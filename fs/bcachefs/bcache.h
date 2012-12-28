@@ -192,6 +192,8 @@
 #include "bset.h"
 #include "util.h"
 
+#include <linux/dynamic_fault.h>
+
 struct bucket {
 	u16		read_prio;
 	u16		write_prio;

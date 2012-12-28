@@ -10,6 +10,7 @@
 #include "util.h"
 #include "bset.h"
 
+#include <linux/dynamic_fault.h>
 #include <linux/console.h>
 #include <linux/random.h>
 #include <linux/prefetch.h>
