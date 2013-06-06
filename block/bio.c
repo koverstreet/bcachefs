@@ -1079,6 +1079,71 @@ void bio_free_pages(struct bio *bio)
 EXPORT_SYMBOL(bio_free_pages);
 
 /**
+ * bio_get_user_pages - pin user pages and add them to a biovec
+ * @bio: bio to add pages to
+ * @uaddr: start of user address
+ * @len: length in bytes
+ * @write_to_vm: bool indicating writing to pages or not
+ *
+ * Pins pages for up to @len bytes and appends them to @bio's bvec array. May
+ * pin only part of the requested pages - @bio need not have room for all the
+ * pages and can already have had pages added to it.
+ *
+ * Returns the number of bytes from @len added to @bio.
+ */
+ssize_t bio_get_user_pages(struct bio *bio, struct iov_iter *i, int write_to_vm)
+{
+	while (bio->bi_vcnt < bio->bi_max_vecs && iov_iter_count(i)) {
+		struct iovec iov = iov_iter_iovec(i);
+		int ret;
+		unsigned nr_pages, bytes;
+		unsigned offset = offset_in_page(iov.iov_base);
+		struct bio_vec *bv;
+		struct page **pages;
+
+		nr_pages = min_t(size_t,
+				 DIV_ROUND_UP(iov.iov_len + offset, PAGE_SIZE),
+				 bio->bi_max_vecs - bio->bi_vcnt);
+
+		bv = &bio->bi_io_vec[bio->bi_vcnt];
+		pages = (void *) bv;
+
+		ret = get_user_pages_fast((unsigned long) iov.iov_base,
+					  nr_pages, write_to_vm, pages);
+		if (ret < 0) {
+			if (bio->bi_vcnt)
+				return 0;
+
+			return ret;
+		}
+
+		bio->bi_vcnt += ret;
+		bytes = ret * PAGE_SIZE - offset;
+
+		while (ret--) {
+			bv[ret].bv_page = pages[ret];
+			bv[ret].bv_len = PAGE_SIZE;
+			bv[ret].bv_offset = 0;
+		}
+
+		bv[0].bv_offset += offset;
+		bv[0].bv_len -= offset;
+
+		if (bytes > iov.iov_len) {
+			bio->bi_io_vec[bio->bi_vcnt - 1].bv_len -=
+				bytes - iov.iov_len;
+			bytes = iov.iov_len;
+		}
+
+		bio->bi_iter.bi_size += bytes;
+		iov_iter_advance(i, bytes);
+	}
+
+	return 0;
+}
+EXPORT_SYMBOL(bio_get_user_pages);
+
+/**
  *	bio_uncopy_user	-	finish previously mapped bio
  *	@bio: bio being terminated
  *
