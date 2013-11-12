@@ -467,6 +467,18 @@ void bch_bucket_free(struct cache_set *c, struct bkey *k)
 				  PTR_BUCKET(c, k, i));
 }
 
+static struct cache *bch_get_next_cache_alloc(struct cache_set *c)
+{
+	int i;
+	struct cache *tmp;
+
+	tmp = c->cache_by_alloc[0];
+	for (i = 0; i < c->caches_loaded-1; i++)
+		c->cache_by_alloc[i] = c->cache_by_alloc[i+1];
+
+	return c->cache_by_alloc[c->caches_loaded-1] = tmp;
+}
+
 int bch_bucket_alloc_set(struct cache_set *c, unsigned reserve,
 			 struct bkey *k, int n, bool wait)
 {
@@ -480,7 +492,7 @@ int bch_bucket_alloc_set(struct cache_set *c, unsigned reserve,
 	/* sort by free space/prio of oldest data in caches */
 
 	for (i = 0; i < n; i++) {
-		struct cache *ca = c->cache_by_alloc[i];
+		struct cache *ca = bch_get_next_cache_alloc(c);
 		long b = bch_bucket_alloc(ca, reserve, wait);
 
 		if (b == -1)
