@@ -115,6 +115,13 @@ do {									\
 
 #define heap_full(h)	((h)->used == (h)->size)
 
+#define heap_resort(heap, cmp)						\
+do {									\
+	ssize_t _i;							\
+	for (_i = (heap)->used / 2 - 1; _i >= 0; --_i)			\
+		heap_sift(heap, _i, cmp);				\
+} while (0)
+
 #define DECLARE_FIFO(type, name)					\
 	struct {							\
 		size_t front, back, size, mask;				\

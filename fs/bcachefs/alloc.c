@@ -177,7 +177,6 @@ static void bch_invalidate_one_bucket(struct cache *ca, struct bucket *b)
 static void invalidate_buckets_lru(struct cache *ca)
 {
 	struct bucket *b;
-	ssize_t i;
 
 	ca->heap.used = 0;
 
@@ -193,8 +192,7 @@ static void invalidate_buckets_lru(struct cache *ca)
 		}
 	}
 
-	for (i = ca->heap.used / 2 - 1; i >= 0; --i)
-		heap_sift(&ca->heap, i, bucket_min_cmp);
+	heap_resort(&ca->heap, bucket_min_cmp);
 
 	while (!fifo_full(&ca->free_inc)) {
 		if (!heap_pop(&ca->heap, b, bucket_min_cmp)) {
