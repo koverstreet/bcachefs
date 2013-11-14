@@ -545,7 +545,7 @@ void bch_prio_write(struct cache *ca)
 		for (b = ca->buckets + i * prios_per_bucket(ca);
 		     b < ca->buckets + ca->sb.nbuckets && d < end;
 		     b++, d++) {
-			d->prio = cpu_to_le16(b->prio);
+			d->prio = cpu_to_le16(b->read_prio);
 			d->gen = b->gen;
 		}
 
@@ -617,7 +617,7 @@ static void prio_read(struct cache *ca, uint64_t bucket)
 			d = p->data;
 		}
 
-		b->prio = le16_to_cpu(d->prio);
+		b->read_prio = le16_to_cpu(d->prio);
 		b->gen = b->last_gc = d->gen;
 	}
 }
@@ -1832,6 +1832,7 @@ void bch_cache_release(struct kobject *kobj)
 static int cache_alloc(struct cache *ca)
 {
 	size_t free;
+	unsigned movinggc_reserve;
 
 	__module_get(THIS_MODULE);
 	kobject_init(&ca->kobj, &bch_cache_ktype);
@@ -1840,14 +1841,18 @@ static int cache_alloc(struct cache *ca)
 	ca->journal.bio.bi_max_vecs = 8;
 	ca->journal.bio.bi_io_vec = ca->journal.bio.bi_inline_vecs;
 
+	movinggc_reserve = max_t(size_t, NUM_GC_GENS * 2,
+				 ca->sb.nbuckets >> 7);
+
 	free = max_t(size_t, 4, ca->sb.nbuckets >> 10);
 
 	if (!init_fifo(&ca->free[RESERVE_BTREE], 8, GFP_KERNEL) ||
 	    !init_fifo(&ca->free[RESERVE_PRIO], prio_buckets(ca), GFP_KERNEL) ||
-	    !init_fifo(&ca->free[RESERVE_MOVINGGC], free, GFP_KERNEL) ||
+	    !init_fifo(&ca->free[RESERVE_MOVINGGC],
+		       movinggc_reserve, GFP_KERNEL) ||
 	    !init_fifo(&ca->free[RESERVE_NONE], free, GFP_KERNEL) ||
 	    !init_fifo(&ca->free_inc,	free << 2, GFP_KERNEL) ||
-	    !init_heap(&ca->heap,	free << 3, GFP_KERNEL) ||
+	    !init_heap(&ca->heap,	movinggc_reserve << 1, GFP_KERNEL) ||
 	    !(ca->buckets	= vzalloc(sizeof(struct bucket) *
 					  ca->sb.nbuckets)) ||
 	    !(ca->prio_buckets	= kzalloc(sizeof(uint64_t) * prio_buckets(ca) *

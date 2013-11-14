@@ -193,10 +193,11 @@
 #include "util.h"
 
 struct bucket {
-	uint16_t	prio;
-	uint8_t		gen;
-	uint8_t		last_gc; /* Most out of date gen in the btree */
-	uint16_t	gc_mark; /* Bitfield used by GC. See below for field */
+	u16		read_prio;
+	u16		write_prio;
+	u8		gen;
+	u8		last_gc; /* Most out of date gen in the btree */
+	u32		gc_mark; /* Bitfield used by GC. See below for field */
 };
 
 /*
@@ -204,14 +205,14 @@ struct bucket {
  * as multiple threads touch struct bucket without locking
  */
 
-BITMASK(GC_MARK,	 struct bucket, gc_mark, 0, 2);
 #define GC_MARK_RECLAIMABLE	1
 #define GC_MARK_DIRTY		2
 #define GC_MARK_METADATA	3
-#define GC_SECTORS_USED_SIZE	13
+#define GC_SECTORS_USED_SIZE	27
 #define MAX_GC_SECTORS_USED	(~(~0ULL << GC_SECTORS_USED_SIZE))
-BITMASK(GC_SECTORS_USED, struct bucket, gc_mark, 2, GC_SECTORS_USED_SIZE);
-BITMASK(GC_MOVE, struct bucket, gc_mark, 15, 1);
+BITMASK(GC_MARK,	 struct bucket, gc_mark, 0, 2);
+BITMASK(GC_GEN,		 struct bucket, gc_mark, 2, 3);
+BITMASK(GC_SECTORS_USED, struct bucket, gc_mark, 5, GC_SECTORS_USED_SIZE);
 
 #include "stats.h"
 struct search;
@@ -486,7 +487,13 @@ struct cache {
 
 	DECLARE_HEAP(struct bucket *, heap);
 
-	struct open_bucket	*gc_bucket;
+	/*
+	 * open buckets used in moving garbage collection
+	 * NOTE: GC_GEN == 0 signifies no moving gc, so accessing the
+	 * gc_buckets array is always GC_GEN-1.
+	 */
+#define NUM_GC_GENS 7
+	struct open_bucket	*gc_buckets[NUM_GC_GENS];
 
 	/*
 	 * If nonzero, we know we aren't going to find any buckets to invalidate

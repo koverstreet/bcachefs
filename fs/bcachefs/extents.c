@@ -160,7 +160,7 @@ static void bch_bkey_dump(struct btree_keys *keys, const struct bkey *k)
 
 		if (n >= b->c->sb.first_bucket && n < b->c->sb.nbuckets)
 			printk(" prio %i",
-			       PTR_BUCKET(b->c, k, j)->prio);
+			       PTR_BUCKET(b->c, k, j)->read_prio);
 	}
 
 	printk(" %s\n", bch_ptr_status(b->c, k));
@@ -203,7 +203,7 @@ static bool btree_ptr_bad_expensive(struct btree *b, const struct bkey *k)
 				g = PTR_BUCKET(b->c, k, i);
 
 				if (KEY_DIRTY(k) ||
-				    g->prio != BTREE_PRIO ||
+				    g->read_prio != BTREE_PRIO ||
 				    (b->c->gc_mark_valid &&
 				     GC_MARK(g) != GC_MARK_METADATA))
 					goto err;
@@ -219,7 +219,7 @@ err:
 	btree_bug(b,
 "inconsistent btree pointer %s: bucket %zi prio %i gen %i last_gc %i mark %llu",
 		  buf, PTR_BUCKET_NR(b->c, k, i),
-		  g->prio, g->gen, g->last_gc, GC_MARK(g));
+		  g->read_prio, g->gen, g->last_gc, GC_MARK(g));
 	return true;
 }
 
@@ -572,7 +572,7 @@ static bool bch_extent_bad_expensive(struct btree *b, const struct bkey *k)
 		      replicas_needed)))
 			goto err;
 
-		if (g->prio == BTREE_PRIO)
+		if (g->read_prio == BTREE_PRIO)
 			goto err;
 
 		if (replicas_needed)
@@ -589,7 +589,7 @@ err:
 	btree_bug(b,
 "inconsistent extent pointer %s:\nbucket %zu prio %i gen %i last_gc %i mark %llu",
 		  buf, PTR_BUCKET_NR(b->c, k, i),
-		  g->prio, g->gen, g->last_gc, GC_MARK(g));
+		  g->read_prio, g->gen, g->last_gc, GC_MARK(g));
 	return true;
 }
 

@@ -1253,9 +1253,9 @@ void bch_initial_mark_key(struct cache_set *c, int level, struct bkey *k)
 			b->gen = PTR_GEN(k, i);
 
 			if (level && bkey_cmp(k, &ZERO_KEY))
-				b->prio = BTREE_PRIO;
-			else if (!level && b->prio == BTREE_PRIO)
-				b->prio = INITIAL_PRIO;
+				b->read_prio = BTREE_PRIO;
+			else if (!level && b->read_prio == BTREE_PRIO)
+				b->read_prio = INITIAL_PRIO;
 		}
 
 	__bch_btree_mark_key(c, level, k);
@@ -2386,7 +2386,7 @@ void bch_btree_set_root(struct btree *b)
 	BUG_ON(!b->written);
 
 	for (i = 0; i < KEY_PTRS(&b->key); i++)
-		BUG_ON(PTR_BUCKET(b->c, &b->key, i)->prio != BTREE_PRIO);
+		BUG_ON(PTR_BUCKET(b->c, &b->key, i)->read_prio != BTREE_PRIO);
 
 	mutex_lock(&b->c->btree_cache_lock);
 	list_del_init(&b->list);

@@ -103,12 +103,16 @@ void bch_rescale_priorities(struct cache_set *c, int sectors)
 	c->min_prio = USHRT_MAX;
 
 	for_each_cache(ca, c, i)
-		for_each_bucket(b, ca)
-			if (b->prio &&
-			    b->prio != BTREE_PRIO) {
-				b->prio--;
-				c->min_prio = min(c->min_prio, b->prio);
+		for_each_bucket(b, ca) {
+			if (b->read_prio &&
+			    b->read_prio != BTREE_PRIO) {
+				b->read_prio--;
+				c->min_prio = min(c->min_prio, b->read_prio);
 			}
+
+			if (b->write_prio)
+				b->write_prio--;
+		}
 
 	mutex_unlock(&c->bucket_lock);
 }
@@ -144,9 +148,10 @@ void __bch_invalidate_one_bucket(struct cache *ca, struct bucket *b)
 		trace_bcache_invalidate(ca, b - ca->buckets);
 
 	bch_inc_gen(ca, b);
-	b->prio = INITIAL_PRIO;
+	b->read_prio = INITIAL_PRIO;
+	b->write_prio = INITIAL_PRIO;
 	SET_GC_MARK(b, GC_MARK_DIRTY);
-	SET_GC_MOVE(b, 0);
+	SET_GC_GEN(b, 0);
 	SET_GC_SECTORS_USED(b, min_t(unsigned, ca->sb.bucket_size,
 				     MAX_GC_SECTORS_USED));
 
@@ -173,7 +178,7 @@ static void bch_invalidate_one_bucket(struct cache *ca, struct bucket *b)
 ({									\
 	unsigned min_prio = (INITIAL_PRIO - ca->set->min_prio) / 8;	\
 									\
-	(b->prio - ca->set->min_prio + min_prio) * GC_SECTORS_USED(b);	\
+	(b->read_prio - ca->set->min_prio + min_prio) * GC_SECTORS_USED(b);\
 })
 
 #define bucket_max_cmp(l, r)	(bucket_prio(l) < bucket_prio(r))
@@ -441,10 +446,12 @@ out:
 
 	if (reserve <= RESERVE_PRIO) {
 		SET_GC_MARK(b, GC_MARK_METADATA);
-		b->prio = BTREE_PRIO;
+		b->read_prio = BTREE_PRIO;
 	} else {
-		b->prio = INITIAL_PRIO;
+		b->read_prio = INITIAL_PRIO;
 	}
+
+	b->write_prio = INITIAL_PRIO;
 
 	return r;
 }
@@ -742,7 +749,7 @@ struct open_bucket *bch_alloc_sectors(struct cache_set *c, struct bkey *k,
 struct open_bucket *bch_gc_alloc_sectors(struct cache_set *c, struct bkey *k,
 					 unsigned long *ptrs_to_write)
 {
-	unsigned i, sectors = KEY_SIZE(k);
+	unsigned i, gen, sectors = KEY_SIZE(k);
 	struct cache *ca;
 	struct open_bucket *b;
 	long bucket;
@@ -751,15 +758,16 @@ struct open_bucket *bch_gc_alloc_sectors(struct cache_set *c, struct bkey *k,
 retry:
 	for (i = 0; i < KEY_PTRS(k); i++)
 		if (ptr_available(c, k, i) &&
-		    GC_MOVE(PTR_BUCKET(c, k, i)))
+		    GC_GEN(PTR_BUCKET(c, k, i)))
 			goto found;
 
 	mutex_unlock(&c->bucket_lock);
 	return NULL;
 found:
 	ca = PTR_CACHE(c, k, i);
+	gen = GC_GEN(PTR_BUCKET(c, k, i)) - 1;
 
-	b = ca->gc_bucket;
+	b = ca->gc_buckets[gen];
 	if (!b) {
 		mutex_unlock(&c->bucket_lock);
 
@@ -775,17 +783,17 @@ found:
 		SET_KEY_PTRS(&b->key, 1);
 
 		/* we dropped bucket_lock, might've raced */
-		if (ca->gc_bucket) {
+		if (ca->gc_buckets[gen]) {
 			/* we raced */
 			bch_bucket_free(c, &b->key);
 			bch_open_bucket_put(c, b);
 		} else {
-			ca->gc_bucket = b;
+			ca->gc_buckets[gen] = b;
 		}
 
 		/*
-		 * GC_MOVE() might also have been reset... don't strictly need
-		 * to recheck though
+		 * GC_GEN() might also have been reset... don't strictly need to
+		 * recheck though
 		 */
 		goto retry;
 	}
@@ -808,7 +816,7 @@ found:
 		SET_PTR_OFFSET(&b->key, 0, PTR_OFFSET(&b->key, 0) + sectors);
 		atomic_inc(&b->pin);
 	} else
-		ca->gc_bucket = NULL;
+		ca->gc_buckets[gen] = NULL;
 
 	mutex_unlock(&c->bucket_lock);
 

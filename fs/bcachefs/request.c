@@ -543,7 +543,7 @@ static int cache_lookup_fn(struct btree_op *op, struct btree *b, struct bkey *k)
 	if (ptr < 0) /* all stale? */
 		return MAP_CONTINUE;
 
-	PTR_BUCKET(b->c, k, ptr)->prio = INITIAL_PRIO;
+	PTR_BUCKET(b->c, k, ptr)->read_prio = INITIAL_PRIO;
 
 	if (KEY_DIRTY(k))
 		s->read_dirty_data = true;
