@@ -5,12 +5,49 @@
  */
 
 #include "bcache.h"
+#include "alloc.h"
 #include "btree.h"
 #include "debug.h"
 #include "keybuf.h"
 #include "request.h"
 
 #include <trace/events/bcachefs.h>
+#include <linux/kthread.h>
+
+/* Rate limiting */
+
+#define GC_TARGET_PERCENT 5 /* 5% reclaimable space */
+
+static void __update_gc_rate(struct cache_set *c)
+{
+	u64 total = 0, target;
+
+	/*
+	 * XXX: Currently this is setting a rate based on the cache_set as
+	 *      a whole. Later we will want to have individual rates for
+	 *      each cache.
+	 */
+
+	total = c->nbuckets * c->sb.bucket_size;
+	target = total * GC_TARGET_PERCENT / 100;
+
+	bch_pd_controller_update(&c->moving_gc_pd,
+				 target << 9,
+				 buckets_available(c) << (c->bucket_bits + 9));
+}
+
+static void update_gc_rate(struct work_struct *work)
+{
+	struct cache_set *c = container_of(to_delayed_work(work),
+					   struct cache_set,
+					   moving_gc_pd.update);
+	__update_gc_rate(c);
+
+	schedule_delayed_work(&c->moving_gc_pd.update,
+			      c->moving_gc_pd.update_seconds * HZ);
+}
+
+/* Moving GC - IO loop */
 
 struct moving_io {
 	struct closure		cl;
@@ -32,8 +69,6 @@ static bool moving_pred(struct keybuf *buf, struct bkey *k)
 
 	return false;
 }
-
-/* Moving GC - IO loop */
 
 static void moving_io_destructor(struct closure *cl)
 {
@@ -122,10 +157,12 @@ static void read_moving(struct cache_set *c)
 	struct closure cl;
 
 	closure_init_stack(&cl);
+	bch_ratelimit_reset(&c->moving_gc_pd.rate);
 
 	/* XXX: if we error, background writeback could stall indefinitely */
 
-	while (!test_bit(CACHE_SET_STOPPING, &c->flags)) {
+	while (!bch_ratelimit_wait_freezable_stoppable(&c->moving_gc_pd.rate,
+						       &cl)) {
 		w = bch_keybuf_next_rescan(c, &c->moving_gc_keys,
 					   &MAX_KEY, moving_pred);
 		if (!w)
@@ -161,6 +198,9 @@ static void read_moving(struct cache_set *c)
 			goto err;
 
 		trace_bcache_gc_copy(&w->key);
+
+		bch_ratelimit_increment(&c->moving_gc_pd.rate,
+					KEY_SIZE(&w->key) << 9);
 
 		closure_call(&io->cl, read_moving_submit, NULL, &cl);
 	}
@@ -241,4 +281,5 @@ void bch_moving_gc(struct cache_set *c)
 void bch_moving_init_cache_set(struct cache_set *c)
 {
 	bch_keybuf_init(&c->moving_gc_keys);
+	INIT_DELAYED_WORK(&c->moving_gc_pd.update, update_gc_rate);
 }

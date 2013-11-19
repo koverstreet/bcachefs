@@ -663,6 +663,7 @@ struct cache_set {
 	/* MOVING GC */
 	struct workqueue_struct	*moving_gc_wq;
 	struct keybuf		moving_gc_keys;
+	struct bch_pd_controller moving_gc_pd;
 
 	/* DEBUG JUNK */
 	struct dentry		*debug;
