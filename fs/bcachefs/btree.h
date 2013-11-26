@@ -194,6 +194,7 @@ static inline void set_gc_sectors(struct cache_set *c)
 }
 
 void bkey_put(struct cache_set *c, struct bkey *k);
+void bkey_get(struct cache_set *c, struct bkey *k);
 
 /* Looping macros */
 

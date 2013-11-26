@@ -644,8 +644,7 @@ bool bch_alloc_sectors(struct cache_set *c, struct bkey *k, unsigned sectors,
 	 * get_data_bucket()'s refcount.
 	 */
 	if (b->sectors_free)
-		for (i = 0; i < KEY_PTRS(&b->key); i++)
-			atomic_inc(&PTR_BUCKET(c, &b->key, i)->pin);
+		bkey_get(c, &b->key);
 
 	spin_unlock(&c->data_bucket_lock);
 	return true;
