@@ -48,6 +48,9 @@ read_attribute(cache_hit_ratio);
 read_attribute(cache_readaheads);
 read_attribute(cache_miss_collisions);
 read_attribute(bypassed);
+read_attribute(foreground_write_ratio);
+read_attribute(foreground_write_sectors);
+read_attribute(gc_write_sectors);
 
 SHOW(bch_stats)
 {
@@ -66,6 +69,13 @@ SHOW(bch_stats)
 	var_print(cache_readaheads);
 	var_print(cache_miss_collisions);
 	sysfs_hprint(bypassed,	var(sectors_bypassed) << 9);
+
+	var_print(foreground_write_sectors);
+	var_print(gc_write_sectors);
+	sysfs_print(foreground_write_ratio,
+		    DIV_SAFE(var(foreground_write_sectors) * 100,
+			     var(foreground_write_sectors) +
+			     var(gc_write_sectors)));
 #undef var
 	return 0;
 }
@@ -88,6 +98,9 @@ static struct attribute *bch_stats_files[] = {
 	&sysfs_cache_readaheads,
 	&sysfs_cache_miss_collisions,
 	&sysfs_bypassed,
+	&sysfs_foreground_write_ratio,
+	&sysfs_foreground_write_sectors,
+	&sysfs_gc_write_sectors,
 	NULL
 };
 static KTYPE(bch_stats);
@@ -110,7 +123,7 @@ void bch_cache_accounting_clear(struct cache_accounting *acc)
 {
 	memset(&acc->total.cache_hits,
 	       0,
-	       sizeof(unsigned long) * 7);
+	       sizeof(unsigned long) * 9);
 }
 
 void bch_cache_accounting_destroy(struct cache_accounting *acc)
@@ -143,6 +156,8 @@ static void scale_stats(struct cache_stats *stats, unsigned long rescale_at)
 		scale_stat(&stats->cache_readaheads);
 		scale_stat(&stats->cache_miss_collisions);
 		scale_stat(&stats->sectors_bypassed);
+		scale_stat(&stats->foreground_write_sectors);
+		scale_stat(&stats->gc_write_sectors);
 	}
 }
 
@@ -166,6 +181,8 @@ static void scale_accounting(unsigned long data)
 	move_stat(cache_readaheads);
 	move_stat(cache_miss_collisions);
 	move_stat(sectors_bypassed);
+	move_stat(foreground_write_sectors);
+	move_stat(gc_write_sectors);
 
 	scale_stats(&acc->total, 0);
 	scale_stats(&acc->day, DAY_RESCALE);
@@ -222,6 +239,16 @@ void bch_mark_sectors_bypassed(struct cache_set *c, struct cached_dev *dc,
 {
 	atomic_add(sectors, &dc->accounting.collector.sectors_bypassed);
 	atomic_add(sectors, &c->accounting.collector.sectors_bypassed);
+}
+
+void bch_mark_foreground_write(struct cache_set *c, int sectors)
+{
+	atomic_add(sectors, &c->accounting.collector.foreground_write_sectors);
+}
+
+void bch_mark_gc_write(struct cache_set *c, int sectors)
+{
+	atomic_add(sectors, &c->accounting.collector.gc_write_sectors);
 }
 
 void bch_cache_accounting_init(struct cache_accounting *acc,

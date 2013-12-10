@@ -14,6 +14,7 @@
 #include "keybuf.h"
 #include "request.h"
 #include "writeback.h"
+#include "stats.h"
 
 #include <linux/module.h>
 #include <linux/hash.h>
@@ -284,6 +285,11 @@ void bch_data_insert(struct closure *cl)
 
 	trace_bcache_write(op->c, op->inode, op->bio,
 			   op->writeback, op->bypass);
+
+	if (op->write_prio)
+		bch_mark_gc_write(op->c, bio_sectors(op->bio));
+	else if (!op->bypass)
+		bch_mark_foreground_write(op->c, bio_sectors(op->bio));
 
 	if (atomic_sub_return(bio_sectors(op->bio),
 			      &op->c->sectors_until_gc) < 0) {

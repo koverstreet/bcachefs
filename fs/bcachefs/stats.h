@@ -9,6 +9,8 @@ struct cache_stat_collector {
 	atomic_t cache_readaheads;
 	atomic_t cache_miss_collisions;
 	atomic_t sectors_bypassed;
+	atomic_t foreground_write_sectors;
+	atomic_t gc_write_sectors;
 };
 
 struct cache_stats {
@@ -21,6 +23,8 @@ struct cache_stats {
 	unsigned long cache_readaheads;
 	unsigned long cache_miss_collisions;
 	unsigned long sectors_bypassed;
+	unsigned long foreground_write_sectors;
+	unsigned long gc_write_sectors;
 
 	unsigned		rescale;
 };
@@ -57,5 +61,7 @@ void bch_mark_cache_accounting(struct cache_set *, struct bcache_device *,
 void bch_mark_cache_readahead(struct cache_set *, struct bcache_device *);
 void bch_mark_cache_miss_collision(struct cache_set *, struct bcache_device *);
 void bch_mark_sectors_bypassed(struct cache_set *, struct cached_dev *, int);
+void bch_mark_foreground_write(struct cache_set *, int sectors);
+void bch_mark_gc_write(struct cache_set *, int sectors);
 
 #endif /* _BCACHE_STATS_H_ */
