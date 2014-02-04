@@ -555,7 +555,12 @@ found:
  * May allocate fewer sectors than @sectors, KEY_SIZE(k) indicates how many
  * sectors were actually allocated.
  *
- * If s->writeback is true, will not fail.
+ * If s->writeback is true, will not fail
+ *
+ * @write_point - opaque identifier of where this write came from.
+ *		  bcache uses ptr address of the task struct
+ * @tier - which tier this write is destined towards
+ * @wait - should the write wait for a bucket or fail if there isn't
  */
 bool bch_alloc_sectors(struct cache_set *c, struct bkey *k,
 		       unsigned write_point, unsigned write_prio, bool wait)

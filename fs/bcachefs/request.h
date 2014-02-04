@@ -15,6 +15,7 @@ struct data_insert_op {
 		uint16_t	flags;
 
 	struct {
+		unsigned	wait:1;
 		unsigned	bypass:1;
 		unsigned	flush:1;
 		unsigned	replace:1;
@@ -34,7 +35,7 @@ static inline void bch_data_insert_op_init(struct data_insert_op *op,
 					   struct workqueue_struct *wq,
 					   struct bio *bio,
 					   unsigned write_point,
-					   bool bypass, bool flush,
+					   bool wait, bool bypass, bool flush,
 					   struct bkey *insert_key,
 					   struct bkey *replace_key)
 {
@@ -44,6 +45,7 @@ static inline void bch_data_insert_op_init(struct data_insert_op *op,
 	op->write_point	= write_point;
 	op->error	= 0;
 	op->flags	= 0;
+	op->wait	= wait;
 	op->bypass	= bypass;
 	op->flush	= flush;
 

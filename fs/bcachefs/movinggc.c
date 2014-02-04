@@ -146,7 +146,8 @@ static void read_moving(struct cache_set *c)
 		io->w			= w;
 
 		bch_data_insert_op_init(&io->op, c, c->moving_gc_wq,
-					&io->bio.bio, 0, false, false,
+					&io->bio.bio, 0,
+					false, false, false,
 					&io->w->key, &io->w->key);
 		io->op.write_prio	= 1;
 

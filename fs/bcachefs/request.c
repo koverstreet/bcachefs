@@ -188,7 +188,7 @@ static void bch_data_insert_start(struct closure *cl)
 		bkey_copy(k, &op->insert_key);
 
 		if (!bch_alloc_sectors(op->c, k, op->write_point,
-				       op->write_prio, KEY_DIRTY(k)))
+				       op->write_prio, op->wait))
 			goto err;
 
 		bch_cut_front(k, &op->insert_key);
@@ -215,8 +215,7 @@ static void bch_data_insert_start(struct closure *cl)
 	op->insert_data_done = true;
 	continue_at(cl, bch_data_insert_keys, op->wq);
 err:
-	/* bch_alloc_sectors() blocks if s->writeback = true */
-	BUG_ON(KEY_DIRTY(&op->insert_key));
+	BUG_ON(op->wait);
 
 	/*
 	 * But if it's not a writeback write we'd rather just bail out if
@@ -709,6 +708,7 @@ static void cached_dev_read_done(struct closure *cl)
 
 		bio_put(s->cache_miss);
 		s->cache_miss = NULL;
+		s->iop.wait = false;
 	}
 
 	if (dc->verify && s->recoverable && !s->read_dirty_data)
@@ -798,7 +798,7 @@ static int cached_dev_cache_miss(struct btree *b, struct search *s,
 
 	bch_data_insert_op_init(&s->iop, b->c, bcache_wq, cache_bio,
 				hash_long((unsigned long) current, 16),
-				false, false,
+				false, false, false,
 				&KEY(s->inode, 0, 0), &replace.key);
 
 	s->cache_miss	= miss;
@@ -907,7 +907,8 @@ static void cached_dev_write(struct cached_dev *dc, struct search *s)
 
 	bch_data_insert_op_init(&s->iop, dc->disk.c, bcache_wq, insert_bio,
 				hash_long((unsigned long) current, 16),
-				bypass, bio->bi_opf & (REQ_PREFLUSH|REQ_FUA),
+				KEY_DIRTY(&insert_key), bypass,
+				bio->bi_opf & (REQ_PREFLUSH|REQ_FUA),
 				&insert_key, NULL);
 
 	closure_call(&s->iop.cl, bch_data_insert, NULL, cl);
@@ -1083,6 +1084,7 @@ static void __flash_dev_make_request(struct request_queue *q, struct bio *bio)
 
 		bch_data_insert_op_init(&s->iop, d->c, bcache_wq, bio,
 					hash_long((unsigned long) current, 16),
+					true,
 					bio_op(bio) == REQ_OP_DISCARD,
 					bio->bi_opf & (REQ_PREFLUSH|REQ_FUA),
 					&insert, NULL);
