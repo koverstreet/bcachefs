@@ -495,15 +495,26 @@ void bch_bucket_free(struct cache_set *c, struct bkey *k)
 
 static struct cache *bch_get_next_cache_alloc(struct cache_tier *tier)
 {
-	struct cache *ret;
+	size_t total_free = 0;
+	size_t current_limit = 0;
+	size_t rand;
+	int i;
 
-	ret = tier->devices[0];
-	memmove(&tier->devices[0],
-		&tier->devices[1],
-		sizeof(struct cache *) * (tier->nr_devices - 1));
-	tier->devices[tier->nr_devices - 1] = ret;
+	for (i = 0; i < tier->nr_devices; i++)
+		total_free += tier->devices[i]->buckets_free;
 
-	return ret;
+	get_random_bytes(&rand, sizeof(rand));
+	rand %= total_free;
+
+	for (i = 0; i < tier->nr_devices; i++) {
+		current_limit += tier->devices[i]->sb.nbuckets;
+		if (rand < current_limit)
+			return tier->devices[i];
+	}
+
+	BUG(); /* off by one error? */
+
+	return NULL;
 }
 
 int bch_bucket_alloc_set(struct cache_set *c, unsigned reserve,
