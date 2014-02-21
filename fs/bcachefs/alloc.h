@@ -41,6 +41,13 @@ static inline size_t buckets_available(struct cache_set *c)
 	return ret;
 }
 
+static inline size_t buckets_free_cache(struct cache *ca, unsigned reserve)
+{
+	return ca->buckets_free +
+		fifo_used(&ca->free[reserve]) +
+		fifo_used(&ca->free_inc);
+}
+
 void bch_rescale_priorities(struct cache_set *, int);
 
 bool bch_can_invalidate_bucket(struct cache *, struct bucket *);

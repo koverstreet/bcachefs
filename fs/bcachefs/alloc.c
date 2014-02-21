@@ -493,23 +493,75 @@ void bch_bucket_free(struct cache_set *c, struct bkey *k)
 	mutex_unlock(&c->bucket_lock);
 }
 
-static struct cache *bch_get_next_cache_alloc(struct cache_tier *tier)
+static struct cache *bch_next_cache(struct cache_set *c, unsigned reserve,
+				    int tier_idx, bool wait,
+				    long *cache_used)
 {
-	size_t total_free = 0;
-	size_t current_limit = 0;
-	size_t rand;
-	int i;
+	DEFINE_WAIT(w);
 
-	for (i = 0; i < tier->nr_devices; i++)
-		total_free += tier->devices[i]->buckets_free;
+	struct cache **devices;
+	size_t sectors_count = 0, rand;
+	int i, nr_devices;
+
+	/* first ptr allocation will always go to the specified tier,
+	 * 2nd and greater can go to any. If one tier is significantly larger
+	 * it is likely to go that tier. */
+
+	if (tier_idx == -1) {
+		devices = c->cache;
+		nr_devices = c->sb.nr_in_set;
+	} else {
+		struct cache_tier *tier = &c->cache_by_alloc[tier_idx];
+
+		devices = tier->devices;
+		nr_devices = tier->nr_devices;
+	}
+
+	while (1) {
+		for (i = 0; i < nr_devices; i++) {
+			if (test_bit(devices[i]->sb.nr_this_dev, cache_used))
+				continue;
+
+			sectors_count +=
+				buckets_free_cache(devices[i], reserve);
+		}
+
+		/* fast path */
+		if (sectors_count)
+			break;
+
+		if (!wait)
+			return NULL;
+
+		prepare_to_wait(&c->bucket_wait, &w, TASK_UNINTERRUPTIBLE);
+		mutex_unlock(&c->bucket_lock);
+		schedule();
+		mutex_lock(&c->bucket_lock);
+	}
+
+	finish_wait(&c->bucket_wait, &w);
+
+	/*
+	 * We create a weighted selection by using the number of free buckets
+	 * in each cache. You can think of this like lining up the caches
+	 * linearly so each as a given range, corresponding to the number of
+	 * free buckets in that cache, and then randomly picking a number
+	 * within that range.
+	 */
 
 	get_random_bytes(&rand, sizeof(rand));
-	rand %= total_free;
+	rand %= sectors_count;
 
-	for (i = 0; i < tier->nr_devices; i++) {
-		current_limit += tier->devices[i]->sb.nbuckets;
-		if (rand < current_limit)
-			return tier->devices[i];
+	for (i = 0; i < nr_devices; i++) {
+		if (test_bit(devices[i]->sb.nr_this_dev, cache_used))
+			continue;
+
+		sectors_count -= buckets_free_cache(devices[i], reserve);
+
+		if (rand >= sectors_count) {
+			__set_bit(devices[i]->sb.nr_this_dev, cache_used);
+			return devices[i];
+		}
 	}
 
 	BUG(); /* off by one error? */
@@ -521,19 +573,29 @@ int bch_bucket_alloc_set(struct cache_set *c, unsigned reserve,
 			 struct bkey *k, int n,
 			 unsigned tier_idx, bool wait)
 {
+	long caches_used[BITS_TO_LONGS(MAX_CACHES_PER_SET)];
 	int i;
-	struct cache_tier *tier = &c->cache_by_alloc[tier_idx];
 
 	mutex_lock(&c->bucket_lock);
-	BUG_ON(!n || n > tier->nr_devices || n > 8);
+	BUG_ON(!n || n > c->sb.nr_in_set || n > MAX_CACHES_PER_SET);
 
 	bkey_init(k);
+	memset(caches_used, 0, sizeof(caches_used));
 
 	/* sort by free space/prio of oldest data in caches */
 
 	for (i = 0; i < n; i++) {
-		struct cache *ca = bch_get_next_cache_alloc(tier);
-		long b = bch_bucket_alloc(ca, reserve, wait);
+		struct cache *ca;
+		long b;
+
+		/* first ptr goes to the specified tier, the rest to any */
+		ca = bch_next_cache(c, reserve, i == 0 ? tier_idx : -1,
+				    wait, caches_used);
+
+		if (!ca)
+			goto err;
+
+		b = bch_bucket_alloc(ca, reserve, wait);
 
 		if (b == -1)
 			goto err;
