@@ -381,6 +381,11 @@ static void btree_node_write_endio(struct bio *bio)
 		set_btree_node_io_error(b);
 
 	bch_bbio_count_io_errors(b->c, bio, bio->bi_error, "writing btree");
+
+	/* This won't free b->bio because we took an extra reference, but it
+	 * will free any replica bios from bch_submit_bbio_replicas() */
+	bio_put(bio);
+
 	closure_put(cl);
 }
 
@@ -388,7 +393,9 @@ static void do_btree_node_write(struct btree *b)
 {
 	struct closure *cl = &b->io;
 	struct bset *i = btree_bset_last(b);
+	unsigned long ptrs_to_write[BITS_TO_LONGS(MAX_CACHES_PER_SET)];
 	BKEY_PADDED(key) k;
+	int n;
 
 	i->version	= BCACHE_BSET_VERSION;
 	i->csum		= btree_csum_set(b, i);
@@ -396,11 +403,17 @@ static void do_btree_node_write(struct btree *b)
 	BUG_ON(b->bio);
 	b->bio = bch_bbio_alloc(b->c);
 
+	/* Take an extra reference so that the bio_put() in
+	 * btree_node_write_endio() doesn't call bio_free() */
+	bio_get(b->bio);
+
 	b->bio->bi_end_io	= btree_node_write_endio;
 	b->bio->bi_private	= cl;
 	b->bio->bi_iter.bi_size	= roundup(set_bytes(i), block_bytes(b->c));
 	bio_set_op_attrs(b->bio, REQ_OP_WRITE, REQ_META|WRITE_SYNC|REQ_FUA);
 	bch_bio_map(b->bio, i);
+
+	memset(ptrs_to_write, 0xFF, sizeof(ptrs_to_write));
 
 	/*
 	 * If we're appending to a leaf node, we don't technically need FUA -
@@ -418,8 +431,9 @@ static void do_btree_node_write(struct btree *b)
 	 */
 
 	bkey_copy(&k.key, &b->key);
-	SET_PTR_OFFSET(&k.key, 0, PTR_OFFSET(&k.key, 0) +
-		       bset_sector_offset(&b->keys, i));
+	for (n = 0; n < KEY_PTRS(&b->key); n++)
+		SET_PTR_OFFSET(&k.key, n, PTR_OFFSET(&k.key, n) +
+			       bset_sector_offset(&b->keys, i));
 
 	if (!bio_alloc_pages(b->bio, __GFP_NOWARN|GFP_NOWAIT)) {
 		int j;
@@ -430,16 +444,14 @@ static void do_btree_node_write(struct btree *b)
 			memcpy(page_address(bv->bv_page),
 			       base + j * PAGE_SIZE, PAGE_SIZE);
 
-		bch_bbio_prep(b->bio, b->c, &k.key, 0);
-		closure_bio_submit_punt(b->bio, cl, b->c);
 
+		bch_submit_bbio_replicas(b->bio, b->c, &k.key, ptrs_to_write);
 		continue_at(cl, btree_node_write_done, NULL);
 	} else {
 		b->bio->bi_vcnt = 0;
 		bch_bio_map(b->bio, i);
 
-		bch_bbio_prep(b->bio, b->c, &k.key, 0);
-		closure_bio_submit_punt(b->bio, cl, b->c);
+		bch_submit_bbio_replicas(b->bio, b->c, &k.key, ptrs_to_write);
 
 		closure_sync(cl);
 		continue_at_nobarrier(cl, __btree_node_write_done, NULL);
@@ -1080,7 +1092,8 @@ struct btree *__bch_btree_node_alloc(struct cache_set *c, struct btree_op *op,
 	BKEY_PADDED(key) k;
 	struct btree *b = ERR_PTR(-EAGAIN);
 retry:
-	if (bch_bucket_alloc_set(c, RESERVE_BTREE, &k.key, 1, wait))
+	if (bch_bucket_alloc_set(c, RESERVE_BTREE, &k.key,
+				 c->meta_replicas, wait))
 		goto err;
 
 	SET_KEY_SIZE(&k.key, c->btree_pages * PAGE_SECTORS);

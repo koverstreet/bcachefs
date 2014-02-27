@@ -8,6 +8,8 @@
 #include "bcache.h"
 #include "bset.h"
 #include "debug.h"
+#include "btree.h"
+#include "extents.h"
 
 #include <linux/blkdev.h>
 
@@ -92,6 +94,31 @@ void bch_submit_bbio(struct bio *bio, struct cache_set *c,
 	struct bbio *b = container_of(bio, struct bbio, bio);
 	bch_bkey_copy_single_ptr(&b->key, k, ptr);
 	__bch_submit_bbio(bio, c);
+}
+
+void bch_submit_bbio_replicas(struct bio *bio_src, struct cache_set *c,
+			      struct bkey *k, unsigned long *ptrs_to_write)
+{
+	struct bio *bio;
+	unsigned first, i;
+
+	BUG_ON(KEY_PTRS(k) < 1 || KEY_PTRS(k) > c->caches_loaded);
+
+	first = find_first_bit(ptrs_to_write, KEY_PTRS(k));
+
+	i = first + 1;
+	for_each_set_bit_from(i, ptrs_to_write, KEY_PTRS(k)) {
+		bio = bio_clone_fast(bio_src, GFP_NOIO,
+				     PTR_CACHE(c, k, i)->replica_set);
+		bio->bi_end_io		= bio_src->bi_end_io;
+		bio->bi_private		= bio_src->bi_private;
+
+		bch_bbio_prep(bio, c, k, i);
+		closure_bio_submit_punt(bio, bio->bi_private, c);
+	}
+
+	bch_bbio_prep(bio_src, c, k, first);
+	closure_bio_submit_punt(bio_src, bio_src->bi_private, c);
 }
 
 /* IO errors */

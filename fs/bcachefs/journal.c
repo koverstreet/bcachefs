@@ -440,7 +440,7 @@ static void journal_reclaim(struct cache_set *c)
 	struct bkey *k = &c->journal.key;
 	struct cache *ca;
 	uint64_t last_seq;
-	unsigned iter, n = 0;
+	unsigned iter;
 	atomic_t p;
 
 	while (!atomic_read(&fifo_front(&c->journal.pin)))
@@ -466,10 +466,11 @@ static void journal_reclaim(struct cache_set *c)
 		goto out;
 
 	/*
-	 * Allocate:
-	 * XXX: Sort by free journal space
+	 * Determine location of the next journal write:
+	 * XXX: sort caches by free journal space
 	 */
 
+	bkey_init(k);
 	for_each_cache(ca, c, iter) {
 		struct journal_device *ja = &ca->journal;
 		unsigned next = (ja->cur_idx + 1) % ca->sb.njournal_buckets;
@@ -479,15 +480,17 @@ static void journal_reclaim(struct cache_set *c)
 			continue;
 
 		ja->cur_idx = next;
-		k->ptr[n++] = PTR(0,
-				  bucket_to_sector(c, ca->sb.d[ja->cur_idx]),
-				  ca->sb.nr_this_dev);
+		k->ptr[KEY_PTRS(k)] =
+			PTR(0, bucket_to_sector(c, ca->sb.d[ja->cur_idx]),
+			    ca->sb.nr_this_dev);
+
+		SET_KEY_PTRS(k, KEY_PTRS(k) + 1);
+
+		if (KEY_PTRS(k) == c->meta_replicas)
+			break;
 	}
 
-	bkey_init(k);
-	SET_KEY_PTRS(k, n);
-
-	if (n)
+	if (KEY_PTRS(k))
 		c->journal.blocks_free = c->sb.bucket_size >> c->block_bits;
 out:
 	if (!journal_full(&c->journal))

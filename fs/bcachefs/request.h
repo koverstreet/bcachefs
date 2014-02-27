@@ -8,7 +8,6 @@ struct data_insert_op {
 	struct bio		*bio;
 
 	uint16_t		write_point;
-	uint16_t		write_prio;
 	short			error;
 
 	union {
@@ -19,6 +18,8 @@ struct data_insert_op {
 		unsigned	bypass:1;
 		unsigned	flush:1;
 		unsigned	replace:1;
+
+		unsigned	moving_gc:1;
 
 		unsigned	replace_collision:1;
 		unsigned	insert_data_done:1;

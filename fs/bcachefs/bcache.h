@@ -445,6 +445,9 @@ struct cache {
 	struct kobject		kobj;
 	struct block_device	*bdev;
 
+	/* biosets used in cloned bios for replicas and moving_gc */
+	struct bio_set		*replica_set;
+
 	struct task_struct	*alloc_thread;
 
 	struct closure		prio;
@@ -482,6 +485,8 @@ struct cache {
 	size_t			buckets_free;
 
 	DECLARE_HEAP(struct bucket *, heap);
+
+	struct open_bucket	*gc_bucket;
 
 	/*
 	 * If nonzero, we know we aren't going to find any buckets to invalidate
@@ -728,6 +733,10 @@ struct cache_set {
 	unsigned		shrinker_disabled:1;
 	unsigned		copy_gc_enabled:1;
 	unsigned		btree_scan_ratelimit;
+
+	/* number of caches to replicate data on */
+	unsigned short		meta_replicas;
+	unsigned short		data_replicas;
 };
 
 struct bbio {
@@ -907,6 +916,8 @@ void __bch_bbio_prep(struct bio *, struct cache_set *);
 void bch_bbio_prep(struct bio *, struct cache_set *, struct bkey *, unsigned);
 void __bch_submit_bbio(struct bio *, struct cache_set *);
 void bch_submit_bbio(struct bio *, struct cache_set *, struct bkey *, unsigned);
+void bch_submit_bbio_replicas(struct bio *, struct cache_set *,
+			      struct bkey *, unsigned long *);
 
 __printf(2, 3)
 bool bch_cache_set_error(struct cache_set *, const char *, ...);

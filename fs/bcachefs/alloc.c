@@ -391,6 +391,8 @@ long bch_bucket_alloc(struct cache *ca, unsigned reserve, bool wait)
 	struct bucket *b;
 	long r;
 
+	lockdep_assert_held(&ca->set->bucket_lock);
+
 	/* fastpath */
 	if (fifo_pop(&ca->free[RESERVE_NONE], r) ||
 	    fifo_pop(&ca->free[reserve], r))
@@ -539,6 +541,7 @@ static struct open_bucket *bch_open_bucket_get(struct cache_set *c)
 				       struct open_bucket, list);
 		list_move(&ret->list, &c->open_buckets_open);
 		atomic_set(&ret->pin, 1);
+		ret->sectors_free = c->sb.bucket_size;
 		bkey_init(&ret->key);
 	}
 
@@ -560,8 +563,6 @@ struct open_bucket *bch_open_bucket_alloc(struct cache_set *c, unsigned reserve,
 	if (ret) {
 		bch_open_bucket_put(c, b);
 		b = NULL;
-	} else {
-		b->sectors_free = c->sb.bucket_size;
 	}
 
 	return b;
@@ -591,7 +592,6 @@ struct open_bucket *bch_open_bucket_alloc(struct cache_set *c, unsigned reserve,
 static struct open_bucket *pick_data_bucket(struct cache_set *c,
 					    const struct bkey *search,
 					    unsigned write_point,
-					    unsigned write_prio,
 					    bool wait)
 	__releases(c->open_buckets_lock)
 	__acquires(c->open_buckets_lock)
@@ -617,10 +617,8 @@ retry:
 		goto found;
 
 	spin_unlock(&c->open_buckets_lock);
-	b = bch_open_bucket_alloc(c, write_prio
-				  ? RESERVE_MOVINGGC
-				  : RESERVE_NONE,
-				  1, wait);
+	b = bch_open_bucket_alloc(c, RESERVE_NONE,
+				  c->data_replicas, wait);
 	spin_lock(&c->open_buckets_lock);
 
 	if (!b)
@@ -676,15 +674,15 @@ found:
  * @wait - should the write wait for a bucket or fail if there isn't
  */
 struct open_bucket *bch_alloc_sectors(struct cache_set *c, struct bkey *k,
-				      unsigned write_point, unsigned write_prio,
-				      bool wait)
+				      unsigned write_point, bool wait,
+				      unsigned long *ptrs_to_write)
 {
 	struct open_bucket *b;
 	unsigned i, sectors;
 
 	spin_lock(&c->open_buckets_lock);
 
-	b = pick_data_bucket(c, k, write_point, write_prio, wait);
+	b = pick_data_bucket(c, k, write_point, wait);
 	if (!b) {
 		spin_unlock(&c->open_buckets_lock);
 		return NULL;
@@ -697,14 +695,16 @@ struct open_bucket *bch_alloc_sectors(struct cache_set *c, struct bkey *k,
 
 	/* Set up the pointer to the space we're allocating: */
 
-	for (i = 0; i < KEY_PTRS(&b->key); i++)
-		k->ptr[i] = b->key.ptr[i];
+	for (i = 0; i < KEY_PTRS(&b->key); i++) {
+		k->ptr[KEY_PTRS(k)] = b->key.ptr[i];
+		__set_bit(KEY_PTRS(k), ptrs_to_write);
+		SET_KEY_PTRS(k, KEY_PTRS(k) + 1);
+	}
 
 	sectors = min_t(unsigned, KEY_SIZE(k), b->sectors_free);
 
 	SET_KEY_OFFSET(k, KEY_START(k) + sectors);
 	SET_KEY_SIZE(k, sectors);
-	SET_KEY_PTRS(k, KEY_PTRS(&b->key));
 
 	/* update open bucket for next time: */
 
@@ -735,6 +735,84 @@ struct open_bucket *bch_alloc_sectors(struct cache_set *c, struct bkey *k,
 	}
 
 	spin_unlock(&c->open_buckets_lock);
+
+	return b;
+}
+
+struct open_bucket *bch_gc_alloc_sectors(struct cache_set *c, struct bkey *k,
+					 unsigned long *ptrs_to_write)
+{
+	unsigned i, sectors = KEY_SIZE(k);
+	struct cache *ca;
+	struct open_bucket *b;
+	long bucket;
+
+	mutex_lock(&c->bucket_lock);
+retry:
+	for (i = 0; i < KEY_PTRS(k); i++)
+		if (ptr_available(c, k, i) &&
+		    GC_MOVE(PTR_BUCKET(c, k, i)))
+			goto found;
+
+	mutex_unlock(&c->bucket_lock);
+	return NULL;
+found:
+	ca = PTR_CACHE(c, k, i);
+
+	b = ca->gc_bucket;
+	if (!b) {
+		mutex_unlock(&c->bucket_lock);
+
+		wait_event(c->open_buckets_wait,
+			   (b = bch_open_bucket_get(c)));
+
+		mutex_lock(&c->bucket_lock);
+
+		bucket = bch_bucket_alloc(ca, RESERVE_MOVINGGC, true);
+		b->key.ptr[0] = PTR(ca->buckets[bucket].gen,
+				    bucket_to_sector(ca->set, bucket),
+				    ca->sb.nr_this_dev);
+		SET_KEY_PTRS(&b->key, 1);
+
+		/* we dropped bucket_lock, might've raced */
+		if (ca->gc_bucket) {
+			/* we raced */
+			bch_bucket_free(c, &b->key);
+			bch_open_bucket_put(c, b);
+		} else {
+			ca->gc_bucket = b;
+		}
+
+		/*
+		 * GC_MOVE() might also have been reset... don't strictly need
+		 * to recheck though
+		 */
+		goto retry;
+	}
+
+	/* check to make sure bucket wasn't used while pinned */
+	EBUG_ON(ptr_stale(c, &b->key, 0));
+
+	k->ptr[i] = b->key.ptr[0];
+	__set_bit(i, ptrs_to_write);
+
+	sectors = min_t(unsigned, sectors, b->sectors_free);
+
+	SET_KEY_OFFSET(k, KEY_START(k) + sectors);
+	SET_KEY_SIZE(k, sectors);
+
+	/* update open bucket for next time: */
+
+	b->sectors_free	-= sectors;
+	if (b->sectors_free) {
+		SET_PTR_OFFSET(&b->key, 0, PTR_OFFSET(&b->key, 0) + sectors);
+		atomic_inc(&b->pin);
+	} else
+		ca->gc_bucket = NULL;
+
+	mutex_unlock(&c->bucket_lock);
+
+	atomic_long_add(sectors, &ca->sectors_written);
 
 	return b;
 }

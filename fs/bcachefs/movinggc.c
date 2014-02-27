@@ -175,11 +175,6 @@ static void read_moving(struct cache_set *c)
 		if (!w)
 			break;
 
-		if (ptr_stale(c, &w->key, 0)) {
-			bch_keybuf_del(&c->moving_gc_keys, w);
-			continue;
-		}
-
 		io = kzalloc(sizeof(struct moving_io) + sizeof(struct bio_vec)
 			     * DIV_ROUND_UP(KEY_SIZE(&w->key), PAGE_SECTORS),
 			     GFP_KERNEL);
@@ -193,7 +188,7 @@ static void read_moving(struct cache_set *c)
 					&io->bio.bio, 0,
 					false, false, false,
 					&io->w->key, &io->w->key);
-		io->op.write_prio	= 1;
+		io->op.moving_gc	= true;
 
 		moving_init(io);
 		bio = &io->bio.bio;

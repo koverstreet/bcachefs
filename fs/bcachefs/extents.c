@@ -545,7 +545,7 @@ static bool bch_extent_bad_expensive(struct btree *b, const struct bkey *k)
 
 	locked = mutex_trylock(&b->c->bucket_lock);
 
-	replicas_needed = !KEY_DIRTY(k) ? 0 : 1;
+	replicas_needed = !KEY_DIRTY(k) ? 0 : b->c->data_replicas;
 
 	for (i = 0; i < KEY_PTRS(k); i++) {
 		if (!ptr_available(b->c, k, i))

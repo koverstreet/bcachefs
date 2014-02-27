@@ -422,7 +422,7 @@ static int __uuid_write(struct cache_set *c)
 
 	lockdep_assert_held(&bch_register_lock);
 
-	b = bch_open_bucket_alloc(c, RESERVE_BTREE, 1, true);
+	b = bch_open_bucket_alloc(c, RESERVE_BTREE, c->meta_replicas, true);
 
 	SET_KEY_SIZE(&b->key, min_t(unsigned, c->sb.bucket_size,
 				    1U << (KEY_SIZE_BITS - 1)));
@@ -1541,6 +1541,9 @@ struct cache_set *bch_cache_set_alloc(struct cache_sb *sb)
 
 	c->btree_scan_ratelimit = 30 * HZ;
 
+	c->meta_replicas = 1;
+	c->data_replicas = 1;
+
 	return c;
 err:
 	bch_cache_set_unregister(c);
@@ -1803,6 +1806,9 @@ void bch_cache_release(struct kobject *kobj)
 		ca->set->cache[ca->sb.nr_this_dev] = NULL;
 	}
 
+	if (ca->replica_set)
+		bioset_free(ca->replica_set);
+
 	free_pages((unsigned long) ca->disk_buckets, ilog2(bucket_pages(ca)));
 	kfree(ca->prio_buckets);
 	vfree(ca->buckets);
@@ -1846,7 +1852,8 @@ static int cache_alloc(struct cache *ca)
 					  ca->sb.nbuckets)) ||
 	    !(ca->prio_buckets	= kzalloc(sizeof(uint64_t) * prio_buckets(ca) *
 					  2, GFP_KERNEL)) ||
-	    !(ca->disk_buckets	= alloc_bucket_pages(GFP_KERNEL, ca)))
+	    !(ca->disk_buckets	= alloc_bucket_pages(GFP_KERNEL, ca)) ||
+	    !(ca->replica_set = bioset_create(4, offsetof(struct bbio, bio))))
 		return -ENOMEM;
 
 	ca->prio_last_buckets = ca->prio_buckets + prio_buckets(ca);

@@ -59,7 +59,9 @@ struct open_bucket *bch_open_bucket_alloc(struct cache_set *,
 					  unsigned, int, bool);
 
 struct open_bucket *bch_alloc_sectors(struct cache_set *, struct bkey *,
-				      unsigned, unsigned, bool);
+				      unsigned, bool, unsigned long *);
+struct open_bucket *bch_gc_alloc_sectors(struct cache_set *, struct bkey *,
+					 unsigned long *);
 
 void bch_mark_open_buckets(struct cache_set *);
 

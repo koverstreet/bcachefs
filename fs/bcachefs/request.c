@@ -170,6 +170,7 @@ static void bch_data_insert_endio(struct bio *bio)
 static void bch_data_insert_start(struct closure *cl)
 {
 	struct data_insert_op *op = container_of(cl, struct data_insert_op, cl);
+	unsigned long ptrs_to_write[BITS_TO_LONGS(MAX_CACHES_PER_SET)];
 	struct bio *bio = op->bio, *n;
 	unsigned open_bucket_nr = 0;
 	struct open_bucket *b;
@@ -189,13 +190,16 @@ static void bch_data_insert_start(struct closure *cl)
 
 		BUG_ON(bio_sectors(bio) != KEY_SIZE(&op->insert_key));
 
+		memset(ptrs_to_write, 0, sizeof(ptrs_to_write));
+
 		if (open_bucket_nr == ARRAY_SIZE(op->open_buckets))
 			continue_at(cl, bch_data_insert_keys,
 				    op->c->btree_insert_wq);
 
-		/* 1 for the device pointer and 1 for the chksum */
+		/* for the device pointers and 1 for the chksum */
 		if (bch_keylist_realloc(&op->insert_keys,
-					bkey_u64s(&op->insert_key) + 1 +
+					bkey_u64s(&op->insert_key) +
+					BKEY_PAD_PTRS +
 					(KEY_CSUM(&op->insert_key) ? 1 : 0)))
 			continue_at(cl, bch_data_insert_keys,
 				    op->c->btree_insert_wq);
@@ -203,8 +207,10 @@ static void bch_data_insert_start(struct closure *cl)
 		k = op->insert_keys.top;
 		bkey_copy(k, &op->insert_key);
 
-		b = bch_alloc_sectors(op->c, k, op->write_point,
-				      op->write_prio, op->wait);
+		b = op->moving_gc
+			? bch_gc_alloc_sectors(op->c, k, ptrs_to_write)
+			: bch_alloc_sectors(op->c, k, op->write_point,
+					    op->wait, ptrs_to_write);
 		if (!b)
 			goto err;
 
@@ -222,7 +228,7 @@ static void bch_data_insert_start(struct closure *cl)
 		trace_bcache_cache_insert(k);
 
 		bio_set_op_attrs(n, REQ_OP_WRITE, 0);
-		bch_submit_bbio(n, op->c, k, 0);
+		bch_submit_bbio_replicas(n, op->c, k, ptrs_to_write);
 
 		bch_extent_normalize(op->c, k);
 		bch_keylist_push(&op->insert_keys);
@@ -303,7 +309,7 @@ void bch_data_insert(struct closure *cl)
 					     &start, &end);
 	}
 
-	if (op->write_prio)
+	if (op->moving_gc)
 		bch_mark_gc_write(op->c, bio_sectors(op->bio));
 	else if (!op->bypass)
 		bch_mark_foreground_write(op->c, bio_sectors(op->bio));
