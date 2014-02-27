@@ -1480,6 +1480,8 @@ static void run_cache_set(struct cache_set *c)
 		LIST_HEAD(journal);
 		struct bkey *k;
 		struct jset *j;
+		struct jset_keys *jk;
+		u64 *prio_bucket_ptrs = NULL;
 
 		err = "cannot allocate memory for journal";
 		if (bch_journal_read(c, &journal))
@@ -1493,9 +1495,18 @@ static void run_cache_set(struct cache_set *c)
 
 		j = &list_entry(journal.prev, struct journal_replay, list)->j;
 
+		for_each_jset_jkeys(jk, j)
+			if (JKEYS_TYPE(jk) == JKEYS_PRIO_PTRS) {
+				prio_bucket_ptrs = jk->d;
+				break;
+			}
+
 		err = "IO error reading priorities";
+		if (!prio_bucket_ptrs)
+			goto err;
+
 		for_each_cache(ca, c, i)
-			prio_read(ca, j->prio_bucket[ca->sb.nr_this_dev]);
+			prio_read(ca, prio_bucket_ptrs[ca->sb.nr_this_dev]);
 
 		/*
 		 * If prio_read() fails it'll call cache_set_error and we'll

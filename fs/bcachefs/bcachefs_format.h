@@ -444,7 +444,10 @@ struct jset_keys {
 	};
 };
 
-BITMASK(JKEYS_BTREE_ROOT, struct jset_keys, flags, 0, 1);
+BITMASK(JKEYS_TYPE,	struct jset_keys, flags, 0, 2);
+#define JKEYS_BTREE_KEYS	0
+#define JKEYS_BTREE_ROOT	1
+#define JKEYS_PRIO_PTRS		2
 
 struct jset {
 	__u64			csum;
@@ -455,8 +458,6 @@ struct jset {
 
 	/* Sequence number of oldest dirty journal entry */
 	__u64			last_seq;
-
-	__u64			prio_bucket[MAX_CACHES_PER_SET];
 
 	union {
 		struct jset_keys start[0];

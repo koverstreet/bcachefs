@@ -12,14 +12,9 @@
 
 #include <trace/events/bcachefs.h>
 
-#define for_each_jset_jkeys(jkeys, jset)			\
-	for (jkeys = (jset)->start;				\
-	     jkeys < (struct jset_keys *) bset_bkey_last(jset);	\
-	     jkeys = jset_keys_next(jkeys))
-
 #define for_each_jset_key(k, jkeys, jset)			\
 	for_each_jset_jkeys(jkeys, jset)			\
-		if (!JKEYS_BTREE_ROOT(jkeys))			\
+		if (JKEYS_TYPE(jkeys) == JKEYS_BTREE_KEYS)	\
 			for (k = (jkeys)->start;		\
 			     k < bset_bkey_last(jkeys);		\
 			     k = bkey_next(k))
@@ -31,8 +26,8 @@ struct bkey *bch_journal_find_btree_root(struct cache_set *c, struct jset *j,
 	struct jset_keys *jkeys;
 
 	for_each_jset_jkeys(jkeys, j)
-		if (jkeys->btree_id == id &&
-		    JKEYS_BTREE_ROOT(jkeys)) {
+		if (JKEYS_TYPE(jkeys) == JKEYS_BTREE_ROOT &&
+		    jkeys->btree_id == id) {
 			k = jkeys->start;
 			*level = jkeys->level;
 
@@ -56,7 +51,21 @@ err:
 static void bch_journal_add_btree_root(struct jset *j, enum btree_id id,
 				       struct bkey *k, unsigned level)
 {
-	bch_journal_add_keys(j, id, k, KEY_U64s(k), level, true);
+	__bch_journal_add_keys(j, id, k, KEY_U64s(k), level, JKEYS_BTREE_ROOT);
+}
+
+static inline void bch_journal_add_prios(struct cache_set *c, struct jset *j)
+{
+	struct jset_keys *prio_set = (struct jset_keys *) bset_bkey_last(j);
+	struct cache *ca;
+	unsigned i;
+
+	for_each_cache(ca, c, i)
+		prio_set->d[ca->sb.nr_this_dev] = ca->prio_journal_bucket;
+
+	prio_set->keys = c->sb.nr_in_set;
+	SET_JKEYS_TYPE(prio_set, JKEYS_PRIO_PTRS);
+	j->keys += sizeof(struct jset_keys) / sizeof(u64) + c->sb.nr_in_set;
 }
 
 /*
@@ -643,11 +652,9 @@ static void journal_write_locked(struct closure *cl)
 
 	spin_unlock(&c->btree_root_lock);
 
-	c->journal.blocks_free -= set_blocks(w->data, block_bytes(c));
+	bch_journal_add_prios(c, w->data);
 
-	for_each_cache(ca, c, i)
-		w->data->prio_bucket[ca->sb.nr_this_dev] =
-			ca->prio_journal_bucket;
+	c->journal.blocks_free -= set_blocks(w->data, block_bytes(c));
 
 	w->data->magic		= jset_magic(&c->sb);
 	w->data->version	= BCACHE_JSET_VERSION;
@@ -722,6 +729,10 @@ static void journal_write_work(struct work_struct *work)
 		spin_unlock(&c->journal.lock);
 }
 
+/*
+ * This function releases the journal write structure so other threads can
+ * then proceed to add their keys as well.
+ */
 void bch_journal_write_put(struct cache_set *c,
 			   struct journal_write *w,
 			   struct closure *parent)
@@ -741,6 +752,13 @@ void bch_journal_write_put(struct cache_set *c,
 	}
 }
 
+/*
+ * Essentially the entry function to the journaling code. When bcache is doing
+ * a btree insert, it calls this function to get the current journal write.
+ * Journal write is the structure used set up journal writes. The calling
+ * function will then add its keys to the structure, queuing them for the
+ * next write.
+ */
 struct journal_write *bch_journal_write_get(struct cache_set *c, unsigned nkeys)
 	__acquires(c->journal.lock)
 {

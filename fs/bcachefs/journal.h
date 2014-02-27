@@ -75,7 +75,11 @@
  * nodes that are pinning the oldest journal entries first.
  */
 
-#define JSET_RESERVE		32
+/*
+ * Calculated from: (max_btrees * (max_size_root_node+1)) +
+ *		    (max_caches_per_set + 1)
+ */
+#define JSET_RESERVE		(32 + (MAX_CACHES_PER_SET + 1))
 
 static inline struct jset_keys *jset_keys_next(struct jset_keys *j)
 {
@@ -99,6 +103,11 @@ struct journal_replay {
 
 #define journal_full(j)						\
 	(!(j)->blocks_free || fifo_free(&(j)->pin) <= 1)
+
+#define for_each_jset_jkeys(jkeys, jset)			\
+	for (jkeys = (jset)->start;				\
+	     jkeys < (struct jset_keys *) bset_bkey_last(jset);	\
+	     jkeys = jset_keys_next(jkeys))
 
 struct closure;
 struct cache_set;
@@ -126,9 +135,9 @@ static inline size_t journal_write_u64s_remaining(struct cache_set *c,
 	return max_t(ssize_t, 0L, (bytes / sizeof(u64)) - JSET_RESERVE);
 }
 
-static inline void bch_journal_add_keys(struct jset *j, enum btree_id id,
-					struct bkey *k, unsigned nkeys,
-					unsigned level, bool btree_root)
+static inline void __bch_journal_add_keys(struct jset *j, enum btree_id id,
+					  struct bkey *k, unsigned nkeys,
+					  unsigned level, unsigned type)
 {
 	struct jset_keys *jkeys = (struct jset_keys *) bset_bkey_last(j);
 
@@ -136,10 +145,18 @@ static inline void bch_journal_add_keys(struct jset *j, enum btree_id id,
 	jkeys->btree_id = id;
 	jkeys->level = level;
 	jkeys->flags = 0;
-	SET_JKEYS_BTREE_ROOT(jkeys, btree_root);
+	SET_JKEYS_TYPE(jkeys, type);
 
 	memcpy(jkeys->start, k, sizeof(u64) * nkeys);
 	j->keys += sizeof(struct jset_keys) / sizeof(u64) + nkeys;
+}
+
+static inline void bch_journal_add_keys(struct jset *j, enum btree_id id,
+					struct bkey *k, unsigned nkeys,
+					unsigned level)
+{
+	return __bch_journal_add_keys(j, id, k, nkeys, level,
+				      JKEYS_BTREE_KEYS);
 }
 
 void bch_journal_next(struct journal *);
