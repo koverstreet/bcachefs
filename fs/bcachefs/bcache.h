@@ -489,6 +489,10 @@ struct cache {
 	/* Allocation stuff: */
 	struct bucket		*buckets;
 
+	/* last calculated minimun prio */
+	u16			min_read_prio;
+	u16			min_write_prio;
+
 	/* count of currently available buckets */
 	size_t			buckets_free;
 
@@ -553,6 +557,12 @@ struct cache_tier {
 	unsigned		nr_devices;
 	struct cache		*devices[MAX_CACHES_PER_SET];
 	struct open_bucket	*data_buckets[6];
+};
+
+struct prio_clock {
+	u16		hand;
+	u16		min_prio;
+	atomic_long_t	rescale;
 };
 
 struct cache_set {
@@ -631,18 +641,15 @@ struct cache_set {
 	struct mutex		bucket_lock;
 	wait_queue_head_t	bucket_wait;
 
-	/*
-	 * For any bio we don't skip we subtract the number of sectors from
-	 * rescale; when it hits 0 we rescale all the bucket priorities.
-	 */
-	atomic_t		rescale;
+
 	/*
 	 * When we invalidate buckets, we use both the priority and the amount
 	 * of good data to determine which buckets to reuse first - to weight
 	 * those together consistently we keep track of the smallest nonzero
 	 * priority of any bucket.
 	 */
-	uint16_t		min_prio;
+	struct prio_clock	read_clock;
+	struct prio_clock	write_clock;
 
 	/* SECTOR ALLOCATOR */
 	struct list_head	open_buckets_open;

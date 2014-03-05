@@ -521,7 +521,7 @@ static struct hlist_head *iohash(struct cached_dev *dc, uint64_t k)
 	return &dc->io_hash[hash_64(k, RECENT_IO_BITS)];
 }
 
-static bool check_should_bypass(struct cached_dev *dc, struct bio *bio)
+static bool check_should_bypass(struct cached_dev *dc, struct bio *bio, int rw)
 {
 	struct cache_set *c = dc->disk.c;
 	unsigned mode = BDEV_CACHE_MODE(&dc->sb);
@@ -602,7 +602,7 @@ found:
 	}
 
 rescale:
-	bch_rescale_priorities(c, bio_sectors(bio));
+	bch_increment_clock(c, bio_sectors(bio), rw);
 	return false;
 skip:
 	bch_mark_sectors_bypassed(c, dc, bio_sectors(bio));
@@ -787,7 +787,7 @@ static int cache_lookup_fn(struct btree_op *op, struct btree *b, struct bkey *k)
 	if (ptr < 0) /* all stale? */
 		return MAP_CONTINUE;
 
-	PTR_BUCKET(b->c, k, ptr)->read_prio = INITIAL_PRIO;
+	PTR_BUCKET(b->c, k, ptr)->read_prio = b->c->read_clock.hand;
 
 	if (!KEY_CACHED(k))
 		s->read_dirty_data = true;
@@ -1171,7 +1171,7 @@ static void __cached_dev_make_request(struct request_queue *q, struct bio *bio)
 					      cached_dev_nodata,
 					      bcache_wq);
 		} else {
-			s->iop.bypass = check_should_bypass(dc, bio);
+			s->iop.bypass = check_should_bypass(dc, bio, rw);
 
 			if (rw)
 				cached_dev_write(dc, s);
@@ -1288,7 +1288,11 @@ static void __flash_dev_make_request(struct request_queue *q, struct bio *bio)
 		continue_at_nobarrier(&s->cl,
 				      flash_dev_nodata,
 				      bcache_wq);
-	} else if (rw) {
+	}
+
+	bch_increment_clock(d->c, bio->bi_iter.bi_size, rw);
+
+	if (rw) {
 		bch_data_insert_op_init(&s->iop, d->c, bcache_wq, bio,
 					hash_long((unsigned long) current, 16),
 					true,

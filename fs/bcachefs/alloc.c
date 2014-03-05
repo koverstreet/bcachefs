@@ -88,37 +88,87 @@ static void alloc_failed(struct cache *ca)
 
 /* Bucket heap / gen */
 
-void bch_rescale_priorities(struct cache_set *c, int sectors)
+void bch_recalc_min_prio(struct cache *ca)
+{
+	struct cache_set *c = ca->set;
+	struct bucket *b;
+	unsigned i;
+
+	/* Determine min prio for this particular cache */
+	u16 max_read_delta = 0;
+	u16 max_write_delta = 0;
+
+	for_each_bucket(b, ca) {
+		max_read_delta = max(max_read_delta,
+			(u16)(c->read_clock.hand - b->read_prio));
+
+		max_write_delta = max(max_write_delta,
+			(u16)(c->write_clock.hand - b->write_prio));
+	}
+	ca->min_read_prio = c->read_clock.hand - max_read_delta;
+	ca->min_write_prio = c->write_clock.hand - max_write_delta;
+
+	/* This may possibly increase the min prio for the whole
+	 * cache, check that as well. */
+	max_read_delta = 0;
+	max_write_delta = 0;
+	for_each_cache(ca, c, i) {
+		max_read_delta = max(max_read_delta,
+			(u16)(c->read_clock.hand - ca->min_read_prio));
+
+		max_write_delta = max(max_write_delta,
+			(u16)(c->write_clock.hand - ca->min_write_prio));
+	}
+	c->read_clock.min_prio = c->read_clock.hand - max_read_delta;
+	c->write_clock.min_prio = c->write_clock.hand - max_write_delta;
+}
+
+static void bch_rescale_prios(struct cache_set *c, int rw)
 {
 	struct cache *ca;
 	struct bucket *b;
-	unsigned next = c->nbuckets * c->sb.bucket_size / 1024;
 	unsigned i;
-	int r;
 
-	atomic_sub(sectors, &c->rescale);
+	for_each_cache(ca, c, i) {
+		for_each_bucket(b, ca) {
+			if (rw)
+				b->write_prio = c->write_clock.hand -
+					(c->write_clock.hand - b->write_prio)/2;
+			else
+				b->read_prio = c->read_clock.hand -
+					(c->read_clock.hand - b->read_prio)/2;
+		}
+
+		bch_recalc_min_prio(ca);
+	}
+}
+
+void bch_increment_clock(struct cache_set *c, int sectors, int rw)
+{
+	long next = (c->nbuckets * c->sb.bucket_size) / 1024;
+	struct prio_clock *clock = rw ? &c->write_clock : &c->read_clock;
+	long r;
+
+	/*
+	 * we only increment when 0.1% of the cache_set has been read
+	 * or written too, this determines if it's time
+	 */
+	atomic_long_sub(sectors, &clock->rescale);
 
 	do {
-		r = atomic_read(&c->rescale);
+		r = atomic_long_read(&clock->rescale);
 
 		if (r >= 0)
 			return;
-	} while (atomic_cmpxchg(&c->rescale, r, r + next) != r);
+	} while (atomic_long_cmpxchg(&clock->rescale, r, r + next) != r);
 
 	mutex_lock(&c->bucket_lock);
 
-	c->min_prio = USHRT_MAX;
+	clock->hand++;
 
-	for_each_cache(ca, c, i)
-		for_each_bucket(b, ca) {
-			if (b->read_prio) {
-				b->read_prio--;
-				c->min_prio = min(c->min_prio, b->read_prio);
-			}
-
-			if (b->write_prio)
-				b->write_prio--;
-		}
+	/* if clock cannot be advanced more, rescale prio */
+	if (clock->hand == (u16)(clock->min_prio - 1))
+		bch_rescale_prios(c, rw);
 
 	mutex_unlock(&c->bucket_lock);
 }
@@ -154,8 +204,10 @@ void __bch_invalidate_one_bucket(struct cache *ca, struct bucket *b)
 		trace_bcache_invalidate(ca, b - ca->buckets);
 
 	b->gen++;
-	b->read_prio = INITIAL_PRIO;
-	b->write_prio = INITIAL_PRIO;
+	/* this is what makes ptrs to the bucket invalid */
+
+	b->read_prio = ca->set->read_clock.hand;
+	b->write_prio = ca->set->write_clock.hand;
 	SET_GC_MARK(b, GC_MARK_DIRTY);
 	SET_GC_GEN(b, 0);
 	SET_GC_SECTORS_USED(b, min_t(unsigned, ca->sb.bucket_size,
@@ -179,15 +231,17 @@ static void bch_invalidate_one_bucket(struct cache *ca, struct bucket *b)
  * first: we also take into account the number of sectors of live data in that
  * bucket, and in order for that multiply to make sense we have to scale bucket
  *
- * Thus, we scale the bucket priorities so that the bucket with the smallest
- * prio is worth 1/8th of what INITIAL_PRIO is worth.
+ * Thus, we scale the bucket priorities so that the prio farthest from the clock
+ * is worth 1/8th of the closest.
  */
 
 #define bucket_prio(b)							\
 ({									\
-	unsigned min_prio = (INITIAL_PRIO - ca->set->min_prio) / 8;	\
+	u16 prio = b->read_prio - ca->min_read_prio;			\
+	prio = (prio * 7) / (ca->set->read_clock.hand -			\
+			     ca->min_read_prio);			\
 									\
-	(b->read_prio - ca->set->min_prio + min_prio) * GC_SECTORS_USED(b);\
+	(prio+1) * GC_SECTORS_USED(b);					\
 })
 
 #define bucket_max_cmp(l, r)	(bucket_prio(l) < bucket_prio(r))
@@ -198,6 +252,8 @@ static void invalidate_buckets_lru(struct cache *ca)
 	struct bucket *b;
 
 	ca->heap.used = 0;
+
+	bch_recalc_min_prio(ca);
 
 	for_each_bucket(b, ca) {
 		if (!bch_can_invalidate_bucket(ca, b))
@@ -463,8 +519,8 @@ out:
 	if (reserve <= RESERVE_PRIO)
 		SET_GC_MARK(b, GC_MARK_METADATA);
 
-	b->read_prio = INITIAL_PRIO;
-	b->write_prio = INITIAL_PRIO;
+	b->read_prio = ca->set->read_clock.hand;
+	b->write_prio = ca->set->write_clock.hand;
 
 	return r;
 }
@@ -478,6 +534,8 @@ void __bch_bucket_free(struct cache *ca, struct bucket *b)
 
 	SET_GC_MARK(b, 0);
 	SET_GC_SECTORS_USED(b, 0);
+	b->read_prio = ca->set->read_clock.hand;
+	b->write_prio = ca->set->write_clock.hand;
 }
 
 void bch_bucket_free(struct cache_set *c, struct bkey *k)

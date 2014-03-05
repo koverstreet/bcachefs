@@ -656,6 +656,8 @@ static void journal_write_locked(struct closure *cl)
 
 	c->journal.blocks_free -= set_blocks(w->data, block_bytes(c));
 
+	w->data->read_clock	= c->read_clock.hand;
+	w->data->write_clock	= c->write_clock.hand;
 	w->data->magic		= jset_magic(&c->sb);
 	w->data->version	= BCACHE_JSET_VERSION;
 	w->data->last_seq	= last_seq(&c->journal);

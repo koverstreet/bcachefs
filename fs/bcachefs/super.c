@@ -1430,6 +1430,11 @@ struct cache_set *bch_cache_set_alloc(struct cache_sb *sb)
 	c->copy_gc_enabled = 1;
 	c->tiering_enabled = 1;
 
+	c->read_clock.hand = 1;
+	c->read_clock.min_prio = 0;
+	c->write_clock.hand = 1;
+	c->write_clock.min_prio = 0;
+
 	c->search = mempool_create_slab_pool(32, bch_search_cache);
 	if (!c->search)
 		goto err;
@@ -1507,6 +1512,12 @@ static void run_cache_set(struct cache_set *c)
 
 		for_each_cache(ca, c, i)
 			prio_read(ca, prio_bucket_ptrs[ca->sb.nr_this_dev]);
+
+		c->read_clock.hand = j->read_clock;
+		c->write_clock.hand = j->write_clock;
+
+		for_each_cache(ca, c, i)
+			bch_recalc_min_prio(ca);
 
 		/*
 		 * If prio_read() fails it'll call cache_set_error and we'll

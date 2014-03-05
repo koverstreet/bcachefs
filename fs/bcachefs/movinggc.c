@@ -126,10 +126,9 @@ static unsigned bucket_sectors_heap_top(struct cache *ca)
 	return (b = heap_peek(&ca->heap)) ? GC_SECTORS_USED(b) : 0;
 }
 
-static unsigned bucket_write_prio_cmp(struct bucket *l, struct bucket *r)
-{
-	return l->write_prio < r->write_prio;
-}
+#define bucket_w_prio(b) (c->write_clock.hand - b->write_prio)
+
+#define bucket_write_prio_max_cmp(l, r)	(bucket_w_prio(l) > bucket_w_prio(r))
 
 bool bch_moving_gc(struct cache_set *c)
 {
@@ -194,13 +193,13 @@ bool bch_moving_gc(struct cache_set *c)
 		 * keep hot and cold data in the same locality.
 		 */
 
-		heap_resort(&ca->heap, bucket_write_prio_cmp);
+		heap_resort(&ca->heap, bucket_write_prio_max_cmp);
 
 		sectors_gen = sectors_to_move / NUM_GC_GENS;
 		gen_current = 1;
 		sectors_total = 0;
 
-		while (heap_pop(&ca->heap, b, bucket_write_prio_cmp)) {
+		while (heap_pop(&ca->heap, b, bucket_write_prio_max_cmp)) {
 			sectors_total += GC_SECTORS_USED(b);
 			SET_GC_GEN(b, gen_current);
 
