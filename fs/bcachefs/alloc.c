@@ -213,9 +213,6 @@ void __bch_invalidate_one_bucket(struct cache *ca, struct bucket *b)
 	SET_GC_SECTORS_USED(b, min_t(unsigned, ca->sb.bucket_size,
 				     MAX_GC_SECTORS_USED));
 
-	ca->set->need_gc = max(ca->set->need_gc, bucket_gc_gen(b));
-	WARN_ON_ONCE(ca->set->need_gc > BUCKET_GC_GEN_MAX);
-
 	ca->buckets_free--;
 }
 

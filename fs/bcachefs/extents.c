@@ -688,8 +688,8 @@ static bool bch_extent_bad_expensive(struct btree *b, const struct bkey *k)
 		stale = ptr_stale(b->c, k, i);
 
 		btree_bug_on(stale > 96, b,
-			     "key too stale: %i, need_gc %u",
-			     stale, b->c->need_gc);
+			     "key too stale: %i",
+			     stale);
 
 		btree_bug_on(stale && replicas_needed && KEY_SIZE(k),
 			     b, "stale dirty pointer");

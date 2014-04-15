@@ -1640,7 +1640,6 @@ static void bch_btree_gc_finish(struct cache_set *c)
 
 	set_gc_sectors(c);
 	c->gc_mark_valid = 1;
-	c->need_gc	= 0;
 
 	bch_mark_writeback_keys(c);
 
@@ -1658,8 +1657,6 @@ static void bch_btree_gc_finish(struct cache_set *c)
 			SET_GC_MARK(ca->buckets + *i, GC_MARK_METADATA);
 
 		for_each_bucket(b, ca) {
-			c->need_gc	= max(c->need_gc, bucket_gc_gen(b));
-
 			if (!GC_MARK(b) || GC_MARK(b) == GC_MARK_RECLAIMABLE)
 				buckets_free++;
 		}

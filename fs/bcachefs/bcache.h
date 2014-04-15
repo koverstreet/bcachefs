@@ -674,11 +674,6 @@ struct cache_set {
 	 */
 	int			gc_mark_valid;
 
-	/*
-	 * max(gen - last_gc) for all buckets. When it gets too big we have to
-	 * gc to keep gens from wrapping around.
-	 */
-	u8			need_gc;
 	struct gc_stat		gc_stats;
 
 	/* MOVING GC */
