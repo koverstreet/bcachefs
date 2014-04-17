@@ -1700,7 +1700,7 @@ static void bch_btree_gc(struct cache_set *c)
 	}
 
 	bch_btree_gc_finish(c);
-	wake_up_allocators(c);
+	wake_up_all(&c->gc_wait);
 
 	bch_time_stats_update(&c->btree_gc_time, start_time);
 

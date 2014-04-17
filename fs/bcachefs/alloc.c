@@ -361,21 +361,22 @@ static void invalidate_buckets(struct cache *ca)
 	}
 }
 
-#define allocator_wait(ca, cond)					\
+#define allocator_wait(c, x, cond)					\
 do {									\
+	DEFINE_WAIT(__wait);						\
 	while (1) {							\
-		set_current_state(TASK_INTERRUPTIBLE);			\
+		prepare_to_wait(&x, &__wait, TASK_INTERRUPTIBLE);	\
 		if (cond)						\
 			break;						\
 									\
-		mutex_unlock(&(ca)->set->bucket_lock);			\
+		mutex_unlock(&c->bucket_lock);				\
 		if (kthread_should_stop())				\
 			return 0;					\
-									\
+		try_to_freeze();					\
 		schedule();						\
-		mutex_lock(&(ca)->set->bucket_lock);			\
+		mutex_lock(&c->bucket_lock);				\
 	}								\
-	__set_current_state(TASK_RUNNING);				\
+	finish_wait(&x, &__wait);					\
 } while (0)
 
 static int bch_allocator_push(struct cache *ca, long bucket)
@@ -396,8 +397,9 @@ static int bch_allocator_push(struct cache *ca, long bucket)
 static int bch_allocator_thread(void *arg)
 {
 	struct cache *ca = arg;
+	struct cache_set *c = ca->set;
 
-	mutex_lock(&ca->set->bucket_lock);
+	mutex_lock(&c->bucket_lock);
 
 	while (1) {
 		/*
@@ -415,18 +417,19 @@ static int bch_allocator_thread(void *arg)
 			 */
 
 			if (ca->discard) {
-				mutex_unlock(&ca->set->bucket_lock);
+				mutex_unlock(&c->bucket_lock);
 				blkdev_issue_discard(ca->bdev,
-					bucket_to_sector(ca->set, bucket),
+					bucket_to_sector(c, bucket),
 					ca->sb.bucket_size, GFP_KERNEL, 0);
-				mutex_lock(&ca->set->bucket_lock);
+				mutex_lock(&c->bucket_lock);
 			}
 
-			allocator_wait(ca, bch_allocator_push(ca, bucket));
+			allocator_wait(c, ca->fifo_wait,
+					bch_allocator_push(ca, bucket));
 			fifo_pop(&ca->free_inc, bucket);
 
-			wake_up(&ca->set->btree_cache_wait);
-			wake_up(&ca->set->bucket_wait);
+			wake_up(&c->btree_cache_wait);
+			wake_up(&c->bucket_wait);
 		}
 
 		/*
@@ -436,8 +439,8 @@ static int bch_allocator_thread(void *arg)
 		 */
 
 retry_invalidate:
-		allocator_wait(ca, ca->set->gc_mark_valid &&
-			       !ca->invalidate_needs_gc);
+		allocator_wait(c, c->gc_wait,
+			c->gc_mark_valid && !ca->invalidate_needs_gc);
 		invalidate_buckets(ca);
 
 		if (CACHE_SYNC(&ca->set->sb)) {
@@ -492,7 +495,7 @@ long bch_bucket_alloc(struct cache *ca, unsigned reserve, bool wait)
 
 	finish_wait(&ca->set->bucket_wait, &w);
 out:
-	wake_up_process(ca->alloc_thread);
+	wake_up(&ca->fifo_wait);
 
 	trace_bcache_alloc(ca, reserve);
 

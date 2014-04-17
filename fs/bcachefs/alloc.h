@@ -20,15 +20,6 @@ static inline u8 bucket_gc_gen(struct bucket *b)
 
 #define BUCKET_GC_GEN_MAX	96U
 
-static inline void wake_up_allocators(struct cache_set *c)
-{
-	struct cache *ca;
-	unsigned i;
-
-	for_each_cache(ca, c, i)
-		wake_up_process(ca->alloc_thread);
-}
-
 static inline size_t buckets_available(struct cache_set *c)
 {
 	struct cache *ca;
