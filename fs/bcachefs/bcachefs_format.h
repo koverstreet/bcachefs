@@ -69,6 +69,8 @@ static inline void SET_##name(struct bkey *k, unsigned i, __u64 v)	\
 #define MAX_KEY_INODE		(~(~0ULL << KEY_INODE_BITS))
 #define MAX_KEY_OFFSET		(~(~0ULL << KEY_OFFSET_BITS))
 
+#define KEY_VERSION_BITS	32
+
 #define KEY_SIZE_BITS		16
 #define KEY_SIZE_MAX		((1U << KEY_SIZE_BITS) - 1)
 
@@ -85,7 +87,7 @@ KEY_FIELD(UNUSED,	header, 32, 20)
  * Sequence number used to determine which extent is the newer one, when dealing
  * with overlapping extents from different servers.
  */
-KEY_FIELD(KEY_VERSION,	header, 0,  32)
+KEY_FIELD(KEY_VERSION,	header, 0,  KEY_VERSION_BITS)
 
 /* Extent size, in sectors */
 KEY_FIELD(KEY_SIZE,	k1, 48, KEY_SIZE_BITS)
