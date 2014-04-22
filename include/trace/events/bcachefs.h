@@ -302,6 +302,26 @@ DEFINE_EVENT(cache_set, bcache_gc_end,
 	TP_ARGS(c)
 );
 
+DECLARE_EVENT_CLASS(cache,
+	TP_PROTO(struct cache *ca),
+	TP_ARGS(ca),
+
+	TP_STRUCT__entry(
+		__array(char,		uuid,	16 )
+	),
+
+	TP_fast_assign(
+		memcpy(__entry->uuid, ca->sb.uuid.b, 16);
+	),
+
+	TP_printk("%pU", __entry->uuid)
+);
+
+DEFINE_EVENT(cache, bcache_alloc_wait,
+	TP_PROTO(struct cache *ca),
+	TP_ARGS(ca)
+);
+
 DEFINE_EVENT(bkey, bcache_gc_copy,
 	TP_PROTO(struct bkey *k),
 	TP_ARGS(k)

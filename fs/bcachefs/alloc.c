@@ -83,6 +83,9 @@ static void alloc_failed(struct cache *ca)
 		}
 
 	ca->invalidate_needs_gc = 1;
+
+	trace_bcache_alloc_wait(ca);
+
 	wake_up_gc(ca->set);
 }
 
