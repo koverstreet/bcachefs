@@ -390,6 +390,16 @@ TRACE_EVENT(bcache_moving_gc_end,
 		__entry->uuid, __entry->sectors_moved, __entry->buckets_moved)
 );
 
+DEFINE_EVENT(cache, bcache_prio_write_start,
+	TP_PROTO(struct cache *ca),
+	TP_ARGS(ca)
+);
+
+DEFINE_EVENT(cache, bcache_prio_write_end,
+	TP_PROTO(struct cache *ca),
+	TP_ARGS(ca)
+);
+
 DEFINE_EVENT(bkey, bcache_gc_copy,
 	TP_PROTO(struct bkey *k),
 	TP_ARGS(k)

@@ -26,6 +26,8 @@
 #include <linux/reboot.h>
 #include <linux/sysfs.h>
 
+#include <trace/events/bcachefs.h>
+
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Kent Overstreet <kent.overstreet@gmail.com>");
 
@@ -400,6 +402,8 @@ void bch_prio_write(struct cache *ca)
 
 	lockdep_assert_held(&ca->set->bucket_lock);
 
+	trace_bcache_prio_write_start(ca);
+
 	ca->disk_buckets->seq++;
 
 	atomic_long_add(ca->sb.bucket_size * prio_buckets(ca),
@@ -423,7 +427,7 @@ void bch_prio_write(struct cache *ca)
 		p->magic	= pset_magic(&ca->sb);
 		p->csum		= bch_crc64(&p->magic, bucket_bytes(ca) - 8);
 
-		bucket = bch_bucket_alloc(ca, RESERVE_PRIO, true);
+		bucket = bch_bucket_alloc(ca, RESERVE_PRIO, false);
 		BUG_ON(bucket == -1);
 
 		/*
@@ -457,6 +461,8 @@ void bch_prio_write(struct cache *ca)
 
 		ca->prio_last_buckets[i] = ca->prio_buckets[i];
 	}
+
+	trace_bcache_prio_write_end(ca);
 }
 
 static void prio_read(struct cache *ca, uint64_t bucket)
