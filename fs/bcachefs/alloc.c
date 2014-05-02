@@ -456,6 +456,10 @@ retry_invalidate:
 			 * uses btree_check_reserve() before allocating now, and
 			 * if it fails it blocks without btree nodes locked.
 			 */
+			trace_bcache_alloc_batch(ca,
+						fifo_used(&ca->free_inc),
+						ca->free_inc.size);
+
 			if (!fifo_full(&ca->free_inc))
 				goto retry_invalidate;
 

@@ -324,6 +324,46 @@ DEFINE_EVENT(cache, bcache_alloc_wait,
 	TP_ARGS(ca)
 );
 
+TRACE_EVENT(bcache_alloc_batch,
+	TP_PROTO(struct cache *ca, size_t free, size_t total),
+	TP_ARGS(ca, free, total),
+
+	TP_STRUCT__entry(
+		__array(char,		uuid,	16	)
+		__field(size_t,		free		)
+		__field(size_t,		total		)
+	),
+
+	TP_fast_assign(
+		memcpy(__entry->uuid, ca->sb.uuid.b, 16);
+		__entry->free = free;
+		__entry->total = total;
+	),
+
+	TP_printk("%pU free %zu total %zu",
+		__entry->uuid, __entry->free, __entry->total)
+);
+
+TRACE_EVENT(bcache_btree_check_reserve,
+	TP_PROTO(struct cache *ca, enum btree_id id, size_t free),
+	TP_ARGS(ca, id, free),
+
+	TP_STRUCT__entry(
+		__array(char,		uuid,	16	)
+		__field(enum btree_id,	id		)
+		__field(size_t,		free		)
+	),
+
+	TP_fast_assign(
+		memcpy(__entry->uuid, ca->sb.uuid.b, 16);
+		__entry->id = id;
+		__entry->free = free;
+	),
+
+	TP_printk("%pU id %u free %zu",
+		__entry->uuid, __entry->id, __entry->free)
+);
+
 DEFINE_EVENT(cache, bcache_moving_gc_start,
 	TP_PROTO(struct cache *ca),
 	TP_ARGS(ca)

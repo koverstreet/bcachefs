@@ -1179,6 +1179,10 @@ static int btree_check_reserve(struct btree *b, struct btree_op *op)
 
 	for_each_cache(ca, c, i) {
 		if (fifo_used(&ca->free[reserve]) < required) {
+			trace_bcache_btree_check_reserve(ca,
+					fifo_used(&ca->free[reserve]),
+					reserve);
+
 			if (op)
 				prepare_to_wait(&c->btree_cache_wait, &op->wait,
 						TASK_UNINTERRUPTIBLE);
