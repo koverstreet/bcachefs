@@ -445,6 +445,9 @@ enum alloc_reserve {
  */
 #define BTREE_NODE_RESERVE 8
 
+#define OPEN_BUCKETS_COUNT 64
+#define OPEN_BUCKETS_MOVING_GC_RESERVE 4
+
 struct open_bucket {
 	struct list_head	list;
 	atomic_t		pin;
@@ -669,9 +672,10 @@ struct cache_set {
 	/* SECTOR ALLOCATOR */
 	struct list_head	open_buckets_open;
 	struct list_head	open_buckets_free;
+	unsigned		open_buckets_nr_free;
 	wait_queue_head_t	open_buckets_wait;
 	spinlock_t		open_buckets_lock;
-	struct open_bucket	open_buckets[64];
+	struct open_bucket	open_buckets[OPEN_BUCKETS_COUNT];
 
 	/* GARBAGE COLLECTION */
 	struct task_struct	*gc_thread;

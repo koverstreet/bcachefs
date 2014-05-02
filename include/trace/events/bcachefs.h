@@ -510,7 +510,6 @@ TRACE_EVENT(bcache_wait_for_next_gc,
 
 	TP_STRUCT__entry(
 		__array(char,			uuid,	16	)
-		__field(struct cache_set *,	c		)
 		__field(unsigned,		gc_count	)
 		__field(unsigned,		gc_check	)
 	),
@@ -585,6 +584,34 @@ TRACE_EVENT(bcache_alloc_fail,
 	TP_printk("alloc fail %d,%d free %u free_inc %u",
 		  MAJOR(__entry->dev), MINOR(__entry->dev),
 		  __entry->free, __entry->free_inc)
+);
+
+DECLARE_EVENT_CLASS(bcache_open_bucket_wait,
+	TP_PROTO(struct cache_set *c, bool moving_gc),
+	TP_ARGS(c, moving_gc),
+
+	TP_STRUCT__entry(
+		__array(char,			uuid,	16	)
+		__field(unsigned,		moving_gc	)
+	),
+
+	TP_fast_assign(
+		memcpy(__entry->uuid, c->sb.set_uuid.b, 16);
+		__entry->moving_gc	= moving_gc;
+	),
+
+	TP_printk("%pU moving_gc %u",
+		  __entry->uuid, __entry->moving_gc)
+);
+
+DEFINE_EVENT(bcache_open_bucket_wait, bcache_open_bucket_wait_start,
+	TP_PROTO(struct cache_set *c, bool moving_gc),
+	TP_ARGS(c, moving_gc)
+);
+
+DEFINE_EVENT(bcache_open_bucket_wait, bcache_open_bucket_wait_end,
+	TP_PROTO(struct cache_set *c, bool moving_gc),
+	TP_ARGS(c, moving_gc)
 );
 
 /* Background writeback */

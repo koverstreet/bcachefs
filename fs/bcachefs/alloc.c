@@ -686,7 +686,10 @@ err:
 
 static void __bch_open_bucket_put(struct cache_set *c, struct open_bucket *b)
 {
+	lockdep_assert_held(&c->open_buckets_lock);
+
 	list_move(&b->list, &c->open_buckets_free);
+	c->open_buckets_nr_free++;
 	wake_up(&c->open_buckets_wait);
 }
 
@@ -699,22 +702,42 @@ void bch_open_bucket_put(struct cache_set *c, struct open_bucket *b)
 	}
 }
 
-static struct open_bucket *bch_open_bucket_get(struct cache_set *c)
+static struct open_bucket *__bch_open_bucket_get(struct cache_set *c,
+						 bool moving_gc)
 {
 	struct open_bucket *ret = NULL;
+	unsigned reserve = (moving_gc ? 0 : OPEN_BUCKETS_MOVING_GC_RESERVE);
 
 	spin_lock(&c->open_buckets_lock);
 
-	if (!list_empty(&c->open_buckets_free)) {
+	if (c->open_buckets_nr_free > reserve) {
+		BUG_ON(list_empty(&c->open_buckets_free));
 		ret = list_first_entry(&c->open_buckets_free,
 				       struct open_bucket, list);
 		list_move(&ret->list, &c->open_buckets_open);
 		atomic_set(&ret->pin, 1);
 		ret->sectors_free = c->sb.bucket_size;
 		bkey_init(&ret->key);
+		c->open_buckets_nr_free--;
 	}
 
 	spin_unlock(&c->open_buckets_lock);
+
+	return ret;
+}
+
+static struct open_bucket *bch_open_bucket_get(struct cache_set *c,
+					       bool moving_gc)
+{
+	struct open_bucket *ret;
+
+	ret = __bch_open_bucket_get(c, moving_gc);
+	if (!ret) {
+		trace_bcache_open_bucket_wait_start(c, moving_gc);
+		wait_event(c->open_buckets_wait,
+			(ret = __bch_open_bucket_get(c, moving_gc)));
+		trace_bcache_open_bucket_wait_end(c, moving_gc);
+	}
 
 	return ret;
 }
@@ -727,8 +750,7 @@ static struct open_bucket *bch_open_bucket_alloc(struct cache_set *c,
 	int ret;
 	struct open_bucket *b;
 
-	wait_event(c->open_buckets_wait,
-		   (b = bch_open_bucket_get(c)));
+	b = bch_open_bucket_get(c, false);
 
 	ret = bch_bucket_alloc_set(c, reserve, &b->key, n, tier, wait);
 	if (ret) {
@@ -936,8 +958,7 @@ found:
 	if (!b) {
 		mutex_unlock(&c->bucket_lock);
 
-		wait_event(c->open_buckets_wait,
-			   (b = bch_open_bucket_get(c)));
+		b = bch_open_bucket_get(c, true);
 
 		mutex_lock(&c->bucket_lock);
 
@@ -1038,8 +1059,10 @@ void bch_open_buckets_init(struct cache_set *c)
 	init_waitqueue_head(&c->open_buckets_wait);
 	spin_lock_init(&c->open_buckets_lock);
 
-	for (i = 0; i < ARRAY_SIZE(c->open_buckets); i++)
+	for (i = 0; i < ARRAY_SIZE(c->open_buckets); i++) {
+		c->open_buckets_nr_free++;
 		list_add(&c->open_buckets[i].list, &c->open_buckets_free);
+	}
 }
 
 int bch_cache_allocator_start(struct cache *ca)
