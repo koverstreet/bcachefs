@@ -32,7 +32,8 @@ static inline size_t buckets_available(struct cache_set *c)
 	return ret;
 }
 
-static inline size_t buckets_free_cache(struct cache *ca, unsigned reserve)
+static inline size_t buckets_free_cache(struct cache *ca,
+					enum alloc_reserve reserve)
 {
 	return ca->buckets_free +
 		fifo_used(&ca->free[reserve]) +
