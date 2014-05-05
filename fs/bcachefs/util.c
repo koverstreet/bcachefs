@@ -237,8 +237,7 @@ int bch_ratelimit_wait_freezable_stoppable(struct bch_ratelimit *d,
 }
 
 /*
- * Updates pd_controller and returns the computed change. Attempts to
- * scale inputed values to units per second.
+ * Updates pd_controller. Attempts to scale inputed values to units per second.
  */
 void bch_pd_controller_update(struct bch_pd_controller *pd,
 			      s64 target, s64 actual)

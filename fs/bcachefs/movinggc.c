@@ -10,73 +10,75 @@
 #include "extents.h"
 #include "keybuf.h"
 #include "move.h"
+#include "movinggc.h"
 
 #include <trace/events/bcachefs.h>
+#include <linux/freezer.h>
 #include <linux/kthread.h>
 
 /* Rate limiting */
 
 #define GC_TARGET_PERCENT 5 /* 5% reclaimable space */
 
-static void __update_gc_rate(struct cache_set *c)
+static void __update_gc_rate(struct cache *ca)
 {
 	u64 total = 0, target;
+	unsigned bucket_bits;
 
-	/*
-	 * XXX: Currently this is setting a rate based on the cache_set as
-	 *      a whole. Later we will want to have individual rates for
-	 *      each cache.
-	 */
-
-	total = c->nbuckets * c->sb.bucket_size;
+	total = ca->sb.nbuckets * ca->sb.bucket_size;
 	target = total * GC_TARGET_PERCENT / 100;
+	bucket_bits = ca->set->bucket_bits + 9;
 
-	bch_pd_controller_update(&c->moving_gc_pd,
+	bch_pd_controller_update(&ca->moving_gc_pd,
 				 target << 9,
-				 buckets_available(c) << (c->bucket_bits + 9));
+				 ca->buckets_free << bucket_bits);
 }
 
 static void update_gc_rate(struct work_struct *work)
 {
-	struct cache_set *c = container_of(to_delayed_work(work),
-					   struct cache_set,
-					   moving_gc_pd.update);
-	__update_gc_rate(c);
+	struct cache *ca = container_of(to_delayed_work(work),
+					struct cache,
+					moving_gc_pd.update);
+	__update_gc_rate(ca);
 
-	schedule_delayed_work(&c->moving_gc_pd.update,
-			      c->moving_gc_pd.update_seconds * HZ);
+	schedule_delayed_work(&ca->moving_gc_pd.update,
+			      ca->moving_gc_pd.update_seconds * HZ);
 }
 
 /* Moving GC - IO loop */
 
 static bool moving_pred(struct keybuf *buf, struct bkey *k)
 {
-	struct cache_set *c = container_of(buf, struct cache_set,
-					   moving_gc_keys);
+	struct cache *ca = container_of(buf, struct cache,
+					moving_gc_keys);
+	struct cache_set *c = ca->set;
 	unsigned i;
 
 	for (i = 0; i < bch_extent_ptrs(k); i++)
 		if (ptr_available(c, k, i) &&
-		    GC_GEN(PTR_BUCKET(c, k, i)))
+		    GC_GEN(PTR_BUCKET(c, k, i)) &&
+		    PTR_CACHE(c, k, i) == ca)
 			return true;
 
 	return false;
 }
 
-static void read_moving(struct cache_set *c)
+static void read_moving(struct cache *ca)
 {
+	struct cache_set *c = ca->set;
 	struct keybuf_key *w;
 	struct moving_io *io;
 	struct closure cl;
 
 	closure_init_stack(&cl);
-	bch_ratelimit_reset(&c->moving_gc_pd.rate);
+	bch_ratelimit_reset(&ca->moving_gc_pd.rate);
+	ca->moving_gc_keys.last_scanned = ZERO_KEY;
 
 	/* XXX: if we error, background writeback could stall indefinitely */
 
-	while (!bch_ratelimit_wait_freezable_stoppable(&c->moving_gc_pd.rate,
+	while (!bch_ratelimit_wait_freezable_stoppable(&ca->moving_gc_pd.rate,
 						       &cl)) {
-		w = bch_keybuf_next_rescan(c, &c->moving_gc_keys,
+		w = bch_keybuf_next_rescan(c, &ca->moving_gc_keys,
 					   &MAX_KEY, moving_pred);
 		if (!w)
 			break;
@@ -89,9 +91,9 @@ static void read_moving(struct cache_set *c)
 
 		w->private		= io;
 		io->w			= w;
-		io->keybuf		= &c->moving_gc_keys;
+		io->keybuf		= &ca->moving_gc_keys;
 
-		bch_data_insert_op_init(&io->op, c, c->moving_gc_wq,
+		bch_data_insert_op_init(&io->op, c, ca->moving_gc_wq,
 					&io->bio.bio, 0,
 					false, false, false,
 					&io->w->key, &io->w->key);
@@ -99,7 +101,7 @@ static void read_moving(struct cache_set *c)
 
 		trace_bcache_gc_copy(&w->key);
 
-		bch_ratelimit_increment(&c->moving_gc_pd.rate,
+		bch_ratelimit_increment(&ca->moving_gc_pd.rate,
 					KEY_SIZE(&w->key) << 9);
 
 		closure_call(&io->cl, bch_data_move, NULL, &cl);
@@ -109,7 +111,7 @@ static void read_moving(struct cache_set *c)
 err:		if (!IS_ERR_OR_NULL(w->private))
 			kfree(w->private);
 
-		bch_keybuf_del(&c->moving_gc_keys, w);
+		bch_keybuf_del(&ca->moving_gc_keys, w);
 	}
 
 	closure_sync(&cl);
@@ -130,95 +132,130 @@ static unsigned bucket_sectors_heap_top(struct cache *ca)
 
 #define bucket_write_prio_max_cmp(l, r)	(bucket_w_prio(l) > bucket_w_prio(r))
 
-bool bch_moving_gc(struct cache_set *c)
+static bool bch_moving_gc(struct cache *ca)
 {
-	struct cache *ca;
+	struct cache_set *c = ca->set;
 	struct bucket *b;
-	unsigned i;
 	bool moved = false;
 
-	if (!c->copy_gc_enabled)
+	unsigned bucket_move_threshold =
+		ca->sb.bucket_size - (ca->sb.bucket_size >> 3);
+	u64 sectors_to_move = 0, sectors_gen, gen_current, sectors_total;
+	u64 buckets_to_move;
+	int reserve_sectors = ca->sb.bucket_size *
+		(fifo_used(&ca->free[RESERVE_MOVINGGC]) - NUM_GC_GENS);
+
+	if (reserve_sectors < (int) ca->sb.block_size)
 		return false;
+
+	trace_bcache_moving_gc_start(ca);
 
 	mutex_lock(&c->bucket_lock);
 
-	for_each_cache(ca, c, i) {
-		unsigned bucket_move_threshold =
-			ca->sb.bucket_size - (ca->sb.bucket_size >> 3);
-		unsigned sectors_to_move = 0, sectors_gen,
-			 gen_current, sectors_total;
-		int reserve_sectors = ca->sb.bucket_size *
-			(fifo_used(&ca->free[RESERVE_MOVINGGC]) - NUM_GC_GENS);
+	/*
+	 * sorts out smallest buckets into the gc heap, and then shrinks
+	 * the heap to fit into a reasonable amount of reserve sectors
+	 */
 
-		if (reserve_sectors < (int) ca->sb.block_size)
+	ca->heap.used = 0;
+	for_each_bucket(b, ca) {
+		SET_GC_GEN(b, 0);
+
+		if (GC_MARK(b) == GC_MARK_METADATA ||
+		    !GC_SECTORS_USED(b) ||
+		    GC_SECTORS_USED(b) >= bucket_move_threshold)
 			continue;
 
-		/*
-		 * sorts out smallest buckets into the gc heap, and then shrinks
-		 * the heap to fit into a reasonable amount of reserve sectors
-		 */
+		if (!heap_full(&ca->heap)) {
+			sectors_to_move += GC_SECTORS_USED(b);
+			heap_add(&ca->heap, b, bucket_sectors_cmp);
+		} else if (bucket_sectors_cmp(b, heap_peek(&ca->heap))) {
+			sectors_to_move -= bucket_sectors_heap_top(ca);
+			sectors_to_move += GC_SECTORS_USED(b);
 
-		ca->heap.used = 0;
-		for_each_bucket(b, ca) {
-			SET_GC_GEN(b, 0);
-
-			if (GC_MARK(b) == GC_MARK_METADATA ||
-			    !GC_SECTORS_USED(b) ||
-			    GC_SECTORS_USED(b) >= bucket_move_threshold)
-				continue;
-
-			if (!heap_full(&ca->heap)) {
-				sectors_to_move += GC_SECTORS_USED(b);
-				heap_add(&ca->heap, b, bucket_sectors_cmp);
-			} else if (bucket_sectors_cmp(b,
-						      heap_peek(&ca->heap))) {
-				sectors_to_move -= bucket_sectors_heap_top(ca);
-				sectors_to_move += GC_SECTORS_USED(b);
-
-				ca->heap.data[0] = b;
-				heap_sift(&ca->heap, 0, bucket_sectors_cmp);
-			}
+			ca->heap.data[0] = b;
+			heap_sift(&ca->heap, 0, bucket_sectors_cmp);
 		}
+	}
 
-		while (sectors_to_move > reserve_sectors) {
-			heap_pop(&ca->heap, b, bucket_sectors_cmp);
-			sectors_to_move -= GC_SECTORS_USED(b);
-		}
+	while (sectors_to_move > reserve_sectors) {
+		heap_pop(&ca->heap, b, bucket_sectors_cmp);
+		sectors_to_move -= GC_SECTORS_USED(b);
+	}
 
-		if (sectors_to_move)
-			moved = true;
+	buckets_to_move = ca->heap.used;
 
-		/*
-		 * resort by write_prio to group into generations, attempts to
-		 * keep hot and cold data in the same locality.
-		 */
+	if (sectors_to_move)
+		moved = true;
 
-		heap_resort(&ca->heap, bucket_write_prio_max_cmp);
+	/*
+	 * resort by write_prio to group into generations, attempts to
+	 * keep hot and cold data in the same locality.
+	 */
 
-		sectors_gen = sectors_to_move / NUM_GC_GENS;
-		gen_current = 1;
-		sectors_total = 0;
+	heap_resort(&ca->heap, bucket_write_prio_max_cmp);
 
-		while (heap_pop(&ca->heap, b, bucket_write_prio_max_cmp)) {
-			sectors_total += GC_SECTORS_USED(b);
-			SET_GC_GEN(b, gen_current);
+	sectors_gen = sectors_to_move / NUM_GC_GENS;
+	gen_current = 1;
+	sectors_total = 0;
 
-			if (gen_current < NUM_GC_GENS &&
-			    sectors_total >= sectors_gen * gen_current)
-				gen_current++;
-		}
+	while (heap_pop(&ca->heap, b, bucket_write_prio_max_cmp)) {
+		sectors_total += GC_SECTORS_USED(b);
+		SET_GC_GEN(b, gen_current);
+		if (gen_current < NUM_GC_GENS &&
+		    sectors_total >= sectors_gen * gen_current)
+			gen_current++;
 	}
 
 	mutex_unlock(&c->bucket_lock);
 
-	c->moving_gc_keys.last_scanned = ZERO_KEY;
+	read_moving(ca);
 
-	read_moving(c);
+	trace_bcache_moving_gc_end(ca, sectors_to_move, buckets_to_move);
+
 	return moved;
 }
 
-void bch_moving_init_cache_set(struct cache_set *c)
+static int bch_moving_gc_thread(void *arg)
 {
-	bch_keybuf_init(&c->moving_gc_keys);
-	INIT_DELAYED_WORK(&c->moving_gc_pd.update, update_gc_rate);
+	struct cache *ca = arg;
+	struct cache_set *c = ca->set;
+	unsigned long last = jiffies;
+
+	do {
+		if (kthread_wait_freezable(c->copy_gc_enabled))
+			break;
+
+		bch_wait_for_next_gc(c, false);
+
+		if (bch_moving_gc(ca))
+			bch_wait_for_next_gc(c, true);
+	} while (!bch_kthread_loop_ratelimit(&last,
+					     c->btree_scan_ratelimit * HZ));
+
+	return 0;
+}
+
+int bch_moving_gc_thread_start(struct cache *ca)
+{
+	char moving_gc_name[16];
+
+	snprintf(moving_gc_name, sizeof(moving_gc_name),
+		"bcache_mv/%s", ca->bdev->bd_disk->disk_name);
+
+	BUG_ON(ca->moving_gc_thread);
+	ca->moving_gc_thread = kthread_create(bch_moving_gc_thread, ca,
+						moving_gc_name);
+	if (IS_ERR(ca->moving_gc_thread))
+		return PTR_ERR(ca->moving_gc_thread);
+
+	wake_up_process(ca->moving_gc_thread);
+
+	return 0;
+}
+
+void bch_moving_init_cache(struct cache *ca)
+{
+	bch_keybuf_init(&ca->moving_gc_keys);
+	INIT_DELAYED_WORK(&ca->moving_gc_pd.update, update_gc_rate);
 }

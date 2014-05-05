@@ -26,6 +26,7 @@
 #include "debug.h"
 #include "extents.h"
 #include "journal.h"
+#include "movinggc.h"
 #include "writeback.h"
 
 #include <linux/slab.h>
@@ -1720,8 +1721,6 @@ static int bch_gc_thread(void *arg)
 
 	while (1) {
 		bch_btree_gc(c);
-		if (bch_moving_gc(c))
-			continue;
 
 		set_current_state(TASK_INTERRUPTIBLE);
 		spin_lock(&c->gc_lock);

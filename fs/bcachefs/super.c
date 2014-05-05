@@ -11,6 +11,7 @@
 #include "btree.h"
 #include "debug.h"
 #include "journal.h"
+#include "movinggc.h"
 #include "request.h"
 #include "writeback.h"
 
@@ -1249,8 +1250,6 @@ static void cache_set_free(struct closure *cl)
 		destroy_workqueue(c->tiering_wq);
 	if (c->btree_insert_wq)
 		destroy_workqueue(c->btree_insert_wq);
-	if (c->moving_gc_wq)
-		destroy_workqueue(c->moving_gc_wq);
 	if (c->bio_split)
 		bioset_free(c->bio_split);
 	mempool_destroy(c->fill_iter);
@@ -1275,7 +1274,15 @@ static void cache_set_flush(struct closure *cl)
 	struct btree *b;
 	unsigned i;
 
-	cancel_delayed_work_sync(&c->moving_gc_pd.update);
+	for_each_cache(ca, c, i) {
+		ca->moving_gc_pd.rate.rate = UINT_MAX;
+		bch_ratelimit_reset(&ca->moving_gc_pd.rate);
+		if (ca->moving_gc_thread)
+			kthread_stop(ca->moving_gc_thread);
+
+		cancel_delayed_work_sync(&ca->moving_gc_pd.update);
+	}
+
 	bch_cache_accounting_destroy(&c->accounting);
 
 	kobject_put(&c->internal);
@@ -1409,7 +1416,6 @@ struct cache_set *bch_cache_set_alloc(struct cache_sb *sb)
 	spin_lock_init(&c->btree_read_time.lock);
 
 	bch_open_buckets_init(c);
-	bch_moving_init_cache_set(c);
 	bch_tiering_init_cache_set(c);
 
 	INIT_LIST_HEAD(&c->list);
@@ -1449,8 +1455,6 @@ struct cache_set *bch_cache_set_alloc(struct cache_sb *sb)
 				bucket_pages(c))) ||
 	    !(c->fill_iter = mempool_create_kmalloc_pool(1, iter_size)) ||
 	    !(c->bio_split = bioset_create(4, offsetof(struct bbio, bio))) ||
-	    !(c->moving_gc_wq = alloc_workqueue("bcache_gc",
-						WQ_MEM_RECLAIM, 0)) ||
 	    !(c->btree_insert_wq = alloc_workqueue("bcache_btree",
 						   WQ_MEM_RECLAIM, 0)) ||
 	    !(c->tiering_wq = alloc_workqueue("bcache_tier",
@@ -1629,6 +1633,11 @@ static void run_cache_set(struct cache_set *c)
 	if (bch_gc_thread_start(c))
 		goto err;
 
+	err = "error starting moving GC thread";
+	for_each_cache(ca, c, i)
+		if (bch_moving_gc_thread_start(ca))
+			goto err;
+
 	err = "error starting tiering thread";
 	if (bch_tiering_thread_start(c))
 		goto err;
@@ -1641,8 +1650,6 @@ static void run_cache_set(struct cache_set *c)
 		bch_cached_dev_attach(dc, c);
 
 	flash_devs_run(c);
-
-	bch_pd_controller_start(&c->moving_gc_pd);
 
 	set_bit(CACHE_SET_RUNNING, &c->flags);
 	closure_put(&c->caching);
@@ -1743,6 +1750,9 @@ void bch_cache_release(struct kobject *kobj)
 		ca->set->cache[ca->sb.nr_this_dev] = NULL;
 	}
 
+	if (ca->moving_gc_wq)
+		destroy_workqueue(ca->moving_gc_wq);
+
 	if (ca->replica_set)
 		bioset_free(ca->replica_set);
 
@@ -1798,12 +1808,15 @@ static int cache_alloc(struct cache *ca)
 	    !(ca->prio_buckets	= kzalloc(sizeof(uint64_t) * prio_buckets(ca) *
 					  2, GFP_KERNEL)) ||
 	    !(ca->disk_buckets	= alloc_bucket_pages(GFP_KERNEL, ca)) ||
-	    !(ca->replica_set = bioset_create(4, offsetof(struct bbio, bio))))
+	    !(ca->replica_set = bioset_create(4, offsetof(struct bbio, bio))) ||
+	    !(ca->moving_gc_wq = alloc_workqueue("bcache_move",
+						 WQ_MEM_RECLAIM, 0)))
 		return -ENOMEM;
 
 	ca->prio_last_buckets = ca->prio_buckets + prio_buckets(ca);
 
 	init_waitqueue_head(&ca->fifo_wait);
+	bch_moving_init_cache(ca);
 
 	return 0;
 }

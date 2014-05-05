@@ -501,6 +501,12 @@ struct cache {
 
 	DECLARE_HEAP(struct bucket *, heap);
 
+	/* Moving GC: */
+	struct task_struct	*moving_gc_thread;
+	struct workqueue_struct	*moving_gc_wq;
+	struct keybuf		moving_gc_keys;
+	struct bch_pd_controller moving_gc_pd;
+
 	/*
 	 * open buckets used in moving garbage collection
 	 * NOTE: GC_GEN == 0 signifies no moving gc, so accessing the
@@ -698,11 +704,7 @@ struct cache_set {
 	/* Allocator threads might be waiting for GC */
 	wait_queue_head_t	gc_wait;
 
-	/* MOVING GC */
-	struct workqueue_struct	*moving_gc_wq;
-	struct keybuf		moving_gc_keys;
-	struct bch_pd_controller moving_gc_pd;
-
+	/* TIERING */
 	struct task_struct	*tiering_thread;
 	struct workqueue_struct	*tiering_wq;
 	struct keybuf		tiering_keys;
@@ -1002,7 +1004,6 @@ void bch_cache_set_stop(struct cache_set *);
 struct cache_set *bch_cache_set_alloc(struct cache_sb *);
 void bch_btree_cache_free(struct cache_set *);
 int bch_btree_cache_alloc(struct cache_set *);
-void bch_moving_init_cache_set(struct cache_set *);
 void bch_tiering_init_cache_set(struct cache_set *);
 int bch_tiering_thread_start(struct cache_set *c);
 

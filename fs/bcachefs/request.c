@@ -309,8 +309,12 @@ void bch_data_insert(struct closure *cl)
 		struct bkey start = KEY(inode, op->bio->bi_iter.bi_sector, 0);
 		struct bkey end = KEY(inode, bio_end_sector(op->bio), 0);
 
-		bch_keybuf_check_overlapping(&c->moving_gc_keys,
-					     &start, &end);
+		unsigned i;
+		struct cache *ca;
+
+		for_each_cache(ca, c, i)
+			bch_keybuf_check_overlapping(&ca->moving_gc_keys,
+						     &start, &end);
 
 		bch_keybuf_check_overlapping(&c->tiering_keys,
 					     &start, &end);
