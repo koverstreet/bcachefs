@@ -67,7 +67,8 @@ static void bch_data_insert_keys(struct closure *cl)
 		closure_sync(&s->cl);
 #endif
 	ret = bch_btree_insert(op->c, BTREE_ID_EXTENTS, &op->insert_keys,
-			       replace_key, op->flush ? cl : NULL);
+			       replace_key, op->flush ? cl : NULL,
+			       op->moving_gc);
 	if (ret == -ESRCH) {
 		op->replace_collision = true;
 	} else if (ret) {

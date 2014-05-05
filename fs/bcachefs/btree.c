@@ -1097,8 +1097,13 @@ struct btree *__bch_btree_node_alloc(struct cache_set *c, struct btree_op *op,
 {
 	BKEY_PADDED(key) k;
 	struct btree *b = ERR_PTR(-EAGAIN);
+	enum alloc_reserve reserve = id;
+
+	if (op && op->moving_gc && id == BTREE_ID_EXTENTS)
+		reserve = RESERVE_MOVINGGC_BTREE;
+
 retry:
-	if (bch_bucket_alloc_set(c, id, &k.key,
+	if (bch_bucket_alloc_set(c, reserve, &k.key,
 				 c->meta_replicas, 0, wait))
 		goto err;
 
@@ -1154,19 +1159,33 @@ static int btree_check_reserve(struct btree *b, struct btree_op *op)
 {
 	struct cache_set *c = b->c;
 	struct cache *ca;
-	unsigned id = b->btree_id, i, reserve =
-		(c->btree_roots[id]->level - b->level) * 2 + 1;
+	enum btree_id id = b->btree_id;
+	unsigned i;
+	unsigned required = (c->btree_roots[id]->level - b->level) * 2 + 1;
+	enum alloc_reserve reserve = b->btree_id;
+
+	/*
+	 * free_inc.size buckets in btree node reserve are set aside for
+	 * moving GC. This means that if moving GC runs out of new buckets for
+	 * btree nodes, it will have put back at least free_inc.size buckets
+	 * back on free_inc, preventing a deadlock.
+	 *
+	 * XXX: except moving GC can still sometimes split nodes
+	 */
+	if (op && op->moving_gc && id == BTREE_ID_EXTENTS)
+		reserve = RESERVE_MOVINGGC_BTREE;
 
 	mutex_lock(&c->bucket_lock);
 
-	for_each_cache(ca, c, i)
-		if (fifo_used(&ca->free[id]) < reserve) {
+	for_each_cache(ca, c, i) {
+		if (fifo_used(&ca->free[reserve]) < required) {
 			if (op)
 				prepare_to_wait(&c->btree_cache_wait, &op->wait,
 						TASK_UNINTERRUPTIBLE);
 			mutex_unlock(&c->bucket_lock);
 			return -EINTR;
 		}
+	}
 
 	mutex_unlock(&c->bucket_lock);
 
@@ -2363,7 +2382,7 @@ static int btree_insert_fn(struct btree_op *b_op, struct btree *b)
 
 int bch_btree_insert(struct cache_set *c, enum btree_id id,
 		     struct keylist *keys, struct bkey *replace_key,
-		     struct closure *parent)
+		     struct closure *parent, bool moving_gc)
 {
 	struct btree_insert_op op;
 	int ret = 0;
@@ -2374,6 +2393,7 @@ int bch_btree_insert(struct cache_set *c, enum btree_id id,
 	op.keys		= keys;
 	op.replace_key	= replace_key;
 	op.parent	= parent;
+	op.op.moving_gc = moving_gc;
 
 	while (!ret && !bch_keylist_empty(keys)) {
 		op.op.lock = 0;

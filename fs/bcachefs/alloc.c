@@ -404,16 +404,16 @@ static int bch_allocator_thread(void *arg)
 
 	while (1) {
 		/*
-		 * First, we pull buckets off of the unused and free_inc lists,
-		 * possibly issue discards to them, then we add the bucket to
-		 * the free list:
+		 * First, we pull buckets off of the free_inc lists, possibly
+		 * issue discards to them, then we add the bucket to the
+		 * free list:
 		 */
 		while (!fifo_empty(&ca->free_inc)) {
 			long bucket = fifo_peek(&ca->free_inc);
 
 			/*
-			 * Don't remove from free_inc/unused until after it's
-			 * added to freelist, so gc doesn't miss it while we've
+			 * Don't remove from free_inc until after it's added
+			 * to freelist, so gc doesn't miss it while we've
 			 * dropped bucket lock
 			 */
 
@@ -520,7 +520,7 @@ out:
 	BUG_ON(ca->set->gc_mark_valid &&
 	       GC_MARK(b) != GC_MARK_DIRTY);
 
-	if (reserve <= RESERVE_PRIO)
+	if (reserve <= RESERVE_MOVINGGC_BTREE)
 		SET_GC_MARK(b, GC_MARK_METADATA);
 
 	b->read_prio = ca->set->read_clock.hand;

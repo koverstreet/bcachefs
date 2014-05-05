@@ -429,12 +429,21 @@ struct cached_dev {
 	unsigned char		writeback_percent;
 };
 
+/* There is one reserve for each type of btree, one for prios and gens
+ * and one for moving GC */
 enum alloc_reserve {
 	RESERVE_PRIO	= BTREE_ID_NR,
+	RESERVE_MOVINGGC_BTREE,
 	RESERVE_MOVINGGC,
 	RESERVE_NONE,
 	RESERVE_NR,
 };
+
+/*
+ * The btree node reserve needs to contain enough buckets that we can split each
+ * level of node twice up to the root. We don't expect more than three levels.
+ */
+#define BTREE_NODE_RESERVE 8
 
 struct open_bucket {
 	struct list_head	list;
@@ -464,9 +473,8 @@ struct cache {
 	/*
 	 * When allocating new buckets, prio_write() gets first dibs - since we
 	 * may not be allocate at all without writing priorities and gens.
-	 * prio_buckets[] contains the last buckets we wrote priorities to (so
-	 * gc can mark them as metadata), prio_next[] contains the buckets
-	 * allocated for the next prio write.
+	 * prio_last_buckets[] contains the last buckets we wrote priorities to
+	 * (so gc can mark them as metadata).
 	 */
 	u64			*prio_buckets;
 	u64			*prio_last_buckets;

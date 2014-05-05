@@ -1778,8 +1778,8 @@ void bch_cache_release(struct kobject *kobj)
 
 static int cache_alloc(struct cache *ca)
 {
-	size_t free;
-	unsigned i, movinggc_reserve;
+	size_t reserve_none, movinggc_reserve, free_inc_reserve, total_reserve;
+	unsigned i;
 
 	__module_get(THIS_MODULE);
 	kobject_init(&ca->kobj, &bch_cache_ktype);
@@ -1788,21 +1788,24 @@ static int cache_alloc(struct cache *ca)
 	ca->journal.bio.bi_max_vecs = 8;
 	ca->journal.bio.bi_io_vec = ca->journal.bio.bi_inline_vecs;
 
+	/* XXX: tune these */
 	movinggc_reserve = max_t(size_t, NUM_GC_GENS * 2,
 				 ca->sb.nbuckets >> 7);
-
-	free = max_t(size_t, 4, ca->sb.nbuckets >> 10);
+	reserve_none = max_t(size_t, 4, ca->sb.nbuckets >> 10);
+	free_inc_reserve = reserve_none << 2;
 
 	for (i = 0; i < BTREE_ID_NR; i++)
-		if (!init_fifo(&ca->free[i], 8, GFP_KERNEL))
+		if (!init_fifo(&ca->free[i], BTREE_NODE_RESERVE, GFP_KERNEL))
 			return -ENOMEM;
 
 	if (!init_fifo(&ca->free[RESERVE_PRIO], prio_buckets(ca), GFP_KERNEL) ||
+	    !init_fifo(&ca->free[RESERVE_MOVINGGC_BTREE],
+		       free_inc_reserve, GFP_KERNEL) ||
 	    !init_fifo(&ca->free[RESERVE_MOVINGGC],
 		       movinggc_reserve, GFP_KERNEL) ||
-	    !init_fifo(&ca->free[RESERVE_NONE], free, GFP_KERNEL) ||
-	    !init_fifo(&ca->free_inc,	free << 2, GFP_KERNEL) ||
-	    !init_heap(&ca->heap,	movinggc_reserve << 1, GFP_KERNEL) ||
+	    !init_fifo(&ca->free[RESERVE_NONE], reserve_none, GFP_KERNEL) ||
+	    !init_fifo(&ca->free_inc,	free_inc_reserve, GFP_KERNEL) ||
+	    !init_heap(&ca->heap,	movinggc_reserve, GFP_KERNEL) ||
 	    !(ca->buckets	= vzalloc(sizeof(struct bucket) *
 					  ca->sb.nbuckets)) ||
 	    !(ca->prio_buckets	= kzalloc(sizeof(uint64_t) * prio_buckets(ca) *
@@ -1814,6 +1817,11 @@ static int cache_alloc(struct cache *ca)
 		return -ENOMEM;
 
 	ca->prio_last_buckets = ca->prio_buckets + prio_buckets(ca);
+
+	total_reserve = ca->free_inc.size;
+	for (i = 0; i < RESERVE_NR; i++)
+		total_reserve += ca->free[i].size;
+	pr_debug("%zu buckets reserved", total_reserve);
 
 	init_waitqueue_head(&ca->fifo_wait);
 	bch_moving_init_cache(ca);
