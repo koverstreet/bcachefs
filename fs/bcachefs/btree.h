@@ -261,6 +261,8 @@ static inline void wake_up_gc(struct cache_set *c)
 		wake_up_process(c->gc_thread);
 }
 
+void bch_wait_for_next_gc(struct cache_set *, bool);
+
 #define MAP_DONE	0
 #define MAP_CONTINUE	1
 

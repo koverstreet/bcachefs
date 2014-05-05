@@ -72,21 +72,22 @@
 
 static void alloc_failed(struct cache *ca)
 {
+	struct cache_set *c = ca->set;
 	unsigned i;
 
 	for (i = CACHE_TIER(&ca->sb) + 1;
-	     i < ARRAY_SIZE(ca->set->cache_by_alloc);
+	     i < ARRAY_SIZE(c->cache_by_alloc);
 	     i++)
-		if (ca->set->cache_by_alloc[i].nr_devices) {
-			ca->set->tiering_pd.rate.rate = UINT_MAX;
-			bch_ratelimit_reset(&ca->set->tiering_pd.rate);
+		if (c->cache_by_alloc[i].nr_devices) {
+			c->tiering_pd.rate.rate = UINT_MAX;
+			bch_ratelimit_reset(&c->tiering_pd.rate);
 		}
-
-	ca->invalidate_needs_gc = 1;
 
 	trace_bcache_alloc_wait(ca);
 
-	wake_up_gc(ca->set);
+	mutex_unlock(&c->bucket_lock);
+	bch_wait_for_next_gc(c, true);
+	mutex_lock(&c->bucket_lock);
 }
 
 /* Bucket heap / gen */
@@ -334,7 +335,7 @@ static void invalidate_buckets(struct cache *ca)
 	size_t dirty = 0, meta = 0, gen = 0;
 	struct bucket *b;
 
-	BUG_ON(ca->invalidate_needs_gc);
+	BUG_ON(!ca->set->gc_mark_valid);
 
 	for_each_bucket(b, ca) {
 		if (GC_MARK(b) == GC_MARK_DIRTY)
@@ -439,8 +440,8 @@ static int bch_allocator_thread(void *arg)
 		 */
 
 retry_invalidate:
-		allocator_wait(c, c->gc_wait,
-			c->gc_mark_valid && !ca->invalidate_needs_gc);
+		allocator_wait(c, c->gc_wait, c->gc_mark_valid);
+
 		invalidate_buckets(ca);
 
 		if (CACHE_SYNC(&ca->set->sb)) {
@@ -530,6 +531,8 @@ out:
 
 void __bch_bucket_free(struct cache *ca, struct bucket *b)
 {
+	lockdep_assert_held(&ca->set->bucket_lock);
+
 	if ((GC_MARK(b) &&
 	     GC_MARK(b) != GC_MARK_RECLAIMABLE) ||
 	    !ca->set->gc_mark_valid)

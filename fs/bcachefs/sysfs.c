@@ -54,6 +54,8 @@ sysfs_time_stats_attribute(btree_split, sec, us);
 sysfs_time_stats_attribute(btree_sort,	ms,  us);
 sysfs_time_stats_attribute(btree_read,	ms,  us);
 
+read_attribute(btree_gc_count);
+
 read_attribute(btree_nodes);
 read_attribute(btree_used_percent);
 read_attribute(average_key_size);
@@ -455,6 +457,17 @@ static unsigned bch_cache_available_percent(struct cache_set *c)
 	return div64_u64((u64) buckets_available(c) * 100, c->nbuckets);
 }
 
+static unsigned bch_gc_count(struct cache_set *c)
+{
+	unsigned ret;
+
+	spin_lock(&c->gc_lock);
+	ret = c->gc_count;
+	spin_unlock(&c->gc_lock);
+
+	return ret;
+}
+
 static unsigned bch_btree_used(struct cache_set *c)
 {
 	return div64_u64(c->gc_stats.key_bytes * 100,
@@ -482,6 +495,8 @@ SHOW(__bch_cache_set)
 
 	sysfs_hprint(btree_cache_size,		bch_cache_size(c));
 	sysfs_print(cache_available_percent,	bch_cache_available_percent(c));
+
+	sysfs_print(btree_gc_count,		bch_gc_count(c));
 
 	sysfs_print_time_stats(&c->btree_gc_time,	btree_gc, sec, ms);
 	sysfs_print_time_stats(&c->btree_split_time,	btree_split, sec, us);
@@ -689,6 +704,8 @@ static struct attribute *bch_cache_set_internal_files[] = {
 	sysfs_time_stats_attribute_list(btree_split, sec, us)
 	sysfs_time_stats_attribute_list(btree_sort, ms, us)
 	sysfs_time_stats_attribute_list(btree_read, ms, us)
+
+	&sysfs_btree_gc_count,
 
 	&sysfs_btree_nodes,
 	&sysfs_btree_used_percent,

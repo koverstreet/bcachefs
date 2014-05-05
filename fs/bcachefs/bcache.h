@@ -514,8 +514,6 @@ struct cache {
 	 * until a gc finishes - otherwise we could pointlessly burn a ton of
 	 * cpu
 	 */
-	unsigned		invalidate_needs_gc:1;
-
 	bool			discard; /* Get rid of? */
 
 	struct journal_device	journal;
@@ -676,6 +674,24 @@ struct cache_set {
 	 * it's not while a gc is in progress. Protected by bucket_lock.
 	 */
 	int			gc_mark_valid;
+
+	/*
+	 * Protects needs_gc and gc_count.
+	 */
+	spinlock_t		gc_lock;
+
+	/*
+	 * If set, someone is requesting a GC. Do not set this directly, always
+	 * use bch_wait_for_next_gc() instead. Protected by gc_lock.
+	 */
+	bool			needs_gc;
+
+	/*
+	 * Number of GC iterations completed. To wait for the next GC to finish,
+	 * add yourself to gc_wait and wait for this to change. Protected by
+	 * gc_lock.
+	 */
+	unsigned		gc_count;
 
 	struct gc_stat		gc_stats;
 
