@@ -142,15 +142,19 @@ static bool bch_moving_gc(struct cache *ca)
 		ca->sb.bucket_size - (ca->sb.bucket_size >> 3);
 	u64 sectors_to_move = 0, sectors_gen, gen_current, sectors_total;
 	u64 buckets_to_move;
-	int reserve_sectors = ca->sb.bucket_size *
-		(fifo_used(&ca->free[RESERVE_MOVINGGC]) - NUM_GC_GENS);
-
-	if (reserve_sectors < (int) ca->sb.block_size)
-		return false;
-
-	trace_bcache_moving_gc_start(ca);
+	int reserve_sectors;
 
 	mutex_lock(&c->bucket_lock);
+
+	reserve_sectors = ca->sb.bucket_size *
+		(fifo_used(&ca->free[RESERVE_MOVINGGC]) - NUM_GC_GENS);
+
+	if (reserve_sectors < (int) ca->sb.block_size) {
+		mutex_unlock(&c->bucket_lock);
+		return false;
+	}
+
+	trace_bcache_moving_gc_start(ca);
 
 	/*
 	 * sorts out smallest buckets into the gc heap, and then shrinks
