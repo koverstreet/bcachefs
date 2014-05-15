@@ -884,6 +884,9 @@ static struct bset_search_iter bset_search_tree(struct bset_tree *t,
 		unsigned p = n << 4;
 		p &= ((int) (p - t->size)) >> 31;
 
+		/* Prefetch the cacheline we'll be working on four
+		 * iterations from now. If out of bounds, just prefetch
+		 * root to avoid a branch. */
 		prefetch(&t->tree[p]);
 
 		j = n;
