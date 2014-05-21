@@ -645,7 +645,11 @@ static struct btree *mca_bucket_alloc(struct cache_set *c,
 	return b;
 }
 
-static int mca_reap(struct btree *b, unsigned min_order, bool flush)
+/*
+ * this version is for btree nodes that have already been freed (we're not
+ * reaping a real btree node)
+ */
+static int mca_reap_notrace(struct btree *b, unsigned min_order, bool flush)
 {
 	struct closure cl;
 
@@ -686,6 +690,14 @@ out_unlock:
 	return -ENOMEM;
 }
 
+static int mca_reap(struct btree *b, unsigned min_order, bool flush)
+{
+	int ret = mca_reap_notrace(b, min_order, flush);
+
+	trace_bcache_mca_reap(b, ret);
+	return ret;
+}
+
 static unsigned long bch_mca_scan(struct shrinker *shrink,
 				  struct shrink_control *sc)
 {
@@ -723,7 +735,7 @@ static unsigned long bch_mca_scan(struct shrinker *shrink,
 			break;
 
 		if (++i > 3 &&
-		    !mca_reap(b, 0, false)) {
+		    !mca_reap_notrace(b, 0, false)) {
 			mca_data_free(b);
 			rw_unlock(true, b);
 			freed++;
@@ -867,6 +879,7 @@ static int mca_cannibalize_lock(struct cache_set *c, struct closure *cl)
 
 	old = cmpxchg(&c->btree_cache_alloc_lock, NULL, current);
 	if (old && old != current) {
+		trace_bcache_mca_cannibalize_lock_fail(c, cl);
 		if (cl) {
 			closure_wait(&c->mca_wait, cl);
 			return -EAGAIN;
@@ -875,6 +888,7 @@ static int mca_cannibalize_lock(struct cache_set *c, struct closure *cl)
 		return -EINTR;
 	}
 
+	trace_bcache_mca_cannibalize_lock(c, cl);
 	return 0;
 }
 
@@ -883,8 +897,6 @@ static struct btree *mca_cannibalize(struct cache_set *c, struct bkey *k,
 {
 	struct btree *b;
 	int ret;
-
-	trace_bcache_btree_cache_cannibalize(c);
 
 	ret = mca_cannibalize_lock(c, cl);
 	if (ret)
@@ -914,6 +926,7 @@ out:
 static void bch_cannibalize_unlock(struct cache_set *c)
 {
 	if (c->btree_cache_alloc_lock == current) {
+		trace_bcache_mca_cannibalize_unlock(c);
 		c->btree_cache_alloc_lock = NULL;
 		closure_wake_up(&c->mca_wait);
 	}
@@ -933,14 +946,14 @@ static struct btree *mca_alloc(struct cache_set *c, struct bkey *k, int level,
 	 * the list. Check if there's any freed nodes there:
 	 */
 	list_for_each_entry(b, &c->btree_cache_freeable, list)
-		if (!mca_reap(b, btree_order(k), false))
+		if (!mca_reap_notrace(b, btree_order(k), false))
 			goto out;
 
 	/* We never free struct btree itself, just the memory that holds the on
 	 * disk node. Check the freed list before allocating a new one:
 	 */
 	list_for_each_entry(b, &c->btree_cache_freed, list)
-		if (!mca_reap(b, 0, false)) {
+		if (!mca_reap_notrace(b, 0, false)) {
 			mca_data_alloc(b, k, __GFP_NOWARN|GFP_NOIO);
 			if (!b->keys.set[0].data)
 				goto err;

@@ -217,11 +217,6 @@ DEFINE_EVENT(bcache_bio, bcache_journal_write,
 
 /* Btree */
 
-DEFINE_EVENT(cache_set, bcache_btree_cache_cannibalize,
-	TP_PROTO(struct cache_set *c),
-	TP_ARGS(c)
-);
-
 DECLARE_EVENT_CLASS(btree_node,
 	TP_PROTO(struct btree *b),
 	TP_ARGS(b),
@@ -292,6 +287,55 @@ TRACE_EVENT(bcache_btree_node_alloc_fail,
 DEFINE_EVENT(btree_node, bcache_btree_node_free,
 	TP_PROTO(struct btree *b),
 	TP_ARGS(b)
+);
+
+TRACE_EVENT(bcache_mca_reap,
+	TP_PROTO(struct btree *b, int ret),
+	TP_ARGS(b, ret),
+
+	TP_STRUCT__entry(
+		__field(size_t,			bucket		)
+		__field(int,			ret		)
+	),
+
+	TP_fast_assign(
+		__entry->bucket	= PTR_BUCKET_NR(b->c, &b->key, 0);
+		__entry->ret = ret;
+	),
+
+	TP_printk("bucket %zu ret %d", __entry->bucket, __entry->ret)
+);
+
+DECLARE_EVENT_CLASS(mca_cannibalize_lock,
+	TP_PROTO(struct cache_set *c, struct closure *cl),
+	TP_ARGS(c, cl),
+
+	TP_STRUCT__entry(
+		__array(char,			uuid,	16	)
+		__field(struct closure *,	cl		)
+	),
+
+	TP_fast_assign(
+		memcpy(__entry->uuid, c->sb.set_uuid.b, 16);
+		__entry->cl = cl;
+	),
+
+	TP_printk("%pU cl %p", __entry->uuid, __entry->cl)
+);
+
+DEFINE_EVENT(mca_cannibalize_lock, bcache_mca_cannibalize_lock_fail,
+	TP_PROTO(struct cache_set *c, struct closure *cl),
+	TP_ARGS(c, cl)
+);
+
+DEFINE_EVENT(mca_cannibalize_lock, bcache_mca_cannibalize_lock,
+	TP_PROTO(struct cache_set *c, struct closure *cl),
+	TP_ARGS(c, cl)
+);
+
+DEFINE_EVENT(cache_set, bcache_mca_cannibalize_unlock,
+	TP_PROTO(struct cache_set *c),
+	TP_ARGS(c)
 );
 
 /* Garbage collection */
