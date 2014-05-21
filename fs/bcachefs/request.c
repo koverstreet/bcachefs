@@ -841,6 +841,8 @@ static void cache_lookup(struct closure *cl)
 				 cache_lookup_fn, MAP_HOLES);
 	if (ret == -EAGAIN)
 		continue_at(cl, cache_lookup, bcache_wq);
+	else if (ret)
+		pr_err("error %i", ret);
 
 	closure_return(cl);
 }
