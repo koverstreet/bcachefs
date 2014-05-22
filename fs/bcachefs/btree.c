@@ -2027,7 +2027,7 @@ static enum btree_insert_status bch_btree_insert_keys(struct btree *b,
 						struct bkey *replace_key,
 						struct closure *parent)
 {
-	bool inserted = false, need_split = false;
+	bool inserted = false, attempted = false, need_split = false;
 	int oldsize = bch_count_data(&b->keys);
 	struct journal_write *journal_write = NULL;
 
@@ -2087,6 +2087,7 @@ static enum btree_insert_status bch_btree_insert_keys(struct btree *b,
 			k = &temp.key;
 		}
 
+		attempted = true;
 		inserted |= btree_insert_key(b, k, replace_key, journal_write);
 
 		if (k == insert_keys->keys)
@@ -2098,7 +2099,7 @@ static enum btree_insert_status bch_btree_insert_keys(struct btree *b,
 					bch_keylist_empty(insert_keys)
 					? parent : NULL);
 
-	if (!inserted)
+	if (attempted && !inserted)
 		op->insert_collision = true;
 
 	BUG_ON(!bch_keylist_empty(insert_keys) && inserted && b->level);
@@ -2412,7 +2413,7 @@ int bch_btree_insert(struct cache_set *c, enum btree_id id,
 
 	if (ret)
 		pr_err("error %i", ret);
-	else if (op.op.insert_collision)
+	else if (!ret && op.op.insert_collision)
 		ret = -ESRCH;
 
 	return ret;
