@@ -547,61 +547,88 @@ TRACE_EVENT(bcache_invalidate,
 		  MINOR(__entry->dev), __entry->offset)
 );
 
-TRACE_EVENT(bcache_alloc,
-	TP_PROTO(struct cache *ca, size_t bucket),
-	TP_ARGS(ca, bucket),
+DECLARE_EVENT_CLASS(bucket_alloc,
+	TP_PROTO(struct cache *ca, enum alloc_reserve reserve,
+		 struct closure *cl),
+	TP_ARGS(ca, reserve, cl),
 
 	TP_STRUCT__entry(
-		__field(dev_t,		dev			)
-		__field(__u64,		offset			)
+		__array(char,			uuid,	16)
+		__field(enum alloc_reserve,	reserve	  )
+		__field(struct closure *,	cl	  )
 	),
 
 	TP_fast_assign(
-		__entry->dev		= ca->bdev->bd_dev;
-		__entry->offset		= bucket << ca->set->bucket_bits;
+		memcpy(__entry->uuid, ca->sb.uuid.b, 16);
+		__entry->reserve = reserve;
+		__entry->cl = cl;
 	),
 
-	TP_printk("allocated %d,%d sector=%llu", MAJOR(__entry->dev),
-		  MINOR(__entry->dev), __entry->offset)
+	TP_printk("%pU reserve %d cl %p", __entry->uuid, __entry->reserve,
+		  __entry->cl)
 );
 
-TRACE_EVENT(bcache_alloc_fail,
-	TP_PROTO(struct cache *ca, unsigned reserve),
-	TP_ARGS(ca, reserve),
-
-	TP_STRUCT__entry(
-		__field(dev_t,		dev			)
-		__field(unsigned,	free			)
-		__field(unsigned,	free_inc		)
-	),
-
-	TP_fast_assign(
-		__entry->dev		= ca->bdev->bd_dev;
-		__entry->free		= fifo_used(&ca->free[reserve]);
-		__entry->free_inc	= fifo_used(&ca->free_inc);
-	),
-
-	TP_printk("alloc fail %d,%d free %u free_inc %u",
-		  MAJOR(__entry->dev), MINOR(__entry->dev),
-		  __entry->free, __entry->free_inc)
+DEFINE_EVENT(bucket_alloc, bcache_bucket_alloc_fail,
+	TP_PROTO(struct cache *ca, enum alloc_reserve reserve,
+		 struct closure *cl),
+	TP_ARGS(ca, reserve, cl)
 );
 
-TRACE_EVENT(bcache_open_bucket_wait,
-	TP_PROTO(struct cache_set *c, bool moving_gc),
-	TP_ARGS(c, moving_gc),
+DEFINE_EVENT(bucket_alloc, bcache_bucket_alloc,
+	TP_PROTO(struct cache *ca, enum alloc_reserve reserve,
+		 struct closure *cl),
+	TP_ARGS(ca, reserve, cl)
+);
+
+TRACE_EVENT(bcache_bucket_alloc_set_fail,
+	TP_PROTO(struct cache_set *c, enum alloc_reserve reserve,
+		 struct closure *cl),
+	TP_ARGS(c, reserve, cl),
 
 	TP_STRUCT__entry(
 		__array(char,			uuid,	16	)
-		__field(unsigned,		moving_gc	)
+		__field(enum alloc_reserve,	reserve		)
+		__field(struct closure *,	cl		)
 	),
 
 	TP_fast_assign(
 		memcpy(__entry->uuid, c->sb.set_uuid.b, 16);
-		__entry->moving_gc	= moving_gc;
+		__entry->reserve = reserve;
+		__entry->cl = cl;
 	),
 
-	TP_printk("%pU moving_gc %u",
-		  __entry->uuid, __entry->moving_gc)
+	TP_printk("%pU reserve %d cl %p", __entry->uuid, __entry->reserve,
+		  __entry->cl)
+);
+
+DECLARE_EVENT_CLASS(open_bucket_alloc,
+	TP_PROTO(struct cache_set *c, bool moving_gc, struct closure *cl),
+	TP_ARGS(c, moving_gc, cl),
+
+	TP_STRUCT__entry(
+		__array(char,			uuid,	16	)
+		__field(unsigned,		moving_gc	)
+		__field(struct closure *,	cl		)
+	),
+
+	TP_fast_assign(
+		memcpy(__entry->uuid, c->sb.set_uuid.b, 16);
+		__entry->moving_gc = moving_gc;
+		__entry->cl = cl;
+	),
+
+	TP_printk("%pU moving_gc %u cl %p",
+		  __entry->uuid, __entry->moving_gc, __entry->cl)
+);
+
+DEFINE_EVENT(open_bucket_alloc, bcache_open_bucket_alloc,
+	TP_PROTO(struct cache_set *c, bool moving_gc, struct closure *cl),
+	TP_ARGS(c, moving_gc, cl)
+);
+
+DEFINE_EVENT(open_bucket_alloc, bcache_open_bucket_alloc_fail,
+	TP_PROTO(struct cache_set *c, bool moving_gc, struct closure *cl),
+	TP_ARGS(c, moving_gc, cl)
 );
 
 /* Background writeback */

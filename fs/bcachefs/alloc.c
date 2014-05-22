@@ -483,7 +483,7 @@ long bch_bucket_alloc(struct cache *ca, enum alloc_reserve reserve,
 	    fifo_pop(&ca->free[reserve], r))
 		goto out;
 
-	trace_bcache_alloc_fail(ca, reserve);
+	trace_bcache_bucket_alloc_fail(ca, reserve, cl);
 
 	if (cl) {
 		closure_wait(&ca->set->bucket_wait, cl);
@@ -494,7 +494,7 @@ long bch_bucket_alloc(struct cache *ca, enum alloc_reserve reserve,
 out:
 	wake_up(&ca->fifo_wait);
 
-	trace_bcache_alloc(ca, reserve);
+	trace_bcache_bucket_alloc(ca, reserve, cl);
 
 	if (expensive_debug_checks(ca->set)) {
 		size_t iter;
@@ -584,7 +584,7 @@ static struct cache *bch_next_cache(struct cache_set *c,
 	}
 
 	if (!sectors_count) {
-		/* XXX: trace alloc fail */
+		trace_bcache_bucket_alloc_set_fail(c, reserve, cl);
 
 		if (cl) {
 			closure_wait(&c->bucket_wait, cl);
@@ -694,7 +694,7 @@ static struct open_bucket *bch_open_bucket_get(struct cache_set *c,
 					       bool moving_gc,
 					       struct closure *cl)
 {
-	struct open_bucket *ret = ERR_PTR(-ENOSPC);
+	struct open_bucket *ret;
 	unsigned reserve = (moving_gc ? 0 : OPEN_BUCKETS_MOVING_GC_RESERVE);
 
 	spin_lock(&c->open_buckets_lock);
@@ -708,13 +708,15 @@ static struct open_bucket *bch_open_bucket_get(struct cache_set *c,
 		ret->sectors_free = c->sb.bucket_size;
 		bkey_init(&ret->key);
 		c->open_buckets_nr_free--;
+		trace_bcache_open_bucket_alloc(c, moving_gc, cl);
 	} else {
-		trace_bcache_open_bucket_wait(c, moving_gc);
+		trace_bcache_open_bucket_alloc_fail(c, moving_gc, cl);
 
 		if (cl) {
 			closure_wait(&c->open_buckets_wait, cl);
 			ret = ERR_PTR(-EAGAIN);
-		}
+		} else
+			ret = ERR_PTR(-ENOSPC);
 	}
 
 	spin_unlock(&c->open_buckets_lock);
