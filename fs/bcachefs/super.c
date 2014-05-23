@@ -1412,7 +1412,7 @@ struct cache_set *bch_cache_set_alloc(struct cache_sb *sb)
 	mutex_init(&c->btree_cache_lock);
 	mutex_init(&c->bucket_lock);
 	spin_lock_init(&c->gc_lock);
-	init_waitqueue_head(&c->btree_cache_wait);
+	init_waitqueue_head(&c->mca_wait);
 	init_waitqueue_head(&c->gc_wait);
 	spin_lock_init(&c->btree_root_lock);
 
@@ -1478,13 +1478,15 @@ err:
 static struct btree *bch_btree_root_alloc(struct cache_set *c,
 					  enum btree_id id)
 {
+	struct closure cl;
 	struct btree_op op;
 
 	bch_btree_op_init(&op, SHRT_MAX);
+	closure_init_stack(&cl);
 
 	while (1) {
-		if (__btree_check_reserve(c, &op, id, 1)) {
-			schedule();
+		if (__btree_check_reserve(c, &op, id, 1, &cl)) {
+			closure_sync(&cl);
 			continue;
 		}
 

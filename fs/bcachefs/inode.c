@@ -33,7 +33,7 @@ static int bch_inode_create_fn(struct btree_op *b_op, struct btree *b,
 		 KEY_INODE(&op->inode->i_key), KEY_U64s(&op->inode->i_key));
 
 	bch_keylist_init_single(&keys, &op->inode->i_key);
-	ret = bch_btree_insert_node(b, b_op, &keys, NULL, NULL);
+	ret = bch_btree_insert_node_sync(b, b_op, &keys, NULL);
 
 	BUG_ON(!ret && !bch_keylist_empty(&keys));
 
@@ -81,7 +81,7 @@ int bch_inode_update(struct cache_set *c, struct bch_inode *inode)
 	struct keylist keys;
 
 	bch_keylist_init_single(&keys, &inode->i_key);
-	return bch_btree_insert(c, BTREE_ID_INODES, &keys, NULL, NULL, false);
+	return bch_btree_insert_sync(c, BTREE_ID_INODES, &keys, NULL);
 }
 
 struct inode_rm_op {
@@ -113,7 +113,7 @@ static int inode_rm_fn(struct btree_op *b_op, struct btree *b, struct bkey *k)
 
 	bch_keylist_init_single(&keys, &erase_key);
 
-	ret = bch_btree_insert_node(b, b_op, &keys, NULL, NULL);
+	ret = bch_btree_insert_node_sync(b, b_op, &keys, NULL);
 
 	/*
 	 * this could be more efficient, this way we're always redoing the
@@ -142,7 +142,7 @@ int bch_inode_rm(struct cache_set *c, u64 inode_nr)
 	SET_KEY_DELETED(&inode, 1);
 	bch_keylist_init_single(&keys, &inode);
 
-	return bch_btree_insert(c, BTREE_ID_INODES, &keys, NULL, NULL, false);
+	return bch_btree_insert_sync(c, BTREE_ID_INODES, &keys, NULL);
 }
 
 struct find_op {

@@ -67,10 +67,12 @@ static void bch_data_insert_keys(struct closure *cl)
 		closure_sync(&s->cl);
 #endif
 	ret = bch_btree_insert(op->c, BTREE_ID_EXTENTS, &op->insert_keys,
-			       replace_key, op->flush ? cl : NULL,
-			       op->moving_gc);
+			       replace_key, cl,
+			       op->moving_gc, op->flush);
 	if (ret == -ESRCH) {
 		op->replace_collision = true;
+	} else if (ret == -EAGAIN) {
+		continue_at(cl, bch_data_insert_keys, op->wq);
 	} else if (ret) {
 		op->error		= -ENOMEM;
 		op->insert_data_done	= true;
@@ -1020,7 +1022,7 @@ static int cached_dev_cache_miss(struct btree *b, struct search *s,
 
 	replace.key = KEY(s->inode, bio->bi_iter.bi_sector + sectors, sectors);
 
-	ret = bch_btree_insert_check_key(b, &s->op, &replace.key);
+	ret = bch_btree_insert_check_key(b, &s->op, &replace.key, &s->cl);
 	if (ret)
 		return ret;
 

@@ -642,13 +642,15 @@ struct cache_set {
 	unsigned		btree_cache_reserve;
 	struct shrinker		btree_cache_shrink;
 
+	struct closure_waitlist	btree_cache_wait;
+
 	/*
 	 * If we need to allocate memory for a new btree node and that
 	 * allocation fails, we can cannibalize another node in the btree cache
 	 * to satisfy the allocation - lock to guarantee only one thread does
 	 * this at a time:
 	 */
-	wait_queue_head_t	btree_cache_wait;
+	wait_queue_head_t	mca_wait;
 	struct task_struct	*btree_cache_alloc_lock;
 
 	struct workqueue_struct	*btree_insert_wq;

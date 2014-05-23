@@ -102,8 +102,8 @@ static void write_dirty_finish(struct closure *cl)
 		SET_KEY_CACHED(keys.top, true);
 		bch_keylist_push(&keys);
 
-		ret = bch_btree_insert(dc->disk.c, BTREE_ID_EXTENTS,
-				       &keys, &w->key, NULL, false);
+		ret = bch_btree_insert_sync(dc->disk.c, BTREE_ID_EXTENTS,
+					    &keys, &w->key);
 		if (ret)
 			trace_bcache_writeback_collision(&w->key);
 
