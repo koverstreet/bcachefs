@@ -932,13 +932,14 @@ struct open_bucket *bch_gc_alloc_sectors(struct cache_set *c, struct bkey *k,
 
 	mutex_lock(&c->bucket_lock);
 retry:
+	/* Check if we raced with a foreground write */
 	for (i = 0; i < bch_extent_ptrs(k); i++)
 		if (ptr_available(c, k, i) &&
 		    GC_GEN(PTR_BUCKET(c, k, i)))
 			goto found;
 
 	mutex_unlock(&c->bucket_lock);
-	return NULL;
+	return ERR_PTR(-ESRCH);
 found:
 	ca = PTR_CACHE(c, k, i);
 	gen = GC_GEN(PTR_BUCKET(c, k, i)) - 1;
@@ -947,9 +948,13 @@ found:
 	if (!b) {
 		mutex_unlock(&c->bucket_lock);
 
-		b = bch_open_bucket_get(c, true, cl);
-		if (IS_ERR_OR_NULL(b))
-			return b;
+		b = bch_open_bucket_get(c, true, NULL);
+		if (WARN_ONCE(IS_ERR(b),
+			      "bcache: movinggc bucket allocation failed with %ld",
+			      PTR_ERR(b))) {
+			mutex_unlock(&c->bucket_lock);
+			return ERR_PTR(-ENOSPC);
+		}
 
 		mutex_lock(&c->bucket_lock);
 
