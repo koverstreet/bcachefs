@@ -1127,7 +1127,7 @@ retry:
 	trace_bcache_btree_node_alloc(b);
 	return b;
 err:
-	trace_bcache_btree_node_alloc_fail(c);
+	trace_bcache_btree_node_alloc_fail(c, id);
 	return NULL;
 }
 

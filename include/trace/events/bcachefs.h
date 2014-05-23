@@ -61,21 +61,6 @@ DECLARE_EVENT_CLASS(bkey,
 		  __entry->cached ? " cached" : "")
 );
 
-DECLARE_EVENT_CLASS(btree_node,
-	TP_PROTO(struct btree *b),
-	TP_ARGS(b),
-
-	TP_STRUCT__entry(
-		__field(size_t,		bucket			)
-	),
-
-	TP_fast_assign(
-		__entry->bucket	= PTR_BUCKET_NR(b->c, &b->key, 0);
-	),
-
-	TP_printk("bucket %zu", __entry->bucket)
-);
-
 /* request.c */
 
 DEFINE_EVENT(bcache_request, bcache_request_start,
@@ -237,6 +222,26 @@ DEFINE_EVENT(cache_set, bcache_btree_cache_cannibalize,
 	TP_ARGS(c)
 );
 
+DECLARE_EVENT_CLASS(btree_node,
+	TP_PROTO(struct btree *b),
+	TP_ARGS(b),
+
+	TP_STRUCT__entry(
+		__array(char,		uuid,	16		)
+		__field(size_t,		bucket			)
+		__field(enum btree_id,	id			)
+	),
+
+	TP_fast_assign(
+		memcpy(__entry->uuid, b->c->sb.set_uuid.b, 16);
+		__entry->bucket	= PTR_BUCKET_NR(b->c, &b->key, 0);
+		__entry->id = b->btree_id;
+	),
+
+	TP_printk("%pU bucket %zu id %u", __entry->uuid, __entry->bucket,
+		__entry->id)
+);
+
 DEFINE_EVENT(btree_node, bcache_btree_read,
 	TP_PROTO(struct btree *b),
 	TP_ARGS(b)
@@ -267,9 +272,21 @@ DEFINE_EVENT(btree_node, bcache_btree_node_alloc,
 	TP_ARGS(b)
 );
 
-DEFINE_EVENT(cache_set, bcache_btree_node_alloc_fail,
-	TP_PROTO(struct cache_set *c),
-	TP_ARGS(c)
+TRACE_EVENT(bcache_btree_node_alloc_fail,
+	TP_PROTO(struct cache_set *c, enum btree_id id),
+	TP_ARGS(c, id),
+
+	TP_STRUCT__entry(
+		__array(char,		uuid,	16		)
+		__field(enum btree_id,	id			)
+	),
+
+	TP_fast_assign(
+		memcpy(__entry->uuid, c->sb.set_uuid.b, 16);
+		__entry->id = id;
+	),
+
+	TP_printk("%pU id %u", __entry->uuid, __entry->id)
 );
 
 DEFINE_EVENT(btree_node, bcache_btree_node_free,
