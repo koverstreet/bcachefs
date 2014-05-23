@@ -1475,6 +1475,23 @@ err:
 	return NULL;
 }
 
+static struct btree *bch_btree_root_alloc(struct cache_set *c,
+					  enum btree_id id)
+{
+	struct btree_op op;
+
+	bch_btree_op_init(&op, SHRT_MAX);
+
+	while (1) {
+		if (__btree_check_reserve(c, &op, id, 1)) {
+			schedule();
+			continue;
+		}
+
+		return bch_btree_node_alloc(c, NULL, 0, id, NULL);
+	}
+}
+
 static void run_cache_set(struct cache_set *c)
 {
 	const char *err = "cannot allocate memory";
@@ -1609,8 +1626,9 @@ static void run_cache_set(struct cache_set *c)
 
 		for (id = 0; id < BTREE_ID_NR; id++) {
 			err = "cannot allocate new btree root";
-			b = __bch_btree_node_alloc(c, NULL, 0, id, true, NULL);
-			if (IS_ERR_OR_NULL(b))
+
+			b = bch_btree_root_alloc(c, id);
+			if (!b)
 				goto err;
 
 			mutex_lock(&b->write_lock);
