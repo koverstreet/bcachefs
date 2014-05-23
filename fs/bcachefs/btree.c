@@ -1092,9 +1092,10 @@ static void btree_node_free(struct btree *b)
 	mutex_unlock(&b->c->btree_cache_lock);
 }
 
-struct btree *bch_btree_node_alloc(struct cache_set *c, struct btree_op *op,
-				   int level, enum btree_id id,
-				   struct btree *parent)
+static struct btree *bch_btree_node_alloc(struct cache_set *c,
+					  struct btree_op *op,
+					  int level, enum btree_id id,
+					  struct btree *parent)
 {
 	BKEY_PADDED(key) k;
 	struct btree *b;
@@ -1146,9 +1147,9 @@ static struct btree *btree_node_alloc_replacement(struct btree *b,
 	return n;
 }
 
-int __btree_check_reserve(struct cache_set *c, struct btree_op *op,
-			  enum btree_id id, unsigned required,
-			  struct closure *cl)
+static int __btree_check_reserve(struct cache_set *c, struct btree_op *op,
+				 enum btree_id id, unsigned required,
+				 struct closure *cl)
 {
 	struct cache *ca;
 	unsigned i;
@@ -1187,6 +1188,24 @@ int __btree_check_reserve(struct cache_set *c, struct btree_op *op,
 	mutex_unlock(&c->bucket_lock);
 
 	return mca_cannibalize_lock(c, op);
+}
+
+struct btree *bch_btree_root_alloc(struct cache_set *c, enum btree_id id)
+{
+	struct closure cl;
+	struct btree_op op;
+
+	bch_btree_op_init(&op, SHRT_MAX);
+	closure_init_stack(&cl);
+
+	while (1) {
+		if (__btree_check_reserve(c, &op, id, 1, &cl)) {
+			closure_sync(&cl);
+			continue;
+		}
+
+		return bch_btree_node_alloc(c, NULL, 0, id, NULL);
+	}
 }
 
 static int btree_check_reserve(struct btree *b, struct btree_op *op,

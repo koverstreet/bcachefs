@@ -1475,25 +1475,6 @@ err:
 	return NULL;
 }
 
-static struct btree *bch_btree_root_alloc(struct cache_set *c,
-					  enum btree_id id)
-{
-	struct closure cl;
-	struct btree_op op;
-
-	bch_btree_op_init(&op, SHRT_MAX);
-	closure_init_stack(&cl);
-
-	while (1) {
-		if (__btree_check_reserve(c, &op, id, 1, &cl)) {
-			closure_sync(&cl);
-			continue;
-		}
-
-		return bch_btree_node_alloc(c, NULL, 0, id, NULL);
-	}
-}
-
 static void run_cache_set(struct cache_set *c)
 {
 	const char *err = "cannot allocate memory";
