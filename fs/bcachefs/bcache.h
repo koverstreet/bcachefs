@@ -527,11 +527,10 @@ struct cache {
 	struct open_bucket	*gc_buckets[NUM_GC_GENS];
 
 	/*
-	 * If nonzero, we know we aren't going to find any buckets to invalidate
-	 * until a gc finishes - otherwise we could pointlessly burn a ton of
-	 * cpu
+	 * If set, the allocator thread will issue discard operations to newly
+	 * invalidated buckets.
 	 */
-	bool			discard; /* Get rid of? */
+	bool			discard;
 
 	struct journal_device	journal;
 
