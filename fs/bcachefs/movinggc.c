@@ -146,6 +146,9 @@ static bool bch_moving_gc(struct cache *ca)
 
 	mutex_lock(&c->bucket_lock);
 
+	/* We won't fill up the moving GC reserve completely if the data
+	 * being copied is from different generations. In the worst case,
+	 * there will be NUM_GC_GENS buckets of internal fragmentation */
 	reserve_sectors = ca->sb.bucket_size *
 		(fifo_used(&ca->free[RESERVE_MOVINGGC]) - NUM_GC_GENS);
 
