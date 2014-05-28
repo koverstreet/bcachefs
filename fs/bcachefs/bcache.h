@@ -1002,7 +1002,7 @@ void bch_cache_release(struct kobject *);
 
 void bcache_write_super(struct cache_set *);
 
-int bch_flash_dev_create(struct cache_set *c, uint64_t size);
+int bch_flash_dev_create(struct cache_set *, u64);
 
 int bch_cached_dev_attach(struct cached_dev *, struct cache_set *);
 void bch_cached_dev_detach(struct cached_dev *);
