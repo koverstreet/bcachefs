@@ -2010,11 +2010,12 @@ static int bcache_reboot(struct notifier_block *n, unsigned long code, void *x)
 	    code == SYS_HALT ||
 	    code == SYS_POWER_OFF) {
 		DEFINE_WAIT(wait);
-		unsigned long start = jiffies;
 		bool stopped = false;
 
 		struct cache_set *c, *tc;
 		struct cached_dev *dc, *tdc;
+
+		unsigned long timeout;
 
 		mutex_lock(&bch_register_lock);
 
@@ -2030,21 +2031,25 @@ static int bcache_reboot(struct notifier_block *n, unsigned long code, void *x)
 		list_for_each_entry_safe(dc, tdc, &uncached_devices, list)
 			bcache_device_stop(&dc->disk);
 
+		/* If we're testing, n == NULL so wait forever */
+		if (n)
+			timeout = 2 * HZ;
+		else
+			timeout = MAX_SCHEDULE_TIMEOUT;
+
 		/* What's a condition variable? */
 		while (1) {
-			long timeout = start + 2 * HZ - jiffies;
-
 			stopped = list_empty(&bch_cache_sets) &&
 				list_empty(&uncached_devices);
 
-			if (timeout < 0 || stopped)
+			if (timeout <= 0 || stopped)
 				break;
 
 			prepare_to_wait(&unregister_wait, &wait,
 					TASK_UNINTERRUPTIBLE);
 
 			mutex_unlock(&bch_register_lock);
-			schedule_timeout(timeout);
+			timeout = schedule_timeout(timeout);
 			mutex_lock(&bch_register_lock);
 		}
 
