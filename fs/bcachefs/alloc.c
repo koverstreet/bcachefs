@@ -850,8 +850,8 @@ found:
  *
  * @write_point - opaque identifier of where this write came from.
  *		  bcache uses ptr address of the task struct
- * @tier - which tier this write is destined towards
- * @wait - should the write wait for a bucket or fail if there isn't
+ * @tier_idx - which tier this write is destined towards
+ * @cl - closure to wait for a bucket
  */
 struct open_bucket *bch_alloc_sectors(struct cache_set *c, struct bkey *k,
 				      unsigned write_point, unsigned tier_idx,
