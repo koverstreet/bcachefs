@@ -692,7 +692,8 @@ static bool bch_extent_bad_expensive(struct btree *b, const struct bkey *k)
 			     stale);
 
 		btree_bug_on(stale && replicas_needed && KEY_SIZE(k),
-			     b, "stale dirty pointer");
+			     b, "stale dirty pointer:\nbucket %zu gen %i",
+			     PTR_BUCKET_NR(b->c, k, i), g->gen);
 
 		if (stale)
 			continue;
