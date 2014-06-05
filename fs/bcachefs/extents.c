@@ -209,7 +209,9 @@ void bch_extent_to_text(char *buf, size_t size, const struct bkey *k)
 
 #define p(...)	(out += scnprintf(out, end - out, __VA_ARGS__))
 
-	p("%llu:%llu len %llu -> [", KEY_INODE(k), KEY_START(k), KEY_SIZE(k));
+	p("%llu:%llu-%llu len %llu ver %llu -> [",
+	  KEY_INODE(k), KEY_START(k), KEY_OFFSET(k),
+	  KEY_SIZE(k), KEY_VERSION(k));
 
 	for (i = 0; i < bch_extent_ptrs(k); i++) {
 		if (i)
