@@ -27,7 +27,7 @@ struct data_insert_op {
 		 * fail when out of space? */
 		unsigned	wait:1;
 		/* Discard key range? */
-		unsigned	bypass:1;
+		unsigned	discard:1;
 		/* Wait for journal commit? */
 		unsigned	flush:1;
 		/* Perform a compare-exchange with replace_key? */
@@ -56,7 +56,7 @@ static inline void bch_data_insert_op_init(struct data_insert_op *op,
 					   struct workqueue_struct *wq,
 					   struct bio *bio,
 					   unsigned write_point,
-					   bool wait, bool bypass, bool flush,
+					   bool wait, bool discard, bool flush,
 					   struct bkey *insert_key,
 					   struct bkey *replace_key)
 {
@@ -67,7 +67,7 @@ static inline void bch_data_insert_op_init(struct data_insert_op *op,
 	op->error	= 0;
 	op->flags	= 0;
 	op->wait	= wait;
-	op->bypass	= bypass;
+	op->discard	= discard;
 	op->flush	= flush;
 
 	bch_keylist_init(&op->insert_keys);

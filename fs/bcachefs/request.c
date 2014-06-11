@@ -179,7 +179,7 @@ static void bch_data_insert_start(struct closure *cl)
 	unsigned open_bucket_nr = 0;
 	struct open_bucket *b;
 
-	if (op->bypass)
+	if (op->discard)
 		return bch_data_invalidate(cl);
 
 	/*
@@ -267,7 +267,7 @@ err:
 		 * we wait for buckets to be freed up, so just invalidate the
 		 * rest of the write.
 		 */
-		op->bypass = true;
+		op->discard = true;
 		return bch_data_invalidate(cl);
 	} else {
 		/*
@@ -301,7 +301,7 @@ err:
  * It inserts the data in s->cache_bio; bi_sector is used for the key offset,
  * and op->inode is used for the key inode.
  *
- * If s->bypass is true, instead of inserting the data it invalidates the
+ * If op->discard is true, instead of inserting the data it invalidates the
  * region of the cache represented by s->cache_bio and op->inode.
  */
 void bch_data_insert(struct closure *cl)
@@ -311,7 +311,7 @@ void bch_data_insert(struct closure *cl)
 	u64 inode = KEY_INODE(&op->insert_key);
 
 	trace_bcache_write(c, inode, op->bio, !KEY_CACHED(&op->insert_key),
-			   op->bypass);
+			   op->discard);
 
 	memset(op->open_buckets, 0, sizeof(op->open_buckets));
 
@@ -339,7 +339,7 @@ void bch_data_insert(struct closure *cl)
 
 	if (op->moving_gc)
 		bch_mark_gc_write(c, bio_sectors(op->bio));
-	else if (!op->bypass)
+	else if (!op->discard)
 		bch_mark_foreground_write(c, bio_sectors(op->bio));
 
 	if (atomic_sub_return(bio_sectors(op->bio),
@@ -736,10 +736,19 @@ struct search {
 	struct bcache_device	*d;
 
 	unsigned		inode;
-	unsigned		recoverable:1;
 	unsigned		write:1;
+
+	/* Flags only used for reads */
+	unsigned		recoverable:1;
 	unsigned		read_dirty_data:1;
 	unsigned		cache_miss:1;
+
+	/*
+	 * For reads:  bypass read from cache and insertion into cache
+	 * For writes: discard key range from cache, sending the write to
+	 *             the backing device (if there is a backing device)
+	 */
+	unsigned		bypass:1;
 
 	unsigned long		start_time;
 
@@ -748,12 +757,10 @@ struct search {
 
 	/*
 	 * Mostly only used for writes. For reads, we still make use of
-	 * some fields:
+	 * some trivial fields:
 	 * - c
 	 * - cl
 	 * - error
-	 * - bypass -- when set, we bypass the cache device and read from
-	 *   backing device directly
 	 */
 	struct data_insert_op	iop;
 };
@@ -834,7 +841,7 @@ static int cache_lookup_fn(struct btree_op *op, struct btree *b, struct bkey *k)
 	 * error up anywhere).
 	 */
 	closure_get(&s->cl);
-	if (!s->iop.bypass)
+	if (!s->bypass)
 		cache_promote(b->c, n, bio_key);
 	else
 		submit_bio(n);
@@ -994,8 +1001,8 @@ static void cached_dev_read_done_bh(struct closure *cl)
 	struct cached_dev *dc = container_of(s->d, struct cached_dev, disk);
 
 	bch_mark_cache_accounting(s->iop.c, s->d,
-				  !s->cache_miss, s->iop.bypass);
-	trace_bcache_read(s->orig_bio, !s->cache_miss, s->iop.bypass);
+				  !s->cache_miss, s->bypass);
+	trace_bcache_read(s->orig_bio, !s->cache_miss, s->bypass);
 
 	if (s->iop.error)
 		continue_at_nobarrier(cl, cached_dev_read_error, bcache_wq);
@@ -1007,6 +1014,8 @@ static void cached_dev_read_done_bh(struct closure *cl)
 
 /**
  * cached_dev_cache_miss - populate cache with data from backing device
+ *
+ * We don't write to the cache if s->bypass is set.
  */
 static int cached_dev_cache_miss(struct btree *b, struct search *s,
 				 struct bio *bio, unsigned sectors)
@@ -1016,7 +1025,7 @@ static int cached_dev_cache_miss(struct btree *b, struct search *s,
 	struct bio *miss;
 	BKEY_PADDED(key) replace;
 
-	if (s->iop.bypass) {
+	if (s->bypass) {
 		miss = bio_next_split(bio, sectors, GFP_NOIO, s->d->bio_split);
 
 		miss->bi_end_io		= request_endio;
@@ -1084,7 +1093,7 @@ static void cached_dev_write(struct cached_dev *dc, struct search *s)
 	struct bkey start = KEY(inode, bio->bi_iter.bi_sector, 0);
 	struct bkey end = KEY(inode, bio_end_sector(bio), 0);
 	bool writeback = false;
-	bool bypass = s->iop.bypass;
+	bool bypass = s->bypass;
 	struct bkey insert_key = KEY(s->inode, 0, 0);
 	struct bio *insert_bio;
 
@@ -1118,6 +1127,11 @@ static void cached_dev_write(struct cached_dev *dc, struct search *s)
 		insert_bio = s->orig_bio;
 		bio_get(insert_bio);
 
+		/* If this is a bypass-write (as opposed to a discard), send
+		 * it down to the backing device. If this is a discard, only
+		 * send it to the backing device if the backing device
+		 * supports discards. Otherwise, we simply discard the key
+		 * range from the cache and don't touch the backing device. */
 		if ((bio_op(bio) != REQ_OP_DISCARD) ||
 		    blk_queue_discard(bdev_get_queue(dc->bdev)))
 			closure_bio_submit(bio, cl);
@@ -1195,7 +1209,7 @@ static void __cached_dev_make_request(struct request_queue *q, struct bio *bio)
 					      cached_dev_nodata,
 					      bcache_wq);
 		} else {
-			s->iop.bypass = check_should_bypass(dc, bio, rw);
+			s->bypass = check_should_bypass(dc, bio, rw);
 
 			if (rw)
 				cached_dev_write(dc, s);
