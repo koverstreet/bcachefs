@@ -23,15 +23,23 @@ struct data_insert_op {
 		uint16_t	flags;
 
 	struct {
+		/* Wait for data bucket allocation or just
+		 * fail when out of space? */
 		unsigned	wait:1;
+		/* Discard key range? */
 		unsigned	bypass:1;
+		/* Wait for journal commit? */
 		unsigned	flush:1;
+		/* Perform a compare-exchange with replace_key? */
 		unsigned	replace:1;
-
+		/* Tier to write to */
 		unsigned	tier:2;
+		/* Use moving GC reserves for buckets, btree nodes and
+		 * open buckets? */
 		unsigned	moving_gc:1;
-
+		/* Set on completion */
 		unsigned	replace_collision:1;
+		/* Internal */
 		unsigned	insert_data_done:1;
 	};
 	};

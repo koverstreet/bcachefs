@@ -2304,7 +2304,7 @@ static int btree_split(struct btree *b, struct btree_op *op,
 }
 
 /**
- * bch_btree_insert_at_node - insert bkeys into a given btree node
+ * bch_btree_insert_node - insert bkeys into a given btree node
  * @b:			parent btree node
  * @op:			pointer to struct btree_op
  * @insert_keys:	list of keys to insert
@@ -2314,7 +2314,7 @@ static int btree_split(struct btree *b, struct btree_op *op,
  * This is top level for common btree insertion/index update code. The control
  * flow goes roughly like:
  *
- * bch_btree_insert_at_node
+ * bch_btree_insert_node
  *     btree_split
  *   bch_btree_insert_keys
  *     btree_insert_key
@@ -2480,7 +2480,7 @@ static int btree_insert_fn(struct btree_op *b_op, struct btree *b)
 }
 
 /**
- * bch_btree_insert - insert keys into the btree
+ * bch_btree_insert - insert keys into the extent btree
  * @c:			pointer to struct cache_set
  * @id:			btree to insert into
  * @insert_keys:	list of keys to insert

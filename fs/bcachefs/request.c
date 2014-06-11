@@ -48,6 +48,9 @@ static void bio_csum(struct bio *bio, struct bkey *k)
 
 /* Insert data into cache */
 
+/**
+ * bch_data_insert_keys - insert extent btree keys for a write
+ */
 static void bch_data_insert_keys(struct closure *cl)
 {
 	struct data_insert_op *op = container_of(cl, struct data_insert_op, cl);
@@ -55,17 +58,6 @@ static void bch_data_insert_keys(struct closure *cl)
 	unsigned i;
 	int ret;
 
-	/*
-	 * If we're looping, might already be waiting on
-	 * another journal write - can't wait on more than one journal write at
-	 * a time
-	 *
-	 * XXX: this looks wrong
-	 */
-#if 0
-	while (atomic_read(&s->cl.remaining) & CLOSURE_WAITING)
-		closure_sync(&s->cl);
-#endif
 	ret = bch_btree_insert(op->c, BTREE_ID_EXTENTS, &op->insert_keys,
 			       replace_key, cl,
 			       op->moving_gc, op->flush);
@@ -91,6 +83,12 @@ static void bch_data_insert_keys(struct closure *cl)
 	closure_return(cl);
 }
 
+/**
+ * bch_data_invalidate - discard range of keys
+ *
+ * Used to implement discard, and to handle when writethrough write hits
+ * a write error on the cache device.
+ */
 static void bch_data_invalidate(struct closure *cl)
 {
 	struct data_insert_op *op = container_of(cl, struct data_insert_op, cl);
@@ -196,8 +194,6 @@ static void bch_data_insert_start(struct closure *cl)
 
 		BUG_ON(bio_sectors(bio) != KEY_SIZE(&op->insert_key));
 
-		memset(ptrs_to_write, 0, sizeof(ptrs_to_write));
-
 		if (open_bucket_nr == ARRAY_SIZE(op->open_buckets))
 			continue_at(cl, bch_data_insert_keys,
 				    op->c->btree_insert_wq);
@@ -210,6 +206,8 @@ static void bch_data_insert_start(struct closure *cl)
 			continue_at(cl, bch_data_insert_keys,
 				    op->c->btree_insert_wq);
 
+		memset(ptrs_to_write, 0, sizeof(ptrs_to_write));
+
 		k = op->insert_keys.top;
 		bkey_copy(k, &op->insert_key);
 
@@ -220,6 +218,9 @@ static void bch_data_insert_start(struct closure *cl)
 					    op->wait ? cl : NULL);
 		BUG_ON(!b);
 		if (PTR_ERR(b) == -EAGAIN) {
+			/* If we already have some keys, must insert them first
+			 * before allocating another open bucket. We only hit
+			 * this case if open_bucket_nr > 1. */
 			if (bch_keylist_empty(&op->insert_keys))
 				continue_at(cl, bch_data_insert_start, op->wq);
 			else
@@ -285,7 +286,7 @@ err:
 }
 
 /**
- * bch_data_insert - stick some data in the cache
+ * bch_data_insert - handle a write to a cache device or flash only volume
  *
  * This is the starting point for any data to end up in a cache device; it could
  * be from a normal write, or a writeback write, or a write to a flash only
@@ -355,7 +356,7 @@ void bch_data_insert(struct closure *cl)
 	continue_at_nobarrier(cl, bch_data_insert_start, NULL);
 }
 
-/* Cache promotion */
+/* Cache promotion on read */
 
 struct cache_promote_op {
 	struct closure		cl;
@@ -742,7 +743,18 @@ struct search {
 
 	unsigned long		start_time;
 
+	/* Only used for reads */
 	struct btree_op		op;
+
+	/*
+	 * Mostly only used for writes. For reads, we still make use of
+	 * some fields:
+	 * - c
+	 * - cl
+	 * - error
+	 * - bypass -- when set, we bypass the cache device and read from
+	 *   backing device directly
+	 */
 	struct data_insert_op	iop;
 };
 
@@ -830,6 +842,9 @@ static int cache_lookup_fn(struct btree_op *op, struct btree *b, struct bkey *k)
 	return n == bio ? MAP_DONE : MAP_CONTINUE;
 }
 
+/**
+ * cache_lookup - handle a read from a cache or flash only volume
+ */
 static void cache_lookup(struct closure *cl)
 {
 	struct search *s = container_of(cl, struct search, iop.cl);
@@ -990,6 +1005,9 @@ static void cached_dev_read_done_bh(struct closure *cl)
 		continue_at_nobarrier(cl, cached_dev_bio_complete, NULL);
 }
 
+/**
+ * cached_dev_cache_miss - populate cache with data from backing device
+ */
 static int cached_dev_cache_miss(struct btree *b, struct search *s,
 				 struct bio *bio, unsigned sectors)
 {
@@ -1244,6 +1262,9 @@ void bch_cached_dev_request_init(struct cached_dev *dc)
 
 /* Flash backed devices */
 
+/**
+ * flash_dev_cache_miss - handle read from a hole in a flash only volume
+ */
 static int flash_dev_cache_miss(struct btree *b, struct search *s,
 				struct bio *bio, unsigned sectors)
 {
