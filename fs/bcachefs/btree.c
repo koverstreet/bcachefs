@@ -1781,10 +1781,11 @@ static int bch_gc_thread(void *arg)
 			set_current_state(TASK_RUNNING);
 		spin_unlock(&c->gc_lock);
 
-		schedule();
-
 		if (kthread_should_stop())
 			break;
+
+		try_to_freeze();
+		schedule();
 	}
 
 	return 0;
