@@ -1733,6 +1733,8 @@ static void bch_btree_gc(struct cache_set *c)
 	trace_bcache_gc_start(c);
 
 	memset(&stats, 0, sizeof(struct gc_stat));
+
+	/* Write lock all nodes */
 	bch_btree_op_init(&op, SHRT_MAX);
 
 	btree_gc_start(c);
@@ -2164,8 +2166,13 @@ static int btree_split(struct btree *b, struct btree_op *op,
 	closure_init_stack(&cl);
 	bch_keylist_init(&parent_keys);
 
+	/* After this check we cannot return -EAGAIN anymore */
 	ret = btree_check_reserve(b, op, parent);
 	if (ret) {
+		/* If splitting an interior node, we've already split a leaf,
+		 * so we should have checked for sufficient reserve. We can't
+		 * just restart splitting an interior node since we've already
+		 * modified the btree. */
 		if (!b->level)
 			return ret;
 		else
@@ -2332,8 +2339,9 @@ static int btree_split(struct btree *b, struct btree_op *op,
  * the journal write (if @flush is set). The journal wait will only happen
  * if the full list is inserted.
  *
- * Returns -EAGAIN if closure was put on a waitlist waiting for
- * btree node allocation.
+ * Return values:
+ * -EAGAIN: @parent was put on a waitlist waiting for btree node allocation.
+ * -EINTR: locking changed, this function should be called again.
  */
 int bch_btree_insert_node(struct btree *b, struct btree_op *op,
 			  struct keylist *insert_keys,
@@ -2384,6 +2392,8 @@ int bch_btree_insert_node(struct btree *b, struct btree_op *op,
 	case BTREE_INSERT_NEED_SPLIT:
 		mutex_unlock(&b->write_lock);
 
+		/* The first time this is called, we don't have a write lock
+		 * on the parent yet, so update op->lock and start again. */
 		if (op->lock <= btree_node_root(b)->level) {
 			op->lock = btree_node_root(b)->level + 1;
 			return -EINTR;
@@ -2421,8 +2431,15 @@ int bch_btree_insert_node_sync(struct btree *b, struct btree_op *op,
 	}
 }
 
-/* Returns -EAGAIN if closure was put on a waitlist waiting for
- * btree node allocation */
+/**
+ * bch_btree_insert_check_key - insert dummy key into btree
+ *
+ * Used to address a race with cache promotion after cache miss.
+ *
+ * Return values:
+ * -EAGAIN: @cl was put on a waitlist waiting for btree node allocation
+ * -EINTR: btree node was changed while upgrading to write lock
+ */
 int bch_btree_insert_check_key(struct btree *b, struct btree_op *op,
 			       struct bkey *check_key, struct closure *cl)
 {

@@ -206,9 +206,16 @@ struct btree_op {
 	u8			iterator_invalidated;
 
 	unsigned		insert_collision:1;
+
+	/* Reserves */
 	unsigned		moving_gc:1;
 };
 
+/**
+ * @write_lock_level: -1 for read locks only
+ *                    0 for write lock on leaf
+ *                    SHRT_MAX for write locks only
+ */
 static inline void bch_btree_op_init(struct btree_op *op, int write_lock_level)
 {
 	memset(op, 0, sizeof(struct btree_op));
@@ -253,9 +260,8 @@ int bch_btree_insert_sync(struct cache_set *, enum btree_id,
 			  struct keylist *, struct bkey *);
 int bch_btree_insert_node(struct btree *, struct btree_op *, struct keylist *,
 			  struct bkey *, struct closure *, bool);
-int bch_btree_insert_node_sync(struct btree *b, struct btree_op *op,
-			       struct keylist *insert_keys,
-			       struct bkey *replace_key);
+int bch_btree_insert_node_sync(struct btree *, struct btree_op *,
+			       struct keylist *, struct bkey *);
 
 int bch_gc_thread_start(struct cache_set *);
 void bch_initial_gc_finish(struct cache_set *);
