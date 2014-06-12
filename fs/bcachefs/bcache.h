@@ -455,7 +455,9 @@ enum alloc_reserve {
 #define BTREE_NODE_RESERVE 8
 
 #define OPEN_BUCKETS_COUNT 64
-#define OPEN_BUCKETS_MOVING_GC_RESERVE 4
+
+/* We don't want open bucket allocations from bch_alloc_gc_sectors() to fail */
+#define OPEN_BUCKETS_MOVING_GC_RESERVE NUM_GC_GENS
 
 struct open_bucket {
 	struct list_head	list;
