@@ -274,7 +274,8 @@ static inline void wake_up_gc(struct cache_set *c)
 		wake_up_process(c->gc_thread);
 }
 
-void bch_wait_for_next_gc(struct cache_set *, bool);
+unsigned bch_gc_count(struct cache_set *);
+void bch_wait_for_next_gc(struct cache_set *, unsigned);
 
 /* Return values from @fn parameter to map_keys and map_nodes */
 #define MAP_DONE	0  /* We're done */

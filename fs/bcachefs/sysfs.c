@@ -457,17 +457,6 @@ static unsigned bch_cache_available_percent(struct cache_set *c)
 	return div64_u64((u64) buckets_available(c) * 100, c->nbuckets);
 }
 
-static unsigned bch_gc_count(struct cache_set *c)
-{
-	unsigned ret;
-
-	spin_lock(&c->gc_lock);
-	ret = c->gc_count;
-	spin_unlock(&c->gc_lock);
-
-	return ret;
-}
-
 static unsigned bch_btree_used(struct cache_set *c)
 {
 	return div64_u64(c->gc_stats.key_bytes * 100,

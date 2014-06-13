@@ -73,7 +73,7 @@
 static void alloc_failed(struct cache *ca)
 {
 	struct cache_set *c = ca->set;
-	unsigned i;
+	unsigned i, gc_count;
 
 	for (i = CACHE_TIER(&ca->sb) + 1;
 	     i < ARRAY_SIZE(c->cache_by_alloc);
@@ -86,7 +86,9 @@ static void alloc_failed(struct cache *ca)
 	trace_bcache_alloc_wait(ca);
 
 	mutex_unlock(&c->bucket_lock);
-	bch_wait_for_next_gc(c, true);
+	gc_count = bch_gc_count(c);
+	wake_up_gc(c);
+	bch_wait_for_next_gc(c, gc_count);
 	mutex_lock(&c->bucket_lock);
 }
 

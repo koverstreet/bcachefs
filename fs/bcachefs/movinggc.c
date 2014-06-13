@@ -228,15 +228,20 @@ static int bch_moving_gc_thread(void *arg)
 	struct cache *ca = arg;
 	struct cache_set *c = ca->set;
 	unsigned long last = jiffies;
+	unsigned gc_count;
 
 	do {
+		gc_count = bch_gc_count(c);
+		bch_wait_for_next_gc(c, gc_count);
+
 		if (kthread_wait_freezable(c->copy_gc_enabled))
 			break;
 
-		bch_wait_for_next_gc(c, false);
-
-		if (bch_moving_gc(ca))
-			bch_wait_for_next_gc(c, true);
+		if (bch_moving_gc(ca)) {
+			gc_count = bch_gc_count(c);
+			wake_up_gc(c);
+			bch_wait_for_next_gc(c, gc_count);
+		}
 	} while (!bch_kthread_loop_ratelimit(&last,
 					     c->btree_scan_ratelimit * HZ));
 

@@ -1695,11 +1695,6 @@ static void bch_btree_gc_finish(struct cache_set *c)
 	set_gc_sectors(c);
 	c->gc_mark_valid = 1;
 
-	spin_lock(&c->gc_lock);
-	c->needs_gc = 0;
-	c->gc_count++;
-	spin_unlock(&c->gc_lock);
-
 	bch_mark_writeback_keys(c);
 
 	for_each_cache(ca, c, i) {
@@ -1759,7 +1754,6 @@ static void bch_btree_gc(struct cache_set *c)
 	}
 
 	bch_btree_gc_finish(c);
-	wake_up_all(&c->gc_wait);
 
 	bch_time_stats_update(&c->btree_gc_time, start_time);
 
@@ -1777,10 +1771,13 @@ static int bch_gc_thread(void *arg)
 	while (1) {
 		bch_btree_gc(c);
 
+		/* Set task to interruptible first so that if someone wakes us
+		 * up while we're finishing up, we will start another GC pass
+		 * immediately */
 		set_current_state(TASK_INTERRUPTIBLE);
 		spin_lock(&c->gc_lock);
-		if (c->needs_gc)
-			set_current_state(TASK_RUNNING);
+		c->gc_count++;
+		wake_up_all(&c->gc_wait);
 		spin_unlock(&c->gc_lock);
 
 		if (kthread_should_stop())
@@ -1818,27 +1815,25 @@ static bool next_gc_check(struct cache_set *c, unsigned gc_check)
 	return ret;
 }
 
-/**
- * bch_wait_for_next_gc - optionally start a new GC, and wait for it to finish
- *
- * @c:		pointer to struct cache_set
- * @wake:	if false, just wait until GC runs again
- *		if true, start GC and wait for it to finish
- */
-void bch_wait_for_next_gc(struct cache_set *c, bool wake)
+unsigned bch_gc_count(struct cache_set *c)
 {
-	unsigned gc_count;
+	unsigned ret;
 
 	spin_lock(&c->gc_lock);
-	gc_count = c->gc_count;
-
-	if (wake) {
-		c->needs_gc = 1;
-		wake_up_gc(c);
-	}
-
+	ret = c->gc_count;
 	spin_unlock(&c->gc_lock);
 
+	return ret;
+}
+
+/**
+ * bch_wait_for_next_gc - wait for the next GC to finish
+ *
+ * @c:		pointer to struct cache_set
+ * @gc_count:	value returned by bch_gc_count()
+ */
+void bch_wait_for_next_gc(struct cache_set *c, unsigned gc_count)
+{
 	while (wait_event_interruptible(c->gc_wait,
 					next_gc_check(c, gc_count)) != 0)
 		;

@@ -719,15 +719,9 @@ struct cache_set {
 	int			gc_mark_valid;
 
 	/*
-	 * Protects needs_gc and gc_count.
+	 * Protects gc_count and gc_wait.
 	 */
 	spinlock_t		gc_lock;
-
-	/*
-	 * If set, someone is requesting a GC. Do not set this directly, always
-	 * use bch_wait_for_next_gc() instead. Protected by gc_lock.
-	 */
-	bool			needs_gc;
 
 	/*
 	 * Number of GC iterations completed. To wait for the next GC to finish,
