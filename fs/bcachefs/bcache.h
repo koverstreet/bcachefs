@@ -649,8 +649,6 @@ struct cache_set {
 	unsigned		btree_cache_reserve;
 	struct shrinker		btree_cache_shrink;
 
-	struct closure_waitlist	btree_cache_wait;
-
 	/*
 	 * If we need to allocate memory for a new btree node and that
 	 * allocation fails, we can cannibalize another node in the btree cache

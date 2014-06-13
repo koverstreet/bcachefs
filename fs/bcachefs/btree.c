@@ -1175,7 +1175,7 @@ static int __btree_check_reserve(struct cache_set *c, struct btree_op *op,
 					reserve);
 
 			if (cl) {
-				closure_wait(&c->btree_cache_wait, cl);
+				closure_wait(&c->bucket_wait, cl);
 				mutex_unlock(&c->bucket_lock);
 				return -EAGAIN;
 			}
