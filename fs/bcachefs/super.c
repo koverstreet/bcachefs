@@ -1820,6 +1820,8 @@ static int cache_alloc(struct cache *ca)
 	if (!init_fifo(&ca->free[RESERVE_PRIO], prio_buckets(ca), GFP_KERNEL) ||
 	    !init_fifo(&ca->free[RESERVE_MOVINGGC_BTREE],
 		       free_inc_reserve, GFP_KERNEL) ||
+	    !init_fifo(&ca->free[RESERVE_TIERING_BTREE],
+		       BTREE_NODE_RESERVE, GFP_KERNEL) ||
 	    !init_fifo(&ca->free[RESERVE_MOVINGGC],
 		       movinggc_reserve, GFP_KERNEL) ||
 	    !init_fifo(&ca->free[RESERVE_NONE], reserve_none, GFP_KERNEL) ||

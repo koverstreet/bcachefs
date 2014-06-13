@@ -48,6 +48,31 @@ static void bio_csum(struct bio *bio, struct bkey *k)
 
 /* Insert data into cache */
 
+static enum alloc_reserve bch_btree_reserve(struct data_insert_op *op)
+{
+	if (op->moving_gc) {
+		/*
+		 * free_inc.size buckets are set aside for moving GC
+		 * btree node allocations. This means that if moving GC
+		 * runs out of new buckets for btree nodes, it will have
+		 * put back at least free_inc.size buckets back on
+		 * free_inc, preventing a deadlock.
+		 *
+		 * XXX: figure out a less stupid way of achieving this
+		 */
+		return RESERVE_MOVINGGC_BTREE;
+	} else if (op->tiering) {
+		/*
+		 * Tiering needs a btree node reserve because of how
+		 * btree_check_reserve() works -- if the cache tier is
+		 * full, we don't want tiering to block forever.
+		 */
+		return RESERVE_TIERING_BTREE;
+	}
+
+	return BTREE_ID_EXTENTS;
+}
+
 /**
  * bch_data_insert_keys - insert extent btree keys for a write
  */
@@ -56,12 +81,11 @@ static void bch_data_insert_keys(struct closure *cl)
 	struct data_insert_op *op = container_of(cl, struct data_insert_op, cl);
 	struct bkey *replace_key = op->replace ? &op->replace_key : NULL;
 	enum btree_id id = BTREE_ID_EXTENTS;
-	enum alloc_reserve reserve = id;
+	enum alloc_reserve reserve;
 	unsigned i;
 	int ret;
 
-	if (op->moving_gc)
-		reserve = RESERVE_MOVINGGC_BTREE;
+	reserve = bch_btree_reserve(op);
 
 	ret = bch_btree_insert(op->c, id, reserve, &op->insert_keys,
 			       replace_key, cl, op->flush);

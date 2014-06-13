@@ -518,7 +518,7 @@ out:
 	BUG_ON(ca->set->gc_mark_valid &&
 	       GC_MARK(b) != GC_MARK_DIRTY);
 
-	if (reserve <= RESERVE_MOVINGGC_BTREE)
+	if (reserve <= RESERVE_METADATA_LAST)
 		SET_GC_MARK(b, GC_MARK_METADATA);
 	else
 		SET_GC_MARK(b, GC_MARK_DIRTY);

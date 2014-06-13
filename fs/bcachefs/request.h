@@ -37,6 +37,8 @@ struct data_insert_op {
 		/* Use moving GC reserves for buckets, btree nodes and
 		 * open buckets? */
 		unsigned	moving_gc:1;
+		/* Use tiering reserves for btree nodes? */
+		unsigned	tiering:1;
 		/* Set on completion */
 		unsigned	replace_collision:1;
 		/* Internal */

@@ -104,6 +104,7 @@ static void read_tiering(struct cache_set *c)
 					&io->bio.bio, 0,
 					false, false, false,
 					&io->w->key, &io->w->key);
+		io->op.tiering	= 1;
 
 		io->op.tier	= PTR_TIER(c, &w->key,
 					   bch_extent_ptrs(&w->key) - 1) + 1;
