@@ -64,7 +64,7 @@ static void bch_data_insert_keys(struct closure *cl)
 	if (ret == -ESRCH) {
 		op->replace_collision = true;
 	} else if (ret == -EAGAIN) {
-		continue_at(cl, bch_data_insert_keys, op->wq);
+		continue_at(cl, bch_data_insert_keys, op->c->btree_insert_wq);
 	} else if (ret) {
 		op->error		= -ENOMEM;
 		op->insert_data_done	= true;
