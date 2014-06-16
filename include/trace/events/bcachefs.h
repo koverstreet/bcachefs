@@ -387,24 +387,53 @@ DEFINE_EVENT(cache, bcache_moving_gc_start,
 );
 
 TRACE_EVENT(bcache_moving_gc_end,
-	TP_PROTO(struct cache *ca, u64 sectors_moved,
+	TP_PROTO(struct cache *ca, u64 sectors_moved, u64 keys_moved,
 		u64 buckets_moved),
-	TP_ARGS(ca, sectors_moved, buckets_moved),
+	TP_ARGS(ca, sectors_moved, keys_moved, buckets_moved),
 
 	TP_STRUCT__entry(
 		__array(char,		uuid,	16	)
 		__field(u64,		sectors_moved	)
+		__field(u64,		keys_moved	)
 		__field(u64,		buckets_moved	)
 	),
 
 	TP_fast_assign(
 		memcpy(__entry->uuid, ca->sb.uuid.b, 16);
 		__entry->sectors_moved = sectors_moved;
+		__entry->keys_moved = keys_moved;
 		__entry->buckets_moved = buckets_moved;
 	),
 
-	TP_printk("%pU sectors_moved %llu buckets_moved %llu",
-		__entry->uuid, __entry->sectors_moved, __entry->buckets_moved)
+	TP_printk("%pU sectors_moved %llu keys_moved %llu buckets_moved %llu",
+		__entry->uuid, __entry->sectors_moved, __entry->keys_moved,
+		__entry->buckets_moved)
+);
+
+DEFINE_EVENT(cache_set, bcache_tiering_start,
+	TP_PROTO(struct cache_set *c),
+	TP_ARGS(c)
+);
+
+TRACE_EVENT(bcache_tiering_end,
+	TP_PROTO(struct cache_set *c, u64 sectors_moved,
+		u64 keys_moved),
+	TP_ARGS(c, sectors_moved, keys_moved),
+
+	TP_STRUCT__entry(
+		__array(char,		uuid,	16	)
+		__field(u64,		sectors_moved	)
+		__field(u64,		keys_moved	)
+	),
+
+	TP_fast_assign(
+		memcpy(__entry->uuid, c->sb.set_uuid.b, 16);
+		__entry->sectors_moved = sectors_moved;
+		__entry->keys_moved = keys_moved;
+	),
+
+	TP_printk("%pU sectors_moved %llu keys_moved %llu",
+		__entry->uuid, __entry->sectors_moved, __entry->keys_moved)
 );
 
 DEFINE_EVENT(cache, bcache_prio_write_start,

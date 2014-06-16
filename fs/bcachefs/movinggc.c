@@ -63,7 +63,7 @@ static bool moving_pred(struct keybuf *buf, struct bkey *k)
 	return false;
 }
 
-static void read_moving(struct cache *ca)
+static void read_moving(struct cache *ca, struct moving_io_stats *stats)
 {
 	struct cache_set *c = ca->set;
 	struct keybuf_key *w;
@@ -92,6 +92,7 @@ static void read_moving(struct cache *ca)
 		w->private		= io;
 		io->w			= w;
 		io->keybuf		= &ca->moving_gc_keys;
+		io->stats		= stats;
 
 		bch_data_insert_op_init(&io->op, c, ca->moving_gc_wq,
 					&io->bio.bio, 0,
@@ -143,6 +144,9 @@ static bool bch_moving_gc(struct cache *ca)
 	u64 sectors_to_move = 0, sectors_gen, gen_current, sectors_total;
 	u64 buckets_to_move;
 	int reserve_sectors;
+	struct moving_io_stats stats;
+
+	memset(&stats, 0, sizeof(stats));
 
 	mutex_lock(&c->bucket_lock);
 
@@ -216,9 +220,10 @@ static bool bch_moving_gc(struct cache *ca)
 
 	mutex_unlock(&c->bucket_lock);
 
-	read_moving(ca);
+	read_moving(ca, &stats);
 
-	trace_bcache_moving_gc_end(ca, sectors_to_move, buckets_to_move);
+	trace_bcache_moving_gc_end(ca, stats.sectors_moved, stats.keys_moved,
+				buckets_to_move);
 
 	return moved;
 }

@@ -65,8 +65,12 @@ static void read_tiering(struct cache_set *c)
 	struct keybuf_key *w;
 	struct moving_io *io;
 	struct closure cl;
+	struct moving_io_stats stats;
 
+	trace_bcache_tiering_start(c);
 	closure_init_stack(&cl);
+
+	memset(&stats, 0, sizeof(stats));
 
 	/* XXX: if we error, background writeback could stall indefinitely */
 
@@ -90,9 +94,11 @@ static void read_tiering(struct cache_set *c)
 		if (!io)
 			goto err;
 
-		w->private	= io;
-		io->w		= w;
-		io->keybuf	= &c->tiering_keys;
+		w->private = io;
+
+		io->w = w;
+		io->keybuf = &c->tiering_keys;
+		io->stats = &stats;
 
 		bch_data_insert_op_init(&io->op, c, c->tiering_wq,
 					&io->bio.bio, 0,
@@ -116,6 +122,8 @@ err:		if (!IS_ERR_OR_NULL(w->private))
 	}
 
 	closure_sync(&cl);
+
+	trace_bcache_tiering_end(c, stats.sectors_moved, stats.keys_moved);
 }
 
 static int bch_tiering_thread(void *arg)
