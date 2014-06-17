@@ -1599,7 +1599,7 @@ static int btree_gc_recurse(struct btree *b, struct btree_op *op,
 
 		if (bkey_cmp(&b->c->gc_cur_key, &MAX_KEY)) {
 			if (need_resched()) {
-				ret = -EAGAIN;
+				ret = -ETIMEDOUT;
 				break;
 			}
 
@@ -1743,7 +1743,7 @@ static void bch_btree_gc(struct cache_set *c)
 			cond_resched();
 		}
 		if (ret) {
-			if (ret != -EAGAIN)
+			if (ret != -ETIMEDOUT)
 				pr_warn("gc failed!");
 
 			continue;
