@@ -973,10 +973,12 @@ found:
 		bch_set_extent_ptrs(&b->key, 1);
 
 		/* we dropped bucket_lock, might've raced */
-		if (ca->gc_buckets[gen]) {
+		if (ca->gc_buckets[gen] || race_fault()) {
 			/* we raced */
+			mutex_unlock(&c->bucket_lock);
 			bch_bucket_free(c, &b->key);
 			bch_open_bucket_put(c, b);
+			mutex_lock(&c->bucket_lock);
 		} else {
 			ca->gc_buckets[gen] = b;
 		}
