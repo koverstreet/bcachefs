@@ -197,18 +197,21 @@ static inline void set_gc_sectors(struct cache_set *c)
 /* Recursing down the btree */
 
 struct btree_op {
-	/* for waiting on mca_lock in mca_cannibalize_lock() */
+	enum btree_id		id;
+
+	/* For allocating new nodes */
+	enum alloc_reserve	reserve;
+
+	/* For waiting on mca_lock in mca_cannibalize_lock() */
 	wait_queue_t		wait;
 
 	/* Btree level at which we start taking write locks */
 	short			lock;
 
+	/* State used by btree insertion is also stored here for convenience */
 	u8			iterator_invalidated;
 
 	unsigned		insert_collision:1;
-
-	/* Reserves */
-	unsigned		moving_gc:1;
 };
 
 /**
@@ -216,11 +219,21 @@ struct btree_op {
  *                    0 for write lock on leaf
  *                    SHRT_MAX for write locks only
  */
-static inline void bch_btree_op_init(struct btree_op *op, int write_lock_level)
+static inline void __bch_btree_op_init(struct btree_op *op, enum btree_id id,
+					enum alloc_reserve reserve,
+					int write_lock_level)
 {
 	memset(op, 0, sizeof(struct btree_op));
+	op->id = id;
+	op->reserve = reserve;
 	init_wait(&op->wait);
 	op->lock = write_lock_level;
+}
+
+static inline void bch_btree_op_init(struct btree_op *op, enum btree_id id,
+					int write_lock_level)
+{
+	__bch_btree_op_init(op, id, id, write_lock_level);
 }
 
 static inline void rw_lock(bool w, struct btree *b, int level)
@@ -248,14 +261,14 @@ void bch_btree_flush(struct cache_set *);
 void bch_btree_set_root(struct btree *);
 struct btree *bch_btree_root_alloc(struct cache_set *, enum btree_id);
 struct btree *bch_btree_node_get(struct cache_set *, struct btree_op *,
-				 struct bkey *, int, enum btree_id, bool,
+				 struct bkey *, int, bool,
 				 struct btree *);
 
 int bch_btree_insert_check_key(struct btree *, struct btree_op *,
 			       struct bkey *, struct closure *);
 int bch_btree_insert(struct cache_set *, enum btree_id,
-		     struct keylist *, struct bkey *, struct closure *, bool,
-		     bool);
+		     enum alloc_reserve, struct keylist *, struct bkey *,
+		     struct closure *, bool);
 int bch_btree_insert_sync(struct cache_set *, enum btree_id,
 			  struct keylist *, struct bkey *);
 int bch_btree_insert_node(struct btree *, struct btree_op *, struct keylist *,
@@ -289,28 +302,26 @@ void bch_wait_for_next_gc(struct cache_set *, unsigned);
 #define MAP_HOLES	1
 
 typedef int (btree_map_nodes_fn)(struct btree_op *, struct btree *);
-int __bch_btree_map_nodes(struct btree_op *, struct cache_set *, enum btree_id,
+int __bch_btree_map_nodes(struct btree_op *, struct cache_set *,
 			  struct bkey *, btree_map_nodes_fn *, int);
 
 static inline int bch_btree_map_nodes(struct btree_op *op, struct cache_set *c,
-				      enum btree_id id, struct bkey *from,
-				      btree_map_nodes_fn *fn)
+				      struct bkey *from, btree_map_nodes_fn *fn)
 {
-	return __bch_btree_map_nodes(op, c, id, from, fn, MAP_ALL_NODES);
+	return __bch_btree_map_nodes(op, c, from, fn, MAP_ALL_NODES);
 }
 
 static inline int bch_btree_map_leaf_nodes(struct btree_op *op,
 					   struct cache_set *c,
-					   enum btree_id id,
 					   struct bkey *from,
 					   btree_map_nodes_fn *fn)
 {
-	return __bch_btree_map_nodes(op, c, id, from, fn, MAP_LEAF_NODES);
+	return __bch_btree_map_nodes(op, c, from, fn, MAP_LEAF_NODES);
 }
 
 typedef int (btree_map_keys_fn)(struct btree_op *, struct btree *,
 				struct bkey *);
-int bch_btree_map_keys(struct btree_op *, struct cache_set *, enum btree_id,
-		       struct bkey *, btree_map_keys_fn *, int);
+int bch_btree_map_keys(struct btree_op *, struct cache_set *, struct bkey *,
+		       btree_map_keys_fn *, int);
 
 #endif

@@ -1165,10 +1165,9 @@ static int flash_devs_run(struct cache_set *c)
 {
 	struct btree_op op;
 
-	bch_btree_op_init(&op, -1);
+	bch_btree_op_init(&op, BTREE_ID_INODES, -1);
 
-	if (bch_btree_map_keys(&op, c, BTREE_ID_INODES,
-			       NULL, flash_dev_map_fn, 0) < 0)
+	if (bch_btree_map_keys(&op, c, NULL, flash_dev_map_fn, 0) < 0)
 		bch_cache_set_error(c, "can't bring up flash only volumes");
 
 	return 0;
@@ -1544,6 +1543,7 @@ static void run_cache_set(struct cache_set *c)
 		 */
 
 		for (id = 0; id < BTREE_ID_NR; id++) {
+			struct btree_op op;
 			unsigned level;
 
 			k = bch_journal_find_btree_root(c, j, id, &level);
@@ -1556,10 +1556,12 @@ static void run_cache_set(struct cache_set *c)
 			}
 
 			err = "error reading btree root";
-			b = bch_btree_node_get(c, NULL, k, level, id,
-					       true, NULL);
-			if (IS_ERR_OR_NULL(b))
+			bch_btree_op_init(&op, id, 0);
+			b = bch_btree_node_get(c, &op, k, level, true, NULL);
+			if (IS_ERR_OR_NULL(b)) {
+				BUG_ON(PTR_ERR(b) == -EINTR);
 				goto err;
+			}
 
 			list_del_init(&b->list);
 			rw_unlock(true, b);

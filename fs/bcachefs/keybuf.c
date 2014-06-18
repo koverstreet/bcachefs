@@ -84,13 +84,13 @@ void bch_refill_keybuf(struct cache_set *c, struct keybuf *buf,
 
 	cond_resched();
 
-	bch_btree_op_init(&refill.op, -1);
+	bch_btree_op_init(&refill.op, BTREE_ID_EXTENTS, -1);
 	refill.nr_found	= 0;
 	refill.buf	= buf;
 	refill.end	= end;
 	refill.pred	= pred;
 
-	ret = bch_btree_map_keys(&refill.op, c, BTREE_ID_EXTENTS,
+	ret = bch_btree_map_keys(&refill.op, c,
 				 &buf->last_scanned,
 				 refill_keybuf_fn, 0);
 	if (ret == MAP_CONTINUE) {

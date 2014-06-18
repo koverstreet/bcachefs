@@ -485,10 +485,10 @@ void bch_sectors_dirty_init(struct cached_dev *dc)
 {
 	struct sectors_dirty_init op;
 
-	bch_btree_op_init(&op.op, -1);
+	bch_btree_op_init(&op.op, BTREE_ID_EXTENTS, -1);
 	op.inode = bcache_dev_inum(&dc->disk);
 
-	bch_btree_map_keys(&op.op, dc->disk.c, BTREE_ID_EXTENTS,
+	bch_btree_map_keys(&op.op, dc->disk.c,
 			   &KEY(op.inode, 0, 0), sectors_dirty_init_fn, 0);
 
 	dc->writeback_pd.last_actual = bcache_dev_sectors_dirty(&dc->disk);

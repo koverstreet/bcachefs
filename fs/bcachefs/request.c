@@ -55,12 +55,17 @@ static void bch_data_insert_keys(struct closure *cl)
 {
 	struct data_insert_op *op = container_of(cl, struct data_insert_op, cl);
 	struct bkey *replace_key = op->replace ? &op->replace_key : NULL;
+	enum btree_id id = BTREE_ID_EXTENTS;
+	enum alloc_reserve reserve = id;
 	unsigned i;
 	int ret;
 
-	ret = bch_btree_insert(op->c, BTREE_ID_EXTENTS, &op->insert_keys,
-			       replace_key, cl,
-			       op->moving_gc, op->flush);
+	if (op->moving_gc)
+		reserve = RESERVE_MOVINGGC_BTREE;
+
+	ret = bch_btree_insert(op->c, id, reserve, &op->insert_keys,
+			       replace_key, cl, op->flush);
+
 	if (ret == -ESRCH) {
 		op->replace_collision = true;
 	} else if (ret == -EAGAIN) {
@@ -712,14 +717,13 @@ int bch_read(struct cache_set *c, struct bio *bio, u64 inode)
 
 	zero_fill_bio(bio);
 
-	bch_btree_op_init(&op.op, -1);
+	bch_btree_op_init(&op.op, BTREE_ID_EXTENTS, -1);
 	op.c = c;
 	op.bio = bio;
 	op.inode = inode;
 
-	ret = bch_btree_map_keys(&op.op, c, BTREE_ID_EXTENTS,
-				 &KEY(inode,
-				      bio->bi_iter.bi_sector, 0),
+	ret = bch_btree_map_keys(&op.op, c,
+				 &KEY(inode, bio->bi_iter.bi_sector, 0),
 				 bch_read_fn, 0);
 	return ret < 0 ? ret : 0;
 }
@@ -858,9 +862,9 @@ static void cache_lookup(struct closure *cl)
 	struct bio *bio = &s->bio.bio;
 	int ret;
 
-	bch_btree_op_init(&s->op, -1);
+	bch_btree_op_init(&s->op, BTREE_ID_EXTENTS, -1);
 
-	ret = bch_btree_map_keys(&s->op, s->iop.c, BTREE_ID_EXTENTS,
+	ret = bch_btree_map_keys(&s->op, s->iop.c,
 				 &KEY(s->inode, bio->bi_iter.bi_sector, 0),
 				 cache_lookup_fn, MAP_HOLES);
 	if (ret == -EAGAIN)
