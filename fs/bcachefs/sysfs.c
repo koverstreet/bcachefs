@@ -42,6 +42,7 @@ read_attribute(nbuckets);
 read_attribute(tree_depth);
 read_attribute(root_usage_percent);
 read_attribute(priority_stats);
+read_attribute(reserve_stats);
 read_attribute(btree_cache_size);
 read_attribute(cache_available_percent);
 read_attribute(written);
@@ -719,6 +720,107 @@ static struct attribute *bch_cache_set_internal_files[] = {
 };
 KTYPE(bch_cache_set_internal);
 
+static ssize_t show_priority_stats(struct cache *ca, char *buf)
+{
+	int cmp(const void *l, const void *r)
+	{	return *((u16 *) r) - *((u16 *) l); }
+
+	struct bucket *b;
+	size_t n = ca->sb.nbuckets, i;
+	size_t unused = 0, available = 0, dirty = 0, meta = 0;
+	u64 sum = 0;
+	/* Compute 31 quantiles */
+	u16 q[31], *p, *cached;
+	ssize_t ret;
+
+	cached = p = vmalloc(ca->sb.nbuckets * sizeof(u16));
+	if (!p)
+		return -ENOMEM;
+
+	mutex_lock(&ca->set->bucket_lock);
+	for_each_bucket(b, ca) {
+		if (!GC_SECTORS_USED(b))
+			unused++;
+		if (GC_MARK(b) == GC_MARK_RECLAIMABLE)
+			available++;
+		if (GC_MARK(b) == GC_MARK_DIRTY)
+			dirty++;
+		if (GC_MARK(b) == GC_MARK_METADATA)
+			meta++;
+	}
+
+	for (i = ca->sb.first_bucket; i < n; i++)
+		p[i] = ca->buckets[i].read_prio;
+	mutex_unlock(&ca->set->bucket_lock);
+
+	sort(p, n, sizeof(u16), cmp, NULL);
+
+	while (n &&
+	       !cached[n - 1])
+		--n;
+
+	unused = ca->sb.nbuckets - n;
+
+	for (i = 0; i < n; i++)
+		sum += INITIAL_PRIO - cached[i];
+
+	if (n)
+		do_div(sum, n);
+
+	for (i = 0; i < ARRAY_SIZE(q); i++)
+		q[i] = INITIAL_PRIO - cached[n * (i + 1) /
+			(ARRAY_SIZE(q) + 1)];
+
+	vfree(p);
+
+	ret = scnprintf(buf, PAGE_SIZE,
+			"Unused:		%zu%% (%zu)\n"
+			"Clean:		%zu%% (%zu)\n"
+			"Dirty:		%zu%% (%zu)\n"
+			"Metadata:	%zu%% (%zu)\n"
+			"Average:	%llu\n"
+			"Sectors per Q:	%zu\n"
+			"Quantiles:	[",
+			unused * 100 / (size_t) ca->sb.nbuckets, unused,
+			available * 100 / (size_t) ca->sb.nbuckets, available,
+			dirty * 100 / (size_t) ca->sb.nbuckets, dirty,
+			meta * 100 / (size_t) ca->sb.nbuckets, meta, sum,
+			n * ca->sb.bucket_size / (ARRAY_SIZE(q) + 1));
+
+	for (i = 0; i < ARRAY_SIZE(q); i++)
+		ret += scnprintf(buf + ret, PAGE_SIZE - ret,
+				 "%u ", q[i]);
+	ret--;
+
+	ret += scnprintf(buf + ret, PAGE_SIZE - ret, "]\n");
+
+	return ret;
+
+}
+
+static ssize_t show_reserve_stats(struct cache *ca, char *buf)
+{
+	enum alloc_reserve i;
+	ssize_t ret;
+
+	mutex_lock(&ca->set->bucket_lock);
+
+	ret = scnprintf(buf, PAGE_SIZE,
+			"free_inc:\t%zu\t%zu\n",
+			fifo_used(&ca->free_inc),
+			ca->free_inc.size);
+
+	for (i = 0; i < RESERVE_NR; i++)
+		ret += scnprintf(buf + ret, PAGE_SIZE - ret,
+				 "free[%u]:\t%zu\t%zu\n", i,
+				 fifo_used(&ca->free[i]),
+				 ca->free[i].size);
+
+	mutex_unlock(&ca->set->bucket_lock);
+
+	return ret;
+}
+
 SHOW(__bch_cache)
 {
 	struct cache *ca = container_of(kobj, struct cache, kobj);
@@ -746,81 +848,10 @@ SHOW(__bch_cache)
 
 	sysfs_print(tier,		CACHE_TIER(&ca->sb));
 
-	if (attr == &sysfs_priority_stats) {
-		int cmp(const void *l, const void *r)
-		{	return *((uint16_t *) r) - *((uint16_t *) l); }
-
-		struct bucket *b;
-		size_t n = ca->sb.nbuckets, i;
-		size_t unused = 0, available = 0, dirty = 0, meta = 0;
-		uint64_t sum = 0;
-		/* Compute 31 quantiles */
-		uint16_t q[31], *p, *cached;
-		ssize_t ret;
-
-		cached = p = vmalloc(ca->sb.nbuckets * sizeof(uint16_t));
-		if (!p)
-			return -ENOMEM;
-
-		mutex_lock(&ca->set->bucket_lock);
-		for_each_bucket(b, ca) {
-			if (!GC_SECTORS_USED(b))
-				unused++;
-			if (GC_MARK(b) == GC_MARK_RECLAIMABLE)
-				available++;
-			if (GC_MARK(b) == GC_MARK_DIRTY)
-				dirty++;
-			if (GC_MARK(b) == GC_MARK_METADATA)
-				meta++;
-		}
-
-		for (i = ca->sb.first_bucket; i < n; i++)
-			p[i] = ca->buckets[i].read_prio;
-		mutex_unlock(&ca->set->bucket_lock);
-
-		sort(p, n, sizeof(uint16_t), cmp, NULL);
-
-		while (n &&
-		       !cached[n - 1])
-			--n;
-
-		unused = ca->sb.nbuckets - n;
-
-		for (i = 0; i < n; i++)
-			sum += INITIAL_PRIO - cached[i];
-
-		if (n)
-			do_div(sum, n);
-
-		for (i = 0; i < ARRAY_SIZE(q); i++)
-			q[i] = INITIAL_PRIO - cached[n * (i + 1) /
-				(ARRAY_SIZE(q) + 1)];
-
-		vfree(p);
-
-		ret = scnprintf(buf, PAGE_SIZE,
-				"Unused:		%zu%%\n"
-				"Clean:		%zu%%\n"
-				"Dirty:		%zu%%\n"
-				"Metadata:	%zu%%\n"
-				"Average:	%llu\n"
-				"Sectors per Q:	%zu\n"
-				"Quantiles:	[",
-				unused * 100 / (size_t) ca->sb.nbuckets,
-				available * 100 / (size_t) ca->sb.nbuckets,
-				dirty * 100 / (size_t) ca->sb.nbuckets,
-				meta * 100 / (size_t) ca->sb.nbuckets, sum,
-				n * ca->sb.bucket_size / (ARRAY_SIZE(q) + 1));
-
-		for (i = 0; i < ARRAY_SIZE(q); i++)
-			ret += scnprintf(buf + ret, PAGE_SIZE - ret,
-					 "%u ", q[i]);
-		ret--;
-
-		ret += scnprintf(buf + ret, PAGE_SIZE - ret, "]\n");
-
-		return ret;
-	}
+	if (attr == &sysfs_priority_stats)
+		return show_priority_stats(ca, buf);
+	if (attr == &sysfs_reserve_stats)
+		return show_reserve_stats(ca, buf);
 
 	return 0;
 }
@@ -912,6 +943,7 @@ static struct attribute *bch_cache_files[] = {
 	&sysfs_block_size,
 	&sysfs_nbuckets,
 	&sysfs_priority_stats,
+	&sysfs_reserve_stats,
 	&sysfs_discard,
 	&sysfs_written,
 	&sysfs_btree_written,
