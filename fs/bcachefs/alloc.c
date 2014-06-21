@@ -431,7 +431,6 @@ static int bch_allocator_thread(void *arg)
 					bch_allocator_push(ca, bucket));
 			fifo_pop(&ca->free_inc, bucket);
 
-			wake_up(&c->mca_wait);
 			closure_wake_up(&c->bucket_wait);
 		}
 
