@@ -32,14 +32,7 @@
  * If we've got discards enabled, that happens when a bucket moves from the
  * free_inc list to the free list.
  *
- * There is another freelist, because sometimes we have buckets that we know
- * have nothing pointing into them - these we can reuse without waiting for
- * priorities to be rewritten. These come from freed btree nodes and buckets
- * that garbage collection discovered no longer had valid keys pointing into
- * them (because they were overwritten). That's the unused list - buckets on the
- * unused list move to the free list, optionally being discarded in the process.
- *
- * It's also important to ensure that gens don't wrap around - with respect to
+ * It's important to ensure that gens don't wrap around - with respect to
  * either the oldest gen in the btree or the gen on disk. This is quite
  * difficult to do in practice, but we explicitly guard against it anyways - if
  * a bucket is in danger of wrapping around we simply skip invalidating it that
@@ -51,7 +44,7 @@
  * bch_bucket_alloc_set() allocates one or more buckets from different caches
  * out of a cache set.
  *
- * free_some_buckets() drives all the processes described above. It's called
+ * invalidate_buckets() drives all the processes described above. It's called
  * from bch_bucket_alloc() and a few other places that need to make sure free
  * buckets are ready.
  *
@@ -70,6 +63,12 @@
 #include <linux/random.h>
 #include <trace/events/bcachefs.h>
 
+/**
+ * alloc_failed - kick off external processes to free up buckets
+ *
+ * We couldn't find enough buckets in invalidate_buckets(). Ask
+ * btree GC to run, hoping it will find more clean buckets.
+ */
 static void alloc_failed(struct cache *ca)
 {
 	struct cache_set *c = ca->set;
@@ -397,6 +396,14 @@ static int bch_allocator_push(struct cache *ca, long bucket)
 	return false;
 }
 
+/**
+ * bch_allocator_thread - move buckets from free_inc to reserves
+ *
+ * The free_inc FIFO is populated by invalidate_buckets(), and
+ * the reserves are depleted by bucket allocation. When we run out
+ * of free_inc, try to invalidate some buckets and write out
+ * prios and gens.
+ */
 static int bch_allocator_thread(void *arg)
 {
 	struct cache *ca = arg;
@@ -406,8 +413,8 @@ static int bch_allocator_thread(void *arg)
 
 	while (1) {
 		/*
-		 * First, we pull buckets off of the free_inc lists, possibly
-		 * issue discards to them, then we add the bucket to the
+		 * First, we pull buckets off of the free_inc list, possibly
+		 * issue discards to them, then we add the bucket to a
 		 * free list:
 		 */
 		while (!fifo_empty(&ca->free_inc)) {
@@ -427,6 +434,10 @@ static int bch_allocator_thread(void *arg)
 				mutex_lock(&c->bucket_lock);
 			}
 
+			/*
+			 * Wait for someone to allocate a bucket if all
+			 * reserves are full:
+			 */
 			allocator_wait(c, ca->fifo_wait,
 					bch_allocator_push(ca, bucket));
 			fifo_pop(&ca->free_inc, bucket);
@@ -434,36 +445,36 @@ static int bch_allocator_thread(void *arg)
 			closure_wake_up(&c->bucket_wait);
 		}
 
-		/*
-		 * We've run out of free buckets, we need to find some buckets
-		 * we can invalidate. First, invalidate them in memory and add
-		 * them to the free_inc list:
-		 */
+		/* We've run out of free buckets! */
 
 retry_invalidate:
+		/* Wait for in-progress GC to finish if there is one */
 		allocator_wait(c, c->gc_wait, c->gc_mark_valid);
 
+		/*
+		 * Find some buckets that we can invalidate, either they're
+		 * completely unused, or only contain clean data that's been
+		 * written back to the backing device or another cache tier
+		 */
 		invalidate_buckets(ca);
 
 		if (CACHE_SYNC(&ca->set->sb)) {
-			/*
-			 * This could deadlock if an allocation with a btree
-			 * node locked ever blocked - having the btree node
-			 * locked would block garbage collection, but here we're
-			 * waiting on garbage collection before we invalidate
-			 * and free anything.
-			 *
-			 * But this should be safe since the btree code always
-			 * uses btree_check_reserve() before allocating now, and
-			 * if it fails it blocks without btree nodes locked.
-			 */
 			trace_bcache_alloc_batch(ca,
 						fifo_used(&ca->free_inc),
 						ca->free_inc.size);
 
+			/*
+			 * If we didn't invalidate enough buckets to fill up
+			 * free_inc, try to invalidate some more. This will
+			 * limit the amount of metadata writes we issue below
+			 */
 			if (!fifo_full(&ca->free_inc))
 				goto retry_invalidate;
 
+			/*
+			 * free_inc is full of newly-invalidated buckets, must
+			 * write out prios and gens before they can be re-used
+			 */
 			bch_prio_write(ca);
 		}
 	}
