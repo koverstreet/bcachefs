@@ -671,7 +671,7 @@ struct cache_set {
 	 * to satisfy the allocation - lock to guarantee only one thread does
 	 * this at a time:
 	 */
-	wait_queue_head_t	mca_wait;
+	struct closure_waitlist	mca_wait;
 	struct task_struct	*btree_cache_alloc_lock;
 
 	struct workqueue_struct	*btree_insert_wq;

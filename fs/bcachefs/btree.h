@@ -204,9 +204,6 @@ struct btree_op {
 	/* For allocating new nodes */
 	enum alloc_reserve	reserve;
 
-	/* For waiting on mca_lock in mca_cannibalize_lock() */
-	wait_queue_t		wait;
-
 	/* Btree level at which we start taking write locks */
 	short			lock;
 
@@ -231,7 +228,6 @@ static inline void __bch_btree_op_init(struct btree_op *op, enum btree_id id,
 {
 	op->id = id;
 	op->reserve = reserve;
-	init_wait(&op->wait);
 	op->lock = write_lock_level;
 	op->iterator_invalidated = 0;
 	op->insert_collision = 0;

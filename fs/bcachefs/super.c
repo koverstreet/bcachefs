@@ -1418,7 +1418,6 @@ struct cache_set *bch_cache_set_alloc(struct cache_sb *sb)
 	mutex_init(&c->btree_cache_lock);
 	mutex_init(&c->bucket_lock);
 	spin_lock_init(&c->gc_lock);
-	init_waitqueue_head(&c->mca_wait);
 	init_waitqueue_head(&c->gc_wait);
 	spin_lock_init(&c->btree_root_lock);
 
@@ -1557,10 +1556,18 @@ static void run_cache_set(struct cache_set *c)
 
 			err = "error reading btree root";
 			bch_btree_op_init(&op, id, 0);
-			b = bch_btree_node_get(c, &op, k, level, true, NULL);
-			if (IS_ERR_OR_NULL(b)) {
-				BUG_ON(PTR_ERR(b) == -EINTR);
-				goto err;
+			while (1) {
+				b = bch_btree_node_get(c, &op, k, level,
+						       true, NULL);
+				if (PTR_ERR(b) == -EAGAIN) {
+					closure_sync(&op.cl);
+					continue;
+				} else if (PTR_ERR(b) == -EINTR) {
+					BUG();
+				} else if (IS_ERR_OR_NULL(b)) {
+					goto err;
+				}
+				break;
 			}
 
 			list_del_init(&b->list);

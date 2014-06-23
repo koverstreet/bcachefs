@@ -148,14 +148,12 @@
 		bch_cannibalize_unlock(c);				\
 		(op)->iterator_invalidated = 0;				\
 		if (_r == -EINTR)					\
-			schedule();					\
+			continue;					\
 		else if (!(async) && _r == -EAGAIN)			\
 			closure_sync(&(op)->cl);			\
 		else							\
 			break;						\
 	}								\
-									\
-	finish_wait(&(c)->mca_wait, &(op)->wait);			\
 	_r;								\
 })
 
@@ -863,30 +861,34 @@ static struct btree *mca_find(struct cache_set *c, struct bkey *k)
 				      bch_btree_cache_params);
 }
 
-static int mca_cannibalize_lock(struct cache_set *c, struct btree_op *op)
+static int mca_cannibalize_lock(struct cache_set *c, struct closure *cl)
 {
 	struct task_struct *old;
 
 	old = cmpxchg(&c->btree_cache_alloc_lock, NULL, current);
 	if (old && old != current) {
-		if (op)
-			prepare_to_wait(&c->mca_wait, &op->wait,
-					TASK_UNINTERRUPTIBLE);
+		if (cl) {
+			closure_wait(&c->mca_wait, cl);
+			return -EAGAIN;
+		}
+
 		return -EINTR;
 	}
 
 	return 0;
 }
 
-static struct btree *mca_cannibalize(struct cache_set *c, struct btree_op *op,
-				     struct bkey *k)
+static struct btree *mca_cannibalize(struct cache_set *c, struct bkey *k,
+				     struct closure *cl)
 {
 	struct btree *b;
+	int ret;
 
 	trace_bcache_btree_cache_cannibalize(c);
 
-	if (mca_cannibalize_lock(c, op))
-		return ERR_PTR(-EINTR);
+	ret = mca_cannibalize_lock(c, cl);
+	if (ret)
+		return ERR_PTR(ret);
 
 	list_for_each_entry_reverse(b, &c->btree_cache, list)
 		if (!mca_reap(b, btree_order(k), false))
@@ -913,12 +915,12 @@ static void bch_cannibalize_unlock(struct cache_set *c)
 {
 	if (c->btree_cache_alloc_lock == current) {
 		c->btree_cache_alloc_lock = NULL;
-		wake_up(&c->mca_wait);
+		closure_wake_up(&c->mca_wait);
 	}
 }
 
-static struct btree *mca_alloc(struct cache_set *c, struct btree_op *op,
-			       struct bkey *k, int level, enum btree_id id)
+static struct btree *mca_alloc(struct cache_set *c, struct bkey *k, int level,
+			       enum btree_id id, struct closure *cl)
 {
 	struct btree *b = NULL;
 
@@ -986,7 +988,7 @@ err:
 	if (b)
 		rw_unlock(true, b);
 
-	b = mca_cannibalize(c, op, k);
+	b = mca_cannibalize(c, k, cl);
 	if (!IS_ERR(b))
 		goto out;
 
@@ -1000,7 +1002,7 @@ err:
  * If IO is necessary and running under generic_make_request, returns -EAGAIN.
  *
  * The btree node will have either a read or a write lock held, depending on
- * level and op->lock.
+ * the @write parameter.
  */
 struct btree *bch_btree_node_get(struct cache_set *c, struct btree_op *op,
 				 struct bkey *k, int level, bool write,
@@ -1019,7 +1021,7 @@ retry:
 		if (current->bio_list)
 			return ERR_PTR(-EAGAIN);
 
-		b = mca_alloc(c, op, k, level, op->id);
+		b = mca_alloc(c, k, level, op->id, &op->cl);
 		if (!b)
 			goto retry;
 		if (IS_ERR(b))
@@ -1063,7 +1065,7 @@ static void btree_node_prefetch(struct btree *parent, struct bkey *k)
 {
 	struct btree *b;
 
-	b = mca_alloc(parent->c, NULL, k, parent->level - 1, parent->btree_id);
+	b = mca_alloc(parent->c, k, parent->level - 1, parent->btree_id, NULL);
 	if (!IS_ERR_OR_NULL(b)) {
 		b->parent = parent;
 		bch_btree_node_read(b);
@@ -1112,7 +1114,7 @@ retry:
 
 	SET_KEY_SIZE(&k.key, c->btree_pages * PAGE_SECTORS);
 
-	b = mca_alloc(c, op, &k.key, level, id);
+	b = mca_alloc(c, &k.key, level, id, NULL);
 	if (IS_ERR(b))
 		goto err;
 
@@ -1148,13 +1150,13 @@ static struct btree *btree_node_alloc_replacement(struct btree *b,
 	return n;
 }
 
-static int __btree_check_reserve(struct cache_set *c, struct btree_op *op,
-				 enum btree_id id, unsigned required,
+static int __btree_check_reserve(struct cache_set *c,
+				 enum alloc_reserve reserve,
+				 unsigned required,
 				 struct closure *cl)
 {
 	struct cache *ca;
 	unsigned i;
-	enum alloc_reserve reserve = (op ? op->reserve : id);
 
 	mutex_lock(&c->bucket_lock);
 
@@ -1177,7 +1179,7 @@ static int __btree_check_reserve(struct cache_set *c, struct btree_op *op,
 
 	mutex_unlock(&c->bucket_lock);
 
-	return mca_cannibalize_lock(c, op);
+	return mca_cannibalize_lock(c, cl);
 }
 
 struct btree *bch_btree_root_alloc(struct cache_set *c, enum btree_id id)
@@ -1187,7 +1189,7 @@ struct btree *bch_btree_root_alloc(struct cache_set *c, enum btree_id id)
 	bch_btree_op_init(&op, id, SHRT_MAX);
 
 	while (1) {
-		if (__btree_check_reserve(c, &op, id, 1, &op.cl)) {
+		if (__btree_check_reserve(c, id, 1, &op.cl)) {
 			closure_sync(&op.cl);
 			continue;
 		}
@@ -1200,8 +1202,9 @@ static int btree_check_reserve(struct btree *b, struct btree_op *op)
 {
 	enum btree_id id = b->btree_id;
 	unsigned required = (b->c->btree_roots[id]->level - b->level) * 2 + 1;
+	enum alloc_reserve reserve = (op ? op->reserve : id);
 
-	return __btree_check_reserve(b->c, op, id, required,
+	return __btree_check_reserve(b->c, reserve, required,
 				     op ? &op->cl : NULL);
 }
 
