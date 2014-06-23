@@ -80,35 +80,14 @@ static int btree_insert_fn(struct btree_op *b_op, struct btree *b)
 	struct bkey *replace_key = op->replace ? &op->replace_key : NULL;
 
 	int ret = bch_btree_insert_node(b, &op->op, &op->insert_keys,
-					replace_key, &op->cl,
-					op->flush);
+					replace_key, op->flush);
 	return bch_keylist_empty(&op->insert_keys) ? MAP_DONE : ret;
 }
 
-/**
- * bch_data_insert_keys - insert extent btree keys for a write
- */
-static void bch_data_insert_keys(struct closure *cl)
+static void bch_data_insert_keys_done(struct closure *cl)
 {
 	struct data_insert_op *op = container_of(cl, struct data_insert_op, cl);
-	struct keylist *keys = &op->insert_keys;
-	enum btree_id id = BTREE_ID_EXTENTS;
-	enum alloc_reserve reserve;
-	int ret = 0;
 	unsigned i;
-
-	reserve = bch_btree_reserve(op);
-	__bch_btree_op_init(&op->op, id, reserve, 0);
-
-	while (!ret && !bch_keylist_empty(keys)) {
-		op->op.lock = 0;
-		ret = bch_btree_map_leaf_nodes(&op->op, op->c,
-					       &START_KEY(keys->keys),
-					       btree_insert_fn);
-	}
-
-	if (ret == -EAGAIN)
-		continue_at(cl, bch_data_insert_keys, op->c->btree_insert_wq);
 
 	if (op->op.insert_collision)
 		op->replace_collision = true;
@@ -124,6 +103,42 @@ static void bch_data_insert_keys(struct closure *cl)
 
 	bch_keylist_free(&op->insert_keys);
 	closure_return(cl);
+}
+
+static void __bch_data_insert_keys(struct closure *cl)
+{
+	struct data_insert_op *op = container_of(cl, struct data_insert_op,
+					op.cl);
+	struct keylist *keys = &op->insert_keys;
+	int ret = 0;
+
+	while (!ret && !bch_keylist_empty(keys)) {
+		op->op.lock = 0;
+		ret = bch_btree_map_leaf_nodes(&op->op, op->c,
+					       &START_KEY(keys->keys),
+					       btree_insert_fn);
+	}
+
+	if (ret == -EAGAIN)
+		continue_at(cl, __bch_data_insert_keys, op->c->btree_insert_wq);
+
+	closure_return(cl);
+}
+
+/**
+ * bch_data_insert_keys - insert extent btree keys for a write
+ */
+static void bch_data_insert_keys(struct closure *cl)
+{
+	struct data_insert_op *op = container_of(cl, struct data_insert_op, cl);
+	enum btree_id id = BTREE_ID_EXTENTS;
+	enum alloc_reserve reserve;
+
+	reserve = bch_btree_reserve(op);
+	__bch_btree_op_init(&op->op, id, reserve, 0);
+
+	closure_call(&op->op.cl, __bch_data_insert_keys, NULL, cl);
+	continue_at(cl, bch_data_insert_keys_done, op->c->btree_insert_wq);
 }
 
 /**
@@ -899,11 +914,12 @@ static int cache_lookup_fn(struct btree_op *op, struct btree *b, struct bkey *k)
  */
 static void cache_lookup(struct closure *cl)
 {
-	struct search *s = container_of(cl, struct search, iop.cl);
+	struct search *s = container_of(cl, struct search, op.cl);
+	enum btree_id id = BTREE_ID_EXTENTS;
 	struct bio *bio = &s->bio.bio;
 	int ret;
 
-	bch_btree_op_init(&s->op, BTREE_ID_EXTENTS, -1);
+	__bch_btree_op_init(&s->op, id, id, -1);
 
 	ret = bch_btree_map_keys(&s->op, s->iop.c,
 				 &KEY(s->inode, bio->bi_iter.bi_sector, 0),
@@ -1094,7 +1110,7 @@ static int cached_dev_cache_miss(struct btree *b, struct search *s,
 
 	replace.key = KEY(s->inode, bio->bi_iter.bi_sector + sectors, sectors);
 
-	ret = bch_btree_insert_check_key(b, &s->op, &replace.key, &s->cl);
+	ret = bch_btree_insert_check_key(b, &s->op, &replace.key);
 	if (ret)
 		return ret;
 
@@ -1115,7 +1131,7 @@ static void cached_dev_read(struct cached_dev *dc, struct search *s)
 {
 	struct closure *cl = &s->cl;
 
-	closure_call(&s->iop.cl, cache_lookup, NULL, cl);
+	closure_call(&s->op.cl, cache_lookup, NULL, cl);
 	continue_at(cl, cached_dev_read_done_bh, NULL);
 }
 
@@ -1388,7 +1404,7 @@ static void __flash_dev_make_request(struct request_queue *q, struct bio *bio)
 
 		closure_call(&s->iop.cl, bch_data_insert, NULL, cl);
 	} else {
-		closure_call(&s->iop.cl, cache_lookup, NULL, cl);
+		closure_call(&s->op.cl, cache_lookup, NULL, cl);
 	}
 
 	continue_at(cl, search_free, NULL);

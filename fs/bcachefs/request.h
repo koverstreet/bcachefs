@@ -14,6 +14,7 @@ struct data_insert_op {
 	struct workqueue_struct *wq;
 	struct bio		*bio;
 
+	/* Used internally, do not touch */
 	struct btree_op		op;
 
 	uint16_t		write_point;

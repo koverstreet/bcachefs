@@ -197,6 +197,8 @@ static inline void set_gc_sectors(struct cache_set *c)
 /* Recursing down the btree */
 
 struct btree_op {
+	struct closure		cl;
+
 	enum btree_id		id;
 
 	/* For allocating new nodes */
@@ -215,24 +217,33 @@ struct btree_op {
 };
 
 /**
+ * __bch_btree_op_init - initialize btree op
+ *
  * @write_lock_level: -1 for read locks only
  *                    0 for write lock on leaf
  *                    SHRT_MAX for write locks only
+ *
+ * Does not initialize @op->cl -- you must do that yourself.
  */
 static inline void __bch_btree_op_init(struct btree_op *op, enum btree_id id,
 					enum alloc_reserve reserve,
 					int write_lock_level)
 {
-	memset(op, 0, sizeof(struct btree_op));
 	op->id = id;
 	op->reserve = reserve;
 	init_wait(&op->wait);
 	op->lock = write_lock_level;
+	op->iterator_invalidated = 0;
+	op->insert_collision = 0;
 }
 
+/**
+ * bch_btree_op_init - initialize synchronous btree op
+ */
 static inline void bch_btree_op_init(struct btree_op *op, enum btree_id id,
-					int write_lock_level)
+				     int write_lock_level)
 {
+	closure_init_stack(&op->cl);
 	__bch_btree_op_init(op, id, id, write_lock_level);
 }
 
@@ -265,11 +276,11 @@ struct btree *bch_btree_node_get(struct cache_set *, struct btree_op *,
 				 struct btree *);
 
 int bch_btree_insert_check_key(struct btree *, struct btree_op *,
-			       struct bkey *, struct closure *);
+			       struct bkey *);
 int bch_btree_insert(struct cache_set *, enum btree_id, struct keylist *,
 		     struct bkey *);
 int bch_btree_insert_node(struct btree *, struct btree_op *, struct keylist *,
-			  struct bkey *, struct closure *, bool);
+			  struct bkey *, bool);
 int bch_btree_insert_node_sync(struct btree *, struct btree_op *,
 			       struct keylist *, struct bkey *);
 
