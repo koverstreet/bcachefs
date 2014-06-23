@@ -2489,12 +2489,10 @@ out:
 }
 
 struct btree_insert_op {
+	struct closure	cl;
 	struct btree_op	op;
 	struct keylist	*keys;
 	struct bkey	*replace_key;
-	/* for waiting on journal write */
-	unsigned	flush:1;
-	struct closure	*parent;
 };
 
 static int btree_insert_fn(struct btree_op *b_op, struct btree *b)
@@ -2503,8 +2501,8 @@ static int btree_insert_fn(struct btree_op *b_op, struct btree *b)
 					struct btree_insert_op, op);
 
 	int ret = bch_btree_insert_node(b, &op->op, op->keys,
-					op->replace_key, op->parent,
-					op->flush);
+					op->replace_key, &op->cl,
+					false);
 	return bch_keylist_empty(op->keys) ? MAP_DONE : ret;
 }
 
@@ -2515,67 +2513,37 @@ static int btree_insert_fn(struct btree_op *b_op, struct btree *b)
  * @reserve:		reserve to allocate btree node from
  * @insert_keys:	list of keys to insert
  * @replace_key:	old key for compare exchange
- * @parent:		closure for waiting
- * @flush:		if true, closure will wait on last key to be inserted
- *
- * The @parent closure is used to wait on btree node allocation as well as
- * the journal write (if @flush is set). The journal wait will only happen
- * if the full list is inserted.
- *
- * Returns -EAGAIN if closure was put on a waitlist waiting for
- * btree node allocation.
  */
 int bch_btree_insert(struct cache_set *c, enum btree_id id,
-		     enum alloc_reserve reserve, struct keylist *keys,
-		     struct bkey *replace_key, struct closure *parent,
-		     bool flush)
+		     struct keylist *keys, struct bkey *replace_key)
 {
 	struct btree_insert_op op;
 	int ret = 0;
 
 	BUG_ON(bch_keylist_empty(keys));
 
-	__bch_btree_op_init(&op.op, id, reserve, 0);
+	closure_init_stack(&op.cl);
+	bch_btree_op_init(&op.op, id, 0);
 	op.keys		= keys;
 	op.replace_key	= replace_key;
-	op.flush	= flush;
-	op.parent	= parent;
-
-	while (!ret && !bch_keylist_empty(keys)) {
-		op.op.lock = 0;
-		ret = bch_btree_map_leaf_nodes(&op.op, c,
-			       id == BTREE_ID_EXTENTS
-					       ? &START_KEY(keys->keys)
-					       : keys->keys,
-					       btree_insert_fn);
-	}
-
-	if (ret && ret != -EAGAIN)
-		pr_err("error %i", ret);
-	else if (!ret && op.op.insert_collision)
-		ret = -ESRCH;
-
-	return ret;
-}
-
-/**
- * bch_btree_insert_sync - like bch_btree_insert but blocks on allocation
- */
-int bch_btree_insert_sync(struct cache_set *c, enum btree_id id,
-			  struct keylist *keys, struct bkey *replace_key)
-{
-	struct closure cl;
-	int ret;
-
-	closure_init_stack(&cl);
 
 	while (1) {
-		ret = bch_btree_insert(c, id, id, keys, replace_key,
-					&cl, false);
+		while (!ret && !bch_keylist_empty(keys)) {
+			op.op.lock = 0;
+			ret = bch_btree_map_leaf_nodes(&op.op, c,
+				       id == BTREE_ID_EXTENTS
+						       ? &START_KEY(keys->keys)
+						       : keys->keys,
+						       btree_insert_fn);
+		}
+
 		if (ret == -EAGAIN)
-			closure_sync(&cl);
-		else
-			return ret;
+			closure_sync(&op.cl);
+		else if (op.op.insert_collision)
+			return -ESRCH;
+
+		BUG_ON(ret);
+		return 0;
 	}
 }
 

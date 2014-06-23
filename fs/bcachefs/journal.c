@@ -356,7 +356,7 @@ static int bch_journal_replay_key(struct cache_set *c, enum btree_id id,
 
 	bch_keylist_init_single(&keys, k);
 
-	ret = bch_btree_insert_sync(c, id, &keys, NULL);
+	ret = bch_btree_insert(c, id, &keys, NULL);
 	BUG_ON(!bch_keylist_empty(&keys));
 
 	cond_resched();

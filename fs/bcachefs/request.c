@@ -73,31 +73,45 @@ static enum alloc_reserve bch_btree_reserve(struct data_insert_op *op)
 	return BTREE_ID_EXTENTS;
 }
 
+static int btree_insert_fn(struct btree_op *b_op, struct btree *b)
+{
+	struct data_insert_op *op = container_of(b_op,
+					struct data_insert_op, op);
+	struct bkey *replace_key = op->replace ? &op->replace_key : NULL;
+
+	int ret = bch_btree_insert_node(b, &op->op, &op->insert_keys,
+					replace_key, &op->cl,
+					op->flush);
+	return bch_keylist_empty(&op->insert_keys) ? MAP_DONE : ret;
+}
+
 /**
  * bch_data_insert_keys - insert extent btree keys for a write
  */
 static void bch_data_insert_keys(struct closure *cl)
 {
 	struct data_insert_op *op = container_of(cl, struct data_insert_op, cl);
-	struct bkey *replace_key = op->replace ? &op->replace_key : NULL;
+	struct keylist *keys = &op->insert_keys;
 	enum btree_id id = BTREE_ID_EXTENTS;
 	enum alloc_reserve reserve;
+	int ret = 0;
 	unsigned i;
-	int ret;
 
 	reserve = bch_btree_reserve(op);
+	__bch_btree_op_init(&op->op, id, reserve, 0);
 
-	ret = bch_btree_insert(op->c, id, reserve, &op->insert_keys,
-			       replace_key, cl, op->flush);
-
-	if (ret == -ESRCH) {
-		op->replace_collision = true;
-	} else if (ret == -EAGAIN) {
-		continue_at(cl, bch_data_insert_keys, op->c->btree_insert_wq);
-	} else if (ret) {
-		op->error		= -ENOMEM;
-		op->insert_data_done	= true;
+	while (!ret && !bch_keylist_empty(keys)) {
+		op->op.lock = 0;
+		ret = bch_btree_map_leaf_nodes(&op->op, op->c,
+					       &START_KEY(keys->keys),
+					       btree_insert_fn);
 	}
+
+	if (ret == -EAGAIN)
+		continue_at(cl, bch_data_insert_keys, op->c->btree_insert_wq);
+
+	if (op->op.insert_collision)
+		op->replace_collision = true;
 
 	for (i = 0; i < ARRAY_SIZE(op->open_buckets); i++)
 		if (op->open_buckets[i]) {
@@ -511,6 +525,9 @@ out_submit:
 	generic_make_request(orig_bio);
 }
 
+/**
+ * cache_promote - promote data stored in higher tiers
+ */
 static void cache_promote(struct cache_set *c, struct bio *bio,
 			  struct bkey *k)
 {

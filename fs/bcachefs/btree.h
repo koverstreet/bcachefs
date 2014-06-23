@@ -266,11 +266,8 @@ struct btree *bch_btree_node_get(struct cache_set *, struct btree_op *,
 
 int bch_btree_insert_check_key(struct btree *, struct btree_op *,
 			       struct bkey *, struct closure *);
-int bch_btree_insert(struct cache_set *, enum btree_id,
-		     enum alloc_reserve, struct keylist *, struct bkey *,
-		     struct closure *, bool);
-int bch_btree_insert_sync(struct cache_set *, enum btree_id,
-			  struct keylist *, struct bkey *);
+int bch_btree_insert(struct cache_set *, enum btree_id, struct keylist *,
+		     struct bkey *);
 int bch_btree_insert_node(struct btree *, struct btree_op *, struct keylist *,
 			  struct bkey *, struct closure *, bool);
 int bch_btree_insert_node_sync(struct btree *, struct btree_op *,
