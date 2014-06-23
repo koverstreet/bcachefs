@@ -397,7 +397,8 @@ static int bch_bset_print_stats(struct cache_set *c, char *buf)
 
 		if (c->btree_roots[id]) {
 			ret = bch_btree_map_nodes(&op.op, c, NULL,
-						  bch_btree_bset_stats);
+						  bch_btree_bset_stats,
+						  MAP_ALL_NODES);
 			if (ret < 0)
 				return ret;
 		}

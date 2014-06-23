@@ -114,9 +114,10 @@ static void __bch_data_insert_keys(struct closure *cl)
 
 	while (!ret && !bch_keylist_empty(keys)) {
 		op->op.lock = 0;
-		ret = bch_btree_map_leaf_nodes(&op->op, op->c,
-					       &START_KEY(keys->keys),
-					       btree_insert_fn);
+		ret = bch_btree_map_nodes(&op->op, op->c,
+					  &START_KEY(keys->keys),
+					  btree_insert_fn,
+					  MAP_ASYNC);
 	}
 
 	if (ret == -EAGAIN)
@@ -923,7 +924,7 @@ static void cache_lookup(struct closure *cl)
 
 	ret = bch_btree_map_keys(&s->op, s->iop.c,
 				 &KEY(s->inode, bio->bi_iter.bi_sector, 0),
-				 cache_lookup_fn, MAP_HOLES);
+				 cache_lookup_fn, MAP_HOLES | MAP_ASYNC);
 	if (ret == -EAGAIN)
 		continue_at(cl, cache_lookup, bcache_wq);
 	else if (ret)

@@ -131,11 +131,12 @@
  * @fn:		function to call, which will be passed the child node
  * @c:		cache set
  * @op:		pointer to struct btree_op
+ * @async:	if true, pass -EAGAIN up to the caller, otherwise wait
  */
-#define btree_root(fn, c, op, ...)					\
+#define btree_root(fn, c, op, async, ...)				\
 ({									\
 	int _r = -EINTR;						\
-	do {								\
+	while (1) {							\
 		struct btree *_b = (c)->btree_roots[(op)->id];		\
 		bool _w = insert_lock(op, _b);				\
 		rw_lock(_w, _b, _b->level);				\
@@ -148,7 +149,11 @@
 		(op)->iterator_invalidated = 0;				\
 		if (_r == -EINTR)					\
 			schedule();					\
-	} while (_r == -EINTR);						\
+		else if (!(async) && _r == -EAGAIN)			\
+			closure_sync(&(op)->cl);			\
+		else							\
+			break;						\
+	}								\
 									\
 	finish_wait(&(c)->mca_wait, &(op)->wait);			\
 	_r;								\
@@ -1749,7 +1754,7 @@ static void bch_btree_gc(struct cache_set *c)
 		bch_btree_op_init(&op, id, SHRT_MAX);
 
 		if (c->btree_roots[id]) {
-			ret = btree_root(gc_root, c, &op, &stats);
+			ret = btree_root(gc_root, c, &op, false, &stats);
 			cond_resched();
 		}
 		if (ret) {
@@ -1892,7 +1897,7 @@ int bch_btree_check(struct cache_set *c)
 		bch_btree_op_init(&op, id, SHRT_MAX);
 
 		if (c->btree_roots[id]) {
-			ret = btree_root(check_recurse, c, &op);
+			ret = btree_root(check_recurse, c, &op, false);
 			if (ret)
 				return ret;
 		}
@@ -2514,24 +2519,22 @@ int bch_btree_insert(struct cache_set *c, enum btree_id id,
 	op.keys		= keys;
 	op.replace_key	= replace_key;
 
-	while (1) {
-		while (!ret && !bch_keylist_empty(keys)) {
-			op.op.lock = 0;
-			ret = bch_btree_map_leaf_nodes(&op.op, c,
-				       id == BTREE_ID_EXTENTS
-						       ? &START_KEY(keys->keys)
-						       : keys->keys,
-						       btree_insert_fn);
-		}
-
-		if (ret == -EAGAIN)
-			closure_sync(&op.op.cl);
-		else if (op.op.insert_collision)
-			return -ESRCH;
-
-		BUG_ON(ret);
-		return 0;
+	while (!ret && !bch_keylist_empty(keys)) {
+		op.op.lock = 0;
+		ret = bch_btree_map_nodes(&op.op, c,
+			       id == BTREE_ID_EXTENTS
+					  ? &START_KEY(keys->keys)
+					  : keys->keys,
+					  btree_insert_fn,
+					  0);
 	}
+
+	BUG_ON(ret);
+
+	if (op.op.insert_collision)
+		return -ESRCH;
+
+	return 0;
 }
 
 void bch_btree_set_root(struct btree *b)
@@ -2583,7 +2586,7 @@ static int bch_btree_map_nodes_recurse(struct btree *b, struct btree_op *op,
 		}
 	}
 
-	if (!b->level || flags == MAP_ALL_NODES) {
+	if (!b->level || (flags & MAP_ALL_NODES)) {
 		ret = fn(op, b);
 
 		if (ret == MAP_CONTINUE && op->iterator_invalidated)
@@ -2593,15 +2596,16 @@ static int bch_btree_map_nodes_recurse(struct btree *b, struct btree_op *op,
 	return ret;
 }
 
-int __bch_btree_map_nodes(struct btree_op *op, struct cache_set *c,
-			  struct bkey *_from, btree_map_nodes_fn *fn, int flags)
+int bch_btree_map_nodes(struct btree_op *op, struct cache_set *c,
+			struct bkey *_from, btree_map_nodes_fn *fn, int flags)
 {
 	struct bkey from = _from ? *_from : KEY(0, 0, 0);
 
 	if (op->id == BTREE_ID_EXTENTS)
 		from = NEXT_KEY(&from);
 
-	return btree_root(map_nodes_recurse, c, op, &from, fn, flags);
+	return btree_root(map_nodes_recurse, c, op, flags & MAP_ASYNC,
+			  &from, fn, flags);
 }
 
 static int do_map_fn(struct btree *b, struct btree_op *op, struct bkey *from,
@@ -2754,5 +2758,6 @@ int bch_btree_map_keys(struct btree_op *op, struct cache_set *c,
 	if (_from)
 		bkey_copy_key(&from, _from);
 
-	return btree_root(map_keys_recurse, c, op, &from, fn, flags);
+	return btree_root(map_keys_recurse, c, op, flags & MAP_ASYNC,
+			  &from, fn, flags);
 }

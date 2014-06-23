@@ -309,23 +309,11 @@ void bch_wait_for_next_gc(struct cache_set *, unsigned);
 /* Only map_keys */
 #define MAP_HOLES	1
 
+#define MAP_ASYNC	2
+
 typedef int (btree_map_nodes_fn)(struct btree_op *, struct btree *);
-int __bch_btree_map_nodes(struct btree_op *, struct cache_set *,
-			  struct bkey *, btree_map_nodes_fn *, int);
-
-static inline int bch_btree_map_nodes(struct btree_op *op, struct cache_set *c,
-				      struct bkey *from, btree_map_nodes_fn *fn)
-{
-	return __bch_btree_map_nodes(op, c, from, fn, MAP_ALL_NODES);
-}
-
-static inline int bch_btree_map_leaf_nodes(struct btree_op *op,
-					   struct cache_set *c,
-					   struct bkey *from,
-					   btree_map_nodes_fn *fn)
-{
-	return __bch_btree_map_nodes(op, c, from, fn, MAP_LEAF_NODES);
-}
+int bch_btree_map_nodes(struct btree_op *, struct cache_set *,
+			struct bkey *, btree_map_nodes_fn *, int);
 
 typedef int (btree_map_keys_fn)(struct btree_op *, struct btree *,
 				struct bkey *);
