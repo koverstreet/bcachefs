@@ -267,9 +267,11 @@ static void __bcache_dev_sectors_dirty_add(struct bcache_device *d,
 		sectors_dirty = atomic_add_return(s,
 					d->stripe_sectors_dirty + stripe);
 		if (sectors_dirty == d->stripe_size)
-			set_bit(stripe, d->full_dirty_stripes);
-		else
+			BUG_ON(test_and_set_bit(stripe, d->full_dirty_stripes));
+		else if (sectors_dirty < d->stripe_size)
 			clear_bit(stripe, d->full_dirty_stripes);
+		else
+			BUG();
 
 		nr_sectors -= s;
 		stripe_offset = 0;
