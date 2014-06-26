@@ -482,6 +482,35 @@ retry_invalidate:
 
 /* Allocation */
 
+int bch_bucket_wait(struct cache_set *c, enum alloc_reserve reserve,
+		    struct closure *cl)
+{
+	lockdep_assert_held(&c->bucket_lock);
+
+	/* If we're waiting on buckets in one of these special reserves,
+	 * it means tiering or moving GC is out of space. In this case, we
+	 * kick btree GC immediately. Usually the allocator thread is
+	 * responsible for kicking btree GC, but in this case it might be
+	 * waiting for us to make progress, so we have to do this ourselves
+	 * to avoid deadlock. */
+	switch (reserve) {
+	case RESERVE_MOVINGGC:
+	case RESERVE_MOVINGGC_BTREE:
+	case RESERVE_TIERING_BTREE:
+		wake_up_gc(c);
+		break;
+	default:
+		break;
+	}
+
+	if (cl) {
+		closure_wait(&c->bucket_wait, cl);
+		return -EAGAIN;
+	}
+
+	return -ENOSPC;
+}
+
 long bch_bucket_alloc(struct cache *ca, enum alloc_reserve reserve,
 		      struct closure *cl)
 {
@@ -497,12 +526,8 @@ long bch_bucket_alloc(struct cache *ca, enum alloc_reserve reserve,
 
 	trace_bcache_bucket_alloc_fail(ca, reserve, cl);
 
-	if (cl) {
-		closure_wait(&ca->set->bucket_wait, cl);
-		return -EAGAIN;
-	}
+	return bch_bucket_wait(ca->set, reserve, cl);
 
-	return -ENOSPC;
 out:
 	wake_up(&ca->fifo_wait);
 
@@ -599,13 +624,7 @@ static struct cache *bch_next_cache(struct cache_set *c,
 
 	if (!sectors_count) {
 		trace_bcache_bucket_alloc_set_fail(c, reserve, cl);
-
-		if (cl) {
-			closure_wait(&c->bucket_wait, cl);
-			return ERR_PTR(-EAGAIN);
-		}
-
-		return ERR_PTR(-ENOSPC);
+		return ERR_PTR(bch_bucket_wait(c, reserve, cl));
 	}
 
 	/*

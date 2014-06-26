@@ -1170,6 +1170,7 @@ static int __btree_check_reserve(struct cache_set *c,
 {
 	struct cache *ca;
 	unsigned i;
+	int ret;
 
 	mutex_lock(&c->bucket_lock);
 
@@ -1179,14 +1180,9 @@ static int __btree_check_reserve(struct cache_set *c,
 					fifo_used(&ca->free[reserve]),
 					reserve);
 
-			if (cl) {
-				closure_wait(&c->bucket_wait, cl);
-				mutex_unlock(&c->bucket_lock);
-				return -EAGAIN;
-			}
-
+			ret = bch_bucket_wait(c, reserve, cl);
 			mutex_unlock(&c->bucket_lock);
-			return -ENOSPC;
+			return ret;
 		}
 	}
 

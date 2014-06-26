@@ -49,6 +49,9 @@ void __bch_invalidate_one_bucket(struct cache *, struct bucket *);
 void __bch_bucket_free(struct cache *, struct bucket *);
 void bch_bucket_free(struct cache_set *, struct bkey *);
 
+int bch_bucket_wait(struct cache_set *, enum alloc_reserve,
+		    struct closure *);
+
 long bch_bucket_alloc(struct cache *, unsigned, struct closure *);
 int bch_bucket_alloc_set(struct cache_set *, unsigned, struct bkey *,
 			 int, unsigned, struct closure *);
