@@ -646,41 +646,9 @@ static int bcache_device_init(struct bcache_device *d, unsigned block_size,
 			      sector_t sectors)
 {
 	struct request_queue *q;
-	size_t n;
 	int minor;
 
 	mutex_init(&d->inode_lock);
-
-	if (!d->stripe_size)
-		d->stripe_size = 1 << 31;
-
-	d->nr_stripes = DIV_ROUND_UP_ULL(sectors, d->stripe_size);
-
-	if (!d->nr_stripes ||
-	    d->nr_stripes > INT_MAX ||
-	    d->nr_stripes > SIZE_MAX / sizeof(atomic_t)) {
-		pr_err("nr_stripes too large or invalid: %u (start sector beyond end of disk?)",
-			(unsigned)d->nr_stripes);
-		return -ENOMEM;
-	}
-
-	n = d->nr_stripes * sizeof(atomic_t);
-	d->stripe_sectors_dirty = n < PAGE_SIZE << 6
-		? kzalloc(n, GFP_KERNEL)
-		: vzalloc(n);
-	if (!d->stripe_sectors_dirty) {
-		pr_err("cannot allocate stripe_sectors_dirty");
-		return -ENOMEM;
-	}
-
-	n = BITS_TO_LONGS(d->nr_stripes) * sizeof(unsigned long);
-	d->full_dirty_stripes = n < PAGE_SIZE << 6
-		? kzalloc(n, GFP_KERNEL)
-		: vzalloc(n);
-	if (!d->full_dirty_stripes) {
-		pr_err("cannot allocate full_dirty_stripes");
-		return -ENOMEM;
-	}
 
 	minor = ida_simple_get(&bcache_minor, 0, MINORMASK + 1, GFP_KERNEL);
 	if (minor < 0) {
@@ -946,7 +914,6 @@ int bch_cached_dev_attach(struct cached_dev *dc, struct cache_set *c)
 	if (BDEV_STATE(&dc->sb) == BDEV_STATE_DIRTY) {
 		atomic_set(&dc->has_dirty, 1);
 		atomic_inc(&dc->count);
-		bch_writeback_queue(dc);
 	}
 
 	bch_cached_dev_run(dc);
@@ -1044,15 +1011,15 @@ static int cached_dev_init(struct cached_dev *dc, unsigned block_size)
 	if (ret)
 		return ret;
 
-	set_capacity(dc->disk.disk,
-		     dc->bdev->bd_part->nr_sects - dc->sb.data_offset);
-
 	dc->disk.disk->queue->backing_dev_info.ra_pages =
 		max(dc->disk.disk->queue->backing_dev_info.ra_pages,
 		    q->backing_dev_info.ra_pages);
 
 	bch_cached_dev_request_init(dc);
-	bch_cached_dev_writeback_init(dc);
+	ret = bch_cached_dev_writeback_init(dc);
+	if (ret)
+		return ret;
+
 	return 0;
 }
 

@@ -248,6 +248,9 @@ static void __bcache_dev_sectors_dirty_add(struct bcache_device *d,
 	if (!d)
 		return;
 
+	if (!d->stripe_sectors_dirty)
+		return;
+
 	stripe = offset_to_stripe(d, offset);
 	stripe_offset = offset & (d->stripe_size - 1);
 
@@ -511,8 +514,51 @@ void bch_sectors_dirty_init(struct cached_dev *dc, struct cache_set *c)
 	dc->writeback_pd.last_actual = bcache_dev_sectors_dirty(d);
 }
 
-void bch_cached_dev_writeback_init(struct cached_dev *dc)
+int bch_cached_dev_writeback_init(struct cached_dev *dc)
 {
+	struct bcache_device *d = &dc->disk;
+	sector_t sectors;
+	size_t n;
+
+	sectors = get_capacity(dc->disk.disk);
+
+	if (!d->stripe_size) {
+#ifdef CONFIG_BCACHEFS_DEBUG
+		d->stripe_size = 1 << 0;
+#else
+		d->stripe_size = 1 << 31;
+#endif
+	}
+
+	pr_debug("stripe size: %d sectors", d->stripe_size);
+	d->nr_stripes = DIV_ROUND_UP_ULL(sectors, d->stripe_size);
+
+	if (!d->nr_stripes ||
+	    d->nr_stripes > INT_MAX ||
+	    d->nr_stripes > SIZE_MAX / sizeof(atomic_t)) {
+		pr_err("nr_stripes too large or invalid: %u (start sector beyond end of disk?)",
+			(unsigned)d->nr_stripes);
+		return -ENOMEM;
+	}
+
+	n = d->nr_stripes * sizeof(atomic_t);
+	d->stripe_sectors_dirty = n < PAGE_SIZE << 6
+		? kzalloc(n, GFP_KERNEL)
+		: vzalloc(n);
+	if (!d->stripe_sectors_dirty) {
+		pr_err("cannot allocate stripe_sectors_dirty");
+		return -ENOMEM;
+	}
+
+	n = BITS_TO_LONGS(d->nr_stripes) * sizeof(unsigned long);
+	d->full_dirty_stripes = n < PAGE_SIZE << 6
+		? kzalloc(n, GFP_KERNEL)
+		: vzalloc(n);
+	if (!d->full_dirty_stripes) {
+		pr_err("cannot allocate full_dirty_stripes");
+		return -ENOMEM;
+	}
+
 	init_rwsem(&dc->writeback_lock);
 	bch_keybuf_init(&dc->writeback_keys);
 
@@ -521,6 +567,8 @@ void bch_cached_dev_writeback_init(struct cached_dev *dc)
 	dc->writeback_percent		= 10;
 
 	INIT_DELAYED_WORK(&dc->writeback_pd.update, update_writeback_rate);
+
+	return 0;
 }
 
 int bch_cached_dev_writeback_start(struct cached_dev *dc)
