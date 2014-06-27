@@ -440,6 +440,8 @@ static void do_btree_node_write(struct btree *b)
 		bch_submit_bbio_replicas(b->bio, b->c, &k.key, ptrs_to_write);
 		continue_at(cl, btree_node_write_done, NULL);
 	} else {
+		trace_bcache_btree_write_sync(b);
+
 		b->bio->bi_vcnt = 0;
 		bch_bio_map(b->bio, i);
 
@@ -1483,6 +1485,8 @@ static int btree_gc_coalesce(struct btree *b, struct btree_op *op,
 	return -EINTR;
 
 out_nocoalesce:
+	trace_bcache_btree_gc_coalesce_fail(b->c);
+
 	/* We may have written out some new nodes which are garbage now,
 	 * wait for writes to finish */
 	closure_sync(&cl);
@@ -1513,10 +1517,13 @@ static int btree_gc_rewrite_node(struct btree *b, struct btree_op *op,
 
 	/* recheck reserve after allocating replacement node */
 	if (btree_check_reserve(b, NULL)) {
+		trace_bcache_btree_gc_rewrite_node_fail(b);
 		btree_node_free(n);
 		rw_unlock(true, n);
 		return 0;
 	}
+
+	trace_bcache_btree_gc_rewrite_node(b);
 
 	bch_btree_node_write_sync(n);
 
@@ -2414,6 +2421,7 @@ int bch_btree_insert_node(struct btree *b, struct btree_op *op,
 		/* The first time this is called, we don't have a write lock
 		 * on the parent yet, so update op->lock and start again. */
 		if (op->lock <= btree_node_root(b)->level) {
+			trace_bcache_btree_upgrade_lock_fail(b, op);
 			op->lock = btree_node_root(b)->level + 1;
 			return -EINTR;
 		} else {
@@ -2454,9 +2462,12 @@ int bch_btree_insert_check_key(struct btree *b, struct btree_op *op,
 
 		if (b->key.val[0] != btree_ptr ||
 		    b->seq != seq + 1) {
+			trace_bcache_btree_upgrade_lock_fail(b, op);
 			op->lock = b->level;
 			goto out;
-               }
+		}
+
+		trace_bcache_btree_upgrade_lock(b, op);
 	}
 
 	bch_set_extent_ptrs(check_key, 1);
@@ -2613,8 +2624,10 @@ static int do_map_fn(struct btree *b, struct btree_op *op, struct bkey *from,
 	if (ret == MAP_CONTINUE)
 		*from = next;
 
-	if (ret == MAP_CONTINUE && op->iterator_invalidated)
+	if (ret == MAP_CONTINUE && op->iterator_invalidated) {
+		trace_bcache_btree_iterator_invalidated(b, op);
 		ret = -EINTR;
+	}
 
 	return ret;
 }

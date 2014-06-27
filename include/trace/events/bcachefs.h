@@ -262,6 +262,11 @@ TRACE_EVENT(bcache_btree_write,
 		  __entry->bucket, __entry->block, __entry->keys)
 );
 
+DEFINE_EVENT(btree_node, bcache_btree_write_sync,
+	TP_PROTO(struct btree *b),
+	TP_ARGS(b)
+);
+
 DEFINE_EVENT(btree_node, bcache_btree_node_alloc,
 	TP_PROTO(struct btree *b),
 	TP_ARGS(b)
@@ -338,6 +343,44 @@ DEFINE_EVENT(cache_set, bcache_mca_cannibalize_unlock,
 	TP_ARGS(c)
 );
 
+DECLARE_EVENT_CLASS(btree_node_op,
+	TP_PROTO(struct btree *b, void *op),
+	TP_ARGS(b, op),
+
+	TP_STRUCT__entry(
+		__array(char,		uuid,	16		)
+		__field(size_t,		bucket			)
+		__field(enum btree_id,	id			)
+		__field(void *,		op			)
+	),
+
+	TP_fast_assign(
+		memcpy(__entry->uuid, b->c->sb.set_uuid.b, 16);
+		__entry->bucket	= PTR_BUCKET_NR(b->c, &b->key, 0);
+		__entry->id = b->btree_id;
+		__entry->op = op;
+	),
+
+	TP_printk("%pU bucket %zu id %u op %p", __entry->uuid, __entry->bucket,
+		__entry->id, __entry->op)
+);
+
+DEFINE_EVENT(btree_node_op, bcache_btree_upgrade_lock,
+	TP_PROTO(struct btree *b, void *op),
+	TP_ARGS(b, op)
+);
+
+DEFINE_EVENT(btree_node_op, bcache_btree_upgrade_lock_fail,
+	TP_PROTO(struct btree *b, void *op),
+	TP_ARGS(b, op)
+);
+
+DEFINE_EVENT(btree_node_op, bcache_btree_iterator_invalidated,
+	TP_PROTO(struct btree *b, void *op),
+	TP_ARGS(b, op)
+);
+
+
 /* Garbage collection */
 
 TRACE_EVENT(bcache_btree_gc_coalesce,
@@ -353,6 +396,21 @@ TRACE_EVENT(bcache_btree_gc_coalesce,
 	),
 
 	TP_printk("coalesced %u nodes", __entry->nodes)
+);
+
+DEFINE_EVENT(cache_set, bcache_btree_gc_coalesce_fail,
+	TP_PROTO(struct cache_set *c),
+	TP_ARGS(c)
+);
+
+DEFINE_EVENT(btree_node, bcache_btree_gc_rewrite_node,
+	TP_PROTO(struct btree *b),
+	TP_ARGS(b)
+);
+
+DEFINE_EVENT(btree_node, bcache_btree_gc_rewrite_node_fail,
+	TP_PROTO(struct btree *b),
+	TP_ARGS(b)
 );
 
 DEFINE_EVENT(cache_set, bcache_gc_start,
