@@ -147,6 +147,7 @@ static int bch_tiering_thread(void *arg)
 			break;
 
 		read_tiering(c);
+		wake_up_gc(c);
 	} while (!bch_kthread_loop_ratelimit(&last,
 					     c->btree_scan_ratelimit * HZ));
 

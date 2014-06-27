@@ -74,19 +74,27 @@ static void alloc_failed(struct cache *ca)
 	struct cache_set *c = ca->set;
 	unsigned i, gc_count;
 
+	gc_count = bch_gc_count(c);
+
+	/* Check if there are caches in higher tiers; we could potentially
+	 * make room on our cache by tiering */
 	for (i = CACHE_TIER(&ca->sb) + 1;
 	     i < ARRAY_SIZE(c->cache_by_alloc);
 	     i++)
 		if (c->cache_by_alloc[i].nr_devices) {
 			c->tiering_pd.rate.rate = UINT_MAX;
 			bch_ratelimit_reset(&c->tiering_pd.rate);
+			wake_up_process(c->tiering_thread);
+			trace_bcache_alloc_wake_tiering(ca);
+			goto wait;
 		}
 
-	trace_bcache_alloc_wait(ca);
+	/* If this is the highest tier cache, just do a btree GC */
+	wake_up_process(ca->moving_gc_thread);
+	trace_bcache_alloc_wake_moving(ca);
 
+wait:
 	mutex_unlock(&c->bucket_lock);
-	gc_count = bch_gc_count(c);
-	wake_up_gc(c);
 	bch_wait_for_next_gc(c, gc_count);
 	mutex_lock(&c->bucket_lock);
 }

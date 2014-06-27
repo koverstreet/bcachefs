@@ -380,7 +380,12 @@ DECLARE_EVENT_CLASS(cache,
 	TP_printk("%pU", __entry->uuid)
 );
 
-DEFINE_EVENT(cache, bcache_alloc_wait,
+DEFINE_EVENT(cache, bcache_alloc_wake_tiering,
+	TP_PROTO(struct cache *ca),
+	TP_ARGS(ca)
+);
+
+DEFINE_EVENT(cache, bcache_alloc_wake_moving,
 	TP_PROTO(struct cache *ca),
 	TP_ARGS(ca)
 );
