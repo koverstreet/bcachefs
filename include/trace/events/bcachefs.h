@@ -107,6 +107,11 @@ DEFINE_EVENT(bcache_bio, bcache_bypass_congested,
 	TP_ARGS(bio)
 );
 
+DEFINE_EVENT(bcache_bio, bcache_cache_promote,
+	TP_PROTO(struct bio *bio),
+	TP_ARGS(bio)
+);
+
 TRACE_EVENT(bcache_read,
 	TP_PROTO(struct bio *bio, bool hit, bool bypass),
 	TP_ARGS(bio, hit, bypass),
@@ -213,6 +218,11 @@ DEFINE_EVENT(cache_set, bcache_journal_entry_full,
 DEFINE_EVENT(bcache_bio, bcache_journal_write,
 	TP_PROTO(struct bio *bio),
 	TP_ARGS(bio)
+);
+
+DEFINE_EVENT(cache_set, bcache_cache_miss_collision,
+	TP_PROTO(struct cache_set *c),
+	TP_ARGS(c)
 );
 
 /* Btree */
