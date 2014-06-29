@@ -456,7 +456,8 @@ enum alloc_reserve {
  */
 #define BTREE_NODE_RESERVE 8
 
-#define OPEN_BUCKETS_COUNT 64
+/* Enough for 16 cache devices, 2 tiers and some left over for pipelining */
+#define OPEN_BUCKETS_COUNT 256
 
 /* We don't want open bucket allocations from bch_alloc_gc_sectors() to fail */
 #define OPEN_BUCKETS_MOVING_GC_RESERVE NUM_GC_GENS
@@ -592,10 +593,12 @@ struct gc_stat {
 #define	CACHE_SET_STOPPING		1
 #define	CACHE_SET_RUNNING		2
 
+#define TIER_OPEN_BUCKETS_COUNT		16
+
 struct cache_tier {
 	unsigned		nr_devices;
 	struct cache		*devices[MAX_CACHES_PER_SET];
-	struct open_bucket	*data_buckets[6];
+	struct open_bucket	*data_buckets[TIER_OPEN_BUCKETS_COUNT];
 };
 
 struct prio_clock {

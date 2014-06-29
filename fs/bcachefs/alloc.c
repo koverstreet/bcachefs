@@ -728,7 +728,10 @@ static struct open_bucket *bch_open_bucket_get(struct cache_set *c,
 					       struct closure *cl)
 {
 	struct open_bucket *ret;
-	unsigned reserve = (moving_gc ? 0 : OPEN_BUCKETS_MOVING_GC_RESERVE);
+	unsigned reserve = 0;
+
+	if (!moving_gc)
+		reserve = OPEN_BUCKETS_MOVING_GC_RESERVE * c->sb.nr_in_set;
 
 	spin_lock(&c->open_buckets_lock);
 
@@ -815,7 +818,9 @@ retry:
 	for (i = 0;
 	     i < ARRAY_SIZE(tier->data_buckets) &&
 	     (b = tier->data_buckets[i]); i++) {
-		if (!bkey_cmp(&b->key, &START_KEY(search)))
+		/* Tiering thread already writes keys in order, maximize
+		 * write bandwidth instead */
+		if (tier_idx == 0 && !bkey_cmp(&b->key, &START_KEY(search)))
 			goto found;
 		else if (b->last_write_point == write_point)
 			wp = i;

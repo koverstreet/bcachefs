@@ -66,11 +66,14 @@ static void read_tiering(struct cache_set *c)
 	struct moving_io *io;
 	struct closure cl;
 	struct moving_io_stats stats;
+	unsigned write_point;
 
 	trace_bcache_tiering_start(c);
 	closure_init_stack(&cl);
 
 	memset(&stats, 0, sizeof(stats));
+
+	write_point = 0;
 
 	/* XXX: if we error, background writeback could stall indefinitely */
 
@@ -101,7 +104,7 @@ static void read_tiering(struct cache_set *c)
 		io->stats = &stats;
 
 		bch_data_insert_op_init(&io->op, c, c->tiering_wq,
-					&io->bio.bio, 0,
+					&io->bio.bio, write_point,
 					false, false, false,
 					&io->w->key, &io->w->key);
 		io->op.tiering	= 1;
@@ -113,6 +116,12 @@ static void read_tiering(struct cache_set *c)
 					KEY_SIZE(&w->key) << 9);
 
 		closure_call(&io->cl, bch_data_move, NULL, &cl);
+
+		/* Try to stripe writes across cache devices by sending them
+		 * to different open buckets */
+		write_point++;
+		if (write_point == c->sb.nr_in_set)
+			write_point = 0;
 	}
 
 	if (0) {
