@@ -65,8 +65,15 @@ struct bio *bch_bbio_alloc(struct cache_set *c)
 
 void bch_bbio_prep(struct bbio *b, struct cache_set *c)
 {
+	struct bvec_iter *iter = &b->bio.bi_iter;
+
+	b->c				= c;
+
 	b->bio.bi_iter.bi_sector	= PTR_OFFSET(&b->key, 0);
 	b->bio.bi_bdev			= PTR_CACHE(c, &b->key, 0)->bdev;
+
+	b->bi_idx			= iter->bi_idx;
+	b->bi_bvec_done			= iter->bi_bvec_done;
 }
 
 void bch_submit_bbio(struct bbio *b, struct cache_set *c,
@@ -104,6 +111,17 @@ void bch_submit_bbio_replicas(struct bio *bio_src, struct cache_set *c,
 	}
 
 	bch_submit_bbio(to_bbio(bio_src), c, k, first, punt);
+}
+
+void bch_bbio_reset(struct bbio *b)
+{
+	struct bvec_iter *iter = &b->bio.bi_iter;
+
+	bio_reset(&b->bio);
+	iter->bi_sector		= KEY_START(&b->key);
+	iter->bi_size		= KEY_SIZE(&b->key) << 9;
+	iter->bi_idx		= b->bi_idx;
+	iter->bi_bvec_done	= b->bi_bvec_done;
 }
 
 /* IO errors */
