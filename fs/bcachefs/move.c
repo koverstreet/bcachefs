@@ -89,7 +89,7 @@ void bch_data_move(struct closure *cl)
 	bio_set_op_attrs(&io->bio.bio, REQ_OP_READ, 0);
 	io->bio.bio.bi_end_io	= read_moving_endio;
 
-	bch_submit_bbio(&io->bio, io->op.c, &io->w->key, ptr);
+	bch_submit_bbio(&io->bio, io->op.c, &io->w->key, ptr, false);
 
 	continue_at(cl, write_moving, io->op.c->wq);
 }

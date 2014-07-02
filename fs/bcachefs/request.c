@@ -822,7 +822,7 @@ static int bch_read_fn(struct btree_op *b_op, struct btree *b, struct bkey *k)
 	bch_cut_front(&KEY(op->inode, n->bi_iter.bi_sector, 0), &bbio->key);
 	bch_cut_back(&KEY(op->inode, bio_end_sector(n), 0), &bbio->key);
 
-	__bch_bbio_prep(bbio, b->c);
+	bch_bbio_prep(bbio, b->c);
 
 	cache_promote(b->c, bbio, k, ptr);
 
@@ -942,7 +942,7 @@ static int cache_lookup_fn(struct btree_op *op, struct btree *b, struct bkey *k)
 	bch_cut_front(&KEY(s->inode, n->bi_iter.bi_sector, 0), &bbio->key);
 	bch_cut_back(&KEY(s->inode, bio_end_sector(n), 0), &bbio->key);
 
-	__bch_bbio_prep(bbio, b->c);
+	bch_bbio_prep(bbio, b->c);
 
 	n->bi_end_io		= bch_cache_read_endio;
 	n->bi_private		= &s->cl;
