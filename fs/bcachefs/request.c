@@ -745,6 +745,22 @@ struct bch_read_op {
 	u64			inode;
 };
 
+/**
+ * bch_read_hole - handle read from a hole in a flash only volume
+ */
+static int bch_read_hole(struct bio *bio, unsigned sectors)
+{
+	unsigned bytes = min(sectors, bio_sectors(bio)) << 9;
+
+	swap(bio->bi_iter.bi_size, bytes);
+	zero_fill_bio(bio);
+	swap(bio->bi_iter.bi_size, bytes);
+
+	bio_advance(bio, bytes);
+
+	return bio->bi_iter.bi_size ? MAP_CONTINUE : MAP_DONE;
+}
+
 /* XXX: this looks a lot like cache_lookup_fn() */
 static int bch_read_fn(struct btree_op *b_op, struct btree *b, struct bkey *k)
 {
@@ -755,32 +771,18 @@ static int bch_read_fn(struct btree_op *b_op, struct btree *b, struct bkey *k)
 	int sectors, ret;
 	int ptr = 0;
 
-	if (bkey_cmp(k, &KEY(op->inode, bio->bi_iter.bi_sector, 0)) <= 0)
-		return MAP_CONTINUE;
+	BUG_ON(bkey_cmp(&START_KEY(k),
+			&KEY(op->inode, bio->bi_iter.bi_sector, 0)) > 0);
 
-	if (KEY_INODE(k) != op->inode ||
-	    KEY_START(k) >= bio_end_sector(bio)) {
-		/* Completely missed */
-		zero_fill_bio(bio);
-		return MAP_DONE;
-	}
+	BUG_ON(bkey_cmp(k, &KEY(op->inode, bio->bi_iter.bi_sector, 0)) <= 0);
 
-	if (KEY_START(k) > bio->bi_iter.bi_sector) {
-		unsigned bytes = (KEY_START(k) - bio->bi_iter.bi_sector) << 9;
-
-		swap(bytes, bio->bi_iter.bi_size);
-		zero_fill_bio(bio);
-		swap(bytes, bio->bi_iter.bi_size);
-
-		bio_advance(bio, bytes);
-	}
+	sectors = KEY_OFFSET(k) - bio->bi_iter.bi_sector;
 
 	ptr = bch_extent_pick_ptr(b->c, k);
-	if (ptr < 0) /* all stale? */
-		return MAP_CONTINUE;
+	if (ptr < 0)
+		return bch_read_hole(bio, sectors);
 
-	sectors = min_t(u64, INT_MAX,
-			KEY_OFFSET(k) - bio->bi_iter.bi_sector);
+	PTR_BUCKET(b->c, k, ptr)->read_prio = b->c->read_clock.hand;
 
 	if (sectors >= bio_sectors(bio)) {
 		n = bio_clone_fast(bio, GFP_NOIO, b->c->bio_split);
@@ -813,8 +815,6 @@ int bch_read(struct cache_set *c, struct bio *bio, u64 inode)
 
 	bch_increment_clock(c, bio_sectors(bio), READ);
 
-	zero_fill_bio(bio);
-
 	bch_btree_op_init(&op.op, BTREE_ID_EXTENTS, -1);
 	op.c = c;
 	op.bio = bio;
@@ -822,7 +822,7 @@ int bch_read(struct cache_set *c, struct bio *bio, u64 inode)
 
 	ret = bch_btree_map_keys(&op.op, c,
 				 &KEY(inode, bio->bi_iter.bi_sector, 0),
-				 bch_read_fn, 0);
+				 bch_read_fn, MAP_HOLES);
 	return ret < 0 ? ret : 0;
 }
 EXPORT_SYMBOL(bch_read);
@@ -1385,24 +1385,10 @@ void bch_cached_dev_request_init(struct cached_dev *dc)
 
 /* Flash backed devices */
 
-/**
- * flash_dev_cache_miss - handle read from a hole in a flash only volume
- */
 static int flash_dev_cache_miss(struct btree *b, struct search *s,
 				struct bio *bio, unsigned sectors)
 {
-	unsigned bytes = min(sectors, bio_sectors(bio)) << 9;
-
-	swap(bio->bi_iter.bi_size, bytes);
-	zero_fill_bio(bio);
-	swap(bio->bi_iter.bi_size, bytes);
-
-	bio_advance(bio, bytes);
-
-	if (!bio->bi_iter.bi_size)
-		return MAP_DONE;
-
-	return MAP_CONTINUE;
+	return bch_read_hole(bio, sectors);
 }
 
 static void flash_dev_nodata(struct closure *cl)
