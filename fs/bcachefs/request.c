@@ -1,9 +1,26 @@
 /*
- * Main bcache entry point - handle a read or a write request and decide what to
- * do with it; the make_request functions are called by the block layer.
+ * Handle a read or a write request and decide what to do with it.
  *
  * Copyright 2010, 2011 Kent Overstreet <kent.overstreet@gmail.com>
  * Copyright 2012 Google, Inc.
+ *
+ * Main pieces here:
+ *
+ * 1) Data insert path, via bch_data_insert() -- writes data to cache and
+ *    updates extents btree
+ * 2) Read path, via bch_read() -- for now only used by bcachefs and ioctl
+ *    interface
+ * 3) Read path, via cache_lookup() and struct search -- used by block device
+ *    make_request functions
+ * 4) Cache promotion -- used by bch_read() and cache_lookup() to copy data to
+ *    the cache, either from a backing device or a cache device in a higher tier
+ *
+ * One tricky thing that comes up is a race condition where a bucket may be
+ * re-used while reads from it are still in flight. To guard against this, we
+ * save the ptr that is being read and check if it is stale once the read
+ * completes. If the ptr is stale, the read is retried.
+ *
+ * #2 and #3 will be unified further in the future.
  */
 
 #include "bcache.h"
@@ -528,6 +545,8 @@ static void cache_promote_endio(struct bio *bio)
 /**
  * __cache_promote -- insert result of read bio into cache
  *
+ * Used for backing devices and flash-only volumes.
+ *
  * @orig_bio must actually be a bbio with a valid key.
  */
 static void __cache_promote(struct cache_set *c, struct bbio *orig_bio,
@@ -588,6 +607,8 @@ out_submit:
 
 /**
  * cache_promote - promote data stored in higher tiers
+ *
+ * Used for flash only volumes.
  *
  * @bio must actually be a bbio with valid key.
  */
@@ -873,15 +894,10 @@ static void bch_cache_read_endio(struct bio *bio)
 	struct closure *cl = bio->bi_private;
 	struct search *s = container_of(cl, struct search, cl);
 
-	/*
-	 * If the bucket was reused while our bio was in flight, we might have
-	 * read the wrong data. Set s->error but not error so it doesn't get
-	 * counted against the cache device, but we'll still reread the data.
-	 */
-
 	if (bio->bi_error)
 		s->iop.error = bio->bi_error;
 	else if (ptr_stale(s->iop.c, &b->key, 0)) {
+		/* Read bucket invalidate race */
 		atomic_long_inc(&s->iop.c->cache_read_races);
 		s->iop.error = -EINTR;
 	}
@@ -931,16 +947,6 @@ static int cache_lookup_fn(struct btree_op *op, struct btree *b, struct bkey *k)
 	n->bi_end_io		= bch_cache_read_endio;
 	n->bi_private		= &s->cl;
 
-	/*
-	 * The bucket we're reading from might be reused while our bio
-	 * is in flight, and we could then end up reading the wrong
-	 * data.
-	 *
-	 * We guard against this by checking (in cache_read_endio()) if
-	 * the pointer is stale again; if so, we treat it as an error
-	 * and reread from the backing device (but we don't pass that
-	 * error up anywhere).
-	 */
 	closure_get(&s->cl);
 	if (!s->bypass) {
 		if (cache_promote(b->c, bbio, k, ptr))
@@ -976,6 +982,9 @@ static void cache_lookup(struct closure *cl)
 
 /* Common code for the make_request functions */
 
+/**
+ * request_endio - endio function for backing device bios
+ */
 static void request_endio(struct bio *bio)
 {
 	struct closure *cl = bio->bi_private;
@@ -1074,7 +1083,9 @@ static void cached_dev_read_error(struct closure *cl)
 	struct bio *bio = &s->bio.bio;
 
 	if (s->recoverable) {
-		/* Retry from the backing device: */
+		/* Read bucket invalidate races are handled here, also plain
+		 * old IO errors from the cache that can be retried from the
+		 * backing device (reads of clean data) */
 		trace_bcache_read_retry(s->orig_bio);
 
 		s->iop.error = 0;
@@ -1407,12 +1418,13 @@ static void flash_dev_read_error(struct closure *cl)
 	struct bio *bio = &s->bio.bio;
 
 	if (s->recoverable) {
+		/* Bucket invalidation read races are handled here */
 		trace_bcache_read_retry(s->orig_bio);
 
 		s->iop.error = 0;
 		do_bio_hook(s, s->orig_bio);
 
-		/* XXX: invalidate cache, don't count twice */
+		/* XXX: don't count twice */
 
 		closure_bio_submit(bio, cl);
 	}
