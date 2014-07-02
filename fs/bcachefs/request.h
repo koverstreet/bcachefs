@@ -86,6 +86,8 @@ void bch_data_insert(struct closure *cl);
 void bch_cached_dev_request_init(struct cached_dev *dc);
 void bch_flash_dev_request_init(struct bcache_device *d);
 
+void bch_read_race_work(struct work_struct *work);
+
 extern struct kmem_cache *bch_search_cache;
 
 #endif /* _BCACHE_REQUEST_H_ */

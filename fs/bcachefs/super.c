@@ -1453,6 +1453,10 @@ struct cache_set *bch_cache_set_alloc(struct cache_sb *sb)
 	INIT_WORK(&c->bio_submit_work, bch_bio_submit_work);
 	spin_lock_init(&c->bio_submit_lock);
 
+	bio_list_init(&c->read_race_list);
+	spin_lock_init(&c->read_race_lock);
+	INIT_WORK(&c->read_race_work, bch_read_race_work);
+
 	c->congested_read_threshold_us	= 2000;
 	c->congested_write_threshold_us	= 20000;
 	c->error_limit	= 8 << IO_ERROR_SHIFT;

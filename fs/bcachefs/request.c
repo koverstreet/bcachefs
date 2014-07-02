@@ -782,6 +782,45 @@ static int bch_read_hole(struct bio *bio, unsigned sectors)
 	return bio->bi_iter.bi_size ? MAP_CONTINUE : MAP_DONE;
 }
 
+static void bch_read_requeue(struct cache_set *c, struct bio *bio)
+{
+	unsigned long flags;
+
+	spin_lock_irqsave(&c->read_race_lock, flags);
+	bio_list_add(&c->read_race_list, bio);
+	spin_unlock_irqrestore(&c->read_race_lock, flags);
+	queue_work(c->wq, &c->read_race_work);
+}
+
+static void bch_read_endio(struct bio *bio)
+{
+	struct bbio *b = container_of(bio, struct bbio, bio);
+	struct cache_set *c = b->c;
+	struct bio *orig = bio->bi_private;
+
+	if (!bio->bi_error && (race_fault() || ptr_stale(c, &b->key, 0))) {
+		/* Read bucket invalidate race */
+		atomic_long_inc(&c->cache_read_races);
+		bch_read_requeue(c, bio);
+		return;
+	}
+
+	bch_bbio_count_io_errors(c, bio, bio->bi_error, "reading from cache");
+
+	if (bio->bi_error)
+		orig->bi_error = bio->bi_error;
+
+	bio_endio(orig);
+	bio_put(bio);
+}
+
+static inline void __bio_inc_remaining(struct bio *bio)
+{
+	bio->bi_flags |= (1 << BIO_CHAIN);
+	smp_mb__before_atomic();
+	atomic_inc(&bio->__bi_remaining);
+}
+
 /* XXX: this looks a lot like cache_lookup_fn() */
 static int bch_read_fn(struct btree_op *b_op, struct btree *b, struct bkey *k)
 {
@@ -813,7 +852,9 @@ static int bch_read_fn(struct btree_op *b_op, struct btree *b, struct bkey *k)
 		ret = MAP_CONTINUE;
 	}
 
-	bio_chain(n, bio);
+	n->bi_private		= bio;
+	n->bi_end_io		= bch_read_endio;
+	__bio_inc_remaining(bio);
 
 	bbio = to_bbio(n);
 	bch_bkey_copy_single_ptr(&bbio->key, k, ptr);
@@ -847,6 +888,57 @@ int bch_read(struct cache_set *c, struct bio *bio, u64 inode)
 	return ret < 0 ? ret : 0;
 }
 EXPORT_SYMBOL(bch_read);
+
+/**
+ * bch_read_retry - re-submit a bio originally from bch_read()
+ */
+static void bch_read_retry(struct bbio *bbio)
+{
+	struct bio *bio = &bbio->bio;
+	struct bio *parent;
+	u64 inode;
+
+	trace_bcache_read_retry(bio);
+
+	/*
+	 * This used to be a leaf bio from bch_read_fn(), but
+	 * since we don't know what happened to the btree in
+	 * the meantime, we have to re-submit it via the
+	 * top-level bch_read() entry point. Before doing that,
+	 * we have to reset the bio, preserving the biovec.
+	 *
+	 * The inode, offset and size come from the bbio's key,
+	 * which was set by bch_read_fn().
+	 */
+	inode = KEY_INODE(&bbio->key);
+	parent = bio->bi_private;
+
+	bch_bbio_reset(bbio);
+	bio_chain(bio, parent);
+
+	bch_read(bbio->c, bio, inode);
+	bio_endio(parent);  /* for bio_chain() in bch_read_fn() */
+	bio_endio(bio);
+}
+
+void bch_read_race_work(struct work_struct *work)
+{
+	struct cache_set *c = container_of(work, struct cache_set,
+					   read_race_work);
+	unsigned long flags;
+	struct bio *bio;
+
+	while (1) {
+		spin_lock_irqsave(&c->read_race_lock, flags);
+		bio = bio_list_pop(&c->read_race_list);
+		spin_unlock_irqrestore(&c->read_race_lock, flags);
+
+		if (!bio)
+			break;
+
+		bch_read_retry(to_bbio(bio));
+	}
+}
 
 /* struct search based code */
 

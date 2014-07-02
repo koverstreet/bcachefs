@@ -741,6 +741,12 @@ struct cache_set {
 
 	struct gc_stat		gc_stats;
 
+
+	/* IO PATH */
+	struct bio_list		read_race_list;
+	struct work_struct	read_race_work;
+	spinlock_t		read_race_lock;
+
 	/* TIERING */
 	struct task_struct	*tiering_thread;
 	struct keybuf		tiering_keys;
