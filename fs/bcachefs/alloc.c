@@ -499,7 +499,7 @@ int bch_bucket_wait(struct cache_set *c, enum alloc_reserve reserve,
 	case RESERVE_MOVINGGC:
 	case RESERVE_MOVINGGC_BTREE:
 	case RESERVE_TIERING_BTREE:
-		wake_up_gc(c);
+		wake_up_gc(c, true);
 		break;
 	default:
 		break;

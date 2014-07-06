@@ -1440,7 +1440,6 @@ struct cache_set *bch_cache_set_alloc(struct cache_sb *sb)
 	INIT_RADIX_TREE(&c->devices, GFP_KERNEL);
 	mutex_init(&c->btree_cache_lock);
 	mutex_init(&c->bucket_lock);
-	spin_lock_init(&c->gc_lock);
 	init_waitqueue_head(&c->gc_wait);
 	spin_lock_init(&c->btree_root_lock);
 

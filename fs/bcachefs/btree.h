@@ -280,9 +280,9 @@ void bch_initial_gc_finish(struct cache_set *);
 int bch_btree_check(struct cache_set *);
 u8 __bch_btree_mark_key(struct cache_set *, int, struct bkey *);
 
-static inline void wake_up_gc(struct cache_set *c)
+static inline void wake_up_gc(struct cache_set *c, bool always)
 {
-	if (c->gc_thread)
+	if (c->gc_thread && (always || atomic_read(&c->gc_waiters)))
 		wake_up_process(c->gc_thread);
 }
 

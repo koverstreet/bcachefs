@@ -1868,10 +1868,8 @@ static int bch_gc_thread(void *arg)
 		 * up while we're finishing up, we will start another GC pass
 		 * immediately */
 		set_current_state(TASK_INTERRUPTIBLE);
-		spin_lock(&c->gc_lock);
-		c->gc_count++;
+		atomic_inc(&c->gc_count);
 		wake_up_all(&c->gc_wait);
-		spin_unlock(&c->gc_lock);
 
 		if (kthread_should_stop())
 			break;
@@ -1893,28 +1891,21 @@ int bch_gc_thread_start(struct cache_set *c)
 	return 0;
 }
 
+unsigned bch_gc_count(struct cache_set *c)
+{
+	return atomic_read(&c->gc_count);
+}
+
 static bool next_gc_check(struct cache_set *c, unsigned gc_check)
 {
+	unsigned count = bch_gc_count(c);
 	bool ret;
 
 	if (kthread_should_stop())
 		return true;
 
-	spin_lock(&c->gc_lock);
-	ret = ((int) (c->gc_count - gc_check) > 0);
-	trace_bcache_wait_for_next_gc(c, c->gc_count, gc_check);
-	spin_unlock(&c->gc_lock);
-
-	return ret;
-}
-
-unsigned bch_gc_count(struct cache_set *c)
-{
-	unsigned ret;
-
-	spin_lock(&c->gc_lock);
-	ret = c->gc_count;
-	spin_unlock(&c->gc_lock);
+	ret = ((int) (count - gc_check) > 0);
+	trace_bcache_wait_for_next_gc(c, count, gc_check);
 
 	return ret;
 }
@@ -1927,9 +1918,11 @@ unsigned bch_gc_count(struct cache_set *c)
  */
 void bch_wait_for_next_gc(struct cache_set *c, unsigned gc_count)
 {
+	atomic_inc(&c->gc_waiters);
 	while (wait_event_interruptible(c->gc_wait,
 					next_gc_check(c, gc_count)) != 0)
 		;
+	atomic_dec(&c->gc_waiters);
 }
 
 /* Initial partial gc */

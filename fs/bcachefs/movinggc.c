@@ -238,7 +238,7 @@ static int bch_moving_gc_thread(void *arg)
 			break;
 
 		bch_moving_gc(ca);
-		wake_up_gc(c);
+		wake_up_gc(c, false);
 	} while (!bch_kthread_loop_ratelimit(&last,
 					     c->btree_scan_ratelimit * HZ));
 

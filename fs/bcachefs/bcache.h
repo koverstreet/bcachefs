@@ -724,21 +724,16 @@ struct cache_set {
 	int			gc_mark_valid;
 
 	/*
-	 * Protects gc_count and gc_wait.
-	 */
-	spinlock_t		gc_lock;
-
-	/*
 	 * Number of GC iterations completed. To wait for the next GC to finish,
-	 * add yourself to gc_wait and wait for this to change. Protected by
-	 * gc_lock.
+	 * add yourself to gc_wait and wait for this to change.
 	 */
-	unsigned		gc_count;
-
-	struct gc_stat		gc_stats;
+	atomic_t		gc_count;
 
 	/* Allocator threads might be waiting for GC */
 	wait_queue_head_t	gc_wait;
+	atomic_t		gc_waiters;
+
+	struct gc_stat		gc_stats;
 
 	/* TIERING */
 	struct task_struct	*tiering_thread;
