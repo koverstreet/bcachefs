@@ -125,6 +125,7 @@ static bool bucket_sectors_cmp(struct bucket *l, struct bucket *r)
 static unsigned bucket_sectors_heap_top(struct cache *ca)
 {
 	struct bucket *b;
+	lockdep_assert_held(&ca->heap_lock);
 	return (b = heap_peek(&ca->heap)) ? GC_SECTORS_USED(b) : 0;
 }
 
@@ -154,11 +155,10 @@ static bool bch_moving_gc(struct cache *ca)
 	 * there will be NUM_GC_GENS buckets of internal fragmentation */
 	reserve_sectors = ca->sb.bucket_size *
 		(fifo_used(&ca->free[RESERVE_MOVINGGC]) - NUM_GC_GENS);
+	mutex_unlock(&c->bucket_lock);
 
-	if (reserve_sectors < (int) ca->sb.block_size) {
-		mutex_unlock(&c->bucket_lock);
+	if (reserve_sectors < (int) ca->sb.block_size)
 		return false;
-	}
 
 	trace_bcache_moving_gc_start(ca);
 
@@ -167,6 +167,7 @@ static bool bch_moving_gc(struct cache *ca)
 	 * the heap to fit into a reasonable amount of reserve sectors
 	 */
 
+	mutex_lock(&ca->heap_lock);
 	ca->heap.used = 0;
 	for_each_bucket(b, ca) {
 		SET_GC_GEN(b, 0);
@@ -217,7 +218,7 @@ static bool bch_moving_gc(struct cache *ca)
 			gen_current++;
 	}
 
-	mutex_unlock(&c->bucket_lock);
+	mutex_unlock(&ca->heap_lock);
 
 	read_moving(ca, &stats);
 

@@ -531,6 +531,7 @@ struct cache {
 	 */
 	size_t			buckets_free;
 
+	struct mutex		heap_lock;
 	DECLARE_HEAP(struct bucket *, heap);
 
 	/* Moving GC: */

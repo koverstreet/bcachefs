@@ -255,6 +255,8 @@ static void invalidate_buckets_lru(struct cache *ca)
 {
 	struct bucket *b;
 
+	mutex_lock(&ca->heap_lock);
+
 	ca->heap.used = 0;
 
 	bch_recalc_min_prio(ca);
@@ -279,12 +281,15 @@ static void invalidate_buckets_lru(struct cache *ca)
 			 * We don't want to be calling invalidate_buckets()
 			 * multiple times when it can't do anything
 			 */
+			mutex_unlock(&ca->heap_lock);
 			alloc_failed(ca);
 			return;
 		}
 
 		bch_invalidate_one_bucket(ca, b);
 	}
+
+	mutex_unlock(&ca->heap_lock);
 }
 
 static void invalidate_buckets_fifo(struct cache *ca)
