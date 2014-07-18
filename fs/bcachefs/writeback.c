@@ -240,16 +240,13 @@ err:
 
 /* Scan for dirty data */
 
-void bcache_dev_sectors_dirty_add(struct cache_set *c, unsigned inode,
-				  uint64_t offset, int nr_sectors)
+static void __bcache_dev_sectors_dirty_add(struct bcache_device *d,
+					   u64 offset, int nr_sectors)
 {
-	struct bcache_device *d;
 	unsigned stripe_offset, stripe, sectors_dirty;
 
-	rcu_read_lock();
-	d = bch_dev_find(c, inode);
 	if (!d)
-		goto out;
+		return;
 
 	stripe = offset_to_stripe(d, offset);
 	stripe_offset = offset & (d->stripe_size - 1);
@@ -275,7 +272,17 @@ void bcache_dev_sectors_dirty_add(struct cache_set *c, unsigned inode,
 		stripe_offset = 0;
 		stripe++;
 	}
-out:
+}
+
+void bcache_dev_sectors_dirty_add(struct cache_set *c, unsigned inode,
+				  u64 offset, int nr_sectors)
+{
+	struct bcache_device *d;
+
+	rcu_read_lock();
+	d = bch_dev_find(c, inode);
+	if (d)
+		__bcache_dev_sectors_dirty_add(d, offset, nr_sectors);
 	rcu_read_unlock();
 }
 
@@ -468,6 +475,7 @@ void bch_mark_writeback_keys(struct cache_set *c)
 struct sectors_dirty_init {
 	struct btree_op	op;
 	unsigned	inode;
+	struct		bcache_device *d;
 };
 
 static int sectors_dirty_init_fn(struct btree_op *_op, struct btree *b,
@@ -478,24 +486,29 @@ static int sectors_dirty_init_fn(struct btree_op *_op, struct btree *b,
 	if (KEY_INODE(k) > op->inode)
 		return MAP_DONE;
 
-	if (!KEY_CACHED(k))
-		bcache_dev_sectors_dirty_add(b->c, KEY_INODE(k),
-					     KEY_START(k), KEY_SIZE(k));
+	if (!KEY_CACHED(k)) {
+		/* We have to do this before the disk is added to the
+		 * radix tree or we race with moving GC */
+		__bcache_dev_sectors_dirty_add(op->d,
+					       KEY_START(k), KEY_SIZE(k));
+	}
 
 	return MAP_CONTINUE;
 }
 
-void bch_sectors_dirty_init(struct cached_dev *dc)
+void bch_sectors_dirty_init(struct cached_dev *dc, struct cache_set *c)
 {
+	struct bcache_device *d = &dc->disk;
 	struct sectors_dirty_init op;
 
 	bch_btree_op_init(&op.op, BTREE_ID_EXTENTS, -1);
-	op.inode = bcache_dev_inum(&dc->disk);
+	op.inode = bcache_dev_inum(d);
+	op.d = d;
 
-	bch_btree_map_keys(&op.op, dc->disk.c,
+	bch_btree_map_keys(&op.op, c,
 			   &KEY(op.inode, 0, 0), sectors_dirty_init_fn, 0);
 
-	dc->writeback_pd.last_actual = bcache_dev_sectors_dirty(&dc->disk);
+	dc->writeback_pd.last_actual = bcache_dev_sectors_dirty(d);
 }
 
 void bch_cached_dev_writeback_init(struct cached_dev *dc)

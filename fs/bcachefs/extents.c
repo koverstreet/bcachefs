@@ -1,23 +1,8 @@
 /*
  * Copyright (C) 2010 Kent Overstreet <kent.overstreet@gmail.com>
  *
- * Uses a block device as cache for other block devices; optimized for SSDs.
- * All allocation is done in buckets, which should match the erase block size
- * of the device.
- *
- * Buckets containing cached data are kept on a heap sorted by priority;
- * bucket priority is increased on cache hit, and periodically all the buckets
- * on the heap have their priority scaled down. This currently is just used as
- * an LRU but in the future should allow for more intelligent heuristics.
- *
- * Buckets have an 8 bit counter; freeing is accomplished by incrementing the
- * counter. Garbage collection is used to remove stale pointers.
- *
- * Indexing is done via a btree; nodes are not necessarily fully sorted, rather
- * as keys are inserted we only sort the pages that have not yet been written.
- * When garbage collection is run, we resort the entire node.
- *
- * All configuration is done via sysfs; see Documentation/bcache.txt.
+ * Code for managing the extent btree and dynamically updating the writeback
+ * dirty sector count.
  */
 
 #include "bcache.h"
