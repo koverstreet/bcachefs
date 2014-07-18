@@ -1358,6 +1358,8 @@ static void __cache_set_unregister(struct closure *cl)
 
 	mutex_lock(&bch_register_lock);
 
+	rcu_read_lock();
+
 	radix_tree_for_each_slot(slot, &c->devices, &iter, 0) {
 		d = radix_tree_deref_slot(slot);
 
@@ -1369,6 +1371,8 @@ static void __cache_set_unregister(struct closure *cl)
 			bcache_device_stop(d);
 		}
 	}
+
+	rcu_read_unlock();
 
 	mutex_unlock(&bch_register_lock);
 
