@@ -1025,13 +1025,17 @@ static int cached_dev_init(struct cached_dev *dc, unsigned block_size)
 
 /* Cached device - bcache superblock */
 
-static void register_bdev(struct cache_sb *sb, struct page *sb_page,
-				 struct block_device *bdev,
-				 struct cached_dev *dc)
+static const char *register_bdev(struct cache_sb *sb, struct page *sb_page,
+				 struct block_device *bdev)
 {
 	char name[BDEVNAME_SIZE];
 	const char *err = "cannot allocate memory";
 	struct cache_set *c;
+	struct cached_dev *dc;
+
+	dc = kzalloc(sizeof(*dc), GFP_KERNEL);
+	if (!dc)
+		return err;
 
 	memcpy(&dc->sb, sb, sizeof(struct cache_sb));
 	dc->bdev = bdev;
@@ -1050,6 +1054,8 @@ static void register_bdev(struct cache_sb *sb, struct page *sb_page,
 	if (kobject_add(&dc->disk.kobj, &part_to_dev(bdev->bd_part)->kobj,
 			"bcache"))
 		goto err;
+
+	err = "error accounting kobject";
 	if (bch_cache_accounting_add_kobjs(&dc->accounting, &dc->disk.kobj))
 		goto err;
 
@@ -1063,10 +1069,10 @@ static void register_bdev(struct cache_sb *sb, struct page *sb_page,
 	    BDEV_STATE(&dc->sb) == BDEV_STATE_STALE)
 		bch_cached_dev_run(dc);
 
-	return;
+	return NULL;
 err:
-	pr_notice("error opening %s: %s", bdevname(bdev, name), err);
 	bcache_device_stop(&dc->disk);
+	return err;
 }
 
 /* Flash only volumes */
@@ -1357,8 +1363,8 @@ void bch_cache_set_stop(struct cache_set *c)
 
 void bch_cache_set_unregister(struct cache_set *c)
 {
-	set_bit(CACHE_SET_UNREGISTERING, &c->flags);
-	bch_cache_set_stop(c);
+	if (!test_and_set_bit(CACHE_SET_UNREGISTERING, &c->flags))
+		bch_cache_set_stop(c);
 }
 
 #define alloc_bucket_pages(gfp, c)			\
@@ -1469,7 +1475,7 @@ err:
 	return NULL;
 }
 
-static void run_cache_set(struct cache_set *c)
+static const char *run_cache_set(struct cache_set *c)
 {
 	const char *err = "cannot allocate memory";
 	struct cached_dev *dc, *t;
@@ -1638,11 +1644,12 @@ static void run_cache_set(struct cache_set *c)
 
 	set_bit(CACHE_SET_RUNNING, &c->flags);
 	closure_put(&c->caching);
-	return;
+	return NULL;
 err:
 	closure_sync(&cl);
 	bch_cache_set_error(c, "%s", err);
 	closure_put(&c->caching);
+	return err;
 }
 
 static bool can_attach_cache(struct cache *ca, struct cache_set *c)
@@ -1714,8 +1721,11 @@ found:
 	for (i = 0; i < CACHE_TIERS; i++)
 		caches_loaded += c->cache_by_alloc[i].nr_devices;
 
+	err = NULL;
 	if (caches_loaded == c->sb.nr_in_set)
-		run_cache_set(c);
+		err = run_cache_set(c);
+	if (err)
+		goto err;
 
 	return NULL;
 err:
@@ -1812,12 +1822,18 @@ static int cache_alloc(struct cache *ca)
 	return 0;
 }
 
-static int register_cache(struct cache_sb *sb, struct page *sb_page,
-				struct block_device *bdev, struct cache *ca)
+static const char *register_cache(struct cache_sb *sb, struct page *sb_page,
+				struct block_device *bdev)
 {
 	char name[BDEVNAME_SIZE];
 	const char *err = NULL; /* must be set for any error case */
+	struct cache *ca;
 	int ret = 0;
+
+	err = "cannot allocate memory";
+	ca = kzalloc(sizeof(*ca), GFP_KERNEL);
+	if (!ca)
+		return err;
 
 	memcpy(&ca->sb, sb, sizeof(struct cache_sb));
 	ca->bdev = bdev;
@@ -1838,34 +1854,25 @@ static int register_cache(struct cache_sb *sb, struct page *sb_page,
 			err = "cache_alloc(): -ENOMEM";
 		else
 			err = "cache_alloc(): unknown error";
-		goto err;
-	}
-
-	if (kobject_add(&ca->kobj, &part_to_dev(bdev->bd_part)->kobj, "bcache")) {
-		err = "error calling kobject_add";
-		ret = -ENOMEM;
 		goto out;
 	}
+
+	err = "error creating kobject";
+	if (kobject_add(&ca->kobj, &part_to_dev(bdev->bd_part)->kobj, "bcache"))
+		goto out;
 
 	mutex_lock(&bch_register_lock);
 	err = register_cache_set(ca);
 	mutex_unlock(&bch_register_lock);
 
-	if (err) {
-		ret = -ENODEV;
+	if (err)
 		goto out;
-	}
 
 	pr_info("registered cache device %s", bdevname(bdev, name));
-
+	err = NULL;
 out:
 	kobject_put(&ca->kobj);
-
-err:
-	if (err)
-		pr_notice("error opening %s: %s", bdevname(bdev, name), err);
-
-	return ret;
+	return err;
 }
 
 /* Global interfaces/init */
@@ -1951,21 +1958,15 @@ static ssize_t register_bcache(struct kobject *k, struct kobj_attribute *attr,
 		goto err_close;
 
 	if (SB_IS_BDEV(sb)) {
-		struct cached_dev *dc = kzalloc(sizeof(*dc), GFP_KERNEL);
-		if (!dc)
-			goto err_close;
-
 		mutex_lock(&bch_register_lock);
-		register_bdev(sb, sb_page, bdev, dc);
+		err = register_bdev(sb, sb_page, bdev);
 		mutex_unlock(&bch_register_lock);
 	} else {
-		struct cache *ca = kzalloc(sizeof(*ca), GFP_KERNEL);
-		if (!ca)
-			goto err_close;
 
-		if (register_cache(sb, sb_page, bdev, ca) != 0)
-			goto err_close;
+		err = register_cache(sb, sb_page, bdev);
 	}
+	if (err)
+		goto err_close;
 out:
 	if (sb_page)
 		put_page(sb_page);
@@ -1977,7 +1978,7 @@ out:
 err_close:
 	blkdev_put(bdev, FMODE_READ|FMODE_WRITE|FMODE_EXCL);
 err:
-	pr_info("error opening %s: %s", path, err);
+	pr_err("error opening %s: %s", path, err);
 	ret = -EINVAL;
 	goto out;
 }
