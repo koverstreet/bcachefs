@@ -173,11 +173,17 @@ reread:		left = ca->sb.bucket_size - offset;
 			}
 
 			list_for_each_entry_reverse(i, list, list) {
-				if (j->seq == i->j.seq)
+				if (j->seq == i->j.seq) {
+					pr_debug("j->seq %llu i->j.seq %llu",
+						 j->seq, i->j.seq);
 					goto next_set;
+				}
 
-				if (j->seq < i->j.last_seq)
+				if (j->seq < i->j.last_seq) {
+					pr_debug("j->seq %llu i->j.seq %llu",
+						 j->seq, i->j.seq);
 					goto next_set;
+				}
 
 				if (j->seq > i->j.seq) {
 					where = &i->list;
@@ -196,7 +202,9 @@ add:
 			ret = 1;
 
 			ja->seq[bucket_index] = j->seq;
+			pr_debug("seq %llu", j->seq);
 next_set:
+			pr_debug("next");
 			offset	+= blocks * ca->sb.block_size;
 			len	-= blocks * ca->sb.block_size;
 			j = ((void *) j) + blocks * block_bytes(ca);
@@ -315,6 +323,8 @@ bsearch:
 				ja->cur_idx = i;
 				ja->last_idx = ja->discard_idx = (i + 1) %
 					ca->sb.njournal_buckets;
+				pr_debug("cur_idx %d last_idx %d",
+					 ja->cur_idx, ja->last_idx);
 
 			}
 	}
@@ -396,6 +406,9 @@ int bch_journal_replay(struct cache_set *c, struct list_head *list)
 	pr_info("journal replay done, %i keys in %i entries, seq %llu",
 		keys, entries, end);
 err:
+	if (ret)
+		pr_err("journal replay error: %d", ret);
+
 	while (!list_empty(list)) {
 		i = list_first_entry(list, struct journal_replay, list);
 		list_del(&i->list);
@@ -538,6 +551,8 @@ static void journal_reclaim(struct cache_set *c)
 	unsigned iter;
 	atomic_t p;
 
+	pr_debug("started");
+
 	/*
 	 * only supposed to be called when we're out of space/haven't started a
 	 * new journal entry
@@ -610,6 +625,7 @@ out:
 	if (!journal_full(&c->journal)) {
 		c->journal.u64s_remaining =
 			journal_write_u64s_remaining(c, c->journal.cur);
+		pr_debug("done: %d", c->journal.u64s_remaining);
 		wake_up(&c->journal.wait);
 	}
 }

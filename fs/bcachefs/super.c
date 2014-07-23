@@ -1568,8 +1568,10 @@ static void run_cache_set(struct cache_set *c)
 			k = bch_journal_find_btree_root(c, j, id, &level);
 			if (!k && id == BTREE_ID_EXTENTS)
 				goto err;
-			if (!k)
+			if (!k) {
+				pr_debug("missing btree root: %d", id);
 				continue;
+			}
 
 			err = "error reading btree root";
 			if (bch_btree_root_read(c, id, k, level))
