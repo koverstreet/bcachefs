@@ -1306,7 +1306,6 @@ static void cache_set_flush(struct closure *cl)
 {
 	struct cache_set *c = container_of(cl, struct cache_set, caching);
 	struct cache *ca;
-	struct btree *b;
 	unsigned i;
 
 	for_each_cache(ca, c, i) {
@@ -1333,17 +1332,8 @@ static void cache_set_flush(struct closure *cl)
 	if (!IS_ERR_OR_NULL(c->gc_thread))
 		kthread_stop(c->gc_thread);
 
-	for (i = 0; i < BTREE_ID_NR; i++)
-		if (c->btree_roots[i])
-			list_add(&c->btree_roots[i]->list, &c->btree_cache);
-
 	/* Should skip this if we're unregistering because of an error */
-	list_for_each_entry(b, &c->btree_cache, list) {
-		six_lock_read(&b->lock);
-		if (btree_node_dirty(b))
-			__bch_btree_node_write(b, NULL);
-		six_unlock_read(&b->lock);
-	}
+	bch_btree_flush(c);
 
 	for_each_cache(ca, c, i)
 		if (ca->alloc_thread)

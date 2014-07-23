@@ -111,7 +111,7 @@ struct keylist;
 struct bkey *bch_journal_find_btree_root(struct cache_set *, struct jset *,
 					 enum btree_id, unsigned *);
 
-void btree_flush_write(struct cache_set *);
+void btree_write_oldest(struct cache_set *);
 
 struct journal_res {
 	unsigned		ref:1;

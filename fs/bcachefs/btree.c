@@ -536,14 +536,19 @@ static void bch_btree_node_write_sync(struct btree *b)
 	closure_sync(&cl);
 }
 
+static void bch_btree_node_write_dirty(struct btree *b, struct closure *parent)
+{
+	six_lock_read(&b->lock);
+	if (btree_node_dirty(b))
+		__bch_btree_node_write(b, parent);
+	six_unlock_read(&b->lock);
+}
+
 static void btree_node_write_work(struct work_struct *w)
 {
 	struct btree *b = container_of(to_delayed_work(w), struct btree, work);
 
-	six_lock_read(&b->lock);
-	if (btree_node_dirty(b))
-		__bch_btree_node_write(b, NULL);
-	six_unlock_read(&b->lock);
+	bch_btree_node_write_dirty(b, NULL);
 }
 
 /*
@@ -573,12 +578,8 @@ restart:
 			rht_for_each_entry_rcu(b, pos, tbl, i, hash)
 				if (btree_node_dirty(b)) {
 					rcu_read_unlock();
-
-					six_lock_read(&b->lock);
-					__bch_btree_node_write(b, &cl);
-					six_unlock_read(&b->lock);
+					bch_btree_node_write_dirty(b, &cl);
 					dropped_lock = true;
-
 					rcu_read_lock();
 					goto restart;
 				}
@@ -819,6 +820,8 @@ void bch_btree_cache_free(struct cache_set *c)
 {
 	struct btree *b;
 	struct closure cl;
+	unsigned i;
+
 	closure_init_stack(&cl);
 
 	if (c->btree_cache_shrink.list.next)
@@ -832,6 +835,10 @@ void bch_btree_cache_free(struct cache_set *c)
 
 	free_pages((unsigned long) c->verify_ondisk, ilog2(bucket_pages(c)));
 #endif
+
+	for (i = 0; i < BTREE_ID_NR; i++)
+		if (c->btree_roots[i])
+			list_add(&c->btree_roots[i]->list, &c->btree_cache);
 
 	list_splice(&c->btree_cache_freeable,
 		    &c->btree_cache);
@@ -2224,7 +2231,7 @@ static void btree_journal_res_get(struct btree *b, unsigned nkeys,
 
 		six_unlock_write(&b->lock);
 		if (ret == -ENOSPC)
-			btree_flush_write(b->c);
+			btree_write_oldest(b->c);
 		schedule();
 		btree_node_lock_for_insert(b);
 	}

@@ -420,7 +420,7 @@ err:
 
 /* Journalling */
 
-void btree_flush_write(struct cache_set *c)
+void btree_write_oldest(struct cache_set *c)
 {
 	/*
 	 * Try to find the btree node with that references the oldest journal
@@ -881,7 +881,7 @@ static int __journal_meta_write_get(struct cache_set *c,
 	int ret = bch_journal_res_get(c, 0, res);
 
 	if (ret == -ENOSPC)
-		btree_flush_write(c);
+		btree_write_oldest(c);
 
 	return ret;
 }
