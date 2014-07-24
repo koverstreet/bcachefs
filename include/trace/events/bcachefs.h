@@ -824,6 +824,35 @@ DEFINE_EVENT(bkey, bcache_writeback_collision,
 	TP_ARGS(k)
 );
 
+TRACE_EVENT(bcache_writeback_error,
+	TP_PROTO(struct bkey *k, bool write, int error),
+	TP_ARGS(k, write, error),
+
+	TP_STRUCT__entry(
+		__field(u32,	size				)
+		__field(u32,	inode				)
+		__field(u64,	offset				)
+		__field(bool,	cached				)
+		__field(bool,	write				)
+		__field(int,	error				)
+	),
+
+	TP_fast_assign(
+		__entry->inode	= KEY_INODE(k);
+		__entry->offset	= KEY_OFFSET(k);
+		__entry->size	= KEY_SIZE(k);
+		__entry->cached = KEY_CACHED(k);
+		__entry->write	= write;
+		__entry->error	= error;
+	),
+
+	TP_printk("%u:%llu len %u%s %s error %d", __entry->inode,
+		  __entry->offset, __entry->size,
+		  __entry->cached ? " cached" : "",
+		  __entry->write ? "write" : "read",
+		  __entry->error)
+);
+
 #endif /* _TRACE_BCACHE_H */
 
 /* This part must be outside protection */
