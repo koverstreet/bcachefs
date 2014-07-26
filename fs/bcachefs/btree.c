@@ -1287,6 +1287,7 @@ static struct btree *btree_node_alloc_replacement(struct btree *b,
 	if (n) {
 		bch_btree_sort_into(&n->keys, &b->keys, &b->c->sort);
 		bkey_copy_key(&n->key, &b->key);
+		trace_bcache_btree_node_alloc_replacement(b, n);
 	}
 
 	return n;
@@ -1518,6 +1519,8 @@ static int btree_gc_coalesce(struct btree *b, struct btree_op *op,
 			 block_bytes(b->c)) > blocks)
 		return 0;
 
+	trace_bcache_btree_gc_coalesce(b, nodes);
+
 	for (i = 0; i < nodes; i++) {
 		new_nodes[i] = btree_node_alloc_replacement(r[i].b, NULL);
 		if (!new_nodes[i])
@@ -1636,7 +1639,6 @@ static int btree_gc_coalesce(struct btree *b, struct btree_op *op,
 		r[i].keys = btree_bset_first(r[i].b)->keys;
 	}
 
-	trace_bcache_btree_gc_coalesce(nodes);
 	gc->nodes -= old_nodes - nodes;
 
 	bch_keylist_free(&keylist);
