@@ -66,8 +66,7 @@ static inline void bch_increment_clock(struct cache_set *c,
 		bch_increment_clock_slowpath(c, rw);
 }
 
-bool bch_can_invalidate_bucket(struct cache *, struct bucket *);
-void __bch_invalidate_one_bucket(struct cache *, struct bucket *);
+void bch_prio_init(struct cache_set *);
 
 void __bch_bucket_free(struct cache *, struct bucket *);
 void bch_bucket_free(struct cache_set *, struct bkey *);

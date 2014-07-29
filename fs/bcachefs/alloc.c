@@ -192,7 +192,7 @@ static inline bool can_inc_bucket_gen(struct bucket *b)
 	return bucket_gc_gen(b) < BUCKET_GC_GEN_MAX;
 }
 
-bool bch_can_invalidate_bucket(struct cache *ca, struct bucket *b)
+static bool bch_can_invalidate_bucket(struct cache *ca, struct bucket *b)
 {
 	BUG_ON(!ca->set->gc_mark_valid);
 
@@ -201,7 +201,7 @@ bool bch_can_invalidate_bucket(struct cache *ca, struct bucket *b)
 		can_inc_bucket_gen(b);
 }
 
-void __bch_invalidate_one_bucket(struct cache *ca, struct bucket *b)
+static void __bch_invalidate_one_bucket(struct cache *ca, struct bucket *b)
 {
 	lockdep_assert_held(&ca->set->bucket_lock);
 	BUG_ON(GC_MARK(b) && GC_MARK(b) != GC_MARK_RECLAIMABLE);
@@ -228,6 +228,42 @@ static void bch_invalidate_one_bucket(struct cache *ca, struct bucket *b)
 	__bch_invalidate_one_bucket(ca, b);
 
 	fifo_push(&ca->free_inc, b - ca->buckets);
+}
+
+/*
+ * bch_prio_init - put some unused buckets directly on the prio freelist.
+ *
+ * This allows the allocator thread to get started - it needs freed buckets
+ * to rewrite the prios and gens, and it needs to rewrite prios and gens in
+ * order to free buckets.
+ *
+ * This is only safe for buckets that have no live data in them, which
+ * there should always be some of when this function is called.
+ */
+void bch_prio_init(struct cache_set *c)
+{
+	struct cache *ca;
+	struct bucket *b;
+	unsigned i;
+
+	mutex_lock(&c->bucket_lock);
+
+	for_each_cache(ca, c, i) {
+		for_each_bucket(b, ca) {
+			if (fifo_full(&ca->free[RESERVE_PRIO]))
+				break;
+
+			if (bch_can_invalidate_bucket(ca, b) &&
+			    !GC_MARK(b)) {
+				__bch_invalidate_one_bucket(ca, b);
+				fifo_push(&ca->free[RESERVE_PRIO],
+					  b - ca->buckets);
+			}
+		}
+	}
+
+	mutex_unlock(&c->bucket_lock);
+
 }
 
 /*

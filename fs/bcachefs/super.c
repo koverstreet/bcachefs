@@ -1555,12 +1555,9 @@ static const char *run_cache_set(struct cache_set *c)
 		}
 
 		err = "error in recovery";
-		if (bch_btree_check(c))
+		if (bch_initial_gc(c, &journal))
 			goto err;
-
-		bch_journal_mark(c, &journal);
-		bch_initial_gc_finish(c);
-		pr_debug("btree_check() done");
+		pr_debug("bch_initial_gc() done");
 
 		/*
 		 * bcache_journal_next() can't happen sooner, or
@@ -1589,7 +1586,7 @@ static const char *run_cache_set(struct cache_set *c)
 				ca->sb.d[j] = ca->sb.first_bucket + j;
 		}
 
-		bch_initial_gc_finish(c);
+		bch_initial_gc(c, NULL);
 
 		err = "error starting allocator thread";
 		for_each_cache(ca, c, i)
