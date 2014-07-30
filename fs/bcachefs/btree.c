@@ -1383,6 +1383,33 @@ int bch_btree_root_read(struct cache_set *c, enum btree_id id,
 
 /* Garbage collection */
 
+/**
+ * bch_mark_keybuf_keys - update oldest generation pointer into a bucket
+ *
+ * This prevents us from wrapping around gens for a bucket only referenced from
+ * the writeback, tiering or moving GC keybufs. We don't actually care that the
+ * data in those buckets is marked live, only that we don't wrap the gens.
+ */
+void bch_mark_keybuf_keys(struct cache_set *c, struct keybuf *buf)
+{
+	struct keybuf_key *w, *n;
+	struct bucket *g;
+	struct bkey *k;
+	unsigned i;
+
+	spin_lock(&buf->lock);
+	rbtree_postorder_for_each_entry_safe(w, n,
+				&buf->keys, node) {
+		k = &w->key;
+		for (i = 0; i < bch_extent_ptrs(k); i++) {
+			g = PTR_BUCKET(c, k, i);
+			if (gen_after(g->last_gc, PTR_GEN(k, i)))
+				g->last_gc = PTR_GEN(k, i);
+		}
+	}
+	spin_unlock(&buf->lock);
+}
+
 u8 __bch_btree_mark_key(struct cache_set *c, int level, struct bkey *k)
 {
 	uint8_t stale = 0;
@@ -1894,10 +1921,13 @@ static void bch_btree_gc_finish(struct cache_set *c)
 	c->gc_mark_valid = 1;
 
 	bch_mark_writeback_keys(c);
+	bch_mark_keybuf_keys(c, &c->tiering_keys);
 
 	for_each_cache(ca, c, i) {
 		size_t buckets_free = 0;
 		uint64_t *i;
+
+		bch_mark_keybuf_keys(c, &ca->moving_gc_keys);
 
 		for (i = ca->sb.d; i < ca->sb.d + ca->sb.keys; i++)
 			SET_GC_MARK(ca->buckets + *i, GC_MARK_METADATA);

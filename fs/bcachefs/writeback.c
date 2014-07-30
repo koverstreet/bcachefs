@@ -154,9 +154,13 @@ static void read_dirty_endio(struct bio *bio)
 {
 	struct keybuf_key *w = bio->bi_private;
 	struct dirty_io *io = w->private;
+	struct cache_set *c = io->dc->disk.c;
 
-	bch_count_io_errors(PTR_CACHE(io->dc->disk.c, &w->key, 0),
+	bch_count_io_errors(PTR_CACHE(c, &w->key, 0),
 			    bio->bi_error, "reading dirty data from cache");
+
+	if (ptr_stale(c, &w->key, 0))
+		bio->bi_error = -EINTR;
 
 	dirty_endio(bio);
 }
@@ -192,7 +196,6 @@ static void read_dirty(struct cached_dev *dc)
 
 		ptr = bch_extent_pick_ptr(dc->disk.c, &w->key);
 		if (ptr < 0) {
-			cache_bug(dc->disk.c, "all ptrs stale in writeback");
 			bch_keybuf_del(&dc->writeback_keys, w);
 			continue;
 		}
@@ -447,7 +450,6 @@ void bch_mark_writeback_keys(struct cache_set *c)
 {
 	struct radix_tree_iter iter;
 	void **slot;
-	unsigned i;
 
 	/* don't reclaim buckets to which writeback keys point */
 	rcu_read_lock();
@@ -455,7 +457,6 @@ void bch_mark_writeback_keys(struct cache_set *c)
 	radix_tree_for_each_slot(slot, &c->devices, &iter, 0) {
 		struct bcache_device *d;
 		struct cached_dev *dc;
-		struct keybuf_key *w, *n;
 
 		d = radix_tree_deref_slot(slot);
 
@@ -463,13 +464,7 @@ void bch_mark_writeback_keys(struct cache_set *c)
 			continue;
 		dc = container_of(d, struct cached_dev, disk);
 
-		spin_lock(&dc->writeback_keys.lock);
-		rbtree_postorder_for_each_entry_safe(w, n,
-					&dc->writeback_keys.keys, node)
-			for (i = 0; i < bch_extent_ptrs(&w->key); i++)
-				SET_GC_MARK(PTR_BUCKET(c, &w->key, i),
-					GC_MARK_DIRTY);
-		spin_unlock(&dc->writeback_keys.lock);
+		bch_mark_keybuf_keys(c, &dc->writeback_keys);
 	}
 
 	rcu_read_unlock();

@@ -266,6 +266,7 @@ int bch_btree_insert_node(struct btree *, struct btree_op *, struct keylist *,
 
 int bch_gc_thread_start(struct cache_set *);
 int bch_initial_gc(struct cache_set *, struct list_head *);
+void bch_mark_keybuf_keys(struct cache_set *, struct keybuf *);
 u8 __bch_btree_mark_key(struct cache_set *, int, struct bkey *);
 
 static inline void wake_up_gc(struct cache_set *c, bool always)
