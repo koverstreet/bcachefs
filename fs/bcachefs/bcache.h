@@ -482,6 +482,16 @@ struct open_bucket {
 	BKEY_PADDED(key);
 };
 
+struct bucket_stats {
+	atomic_t		buckets_dirty;
+	atomic_t		buckets_cached;
+	atomic_t		buckets_meta;
+	atomic_t		buckets_alloc;
+
+	atomic64_t		sectors_dirty;
+	atomic64_t		sectors_cached;
+};
+
 struct cache {
 	struct cache_set	*set;
 	/* Cache tier is protected by bucket_lock */
@@ -537,11 +547,11 @@ struct cache {
 	u16			min_prio[2];
 
 	/*
-	 * Count of currently available buckets.
-	 *
-	 * Protected by bucket_lock.
+	 * Bucket book keeping. The first element is updated by GC, the
+	 * second contains a saved copy of the stats from the beginning
+	 * of GC.
 	 */
-	size_t			buckets_free;
+	struct bucket_stats	bucket_stats[2];
 
 	struct mutex		heap_lock;
 	DECLARE_HEAP(struct bucket *, heap);

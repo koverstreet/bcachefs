@@ -5,7 +5,6 @@
  */
 
 #include "bcache.h"
-#include "alloc.h"
 #include "btree.h"
 #include "buckets.h"
 #include "extents.h"
@@ -32,7 +31,7 @@ static void __update_gc_rate(struct cache *ca)
 
 	bch_pd_controller_update(&ca->moving_gc_pd,
 				 target << 9,
-				 ca->buckets_free << bucket_bits);
+				 buckets_available_cache(ca) << bucket_bits);
 	ca->moving_gc_pd.rate.rate = UINT_MAX;
 }
 

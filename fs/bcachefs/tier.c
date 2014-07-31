@@ -23,10 +23,10 @@ static void __update_tiering_rate(struct cache_set *c)
 
 		for (j = 0; j < tier->nr_devices; j++) {
 			struct cache *ca = tier->devices[j];
+			struct bucket_stats *stats = &ca->bucket_stats[0];
 
 			tier_size[i] += ca->sb.nbuckets - ca->sb.first_bucket;
-			tier_dirty[i] += ca->sb.nbuckets - ca->sb.first_bucket -
-				ca->buckets_free;
+			tier_dirty[i] += atomic_read(&stats->buckets_dirty);
 		}
 	}
 

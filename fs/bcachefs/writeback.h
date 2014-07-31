@@ -1,7 +1,7 @@
 #ifndef _BCACHE_WRITEBACK_H
 #define _BCACHE_WRITEBACK_H
 
-#include "alloc.h"
+#include "buckets.h"
 
 #define CUTOFF_WRITEBACK	60
 #define CUTOFF_WRITEBACK_SYNC	30

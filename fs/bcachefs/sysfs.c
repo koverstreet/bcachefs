@@ -62,6 +62,11 @@ read_attribute(btree_nodes);
 read_attribute(btree_used_percent);
 read_attribute(average_key_size);
 read_attribute(dirty_data);
+read_attribute(dirty_buckets);
+read_attribute(cached_data);
+read_attribute(cached_buckets);
+read_attribute(meta_buckets);
+read_attribute(alloc_buckets);
 read_attribute(bset_tree_stats);
 
 read_attribute(state);
@@ -865,6 +870,12 @@ static ssize_t show_reserve_stats(struct cache *ca, char *buf)
 SHOW(__bch_cache)
 {
 	struct cache *ca = container_of(kobj, struct cache, kobj);
+	struct bucket_stats stats;
+
+	mutex_lock(&ca->set->bucket_lock);
+	memcpy(&stats, &ca->bucket_stats[ca->set->gc_mark_valid ? 0 : 1],
+	       sizeof(stats));
+	mutex_unlock(&ca->set->bucket_lock);
 
 	sysfs_hprint(bucket_size,	bucket_bytes(ca));
 	sysfs_hprint(block_size,	block_bytes(ca));
@@ -879,6 +890,19 @@ SHOW(__bch_cache)
 
 	sysfs_print(io_errors,
 		    atomic_read(&ca->io_errors) >> IO_ERROR_SHIFT);
+
+	sysfs_hprint(dirty_data,
+		     atomic64_read(&stats.sectors_dirty) << 9);
+	sysfs_print(dirty_buckets,
+		     atomic_read(&stats.buckets_dirty));
+	sysfs_hprint(cached_data,
+		     atomic64_read(&stats.sectors_cached) << 9);
+	sysfs_print(cached_buckets,
+		    atomic_read(&stats.buckets_cached));
+	sysfs_print(meta_buckets,
+		    atomic_read(&stats.buckets_meta));
+	sysfs_print(alloc_buckets,
+		    atomic_read(&stats.buckets_alloc));
 
 	sysfs_pd_controller_show(copy_gc, &ca->moving_gc_pd);
 
@@ -985,6 +1009,12 @@ static struct attribute *bch_cache_files[] = {
 	&sysfs_nbuckets,
 	&sysfs_priority_stats,
 	&sysfs_reserve_stats,
+	&sysfs_dirty_data,
+	&sysfs_dirty_buckets,
+	&sysfs_cached_data,
+	&sysfs_cached_buckets,
+	&sysfs_meta_buckets,
+	&sysfs_alloc_buckets,
 	&sysfs_discard,
 	&sysfs_written,
 	&sysfs_btree_written,

@@ -1559,9 +1559,8 @@ static int btree_gc_coalesce(struct btree *b, struct btree_op *op,
 		goto out_nocoalesce_unlock;
 
 	/*
-	 * Conceptually we concatenate the nodes' keys together and slice them
-	 * up at different boundaries. This means the new nodes will different
-	 * keys in their parent nodes.
+	 * Conceptually we concatenate the nodes together and slice them
+	 * up at different boundaries.
 	 */
 	for (i = nodes - 1; i > 0; --i) {
 		struct bset *n1 = btree_bset_first(new_nodes[i]);
@@ -1885,6 +1884,7 @@ static void btree_gc_start(struct cache_set *c)
 	struct cache *ca;
 	struct bucket *g;
 	unsigned i;
+	struct bucket_stats *stats;
 
 	/* We should not be doing a GC while trying to start GC */
 	BUG_ON(!c->gc_mark_valid);
@@ -1898,11 +1898,17 @@ static void btree_gc_start(struct cache_set *c)
 	c->gc_cur_key = ZERO_KEY;
 	write_sequnlock(&c->gc_cur_lock);
 
-	for_each_cache(ca, c, i)
+	for_each_cache(ca, c, i) {
+		stats = &ca->bucket_stats[0];
+
+		memcpy(&ca->bucket_stats[1], stats, sizeof(*stats));
+		memset(stats, 0, sizeof(*stats));
+
 		for_each_bucket(g, ca) {
 			g->last_gc = ca->bucket_gens[g - ca->buckets];
 			g->mark.counter = 0;
 		}
+	}
 
 	/*
 	 * must happen before traversing the btree, as pointers move from open
@@ -1916,7 +1922,6 @@ static void btree_gc_start(struct cache_set *c)
 
 static void bch_btree_gc_finish(struct cache_set *c)
 {
-	struct bucket *g;
 	struct cache *ca;
 	unsigned i;
 
@@ -1929,7 +1934,6 @@ static void bch_btree_gc_finish(struct cache_set *c)
 	bch_mark_keybuf_keys(c, &c->tiering_keys);
 
 	for_each_cache(ca, c, i) {
-		size_t buckets_free = 0;
 		uint64_t *i;
 
 		bch_mark_keybuf_keys(c, &ca->moving_gc_keys);
@@ -1940,15 +1944,6 @@ static void bch_btree_gc_finish(struct cache_set *c)
 		for (i = ca->prio_buckets;
 		     i < ca->prio_buckets + prio_buckets(ca) * 2; i++)
 			bch_mark_metadata_bucket(ca, &ca->buckets[*i]);
-
-		for_each_bucket(g, ca) {
-			if (!g->mark.owned_by_allocator &&
-			    !g->mark.is_metadata &&
-			    !g->mark.dirty_sectors)
-				buckets_free++;
-		}
-
-		ca->buckets_free = buckets_free;
 	}
 
 	mutex_unlock(&c->bucket_lock);

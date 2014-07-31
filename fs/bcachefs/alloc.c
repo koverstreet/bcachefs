@@ -209,7 +209,6 @@ static void __bch_invalidate_one_bucket(struct cache *ca, struct bucket *g)
 {
 	lockdep_assert_held(&ca->set->bucket_lock);
 	BUG_ON(!bch_can_invalidate_bucket(ca, g));
-	BUG_ON(!ca->buckets_free);
 
 	ca->bucket_gens[g - ca->buckets]++;
 	/* this is what makes ptrs to the bucket invalid */
@@ -219,7 +218,6 @@ static void __bch_invalidate_one_bucket(struct cache *ca, struct bucket *g)
 	g->copygc_gen = 0;
 
 	bch_mark_alloc_bucket(ca, g);
-	ca->buckets_free--;
 }
 
 static void bch_invalidate_one_bucket(struct cache *ca, struct bucket *g)
@@ -375,22 +373,7 @@ static void invalidate_buckets_random(struct cache *ca)
 
 static void invalidate_buckets(struct cache *ca)
 {
-	size_t dirty = 0, meta = 0, gen = 0;
-	struct bucket *b;
-
 	BUG_ON(!ca->set->gc_mark_valid);
-
-	for_each_bucket(b, ca) {
-		if (b->mark.dirty_sectors)
-			dirty++;
-		if (b->mark.is_metadata)
-			meta++;
-		if (!can_inc_bucket_gen(ca, b - ca->buckets))
-			gen++;
-	}
-
-	pr_debug("dirty %zu meta %zu gen %zu total %llu",
-		 dirty, meta, gen, ca->sb.nbuckets - ca->sb.first_bucket);
 
 	switch (CACHE_REPLACEMENT(&ca->sb)) {
 	case CACHE_REPLACEMENT_LRU:
@@ -605,8 +588,6 @@ void __bch_bucket_free(struct cache *ca, struct bucket *g)
 {
 	lockdep_assert_held(&ca->set->bucket_lock);
 
-	if (g->mark.is_metadata || g->mark.owned_by_allocator)
-		ca->buckets_free++;
 	bch_mark_free_bucket(ca, g);
 
 	g->read_prio = ca->set->prio_clock[READ].hand;
@@ -654,7 +635,7 @@ static struct cache *bch_next_cache(struct cache_set *c,
 				    int tier_idx, long *cache_used,
 				    struct closure *cl)
 {
-	struct cache **devices;
+	struct cache *device, **devices;
 	size_t sectors_count = 0, rand;
 	int i, nr_devices;
 
@@ -695,21 +676,25 @@ static struct cache *bch_next_cache(struct cache_set *c,
 	get_random_bytes(&rand, sizeof(rand));
 	rand %= sectors_count;
 
+	device = NULL;
+
 	for (i = 0; i < nr_devices; i++) {
 		if (test_bit(devices[i]->sb.nr_this_dev, cache_used))
 			continue;
 
-		sectors_count -= buckets_free_cache(devices[i], reserve);
+		device = devices[i];
+		sectors_count -= buckets_free_cache(device, reserve);
 
 		if (rand >= sectors_count) {
-			__set_bit(devices[i]->sb.nr_this_dev, cache_used);
-			return devices[i];
+			__set_bit(device->sb.nr_this_dev, cache_used);
+			return device;
 		}
 	}
 
-	BUG(); /* off by one error? */
-
-	return NULL;
+	/* If the bucket free counters changed while we were running, we might
+	 * fall off the end, so just return the last cache device */
+	__set_bit(device->sb.nr_this_dev, cache_used);
+	return device;
 }
 
 int bch_bucket_alloc_set(struct cache_set *c, enum alloc_reserve reserve,

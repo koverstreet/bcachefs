@@ -8,26 +8,6 @@ struct bucket;
 struct cache;
 struct cache_set;
 
-static inline size_t buckets_available(struct cache_set *c)
-{
-	struct cache *ca;
-	unsigned i;
-	size_t ret = 0;
-
-	for_each_cache(ca, c, i)
-		ret += ca->buckets_free;
-
-	return ret;
-}
-
-static inline size_t buckets_free_cache(struct cache *ca,
-					enum alloc_reserve reserve)
-{
-	return ca->buckets_free +
-		fifo_used(&ca->free[reserve]) +
-		fifo_used(&ca->free_inc);
-}
-
 void bch_recalc_min_prio(struct cache *, int);
 void bch_increment_clock_slowpath(struct cache_set *, int);
 
