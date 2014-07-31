@@ -186,6 +186,7 @@
 #include <linux/rbtree.h>
 #include <linux/rhashtable.h>
 #include <linux/rwsem.h>
+#include <linux/seqlock.h>
 #include <linux/types.h>
 #include <linux/workqueue.h>
 
@@ -721,10 +722,14 @@ struct cache_set {
 	atomic_t		sectors_until_gc;
 
 	/*
-	 * Where in the btree gc currently is.
+	 * Where in the btree GC currently is.
 	 *
-	 * Only accessed from the GC thread, so no lock.
+	 * All keys strictly smaller than gc_cur_key have been visited.
+	 *
+	 * Protected by gc_cur_lock. Only written to by GC thread, so GC thread
+	 * can read without a lock.
 	 */
+	seqlock_t		gc_cur_lock;
 	enum btree_id		gc_cur_btree;
 	struct bkey		gc_cur_key;
 
