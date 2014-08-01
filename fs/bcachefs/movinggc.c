@@ -32,7 +32,7 @@ static void __update_gc_rate(struct cache *ca)
 	bch_pd_controller_update(&ca->moving_gc_pd,
 				 target << 9,
 				 ca->buckets_free << bucket_bits);
-	ca->moving_gc_pd.rate.rate = NSEC_PER_MSEC;
+	ca->moving_gc_pd.rate.rate = UINT_MAX;
 }
 
 static void update_gc_rate(struct work_struct *work)

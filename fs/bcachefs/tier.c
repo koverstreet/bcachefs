@@ -37,7 +37,7 @@ static void __update_tiering_rate(struct cache_set *c)
 		bch_pd_controller_update(&c->tiering_pd,
 					 target << (c->bucket_bits + 9),
 					 tier_dirty[0] << (c->bucket_bits + 9));
-		c->tiering_pd.rate.rate = NSEC_PER_MSEC;
+		c->tiering_pd.rate.rate = UINT_MAX;
 	}
 }
 
