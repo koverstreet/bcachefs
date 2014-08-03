@@ -205,8 +205,9 @@ static void __bch_invalidate_one_bucket(struct cache *ca, struct bucket *b)
 
 	b->read_prio = ca->set->prio_clock[READ].hand;
 	b->write_prio = ca->set->prio_clock[WRITE].hand;
+	b->copygc_gen = 0;
+
 	SET_GC_MARK(b, GC_MARK_DIRTY);
-	SET_GC_GEN(b, 0);
 	SET_GC_SECTORS_USED(b, min_t(unsigned, ca->sb.bucket_size,
 				     MAX_GC_SECTORS_USED));
 
@@ -1023,14 +1024,14 @@ retry:
 	/* Check if we raced with a foreground write */
 	for (i = 0; i < bch_extent_ptrs(k); i++)
 		if (ptr_available(c, k, i) &&
-		    GC_GEN(PTR_BUCKET(c, k, i)))
+		    PTR_BUCKET(c, k, i)->copygc_gen)
 			goto found;
 
 	mutex_unlock(&c->bucket_lock);
 	return ERR_PTR(-ESRCH);
 found:
 	ca = PTR_CACHE(c, k, i);
-	gen = GC_GEN(PTR_BUCKET(c, k, i)) - 1;
+	gen = PTR_BUCKET(c, k, i)->copygc_gen - 1;
 
 	b = ca->gc_buckets[gen];
 	if (!b) {

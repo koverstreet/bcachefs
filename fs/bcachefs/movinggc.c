@@ -57,7 +57,7 @@ static bool moving_pred(struct keybuf *buf, struct bkey *k)
 
 	for (i = 0; i < bch_extent_ptrs(k); i++)
 		if (ptr_available(c, k, i) &&
-		    GC_GEN(PTR_BUCKET(c, k, i)) &&
+		    PTR_BUCKET(c, k, i)->copygc_gen &&
 		    PTR_CACHE(c, k, i) == ca)
 			return true;
 
@@ -171,7 +171,7 @@ static bool bch_moving_gc(struct cache *ca)
 	mutex_lock(&ca->heap_lock);
 	ca->heap.used = 0;
 	for_each_bucket(b, ca) {
-		SET_GC_GEN(b, 0);
+		b->copygc_gen = 0;
 
 		if (!GC_SECTORS_USED(b) && !GC_MARK(b))
 			buckets_unused++;
@@ -223,7 +223,7 @@ static bool bch_moving_gc(struct cache *ca)
 
 	while (heap_pop(&ca->heap, b, bucket_write_prio_max_cmp)) {
 		sectors_total += GC_SECTORS_USED(b);
-		SET_GC_GEN(b, gen_current);
+		b->copygc_gen = gen_current;
 		if (gen_current < NUM_GC_GENS &&
 		    sectors_total >= sectors_gen * gen_current)
 			gen_current++;

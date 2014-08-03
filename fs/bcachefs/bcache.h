@@ -214,6 +214,10 @@ struct bucket {
 	};
 	u8		gen;
 	u8		last_gc; /* Most out of date gen in the btree */
+
+	/* generation copygc is going to move this bucket into */
+	u8		copygc_gen;
+
 	u32		gc_mark; /* Bitfield used by GC. See below for field */
 };
 
@@ -228,8 +232,7 @@ struct bucket {
 #define GC_SECTORS_USED_SIZE	27
 #define MAX_GC_SECTORS_USED	(~(~0ULL << GC_SECTORS_USED_SIZE))
 BITMASK(GC_MARK,	 struct bucket, gc_mark, 0, 2);
-BITMASK(GC_GEN,		 struct bucket, gc_mark, 2, 3);
-BITMASK(GC_SECTORS_USED, struct bucket, gc_mark, 5, GC_SECTORS_USED_SIZE);
+BITMASK(GC_SECTORS_USED, struct bucket, gc_mark, 2, GC_SECTORS_USED_SIZE);
 
 #include "stats.h"
 #include "inode.h"
