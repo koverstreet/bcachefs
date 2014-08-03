@@ -463,14 +463,57 @@ static struct bkey *bch_extent_sort_fixup(struct btree_iter *iter,
 	return NULL;
 }
 
-static void bch_subtract_dirty(struct bkey *k,
-			   struct cache_set *c,
-			   uint64_t offset,
-			   int sectors)
+static void bch_add_sectors(struct bkey *k,
+			    struct cache_set *c,
+			    u64 offset,
+			    int sectors)
 {
-	if (!KEY_CACHED(k) && bch_extent_ptrs(k))
+	unsigned replicas_found = 0, replicas_needed = c->data_replicas;
+	int i;
+
+	if (!bch_extent_ptrs(k))
+		return;
+
+	if (!sectors)
+		return;
+
+	BUG_ON(KEY_DELETED(k));
+
+	if (!KEY_CACHED(k))
 		bcache_dev_sectors_dirty_add(c, KEY_INODE(k),
-					     offset, -sectors);
+					     offset, sectors);
+
+	if (KEY_CACHED(k))
+		replicas_needed = 0;
+
+	/* GC cannot advance gc_cur_btree past @k because we have
+	 * an intent lock on the node that contains @k, so we only
+	 * have to check once. */
+	if (gc_will_visit_key(c, k))
+		return;
+
+	for (i = bch_extent_ptrs(k) - 1; i >= 0; --i) {
+		if (!ptr_available(c, k, i))
+			continue;
+
+		if (ptr_stale(c, k, i))
+			continue;
+
+		bch_mark_data_bucket(PTR_CACHE(c, k, i),
+				     PTR_BUCKET(c, k, i),
+				     sectors,
+				     replicas_found < replicas_needed);
+
+		replicas_found++;
+	}
+}
+
+static void bch_subtract_sectors(struct bkey *k,
+				 struct cache_set *c,
+				 u64 offset,
+				 int sectors)
+{
+	bch_add_sectors(k, c, offset, -sectors);
 }
 
 static bool bkey_cmpxchg(struct bkey *k,
@@ -579,8 +622,8 @@ static bool bch_extent_insert_fixup(struct btree_keys *b,
 
 			struct bkey *top;
 
-			bch_subtract_dirty(k, c, KEY_START(insert),
-				       KEY_SIZE(insert));
+			bch_subtract_sectors(k, c, KEY_START(insert),
+					     KEY_SIZE(insert));
 
 			if (bkey_written(b, k)) {
 				/*
@@ -630,7 +673,7 @@ static bool bch_extent_insert_fixup(struct btree_keys *b,
 			}
 		}
 
-		bch_subtract_dirty(k, c, old_offset, old_size - KEY_SIZE(k));
+		bch_subtract_sectors(k, c, old_offset, old_size - KEY_SIZE(k));
 	}
 
 check_failed:
@@ -644,10 +687,7 @@ check_failed:
 		}
 	}
 out:
-	if (!KEY_CACHED(insert) && bch_extent_ptrs(insert))
-		bcache_dev_sectors_dirty_add(c, KEY_INODE(insert),
-					     KEY_START(insert),
-					     KEY_SIZE(insert));
+	bch_add_sectors(insert, c, KEY_START(insert), KEY_SIZE(insert));
 
 	return false;
 }
