@@ -295,7 +295,8 @@ err:
 	btree_bug(b,
 "inconsistent btree pointer %s: bucket %zi prio %i gen %i last_gc %i mark %llu",
 		  buf, PTR_BUCKET_NR(b->c, k, i),
-		  g->read_prio, g->gen, g->last_gc, GC_MARK(g));
+		  g->read_prio, PTR_BUCKET_GEN(b->c, k, i),
+		  g->last_gc, GC_MARK(g));
 	return true;
 }
 
@@ -701,9 +702,11 @@ static bool bch_extent_bad_expensive(struct btree *b, const struct bkey *k)
 			     "key too stale: %i",
 			     stale);
 
-		btree_bug_on(stale && replicas_needed && KEY_SIZE(k),
-			     b, "stale dirty pointer:\nbucket %zu gen %i",
-			     PTR_BUCKET_NR(b->c, k, i), g->gen);
+		btree_bug_on(stale && replicas_needed && KEY_SIZE(k), b,
+			     "stale dirty pointer:\nbucket %zu gen %i != %llu",
+			     PTR_BUCKET_NR(b->c, k, i),
+			     PTR_BUCKET_GEN(b->c, k, i),
+			     PTR_GEN(k, i));
 
 		if (stale)
 			continue;
@@ -729,7 +732,8 @@ err:
 	btree_bug(b,
 "inconsistent extent pointer %s:\nbucket %zu prio %i gen %i last_gc %i mark %llu",
 		  buf, PTR_BUCKET_NR(b->c, k, i),
-		  g->read_prio, g->gen, g->last_gc, GC_MARK(g));
+		  g->read_prio, PTR_BUCKET_GEN(b->c, k, i),
+		  g->last_gc, GC_MARK(g));
 	return true;
 }
 

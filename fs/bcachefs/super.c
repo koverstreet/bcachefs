@@ -400,7 +400,6 @@ static void prio_io(struct cache *ca, uint64_t bucket, int op,
 void bch_prio_write(struct cache *ca)
 {
 	int i;
-	struct bucket *b;
 	struct closure cl;
 
 	closure_init_stack(&cl);
@@ -415,34 +414,36 @@ void bch_prio_write(struct cache *ca)
 			&ca->meta_sectors_written);
 
 	for (i = prio_buckets(ca) - 1; i >= 0; --i) {
-		long bucket;
+		long r;
+		struct bucket *g;
 		struct prio_set *p = ca->disk_buckets;
 		struct bucket_disk *d = p->data;
 		struct bucket_disk *end = d + prios_per_bucket(ca);
 
-		for (b = ca->buckets + i * prios_per_bucket(ca);
-		     b < ca->buckets + ca->sb.nbuckets && d < end;
-		     b++, d++) {
-			d->read_prio = cpu_to_le16(b->read_prio);
-			d->write_prio = cpu_to_le16(b->write_prio);
-			d->gen = b->gen;
+		for (r = i * prios_per_bucket(ca);
+		     r < ca->sb.nbuckets && d < end;
+		     r++, d++) {
+			g = ca->buckets + r;
+			d->read_prio = cpu_to_le16(g->read_prio);
+			d->write_prio = cpu_to_le16(g->write_prio);
+			d->gen = ca->bucket_gens[r];
 		}
 
 		p->next_bucket	= ca->prio_buckets[i + 1];
 		p->magic	= pset_magic(&ca->sb);
 		p->csum		= bch_crc64(&p->magic, bucket_bytes(ca) - 8);
 
-		bucket = bch_bucket_alloc(ca, RESERVE_PRIO, NULL);
-		BUG_ON(bucket < 0);
+		r = bch_bucket_alloc(ca, RESERVE_PRIO, NULL);
+		BUG_ON(r < 0);
 
 		/*
 		 * goes here before dropping bucket_lock to guard against it
 		 * getting gc'd from under us
 		 */
-		ca->prio_buckets[i] = bucket;
+		ca->prio_buckets[i] = r;
 
 		mutex_unlock(&ca->set->bucket_lock);
-		prio_io(ca, bucket, REQ_OP_WRITE, 0);
+		prio_io(ca, r, REQ_OP_WRITE, 0);
 		mutex_lock(&ca->set->bucket_lock);
 	}
 
@@ -474,7 +475,7 @@ static void prio_read(struct cache *ca, uint64_t bucket)
 {
 	struct prio_set *p = ca->disk_buckets;
 	struct bucket_disk *d = p->data + prios_per_bucket(ca), *end = d;
-	struct bucket *b;
+	size_t b;
 	unsigned bucket_nr = 0;
 
 	if (cache_set_init_fault("prio_read"))
@@ -482,9 +483,7 @@ static void prio_read(struct cache *ca, uint64_t bucket)
 
 	ca->prio_journal_bucket = bucket;
 
-	for (b = ca->buckets;
-	     b < ca->buckets + ca->sb.nbuckets;
-	     b++, d++) {
+	for (b = 0; b < ca->sb.nbuckets; b++, d++) {
 		if (d == end) {
 			ca->prio_last_buckets[bucket_nr] = bucket;
 			bucket_nr++;
@@ -501,9 +500,10 @@ static void prio_read(struct cache *ca, uint64_t bucket)
 			d = p->data;
 		}
 
-		b->read_prio = le16_to_cpu(d->read_prio);
-		b->write_prio = le16_to_cpu(d->write_prio);
-		b->gen = b->last_gc = d->gen;
+		ca->buckets[b].read_prio = le16_to_cpu(d->read_prio);
+		ca->buckets[b].write_prio = le16_to_cpu(d->write_prio);
+		ca->buckets[b].last_gc = d->gen;
+		ca->bucket_gens[b] = d->gen;
 	}
 }
 
@@ -1752,6 +1752,7 @@ void bch_cache_release(struct kobject *kobj)
 	free_pages((unsigned long) ca->disk_buckets, ilog2(bucket_pages(ca)));
 	kfree(ca->prio_buckets);
 	vfree(ca->buckets);
+	vfree(ca->bucket_gens);
 
 	free_heap(&ca->heap);
 	free_fifo(&ca->free_inc);
@@ -1801,6 +1802,8 @@ static int cache_alloc(struct cache *ca)
 	    !init_fifo(&ca->free[RESERVE_NONE], reserve_none, GFP_KERNEL) ||
 	    !init_fifo(&ca->free_inc,	free_inc_reserve, GFP_KERNEL) ||
 	    !init_heap(&ca->heap,	movinggc_reserve, GFP_KERNEL) ||
+	    !(ca->bucket_gens	= vzalloc(sizeof(u8) *
+					  ca->sb.nbuckets)) ||
 	    !(ca->buckets	= vzalloc(sizeof(struct bucket) *
 					  ca->sb.nbuckets)) ||
 	    !(ca->prio_buckets	= kzalloc(sizeof(uint64_t) * prio_buckets(ca) *

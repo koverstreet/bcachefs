@@ -8,18 +8,6 @@ struct bucket;
 struct cache;
 struct cache_set;
 
-/*
- * bucket_gc_gen() returns the difference between the bucket's current gen and
- * the oldest gen of any pointer into that bucket in the btree (last_gc).
- */
-
-static inline u8 bucket_gc_gen(struct bucket *b)
-{
-	return b->gen - b->last_gc;
-}
-
-#define BUCKET_GC_GEN_MAX	96U
-
 static inline size_t buckets_available(struct cache_set *c)
 {
 	struct cache *ca;

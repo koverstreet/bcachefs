@@ -531,6 +531,7 @@ struct cache {
 	wait_queue_head_t	fifo_wait;
 
 	/* Allocation stuff: */
+	u8			*bucket_gens;
 	struct bucket		*buckets;
 
 	/* last calculated minimum prio */
@@ -893,6 +894,13 @@ static inline size_t PTR_BUCKET_NR(struct cache_set *c,
 	return sector_to_bucket(c, PTR_OFFSET(k, ptr));
 }
 
+static inline u8 PTR_BUCKET_GEN(struct cache_set *c,
+				const struct bkey *k,
+				unsigned ptr)
+{
+	return PTR_CACHE(c, k, ptr)->bucket_gens[PTR_BUCKET_NR(c, k, ptr)];
+}
+
 static inline struct bucket *PTR_BUCKET(struct cache_set *c,
 					const struct bkey *k,
 					unsigned ptr)
@@ -909,7 +917,7 @@ static inline uint8_t gen_after(uint8_t a, uint8_t b)
 static inline uint8_t ptr_stale(struct cache_set *c, const struct bkey *k,
 				unsigned i)
 {
-	return gen_after(PTR_BUCKET(c, k, i)->gen, PTR_GEN(k, i));
+	return gen_after(PTR_BUCKET_GEN(c, k, i), PTR_GEN(k, i));
 }
 
 static inline bool ptr_available(struct cache_set *c, const struct bkey *k,

@@ -1898,7 +1898,7 @@ static void btree_gc_start(struct cache_set *c)
 
 	for_each_cache(ca, c, i)
 		for_each_bucket(b, ca) {
-			b->last_gc = b->gen;
+			b->last_gc = ca->bucket_gens[b - ca->buckets];
 			SET_GC_MARK(b, 0);
 			SET_GC_SECTORS_USED(b, 0);
 		}
