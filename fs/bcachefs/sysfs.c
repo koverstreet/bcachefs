@@ -780,14 +780,14 @@ static ssize_t show_priority_stats(struct cache *ca, char *buf)
 
 	mutex_lock(&ca->set->bucket_lock);
 	for_each_bucket(b, ca) {
-		if (!GC_SECTORS_USED(b))
-			unused++;
-		if (GC_MARK(b) == GC_MARK_RECLAIMABLE)
-			available++;
-		if (GC_MARK(b) == GC_MARK_DIRTY)
-			dirty++;
-		if (GC_MARK(b) == GC_MARK_METADATA)
+		if (b->mark.is_metadata)
 			meta++;
+		else if (b->mark.dirty_sectors)
+			dirty++;
+		else if (b->mark.cached_sectors)
+			available++;
+		else
+			unused++;
 	}
 
 	for (i = ca->sb.first_bucket; i < n; i++)

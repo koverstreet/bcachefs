@@ -281,7 +281,7 @@ static bool btree_ptr_bad_expensive(struct btree *b, const struct bkey *k)
 
 				if (KEY_CACHED(k) ||
 				    (b->c->gc_mark_valid &&
-				     GC_MARK(g) != GC_MARK_METADATA))
+				     !g->mark.is_metadata))
 					goto err;
 			}
 
@@ -292,11 +292,11 @@ static bool btree_ptr_bad_expensive(struct btree *b, const struct bkey *k)
 err:
 	mutex_unlock(&b->c->bucket_lock);
 	bch_extent_to_text(buf, sizeof(buf), k);
-	btree_bug(b,
-"inconsistent btree pointer %s: bucket %zi prio %i gen %i last_gc %i mark %llu",
+	btree_bug(b, "inconsistent btree pointer %s: bucket %zi prio %i "
+		  "gen %i last_gc %i mark %08x",
 		  buf, PTR_BUCKET_NR(b->c, k, i),
 		  g->read_prio, PTR_BUCKET_GEN(b->c, k, i),
-		  g->last_gc, GC_MARK(g));
+		  g->last_gc, g->mark.counter);
 	return true;
 }
 
@@ -678,6 +678,7 @@ static bool bch_extent_invalid(struct btree_keys *bk, const struct bkey *k)
 static bool bch_extent_bad_expensive(struct btree *b, const struct bkey *k)
 {
 	unsigned stale, replicas_needed, locked = false;
+	struct cache *ca;
 	struct bucket *g;
 	char buf[80];
 	int i;
@@ -698,6 +699,8 @@ static bool bch_extent_bad_expensive(struct btree *b, const struct bkey *k)
 		g = PTR_BUCKET(b->c, k, i);
 		stale = ptr_stale(b->c, k, i);
 
+		ca = PTR_CACHE(b->c, k, i);
+
 		btree_bug_on(stale > 96, b,
 			     "key too stale: %i",
 			     stale);
@@ -712,9 +715,9 @@ static bool bch_extent_bad_expensive(struct btree *b, const struct bkey *k)
 			continue;
 
 		if (locked &&
-		    (!GC_MARK(g) ||
-		     GC_MARK(g) == GC_MARK_METADATA ||
-		     (GC_MARK(g) != GC_MARK_DIRTY &&
+		    (g->mark.is_metadata ||
+		     (!g->mark.dirty_sectors &&
+		      !g->mark.owned_by_allocator &&
 		      replicas_needed)))
 			goto err;
 
@@ -729,11 +732,11 @@ static bool bch_extent_bad_expensive(struct btree *b, const struct bkey *k)
 err:
 	mutex_unlock(&b->c->bucket_lock);
 	bch_extent_to_text(buf, sizeof(buf), k);
-	btree_bug(b,
-"inconsistent extent pointer %s:\nbucket %zu prio %i gen %i last_gc %i mark %llu",
+	btree_bug(b, "inconsistent extent pointer %s:\nbucket %zu prio %i "
+		  "gen %i last_gc %i mark 0x%08x",
 		  buf, PTR_BUCKET_NR(b->c, k, i),
 		  g->read_prio, PTR_BUCKET_GEN(b->c, k, i),
-		  g->last_gc, GC_MARK(g));
+		  g->last_gc, g->mark.counter);
 	return true;
 }
 

@@ -510,6 +510,11 @@ DECLARE_EVENT_CLASS(cache,
 	TP_printk("%pU", __entry->uuid)
 );
 
+DEFINE_EVENT(cache, bcache_sectors_saturated,
+	TP_PROTO(struct cache *ca),
+	TP_ARGS(ca)
+);
+
 DEFINE_EVENT(cache, bcache_alloc_wake_tiering,
 	TP_PROTO(struct cache *ca),
 	TP_ARGS(ca)
@@ -780,8 +785,8 @@ TRACE_EVENT(bcache_wait_for_next_gc,
 /* Allocator */
 
 TRACE_EVENT(bcache_invalidate,
-	TP_PROTO(struct cache *ca, size_t bucket),
-	TP_ARGS(ca, bucket),
+	TP_PROTO(struct cache *ca, size_t bucket, unsigned sectors),
+	TP_ARGS(ca, bucket, sectors),
 
 	TP_STRUCT__entry(
 		__field(unsigned,	sectors			)
@@ -792,7 +797,7 @@ TRACE_EVENT(bcache_invalidate,
 	TP_fast_assign(
 		__entry->dev		= ca->bdev->bd_dev;
 		__entry->offset		= bucket << ca->set->bucket_bits;
-		__entry->sectors	= GC_SECTORS_USED(&ca->buckets[bucket]);
+		__entry->sectors	= sectors;
 	),
 
 	TP_printk("invalidated %u sectors at %d,%d sector=%llu",

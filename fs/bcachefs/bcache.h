@@ -202,9 +202,22 @@
 #define bch_meta_write_fault(name)					\
 	 dynamic_fault("bcache:meta:write:" name)
 
+struct bucket_mark {
+	union {
+	struct {
+		u32		counter;
+	};
+
+	struct {
+		unsigned	owned_by_allocator:1;
+		unsigned	cached_sectors:15;
+		unsigned	is_metadata:1;
+		unsigned	dirty_sectors:15;
+	};
+	};
+};
+
 struct bucket {
-	/* Anyone other than the GC thread must take bucket_lock and check
-	 * c->gc_mark_valid. GC thread can modify without a lock. */
 	union {
 		struct {
 			u16	read_prio;
@@ -212,27 +225,12 @@ struct bucket {
 		};
 		u16		prio[2];
 	};
-	u8		gen;
-	u8		last_gc; /* Most out of date gen in the btree */
+	struct bucket_mark	mark;
+	u8			last_gc; /* Most out of date gen in the btree */
 
 	/* generation copygc is going to move this bucket into */
-	u8		copygc_gen;
-
-	u32		gc_mark; /* Bitfield used by GC. See below for field */
+	u8			copygc_gen;
 };
-
-/*
- * I'd use bitfields for these, but I don't trust the compiler not to screw me
- * as multiple threads touch struct bucket without locking
- */
-
-#define GC_MARK_RECLAIMABLE	1
-#define GC_MARK_DIRTY		2
-#define GC_MARK_METADATA	3
-#define GC_SECTORS_USED_SIZE	27
-#define MAX_GC_SECTORS_USED	(~(~0ULL << GC_SECTORS_USED_SIZE))
-BITMASK(GC_MARK,	 struct bucket, gc_mark, 0, 2);
-BITMASK(GC_SECTORS_USED, struct bucket, gc_mark, 2, GC_SECTORS_USED_SIZE);
 
 #include "stats.h"
 #include "inode.h"

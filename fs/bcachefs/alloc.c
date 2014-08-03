@@ -56,6 +56,7 @@
 #include "bcache.h"
 #include "alloc.h"
 #include "btree.h"
+#include "buckets.h"
 #include "extents.h"
 
 #include <linux/blkdev.h>
@@ -198,39 +199,33 @@ static bool bch_can_invalidate_bucket(struct cache *ca, struct bucket *b)
 {
 	BUG_ON(!ca->set->gc_mark_valid);
 
-	return (!GC_MARK(b) ||
-		GC_MARK(b) == GC_MARK_RECLAIMABLE) &&
-		can_inc_bucket_gen(ca, b - ca->buckets);
+	return (!b->mark.owned_by_allocator &&
+		!b->mark.is_metadata &&
+		!b->mark.dirty_sectors &&
+		can_inc_bucket_gen(ca, b - ca->buckets));
 }
 
-static void __bch_invalidate_one_bucket(struct cache *ca, struct bucket *b)
+static void __bch_invalidate_one_bucket(struct cache *ca, struct bucket *g)
 {
 	lockdep_assert_held(&ca->set->bucket_lock);
-	BUG_ON(GC_MARK(b) && GC_MARK(b) != GC_MARK_RECLAIMABLE);
+	BUG_ON(!bch_can_invalidate_bucket(ca, g));
 	BUG_ON(!ca->buckets_free);
 
-	if (GC_SECTORS_USED(b))
-		trace_bcache_invalidate(ca, b - ca->buckets);
-
-	ca->bucket_gens[b - ca->buckets]++;
+	ca->bucket_gens[g - ca->buckets]++;
 	/* this is what makes ptrs to the bucket invalid */
 
-	b->read_prio = ca->set->prio_clock[READ].hand;
-	b->write_prio = ca->set->prio_clock[WRITE].hand;
-	b->copygc_gen = 0;
+	g->read_prio = ca->set->prio_clock[READ].hand;
+	g->write_prio = ca->set->prio_clock[WRITE].hand;
+	g->copygc_gen = 0;
 
-	SET_GC_MARK(b, GC_MARK_DIRTY);
-	SET_GC_SECTORS_USED(b, min_t(unsigned, ca->sb.bucket_size,
-				     MAX_GC_SECTORS_USED));
-
+	bch_mark_alloc_bucket(ca, g);
 	ca->buckets_free--;
 }
 
-static void bch_invalidate_one_bucket(struct cache *ca, struct bucket *b)
+static void bch_invalidate_one_bucket(struct cache *ca, struct bucket *g)
 {
-	__bch_invalidate_one_bucket(ca, b);
-
-	fifo_push(&ca->free_inc, b - ca->buckets);
+	__bch_invalidate_one_bucket(ca, g);
+	BUG_ON(!fifo_push(&ca->free_inc, g - ca->buckets));
 }
 
 /*
@@ -257,7 +252,7 @@ void bch_prio_init(struct cache_set *c)
 				break;
 
 			if (bch_can_invalidate_bucket(ca, b) &&
-			    !GC_MARK(b)) {
+			    !b->mark.cached_sectors) {
 				__bch_invalidate_one_bucket(ca, b);
 				fifo_push(&ca->free[RESERVE_PRIO],
 					  b - ca->buckets);
@@ -284,7 +279,7 @@ void bch_prio_init(struct cache_set *c)
 	prio = (prio * 7) / (ca->set->prio_clock[READ].hand -		\
 			     ca->min_prio[READ]);			\
 									\
-	(prio + 1) * GC_SECTORS_USED(b);				\
+	(prio + 1) * bucket_sectors_used(b);				\
 })
 
 #define bucket_max_cmp(l, r)	(bucket_prio(l) < bucket_prio(r))
@@ -386,9 +381,9 @@ static void invalidate_buckets(struct cache *ca)
 	BUG_ON(!ca->set->gc_mark_valid);
 
 	for_each_bucket(b, ca) {
-		if (GC_MARK(b) == GC_MARK_DIRTY)
+		if (b->mark.dirty_sectors)
 			dirty++;
-		if (GC_MARK(b) == GC_MARK_METADATA)
+		if (b->mark.is_metadata)
 			meta++;
 		if (!can_inc_bucket_gen(ca, b - ca->buckets))
 			gen++;
@@ -561,7 +556,7 @@ int bch_bucket_wait(struct cache_set *c, enum alloc_reserve reserve,
 long bch_bucket_alloc(struct cache *ca, enum alloc_reserve reserve,
 		      struct closure *cl)
 {
-	struct bucket *b;
+	struct bucket *g;
 	long r;
 
 	lockdep_assert_held(&ca->set->bucket_lock);
@@ -595,35 +590,27 @@ out:
 			BUG_ON(i == r);
 	}
 
-	b = ca->buckets + r;
-
-	BUG_ON(ca->set->gc_mark_valid &&
-	       GC_MARK(b) != GC_MARK_DIRTY);
+	g = ca->buckets + r;
 
 	if (reserve <= RESERVE_METADATA_LAST)
-		SET_GC_MARK(b, GC_MARK_METADATA);
-	else
-		SET_GC_MARK(b, GC_MARK_DIRTY);
+		bch_mark_metadata_bucket(ca, g);
 
-	b->read_prio = ca->set->prio_clock[READ].hand;
-	b->write_prio = ca->set->prio_clock[WRITE].hand;
+	g->read_prio = ca->set->prio_clock[READ].hand;
+	g->write_prio = ca->set->prio_clock[WRITE].hand;
 
 	return r;
 }
 
-void __bch_bucket_free(struct cache *ca, struct bucket *b)
+void __bch_bucket_free(struct cache *ca, struct bucket *g)
 {
 	lockdep_assert_held(&ca->set->bucket_lock);
 
-	if ((GC_MARK(b) &&
-	     GC_MARK(b) != GC_MARK_RECLAIMABLE) ||
-	    !ca->set->gc_mark_valid)
+	if (g->mark.is_metadata || g->mark.owned_by_allocator)
 		ca->buckets_free++;
+	bch_mark_free_bucket(ca, g);
 
-	SET_GC_MARK(b, 0);
-	SET_GC_SECTORS_USED(b, 0);
-	b->read_prio = ca->set->prio_clock[READ].hand;
-	b->write_prio = ca->set->prio_clock[WRITE].hand;
+	g->read_prio = ca->set->prio_clock[READ].hand;
+	g->write_prio = ca->set->prio_clock[WRITE].hand;
 }
 
 void bch_bucket_free(struct cache_set *c, struct bkey *k)
@@ -641,17 +628,22 @@ void bch_bucket_free(struct cache_set *c, struct bkey *k)
 
 static void bch_bucket_free_never_used(struct cache_set *c, struct bkey *k)
 {
+	struct cache *ca;
+	struct bucket *g;
 	unsigned i;
+	long r;
 
 	mutex_lock(&c->bucket_lock);
 
 	for (i = 0; i < bch_extent_ptrs(k); i++) {
-		struct cache *ca = PTR_CACHE(c, k, i);
-		long bucket = PTR_BUCKET_NR(c, k, i);
+		ca = PTR_CACHE(c, k, i);
+		r = PTR_BUCKET_NR(c, k, i);
+		g = PTR_BUCKET(c, k, i);
 
-		if (!bch_allocator_push(ca, bucket))
-			__bch_bucket_free(PTR_CACHE(c, k, i),
-					  PTR_BUCKET(c, k, i));
+		if (!bch_allocator_push(ca, r))
+			__bch_bucket_free(ca, g);
+		else
+			bch_mark_alloc_bucket(ca, g);
 	}
 
 	mutex_unlock(&c->bucket_lock);
@@ -1116,14 +1108,6 @@ found:
 	return b;
 }
 
-static void alloc_mark_bucket(struct cache *ca, size_t b)
-{
-	SET_GC_MARK(&ca->buckets[b], GC_MARK_DIRTY);
-	SET_GC_SECTORS_USED(&ca->buckets[b],
-			    min_t(unsigned, ca->sb.bucket_size,
-				  MAX_GC_SECTORS_USED));
-}
-
 void bch_mark_open_buckets(struct cache_set *c)
 {
 	struct cache *ca;
@@ -1136,22 +1120,25 @@ void bch_mark_open_buckets(struct cache_set *c)
 	for_each_cache(ca, c, ci) {
 		for (i = 0; i < prio_buckets(ca) * 2; i++)
 			if (ca->prio_buckets[i])
-				alloc_mark_bucket(ca, ca->prio_buckets[i]);
+				bch_mark_alloc_bucket(ca,
+					&ca->buckets[ca->prio_buckets[i]]);
 
 		for (j = 0; j < RESERVE_NR; j++)
 			fifo_for_each(i, &ca->free[j], iter)
-				alloc_mark_bucket(ca, i);
+				bch_mark_alloc_bucket(ca,
+					&ca->buckets[i]);
 
 		fifo_for_each(i, &ca->free_inc, iter)
-			alloc_mark_bucket(ca, i);
+			bch_mark_alloc_bucket(ca,
+				&ca->buckets[i]);
 	}
 
 	spin_lock(&c->open_buckets_lock);
 
 	list_for_each_entry(b, &c->open_buckets_open, list)
 		for (i = 0; i < bch_extent_ptrs(&b->key); i++)
-			alloc_mark_bucket(PTR_CACHE(c, &b->key, i),
-					  PTR_BUCKET_NR(c, &b->key, i));
+			bch_mark_alloc_bucket(PTR_CACHE(c, &b->key, i),
+					      PTR_BUCKET(c, &b->key, i));
 
 	spin_unlock(&c->open_buckets_lock);
 }

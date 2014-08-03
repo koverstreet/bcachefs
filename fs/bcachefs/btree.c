@@ -23,6 +23,7 @@
 #include "bcache.h"
 #include "alloc.h"
 #include "btree.h"
+#include "buckets.h"
 #include "debug.h"
 #include "extents.h"
 #include "journal.h"
@@ -1419,9 +1420,9 @@ u8 __bch_btree_mark_key(struct cache_set *c, int level, struct bkey *k)
 	uint8_t stale = 0;
 	unsigned replicas_found = 0, replicas_needed = level
 		? c->meta_replicas : c->data_replicas;
-	unsigned mark = level ? GC_MARK_METADATA : GC_MARK_DIRTY;
-	int i;
+	struct cache *ca;
 	struct bucket *g;
+	int i;
 
 	if (KEY_DELETED(k))
 		return stale;
@@ -1433,6 +1434,7 @@ u8 __bch_btree_mark_key(struct cache_set *c, int level, struct bkey *k)
 		if (!ptr_available(c, k, i))
 			continue;
 
+		ca = PTR_CACHE(c, k, i);
 		g = PTR_BUCKET(c, k, i);
 
 		if (gen_after(g->last_gc, PTR_GEN(k, i)))
@@ -1443,24 +1445,13 @@ u8 __bch_btree_mark_key(struct cache_set *c, int level, struct bkey *k)
 		if (!level && ptr_stale(c, k, i))
 			continue;
 
-		cache_bug_on(GC_MARK(g) &&
-			     (GC_MARK(g) == GC_MARK_METADATA) != (level != 0),
-			     c, "inconsistent ptrs: mark = %llu, level = %i",
-			     GC_MARK(g), level);
-
-		if (replicas_found < replicas_needed)
-			SET_GC_MARK(g, mark);
-		else if (!GC_MARK(g))
-			SET_GC_MARK(g, GC_MARK_RECLAIMABLE);
+		if (level)
+			bch_mark_metadata_bucket(ca, g);
+		else
+			bch_mark_data_bucket(ca, g, KEY_SIZE(k),
+					     replicas_found < replicas_needed);
 
 		replicas_found++;
-
-		/* guard against overflow */
-		SET_GC_SECTORS_USED(g, min_t(unsigned,
-					     GC_SECTORS_USED(g) + KEY_SIZE(k),
-					     MAX_GC_SECTORS_USED));
-
-		BUG_ON(KEY_SIZE(k) && !GC_SECTORS_USED(g));
 	}
 
 	return stale;
@@ -1884,7 +1875,7 @@ static int bch_btree_gc_root(struct btree *b, struct btree_op *op,
 static void btree_gc_start(struct cache_set *c)
 {
 	struct cache *ca;
-	struct bucket *b;
+	struct bucket *g;
 	unsigned i;
 
 	/* We should not be doing a GC while trying to start GC */
@@ -1897,10 +1888,9 @@ static void btree_gc_start(struct cache_set *c)
 	c->gc_cur_key = ZERO_KEY;
 
 	for_each_cache(ca, c, i)
-		for_each_bucket(b, ca) {
-			b->last_gc = ca->bucket_gens[b - ca->buckets];
-			SET_GC_MARK(b, 0);
-			SET_GC_SECTORS_USED(b, 0);
+		for_each_bucket(g, ca) {
+			g->last_gc = ca->bucket_gens[g - ca->buckets];
+			g->mark.counter = 0;
 		}
 
 	/*
@@ -1915,7 +1905,7 @@ static void btree_gc_start(struct cache_set *c)
 
 static void bch_btree_gc_finish(struct cache_set *c)
 {
-	struct bucket *b;
+	struct bucket *g;
 	struct cache *ca;
 	unsigned i;
 
@@ -1934,14 +1924,16 @@ static void bch_btree_gc_finish(struct cache_set *c)
 		bch_mark_keybuf_keys(c, &ca->moving_gc_keys);
 
 		for (i = ca->sb.d; i < ca->sb.d + ca->sb.keys; i++)
-			SET_GC_MARK(ca->buckets + *i, GC_MARK_METADATA);
+			bch_mark_metadata_bucket(ca, &ca->buckets[*i]);
 
 		for (i = ca->prio_buckets;
 		     i < ca->prio_buckets + prio_buckets(ca) * 2; i++)
-			SET_GC_MARK(ca->buckets + *i, GC_MARK_METADATA);
+			bch_mark_metadata_bucket(ca, &ca->buckets[*i]);
 
-		for_each_bucket(b, ca) {
-			if (!GC_MARK(b) || GC_MARK(b) == GC_MARK_RECLAIMABLE)
+		for_each_bucket(g, ca) {
+			if (!g->mark.owned_by_allocator &&
+			    !g->mark.is_metadata &&
+			    !g->mark.dirty_sectors)
 				buckets_free++;
 		}
 

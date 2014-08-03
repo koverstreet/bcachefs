@@ -7,6 +7,7 @@
 #include "bcache.h"
 #include "alloc.h"
 #include "btree.h"
+#include "buckets.h"
 #include "extents.h"
 #include "keybuf.h"
 #include "move.h"
@@ -120,14 +121,14 @@ err:		if (!IS_ERR_OR_NULL(w->private))
 
 static bool bucket_sectors_cmp(struct bucket *l, struct bucket *r)
 {
-	return GC_SECTORS_USED(l) < GC_SECTORS_USED(r);
+	return bucket_sectors_used(l) < bucket_sectors_used(r);
 }
 
 static unsigned bucket_sectors_heap_top(struct cache *ca)
 {
 	struct bucket *b;
 	lockdep_assert_held(&ca->heap_lock);
-	return (b = heap_peek(&ca->heap)) ? GC_SECTORS_USED(b) : 0;
+	return (b = heap_peek(&ca->heap)) ? bucket_sectors_used(b) : 0;
 }
 
 #define bucket_w_prio(b) (c->prio_clock[WRITE].hand - b->write_prio)
@@ -173,20 +174,22 @@ static bool bch_moving_gc(struct cache *ca)
 	for_each_bucket(b, ca) {
 		b->copygc_gen = 0;
 
-		if (!GC_SECTORS_USED(b) && !GC_MARK(b))
+		if (bucket_unused(b)) {
 			buckets_unused++;
+			continue;
+		}
 
-		if (GC_MARK(b) == GC_MARK_METADATA ||
-		    !GC_SECTORS_USED(b) ||
-		    GC_SECTORS_USED(b) >= bucket_move_threshold)
+		if (b->mark.owned_by_allocator ||
+		    b->mark.is_metadata ||
+		    bucket_sectors_used(b) >= bucket_move_threshold)
 			continue;
 
 		if (!heap_full(&ca->heap)) {
-			sectors_to_move += GC_SECTORS_USED(b);
+			sectors_to_move += bucket_sectors_used(b);
 			heap_add(&ca->heap, b, bucket_sectors_cmp);
 		} else if (bucket_sectors_cmp(b, heap_peek(&ca->heap))) {
 			sectors_to_move -= bucket_sectors_heap_top(ca);
-			sectors_to_move += GC_SECTORS_USED(b);
+			sectors_to_move += bucket_sectors_used(b);
 
 			ca->heap.data[0] = b;
 			heap_sift(&ca->heap, 0, bucket_sectors_cmp);
@@ -202,7 +205,7 @@ static bool bch_moving_gc(struct cache *ca)
 
 	while (sectors_to_move > reserve_sectors) {
 		heap_pop(&ca->heap, b, bucket_sectors_cmp);
-		sectors_to_move -= GC_SECTORS_USED(b);
+		sectors_to_move -= bucket_sectors_used(b);
 	}
 
 	buckets_to_move = ca->heap.used;
@@ -222,7 +225,7 @@ static bool bch_moving_gc(struct cache *ca)
 	sectors_total = 0;
 
 	while (heap_pop(&ca->heap, b, bucket_write_prio_max_cmp)) {
-		sectors_total += GC_SECTORS_USED(b);
+		sectors_total += bucket_sectors_used(b);
 		b->copygc_gen = gen_current;
 		if (gen_current < NUM_GC_GENS &&
 		    sectors_total >= sectors_gen * gen_current)
