@@ -368,8 +368,14 @@ bool __bch_cut_front(const struct bkey *where, struct bkey *k)
 	else
 		bkey_copy_key(k, where);
 
-	for (i = 0; i < bch_extent_ptrs(k); i++)
-		SET_PTR_OFFSET(k, i, PTR_OFFSET(k, i) + KEY_SIZE(k) - len);
+	/*
+	 * Don't readjust offset if the key size is now 0, because that could
+	 * cause offset to point to the next bucket:
+	 */
+	if (len)
+		for (i = 0; i < bch_extent_ptrs(k); i++)
+			SET_PTR_OFFSET(k, i, PTR_OFFSET(k, i) +
+				       KEY_SIZE(k) - len);
 
 	BUG_ON(len > KEY_SIZE(k));
 	SET_KEY_SIZE(k, len);
