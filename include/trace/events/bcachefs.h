@@ -800,6 +800,11 @@ TRACE_EVENT(bcache_invalidate,
 		  MINOR(__entry->dev), __entry->offset)
 );
 
+DEFINE_EVENT(cache_set, bcache_rescale_prios,
+	TP_PROTO(struct cache_set *c),
+	TP_ARGS(c)
+);
+
 DECLARE_EVENT_CLASS(bucket_alloc,
 	TP_PROTO(struct cache *ca, enum alloc_reserve reserve,
 		 struct closure *cl),

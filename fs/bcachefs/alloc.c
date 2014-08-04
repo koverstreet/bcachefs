@@ -135,6 +135,8 @@ static void bch_rescale_prios(struct cache_set *c, int rw)
 	struct bucket *b;
 	unsigned i;
 
+	trace_bcache_rescale_prios(c);
+
 	for_each_cache(ca, c, i) {
 		for_each_bucket(b, ca)
 			b->prio[rw] = clock->hand -
