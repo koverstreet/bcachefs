@@ -183,7 +183,8 @@ static inline unsigned bset_block_offset(struct btree *b, struct bset *i)
 
 static inline void set_gc_sectors(struct cache_set *c)
 {
-	atomic_set(&c->sectors_until_gc, c->sb.bucket_size * c->nbuckets / 16);
+	atomic64_set(&c->sectors_until_gc,
+		     c->sb.bucket_size * c->nbuckets / 16);
 }
 
 /* Looping macros */

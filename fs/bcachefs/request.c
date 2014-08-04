@@ -459,8 +459,8 @@ void bch_data_insert(struct closure *cl)
 	else
 		bch_mark_discard(c, bio_sectors(op->bio));
 
-	if (atomic_sub_return(bio_sectors(op->bio),
-			      &c->sectors_until_gc) < 0) {
+	if (atomic64_sub_return(bio_sectors(op->bio),
+				&c->sectors_until_gc) < 0) {
 		set_gc_sectors(c);
 		wake_up_gc(c, true);
 	}

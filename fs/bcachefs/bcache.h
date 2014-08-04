@@ -735,7 +735,7 @@ struct cache_set {
 	struct task_struct	*gc_thread;
 
 	/* Counts how many sectors bch_data_insert has added to the cache */
-	atomic_t		sectors_until_gc;
+	atomic64_t		sectors_until_gc;
 
 	/*
 	 * Where in the btree GC currently is.
