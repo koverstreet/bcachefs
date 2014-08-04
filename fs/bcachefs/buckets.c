@@ -188,3 +188,29 @@ void bch_mark_data_bucket(struct cache *ca, struct bucket *g,
 		}
 	}
 }
+
+void bch_unmark_open_bucket(struct cache *ca, struct bucket *g)
+{
+	struct bucket_mark old, new;
+	struct bucket_stats *stats = &ca->bucket_stats[0];
+
+	bucket_cmpxchg(g, old, new, ({
+		BUG_ON(old.is_metadata);
+		new.owned_by_allocator = 0;
+	}));
+
+	if (old.owned_by_allocator) {
+		if (old.dirty_sectors) {
+			atomic64_add_bug(old.dirty_sectors,
+					 &stats->sectors_dirty);
+			atomic64_add_bug(old.cached_sectors,
+					 &stats->sectors_cached);
+			atomic_inc(&stats->buckets_dirty);
+		} else if (old.cached_sectors) {
+			atomic64_add_bug(old.cached_sectors,
+					 &stats->sectors_cached);
+			atomic_inc(&stats->buckets_cached);
+		}
+		atomic_dec(&stats->buckets_alloc);
+	}
+}

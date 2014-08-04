@@ -627,6 +627,8 @@ static void bch_bucket_free_never_used(struct cache_set *c, struct bkey *k)
 			bch_mark_alloc_bucket(ca, g);
 	}
 
+	bch_set_extent_ptrs(k, 0);
+
 	mutex_unlock(&c->bucket_lock);
 }
 
@@ -749,7 +751,14 @@ err:
 
 static void __bch_open_bucket_put(struct cache_set *c, struct open_bucket *b)
 {
+	struct bkey *k = &b->key;
+	unsigned i;
+
 	lockdep_assert_held(&c->open_buckets_lock);
+
+	for (i = 0; i < bch_extent_ptrs(k); i++)
+		bch_unmark_open_bucket(PTR_CACHE(c, k, i),
+				       PTR_BUCKET(c, k, i));
 
 	list_move(&b->list, &c->open_buckets_free);
 	c->open_buckets_nr_free++;
