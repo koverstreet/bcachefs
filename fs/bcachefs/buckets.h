@@ -32,7 +32,6 @@ static inline size_t buckets_available_cache(struct cache *ca)
 	/* XXX: awkward? */
 	return buckets -
 		atomic_read(&stats->buckets_dirty) -
-		atomic_read(&stats->buckets_cached) -
 		atomic_read(&stats->buckets_alloc) -
 		atomic_read(&stats->buckets_meta);
 }
