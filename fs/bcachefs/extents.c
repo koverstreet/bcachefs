@@ -617,11 +617,15 @@ static bool bch_extent_insert_fixup(struct btree_keys *b,
 {
 	struct cache_set *c = container_of(b, struct btree, keys)->c;
 
-	uint64_t old_offset;
-	unsigned old_size, sectors_found = 0;
+	unsigned old_size;
+	u64 old_offset, insert_offset = KEY_START(insert);
+	unsigned insert_size = KEY_SIZE(insert);
 
-	BUG_ON(!KEY_OFFSET(insert));
-	BUG_ON(!KEY_SIZE(insert));
+	unsigned sectors_found = 0;  /* for cmpxchg */
+
+	BUG_ON(!insert_size);
+
+	bch_add_sectors(insert, c, insert_offset, insert_size);
 
 	while (1) {
 		struct bkey *k = bch_btree_iter_next(iter);
@@ -650,6 +654,7 @@ static bool bch_extent_insert_fixup(struct btree_keys *b,
 		 */
 
 		if (replace_key && KEY_SIZE(k)) {
+			/* This might make @insert shorter */
 			if (!bkey_cmpxchg(k, replace_key, insert,
 					  &sectors_found))
 				goto check_failed;
@@ -671,6 +676,7 @@ static bool bch_extent_insert_fixup(struct btree_keys *b,
 
 			bch_subtract_sectors(k, c, KEY_START(insert),
 					     KEY_SIZE(insert));
+			sectors_found = KEY_SIZE(insert);
 
 			if (bkey_written(b, k)) {
 				/*
@@ -698,7 +704,7 @@ static bool bch_extent_insert_fixup(struct btree_keys *b,
 			bch_cut_front(insert, top);
 			bch_cut_back(&START_KEY(insert), k);
 			bch_bset_fix_invalidated_key(b, k);
-			goto out;
+			break;
 		}
 
 		if (bkey_cmp(insert, k) < 0) {
@@ -725,16 +731,33 @@ static bool bch_extent_insert_fixup(struct btree_keys *b,
 
 check_failed:
 	if (replace_key) {
-		if (!sectors_found) {
+		/*
+		 * The insert key may have changed on us:
+		 * - The bkey_cmpxchg() function may have cut off a prefix
+		 * - And now we want to cut off a suffix from sectors_found
+		 *
+		 * So make sure to update sector counts here.
+		 */
+		BUG_ON(insert_offset + insert_size != KEY_OFFSET(insert));
+		BUG_ON(insert_size < KEY_SIZE(insert));
+		bch_subtract_sectors(insert, c,
+				     insert_offset,
+				     insert_size - KEY_SIZE(insert));
+
+		if (sectors_found >= KEY_SIZE(insert))
+			return false;
+
+		bch_subtract_sectors(insert, c,
+				     KEY_START(insert) + sectors_found,
+				     KEY_SIZE(insert) - sectors_found);
+
+		SET_KEY_OFFSET(insert, KEY_OFFSET(insert) -
+			       (KEY_SIZE(insert) - sectors_found));
+		SET_KEY_SIZE(insert, sectors_found);
+
+		if (!sectors_found)
 			return true;
-		} else if (sectors_found < KEY_SIZE(insert)) {
-			SET_KEY_OFFSET(insert, KEY_OFFSET(insert) -
-				       (KEY_SIZE(insert) - sectors_found));
-			SET_KEY_SIZE(insert, sectors_found);
-		}
 	}
-out:
-	bch_add_sectors(insert, c, KEY_START(insert), KEY_SIZE(insert));
 
 	return false;
 }
