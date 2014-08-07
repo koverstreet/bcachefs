@@ -859,8 +859,6 @@ struct bbio {
 
 #define to_bbio(_bio)		container_of((_bio), struct bbio, bio)
 
-#define INITIAL_PRIO		USHRT_MAX
-
 #define btree_bytes(c)		((c)->btree_pages * PAGE_SIZE)
 #define btree_blocks(b)							\
 	((unsigned) (KEY_SIZE(&b->key) >> (b)->c->block_bits))
