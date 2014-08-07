@@ -22,17 +22,16 @@
 
 static void __update_gc_rate(struct cache *ca)
 {
-	u64 total = 0, target;
+	u64 total, target;
 	unsigned bucket_bits;
 
-	total = ca->sb.nbuckets * ca->sb.bucket_size;
-	target = total * GC_TARGET_PERCENT / 100;
 	bucket_bits = ca->set->bucket_bits + 9;
+	total = ca->sb.nbuckets - ca->sb.first_bucket;
+	target = total * GC_TARGET_PERCENT / 100;
 
 	bch_pd_controller_update(&ca->moving_gc_pd,
-				 target << 9,
+				 target << bucket_bits,
 				 buckets_available_cache(ca) << bucket_bits);
-	ca->moving_gc_pd.rate.rate = UINT_MAX;
 }
 
 static void update_gc_rate(struct work_struct *work)

@@ -115,6 +115,7 @@ rw_attribute(btree_shrinker_disabled);
 
 rw_attribute(copy_gc_enabled);
 rw_attribute(tiering_enabled);
+rw_attribute(tiering_percent);
 sysfs_pd_controller_attribute(tiering);
 
 rw_attribute(size);
@@ -552,6 +553,7 @@ SHOW(__bch_cache_set)
 	sysfs_pd_controller_show(tiering,	&c->tiering_pd);
 
 	sysfs_print(btree_scan_ratelimit,	c->btree_scan_ratelimit);
+	sysfs_print(tiering_percent,		c->tiering_percent);
 
 	sysfs_printf(meta_replicas,		"%u", c->meta_replicas);
 	sysfs_printf(data_replicas,		"%u", c->data_replicas);
@@ -638,6 +640,7 @@ STORE(__bch_cache_set)
 	sysfs_strtoul(btree_shrinker_disabled,	c->shrinker_disabled);
 	sysfs_strtoul(copy_gc_enabled,		c->copy_gc_enabled);
 	sysfs_strtoul(btree_scan_ratelimit,	c->btree_scan_ratelimit);
+	sysfs_strtoul(tiering_percent,		c->tiering_percent);
 
 	if (attr == &sysfs_copy_gc_enabled) {
 		struct cache *ca;
@@ -742,6 +745,10 @@ static struct attribute *bch_cache_set_files[] = {
 
 	&sysfs_meta_replicas,
 	&sysfs_data_replicas,
+
+	&sysfs_btree_scan_ratelimit,
+	&sysfs_tiering_percent,
+
 	NULL
 };
 KTYPE(bch_cache_set);
@@ -776,6 +783,7 @@ static struct attribute *bch_cache_set_internal_files[] = {
 	&sysfs_copy_gc_enabled,
 	&sysfs_tiering_enabled,
 	sysfs_pd_controller_files(tiering),
+
 	NULL
 };
 KTYPE(bch_cache_set_internal);

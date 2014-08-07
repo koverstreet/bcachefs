@@ -1457,6 +1457,7 @@ struct cache_set *bch_cache_set_alloc(struct cache_sb *sb)
 	c->data_replicas = 1;
 	c->copy_gc_enabled = 1;
 	c->tiering_enabled = 1;
+	c->tiering_percent = 10;
 
 	c->search = mempool_create_slab_pool(32, bch_search_cache);
 	if (!c->search)

@@ -11,16 +11,20 @@
 #include <linux/kthread.h>
 #include <trace/events/bcachefs.h>
 
-#define TIERING_THRESHOLD	100
-
 static void __update_tiering_rate(struct cache_set *c)
 {
 	unsigned i, j;
 	u64 tier_dirty[CACHE_TIERS];
 	u64 tier_size[CACHE_TIERS];
+	unsigned bucket_bits;
+
+	bucket_bits = c->bucket_bits + 9;
 
 	for (i = 0; i < CACHE_TIERS; i++) {
 		struct cache_tier *tier = c->cache_by_alloc + i;
+
+		tier_size[i] = 0;
+		tier_dirty[i] = 0;
 
 		for (j = 0; j < tier->nr_devices; j++) {
 			struct cache *ca = tier->devices[j];
@@ -32,13 +36,11 @@ static void __update_tiering_rate(struct cache_set *c)
 	}
 
 	if (tier_size[1]) {
-		u64 target = div64_u64(tier_size[0] * tier_dirty[1],
-				       tier_size[1]);
+		u64 target = div_u64(tier_size[0] * c->tiering_percent, 100);
 
 		bch_pd_controller_update(&c->tiering_pd,
-					 target << (c->bucket_bits + 9),
-					 tier_dirty[0] << (c->bucket_bits + 9));
-		c->tiering_pd.rate.rate = UINT_MAX;
+					 target << bucket_bits,
+					 tier_dirty[0] << bucket_bits);
 	}
 }
 
