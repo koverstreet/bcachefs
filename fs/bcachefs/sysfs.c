@@ -61,6 +61,7 @@ read_attribute(btree_gc_count);
 read_attribute(btree_nodes);
 read_attribute(btree_used_percent);
 read_attribute(average_key_size);
+read_attribute(available_buckets);
 read_attribute(dirty_data);
 read_attribute(dirty_buckets);
 read_attribute(cached_data);
@@ -898,6 +899,8 @@ SHOW(__bch_cache)
 		    atomic_read(&stats.buckets_meta));
 	sysfs_print(alloc_buckets,
 		    atomic_read(&stats.buckets_alloc));
+	sysfs_print(available_buckets,
+		    buckets_available_cache(ca));
 
 	sysfs_pd_controller_show(copy_gc, &ca->moving_gc_pd);
 
@@ -1008,6 +1011,7 @@ static struct attribute *bch_cache_files[] = {
 	&sysfs_nbuckets,
 	&sysfs_priority_stats,
 	&sysfs_reserve_stats,
+	&sysfs_available_buckets,
 	&sysfs_dirty_data,
 	&sysfs_dirty_buckets,
 	&sysfs_cached_data,
