@@ -38,7 +38,9 @@ write_attribute(prune_cache);
 write_attribute(flash_vol_create);
 
 read_attribute(bucket_size);
+read_attribute(bucket_size_bytes);
 read_attribute(block_size);
+read_attribute(block_size_bytes);
 read_attribute(nbuckets);
 read_attribute(tree_depth);
 read_attribute(root_usage_percent);
@@ -64,8 +66,10 @@ read_attribute(btree_used_percent);
 read_attribute(average_key_size);
 read_attribute(available_buckets);
 read_attribute(dirty_data);
+read_attribute(dirty_bytes);
 read_attribute(dirty_buckets);
 read_attribute(cached_data);
+read_attribute(cached_bytes);
 read_attribute(cached_buckets);
 read_attribute(meta_buckets);
 read_attribute(alloc_buckets);
@@ -142,6 +146,8 @@ SHOW(__bch_cached_dev)
 
 	sysfs_hprint(dirty_data,
 		     bcache_dev_sectors_dirty(&dc->disk) << 9);
+	sysfs_print(dirty_bytes,
+		    bcache_dev_sectors_dirty(&dc->disk) << 9);
 
 	sysfs_hprint(stripe_size,	dc->disk.stripe_size << 9);
 	var_printf(partial_stripes_expensive,	"%u");
@@ -294,6 +300,7 @@ static struct attribute *bch_cached_dev_files[] = {
 	&sysfs_writeback_percent,
 	sysfs_pd_controller_files(writeback),
 	&sysfs_dirty_data,
+	&sysfs_dirty_bytes,
 	&sysfs_stripe_size,
 	&sysfs_partial_stripes_expensive,
 	&sysfs_sequential_cutoff,
@@ -488,8 +495,11 @@ SHOW(__bch_cache_set)
 
 	sysfs_print(synchronous,		CACHE_SYNC(&c->sb));
 	sysfs_print(journal_delay_ms,		c->journal.delay_ms);
+
 	sysfs_hprint(bucket_size,		bucket_bytes(c));
+	sysfs_print(bucket_size_bytes,		bucket_bytes(c));
 	sysfs_hprint(block_size,		block_bytes(c));
+	sysfs_print(block_size_bytes,		block_bytes(c));
 
 	sysfs_hprint(btree_cache_size,		bch_cache_size(c));
 	sysfs_print(cache_available_percent,	bch_cache_available_percent(c));
@@ -712,7 +722,9 @@ static struct attribute *bch_cache_set_files[] = {
 	&sysfs_flash_vol_create,
 
 	&sysfs_bucket_size,
+	&sysfs_bucket_size_bytes,
 	&sysfs_block_size,
+	&sysfs_block_size_bytes,
 	&sysfs_tree_depth,
 	&sysfs_root_usage_percent,
 	&sysfs_btree_cache_size,
@@ -837,7 +849,9 @@ SHOW(__bch_cache)
 	struct bucket_stats stats = bucket_stats_read(ca);
 
 	sysfs_hprint(bucket_size,	bucket_bytes(ca));
+	sysfs_print(bucket_size_bytes,	bucket_bytes(ca));
 	sysfs_hprint(block_size,	block_bytes(ca));
+	sysfs_print(block_size_bytes,	block_bytes(ca));
 	sysfs_print(nbuckets,		ca->sb.nbuckets);
 	sysfs_print(discard,		ca->discard);
 	sysfs_hprint(written, atomic_long_read(&ca->sectors_written) << 9);
@@ -852,10 +866,14 @@ SHOW(__bch_cache)
 
 	sysfs_hprint(dirty_data,
 		     atomic64_read(&stats.sectors_dirty) << 9);
+	sysfs_print(dirty_bytes,
+		    atomic64_read(&stats.sectors_dirty) << 9);
 	sysfs_print(dirty_buckets,
 		     atomic_read(&stats.buckets_dirty));
 	sysfs_hprint(cached_data,
 		     atomic64_read(&stats.sectors_cached) << 9);
+	sysfs_print(cached_bytes,
+		    atomic64_read(&stats.sectors_cached) << 9);
 	sysfs_print(cached_buckets,
 		    atomic_read(&stats.buckets_cached));
 	sysfs_print(meta_buckets,
@@ -972,15 +990,19 @@ STORE_LOCKED(bch_cache)
 static struct attribute *bch_cache_files[] = {
 	&sysfs_unregister,
 	&sysfs_bucket_size,
+	&sysfs_bucket_size_bytes,
 	&sysfs_block_size,
+	&sysfs_block_size_bytes,
 	&sysfs_nbuckets,
 	&sysfs_read_priority_stats,
 	&sysfs_write_priority_stats,
 	&sysfs_reserve_stats,
 	&sysfs_available_buckets,
 	&sysfs_dirty_data,
+	&sysfs_dirty_bytes,
 	&sysfs_dirty_buckets,
 	&sysfs_cached_data,
+	&sysfs_cached_bytes,
 	&sysfs_cached_buckets,
 	&sysfs_meta_buckets,
 	&sysfs_alloc_buckets,
