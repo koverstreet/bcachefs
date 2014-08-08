@@ -197,14 +197,15 @@ static inline bool can_inc_bucket_gen(struct cache *ca, size_t b)
 	return bucket_gc_gen(ca, b) < BUCKET_GC_GEN_MAX;
 }
 
-static bool bch_can_invalidate_bucket(struct cache *ca, struct bucket *b)
+static bool bch_can_invalidate_bucket(struct cache *ca, struct bucket *g)
 {
-	BUG_ON(!ca->set->gc_mark_valid);
+	struct bucket_mark mark = READ_ONCE(g->mark);
 
-	return (!b->mark.owned_by_allocator &&
-		!b->mark.is_metadata &&
-		!b->mark.dirty_sectors &&
-		can_inc_bucket_gen(ca, b - ca->buckets));
+	BUG_ON(!ca->set->gc_mark_valid);
+	return (!mark.owned_by_allocator &&
+		!mark.is_metadata &&
+		!mark.dirty_sectors &&
+		can_inc_bucket_gen(ca, g - ca->buckets));
 }
 
 static void __bch_invalidate_one_bucket(struct cache *ca, struct bucket *g)
@@ -241,21 +242,21 @@ static void bch_invalidate_one_bucket(struct cache *ca, struct bucket *g)
 void bch_prio_init(struct cache_set *c)
 {
 	struct cache *ca;
-	struct bucket *b;
+	struct bucket *g;
 	unsigned i;
 
 	mutex_lock(&c->bucket_lock);
 
 	for_each_cache(ca, c, i) {
-		for_each_bucket(b, ca) {
+		for_each_bucket(g, ca) {
 			if (fifo_full(&ca->free[RESERVE_PRIO]))
 				break;
 
-			if (bch_can_invalidate_bucket(ca, b) &&
-			    !b->mark.cached_sectors) {
-				__bch_invalidate_one_bucket(ca, b);
+			if (bch_can_invalidate_bucket(ca, g) &&
+			    !g->mark.cached_sectors) {
+				__bch_invalidate_one_bucket(ca, g);
 				fifo_push(&ca->free[RESERVE_PRIO],
-					  b - ca->buckets);
+					  g - ca->buckets);
 			}
 		}
 	}

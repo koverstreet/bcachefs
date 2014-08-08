@@ -302,20 +302,34 @@ int bch_btree_map_keys(struct btree_op *, struct cache_set *, struct bkey *,
 		       btree_map_keys_fn *, int);
 
 /**
+ * __gc_will_visit_key - for checking GC marks while holding a btree read lock
+ *
+ * Since btree GC takes intent locks, it might advance the current key, so in
+ * this case the entire reading of the mark has to be surrounded with the
+ * seqlock.
+ */
+static inline bool __gc_will_visit_key(struct cache_set *c,
+				       const struct bkey *k)
+{
+	return (c->gc_cur_btree == BTREE_ID_EXTENTS &&
+		bkey_cmp(&c->gc_cur_key, k) < 0);
+}
+
+/**
  * gc_will_visit_key - is the currently-running GC pass going to visit the key?
  *
  * If so, we don't have to update reference counts for buckets this key points
  * into -- the GC will do it before the current pass ends.
  */
-static inline bool gc_will_visit_key(struct cache_set *c, const struct bkey *k)
+static inline bool gc_will_visit_key(struct cache_set *c,
+				     const struct bkey *k)
 {
 	unsigned seq;
 	bool ret;
 
 	do {
 		seq = read_seqbegin(&c->gc_cur_lock);
-		ret = (c->gc_cur_btree == BTREE_ID_EXTENTS &&
-		       bkey_cmp(&c->gc_cur_key, k) < 0);
+		ret = __gc_will_visit_key(c, k);
 	} while (read_seqretry(&c->gc_cur_lock, seq));
 
 	return ret;

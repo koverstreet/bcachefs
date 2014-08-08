@@ -311,24 +311,31 @@ static bool btree_ptr_bad_expensive(struct btree *b, const struct bkey *k)
 	char buf[80];
 	struct bucket *g;
 	struct cache *ca;
+	struct cache_set *c = b->c;
+	unsigned seq;
+	bool bad;
 
-	if (mutex_trylock(&b->c->bucket_lock)) {
-		rcu_read_lock();
+	rcu_read_lock();
 
-		for (i = 0; i < bch_extent_ptrs(k); i++) {
-			if ((ca = PTR_CACHE(b->c, k, i))) {
-				g = PTR_BUCKET(b->c, ca, k, i);
+	for (i = 0; i < bch_extent_ptrs(k); i++) {
+		if ((ca = PTR_CACHE(c, k, i))) {
+			g = PTR_BUCKET(c, ca, k, i);
 
-				if (KEY_CACHED(k) ||
-				    (b->c->gc_mark_valid &&
-				     !g->mark.is_metadata))
-					goto err;
-			}
+			if (KEY_CACHED(k))
+				goto err;
+
+			do {
+				seq = read_seqbegin(&c->gc_cur_lock);
+				bad = (!__gc_will_visit_key(c, k) &&
+				       !g->mark.is_metadata);
+			} while (read_seqretry(&c->gc_cur_lock, seq));
+
+			if (bad)
+				goto err;
 		}
-
-		rcu_read_unlock();
-		mutex_unlock(&b->c->bucket_lock);
 	}
+
+	rcu_read_unlock();
 
 	return false;
 err:
@@ -339,7 +346,6 @@ err:
 		  g->read_prio, PTR_BUCKET_GEN(b->c, ca, k, i),
 		  g->last_gc, g->mark.counter);
 	rcu_read_unlock();
-	mutex_unlock(&b->c->bucket_lock);
 	return true;
 }
 
@@ -815,50 +821,59 @@ static bool bch_extent_invalid(struct btree_keys *bk, const struct bkey *k)
 
 static bool bch_extent_bad_expensive(struct btree *b, const struct bkey *k)
 {
-	unsigned stale, replicas_needed, locked = false;
+	unsigned stale, replicas_needed;
+	struct cache_set *c = b->c;
 	struct cache *ca;
 	struct bucket *g;
+	unsigned seq;
 	char buf[80];
+	bool bad;
 	int i;
 
-	replicas_needed = KEY_CACHED(k) ? 0 : b->c->data_replicas;
-
-	if (mutex_trylock(&b->c->bucket_lock)) {
-		if (b->c->gc_mark_valid)
-			locked = true;
-		else
-			mutex_unlock(&b->c->bucket_lock);
-	}
+	replicas_needed = KEY_CACHED(k) ? 0 : c->data_replicas;
 
 	rcu_read_lock();
 
 	for (i = bch_extent_ptrs(k) - 1; i >= 0; --i) {
-		ca = PTR_CACHE(b->c, k, i);
-		if (!ca)
-			continue;
+		ca = PTR_CACHE(c, k, i);
+		if (ca) {
+			g = PTR_BUCKET(c, ca, k, i);
 
-		g = PTR_BUCKET(b->c, ca, k, i);
-		stale = ptr_stale(b->c, ca, k, i);
+			do {
+				struct bucket_mark mark;
 
-		btree_bug_on(stale > 96, b,
-			     "key too stale: %i",
-			     stale);
+				seq = read_seqbegin(&c->gc_cur_lock);
+				mark = READ_ONCE(g->mark);
 
-		btree_bug_on(stale && replicas_needed && KEY_SIZE(k), b,
-			     "stale dirty pointer:\nbucket %zu gen %i != %llu",
-			     PTR_BUCKET_NR(b->c, k, i),
-			     PTR_BUCKET_GEN(b->c, ca, k, i),
-			     PTR_GEN(k, i));
+				/* between mark and bucket gen */
+				smp_rmb();
 
-		if (stale)
-			continue;
+				stale = ptr_stale(c, ca, k, i);
 
-		if (locked &&
-		    (g->mark.is_metadata ||
-		     (!g->mark.dirty_sectors &&
-		      !g->mark.owned_by_allocator &&
-		      replicas_needed)))
-			goto err;
+				btree_bug_on(stale > 96, b,
+					     "key too stale: %i",
+					     stale);
+
+				btree_bug_on(
+					stale && replicas_needed &&
+					KEY_SIZE(k), b,
+					"stale dirty pointer:\n"
+					"bucket %zu gen %i != %llu",
+					PTR_BUCKET_NR(c, k, i),
+					PTR_BUCKET_GEN(c, ca, k, i),
+					PTR_GEN(k, i));
+
+				bad = (!stale &&
+				       !__gc_will_visit_key(c, k) &&
+				       (mark.is_metadata ||
+					(!mark.dirty_sectors &&
+					 !mark.owned_by_allocator &&
+					 replicas_needed)));
+			} while (read_seqretry(&c->gc_cur_lock, seq));
+
+			if (bad)
+				goto err;
+		}
 
 		if (replicas_needed)
 			replicas_needed--;
@@ -866,19 +881,15 @@ static bool bch_extent_bad_expensive(struct btree *b, const struct bkey *k)
 
 	rcu_read_unlock();
 
-	if (locked)
-		mutex_unlock(&b->c->bucket_lock);
-
 	return false;
 err:
 	bch_extent_to_text(buf, sizeof(buf), k);
 	btree_bug(b, "extent pointer %i bad: %s:\nbucket %zu prio %i "
 		  "gen %i last_gc %i mark 0x%08x", i,
-		  buf, PTR_BUCKET_NR(b->c, k, i),
-		  g->read_prio, PTR_BUCKET_GEN(b->c, ca, k, i),
+		  buf, PTR_BUCKET_NR(c, k, i),
+		  g->read_prio, PTR_BUCKET_GEN(c, ca, k, i),
 		  g->last_gc, g->mark.counter);
 	rcu_read_unlock();
-	mutex_unlock(&b->c->bucket_lock);
 	return true;
 }
 
