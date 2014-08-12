@@ -831,8 +831,6 @@ unsigned bch_btree_insert_key(struct btree_keys *b, struct bkey *k,
 	if (b->ops->insert_fixup(b, k, &iter, replace_key))
 		return status;
 
-	status = BTREE_INSERT_STATUS_INSERT;
-
 	while (m != bset_bkey_last(i) &&
 	       bkey_cmp(k, b->ops->is_extents ? &START_KEY(m) : m) > 0)
 		prev = m, m = bkey_next(m);
@@ -866,6 +864,7 @@ unsigned bch_btree_insert_key(struct btree_keys *b, struct bkey *k,
 			goto copy;
 	}
 
+	status = BTREE_INSERT_STATUS_INSERT;
 	bch_bset_insert(b, m, k);
 copy:	bkey_copy(m, k);
 merged:
