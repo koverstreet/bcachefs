@@ -46,6 +46,7 @@ read_attribute(tree_depth);
 read_attribute(root_usage_percent);
 read_attribute(read_priority_stats);
 read_attribute(write_priority_stats);
+read_attribute(fragmentation_stats);
 read_attribute(reserve_stats);
 read_attribute(btree_cache_size);
 read_attribute(cache_available_percent);
@@ -788,34 +789,51 @@ static struct attribute *bch_cache_set_internal_files[] = {
 };
 KTYPE(bch_cache_set_internal);
 
-static ssize_t show_priority_stats(struct cache *ca, char *buf, int rw)
+typedef unsigned (bucket_map_fn)(struct cache *, struct bucket *, void *);
+
+static unsigned bucket_priority_fn(struct cache *ca, struct bucket *g,
+				   void *private)
+{
+	int rw = (private ? 1 : 0);
+
+	return ca->set->prio_clock[rw].hand - g->prio[rw];
+}
+
+static unsigned bucket_sectors_used_fn(struct cache *ca, struct bucket *g,
+				       void *private)
+{
+	return bucket_sectors_used(g);
+}
+
+static ssize_t show_quantiles(struct cache *ca, char *buf,
+			      bucket_map_fn *fn, void *private)
 {
 	int cmp(const void *l, const void *r)
-	{	return *((u16 *) r) - *((u16 *) l); }
+	{	return *((unsigned *) r) - *((unsigned *) l); }
 
 	struct cache_set *c = ca->set;
 	size_t n = ca->sb.nbuckets, i;
 	/* Compute 31 quantiles */
-	u16 q[31], *p, *cached;
+	unsigned q[31], *p;
 	ssize_t ret = 0;
 
-	cached = p = vmalloc(ca->sb.nbuckets * sizeof(u16));
+	p = vzalloc(ca->sb.nbuckets * sizeof(unsigned));
 	if (!p)
 		return -ENOMEM;
 
 	mutex_lock(&c->bucket_lock);
 	for (i = ca->sb.first_bucket; i < n; i++)
-		p[i] = c->prio_clock[rw].hand - ca->buckets[i].prio[rw];
+		p[i] = fn(ca, &ca->buckets[i], private);
 	mutex_unlock(&c->bucket_lock);
 
-	sort(p, n, sizeof(u16), cmp, NULL);
+	sort(p, n, sizeof(unsigned), cmp, NULL);
 
 	while (n &&
-	       !cached[n - 1])
+	       !p[n - 1])
 		--n;
 
 	for (i = 0; i < ARRAY_SIZE(q); i++)
-		q[i] = cached[n * (i + 1) / (ARRAY_SIZE(q) + 1)];
+		q[i] = p[n * (i + 1) / (ARRAY_SIZE(q) + 1)];
 
 	vfree(p);
 
@@ -901,9 +919,11 @@ SHOW(__bch_cache)
 	sysfs_print(tier,		CACHE_TIER(&ca->sb));
 
 	if (attr == &sysfs_read_priority_stats)
-		return show_priority_stats(ca, buf, 0);
+		return show_quantiles(ca, buf, bucket_priority_fn, (void *) 0);
 	if (attr == &sysfs_write_priority_stats)
-		return show_priority_stats(ca, buf, 1);
+		return show_quantiles(ca, buf, bucket_priority_fn, (void *) 1);
+	if (attr == &sysfs_fragmentation_stats)
+		return show_quantiles(ca, buf, bucket_sectors_used_fn, NULL);
 	if (attr == &sysfs_reserve_stats)
 		return show_reserve_stats(ca, buf);
 
@@ -1004,6 +1024,7 @@ static struct attribute *bch_cache_files[] = {
 	&sysfs_nbuckets,
 	&sysfs_read_priority_stats,
 	&sysfs_write_priority_stats,
+	&sysfs_fragmentation_stats,
 	&sysfs_reserve_stats,
 	&sysfs_available_buckets,
 	&sysfs_dirty_data,
