@@ -1802,6 +1802,15 @@ static int btree_gc_recurse(struct btree *b, struct btree_op *op,
 
 		if (!IS_ERR(last->b)) {
 			should_rewrite = btree_gc_mark_node(last->b, gc);
+
+			if (!last->b->level) {
+				write_seqlock(&c->gc_cur_lock);
+				BUG_ON(bkey_cmp(&c->gc_cur_key,
+						&last->b->key) > 0);
+				bkey_copy_key(&c->gc_cur_key, &last->b->key);
+				write_sequnlock(&c->gc_cur_lock);
+			}
+
 			if (should_rewrite) {
 				ret = btree_gc_rewrite_node(b, op, last->b);
 				if (ret)
@@ -1814,10 +1823,6 @@ static int btree_gc_recurse(struct btree *b, struct btree_op *op,
 					break;
 			}
 
-			write_seqlock(&c->gc_cur_lock);
-			BUG_ON(bkey_cmp(&c->gc_cur_key, &last->b->key) > 0);
-			bkey_copy_key(&c->gc_cur_key, &last->b->key);
-			write_sequnlock(&c->gc_cur_lock);
 			six_unlock_intent(&last->b->lock);
 		}
 
@@ -1825,7 +1830,7 @@ static int btree_gc_recurse(struct btree *b, struct btree_op *op,
 		r->b = NULL;
 
 		if (bkey_cmp(&c->gc_cur_key, &MAX_KEY)) {
-			if (need_resched()) {
+			if (need_resched() || race_fault()) {
 				ret = -ETIMEDOUT;
 				break;
 			}
@@ -1876,12 +1881,12 @@ static int bch_btree_gc_root(struct btree *b, struct btree_op *op,
 		ret = btree_gc_recurse(b, op, gc);
 		if (ret)
 			return ret;
+	} else {
+		write_seqlock(&b->c->gc_cur_lock);
+		BUG_ON(bkey_cmp(&b->c->gc_cur_key, &b->key) > 0);
+		bkey_copy_key(&b->c->gc_cur_key, &b->key);
+		write_sequnlock(&b->c->gc_cur_lock);
 	}
-
-	write_seqlock(&b->c->gc_cur_lock);
-	BUG_ON(bkey_cmp(&b->c->gc_cur_key, &b->key) > 0);
-	bkey_copy_key(&b->c->gc_cur_key, &b->key);
-	write_sequnlock(&b->c->gc_cur_lock);
 
 	return ret;
 }
@@ -1987,7 +1992,7 @@ static void bch_btree_gc(struct cache_set *c)
 		}
 		if (ret) {
 			if (ret != -ETIMEDOUT)
-				pr_warn("gc failed!");
+				pr_warn("gc failed with %d!", ret);
 
 			continue;
 		}
