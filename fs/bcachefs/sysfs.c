@@ -61,6 +61,7 @@ sysfs_time_stats_attribute(btree_sort,	ms,  us);
 sysfs_time_stats_attribute(btree_read,	ms,  us);
 
 read_attribute(btree_gc_count);
+read_attribute(btree_gc_running);
 
 read_attribute(btree_nodes);
 read_attribute(btree_used_percent);
@@ -507,6 +508,7 @@ SHOW(__bch_cache_set)
 	sysfs_print(cache_available_percent,	bch_cache_available_percent(c));
 
 	sysfs_print(btree_gc_count,		bch_gc_count(c));
+	sysfs_print(btree_gc_running,		!c->gc_mark_valid);
 
 	sysfs_print_time_stats(&c->btree_gc_time,	btree_gc, sec, ms);
 	sysfs_print_time_stats(&c->btree_split_time,	btree_split, sec, us);
@@ -763,6 +765,7 @@ static struct attribute *bch_cache_set_internal_files[] = {
 	sysfs_time_stats_attribute_list(btree_read, ms, us)
 
 	&sysfs_btree_gc_count,
+	&sysfs_btree_gc_running,
 
 	&sysfs_btree_nodes,
 	&sysfs_btree_used_percent,
