@@ -1449,13 +1449,11 @@ u8 __bch_btree_mark_key(struct cache_set *c, int level, struct bkey *k)
 
 			stale = max(stale, ptr_stale(c, ca, k, i));
 
-			if (!level && ptr_stale(c, ca, k, i))
-				continue;
-
 			if (level)
 				bch_mark_metadata_bucket(ca, g);
 			else
-				bch_mark_data_bucket(ca, g, KEY_SIZE(k),
+				bch_mark_data_bucket(c, ca, g,
+					PTR_GEN(k, i), KEY_SIZE(k),
 					replicas_found < replicas_needed);
 
 			replicas_found++;

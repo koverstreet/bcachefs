@@ -75,7 +75,8 @@ static inline size_t buckets_free_cache(struct cache *ca,
 void bch_mark_free_bucket(struct cache *, struct bucket *);
 void bch_mark_alloc_bucket(struct cache *, struct bucket *);
 void bch_mark_metadata_bucket(struct cache *, struct bucket *);
-void bch_mark_data_bucket(struct cache *, struct bucket *, int, bool);
+void bch_mark_data_bucket(struct cache_set *, struct cache *, struct bucket *,
+			  unsigned, int, bool);
 void bch_unmark_open_bucket(struct cache *, struct bucket *);
 
 #endif

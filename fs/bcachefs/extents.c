@@ -553,6 +553,8 @@ static void bch_add_sectors(struct bkey *k,
 {
 	unsigned replicas_found = 0, replicas_needed = c->data_replicas;
 	struct cache *ca;
+	struct bucket *g;
+	unsigned gen;
 	int i;
 
 	if (!bch_extent_ptrs(k))
@@ -578,10 +580,10 @@ static void bch_add_sectors(struct bkey *k,
 
 	rcu_read_lock();
 	for (i = bch_extent_ptrs(k) - 1; i >= 0; --i)
-		if ((ca = PTR_CACHE(c, k, i)) &&
-		    !ptr_stale(c, ca, k, i)) {
-			bch_mark_data_bucket(ca, PTR_BUCKET(c, ca, k, i),
-					     sectors,
+		if ((ca = PTR_CACHE(c, k, i))) {
+			g = PTR_BUCKET(c, ca, k, i);
+			gen = PTR_GEN(k, i);
+			bch_mark_data_bucket(c, ca, g, gen, sectors,
 					     replicas_found < replicas_needed);
 
 			replicas_found++;

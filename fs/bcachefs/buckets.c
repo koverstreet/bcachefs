@@ -94,7 +94,7 @@ struct bucket_mark bch_bucket_mark_set(struct cache *ca, struct bucket *g,
 
 #define bucket_cmpxchg(g, old, new, expr)			\
 do {								\
-	old = (g)->mark;					\
+	old = READ_ONCE((g)->mark);				\
 	while (1) {						\
 		u32 _v;						\
 								\
@@ -150,12 +150,25 @@ do {								\
 	}							\
 } while (0)
 
-void bch_mark_data_bucket(struct cache *ca, struct bucket *g,
+void bch_mark_data_bucket(struct cache_set *c, struct cache *ca,
+			  struct bucket *g, unsigned gen,
 			  int sectors, bool dirty)
 {
 	struct bucket_mark old, new;
+	unsigned bucket_gen;
+	bool stale;
 
 	bucket_cmpxchg(g, old, new, ({
+		/*
+		 * cmpxchg() only implies a full barrier on success, not
+		 * failure, so we need a read barrier on all iterations
+		 */
+		smp_rmb();
+		bucket_gen = ACCESS_ONCE(ca->bucket_gens[g - ca->buckets]);
+		stale = gen_after(bucket_gen, gen);
+		if (stale)
+			return;
+
 		BUG_ON(old.is_metadata);
 		if (dirty)
 			saturated_add(ca, new.dirty_sectors, sectors,

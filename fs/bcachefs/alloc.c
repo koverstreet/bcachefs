@@ -213,14 +213,16 @@ static void __bch_invalidate_one_bucket(struct cache *ca, struct bucket *g)
 	lockdep_assert_held(&ca->set->bucket_lock);
 	BUG_ON(!bch_can_invalidate_bucket(ca, g));
 
-	ca->bucket_gens[g - ca->buckets]++;
+	/* Ordering matters: see bch_mark_data_bucket() */
+
 	/* this is what makes ptrs to the bucket invalid */
+	ca->bucket_gens[g - ca->buckets]++;
+	/* bucket mark updates imply a write barrier */
+	bch_mark_alloc_bucket(ca, g);
 
 	g->read_prio = ca->set->prio_clock[READ].hand;
 	g->write_prio = ca->set->prio_clock[WRITE].hand;
 	g->copygc_gen = 0;
-
-	bch_mark_alloc_bucket(ca, g);
 }
 
 static void bch_invalidate_one_bucket(struct cache *ca, struct bucket *g)
