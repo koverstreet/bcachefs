@@ -1551,6 +1551,9 @@ static void run_cache_set(struct cache_set *c)
 
 	closure_init_stack(&cl);
 
+	/* We don't want bch_cache_set_error() to free underneath us */
+	closure_get(&c->caching);
+
 	for_each_cache(ca, c, i)
 		c->nbuckets += ca->sb.nbuckets;
 
@@ -1700,11 +1703,12 @@ static void run_cache_set(struct cache_set *c)
 	flash_devs_run(c);
 
 	set_bit(CACHE_SET_RUNNING, &c->flags);
+	closure_put(&c->caching);
 	return;
 err:
 	closure_sync(&cl);
-	/* XXX: test this, it's broken */
 	bch_cache_set_error(c, "%s", err);
+	closure_put(&c->caching);
 }
 
 static bool can_attach_cache(struct cache *ca, struct cache_set *c)
