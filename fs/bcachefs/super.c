@@ -1173,6 +1173,9 @@ static int flash_devs_run(struct cache_set *c)
 	struct btree_op op;
 	int ret;
 
+	if (test_bit(CACHE_SET_STOPPING, &c->flags))
+		return -EINVAL;
+
 	bch_btree_op_init(&op, BTREE_ID_INODES, -1);
 
 	ret = bch_btree_map_keys(&op, c, NULL, flash_dev_map_fn, 0);
