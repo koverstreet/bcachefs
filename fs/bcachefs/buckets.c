@@ -159,19 +159,25 @@ void bch_mark_data_bucket(struct cache_set *c, struct cache *ca,
 	unsigned bucket_gen;
 	bool stale;
 
-	struct bucket *g = PTR_BUCKET(c, ca, k, i);
+	unsigned long r = PTR_BUCKET_NR(c, k, i);
 	unsigned gen = PTR_GEN(k, i);
 
-	bucket_cmpxchg(g, old, new, ({
-		if (!gc && gc_will_visit_key(c, k))
-			return;
-
+	bucket_cmpxchg(&ca->buckets[r], old, new, ({
 		/*
 		 * cmpxchg() only implies a full barrier on success, not
 		 * failure, so we need a read barrier on all iterations
 		 */
 		smp_rmb();
-		bucket_gen = ACCESS_ONCE(ca->bucket_gens[g - ca->buckets]);
+
+		/*
+		 * Check this after reading bucket mark to guard against
+		 * GC starting between when we check gc_cur_key and when
+		 * the GC zeroes out marks
+		 */
+		if (!gc && gc_will_visit_key(c, k))
+			return;
+
+		bucket_gen = ca->bucket_gens[r];
 		stale = gen_after(bucket_gen, gen);
 		if (stale)
 			return;
