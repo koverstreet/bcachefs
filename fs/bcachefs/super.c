@@ -1081,7 +1081,10 @@ static const char *register_bdev(struct cache_sb *sb, struct page *sb_page,
 
 	return NULL;
 err:
-	bcache_device_stop(&dc->disk);
+	if (dc) {
+		dc->bdev = NULL;
+		bcache_device_stop(&dc->disk);
+	}
 	return err;
 }
 
@@ -1956,23 +1959,26 @@ static const char *register_cache(struct cache_sb *sb, struct page *sb_page,
 			err = "cache_alloc(): -ENOMEM";
 		else
 			err = "cache_alloc(): unknown error";
-		goto out;
+		goto err;
 	}
 
 	err = "error creating kobject";
 	if (kobject_add(&ca->kobj, &part_to_dev(bdev->bd_part)->kobj, "bcache"))
-		goto out;
+		goto err;
 
 	mutex_lock(&bch_register_lock);
 	err = register_cache_set(ca);
 	mutex_unlock(&bch_register_lock);
 
 	if (err)
-		goto out;
+		goto err;
 
 	pr_info("registered cache device %s", bdevname(bdev, name));
-	err = NULL;
-out:
+	kobject_put(&ca->kobj);
+	return NULL;
+
+err:
+	ca->bdev = NULL;
 	kobject_put(&ca->kobj);
 	return err;
 }
