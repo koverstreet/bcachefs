@@ -464,10 +464,11 @@ enum alloc_reserve {
 };
 
 /*
- * The btree node reserve needs to contain enough buckets that we can split each
- * level of node twice up to the root. We don't expect more than three levels.
+ * The btree node reserve needs to contain enough buckets so that in a tree of
+ * depth 2, we can split each level of node, and then allocate a new root.
+ * See btree_check_reserve().
  */
-#define BTREE_NODE_RESERVE 8
+#define BTREE_NODE_RESERVE 7
 
 /* Enough for 16 cache devices, 2 tiers and some left over for pipelining */
 #define OPEN_BUCKETS_COUNT 256

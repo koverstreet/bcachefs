@@ -1333,7 +1333,12 @@ static int __btree_check_reserve(struct cache_set *c,
 static int btree_check_reserve(struct btree *b, struct btree_op *op)
 {
 	enum btree_id id = b->btree_id;
-	unsigned required = (b->c->btree_roots[id]->level - b->level) * 2 + 1;
+	/*
+	 * In the worst case, inserting at b->level will split all nodes up
+	 * to the root (2 nodes per level, not including the root) and also
+	 * split the root (2 new nodes plus 1 for the new root)
+	 */
+	unsigned required = (b->c->btree_roots[id]->level - b->level) * 2 + 3;
 	enum alloc_reserve reserve = (op ? op->reserve : id);
 
 	return __btree_check_reserve(b->c, reserve, required,
@@ -1528,8 +1533,7 @@ static int btree_gc_coalesce(struct btree *b, struct btree_op *op,
 
 	bch_keylist_init(&keylist);
 
-	/* If we can't allocate new nodes, just keep going */
-	if (btree_check_reserve(b, NULL))
+	if (__btree_check_reserve(b->c, b->btree_id, GC_MERGE_NODES, NULL))
 		return 0;
 
 	memset(new_nodes, 0, sizeof(new_nodes));
