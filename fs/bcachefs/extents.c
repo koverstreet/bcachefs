@@ -553,8 +553,6 @@ static void bch_add_sectors(struct bkey *k,
 {
 	unsigned replicas_found = 0, replicas_needed = c->data_replicas;
 	struct cache *ca;
-	struct bucket *g;
-	unsigned gen;
 	int i;
 
 	if (!bch_extent_ptrs(k))
@@ -572,20 +570,12 @@ static void bch_add_sectors(struct bkey *k,
 	if (KEY_CACHED(k))
 		replicas_needed = 0;
 
-	/* GC cannot advance gc_cur_btree past @k because we have
-	 * an intent lock on the node that contains @k, so we only
-	 * have to check once. */
-	if (gc_will_visit_key(c, k))
-		return;
-
 	rcu_read_lock();
 	for (i = bch_extent_ptrs(k) - 1; i >= 0; --i)
 		if ((ca = PTR_CACHE(c, k, i))) {
-			g = PTR_BUCKET(c, ca, k, i);
-			gen = PTR_GEN(k, i);
-			bch_mark_data_bucket(c, ca, g, gen, sectors,
-					     replicas_found < replicas_needed);
-
+			bch_mark_data_bucket(c, ca, k, i, sectors,
+					     replicas_found < replicas_needed,
+					     false);
 			replicas_found++;
 		}
 	rcu_read_unlock();
