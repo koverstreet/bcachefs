@@ -1833,16 +1833,14 @@ static int btree_gc_recurse(struct btree *b, struct btree_op *op,
 		memmove(r + 1, r, sizeof(r[0]) * (GC_MERGE_NODES - 1));
 		r->b = NULL;
 
-		if (bkey_cmp(&c->gc_cur_key, &MAX_KEY)) {
-			if (need_resched() || race_fault()) {
-				ret = -ETIMEDOUT;
-				break;
-			}
+		if (need_resched() || race_fault()) {
+			ret = -ETIMEDOUT;
+			break;
+		}
 
-			if (op->iterator_invalidated) {
-				ret = -EINTR;
-				break;
-			}
+		if (op->iterator_invalidated) {
+			ret = -EINTR;
+			break;
 		}
 	}
 
@@ -1850,7 +1848,10 @@ static int btree_gc_recurse(struct btree *b, struct btree_op *op,
 		if (!IS_ERR_OR_NULL(i->b))
 			six_unlock_intent(&i->b->lock);
 
-	return ret;
+	if (bkey_cmp(&c->gc_cur_key, &MAX_KEY))
+		return ret;
+
+	return 0;
 }
 
 static int bch_btree_gc_root(struct btree *b, struct btree_op *op,
