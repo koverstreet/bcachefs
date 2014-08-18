@@ -1081,9 +1081,6 @@ retry:
 	rcu_read_unlock();
 
 	if (unlikely(!b)) {
-		if (current->bio_list)
-			return ERR_PTR(-EAGAIN);
-
 		b = mca_alloc(c, k, level, op->id, &op->cl);
 		if (!b)
 			goto retry;
