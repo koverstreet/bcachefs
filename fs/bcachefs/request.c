@@ -241,7 +241,7 @@ static void bch_data_insert_error(struct closure *cl)
 
 	/*
 	 * Our data write just errored, which means we've got a bunch of keys to
-	 * insert that point to data that wasn't succesfully written.
+	 * insert that point to data that wasn't successfully written.
 	 *
 	 * We don't have to insert those keys but we still have to invalidate
 	 * that region of the cache - so, if we just strip off all the pointers
@@ -406,15 +406,15 @@ err:
  * mostly empty buckets.
  *
  * It first writes the data to the cache, creating a list of keys to be inserted
- * (if the data had to be fragmented there will be multiple keys); after the
- * data is written it calls bch_journal, and after the keys have been added to
- * the next journal write they're inserted into the btree.
+ * (if the data won't fit in a single open bucket, there will be multiple keys);
+ * after the data is written it calls bch_journal, and after the keys have been
+ * added to the next journal write they're inserted into the btree.
  *
- * It inserts the data in s->cache_bio; bi_sector is used for the key offset,
- * and op->inode is used for the key inode.
+ * It inserts the data in op->bio; bi_sector is used for the key offset, and
+ * op->inode is used for the key inode.
  *
  * If op->discard is true, instead of inserting the data it invalidates the
- * region of the cache represented by s->cache_bio and op->inode.
+ * region of the cache represented by op->bio and op->inode.
  */
 void bch_data_insert(struct closure *cl)
 {
