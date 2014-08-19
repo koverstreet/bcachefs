@@ -1354,9 +1354,9 @@ static int __btree_check_reserve(struct cache_set *c,
 
 	for_each_cache_rcu(ca, c, i) {
 		if (fifo_used(&ca->free[reserve]) < required) {
-			trace_bcache_btree_check_reserve_fail(ca,
+			trace_bcache_btree_check_reserve_fail(ca, reserve,
 					fifo_used(&ca->free[reserve]),
-					reserve, cl);
+					required, cl);
 
 			ret = bch_bucket_wait(c, reserve, cl);
 			rcu_read_unlock();

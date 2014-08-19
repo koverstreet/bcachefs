@@ -647,7 +647,7 @@ static struct cache *bch_next_cache(struct cache_set *c,
 				    struct closure *cl)
 {
 	struct cache *device, **devices;
-	size_t sectors_count = 0, rand;
+	size_t bucket_count = 0, rand;
 	int i, nr_devices;
 
 	/* first ptr allocation will always go to the specified tier,
@@ -671,10 +671,10 @@ static struct cache *bch_next_cache(struct cache_set *c,
 		if (test_bit(devices[i]->sb.nr_this_dev, cache_used))
 			continue;
 
-		sectors_count += buckets_free_cache(devices[i], reserve);
+		bucket_count += buckets_free_cache(devices[i], reserve);
 	}
 
-	if (!sectors_count) {
+	if (!bucket_count) {
 		trace_bcache_bucket_alloc_set_fail(c, reserve, cl);
 		return ERR_PTR(bch_bucket_wait(c, reserve, cl));
 	}
@@ -688,7 +688,7 @@ static struct cache *bch_next_cache(struct cache_set *c,
 	 */
 
 	get_random_bytes(&rand, sizeof(rand));
-	rand %= sectors_count;
+	rand %= bucket_count;
 
 	device = NULL;
 
@@ -700,9 +700,9 @@ static struct cache *bch_next_cache(struct cache_set *c,
 			continue;
 
 		device = devices[i];
-		sectors_count -= buckets_free_cache(device, reserve);
+		bucket_count -= buckets_free_cache(device, reserve);
 
-		if (rand >= sectors_count) {
+		if (rand >= bucket_count) {
 			__set_bit(device->sb.nr_this_dev, cache_used);
 			return device;
 		}

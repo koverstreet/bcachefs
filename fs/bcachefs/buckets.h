@@ -40,14 +40,15 @@ static inline unsigned bucket_sectors_used(struct bucket *b)
 
 static inline size_t buckets_available_cache(struct cache *ca)
 {
-	size_t buckets = ca->sb.nbuckets - ca->sb.first_bucket;
 	struct bucket_stats stats = bucket_stats_read(ca);
-
 	/* XXX: awkward? */
-	return buckets -
+	ssize_t buckets = ca->sb.nbuckets -
+		ca->sb.first_bucket -
 		atomic_read(&stats.buckets_dirty) -
 		atomic_read(&stats.buckets_alloc) -
 		atomic_read(&stats.buckets_meta);
+
+	return max_t(ssize_t, buckets, 0);
 }
 
 static inline size_t buckets_available(struct cache_set *c)

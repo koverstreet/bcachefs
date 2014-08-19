@@ -58,6 +58,21 @@
 
 #include <trace/events/bcachefs.h>
 
+static inline int is_meta_bucket(struct bucket_mark m)
+{
+	return !m.owned_by_allocator && m.is_metadata;
+}
+
+static inline int is_dirty_bucket(struct bucket_mark m)
+{
+	return !m.owned_by_allocator && !!m.dirty_sectors;
+}
+
+static inline int is_cached_bucket(struct bucket_mark m)
+{
+	return !m.owned_by_allocator && !m.dirty_sectors && !!m.cached_sectors;
+}
+
 static void bucket_stats_update(struct cache *ca,
 				struct bucket_mark old,
 				struct bucket_mark new)
@@ -65,22 +80,22 @@ static void bucket_stats_update(struct cache *ca,
 	struct bucket_stats *stats = &ca->bucket_stats[0];
 	int v;
 
-	if ((v = ((int) new.owned_by_allocator - (int) old.owned_by_allocator)))
-		atomic_add_bug(v, &stats->buckets_alloc);
-
-	if ((v = ((int) new.is_metadata - (int) old.is_metadata)))
-		atomic_add_bug(v, &stats->buckets_meta);
-
 	if ((v = ((int) new.cached_sectors - (int) old.cached_sectors)))
 		atomic64_add_bug(v, &stats->sectors_cached);
-
-	if ((v = ((int) !!new.cached_sectors - (int) !!old.cached_sectors)))
-		atomic_add_bug(v, &stats->buckets_cached);
 
 	if ((v = ((int) new.dirty_sectors - (int) old.dirty_sectors)))
 		atomic64_add_bug(v, &stats->sectors_dirty);
 
-	if ((v = ((int) !!new.dirty_sectors - (int) !!old.dirty_sectors)))
+	if ((v = ((int) new.owned_by_allocator - (int) old.owned_by_allocator)))
+		atomic_add_bug(v, &stats->buckets_alloc);
+
+	if ((v = (is_meta_bucket(new) - is_meta_bucket(old))))
+		atomic_add_bug(v, &stats->buckets_meta);
+
+	if ((v = (is_cached_bucket(old) - is_cached_bucket(new))))
+		atomic_add_bug(v, &stats->buckets_cached);
+
+	if ((v = (is_dirty_bucket(old) - is_dirty_bucket(new))))
 		atomic_add_bug(v, &stats->buckets_dirty);
 }
 
