@@ -694,6 +694,34 @@ TRACE_EVENT(bcache_btree_insert_key,
 		  __entry->bucket)
 );
 
+TRACE_EVENT(bcache_add_sectors,
+	TP_PROTO(struct cache *ca, struct bkey *k, unsigned i,
+		 u64 offset, int sectors, bool dirty),
+	TP_ARGS(ca, k, i, offset, sectors, dirty),
+
+	TP_STRUCT__entry(
+		__array(char,		uuid,		16	)
+		__field(u32,		inode			)
+		__field(u64,		offset			)
+		__field(u32,		sectors			)
+		__field(u64,		bucket			)
+		__field(bool,		dirty			)
+	),
+
+	TP_fast_assign(
+		memcpy(__entry->uuid, ca->sb.uuid.b, 16);
+		__entry->inode		= KEY_INODE(k);
+		__entry->offset		= KEY_OFFSET(k);
+		__entry->sectors	= sectors;
+		__entry->bucket		= PTR_BUCKET_NR(ca->set, k, i);
+		__entry->dirty		= dirty;
+	),
+
+	TP_printk("%pU %u:%llu sectors %i bucket %llu dirty %i",
+		  __entry->uuid, __entry->inode, __entry->offset,
+		  __entry->sectors, __entry->bucket, __entry->dirty)
+);
+
 DECLARE_EVENT_CLASS(btree_split,
 	TP_PROTO(struct btree *b, unsigned keys),
 	TP_ARGS(b, keys),

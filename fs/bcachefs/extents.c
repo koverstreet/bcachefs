@@ -12,6 +12,8 @@
 #include "inode.h"
 #include "writeback.h"
 
+#include <trace/events/bcachefs.h>
+
 static void sort_key_next(struct btree_iter *iter,
 			  struct btree_iter_set *i)
 {
@@ -554,9 +556,12 @@ static void bch_add_sectors(struct bkey *k,
 	rcu_read_lock();
 	for (i = bch_extent_ptrs(k) - 1; i >= 0; --i)
 		if ((ca = PTR_CACHE(c, k, i))) {
+			bool dirty = replicas_found < replicas_needed;
+
+			trace_bcache_add_sectors(ca, k, i, offset,
+						 sectors, dirty);
 			bch_mark_data_bucket(c, ca, k, i, sectors,
-					     replicas_found < replicas_needed,
-					     false);
+					     dirty, false);
 			replicas_found++;
 		}
 	rcu_read_unlock();
