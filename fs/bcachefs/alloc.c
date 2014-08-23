@@ -89,6 +89,13 @@ static void alloc_failed(struct cache *ca)
 
 	gc_count = bch_gc_count(c);
 
+	/* Journal replay shouldn't run out of buckets, but the allocator
+	 * might fail to find more buckets to invalidate once it fills up
+	 * free lists. If this happens, bch_run_cache_set() will kick off
+	 * a btree GC and wake us up after journal replay completes. */
+	if (!test_bit(CACHE_SET_RUNNING, &c->flags))
+		goto wait;
+
 	/* Check if there are caches in higher tiers; we could potentially
 	 * make room on our cache by tiering */
 	for (i = CACHE_TIER(&ca->sb) + 1;
