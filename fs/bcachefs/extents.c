@@ -694,7 +694,8 @@ static bool bch_extent_insert_fixup(struct btree_keys *b,
 				continue;
 		}
 
-		if (KEY_VERSION(insert) < KEY_VERSION(k) && KEY_SIZE(k)) {
+		if (KEY_SIZE(k) && !KEY_DELETED(insert) &&
+		    KEY_VERSION(insert) < KEY_VERSION(k)) {
 			if (handle_existing_key_newer(c, insert, k))
 				return true;
 
