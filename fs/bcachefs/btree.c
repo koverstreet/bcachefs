@@ -1510,6 +1510,12 @@ u8 __bch_btree_mark_key(struct cache_set *c, int level, struct bkey *k)
 
 #define btree_mark_key(b, k)	__bch_btree_mark_key(b->c, b->level, k)
 
+/* Only the extent btree has leafs whose keys point to data */
+static inline bool btree_node_has_ptrs(struct btree *b, unsigned level)
+{
+	return b->btree_id == BTREE_ID_EXTENTS || level > 0;
+}
+
 static bool btree_gc_mark_node(struct btree *b, struct gc_stat *gc)
 {
 	uint8_t stale = 0;
@@ -1520,7 +1526,7 @@ static bool btree_gc_mark_node(struct btree *b, struct gc_stat *gc)
 
 	gc->nodes++;
 
-	if (b->btree_id != BTREE_ID_EXTENTS && b->level == 0)
+	if (!btree_node_has_ptrs(b, b->level))
 		return 0;
 
 	for_each_key(&b->keys, k, &iter) {
@@ -1792,7 +1798,10 @@ static unsigned btree_gc_count_keys(struct btree *b)
 	unsigned ret = 0;
 
 	for_each_key(&b->keys, k, &iter)
-		ret += bch_extent_nr_ptrs_after_normalize(b->c, k);
+		if (btree_node_has_ptrs(b, b->level))
+			ret += bch_extent_nr_ptrs_after_normalize(b->c, k);
+		else
+			ret += KEY_U64s(k);
 
 	return ret;
 }
@@ -2138,13 +2147,13 @@ static int bch_btree_check_recurse(struct btree *b, struct btree_op *op)
 	struct bkey *k, *p = NULL;
 	struct btree_iter iter;
 
-	if (b->btree_id == BTREE_ID_EXTENTS || b->level)
+	if (btree_node_has_ptrs(b, b->level))
 		for_each_key(&b->keys, k, &iter)
 			btree_mark_key(b, k);
 
 	__bch_btree_mark_key(b->c, b->level + 1, &b->key);
 
-	if ((b->btree_id == BTREE_ID_EXTENTS && b->level) || b->level > 1) {
+	if (b->level > 0 && btree_node_has_ptrs(b, b->level - 1)) {
 		bch_btree_iter_init(&b->keys, &iter, NULL);
 
 		do {
