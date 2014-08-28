@@ -89,6 +89,7 @@ static void read_moving(struct cache *ca, struct moving_io_stats *stats)
 			     * DIV_ROUND_UP(KEY_SIZE(&w->key), PAGE_SECTORS),
 			     GFP_KERNEL);
 		if (!io) {
+			trace_bcache_moving_gc_alloc_fail(c, KEY_SIZE(&w->key));
 			bch_keybuf_put(&ca->moving_gc_keys, w);
 			break;
 		}

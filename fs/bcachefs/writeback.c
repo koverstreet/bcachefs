@@ -214,6 +214,8 @@ static void read_dirty(struct cached_dev *dc)
 						  PAGE_SECTORS),
 				     GFP_KERNEL);
 			if (!io) {
+				trace_bcache_writeback_alloc_fail(ca->set,
+							KEY_SIZE(&w->key));
 				io = mempool_alloc(dc->writeback_io_pool,
 						   GFP_KERNEL);
 				memset(io, 0, sizeof(*io) +

@@ -96,6 +96,7 @@ static void read_tiering(struct cache_set *c)
 			     * DIV_ROUND_UP(KEY_SIZE(&w->key), PAGE_SECTORS),
 			     GFP_KERNEL);
 		if (!io) {
+			trace_bcache_tiering_alloc_fail(c, KEY_SIZE(&w->key));
 			bch_keybuf_put(&c->tiering_keys, w);
 			break;
 		}
