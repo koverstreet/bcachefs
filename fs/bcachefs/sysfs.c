@@ -668,7 +668,6 @@ STORE(__bch_cache_set)
 	sysfs_strtoul(expensive_debug_checks,	c->expensive_debug_checks);
 	sysfs_strtoul(gc_always_rewrite,	c->gc_always_rewrite);
 	sysfs_strtoul(btree_shrinker_disabled,	c->shrinker_disabled);
-	sysfs_strtoul(copy_gc_enabled,		c->copy_gc_enabled);
 	sysfs_strtoul(btree_scan_ratelimit,	c->btree_scan_ratelimit);
 	sysfs_strtoul(tiering_percent,		c->tiering_percent);
 
