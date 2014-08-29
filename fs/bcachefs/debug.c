@@ -164,7 +164,7 @@ static ssize_t bch_dump_read(struct file *file, char __user *buf,
 {
 	struct dump_iterator *i = file->private_data;
 	ssize_t ret = 0;
-	char kbuf[80];
+	char kbuf[256];
 
 	while (size) {
 		struct keybuf_key *w;
