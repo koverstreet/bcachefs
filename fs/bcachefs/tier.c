@@ -106,7 +106,7 @@ static void read_tiering(struct cache_set *c)
 		io->stats = &stats;
 
 		bch_data_insert_op_init(&io->op, c, &io->bio.bio,
-					write_point, false, false, false,
+					write_point, true, false, false,
 					&io->w->key, &io->w->key);
 		io->op.io_wq	= c->tiering_write;
 		io->op.tiering	= 1;
