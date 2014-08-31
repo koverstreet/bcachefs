@@ -35,6 +35,7 @@ static inline unsigned bch_extent_ptrs(const struct bkey *k)
 
 static inline void bch_set_extent_ptrs(struct bkey *k, unsigned i)
 {
+	BUG_ON(i > BKEY_EXTENT_PTRS_MAX);
 	bch_set_val_u64s(k, i);
 }
 
