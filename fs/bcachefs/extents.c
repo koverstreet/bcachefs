@@ -148,36 +148,6 @@ static unsigned PTR_TIER(struct cache_set *c, const struct bkey *k,
 	return dev < c->sb.nr_in_set ? CACHE_TIER(&c->members[dev]) : UINT_MAX;
 }
 
-bool bch_extent_normalize(struct cache_set *c, struct bkey *k)
-{
-	unsigned i;
-	bool swapped;
-
-	if (!KEY_SIZE(k)) {
-		bch_set_extent_ptrs(k, 0);
-		SET_KEY_DELETED(k, true);
-		return true;
-	}
-
-	bch_extent_drop_stale(c, k);
-
-	/* Bubble sort pointers by tier, lowest (fastest) tier first */
-	do {
-		swapped = false;
-		for (i = 0; i + 1 < bch_extent_ptrs(k); i++) {
-			if (PTR_TIER(c, k, i) > PTR_TIER(c, k, i + 1)) {
-				swap(k->val[i], k->val[i + 1]);
-				swapped = true;
-			}
-		}
-	} while (swapped);
-
-	if (!bch_extent_ptrs(k))
-		SET_KEY_DELETED(k, true);
-
-	return KEY_DELETED(k);
-}
-
 static bool bch_ptr_normalize(struct btree_keys *bk,
 			      struct bkey *k)
 {
@@ -815,22 +785,24 @@ static bool bch_extent_invalid(struct btree_keys *bk, struct bkey *k)
 	return __bch_extent_invalid(b->c, k);
 }
 
-static bool bch_extent_debug_invalid(struct btree_keys *bk, struct bkey *k)
+static bool __bch_extent_debug_invalid(struct cache_set *c, struct bkey *k)
 {
-	struct btree *b = container_of(bk, struct btree, keys);
-	struct cache_set *c = b->c;
 	struct cache *ca;
 	struct bucket *g;
 	unsigned seq, stale, replicas_needed;
 	char buf[80];
 	bool bad;
 	int i;
+	unsigned ptrs_per_tier[CACHE_TIERS];
+	unsigned dev, tier, replicas;
 
-	if (bch_extent_invalid(bk, k)) {
+	if (__bch_extent_invalid(c, k)) {
 		bch_extent_to_text(buf, sizeof(buf), k);
-		btree_bug(b, "invalid bkey %s", buf);
+		cache_bug(c, "invalid bkey %s", buf);
 		return true;
 	}
+
+	memset(ptrs_per_tier, 0, sizeof(ptrs_per_tier));
 
 	replicas_needed = KEY_CACHED(k) ? 0
 		: CACHE_SET_DATA_REPLICAS_WANT(&c->sb);
@@ -838,6 +810,10 @@ static bool bch_extent_debug_invalid(struct btree_keys *bk, struct bkey *k)
 	rcu_read_lock();
 
 	for (i = bch_extent_ptrs(k) - 1; i >= 0; --i) {
+		dev = PTR_DEV(k, i);
+		tier = CACHE_TIER(&c->members[dev]);
+		ptrs_per_tier[tier]++;
+
 		if ((ca = PTR_CACHE(c, k, i))) {
 			g = PTR_BUCKET(c, ca, k, i);
 
@@ -852,13 +828,13 @@ static bool bch_extent_debug_invalid(struct btree_keys *bk, struct bkey *k)
 
 				stale = ptr_stale(c, ca, k, i);
 
-				btree_bug_on(stale > 96, b,
+				cache_bug_on(stale > 96, c,
 					     "key too stale: %i",
 					     stale);
 
-				btree_bug_on(
+				cache_bug_on(
 					stale && replicas_needed &&
-					KEY_SIZE(k), b,
+					KEY_SIZE(k), c,
 					"stale dirty pointer:\n"
 					"bucket %zu gen %i != %llu",
 					PTR_BUCKET_NR(c, k, i),
@@ -881,18 +857,73 @@ static bool bch_extent_debug_invalid(struct btree_keys *bk, struct bkey *k)
 			replicas_needed--;
 	}
 
-	rcu_read_unlock();
+	replicas = CACHE_SET_DATA_REPLICAS_WANT(&c->sb);
+	for (i = 0; i < CACHE_TIERS; i++)
+		if (ptrs_per_tier[i] > replicas)
+			goto bad_ptrs;
 
+	rcu_read_unlock();
 	return false;
+
+bad_ptrs:
+	cache_bug(c, "too many pointers: %u but want %u in tier %u",
+		  ptrs_per_tier[i], replicas, i);
+	rcu_read_unlock();
+	return true;
+
 err:
 	bch_extent_to_text(buf, sizeof(buf), k);
-	btree_bug(b, "extent pointer %i bad: %s:\nbucket %zu prio %i "
+	cache_bug(c, "extent pointer %i bad: %s:\nbucket %zu prio %i "
 		  "gen %i last_gc %i mark 0x%08x", i,
 		  buf, PTR_BUCKET_NR(c, k, i),
 		  g->read_prio, PTR_BUCKET_GEN(c, ca, k, i),
 		  g->last_gc, g->mark.counter);
 	rcu_read_unlock();
 	return true;
+}
+
+static bool bch_extent_debug_invalid(struct btree_keys *bk, struct bkey *k)
+{
+	struct btree *b = container_of(bk, struct btree, keys);
+	struct cache_set *c = b->c;
+
+	return __bch_extent_debug_invalid(c, k);
+}
+
+bool bch_extent_normalize(struct cache_set *c, struct bkey *k)
+{
+	unsigned i;
+	bool swapped;
+
+	if (!KEY_SIZE(k)) {
+		bch_set_extent_ptrs(k, 0);
+		SET_KEY_DELETED(k, true);
+		return true;
+	}
+
+	bch_extent_drop_stale(c, k);
+
+	/* Bubble sort pointers by tier, lowest (fastest) tier first */
+	do {
+		swapped = false;
+		for (i = 0; i + 1 < bch_extent_ptrs(k); i++) {
+			if (PTR_TIER(c, k, i) > PTR_TIER(c, k, i + 1)) {
+				swap(k->val[i], k->val[i + 1]);
+				swapped = true;
+			}
+		}
+	} while (swapped);
+
+	if (!bch_extent_ptrs(k))
+		SET_KEY_DELETED(k, true);
+
+#ifdef CONFIG_BCACHEFS_DEBUG
+	if (expensive_debug_checks(c) &&
+	    __bch_extent_debug_invalid(c, k))
+		return true;
+#endif
+
+	return KEY_DELETED(k);
 }
 
 struct cache *bch_extent_pick_ptr(struct cache_set *c, const struct bkey *k,
