@@ -539,9 +539,9 @@ static void bch_add_sectors(struct bkey *k,
 
 			trace_bcache_add_sectors(ca, k, i, offset,
 						 sectors, dirty);
-			bch_mark_data_bucket(c, ca, k, i, sectors,
-					     dirty, false);
-			replicas_found++;
+			if (!bch_mark_data_bucket(c, ca, k, i, sectors,
+						  dirty, false))
+				replicas_found++;
 		}
 	rcu_read_unlock();
 }
@@ -811,6 +811,8 @@ static bool __bch_extent_debug_invalid(struct cache_set *c, struct bkey *k)
 		tier = CACHE_TIER(&c->members[dev]);
 		ptrs_per_tier[tier]++;
 
+		stale = 0;
+
 		if ((ca = PTR_CACHE(c, k, i))) {
 			g = PTR_BUCKET(c, ca, k, i);
 
@@ -829,15 +831,6 @@ static bool __bch_extent_debug_invalid(struct cache_set *c, struct bkey *k)
 					     "key too stale: %i",
 					     stale);
 
-				cache_bug_on(
-					stale && replicas_needed &&
-					KEY_SIZE(k), c,
-					"stale dirty pointer:\n"
-					"bucket %zu gen %i != %llu",
-					PTR_BUCKET_NR(c, k, i),
-					PTR_BUCKET_GEN(c, ca, k, i),
-					PTR_GEN(k, i));
-
 				bad = (!stale &&
 				       !__gc_will_visit_key(c, k) &&
 				       (mark.is_metadata ||
@@ -847,28 +840,31 @@ static bool __bch_extent_debug_invalid(struct cache_set *c, struct bkey *k)
 			} while (read_seqretry(&c->gc_cur_lock, seq));
 
 			if (bad)
-				goto err;
+				goto bad_ptr;
 		}
 
-		if (replicas_needed)
+		if (replicas_needed && !stale)
 			replicas_needed--;
 	}
+
+	if (replicas_needed && KEY_SIZE(k))
+		goto bad_key;
 
 	replicas = CACHE_SET_DATA_REPLICAS_WANT(&c->sb);
 	for (i = 0; i < CACHE_TIERS; i++)
 		if (ptrs_per_tier[i] > replicas)
-			goto bad_ptrs;
+			goto bad_key;
 
 	rcu_read_unlock();
 	return false;
 
-bad_ptrs:
-	cache_bug(c, "too many pointers: %u but want %u in tier %u",
-		  ptrs_per_tier[i], replicas, i);
+bad_key:
+	bch_extent_to_text(buf, sizeof(buf), k);
+	cache_bug(c, "extent key bad: %s", buf);
 	rcu_read_unlock();
 	return true;
 
-err:
+bad_ptr:
 	bch_extent_to_text(buf, sizeof(buf), k);
 	cache_bug(c, "extent pointer %i bad: %s:\nbucket %zu prio %i "
 		  "gen %i last_gc %i mark 0x%08x", i,

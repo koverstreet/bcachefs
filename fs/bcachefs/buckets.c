@@ -160,13 +160,13 @@ do {								\
 	}							\
 } while (0)
 
-void bch_mark_data_bucket(struct cache_set *c, struct cache *ca,
-			  struct bkey *k, unsigned i, int sectors,
-			  bool dirty, bool gc)
+u8 bch_mark_data_bucket(struct cache_set *c, struct cache *ca, struct bkey *k,
+			unsigned i, int sectors, bool dirty, bool gc)
 {
 	struct bucket_mark old, new;
 	unsigned long bucket_nr = PTR_BUCKET_NR(c, k, i);
 	unsigned gen = PTR_GEN(k, i);
+	u8 stale;
 
 	bucket_cmpxchg(&ca->buckets[bucket_nr], old, new, ({
 		/*
@@ -177,16 +177,22 @@ void bch_mark_data_bucket(struct cache_set *c, struct cache *ca,
 		 */
 		smp_rmb();
 
-		if (!gc && gc_will_visit_key(c, k))
-			return;
-
 		/*
 		 * Check this after reading bucket mark to guard against
 		 * the allocator invalidating a bucket after we've already
 		 * checked the gen
 		 */
-		if (gen_after(ca->bucket_gens[bucket_nr], gen))
-			return;
+		stale = gen_after(ca->bucket_gens[bucket_nr], gen);
+		if (stale)
+			return stale;
+
+		/*
+		 * Check this after reading bucket mark to guard against
+		 * GC starting between when we check gc_cur_key and when
+		 * the GC zeroes out marks
+		 */
+		if (!gc && gc_will_visit_key(c, k))
+			return 0;
 
 		BUG_ON(old.is_metadata);
 		if (dirty)
@@ -196,6 +202,8 @@ void bch_mark_data_bucket(struct cache_set *c, struct cache *ca,
 			saturated_add(ca, new.cached_sectors, sectors,
 				      GC_MAX_SECTORS_USED);
 	}));
+
+	return 0;
 }
 
 void bch_unmark_open_bucket(struct cache *ca, struct bucket *g)

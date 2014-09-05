@@ -1463,7 +1463,7 @@ void bch_mark_keybuf_keys(struct cache_set *c, struct keybuf *buf)
 
 u8 __bch_btree_mark_key(struct cache_set *c, int level, struct bkey *k)
 {
-	uint8_t stale = 0;
+	u8 stale, max_stale = 0;
 	unsigned replicas_found = 0, replicas_needed = level
 		? CACHE_SET_META_REPLICAS_WANT(&c->sb)
 		: CACHE_SET_DATA_REPLICAS_WANT(&c->sb);
@@ -1472,7 +1472,7 @@ u8 __bch_btree_mark_key(struct cache_set *c, int level, struct bkey *k)
 	int i;
 
 	if (KEY_DELETED(k))
-		return stale;
+		return 0;
 
 	if (KEY_CACHED(k))
 		replicas_needed = 0;
@@ -1489,22 +1489,24 @@ u8 __bch_btree_mark_key(struct cache_set *c, int level, struct bkey *k)
 			if (gen_after(g->last_gc, PTR_GEN(k, i)))
 				g->last_gc = PTR_GEN(k, i);
 
-			stale = max(stale, ptr_stale(c, ca, k, i));
-
 			if (level)
 				bch_mark_metadata_bucket(ca, g);
-			else
-				bch_mark_data_bucket(c, ca, k, i, KEY_SIZE(k),
+			else {
+				stale = bch_mark_data_bucket(c, ca, k, i,
+					KEY_SIZE(k),
 					replicas_found < replicas_needed,
 					true);
-
-			replicas_found++;
+				if (stale)
+					max_stale = max(max_stale, stale);
+				else
+					replicas_found++;
+			}
 		}
 	}
 
 	rcu_read_unlock();
 
-	return stale;
+	return max_stale;
 }
 
 #define btree_mark_key(b, k)	__bch_btree_mark_key(b->c, b->level, k)
