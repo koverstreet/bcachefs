@@ -286,8 +286,6 @@ static void read_dirty(struct cached_dev *dc)
 	 * freed) before refilling again
 	 */
 	closure_sync(&cl);
-
-	BUG_ON(!RB_EMPTY_ROOT(&dc->writeback_keys.keys));
 }
 
 /* Scan for dirty data */
