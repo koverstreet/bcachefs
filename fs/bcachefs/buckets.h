@@ -54,14 +54,14 @@ static inline struct bucket_stats bucket_stats_read(struct cache *ca)
 	return ret;
 }
 
-static inline bool bucket_unused(struct bucket *b)
+static inline bool bucket_unused(struct bucket *g)
 {
-	return !b->mark.counter;
+	return !g->mark.counter;
 }
 
-static inline unsigned bucket_sectors_used(struct bucket *b)
+static inline unsigned bucket_sectors_used(struct bucket *g)
 {
-	return b->mark.dirty_sectors + b->mark.cached_sectors;
+	return g->mark.dirty_sectors + g->mark.cached_sectors;
 }
 
 static inline size_t buckets_available_cache(struct cache *ca)

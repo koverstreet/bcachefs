@@ -69,9 +69,9 @@
  * the oldest gen of any pointer into that bucket in the btree (last_gc).
  */
 
-static inline u8 bucket_gc_gen(struct cache *ca, size_t b)
+static inline u8 bucket_gc_gen(struct cache *ca, size_t r)
 {
-	return ca->bucket_gens[b] - ca->buckets[b].last_gc;
+	return ca->bucket_gens[r] - ca->buckets[r].last_gc;
 }
 
 #define BUCKET_GC_GEN_MAX	96U
@@ -127,13 +127,13 @@ void bch_recalc_min_prio(struct cache *ca, int rw)
 {
 	struct cache_set *c = ca->set;
 	struct prio_clock *clock = &c->prio_clock[rw];
-	struct bucket *b;
+	struct bucket *g;
 	u16 max_delta = 0;
 	unsigned i;
 
 	/* Determine min prio for this particular cache */
-	for_each_bucket(b, ca)
-		max_delta = max(max_delta, (u16) (clock->hand - b->prio[rw]));
+	for_each_bucket(g, ca)
+		max_delta = max(max_delta, (u16) (clock->hand - g->prio[rw]));
 
 	ca->min_prio[rw] = clock->hand - max_delta;
 
@@ -154,15 +154,15 @@ static void bch_rescale_prios(struct cache_set *c, int rw)
 {
 	struct prio_clock *clock = &c->prio_clock[rw];
 	struct cache *ca;
-	struct bucket *b;
+	struct bucket *g;
 	unsigned i;
 
 	trace_bcache_rescale_prios(c);
 
 	for_each_cache(ca, c, i) {
-		for_each_bucket(b, ca)
-			b->prio[rw] = clock->hand -
-				(clock->hand - b->prio[rw]) / 2;
+		for_each_bucket(g, ca)
+			g->prio[rw] = clock->hand -
+				(clock->hand - g->prio[rw]) / 2;
 
 		bch_recalc_min_prio(ca, rw);
 	}
@@ -199,9 +199,9 @@ void bch_increment_clock_slowpath(struct cache_set *c, int rw)
  * them on the various freelists.
  */
 
-static inline bool can_inc_bucket_gen(struct cache *ca, size_t b)
+static inline bool can_inc_bucket_gen(struct cache *ca, size_t r)
 {
-	return bucket_gc_gen(ca, b) < BUCKET_GC_GEN_MAX;
+	return bucket_gc_gen(ca, r) < BUCKET_GC_GEN_MAX;
 }
 
 static bool bch_can_invalidate_bucket(struct cache *ca, struct bucket *g)
@@ -282,13 +282,13 @@ void bch_prio_init(struct cache_set *c)
  * is worth 1/8th of the closest.
  */
 
-#define bucket_prio(b)							\
+#define bucket_prio(g)							\
 ({									\
-	u16 prio = b->read_prio - ca->min_prio[READ];			\
+	u16 prio = g->read_prio - ca->min_prio[READ];			\
 	prio = (prio * 7) / (ca->set->prio_clock[READ].hand -		\
 			     ca->min_prio[READ]);			\
 									\
-	(prio + 1) * bucket_sectors_used(b);				\
+	(prio + 1) * bucket_sectors_used(g);				\
 })
 
 #define bucket_max_cmp(l, r)	(bucket_prio(l) < bucket_prio(r))
@@ -296,7 +296,7 @@ void bch_prio_init(struct cache_set *c)
 
 static void invalidate_buckets_lru(struct cache *ca)
 {
-	struct bucket *b;
+	struct bucket *g;
 
 	mutex_lock(&ca->heap_lock);
 
@@ -305,14 +305,14 @@ static void invalidate_buckets_lru(struct cache *ca)
 	bch_recalc_min_prio(ca, READ);
 	bch_recalc_min_prio(ca, WRITE);
 
-	for_each_bucket(b, ca) {
-		if (!bch_can_invalidate_bucket(ca, b))
+	for_each_bucket(g, ca) {
+		if (!bch_can_invalidate_bucket(ca, g))
 			continue;
 
 		if (!heap_full(&ca->heap))
-			heap_add(&ca->heap, b, bucket_max_cmp);
-		else if (bucket_max_cmp(b, heap_peek(&ca->heap))) {
-			ca->heap.data[0] = b;
+			heap_add(&ca->heap, g, bucket_max_cmp);
+		else if (bucket_max_cmp(g, heap_peek(&ca->heap))) {
+			ca->heap.data[0] = g;
 			heap_sift(&ca->heap, 0, bucket_max_cmp);
 		}
 	}
@@ -320,7 +320,7 @@ static void invalidate_buckets_lru(struct cache *ca)
 	heap_resort(&ca->heap, bucket_min_cmp);
 
 	while (!fifo_full(&ca->free_inc)) {
-		if (!heap_pop(&ca->heap, b, bucket_min_cmp)) {
+		if (!heap_pop(&ca->heap, g, bucket_min_cmp)) {
 			/*
 			 * We don't want to be calling invalidate_buckets()
 			 * multiple times when it can't do anything
@@ -330,7 +330,7 @@ static void invalidate_buckets_lru(struct cache *ca)
 			return;
 		}
 
-		bch_invalidate_one_bucket(ca, b);
+		bch_invalidate_one_bucket(ca, g);
 	}
 
 	mutex_unlock(&ca->heap_lock);
@@ -338,7 +338,7 @@ static void invalidate_buckets_lru(struct cache *ca)
 
 static void invalidate_buckets_fifo(struct cache *ca)
 {
-	struct bucket *b;
+	struct bucket *g;
 	size_t checked = 0;
 
 	while (!fifo_full(&ca->free_inc)) {
@@ -346,10 +346,10 @@ static void invalidate_buckets_fifo(struct cache *ca)
 		    ca->fifo_last_bucket >= ca->sb.nbuckets)
 			ca->fifo_last_bucket = ca->sb.first_bucket;
 
-		b = ca->buckets + ca->fifo_last_bucket++;
+		g = ca->buckets + ca->fifo_last_bucket++;
 
-		if (bch_can_invalidate_bucket(ca, b))
-			bch_invalidate_one_bucket(ca, b);
+		if (bch_can_invalidate_bucket(ca, g))
+			bch_invalidate_one_bucket(ca, g);
 
 		if (++checked >= ca->sb.nbuckets) {
 			alloc_failed(ca);
@@ -360,7 +360,7 @@ static void invalidate_buckets_fifo(struct cache *ca)
 
 static void invalidate_buckets_random(struct cache *ca)
 {
-	struct bucket *b;
+	struct bucket *g;
 	size_t checked = 0;
 
 	while (!fifo_full(&ca->free_inc)) {
@@ -370,10 +370,10 @@ static void invalidate_buckets_random(struct cache *ca)
 		n %= (size_t) (ca->sb.nbuckets - ca->sb.first_bucket);
 		n += ca->sb.first_bucket;
 
-		b = ca->buckets + n;
+		g = ca->buckets + n;
 
-		if (bch_can_invalidate_bucket(ca, b))
-			bch_invalidate_one_bucket(ca, b);
+		if (bch_can_invalidate_bucket(ca, g))
+			bch_invalidate_one_bucket(ca, g);
 
 		if (++checked >= ca->sb.nbuckets / 2) {
 			alloc_failed(ca);
@@ -756,7 +756,7 @@ int bch_bucket_alloc_set(struct cache_set *c, enum alloc_reserve reserve,
 
 	for (i = 0; i < n; i++) {
 		struct cache *ca;
-		long b;
+		long r;
 
 		/* first ptr goes to the specified tier, the rest to any */
 		ca = bch_next_cache(c, reserve, i == 0 ? tier_idx : -1,
@@ -768,14 +768,14 @@ int bch_bucket_alloc_set(struct cache_set *c, enum alloc_reserve reserve,
 			goto err;
 		}
 
-		b = bch_bucket_alloc(ca, reserve, cl);
-		if (b < 0) {
-			ret = b;
+		r = bch_bucket_alloc(ca, reserve, cl);
+		if (r < 0) {
+			ret = r;
 			goto err;
 		}
 
-		k->val[i] = PTR(ca->bucket_gens[b],
-				bucket_to_sector(c, b),
+		k->val[i] = PTR(ca->bucket_gens[r],
+				bucket_to_sector(c, r),
 				ca->sb.nr_this_dev);
 
 		bch_set_extent_ptrs(k, i + 1);

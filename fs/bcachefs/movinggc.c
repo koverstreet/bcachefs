@@ -139,19 +139,19 @@ static bool bucket_sectors_cmp(struct bucket *l, struct bucket *r)
 
 static unsigned bucket_sectors_heap_top(struct cache *ca)
 {
-	struct bucket *b;
+	struct bucket *g;
 	lockdep_assert_held(&ca->heap_lock);
-	return (b = heap_peek(&ca->heap)) ? bucket_sectors_used(b) : 0;
+	return (g = heap_peek(&ca->heap)) ? bucket_sectors_used(g) : 0;
 }
 
-#define bucket_w_prio(b) (c->prio_clock[WRITE].hand - b->write_prio)
+#define bucket_w_prio(g) (c->prio_clock[WRITE].hand - g->write_prio)
 
 #define bucket_write_prio_max_cmp(l, r)	(bucket_w_prio(l) > bucket_w_prio(r))
 
 static bool bch_moving_gc(struct cache *ca)
 {
 	struct cache_set *c = ca->set;
-	struct bucket *b;
+	struct bucket *g;
 	bool moved = false;
 
 	unsigned bucket_move_threshold =
@@ -184,27 +184,27 @@ static bool bch_moving_gc(struct cache *ca)
 
 	mutex_lock(&ca->heap_lock);
 	ca->heap.used = 0;
-	for_each_bucket(b, ca) {
-		b->copygc_gen = 0;
+	for_each_bucket(g, ca) {
+		g->copygc_gen = 0;
 
-		if (bucket_unused(b)) {
+		if (bucket_unused(g)) {
 			buckets_unused++;
 			continue;
 		}
 
-		if (b->mark.owned_by_allocator ||
-		    b->mark.is_metadata ||
-		    bucket_sectors_used(b) >= bucket_move_threshold)
+		if (g->mark.owned_by_allocator ||
+		    g->mark.is_metadata ||
+		    bucket_sectors_used(g) >= bucket_move_threshold)
 			continue;
 
 		if (!heap_full(&ca->heap)) {
-			sectors_to_move += bucket_sectors_used(b);
-			heap_add(&ca->heap, b, bucket_sectors_cmp);
-		} else if (bucket_sectors_cmp(b, heap_peek(&ca->heap))) {
+			sectors_to_move += bucket_sectors_used(g);
+			heap_add(&ca->heap, g, bucket_sectors_cmp);
+		} else if (bucket_sectors_cmp(g, heap_peek(&ca->heap))) {
 			sectors_to_move -= bucket_sectors_heap_top(ca);
-			sectors_to_move += bucket_sectors_used(b);
+			sectors_to_move += bucket_sectors_used(g);
 
-			ca->heap.data[0] = b;
+			ca->heap.data[0] = g;
 			heap_sift(&ca->heap, 0, bucket_sectors_cmp);
 		}
 	}
@@ -217,8 +217,8 @@ static bool bch_moving_gc(struct cache *ca)
 	}
 
 	while (sectors_to_move > reserve_sectors) {
-		heap_pop(&ca->heap, b, bucket_sectors_cmp);
-		sectors_to_move -= bucket_sectors_used(b);
+		heap_pop(&ca->heap, g, bucket_sectors_cmp);
+		sectors_to_move -= bucket_sectors_used(g);
 	}
 
 	buckets_to_move = ca->heap.used;
@@ -237,9 +237,9 @@ static bool bch_moving_gc(struct cache *ca)
 	gen_current = 1;
 	sectors_total = 0;
 
-	while (heap_pop(&ca->heap, b, bucket_write_prio_max_cmp)) {
-		sectors_total += bucket_sectors_used(b);
-		b->copygc_gen = gen_current;
+	while (heap_pop(&ca->heap, g, bucket_write_prio_max_cmp)) {
+		sectors_total += bucket_sectors_used(g);
+		g->copygc_gen = gen_current;
 		if (gen_current < NUM_GC_GENS &&
 		    sectors_total >= sectors_gen * gen_current)
 			gen_current++;
