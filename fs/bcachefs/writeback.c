@@ -405,7 +405,8 @@ static void bch_writeback(struct cached_dev *dc)
 
 	buf->last_scanned = KEY(inode, 0, 0);
 
-	while (bkey_cmp(&buf->last_scanned, &end) < 0) {
+	while (bkey_cmp(&buf->last_scanned, &end) < 0 &&
+	       !kthread_should_stop()) {
 		down_write(&dc->writeback_lock);
 
 		if (!atomic_read(&dc->has_dirty)) {
