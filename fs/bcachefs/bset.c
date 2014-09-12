@@ -1098,7 +1098,7 @@ static inline struct bkey *__bch_btree_iter_next(struct btree_iter *iter,
 		}
 
 		if (iter->data->k == iter->data->end)
-			heap_pop(iter, unused, cmp);
+			BUG_ON(!heap_pop(iter, unused, cmp));
 		else
 			heap_sift(iter, 0, cmp);
 	}
