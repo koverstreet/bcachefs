@@ -251,7 +251,7 @@ static void read_dirty(struct cached_dev *dc)
 						      : GFP_KERNEL);
 				if (!bv->bv_page) {
 					BUG_ON(!i);
-					io->bio.bi_vcnt = i - 1;
+					io->bio.bi_vcnt = i;
 
 					io->bio.bi_iter.bi_size =
 						io->bio.bi_vcnt * PAGE_SIZE;
