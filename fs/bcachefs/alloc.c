@@ -335,11 +335,9 @@ static void bch_invalidate_one_bucket(struct cache *ca, struct bucket *g)
 	(prio + 1) * bucket_sectors_used(g);				\
 })
 
-#define bucket_max_cmp(l, r)	(bucket_prio(l) < bucket_prio(r))
-#define bucket_min_cmp(l, r)	(bucket_prio(l) > bucket_prio(r))
-
 static void invalidate_buckets_lru(struct cache *ca)
 {
+	struct bucket_heap_entry e;
 	struct bucket *g;
 
 	mutex_lock(&ca->heap_lock);
@@ -350,27 +348,28 @@ static void invalidate_buckets_lru(struct cache *ca)
 	bch_recalc_min_prio(ca, READ);
 	bch_recalc_min_prio(ca, WRITE);
 
+	/*
+	 * Find buckets with lowest read priority, by building a maxheap sorted
+	 * by read priority and repeatedly replacing the maximum element until
+	 * all buckets have been visited.
+	 */
 	for_each_bucket(g, ca) {
 		if (!bch_can_invalidate_bucket(ca, g))
 			continue;
 
-		if (!heap_full(&ca->heap))
-			heap_add(&ca->heap, g, bucket_max_cmp);
-		else if (bucket_max_cmp(g, heap_peek(&ca->heap))) {
-			ca->heap.data[0] = g;
-			heap_sift(&ca->heap, 0, bucket_max_cmp);
-		}
+		bucket_heap_push(ca, g, bucket_prio(g));
 	}
 
-	heap_resort(&ca->heap, bucket_min_cmp);
+	/* Sort in increasing order */
+	heap_resort(&ca->heap, bucket_max_cmp);
 
 	/*
 	 * If we run out of buckets to invalidate, bch_allocator_thread() will
 	 * kick stuff and retry us
 	 */
 	while (!fifo_full(&ca->free_inc) &&
-	       heap_pop(&ca->heap, g, bucket_min_cmp))
-		bch_invalidate_one_bucket(ca, g);
+	       heap_pop(&ca->heap, e, bucket_max_cmp))
+		bch_invalidate_one_bucket(ca, e.g);
 
 	mutex_unlock(&ca->set->bucket_lock);
 	mutex_unlock(&ca->heap_lock);

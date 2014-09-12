@@ -536,6 +536,23 @@ struct bucket_stats {
 	u64			sectors_cached;
 };
 
+struct bucket_heap_entry {
+	struct bucket *g;
+	unsigned long val;
+};
+
+static inline bool bucket_min_cmp(struct bucket_heap_entry l,
+				  struct bucket_heap_entry r)
+{
+	return l.val < r.val;
+}
+
+static inline bool bucket_max_cmp(struct bucket_heap_entry l,
+				  struct bucket_heap_entry r)
+{
+	return l.val > r.val;
+}
+
 struct cache {
 	struct percpu_ref	ref;
 	struct rcu_head		kill_rcu;
@@ -603,7 +620,7 @@ struct cache {
 	size_t			inc_gen_needs_gc;
 
 	struct mutex		heap_lock;
-	DECLARE_HEAP(struct bucket *, heap);
+	DECLARE_HEAP(struct bucket_heap_entry, heap);
 
 	/* Moving GC: */
 	struct task_struct	*moving_gc_read;
@@ -630,6 +647,19 @@ struct cache {
 	atomic_long_t		btree_sectors_written;
 	atomic_long_t		sectors_written;
 };
+
+static inline void bucket_heap_push(struct cache *ca, struct bucket *g,
+				    unsigned long val)
+{
+	struct bucket_heap_entry new = { g, val };
+
+	if (!heap_full(&ca->heap))
+		heap_add(&ca->heap, new, bucket_min_cmp);
+	else if (bucket_min_cmp(new, heap_peek(&ca->heap))) {
+		ca->heap.data[0] = new;
+		heap_sift(&ca->heap, 0, bucket_min_cmp);
+	}
+}
 
 struct gc_stat {
 	size_t			nodes;
