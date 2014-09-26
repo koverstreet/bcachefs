@@ -689,8 +689,6 @@ STORE(__bch_cache_set)
 	sysfs_strtoul(expensive_debug_checks,	c->expensive_debug_checks);
 	sysfs_strtoul(gc_always_rewrite,	c->gc_always_rewrite);
 	sysfs_strtoul(btree_shrinker_disabled,	c->shrinker_disabled);
-	sysfs_strtoul(btree_scan_ratelimit,	c->btree_scan_ratelimit);
-	sysfs_strtoul(tiering_percent,		c->tiering_percent);
 
 	if (attr == &sysfs_copy_gc_enabled) {
 		struct cache *ca;
@@ -734,6 +732,24 @@ STORE(__bch_cache_set)
 			bcache_write_super(c);
 		}
 	}
+
+	if (attr == &sysfs_btree_scan_ratelimit) {
+		struct cache *ca;
+		unsigned i;
+		ssize_t ret = strtoul_safe(buf, c->btree_scan_ratelimit)
+			?: (ssize_t) size;
+
+		for_each_cache(ca, c, i)
+			if (ca->moving_gc_read)
+				wake_up_process(ca->moving_gc_read);
+
+		if (c->tiering_read)
+			wake_up_process(c->tiering_read);
+
+		return ret;
+	}
+
+	sysfs_strtoul(tiering_percent,		c->tiering_percent);
 
 	if (attr == &sysfs_add_device) {
 		char *path = kstrdup(buf, GFP_KERNEL);
