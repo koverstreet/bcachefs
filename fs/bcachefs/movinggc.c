@@ -139,8 +139,6 @@ static bool bch_moving_gc(struct cache *ca)
 	struct bucket *g;
 	bool moved = false;
 
-	unsigned bucket_move_threshold =
-		ca->sb.bucket_size - (ca->sb.bucket_size >> 3);
 	u64 sectors_to_move, sectors_gen, gen_current, sectors_total;
 	size_t buckets_to_move, buckets_unused = 0;
 	struct bucket_heap_entry e;
@@ -186,8 +184,7 @@ static bool bch_moving_gc(struct cache *ca)
 		sectors_used = bucket_sectors_used(g);
 
 		if (g->mark.owned_by_allocator ||
-		    g->mark.is_metadata ||
-		    sectors_used >= bucket_move_threshold)
+		    g->mark.is_metadata)
 			continue;
 
 		bucket_heap_push(ca, g, sectors_used);
