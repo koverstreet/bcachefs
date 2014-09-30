@@ -745,26 +745,6 @@ TRACE_EVENT(bcache_keyscan,
 		  __entry->end_inode, __entry->end_offset)
 );
 
-TRACE_EVENT(bcache_wait_for_next_gc,
-	TP_PROTO(struct cache_set *c, unsigned gc_count, unsigned gc_check),
-	TP_ARGS(c, gc_count, gc_check),
-
-	TP_STRUCT__entry(
-		__array(char,			uuid,	16	)
-		__field(unsigned,		gc_count	)
-		__field(unsigned,		gc_check	)
-	),
-
-	TP_fast_assign(
-		memcpy(__entry->uuid, c->sb.set_uuid.b, 16);
-		__entry->gc_count	= gc_count;
-		__entry->gc_check	= gc_check;
-	),
-
-	TP_printk("%pU gc_count %u gc_check %u",
-		  __entry->uuid, __entry->gc_count, __entry->gc_check)
-);
-
 /* Allocator */
 
 TRACE_EVENT(bcache_invalidate,
