@@ -181,10 +181,13 @@ static bool bch_moving_gc(struct cache *ca)
 			continue;
 		}
 
-		sectors_used = bucket_sectors_used(g);
-
 		if (g->mark.owned_by_allocator ||
 		    g->mark.is_metadata)
+			continue;
+
+		sectors_used = bucket_sectors_used(g);
+
+		if (sectors_used >= ca->sb.bucket_size)
 			continue;
 
 		bucket_heap_push(ca, g, sectors_used);
