@@ -1286,6 +1286,7 @@ void bch_cache_remove(struct cache *ca)
 static int cache_init(struct cache *ca)
 {
 	size_t reserve_none, movinggc_reserve, free_inc_reserve, total_reserve;
+	size_t heap_size;
 	unsigned i;
 
 	if (cache_set_init_fault("cache_alloc"))
@@ -1312,6 +1313,7 @@ static int cache_init(struct cache *ca)
 				 ca->sb.nbuckets >> 7);
 	reserve_none = max_t(size_t, 4, ca->sb.nbuckets >> 9);
 	free_inc_reserve = reserve_none << 1;
+	heap_size = max_t(size_t, free_inc_reserve, movinggc_reserve);
 
 	for (i = 0; i < BTREE_ID_NR; i++)
 		if (!init_fifo(&ca->free[i], BTREE_NODE_RESERVE, GFP_KERNEL))
@@ -1319,14 +1321,14 @@ static int cache_init(struct cache *ca)
 
 	if (!init_fifo(&ca->free[RESERVE_PRIO], prio_buckets(ca), GFP_KERNEL) ||
 	    !init_fifo(&ca->free[RESERVE_MOVINGGC_BTREE],
-		       free_inc_reserve, GFP_KERNEL) ||
+		       BTREE_NODE_RESERVE, GFP_KERNEL) ||
 	    !init_fifo(&ca->free[RESERVE_TIERING_BTREE],
 		       BTREE_NODE_RESERVE, GFP_KERNEL) ||
 	    !init_fifo(&ca->free[RESERVE_MOVINGGC],
 		       movinggc_reserve, GFP_KERNEL) ||
 	    !init_fifo(&ca->free[RESERVE_NONE], reserve_none, GFP_KERNEL) ||
 	    !init_fifo(&ca->free_inc,	free_inc_reserve, GFP_KERNEL) ||
-	    !init_heap(&ca->heap,	movinggc_reserve, GFP_KERNEL) ||
+	    !init_heap(&ca->heap,	heap_size, GFP_KERNEL) ||
 	    !(ca->bucket_gens	= vzalloc(sizeof(u8) *
 					  ca->sb.nbuckets)) ||
 	    !(ca->buckets	= vzalloc(sizeof(struct bucket) *
