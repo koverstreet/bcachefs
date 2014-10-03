@@ -226,8 +226,10 @@ u8 bch_mark_data_bucket(struct cache_set *c, struct cache *ca, struct bkey *k,
 	if (saturated &&
 	    atomic_long_add_return(saturated,
 				   &ca->saturated_count) >=
-	    ca->free_inc.size << c->bucket_bits)
-		wake_up_process(ca->alloc_thread);
+	    ca->free_inc.size << c->bucket_bits) {
+		if (c->gc_thread)
+			wake_up_process(c->gc_thread);
+	}
 
 
 	return 0;

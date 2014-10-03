@@ -515,16 +515,6 @@ DEFINE_EVENT(cache, bcache_sectors_saturated,
 	TP_ARGS(ca)
 );
 
-DEFINE_EVENT(cache, bcache_alloc_wake_tiering,
-	TP_PROTO(struct cache *ca),
-	TP_ARGS(ca)
-);
-
-DEFINE_EVENT(cache, bcache_alloc_wake_moving,
-	TP_PROTO(struct cache *ca),
-	TP_ARGS(ca)
-);
-
 TRACE_EVENT(bcache_alloc_batch,
 	TP_PROTO(struct cache *ca, size_t free, size_t total),
 	TP_ARGS(ca, free, total),

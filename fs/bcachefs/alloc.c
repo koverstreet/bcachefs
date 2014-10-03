@@ -423,13 +423,11 @@ static inline u8 bucket_gc_gen(struct cache *ca, size_t r)
 /**
  * wait_buckets_available - wait on reclaimable buckets
  *
- * If there aren't enough available buckets for invalidate_buckets(), kick
- * various things and wait.
+ * If there aren't enough available buckets to fill up free_inc, wait until
+ * there are.
  */
 static int wait_buckets_available(struct cache *ca)
 {
-	struct cache_set *c = ca->set;
-	unsigned i;
 	int ret = 0;
 
 	while (1) {
@@ -439,50 +437,12 @@ static int wait_buckets_available(struct cache *ca)
 			break;
 		}
 
-		if (ca->inc_gen_needs_gc > ca->free_inc.size) {
-			if (c->gc_thread)
-				wake_up_process(c->gc_thread);
-			goto wait;
-		}
-
 		if (buckets_available_cache(ca) >= fifo_free(&ca->free_inc))
 			break;
 
-		/*
-		 * Journal replay shouldn't run out of buckets, but the
-		 * allocator might fail to find more buckets to invalidate once
-		 * it fills up free lists.
-		 */
-		if (!test_bit(CACHE_SET_RUNNING, &c->flags))
-			goto wait;
-
-		if (atomic_long_read(&ca->saturated_count) >=
-		    ca->free_inc.size << c->bucket_bits)
-			wake_up_process(c->gc_thread);
-
-		/*
-		 * Check if there are caches in higher tiers; we could
-		 * potentially make room on our cache by tiering
-		 */
-		for (i = CACHE_TIER(cache_member_info(ca)) + 1;
-		     i < ARRAY_SIZE(c->cache_tiers);
-		     i++)
-			if (c->cache_tiers[i].nr_devices) {
-				c->tiering_pd.rate.rate = UINT_MAX;
-				bch_ratelimit_reset(&c->tiering_pd.rate);
-				wake_up_process(c->tiering_read);
-				trace_bcache_alloc_wake_tiering(ca);
-			}
-
-		/* If this is the highest tier cache, just do a btree GC */
-		ca->moving_gc_pd.rate.rate = UINT_MAX;
-		bch_ratelimit_reset(&ca->moving_gc_pd.rate);
-		wake_up_process(ca->moving_gc_read);
-		trace_bcache_alloc_wake_moving(ca);
-wait:
-		up_read(&c->gc_lock);
+		up_read(&ca->set->gc_lock);
 		schedule();
-		down_read(&c->gc_lock);
+		down_read(&ca->set->gc_lock);
 	}
 
 	__set_current_state(TASK_RUNNING);
@@ -597,6 +557,10 @@ static bool bch_can_invalidate_bucket(struct cache *ca, struct bucket *g)
 
 	if (!can_inc_bucket_gen(ca, g - ca->buckets)) {
 		ca->inc_gen_needs_gc++;
+		if (ca->inc_gen_needs_gc > ca->free_inc.size) {
+			if (ca->set->gc_thread)
+				wake_up_process(ca->set->gc_thread);
+		}
 		return false;
 	}
 
