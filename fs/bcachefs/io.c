@@ -186,7 +186,6 @@ void bch_count_io_errors(struct cache *ca, int error, const char *m)
 		char buf[BDEVNAME_SIZE];
 		unsigned errors = atomic_add_return(1 << IO_ERROR_SHIFT,
 						    &ca->io_errors);
-		errors >>= IO_ERROR_SHIFT;
 
 		if (errors < ca->set->error_limit) {
 			pr_err("%s: IO error on %s, recovering",

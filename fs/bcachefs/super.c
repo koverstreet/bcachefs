@@ -808,7 +808,7 @@ static struct cache_set *bch_cache_set_alloc(struct cache *ca)
 
 	c->congested_read_threshold_us	= 2000;
 	c->congested_write_threshold_us	= 20000;
-	c->error_limit	= 8 << IO_ERROR_SHIFT;
+	c->error_limit	= 16 << IO_ERROR_SHIFT;
 
 	c->btree_scan_ratelimit = 30;
 
