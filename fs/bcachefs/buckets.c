@@ -98,7 +98,8 @@ static void bucket_stats_update(struct cache *ca,
 
 	preempt_enable();
 
-	bch_wake_allocator(ca);
+	if (!is_available_bucket(old) && is_available_bucket(new))
+		bch_wake_allocator(ca);
 }
 
 static struct bucket_mark bch_bucket_mark_set(struct cache *ca,

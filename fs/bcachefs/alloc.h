@@ -60,6 +60,8 @@ static inline void bch_wake_allocator(struct cache *ca)
 	if ((p = ACCESS_ONCE(ca->alloc_thread)))
 		wake_up_process(p);
 	rcu_read_unlock();
+
+	closure_wake_up(&ca->set->bucket_wait);
 }
 
 void bch_mark_allocator_buckets(struct cache_set *);
