@@ -252,6 +252,9 @@ void bch_pd_controller_update(struct bch_pd_controller *pd,
 
 	unsigned long seconds_since_update = (jiffies - pd->last_update) * HZ;
 
+	if (seconds_since_update == 0)
+		return;
+
 	pd->last_update = jiffies;
 
 	proportional = actual - target;
