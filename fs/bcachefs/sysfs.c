@@ -154,6 +154,10 @@ rw_attribute(tiering_percent);
 sysfs_pd_controller_attribute(tiering);
 sysfs_pd_controller_attribute(foreground_write);
 
+rw_attribute(foreground_target_percent);
+rw_attribute(bucket_reserve_percent);
+rw_attribute(sector_reserve_percent);
+
 rw_attribute(size);
 rw_attribute(meta_replicas);
 rw_attribute(data_replicas);
@@ -600,6 +604,9 @@ SHOW(__bch_cache_set)
 	sysfs_pd_controller_show(foreground_write, &c->foreground_write_pd);
 
 	sysfs_print(btree_scan_ratelimit,	c->btree_scan_ratelimit);
+	sysfs_print(foreground_target_percent,	c->foreground_target_percent);
+	sysfs_print(bucket_reserve_percent,	c->bucket_reserve_percent);
+	sysfs_print(sector_reserve_percent,	c->sector_reserve_percent);
 	sysfs_print(tiering_percent,		c->tiering_percent);
 
 	sysfs_printf(meta_replicas,		"%llu",
@@ -751,7 +758,10 @@ STORE(__bch_cache_set)
 		return ret;
 	}
 
-	sysfs_strtoul(tiering_percent,		c->tiering_percent);
+	sysfs_strtoul(foreground_target_percent, c->foreground_target_percent);
+	sysfs_strtoul(bucket_reserve_percent, c->bucket_reserve_percent);
+	sysfs_strtoul(sector_reserve_percent, c->sector_reserve_percent);
+	sysfs_strtoul(tiering_percent, c->tiering_percent);
 
 	if (attr == &sysfs_add_device) {
 		char *path = kstrdup(buf, GFP_KERNEL);
@@ -853,6 +863,9 @@ static struct attribute *bch_cache_set_files[] = {
 	&sysfs_data_replicas,
 
 	&sysfs_btree_scan_ratelimit,
+	&sysfs_foreground_target_percent,
+	&sysfs_bucket_reserve_percent,
+	&sysfs_sector_reserve_percent,
 	&sysfs_tiering_percent,
 
 	NULL

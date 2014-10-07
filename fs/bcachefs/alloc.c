@@ -112,22 +112,13 @@ static inline struct cache *cache_group_next(struct cache_group *devs,
 
 /* Ratelimiting/PD controllers */
 
-/* Target amount of space lost to internal fragmentation */
-#define GC_TARGET_PERCENT 10
-
-/*
- * (possibly) start throttling foreground writes when the amount free space
- * (after taking into account reserve) is below this percentage:
- */
-#define FOREGROUND_TARGET_PERCENT 20
-
 static void pd_controllers_update(struct work_struct *work)
 {
 	struct cache_set *c = container_of(to_delayed_work(work),
 					   struct cache_set,
 					   pd_controllers_update);
 	struct cache *ca;
-	unsigned iter, bucket_bits = c->bucket_bits + 9, highest_tier = 0;
+	unsigned iter, bucket_bits = c->bucket_bits + 9;
 	int i;
 
 	/*
@@ -150,8 +141,10 @@ static void pd_controllers_update(struct work_struct *work)
 		group_for_each_cache_rcu(ca, &c->cache_tiers[i], iter) {
 			struct bucket_stats stats = bucket_stats_read(ca);
 
-			/* bytes of internal fragmentation */
-
+			/*
+			 * Bytes of internal fragmentation, which can be
+			 * reclaimed by copy GC
+			 */
 			u64 fragmented = ((stats.buckets_dirty +
 					   stats.buckets_cached) <<
 					  bucket_bits) -
@@ -164,46 +157,12 @@ static void pd_controllers_update(struct work_struct *work)
 			u64 free = __buckets_free_cache(ca, stats,
 						RESERVE_NONE) << bucket_bits;
 
-			u64 target = div_u64(dev_size *
-					     GC_TARGET_PERCENT, 100);
+			bch_pd_controller_update(&ca->moving_gc_pd,
+						 free, fragmented, -1);
 
-			u64 available = __buckets_available_cache(ca, stats) <<
-				bucket_bits;
 
-			if (i <= highest_tier)
-				highest_tier = i;
-
-			/*
-			 * If this is the highest tier, we can't only go
-			 * off internal fragmentation - copygc is the
-			 * only method we have of freeing up space, so
-			 * we need to crank the rate up if the number of
-			 * available buckets is too low as well.
-			 *
-			 * XXX: it would probably be ideal if we could take
-			 * fragmentation (i.e.  how much work it's possible to
-			 * do) into account in both cases.
-			 *
-			 * Without that, we're relying on -ENOSPC (i.e. never
-			 * oversubscribing) to keep copygc from spinning when
-			 * we're almost full.
-			 */
-			if (i == highest_tier && available < target) {
-				tier0_can_free += target - available;
-
-				bch_pd_controller_update(&ca->moving_gc_pd,
-							 target,
-							 available,
-							 1);
-			} else {
-				if (i == 0 && fragmented > target)
-					tier0_can_free += fragmented - target;
-
-				bch_pd_controller_update(&ca->moving_gc_pd,
-							 target,
-							 fragmented,
-							 -1);
-			}
+			if (i == 0)
+				tier0_can_free += fragmented;
 
 			tier_size[i] += dev_size;
 			tier_free[i] += free;
@@ -237,7 +196,8 @@ static void pd_controllers_update(struct work_struct *work)
 	bch_pd_controller_update(&c->foreground_write_pd,
 				 min(tier0_can_free,
 				     div_u64(tier_size[0] *
-					     FOREGROUND_TARGET_PERCENT, 100)),
+					     c->foreground_target_percent,
+					     100)),
 				 tier_free[0],
 				 -1);
 
@@ -1345,6 +1305,9 @@ void bch_open_buckets_init(struct cache_set *c)
 		seqcount_init(&c->cache_tiers[i].lock);
 		c->tier_write_points[i].tier = &c->cache_tiers[i];
 	}
+
+	for (i = 0; i < ARRAY_SIZE(c->write_points); i++)
+		c->write_points[i].throttle = true;
 
 	c->pd_controllers_update_seconds = 5;
 	INIT_DELAYED_WORK(&c->pd_controllers_update, pd_controllers_update);

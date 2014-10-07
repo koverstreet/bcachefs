@@ -540,14 +540,22 @@ static void bch_recalc_capacity(struct cache_set *c)
 				capacity += (ca->sb.nbuckets -
 					     ca->sb.first_bucket) <<
 					c->bucket_bits;
+
+				ca->reserve_buckets_count =
+					((ca->sb.nbuckets - ca->sb.first_bucket)
+					 * c->bucket_reserve_percent) / 100;
+
 			}
 
-			capacity *= (100 - CACHE_RESERVE_PERCENT);
+			capacity *= (100 - c->sector_reserve_percent);
 			capacity = div64_u64(capacity, 100);
 			break;
 		}
 
 	c->capacity = capacity;
+
+	/* Wake up case someone was waiting for buckets */
+	closure_wake_up(&c->bucket_wait);
 }
 
 __printf(2, 3)
@@ -634,6 +642,7 @@ static void cache_set_flush(struct closure *cl)
 	struct cache *ca;
 	unsigned i;
 
+	bch_wake_delayed_writes((unsigned long) c);
 	del_timer_sync(&c->foreground_write_wakeup);
 	cancel_delayed_work_sync(&c->pd_controllers_update);
 
@@ -815,6 +824,10 @@ static struct cache_set *bch_cache_set_alloc(struct cache *ca)
 	c->copy_gc_enabled = 1;
 	c->tiering_enabled = 1;
 	c->tiering_percent = 10;
+
+	c->foreground_target_percent = 20;
+	c->bucket_reserve_percent = 10;
+	c->sector_reserve_percent = 20;
 
 	c->search = mempool_create_slab_pool(32, bch_search_cache);
 	if (!c->search)
@@ -1303,10 +1316,6 @@ static int cache_init(struct cache *ca)
 	ca->journal.bio.bi_io_vec = ca->journal.bio.bi_inline_vecs;
 	spin_lock_init(&ca->freelist_lock);
 	spin_lock_init(&ca->prio_buckets_lock);
-
-	ca->reserve_buckets_count =
-		((ca->sb.nbuckets - ca->sb.first_bucket) *
-		 CACHE_RESERVE_PERCENT) / 100;
 
 	/* XXX: tune these */
 	movinggc_reserve = max_t(size_t, NUM_GC_GENS * 2,

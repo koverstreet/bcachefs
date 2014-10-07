@@ -50,6 +50,11 @@ struct write_point {
 	struct open_bucket	*b;
 
 	/*
+	 * Throttle writes to this write point if tier 0 is full?
+	 */
+	bool throttle;
+
+	/*
 	 * If not NULL, refill from that device (this write point is a member of
 	 * that struct cache)
 	 *

@@ -533,9 +533,9 @@ void bch_wake_delayed_writes(unsigned long data)
 	spin_lock_irqsave(&c->foreground_write_pd_lock, flags);
 
 	while ((op = c->write_wait_head)) {
-		if (time_after(op->expires, jiffies)) {
-			c->foreground_write_wakeup.expires = op->expires;
-			add_timer(&c->foreground_write_wakeup);
+		if (!test_bit(CACHE_SET_STOPPING, &c->flags)
+		    && time_after(op->expires, jiffies)) {
+			mod_timer(&c->foreground_write_wakeup, op->expires);
 			break;
 		}
 
@@ -547,6 +547,7 @@ void bch_wake_delayed_writes(unsigned long data)
 	}
 
 	spin_unlock_irqrestore(&c->foreground_write_pd_lock, flags);
+
 }
 
 /**
@@ -631,20 +632,22 @@ void bch_write(struct closure *cl)
 	/* Don't call bch_next_delay() if rate is >= 1 GB/sec */
 
 	if (c->foreground_write_pd.rate.rate < (1 << 30) &&
-	    !op->discard) {
+	    !op->discard && op->wp->throttle) {
 		unsigned long flags;
-		u64 next, now = local_clock();
+		u64 delay;
 
 		spin_lock_irqsave(&c->foreground_write_pd_lock, flags);
 		bch_ratelimit_increment(&c->foreground_write_pd.rate,
 					op->bio->bi_iter.bi_size);
 
-		next = c->foreground_write_pd.rate.next;
+		delay = bch_ratelimit_delay(&c->foreground_write_pd.rate);
 
-		if (time_after64(next, now + NSEC_PER_MSEC * 10)) {
+		if (delay >= HZ / 100) {
+			trace_bcache_write_throttle(c, inode, op->bio, delay);
+
 			closure_get(&op->cl); /* list takes a ref */
 
-			op->expires = div_u64(next, NSEC_PER_SEC / HZ);
+			op->expires = jiffies + delay;
 			op->next = NULL;
 
 			if (c->write_wait_tail)
