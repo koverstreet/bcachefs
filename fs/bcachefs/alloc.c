@@ -145,7 +145,7 @@ static void pd_controllers_update(struct work_struct *work)
 			 * Bytes of internal fragmentation, which can be
 			 * reclaimed by copy GC
 			 */
-			u64 fragmented = ((stats.buckets_dirty +
+			s64 fragmented = ((stats.buckets_dirty +
 					   stats.buckets_cached) <<
 					  bucket_bits) -
 				((stats.sectors_dirty +
@@ -156,6 +156,9 @@ static void pd_controllers_update(struct work_struct *work)
 
 			u64 free = __buckets_free_cache(ca, stats,
 						RESERVE_NONE) << bucket_bits;
+
+			if (fragmented < 0)
+				fragmented = 0;
 
 			bch_pd_controller_update(&ca->moving_gc_pd,
 						 free, fragmented, -1);
