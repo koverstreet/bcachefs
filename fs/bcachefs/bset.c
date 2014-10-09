@@ -1114,6 +1114,29 @@ struct bkey *bch_btree_iter_next_all(struct btree_iter *iter)
 }
 EXPORT_SYMBOL(bch_btree_iter_next_all);
 
+/**
+ * Used by extent fixup functions which insert entries into the bset.
+ * We have to update the iterator's cached ->end pointer.
+ *
+ * @top must be in the last bset.
+ */
+void bch_btree_iter_fix(struct btree_iter *iter, struct bkey *top,
+			struct bkey *new)
+{
+	struct btree_iter_set *set;
+	u64 n = KEY_U64s(new);
+
+	for (set = iter->data;
+	     set < iter->data + iter->used;
+	     set++) {
+		if (set->k >= top)
+			set->k = (struct bkey *) ((u64 *) set->k + n);
+		if (set->end >= top)
+			set->end = (struct bkey *) ((u64 *) set->end + n);
+	}
+}
+EXPORT_SYMBOL(bch_btree_iter_fix);
+
 /* Mergesort */
 
 void bch_bset_sort_state_free(struct bset_sort_state *state)
