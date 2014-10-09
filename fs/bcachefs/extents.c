@@ -683,9 +683,14 @@ static bool bkey_cmpxchg(struct cache_set *c,
 }
 
 static bool handle_existing_key_newer(struct cache_set *c,
+				      struct btree_keys *b,
 				      struct bkey *insert,
-				      struct bkey *k)
+				      struct bkey *k,
+				      struct btree_iter *iter)
 {
+	BKEY_PADDED(key) temp;
+	struct bkey *top;
+
 	switch (bch_extent_overlap(k, insert)) {
 	case BCH_EXTENT_OVERLAP_FRONT:
 		bch_subtract_sectors(c, insert, KEY_START(insert),
@@ -694,14 +699,37 @@ static bool handle_existing_key_newer(struct cache_set *c,
 		break;
 
 	case BCH_EXTENT_OVERLAP_BACK:
-	case BCH_EXTENT_OVERLAP_MIDDLE:
-		/*
-		 * We don't bother with splitting the key we're
-		 * inserting:
-		 */
 		bch_subtract_sectors(c, insert, KEY_START(k),
 				     KEY_OFFSET(insert) - KEY_START(k));
 		bch_cut_back(&START_KEY(k), insert);
+		break;
+
+	case BCH_EXTENT_OVERLAP_MIDDLE:
+		bch_subtract_sectors(c, insert, KEY_START(k),
+				     KEY_SIZE(k));
+
+		/* We have an overlap where @k (newer version splits
+		 * @insert (ker version) in two. */
+		bkey_copy(&temp.key, insert);
+		bch_cut_back(&START_KEY(k), &temp.key);
+
+		if (bkey_written(b, k)) {
+			struct bset_tree *l = bset_tree_last(b);
+
+			top = bch_bset_search(b, l, &START_KEY(&temp.key));
+			while (top != bset_bkey_last(l->data) &&
+			       bkey_cmp(&temp.key, &START_KEY(top)) > 0)
+				top = bkey_next(top);
+		} else
+			top = k;
+
+		/* The caller will insert the second half of the new
+		 * key, we just have to update @insert. */
+		bch_cut_front(k, insert);
+
+		/* Insert the first half of @insert ourselves. */
+		bch_bset_insert(b, top, &temp.key);
+		bch_btree_iter_fix(iter, top, &temp.key);
 		break;
 
 	case BCH_EXTENT_OVERLAP_ALL:
@@ -767,7 +795,7 @@ static bool bch_extent_insert_fixup(struct btree_keys *b,
 
 		if (KEY_SIZE(k) && !KEY_DELETED(insert) &&
 		    KEY_VERSION(insert) < KEY_VERSION(k)) {
-			if (handle_existing_key_newer(c, insert, k))
+			if (handle_existing_key_newer(c, b, insert, k, iter))
 				return true;
 
 			if (bkey_cmp(k, &START_KEY(insert)) <= 0)
@@ -840,6 +868,11 @@ static bool bch_extent_insert_fixup(struct btree_keys *b,
 			bch_cut_front(insert, top);
 			bch_cut_back(&START_KEY(insert), k);
 			bch_bset_fix_invalidated_key(b, k);
+
+			/*
+			 * Warning: the iterator is no longer valid, since we
+			 * moved keys from underneath iter->data[n].k and .end
+			 */
 			return false;
 		}
 	}
