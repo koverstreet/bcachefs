@@ -506,6 +506,10 @@ struct bch_pd_controller {
 	s64			last_proportional;
 	s64			last_change;
 	s64			last_target;
+
+	/* If true, the rate will not increase if bch_ratelimit_delay()
+	 * is not being called often enough. */
+	bool			backpressure;
 };
 
 void bch_pd_controller_update(struct bch_pd_controller *, s64, s64, int);
@@ -537,7 +541,7 @@ do {									\
 #define sysfs_pd_controller_store(name, var)				\
 do {									\
 	sysfs_strtoul_clamp(name##_rate,				\
-			    (var)->rate.rate, 1, INT_MAX);		\
+			    (var)->rate.rate, 1, UINT_MAX);		\
 	sysfs_strtoul(name##_rate_d_term,	(var)->d_term);		\
 	sysfs_strtoul_clamp(name##_rate_p_term_inverse,			\
 			    (var)->p_term_inverse, 1, INT_MAX);		\

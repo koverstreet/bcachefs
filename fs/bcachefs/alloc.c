@@ -121,10 +121,7 @@ static void pd_controllers_update(struct work_struct *work)
 	unsigned iter, bucket_bits = c->bucket_bits + 9;
 	int i;
 
-	/*
-	 * free + dirty do not sum to size because of internal fragmentation
-	 * (dirty is live dirty data, not dirty buckets)
-	 */
+	/* All units are in bytes */
 	u64 tier_size[CACHE_TIERS];
 	u64 tier_free[CACHE_TIERS];
 	u64 tier_dirty[CACHE_TIERS];
@@ -133,8 +130,6 @@ static void pd_controllers_update(struct work_struct *work)
 	memset(tier_size, 0, sizeof(tier_size));
 	memset(tier_free, 0, sizeof(tier_free));
 	memset(tier_dirty, 0, sizeof(tier_dirty));
-
-	/* All units are in bytes */
 
 	rcu_read_lock();
 	for (i = CACHE_TIERS - 1; i >= 0; --i)
@@ -163,13 +158,12 @@ static void pd_controllers_update(struct work_struct *work)
 			bch_pd_controller_update(&ca->moving_gc_pd,
 						 free, fragmented, -1);
 
-
 			if (i == 0)
 				tier0_can_free += fragmented;
 
 			tier_size[i] += dev_size;
 			tier_free[i] += free;
-			tier_dirty[i] += stats.sectors_dirty << 9;
+			tier_dirty[i] += stats.buckets_dirty << bucket_bits;
 		}
 	rcu_read_unlock();
 
@@ -1317,6 +1311,15 @@ void bch_open_buckets_init(struct cache_set *c)
 
 	spin_lock_init(&c->foreground_write_pd_lock);
 	bch_pd_controller_init(&c->foreground_write_pd);
+	/*
+	 * We do not want the write rate to have an effect on the computed
+	 * rate, for two reasons:
+	 *
+	 * We do not call bch_ratelimit_delay() at all if the write rate
+	 * exceeds 1GB/s. In this case, the PD controller will think we are
+	 * not "keeping up" and not change the rate.
+	 */
+	c->foreground_write_pd.backpressure = 0;
 	init_timer(&c->foreground_write_wakeup);
 
 	c->foreground_write_wakeup.data = (unsigned long) c;

@@ -89,10 +89,14 @@ ssize_t bch_hprint(char *buf, int64_t v)
 	}
 
 	if (!u)
-		return sprintf(buf, "%llu", v);
+		return sprintf(buf, "%lli", v);
 
+	/*
+	 * 103 is magic: t is in the range [-1023, 1023] and we want
+	 * to turn it into [-9, 9]
+	 */
 	if (v < 100 && v > -100)
-		snprintf(dec, sizeof(dec), ".%i", t / 100);
+		snprintf(dec, sizeof(dec), ".%i", t / 103);
 
 	return sprintf(buf, "%lli%s%c", v, dec, units[u]);
 }
@@ -272,6 +276,7 @@ void bch_pd_controller_update(struct bch_pd_controller *pd,
 
 	/* Don't increase rate if not keeping up */
 	if (change > 0 &&
+	    pd->backpressure &&
 	    time_after64(local_clock(),
 			 pd->rate.next + NSEC_PER_MSEC))
 		change = 0;
@@ -295,16 +300,18 @@ void bch_pd_controller_init(struct bch_pd_controller *pd)
 	pd->p_term_inverse	= 6000;
 	pd->d_term		= 30;
 	pd->d_smooth		= pd->d_term;
+	pd->backpressure	= 1;
 }
 
 size_t bch_pd_controller_print_debug(struct bch_pd_controller *pd, char *buf)
 {
-	char rate[20];
-	char actual[20];
-	char target[20];
-	char proportional[20];
-	char derivative[20];
-	char change[20];
+	/* 2^64 - 1 is 20 digits, plus null byte */
+	char rate[21];
+	char actual[21];
+	char target[21];
+	char proportional[21];
+	char derivative[21];
+	char change[21];
 	s64 next_io;
 
 	bch_hprint(rate,	pd->rate.rate);

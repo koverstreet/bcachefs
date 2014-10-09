@@ -138,7 +138,6 @@ rw_attribute(readahead);
 rw_attribute(errors);
 rw_attribute(io_error_limit);
 rw_attribute(io_error_halflife);
-rw_attribute(btree_scan_ratelimit);
 rw_attribute(verify);
 rw_attribute(bypass_torture_test);
 rw_attribute(key_merging_disabled);
@@ -153,6 +152,9 @@ rw_attribute(tiering_enabled);
 rw_attribute(tiering_percent);
 sysfs_pd_controller_attribute(tiering);
 sysfs_pd_controller_attribute(foreground_write);
+
+rw_attribute(btree_scan_ratelimit);
+rw_attribute(pd_controllers_update_seconds);
 
 rw_attribute(foreground_target_percent);
 rw_attribute(bucket_reserve_percent);
@@ -604,6 +606,8 @@ SHOW(__bch_cache_set)
 	sysfs_pd_controller_show(foreground_write, &c->foreground_write_pd);
 
 	sysfs_print(btree_scan_ratelimit,	c->btree_scan_ratelimit);
+	sysfs_print(pd_controllers_update_seconds,
+		    c->pd_controllers_update_seconds);
 	sysfs_print(foreground_target_percent,	c->foreground_target_percent);
 	sysfs_print(bucket_reserve_percent,	c->bucket_reserve_percent);
 	sysfs_print(sector_reserve_percent,	c->sector_reserve_percent);
@@ -759,6 +763,8 @@ STORE(__bch_cache_set)
 		return ret;
 	}
 
+	sysfs_strtoul(pd_controllers_update_seconds,
+		      c->pd_controllers_update_seconds);
 	sysfs_strtoul(foreground_target_percent, c->foreground_target_percent);
 	sysfs_strtoul(bucket_reserve_percent, c->bucket_reserve_percent);
 	sysfs_strtoul(sector_reserve_percent, c->sector_reserve_percent);
