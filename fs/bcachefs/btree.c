@@ -1735,7 +1735,7 @@ static int btree_gc_coalesce(struct btree *b, struct btree_op *op,
 		bch_set_extent_ptrs(keylist.top, 0);
 		SET_KEY_DELETED(keylist.top, true);
 
-		bch_keylist_push(&keylist);
+		__bch_keylist_push(&keylist);
 	}
 
 	/* Keys for the new nodes get inserted */
@@ -1744,7 +1744,7 @@ static int btree_gc_coalesce(struct btree *b, struct btree_op *op,
 					KEY_U64s(&new_nodes[i]->key)))
 			goto out_nocoalesce;
 
-		bch_keylist_add(&keylist, &new_nodes[i]->key);
+		__bch_keylist_add(&keylist, &new_nodes[i]->key);
 	}
 
 	/* Insert the newly coalesced nodes */
@@ -2313,7 +2313,7 @@ static bool have_enough_space(struct btree *b, struct keylist *insert_keys)
 	 */
 	unsigned u64s = b->level
 		? bch_keylist_nkeys(insert_keys)
-		: KEY_U64s(insert_keys->keys);
+		: KEY_U64s(bch_keylist_front(insert_keys));
 
 	return u64s <= insert_u64s_remaining(b);
 }
@@ -2347,16 +2347,17 @@ bch_btree_insert_keys(struct btree *b, struct btree_op *op,
 		return BTREE_INSERT_NEED_SPLIT;
 
 	while (!done && !bch_keylist_empty(insert_keys)) {
+		unsigned n_min = KEY_U64s(bch_keylist_front(insert_keys));
 		if (!b->level)
 			bch_journal_res_get(b->c, &res,
-					    KEY_U64s(insert_keys->keys),
+					    n_min,
 					    bch_keylist_nkeys(insert_keys));
 
 		btree_node_lock_for_insert(b);
 
 		while (!bch_keylist_empty(insert_keys)) {
 			BKEY_PADDED(key) temp;
-			struct bkey *k = insert_keys->keys;
+			struct bkey *k = (bch_keylist_front(insert_keys));
 
 			/* finished for this node */
 			if (b->keys.ops->is_extents
@@ -2395,7 +2396,7 @@ bch_btree_insert_keys(struct btree *b, struct btree_op *op,
 				inserted = true;
 			}
 
-			if (k == insert_keys->keys)
+			if (k == (bch_keylist_front(insert_keys)))
 				bch_keylist_pop_front(insert_keys);
 		}
 
@@ -2586,6 +2587,8 @@ static int btree_split(struct btree *b, struct btree_op *op,
 
 		six_unlock_intent(&n3->lock);
 	} else if (!b->parent) {
+		BUG_ON(parent_keys->start_keys_p
+		       != &parent_keys->inline_keys[0]);
 		bch_keylist_init(parent_keys);
 
 		/* Root filled up but didn't need to be split */
@@ -2786,8 +2789,8 @@ int bch_btree_insert(struct cache_set *c, enum btree_id id,
 		op.op.locks_want = 0;
 		ret = bch_btree_map_nodes(&op.op, c,
 			       id == BTREE_ID_EXTENTS
-					  ? &START_KEY(keys->keys)
-					  : keys->keys,
+					  ? &START_KEY(bch_keylist_front(keys))
+					  : (bch_keylist_front(keys)),
 					  btree_insert_fn,
 					  0);
 	}

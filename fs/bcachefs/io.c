@@ -305,7 +305,7 @@ static void __bch_write_index(struct closure *cl)
 	while (!ret && !bch_keylist_empty(keys)) {
 		op->op.locks_want = 0;
 		ret = bch_btree_map_nodes(&op->op, op->c,
-					  &START_KEY(keys->keys),
+					  &START_KEY(bch_keylist_front(keys)),
 					  btree_insert_fn,
 					  MAP_ASYNC);
 	}
@@ -359,7 +359,7 @@ static void bch_discard(struct closure *cl)
 				 bio->bi_iter.bi_sector, sectors);
 		SET_KEY_DELETED(keys->top, true);
 
-		bch_keylist_push(keys);
+		__bch_keylist_push(keys);
 	}
 
 	op->write_done = true;
@@ -381,7 +381,8 @@ static void bch_write_error(struct closure *cl)
 	 * from the keys we'll accomplish just that.
 	 */
 
-	struct bkey *src = op->insert_keys.keys, *dst = op->insert_keys.keys;
+	struct bkey *src = bch_keylist_front(&op->insert_keys);
+	struct bkey *dst = bch_keylist_front(&op->insert_keys);
 
 	while (src != op->insert_keys.top) {
 		struct bkey *n = bkey_next(src);

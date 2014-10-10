@@ -161,10 +161,14 @@ static inline void bch_btree_iter_next_check(struct btree_iter *iter) {}
 
 int bch_keylist_realloc(struct keylist *l, unsigned u64s)
 {
-	size_t oldsize = bch_keylist_nkeys(l);
+	size_t oldsize = bch_keylist_size(l);
+	size_t offset = bch_keylist_offset(l);
 	size_t newsize = oldsize + u64s;
-	uint64_t *old_keys = l->keys_p == l->inline_keys ? NULL : l->keys_p;
-	uint64_t *new_keys;
+	u64 *old_keys = l->start_keys_p;
+	u64 *new_keys;
+
+	if (old_keys == l->inline_keys)
+		old_keys = NULL;
 
 	/*
 	 * The idea here is that the allocated size is always a power of two:
@@ -177,40 +181,38 @@ int bch_keylist_realloc(struct keylist *l, unsigned u64s)
 	    roundup_pow_of_two(oldsize) == newsize)
 		return 0;
 
-	new_keys = krealloc(old_keys, sizeof(uint64_t) * newsize, GFP_NOIO);
+	/* We simulate being out of memory -- the code using the key list
+	   has to handle that case. */
+	if (newsize > KEYLIST_MAX)
+		return -ENOMEM;
+
+	new_keys = krealloc(old_keys, sizeof(u64) * newsize, GFP_NOIO);
 
 	if (!new_keys)
 		return -ENOMEM;
 
 	if (!old_keys)
-		memcpy(new_keys, l->inline_keys, sizeof(uint64_t) * oldsize);
+		memcpy(new_keys, l->inline_keys, sizeof(u64) * oldsize);
 
-	l->keys_p = new_keys;
+	l->start_keys_p = new_keys;
 	l->top_p = new_keys + oldsize;
+	l->bot_p = new_keys + offset;
+	l->end_keys_p = new_keys + newsize;
 
 	return 0;
 }
 
 struct bkey *bch_keylist_pop(struct keylist *l)
 {
-	struct bkey *k = l->keys;
+	struct bkey *k = (bch_keylist_front(l));
 
-	if (k == l->top)
+	if (bch_keylist_is_end(l, k))
 		return NULL;
 
-	while (bkey_next(k) != l->top)
+	while (!bch_keylist_is_last(l, k))
 		k = bkey_next(k);
 
 	return l->top = k;
-}
-
-void bch_keylist_pop_front(struct keylist *l)
-{
-	l->top_p -= KEY_U64s(l->keys);
-
-	memmove(l->keys,
-		bkey_next(l->keys),
-		bch_keylist_bytes(l));
 }
 
 /* Auxiliary search trees */

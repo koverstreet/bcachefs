@@ -412,29 +412,70 @@ static inline bool bch_bkey_equal_header(const struct bkey *l,
 
 /* Keylists */
 
+/* keylists can be used as a stack, using push and pop,
+   or as a queue, using push and pop_front.
+*/
+
 struct keylist {
+	/* This is a pointer to the LSB (inline_keys until realloc'd) */
 	union {
-		struct bkey		*keys;
-		uint64_t		*keys_p;
+		struct bkey		*start_keys;
+		u64			*start_keys_p;
 	};
+	/* This is a pointer to the next to enqueue (push) */
 	union {
 		struct bkey		*top;
-		uint64_t		*top_p;
+		u64			*top_p;
 	};
-
+	/* This is a pointer to the next to dequeue (pop_front) */
+	union {
+		struct bkey		*bot;
+		u64			*bot_p;
+	};
+	/* This is a pointer to beyond the MSB */
+	union {
+		struct bkey		*end_keys;
+		u64			*end_keys_p;
+	};
 	/* Enough room for btree_split's keys without realloc */
 #define KEYLIST_INLINE		roundup_pow_of_two(BKEY_EXTENT_MAX_U64s * 2)
-	uint64_t		inline_keys[KEYLIST_INLINE];
+	/* Prevent key lists from growing too big */
+	/*
+	 * This should always be big enough to allow btree_gc_coalesce and
+	 * btree_split to complete.
+	 * The current value is the (current) size of a bucket, so it
+	 * is far more than enough, as those two operations require only
+	 * a handful of keys.
+	 */
+#define KEYLIST_MAX		(1 << 18)
+	u64			inline_keys[KEYLIST_INLINE];
 };
 
 static inline void bch_keylist_init(struct keylist *l)
 {
-	l->top_p = l->keys_p = l->inline_keys;
+	l->bot_p = l->top_p = l->start_keys_p = l->inline_keys;
+	l->end_keys_p = (&l->inline_keys[KEYLIST_INLINE]);
+}
+
+/* __bch_keylist_push can be used if we've just checked the size */
+
+static inline void __bch_keylist_push(struct keylist *l)
+{
+	l->top = bkey_next(l->top);
 }
 
 static inline void bch_keylist_push(struct keylist *l)
 {
-	l->top = bkey_next(l->top);
+	__bch_keylist_push(l);
+	BUG_ON(l->top_p > l->end_keys_p);
+}
+
+/* __bch_keylist_add can be used if we've just checked the size */
+
+static inline void __bch_keylist_add(struct keylist *l, struct bkey *k)
+{
+	bkey_copy(l->top, k);
+	__bch_keylist_push(l);
 }
 
 static inline void bch_keylist_add(struct keylist *l, struct bkey *k)
@@ -445,37 +486,66 @@ static inline void bch_keylist_add(struct keylist *l, struct bkey *k)
 
 static inline bool bch_keylist_empty(struct keylist *l)
 {
-	return l->top == l->keys;
+	return l->bot == l->top;
 }
 
 static inline void bch_keylist_reset(struct keylist *l)
 {
-	l->top = l->keys;
+	l->bot = l->top = l->start_keys;
 }
 
 static inline void bch_keylist_free(struct keylist *l)
 {
-	if (l->keys_p != l->inline_keys)
-		kfree(l->keys_p);
+	if (l->start_keys_p != l->inline_keys)
+		kfree(l->start_keys_p);
 }
 
+/* This returns the number of u64s, rather than the number of keys.
+   As keys are variable sized, the actual number of keys would have to
+   be counted.
+*/
 static inline size_t bch_keylist_nkeys(struct keylist *l)
 {
-	return l->top_p - l->keys_p;
+	return l->top_p - l->bot_p;
+}
+
+static inline size_t bch_keylist_size(struct keylist *l)
+{
+	return l->top_p - l->start_keys_p;
+}
+
+static inline size_t bch_keylist_offset(struct keylist *l)
+{
+	return l->bot_p - l->start_keys_p;
+}
+
+static inline bool bch_keylist_is_end(struct keylist *l, struct bkey *k)
+{
+	return k == (l->top);
 }
 
 static inline bool bch_keylist_is_last(struct keylist *l, struct bkey *k)
 {
-	return bkey_next(k) == l->top;
+	return bch_keylist_is_end(l, bkey_next(k));
 }
 
-static inline size_t bch_keylist_bytes(struct keylist *l)
+static inline struct bkey *bch_keylist_front(struct keylist *l)
 {
-	return bch_keylist_nkeys(l) * sizeof(uint64_t);
+	return l->bot;
+}
+
+static inline void bch_keylist_pop_front(struct keylist *l)
+{
+	l->bot_p += (KEY_U64s(l->bot));
 }
 
 #define keylist_single(k)					\
-	((struct keylist) { .keys = k, .top = bkey_next(k) })
+((struct keylist) {						\
+	.start_keys = k,					\
+	.top = bkey_next(k),					\
+	.bot = k,						\
+	.end_keys = bkey_next(k)				\
+})
 
 struct bkey *bch_keylist_pop(struct keylist *);
 void bch_keylist_pop_front(struct keylist *);
