@@ -50,8 +50,6 @@ struct workqueue_struct *bcache_io_wq;
 
 static void bch_cache_stop(struct cache *);
 
-#define BTREE_MAX_PAGES		(256 * 1024 / PAGE_SIZE)
-
 u64 bch_checksum_update(unsigned type, u64 crc, const void *data, size_t len)
 {
 	switch (type) {
@@ -228,6 +226,10 @@ const char *validate_super(struct bcache_superblock *disk_sb,
 
 		err = "Invalid checksum type";
 		if (CACHE_SB_CSUM_TYPE(sb) >= BCH_CSUM_NR)
+			goto err;
+
+		err = "Btree node size not set";
+		if (!CACHE_BTREE_NODE_SIZE(sb))
 			goto err;
 
 		break;
@@ -775,11 +777,7 @@ static struct cache_set *bch_cache_set_alloc(struct cache *ca)
 
 	c->bucket_bits		= ilog2(c->sb.bucket_size);
 	c->block_bits		= ilog2(c->sb.block_size);
-
-	c->btree_pages		= bucket_pages(c);
-	if (c->btree_pages > BTREE_MAX_PAGES)
-		c->btree_pages = max_t(int, c->btree_pages / 4,
-				       BTREE_MAX_PAGES);
+	c->btree_pages		= CACHE_BTREE_NODE_SIZE(&c->sb) / PAGE_SECTORS;
 
 	sema_init(&c->sb_write_mutex, 1);
 	INIT_RADIX_TREE(&c->devices, GFP_KERNEL);

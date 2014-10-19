@@ -400,6 +400,9 @@ BITMASK(CACHE_PREFERRED_CSUM_TYPE,	struct cache_sb, flags, 16, 20);
 #define BCH_CSUM_CRC64			2U
 #define BCH_CSUM_NR			3U
 
+/* Node size for variable sized buckets */
+BITMASK(CACHE_BTREE_NODE_SIZE,		struct cache_sb, flags, 20, 36);
+
 BITMASK(BDEV_CACHE_MODE,		struct cache_sb, flags, 0, 4);
 #define CACHE_MODE_WRITETHROUGH		0U
 #define CACHE_MODE_WRITEBACK		1U
