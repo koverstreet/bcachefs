@@ -154,6 +154,7 @@ rw_attribute(tiering_percent);
 sysfs_pd_controller_attribute(tiering);
 sysfs_pd_controller_attribute(foreground_write);
 
+rw_attribute(btree_flush_delay);
 rw_attribute(btree_scan_ratelimit);
 rw_attribute(pd_controllers_update_seconds);
 
@@ -615,6 +616,8 @@ SHOW(__bch_cache_set)
 	sysfs_print(sector_reserve_percent,	c->sector_reserve_percent);
 	sysfs_print(tiering_percent,		c->tiering_percent);
 
+	sysfs_print(btree_flush_delay,		c->btree_flush_delay);
+
 	sysfs_printf(meta_replicas,		"%llu",
 		     CACHE_SET_META_REPLICAS_WANT(&c->sb));
 	sysfs_printf(data_replicas,		"%llu",
@@ -750,6 +753,8 @@ STORE(__bch_cache_set)
 		}
 	}
 
+	sysfs_strtoul(btree_flush_delay, c->btree_flush_delay);
+
 	if (attr == &sysfs_btree_scan_ratelimit) {
 		struct cache *ca;
 		unsigned i;
@@ -872,6 +877,7 @@ static struct attribute *bch_cache_set_files[] = {
 	&sysfs_meta_replicas,
 	&sysfs_data_replicas,
 
+	&sysfs_btree_flush_delay,
 	&sysfs_btree_scan_ratelimit,
 	&sysfs_foreground_target_percent,
 	&sysfs_bucket_reserve_percent,

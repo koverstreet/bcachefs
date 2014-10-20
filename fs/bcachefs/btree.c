@@ -427,13 +427,14 @@ static void __btree_node_write_done(struct closure *cl)
 {
 	struct btree *b = container_of(cl, struct btree, io);
 	struct btree_write *w = btree_prev_write(b);
+	struct cache_set *c = b->c;
 
-	bch_bbio_free(b->bio, b->c);
+	bch_bbio_free(b->bio, c);
 	b->bio = NULL;
 	btree_complete_write(b, w);
 
-	if (btree_node_dirty(b))
-		schedule_delayed_work(&b->work, 30 * HZ);
+	if (btree_node_dirty(b) && c->btree_flush_delay)
+		schedule_delayed_work(&b->work, c->btree_flush_delay * HZ);
 
 	closure_return_with_destructor(cl, btree_node_write_unlock);
 }
@@ -2200,6 +2201,7 @@ static bool btree_insert_key(struct btree *b, struct keylist *insert_keys,
 			     struct closure *flush_cl)
 {
 	struct bkey done, *insert = bch_keylist_front(insert_keys);
+	struct cache_set *c = b->c;
 	BKEY_PADDED(key) temp;
 	unsigned status;
 
@@ -2235,19 +2237,22 @@ static bool btree_insert_key(struct btree *b, struct keylist *insert_keys,
 
 	if (!btree_node_dirty(b)) {
 		set_btree_node_dirty(b);
-		schedule_delayed_work(&b->work, 30 * HZ);
+
+		if (c->btree_flush_delay)
+			schedule_delayed_work(&b->work,
+					      c->btree_flush_delay * HZ);
 	}
 
 	if (res->ref &&
-	    test_bit(JOURNAL_REPLAY_DONE, &b->c->journal.flags)) {
+	    test_bit(JOURNAL_REPLAY_DONE, &c->journal.flags)) {
 		struct btree_write *w = btree_current_write(b);
 
 		if (!w->journal) {
-			w->journal = &fifo_back(&b->c->journal.pin);
+			w->journal = &fifo_back(&c->journal.pin);
 			atomic_inc(w->journal);
 		}
 
-		bch_journal_add_keys(b->c, res, b->btree_id, insert,
+		bch_journal_add_keys(c, res, b->btree_id, insert,
 				     KEY_U64s(insert), b->level,
 				     bch_keylist_empty(insert_keys)
 				     ? flush_cl : NULL);
