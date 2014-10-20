@@ -1283,30 +1283,6 @@ static void btree_node_prefetch(struct btree *parent, struct bkey *k)
 
 /* Btree alloc */
 
-static void bch_btree_set_root(struct btree *b)
-{
-	struct closure cl;
-
-	closure_init_stack(&cl);
-
-	trace_bcache_btree_set_root(b);
-
-	BUG_ON(!b->written);
-
-	mutex_lock(&b->c->btree_cache_lock);
-	list_del_init(&b->list);
-	mutex_unlock(&b->c->btree_cache_lock);
-
-	spin_lock(&b->c->btree_root_lock);
-	btree_node_root(b) = b;
-	spin_unlock(&b->c->btree_root_lock);
-
-	bch_recalc_btree_reserve(b->c);
-
-	bch_journal_meta(b->c, &cl);
-	closure_sync(&cl);
-}
-
 static void btree_node_free(struct btree *b)
 {
 	trace_bcache_btree_node_free(b);
@@ -1328,6 +1304,54 @@ static void btree_node_free(struct btree *b)
 	mutex_unlock(&b->c->btree_cache_lock);
 
 	six_unlock_write(&b->lock);
+}
+
+/**
+ * bch_btree_set_root - update the root in memory and on disk
+ *
+ * To ensure forward progress, the current task must not be holding any
+ * btree node write locks. However, you must hold an intent lock on the
+ * old root.
+ *
+ * Frees the old root.
+ */
+static void bch_btree_set_root(struct btree *b)
+{
+	struct cache_set *c = b->c;
+	struct journal_res res;
+	struct closure cl;
+	struct btree *old;
+
+	memset(&res, 0, sizeof(res));
+	closure_init_stack(&cl);
+
+	trace_bcache_btree_set_root(b);
+	BUG_ON(!b->written);
+
+	old = btree_node_root(b);
+	if (old) {
+		bch_journal_res_get(c, &res, 0, 0);
+		six_lock_write(&old->lock);
+	}
+
+	/* Root nodes cannot be reaped */
+	mutex_lock(&c->btree_cache_lock);
+	list_del_init(&b->list);
+	mutex_unlock(&c->btree_cache_lock);
+
+	spin_lock(&c->btree_root_lock);
+	btree_node_root(b) = b;
+	spin_unlock(&c->btree_root_lock);
+
+	bch_recalc_btree_reserve(c);
+
+	if (old) {
+		bch_journal_res_put(c, &res, &cl);
+		closure_sync(&cl);
+
+		six_unlock_write(&old->lock);
+		btree_node_free(old);
+	}
 }
 
 static struct btree *bch_btree_node_alloc(struct cache_set *c,
@@ -1927,11 +1951,7 @@ static int bch_btree_gc_root(struct btree *b, struct btree_op *op,
 			six_unlock_write(&n->lock);
 			bch_btree_node_write_sync(n);
 
-			six_lock_write(&b->lock);
 			bch_btree_set_root(n);
-			six_unlock_write(&b->lock);
-
-			btree_node_free(b);
 			six_unlock_intent(&n->lock);
 
 			return -EINTR;
@@ -2565,10 +2585,7 @@ static int btree_split(struct btree *b, struct btree_op *op,
 
 		closure_sync(stack_cl);
 
-		six_lock_write(&b->lock);
 		bch_btree_set_root(n3);
-		six_unlock_write(&b->lock);
-
 		six_unlock_intent(&n3->lock);
 	} else if (!b->parent) {
 		BUG_ON(parent_keys->start_keys_p
@@ -2578,9 +2595,7 @@ static int btree_split(struct btree *b, struct btree_op *op,
 		/* Root filled up but didn't need to be split */
 		closure_sync(stack_cl);
 
-		six_lock_write(&b->lock);
 		bch_btree_set_root(n1);
-		six_unlock_write(&b->lock);
 	} else {
 		/* Split a non root node */
 		closure_sync(stack_cl);
@@ -2588,9 +2603,10 @@ static int btree_split(struct btree *b, struct btree_op *op,
 		__bch_btree_insert_node(b->parent, op, parent_keys, NULL,
 					NULL, parent_keys, stack_cl);
 		BUG_ON(!bch_keylist_empty(parent_keys));
+
+		btree_node_free(b);
 	}
 
-	btree_node_free(b);
 	op->iterator_invalidated = 1;
 
 	/* New nodes now visible, can finish insert */
