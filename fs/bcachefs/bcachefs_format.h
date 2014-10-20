@@ -64,10 +64,30 @@ static inline void SET_##name(struct bkey *k, unsigned i, __u64 v)	\
 #define KEY_OFFSET_BITS		(KEY_OFFSET_H_BITS + KEY_OFFSET_L_BITS)
 #define KEY_OFFSET_MAX		(~(~0ULL << KEY_OFFSET_BITS))
 
+/*
+ * DELETED keys are used internally to mark keys that should be ignored but
+ * override keys in composition order.  Their version number is ignored.
+ * WIPED keys indicate that the data is all 0s because it has been discarded.
+ * Unlike DELETED keys, WIPED keys have version numbers so that discarded
+ * regions don't revert when a server that was offline during the discard
+ * comes back on line.
+ * Unlike DELETED keys, which can be eliminated by (node-) local GC,
+ * WIPED keys can only be eliminated by:
+ * - cluster-wide GC, when all the servers are online and the WIPED keys
+ *   are no longer overriding any older keys, or
+ * - local GC when completely overridden by younger writes/discards.
+ * Note that a key can be DELETED and WIPED, in which case the DELETED
+ * behavior overrides the WIPED behavior.  A key can be both when it was
+ * originally WIPED and subsequently becomes DELETED through overwrites.
+ * Modulo how they source data on reads (they source 0s rather than data
+ * from an actual real extent), WIPED keys are regular keys.
+*/
+
 KEY_FIELD(KEY_U64s,	header, 56, 64)
 KEY_FIELD(KEY_DELETED,	header, 55, 56)
 KEY_FIELD(KEY_CACHED,	header, 54, 55)
 KEY_FIELD(KEY_CSUM,	header, 50, 54)
+KEY_FIELD(KEY_WIPED,	header, 49, 50)
 
 /*
  * Sequence number used to determine which extent is the newer one, when dealing

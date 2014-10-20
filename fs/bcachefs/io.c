@@ -340,12 +340,12 @@ static void bch_write_index(struct closure *cl)
 }
 
 /**
- * bch_discard - discard range of keys
+ * bch_write_discard - discard range of keys
  *
  * Used to implement discard, and to handle when writethrough write hits
  * a write error on the cache device.
  */
-static void bch_discard(struct closure *cl)
+static void bch_write_discard(struct closure *cl)
 {
 	struct bch_write_op *op = container_of(cl, struct bch_write_op, cl);
 	struct keylist *keys = &op->insert_keys;
@@ -366,7 +366,7 @@ static void bch_discard(struct closure *cl)
 
 		*keys->top = KEY(KEY_INODE(&op->insert_key),
 				 bio->bi_iter.bi_sector, sectors);
-		SET_KEY_DELETED(keys->top, true);
+		SET_KEY_DELETED(keys->top, 1);
 
 		__bch_keylist_push(keys);
 	}
@@ -436,7 +436,7 @@ static void __bch_write(struct closure *cl)
 	memset(op->open_buckets, 0, sizeof(op->open_buckets));
 
 	if (op->discard)
-		return bch_discard(cl);
+		return bch_write_discard(cl);
 
 	bch_extent_drop_stale(op->c, &op->insert_key);
 	ptrs_from = bch_extent_ptrs(&op->insert_key);
@@ -516,7 +516,7 @@ err:
 		 */
 
 		op->discard = true;
-		return bch_discard(cl);
+		return bch_write_discard(cl);
 	}
 
 	op->error		= -ENOSPC;
@@ -941,7 +941,7 @@ static int bch_read_fn(struct btree_op *b_op, struct btree *b, struct bkey *k)
 
 	ca = bch_extent_pick_ptr(b->c, k, &ptr);
 	if (!ca) {
-		if (!KEY_CACHED(k) && bch_extent_ptrs(k)) {
+		if (!KEY_WIPED(k) && !KEY_CACHED(k) && bch_extent_ptrs(k)) {
 			bio_io_error(bio);
 			return MAP_DONE;
 		} else {

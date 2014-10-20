@@ -13,6 +13,9 @@ ssize_t bch_inode_status(char *buf, size_t len, const struct bkey *k)
 	if (KEY_DELETED(k))
 		return scnprintf(buf, len, "deleted");
 
+	if (KEY_WIPED(k))
+		return scnprintf(buf, len, "wiped");
+
 	if (bkey_bytes(k) < sizeof(struct bch_inode))
 		return scnprintf(buf, len, "key too small: %lu", bkey_bytes(k));
 
@@ -77,6 +80,11 @@ bool bch_inode_invalid(const struct bkey *k)
 
 	if (KEY_DELETED(k))
 		return false;
+
+	if (KEY_WIPED(k)) {
+		/* We don't use WIPED keys for inodes */
+		return true;
+	}
 
 	if (bkey_bytes(k) < sizeof(struct bch_inode))
 		return true;
@@ -216,7 +224,7 @@ static int inode_rm_fn(struct btree_op *b_op, struct btree *b, struct bkey *k)
 	erase_key = KEY(op->inode_nr,
 			KEY_START(k) + KEY_SIZE_MAX,
 			KEY_SIZE_MAX);
-	SET_KEY_DELETED(&erase_key, true);
+	SET_KEY_DELETED(&erase_key, 1);
 
 	if (bkey_cmp(&erase_key, &b->key) > 0)
 		bch_cut_back(&b->key, &erase_key);

@@ -157,8 +157,11 @@ static bool __ptr_invalid(struct cache_set *c, const struct bkey *k)
 	    bch_extent_ptrs(k) > BKEY_EXTENT_PTRS_MAX)
 		return true;
 
-	if (!bch_extent_ptrs(k) && !KEY_DELETED(k))
+	if (!bch_extent_ptrs(k) && !KEY_DELETED(k) && !KEY_WIPED(k))
 		return true;
+
+	if (KEY_WIPED(k))
+		return false;
 
 	rcu_read_lock();
 
@@ -204,9 +207,14 @@ static const char *__bch_ptr_status(struct cache_set *c, const struct bkey *k)
 
 	if (!bkey_cmp(k, &ZERO_KEY))
 		return "bad, null key";
-	if (!bch_extent_ptrs(k))
-		return "bad, no pointers";
+	if (!bch_extent_ptrs(k)) {
+		if (KEY_WIPED(k))
+			return "wiped key";
+		else
+			return "bad, no pointers";
+	}
 	if (!KEY_SIZE(k))
+		/* This should really say 'deleted key' or some such */
 		return "zeroed key";
 	return "";
 }
@@ -248,6 +256,8 @@ void bch_extent_to_text(char *buf, size_t size, const struct bkey *k)
 
 	if (KEY_DELETED(k))
 		p(" deleted");
+	if (KEY_WIPED(k))
+		p(" wiped");
 	if (KEY_CACHED(k))
 		p(" cached");
 	if (KEY_CSUM(k))
@@ -278,7 +288,7 @@ bool __bch_btree_ptr_invalid(struct cache_set *c, const struct bkey *k)
 {
 	return (KEY_CACHED(k) ||
 		KEY_SIZE(k) ||
-		(!KEY_DELETED(k) && !bch_extent_ptrs(k)) ||
+		(!KEY_DELETED(k) && !KEY_WIPED(k) && !bch_extent_ptrs(k)) ||
 		__ptr_invalid(c, k));
 }
 
@@ -411,7 +421,7 @@ bool bch_cut_front(const struct bkey *where, struct bkey *k)
 	SET_KEY_SIZE(k, len);
 
 	if (!len)
-		SET_KEY_DELETED(k, true);
+		SET_KEY_DELETED(k, 1);
 
 	return true;
 }
@@ -436,7 +446,7 @@ bool bch_cut_back(const struct bkey *where, struct bkey *k)
 	SET_KEY_SIZE(k, len);
 
 	if (!len)
-		SET_KEY_DELETED(k, true);
+		SET_KEY_DELETED(k, 1);
 
 	return true;
 }
@@ -919,7 +929,7 @@ out:
 bool __bch_extent_invalid(struct cache_set *c, const struct bkey *k)
 {
 	return (KEY_SIZE(k) > KEY_OFFSET(k) ||
-		(!KEY_SIZE(k) && !KEY_DELETED(k)) ||
+		(!KEY_SIZE(k) && !KEY_WIPED(k) && !KEY_DELETED(k)) ||
 		__ptr_invalid(c, k));
 }
 
@@ -1049,7 +1059,7 @@ bool bch_extent_normalize(struct cache_set *c, struct bkey *k)
 
 	if (!KEY_SIZE(k)) {
 		bch_set_extent_ptrs(k, 0);
-		SET_KEY_DELETED(k, true);
+		SET_KEY_DELETED(k, 1);
 		return true;
 	}
 
@@ -1066,8 +1076,8 @@ bool bch_extent_normalize(struct cache_set *c, struct bkey *k)
 		}
 	} while (swapped);
 
-	if (!bch_extent_ptrs(k))
-		SET_KEY_DELETED(k, true);
+	if (!bch_extent_ptrs(k) && !KEY_WIPED(k))
+		SET_KEY_DELETED(k, 1);
 
 	return KEY_DELETED(k);
 }
@@ -1075,7 +1085,7 @@ bool bch_extent_normalize(struct cache_set *c, struct bkey *k)
 struct cache *bch_extent_pick_ptr(struct cache_set *c, const struct bkey *k,
 				  unsigned *ptr)
 {
-	if (!KEY_SIZE(k))
+	if (((KEY_SIZE(k)) == 0) || (KEY_WIPED(k)))
 		return NULL;
 
 	rcu_read_lock();

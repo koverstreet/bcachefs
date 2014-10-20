@@ -19,6 +19,12 @@
  * bch_ptr_invalid() primarily filters out keys and pointers that would be
  * invalid due to some sort of bug, whereas bkey_deleted() filters out keys and
  * pointer that occur in normal practice but don't point to real data.
+ * Note, however, that bkey_deleted does _not_ filter out WIPED keys, as these
+ * need to act persistently as a source of 0s until cluster-wide GC removes
+ * them or they are completely overridden locally through overwrites.
+ * Reads treat WIPED keys as a source of 0s, and list extents treat them
+ * as real keys.  The latter is the really crucial part, as they have valid
+ * meaningful version numbers that may override what other servers have.
  *
  * The one exception to the rule that ptr_invalid() filters out invalid keys is
  * that it also filters out keys of size 0 - these are keys that have been
@@ -403,6 +409,7 @@ static inline bool bch_bkey_equal_header(const struct bkey *l,
 					 const struct bkey *r)
 {
 	return (KEY_CACHED(l) == KEY_CACHED(r) &&
+		KEY_WIPED(l) == KEY_WIPED(r) &&
 		KEY_DELETED(l) == KEY_DELETED(r) &&
 		KEY_VERSION(l) == KEY_VERSION(r) &&
 		KEY_U64s(l) == KEY_U64s(r) &&
