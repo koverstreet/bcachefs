@@ -1460,6 +1460,8 @@ int bch_cache_add(struct cache_set *c, const char *path)
 	struct cache *ca;
 	unsigned i, nr_this_dev;
 	int ret = -EINVAL;
+	struct cache_member *omi, *mi, saved_mi;
+	unsigned old_nr_this_dev;
 
 	lockdep_assert_held(&bch_register_lock);
 
@@ -1514,6 +1516,14 @@ have_slot:
 	sb.sb->bucket_size	= c->sb.bucket_size;
 	sb.sb->block_size	= c->sb.block_size;
 
+	/* Preserve the old cache member information (esp. tier)
+	 * before we start bashing the disk stuff.
+	 */
+
+	old_nr_this_dev = le16_to_cpu(sb.sb->nr_this_dev);
+	omi = &sb.sb->members[old_nr_this_dev];
+	saved_mi = *omi;
+
 	err = __register_cache(&sb, bdev, &ca);
 	if (err)
 		goto err;
@@ -1526,7 +1536,10 @@ have_slot:
 	if (bch_cache_journal_alloc(ca))
 		goto err_put;
 
-	c->members[nr_this_dev].uuid = ca->sb.uuid;
+	/* Are there other fields to preserve besides the uuid and tier? */
+	mi = &c->members[nr_this_dev];
+	mi->uuid = ca->sb.uuid;
+	SET_CACHE_TIER(mi, (CACHE_TIER(&saved_mi)));
 	bcache_write_super(c);
 
 	err = can_attach_cache(ca, c);
