@@ -561,35 +561,21 @@ static void bch_recalc_capacity(struct cache_set *c)
 	closure_wake_up(&c->bucket_wait);
 }
 
-__printf(2, 3)
-bool bch_cache_set_error(struct cache_set *c, const char *fmt, ...)
+void bch_cache_set_fail(struct cache_set *c)
 {
-	va_list args;
-
-	/* XXX: we can be called from atomic context
-	acquire_console_sem();
-	*/
-
-	printk(KERN_ERR "bcache: error on %pU: ", c->sb.set_uuid.b);
-
-	va_start(args, fmt);
-	vprintk(fmt, args);
-	va_end(args);
-
 	switch (CACHE_ERROR_ACTION(&c->sb)) {
 	case BCH_ON_ERROR_CONTINUE:
-		printk(", continuing\n");
 		break;
 	case BCH_ON_ERROR_RO:
-		printk(", going read only\n");
+		printk(KERN_ERR "bcache: %pU going read only\n",
+		       c->sb.set_uuid.b);
 		set_bit(CACHE_SET_RO, &c->flags);
 		break;
 	case BCH_ON_ERROR_PANIC:
-		panic("panic forced after error\n");
+		panic("bcache: %pU panic after error\n",
+		      c->sb.set_uuid.b);
 		break;
 	}
-
-	return true;
 }
 
 void bch_cache_set_release(struct kobject *kobj)
@@ -908,8 +894,7 @@ static const char *run_cache_set(struct cache_set *c)
 		for_each_cache(ca, c, i) {
 			size_t bucket = prio_bucket_ptrs[ca->sb.nr_this_dev];
 
-			if (bucket &&
-			    (err = bch_prio_read(ca, bucket))) {
+			if (bucket && bch_prio_read(ca, bucket)) {
 				percpu_ref_put(&ca->ref);
 				goto err;
 			}

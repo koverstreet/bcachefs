@@ -35,6 +35,7 @@ void bch_btree_verify(struct btree *b)
 {
 	struct btree *v = b->c->verify_data;
 	struct bset *ondisk, *sorted, *inmemory;
+	struct cache *ca;
 	struct bio *bio;
 
 	if (!b->c->verify || !b->c->verify_ondisk)
@@ -52,8 +53,9 @@ void bch_btree_verify(struct btree *b)
 	v->level = b->level;
 	v->keys.ops = b->keys.ops;
 
+	ca = PTR_CACHE(b->c, &b->key, 0);
 	bio = bch_bbio_alloc(b->c);
-	bio->bi_bdev		= PTR_CACHE(b->c, &b->key, 0)->bdev;
+	bio->bi_bdev		= ca->bdev;
 	bio->bi_iter.bi_sector	= PTR_OFFSET(&b->key, 0);
 	bio->bi_iter.bi_size	= KEY_SIZE(&v->key) << 9;
 	bio_set_op_attrs(bio, REQ_OP_READ, REQ_META|READ_SYNC);
@@ -64,7 +66,7 @@ void bch_btree_verify(struct btree *b)
 
 	memcpy(ondisk, sorted, KEY_SIZE(&v->key) << 9);
 
-	bch_btree_node_read_done(v);
+	bch_btree_node_read_done(v, ca, 0);
 	sorted = v->keys.set->data;
 
 	if (inmemory->keys != sorted->keys ||

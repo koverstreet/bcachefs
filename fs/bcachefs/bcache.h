@@ -614,16 +614,40 @@ struct bbio {
 
 /* Error handling macros */
 
-#define btree_bug(b, ...)						\
+#define __bch_cache_set_error(c, fmt, ...)				\
+	printk(KERN_ERR "bcache: error on %pU: " fmt,			\
+	       (c)->sb.set_uuid.b, ##__VA_ARGS__)
+
+#define __bch_cache_error(ca, fmt, ...)					\
 do {									\
-	if (bch_cache_set_error((b)->c, __VA_ARGS__))			\
-		dump_stack();						\
+	char buf[BDEVNAME_SIZE];					\
+	__bch_cache_set_error((ca)->set, "%s: " fmt,			\
+			      bdevname((ca)->bdev, buf),		\
+			      ##__VA_ARGS__);				\
 } while (0)
 
-#define cache_bug(c, ...)						\
+#define bch_cache_set_error(c, ...)					\
 do {									\
-	if (bch_cache_set_error(c, __VA_ARGS__))			\
-		dump_stack();						\
+	__bch_cache_set_error(c, __VA_ARGS__);				\
+	bch_cache_set_fail(c);						\
+} while (0)
+
+#define bch_cache_error(ca, ...)					\
+do {									\
+	__bch_cache_error(ca, __VA_ARGS__);				\
+	bch_cache_set_fail((ca)->set);					\
+} while (0)
+
+#define btree_bug(b, ...)						\
+do {									\
+	bch_cache_set_error((b)->c, __VA_ARGS__);			\
+	dump_stack();							\
+} while (0)
+
+#define cache_set_bug(c, ...)						\
+do {									\
+	bch_cache_set_error(c, __VA_ARGS__);				\
+	dump_stack();							\
 } while (0)
 
 #define btree_bug_on(cond, b, ...)					\
@@ -632,10 +656,10 @@ do {									\
 		btree_bug(b, __VA_ARGS__);				\
 } while (0)
 
-#define cache_bug_on(cond, c, ...)					\
+#define cache_set_bug_on(cond, c, ...)					\
 do {									\
 	if (cond)							\
-		cache_bug(c, __VA_ARGS__);				\
+		cache_set_bug(c, __VA_ARGS__);				\
 } while (0)
 
 #define cache_set_err_on(cond, c, ...)					\

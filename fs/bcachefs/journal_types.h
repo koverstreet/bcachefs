@@ -78,6 +78,9 @@ struct journal_device {
 	struct bio		bio;
 	struct bio_vec		bv[1 << JSET_BITS];
 
+	/* LBA of current journal write */
+	sector_t		offset;
+
 	/* for bch_journal_read_device */
 	struct closure		read;
 };

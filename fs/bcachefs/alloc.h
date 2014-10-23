@@ -12,7 +12,7 @@ struct cache_group;
 void bch_cache_group_remove_cache(struct cache_group *, struct cache *);
 void bch_cache_group_add_cache(struct cache_group *, struct cache *);
 
-const char *bch_prio_read(struct cache *, u64);
+int bch_prio_read(struct cache *, u64);
 
 void bch_recalc_min_prio(struct cache *, int);
 void bch_increment_clock_slowpath(struct cache_set *, int);

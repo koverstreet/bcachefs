@@ -943,7 +943,7 @@ static bool bch_extent_debug_invalid(struct btree_keys *bk, struct bkey *k)
 
 	if (__bch_extent_invalid(c, k)) {
 		bch_extent_to_text(buf, sizeof(buf), k);
-		cache_bug(c, "invalid bkey %s", buf);
+		cache_set_bug(c, "invalid bkey %s", buf);
 		return true;
 	}
 
@@ -985,9 +985,9 @@ static bool bch_extent_debug_invalid(struct btree_keys *bk, struct bkey *k)
 
 				stale = ptr_stale(c, ca, k, i);
 
-				cache_bug_on(stale > 96, c,
-					     "key too stale: %i",
-					     stale);
+				cache_set_bug_on(stale > 96, c,
+						 "key too stale: %i",
+						 stale);
 
 				bad = (!stale &&
 				       !__gc_will_visit_key(c, b->btree_id,
@@ -1019,24 +1019,24 @@ static bool bch_extent_debug_invalid(struct btree_keys *bk, struct bkey *k)
 
 bad_key:
 	bch_extent_to_text(buf, sizeof(buf), k);
-	cache_bug(c, "extent key bad: %s", buf);
+	cache_set_bug(c, "extent key bad: %s", buf);
 	rcu_read_unlock();
 	return true;
 
 bad_device:
 	bch_extent_to_text(buf, sizeof(buf), k);
-	cache_bug(c, "extent pointer %i device missing: %s:\nbucket %zu",
-		  i, buf, PTR_BUCKET_NR(c, k, i));
+	cache_set_bug(c, "extent pointer %i device missing: %s:\nbucket %zu",
+		      i, buf, PTR_BUCKET_NR(c, k, i));
 	rcu_read_unlock();
 	return true;
 
 bad_ptr:
 	bch_extent_to_text(buf, sizeof(buf), k);
-	cache_bug(c, "extent pointer %i bad: %s:\nbucket %zu prio %i "
-		  "gen %i last_gc %i mark 0x%08x", i,
-		  buf, PTR_BUCKET_NR(c, k, i),
-		  g->read_prio, PTR_BUCKET_GEN(c, ca, k, i),
-		  g->last_gc, g->mark.counter);
+	cache_set_bug(c, "extent pointer %i bad: %s:\nbucket %zu prio %i "
+		      "gen %i last_gc %i mark 0x%08x", i,
+		      buf, PTR_BUCKET_NR(c, k, i),
+		      g->read_prio, PTR_BUCKET_GEN(c, ca, k, i),
+		      g->last_gc, g->mark.counter);
 	rcu_read_unlock();
 	return true;
 }

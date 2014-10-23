@@ -186,8 +186,12 @@ reread:		left = ca->sb.bucket_size - offset;
 		bch_bio_map(bio, data);
 
 		ret = submit_bio_wait(bio);
-		if (ret)
+		if (ret) {
+			__bch_cache_error(ca,
+				"IO error %d reading journal from offset %zu",
+				ret, bucket + offset);
 			goto err;
+		}
 
 		/* This function could be simpler now since we no longer write
 		 * journal entries that overlap bucket boundaries; this means
@@ -198,6 +202,7 @@ reread:		left = ca->sb.bucket_size - offset;
 		j = data;
 		while (len) {
 			size_t blocks, bytes = set_bytes(j);
+			u64 got, expect;
 
 			if (cache_set_init_fault("journal_read"))
 				goto err;
@@ -207,24 +212,32 @@ reread:		left = ca->sb.bucket_size - offset;
 				goto err;
 			}
 
-			if (j->version != BCACHE_JSET_VERSION) {
-				pr_info("unsupported journal version");
+			got = j->version;
+			expect = BCACHE_JSET_VERSION;
+			if (got != expect) {
+				__bch_cache_error(ca,
+					"bad version (got %llu expect %llu) while reading journal from offset %zu",
+					got, expect, bucket + offset);
 				goto err;
 			}
 
 			if (bytes > left << 9 ||
 			    bytes > PAGE_SIZE << JSET_BITS) {
-				pr_info("%u: too big, %zu bytes, offset %u",
-					bucket_index, bytes, offset);
+				__bch_cache_error(ca,
+					"too big (%zu bytes) while reading journal from offset %zu",
+					bytes, bucket + offset);
 				goto err;
 			}
 
 			if (bytes > len << 9)
 				goto reread;
 
-			if (j->csum != csum_set(j, JSET_CSUM_TYPE(j))) {
-				pr_info("%u: bad csum, %zu bytes, offset %u",
-					bucket_index, bytes, offset);
+			got = j->csum;
+			expect = csum_set(j, JSET_CSUM_TYPE(j));
+			if (got != expect) {
+				__bch_cache_error(ca,
+					"bad checksum (got %llu expect %llu) while reading journal from offset %zu",
+					got, expect, bucket + offset);
 				goto err;
 			}
 
@@ -729,7 +742,11 @@ static void journal_write_endio(struct bio *bio)
 	struct cache *ca = container_of(bio, struct cache, journal.bio);
 	struct journal_write *w = bio->bi_private;
 
-	cache_set_err_on(bio->bi_error, w->c, "journal io error");
+	if (bio->bi_error)
+		bch_cache_error(ca,
+				"IO error %d writing journal at offset %zu",
+				bio->bi_error, ca->journal.offset);
+
 	closure_put(&w->c->journal.io);
 	percpu_ref_put(&ca->ref);
 }
@@ -815,13 +832,14 @@ static void journal_write_locked(struct closure *cl)
 
 		atomic_long_add(sectors, &ca->meta_sectors_written);
 
-		bio_reset(bio);
-		bio->bi_iter.bi_sector	= PTR_OFFSET(k, i);
-		bio->bi_bdev	= ca->bdev;
-		bio->bi_iter.bi_size = sectors << 9;
+		ca->journal.offset = PTR_OFFSET(k, i);
 
-		bio->bi_end_io	= journal_write_endio;
-		bio->bi_private = w;
+		bio_reset(bio);
+		bio->bi_iter.bi_sector	= ca->journal.offset;
+		bio->bi_bdev		= ca->bdev;
+		bio->bi_iter.bi_size	= sectors << 9;
+		bio->bi_end_io		= journal_write_endio;
+		bio->bi_private		= w;
 		bio_set_op_attrs(bio, REQ_OP_WRITE,
 				 REQ_SYNC|REQ_META|REQ_PREFLUSH|REQ_FUA);
 		bch_bio_map(bio, w->data);
@@ -829,7 +847,7 @@ static void journal_write_locked(struct closure *cl)
 		trace_bcache_journal_write(bio);
 		bio_list_add(&list, bio);
 
-		SET_PTR_OFFSET(k, i, PTR_OFFSET(k, i) + sectors);
+		SET_PTR_OFFSET(k, i, ca->journal.offset + sectors);
 
 		ca->journal.seq[ca->journal.cur_idx] = w->data->seq;
 	}

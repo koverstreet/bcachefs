@@ -59,9 +59,6 @@ static inline struct cache *bch_get_next_cache(struct cache_set *c,
 	     (ca = bch_get_next_cache(c, &(iter)));			\
 	     percpu_ref_put(&ca->ref), (iter)++)
 
-__printf(2, 3)
-bool bch_cache_set_error(struct cache_set *, const char *, ...);
-
 u64 bch_checksum_update(unsigned, u64, const void *, size_t);
 u64 bch_checksum(unsigned, const void *, size_t);
 
@@ -111,6 +108,8 @@ void __write_super(struct cache_set *, struct bcache_superblock *,
 
 const char *validate_super(struct bcache_superblock *, struct block_device *,
 			   struct cache_sb *);
+
+void bch_cache_set_fail(struct cache_set *);
 
 void bch_cache_set_release(struct kobject *);
 void bch_cache_release(struct kobject *);

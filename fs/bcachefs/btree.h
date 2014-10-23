@@ -249,7 +249,7 @@ static inline void bch_btree_op_init(struct btree_op *op, enum btree_id id,
 
 #define btree_node_root(b)	((b)->c->btree_roots[(b)->btree_id])
 
-void bch_btree_node_read_done(struct btree *);
+void bch_btree_node_read_done(struct btree *, struct cache *, unsigned);
 void bch_btree_flush(struct cache_set *);
 void bch_btree_write_oldest(struct cache_set *);
 

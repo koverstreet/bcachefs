@@ -232,15 +232,16 @@ static u64 btree_csum_set(struct btree *b, struct bset *i)
 	return crc ^ 0xffffffffffffffffULL;
 }
 
-#define btree_node_error(b, msg, ...)					\
-	bch_cache_set_error((b)->c,					\
-		"btree node error at btree %u level %u/%u bucket %zu block %u keys %u: " msg,\
-		(b)->btree_id, b->level, btree_node_root(b)		\
-			    ? btree_node_root(b)->level : -1,		\
-		PTR_BUCKET_NR(b->c, &b->key, 0), bset_block_offset(b, i),\
+#define btree_node_error(b, ca, ptr, fmt, ...)			\
+	bch_cache_error(ca,					\
+		"btree node error at btree %u level %u/%u bucket %zu block %u keys %u: " fmt,\
+		(b)->btree_id, (b)->level, btree_node_root(b)	\
+			    ? btree_node_root(b)->level : -1,	\
+		PTR_BUCKET_NR((b)->c, &(b)->key, ptr),		\
+		bset_block_offset(b, i),			\
 		i->keys, ##__VA_ARGS__)
 
-void bch_btree_node_read_done(struct btree *b)
+void bch_btree_node_read_done(struct btree *b, struct cache *ca, unsigned ptr)
 {
 	const char *err = "bad btree header";
 	struct bset *i = btree_bset_first(b);
@@ -285,12 +286,12 @@ void bch_btree_node_read_done(struct btree *b)
 			goto err;
 
 		if (i != b->keys.set[0].data && !i->keys)
-			btree_node_error(b, "empty set");
+			btree_node_error(b, ca, ptr, "empty set");
 
 		for (k = i->start;
 		     k != bset_bkey_last(i);) {
 			if (!KEY_U64s(k)) {
-				btree_node_error(b,
+				btree_node_error(b, ca, ptr,
 					"KEY_U64s 0: %zu bytes of metadata lost",
 					(void *) bset_bkey_last(i) -
 					(void *) k);
@@ -300,7 +301,7 @@ void bch_btree_node_read_done(struct btree *b)
 			}
 
 			if (bkey_next(k) > bset_bkey_last(i)) {
-				btree_node_error(b,
+				btree_node_error(b, ca, ptr,
 					"key extends past end of bset");
 
 				i->keys = (u64 *) k - i->d;
@@ -311,7 +312,8 @@ void bch_btree_node_read_done(struct btree *b)
 				char buf[80];
 
 				bch_bkey_to_text(&b->keys, buf, sizeof(buf), k);
-				btree_node_error(b, "invalid bkey %s", buf);
+				btree_node_error(b, ca, ptr,
+						 "invalid bkey %s", buf);
 
 				i->keys -= KEY_U64s(k);
 				memmove(k, bkey_next(k),
@@ -346,10 +348,7 @@ out:
 	return;
 err:
 	set_btree_node_io_error(b);
-	btree_node_error(b, "%s at bucket %zu level %u/%u block %u keys %u",
-			 err, PTR_BUCKET_NR(b->c, &b->key, 0),
-			 b->level, btree_node_root(b)->level,
-			 bset_block_offset(b, i), i->keys);
+	btree_node_error(b, ca, ptr, "%s", err);
 	goto out;
 }
 
@@ -373,7 +372,7 @@ static void bch_btree_node_read(struct btree *b)
 	ca = bch_btree_pick_ptr(b->c, &b->key, &ptr);
 	if (!ca) {
 		set_btree_node_io_error(b);
-		goto err;
+		goto missing;
 	}
 
 	bio = to_bbio(bch_bbio_alloc(b->c));
@@ -397,13 +396,18 @@ static void bch_btree_node_read(struct btree *b)
 	if (btree_node_io_error(b))
 		goto err;
 
-	bch_btree_node_read_done(b);
+	bch_btree_node_read_done(b, ca, ptr);
 	bch_time_stats_update(&b->c->btree_read_time, start_time);
 
 	return;
+
+missing:
+	bch_cache_set_error(b->c, "no cache device for btree node");
+	return;
+
 err:
-	bch_cache_set_error(b->c, "io error reading bucket %zu",
-			    PTR_BUCKET_NR(b->c, &b->key, 0));
+	bch_cache_error(ca, "IO error reading bucket %zu",
+			PTR_BUCKET_NR(b->c, &b->key, ptr));
 }
 
 static void btree_complete_write(struct btree *b, struct btree_write *w)
@@ -1376,7 +1380,7 @@ retry:
 		goto err;
 
 	if (!b) {
-		cache_bug(c,
+		cache_set_bug(c,
 			"Tried to allocate bucket that was in btree cache");
 		goto retry;
 	}
