@@ -2335,6 +2335,10 @@ static void verify_keys_sorted(struct keylist *l)
  *
  * If keys couldn't be inserted because @b was full, the caller must split @b
  * and bch_btree_insert_keys() will be called again from btree_split().
+ *
+ * Caller must either be holding an intent lock on this node only, or intent
+ * locks on all nodes all the way up to the root. Caller must not be holding
+ * read locks on any nodes.
  */
 static enum btree_insert_status
 bch_btree_insert_keys(struct btree *b, struct btree_op *op,
@@ -2657,19 +2661,39 @@ static int __bch_btree_insert_node(struct btree *b, struct btree_op *op,
 				   struct keylist *split_keys,
 				   struct closure *stack_cl)
 {
+	struct btree *p;
+	int level;
+
 	if (btree_lock_upgrade(b, op))
 		return -EINTR;
 
 	BUG_ON(b->level && replace_key);
 	BUG_ON(!b->written);
 
+	/*
+	 * Release any read locks we are holding on parent nodes, so that if
+	 * we block in bch_journal_res_get(), other threads who are holding
+	 * intent locks can take a write lock on the root if there is a new
+	 * root
+	 */
+	for (p = b->parent, level = b->level + 1;
+	     p;
+	     p = p->parent, level++) {
+		if (!__test_and_clear_bit(level, (void *) &op->locks_read))
+			break;
+		six_unlock_read(&p->lock);
+	}
+
 	if (bch_btree_insert_keys(b, op, insert_keys, replace_key,
 				  flush_cl) == BTREE_INSERT_NEED_SPLIT) {
-		struct btree *p;
-
-		for (p = b; p->parent; p = p->parent)
-			if (!btree_node_locked(op, p->level + 1) ||
-			    btree_lock_upgrade(p->parent, op)) {
+		/*
+		 * Check if we have intent locks on all parent nodes, if not
+		 * try again
+		 */
+		for (p = b->parent, level = b->level + 1;
+		     p;
+		     p = p->parent, level++)
+			if (!test_bit(level, (void *) &op->locks_intent)) {
 				op->locks_want = btree_node_root(b)->level + 1;
 				return -EINTR;
 			}
