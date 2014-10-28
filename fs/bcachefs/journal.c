@@ -614,7 +614,7 @@ static size_t journal_write_u64s_remaining(struct cache_set *c,
 					   struct journal_write *w)
 {
 	ssize_t u64s = (min_t(size_t,
-			     c->journal.blocks_free * block_bytes(c),
+			     c->journal.sectors_free * block_bytes(c),
 			     PAGE_SIZE << JSET_BITS) -
 			set_bytes(w->data)) / sizeof(u64);
 
@@ -632,7 +632,7 @@ static void journal_reclaim(struct cache_set *c)
 	struct bkey *k = &c->journal.key;
 	struct cache *ca;
 	uint64_t last_seq;
-	unsigned i, iter;
+	unsigned iter, i;
 	atomic_t p;
 
 	pr_debug("started");
@@ -671,10 +671,10 @@ static void journal_reclaim(struct cache_set *c)
 		 * journal write
 		 */
 
-		c->journal.blocks_free = 0;
+		c->journal.sectors_free = 0;
 	}
 
-	if (c->journal.blocks_free) {
+	if (c->journal.sectors_free) {
 		/*
 		 * Check that the devices we are writing the journal
 		 * to are still writable, and if not, pick new
@@ -695,12 +695,38 @@ pick_new_devices:
 	 * XXX: sort caches by free journal space
 	 */
 
-	bkey_init(k);
+
+	i = 0;
+	while (i < bch_extent_ptrs(k)) {
+		/*
+		 * Don't wipe all ptrs, delete the ptr if the bucket is full
+		 * then add back ptrs until we have the correct amount of
+		 * replicas
+		 */
+		ca = PTR_CACHE(c, k, i);
+
+		if (!ca->journal.sectors_free)
+			bch_extent_drop_ptr(k, i);
+		else
+			i++;
+	}
 
 	for_each_cache_rcu(ca, c, iter) {
 		struct journal_device *ja = &ca->journal;
 		unsigned next = (ja->cur_idx + 1) %
 			bch_nr_journal_buckets(&ca->sb);
+		int same_cache = 0;
+
+		/* Check that we don't already have a ptr to this cache */
+		for (i = 0; i < bch_extent_ptrs(k); i++) {
+			if (PTR_CACHE(c, k, i) == ca) {
+				same_cache = 1;
+				break;
+			}
+		}
+
+		if (same_cache)
+			continue;
 
 		if ((CACHE_TIER(&ca->mi) != 0)
 		    || (CACHE_STATE(&ca->mi) != CACHE_ACTIVE))
@@ -711,6 +737,9 @@ pick_new_devices:
 			continue;
 
 		BUG_ON(bch_extent_ptrs(k) >= BKEY_EXTENT_PTRS_MAX);
+
+		ja->sectors_free = CACHE_BTREE_NODE_SIZE(&ca->sb) >>
+			c->block_bits;
 
 		ja->cur_idx = next;
 		k->val[bch_extent_ptrs(k)] =
@@ -724,8 +753,13 @@ pick_new_devices:
 			break;
 	}
 
-	if (bch_extent_ptrs(k))
-		c->journal.blocks_free = c->sb.bucket_size >> c->block_bits;
+	for (i = 0; i < bch_extent_ptrs(k); i++) {
+		ca = PTR_CACHE(c, k, i);
+		if (!c->journal.sectors_free ||
+			(c->journal.sectors_free > ca->journal.sectors_free))
+			c->journal.sectors_free = ca->journal.sectors_free;
+	}
+
 out:
 	rcu_read_unlock();
 
@@ -825,8 +859,8 @@ static void journal_write_locked(struct closure *cl)
 
 	bch_journal_add_prios(c, w->data);
 
-	BUG_ON(c->journal.blocks_free < set_blocks(w->data, block_bytes(c)));
-	c->journal.blocks_free -= set_blocks(w->data, block_bytes(c));
+	BUG_ON(c->journal.sectors_free < set_blocks(w->data, block_bytes(c)));
+	c->journal.sectors_free -= set_blocks(w->data, block_bytes(c));
 
 	w->data->read_clock	= c->prio_clock[READ].hand;
 	w->data->write_clock	= c->prio_clock[WRITE].hand;
@@ -851,6 +885,8 @@ static void journal_write_locked(struct closure *cl)
 			pr_err("missing journal write\n");
 			continue;
 		}
+
+		ca->journal.sectors_free -= set_blocks(w->data, block_bytes(c));
 
 		bio = &ca->journal.bio;
 
@@ -1005,7 +1041,7 @@ static bool __journal_res_get(struct cache_set *c, struct journal_res *res,
 			if (!c->journal.cur->data->keys) {
 				BUG_ON(test_bit(JOURNAL_DIRTY,
 						&c->journal.flags));
-				c->journal.blocks_free = 0;
+				c->journal.sectors_free = 0;
 				c->journal.u64s_remaining = 0;
 				continue;
 			}
@@ -1128,6 +1164,8 @@ int bch_journal_alloc(struct cache_set *c)
 	INIT_DELAYED_WORK(&j->work, journal_write_work);
 
 	c->journal.delay_ms = 10;
+
+	bkey_init(&j->key);
 
 	j->w[0].c = c;
 	j->w[1].c = c;
