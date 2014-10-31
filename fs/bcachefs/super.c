@@ -289,10 +289,16 @@ static int __bch_super_realloc(struct bcache_superblock *sb, unsigned order)
 
 int bch_super_realloc(struct cache *ca, unsigned keys)
 {
+	char buf[BDEVNAME_SIZE];
 	size_t bytes = __set_bytes((struct cache_sb *) NULL, keys);
+	size_t want = bytes + (SB_SECTOR << 9);
 
-	if (bytes + (SB_SECTOR << 9) > ca->sb.first_bucket * bucket_bytes(ca))
+	if (want > ca->sb.first_bucket * bucket_bytes(ca)) {
+		pr_err("%s: superblock too big: want %zu but have %u",
+		       bdevname(ca->bdev, buf), want,
+		       ca->sb.first_bucket * bucket_bytes(ca));
 		return -ENOSPC;
+	}
 
 	return __bch_super_realloc(&ca->disk_sb, get_order(bytes));
 }
