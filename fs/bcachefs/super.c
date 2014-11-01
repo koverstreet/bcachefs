@@ -1052,16 +1052,33 @@ err:
 	return err;
 }
 
-static const char *can_attach_cache(struct cache *ca, struct cache_set *c)
+static const char *can_add_cache(struct cache *ca, struct cache_set *c)
 {
-	struct cache_member_rcu *mi;
-	bool match;
-
 	if (ca->sb.block_size	!= c->sb.block_size ||
 	    ca->sb.bucket_size	!= c->sb.bucket_size ||
 	    ca->sb.nr_in_set	!= c->sb.nr_in_set)
 		return "cache sb does not match set";
 
+	if (c->cache[ca->sb.nr_this_dev])
+		return "duplicate cache set member";
+
+	return NULL;
+}
+
+static const char *can_attach_cache(struct cache *ca, struct cache_set *c)
+{
+	const char *err;
+	struct cache_member_rcu *mi;
+	bool match;
+
+	err = can_add_cache(ca, c);
+	if (err)
+		return err;
+
+	/*
+	 * When attaching an existing device, the cache set superblock must
+	 * already contain member_info with a matching UUID
+	 */
 	mi = cache_member_info_get(c);
 
 	match = !(ca->sb.seq <= c->sb.seq &&
@@ -1074,9 +1091,6 @@ static const char *can_attach_cache(struct cache *ca, struct cache_set *c)
 
 	if (!match)
 		return "cache sb does not match set";
-
-	if (c->cache[ca->sb.nr_this_dev])
-		return "duplicate cache set member";
 
 	return NULL;
 }
@@ -1546,7 +1560,7 @@ have_slot:
 	if (bch_cache_journal_alloc(ca))
 		goto err_put;
 
-	err = can_attach_cache(ca, c);
+	err = can_add_cache(ca, c);
 	if (err)
 		goto err_put;
 
