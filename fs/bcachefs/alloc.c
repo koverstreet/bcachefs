@@ -418,13 +418,13 @@ static int wait_buckets_available(struct cache *ca)
 
 	while (1) {
 		set_current_state(TASK_INTERRUPTIBLE);
-		if (kthread_should_stop() ||
-		    test_bit(CACHE_SET_GC_FAILURE, &ca->set->flags)) {
+		if (kthread_should_stop()) {
 			ret = -1;
 			break;
 		}
 
-		if (buckets_available_cache(ca) >= fifo_free(&ca->free_inc))
+		if (!test_bit(CACHE_SET_GC_FAILURE, &ca->set->flags) &&
+		    buckets_available_cache(ca) >= fifo_free(&ca->free_inc))
 			break;
 
 		up_read(&ca->set->gc_lock);

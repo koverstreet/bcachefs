@@ -2051,11 +2051,14 @@ static void bch_btree_gc_finish(struct cache_set *c)
  * contain too many bsets are merged up and re-written, and adjacent nodes
  * with low occupancy are coalesced together.
  */
-static int bch_btree_gc(struct cache_set *c)
+static void bch_btree_gc(struct cache_set *c)
 {
 	struct gc_stat stats;
 	struct btree_op op;
 	uint64_t start_time = local_clock();
+
+	if (test_bit(CACHE_SET_GC_FAILURE, &c->flags))
+		return;
 
 	trace_bcache_gc_start(c);
 
@@ -2103,12 +2106,11 @@ static int bch_btree_gc(struct cache_set *c)
 	memcpy(&c->gc_stats, &stats, sizeof(struct gc_stat));
 
 	trace_bcache_gc_end(c);
-	return 0;
+	return;
 
 gc_failed:
 	set_bit(CACHE_SET_GC_FAILURE, &c->flags);
 	up_write(&c->gc_lock);
-	return -1;
 }
 
 static int bch_gc_thread(void *arg)
@@ -2116,8 +2118,7 @@ static int bch_gc_thread(void *arg)
 	struct cache_set *c = arg;
 
 	while (1) {
-		if (bch_btree_gc(c))
-			break;
+		bch_btree_gc(c);
 
 		/* Set task to interruptible first so that if someone wakes us
 		 * up while we're finishing up, we will start another GC pass
