@@ -12,6 +12,7 @@
 #include "extents.h"
 #include "io.h"
 #include "keybuf.h"
+#include "keylist.h"
 #include "writeback.h"
 
 #include <linux/delay.h>
@@ -444,6 +445,7 @@ static void bch_writeback(struct cached_dev *dc)
 			SET_BDEV_STATE(&dc->sb, BDEV_STATE_CLEAN);
 			bch_write_bdev_super(dc, NULL);
 		}
+
 refill_done:
 		up_write(&dc->writeback_lock);
 

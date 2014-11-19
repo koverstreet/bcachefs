@@ -708,4 +708,6 @@ static inline s64 timekeeping_clocktai_ns(void)
 
 size_t bch_rand_range(size_t);
 
+void bch_semaphore_resize(struct semaphore *sem, int delta);
+
 #endif /* _BCACHE_UTIL_H */

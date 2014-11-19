@@ -204,11 +204,13 @@
 #define bch_meta_write_fault(name)					\
 	 dynamic_fault("bcache:meta:write:" name)
 
+#define BTREE_SCAN_BATCH	500
+
 #include "alloc_types.h"
 #include "blockdev_types.h"
 #include "buckets_types.h"
 #include "journal_types.h"
-#include "keybuf_types.h"
+#include "keylist_types.h"
 #include "stats_types.h"
 #include "super_types.h"
 
@@ -294,7 +296,8 @@ struct cache {
 	/* Moving GC: */
 	struct task_struct	*moving_gc_read;
 	struct workqueue_struct	*moving_gc_write;
-	struct keybuf		moving_gc_keys;
+	struct semaphore	moving_gc_in_flight;
+	struct scan_keylist	moving_gc_keys;
 	struct bch_pd_controller moving_gc_pd;
 
 	/*
@@ -529,7 +532,8 @@ struct cache_set {
 	struct task_struct	*tiering_read;
 	struct workqueue_struct	*tiering_write;
 
-	struct keybuf		tiering_keys;
+	struct semaphore	tiering_in_flight;
+	struct scan_keylist	tiering_keys;
 	struct bch_pd_controller tiering_pd;
 
 	/* DEBUG JUNK */

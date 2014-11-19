@@ -27,6 +27,7 @@
 #include "debug.h"
 #include "extents.h"
 #include "io.h"
+#include "keylist.h"
 #include "journal.h"
 #include "movinggc.h"
 #include "super.h"
@@ -1977,13 +1978,25 @@ static void bch_btree_gc_finish(struct cache_set *c)
 	unsigned i;
 
 	bch_mark_writeback_keys(c);
+#if 0
+	/*
+	 * Not necessary for tiering keys as there is never an overwrite
+	 * of the storage.
+	 */
 	bch_mark_keybuf_keys(c, &c->tiering_keys);
+#endif
 
 	for_each_cache(ca, c, i) {
 		unsigned j;
 		uint64_t *i;
 
+#if 0
+		/*
+		 * Not necessary for moving gc keys as there is never an
+		 * overwrite of the storage.
+		 */
 		bch_mark_keybuf_keys(c, &ca->moving_gc_keys);
+#endif
 
 		for (j = 0; j < bch_nr_journal_buckets(&ca->sb); j++)
 			bch_mark_metadata_bucket(ca,

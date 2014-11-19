@@ -1,0 +1,67 @@
+#ifndef _BCACHE_KEYLIST_TYPES_H
+#define _BCACHE_KEYLIST_TYPES_H
+
+/* keylists can be used as a stack, using push and pop,
+   or as a queue, using push and pop_front.
+*/
+
+struct keylist {
+	/* This is a pointer to the LSB (inline_keys until realloc'd) */
+	union {
+		struct bkey		*start_keys;
+		u64			*start_keys_p;
+	};
+	/* This is a pointer to the next to enqueue (push) */
+	union {
+		struct bkey		*top;
+		u64			*top_p;
+	};
+	/* This is a pointer to the next to dequeue (pop_front) */
+	union {
+		struct bkey		*bot;
+		u64			*bot_p;
+	};
+	/* This is a pointer to beyond the MSB */
+	union {
+		struct bkey		*end_keys;
+		u64			*end_keys_p;
+	};
+	/* Enough room for btree_split's keys without realloc */
+#define KEYLIST_INLINE		roundup_pow_of_two(BKEY_EXTENT_MAX_U64s * 2)
+	/* Prevent key lists from growing too big */
+	/*
+	 * This should always be big enough to allow btree_gc_coalesce and
+	 * btree_split to complete.
+	 * The current value is the (current) size of a bucket, so it
+	 * is far more than enough, as those two operations require only
+	 * a handful of keys.
+	 */
+#define KEYLIST_MAX		(1 << 18)
+	u64			inline_keys[KEYLIST_INLINE];
+};
+
+/*
+ * scan_keylists are conceptually similar to keybufs, but they don't
+ * have an internal RB tree.
+ * keybufs should be used when read or write operations need to
+ * examine keys in flight, as for writeback.
+ * But for moving operations (moving gc, tiering, moving data off
+ * devices), read and writes don't need to look at all, so we don't
+ * need the RB tree and use scan_keylists instead.
+ *
+ * Note that unlike keybufs, they don't contain a semaphore to limit
+ * bios.  That must be done externally, if necessary.
+ */
+
+#define DFLT_SCAN_KEYLIST_MAX_SIZE	(1 << 14)
+
+struct scan_keylist {
+	spinlock_t		lock;
+	struct bkey		last_scanned;
+	unsigned		max_size;
+	struct keylist		list;
+};
+
+typedef bool (scan_keylist_pred_fn)(struct scan_keylist *, struct bkey *);
+
+#endif /* _BCACHE_KEYLIST_TYPES_H */

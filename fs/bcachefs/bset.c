@@ -172,68 +172,6 @@ static inline void bch_btree_iter_next_check(struct btree_iter *iter) {}
 
 #endif
 
-/* Keylists */
-
-int bch_keylist_realloc(struct keylist *l, unsigned u64s)
-{
-	size_t oldsize = bch_keylist_size(l);
-	size_t offset = bch_keylist_offset(l);
-	size_t newsize = oldsize + u64s;
-	u64 *old_keys = l->start_keys_p;
-	u64 *new_keys;
-
-	if (old_keys == l->inline_keys)
-		old_keys = NULL;
-
-	/*
-	 * The idea here is that the allocated size is always a power of two:
-	 * thus, we know we need to reallocate if current_space_used and
-	 * current_space_used + new_space spans a power of two
-	 */
-	newsize = roundup_pow_of_two(newsize);
-
-	if (newsize <= KEYLIST_INLINE ||
-	    roundup_pow_of_two(oldsize) == newsize)
-		return 0;
-
-	/* We simulate being out of memory -- the code using the key list
-	   has to handle that case. */
-	if (newsize > KEYLIST_MAX)
-		return -ENOMEM;
-
-	new_keys = krealloc(old_keys, sizeof(u64) * newsize, GFP_NOIO);
-
-	if (!new_keys)
-		return -ENOMEM;
-
-	if (!old_keys)
-		memcpy(new_keys, l->inline_keys, sizeof(u64) * oldsize);
-
-	l->start_keys_p = new_keys;
-	l->top_p = new_keys + oldsize;
-	l->bot_p = new_keys + offset;
-	l->end_keys_p = new_keys + newsize;
-
-	return 0;
-}
-
-void bch_keylist_add_in_order(struct keylist *l, struct bkey *insert)
-{
-	struct bkey *where = l->bot;
-
-	while (where != l->top &&
-	       bkey_cmp(insert, where) >= 0)
-		where = bkey_next(where);
-
-	memmove((u64 *) where + KEY_U64s(insert),
-		where,
-		((void *) l->top) - ((void *) where));
-
-	l->top_p += KEY_U64s(insert);
-	BUG_ON(l->top_p > l->end_keys_p);
-	bkey_copy(where, insert);
-}
-
 /* Auxiliary search trees */
 
 /* 32 bits total: */

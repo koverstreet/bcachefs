@@ -4,9 +4,9 @@
 #include "buckets.h"
 #include "extents.h"
 #include "io.h"
-#include "keybuf.h"
 #include "move.h"
 #include "super.h"
+#include "keylist.h"
 
 #include <trace/events/bcachefs.h>
 
@@ -43,8 +43,8 @@ static void moving_init(struct moving_io *io)
 	bio_get(bio);
 	bio_set_prio(bio, IOPRIO_PRIO_VALUE(IOPRIO_CLASS_IDLE, 0));
 
-	bio->bi_iter.bi_size	= KEY_SIZE(&io->w->key) << 9;
-	bio->bi_max_vecs	= DIV_ROUND_UP(KEY_SIZE(&io->w->key),
+	bio->bi_iter.bi_size	= KEY_SIZE(&io->key) << 9;
+	bio->bi_max_vecs	= DIV_ROUND_UP(KEY_SIZE(&io->key),
 					       PAGE_SECTORS);
 	bio->bi_private		= &io->cl;
 	bio->bi_io_vec		= bio->bi_inline_vecs;
@@ -52,7 +52,7 @@ static void moving_init(struct moving_io *io)
 
 	if (io->stats) {
 		io->stats->keys_moved++;
-		io->stats->sectors_moved += KEY_SIZE(&io->w->key);
+		io->stats->sectors_moved += KEY_SIZE(&io->key);
 	}
 }
 
@@ -67,9 +67,9 @@ static void moving_io_destructor(struct closure *cl)
 			__free_page(bv->bv_page);
 
 	if (io->op.replace_collision)
-		trace_bcache_copy_collision(&io->w->key);
+		trace_bcache_copy_collision(&io->key);
 
-	bch_keybuf_put(io->keybuf, io->w);
+	up(io->in_flight);
 	kfree(io);
 }
 
@@ -93,7 +93,7 @@ static void write_moving(struct closure *cl)
 	else {
 		moving_init(io);
 
-		op->bio->bi_iter.bi_sector = KEY_START(&io->w->key);
+		op->bio->bi_iter.bi_sector = KEY_START(&io->key);
 
 		closure_call(&op->cl, bch_write, NULL, cl);
 		closure_return_with_destructor(cl, moving_io_after_write);
@@ -122,8 +122,10 @@ void bch_data_move(struct closure *cl)
 	struct cache *ca;
 	int ptr;
 
+	down(io->in_flight);
+
 	/* bail out if all pointers are stale */
-	ca = bch_extent_pick_ptr(io->op.c, &io->w->key, &ptr);
+	ca = bch_extent_pick_ptr(io->op.c, &io->key, &ptr);
 	if (!ca)
 		closure_return_with_destructor(cl, moving_io_destructor);
 
@@ -139,20 +141,21 @@ void bch_data_move(struct closure *cl)
 	bio_set_op_attrs(&io->bio.bio, REQ_OP_READ, 0);
 	io->bio.bio.bi_end_io	= read_moving_endio;
 
-	bch_submit_bbio(&io->bio, ca, &io->w->key, ptr, false);
+	bch_submit_bbio(&io->bio, ca, &io->key, ptr, false);
 
 	continue_at(cl, write_moving, io->op.io_wq);
 }
 
 struct move_data_off_device_op {
-	unsigned	dev;
-	struct keybuf	keys;
+	unsigned		dev;
+	struct semaphore	in_flight;
+	struct scan_keylist	keys;
 };
 
-static bool migrate_data_pred(struct keybuf *buf, struct bkey *k)
+static bool migrate_data_pred(struct scan_keylist *kl, struct bkey *k)
 {
 	struct move_data_off_device_op *op =
-		container_of(buf, struct move_data_off_device_op, keys);
+		container_of(kl, struct move_data_off_device_op, keys);
 	unsigned i;
 
 	for (i = 0; i < bch_extent_ptrs(k); i++)
@@ -163,11 +166,12 @@ static bool migrate_data_pred(struct keybuf *buf, struct bkey *k)
 }
 
 #define MAX_DATA_OFF_ITER	10
+#define MAX_MOVE_IN_FLIGHT	200
+#define DFLT_MOVE_KEYS_MAX_SIZE	DFLT_SCAN_KEYLIST_MAX_SIZE
 
 int bch_move_data_off_device(struct cache *ca)
 {
 	struct cache_set *c = ca->set;
-	struct keybuf_key *w;
 	struct moving_io *io;
 	struct moving_io_stats stats;
 	struct moving_ctxt ctxt;
@@ -185,10 +189,11 @@ int bch_move_data_off_device(struct cache *ca)
 		return -ENOMEM;
 
 	op->dev = ca->sb.nr_this_dev;
-	bch_keybuf_init(&op->keys);
+	sema_init(&op->in_flight, MAX_MOVE_IN_FLIGHT);
+	bch_scan_keylist_init(&op->keys, DFLT_MOVE_KEYS_MAX_SIZE);
 	memset(&stats, 0, sizeof(stats));
-
 	memset(&ctxt, 0, sizeof(ctxt));
+
 	closure_init_stack(&ctxt.cl);
 
 	/*
@@ -197,6 +202,12 @@ int bch_move_data_off_device(struct cache *ca)
 	 *
 	 * The only reason we may iterate is if one of the moves fails
 	 * due to an error, which we can find out from the moving_ctxt.
+	 *
+	 * Currently it can also fail to move some extent because it's key
+	 * changes in between so that bkey_cmpxchg fails. The reason for
+	 * this is that the extent is cached or un-cached, changing the
+	 * device pointers.  This will be remedied soon by improving
+	 * bkey_cmpxchg to recognize this case.
 	 */
 
 	seen_key_count = 1;
@@ -212,8 +223,9 @@ int bch_move_data_off_device(struct cache *ca)
 		atomic_set(&ctxt.error_flags, 0);
 		op->keys.last_scanned = ZERO_KEY;
 
-		while ((w = bch_keybuf_next_rescan(c, &op->keys, &MAX_KEY,
-						   migrate_data_pred))) {
+		while ((k = bch_scan_keylist_next_rescan(c, &op->keys, &MAX_KEY,
+							 migrate_data_pred))) {
+			bool found;
 			struct cache_member *mi = &ca->mi;
 
 			seen_key_count += 1;
@@ -224,28 +236,36 @@ int bch_move_data_off_device(struct cache *ca)
 				goto out;
 			}
 
-			io = moving_io_alloc(w);
+			io = moving_io_alloc(k);
 			if (!io) {
 				ret = -ENOMEM;
 				goto out;
 			}
 
-			io->support_moving_error = true;
-			io->keybuf = &op->keys;
 			io->stats = &stats;
+			io->in_flight = &op->in_flight;
+			io->support_moving_error = true;
+
+			/* This also copies k into the write op */
 
 			bch_write_op_init(&io->op, c, &io->bio.bio,
 					  &c->migration_write_point,
 					  true, false, true,
-					  &io->w->key, &io->w->key);
+					  k, k);
 			io->op.io_wq	= c->tiering_write; /* XXX */
+
+			bch_scan_keylist_advance(&op->keys);
 
 			k = &io->op.insert_key;
 
+			found = false;
 			for (i = 0; i < bch_extent_ptrs(k); i++)
-				if (PTR_DEV(k, i) == ca->sb.nr_this_dev)
+				if (PTR_DEV(k, i) == op->dev) {
 					bch_extent_drop_ptr(k, i--);
+					found = true;
+				}
 
+			BUG_ON(!found);
 			closure_call(&io->cl, bch_data_move, NULL, &ctxt.cl);
 		}
 
@@ -265,6 +285,8 @@ int bch_move_data_off_device(struct cache *ca)
 				  last_error_count, last_error_flags);
 		}
 	}
+
+	bch_scan_keylist_destroy(&op->keys);
 	kfree(op);
 
 	if ((seen_key_count != 0) || (atomic_read(&ctxt.error_count) != 0)) {
@@ -277,6 +299,7 @@ int bch_move_data_off_device(struct cache *ca)
 
 out:
 	closure_sync(&ctxt.cl);
+	bch_scan_keylist_destroy(&op->keys);
 	kfree(op);
 	return ret;
 }

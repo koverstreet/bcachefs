@@ -220,7 +220,7 @@ struct keybuf_key *bch_keybuf_next_rescan(struct cache_set *c,
 
 void bch_keybuf_init(struct keybuf *buf)
 {
-	sema_init(&buf->in_flight, KEYBUF_NR / 2);
+	sema_init(&buf->in_flight, BTREE_SCAN_BATCH / 2);
 
 	buf->last_scanned	= MAX_KEY;
 	buf->keys		= RB_ROOT;

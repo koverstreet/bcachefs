@@ -510,3 +510,18 @@ size_t bch_rand_range(size_t max)
 
 	return rand;
 }
+
+void bch_semaphore_resize(struct semaphore *sem, int delta)
+{
+	while (delta > 0) {
+		/* This should not block */
+		up(sem);
+		delta -= 1;
+	}
+
+	while (delta < 0) {
+		/* This can block */
+		down(sem);
+		delta += 1;
+	}
+}

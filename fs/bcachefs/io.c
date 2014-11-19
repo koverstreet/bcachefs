@@ -13,7 +13,7 @@
 #include "debug.h"
 #include "extents.h"
 #include "io.h"
-#include "keybuf.h"
+#include "keylist.h"
 #include "stats.h"
 #include "super.h"
 
@@ -606,23 +606,6 @@ void bch_write(struct closure *cl)
 
 	if (!op->discard)
 		bch_increment_clock(c, bio_sectors(op->bio), WRITE);
-
-	if (!op->replace) {
-		/* XXX: discards may be for more sectors than max key size */
-
-		struct bkey start = KEY(inode, op->bio->bi_iter.bi_sector, 0);
-		struct bkey end = KEY(inode, bio_end_sector(op->bio), 0);
-
-		unsigned i;
-		struct cache *ca;
-
-		for_each_cache(ca, c, i)
-			bch_keybuf_check_overlapping(&ca->moving_gc_keys,
-						     &start, &end);
-
-		bch_keybuf_check_overlapping(&c->tiering_keys,
-					     &start, &end);
-	}
 
 	if (op->wp->ca)
 		bch_mark_gc_write(c, bio_sectors(op->bio));

@@ -18,6 +18,7 @@
 #include "movinggc.h"
 #include "stats.h"
 #include "super.h"
+#include "keylist.h"
 
 #include <linux/blkdev.h>
 #include <linux/crc32c.h>
@@ -671,6 +672,8 @@ static void cache_set_free(struct closure *cl)
 	list_del(&c->list);
 	mutex_unlock(&bch_register_lock);
 
+	bch_scan_keylist_destroy(&c->tiering_keys);
+
 	pr_info("Cache set %pU unregistered", c->sb.set_uuid.b);
 
 	closure_debug_destroy(&c->cl);
@@ -1255,6 +1258,8 @@ void bch_cache_release(struct kobject *kobj)
 {
 	struct cache *ca = container_of(kobj, struct cache, kobj);
 	unsigned i;
+
+	bch_scan_keylist_destroy(&ca->moving_gc_keys);
 
 	kfree(ca->journal.seq);
 	free_percpu(ca->bucket_stats_percpu);

@@ -21,10 +21,10 @@ struct keybuf {
 
 	struct rb_root		keys;
 
+	unsigned		max_in_flight;
 	struct semaphore	in_flight;
 
-#define KEYBUF_NR		500
-	DECLARE_ARRAY_ALLOCATOR(struct keybuf_key, freelist, KEYBUF_NR);
+	DECLARE_ARRAY_ALLOCATOR(struct keybuf_key, freelist, BTREE_SCAN_BATCH);
 };
 
 #endif /* _BCACHE_KEYBUF_TYPES_H */

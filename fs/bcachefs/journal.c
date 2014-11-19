@@ -10,6 +10,7 @@
 #include "debug.h"
 #include "extents.h"
 #include "io.h"
+#include "keylist.h"
 #include "journal.h"
 #include "super.h"
 

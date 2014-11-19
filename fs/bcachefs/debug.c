@@ -11,7 +11,7 @@
 #include "debug.h"
 #include "extents.h"
 #include "io.h"
-#include "keybuf.h"
+#include "keylist.h"
 #include "super.h"
 
 #include <linux/console.h>
@@ -156,10 +156,10 @@ struct dump_iterator {
 	char			buf[PAGE_SIZE];
 	size_t			bytes;
 	struct cache_set	*c;
-	struct keybuf		keys;
+	struct scan_keylist	keys;
 };
 
-static bool dump_pred(struct keybuf *buf, struct bkey *k)
+static bool dump_pred(struct scan_keylist *kl, struct bkey *k)
 {
 	return true;
 }
@@ -172,7 +172,7 @@ static ssize_t bch_dump_read(struct file *file, char __user *buf,
 	char kbuf[256];
 
 	while (size) {
-		struct keybuf_key *w;
+		struct bkey *k;
 		unsigned bytes = min(i->bytes, size);
 
 		int err = copy_to_user(buf, i->buf, bytes);
@@ -188,13 +188,16 @@ static ssize_t bch_dump_read(struct file *file, char __user *buf,
 		if (i->bytes)
 			break;
 
-		w = bch_keybuf_next_rescan(i->c, &i->keys, &MAX_KEY, dump_pred);
-		if (!w)
+		k = bch_scan_keylist_next_rescan(i->c,
+						 &i->keys,
+						 &MAX_KEY,
+						 dump_pred);
+		if (k == NULL)
 			break;
 
-		bch_extent_to_text(i->c, kbuf, sizeof(kbuf), &w->key);
+		bch_extent_to_text(i->c, kbuf, sizeof(kbuf), k);
 		i->bytes = snprintf(i->buf, PAGE_SIZE, "%s\n", kbuf);
-		bch_keybuf_put(&i->keys, w);
+		bch_scan_keylist_advance(&i->keys);
 	}
 
 	return ret;
@@ -211,7 +214,7 @@ static int bch_dump_open(struct inode *inode, struct file *file)
 
 	file->private_data = i;
 	i->c = c;
-	bch_keybuf_init(&i->keys);
+	bch_scan_keylist_init(&i->keys, DFLT_SCAN_KEYLIST_MAX_SIZE);
 	i->keys.last_scanned = KEY(0, 0, 0);
 
 	return 0;
@@ -219,6 +222,9 @@ static int bch_dump_open(struct inode *inode, struct file *file)
 
 static int bch_dump_release(struct inode *inode, struct file *file)
 {
+	struct dump_iterator *i = file->private_data;
+
+	bch_scan_keylist_destroy(&i->keys);
 	kfree(file->private_data);
 	return 0;
 }

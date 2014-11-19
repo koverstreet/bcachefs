@@ -3,6 +3,7 @@
 #include "btree.h"
 #include "extents.h"
 #include "inode.h"
+#include "keylist.h"
 
 #define key_to_inode(k)	container_of(k, struct bch_inode, i_key)
 

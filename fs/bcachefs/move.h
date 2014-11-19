@@ -10,27 +10,27 @@ struct moving_io_stats {
 
 struct moving_io {
 	struct closure		cl;
-	struct keybuf_key	*w;
-	struct keybuf		*keybuf;
 	struct bch_write_op	op;
 	/* Stats to update from submission context */
 	struct moving_io_stats	*stats;
+	struct semaphore	*in_flight;
 	bool			support_moving_error;
-	/* Must be last because it is variable size */
+	BKEY_PADDED(key);
+	/* Must be last since it is variable size */
 	struct bbio		bio;
 };
 
-static inline struct moving_io *moving_io_alloc(struct keybuf_key *w)
+static inline struct moving_io *moving_io_alloc(struct bkey *k)
 {
 	struct moving_io *io;
 
 	io = kzalloc(sizeof(struct moving_io) + sizeof(struct bio_vec)
-		     * DIV_ROUND_UP(KEY_SIZE(&w->key), PAGE_SECTORS),
+		     * DIV_ROUND_UP(KEY_SIZE(k), PAGE_SECTORS),
 		     GFP_KERNEL);
 	if (!io)
 		return NULL;
 
-	io->w = w;
+	bkey_copy(&io->key, k);
 
 	return io;
 }
