@@ -57,16 +57,13 @@ static void read_tiering(struct cache_set *c)
 		if (!w)
 			break;
 
-		io = kzalloc(sizeof(struct moving_io) + sizeof(struct bio_vec)
-			     * DIV_ROUND_UP(KEY_SIZE(&w->key), PAGE_SECTORS),
-			     GFP_KERNEL);
+		io = moving_io_alloc(w);
 		if (!io) {
 			trace_bcache_tiering_alloc_fail(c, KEY_SIZE(&w->key));
 			bch_keybuf_put(&c->tiering_keys, w);
 			break;
 		}
 
-		io->w = w;
 		io->keybuf = &c->tiering_keys;
 		io->stats = &stats;
 

@@ -44,6 +44,7 @@ static inline void bch_set_extent_ptrs(struct bkey *k, unsigned i)
 
 static inline void bch_extent_drop_ptr(struct bkey *k, unsigned ptr)
 {
+	BUG_ON(bch_extent_ptrs(k) > BKEY_EXTENT_PTRS_MAX);
 	BUG_ON(ptr >= bch_extent_ptrs(k));
 	bch_set_extent_ptrs(k, bch_extent_ptrs(k) - 1);
 	memmove(&k->val[ptr],

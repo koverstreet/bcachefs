@@ -66,6 +66,12 @@ struct write_point {
 	bool throttle;
 
 	/*
+	 * If 0, use the desired replica count for the cache set.
+	 * Otherwise, this is the number of replicas desired (generally 1).
+	 */
+	unsigned nr_replicas;
+
+	/*
 	 * If not NULL, refill from that device (this write point is a member of
 	 * that struct cache)
 	 *

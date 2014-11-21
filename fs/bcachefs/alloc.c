@@ -25,7 +25,7 @@
  * call prio_write(), and when prio_write() finishes we pull buckets off the
  * free_inc list and optionally discard them.
  *
- * free_inc isn't the only freelist - if it was, we'd often to sleep while
+ * free_inc isn't the only freelist - if it was, we'd often have to sleep while
  * priorities and gens were being written before we could allocate. c->free is a
  * smaller freelist, and buckets on that list are always ready to be used.
  *
@@ -971,7 +971,7 @@ static int __bch_bucket_alloc_set(struct cache_set *c,
 	long caches_used[BITS_TO_LONGS(MAX_CACHES_PER_SET)];
 	int i, ret;
 
-	BUG_ON(!n || n > BKEY_EXTENT_PTRS_MAX);
+	BUG_ON(n <= 0 || n > BKEY_EXTENT_PTRS_MAX);
 
 	bkey_init(k);
 	memset(caches_used, 0, sizeof(caches_used));
@@ -1019,6 +1019,7 @@ static int __bch_bucket_alloc_set(struct cache_set *c,
 			goto err;
 		}
 
+		BUG_ON(i < 0 || i > BKEY_EXTENT_PTRS_MAX);
 		k->val[i] = PTR(ca->bucket_gens[r],
 				bucket_to_sector(c, r),
 				ca->sb.nr_this_dev);
@@ -1167,8 +1168,9 @@ static struct open_bucket *bch_open_bucket_alloc(struct cache_set *c,
 			goto err;
 	} else {
 		ret = bch_bucket_alloc_set(c, RESERVE_NONE, &b->key,
-				CACHE_SET_DATA_REPLICAS_WANT(&c->sb),
-				&c->cache_all, cl);
+					   wp->nr_replicas ?:
+					   CACHE_SET_DATA_REPLICAS_WANT(&c->sb),
+					   &c->cache_all, cl);
 		if (ret)
 			goto err;
 	}
@@ -1181,6 +1183,8 @@ err:
 }
 
 /* Sector allocator */
+
+static bool bucket_still_writeable(struct open_bucket *b, struct cache_set *c);
 
 static struct open_bucket *lock_and_refill_writepoint(struct cache_set *c,
 						      struct write_point *wp,
@@ -1202,8 +1206,12 @@ static struct open_bucket *lock_and_refill_writepoint(struct cache_set *c,
 				return b;
 
 			if (!race_fault() &&
-			    cmpxchg(&wp->b, NULL, b) == NULL)
-				return b;
+			    cmpxchg(&wp->b, NULL, b) == NULL) {
+				if (bucket_still_writeable(b, c))
+					return b;
+				cmpxchg(&wp->b, b, NULL);
+				/* Fall through */
+			}
 
 			bch_bucket_free_never_used(c, &b->key);
 			spin_unlock(&b->lock);
@@ -1238,9 +1246,10 @@ static void verify_not_stale(struct cache_set *c, struct bkey *k)
  * - -EAGAIN: closure was added to waitlist
  * - -ENOSPC: out of space and no closure provided
  *
- * @write_point - opaque identifier of where this write came from.
- *		  bcache uses ptr address of the task struct
- * @tier_idx - which tier this write is destined towards
+ * @c cache set.
+ * @wp - opaque identifier of where this write came from.
+ *       bcache uses ptr address of the task struct.
+ * @k  - key to return the allocated space information.
  * @cl - closure to wait for a bucket
  */
 struct open_bucket *bch_alloc_sectors(struct cache_set *c,
@@ -1249,7 +1258,7 @@ struct open_bucket *bch_alloc_sectors(struct cache_set *c,
 				      struct closure *cl)
 {
 	struct open_bucket *b;
-	unsigned i, sectors;
+	unsigned i, sectors, nptrs;
 
 	b = lock_and_refill_writepoint(c, wp, cl);
 	if (IS_ERR_OR_NULL(b))
@@ -1259,12 +1268,15 @@ struct open_bucket *bch_alloc_sectors(struct cache_set *c,
 
 	verify_not_stale(c, &b->key);
 
+	nptrs = (bch_extent_ptrs(k) + bch_extent_ptrs(&b->key));
+	BUG_ON(nptrs > BKEY_EXTENT_PTRS_MAX);
+
 	/* Set up the pointer to the space we're allocating: */
 	memcpy(&k->val[bch_extent_ptrs(k)],
 	       &b->key.val[0],
 	       bch_extent_ptrs(&b->key) * sizeof(u64));
 
-	bch_set_extent_ptrs(k, bch_extent_ptrs(k) + bch_extent_ptrs(&b->key));
+	bch_set_extent_ptrs(k, nptrs);
 
 	sectors = min_t(unsigned, KEY_SIZE(k), b->sectors_free);
 
@@ -1332,6 +1344,179 @@ void bch_mark_allocator_buckets(struct cache_set *c)
 	spin_unlock(&c->open_buckets_lock);
 }
 
+/*
+ * This code is only called when the ca device has become read only,
+ * which prevents new buckets from being allocated from it, as it has
+ * been removed from the cache groups, which is where new buckets
+ * are allocated from.
+ *
+ * Thus if a write-point's bucket changes underneath us, we can safely
+ * assume that the new one does not point to this device, and hence
+ * we can go on.
+ *
+ * Note: This code only examines the buckets pointed at by write-points.
+ * But the allocation code could just have assigned this device to
+ * a key in a new open bucket, and the bucket is not yet pointed at
+ * by the write-point.
+ *
+ * We close that race in lock_and_refill_writepoint, which after
+ * allocating a new bucket, making the write-point point to it, and
+ * with the bucket lock held, verifies that all the replicas are
+ * writeable by calling bucket_still_writeable below.
+ *
+ * Note: bch_stop_write_point returns a bool in case we want to count
+ * the number of write points that are being stopped.
+ */
+
+static bool bch_stop_write_point(struct cache *ca,
+				 struct write_point *wp)
+{
+	unsigned ptr;
+	struct open_bucket *b;
+	struct cache_set *c = ca->set;
+
+	b = ACCESS_ONCE(wp->b);
+	if (b == NULL)
+		return false;
+
+	spin_lock(&b->lock);
+	if (wp->b != b) {
+		spin_unlock(&b->lock);
+		return false;
+	}
+
+	/* Walk over all the replicas in the key */
+
+	for (ptr = 0; ptr < bch_extent_ptrs(&b->key); ptr++) {
+		if (PTR_CACHE(c, &b->key, ptr) == ca)
+			goto found_it;
+	}
+
+	/* Not found */
+	spin_unlock(&b->lock);
+	return false;
+
+found_it:
+	/*
+	 * Remove the bucket from the write point, effectively
+	 * truncating it.
+	 * Note that if there are multiple replicas, they are
+	 * all in sync, and those physical buckets will effectively
+	 * be truncated.
+	 * Eventually, gc will reclaim the space due to the partly
+	 * empty buckets.
+	 *
+	 * Note that we have to decrement the reference count
+	 * in the bucket so that it can be reclaimed.
+	 */
+	BUG_ON(xchg(&wp->b, NULL) != b);
+	spin_unlock(&b->lock);
+	bch_open_bucket_put(c, b);
+	return true;
+}
+
+static void bch_stop_write_points(struct cache *ca,
+				  struct write_point *wp,
+				  unsigned n_wp)
+{
+	unsigned wpno;
+
+	/* Walk over all the write points in the cache set */
+
+	for (wpno = 0; wpno < n_wp; wpno++, wp++)
+		bch_stop_write_point(ca, wp);
+}
+
+/*
+ * IMPORTANT: This does not currently stop any meta-data writes, but as
+ * we can't currently remove devices with meta-data, that's OK for now.
+ * Once we add the code to remove devices with meta-data, we'll need to fix
+ * that.
+ * We'll have to add a ref count for the meta-data writes and wait for that
+ * to go to 0.
+ */
+
+void bch_stop_new_writes(struct cache *ca)
+{
+	struct cache_set *c = ca->set;
+
+	bch_stop_write_points(ca, (&c->write_points[0]), WRITE_POINT_COUNT);
+	bch_stop_write_points(ca, (&c->tier_write_points[0]), CACHE_TIERS);
+	bch_stop_write_points(ca, (&ca->gc_buckets[0]), NUM_GC_GENS);
+	bch_stop_write_points(ca, (&c->migration_write_point), 1);
+}
+
+/*
+ * Note: We could have a counter in the cache_set indicating whether
+ * any devices are being removed, and return 0 if none.  However, as
+ * this is only called on new open bucket allocation (and not every
+ * write), and it is not that expensive (there is typically only one
+ * replica), it is probably OK.
+ */
+
+static bool bucket_still_writeable(struct open_bucket *b, struct cache_set *c)
+{
+	unsigned repno;
+
+	for (repno = 0; repno < bch_extent_ptrs(&b->key); repno++) {
+		struct cache *ca = PTR_CACHE(c, &b->key, repno);
+
+		if (CACHE_STATE(&ca->mi) != CACHE_ACTIVE)
+			return false;
+	}
+
+	return true;
+}
+
+void bch_await_scheduled_writes(struct cache *ca)
+{
+	unsigned i;
+	unsigned matching;
+	struct open_bucket *b;
+	struct closure cl;
+	struct cache_set *c = ca->set;
+
+	closure_init_stack(&cl);
+
+retry:
+	matching = 0;
+	spin_lock(&c->open_buckets_lock);
+	rcu_read_lock();
+
+	list_for_each_entry(b, &c->open_buckets_open, list) {
+		spin_lock(&b->lock);
+		for (i = 0; i < bch_extent_ptrs(&b->key); i++) {
+			if (ca == PTR_CACHE(c, &b->key, i)) {
+				/* We found an open bucket for this dev */
+				matching += 1;
+				break;
+			}
+		}
+		spin_unlock(&b->lock);
+	}
+
+	if (matching != 0) {
+		/*
+		 * closure_wait doesn't actually wait -- it adds to the
+		 * wait list.
+		 * The actual waiting is done by closure_sync below.
+		 * That's why it's OK to hold the spin_lock when calling
+		 * closure_wait, but _not_ when calling closure_sync.
+		 * In fact, we _must_ hold the spin_lock when calling
+		 * closure_wait to avoid the race that someone frees
+		 * an open bucket and then we go to sleep.
+		 */
+		closure_wait(&c->open_buckets_wait, &cl);
+		rcu_read_unlock();
+		spin_unlock(&c->open_buckets_lock);
+		closure_sync(&cl);
+		goto retry;
+	}
+
+	rcu_read_unlock();
+	spin_unlock(&c->open_buckets_lock);
+}
+
 /* Init */
 
 void bch_open_buckets_init(struct cache_set *c)
@@ -1353,10 +1538,13 @@ void bch_open_buckets_init(struct cache_set *c)
 	for (i = 0; i < ARRAY_SIZE(c->cache_tiers); i++) {
 		seqcount_init(&c->cache_tiers[i].lock);
 		c->tier_write_points[i].tier = &c->cache_tiers[i];
+		c->tier_write_points[i].nr_replicas = 1;
 	}
 
 	for (i = 0; i < ARRAY_SIZE(c->write_points); i++)
 		c->write_points[i].throttle = true;
+
+	c->migration_write_point.nr_replicas = 1;
 
 	c->pd_controllers_update_seconds = 5;
 	INIT_DELAYED_WORK(&c->pd_controllers_update, pd_controllers_update);

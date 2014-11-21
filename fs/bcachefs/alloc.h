@@ -68,4 +68,7 @@ void bch_mark_allocator_buckets(struct cache_set *);
 void bch_open_buckets_init(struct cache_set *);
 const char *bch_cache_allocator_start(struct cache *);
 
+void bch_stop_new_writes(struct cache *);
+void bch_await_scheduled_writes(struct cache *);
+
 #endif /* _BCACHE_ALLOC_H */

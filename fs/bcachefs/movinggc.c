@@ -72,16 +72,13 @@ static void read_moving(struct cache *ca, struct moving_io_stats *stats)
 		bch_keybuf_put(&ca->moving_gc_keys, w);
 		continue;
 found:
-		io = kzalloc(sizeof(struct moving_io) + sizeof(struct bio_vec)
-			     * DIV_ROUND_UP(KEY_SIZE(&w->key), PAGE_SECTORS),
-			     GFP_KERNEL);
+		io = moving_io_alloc(w);
 		if (!io) {
 			trace_bcache_moving_gc_alloc_fail(c, KEY_SIZE(&w->key));
 			bch_keybuf_put(&ca->moving_gc_keys, w);
 			break;
 		}
 
-		io->w			= w;
 		io->keybuf		= &ca->moving_gc_keys;
 		io->stats		= stats;
 

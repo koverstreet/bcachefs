@@ -410,6 +410,20 @@ static inline void bch_bkey_val_to_text(struct btree_keys *b, char *buf,
 		b->ops->val_to_text(b, out, end - out, k);
 	}
 }
+/*
+ * This is used to determine whether it is possible for cmpxchg to succeed
+ * because the keys differ in the number of extent ptrs.
+ * For example, one has one more or fewer replica/cache.
+*/
+
+static inline bool bch_bkey_maybe_compatible(const struct bkey *l,
+					     const struct bkey *r)
+{
+	bool result = (KEY_WIPED(l) == KEY_WIPED(r) &&
+		       KEY_DELETED(l) == KEY_DELETED(r) &&
+		       KEY_VERSION(l) == KEY_VERSION(r));
+	return result;
+}
 
 static inline bool bch_bkey_equal_header(const struct bkey *l,
 					 const struct bkey *r)

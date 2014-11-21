@@ -14,6 +14,7 @@
 #include "inode.h"
 #include "io.h"
 #include "journal.h"
+#include "move.h"
 #include "movinggc.h"
 #include "stats.h"
 #include "super.h"
@@ -620,8 +621,7 @@ void bch_cache_set_fail(struct cache_set *c)
 	case BCH_ON_ERROR_CONTINUE:
 		break;
 	case BCH_ON_ERROR_RO:
-		printk(KERN_ERR "bcache: %pU going read only\n",
-		       c->sb.set_uuid.b);
+		pr_err("%pU going read only", c->sb.set_uuid.b);
 		bch_cache_set_read_only(c);
 		break;
 	case BCH_ON_ERROR_PANIC:
@@ -1112,7 +1112,7 @@ static int cache_set_add_device(struct cache_set *c, struct cache *ca)
 
 	lockdep_assert_held(&bch_register_lock);
 
-	sprintf(buf, "cache%i", ca->sb.nr_this_dev);
+	sprintf(buf, "cache%u", ca->sb.nr_this_dev);
 	ret = sysfs_create_link(&ca->kobj, &c->kobj, "set");
 	if (ret)
 		return ret;
@@ -1193,6 +1193,11 @@ void bch_cache_read_only(struct cache *ca)
 
 	bch_moving_gc_stop(ca);
 
+	/*
+	 * These remove this cache device from the list from which new
+	 * buckets can be allocated.
+	 */
+
 	bch_cache_group_remove_cache(tier, ca);
 	bch_cache_group_remove_cache(&c->cache_all, ca);
 
@@ -1203,6 +1208,21 @@ void bch_cache_read_only(struct cache *ca)
 		kthread_stop(p);
 
 	bch_recalc_capacity(c);
+
+	/*
+	 * This stops new writes (e.g. to existing open buckets) and
+	 * then waits for all existing writes to complete.
+	 * The access (read) barrier is in bch_cache_percpu_ref_release.
+	 */
+
+	bch_stop_new_writes(ca);
+	bch_await_scheduled_writes(ca); /* This can suspend the running task */
+
+	/*
+	 * Device write barrier -- no non-superblock writes should occur
+	 * after this point.
+	 */
+
 	pr_notice("%s read only", bdevname(ca->bdev, buf));
 }
 
@@ -1231,10 +1251,7 @@ const char *bch_cache_read_write(struct cache *ca)
 void bch_cache_release(struct kobject *kobj)
 {
 	struct cache *ca = container_of(kobj, struct cache, kobj);
-	char buf[BDEVNAME_SIZE];
 	unsigned i;
-
-	bdevname(ca->bdev, buf);
 
 	kfree(ca->journal.seq);
 	free_percpu(ca->bucket_stats_percpu);
@@ -1255,25 +1272,58 @@ void bch_cache_release(struct kobject *kobj)
 
 	free_super(&ca->disk_sb);
 
-	if (!IS_ERR_OR_NULL(ca->bdev))
-		blkdev_put(ca->bdev, FMODE_READ|FMODE_WRITE|FMODE_EXCL);
-
 	percpu_ref_exit(&ca->ref);
 	kfree(ca);
 	module_put(THIS_MODULE);
-
-	pr_notice("%s removed", buf);
+	return;
 }
+
+/*
+ * bch_cache_stop has already returned, so we no longer hold the register
+ * lock at the point this is called.
+ */
 
 static void bch_cache_kill_work(struct work_struct *work)
 {
 	struct cache *ca = container_of(work, struct cache, kill_work);
+	struct cache_set *c = ca->set;
+	char buf[BDEVNAME_SIZE];
+
+	mutex_lock(&bch_register_lock);
+
+	bdevname(ca->bdev, buf);
+
+	if (!IS_ERR_OR_NULL(ca->bdev))
+		blkdev_put(ca->bdev, FMODE_READ|FMODE_WRITE|FMODE_EXCL);
+
+	pr_notice("%s removed", buf);
+
+	if (c->kobj.state_in_sysfs) {
+		char buf2[12];
+
+		sprintf(buf2, "cache%u", ca->sb.nr_this_dev);
+		sysfs_remove_link(&c->kobj, buf2);
+	}
+
+	mutex_unlock(&bch_register_lock);
+
+	/*
+	 * This results in bch_cache_release being called which
+	 * frees up the storage.
+	 */
 
 	kobject_put(&ca->kobj);
+	return;
 }
 
 static void bch_cache_percpu_ref_release(struct percpu_ref *ref)
 {
+	/*
+	 * Device access barrier -- no non-superblock accesses should occur
+	 * after this point.
+	 * The write barrier is in bch_cache_read_only.
+	 */
+
 	struct cache *ca = container_of(ref, struct cache, ref);
 
 	schedule_work(&ca->kill_work);
@@ -1282,6 +1332,20 @@ static void bch_cache_percpu_ref_release(struct percpu_ref *ref)
 static void bch_cache_kill_rcu(struct rcu_head *rcu)
 {
 	struct cache *ca = container_of(rcu, struct cache, kill_rcu);
+
+	/*
+	 * This decrements the ref count to ca, and once the ref count
+	 * is 0 (outstanding bios to the ca also incremented it and
+	 * decrement it on completion/error), bch_cache_percpu_ref_release
+	 * is called, and that eventually results in bch_cache_kill_work
+	 * being called, which in turn results in bch_cache_release being
+	 * called.
+	 *
+	 * In particular, these functions won't be called until there are no
+	 * bios outstanding (the per-cpu ref counts are all 0), so it
+	 * is safe to remove the actual sysfs device at that point,
+	 * and that can indicate success to the user.
+	 */
 
 	percpu_ref_kill(&ca->ref);
 }
@@ -1294,13 +1358,6 @@ static void bch_cache_stop(struct cache *ca)
 
 	BUG_ON(rcu_access_pointer(c->cache[ca->sb.nr_this_dev]) != ca);
 
-	if (c->kobj.state_in_sysfs) {
-		char buf[12];
-
-		sprintf(buf, "cache%i", ca->sb.nr_this_dev);
-		sysfs_remove_link(&c->kobj, buf);
-	}
-
 	rcu_assign_pointer(c->cache[ca->sb.nr_this_dev], NULL);
 
 	call_rcu(&ca->kill_rcu, bch_cache_kill_rcu);
@@ -1308,42 +1365,117 @@ static void bch_cache_stop(struct cache *ca)
 
 static void bch_cache_remove_work(struct work_struct *work)
 {
+	unsigned tier;
 	struct cache *ca = container_of(work, struct cache, remove_work);
-	struct cache_member *mi;
 	struct cache_set *c = ca->set;
+	struct cache_member_rcu *allmi;
+	struct cache_member *mi;
+	bool force = (test_bit(CACHE_DEV_FORCE_REMOVE, &ca->flags));
 
 	mutex_lock(&bch_register_lock);
-	mi = &c->members->m[ca->sb.nr_this_dev];
+	allmi = cache_member_info_get(c);
+	mi = &allmi->m[ca->sb.nr_this_dev];
+
+	/*
+	 * Right now, we can't remove the last device from a tier,
+	 * - For tier 0, because all metadata lives in tier 0 and because
+	 *   there is no way to have foreground writes go directly to tier 1.
+	 * - For tier 1, because the code doesn't completely support an
+	 *   empty tier 1.
+	 */
+
+	tier = CACHE_TIER(mi);
+
+	if (c->cache_tiers[tier].nr_devices == 1) {
+		cache_member_info_put();
+		mutex_unlock(&bch_register_lock);
+		clear_bit(CACHE_DEV_FORCE_REMOVE, &ca->flags);
+		clear_bit(CACHE_DEV_REMOVING, &ca->flags);
+		pr_err("Can't remove last device in tier %u of %pU.",
+		       tier, c->sb.set_uuid.b);
+		return;
+	}
 
 	if (CACHE_STATE(mi) == CACHE_ACTIVE) {
-		bch_cache_read_only(ca);
+		cache_member_info_put();
+		bch_cache_read_only(ca); /* This quiesces writes */
 
+		allmi = cache_member_info_get(c);
+		mi = &allmi->m[ca->sb.nr_this_dev];
 		SET_CACHE_STATE(mi, CACHE_RO);
+		ca->mi = *mi;	/* Update cache_member cache in struct cache */
 		bcache_write_super(c);
 	}
 
-	down(&c->sb_write_mutex);
+	cache_member_info_put();
+	mutex_unlock(&bch_register_lock);
+
 	/*
-	 * XXX: haven't cleared out open buckets, someone might still mark this
-	 * device as having data/metadata
+	 * The call to bch_cache_read_only above has quiesced all writes.
+	 * Move the data off the device.
 	 */
 
-	if (!CACHE_HAS_METADATA(mi) &&
-	    !CACHE_HAS_DATA(mi)) {
-		memset(mi, 0, sizeof(*mi));
-		__bcache_write_super(c);
-	} else {
-		up(&c->sb_write_mutex);
+	if (bch_move_data_off_device(ca) != 0) {
+		if (!force) {
+			clear_bit(CACHE_DEV_REMOVING, &ca->flags);
+			pr_err("Unable to move data off device in %pU.",
+			       c->sb.set_uuid.b);
+			return;
+		}
+		pr_err("Forcing device removal with live data in %pU!",
+		       c->sb.set_uuid.b);
 	}
 
+	allmi = cache_member_info_get(c);
+	mi = &allmi->m[ca->sb.nr_this_dev];
+	SET_CACHE_HAS_DATA(mi, false); /* We've just moved all the data off! */
+	ca->mi = *mi;	/* Update cache_member cache in struct cache */
+	cache_member_info_put();
+
+	down(&c->sb_write_mutex);
+
+	if (!CACHE_HAS_METADATA(mi))
+		memset(mi, 0, sizeof(*mi));
+
+	__bcache_write_super(c); /* ups sb_write_mutex */
+
+	allmi = cache_member_info_get(c);
+	mi = &allmi->m[ca->sb.nr_this_dev];
+	if (CACHE_HAS_METADATA(mi)) {
+		cache_member_info_put();
+		/*
+		 * We can't really remove it as the meta data may be
+		 * live.  All we can do is keep it as read only
+		 * Eventually the meta data will effectively migrate
+		 * to another device (if one exists), but we don't
+		 * know when/how that will be.
+		 */
+		clear_bit(CACHE_DEV_FORCE_REMOVE, &ca->flags);
+		clear_bit(CACHE_DEV_REMOVING, &ca->flags);
+		pr_err("Device with metadata in %pU not removed: now read only.",
+		       c->sb.set_uuid.b);
+		return;
+	}
+	cache_member_info_put();
+
+	/*
+	 * This completes asynchronously, with bch_cache_stop scheduling
+	 * the final teardown when there are no (read) bios outstanding.
+	 */
+
+	mutex_lock(&bch_register_lock);
 	bch_cache_stop(ca);
 	mutex_unlock(&bch_register_lock);
+	return;
 }
 
-bool bch_cache_remove(struct cache *ca)
+bool bch_cache_remove(struct cache *ca, bool force)
 {
 	if (test_and_set_bit(CACHE_DEV_REMOVING, &ca->flags))
 		return false;
+
+	if (force)
+		set_bit(CACHE_DEV_FORCE_REMOVE, &ca->flags);
 
 	queue_work(system_long_wq, &ca->remove_work);
 	return true;
@@ -1411,8 +1543,10 @@ static int cache_init(struct cache *ca)
 		total_reserve += ca->free[i].size;
 	pr_debug("%zu buckets reserved", total_reserve);
 
-	for (i = 0; i < ARRAY_SIZE(ca->gc_buckets); i++)
+	for (i = 0; i < ARRAY_SIZE(ca->gc_buckets); i++) {
 		ca->gc_buckets[i].ca = ca;
+		ca->gc_buckets[i].nr_replicas = 1;
+	}
 
 	mutex_init(&ca->heap_lock);
 	bch_moving_init_cache(ca);

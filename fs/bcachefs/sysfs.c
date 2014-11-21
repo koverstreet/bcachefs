@@ -1133,8 +1133,14 @@ STORE(__bch_cache)
 		bcache_write_super(c);
 	}
 
-	if (attr == &sysfs_unregister)
-		bch_cache_remove(ca);
+	if (attr == &sysfs_unregister) {
+		bool force = false;
+
+		if (!strncmp(buf, "force", 5) &&
+		    (buf[5] == '\0' || buf[5] == '\n'))
+			force = true;
+		bch_cache_remove(ca, force);
+	}
 
 	if (attr == &sysfs_clear_stats) {
 		atomic_long_set(&ca->sectors_written, 0);

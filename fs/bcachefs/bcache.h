@@ -477,6 +477,15 @@ struct cache_set {
 
 	struct write_point	tier_write_points[CACHE_TIERS];
 
+	/*
+	 * This write point is used for migrating data off a device
+	 * and can point to any other device.
+	 * We can't use the normal write points because those will
+	 * gang up n replicas, and for migration we want only one new
+	 * replica.
+	 */
+	struct write_point	migration_write_point;
+
 	/* GARBAGE COLLECTION */
 	struct task_struct	*gc_thread;
 

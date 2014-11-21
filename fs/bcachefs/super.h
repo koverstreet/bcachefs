@@ -130,7 +130,7 @@ const char *bch_run_cache_set(struct cache_set *);
 
 void bch_cache_read_only(struct cache *);
 const char *bch_cache_read_write(struct cache *);
-bool bch_cache_remove(struct cache *);
+bool bch_cache_remove(struct cache *, bool force);
 int bch_cache_add(struct cache_set *, const char *);
 
 extern struct mutex bch_register_lock;

@@ -633,19 +633,36 @@ static bool bkey_cmpxchg_cmp(struct bkey *k, struct bkey *old)
 {
 	/* skip past gen */
 	s64 offset = (KEY_START(k) - KEY_START(old)) << 8;
-	unsigned i;
+	unsigned i, j;
 
 	if (!KEY_SIZE(old))
 		return false;
 
-	if (!bch_bkey_equal_header(k, old))
+	if (bch_bkey_equal_header(k, old)) {
+		for (i = 0; i < bch_extent_ptrs(old); i++)
+			if (k->val[i] != old->val[i] + offset)
+				return false;
+
+	    return true;
+	}
+
+	/* This does not compare KEY_CACHED, KEY_U64s, or KEY_CSUM */
+
+	if (!bch_bkey_maybe_compatible(k, old))
 		return false;
 
 	for (i = 0; i < bch_extent_ptrs(old); i++)
-		if (k->val[i] != old->val[i] + offset)
-			return false;
+		for (j = 0; j < bch_extent_ptrs(k); j++)
+			if (k->val[j] == old->val[i] + offset)
+				goto found_common;
 
-	return true;
+	return false;
+
+found_common:
+#if (0)
+	pr_err("Found common pointers but failing cmpxchg.");
+#endif
+	return false;
 }
 
 /*

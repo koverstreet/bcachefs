@@ -689,6 +689,8 @@ static void journal_reclaim(struct cache_set *c)
 		if (next == ja->discard_idx)
 			continue;
 
+		BUG_ON(bch_extent_ptrs(k) >= BKEY_EXTENT_PTRS_MAX);
+
 		ja->cur_idx = next;
 		k->val[bch_extent_ptrs(k)] =
 			PTR(0, bucket_to_sector(c,
