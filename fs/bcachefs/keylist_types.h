@@ -74,11 +74,6 @@ struct keylist {
 
 struct scan_keylist {
 	/*
-	 * The last key we added to the keylist while refilling. Refilling will
-	 * restart from the next key after this key.
-	 */
-	struct bkey		last_scanned;
-	/*
 	 * Only one thread is allowed to mutate the keylist. Other threads can
 	 * read it. The mutex has to be taken by the mutator thread when
 	 * mutating the keylist, and by other threads when reading, but not by

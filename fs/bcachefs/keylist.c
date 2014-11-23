@@ -116,7 +116,6 @@ void bch_scan_keylist_init(struct scan_keylist *kl,
 			   unsigned max_size)
 {
 	mutex_init(&kl->lock);
-	kl->last_scanned = MAX_KEY;
 	kl->max_size = max_size;
 	bch_keylist_init(&kl->list);
 }
@@ -175,6 +174,7 @@ struct skl_refill {
 	struct btree_op		op;
 	unsigned		nr_found;
 	struct scan_keylist	*kl;
+	struct bkey		*last_scanned;
 	struct bkey		*end;
 	scan_keylist_pred_fn	*pred;
 };
@@ -211,29 +211,31 @@ static int refill_scan_keylist_fn(struct btree_op *op,
 			refill->nr_found += 1;
 	}
 
-	kl->last_scanned = *k;
+	*refill->last_scanned = *k;
 	return ret;
 }
 
 static void bch_refill_scan_keylist(struct cache_set *c,
 				    struct scan_keylist *kl,
+				    struct bkey *last_scanned,
 				    struct bkey *end,
 				    scan_keylist_pred_fn *pred)
 {
-	struct bkey start = kl->last_scanned;
+	struct bkey start = *last_scanned;
 	struct skl_refill refill;
 	int ret;
 
 	cond_resched();
 
 	bch_btree_op_init(&refill.op, BTREE_ID_EXTENTS, -1);
-	refill.nr_found	= 0;
-	refill.kl	= kl;
-	refill.end	= end;
-	refill.pred	= pred;
+	refill.nr_found		= 0;
+	refill.kl		= kl;
+	refill.last_scanned	= last_scanned;
+	refill.end		= end;
+	refill.pred		= pred;
 
 	ret = bch_btree_map_keys(&refill.op, c,
-				 &kl->last_scanned,
+				 last_scanned,
 				 refill_scan_keylist_fn, 0);
 	if (ret == MAP_CONTINUE) {
 		/* If we end up here, it means:
@@ -241,13 +243,13 @@ static void bch_refill_scan_keylist(struct cache_set *c,
 		 * - the map_fn didn't see the end key
 		 * - there were no more keys to map over
 		 * Therefore, we are at the end of the key space */
-		kl->last_scanned = MAX_KEY;
+		*last_scanned = MAX_KEY;
 	}
 
 	trace_bcache_keyscan(refill.nr_found,
 			     KEY_INODE(&start), KEY_OFFSET(&start),
-			     KEY_INODE(&kl->last_scanned),
-			     KEY_OFFSET(&kl->last_scanned));
+			     KEY_INODE(last_scanned),
+			     KEY_OFFSET(last_scanned));
 }
 
 struct bkey *bch_scan_keylist_next(struct scan_keylist *kl)
@@ -260,6 +262,7 @@ struct bkey *bch_scan_keylist_next(struct scan_keylist *kl)
 
 struct bkey *bch_scan_keylist_next_rescan(struct cache_set *c,
 					  struct scan_keylist *kl,
+					  struct bkey *last_scanned,
 					  struct bkey *end,
 					  scan_keylist_pred_fn *pred)
 {
@@ -270,12 +273,12 @@ struct bkey *bch_scan_keylist_next_rescan(struct cache_set *c,
 		if (k)
 			break;
 
-		if (bkey_cmp(&kl->last_scanned, end) >= 0) {
+		if (bkey_cmp(last_scanned, end) >= 0) {
 			pr_debug("scan finished");
 			break;
 		}
 
-		bch_refill_scan_keylist(c, kl, end, pred);
+		bch_refill_scan_keylist(c, kl, last_scanned, end, pred);
 	}
 
 	return k;

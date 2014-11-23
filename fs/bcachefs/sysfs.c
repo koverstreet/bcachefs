@@ -12,8 +12,9 @@
 #include "btree.h"
 #include "inode.h"
 #include "journal.h"
+#include "keylist.h"
+#include "move.h"
 #include "request.h"
-#include "super.h"
 #include "writeback.h"
 
 #include <linux/blkdev.h>
@@ -149,9 +150,13 @@ rw_attribute(checksum_type);
 rw_attribute(btree_shrinker_disabled);
 
 rw_attribute(copy_gc_enabled);
+sysfs_queue_attribute(copy_gc);
+sysfs_pd_controller_attribute(copy_gc);
 rw_attribute(tiering_enabled);
+sysfs_queue_attribute(tiering);
 rw_attribute(tiering_percent);
 sysfs_pd_controller_attribute(tiering);
+
 sysfs_pd_controller_attribute(foreground_write);
 
 rw_attribute(btree_flush_delay);
@@ -166,7 +171,6 @@ rw_attribute(size);
 rw_attribute(meta_replicas);
 rw_attribute(data_replicas);
 rw_attribute(tier);
-sysfs_pd_controller_attribute(copy_gc);
 
 static struct attribute sysfs_state_rw = {
 	.name = "state",
@@ -586,8 +590,6 @@ SHOW(__bch_cache_set)
 	sysfs_printf(gc_always_rewrite,		"%i", c->gc_always_rewrite);
 	sysfs_printf(btree_shrinker_disabled,	"%i", c->shrinker_disabled);
 	sysfs_printf(copy_gc_enabled,		"%i", c->copy_gc_enabled);
-	sysfs_printf(tiering_enabled,		"%i", c->tiering_enabled);
-	sysfs_pd_controller_show(tiering,	&c->tiering_pd);
 	sysfs_pd_controller_show(foreground_write, &c->foreground_write_pd);
 
 	sysfs_print(btree_scan_ratelimit,	c->btree_scan_ratelimit);
@@ -596,7 +598,12 @@ SHOW(__bch_cache_set)
 	sysfs_print(foreground_target_percent,	c->foreground_target_percent);
 	sysfs_print(bucket_reserve_percent,	c->bucket_reserve_percent);
 	sysfs_print(sector_reserve_percent,	c->sector_reserve_percent);
+
+	sysfs_printf(tiering_enabled,		"%i", c->tiering_enabled);
+	sysfs_queue_show(tiering,		&c->tiering_queue);
 	sysfs_print(tiering_percent,		c->tiering_percent);
+	sysfs_pd_controller_show(tiering,	&c->tiering_pd);
+
 
 	sysfs_print(btree_flush_delay,		c->btree_flush_delay);
 
@@ -712,7 +719,6 @@ STORE(__bch_cache_set)
 		return ret;
 	}
 
-	sysfs_pd_controller_store(tiering,	&c->tiering_pd);
 	sysfs_pd_controller_store(foreground_write, &c->foreground_write_pd);
 
 	if (attr == &sysfs_meta_replicas) {
@@ -758,7 +764,11 @@ STORE(__bch_cache_set)
 	sysfs_strtoul(foreground_target_percent, c->foreground_target_percent);
 	sysfs_strtoul(bucket_reserve_percent, c->bucket_reserve_percent);
 	sysfs_strtoul(sector_reserve_percent, c->sector_reserve_percent);
-	sysfs_strtoul(tiering_percent, c->tiering_percent);
+
+	sysfs_strtoul(tiering_percent,		c->tiering_percent);
+	sysfs_pd_controller_store(tiering,	&c->tiering_pd);
+	sysfs_queue_store(tiering,		&c->tiering_queue);
+
 
 	if (attr == &sysfs_add_device) {
 		char *path = kstrdup(buf, GFP_KERNEL);
@@ -865,7 +875,6 @@ static struct attribute *bch_cache_set_files[] = {
 	&sysfs_bucket_reserve_percent,
 	&sysfs_sector_reserve_percent,
 	&sysfs_tiering_percent,
-
 	NULL
 };
 KTYPE(bch_cache_set);
@@ -901,6 +910,7 @@ static struct attribute *bch_cache_set_internal_files[] = {
 	&sysfs_copy_gc_enabled,
 	&sysfs_tiering_enabled,
 	sysfs_pd_controller_files(tiering),
+	sysfs_queue_files(tiering),
 	sysfs_pd_controller_files(foreground_write),
 
 	NULL
@@ -1018,6 +1028,7 @@ SHOW(__bch_cache)
 	sysfs_print(has_metadata,	CACHE_HAS_METADATA(&ca->mi));
 
 	sysfs_pd_controller_show(copy_gc, &ca->moving_gc_pd);
+	sysfs_queue_show(copy_gc, &ca->moving_gc_queue);
 
 	if (attr == &sysfs_cache_replacement_policy)
 		return bch_snprint_string_list(buf, PAGE_SIZE,
@@ -1051,6 +1062,7 @@ STORE(__bch_cache)
 	struct cache_member *mi = &c->members->m[ca->sb.nr_this_dev];
 
 	sysfs_pd_controller_store(copy_gc, &ca->moving_gc_pd);
+	sysfs_queue_store(copy_gc, &ca->moving_gc_queue);
 
 	if (attr == &sysfs_discard) {
 		bool v = strtoul_or_return(buf);
@@ -1186,6 +1198,7 @@ static struct attribute *bch_cache_files[] = {
 	&sysfs_tier,
 	&sysfs_state_rw,
 	sysfs_pd_controller_files(copy_gc),
+	sysfs_queue_files(copy_gc),
 	NULL
 };
 KTYPE(bch_cache);

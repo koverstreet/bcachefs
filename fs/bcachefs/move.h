@@ -3,19 +3,49 @@
 
 #include "request.h"
 
-struct moving_io_stats {
-	u64			keys_moved;
-	u64			sectors_moved;
+enum moving_flag_bitnos {
+	MOVING_FLAG_BITNO_ALLOC = 0,
+	MOVING_FLAG_BITNO_READ,
+	MOVING_FLAG_BITNO_WRITE,
 };
 
-struct moving_io {
+#define MOVING_FLAG_ALLOC	(1U << MOVING_FLAG_BITNO_ALLOC)
+#define MOVING_FLAG_READ	(1U << MOVING_FLAG_BITNO_READ)
+#define MOVING_FLAG_WRITE	(1U << MOVING_FLAG_BITNO_WRITE)
+
+struct moving_context {
+	/* Closure for waiting on all reads and writes to complete */
 	struct closure		cl;
+
+	/* Number and types of errors reported */
+	atomic_t		error_count;
+	atomic_t		error_flags;
+
+	/* If != 0, @task is waiting for a read or write to complete */
+	atomic_t		pending;
+	struct task_struct	*task;
+
+	/* Key and sector moves issued, updated from submission context */
+	u64			keys_moved;
+	u64			sectors_moved;
+
+	/* Last key scanned */
+	struct bkey		last_scanned;
+};
+
+void bch_moving_context_init(struct moving_context *);
+void bch_moving_wait(struct moving_context *);
+
+struct moving_io {
+	struct list_head	list;
+	struct closure		cl;
+	struct moving_queue	*q;
 	struct bch_write_op	op;
-	/* Stats to update from submission context */
-	struct moving_io_stats	*stats;
-	struct semaphore	*in_flight;
-	bool			support_moving_error;
+	struct moving_context	*context;
 	BKEY_PADDED(key);
+	/* Protected by q->lock */
+	int			read_completed : 1;
+	int			write_issued : 1;
 	/* Must be last since it is variable size */
 	struct bbio		bio;
 };
@@ -35,7 +65,52 @@ static inline struct moving_io *moving_io_alloc(struct bkey *k)
 	return io;
 }
 
-void bch_data_move(struct closure *);
+typedef struct moving_io *(moving_queue_fn)(struct moving_queue *,
+					    struct moving_context *);
+
+void bch_queue_init(struct moving_queue *,
+		    unsigned, unsigned, unsigned, unsigned);
+int bch_queue_start(struct moving_queue *,
+		    const char *);
+bool bch_queue_full(struct moving_queue *);
+void bch_data_move(struct moving_queue *,
+		   struct moving_context *,
+		   struct moving_io *);
+void bch_queue_destroy(struct moving_queue *);
+
+#define sysfs_queue_attribute(name)					\
+	rw_attribute(name##_max_count);					\
+	rw_attribute(name##_max_read_count);				\
+	rw_attribute(name##_max_write_count);				\
+	rw_attribute(name##_max_keys)
+
+#define sysfs_queue_files(name)						\
+	&sysfs_##name##_max_count,					\
+	&sysfs_##name##_max_read_count,					\
+	&sysfs_##name##_max_write_count,				\
+	&sysfs_##name##_max_keys
+
+#define sysfs_queue_show(name, var)					\
+do {									\
+	sysfs_hprint(name##_max_count,		(var)->max_count);	\
+	sysfs_print(name##_max_read_count,	(var)->max_read_count);	\
+	sysfs_print(name##_max_write_count,	(var)->max_write_count);\
+	sysfs_print(name##_max_keys, bch_scan_keylist_size(&(var)->keys));\
+} while (0)
+
+#define sysfs_queue_store(name, var)					\
+do {									\
+	sysfs_strtoul(name##_max_count, (var)->max_count);		\
+	sysfs_strtoul(name##_max_read_count, (var)->max_read_count);	\
+	sysfs_strtoul(name##_max_write_count, (var)->max_write_count);	\
+	if (attr == &sysfs_##name##_max_keys) {				\
+		int v = strtoi_h_or_return(buf);			\
+									\
+		v = clamp(v, 2, KEYLIST_MAX);				\
+		bch_scan_keylist_resize(&(var)->keys, v);		\
+	}								\
+} while (0)
+
 int bch_move_data_off_device(struct cache *);
 int bch_move_meta_data_off_device(struct cache *);
 

@@ -2034,13 +2034,13 @@ static void bch_btree_gc_finish(struct cache_set *c)
 	unsigned i;
 
 	bch_mark_writeback_keys(c);
-	bch_mark_scan_keylist_keys(c, &c->tiering_keys);
+	bch_mark_scan_keylist_keys(c, &c->tiering_queue.keys);
 
 	for_each_cache(ca, c, i) {
 		unsigned j;
 		uint64_t *i;
 
-		bch_mark_scan_keylist_keys(c, &ca->moving_gc_keys);
+		bch_mark_scan_keylist_keys(c, &ca->moving_gc_queue.keys);
 
 		for (j = 0; j < bch_nr_journal_buckets(&ca->sb); j++)
 			bch_mark_metadata_bucket(ca,

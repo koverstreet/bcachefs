@@ -211,6 +211,8 @@
 #include "buckets_types.h"
 #include "journal_types.h"
 #include "keylist_types.h"
+#include "keybuf_types.h"
+#include "move_types.h"
 #include "stats_types.h"
 #include "super_types.h"
 
@@ -296,8 +298,8 @@ struct cache {
 	/* Moving GC: */
 	struct task_struct	*moving_gc_read;
 	struct workqueue_struct	*moving_gc_write;
-	struct semaphore	moving_gc_in_flight;
-	struct scan_keylist	moving_gc_keys;
+
+	struct moving_queue	moving_gc_queue;
 	struct bch_pd_controller moving_gc_pd;
 
 	/*
@@ -532,8 +534,7 @@ struct cache_set {
 	struct task_struct	*tiering_read;
 	struct workqueue_struct	*tiering_write;
 
-	struct semaphore	tiering_in_flight;
-	struct scan_keylist	tiering_keys;
+	struct moving_queue	tiering_queue;
 	struct bch_pd_controller tiering_pd;
 
 	/* DEBUG JUNK */
@@ -695,9 +696,6 @@ do {									\
 } while (0)
 
 /* Forward declarations */
-
-void bch_tiering_init_cache_set(struct cache_set *);
-int bch_tiering_thread_start(struct cache_set *c);
 
 void bch_debug_exit(void);
 int bch_debug_init(struct kobject *);

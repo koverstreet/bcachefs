@@ -19,6 +19,7 @@
 #include "movinggc.h"
 #include "stats.h"
 #include "super.h"
+#include "tier.h"
 #include "writeback.h"
 
 #include <linux/blkdev.h>
@@ -617,11 +618,7 @@ static void bch_cache_set_read_only(struct cache_set *c)
 
 	c->tiering_pd.rate.rate = UINT_MAX;
 	bch_ratelimit_reset(&c->tiering_pd.rate);
-	if (!IS_ERR_OR_NULL(c->tiering_read))
-		kthread_stop(c->tiering_read);
-
-	if (c->tiering_write)
-		destroy_workqueue(c->tiering_write);
+	bch_tiering_stop(c);
 
 	if (!IS_ERR_OR_NULL(c->gc_thread))
 		kthread_stop(c->gc_thread);
@@ -696,8 +693,6 @@ static void cache_set_free(struct closure *cl)
 	mutex_lock(&bch_register_lock);
 	list_del(&c->list);
 	mutex_unlock(&bch_register_lock);
-
-	bch_scan_keylist_destroy(&c->tiering_keys);
 
 	pr_info("Cache set %pU unregistered", c->sb.set_uuid.b);
 
@@ -1067,11 +1062,11 @@ static const char *run_cache_set(struct cache_set *c)
 		bch_journal_meta(c, &cl);
 	}
 
-	err = "error starting gc thread";
+	err = "error starting btree GC thread";
 	if (bch_gc_thread_start(c))
 		goto err;
 
-	err = "error starting moving GC thread";
+	err = "error starting moving GC threads";
 	for_each_cache(ca, c, i)
 		if (CACHE_STATE(&ca->mi) == CACHE_ACTIVE &&
 		    bch_moving_gc_thread_start(ca)) {
@@ -1399,8 +1394,6 @@ void bch_cache_release(struct kobject *kobj)
 {
 	struct cache *ca = container_of(kobj, struct cache, kobj);
 	unsigned i;
-
-	bch_scan_keylist_destroy(&ca->moving_gc_keys);
 
 	kfree(ca->journal.seq);
 	free_percpu(ca->bucket_stats_percpu);

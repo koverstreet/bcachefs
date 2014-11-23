@@ -651,11 +651,6 @@ DEFINE_EVENT(cache, bcache_prio_write_end,
 	TP_ARGS(ca)
 );
 
-DEFINE_EVENT(bkey, bcache_copy_collision,
-	TP_PROTO(struct bkey *k),
-	TP_ARGS(k)
-);
-
 TRACE_EVENT(bcache_btree_insert_key,
 	TP_PROTO(struct btree *b, struct bkey *k, unsigned op, unsigned status),
 	TP_ARGS(b, k, op, status),
@@ -796,6 +791,61 @@ TRACE_EVENT(bcache_keyscan,
 	TP_printk("found %u keys from %u:%llu to %u:%llu", __entry->nr_found,
 		  __entry->start_inode, __entry->start_offset,
 		  __entry->end_inode, __entry->end_offset)
+);
+
+DECLARE_EVENT_CLASS(moving_io,
+	TP_PROTO(struct moving_queue *q, struct bkey *k),
+	TP_ARGS(q, k),
+
+	TP_STRUCT__entry(
+		__field(void *,		q			)
+		__field(__u32,		inode			)
+		__field(__u64,		offset			)
+		__field(__u32,		sectors			)
+		__field(unsigned,	count			)
+		__field(unsigned,	read_count		)
+		__field(unsigned,	write_count		)
+	),
+
+	TP_fast_assign(
+		__entry->q		= q;
+		__entry->inode		= KEY_INODE(k);
+		__entry->offset		= KEY_OFFSET(k);
+		__entry->sectors	= KEY_SIZE(k);
+		__entry->count		= q->count;
+		__entry->read_count	= q->read_count;
+		__entry->write_count	= q->write_count;
+	),
+
+	TP_printk("%p %u:%llu sectors %u queue %u reads %u writes %u",
+		  __entry->q, __entry->inode, __entry->offset,
+		  __entry->sectors, __entry->count,
+		  __entry->read_count, __entry->write_count)
+);
+
+DEFINE_EVENT(moving_io, bcache_move_read,
+	TP_PROTO(struct moving_queue *q, struct bkey *k),
+	TP_ARGS(q, k)
+);
+
+DEFINE_EVENT(moving_io, bcache_move_read_done,
+	TP_PROTO(struct moving_queue *q, struct bkey *k),
+	TP_ARGS(q, k)
+);
+
+DEFINE_EVENT(moving_io, bcache_move_write,
+	TP_PROTO(struct moving_queue *q, struct bkey *k),
+	TP_ARGS(q, k)
+);
+
+DEFINE_EVENT(moving_io, bcache_move_write_done,
+	TP_PROTO(struct moving_queue *q, struct bkey *k),
+	TP_ARGS(q, k)
+);
+
+DEFINE_EVENT(moving_io, bcache_copy_collision,
+	TP_PROTO(struct moving_queue *q, struct bkey *k),
+	TP_ARGS(q, k)
 );
 
 /* Allocator */

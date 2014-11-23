@@ -22,7 +22,7 @@
 static bool moving_pred(struct scan_keylist *kl, struct bkey *k)
 {
 	struct cache *ca = container_of(kl, struct cache,
-					moving_gc_keys);
+					moving_gc_queue.keys);
 	struct cache_set *c = ca->set;
 	bool ret = false;
 	unsigned i;
@@ -37,72 +37,81 @@ static bool moving_pred(struct scan_keylist *kl, struct bkey *k)
 	return ret;
 }
 
-static void read_moving(struct cache *ca, struct moving_io_stats *stats)
+static int issue_moving_gc_move(struct moving_queue *q,
+				struct moving_context *ctxt,
+				struct bkey *k)
 {
-	struct bkey *k;
+	struct cache *ca = container_of(q, struct cache, moving_gc_queue);
 	struct cache_set *c = ca->set;
 	struct moving_io *io;
-	struct closure cl;
 	struct write_point *wp;
 	unsigned ptr, gen;
 
-	closure_init_stack(&cl);
+	for (ptr = 0; ptr < bch_extent_ptrs(k); ptr++)
+		if ((ca->sb.nr_this_dev == PTR_DEV(k, ptr)) &&
+		    (gen = PTR_BUCKET(c, ca, k, ptr)->copygc_gen)) {
+			gen--;
+			BUG_ON(gen > ARRAY_SIZE(ca->gc_buckets));
+			wp = &ca->gc_buckets[gen];
+			goto found;
+		}
+
+	bch_scan_keylist_dequeue(&q->keys);
+	return 0;
+
+found:
+	io = moving_io_alloc(k);
+	if (!io) {
+		trace_bcache_moving_gc_alloc_fail(c, KEY_SIZE(k));
+		return -ENOMEM;
+	}
+
+	/* This also copies k into both insert_key and replace_key */
+	bch_write_op_init(&io->op, c, &io->bio.bio, wp,
+			  false, false, false,
+			  k, k);
+	io->op.io_wq		= ca->moving_gc_write;
+	io->op.btree_alloc_reserve = RESERVE_MOVINGGC_BTREE;
+
+	bch_extent_drop_ptr(&io->op.insert_key, ptr);
+
+	bch_ratelimit_increment(&ca->moving_gc_pd.rate,
+				KEY_SIZE(k) << 9);
+
+	trace_bcache_gc_copy(k);
+	bch_scan_keylist_dequeue(&q->keys);
+
+	bch_data_move(q, ctxt, io);
+	return 0;
+}
+
+static void read_moving(struct cache *ca, struct moving_context *ctxt)
+{
+	struct bkey *k;
+
 	bch_ratelimit_reset(&ca->moving_gc_pd.rate);
-	ca->moving_gc_keys.last_scanned = ZERO_KEY;
 
 	/* XXX: if we error, background writeback could stall indefinitely */
 
 	while (!bch_ratelimit_wait_freezable_stoppable(&ca->moving_gc_pd.rate,
-						       &cl)) {
-		k = bch_scan_keylist_next_rescan(c,
-						 &ca->moving_gc_keys,
+						       &ctxt->cl)) {
+		if (bch_queue_full(&ca->moving_gc_queue)) {
+			bch_moving_wait(ctxt);
+			continue;
+		}
+
+		k = bch_scan_keylist_next_rescan(ca->set,
+						 &ca->moving_gc_queue.keys,
+						 &ctxt->last_scanned,
 						 &MAX_KEY,
 						 moving_pred);
 		if (k == NULL)
 			break;
 
-		for (ptr = 0; ptr < bch_extent_ptrs(k); ptr++)
-			if ((ca->sb.nr_this_dev == PTR_DEV(k, ptr)) &&
-			    (gen = PTR_BUCKET(c, ca, k, ptr)->copygc_gen)) {
-				gen--;
-				BUG_ON(gen > ARRAY_SIZE(ca->gc_buckets));
-				wp = &ca->gc_buckets[gen];
-				goto found;
-			}
-
-		bch_scan_keylist_dequeue(&ca->moving_gc_keys);
-		continue;
-found:
-		io = moving_io_alloc(k);
-		if (!io) {
-			trace_bcache_moving_gc_alloc_fail(c, KEY_SIZE(k));
-			break;
-		}
-
-		io->stats		= stats;
-		io->in_flight		= &ca->moving_gc_in_flight;
-
-		/* This also copies k into both insert_key and replace_key */
-
-		bch_write_op_init(&io->op, c, &io->bio.bio, wp,
-				  false, false, false,
-				  k, k);
-		io->op.io_wq		= ca->moving_gc_write;
-		io->op.btree_alloc_reserve = RESERVE_MOVINGGC_BTREE;
-
-		bch_extent_drop_ptr(&io->op.insert_key, ptr);
-
-		trace_bcache_gc_copy(k);
-
-		bch_ratelimit_increment(&ca->moving_gc_pd.rate,
-					KEY_SIZE(k) << 9);
-
-		bch_scan_keylist_dequeue(&ca->moving_gc_keys);
-
-		closure_call(&io->cl, bch_data_move, NULL, &cl);
+		issue_moving_gc_move(&ca->moving_gc_queue, ctxt, k);
 	}
 
-	closure_sync(&cl);
+	closure_sync(&ctxt->cl);
 }
 
 static bool bch_moving_gc(struct cache *ca)
@@ -116,9 +125,10 @@ static bool bch_moving_gc(struct cache *ca)
 	struct bucket_heap_entry e;
 	unsigned sectors_used, i;
 	int reserve_sectors;
-	struct moving_io_stats stats;
 
-	memset(&stats, 0, sizeof(stats));
+	struct moving_context ctxt;
+
+	bch_moving_context_init(&ctxt);
 
 	/*
 	 * We won't fill up the moving GC reserve completely if the data
@@ -214,9 +224,9 @@ static bool bch_moving_gc(struct cache *ca)
 
 	mutex_unlock(&ca->heap_lock);
 
-	read_moving(ca, &stats);
+	read_moving(ca, &ctxt);
 
-	trace_bcache_moving_gc_end(ca, stats.sectors_moved, stats.keys_moved,
+	trace_bcache_moving_gc_end(ca, ctxt.sectors_moved, ctxt.keys_moved,
 				buckets_to_move);
 
 	return moved;
@@ -239,27 +249,32 @@ static int bch_moving_gc_thread(void *arg)
 	return 0;
 }
 
-void bch_moving_gc_stop(struct cache *ca)
-{
-	ca->moving_gc_pd.rate.rate = UINT_MAX;
-	bch_ratelimit_reset(&ca->moving_gc_pd.rate);
-	if (ca->moving_gc_read)
-		kthread_stop(ca->moving_gc_read);
-	ca->moving_gc_read = NULL;
+#define MOVING_GC_KEYS_MAX_SIZE	DFLT_SCAN_KEYLIST_MAX_SIZE
+#define MOVING_GC_NR 64
+#define MOVING_GC_READ_NR 32
+#define MOVING_GC_WRITE_NR 32
 
-	if (ca->moving_gc_write)
-		destroy_workqueue(ca->moving_gc_write);
-	ca->moving_gc_write = NULL;
+void bch_moving_init_cache(struct cache *ca)
+{
+	bch_pd_controller_init(&ca->moving_gc_pd);
+	bch_queue_init(&ca->moving_gc_queue,
+		       MOVING_GC_KEYS_MAX_SIZE,
+		       MOVING_GC_NR,
+		       MOVING_GC_READ_NR,
+		       MOVING_GC_WRITE_NR);
+
+	ca->moving_gc_pd.d_term = 0;
 }
 
 int bch_moving_gc_thread_start(struct cache *ca)
 {
 	struct task_struct *t;
+	int ret;
 
-	ca->moving_gc_write = alloc_workqueue("bch_copygc_write",
-					      WQ_UNBOUND|WQ_MEM_RECLAIM, 1);
-	if (!ca->moving_gc_write)
-		return -ENOMEM;
+	ret = bch_queue_start(&ca->moving_gc_queue,
+			      "bch_copygc_write");
+	if (ret)
+		return ret;
 
 	t = kthread_create(bch_moving_gc_thread, ca, "bch_copygc_read");
 	if (IS_ERR(t))
@@ -271,11 +286,13 @@ int bch_moving_gc_thread_start(struct cache *ca)
 	return 0;
 }
 
-void bch_moving_init_cache(struct cache *ca)
+void bch_moving_gc_stop(struct cache *ca)
 {
-	sema_init(&ca->moving_gc_in_flight, BTREE_SCAN_BATCH / 2);
-	bch_scan_keylist_init(&ca->moving_gc_keys, BTREE_SCAN_BATCH);
-	bch_pd_controller_init(&ca->moving_gc_pd);
+	ca->moving_gc_pd.rate.rate = UINT_MAX;
+	bch_ratelimit_reset(&ca->moving_gc_pd.rate);
+	if (ca->moving_gc_read)
+		kthread_stop(ca->moving_gc_read);
+	ca->moving_gc_read = NULL;
 
-	ca->moving_gc_pd.d_term = 0;
+	bch_queue_destroy(&ca->moving_gc_queue);
 }
