@@ -1426,10 +1426,11 @@ void bch_stop_new_data_writes(struct cache *ca)
 {
 	struct cache_set *c = ca->set;
 
-	bch_stop_write_points(ca, (&c->write_points[0]), WRITE_POINT_COUNT);
-	bch_stop_write_points(ca, (&c->tier_write_points[0]), CACHE_TIERS);
-	bch_stop_write_points(ca, (&ca->gc_buckets[0]), NUM_GC_GENS);
-	bch_stop_write_points(ca, (&c->migration_write_point), 1);
+	bch_stop_write_points(ca, &c->write_points[0], WRITE_POINT_COUNT);
+	bch_stop_write_points(ca, &c->promote_write_point, 1);
+	bch_stop_write_points(ca, &c->migration_write_point, 1);
+	bch_stop_write_points(ca, &ca->gc_buckets[0], NUM_GC_GENS);
+	bch_stop_write_points(ca, &ca->tiering_write_point, 1);
 }
 
 /*
@@ -1527,18 +1528,18 @@ void bch_open_buckets_init(struct cache_set *c)
 
 	seqcount_init(&c->cache_all.lock);
 
-	for (i = 0; i < ARRAY_SIZE(c->cache_tiers); i++) {
-		seqcount_init(&c->cache_tiers[i].lock);
-		c->tier_write_points[i].group = &c->cache_tiers[i];
-		c->tier_write_points[i].nr_replicas = 1;
-		c->tier_write_points[i].reserve = RESERVE_NONE;
-	}
-
 	for (i = 0; i < ARRAY_SIZE(c->write_points); i++) {
 		c->write_points[i].throttle = true;
 		c->write_points[i].reserve = RESERVE_NONE;
 		c->write_points[i].group = &c->cache_tiers[0];
 	}
+
+	for (i = 0; i < ARRAY_SIZE(c->cache_tiers); i++)
+		seqcount_init(&c->cache_tiers[i].lock);
+
+	c->promote_write_point.group = &c->cache_tiers[0];
+	c->promote_write_point.nr_replicas = 1;
+	c->promote_write_point.reserve = RESERVE_NONE;
 
 	c->migration_write_point.group = &c->cache_all;
 	c->migration_write_point.nr_replicas = 1;

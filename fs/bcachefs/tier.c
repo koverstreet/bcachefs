@@ -12,10 +12,14 @@
 #include <linux/kthread.h>
 #include <trace/events/bcachefs.h>
 
+/**
+ * tiering_pred - check if tiering should copy an extent to tier 1
+ */
 static bool tiering_pred(struct scan_keylist *kl, struct bkey *k)
 {
-	struct cache_set *c = container_of(kl, struct cache_set,
-					   tiering_queue.keys);
+	struct cache *ca = container_of(kl, struct cache,
+					tiering_queue.keys);
+	struct cache_set *c = ca->set;
 	struct cache_member_rcu *mi;
 	unsigned dev;
 	bool ret;
@@ -41,11 +45,184 @@ static bool tiering_pred(struct scan_keylist *kl, struct bkey *k)
 	return ret;
 }
 
+struct tiering_refill {
+	struct btree_op		op;
+	struct bkey		start;
+	struct cache		*ca;
+	int			cache_iter;
+	u64			sectors;
+};
+
+static void refill_done(struct tiering_refill *refill)
+{
+	if (refill->ca) {
+		percpu_ref_put(&refill->ca->ref);
+		refill->ca = NULL;
+	}
+}
+
+/**
+ * refill_next - move on to refilling the next cache's tiering keylist
+ */
+static void refill_next(struct cache_set *c, struct tiering_refill *refill)
+{
+	struct cache_group *tier;
+
+	refill_done(refill);
+
+	rcu_read_lock();
+	tier = &c->cache_tiers[1];
+	if (tier->nr_devices == 0)
+		goto out;
+
+	while (1) {
+		while (refill->cache_iter < tier->nr_devices) {
+			refill->ca = rcu_dereference(
+					tier->devices[refill->cache_iter]);
+			if (refill->ca != NULL) {
+				percpu_ref_get(&refill->ca->ref);
+				goto out;
+			}
+			refill->cache_iter++;
+		}
+
+		/* Reached the end, wrap around */
+		refill->cache_iter = 0;
+	}
+
+out:
+	rcu_read_unlock();
+}
+
+/*
+ * refill_init - Start refilling a random cache device -- this ensures we
+ * distribute data sanely even if each tiering pass discovers only a few
+ * keys to tier
+ */
+static void refill_init(struct cache_set *c, struct tiering_refill *refill)
+{
+	struct cache_group *tier;
+
+	memset(refill, 0, sizeof(*refill));
+	refill->start = ZERO_KEY;
+
+	rcu_read_lock();
+	tier = &c->cache_tiers[1];
+	if (tier->nr_devices != 0)
+		refill->cache_iter = bch_rand_range(tier->nr_devices);
+	rcu_read_unlock();
+
+	refill_next(c, refill);
+}
+
+/**
+ * tiering_keylist_full - we accumulate tiering_stripe_size sectors in a cache
+ * device's tiering keylist before we move on to the next cache device
+ */
+static bool tiering_keylist_full(struct tiering_refill *refill)
+{
+	return (refill->sectors >= refill->ca->tiering_stripe_size);
+}
+
+/**
+ * tiering_keylist_empty - to prevent a keylist from growing to more than twice
+ * the tiering stripe size, we stop refill when a keylist has more than a single
+ * stripe of sectors
+ */
+static bool tiering_keylist_empty(struct cache *ca)
+{
+	return (bch_scan_keylist_sectors(&ca->tiering_queue.keys)
+		<= ca->tiering_stripe_size);
+}
+
+static int tiering_refill_fn(struct btree_op *op, struct btree *b,
+			     struct bkey *k)
+{
+	struct tiering_refill *refill =
+		container_of(op, struct tiering_refill, op);
+	struct scan_keylist *keys = &refill->ca->tiering_queue.keys;
+	int ret = MAP_CONTINUE;
+
+	if (!tiering_pred(keys, k))
+		goto out;
+
+	/* Growing the keylist might fail */
+	if (bch_scan_keylist_add(keys, k)) {
+		ret = MAP_DONE;
+		goto out;
+	}
+
+	/* TODO: split key if refill->sectors is now > stripe_size */
+	refill->sectors += KEY_SIZE(k);
+
+	/* Check if we've added enough keys to this keylist */
+	if (tiering_keylist_full(refill)) {
+		/* Make sure what we thought we added got added */
+		BUG_ON(bch_scan_keylist_sectors(keys) < refill->sectors);
+
+		/* Move on to refill the next cache device's keylist */
+		refill->sectors = 0;
+		refill->cache_iter++;
+		refill_next(b->c, refill);
+
+		/* All cache devices got removed somehow */
+		if (refill->ca == NULL)
+			ret = MAP_DONE;
+
+		/*
+		 * If the next cache's keylist is not sufficiently empty,
+		 * wait for it to drain before refilling anything.
+		 * We prioritize even distribution of data over maximizing
+		 * write bandwidth.
+		 */
+		if (!tiering_keylist_empty(refill->ca))
+			ret = MAP_DONE;
+	}
+
+out:
+	refill->start = *k;
+	return ret;
+}
+
+/**
+ * tiering_refill - to keep all queues busy as much as possible, we add
+ * up to a single stripe of sectors to each cache device's queue, iterating
+ * over all cache devices twice, so each one has two stripe's of writes
+ * queued up, before we have to wait for move operations to complete.
+ */
+static void tiering_refill(struct cache_set *c, struct tiering_refill *refill)
+{
+	int ret;
+
+	if (bkey_cmp(&refill->start, &MAX_KEY) >= 0)
+		return;
+
+	if (refill->ca == NULL)
+		return;
+
+	if (!tiering_keylist_empty(refill->ca))
+		return;
+
+	trace_bcache_tiering_refill_start(c);
+
+	bch_btree_op_init(&refill->op, BTREE_ID_EXTENTS, -1);
+	ret = bch_btree_map_keys(&refill->op, c,
+				 &refill->start,
+				 tiering_refill_fn, 0);
+	if (ret == MAP_CONTINUE) {
+		/* Reached the end of the keyspace */
+		refill->start = MAX_KEY;
+	}
+
+	trace_bcache_tiering_refill_end(c);
+}
+
 static int issue_tiering_move(struct moving_queue *q,
 			      struct moving_context *ctxt,
 			      struct bkey *k)
 {
-	struct cache_set *c = container_of(q, struct cache_set, tiering_queue);
+	struct cache *ca = container_of(q, struct cache, tiering_queue);
+	struct cache_set *c = ca->set;
 	struct moving_io *io;
 
 	io = moving_io_alloc(k);
@@ -55,7 +232,7 @@ static int issue_tiering_move(struct moving_queue *q,
 	}
 
 	bch_write_op_init(&io->op, c, &io->bio.bio,
-			  &c->tier_write_points[1],
+			  &ca->tiering_write_point,
 			  true, false, false,
 			  &io->key, &io->key);
 	io->op.io_wq = q->wq;
@@ -68,34 +245,103 @@ static int issue_tiering_move(struct moving_queue *q,
 	return 0;
 }
 
+/**
+ * tiering_next_cache - issue a move to write an extent to the next cache
+ * device in round robin order
+ */
+static int tiering_next_cache(struct cache_set *c,
+			      int *cache_iter,
+			      struct moving_context *ctxt,
+			      struct tiering_refill *refill)
+{
+	struct cache_group *tier;
+	int start = *cache_iter;
+	struct cache *ca;
+	struct bkey *k;
+
+	/* If true at the end of the loop, all keylists were empty, so we
+	 * have reached the end of the keyspace */
+	bool done = true;
+	/* If true at the end of the loop, all queues were full, so we must
+	 * wait for some ops to finish */
+	bool full = true;
+
+	do {
+		rcu_read_lock();
+		tier = &c->cache_tiers[1];
+		if (tier->nr_devices == 0) {
+			rcu_read_unlock();
+			return 0;
+		}
+
+		if (*cache_iter >= tier->nr_devices) {
+			rcu_read_unlock();
+			*cache_iter = 0;
+			continue;
+		}
+
+		ca = rcu_dereference(tier->devices[*cache_iter]);
+		if (ca == NULL) {
+			rcu_read_unlock();
+			(*cache_iter)++;
+			continue;
+		}
+
+		percpu_ref_get(&ca->ref);
+		rcu_read_unlock();
+		(*cache_iter)++;
+
+		tiering_refill(c, refill);
+
+		if (bch_queue_full(&ca->tiering_queue)) {
+			done = false;
+		} else {
+			full = false;
+
+			k = bch_scan_keylist_next(&ca->tiering_queue.keys);
+			if (k) {
+				issue_tiering_move(&ca->tiering_queue, ctxt, k);
+				done = false;
+			}
+		}
+
+		percpu_ref_put(&ca->ref);
+	} while (*cache_iter != start);
+
+	if (done)
+		return 0;
+	else if (full)
+		return -EAGAIN;
+	else
+		return -EIOCBQUEUED;
+}
+
 static void read_tiering(struct cache_set *c)
 {
 	struct moving_context ctxt;
-	struct bkey *k;
+	struct tiering_refill refill;
+	int cache_iter = 0;
+	int ret;
 
 	trace_bcache_tiering_start(c);
+
+	refill_init(c, &refill);
 
 	bch_moving_context_init(&ctxt);
 
 	while (!bch_ratelimit_wait_freezable_stoppable(&c->tiering_pd.rate,
 						       &ctxt.cl)) {
-		if (bch_queue_full(&c->tiering_queue)) {
+		cond_resched();
+
+		ret = tiering_next_cache(c, &cache_iter, &ctxt, &refill);
+		if (ret == -EAGAIN)
 			bch_moving_wait(&ctxt);
-			continue;
-		}
-
-		k = bch_scan_keylist_next_rescan(c,
-						 &c->tiering_queue.keys,
-						 &ctxt.last_scanned,
-						 &MAX_KEY,
-						 tiering_pred);
-		if (k == NULL)
+		else if (!ret)
 			break;
-
-		issue_tiering_move(&c->tiering_queue, &ctxt, k);
 	}
 
 	closure_sync(&ctxt.cl);
+	refill_done(&refill);
 
 	trace_bcache_tiering_end(c, ctxt.sectors_moved, ctxt.keys_moved);
 }
@@ -125,22 +371,27 @@ static int bch_tiering_thread(void *arg)
 void bch_tiering_init_cache_set(struct cache_set *c)
 {
 	bch_pd_controller_init(&c->tiering_pd);
-	bch_queue_init(&c->tiering_queue,
+}
+
+void bch_tiering_init_cache(struct cache *ca)
+{
+	bch_queue_init(&ca->tiering_queue,
 		       TIERING_KEYS_MAX_SIZE,
 		       TIERING_NR,
 		       TIERING_READ_NR,
 		       TIERING_WRITE_NR);
+
+	ca->tiering_stripe_size = ca->sb.bucket_size * 2;
 }
 
-int bch_tiering_thread_start(struct cache_set *c)
+int bch_tiering_write_start(struct cache *ca)
+{
+	return bch_queue_start(&ca->tiering_queue, "bch_tier_write");
+}
+
+int bch_tiering_read_start(struct cache_set *c)
 {
 	struct task_struct *t;
-	int ret;
-
-	ret = bch_queue_start(&c->tiering_queue,
-			      "bch_tier_write");
-	if (ret)
-		return ret;
 
 	t = kthread_create(bch_tiering_thread, c, "bch_tier_read");
 	if (IS_ERR(t))
@@ -152,12 +403,15 @@ int bch_tiering_thread_start(struct cache_set *c)
 	return 0;
 }
 
-void bch_tiering_stop(struct cache_set *c)
+void bch_tiering_write_stop(struct cache *ca)
+{
+	bch_queue_destroy(&ca->tiering_queue);
+}
+
+void bch_tiering_read_stop(struct cache_set *c)
 {
 	if (!IS_ERR_OR_NULL(c->tiering_read)) {
 		kthread_stop(c->tiering_read);
 		c->tiering_read = NULL;
 	}
-
-	bch_queue_destroy(&c->tiering_queue);
 }

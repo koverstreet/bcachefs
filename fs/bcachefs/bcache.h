@@ -312,6 +312,11 @@ struct cache {
 	struct moving_queue	moving_gc_queue;
 	struct bch_pd_controller moving_gc_pd;
 
+	/* Tiering: */
+	struct moving_queue	tiering_queue;
+	struct write_point	tiering_write_point;
+	unsigned		tiering_stripe_size;
+
 	/*
 	 * open buckets used in moving garbage collection
 	 * NOTE: GC_GEN == 0 signifies no moving gc, so accessing the
@@ -483,8 +488,7 @@ struct cache_set {
 	struct open_bucket	open_buckets[OPEN_BUCKETS_COUNT];
 
 	struct write_point	write_points[WRITE_POINT_COUNT];
-
-	struct write_point	tier_write_points[CACHE_TIERS];
+	struct write_point	promote_write_point;
 
 	/*
 	 * This write point is used for migrating data off a device
@@ -536,9 +540,6 @@ struct cache_set {
 
 	/* TIERING */
 	struct task_struct	*tiering_read;
-	struct workqueue_struct	*tiering_write;
-
-	struct moving_queue	tiering_queue;
 	struct bch_pd_controller tiering_pd;
 
 	/* DEBUG JUNK */

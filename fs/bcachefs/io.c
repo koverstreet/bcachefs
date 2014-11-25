@@ -873,7 +873,7 @@ void __cache_promote(struct cache_set *c, struct bbio *orig_bio,
 	op->stale		= 0;
 
 	bch_write_op_init(&op->iop, c, bio,
-			  &c->tier_write_points[0],
+			  &c->promote_write_point,
 			  false, false, false,
 			  replace_key, replace_key);
 

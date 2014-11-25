@@ -1039,6 +1039,16 @@ DEFINE_EVENT(bkey, bcache_gc_copy,
 
 /* Tiering */
 
+DEFINE_EVENT(cache_set, bcache_tiering_refill_start,
+	TP_PROTO(struct cache_set *c),
+	TP_ARGS(c)
+);
+
+DEFINE_EVENT(cache_set, bcache_tiering_refill_end,
+	TP_PROTO(struct cache_set *c),
+	TP_ARGS(c)
+);
+
 DEFINE_EVENT(page_alloc_fail, bcache_tiering_alloc_fail,
 	TP_PROTO(struct cache_set *c, u64 size),
 	TP_ARGS(c, size)

@@ -618,7 +618,7 @@ static void bch_cache_set_read_only(struct cache_set *c)
 
 	c->tiering_pd.rate.rate = UINT_MAX;
 	bch_ratelimit_reset(&c->tiering_pd.rate);
-	bch_tiering_stop(c);
+	bch_tiering_read_stop(c);
 
 	if (!IS_ERR_OR_NULL(c->gc_thread))
 		kthread_stop(c->gc_thread);
@@ -1066,16 +1066,17 @@ static const char *run_cache_set(struct cache_set *c)
 	if (bch_gc_thread_start(c))
 		goto err;
 
-	err = "error starting moving GC threads";
+	err = "error starting moving GC or tiering threads";
 	for_each_cache(ca, c, i)
 		if (CACHE_STATE(&ca->mi) == CACHE_ACTIVE &&
-		    bch_moving_gc_thread_start(ca)) {
+		    (bch_moving_gc_thread_start(ca) ||
+		     bch_tiering_write_start(ca))) {
 			percpu_ref_put(&ca->ref);
 			goto err;
 		}
 
 	err = "error starting tiering thread";
-	if (bch_tiering_thread_start(c))
+	if (bch_tiering_read_start(c))
 		goto err;
 
 	schedule_delayed_work(&c->pd_controllers_update, 5 * HZ);
@@ -1239,6 +1240,7 @@ static void __bch_cache_read_only(struct cache *ca)
 	trace_bcache_cache_read_only(ca);
 
 	bch_moving_gc_stop(ca);
+	bch_tiering_write_stop(ca);
 
 	/*
 	 * These remove this cache device from the list from which new
@@ -1765,8 +1767,13 @@ static int cache_init(struct cache *ca)
 		ca->gc_buckets[i].group = &ca->self;
 	}
 
+	ca->tiering_write_point.nr_replicas = 1;
+	ca->tiering_write_point.reserve = RESERVE_NONE;
+	ca->tiering_write_point.group = &ca->self;
+
 	mutex_init(&ca->heap_lock);
 	bch_moving_init_cache(ca);
+	bch_tiering_init_cache(ca);
 
 	return 0;
 }
