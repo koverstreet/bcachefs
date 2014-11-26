@@ -605,6 +605,7 @@ static void invalidate_buckets_lru(struct cache *ca)
 {
 	struct bucket_heap_entry e;
 	struct bucket *g;
+	unsigned i;
 
 	mutex_lock(&ca->heap_lock);
 
@@ -626,7 +627,13 @@ static void invalidate_buckets_lru(struct cache *ca)
 		bucket_heap_push(ca, g, bucket_prio(g));
 	}
 
-	/* Sort in increasing order */
+	/* Sort buckets by physical location on disk for better locality */
+	for (i = 0; i < ca->heap.used; i++) {
+		struct bucket_heap_entry *e = &ca->heap.data[i];
+
+		e->val = e->g - ca->buckets;
+	}
+
 	heap_resort(&ca->heap, bucket_max_cmp);
 
 	/*
