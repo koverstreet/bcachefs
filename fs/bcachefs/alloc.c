@@ -1158,6 +1158,11 @@ static struct open_bucket *bch_open_bucket_alloc(struct cache_set *c,
 	if (wp->ca) {
 		size_t bucket;
 
+		if (CACHE_STATE(&wp->ca->mi) != CACHE_ACTIVE) {
+			ret = -ENOSPC;
+			goto err;
+		}
+
 		bucket = bch_bucket_alloc(wp->ca, RESERVE_MOVINGGC);
 		if (!bucket) {
 			ret = -ENOSPC;
@@ -1253,9 +1258,8 @@ static void verify_not_stale(struct cache_set *c, struct bkey *k)
  * - -EAGAIN: closure was added to waitlist
  * - -ENOSPC: out of space and no closure provided
  *
- * @c cache set.
- * @wp - opaque identifier of where this write came from.
- *       bcache uses ptr address of the task struct.
+ * @c  - cache set.
+ * @wp - write point to use for allocating sectors.
  * @k  - key to return the allocated space information.
  * @cl - closure to wait for a bucket
  */
