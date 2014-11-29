@@ -254,6 +254,55 @@ DEFINE_EVENT(bcache_bio, bcache_journal_write,
 	TP_ARGS(bio)
 );
 
+/* Device state changes */
+
+DEFINE_EVENT(cache_set, bcache_cache_set_read_only,
+	TP_PROTO(struct cache_set *c),
+	TP_ARGS(c)
+);
+
+DEFINE_EVENT(cache_set, bcache_cache_set_read_only_done,
+	TP_PROTO(struct cache_set *c),
+	TP_ARGS(c)
+);
+
+DECLARE_EVENT_CLASS(cache,
+	TP_PROTO(struct cache *ca),
+	TP_ARGS(ca),
+
+	TP_STRUCT__entry(
+		__array(char,		uuid,	16	)
+		__field(unsigned,	tier		)
+	),
+
+	TP_fast_assign(
+		memcpy(__entry->uuid, ca->sb.uuid.b, 16);
+		__entry->tier = CACHE_TIER(&ca->mi);
+	),
+
+	TP_printk("%pU tier %u", __entry->uuid, __entry->tier)
+);
+
+DEFINE_EVENT(cache, bcache_cache_read_only,
+	TP_PROTO(struct cache *ca),
+	TP_ARGS(ca)
+);
+
+DEFINE_EVENT(cache, bcache_cache_read_only_done,
+	TP_PROTO(struct cache *ca),
+	TP_ARGS(ca)
+);
+
+DEFINE_EVENT(cache, bcache_cache_read_write,
+	TP_PROTO(struct cache *ca),
+	TP_ARGS(ca)
+);
+
+DEFINE_EVENT(cache, bcache_cache_read_write_done,
+	TP_PROTO(struct cache *ca),
+	TP_ARGS(ca)
+);
+
 /* Btree */
 
 DECLARE_EVENT_CLASS(btree_node,
@@ -522,21 +571,6 @@ DEFINE_EVENT(cache_set, bcache_gc_start,
 DEFINE_EVENT(cache_set, bcache_gc_end,
 	TP_PROTO(struct cache_set *c),
 	TP_ARGS(c)
-);
-
-DECLARE_EVENT_CLASS(cache,
-	TP_PROTO(struct cache *ca),
-	TP_ARGS(ca),
-
-	TP_STRUCT__entry(
-		__array(char,		uuid,	16 )
-	),
-
-	TP_fast_assign(
-		memcpy(__entry->uuid, ca->sb.uuid.b, 16);
-	),
-
-	TP_printk("%pU", __entry->uuid)
 );
 
 DEFINE_EVENT(cache, bcache_sectors_saturated,

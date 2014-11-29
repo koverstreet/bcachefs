@@ -588,6 +588,8 @@ static void bch_cache_set_read_only(struct cache_set *c)
 	if (test_and_set_bit(CACHE_SET_RO, &c->flags))
 		return;
 
+	trace_bcache_cache_set_read_only(c);
+
 	bch_wake_delayed_writes((unsigned long) c);
 	del_timer_sync(&c->foreground_write_wakeup);
 	cancel_delayed_work_sync(&c->pd_controllers_update);
@@ -614,6 +616,8 @@ static void bch_cache_set_read_only(struct cache_set *c)
 		/* flush last journal entry if needed */
 		c->journal.work.work.func(&c->journal.work.work);
 	}
+
+	trace_bcache_cache_set_read_only_done(c);
 }
 
 void bch_cache_set_fail(struct cache_set *c)
@@ -1197,6 +1201,8 @@ void bch_cache_read_only(struct cache *ca)
 
 	cache_member_info_put();
 
+	trace_bcache_cache_read_only(ca);
+
 	bch_moving_gc_stop(ca);
 
 	/*
@@ -1229,6 +1235,8 @@ void bch_cache_read_only(struct cache *ca)
 	 * after this point.
 	 */
 
+	trace_bcache_cache_read_only_done(ca);
+
 	pr_notice("%s read only", bdevname(ca->bdev, buf));
 }
 
@@ -1242,6 +1250,8 @@ const char *bch_cache_read_write(struct cache *ca)
 
 	cache_member_info_put();
 
+	trace_bcache_cache_read_write(ca);
+
 	err = bch_cache_allocator_start(ca);
 	if (err)
 		return err;
@@ -1250,6 +1260,8 @@ const char *bch_cache_read_write(struct cache *ca)
 	bch_cache_group_add_cache(&c->cache_all, ca);
 
 	bch_recalc_capacity(c);
+
+	trace_bcache_cache_read_write_done(ca);
 
 	return NULL;
 }
