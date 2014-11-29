@@ -539,6 +539,15 @@ void bch_sectors_dirty_init(struct cached_dev *dc, struct cache_set *c)
 	dc->writeback_pd.last_actual = bcache_dev_sectors_dirty(d);
 }
 
+void bch_cached_dev_writeback_stop(struct cached_dev *dc)
+{
+	cancel_delayed_work_sync(&dc->writeback_pd_update);
+	if (!IS_ERR_OR_NULL(dc->writeback_thread)) {
+		kthread_stop(dc->writeback_thread);
+		dc->writeback_thread = NULL;
+	}
+}
+
 void bch_cached_dev_writeback_free(struct cached_dev *dc)
 {
 	struct bcache_device *d = &dc->disk;

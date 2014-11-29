@@ -14,11 +14,12 @@
 #include "inode.h"
 #include "io.h"
 #include "journal.h"
+#include "keylist.h"
 #include "move.h"
 #include "movinggc.h"
 #include "stats.h"
 #include "super.h"
-#include "keylist.h"
+#include "writeback.h"
 
 #include <linux/blkdev.h>
 #include <linux/crc32c.h>
@@ -580,6 +581,11 @@ static void bch_recalc_capacity(struct cache_set *c)
 
 static void bch_cache_set_read_only(struct cache_set *c)
 {
+	struct cached_dev *dc;
+	struct bcache_device *d;
+	struct radix_tree_iter iter;
+	void **slot;
+
 	struct cache *ca;
 	unsigned i;
 
@@ -593,6 +599,19 @@ static void bch_cache_set_read_only(struct cache_set *c)
 	bch_wake_delayed_writes((unsigned long) c);
 	del_timer_sync(&c->foreground_write_wakeup);
 	cancel_delayed_work_sync(&c->pd_controllers_update);
+
+	rcu_read_lock();
+
+	radix_tree_for_each_slot(slot, &c->devices, &iter, 0) {
+		d = radix_tree_deref_slot(slot);
+
+		if (!INODE_FLASH_ONLY(&d->inode)) {
+			dc = container_of(d, struct cached_dev, disk);
+			bch_cached_dev_writeback_stop(dc);
+		}
+	}
+
+	rcu_read_unlock();
 
 	c->tiering_pd.rate.rate = UINT_MAX;
 	bch_ratelimit_reset(&c->tiering_pd.rate);
