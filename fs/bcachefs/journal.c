@@ -627,10 +627,11 @@ static void journal_reclaim(struct cache_set *c)
 	struct bkey *k = &c->journal.key;
 	struct cache *ca;
 	uint64_t last_seq;
-	unsigned iter;
+	unsigned i, iter;
 	atomic_t p;
 
 	pr_debug("started");
+	lockdep_assert_held(&c->journal.lock);
 
 	/*
 	 * only supposed to be called when we're out of space/haven't started a
@@ -668,9 +669,22 @@ static void journal_reclaim(struct cache_set *c)
 		c->journal.blocks_free = 0;
 	}
 
-	if (c->journal.blocks_free)
+	if (c->journal.blocks_free) {
+		/*
+		 * Check that the devices we are writing the journal
+		 * to are still writable, and if not, pick new
+		 * devices.
+		 * See bch_journal_move that depends on this check.
+		 */
+		for (i = 0; i < bch_extent_ptrs(k); i++) {
+			ca = PTR_CACHE(c, k, i);
+			if (CACHE_STATE(&ca->mi) != CACHE_ACTIVE)
+				goto pick_new_devices;
+		}
 		goto out;
+	}
 
+pick_new_devices:
 	/*
 	 * Determine location of the next journal write:
 	 * XXX: sort caches by free journal space
@@ -683,7 +697,8 @@ static void journal_reclaim(struct cache_set *c)
 		unsigned next = (ja->cur_idx + 1) %
 			bch_nr_journal_buckets(&ca->sb);
 
-		if (CACHE_TIER(&ca->mi))
+		if ((CACHE_TIER(&ca->mi) != 0)
+		    || (CACHE_STATE(&ca->mi) != CACHE_ACTIVE))
 			continue;
 
 		/* No space available on this device */
@@ -805,6 +820,7 @@ static void journal_write_locked(struct closure *cl)
 
 	bch_journal_add_prios(c, w->data);
 
+	BUG_ON(c->journal.blocks_free < set_blocks(w->data, block_bytes(c)));
 	c->journal.blocks_free -= set_blocks(w->data, block_bytes(c));
 
 	w->data->read_clock	= c->prio_clock[READ].hand;
@@ -947,8 +963,8 @@ void __bch_journal_res_put(struct cache_set *c,
 static bool __journal_res_get(struct cache_set *c, struct journal_res *res,
 			      unsigned u64s_min, unsigned u64s_max)
 {
-	unsigned actual_min = u64s_min + sizeof(struct jset_keys) / sizeof(u64);
-	unsigned actual_max = u64s_max + sizeof(struct jset_keys) / sizeof(u64);
+	unsigned actual_min = jset_u64s(u64s_min);
+	unsigned actual_max = jset_u64s(u64s_max);
 
 	BUG_ON(res->ref);
 
@@ -982,6 +998,8 @@ static bool __journal_res_get(struct cache_set *c, struct journal_res *res,
 			 * entry yet - skip it and allocate a new journal entry
 			 */
 			if (!c->journal.cur->data->keys) {
+				BUG_ON(test_bit(JOURNAL_DIRTY,
+						&c->journal.flags));
 				c->journal.blocks_free = 0;
 				c->journal.u64s_remaining = 0;
 				continue;
@@ -1072,4 +1090,92 @@ ssize_t bch_journal_print_debug(struct journal *j, char *buf)
 			test_bit(JOURNAL_NEED_WRITE,	&j->flags),
 			test_bit(JOURNAL_DIRTY,		&j->flags),
 			test_bit(JOURNAL_REPLAY_DONE,	&j->flags));
+}
+
+static bool bch_journal_writing_to_device(struct cache *ca)
+{
+	struct bkey *k;
+	bool found = false;
+	struct cache_set *c = ca->set;
+	unsigned i, mov_dev = ca->sb.nr_this_dev;
+
+	spin_lock(&c->journal.lock);
+
+	k = &c->journal.key;
+	for (i = 0; i < bch_extent_ptrs(k); i++) {
+		if (PTR_DEV(k, i) == mov_dev) {
+			found = true;
+			break;
+		}
+	}
+
+	spin_unlock(&c->journal.lock);
+	return found;
+}
+
+/*
+ * This asumes that ca has already been marked read-only so that
+ * journal_reclaim won't pick buckets out of ca any more.
+ * Hence, if the journal is not currently pointing to ca, there
+ * will be no new writes to journal entries in ca after all the
+ * pending ones have been flushed to disk.
+ *
+ * If the journal is being written to ca, write a new record, and
+ * journal_reclaim will notice that the device is no longer writeable
+ * and pick a new set of devices to write to.
+ */
+
+int bch_journal_move(struct cache *ca)
+{
+	struct closure cl;
+	unsigned i, nr_buckets;
+	u64 last_flushed_seq;
+	struct cache_set *c = ca->set;
+	int ret = 0;		/* Success */
+
+	closure_init_stack(&cl);
+
+	if (bch_journal_writing_to_device(ca)) {
+		/*
+		 * bch_journal_meta will write a record and we'll wait
+		 * for the write to complete.
+		 * Actually writing the journal (journal_write_locked)
+		 * will call journal_reclaim which notices that the
+		 * device is no longer writeable, and picks a new one.
+		 */
+		bch_journal_meta(c, &cl);
+		/* Wait for the meta-data write */
+		closure_sync(&cl);
+		BUG_ON(bch_journal_writing_to_device(ca));
+	}
+
+	/*
+	 * Flush all btree updates to backing store so that any
+	 * journal entries written to ca become stale and are no
+	 * longer needed.
+	 */
+	bch_btree_flush(c);
+
+	/*
+	 * Force a meta-data journal entry to be written so that
+	 * we have newer journal entries in devices other than ca,
+	 * and wait for the meta data write to complete.
+	 */
+	bch_journal_meta(c, &cl);
+	closure_sync(&cl);
+
+	/*
+	 * Verify that we no longer need any of the journal entries in
+	 * the device
+	 */
+	spin_lock(&c->journal.lock);
+	last_flushed_seq = last_seq(&c->journal);
+	spin_unlock(&c->journal.lock);
+
+	nr_buckets = bch_nr_journal_buckets(&ca->sb);
+
+	for (i = 0; i < nr_buckets; i += 1)
+		BUG_ON(ca->journal.seq[i] > last_flushed_seq);
+
+	return ret;
 }

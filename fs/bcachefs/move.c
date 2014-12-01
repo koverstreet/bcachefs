@@ -6,6 +6,7 @@
 #include "io.h"
 #include "move.h"
 #include "super.h"
+#include "journal.h"
 #include "keylist.h"
 
 #include <trace/events/bcachefs.h>
@@ -169,6 +170,20 @@ static bool migrate_data_pred(struct scan_keylist *kl, struct bkey *k)
 #define MAX_MOVE_IN_FLIGHT	200
 #define DFLT_MOVE_KEYS_MAX_SIZE	DFLT_SCAN_KEYLIST_MAX_SIZE
 
+/*
+ * This moves only the data off, leaving the meta-data (if any) in place.
+ * It walks the key space, and for any key with a valid pointer to the
+ * relevant device, it copies it elsewhere, updating the key to point to
+ * the copy.
+ * The meta-data is moved off by bch_move_meta_data_off_device.
+ *
+ * Note: If the number of data replicas desired is > 1, ideally, any
+ * new copies would not be made in the same device that already have a
+ * copy (if there are enough devices).
+ * This is _not_ currently implemented.  The multiple replicas can
+ * land in the same device even if there are others available.
+ */
+
 int bch_move_data_off_device(struct cache *ca)
 {
 	struct cache_set *c = ca->set;
@@ -301,5 +316,239 @@ out:
 	closure_sync(&ctxt.cl);
 	bch_scan_keylist_destroy(&op->keys);
 	kfree(op);
+	return ret;
+}
+
+struct btree_move {
+	struct btree_op	op;	/* Tree traversal info */
+	unsigned	dev;	/* Device to move btree from */
+	unsigned	err;	/* Something went awry */
+	unsigned	seen;	/* How many were examined */
+	unsigned	found;	/* How many were found. */
+	unsigned	moved;	/* How many were moved. */
+	struct bkey	start;	/* Where to re-start walk */
+};
+
+#define MOVE_DEBUG	0
+
+/*
+ * Note: btree_map_nodes implements a post-order traversal,
+ * i.e. the children of this node have already been processed.
+ */
+
+static int move_btree_off_fn(struct btree_op *op, struct btree *b)
+{
+	unsigned i;
+	struct bkey *k = &b->key;
+	struct btree_move *mov = container_of(op, struct btree_move, op);
+
+	mov->seen += 1;
+
+	if (MOVE_DEBUG) {
+		char buf[256];
+
+		(void) bch_bkey_to_text(buf, sizeof(buf), k);
+		pr_notice("Examining bkey %s (%u pointers)",
+			  buf, bch_extent_ptrs(k));
+		for (i = 0; i < bch_extent_ptrs(k); i++)
+			pr_notice("device %u", ((unsigned) PTR_DEV(k, i)));
+	}
+
+	for (i = 0; i < bch_extent_ptrs(k); i++)
+		if (PTR_DEV(k, i) == mov->dev)
+			goto found;
+
+	/* Not found */
+	return MAP_CONTINUE;
+
+found:
+	mov->found += 1;
+
+	if (btree_move_node(b, op)) {
+		mov->moved += 1;
+		return MAP_CONTINUE;
+	}
+
+	/*
+	 * Assume failure due to inability to allocate space.
+	 * Remember where to start again, and punt.
+	 * btree_move_node has already made op.cl wait in the bucket
+	 * freelist.
+	 */
+	mov->start = START_KEY(k);
+	return MAP_DONE;
+}
+
+/*
+ * This walks the btree without walking the leaves, and for any
+ * pointer to a node in the relevant device, it moves the interior
+ * node elsewhere.
+ *
+ * Note: If the number of meta-data replicas desired is > 1, ideally,
+ * any new copies would not be made in the same device that already
+ * have a copy (if there are enough devices).
+ *
+ * This is _not_ currently implemented.  The multiple replicas can
+ * land in the same device even if there are others available.
+ */
+
+/*
+ * Note: Since this intent-locks the whole btree (including the root),
+ * perhaps we want to do something similar to btree gc, and
+ * periodically give up, to prevent foreground writes from being
+ * stalled for a long time.
+ */
+
+static int bch_move_btree_off(struct cache *ca,
+			      enum btree_id id,
+			      const char *name)
+{
+	int val, ret;
+	unsigned pass;
+	struct bkey start;
+	struct btree_move mov;
+
+	if (MOVE_DEBUG) {
+		/* Debugging */
+		pr_notice("Moving %s btree off device %u",
+			  name, ca->sb.nr_this_dev);
+	}
+
+	for (pass = 0; (pass < MAX_DATA_OFF_ITER); pass++) {
+		bch_btree_op_init(&mov.op, id, S8_MAX);
+		mov.dev = ca->sb.nr_this_dev;
+		mov.err = mov.seen = mov.found = mov.moved = 0;
+		mov.start = ZERO_KEY;
+
+		while (1) {
+			start = mov.start;
+			mov.start = MAX_KEY;
+			val = bch_btree_map_nodes(&mov.op,
+						  ca->set,
+						  &start,
+						  move_btree_off_fn,
+						  (MAP_ASYNC
+						   |MAP_ALL_NODES));
+
+			/*
+			 * Actually wait on the bucket freelist.
+			 * The call to closure_wait is all the way in
+			 * __btree_check_reserve called (eventually)
+			 * by btree_move_node when there aren't enough
+			 * buckets available.
+			 * That way, we wait after unlocking the tree,
+			 * rather than in the guts, with the tree
+			 * write-locked.
+			 * Note that if we didn't fail to allocate, we
+			 * won't wait at all, since we won't be in the
+			 * waitlist.
+			 */
+			closure_sync(&mov.op.cl);
+
+			if (val < 0) {
+				ret = 1; /* Failure */
+				break;
+			} else if (bkey_cmp(&mov.start, &MAX_KEY) == 0) {
+				ret = 0; /* Success */
+				break;
+			}
+		}
+
+		if (MOVE_DEBUG) {
+			/* Debugging */
+			pr_notice("%s pass %u: seen %u, found %u, moved %u.",
+				  name, pass, mov.seen, mov.found, mov.moved);
+
+			if (mov.moved != 0)
+				pr_notice("moved %u %s nodes in pass %u.",
+					  mov.moved, name, pass);
+		}
+
+		if (ret != 0)
+			pr_err("pass %u: Unable to move %s meta-data in %pU.",
+			       pass, name, ca->set->sb.set_uuid.b);
+		else if (mov.found == 0)
+			break;
+	}
+
+	if (mov.found != 0)
+		ret = -1;	/* We don't know if we succeeded */
+
+	return ret;
+}
+
+/*
+ * This moves only the meta-data off, leaving the data (if any) in place.
+ * The data is moved off by bch_move_data_off_device, if desired, and
+ * called first.
+ *
+ * Before calling this, allocation of buckets to the device must have
+ * been disabled, as else we'll continue to write meta-data to the device
+ * when new buckets are picked for meta-data writes.
+ * In addition, the copying gc and allocator threads for the device
+ * must have been stopped.  The allocator thread is the only thread
+ * that writes prio/gen information.
+ *
+ * Meta-data consists of:
+ * - Btree nodes
+ * - Prio/gen information
+ * - Journal entries
+ * - Superblock
+ *
+ * This has to move the btree nodes and the journal only:
+ * - prio/gen information is not written once the allocator thread is stopped.
+ *   also, as the prio/gen information is per-device it is not moved.
+ * - the superblock will be written by the caller once after everything
+ *   is stopped.
+ *
+ * Note that currently there is no way to stop btree node and journal
+ * meta-data writes to a device without moving the meta-data because
+ * once a bucket is open for a btree node, unless a replacement btree
+ * node is allocated (and the tree updated), the bucket will continue
+ * to be written with updates.  Similarly for the journal (it gets
+ * written until filled).
+ *
+ * This routine leaves the data (if any) in place.  Whether the data
+ * should be moved off is a decision independent of whether the meta
+ * data should be moved off and stopped:
+ *
+ * - For device removal, both data and meta-data are moved off, in
+ *   that order.
+ *
+ * - However, for turning a device read-only without removing it, only
+ *   meta-data is moved off since that's the only way to prevent it
+ *   from being written.  Data is left in the device, but no new data
+ *   is written.
+ */
+
+#define DEF_BTREE_ID(kwd, val, name) name,
+
+static const char *btree_id_names[BTREE_ID_NR] = {
+	DEFINE_BCH_BTREE_IDS()
+};
+
+#undef DEF_BTREE_ID
+
+int bch_move_meta_data_off_device(struct cache *ca)
+{
+	unsigned i;
+	int ret = 0;		/* Success */
+
+	/* 1st, Move the btree nodes off the device */
+
+	for (i = 0; i < BTREE_ID_NR; i++)
+		if (bch_move_btree_off(ca, i, btree_id_names[i]) != 0)
+			return 1;
+
+	/* There are no prios/gens to move -- they are already in the device. */
+
+	/* 2nd. Move the journal off the device */
+
+	if (bch_journal_move(ca) != 0) {
+		pr_err("Unable to move the journal off in %pU.",
+		       ca->set->sb.set_uuid.b);
+		ret = 1;	/* Failure */
+	}
+
 	return ret;
 }

@@ -504,12 +504,18 @@ static inline __u64 bset_magic(struct cache_sb *sb)
 #define BCACHE_JSET_VERSION_JKEYS	2
 #define BCACHE_JSET_VERSION		2
 
+#define DEFINE_BCH_BTREE_IDS()						\
+	DEF_BTREE_ID(BTREE_ID_EXTENTS, 0, "extents")			\
+	DEF_BTREE_ID(BTREE_ID_INODES,  1, "inodes")
+
+#define DEF_BTREE_ID(kwd, val, name) kwd = val,
+
 enum btree_id {
-	BTREE_ID_EXTENTS		= 0,
-	BTREE_ID_INODES			= 1,
-	BTREE_ID_DIRS			= 2,
-	BTREE_ID_NR			= 3,
+	DEFINE_BCH_BTREE_IDS()
+	BTREE_ID_NR			= 4,
 };
+
+#undef DEF_BTREE_ID
 
 struct jset_keys {
 	__u16			keys;

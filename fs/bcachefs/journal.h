@@ -31,8 +31,9 @@
  * down to the journalling code. That closure will will wait on the journal
  * write to complete (via closure_wait()).
  *
- * If the index update wasn't synchronous, the journal entry will be written out
- * after 100 ms has elapsed, by default (the delay_ms field in struct journal).
+ * If the index update wasn't synchronous, the journal entry will be
+ * written out after 10 ms have elapsed, by default (the delay_ms field
+ * in struct journal).
  *
  * JOURNAL ENTRIES:
  *
@@ -171,7 +172,7 @@ static inline unsigned jset_u64s(unsigned nkeys)
 }
 
 static inline void __bch_journal_add_keys(struct jset *j, enum btree_id id,
-					  struct bkey *k, unsigned nkeys,
+					  const struct bkey *k, unsigned nkeys,
 					  unsigned level, unsigned type)
 {
 	struct jset_keys *jkeys = (struct jset_keys *) bset_bkey_last(j);
@@ -188,7 +189,8 @@ static inline void __bch_journal_add_keys(struct jset *j, enum btree_id id,
 
 static inline void bch_journal_add_keys(struct cache_set *c,
 					struct journal_res *res,
-					enum btree_id id, struct bkey *k,
+					enum btree_id id,
+					const struct bkey *k,
 					unsigned nkeys, unsigned level,
 					struct closure *parent)
 {
@@ -235,5 +237,7 @@ static inline void set_journal_bucket(struct cache *ca, unsigned nr, u64 bucket)
 {
 	__journal_buckets(ca)[nr] = cpu_to_le64(bucket);
 }
+
+int bch_journal_move(struct cache *);
 
 #endif /* _BCACHE_JOURNAL_H */

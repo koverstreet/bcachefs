@@ -37,5 +37,6 @@ static inline struct moving_io *moving_io_alloc(struct bkey *k)
 
 void bch_data_move(struct closure *);
 int bch_move_data_off_device(struct cache *);
+int bch_move_meta_data_off_device(struct cache *);
 
 #endif /* _BCACHE_MOVE_H */

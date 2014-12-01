@@ -283,6 +283,7 @@ int bch_btree_cache_alloc(struct cache_set *);
 /* Values for @flags parameter to map_nodes and map_keys */
 #define MAP_HOLES	1  /* Only map_keys */
 #define MAP_ASYNC	2
+#define MAP_ALL_NODES	4  /* Meaningfull only for bch_btree_map_nodes */
 
 typedef int (btree_map_nodes_fn)(struct btree_op *, struct btree *);
 int bch_btree_map_nodes(struct btree_op *, struct cache_set *,
@@ -329,5 +330,7 @@ static inline bool gc_will_visit_key(struct cache_set *c,
 
 	return ret;
 }
+
+bool btree_move_node(struct btree *, struct btree_op *);
 
 #endif

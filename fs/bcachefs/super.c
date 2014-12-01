@@ -579,6 +579,8 @@ static void bch_recalc_capacity(struct cache_set *c)
 	closure_wake_up(&c->buckets_available_wait);
 }
 
+static void __bch_cache_read_only(struct cache *ca);
+
 static void bch_cache_set_read_only(struct cache_set *c)
 {
 	struct cached_dev *dc;
@@ -625,7 +627,7 @@ static void bch_cache_set_read_only(struct cache_set *c)
 		kthread_stop(c->gc_thread);
 
 	for_each_cache(ca, c, i)
-		bch_cache_read_only(ca);
+		__bch_cache_read_only(ca);
 
 	/* Should skip this if we're unregistering because of an error */
 	bch_btree_flush(c);
@@ -897,7 +899,7 @@ err:
 	return NULL;
 }
 
-static const char *bch_cache_read_write_internal(struct cache *ca);
+static const char *__bch_cache_read_write(struct cache *ca);
 
 static const char *run_cache_set(struct cache_set *c)
 {
@@ -1022,7 +1024,7 @@ static const char *run_cache_set(struct cache_set *c)
 
 		for_each_cache(ca, c, i)
 			if (CACHE_STATE(&ca->mi) == CACHE_ACTIVE &&
-			    (err = bch_cache_read_write_internal(ca))) {
+			    (err = __bch_cache_read_write(ca))) {
 				percpu_ref_put(&ca->ref);
 				goto err;
 			}
@@ -1043,7 +1045,7 @@ static const char *run_cache_set(struct cache_set *c)
 
 		for_each_cache(ca, c, i)
 			if (CACHE_STATE(&ca->mi) == CACHE_ACTIVE &&
-			    (err = bch_cache_read_write_internal(ca))) {
+			    (err = __bch_cache_read_write(ca))) {
 				percpu_ref_put(&ca->ref);
 				goto err;
 			}
@@ -1228,7 +1230,7 @@ err:
 
 /* Cache device */
 
-void bch_cache_read_only(struct cache *ca)
+static void __bch_cache_read_only(struct cache *ca)
 {
 	struct cache_set *c = ca->set;
 	struct cache_member_rcu *mi = cache_member_info_get(c);
@@ -1247,10 +1249,13 @@ void bch_cache_read_only(struct cache *ca)
 	 * These remove this cache device from the list from which new
 	 * buckets can be allocated.
 	 */
-
 	bch_cache_group_remove_cache(tier, ca);
 	bch_cache_group_remove_cache(&c->cache_all, ca);
 
+	/*
+	 * Stopping the allocator thread stops the writing of any
+	 * prio/gen information to the device.
+	 */
 	p = ca->alloc_thread;
 	ca->alloc_thread = NULL;
 	smp_wmb(); /* XXX */
@@ -1260,25 +1265,95 @@ void bch_cache_read_only(struct cache *ca)
 	bch_recalc_capacity(c);
 
 	/*
-	 * This stops new writes (e.g. to existing open buckets) and
-	 * then waits for all existing writes to complete.
+	 * This stops new data writes (e.g. to existing open data
+	 * buckets) and then waits for all existing writes to
+	 * complete.
+	 *
 	 * The access (read) barrier is in bch_cache_percpu_ref_release.
 	 */
-
-	bch_stop_new_writes(ca);
-	bch_await_scheduled_writes(ca); /* This can suspend the running task */
+	bch_stop_new_data_writes(ca);
 
 	/*
-	 * Device write barrier -- no non-superblock writes should occur
-	 * after this point.
+	 * This will suspend the running task until outstanding writes complete.
 	 */
+	bch_await_scheduled_data_writes(ca);
 
+	/*
+	 * Device data write barrier -- no non-meta-data writes should
+	 * occur after this point.  However, writes to btree buckets,
+	 * journal buckets, and the superblock can still occur.
+	 */
 	trace_bcache_cache_read_only_done(ca);
 
-	pr_notice("%s read only", bdevname(ca->bdev, buf));
+	pr_notice("%s read only (data)", bdevname(ca->bdev, buf));
 }
 
-static const char *bch_cache_read_write_internal(struct cache *ca)
+static bool bch_last_rw_tier0_device(struct cache *ca)
+{
+	unsigned i;
+	bool ret = true;
+	struct cache *ca2;
+
+	rcu_read_lock();
+
+	for_each_cache_rcu(ca2, ca->set, i) {
+		if ((CACHE_TIER(&ca2->mi) == 0)
+		    && (CACHE_STATE(&ca2->mi) == CACHE_ACTIVE)
+		    && (ca2 != ca)) {
+			ret = false;
+		}
+	}
+
+	rcu_read_unlock();
+	return ret;
+}
+
+/* This does not write the super-block, should it? */
+
+void bch_cache_read_only(struct cache *ca)
+{
+	unsigned tier;
+	bool has_meta, meta_off;
+	char buf[BDEVNAME_SIZE];
+	struct cache_member *mi;
+	struct cache_member_rcu *allmi;
+
+	/*
+	 * Stop data writes.
+	 */
+	__bch_cache_read_only(ca);
+
+	allmi = cache_member_info_get(ca->set);
+	mi = &allmi->m[ca->sb.nr_this_dev];
+	tier = CACHE_TIER(mi);
+	has_meta = CACHE_HAS_METADATA(mi);
+	SET_CACHE_STATE(mi, CACHE_RO);
+	ca->mi = *mi;		/* Update cache_member cache in struct cache */
+	cache_member_info_put();
+
+	meta_off = false;
+
+	/*
+	 * The only way to stop meta-data writes is to actually move
+	 * the meta-data off!
+	 */
+	if (has_meta) {
+		if ((tier == 0) && (bch_last_rw_tier0_device(ca)))
+			pr_err("Tier 0 needs to allow meta-data writes in %pU.",
+			       ca->set->sb.set_uuid.b);
+		else if (bch_move_meta_data_off_device(ca) != 0)
+			pr_err("Unable to stop writing meta-data in %pU.",
+			       ca->set->sb.set_uuid.b);
+		else
+			meta_off = true;
+	}
+
+	if (has_meta && meta_off)
+		pr_notice("%s read only (meta-data)", bdevname(ca->bdev, buf));
+	return;
+}
+
+static const char *__bch_cache_read_write(struct cache *ca)
 {
 	struct cache_set *c = ca->set;
 	struct cache_member_rcu *mi = cache_member_info_get(c);
@@ -1304,9 +1379,11 @@ static const char *bch_cache_read_write_internal(struct cache *ca)
 	return NULL;
 }
 
+/* This does not write the super-block, should it? */
+
 const char *bch_cache_read_write(struct cache *ca)
 {
-	const char *err = bch_cache_read_write_internal(ca);
+	const char *err = __bch_cache_read_write(ca);
 
 	if (err != NULL)
 		return err;
@@ -1440,10 +1517,12 @@ static void bch_cache_stop(struct cache *ca)
 static void bch_cache_remove_work(struct work_struct *work)
 {
 	unsigned tier;
+	bool has_data, has_meta, data_off, meta_off;
 	struct cache *ca = container_of(work, struct cache, remove_work);
 	struct cache_set *c = ca->set;
 	struct cache_member_rcu *allmi;
 	struct cache_member *mi;
+	char buf[BDEVNAME_SIZE];
 	bool force = (test_bit(CACHE_DEV_FORCE_REMOVE, &ca->flags));
 
 	mutex_lock(&bch_register_lock);
@@ -1470,67 +1549,117 @@ static void bch_cache_remove_work(struct work_struct *work)
 		return;
 	}
 
-	if (CACHE_STATE(mi) == CACHE_ACTIVE) {
+	/* CACHE_ACTIVE means Read/Write. */
+
+	if (CACHE_STATE(mi) != CACHE_ACTIVE) {
+		has_data = CACHE_HAS_DATA(mi);
 		cache_member_info_put();
-		bch_cache_read_only(ca); /* This quiesces writes */
+	} else {
+		cache_member_info_put();
+		/*
+		 * The following quiesces data writes but not meta-data writes.
+		 */
+		__bch_cache_read_only(ca);
+
+		/* Update the state to read-only */
 
 		allmi = cache_member_info_get(c);
 		mi = &allmi->m[ca->sb.nr_this_dev];
 		SET_CACHE_STATE(mi, CACHE_RO);
 		ca->mi = *mi;	/* Update cache_member cache in struct cache */
+		has_data = CACHE_HAS_DATA(mi);
+		cache_member_info_put();
 		bcache_write_super(c);
 	}
 
-	cache_member_info_put();
 	mutex_unlock(&bch_register_lock);
 
 	/*
-	 * The call to bch_cache_read_only above has quiesced all writes.
-	 * Move the data off the device.
+	 * The call to __bch_cache_read_only above has quiesced all data writes.
+	 * Move the data off the device, if there is any.
 	 */
 
-	if (bch_move_data_off_device(ca) != 0) {
-		if (!force) {
-			clear_bit(CACHE_DEV_REMOVING, &ca->flags);
-			pr_err("Unable to move data off device in %pU.",
-			       c->sb.set_uuid.b);
-			return;
-		}
-		pr_err("Forcing device removal with live data in %pU!",
-		       c->sb.set_uuid.b);
-	}
+	data_off = (!has_data || (bch_move_data_off_device(ca) == 0));
 
 	allmi = cache_member_info_get(c);
 	mi = &allmi->m[ca->sb.nr_this_dev];
-	SET_CACHE_HAS_DATA(mi, false); /* We've just moved all the data off! */
-	ca->mi = *mi;	/* Update cache_member cache in struct cache */
+	if (has_data && data_off) {
+		/* We've just moved all the data off! */
+		SET_CACHE_HAS_DATA(mi, false);
+		/* Update cache_member cache in struct cache */
+		ca->mi = *mi;
+	}
+	has_meta = CACHE_HAS_METADATA(mi);
 	cache_member_info_put();
+
+	/*
+	 * If there is no meta data, claim it has been moved off.
+	 * Else, try to move it off -- this also quiesces meta-data writes.
+	 */
+
+	meta_off = (!has_meta || (bch_move_meta_data_off_device(ca) == 0));
+
+	/*
+	 * If we successfully moved meta-data off, mark as having none.
+	 */
+
+	if (has_meta && meta_off) {
+		allmi = cache_member_info_get(c);
+		mi = &allmi->m[ca->sb.nr_this_dev];
+		/* We've just moved all the meta-data off! */
+		SET_CACHE_HAS_METADATA(mi, false);
+		/* Update cache_member cache in struct cache */
+		ca->mi = *mi;
+		cache_member_info_put();
+	}
+
+	/* Now, complain as necessary */
+
+	/*
+	 * Note: These error messages are messy because pr_err is a macro
+	 * that concatenates its first must-be-string argument.
+	 */
+
+	if (has_data && !data_off)
+		pr_err("%s in %pU%s",
+		       (force
+			? "Forcing device removal with live data"
+			: "Unable to move data off device"),
+		       c->sb.set_uuid.b,
+		       (force ? "!" : "."));
+
+	if (has_meta && !meta_off)
+		pr_err("%s in %pU%s",
+		       (force
+			? "Forcing device removal with live meta-data"
+			: "Unable to move meta-data off device"),
+		       c->sb.set_uuid.b,
+		       (force ? "!" : "."));
+
+	/* If there is (meta-) data left, and not forcing, abort */
+
+	if ((!data_off || !meta_off) && !force) {
+		clear_bit(CACHE_DEV_REMOVING, &ca->flags);
+		return;
+	}
+
+	if (has_meta && meta_off)
+		pr_notice("%s read only (meta-data)", bdevname(ca->bdev, buf));
+
+	/* Update the super block */
 
 	down(&c->sb_write_mutex);
 
-	if (!CACHE_HAS_METADATA(mi))
+	if (meta_off) {
+		allmi = cache_member_info_get(c);
+		mi = &allmi->m[ca->sb.nr_this_dev];
 		memset(mi, 0, sizeof(*mi));
+		/* Update cache_member cache in struct cache */
+		ca->mi = *mi;
+		cache_member_info_put();
+	}
 
 	__bcache_write_super(c); /* ups sb_write_mutex */
-
-	allmi = cache_member_info_get(c);
-	mi = &allmi->m[ca->sb.nr_this_dev];
-	if (CACHE_HAS_METADATA(mi)) {
-		cache_member_info_put();
-		/*
-		 * We can't really remove it as the meta data may be
-		 * live.  All we can do is keep it as read only
-		 * Eventually the meta data will effectively migrate
-		 * to another device (if one exists), but we don't
-		 * know when/how that will be.
-		 */
-		clear_bit(CACHE_DEV_FORCE_REMOVE, &ca->flags);
-		clear_bit(CACHE_DEV_REMOVING, &ca->flags);
-		pr_err("Device with metadata in %pU not removed: now read only.",
-		       c->sb.set_uuid.b);
-		return;
-	}
-	cache_member_info_put();
 
 	/*
 	 * This completes asynchronously, with bch_cache_stop scheduling

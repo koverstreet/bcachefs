@@ -1445,7 +1445,7 @@ static void bch_stop_write_points(struct cache *ca,
  * to go to 0.
  */
 
-void bch_stop_new_writes(struct cache *ca)
+void bch_stop_new_data_writes(struct cache *ca)
 {
 	struct cache_set *c = ca->set;
 
@@ -1483,7 +1483,7 @@ static bool bucket_still_writeable(struct open_bucket *b, struct cache_set *c)
 	return true;
 }
 
-void bch_await_scheduled_writes(struct cache *ca)
+void bch_await_scheduled_data_writes(struct cache *ca)
 {
 	unsigned i;
 	unsigned matching;

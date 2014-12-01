@@ -1376,6 +1376,11 @@ static void btree_node_free(struct btree *b)
  * old root.
  *
  * Frees the old root.
+ *
+ * Note: This allocates a journal entry but doesn't add any keys to
+ * it.  All the btree roots are part of every journal write, so there
+ * is nothing new to be done.  This just guarantees that there is a
+ * journal write.
  */
 static void bch_btree_set_root(struct btree *b)
 {
@@ -2847,7 +2852,12 @@ static int bch_btree_map_nodes_recurse(struct btree *b, struct btree_op *op,
 	int ret = MAP_CONTINUE;
 	unsigned level = b->level;
 
-	if (level) {
+	/*
+	 * Note: When MAP_ALL_NODES is set in the flags, the children
+	 * are walked first, and then the parent is walked.
+	 */
+
+	if (level != 0) {
 		struct bkey *k;
 		struct btree_node_iter iter;
 
@@ -2869,7 +2879,7 @@ static int bch_btree_map_nodes_recurse(struct btree *b, struct btree_op *op,
 		}
 	}
 
-	if (!level) {
+	if ((level == 0) || ((flags & MAP_ALL_NODES) != 0)) {
 		ret = fn(op, b);
 
 		if (ret == MAP_CONTINUE && op->iterator_invalidated)
@@ -3087,4 +3097,86 @@ int bch_btree_map_keys(struct btree_op *op, struct cache_set *c,
 
 	return btree_root(map_keys_recurse, c, op, flags & MAP_ASYNC,
 			  &from, fn, flags);
+}
+
+/*
+ * btree_move_node is used when moving meta-data off a device.  On
+ * success, it returns true.  On failure it returns false.
+ * The btree node and all its ancestors should be intent-locked, so
+ * the only reason for failure should be inability to allocate.
+ *
+ * This is modelled after btree_gc_rewrite_node.
+ *
+ * Note that this does not update the parent pointers of any level-1
+ * (i.e. 'leafwards') nodes to point to the new node.
+ * This is unnecessary because they'll be updated on demand as they
+ * are re-fetched in bch_btree_node_get.
+ *
+ * No other thread can be modifying this node or its ancestors due to
+ * the intent lock, but other threads can be reading these nodes.
+ *
+ * Some other thread can be reading the parent link that points to the
+ * old node.  As long as it has a reader-lock on the parent (as all
+ * walks should have), that's OK because freeing the old node
+ * write-locks the old node, which will wait for all readers to
+ * complete. In other words, this code inherently depends on no thread
+ * reading a node's parent link unless it has a read lock (or better)
+ * on the parent, acquired as part of the walk that got to the node.
+ */
+
+bool btree_move_node(struct btree *node, struct btree_op *op)
+{
+	struct btree *new;
+
+	/*
+	 * btree_check_reserve checks for additional nodes,
+	 * It checks for enough for a btree split, which is more
+	 * than we need as we are replacing a node with the tree locked,
+	 * so we don't need the extra factor of 2, but that's OK.
+	 */
+
+	if (btree_check_reserve(node, op, op->id, 0) != 0) {
+		/*
+		 * If we fail to allocate, the closure in op is
+		 * atomically added to the freelist_wait, and we
+		 * closure_sync in the top-level motion code.
+		 */
+		return false;
+	}
+
+	new = btree_node_alloc_replacement(node, op->id);
+	six_unlock_write(&new->lock);
+
+	bch_btree_node_write_sync(new);
+
+	if (node->parent == NULL) {
+		/*
+		 * Note: bch_btree_set_root requires that we not be
+		 * holding a write lock on the old root, but that's OK
+		 * as we are only holding an intent lock.
+		 * In addition, bch_btree_set_root frees the old root
+		 * note, but any actual re-allocation is delayed until the
+		 * intent lock in the btree-walking code is released,
+		 * and it won't be released until the whole walk
+		 * completes. See bch_mca_scan and mca_reap_notrace.
+		 */
+		bch_btree_set_root(new);
+	} else {
+		/*
+		 * This doesn't use the replace argument even though
+		 * it would succeed as the tree is intent-locked so no
+		 * other thread can modify it.  We unconditionally
+		 * insert.
+		 */
+		bch_btree_insert_node(node->parent,
+				      op,
+				      &keylist_single(&new->key),
+				      NULL,
+				      NULL,
+				      op->id);
+		btree_node_free(node);
+	}
+
+	six_unlock_intent(&new->lock);
+	return true;
 }
