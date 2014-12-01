@@ -924,6 +924,7 @@ static int bch_read_fn(struct btree_op *b_op, struct btree *b, struct bkey *k)
 
 	ca = bch_extent_pick_ptr(b->c, k, &ptr);
 	if (IS_ERR(ca)) {
+		__bio_inc_remaining(bio);
 		bio_io_error(bio);
 		return MAP_DONE;
 	}
