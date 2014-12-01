@@ -29,6 +29,7 @@
 #include "io.h"
 #include "keylist.h"
 #include "journal.h"
+#include "keylist.h"
 #include "movinggc.h"
 #include "super.h"
 #include "writeback.h"
@@ -1547,47 +1548,11 @@ int bch_btree_root_read(struct cache_set *c, enum btree_id id,
 
 /* Garbage collection */
 
-/**
- * bch_mark_keybuf_keys - update oldest generation pointer into a bucket
- *
- * This prevents us from wrapping around gens for a bucket only referenced from
- * the writeback, tiering or moving GC keybufs. We don't actually care that the
- * data in those buckets is marked live, only that we don't wrap the gens.
- */
-void bch_mark_keybuf_keys(struct cache_set *c, struct keybuf *buf)
-{
-	struct keybuf_key *w, *n;
-	struct cache *ca;
-	struct bucket *g;
-	struct bkey *k;
-	unsigned i;
-
-	spin_lock(&buf->lock);
-	rcu_read_lock();
-	rbtree_postorder_for_each_entry_safe(w, n,
-				&buf->keys, node) {
-		k = &w->key;
-		for (i = 0; i < bch_extent_ptrs(k); i++)
-			if ((ca = PTR_CACHE(c, k, i))) {
-				g = PTR_BUCKET(c, ca, k, i);
-				if (gen_after(g->last_gc, PTR_GEN(k, i)))
-					g->last_gc = PTR_GEN(k, i);
-			}
-	}
-	rcu_read_unlock();
-	spin_unlock(&buf->lock);
-}
-
-u8 __bch_btree_mark_key(struct cache_set *c, int level, struct bkey *k)
+u8 bch_btree_mark_last_gc(struct cache_set *c, struct bkey *k)
 {
 	u8 max_stale = 0;
 	struct cache *ca;
 	unsigned i;
-
-	if (KEY_DELETED(k))
-		return 0;
-
-	rcu_read_lock();
 
 	for (i = 0; i < bch_extent_ptrs(k); i++) {
 		if (PTR_DEV(k, i) < MAX_CACHES_PER_SET)
@@ -1602,6 +1567,22 @@ u8 __bch_btree_mark_key(struct cache_set *c, int level, struct bkey *k)
 			max_stale = max(max_stale, ptr_stale(c, ca, k, i));
 		}
 	}
+
+	return max_stale;
+}
+
+u8 __bch_btree_mark_key(struct cache_set *c, int level, struct bkey *k)
+{
+	u8 max_stale;
+	struct cache *ca;
+	unsigned i;
+
+	if (KEY_DELETED(k))
+		return 0;
+
+	rcu_read_lock();
+
+	max_stale = bch_btree_mark_last_gc(c, k);
 
 	if (level) {
 		for (i = 0; i < bch_extent_ptrs(k); i++)
@@ -2026,25 +2007,13 @@ static void bch_btree_gc_finish(struct cache_set *c)
 	unsigned i;
 
 	bch_mark_writeback_keys(c);
-#if 0
-	/*
-	 * Not necessary for tiering keys as there is never an overwrite
-	 * of the storage.
-	 */
-	bch_mark_keybuf_keys(c, &c->tiering_keys);
-#endif
+	bch_mark_scan_keylist_keys(c, &c->tiering_keys);
 
 	for_each_cache(ca, c, i) {
 		unsigned j;
 		uint64_t *i;
 
-#if 0
-		/*
-		 * Not necessary for moving gc keys as there is never an
-		 * overwrite of the storage.
-		 */
-		bch_mark_keybuf_keys(c, &ca->moving_gc_keys);
-#endif
+		bch_mark_scan_keylist_keys(c, &ca->moving_gc_keys);
 
 		for (j = 0; j < bch_nr_journal_buckets(&ca->sb); j++)
 			bch_mark_metadata_bucket(ca,

@@ -86,6 +86,7 @@ void bch_keylist_add_in_order(struct keylist *l, struct bkey *insert)
 void bch_scan_keylist_init(struct scan_keylist *kl,
 			   unsigned max_size)
 {
+	spin_lock_init(&kl->lock);
 	kl->last_scanned = MAX_KEY;
 	kl->max_size = max_size;
 	bch_keylist_init(&kl->list);
@@ -104,7 +105,9 @@ void bch_scan_keylist_destroy(struct scan_keylist *kl)
 void bch_scan_keylist_resize(struct scan_keylist *kl,
 			     unsigned max_size)
 {
+	spin_lock(&kl->lock);
 	kl->max_size = max_size;	/* May be smaller than current size */
+	spin_unlock(&kl->lock);
 }
 
 /*
@@ -116,9 +119,40 @@ void bch_scan_keylist_resize(struct scan_keylist *kl,
 
 bool bch_scan_keylist_full(struct scan_keylist *kl)
 {
-	return (bch_keylist_capacity(&kl->list) >= kl->max_size &&
-		((bch_keylist_capacity(&kl->list) -
-		  bch_keylist_size(&kl->list)) < BKEY_EXTENT_MAX_U64s));
+	bool ret = false;
+
+	spin_lock(&kl->lock);
+
+	if ((bch_keylist_capacity(&kl->list) >= kl->max_size)
+	    && ((bch_keylist_capacity(&kl->list)
+		 - bch_keylist_size(&kl->list))
+		< BKEY_EXTENT_MAX_U64s)) {
+		ret = true;
+	}
+	spin_unlock(&kl->lock);
+
+	return ret;
+}
+
+/**
+ * bch_mark_keylist_keys - update oldest generation pointer into a bucket
+ *
+ * This prevents us from wrapping around gens for a bucket only referenced from
+ * the tiering or moving GC keylists. We don't actually care that the data in
+ * those buckets is marked live, only that we don't wrap the gens.
+ */
+void bch_mark_scan_keylist_keys(struct cache_set *c, struct scan_keylist *kl)
+{
+	struct bkey *k;
+
+	spin_lock(&kl->lock);
+	rcu_read_lock();
+
+	for (k = kl->list.bot; k < kl->list.top; k = bkey_next(k))
+		bch_btree_mark_last_gc(c, k);
+
+	rcu_read_unlock();
+	spin_unlock(&kl->lock);
 }
 
 /* Actual scanning functionality of scan_keylists */
@@ -145,8 +179,12 @@ static int refill_scan_keylist_fn(struct btree_op *op,
 		if (bch_keylist_realloc(&kl->list, KEY_U64s(k)))
 			ret = MAP_DONE;
 		else {
+			spin_lock(&kl->lock);
+
 			__bch_keylist_add(&kl->list, k);
 			refill->nr_found += 1;
+
+			spin_unlock(&kl->lock);
 		}
 	}
 

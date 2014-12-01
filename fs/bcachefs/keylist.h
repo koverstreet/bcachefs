@@ -142,6 +142,8 @@ static inline void bch_scan_keylist_advance(struct scan_keylist *kl)
 	bch_keylist_pop_front(&kl->list);
 }
 
+void bch_mark_scan_keylist_keys(struct cache_set *, struct scan_keylist *);
+
 bool bch_scan_keylist_full(struct scan_keylist *kl);
 
 #endif /* _BCACHE_KEYLIST_H */
