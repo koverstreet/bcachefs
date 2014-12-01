@@ -944,12 +944,13 @@ static void bch_extent_debugcheck(struct btree_keys *bk, const struct bkey *k)
 	struct cache_set *c = b->c;
 	struct cache *ca;
 	struct bucket *g;
-	unsigned seq, stale, replicas_needed;
+	unsigned seq, replicas_needed;
 	char buf[80];
 	bool bad;
 	int i;
 	unsigned ptrs_per_tier[CACHE_TIERS];
 	unsigned dev, tier, replicas;
+	bool stale;
 
 	if (__bch_extent_invalid(c, k)) {
 		bch_extent_to_text(c, buf, sizeof(buf), k);
@@ -994,10 +995,6 @@ static void bch_extent_debugcheck(struct btree_keys *bk, const struct bkey *k)
 				smp_rmb();
 
 				stale = ptr_stale(c, ca, k, i);
-
-				cache_set_bug_on(stale > 96, c,
-						 "key too stale: %i",
-						 stale);
 
 				bad = (!stale &&
 				       !__gc_will_visit_key(c, b->btree_id,
