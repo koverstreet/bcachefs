@@ -1,9 +1,26 @@
 #ifndef _BCACHE_KEYLIST_TYPES_H
 #define _BCACHE_KEYLIST_TYPES_H
 
-/* keylists can be used as a stack, using push and pop,
-   or as a queue, using push and pop_front.
-*/
+/*
+ * Keylists are growable FIFOs storing bkeys.
+ *
+ * New keys are added via bch_keylist_push(), which increments @top until
+ * it wraps around.
+ *
+ * Old keys are removed via bch_keylist_pop_front() which increments @bot
+ * until it wraps around.
+ *
+ * If @top == @bot, the keylist is empty.
+ *
+ * We always ensure there is room for a maximum-sized extent key at @top;
+ * that is, @top_p + BKEY_EXTENT_MAX_U64s <= @end_keys_p.
+ *
+ * If this invariant does not hold after pushing a key, we wrap @top back
+ * to @start_keys_p.
+ *
+ * If at any time, @top_p + BKEY_EXTENT_MAX_U64s >= @bot_p, the keylist is
+ * full.
+ */
 
 struct keylist {
 	/* This is a pointer to the LSB (inline_keys until realloc'd) */
@@ -27,7 +44,7 @@ struct keylist {
 		u64			*end_keys_p;
 	};
 	/* Enough room for btree_split's keys without realloc */
-#define KEYLIST_INLINE		roundup_pow_of_two(BKEY_EXTENT_MAX_U64s * 2)
+#define KEYLIST_INLINE		roundup_pow_of_two(BKEY_EXTENT_MAX_U64s * 3)
 	/* Prevent key lists from growing too big */
 	/*
 	 * This should always be big enough to allow btree_gc_coalesce and

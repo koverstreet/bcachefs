@@ -12,14 +12,11 @@ int bch_keylist_realloc_max(struct keylist *l,
 			    unsigned maxu64s)
 {
 	size_t oldcap = bch_keylist_capacity(l);
-	size_t oldsize = bch_keylist_size(l);
-	size_t offset = bch_keylist_offset(l);
-	size_t newsize = oldsize + needu64s;
-	u64 *old_keys = l->start_keys_p;
+	size_t newsize = oldcap + needu64s;
 	u64 *new_keys;
 
-	if (old_keys == l->inline_keys)
-		old_keys = NULL;
+	if (bch_keylist_fits(l, needu64s))
+		return 0;
 
 	/*
 	 * The idea here is that the allocated size is always a power of two:
@@ -31,10 +28,6 @@ int bch_keylist_realloc_max(struct keylist *l,
 	 */
 	newsize = roundup_pow_of_two(newsize);
 
-	if (newsize <= KEYLIST_INLINE ||
-	    roundup_pow_of_two(oldsize) == newsize)
-		return 0;
-
 	/* We simulate being out of memory -- the code using the key list
 	   has to handle that case. */
 	if (newsize > maxu64s) {
@@ -43,17 +36,47 @@ int bch_keylist_realloc_max(struct keylist *l,
 		newsize = maxu64s;
 	}
 
-	new_keys = krealloc(old_keys, sizeof(u64) * newsize, GFP_NOIO);
+	new_keys = kmalloc_array(newsize, sizeof(u64), GFP_NOIO);
 
 	if (!new_keys)
 		return -ENOMEM;
 
-	if (!old_keys)
-		memcpy(new_keys, l->inline_keys, sizeof(u64) * oldsize);
+	/* Has @top wrapped around? */
+	if (l->top_p < l->bot_p) {
+		/*
+		 * The FIFO wraps around the end with a "gap" in the
+		 * middle. Copy the first half to the beginning and the
+		 * second to the end and grow the gap.
+		 */
+
+		/* Copy @start_keys up to @top */
+		memcpy(new_keys,
+		       l->start_keys_p,
+		       (l->top_p - l->start_keys_p) * sizeof(u64));
+
+		/* Copy @bot up to @end_keys */
+		memcpy(new_keys + newsize - (l->end_keys_p - l->bot_p),
+		       l->bot_p,
+		       (l->end_keys_p - l->bot_p) * sizeof(u64));
+
+		l->top_p = new_keys + (l->top_p - l->start_keys_p);
+		l->bot_p = new_keys + newsize - (l->end_keys_p - l->bot_p);
+	} else {
+		/*
+		 * Else copy everything over and shift the bottom of
+		 * the FIFO to align with the start of the keylist
+		 */
+		memcpy(new_keys,
+		       l->bot_p,
+		       (l->top_p - l->bot_p) * sizeof(u64));
+		l->top_p = new_keys + (l->top_p - l->bot_p);
+		l->bot_p = new_keys;
+	}
+
+	if (l->start_keys_p != l->inline_keys)
+		kfree(l->start_keys_p);
 
 	l->start_keys_p = new_keys;
-	l->top_p = new_keys + oldsize;
-	l->bot_p = new_keys + offset;
 	l->end_keys_p = new_keys + newsize;
 
 	return 0;
@@ -67,6 +90,12 @@ int bch_keylist_realloc(struct keylist *l, unsigned needu64s)
 void bch_keylist_add_in_order(struct keylist *l, struct bkey *insert)
 {
 	struct bkey *where = l->bot;
+
+	/*
+	 * Shouldn't fire since we only use this on a fresh keylist
+	 * before calling bch_keylist_pop_front()
+	 */
+	BUG_ON(l->top_p < l->bot_p);
 
 	while (where != l->top &&
 	       bkey_cmp(insert, where) >= 0)
@@ -106,37 +135,12 @@ void bch_scan_keylist_reset(struct scan_keylist *kl)
  * This should only be called from sysfs, and holding a lock that prevents
  * re-entrancy.
  */
-
 void bch_scan_keylist_resize(struct scan_keylist *kl,
 			     unsigned max_size)
 {
 	spin_lock(&kl->lock);
 	kl->max_size = max_size;	/* May be smaller than current size */
 	spin_unlock(&kl->lock);
-}
-
-/*
- * This makes sure that we have enough room for another bkey, no matter
- * how many extent pointers it has.
- * As bkeys are variable size, we don't really know whether the next one
- * will fit, so we are conservative.
- */
-
-bool bch_scan_keylist_full(struct scan_keylist *kl)
-{
-	bool ret = false;
-
-	spin_lock(&kl->lock);
-
-	if ((bch_keylist_capacity(&kl->list) >= kl->max_size)
-	    && ((bch_keylist_capacity(&kl->list)
-		 - bch_keylist_size(&kl->list))
-		< BKEY_EXTENT_MAX_U64s)) {
-		ret = true;
-	}
-	spin_unlock(&kl->lock);
-
-	return ret;
 }
 
 /**
@@ -148,13 +152,18 @@ bool bch_scan_keylist_full(struct scan_keylist *kl)
  */
 void bch_mark_scan_keylist_keys(struct cache_set *c, struct scan_keylist *kl)
 {
+	u64 *k_p;
 	struct bkey *k;
 
 	spin_lock(&kl->lock);
 	rcu_read_lock();
 
-	for (k = kl->list.bot; k < kl->list.top; k = bkey_next(k))
+	k_p = kl->list.bot_p;
+	while (k_p != kl->list.top_p) {
+		k = (struct bkey *) k_p;
 		bch_btree_mark_last_gc(c, k);
+		k_p = __bch_keylist_next(&kl->list, k_p);
+	}
 
 	rcu_read_unlock();
 	spin_unlock(&kl->lock);
@@ -185,11 +194,10 @@ static int refill_scan_keylist_fn(struct btree_op *op,
 			ret = MAP_DONE;
 		else {
 			spin_lock(&kl->lock);
-
-			__bch_keylist_add(&kl->list, k);
-			refill->nr_found += 1;
-
+			bch_keylist_add(&kl->list, k);
 			spin_unlock(&kl->lock);
+
+			refill->nr_found += 1;
 		}
 	}
 
@@ -234,11 +242,12 @@ static void bch_refill_scan_keylist(struct cache_set *c,
 
 struct bkey *bch_scan_keylist_next(struct scan_keylist *kl)
 {
-	struct bkey *k;
+	struct bkey *k = NULL;
 
-	k = bch_keylist_front(&kl->list);
-	if (bch_keylist_is_end(&kl->list, k))
-		return NULL;
+	spin_lock(&kl->lock);
+	if (!bch_keylist_empty(&kl->list))
+		k = bch_keylist_front(&kl->list);
+	spin_unlock(&kl->lock);
 
 	return k;
 }
@@ -248,11 +257,11 @@ struct bkey *bch_scan_keylist_next_rescan(struct cache_set *c,
 					  struct bkey *end,
 					  scan_keylist_pred_fn *pred)
 {
-	struct bkey *ret;
+	struct bkey *k;
 
 	while (1) {
-		ret = bch_scan_keylist_next(kl);
-		if (ret)
+		k = bch_scan_keylist_next(kl);
+		if (k)
 			break;
 
 		if (bkey_cmp(&kl->last_scanned, end) >= 0) {
@@ -263,5 +272,5 @@ struct bkey *bch_scan_keylist_next_rescan(struct cache_set *c,
 		bch_refill_scan_keylist(c, kl, end, pred);
 	}
 
-	return ret;
+	return k;
 }

@@ -1796,7 +1796,7 @@ static int btree_gc_coalesce(struct btree *b, struct btree_op *op,
 		bch_set_extent_ptrs(keylist.top, 0);
 		SET_KEY_DELETED(keylist.top, 1);
 
-		__bch_keylist_push(&keylist);
+		bch_keylist_push(&keylist);
 	}
 
 	/*
