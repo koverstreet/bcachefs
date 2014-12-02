@@ -810,8 +810,7 @@ static int bch_allocator_thread(void *arg)
 		 * free_inc is full of newly-invalidated buckets, must write out
 		 * prios and gens before they can be re-used
 		 */
-		if (CACHE_SYNC(&ca->set->sb))
-			bch_prio_write(ca);
+		bch_prio_write(ca);
 	}
 out:
 	/*
