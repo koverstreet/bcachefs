@@ -73,9 +73,29 @@ struct keylist {
 #define DFLT_SCAN_KEYLIST_MAX_SIZE	(1 << 14)
 
 struct scan_keylist {
-	spinlock_t		lock;
+	/*
+	 * The last key we added to the keylist while refilling. Refilling will
+	 * restart from the next key after this key.
+	 */
 	struct bkey		last_scanned;
+	/*
+	 * Only one thread is allowed to mutate the keylist. Other threads can
+	 * read it. The mutex has to be taken by the mutator thread when
+	 * mutating the keylist, and by other threads when reading, but not by
+	 * the mutator thread when reading.
+	 */
+	spinlock_t		lock;
+	/*
+	 * Maximum size, in u64s. The keylist will not grow beyond this size.
+	 */
 	unsigned		max_size;
+	/*
+	 * Number of sectors in keys currently on the keylist.
+	 */
+	atomic64_t		sectors;
+	/*
+	 * The underlying keylist.
+	 */
 	struct keylist		list;
 };
 
