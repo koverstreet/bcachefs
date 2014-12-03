@@ -4,10 +4,10 @@
 /*
  * Keylists are growable FIFOs storing bkeys.
  *
- * New keys are added via bch_keylist_push(), which increments @top until
+ * New keys are added via bch_keylist_enqueue(), which increments @top until
  * it wraps around.
  *
- * Old keys are removed via bch_keylist_pop_front() which increments @bot
+ * Old keys are removed via bch_keylist_dequeue() which increments @bot
  * until it wraps around.
  *
  * If @top == @bot, the keylist is empty.
@@ -15,7 +15,7 @@
  * We always ensure there is room for a maximum-sized extent key at @top;
  * that is, @top_p + BKEY_EXTENT_MAX_U64s <= @end_keys_p.
  *
- * If this invariant does not hold after pushing a key, we wrap @top back
+ * If this invariant does not hold after enqueuing a key, we wrap @top back
  * to @start_keys_p.
  *
  * If at any time, @top_p + BKEY_EXTENT_MAX_U64s >= @bot_p, the keylist is
@@ -28,12 +28,12 @@ struct keylist {
 		struct bkey		*start_keys;
 		u64			*start_keys_p;
 	};
-	/* This is a pointer to the next to enqueue (push) */
+	/* This is a pointer to the next to enqueue */
 	union {
 		struct bkey		*top;
 		u64			*top_p;
 	};
-	/* This is a pointer to the next to dequeue (pop_front) */
+	/* This is a pointer to the next to dequeue */
 	union {
 		struct bkey		*bot;
 		u64			*bot_p;

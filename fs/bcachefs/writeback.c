@@ -114,7 +114,7 @@ static void write_dirty_finish(struct closure *cl)
 
 		bkey_copy(keys.top, &io->key);
 		SET_KEY_CACHED(keys.top, true);
-		bch_keylist_push(&keys);
+		bch_keylist_enqueue(&keys);
 
 		ret = bch_btree_insert(dc->disk.c, BTREE_ID_EXTENTS,
 				       &keys, &io->key);

@@ -1796,7 +1796,7 @@ static int btree_gc_coalesce(struct btree *b, struct btree_op *op,
 		bch_set_extent_ptrs(keylist.top, 0);
 		SET_KEY_DELETED(keylist.top, 1);
 
-		bch_keylist_push(&keylist);
+		bch_keylist_enqueue(&keylist);
 	}
 
 	/*
@@ -2281,13 +2281,13 @@ static bool btree_insert_key(struct btree *b, struct keylist *insert_keys,
 						     replace, &done);
 		bch_cut_front(&done, orig);
 		if (!KEY_SIZE(orig))
-			bch_keylist_pop_front(insert_keys);
+			bch_keylist_dequeue(insert_keys);
 	} else {
 		BUG_ON(bkey_cmp(insert, &b->key) > 0);
 
 		do_insert = !bch_insert_fixup_key(b, insert, iter,
 						  replace, &done);
-		bch_keylist_pop_front(insert_keys);
+		bch_keylist_dequeue(insert_keys);
 	}
 
 	if (!do_insert)

@@ -93,7 +93,7 @@ void bch_keylist_add_in_order(struct keylist *l, struct bkey *insert)
 
 	/*
 	 * Shouldn't fire since we only use this on a fresh keylist
-	 * before calling bch_keylist_pop_front()
+	 * before calling bch_keylist_dequeue()
 	 */
 	BUG_ON(l->top_p < l->bot_p);
 
@@ -273,4 +273,11 @@ struct bkey *bch_scan_keylist_next_rescan(struct cache_set *c,
 	}
 
 	return k;
+}
+
+void bch_scan_keylist_dequeue(struct scan_keylist *kl)
+{
+	spin_lock(&kl->lock);
+	bch_keylist_dequeue(&kl->list);
+	spin_unlock(&kl->lock);
 }

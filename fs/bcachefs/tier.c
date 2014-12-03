@@ -88,7 +88,7 @@ static void read_tiering(struct cache_set *c)
 		bch_ratelimit_increment(&c->tiering_pd.rate,
 					KEY_SIZE(k) << 9);
 
-		bch_scan_keylist_advance(&c->tiering_keys);
+		bch_scan_keylist_dequeue(&c->tiering_keys);
 
 		closure_call(&io->cl, bch_data_move, NULL, &cl);
 	}

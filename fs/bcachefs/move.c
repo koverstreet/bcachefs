@@ -268,7 +268,7 @@ int bch_move_data_off_device(struct cache *ca)
 					  k, k);
 			io->op.io_wq	= c->tiering_write; /* XXX */
 
-			bch_scan_keylist_advance(&ca->moving_gc_keys);
+			bch_scan_keylist_dequeue(&ca->moving_gc_keys);
 
 			k = &io->op.insert_key;
 

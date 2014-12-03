@@ -70,7 +70,7 @@ static void read_moving(struct cache *ca, struct moving_io_stats *stats)
 				goto found;
 			}
 
-		bch_scan_keylist_advance(&ca->moving_gc_keys);
+		bch_scan_keylist_dequeue(&ca->moving_gc_keys);
 		continue;
 found:
 		io = moving_io_alloc(k);
@@ -97,7 +97,7 @@ found:
 		bch_ratelimit_increment(&ca->moving_gc_pd.rate,
 					KEY_SIZE(k) << 9);
 
-		bch_scan_keylist_advance(&ca->moving_gc_keys);
+		bch_scan_keylist_dequeue(&ca->moving_gc_keys);
 
 		closure_call(&io->cl, bch_data_move, NULL, &cl);
 	}

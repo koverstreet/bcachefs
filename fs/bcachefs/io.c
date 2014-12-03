@@ -486,7 +486,7 @@ static void __bch_write(struct closure *cl)
 		bch_extent_normalize(op->c, k);
 		bch_check_mark_super(op->c, k, false);
 
-		bch_keylist_push(&op->insert_keys);
+		bch_keylist_enqueue(&op->insert_keys);
 	} while (n != bio);
 
 	op->write_done = true;

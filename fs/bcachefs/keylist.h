@@ -39,7 +39,7 @@ static inline u64 *__bch_keylist_next(struct keylist *l, u64 *p)
 	return p;
 }
 
-static inline void bch_keylist_push(struct keylist *l)
+static inline void bch_keylist_enqueue(struct keylist *l)
 {
 	BUG_ON(!bch_keylist_fits(l, KEY_U64s(l->top)));
 	l->top_p = __bch_keylist_next(l, l->top_p);
@@ -48,7 +48,7 @@ static inline void bch_keylist_push(struct keylist *l)
 static inline void bch_keylist_add(struct keylist *l, struct bkey *k)
 {
 	bkey_copy(l->top, k);
-	bch_keylist_push(l);
+	bch_keylist_enqueue(l);
 }
 
 static inline bool bch_keylist_empty(struct keylist *l)
@@ -90,7 +90,7 @@ static inline struct bkey *bch_keylist_front(struct keylist *l)
 	return l->bot;
 }
 
-static inline void bch_keylist_pop_front(struct keylist *l)
+static inline void bch_keylist_dequeue(struct keylist *l)
 {
 	BUG_ON(bch_keylist_empty(l));
 	l->bot_p = __bch_keylist_next(l, l->bot_p);
@@ -141,10 +141,7 @@ struct bkey *bch_scan_keylist_next_rescan(struct cache_set *c,
 					  struct bkey *end,
 					  scan_keylist_pred_fn *pred);
 
-static inline void bch_scan_keylist_advance(struct scan_keylist *kl)
-{
-	bch_keylist_pop_front(&kl->list);
-}
+void bch_scan_keylist_dequeue(struct scan_keylist *);
 
 void bch_mark_scan_keylist_keys(struct cache_set *, struct scan_keylist *);
 
