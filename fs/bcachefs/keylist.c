@@ -115,7 +115,7 @@ void bch_keylist_add_in_order(struct keylist *l, struct bkey *insert)
 void bch_scan_keylist_init(struct scan_keylist *kl,
 			   unsigned max_size)
 {
-	spin_lock_init(&kl->lock);
+	mutex_init(&kl->lock);
 	kl->last_scanned = MAX_KEY;
 	kl->max_size = max_size;
 	bch_keylist_init(&kl->list);
@@ -138,9 +138,9 @@ void bch_scan_keylist_reset(struct scan_keylist *kl)
 void bch_scan_keylist_resize(struct scan_keylist *kl,
 			     unsigned max_size)
 {
-	spin_lock(&kl->lock);
+	mutex_lock(&kl->lock);
 	kl->max_size = max_size;	/* May be smaller than current size */
-	spin_unlock(&kl->lock);
+	mutex_unlock(&kl->lock);
 }
 
 /**
@@ -155,18 +155,18 @@ void bch_mark_scan_keylist_keys(struct cache_set *c, struct scan_keylist *kl)
 	u64 *k_p;
 	struct bkey *k;
 
-	spin_lock(&kl->lock);
-	rcu_read_lock();
+	mutex_lock(&kl->lock);
 
 	k_p = kl->list.bot_p;
 	while (k_p != kl->list.top_p) {
 		k = (struct bkey *) k_p;
+		rcu_read_lock();
 		bch_btree_mark_last_gc(c, k);
+		rcu_read_unlock();
 		k_p = __bch_keylist_next(&kl->list, k_p);
 	}
 
-	rcu_read_unlock();
-	spin_unlock(&kl->lock);
+	mutex_unlock(&kl->lock);
 }
 
 /* Actual scanning functionality of scan_keylists */
@@ -179,6 +179,21 @@ struct skl_refill {
 	scan_keylist_pred_fn	*pred;
 };
 
+int bch_scan_keylist_add(struct scan_keylist *kl, struct bkey *k)
+{
+	int ret;
+
+	mutex_lock(&kl->lock);
+	ret = bch_keylist_realloc(&kl->list, KEY_U64s(k));
+	if (!ret) {
+		bch_keylist_add(&kl->list, k);
+		atomic64_add(KEY_SIZE(k), &kl->sectors);
+	}
+	mutex_unlock(&kl->lock);
+
+	return ret;
+}
+
 static int refill_scan_keylist_fn(struct btree_op *op,
 				  struct btree *b,
 				  struct bkey *k)
@@ -190,16 +205,10 @@ static int refill_scan_keylist_fn(struct btree_op *op,
 	if (bkey_cmp(k, refill->end) >= 0)
 		ret = MAP_DONE;
 	else if (refill->pred(kl, k)) {
-		if (bch_keylist_realloc(&kl->list, KEY_U64s(k)))
+		if (bch_scan_keylist_add(kl, k))
 			ret = MAP_DONE;
-		else {
-			spin_lock(&kl->lock);
-			bch_keylist_add(&kl->list, k);
-			spin_unlock(&kl->lock);
-
+		else
 			refill->nr_found += 1;
-			atomic64_add(KEY_SIZE(k), &kl->sectors);
-		}
 	}
 
 	kl->last_scanned = *k;
@@ -243,14 +252,10 @@ static void bch_refill_scan_keylist(struct cache_set *c,
 
 struct bkey *bch_scan_keylist_next(struct scan_keylist *kl)
 {
-	struct bkey *k = NULL;
+	if (bch_keylist_empty(&kl->list))
+		return NULL;
 
-	spin_lock(&kl->lock);
-	if (!bch_keylist_empty(&kl->list))
-		k = bch_keylist_front(&kl->list);
-	spin_unlock(&kl->lock);
-
-	return k;
+	return bch_keylist_front(&kl->list);
 }
 
 struct bkey *bch_scan_keylist_next_rescan(struct cache_set *c,
@@ -280,10 +285,10 @@ void bch_scan_keylist_dequeue(struct scan_keylist *kl)
 {
 	u64 sectors;
 
-	spin_lock(&kl->lock);
+	mutex_lock(&kl->lock);
 	sectors = KEY_SIZE(kl->list.bot);
 	bch_keylist_dequeue(&kl->list);
-	spin_unlock(&kl->lock);
+	mutex_unlock(&kl->lock);
 
 	BUG_ON(atomic64_sub_return(sectors, &kl->sectors) < 0);
 }

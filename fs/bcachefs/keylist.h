@@ -146,6 +146,7 @@ struct bkey *bch_scan_keylist_next_rescan(struct cache_set *c,
 					  struct bkey *end,
 					  scan_keylist_pred_fn *pred);
 
+int bch_scan_keylist_add(struct scan_keylist *, struct bkey *);
 void bch_scan_keylist_dequeue(struct scan_keylist *);
 
 void bch_mark_scan_keylist_keys(struct cache_set *, struct scan_keylist *);

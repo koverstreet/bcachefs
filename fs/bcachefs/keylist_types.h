@@ -84,7 +84,7 @@ struct scan_keylist {
 	 * mutating the keylist, and by other threads when reading, but not by
 	 * the mutator thread when reading.
 	 */
-	spinlock_t		lock;
+	struct mutex		lock;
 	/*
 	 * Maximum size, in u64s. The keylist will not grow beyond this size.
 	 */
