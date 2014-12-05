@@ -147,20 +147,14 @@ void bch_data_move(struct closure *cl)
 	continue_at(cl, write_moving, io->op.io_wq);
 }
 
-struct move_data_off_device_op {
-	unsigned		dev;
-	struct semaphore	in_flight;
-	struct scan_keylist	keys;
-};
-
 static bool migrate_data_pred(struct scan_keylist *kl, struct bkey *k)
 {
-	struct move_data_off_device_op *op =
-		container_of(kl, struct move_data_off_device_op, keys);
+	struct cache *ca = container_of(kl, struct cache, moving_gc_keys);
+	unsigned dev = ca->sb.nr_this_dev;
 	unsigned i;
 
 	for (i = 0; i < bch_extent_ptrs(k); i++)
-		if (PTR_DEV(k, i) == op->dev)
+		if (PTR_DEV(k, i) == dev)
 			return true;
 
 	return false;
@@ -168,7 +162,6 @@ static bool migrate_data_pred(struct scan_keylist *kl, struct bkey *k)
 
 #define MAX_DATA_OFF_ITER	10
 #define MAX_MOVE_IN_FLIGHT	200
-#define DFLT_MOVE_KEYS_MAX_SIZE	DFLT_SCAN_KEYLIST_MAX_SIZE
 
 /*
  * This moves only the data off, leaving the meta-data (if any) in place.
@@ -190,22 +183,26 @@ int bch_move_data_off_device(struct cache *ca)
 	struct moving_io *io;
 	struct moving_io_stats stats;
 	struct moving_ctxt ctxt;
-	struct move_data_off_device_op *op;
+	struct semaphore in_flight;
 	u64 seen_key_count;
 	struct bkey *k;
-	unsigned i;
+	unsigned i, dev;
 	int ret;
 	unsigned pass;
 	unsigned last_error_count;
 	unsigned last_error_flags;
 
-	op = kmalloc(sizeof(*op), GFP_KERNEL);
-	if (!op)
-		return -ENOMEM;
+	/*
+	 * This re-uses the moving gc scan key list because moving gc
+	 * must already be stopped when this is called and btree gc
+	 * already knows to scan it.
+	 */
 
-	op->dev = ca->sb.nr_this_dev;
-	sema_init(&op->in_flight, MAX_MOVE_IN_FLIGHT);
-	bch_scan_keylist_init(&op->keys, DFLT_MOVE_KEYS_MAX_SIZE);
+	BUG_ON(ca->moving_gc_read != NULL);
+	bch_scan_keylist_reset(&ca->moving_gc_keys);
+	dev = ca->sb.nr_this_dev;
+
+	sema_init(&in_flight, MAX_MOVE_IN_FLIGHT);
 	memset(&stats, 0, sizeof(stats));
 	memset(&ctxt, 0, sizeof(ctxt));
 
@@ -236,9 +233,11 @@ int bch_move_data_off_device(struct cache *ca)
 		seen_key_count = 0;
 		atomic_set(&ctxt.error_count, 0);
 		atomic_set(&ctxt.error_flags, 0);
-		op->keys.last_scanned = ZERO_KEY;
+		ca->moving_gc_keys.last_scanned = ZERO_KEY;
 
-		while ((k = bch_scan_keylist_next_rescan(c, &op->keys, &MAX_KEY,
+		while ((k = bch_scan_keylist_next_rescan(c,
+							 &ca->moving_gc_keys,
+							 &MAX_KEY,
 							 migrate_data_pred))) {
 			bool found;
 			struct cache_member *mi = &ca->mi;
@@ -258,7 +257,7 @@ int bch_move_data_off_device(struct cache *ca)
 			}
 
 			io->stats = &stats;
-			io->in_flight = &op->in_flight;
+			io->in_flight = &in_flight;
 			io->support_moving_error = true;
 
 			/* This also copies k into the write op */
@@ -269,13 +268,13 @@ int bch_move_data_off_device(struct cache *ca)
 					  k, k);
 			io->op.io_wq	= c->tiering_write; /* XXX */
 
-			bch_scan_keylist_advance(&op->keys);
+			bch_scan_keylist_advance(&ca->moving_gc_keys);
 
 			k = &io->op.insert_key;
 
 			found = false;
 			for (i = 0; i < bch_extent_ptrs(k); i++)
-				if (PTR_DEV(k, i) == op->dev) {
+				if (PTR_DEV(k, i) == dev) {
 					bch_extent_drop_ptr(k, i--);
 					found = true;
 				}
@@ -301,9 +300,6 @@ int bch_move_data_off_device(struct cache *ca)
 		}
 	}
 
-	bch_scan_keylist_destroy(&op->keys);
-	kfree(op);
-
 	if ((seen_key_count != 0) || (atomic_read(&ctxt.error_count) != 0)) {
 		pr_err("Unable to migrate all data in %d iterations.",
 		       MAX_DATA_OFF_ITER);
@@ -314,8 +310,6 @@ int bch_move_data_off_device(struct cache *ca)
 
 out:
 	closure_sync(&ctxt.cl);
-	bch_scan_keylist_destroy(&op->keys);
-	kfree(op);
 	return ret;
 }
 

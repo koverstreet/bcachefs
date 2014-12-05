@@ -109,6 +109,8 @@ int bch_keylist_realloc_max(struct keylist *, unsigned, unsigned);
 void bch_scan_keylist_init(struct scan_keylist *kl,
 			   unsigned max_size);
 
+void bch_scan_keylist_reset(struct scan_keylist *kl);
+
 /* The keylist is dynamically adjusted. This just clamps the maxima */
 
 static inline unsigned bch_scan_keylist_size(struct scan_keylist *kl)

@@ -631,11 +631,24 @@ static void bch_drop_subtract(struct cache_set *c, struct bkey *k)
 	SET_KEY_DELETED(k, true);
 }
 
+/*
+ * Note: If this returns true because only some pointers matched,
+ * we can lose some caching that had happened in the interim.
+ * Because cache promotion only promotes the part of the extent
+ * actually read, and not the whole extent, and due to the key
+ * splitting done in bch_extent_insert_fixup, preserving such
+ * caching is difficult.
+ * In addition, we are not currently marking the keys in the bios
+ * in flight (insert and replace keys), so this could insert a stale
+ * pointer.
+ * Until we mark those keys as well, we can't turn this on.
+ */
+
 static bool bkey_cmpxchg_cmp(struct bkey *k, struct bkey *old)
 {
 	/* skip past gen */
 	s64 offset = (KEY_START(k) - KEY_START(old)) << 8;
-	unsigned i, j;
+	unsigned i;
 
 	if (!KEY_SIZE(old))
 		return false;
@@ -648,22 +661,21 @@ static bool bkey_cmpxchg_cmp(struct bkey *k, struct bkey *old)
 	    return true;
 	}
 
+#if (0)
 	/* This does not compare KEY_CACHED, KEY_U64s, or KEY_CSUM */
 
 	if (!bch_bkey_maybe_compatible(k, old))
 		return false;
 
-	for (i = 0; i < bch_extent_ptrs(old); i++)
+	for (i = 0; i < bch_extent_ptrs(old); i++) {
+		unsigned j;
+
 		for (j = 0; j < bch_extent_ptrs(k); j++)
 			if (k->val[j] == old->val[i] + offset)
-				goto found_common;
+				return true;
+	}
+#endif /* 0 */
 
-	return false;
-
-found_common:
-#if (0)
-	pr_err("Found common pointers but failing cmpxchg.");
-#endif
 	return false;
 }
 
@@ -719,28 +731,37 @@ static bool bkey_cmpxchg(struct cache_set *c,
 	return ret;
 }
 
+/* We are trying to insert a key with an older version than the existing one */
+
 static void handle_existing_key_newer(struct cache_set *c,
 				      struct btree_keys *b,
 				      struct btree_node_iter *iter,
 				      struct bkey *insert,
 				      struct bkey *k)
 {
+	/* k is the key currently in the tree, 'insert' the new key */
+
 	switch (bch_extent_overlap(k, insert)) {
 	case BCH_EXTENT_OVERLAP_FRONT:
+		/* k and insert share the start, remove it from insert */
 		bch_cut_subtract_front(c, k, insert);
 		break;
 
 	case BCH_EXTENT_OVERLAP_BACK:
+		/* k and insert share the end, remove it from insert */
 		bch_cut_subtract_back(c, &START_KEY(k), insert);
 		break;
 
 	case BCH_EXTENT_OVERLAP_MIDDLE:
 		/*
 		 * We have an overlap where @k (newer version splits
-		 * @insert (older version) in two.
+		 * @insert (older version) in three:
+		 * - start only in insert
+		 * - middle common section -- keep k
+		 * - end only in insert
 		 *
-		 * Insert the first half of @insert ourselves, then update
-		 * @insert to to represent the other half of the split.
+		 * Insert the start of @insert ourselves, then update
+		 * @insert to to represent the end.
 		 */
 		bch_bset_insert_with_hint(b, iter, NULL,
 				bch_key_split(&START_KEY(k), insert));
@@ -748,6 +769,7 @@ static void handle_existing_key_newer(struct cache_set *c,
 		break;
 
 	case BCH_EXTENT_OVERLAP_ALL:
+		/* k completely covers insert -- drop insert */
 		bch_drop_subtract(c, insert);
 		break;
 	}
@@ -767,6 +789,7 @@ static void handle_existing_key_newer(struct cache_set *c,
  * within one bset:
  *
  * START_KEY(bkey_next(k)) >= k
+ * or KEY_START(bkey_next(k)) >= KEY_OFFSET(k)
  *
  * i.e. strict ordering, no overlapping extents.
  *
@@ -857,17 +880,27 @@ static bool bch_extent_insert_fixup(struct btree_keys *b,
 			continue;
 		}
 
+		/* k is the key currently in the tree, 'insert' the new key */
+
 		switch (bch_extent_overlap(insert, k)) {
 		case BCH_EXTENT_OVERLAP_FRONT:
+			/* insert and k share the start, invalidate in k */
 			bch_cut_subtract_front(c, insert, k);
 			break;
 
 		case BCH_EXTENT_OVERLAP_BACK:
+			/* insert and k share the end, invalidate in k */
 			bch_cut_subtract_back(c, &START_KEY(insert), k);
+			/*
+			 * As the auxiliary tree is indexed by the end of the
+			 * key and we've just changed the end, update the
+			 * auxiliary tree.
+			 */
 			bch_bset_fix_invalidated_key(b, k);
 			break;
 
 		case BCH_EXTENT_OVERLAP_ALL:
+			/* The insert key completely covers k, invalidate k */
 			if (!KEY_DELETED(k))
 				b->nr_live_keys -= KEY_U64s(k);
 
@@ -891,10 +924,15 @@ static bool bch_extent_insert_fixup(struct btree_keys *b,
 
 		case BCH_EXTENT_OVERLAP_MIDDLE:
 			/*
-			 * We overlapped in the middle of an existing key: that
-			 * means we have to split the old key: the old key will
-			 * represent one half of the split, and we have to
-			 * insert a new key to represent the other half.
+			 * The insert key falls 'in the middle' of k
+			 * The insert key splits k in 3:
+			 * - start only in k, preserve
+			 * - middle common section, invalidate in k
+			 * - end only in k, preserve
+			 *
+			 * We update the old key to preserve the start,
+			 * insert will be the new common section,
+			 * we manually insert the end that we are preserving.
 			 *
 			 * modify k _before_ doing the insert (which will move
 			 * what k points to)

@@ -97,6 +97,11 @@ void bch_scan_keylist_destroy(struct scan_keylist *kl)
 	bch_keylist_free(&kl->list);
 }
 
+void bch_scan_keylist_reset(struct scan_keylist *kl)
+{
+	kl->list.bot_p = kl->list.top_p = kl->list.start_keys_p;
+}
+
 /*
  * This should only be called from sysfs, and holding a lock that prevents
  * re-entrancy.
