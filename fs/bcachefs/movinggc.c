@@ -141,8 +141,10 @@ static bool bch_moving_gc(struct cache *ca)
 		(fifo_used(&ca->free[RESERVE_MOVINGGC]) - NUM_GC_GENS);
 	spin_unlock(&ca->freelist_lock);
 
-	if (reserve_sectors < (int) ca->sb.block_size)
+	if (reserve_sectors < (int) ca->sb.block_size) {
+		trace_bcache_moving_gc_reserve_empty(ca);
 		return false;
+	}
 
 	trace_bcache_moving_gc_start(ca);
 
@@ -182,6 +184,7 @@ static bool bch_moving_gc(struct cache *ca)
 	if (ca->heap.used < ca->heap.size / 4 &&
 	    sectors_to_move < reserve_sectors) {
 		mutex_unlock(&ca->heap_lock);
+		trace_bcache_moving_gc_no_work(ca);
 		return false;
 	}
 
