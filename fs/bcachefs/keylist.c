@@ -31,15 +31,19 @@ int bch_keylist_realloc_max(struct keylist *l,
 	/* We simulate being out of memory -- the code using the key list
 	   has to handle that case. */
 	if (newsize > maxu64s) {
-		if (oldcap >= maxu64s)
+		if (oldcap >= maxu64s) {
+			trace_bcache_keylist_realloc_full(l);
 			return -ENOMEM;
+		}
 		newsize = maxu64s;
 	}
 
 	new_keys = kmalloc_array(newsize, sizeof(u64), GFP_NOIO);
 
-	if (!new_keys)
+	if (!new_keys) {
+		trace_bcache_keylist_realloc_fail(l);
 		return -ENOMEM;
+	}
 
 	/* Has @top wrapped around? */
 	if (l->top_p < l->bot_p) {
@@ -78,6 +82,8 @@ int bch_keylist_realloc_max(struct keylist *l,
 
 	l->start_keys_p = new_keys;
 	l->end_keys_p = new_keys + newsize;
+
+	trace_bcache_keylist_realloc(l);
 
 	return 0;
 }

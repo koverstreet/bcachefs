@@ -6,6 +6,8 @@
 
 #include <linux/tracepoint.h>
 
+#include "keylist.h"
+
 DECLARE_EVENT_CLASS(bcache_request,
 	TP_PROTO(struct bcache_device *d, struct bio *bio),
 	TP_ARGS(d, bio),
@@ -950,6 +952,40 @@ DEFINE_EVENT(open_bucket_alloc, bcache_open_bucket_alloc,
 DEFINE_EVENT(open_bucket_alloc, bcache_open_bucket_alloc_fail,
 	TP_PROTO(struct cache_set *c, struct closure *cl),
 	TP_ARGS(c, cl)
+);
+
+/* Keylists */
+
+DECLARE_EVENT_CLASS(keylist,
+	TP_PROTO(struct keylist *keys),
+	TP_ARGS(keys),
+
+	TP_STRUCT__entry(
+		__field(struct keylist *,	keys		)
+		__field(size_t,			capacity	)
+	),
+
+	TP_fast_assign(
+		__entry->keys		= keys;
+		__entry->capacity	= bch_keylist_capacity(keys);
+	),
+
+	TP_printk("%p capacity %zu", __entry->keys, __entry->capacity)
+);
+
+DEFINE_EVENT(keylist, bcache_keylist_realloc,
+	TP_PROTO(struct keylist *keys),
+	TP_ARGS(keys)
+);
+
+DEFINE_EVENT(keylist, bcache_keylist_realloc_full,
+	TP_PROTO(struct keylist *keys),
+	TP_ARGS(keys)
+);
+
+DEFINE_EVENT(keylist, bcache_keylist_realloc_fail,
+	TP_PROTO(struct keylist *keys),
+	TP_ARGS(keys)
 );
 
 /* Copy GC */
