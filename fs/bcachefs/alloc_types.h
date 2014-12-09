@@ -63,31 +63,28 @@ struct write_point {
 	/*
 	 * Throttle writes to this write point if tier 0 is full?
 	 */
-	bool throttle;
+	bool			throttle;
 
 	/*
 	 * If 0, use the desired replica count for the cache set.
 	 * Otherwise, this is the number of replicas desired (generally 1).
 	 */
-	unsigned nr_replicas;
+	unsigned		nr_replicas;
 
 	/*
-	 * If not NULL, refill from that device (this write point is a member of
-	 * that struct cache)
-	 *
-	 * If NULL, do a normal replicated bucket allocation
+	 * Bucket reserve to allocate from.
 	 */
-	struct cache		*ca;
+	enum alloc_reserve	reserve;
 
 	/*
-	 * If not NULL, tier specific writepoint used by tiering/promotion -
+	 * If not NULL, cache group for tiering, promotion and moving GC -
 	 * always allocates a single replica
 	 */
-	struct cache_group	*tier;
+	struct cache_group	*group;
 
 	/*
 	 * Otherwise do a normal replicated bucket allocation that could come
-	 * from any tier (foreground write)
+	 * from any device in tier 0 (foreground write)
 	 */
 };
 

@@ -1706,6 +1706,10 @@ static int cache_init(struct cache *ca)
 			    0, GFP_KERNEL))
 		return -ENOMEM;
 
+	seqcount_init(&ca->self.lock);
+	ca->self.nr_devices = 1;
+	ca->self.devices[0] = ca;
+
 	INIT_WORK(&ca->kill_work, bch_cache_kill_work);
 	INIT_WORK(&ca->remove_work, bch_cache_remove_work);
 	bio_init(&ca->journal.bio);
@@ -1756,8 +1760,9 @@ static int cache_init(struct cache *ca)
 	pr_debug("%zu buckets reserved", total_reserve);
 
 	for (i = 0; i < ARRAY_SIZE(ca->gc_buckets); i++) {
-		ca->gc_buckets[i].ca = ca;
 		ca->gc_buckets[i].nr_replicas = 1;
+		ca->gc_buckets[i].reserve = RESERVE_MOVINGGC;
+		ca->gc_buckets[i].group = &ca->self;
 	}
 
 	mutex_init(&ca->heap_lock);

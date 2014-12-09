@@ -218,6 +218,14 @@
 
 struct btree;
 
+struct cache;
+
+struct cache_group {
+	seqcount_t		lock;
+	unsigned		nr_devices;
+	struct cache __rcu	*devices[MAX_CACHES_PER_SET];
+};
+
 struct cache {
 	struct percpu_ref	ref;
 	struct rcu_head		kill_rcu;
@@ -227,6 +235,8 @@ struct cache {
 
 	struct cache_set	*set;
 	struct cache_sb		sb;
+
+	struct cache_group	self;
 
 	/*
 	 * Cached version of this device's member info from superblock
@@ -349,12 +359,6 @@ struct gc_stat {
 #define	CACHE_SET_RUNNING		2
 #define	CACHE_SET_RO			3
 #define	CACHE_SET_GC_FAILURE		4
-
-struct cache_group {
-	seqcount_t		lock;
-	unsigned		nr_devices;
-	struct cache __rcu	*devices[MAX_CACHES_PER_SET];
-};
 
 struct prio_clock {
 	/* All fields protected by bucket_lock */

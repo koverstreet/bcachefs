@@ -592,9 +592,7 @@ void bch_write(struct closure *cl)
 	if (!op->discard)
 		bch_increment_clock(c, bio_sectors(op->bio), WRITE);
 
-	if (op->wp->ca)
-		bch_mark_gc_write(c, bio_sectors(op->bio));
-	else if (!op->discard)
+	if (!op->discard)
 		bch_mark_foreground_write(c, bio_sectors(op->bio));
 	else
 		bch_mark_discard(c, bio_sectors(op->bio));
