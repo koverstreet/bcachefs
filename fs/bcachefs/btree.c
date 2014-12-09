@@ -3155,13 +3155,14 @@ bool btree_move_node(struct btree *node, struct btree_op *op)
 		 * Note: bch_btree_set_root requires that we not be
 		 * holding a write lock on the old root, but that's OK
 		 * as we are only holding an intent lock.
-		 * In addition, bch_btree_set_root frees the old root
-		 * note, but any actual re-allocation is delayed until the
-		 * intent lock in the btree-walking code is released,
-		 * and it won't be released until the whole walk
+		 * In addition, this frees the old root node, but any
+		 * actual re-allocation is delayed until the intent
+		 * lock in the btree-walking code is released, and it
+		 * won't be released until the whole walk
 		 * completes. See bch_mca_scan and mca_reap_notrace.
 		 */
 		bch_btree_set_root(new);
+		btree_node_free(node);
 	} else {
 		/*
 		 * This doesn't use the replace argument even though
