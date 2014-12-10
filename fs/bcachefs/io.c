@@ -599,6 +599,7 @@ void bch_write(struct closure *cl)
 
 	if (atomic64_sub_return(bio_sectors(op->bio),
 				&c->sectors_until_gc) < 0) {
+		trace_bcache_gc_periodic(c);
 		set_gc_sectors(c);
 		wake_up_process(c->gc_thread);
 	}

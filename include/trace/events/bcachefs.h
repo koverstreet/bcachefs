@@ -217,6 +217,23 @@ DEFINE_EVENT(bkey, bcache_cache_insert,
 	TP_ARGS(k)
 );
 
+DECLARE_EVENT_CLASS(page_alloc_fail,
+	TP_PROTO(struct cache_set *c, u64 size),
+	TP_ARGS(c, size),
+
+	TP_STRUCT__entry(
+		__array(char,		uuid,	16	)
+		__field(u64,		size		)
+	),
+
+	TP_fast_assign(
+		memcpy(__entry->uuid, c->sb.set_uuid.b, 16);
+		__entry->size = size;
+	),
+
+	TP_printk("%pU size %llu", __entry->uuid, __entry->size)
+);
+
 /* Journal */
 
 DECLARE_EVENT_CLASS(cache_set,
@@ -488,6 +505,90 @@ DEFINE_EVENT(btree_node_op, bcache_btree_iterator_invalidated,
 	TP_ARGS(b, op)
 );
 
+TRACE_EVENT(bcache_btree_insert_key,
+	TP_PROTO(struct btree *b, struct bkey *k, unsigned op, unsigned status),
+	TP_ARGS(b, k, op, status),
+
+	TP_STRUCT__entry(
+		__field(u64,		b_bucket		)
+		__field(u64,		b_offset		)
+		__field(u64,		offset			)
+		__field(u64,		bucket			)
+		__field(u32,		b_inode			)
+		__field(u32,		inode			)
+		__field(u32,		size			)
+		__field(u8,		level			)
+		__field(u8,		id			)
+		__field(u8,		cached			)
+		__field(u8,		op			)
+		__field(u8,		status			)
+	),
+
+	TP_fast_assign(
+		__entry->b_bucket	= PTR_BUCKET_NR(b->c, &b->key, 0);
+		__entry->level		= b->level;
+		__entry->id		= b->btree_id;
+		__entry->b_inode	= KEY_INODE(&b->key);
+		__entry->b_offset	= KEY_OFFSET(&b->key);
+		__entry->bucket		= PTR_BUCKET_NR(b->c, k, 0);
+		__entry->inode		= KEY_INODE(k);
+		__entry->offset		= KEY_OFFSET(k);
+		__entry->size		= KEY_SIZE(k);
+		__entry->cached		= KEY_CACHED(k);
+		__entry->op		= op;
+		__entry->status		= status;
+	),
+
+	TP_printk("%u for %u bucket %llu(%u) id %u: %u:%llu %u:%llu len %u%s -> %llu",
+		  __entry->status, __entry->op,
+		  __entry->b_bucket, __entry->level, __entry->id,
+		  __entry->b_inode, __entry->b_offset,
+		  __entry->inode, __entry->offset,
+		  __entry->size, __entry->cached ? " cached" : "",
+		  __entry->bucket)
+);
+
+DECLARE_EVENT_CLASS(btree_split,
+	TP_PROTO(struct btree *b, unsigned keys),
+	TP_ARGS(b, keys),
+
+	TP_STRUCT__entry(
+		__field(u64,		bucket			)
+		__field(u8,		level			)
+		__field(u8,		id			)
+		__field(u32,		inode			)
+		__field(u64,		offset			)
+		__field(u32,		keys			)
+	),
+
+	TP_fast_assign(
+		__entry->bucket	= PTR_BUCKET_NR(b->c, &b->key, 0);
+		__entry->level	= b->level;
+		__entry->id	= b->btree_id;
+		__entry->inode	= KEY_INODE(&b->key);
+		__entry->offset	= KEY_OFFSET(&b->key);
+		__entry->keys	= keys;
+	),
+
+	TP_printk("bucket %llu(%u) id %u: %u:%llu keys %u",
+		  __entry->bucket, __entry->level, __entry->id,
+		  __entry->inode, __entry->offset, __entry->keys)
+);
+
+DEFINE_EVENT(btree_split, bcache_btree_node_split,
+	TP_PROTO(struct btree *b, unsigned keys),
+	TP_ARGS(b, keys)
+);
+
+DEFINE_EVENT(btree_split, bcache_btree_node_compact,
+	TP_PROTO(struct btree *b, unsigned keys),
+	TP_ARGS(b, keys)
+);
+
+DEFINE_EVENT(btree_node, bcache_btree_set_root,
+	TP_PROTO(struct btree *b),
+	TP_ARGS(b)
+);
 
 /* Garbage collection */
 
@@ -578,6 +679,51 @@ DEFINE_EVENT(cache, bcache_sectors_saturated,
 	TP_ARGS(ca)
 );
 
+DEFINE_EVENT(cache_set, bcache_gc_sectors_saturated,
+	TP_PROTO(struct cache_set *c),
+	TP_ARGS(c)
+);
+
+DEFINE_EVENT(cache_set, bcache_gc_cannot_inc_gens,
+	TP_PROTO(struct cache_set *c),
+	TP_ARGS(c)
+);
+
+DEFINE_EVENT(cache_set, bcache_gc_periodic,
+	TP_PROTO(struct cache_set *c),
+	TP_ARGS(c)
+);
+
+TRACE_EVENT(bcache_add_sectors,
+	TP_PROTO(struct cache *ca, struct bkey *k, unsigned i,
+		 u64 offset, int sectors, bool dirty),
+	TP_ARGS(ca, k, i, offset, sectors, dirty),
+
+	TP_STRUCT__entry(
+		__array(char,		uuid,		16	)
+		__field(u32,		inode			)
+		__field(u64,		offset			)
+		__field(u32,		sectors			)
+		__field(u64,		bucket			)
+		__field(bool,		dirty			)
+	),
+
+	TP_fast_assign(
+		memcpy(__entry->uuid, ca->sb.uuid.b, 16);
+		__entry->inode		= KEY_INODE(k);
+		__entry->offset		= KEY_OFFSET(k);
+		__entry->sectors	= sectors;
+		__entry->bucket		= PTR_BUCKET_NR(ca->set, k, i);
+		__entry->dirty		= dirty;
+	),
+
+	TP_printk("%pU %u:%llu sectors %i bucket %llu dirty %i",
+		  __entry->uuid, __entry->inode, __entry->offset,
+		  __entry->sectors, __entry->bucket, __entry->dirty)
+);
+
+/* Allocator */
+
 TRACE_EVENT(bcache_alloc_batch,
 	TP_PROTO(struct cache *ca, size_t free, size_t total),
 	TP_ARGS(ca, free, total),
@@ -624,23 +770,6 @@ TRACE_EVENT(bcache_btree_check_reserve_fail,
 		__entry->cl)
 );
 
-DECLARE_EVENT_CLASS(page_alloc_fail,
-	TP_PROTO(struct cache_set *c, u64 size),
-	TP_ARGS(c, size),
-
-	TP_STRUCT__entry(
-		__array(char,		uuid,	16	)
-		__field(u64,		size		)
-	),
-
-	TP_fast_assign(
-		memcpy(__entry->uuid, c->sb.set_uuid.b, 16);
-		__entry->size = size;
-	),
-
-	TP_printk("%pU size %llu", __entry->uuid, __entry->size)
-);
-
 DEFINE_EVENT(cache, bcache_prio_write_start,
 	TP_PROTO(struct cache *ca),
 	TP_ARGS(ca)
@@ -650,205 +779,6 @@ DEFINE_EVENT(cache, bcache_prio_write_end,
 	TP_PROTO(struct cache *ca),
 	TP_ARGS(ca)
 );
-
-TRACE_EVENT(bcache_btree_insert_key,
-	TP_PROTO(struct btree *b, struct bkey *k, unsigned op, unsigned status),
-	TP_ARGS(b, k, op, status),
-
-	TP_STRUCT__entry(
-		__field(u64,		b_bucket		)
-		__field(u64,		b_offset		)
-		__field(u64,		offset			)
-		__field(u64,		bucket			)
-		__field(u32,		b_inode			)
-		__field(u32,		inode			)
-		__field(u32,		size			)
-		__field(u8,		level			)
-		__field(u8,		id			)
-		__field(u8,		cached			)
-		__field(u8,		op			)
-		__field(u8,		status			)
-	),
-
-	TP_fast_assign(
-		__entry->b_bucket	= PTR_BUCKET_NR(b->c, &b->key, 0);
-		__entry->level		= b->level;
-		__entry->id		= b->btree_id;
-		__entry->b_inode	= KEY_INODE(&b->key);
-		__entry->b_offset	= KEY_OFFSET(&b->key);
-		__entry->bucket		= PTR_BUCKET_NR(b->c, k, 0);
-		__entry->inode		= KEY_INODE(k);
-		__entry->offset		= KEY_OFFSET(k);
-		__entry->size		= KEY_SIZE(k);
-		__entry->cached		= KEY_CACHED(k);
-		__entry->op		= op;
-		__entry->status		= status;
-	),
-
-	TP_printk("%u for %u bucket %llu(%u) id %u: %u:%llu %u:%llu len %u%s -> %llu",
-		  __entry->status, __entry->op,
-		  __entry->b_bucket, __entry->level, __entry->id,
-		  __entry->b_inode, __entry->b_offset,
-		  __entry->inode, __entry->offset,
-		  __entry->size, __entry->cached ? " cached" : "",
-		  __entry->bucket)
-);
-
-TRACE_EVENT(bcache_add_sectors,
-	TP_PROTO(struct cache *ca, struct bkey *k, unsigned i,
-		 u64 offset, int sectors, bool dirty),
-	TP_ARGS(ca, k, i, offset, sectors, dirty),
-
-	TP_STRUCT__entry(
-		__array(char,		uuid,		16	)
-		__field(u32,		inode			)
-		__field(u64,		offset			)
-		__field(u32,		sectors			)
-		__field(u64,		bucket			)
-		__field(bool,		dirty			)
-	),
-
-	TP_fast_assign(
-		memcpy(__entry->uuid, ca->sb.uuid.b, 16);
-		__entry->inode		= KEY_INODE(k);
-		__entry->offset		= KEY_OFFSET(k);
-		__entry->sectors	= sectors;
-		__entry->bucket		= PTR_BUCKET_NR(ca->set, k, i);
-		__entry->dirty		= dirty;
-	),
-
-	TP_printk("%pU %u:%llu sectors %i bucket %llu dirty %i",
-		  __entry->uuid, __entry->inode, __entry->offset,
-		  __entry->sectors, __entry->bucket, __entry->dirty)
-);
-
-DECLARE_EVENT_CLASS(btree_split,
-	TP_PROTO(struct btree *b, unsigned keys),
-	TP_ARGS(b, keys),
-
-	TP_STRUCT__entry(
-		__field(u64,		bucket			)
-		__field(u8,		level			)
-		__field(u8,		id			)
-		__field(u32,		inode			)
-		__field(u64,		offset			)
-		__field(u32,		keys			)
-	),
-
-	TP_fast_assign(
-		__entry->bucket	= PTR_BUCKET_NR(b->c, &b->key, 0);
-		__entry->level	= b->level;
-		__entry->id	= b->btree_id;
-		__entry->inode	= KEY_INODE(&b->key);
-		__entry->offset	= KEY_OFFSET(&b->key);
-		__entry->keys	= keys;
-	),
-
-	TP_printk("bucket %llu(%u) id %u: %u:%llu keys %u",
-		  __entry->bucket, __entry->level, __entry->id,
-		  __entry->inode, __entry->offset, __entry->keys)
-);
-
-DEFINE_EVENT(btree_split, bcache_btree_node_split,
-	TP_PROTO(struct btree *b, unsigned keys),
-	TP_ARGS(b, keys)
-);
-
-DEFINE_EVENT(btree_split, bcache_btree_node_compact,
-	TP_PROTO(struct btree *b, unsigned keys),
-	TP_ARGS(b, keys)
-);
-
-DEFINE_EVENT(btree_node, bcache_btree_set_root,
-	TP_PROTO(struct btree *b),
-	TP_ARGS(b)
-);
-
-TRACE_EVENT(bcache_keyscan,
-	TP_PROTO(unsigned nr_found,
-		 unsigned start_inode, uint64_t start_offset,
-		 unsigned end_inode, uint64_t end_offset),
-	TP_ARGS(nr_found,
-		start_inode, start_offset,
-		end_inode, end_offset),
-
-	TP_STRUCT__entry(
-		__field(__u32,	nr_found			)
-		__field(__u32,	start_inode			)
-		__field(__u64,	start_offset			)
-		__field(__u32,	end_inode			)
-		__field(__u64,	end_offset			)
-	),
-
-	TP_fast_assign(
-		__entry->nr_found	= nr_found;
-		__entry->start_inode	= start_inode;
-		__entry->start_offset	= start_offset;
-		__entry->end_inode	= end_inode;
-		__entry->end_offset	= end_offset;
-	),
-
-	TP_printk("found %u keys from %u:%llu to %u:%llu", __entry->nr_found,
-		  __entry->start_inode, __entry->start_offset,
-		  __entry->end_inode, __entry->end_offset)
-);
-
-DECLARE_EVENT_CLASS(moving_io,
-	TP_PROTO(struct moving_queue *q, struct bkey *k),
-	TP_ARGS(q, k),
-
-	TP_STRUCT__entry(
-		__field(void *,		q			)
-		__field(__u32,		inode			)
-		__field(__u64,		offset			)
-		__field(__u32,		sectors			)
-		__field(unsigned,	count			)
-		__field(unsigned,	read_count		)
-		__field(unsigned,	write_count		)
-	),
-
-	TP_fast_assign(
-		__entry->q		= q;
-		__entry->inode		= KEY_INODE(k);
-		__entry->offset		= KEY_OFFSET(k);
-		__entry->sectors	= KEY_SIZE(k);
-		__entry->count		= q->count;
-		__entry->read_count	= q->read_count;
-		__entry->write_count	= q->write_count;
-	),
-
-	TP_printk("%p %u:%llu sectors %u queue %u reads %u writes %u",
-		  __entry->q, __entry->inode, __entry->offset,
-		  __entry->sectors, __entry->count,
-		  __entry->read_count, __entry->write_count)
-);
-
-DEFINE_EVENT(moving_io, bcache_move_read,
-	TP_PROTO(struct moving_queue *q, struct bkey *k),
-	TP_ARGS(q, k)
-);
-
-DEFINE_EVENT(moving_io, bcache_move_read_done,
-	TP_PROTO(struct moving_queue *q, struct bkey *k),
-	TP_ARGS(q, k)
-);
-
-DEFINE_EVENT(moving_io, bcache_move_write,
-	TP_PROTO(struct moving_queue *q, struct bkey *k),
-	TP_ARGS(q, k)
-);
-
-DEFINE_EVENT(moving_io, bcache_move_write_done,
-	TP_PROTO(struct moving_queue *q, struct bkey *k),
-	TP_ARGS(q, k)
-);
-
-DEFINE_EVENT(moving_io, bcache_copy_collision,
-	TP_PROTO(struct moving_queue *q, struct bkey *k),
-	TP_ARGS(q, k)
-);
-
-/* Allocator */
 
 TRACE_EVENT(bcache_invalidate,
 	TP_PROTO(struct cache *ca, size_t bucket, unsigned sectors),
@@ -876,7 +806,7 @@ DEFINE_EVENT(cache_set, bcache_rescale_prios,
 	TP_ARGS(c)
 );
 
-DECLARE_EVENT_CLASS(bucket_alloc,
+DECLARE_EVENT_CLASS(cache_bucket_alloc,
 	TP_PROTO(struct cache *ca, enum alloc_reserve reserve),
 	TP_ARGS(ca, reserve),
 
@@ -893,17 +823,17 @@ DECLARE_EVENT_CLASS(bucket_alloc,
 	TP_printk("%pU reserve %d", __entry->uuid, __entry->reserve)
 );
 
-DEFINE_EVENT(bucket_alloc, bcache_bucket_alloc,
+DEFINE_EVENT(cache_bucket_alloc, bcache_bucket_alloc,
 	TP_PROTO(struct cache *ca, enum alloc_reserve reserve),
 	TP_ARGS(ca, reserve)
 );
 
-DEFINE_EVENT(bucket_alloc, bcache_bucket_alloc_fail,
+DEFINE_EVENT(cache_bucket_alloc, bcache_bucket_alloc_fail,
 	TP_PROTO(struct cache *ca, enum alloc_reserve reserve),
 	TP_ARGS(ca, reserve)
 );
 
-TRACE_EVENT(bcache_buckets_unavailable_fail,
+DECLARE_EVENT_CLASS(cache_set_bucket_alloc,
 	TP_PROTO(struct cache_set *c, enum alloc_reserve reserve,
 		 struct closure *cl),
 	TP_ARGS(c, reserve, cl),
@@ -922,6 +852,18 @@ TRACE_EVENT(bcache_buckets_unavailable_fail,
 
 	TP_printk("%pU reserve %d cl %p", __entry->uuid, __entry->reserve,
 		  __entry->cl)
+);
+
+DEFINE_EVENT(cache_set_bucket_alloc, bcache_buckets_unavailable_fail,
+	TP_PROTO(struct cache_set *c, enum alloc_reserve reserve,
+		 struct closure *cl),
+	TP_ARGS(c, reserve, cl)
+);
+
+DEFINE_EVENT(cache_set_bucket_alloc, bcache_cache_set_full,
+	TP_PROTO(struct cache_set *c, enum alloc_reserve reserve,
+		 struct closure *cl),
+	TP_ARGS(c, reserve, cl)
 );
 
 DECLARE_EVENT_CLASS(open_bucket_alloc,
@@ -984,6 +926,92 @@ DEFINE_EVENT(keylist, bcache_keylist_realloc_full,
 DEFINE_EVENT(keylist, bcache_keylist_realloc_fail,
 	TP_PROTO(struct keylist *keys),
 	TP_ARGS(keys)
+);
+
+TRACE_EVENT(bcache_keyscan,
+	TP_PROTO(unsigned nr_found,
+		 unsigned start_inode, u64 start_offset,
+		 unsigned end_inode, u64 end_offset),
+	TP_ARGS(nr_found,
+		start_inode, start_offset,
+		end_inode, end_offset),
+
+	TP_STRUCT__entry(
+		__field(__u32,	nr_found			)
+		__field(__u32,	start_inode			)
+		__field(__u64,	start_offset			)
+		__field(__u32,	end_inode			)
+		__field(__u64,	end_offset			)
+	),
+
+	TP_fast_assign(
+		__entry->nr_found	= nr_found;
+		__entry->start_inode	= start_inode;
+		__entry->start_offset	= start_offset;
+		__entry->end_inode	= end_inode;
+		__entry->end_offset	= end_offset;
+	),
+
+	TP_printk("found %u keys from %u:%llu to %u:%llu", __entry->nr_found,
+		  __entry->start_inode, __entry->start_offset,
+		  __entry->end_inode, __entry->end_offset)
+);
+
+/* Moving IO */
+
+DECLARE_EVENT_CLASS(moving_io,
+	TP_PROTO(struct moving_queue *q, struct bkey *k),
+	TP_ARGS(q, k),
+
+	TP_STRUCT__entry(
+		__field(void *,		q			)
+		__field(__u32,		inode			)
+		__field(__u64,		offset			)
+		__field(__u32,		sectors			)
+		__field(unsigned,	count			)
+		__field(unsigned,	read_count		)
+		__field(unsigned,	write_count		)
+	),
+
+	TP_fast_assign(
+		__entry->q		= q;
+		__entry->inode		= KEY_INODE(k);
+		__entry->offset		= KEY_OFFSET(k);
+		__entry->sectors	= KEY_SIZE(k);
+		__entry->count		= q->count;
+		__entry->read_count	= q->read_count;
+		__entry->write_count	= q->write_count;
+	),
+
+	TP_printk("%p %u:%llu sectors %u queue %u reads %u writes %u",
+		  __entry->q, __entry->inode, __entry->offset,
+		  __entry->sectors, __entry->count,
+		  __entry->read_count, __entry->write_count)
+);
+
+DEFINE_EVENT(moving_io, bcache_move_read,
+	TP_PROTO(struct moving_queue *q, struct bkey *k),
+	TP_ARGS(q, k)
+);
+
+DEFINE_EVENT(moving_io, bcache_move_read_done,
+	TP_PROTO(struct moving_queue *q, struct bkey *k),
+	TP_ARGS(q, k)
+);
+
+DEFINE_EVENT(moving_io, bcache_move_write,
+	TP_PROTO(struct moving_queue *q, struct bkey *k),
+	TP_ARGS(q, k)
+);
+
+DEFINE_EVENT(moving_io, bcache_move_write_done,
+	TP_PROTO(struct moving_queue *q, struct bkey *k),
+	TP_ARGS(q, k)
+);
+
+DEFINE_EVENT(moving_io, bcache_copy_collision,
+	TP_PROTO(struct moving_queue *q, struct bkey *k),
+	TP_ARGS(q, k)
 );
 
 /* Copy GC */

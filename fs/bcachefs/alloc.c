@@ -547,8 +547,10 @@ static bool bch_can_invalidate_bucket(struct cache *ca, struct bucket *g)
 	if (!can_inc_bucket_gen(ca, g - ca->buckets)) {
 		ca->inc_gen_needs_gc++;
 		if (ca->inc_gen_needs_gc > ca->free_inc.size) {
-			if (ca->set->gc_thread)
+			if (ca->set->gc_thread) {
+				trace_bcache_gc_cannot_inc_gens(ca->set);
 				wake_up_process(ca->set->gc_thread);
+			}
 		}
 		return false;
 	}
@@ -1057,8 +1059,10 @@ int bch_bucket_alloc_set(struct cache_set *c, enum alloc_reserve reserve,
 		return -ENOSPC;
 
 	if (reserve == RESERVE_NONE &&
-	    !cache_set_can_write(c))
+	    !cache_set_can_write(c)) {
+		trace_bcache_cache_set_full(c, reserve, cl);
 		return -ENOSPC;
+	}
 
 	if (cl) {
 		struct closure_waitlist *waitlist =
