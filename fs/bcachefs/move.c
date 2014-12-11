@@ -17,11 +17,13 @@ static void moving_error(struct moving_context *ctxt, unsigned flag)
 	atomic_or(flag, &ctxt->error_flags);
 }
 
-void bch_moving_context_init(struct moving_context *ctxt)
+void bch_moving_context_init(struct moving_context *ctxt,
+			     enum moving_purpose purpose)
 {
 	memset(ctxt, 0, sizeof(*ctxt));
 	ctxt->task = current;
 	closure_init_stack(&ctxt->cl);
+	ctxt->purpose = purpose;
 }
 
 void bch_moving_wait(struct moving_context *ctxt)
@@ -89,7 +91,13 @@ static void moving_io_destructor(struct closure *cl)
 	} else
 		list_del(&io->list);
 
+	if ((q->count == 0) && (q->stop_waitcl != NULL)) {
+		closure_put(q->stop_waitcl);
+		q->stop_waitcl = NULL;
+	}
+
 	spin_unlock_irqrestore(&q->lock, flags);
+	BUG_ON(q->wq == NULL);
 	queue_work(q->wq, &q->work);
 
 	kfree(io);
@@ -100,17 +108,32 @@ static void moving_io_destructor(struct closure *cl)
 static void moving_io_after_write(struct closure *cl)
 {
 	struct moving_io *io = container_of(cl, struct moving_io, cl);
+	struct moving_context *ctxt = io->context;
 
 	if (io->op.error)
-		moving_error(io->context, MOVING_FLAG_WRITE);
+		moving_error(ctxt, MOVING_FLAG_WRITE);
 
 	moving_io_destructor(cl);
 }
+
 static void write_moving(struct moving_io *io)
 {
+	bool stopped;
+	unsigned long flags;
 	struct bch_write_op *op = &io->op;
 
-	if (op->error)
+	spin_lock_irqsave(&io->q->lock, flags);
+	BUG_ON(io->q->count == 0);
+	stopped = io->q->stopped;
+	spin_unlock_irqrestore(&io->q->lock, flags);
+
+	/*
+	 * If the queue has been stopped, prevent the write from occurring.
+	 * This stops all writes on a device going read-only as quickly
+	 * as possible.
+	 */
+
+	if (op->error || stopped)
 		closure_return_with_destructor(&io->cl, moving_io_destructor);
 	else {
 		moving_init(io);
@@ -149,13 +172,19 @@ static void bch_queue_write_work(struct work_struct *work)
 	spin_unlock_irqrestore(&q->lock, flags);
 }
 
+/*
+ * IMPORTANT: The caller of queue_init must have zero-filled it when it
+ * allocates it.
+ */
+
 void bch_queue_init(struct moving_queue *q,
 		    unsigned max_size,
 		    unsigned max_count,
 		    unsigned max_read_count,
 		    unsigned max_write_count)
 {
-	memset(q, 0, sizeof(*q));
+	if (test_and_set_bit(MOVING_QUEUE_INITIALIZED, &q->flags))
+		return;
 
 	INIT_WORK(&q->work, bch_queue_write_work);
 	bch_scan_keylist_init(&q->keys, max_size);
@@ -171,6 +200,10 @@ void bch_queue_init(struct moving_queue *q,
 int bch_queue_start(struct moving_queue *q,
 		    const char *name)
 {
+	if (q->wq != NULL)
+		/* Already started */
+		return 0;
+
 	q->wq = alloc_workqueue(name, WQ_UNBOUND|WQ_MEM_RECLAIM, 1);
 	if (!q->wq)
 		return -ENOMEM;
@@ -178,14 +211,69 @@ int bch_queue_start(struct moving_queue *q,
 	return 0;
 }
 
+static int bch_queue_restart(struct moving_queue *q, const char *name)
+{
+	int ret;
+	unsigned long flags;
+
+	spin_lock_irqsave(&q->lock, flags);
+	q->stopped = false;
+	spin_unlock_irqrestore(&q->lock, flags);
+
+	mutex_lock(&q->keys.lock);
+	bch_scan_keylist_reset(&q->keys);
+	ret = bch_queue_start(q, name);
+	mutex_unlock(&q->keys.lock);
+	return ret;
+}
+
+static void queue_io_resize(struct moving_queue *q,
+			    unsigned max_io,
+			    unsigned max_read,
+			    unsigned max_write)
+{
+	unsigned long flags;
+
+	spin_lock_irqsave(&q->lock, flags);
+	q->max_count = max_io;
+	q->max_read_count = max_read;
+	q->max_write_count = max_write;
+	spin_unlock_irqrestore(&q->lock, flags);
+}
+
 void bch_queue_destroy(struct moving_queue *q)
 {
+	if (!test_and_clear_bit(MOVING_QUEUE_INITIALIZED, &q->flags))
+		return;
+
 	if (q->wq) {
 		destroy_workqueue(q->wq);
 		q->wq = NULL;
 	}
 
 	bch_scan_keylist_destroy(&q->keys);
+}
+
+void bch_queue_stop(struct moving_queue *q)
+{
+	unsigned long flags;
+	struct closure waitcl;
+
+	closure_init_stack(&waitcl);
+
+	spin_lock_irqsave(&q->lock, flags);
+	if (q->stopped)
+		BUG_ON(q->stop_waitcl != NULL);
+	else {
+		q->stopped = true;
+		if (q->count != 0) {
+			q->stop_waitcl = &waitcl;
+			closure_get(&waitcl);
+		}
+	}
+	spin_unlock_irqrestore(&q->lock, flags);
+
+	closure_sync(&waitcl);
 }
 
 static void read_moving_endio(struct bio *bio)
@@ -200,8 +288,9 @@ static void read_moving_endio(struct bio *bio)
 	if (bio->bi_error) {
 		io->op.error = bio->bi_error;
 		moving_error(io->context, MOVING_FLAG_READ);
-	} else if (ptr_stale(b->ca->set, b->ca, &b->key, 0))
+	} else if (ptr_stale(b->ca->set, b->ca, &b->key, 0)) {
 		io->op.error = -EINTR;
+	}
 
 	bch_bbio_endio(b, bio->bi_error, "reading data to move");
 
@@ -214,6 +303,7 @@ static void read_moving_endio(struct bio *bio)
 	BUG_ON(!q->read_count);
 	q->read_count--;
 	spin_unlock_irqrestore(&q->lock, flags);
+	BUG_ON(q->wq == NULL);
 	queue_work(q->wq, &q->work);
 
 	bch_moving_notify(ctxt);
@@ -266,86 +356,235 @@ void bch_data_move(struct moving_queue *q,
 		   struct moving_io *io)
 {
 	unsigned long flags;
+	bool stopped = false;
 
+	BUG_ON(q->wq == NULL);
 	io->q = q;
 	io->context = ctxt;
 
 	spin_lock_irqsave(&q->lock, flags);
-	q->count++;
-	q->read_count++;
-	list_add_tail(&io->list, &q->pending);
-	trace_bcache_move_read(q, &io->key);
+	if (q->stopped)
+		stopped = true;
+	else {
+		q->count++;
+		q->read_count++;
+		list_add_tail(&io->list, &q->pending);
+		trace_bcache_move_read(q, &io->key);
+	}
 
 	spin_unlock_irqrestore(&q->lock, flags);
 
-	closure_call(&io->cl, __bch_data_move, NULL, &ctxt->cl);
+	if (stopped)
+		kfree(io);
+	else
+		closure_call(&io->cl, __bch_data_move, NULL, &ctxt->cl);
+	return;
 }
 
 struct migrate_data_op {
 	struct cache_set	*c;
-	struct moving_queue	queue;
+	struct moving_queue	*q;
 	struct moving_context	context;
 	unsigned		dev;
 };
 
 static bool migrate_data_pred(struct scan_keylist *kl, struct bkey *k)
 {
-	struct migrate_data_op *op =
-		container_of(kl, struct migrate_data_op, queue.keys);
+	struct cache *ca = container_of(kl, struct cache,
+					moving_gc_queue.keys);
+	unsigned dev = ca->sb.nr_this_dev;
 	unsigned i;
 
 	for (i = 0; i < bch_extent_ptrs(k); i++)
-		if (PTR_DEV(k, i) == op->dev)
+		if (PTR_DEV(k, i) == dev)
 			return true;
 
 	return false;
 }
 
-static int issue_migration_move(struct moving_queue *q,
+#if (0)
+
+/*
+ * This code is ifdef'd out because it does not work when replicas_want > 1,
+ * and when replicas_want is 1, it merely removes all the extent pointers
+ * from the key, which can be dome more simply and works for replicas_want > 1
+ * at the expense of copying more data around.
+ * At some point this should be 'resurrected' and fixed to cause less copying.
+ * But for now, it is disabled.
+ */
+
+static atomic64_t bch_dropped_pointer = ATOMIC64_INIT(0);
+
+static void migrate_compact_key(struct cache_set *c,
+				struct bkey *k,
+				struct cache *ca)
+{
+	bool dropped;
+	unsigned tierno;
+	unsigned i, tier[CACHE_TIERS], tier_count[CACHE_TIERS];
+	unsigned replicas_want = CACHE_SET_DATA_REPLICAS_WANT(&c->sb);
+
+	tierno = CACHE_TIER(&ca->mi);
+
+	bch_extent_drop_stale(c, k);
+
+	/*
+	 * Ensure that we are not inserting too many
+	 * copies in either tier.
+	 * We can do this better by not actually copying
+	 * in these cases, and supporting MIGRATE_REWRITE_KEY,
+	 * but that could make some buckets become unavailable
+	 * (from clean to dirty), which is not supported yet.
+	 */
+	for (i = 0; i < CACHE_TIERS; i++) {
+		tier[i] = ((unsigned) -1);
+		tier_count[i] = 0;
+	}
+
+	rcu_read_lock();
+
+	/*
+	 * This relies on pointers being sorted by tier _and_
+	 * the rest of the code considering dirty any pointers
+	 * closer to the end of the list.
+	 */
+
+	for (i = bch_extent_ptrs(k); i != 0; ) {
+		unsigned tierno;
+		struct cache *ca2;
+
+		i -= 1;
+		ca2 = PTR_CACHE(c, k, i);
+		BUG_ON(ca2 == NULL);
+		tierno = CACHE_TIER(&ca2->mi);
+		tier_count[tierno] += 1;
+		if ((tier[i] == ((unsigned) -1))
+		    || bch_ptr_is_cache_ptr(c, k, i))
+			tier[tierno] = i;
+	}
+	rcu_read_unlock();
+
+	dropped = false;
+	/* This relies on pointers being sorted by tier. */
+	for (i = CACHE_TIERS; i != 0; ) {
+		i -= 1;
+		BUG_ON(tier_count[i] > replicas_want);
+		if (tier_count[i] == replicas_want) {
+			BUG_ON(i == tierno);
+			BUG_ON(tier[i] == ((unsigned) -1));
+			bch_extent_drop_ptr(k, tier[i]);
+			dropped = true;
+		}
+	}
+
+	if (dropped)
+		atomic64_inc(&bch_dropped_pointer);
+}
+
+#endif
+
+/*
+ * It's OK to leave keys whose pointers are all stale as they'll be
+ * removed by tree gc which won't allow a device slot to be re-used
+ * until it has found no pointers to that slot -- presumably such keys
+ * have been overwritten by something else and we were just racing.
+ */
+
+enum migrate_option {
+	MIGRATE_IGNORE,		/* All pointers stale, don't do anything */
+	MIGRATE_COPY,
+	MIGRATE_REWRITE_KEY,	/* Unused for now */
+};
+
+static enum migrate_option migrate_cleanup_key(struct cache_set *c,
+					       struct bkey *k,
+					       struct cache *ca)
+{
+	bool found;
+	unsigned i, dev = ca->sb.nr_this_dev;
+
+	found = false;
+	for (i = 0; i < bch_extent_ptrs(k); i++)
+		if (PTR_DEV(k, i) == dev) {
+			bch_extent_drop_ptr(k, i--);
+			found = true;
+		}
+
+	if (!found) {
+		/* The pointer to this device was stale. */
+		return MIGRATE_IGNORE;
+	}
+
+	/*
+	 * Remove all pointers, to avoid too many in a tier.
+	 * migrate_compact_key above does the same when n_replicas is
+	 * 1, and doesn't actually work if n_replicas > 1, so do
+	 * something simple instead.
+	 * Effectively, every migration copy is a fresh 'foreground' write.
+	 */
+	bch_set_extent_ptrs(k, 0);
+	return MIGRATE_COPY;
+}
+
+static int issue_migration_move(struct cache *ca,
 				struct moving_context *ctxt,
 				struct bkey *k)
 {
-	struct migrate_data_op *op = container_of(q, struct migrate_data_op,
-						  queue);
+	enum migrate_option option;
+	struct moving_queue *q = &ca->moving_gc_queue;
+	struct cache_set *c = ca->set;
 	struct moving_io *io;
-	unsigned i;
-	bool found;
+	struct write_point *wp = &c->migration_write_point;
+
 
 	io = moving_io_alloc(k);
 	if (io == NULL)
 		return -ENOMEM;
 
-	/* This also copies k into the write op */
+	/*
+	 * This is a gross hack. It relies on migrate_cleanup_key
+	 * removing all extent pointers from the key to be inserted.
+	 */
+	if (CACHE_SET_DATA_REPLICAS_WANT(&c->sb) > 1)
+		wp = NULL;
 
-	bch_write_op_init(&io->op, op->c, &io->bio.bio,
-			  &op->c->migration_write_point,
+	/* This also copies k into the write op's replace_key and insert_key */
+
+	bch_write_op_init(&io->op, c, &io->bio.bio,
+			  wp,
 			  true, false, true,
 			  k, k);
+	BUG_ON(q->wq == NULL);
 	io->op.io_wq = q->wq;
 
 	bch_scan_keylist_dequeue(&q->keys);
 
 	k = &io->op.insert_key;
 
-	found = false;
-	for (i = 0; i < bch_extent_ptrs(k); i++)
-		if (PTR_DEV(k, i) == op->dev) {
-			bch_extent_drop_ptr(k, i--);
-			found = true;
-		}
+	option = migrate_cleanup_key(c, k, ca);
 
-	BUG_ON(!found);
+	switch (option) {
+	default:
+	case MIGRATE_REWRITE_KEY:
+		/* For now */
+		BUG();
 
-	bch_data_move(q, ctxt, io);
-	return 0;
+	case MIGRATE_COPY:
+		bch_data_move(q, ctxt, io);
+		return 0;
+
+	case MIGRATE_IGNORE:
+		/* The pointer to this device was stale. */
+		kfree(io);
+		return 1;
+	}
 }
 
-#define MIGRATION_KEYS_MAX_SIZE DFLT_SCAN_KEYLIST_MAX_SIZE
-#define MIGRATION_NR 32
-#define MIGRATION_READ_NR 16
-#define MIGRATION_WRITE_NR 16
-
 #define MAX_DATA_OFF_ITER	10
+#define PASS_LOW_LIMIT		1
+#define MIGRATE_NR		64
+#define MIGRATE_READ_NR		32
+#define MIGRATE_WRITE_NR	32
 
 /*
  * This moves only the data off, leaving the meta-data (if any) in place.
@@ -364,31 +603,37 @@ static int issue_migration_move(struct moving_queue *q,
 int bch_move_data_off_device(struct cache *ca)
 {
 	struct bkey *k;
-	int ret;
+	int ret, ret2;
 	unsigned pass;
-	struct migrate_data_op *op;
 	u64 seen_key_count;
 	unsigned last_error_count;
 	unsigned last_error_flags;
+	struct moving_context context;
+	struct cache_set *c = ca->set;
+	struct moving_queue *queue = &ca->moving_gc_queue;
 
-	op = kzalloc(sizeof(*op), GFP_KERNEL);
-	if (!op)
-		return -ENOMEM;
+	/*
+	 * This reuses the moving gc queue as it is no longer in use
+	 * by moving gc, which must have been stopped to call this.
+	 */
 
-	op->c = ca->set;
-	op->dev = ca->sb.nr_this_dev;
+	BUG_ON(ca->moving_gc_read != NULL);
 
-	bch_queue_init(&op->queue,
-		       MIGRATION_KEYS_MAX_SIZE,
-		       MIGRATION_NR,
-		       MIGRATION_READ_NR,
-		       MIGRATION_WRITE_NR);
+	/*
+	 * This may actually need to start the work queue because the
+	 * device may have always been read-only and never have had it
+	 * started (moving gc usually starts it but not for RO
+	 * devices).
+	 */
 
-	ret = bch_queue_start(&op->queue, "bch_migration");
-	if (ret)
-		goto out_free;
+	ret = bch_queue_restart(queue, "bch_move_data_off_device");
+	if (ret != 0)
+		return ret;
 
-	bch_moving_context_init(&op->context);
+	queue_io_resize(queue, MIGRATE_NR, MIGRATE_READ_NR, MIGRATE_WRITE_NR);
+
+	BUG_ON(queue->wq == NULL);
+	bch_moving_context_init(&context, MOVING_PURPOSE_MIGRATION);
 
 	/*
 	 * Only one pass should be necessary as we've quiesced all writes
@@ -405,7 +650,7 @@ int bch_move_data_off_device(struct cache *ca)
 	 */
 
 	seen_key_count = 1;
-	last_error_count = 1;
+	last_error_count = 0;
 	last_error_flags = 0;
 
 	for (pass = 0;
@@ -413,9 +658,9 @@ int bch_move_data_off_device(struct cache *ca)
 	     pass++) {
 		ret = 0;
 		seen_key_count = 0;
-		atomic_set(&op->context.error_count, 0);
-		atomic_set(&op->context.error_flags, 0);
-		op->context.last_scanned = ZERO_KEY;
+		atomic_set(&context.error_count, 0);
+		atomic_set(&context.error_flags, 0);
+		context.last_scanned = ZERO_KEY;
 
 		while (1) {
 			if (CACHE_STATE(&ca->mi) != CACHE_RO &&
@@ -424,52 +669,51 @@ int bch_move_data_off_device(struct cache *ca)
 				goto out;
 			}
 
-			if (bch_queue_full(&op->queue)) {
-				bch_moving_wait(&op->context);
+			if (bch_queue_full(queue)) {
+				bch_moving_wait(&context);
 				continue;
 			}
 
-			k = bch_scan_keylist_next_rescan(op->c,
-						&op->queue.keys,
-						&op->context.last_scanned,
+			k = bch_scan_keylist_next_rescan(c,
+						&queue->keys,
+						&context.last_scanned,
 						&MAX_KEY,
 						migrate_data_pred);
 			if (k == NULL)
 				break;
 
-			ret = issue_migration_move(&op->queue, &op->context, k);
-			if (!ret)
+			ret2 = issue_migration_move(ca, &context, k);
+			if (ret2 == 0)
 				seen_key_count += 1;
+			else if (ret2 < 0)
+				ret = -1;
 		}
 
-		if ((pass != 0)
-		    && (seen_key_count != 0)
-		    && (last_error_count == 0)) {
+		closure_sync(&context.cl);
+
+		if ((pass >= PASS_LOW_LIMIT)
+		    && (seen_key_count != 0)) {
 			pr_notice("found %llu keys on pass %u.",
 				  seen_key_count, pass);
 		}
 
-		closure_sync(&op->context.cl);
-		last_error_count = atomic_read(&op->context.error_count);
-		last_error_flags = atomic_read(&op->context.error_flags);
+		last_error_count = atomic_read(&context.error_count);
+		last_error_flags = atomic_read(&context.error_flags);
 
 		if (last_error_count != 0) {
-			pr_notice("error count = %u, error flags = 0x%x",
-				  last_error_count, last_error_flags);
+			pr_notice("pass %u: error count = %u, error flags = 0x%x",
+				  pass, last_error_count, last_error_flags);
 		}
 	}
 
-	if (seen_key_count != 0 || atomic_read(&op->context.error_count) != 0) {
+	if (seen_key_count != 0 || last_error_count != 0) {
 		pr_err("Unable to migrate all data in %d iterations.",
 		       MAX_DATA_OFF_ITER);
 		ret = -EDEADLK;
 	}
 
 out:
-	closure_sync(&op->context.cl);
-out_free:
-	bch_queue_destroy(&op->queue);
-	kfree(op);
+	closure_sync(&context.cl);
 
 	return ret;
 }

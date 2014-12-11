@@ -128,7 +128,7 @@ static bool bch_moving_gc(struct cache *ca)
 
 	struct moving_context ctxt;
 
-	bch_moving_context_init(&ctxt);
+	bch_moving_context_init(&ctxt, MOVING_PURPOSE_COPY_GC);
 
 	/*
 	 * We won't fill up the moving GC reserve completely if the data
@@ -274,10 +274,16 @@ int bch_moving_gc_thread_start(struct cache *ca)
 	struct task_struct *t;
 	int ret;
 
-	ret = bch_queue_start(&ca->moving_gc_queue,
-			      "bch_copygc_write");
-	if (ret)
-		return ret;
+	/* The moving gc read thread must be stopped */
+	BUG_ON(ca->moving_gc_read != NULL);
+
+	/* However, the work queue may actually exist */
+	if (ca->moving_gc_queue.wq == NULL) {
+		ret = bch_queue_start(&ca->moving_gc_queue,
+				      "bch_copygc_write");
+		if (ret)
+			return ret;
+	}
 
 	t = kthread_create(bch_moving_gc_thread, ca, "bch_copygc_read");
 	if (IS_ERR(t))
@@ -296,6 +302,10 @@ void bch_moving_gc_stop(struct cache *ca)
 	if (ca->moving_gc_read)
 		kthread_stop(ca->moving_gc_read);
 	ca->moving_gc_read = NULL;
+	bch_queue_stop(&ca->moving_gc_queue);
+}
 
+void bch_moving_gc_destroy(struct cache *ca)
+{
 	bch_queue_destroy(&ca->moving_gc_queue);
 }

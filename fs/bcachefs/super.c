@@ -1282,7 +1282,6 @@ static void __bch_cache_read_only(struct cache *ca)
 	 * This will suspend the running task until outstanding writes complete.
 	 */
 	bch_await_scheduled_data_writes(ca);
-
 	/*
 	 * Device data write barrier -- no non-meta-data writes should
 	 * occur after this point.  However, writes to btree buckets,
@@ -1328,6 +1327,9 @@ void bch_cache_read_only(struct cache *ca)
 	 */
 	__bch_cache_read_only(ca);
 
+	/*
+	 * Mark as RO.
+	 */
 	allmi = cache_member_info_get(ca->set);
 	mi = &allmi->m[ca->sb.nr_this_dev];
 	tier = CACHE_TIER(mi);
@@ -1408,6 +1410,9 @@ void bch_cache_release(struct kobject *kobj)
 {
 	struct cache *ca = container_of(kobj, struct cache, kobj);
 	unsigned i;
+
+	bch_moving_gc_destroy(ca);
+	bch_tiering_write_destroy(ca);
 
 	kfree(ca->journal.seq);
 	free_percpu(ca->bucket_stats_percpu);

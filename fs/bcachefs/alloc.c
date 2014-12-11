@@ -1202,6 +1202,19 @@ static struct open_bucket *lock_and_refill_writepoint(struct cache_set *c,
 				if (bucket_still_writeable(b, c))
 					return b;
 				cmpxchg(&wp->b, b, NULL);
+				/*
+				 * If the bucket is no longer writeable
+				 * and the cache group has only one
+				 * device, we'll loop indefinitely
+				 * trying to get a bucket.
+				 * Hitting this bug usually means that
+				 * the device cache-only sequence has
+				 * been broken and data writes have not
+				 * been quiesced before the device
+				 * is marked read-only.
+				 */
+				BUG_ON((wp->group != NULL)
+				       && (wp->group->nr_devices == 1));
 				/* Fall through */
 			}
 
@@ -1418,12 +1431,9 @@ static void bch_stop_write_points(struct cache *ca,
 }
 
 /*
- * IMPORTANT: This does not currently stop any meta-data writes, but as
- * we can't currently remove devices with meta-data, that's OK for now.
- * Once we add the code to remove devices with meta-data, we'll need to fix
- * that.
- * We'll have to add a ref count for the meta-data writes and wait for that
- * to go to 0.
+ * IMPORTANT: This does not currently stop any meta-data writes
+ * Meta-data writes are stopped by the code that moves the mata data off
+ * the device.
  */
 
 void bch_stop_new_data_writes(struct cache *ca)

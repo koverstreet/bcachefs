@@ -3,9 +3,13 @@
 
 #include "bset.h"
 
+struct bch_replace_info;
+
 struct bkey *bch_generic_sort_fixup(struct btree_node_iter *, struct bkey *);
-bool bch_insert_fixup_key(struct btree *, struct bkey *,
-			  struct btree_node_iter *, struct bkey *,
+bool bch_insert_fixup_key(struct btree *,
+			  struct bkey *,
+			  struct btree_node_iter *,
+			  struct bch_replace_info *,
 			  struct bkey *);
 
 extern const struct btree_keys_ops bch_btree_interior_node_ops;
@@ -26,7 +30,7 @@ struct cache *bch_extent_pick_ptr(struct cache_set *, const struct bkey *,
 
 bool bch_insert_fixup_extent(struct btree *, struct bkey *,
 			     struct btree_node_iter *,
-			     struct bkey *, struct bkey *);
+			     struct bch_replace_info *, struct bkey *);
 
 unsigned bch_extent_nr_ptrs_after_normalize(struct cache_set *,
 					    const struct bkey *);

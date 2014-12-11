@@ -58,7 +58,7 @@ static void update_writeback_rate(struct work_struct *work)
 
 struct dirty_io {
 	struct closure		cl;
-	BKEY_PADDED(key);
+	struct bch_replace_info	replace;
 	struct cached_dev	*dc;
 	struct cache		*ca;
 	struct keybuf_key	*w;
@@ -80,9 +80,9 @@ static void dirty_init(struct dirty_io *io)
 	if (!io->dc->writeback_percent)
 		bio_set_prio(bio, IOPRIO_PRIO_VALUE(IOPRIO_CLASS_IDLE, 0));
 
-	bio->bi_iter.bi_size	= KEY_SIZE(&io->key) << 9;
+	bio->bi_iter.bi_size	= KEY_SIZE(&io->replace.key) << 9;
 	bio->bi_max_vecs	=
-		DIV_ROUND_UP(KEY_SIZE(&io->key), PAGE_SECTORS);
+		DIV_ROUND_UP(KEY_SIZE(&io->replace.key), PAGE_SECTORS);
 	bio->bi_io_vec		= bio->bi_inline_vecs;
 	bch_bio_map(bio, NULL);
 }
@@ -113,14 +113,15 @@ static void write_dirty_finish(struct closure *cl)
 
 		bch_keylist_init(&keys);
 
-		bkey_copy(keys.top, &io->key);
+		bkey_copy(keys.top, &io->replace.key);
 		SET_KEY_CACHED(keys.top, true);
 		bch_keylist_enqueue(&keys);
 
 		ret = bch_btree_insert(dc->disk.c, BTREE_ID_EXTENTS,
-				       &keys, &io->key);
+				       &keys,
+				       &io->replace);
 		if (ret)
-			trace_bcache_writeback_collision(&io->key);
+			trace_bcache_writeback_collision(&io->replace.key);
 
 		atomic_long_inc(ret
 				? &dc->disk.c->writeback_keys_failed
@@ -137,7 +138,7 @@ static void dirty_endio(struct bio *bio)
 	struct dirty_io *io = container_of(bio, struct dirty_io, bio);
 
 	if (bio->bi_error) {
-		trace_bcache_writeback_error(&io->key,
+		trace_bcache_writeback_error(&io->replace.key,
 					     op_is_write(bio_op(&io->bio)),
 					     bio->bi_error);
 		io->error = bio->bi_error;
@@ -153,7 +154,7 @@ static void write_dirty(struct closure *cl)
 	if (!io->error) {
 		dirty_init(io);
 		bio_set_op_attrs(&io->bio, REQ_OP_WRITE, 0);
-		io->bio.bi_iter.bi_sector = KEY_START(&io->key);
+		io->bio.bi_iter.bi_sector = KEY_START(&io->replace.key);
 		io->bio.bi_bdev		= io->dc->bdev;
 		io->bio.bi_end_io	= dirty_endio;
 
@@ -172,7 +173,7 @@ static void read_dirty_endio(struct bio *bio)
 			    "reading dirty data from cache");
 	percpu_ref_put(&io->ca->ref);
 
-	if (ptr_stale(c, io->ca, &io->key, io->ptr))
+	if (ptr_stale(c, io->ca, &io->replace.key, io->ptr))
 		bio->bi_error = -EINTR;
 
 	dirty_endio(bio);
@@ -226,14 +227,14 @@ static void read_dirty(struct cached_dev *dc)
 				       DIRTY_IO_MEMPOOL_BVECS);
 				io->from_mempool = true;
 
-				bkey_copy(&io->key, &tmp.k);
+				bkey_copy(&io->replace.key, &tmp.k);
 
 				if (DIRTY_IO_MEMPOOL_SECTORS <
-				    KEY_SIZE(&io->key))
-					bch_key_resize(&io->key,
+				    KEY_SIZE(&io->replace.key))
+					bch_key_resize(&io->replace.key,
 						DIRTY_IO_MEMPOOL_SECTORS);
 			} else {
-				bkey_copy(&io->key, &tmp.k);
+				bkey_copy(&io->replace.key, &tmp.k);
 			}
 
 			io->dc		= dc;
@@ -244,7 +245,8 @@ static void read_dirty(struct cached_dev *dc)
 
 			dirty_init(io);
 			bio_set_op_attrs(&io->bio, REQ_OP_READ, 0);
-			io->bio.bi_iter.bi_sector = PTR_OFFSET(&io->key, ptr);
+			io->bio.bi_iter.bi_sector
+				= PTR_OFFSET(&io->replace.key, ptr);
 			io->bio.bi_bdev		= ca->bdev;
 			io->bio.bi_end_io	= read_dirty_endio;
 
@@ -260,17 +262,18 @@ static void read_dirty(struct cached_dev *dc)
 					io->bio.bi_iter.bi_size =
 						io->bio.bi_vcnt * PAGE_SIZE;
 
-					bch_key_resize(&io->key,
+					bch_key_resize(&io->replace.key,
 						       bio_sectors(&io->bio));
 					break;
 				}
 			}
 
-			bch_cut_front(&io->key, &tmp.k);
-			trace_bcache_writeback(&io->key);
+			bch_cut_front(&io->replace.key, &tmp.k);
+			trace_bcache_writeback(&io->replace.key);
 
 			bch_ratelimit_increment(&dc->writeback_pd.rate,
-						KEY_SIZE(&io->key) << 9);
+						(KEY_SIZE(&io->replace.key)
+						 << 9));
 
 			closure_call(&io->cl, read_dirty_submit, NULL, &cl);
 		}

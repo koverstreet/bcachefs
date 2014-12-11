@@ -3,6 +3,13 @@
 
 #include "request.h"
 
+enum moving_purpose {
+	MOVING_PURPOSE_UNKNOWN,	/* Un-init */
+	MOVING_PURPOSE_MIGRATION,
+	MOVING_PURPOSE_TIERING,
+	MOVING_PURPOSE_COPY_GC,
+};
+
 enum moving_flag_bitnos {
 	MOVING_FLAG_BITNO_ALLOC = 0,
 	MOVING_FLAG_BITNO_READ,
@@ -31,9 +38,12 @@ struct moving_context {
 
 	/* Last key scanned */
 	struct bkey		last_scanned;
+
+	/* Debugging... */
+	enum moving_purpose	purpose;
 };
 
-void bch_moving_context_init(struct moving_context *);
+void bch_moving_context_init(struct moving_context *, enum moving_purpose);
 void bch_moving_wait(struct moving_context *);
 
 struct moving_io {
@@ -77,6 +87,7 @@ void bch_data_move(struct moving_queue *,
 		   struct moving_context *,
 		   struct moving_io *);
 void bch_queue_destroy(struct moving_queue *);
+void bch_queue_stop(struct moving_queue *);
 
 #define sysfs_queue_attribute(name)					\
 	rw_attribute(name##_max_count);					\

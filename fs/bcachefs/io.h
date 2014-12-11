@@ -1,6 +1,16 @@
 #ifndef _BCACHE_IO_H
 #define _BCACHE_IO_H
 
+/*
+ * Adding a wrapper around the replace_key allows easy addition of
+ * statistics and other fields for debugging.
+ */
+
+struct bch_replace_info {
+	/* Debugging */
+	BKEY_PADDED(key);
+};
+
 struct bch_write_op {
 	struct closure		cl;
 	struct cache_set	*c;
@@ -48,7 +58,7 @@ struct bch_write_op {
 
 	struct keylist		insert_keys;
 	BKEY_PADDED(insert_key);
-	BKEY_PADDED(replace_key);
+	struct bch_replace_info replace_info;
 };
 
 void bch_write_op_init(struct bch_write_op *, struct cache_set *,

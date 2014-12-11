@@ -4,5 +4,6 @@
 void bch_moving_init_cache(struct cache *);
 void bch_moving_gc_stop(struct cache *);
 int bch_moving_gc_thread_start(struct cache *);
+void bch_moving_gc_destroy(struct cache *);
 
 #endif

@@ -62,10 +62,10 @@ struct bkey *bch_generic_sort_fixup(struct btree_node_iter *iter,
 
 bool bch_insert_fixup_key(struct btree *b, struct bkey *insert,
 			  struct btree_node_iter *iter,
-			  struct bkey *replace_key,
+			  struct bch_replace_info *replace,
 			  struct bkey *done)
 {
-	BUG_ON(replace_key);
+	BUG_ON(replace);
 
 	while (1) {
 		struct bkey *k = bch_btree_node_iter_peek_all(iter);
@@ -650,25 +650,25 @@ static bool bkey_cmpxchg_cmp(struct bkey *k, struct bkey *old)
 	if (bch_bkey_equal_header(k, old)) {
 		for (i = 0; i < bch_extent_ptrs(old); i++)
 			if (k->val[i] != old->val[i] + offset)
-				return false;
+				goto try_partial;
 
-	    return true;
+		return true;
 	}
 
+try_partial:
 #if (0)
 	/* This does not compare KEY_CACHED, KEY_U64s, or KEY_CSUM */
 
-	if (!bch_bkey_maybe_compatible(k, old))
-		return false;
+	if (bch_bkey_maybe_compatible(k, old)) {
+		for (i = 0; i < bch_extent_ptrs(old); i++) {
+			unsigned j;
 
-	for (i = 0; i < bch_extent_ptrs(old); i++) {
-		unsigned j;
-
-		for (j = 0; j < bch_extent_ptrs(k); j++)
-			if (k->val[j] == old->val[i] + offset)
-				return true;
+			for (j = 0; j < bch_extent_ptrs(k); j++)
+				if (k->val[j] == old->val[i] + offset)
+					return true;
+		}
 	}
-#endif /* 0 */
+#endif
 
 	return false;
 }
@@ -680,11 +680,12 @@ static bool bkey_cmpxchg_cmp(struct bkey *k, struct bkey *old)
 static bool bkey_cmpxchg(struct btree *b,
 			 struct btree_node_iter *iter,
 			 struct bkey *k,
-			 struct bkey *old,
+			 struct bch_replace_info *replace,
 			 struct bkey *new,
 			 struct bkey *done)
 {
 	bool ret;
+	struct bkey *old = &replace->key;
 
 	/* must have something to compare against */
 	BUG_ON(!bch_extent_ptrs(old));
@@ -799,7 +800,8 @@ static void handle_existing_key_newer(struct btree *b,
  */
 bool bch_insert_fixup_extent(struct btree *b, struct bkey *insert,
 			     struct btree_node_iter *iter,
-			     struct bkey *replace_key, struct bkey *done)
+			     struct bch_replace_info *replace,
+			     struct bkey *done)
 {
 	struct bkey *k, *split, orig_insert = *insert;
 
@@ -824,7 +826,7 @@ bool bch_insert_fixup_extent(struct btree *b, struct bkey *insert,
 	 * to proceed with the insertion.
 	 */
 	if (bch_add_sectors(b, insert, KEY_START(insert),
-			    KEY_SIZE(insert), replace_key)) {
+			    KEY_SIZE(insert), (replace != NULL))) {
 		/* We raced - a dirty pointer was stale */
 		*done = *insert;
 		return true;
@@ -855,10 +857,10 @@ bool bch_insert_fixup_extent(struct btree *b, struct bkey *insert,
 		 * inserting. But we don't want to check them for replace
 		 * operations.
 		 */
-		if (!replace_key)
+		if (replace == NULL)
 			*done = bkey_cmp(k, insert) < 0 ? *k : *insert;
 		else if (KEY_SIZE(k) &&
-			 !bkey_cmpxchg(b, iter, k, replace_key, insert, done))
+			 !bkey_cmpxchg(b, iter, k, replace, insert, done))
 			continue;
 
 		if (KEY_SIZE(k) && !KEY_DELETED(insert) &&
@@ -938,7 +940,7 @@ bool bch_insert_fixup_extent(struct btree *b, struct bkey *insert,
 		 * whatever we're not inserting (but done needs to reflect what
 		 * we've processed, i.e. what insert was)
 		 */
-		if (replace_key)
+		if (replace != NULL)
 			bch_cut_subtract_back(b, done, insert);
 
 		*done = orig_insert;
@@ -1043,20 +1045,23 @@ static void bch_extent_debugcheck(struct btree_keys *bk, const struct bkey *k)
 			replicas_needed--;
 	}
 
-	if (replicas_needed && KEY_SIZE(k))
-		goto bad_key;
+	if (replicas_needed && KEY_SIZE(k)) {
+		bch_extent_to_text(c, buf, sizeof(buf), k);
+		cache_set_bug(c, "extent key bad (too few replicas): %s", buf);
+		goto done;
+	}
 
 	replicas = CACHE_SET_DATA_REPLICAS_WANT(&c->sb);
 	for (i = 0; i < CACHE_TIERS; i++)
-		if (ptrs_per_tier[i] > replicas)
-			goto bad_key;
+		if (ptrs_per_tier[i] > replicas) {
+			bch_extent_to_text(c, buf, sizeof(buf), k);
+			cache_set_bug(c,
+				      "extent key bad (too many tier %u replicas): %s",
+				      i, buf);
+			break;
+		}
 
-	cache_member_info_put();
-	return;
-
-bad_key:
-	bch_extent_to_text(c, buf, sizeof(buf), k);
-	cache_set_bug(c, "extent key bad: %s", buf);
+done:
 	cache_member_info_put();
 	return;
 
@@ -1102,7 +1107,7 @@ bool bch_extent_normalize(struct cache_set *c, struct bkey *k)
 
 	mi = cache_member_info_get(c);
 
-	/* Bubble sort pointers by tier, lowest (fastest) tier first */
+	/* Bubble sort pointers by tier, lowest (fastest) tier first. */
 	do {
 		swapped = false;
 		for (i = 0; i + 1 < bch_extent_ptrs(k); i++) {
