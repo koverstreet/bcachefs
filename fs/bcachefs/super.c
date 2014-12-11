@@ -1650,16 +1650,32 @@ static void bch_cache_remove_work(struct work_struct *work)
 
 	down(&c->sb_write_mutex);
 
+	/* Mark it as failed in the super block */
+
 	if (meta_off) {
 		allmi = cache_member_info_get(c);
 		mi = &allmi->m[ca->sb.nr_this_dev];
-		memset(mi, 0, sizeof(*mi));
+		SET_CACHE_STATE(mi, CACHE_FAILED);
 		/* Update cache_member cache in struct cache */
 		ca->mi = *mi;
 		cache_member_info_put();
 	}
 
 	__bcache_write_super(c); /* ups sb_write_mutex */
+
+	/*
+	 * Now mark the slot as 0 in memory so that the slot can be reused.
+	 * It won't actually be reused until btree_gc makes sure that there
+	 * are no pointers to the device at all.
+	 */
+
+	if (meta_off) {
+		allmi = cache_member_info_get(c);
+		mi = &allmi->m[ca->sb.nr_this_dev];
+		memset(mi, 0, sizeof(*mi));
+		/* No need to copy to struct cache as we are removing */
+		cache_member_info_put();
+	}
 
 	/*
 	 * This completes asynchronously, with bch_cache_stop scheduling
