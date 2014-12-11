@@ -1058,12 +1058,6 @@ int bch_bucket_alloc_set(struct cache_set *c, enum alloc_reserve reserve,
 	if (!tier->nr_devices)
 		return -ENOSPC;
 
-	if (reserve == RESERVE_NONE &&
-	    !cache_set_can_write(c)) {
-		trace_bcache_cache_set_full(c, reserve, cl);
-		return -ENOSPC;
-	}
-
 	if (cl) {
 		struct closure_waitlist *waitlist =
 			ret == -BUCKETS_NOT_AVAILABLE
@@ -1158,6 +1152,12 @@ static struct open_bucket *bch_open_bucket_alloc(struct cache_set *c,
 
 	BUG_ON(!wp->group);
 	BUG_ON(!wp->reserve);
+
+	if (wp->throttle && cache_set_full(c)) {
+		trace_bcache_cache_set_full(c, wp->reserve, cl);
+		bch_open_bucket_put(c, b);
+		return ERR_PTR(-ENOSPC);
+	}
 
 	spin_lock(&b->lock);
 	ret = bch_bucket_alloc_set(c, wp->reserve, &b->key,
