@@ -1411,25 +1411,53 @@ void bch_cache_release(struct kobject *kobj)
 	struct cache *ca = container_of(kobj, struct cache, kobj);
 	unsigned i;
 
+	/*
+	 * bch_cache_relaese can be called in the middle of initialization
+	 * of the struct cache object.
+	 * As such, not all the sub-structures may be initialized.
+	 * However, they were zeroed when the object was allocated (kzalloc),
+	 * hence we can test here, and only invoke destructors for those
+	 * sub-structures that have been allocated.
+	 * This code needs this level of paranoia.
+	 */
+
+	/*
+	 * These test internally and skip if never initialized,
+	 * hence we don't need to test here.
+	 */
 	bch_moving_gc_destroy(ca);
 	bch_tiering_write_destroy(ca);
 
-	kfree(ca->journal.seq);
-	free_percpu(ca->bucket_stats_percpu);
+	if (ca->journal.seq != NULL)
+		kfree(ca->journal.seq);
 
-	if (ca->replica_set)
+	if (ca->bucket_stats_percpu != NULL)
+		free_percpu(ca->bucket_stats_percpu);
+
+	if (ca->replica_set != NULL)
 		bioset_free(ca->replica_set);
 
-	free_pages((unsigned long) ca->disk_buckets, ilog2(bucket_pages(ca)));
-	kfree(ca->prio_buckets);
-	vfree(ca->buckets);
-	vfree(ca->bucket_gens);
+	if (ca->disk_buckets != NULL)
+		free_pages((unsigned long) ca->disk_buckets,
+			   ilog2(bucket_pages(ca)));
 
-	free_heap(&ca->heap);
-	free_fifo(&ca->free_inc);
+	if (ca->prio_buckets != NULL)
+		kfree(ca->prio_buckets);
+	if (ca->buckets != NULL)
+		vfree(ca->buckets);
+	if (ca->bucket_gens != NULL)
+		vfree(ca->bucket_gens);
 
-	for (i = 0; i < RESERVE_NR; i++)
-		free_fifo(&ca->free[i]);
+	if (ca->heap.data != NULL)
+		free_heap(&ca->heap);
+
+	if (ca->free_inc.data != NULL)
+		free_fifo(&ca->free_inc);
+
+	for (i = 0; i < RESERVE_NR; i++) {
+		if (ca->free[i].data != NULL)
+			free_fifo(&ca->free[i]);
+	}
 
 	free_super(&ca->disk_sb);
 

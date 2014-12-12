@@ -13,21 +13,31 @@
  * - cached bucket: owned_by_allocator == 0 &&
  *                  dirty_sectors == 0 &&
  *                  cached_sectors > 0
- *   The bucket contains data but may be safely discarded as the
- *   we have another replica of the data on a cache device, or it
- *   has been written back to the backing device
+ *   The bucket contains data but may be safely discarded as there are
+ *   enough replicas of the data on other cache devices, or it has been
+ *   written back to the backing device
  *
  * - dirty bucket: owned_by_allocator == 0 &&
  *                 dirty_sectors > 0
- *   The bucket contains data that we only have one copy of
+ *   The bucket contains data that we must not discard (either only copy,
+ *   or one of the 'main copies' for data requiring multiple replicas)
  *
  * - metadata bucket: owned_by_allocator == 0 && is_metadata == 1
- *   This is a btree node, journal or prio bucket
+ *   This is a btree node, journal or gen/prio bucket
  *
  * Lifecycle:
  *
  * bucket invalidated => bucket on freelist => open bucket =>
- *     dirty bucket => clean bucket => bucket invalidated => ...
+ *     [dirty bucket =>] cached bucket => bucket invalidated => ...
+ *
+ * Note that cache promotion can skip the dirty bucket step, as data
+ * is copied from a deeper tier to a shallower tier, onto a cached
+ * bucket.
+ * Note also that a cached bucket can spontaneously become dirty --
+ * see below.
+ *
+ * Only a traversal of the key space can determine whether a bucket is
+ * truly dirty or cached.
  *
  * Transitions:
  *
@@ -38,8 +48,8 @@
  * - allocator => cached: open bucket was filled up
  * - allocator => metadata: metadata was allocated
  *
- * - dirty => cached: dirty sectors were overwritten
- * - dirty => free: dirty sectors were overwritten
+ * - dirty => cached: dirty sectors were copied to a deeper tier
+ * - dirty => free: dirty sectors were overwritten or moved (copy gc)
  * - cached => free: cached sectors were overwritten
  *
  * - metadata => free: metadata was freed
