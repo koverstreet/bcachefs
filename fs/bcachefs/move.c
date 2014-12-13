@@ -18,12 +18,14 @@ static void moving_error(struct moving_context *ctxt, unsigned flag)
 }
 
 void bch_moving_context_init(struct moving_context *ctxt,
+			     struct bch_ratelimit *rate,
 			     enum moving_purpose purpose)
 {
 	memset(ctxt, 0, sizeof(*ctxt));
 	ctxt->task = current;
-	closure_init_stack(&ctxt->cl);
+	ctxt->rate = rate;
 	ctxt->purpose = purpose;
+	closure_init_stack(&ctxt->cl);
 }
 
 /*
@@ -367,6 +369,7 @@ static void __bch_data_move(struct closure *cl)
 {
 	struct moving_io *io = container_of(cl, struct moving_io, cl);
 	struct cache *ca;
+	u64 size = KEY_SIZE(&io->key);
 	int ptr;
 
 	ca = bch_extent_pick_ptr(io->op.c, &io->key, &ptr);
@@ -374,7 +377,9 @@ static void __bch_data_move(struct closure *cl)
 		closure_return_with_destructor(cl, moving_io_destructor);
 
 	io->context->keys_moved++;
-	io->context->sectors_moved += KEY_SIZE(&io->key);
+	io->context->sectors_moved += size;
+	if (io->context->rate)
+		bch_ratelimit_increment(io->context->rate, size);
 
 	moving_init(io);
 
@@ -699,7 +704,7 @@ int bch_move_data_off_device(struct cache *ca)
 	queue_io_resize(queue, MIGRATE_NR, MIGRATE_READ_NR, MIGRATE_WRITE_NR);
 
 	BUG_ON(queue->wq == NULL);
-	bch_moving_context_init(&context, MOVING_PURPOSE_MIGRATION);
+	bch_moving_context_init(&context, NULL, MOVING_PURPOSE_MIGRATION);
 
 	/*
 	 * Only one pass should be necessary as we've quiesced all writes

@@ -39,11 +39,21 @@ struct moving_context {
 	/* Last key scanned */
 	struct bkey		last_scanned;
 
+	/* Rate-limiter counting submitted reads */
+	struct bch_ratelimit	*rate;
+
 	/* Debugging... */
 	enum moving_purpose	purpose;
 };
 
-void bch_moving_context_init(struct moving_context *, enum moving_purpose);
+void bch_moving_context_init(struct moving_context *, struct bch_ratelimit *,
+			     enum moving_purpose);
+
+static inline int bch_moving_context_wait(struct moving_context *ctxt)
+{
+	return bch_ratelimit_wait_freezable_stoppable(ctxt->rate, &ctxt->cl);
+}
+
 void bch_moving_wait(struct moving_context *);
 
 struct moving_io {

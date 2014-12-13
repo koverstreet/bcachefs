@@ -75,9 +75,6 @@ found:
 
 	bch_extent_drop_ptr(&io->op.insert_key, ptr);
 
-	bch_ratelimit_increment(&ca->moving_gc_pd.rate,
-				KEY_SIZE(k) << 9);
-
 	trace_bcache_gc_copy(k);
 
 	/*
@@ -101,8 +98,7 @@ static void read_moving(struct cache *ca, struct moving_context *ctxt)
 
 	/* XXX: if we error, background writeback could stall indefinitely */
 
-	while (!bch_ratelimit_wait_freezable_stoppable(&ca->moving_gc_pd.rate,
-						       &ctxt->cl)) {
+	while (!bch_moving_context_wait(ctxt)) {
 		if (bch_queue_full(&ca->moving_gc_queue)) {
 			bch_moving_wait(ctxt);
 			continue;
@@ -136,7 +132,8 @@ static bool bch_moving_gc(struct cache *ca)
 
 	struct moving_context ctxt;
 
-	bch_moving_context_init(&ctxt, MOVING_PURPOSE_COPY_GC);
+	bch_moving_context_init(&ctxt, &ca->moving_gc_pd.rate,
+				MOVING_PURPOSE_COPY_GC);
 
 	/*
 	 * We won't fill up the moving GC reserve completely if the data

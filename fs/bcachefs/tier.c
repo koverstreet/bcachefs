@@ -339,10 +339,10 @@ static void read_tiering(struct cache_set *c)
 
 	refill_init(c, &refill);
 
-	bch_moving_context_init(&ctxt, MOVING_PURPOSE_TIERING);
+	bch_moving_context_init(&ctxt, &c->tiering_pd.rate,
+				MOVING_PURPOSE_TIERING);
 
-	while (!bch_ratelimit_wait_freezable_stoppable(&c->tiering_pd.rate,
-						       &ctxt.cl)) {
+	while (!bch_moving_context_wait(&ctxt)) {
 		cond_resched();
 
 		ret = tiering_next_cache(c, &cache_iter, &ctxt, &refill);
