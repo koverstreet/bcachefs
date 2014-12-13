@@ -150,6 +150,11 @@ void bch_scan_keylist_resize(struct scan_keylist *kl,
 	mutex_unlock(&kl->lock);
 }
 
+#define keylist_for_each(k, l)						       \
+	for (k = (l)->bot;						       \
+	     k != (l)->top;						       \
+	     k = __bch_keylist_next(l, k))
+
 /**
  * bch_mark_keylist_keys - update oldest generation pointer into a bucket
  *
@@ -159,18 +164,14 @@ void bch_scan_keylist_resize(struct scan_keylist *kl,
  */
 void bch_mark_scan_keylist_keys(struct cache_set *c, struct scan_keylist *kl)
 {
-	u64 *k_p;
 	struct bkey *k;
 
 	mutex_lock(&kl->lock);
 
-	k_p = kl->list.bot_p;
-	while (k_p != kl->list.top_p) {
-		k = (struct bkey *) k_p;
+	keylist_for_each(k, &kl->list) {
 		rcu_read_lock();
 		bch_btree_mark_last_gc(c, k);
 		rcu_read_unlock();
-		k_p = __bch_keylist_next(&kl->list, k_p);
 	}
 
 	mutex_unlock(&kl->lock);
@@ -250,22 +251,14 @@ struct bkey *bch_scan_keylist_next_rescan(struct cache_set *c,
 					  struct bkey *end,
 					  scan_keylist_pred_fn *pred)
 {
-	struct bkey *k;
-
-	while (1) {
-		k = bch_scan_keylist_next(kl);
-		if (k)
-			break;
-
-		if (bkey_cmp(last_scanned, end) >= 0) {
-			pr_debug("scan finished");
-			break;
-		}
+	if (bch_keylist_empty(&kl->list)) {
+		if (bkey_cmp(last_scanned, end) >= 0)
+			return NULL;
 
 		bch_refill_scan_keylist(c, kl, last_scanned, end, pred);
 	}
 
-	return k;
+	return bch_scan_keylist_next(kl);
 }
 
 void bch_scan_keylist_dequeue(struct scan_keylist *kl)

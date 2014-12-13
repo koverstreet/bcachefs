@@ -26,6 +26,12 @@ void bch_moving_context_init(struct moving_context *ctxt,
 	ctxt->purpose = purpose;
 }
 
+/*
+ * bch_moving_wait() -- wait for a bch_moving_notify() call
+ *
+ * To deal with lost wakeups, we make this return immediately if notify
+ * was already called.
+ */
 void bch_moving_wait(struct moving_context *ctxt)
 {
 	while (1) {

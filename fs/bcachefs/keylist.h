@@ -24,25 +24,25 @@ static inline bool bch_keylist_fits(struct keylist *l, size_t u64s)
 		return true;
 }
 
-static inline u64 *__bch_keylist_next(struct keylist *l, u64 *p)
+static inline struct bkey *__bch_keylist_next(struct keylist *l, struct bkey *k)
 {
-	p += KEY_U64s((struct bkey *) p);
-	BUG_ON(p > l->end_keys_p);
+	k = bkey_next(k);
+	BUG_ON(k > l->end_keys);
 
 	/* single_keylists don't wrap */
-	if (p == l->top_p)
-		return p;
+	if (k == l->top)
+		return k;
 
-	if (p + BKEY_EXTENT_MAX_U64s > l->end_keys_p)
-		return l->start_keys_p;
+	if ((u64 *) k + BKEY_EXTENT_MAX_U64s > l->end_keys_p)
+		return l->start_keys;
 
-	return p;
+	return k;
 }
 
 static inline void bch_keylist_enqueue(struct keylist *l)
 {
 	BUG_ON(!bch_keylist_fits(l, KEY_U64s(l->top)));
-	l->top_p = __bch_keylist_next(l, l->top_p);
+	l->top = __bch_keylist_next(l, l->top);
 }
 
 static inline void bch_keylist_add(struct keylist *l, const struct bkey *k)
@@ -83,8 +83,8 @@ static inline size_t bch_keylist_nkeys(struct keylist *l)
 
 static inline bool bch_keylist_is_last(struct keylist *l, struct bkey *k)
 {
-	u64 *k_p = __bch_keylist_next(l, (u64 *) k);
-	return k_p == l->top_p;
+	k = __bch_keylist_next(l, k);
+	return k == l->top;
 }
 
 static inline struct bkey *bch_keylist_front(struct keylist *l)
@@ -95,7 +95,7 @@ static inline struct bkey *bch_keylist_front(struct keylist *l)
 static inline void bch_keylist_dequeue(struct keylist *l)
 {
 	BUG_ON(bch_keylist_empty(l));
-	l->bot_p = __bch_keylist_next(l, l->bot_p);
+	l->bot = __bch_keylist_next(l, l->bot);
 }
 
 #define keylist_single(k)						\
