@@ -298,24 +298,35 @@ static int tiering_next_cache(struct cache_set *c,
 		if (bch_queue_full(&ca->tiering_queue)) {
 			done = false;
 		} else {
-			full = false;
-
 			k = bch_scan_keylist_next(&ca->tiering_queue.keys);
 			if (k) {
 				issue_tiering_move(&ca->tiering_queue, ctxt, k);
 				done = false;
+				full = false;
 			}
 		}
 
 		percpu_ref_put(&ca->ref);
 	} while (*cache_iter != start);
 
-	if (done)
+	if (done) {
+		/*
+		 * All devices have an empty keylist now, just wait for
+		 * pending moves to finish and we're done.
+		 */
 		return 0;
-	else if (full)
+	} else if (full) {
+		/*
+		 * No device with keys still remaining on its keylist has a
+		 * queue that is not full. In this case, we have to wait for
+		 * at least one read to complete before trying again.
+		 * Otherwise, we could issue a read for this device.
+		 */
 		return -EAGAIN;
-	else
+	} else {
+		/* Try again immediately */
 		return -EIOCBQUEUED;
+	}
 }
 
 static void read_tiering(struct cache_set *c)
