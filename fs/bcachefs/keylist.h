@@ -58,8 +58,10 @@ static inline bool bch_keylist_empty(struct keylist *l)
 
 static inline void bch_keylist_free(struct keylist *l)
 {
-	if (l->start_keys_p != l->inline_keys)
+	if (l->start_keys_p != l->inline_keys) {
 		kfree(l->start_keys_p);
+		bch_keylist_init(l);
+	}
 }
 
 /*
