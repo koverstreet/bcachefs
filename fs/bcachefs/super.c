@@ -387,6 +387,8 @@ void __write_super(struct cache_set *c, struct bcache_superblock *disk_sb,
 	out->last_mount		= cpu_to_le32(sb->last_mount);
 	out->first_bucket	= cpu_to_le16(sb->first_bucket);
 	out->keys		= cpu_to_le16(sb->keys);
+	out->nr_in_set		= cpu_to_le16(sb->nr_in_set);
+	out->nr_this_dev	= cpu_to_le16(sb->nr_this_dev);
 	out->csum		=
 		csum_set(out, sb->version < BCACHE_SB_VERSION_CDEV_V3
 			 ? BCH_CSUM_CRC64
@@ -2001,12 +2003,13 @@ have_slot:
 	rcu_assign_pointer(c->members, new_mi);
 	c->sb.nr_in_set = new_mi->nr_in_set;
 
-	bcache_write_super(c);
 	kfree_rcu(old_mi, rcu);
 
 	err = "sysfs error";
 	if (cache_set_add_device(c, ca))
 		goto err_put;
+
+	bcache_write_super(c);
 
 	err = bch_cache_read_write(ca);
 	if (err)
