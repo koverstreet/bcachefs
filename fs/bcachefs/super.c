@@ -1117,12 +1117,8 @@ err:
 static const char *can_add_cache(struct cache *ca, struct cache_set *c)
 {
 	if (ca->sb.block_size	!= c->sb.block_size ||
-	    ca->sb.bucket_size	!= c->sb.bucket_size ||
-	    ca->sb.nr_in_set	!= c->sb.nr_in_set)
-		return "cache sb does not match set";
-
-	if (c->cache[ca->sb.nr_this_dev])
-		return "duplicate cache set member";
+	    ca->sb.bucket_size	!= c->sb.bucket_size)
+		return "new cache has wrong block or bucket size";
 
 	return NULL;
 }
@@ -1917,8 +1913,6 @@ int bch_cache_add(struct cache_set *c, const char *path)
 	int ret = -EINVAL;
 	struct cache_member *mi, orig_mi;
 
-	lockdep_assert_held(&bch_register_lock);
-
 	memset(&sb, 0, sizeof(sb));
 
 	down_read(&c->gc_lock);
@@ -2006,7 +2000,10 @@ have_slot:
 	kfree_rcu(old_mi, rcu);
 
 	err = "sysfs error";
-	if (cache_set_add_device(c, ca))
+	mutex_lock(&bch_register_lock);
+	ret = cache_set_add_device(c, ca);
+	mutex_unlock(&bch_register_lock);
+	if (ret)
 		goto err_put;
 
 	bcache_write_super(c);
