@@ -40,7 +40,7 @@ static inline u8 PTR_BUCKET_GEN(const struct cache_set *c,
 	return ca->bucket_gens[PTR_BUCKET_NR(c, k, ptr)];
 }
 
-static inline struct bucket *PTR_BUCKET(struct cache_set *c,
+static inline struct bucket *PTR_BUCKET(const struct cache_set *c,
 					struct cache *ca,
 					const struct bkey *k,
 					unsigned ptr)
@@ -64,6 +64,12 @@ static inline u8 gen_after(u8 a, u8 b)
 	return r;
 }
 
+/**
+ * ptr_stale() - check if a pointer points into a bucket that has been
+ * invalidated.
+ *
+ * Warning: PTR_CACHE(c, k, ptr) must equal ca.
+ */
 static inline u8 ptr_stale(const struct cache_set *c,
 			   const struct cache *ca,
 			   const struct bkey *k, unsigned ptr)
