@@ -189,7 +189,13 @@ static int bch_dump_read_fn(struct btree_op *b_op, struct btree *b,
 	struct dump_iter *i = container_of(b_op, struct dump_iter, op);
 	int err;
 
+	BUG_ON(i->bytes);
 	bch_bkey_val_to_text(&b->keys, i->buf, sizeof(i->buf), k);
+
+	i->bytes = strlen(i->buf);
+	BUG_ON(i->bytes >= PAGE_SIZE);
+	i->buf[i->bytes] = '\n';
+	i->bytes++;
 
 	err = flush_buf(i);
 	if (err)
@@ -208,6 +214,7 @@ static ssize_t bch_dump_read(struct file *file, char __user *buf,
 
 	bch_btree_op_init(&i->op, BTREE_ID_EXTENTS, -1);
 
+	i->ubuf = buf;
 	i->size	= size;
 	i->ret	= 0;
 
@@ -220,7 +227,7 @@ static ssize_t bch_dump_read(struct file *file, char __user *buf,
 
 	err = bch_btree_map_keys(&i->op, i->c, &i->from, bch_dump_read_fn, 0);
 
-	return err ?: i->ret;
+	return err < 0 ? err : i->ret;
 }
 
 static int bch_dump_open(struct inode *inode, struct file *file)
