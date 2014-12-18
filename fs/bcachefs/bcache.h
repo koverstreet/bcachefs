@@ -673,14 +673,14 @@ do {									\
 
 #define btree_bug(b, ...)						\
 do {									\
-	bch_cache_set_error((b)->c, __VA_ARGS__);			\
-	dump_stack();							\
+	__bch_cache_set_error((b)->c, __VA_ARGS__);			\
+	BUG();								\
 } while (0)
 
 #define cache_set_bug(c, ...)						\
 do {									\
-	bch_cache_set_error(c, __VA_ARGS__);				\
-	dump_stack();							\
+	__bch_cache_set_error(c, __VA_ARGS__);				\
+	BUG();								\
 } while (0)
 
 #define btree_bug_on(cond, b, ...)					\
