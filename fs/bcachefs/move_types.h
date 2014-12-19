@@ -24,6 +24,7 @@ struct moving_queue {
 	bool stopped;		/* This can be examined without locking */
 	struct closure *stop_waitcl;
 	struct list_head pending; /* List of struct moving_io */
+	struct list_head write_pending;
 	unsigned count;
 	unsigned read_count;
 	unsigned write_count;

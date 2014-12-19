@@ -89,6 +89,8 @@ void bch_data_move(struct moving_queue *,
 void bch_queue_destroy(struct moving_queue *);
 void bch_queue_stop(struct moving_queue *);
 
+void bch_queue_mark(struct cache_set *, struct moving_queue *);
+
 #define sysfs_queue_attribute(name)					\
 	rw_attribute(name##_max_count);					\
 	rw_attribute(name##_max_read_count);				\

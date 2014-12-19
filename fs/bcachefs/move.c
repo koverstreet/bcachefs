@@ -88,8 +88,9 @@ static void moving_io_destructor(struct closure *cl)
 		BUG_ON(!q->write_count);
 		q->write_count--;
 		trace_bcache_move_write_done(q, &io->key);
-	} else
-		list_del(&io->list);
+	}
+
+	list_del(&io->list);
 
 	if ((q->count == 0) && (q->stop_waitcl != NULL)) {
 		closure_put(q->stop_waitcl);
@@ -152,23 +153,33 @@ static void bch_queue_write_work(struct work_struct *work)
 	unsigned long flags;
 
 	spin_lock_irqsave(&q->lock, flags);
+
 	while (q->write_count < q->max_write_count) {
 		io = list_first_entry_or_null(&q->pending,
 					struct moving_io, list);
-		if (!io)
-			break;
-		if (!io->read_completed)
+		/*
+		 * We only issue the writes in insertion order to preserve
+		 * any linearity in the original key list/tree, so if we
+		 * find an io whose read hasn't completed, we don't
+		 * scan beyond it.  Eventually that read will complete,
+		 * at which point we may issue multiple writes (for it
+		 * and any following entries whose reads had already
+		 * completed and we had not examined here).
+		 */
+		if (!io || !io->read_completed)
 			break;
 
-		q->write_count++;
 		BUG_ON(io->write_issued);
+		q->write_count++;
 		io->write_issued = 1;
 		list_del(&io->list);
+		list_add_tail(&io->list, &q->write_pending);
 		trace_bcache_move_write(q, &io->key);
 		spin_unlock_irqrestore(&q->lock, flags);
 		write_moving(io);
 		spin_lock_irqsave(&q->lock, flags);
 	}
+
 	spin_unlock_irqrestore(&q->lock, flags);
 }
 
@@ -195,6 +206,7 @@ void bch_queue_init(struct moving_queue *q,
 
 	spin_lock_init(&q->lock);
 	INIT_LIST_HEAD(&q->pending);
+	INIT_LIST_HEAD(&q->write_pending);
 }
 
 int bch_queue_start(struct moving_queue *q,
@@ -274,6 +286,41 @@ void bch_queue_stop(struct moving_queue *q)
 	spin_unlock_irqrestore(&q->lock, flags);
 
 	closure_sync(&waitcl);
+}
+
+static void mark_pending_list(struct cache_set *c, struct list_head *l)
+{
+	struct moving_io *io;
+
+	list_for_each_entry(io, l, list) {
+		/*
+		 * This only marks the (replacement) key and not the
+		 * insertion key in the bch_write_op, as the insertion
+		 * key should be a subset of the replacement key except
+		 * for any new pointers added by the write, and those
+		 * don't need to be marked because they are pointing
+		 * to open buckets until the write completes
+		 */
+		rcu_read_lock();
+		bch_btree_mark_last_gc(c, &io->key);
+		rcu_read_unlock();
+	}
+}
+
+void bch_queue_mark(struct cache_set *c, struct moving_queue *q)
+{
+	unsigned long flags;
+
+	/* 1st, mark the keylist keys */
+	bch_mark_scan_keylist_keys(c, &q->keys);
+
+	/* 2nd, mark the keys in the I/Os */
+	spin_lock_irqsave(&q->lock, flags);
+
+	mark_pending_list(c, &q->pending);
+	mark_pending_list(c, &q->write_pending);
+
+	spin_unlock_irqrestore(&q->lock, flags);
 }
 
 static void read_moving_endio(struct bio *bio)
@@ -530,6 +577,7 @@ static int issue_migration_move(struct cache *ca,
 				struct moving_context *ctxt,
 				struct bkey *k)
 {
+	int ret;
 	enum migrate_option option;
 	struct moving_queue *q = &ca->moving_gc_queue;
 	struct cache_set *c = ca->set;
@@ -557,8 +605,6 @@ static int issue_migration_move(struct cache *ca,
 	BUG_ON(q->wq == NULL);
 	io->op.io_wq = q->wq;
 
-	bch_scan_keylist_dequeue(&q->keys);
-
 	k = &io->op.insert_key;
 
 	option = migrate_cleanup_key(c, k, ca);
@@ -571,13 +617,26 @@ static int issue_migration_move(struct cache *ca,
 
 	case MIGRATE_COPY:
 		bch_data_move(q, ctxt, io);
-		return 0;
+		ret = 0;
+		break;
 
 	case MIGRATE_IGNORE:
 		/* The pointer to this device was stale. */
 		kfree(io);
-		return 1;
+		ret = 1;
+		break;
 	}
+
+	/*
+	 * IMPORTANT: We must call bch_data_move before we dequeue so
+	 * that the key can always be found in either the pending list
+	 * in the moving queue or in the scan keylist list in the
+	 * moving queue.
+	 * If we reorder, there is a window where a key is not found
+	 * by btree gc marking.
+	 */
+	bch_scan_keylist_dequeue(&q->keys);
+	return ret;
 }
 
 #define MAX_DATA_OFF_ITER	10

@@ -30,6 +30,7 @@
 #include "keylist.h"
 #include "journal.h"
 #include "keylist.h"
+#include "move.h"
 #include "movinggc.h"
 #include "super.h"
 #include "writeback.h"
@@ -2039,8 +2040,8 @@ static void bch_btree_gc_finish(struct cache_set *c)
 		unsigned j;
 		uint64_t *i;
 
-		bch_mark_scan_keylist_keys(c, &ca->moving_gc_queue.keys);
-		bch_mark_scan_keylist_keys(c, &ca->tiering_queue.keys);
+		bch_queue_mark(c, &ca->moving_gc_queue);
+		bch_queue_mark(c, &ca->tiering_queue);
 
 		for (j = 0; j < bch_nr_journal_buckets(&ca->sb); j++)
 			bch_mark_metadata_bucket(ca,

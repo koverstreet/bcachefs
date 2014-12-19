@@ -239,9 +239,17 @@ static int issue_tiering_move(struct moving_queue *q,
 	io->op.btree_alloc_reserve = RESERVE_TIERING_BTREE;
 
 	trace_bcache_tiering_copy(k);
-	bch_scan_keylist_dequeue(&q->keys);
 
+	/*
+	 * IMPORTANT: We must call bch_data_move before we dequeue so
+	 * that the key can always be found in either the pending list
+	 * in the moving queue or in the scan keylist list in the
+	 * moving queue.
+	 * If we reorder, there is a window where a key is not found
+	 * by btree gc marking.
+	 */
 	bch_data_move(q, ctxt, io);
+	bch_scan_keylist_dequeue(&q->keys);
 	return 0;
 }
 
