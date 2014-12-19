@@ -1116,9 +1116,13 @@ err:
 
 static const char *can_add_cache(struct cache *ca, struct cache_set *c)
 {
-	if (ca->sb.block_size	!= c->sb.block_size ||
-	    ca->sb.bucket_size	!= c->sb.bucket_size)
-		return "new cache has wrong block or bucket size";
+	if (ca->sb.block_size != c->sb.block_size)
+		return "new cache has wrong block size";
+	else if (ca->sb.bucket_size != c->sb.bucket_size)
+		return "new cache has wrong bucket size";
+	else if (memcmp(&ca->sb.set_uuid, &c->sb.set_uuid,
+				sizeof(ca->sb.set_uuid)))
+		return "new cache has wrong cacheset uuid";
 
 	return NULL;
 }
@@ -1946,6 +1950,7 @@ have_slot:
 		goto err;
 	}
 
+	memcpy(&sb.sb->set_uuid, &c->sb.set_uuid, sizeof(sb.sb->set_uuid));
 	sb.sb->bucket_size	= c->sb.bucket_size;
 	sb.sb->block_size	= c->sb.block_size;
 
