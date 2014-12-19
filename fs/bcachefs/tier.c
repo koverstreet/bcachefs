@@ -388,6 +388,7 @@ void bch_tiering_init_cache_set(struct cache_set *c)
 void bch_tiering_init_cache(struct cache *ca)
 {
 	bch_queue_init(&ca->tiering_queue,
+		       ca->set,
 		       TIERING_KEYS_MAX_SIZE,
 		       TIERING_NR,
 		       TIERING_READ_NR,

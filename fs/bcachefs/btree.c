@@ -1940,16 +1940,25 @@ static void bch_gc_start(struct cache_set *c)
 static void bch_gc_finish(struct cache_set *c)
 {
 	struct cache *ca;
+	struct scan_keylist *kl;
 	unsigned i;
 
 	bch_mark_writeback_keys(c);
 
+	mutex_lock(&c->gc_scan_keylist_lock);
+
+	list_for_each_entry(kl, &c->gc_scan_keylists, mark_list) {
+		if (kl->owner == NULL)
+			bch_mark_scan_keylist_keys(c, kl);
+		else
+			bch_queue_mark(c, kl->owner);
+	}
+
+	mutex_unlock(&c->gc_scan_keylist_lock);
+
 	for_each_cache(ca, c, i) {
 		unsigned j;
 		uint64_t *i;
-
-		bch_queue_mark(c, &ca->moving_gc_queue);
-		bch_queue_mark(c, &ca->tiering_queue);
 
 		for (j = 0; j < bch_nr_journal_buckets(&ca->sb); j++)
 			bch_mark_metadata_bucket(ca,
@@ -2138,6 +2147,7 @@ static bool btree_insert_key(struct btree_iter *iter, struct btree *b,
 			     struct journal_res *res,
 			     struct closure *persistent)
 {
+	bool dequeue = false;
 	struct cache_set *c = iter->c;
 	struct btree_node_iter *node_iter = &iter->node_iters[b->level];
 	struct bkey done, *insert = bch_keylist_front(insert_keys);
@@ -2165,20 +2175,30 @@ static bool btree_insert_key(struct btree_iter *iter, struct btree *b,
 		do_insert = !bch_insert_fixup_extent(b, insert, node_iter,
 						     replace, &done);
 		bch_cut_front(&done, orig);
-		if (!KEY_SIZE(orig))
-			bch_keylist_dequeue(insert_keys);
+		dequeue = (KEY_SIZE(orig) == 0);
 	} else {
 		BUG_ON(bkey_cmp(insert, &b->key) > 0);
 
 		do_insert = !bch_insert_fixup_key(b, insert, node_iter,
 						  replace, &done);
-		bch_keylist_dequeue(insert_keys);
+		dequeue = true;
 	}
 
 	if (!do_insert)
 		goto out;
 
 	status = bch_bset_insert(&b->keys, node_iter, insert);
+
+	/*
+	 * We dequeue after the insertion so that if insert_keys is
+	 * being marked for btree gc, we don't remove it from the
+	 * key list until after it has been transferred to the tree
+	 * or dropped.
+	 */
+	if (dequeue) {
+		bch_keylist_dequeue(insert_keys);
+		dequeue = false; /* already done */
+	}
 
 	if (!btree_node_dirty(b)) {
 		set_btree_node_dirty(b);
@@ -2203,6 +2223,9 @@ static bool btree_insert_key(struct btree_iter *iter, struct btree *b,
 				     ? persistent : NULL);
 	}
 out:
+	if (dequeue)
+		bch_keylist_dequeue(insert_keys);
+
 	newsize = bch_count_data(&b->keys);
 	BUG_ON(newsize != -1 && newsize < oldsize);
 	bch_check_keys(&b->keys, "%u for %s", status,

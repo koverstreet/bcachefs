@@ -266,6 +266,7 @@ void bch_moving_init_cache(struct cache *ca)
 {
 	bch_pd_controller_init(&ca->moving_gc_pd);
 	bch_queue_init(&ca->moving_gc_queue,
+		       ca->set,
 		       MOVING_GC_KEYS_MAX_SIZE,
 		       MOVING_GC_NR,
 		       MOVING_GC_READ_NR,

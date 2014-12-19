@@ -73,6 +73,10 @@ struct keylist {
 #define DFLT_SCAN_KEYLIST_MAX_SIZE	(1 << 14)
 
 struct scan_keylist {
+	struct list_head	mark_list;	/* For GC marking */
+
+	struct cache_set	*c;	/* For destroying */
+
 	/*
 	 * Only one thread is allowed to mutate the keylist. Other threads can
 	 * read it. The mutex has to be taken by the mutator thread when
@@ -92,6 +96,8 @@ struct scan_keylist {
 	 * The underlying keylist.
 	 */
 	struct keylist		list;
+
+	struct moving_queue	*owner;
 };
 
 typedef bool (scan_keylist_pred_fn)(struct scan_keylist *, const struct bkey *);

@@ -119,15 +119,34 @@ void bch_keylist_add_in_order(struct keylist *l, struct bkey *insert)
 /* Scan keylists simple utilities */
 
 void bch_scan_keylist_init(struct scan_keylist *kl,
+			   struct cache_set *c,
 			   unsigned max_size)
+
 {
+	kl->c = c;
+	kl->owner = NULL;
+
 	mutex_init(&kl->lock);
 	kl->max_size = max_size;
 	bch_keylist_init(&kl->list);
+
+	/*
+	 * Order of initialization is tricky, and this makes sure that
+	 * we have a valid cache set in case the order of
+	 * initialization chages and breaks things.
+	 */
+	BUG_ON(c == NULL);
+	mutex_lock(&c->gc_scan_keylist_lock);
+	list_add_tail(&kl->mark_list, &c->gc_scan_keylists);
+	mutex_unlock(&c->gc_scan_keylist_lock);
 }
 
 void bch_scan_keylist_destroy(struct scan_keylist *kl)
 {
+	mutex_lock(&kl->c->gc_scan_keylist_lock);
+	list_del(&kl->mark_list);
+	mutex_unlock(&kl->c->gc_scan_keylist_lock);
+
 	mutex_lock(&kl->lock);
 	bch_keylist_free(&kl->list);
 	mutex_unlock(&kl->lock);
@@ -150,10 +169,10 @@ void bch_scan_keylist_resize(struct scan_keylist *kl,
 	mutex_unlock(&kl->lock);
 }
 
-#define keylist_for_each(k, l)						       \
-	for (k = (l)->bot;						       \
-	     k != (l)->top;						       \
-	     k = __bch_keylist_next(l, k))
+#define keylist_for_each(k, l)						\
+for (k = ACCESS_ONCE((l)->bot);						\
+	k != (l)->top;							\
+	k = __bch_keylist_next(l, k))
 
 /**
  * bch_mark_keylist_keys - update oldest generation pointer into a bucket
@@ -161,6 +180,19 @@ void bch_scan_keylist_resize(struct scan_keylist *kl,
  * This prevents us from wrapping around gens for a bucket only referenced from
  * the tiering or moving GC keylists. We don't actually care that the data in
  * those buckets is marked live, only that we don't wrap the gens.
+ *
+ * Note: This interlocks with insertions, but not all dequeues interlock.
+ * The particular case in which dequeues don't interlock is when a
+ * scan list used by the copy offload ioctls is used as a plain
+ * keylist for btree insertion.
+ * The btree insertion code doesn't go through
+ * bch_scan_keylist_dequeue below, and instead uses plain
+ * bch_keylist_dequeue.  The other pointers (top, start, end) are
+ * unchanged in this case.
+ * A little care with the bottomp pointer suffices in this case.
+ * Of course, we may end up marking stuff that we don't need to mark,
+ * but was recently valid and we have likely just inserted in the tree
+ * anyway.
  */
 void bch_mark_scan_keylist_keys(struct cache_set *c, struct scan_keylist *kl)
 {
@@ -182,7 +214,10 @@ int bch_scan_keylist_add(struct scan_keylist *kl, const struct bkey *k)
 	int ret;
 
 	mutex_lock(&kl->lock);
-	ret = bch_keylist_realloc(&kl->list, KEY_U64s(k));
+	ret = bch_keylist_realloc_max(&kl->list,
+				      KEY_U64s(k),
+				      kl->max_size);
+
 	if (!ret) {
 		bch_keylist_add(&kl->list, k);
 		atomic64_add(KEY_SIZE(k), &kl->sectors);
@@ -213,7 +248,7 @@ static void bch_refill_scan_keylist(struct cache_set *c,
 
 		if (pred(kl, k)) {
 			if (bch_scan_keylist_add(kl, k))
-				break;
+				goto done;
 
 			nr_found++;
 		}

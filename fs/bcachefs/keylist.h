@@ -111,6 +111,7 @@ int bch_keylist_realloc(struct keylist *, unsigned);
 int bch_keylist_realloc_max(struct keylist *, unsigned, unsigned);
 
 void bch_scan_keylist_init(struct scan_keylist *kl,
+			   struct cache_set *c,
 			   unsigned max_size);
 
 void bch_scan_keylist_reset(struct scan_keylist *kl);

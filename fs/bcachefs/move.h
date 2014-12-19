@@ -89,7 +89,11 @@ typedef struct moving_io *(moving_queue_fn)(struct moving_queue *,
 					    struct moving_context *);
 
 void bch_queue_init(struct moving_queue *,
-		    unsigned, unsigned, unsigned, unsigned);
+		    struct cache_set *,
+		    unsigned max_keys,
+		    unsigned max_ios,
+		    unsigned max_reads,
+		    unsigned max_writes);
 int bch_queue_start(struct moving_queue *,
 		    const char *);
 bool bch_queue_full(struct moving_queue *);

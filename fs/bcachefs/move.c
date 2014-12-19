@@ -198,6 +198,7 @@ static void bch_queue_write_work(struct work_struct *work)
  */
 
 void bch_queue_init(struct moving_queue *q,
+		    struct cache_set *c,
 		    unsigned max_size,
 		    unsigned max_count,
 		    unsigned max_read_count,
@@ -207,8 +208,9 @@ void bch_queue_init(struct moving_queue *q,
 		return;
 
 	INIT_WORK(&q->work, bch_queue_write_work);
-	bch_scan_keylist_init(&q->keys, max_size);
+	bch_scan_keylist_init(&q->keys, c, max_size);
 
+	q->keys.owner = q;
 	q->max_count = max_count;
 	q->max_read_count = max_read_count;
 	q->max_write_count = max_write_count;
@@ -242,6 +244,7 @@ static int bch_queue_restart(struct moving_queue *q, const char *name)
 	spin_unlock_irqrestore(&q->lock, flags);
 
 	mutex_lock(&q->keys.lock);
+	/* It should have been reset when stopped, but this doesn't hurt */
 	bch_scan_keylist_reset(&q->keys);
 	ret = bch_queue_start(q, name);
 	mutex_unlock(&q->keys.lock);
@@ -295,6 +298,14 @@ void bch_queue_stop(struct moving_queue *q)
 	spin_unlock_irqrestore(&q->lock, flags);
 
 	closure_sync(&waitcl);
+
+	/*
+	 * Make sure that it is empty so that gc marking doesn't keep
+	 * marking stale entries from when last used.
+	 */
+	mutex_lock(&q->keys.lock);
+	bch_scan_keylist_reset(&q->keys);
+	mutex_unlock(&q->keys.lock);
 }
 
 static void mark_pending_list(struct cache_set *c, struct list_head *l)
@@ -652,7 +663,7 @@ static int issue_migration_move(struct cache *ca,
 }
 
 #define MAX_DATA_OFF_ITER	10
-#define PASS_LOW_LIMIT		1
+#define PASS_LOW_LIMIT		2
 #define MIGRATE_NR		64
 #define MIGRATE_READ_NR		32
 #define MIGRATE_WRITE_NR	32

@@ -817,8 +817,11 @@ static struct cache_set *bch_cache_set_alloc(struct cache *ca)
 	INIT_RADIX_TREE(&c->devices, GFP_KERNEL);
 	mutex_init(&c->btree_cache_lock);
 	mutex_init(&c->bucket_lock);
-	init_rwsem(&c->gc_lock);
 	spin_lock_init(&c->btree_root_lock);
+
+	init_rwsem(&c->gc_lock);
+	mutex_init(&c->gc_scan_keylist_lock);
+	INIT_LIST_HEAD(&c->gc_scan_keylists);
 
 	spin_lock_init(&c->btree_gc_time.lock);
 	spin_lock_init(&c->btree_split_time.lock);
@@ -1730,7 +1733,14 @@ bool bch_cache_remove(struct cache *ca, bool force)
 	return true;
 }
 
-static int cache_init(struct cache *ca)
+static void cache_init_motion(struct cache *ca, struct cache_set *c)
+{
+	ca->set = c;
+	bch_moving_init_cache(ca);
+	bch_tiering_init_cache(ca);
+}
+
+static int cache_init(struct cache *ca, struct cache_set *c)
 {
 	size_t reserve_none, movinggc_reserve, free_inc_reserve, total_reserve;
 	size_t heap_size;
@@ -1807,15 +1817,21 @@ static int cache_init(struct cache *ca)
 	ca->tiering_write_point.group = &ca->self;
 
 	mutex_init(&ca->heap_lock);
-	bch_moving_init_cache(ca);
-	bch_tiering_init_cache(ca);
 
+	/*
+	 * Note: Depending on the path through the initialization code,
+	 * c can be NULL at this point.
+	 * This is relevant to the initialization of moving gc and tiering.
+	 */
+	if (c != NULL)
+		cache_init_motion(ca, c);
 	return 0;
 }
 
 static const char *__register_cache(struct bcache_superblock *sb,
 				    struct block_device *bdev,
-				    struct cache **ret)
+				    struct cache **ret,
+				    struct cache_set *c)
 {
 	const char *err = NULL; /* must be set for any error case */
 	struct cache *ca;
@@ -1847,7 +1863,7 @@ static const char *__register_cache(struct bcache_superblock *sb,
 	    ca->sb.version != BCACHE_SB_VERSION_CDEV_V3)
 		goto err;
 
-	ret2 = cache_init(ca);
+	ret2 = cache_init(ca, c);
 	if (ret2 != 0) {
 		if (ret2 == -ENOMEM)
 			err = "cache_alloc(): -ENOMEM";
@@ -1880,7 +1896,7 @@ static const char *register_cache(struct bcache_superblock *sb,
 	const char *err;
 	struct cache *ca;
 
-	err = __register_cache(sb, bdev, &ca);
+	err = __register_cache(sb, bdev, &ca, NULL);
 	if (err)
 		return err;
 
@@ -1952,14 +1968,13 @@ have_slot:
 	 */
 	orig_mi = sb.sb->members[le16_to_cpu(sb.sb->nr_this_dev)];
 
-	err = __register_cache(&sb, bdev, &ca);
+	err = __register_cache(&sb, bdev, &ca, c);
 	if (err)
 		goto err;
 
 	ca->sb.nr_this_dev	= nr_this_dev;
 	ca->sb.nr_in_set	= c->sb.nr_in_set;
 	kobject_get(&c->kobj);
-	ca->set			= c;
 
 	err = "journal alloc failed";
 	if (bch_cache_journal_alloc(ca))
