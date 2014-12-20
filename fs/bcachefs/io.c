@@ -320,14 +320,10 @@ static void bch_write_discard(struct closure *cl)
 	struct bio *bio = op->bio;
 	u64 inode = KEY_INODE(&op->insert_key);
 
-	op->write_done = true;
 	op->error = bch_discard(op->c,
 		    &KEY(inode, bio->bi_iter.bi_sector, 0),
 		    &KEY(inode, bio_end_sector(bio), 0),
 		    KEY_VERSION(&op->insert_key));
-	bio_put(bio);
-
-	continue_at(cl, bch_write_done, op->c->wq);
 }
 
 static void bch_write_error(struct closure *cl)
@@ -388,8 +384,12 @@ static void __bch_write(struct closure *cl)
 
 	memset(op->open_buckets, 0, sizeof(op->open_buckets));
 
-	if (op->discard)
-		return bch_write_discard(cl);
+	if (op->discard) {
+		op->write_done = true;
+		bch_write_discard(cl);
+		bio_put(bio);
+		continue_at(cl, bch_write_done, op->c->wq);
+	}
 
 	bch_extent_drop_stale(op->c, &op->insert_key);
 	ptrs_from = bch_extent_ptrs(&op->insert_key);
@@ -460,6 +460,8 @@ static void __bch_write(struct closure *cl)
 	op->write_done = true;
 	continue_at(cl, bch_write_index, op->c->wq);
 err:
+	op->error = -ENOSPC;
+
 	if (KEY_CACHED(&op->insert_key)) {
 		/*
 		 * If we were writing cached data, not doing the write is fine
@@ -468,12 +470,10 @@ err:
 		 * reclaiming it.
 		 */
 
-		op->discard = true;
-		return bch_write_discard(cl);
+		bch_write_discard(cl);
 	}
 
-	op->error		= -ENOSPC;
-	op->write_done	= true;
+	op->write_done = true;
 	bio_put(bio);
 
 	/*
