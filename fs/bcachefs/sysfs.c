@@ -88,12 +88,15 @@ read_attribute(btree_written);
 read_attribute(metadata_written);
 read_attribute(journal_debug);
 
-sysfs_time_stats_attribute(btree_gc,	sec, ms);
+sysfs_time_stats_attribute(btree_gc, sec, ms);
 sysfs_time_stats_attribute(btree_split, sec, us);
-sysfs_time_stats_attribute(btree_sort,	ms,  us);
-sysfs_time_stats_attribute(btree_read,	ms,  us);
+sysfs_time_stats_attribute(btree_sort, ms, us);
+sysfs_time_stats_attribute(btree_read, ms, us);
 
 read_attribute(btree_gc_running);
+rw_attribute(btree_gc_always_rewrite);
+rw_attribute(btree_gc_rewrite_disabled);
+rw_attribute(btree_gc_coalesce_disabled);
 
 read_attribute(btree_nodes);
 read_attribute(btree_used_percent);
@@ -143,7 +146,6 @@ rw_attribute(io_error_halflife);
 rw_attribute(verify);
 rw_attribute(bypass_torture_test);
 rw_attribute(key_merging_disabled);
-rw_attribute(gc_always_rewrite);
 rw_attribute(expensive_debug_checks);
 rw_attribute(version_stress_test);
 rw_attribute(cache_replacement_policy);
@@ -545,10 +547,10 @@ SHOW(__bch_cache_set)
 
 	sysfs_print(btree_gc_running,		c->gc_cur_btree <= BTREE_ID_NR);
 
-	sysfs_print_time_stats(&c->btree_gc_time,	btree_gc, sec, ms);
-	sysfs_print_time_stats(&c->btree_split_time,	btree_split, sec, us);
-	sysfs_print_time_stats(&c->sort.time,		btree_sort, ms, us);
-	sysfs_print_time_stats(&c->btree_read_time,	btree_read, ms, us);
+	sysfs_print_time_stats(&c->btree_gc_time, btree_gc, sec, ms);
+	sysfs_print_time_stats(&c->btree_split_time, btree_split, sec, us);
+	sysfs_print_time_stats(&c->sort.time, btree_sort, ms, us);
+	sysfs_print_time_stats(&c->btree_read_time, btree_read, ms, us);
 
 	sysfs_print(btree_used_percent,	bch_btree_used(c));
 	sysfs_print(btree_nodes,	c->gc_stats.nodes);
@@ -585,22 +587,24 @@ SHOW(__bch_cache_set)
 	if (attr == &sysfs_journal_debug)
 		return bch_journal_print_debug(&c->journal, buf);
 
-	sysfs_printf(verify,			"%i", c->verify);
-	sysfs_printf(key_merging_disabled,	"%i", c->key_merging_disabled);
+	sysfs_printf(verify, "%i", c->verify);
+	sysfs_printf(key_merging_disabled, "%i", c->key_merging_disabled);
 	sysfs_printf(expensive_debug_checks,
 		     "%i", c->expensive_debug_checks);
-	sysfs_printf(version_stress_test,	"%i", c->version_stress_test);
-	sysfs_printf(gc_always_rewrite,		"%i", c->gc_always_rewrite);
-	sysfs_printf(btree_shrinker_disabled,	"%i", c->shrinker_disabled);
-	sysfs_printf(copy_gc_enabled,		"%i", c->copy_gc_enabled);
+	sysfs_printf(version_stress_test, "%i", c->version_stress_test);
+	sysfs_printf(btree_gc_always_rewrite, "%i", c->gc_always_rewrite);
+	sysfs_printf(btree_gc_rewrite_disabled,	"%i", c->gc_rewrite_disabled);
+	sysfs_printf(btree_gc_coalesce_disabled, "%i", c->gc_coalesce_disabled);
+	sysfs_printf(btree_shrinker_disabled, "%i", c->shrinker_disabled);
+	sysfs_printf(copy_gc_enabled, "%i", c->copy_gc_enabled);
 	sysfs_pd_controller_show(foreground_write, &c->foreground_write_pd);
 
-	sysfs_print(btree_scan_ratelimit,	c->btree_scan_ratelimit);
+	sysfs_print(btree_scan_ratelimit, c->btree_scan_ratelimit);
 	sysfs_print(pd_controllers_update_seconds,
 		    c->pd_controllers_update_seconds);
-	sysfs_print(foreground_target_percent,	c->foreground_target_percent);
-	sysfs_print(bucket_reserve_percent,	c->bucket_reserve_percent);
-	sysfs_print(sector_reserve_percent,	c->sector_reserve_percent);
+	sysfs_print(foreground_target_percent, c->foreground_target_percent);
+	sysfs_print(bucket_reserve_percent, c->bucket_reserve_percent);
+	sysfs_print(sector_reserve_percent, c->sector_reserve_percent);
 
 	sysfs_printf(tiering_enabled,		"%i", c->tiering_enabled);
 	sysfs_print(tiering_percent,		c->tiering_percent);
@@ -608,9 +612,9 @@ SHOW(__bch_cache_set)
 
 	sysfs_print(btree_flush_delay,		c->btree_flush_delay);
 
-	sysfs_printf(meta_replicas,		"%llu",
+	sysfs_printf(meta_replicas, "%llu",
 		     CACHE_SET_META_REPLICAS_WANT(&c->sb));
-	sysfs_printf(data_replicas,		"%llu",
+	sysfs_printf(data_replicas, "%llu",
 		     CACHE_SET_DATA_REPLICAS_WANT(&c->sb));
 
 	if (!test_bit(CACHE_SET_RUNNING, &c->flags))
@@ -691,13 +695,15 @@ STORE(__bch_cache_set)
 		return size;
 	}
 
-	sysfs_strtoul(journal_delay_ms,		c->journal.delay_ms);
-	sysfs_strtoul(verify,			c->verify);
-	sysfs_strtoul(key_merging_disabled,	c->key_merging_disabled);
-	sysfs_strtoul(expensive_debug_checks,	c->expensive_debug_checks);
-	sysfs_strtoul(version_stress_test,	c->version_stress_test);
-	sysfs_strtoul(gc_always_rewrite,	c->gc_always_rewrite);
-	sysfs_strtoul(btree_shrinker_disabled,	c->shrinker_disabled);
+	sysfs_strtoul(journal_delay_ms, c->journal.delay_ms);
+	sysfs_strtoul(verify, c->verify);
+	sysfs_strtoul(key_merging_disabled, c->key_merging_disabled);
+	sysfs_strtoul(expensive_debug_checks, c->expensive_debug_checks);
+	sysfs_strtoul(version_stress_test, c->version_stress_test);
+	sysfs_strtoul(btree_gc_always_rewrite, c->gc_always_rewrite);
+	sysfs_strtoul(btree_gc_rewrite_disabled, c->gc_rewrite_disabled);
+	sysfs_strtoul(btree_gc_coalesce_disabled, c->gc_coalesce_disabled);
+	sysfs_strtoul(btree_shrinker_disabled, c->shrinker_disabled);
 
 	if (attr == &sysfs_copy_gc_enabled) {
 		struct cache *ca;
@@ -905,7 +911,9 @@ static struct attribute *bch_cache_set_internal_files[] = {
 	&sysfs_expensive_debug_checks,
 	&sysfs_version_stress_test,
 #endif
-	&sysfs_gc_always_rewrite,
+	&sysfs_btree_gc_always_rewrite,
+	&sysfs_btree_gc_rewrite_disabled,
+	&sysfs_btree_gc_coalesce_disabled,
 	&sysfs_btree_shrinker_disabled,
 	&sysfs_copy_gc_enabled,
 	&sysfs_tiering_enabled,

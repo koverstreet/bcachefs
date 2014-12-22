@@ -123,6 +123,9 @@ bool btree_gc_mark_node(struct cache_set *c, struct btree *b,
 			}
 		}
 
+		if (c->gc_rewrite_disabled)
+			return false;
+
 		if (stale > 10)
 			return true;
 
@@ -149,6 +152,9 @@ static void btree_gc_coalesce(struct btree *old_nodes[GC_MERGE_NODES],
 	struct closure cl;
 	struct bkey saved_pos;
 	int ret;
+
+	if (c->gc_coalesce_disabled)
+		return;
 
 	memset(new_nodes, 0, sizeof(new_nodes));
 	bch_keylist_init(&keylist);

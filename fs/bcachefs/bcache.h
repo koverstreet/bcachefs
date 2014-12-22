@@ -605,6 +605,8 @@ struct cache_set {
 	unsigned		verify:1;
 	unsigned		key_merging_disabled:1;
 	unsigned		gc_always_rewrite:1;
+	unsigned		gc_rewrite_disabled:1;
+	unsigned		gc_coalesce_disabled:1;
 	unsigned		shrinker_disabled:1;
 	unsigned		copy_gc_enabled:1;
 	unsigned		tiering_enabled:1;
