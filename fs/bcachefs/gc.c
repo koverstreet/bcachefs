@@ -593,44 +593,40 @@ int bch_gc_thread_start(struct cache_set *c)
 	return 0;
 }
 
-/* Initial partial gc */
+/* Initial GC computes bucket marks during startup */
 
-static int bch_btree_check(struct cache_set *c)
+static void bch_initial_gc_btree(struct cache_set *c, enum btree_id id)
 {
 	struct btree_iter iter;
 	struct btree *b;
-	enum btree_id id;
 
-	for (id = 0; id < BTREE_ID_NR; id++) {
-		if (!c->btree_roots[id])
-			continue;
+	if (!c->btree_roots[id])
+		return;
 
-		for_each_btree_node(&iter, c, id, NULL, b) {
-			if (btree_node_has_ptrs(b)) {
-				struct btree_node_iter node_iter;
-				struct bkey *k;
+	for_each_btree_node(&iter, c, id, NULL, b) {
+		if (btree_node_has_ptrs(b)) {
+			struct btree_node_iter node_iter;
+			struct bkey *k;
 
-				for_each_btree_node_key(&b->keys, k, &node_iter)
-					btree_mark_key(c, b, k);
-			}
-
-			__bch_btree_mark_key(c, iter.level + 1, &b->key);
-
-			bch_btree_iter_cond_resched(&iter);
+			for_each_btree_node_key(&b->keys, k, &node_iter)
+				btree_mark_key(c, b, k);
 		}
-		bch_btree_iter_unlock(&iter);
+
+		__bch_btree_mark_key(c, iter.level + 1, &b->key);
+
+		bch_btree_iter_cond_resched(&iter);
 	}
 
-	return 0;
+	bch_btree_iter_unlock(&iter);
 }
 
 int bch_initial_gc(struct cache_set *c, struct list_head *journal)
 {
-	if (journal) {
-		int ret = bch_btree_check(c);
+	enum btree_id id;
 
-		if (ret)
-			return ret;
+	if (journal) {
+		for (id = 0; id < BTREE_ID_NR; id++)
+			bch_initial_gc_btree(c, id);
 
 		bch_journal_mark(c, journal);
 	}
