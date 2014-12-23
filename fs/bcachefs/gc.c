@@ -540,6 +540,8 @@ void bch_gc(struct cache_set *c)
 	stats.data	<<= 9;
 	memcpy(&c->gc_stats, &stats, sizeof(struct gc_stat));
 
+	debug_check_no_locks_held();
+
 	trace_bcache_gc_end(c);
 	return;
 
