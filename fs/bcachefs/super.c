@@ -1042,8 +1042,8 @@ static const char *run_cache_set(struct cache_set *c)
 
 		/*
 		 * bcache_journal_next() can't happen sooner, or
-		 * btree_gc_finish() will give spurious errors about last_gc >
-		 * gc_gen - this is a hack but oh well.
+		 * btree_gc_finish() will give spurious errors about oldest_gen
+		 * > bucket_gen - this is a hack but oh well.
 		 */
 		bch_journal_next(&c->journal);
 

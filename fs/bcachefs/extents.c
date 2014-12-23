@@ -310,10 +310,10 @@ static void btree_ptr_debugcheck(struct btree_keys *bk, const struct bkey *k)
 err:
 	bch_bkey_val_to_text(bk, buf, sizeof(buf), k);
 	btree_bug(b, "inconsistent btree pointer %s: bucket %zi prio %i "
-		  "gen %i last_gc %i mark %08x",
+		  "gen %i oldest_gen %i mark 0x%08x",
 		  buf, PTR_BUCKET_NR(c, k, i),
 		  g->read_prio, PTR_BUCKET_GEN(c, ca, k, i),
-		  g->last_gc, g->mark.counter);
+		  g->oldest_gen, g->mark.counter);
 	rcu_read_unlock();
 }
 
@@ -1069,10 +1069,10 @@ bad_device:
 bad_ptr:
 	bch_bkey_val_to_text(bk, buf, sizeof(buf), k);
 	cache_set_bug(c, "extent pointer %i bad gc mark: %s:\nbucket %zu prio %i "
-		      "gen %i last_gc %i mark 0x%08x", i,
+		      "gen %i oldest_gen %i mark 0x%08x", i,
 		      buf, PTR_BUCKET_NR(c, k, i),
 		      g->read_prio, PTR_BUCKET_GEN(c, ca, k, i),
-		      g->last_gc, g->mark.counter);
+		      g->oldest_gen, g->mark.counter);
 	cache_member_info_put();
 	return;
 }

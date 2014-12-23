@@ -478,12 +478,18 @@ static int bch_writeback_thread(void *arg)
 	return 0;
 }
 
-void bch_mark_writeback_keys(struct cache_set *c)
+/**
+ * bch_keylist_recalc_oldest_gens - update oldest_gen pointers from writeback keys
+ *
+ * This prevents us from wrapping around gens for a bucket only referenced from
+ * writeback keybufs. We don't actually care that the data in those buckets is
+ * marked live, only that we don't wrap the gens.
+ */
+void bch_writeback_recalc_oldest_gens(struct cache_set *c)
 {
 	struct radix_tree_iter iter;
 	void **slot;
 
-	/* don't reclaim buckets to which writeback keys point */
 	rcu_read_lock();
 
 	radix_tree_for_each_slot(slot, &c->devices, &iter, 0) {
@@ -496,7 +502,7 @@ void bch_mark_writeback_keys(struct cache_set *c)
 			continue;
 		dc = container_of(d, struct cached_dev, disk);
 
-		bch_mark_keybuf_keys(c, &dc->writeback_keys);
+		bch_keybuf_recalc_oldest_gens(c, &dc->writeback_keys);
 	}
 
 	rcu_read_unlock();

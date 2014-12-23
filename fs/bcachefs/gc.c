@@ -23,7 +23,7 @@
 #include <linux/delay.h>
 #include <trace/events/bcachefs.h>
 
-u8 bch_btree_mark_last_gc(struct cache_set *c, struct bkey *k)
+u8 bch_btree_key_recalc_oldest_gen(struct cache_set *c, struct bkey *k)
 {
 	u8 max_stale = 0;
 	struct cache *ca;
@@ -36,8 +36,8 @@ u8 bch_btree_mark_last_gc(struct cache_set *c, struct bkey *k)
 		if ((ca = PTR_CACHE(c, k, i))) {
 			struct bucket *g = PTR_BUCKET(c, ca, k, i);
 
-			if (__gen_after(g->last_gc, PTR_GEN(k, i)))
-				g->last_gc = PTR_GEN(k, i);
+			if (__gen_after(g->oldest_gen, PTR_GEN(k, i)))
+				g->oldest_gen = PTR_GEN(k, i);
 
 			max_stale = max(max_stale, ptr_stale(c, ca, k, i));
 		}
@@ -57,7 +57,7 @@ u8 __bch_btree_mark_key(struct cache_set *c, int level, struct bkey *k)
 
 	rcu_read_lock();
 
-	max_stale = bch_btree_mark_last_gc(c, k);
+	max_stale = bch_btree_key_recalc_oldest_gen(c, k);
 
 	if (level) {
 		for (i = 0; i < bch_extent_ptrs(k); i++)
@@ -426,7 +426,7 @@ static void bch_gc_start(struct cache_set *c)
 
 	for_each_cache(ca, c, i)
 		for_each_bucket(g, ca) {
-			g->last_gc = ca->bucket_gens[g - ca->buckets];
+			g->oldest_gen = ca->bucket_gens[g - ca->buckets];
 			bch_mark_free_bucket(ca, g);
 		}
 
@@ -444,15 +444,15 @@ static void bch_gc_finish(struct cache_set *c)
 	struct scan_keylist *kl;
 	unsigned i;
 
-	bch_mark_writeback_keys(c);
+	bch_writeback_recalc_oldest_gens(c);
 
 	mutex_lock(&c->gc_scan_keylist_lock);
 
 	list_for_each_entry(kl, &c->gc_scan_keylists, mark_list) {
 		if (kl->owner == NULL)
-			bch_mark_scan_keylist_keys(c, kl);
+			bch_keylist_recalc_oldest_gens(c, kl);
 		else
-			bch_queue_mark(c, kl->owner);
+			bch_queue_recalc_oldest_gens(c, kl->owner);
 	}
 
 	mutex_unlock(&c->gc_scan_keylist_lock);

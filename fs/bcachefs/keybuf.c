@@ -118,14 +118,7 @@ void bch_keybuf_put(struct keybuf *buf, struct keybuf_key *w)
 	}
 }
 
-/**
- * bch_mark_keybuf_keys - update oldest generation pointer into a bucket
- *
- * This prevents us from wrapping around gens for a bucket only referenced from
- * the writeback keybufs. We don't actually care that the data in those buckets
- * is marked live, only that we don't wrap the gens.
- */
-void bch_mark_keybuf_keys(struct cache_set *c, struct keybuf *buf)
+void bch_keybuf_recalc_oldest_gens(struct cache_set *c, struct keybuf *buf)
 {
 	struct keybuf_key *w, *n;
 
@@ -133,7 +126,7 @@ void bch_mark_keybuf_keys(struct cache_set *c, struct keybuf *buf)
 	rcu_read_lock();
 	rbtree_postorder_for_each_entry_safe(w, n,
 				&buf->keys, node)
-		bch_btree_mark_last_gc(c, &w->key);
+		bch_btree_key_recalc_oldest_gen(c, &w->key);
 	rcu_read_unlock();
 	spin_unlock(&buf->lock);
 }

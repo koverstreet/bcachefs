@@ -389,7 +389,7 @@ int bch_prio_read(struct cache *ca, u64 bucket)
 
 		ca->buckets[b].read_prio = le16_to_cpu(d->read_prio);
 		ca->buckets[b].write_prio = le16_to_cpu(d->write_prio);
-		ca->buckets[b].last_gc = d->gen;
+		ca->buckets[b].oldest_gen = d->gen;
 		ca->bucket_gens[b] = d->gen;
 	}
 
@@ -398,12 +398,12 @@ int bch_prio_read(struct cache *ca, u64 bucket)
 
 /*
  * bucket_gc_gen() returns the difference between the bucket's current gen and
- * the oldest gen of any pointer into that bucket in the btree (last_gc).
+ * the oldest gen of any pointer into that bucket in the btree.
  */
 
 static inline u8 bucket_gc_gen(struct cache *ca, size_t r)
 {
-	return ca->bucket_gens[r] - ca->buckets[r].last_gc;
+	return ca->bucket_gens[r] - ca->buckets[r].oldest_gen;
 }
 
 #define BUCKET_GC_GEN_MAX	96U

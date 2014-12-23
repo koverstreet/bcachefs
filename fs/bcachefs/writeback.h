@@ -89,7 +89,7 @@ static inline void bch_writeback_add(struct cached_dev *dc)
 
 void bcache_dev_sectors_dirty_add(struct cache_set *, unsigned, u64, int);
 
-void bch_mark_writeback_keys(struct cache_set *);
+void bch_writeback_recalc_oldest_gens(struct cache_set *);
 void bch_sectors_dirty_init(struct cached_dev *, struct cache_set *c);
 
 void bch_cached_dev_writeback_stop(struct cached_dev *);

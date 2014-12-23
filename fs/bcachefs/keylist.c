@@ -176,7 +176,7 @@ for (k = ACCESS_ONCE((l)->bot);						\
 	k = __bch_keylist_next(l, k))
 
 /**
- * bch_mark_keylist_keys - update oldest generation pointer into a bucket
+ * bch_keylist_recalc_oldest_gens - update oldest_gen pointers from keylist keys
  *
  * This prevents us from wrapping around gens for a bucket only referenced from
  * the tiering or moving GC keylists. We don't actually care that the data in
@@ -195,7 +195,8 @@ for (k = ACCESS_ONCE((l)->bot);						\
  * but was recently valid and we have likely just inserted in the tree
  * anyway.
  */
-void bch_mark_scan_keylist_keys(struct cache_set *c, struct scan_keylist *kl)
+void bch_keylist_recalc_oldest_gens(struct cache_set *c,
+				    struct scan_keylist *kl)
 {
 	struct bkey *k;
 
@@ -203,7 +204,7 @@ void bch_mark_scan_keylist_keys(struct cache_set *c, struct scan_keylist *kl)
 
 	keylist_for_each(k, &kl->list) {
 		rcu_read_lock();
-		bch_btree_mark_last_gc(c, k);
+		bch_btree_key_recalc_oldest_gen(c, k);
 		rcu_read_unlock();
 	}
 

@@ -153,6 +153,6 @@ struct bkey *bch_scan_keylist_next_rescan(struct cache_set *c,
 int bch_scan_keylist_add(struct scan_keylist *, const struct bkey *);
 void bch_scan_keylist_dequeue(struct scan_keylist *);
 
-void bch_mark_scan_keylist_keys(struct cache_set *, struct scan_keylist *);
+void bch_keylist_recalc_oldest_gens(struct cache_set *, struct scan_keylist *);
 
 #endif /* _BCACHE_KEYLIST_H */

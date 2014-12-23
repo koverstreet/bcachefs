@@ -25,7 +25,8 @@ struct bucket {
 		u16		prio[2];
 	};
 	struct bucket_mark	mark;
-	u8			last_gc; /* Most out of date gen in the btree */
+	/* Most out of date gen in the btree */
+	u8			oldest_gen;
 
 	/* generation copygc is going to move this bucket into */
 	u8			copygc_gen;

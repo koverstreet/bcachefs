@@ -309,7 +309,7 @@ void bch_queue_stop(struct moving_queue *q)
 	mutex_unlock(&q->keys.lock);
 }
 
-static void mark_pending_list(struct cache_set *c, struct list_head *l)
+static void pending_recalc_oldest_gens(struct cache_set *c, struct list_head *l)
 {
 	struct moving_io *io;
 
@@ -323,23 +323,23 @@ static void mark_pending_list(struct cache_set *c, struct list_head *l)
 		 * to open buckets until the write completes
 		 */
 		rcu_read_lock();
-		bch_btree_mark_last_gc(c, &io->key);
+		bch_btree_key_recalc_oldest_gen(c, &io->key);
 		rcu_read_unlock();
 	}
 }
 
-void bch_queue_mark(struct cache_set *c, struct moving_queue *q)
+void bch_queue_recalc_oldest_gens(struct cache_set *c, struct moving_queue *q)
 {
 	unsigned long flags;
 
 	/* 1st, mark the keylist keys */
-	bch_mark_scan_keylist_keys(c, &q->keys);
+	bch_keylist_recalc_oldest_gens(c, &q->keys);
 
 	/* 2nd, mark the keys in the I/Os */
 	spin_lock_irqsave(&q->lock, flags);
 
-	mark_pending_list(c, &q->pending);
-	mark_pending_list(c, &q->write_pending);
+	pending_recalc_oldest_gens(c, &q->pending);
+	pending_recalc_oldest_gens(c, &q->write_pending);
 
 	spin_unlock_irqrestore(&q->lock, flags);
 }
