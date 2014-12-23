@@ -3,6 +3,7 @@
 #include "btree.h"
 #include "buckets.h"
 #include "extents.h"
+#include "gc.h"
 #include "io.h"
 #include "move.h"
 #include "super.h"

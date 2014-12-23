@@ -1318,42 +1318,6 @@ struct open_bucket *bch_alloc_sectors(struct cache_set *c,
 	return b;
 }
 
-void bch_mark_allocator_buckets(struct cache_set *c)
-{
-	struct cache *ca;
-	struct open_bucket *b;
-	size_t i, j, iter;
-	unsigned ci;
-
-	for_each_cache(ca, c, ci) {
-		spin_lock(&ca->freelist_lock);
-
-		fifo_for_each(i, &ca->free_inc, iter)
-			bch_mark_alloc_bucket(ca, &ca->buckets[i]);
-
-		for (j = 0; j < RESERVE_NR; j++)
-			fifo_for_each(i, &ca->free[j], iter)
-				bch_mark_alloc_bucket(ca, &ca->buckets[i]);
-
-		spin_unlock(&ca->freelist_lock);
-	}
-
-	spin_lock(&c->open_buckets_lock);
-	rcu_read_lock();
-
-	list_for_each_entry(b, &c->open_buckets_open, list) {
-		spin_lock(&b->lock);
-		for (i = 0; i < bch_extent_ptrs(&b->key); i++)
-			if ((ca = PTR_CACHE(c, &b->key, i)))
-				bch_mark_alloc_bucket(ca,
-					PTR_BUCKET(c, ca, &b->key, i));
-		spin_unlock(&b->lock);
-	}
-
-	rcu_read_unlock();
-	spin_unlock(&c->open_buckets_lock);
-}
-
 /*
  * This code is only called when the ca device has become read only,
  * which prevents new buckets from being allocated from it, as it has

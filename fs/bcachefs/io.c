@@ -12,6 +12,7 @@
 #include "buckets.h"
 #include "debug.h"
 #include "extents.h"
+#include "gc.h"
 #include "io.h"
 #include "keylist.h"
 #include "stats.h"

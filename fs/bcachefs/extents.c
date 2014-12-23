@@ -9,6 +9,7 @@
 #include "btree.h"
 #include "debug.h"
 #include "extents.h"
+#include "gc.h"
 #include "inode.h"
 #include "super.h"
 #include "writeback.h"

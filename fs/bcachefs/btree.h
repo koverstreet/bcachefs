@@ -161,11 +161,6 @@ static inline unsigned bset_block_offset(struct btree *b, struct bset *i)
 	return bset_sector_offset(&b->keys, i) >> b->c->block_bits;
 }
 
-static inline void set_gc_sectors(struct cache_set *c)
-{
-	atomic64_set(&c->sectors_until_gc, c->capacity / 16);
-}
-
 static inline size_t btree_bytes(struct cache_set *c)
 {
 	return c->btree_pages * PAGE_SIZE;
@@ -252,6 +247,18 @@ struct btree_iter {
 	struct btree_node_iter	node_iters[BTREE_MAX_DEPTH];
 };
 
+static inline bool btree_node_locked(struct btree_iter *iter, unsigned level)
+{
+	return iter->nodes_locked & (1 << level);
+}
+
+static inline void mark_btree_node_unlocked(struct btree_iter *iter,
+					    unsigned level)
+{
+	iter->nodes_locked &= ~(1 << level);
+	iter->nodes_intent_locked &= ~(1 << level);
+}
+
 int bch_btree_iter_unlock(struct btree_iter *);
 void __bch_btree_iter_init(struct btree_iter *, struct cache_set *,
 			   enum btree_id, const struct bkey *, int);
@@ -280,6 +287,26 @@ const struct bkey *bch_btree_iter_peek_with_holes(struct btree_iter *);
 void bch_btree_iter_set_pos(struct btree_iter *, const struct bkey *);
 void bch_btree_iter_advance_pos(struct btree_iter *);
 bool bch_btree_iter_upgrade(struct btree_iter *);
+
+static inline void __btree_iter_node_set(struct btree_iter *iter,
+					 struct btree *b,
+					 const struct bkey *pos)
+{
+	struct bkey search = iter->is_extents && bkey_cmp(pos, &MAX_KEY)
+		? bkey_successor(pos)
+		: *pos;
+
+	iter->lock_seq[b->level] = b->lock.state.seq;
+	iter->nodes[b->level] = b;
+	bch_btree_node_iter_init(&b->keys,
+				 &iter->node_iters[b->level],
+				 &search);
+}
+
+static inline void btree_iter_node_set(struct btree_iter *iter, struct btree *b)
+{
+	__btree_iter_node_set(iter, b, &iter->pos);
+}
 
 #define for_each_btree_node(_iter, _c, _btree_id, _start, _b)		\
 	for (bch_btree_iter_init((_iter), (_c), (_btree_id), _start),	\
@@ -333,15 +360,28 @@ static inline void bch_btree_iter_cond_resched(struct btree_iter *iter)
 
 #define btree_node_root(_b)	((_b)->c->btree_roots[(_b)->btree_id])
 
+void btree_node_free(struct btree *);
+
+void bch_btree_node_write(struct btree *, struct closure *,
+			  struct btree_iter *);
 void bch_btree_node_read_done(struct btree *, struct cache *, unsigned);
 void bch_btree_flush(struct cache_set *);
 void bch_btree_write_oldest(struct cache_set *);
+
+struct btree *btree_node_alloc_replacement(struct btree *,
+					   enum alloc_reserve);
+int btree_check_reserve(struct btree *, struct btree_iter *,
+			enum alloc_reserve, unsigned);
 
 int bch_btree_root_alloc(struct cache_set *, enum btree_id, struct closure *);
 int bch_btree_root_read(struct cache_set *, enum btree_id,
 			struct bkey *, unsigned);
 
 struct bch_replace_info;
+
+int bch_btree_insert_node(struct btree *, struct btree_iter *,
+			  struct keylist *, struct bch_replace_info *,
+			  struct closure *, enum alloc_reserve);
 
 /*
  * Don't drop/retake locks: instead return -EINTR if need to upgrade to intent
@@ -358,51 +398,7 @@ int bch_btree_insert(struct cache_set *, enum btree_id, struct keylist *,
 
 int bch_btree_node_rewrite(struct btree *, struct btree_iter *, bool);
 
-void bch_gc(struct cache_set *);
-int bch_gc_thread_start(struct cache_set *);
-int bch_initial_gc(struct cache_set *, struct list_head *);
-u8 bch_btree_mark_last_gc(struct cache_set *, struct bkey *);
-u8 __bch_btree_mark_key(struct cache_set *, int, struct bkey *);
-
 void bch_btree_cache_free(struct cache_set *);
 int bch_btree_cache_alloc(struct cache_set *);
-
-/**
- * __gc_will_visit_node - for checking GC marks while holding a btree read lock
- *
- * Since btree GC takes intent locks, it might advance the current key, so in
- * this case the entire reading of the mark has to be surrounded with the
- * seqlock.
- */
-static inline bool __gc_will_visit_node(struct cache_set *c,
-					struct btree *b)
-{
-	return b->btree_id != c->gc_cur_btree
-		? b->btree_id > c->gc_cur_btree
-		: bkey_cmp(&b->key, &c->gc_cur_key)
-		? bkey_cmp(&b->key, &c->gc_cur_key) > 0
-		: b->level > c->gc_cur_level;
-}
-
-/**
- * gc_will_visit_key - is the currently-running GC pass going to visit the given
- * btree node?
- *
- * If so, we don't have to update reference counts for buckets this key points
- * into -- the GC will do it before the current pass ends.
- */
-static inline bool gc_will_visit_node(struct cache_set *c,
-				      struct btree *b)
-{
-	unsigned seq;
-	bool ret;
-
-	do {
-		seq = read_seqbegin(&c->gc_cur_lock);
-		ret = __gc_will_visit_node(c, b);
-	} while (read_seqretry(&c->gc_cur_lock, seq));
-
-	return ret;
-}
 
 #endif

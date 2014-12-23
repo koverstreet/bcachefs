@@ -66,6 +66,7 @@
 #include "alloc.h"
 #include "btree.h"
 #include "buckets.h"
+#include "gc.h"
 
 #include <trace/events/bcachefs.h>
 

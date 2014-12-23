@@ -11,6 +11,7 @@
 #include "alloc.h"
 #include "btree.h"
 #include "debug.h"
+#include "gc.h"
 #include "inode.h"
 #include "io.h"
 #include "journal.h"

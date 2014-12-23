@@ -1,7 +1,7 @@
 #ifndef _BCACHE_MOVE_H
 #define _BCACHE_MOVE_H
 
-#include "request.h"
+#include "io.h"
 
 enum moving_purpose {
 	MOVING_PURPOSE_UNKNOWN,	/* Un-init */
