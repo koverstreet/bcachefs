@@ -589,6 +589,7 @@ struct cache_set {
 	unsigned		congested_write_threshold_us;
 
 	struct time_stats	btree_gc_time;
+	struct time_stats	btree_coalesce_time;
 	struct time_stats	btree_split_time;
 	struct time_stats	btree_read_time;
 	struct time_stats	journal_full_time;

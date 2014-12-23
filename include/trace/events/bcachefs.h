@@ -669,6 +669,16 @@ DEFINE_EVENT(cache_set, bcache_gc_end,
 	TP_ARGS(c)
 );
 
+DEFINE_EVENT(cache_set, bcache_gc_coalesce_start,
+	TP_PROTO(struct cache_set *c),
+	TP_ARGS(c)
+);
+
+DEFINE_EVENT(cache_set, bcache_gc_coalesce_end,
+	TP_PROTO(struct cache_set *c),
+	TP_ARGS(c)
+);
+
 DEFINE_EVENT(cache, bcache_sectors_saturated,
 	TP_PROTO(struct cache *ca),
 	TP_ARGS(ca)

@@ -139,9 +139,233 @@ bool btree_gc_mark_node(struct cache_set *c, struct btree *b,
 	return false;
 }
 
-static void btree_gc_coalesce(struct btree *old_nodes[GC_MERGE_NODES],
-			      struct btree_iter *iter,
-			      struct gc_stat *stat)
+static int bch_gc_btree(struct cache_set *c, enum btree_id btree_id,
+			struct gc_stat *stat)
+{
+	struct btree_iter iter;
+	struct btree *b;
+	bool should_rewrite;
+
+	bch_btree_iter_init(&iter, c, btree_id, NULL);
+	iter.is_extents = false;
+	iter.locks_want = BTREE_MAX_DEPTH;
+
+	for (b = bch_btree_iter_peek_node(&iter);
+	     b;
+	     b = bch_btree_iter_next_node(&iter)) {
+		verify_nr_live_keys(&b->keys);
+
+		should_rewrite = btree_gc_mark_node(c, b, stat);
+
+		BUG_ON(bkey_cmp(&c->gc_cur_key, &b->key) > 0);
+		BUG_ON(!gc_will_visit_node(c, b));
+
+		write_seqlock(&c->gc_cur_lock);
+		c->gc_cur_level = b->level;
+		bkey_copy_key(&c->gc_cur_key, &b->key);
+		write_sequnlock(&c->gc_cur_lock);
+
+		BUG_ON(gc_will_visit_node(c, b));
+
+		if (should_rewrite)
+			bch_btree_node_rewrite(b, &iter, false);
+
+		if (test_bit(CACHE_SET_STOPPING, &c->flags)) {
+			bch_btree_iter_unlock(&iter);
+			return -ESHUTDOWN;
+		}
+
+		bch_btree_iter_cond_resched(&iter);
+	}
+	return bch_btree_iter_unlock(&iter);
+}
+
+static void bch_mark_allocator_buckets(struct cache_set *c)
+{
+	struct cache *ca;
+	struct open_bucket *b;
+	size_t i, j, iter;
+	unsigned ci;
+
+	for_each_cache(ca, c, ci) {
+		spin_lock(&ca->freelist_lock);
+
+		fifo_for_each(i, &ca->free_inc, iter)
+			bch_mark_alloc_bucket(ca, &ca->buckets[i]);
+
+		for (j = 0; j < RESERVE_NR; j++)
+			fifo_for_each(i, &ca->free[j], iter)
+				bch_mark_alloc_bucket(ca, &ca->buckets[i]);
+
+		spin_unlock(&ca->freelist_lock);
+	}
+
+	spin_lock(&c->open_buckets_lock);
+	rcu_read_lock();
+
+	list_for_each_entry(b, &c->open_buckets_open, list) {
+		spin_lock(&b->lock);
+		for (i = 0; i < bch_extent_ptrs(&b->key); i++)
+			if ((ca = PTR_CACHE(c, &b->key, i)))
+				bch_mark_alloc_bucket(ca,
+					PTR_BUCKET(c, ca, &b->key, i));
+		spin_unlock(&b->lock);
+	}
+
+	rcu_read_unlock();
+	spin_unlock(&c->open_buckets_lock);
+}
+
+static void bch_gc_start(struct cache_set *c)
+{
+	struct cache *ca;
+	struct bucket *g;
+	unsigned i;
+
+	write_seqlock(&c->gc_cur_lock);
+	for_each_cache(ca, c, i)
+		ca->bucket_stats_cached = __bucket_stats_read(ca);
+
+	c->gc_cur_btree = 0;
+	c->gc_cur_level = 0;
+	c->gc_cur_key = ZERO_KEY;
+	write_sequnlock(&c->gc_cur_lock);
+
+	memset(c->cache_slots_used, 0, sizeof(c->cache_slots_used));
+
+	for_each_cache(ca, c, i)
+		for_each_bucket(g, ca) {
+			g->oldest_gen = ca->bucket_gens[g - ca->buckets];
+			bch_mark_free_bucket(ca, g);
+		}
+
+	/*
+	 * must happen before traversing the btree, as pointers move from open
+	 * buckets into the btree - if we race and an open_bucket has been freed
+	 * before we marked it, it's in the btree now
+	 */
+	bch_mark_allocator_buckets(c);
+}
+
+static void bch_gc_finish(struct cache_set *c)
+{
+	struct cache *ca;
+	struct scan_keylist *kl;
+	unsigned i;
+
+	bch_writeback_recalc_oldest_gens(c);
+
+	mutex_lock(&c->gc_scan_keylist_lock);
+
+	list_for_each_entry(kl, &c->gc_scan_keylists, mark_list) {
+		if (kl->owner == NULL)
+			bch_keylist_recalc_oldest_gens(c, kl);
+		else
+			bch_queue_recalc_oldest_gens(c, kl->owner);
+	}
+
+	mutex_unlock(&c->gc_scan_keylist_lock);
+
+	for_each_cache(ca, c, i) {
+		unsigned j;
+		u64 *i;
+
+		for (j = 0; j < bch_nr_journal_buckets(&ca->sb); j++)
+			bch_mark_metadata_bucket(ca,
+					&ca->buckets[journal_bucket(ca, j)],
+						 true);
+
+		spin_lock(&ca->prio_buckets_lock);
+
+		for (i = ca->prio_buckets;
+		     i < ca->prio_buckets + prio_buckets(ca) * 2; i++)
+			bch_mark_metadata_bucket(ca, &ca->buckets[*i], true);
+
+		spin_unlock(&ca->prio_buckets_lock);
+
+		atomic_long_set(&ca->saturated_count, 0);
+		ca->inc_gen_needs_gc = 0;
+	}
+
+	set_gc_sectors(c);
+
+	write_seqlock(&c->gc_cur_lock);
+	c->gc_cur_btree = BTREE_ID_NR + 1;
+	write_sequnlock(&c->gc_cur_lock);
+
+	/*
+	 * Setting gc_cur_btree marks gc as finished, and the allocator threads
+	 * will now see the new buckets_available - wake them up in case they
+	 * were waiting on it
+	 */
+
+	for_each_cache(ca, c, i)
+		bch_wake_allocator(ca);
+}
+
+/**
+ * bch_gc - recompute bucket marks and oldest_gen, rewrite btree nodes
+ */
+void bch_gc(struct cache_set *c)
+{
+	struct gc_stat stats;
+	u64 start_time = local_clock();
+
+	if (test_bit(CACHE_SET_GC_FAILURE, &c->flags))
+		return;
+
+	trace_bcache_gc_start(c);
+
+	memset(&stats, 0, sizeof(struct gc_stat));
+
+	down_write(&c->gc_lock);
+	bch_gc_start(c);
+
+	while (c->gc_cur_btree < BTREE_ID_NR) {
+		int ret = c->btree_roots[c->gc_cur_btree]
+			? bch_gc_btree(c, c->gc_cur_btree, &stats)
+			: 0;
+
+		if (ret) {
+			if (ret != -ESHUTDOWN)
+				pr_err("btree gc failed with %d!", ret);
+
+			write_seqlock(&c->gc_cur_lock);
+			c->gc_cur_btree = BTREE_ID_NR + 1;
+			c->gc_cur_level = 0;
+			c->gc_cur_key = ZERO_KEY;
+			write_sequnlock(&c->gc_cur_lock);
+
+			set_bit(CACHE_SET_GC_FAILURE, &c->flags);
+			up_write(&c->gc_lock);
+			return;
+		}
+
+		write_seqlock(&c->gc_cur_lock);
+		c->gc_cur_btree++;
+		c->gc_cur_level = 0;
+		c->gc_cur_key = ZERO_KEY;
+		write_sequnlock(&c->gc_cur_lock);
+	}
+
+	bch_gc_finish(c);
+	up_write(&c->gc_lock);
+
+	bch_time_stats_update(&c->btree_gc_time, start_time);
+
+	stats.key_bytes *= sizeof(u64);
+	stats.data	<<= 9;
+	memcpy(&c->gc_stats, &stats, sizeof(struct gc_stat));
+
+	debug_check_no_locks_held();
+
+	trace_bcache_gc_end(c);
+}
+
+/* Btree coalescing */
+
+static void bch_coalesce_nodes(struct btree *old_nodes[GC_MERGE_NODES],
+			       struct btree_iter *iter)
 {
 	struct btree *parent = iter->nodes[old_nodes[0]->level + 1];
 	struct cache_set *c = iter->c;
@@ -288,17 +512,13 @@ static void btree_gc_coalesce(struct btree *old_nodes[GC_MERGE_NODES],
 		old_nodes[i] = new_nodes[i];
 	}
 
-	stat->nodes -= nr_old_nodes - nr_new_nodes;
-
 	bch_keylist_free(&keylist);
 }
 
-static int bch_gc_btree(struct cache_set *c, enum btree_id btree_id,
-			struct gc_stat *stat)
+static int bch_coalesce_btree(struct cache_set *c, enum btree_id btree_id)
 {
 	struct btree_iter iter;
 	struct btree *b;
-	bool should_rewrite;
 	unsigned i;
 
 	/* Sliding window of adjacent btree nodes */
@@ -314,25 +534,6 @@ static int bch_gc_btree(struct cache_set *c, enum btree_id btree_id,
 	for (b = bch_btree_iter_peek_node(&iter);
 	     b;
 	     b = bch_btree_iter_next_node(&iter)) {
-		verify_nr_live_keys(&b->keys);
-
-		should_rewrite = btree_gc_mark_node(c, b, stat);
-
-		BUG_ON(bkey_cmp(&c->gc_cur_key, &b->key) > 0);
-		BUG_ON(!gc_will_visit_node(c, b));
-
-		write_seqlock(&c->gc_cur_lock);
-		c->gc_cur_level = b->level;
-		bkey_copy_key(&c->gc_cur_key, &b->key);
-		write_sequnlock(&c->gc_cur_lock);
-
-		BUG_ON(gc_will_visit_node(c, b));
-
-		if (should_rewrite)
-			bch_btree_node_rewrite(b, &iter, false);
-
-		b = iter.nodes[iter.level]; /* might have been rewritten */
-
 		memmove(merge + 1, merge,
 			sizeof(merge) - sizeof(merge[0]));
 		memmove(lock_seq + 1, lock_seq,
@@ -352,7 +553,7 @@ static int bch_gc_btree(struct cache_set *c, enum btree_id btree_id,
 		}
 		memset(merge + i, 0, (GC_MERGE_NODES - i) * sizeof(merge[0]));
 
-		btree_gc_coalesce(merge, &iter, stat);
+		bch_coalesce_nodes(merge, &iter);
 
 		for (i = 1; i < GC_MERGE_NODES && merge[i]; i++) {
 			lock_seq[i] = merge[i]->lock.state.seq;
@@ -371,191 +572,37 @@ static int bch_gc_btree(struct cache_set *c, enum btree_id btree_id,
 	return bch_btree_iter_unlock(&iter);
 }
 
-static void bch_mark_allocator_buckets(struct cache_set *c)
-{
-	struct cache *ca;
-	struct open_bucket *b;
-	size_t i, j, iter;
-	unsigned ci;
-
-	for_each_cache(ca, c, ci) {
-		spin_lock(&ca->freelist_lock);
-
-		fifo_for_each(i, &ca->free_inc, iter)
-			bch_mark_alloc_bucket(ca, &ca->buckets[i]);
-
-		for (j = 0; j < RESERVE_NR; j++)
-			fifo_for_each(i, &ca->free[j], iter)
-				bch_mark_alloc_bucket(ca, &ca->buckets[i]);
-
-		spin_unlock(&ca->freelist_lock);
-	}
-
-	spin_lock(&c->open_buckets_lock);
-	rcu_read_lock();
-
-	list_for_each_entry(b, &c->open_buckets_open, list) {
-		spin_lock(&b->lock);
-		for (i = 0; i < bch_extent_ptrs(&b->key); i++)
-			if ((ca = PTR_CACHE(c, &b->key, i)))
-				bch_mark_alloc_bucket(ca,
-					PTR_BUCKET(c, ca, &b->key, i));
-		spin_unlock(&b->lock);
-	}
-
-	rcu_read_unlock();
-	spin_unlock(&c->open_buckets_lock);
-}
-
-static void bch_gc_start(struct cache_set *c)
-{
-	struct cache *ca;
-	struct bucket *g;
-	unsigned i;
-
-	write_seqlock(&c->gc_cur_lock);
-	for_each_cache(ca, c, i)
-		ca->bucket_stats_cached = __bucket_stats_read(ca);
-
-	c->gc_cur_btree = 0;
-	c->gc_cur_level = 0;
-	c->gc_cur_key = ZERO_KEY;
-	write_sequnlock(&c->gc_cur_lock);
-
-	memset(c->cache_slots_used, 0, sizeof(c->cache_slots_used));
-
-	for_each_cache(ca, c, i)
-		for_each_bucket(g, ca) {
-			g->oldest_gen = ca->bucket_gens[g - ca->buckets];
-			bch_mark_free_bucket(ca, g);
-		}
-
-	/*
-	 * must happen before traversing the btree, as pointers move from open
-	 * buckets into the btree - if we race and an open_bucket has been freed
-	 * before we marked it, it's in the btree now
-	 */
-	bch_mark_allocator_buckets(c);
-}
-
-static void bch_gc_finish(struct cache_set *c)
-{
-	struct cache *ca;
-	struct scan_keylist *kl;
-	unsigned i;
-
-	bch_writeback_recalc_oldest_gens(c);
-
-	mutex_lock(&c->gc_scan_keylist_lock);
-
-	list_for_each_entry(kl, &c->gc_scan_keylists, mark_list) {
-		if (kl->owner == NULL)
-			bch_keylist_recalc_oldest_gens(c, kl);
-		else
-			bch_queue_recalc_oldest_gens(c, kl->owner);
-	}
-
-	mutex_unlock(&c->gc_scan_keylist_lock);
-
-	for_each_cache(ca, c, i) {
-		unsigned j;
-		u64 *i;
-
-		for (j = 0; j < bch_nr_journal_buckets(&ca->sb); j++)
-			bch_mark_metadata_bucket(ca,
-					&ca->buckets[journal_bucket(ca, j)],
-						 true);
-
-		spin_lock(&ca->prio_buckets_lock);
-
-		for (i = ca->prio_buckets;
-		     i < ca->prio_buckets + prio_buckets(ca) * 2; i++)
-			bch_mark_metadata_bucket(ca, &ca->buckets[*i], true);
-
-		spin_unlock(&ca->prio_buckets_lock);
-
-		atomic_long_set(&ca->saturated_count, 0);
-		ca->inc_gen_needs_gc = 0;
-	}
-
-	set_gc_sectors(c);
-
-	write_seqlock(&c->gc_cur_lock);
-	c->gc_cur_btree = BTREE_ID_NR + 1;
-	write_sequnlock(&c->gc_cur_lock);
-
-	/*
-	 * Setting gc_cur_btree marks gc as finished, and the allocator threads
-	 * will now see the new buckets_available - wake them up in case they
-	 * were waiting on it
-	 */
-
-	for_each_cache(ca, c, i)
-		bch_wake_allocator(ca);
-}
-
 /**
- * bch_gc - find reclaimable buckets and clean up the btree
- *
- * This will find buckets that are completely unreachable, as well as those
- * only containing clean data that can be safely discarded. Also, nodes that
- * contain too many bsets are merged up and re-written, and adjacent nodes
- * with low occupancy are coalesced together.
+ * bch_coalesce - coalesce adjacent nodes with low occupancy
  */
-void bch_gc(struct cache_set *c)
+static void bch_coalesce(struct cache_set *c)
 {
-	struct gc_stat stats;
 	u64 start_time = local_clock();
+	enum btree_id id;
 
 	if (test_bit(CACHE_SET_GC_FAILURE, &c->flags))
 		return;
 
-	trace_bcache_gc_start(c);
+	trace_bcache_gc_coalesce_start(c);
 
-	memset(&stats, 0, sizeof(struct gc_stat));
-
-	down_write(&c->gc_lock);
-	bch_gc_start(c);
-
-	while (c->gc_cur_btree < BTREE_ID_NR) {
-		int ret = c->btree_roots[c->gc_cur_btree]
-			? bch_gc_btree(c, c->gc_cur_btree, &stats)
+	for (id = 0; id < BTREE_ID_NR; id++) {
+		int ret = c->btree_roots[id]
+			? bch_coalesce_btree(c, id)
 			: 0;
 
 		if (ret) {
 			if (ret != -ESHUTDOWN)
-				pr_err("btree gc failed with %d!", ret);
-
-			write_seqlock(&c->gc_cur_lock);
-			c->gc_cur_btree = BTREE_ID_NR + 1;
-			c->gc_cur_level = 0;
-			c->gc_cur_key = ZERO_KEY;
-			write_sequnlock(&c->gc_cur_lock);
-
+				pr_err("btree coalescing failed with %d!", ret);
 			set_bit(CACHE_SET_GC_FAILURE, &c->flags);
-			up_write(&c->gc_lock);
 			return;
 		}
-
-		write_seqlock(&c->gc_cur_lock);
-		c->gc_cur_btree++;
-		c->gc_cur_level = 0;
-		c->gc_cur_key = ZERO_KEY;
-		write_sequnlock(&c->gc_cur_lock);
 	}
 
-	bch_gc_finish(c);
-	up_write(&c->gc_lock);
-
-	bch_time_stats_update(&c->btree_gc_time, start_time);
-
-	stats.key_bytes *= sizeof(u64);
-	stats.data	<<= 9;
-	memcpy(&c->gc_stats, &stats, sizeof(struct gc_stat));
+	bch_time_stats_update(&c->btree_coalesce_time, start_time);
 
 	debug_check_no_locks_held();
 
-	trace_bcache_gc_end(c);
+	trace_bcache_gc_coalesce_end(c);
 }
 
 static int bch_gc_thread(void *arg)
@@ -564,6 +611,7 @@ static int bch_gc_thread(void *arg)
 
 	while (1) {
 		bch_gc(c);
+		bch_coalesce(c);
 
 		/* Set task to interruptible first so that if someone wakes us
 		 * up while we're finishing up, we will start another GC pass
