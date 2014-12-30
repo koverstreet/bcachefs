@@ -356,7 +356,7 @@ static void read_moving_endio(struct bio *bio)
 	if (bio->bi_error) {
 		io->op.error = bio->bi_error;
 		moving_error(io->context, MOVING_FLAG_READ);
-	} else if (ptr_stale(b->ca->set, b->ca, &b->key, 0)) {
+	} else if (ptr_stale(b->ca, &b->key, 0)) {
 		io->op.error = -EINTR;
 	}
 

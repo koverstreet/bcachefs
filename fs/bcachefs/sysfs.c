@@ -539,8 +539,8 @@ SHOW(__bch_cache_set)
 	sysfs_print(synchronous,		CACHE_SYNC(&c->sb));
 	sysfs_print(journal_delay_ms,		c->journal.delay_ms);
 
-	sysfs_hprint(bucket_size,		bucket_bytes(c));
-	sysfs_print(bucket_size_bytes,		bucket_bytes(c));
+	sysfs_hprint(bucket_size, (c->btree_pages * PAGE_SECTORS) << 9);
+	sysfs_print(bucket_size_bytes, (c->btree_pages * PAGE_SECTORS) << 9);
 	sysfs_hprint(block_size,		block_bytes(c));
 	sysfs_print(block_size_bytes,		block_bytes(c));
 

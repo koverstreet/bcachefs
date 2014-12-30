@@ -25,27 +25,41 @@ static inline struct cache *PTR_CACHE(const struct cache_set *c,
 		: NULL;
 }
 
+/* If you already know the cache then just call CACHE_BUCKET_NR */
+#define CACHE_BUCKET_NR(ca, k, ptr)					\
+	sector_to_bucket(ca, PTR_OFFSET(k, ptr))			\
+
 static inline size_t PTR_BUCKET_NR(const struct cache_set *c,
 				   const struct bkey *k,
 				   unsigned ptr)
 {
-	return sector_to_bucket(c, PTR_OFFSET(k, ptr));
+	struct cache *ca;
+	size_t bucket;
+
+	rcu_read_lock();
+	ca = PTR_CACHE(c, k, ptr);
+
+	/* Every key should belong to a cache */
+	BUG_ON(!ca);
+
+	bucket = CACHE_BUCKET_NR(ca, k, ptr);
+	rcu_read_unlock();
+
+	return bucket;
 }
 
-static inline u8 PTR_BUCKET_GEN(const struct cache_set *c,
-				const struct cache *ca,
+static inline u8 PTR_BUCKET_GEN(const struct cache *ca,
 				const struct bkey *k,
 				unsigned ptr)
 {
-	return ca->bucket_gens[PTR_BUCKET_NR(c, k, ptr)];
+	return ca->bucket_gens[CACHE_BUCKET_NR(ca, k, ptr)];
 }
 
-static inline struct bucket *PTR_BUCKET(const struct cache_set *c,
-					struct cache *ca,
+static inline struct bucket *PTR_BUCKET(struct cache *ca,
 					const struct bkey *k,
 					unsigned ptr)
 {
-	return ca->buckets + PTR_BUCKET_NR(c, k, ptr);
+	return ca->buckets + CACHE_BUCKET_NR(ca, k, ptr);
 }
 
 static inline u8 __gen_after(u8 a, u8 b)
@@ -70,11 +84,10 @@ static inline u8 gen_after(u8 a, u8 b)
  *
  * Warning: PTR_CACHE(c, k, ptr) must equal ca.
  */
-static inline u8 ptr_stale(const struct cache_set *c,
-			   const struct cache *ca,
+static inline u8 ptr_stale(const struct cache *ca,
 			   const struct bkey *k, unsigned ptr)
 {
-	return gen_after(PTR_BUCKET_GEN(c, ca, k, ptr), PTR_GEN(k, ptr));
+	return gen_after(PTR_BUCKET_GEN(ca, k, ptr), PTR_GEN(k, ptr));
 }
 
 /* bucket heaps */
@@ -184,23 +197,23 @@ static inline u64 sectors_available(struct cache_set *c)
 
 	rcu_read_lock();
 	for_each_cache_rcu(ca, c, i)
-		ret += buckets_available_cache(ca);
+		ret += buckets_available_cache(ca) << ca->bucket_bits;
 	rcu_read_unlock();
 
-	return ret << c->bucket_bits;
+	return ret;
 }
 
 static inline size_t __buckets_free_cache(struct cache *ca,
 					  struct bucket_stats stats,
 					  enum alloc_reserve reserve)
 {
-	size_t free = __buckets_available_cache(ca, stats) +
+	size_t free =  __buckets_available_cache(ca, stats) +
 		fifo_used(&ca->free[reserve]) +
 		fifo_used(&ca->free_inc);
 
 	if (reserve == RESERVE_NONE)
 		free = max_t(ssize_t, 0, free -
-			     ca->reserve_buckets_count);
+				ca->reserve_buckets_count);
 
 	return free;
 }
@@ -217,7 +230,7 @@ static inline u64 cache_sectors_used(struct cache *ca)
 
 	return (((u64) (ca->sb.first_bucket +
 			stats.buckets_alloc +
-			stats.buckets_meta)) << ca->set->bucket_bits) +
+			stats.buckets_meta)) << ca->bucket_bits) +
 		stats.sectors_dirty;
 }
 

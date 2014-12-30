@@ -3,19 +3,19 @@
 
 #include "extents.h"
 
-static inline size_t sector_to_bucket(const struct cache_set *c, sector_t s)
+static inline size_t sector_to_bucket(const struct cache *ca, sector_t s)
 {
-	return s >> c->bucket_bits;
+	return s >> ca->bucket_bits;
 }
 
-static inline sector_t bucket_to_sector(const struct cache_set *c, size_t b)
+static inline sector_t bucket_to_sector(const struct cache *ca, size_t b)
 {
-	return ((sector_t) b) << c->bucket_bits;
+	return ((sector_t) b) << ca->bucket_bits;
 }
 
-static inline sector_t bucket_remainder(const struct cache_set *c, sector_t s)
+static inline sector_t bucket_remainder(const struct cache *ca, sector_t s)
 {
-	return s & (c->sb.bucket_size - 1);
+	return s & (ca->sb.bucket_size - 1);
 }
 
 static inline struct cache_member_rcu *

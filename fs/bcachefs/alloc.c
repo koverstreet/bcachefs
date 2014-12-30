@@ -120,7 +120,7 @@ static void pd_controllers_update(struct work_struct *work)
 					   struct cache_set,
 					   pd_controllers_update);
 	struct cache *ca;
-	unsigned iter, bucket_bits = c->bucket_bits + 9;
+	unsigned iter;
 	int i;
 
 	/* All units are in bytes */
@@ -137,6 +137,7 @@ static void pd_controllers_update(struct work_struct *work)
 	for (i = CACHE_TIERS - 1; i >= 0; --i)
 		group_for_each_cache_rcu(ca, &c->cache_tiers[i], iter) {
 			struct bucket_stats stats = bucket_stats_read(ca);
+			unsigned bucket_bits = ca->bucket_bits + 9;
 
 			/*
 			 * Bytes of internal fragmentation, which can be
@@ -233,19 +234,17 @@ static void pd_controllers_update(struct work_struct *work)
 
 static int prio_io(struct cache *ca, uint64_t bucket, int op)
 {
-	struct bio *bio = bch_bbio_alloc(ca->set);
-	int ret;
+	bio_init(ca->bio_prio);
+	bio_set_op_attrs(ca->bio_prio, op, REQ_SYNC|REQ_META);
 
-	bio->bi_iter.bi_sector	= bucket * ca->sb.bucket_size;
-	bio->bi_bdev		= ca->bdev;
-	bio->bi_iter.bi_size	= bucket_bytes(ca);
-	bio_set_op_attrs(bio, op, REQ_SYNC|REQ_META);
-	bch_bio_map(bio, ca->disk_buckets);
+	ca->bio_prio->bi_max_vecs	= bucket_pages(ca);
+	ca->bio_prio->bi_io_vec		= ca->bio_prio->bi_inline_vecs;
+	ca->bio_prio->bi_iter.bi_sector	= bucket * ca->sb.bucket_size;
+	ca->bio_prio->bi_bdev		= ca->bdev;
+	ca->bio_prio->bi_iter.bi_size	= bucket_bytes(ca);
+	bch_bio_map(ca->bio_prio, ca->disk_buckets);
 
-	ret = submit_bio_wait(bio);
-
-	bch_bbio_free(bio, ca->set);
-	return ret;
+	return submit_bio_wait(ca->bio_prio);
 }
 
 static void bch_prio_write(struct cache *ca)
@@ -779,7 +778,7 @@ static int bch_allocator_thread(void *arg)
 			if (CACHE_DISCARD(&ca->mi) &&
 			    blk_queue_discard(bdev_get_queue(ca->bdev)))
 				blkdev_issue_discard(ca->bdev,
-					bucket_to_sector(c, bucket),
+					bucket_to_sector(ca, bucket),
 					ca->sb.bucket_size, GFP_KERNEL, 0);
 
 			while (1) {
@@ -892,7 +891,7 @@ void bch_bucket_free(struct cache_set *c, struct bkey *k)
 
 	for (i = 0; i < bch_extent_ptrs(k); i++)
 		if ((ca = PTR_CACHE(c, k, i)))
-			__bch_bucket_free(ca, PTR_BUCKET(c, ca, k, i));
+			__bch_bucket_free(ca, PTR_BUCKET(ca, k, i));
 
 	rcu_read_unlock();
 }
@@ -908,8 +907,8 @@ static void bch_bucket_free_never_used(struct cache_set *c, struct bkey *k)
 
 	for (i = 0; i < bch_extent_ptrs(k); i++)
 		if ((ca = PTR_CACHE(c, k, i))) {
-			r = PTR_BUCKET_NR(c, k, i);
-			g = PTR_BUCKET(c, ca, k, i);
+			r = CACHE_BUCKET_NR(ca, k, i);
+			g = PTR_BUCKET(ca, k, i);
 
 			spin_lock(&ca->freelist_lock);
 			verify_not_on_freelist(ca, r);
@@ -1049,7 +1048,7 @@ static enum bucket_alloc_ret __bch_bucket_alloc_set(struct cache_set *c,
 
 		BUG_ON(i < 0 || i > BKEY_EXTENT_PTRS_MAX);
 		k->val[i] = PTR(ca->bucket_gens[r],
-				bucket_to_sector(c, r),
+				bucket_to_sector(ca, r),
 				ca->sb.nr_this_dev);
 		bch_set_extent_ptrs(k, i + 1);
 	}
@@ -1119,7 +1118,7 @@ static void __bch_open_bucket_put(struct cache_set *c, struct open_bucket *b)
 	rcu_read_lock();
 	for (i = 0; i < bch_extent_ptrs(k); i++)
 		if ((ca = PTR_CACHE(c, k, i)))
-			bch_unmark_open_bucket(ca, PTR_BUCKET(c, ca, k, i));
+			bch_unmark_open_bucket(ca, PTR_BUCKET(ca, k, i));
 	rcu_read_unlock();
 
 	list_move(&b->list, &c->open_buckets_free);
@@ -1149,7 +1148,7 @@ static struct open_bucket *bch_open_bucket_get(struct cache_set *c,
 				       struct open_bucket, list);
 		list_move(&ret->list, &c->open_buckets_open);
 		atomic_set(&ret->pin, 1);
-		ret->sectors_free = c->sb.bucket_size;
+		ret->sectors_free = PAGE_SECTORS * c->btree_pages;
 		bkey_init(&ret->key);
 		c->open_buckets_nr_free--;
 		trace_bcache_open_bucket_alloc(c, cl);
@@ -1257,7 +1256,7 @@ static void verify_not_stale(struct cache_set *c, struct bkey *k)
 	rcu_read_lock();
 	for (ptr = 0; ptr < bch_extent_ptrs(k); ptr++)
 		if ((ca = PTR_CACHE(c, k, ptr)))
-			BUG_ON(ptr_stale(c, ca, k, ptr));
+			BUG_ON(ptr_stale(ca, k, ptr));
 	rcu_read_unlock();
 #endif
 }

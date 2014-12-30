@@ -34,12 +34,12 @@ u8 bch_btree_key_recalc_oldest_gen(struct cache_set *c, const struct bkey *k)
 			__set_bit(PTR_DEV(k, i), c->cache_slots_used);
 
 		if ((ca = PTR_CACHE(c, k, i))) {
-			struct bucket *g = PTR_BUCKET(c, ca, k, i);
+			struct bucket *g = PTR_BUCKET(ca, k, i);
 
 			if (__gen_after(g->oldest_gen, PTR_GEN(k, i)))
 				g->oldest_gen = PTR_GEN(k, i);
 
-			max_stale = max(max_stale, ptr_stale(c, ca, k, i));
+			max_stale = max(max_stale, ptr_stale(ca, k, i));
 		}
 	}
 
@@ -63,7 +63,7 @@ u8 __bch_btree_mark_key(struct cache_set *c, int level, const struct bkey *k)
 		for (i = 0; i < bch_extent_ptrs(k); i++)
 			if ((ca = PTR_CACHE(c, k, i)))
 				bch_mark_metadata_bucket(ca,
-					PTR_BUCKET(c, ca, k, i), true);
+					PTR_BUCKET(ca, k, i), true);
 	} else {
 		__bch_add_sectors(c, NULL, k, KEY_START(k), KEY_SIZE(k), false);
 	}
@@ -216,7 +216,7 @@ static void bch_mark_allocator_buckets(struct cache_set *c)
 		for (i = 0; i < bch_extent_ptrs(&b->key); i++)
 			if ((ca = PTR_CACHE(c, &b->key, i)))
 				bch_mark_alloc_bucket(ca,
-					PTR_BUCKET(c, ca, &b->key, i));
+					PTR_BUCKET(ca, &b->key, i));
 		spin_unlock(&b->lock);
 	}
 

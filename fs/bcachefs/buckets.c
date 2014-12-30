@@ -192,7 +192,7 @@ u8 bch_mark_data_bucket(struct cache_set *c, struct cache *ca, struct btree *b,
 			int sectors, bool dirty)
 {
 	struct bucket_mark old, new;
-	unsigned long bucket_nr = PTR_BUCKET_NR(c, k, i);
+	unsigned long bucket_nr = CACHE_BUCKET_NR(ca, k, i);
 	unsigned gen = PTR_GEN(k, i);
 	unsigned saturated;
 	u8 stale;
@@ -250,7 +250,7 @@ u8 bch_mark_data_bucket(struct cache_set *c, struct cache *ca, struct btree *b,
 	if (saturated &&
 	    atomic_long_add_return(saturated,
 				   &ca->saturated_count) >=
-	    ca->free_inc.size << c->bucket_bits) {
+	    ca->free_inc.size << ca->bucket_bits) {
 		if (c->gc_thread) {
 			trace_bcache_gc_sectors_saturated(c);
 			wake_up_process(c->gc_thread);

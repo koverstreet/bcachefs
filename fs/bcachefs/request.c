@@ -391,7 +391,7 @@ static void bch_cache_read_endio(struct bio *bio)
 
 	if (bio->bi_error)
 		s->iop.error = bio->bi_error;
-	else if (ptr_stale(b->ca->set, b->ca, &b->key, 0)) {
+	else if (ptr_stale(b->ca, &b->key, 0)) {
 		/* Read bucket invalidate race */
 		atomic_long_inc(&s->iop.c->cache_read_races);
 		s->iop.error = -EINTR;
@@ -451,7 +451,7 @@ retry:
 				goto retry;
 			}
 		} else {
-			PTR_BUCKET(s->iop.c, ca, k, ptr)->read_prio =
+			PTR_BUCKET(ca, k, ptr)->read_prio =
 				s->iop.c->prio_clock[READ].hand;
 
 			if (!KEY_CACHED(k))

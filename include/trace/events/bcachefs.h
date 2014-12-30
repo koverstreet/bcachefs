@@ -474,7 +474,8 @@ DECLARE_EVENT_CLASS(btree_node_op,
 
 	TP_fast_assign(
 		memcpy(__entry->uuid, b->c->sb.set_uuid.b, 16);
-		__entry->bucket	= PTR_BUCKET_NR(b->c, &b->key, 0);
+		__entry->bucket	= bch_extent_ptrs(&b->key) > 1
+		? PTR_BUCKET_NR(b->c, &b->key, 0) : 0;
 		__entry->level	= b->level;
 		__entry->id	= b->btree_id;
 		__entry->op	= op;
@@ -525,7 +526,13 @@ TRACE_EVENT(bcache_btree_insert_key,
 		__entry->id		= b->btree_id;
 		__entry->b_inode	= KEY_INODE(&b->key);
 		__entry->b_offset	= KEY_OFFSET(&b->key);
-		__entry->bucket		= PTR_BUCKET_NR(b->c, k, 0);
+		/*
+		 * Make sure that this key has ptrs otherwise
+		 * we'll trigger a BUG_ON since there is no
+		 * PTR_DEV set
+		 */
+		__entry->bucket		= bch_extent_ptrs(k) > 1 ?
+		PTR_BUCKET_NR(b->c, k, 0) : 0;
 		__entry->inode		= KEY_INODE(k);
 		__entry->offset		= KEY_OFFSET(k);
 		__entry->size		= KEY_SIZE(k);
@@ -797,7 +804,7 @@ TRACE_EVENT(bcache_invalidate,
 
 	TP_fast_assign(
 		__entry->dev		= ca->bdev->bd_dev;
-		__entry->offset		= bucket << ca->set->bucket_bits;
+		__entry->offset		= bucket << ca->bucket_bits;
 		__entry->sectors	= sectors;
 	),
 

@@ -30,7 +30,7 @@ static bool moving_pred(struct scan_keylist *kl, const struct bkey *k)
 	rcu_read_lock();
 	for (i = 0; i < bch_extent_ptrs(k); i++)
 		if (PTR_CACHE(c, k, i) == ca &&
-		    PTR_BUCKET(c, ca, k, i)->copygc_gen)
+		    PTR_BUCKET(ca, k, i)->copygc_gen)
 			ret = true;
 	rcu_read_unlock();
 
@@ -49,7 +49,7 @@ static int issue_moving_gc_move(struct moving_queue *q,
 
 	for (ptr = 0; ptr < bch_extent_ptrs(k); ptr++)
 		if ((ca->sb.nr_this_dev == PTR_DEV(k, ptr)) &&
-		    (gen = PTR_BUCKET(c, ca, k, ptr)->copygc_gen)) {
+		    (gen = PTR_BUCKET(ca, k, ptr)->copygc_gen)) {
 			gen--;
 			BUG_ON(gen > ARRAY_SIZE(ca->gc_buckets));
 			wp = &ca->gc_buckets[gen];
