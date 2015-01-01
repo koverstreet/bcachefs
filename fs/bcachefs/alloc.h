@@ -49,7 +49,7 @@ int bch_bucket_alloc_set(struct cache_set *, enum alloc_reserve, struct bkey *,
 void bch_open_bucket_put(struct cache_set *, struct open_bucket *);
 
 struct open_bucket *bch_alloc_sectors(struct cache_set *, struct write_point *,
-				      struct bkey *, struct closure *);
+				      struct bkey *, struct closure *, bool);
 
 static inline void bch_wake_allocator(struct cache *ca)
 {

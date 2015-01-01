@@ -408,9 +408,10 @@ static inline void bch_bkey_val_to_text(struct btree_keys *b, char *buf,
 static inline bool bch_bkey_maybe_compatible(const struct bkey *l,
 					     const struct bkey *r)
 {
-	bool result = (KEY_WIPED(l) == KEY_WIPED(r) &&
-		       KEY_BAD(l) == KEY_BAD(r) &&
+	bool result = (KEY_CACHED(l) == KEY_CACHED(r) &&
 		       KEY_DELETED(l) == KEY_DELETED(r) &&
+		       KEY_WIPED(l) == KEY_WIPED(r) &&
+		       KEY_BAD(l) == KEY_BAD(r) &&
 		       KEY_VERSION(l) == KEY_VERSION(r));
 	return result;
 }
@@ -418,13 +419,9 @@ static inline bool bch_bkey_maybe_compatible(const struct bkey *l,
 static inline bool bch_bkey_equal_header(const struct bkey *l,
 					 const struct bkey *r)
 {
-	return (KEY_CACHED(l) == KEY_CACHED(r) &&
-		KEY_WIPED(l) == KEY_WIPED(r) &&
-		KEY_BAD(l) == KEY_BAD(r) &&
-		KEY_DELETED(l) == KEY_DELETED(r) &&
-		KEY_VERSION(l) == KEY_VERSION(r) &&
+	return bch_bkey_maybe_compatible(l, r) &&
 		KEY_U64s(l) == KEY_U64s(r) &&
-		KEY_CSUM(l) == KEY_CSUM(r));
+		KEY_CSUM(l) == KEY_CSUM(r);
 }
 
 /*

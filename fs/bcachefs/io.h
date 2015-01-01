@@ -3,11 +3,13 @@
 
 /*
  * Adding a wrapper around the replace_key allows easy addition of
- * statistics and other fields for debugging.
+ * statistics and other fields for debugging, etc.
  */
 
 struct bch_replace_info {
-	/* Debugging */
+	bool replace_exact;	/* No fragmentation allowed */
+	unsigned successes;	/* How many insertions succeeded */
+	unsigned failures;	/* How many insertions failed */
 	BKEY_PADDED(key);
 };
 

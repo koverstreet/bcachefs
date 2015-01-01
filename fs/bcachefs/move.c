@@ -602,7 +602,6 @@ static int issue_migration_move(struct cache *ca,
 	struct moving_io *io;
 	struct write_point *wp = &c->migration_write_point;
 
-
 	io = moving_io_alloc(k);
 	if (io == NULL)
 		return -ENOMEM;
@@ -618,6 +617,12 @@ static int issue_migration_move(struct cache *ca,
 
 	bch_write_op_init(&io->op, c, &io->bio.bio,
 			  wp, k, k, 0);
+
+#if (0)
+	/* For testing only */
+	io->op.replace_info.replace_exact = true;
+#endif
+
 	BUG_ON(q->wq == NULL);
 	io->op.io_wq = q->wq;
 

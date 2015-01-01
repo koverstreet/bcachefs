@@ -62,6 +62,8 @@ struct bkey *bch_generic_sort_fixup(struct btree_node_iter *iter,
 	return NULL;
 }
 
+/* This returns true if insert should be inserted, false otherwise */
+
 bool bch_insert_fixup_key(struct btree *b, struct bkey *insert,
 			  struct btree_node_iter *iter,
 			  struct bch_replace_info *replace,
@@ -639,13 +641,9 @@ static void bch_drop_subtract(struct btree *b, struct bkey *k)
  * actually read, and not the whole extent, and due to the key
  * splitting done in bch_extent_insert_fixup, preserving such
  * caching is difficult.
- * In addition, we are not currently marking the keys in the bios
- * in flight (insert and replace keys), so this could insert a stale
- * pointer.
- * Until we mark those keys as well, we can't turn this on.
  */
 
-static bool bkey_cmpxchg_cmp(struct bkey *k, struct bkey *old)
+static bool bkey_cmpxchg_cmp(struct bkey *k, struct bkey *old, bool exact)
 {
 	/* skip past gen */
 	s64 offset = (KEY_START(k) - KEY_START(old)) << 8;
@@ -654,17 +652,22 @@ static bool bkey_cmpxchg_cmp(struct bkey *k, struct bkey *old)
 	if (!KEY_SIZE(old))
 		return false;
 
+	/* This does not compare KEY_OFFSET or KEY_SIZE */
+
 	if (bch_bkey_equal_header(k, old)) {
 		for (i = 0; i < bch_extent_ptrs(old); i++)
 			if (k->val[i] != old->val[i] + offset)
-				goto try_partial;
+				goto try_partial_match;
 
 		return true;
 	}
 
-try_partial:
+try_partial_match:
+	if (exact)
+		/* Non-exact matches not allowed */
+		return false;
 #if (0)
-	/* This does not compare KEY_CACHED, KEY_U64s, or KEY_CSUM */
+	/* This does not compare KEY_U64s or KEY_CSUM either */
 
 	if (bch_bkey_maybe_compatible(k, old)) {
 		for (i = 0; i < bch_extent_ptrs(old); i++) {
@@ -717,6 +720,7 @@ static bool bkey_cmpxchg(struct btree *b,
 	if (bkey_cmp(&START_KEY(k), done) > 0) {
 		/* insert previous partial match: */
 		if (bkey_cmp(done, &START_KEY(new)) > 0) {
+			replace->successes += 1;
 			bch_btree_insert_and_journal(b, iter,
 						     bch_key_split(done, new),
 						     res);
@@ -739,9 +743,10 @@ static bool bkey_cmpxchg(struct btree *b,
 		*done = START_KEY(k);
 	}
 
-	ret = bkey_cmpxchg_cmp(k, old);
+	ret = bkey_cmpxchg_cmp(k, old, false);
 	if (!ret) {
 		/* failed: */
+		replace->failures += 1;
 		if (bkey_cmp(done, &START_KEY(new)) > 0) {
 			bch_btree_insert_and_journal(b, iter,
 						     bch_key_split(done, new),
@@ -753,7 +758,8 @@ static bool bkey_cmpxchg(struct btree *b,
 			bch_drop_subtract(b, new);
 		else
 			bch_cut_subtract_front(b, k, new);
-	}
+	} else
+		replace->successes += 1;
 
 	*done = bkey_cmp(k, new) < 0 ? *k : *new;
 	return ret;
@@ -809,6 +815,96 @@ static void handle_existing_key_newer(struct btree *b,
 	}
 }
 
+static void overwrite_full_key(struct btree *b, struct bkey *insert,
+			     struct btree_node_iter *iter,
+			     struct bkey *k)
+{
+	if (!KEY_DELETED(k))
+		b->keys.nr_live_keys -= KEY_U64s(k);
+
+	bch_drop_subtract(b, k);
+	/*
+	 * Completely overwrote, so if this key isn't in the
+	 * same bset as the one we're going to insert into we
+	 * can just set its size to 0, and not modify the
+	 * offset, and not have to invalidate/fix the auxiliary
+	 * search tree.
+	 *
+	 * Note: peek_overlapping() will think we still overlap,
+	 * so we need the explicit iter_next() call.
+	 */
+	if (!bkey_written(&b->keys, k))
+		SET_KEY_OFFSET(k, KEY_START(insert));
+
+	bch_btree_node_iter_next_all(iter);
+}
+
+/*
+ * bch_insert_exact_extent is similar to bch_insert_fixup_extent but it
+ * is always used to replace and does not fragment the key.
+ * It is pre-checked by the caller to make sure that it would be a
+ * complete replacement.
+ *
+ * This returns true if it inserted, false otherwise.  It can return
+ * false because the comparison fails or because there is no room --
+ * the caller needs to split the btree node.
+ */
+bool bch_insert_exact_extent(struct btree *b,
+			     struct bkey *insert,
+			     struct btree_node_iter *iter,
+			     struct bch_replace_info *replace,
+			     struct bkey *done,
+			     struct journal_res *res)
+{
+	bool ret;
+	struct bkey *k;
+
+	BUG_ON(!KEY_SIZE(insert));
+	BUG_ON(replace == NULL || !replace->replace_exact);
+	BUG_ON(!bch_same_extent(insert, &replace->key));
+
+	/* Make sure there is enough room for the insertion */
+
+	if (bch_btree_keys_u64s_remaining(&b->keys) < BKEY_EXTENT_MAX_U64s) {
+		/*
+		 * XXX: would be better to explicitly signal that we
+		 * need to split
+		 */
+		*done = START_KEY(insert);
+		return false;
+	}
+
+	/* Whether we succeed or fail, it is all or nothing */
+	*done = *insert;
+
+	k = bch_btree_node_iter_peek_overlapping(iter, insert);
+
+	ret = (k != NULL
+	       && !KEY_DELETED(k)
+	       && bch_same_extent(k, &replace->key)
+	       && bkey_cmpxchg_cmp(k, &replace->key, true));
+
+	if (ret) {
+		/*
+		 * Do not insert if the pointers being inserted are stale.
+		 */
+		if (bch_add_sectors(b, insert, KEY_START(insert),
+				    KEY_SIZE(insert), true)) {
+			/* We raced - a dirty pointer was stale */
+			ret = false;
+		} else {
+			overwrite_full_key(b, insert, iter, k);
+			bch_btree_insert_and_journal(b, iter, insert, res);
+			replace->successes += 1;
+		}
+	}
+
+	if (!ret)
+		replace->failures += 1;
+
+	return ret;
+}
+
 /**
  * bch_extent_insert_fixup - insert a new extent and deal with overlaps
  *
@@ -843,6 +939,14 @@ static void handle_existing_key_newer(struct btree *b,
  * the key merging done in bch_btree_insert_key() - for two mergeable keys k, j
  * there may be another 0 size key between them in another bset, and it will
  * thus overlap with the merged key.
+ *
+ * This returns true if it inserted, false otherwise.
+ * Note that it can return false due to failure or because there is no
+ * room for the insertion -- the caller needs to split the btree node.
+ *
+ * In addition, the end of done indicates how much has been processed.
+ * If the end of done is not the same as the end of insert, then
+ * key insertion needs to continue/be retried.
  */
 bool bch_insert_fixup_extent(struct btree *b, struct bkey *insert,
 			     struct btree_node_iter *iter,
@@ -878,6 +982,8 @@ bool bch_insert_fixup_extent(struct btree *b, struct bkey *insert,
 		/* We raced - a dirty pointer was stale */
 		*done = *insert;
 		SET_KEY_SIZE(insert, 0);
+		if (replace != NULL)
+			replace->failures += 1;
 		return false;
 	}
 
@@ -947,25 +1053,7 @@ bool bch_insert_fixup_extent(struct btree *b, struct bkey *insert,
 
 		case BCH_EXTENT_OVERLAP_ALL:
 			/* The insert key completely covers k, invalidate k */
-			if (!KEY_DELETED(k))
-				b->keys.nr_live_keys -= KEY_U64s(k);
-
-			bch_drop_subtract(b, k);
-
-			/*
-			 * Completely overwrote, so if this key isn't in the
-			 * same bset as the one we're going to insert into we
-			 * can just set its size to 0, and not modify the
-			 * offset, and not have to invalidate/fix the auxiliary
-			 * search tree.
-			 *
-			 * note: peek_overlapping() will think we still overlap,
-			 * so we need the explicit iter_next() call.
-			 */
-			if (!bkey_written(&b->keys, k))
-				SET_KEY_OFFSET(k, KEY_START(insert));
-
-			bch_btree_node_iter_next_all(iter);
+			overwrite_full_key(b, insert, iter, k);
 			break;
 
 		case BCH_EXTENT_OVERLAP_MIDDLE:
