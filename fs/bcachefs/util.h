@@ -401,17 +401,20 @@ ssize_t bch_read_string_list(const char *buf, const char * const list[]);
 
 struct time_stats {
 	spinlock_t	lock;
+	u64		count;
 	/*
 	 * all fields are in nanoseconds, averages are ewmas stored left shifted
 	 * by 8
 	 */
-	uint64_t	max_duration;
-	uint64_t	average_duration;
-	uint64_t	average_frequency;
-	uint64_t	last;
+	u64		last_duration;
+	u64		max_duration;
+	u64		average_duration;
+	u64		average_frequency;
+	u64		last;
 };
 
-void bch_time_stats_update(struct time_stats *stats, uint64_t time);
+void bch_time_stats_clear(struct time_stats *stats);
+void bch_time_stats_update(struct time_stats *stats, u64 time);
 
 static inline unsigned local_clock_us(void)
 {
@@ -435,8 +438,13 @@ do {									\
 			  average_frequency,	frequency_units);	\
 	__print_time_stat(stats, name,					\
 			  average_duration,	duration_units);	\
+	sysfs_print(name ## _ ##count, (stats)->count);			\
+	sysfs_print(name ## _ ##last_duration ## _ ## duration_units,	\
+			div_u64((stats)->last_duration,			\
+				NSEC_PER_ ## duration_units));		\
 	sysfs_print(name ## _ ##max_duration ## _ ## duration_units,	\
-			div_u64((stats)->max_duration, NSEC_PER_ ## duration_units));\
+			div_u64((stats)->max_duration,			\
+				NSEC_PER_ ## duration_units));		\
 									\
 	sysfs_print(name ## _last_ ## frequency_units, (stats)->last	\
 		    ? div_s64(local_clock() - (stats)->last,		\
@@ -444,19 +452,31 @@ do {									\
 		    : -1LL);						\
 } while (0)
 
+#define sysfs_clear_time_stats(stats, name)				\
+do {									\
+	if (attr == &sysfs_ ## name ## _clear)				\
+		bch_time_stats_clear(stats);				\
+} while (0)
+
 #define sysfs_time_stats_attribute(name,				\
 				   frequency_units,			\
 				   duration_units)			\
+write_attribute(name ## _clear);					\
+read_attribute(name ## _count);						\
 read_attribute(name ## _average_frequency_ ## frequency_units);		\
 read_attribute(name ## _average_duration_ ## duration_units);		\
+read_attribute(name ## _last_duration_ ## duration_units);		\
 read_attribute(name ## _max_duration_ ## duration_units);		\
 read_attribute(name ## _last_ ## frequency_units)
 
 #define sysfs_time_stats_attribute_list(name,				\
 					frequency_units,		\
 					duration_units)			\
+&sysfs_ ## name ## _clear,						\
+&sysfs_ ## name ## _count,						\
 &sysfs_ ## name ## _average_frequency_ ## frequency_units,		\
 &sysfs_ ## name ## _average_duration_ ## duration_units,		\
+&sysfs_ ## name ## _last_duration_ ## duration_units,			\
 &sysfs_ ## name ## _max_duration_ ## duration_units,			\
 &sysfs_ ## name ## _last_ ## frequency_units,
 

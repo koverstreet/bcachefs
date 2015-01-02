@@ -695,6 +695,11 @@ STORE(__bch_cache_set)
 		return size;
 	}
 
+	sysfs_clear_time_stats(&c->btree_gc_time, btree_gc);
+	sysfs_clear_time_stats(&c->btree_split_time, btree_split);
+	sysfs_clear_time_stats(&c->sort.time, btree_sort);
+	sysfs_clear_time_stats(&c->btree_read_time, btree_read);
+
 	sysfs_strtoul(journal_delay_ms, c->journal.delay_ms);
 	sysfs_strtoul(verify, c->verify);
 	sysfs_strtoul(key_merging_disabled, c->key_merging_disabled);

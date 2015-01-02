@@ -146,11 +146,27 @@ bool bch_is_zero(const char *p, size_t n)
 	return true;
 }
 
-void bch_time_stats_update(struct time_stats *stats, uint64_t start_time)
+void bch_time_stats_clear(struct time_stats *stats)
 {
-	uint64_t now, duration, last;
+	spin_lock(&stats->lock);
+
+	stats->count = 0;
+	stats->last_duration = 0;
+	stats->max_duration = 0;
+	stats->average_duration = 0;
+	stats->average_frequency = 0;
+	stats->last = 0;
+
+	spin_unlock(&stats->lock);
+}
+
+void bch_time_stats_update(struct time_stats *stats, u64 start_time)
+{
+	u64 now, duration, last;
 
 	spin_lock(&stats->lock);
+
+	stats->count++;
 
 	now		= local_clock();
 	duration	= time_after64(now, start_time)
@@ -158,6 +174,7 @@ void bch_time_stats_update(struct time_stats *stats, uint64_t start_time)
 	last		= time_after64(now, stats->last)
 		? now - stats->last : 0;
 
+	stats->last_duration = duration;
 	stats->max_duration = max(stats->max_duration, duration);
 
 	if (stats->last) {
