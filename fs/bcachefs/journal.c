@@ -962,7 +962,8 @@ void __bch_journal_res_put(struct cache_set *c,
 }
 
 static bool __journal_res_get(struct cache_set *c, struct journal_res *res,
-			      unsigned u64s_min, unsigned u64s_max)
+			      unsigned u64s_min, unsigned u64s_max,
+			      u64 *start_time)
 {
 	unsigned actual_min = jset_u64s(u64s_min);
 	unsigned actual_max = jset_u64s(u64s_max);
@@ -980,8 +981,17 @@ static bool __journal_res_get(struct cache_set *c, struct journal_res *res,
 			c->journal.u64s_remaining -= res->nkeys;
 			c->journal.res_count++;
 			spin_unlock(&c->journal.lock);
+
+			if (*start_time)
+				bch_time_stats_update(&c->journal_full_time,
+						      *start_time);
+
 			return true;
 		}
+
+		/* local_clock() can of course be 0 but we don't care */
+		if (*start_time == 0)
+			*start_time = local_clock();
 
 		if (!c->journal.u64s_remaining) {
 			journal_reclaim(c);
@@ -1029,8 +1039,10 @@ static bool __journal_res_get(struct cache_set *c, struct journal_res *res,
 void bch_journal_res_get(struct cache_set *c, struct journal_res *res,
 			 unsigned u64s_min, unsigned u64s_max)
 {
+	u64 start_time = 0;
+
 	wait_event(c->journal.wait,
-		   __journal_res_get(c, res, u64s_min, u64s_max));
+		   __journal_res_get(c, res, u64s_min, u64s_max, &start_time));
 }
 
 void bch_journal_meta(struct cache_set *c, struct closure *parent)

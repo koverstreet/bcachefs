@@ -92,6 +92,7 @@ sysfs_time_stats_attribute(btree_gc, sec, ms);
 sysfs_time_stats_attribute(btree_split, sec, us);
 sysfs_time_stats_attribute(btree_sort, ms, us);
 sysfs_time_stats_attribute(btree_read, ms, us);
+sysfs_time_stats_attribute(journal_full, sec, ms);
 
 read_attribute(btree_gc_running);
 rw_attribute(btree_gc_always_rewrite);
@@ -551,6 +552,7 @@ SHOW(__bch_cache_set)
 	sysfs_print_time_stats(&c->btree_split_time, btree_split, sec, us);
 	sysfs_print_time_stats(&c->sort.time, btree_sort, ms, us);
 	sysfs_print_time_stats(&c->btree_read_time, btree_read, ms, us);
+	sysfs_print_time_stats(&c->journal_full_time, journal_full, sec, ms);
 
 	sysfs_print(btree_used_percent,	bch_btree_used(c));
 	sysfs_print(btree_nodes,	c->gc_stats.nodes);
@@ -699,6 +701,7 @@ STORE(__bch_cache_set)
 	sysfs_clear_time_stats(&c->btree_split_time, btree_split);
 	sysfs_clear_time_stats(&c->sort.time, btree_sort);
 	sysfs_clear_time_stats(&c->btree_read_time, btree_read);
+	sysfs_clear_time_stats(&c->journal_full_time, journal_full);
 
 	sysfs_strtoul(journal_delay_ms, c->journal.delay_ms);
 	sysfs_strtoul(verify, c->verify);
@@ -897,6 +900,7 @@ static struct attribute *bch_cache_set_internal_files[] = {
 	sysfs_time_stats_attribute_list(btree_split, sec, us)
 	sysfs_time_stats_attribute_list(btree_sort, ms, us)
 	sysfs_time_stats_attribute_list(btree_read, ms, us)
+	sysfs_time_stats_attribute_list(journal_full, sec, ms)
 
 	&sysfs_btree_gc_running,
 

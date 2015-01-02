@@ -856,6 +856,7 @@ static struct cache_set *bch_cache_set_alloc(struct cache *ca)
 	spin_lock_init(&c->btree_gc_time.lock);
 	spin_lock_init(&c->btree_split_time.lock);
 	spin_lock_init(&c->btree_read_time.lock);
+	spin_lock_init(&c->journal_full_time.lock);
 
 	bch_open_buckets_init(c);
 	bch_tiering_init_cache_set(c);
