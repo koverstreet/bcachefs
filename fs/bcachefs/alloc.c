@@ -413,10 +413,8 @@ static inline u8 bucket_gc_gen(struct cache *ca, size_t r)
  *
  * If there aren't enough available buckets to fill up free_inc, wait until
  * there are.
- * However, if we are buzzing in bch_allocator_thread and btree_gc is waiting
- * on the gc_lock, let it run.
  */
-static int wait_buckets_available(struct cache *ca, bool first_time)
+static int wait_buckets_available(struct cache *ca)
 {
 	int ret = 0;
 
@@ -427,9 +425,25 @@ static int wait_buckets_available(struct cache *ca, bool first_time)
 			break;
 		}
 
-		if (!test_bit(CACHE_SET_GC_FAILURE, &ca->set->flags) &&
-		    buckets_available_cache(ca) >= fifo_free(&ca->free_inc) &&
-		    (first_time || !rwsem_is_contended(&ca->set->gc_lock)))
+		if (test_bit(CACHE_SET_GC_FAILURE, &ca->set->flags)) {
+			ret = -1;
+			break;
+		}
+
+		if (ca->inc_gen_needs_gc > ca->free_inc.size) {
+			if (ca->set->gc_thread) {
+				trace_bcache_gc_cannot_inc_gens(ca->set);
+				wake_up_process(ca->set->gc_thread);
+			}
+
+			/*
+			 * We are going to wait for GC to wake us up, even if
+			 * bucket counters tell us enough buckets are available,
+			 * because we are actually waiting for GC to rewrite
+			 * nodes with stale pointers
+			 */
+		} else if (buckets_available_cache(ca) >=
+			   fifo_free(&ca->free_inc))
 			break;
 
 		up_read(&ca->set->gc_lock);
@@ -549,12 +563,6 @@ static bool bch_can_invalidate_bucket(struct cache *ca, struct bucket *g)
 
 	if (!can_inc_bucket_gen(ca, g - ca->buckets)) {
 		ca->inc_gen_needs_gc++;
-		if (ca->inc_gen_needs_gc > ca->free_inc.size) {
-			if (ca->set->gc_thread) {
-				trace_bcache_gc_cannot_inc_gens(ca->set);
-				wake_up_process(ca->set->gc_thread);
-			}
-		}
 		return false;
 	}
 
@@ -749,7 +757,6 @@ static bool bch_allocator_push(struct cache *ca, long bucket)
  */
 static int bch_allocator_thread(void *arg)
 {
-	bool first_time;
 	struct cache *ca = arg;
 	struct cache_set *c = ca->set;
 
@@ -792,10 +799,8 @@ static int bch_allocator_thread(void *arg)
 
 		down_read(&c->gc_lock);
 
-		for (first_time = true;
-		     first_time || !fifo_full(&ca->free_inc);
-		     first_time = false) {
-			if (wait_buckets_available(ca, first_time)) {
+		while (!fifo_full(&ca->free_inc)) {
+			if (wait_buckets_available(ca)) {
 				up_read(&c->gc_lock);
 				goto out;
 			}
