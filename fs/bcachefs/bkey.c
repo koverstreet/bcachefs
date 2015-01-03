@@ -17,6 +17,10 @@ int bch_bkey_to_text(char *buf, size_t size, const struct bkey *k)
 		p(" deleted");
 	if (KEY_WIPED(k))
 		p(" wiped");
+	if (KEY_BAD(k))
+		p(" bad");
+
+
 #undef p
 
 	return out - buf;

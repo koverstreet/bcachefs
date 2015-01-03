@@ -384,7 +384,8 @@ static void __bch_data_move(struct closure *cl)
 	u64 size = KEY_SIZE(&io->key);
 	int ptr;
 
-	ca = bch_extent_pick_ptr(io->op.c, &io->key, &ptr);
+	ca = bch_extent_pick_ptr_avoiding(io->op.c, &io->key, &ptr,
+					  io->context->avoid);
 	if (IS_ERR_OR_NULL(ca))
 		closure_return_with_destructor(cl, moving_io_destructor);
 
@@ -451,13 +452,6 @@ void bch_data_move(struct moving_queue *q,
 		closure_call(&io->cl, __bch_data_move, NULL, &ctxt->cl);
 	return;
 }
-
-struct migrate_data_op {
-	struct cache_set	*c;
-	struct moving_queue	*q;
-	struct moving_context	context;
-	unsigned		dev;
-};
 
 static bool migrate_data_pred(struct scan_keylist *kl, const struct bkey *k)
 {
@@ -664,6 +658,7 @@ static int issue_migration_move(struct cache *ca,
 #define MIGRATION_DEBUG		0
 
 #define MAX_DATA_OFF_ITER	10
+#define MAX_FLAG_DATA_BAD_ITER	(MIGRATION_DEBUG ? 2 : 1)
 #define PASS_LOW_LIMIT		(MIGRATION_DEBUG ? 0 : 2)
 #define MIGRATE_NR		64
 #define MIGRATE_READ_NR		32
@@ -717,19 +712,23 @@ int bch_move_data_off_device(struct cache *ca)
 
 	BUG_ON(queue->wq == NULL);
 	bch_moving_context_init(&context, NULL, MOVING_PURPOSE_MIGRATION);
+	context.avoid = ca;
 
 	/*
-	 * Only one pass should be necessary as we've quiesced all writes
-	 * before calling this.
+	 * In theory, only one pass should be necessary as we've
+	 * quiesced all writes before calling this.
 	 *
-	 * The only reason we may iterate is if one of the moves fails
-	 * due to an error, which we can find out from the moving_context.
+	 * However, in practice, more than one pass may be necessary:
+	 * - Some move fails due to an error. We can can find this out
+	 *   from the moving_context.
+	 * - Some key swap failed because some of the pointers in the
+	 *   key in the tree changed due to caching behavior, btree gc
+	 *   pruning stale pointers, or tiering (if the device being
+	 *   removed is in tier 0).  A smarter bkey_cmpxchg would
+	 *   handle these cases.
 	 *
-	 * Currently it can also fail to move some extent because it's key
-	 * changes in between so that bkey_cmpxchg fails. The reason for
-	 * this is that the extent is cached or un-cached, changing the
-	 * device pointers.  This will be remedied soon by improving
-	 * bkey_cmpxchg to recognize this case.
+	 * Thus this scans the tree one more time than strictly necessary,
+	 * but that can be viewed as a verification pass.
 	 */
 
 	seen_key_count = 1;
@@ -930,6 +929,156 @@ int bch_move_meta_data_off_device(struct cache *ca)
 		pr_err("Unable to move the journal off in %pU.",
 		       ca->set->sb.set_uuid.b);
 		ret = 1;	/* Failure */
+	}
+
+	return ret;
+}
+
+/*
+ * Flagging data bad when forcibly removing a device after failing to
+ * migrate the data off the device.
+ */
+
+static bool flag_data_pred(struct cache *ca, const struct bkey *k)
+{
+	unsigned dev = ca->sb.nr_this_dev;
+	unsigned i;
+
+	for (i = 0; i < bch_extent_ptrs(k); i++)
+		if (PTR_DEV(k, i) == dev)
+			return true;
+
+	return false;
+}
+
+static int bch_flag_key_bad(struct btree_iter *iter,
+			    struct cache *ca,
+			    const struct bkey *orig_k)
+{
+	unsigned i, n_ptrs;
+	bool found = false;
+	BKEY_PADDED(key) tmp;
+	struct bkey *k = &tmp.key;
+	struct cache_set *c = ca->set;
+	unsigned dev = ca->sb.nr_this_dev;
+
+	bkey_copy(k, orig_k);
+
+	for (i = 0; i < bch_extent_ptrs(k); i++)
+		if (PTR_DEV(k, i) == dev) {
+			found = true;
+			bch_extent_drop_ptr(k, i);
+		}
+
+	BUG_ON(!found);
+
+	bch_extent_drop_stale(c, k);
+
+	/*
+	 * The key can still be valid because the pointers to the bad
+	 * device were just cache pointers, and not 'dirty' pointers.
+	 * Or because there was more than one replica yet we were unable
+	 * to move the data due to lack of space.
+	 */
+
+	n_ptrs = bch_extent_ptrs(k);
+
+	if (n_ptrs == 0) {
+		/* The key is just bad, no sense faking it. */
+		SET_KEY_BAD(k, 1);
+	} else {
+		/*
+		 * We have some valid pointers -- add PTR_LOST_DEV
+		 * pointers to make the key valid again.
+		 *
+		 * This should not happen very often at all, but can
+		 * in degenerate cases, such as being unable to
+		 * migrate the data due to lack of space, and yet we
+		 * still have some valid pointer either due to caching
+		 * or multiple replicas.
+		 */
+		while (!bch_extent_key_valid(c, k)
+		       && n_ptrs < BKEY_EXTENT_PTRS_MAX) {
+			k->val[n_ptrs] = PTR(0, 0, PTR_LOST_DEV);
+			n_ptrs += 1;
+			bch_set_extent_ptrs(k, n_ptrs);
+		}
+	}
+
+	return bch_btree_insert_at(iter,
+				   &keylist_single(k),
+				   NULL, /* replace_info */
+				   NULL, /* closure */
+				   0,    /* reserve */
+				   BTREE_INSERT_ATOMIC);
+}
+
+/*
+ * This doesn't actually move any data -- it marks the keys as bad
+ * if they contain a pointer to a device that is forcibly removed
+ * and don't have other valid pointers.  If there are valid pointers,
+ * the necessary pointers to the removed device are replaced with
+ * bad pointers instead.
+ * This is only called if bch_move_data_off_device above failed, meaning
+ * that we've already tried to move the data MAX_DATA_OFF_ITER times and
+ * are not likely to succeed if we try again.
+ */
+
+int bch_flag_data_bad(struct cache *ca)
+{
+	int ret2, ret = 0;
+	unsigned pass;
+	const struct bkey *k;
+	struct btree_iter iter;
+	u64 seen_key_count = 1;
+
+	if (MIGRATION_DEBUG)
+		pr_notice("Flagging bad data.");
+
+	/*
+	 * It should not be necessary to run more than one pass,
+	 * but at most one extra pass will be run, and it serves
+	 * as verification.
+	 */
+
+	for (pass = 0;
+	     (seen_key_count != 0 && (pass < MAX_FLAG_DATA_BAD_ITER));
+	     pass++) {
+		seen_key_count = 0;
+
+		bch_btree_iter_init(&iter,
+				    ca->set,
+				    BTREE_ID_EXTENTS,
+				    &ZERO_KEY);
+
+		while ((k = bch_btree_iter_peek(&iter))) {
+			if (!flag_data_pred(ca, k)) {
+				bch_btree_iter_advance_pos(&iter);
+				continue;
+			}
+
+			seen_key_count += 1;
+
+			ret2 = bch_flag_key_bad(&iter, ca, k);
+			if (ret2 == -EINTR || ret == -EAGAIN)
+				continue;
+
+			bch_btree_iter_advance_pos(&iter);
+		}
+
+		bch_btree_iter_unlock(&iter);
+
+		if ((pass >= PASS_LOW_LIMIT)
+		    && (seen_key_count != (MIGRATION_DEBUG ? ~0ULL : 0))) {
+			pr_notice("found %llu keys on pass %u.",
+				  seen_key_count, pass);
+		}
+	}
+
+	if ((MAX_FLAG_DATA_BAD_ITER != 1) && (seen_key_count != 0)) {
+		pr_err("Unable to flag device data as bad in %d iterations.",
+		       MAX_DATA_OFF_ITER);
+		ret = -1;
 	}
 
 	return ret;

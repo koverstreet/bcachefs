@@ -20,6 +20,8 @@ static inline struct cache *PTR_CACHE(const struct cache_set *c,
 {
 	unsigned dev = PTR_DEV(k, ptr);
 
+	/* The range test covers PTR_LOST_DEV and PTR_CHECK_DEV  */
+
 	return dev < MAX_CACHES_PER_SET
 		? rcu_dereference(c->cache[dev])
 		: NULL;

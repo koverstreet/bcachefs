@@ -42,6 +42,9 @@ struct moving_context {
 	/* Rate-limiter counting submitted reads */
 	struct bch_ratelimit	*rate;
 
+	/* Try to avoid reading the following device */
+	struct cache		*avoid;
+
 	/* Debugging... */
 	enum moving_purpose	purpose;
 };
@@ -140,5 +143,6 @@ do {									\
 
 int bch_move_data_off_device(struct cache *);
 int bch_move_meta_data_off_device(struct cache *);
+int bch_flag_data_bad(struct cache *);
 
 #endif /* _BCACHE_MOVE_H */

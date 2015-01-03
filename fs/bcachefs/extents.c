@@ -93,10 +93,15 @@ bool bch_insert_fixup_key(struct btree *b, struct bkey *insert,
 static bool should_drop_ptr(const struct cache_set *c, const struct bkey *k,
 			    unsigned ptr)
 {
+	unsigned dev;
 	struct cache *ca;
 	struct cache_member *mi;
 
-	if (PTR_DEV(k, ptr) >= c->sb.nr_in_set)
+	dev = PTR_DEV(k, ptr);
+	if (dev == PTR_LOST_DEV)
+		return false;
+
+	if (dev >= c->sb.nr_in_set)
 		return true;
 
 	mi = rcu_dereference(c->members)->m;
@@ -157,10 +162,11 @@ static bool __ptr_invalid(const struct cache_set *c, const struct bkey *k)
 	    bch_extent_ptrs(k) > BKEY_EXTENT_PTRS_MAX)
 		return true;
 
-	if (!bch_extent_ptrs(k) && !KEY_DELETED(k) && !KEY_WIPED(k))
+	if (!bch_extent_ptrs(k)
+	    && !KEY_DELETED(k) && !KEY_WIPED(k) && !KEY_BAD(k))
 		return true;
 
-	if (KEY_WIPED(k))
+	if (KEY_WIPED(k) || KEY_BAD(k))
 		return false;
 
 	rcu_read_lock();
@@ -211,6 +217,8 @@ static const char *bch_ptr_status(const struct cache_set *c,
 	if (!bch_extent_ptrs(k)) {
 		if (KEY_WIPED(k))
 			return "wiped key";
+		else if (KEY_BAD(k))
+			return "bad key, data lost";
 		else
 			return "bad, no pointers";
 	}
@@ -260,7 +268,8 @@ bool __bch_btree_ptr_invalid(const struct cache_set *c, const struct bkey *k)
 {
 	return (KEY_CACHED(k) ||
 		KEY_SIZE(k) ||
-		(!KEY_DELETED(k) && !KEY_WIPED(k) && !bch_extent_ptrs(k)) ||
+		(!KEY_DELETED(k) && !KEY_WIPED(k) && !KEY_BAD(k)
+		 && !bch_extent_ptrs(k)) ||
 		__ptr_invalid(c, k));
 }
 
@@ -1013,7 +1022,8 @@ out:
 bool __bch_extent_invalid(const struct cache_set *c, const const struct bkey *k)
 {
 	return (KEY_SIZE(k) > KEY_OFFSET(k) ||
-		(!KEY_SIZE(k) && !KEY_WIPED(k) && !KEY_DELETED(k)) ||
+		(!KEY_SIZE(k) && !KEY_WIPED(k)
+		 && !KEY_BAD(k) && !KEY_DELETED(k)) ||
 		__ptr_invalid(c, k));
 }
 
@@ -1023,6 +1033,65 @@ static bool bch_extent_invalid(const struct btree_keys *bk,
 	struct btree *b = container_of(bk, struct btree, keys);
 
 	return __bch_extent_invalid(b->c, k);
+}
+
+/*
+ * This is a subset of bch_extent_debugcheck but doesn't complain,
+ * just returns a boolean.
+ */
+
+bool bch_extent_key_valid(struct cache_set *c, struct bkey *k)
+{
+	int i;
+	bool ret = true;
+	struct cache *ca;
+	struct cache_member_rcu *mi;
+	unsigned dev, stale, replicas_needed;
+
+	if (__bch_extent_invalid(c, k))
+		return false;
+
+	if (bkey_deleted(k) || KEY_WIPED(k) || KEY_BAD(k))
+		return true;
+
+	replicas_needed = KEY_CACHED(k) ? 0
+		: CACHE_SET_DATA_REPLICAS_WANT(&c->sb);
+
+	mi = cache_member_info_get(c);
+
+	for (i = bch_extent_ptrs(k) - 1; i >= 0; --i) {
+		dev = PTR_DEV(k, i);
+
+		/* Could be a special pointer such as PTR_CHECK_DEV */
+		if (dev >= mi->nr_in_set) {
+			/*
+			 * PTR_LOST_DEV counts as a valid replica...
+			 * Since it is a valid state (data loss due to device
+			 * removal with unsuccessful data motion).
+			 */
+			if ((dev == PTR_LOST_DEV) && replicas_needed)
+				replicas_needed--;
+			continue;
+		}
+
+		if (replicas_needed &&
+		    bch_is_zero(mi->m[dev].uuid.b, sizeof(uuid_le)))
+			break;
+
+		ca = PTR_CACHE(c, k, i);
+		if (ca == NULL)
+			continue;
+
+		stale = ptr_stale(ca, k, i);
+		if (replicas_needed && !stale)
+			replicas_needed--;
+	}
+
+	if (replicas_needed && KEY_SIZE(k))
+		ret = false;
+
+	cache_member_info_put();
+	return ret;
 }
 
 static void bch_extent_debugcheck(struct btree_keys *bk, const struct bkey *k)
@@ -1045,7 +1114,7 @@ static void bch_extent_debugcheck(struct btree_keys *bk, const struct bkey *k)
 		return;
 	}
 
-	if (bkey_deleted(k) || KEY_WIPED(k))
+	if (bkey_deleted(k) || KEY_WIPED(k) || KEY_BAD(k))
 		return;
 
 	memset(ptrs_per_tier, 0, sizeof(ptrs_per_tier));
@@ -1058,13 +1127,20 @@ static void bch_extent_debugcheck(struct btree_keys *bk, const struct bkey *k)
 	for (i = bch_extent_ptrs(k) - 1; i >= 0; --i) {
 		dev = PTR_DEV(k, i);
 
-		/* could be PTR_CHECK_DEV */
-		if (PTR_DEV(k, i) >= mi->nr_in_set)
+		/* Could be a special pointer such as PTR_CHECK_DEV */
+		if (dev >= mi->nr_in_set) {
+			/*
+			 * PTR_LOST_DEV counts as a valid replica...
+			 * Since it is a valid state (data loss due to device
+			 * removal with unsuccessful data motion).
+			 */
+			if ((dev == PTR_LOST_DEV) && replicas_needed)
+				replicas_needed--;
 			continue;
+		}
 
 		if (replicas_needed &&
-		    bch_is_zero(mi->m[PTR_DEV(k, i)].uuid.b,
-				sizeof(uuid_le)))
+		    bch_is_zero(mi->m[dev].uuid.b, sizeof(uuid_le)))
 			goto bad_device;
 
 		tier = CACHE_TIER(&mi->m[dev]);
@@ -1180,28 +1256,54 @@ bool bch_extent_normalize(struct cache_set *c, struct bkey *k)
 
 	cache_member_info_put();
 
-	if (!bch_extent_ptrs(k) && !KEY_WIPED(k))
+	if (!bch_extent_ptrs(k) && !KEY_WIPED(k) && !KEY_BAD(k))
 		SET_KEY_DELETED(k, 1);
 
 	return KEY_DELETED(k);
 }
 
-struct cache *bch_extent_pick_ptr(struct cache_set *c, const struct bkey *k,
-				  unsigned *ptr)
+/*
+ * This picks a non-stale pointer, preferabbly from a device other than
+ * avoid.  Avoid can be NULL, meaning pick any.  If there are no non-stale
+ * pointers to other devices, it will still pick a pointer from avoid.
+ * Note that it prefers lowered-numbered pointers to higher-numbered pointers
+ * as the pointers are sorted by tier, hence preferring pointers to tier 0
+ * rather than pointers to tier 1.
+ */
+
+struct cache *bch_extent_pick_ptr_avoiding(struct cache_set *c,
+					   const struct bkey *k,
+					   unsigned *ptr,
+					   struct cache *avoid)
 {
-	if (((KEY_SIZE(k)) == 0) || (KEY_WIPED(k)))
+	unsigned i;
+	struct cache *picked = NULL;
+
+	if (((KEY_SIZE(k)) == 0) || (KEY_WIPED(k)) || (KEY_BAD(k)))
 		return NULL;
 
 	rcu_read_lock();
 
-	for (*ptr = 0; *ptr < bch_extent_ptrs(k); (*ptr)++) {
-		struct cache *ca = PTR_CACHE(c, k, *ptr);
+	/*
+	 * Note: If DEV is PTR_LOST_DEV, PTR_CACHE returns NULL
+	 * so if there are no other pointers, we'll return ERR_PTR(-EIO).
+	 */
 
-		if (ca && !ptr_stale(ca, k, *ptr)) {
-			percpu_ref_get(&ca->ref);
-			rcu_read_unlock();
-			return ca;
+	for (i = 0; i < bch_extent_ptrs(k); i++) {
+		struct cache *ca = PTR_CACHE(c, k, i);
+
+		if (ca && !ptr_stale(ca, k, i)) {
+			picked = ca;
+			*ptr = i;
+			if (ca != avoid)
+				break;
 		}
+	}
+
+	if (picked != NULL) {
+		percpu_ref_get(&picked->ref);
+		rcu_read_unlock();
+		return picked;
 	}
 
 	rcu_read_unlock();

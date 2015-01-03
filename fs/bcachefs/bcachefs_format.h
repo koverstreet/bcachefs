@@ -81,13 +81,23 @@ static inline void SET_##name(struct bkey *k, unsigned i, __u64 v)	\
  * originally WIPED and subsequently becomes DELETED through overwrites.
  * Modulo how they source data on reads (they source 0s rather than data
  * from an actual real extent), WIPED keys are regular keys.
-*/
+ *
+ * BAD keys are similar to WIPED KEYS except that any read of the data
+ * causes a read error, as the data was lost due to a failing device.
+ * Like WIPED keys, they can be removed (overridden) by new writes or
+ * cluster-wide GC.  Node repair can also overwrite them with the same
+ * or a more recent version number, but not with an older version
+ * number.
+ * As with WIPED keys, a key can be both BAD and DELETED (but not both
+ * BAD and WIPED!), in which case the DELETED behavior wins.
+ */
 
 KEY_FIELD(KEY_U64s,	header, 56, 64)
 KEY_FIELD(KEY_DELETED,	header, 55, 56)
 KEY_FIELD(KEY_CACHED,	header, 54, 55)
 KEY_FIELD(KEY_CSUM,	header, 50, 54)
 KEY_FIELD(KEY_WIPED,	header, 49, 50)
+KEY_FIELD(KEY_BAD,	header, 48, 49)
 
 /*
  * Sequence number used to determine which extent is the newer one, when dealing
@@ -164,7 +174,20 @@ PTR_FIELD(PTR_GEN,			0,  8)
 PTR_FIELD(PTR_OFFSET,			8,  51)
 PTR_FIELD(PTR_DEV,			51, 51 + PTR_DEV_BITS)
 
+/* Dummy DEV numbers: */
+
+/*
+ * PTR_CHECK_DEV is used when inserting dummy keys.
+ */
+
 #define PTR_CHECK_DEV			((1 << PTR_DEV_BITS) - 1)
+
+/*
+ * When removing devices, if there are valid pointers left in a key,
+ * we replace the ones to the device removed with PTR_LOST_DEV.
+ */
+
+#define PTR_LOST_DEV			((1 << PTR_DEV_BITS) - 2)
 
 #define PTR(gen, offset, dev)						\
 	((((__u64) dev) << 51) | ((__u64) offset) << 8 | gen)

@@ -18,6 +18,9 @@ ssize_t bch_inode_status(char *buf, size_t len, const struct bkey *k)
 	if (KEY_WIPED(k))
 		return scnprintf(buf, len, "wiped");
 
+	if (KEY_BAD(k))
+		return scnprintf(buf, len, "bad");
+
 	if (bkey_bytes(k) < sizeof(struct bch_inode))
 		return scnprintf(buf, len, "key too small: %lu", bkey_bytes(k));
 
@@ -68,6 +71,11 @@ bool bch_inode_invalid(const struct bkey *k)
 
 	if (KEY_WIPED(k)) {
 		/* We don't use WIPED keys for inodes */
+		return true;
+	}
+
+	if (KEY_BAD(k)) {
+		/* We don't use BAD keys for inodes */
 		return true;
 	}
 

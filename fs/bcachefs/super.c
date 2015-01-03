@@ -1616,7 +1616,17 @@ static void bch_cache_remove_work(struct work_struct *work)
 
 	tier = CACHE_TIER(mi);
 
-	if (c->cache_tiers[tier].nr_devices == 1) {
+	/*
+	 * Turning a device read-only removes it from the cache group,
+	 * so there may only be one read-write device in a tier, and yet
+	 * the device we are removing is in the same tier, so we have
+	 * to check for identity.
+	 * Removing the last RW device from a tier requires turning the
+	 * whole cache set RO.
+	 */
+
+	if ((c->cache_tiers[tier].nr_devices == 1)
+	    && (c->cache_tiers[tier].devices[0] == ca)) {
 		cache_member_info_put();
 		mutex_unlock(&bch_register_lock);
 		clear_bit(CACHE_DEV_FORCE_REMOVE, &ca->flags);
@@ -1658,9 +1668,13 @@ static void bch_cache_remove_work(struct work_struct *work)
 
 	data_off = (!has_data || (bch_move_data_off_device(ca) == 0));
 
+	if (has_data && !data_off && force)
+		/* Ignore the return value and proceed anyway */
+		(void) bch_flag_data_bad(ca);
+
 	allmi = cache_member_info_get(c);
 	mi = &allmi->m[ca->sb.nr_this_dev];
-	if (has_data && data_off) {
+	if (has_data && (data_off || force)) {
 		/* We've just moved all the data off! */
 		SET_CACHE_HAS_DATA(mi, false);
 		/* Update cache_member cache in struct cache */

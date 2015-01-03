@@ -428,7 +428,8 @@ retry:
 		done = sectors >= bio_sectors(bio);
 
 		ca = bch_extent_pick_ptr(s->iop.c, k, &ptr);
-		if (IS_ERR(ca)) {
+		if (IS_ERR(ca) || (!ca && KEY_BAD(k))) {
+			/* If KEY_BAD, the data was lost due to a bad device. */
 			bcache_io_error(s->iop.c, bio,
 					"no device to read from");
 			bch_btree_iter_unlock(&iter);

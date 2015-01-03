@@ -25,8 +25,17 @@ bool __bch_extent_invalid(const struct cache_set *, const struct bkey *);
 
 struct cache *bch_btree_pick_ptr(struct cache_set *, const struct bkey *,
 				 unsigned *);
-struct cache *bch_extent_pick_ptr(struct cache_set *, const struct bkey *,
-				  unsigned *);
+struct cache *bch_extent_pick_ptr_avoiding(struct cache_set *,
+					   const struct bkey *,
+					   unsigned *,
+					   struct cache *);
+
+static inline struct cache *bch_extent_pick_ptr(struct cache_set *c,
+						const struct bkey *k,
+						unsigned *ptr)
+{
+	return bch_extent_pick_ptr_avoiding(c, k, ptr, NULL);
+}
 
 bool bch_insert_fixup_extent(struct btree *, struct bkey *,
 			     struct btree_node_iter *,
@@ -69,5 +78,7 @@ bool bch_cut_front(const struct bkey *, struct bkey *);
 bool bch_cut_back(const struct bkey *, struct bkey *);
 void bch_key_resize(struct bkey *, unsigned);
 void bch_insert_check_key(struct btree_keys *, struct bkey *);
+
+bool bch_extent_key_valid(struct cache_set *, struct bkey *);
 
 #endif /* _BCACHE_EXTENTS_H */

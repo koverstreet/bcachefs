@@ -192,7 +192,7 @@ void bch_count_io_errors(struct cache *ca, int error, const char *m)
 			pr_err("%s: IO error on %s, recovering",
 			       bdevname(ca->bdev, buf), m);
 		} else {
-			if (bch_cache_remove(ca, false))
+			if (bch_cache_remove(ca, true))
 				pr_err("%s: too many IO errors on %s, removing",
 				       bdevname(ca->bdev, buf), m);
 		}
@@ -957,7 +957,7 @@ int bch_read(struct cache_set *c, struct bio *bio, u64 inode)
 		done = sectors >= bio_sectors(bio);
 
 		ca = bch_extent_pick_ptr(c, k, &ptr);
-		if (IS_ERR(ca)) {
+		if (IS_ERR(ca) || (!ca && KEY_BAD(k))) {
 			bcache_io_error(c, bio, "no device to read from");
 			bch_btree_iter_unlock(&iter);
 			return 0;
