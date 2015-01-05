@@ -663,8 +663,10 @@ static int issue_migration_move(struct cache *ca,
 	return ret;
 }
 
+#define MIGRATION_DEBUG		0
+
 #define MAX_DATA_OFF_ITER	10
-#define PASS_LOW_LIMIT		2
+#define PASS_LOW_LIMIT		(MIGRATION_DEBUG ? 0 : 2)
 #define MIGRATE_NR		64
 #define MIGRATE_READ_NR		32
 #define MIGRATE_WRITE_NR	32
@@ -775,7 +777,7 @@ int bch_move_data_off_device(struct cache *ca)
 		closure_sync(&context.cl);
 
 		if ((pass >= PASS_LOW_LIMIT)
-		    && (seen_key_count != 0)) {
+		    && (seen_key_count != (MIGRATION_DEBUG ? ~0ULL : 0))) {
 			pr_notice("found %llu keys on pass %u.",
 				  seen_key_count, pass);
 		}
@@ -793,7 +795,8 @@ int bch_move_data_off_device(struct cache *ca)
 		pr_err("Unable to migrate all data in %d iterations.",
 		       MAX_DATA_OFF_ITER);
 		ret = -EDEADLK;
-	}
+	} else if (MIGRATION_DEBUG)
+		pr_notice("Migrated all data in %d iterations", pass);
 
 out:
 	closure_sync(&context.cl);
