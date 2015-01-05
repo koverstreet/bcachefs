@@ -256,7 +256,49 @@ DEFINE_EVENT(bkey, bcache_journal_replay_key,
 	TP_ARGS(k)
 );
 
-DEFINE_EVENT(cache_set, bcache_journal_full,
+TRACE_EVENT(bcache_journal_write_oldest,
+	TP_PROTO(struct cache_set *c, u64 seq),
+	TP_ARGS(c, seq),
+
+	TP_STRUCT__entry(
+		__array(char,		uuid,	16	)
+		__field(u64,		seq		)
+	),
+
+	TP_fast_assign(
+		memcpy(__entry->uuid, c->sb.set_uuid.b, 16);
+		__entry->seq		= seq;
+	),
+
+	TP_printk("%pU seq %llu", __entry->uuid, __entry->seq)
+);
+
+TRACE_EVENT(bcache_journal_write_oldest_done,
+	TP_PROTO(struct cache_set *c, u64 seq, unsigned written),
+	TP_ARGS(c, seq, written),
+
+	TP_STRUCT__entry(
+		__array(char,		uuid,	16	)
+		__field(u64,		seq		)
+		__field(unsigned,	written		)
+	),
+
+	TP_fast_assign(
+		memcpy(__entry->uuid, c->sb.set_uuid.b, 16);
+		__entry->seq		= seq;
+		__entry->written	= written;
+	),
+
+	TP_printk("%pU seq %llu written %u", __entry->uuid, __entry->seq,
+		  __entry->written)
+);
+
+DEFINE_EVENT(cache_set, bcache_journal_discard_wait,
+	TP_PROTO(struct cache_set *c),
+	TP_ARGS(c)
+);
+
+DEFINE_EVENT(cache_set, bcache_journal_fifo_full,
 	TP_PROTO(struct cache_set *c),
 	TP_ARGS(c)
 );

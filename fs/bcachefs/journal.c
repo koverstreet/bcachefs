@@ -523,6 +523,9 @@ int bch_cache_journal_alloc(struct cache *ca)
 	int ret;
 	unsigned i;
 
+	if (CACHE_TIER(&ca->mi) != 0)
+		return 0;
+
 	/* clamp journal size to 512MB (in sectors) */
 
 	ret = bch_set_nr_journal_buckets(ca,
@@ -543,6 +546,7 @@ int bch_cache_journal_alloc(struct cache *ca)
 
 /* Journalling */
 
+/* Sequence number of oldest dirty journal entry */
 #define last_seq(j)	((j)->seq - fifo_used(&(j)->pin) + 1)
 
 static void journal_discard_endio(struct bio *bio)
@@ -565,7 +569,7 @@ static void journal_discard_work(struct work_struct *work)
 	submit_bio(&ja->discard_bio);
 }
 
-static void do_journal_discard(struct cache *ca)
+static bool do_journal_discard(struct cache *ca)
 {
 	struct journal_device *ja = &ca->journal;
 	struct bio *bio = &ja->discard_bio;
@@ -573,12 +577,12 @@ static void do_journal_discard(struct cache *ca)
 	if (!CACHE_DISCARD(&ca->mi) ||
 	    !blk_queue_discard(bdev_get_queue(ca->bdev))) {
 		ja->discard_idx = ja->last_idx;
-		return;
+		return true;
 	}
 
 	switch (atomic_read(&ja->discard_in_flight)) {
 	case DISCARD_IN_FLIGHT:
-		return;
+		return false;
 
 	case DISCARD_DONE:
 		ja->discard_idx = (ja->discard_idx + 1) %
@@ -589,7 +593,7 @@ static void do_journal_discard(struct cache *ca)
 
 	case DISCARD_READY:
 		if (ja->discard_idx == ja->last_idx)
-			return;
+			return true;
 
 		atomic_set(&ja->discard_in_flight, DISCARD_IN_FLIGHT);
 
@@ -607,6 +611,12 @@ static void do_journal_discard(struct cache *ca)
 		closure_get(&ca->set->cl);
 		INIT_WORK(&ja->discard_work, journal_discard_work);
 		schedule_work(&ja->discard_work);
+
+		return false;
+
+	default:
+		BUG();
+		return true;
 	}
 }
 
@@ -627,13 +637,28 @@ static size_t journal_write_u64s_remaining(struct cache_set *c,
 	return max_t(ssize_t, 0L, u64s);
 }
 
-static void journal_reclaim(struct cache_set *c)
+/**
+ * journal_reclaim - make room in the journal by discarding journal buckets
+ * where all entries have been flushed.
+ *
+ * Does not trigger writing btree nodes, this is done by the caller.
+ *
+ * The @oldest_seq parameter, if non-NULL, will be set to the sequence number
+ * of the oldest node that can remain dirty -- all older nodes must be written
+ * out.
+ *
+ * Return value is true if we have to write out dirty nodes and @oldest_seq was
+ * set.
+ */
+static bool journal_reclaim(struct cache_set *c, u64 *oldest_seq)
 {
 	struct bkey *k = &c->journal.key;
 	struct cache *ca;
 	uint64_t last_seq;
 	unsigned iter, i;
 	atomic_t p;
+	bool ret = false;
+	bool discard_done = true;
 
 	pr_debug("started");
 	lockdep_assert_held(&c->journal.lock);
@@ -644,26 +669,39 @@ static void journal_reclaim(struct cache_set *c)
 	 */
 	BUG_ON(c->journal.u64s_remaining);
 
+	/*
+	 * Unpin journal entries whose reference counts reached zero, meaning
+	 * all btree nodes got written out
+	 */
 	while (!atomic_read(&fifo_front(&c->journal.pin)))
 		fifo_pop(&c->journal.pin, p);
 
 	last_seq = last_seq(&c->journal);
 
-	/* Update last_idx */
+	/*
+	 * Advance last_idx to point to the oldest journal entry containing
+	 * btree node updates that have not yet been written out
+	 *
+	 * Advance discard_idx toward last_idx by discarding journal buckets
+	 * that have had all btree node updates written out
+	 */
 
 	rcu_read_lock();
 
 	for_each_cache_rcu(ca, c, iter) {
 		struct journal_device *ja = &ca->journal;
 
+		if ((CACHE_TIER(&ca->mi) != 0)
+		    || (CACHE_STATE(&ca->mi) != CACHE_ACTIVE))
+			continue;
+
 		while (ja->last_idx != ja->cur_idx &&
 		       ja->seq[ja->last_idx] < last_seq)
 			ja->last_idx = (ja->last_idx + 1) %
 				bch_nr_journal_buckets(&ca->sb);
-	}
 
-	for_each_cache_rcu(ca, c, iter)
-		do_journal_discard(ca);
+		discard_done &= do_journal_discard(ca);
+	}
 
 	if (!journal_write_u64s_remaining(c, c->journal.cur)) {
 		/*
@@ -732,9 +770,22 @@ pick_new_devices:
 		    || (CACHE_STATE(&ca->mi) != CACHE_ACTIVE))
 			continue;
 
-		/* No space available on this device */
-		if (next == ja->discard_idx)
+		/* No journal buckets available for writing on this device */
+		if (next == ja->discard_idx) {
+			/*
+			 * No work for discard to do -- tell the caller to
+			 * flush all btree nodes up to the end of the oldest
+			 * journal bucket
+			 */
+			if (discard_done && oldest_seq) {
+				BUG_ON(ja->last_idx != ja->discard_idx);
+				*oldest_seq = max_t(u64, *oldest_seq,
+						    ja->seq[next]);
+				ret = true;
+			}
+
 			continue;
+		}
 
 		BUG_ON(bch_extent_ptrs(k) >= BKEY_EXTENT_PTRS_MAX);
 
@@ -762,12 +813,30 @@ pick_new_devices:
 out:
 	rcu_read_unlock();
 
-	if (!journal_full(&c->journal)) {
+	if (fifo_free(&c->journal.pin) <= 1) {
+		size_t used = fifo_used(&c->journal.pin);
+
+		trace_bcache_journal_fifo_full(c);
+		if (oldest_seq) {
+			/*
+			 * Write out enough btree nodes to free up ~1%
+			 * the FIFO
+			 */
+			*oldest_seq = max_t(u64, *oldest_seq,
+					    last_seq(&c->journal)
+					    + (used >> 8));
+			ret = true;
+		}
+	} else if (c->journal.blocks_free) {
 		c->journal.u64s_remaining =
 			journal_write_u64s_remaining(c, c->journal.cur);
+		BUG_ON(!c->journal.u64s_remaining);
 		pr_debug("done: %d", c->journal.u64s_remaining);
 		wake_up(&c->journal.wait);
+		ret = false;
 	}
+
+	return ret;
 }
 
 void bch_journal_next(struct journal *j)
@@ -788,9 +857,6 @@ void bch_journal_next(struct journal *j)
 	j->cur->data->seq	= ++j->seq;
 	j->cur->data->keys	= 0;
 	j->u64s_remaining	= 0;
-
-	if (fifo_full(&j->pin))
-		pr_debug("journal_pin full (%zu)", fifo_used(&j->pin));
 }
 
 static void journal_write_endio(struct bio *bio)
@@ -919,7 +985,7 @@ static void journal_write_locked(struct closure *cl)
 
 	atomic_dec_bug(&fifo_back(&c->journal.pin));
 	bch_journal_next(&c->journal);
-	journal_reclaim(c);
+	journal_reclaim(c, NULL);
 
 	spin_unlock(&c->journal.lock);
 
@@ -1004,6 +1070,8 @@ static bool __journal_res_get(struct cache_set *c, struct journal_res *res,
 {
 	unsigned actual_min = jset_u64s(u64s_min);
 	unsigned actual_max = jset_u64s(u64s_max);
+	u64 oldest_seq;
+	bool write_oldest;
 
 	BUG_ON(res->ref);
 
@@ -1031,12 +1099,26 @@ static bool __journal_res_get(struct cache_set *c, struct journal_res *res,
 			*start_time = local_clock();
 
 		if (!c->journal.u64s_remaining) {
-			journal_reclaim(c);
+			oldest_seq = 0;
+			write_oldest = journal_reclaim(c, &oldest_seq);
 
-			if (!c->journal.u64s_remaining) {
+			/* Waiting for discards, or active cache devices gone */
+			if (!write_oldest && !c->journal.u64s_remaining) {
 				spin_unlock(&c->journal.lock);
-				trace_bcache_journal_full(c);
-				bch_btree_write_oldest(c);
+				trace_bcache_journal_discard_wait(c);
+				return false;
+			}
+
+			if (write_oldest) {
+				BUG_ON(c->journal.u64s_remaining);
+				BUG_ON(oldest_seq == 0);
+				oldest_seq -= last_seq(&c->journal);
+				spin_unlock(&c->journal.lock);
+				/*
+				 * If we didn't write any nodes, wake us up
+				 * again so we don't wait forever
+				 */
+				bch_btree_write_oldest(c, oldest_seq);
 				return false;
 			}
 		} else {

@@ -31,18 +31,41 @@ struct journal {
 	/* minimum blocks free in the bucket(s) we're currently writing to */
 	unsigned		blocks_free;
 
-	/* used when waiting because the journal was full */
+	/* Used when waiting because the journal was full */
 	wait_queue_head_t	wait;
+
 	struct closure		io;
 	struct delayed_work	work;
 
 	unsigned		delay_ms;
 
+	/* Sequence number of most recent journal entry (last entry in @pin) */
 	u64			seq;
+
+	/*
+	 * FIFO of journal entries whose btree updates have not yet been
+	 * written out.
+	 *
+	 * Each entry is a reference count. The position in the FIFO is the
+	 * entry's sequence number relative to @seq.
+	 *
+	 * The journal entry itself holds a reference count, put when the
+	 * journal entry is written out. Each btree node modified by the journal
+	 * entry also holds a reference count, put when the btree node is
+	 * written.
+	 *
+	 * When a reference count reaches zero, the journal entry is no longer
+	 * needed. When all journal entries in the oldest journal bucket are no
+	 * longer needed, the bucket can be discarded and reused.
+	 */
 	DECLARE_FIFO(atomic_t, pin);
 
 	BKEY_PADDED(key);
 
+	/*
+	 * Two journal entries -- one is currently open for new entries, the
+	 * other is possibly being written out.
+	 */
 	struct journal_write	w[2], *cur;
 };
 

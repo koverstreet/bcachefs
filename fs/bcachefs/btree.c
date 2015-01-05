@@ -602,45 +602,45 @@ static void btree_node_write_work(struct work_struct *w)
 	bch_btree_node_write_dirty(b, NULL);
 }
 
-void bch_btree_write_oldest(struct cache_set *c)
+/**
+ * bch_btree_write_oldest - write all btree nodes with sequence numbers older
+ * than @oldest_seq
+ */
+void bch_btree_write_oldest(struct cache_set *c, u64 oldest_seq)
 {
 	/*
 	 * Try to find the btree node with that references the oldest journal
 	 * entry, best is our current candidate and is locked if non NULL:
 	 */
-	struct btree *b, *best;
+	struct btree *b;
 	struct bucket_table *tbl;
 	struct rhash_head *pos;
 	unsigned i;
-retry:
-	cond_resched();
-	best = NULL;
+	int written = 0;
+	struct closure cl;
+
+	closure_init_stack(&cl);
+
+	trace_bcache_journal_write_oldest(c, oldest_seq);
 
 	rcu_read_lock();
 	for_each_cached_btree(b, c, tbl, i, pos)
 		if (btree_current_write(b)->journal) {
-			if (!best)
-				best = b;
-			else if (journal_pin_cmp(c,
-					btree_current_write(best)->journal,
-					btree_current_write(b)->journal)) {
-				best = b;
+			if (fifo_idx(&c->journal.pin,
+				     btree_current_write(b)->journal)
+				<= oldest_seq) {
+				six_lock_read(&b->lock);
+				if (btree_current_write(b)->journal) {
+					written++;
+					__bch_btree_node_write(b, &cl);
+				}
+				six_unlock_read(&b->lock);
 			}
 		}
 	rcu_read_unlock();
 
-	b = best;
-	if (b) {
-		six_lock_read(&b->lock);
-		if (!btree_current_write(b)->journal) {
-			six_unlock_read(&b->lock);
-			/* We raced */
-			goto retry;
-		}
-
-		__bch_btree_node_write(b, NULL);
-		six_unlock_read(&b->lock);
-	}
+	closure_sync(&cl);
+	trace_bcache_journal_write_oldest_done(c, oldest_seq, written);
 }
 
 /*

@@ -124,10 +124,7 @@ struct journal_replay {
 	struct jset		j;
 };
 
-#define journal_pin_cmp(c, l, r)				\
-	(fifo_idx(&(c)->journal.pin, (l)) > fifo_idx(&(c)->journal.pin, (r)))
-
-#define JOURNAL_PIN	20000
+#define JOURNAL_PIN	((32 * 1024) - 1)
 
 #define journal_full(j)						\
 	(!(j)->blocks_free || fifo_free(&(j)->pin) <= 1)

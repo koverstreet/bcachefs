@@ -367,7 +367,7 @@ void bch_btree_node_write(struct btree *, struct closure *,
 			  struct btree_iter *);
 void bch_btree_node_read_done(struct btree *, struct cache *, unsigned);
 void bch_btree_flush(struct cache_set *);
-void bch_btree_write_oldest(struct cache_set *);
+void bch_btree_write_oldest(struct cache_set *, u64);
 
 struct btree *btree_node_alloc_replacement(struct btree *,
 					   enum alloc_reserve);
