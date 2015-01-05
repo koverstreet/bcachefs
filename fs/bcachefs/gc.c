@@ -114,13 +114,20 @@ bool btree_gc_mark_node(struct cache_set *c, struct btree *b,
 			stale = max(stale, btree_mark_key(c, b, k));
 			keys++;
 
-			u64s = bch_extent_nr_ptrs_after_normalize(c, k);
-			if (stat && u64s) {
+			if (KEY_WIPED(k)) {
 				good_keys++;
-
-				stat->key_bytes += KEY_U64s(k);
-				stat->nkeys++;
-				stat->data += KEY_SIZE(k);
+				if (stat)
+					stat->nkeys++;
+			} else {
+				u64s = bch_extent_nr_ptrs_after_normalize(c, k);
+				if (u64s) {
+					good_keys++;
+					if (stat) {
+						stat->key_bytes += KEY_U64s(k);
+						stat->nkeys++;
+						stat->data += KEY_SIZE(k);
+					}
+				}
 			}
 		}
 
