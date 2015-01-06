@@ -1002,16 +1002,28 @@ static int mca_cannibalize_lock(struct cache_set *c, struct closure *cl)
 	struct task_struct *old;
 
 	old = cmpxchg(&c->btree_cache_alloc_lock, NULL, current);
-	if (old && old != current) {
-		trace_bcache_mca_cannibalize_lock_fail(c, cl);
-		if (cl) {
-			closure_wait(&c->mca_wait, cl);
-			return -EAGAIN;
-		}
+	if (old == NULL || old == current)
+		goto success;
 
+	if (!cl) {
+		trace_bcache_mca_cannibalize_lock_fail(c, cl);
 		return -EINTR;
 	}
 
+	closure_wait(&c->mca_wait, cl);
+
+	/* Try again, after adding ourselves to waitlist */
+	old = cmpxchg(&c->btree_cache_alloc_lock, NULL, current);
+	if (old == NULL || old == current) {
+		/* We raced */
+		closure_wake_up(&c->mca_wait);
+		goto success;
+	}
+
+	trace_bcache_mca_cannibalize_lock_fail(c, cl);
+	return -EAGAIN;
+
+success:
 	trace_bcache_mca_cannibalize_lock(c, cl);
 	return 0;
 }
