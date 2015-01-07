@@ -817,9 +817,9 @@ static void bch_bset_fix_lookup_table(struct btree_keys *b,
 		}
 }
 
-unsigned bch_bset_insert(struct btree_keys *b,
-			 struct btree_node_iter *iter,
-			 struct bkey *insert)
+void bch_bset_insert(struct btree_keys *b,
+		     struct btree_node_iter *iter,
+		     struct bkey *insert)
 {
 	struct bset_tree *t = bset_tree_last(b);
 	struct bset *i = t->data;
@@ -845,7 +845,7 @@ unsigned bch_bset_insert(struct btree_keys *b,
 	/* prev is in the tree, if we merge we're done */
 	if (prev &&
 	    bch_bkey_try_merge(b, prev, insert))
-		return BTREE_INSERT_STATUS_BACK_MERGE;
+		return;
 
 	if (where != bset_bkey_last(i) &&
 	    b->ops->is_extents &&
@@ -854,7 +854,7 @@ unsigned bch_bset_insert(struct btree_keys *b,
 			b->nr_live_keys += KEY_U64s(insert);
 
 		bkey_copy(where, insert);
-		return BTREE_INSERT_STATUS_OVERWROTE;
+		return;
 	}
 
 	if (where != bset_bkey_last(i) &&
@@ -871,7 +871,7 @@ unsigned bch_bset_insert(struct btree_keys *b,
 		 */
 		if (bch_bkey_try_merge(b, insert, where)) {
 			bkey_copy(where, insert);
-			return BTREE_INSERT_STATUS_FRONT_MERGE;
+			return;
 		}
 	}
 
@@ -889,8 +889,6 @@ unsigned bch_bset_insert(struct btree_keys *b,
 	bch_btree_node_iter_fix(iter, where, insert);
 
 	bch_btree_node_iter_verify(b, iter);
-
-	return BTREE_INSERT_STATUS_INSERT;
 }
 EXPORT_SYMBOL(bch_bset_insert);
 

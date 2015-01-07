@@ -322,16 +322,8 @@ void bch_bset_init_next(struct btree_keys *, struct bset *);
 void bch_bset_build_written_tree(struct btree_keys *);
 void bch_bset_fix_invalidated_key(struct btree_keys *, struct bkey *);
 
-unsigned bch_bset_insert(struct btree_keys *, struct btree_node_iter *,
-			 struct bkey *);
-
-enum {
-	BTREE_INSERT_STATUS_NO_INSERT = 0,
-	BTREE_INSERT_STATUS_INSERT,
-	BTREE_INSERT_STATUS_BACK_MERGE,
-	BTREE_INSERT_STATUS_OVERWROTE,
-	BTREE_INSERT_STATUS_FRONT_MERGE,
-};
+void bch_bset_insert(struct btree_keys *, struct btree_node_iter *,
+		     struct bkey *);
 
 /* Bkey utility code */
 

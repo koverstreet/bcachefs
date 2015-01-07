@@ -1550,7 +1550,6 @@ static bool btree_insert_key(struct btree_iter *iter, struct btree *b,
 	struct btree_node_iter *node_iter = &iter->node_iters[b->level];
 	struct bkey done, *insert = bch_keylist_front(insert_keys);
 	BKEY_PADDED(key) temp;
-	unsigned status = BTREE_INSERT_STATUS_NO_INSERT;
 	int newsize, oldsize = bch_count_data(&b->keys);
 	bool do_insert;
 	struct bkey *orig = insert;
@@ -1584,7 +1583,7 @@ static bool btree_insert_key(struct btree_iter *iter, struct btree *b,
 	if (!do_insert)
 		goto out;
 
-	status = bch_bset_insert(&b->keys, node_iter, insert);
+	bch_bset_insert(&b->keys, node_iter, insert);
 
 	/*
 	 * We dequeue after the insertion so that if insert_keys is
@@ -1626,12 +1625,12 @@ out:
 
 	newsize = bch_count_data(&b->keys);
 	BUG_ON(newsize != -1 && newsize < oldsize);
-	bch_check_keys(&b->keys, "%u for %s", status,
+	bch_check_keys(&b->keys, "%u for %s", do_insert,
 		       replace ? "replace" : "insert");
 
-	trace_bcache_btree_insert_key(b, insert, replace != NULL, status);
+	trace_bcache_btree_insert_key(b, insert, replace != NULL, do_insert);
 
-	return status != BTREE_INSERT_STATUS_NO_INSERT;
+	return do_insert;
 }
 
 enum btree_insert_status {
