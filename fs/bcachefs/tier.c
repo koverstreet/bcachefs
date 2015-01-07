@@ -175,10 +175,6 @@ static void tiering_refill(struct cache_set *c, struct tiering_refill *refill)
 
 		/* Check if we've added enough keys to this keylist */
 		if (tiering_keylist_full(refill)) {
-			/* Make sure what we thought we added got added */
-			BUG_ON(bch_scan_keylist_sectors(keys) <
-			       refill->sectors);
-
 			/* Move on to refill the next cache device's keylist */
 			refill->sectors = 0;
 			refill->cache_iter++;
