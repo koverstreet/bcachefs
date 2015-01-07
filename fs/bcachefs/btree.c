@@ -1531,13 +1531,47 @@ int bch_btree_node_rewrite(struct btree *b, struct btree_iter *iter, bool wait)
 /* Btree insertion */
 
 /**
- * btree_insert_key - insert one key into a btree node, and then journal the key
- * that was inserted.
+ * bch_btree_insert_and_journal - insert a non-overlapping key into a btree node
  *
- * Wrapper around bch_btree_insert_key() which does the real heavy lifting, this
- * function journals the key that bch_btree_insert_key() actually inserted
- * (which may have been different than @k if e.g. @replace was only partially
- * present, or not present).
+ * This is called from bch_insert_fixup_extent().
+ *
+ * The insert is journalled.
+ */
+void bch_btree_insert_and_journal(struct btree *b,
+				  struct btree_node_iter *node_iter,
+				  struct bkey *insert,
+				  struct journal_res *res)
+{
+	struct cache_set *c = b->c;
+
+	bch_bset_insert(&b->keys, node_iter, insert);
+
+	if (!btree_node_dirty(b)) {
+		set_btree_node_dirty(b);
+
+		if (c->btree_flush_delay)
+			schedule_delayed_work(&b->work,
+					      c->btree_flush_delay * HZ);
+	}
+
+	if (res->ref &&
+	    test_bit(JOURNAL_REPLAY_DONE, &c->journal.flags)) {
+		struct btree_write *w = btree_current_write(b);
+
+		if (!w->journal) {
+			w->journal = &fifo_back(&c->journal.pin);
+			atomic_inc(w->journal);
+		}
+
+		bch_journal_add_keys(c, res, b->btree_id, insert,
+				     KEY_U64s(insert), b->level);
+	}
+}
+
+/**
+ * btree_insert_key - insert a key into a btree node, handling overlapping extents.
+ *
+ * The insert is journalled.
  */
 static bool btree_insert_key(struct btree_iter *iter, struct btree *b,
 			     struct keylist *insert_keys,
@@ -1545,7 +1579,6 @@ static bool btree_insert_key(struct btree_iter *iter, struct btree *b,
 			     struct journal_res *res)
 {
 	bool dequeue = false;
-	struct cache_set *c = iter->c;
 	struct btree_node_iter *node_iter = &iter->node_iters[b->level];
 	struct bkey done, *insert = bch_keylist_front(insert_keys);
 	BKEY_PADDED(key) temp;
@@ -1582,7 +1615,7 @@ static bool btree_insert_key(struct btree_iter *iter, struct btree *b,
 	if (!do_insert)
 		goto out;
 
-	bch_bset_insert(&b->keys, node_iter, insert);
+	bch_btree_insert_and_journal(b, node_iter, insert, res);
 
 	/*
 	 * We dequeue after the insertion so that if insert_keys is
@@ -1596,26 +1629,6 @@ static bool btree_insert_key(struct btree_iter *iter, struct btree *b,
 		dequeue = false; /* already done */
 	}
 
-	if (!btree_node_dirty(b)) {
-		set_btree_node_dirty(b);
-
-		if (c->btree_flush_delay)
-			schedule_delayed_work(&b->work,
-					      c->btree_flush_delay * HZ);
-	}
-
-	if (res->ref &&
-	    test_bit(JOURNAL_REPLAY_DONE, &c->journal.flags)) {
-		struct btree_write *w = btree_current_write(b);
-
-		if (!w->journal) {
-			w->journal = &fifo_back(&c->journal.pin);
-			atomic_inc(w->journal);
-		}
-
-		bch_journal_add_keys(c, res, iter->btree_id, insert,
-				     KEY_U64s(insert), b->level);
-	}
 out:
 	if (dequeue)
 		bch_keylist_dequeue(insert_keys);
@@ -2028,7 +2041,19 @@ static int __bch_btree_insert_node(struct btree *b,
 	return 0;
 }
 
-/* insert into a given node, possibly an interior node */
+/**
+ * bch_btree_insert_node - insert bkeys into a given btree node
+ *
+ * @iter:		btree iterator
+ * @insert_keys:	list of keys to insert
+ * @replace:		old key for compare exchange (+ stats)
+ * @persistent:		if not null, @persistent will wait on journal write
+ * @reserve:		btree node reserve
+ *
+ * Inserts as many keys as it can into a given btree node, splitting it if full.
+ * If a split occurred, this function will return early. This can only happen
+ * for leaf nodes -- inserts into interior nodes have to be atomic.
+ */
 int bch_btree_insert_node(struct btree *b,
 			  struct btree_iter *iter,
 			  struct keylist *insert_keys,
@@ -2051,33 +2076,34 @@ int bch_btree_insert_node(struct btree *b,
 }
 
 /**
- * bch_btree_insert_at - insert bkeys into a given btree node
+ * bch_btree_insert_at - insert bkeys starting at a given btree node
  * @iter:		btree iterator
  * @insert_keys:	list of keys to insert
  * @replace:		old key for compare exchange (+ stats)
  * @persistent:		if not null, @persistent will wait on journal write
+ * @reserve:		btree node reserve
+ * @flags:		insert flags, currently only BTREE_INSERT_ATOMIC
  *
  * This is top level for common btree insertion/index update code. The control
  * flow goes roughly like:
  *
- * bch_btree_insert_at
+ * bch_btree_insert_at -- split keys that span interior nodes
+ *   bch_btree_insert_node -- split btree nodes when full
  *     btree_split
- *   bch_btree_insert_keys
- *     btree_insert_key
- *       bch_btree_insert_key
- *         op->insert_fixup
- *         bch_bset_insert
+ *     bch_btree_insert_keys -- get and put journal reservations
+ *       btree_insert_key -- call fixup and remove key from keylist
+ *         bch_insert_fixup_extent -- handle overlapping extents
+ *           bch_btree_insert_and_journal -- add the key to the journal
+ *             bch_bset_insert -- actually insert into the bset
  *
- * Inserts the keys from @insert_keys that belong in node @b; if there's extra
- * keys that go in different nodes, it's up to the caller to insert the rest of
- * the keys in the correct node (@insert_keys might span multiple btree nodes.
- * It must be in sorted order, lowest keys first).
+ * This function will split keys that span multiple nodes, calling
+ * bch_btree_insert_node() for each one. It will not return until all keys
+ * have been inserted, or an insert has failed.
  *
  * @persistent will only wait on the journal write if the full keylist was
  * inserted.
  *
  * Return values:
- * -EAGAIN: @op->cl was put on a waitlist waiting for btree node allocation.
  * -EINTR: locking changed, this function should be called again.
  * -EROFS: cache set read only
  */
