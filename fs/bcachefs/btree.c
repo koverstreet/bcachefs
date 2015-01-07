@@ -1327,8 +1327,8 @@ static void bch_btree_set_root(struct btree *b)
 	bch_recalc_btree_reserve(c);
 
 	if (old) {
-		bch_journal_set_dirty(c, &cl);
-		bch_journal_res_put(c, &res);
+		bch_journal_set_dirty(c);
+		bch_journal_res_put(c, &res, &cl);
 		closure_sync(&cl);
 
 		six_unlock_write(&old->lock);
@@ -1542,8 +1542,7 @@ int bch_btree_node_rewrite(struct btree *b, struct btree_iter *iter, bool wait)
 static bool btree_insert_key(struct btree_iter *iter, struct btree *b,
 			     struct keylist *insert_keys,
 			     struct bch_replace_info *replace,
-			     struct journal_res *res,
-			     struct closure *persistent)
+			     struct journal_res *res)
 {
 	bool dequeue = false;
 	struct cache_set *c = iter->c;
@@ -1615,9 +1614,7 @@ static bool btree_insert_key(struct btree_iter *iter, struct btree *b,
 		}
 
 		bch_journal_add_keys(c, res, iter->btree_id, insert,
-				     KEY_U64s(insert), b->level,
-				     bch_keylist_empty(insert_keys)
-				     ? persistent : NULL);
+				     KEY_U64s(insert), b->level);
 	}
 out:
 	if (dequeue)
@@ -1730,16 +1727,16 @@ bch_btree_insert_keys(struct btree *b,
 
 			attempted = true;
 			if (btree_insert_key(iter, b, insert_keys,
-					     replace, &res,
-					     bch_keylist_is_last(insert_keys, k)
-					     ? persistent : NULL))
+					     replace, &res))
 				inserted = true;
 		}
 
 		six_unlock_write(&b->lock);
 
 		if (res.ref)
-			bch_journal_res_put(iter->c, &res);
+			bch_journal_res_put(iter->c, &res,
+					    bch_keylist_empty(insert_keys)
+					    ? persistent : NULL);
 	}
 
 	if (inserted && b->written) {

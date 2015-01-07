@@ -149,19 +149,21 @@ struct journal_res {
 	unsigned		nkeys:31;
 };
 
-void __bch_journal_res_put(struct cache_set *, struct journal_res *);
+void __bch_journal_res_put(struct cache_set *, struct journal_res *,
+			   struct closure *);
 void bch_journal_res_get(struct cache_set *, struct journal_res *,
 			 unsigned, unsigned);
-void bch_journal_set_dirty(struct cache_set *, struct closure *);
+void bch_journal_set_dirty(struct cache_set *);
 void bch_journal_add_keys(struct cache_set *, struct journal_res *,
 			  enum btree_id, const struct bkey *,
-			  unsigned, unsigned, struct closure *);
+			  unsigned, unsigned);
 
 static inline void bch_journal_res_put(struct cache_set *c,
-				       struct journal_res *res)
+				       struct journal_res *res,
+				       struct closure *parent)
 {
 	spin_lock(&c->journal.lock);
-	__bch_journal_res_put(c, res);
+	__bch_journal_res_put(c, res, parent);
 }
 
 /*

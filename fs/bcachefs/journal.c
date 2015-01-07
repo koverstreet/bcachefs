@@ -979,14 +979,22 @@ static void journal_write_work(struct work_struct *work)
  * then proceed to add their keys as well.
  */
 void __bch_journal_res_put(struct cache_set *c,
-			   struct journal_res *res)
+			   struct journal_res *res,
+			   struct closure *parent)
 {
+	lockdep_assert_held(&c->journal.lock);
+
 	BUG_ON(!res->ref);
 
 	c->journal.u64s_remaining += res->nkeys;
 	--c->journal.res_count;
 	res->nkeys = 0;
 	res->ref = 0;
+
+	if (parent && test_bit(JOURNAL_DIRTY, &c->journal.flags)) {
+		BUG_ON(!closure_wait(&c->journal.cur->wait, parent));
+		set_bit(JOURNAL_NEED_WRITE, &c->journal.flags);
+	}
 
 	journal_unlock(c);
 }
@@ -1075,25 +1083,11 @@ void bch_journal_res_get(struct cache_set *c, struct journal_res *res,
 		   __journal_res_get(c, res, u64s_min, u64s_max, &start_time));
 }
 
-void bch_journal_set_dirty(struct cache_set *c, struct closure *parent)
+void bch_journal_set_dirty(struct cache_set *c)
 {
-	/*
-	 * We sometimes need to write an empty journal entry to e.g. set a new
-	 * btree root - but when that happens it's always going to be an
-	 * immediate journal write someone is waiting on.
-	 *
-	 * Other than that, the journal write shouldn't be empty:
-	 */
-	BUG_ON(!parent && !c->journal.cur->data->keys);
-
 	if (!test_and_set_bit(JOURNAL_DIRTY, &c->journal.flags))
 		schedule_delayed_work(&c->journal.work,
 				      msecs_to_jiffies(c->journal.delay_ms));
-
-	if (parent) {
-		BUG_ON(!closure_wait(&c->journal.cur->wait, parent));
-		set_bit(JOURNAL_NEED_WRITE, &c->journal.flags);
-	}
 }
 
 static inline void __bch_journal_add_keys(struct jset *j, enum btree_id id,
@@ -1114,8 +1108,7 @@ static inline void __bch_journal_add_keys(struct jset *j, enum btree_id id,
 
 void bch_journal_add_keys(struct cache_set *c, struct journal_res *res,
 			  enum btree_id id, const struct bkey *k,
-			  unsigned nkeys, unsigned level,
-			  struct closure *parent)
+			  unsigned nkeys, unsigned level)
 {
 	unsigned actual = jset_u64s(nkeys);
 
@@ -1126,12 +1119,8 @@ void bch_journal_add_keys(struct cache_set *c, struct journal_res *res,
 	spin_lock(&c->journal.lock);
 	__bch_journal_add_keys(c->journal.cur->data, id, k, nkeys,
 			       level, JKEYS_BTREE_KEYS);
-	bch_journal_set_dirty(c, parent);
-
-	if (!res->nkeys)
-		__bch_journal_res_put(c, res);
-	else
-		spin_unlock(&c->journal.lock);
+	bch_journal_set_dirty(c);
+	spin_unlock(&c->journal.lock);
 }
 
 void bch_journal_meta(struct cache_set *c, struct closure *parent)
@@ -1144,8 +1133,8 @@ void bch_journal_meta(struct cache_set *c, struct closure *parent)
 		return;
 
 	bch_journal_res_get(c, &res, 0, 0);
-	bch_journal_set_dirty(c, parent);
-	bch_journal_res_put(c, &res);
+	bch_journal_set_dirty(c);
+	bch_journal_res_put(c, &res, parent);
 }
 
 void bch_journal_free(struct cache_set *c)

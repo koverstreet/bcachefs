@@ -81,12 +81,6 @@ static inline size_t bch_keylist_nkeys(struct keylist *l)
 			(l->end_keys_p - l->bot_p));
 }
 
-static inline bool bch_keylist_is_last(struct keylist *l, struct bkey *k)
-{
-	k = __bch_keylist_next(l, k);
-	return k == l->top;
-}
-
 static inline struct bkey *bch_keylist_front(struct keylist *l)
 {
 	return l->bot;
