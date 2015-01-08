@@ -300,15 +300,6 @@ static void bch_gc_finish(struct cache_set *c)
 	write_seqlock(&c->gc_cur_lock);
 	c->gc_cur_btree = BTREE_ID_NR + 1;
 	write_sequnlock(&c->gc_cur_lock);
-
-	/*
-	 * Setting gc_cur_btree marks gc as finished, and the allocator threads
-	 * will now see the new buckets_available - wake them up in case they
-	 * were waiting on it
-	 */
-
-	for_each_cache(ca, c, i)
-		bch_wake_allocator(ca);
 }
 
 /**
@@ -616,15 +607,22 @@ static void bch_coalesce(struct cache_set *c)
 static int bch_gc_thread(void *arg)
 {
 	struct cache_set *c = arg;
+	struct cache *ca;
+	unsigned i;
 
 	while (1) {
 		bch_gc(c);
 		bch_coalesce(c);
 
-		/* Set task to interruptible first so that if someone wakes us
-		 * up while we're finishing up, we will start another GC pass
-		 * immediately */
 		set_current_state(TASK_INTERRUPTIBLE);
+
+		/*
+		 * Wake up allocator in case it was waiting for buckets
+		 * because of not being able to inc gens
+		 */
+		for_each_cache(ca, c, i)
+			bch_wake_allocator(ca);
+
 		if (kthread_should_stop())
 			break;
 
