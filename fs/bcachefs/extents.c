@@ -82,7 +82,7 @@ bool bch_insert_fixup_key(struct btree *b, struct bkey *insert,
 		bch_btree_node_iter_next_all(iter);
 	}
 
-	return false;
+	return true;
 }
 
 /* Common among btree and extent ptrs */
@@ -677,7 +677,8 @@ static bool bkey_cmpxchg(struct btree *b,
 			 struct bkey *k,
 			 struct bch_replace_info *replace,
 			 struct bkey *new,
-			 struct bkey *done)
+			 struct bkey *done,
+			 bool *inserted)
 {
 	bool ret;
 	struct bkey *old = &replace->key;
@@ -695,9 +696,11 @@ static bool bkey_cmpxchg(struct btree *b,
 	 */
 	if (bkey_cmp(&START_KEY(k), done) > 0) {
 		/* insert previous partial match: */
-		if (bkey_cmp(done, &START_KEY(new)) > 0)
+		if (bkey_cmp(done, &START_KEY(new)) > 0) {
 			bch_bset_insert(&b->keys, iter,
 					bch_key_split(done, new));
+			*inserted = true;
+		}
 
 		bch_cut_subtract_front(b, &START_KEY(k), new);
 		*done = START_KEY(k);
@@ -706,9 +709,11 @@ static bool bkey_cmpxchg(struct btree *b,
 	ret = bkey_cmpxchg_cmp(k, old);
 	if (!ret) {
 		/* failed: */
-		if (bkey_cmp(done, &START_KEY(new)) > 0)
+		if (bkey_cmp(done, &START_KEY(new)) > 0) {
 			bch_bset_insert(&b->keys, iter,
 					bch_key_split(done, new));
+			*inserted = true;
+		}
 
 		if (bkey_cmp(k, new) > 0)
 			bch_drop_subtract(b, new);
@@ -724,7 +729,8 @@ static bool bkey_cmpxchg(struct btree *b,
 static void handle_existing_key_newer(struct btree *b,
 				      struct btree_node_iter *iter,
 				      struct bkey *insert,
-				      struct bkey *k)
+				      struct bkey *k,
+				      bool *inserted)
 {
 	/* k is the key currently in the tree, 'insert' the new key */
 
@@ -753,6 +759,7 @@ static void handle_existing_key_newer(struct btree *b,
 		bch_bset_insert(&b->keys, iter,
 				bch_key_split(&START_KEY(k), insert));
 		bch_cut_subtract_front(b, k, insert);
+		*inserted = true;
 		break;
 
 	case BCH_EXTENT_OVERLAP_ALL:
@@ -799,6 +806,7 @@ bool bch_insert_fixup_extent(struct btree *b, struct bkey *insert,
 			     struct bkey *done)
 {
 	struct bkey *k, *split, orig_insert = *insert;
+	bool inserted = false;
 
 	BUG_ON(!KEY_SIZE(insert));
 
@@ -824,7 +832,8 @@ bool bch_insert_fixup_extent(struct btree *b, struct bkey *insert,
 			    KEY_SIZE(insert), (replace != NULL))) {
 		/* We raced - a dirty pointer was stale */
 		*done = *insert;
-		return true;
+		SET_KEY_SIZE(insert, 0);
+		return false;
 	}
 
 	while (KEY_SIZE(insert) &&
@@ -855,12 +864,14 @@ bool bch_insert_fixup_extent(struct btree *b, struct bkey *insert,
 		if (replace == NULL)
 			*done = bkey_cmp(k, insert) < 0 ? *k : *insert;
 		else if (KEY_SIZE(k) &&
-			 !bkey_cmpxchg(b, iter, k, replace, insert, done))
+			 !bkey_cmpxchg(b, iter, k, replace, insert, done,
+				       &inserted))
 			continue;
 
 		if (KEY_SIZE(k) && !KEY_DELETED(insert) &&
 		    KEY_VERSION(insert) < KEY_VERSION(k)) {
-			handle_existing_key_newer(b, iter, insert, k);
+			handle_existing_key_newer(b, iter, insert, k,
+						  &inserted);
 			continue;
 		}
 
@@ -941,7 +952,10 @@ bool bch_insert_fixup_extent(struct btree *b, struct bkey *insert,
 		*done = orig_insert;
 	}
 out:
-	return !KEY_SIZE(insert);
+	if (KEY_SIZE(insert))
+		inserted = true;
+
+	return inserted;
 }
 
 bool __bch_extent_invalid(const struct cache_set *c, const const struct bkey *k)

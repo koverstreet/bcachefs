@@ -1600,20 +1600,20 @@ static bool btree_insert_key(struct btree_iter *iter, struct btree *b,
 		if (bkey_cmp(insert, &b->key) > 0)
 			bch_cut_back(&b->key, insert);
 
-		do_insert = !bch_insert_fixup_extent(b, insert, node_iter,
-						     replace, &done);
+		do_insert = bch_insert_fixup_extent(b, insert, node_iter,
+						    replace, &done);
 		bch_cut_front(&done, orig);
 		dequeue = (KEY_SIZE(orig) == 0);
+
+		if (!KEY_SIZE(insert))
+			goto out;
 	} else {
 		BUG_ON(bkey_cmp(insert, &b->key) > 0);
 
-		do_insert = !bch_insert_fixup_key(b, insert, node_iter,
-						  replace, &done);
+		do_insert = bch_insert_fixup_key(b, insert, node_iter,
+						 replace, &done);
 		dequeue = true;
 	}
-
-	if (!do_insert)
-		goto out;
 
 	bch_btree_insert_and_journal(b, node_iter, insert, res);
 
