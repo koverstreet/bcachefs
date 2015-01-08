@@ -1601,35 +1601,17 @@ static bool btree_insert_key(struct btree_iter *iter, struct btree *b,
 			bch_cut_back(&b->key, insert);
 
 		do_insert = bch_insert_fixup_extent(b, insert, node_iter,
-						    replace, &done);
+						    replace, &done, res);
 		bch_cut_front(&done, orig);
 		dequeue = (KEY_SIZE(orig) == 0);
-
-		if (!KEY_SIZE(insert))
-			goto out;
 	} else {
 		BUG_ON(bkey_cmp(insert, &b->key) > 0);
 
 		do_insert = bch_insert_fixup_key(b, insert, node_iter,
-						 replace, &done);
+						 replace, &done, res);
 		dequeue = true;
 	}
 
-	bch_btree_insert_and_journal(b, node_iter, insert, res);
-
-	/*
-	 * We dequeue after the insertion so that if insert_keys is
-	 * being marked for btree gc, we don't remove it from the
-	 * key list until after it has been transferred to the tree
-	 * or dropped.
-	 */
-	if (dequeue) {
-		bch_insert_check_key(&b->keys, orig);
-		bch_keylist_dequeue(insert_keys);
-		dequeue = false; /* already done */
-	}
-
-out:
 	if (dequeue)
 		bch_keylist_dequeue(insert_keys);
 
@@ -1704,7 +1686,13 @@ bch_btree_insert_keys(struct btree *b,
 	BUG_ON(iter->nodes[b->level] != b);
 
 	while (!done && !bch_keylist_empty(insert_keys)) {
-		unsigned n_min = KEY_U64s(bch_keylist_front(insert_keys));
+		/*
+		 * We need room to insert at least two keys in the journal
+		 * reservation -- the insert key itself, as well as a subset
+		 * of it, in the bkey_cmpxchg() or handle_existing_key_newer()
+		 * cases
+		 */
+		unsigned n_min = KEY_U64s(bch_keylist_front(insert_keys)) * 2;
 		if (!b->level)
 			bch_journal_res_get(iter->c, &res,
 					    n_min,

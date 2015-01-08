@@ -11,6 +11,7 @@
 #include "extents.h"
 #include "gc.h"
 #include "inode.h"
+#include "journal.h"
 #include "super.h"
 #include "writeback.h"
 
@@ -64,7 +65,8 @@ struct bkey *bch_generic_sort_fixup(struct btree_node_iter *iter,
 bool bch_insert_fixup_key(struct btree *b, struct bkey *insert,
 			  struct btree_node_iter *iter,
 			  struct bch_replace_info *replace,
-			  struct bkey *done)
+			  struct bkey *done,
+			  struct journal_res *res)
 {
 	BUG_ON(replace);
 
@@ -82,6 +84,7 @@ bool bch_insert_fixup_key(struct btree *b, struct bkey *insert,
 		bch_btree_node_iter_next_all(iter);
 	}
 
+	bch_btree_insert_and_journal(b, iter, insert, res);
 	return true;
 }
 
@@ -671,6 +674,12 @@ try_partial:
 /*
  * Returns true on success, false on failure (and false means @new no longer
  * overlaps with @k)
+ *
+ * If returned true, we may have inserted up to one key in @b.
+ * If returned false, we may have inserted up to two keys in @b.
+ *
+ * On return, there is room in @res for at least one more key of the same size
+ * as @new.
  */
 static bool bkey_cmpxchg(struct btree *b,
 			 struct btree_node_iter *iter,
@@ -678,13 +687,15 @@ static bool bkey_cmpxchg(struct btree *b,
 			 struct bch_replace_info *replace,
 			 struct bkey *new,
 			 struct bkey *done,
-			 bool *inserted)
+			 bool *inserted,
+			 struct journal_res *res)
 {
 	bool ret;
 	struct bkey *old = &replace->key;
 
 	/* must have something to compare against */
 	BUG_ON(!bch_extent_ptrs(old));
+	BUG_ON(b->level);
 
 	/* new must be a subset of old */
 	BUG_ON(bkey_cmp(new, old) > 0 ||
@@ -697,9 +708,27 @@ static bool bkey_cmpxchg(struct btree *b,
 	if (bkey_cmp(&START_KEY(k), done) > 0) {
 		/* insert previous partial match: */
 		if (bkey_cmp(done, &START_KEY(new)) > 0) {
-			bch_bset_insert(&b->keys, iter,
-					bch_key_split(done, new));
+			bch_btree_insert_and_journal(b, iter,
+						     bch_key_split(done, new),
+						     res);
 			*inserted = true;
+		}
+		if (bkey_cmp(done, &START_KEY(new)) > 0) {
+			bch_btree_insert_and_journal(b, iter,
+						     bch_key_split(done, new),
+						     res);
+
+			/*
+			 * If we don't have room for one more insert, we have
+			 * to get a new journal reservation all the way up in
+			 * bch_btree_insert_keys().
+			 */
+			if (jset_u64s(KEY_U64s(new)) > res->nkeys || true) {
+				bch_cut_subtract_front(b, &START_KEY(k), new);
+				*done = START_KEY(k);
+
+				return false;
+			}
 		}
 
 		bch_cut_subtract_front(b, &START_KEY(k), new);
@@ -710,8 +739,9 @@ static bool bkey_cmpxchg(struct btree *b,
 	if (!ret) {
 		/* failed: */
 		if (bkey_cmp(done, &START_KEY(new)) > 0) {
-			bch_bset_insert(&b->keys, iter,
-					bch_key_split(done, new));
+			bch_btree_insert_and_journal(b, iter,
+						     bch_key_split(done, new),
+						     res);
 			*inserted = true;
 		}
 
@@ -730,7 +760,8 @@ static void handle_existing_key_newer(struct btree *b,
 				      struct btree_node_iter *iter,
 				      struct bkey *insert,
 				      struct bkey *k,
-				      bool *inserted)
+				      bool *inserted,
+				      struct journal_res *res)
 {
 	/* k is the key currently in the tree, 'insert' the new key */
 
@@ -755,9 +786,14 @@ static void handle_existing_key_newer(struct btree *b,
 		 *
 		 * Insert the start of @insert ourselves, then update
 		 * @insert to to represent the end.
+		 *
+		 * Since we're splitting the insert key, we have to use
+		 * bch_btree_insert_and_journal(), which adds a journal
+		 * entry to @res.
 		 */
-		bch_bset_insert(&b->keys, iter,
-				bch_key_split(&START_KEY(k), insert));
+		bch_btree_insert_and_journal(b, iter,
+				bch_key_split(&START_KEY(k), insert),
+				res);
 		bch_cut_subtract_front(b, k, insert);
 		*inserted = true;
 		break;
@@ -770,11 +806,15 @@ static void handle_existing_key_newer(struct btree *b,
 }
 
 /**
- * bch_extent_insert_fixup - when about to insert a new extent, deal with all
- * the existing keys @insert overlaps with.
+ * bch_extent_insert_fixup - insert a new extent and deal with overlaps
  *
- * this may result in not actually doing the insert - because e.g. for cmpxchg
- * operations this is where that logic lives.
+ * this may result in not actually doing the insert, or inserting some subset
+ * of the insert key. For cmpxchg operations this is where that logic lives.
+ *
+ * All subsets of @insert that need to be inserted are inserted using
+ * bch_btree_insert_and_journal(). If @b or @res fills up, this function
+ * returns false, setting @done for the prefix of @insert that actually got
+ * inserted.
  *
  * BSET INVARIANTS: this function is responsible for maintaining all the
  * invariants for bsets of extents in memory. things get really hairy with 0
@@ -803,7 +843,8 @@ static void handle_existing_key_newer(struct btree *b,
 bool bch_insert_fixup_extent(struct btree *b, struct bkey *insert,
 			     struct btree_node_iter *iter,
 			     struct bch_replace_info *replace,
-			     struct bkey *done)
+			     struct bkey *done,
+			     struct journal_res *res)
 {
 	struct bkey *k, *split, orig_insert = *insert;
 	bool inserted = false;
@@ -855,6 +896,20 @@ bool bch_insert_fixup_extent(struct btree *b, struct bkey *insert,
 		}
 
 		/*
+		 * Check if we have enough room in the journal reservation to
+		 * complete the insert.
+		 *
+		 * One of bkey_cmpxchg(), handle_existing_key_newer() or the
+		 * actual insert itself will need space in the journal
+		 * reservation, but never more than one of these.
+		 *
+		 * Since we're journaling a subset of the insert key, we need
+		 * as much space as the journal key itself consumes.
+		 */
+		if (jset_u64s(KEY_U64s(insert)) > res->nkeys)
+			return false;
+
+		/*
 		 * We might overlap with 0 size extents; we can't skip these
 		 * because if they're in the set we're inserting to we have to
 		 * adjust them so they don't overlap with the key we're
@@ -865,13 +920,13 @@ bool bch_insert_fixup_extent(struct btree *b, struct bkey *insert,
 			*done = bkey_cmp(k, insert) < 0 ? *k : *insert;
 		else if (KEY_SIZE(k) &&
 			 !bkey_cmpxchg(b, iter, k, replace, insert, done,
-				       &inserted))
+				       &inserted, res))
 			continue;
 
 		if (KEY_SIZE(k) && !KEY_DELETED(insert) &&
 		    KEY_VERSION(insert) < KEY_VERSION(k)) {
 			handle_existing_key_newer(b, iter, insert, k,
-						  &inserted);
+						  &inserted, res);
 			continue;
 		}
 
@@ -952,8 +1007,10 @@ bool bch_insert_fixup_extent(struct btree *b, struct bkey *insert,
 		*done = orig_insert;
 	}
 out:
-	if (KEY_SIZE(insert))
+	if (KEY_SIZE(insert)) {
+		bch_btree_insert_and_journal(b, iter, insert, res);
 		inserted = true;
+	}
 
 	return inserted;
 }

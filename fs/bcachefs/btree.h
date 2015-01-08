@@ -82,6 +82,7 @@
 #include "bset.h"
 #include "debug.h"
 #include "six.h"
+#include "journal_types.h"
 
 struct btree_write {
 	atomic_t		*journal;
@@ -376,6 +377,11 @@ int btree_check_reserve(struct btree *, struct btree_iter *,
 int bch_btree_root_alloc(struct cache_set *, enum btree_id, struct closure *);
 int bch_btree_root_read(struct cache_set *, enum btree_id,
 			const struct bkey *, unsigned);
+
+void bch_btree_insert_and_journal(struct btree *,
+				  struct btree_node_iter *,
+				  struct bkey *,
+				  struct journal_res *);
 
 struct bch_replace_info;
 

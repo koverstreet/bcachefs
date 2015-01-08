@@ -1,6 +1,8 @@
 #ifndef _BCACHE_JOURNAL_TYPES_H
 #define _BCACHE_JOURNAL_TYPES_H
 
+struct journal_res;
+
 /*
  * We put two of these in struct journal; we used them for writes to the
  * journal that are being staged or in flight.

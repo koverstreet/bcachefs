@@ -2,6 +2,7 @@
 #define _BCACHE_EXTENTS_H
 
 #include "bset.h"
+#include "journal_types.h"
 
 struct bch_replace_info;
 
@@ -10,7 +11,8 @@ bool bch_insert_fixup_key(struct btree *,
 			  struct bkey *,
 			  struct btree_node_iter *,
 			  struct bch_replace_info *,
-			  struct bkey *);
+			  struct bkey *,
+			  struct journal_res *);
 
 extern const struct btree_keys_ops bch_btree_interior_node_ops;
 extern const struct btree_keys_ops *bch_btree_ops[];
@@ -28,7 +30,8 @@ struct cache *bch_extent_pick_ptr(struct cache_set *, const struct bkey *,
 
 bool bch_insert_fixup_extent(struct btree *, struct bkey *,
 			     struct btree_node_iter *,
-			     struct bch_replace_info *, struct bkey *);
+			     struct bch_replace_info *, struct bkey *,
+			     struct journal_res *);
 
 unsigned bch_extent_nr_ptrs_after_normalize(const struct cache_set *,
 					    const struct bkey *);
