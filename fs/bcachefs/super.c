@@ -1454,13 +1454,6 @@ void bch_cache_release(struct kobject *kobj)
 	 * This code needs this level of paranoia.
 	 */
 
-	/*
-	 * These test internally and skip if never initialized,
-	 * hence we don't need to test here.
-	 */
-	bch_moving_gc_destroy(ca);
-	bch_tiering_write_destroy(ca);
-
 	if (ca->journal.seq != NULL)
 		kfree(ca->journal.seq);
 
@@ -1530,7 +1523,17 @@ static void bch_cache_kill_work(struct work_struct *work)
 
 	mutex_unlock(&bch_register_lock);
 
+	/*
+	 * These test internally and skip if never initialized,
+	 * hence we don't need to test here. However, we do need
+	 * to unregister them before we drop our reference to
+	 * @c.
+	 */
+	bch_moving_gc_destroy(ca);
+	bch_tiering_write_destroy(ca);
+
 	kobject_put(&c->kobj);
+	ca->set = NULL;
 
 	/*
 	 * This results in bch_cache_release being called which
