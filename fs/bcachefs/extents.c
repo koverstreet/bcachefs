@@ -712,18 +712,13 @@ static bool bkey_cmpxchg(struct btree *b,
 						     bch_key_split(done, new),
 						     res);
 			*inserted = true;
-		}
-		if (bkey_cmp(done, &START_KEY(new)) > 0) {
-			bch_btree_insert_and_journal(b, iter,
-						     bch_key_split(done, new),
-						     res);
 
 			/*
 			 * If we don't have room for one more insert, we have
 			 * to get a new journal reservation all the way up in
 			 * bch_btree_insert_keys().
 			 */
-			if (jset_u64s(KEY_U64s(new)) > res->nkeys || true) {
+			if (jset_u64s(KEY_U64s(new)) > res->nkeys) {
 				bch_cut_subtract_front(b, &START_KEY(k), new);
 				*done = START_KEY(k);
 
