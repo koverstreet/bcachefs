@@ -424,11 +424,6 @@ static int wait_buckets_available(struct cache *ca)
 			break;
 		}
 
-		if (test_bit(CACHE_SET_GC_FAILURE, &ca->set->flags)) {
-			ret = -1;
-			break;
-		}
-
 		if (ca->inc_gen_needs_gc > ca->free_inc.size) {
 			if (ca->set->gc_thread) {
 				trace_bcache_gc_cannot_inc_gens(ca->set);
