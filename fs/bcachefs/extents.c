@@ -885,33 +885,24 @@ bool bch_insert_fixup_extent(struct btree *b, struct bkey *insert,
 	       (k = bch_btree_node_iter_peek_overlapping(iter, insert))) {
 		/*
 		 * Incrementing @done indicates to the caller that we've
-		 * finished with @insert up to that point: before setting @done,
-		 * check if we have space for the insert plus one potential
-		 * split:
+		 * finished with @insert up to that point.
+		 *
+		 * Before setting @done, we first check if we have space for
+		 * the insert plus one potential split in the btree node and
+		 * journal reservation.
 		 */
-		if (bch_btree_keys_u64s_remaining(&b->keys) <
-		    BKEY_EXTENT_MAX_U64s * 2) {
+		bool needs_split = (bch_btree_keys_u64s_remaining(&b->keys) <
+				    BKEY_EXTENT_MAX_U64s * 2);
+
+		if (needs_split || jset_u64s(KEY_U64s(insert)) > res->nkeys) {
 			/*
 			 * XXX: would be better to explicitly signal that we
 			 * need to split
 			 */
 			bch_cut_subtract_back(b, done, insert);
-			goto out;
-		}
-
-		/*
-		 * Check if we have enough room in the journal reservation to
-		 * complete the insert.
-		 *
-		 * One of bkey_cmpxchg(), handle_existing_key_newer() or the
-		 * actual insert itself will need space in the journal
-		 * reservation, but never more than one of these.
-		 *
-		 * Since we're journaling a subset of the insert key, we need
-		 * as much space as the journal key itself consumes.
-		 */
-		if (jset_u64s(KEY_U64s(insert)) > res->nkeys)
+			BUG_ON(KEY_SIZE(insert));
 			return false;
+		}
 
 		/*
 		 * We might overlap with 0 size extents; we can't skip these
@@ -1010,7 +1001,7 @@ bool bch_insert_fixup_extent(struct btree *b, struct bkey *insert,
 
 		*done = orig_insert;
 	}
-out:
+
 	if (KEY_SIZE(insert)) {
 		bch_btree_insert_and_journal(b, iter, insert, res);
 		inserted = true;
