@@ -448,9 +448,28 @@ void bch_journal_mark(struct cache_set *c, struct list_head *list)
 static int bch_journal_replay_key(struct cache_set *c, enum btree_id id,
 				  struct bkey *k)
 {
+	int ret;
+	BKEY_PADDED(key) temp;
+
 	trace_bcache_journal_replay_key(k);
 
-	return bch_btree_insert(c, id, &keylist_single(k), NULL, NULL);
+	bkey_copy(&temp.key, k);
+
+	ret = bch_btree_insert(c, id, &keylist_single(k), NULL, NULL);
+	if (ret)
+		return ret;
+
+	k = &temp.key;
+
+	/*
+	 * Subtract sectors after replay since bch_btree_insert() added
+	 * them again
+	 */
+	if (id == BTREE_ID_EXTENTS)
+		__bch_add_sectors(c, NULL, k, KEY_START(k), -KEY_SIZE(k),
+				  false);
+
+	return 0;
 }
 
 int bch_journal_replay(struct cache_set *c, struct list_head *list)
@@ -470,7 +489,7 @@ int bch_journal_replay(struct cache_set *c, struct list_head *list)
 
 		for_each_jset_key(k, jkeys, &i->j) {
 			cond_resched();
-			bch_journal_replay_key(c, jkeys->btree_id, k);
+			ret = bch_journal_replay_key(c, jkeys->btree_id, k);
 			if (ret)
 				goto err;
 
