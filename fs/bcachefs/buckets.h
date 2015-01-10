@@ -14,6 +14,16 @@
 	for (b = (ca)->buckets + (ca)->sb.first_bucket;			\
 	     b < (ca)->buckets + (ca)->sb.nbuckets; b++)
 
+/*
+ * bucket_gc_gen() returns the difference between the bucket's current gen and
+ * the oldest gen of any pointer into that bucket in the btree.
+ */
+
+static inline u8 bucket_gc_gen(struct cache *ca, size_t r)
+{
+	return ca->bucket_gens[r] - ca->buckets[r].oldest_gen;
+}
+
 static inline struct cache *PTR_CACHE(const struct cache_set *c,
 				      const struct bkey *k,
 				      unsigned ptr)
