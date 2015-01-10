@@ -172,6 +172,12 @@ static inline unsigned jset_u64s(unsigned nkeys)
 	return nkeys + sizeof(struct jset_keys) / sizeof(u64);
 }
 
+static inline bool journal_res_full(struct journal_res *res,
+				    struct bkey *k)
+{
+	return (res->ref && jset_u64s(KEY_U64s(k)) > res->nkeys);
+}
+
 void bch_journal_next(struct journal *);
 void bch_journal_mark(struct cache_set *, struct list_head *);
 void bch_journal_meta(struct cache_set *, struct closure *);

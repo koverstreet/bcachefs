@@ -727,7 +727,7 @@ static bool bkey_cmpxchg(struct btree *b,
 			 * to get a new journal reservation all the way up in
 			 * bch_btree_insert_keys().
 			 */
-			if (jset_u64s(KEY_U64s(new)) > res->nkeys) {
+			if (journal_res_full(res, new)) {
 				bch_cut_subtract_front(b, &START_KEY(k), new);
 				*done = START_KEY(k);
 
@@ -893,8 +893,9 @@ bool bch_insert_fixup_extent(struct btree *b, struct bkey *insert,
 		 */
 		bool needs_split = (bch_btree_keys_u64s_remaining(&b->keys) <
 				    BKEY_EXTENT_MAX_U64s * 2);
+		bool res_full = journal_res_full(res, insert);
 
-		if (needs_split || jset_u64s(KEY_U64s(insert)) > res->nkeys) {
+		if (needs_split || res_full) {
 			/*
 			 * XXX: would be better to explicitly signal that we
 			 * need to split

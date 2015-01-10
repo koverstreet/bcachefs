@@ -1094,6 +1094,9 @@ static bool __journal_res_get(struct cache_set *c, struct journal_res *res,
 
 	BUG_ON(res->ref);
 
+	if (!test_bit(JOURNAL_REPLAY_DONE, &c->journal.flags))
+		return true;
+
 	spin_lock(&c->journal.lock);
 
 	while (1) {
@@ -1233,8 +1236,10 @@ void bch_journal_meta(struct cache_set *c, struct closure *parent)
 		return;
 
 	bch_journal_res_get(c, &res, 0, 0);
-	bch_journal_set_dirty(c);
-	bch_journal_res_put(c, &res, parent);
+	if (res.ref) {
+		bch_journal_set_dirty(c);
+		bch_journal_res_put(c, &res, parent);
+	}
 }
 
 void bch_journal_free(struct cache_set *c)
