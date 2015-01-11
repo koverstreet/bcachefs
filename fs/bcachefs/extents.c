@@ -736,25 +736,25 @@ static bool bkey_cmpxchg(struct btree *b,
 		/* insert previous partial match: */
 		if (bkey_cmp(done, &START_KEY(new)) > 0) {
 			replace->successes += 1;
+
+			/*
+			 * [ prev key ]
+			 *                 [ k        ]
+			 *         [**|   new      ]
+			 *            ^
+			 *            |
+			 *            +-- done
+			 *
+			 * The [**] are already known to match, so insert them.
+			 */
 			bch_btree_insert_and_journal(b, iter,
 						     bch_key_split(done, new),
 						     res);
 			*inserted = true;
-
-			/*
-			 * If we don't have room for one more insert, we have
-			 * to get a new journal reservation all the way up in
-			 * bch_btree_insert_keys().
-			 */
-			if (journal_res_full(res, new)) {
-				bch_cut_subtract_front(b, &START_KEY(k), new);
-				*done = START_KEY(k);
-
-				return false;
-			}
 		}
 
 		bch_cut_subtract_front(b, &START_KEY(k), new);
+		/* advance @done from the end of prev key to the start of @k */
 		*done = START_KEY(k);
 	}
 
@@ -762,13 +762,25 @@ static bool bkey_cmpxchg(struct btree *b,
 	if (!ret) {
 		/* failed: */
 		replace->failures += 1;
+
 		if (bkey_cmp(done, &START_KEY(new)) > 0) {
+			/*
+			 * [ prev key ]
+			 *             [ k        ]
+			 *    [*******| new              ]
+			 *            ^
+			 *            |
+			 *            +-- done
+			 *
+			 * The [**] are already known to match, so insert them.
+			 */
 			bch_btree_insert_and_journal(b, iter,
 						     bch_key_split(done, new),
 						     res);
 			*inserted = true;
 		}
 
+		/* update @new to be the part we haven't checked yet */
 		if (bkey_cmp(k, new) > 0)
 			bch_drop_subtract(b, new);
 		else
@@ -776,6 +788,7 @@ static bool bkey_cmpxchg(struct btree *b,
 	} else
 		replace->successes += 1;
 
+	/* advance @done past the part of @k overlapping @new */
 	*done = bkey_cmp(k, new) < 0 ? *k : *new;
 	return ret;
 }
@@ -949,15 +962,17 @@ bool bch_insert_fixup_extent(struct btree *b, struct bkey *insert,
 	while (KEY_SIZE(insert) &&
 	       (k = bch_btree_node_iter_peek_overlapping(iter, insert))) {
 		/*
-		 * Incrementing @done indicates to the caller that we've
-		 * finished with @insert up to that point.
-		 *
 		 * Before setting @done, we first check if we have space for
-		 * the insert plus one potential split in the btree node and
-		 * journal reservation.
+		 * the insert in the btree node and journal reservation.
+		 *
+		 * Each insert checks for room in the journal entry, but we
+		 * check for room in the btree node up-front. In the worst
+		 * case, bkey_cmpxchg() will insert two keys, and one
+		 * iteration of this room will insert one key, so we need
+		 * room for three keys.
 		 */
 		bool needs_split = (bch_btree_keys_u64s_remaining(&b->keys) <
-				    BKEY_EXTENT_MAX_U64s * 2);
+				    BKEY_EXTENT_MAX_U64s * 3);
 		bool res_full = journal_res_full(res, insert);
 
 		if (needs_split || res_full) {
@@ -966,8 +981,7 @@ bool bch_insert_fixup_extent(struct btree *b, struct bkey *insert,
 			 * need to split
 			 */
 			bch_cut_subtract_back(b, done, insert);
-			BUG_ON(KEY_SIZE(insert));
-			return false;
+			goto out;
 		}
 
 		/*
@@ -1050,6 +1064,7 @@ bool bch_insert_fixup_extent(struct btree *b, struct bkey *insert,
 		*done = orig_insert;
 	}
 
+out:
 	if (KEY_SIZE(insert)) {
 		bch_btree_insert_and_journal(b, iter, insert, res);
 		inserted = true;

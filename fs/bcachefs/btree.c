@@ -1639,12 +1639,16 @@ static bool have_enough_space(struct btree *b, struct keylist *insert_keys)
 {
 	/*
 	 * For updates to interior nodes, everything on the
-	 * keylist has to be inserted atomically
+	 * keylist has to be inserted atomically.
+	 *
+	 * For updates to extents, bch_insert_fixup_extent()
+	 * needs room for at least three keys to make forward
+	 * progress.
 	 */
 	unsigned u64s = b->level
 		? bch_keylist_nkeys(insert_keys)
 		: b->keys.ops->is_extents
-		? BKEY_EXTENT_MAX_U64s * 2
+		? BKEY_EXTENT_MAX_U64s * 3
 		: KEY_U64s(bch_keylist_front(insert_keys));
 
 	return u64s <= bch_btree_keys_u64s_remaining(&b->keys);

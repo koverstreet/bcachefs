@@ -175,7 +175,7 @@ static inline unsigned jset_u64s(unsigned u64s)
 static inline bool journal_res_full(struct journal_res *res,
 				    struct bkey *k)
 {
-	return (res->ref && jset_u64s(KEY_U64s(k)) > res->nkeys);
+	return (res->ref && jset_u64s(KEY_U64s(k)) * 2 > res->nkeys);
 }
 
 void bch_journal_next(struct journal *);
