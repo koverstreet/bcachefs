@@ -1085,6 +1085,7 @@ static bool __journal_res_get(struct cache_set *c, struct journal_res *res,
 	bool write_oldest;
 
 	BUG_ON(res->ref);
+	BUG_ON(actual_max < actual_min);
 
 	if (!test_bit(JOURNAL_REPLAY_DONE, &c->journal.flags))
 		return true;

@@ -1696,10 +1696,11 @@ bch_btree_insert_keys(struct btree *b,
 		 * cases
 		 */
 		unsigned n_min = KEY_U64s(bch_keylist_front(insert_keys)) * 2;
+		unsigned n_max = max_t(unsigned, n_min,
+				       bch_keylist_nkeys(insert_keys));
+
 		if (!b->level)
-			bch_journal_res_get(iter->c, &res,
-					    n_min,
-					    bch_keylist_nkeys(insert_keys));
+			bch_journal_res_get(iter->c, &res, n_min, n_max);
 
 		six_lock_write(&b->lock);
 
