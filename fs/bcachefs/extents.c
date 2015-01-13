@@ -444,8 +444,8 @@ bool bch_cut_back(const struct bkey *where, struct bkey *k)
 }
 
 /*
- * Returns a key corresponding to the end of @k split at @where, @k will be the
- * first half of the split
+ * Returns a key corresponding to the start of @k split at @where, @k will be
+ * the second half of the split
  */
 #define bch_key_split(where, k)					\
 ({								\
@@ -788,6 +788,8 @@ static void handle_existing_key_newer(struct btree *b,
 				      bool *inserted,
 				      struct journal_res *res)
 {
+	struct bkey *split;
+
 	/* k is the key currently in the tree, 'insert' the new key */
 
 	switch (bch_extent_overlap(k, insert)) {
@@ -803,7 +805,7 @@ static void handle_existing_key_newer(struct btree *b,
 
 	case BCH_EXTENT_OVERLAP_MIDDLE:
 		/*
-		 * We have an overlap where @k (newer version splits
+		 * We have an overlap where @k (newer version) splits
 		 * @insert (older version) in three:
 		 * - start only in insert
 		 * - middle common section -- keep k
@@ -816,10 +818,9 @@ static void handle_existing_key_newer(struct btree *b,
 		 * bch_btree_insert_and_journal(), which adds a journal
 		 * entry to @res.
 		 */
-		bch_btree_insert_and_journal(b, iter,
-				bch_key_split(&START_KEY(k), insert),
-				res);
+		split = bch_key_split(&START_KEY(k), insert);
 		bch_cut_subtract_front(b, k, insert);
+		bch_btree_insert_and_journal(b, iter, split, res);
 		*inserted = true;
 		break;
 
@@ -908,6 +909,15 @@ bool bch_insert_fixup_extent(struct btree *b, struct bkey *insert,
 
 	BUG_ON(!KEY_SIZE(insert));
 
+	/*
+	 * The end of this key is the range processed so far.
+	 *
+	 * At the start, we add bucket sector counts for the entirely of the
+	 * new insert, then we subtract sector counts for existing keys or
+	 * parts of the new key as necessary.
+	 *
+	 * All sector counts up to @done are finalized.
+	 */
 	*done = START_KEY(insert);
 
 	/*
