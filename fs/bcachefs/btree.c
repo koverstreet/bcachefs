@@ -1568,8 +1568,7 @@ void bch_btree_insert_and_journal(struct btree *b,
 			atomic_inc(w->journal);
 		}
 
-		bch_journal_add_keys(c, res, b->btree_id, insert,
-				     KEY_U64s(insert), b->level);
+		bch_journal_add_keys(c, res, b->btree_id, insert, b->level);
 	}
 }
 

@@ -153,7 +153,7 @@ void bch_journal_res_get(struct cache_set *, struct journal_res *,
 void bch_journal_set_dirty(struct cache_set *);
 void bch_journal_add_keys(struct cache_set *, struct journal_res *,
 			  enum btree_id, const struct bkey *,
-			  unsigned, unsigned);
+			  unsigned);
 
 static inline void bch_journal_res_put(struct cache_set *c,
 				       struct journal_res *res,

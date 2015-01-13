@@ -25,7 +25,7 @@
 			     k = bkey_next(k))
 
 static inline void __bch_journal_add_keys(struct jset *, enum btree_id,
-					  const struct bkey *, unsigned,
+					  const struct bkey *,
 					  unsigned, unsigned);
 
 struct bkey *bch_journal_find_btree_root(struct cache_set *c, struct jset *j,
@@ -60,7 +60,7 @@ err:
 static void bch_journal_add_btree_root(struct jset *j, enum btree_id id,
 				       struct bkey *k, unsigned level)
 {
-	__bch_journal_add_keys(j, id, k, KEY_U64s(k), level, JKEYS_BTREE_ROOT);
+	__bch_journal_add_keys(j, id, k, level, JKEYS_BTREE_ROOT);
 }
 
 static inline void bch_journal_add_prios(struct cache_set *c, struct jset *j)
@@ -1185,33 +1185,35 @@ void bch_journal_set_dirty(struct cache_set *c)
 }
 
 static inline void __bch_journal_add_keys(struct jset *j, enum btree_id id,
-					  const struct bkey *k, unsigned nkeys,
-					  unsigned level, unsigned type)
+					  const struct bkey *k, unsigned level,
+					  unsigned type)
 {
 	struct jset_keys *jkeys = (struct jset_keys *) bset_bkey_last(j);
+	unsigned u64s = KEY_U64s(k);
 
-	jkeys->keys = nkeys;
+	jkeys->keys = u64s;
 	jkeys->btree_id = id;
 	jkeys->level = level;
 	jkeys->flags = 0;
 	SET_JKEYS_TYPE(jkeys, type);
 
-	memcpy(jkeys->start, k, sizeof(u64) * nkeys);
-	j->keys += jset_u64s(nkeys);
+	memcpy(jkeys->start, k, sizeof(u64) * u64s);
+	j->keys += jset_u64s(u64s);
 }
 
 void bch_journal_add_keys(struct cache_set *c, struct journal_res *res,
 			  enum btree_id id, const struct bkey *k,
-			  unsigned nkeys, unsigned level)
+			  unsigned level)
 {
-	unsigned actual = jset_u64s(nkeys);
+	unsigned u64s = KEY_U64s(k);
+	unsigned actual = jset_u64s(u64s);
 
 	BUG_ON(!res->ref);
 	BUG_ON(actual > res->nkeys);
 	res->nkeys -= actual;
 
 	spin_lock(&c->journal.lock);
-	__bch_journal_add_keys(c->journal.cur->data, id, k, nkeys,
+	__bch_journal_add_keys(c->journal.cur->data, id, k,
 			       level, JKEYS_BTREE_KEYS);
 	bch_journal_set_dirty(c);
 	spin_unlock(&c->journal.lock);
