@@ -365,7 +365,8 @@ struct gc_stat {
 #define	CACHE_SET_STOPPING		1
 #define	CACHE_SET_RUNNING		2
 #define	CACHE_SET_RO			3
-#define	CACHE_SET_GC_FAILURE		4
+#define	CACHE_SET_GC_STOPPING		4
+#define	CACHE_SET_GC_FAILURE		5
 
 struct prio_clock {
 	/* All fields protected by bucket_lock */

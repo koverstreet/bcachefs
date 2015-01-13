@@ -626,6 +626,8 @@ static void bch_cache_set_read_only(struct cache_set *c)
 	bch_ratelimit_reset(&c->tiering_pd.rate);
 	bch_tiering_read_stop(c);
 
+	set_bit(CACHE_SET_GC_STOPPING, &c->flags);
+
 	if (!IS_ERR_OR_NULL(c->gc_thread))
 		kthread_stop(c->gc_thread);
 

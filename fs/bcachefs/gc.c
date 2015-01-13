@@ -178,7 +178,7 @@ static int bch_gc_btree(struct cache_set *c, enum btree_id btree_id,
 		if (should_rewrite)
 			bch_btree_node_rewrite(b, &iter, false);
 
-		if (test_bit(CACHE_SET_STOPPING, &c->flags)) {
+		if (test_bit(CACHE_SET_GC_STOPPING, &c->flags)) {
 			bch_btree_iter_unlock(&iter);
 			return -ESHUTDOWN;
 		}
@@ -559,7 +559,7 @@ static int bch_coalesce_btree(struct cache_set *c, enum btree_id btree_id)
 
 		lock_seq[0] = merge[0]->lock.state.seq;
 
-		if (test_bit(CACHE_SET_STOPPING, &c->flags)) {
+		if (test_bit(CACHE_SET_GC_STOPPING, &c->flags)) {
 			bch_btree_iter_unlock(&iter);
 			return -ESHUTDOWN;
 		}
