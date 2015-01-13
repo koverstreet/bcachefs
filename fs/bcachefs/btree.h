@@ -210,9 +210,6 @@ struct btree_iter {
 
 	s8			error;
 
-	/* State used by btree insertion is also stored here for convenience */
-	unsigned		insert_collision:1;
-
 	struct cache_set	*c;
 
 	/* Current position of the iterator */

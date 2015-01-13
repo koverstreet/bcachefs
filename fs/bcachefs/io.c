@@ -301,13 +301,11 @@ static void bch_write_index(struct closure *cl)
 	int ret = bch_btree_insert(op->c, BTREE_ID_EXTENTS, &op->insert_keys,
 				   op->replace ? &op->replace_info : NULL,
 				   op->flush ? &op->cl : NULL);
-
-	if (ret == -ESRCH)
-		op->replace_collision = true;
-	else if (ret) {
+	if (ret) {
 		__bcache_io_error(op->c, "btree IO error");
 		op->error = ret;
-	}
+	} else if (op->replace && op->replace_info.successes == 0)
+		op->replace_collision = true;
 
 	continue_at(cl, bch_write_done, op->c->wq);
 }
