@@ -1310,7 +1310,9 @@ static void bch_btree_set_root(struct btree *b)
 
 	old = btree_node_root(b);
 	if (old) {
-		bch_journal_res_get(c, &res, 0, 0);
+		unsigned u64s = jset_u64s(0);
+
+		bch_journal_res_get(c, &res, u64s, u64s);
 		six_lock_write(&old->lock);
 	}
 
@@ -1695,12 +1697,16 @@ bch_btree_insert_keys(struct btree *b,
 		 * of it, in the bkey_cmpxchg() or handle_existing_key_newer()
 		 * cases
 		 */
-		unsigned n_min = KEY_U64s(bch_keylist_front(insert_keys)) * 2;
-		unsigned n_max = max_t(unsigned, n_min,
-				       bch_keylist_nkeys(insert_keys));
+		unsigned n_min = KEY_U64s(bch_keylist_front(insert_keys));
+		unsigned n_max = bch_keylist_nkeys(insert_keys);
+
+		unsigned actual_min = jset_u64s(n_min) * 2;
+		unsigned actual_max = max_t(unsigned, actual_min,
+					    jset_u64s(n_max));
 
 		if (!b->level)
-			bch_journal_res_get(iter->c, &res, n_min, n_max);
+			bch_journal_res_get(iter->c, &res,
+					    actual_min, actual_max);
 
 		six_lock_write(&b->lock);
 

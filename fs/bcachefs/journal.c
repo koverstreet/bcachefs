@@ -1079,13 +1079,11 @@ static bool __journal_res_get(struct cache_set *c, struct journal_res *res,
 			      unsigned u64s_min, unsigned u64s_max,
 			      u64 *start_time)
 {
-	unsigned actual_min = jset_u64s(u64s_min);
-	unsigned actual_max = jset_u64s(u64s_max);
 	u64 oldest_seq;
 	bool write_oldest;
 
 	BUG_ON(res->ref);
-	BUG_ON(actual_max < actual_min);
+	BUG_ON(u64s_max < u64s_min);
 
 	if (!test_bit(JOURNAL_REPLAY_DONE, &c->journal.flags))
 		return true;
@@ -1093,8 +1091,8 @@ static bool __journal_res_get(struct cache_set *c, struct journal_res *res,
 	spin_lock(&c->journal.lock);
 
 	while (1) {
-		if (actual_min < c->journal.u64s_remaining) {
-			res->nkeys = min_t(unsigned, actual_max,
+		if (u64s_max < c->journal.u64s_remaining) {
+			res->nkeys = min_t(unsigned, u64s_max,
 					   c->journal.u64s_remaining - 1);
 			res->ref = 1;
 
@@ -1222,13 +1220,14 @@ void bch_journal_add_keys(struct cache_set *c, struct journal_res *res,
 void bch_journal_meta(struct cache_set *c, struct closure *parent)
 {
 	struct journal_res res;
+	unsigned u64s = jset_u64s(0);
 
 	memset(&res, 0, sizeof(res));
 
 	if (!CACHE_SYNC(&c->sb))
 		return;
 
-	bch_journal_res_get(c, &res, 0, 0);
+	bch_journal_res_get(c, &res, u64s, u64s);
 	if (res.ref) {
 		bch_journal_set_dirty(c);
 		bch_journal_res_put(c, &res, parent);

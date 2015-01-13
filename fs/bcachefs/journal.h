@@ -167,9 +167,9 @@ static inline void bch_journal_res_put(struct cache_set *c,
  * Amount of space that will be taken up by some keys in the journal (i.e.
  * including the jset header)
  */
-static inline unsigned jset_u64s(unsigned nkeys)
+static inline unsigned jset_u64s(unsigned u64s)
 {
-	return nkeys + sizeof(struct jset_keys) / sizeof(u64);
+	return u64s + sizeof(struct jset_keys) / sizeof(u64);
 }
 
 static inline bool journal_res_full(struct journal_res *res,
