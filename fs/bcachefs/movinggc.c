@@ -107,29 +107,43 @@ found:
 static void read_moving(struct cache *ca, struct moving_context *ctxt)
 {
 	struct bkey *k;
+	bool again;
 
 	bch_ratelimit_reset(&ca->moving_gc_pd.rate);
 
-	/* XXX: if we error, background writeback could stall indefinitely */
+	do {
+		again = false;
 
-	while (!bch_moving_context_wait(ctxt)) {
-		if (bch_queue_full(&ca->moving_gc_queue)) {
-			bch_moving_wait(ctxt);
-			continue;
+		while (!bch_moving_context_wait(ctxt)) {
+			if (bch_queue_full(&ca->moving_gc_queue)) {
+				bch_moving_wait(ctxt);
+				continue;
+			}
+
+			k = bch_scan_keylist_next_rescan(
+				ca->set,
+				&ca->moving_gc_queue.keys,
+				&ctxt->last_scanned,
+				POS_MAX,
+				moving_pred);
+
+			if (k == NULL)
+				break;
+
+			if (issue_moving_gc_move(&ca->moving_gc_queue,
+						 ctxt, k)) {
+				/*
+				 * Memory allocation failed; we will wait for
+				 * all queued moves to finish and continue
+				 * scanning starting from the same key
+				 */
+				again = true;
+				break;
+			}
 		}
 
-		k = bch_scan_keylist_next_rescan(ca->set,
-						 &ca->moving_gc_queue.keys,
-						 &ctxt->last_scanned,
-						 POS_MAX,
-						 moving_pred);
-		if (k == NULL)
-			break;
-
-		issue_moving_gc_move(&ca->moving_gc_queue, ctxt, k);
-	}
-
-	bch_queue_run(&ca->moving_gc_queue, ctxt);
+		bch_queue_run(&ca->moving_gc_queue, ctxt);
+	} while (again);
 }
 
 static bool bch_moving_gc(struct cache *ca)
