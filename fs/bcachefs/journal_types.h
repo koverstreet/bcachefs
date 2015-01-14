@@ -80,8 +80,6 @@ struct journal_device {
 	 */
 	u64			*seq;
 
-	unsigned		blocks_free;
-
 	/* Journal bucket we're currently writing to */
 	unsigned		cur_idx;
 
