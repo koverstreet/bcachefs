@@ -328,12 +328,12 @@ int bch_moving_gc_thread_start(struct cache *ca)
 
 void bch_moving_gc_stop(struct cache *ca)
 {
+	bch_queue_stop(&ca->moving_gc_queue);
 	ca->moving_gc_pd.rate.rate = UINT_MAX;
 	bch_ratelimit_reset(&ca->moving_gc_pd.rate);
 	if (ca->moving_gc_read)
 		kthread_stop(ca->moving_gc_read);
 	ca->moving_gc_read = NULL;
-	bch_queue_stop(&ca->moving_gc_queue);
 }
 
 void bch_moving_gc_destroy(struct cache *ca)
