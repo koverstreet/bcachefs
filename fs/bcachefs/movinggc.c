@@ -129,7 +129,7 @@ static void read_moving(struct cache *ca, struct moving_context *ctxt)
 		issue_moving_gc_move(&ca->moving_gc_queue, ctxt, k);
 	}
 
-	closure_sync(&ctxt->cl);
+	bch_queue_run(&ca->moving_gc_queue, ctxt);
 }
 
 static bool bch_moving_gc(struct cache *ca)

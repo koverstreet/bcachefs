@@ -472,6 +472,11 @@ void bch_data_move(struct moving_queue *q,
 	return;
 }
 
+void bch_queue_run(struct moving_queue *q, struct moving_context *ctxt)
+{
+	closure_sync(&ctxt->cl);
+}
+
 static bool migrate_data_pred(struct scan_keylist *kl, const struct bkey *k)
 {
 	struct cache *ca = container_of(kl, struct cache,
@@ -793,7 +798,7 @@ int bch_move_data_off_device(struct cache *ca)
 				ret = -1;
 		}
 
-		closure_sync(&context.cl);
+		bch_queue_run(queue, &context);
 
 		if ((pass >= PASS_LOW_LIMIT)
 		    && (seen_key_count != (MIGRATION_DEBUG ? ~0ULL : 0))) {
@@ -818,8 +823,7 @@ int bch_move_data_off_device(struct cache *ca)
 		pr_notice("Migrated all data in %d iterations", pass);
 
 out:
-	closure_sync(&context.cl);
-
+	bch_queue_run(queue, &context);
 	return ret;
 }
 

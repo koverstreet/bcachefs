@@ -110,6 +110,8 @@ void bch_queue_stop(struct moving_queue *);
 
 void bch_queue_recalc_oldest_gens(struct cache_set *, struct moving_queue *);
 
+void bch_queue_run(struct moving_queue *, struct moving_context *);
+
 #define sysfs_queue_attribute(name)					\
 	rw_attribute(name##_max_count);					\
 	rw_attribute(name##_max_read_count);				\
