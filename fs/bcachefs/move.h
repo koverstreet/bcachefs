@@ -67,6 +67,23 @@ struct moving_io {
 	struct moving_context	*context;
 	BKEY_PADDED(key);
 	/* Protected by q->lock */
+
+	/*
+	 * 1) !read_issued && !read_completed
+	 *    - Closure is not running yet, starts when read_issued is set
+	 *    - IO is in q->pending
+	 * 2) !write_issued && !write_completed:
+	 *    - IO is in q->pending
+	 * 3) write_issued:
+	 *    - IO is in q->write_pending
+	 * 4) write_completed:
+	 *    - Closure is about to return and the IO is about to be freed
+	 *
+	 * If read_issued, we hold a reference on q->read_count
+	 * If write_issued, we hold a reference on q->write_count
+	 * Until IO is freed, we hold a reference on q->count
+	 */
+	int			read_issued : 1;
 	int			read_completed : 1;
 	int			write_issued : 1;
 	/* Must be last since it is variable size */
