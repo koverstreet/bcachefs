@@ -114,6 +114,7 @@ static void moving_io_destructor(struct closure *cl)
 	struct moving_queue *q = io->q;
 	struct moving_context *ctxt = io->context;
 	unsigned long flags;
+	bool kick_writes = true;
 
 	if (io->op.replace_collision)
 		trace_bcache_copy_collision(q, &io->key);
@@ -141,10 +142,15 @@ static void moving_io_destructor(struct closure *cl)
 		q->stop_waitcl = NULL;
 	}
 
+	if (list_empty(&q->pending))
+		kick_writes = false;
+
 	spin_unlock_irqrestore(&q->lock, flags);
-	bch_queue_write(q);
 
 	moving_io_free(io);
+
+	if (kick_writes)
+		bch_queue_write(q);
 
 	bch_moving_notify(ctxt);
 }
