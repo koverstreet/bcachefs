@@ -395,7 +395,8 @@ void bch_tiering_init_cache(struct cache *ca)
 		       TIERING_KEYS_MAX_SIZE,
 		       TIERING_NR,
 		       TIERING_READ_NR,
-		       TIERING_WRITE_NR);
+		       TIERING_WRITE_NR,
+		       false);
 
 	ca->tiering_stripe_size = ca->sb.bucket_size * 2;
 }

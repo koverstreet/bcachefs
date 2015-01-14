@@ -104,7 +104,8 @@ void bch_queue_init(struct moving_queue *,
 		    unsigned max_keys,
 		    unsigned max_ios,
 		    unsigned max_reads,
-		    unsigned max_writes);
+		    unsigned max_writes,
+		    bool rotational);
 int bch_queue_start(struct moving_queue *,
 		    const char *);
 bool bch_queue_full(struct moving_queue *);

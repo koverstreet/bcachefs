@@ -268,7 +268,8 @@ void bch_queue_init(struct moving_queue *q,
 		    unsigned max_size,
 		    unsigned max_count,
 		    unsigned max_read_count,
-		    unsigned max_write_count)
+		    unsigned max_write_count,
+		    bool rotational)
 {
 	if (test_and_set_bit(MOVING_QUEUE_INITIALIZED, &q->flags))
 		return;
@@ -280,6 +281,7 @@ void bch_queue_init(struct moving_queue *q,
 	q->max_count = max_count;
 	q->max_read_count = max_read_count;
 	q->max_write_count = max_write_count;
+	q->rotational = rotational;
 
 	spin_lock_init(&q->lock);
 	INIT_LIST_HEAD(&q->pending);
