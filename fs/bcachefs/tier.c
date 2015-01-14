@@ -21,6 +21,7 @@ static bool tiering_pred(struct scan_keylist *kl, const struct bkey *k)
 					tiering_queue.keys);
 	struct cache_set *c = ca->set;
 	struct cache_member_rcu *mi;
+	unsigned replicas = CACHE_SET_DATA_REPLICAS_WANT(&c->sb);
 	unsigned dev;
 	bool ret;
 
@@ -35,9 +36,10 @@ static bool tiering_pred(struct scan_keylist *kl, const struct bkey *k)
 		return false;
 
 	/* Need at least CACHE_SET_DATA_REPLICAS_WANT ptrs not on tier 0 */
-	dev = max_t(int, 0, PTR_DEV(k, bch_extent_ptrs(k) -
-				    CACHE_SET_DATA_REPLICAS_WANT(&c->sb)));
+	if (bch_extent_ptrs(k) < replicas)
+		return true;
 
+	dev = PTR_DEV(k, bch_extent_ptrs(k) - replicas);
 	mi = cache_member_info_get(c);
 	ret = dev < mi->nr_in_set && !CACHE_TIER(&mi->m[dev]);
 	cache_member_info_put();
