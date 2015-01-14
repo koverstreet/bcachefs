@@ -90,6 +90,7 @@ read_attribute(written);
 read_attribute(btree_written);
 read_attribute(metadata_written);
 read_attribute(journal_debug);
+write_attribute(journal_flush);
 
 sysfs_time_stats_attribute(btree_gc, sec, ms);
 sysfs_time_stats_attribute(btree_coalesce, sec, ms);
@@ -763,6 +764,16 @@ STORE(__bch_cache_set)
 
 	sysfs_strtoul(btree_flush_delay, c->btree_flush_delay);
 
+	if (attr == &sysfs_journal_flush) {
+		struct closure cl;
+
+		closure_init_stack(&cl);
+		bch_journal_meta(c, &cl);
+		closure_sync(&cl);
+
+		return size;
+	}
+
 	if (attr == &sysfs_btree_scan_ratelimit) {
 		struct cache *ca;
 		unsigned i;
@@ -892,6 +903,8 @@ static struct attribute *bch_cache_set_files[] = {
 	&sysfs_bucket_reserve_percent,
 	&sysfs_sector_reserve_percent,
 	&sysfs_tiering_percent,
+
+	&sysfs_journal_flush,
 	NULL
 };
 KTYPE(bch_cache_set);
