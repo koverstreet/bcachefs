@@ -52,6 +52,12 @@ static void bch_moving_notify(struct moving_context *ctxt)
 	wake_up_process(ctxt->task);
 }
 
+static void bch_queue_write(struct moving_queue *q)
+{
+	BUG_ON(q->wq == NULL);
+	queue_work(q->wq, &q->work);
+}
+
 static void moving_init(struct moving_io *io)
 {
 	struct bio *bio = &io->bio.bio;
@@ -108,8 +114,7 @@ static void moving_io_destructor(struct closure *cl)
 	}
 
 	spin_unlock_irqrestore(&q->lock, flags);
-	BUG_ON(q->wq == NULL);
-	queue_work(q->wq, &q->work);
+	bch_queue_write(q);
 
 	kfree(io);
 
@@ -359,8 +364,7 @@ static void read_moving_endio(struct bio *bio)
 	BUG_ON(!q->read_count);
 	q->read_count--;
 	spin_unlock_irqrestore(&q->lock, flags);
-	BUG_ON(q->wq == NULL);
-	queue_work(q->wq, &q->work);
+	bch_queue_write(q);
 
 	bch_moving_notify(ctxt);
 }
@@ -396,6 +400,9 @@ static void __bch_data_move(struct closure *cl)
 	bch_submit_bbio(&io->bio, ca, &io->key, ptr, false);
 }
 
+/*
+ * bch_queue_full() - return if more reads can be queued with bch_data_move().
+ */
 bool bch_queue_full(struct moving_queue *q)
 {
 	unsigned long flags;

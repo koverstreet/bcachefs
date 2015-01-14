@@ -85,7 +85,6 @@ found:
 	 */
 	bch_write_op_init(&io->op, c, &io->bio.bio, wp, k, k,
 			  cached ? BCH_WRITE_CACHED : 0);
-	io->op.io_wq		= ca->moving_gc_write;
 	io->op.btree_alloc_reserve = RESERVE_MOVINGGC_BTREE;
 
 	bch_extent_drop_ptr(&io->op.insert_key, ptr - e->v.ptr);
