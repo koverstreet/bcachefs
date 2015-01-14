@@ -75,7 +75,7 @@ struct moving_io {
 	/*
 	 * 1) !read_issued && !read_completed
 	 *    - Closure is not running yet, starts when read_issued is set
-	 *    - IO is in q->pending
+	 *    - IO is in q->tree (if q->rotational) and q->pending
 	 * 2) !write_issued && !write_completed:
 	 *    - IO is in q->pending
 	 * 3) write_issued:
