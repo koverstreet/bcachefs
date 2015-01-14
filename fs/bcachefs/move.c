@@ -135,7 +135,7 @@ static void moving_io_destructor(struct closure *cl)
 		trace_bcache_move_write_done(q, &io->key);
 	}
 
-	list_del(&io->list);
+	list_del_init(&io->list);
 
 	if ((q->count == 0) && (q->stop_waitcl != NULL)) {
 		closure_put(q->stop_waitcl);
@@ -203,7 +203,7 @@ static void bch_queue_write_work(struct work_struct *work)
 
 	spin_lock_irqsave(&q->lock, flags);
 
-	while (q->write_count < q->max_write_count) {
+	while (!q->stopped && q->write_count < q->max_write_count) {
 		io = list_first_entry_or_null(&q->pending,
 					struct moving_io, list);
 		/*
@@ -308,6 +308,35 @@ void bch_queue_destroy(struct moving_queue *q)
 	bch_scan_keylist_destroy(&q->keys);
 }
 
+static void bch_queue_cancel_writes(struct moving_queue *q)
+{
+	struct moving_io *io;
+	unsigned long flags;
+	bool read_completed;
+
+	spin_lock_irqsave(&q->lock, flags);
+
+	while (1) {
+		io = list_first_entry_or_null(&q->pending,
+					      struct moving_io,
+					      list);
+		if (!io)
+			break;
+
+		BUG_ON(!io->read_issued);
+		BUG_ON(io->write_issued);
+		list_del_init(&io->list);
+		read_completed = io->read_completed;
+		spin_unlock_irqrestore(&q->lock, flags);
+		if (read_completed)
+			closure_return_with_destructor_noreturn(&io->cl,
+					moving_io_destructor);
+		spin_lock_irqsave(&q->lock, flags);
+	}
+
+	spin_unlock_irqrestore(&q->lock, flags);
+}
+
 void bch_queue_stop(struct moving_queue *q)
 {
 	unsigned long flags;
@@ -326,6 +355,8 @@ void bch_queue_stop(struct moving_queue *q)
 		}
 	}
 	spin_unlock_irqrestore(&q->lock, flags);
+
+	bch_queue_cancel_writes(q);
 
 	closure_sync(&waitcl);
 
@@ -378,6 +409,8 @@ static void read_moving_endio(struct bio *bio)
 					    struct moving_io, cl);
 	struct moving_queue *q = io->q;
 	struct moving_context *ctxt = io->context;
+	bool stopped;
+
 	unsigned long flags;
 
 	if (bio->bi_error) {
@@ -399,8 +432,16 @@ static void read_moving_endio(struct bio *bio)
 	io->read_completed = 1;
 	BUG_ON(!q->read_count);
 	q->read_count--;
+	stopped = q->stopped;
+	if (stopped)
+		list_del_init(&io->list);
 	spin_unlock_irqrestore(&q->lock, flags);
-	bch_queue_write(q);
+
+	if (stopped)
+		closure_return_with_destructor(&io->cl,
+			moving_io_destructor);
+	else
+		bch_queue_write(q);
 
 	bch_moving_notify(ctxt);
 }
