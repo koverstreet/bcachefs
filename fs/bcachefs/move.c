@@ -258,6 +258,7 @@ void bch_queue_init(struct moving_queue *q,
 	spin_lock_init(&q->lock);
 	INIT_LIST_HEAD(&q->pending);
 	INIT_LIST_HEAD(&q->write_pending);
+	q->tree = RB_ROOT;
 }
 
 int bch_queue_start(struct moving_queue *q,
@@ -312,7 +313,7 @@ static void bch_queue_cancel_writes(struct moving_queue *q)
 {
 	struct moving_io *io;
 	unsigned long flags;
-	bool read_completed;
+	bool read_issued, read_completed;
 
 	spin_lock_irqsave(&q->lock, flags);
 
@@ -323,14 +324,18 @@ static void bch_queue_cancel_writes(struct moving_queue *q)
 		if (!io)
 			break;
 
-		BUG_ON(!io->read_issued);
 		BUG_ON(io->write_issued);
 		list_del_init(&io->list);
+		read_issued = io->read_issued;
 		read_completed = io->read_completed;
+		if (!read_issued && !read_completed && q->rotational)
+			rb_erase(&io->node, &q->tree);
 		spin_unlock_irqrestore(&q->lock, flags);
 		if (read_completed)
 			closure_return_with_destructor_noreturn(&io->cl,
 					moving_io_destructor);
+		else if (!read_issued)
+			moving_io_destructor(&io->cl);
 		spin_lock_irqsave(&q->lock, flags);
 	}
 
@@ -487,6 +492,24 @@ bool bch_queue_full(struct moving_queue *q)
 	return full;
 }
 
+static int moving_io_cmp(struct moving_io *io1, struct moving_io *io2)
+{
+	if (io1->sort_key < io2->sort_key)
+		return -1;
+	else if (io1->sort_key > io2->sort_key)
+		return 1;
+	else {
+		/* We don't want duplicate keys. Eventually, we will have
+		 * support for GC with duplicate pointers -- for now,
+		 * just sort them randomly instead */
+		if (io1 < io2)
+			return -1;
+		else if (io1 > io2)
+			return 1;
+		BUG();
+	}
+}
+
 void bch_data_move(struct moving_queue *q,
 		   struct moving_context *ctxt,
 		   struct moving_io *io)
@@ -499,24 +522,30 @@ void bch_data_move(struct moving_queue *q,
 	io->context = ctxt;
 
 	spin_lock_irqsave(&q->lock, flags);
-	if (q->stopped)
+	if (q->stopped) {
 		stopped = true;
+		goto out;
+	}
+
+	q->count++;
+	list_add_tail(&io->list, &q->pending);
+	trace_bcache_move_read(q, &io->key);
+
+	if (q->rotational)
+		BUG_ON(RB_INSERT(&q->tree, io, node, moving_io_cmp));
 	else {
 		BUG_ON(io->read_issued);
 		io->read_issued = 1;
-		q->count++;
 		q->read_count++;
-		list_add_tail(&io->list, &q->pending);
-		trace_bcache_move_read(q, &io->key);
 	}
 
+out:
 	spin_unlock_irqrestore(&q->lock, flags);
 
 	if (stopped)
 		moving_io_free(io);
-	else
+	else if (!q->rotational)
 		closure_call(&io->cl, __bch_data_move, NULL, &ctxt->cl);
-	return;
 }
 
 void bch_queue_run(struct moving_queue *q, struct moving_context *ctxt)

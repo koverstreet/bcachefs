@@ -59,11 +59,14 @@ void bch_moving_wait(struct moving_context *);
 
 struct moving_io {
 	struct list_head	list;
+	struct rb_node		node;
 	struct closure		cl;
 	struct moving_queue	*q;
 	struct bch_write_op	op;
 	struct moving_context	*context;
 	BKEY_PADDED(key);
+	/* Sort key for moving_queue->tree */
+	u64			sort_key;
 	/* Protected by q->lock */
 
 	/*

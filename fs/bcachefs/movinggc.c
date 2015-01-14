@@ -57,6 +57,7 @@ static int issue_moving_gc_move(struct moving_queue *q,
 	struct write_point *wp;
 	unsigned gen;
 	bool cached = EXTENT_CACHED(&e->v);
+	u64 sort_key;
 
 	extent_for_each_ptr(e, ptr)
 		if ((ca->sb.nr_this_dev == PTR_DEV(ptr)) &&
@@ -64,6 +65,7 @@ static int issue_moving_gc_move(struct moving_queue *q,
 			gen--;
 			BUG_ON(gen > ARRAY_SIZE(ca->gc_buckets));
 			wp = &ca->gc_buckets[gen];
+			sort_key = PTR_OFFSET(ptr);
 			goto found;
 		}
 
@@ -86,6 +88,7 @@ found:
 	bch_write_op_init(&io->op, c, &io->bio.bio, wp, k, k,
 			  cached ? BCH_WRITE_CACHED : 0);
 	io->op.btree_alloc_reserve = RESERVE_MOVINGGC_BTREE;
+	io->sort_key		   = sort_key;
 
 	bch_extent_drop_ptr(&io->op.insert_key, ptr - e->v.ptr);
 
