@@ -178,11 +178,6 @@ static int bch_gc_btree(struct cache_set *c, enum btree_id btree_id,
 		if (should_rewrite)
 			bch_btree_node_rewrite(b, &iter, false);
 
-		if (test_bit(CACHE_SET_GC_STOPPING, &c->flags)) {
-			bch_btree_iter_unlock(&iter);
-			return -ESHUTDOWN;
-		}
-
 		bch_btree_iter_cond_resched(&iter);
 	}
 	return bch_btree_iter_unlock(&iter);
@@ -326,15 +321,7 @@ void bch_gc(struct cache_set *c)
 			: 0;
 
 		if (ret) {
-			if (ret != -ESHUTDOWN)
-				pr_err("btree gc failed with %d!", ret);
-
-			write_seqlock(&c->gc_cur_lock);
-			c->gc_cur_btree = BTREE_ID_NR + 1;
-			c->gc_cur_level = 0;
-			c->gc_cur_key = ZERO_KEY;
-			write_sequnlock(&c->gc_cur_lock);
-
+			pr_err("btree gc failed with %d!", ret);
 			set_bit(CACHE_SET_GC_FAILURE, &c->flags);
 			up_write(&c->gc_lock);
 			return;
