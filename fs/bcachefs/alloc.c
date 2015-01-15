@@ -535,9 +535,9 @@ void bch_increment_clock_slowpath(struct cache_set *c, int rw)
  * them on the various freelists.
  */
 
-static inline bool can_inc_bucket_gen(struct cache *ca, size_t r)
+static inline bool can_inc_bucket_gen(struct cache *ca, struct bucket *g)
 {
-	return bucket_gc_gen(ca, r) < BUCKET_GC_GEN_MAX;
+	return bucket_gc_gen(ca, g) < BUCKET_GC_GEN_MAX;
 }
 
 static bool bch_can_invalidate_bucket(struct cache *ca, struct bucket *g)
@@ -545,7 +545,7 @@ static bool bch_can_invalidate_bucket(struct cache *ca, struct bucket *g)
 	if (!is_available_bucket(READ_ONCE(g->mark)))
 		return false;
 
-	if (!can_inc_bucket_gen(ca, g - ca->buckets)) {
+	if (!can_inc_bucket_gen(ca, g)) {
 		ca->inc_gen_needs_gc++;
 		return false;
 	}
@@ -581,21 +581,29 @@ static void bch_invalidate_one_bucket(struct cache *ca, struct bucket *g)
 }
 
 /*
- * Determines what order we're going to reuse buckets, smallest bucket_prio()
- * first: we also take into account the number of sectors of live data in that
- * bucket, and in order for that multiply to make sense we have to scale bucket
+ * Determines what order we're going to reuse buckets, smallest bucket_key()
+ * first.
  *
- * Thus, we scale the bucket priorities so that the prio farthest from the clock
- * is worth 1/8th of the closest.
+ *
+ * - We take into account the read prio of the bucket, which gives us an
+ *   indication of how hot the data is -- we scale the prio so that the prio
+ *   farthest from the clock is worth 1/8th of the closest.
+ *
+ * - The number of sectors of cached data in the bucket, which gives us an
+ *   indication of the cost in cache misses this eviction will cause.
+ *
+ * - The difference between the bucket's current gen and oldest gen of any
+ *   pointer into it, which gives us an indication of the cost of an eventual
+ *   btree GC to rewrite nodes with stale pointers.
  */
 
-#define bucket_prio(g)							\
+#define bucket_sort_key(g)						\
 ({									\
-	u16 prio = g->read_prio - ca->min_prio[READ];			\
+	unsigned long prio = g->read_prio - ca->min_prio[READ];		\
 	prio = (prio * 7) / (ca->set->prio_clock[READ].hand -		\
 			     ca->min_prio[READ]);			\
 									\
-	(prio + 1) * bucket_sectors_used(g);				\
+	(((prio + 1) * bucket_sectors_used(g)) << 8) | bucket_gc_gen(ca, g);\
 })
 
 static void invalidate_buckets_lru(struct cache *ca)
@@ -621,7 +629,7 @@ static void invalidate_buckets_lru(struct cache *ca)
 		if (!bch_can_invalidate_bucket(ca, g))
 			continue;
 
-		bucket_heap_push(ca, g, bucket_prio(g));
+		bucket_heap_push(ca, g, bucket_sort_key(g));
 	}
 
 	/* Sort buckets by physical location on disk for better locality */

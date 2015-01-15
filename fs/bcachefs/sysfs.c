@@ -977,7 +977,7 @@ static unsigned bucket_sectors_used_fn(struct cache *ca, struct bucket *g,
 static unsigned bucket_oldest_gen_fn(struct cache *ca, struct bucket *g,
 				     void *private)
 {
-	return bucket_gc_gen(ca, g - ca->buckets);
+	return bucket_gc_gen(ca, g);
 }
 
 static ssize_t show_quantiles(struct cache *ca, char *buf,

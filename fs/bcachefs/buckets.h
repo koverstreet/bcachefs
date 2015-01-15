@@ -19,8 +19,9 @@
  * the oldest gen of any pointer into that bucket in the btree.
  */
 
-static inline u8 bucket_gc_gen(struct cache *ca, size_t r)
+static inline u8 bucket_gc_gen(struct cache *ca, struct bucket *g)
 {
+	unsigned long r = g - ca->buckets;
 	return ca->bucket_gens[r] - ca->buckets[r].oldest_gen;
 }
 
