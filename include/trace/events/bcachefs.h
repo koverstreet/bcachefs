@@ -465,6 +465,32 @@ TRACE_EVENT(bcache_mca_reap,
 	TP_printk("bucket %llu ret %d", __entry->bucket, __entry->ret)
 );
 
+TRACE_EVENT(bcache_mca_scan,
+	TP_PROTO(struct cache_set *c, unsigned touched, unsigned freed,
+		 unsigned can_free, unsigned long nr),
+	TP_ARGS(c, touched, freed, can_free, nr),
+
+	TP_STRUCT__entry(
+		__array(char,		uuid,	16	)
+		__field(unsigned long,	touched		)
+		__field(unsigned long,	freed		)
+		__field(unsigned long,	can_free	)
+		__field(unsigned long,	nr		)
+	),
+
+	TP_fast_assign(
+		memcpy(__entry->uuid, c->sb.set_uuid.b, 16);
+		__entry->touched	= touched;
+		__entry->freed		= freed;
+		__entry->can_free	= can_free;
+		__entry->nr		= nr;
+	),
+
+	TP_printk("%pU touched %lu freed %lu can_free %lu nr %lu",
+		  __entry->uuid, __entry->touched, __entry->freed,
+		  __entry->can_free, __entry->nr)
+);
+
 DECLARE_EVENT_CLASS(mca_cannibalize_lock,
 	TP_PROTO(struct cache_set *c, struct closure *cl),
 	TP_ARGS(c, cl),
