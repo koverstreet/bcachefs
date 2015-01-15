@@ -740,7 +740,7 @@ static bool journal_reclaim(struct cache_set *c, u64 *oldest_seq)
 		 */
 		for (i = 0; i < bch_extent_ptrs(k); i++) {
 			ca = PTR_CACHE(c, k, i);
-			if (CACHE_STATE(&ca->mi) != CACHE_ACTIVE)
+			if (!ca || CACHE_STATE(&ca->mi) != CACHE_ACTIVE)
 				goto pick_new_devices;
 		}
 		goto out;
@@ -800,6 +800,9 @@ pick_new_devices:
 		unsigned blocks_free;
 
 		ca = PTR_CACHE(c, k, i);
+		if (!ca)
+			continue;
+
 		blocks_free = ca->sb.bucket_size >> c->block_bits;
 
 		if (!c->journal.blocks_free ||
