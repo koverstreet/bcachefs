@@ -122,6 +122,9 @@ static bool should_drop_ptr(const struct cache_set *c, const struct bkey *k,
 	if (bch_is_zero(mi[PTR_DEV(k, ptr)].uuid.b, sizeof(uuid_le)))
 		return true;
 
+	if (bch_extent_ptr_is_dirty(c, k, ptr))
+		return false;
+
 	return (ca = PTR_CACHE(c, k, ptr)) &&
 		ptr_stale(ca, k, ptr);
 }
