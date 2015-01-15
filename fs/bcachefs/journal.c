@@ -1078,7 +1078,7 @@ static bool __journal_res_get(struct cache_set *c, struct journal_res *res,
 	spin_lock(&c->journal.lock);
 
 	while (1) {
-		if (u64s_max < c->journal.u64s_remaining) {
+		if (u64s_min < c->journal.u64s_remaining) {
 			res->nkeys = min_t(unsigned, u64s_max,
 					   c->journal.u64s_remaining - 1);
 			res->ref = 1;
