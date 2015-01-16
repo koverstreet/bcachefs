@@ -8,6 +8,7 @@ bool bch_inode_invalid(const struct bkey *);
 
 int bch_inode_create(struct cache_set *, struct bch_inode *, u64, u64, u64 *);
 int bch_inode_update(struct cache_set *, struct bch_inode *);
+int bch_inode_truncate(struct cache_set *, u64, u64);
 int bch_inode_rm(struct cache_set *c, u64 inode_nr);
 
 int bch_blockdev_inode_find_by_uuid(struct cache_set *, uuid_le *,

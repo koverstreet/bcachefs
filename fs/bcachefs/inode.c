@@ -186,6 +186,14 @@ int bch_inode_update(struct cache_set *c, struct bch_inode *inode)
 				NULL, NULL);
 }
 
+int bch_inode_truncate(struct cache_set *c, u64 inode_nr, u64 new_size)
+{
+	return bch_discard(c,
+			   &KEY(inode_nr, new_size, 0),
+			   &KEY(inode_nr + 1, 0, 0),
+			   0);
+}
+
 int bch_inode_rm(struct cache_set *c, u64 inode_nr)
 {
 	struct bkey inode;
