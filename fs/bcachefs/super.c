@@ -1133,6 +1133,8 @@ static const char *can_add_cache(struct cache *ca, struct cache_set *c)
 	else if (memcmp(&ca->sb.set_uuid, &c->sb.set_uuid,
 				sizeof(ca->sb.set_uuid)))
 		return "new cache has wrong cacheset uuid";
+	else if (ca->sb.bucket_size < c->btree_pages * PAGE_SECTORS)
+		return "new cache bucket_size is too small";
 
 	return NULL;
 }
