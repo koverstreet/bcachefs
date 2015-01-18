@@ -2027,13 +2027,17 @@ have_slot:
 	new_size = max_t(unsigned, nr_this_dev + 1, c->sb.nr_in_set);
 
 	old_mi = c->members;
-	new_mi = kzalloc(sizeof(struct cache_member_rcu) +
-			 sizeof(struct cache_member) * new_size,
-			 GFP_KERNEL);
+
+	/* Check if dynamic fault is enabled for error path testing */
+	new_mi = cache_set_init_fault() ? NULL :
+			kzalloc(sizeof(struct cache_member_rcu) +
+				sizeof(struct cache_member) * new_size,
+				GFP_KERNEL);
+
 	if (!new_mi) {
 		err = "cannot allocate memory";
 		ret = -ENOMEM;
-		goto err;
+		goto err_put;
 	}
 
 	new_mi->nr_in_set = new_size;
