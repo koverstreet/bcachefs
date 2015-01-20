@@ -291,17 +291,23 @@ static void bch_ptr_swab(const struct bkey_format *f, struct bkey_packed *k)
 		d[i] = swab64(d[i]);
 }
 
-static const char *extent_ptr_invalid(const struct cache_member_rcu *mi,
+static const char *extent_ptr_invalid(struct bkey_s_c_extent e,
+				      const struct cache_member_rcu *mi,
 				      const struct bch_extent_ptr *ptr,
 				      unsigned size_ondisk)
 {
+	const struct bch_extent_ptr *ptr2;
 	const struct cache_member_cpu *m = mi->m + ptr->dev;
 
 	if (ptr->dev > mi->nr_in_set || !m->valid)
 		return "pointer to invalid device";
 
+	extent_for_each_ptr(e, ptr2)
+		if (ptr != ptr2 && ptr->dev == ptr2->dev)
+			return "multiple pointers to same device";
+
 	if (ptr->offset + size_ondisk > m->bucket_size * m->nbuckets)
-	    return "offset past end of device";
+		return "offset past end of device";
 
 	if (ptr->offset < m->bucket_size * m->first_bucket)
 		return "offset before first bucket";
@@ -386,7 +392,7 @@ static const char *bch_btree_ptr_invalid(const struct cache_set *c,
 		mi = cache_member_info_get(c);
 
 		extent_for_each_ptr_crc(e, ptr, crc) {
-			reason = extent_ptr_invalid(mi, ptr,
+			reason = extent_ptr_invalid(e, mi, ptr,
 						c->sb.btree_node_size);
 
 			if (reason) {
@@ -1390,7 +1396,8 @@ static const char *bch_extent_invalid(const struct cache_set *c,
 					goto invalid;
 				break;
 			case BCH_EXTENT_ENTRY_ptr:
-				reason = extent_ptr_invalid(mi, &entry->ptr, size_ondisk);
+				reason = extent_ptr_invalid(e, mi,
+						&entry->ptr, size_ondisk);
 				if (reason)
 					goto invalid;
 				break;
