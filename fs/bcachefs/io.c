@@ -709,8 +709,7 @@ int bch_discard(struct cache_set *c, const struct bkey *start_key,
 		erase_key = KEY(KEY_INODE(k),
 				KEY_START(k) + max_sectors,
 				max_sectors);
-		bch_cut_front(&START_KEY(start_key), &erase_key);
-		bch_cut_back(end_key, &erase_key);
+		bch_cut_front(&iter.pos, &erase_key);
 		n = erase_key;
 
 		if ((version) == 0ULL) {
@@ -720,6 +719,8 @@ int bch_discard(struct cache_set *c, const struct bkey *start_key,
 			SET_KEY_WIPED(&erase_key, 1);
 			SET_KEY_VERSION(&erase_key, version);
 		}
+
+		bch_cut_back(end_key, &erase_key);
 
 		ret = bch_btree_insert_at(&iter,
 					  &keylist_single(&erase_key),
