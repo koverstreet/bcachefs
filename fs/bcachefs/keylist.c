@@ -155,7 +155,9 @@ void bch_scan_keylist_destroy(struct scan_keylist *kl)
 
 void bch_scan_keylist_reset(struct scan_keylist *kl)
 {
+	mutex_lock(&kl->lock);
 	kl->list.bot_p = kl->list.top_p = kl->list.start_keys_p;
+	mutex_unlock(&kl->lock);
 }
 
 /*

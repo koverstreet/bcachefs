@@ -244,11 +244,9 @@ static int bch_queue_restart(struct moving_queue *q, const char *name)
 	q->stopped = false;
 	spin_unlock_irqrestore(&q->lock, flags);
 
-	mutex_lock(&q->keys.lock);
 	/* It should have been reset when stopped, but this doesn't hurt */
 	bch_scan_keylist_reset(&q->keys);
 	ret = bch_queue_start(q, name);
-	mutex_unlock(&q->keys.lock);
 	return ret;
 }
 
@@ -304,9 +302,7 @@ void bch_queue_stop(struct moving_queue *q)
 	 * Make sure that it is empty so that gc marking doesn't keep
 	 * marking stale entries from when last used.
 	 */
-	mutex_lock(&q->keys.lock);
 	bch_scan_keylist_reset(&q->keys);
-	mutex_unlock(&q->keys.lock);
 }
 
 static void pending_recalc_oldest_gens(struct cache_set *c, struct list_head *l)
