@@ -1086,12 +1086,6 @@ static const char *run_cache_set(struct cache_set *c)
 			percpu_ref_put(&ca->ref);
 			goto err;
 		}
-
-		err = "error starting tiering write workqueue";
-		if (bch_tiering_write_start(ca)) {
-			percpu_ref_put(&ca->ref);
-			goto err;
-		}
 	}
 
 	err = "error starting tiering thread";
@@ -1414,9 +1408,7 @@ const char *bch_cache_read_write(struct cache *ca)
 	if (!bch_moving_gc_thread_start(ca))
 		err = NULL;
 
-	err = "error starting tiering write workqueue";
-	if (!bch_tiering_write_start(ca))
-		err = NULL;
+	wake_up_process(ca->set->tiering_read);
 
 	return err;
 }
