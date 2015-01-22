@@ -119,8 +119,13 @@ static void read_moving(struct cache *ca, struct moving_context *ctxt)
 
 		while (!bch_moving_context_wait(ctxt)) {
 			if (bch_queue_full(&ca->moving_gc_queue)) {
-				bch_moving_wait(ctxt);
-				continue;
+				if (ca->moving_gc_queue.rotational) {
+					again = true;
+					break;
+				} else {
+					bch_moving_wait(ctxt);
+					continue;
+				}
 			}
 
 			k = bch_scan_keylist_next_rescan(

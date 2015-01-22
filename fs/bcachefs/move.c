@@ -948,8 +948,13 @@ again:
 			}
 
 			if (bch_queue_full(queue)) {
-				bch_moving_wait(&context);
-				continue;
+				if (queue->rotational) {
+					again = true;
+					break;
+				} else {
+					bch_moving_wait(&context);
+					continue;
+				}
 			}
 
 			k = bch_scan_keylist_next_rescan(c,
