@@ -1038,6 +1038,8 @@ int bch_flag_data_bad(struct cache *ca)
 			BUG_ON(k->type == BCH_EXTENT &&
 			       bch_extent_has_device(bkey_i_to_extent_c(k),
 						     ca->sb.nr_this_dev));
+
+	bch_btree_iter_unlock(&iter);
 #endif
 
 	return ret ?: ret2;
