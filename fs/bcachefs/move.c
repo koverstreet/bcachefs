@@ -224,30 +224,22 @@ void bch_queue_init(struct moving_queue *q,
 int bch_queue_start(struct moving_queue *q,
 		    const char *name)
 {
-	if (q->wq != NULL)
-		/* Already started */
-		return 0;
-
-	q->wq = alloc_workqueue(name, WQ_UNBOUND|WQ_MEM_RECLAIM, 1);
-	if (!q->wq)
-		return -ENOMEM;
-
-	return 0;
-}
-
-static int bch_queue_restart(struct moving_queue *q, const char *name)
-{
-	int ret;
 	unsigned long flags;
 
 	spin_lock_irqsave(&q->lock, flags);
 	q->stopped = false;
 	spin_unlock_irqrestore(&q->lock, flags);
 
-	/* It should have been reset when stopped, but this doesn't hurt */
 	bch_scan_keylist_reset(&q->keys);
-	ret = bch_queue_start(q, name);
-	return ret;
+
+	/* Re-use workqueue if already started */
+	if (!q->wq)
+		q->wq = alloc_workqueue(name, WQ_UNBOUND|WQ_MEM_RECLAIM, 1);
+
+	if (!q->wq)
+		return -ENOMEM;
+
+	return 0;
 }
 
 static void queue_io_resize(struct moving_queue *q,
@@ -703,8 +695,8 @@ int bch_move_data_off_device(struct cache *ca)
 	 * devices).
 	 */
 
-	ret = bch_queue_restart(queue, "bch_move_data_off_device");
-	if (ret != 0)
+	ret = bch_queue_start(queue, "bch_move_data_off_device");
+	if (ret)
 		return ret;
 
 	queue_io_resize(queue, MIGRATE_NR, MIGRATE_READ_NR, MIGRATE_WRITE_NR);

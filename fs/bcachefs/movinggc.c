@@ -291,13 +291,10 @@ int bch_moving_gc_thread_start(struct cache *ca)
 	/* The moving gc read thread must be stopped */
 	BUG_ON(ca->moving_gc_read != NULL);
 
-	/* However, the work queue may actually exist */
-	if (ca->moving_gc_queue.wq == NULL) {
-		ret = bch_queue_start(&ca->moving_gc_queue,
-				      "bch_copygc_write");
-		if (ret)
-			return ret;
-	}
+	ret = bch_queue_start(&ca->moving_gc_queue,
+			      "bch_copygc_write");
+	if (ret)
+		return ret;
 
 	t = kthread_create(bch_moving_gc_thread, ca, "bch_copygc_read");
 	if (IS_ERR(t))
