@@ -615,9 +615,9 @@ static enum migrate_option migrate_cleanup_key(struct cache_set *c,
 
 static int issue_migration_move(struct cache *ca,
 				struct moving_context *ctxt,
-				struct bkey *k)
+				struct bkey *k,
+				u64 *seen_key_count)
 {
-	int ret;
 	enum migrate_option option;
 	struct moving_queue *q = &ca->moving_gc_queue;
 	struct cache_set *c = ca->set;
@@ -660,13 +660,12 @@ static int issue_migration_move(struct cache *ca,
 
 	case MIGRATE_COPY:
 		bch_data_move(q, ctxt, io);
-		ret = 0;
+		(*seen_key_count)++;
 		break;
 
 	case MIGRATE_IGNORE:
 		/* The pointer to this device was stale. */
 		moving_io_free(io);
-		ret = 1;
 		break;
 	}
 
@@ -679,7 +678,7 @@ static int issue_migration_move(struct cache *ca,
 	 * by btree gc marking.
 	 */
 	bch_scan_keylist_dequeue(&q->keys);
-	return ret;
+	return 0;
 }
 
 #define MIGRATION_DEBUG		0
@@ -707,8 +706,8 @@ static int issue_migration_move(struct cache *ca,
 
 int bch_move_data_off_device(struct cache *ca)
 {
+	int ret;
 	struct bkey *k;
-	int ret, ret2;
 	unsigned pass;
 	u64 seen_key_count;
 	unsigned last_error_count;
@@ -765,11 +764,15 @@ int bch_move_data_off_device(struct cache *ca)
 	for (pass = 0;
 	     (seen_key_count != 0 && (pass < MAX_DATA_OFF_ITER));
 	     pass++) {
-		ret = 0;
+		bool again;
+
 		seen_key_count = 0;
 		atomic_set(&context.error_count, 0);
 		atomic_set(&context.error_flags, 0);
 		context.last_scanned = POS_MIN;
+
+again:
+		again = false;
 
 		while (1) {
 			if (CACHE_STATE(&ca->mi) != CACHE_RO &&
@@ -791,14 +794,21 @@ int bch_move_data_off_device(struct cache *ca)
 			if (k == NULL)
 				break;
 
-			ret2 = issue_migration_move(ca, &context, k);
-			if (ret2 == 0)
-				seen_key_count += 1;
-			else if (ret2 < 0)
-				ret = -1;
+			if (issue_migration_move(ca, &context, k,
+						 &seen_key_count)) {
+				/*
+				 * Memory allocation failed; we will wait for
+				 * all queued moves to finish and continue
+				 * scanning starting from the same key
+				 */
+				again = true;
+				break;
+			}
 		}
 
 		bch_queue_run(queue, &context);
+		if (again)
+			goto again;
 
 		if ((pass >= PASS_LOW_LIMIT)
 		    && (seen_key_count != (MIGRATION_DEBUG ? ~0ULL : 0))) {
