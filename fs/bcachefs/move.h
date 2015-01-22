@@ -52,6 +52,9 @@ void bch_moving_context_init(struct moving_context *, struct bch_ratelimit *,
 
 static inline int bch_moving_context_wait(struct moving_context *ctxt)
 {
+	if (ctxt->rate == NULL)
+		return 0;
+
 	return bch_ratelimit_wait_freezable_stoppable(ctxt->rate, &ctxt->cl);
 }
 
