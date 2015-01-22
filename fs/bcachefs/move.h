@@ -90,20 +90,7 @@ struct moving_io {
 	struct bbio		bio;
 };
 
-static inline struct moving_io *moving_io_alloc(const struct bkey *k)
-{
-	struct moving_io *io;
-
-	io = kzalloc(sizeof(struct moving_io) + sizeof(struct bio_vec)
-		     * DIV_ROUND_UP(k->size, PAGE_SECTORS),
-		     GFP_KERNEL);
-	if (!io)
-		return NULL;
-
-	bkey_copy(&io->key, k);
-
-	return io;
-}
+struct moving_io *moving_io_alloc(const struct bkey *);
 
 typedef struct moving_io *(moving_queue_fn)(struct moving_queue *,
 					    struct moving_context *);

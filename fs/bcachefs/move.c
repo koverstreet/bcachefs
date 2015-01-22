@@ -74,6 +74,21 @@ static void moving_init(struct moving_io *io)
 	bch_bio_map(bio, NULL);
 }
 
+struct moving_io *moving_io_alloc(const struct bkey *k)
+{
+	struct moving_io *io;
+
+	io = kzalloc(sizeof(struct moving_io) + sizeof(struct bio_vec)
+		     * DIV_ROUND_UP(k->size, PAGE_SECTORS),
+		     GFP_KERNEL);
+	if (!io)
+		return NULL;
+
+	bkey_copy(&io->key, k);
+
+	return io;
+}
+
 static void moving_io_destructor(struct closure *cl)
 {
 	struct moving_io *io = container_of(cl, struct moving_io, cl);
