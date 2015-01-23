@@ -721,8 +721,9 @@ int bch_discard(struct cache_set *c, struct bpos start,
 
 		/* create the biggest key we can, to minimize writes */
 		bkey_init(&erase);
-		erase.p = iter.pos;
+		erase.p = bkey_start_pos(k);
 		bch_key_resize(&erase, max_sectors);
+		bch_cut_front(iter.pos, &erase);
 		n = erase.p;
 
 		erase.version = version;
