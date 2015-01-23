@@ -56,6 +56,7 @@ static int issue_moving_gc_move(struct moving_queue *q,
 	struct moving_io *io;
 	struct write_point *wp;
 	unsigned gen;
+	bool cached = EXTENT_CACHED(&e->v);
 
 	extent_for_each_ptr(e, ptr)
 		if ((ca->sb.nr_this_dev == PTR_DEV(ptr)) &&
@@ -76,8 +77,14 @@ found:
 		return -ENOMEM;
 	}
 
-	/* This also copies k into both insert_key and replace_key */
-	bch_write_op_init(&io->op, c, &io->bio.bio, wp, k, k, 0);
+	/*
+	 * This also copies k into both insert_key and replace_key.
+	 * Notice that we must preserve the cached status of the
+	 * key here, since extent_drop_ptr() might delete the
+	 * first pointer, losing the cached status
+	 */
+	bch_write_op_init(&io->op, c, &io->bio.bio, wp, k, k,
+			  cached ? BCH_WRITE_CACHED : 0);
 	io->op.io_wq		= ca->moving_gc_write;
 	io->op.btree_alloc_reserve = RESERVE_MOVINGGC_BTREE;
 

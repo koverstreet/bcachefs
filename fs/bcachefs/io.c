@@ -467,13 +467,20 @@ static void __bch_write(struct closure *cl)
 		bch_extent_normalize(op->c, k);
 		bch_check_mark_super(op->c, k, false);
 
+		/*
+		 * Do this after normalize since EXTENT_CACHED is stored
+		 * in the first pointer
+		 */
+		if (op->cached && k->type == BCH_EXTENT)
+			SET_EXTENT_CACHED(&bkey_i_to_extent(k)->v, true);
+
 		bch_keylist_enqueue(&op->insert_keys);
 	} while (n != bio);
 
 	op->write_done = true;
 	continue_at(cl, bch_write_index, op->c->wq);
 err:
-	if (bkey_extent_cached(&op->insert_key)) {
+	if (op->cached) {
 		/*
 		 * If we were writing cached data, not doing the write is fine
 		 * so long as we discard whatever would have been overwritten -
@@ -671,13 +678,16 @@ void bch_write_op_init(struct bch_write_op *op, struct cache_set *c,
 	bch_keylist_init(&op->insert_keys);
 	bkey_copy(&op->insert_key, insert_key);
 
-	if (!bkey_val_u64s(&op->insert_key))
+	if (!bkey_val_u64s(&op->insert_key)) {
+		/*
+		 * If the new key has no pointers, we're either doing a
+		 * discard or we're writing new data and we're going to
+		 * allocate pointers
+		 */
 		op->insert_key.type = op->discard
 			? KEY_TYPE_DELETED
 			: BCH_EXTENT;
-
-	if (op->cached && op->insert_key.type == BCH_EXTENT)
-		SET_EXTENT_CACHED(&bkey_i_to_extent(&op->insert_key)->v, true);
+	}
 
 	if (replace_key) {
 		op->replace = true;

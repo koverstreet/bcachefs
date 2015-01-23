@@ -1263,6 +1263,7 @@ bool bch_extent_normalize(struct cache_set *c, struct bkey *k)
 	struct cache_member_rcu *mi;
 	unsigned i;
 	bool swapped, have_data = false;
+	bool cached;
 
 	switch (k->type) {
 	case KEY_TYPE_DELETED:
@@ -1281,6 +1282,12 @@ bool bch_extent_normalize(struct cache_set *c, struct bkey *k)
 			set_bkey_deleted(&e->k);
 			return true;
 		}
+
+		/*
+		 * Preserve cached status since its stored in the
+		 * first pointer
+		 */
+		cached = EXTENT_CACHED(&e->v);
 
 		bch_extent_drop_stale(c, &e->k);
 
@@ -1308,9 +1315,9 @@ bool bch_extent_normalize(struct cache_set *c, struct bkey *k)
 			bch_set_extent_ptrs(e, 0);
 
 		if (!bch_extent_ptrs(e))
-			k->type = EXTENT_CACHED(&e->v)
-				? KEY_TYPE_DELETED
-				: KEY_TYPE_ERROR;
+			k->type = KEY_TYPE_DELETED;
+		else
+			SET_EXTENT_CACHED(&e->v, cached);
 
 		break;
 	default:
