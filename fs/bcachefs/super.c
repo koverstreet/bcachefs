@@ -659,11 +659,11 @@ static void bch_cache_set_read_only(struct cache_set *c)
 	if (!IS_ERR_OR_NULL(c->gc_thread))
 		kthread_stop(c->gc_thread);
 
-	for_each_cache(ca, c, i)
-		__bch_cache_read_only(ca);
-
 	/* Should skip this if we're unregistering because of an error */
 	bch_btree_flush(c);
+
+	for_each_cache(ca, c, i)
+		__bch_cache_read_only(ca);
 
 	if (c->journal.cur) {
 		cancel_delayed_work_sync(&c->journal.work);

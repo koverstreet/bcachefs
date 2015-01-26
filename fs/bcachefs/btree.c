@@ -602,8 +602,7 @@ static void bch_btree_node_write_sync(struct btree *b, struct btree_iter *iter)
 static void bch_btree_node_write_dirty(struct btree *b, struct closure *parent)
 {
 	six_lock_read(&b->lock);
-	if (btree_node_dirty(b))
-		__bch_btree_node_write(b, parent);
+	__bch_btree_node_write(b, parent);
 	six_unlock_read(&b->lock);
 }
 
