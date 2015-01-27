@@ -552,6 +552,10 @@ struct cache_set {
 	struct task_struct	*tiering_read;
 	struct bch_pd_controller tiering_pd;
 
+	/* NOTIFICATIONS */
+	struct mutex		uevent_lock;
+	struct kobj_uevent_env	uevent_env;
+
 	/* DEBUG JUNK */
 	struct dentry		*debug;
 #ifdef CONFIG_BCACHEFS_DEBUG

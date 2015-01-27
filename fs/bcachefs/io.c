@@ -15,6 +15,7 @@
 #include "gc.h"
 #include "io.h"
 #include "keylist.h"
+#include "notify.h"
 #include "stats.h"
 #include "super.h"
 
@@ -195,9 +196,13 @@ void bch_count_io_errors(struct cache *ca, int error, const char *m)
 						    &ca->io_errors);
 
 		if (errors < ca->set->error_limit) {
+			bch_notify_cache_error(ca, false, m);
+
 			pr_err("%s: IO error on %s, recovering",
 			       bdevname(ca->disk_sb.bdev, buf), m);
 		} else {
+			bch_notify_cache_error(ca, true, m);
+
 			if (bch_cache_remove(ca, true))
 				pr_err("%s: too many IO errors on %s, removing",
 				       bdevname(ca->disk_sb.bdev, buf), m);
