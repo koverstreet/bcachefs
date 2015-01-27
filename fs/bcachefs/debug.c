@@ -272,7 +272,7 @@ void bch_debug_exit(void)
 		debugfs_remove_recursive(debug);
 }
 
-int __init bch_debug_init(struct kobject *kobj)
+int __init bch_debug_init(void)
 {
 	int ret = 0;
 

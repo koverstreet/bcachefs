@@ -737,6 +737,6 @@ do {									\
 /* Forward declarations */
 
 void bch_debug_exit(void);
-int bch_debug_init(struct kobject *);
+int bch_debug_init(void);
 
 #endif /* _BCACHE_H */
