@@ -524,8 +524,9 @@ void bch_wake_delayed_writes(unsigned long data)
 	spin_lock_irqsave(&c->foreground_write_pd_lock, flags);
 
 	while ((op = c->write_wait_head)) {
-		if (!test_bit(CACHE_SET_STOPPING, &c->flags)
-		    && time_after(op->expires, jiffies)) {
+		if (!test_bit(CACHE_SET_RO, &c->flags) &&
+		    !test_bit(CACHE_SET_STOPPING, &c->flags) &&
+		    time_after(op->expires, jiffies)) {
 			mod_timer(&c->foreground_write_wakeup, op->expires);
 			break;
 		}
@@ -804,6 +805,7 @@ static void cache_promote_write(struct closure *cl)
 
 	if (!op->stale &&
 	    !op->iop.error &&
+	    !test_bit(CACHE_SET_RO, &op->iop.c->flags) &&
 	    !test_bit(CACHE_SET_STOPPING, &op->iop.c->flags))
 		closure_call(&op->iop.cl, bch_write, NULL, cl);
 
