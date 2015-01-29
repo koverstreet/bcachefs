@@ -296,6 +296,8 @@ static void bch_prio_write(struct cache *ca)
 		spin_unlock(&ca->prio_buckets_lock);
 
 		ret = prio_io(ca, r, REQ_OP_WRITE);
+		if (bch_meta_write_fault("prio"))
+			ret = -EIO;
 		if (ret)
 			bch_cache_error(ca,
 				"IO error %d writing prios to bucket %lu",
@@ -339,11 +341,6 @@ int bch_prio_read(struct cache *ca)
 	size_t b;
 	int ret;
 
-	if (cache_set_init_fault("prio_read")) {
-		bch_cache_error(ca, "bch_prio_read() dynamic fault");
-		return -EIO;
-	}
-
 	bucket = c->journal.prio_buckets[ca->sb.nr_this_dev];
 
 	/*
@@ -352,7 +349,8 @@ int bch_prio_read(struct cache *ca)
 	if (!bucket)
 		return 0;
 
-	if (bucket < ca->mi.first_bucket && bucket >= ca->mi.nbuckets) {
+	if ((bucket < ca->mi.first_bucket && bucket >= ca->mi.nbuckets) ||
+	    bch_meta_read_fault("prio")) {
 		bch_cache_error(ca, "bad prio bucket %llu", bucket);
 		return -EIO;
 	}
@@ -367,7 +365,7 @@ int bch_prio_read(struct cache *ca)
 			bucket_nr++;
 
 			ret = prio_io(ca, bucket, REQ_OP_READ);
-			if (ret) {
+			if (ret || bch_meta_read_fault("prio")) {
 				bch_cache_error(ca,
 					"IO error %d reading prios from bucket %llu",
 					ret, bucket);

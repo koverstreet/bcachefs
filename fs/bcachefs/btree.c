@@ -241,7 +241,7 @@ void bch_btree_node_read_done(struct btree *b, struct cache *ca,
 			      const struct bch_extent_ptr *ptr)
 {
 	struct cache_set *c = b->c;
-	const char *err = "bad btree header";
+	const char *err;
 	struct bset *i = btree_bset_first(b);
 	struct btree_node_iter *iter;
 	struct bkey *k;
@@ -255,6 +255,11 @@ void bch_btree_node_read_done(struct btree *b, struct cache *ca,
 	iter->b = &b->keys;
 #endif
 
+	err = "dynamic fault";
+	if (bch_meta_read_fault("btree"))
+		goto err;
+
+	err = "bad btree header";
 	if (!i->seq)
 		goto err;
 
@@ -388,7 +393,8 @@ static void bch_btree_node_read(struct btree *b)
 
 	closure_sync(&cl);
 
-	if (bio->bio.bi_error)
+	if (bio->bio.bi_error ||
+	    bch_meta_read_fault("btree"))
 		set_btree_node_io_error(b);
 
 	bch_bbio_free(&bio->bio, b->c);
@@ -456,7 +462,7 @@ static void btree_node_write_endio(struct bio *bio)
 	struct closure *cl = bio->bi_private;
 	struct btree *b = container_of(cl, struct btree, io);
 
-	if (bio->bi_error)
+	if (bio->bi_error || bch_meta_write_fault("btree"))
 		set_btree_node_io_error(b);
 
 	bch_bbio_endio(to_bbio(bio), bio->bi_error, "writing btree");

@@ -327,7 +327,7 @@ retry:
 		goto err;
 
 	err = "dynamic fault";
-	if (cache_set_init_fault())
+	if (cache_set_init_fault("read_super"))
 		goto err;
 
 	bio_reset(sb->bio);
