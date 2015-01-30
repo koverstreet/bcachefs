@@ -81,14 +81,20 @@ static inline bool btree_want_intent(struct btree_iter *iter, int level)
 	return level <= iter->locks_want;
 }
 
-static void btree_node_unlock(struct btree_iter *iter, unsigned level)
+static void __btree_node_unlock(struct btree_iter *iter, unsigned level,
+				struct btree *b)
 {
 	if (btree_node_intent_locked(iter, level))
-		six_unlock_intent(&iter->nodes[level]->lock);
+		six_unlock_intent(&b->lock);
 	else if (btree_node_read_locked(iter, level))
-		six_unlock_read(&iter->nodes[level]->lock);
+		six_unlock_read(&b->lock);
 
 	mark_btree_node_unlocked(iter, level);
+}
+
+static void btree_node_unlock(struct btree_iter *iter, unsigned level)
+{
+	__btree_node_unlock(iter, level, iter->nodes[level]);
 }
 
 #define __btree_node_lock(b, iter, _level, check_if_raced, type)	\
@@ -1289,7 +1295,7 @@ retry:
 		prefetch(b->keys.set[i].data);
 
 	if (btree_node_io_error(b)) {
-		btree_node_unlock(iter, level);
+		__btree_node_unlock(iter, level, b);
 		return ERR_PTR(-EIO);
 	}
 
