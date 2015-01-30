@@ -1521,6 +1521,11 @@ int bch_btree_root_read(struct cache_set *c, enum btree_id id,
 	bch_btree_node_read(b);
 	six_unlock_write(&b->lock);
 
+	if (btree_node_io_error(b)) {
+		six_unlock_intent(&b->lock);
+		return -EIO;
+	}
+
 	bch_btree_set_root(b);
 	six_unlock_intent(&b->lock);
 
