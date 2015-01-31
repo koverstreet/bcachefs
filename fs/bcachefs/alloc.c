@@ -566,12 +566,9 @@ static bool bch_can_invalidate_bucket(struct cache *ca, struct bucket *g)
 static void __bch_invalidate_one_bucket(struct cache *ca, struct bucket *g)
 {
 	lockdep_assert_held(&ca->freelist_lock);
-	BUG_ON(!bch_can_invalidate_bucket(ca, g));
 
 	/* Ordering matters: see bch_mark_data_bucket() */
 
-	/* this is what makes ptrs to the bucket invalid */
-	ca->bucket_gens[g - ca->buckets]++;
 	/* bucket mark updates imply a write barrier */
 	bch_mark_alloc_bucket(ca, g);
 
@@ -585,6 +582,10 @@ static void __bch_invalidate_one_bucket(struct cache *ca, struct bucket *g)
 static void bch_invalidate_one_bucket(struct cache *ca, struct bucket *g)
 {
 	spin_lock(&ca->freelist_lock);
+
+	/* this is what makes ptrs to the bucket invalid */
+	ca->bucket_gens[g - ca->buckets]++;
+
 	__bch_invalidate_one_bucket(ca, g);
 	BUG_ON(!fifo_push(&ca->free_inc, g - ca->buckets));
 	spin_unlock(&ca->freelist_lock);
@@ -656,8 +657,10 @@ static void invalidate_buckets_lru(struct cache *ca)
 	 * kick stuff and retry us
 	 */
 	while (!fifo_full(&ca->free_inc) &&
-	       heap_pop(&ca->heap, e, bucket_max_cmp))
+	       heap_pop(&ca->heap, e, bucket_max_cmp)) {
+		BUG_ON(!bch_can_invalidate_bucket(ca, e.g));
 		bch_invalidate_one_bucket(ca, e.g);
+	}
 
 	mutex_unlock(&ca->set->bucket_lock);
 	mutex_unlock(&ca->heap_lock);
@@ -1586,38 +1589,48 @@ void bch_open_buckets_init(struct cache_set *c)
 }
 
 /*
- * bch_cache_allocator_start - put some unused buckets directly on the prio
- * freelist, start allocator
+ * bch_cache_allocator_start - fill freelists directly with completely unused
+ * buckets
  *
  * The allocator thread needs freed buckets to rewrite the prios and gens, and
  * it needs to rewrite prios and gens in order to free buckets.
  *
- * This is only safe for buckets that have no live data in them, which
- * there should always be some of when this function is called.
+ * Don't increment gens. We are only re-using completely free buckets here, so
+ * there are no existing pointers into them.
+ *
+ * Also, we can't increment gens until we re-write prios and gens, but we
+ * can't do that until we can write a journal entry.
+ *
+ * If the journal is completely full, we cannot write a journal entry until we
+ * reclaim a journal bucket, and we cannot do that until we possibly allocate
+ * some buckets for btree nodes.
+ *
+ * So dig ourselves out of that hole here.
+ *
+ * This is only safe for buckets that have no live data in them, which there
+ * should always be some of when this function is called, since the last time
+ * we shut down there should have been unused buckets stranded on freelists.
  */
 const char *bch_cache_allocator_start(struct cache *ca)
 {
 	struct task_struct *k;
 	struct bucket *g;
 
+	spin_lock(&ca->freelist_lock);
 	for_each_bucket(g, ca) {
-		spin_lock(&ca->freelist_lock);
-		if (fifo_used(&ca->free_inc) >= prio_buckets(ca)) {
-			spin_unlock(&ca->freelist_lock);
-			goto done;
-		}
-
 		if (bch_can_invalidate_bucket(ca, g) &&
 		    !g->mark.cached_sectors) {
-			__bch_invalidate_one_bucket(ca, g);
-			fifo_push(&ca->free_inc, g - ca->buckets);
+			if (__bch_allocator_push(ca, g - ca->buckets))
+				__bch_invalidate_one_bucket(ca, g);
+			else
+				break;
 		}
-
-		spin_unlock(&ca->freelist_lock);
 	}
+	spin_unlock(&ca->freelist_lock);
 
-	return "couldn't find enough available buckets to write prios";
-done:
+	if (!fifo_full(&ca->free[RESERVE_PRIO]))
+		return "couldn't find enough available buckets to write prios";
+
 	k = kthread_create(bch_allocator_thread, ca, "bcache_allocator");
 	if (IS_ERR(k))
 		return "error starting allocator thread";
