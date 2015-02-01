@@ -256,6 +256,30 @@ DEFINE_EVENT(bkey, bcache_journal_replay_key,
 	TP_ARGS(k)
 );
 
+TRACE_EVENT(bcache_journal_next_bucket,
+	TP_PROTO(struct cache *ca, unsigned cur_idx,
+		unsigned last_idx, unsigned discard_idx),
+	TP_ARGS(ca, cur_idx, last_idx, discard_idx),
+
+	TP_STRUCT__entry(
+		__array(char,		uuid,	16	)
+		__field(unsigned,	cur_idx		)
+		__field(unsigned,	last_idx	)
+		__field(unsigned,	discard_idx	)
+	),
+
+	TP_fast_assign(
+		memcpy(__entry->uuid, ca->sb.disk_uuid.b, 16);
+		__entry->cur_idx	= cur_idx;
+		__entry->last_idx	= last_idx;
+		__entry->discard_idx	= discard_idx;
+	),
+
+	TP_printk("%pU cur %u last %u discard %u",
+		  __entry->uuid, __entry->cur_idx,
+		  __entry->last_idx, __entry->discard_idx)
+);
+
 TRACE_EVENT(bcache_journal_write_oldest,
 	TP_PROTO(struct cache_set *c, u64 seq),
 	TP_ARGS(c, seq),
@@ -293,12 +317,7 @@ TRACE_EVENT(bcache_journal_write_oldest_done,
 		  __entry->written)
 );
 
-DEFINE_EVENT(cache_set, bcache_journal_discard_wait,
-	TP_PROTO(struct cache_set *c),
-	TP_ARGS(c)
-);
-
-DEFINE_EVENT(cache_set, bcache_journal_fifo_full,
+DEFINE_EVENT(cache_set, bcache_journal_full,
 	TP_PROTO(struct cache_set *c),
 	TP_ARGS(c)
 );
