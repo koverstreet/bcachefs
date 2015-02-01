@@ -726,27 +726,18 @@ static void journal_entry_no_room(struct cache_set *c)
 }
 
 /**
- * journal_reclaim - make room in the journal by discarding journal buckets
- * where all entries have been flushed.
- *
- * Does not trigger writing btree nodes, this is done by the caller.
- *
- * The @oldest_seq parameter, if non-NULL, will be set to the sequence number
- * of the oldest node that can remain dirty -- all older nodes must be written
- * out.
- *
- * Return value is true if we have to write out dirty nodes and @oldest_seq was
- * set.
+ * journal_reclaim - make room in the journal
  */
-static bool journal_reclaim(struct cache_set *c, u64 *oldest_seq)
+static void journal_reclaim(struct cache_set *c)
 {
 	struct bkey_i_extent *e = bkey_i_to_extent(&c->journal.key);
 	struct bch_extent_ptr *ptr;
 	struct cache *ca;
-	uint64_t last_seq;
+	u64 last_seq;
+	u64 oldest_seq = 0;
 	unsigned iter;
 	atomic_t p;
-	bool ret = false;
+	bool flush = false;
 	bool discard_done = true;
 
 	pr_debug("started");
@@ -757,6 +748,7 @@ static bool journal_reclaim(struct cache_set *c, u64 *oldest_seq)
 	 * new journal entry
 	 */
 	BUG_ON(c->journal.u64s_remaining);
+	BUG_ON(c->journal.cur->data->u64s);
 
 	/*
 	 * Unpin journal entries whose reference counts reached zero, meaning
@@ -837,11 +829,11 @@ static bool journal_reclaim(struct cache_set *c, u64 *oldest_seq)
 			 * flush all btree nodes up to the end of the oldest
 			 * journal bucket
 			 */
-			if (discard_done && oldest_seq) {
+			if (discard_done) {
 				BUG_ON(ja->last_idx != ja->discard_idx);
-				*oldest_seq = max_t(u64, *oldest_seq,
-						    ja->seq[next]);
-				ret = true;
+				oldest_seq = max_t(u64, oldest_seq,
+						   ja->seq[next]);
+				flush = true;
 			}
 
 			continue;
@@ -875,26 +867,30 @@ static bool journal_reclaim(struct cache_set *c, u64 *oldest_seq)
 		size_t used = fifo_used(&c->journal.pin);
 
 		trace_bcache_journal_fifo_full(c);
-		if (oldest_seq) {
-			/*
-			 * Write out enough btree nodes to free up ~1%
-			 * the FIFO
-			 */
-			*oldest_seq = max_t(u64, *oldest_seq,
-					    last_seq(&c->journal)
-					    + (used >> 8));
-			ret = true;
-		}
+		/*
+		 * Write out enough btree nodes to free up ~1%
+		 * the FIFO
+		 */
+		oldest_seq = max_t(u64, oldest_seq,
+				   last_seq(&c->journal)
+				   + (used >> 8));
+		flush = true;
 	} else if (c->journal.sectors_free) {
 		c->journal.u64s_remaining =
 			journal_write_u64s_remaining(c, c->journal.cur);
 		BUG_ON(!c->journal.u64s_remaining);
 		pr_debug("done: %d", c->journal.u64s_remaining);
 		wake_up(&c->journal.wait);
-		ret = false;
+		flush = false;
 	}
 
-	return ret;
+	if (flush) {
+		BUG_ON(oldest_seq == 0);
+		oldest_seq -= last_seq(&c->journal);
+		spin_unlock(&c->journal.lock);
+		bch_btree_write_oldest(c, oldest_seq);
+		spin_lock(&c->journal.lock);
+	}
 }
 
 void bch_journal_next(struct journal *j)
@@ -1128,9 +1124,6 @@ static bool __journal_res_get(struct cache_set *c, struct journal_res *res,
 			      unsigned u64s_min, unsigned u64s_max,
 			      u64 *start_time)
 {
-	u64 oldest_seq;
-	bool write_oldest;
-
 	BUG_ON(res->ref);
 	BUG_ON(u64s_max < u64s_min);
 
@@ -1185,29 +1178,13 @@ static bool __journal_res_get(struct cache_set *c, struct journal_res *res,
 					 &c->journal.flags));
 
 			journal_entry_no_room(c);
-			continue;
 		}
 
-		oldest_seq = 0;
-		write_oldest = journal_reclaim(c, &oldest_seq);
+		journal_reclaim(c);
 
-		/* Waiting for discards, or active cache devices gone */
-		if (!write_oldest && !c->journal.u64s_remaining) {
+		if (!c->journal.u64s_remaining) {
+			/* Still no room, we have to wait */
 			spin_unlock(&c->journal.lock);
-			trace_bcache_journal_discard_wait(c);
-			return false;
-		}
-
-		if (write_oldest) {
-			BUG_ON(c->journal.u64s_remaining);
-			BUG_ON(oldest_seq == 0);
-			oldest_seq -= last_seq(&c->journal);
-			spin_unlock(&c->journal.lock);
-			/*
-			 * If we didn't write any nodes, wake us up
-			 * again so we don't wait forever
-			 */
-			bch_btree_write_oldest(c, oldest_seq);
 			return false;
 		}
 	}
