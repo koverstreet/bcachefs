@@ -104,6 +104,15 @@ void bch_notify_cache_removing(struct cache *ca)
 	notify_put(c);
 }
 
+void bch_notify_cache_remove_failed(struct cache *ca)
+{
+	struct cache_set *c = ca->set;
+
+	notify_get_cache(ca);
+	notify_var(c, "STATE=remove_failed");
+	notify_put(c);
+}
+
 void bch_notify_cache_removed(struct cache *ca)
 {
 	struct cache_set *c = ca->set;
