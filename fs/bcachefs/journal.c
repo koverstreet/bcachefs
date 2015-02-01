@@ -556,8 +556,8 @@ int bch_journal_replay(struct cache_set *c, struct list_head *list)
 			keys++;
 		}
 
-		atomic_dec(c->journal.cur_pin);
-		wake_up(&c->journal.wait);
+		if (atomic_dec_and_test(c->journal.cur_pin))
+			wake_up(&c->journal.wait);
 
 		n = i->j.seq + 1;
 		entries++;

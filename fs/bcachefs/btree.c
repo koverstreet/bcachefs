@@ -429,8 +429,8 @@ err:
 static void btree_complete_write(struct btree *b, struct btree_write *w)
 {
 	if (w->journal) {
-		atomic_dec_bug(w->journal);
-		wake_up(&b->c->journal.wait);
+		if (atomic_dec_and_test(w->journal))
+			wake_up(&b->c->journal.wait);
 	}
 
 	w->journal	= NULL;
