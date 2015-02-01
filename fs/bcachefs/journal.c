@@ -724,6 +724,132 @@ static void journal_entry_no_room(struct cache_set *c)
 }
 
 /**
+ * journal_reclaim_work - free up journal buckets
+ *
+ * Background journal reclaim writes out btree nodes. It should be run
+ * early enough so that we never completely run out of journal buckets.
+ */
+static void journal_reclaim_work(struct work_struct *work)
+{
+	struct cache_set *c = container_of(work, struct cache_set,
+					   journal.reclaim_work);
+	struct cache *ca;
+	u64 oldest_seq = 0;
+	unsigned iter;
+	bool flush = false;
+
+	pr_debug("started");
+	spin_lock(&c->journal.lock);
+
+	rcu_read_lock();
+
+	for_each_cache_rcu(ca, c, iter) {
+		struct journal_device *ja = &ca->journal;
+		unsigned next = (ja->cur_idx + 1) %
+			bch_nr_journal_buckets(&ca->sb);
+
+		if ((CACHE_TIER(&ca->mi) != 0)
+		    || (CACHE_STATE(&ca->mi) != CACHE_ACTIVE))
+			continue;
+
+		/* No journal buckets available for writing on this device */
+		if (next == ja->last_idx) {
+			BUG_ON(ja->last_idx != ja->discard_idx);
+			oldest_seq = max_t(u64, oldest_seq,
+					   ja->seq[next]);
+			flush = true;
+		}
+	}
+
+	rcu_read_unlock();
+
+	if (fifo_free(&c->journal.pin) <= 1) {
+		size_t used = fifo_used(&c->journal.pin);
+
+		/*
+		 * Write out enough btree nodes to free up ~1%
+		 * the FIFO
+		 */
+		oldest_seq = max_t(u64, oldest_seq,
+				   last_seq(&c->journal)
+				   + (used >> 8));
+		flush = true;
+	}
+
+	if (!flush) {
+		spin_unlock(&c->journal.lock);
+		return;
+	}
+
+	BUG_ON(oldest_seq == 0);
+	oldest_seq -= last_seq(&c->journal);
+	spin_unlock(&c->journal.lock);
+	bch_btree_write_oldest(c, oldest_seq);
+}
+
+/**
+ * journal_reclaim_fast - do the fast part of journal reclaim
+ *
+ * Called from IO submission context, does not block. Cleans up after btree
+ * write completions by advancing the journal pin and each cache's last_idx,
+ * and kicking off discards.
+ *
+ * Returns true if background reclaim needs to run.
+ */
+static bool journal_reclaim_fast(struct cache_set *c)
+{
+	struct cache *ca;
+	u64 last_seq;
+	atomic_t p;
+	unsigned iter;
+	bool need_reclaim = false;
+
+	lockdep_assert_held(&c->journal.lock);
+
+	/*
+	 * Unpin journal entries whose reference counts reached zero, meaning
+	 * all btree nodes got written out
+	 */
+	while (!atomic_read(&fifo_front(&c->journal.pin)))
+		fifo_pop(&c->journal.pin, p);
+
+	if (fifo_free(&c->journal.pin) <= 1)
+		need_reclaim = true;
+
+	last_seq = last_seq(&c->journal);
+
+	rcu_read_lock();
+
+	/*
+	 * Advance last_idx to point to the oldest journal entry containing
+	 * btree node updates that have not yet been written out
+	 */
+	for_each_cache_rcu(ca, c, iter) {
+		struct journal_device *ja = &ca->journal;
+		unsigned next = (ja->cur_idx + 1) %
+			bch_nr_journal_buckets(&ca->sb);
+
+		if ((CACHE_TIER(&ca->mi) != 0)
+		    || (CACHE_STATE(&ca->mi) != CACHE_ACTIVE))
+			continue;
+
+		while (ja->last_idx != ja->cur_idx &&
+		       ja->seq[ja->last_idx] < last_seq)
+			ja->last_idx = (ja->last_idx + 1) %
+				bch_nr_journal_buckets(&ca->sb);
+
+		if (next == ja->last_idx)
+			need_reclaim = true;
+
+		do_journal_discard(ca);
+	}
+
+	rcu_read_unlock();
+
+	return need_reclaim;
+}
+
+/**
  * journal_next_bucket - move on to the next journal bucket if possible
  */
 static void journal_next_bucket(struct cache_set *c)
@@ -731,12 +857,7 @@ static void journal_next_bucket(struct cache_set *c)
 	struct bkey_i_extent *e = bkey_i_to_extent(&c->journal.key);
 	struct bch_extent_ptr *ptr;
 	struct cache *ca;
-	u64 last_seq;
-	u64 oldest_seq = 0;
 	unsigned iter;
-	atomic_t p;
-	bool flush = false;
-	bool discard_done = true;
 
 	pr_debug("started");
 	lockdep_assert_held(&c->journal.lock);
@@ -748,39 +869,10 @@ static void journal_next_bucket(struct cache_set *c)
 	BUG_ON(c->journal.u64s_remaining);
 	BUG_ON(c->journal.cur->data->u64s);
 
-	/*
-	 * Unpin journal entries whose reference counts reached zero, meaning
-	 * all btree nodes got written out
-	 */
-	while (!atomic_read(&fifo_front(&c->journal.pin)))
-		fifo_pop(&c->journal.pin, p);
-
-	last_seq = last_seq(&c->journal);
-
-	/*
-	 * Advance last_idx to point to the oldest journal entry containing
-	 * btree node updates that have not yet been written out
-	 *
-	 * Advance discard_idx toward last_idx by discarding journal buckets
-	 * that have had all btree node updates written out
-	 */
+	if (journal_reclaim_fast(c))
+		queue_work(system_long_wq, &c->journal.reclaim_work);
 
 	rcu_read_lock();
-
-	for_each_cache_rcu(ca, c, iter) {
-		struct journal_device *ja = &ca->journal;
-
-		if ((CACHE_TIER(&ca->mi) != 0)
-		    || (CACHE_STATE(&ca->mi) != CACHE_ACTIVE))
-			continue;
-
-		while (ja->last_idx != ja->cur_idx &&
-		       ja->seq[ja->last_idx] < last_seq)
-			ja->last_idx = (ja->last_idx + 1) %
-				bch_nr_journal_buckets(&ca->sb);
-
-		discard_done &= do_journal_discard(ca);
-	}
 
 	/*
 	 * Drop any pointers to devices that have been removed, are no longer
@@ -814,21 +906,8 @@ static void journal_next_bucket(struct cache_set *c)
 			continue;
 
 		/* No journal buckets available for writing on this device */
-		if (next == ja->discard_idx) {
-			/*
-			 * No work for discard to do -- tell the caller to
-			 * flush all btree nodes up to the end of the oldest
-			 * journal bucket
-			 */
-			if (discard_done) {
-				BUG_ON(ja->last_idx != ja->discard_idx);
-				oldest_seq = max_t(u64, oldest_seq,
-						   ja->seq[next]);
-				flush = true;
-			}
-
+		if (next == ja->discard_idx)
 			continue;
-		}
 
 		BUG_ON(bch_extent_ptrs(e) >= BKEY_EXTENT_PTRS_MAX);
 
@@ -855,26 +934,6 @@ static void journal_next_bucket(struct cache_set *c)
 		c->journal.sectors_free = 0;
 
 	rcu_read_unlock();
-
-	if (fifo_free(&c->journal.pin) <= 1) {
-		size_t used = fifo_used(&c->journal.pin);
-		/*
-		 * Write out enough btree nodes to free up ~1%
-		 * the FIFO
-		 */
-		oldest_seq = max_t(u64, oldest_seq,
-				   last_seq(&c->journal)
-				   + (used >> 8));
-		flush = true;
-	}
-
-	if (flush) {
-		BUG_ON(oldest_seq == 0);
-		oldest_seq -= last_seq(&c->journal);
-		spin_unlock(&c->journal.lock);
-		bch_btree_write_oldest(c, oldest_seq);
-		spin_lock(&c->journal.lock);
-	}
 }
 
 void bch_journal_next(struct journal *j)
@@ -1264,6 +1323,7 @@ int bch_journal_alloc(struct cache_set *c)
 	spin_lock_init(&j->lock);
 	init_waitqueue_head(&j->wait);
 	INIT_DELAYED_WORK(&j->write_work, journal_write_work);
+	INIT_WORK(&j->reclaim_work, journal_reclaim_work);
 
 	c->journal.delay_ms = 10;
 

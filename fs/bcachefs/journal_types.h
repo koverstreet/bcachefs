@@ -63,6 +63,8 @@ struct journal {
 
 	BKEY_PADDED(key);
 
+	struct work_struct	reclaim_work;
+
 	/*
 	 * Two journal entries -- one is currently open for new entries, the
 	 * other is possibly being written out.
