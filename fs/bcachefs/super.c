@@ -859,6 +859,9 @@ static const char *bch_cache_set_alloc(struct cache_sb *sb,
 	if (!c)
 		return err;
 
+	if (percpu_ref_init(&c->writes, bch_writes_disabled, 0, GFP_KERNEL))
+		goto err_free;
+
 	__module_get(THIS_MODULE);
 	closure_init(&c->cl, NULL);
 	set_closure_fn(&c->cl, cache_set_free, system_wq);
@@ -951,6 +954,9 @@ static const char *bch_cache_set_alloc(struct cache_sb *sb,
 	iter_size = (btree_blocks(c) + 1) *
 		sizeof(struct btree_node_iter_set);
 
+	if (cache_set_init_fault("cache_set_alloc"))
+		goto err;
+
 	if (!(c->bio_meta = mempool_create_kmalloc_pool(2,
 				sizeof(struct bbio) + sizeof(struct bio_vec) *
 				c->btree_pages)) ||
@@ -977,6 +983,10 @@ static const char *bch_cache_set_alloc(struct cache_sb *sb,
 	return NULL;
 err:
 	bch_cache_set_stop(c);
+	return err;
+
+err_free:
+	kfree(c);
 	return err;
 }
 
