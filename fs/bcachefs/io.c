@@ -475,7 +475,8 @@ static void __bch_write(struct closure *cl)
 		bio_set_op_attrs(n, REQ_OP_WRITE, 0);
 		bch_submit_bbio_replicas(n, op->c, k, ptrs_from, false);
 
-		bch_extent_normalize(op->c, k);
+		BUG_ON(bch_extent_normalize(op->c, k));
+
 		bch_check_mark_super(op->c, k, false);
 
 		/*

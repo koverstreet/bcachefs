@@ -1376,32 +1376,24 @@ bool bch_extent_normalize(struct cache_set *c, struct bkey *k)
 	bool cached;
 
 	switch (k->type) {
-	case KEY_TYPE_DELETED:
 	case KEY_TYPE_ERROR:
-		break;
+		return false;
+
+	case KEY_TYPE_DELETED:
+	case KEY_TYPE_COOKIE:
+		return true;
 
 	case KEY_TYPE_DISCARD:
-		if (!k->version)
-			set_bkey_deleted(k);
-		break;
-
-	case KEY_TYPE_COOKIE:
-		set_bkey_deleted(k);
-		break;
+		return !k->version;
 
 	case BCH_EXTENT:
 		e = bkey_i_to_extent(k);
-
-		if (!e->k.size) {
-			set_bkey_deleted(&e->k);
-			return true;
-		}
 
 		/*
 		 * Preserve cached status since its stored in the
 		 * first pointer
 		 */
-		cached = EXTENT_CACHED(&e->v);
+		cached = bch_extent_ptrs(e) && EXTENT_CACHED(&e->v);
 
 		bch_extent_drop_stale(c, &e->k);
 
@@ -1425,20 +1417,24 @@ bool bch_extent_normalize(struct cache_set *c, struct bkey *k)
 			if (PTR_DEV(ptr) != PTR_LOST_DEV)
 				have_data = true;
 
-		if (!have_data)
+		if (!have_data) {
 			bch_set_extent_ptrs(e, 0);
-
-		if (!bch_extent_ptrs(e))
-			k->type = KEY_TYPE_DELETED;
-		else
+			if (cached) {
+				k->type = KEY_TYPE_DISCARD;
+				if (!k->version)
+					return true;
+			} else {
+				k->type = KEY_TYPE_ERROR;
+			}
+		} else {
 			SET_EXTENT_CACHED(&e->v, cached);
+		}
 
-		break;
+		return false;
 	default:
 		BUG();
+		return false;
 	}
-
-	return bkey_deleted(k);
 }
 
 /*

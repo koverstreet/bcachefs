@@ -1188,7 +1188,11 @@ static int bch_flag_key_bad(struct btree_iter *iter,
 	 * bch_extent_normalize() needs to know how to turn a key with only
 	 * pointers to PTR_LOST_DEV into a KEY_BAD() key anyways - because we
 	 * might have a cached pointer that will go stale later - so just call
-	 * it here:
+	 * it here.
+	 *
+	 * If the key was cached, we may have dropped all pointers above --
+	 * in this case, bch_extent_normalize() will change the key type to
+	 * DISCARD.
 	 */
 	bch_extent_normalize(c, &e->k);
 
