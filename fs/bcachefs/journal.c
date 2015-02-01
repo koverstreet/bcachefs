@@ -397,7 +397,7 @@ bsearch:
 		if (ja->seq[i] > seq) {
 			seq = ja->seq[i];
 			/*
-			 * When journal_reclaim() goes to allocate for
+			 * When journal_next_bucket() goes to allocate for
 			 * the first time, it'll use the bucket after
 			 * ja->cur_idx
 			 */
@@ -724,9 +724,9 @@ static void journal_entry_no_room(struct cache_set *c)
 }
 
 /**
- * journal_reclaim - make room in the journal
+ * journal_next_bucket - move on to the next journal bucket if possible
  */
-static void journal_reclaim(struct cache_set *c)
+static void journal_next_bucket(struct cache_set *c)
 {
 	struct bkey_i_extent *e = bkey_i_to_extent(&c->journal.key);
 	struct bch_extent_ptr *ptr;
@@ -1019,7 +1019,7 @@ static void journal_write_locked(struct closure *cl)
 
 	/*
 	 * Make a copy of the key we're writing to for check_mark_super, since
-	 * journal_reclaim will change it
+	 * journal_next_bucket will change it
 	 */
 	bkey_copy(&tmp.k, &e->k);
 
@@ -1179,7 +1179,7 @@ static bool __journal_res_get(struct cache_set *c, struct journal_res *res,
 		}
 
 		/* Try to get a new journal bucket */
-		journal_reclaim(c);
+		journal_next_bucket(c);
 
 		if (!journal_bucket_has_room(c)) {
 			/* Still no room, we have to wait */
@@ -1313,14 +1313,14 @@ static bool bch_journal_writing_to_device(struct cache *ca)
 
 /*
  * This asumes that ca has already been marked read-only so that
- * journal_reclaim won't pick buckets out of ca any more.
+ * journal_next_bucket won't pick buckets out of ca any more.
  * Hence, if the journal is not currently pointing to ca, there
  * will be no new writes to journal entries in ca after all the
  * pending ones have been flushed to disk.
  *
  * If the journal is being written to ca, write a new record, and
- * journal_reclaim will notice that the device is no longer writeable
- * and pick a new set of devices to write to.
+ * journal_next_bucket will notice that the device is no longer
+ * writeable and pick a new set of devices to write to.
  */
 
 int bch_journal_move(struct cache *ca)
@@ -1338,7 +1338,7 @@ int bch_journal_move(struct cache *ca)
 		 * bch_journal_meta will write a record and we'll wait
 		 * for the write to complete.
 		 * Actually writing the journal (journal_write_locked)
-		 * will call journal_reclaim which notices that the
+		 * will call journal_next_bucket which notices that the
 		 * device is no longer writeable, and picks a new one.
 		 */
 		bch_journal_meta(c, &cl);
