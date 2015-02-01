@@ -606,7 +606,7 @@ int bch_cache_journal_alloc(struct cache *ca)
 
 	ret = bch_set_nr_journal_buckets(ca,
 			clamp_t(unsigned, ca->mi.nbuckets >> 8,
-				2, (1 << 20) / ca->mi.bucket_size));
+				8, (1 << 20) / ca->mi.bucket_size));
 	if (ret)
 		return ret;
 
@@ -693,6 +693,15 @@ static bool do_journal_discard(struct cache *ca)
 	}
 }
 
+/* Number of journal buckets which may be discarded and reused */
+static inline unsigned journal_free_buckets(struct cache *ca)
+{
+	struct journal_device *ja = &ca->journal;
+	unsigned nr = bch_nr_journal_buckets(&ca->sb);
+
+	return (ja->last_idx - ja->cur_idx + nr - 1) % nr;
+}
+
 static size_t journal_write_u64s_remaining(struct cache_set *c)
 {
 	ssize_t u64s = min_t(size_t,
@@ -728,6 +737,18 @@ static void journal_entry_no_room(struct cache_set *c)
  *
  * Background journal reclaim writes out btree nodes. It should be run
  * early enough so that we never completely run out of journal buckets.
+ *
+ * High watermarks for triggering background reclaim:
+ * - FIFO has fewer than 512 entries left
+ * - fewer than 25% journal buckets free
+ *
+ * Background reclaim runs until low watermarks are reached:
+ * - FIFO has more than 1024 entries left
+ * - more than 50% journal buckets free
+ *
+ * As long as a reclaim can complete in the time it takes to fill up
+ * 512 journal entries or 25% of all journal buckets, then
+ * journal_next_bucket() should not stall.
  */
 static void journal_reclaim_work(struct work_struct *work)
 {
@@ -737,6 +758,7 @@ static void journal_reclaim_work(struct work_struct *work)
 	u64 oldest_seq = 0;
 	unsigned iter;
 	bool flush = false;
+	size_t fifo_cutoff;
 
 	pr_debug("started");
 	spin_lock(&c->journal.lock);
@@ -745,16 +767,18 @@ static void journal_reclaim_work(struct work_struct *work)
 
 	for_each_cache_rcu(ca, c, iter) {
 		struct journal_device *ja = &ca->journal;
-		unsigned next = (ja->cur_idx + 1) %
-			bch_nr_journal_buckets(&ca->sb);
+		unsigned nr = bch_nr_journal_buckets(&ca->sb);
+		unsigned next = (ja->cur_idx + (nr >> 1)) % nr;
 
 		if ((CACHE_TIER(&ca->mi) != 0)
 		    || (CACHE_STATE(&ca->mi) != CACHE_ACTIVE))
 			continue;
 
-		/* No journal buckets available for writing on this device */
-		if (next == ja->last_idx) {
-			BUG_ON(ja->last_idx != ja->discard_idx);
+		/*
+		 * Write out enough btree nodes to free up 50% journal
+		 * buckets
+		 */
+		if (journal_free_buckets(ca) < (nr >> 1)) {
 			oldest_seq = max_t(u64, oldest_seq,
 					   ja->seq[next]);
 			flush = true;
@@ -763,16 +787,12 @@ static void journal_reclaim_work(struct work_struct *work)
 
 	rcu_read_unlock();
 
-	if (fifo_free(&c->journal.pin) <= 1) {
-		size_t used = fifo_used(&c->journal.pin);
-
-		/*
-		 * Write out enough btree nodes to free up ~1%
-		 * the FIFO
-		 */
+	fifo_cutoff = (c->journal.pin.size >> 5);
+	if (fifo_free(&c->journal.pin) <= fifo_cutoff) {
+		/* Write out enough btree nodes to free up 33% of the FIFO */
 		oldest_seq = max_t(u64, oldest_seq,
 				   last_seq(&c->journal)
-				   + (used >> 8));
+				   + fifo_cutoff);
 		flush = true;
 	}
 
@@ -813,7 +833,8 @@ static bool journal_reclaim_fast(struct cache_set *c)
 	while (!atomic_read(&fifo_front(&c->journal.pin)))
 		fifo_pop(&c->journal.pin, p);
 
-	if (fifo_free(&c->journal.pin) <= 1)
+	/* If less than 15% space free, kick off background reclaim */
+	if (fifo_free(&c->journal.pin) <= (c->journal.pin.size >> 6))
 		need_reclaim = true;
 
 	last_seq = last_seq(&c->journal);
@@ -826,8 +847,7 @@ static bool journal_reclaim_fast(struct cache_set *c)
 	 */
 	for_each_cache_rcu(ca, c, iter) {
 		struct journal_device *ja = &ca->journal;
-		unsigned next = (ja->cur_idx + 1) %
-			bch_nr_journal_buckets(&ca->sb);
+		unsigned nr = bch_nr_journal_buckets(&ca->sb);
 
 		if ((CACHE_TIER(&ca->mi) != 0)
 		    || (CACHE_STATE(&ca->mi) != CACHE_ACTIVE))
@@ -835,10 +855,13 @@ static bool journal_reclaim_fast(struct cache_set *c)
 
 		while (ja->last_idx != ja->cur_idx &&
 		       ja->seq[ja->last_idx] < last_seq)
-			ja->last_idx = (ja->last_idx + 1) %
-				bch_nr_journal_buckets(&ca->sb);
+			ja->last_idx = (ja->last_idx + 1) % nr;
 
-		if (next == ja->last_idx)
+		/*
+		 * If less than 25% journal buckets free, kick off
+		 * background reclaim
+		 */
+		if (journal_free_buckets(ca) < (nr >> 2))
 			need_reclaim = true;
 
 		do_journal_discard(ca);
