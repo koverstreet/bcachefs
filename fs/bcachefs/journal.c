@@ -693,13 +693,11 @@ static bool do_journal_discard(struct cache *ca)
 	}
 }
 
-static size_t journal_write_u64s_remaining(struct cache_set *c,
-					   struct journal_write *w)
+static size_t journal_write_u64s_remaining(struct cache_set *c)
 {
-	ssize_t u64s = (min_t(size_t,
+	ssize_t u64s = min_t(size_t,
 			     c->journal.sectors_free << 9,
-			     PAGE_SIZE << JSET_BITS) -
-			set_bytes(w->data)) / sizeof(u64);
+			     PAGE_SIZE << JSET_BITS) / sizeof(u64);
 
 	/* Subtract off some for the btree roots */
 	u64s -= BTREE_ID_NR * (JSET_KEYS_U64s + BKEY_EXTENT_MAX_U64s);
@@ -785,13 +783,6 @@ static void journal_reclaim(struct cache_set *c)
 	}
 
 	/*
-	 * If not enough room in the current bucket(s) for an empty journal
-	 * write, just advance to the next bucket(s)
-	 */
-	if (!journal_write_u64s_remaining(c, c->journal.cur))
-		journal_entry_no_room(c);
-
-	/*
 	 * Drop any pointers to devices that have been removed, are no longer
 	 * empty, or filled up their current journal bucket:
 	 */
@@ -875,13 +866,6 @@ static void journal_reclaim(struct cache_set *c)
 				   last_seq(&c->journal)
 				   + (used >> 8));
 		flush = true;
-	} else if (c->journal.sectors_free) {
-		c->journal.u64s_remaining =
-			journal_write_u64s_remaining(c, c->journal.cur);
-		BUG_ON(!c->journal.u64s_remaining);
-		pr_debug("done: %d", c->journal.u64s_remaining);
-		wake_up(&c->journal.wait);
-		flush = false;
 	}
 
 	if (flush) {
@@ -1120,6 +1104,11 @@ void __bch_journal_res_put(struct cache_set *c,
 	journal_unlock(c);
 }
 
+static inline bool journal_bucket_has_room(struct cache_set *c)
+{
+	return (c->journal.sectors_free && fifo_free(&c->journal.pin) > 1);
+}
+
 static bool __journal_res_get(struct cache_set *c, struct journal_res *res,
 			      unsigned u64s_min, unsigned u64s_max,
 			      u64 *start_time)
@@ -1166,12 +1155,12 @@ static bool __journal_res_get(struct cache_set *c, struct journal_res *res,
 			continue;
 		}
 
+		/*
+		 * There's room in the entry, but not enough for our
+		 * reservation: since we haven't added any keys yet, we're at
+		 * the end of a bucket, so skip to the end of the bucket
+		 */
 		if (c->journal.u64s_remaining) {
-			/*
-			 * Not much room for this journal entry (near the end of
-			 * a journal bucket) but there's nothing in this journal
-			 * entry yet - skip it and allocate a new journal entry
-			 */
 			BUG_ON(test_bit(JOURNAL_DIRTY,
 					&c->journal.flags) &&
 			       !test_bit(JOURNAL_NEED_WRITE,
@@ -1180,9 +1169,19 @@ static bool __journal_res_get(struct cache_set *c, struct journal_res *res,
 			journal_entry_no_room(c);
 		}
 
+		/* If there's room in the journal bucket, start a new entry */
+		if (journal_bucket_has_room(c)) {
+			c->journal.u64s_remaining =
+				journal_write_u64s_remaining(c);
+			BUG_ON(!c->journal.u64s_remaining);
+			pr_debug("done: %d", c->journal.u64s_remaining);
+			continue;
+		}
+
+		/* Try to get a new journal bucket */
 		journal_reclaim(c);
 
-		if (!c->journal.u64s_remaining) {
+		if (!journal_bucket_has_room(c)) {
 			/* Still no room, we have to wait */
 			spin_unlock(&c->journal.lock);
 			return false;
