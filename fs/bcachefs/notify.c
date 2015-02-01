@@ -5,6 +5,7 @@
  */
 
 #include "bcache.h"
+#include "notify.h"
 
 #include <linux/kobject.h>
 
@@ -112,13 +113,12 @@ void bch_notify_cache_removed(struct cache *ca)
 	notify_put(c);
 }
 
-void bch_notify_cache_error(struct cache *ca, bool fatal, const char *m)
+void bch_notify_cache_error(struct cache *ca, bool fatal)
 {
 	struct cache_set *c = ca->set;
 
 	notify_get_cache(ca);
 	notify_var(c, "STATE=error");
 	notify_var(c, "FATAL=%d", fatal);
-	notify_var(c, "MESSAGE=%s", m);
 	notify_put(c);
 }

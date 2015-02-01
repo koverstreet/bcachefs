@@ -327,6 +327,8 @@ struct cache {
 
 	struct journal_device	journal;
 
+	struct work_struct	io_error_work;
+
 	/* The rest of this all shows up in sysfs */
 #define IO_ERROR_SHIFT		20
 	atomic_t		io_errors;

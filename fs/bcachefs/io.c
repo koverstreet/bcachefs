@@ -192,21 +192,27 @@ void bch_count_io_errors(struct cache *ca, int error, const char *m)
 
 	if (error) {
 		char buf[BDEVNAME_SIZE];
-		unsigned errors = atomic_add_return(1 << IO_ERROR_SHIFT,
-						    &ca->io_errors);
 
-		if (errors < ca->set->error_limit) {
-			bch_notify_cache_error(ca, false, m);
+		atomic_add(1 << IO_ERROR_SHIFT, &ca->io_errors);
+		queue_work(system_long_wq, &ca->io_error_work);
+		printk_ratelimited(KERN_ERR "%s: IO error on %s",
+		       bdevname(ca->disk_sb.bdev, buf), m);
+	}
+}
 
-			pr_err("%s: IO error on %s, recovering",
-			       bdevname(ca->disk_sb.bdev, buf), m);
-		} else {
-			bch_notify_cache_error(ca, true, m);
+void bch_cache_io_error_work(struct work_struct *work)
+{
+	struct cache *ca = container_of(work, struct cache, io_error_work);
+	unsigned errors = atomic_read(&ca->io_errors);
+	char buf[BDEVNAME_SIZE];
 
-			if (bch_cache_remove(ca, true))
-				pr_err("%s: too many IO errors on %s, removing",
-				       bdevname(ca->disk_sb.bdev, buf), m);
-		}
+	if (errors < ca->set->error_limit) {
+		bch_notify_cache_error(ca, false);
+	} else {
+		bch_notify_cache_error(ca, true);
+		printk_ratelimited(KERN_ERR "%s: too many IO errors, removing",
+		       bdevname(ca->disk_sb.bdev, buf));
+		bch_cache_remove(ca, true);
 	}
 }
 

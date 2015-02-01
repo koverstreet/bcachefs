@@ -1766,6 +1766,8 @@ static const char *cache_alloc(struct bcache_superblock *sb,
 	ca->disk_sb.bdev->bd_holder = ca;
 	memset(sb, 0, sizeof(*sb));
 
+	INIT_WORK(&ca->io_error_work, bch_cache_io_error_work);
+
 	err = "dynamic fault";
 	if (cache_set_init_fault("cache_alloc"))
 		goto err;

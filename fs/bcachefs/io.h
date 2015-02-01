@@ -76,6 +76,7 @@ void bch_write(struct closure *);
 
 int bch_read(struct cache_set *, struct bio *, u64);
 
+void bch_cache_io_error_work(struct work_struct *);
 void bch_count_io_errors(struct cache *, int, const char *);
 void bch_bbio_count_io_errors(struct bbio *, int, const char *);
 void bch_bbio_endio(struct bbio *, int, const char *);

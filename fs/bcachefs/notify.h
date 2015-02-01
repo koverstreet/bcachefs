@@ -16,6 +16,6 @@ void bch_notify_cache_read_only(struct cache *);
 void bch_notify_cache_added(struct cache *);
 void bch_notify_cache_removing(struct cache *);
 void bch_notify_cache_removed(struct cache *);
-void bch_notify_cache_error(struct cache *, bool, const char *);
+void bch_notify_cache_error(struct cache *, bool);
 
 #endif /* _NOTIFY_H */
