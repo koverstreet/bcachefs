@@ -1045,7 +1045,7 @@ static void journal_write_locked(struct closure *cl)
 
 	atomic_dec_bug(&fifo_back(&c->journal.pin));
 	bch_journal_next(&c->journal);
-	journal_reclaim(c, NULL);
+	wake_up(&c->journal.wait);
 
 	spin_unlock(&c->journal.lock);
 
