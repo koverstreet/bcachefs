@@ -1137,6 +1137,7 @@ static bool __journal_res_get(struct cache_set *c, struct journal_res *res,
 	spin_lock(&c->journal.lock);
 
 	while (1) {
+		/* Check if there is still room in the current journal entry */
 		if (u64s_min < c->journal.u64s_remaining) {
 			res->nkeys = min_t(unsigned, u64s_max,
 					   c->journal.u64s_remaining - 1);
@@ -1157,51 +1158,57 @@ static bool __journal_res_get(struct cache_set *c, struct journal_res *res,
 		if (*start_time == 0)
 			*start_time = local_clock();
 
-		if (!c->journal.u64s_remaining) {
-			oldest_seq = 0;
-			write_oldest = journal_reclaim(c, &oldest_seq);
-
-			/* Waiting for discards, or active cache devices gone */
-			if (!write_oldest && !c->journal.u64s_remaining) {
-				spin_unlock(&c->journal.lock);
-				trace_bcache_journal_discard_wait(c);
-				return false;
-			}
-
-			if (write_oldest) {
-				BUG_ON(c->journal.u64s_remaining);
-				BUG_ON(oldest_seq == 0);
-				oldest_seq -= last_seq(&c->journal);
-				spin_unlock(&c->journal.lock);
-				/*
-				 * If we didn't write any nodes, wake us up
-				 * again so we don't wait forever
-				 */
-				bch_btree_write_oldest(c, oldest_seq);
-				return false;
-			}
-		} else {
+		/* If the current journal entry is not empty, write it */
+		if (c->journal.cur->data->u64s) {
 			/*
-			 * Not much room for this journal entry (near the end of
-			 * a journal bucket) but there's nothing in this journal
-			 * entry yet - skip it and allocate a new journal entry
+			 * If the previous journal entry is still being written,
+			 * we have to wait
 			 */
-			if (!c->journal.cur->data->u64s) {
-				BUG_ON(test_bit(JOURNAL_DIRTY,
-						&c->journal.flags) &&
-				       !test_bit(JOURNAL_NEED_WRITE,
-						 &c->journal.flags));
-
-				journal_entry_no_room(c);
-				continue;
-			}
-
 			if (!journal_try_write(c)) {
 				trace_bcache_journal_entry_full(c);
 				return false;
 			}
 
 			spin_lock(&c->journal.lock);
+			continue;
+		}
+
+		if (c->journal.u64s_remaining) {
+			/*
+			 * Not much room for this journal entry (near the end of
+			 * a journal bucket) but there's nothing in this journal
+			 * entry yet - skip it and allocate a new journal entry
+			 */
+			BUG_ON(test_bit(JOURNAL_DIRTY,
+					&c->journal.flags) &&
+			       !test_bit(JOURNAL_NEED_WRITE,
+					 &c->journal.flags));
+
+			journal_entry_no_room(c);
+			continue;
+		}
+
+		oldest_seq = 0;
+		write_oldest = journal_reclaim(c, &oldest_seq);
+
+		/* Waiting for discards, or active cache devices gone */
+		if (!write_oldest && !c->journal.u64s_remaining) {
+			spin_unlock(&c->journal.lock);
+			trace_bcache_journal_discard_wait(c);
+			return false;
+		}
+
+		if (write_oldest) {
+			BUG_ON(c->journal.u64s_remaining);
+			BUG_ON(oldest_seq == 0);
+			oldest_seq -= last_seq(&c->journal);
+			spin_unlock(&c->journal.lock);
+			/*
+			 * If we didn't write any nodes, wake us up
+			 * again so we don't wait forever
+			 */
+			bch_btree_write_oldest(c, oldest_seq);
+			return false;
 		}
 	}
 }
