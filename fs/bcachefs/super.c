@@ -667,9 +667,9 @@ static void bch_cache_set_read_only(struct cache_set *c)
 		__bch_cache_read_only(ca);
 
 	if (c->journal.cur) {
-		cancel_delayed_work_sync(&c->journal.work);
+		cancel_delayed_work_sync(&c->journal.write_work);
 		/* flush last journal entry if needed */
-		c->journal.work.work.func(&c->journal.work.work);
+		c->journal.write_work.work.func(&c->journal.write_work.work);
 	}
 
 	bch_notify_cache_set_read_only(c);

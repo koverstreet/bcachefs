@@ -35,7 +35,7 @@ struct journal {
 	wait_queue_head_t	wait;
 
 	struct closure		io;
-	struct delayed_work	work;
+	struct delayed_work	write_work;
 
 	unsigned		delay_ms;
 

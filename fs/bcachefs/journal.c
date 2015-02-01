@@ -926,7 +926,7 @@ static void journal_write_done(struct closure *cl)
 	wake_up(&j->wait);
 
 	if (test_bit(JOURNAL_NEED_WRITE, &j->flags))
-		mod_delayed_work(system_wq, &j->work, 0);
+		mod_delayed_work(system_wq, &j->write_work, 0);
 }
 
 static void journal_write_locked(struct closure *cl)
@@ -949,7 +949,7 @@ static void journal_write_locked(struct closure *cl)
 
 	clear_bit(JOURNAL_NEED_WRITE, &c->journal.flags);
 	clear_bit(JOURNAL_DIRTY, &c->journal.flags);
-	cancel_delayed_work(&c->journal.work);
+	cancel_delayed_work(&c->journal.write_work);
 
 	spin_lock(&c->btree_root_lock);
 
@@ -1072,7 +1072,7 @@ static void journal_write_work(struct work_struct *work)
 {
 	struct cache_set *c = container_of(to_delayed_work(work),
 					   struct cache_set,
-					   journal.work);
+					   journal.write_work);
 	spin_lock(&c->journal.lock);
 	if (test_bit(JOURNAL_DIRTY, &c->journal.flags))
 		set_bit(JOURNAL_NEED_WRITE, &c->journal.flags);
@@ -1211,7 +1211,7 @@ void bch_journal_res_get(struct cache_set *c, struct journal_res *res,
 void bch_journal_set_dirty(struct cache_set *c)
 {
 	if (!test_and_set_bit(JOURNAL_DIRTY, &c->journal.flags))
-		schedule_delayed_work(&c->journal.work,
+		schedule_delayed_work(&c->journal.write_work,
 				      msecs_to_jiffies(c->journal.delay_ms));
 }
 
@@ -1262,7 +1262,7 @@ int bch_journal_alloc(struct cache_set *c)
 
 	spin_lock_init(&j->lock);
 	init_waitqueue_head(&j->wait);
-	INIT_DELAYED_WORK(&j->work, journal_write_work);
+	INIT_DELAYED_WORK(&j->write_work, journal_write_work);
 
 	c->journal.delay_ms = 10;
 
