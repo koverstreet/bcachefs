@@ -92,6 +92,7 @@ read_attribute(btree_written);
 read_attribute(metadata_written);
 read_attribute(journal_debug);
 write_attribute(journal_flush);
+read_attribute(internal_uuid);
 
 sysfs_time_stats_attribute(mca_alloc, sec, us);
 sysfs_time_stats_attribute(mca_scan, sec, ms);
@@ -639,6 +640,8 @@ SHOW(bch_cache_set)
 	sysfs_print(tree_depth, c->btree_roots[BTREE_ID_EXTENTS]->level);
 	sysfs_print(root_usage_percent,		bch_root_usage(c));
 
+	sysfs_printf(internal_uuid, "%pU", c->sb.set_uuid.b);
+
 	return 0;
 }
 
@@ -964,6 +967,7 @@ static struct attribute *bch_cache_set_internal_files[] = {
 	&sysfs_tiering_enabled,
 	sysfs_pd_controller_files(tiering),
 	sysfs_pd_controller_files(foreground_write),
+	&sysfs_internal_uuid,
 
 	NULL
 };
