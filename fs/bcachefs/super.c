@@ -763,7 +763,8 @@ static void cache_set_flush(struct closure *cl)
 	bch_cache_accounting_destroy(&c->accounting);
 
 	kobject_put(&c->internal);
-	kobject_del(&c->kobj);
+	if (c->kobj.state_in_sysfs)
+		kobject_del(&c->kobj);
 
 	closure_return(cl);
 }
