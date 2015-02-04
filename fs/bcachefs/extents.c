@@ -1159,7 +1159,7 @@ bool bch_insert_fixup_extent(struct btree *b, struct bkey *insert,
 				       &inserted, res))
 			continue;
 
-		if (k->size &&
+		if (k->size && insert->version &&
 		    insert->version < k->version) {
 			handle_existing_key_newer(b, iter, insert, k,
 						  &inserted, res);
