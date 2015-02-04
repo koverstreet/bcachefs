@@ -667,8 +667,6 @@ void bch_btree_write_oldest(struct cache_set *c, u64 oldest_seq)
 
 	closure_sync(&cl);
 	trace_bcache_journal_write_oldest_done(c, oldest_seq, written);
-
-	BUG_ON(!test_bit(JOURNAL_REPLAY_DONE, &c->journal.flags) && !written);
 }
 
 /*
