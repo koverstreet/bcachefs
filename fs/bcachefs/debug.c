@@ -30,6 +30,13 @@ static struct dentry *debug;
 	     i = (void *) i + set_blocks(i, block_bytes(b->c)) *	\
 		 block_bytes(b->c))
 
+static void btree_verify_endio(struct bio *bio)
+{
+	struct closure *cl = bio->bi_private;
+
+	closure_put(cl);
+}
+
 void bch_btree_verify(struct btree *b)
 {
 	const struct bkey_i_extent *e = bkey_i_to_extent_c(&b->key);
@@ -37,9 +44,12 @@ void bch_btree_verify(struct btree *b)
 	struct bset *ondisk, *sorted, *inmemory;
 	struct cache *ca;
 	struct bio *bio;
+	struct closure cl;
 
 	if (!b->c->verify || !b->c->verify_ondisk)
 		return;
+
+	closure_init_stack(&cl);
 
 	down(&b->io_mutex);
 	mutex_lock(&b->c->verify_lock);
@@ -53,21 +63,30 @@ void bch_btree_verify(struct btree *b)
 	v->level = b->level;
 	v->keys.ops = b->keys.ops;
 
+	rcu_read_lock();
 	ca = PTR_CACHE(b->c, &e->v.ptr[0]);
+	percpu_ref_get(&ca->ref);
+	rcu_read_unlock();
 	bio = bch_bbio_alloc(b->c);
 	bio->bi_bdev		= ca->disk_sb.bdev;
 	bio->bi_iter.bi_sector	= PTR_OFFSET(&e->v.ptr[0]);
 	bio->bi_iter.bi_size	= btree_bytes(b->c);
 	bio_set_op_attrs(bio, REQ_OP_READ, REQ_META|READ_SYNC);
+	bio->bi_private		= &cl;
+	bio->bi_end_io		= btree_verify_endio;
 	bch_bio_map(bio, sorted);
 
-	submit_bio_wait(bio);
+	closure_bio_submit_punt(bio, &cl, b->c);
+	closure_sync(&cl);
+
 	bch_bbio_free(bio, b->c);
 
 	memcpy(ondisk, sorted, btree_bytes(b->c));
 
 	bch_btree_node_read_done(v, ca, 0);
 	sorted = v->keys.set->data;
+
+	percpu_ref_put(&ca->ref);
 
 	if (inmemory->u64s != sorted->u64s ||
 	    memcmp(inmemory->start,
