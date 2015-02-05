@@ -702,11 +702,14 @@ static inline unsigned journal_free_buckets(struct cache *ca)
 	return (ja->last_idx - ja->cur_idx + nr - 1) % nr;
 }
 
+#define JSET_SECTORS (PAGE_SECTORS << JSET_BITS)
+
+/* Number of u64s we can write to the current journal bucket */
 static size_t journal_write_u64s_remaining(struct cache_set *c)
 {
-	ssize_t u64s = min_t(size_t,
-			     c->journal.sectors_free << 9,
-			     PAGE_SIZE << JSET_BITS) / sizeof(u64);
+	ssize_t u64s = (min_t(size_t,
+			      c->journal.sectors_free,
+			      JSET_SECTORS) << 9) / sizeof(u64);
 
 	/* Subtract off some for the btree roots */
 	u64s -= BTREE_ID_NR * (JSET_KEYS_U64s + BKEY_EXTENT_MAX_U64s);
@@ -1076,6 +1079,17 @@ static void journal_write_locked(struct closure *cl)
 
 		BUG_ON(sectors > ca->journal.sectors_free);
 		ca->journal.sectors_free -= sectors;
+
+		/*
+		 * If we don't have enough space for a full-sized journal
+		 * entry, go to the next bucket. We do this check after
+		 * the write, so that if our bucket size is really small
+		 * we don't get stuck forever.
+		 */
+		if (ca->journal.sectors_free < JSET_SECTORS) {
+			c->journal.sectors_free = 0;
+			ca->journal.sectors_free = 0;
+		}
 
 		bio = &ca->journal.bio;
 
