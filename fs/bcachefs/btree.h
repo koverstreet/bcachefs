@@ -442,13 +442,21 @@ struct bch_replace_info;
 
 int bch_btree_insert_node(struct btree *, struct btree_iter *,
 			  struct keylist *, struct bch_replace_info *,
-			  struct closure *);
+			  struct closure *, unsigned);
 
 /*
  * Don't drop/retake locks: instead return -EINTR if need to upgrade to intent
  * locks, -EAGAIN if need to wait on btree reserve
  */
 #define BTREE_INSERT_ATOMIC		1
+
+/*
+ * Fail a btree insert if dirty stale pointers are being added
+ *
+ * Needs to be set for compare exchange and device removal, and not
+ * set for journal replay. See big comment in bch_insert_fixup_extent()
+ */
+#define FAIL_IF_STALE			2
 
 int bch_btree_insert_at(struct btree_iter *, struct keylist *,
 			struct bch_replace_info *, struct closure *,

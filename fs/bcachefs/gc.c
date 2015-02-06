@@ -539,7 +539,7 @@ static void bch_coalesce_nodes(struct btree *old_nodes[GC_MERGE_NODES],
 
 	/* Insert the newly coalesced nodes */
 	ret = bch_btree_insert_node(parent, iter, &keylist,
-				    NULL, NULL);
+				    NULL, NULL, 0);
 	BUG_ON(ret || !bch_keylist_empty(&keylist));
 
 	iter->pos = saved_pos;

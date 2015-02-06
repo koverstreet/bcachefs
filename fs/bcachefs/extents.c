@@ -1172,7 +1172,8 @@ bool bch_insert_fixup_extent(struct btree *b, struct bkey_i *insert,
 			     struct btree_node_iter *iter,
 			     struct bch_replace_info *replace,
 			     struct bpos *done,
-			     struct journal_res *res)
+			     struct journal_res *res,
+			     unsigned flags)
 {
 	const struct bkey_format *f = &b->keys.format;
 	struct bpos orig_insert = insert->k.p;
@@ -1214,7 +1215,7 @@ bool bch_insert_fixup_extent(struct btree *b, struct bkey_i *insert,
 	 */
 	if (bch_add_sectors(b, bkey_i_to_s_c(insert),
 			    bkey_start_offset(&insert->k),
-			    insert->k.size, replace != NULL)) {
+			    insert->k.size, !!(flags & FAIL_IF_STALE))) {
 		/* We raced - a dirty pointer was stale */
 		*done = insert->k.p;
 		insert->k.size = 0;

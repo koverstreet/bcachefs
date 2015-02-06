@@ -41,7 +41,8 @@ static inline struct cache *bch_extent_pick_ptr(struct cache_set *c,
 bool bch_insert_fixup_extent(struct btree *, struct bkey_i *,
 			     struct btree_node_iter *,
 			     struct bch_replace_info *, struct bpos *,
-			     struct journal_res *);
+			     struct journal_res *,
+			     unsigned);
 
 unsigned bch_extent_nr_ptrs_after_normalize(const struct btree *,
 					    const struct bkey_packed *);
