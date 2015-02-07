@@ -95,6 +95,7 @@ struct moving_io {
 };
 
 struct moving_io *moving_io_alloc(struct bkey_s_c);
+void moving_io_free(struct moving_io *);
 
 typedef struct moving_io *(moving_queue_fn)(struct moving_queue *,
 					    struct moving_context *);
@@ -112,6 +113,10 @@ bool bch_queue_full(struct moving_queue *);
 void bch_data_move(struct moving_queue *,
 		   struct moving_context *,
 		   struct moving_io *);
+void queue_io_resize(struct moving_queue *,
+		     unsigned,
+		     unsigned,
+		     unsigned);
 void bch_queue_destroy(struct moving_queue *);
 void bch_queue_stop(struct moving_queue *);
 
@@ -151,9 +156,5 @@ do {									\
 		bch_scan_keylist_resize(&(var)->keys, v);		\
 	}								\
 } while (0)
-
-int bch_move_data_off_device(struct cache *);
-int bch_move_meta_data_off_device(struct cache *);
-int bch_flag_data_bad(struct cache *);
 
 #endif /* _BCACHE_MOVE_H */

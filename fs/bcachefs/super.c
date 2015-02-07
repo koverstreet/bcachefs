@@ -17,6 +17,7 @@
 #include "journal.h"
 #include "keylist.h"
 #include "move.h"
+#include "migrate.h"
 #include "movinggc.h"
 #include "notify.h"
 #include "stats.h"
