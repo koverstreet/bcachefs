@@ -326,6 +326,9 @@ int bch_moving_gc_thread_start(struct cache *ca)
 	if (ret)
 		return ret;
 
+	if (cache_set_init_fault("moving_gc_start"))
+		return -ENOMEM;
+
 	t = kthread_create(bch_moving_gc_thread, ca, "bch_copygc_read");
 	if (IS_ERR(t))
 		return PTR_ERR(t);

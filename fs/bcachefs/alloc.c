@@ -1628,6 +1628,9 @@ const char *bch_cache_allocator_start(struct cache *ca)
 	}
 	spin_unlock(&ca->freelist_lock);
 
+	if (cache_set_init_fault("alloc_start"))
+		return "dynamic fault";
+
 	if (!fifo_full(&ca->free[RESERVE_PRIO]))
 		return "couldn't find enough available buckets to write prios";
 

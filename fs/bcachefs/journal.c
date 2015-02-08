@@ -602,6 +602,9 @@ int bch_cache_journal_alloc(struct cache *ca)
 	if (CACHE_TIER(&ca->mi) != 0)
 		return 0;
 
+	if (dynamic_fault("bcache:add:journal_alloc"))
+		return -ENOMEM;
+
 	/* clamp journal size to 512MB (in sectors) */
 
 	ret = bch_set_nr_journal_buckets(ca,

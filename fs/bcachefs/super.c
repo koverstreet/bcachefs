@@ -272,7 +272,9 @@ static int __bch_super_realloc(struct bcache_superblock *sb, unsigned order)
 	if (!new_sb)
 		return -ENOMEM;
 
-	bio = bio_kmalloc(GFP_KERNEL, 1 << order);
+	bio = (dynamic_fault("bcache:add:super_realloc")
+	       ? NULL
+	       : bio_kmalloc(GFP_KERNEL, 1 << order));
 	if (!bio) {
 		free_pages((unsigned long) new_sb, order);
 		return -ENOMEM;
@@ -1477,6 +1479,10 @@ static void bch_cache_free_work(struct work_struct *work)
 		pr_notice("%s removed", bdevname(ca->disk_sb.bdev, buf));
 
 	free_super(&ca->disk_sb);
+
+	if (ca->kobj.state_in_sysfs)
+		kobject_del(&ca->kobj);
+
 	kobject_put(&ca->kobj);
 }
 
@@ -1747,17 +1753,20 @@ static const char *cache_alloc(struct bcache_superblock *sb,
 	size_t heap_size;
 	char buf[12];
 	unsigned i;
-	const char *err;
+	const char *err = "cannot allocate memory";
 	struct cache *ca;
+
+	if (cache_set_init_fault("cache_alloc"))
+		return err;
 
 	ca = kzalloc(sizeof(*ca), GFP_KERNEL);
 	if (!ca)
-		return "cannot allocate memory";
+		return err;
 
 	if (percpu_ref_init(&ca->ref, bch_cache_percpu_ref_release,
 			    0, GFP_KERNEL)) {
 		kfree(ca);
-		return "cannot allocate memory";
+		return err;
 	}
 
 	kobject_init(&ca->kobj, &bch_cache_ktype);
@@ -1869,6 +1878,9 @@ static const char *cache_alloc(struct bcache_superblock *sb,
 	kobject_get(&c->kobj);
 	ca->set = c;
 
+	kobject_get(&ca->kobj);
+	rcu_assign_pointer(c->cache[ca->sb.nr_this_dev], ca);
+
 	bch_moving_init_cache(ca);
 	bch_tiering_init_cache(ca);
 
@@ -1881,9 +1893,6 @@ static const char *cache_alloc(struct bcache_superblock *sb,
 	    sysfs_create_link(&ca->kobj, &c->kobj, "set") ||
 	    sysfs_create_link(&c->kobj, &ca->kobj, buf))
 		goto err;
-
-	kobject_get(&ca->kobj);
-	rcu_assign_pointer(c->cache[ca->sb.nr_this_dev], ca);
 
 	if (ca->sb.seq > c->sb.seq)
 		cache_sb_to_cache_set(c, ca->disk_sb.sb);
@@ -1967,6 +1976,10 @@ int bch_cache_set_add_cache(struct cache_set *c, const char *path)
 
 	mutex_lock(&bch_register_lock);
 	down_read(&c->gc_lock);
+
+	if (dynamic_fault("bcache:add:no_slot"))
+		goto no_slot;
+
 	if (test_bit(CACHE_SET_GC_FAILURE, &c->flags))
 		goto no_slot;
 
@@ -1998,13 +2011,15 @@ have_slot:
 	sb.sb->u64s		= u64s;
 
 	old_mi = c->members;
-	new_mi = kzalloc(sizeof(struct cache_member_rcu) +
-			 sizeof(struct cache_member) * nr_in_set,
-			 GFP_KERNEL);
+	new_mi = (dynamic_fault("bcache:add:member_info_realloc")
+		  ? NULL
+		  : kzalloc(sizeof(struct cache_member_rcu) +
+			    sizeof(struct cache_member) * nr_in_set,
+			    GFP_KERNEL));
 	if (!new_mi) {
 		err = "cannot allocate memory";
 		ret = -ENOMEM;
-		goto err_put;
+		goto err_unlock;
 	}
 
 	new_mi->nr_in_set = nr_in_set;
@@ -2023,7 +2038,7 @@ have_slot:
 
 	err = cache_alloc(&sb, c, &ca);
 	if (err)
-		goto err;
+		goto err_unlock;
 
 	bcache_write_super(c);
 
@@ -2041,7 +2056,7 @@ have_slot:
 	mutex_unlock(&bch_register_lock);
 	return 0;
 err_put:
-	kobject_put(&ca->kobj);
+	bch_cache_stop(ca);
 err_unlock:
 	mutex_unlock(&bch_register_lock);
 err:
