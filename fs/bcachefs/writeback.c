@@ -526,6 +526,9 @@ void bch_sectors_dirty_init(struct cached_dev *dc, struct cache_set *c)
 		if (k->p.inode > bcache_dev_inum(d))
 			break;
 
+		if (k->type != BCH_EXTENT)
+			continue;
+
 		if (!bkey_extent_cached(k))
 			__bcache_dev_sectors_dirty_add(d, bkey_start_offset(k),
 						       k->size);
