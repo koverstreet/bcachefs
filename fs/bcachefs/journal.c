@@ -837,7 +837,7 @@ static bool journal_reclaim_fast(struct cache_set *c)
 	 * all btree nodes got written out
 	 */
 	while (!atomic_read(&fifo_front(&c->journal.pin)))
-		fifo_pop(&c->journal.pin, p);
+		BUG_ON(!fifo_pop(&c->journal.pin, p));
 
 	/* If less than 15% space free, kick off background reclaim */
 	if (fifo_free(&c->journal.pin) <= (c->journal.pin.size >> 6))

@@ -1112,6 +1112,12 @@ static const char *run_cache_set(struct cache_set *c)
 
 		bch_initial_gc(c, NULL);
 
+		/*
+		 * journal_res_get() will crash if called before this has
+		 * set up the journal.pin FIFO and journal.cur pointer:
+		 */
+		bch_journal_next(&c->journal);
+
 		for_each_cache(ca, c, i)
 			if (CACHE_STATE(&ca->mi) == CACHE_ACTIVE &&
 			    (err = __bch_cache_read_write(ca))) {
@@ -1132,7 +1138,6 @@ static const char *run_cache_set(struct cache_set *c)
 		SET_CACHE_SYNC(&c->sb, true);
 		set_bit(JOURNAL_REPLAY_DONE, &c->journal.flags);
 
-		bch_journal_next(&c->journal);
 		bch_journal_meta(c, &cl);
 	}
 
