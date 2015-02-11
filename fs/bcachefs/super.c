@@ -224,8 +224,18 @@ const char *validate_super(struct bcache_superblock *disk_sb,
 		    CACHE_SET_META_REPLICAS_WANT(sb) >= BKEY_EXTENT_PTRS_MAX)
 			return "Invalid number of metadata replicas";
 
+		if (!CACHE_SET_META_REPLICAS_HAVE(sb) ||
+		    CACHE_SET_META_REPLICAS_HAVE(sb) >
+		    CACHE_SET_META_REPLICAS_WANT(sb))
+			return "Invalid number of metadata replicas";
+
 		if (!CACHE_SET_DATA_REPLICAS_WANT(sb) ||
 		    CACHE_SET_DATA_REPLICAS_WANT(sb) >= BKEY_EXTENT_PTRS_MAX)
+			return "Invalid number of data replicas";
+
+		if (!CACHE_SET_DATA_REPLICAS_HAVE(sb) ||
+		    CACHE_SET_DATA_REPLICAS_HAVE(sb) >
+		    CACHE_SET_DATA_REPLICAS_WANT(sb))
 			return "Invalid number of data replicas";
 
 		if (CACHE_SB_CSUM_TYPE(sb) >= BCH_CSUM_NR)

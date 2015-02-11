@@ -78,12 +78,6 @@ static inline void bch_extent_drop_ptr(struct bkey_s_extent e,
 		(bch_extent_ptrs(extent_s_to_s_c(e)) - ptr) * sizeof(u64));
 }
 
-static inline unsigned bch_extent_replicas_needed(const struct cache_set *c,
-						  const struct bch_extent *e)
-{
-	return EXTENT_CACHED(e) ? 0 : CACHE_SET_DATA_REPLICAS_WANT(&c->sb);
-}
-
 static inline bool __bch_extent_ptr_is_dirty(const struct cache_set *c,
 					     const struct bch_extent *e,
 					     const struct bch_extent_ptr *ptr,
@@ -91,7 +85,10 @@ static inline bool __bch_extent_ptr_is_dirty(const struct cache_set *c,
 {
 	/* Dirty pointers come last */
 
-	return ptr + bch_extent_replicas_needed(c, e) >=
+	if (EXTENT_CACHED(e))
+		return false;
+
+	return ptr + CACHE_SET_DATA_REPLICAS_WANT(&c->sb) >=
 		e->ptr + nr_ptrs;
 }
 

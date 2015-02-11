@@ -403,6 +403,16 @@ static void btree_ptr_debugcheck(struct btree *b, struct bkey_s_c k)
 		return;
 	}
 
+	if (bch_extent_ptrs(e) < CACHE_SET_META_REPLICAS_HAVE(&c->sb)) {
+		bch_bkey_val_to_text(b, buf, sizeof(buf), k);
+		cache_set_bug(c,
+			"btree key bad (too few replicas, %u < %llu): %s",
+			bch_extent_ptrs(e),
+			CACHE_SET_META_REPLICAS_HAVE(&c->sb),
+			buf);
+		return;
+	}
+
 	rcu_read_lock();
 
 	extent_for_each_online_device(c, e, ptr, ca) {
@@ -1385,9 +1395,14 @@ static void bch_extent_debugcheck(struct btree *b, struct bkey_s_c k)
 
 	memset(ptrs_per_tier, 0, sizeof(ptrs_per_tier));
 
-	if (bch_extent_ptrs(e) < bch_extent_replicas_needed(c, e.v)) {
+	if (!EXTENT_CACHED(e.v) &&
+	    bch_extent_ptrs(e) < CACHE_SET_DATA_REPLICAS_HAVE(&c->sb)) {
 		bch_bkey_val_to_text(b, buf, sizeof(buf), k);
-		cache_set_bug(c, "extent key bad (too few replicas): %s", buf);
+		cache_set_bug(c,
+			"extent key bad (too few replicas, %u < %llu): %s",
+			bch_extent_ptrs(e),
+			CACHE_SET_DATA_REPLICAS_HAVE(&c->sb),
+			buf);
 		return;
 	}
 

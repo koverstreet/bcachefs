@@ -383,11 +383,6 @@ BITMASK(CACHE_TIER,		struct cache_member, f1, 4,  8)
 
 BITMASK(CACHE_REPLICATION_SET,	struct cache_member, f1, 8,  16)
 
-BITMASK(REPLICATION_SET_CUR_META_REPLICAS,
-				struct cache_member, f1, 16, 20)
-BITMASK(REPLICATION_SET_CUR_DATA_REPLICAS,
-				struct cache_member, f1, 20, 24)
-
 BITMASK(CACHE_HAS_METADATA,	struct cache_member, f1, 24, 25)
 BITMASK(CACHE_HAS_DATA,		struct cache_member, f1, 25, 26)
 
@@ -489,6 +484,9 @@ BITMASK(CACHE_PREFERRED_CSUM_TYPE,	struct cache_sb, flags, 16, 20);
 
 /* Node size for variable sized buckets */
 BITMASK(CACHE_BTREE_NODE_SIZE,		struct cache_sb, flags, 20, 36);
+
+BITMASK(CACHE_SET_META_REPLICAS_HAVE,	struct cache_sb, flags, 36, 40);
+BITMASK(CACHE_SET_DATA_REPLICAS_HAVE,	struct cache_sb, flags, 40, 44);
 
 BITMASK(BDEV_CACHE_MODE,		struct cache_sb, flags, 0, 4);
 #define CACHE_MODE_WRITETHROUGH		0U

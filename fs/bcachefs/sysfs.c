@@ -185,8 +185,10 @@ rw_attribute(bucket_reserve_percent);
 rw_attribute(sector_reserve_percent);
 
 rw_attribute(size);
-rw_attribute(meta_replicas);
-rw_attribute(data_replicas);
+rw_attribute(meta_replicas_want);
+read_attribute(meta_replicas_have);
+rw_attribute(data_replicas_want);
+read_attribute(data_replicas_have);
 rw_attribute(tier);
 
 static struct attribute sysfs_state_rw = {
@@ -632,10 +634,14 @@ SHOW(bch_cache_set)
 
 	sysfs_print(btree_flush_delay,		c->btree_flush_delay);
 
-	sysfs_printf(meta_replicas, "%llu",
+	sysfs_printf(meta_replicas_want, "%llu",
 		     CACHE_SET_META_REPLICAS_WANT(&c->sb));
-	sysfs_printf(data_replicas, "%llu",
+	sysfs_printf(meta_replicas_have, "%llu",
+		     CACHE_SET_META_REPLICAS_HAVE(&c->sb));
+	sysfs_printf(data_replicas_want, "%llu",
 		     CACHE_SET_DATA_REPLICAS_WANT(&c->sb));
+	sysfs_printf(data_replicas_have, "%llu",
+		     CACHE_SET_DATA_REPLICAS_HAVE(&c->sb));
 
 	if (!test_bit(CACHE_SET_RUNNING, &c->flags))
 		return -EPERM;
@@ -758,7 +764,7 @@ STORE(__bch_cache_set)
 
 	sysfs_pd_controller_store(foreground_write, &c->foreground_write_pd);
 
-	if (attr == &sysfs_meta_replicas) {
+	if (attr == &sysfs_meta_replicas_want) {
 		unsigned v = strtoul_restrict_or_return(buf, 1,
 						BKEY_EXTENT_PTRS_MAX - 1);
 
@@ -768,7 +774,7 @@ STORE(__bch_cache_set)
 		}
 	}
 
-	if (attr == &sysfs_data_replicas) {
+	if (attr == &sysfs_data_replicas_want) {
 		unsigned v = strtoul_restrict_or_return(buf, 1,
 						BKEY_EXTENT_PTRS_MAX - 1);
 
@@ -922,8 +928,10 @@ static struct attribute *bch_cache_set_files[] = {
 	&sysfs_clear_stats,
 
 	&sysfs_checksum_type,
-	&sysfs_meta_replicas,
-	&sysfs_data_replicas,
+	&sysfs_meta_replicas_want,
+	&sysfs_meta_replicas_have,
+	&sysfs_data_replicas_want,
+	&sysfs_data_replicas_have,
 
 	&sysfs_btree_flush_delay,
 	&sysfs_btree_scan_ratelimit,
