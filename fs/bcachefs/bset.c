@@ -1332,6 +1332,9 @@ static void btree_mergesort(struct btree_keys *dst,
 	struct bkey_format *out_f = &dst->format;
 	struct bkey_packed *k, *prev = NULL, *out = dst_set->start;
 	struct bkey_tup tup;
+	BKEY_PADDED(k) tmp;
+
+	EBUG_ON(filter && !dst->ops->is_extents);
 
 	dst->nr_packed_keys	= 0;
 	dst->nr_unpacked_keys	= 0;
@@ -1342,25 +1345,28 @@ static void btree_mergesort(struct btree_keys *dst,
 		BUG_ON((void *) __bkey_idx(out, k->u64s) >
 		       (void *) dst_set + (PAGE_SIZE << dst->page_order));
 
-		bkey_disassemble(&tup, in_f, k);
-
-		if (filter && filter(src, bkey_tup_to_s(&tup)))
+		if (bkey_deleted(k))
 			continue;
 
-		if (bkey_deleted(&tup.k))
-			continue;
+		if (dst->ops->is_extents) {
+			/*
+			 * For extents, the filter might modify pointers, so we
+			 * have to unpack the key and values to &tmp.k.
+			 */
+			bkey_unpack(&tmp.k, in_f, k);
 
-		if (prev && src->ops->key_merge) {
-			BKEY_PADDED(k) tmp;
+			if (filter && filter(src, bkey_i_to_s(&tmp.k)))
+				continue;
 
-			BUG_ON(bkey_bytes(&tup.k) > sizeof(tmp));
-
-			bkey_reassemble(&tmp.k, bkey_tup_to_s_c(&tup));
-
-			if (bch_bkey_try_merge(src, (void *) prev, &tmp.k))
+			if (prev &&
+			    src->ops->key_merge &&
+			    bch_bkey_try_merge(src, (void *) prev, &tmp.k))
 				continue;
 
 			bkey_disassemble(&tup, in_f, bkey_to_packed(&tmp.k));
+		} else {
+			/* We're not touching values -- only copy the key */
+			bkey_disassemble(&tup, in_f, k);
 		}
 
 		if (prev) {
