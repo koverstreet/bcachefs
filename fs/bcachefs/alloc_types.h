@@ -5,22 +5,7 @@
  * and one for moving GC */
 enum alloc_reserve {
 	RESERVE_PRIO	= BTREE_ID_NR,
-	/*
-	 * free_inc.size buckets are set aside for moving GC btree node
-	 * allocations. This means that if moving GC runs out of new buckets for
-	 * btree nodes, it will have put back at least free_inc.size buckets
-	 * back on free_inc, preventing a deadlock.
-	 *
-	 * XXX: figure out a less stupid way of achieving this
-	 */
-	RESERVE_MOVINGGC_BTREE,
-	/*
-	 * Tiering needs a btree node reserve because of how
-	 * btree_check_reserve() works -- if the cache tier is full, we don't
-	 * want tiering to block forever.
-	 */
-	RESERVE_TIERING_BTREE,
-	RESERVE_METADATA_LAST = RESERVE_TIERING_BTREE,
+	RESERVE_METADATA_LAST = RESERVE_PRIO,
 	RESERVE_MOVINGGC,
 
 	/* Not a real reserve (always empty), */

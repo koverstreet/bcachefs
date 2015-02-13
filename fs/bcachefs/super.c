@@ -1844,10 +1844,6 @@ static const char *cache_alloc(struct bcache_superblock *sb,
 			goto err;
 
 	if (!init_fifo(&ca->free[RESERVE_PRIO], prio_buckets(ca), GFP_KERNEL) ||
-	    !init_fifo(&ca->free[RESERVE_MOVINGGC_BTREE],
-		       BTREE_NODE_RESERVE, GFP_KERNEL) ||
-	    !init_fifo(&ca->free[RESERVE_TIERING_BTREE],
-		       BTREE_NODE_RESERVE, GFP_KERNEL) ||
 	    !init_fifo(&ca->free[RESERVE_MOVINGGC],
 		       movinggc_reserve, GFP_KERNEL) ||
 	    !init_fifo(&ca->free[RESERVE_TIERING], 0, GFP_KERNEL) ||

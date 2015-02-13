@@ -442,7 +442,6 @@ static void bch_coalesce_nodes(struct btree *old_nodes[GC_MERGE_NODES],
 
 	for (i = 0; i < nr_old_nodes; i++)
 		new_nodes[i] = __btree_node_alloc_replacement(old_nodes[i],
-							      iter->btree_id,
 							      new_format);
 
 	/*
@@ -540,7 +539,7 @@ static void bch_coalesce_nodes(struct btree *old_nodes[GC_MERGE_NODES],
 
 	/* Insert the newly coalesced nodes */
 	ret = bch_btree_insert_node(parent, iter, &keylist,
-				    NULL, NULL, iter->btree_id);
+				    NULL, NULL);
 	BUG_ON(ret || !bch_keylist_empty(&keylist));
 
 	iter->pos = saved_pos;

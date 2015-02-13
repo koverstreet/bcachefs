@@ -227,7 +227,7 @@ static inline size_t __buckets_free_cache(struct cache *ca,
 		fifo_used(&ca->free[reserve]) +
 		fifo_used(&ca->free_inc);
 
-	if (reserve == RESERVE_NONE)
+	if (reserve == RESERVE_NONE || reserve == RESERVE_TIERING)
 		free = max_t(ssize_t, 0, free -
 				ca->reserve_buckets_count);
 

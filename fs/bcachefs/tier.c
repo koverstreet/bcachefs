@@ -231,7 +231,6 @@ static int issue_tiering_move(struct moving_queue *q,
 			  bkey_i_to_s_c(&io->key),
 			  bkey_i_to_s_c(&io->key), 0);
 	io->op.io_wq = q->wq;
-	io->op.btree_alloc_reserve = RESERVE_TIERING_BTREE;
 
 	trace_bcache_tiering_copy(k.k);
 

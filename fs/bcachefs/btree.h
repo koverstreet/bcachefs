@@ -424,10 +424,8 @@ static inline bool btree_node_format_fits(struct btree *b,
 void __bch_btree_calc_format(struct bkey_format_state *, struct btree *);
 
 struct btree *__btree_node_alloc_replacement(struct btree *,
-					     enum alloc_reserve,
 					     struct bkey_format);
-struct btree *btree_node_alloc_replacement(struct btree *,
-					   enum alloc_reserve);
+struct btree *btree_node_alloc_replacement(struct btree *);
 int btree_check_reserve(struct btree *, struct btree_iter *,
 			enum alloc_reserve, unsigned);
 
@@ -444,7 +442,7 @@ struct bch_replace_info;
 
 int bch_btree_insert_node(struct btree *, struct btree_iter *,
 			  struct keylist *, struct bch_replace_info *,
-			  struct closure *, enum alloc_reserve);
+			  struct closure *);
 
 /*
  * Don't drop/retake locks: instead return -EINTR if need to upgrade to intent
@@ -454,7 +452,7 @@ int bch_btree_insert_node(struct btree *, struct btree_iter *,
 
 int bch_btree_insert_at(struct btree_iter *, struct keylist *,
 			struct bch_replace_info *, struct closure *,
-			enum alloc_reserve, unsigned);
+			unsigned);
 int bch_btree_insert_check_key(struct btree_iter *, struct bkey_i *);
 int bch_btree_insert(struct cache_set *, enum btree_id, struct keylist *,
 		     struct bch_replace_info *, struct closure *);

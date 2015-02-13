@@ -44,8 +44,6 @@ struct bch_write_op {
 	};
 	};
 
-	u8			btree_alloc_reserve;
-
 	struct write_point	*wp;
 
 	union {

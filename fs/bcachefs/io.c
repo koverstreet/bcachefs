@@ -686,7 +686,6 @@ void bch_write_op_init(struct bch_write_op *op, struct cache_set *c,
 	op->cached	= (flags & BCH_WRITE_CACHED) != 0;
 	op->flush	= (flags & BCH_WRITE_FLUSH) != 0;
 	op->wp		= wp;
-	op->btree_alloc_reserve = BTREE_ID_EXTENTS;
 
 	bch_keylist_init(&op->insert_keys);
 	bkey_reassemble(&op->insert_key, insert_key);
@@ -755,7 +754,7 @@ int bch_discard(struct cache_set *c, struct bpos start,
 		bch_cut_back(end, &erase.k);
 
 		ret = bch_btree_insert_at(&iter, &keylist_single(&erase),
-					  NULL, NULL, 0, 0);
+					  NULL, NULL, 0);
 		if (ret)
 			break;
 

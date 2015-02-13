@@ -1196,7 +1196,6 @@ static int bch_flag_key_bad(struct btree_iter *iter,
 				   &keylist_single(&tmp.key),
 				   NULL, /* replace_info */
 				   NULL, /* closure */
-				   0,    /* reserve */
 				   BTREE_INSERT_ATOMIC);
 }
 
