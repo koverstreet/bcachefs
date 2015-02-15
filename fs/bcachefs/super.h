@@ -59,6 +59,23 @@ static inline struct cache *bch_get_next_cache(struct cache_set *c,
 	     (ca = bch_get_next_cache(c, &(iter)));			\
 	     percpu_ref_put(&ca->ref), (iter)++)
 
+static inline struct cache *cache_group_next(struct cache_group *devs,
+					     unsigned *iter)
+{
+	struct cache *ret = NULL;
+
+	while (*iter < devs->nr_devices &&
+	       !(ret = rcu_dereference(devs->devices[*iter])))
+		(*iter)++;
+
+	return ret;
+}
+
+#define group_for_each_cache_rcu(ca, devs, iter)			\
+	for ((iter) = 0;						\
+	     ((ca) = cache_group_next((devs), &(iter)));		\
+	     (iter)++)
+
 u64 bch_checksum_update(unsigned, u64, const void *, size_t);
 u64 bch_checksum(unsigned, const void *, size_t);
 

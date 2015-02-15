@@ -97,21 +97,6 @@ void bch_cache_group_add_cache(struct cache_group *grp, struct cache *ca)
 	write_seqcount_end(&grp->lock);
 }
 
-static inline struct cache *cache_group_next(struct cache_group *devs,
-					     unsigned *iter)
-{
-	struct cache *ret = NULL;
-
-	while (*iter < devs->nr_devices &&
-	       !(ret = rcu_dereference(devs->devices[*iter])))
-		(*iter)++;
-
-	return ret;
-}
-
-#define group_for_each_cache_rcu(ca, devs, iter)			\
-	for ((iter) = 0; ((ca) = cache_group_next((devs), &(iter))); (iter)++)
-
 /* Ratelimiting/PD controllers */
 
 static void pd_controllers_update(struct work_struct *work)

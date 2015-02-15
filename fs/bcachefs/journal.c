@@ -773,14 +773,10 @@ static void journal_reclaim_work(struct work_struct *work)
 
 	rcu_read_lock();
 
-	for_each_cache_rcu(ca, c, iter) {
+	group_for_each_cache_rcu(ca, &c->cache_tiers[0], iter) {
 		struct journal_device *ja = &ca->journal;
 		unsigned nr = bch_nr_journal_buckets(&ca->sb);
 		unsigned next = (ja->cur_idx + (nr >> 1)) % nr;
-
-		if ((CACHE_TIER(&ca->mi) != 0)
-		    || (CACHE_STATE(&ca->mi) != CACHE_ACTIVE))
-			continue;
 
 		/*
 		 * Write out enough btree nodes to free up 50% journal
@@ -853,13 +849,9 @@ static bool journal_reclaim_fast(struct cache_set *c)
 	 * Advance last_idx to point to the oldest journal entry containing
 	 * btree node updates that have not yet been written out
 	 */
-	for_each_cache_rcu(ca, c, iter) {
+	group_for_each_cache_rcu(ca, &c->cache_tiers[0], iter) {
 		struct journal_device *ja = &ca->journal;
 		unsigned nr = bch_nr_journal_buckets(&ca->sb);
-
-		if ((CACHE_TIER(&ca->mi) != 0)
-		    || (CACHE_STATE(&ca->mi) != CACHE_ACTIVE))
-			continue;
 
 		while (ja->last_idx != ja->cur_idx &&
 		       ja->seq[ja->last_idx] < last_seq)
@@ -919,7 +911,7 @@ static void journal_next_bucket(struct cache_set *c)
 	 * Determine location of the next journal write:
 	 * XXX: sort caches by free journal space
 	 */
-	for_each_cache_rcu(ca, c, iter) {
+	group_for_each_cache_rcu(ca, &c->cache_tiers[0], iter) {
 		struct journal_device *ja = &ca->journal;
 		unsigned next = (ja->cur_idx + 1) %
 			bch_nr_journal_buckets(&ca->sb);
@@ -931,9 +923,7 @@ static void journal_next_bucket(struct cache_set *c)
 		 * Check that we can use this device, and aren't already using
 		 * it:
 		 */
-		if ((CACHE_TIER(&ca->mi) != 0) ||
-		    (CACHE_STATE(&ca->mi) != CACHE_ACTIVE) ||
-		    bch_extent_has_device(extent_s_to_s_c(e),
+		if (bch_extent_has_device(extent_s_to_s_c(e),
 					  ca->sb.nr_this_dev))
 			continue;
 
