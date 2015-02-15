@@ -103,6 +103,9 @@ void bch_verify_btree_keys_accounting(struct btree_keys *b)
 	struct bkey_packed *k;
 	unsigned u64s = 0, packed = 0, unpacked = 0;
 
+	if (!btree_keys_expensive_checks(b))
+		return;
+
 	for_each_btree_node_key(b, k, &iter) {
 		u64s += k->u64s;
 		if (bkey_packed(k))
