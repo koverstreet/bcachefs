@@ -407,11 +407,13 @@ static void bch_coalesce_nodes(struct btree *old_nodes[GC_MERGE_NODES],
 	bch_keylist_init(&keylist);
 	closure_init_stack(&cl);
 
+	/* Count keys that are not deleted */
 	for (i = 0; i < GC_MERGE_NODES && old_nodes[i]; i++)
 		u64s += old_nodes[i]->keys.nr_live_u64s;
 
 	nr_old_nodes = nr_new_nodes = i;
 
+	/* Check if all keys in @old_nodes could fit in one fewer node */
 	if (nr_old_nodes <= 1 ||
 	    __set_blocks(old_nodes[0]->data,
 			 DIV_ROUND_UP(u64s, nr_old_nodes - 1),
@@ -427,6 +429,7 @@ static void bch_coalesce_nodes(struct btree *old_nodes[GC_MERGE_NODES],
 
 	trace_bcache_btree_gc_coalesce(parent, nr_old_nodes);
 
+	/* Find a format that all keys in @old_nodes can pack into */
 	bch_bkey_format_init(&format_state);
 
 	for (i = 0; i < nr_old_nodes; i++)
@@ -434,12 +437,14 @@ static void bch_coalesce_nodes(struct btree *old_nodes[GC_MERGE_NODES],
 
 	new_format = bch_bkey_format_done(&format_state);
 
+	/* Check if repacking would make any nodes too big to fit */
 	for (i = 0; i < nr_old_nodes; i++)
 		if (!btree_node_format_fits(old_nodes[i], &new_format)) {
 			trace_bcache_btree_gc_coalesce_fail(c);
 			return;
 		}
 
+	/* Repack everything with @new_format and sort down to one bset */
 	for (i = 0; i < nr_old_nodes; i++)
 		new_nodes[i] = __btree_node_alloc_replacement(old_nodes[i],
 							      new_format);
@@ -456,6 +461,7 @@ static void bch_coalesce_nodes(struct btree *old_nodes[GC_MERGE_NODES],
 		struct bset *s2 = btree_bset_first(n2);
 		struct bkey_packed *k, *last = NULL;
 
+		/* Calculate how many keys from @n2 we could fit inside @n1 */
 		u64s = 0;
 
 		for (k = s2->start;
@@ -517,7 +523,10 @@ static void bch_coalesce_nodes(struct btree *old_nodes[GC_MERGE_NODES],
 	/* Wait for all the writes to finish */
 	closure_sync(&cl);
 
-	/* The keys for the old nodes get deleted */
+	/*
+	 * The keys for the old nodes get deleted. We don't need a deleted
+	 * key for old_nodes[0], since new_nodes[0] must have the same key
+	 */
 	for (i = nr_old_nodes - 1; i > 0; --i) {
 		*keylist.top = old_nodes[i]->key;
 		set_bkey_deleted(&keylist.top->k);
@@ -528,6 +537,8 @@ static void bch_coalesce_nodes(struct btree *old_nodes[GC_MERGE_NODES],
 	/*
 	 * Keys for the new nodes get inserted: bch_btree_insert_keys() only
 	 * does the lookup once and thus expects the keys to be in sorted order
+	 * so we have to make sure the new keys are correctly ordered with
+	 * respect to the deleted keys added in the previous loop
 	 */
 	for (i = 0; i < nr_new_nodes; i++)
 		bch_keylist_add_in_order(&keylist, &new_nodes[i]->key);

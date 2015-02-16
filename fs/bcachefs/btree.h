@@ -398,6 +398,12 @@ void bch_btree_node_read_done(struct btree *, struct cache *,
 void bch_btree_flush(struct cache_set *);
 void bch_btree_write_oldest(struct cache_set *, u64);
 
+/**
+ * btree_node_format_fits - check if we could rewrite node with a new format
+ *
+ * This assumes all keys can pack with the new format -- it just checks if
+ * the re-packed keys would fit inside the node itself.
+ */
 static inline bool btree_node_format_fits(struct btree *b,
 					  struct bkey_format *new_f)
 {
@@ -414,7 +420,7 @@ static inline bool btree_node_format_fits(struct btree *b,
 
 	BUG_ON(new_u64s + b->keys.nr_live_u64s < 0);
 
-	return __set_bytes(b->keys.set->data, b->keys.nr_live_u64s + new_u64s) <
+	return __set_bytes(b->data, b->keys.nr_live_u64s + new_u64s) <
 		PAGE_SIZE << b->keys.page_order;
 }
 
