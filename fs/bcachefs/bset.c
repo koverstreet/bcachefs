@@ -1345,9 +1345,6 @@ static void btree_mergesort(struct btree_keys *dst,
 	while (!bch_btree_node_iter_end(iter)) {
 		k = bch_btree_node_iter_next_all(iter, src);
 
-		BUG_ON((void *) __bkey_idx(out, k->u64s) >
-		       (void *) dst_set + (PAGE_SIZE << dst->page_order));
-
 		if (bkey_deleted(k))
 			continue;
 
@@ -1387,6 +1384,9 @@ static void btree_mergesort(struct btree_keys *dst,
 
 		prev = out;
 		out = bkey_next(out);
+
+		BUG_ON((void *) out >
+		       (void *) dst_set + (PAGE_SIZE << dst->page_order));
 	}
 
 	if (prev) {
