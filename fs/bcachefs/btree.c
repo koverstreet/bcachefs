@@ -655,11 +655,15 @@ static void do_btree_node_write(struct closure *cl)
 	}
 }
 
-static void __bch_btree_node_write(struct btree *b, struct closure *parent)
+static void __bch_btree_node_write(struct btree *b, struct closure *parent,
+				   int idx_to_write)
 {
 	/*
-	 * can't be flipped back on without a write lock, we have at least a
-	 * read lock:
+	 * We may only have a read lock on the btree node - the dirty bit is our
+	 * "lock" against racing with other threads that may be trying to start
+	 * a write, we do a write iff we clear the dirty bit. Since setting the
+	 * dirty bit requires a write lock, we can't race with other threads
+	 * redirtying it:
 	 */
 	if (!test_and_clear_bit(BTREE_NODE_dirty, &b->flags))
 		return;
@@ -671,6 +675,12 @@ static void __bch_btree_node_write(struct btree *b, struct closure *parent)
 	 */
 	down(&b->io_mutex);
 
+	if (idx_to_write != -1 &&
+	    idx_to_write != btree_node_write_idx(b)) {
+		up(&b->io_mutex);
+		return;
+	}
+
 	/*
 	 * do_btree_node_write() must not run asynchronously (NULL is passed for
 	 * workqueue) - it needs the lock we have on the btree node
@@ -681,7 +691,7 @@ static void __bch_btree_node_write(struct btree *b, struct closure *parent)
 void bch_btree_node_write(struct btree *b, struct closure *parent,
 			  struct btree_iter *iter)
 {
-	__bch_btree_node_write(b, parent);
+	__bch_btree_node_write(b, parent, -1);
 
 	six_lock_write(&b->lock);
 	bch_btree_init_next(b, iter);
@@ -701,7 +711,7 @@ static void bch_btree_node_write_sync(struct btree *b, struct btree_iter *iter)
 static void bch_btree_node_write_dirty(struct btree *b, struct closure *parent)
 {
 	six_lock_read(&b->lock);
-	__bch_btree_node_write(b, parent);
+	__bch_btree_node_write(b, parent, -1);
 	six_unlock_read(&b->lock);
 }
 
@@ -742,7 +752,7 @@ void bch_btree_write_oldest(struct cache_set *c, u64 oldest_seq)
 				six_lock_read(&b->lock);
 				if (btree_current_write(b)->journal) {
 					written++;
-					__bch_btree_node_write(b, &cl);
+					__bch_btree_node_write(b, &cl, -1);
 				}
 				six_unlock_read(&b->lock);
 			}
@@ -911,7 +921,7 @@ static int mca_reap_notrace(struct btree *b, bool flush)
 	}
 
 	if (btree_node_dirty(b))
-		__bch_btree_node_write(b, &cl);
+		__bch_btree_node_write(b, &cl, -1);
 
 	closure_sync(&cl);
 
