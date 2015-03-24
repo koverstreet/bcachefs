@@ -357,7 +357,8 @@ void bch_cached_dev_detach(struct cached_dev *dc)
 
 int bch_cached_dev_attach(struct cached_dev *dc, struct cache_set *c)
 {
-	s64 rtime = timekeeping_clocktai_ns();
+	struct timespec ts = CURRENT_TIME;
+	s64 rtime = timespec_to_ns(&ts);
 	char buf[BDEVNAME_SIZE];
 	bool found;
 	int ret;
@@ -727,7 +728,8 @@ int flash_devs_run(struct cache_set *c)
 
 int bch_flash_dev_create(struct cache_set *c, u64 size)
 {
-	s64 rtime = timekeeping_clocktai_ns();
+	struct timespec ts = CURRENT_TIME;
+	s64 rtime = timespec_to_ns(&ts);
 	struct bkey_i_inode_blockdev inode;
 	int ret;
 
