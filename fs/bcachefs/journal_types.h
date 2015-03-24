@@ -44,6 +44,9 @@ struct journal {
 	/* Sequence number of most recent journal entry (last entry in @pin) */
 	u64			seq;
 
+	/* last_seq from the most recent journal entry written */
+	u64			last_seq_ondisk;
+
 	/*
 	 * FIFO of journal entries whose btree updates have not yet been
 	 * written out.

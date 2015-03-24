@@ -472,6 +472,8 @@ const char *bch_journal_read(struct cache_set *c, struct list_head *list)
 	c->journal.pin.back = j->seq - j->last_seq + 1;
 
 	c->journal.seq = j->seq;
+	c->journal.last_seq_ondisk = j->last_seq;
+
 	BUG_ON(last_seq(&c->journal) != j->last_seq);
 
 	i = list_first_entry(list, struct journal_replay, list);
@@ -664,7 +666,7 @@ static void journal_discard_work(struct work_struct *work)
 	submit_bio(&ja->discard_bio);
 }
 
-static bool do_journal_discard(struct cache *ca)
+static void do_journal_discard(struct cache *ca)
 {
 	struct journal_device *ja = &ca->journal;
 	struct bio *bio = &ja->discard_bio;
@@ -672,12 +674,12 @@ static bool do_journal_discard(struct cache *ca)
 	if (!CACHE_DISCARD(&ca->mi) ||
 	    !blk_queue_discard(bdev_get_queue(ca->disk_sb.bdev))) {
 		ja->discard_idx = ja->last_idx;
-		return true;
+		return;
 	}
 
 	switch (atomic_read(&ja->discard_in_flight)) {
 	case DISCARD_IN_FLIGHT:
-		return false;
+		break;
 
 	case DISCARD_DONE:
 		ja->discard_idx = (ja->discard_idx + 1) %
@@ -688,7 +690,7 @@ static bool do_journal_discard(struct cache *ca)
 
 	case DISCARD_READY:
 		if (ja->discard_idx == ja->last_idx)
-			return true;
+			break;
 
 		atomic_set(&ja->discard_in_flight, DISCARD_IN_FLIGHT);
 
@@ -707,11 +709,9 @@ static bool do_journal_discard(struct cache *ca)
 		INIT_WORK(&ja->discard_work, journal_discard_work);
 		schedule_work(&ja->discard_work);
 
-		return false;
-
+		break;
 	default:
 		BUG();
-		return true;
 	}
 }
 
@@ -833,11 +833,9 @@ static void journal_reclaim_work(struct work_struct *work)
  *
  * Called from IO submission context, does not block. Cleans up after btree
  * write completions by advancing the journal pin and each cache's last_idx,
- * and kicking off discards.
- *
- * Returns true if background reclaim needs to run.
+ * kicking off discards and background reclaim as necessary.
  */
-static bool journal_reclaim_fast(struct cache_set *c)
+static void journal_reclaim_fast(struct cache_set *c)
 {
 	struct cache *ca;
 	u64 last_seq;
@@ -858,7 +856,7 @@ static bool journal_reclaim_fast(struct cache_set *c)
 	if (fifo_free(&c->journal.pin) <= (c->journal.pin.size >> 6))
 		need_reclaim = true;
 
-	last_seq = last_seq(&c->journal);
+	last_seq = c->journal.last_seq_ondisk;
 
 	rcu_read_lock();
 
@@ -886,7 +884,8 @@ static bool journal_reclaim_fast(struct cache_set *c)
 
 	rcu_read_unlock();
 
-	return need_reclaim;
+	if (need_reclaim)
+		queue_work(system_long_wq, &c->journal.reclaim_work);
 }
 
 /**
@@ -909,8 +908,7 @@ static void journal_next_bucket(struct cache_set *c)
 	BUG_ON(c->journal.u64s_remaining);
 	BUG_ON(c->journal.cur->data->u64s);
 
-	if (journal_reclaim_fast(c))
-		queue_work(system_long_wq, &c->journal.reclaim_work);
+	journal_reclaim_fast(c);
 
 	rcu_read_lock();
 
@@ -930,7 +928,7 @@ static void journal_next_bucket(struct cache_set *c)
 	 */
 	group_for_each_cache_rcu(ca, &c->cache_tiers[0], iter) {
 		struct journal_device *ja = &ca->journal;
-		unsigned next = (ja->cur_idx + 1) %
+		unsigned next, remaining, nr_buckets =
 			bch_nr_journal_buckets(&ca->sb);
 
 		if (bch_extent_ptrs(e) == CACHE_SET_META_REPLICAS_WANT(&c->sb))
@@ -944,8 +942,18 @@ static void journal_next_bucket(struct cache_set *c)
 					  ca->sb.nr_this_dev))
 			continue;
 
-		/* No journal buckets available for writing on this device */
-		if (next == ja->discard_idx)
+		next = (ja->cur_idx + 1) % nr_buckets;
+		remaining = (ja->discard_idx + nr_buckets - next) % nr_buckets;
+
+		if (!remaining)
+			continue;
+
+		/*
+		 * Don't use the last bucket unless writing the new last_seq
+		 * will make another bucket available:
+		 */
+		if (remaining == 1 &&
+		    ja->seq[(next + 1) % nr_buckets] >= last_seq(&c->journal))
 			continue;
 
 		BUG_ON(bch_extent_ptrs(e) >= BKEY_EXTENT_PTRS_MAX);
@@ -1017,6 +1025,8 @@ static void journal_write_done(struct closure *cl)
 	struct journal_write *w = (j->cur == j->w)
 		? &j->w[1]
 		: &j->w[0];
+
+	j->last_seq_ondisk = w->data->last_seq;
 
 	__closure_wake_up(&w->wait);
 
@@ -1294,6 +1304,7 @@ static bool __journal_res_get(struct cache_set *c, struct journal_res *res,
 			/* Still no room, we have to wait */
 			spin_unlock(&c->journal.lock);
 			trace_bcache_journal_full(c);
+			queue_work(system_long_wq, &c->journal.reclaim_work);
 			return false;
 		}
 	}
