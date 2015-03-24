@@ -213,11 +213,11 @@ static void bch_mark_allocator_buckets(struct cache_set *c)
 	for_each_cache(ca, c, ci) {
 		spin_lock(&ca->freelist_lock);
 
-		fifo_for_each(i, &ca->free_inc, iter)
+		fifo_for_each_entry(i, &ca->free_inc, iter)
 			bch_mark_alloc_bucket(ca, &ca->buckets[i]);
 
 		for (j = 0; j < RESERVE_NR; j++)
-			fifo_for_each(i, &ca->free[j], iter)
+			fifo_for_each_entry(i, &ca->free[j], iter)
 				bch_mark_alloc_bucket(ca, &ca->buckets[i]);
 
 		spin_unlock(&ca->freelist_lock);

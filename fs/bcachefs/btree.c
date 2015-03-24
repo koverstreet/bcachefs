@@ -736,8 +736,8 @@ void bch_btree_write_oldest(struct cache_set *c, u64 oldest_seq)
 	rcu_read_lock();
 	for_each_cached_btree(b, c, tbl, i, pos)
 		if (btree_current_write(b)->journal) {
-			if (fifo_idx(&c->journal.pin,
-				     btree_current_write(b)->journal)
+			if (fifo_entry_idx(&c->journal.pin,
+					   btree_current_write(b)->journal)
 				<= oldest_seq) {
 				six_lock_read(&b->lock);
 				if (btree_current_write(b)->journal) {

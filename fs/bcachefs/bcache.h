@@ -194,6 +194,7 @@
 
 #include "bcachefs_format.h"
 #include "bset.h"
+#include "fifo.h"
 #include "util.h"
 
 #include <linux/dynamic_fault.h>

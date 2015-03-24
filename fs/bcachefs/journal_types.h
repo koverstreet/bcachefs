@@ -1,6 +1,8 @@
 #ifndef _BCACHE_JOURNAL_TYPES_H
 #define _BCACHE_JOURNAL_TYPES_H
 
+#include "fifo.h"
+
 struct journal_res;
 
 /*

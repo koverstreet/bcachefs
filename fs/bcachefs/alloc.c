@@ -445,9 +445,9 @@ static void verify_not_on_freelist(struct cache *ca, size_t bucket)
 			BUG_ON(ca->prio_buckets[iter] == bucket);
 
 		for (j = 0; j < RESERVE_NR; j++)
-			fifo_for_each(i, &ca->free[j], iter)
+			fifo_for_each_entry(i, &ca->free[j], iter)
 				BUG_ON(i == bucket);
-		fifo_for_each(i, &ca->free_inc, iter)
+		fifo_for_each_entry(i, &ca->free_inc, iter)
 			BUG_ON(i == bucket);
 	}
 }
