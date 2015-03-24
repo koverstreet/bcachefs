@@ -1463,21 +1463,48 @@ int bch_journal_alloc(struct cache_set *c)
 
 ssize_t bch_journal_print_debug(struct journal *j, char *buf)
 {
-	return snprintf(buf, PAGE_SIZE,
-			"active journal entries:\t%zu\n"
-			"seq:\t\t\t%llu\n"
-			"reservation count:\t%u\n"
-			"io in flight:\t\t%i\n"
-			"need write:\t\t%i\n"
-			"dirty:\t\t\t%i\n"
-			"replay done:\t\t%i\n",
-			fifo_used(&j->pin),
-			j->seq,
-			j->res_count,
-			atomic_read(&j->in_flight),
-			test_bit(JOURNAL_NEED_WRITE,	&j->flags),
-			test_bit(JOURNAL_DIRTY,		&j->flags),
-			test_bit(JOURNAL_REPLAY_DONE,	&j->flags));
+	struct cache_set *c = container_of(j, struct cache_set, journal);
+	struct cache *ca;
+	unsigned iter;
+	ssize_t ret = 0;
+
+	rcu_read_lock();
+	spin_lock_irq(&j->lock);
+
+	ret += scnprintf(buf + ret, PAGE_SIZE - ret,
+			 "active journal entries:\t%zu\n"
+			 "seq:\t\t\t%llu\n"
+			 "last_seq:\t\t%llu\n"
+			 "last_seq_ondisk:\t%llu\n"
+			 "reservation count:\t%u\n"
+			 "io in flight:\t\t%i\n"
+			 "need write:\t\t%i\n"
+			 "dirty:\t\t\t%i\n"
+			 "replay done:\t\t%i\n",
+			 fifo_used(&j->pin),
+			 j->seq,
+			 last_seq(j),
+			 j->last_seq_ondisk,
+			 j->res_count,
+			 atomic_read(&j->in_flight),
+			 test_bit(JOURNAL_NEED_WRITE,	&j->flags),
+			 test_bit(JOURNAL_DIRTY,		&j->flags),
+			 test_bit(JOURNAL_REPLAY_DONE,	&j->flags));
+
+	group_for_each_cache_rcu(ca, &c->cache_tiers[0], iter) {
+		struct journal_device *ja = &ca->journal;
+
+		ret += scnprintf(buf + ret, PAGE_SIZE - ret,
+				 "dev %u: nr %u cur_idx %u last_idx %u next bucket_seq %llu\n",
+				 iter, bch_nr_journal_buckets(&ca->sb),
+				 ja->cur_idx, ja->last_idx,
+				 ja->bucket_seq[ja->last_idx]);
+	}
+
+	spin_unlock_irq(&j->lock);
+	rcu_read_unlock();
+
+	return ret;
 }
 
 static bool bch_journal_writing_to_device(struct cache *ca)
