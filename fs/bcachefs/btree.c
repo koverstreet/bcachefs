@@ -2028,6 +2028,8 @@ static int btree_split(struct btree *b,
 	uint64_t start_time = local_clock();
 	struct bkey_packed *k;
 	enum btree_insert_status status;
+	unsigned u64s_to_insert = b->level
+		? bch_keylist_nkeys(insert_keys) : 0;
 	int ret;
 
 	BUG_ON(!parent && (b != btree_node_root(b)));
@@ -2047,68 +2049,10 @@ static int btree_split(struct btree *b,
 	}
 
 	n1 = btree_node_alloc_replacement(b);
-	bch_verify_btree_keys_accounting(&n1->keys);
 	set1 = btree_bset_first(n1);
 
-	/*
-	 * For updates to interior nodes, we've got to do the insert before we
-	 * split because the stuff we're inserting has to be inserted
-	 * atomically. Post split, the keys might have to go in different nodes
-	 * and the split would no longer be atomic.
-	 *
-	 * But for updates to leaf nodes (in the extent btree, anyways) - we
-	 * can't update the new replacement node while the old node is still
-	 * visible. Reason being as we do the update we're updating garbage
-	 * collection information on the fly, possibly causing a bucket to
-	 * become unreferenced and available to the allocator to reuse - we
-	 * don't want that to happen while other threads can still use the old
-	 * version of the btree node.
-	 */
-	if (b->level) {
-		six_unlock_write(&n1->lock);
-
-		btree_iter_node_set(iter, n1); /* set temporarily for insert */
-		status = bch_btree_insert_keys(n1, iter, insert_keys,
-					       replace, persistent, 0);
-		BUG_ON(status != BTREE_INSERT_INSERTED);
-
-		iter->nodes[b->level] = b; /* still have b locked */
-
-		six_lock_write(&n1->lock);
-
-		/*
-		 * There might be duplicate (deleted) keys after the
-		 * bch_btree_insert_keys() call - we need to remove them before
-		 * we split, as it would be rather bad if we picked a duplicate
-		 * for the pivot.
-		 *
-		 * Additionally, inserting might overwrite a bunch of existing
-		 * keys (i.e. a big discard when there were a bunch of small
-		 * extents previously) - we might not want to split after the
-		 * insert. Splitting a node that's too small to be split would
-		 * be bad (if the node had only one key, we wouldn't be able to
-		 * assign the new node a key different from the original node)
-		 */
-		k = set1->start;
-		while (k != bset_bkey_last(set1))
-			if (bkey_deleted(k)) {
-				set1->u64s -= k->u64s;
-				memmove(k, bkey_next(k),
-					(void *) bset_bkey_last(set1) -
-					(void *) k);
-			} else
-				k = bkey_next(k);
-	}
-	bch_verify_btree_keys_accounting(&n1->keys);
-
-	/*
-	 * Note that on recursive parent_keys == insert_keys, so we can't start
-	 * adding new keys to parent_keys before emptying it out (by doing the
-	 * insert, which we just did above)
-	 */
-
 	if (__set_blocks(n1->data,
-			 n1->data->keys.u64s,
+			 n1->data->keys.u64s + u64s_to_insert,
 			 block_bytes(n1->c)) > btree_blocks(iter->c) * 3 / 4) {
 		size_t nr_packed = 0, nr_unpacked = 0;
 
@@ -2168,12 +2112,40 @@ static int btree_split(struct btree *b,
 
 		n2->key.k.p = b->key.k.p;
 
+		n1->keys.set->size = 0;
+		n2->keys.set->size = 0;
+
 		six_unlock_write(&n1->lock);
 		six_unlock_write(&n2->lock);
 
 		bch_verify_btree_keys_accounting(&n1->keys);
 		bch_verify_btree_keys_accounting(&n2->keys);
 
+		/*
+		 * For updates to interior nodes, we've got to do the insert
+		 * before we split because the stuff we're inserting has to be
+		 * inserted atomically. Post split, the keys might have to go in
+		 * different nodes and the split would no longer be atomic.
+		 */
+		if (b->level) {
+			btree_iter_node_set(iter, n1);
+			status = bch_btree_insert_keys(n1, iter, insert_keys,
+						       replace, persistent, 0);
+			BUG_ON(status == BTREE_INSERT_NEED_SPLIT);
+
+			btree_iter_node_set(iter, n2);
+			status = bch_btree_insert_keys(n2, iter, insert_keys,
+						       replace, persistent, 0);
+			BUG_ON(status == BTREE_INSERT_NEED_SPLIT);
+			BUG_ON(!bch_keylist_empty(insert_keys));
+			iter->nodes[b->level] = b; /* still have b locked */
+		}
+
+		/*
+		 * Note that on recursive parent_keys == insert_keys, so we
+		 * can't start adding new keys to parent_keys before emptying it
+		 * out (by doing the insert, which we just did above)
+		 */
 		bch_keylist_add(parent_keys, &n1->key);
 		bch_keylist_add(parent_keys, &n2->key);
 
@@ -2190,8 +2162,17 @@ static int btree_split(struct btree *b,
 		six_unlock_write(&b->lock);
 	} else {
 		trace_bcache_btree_node_compact(b, set1->u64s);
-
 		six_unlock_write(&n1->lock);
+
+		if (b->level) {
+			btree_iter_node_set(iter, n1);
+			status = bch_btree_insert_keys(n1, iter, insert_keys,
+						       replace, persistent, 0);
+			BUG_ON(status != BTREE_INSERT_INSERTED);
+			BUG_ON(!bch_keylist_empty(insert_keys));
+			iter->nodes[b->level] = b; /* still have b locked */
+		}
+
 		bch_keylist_add(parent_keys, &n1->key);
 	}
 
@@ -2239,26 +2220,16 @@ static int btree_split(struct btree *b,
 
 	/* Update iterator, and finish insert now that new nodes are visible: */
 	BUG_ON(iter->nodes[b->level] != b);
-
 	six_unlock_intent(&b->lock);
-	btree_iter_node_set(iter, n1);
 
-	if (!n1->level)
-		bch_btree_insert_keys(n1, iter, insert_keys,
-				      replace, persistent,
-				      flags);
-
-	if (n2 &&
-	    bkey_cmp(iter->pos, n1->key.k.p) > 0) {
+	if (n2 && bkey_cmp(iter->pos, n1->key.k.p) > 0) {
 		six_unlock_intent(&n1->lock);
 		btree_iter_node_set(iter, n2);
-
-		if (!n2->level)
-			bch_btree_insert_keys(n2, iter, insert_keys,
-					      replace, persistent,
-					      flags);
 	} else if (n2) {
 		six_unlock_intent(&n2->lock);
+		btree_iter_node_set(iter, n1);
+	} else {
+		btree_iter_node_set(iter, n1);
 	}
 
 	bch_time_stats_update(&iter->c->btree_split_time, start_time);
@@ -2389,9 +2360,13 @@ traverse:
 			bch_btree_iter_unlock(iter);
 
 		if (bch_keylist_empty(insert_keys) ||
-		    (flags & BTREE_INSERT_ATOMIC) ||
 		    ret == -EROFS)
 			break;
+
+		if (flags & BTREE_INSERT_ATOMIC) {
+			ret = ret ?: -EINTR;
+			break;
+		}
 
 		bch_btree_iter_set_pos(iter,
 			bkey_start_pos(&bch_keylist_front(insert_keys)->k));
