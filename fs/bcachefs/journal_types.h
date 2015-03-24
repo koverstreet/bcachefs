@@ -88,7 +88,7 @@ struct journal_device {
 	 * For each journal bucket, contains the max sequence number of the
 	 * journal writes it contains - so we know when a bucket can be reused.
 	 */
-	u64			*seq;
+	u64			*bucket_seq;
 
 	unsigned		sectors_free;
 

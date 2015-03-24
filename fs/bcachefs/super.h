@@ -85,8 +85,8 @@ u64 bch_checksum(unsigned, const void *, size_t);
  */
 #define csum_set(i, type)						\
 ({									\
-	void *start = ((void *) (i)) + sizeof(u64);			\
-	void *end = __bset_bkey_last(i);				\
+	const void *start = ((const void *) (i)) + sizeof(u64);		\
+	const void *end = __bset_bkey_last(i);				\
 									\
 	bch_checksum(type, start, end - start);				\
 })

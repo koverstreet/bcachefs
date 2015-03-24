@@ -1484,7 +1484,7 @@ static void bch_cache_free_work(struct work_struct *work)
 		bioset_free(ca->replica_set);
 
 	free_percpu(ca->bucket_stats_percpu);
-	kfree(ca->journal.seq);
+	kfree(ca->journal.bucket_seq);
 	free_pages((unsigned long) ca->disk_buckets, ilog2(bucket_pages(ca)));
 	kfree(ca->prio_buckets);
 	kfree(ca->bio_prio);
@@ -1870,8 +1870,8 @@ static const char *cache_alloc(struct bcache_superblock *sb,
 	    !(ca->disk_buckets	= alloc_bucket_pages(GFP_KERNEL, ca)) ||
 	    !(ca->replica_set = bioset_create(4, offsetof(struct bbio, bio))) ||
 	    !(ca->bucket_stats_percpu = alloc_percpu(struct bucket_stats)) ||
-	    !(ca->journal.seq	= kcalloc(bch_nr_journal_buckets(&ca->sb),
-					  sizeof(u64), GFP_KERNEL)) ||
+	    !(ca->journal.bucket_seq = kcalloc(bch_nr_journal_buckets(&ca->sb),
+					       sizeof(u64), GFP_KERNEL)) ||
 	    !(ca->bio_prio = bio_kmalloc(GFP_NOIO, bucket_pages(ca))))
 		goto err;
 
