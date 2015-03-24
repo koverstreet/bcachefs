@@ -1263,7 +1263,6 @@ static void __bch_cache_read_only(struct cache *ca)
 	struct cache_group *tier = &c->cache_tiers[
 		CACHE_TIER(&mi->m[ca->sb.nr_this_dev])];
 	struct task_struct *p;
-	char buf[BDEVNAME_SIZE];
 
 	cache_member_info_put();
 
@@ -1305,16 +1304,12 @@ static void __bch_cache_read_only(struct cache *ca)
 	 */
 	bch_await_scheduled_data_writes(ca);
 
-	bch_notify_cache_read_only(ca);
-
 	/*
 	 * Device data write barrier -- no non-meta-data writes should
 	 * occur after this point.  However, writes to btree buckets,
 	 * journal buckets, and the superblock can still occur.
 	 */
 	trace_bcache_cache_read_only_done(ca);
-
-	pr_notice("%s read only (data)", bdevname(ca->disk_sb.bdev, buf));
 }
 
 static bool bch_last_rw_tier0_device(struct cache *ca)
@@ -1351,6 +1346,9 @@ void bch_cache_read_only(struct cache *ca)
 	 * Stop data writes.
 	 */
 	__bch_cache_read_only(ca);
+
+	pr_notice("%s read only (data)", bdevname(ca->disk_sb.bdev, buf));
+	bch_notify_cache_read_only(ca);
 
 	/*
 	 * Mark as RO.
