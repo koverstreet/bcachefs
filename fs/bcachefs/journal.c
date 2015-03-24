@@ -260,6 +260,12 @@ reread:		left = ca->mi.bucket_size - offset;
 				goto err;
 			}
 
+			if (j->last_seq > j->seq) {
+				__bch_cache_error(ca,
+					"invalid journal entry: last_seq > seq");
+				goto err;
+			}
+
 			ret = journal_add_entry(jlist, j);
 			if (ret < 0)
 				goto err;
@@ -427,8 +433,9 @@ const char *bch_journal_read(struct cache_set *c, struct list_head *list)
 {
 	struct jset_entry *prio_ptrs;
 	struct journal_list jlist;
+	struct journal_replay *i;
 	struct jset *j;
-	struct list_head *l;
+	atomic_t *p;
 	struct cache *ca;
 	unsigned iter;
 
@@ -457,19 +464,36 @@ const char *bch_journal_read(struct cache_set *c, struct list_head *list)
 	if (list_empty(list))
 		return "no journal entries found";
 
-	/* XXX: this can't tolerate missing journal entries */
-	list_for_each(l, list) {
-		atomic_t p = { 1 };
-
-		BUG_ON(!fifo_push(&c->journal.pin, p));
-		atomic_set(&fifo_back(&c->journal.pin), 1);
-	}
-
 	j = &list_entry(list->prev, struct journal_replay, list)->j;
 
-	c->journal.seq = j->seq;
+	if (j->seq - j->last_seq + 1 > c->journal.pin.size)
+		return "too many journal entries open for refcount fifo";
 
+	c->journal.pin.back = j->seq - j->last_seq + 1;
+
+	c->journal.seq = j->seq;
 	BUG_ON(last_seq(&c->journal) != j->last_seq);
+
+	i = list_first_entry(list, struct journal_replay, list);
+
+	fifo_for_each_entry_ptr(p, &c->journal.pin, iter) {
+		u64 seq = last_seq(&c->journal) +
+			fifo_entry_idx(&c->journal.pin, p);
+
+		if (!i || i->j.seq != seq) {
+			atomic_set(p, 0);
+
+			bch_cache_set_error(c,
+				"bcache: journal entry %llu missing! (replaying %llu-%llu)",
+				seq, last_seq(&c->journal), c->journal.seq);
+		} else {
+			atomic_set(p, 1);
+
+			i = list_next_entry(i, list);
+			if (&i->list == list)
+				i = NULL;
+		}
+	}
 
 	prio_ptrs = bch_journal_find_entry(j, JKEYS_PRIO_PTRS, 0);
 	if (!prio_ptrs)
@@ -535,13 +559,7 @@ int bch_journal_replay(struct cache_set *c, struct list_head *list)
 	struct journal_replay *i =
 		list_entry(list->prev, struct journal_replay, list);
 
-	uint64_t start = i->j.last_seq, end = i->j.seq, n = start;
-
 	list_for_each_entry(i, list, list) {
-		cache_set_err_on(n != i->j.seq, c,
-"bcache: journal entries %llu-%llu missing! (replaying %llu-%llu)",
-				 n, i->j.seq - 1, start, end);
-
 		c->journal.cur_pin =
 			&c->journal.pin.data[((c->journal.pin.back - 1 -
 					       (c->journal.seq - i->j.seq)) &
@@ -561,12 +579,11 @@ int bch_journal_replay(struct cache_set *c, struct list_head *list)
 		if (atomic_dec_and_test(c->journal.cur_pin))
 			wake_up(&c->journal.wait);
 
-		n = i->j.seq + 1;
 		entries++;
 	}
 
 	pr_info("journal replay done, %i keys in %i entries, seq %llu",
-		keys, entries, end);
+		keys, entries, c->journal.seq);
 err:
 	if (ret)
 		pr_err("journal replay error: %d", ret);

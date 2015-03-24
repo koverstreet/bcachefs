@@ -688,6 +688,7 @@ static inline unsigned bucket_bytes(const struct cache *ca)
 
 /* Error handling macros */
 
+/* The underscore versions merely log an error, they don't fail the cache set */
 #define __bch_cache_set_error(c, fmt, ...)				\
 	printk(KERN_ERR "bcache: error on %pU: " fmt,			\
 	       (c)->sb.set_uuid.b, ##__VA_ARGS__)
@@ -700,6 +701,7 @@ do {									\
 			      ##__VA_ARGS__);				\
 } while (0)
 
+/* These do fail the cache set */
 #define bch_cache_set_error(c, ...)					\
 do {									\
 	__bch_cache_set_error(c, __VA_ARGS__);				\

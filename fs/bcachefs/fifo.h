@@ -122,5 +122,11 @@ do {									\
 	      (_entry = (_fifo)->data[(_iter)], true));			\
 	     _iter = ((_iter) + 1) & (_fifo)->mask)
 
+#define fifo_for_each_entry_ptr(_ptr, _fifo, _iter)			\
+	for (_iter = (_fifo)->front;					\
+	     ((_iter != (_fifo)->back) &&				\
+	      (_ptr = &(_fifo)->data[(_iter)], true));			\
+	     _iter = ((_iter) + 1) & (_fifo)->mask)
+
 #endif /* _BCACHE_FIFO_H */
 
