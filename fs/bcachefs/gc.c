@@ -683,8 +683,8 @@ static int bch_gc_thread(void *arg)
 		if (kthread_should_stop())
 			break;
 
-		try_to_freeze();
 		schedule();
+		try_to_freeze();
 	}
 
 	return 0;

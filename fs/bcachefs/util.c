@@ -246,15 +246,15 @@ int bch_ratelimit_wait_freezable_stoppable(struct bch_ratelimit *d,
 			return 1;
 		}
 
-		if (freezing(current)) {
-			closure_sync(cl);
-			try_to_freeze();
-		}
-
 		if (!delay)
 			return 0;
 
 		schedule_timeout(delay);
+
+		if (freezing(current)) {
+			closure_sync(cl);
+			try_to_freeze();
+		}
 	}
 }
 
@@ -509,8 +509,8 @@ int bch_kthread_loop_ratelimit(unsigned long *last, unsigned long delay)
 	if (kthread_should_stop())
 		return -1;
 
-	try_to_freeze();
 	schedule_timeout(max_t(long, 0, next - jiffies));
+	try_to_freeze();
 	*last = jiffies;
 
 	return 0;

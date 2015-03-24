@@ -595,8 +595,8 @@ int bch_kthread_loop_ratelimit(unsigned long *, unsigned long);
 		if (cond)						\
 			break;						\
 									\
-		try_to_freeze();					\
 		schedule();						\
+		try_to_freeze();					\
 	}								\
 	set_current_state(TASK_RUNNING);				\
 	_ret;								\

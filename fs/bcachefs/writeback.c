@@ -419,8 +419,8 @@ static void bch_writeback(struct cached_dev *dc)
 			if (kthread_should_stop())
 				return;
 
-			try_to_freeze();
 			schedule();
+			try_to_freeze();
 			return;
 		}
 
