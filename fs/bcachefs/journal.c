@@ -1320,6 +1320,7 @@ static bool __journal_res_get(struct cache_set *c, struct journal_res *res,
 
 		/* If the current journal entry is not empty, write it */
 		if (c->journal.cur->data->u64s) {
+			__set_current_state(TASK_RUNNING);
 			/*
 			 * If the previous journal entry is still being written,
 			 * we have to wait
