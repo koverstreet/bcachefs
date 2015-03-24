@@ -891,6 +891,18 @@ static void journal_next_bucket(struct cache_set *c)
 		next = (ja->cur_idx + 1) % nr_buckets;
 		remaining = (ja->last_idx + nr_buckets - next) % nr_buckets;
 
+		/*
+		 * Hack to avoid a deadlock during journal replay: journal
+		 * replay might require setting a new btree root, which requires
+		 * writing another journal entry - thus, if the journal is full
+		 * (and this happens when replaying the first journal bucket's
+		 * entries) we're screwed.
+		 *
+		 * So don't let the journal fill up unless we're in replay:
+		 */
+		if (test_bit(JOURNAL_REPLAY_DONE, &j->flags))
+			remaining = max((int) remaining - 2, 0);
+
 		if (!remaining)
 			continue;
 
