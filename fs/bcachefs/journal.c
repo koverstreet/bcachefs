@@ -788,34 +788,23 @@ static inline unsigned journal_free_buckets(struct cache *ca)
 #define JSET_SECTORS (PAGE_SECTORS << JSET_BITS)
 
 /* Number of u64s we can write to the current journal bucket */
-static size_t journal_write_u64s_remaining(struct cache_set *c)
+static size_t journal_write_u64s_remaining(struct journal *j)
 {
 	ssize_t u64s = (min_t(size_t,
-			      c->journal.sectors_free,
+			      j->sectors_free,
 			      JSET_SECTORS) << 9) / sizeof(u64);
 
-	/* Subtract off some for the btree roots */
-	u64s -= BTREE_ID_NR * (JSET_KEYS_U64s + BKEY_EXTENT_MAX_U64s);
+	/* Subtract the journal header and any entries already added: */
+	u64s -= set_bytes(j->cur->data) / sizeof(u64);
 
-	/* And for the prio pointers */
-	u64s -= JSET_KEYS_U64s + c->sb.nr_in_set;
+	/*
+	 * Btree roots, prio pointers don't get added until right before we do
+	 * the write:
+	 */
+	u64s -= BTREE_ID_NR * (JSET_KEYS_U64s + BKEY_EXTENT_MAX_U64s);
+	u64s -= JSET_KEYS_U64s + j->nr_prio_buckets;
 
 	return max_t(ssize_t, 0L, u64s);
-}
-
-static void journal_entry_no_room(struct cache_set *c)
-{
-	struct bkey_s_extent e = bkey_i_to_s_extent(&c->journal.key);
-	struct bch_extent_ptr *ptr;
-	struct cache *ca;
-
-	extent_for_each_ptr_backwards(e, ptr)
-		if (!(ca = PTR_CACHE(c, ptr)) ||
-		    ca->journal.sectors_free <= c->journal.sectors_free)
-			bch_extent_drop_ptr(e, ptr - e.v->ptr);
-
-	c->journal.sectors_free = 0;
-	c->journal.u64s_remaining = 0;
 }
 
 /**
@@ -967,7 +956,6 @@ static void journal_next_bucket(struct cache_set *c)
 	 * only supposed to be called when we're out of space/haven't started a
 	 * new journal entry
 	 */
-	BUG_ON(j->u64s_remaining);
 	BUG_ON(j->cur->data->u64s);
 
 	journal_reclaim_fast(c);
@@ -977,11 +965,16 @@ static void journal_next_bucket(struct cache_set *c)
 	/*
 	 * Drop any pointers to devices that have been removed, are no longer
 	 * empty, or filled up their current journal bucket:
+	 *
+	 * Note that a device may have had a small amount of free space (perhaps
+	 * one sector) that wasn't enough for the smallest possible journal
+	 * entry - that's why we drop pointers to devices <= current free space,
+	 * i.e. whichever device was limiting the current journal entry size.
 	 */
 	extent_for_each_ptr_backwards(e, ptr)
 		if (!(ca = PTR_CACHE(c, ptr)) ||
-		    !ca->journal.sectors_free ||
-		    CACHE_STATE(&ca->mi) != CACHE_ACTIVE)
+		    CACHE_STATE(&ca->mi) != CACHE_ACTIVE ||
+		    ca->journal.sectors_free <= j->sectors_free)
 			bch_extent_drop_ptr(e, ptr - e.v->ptr);
 
 	/*
@@ -1044,6 +1037,8 @@ static void journal_next_bucket(struct cache_set *c)
 	if (j->sectors_free == UINT_MAX)
 		j->sectors_free = 0;
 
+	j->u64s_remaining = journal_write_u64s_remaining(j);
+
 	rcu_read_unlock();
 }
 
@@ -1067,7 +1062,7 @@ void bch_journal_next_entry(struct journal *j)
 
 	j->cur->data->seq	= ++j->seq;
 	j->cur->data->u64s	= 0;
-	j->u64s_remaining	= 0;
+	j->u64s_remaining	= journal_write_u64s_remaining(j);
 }
 
 static void journal_write_endio(struct bio *bio)
@@ -1326,52 +1321,31 @@ static bool __journal_res_get(struct cache_set *c, struct journal_res *res,
 		if (*start_time == 0)
 			*start_time = local_clock();
 
-		/* If the current journal entry is not empty, write it */
 		if (j->cur->data->u64s) {
-			__set_current_state(TASK_RUNNING);
 			/*
-			 * If the previous journal entry is still being written,
-			 * we have to wait
+			 * If the current journal entry isn't empty, try to
+			 * write it - if previous journal write is still in
+			 * flight, we'll have to wait:
 			 */
+
+			__set_current_state(TASK_RUNNING);
 			if (!journal_try_write(c)) {
 				trace_bcache_journal_entry_full(c);
 				return false;
 			}
 
 			spin_lock(&j->lock);
-			continue;
-		}
+		} else {
+			/* Try to get a new journal bucket */
+			journal_next_bucket(c);
 
-		/*
-		 * There's room in the entry, but not enough for our
-		 * reservation: since we haven't added any keys yet, we're at
-		 * the end of a bucket, so skip to the end of the bucket
-		 */
-		if (j->u64s_remaining) {
-			BUG_ON(test_bit(JOURNAL_DIRTY, &j->flags) &&
-			       !test_bit(JOURNAL_NEED_WRITE, &j->flags));
-
-			journal_entry_no_room(c);
-		}
-
-		/* If there's room in the journal bucket, start a new entry */
-		if (journal_bucket_has_room(j)) {
-			j->u64s_remaining =
-				journal_write_u64s_remaining(c);
-			BUG_ON(!j->u64s_remaining);
-			pr_debug("done: %d", j->u64s_remaining);
-			continue;
-		}
-
-		/* Try to get a new journal bucket */
-		journal_next_bucket(c);
-
-		if (!journal_bucket_has_room(j)) {
-			/* Still no room, we have to wait */
-			spin_unlock(&j->lock);
-			trace_bcache_journal_full(c);
-			queue_work(system_long_wq, &j->reclaim_work);
-			return false;
+			if (!journal_bucket_has_room(j)) {
+				/* Still no room, we have to wait */
+				spin_unlock(&j->lock);
+				trace_bcache_journal_full(c);
+				queue_work(system_long_wq, &j->reclaim_work);
+				return false;
+			}
 		}
 	}
 }
