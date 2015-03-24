@@ -777,8 +777,10 @@ static int bch_allocator_thread(void *arg)
 				if (bch_allocator_push(ca, bucket))
 					break;
 
-				if (kthread_should_stop())
+				if (kthread_should_stop()) {
+					__set_current_state(TASK_RUNNING);
 					goto out;
+				}
 				schedule();
 			}
 

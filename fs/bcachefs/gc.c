@@ -680,8 +680,10 @@ static int bch_gc_thread(void *arg)
 		for_each_cache(ca, c, i)
 			bch_wake_allocator(ca);
 
-		if (kthread_should_stop())
+		if (kthread_should_stop()) {
+			__set_current_state(TASK_RUNNING);
 			break;
+		}
 
 		schedule();
 		try_to_freeze();

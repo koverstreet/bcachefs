@@ -506,8 +506,10 @@ int bch_kthread_loop_ratelimit(unsigned long *last, unsigned long delay)
 	unsigned long next = *last + delay;
 
 	set_current_state(TASK_INTERRUPTIBLE);
-	if (kthread_should_stop())
+	if (kthread_should_stop()) {
+		__set_current_state(TASK_RUNNING);
 		return -1;
+	}
 
 	schedule_timeout(max_t(long, 0, next - jiffies));
 	try_to_freeze();
