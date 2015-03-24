@@ -124,7 +124,7 @@ void bch_verify_btree_keys_accounting(struct btree_keys *b)
 /* Auxiliary search trees */
 
 /* 32 bits total: */
-#define BKEY_MID_BITS		5U
+#define BKEY_MID_BITS		8U
 #define BKEY_EXPONENT_BITS	8U
 #define BKEY_MANTISSA_BITS	(32 - BKEY_MID_BITS - BKEY_EXPONENT_BITS)
 #define BKEY_MANTISSA_MASK	((1 << BKEY_MANTISSA_BITS) - 1)
