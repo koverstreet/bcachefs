@@ -572,7 +572,7 @@ SHOW(bch_cache_set)
 	sysfs_print_time_stats(&c->btree_split_time, btree_split, sec, us);
 	sysfs_print_time_stats(&c->sort.time, btree_sort, ms, us);
 	sysfs_print_time_stats(&c->btree_read_time, btree_read, ms, us);
-	sysfs_print_time_stats(&c->journal_full_time, journal_full, sec, ms);
+	sysfs_print_time_stats(&c->journal.full_time, journal_full, sec, ms);
 
 	sysfs_print(btree_used_percent,	bch_btree_used(c));
 	sysfs_print(btree_nodes,	c->gc_stats.nodes);
@@ -729,7 +729,7 @@ STORE(__bch_cache_set)
 	sysfs_clear_time_stats(&c->btree_split_time, btree_split);
 	sysfs_clear_time_stats(&c->sort.time, btree_sort);
 	sysfs_clear_time_stats(&c->btree_read_time, btree_read);
-	sysfs_clear_time_stats(&c->journal_full_time, journal_full);
+	sysfs_clear_time_stats(&c->journal.full_time, journal_full);
 
 	sysfs_strtoul(journal_delay_ms, c->journal.delay_ms);
 	sysfs_strtoul(verify, c->verify);

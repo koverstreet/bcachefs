@@ -922,7 +922,6 @@ static const char *bch_cache_set_alloc(struct cache_sb *sb,
 	spin_lock_init(&c->btree_coalesce_time.lock);
 	spin_lock_init(&c->btree_split_time.lock);
 	spin_lock_init(&c->btree_read_time.lock);
-	spin_lock_init(&c->journal_full_time.lock);
 
 	bch_open_buckets_init(c);
 	bch_tiering_init_cache_set(c);
@@ -1105,7 +1104,7 @@ static const char *run_cache_set(struct cache_set *c)
 		 * btree_gc_finish() will give spurious errors about oldest_gen
 		 * > bucket_gen - this is a hack but oh well.
 		 */
-		bch_journal_next(&c->journal);
+		bch_journal_next_entry(&c->journal);
 
 		for_each_cache(ca, c, i)
 			if (CACHE_STATE(&ca->mi) == CACHE_ACTIVE &&
@@ -1132,7 +1131,7 @@ static const char *run_cache_set(struct cache_set *c)
 		 * journal_res_get() will crash if called before this has
 		 * set up the journal.pin FIFO and journal.cur pointer:
 		 */
-		bch_journal_next(&c->journal);
+		bch_journal_next_entry(&c->journal);
 
 		for_each_cache(ca, c, i)
 			if (CACHE_STATE(&ca->mi) == CACHE_ACTIVE &&
@@ -1567,6 +1566,9 @@ static void bch_cache_remove_work(struct work_struct *work)
 	struct cache_member *mi;
 	char buf[BDEVNAME_SIZE];
 	bool force = (test_bit(CACHE_DEV_FORCE_REMOVE, &ca->flags));
+	struct closure cl;
+
+	closure_init_stack(&cl);
 
 	bch_notify_cache_removing(ca);
 
@@ -1722,6 +1724,13 @@ static void bch_cache_remove_work(struct work_struct *work)
 		ca->mi = *mi;
 		cache_member_info_put();
 	}
+
+	spin_lock(&c->journal.lock);
+	c->journal.prio_buckets[ca->sb.nr_this_dev] = 0;
+	spin_unlock(&c->journal.lock);
+
+	bch_journal_meta(c, &cl);
+	closure_sync(&cl);
 
 	__bcache_write_super(c); /* ups sb_write_mutex */
 

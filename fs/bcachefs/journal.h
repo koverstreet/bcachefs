@@ -178,7 +178,7 @@ static inline bool journal_res_full(struct journal_res *res,
 	return (res->ref && jset_u64s(k->u64s) * 2 > res->nkeys);
 }
 
-void bch_journal_next(struct journal *);
+void bch_journal_next_entry(struct journal *);
 void bch_journal_mark(struct cache_set *, struct list_head *);
 void bch_journal_meta(struct cache_set *, struct closure *);
 const char *bch_journal_read(struct cache_set *, struct list_head *);

@@ -77,6 +77,9 @@ struct journal {
 	struct journal_write	w[2], *cur;
 
 	u64			prio_buckets[MAX_CACHES_PER_SET];
+	unsigned		nr_prio_buckets;
+
+	struct time_stats	full_time;
 };
 
 /*

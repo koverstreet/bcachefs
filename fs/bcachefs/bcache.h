@@ -612,7 +612,6 @@ struct cache_set {
 	struct time_stats	btree_coalesce_time;
 	struct time_stats	btree_split_time;
 	struct time_stats	btree_read_time;
-	struct time_stats	journal_full_time;
 
 	struct cache_accounting accounting;
 	atomic_long_t		cache_read_races;

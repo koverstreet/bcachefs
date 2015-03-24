@@ -291,9 +291,12 @@ static void bch_prio_write(struct cache *ca)
 
 	spin_lock(&c->journal.lock);
 	c->journal.prio_buckets[ca->sb.nr_this_dev] = ca->prio_buckets[0];
+	c->journal.nr_prio_buckets = max_t(unsigned,
+					   ca->sb.nr_this_dev + 1,
+					   c->journal.nr_prio_buckets);
 	spin_unlock(&c->journal.lock);
 
-	bch_journal_meta(ca->set, &cl);
+	bch_journal_meta(c, &cl);
 	closure_sync(&cl);
 
 	/*
