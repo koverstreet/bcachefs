@@ -735,8 +735,7 @@ int bch_discard(struct cache_set *c, struct bpos start,
 
 	bch_btree_iter_init_intent(&iter, c, BTREE_ID_EXTENTS, start);
 
-	while ((k = bch_btree_iter_peek(&iter)).k &&
-	       bkey_cmp(bkey_start_pos(k.k), end) < 0) {
+	while ((k = bch_btree_iter_peek(&iter)).k) {
 		unsigned max_sectors = KEY_SIZE_MAX & (~0 << c->block_bits);
 		/* really shouldn't be using a bare, unpadded bkey_i */
 		struct bkey_i erase;
@@ -746,12 +745,17 @@ int bch_discard(struct cache_set *c, struct bpos start,
 		bkey_init(&erase.k);
 		erase.k.type	= KEY_TYPE_DISCARD;
 		erase.k.version	= version;
-		erase.k.p	= bkey_start_pos(k.k);
-		bch_key_resize(&erase.k, max_sectors);
-		bch_cut_front(iter.pos, &erase);
-		n = erase.k.p;
+		erase.k.p	= bkey_cmp(bkey_start_pos(k.k),
+					   iter.pos) > 0
+			? bkey_start_pos(k.k)
+			: iter.pos;
 
+		if (bkey_cmp(erase.k.p, end) >= 0)
+			break;
+
+		bch_key_resize(&erase.k, max_sectors);
 		bch_cut_back(end, &erase.k);
+		n = erase.k.p;
 
 		ret = bch_btree_insert_at(&iter, &keylist_single(&erase),
 					  NULL, NULL, 0);
