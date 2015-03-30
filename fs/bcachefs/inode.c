@@ -78,11 +78,26 @@ static bool bch_inode_invalid(const struct cache_set *c, struct bkey_s_c k)
 	}
 }
 
+static void bch_inode_to_text(const struct btree *b, char *buf,
+			      size_t size, struct bkey_s_c k)
+{
+	struct bkey_s_c_inode inode;
+
+	switch (k.k->type) {
+	case BCH_INODE_FS:
+		inode = bkey_s_c_to_inode(k);
+
+		scnprintf(buf, size, "i_size %llu", inode.v->i_size);
+		break;
+	}
+}
+
 const struct btree_keys_ops bch_inode_ops = {
 };
 
 const struct bkey_ops bch_bkey_inode_ops = {
 	.key_invalid	= bch_inode_invalid,
+	.val_to_text	= bch_inode_to_text,
 };
 
 int bch_inode_create(struct cache_set *c, struct bkey_i *inode,
