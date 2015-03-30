@@ -1745,7 +1745,8 @@ static bool extent_i_save(struct bkey_packed *dst, struct bkey_i *src,
 static bool bch_extent_merge_inline(struct btree_keys *b,
 				    struct btree_node_iter *iter,
 				    struct bkey_packed *l,
-				    struct bkey_packed *r)
+				    struct bkey_packed *r,
+				    bool back_merge)
 {
 	const struct bkey_format *f = &b->format;
 	struct bset_tree *t;
@@ -1756,20 +1757,18 @@ static bool bch_extent_merge_inline(struct btree_keys *b,
 	struct bkey_i *mi;
 	bool ret;
 
-	if (l >= b->set->data->start &&
-	    l < bset_bkey_last(bset_tree_last(b)->data)) {
-		bkey_unpack(&li.k, f, l);
-		bkey_copy(&ri.k, packed_to_bkey(r));
-		m = l;
-		mi = &li.k;
-	} else if (r >= b->set->data->start &&
-		   r < bset_bkey_last(bset_tree_last(b)->data)) {
-		bkey_unpack(&ri.k, f, r);
-		bkey_copy(&li.k, packed_to_bkey(l));
-		m = r;
-		mi = &ri.k;
-	} else
-		BUG();
+	/*
+	 * We need to save copies of both l and r, because we might get a
+	 * partial merge (which modifies both) and then fails to repack
+	 */
+	bkey_unpack(&li.k, f, l);
+	bkey_unpack(&ri.k, f, r);
+
+	m = back_merge ? l : r;
+	mi = back_merge ? &li.k : &ri.k;
+
+	BUG_ON(m < b->set->data->start ||
+	       m >= bset_bkey_last(bset_tree_last(b)->data));
 
 	switch (bch_extent_merge(b, &li.k, &ri.k)) {
 	case BCH_MERGE_NOMERGE:
@@ -1778,7 +1777,7 @@ static bool bch_extent_merge_inline(struct btree_keys *b,
 		if (!extent_i_save(m, mi, f))
 			return false;
 
-		if (m == r)
+		if (!back_merge)
 			bkey_copy(packed_to_bkey(l), &li.k);
 		else
 			bkey_copy(packed_to_bkey(r), &ri.k);
@@ -1791,6 +1790,8 @@ static bool bch_extent_merge_inline(struct btree_keys *b,
 
 		ret = true;
 		break;
+	default:
+		BUG();
 	}
 
 	/*
@@ -1814,7 +1815,7 @@ static bool bch_extent_merge_inline(struct btree_keys *b,
 		k = bch_btree_node_iter_bset_pos(iter, b, t->data) ?:
 			bkey_prev(b, t, bset_bkey_last(t->data));
 
-		if (m == l) {
+		if (back_merge) {
 			/*
 			 * Back merge: 0 size extents will be before the key
 			 * that was just inserted (and thus the iterator
@@ -1857,7 +1858,7 @@ static bool bch_extent_merge_inline(struct btree_keys *b,
 	}
 
 	bch_btree_node_iter_sort(iter, b);
-	return true;
+	return ret;
 }
 
 static const struct btree_keys_ops bch_extent_ops = {

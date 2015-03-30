@@ -205,7 +205,7 @@ struct btree_keys_ops {
 	bool		(*key_merge_inline)(struct btree_keys *,
 					    struct btree_node_iter *,
 					    struct bkey_packed *,
-					    struct bkey_packed *);
+					    struct bkey_packed *, bool);
 
 	/*
 	 * Only used for deciding whether to use bkey_start_pos(k) or just the
@@ -359,10 +359,11 @@ static inline bool bch_bkey_try_merge(struct btree_keys *b,
 static inline bool bch_bkey_try_merge_inline(struct btree_keys *b,
 					     struct btree_node_iter *iter,
 					     struct bkey_packed *l,
-					     struct bkey_packed *r)
+					     struct bkey_packed *r,
+					     bool back_merge)
 {
 	return b->ops->key_merge_inline
-		? b->ops->key_merge_inline(b, iter, l, r)
+		? b->ops->key_merge_inline(b, iter, l, r, back_merge)
 		: false;
 }
 

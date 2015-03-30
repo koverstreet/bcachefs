@@ -815,7 +815,8 @@ void bch_bset_insert(struct btree_keys *b,
 
 	/* prev is in the tree, if we merge we're done */
 	if (prev &&
-	    bch_bkey_try_merge_inline(b, iter, prev, bkey_to_packed(insert)))
+	    bch_bkey_try_merge_inline(b, iter, prev,
+				      bkey_to_packed(insert), true))
 		return;
 
 	if (b->ops->is_extents &&
@@ -852,7 +853,7 @@ void bch_bset_insert(struct btree_keys *b,
 		 */
 		if (bch_bkey_try_merge_inline(b, iter,
 					      bkey_to_packed(insert),
-					      where))
+					      where, false))
 			return;
 	}
 
