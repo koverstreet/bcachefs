@@ -1608,12 +1608,13 @@ const char *bch_cache_allocator_start(struct cache *ca)
 
 	spin_lock(&ca->freelist_lock);
 	for_each_bucket(g, ca) {
+		if (fifo_full(&ca->free[RESERVE_NONE]))
+			break;
+
 		if (bch_can_invalidate_bucket(ca, g) &&
 		    !g->mark.cached_sectors) {
-			if (__bch_allocator_push(ca, g - ca->buckets))
-				__bch_invalidate_one_bucket(ca, g);
-			else
-				break;
+			__bch_invalidate_one_bucket(ca, g);
+			BUG_ON(!__bch_allocator_push(ca, g - ca->buckets));
 		}
 	}
 	spin_unlock(&ca->freelist_lock);
