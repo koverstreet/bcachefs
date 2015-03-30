@@ -532,20 +532,17 @@ static void bch_journal_read_device(struct closure *cl)
 	bitmap_zero(bitmap, nr_buckets);
 	pr_debug("%u journal buckets", nr_buckets);
 
-	if (!blk_queue_nonrot(q))
-		goto linear_scan;
-
 	/*
 	 * If the device supports discard but not secure discard, we can't do
 	 * the fancy fibonacci hash/binary search because the live journal
 	 * entries might not form a contiguous range:
 	 */
-	if (blk_queue_discard(q) &&
-	    !blk_queue_secure_erase(q)) {
 		for (i = 0; i < nr_buckets; i++)
 			read_bucket(i);
 		goto search_done;
-	}
+
+	if (!blk_queue_nonrot(q))
+		goto linear_scan;
 
 	/*
 	 * Read journal buckets ordered by golden ratio hash to quickly
