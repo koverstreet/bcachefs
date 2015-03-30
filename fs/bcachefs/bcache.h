@@ -696,7 +696,7 @@ static inline unsigned bucket_bytes(const struct cache *ca)
 
 /* The underscore versions merely log an error, they don't fail the cache set */
 #define __bch_cache_set_error(c, fmt, ...)				\
-	printk(KERN_ERR "bcache: error on %pU: " fmt,			\
+	printk(KERN_ERR "bcache: error on %pU: " fmt "\n",		\
 	       (c)->sb.set_uuid.b, ##__VA_ARGS__)
 
 #define __bch_cache_error(ca, fmt, ...)					\
