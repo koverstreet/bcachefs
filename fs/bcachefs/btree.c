@@ -461,6 +461,8 @@ static void bch_btree_node_read(struct btree *b)
 		goto missing;
 	}
 
+	percpu_ref_get(&ca->ref);
+
 	bio = to_bbio(bch_bbio_alloc(b->c));
 	bio->bio.bi_iter.bi_size	= btree_bytes(b->c);
 	bio->bio.bi_end_io		= btree_node_read_endio;
@@ -486,15 +488,18 @@ static void bch_btree_node_read(struct btree *b)
 	bch_btree_node_read_done(b, ca, ptr);
 	bch_time_stats_update(&b->c->btree_read_time, start_time);
 
+	percpu_ref_put(&ca->ref);
 	return;
 
 missing:
 	bch_cache_set_error(b->c, "no cache device for btree node");
+	percpu_ref_put(&ca->ref);
 	return;
 
 err:
 	bch_cache_error(ca, "IO error reading bucket %zu",
 			PTR_BUCKET_NR(ca, ptr));
+	percpu_ref_put(&ca->ref);
 }
 
 static void btree_complete_write(struct btree *b, struct btree_write *w)
