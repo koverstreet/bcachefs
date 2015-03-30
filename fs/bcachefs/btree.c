@@ -685,13 +685,13 @@ static void __bch_btree_node_write(struct btree *b, struct closure *parent,
 	 * do_btree_node_write() will drop it asynchronously.
 	 */
 	down(&b->io_mutex);
-
+#if 0
 	if (idx_to_write != -1 &&
 	    idx_to_write != btree_node_write_idx(b)) {
 		up(&b->io_mutex);
 		return;
 	}
-
+#endif
 	/*
 	 * do_btree_node_write() must not run asynchronously (NULL is passed for
 	 * workqueue) - it needs the lock we have on the btree node
