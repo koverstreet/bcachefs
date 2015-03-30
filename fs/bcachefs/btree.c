@@ -826,6 +826,10 @@ static const struct rhashtable_params bch_btree_cache_params = {
 static void mca_bucket_free(struct btree *b)
 {
 	BUG_ON(btree_node_dirty(b));
+	BUG_ON(!list_empty_careful(&b->journal_seq_blacklisted));
+
+	b->keys.nsets = 0;
+	b->keys.set[0].data = NULL;
 
 	rhashtable_remove_fast(&b->c->btree_cache_table, &b->hash,
 			       bch_btree_cache_params);
@@ -880,6 +884,7 @@ static struct btree *mca_bucket_alloc(struct cache_set *c, gfp_t gfp)
 static int mca_reap_notrace(struct btree *b, bool flush)
 {
 	struct closure cl;
+	struct bset *i;
 
 	closure_init_stack(&cl);
 	lockdep_assert_held(&b->c->btree_cache_lock);
@@ -890,7 +895,13 @@ static int mca_reap_notrace(struct btree *b, bool flush)
 	if (!six_trylock_write(&b->lock))
 		goto out_unlock_intent;
 
-	BUG_ON(btree_node_dirty(b) && !b->keys.set[0].data);
+	i = btree_bset_last(b);
+	BUG_ON(!i && btree_node_dirty(b));
+	BUG_ON(i && i->u64s &&
+	       b->io_mutex.count == 1 &&
+	       !btree_node_dirty(b) &&
+	       (((void *) i - (void *) b->data) >>
+		(b->c->block_bits + 9) >= b->written));
 
 	/* XXX: we need a better solution for this, this will cause deadlocks */
 	if (!list_empty_careful(&b->journal_seq_blacklisted))
