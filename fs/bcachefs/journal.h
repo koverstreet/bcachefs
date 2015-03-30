@@ -192,6 +192,8 @@ struct keylist;
 struct bkey_i *bch_journal_find_btree_root(struct cache_set *, struct jset *,
 					   enum btree_id, unsigned *);
 
+int bch_journal_seq_blacklisted(struct cache_set *, u64, struct btree *);
+
 struct journal_res {
 	unsigned		ref:1;
 	unsigned		nkeys:31;
@@ -202,9 +204,9 @@ void __bch_journal_res_put(struct cache_set *, struct journal_res *,
 void bch_journal_res_get(struct cache_set *, struct journal_res *,
 			 unsigned, unsigned);
 void bch_journal_set_dirty(struct cache_set *);
-void bch_journal_add_keys(struct cache_set *, struct journal_res *,
-			  enum btree_id, const struct bkey_i *,
-			  unsigned);
+u64 bch_journal_add_keys(struct cache_set *, struct journal_res *,
+			 enum btree_id, const struct bkey_i *,
+			 unsigned);
 
 static inline void bch_journal_res_put(struct cache_set *c,
 				       struct journal_res *res,
@@ -229,9 +231,10 @@ static inline bool journal_res_full(struct journal_res *res,
 	return (res->ref && jset_u64s(k->u64s) * 2 > res->nkeys);
 }
 
-void bch_journal_next_entry(struct journal *);
+void bch_journal_start(struct cache_set *);
 void bch_journal_mark(struct cache_set *, struct list_head *);
 void bch_journal_meta(struct cache_set *, struct closure *);
+void bch_journal_push_seq(struct cache_set *, u64, struct closure *);
 const char *bch_journal_read(struct cache_set *, struct list_head *);
 int bch_journal_replay(struct cache_set *, struct list_head *);
 

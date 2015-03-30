@@ -444,6 +444,11 @@ static void bch_coalesce_nodes(struct btree *old_nodes[GC_MERGE_NODES],
 			goto out;
 		}
 
+	for (i = 0; i < nr_old_nodes; i++) {
+		closure_sync(&cl);
+		bch_btree_push_journal_seq(old_nodes[i], &cl);
+	}
+
 	/* Repack everything with @new_format and sort down to one bset */
 	for (i = 0; i < nr_old_nodes; i++)
 		new_nodes[i] = __btree_node_alloc_replacement(old_nodes[i],
@@ -743,5 +748,7 @@ int bch_initial_gc(struct cache_set *c, struct list_head *journal)
 	}
 
 	bch_gc_finish(c);
+
+	set_bit(CACHE_SET_INITIAL_GC_DONE, &c->flags);
 	return 0;
 }

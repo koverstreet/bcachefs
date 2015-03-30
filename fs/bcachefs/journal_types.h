@@ -37,6 +37,17 @@ struct journal_entry_pin {
 	struct journal_entry_pin_list	*pin_list;
 };
 
+struct journal_seq_blacklist {
+	struct cache_set	*c;
+	struct list_head	list;
+	u64			seq;
+	bool			written;
+	struct journal_entry_pin pin;
+
+	/* Btree nodes to be flushed: */
+	struct list_head	nodes;
+};
+
 /* Embedded in struct cache_set */
 struct journal {
 	unsigned long		flags;
@@ -85,6 +96,9 @@ struct journal {
 	 */
 	DECLARE_FIFO(struct journal_entry_pin_list, pin);
 	struct journal_entry_pin_list *cur_pin_list;
+
+	struct mutex		blacklist_lock;
+	struct list_head	seq_blacklist;
 
 	BKEY_PADDED(key);
 

@@ -596,10 +596,25 @@ struct jset_entry {
 
 #define JSET_KEYS_U64s	(sizeof(struct jset_entry) / sizeof(__u64))
 
-BITMASK(JKEYS_TYPE,	struct jset_entry, flags, 0, 2);
-#define JKEYS_BTREE_KEYS	0
-#define JKEYS_BTREE_ROOT	1
-#define JKEYS_PRIO_PTRS		2
+
+BITMASK(JKEYS_TYPE,	struct jset_entry, flags, 0, 8);
+enum {
+	JKEYS_BTREE_KEYS		= 0,
+	JKEYS_BTREE_ROOT		= 1,
+	JKEYS_PRIO_PTRS			= 2,
+
+	/*
+	 * Journal sequence numbers can be blacklisted: bsets record the max
+	 * sequence number of all the journal entries they contain updates for,
+	 * so that on recovery we can ignore those bsets that contain index
+	 * updates newer that what made it into the journal.
+	 *
+	 * This means that we can't reuse that journal_seq - we have to skip it,
+	 * and then record that we skipped it so that the next time we crash and
+	 * recover we don't think there was a missing journal entry.
+	 */
+	JKEYS_JOURNAL_SEQ_BLACKLISTED	= 3,
+};
 
 struct jset {
 	__u64			csum;
@@ -659,6 +674,14 @@ BITMASK(PSET_CSUM_TYPE,		struct prio_set, flags, 0, 4);
  */
 struct bset {
 	__u64			seq;
+
+	/*
+	 * Highest journal entry this bset contains keys for.
+	 * If on recovery we don't see that journal entry, this bset is ignored:
+	 * this allows us to preserve the order of all index updates after a
+	 * crash, since the journal records a total order of all index updates
+	 * and anything that didn't make it to the journal doesn't get used.
+	 */
 	__u64			journal_seq;
 
 	__u32			flags;

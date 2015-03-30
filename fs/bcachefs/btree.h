@@ -121,6 +121,8 @@ struct btree {
 	struct list_head	list;
 	struct delayed_work	work;
 
+	struct list_head	journal_seq_blacklisted;
+
 	struct btree_write	writes[2];
 	struct bio		*bio;
 };
@@ -398,6 +400,7 @@ void bch_btree_node_write(struct btree *, struct closure *,
 void bch_btree_node_read_done(struct btree *, struct cache *,
 			      const struct bch_extent_ptr *);
 void bch_btree_flush(struct cache_set *);
+void bch_btree_push_journal_seq(struct btree *, struct closure *);
 
 /**
  * btree_node_format_fits - check if we could rewrite node with a new format

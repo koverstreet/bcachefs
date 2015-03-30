@@ -324,6 +324,7 @@ void bch_btree_node_read_done(struct btree *b, struct cache *ca,
 	struct bset *i = &b->data->keys;
 	struct btree_node_iter *iter;
 	const char *err;
+	int ret;
 
 	iter = mempool_alloc(b->c->fill_iter, GFP_NOIO);
 	iter->used = 0;
@@ -396,6 +397,14 @@ void bch_btree_node_read_done(struct btree *b, struct cache *ca,
 		err = validate_bset(b, ca, ptr, i, blocks);
 		if (err)
 			goto err;
+
+		err = "insufficient memory";
+		ret = bch_journal_seq_blacklisted(c, i->journal_seq, b);
+		if (ret < 0)
+			goto err;
+
+		if (ret)
+			continue;
 
 		bch_btree_node_iter_push(iter, &b->keys,
 					 i->start, bset_bkey_last(i));
@@ -758,6 +767,20 @@ restart:
 	closure_sync(&cl);
 }
 
+void bch_btree_push_journal_seq(struct btree *b, struct closure *cl)
+{
+	int i;
+
+	for (i = b->keys.nsets; i >= 0; --i) {
+		u64 seq = b->keys.set[i].data->journal_seq;
+
+		if (seq) {
+			bch_journal_push_seq(b->c, seq, cl);
+			break;
+		}
+	}
+}
+
 /*
  * Btree in memory cache - allocation/freeing
  * mca -> memory cache
@@ -843,6 +866,7 @@ static struct btree *mca_bucket_alloc(struct cache_set *c, gfp_t gfp)
 	INIT_DELAYED_WORK(&b->work, btree_node_write_work);
 	b->c = c;
 	sema_init(&b->io_mutex, 1);
+	INIT_LIST_HEAD(&b->journal_seq_blacklisted);
 	b->writes[1].index = 1;
 
 	mca_data_alloc(b, gfp);
@@ -867,6 +891,10 @@ static int mca_reap_notrace(struct btree *b, bool flush)
 		goto out_unlock_intent;
 
 	BUG_ON(btree_node_dirty(b) && !b->keys.set[0].data);
+
+	/* XXX: we need a better solution for this, this will cause deadlocks */
+	if (!list_empty_careful(&b->journal_seq_blacklisted))
+		goto out_unlock;
 
 	if (!flush) {
 		if (btree_node_dirty(b))
@@ -1389,6 +1417,12 @@ void btree_node_free(struct btree *b)
 		btree_complete_write(b, btree_current_write(b));
 	clear_btree_node_dirty(b);
 
+	if (!list_empty_careful(&b->journal_seq_blacklisted)) {
+		mutex_lock(&b->c->journal.blacklist_lock);
+		list_del_init(&b->journal_seq_blacklisted);
+		mutex_unlock(&b->c->journal.blacklist_lock);
+	}
+
 	cancel_delayed_work(&b->work);
 
 	bch_bucket_free(b->c, &b->key);
@@ -1689,7 +1723,10 @@ int bch_btree_root_read(struct cache_set *c, enum btree_id id,
 int bch_btree_node_rewrite(struct btree *b, struct btree_iter *iter, bool wait)
 {
 	struct btree *n, *parent = iter->nodes[b->level + 1];
+	struct closure cl;
 	int ret;
+
+	closure_init_stack(&cl);
 
 	iter->locks_want = BTREE_MAX_DEPTH;
 	if (!bch_btree_iter_upgrade(iter))
@@ -1701,12 +1738,15 @@ int bch_btree_node_rewrite(struct btree *b, struct btree_iter *iter, bool wait)
 		return ret;
 	}
 
+	bch_btree_push_journal_seq(b, &cl);
+
 	n = btree_node_alloc_replacement(b);
 	six_unlock_write(&n->lock);
 
 	trace_bcache_btree_gc_rewrite_node(b);
 
-	bch_btree_node_write_sync(n, NULL);
+	bch_btree_node_write(n, &cl, NULL);
+	closure_sync(&cl);
 
 	if (parent) {
 		ret = bch_btree_insert_node(parent, iter,
@@ -1776,7 +1816,9 @@ void bch_btree_insert_and_journal(struct btree *b,
 	}
 
 	if (res->ref)
-		bch_journal_add_keys(c, res, b->btree_id, insert, b->level);
+		btree_bset_last(b)->journal_seq =
+			bch_journal_add_keys(c, res, b->btree_id,
+					     insert, b->level);
 }
 
 /**
@@ -2027,6 +2069,8 @@ static int btree_split(struct btree *b,
 		else
 			WARN(1, "insufficient reserve for split\n");
 	}
+
+	bch_btree_push_journal_seq(b, stack_cl);
 
 	n1 = btree_node_alloc_replacement(b);
 	set1 = btree_bset_first(n1);

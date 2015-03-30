@@ -1100,11 +1100,11 @@ static const char *run_cache_set(struct cache_set *c)
 		pr_debug("bch_initial_gc() done");
 
 		/*
-		 * bcache_journal_next() can't happen sooner, or
-		 * btree_gc_finish() will give spurious errors about oldest_gen
-		 * > bucket_gen - this is a hack but oh well.
+		 * bch_journal_start() can't happen sooner, or btree_gc_finish()
+		 * will give spurious errors about oldest_gen > bucket_gen -
+		 * this is a hack but oh well.
 		 */
-		bch_journal_next_entry(&c->journal);
+		bch_journal_start(c);
 
 		for_each_cache(ca, c, i)
 			if (CACHE_STATE(&ca->mi) == CACHE_ACTIVE &&
@@ -1131,7 +1131,7 @@ static const char *run_cache_set(struct cache_set *c)
 		 * journal_res_get() will crash if called before this has
 		 * set up the journal.pin FIFO and journal.cur pointer:
 		 */
-		bch_journal_next_entry(&c->journal);
+		bch_journal_start(c);
 
 		for_each_cache(ca, c, i)
 			if (CACHE_STATE(&ca->mi) == CACHE_ACTIVE &&

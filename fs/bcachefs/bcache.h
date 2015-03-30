@@ -353,7 +353,8 @@ struct gc_stat {
 };
 
 /*
- * Flag bits, for how the cache set is shutting down, and what phase it's at:
+ * Flag bits for what phase of startup/shutdown the cache set is at, how we're
+ * shutting down, etc.:
  *
  * CACHE_SET_UNREGISTERING means we're not just shutting down, we're detaching
  * all the backing devices first (their cached data gets invalidated, and they
@@ -366,12 +367,18 @@ struct gc_stat {
  * CACHE_SET_RUNNING means all cache devices have been registered and journal
  * replay is complete.
  */
-#define CACHE_SET_UNREGISTERING		0
-#define	CACHE_SET_STOPPING		1
-#define	CACHE_SET_RUNNING		2
-#define	CACHE_SET_RO			3
-#define	CACHE_SET_GC_STOPPING		4
-#define	CACHE_SET_GC_FAILURE		5
+enum {
+	/* Startup: */
+	CACHE_SET_INITIAL_GC_DONE,
+
+	/* Shutdown: */
+	CACHE_SET_UNREGISTERING,
+	CACHE_SET_STOPPING,
+	CACHE_SET_RUNNING,
+	CACHE_SET_RO,
+	CACHE_SET_GC_STOPPING,
+	CACHE_SET_GC_FAILURE,
+};
 
 struct prio_clock {
 	/* All fields protected by bucket_lock */
