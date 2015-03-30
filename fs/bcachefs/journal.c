@@ -903,6 +903,8 @@ int bch_journal_replay(struct cache_set *c, struct list_head *list)
 
 	pr_info("journal replay done, %i keys in %i entries, seq %llu",
 		keys, entries, j->seq);
+
+	bch_journal_set_replay_done(&c->journal);
 err:
 	if (ret)
 		pr_err("journal replay error: %d", ret);

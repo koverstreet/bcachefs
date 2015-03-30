@@ -238,6 +238,14 @@ void bch_journal_push_seq(struct cache_set *, u64, struct closure *);
 const char *bch_journal_read(struct cache_set *, struct list_head *);
 int bch_journal_replay(struct cache_set *, struct list_head *);
 
+static inline void bch_journal_set_replay_done(struct journal *j)
+{
+	spin_lock_irq(&j->lock);
+	set_bit(JOURNAL_REPLAY_DONE, &j->flags);
+	j->cur_pin_list = &fifo_back(&j->pin);
+	spin_unlock_irq(&j->lock);
+}
+
 void bch_journal_free(struct cache_set *);
 int bch_journal_alloc(struct cache_set *);
 
