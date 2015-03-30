@@ -180,11 +180,6 @@ static inline void journal_pin_drop(struct journal *j,
 #define journal_full(j)						\
 	(!(j)->sectors_free || fifo_free(&(j)->pin) <= 1)
 
-#define for_each_jset_jkeys(jkeys, jset)			\
-	for (jkeys = (jset)->start;				\
-	     jkeys < (struct jset_entry *) bset_bkey_last(jset);	\
-	     jkeys = jset_keys_next(jkeys))
-
 struct closure;
 struct cache_set;
 struct keylist;

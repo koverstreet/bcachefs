@@ -32,12 +32,18 @@ static inline u64 journal_pin_seq(struct journal *j,
 	return last_seq(j) + fifo_entry_idx(&j->pin, pin_list);
 }
 
-#define for_each_jset_key(k, jkeys, jset)			\
-	for_each_jset_jkeys(jkeys, jset)			\
-		if (JKEYS_TYPE(jkeys) == JKEYS_BTREE_KEYS)	\
-			for (k = (jkeys)->start;		\
-			     k < bset_bkey_last(jkeys);		\
-			     k = bkey_next(k))
+#define for_each_jset_jkeys(jkeys, jset)				\
+	for (jkeys = (jset)->start;					\
+	     jkeys < (struct jset_entry *) bset_bkey_last(jset);	\
+	     jkeys = jset_keys_next(jkeys))
+
+#define for_each_jset_key(k, _n, jkeys, jset)				\
+	for_each_jset_jkeys(jkeys, jset)				\
+		if (JKEYS_TYPE(jkeys) == JKEYS_BTREE_KEYS)		\
+			for (k = (jkeys)->start;			\
+			     (k < bset_bkey_last(jkeys) &&		\
+			      (_n = bkey_next(k), 1));			\
+			     k = _n)
 
 #define JSET_SECTORS (PAGE_SECTORS << JSET_BITS)
 
@@ -759,12 +765,12 @@ const char *bch_journal_read(struct cache_set *c, struct list_head *list)
 
 void bch_journal_mark(struct cache_set *c, struct list_head *list)
 {
-	struct bkey_i *k;
+	struct bkey_i *k, *n;
 	struct jset_entry *j;
 	struct journal_replay *r;
 
 	list_for_each_entry(r, list, list)
-		for_each_jset_key(k, j, &r->j) {
+		for_each_jset_key(k, n, j, &r->j) {
 			if ((j->level || j->btree_id == BTREE_ID_EXTENTS) &&
 			    !bkey_invalid(c, j->level
 					  ? BKEY_TYPE_BTREE : j->btree_id,
@@ -855,7 +861,7 @@ int bch_journal_replay(struct cache_set *c, struct list_head *list)
 {
 	int ret = 0, keys = 0, entries = 0;
 	struct journal *j = &c->journal;
-	struct bkey_i *k;
+	struct bkey_i *k, *_n;
 	struct jset_entry *jkeys;
 	struct journal_replay *i, *n;
 	u64 cur_seq = last_seq(j);
@@ -886,7 +892,7 @@ int bch_journal_replay(struct cache_set *c, struct list_head *list)
 
 		BUG_ON(atomic_read(&j->cur_pin_list->count) != 1);
 
-		for_each_jset_key(k, jkeys, &i->j) {
+		for_each_jset_key(k, _n, jkeys, &i->j) {
 			cond_resched();
 			ret = bch_journal_replay_key(c, jkeys->btree_id, k);
 			if (ret)
