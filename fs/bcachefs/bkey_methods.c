@@ -45,7 +45,7 @@ bool bkey_invalid(struct cache_set *c,
 
 void bkey_debugcheck(struct btree *b, struct bkey_s_c k)
 {
-	enum bkey_type type = b->level ? BKEY_TYPE_BTREE : b->btree_id;
+	enum bkey_type type = btree_node_type(b);
 	const struct bkey_ops *ops = bch_bkey_ops[type];
 
 	BUG_ON(!k.k->u64s);
@@ -74,7 +74,7 @@ void bkey_debugcheck(struct btree *b, struct bkey_s_c k)
 void bch_bkey_val_to_text(struct btree *b, char *buf,
 			  size_t size, struct bkey_s_c k)
 {
-	enum bkey_type type = b->level ? BKEY_TYPE_BTREE : b->btree_id;
+	enum bkey_type type = btree_node_type(b);
 	const struct bkey_ops *ops = bch_bkey_ops[type];
 	char *out = buf, *end = buf + size;
 

@@ -799,8 +799,11 @@ void bch_bset_insert(struct btree_keys *b,
 	struct bkey_packed packed, *src;
 	BKEY_PADDED(k) tmp;
 
+	BUG_ON(insert->k.u64s < BKEY_U64s);
+	BUG_ON(insert->k.format != KEY_FORMAT_CURRENT);
 	BUG_ON(b->ops->is_extents &&
 	       (!insert->k.size || bkey_deleted(&insert->k)));
+
 	BUG_ON(!b->last_set_unwritten);
 	BUG_ON(where < i->start);
 	BUG_ON(where > bset_bkey_last(i));

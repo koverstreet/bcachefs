@@ -291,9 +291,7 @@ static const char *validate_bset(struct btree *b, struct cache *ca,
 
 		bkey_disassemble(&tup, f, k);
 
-		if (bkey_invalid(c, b->level
-				 ? BKEY_TYPE_BTREE
-				 : b->btree_id,
+		if (bkey_invalid(c, btree_node_type(b),
 				 bkey_tup_to_s_c(&tup))) {
 			char buf[160];
 

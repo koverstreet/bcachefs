@@ -8,6 +8,8 @@ enum bkey_type {
 	BKEY_TYPE_BTREE,
 };
 
+#define btree_node_type(_b)	((_b)->level ? BKEY_TYPE_BTREE : (_b)->btree_id)
+
 struct cache_set;
 struct btree;
 struct bkey;
