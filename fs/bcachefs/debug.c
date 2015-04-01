@@ -371,7 +371,7 @@ static const struct file_operations btree_format_debug_ops = {
 void bch_debug_exit_cache_set(struct cache_set *c)
 {
 	if (!IS_ERR_OR_NULL(c->debug))
-		debugfs_remove(c->debug);
+		debugfs_remove_recursive(c->debug);
 }
 
 void bch_debug_init_cache_set(struct cache_set *c)
