@@ -127,7 +127,7 @@ again:
 				 inode->k.p.inode, inode->k.u64s);
 
 			ret = bch_btree_insert_at(&iter, &keylist_single(inode),
-						  NULL, NULL,
+						  NULL, NULL, NULL,
 						  BTREE_INSERT_ATOMIC);
 
 			if (ret == -EINTR || ret == -EAGAIN)
@@ -159,7 +159,7 @@ int bch_inode_update(struct cache_set *c, struct bkey_i *inode)
 {
 	return bch_btree_insert(c, BTREE_ID_INODES,
 				&keylist_single(inode),
-				NULL, NULL);
+				NULL, NULL, NULL);
 }
 
 int bch_inode_truncate(struct cache_set *c, u64 inode_nr, u64 new_size)
@@ -182,7 +182,7 @@ int bch_inode_rm(struct cache_set *c, u64 inode_nr)
 
 	return bch_btree_insert(c, BTREE_ID_INODES,
 				&keylist_single(&delete),
-				NULL, NULL);
+				NULL, NULL, NULL);
 }
 
 int bch_blockdev_inode_find_by_uuid(struct cache_set *c, uuid_le *uuid,

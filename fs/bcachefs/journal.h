@@ -194,22 +194,14 @@ struct journal_res {
 	unsigned		nkeys:31;
 };
 
-void __bch_journal_res_put(struct cache_set *, struct journal_res *,
-			   struct closure *);
+void bch_journal_res_put(struct cache_set *, struct journal_res *,
+			 struct closure *, u64 *);
 void bch_journal_res_get(struct cache_set *, struct journal_res *,
 			 unsigned, unsigned);
 void bch_journal_set_dirty(struct cache_set *);
 u64 bch_journal_add_keys(struct cache_set *, struct journal_res *,
 			 enum btree_id, const struct bkey_i *,
 			 unsigned);
-
-static inline void bch_journal_res_put(struct cache_set *c,
-				       struct journal_res *res,
-				       struct closure *parent)
-{
-	spin_lock_irq(&c->journal.lock);
-	__bch_journal_res_put(c, res, parent);
-}
 
 /*
  * Amount of space that will be taken up by some keys in the journal (i.e.

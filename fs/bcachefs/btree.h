@@ -449,7 +449,7 @@ struct bch_replace_info;
 
 int bch_btree_insert_node(struct btree *, struct btree_iter *,
 			  struct keylist *, struct bch_replace_info *,
-			  struct closure *, unsigned);
+			  struct closure *, u64 *, unsigned);
 
 /*
  * Don't drop/retake locks: instead return -EINTR if need to upgrade to intent
@@ -467,10 +467,10 @@ int bch_btree_insert_node(struct btree *, struct btree_iter *,
 
 int bch_btree_insert_at(struct btree_iter *, struct keylist *,
 			struct bch_replace_info *, struct closure *,
-			unsigned);
+			u64 *, unsigned);
 int bch_btree_insert_check_key(struct btree_iter *, struct bkey_i *);
 int bch_btree_insert(struct cache_set *, enum btree_id, struct keylist *,
-		     struct bch_replace_info *, struct closure *);
+		     struct bch_replace_info *, struct closure *, u64 *);
 
 int bch_btree_node_rewrite(struct btree *, struct btree_iter *, bool);
 

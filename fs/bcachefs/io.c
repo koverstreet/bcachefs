@@ -320,7 +320,8 @@ static void bch_write_index(struct closure *cl)
 
 	int ret = bch_btree_insert(op->c, BTREE_ID_EXTENTS, &op->insert_keys,
 				   op->replace ? &op->replace_info : NULL,
-				   op->flush ? &op->cl : NULL);
+				   op->flush ? &op->cl : NULL,
+				   op->journal_seq);
 	if (ret) {
 		__bcache_io_error(op->c, "btree IO error");
 		op->error = ret;
@@ -687,6 +688,7 @@ void bch_write_op_init(struct bch_write_op *op, struct cache_set *c,
 	op->cached	= (flags & BCH_WRITE_CACHED) != 0;
 	op->flush	= (flags & BCH_WRITE_FLUSH) != 0;
 	op->wp		= wp;
+	op->journal_seq	= NULL;
 
 	bch_keylist_init(&op->insert_keys);
 	bkey_reassemble(&op->insert_key, insert_key);
@@ -759,7 +761,7 @@ int bch_discard(struct cache_set *c, struct bpos start,
 		n = erase.k.p;
 
 		ret = bch_btree_insert_at(&iter, &keylist_single(&erase),
-					  NULL, NULL, 0);
+					  NULL, NULL, NULL, 0);
 		if (ret)
 			break;
 

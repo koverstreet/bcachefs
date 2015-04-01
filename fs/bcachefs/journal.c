@@ -843,7 +843,7 @@ static int bch_journal_replay_key(struct cache_set *c, enum btree_id id,
 	if (do_subtract)
 		bkey_copy(&temp.key, k);
 
-	ret = bch_btree_insert(c, id, &keylist_single(k), NULL, NULL);
+	ret = bch_btree_insert(c, id, &keylist_single(k), NULL, NULL, NULL);
 	if (ret)
 		return ret;
 
@@ -1451,11 +1451,16 @@ static void journal_write_work(struct work_struct *work)
  * This function releases the journal write structure so other threads can
  * then proceed to add their keys as well.
  */
-void __bch_journal_res_put(struct cache_set *c,
-			   struct journal_res *res,
-			   struct closure *parent)
+void bch_journal_res_put(struct cache_set *c,
+			 struct journal_res *res,
+			 struct closure *parent,
+			 u64 *journal_seq)
 {
-	lockdep_assert_held(&c->journal.lock);
+	spin_lock_irq(&c->journal.lock);
+
+	/* Set under journal lock */
+	if (journal_seq)
+		*journal_seq = c->journal.seq;
 
 	BUG_ON(!res->ref);
 
@@ -1600,7 +1605,7 @@ void bch_journal_meta(struct cache_set *c, struct closure *parent)
 	bch_journal_res_get(c, &res, u64s, u64s);
 	if (res.ref) {
 		bch_journal_set_dirty(c);
-		bch_journal_res_put(c, &res, parent);
+		bch_journal_res_put(c, &res, parent, NULL);
 	}
 }
 

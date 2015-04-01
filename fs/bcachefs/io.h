@@ -54,6 +54,7 @@ struct bch_write_op {
 	};
 	};
 
+	u64			*journal_seq;
 
 	struct keylist		insert_keys;
 	BKEY_PADDED(insert_key);
