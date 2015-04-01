@@ -757,16 +757,19 @@ static void bch_bset_fix_lookup_table(struct btree_keys *b,
 	 * have gotten too big
 	 */
 	for (; j < t->size; j++) {
-		t->prev[j] += shift;
+		/* Avoid overflow - might temporarily be larger than a u8 */
+		unsigned p = (unsigned) t->prev[j] + shift;
 
-		if (t->prev[j] > 7) {
+		if (p > 7) {
 			k = table_to_bkey(t, j - 1);
 
 			while (k < cacheline_to_bkey(t, j, 0))
 				k = bkey_next(k);
 
-			t->prev[j] = bkey_to_cacheline_offset(t, j, k);
+			p = bkey_to_cacheline_offset(t, j, k);
 		}
+
+		t->prev[j] = p;
 	}
 
 	if (t->size == b->set->tree + btree_keys_cachelines(b) - t->tree)
