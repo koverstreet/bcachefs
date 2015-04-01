@@ -1289,33 +1289,19 @@ static void verify_not_stale(struct cache_set *c, const struct bkey_i *k)
 struct open_bucket *bch_alloc_sectors(struct cache_set *c,
 				      struct write_point *wp,
 				      struct bkey_i *k,
-				      struct closure *cl,
-				      bool contiguous)
+				      struct closure *cl)
 {
-	bool first_time = true;
 	struct bkey_s_extent src, dst;
 	struct bch_extent_ptr *ptr;
 	struct open_bucket *b;
 	struct cache *ca;
 	unsigned sectors, nptrs;
 
-retry:
 	b = lock_and_refill_writepoint(c, wp, cl);
 	if (IS_ERR_OR_NULL(b))
 		return b;
 
 	BUG_ON(!b->sectors_free);
-
-	if (contiguous && b->sectors_free < k->k.size) {
-		if (!first_time)
-			return NULL;
-
-		BUG_ON(xchg(&wp->b, NULL) != b);
-		spin_unlock(&b->lock);
-		bch_open_bucket_put(c, b);
-		first_time = false;
-		goto retry;
-	}
 
 	verify_not_stale(c, &b->key);
 

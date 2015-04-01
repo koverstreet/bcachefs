@@ -7,7 +7,6 @@
  */
 
 struct bch_replace_info {
-	bool replace_exact;	/* No fragmentation allowed */
 	unsigned successes;	/* How many insertions succeeded */
 	unsigned failures;	/* How many insertions failed */
 	BKEY_PADDED(key);
@@ -43,6 +42,8 @@ struct bch_write_op {
 		unsigned	write_done:1;
 	};
 	};
+
+	u8			btree_alloc_reserve;
 
 	struct write_point	*wp;
 

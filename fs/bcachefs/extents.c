@@ -996,21 +996,6 @@ static bool bkey_cmpxchg(struct btree *b,
 	       bkey_cmp(bkey_start_pos(&new->k),
 			bkey_start_pos(&old->k)) < 0);
 
-	/* if an exact match was requested, those are simple: */
-	if (replace->replace_exact) {
-		ret = bkey_val_bytes(k.k) == bkey_val_bytes(&old->k) &&
-			!memcmp(k.k, &old->k, sizeof(*k.k)) &&
-			!memcmp(k.v, &old->v, bkey_val_bytes(k.k));
-
-		if (ret)
-			replace->successes += 1;
-		else
-			replace->failures += 1;
-
-		*done = new->k.p;
-		return ret;
-	}
-
 	/*
 	 * first, check if there was a hole - part of the new key that we
 	 * haven't checked against any existing key

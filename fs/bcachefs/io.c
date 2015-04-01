@@ -442,9 +442,7 @@ static void __bch_write(struct closure *cl)
 		k = op->insert_keys.top;
 		bkey_copy(k, &op->insert_key);
 
-		b = bch_alloc_sectors(op->c, op->wp, k, op->wait ? cl : NULL,
-				      op->replace
-				      && op->replace_info.replace_exact);
+		b = bch_alloc_sectors(op->c, op->wp, k, op->wait ? cl : NULL);
 		BUG_ON(!b);
 
 		if (PTR_ERR(b) == -EAGAIN) {
