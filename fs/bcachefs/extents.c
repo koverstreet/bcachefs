@@ -512,17 +512,16 @@ bool __bch_cut_front(struct bpos where, struct bkey_s k)
 {
 	struct bkey_s_extent e;
 	struct bch_extent_ptr *ptr;
-	unsigned len = 0;
-
-	BUG_ON(bkey_cmp(where, k.k->p) > 0);
+	u64 len = 0;
 
 	if (bkey_cmp(where, bkey_start_pos(k.k)) <= 0)
 		return false;
 
-	if (bkey_cmp(where, k.k->p) < 0)
-		len = k.k->p.offset - where.offset;
-	else
-		k.k->p = where;
+	EBUG_ON(bkey_cmp(where, k.k->p) > 0);
+
+	len = k.k->p.offset - where.offset;
+
+	BUG_ON(len > k.k->size);
 
 	/*
 	 * Don't readjust offset if the key size is now 0, because that could
@@ -540,12 +539,10 @@ bool __bch_cut_front(struct bpos where, struct bkey_s k)
 		default:
 			break;
 		}
-
-	BUG_ON(len > k.k->size);
-	k.k->size = len;
-
-	if (!len)
+	else
 		__set_bkey_deleted(k.k);
+
+	k.k->size = len;
 
 	return true;
 }
@@ -557,21 +554,18 @@ bool bch_cut_front(struct bpos where, struct bkey_i *k)
 
 bool bch_cut_back(struct bpos where, struct bkey *k)
 {
-	unsigned len = 0;
-
-	BUG_ON(bkey_cmp(where, bkey_start_pos(k)) < 0);
+	u64 len = 0;
 
 	if (bkey_cmp(where, k->p) >= 0)
 		return false;
 
-	BUG_ON(where.inode != k->p.inode);
+	EBUG_ON(bkey_cmp(where, bkey_start_pos(k)) < 0);
 
-	if (bkey_cmp(where, bkey_start_pos(k)) > 0)
-		len = where.offset - bkey_start_offset(k);
-
-	k->p = where;
+	len = where.offset - bkey_start_offset(k);
 
 	BUG_ON(len > k->size);
+
+	k->p = where;
 	k->size = len;
 
 	if (!len)
