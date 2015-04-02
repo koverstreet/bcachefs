@@ -442,7 +442,9 @@ static void __bch_write(struct closure *cl)
 		k = op->insert_keys.top;
 		bkey_copy(k, &op->insert_key);
 
-		b = bch_alloc_sectors(op->c, op->wp, k, op->wait ? cl : NULL);
+		b = bch_alloc_sectors(op->c, op->wp, k,
+				      op->check_enospc,
+				      op->nowait ? NULL : cl);
 		BUG_ON(!b);
 
 		if (PTR_ERR(b) == -EAGAIN) {
@@ -502,8 +504,8 @@ err:
 	} else {
 		if (!op->replace)
 			__bcache_io_error(op->c,
-				"out of space for write %li wait %i",
-				PTR_ERR(b), op->wait);
+				"out of space for write %li nowait %i",
+				PTR_ERR(b), op->nowait);
 		op->error = -ENOSPC;
 	}
 
@@ -679,7 +681,8 @@ void bch_write_op_init(struct bch_write_op *op, struct cache_set *c,
 	op->bio		= bio;
 	op->error	= 0;
 	op->flags	= 0;
-	op->wait	= !(flags & BCH_WRITE_ALLOC_NOWAIT);
+	op->check_enospc = (flags & BCH_WRITE_CHECK_ENOSPC) != 0;
+	op->nowait	= (flags & BCH_WRITE_ALLOC_NOWAIT) != 0;
 	op->discard	= (flags & BCH_WRITE_DISCARD) != 0;
 	op->cached	= (flags & BCH_WRITE_CACHED) != 0;
 	op->flush	= (flags & BCH_WRITE_FLUSH) != 0;
@@ -884,9 +887,8 @@ void __cache_promote(struct cache_set *c, struct bbio *orig_bio,
 	op->orig_bio		= &orig_bio->bio;
 	op->stale		= 0;
 
-	bch_write_op_init(&op->iop, c, bio,
-			  &c->promote_write_point,
-			  new, old, write_flags);
+	bch_write_op_init(&op->iop, c, bio, &c->promote_write_point,
+			  new, old, BCH_WRITE_CHECK_ENOSPC|write_flags);
 
 	bch_cut_front(bkey_start_pos(&orig_bio->key.k), &op->iop.insert_key);
 	bch_cut_back(orig_bio->key.k.p, &op->iop.insert_key.k);

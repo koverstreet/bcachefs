@@ -176,7 +176,7 @@ static int issue_migration_move(struct cache *ca,
 	/* This also copies k into the write op's replace_key and insert_key */
 
 	bch_write_op_init(&io->op, c, &io->bio.bio,
-			  wp, k, k, 0);
+			  wp, k, k, BCH_WRITE_CHECK_ENOSPC);
 
 	BUG_ON(q->wq == NULL);
 	io->op.io_wq = q->wq;

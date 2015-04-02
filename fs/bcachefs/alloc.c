@@ -982,7 +982,8 @@ static struct cache *bch_next_cache(struct cache_set *c,
 static enum bucket_alloc_ret __bch_bucket_alloc_set(struct cache_set *c,
 						    enum alloc_reserve reserve,
 						    struct bkey_i *k, int n,
-						    struct cache_group *devs)
+						    struct cache_group *devs,
+						    bool check_enospc)
 {
 	struct bkey_i_extent *e;
 	long caches_used[BITS_TO_LONGS(MAX_CACHES_PER_SET)];
@@ -992,7 +993,7 @@ static enum bucket_alloc_ret __bch_bucket_alloc_set(struct cache_set *c,
 	BUG_ON(n <= 0 || n > BKEY_EXTENT_PTRS_MAX);
 
 	if (!devs->nr_devices ||
-	    (reserve == RESERVE_NONE && cache_set_full(c)))
+	    (check_enospc && cache_set_full(c)))
 		return CACHE_SET_FULL;
 
 	e = bkey_extent_init(k);
@@ -1058,13 +1059,14 @@ err:
 
 int bch_bucket_alloc_set(struct cache_set *c, enum alloc_reserve reserve,
 			 struct bkey_i *k, int n, struct cache_group *devs,
-			 struct closure *cl)
+			 bool check_enospc, struct closure *cl)
 {
 	struct closure_waitlist *waitlist = NULL;
 	bool waiting = false;
 
 	while (1) {
-		switch (__bch_bucket_alloc_set(c, reserve, k, n, devs)) {
+		switch (__bch_bucket_alloc_set(c, reserve, k, n,
+					       devs, check_enospc)) {
 		case ALLOC_SUCCESS:
 			if (waitlist)
 				closure_wake_up(waitlist);
@@ -1162,6 +1164,7 @@ static struct open_bucket *bch_open_bucket_get(struct cache_set *c,
 
 static struct open_bucket *bch_open_bucket_alloc(struct cache_set *c,
 						 struct write_point *wp,
+						 bool check_enospc,
 						 struct closure *cl)
 {
 	int ret;
@@ -1181,7 +1184,7 @@ static struct open_bucket *bch_open_bucket_alloc(struct cache_set *c,
 	ret = bch_bucket_alloc_set(c, wp->reserve, &b->key,
 				   wp->nr_replicas ?:
 				   CACHE_SET_DATA_REPLICAS_WANT(&c->sb),
-				   wp->group, cl);
+				   wp->group, check_enospc, cl);
 
 	if (ret) {
 		spin_unlock(&b->lock);
@@ -1210,6 +1213,7 @@ static bool bucket_still_writeable(struct open_bucket *b, struct cache_set *c);
 
 static struct open_bucket *lock_and_refill_writepoint(struct cache_set *c,
 						      struct write_point *wp,
+						      bool check_enospc,
 						      struct closure *cl)
 {
 	struct open_bucket *b;
@@ -1223,7 +1227,7 @@ static struct open_bucket *lock_and_refill_writepoint(struct cache_set *c,
 
 			spin_unlock(&b->lock);
 		} else {
-			b = bch_open_bucket_alloc(c, wp, cl);
+			b = bch_open_bucket_alloc(c, wp, check_enospc, cl);
 			if (IS_ERR_OR_NULL(b))
 				return b;
 
@@ -1289,6 +1293,7 @@ static void verify_not_stale(struct cache_set *c, const struct bkey_i *k)
 struct open_bucket *bch_alloc_sectors(struct cache_set *c,
 				      struct write_point *wp,
 				      struct bkey_i *k,
+				      bool check_enospc,
 				      struct closure *cl)
 {
 	struct bkey_s_extent src, dst;
@@ -1297,7 +1302,7 @@ struct open_bucket *bch_alloc_sectors(struct cache_set *c,
 	struct cache *ca;
 	unsigned sectors, nptrs;
 
-	b = lock_and_refill_writepoint(c, wp, cl);
+	b = lock_and_refill_writepoint(c, wp, check_enospc, cl);
 	if (IS_ERR_OR_NULL(b))
 		return b;
 

@@ -24,9 +24,10 @@ struct bch_write_op {
 		u8		flags;
 
 	struct {
-		/* Wait for data bucket allocation or just
-		 * fail when out of space? */
-		unsigned	wait:1;
+		/* Return -ENOSPC if cache set is full? */
+		unsigned	check_enospc:1;
+		/* Return -ENOSPC if no buckets immediately available? */
+		unsigned	nowait:1;
 		/* Discard key range? */
 		unsigned	discard:1;
 		/* Mark data as cached? */
@@ -42,8 +43,6 @@ struct bch_write_op {
 		unsigned	write_done:1;
 	};
 	};
-
-	u8			btree_alloc_reserve;
 
 	struct write_point	*wp;
 
@@ -62,10 +61,11 @@ struct bch_write_op {
 };
 
 enum bch_write_flags {
-	BCH_WRITE_ALLOC_NOWAIT		= (1 << 0),
-	BCH_WRITE_DISCARD		= (1 << 1),
-	BCH_WRITE_CACHED		= (1 << 2),
-	BCH_WRITE_FLUSH			= (1 << 3),
+	BCH_WRITE_CHECK_ENOSPC		= (1 << 0),
+	BCH_WRITE_ALLOC_NOWAIT		= (1 << 1),
+	BCH_WRITE_DISCARD		= (1 << 2),
+	BCH_WRITE_CACHED		= (1 << 3),
+	BCH_WRITE_FLUSH			= (1 << 4),
 };
 
 void bch_write_op_init(struct bch_write_op *, struct cache_set *,

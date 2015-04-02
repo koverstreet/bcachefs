@@ -1511,7 +1511,7 @@ static struct btree *bch_btree_node_alloc(struct cache_set *c, int level,
 
 	if (bch_bucket_alloc_set(c, id, &k.key,
 				 CACHE_SET_META_REPLICAS_WANT(&c->sb),
-				 &c->cache_all, NULL))
+				 &c->cache_all, false, NULL))
 		BUG();
 
 	BUG_ON(k.key.k.size);

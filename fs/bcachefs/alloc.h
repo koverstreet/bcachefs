@@ -44,13 +44,13 @@ void __bch_bucket_free(struct cache *, struct bucket *);
 void bch_bucket_free(struct cache_set *, struct bkey_i *);
 
 int bch_bucket_alloc_set(struct cache_set *, enum alloc_reserve,
-			 struct bkey_i *, int,
-			 struct cache_group *, struct closure *);
+			 struct bkey_i *, int, struct cache_group *,
+			 bool, struct closure *);
 
 void bch_open_bucket_put(struct cache_set *, struct open_bucket *);
 
 struct open_bucket *bch_alloc_sectors(struct cache_set *, struct write_point *,
-				      struct bkey_i *, struct closure *);
+				      struct bkey_i *, bool, struct closure *);
 
 static inline void bch_wake_allocator(struct cache *ca)
 {
