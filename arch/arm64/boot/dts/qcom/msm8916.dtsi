@@ -1331,6 +1331,32 @@
 				compatible = "venus-encoder";
 			};
 		};
+
+		uqfprom: eeprom@58000 {
+			compatible = "qcom,qfprom-msm8916";
+			reg = <0x58000 0x7000>;
+		};
+
+		cpr@b018000 {
+			compatible = "qcom,cpr";
+			reg = <0xb018000 0x1000>;
+			interrupts = <0 15 1>, <0 16 1>, <0 17 1>;
+			vdd-mx-supply = <&pm8916_l3>;
+			acc-syscon = <&tcsr>;
+			eeprom = <&uqfprom>;
+
+			qcom,cpr-ref-clk = <19200>;
+			qcom,cpr-timer-delay-us = <5000>;
+			qcom,cpr-timer-cons-up = <0>;
+			qcom,cpr-timer-cons-down = <2>;
+			qcom,cpr-up-threshold = <0>;
+			qcom,cpr-down-threshold = <2>;
+			qcom,cpr-idle-clocks = <15>;
+			qcom,cpr-gcnt-us = <1>;
+			qcom,vdd-apc-step-up-limit = <1>;
+			qcom,vdd-apc-step-down-limit = <1>;
+			qcom,cpr-cpus = <&CPU0 &CPU1 &CPU2 &CPU3>;
+		};
 	};
 
 	smd {
