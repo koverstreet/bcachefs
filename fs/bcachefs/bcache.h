@@ -284,6 +284,11 @@ struct cache {
 	DECLARE_FIFO(long, free_inc);
 	spinlock_t		freelist_lock;
 
+	/*
+	 * Number of buckets that can be stranded on freelists or as open
+	 * buckets - basically, number of buckets we must reserve to make
+	 * forward progress:
+	 */
 	size_t			reserve_buckets_count;
 
 	size_t			fifo_last_bucket;
@@ -646,11 +651,6 @@ struct cache_set {
 	 * buckets is below this percentage
 	 */
 	unsigned		foreground_target_percent;
-	/*
-	 * foreground writes will wait when the number of free buckets is
-	 * below this percentage
-	 */
-	unsigned		bucket_reserve_percent;
 	/*
 	 * foreground writes will fail when the number of free sectors is
 	 * below this percentage

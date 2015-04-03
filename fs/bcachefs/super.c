@@ -598,22 +598,40 @@ static void bch_recalc_capacity(struct cache_set *c)
 {
 	struct cache_group *tier = c->cache_tiers + ARRAY_SIZE(c->cache_tiers);
 	u64 capacity = 0;
-	unsigned i;
+	unsigned i, j;
 
 	while (--tier >= c->cache_tiers)
 		if (tier->nr_devices) {
 			for (i = 0; i < tier->nr_devices; i++) {
 				struct cache *ca = tier->devices[i];
+				size_t reserve = 0;
+
+				/*
+				 * We need to reserve buckets (from the number
+				 * of currently available buckets) against
+				 * foreground writes so that mainly copygc can
+				 * make forward progress.
+				 *
+				 * We need enough to refill the various reserves
+				 * from scratch - copygc will use its entire
+				 * reserve all at once, then run against when
+				 * its reserve is refilled (from the formerly
+				 * available buckets).
+				 *
+				 * This reserve is just used when considering if
+				 * allocations for foreground writes must wait -
+				 * not -ENOSPC calculations.
+				 */
+				for (j = 0; j < RESERVE_NR; j++)
+					reserve += ca->free[j].size;
+
+				reserve += ca->free_inc.size;
+
+				ca->reserve_buckets_count = reserve;
 
 				capacity += (ca->mi.nbuckets -
 					     ca->mi.first_bucket) <<
 					ca->bucket_bits;
-
-				ca->reserve_buckets_count =
-				div_u64((ca->mi.nbuckets -
-					 ca->mi.first_bucket) *
-					c->bucket_reserve_percent, 100);
-
 			}
 
 			capacity *= (100 - c->sector_reserve_percent);
@@ -959,7 +977,6 @@ static const char *bch_cache_set_alloc(struct cache_sb *sb,
 	c->tiering_percent = 10;
 
 	c->foreground_target_percent = 20;
-	c->bucket_reserve_percent = 10;
 	c->sector_reserve_percent = 20;
 
 	mutex_init(&c->uevent_lock);

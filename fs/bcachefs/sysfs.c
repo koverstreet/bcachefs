@@ -125,6 +125,7 @@ read_attribute(alloc_buckets);
 read_attribute(has_data);
 read_attribute(has_metadata);
 read_attribute(bset_tree_stats);
+read_attribute(alloc_debug);
 
 read_attribute(state);
 read_attribute(cache_read_races);
@@ -181,7 +182,6 @@ rw_attribute(btree_scan_ratelimit);
 rw_attribute(pd_controllers_update_seconds);
 
 rw_attribute(foreground_target_percent);
-rw_attribute(bucket_reserve_percent);
 rw_attribute(sector_reserve_percent);
 
 rw_attribute(size);
@@ -558,6 +558,28 @@ static unsigned bch_average_key_size(struct cache_set *c)
 		: 0;
 }
 
+static ssize_t show_cache_set_alloc_debug(struct cache_set *c, char *buf)
+{
+	struct cache *ca;
+	unsigned i;
+	u64 meta = 0, dirty = 0;
+
+	rcu_read_lock();
+	for_each_cache_rcu(ca, c, i) {
+		struct bucket_stats stats = bch_bucket_stats_read(ca);
+
+		meta += stats.buckets_meta << ca->bucket_bits;
+		dirty += stats.sectors_dirty;
+	}
+	rcu_read_unlock();
+
+	return scnprintf(buf, PAGE_SIZE,
+			 "capacity:\t\t%llu\n"
+			 "meta sectors:\t\t%llu\n"
+			 "dirty sectors:\t\t%llu\n",
+			 c->capacity, meta, dirty);
+}
+
 SHOW(bch_cache_set)
 {
 	struct cache_set *c = container_of(kobj, struct cache_set, kobj);
@@ -638,7 +660,6 @@ SHOW(bch_cache_set)
 	sysfs_print(pd_controllers_update_seconds,
 		    c->pd_controllers_update_seconds);
 	sysfs_print(foreground_target_percent, c->foreground_target_percent);
-	sysfs_print(bucket_reserve_percent, c->bucket_reserve_percent);
 	sysfs_print(sector_reserve_percent, c->sector_reserve_percent);
 
 	sysfs_printf(tiering_enabled,		"%i", c->tiering_enabled);
@@ -661,6 +682,8 @@ SHOW(bch_cache_set)
 
 	if (attr == &sysfs_bset_tree_stats)
 		return bch_bset_print_stats(c, buf);
+	if (attr == &sysfs_alloc_debug)
+		return show_cache_set_alloc_debug(c, buf);
 
 	sysfs_print(tree_depth, c->btree_roots[BTREE_ID_EXTENTS]->level);
 	sysfs_print(root_usage_percent,		bch_root_usage(c));
@@ -828,7 +851,6 @@ STORE(__bch_cache_set)
 	sysfs_strtoul(pd_controllers_update_seconds,
 		      c->pd_controllers_update_seconds);
 	sysfs_strtoul(foreground_target_percent, c->foreground_target_percent);
-	sysfs_strtoul(bucket_reserve_percent, c->bucket_reserve_percent);
 	sysfs_strtoul(sector_reserve_percent, c->sector_reserve_percent);
 
 	sysfs_strtoul(tiering_percent,		c->tiering_percent);
@@ -949,7 +971,6 @@ static struct attribute *bch_cache_set_files[] = {
 	&sysfs_btree_flush_delay,
 	&sysfs_btree_scan_ratelimit,
 	&sysfs_foreground_target_percent,
-	&sysfs_bucket_reserve_percent,
 	&sysfs_sector_reserve_percent,
 	&sysfs_tiering_percent,
 
@@ -960,6 +981,8 @@ KTYPE(bch_cache_set);
 
 static struct attribute *bch_cache_set_internal_files[] = {
 	&sysfs_journal_debug,
+
+	&sysfs_alloc_debug,
 
 	sysfs_time_stats_attribute_list(mca_alloc, sec, us)
 	sysfs_time_stats_attribute_list(mca_scan, sec, ms)
@@ -1085,6 +1108,15 @@ static ssize_t show_reserve_stats(struct cache *ca, char *buf)
 	return ret;
 }
 
+static ssize_t show_cache_alloc_debug(struct cache *ca, char *buf)
+{
+	return scnprintf(buf, PAGE_SIZE,
+			 "free_inc size:\t\t%zu\n"
+			 "reserve_buckets_count:\t%zu\n",
+			 ca->free_inc.size,
+			 ca->reserve_buckets_count);
+}
+
 SHOW(bch_cache)
 {
 	struct cache *ca = container_of(kobj, struct cache, kobj);
@@ -1149,6 +1181,8 @@ SHOW(bch_cache)
 		return show_quantiles(ca, buf, bucket_oldest_gen_fn, NULL);
 	if (attr == &sysfs_reserve_stats)
 		return show_reserve_stats(ca, buf);
+	if (attr == &sysfs_alloc_debug)
+		return show_cache_alloc_debug(ca, buf);
 
 	return 0;
 }
@@ -1301,6 +1335,8 @@ static struct attribute *bch_cache_files[] = {
 	&sysfs_cache_replacement_policy,
 	&sysfs_tier,
 	&sysfs_state_rw,
+	&sysfs_alloc_debug,
+
 	sysfs_pd_controller_files(copy_gc),
 	sysfs_queue_files(copy_gc),
 	sysfs_queue_files(tiering),

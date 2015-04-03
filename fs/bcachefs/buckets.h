@@ -186,6 +186,10 @@ static inline size_t __buckets_available_cache(struct cache *ca,
 		     stats.buckets_meta);
 }
 
+/*
+ * This is for the allocator thread - it's waiting on buckets that it can
+ * invalidate and put on a freelist:
+ */
 static inline size_t buckets_available_cache(struct cache *ca)
 {
 	return __buckets_available_cache(ca, bch_bucket_stats_read(ca));
@@ -214,8 +218,7 @@ static inline size_t __buckets_free_cache(struct cache *ca,
 		fifo_used(&ca->free_inc);
 
 	if (reserve == RESERVE_NONE || reserve == RESERVE_TIERING)
-		free = max_t(ssize_t, 0, free -
-				ca->reserve_buckets_count);
+		free = max_t(ssize_t, 0, free - ca->reserve_buckets_count);
 
 	return free;
 }
