@@ -70,6 +70,22 @@
 
 #include <trace/events/bcachefs.h>
 
+struct bucket_stats bch_bucket_stats_read(struct cache *ca)
+{
+	struct cache_set *c = ca->set;
+	struct bucket_stats ret;
+	unsigned seq;
+
+	do {
+		seq = read_seqbegin(&c->gc_cur_lock);
+		ret = c->gc_cur_btree > BTREE_ID_NR
+			? __bucket_stats_read(ca)
+			: ca->bucket_stats_cached;
+	} while (read_seqretry(&c->gc_cur_lock, seq));
+
+	return ret;
+}
+
 static inline int is_meta_bucket(struct bucket_mark m)
 {
 	return !m.owned_by_allocator && m.is_metadata;

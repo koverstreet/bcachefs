@@ -1088,7 +1088,7 @@ static ssize_t show_reserve_stats(struct cache *ca, char *buf)
 SHOW(bch_cache)
 {
 	struct cache *ca = container_of(kobj, struct cache, kobj);
-	struct bucket_stats stats = bucket_stats_read(ca);
+	struct bucket_stats stats = bch_bucket_stats_read(ca);
 
 	sysfs_printf(uuid,		"%pU\n", ca->sb.disk_uuid.b);
 

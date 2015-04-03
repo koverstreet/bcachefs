@@ -164,21 +164,7 @@ static inline struct bucket_stats __bucket_stats_read(struct cache *ca)
 	return ret;
 }
 
-static inline struct bucket_stats bucket_stats_read(struct cache *ca)
-{
-	struct cache_set *c = ca->set;
-	struct bucket_stats ret;
-	unsigned seq;
-
-	do {
-		seq = read_seqbegin(&c->gc_cur_lock);
-		ret = c->gc_cur_btree > BTREE_ID_NR
-			? __bucket_stats_read(ca)
-			: ca->bucket_stats_cached;
-	} while (read_seqretry(&c->gc_cur_lock, seq));
-
-	return ret;
-}
+struct bucket_stats bch_bucket_stats_read(struct cache *);
 
 static inline bool bucket_unused(struct bucket *g)
 {
@@ -202,7 +188,7 @@ static inline size_t __buckets_available_cache(struct cache *ca,
 
 static inline size_t buckets_available_cache(struct cache *ca)
 {
-	return __buckets_available_cache(ca, bucket_stats_read(ca));
+	return __buckets_available_cache(ca, bch_bucket_stats_read(ca));
 }
 
 static inline u64 sectors_available(struct cache_set *c)
@@ -237,12 +223,12 @@ static inline size_t __buckets_free_cache(struct cache *ca,
 static inline size_t buckets_free_cache(struct cache *ca,
 					enum alloc_reserve reserve)
 {
-	return __buckets_free_cache(ca, bucket_stats_read(ca), reserve);
+	return __buckets_free_cache(ca, bch_bucket_stats_read(ca), reserve);
 }
 
 static inline u64 cache_sectors_used(struct cache *ca)
 {
-	struct bucket_stats stats = bucket_stats_read(ca);
+	struct bucket_stats stats = bch_bucket_stats_read(ca);
 
 	return (stats.buckets_meta << ca->bucket_bits) +
 		stats.sectors_dirty;
