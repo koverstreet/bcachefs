@@ -15,30 +15,7 @@ void bch_cache_group_add_cache(struct cache_group *, struct cache *);
 int bch_prio_read(struct cache *);
 
 void bch_recalc_min_prio(struct cache *, int);
-void bch_increment_clock_slowpath(struct cache_set *, int);
-
-static inline void bch_increment_clock(struct cache_set *c,
-				       unsigned sectors, int rw)
-{
-	struct prio_clock *clock = &c->prio_clock[rw];
-
-	/* Buffer up one megabyte worth of IO in the percpu counter */
-	preempt_disable();
-	if (this_cpu_add_return(*clock->rescale_percpu, sectors) < 2048) {
-		preempt_enable();
-		return;
-	}
-
-	sectors = this_cpu_xchg(*clock->rescale_percpu, 0);
-	preempt_enable();
-
-	/*
-	 * we only increment when 0.1% of the cache_set has been read
-	 * or written too, this determines if it's time
-	 */
-	if (atomic_long_sub_return(sectors, &clock->rescale) < 0)
-		bch_increment_clock_slowpath(c, rw);
-}
+void bch_prio_timer_start(struct cache_set *, int);
 
 void __bch_bucket_free(struct cache *, struct bucket *);
 void bch_bucket_free(struct cache_set *, struct bkey_i *);

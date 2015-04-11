@@ -1,6 +1,35 @@
 #ifndef _BCACHE_ALLOC_TYPES_H
 #define _BCACHE_ALLOC_TYPES_H
 
+#include "clock_types.h"
+
+/*
+ * There's two of these clocks, one for reads and one for writes:
+ *
+ * All fields protected by bucket_lock
+ */
+struct prio_clock {
+	/*
+	 * "now" in (read/write) IO time - incremented whenever we do X amount
+	 * of reads or writes.
+	 *
+	 * Goes with the bucket read/write prios: when we read or write to a
+	 * bucket we reset the bucket's prio to the current hand; thus hand -
+	 * prio = time since bucket was last read/written.
+	 *
+	 * The units are some amount (bytes/sectors) of data read/written, and
+	 * the units can change on the fly if we need to rescale to fit
+	 * everything in a u16 - your only guarantee is that the units are
+	 * consistent.
+	 */
+	u16			hand;
+	u16			min_prio;
+
+	int			rw;
+
+	struct io_timer		rescale;
+};
+
 /* There is one reserve for each type of btree, one for prios and gens
  * and one for moving GC */
 enum alloc_reserve {

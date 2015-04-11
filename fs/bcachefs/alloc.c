@@ -57,6 +57,7 @@
 #include "alloc.h"
 #include "btree.h"
 #include "buckets.h"
+#include "clock.h"
 #include "extents.h"
 #include "io.h"
 #include "journal.h"
@@ -502,18 +503,12 @@ static void bch_rescale_prios(struct cache_set *c, int rw)
 	}
 }
 
-void bch_increment_clock_slowpath(struct cache_set *c, int rw)
+static void bch_inc_clock_hand(struct io_timer *timer)
 {
-	struct prio_clock *clock = &c->prio_clock[rw];
-	long next = c->capacity >> 10;
-	long old, v = atomic_long_read(&clock->rescale);
-
-	do {
-		old = v;
-		if (old >= 0)
-			return;
-	} while ((v = atomic_long_cmpxchg(&clock->rescale,
-					  old, old + next)) != old);
+	struct prio_clock *clock = container_of(timer,
+					struct prio_clock, rescale);
+	struct cache_set *c = container_of(clock,
+				struct cache_set, prio_clock[clock->rw]);
 
 	mutex_lock(&c->bucket_lock);
 
@@ -521,9 +516,28 @@ void bch_increment_clock_slowpath(struct cache_set *c, int rw)
 
 	/* if clock cannot be advanced more, rescale prio */
 	if (clock->hand == (u16) (clock->min_prio - 1))
-		bch_rescale_prios(c, rw);
+		bch_rescale_prios(c, clock->rw);
 
 	mutex_unlock(&c->bucket_lock);
+
+	/*
+	 * we only increment when 0.1% of the cache_set has been read
+	 * or written too, this determines if it's time
+	 */
+	timer->expire += c->capacity >> 10;
+
+	bch_io_timer_add(&c->io_clock[clock->rw], timer);
+}
+
+void bch_prio_timer_start(struct cache_set *c, int rw)
+{
+	struct prio_clock *clock = &c->prio_clock[rw];
+	struct io_timer *timer = &clock->rescale;
+
+	clock->rw	= rw;
+	timer->fn	= bch_inc_clock_hand;
+	timer->expire	= c->capacity >> 10;
+	bch_io_timer_add(&c->io_clock[rw], timer);
 }
 
 /*

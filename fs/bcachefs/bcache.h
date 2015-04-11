@@ -212,6 +212,7 @@
 #include "bkey_methods.h"
 #include "blockdev_types.h"
 #include "buckets_types.h"
+#include "clock_types.h"
 #include "journal_types.h"
 #include "keylist_types.h"
 #include "keybuf_types.h"
@@ -385,14 +386,6 @@ enum {
 	CACHE_SET_GC_FAILURE,
 };
 
-struct prio_clock {
-	/* All fields protected by bucket_lock */
-	u16			hand;
-	u16			min_prio;
-	atomic_long_t		rescale;
-	unsigned __percpu	*rescale_percpu;
-};
-
 struct cache_member_rcu {
 	struct rcu_head		rcu;
 	unsigned		nr_in_set;
@@ -508,6 +501,8 @@ struct cache_set {
 	 * priority of any bucket.
 	 */
 	struct prio_clock	prio_clock[2];
+
+	struct io_clock		io_clock[2];
 
 	/* SECTOR ALLOCATOR */
 	struct list_head	open_buckets_open;

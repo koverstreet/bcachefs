@@ -10,6 +10,7 @@
 #include "bset.h"
 #include "btree.h"
 #include "buckets.h"
+#include "clock.h"
 #include "debug.h"
 #include "extents.h"
 #include "gc.h"

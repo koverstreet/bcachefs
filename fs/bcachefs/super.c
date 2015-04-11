@@ -10,6 +10,7 @@
 #include "blockdev.h"
 #include "alloc.h"
 #include "btree.h"
+#include "clock.h"
 #include "debug.h"
 #include "gc.h"
 #include "inode.h"
@@ -766,8 +767,8 @@ static void cache_set_free(struct closure *cl)
 	bch_bset_sort_state_free(&c->sort);
 
 	percpu_ref_exit(&c->writes);
-	free_percpu(c->prio_clock[WRITE].rescale_percpu);
-	free_percpu(c->prio_clock[READ].rescale_percpu);
+	bch_io_clock_exit(&c->io_clock[WRITE]);
+	bch_io_clock_exit(&c->io_clock[READ]);
 	if (c->wq)
 		destroy_workqueue(c->wq);
 	if (c->bio_split)
@@ -998,9 +999,8 @@ static const char *bch_cache_set_alloc(struct cache_sb *sb,
 	    !(c->fill_iter = mempool_create_kmalloc_pool(1, iter_size)) ||
 	    !(c->bio_split = bioset_create(4, offsetof(struct bbio, bio))) ||
 	    !(c->wq = alloc_workqueue("bcache", WQ_MEM_RECLAIM, 0)) ||
-	    !(c->prio_clock[READ].rescale_percpu = alloc_percpu(unsigned)) ||
-	    !(c->prio_clock[WRITE].rescale_percpu = alloc_percpu(unsigned)) ||
-	    percpu_ref_init(&c->writes, bch_writes_disabled, 0, GFP_KERNEL) ||
+	    bch_io_clock_init(&c->io_clock[READ]) ||
+	    bch_io_clock_init(&c->io_clock[WRITE]) ||
 	    bch_journal_alloc(c) ||
 	    bch_btree_cache_alloc(c) ||
 	    bch_bset_sort_state_init(&c->sort, ilog2(c->btree_pages)))
@@ -1172,6 +1172,9 @@ static const char *run_cache_set(struct cache_set *c)
 		/* XXX: necessary? */
 		bch_journal_meta(c, &cl);
 	}
+
+	bch_prio_timer_start(c, READ);
+	bch_prio_timer_start(c, WRITE);
 
 	err = "error starting btree GC thread";
 	if (bch_gc_thread_start(c))
