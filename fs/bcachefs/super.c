@@ -794,13 +794,14 @@ static void cache_set_flush(struct closure *cl)
 
 	mutex_lock(&bch_register_lock);
 	bch_cache_set_read_only(c);
+
+	if (c->kobj.state_in_sysfs)
+		kobject_del(&c->kobj);
 	mutex_unlock(&bch_register_lock);
 
 	bch_cache_accounting_destroy(&c->accounting);
 
 	kobject_put(&c->internal);
-	if (c->kobj.state_in_sysfs)
-		kobject_del(&c->kobj);
 
 	closure_return(cl);
 }
@@ -1479,11 +1480,16 @@ static void bch_cache_free_work(struct work_struct *work)
 	bch_moving_gc_destroy(ca);
 	bch_tiering_write_destroy(ca);
 
-	if (c && c->kobj.state_in_sysfs) {
-		char buf[12];
+	if (c) {
+		mutex_lock(&bch_register_lock);
+		if (c->kobj.state_in_sysfs) {
+			char buf[12];
 
-		sprintf(buf, "cache%u", ca->sb.nr_this_dev);
-		sysfs_remove_link(&c->kobj, buf);
+			sprintf(buf, "cache%u", ca->sb.nr_this_dev);
+			sysfs_remove_link(&c->kobj, buf);
+		}
+		mutex_unlock(&bch_register_lock);
+
 		kobject_put(&c->kobj);
 	}
 
