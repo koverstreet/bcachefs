@@ -30,9 +30,8 @@ static void btree_verify_endio(struct bio *bio)
 	closure_put(cl);
 }
 
-void bch_btree_verify(struct btree *b)
+void bch_btree_verify(struct cache_set *c, struct btree *b)
 {
-	struct cache_set *c = b->c;
 	struct btree *v = c->verify_data;
 	struct btree_node *n_ondisk, *n_sorted, *n_inmemory;
 	struct bset *sorted, *inmemory;
@@ -82,7 +81,7 @@ void bch_btree_verify(struct btree *b)
 
 	memcpy(n_ondisk, n_sorted, btree_bytes(c));
 
-	bch_btree_node_read_done(v, ca, ptr);
+	bch_btree_node_read_done(c, v, ca, ptr);
 	n_sorted = c->verify_data->data;
 
 	percpu_ref_put(&ca->ref);
@@ -266,7 +265,8 @@ static ssize_t bch_read_btree(struct file *file, char __user *buf,
 	bch_btree_iter_init(&iter, i->c, i->id, i->from);
 
 	while ((k = bch_btree_iter_peek(&iter)).k) {
-		bch_bkey_val_to_text(iter.nodes[0], i->buf, sizeof(i->buf), k);
+		bch_bkey_val_to_text(i->c, iter.nodes[0], i->buf,
+				     sizeof(i->buf), k);
 		i->bytes = strlen(i->buf);
 		BUG_ON(i->bytes >= PAGE_SIZE);
 		i->buf[i->bytes] = '\n';

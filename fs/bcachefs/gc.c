@@ -118,14 +118,14 @@ bool btree_gc_mark_node(struct cache_set *c, struct btree *b,
 		for_each_btree_node_key(&b->keys, k, &iter) {
 			bkey_disassemble(&tup, f, k);
 
-			bkey_debugcheck(b, bkey_tup_to_s_c(&tup));
+			bkey_debugcheck(c, b, bkey_tup_to_s_c(&tup));
 
 			stale = max(stale,
 				    btree_mark_key(c, b,
 						   bkey_tup_to_s_c(&tup)));
 			keys++;
 
-			u64s = bch_extent_nr_ptrs_after_normalize(b, k);
+			u64s = bch_extent_nr_ptrs_after_normalize(c, b, k);
 			if (stat && u64s) {
 				good_keys++;
 
@@ -420,7 +420,7 @@ static void bch_coalesce_nodes(struct btree *old_nodes[GC_MERGE_NODES],
 			 block_bytes(c)) > blocks)
 		return;
 
-	if (btree_check_reserve(parent, NULL, iter->btree_id,
+	if (btree_check_reserve(c, parent, NULL, iter->btree_id,
 				nr_old_nodes, false) ||
 	    bch_keylist_realloc(&keylist,
 			(BKEY_U64s + BKEY_EXTENT_MAX_U64s) * nr_old_nodes)) {
@@ -447,12 +447,12 @@ static void bch_coalesce_nodes(struct btree *old_nodes[GC_MERGE_NODES],
 
 	for (i = 0; i < nr_old_nodes; i++) {
 		closure_sync(&cl);
-		bch_btree_push_journal_seq(old_nodes[i], &cl);
+		bch_btree_push_journal_seq(c, old_nodes[i], &cl);
 	}
 
 	/* Repack everything with @new_format and sort down to one bset */
 	for (i = 0; i < nr_old_nodes; i++)
-		new_nodes[i] = __btree_node_alloc_replacement(old_nodes[i],
+		new_nodes[i] = __btree_node_alloc_replacement(c, old_nodes[i],
 							      new_format);
 
 	/*
@@ -489,7 +489,7 @@ static void bch_coalesce_nodes(struct btree *old_nodes[GC_MERGE_NODES],
 			s1->u64s += s2->u64s;
 
 			six_unlock_write(&n2->lock);
-			btree_node_free(n2);
+			btree_node_free(c, n2);
 			six_unlock_intent(&n2->lock);
 
 			memmove(new_nodes + i - 1,
@@ -556,7 +556,7 @@ static void bch_coalesce_nodes(struct btree *old_nodes[GC_MERGE_NODES],
 
 	/* Insert the newly coalesced nodes */
 	ret = bch_btree_insert_node(parent, iter, &keylist,
-				    NULL, NULL, NULL, 0);
+				    NULL, NULL, 0);
 	BUG_ON(ret || !bch_keylist_empty(&keylist));
 
 	iter->pos = saved_pos;
@@ -567,7 +567,7 @@ static void bch_coalesce_nodes(struct btree *old_nodes[GC_MERGE_NODES],
 
 	/* Free the old nodes and update our sliding window */
 	for (i = 0; i < nr_old_nodes; i++) {
-		btree_node_free(old_nodes[i]);
+		btree_node_free(c, old_nodes[i]);
 		six_unlock_intent(&old_nodes[i]->lock);
 		old_nodes[i] = new_nodes[i];
 	}

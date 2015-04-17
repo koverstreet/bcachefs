@@ -104,8 +104,6 @@ struct btree {
 
 	struct six_lock		lock;
 
-	struct cache_set	*c;
-
 	unsigned long		flags;
 	u16			written;	/* would be nice to kill */
 	u8			level;
@@ -114,17 +112,20 @@ struct btree {
 	struct btree_keys	keys;
 	struct btree_node	*data;
 
+	struct cache_set	*c;
+
+	/* lru list */
+	struct list_head	list;
+
 	/* For outstanding btree writes, used as a lock - protects write_idx */
 	struct closure		io;
 	struct semaphore	io_mutex;
-
-	struct list_head	list;
 	struct delayed_work	work;
-
-	struct list_head	journal_seq_blacklisted;
 
 	struct btree_write	writes[2];
 	struct bio		*bio;
+
+	struct list_head	journal_seq_blacklisted;
 };
 
 #define BTREE_FLAG(flag)						\
@@ -393,14 +394,15 @@ static inline void bch_btree_iter_cond_resched(struct btree_iter *iter)
 
 #define btree_node_root(_b)	((_b)->c->btree_roots[(_b)->btree_id])
 
-void btree_node_free(struct btree *);
+void btree_node_free(struct cache_set *, struct btree *);
 
 void bch_btree_node_write(struct btree *, struct closure *,
 			  struct btree_iter *);
-void bch_btree_node_read_done(struct btree *, struct cache *,
-			      const struct bch_extent_ptr *);
+void bch_btree_node_read_done(struct cache_set *, struct btree *,
+			      struct cache *, const struct bch_extent_ptr *);
 void bch_btree_flush(struct cache_set *);
-void bch_btree_push_journal_seq(struct btree *, struct closure *);
+void bch_btree_push_journal_seq(struct cache_set *, struct btree *,
+				struct closure *);
 
 /**
  * btree_node_format_fits - check if we could rewrite node with a new format
@@ -430,17 +432,19 @@ static inline bool btree_node_format_fits(struct btree *b,
 
 void __bch_btree_calc_format(struct bkey_format_state *, struct btree *);
 
-struct btree *__btree_node_alloc_replacement(struct btree *,
+struct btree *__btree_node_alloc_replacement(struct cache_set *,
+					     struct btree *,
 					     struct bkey_format);
-struct btree *btree_node_alloc_replacement(struct btree *);
-int btree_check_reserve(struct btree *, struct btree_iter *,
-			enum alloc_reserve, unsigned, bool);
+struct btree *btree_node_alloc_replacement(struct cache_set *, struct btree *);
+int btree_check_reserve(struct cache_set *c, struct btree *,
+			struct btree_iter *, enum alloc_reserve,
+			unsigned, bool);
 
 int bch_btree_root_alloc(struct cache_set *, enum btree_id, struct closure *);
 int bch_btree_root_read(struct cache_set *, enum btree_id,
 			const struct bkey_i *, unsigned);
 
-void bch_btree_insert_and_journal(struct btree *,
+void bch_btree_insert_and_journal(struct cache_set *, struct btree *,
 				  struct btree_node_iter *,
 				  struct bkey_i *,
 				  struct journal_res *);
@@ -449,7 +453,7 @@ struct bch_replace_info;
 
 int bch_btree_insert_node(struct btree *, struct btree_iter *,
 			  struct keylist *, struct bch_replace_info *,
-			  struct closure *, u64 *, unsigned);
+			  u64 *, unsigned);
 
 /*
  * Don't drop/retake locks: instead return -EINTR if need to upgrade to intent
@@ -469,8 +473,7 @@ int bch_btree_insert_node(struct btree *, struct btree_iter *,
 #define FAIL_IF_STALE			(1 << 2)
 
 int bch_btree_insert_at(struct btree_iter *, struct keylist *,
-			struct bch_replace_info *, struct closure *,
-			u64 *, unsigned);
+			struct bch_replace_info *, u64 *, unsigned);
 int bch_btree_insert_check_key(struct btree_iter *, struct bkey_i *);
 int bch_btree_insert(struct cache_set *, enum btree_id, struct keylist *,
 		     struct bch_replace_info *, struct closure *,

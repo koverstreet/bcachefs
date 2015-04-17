@@ -345,7 +345,7 @@ static int cached_dev_cache_miss(struct btree_iter *iter, struct search *s,
 	if (!(bio->bi_opf & REQ_RAHEAD) &&
 	    !(bio->bi_opf & REQ_META) &&
 	    ((u64) sectors_available(dc->disk.c) * 100 <
-	     (u64) b->c->capacity * CUTOFF_CACHE_READA))
+	     (u64) iter->c->capacity * CUTOFF_CACHE_READA))
 		reada = min_t(sector_t, dc->readahead >> 9,
 			      bdev_sectors(bio->bi_bdev) - bio_end_sector(bio));
 #endif

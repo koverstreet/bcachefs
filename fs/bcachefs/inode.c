@@ -78,7 +78,7 @@ static bool bch_inode_invalid(const struct cache_set *c, struct bkey_s_c k)
 	}
 }
 
-static void bch_inode_to_text(const struct btree *b, char *buf,
+static void bch_inode_to_text(struct cache_set *c, char *buf,
 			      size_t size, struct bkey_s_c k)
 {
 	struct bkey_s_c_inode inode;
@@ -127,7 +127,7 @@ again:
 				 inode->k.p.inode, inode->k.u64s);
 
 			ret = bch_btree_insert_at(&iter, &keylist_single(inode),
-						  NULL, NULL, NULL,
+						  NULL, NULL,
 						  BTREE_INSERT_ATOMIC);
 
 			if (ret == -EINTR || ret == -EAGAIN)

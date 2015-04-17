@@ -7,7 +7,7 @@ struct cache_set;
 
 #ifdef CONFIG_BCACHEFS_DEBUG
 
-void bch_btree_verify(struct btree *);
+void bch_btree_verify(struct cache_set *, struct btree *);
 void bch_data_verify(struct cached_dev *, struct bio *);
 
 #define expensive_debug_checks(c)	((c)->expensive_debug_checks)
@@ -16,7 +16,7 @@ void bch_data_verify(struct cached_dev *, struct bio *);
 
 #else /* DEBUG */
 
-static inline void bch_btree_verify(struct btree *b) {}
+static inline void bch_btree_verify(struct cache_set *c, struct btree *b) {}
 static inline void bch_data_verify(struct cached_dev *dc, struct bio *bio) {}
 
 #define expensive_debug_checks(c)	0

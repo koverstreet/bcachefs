@@ -115,7 +115,8 @@ void bch_key_sort_fix_overlapping(struct btree_keys *b,
 
 /* This returns true if insert should be inserted, false otherwise */
 
-bool bch_insert_fixup_key(struct btree *b, struct bkey_i *insert,
+bool bch_insert_fixup_key(struct cache_set *c, struct btree *b,
+			  struct bkey_i *insert,
 			  struct btree_node_iter *iter,
 			  struct bch_replace_info *replace,
 			  struct bpos *done,
@@ -123,13 +124,13 @@ bool bch_insert_fixup_key(struct btree *b, struct bkey_i *insert,
 {
 	const struct bkey_format *f = &b->keys.format;
 	struct bkey_packed *k;
-	int c;
+	int cmp;
 
 	BUG_ON(replace);
 
 	while ((k = bch_btree_node_iter_peek_all(iter, &b->keys)) &&
-	       (c = bkey_cmp_packed(f, k, &insert->k)) <= 0) {
-		if (!c && !bkey_deleted(k)) {
+	       (cmp = bkey_cmp_packed(f, k, &insert->k)) <= 0) {
+		if (!cmp && !bkey_deleted(k)) {
 			k->type = KEY_TYPE_DELETED;
 			btree_keys_account_key_drop(&b->keys, k);
 		}
@@ -137,7 +138,7 @@ bool bch_insert_fixup_key(struct btree *b, struct bkey_i *insert,
 		bch_btree_node_iter_next_all(iter, &b->keys);
 	}
 
-	bch_btree_insert_and_journal(b, iter, insert, res);
+	bch_btree_insert_and_journal(c, b, iter, insert, res);
 	return true;
 }
 
@@ -181,7 +182,8 @@ static bool should_drop_ptr(const struct cache_set *c,
 	return (ca = PTR_CACHE(c, ptr)) && ptr_stale(ca, ptr);
 }
 
-unsigned bch_extent_nr_ptrs_after_normalize(const struct btree *b,
+unsigned bch_extent_nr_ptrs_after_normalize(struct cache_set *c,
+					    const struct btree *b,
 					    const struct bkey_packed *k)
 {
 	const struct bkey_format *f = &b->keys.format;
@@ -204,7 +206,7 @@ unsigned bch_extent_nr_ptrs_after_normalize(const struct btree *b,
 
 		rcu_read_lock();
 		for (ptr = 0; ptr < bkeyp_extent_ptrs(f, k); ptr++)
-			if (!should_drop_ptr(b->c, e, &e->ptr[ptr],
+			if (!should_drop_ptr(c, e, &e->ptr[ptr],
 					     bkeyp_extent_ptrs(f, k)))
 				ret++;
 		rcu_read_unlock();
@@ -342,10 +344,9 @@ static const char *bch_ptr_status(const struct cache_set *c,
 	return "";
 }
 
-static void bch_extent_to_text(const struct btree *b, char *buf,
+static void bch_extent_to_text(struct cache_set *c, char *buf,
 			       size_t size, struct bkey_s_c k)
 {
-	struct cache_set *c = b->c;
 	struct bkey_s_c_extent e;
 	char *out = buf, *end = buf + size;
 	const struct bch_extent_ptr *ptr;
@@ -386,11 +387,11 @@ static bool bch_btree_ptr_invalid(const struct cache_set *c, struct bkey_s_c k)
 		__ptr_invalid(c, k);
 }
 
-static void btree_ptr_debugcheck(struct btree *b, struct bkey_s_c k)
+static void btree_ptr_debugcheck(struct cache_set *c, struct btree *b,
+				 struct bkey_s_c k)
 {
 	struct bkey_s_c_extent e = bkey_s_c_to_extent(k);
 	const struct bch_extent_ptr *ptr;
-	struct cache_set *c = b->c;
 	unsigned seq;
 	const char *err;
 	char buf[160];
@@ -404,7 +405,7 @@ static void btree_ptr_debugcheck(struct btree *b, struct bkey_s_c k)
 	}
 
 	if (bch_extent_ptrs(e) < CACHE_SET_META_REPLICAS_HAVE(&c->sb)) {
-		bch_bkey_val_to_text(b, buf, sizeof(buf), k);
+		bch_bkey_val_to_text(c, b, buf, sizeof(buf), k);
 		cache_set_bug(c,
 			"btree key bad (too few replicas, %u < %llu): %s",
 			bch_extent_ptrs(e),
@@ -437,7 +438,7 @@ static void btree_ptr_debugcheck(struct btree *b, struct bkey_s_c k)
 
 	return;
 err:
-	bch_bkey_val_to_text(b, buf, sizeof(buf), k);
+	bch_bkey_val_to_text(c, b, buf, sizeof(buf), k);
 	btree_bug(b, "%s btree pointer %s: bucket %zi prio %i "
 		  "gen %i last_gc %i mark %08x",
 		  err, buf, PTR_BUCKET_NR(ca, ptr),
@@ -838,53 +839,55 @@ stale:
 	return -1;
 }
 
-static int bch_add_sectors(struct btree *b, struct bkey_s_c k,
-			   u64 offset, int sectors, bool fail_if_stale)
+static int bch_add_sectors(struct cache_set *c, struct btree *b,
+			   struct bkey_s_c k, u64 offset,
+			   int sectors, bool fail_if_stale)
 {
 	if (sectors && k.k->type == BCH_EXTENT) {
 		struct bkey_s_c_extent e = bkey_s_c_to_extent(k);
 		int ret;
 
-		ret = __bch_add_sectors(b->c, b, e, offset,
+		ret = __bch_add_sectors(c, b, e, offset,
 					sectors, fail_if_stale);
 		if (ret)
 			return ret;
 
 		if (!EXTENT_CACHED(e.v))
-			bcache_dev_sectors_dirty_add(b->c, e.k->p.inode,
+			bcache_dev_sectors_dirty_add(c, e.k->p.inode,
 						     offset, sectors);
 	}
 
 	return 0;
 }
 
-static void bch_subtract_sectors(struct btree *b, struct bkey_s_c k,
-				 u64 offset, int sectors)
+static void bch_subtract_sectors(struct cache_set *c, struct btree *b,
+				 struct bkey_s_c k, u64 offset, int sectors)
 {
-	bch_add_sectors(b, k, offset, -sectors, false);
+	bch_add_sectors(c, b, k, offset, -sectors, false);
 }
 
 /* These wrappers subtract exactly the sectors that we're removing from @k */
-static void bch_cut_subtract_back(struct btree *b, struct bpos where,
-				  struct bkey_s k)
+static void bch_cut_subtract_back(struct cache_set *c, struct btree *b,
+				  struct bpos where, struct bkey_s k)
 {
-	bch_subtract_sectors(b, bkey_s_to_s_c(k), where.offset,
+	bch_subtract_sectors(c, b, bkey_s_to_s_c(k), where.offset,
 			     k.k->p.offset - where.offset);
 	bch_cut_back(where, k.k);
 }
 
-static void bch_cut_subtract_front(struct btree *b, struct bpos where,
-				   struct bkey_s k)
+static void bch_cut_subtract_front(struct cache_set *c, struct btree *b,
+				   struct bpos where, struct bkey_s k)
 {
-	bch_subtract_sectors(b, bkey_s_to_s_c(k), bkey_start_offset(k.k),
+	bch_subtract_sectors(c, b, bkey_s_to_s_c(k), bkey_start_offset(k.k),
 			     where.offset - bkey_start_offset(k.k));
 	__bch_cut_front(where, k);
 }
 
-static void bch_drop_subtract(struct btree *b, struct bkey_s k)
+static void bch_drop_subtract(struct cache_set *c, struct btree *b,
+			      struct bkey_s k)
 {
 	if (k.k->size)
-		bch_subtract_sectors(b, bkey_s_to_s_c(k),
+		bch_subtract_sectors(c, b, bkey_s_to_s_c(k),
 				     bkey_start_offset(k.k), k.k->size);
 	k.k->size = 0;
 	__set_bkey_deleted(k.k);
@@ -975,7 +978,7 @@ try_partial:
  * On return, there is room in @res for at least one more key of the same size
  * as @new.
  */
-static bool bkey_cmpxchg(struct btree *b,
+static bool bkey_cmpxchg(struct cache_set *c, struct btree *b,
 			 struct btree_node_iter *iter,
 			 struct bkey_s_c k,
 			 struct bch_replace_info *replace,
@@ -1015,13 +1018,13 @@ static bool bkey_cmpxchg(struct btree *b,
 			 *
 			 * The [**] are already known to match, so insert them.
 			 */
-			bch_btree_insert_and_journal(b, iter,
+			bch_btree_insert_and_journal(c, b, iter,
 						     bch_key_split(*done, new),
 						     res);
 			*inserted = true;
 		}
 
-		bch_cut_subtract_front(b, bkey_start_pos(k.k),
+		bch_cut_subtract_front(c, b, bkey_start_pos(k.k),
 				       bkey_i_to_s(new));
 		/* advance @done from the end of prev key to the start of @k */
 		*done = bkey_start_pos(k.k);
@@ -1043,7 +1046,7 @@ static bool bkey_cmpxchg(struct btree *b,
 			 *
 			 * The [**] are already known to match, so insert them.
 			 */
-			bch_btree_insert_and_journal(b, iter,
+			bch_btree_insert_and_journal(c, b, iter,
 						     bch_key_split(*done, new),
 						     res);
 			*inserted = true;
@@ -1051,9 +1054,9 @@ static bool bkey_cmpxchg(struct btree *b,
 
 		/* update @new to be the part we haven't checked yet */
 		if (bkey_cmp(k.k->p, new->k.p) > 0)
-			bch_drop_subtract(b, bkey_i_to_s(new));
+			bch_drop_subtract(c, b, bkey_i_to_s(new));
 		else
-			bch_cut_subtract_front(b, k.k->p, bkey_i_to_s(new));
+			bch_cut_subtract_front(c, b, k.k->p, bkey_i_to_s(new));
 	} else
 		replace->successes += 1;
 
@@ -1063,7 +1066,7 @@ static bool bkey_cmpxchg(struct btree *b,
 }
 
 /* We are trying to insert a key with an older version than the existing one */
-static void handle_existing_key_newer(struct btree *b,
+static void handle_existing_key_newer(struct cache_set *c, struct btree *b,
 				      struct btree_node_iter *iter,
 				      struct bkey_i *insert,
 				      const struct bkey *k,
@@ -1077,12 +1080,12 @@ static void handle_existing_key_newer(struct btree *b,
 	switch (bch_extent_overlap(k, &insert->k)) {
 	case BCH_EXTENT_OVERLAP_FRONT:
 		/* k and insert share the start, remove it from insert */
-		bch_cut_subtract_front(b, k->p, bkey_i_to_s(insert));
+		bch_cut_subtract_front(c, b, k->p, bkey_i_to_s(insert));
 		break;
 
 	case BCH_EXTENT_OVERLAP_BACK:
 		/* k and insert share the end, remove it from insert */
-		bch_cut_subtract_back(b, bkey_start_pos(k),
+		bch_cut_subtract_back(c, b, bkey_start_pos(k),
 				      bkey_i_to_s(insert));
 		break;
 
@@ -1102,14 +1105,14 @@ static void handle_existing_key_newer(struct btree *b,
 		 * entry to @res.
 		 */
 		split = bch_key_split(bkey_start_pos(k), insert),
-		bch_cut_subtract_front(b, k->p, bkey_i_to_s(insert));
-		bch_btree_insert_and_journal(b, iter, split, res);
+		bch_cut_subtract_front(c, b, k->p, bkey_i_to_s(insert));
+		bch_btree_insert_and_journal(c, b, iter, split, res);
 		*inserted = true;
 		break;
 
 	case BCH_EXTENT_OVERLAP_ALL:
 		/* k completely covers insert -- drop insert */
-		bch_drop_subtract(b, bkey_i_to_s(insert));
+		bch_drop_subtract(c, b, bkey_i_to_s(insert));
 		break;
 	}
 }
@@ -1157,7 +1160,8 @@ static void handle_existing_key_newer(struct btree *b,
  * If the end of done is not the same as the end of insert, then
  * key insertion needs to continue/be retried.
  */
-bool bch_insert_fixup_extent(struct btree *b, struct bkey_i *insert,
+bool bch_insert_fixup_extent(struct cache_set *c, struct btree *b,
+			     struct bkey_i *insert,
 			     struct btree_node_iter *iter,
 			     struct bch_replace_info *replace,
 			     struct bpos *done,
@@ -1202,7 +1206,7 @@ bool bch_insert_fixup_extent(struct btree *b, struct bkey_i *insert,
 	 * can also insert keys with stale pointers, but for those we still need
 	 * to proceed with the insertion.
 	 */
-	if (bch_add_sectors(b, bkey_i_to_s_c(insert),
+	if (bch_add_sectors(c, b, bkey_i_to_s_c(insert),
 			    bkey_start_offset(&insert->k),
 			    insert->k.size, !!(flags & FAIL_IF_STALE))) {
 		/* We raced - a dirty pointer was stale */
@@ -1240,7 +1244,7 @@ bool bch_insert_fixup_extent(struct btree *b, struct bkey_i *insert,
 			 * XXX: would be better to explicitly signal that we
 			 * need to split
 			 */
-			bch_cut_subtract_back(b, *done, bkey_i_to_s(insert));
+			bch_cut_subtract_back(c, b, *done, bkey_i_to_s(insert));
 			goto out;
 		}
 
@@ -1255,13 +1259,13 @@ bool bch_insert_fixup_extent(struct btree *b, struct bkey_i *insert,
 			*done = bkey_cmp(k.k->p, insert->k.p) < 0
 				? k.k->p : insert->k.p;
 		else if (k.k->size &&
-			 !bkey_cmpxchg(b, iter, bkey_s_to_s_c(k), replace,
+			 !bkey_cmpxchg(c, b, iter, bkey_s_to_s_c(k), replace,
 				       insert, done, &inserted, res))
 			continue;
 
 		if (k.k->size && insert->k.version &&
 		    insert->k.version < k.k->version) {
-			handle_existing_key_newer(b, iter, insert, k.k,
+			handle_existing_key_newer(c, b, iter, insert, k.k,
 						  &inserted, res);
 			continue;
 		}
@@ -1271,13 +1275,14 @@ bool bch_insert_fixup_extent(struct btree *b, struct bkey_i *insert,
 		switch (bch_extent_overlap(&insert->k, k.k)) {
 		case BCH_EXTENT_OVERLAP_FRONT:
 			/* insert and k share the start, invalidate in k */
-			bch_cut_subtract_front(b, insert->k.p, k);
+			bch_cut_subtract_front(c, b, insert->k.p, k);
 			extent_save(_k, k.k, f);
 			break;
 
 		case BCH_EXTENT_OVERLAP_BACK:
 			/* insert and k share the end, invalidate in k */
-			bch_cut_subtract_back(b, bkey_start_pos(&insert->k), k);
+			bch_cut_subtract_back(c, b,
+					      bkey_start_pos(&insert->k), k);
 			extent_save(_k, k.k, f);
 
 			/*
@@ -1294,7 +1299,7 @@ bool bch_insert_fixup_extent(struct btree *b, struct bkey_i *insert,
 			if (!bkey_deleted(_k))
 				btree_keys_account_key_drop(&b->keys, _k);
 
-			bch_drop_subtract(b, k);
+			bch_drop_subtract(c, b, k);
 			k.k->p = bkey_start_pos(&insert->k);
 			extent_save(_k, k.k, f);
 
@@ -1321,7 +1326,7 @@ bool bch_insert_fixup_extent(struct btree *b, struct bkey_i *insert,
 			bch_cut_back(bkey_start_pos(&insert->k), &split.k.k);
 
 			__bch_cut_front(bkey_start_pos(&insert->k), k);
-			bch_cut_subtract_front(b, insert->k.p, k);
+			bch_cut_subtract_front(c, b, insert->k.p, k);
 			extent_save(_k, k.k, f);
 
 			bch_bset_insert(&b->keys, iter, &split.k);
@@ -1337,14 +1342,14 @@ bool bch_insert_fixup_extent(struct btree *b, struct bkey_i *insert,
 		 * we've processed, i.e. what insert was)
 		 */
 		if (replace != NULL)
-			bch_cut_subtract_back(b, *done, bkey_i_to_s(insert));
+			bch_cut_subtract_back(c, b, *done, bkey_i_to_s(insert));
 
 		*done = orig_insert;
 	}
 
 out:
 	if (insert->k.size) {
-		bch_btree_insert_and_journal(b, iter, insert, res);
+		bch_btree_insert_and_journal(c, b, iter, insert, res);
 		inserted = true;
 	}
 
@@ -1358,12 +1363,12 @@ static bool bch_extent_invalid(const struct cache_set *c, struct bkey_s_c k)
 		__ptr_invalid(c, k);
 }
 
-static void bch_extent_debugcheck(struct btree *b, struct bkey_s_c k)
+static void bch_extent_debugcheck(struct cache_set *c, struct btree *b,
+				  struct bkey_s_c k)
 {
 	struct bkey_s_c_extent e = bkey_s_c_to_extent(k);
 	const struct bch_extent_ptr *ptr;
 	struct cache_member_rcu *mi;
-	struct cache_set *c = b->c;
 	struct cache *ca;
 	struct bucket *g;
 	unsigned seq, stale;
@@ -1376,7 +1381,7 @@ static void bch_extent_debugcheck(struct btree *b, struct bkey_s_c k)
 
 	if (!EXTENT_CACHED(e.v) &&
 	    bch_extent_ptrs(e) < CACHE_SET_DATA_REPLICAS_HAVE(&c->sb)) {
-		bch_bkey_val_to_text(b, buf, sizeof(buf), k);
+		bch_bkey_val_to_text(c, b, buf, sizeof(buf), k);
 		cache_set_bug(c,
 			"extent key bad (too few replicas, %u < %llu): %s",
 			bch_extent_ptrs(e),
@@ -1442,7 +1447,7 @@ static void bch_extent_debugcheck(struct btree *b, struct bkey_s_c k)
 	replicas = CACHE_SET_DATA_REPLICAS_WANT(&c->sb);
 	for (i = 0; i < CACHE_TIERS; i++)
 		if (ptrs_per_tier[i] > replicas) {
-			bch_bkey_val_to_text(b, buf, sizeof(buf), k);
+			bch_bkey_val_to_text(c, b, buf, sizeof(buf), k);
 			cache_set_bug(c,
 				      "extent key bad (too many tier %u replicas): %s",
 				      i, buf);
@@ -1453,14 +1458,14 @@ static void bch_extent_debugcheck(struct btree *b, struct bkey_s_c k)
 	return;
 
 bad_device:
-	bch_bkey_val_to_text(b, buf, sizeof(buf), k);
+	bch_bkey_val_to_text(c, b, buf, sizeof(buf), k);
 	cache_set_bug(c, "extent pointer %u device missing: %s",
 		      (unsigned) (ptr - e.v->ptr), buf);
 	cache_member_info_put();
 	return;
 
 bad_ptr:
-	bch_bkey_val_to_text(b, buf, sizeof(buf), k);
+	bch_bkey_val_to_text(c, b, buf, sizeof(buf), k);
 	cache_set_bug(c, "extent pointer %u bad gc mark: %s:\nbucket %zu prio %i "
 		      "gen %i last_gc %i mark 0x%08x",
 		      (unsigned) (ptr - e.v->ptr), buf, PTR_BUCKET_NR(ca, ptr),
@@ -1621,11 +1626,12 @@ static enum merge_result bch_extent_merge(struct btree_keys *bk,
 					  struct bkey_i *l, struct bkey_i *r)
 {
 	struct btree *b = container_of(bk, struct btree, keys);
+	struct cache_set *c = b->c;
 	struct bkey_s_extent el, er;
 	struct cache *ca;
 	unsigned i;
 
-	if (key_merging_disabled(b->c))
+	if (key_merging_disabled(c))
 		return BCH_MERGE_NOMERGE;
 
 	/*
@@ -1666,7 +1672,7 @@ static enum merge_result bch_extent_merge(struct btree_keys *bk,
 			 * size so we can't check
 			 */
 			rcu_read_lock();
-			if (!(ca = PTR_CACHE(b->c, &el.v->ptr[i])) ||
+			if (!(ca = PTR_CACHE(c, &el.v->ptr[i])) ||
 			    PTR_BUCKET_NR(ca, &el.v->ptr[i]) !=
 			    PTR_BUCKET_NR(ca, &er.v->ptr[i])) {
 				rcu_read_unlock();
