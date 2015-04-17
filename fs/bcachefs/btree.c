@@ -1297,6 +1297,42 @@ err:
 	goto out_unlock;
 }
 
+/* Slowpath, don't want it inlined into btree_iter_traverse() */
+static noinline struct btree *bch_btree_node_fill(struct btree_iter *iter,
+						  const struct bkey_i *k,
+						  int level)
+{
+	struct btree *b = mca_alloc(iter->c, k, level, iter->btree_id,
+				    &iter->cl);
+
+	if (IS_ERR_OR_NULL(b))
+		return b;
+
+	/*
+	 * If the btree node wasn't cached, we can't drop our lock on
+	 * the parent until after it's added to the cache - because
+	 * otherwise we could race with a btree_split() freeing the node
+	 * we're trying to lock.
+	 *
+	 * But the deadlock described below doesn't exist in this case,
+	 * so it's safe to not drop the parent lock until here:
+	 */
+	if (btree_node_read_locked(iter, level + 1))
+		btree_node_unlock(iter, level + 1);
+
+	bch_btree_node_read(b);
+	six_unlock_write(&b->lock);
+
+	if (btree_want_intent(iter, level)) {
+		mark_btree_node_intent_locked(iter, level);
+	} else {
+		mark_btree_node_read_locked(iter, level);
+		BUG_ON(!six_trylock_convert(&b->lock, intent, read));
+	}
+
+	return b;
+}
+
 /**
  * bch_btree_node_get - find a btree node in the cache and lock it, reading it
  * in from disk if necessary.
@@ -1319,7 +1355,7 @@ retry:
 	rcu_read_unlock();
 
 	if (unlikely(!b)) {
-		b = mca_alloc(iter->c, k, level, iter->btree_id, &iter->cl);
+		b = bch_btree_node_fill(iter, k, level);
 
 		/* We raced and found the btree node in the cache */
 		if (!b)
@@ -1328,28 +1364,6 @@ retry:
 		if (IS_ERR(b)) {
 			BUG_ON(PTR_ERR(b) != -EAGAIN);
 			return b;
-		}
-
-		/*
-		 * If the btree node wasn't cached, we can't drop our lock on
-		 * the parent until after it's added to the cache - because
-		 * otherwise we could race with a btree_split() freeing the node
-		 * we're trying to lock.
-		 *
-		 * But the deadlock described below doesn't exist in this case,
-		 * so it's safe to not drop the parent lock until here:
-		 */
-		if (btree_node_read_locked(iter, level + 1))
-			btree_node_unlock(iter, level + 1);
-
-		bch_btree_node_read(b);
-		six_unlock_write(&b->lock);
-
-		if (btree_want_intent(iter, level)) {
-			mark_btree_node_intent_locked(iter, level);
-		} else {
-			mark_btree_node_read_locked(iter, level);
-			BUG_ON(!six_trylock_convert(&b->lock, intent, read));
 		}
 	} else {
 		/*
