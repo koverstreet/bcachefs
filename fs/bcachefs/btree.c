@@ -1610,18 +1610,24 @@ struct btree *btree_node_alloc_replacement(struct btree *b)
 static int __btree_check_reserve(struct cache_set *c,
 				 enum alloc_reserve reserve,
 				 unsigned required,
-				 struct closure *cl)
+				 struct closure *cl,
+				 bool check_enospc)
 {
+	struct cache_group *devs = &c->cache_tiers[0];
 	struct cache *ca;
 	unsigned i;
 	int ret;
 
+	/*
+	 * XXX: racy... the whole btree node reserve thing needs to be
+	 * completely reworked
+	 */
+	if (!devs->nr_devices)
+		return -ENOSPC;
+
 	rcu_read_lock();
 
-	for_each_cache_rcu(ca, c, i) {
-		if (CACHE_STATE(&ca->mi) != CACHE_ACTIVE)
-			continue;
-
+	group_for_each_cache_rcu(ca, devs, i) {
 		spin_lock(&ca->freelist_lock);
 
 		if (fifo_used(&ca->free[reserve]) < required) {
@@ -1629,11 +1635,12 @@ static int __btree_check_reserve(struct cache_set *c,
 					fifo_used(&ca->free[reserve]),
 					required, cl);
 
-			if (cl) {
+			if (!cl ||
+			    (check_enospc && cache_set_full(c))) {
+				ret = -ENOSPC;
+			} else {
 				closure_wait(&c->freelist_wait, cl);
 				ret = -EAGAIN;
-			} else {
-				ret = -ENOSPC;
 			}
 
 			spin_unlock(&ca->freelist_lock);
@@ -1651,13 +1658,13 @@ static int __btree_check_reserve(struct cache_set *c,
 
 int btree_check_reserve(struct btree *b, struct btree_iter *iter,
 			enum alloc_reserve reserve,
-			unsigned extra_nodes)
+			unsigned extra_nodes, bool check_enospc)
 {
 	unsigned depth = btree_node_root(b)->level - b->level;
 
 	return __btree_check_reserve(b->c, reserve,
 			btree_reserve_required_nodes(depth) + extra_nodes,
-			iter ? &iter->cl : NULL);
+			iter ? &iter->cl : NULL, check_enospc);
 }
 
 static struct btree *__btree_root_alloc(struct cache_set *c, unsigned level,
@@ -1680,11 +1687,15 @@ int bch_btree_root_alloc(struct cache_set *c, enum btree_id id,
 {
 	struct closure cl;
 	struct btree *b;
+	int ret;
 
 	closure_init_stack(&cl);
 
-	while (__btree_check_reserve(c, id, 1, &cl))
+	while ((ret = __btree_check_reserve(c, id, 1, &cl, true)) == -EAGAIN)
 		closure_sync(&cl);
+
+	if (ret == -ENOSPC)
+		return ret;
 
 	b = __btree_root_alloc(c, 0, id);
 
@@ -1742,7 +1753,8 @@ int bch_btree_node_rewrite(struct btree *b, struct btree_iter *iter, bool wait)
 	if (!bch_btree_iter_upgrade(iter))
 		return -EINTR;
 
-	ret = btree_check_reserve(b, wait ? iter : NULL, iter->btree_id, 1);
+	ret = btree_check_reserve(b, wait ? iter : NULL,
+				  iter->btree_id, 1, true);
 	if (ret) {
 		trace_bcache_btree_gc_rewrite_node_fail(b);
 		return ret;
@@ -2069,7 +2081,8 @@ static int btree_split(struct btree *b,
 	BUG_ON(!btree_node_intent_locked(iter, btree_node_root(b)->level));
 
 	/* After this check we cannot return -EAGAIN anymore */
-	ret = btree_check_reserve(b, iter, iter->btree_id, 0);
+	ret = btree_check_reserve(b, iter, iter->btree_id, 0,
+				  !(flags & BTREE_INSERT_NOFAIL));
 	if (ret) {
 		/* If splitting an interior node, we've already split a leaf,
 		 * so we should have checked for sufficient reserve. We can't
@@ -2463,7 +2476,7 @@ int bch_btree_insert_check_key(struct btree_iter *iter,
  */
 int bch_btree_insert(struct cache_set *c, enum btree_id id,
 		     struct keylist *keys, struct bch_replace_info *replace,
-		     struct closure *persistent, u64 *journal_seq)
+		     struct closure *persistent, u64 *journal_seq, int flags)
 {
 	struct btree_iter iter;
 	int ret, ret2;
@@ -2476,7 +2489,7 @@ int bch_btree_insert(struct cache_set *c, enum btree_id id,
 		goto out;
 
 	ret = bch_btree_insert_at(&iter, keys, replace,
-				  persistent, journal_seq, 0);
+				  persistent, journal_seq, flags);
 out:	ret2 = bch_btree_iter_unlock(&iter);
 
 	return ret ?: ret2;

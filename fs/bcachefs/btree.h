@@ -434,7 +434,7 @@ struct btree *__btree_node_alloc_replacement(struct btree *,
 					     struct bkey_format);
 struct btree *btree_node_alloc_replacement(struct btree *);
 int btree_check_reserve(struct btree *, struct btree_iter *,
-			enum alloc_reserve, unsigned);
+			enum alloc_reserve, unsigned, bool);
 
 int bch_btree_root_alloc(struct cache_set *, enum btree_id, struct closure *);
 int bch_btree_root_read(struct cache_set *, enum btree_id,
@@ -455,7 +455,10 @@ int bch_btree_insert_node(struct btree *, struct btree_iter *,
  * Don't drop/retake locks: instead return -EINTR if need to upgrade to intent
  * locks, -EAGAIN if need to wait on btree reserve
  */
-#define BTREE_INSERT_ATOMIC		1
+#define BTREE_INSERT_ATOMIC		(1 << 0)
+
+/* Don't check for -ENOSPC: */
+#define BTREE_INSERT_NOFAIL		(1 << 1)
 
 /*
  * Fail a btree insert if dirty stale pointers are being added
@@ -463,14 +466,15 @@ int bch_btree_insert_node(struct btree *, struct btree_iter *,
  * Needs to be set for compare exchange and device removal, and not
  * set for journal replay. See big comment in bch_insert_fixup_extent()
  */
-#define FAIL_IF_STALE			2
+#define FAIL_IF_STALE			(1 << 2)
 
 int bch_btree_insert_at(struct btree_iter *, struct keylist *,
 			struct bch_replace_info *, struct closure *,
 			u64 *, unsigned);
 int bch_btree_insert_check_key(struct btree_iter *, struct bkey_i *);
 int bch_btree_insert(struct cache_set *, enum btree_id, struct keylist *,
-		     struct bch_replace_info *, struct closure *, u64 *);
+		     struct bch_replace_info *, struct closure *,
+		     u64 *, int flags);
 int bch_btree_update(struct cache_set *, enum btree_id, struct bkey_i *,
 		     struct closure *, u64 *);
 
