@@ -195,13 +195,13 @@ struct journal_res {
 };
 
 void bch_journal_res_put(struct cache_set *, struct journal_res *,
-			 struct closure *, u64 *);
+			 struct closure *);
 void bch_journal_res_get(struct cache_set *, struct journal_res *,
 			 unsigned, unsigned);
 void bch_journal_set_dirty(struct cache_set *);
-u64 bch_journal_add_keys(struct cache_set *, struct journal_res *,
-			 enum btree_id, const struct bkey_i *,
-			 unsigned);
+void bch_journal_add_keys(struct cache_set *, struct journal_res *,
+			  enum btree_id, const struct bkey_i *,
+			  unsigned);
 
 /*
  * Amount of space that will be taken up by some keys in the journal (i.e.

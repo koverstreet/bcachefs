@@ -1453,14 +1453,9 @@ static void journal_write_work(struct work_struct *work)
  */
 void bch_journal_res_put(struct cache_set *c,
 			 struct journal_res *res,
-			 struct closure *parent,
-			 u64 *journal_seq)
+			 struct closure *parent)
 {
 	spin_lock_irq(&c->journal.lock);
-
-	/* Set under journal lock */
-	if (journal_seq)
-		*journal_seq = c->journal.seq;
 
 	BUG_ON(!res->ref);
 
@@ -1570,26 +1565,21 @@ void bch_journal_set_dirty(struct cache_set *c)
 				      msecs_to_jiffies(c->journal.delay_ms));
 }
 
-u64 bch_journal_add_keys(struct cache_set *c, struct journal_res *res,
+void bch_journal_add_keys(struct cache_set *c, struct journal_res *res,
 			 enum btree_id id, const struct bkey_i *k,
 			 unsigned level)
 {
 	unsigned actual = jset_u64s(k->k.u64s);
-	u64 seq;
 
 	BUG_ON(!res->ref);
 	BUG_ON(actual > res->nkeys);
 	res->nkeys -= actual;
 
 	spin_lock_irq(&c->journal.lock);
-	seq = c->journal.seq;
-
 	bch_journal_add_entry(c->journal.cur->data, k, k->k.u64s,
 			      JKEYS_BTREE_KEYS, id, level);
 	bch_journal_set_dirty(c);
 	spin_unlock_irq(&c->journal.lock);
-
-	return seq;
 }
 
 void bch_journal_meta(struct cache_set *c, struct closure *parent)
@@ -1605,7 +1595,7 @@ void bch_journal_meta(struct cache_set *c, struct closure *parent)
 	bch_journal_res_get(c, &res, u64s, u64s);
 	if (res.ref) {
 		bch_journal_set_dirty(c);
-		bch_journal_res_put(c, &res, parent, NULL);
+		bch_journal_res_put(c, &res, parent);
 	}
 }
 
