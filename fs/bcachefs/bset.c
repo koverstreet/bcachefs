@@ -1312,17 +1312,18 @@ int bch_bset_sort_state_init(struct bset_sort_state *state, unsigned page_order)
 }
 EXPORT_SYMBOL(bch_bset_sort_state_init);
 
+/* No repacking: */
 static void btree_mergesort_simple(struct btree_keys *b, struct bset *bset,
 				   struct btree_node_iter *iter)
 {
-	struct bkey_packed *k, *out = bset->start;
+	struct bkey_packed *in, *out = bset->start;
 
 	while (!bch_btree_node_iter_end(iter)) {
-		k = bch_btree_node_iter_next_all(iter, b);
+		in = bch_btree_node_iter_next_all(iter, b);
 
-		if (!bkey_deleted(k)) {
+		if (!bkey_deleted(in)) {
 			/* XXX: need better bkey_copy */
-			memcpy(out, k, bkey_bytes(k));
+			memcpy(out, in, bkey_bytes(in));
 			out = bkey_next(out);
 		}
 	}
@@ -1332,6 +1333,7 @@ static void btree_mergesort_simple(struct btree_keys *b, struct bset *bset,
 	pr_debug("sorted %i keys", bset->u64s);
 }
 
+/* Sort + repack in a new format: */
 static void btree_mergesort(struct btree_keys *dst,
 			    struct bset *dst_set,
 			    struct btree_keys *src,
@@ -1340,11 +1342,55 @@ static void btree_mergesort(struct btree_keys *dst,
 {
 	struct bkey_format *in_f = &src->format;
 	struct bkey_format *out_f = &dst->format;
+	struct bkey_packed *in, *out = dst_set->start;
+
+	BUG_ON(filter);
+	EBUG_ON(filter && !dst->ops->is_extents);
+
+	dst->nr_packed_keys	= 0;
+	dst->nr_unpacked_keys	= 0;
+
+	while (!bch_btree_node_iter_end(iter)) {
+		in = bch_btree_node_iter_next_all(iter, src);
+
+		if (bkey_deleted(in))
+			continue;
+
+		if (bch_bkey_transform(out_f, out, bkey_packed(in)
+				       ? in_f : &bch_bkey_format_current, in)) {
+			out->format = KEY_FORMAT_LOCAL_BTREE;
+			dst->nr_packed_keys++;
+		} else {
+			bkey_unpack((void *) out, in_f, in);
+			dst->nr_unpacked_keys++;
+		}
+
+		out = bkey_next(out);
+
+		BUG_ON((void *) out >
+		       (void *) dst_set + (PAGE_SIZE << dst->page_order));
+	}
+
+	dst_set->u64s = (u64 *) out - dst_set->_data;
+	dst->nr_live_u64s = dst_set->u64s;
+
+	pr_debug("sorted %i keys", dst_set->u64s);
+}
+
+/* Sort, repack, and merge extents */
+static void btree_mergesort_extents(struct btree_keys *dst,
+				    struct bset *dst_set,
+				    struct btree_keys *src,
+				    struct btree_node_iter *iter,
+				    ptr_filter_fn filter)
+{
+	struct bkey_format *in_f = &src->format;
+	struct bkey_format *out_f = &dst->format;
 	struct bkey_packed *k, *prev = NULL, *out = dst_set->start;
 	struct bkey_tup tup;
 	BKEY_PADDED(k) tmp;
 
-	EBUG_ON(filter && !dst->ops->is_extents);
+	EBUG_ON(!dst->ops->is_extents);
 
 	dst->nr_packed_keys	= 0;
 	dst->nr_unpacked_keys	= 0;
@@ -1355,26 +1401,21 @@ static void btree_mergesort(struct btree_keys *dst,
 		if (bkey_deleted(k))
 			continue;
 
-		if (dst->ops->is_extents) {
-			/*
-			 * For extents, the filter might modify pointers, so we
-			 * have to unpack the key and values to &tmp.k.
-			 */
-			bkey_unpack(&tmp.k, in_f, k);
+		/*
+		 * The filter might modify pointers, so we have to unpack the
+		 * key and values to &tmp.k:
+		 */
+		bkey_unpack(&tmp.k, in_f, k);
 
-			if (filter && filter(src, bkey_i_to_s(&tmp.k)))
-				continue;
+		if (filter && filter(src, bkey_i_to_s(&tmp.k)))
+			continue;
 
-			if (prev &&
-			    src->ops->key_merge &&
-			    bch_bkey_try_merge(src, (void *) prev, &tmp.k))
-				continue;
+		if (prev &&
+		    src->ops->key_merge &&
+		    bch_bkey_try_merge(src, (void *) prev, &tmp.k))
+			continue;
 
-			bkey_disassemble(&tup, in_f, bkey_to_packed(&tmp.k));
-		} else {
-			/* We're not touching values -- only copy the key */
-			bkey_disassemble(&tup, in_f, k);
-		}
+		bkey_disassemble(&tup, in_f, bkey_to_packed(&tmp.k));
 
 		if (prev) {
 			if (bkey_pack(prev, (void *) prev, out_f))
@@ -1441,15 +1482,16 @@ static void __btree_sort(struct btree_keys *b, struct btree_node_iter *iter,
 	 */
 	if (sort)
 		sort(b, out, iter);
-	else if (start)
-		btree_mergesort_simple(b, out, iter);
+	else if (b->ops->is_extents && !start)
+		btree_mergesort_extents(b, out, b, iter, NULL);
 	else
-		btree_mergesort(b, out, b, iter, NULL);
+		btree_mergesort_simple(b, out, iter);
 
 	BUG_ON(set_bytes(out) > (PAGE_SIZE << b->page_order));
 
 	b->nsets = start;
 
+	/* XXX: reenable */
 	if (0 && !start && order == b->page_order) {
 		unsigned u64s = out->u64s;
 		/*
@@ -1530,8 +1572,12 @@ void bch_btree_sort_into(struct btree_keys *dst,
 
 	bch_btree_node_iter_init_from_start(&iter, src);
 
-	btree_mergesort(dst, dst->set->data,
-			src, &iter, filter);
+	if (!dst->ops->is_extents)
+		btree_mergesort(dst, dst->set->data,
+				src, &iter, filter);
+	else
+		btree_mergesort_extents(dst, dst->set->data,
+					src, &iter, filter);
 
 	BUG_ON(set_bytes(dst->set->data) > (PAGE_SIZE << dst->page_order));
 
