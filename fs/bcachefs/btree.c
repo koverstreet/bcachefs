@@ -2482,6 +2482,35 @@ out:	ret2 = bch_btree_iter_unlock(&iter);
 	return ret ?: ret2;
 }
 
+/**
+ * bch_btree_update - like bch_btree_insert(), but asserts that we're
+ * overwriting an existing key
+ */
+int bch_btree_update(struct cache_set *c, enum btree_id id, struct bkey_i *k,
+		     struct closure *persistent, u64 *journal_seq)
+{
+	struct btree_iter iter;
+	struct bkey_s_c u;
+	int ret, ret2;
+
+	EBUG_ON(id == BTREE_ID_EXTENTS);
+
+	bch_btree_iter_init_intent(&iter, c, id, k->k.p);
+
+	ret = bch_btree_iter_traverse(&iter);
+	if (unlikely(ret))
+		goto out;
+
+	u = bch_btree_iter_peek_with_holes(&iter);
+	BUG_ON(!u.k || bkey_deleted(u.k));
+
+	ret = bch_btree_insert_at(&iter, &keylist_single(k), NULL,
+				  persistent, journal_seq, 0);
+out:	ret2 = bch_btree_iter_unlock(&iter);
+
+	return ret ?: ret2;
+}
+
 /* Btree iterator: */
 
 int bch_btree_iter_unlock(struct btree_iter *iter)
