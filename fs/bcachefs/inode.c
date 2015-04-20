@@ -175,7 +175,8 @@ int bch_inode_rm(struct cache_set *c, u64 inode_nr)
 
 	return bch_btree_insert(c, BTREE_ID_INODES,
 				&keylist_single(&delete),
-				NULL, NULL, NULL, 0);
+				NULL, NULL, NULL,
+				BTREE_INSERT_NOFAIL);
 }
 
 int bch_blockdev_inode_find_by_uuid(struct cache_set *c, uuid_le *uuid,

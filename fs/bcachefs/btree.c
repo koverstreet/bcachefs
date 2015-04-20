@@ -1642,7 +1642,8 @@ static int __btree_check_reserve(struct cache_set *c,
 	 * XXX: racy... the whole btree node reserve thing needs to be
 	 * completely reworked
 	 */
-	if (!devs->nr_devices)
+	if (!devs->nr_devices ||
+	    (check_enospc && cache_set_full(c)))
 		return -ENOSPC;
 
 	rcu_read_lock();
@@ -1655,8 +1656,7 @@ static int __btree_check_reserve(struct cache_set *c,
 					fifo_used(&ca->free[reserve]),
 					required, cl);
 
-			if (!cl ||
-			    (check_enospc && cache_set_full(c))) {
+			if (!cl) {
 				ret = -ENOSPC;
 			} else {
 				closure_wait(&c->freelist_wait, cl);
@@ -1794,7 +1794,8 @@ int bch_btree_node_rewrite(struct btree *b, struct btree_iter *iter, bool wait)
 	if (parent) {
 		ret = bch_btree_insert_node(parent, iter,
 					    &keylist_single(&n->key),
-					    NULL, NULL, 0);
+					    NULL, NULL,
+					    BTREE_INSERT_NOFAIL);
 		BUG_ON(ret);
 	} else {
 		bch_btree_set_root(c, n);
@@ -2276,7 +2277,8 @@ static int btree_split(struct btree *b,
 		closure_sync(stack_cl);
 
 		ret = __bch_btree_insert_node(parent, iter, parent_keys, NULL,
-					      NULL, 0, parent_keys, stack_cl);
+					      NULL, BTREE_INSERT_NOFAIL,
+					      parent_keys, stack_cl);
 		BUG_ON(ret || !bch_keylist_empty(parent_keys));
 	}
 

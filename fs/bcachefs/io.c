@@ -763,7 +763,7 @@ int bch_discard(struct cache_set *c, struct bpos start,
 		n = erase.k.p;
 
 		ret = bch_btree_insert_at(&iter, &keylist_single(&erase),
-					  NULL, NULL, 0);
+					  NULL, NULL, BTREE_INSERT_NOFAIL);
 		if (ret)
 			break;
 
