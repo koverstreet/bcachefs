@@ -1,6 +1,7 @@
 #ifndef _BCACHE_JOURNAL_TYPES_H
 #define _BCACHE_JOURNAL_TYPES_H
 
+#include <linux/cache.h>
 #include <linux/workqueue.h>
 #include "fifo.h"
 
@@ -48,19 +49,43 @@ struct journal_seq_blacklist {
 	struct list_head	nodes;
 };
 
+union journal_res_state {
+	struct {
+		atomic64_t	counter;
+	};
+
+	struct {
+		u64		v;
+	};
+
+	struct {
+		unsigned	count;
+		unsigned	cur_entry_offset;
+	};
+};
+
 /* Embedded in struct cache_set */
 struct journal {
+	/* Fastpath stuff up front: */
+
 	unsigned long		flags;
 #define JOURNAL_NEED_WRITE	0
 #define JOURNAL_DIRTY		1
 #define JOURNAL_REPLAY_DONE	2
-	atomic_t		in_flight;
+#define JOURNAL_IO_IN_FLIGHT	3
+
+	union journal_res_state reservations;
+	unsigned		cur_entry_u64s;
+
+	struct journal_write	*cur;
+
+	/*
+	 * Two journal entries -- one is currently open for new entries, the
+	 * other is possibly being written out.
+	 */
+	struct journal_write	w[2];
 
 	spinlock_t		lock;
-
-	unsigned		res_count;
-	unsigned		cur_entry_offset;
-	unsigned		cur_entry_u64s;
 
 	/* minimum sectors free in the bucket(s) we're currently writing to */
 	unsigned		sectors_free;
@@ -104,12 +129,6 @@ struct journal {
 	BKEY_PADDED(key);
 
 	struct work_struct	reclaim_work;
-
-	/*
-	 * Two journal entries -- one is currently open for new entries, the
-	 * other is possibly being written out.
-	 */
-	struct journal_write	w[2], *cur;
 
 	u64			prio_buckets[MAX_CACHES_PER_SET];
 	unsigned		nr_prio_buckets;

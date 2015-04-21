@@ -17,7 +17,7 @@
 
 #include <trace/events/bcachefs.h>
 
-static void bch_journal_next_entry(struct journal *);
+static void __bch_journal_next_entry(struct journal *);
 
 /* Sequence number of oldest dirty journal entry */
 
@@ -768,12 +768,53 @@ void bch_journal_mark(struct cache_set *c, struct list_head *list)
 		}
 }
 
+static union journal_res_state journal_res_state(unsigned count,
+						 unsigned entry_offset)
+{
+	return (union journal_res_state) {
+		.count = count,
+		.cur_entry_offset = entry_offset,
+	};
+}
+
+static bool journal_entry_is_open(struct journal *j)
+{
+	return j->reservations.cur_entry_offset < S32_MAX;
+}
+
+/*
+ * Closes the current journal entry so that new reservations cannot be take on
+ * it - returns true if the count of outstanding reservations is 0.
+ */
+static bool journal_entry_close(struct journal *j)
+{
+	union journal_res_state old, new;
+	u64 v = atomic64_read(&j->reservations.counter);
+
+	do {
+		old.v = new.v = v;
+		if (old.cur_entry_offset == S32_MAX)
+			return old.count == 0;
+
+		new.cur_entry_offset = S32_MAX;
+	} while ((v = cmpxchg(&j->reservations.v, old.v, new.v)) != old.v);
+
+	j->cur->data->u64s = old.cur_entry_offset;
+
+	return old.count == 0;
+}
+
 /* Number of u64s we can write to the current journal bucket */
 static void journal_calc_entry_size(struct journal *j)
 {
-	ssize_t u64s = (min_t(size_t,
-			      j->sectors_free,
-			      JSET_SECTORS) << 9) / sizeof(u64);
+	ssize_t u64s;
+
+	BUG_ON(journal_entry_is_open(j) ||
+	       test_bit(JOURNAL_DIRTY, &j->flags));
+
+	u64s = (min_t(size_t,
+		      j->sectors_free,
+		      JSET_SECTORS) << 9) / sizeof(u64);
 
 	/* Subtract the journal header */
 	u64s -= sizeof(struct jset) / sizeof(u64);
@@ -784,11 +825,16 @@ static void journal_calc_entry_size(struct journal *j)
 	 */
 	u64s -= BTREE_ID_NR * (JSET_KEYS_U64s + BKEY_EXTENT_MAX_U64s);
 	u64s -= JSET_KEYS_U64s + j->nr_prio_buckets;
+	u64s  = max_t(ssize_t, 0L, u64s);
 
-	j->cur_entry_u64s	= max_t(ssize_t, 0L, u64s);
+	if (u64s > j->cur->data->u64s) {
+		j->cur_entry_u64s	= max_t(ssize_t, 0L, u64s);
 
-	/* Handle any already added entries */
-	j->cur_entry_offset	= j->cur->data->u64s;
+		/* Handle any already added entries */
+		atomic64_set(&j->reservations.counter,
+			     journal_res_state(0, j->cur->data->u64s).v);
+		wake_up(&j->wait);
+	}
 }
 
 void bch_journal_start(struct cache_set *c)
@@ -813,7 +859,7 @@ void bch_journal_start(struct cache_set *c)
 		j->seq++;
 	}
 
-	bch_journal_next_entry(j);
+	__bch_journal_next_entry(j);
 
 	/*
 	 * Adding entries to the next journal entry before allocating space on
@@ -1067,7 +1113,7 @@ static void journal_reclaim_work(struct work_struct *work)
 			ja->last_idx = (ja->last_idx + 1) % nr;
 			spin_unlock_irq(&j->lock);
 
-			wake_up(&c->journal.wait);
+			wake_up(&j->wait);
 		}
 
 		/*
@@ -1229,7 +1275,7 @@ static void journal_next_bucket(struct cache_set *c)
 	queue_work(system_long_wq, &j->reclaim_work);
 }
 
-static void bch_journal_next_entry(struct journal *j)
+static void __bch_journal_next_entry(struct journal *j)
 {
 	struct journal_entry_pin_list pin_list, *p;
 
@@ -1252,6 +1298,11 @@ static void bch_journal_next_entry(struct journal *j)
 
 	j->cur->data->seq	= ++j->seq;
 	j->cur->data->u64s	= 0;
+}
+
+static void bch_journal_next_entry(struct journal *j)
+{
+	__bch_journal_next_entry(j);
 	journal_calc_entry_size(j);
 }
 
@@ -1284,7 +1335,7 @@ static void journal_write_done(struct closure *cl)
 
 	__closure_wake_up(&w->wait);
 
-	atomic_set(&j->in_flight, 0);
+	clear_bit(JOURNAL_IO_IN_FLIGHT, &j->flags);
 	wake_up(&j->wait);
 
 	if (test_bit(JOURNAL_NEED_WRITE, &j->flags))
@@ -1309,14 +1360,13 @@ static void journal_write_locked(struct closure *cl)
 	struct bio_list list;
 	bio_list_init(&list);
 
-	BUG_ON(j->res_count);
+	BUG_ON(j->reservations.count);
 	BUG_ON(journal_full(j));
+	BUG_ON(!test_bit(JOURNAL_DIRTY, &j->flags));
 
 	clear_bit(JOURNAL_NEED_WRITE, &j->flags);
 	clear_bit(JOURNAL_DIRTY, &j->flags);
 	cancel_delayed_work(&j->write_work);
-
-	w->data->u64s = j->cur_entry_offset;
 
 	spin_lock(&c->btree_root_lock);
 
@@ -1333,7 +1383,7 @@ static void journal_write_locked(struct closure *cl)
 	bch_journal_add_prios(j, w->data);
 
 	/* So last_seq is up to date */
-	journal_reclaim_fast(&c->journal);
+	journal_reclaim_fast(j);
 
 	w->data->read_clock	= c->prio_clock[READ].hand;
 	w->data->write_clock	= c->prio_clock[WRITE].hand;
@@ -1421,20 +1471,23 @@ static void journal_write_locked(struct closure *cl)
 static bool __journal_write(struct journal *j)
 	__releases(j->lock)
 {
-	BUG_ON(!j->res_count &&
-	       !test_bit(JOURNAL_DIRTY, &j->flags));
+	struct cache_set *c = container_of(j, struct cache_set, journal);
 
-	if (!j->res_count &&
-	    !atomic_xchg(&j->in_flight, 1)) {
-		struct cache_set *c =
-			container_of(j, struct cache_set, journal);
+	EBUG_ON(!j->reservations.count &&
+		!test_bit(JOURNAL_DIRTY, &j->flags));
 
-		closure_call(&j->io, journal_write_locked, NULL, &c->cl);
-		return true;
-	} else {
-		spin_unlock_irq(&j->lock);
-		return false;
-	}
+	if (test_bit(JOURNAL_IO_IN_FLIGHT, &j->flags) ||
+	    !journal_entry_close(j))
+		goto nowrite;
+
+	set_bit(JOURNAL_IO_IN_FLIGHT, &j->flags);
+
+	__set_current_state(TASK_RUNNING);
+	closure_call(&j->io, journal_write_locked, NULL, &c->cl);
+	return true;
+nowrite:
+	spin_unlock_irq(&j->lock);
+	return false;
 }
 
 static bool journal_try_write(struct journal *j)
@@ -1486,8 +1539,12 @@ void bch_journal_res_put(struct cache_set *c,
 			 struct closure *parent)
 {
 	struct journal *j = &c->journal;
+	union journal_res_state s;
+	bool do_write = false;
 
 	BUG_ON(!res->ref);
+
+	res->ref = false;
 
 	while (res->u64s) {
 		unsigned actual = jset_u64s(0);
@@ -1498,23 +1555,68 @@ void bch_journal_res_put(struct cache_set *c,
 		res->u64s	-= actual;
 	}
 
-	spin_lock_irq(&j->lock);
-	--j->res_count;
-	res->ref	= 0;
-	res->u64s	= 0;
+	bch_journal_set_dirty(c);
 
 	if (parent && test_bit(JOURNAL_DIRTY, &j->flags)) {
 		BUG_ON(!closure_wait(&j->cur->wait, parent));
 		set_bit(JOURNAL_NEED_WRITE, &j->flags);
 	}
 
-	bch_journal_set_dirty(c);
-	journal_unlock(j);
+	if (test_bit(JOURNAL_NEED_WRITE, &j->flags) &&
+	    !test_bit(JOURNAL_IO_IN_FLIGHT, &j->flags)) {
+		journal_entry_close(j);
+		do_write = true;
+	}
+
+	s.v = atomic64_sub_return(journal_res_state(1, 0).v,
+				  &j->reservations.counter);
+	BUG_ON((int) s.count < 0);
+
+	if (!s.count) {
+		if (do_write) {
+			spin_lock_irq(&j->lock);
+			journal_unlock(j);
+		}
+
+		if (!list_empty_careful(&j->wait.task_list))
+			wake_up(&j->wait);
+	}
 }
 
 static inline bool journal_bucket_has_room(struct journal *j)
 {
 	return (j->sectors_free && fifo_free(&j->pin) > 1);
+}
+
+static inline bool journal_res_get_fast(struct journal *j,
+					struct journal_res *res,
+					unsigned u64s_min,
+					unsigned u64s_max)
+{
+	union journal_res_state old, new;
+	u64 v = atomic64_read(&j->reservations.counter);
+
+	do {
+		old.v = new.v = v;
+
+		/*
+		 * Check if there is still room in the current journal
+		 * entry:
+		 */
+		if (old.cur_entry_offset + u64s_min > j->cur_entry_u64s)
+			return false;
+
+		res->offset	= old.cur_entry_offset;
+		res->u64s	= min(u64s_max, j->cur_entry_u64s -
+				      old.cur_entry_offset);
+
+		new.cur_entry_offset += res->u64s;
+		new.count++;
+	} while ((v = cmpxchg(&j->reservations.v,
+			      old.v, new.v)) != old.v);
+
+	res->ref = true;
+	return true;
 }
 
 static bool __journal_res_get(struct cache_set *c, struct journal_res *res,
@@ -1523,34 +1625,30 @@ static bool __journal_res_get(struct cache_set *c, struct journal_res *res,
 {
 	struct journal *j = &c->journal;
 
-	BUG_ON(res->ref);
-	BUG_ON(u64s_max < u64s_min);
-
-	spin_lock_irq(&j->lock);
-	BUG_ON(!j->cur);
-
 	while (1) {
-		/* Check if there is still room in the current journal entry */
-		if (j->cur_entry_offset + u64s_min <= j->cur_entry_u64s) {
-			res->ref	= true;
-			res->offset	= j->cur_entry_offset;
-			res->u64s	= min(u64s_max, j->cur_entry_u64s -
-					      j->cur_entry_offset);
+		if (journal_res_get_fast(j, res, u64s_min, u64s_max))
+			return true;
 
-			j->cur_entry_offset += res->u64s;
-			j->res_count++;
+		spin_lock_irq(&j->lock);
+
+		/*
+		 * Recheck after taking the lock, so we don't race with another
+		 * thread that just did journal_calc_entry_size() and call
+		 * journal_entry_close() unnecessarily
+		 */
+		if (journal_res_get_fast(j, res, u64s_min, u64s_max)) {
 			spin_unlock_irq(&j->lock);
-
-			if (*start_time)
-				bch_time_stats_update(&j->full_time,
-						      *start_time);
-
 			return true;
 		}
 
 		/* local_clock() can of course be 0 but we don't care */
 		if (*start_time == 0)
 			*start_time = local_clock();
+
+		if (!journal_entry_close(j)) {
+			spin_unlock_irq(&j->lock);
+			return false;
+		}
 
 		if (test_bit(JOURNAL_DIRTY, &j->flags)) {
 			/*
@@ -1559,13 +1657,10 @@ static bool __journal_res_get(struct cache_set *c, struct journal_res *res,
 			 * flight, we'll have to wait:
 			 */
 
-			__set_current_state(TASK_RUNNING);
 			if (!journal_try_write(j)) {
 				trace_bcache_journal_entry_full(c);
 				return false;
 			}
-
-			spin_lock_irq(&j->lock);
 		} else {
 			/* Try to get a new journal bucket */
 			journal_next_bucket(c);
@@ -1576,6 +1671,8 @@ static bool __journal_res_get(struct cache_set *c, struct journal_res *res,
 				trace_bcache_journal_full(c);
 				return false;
 			}
+
+			spin_unlock_irq(&j->lock);
 		}
 	}
 }
@@ -1593,10 +1690,20 @@ static bool __journal_res_get(struct cache_set *c, struct journal_res *res,
 void bch_journal_res_get(struct cache_set *c, struct journal_res *res,
 			 unsigned u64s_min, unsigned u64s_max)
 {
+	struct journal *j = &c->journal;
 	u64 start_time = 0;
 
-	wait_event(c->journal.wait,
+	BUG_ON(res->ref);
+	BUG_ON(u64s_max < u64s_min);
+	BUG_ON(!j->cur);
+
+	wait_event(j->wait,
 		   __journal_res_get(c, res, u64s_min, u64s_max, &start_time));
+
+	BUG_ON(!res->ref);
+
+	if (start_time)
+		bch_time_stats_update(&j->full_time, start_time);
 }
 
 void bch_journal_set_dirty(struct cache_set *c)
@@ -1638,7 +1745,7 @@ void bch_journal_push_seq(struct cache_set *c, u64 seq, struct closure *parent)
 		BUG_ON(!closure_wait(&j->cur->wait, parent));
 		set_bit(JOURNAL_NEED_WRITE, &j->flags);
 	} else if (seq + 1 == j->seq &&
-		   atomic_read(&j->in_flight)) {
+		   test_bit(JOURNAL_IO_IN_FLIGHT, &j->flags)) {
 		struct journal_write *w = (j->cur == j->w)
 			? &j->w[1]
 			: &j->w[0];
@@ -1672,6 +1779,9 @@ int bch_journal_alloc(struct cache_set *c)
 
 	bkey_extent_init(&j->key);
 
+	atomic64_set(&j->reservations.counter,
+		     journal_res_state(0, S32_MAX).v);
+
 	j->w[0].c = c;
 	j->w[1].c = c;
 
@@ -1699,6 +1809,8 @@ ssize_t bch_journal_print_debug(struct journal *j, char *buf)
 			 "last_seq:\t\t%llu\n"
 			 "last_seq_ondisk:\t%llu\n"
 			 "reservation count:\t%u\n"
+			 "reservation offset:\t%u\n"
+			 "current entry u64s:\t%u\n"
 			 "io in flight:\t\t%i\n"
 			 "need write:\t\t%i\n"
 			 "dirty:\t\t\t%i\n"
@@ -1707,10 +1819,12 @@ ssize_t bch_journal_print_debug(struct journal *j, char *buf)
 			 j->seq,
 			 last_seq(j),
 			 j->last_seq_ondisk,
-			 j->res_count,
-			 atomic_read(&j->in_flight),
+			 j->reservations.count,
+			 j->reservations.cur_entry_offset,
+			 j->cur_entry_u64s,
+			 test_bit(JOURNAL_IO_IN_FLIGHT,	&j->flags),
 			 test_bit(JOURNAL_NEED_WRITE,	&j->flags),
-			 test_bit(JOURNAL_DIRTY,		&j->flags),
+			 test_bit(JOURNAL_DIRTY,	&j->flags),
 			 test_bit(JOURNAL_REPLAY_DONE,	&j->flags));
 
 	group_for_each_cache_rcu(ca, &c->cache_tiers[0], iter) {
