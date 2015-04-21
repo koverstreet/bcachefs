@@ -504,8 +504,13 @@ static void bset_alloc_tree(struct btree_keys *b, struct bset_tree *t)
 		t->prev = t[-1].prev + j;
 	}
 
-	while (t < b->set + MAX_BSETS)
-		t++->size = 0;
+	t->size = 0;
+
+	while (++t < b->set + MAX_BSETS) {
+		t->size = 0;
+		t->tree = NULL;
+		t->prev = NULL;
+	}
 }
 
 static void bch_bset_build_unwritten_tree(struct btree_keys *b)

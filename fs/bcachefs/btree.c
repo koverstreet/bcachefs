@@ -1414,13 +1414,10 @@ retry:
 
 	b->accessed = 1;
 
-	for (; i <= b->keys.nsets && b->keys.set[i].size; i++) {
+	for (; i <= b->keys.nsets; i++) {
 		prefetch(b->keys.set[i].tree);
 		prefetch(b->keys.set[i].data);
 	}
-
-	for (; i <= b->keys.nsets; i++)
-		prefetch(b->keys.set[i].data);
 
 	if (btree_node_io_error(b)) {
 		__btree_node_unlock(iter, level, b);
