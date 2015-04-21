@@ -58,8 +58,9 @@ struct journal {
 
 	spinlock_t		lock;
 
-	unsigned		u64s_remaining;
 	unsigned		res_count;
+	unsigned		cur_entry_offset;
+	unsigned		cur_entry_u64s;
 
 	/* minimum sectors free in the bucket(s) we're currently writing to */
 	unsigned		sectors_free;

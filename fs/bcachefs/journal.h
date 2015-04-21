@@ -190,8 +190,9 @@ struct bkey_i *bch_journal_find_btree_root(struct cache_set *, struct jset *,
 int bch_journal_seq_blacklisted(struct cache_set *, u64, struct btree *);
 
 struct journal_res {
-	unsigned		ref:1;
-	unsigned		nkeys:31;
+	bool			ref;
+	u16			offset;
+	u16			u64s;
 };
 
 void bch_journal_res_put(struct cache_set *, struct journal_res *,
@@ -215,7 +216,7 @@ static inline unsigned jset_u64s(unsigned u64s)
 static inline bool journal_res_full(struct journal_res *res,
 				    struct bkey *k)
 {
-	return (res->ref && jset_u64s(k->u64s) * 2 > res->nkeys);
+	return res->offset && jset_u64s(k->u64s) * 2 > res->u64s;
 }
 
 void bch_journal_start(struct cache_set *);
