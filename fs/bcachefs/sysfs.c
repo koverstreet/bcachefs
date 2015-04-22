@@ -147,7 +147,6 @@ sysfs_pd_controller_attribute(writeback);
 read_attribute(stripe_size);
 read_attribute(partial_stripes_expensive);
 
-rw_attribute(synchronous);
 rw_attribute(journal_delay_ms);
 rw_attribute(discard);
 rw_attribute(running);
@@ -583,7 +582,6 @@ SHOW(bch_cache_set)
 {
 	struct cache_set *c = container_of(kobj, struct cache_set, kobj);
 
-	sysfs_print(synchronous,		CACHE_SYNC(&c->sb));
 	sysfs_print(journal_delay_ms,		c->journal.delay_ms);
 
 	sysfs_hprint(block_size,		block_bytes(c));
@@ -705,17 +703,6 @@ STORE(__bch_cache_set)
 		return size;
 	}
 
-	if (attr == &sysfs_synchronous) {
-		bool sync = strtoul_or_return(buf);
-
-		if (sync != CACHE_SYNC(&c->sb)) {
-			SET_CACHE_SYNC(&c->sb, sync);
-			bcache_write_super(c);
-		}
-
-		return size;
-	}
-
 	if (attr == &sysfs_clear_stats) {
 		atomic_long_set(&c->writeback_keys_done,	0);
 		atomic_long_set(&c->writeback_keys_failed,	0);
@@ -824,7 +811,7 @@ STORE(__bch_cache_set)
 		struct closure cl;
 
 		closure_init_stack(&cl);
-		bch_journal_meta(c, &cl);
+		bch_journal_meta(&c->journal, &cl);
 		closure_sync(&cl);
 
 		return size;
@@ -920,7 +907,6 @@ static void bch_cache_set_internal_release(struct kobject *k)
 static struct attribute *bch_cache_set_files[] = {
 	&sysfs_unregister,
 	&sysfs_stop,
-	&sysfs_synchronous,
 	&sysfs_journal_delay_ms,
 	&sysfs_flash_vol_create,
 	&sysfs_add_device,

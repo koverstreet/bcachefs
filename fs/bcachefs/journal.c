@@ -47,12 +47,12 @@ static inline u64 journal_pin_seq(struct journal *j,
 
 #define JSET_SECTORS (PAGE_SECTORS << JSET_BITS)
 
-static inline void bch_journal_add_entry_at(struct jset *j, const void *data,
+static inline void bch_journal_add_entry_at(struct journal *j, const void *data,
 					    size_t u64s, unsigned type,
 					    enum btree_id id, unsigned level,
 					    unsigned offset)
 {
-	struct jset_entry *jkeys = (struct jset_entry *) bkey_idx(j, offset);
+	struct jset_entry *jkeys = bkey_idx(journal_cur_write(j)->data, offset);
 
 	jkeys->u64s = u64s;
 	jkeys->btree_id = id;
@@ -63,12 +63,14 @@ static inline void bch_journal_add_entry_at(struct jset *j, const void *data,
 	memcpy(jkeys->_data, data, u64s * sizeof(u64));
 }
 
-static inline void bch_journal_add_entry(struct jset *j, const void *data,
+static inline void bch_journal_add_entry(struct journal *j, const void *data,
 					 size_t u64s, unsigned type,
 					 enum btree_id id, unsigned level)
 {
-	bch_journal_add_entry_at(j, data, u64s, type, id, level, j->u64s);
-	j->u64s += jset_u64s(u64s);
+	struct jset *jset = journal_cur_write(j)->data;
+
+	bch_journal_add_entry_at(j, data, u64s, type, id, level, jset->u64s);
+	jset->u64s += jset_u64s(u64s);
 }
 
 static struct jset_entry *bch_journal_find_entry(struct jset *j, unsigned type,
@@ -106,15 +108,15 @@ struct bkey_i *bch_journal_find_btree_root(struct cache_set *c, struct jset *j,
 	return k;
 }
 
-static void bch_journal_add_btree_root(struct jset *j, enum btree_id id,
+static void bch_journal_add_btree_root(struct journal *j, enum btree_id id,
 				       struct bkey_i *k, unsigned level)
 {
 	bch_journal_add_entry(j, k, k->k.u64s, JKEYS_BTREE_ROOT, id, level);
 }
 
-static inline void bch_journal_add_prios(struct journal *j, struct jset *jset)
+static inline void bch_journal_add_prios(struct journal *j)
 {
-	bch_journal_add_entry(jset, j->prio_buckets, j->nr_prio_buckets,
+	bch_journal_add_entry(j, j->prio_buckets, j->nr_prio_buckets,
 			      JKEYS_PRIO_PTRS, 0, 0);
 }
 
@@ -799,7 +801,7 @@ static bool journal_entry_close(struct journal *j)
 		new.cur_entry_offset = S32_MAX;
 	} while ((v = cmpxchg(&j->reservations.v, old.v, new.v)) != old.v);
 
-	j->cur->data->u64s = old.cur_entry_offset;
+	journal_cur_write(j)->data->u64s = old.cur_entry_offset;
 
 	return old.count == 0;
 }
@@ -807,8 +809,10 @@ static bool journal_entry_close(struct journal *j)
 /* Number of u64s we can write to the current journal bucket */
 static void journal_calc_entry_size(struct journal *j)
 {
+	struct journal_write *w = journal_cur_write(j);
 	ssize_t u64s;
 
+	lockdep_assert_held(&j->lock);
 	BUG_ON(journal_entry_is_open(j) ||
 	       test_bit(JOURNAL_DIRTY, &j->flags));
 
@@ -827,12 +831,12 @@ static void journal_calc_entry_size(struct journal *j)
 	u64s -= JSET_KEYS_U64s + j->nr_prio_buckets;
 	u64s  = max_t(ssize_t, 0L, u64s);
 
-	if (u64s > j->cur->data->u64s) {
+	if (u64s > w->data->u64s) {
 		j->cur_entry_u64s	= max_t(ssize_t, 0L, u64s);
 
 		/* Handle any already added entries */
 		atomic64_set(&j->reservations.counter,
-			     journal_res_state(0, j->cur->data->u64s).v);
+			     journal_res_state(0, w->data->u64s).v);
 		wake_up(&j->wait);
 	}
 }
@@ -869,7 +873,7 @@ void bch_journal_start(struct cache_set *c)
 
 	list_for_each_entry(bl, &j->seq_blacklist, list)
 		if (!bl->written) {
-			bch_journal_add_entry(j->cur->data, &bl->seq, 1,
+			bch_journal_add_entry(j, &bl->seq, 1,
 					      JKEYS_JOURNAL_SEQ_BLACKLISTED,
 					      0, 0);
 
@@ -1278,10 +1282,9 @@ static void journal_next_bucket(struct cache_set *c)
 static void __bch_journal_next_entry(struct journal *j)
 {
 	struct journal_entry_pin_list pin_list, *p;
+	struct jset *jset;
 
-	j->cur = (j->cur == j->w)
-		? &j->w[1]
-		: &j->w[0];
+	change_bit(JOURNAL_WRITE_IDX, &j->flags);
 
 	/*
 	 * The fifo_push() needs to happen at the same time as j->seq is
@@ -1296,8 +1299,9 @@ static void __bch_journal_next_entry(struct journal *j)
 	if (test_bit(JOURNAL_REPLAY_DONE, &j->flags))
 		j->cur_pin_list = p;
 
-	j->cur->data->seq	= ++j->seq;
-	j->cur->data->u64s	= 0;
+	jset = journal_cur_write(j)->data;
+	jset->seq	= ++j->seq;
+	jset->u64s	= 0;
 }
 
 static void bch_journal_next_entry(struct journal *j)
@@ -1315,21 +1319,17 @@ static void journal_write_endio(struct bio *bio)
 		bch_cache_error(ca, "IO error %d writing journal",
 				bio->bi_error);
 
-	closure_put(&w->c->journal.io);
+	closure_put(&w->j->io);
 	percpu_ref_put(&ca->ref);
 }
 
 static void journal_write_done(struct closure *cl)
 {
 	struct journal *j = container_of(cl, struct journal, io);
-	struct journal_write *w;
+	struct journal_write *w = journal_prev_write(j);
 	unsigned long flags;
 
 	spin_lock_irqsave(&j->lock, flags);
-
-	w = (j->cur == j->w)
-		? &j->w[1]
-		: &j->w[0];
 
 	j->last_seq_ondisk = w->data->last_seq;
 
@@ -1350,7 +1350,8 @@ static void journal_write_locked(struct closure *cl)
 	struct journal *j =  container_of(cl, struct journal, io);
 	struct cache_set *c = container_of(j, struct cache_set, journal);
 	struct cache *ca;
-	struct journal_write *w = j->cur;
+	struct btree *b;
+	struct journal_write *w = journal_cur_write(j);
 	struct bkey_s_extent e = bkey_i_to_s_extent(&j->key);
 	struct bch_extent_ptr *ptr;
 	BKEY_PADDED(k) tmp;
@@ -1370,17 +1371,13 @@ static void journal_write_locked(struct closure *cl)
 
 	spin_lock(&c->btree_root_lock);
 
-	for (i = 0; i < BTREE_ID_NR; i++) {
-		struct btree *b = c->btree_roots[i];
-
-		if (b)
-			bch_journal_add_btree_root(w->data, i,
-						   &b->key, b->level);
-	}
+	for (i = 0; i < BTREE_ID_NR; i++)
+		if ((b = c->btree_roots[i]))
+			bch_journal_add_btree_root(j, i, &b->key, b->level);
 
 	spin_unlock(&c->btree_root_lock);
 
-	bch_journal_add_prios(j, w->data);
+	bch_journal_add_prios(j);
 
 	/* So last_seq is up to date */
 	journal_reclaim_fast(j);
@@ -1514,7 +1511,7 @@ static void journal_write_work(struct work_struct *work)
 	journal_unlock(j);
 }
 
-void bch_journal_add_keys(struct cache_set *c, struct journal_res *res,
+void bch_journal_add_keys(struct journal *j, struct journal_res *res,
 			  enum btree_id id, const struct bkey_i *k,
 			  unsigned level)
 {
@@ -1523,7 +1520,7 @@ void bch_journal_add_keys(struct cache_set *c, struct journal_res *res,
 	BUG_ON(!res->ref);
 	BUG_ON(actual > res->u64s);
 
-	bch_journal_add_entry_at(c->journal.cur->data, k, k->k.u64s,
+	bch_journal_add_entry_at(j, k, k->k.u64s,
 				 JKEYS_BTREE_KEYS, id, level, res->offset);
 
 	res->offset	+= actual;
@@ -1534,11 +1531,8 @@ void bch_journal_add_keys(struct cache_set *c, struct journal_res *res,
  * This function releases the journal write structure so other threads can
  * then proceed to add their keys as well.
  */
-void bch_journal_res_put(struct cache_set *c,
-			 struct journal_res *res,
-			 struct closure *parent)
+void bch_journal_res_put(struct journal *j, struct journal_res *res)
 {
-	struct journal *j = &c->journal;
 	union journal_res_state s;
 	bool do_write = false;
 
@@ -1549,18 +1543,15 @@ void bch_journal_res_put(struct cache_set *c,
 	while (res->u64s) {
 		unsigned actual = jset_u64s(0);
 
-		bch_journal_add_entry_at(j->cur->data, NULL, 0,
-					 JKEYS_BTREE_KEYS, 0, 0, res->offset);
+		bch_journal_add_entry_at(j, NULL, 0, JKEYS_BTREE_KEYS,
+					 0, 0, res->offset);
 		res->offset	+= actual;
 		res->u64s	-= actual;
 	}
 
-	bch_journal_set_dirty(c);
-
-	if (parent && test_bit(JOURNAL_DIRTY, &j->flags)) {
-		BUG_ON(!closure_wait(&j->cur->wait, parent));
-		set_bit(JOURNAL_NEED_WRITE, &j->flags);
-	}
+	if (!test_and_set_bit(JOURNAL_DIRTY, &j->flags))
+		schedule_delayed_work(&j->write_work,
+				      msecs_to_jiffies(j->delay_ms));
 
 	if (test_bit(JOURNAL_NEED_WRITE, &j->flags) &&
 	    !test_bit(JOURNAL_IO_IN_FLIGHT, &j->flags)) {
@@ -1619,11 +1610,11 @@ static inline bool journal_res_get_fast(struct journal *j,
 	return true;
 }
 
-static bool __journal_res_get(struct cache_set *c, struct journal_res *res,
+static bool __journal_res_get(struct journal *j, struct journal_res *res,
 			      unsigned u64s_min, unsigned u64s_max,
 			      u64 *start_time)
 {
-	struct journal *j = &c->journal;
+	struct cache_set *c = container_of(j, struct cache_set, journal);
 
 	while (1) {
 		if (journal_res_get_fast(j, res, u64s_min, u64s_max))
@@ -1687,18 +1678,16 @@ static bool __journal_res_get(struct cache_set *c, struct journal_res *res,
  * To ensure forward progress, the current task must not be holding any
  * btree node write locks.
  */
-void bch_journal_res_get(struct cache_set *c, struct journal_res *res,
+void bch_journal_res_get(struct journal *j, struct journal_res *res,
 			 unsigned u64s_min, unsigned u64s_max)
 {
-	struct journal *j = &c->journal;
 	u64 start_time = 0;
 
 	BUG_ON(res->ref);
 	BUG_ON(u64s_max < u64s_min);
-	BUG_ON(!j->cur);
 
 	wait_event(j->wait,
-		   __journal_res_get(c, res, u64s_min, u64s_max, &start_time));
+		   __journal_res_get(j, res, u64s_min, u64s_max, &start_time));
 
 	BUG_ON(!res->ref);
 
@@ -1706,67 +1695,70 @@ void bch_journal_res_get(struct cache_set *c, struct journal_res *res,
 		bch_time_stats_update(&j->full_time, start_time);
 }
 
-void bch_journal_set_dirty(struct cache_set *c)
+void bch_journal_push_seq(struct journal *j, u64 seq, struct closure *parent)
 {
-	if (!test_and_set_bit(JOURNAL_DIRTY, &c->journal.flags))
-		schedule_delayed_work(&c->journal.write_work,
-				      msecs_to_jiffies(c->journal.delay_ms));
-}
-
-void bch_journal_meta(struct cache_set *c, struct closure *parent)
-{
-	struct journal_res res;
-	unsigned u64s = jset_u64s(0);
-
-	memset(&res, 0, sizeof(res));
-
-	if (!CACHE_SYNC(&c->sb))
-		return;
-
-	bch_journal_res_get(c, &res, u64s, u64s);
-	if (res.ref) {
-		bch_journal_set_dirty(c);
-		bch_journal_res_put(c, &res, parent);
-	}
-}
-
-void bch_journal_push_seq(struct cache_set *c, u64 seq, struct closure *parent)
-{
-	struct journal *j = &c->journal;
-
 	spin_lock_irq(&j->lock);
 
 	BUG_ON(seq > j->seq);
 
 	if (seq == j->seq) {
-		BUG_ON(!test_bit(JOURNAL_REPLAY_DONE, &j->flags));
 		BUG_ON(!test_bit(JOURNAL_DIRTY, &j->flags));
-
-		BUG_ON(!closure_wait(&j->cur->wait, parent));
 		set_bit(JOURNAL_NEED_WRITE, &j->flags);
+		if (parent &&
+		    !closure_wait(&journal_cur_write(j)->wait, parent))
+			BUG();
 	} else if (seq + 1 == j->seq &&
 		   test_bit(JOURNAL_IO_IN_FLIGHT, &j->flags)) {
-		struct journal_write *w = (j->cur == j->w)
-			? &j->w[1]
-			: &j->w[0];
-
-		BUG_ON(!closure_wait(&w->wait, parent));
+		if (parent &&
+		    !closure_wait(&journal_prev_write(j)->wait, parent))
+			BUG();
 	}
 
 	journal_unlock(j);
 }
 
-void bch_journal_free(struct cache_set *c)
+void bch_journal_meta(struct journal *j, struct closure *parent)
 {
-	free_pages((unsigned long) c->journal.w[1].data, JSET_BITS);
-	free_pages((unsigned long) c->journal.w[0].data, JSET_BITS);
-	free_fifo(&c->journal.pin);
+	struct journal_res res;
+	unsigned u64s = jset_u64s(0);
+	u64 seq;
+
+	memset(&res, 0, sizeof(res));
+
+	bch_journal_res_get(j, &res, u64s, u64s);
+	seq = j->seq;
+	bch_journal_res_put(j, &res);
+
+	bch_journal_push_seq(j, seq, parent);
 }
 
-int bch_journal_alloc(struct cache_set *c)
+void bch_journal_flush(struct journal *j, struct closure *parent)
 {
-	struct journal *j = &c->journal;
+	u64 seq;
 
+	spin_lock_irq(&j->lock);
+	if (test_bit(JOURNAL_DIRTY, &j->flags)) {
+		seq = j->seq;
+	} else if (j->seq) {
+		seq = j->seq - 1;
+	} else {
+		spin_unlock_irq(&j->lock);
+		return;
+	}
+	spin_unlock_irq(&j->lock);
+
+	bch_journal_push_seq(j, seq, parent);
+}
+
+void bch_journal_free(struct journal *j)
+{
+	free_pages((unsigned long) j->w[1].data, JSET_BITS);
+	free_pages((unsigned long) j->w[0].data, JSET_BITS);
+	free_fifo(&j->pin);
+}
+
+int bch_journal_alloc(struct journal *j)
+{
 	spin_lock_init(&j->lock);
 	init_waitqueue_head(&j->wait);
 	INIT_DELAYED_WORK(&j->write_work, journal_write_work);
@@ -1782,8 +1774,8 @@ int bch_journal_alloc(struct cache_set *c)
 	atomic64_set(&j->reservations.counter,
 		     journal_res_state(0, S32_MAX).v);
 
-	j->w[0].c = c;
-	j->w[1].c = c;
+	j->w[0].j = j;
+	j->w[1].j = j;
 
 	if (!(init_fifo(&j->pin, JOURNAL_PIN, GFP_KERNEL)) ||
 	    !(j->w[0].data = (void *) __get_free_pages(GFP_KERNEL, JSET_BITS)) ||
@@ -1874,6 +1866,7 @@ int bch_journal_move(struct cache *ca)
 	unsigned i, nr_buckets;
 	u64 last_flushed_seq;
 	struct cache_set *c = ca->set;
+	struct journal *j = &c->journal;
 	int ret = 0;		/* Success */
 
 	closure_init_stack(&cl);
@@ -1886,7 +1879,7 @@ int bch_journal_move(struct cache *ca)
 		 * will call journal_next_bucket which notices that the
 		 * device is no longer writeable, and picks a new one.
 		 */
-		bch_journal_meta(c, &cl);
+		bch_journal_meta(j, &cl);
 		/* Wait for the meta-data write */
 		closure_sync(&cl);
 		BUG_ON(bch_journal_writing_to_device(ca));
@@ -1904,7 +1897,7 @@ int bch_journal_move(struct cache *ca)
 	 * we have newer journal entries in devices other than ca,
 	 * and wait for the meta data write to complete.
 	 */
-	bch_journal_meta(c, &cl);
+	bch_journal_meta(j, &cl);
 	closure_sync(&cl);
 
 	/*

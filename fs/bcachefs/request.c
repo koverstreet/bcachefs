@@ -594,20 +594,6 @@ static void cached_dev_write(struct cached_dev *dc, struct search *s)
 	continue_at(cl, cached_dev_write_complete, NULL);
 }
 
-static void cached_dev_nodata(struct closure *cl)
-{
-	struct search *s = container_of(cl, struct search, cl);
-	struct bio *bio = &s->bio.bio;
-
-	if (s->orig_bio->bi_opf & (REQ_PREFLUSH|REQ_FUA))
-		bch_journal_meta(s->iop.c, cl);
-
-	/* If it's a flush, we send the flush to the backing device too */
-	closure_bio_submit(bio, cl);
-
-	continue_at(cl, cached_dev_bio_complete, NULL);
-}
-
 /* Cached devices - read & write stuff */
 
 static void __cached_dev_make_request(struct request_queue *q, struct bio *bio)
@@ -627,13 +613,16 @@ static void __cached_dev_make_request(struct request_queue *q, struct bio *bio)
 		trace_bcache_request_start(s->d, bio);
 
 		if (!bio->bi_iter.bi_size) {
+			if (s->orig_bio->bi_opf & (REQ_PREFLUSH|REQ_FUA))
+				bch_journal_meta(&s->iop.c->journal, &s->cl);
+
 			/*
-			 * can't call bch_journal_meta from under
-			 * generic_make_request
+			 * If it's a flush, we send the flush to the backing
+			 * device too
 			 */
-			continue_at_nobarrier(&s->cl,
-					      cached_dev_nodata,
-					      d->c->wq);
+			closure_bio_submit(&s->bio.bio, &s->cl);
+
+			continue_at(&s->cl, cached_dev_bio_complete, NULL);
 		} else {
 			s->bypass = check_should_bypass(dc, bio, rw);
 
@@ -701,16 +690,6 @@ void bch_cached_dev_request_init(struct cached_dev *dc)
 
 /* Flash backed devices */
 
-static void flash_dev_nodata(struct closure *cl)
-{
-	struct search *s = container_of(cl, struct search, cl);
-
-	if (s->orig_bio->bi_opf & (REQ_PREFLUSH|REQ_FUA))
-		bch_journal_meta(s->iop.c, cl);
-
-	continue_at(cl, search_free, NULL);
-}
-
 static void __flash_dev_make_request(struct request_queue *q, struct bio *bio)
 {
 	struct search *s;
@@ -723,13 +702,11 @@ static void __flash_dev_make_request(struct request_queue *q, struct bio *bio)
 
 	if (!bio->bi_iter.bi_size) {
 		s = search_alloc(bio, d);
-		/*
-		 * can't call bch_journal_meta from under
-		 * generic_make_request
-		 */
-		continue_at_nobarrier(&s->cl,
-				      flash_dev_nodata,
-				      d->c->wq);
+
+		if (s->orig_bio->bi_opf & (REQ_PREFLUSH|REQ_FUA))
+			bch_journal_meta(&s->iop.c->journal, &s->cl);
+
+		continue_at(&s->cl, search_free, NULL);
 	} else if (rw) {
 		unsigned flags = 0;
 

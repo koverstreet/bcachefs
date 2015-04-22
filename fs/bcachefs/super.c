@@ -654,12 +654,14 @@ static void bch_cache_set_read_only(struct cache_set *c)
 	struct cached_dev *dc;
 	struct bcache_device *d;
 	struct radix_tree_iter iter;
+	struct closure cl;
 	void **slot;
 
 	struct cache *ca;
 	unsigned i;
 
 	lockdep_assert_held(&bch_register_lock);
+	closure_init_stack(&cl);
 
 	if (test_and_set_bit(CACHE_SET_RO, &c->flags))
 		return;
@@ -704,11 +706,10 @@ static void bch_cache_set_read_only(struct cache_set *c)
 	for_each_cache(ca, c, i)
 		__bch_cache_read_only(ca);
 
-	if (c->journal.cur) {
-		cancel_delayed_work_sync(&c->journal.write_work);
-		/* flush last journal entry if needed */
-		c->journal.write_work.work.func(&c->journal.write_work.work);
-	}
+	bch_journal_flush(&c->journal, &cl);
+	closure_sync(&cl);
+
+	cancel_delayed_work_sync(&c->journal.write_work);
 
 	bch_notify_cache_set_read_only(c);
 
@@ -757,7 +758,7 @@ static void cache_set_free(struct closure *cl)
 	bch_debug_exit_cache_set(c);
 
 	bch_btree_cache_free(c);
-	bch_journal_free(c);
+	bch_journal_free(&c->journal);
 
 	mutex_lock(&bch_register_lock);
 	for_each_cache(ca, c, i)
@@ -999,7 +1000,7 @@ static const char *bch_cache_set_alloc(struct cache_sb *sb,
 	    !(c->wq = alloc_workqueue("bcache", WQ_MEM_RECLAIM, 0)) ||
 	    bch_io_clock_init(&c->io_clock[READ]) ||
 	    bch_io_clock_init(&c->io_clock[WRITE]) ||
-	    bch_journal_alloc(c) ||
+	    bch_journal_alloc(&c->journal) ||
 	    bch_btree_cache_alloc(c) ||
 	    bch_bset_sort_state_init(&c->sort, ilog2(c->btree_pages)))
 		goto err;
@@ -1168,7 +1169,8 @@ static const char *run_cache_set(struct cache_set *c)
 		bch_journal_set_replay_done(&c->journal);
 
 		/* XXX: necessary? */
-		bch_journal_meta(c, &cl);
+		bch_journal_meta(&c->journal, &cl);
+		closure_sync(&cl);
 	}
 
 	bch_prio_timer_start(c, READ);
@@ -1750,7 +1752,8 @@ static void bch_cache_remove_work(struct work_struct *work)
 	c->journal.prio_buckets[ca->sb.nr_this_dev] = 0;
 	spin_unlock(&c->journal.lock);
 
-	bch_journal_meta(c, &cl);
+	/* write new prio pointers */
+	bch_journal_meta(&c->journal, &cl);
 	closure_sync(&cl);
 
 	__bcache_write_super(c); /* ups sb_write_mutex */

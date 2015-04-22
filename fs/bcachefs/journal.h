@@ -172,7 +172,7 @@ static inline void journal_pin_drop(struct journal *j,
 	}
 
 	if (atomic_dec_and_test(&pin->pin_list->count))
-		wake_up(&j->wait);
+		queue_work(system_long_wq, &j->reclaim_work);
 
 	pin->pin_list = NULL;
 }
@@ -189,20 +189,29 @@ struct bkey_i *bch_journal_find_btree_root(struct cache_set *, struct jset *,
 
 int bch_journal_seq_blacklisted(struct cache_set *, u64, struct btree *);
 
-struct journal_res {
-	bool			ref;
-	u16			offset;
-	u16			u64s;
-};
+static inline struct journal_write *journal_cur_write(struct journal *j)
+{
 
-void bch_journal_res_put(struct cache_set *, struct journal_res *,
-			 struct closure *);
-void bch_journal_res_get(struct cache_set *, struct journal_res *,
-			 unsigned, unsigned);
-void bch_journal_set_dirty(struct cache_set *);
-void bch_journal_add_keys(struct cache_set *, struct journal_res *,
+	return j->w + test_bit(JOURNAL_WRITE_IDX, &j->flags);
+}
+
+static inline struct journal_write *journal_prev_write(struct journal *j)
+{
+
+	return j->w + !test_bit(JOURNAL_WRITE_IDX, &j->flags);
+}
+
+void bch_journal_add_keys(struct journal *, struct journal_res *,
 			  enum btree_id, const struct bkey_i *,
 			  unsigned);
+
+void bch_journal_res_put(struct journal *, struct journal_res *);
+void bch_journal_res_get(struct journal *, struct journal_res *,
+			 unsigned, unsigned);
+
+void bch_journal_push_seq(struct journal *, u64, struct closure *);
+void bch_journal_meta(struct journal *, struct closure *);
+void bch_journal_flush(struct journal *, struct closure *);
 
 /*
  * Amount of space that will be taken up by some keys in the journal (i.e.
@@ -221,8 +230,6 @@ static inline bool journal_res_full(struct journal_res *res,
 
 void bch_journal_start(struct cache_set *);
 void bch_journal_mark(struct cache_set *, struct list_head *);
-void bch_journal_meta(struct cache_set *, struct closure *);
-void bch_journal_push_seq(struct cache_set *, u64, struct closure *);
 const char *bch_journal_read(struct cache_set *, struct list_head *);
 int bch_journal_replay(struct cache_set *, struct list_head *);
 
@@ -234,8 +241,8 @@ static inline void bch_journal_set_replay_done(struct journal *j)
 	spin_unlock_irq(&j->lock);
 }
 
-void bch_journal_free(struct cache_set *);
-int bch_journal_alloc(struct cache_set *);
+void bch_journal_free(struct journal *);
+int bch_journal_alloc(struct journal *);
 
 ssize_t bch_journal_print_debug(struct journal *, char *);
 

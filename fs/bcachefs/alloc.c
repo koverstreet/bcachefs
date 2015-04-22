@@ -297,7 +297,7 @@ static void bch_prio_write(struct cache *ca)
 					   c->journal.nr_prio_buckets);
 	spin_unlock_irq(&c->journal.lock);
 
-	bch_journal_meta(c, &cl);
+	bch_journal_meta(&c->journal, &cl);
 	closure_sync(&cl);
 
 	/*

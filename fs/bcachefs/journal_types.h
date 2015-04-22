@@ -15,7 +15,7 @@ struct journal_write {
 	struct jset		*data;
 #define JSET_BITS		5
 
-	struct cache_set	*c;
+	struct journal		*j;
 	struct closure_waitlist	wait;
 };
 
@@ -49,6 +49,12 @@ struct journal_seq_blacklist {
 	struct list_head	nodes;
 };
 
+struct journal_res {
+	bool			ref;
+	u16			offset;
+	u16			u64s;
+};
+
 union journal_res_state {
 	struct {
 		atomic64_t	counter;
@@ -64,20 +70,32 @@ union journal_res_state {
 	};
 };
 
+/*
+ * JOURNAL_DIRTY - current journal entry has stuff in it to write
+ *
+ * JOURNAL_NEED_WRITE - current (pending) journal entry should be written ASAP,
+ * either because something's waiting on the write to complete or because it's
+ * been dirty too long and the timer's expired.
+ *
+ * If JOURNAL_NEED_WRITE is set, JOURNAL_DIRTY must be set.
+ */
+
+enum {
+	JOURNAL_DIRTY,
+	JOURNAL_NEED_WRITE,
+	JOURNAL_IO_IN_FLIGHT,
+	JOURNAL_WRITE_IDX,
+	JOURNAL_REPLAY_DONE,
+};
+
 /* Embedded in struct cache_set */
 struct journal {
 	/* Fastpath stuff up front: */
 
 	unsigned long		flags;
-#define JOURNAL_NEED_WRITE	0
-#define JOURNAL_DIRTY		1
-#define JOURNAL_REPLAY_DONE	2
-#define JOURNAL_IO_IN_FLIGHT	3
 
 	union journal_res_state reservations;
 	unsigned		cur_entry_u64s;
-
-	struct journal_write	*cur;
 
 	/*
 	 * Two journal entries -- one is currently open for new entries, the
