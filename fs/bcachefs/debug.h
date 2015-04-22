@@ -2,6 +2,7 @@
 #define _BCACHE_DEBUG_H
 
 struct bio;
+struct btree;
 struct cached_dev;
 struct cache_set;
 

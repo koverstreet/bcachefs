@@ -38,14 +38,31 @@ DECLARE_EVENT_CLASS(bcache_request,
 		  (unsigned long long)__entry->orig_sector)
 );
 
+DECLARE_EVENT_CLASS(bpos,
+	TP_PROTO(struct bpos p),
+	TP_ARGS(p),
+
+	TP_STRUCT__entry(
+		__field(u64,	inode				)
+		__field(u64,	offset				)
+	),
+
+	TP_fast_assign(
+		__entry->inode	= p.inode;
+		__entry->offset	= p.offset;
+	),
+
+	TP_printk("%llu:%llu", __entry->inode, __entry->offset)
+);
+
 DECLARE_EVENT_CLASS(bkey,
 	TP_PROTO(const struct bkey *k),
 	TP_ARGS(k),
 
 	TP_STRUCT__entry(
-		__field(u32,	size				)
-		__field(u32,	inode				)
+		__field(u64,	inode				)
 		__field(u64,	offset				)
+		__field(u32,	size				)
 	),
 
 	TP_fast_assign(
@@ -54,7 +71,7 @@ DECLARE_EVENT_CLASS(bkey,
 		__entry->size	= k->size;
 	),
 
-	TP_printk("%u:%llu len %u", __entry->inode,
+	TP_printk("%llu:%llu len %u", __entry->inode,
 		  __entry->offset, __entry->size)
 );
 
@@ -372,6 +389,18 @@ DEFINE_EVENT(cache, bcache_cache_read_write,
 DEFINE_EVENT(cache, bcache_cache_read_write_done,
 	TP_PROTO(struct cache *ca),
 	TP_ARGS(ca)
+);
+
+/* Searching */
+
+DEFINE_EVENT(bpos, bkey_pack_pos_fail,
+	TP_PROTO(struct bpos p),
+	TP_ARGS(p)
+);
+
+DEFINE_EVENT(bpos, bkey_pack_pos_lossy_fail,
+	TP_PROTO(struct bpos p),
+	TP_ARGS(p)
 );
 
 /* Btree */

@@ -9,12 +9,14 @@
 
 #include "util.h"
 #include "bset.h"
+#include "bcache.h"
 
 #include <asm/unaligned.h>
 #include <linux/dynamic_fault.h>
 #include <linux/console.h>
 #include <linux/random.h>
 #include <linux/prefetch.h>
+#include <trace/events/bcachefs.h>
 
 static bool keys_out_of_order(const struct bkey_format *f,
 			      const struct bkey_packed *prev,
@@ -939,8 +941,10 @@ static struct bkey_packed *bset_search_tree(const struct bkey_format *format,
 	 * have.
 	 */
 	if (bkey_pack_pos_lossy(&packed_search, search, format) ==
-	    BKEY_PACK_POS_FAIL)
+	    BKEY_PACK_POS_FAIL) {
+		trace_bkey_pack_pos_lossy_fail(search);
 		return t->data->start;
+	}
 
 	while (1) {
 		if (likely(n << 4 < t->size)) {
@@ -1124,6 +1128,9 @@ void bch_btree_node_iter_init(struct btree_node_iter *iter,
 	struct bset_tree *t;
 	struct bkey_packed p, *packed_search =
 		bkey_pack_pos(&p, search, &b->format) ? &p : NULL;
+
+	if (!packed_search)
+		trace_bkey_pack_pos_fail(search);
 
 	__bch_btree_node_iter_init(iter, b, b->set);
 

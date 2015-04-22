@@ -79,6 +79,7 @@
  * and fails if the sequence number doesn't match.
  */
 
+#include "bcache.h"
 #include "bset.h"
 #include "debug.h"
 #include "six.h"
