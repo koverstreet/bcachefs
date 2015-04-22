@@ -653,6 +653,40 @@ unsigned bkey_greatest_differing_bit(const struct bkey_format *format,
 	}
 }
 
+unsigned bkey_ffs(const struct bkey_format *format,
+		  const struct bkey_packed *k)
+{
+	const u64 *p = high_word(format, k);
+	unsigned nr_key_bits = bkey_format_key_bits(format);
+	unsigned ret = 0, offset;
+
+	offset = nr_key_bits;
+	while (offset >= 64) {
+		p = next_word(p);
+		offset -= 64;
+	}
+
+	offset = 64 - offset;
+
+	while (nr_key_bits) {
+		unsigned bits = nr_key_bits + offset < 64
+			? nr_key_bits
+			: 64 - offset;
+
+		u64 mask = (~0ULL >> (64 - bits)) << offset;
+
+		if (*p & mask)
+			return ret + __ffs64(*p & mask) - offset;
+
+		p = prev_word(p);
+		nr_key_bits -= bits;
+		ret += bits;
+		offset = 0;
+	}
+
+	return 0;
+}
+
 static int __bkey_cmp_bits(unsigned nr_key_bits, const u64 *l, const u64 *r)
 {
 	u64 l_v, r_v;

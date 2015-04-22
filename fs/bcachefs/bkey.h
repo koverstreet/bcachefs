@@ -87,6 +87,7 @@ const char *bch_bkey_format_validate(struct bkey_format *);
 unsigned bkey_greatest_differing_bit(const struct bkey_format *,
 				     const struct bkey_packed *,
 				     const struct bkey_packed *);
+unsigned bkey_ffs(const struct bkey_format *, const struct bkey_packed *);
 
 int __bkey_cmp_left_packed(const struct bkey_format *,
 			   const struct bkey_packed *,

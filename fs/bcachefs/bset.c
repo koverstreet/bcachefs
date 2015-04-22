@@ -463,11 +463,11 @@ static void make_bfloat(struct bkey_format *format,
 	struct bkey_packed *r = is_power_of_2(j + 1)
 		? bset_bkey_idx(t->data, t->data->u64s - t->end.u64s)
 		: tree_to_bkey(t, j >> (ffz(j) + 1));
-	unsigned exponent, shift, key_bits_start =
+	unsigned exponent, shift, extra = 0, key_bits_start =
 		format->key_u64s * 64 - bkey_format_key_bits(format);
 
-	BUG_ON(m < l || m > r);
-	BUG_ON(bkey_next(p) != m);
+	EBUG_ON(m < l || m > r);
+	EBUG_ON(bkey_next(p) != m);
 
 	/*
 	 * for failed bfloats, the lookup code falls back to comparing against
@@ -483,17 +483,53 @@ static void make_bfloat(struct bkey_format *format,
 			 BKEY_MANTISSA_BITS + 1, 0);
 
 #ifdef __LITTLE_ENDIAN
-	shift = min(key_bits_start + exponent,
-		    format->key_u64s * 64 - BKEY_MANTISSA_BITS);
+	shift = key_bits_start + exponent;
 #endif
-	BUG_ON(shift >= BFLOAT_FAILED);
+	EBUG_ON(shift >= BFLOAT_FAILED);
 
+	/*
+	 * There might be fewer key bits than BKEY_MANTISSA_BITS:
+	 * bfloat_mantissa() is in the fast path so it doesn't check for this -
+	 * it's going to return some garbage bits we don't want.
+	 *
+	 * So firstly, ensure that the garbage bits are the least significant
+	 * bits:
+	 */
+	if (shift > format->key_u64s * 64 - BKEY_MANTISSA_BITS) {
+		shift = format->key_u64s * 64 - BKEY_MANTISSA_BITS;
+		extra = key_bits_start - shift;
+	}
+
+	/*
+	 * If we've got garbage bits, set them to all 1s - it's legal for the
+	 * bfloat to compare larger than the original key, but not smaller:
+	 */
 	f->exponent = shift;
-	f->mantissa = bfloat_mantissa(m, f) - 1;
+	f->mantissa = bfloat_mantissa(m, f) | ~(~0U << extra);
 
-	if (bfloat_mantissa(m, f) == bfloat_mantissa(p, f) &&
-	    shift > format->key_u64s * 64 - bkey_format_key_bits(format))
+	/*
+	 * The bfloat must be able to tell its key apart from the previous key -
+	 * if its key and the previous key don't differ in the required bits,
+	 * flag as failed:
+	 */
+	if (shift > key_bits_start &&
+	    f->mantissa == bfloat_mantissa(p, f)) {
 		f->exponent = BFLOAT_FAILED;
+		return;
+	}
+
+	/*
+	 * f->mantissa must compare >= the original key - for transitivity with
+	 * the comparison in bset_search_tree. If we're dropping set bits,
+	 * increment it:
+	 */
+	if (shift > key_bits_start &&
+	    shift > key_bits_start + bkey_ffs(format, m)) {
+		if (f->mantissa == BKEY_MANTISSA_MASK)
+			f->exponent = BFLOAT_FAILED;
+
+		f->mantissa++;
+	}
 }
 
 static void bset_alloc_tree(struct btree_keys *b, struct bset_tree *t)
@@ -900,8 +936,8 @@ EXPORT_SYMBOL(bch_bset_insert);
 __attribute__((flatten))
 static struct bkey_packed *bset_search_write_set(const struct bkey_format *f,
 				struct bset_tree *t,
-				const struct bkey_packed *packed_search,
-				struct bpos search)
+				struct bpos search,
+				const struct bkey_packed *packed_search)
 {
 	unsigned li = 0, ri = t->size;
 
@@ -920,27 +956,22 @@ static struct bkey_packed *bset_search_write_set(const struct bkey_format *f,
 
 __attribute__((flatten))
 static struct bkey_packed *bset_search_tree(const struct bkey_format *format,
-					    struct bset_tree *t,
-					    struct bpos search)
+				struct bset_tree *t,
+				struct bpos search,
+				const struct bkey_packed *packed_search)
 {
 	struct bkey_float *f = &t->tree[1];
 	unsigned inorder, n = 1;
-	struct bkey_packed packed_search;
-
-	/* don't ask. */
-	if (!search.snapshot-- &&
-	    !search.offset-- &&
-	    !search.inode--)
-		BUG();
+	struct bkey_packed lossy_packed_search;
 
 	/*
 	 * If there are bits in search that don't fit in the packed format,
-	 * packed_search will always compare less than search - it'll
+	 * lossy_packed_search will always compare less than search - it'll
 	 * effectively have 0s where search did not - so we can still use
-	 * packed_search and we'll just do more linear searching than we would
-	 * have.
+	 * lossy_packed_search and we'll just do more linear searching than we
+	 * would have.
 	 */
-	if (bkey_pack_pos_lossy(&packed_search, search, format) ==
+	if (bkey_pack_pos_lossy(&lossy_packed_search, search, format) ==
 	    BKEY_PACK_POS_FAIL) {
 		trace_bkey_pack_pos_lossy_fail(search);
 		return t->data->start;
@@ -961,21 +992,26 @@ static struct bkey_packed *bset_search_tree(const struct bkey_format *format,
 		f = &t->tree[n];
 
 		/*
-		 * n = (f->mantissa > bfloat_mantissa())
+		 * n *= 2;
+		 * if (bfloat_mantissa(search) >= f->mantissa)
+		 *	n++;
+		 *
+		 * n = (f->mantissa >= bfloat_mantissa(search))
 		 *	? n * 2
 		 *	: n * 2 + 1;
 		 *
-		 * We need to subtract 1 from f->mantissa for the sign bit trick
-		 * to work  - that's done in make_bfloat()
+		 * n = (f->mantissa - bfloat_mantissa(search) >= 0)
+		 *	? n * 2
+		 *	: n * 2 + 1;
 		 */
 		if (likely(f->exponent != BFLOAT_FAILED))
 			n = n * 2 + (((unsigned)
 				      (f->mantissa -
-				       bfloat_mantissa(&packed_search,
+				       bfloat_mantissa(&lossy_packed_search,
 						       f))) >> 31);
 		else
 			n = bkey_cmp_p_or_unp(format, tree_to_bkey(t, n),
-					      &packed_search, search) > 0
+					      &lossy_packed_search, search) >= 0
 				? n * 2
 				: n * 2 + 1;
 	} while (n < t->size);
@@ -1002,9 +1038,9 @@ static struct bkey_packed *bset_search_tree(const struct bkey_format *format,
  */
 __always_inline
 static struct bkey_packed *bch_bset_search(struct btree_keys *b,
-					   struct bset_tree *t,
-					   struct bpos search,
-					   struct bkey_packed *packed_search)
+				struct bset_tree *t,
+				struct bpos search,
+				struct bkey_packed *packed_search)
 {
 	const struct bkey_format *f = &b->format;
 	struct bkey_packed *m;
@@ -1042,9 +1078,9 @@ static struct bkey_packed *bch_bset_search(struct btree_keys *b,
 					       packed_search, search) >= 0))
 			return t->data->start;
 
-		m = bset_search_tree(f, t, search);
+		m = bset_search_tree(f, t, search, packed_search);
 	} else {
-		m = bset_search_write_set(f, t, packed_search, search);
+		m = bset_search_write_set(f, t, search, packed_search);
 	}
 
 	while (m != bset_bkey_last(t->data) &&
