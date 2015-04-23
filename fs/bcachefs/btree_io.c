@@ -732,6 +732,9 @@ static void bch_btree_node_write_dirty(struct btree *b, struct closure *parent)
 	six_unlock_read(&b->lock);
 }
 
+/* buffer up 4k before writing out a bset */
+#define BTREE_WRITE_SET_BUFFER         (4 << 10)
+
 /*
  * Write leaf nodes if the unwritten bset is getting too big:
  */
@@ -744,7 +747,7 @@ void bch_btree_node_write_lazy(struct btree *b, struct btree_iter *iter)
 
 	if ((max(round_up(bytes, block_bytes(iter->c)),
 		 PAGE_SIZE) - bytes < 48 ||
-	     bytes > 16 << 10) &&
+	     bytes > BTREE_WRITE_SET_BUFFER) &&
 	    b->io_mutex.count > 0)
 		bch_btree_node_write(b, NULL, iter);
 }
