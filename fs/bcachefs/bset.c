@@ -131,7 +131,12 @@ void bch_verify_btree_keys_accounting(struct btree_keys *b)
 #define BKEY_MANTISSA_BITS	(32 - BKEY_MID_BITS - BKEY_EXPONENT_BITS)
 #define BKEY_MANTISSA_MASK	((1 << BKEY_MANTISSA_BITS) - 1)
 
-#define BFLOAT_FAILED		((1 << BKEY_EXPONENT_BITS) - 1)
+#define BFLOAT_EXPONENT_MAX	((1 << BKEY_EXPONENT_BITS) - 1)
+
+#define BFLOAT_FAILED_UNPACKED	(BFLOAT_EXPONENT_MAX - 0)
+#define BFLOAT_FAILED_PREV	(BFLOAT_EXPONENT_MAX - 1)
+#define BFLOAT_FAILED_OVERFLOW	(BFLOAT_EXPONENT_MAX - 2)
+#define BFLOAT_FAILED		(BFLOAT_EXPONENT_MAX - 2)
 
 #define KEY_WORDS		BITS_TO_LONGS(1 << BKEY_EXPONENT_BITS)
 
@@ -473,11 +478,12 @@ static void make_bfloat(struct bkey_format *format,
 	 * for failed bfloats, the lookup code falls back to comparing against
 	 * the original key.
 	 */
-	f->exponent = BFLOAT_FAILED;
 
 	if (!bkey_packed(l) || !bkey_packed(r) ||
-	    !bkey_packed(p) || !bkey_packed(m))
+	    !bkey_packed(p) || !bkey_packed(m)) {
+		f->exponent = BFLOAT_FAILED_UNPACKED;
 		return;
+	}
 
 	exponent = max_t(int, bkey_greatest_differing_bit(format, l, r) -
 			 BKEY_MANTISSA_BITS + 1, 0);
@@ -514,7 +520,7 @@ static void make_bfloat(struct bkey_format *format,
 	 */
 	if (shift > key_bits_start &&
 	    f->mantissa == bfloat_mantissa(p, f)) {
-		f->exponent = BFLOAT_FAILED;
+		f->exponent = BFLOAT_FAILED_PREV;
 		return;
 	}
 
@@ -526,7 +532,7 @@ static void make_bfloat(struct bkey_format *format,
 	if (shift > key_bits_start &&
 	    shift > key_bits_start + bkey_ffs(format, m)) {
 		if (f->mantissa == BKEY_MANTISSA_MASK)
-			f->exponent = BFLOAT_FAILED;
+			f->exponent = BFLOAT_FAILED_OVERFLOW;
 
 		f->mantissa++;
 	}
@@ -1002,7 +1008,7 @@ static struct bkey_packed *bset_search_tree(const struct bkey_format *format,
 		 *	? n * 2
 		 *	: n * 2 + 1;
 		 */
-		if (likely(f->exponent != BFLOAT_FAILED))
+		if (likely(f->exponent < BFLOAT_FAILED))
 			n = n * 2 + (((unsigned)
 				      (f->mantissa -
 				       bfloat_mantissa(packed_search,
@@ -1708,8 +1714,18 @@ void bch_btree_keys_stats(struct btree_keys *b, struct bset_stats *stats)
 				stats->floats += t->size - 1;
 
 			for (j = 1; j < t->size; j++)
-				if (t->tree[j].exponent == BFLOAT_FAILED)
-					stats->failed++;
+				switch (t->tree[j].exponent) {
+				case BFLOAT_FAILED_UNPACKED:
+					stats->failed_unpacked++;
+					break;
+				case BFLOAT_FAILED_PREV:
+					stats->failed_prev++;
+					break;
+				case BFLOAT_FAILED_OVERFLOW:
+					stats->failed_overflow++;
+					break;
+				}
+
 		} else {
 			stats->sets_unwritten++;
 			stats->bytes_unwritten += bytes;

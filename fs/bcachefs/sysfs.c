@@ -493,11 +493,16 @@ static int bch_bset_print_stats(struct cache_set *c, char *buf)
 			"written key bytes:	%zu\n"
 			"unwritten key bytes:	%zu\n"
 			"floats:			%zu\n"
-			"failed:			%zu\n",
+			"failed unpacked:	%zu\n"
+			"failed prev:		%zu\n"
+			"failed overflow:	%zu\n",
 			nodes,
 			stats.sets_written, stats.sets_unwritten,
 			stats.bytes_written, stats.bytes_unwritten,
-			stats.floats, stats.failed);
+			stats.floats,
+			stats.failed_unpacked,
+			stats.failed_prev,
+			stats.failed_overflow);
 }
 
 static unsigned bch_root_usage(struct cache_set *c)

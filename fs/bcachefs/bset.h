@@ -571,7 +571,10 @@ static inline void bch_btree_sort(struct btree_keys *b,
 struct bset_stats {
 	size_t sets_written, sets_unwritten;
 	size_t bytes_written, bytes_unwritten;
-	size_t floats, failed;
+	size_t floats;
+	size_t failed_unpacked;
+	size_t failed_prev;
+	size_t failed_overflow;
 };
 
 void bch_btree_keys_stats(struct btree_keys *, struct bset_stats *);

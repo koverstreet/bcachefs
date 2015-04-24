@@ -323,7 +323,10 @@ static ssize_t bch_read_btree_formats(struct file *file, char __user *buf,
 				     "l %u %llu:%llu - %llu:%llu:\n"
 				     "\tformat: u64s %u fields %u %u %u %u %u\n"
 				     "\tpacked %u unpacked %u u64s %u\n"
-				     "\tfloats %zu failed %zu\n",
+				     "\tfloats %zu\n"
+				     "\tfailed unpacked %zu\n"
+				     "\tfailed prev %zu\n"
+				     "\tfailed overflow %zu\n",
 				     b->level,
 				     b->data->min_key.inode,
 				     b->data->min_key.offset,
@@ -339,7 +342,9 @@ static ssize_t bch_read_btree_formats(struct file *file, char __user *buf,
 				     b->keys.nr_unpacked_keys,
 				     b->keys.nr_live_u64s,
 				     stats.floats,
-				     stats.failed);
+				     stats.failed_unpacked,
+				     stats.failed_prev,
+				     stats.failed_overflow);
 
 		err = flush_buf(i);
 		if (err)
