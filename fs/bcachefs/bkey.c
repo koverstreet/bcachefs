@@ -587,6 +587,17 @@ struct bkey_format bch_bkey_format_done(struct bkey_format_state *s)
 		ret.bits_per_field[i]	= fls64(s->field_max[i] -
 						ret.field_offset[i]);
 
+		/*
+		 * We don't want it to be possible for the packed format to
+		 * represent fields bigger than a u64... that will cause
+		 * confusion and issues (like with bkey_packed_successor())
+		 */
+
+		ret.field_offset[i] = ret.bits_per_field[i] != 64
+			? min(ret.field_offset[i], U64_MAX -
+			      ((1ULL << ret.bits_per_field[i]) - 1))
+			: 0;
+
 		bits += ret.bits_per_field[i];
 	}
 
@@ -605,6 +616,13 @@ const char *bch_bkey_format_validate(struct bkey_format *f)
 	for (i = 0; i < f->nr_fields; i++) {
 		if (f->bits_per_field[i] > 64)
 			return "invalid format: field too large";
+
+		if ((f->bits_per_field[i] == 64 &&
+		     f->field_offset[i]) ||
+		    (f->field_offset[i] +
+		     ((1ULL << f->bits_per_field[i]) - 1) <
+		     f->field_offset[i]))
+			return "invalid format: offset + bits overflow";
 
 		bits += f->bits_per_field[i];
 	}
