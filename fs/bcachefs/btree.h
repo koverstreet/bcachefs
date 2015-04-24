@@ -328,14 +328,10 @@ static inline void __btree_iter_node_set(struct btree_iter *iter,
 					 struct btree *b,
 					 struct bpos pos)
 {
-	struct bpos search = iter->is_extents && bkey_cmp(pos, POS_MAX)
-		? bkey_successor(pos)
-		: pos;
-
 	iter->lock_seq[b->level] = b->lock.state.seq;
 	iter->nodes[b->level] = b;
-	bch_btree_node_iter_init(&iter->node_iters[b->level],
-				 &b->keys, search);
+	bch_btree_node_iter_init(&iter->node_iters[b->level], &b->keys,
+				 pos, iter->is_extents);
 }
 
 static inline void btree_iter_node_set(struct btree_iter *iter, struct btree *b)

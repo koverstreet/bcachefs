@@ -18,6 +18,23 @@
 #include <linux/prefetch.h>
 #include <trace/events/bcachefs.h>
 
+/*
+ * There are never duplicate live keys in the btree - but including keys that
+ * have been flagged as deleted (and will be cleaned up later) we _will_ see
+ * duplicates.
+ *
+ * Sort order is important here:
+ *  - For extents, the deleted keys have to come last. This is because we're
+ *    using bkey_deleted() as a proxy for k->size == 0, and we still have to
+ *    maintain the invariant that
+ *    bkey_cmp(k->p, bkey_start_pos(bkey_next(k)) <= 0)
+ *
+ *    i.e. a key can't end after the start of the next key.
+ *
+ * - For non extents, deleted keys must come first.
+ *   XXX: why is this?
+ */
+
 static bool keys_out_of_order(const struct bkey_format *f,
 			      const struct bkey_packed *prev,
 			      const struct bkey_packed *next,
@@ -183,7 +200,7 @@ static inline size_t bset_tree_bytes(struct btree_keys *b)
 /* Space required for the prev pointers */
 static inline size_t bset_prev_bytes(struct btree_keys *b)
 {
-	return btree_keys_cachelines(b) * sizeof(uint8_t);
+	return btree_keys_cachelines(b) * sizeof(u8);
 }
 
 /* Memory allocation */
@@ -428,7 +445,7 @@ static struct bkey_packed *tree_to_bkey(struct bset_tree *t, unsigned j)
 
 static struct bkey_packed *tree_to_prev_bkey(struct bset_tree *t, unsigned j)
 {
-	return (void *) (((uint64_t *) tree_to_bkey(t, j)) - t->prev[j]);
+	return (void *) (((u64 *) tree_to_bkey(t, j)) - t->prev[j]);
 }
 
 /*
@@ -516,10 +533,12 @@ static void make_bfloat(struct bkey_format *format,
 	/*
 	 * The bfloat must be able to tell its key apart from the previous key -
 	 * if its key and the previous key don't differ in the required bits,
-	 * flag as failed:
+	 * flag as failed - unless the keys are actually equal, in which case
+	 * we aren't required to return a specific one:
 	 */
 	if (shift > key_bits_start &&
-	    f->mantissa == bfloat_mantissa(p, f)) {
+	    f->mantissa == bfloat_mantissa(p, f) &&
+	    bkey_cmp_packed(format, p, m)) {
 		f->exponent = BFLOAT_FAILED_PREV;
 		return;
 	}
@@ -1169,8 +1188,49 @@ static void __bch_btree_node_iter_init(struct btree_node_iter *iter,
 	iter->is_extents = b->ops->is_extents;
 }
 
+/**
+ * bch_btree_node_iter_init - initialize a btree node iterator, starting from a
+ * given position
+ *
+ * Main entry point to the lookup code for individual btree nodes:
+ *
+ * NOTE:
+ *
+ * When you don't filter out deleted keys, btree nodes _do_ contain duplicate
+ * keys. This doesn't matter for most code, but it does matter for lookups.
+ *
+ * Some adjacent keys with a string of equal keys:
+ *	i j k k k k l m
+ *
+ * If you search for k, the lookup code isn't guaranteed to return you any
+ * specific k. The lookup code is conceptually doing a binary search and
+ * iterating backwards is very expensive so if the pivot happens to land at the
+ * last k that's what you'll get.
+ *
+ * This works out ok, but it's something to be aware of:
+ *
+ *  - For non extents, we guarantee that the live key comes last - see
+ *    btree_node_iter_cmp(), keys_out_of_order(). So the duplicates you don't
+ *    see will only be deleted keys you don't care about.
+ *
+ *  - For extents, deleted keys sort last (see the comment at the top of this
+ *    file). But when you're searching for extents, you actually want the first
+ *    key strictly greater than your search key - an extent that compares equal
+ *    to the search key is going to have 0 sectors after the search key.
+ *
+ *    But this does mean that we can't just search for
+ *    bkey_successor(start_of_range) to get the first extent that overlaps with
+ *    the range we want - if we're unlucky and there's an extent that ends
+ *    exactly where we searched, then there could be a deleted key at the same
+ *    position and we'd get that when we search instead of the preceding extent
+ *    we needed.
+ *
+ *    So we've got to search for start_of_range, then after the lookup iterate
+ *    past any extents that compare equal to the position we searched for.
+ */
 void bch_btree_node_iter_init(struct btree_node_iter *iter,
-			      struct btree_keys *b, struct bpos search)
+			      struct btree_keys *b, struct bpos search,
+			      bool is_for_extents)
 {
 	struct bset_tree *t;
 	struct bkey_packed p, *packed_search, *lossy_packed_search;
@@ -1202,6 +1262,15 @@ void bch_btree_node_iter_init(struct btree_node_iter *iter,
 							 packed_search,
 							 lossy_packed_search),
 					 bset_bkey_last(t->data));
+
+	if (is_for_extents) {
+		struct bkey_packed *m;
+
+		while ((m = bch_btree_node_iter_peek_all(iter, b)) &&
+		       (bkey_cmp_p_or_unp(&b->format, m,
+					  packed_search, search) == 0))
+			bch_btree_node_iter_advance(iter, b);
+	}
 }
 EXPORT_SYMBOL(bch_btree_node_iter_init);
 
@@ -1533,7 +1602,7 @@ static void __btree_sort(struct btree_keys *b, struct btree_node_iter *iter,
 			 btree_keys_sort_fn sort,
 			 struct bset_sort_state *state)
 {
-	uint64_t start_time;
+	u64 start_time;
 	bool used_mempool = false;
 	struct bset *out = (void *) __get_free_pages(__GFP_NOWARN|GFP_NOWAIT,
 						     order);
@@ -1642,7 +1711,7 @@ void bch_btree_sort_into(struct btree_keys *dst,
 			 ptr_filter_fn filter,
 			 struct bset_sort_state *state)
 {
-	uint64_t start_time = local_clock();
+	u64 start_time = local_clock();
 	struct btree_node_iter iter;
 
 	bch_btree_node_iter_init_from_start(&iter, src);
@@ -1665,7 +1734,7 @@ void bch_btree_sort_into(struct btree_keys *dst,
 	bch_verify_btree_keys_accounting(dst);
 }
 
-#define SORT_CRIT	(4096 / sizeof(uint64_t))
+#define SORT_CRIT	(4096 / sizeof(u64))
 
 void bch_btree_sort_lazy(struct btree_keys *b,
 			 struct bset_sort_state *state)

@@ -148,40 +148,6 @@ struct btree_node_iter;
 struct btree_node_iter_set;
 struct bkey_float;
 
-#define MAX_BSETS		3U
-
-struct bset_tree {
-	/*
-	 * We construct a binary tree in an array as if the array
-	 * started at 1, so that things line up on the same cachelines
-	 * better: see comments in bset.c at cacheline_to_bkey() for
-	 * details
-	 */
-
-	/* size of the binary tree and prev array */
-	unsigned		size;
-
-	/* function of size - precalculated for to_inorder() */
-	unsigned		extra;
-
-	/* copy of the last key in the set */
-	struct bkey_packed	end;
-	struct bkey_float	*tree;
-
-	/*
-	 * The nodes in the bset tree point to specific keys - this
-	 * array holds the sizes of the previous key.
-	 *
-	 * Conceptually it's a member of struct bkey_float, but we want
-	 * to keep bkey_float to 4 bytes and prev isn't used in the fast
-	 * path.
-	 */
-	uint8_t			*prev;
-
-	/* The actual btree node, with pointers to each sorted set */
-	struct bset		*data;
-};
-
 typedef bool (*ptr_filter_fn)(struct btree_keys *, struct bkey_s);
 
 typedef bool (*iter_cmp_fn)(struct btree_node_iter_set,
@@ -212,6 +178,40 @@ struct btree_keys_ops {
 	 * key itself in a couple places
 	 */
 	bool		is_extents;
+};
+
+#define MAX_BSETS		3U
+
+struct bset_tree {
+	/*
+	 * We construct a binary tree in an array as if the array
+	 * started at 1, so that things line up on the same cachelines
+	 * better: see comments in bset.c at cacheline_to_bkey() for
+	 * details
+	 */
+
+	/* size of the binary tree and prev array */
+	unsigned		size;
+
+	/* function of size - precalculated for to_inorder() */
+	unsigned		extra;
+
+	/* copy of the last key in the set */
+	struct bkey_packed	end;
+	struct bkey_float	*tree;
+
+	/*
+	 * The nodes in the bset tree point to specific keys - this
+	 * array holds the sizes of the previous key.
+	 *
+	 * Conceptually it's a member of struct bkey_float, but we want
+	 * to keep bkey_float to 4 bytes and prev isn't used in the fast
+	 * path.
+	 */
+	u8			*prev;
+
+	/* The actual btree node, with pointers to each sorted set */
+	struct bset		*data;
 };
 
 struct btree_keys {
@@ -407,7 +407,7 @@ struct btree_node_iter {
 void bch_btree_node_iter_push(struct btree_node_iter *, struct btree_keys *,
 			      struct bkey_packed *, struct bkey_packed *);
 void bch_btree_node_iter_init(struct btree_node_iter *, struct btree_keys *,
-			      struct bpos);
+			      struct bpos, bool);
 void bch_btree_node_iter_init_from_start(struct btree_node_iter *,
 					 struct btree_keys *);
 struct bkey_packed *bch_btree_node_iter_bset_pos(struct btree_node_iter *,
