@@ -262,14 +262,11 @@ static inline void rw_unlock(bool w, struct btree *b)
 
 void bch_btree_node_read_done(struct btree *);
 void __bch_btree_node_write(struct btree *, struct closure *);
-void bch_btree_node_write(struct btree *, struct closure *);
 void bch_btree_flush(struct cache_set *);
 
-void bch_btree_set_root(struct btree *);
-struct btree *bch_btree_root_alloc(struct cache_set *, enum btree_id);
-struct btree *bch_btree_node_get(struct cache_set *, struct btree_op *,
-				 struct bkey *, int, bool,
-				 struct btree *);
+int bch_btree_root_alloc(struct cache_set *, enum btree_id, struct closure *);
+int bch_btree_root_read(struct cache_set *, enum btree_id,
+			struct bkey *, unsigned);
 
 int bch_btree_insert_check_key(struct btree *, struct btree_op *,
 			       struct bkey *);

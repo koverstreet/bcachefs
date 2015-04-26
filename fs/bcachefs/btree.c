@@ -483,7 +483,7 @@ void __bch_btree_node_write(struct btree *b, struct closure *parent)
 	b->written += set_blocks(i, block_bytes(b->c));
 }
 
-void bch_btree_node_write(struct btree *b, struct closure *parent)
+static void bch_btree_node_write(struct btree *b, struct closure *parent)
 {
 	lockdep_assert_held(&b->lock);
 
@@ -1017,9 +1017,10 @@ err:
  * The btree node will have either a read or a write lock held, depending on
  * the @write parameter.
  */
-struct btree *bch_btree_node_get(struct cache_set *c, struct btree_op *op,
-				 struct bkey *k, int level, bool write,
-				 struct btree *parent)
+static struct btree *bch_btree_node_get(struct cache_set *c,
+					struct btree_op *op, struct bkey *k,
+					int level, bool write,
+					struct btree *parent)
 {
 	int i = 0;
 	struct btree *b;
@@ -1087,6 +1088,30 @@ static void btree_node_prefetch(struct btree *parent, struct bkey *k)
 }
 
 /* Btree alloc */
+
+static void bch_btree_set_root(struct btree *b)
+{
+	struct closure cl;
+
+	closure_init_stack(&cl);
+
+	trace_bcache_btree_set_root(b);
+
+	BUG_ON(!b->written);
+
+	mutex_lock(&b->c->btree_cache_lock);
+	list_del_init(&b->list);
+	mutex_unlock(&b->c->btree_cache_lock);
+
+	spin_lock(&b->c->btree_root_lock);
+	btree_node_root(b) = b;
+	spin_unlock(&b->c->btree_root_lock);
+
+	bch_recalc_btree_reserve(b->c);
+
+	bch_journal_meta(b->c, &cl);
+	closure_sync(&cl);
+}
 
 static void btree_node_free(struct btree *b)
 {
@@ -1192,22 +1217,6 @@ static int __btree_check_reserve(struct cache_set *c,
 	return mca_cannibalize_lock(c, cl);
 }
 
-struct btree *bch_btree_root_alloc(struct cache_set *c, enum btree_id id)
-{
-	struct btree_op op;
-
-	bch_btree_op_init(&op, id, SHRT_MAX);
-
-	while (1) {
-		if (__btree_check_reserve(c, id, 1, &op.cl)) {
-			closure_sync(&op.cl);
-			continue;
-		}
-
-		return bch_btree_node_alloc(c, NULL, 0, id, NULL);
-	}
-}
-
 static int btree_check_reserve(struct btree *b, struct btree_op *op)
 {
 	enum btree_id id = b->btree_id;
@@ -1216,6 +1225,57 @@ static int btree_check_reserve(struct btree *b, struct btree_op *op)
 
 	return __btree_check_reserve(b->c, reserve, required,
 				     op ? &op->cl : NULL);
+}
+
+int bch_btree_root_alloc(struct cache_set *c, enum btree_id id,
+			 struct closure *cl)
+{
+	struct btree_op op;
+	struct btree *b;
+
+	bch_btree_op_init(&op, id, SHRT_MAX);
+
+	while (__btree_check_reserve(c, id, 1, &op.cl))
+		closure_sync(&op.cl);
+
+	b = bch_btree_node_alloc(c, NULL, 0, id, NULL);
+	if (!b)
+		return -EINVAL;
+
+	mutex_lock(&b->write_lock);
+	bkey_copy_key(&b->key, &MAX_KEY);
+	bch_btree_node_write(b, cl);
+	mutex_unlock(&b->write_lock);
+
+	bch_btree_set_root(b);
+	rw_unlock(true, b);
+
+	return 0;
+}
+
+int bch_btree_root_read(struct cache_set *c, enum btree_id id,
+			struct bkey *k, unsigned level)
+{
+	struct btree_op op;
+	struct btree *b;
+
+	bch_btree_op_init(&op, id, SHRT_MAX);
+
+	while (IS_ERR(b = bch_btree_node_get(c, &op, k, level, true, NULL))) {
+		if (PTR_ERR(b) == -EAGAIN)
+			closure_sync(&op.cl);
+		else if (PTR_ERR(b) == -EINTR)
+			BUG();
+		else
+			return PTR_ERR(b);
+	}
+
+	list_del_init(&b->list);
+	rw_unlock(true, b);
+
+	c->btree_roots[id] = b;
+
+	return 0;
 }
 
 /* Garbage collection */
@@ -2534,30 +2594,6 @@ int bch_btree_insert(struct cache_set *c, enum btree_id id,
 		return -ESRCH;
 
 	return 0;
-}
-
-void bch_btree_set_root(struct btree *b)
-{
-	struct closure cl;
-
-	closure_init_stack(&cl);
-
-	trace_bcache_btree_set_root(b);
-
-	BUG_ON(!b->written);
-
-	mutex_lock(&b->c->btree_cache_lock);
-	list_del_init(&b->list);
-	mutex_unlock(&b->c->btree_cache_lock);
-
-	spin_lock(&b->c->btree_root_lock);
-	btree_node_root(b) = b;
-	spin_unlock(&b->c->btree_root_lock);
-
-	bch_recalc_btree_reserve(b->c);
-
-	bch_journal_meta(b->c, &cl);
-	closure_sync(&cl);
 }
 
 /* Map across nodes or keys */

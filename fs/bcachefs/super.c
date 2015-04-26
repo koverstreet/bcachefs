@@ -1507,7 +1507,6 @@ static void run_cache_set(struct cache_set *c)
 	const char *err = "cannot allocate memory";
 	struct cached_dev *dc, *t;
 	struct cache *ca;
-	struct btree *b;
 	struct closure cl;
 	unsigned i, id;
 
@@ -1521,7 +1520,6 @@ static void run_cache_set(struct cache_set *c)
 
 	if (CACHE_SYNC(&c->sb)) {
 		LIST_HEAD(journal);
-		struct bkey *k;
 		struct jset *j;
 		struct jset_keys *jk;
 		u64 *prio_bucket_ptrs = NULL;
@@ -1564,38 +1562,19 @@ static void run_cache_set(struct cache_set *c)
 		 */
 
 		for (id = 0; id < BTREE_ID_NR; id++) {
-			struct btree_op op;
 			unsigned level;
+			struct bkey *k;
 
+			err = "bad btree root";
 			k = bch_journal_find_btree_root(c, j, id, &level);
-			if (!k) {
-				err = "bad btree root";
-				if (id == BTREE_ID_EXTENTS)
-					goto err;
-				else
-					continue;
-			}
+			if (!k && id == BTREE_ID_EXTENTS)
+				goto err;
+			if (!k)
+				continue;
 
 			err = "error reading btree root";
-			bch_btree_op_init(&op, id, 0);
-			while (1) {
-				b = bch_btree_node_get(c, &op, k, level,
-						       true, NULL);
-				if (PTR_ERR(b) == -EAGAIN) {
-					closure_sync(&op.cl);
-					continue;
-				} else if (PTR_ERR(b) == -EINTR) {
-					BUG();
-				} else if (IS_ERR_OR_NULL(b)) {
-					goto err;
-				}
-				break;
-			}
-
-			list_del_init(&b->list);
-			rw_unlock(true, b);
-
-			c->btree_roots[id] = b;
+			if (bch_btree_root_read(c, id, k, level))
+				goto err;
 		}
 
 		err = "error in recovery";
@@ -1645,21 +1624,10 @@ static void run_cache_set(struct cache_set *c)
 			bch_prio_write(ca);
 		mutex_unlock(&c->bucket_lock);
 
-		for (id = 0; id < BTREE_ID_NR; id++) {
-			err = "cannot allocate new btree root";
-
-			b = bch_btree_root_alloc(c, id);
-			if (!b)
+		err = "cannot allocate new btree root";
+		for (id = 0; id < BTREE_ID_NR; id++)
+			if (bch_btree_root_alloc(c, id, &cl))
 				goto err;
-
-			mutex_lock(&b->write_lock);
-			bkey_copy_key(&b->key, &MAX_KEY);
-			bch_btree_node_write(b, &cl);
-			mutex_unlock(&b->write_lock);
-
-			bch_btree_set_root(b);
-			rw_unlock(true, b);
-		}
 
 		/*
 		 * We don't want to write the first journal entry until
