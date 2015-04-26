@@ -91,7 +91,7 @@ void bch_submit_bbio(struct bbio *b, struct cache *ca, const struct bkey *k,
 
 	b->key = *k;
 	b->ptr = *ptr;
-	bch_set_extent_ptrs(&b->key, 1);
+	bch_set_extent_ptrs(bkey_i_to_extent(&b->key), 1);
 	bch_bbio_prep(b, ca);
 	b->submit_time_us = local_clock_us();
 
@@ -112,7 +112,7 @@ void bch_submit_bbio_replicas(struct bio *bio, struct cache_set *c,
 	unsigned ptr;
 
 	for (ptr = ptrs_from;
-	     ptr < bch_extent_ptrs(&e->k);
+	     ptr < bch_extent_ptrs(e);
 	     ptr++) {
 		rcu_read_lock();
 		ca = PTR_CACHE(c, &e->v.ptr[ptr]);
@@ -126,7 +126,7 @@ void bch_submit_bbio_replicas(struct bio *bio, struct cache_set *c,
 			break;
 		}
 
-		if (ptr + 1 < bch_extent_ptrs(&e->k)) {
+		if (ptr + 1 < bch_extent_ptrs(e)) {
 			struct bio *n = bio_clone_fast(bio, GFP_NOIO,
 						       ca->replica_set);
 			n->bi_end_io		= bio->bi_end_io;
@@ -355,7 +355,8 @@ static void bch_write_error(struct closure *cl)
 	while (src != op->insert_keys.top) {
 		struct bkey *n = bkey_next(src);
 
-		bch_set_extent_ptrs(src, 0);
+		set_bkey_val_u64s(src, 0);
+		src->type = KEY_TYPE_DELETED;
 		memmove(dst, src, bkey_bytes(src));
 
 		dst = bkey_next(dst);
@@ -403,7 +404,7 @@ static void __bch_write(struct closure *cl)
 	}
 
 	bch_extent_drop_stale(op->c, &op->insert_key);
-	ptrs_from = bch_extent_ptrs(&op->insert_key);
+	ptrs_from = bch_extent_ptrs(bkey_i_to_extent(&op->insert_key));
 
 	/*
 	 * Journal writes are marked REQ_PREFLUSH; if the original write was a

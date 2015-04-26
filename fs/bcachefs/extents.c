@@ -208,10 +208,11 @@ static bool __ptr_invalid(const struct cache_set *c, const struct bkey *k)
 		return false;
 
 	case BCH_EXTENT:
-		if (bch_extent_ptrs(k) > BKEY_EXTENT_PTRS_MAX)
+		e = bkey_i_to_extent_c(k);
+
+		if (bch_extent_ptrs(e) > BKEY_EXTENT_PTRS_MAX)
 			return true;
 
-		e = bkey_i_to_extent_c(k);
 		rcu_read_lock();
 
 		extent_for_each_online_device(c, e, ptr, ca) {
@@ -255,9 +256,9 @@ static const char *bch_ptr_status(const struct cache_set *c,
 			return "stale";
 	}
 
-	if (!bkey_cmp(k->p, POS_MIN))
+	if (!bkey_cmp(e->k.p, POS_MIN))
 		return "bad, null key";
-	if (!bch_extent_ptrs(k))
+	if (!bch_extent_ptrs(e))
 		return "bad, no pointers";
 	if (!k->size)
 		return "zeroed key";
@@ -299,6 +300,8 @@ static void bch_extent_to_text(const struct btree_keys *bk, char *buf,
 
 bool __bch_btree_ptr_invalid(const struct cache_set *c, const struct bkey *k)
 {
+	const struct bkey_i_extent *e;
+
 	if (k->size ||
 	    __ptr_invalid(c, k))
 		return true;
@@ -308,8 +311,9 @@ bool __bch_btree_ptr_invalid(const struct cache_set *c, const struct bkey *k)
 	case KEY_TYPE_ERROR:
 		return false;
 	case BCH_EXTENT:
-		return EXTENT_CACHED(&bkey_i_to_extent_c(k)->v) ||
-			!bch_extent_ptrs(k);
+		e = bkey_i_to_extent_c(k);
+
+		return EXTENT_CACHED(&e->v) || !bch_extent_ptrs(e);
 	default:
 		return true;
 	}
@@ -406,15 +410,18 @@ const struct btree_keys_ops bch_btree_interior_node_ops = {
 void bch_bkey_copy_single_ptr(struct bkey *dst, const struct bkey *src,
 			      unsigned i)
 {
-	const struct bkey_i_extent *e = bkey_i_to_extent_c(src);
+	const struct bkey_i_extent *srce = bkey_i_to_extent_c(src);
+	struct bkey_i_extent *dste;
 
-	BUG_ON(i > bch_extent_ptrs(&e->k));
+	BUG_ON(i > bch_extent_ptrs(srce));
 
 	/* Only copy the header, key, and one pointer. */
-	*dst = e->k;
-	bkey_i_to_extent(dst)->v.ptr[0] = e->v.ptr[i];
+	*dst = srce->k;
+	dste = bkey_i_to_extent(dst);
 
-	bch_set_extent_ptrs(dst, 1);
+	dste->v.ptr[0] = srce->v.ptr[i];
+
+	bch_set_extent_ptrs(dste, 1);
 #if 0
 	/* We didn't copy the checksum so clear that bit. */
 	SET_KEY_CSUM(dst, 0);
@@ -574,10 +581,9 @@ static struct bkey *bch_extent_sort_fixup(struct btree_node_iter *iter,
 }
 
 int __bch_add_sectors(struct cache_set *c, struct btree *b,
-		      const struct bkey *k, u64 offset,
+		      const struct bkey_i_extent *e, u64 offset,
 		      int sectors, bool fail_if_stale)
 {
-	const struct bkey_i_extent *e = bkey_i_to_extent_c(k);
 	const struct bch_extent_ptr *ptr;
 	struct cache *ca;
 
@@ -641,15 +647,16 @@ static int bch_add_sectors(struct btree *b, const struct bkey *k, u64 offset,
 			   int sectors, bool fail_if_stale)
 {
 	if (sectors && k->type == BCH_EXTENT) {
+		const struct bkey_i_extent *e = bkey_i_to_extent_c(k);
 		int ret;
 
-		ret = __bch_add_sectors(b->c, b, k, offset,
+		ret = __bch_add_sectors(b->c, b, e, offset,
 					sectors, fail_if_stale);
 		if (ret)
 			return ret;
 
-		if (!bkey_extent_cached(k))
-			bcache_dev_sectors_dirty_add(b->c, k->p.inode,
+		if (!EXTENT_CACHED(&e->v))
+			bcache_dev_sectors_dirty_add(b->c, e->k.p.inode,
 						     offset, sectors);
 	}
 
@@ -729,8 +736,8 @@ static bool bkey_cmpxchg_cmp(const struct bkey *l, const struct bkey *r)
 		 */
 		offset = bkey_start_offset(l) - bkey_start_offset(r);
 
-		if (bch_extent_ptrs(&le->k) == bch_extent_ptrs(&re->k)) {
-			for (i = 0; i < bch_extent_ptrs(&le->k); i++)
+		if (bch_extent_ptrs(le) == bch_extent_ptrs(re)) {
+			for (i = 0; i < bch_extent_ptrs(le); i++)
 				if (le->v.ptr[i]._val !=
 				    re->v.ptr[i]._val +
 				    (offset << PTR_OFFSET_OFFSET))
@@ -785,7 +792,7 @@ static bool bkey_cmpxchg(struct btree *b,
 	struct bkey *old = &replace->key;
 
 	/* must have something to compare against */
-	BUG_ON(!bch_extent_ptrs(old));
+	BUG_ON(!bkey_val_u64s(old));
 	BUG_ON(b->level);
 
 	/* new must be a subset of old */
@@ -1204,7 +1211,7 @@ static void bch_extent_debugcheck(struct btree_keys *bk, const struct bkey *k)
 		return;
 	}
 
-	if (bch_extent_ptrs(k) < bch_extent_replicas_needed(c, e)) {
+	if (bch_extent_ptrs(e) < bch_extent_replicas_needed(c, e)) {
 		bch_bkey_val_to_text(bk, buf, sizeof(buf), k);
 		cache_set_bug(c, "extent key bad (too few replicas): %s", buf);
 		return;
@@ -1287,9 +1294,10 @@ bad_device:
 bad_ptr:
 	bch_bkey_val_to_text(bk, buf, sizeof(buf), k);
 	cache_set_bug(c, "extent pointer %u bad gc mark: %s:\nbucket %zu prio %i "
-		      "gen %i last_gc %i mark 0x%08x", (unsigned) (ptr - e->v.ptr),
-		      buf, PTR_BUCKET_NR(ca, ptr), g->read_prio,
-		      PTR_BUCKET_GEN(ca, ptr), g->oldest_gen, g->mark.counter);
+		      "gen %i last_gc %i mark 0x%08x",
+		      (unsigned) (ptr - e->v.ptr), buf, PTR_BUCKET_NR(ca, ptr),
+		      g->read_prio, PTR_BUCKET_GEN(ca, ptr),
+		      g->oldest_gen, g->mark.counter);
 	cache_member_info_put();
 	return;
 }
@@ -1306,6 +1314,7 @@ static unsigned PTR_TIER(struct cache_member_rcu *mi,
 bool bch_extent_normalize(struct cache_set *c, struct bkey *k)
 {
 	struct bkey_i_extent *e;
+	struct bch_extent_ptr *ptr;
 	struct cache_member_rcu *mi;
 	unsigned i;
 	bool swapped, have_data = false;
@@ -1335,7 +1344,7 @@ bool bch_extent_normalize(struct cache_set *c, struct bkey *k)
 		/* Bubble sort pointers by tier, lowest (fastest) tier first */
 		do {
 			swapped = false;
-			for (i = 0; i + 1 < bch_extent_ptrs(&e->k); i++) {
+			for (i = 0; i + 1 < bch_extent_ptrs(e); i++) {
 				if (PTR_TIER(mi, &e->v, i) >
 				    PTR_TIER(mi, &e->v, i + 1)) {
 					swap(e->v.ptr[i], e->v.ptr[i + 1]);
@@ -1346,14 +1355,14 @@ bool bch_extent_normalize(struct cache_set *c, struct bkey *k)
 
 		cache_member_info_put();
 
-		for (i = 0; i < bch_extent_ptrs(k); i++)
-			if (PTR_DEV(&e->v.ptr[i]) != PTR_LOST_DEV)
+		extent_for_each_ptr(e, ptr)
+			if (PTR_DEV(ptr) != PTR_LOST_DEV)
 				have_data = true;
 
 		if (!have_data)
-			bch_set_extent_ptrs(k, 0);
+			bch_set_extent_ptrs(e, 0);
 
-		if (!bch_extent_ptrs(k))
+		if (!bch_extent_ptrs(e))
 			k->type = EXTENT_CACHED(&e->v)
 				? KEY_TYPE_DELETED
 				: KEY_TYPE_ERROR;
@@ -1469,7 +1478,7 @@ static bool bch_extent_merge(struct btree_keys *bk, struct bkey *l, struct bkey 
 		el = bkey_i_to_extent(l);
 		er = bkey_i_to_extent(r);
 
-		for (i = 0; i < bch_extent_ptrs(&el->k); i++) {
+		for (i = 0; i < bch_extent_ptrs(el); i++) {
 			/*
 			 * compare all the pointer fields at once, adding the
 			 * size to the left pointer's offset:

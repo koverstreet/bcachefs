@@ -480,6 +480,7 @@ static void migrate_compact_key(struct cache_set *c,
 				struct bkey *k,
 				struct cache *ca)
 {
+	struct bkey_i_extent *e = bkey_to_extent(k);
 	bool dropped;
 	unsigned tierno;
 	unsigned i, tier[CACHE_TIERS], tier_count[CACHE_TIERS];
@@ -510,12 +511,12 @@ static void migrate_compact_key(struct cache_set *c,
 	 * closer to the end of the list.
 	 */
 
-	for (i = bch_extent_ptrs(k); i != 0; ) {
+	for (i = bch_extent_ptrs(e); i != 0; ) {
 		unsigned tierno;
 		struct cache *ca2;
 
 		i -= 1;
-		ca2 = PTR_CACHE(c, k, i);
+		ca2 = PTR_CACHE(c, &e->v, i);
 		BUG_ON(ca2 == NULL);
 		tierno = CACHE_TIER(&ca2->mi);
 		tier_count[tierno] += 1;
@@ -584,7 +585,7 @@ static enum migrate_option migrate_cleanup_key(struct cache_set *c,
 	 * something simple instead.
 	 * Effectively, every migration copy is a fresh 'foreground' write.
 	 */
-	bch_set_extent_ptrs(&e->k, 0);
+	bch_set_extent_ptrs(e, 0);
 	return MIGRATE_COPY;
 }
 

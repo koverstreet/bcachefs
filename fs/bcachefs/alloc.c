@@ -911,7 +911,7 @@ static void bch_bucket_free_never_used(struct cache_set *c, struct bkey *k)
 		spin_unlock(&ca->freelist_lock);
 	}
 
-	bch_set_extent_ptrs(&e->k, 0);
+	bch_set_extent_ptrs(e, 0);
 
 	rcu_read_unlock();
 }
@@ -1042,7 +1042,7 @@ static enum bucket_alloc_ret __bch_bucket_alloc_set(struct cache_set *c,
 		e->v.ptr[i] = PTR(ca->bucket_gens[r],
 				  bucket_to_sector(ca, r),
 				  ca->sb.nr_this_dev);
-		bch_set_extent_ptrs(&e->k, i + 1);
+		bch_set_extent_ptrs(e, i + 1);
 	}
 
 	rcu_read_unlock();
@@ -1316,18 +1316,18 @@ retry:
 
 	verify_not_stale(c, &b->key);
 
-	nptrs = (bch_extent_ptrs(k) + bch_extent_ptrs(&b->key));
-	BUG_ON(nptrs > BKEY_EXTENT_PTRS_MAX);
-
 	src = bkey_i_to_extent(&b->key);
 	dst = bkey_i_to_extent(k);
 
-	/* Set up the pointer to the space we're allocating: */
-	memcpy(&dst->v.ptr[bch_extent_ptrs(&dst->k)],
-	       src->v.ptr,
-	       bch_extent_ptrs(&src->k) * sizeof(u64));
+	nptrs = (bch_extent_ptrs(dst) + bch_extent_ptrs(src));
+	BUG_ON(nptrs > BKEY_EXTENT_PTRS_MAX);
 
-	bch_set_extent_ptrs(&dst->k, nptrs);
+	/* Set up the pointer to the space we're allocating: */
+	memcpy(&dst->v.ptr[bch_extent_ptrs(dst)],
+	       src->v.ptr,
+	       bch_extent_ptrs(src) * sizeof(u64));
+
+	bch_set_extent_ptrs(dst, nptrs);
 
 	sectors = min_t(unsigned, dst->k.size, b->sectors_free);
 

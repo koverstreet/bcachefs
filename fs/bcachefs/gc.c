@@ -66,7 +66,7 @@ u8 __bch_btree_mark_key(struct cache_set *c, int level, const struct bkey *k)
 				bch_mark_metadata_bucket(ca,
 						PTR_BUCKET(ca, ptr), true);
 		} else {
-			__bch_add_sectors(c, NULL, k, bkey_start_offset(k),
+			__bch_add_sectors(c, NULL, e, bkey_start_offset(k),
 					  k->size, false);
 		}
 

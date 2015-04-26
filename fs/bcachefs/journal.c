@@ -449,10 +449,11 @@ static int bch_journal_replay_key(struct cache_set *c, enum btree_id id,
 {
 	int ret;
 	BKEY_PADDED(key) temp;
+	bool do_subtract = id == BTREE_ID_EXTENTS && k->type == BCH_EXTENT;
 
 	trace_bcache_journal_replay_key(k);
 
-	if (id == BTREE_ID_EXTENTS && k->type == BCH_EXTENT)
+	if (do_subtract)
 		bkey_copy(&temp.key, k);
 
 	ret = bch_btree_insert(c, id, &keylist_single(k), NULL, NULL);
@@ -463,8 +464,8 @@ static int bch_journal_replay_key(struct cache_set *c, enum btree_id id,
 	 * Subtract sectors after replay since bch_btree_insert() added
 	 * them again
 	 */
-	if (id == BTREE_ID_EXTENTS && k->type == BCH_EXTENT)
-		__bch_add_sectors(c, NULL, &temp.key,
+	if (do_subtract)
+		__bch_add_sectors(c, NULL, bkey_i_to_extent_c(&temp.key),
 				  bkey_start_offset(&temp.key),
 				  -temp.key.size, false);
 
@@ -763,8 +764,7 @@ static bool journal_reclaim(struct cache_set *c, u64 *oldest_seq)
 		unsigned next = (ja->cur_idx + 1) %
 			bch_nr_journal_buckets(&ca->sb);
 
-		if (bch_extent_ptrs(&e->k) ==
-		    CACHE_SET_META_REPLICAS_WANT(&c->sb))
+		if (bch_extent_ptrs(e) == CACHE_SET_META_REPLICAS_WANT(&c->sb))
 			break;
 
 		/*
@@ -793,17 +793,17 @@ static bool journal_reclaim(struct cache_set *c, u64 *oldest_seq)
 			continue;
 		}
 
-		BUG_ON(bch_extent_ptrs(&e->k) >= BKEY_EXTENT_PTRS_MAX);
+		BUG_ON(bch_extent_ptrs(e) >= BKEY_EXTENT_PTRS_MAX);
 
 		ja->sectors_free = ca->sb.bucket_size;
 
 		ja->cur_idx = next;
-		e->v.ptr[bch_extent_ptrs(&e->k)] =
+		e->v.ptr[bch_extent_ptrs(e)] =
 			PTR(0, bucket_to_sector(ca,
 					journal_bucket(ca, ja->cur_idx)),
 			    ca->sb.nr_this_dev);
 
-		bch_set_extent_ptrs(&e->k, bch_extent_ptrs(&e->k) + 1);
+		bch_set_extent_ptrs(e, bch_extent_ptrs(e) + 1);
 	}
 
 	/* set c->journal.sectors_free to the min of any device */

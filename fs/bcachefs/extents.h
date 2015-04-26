@@ -49,7 +49,7 @@ void bch_extent_drop_stale(struct cache_set *, struct bkey *);
 bool bch_extent_normalize(struct cache_set *, struct bkey *);
 
 int __bch_add_sectors(struct cache_set *, struct btree *,
-		      const struct bkey *, u64, int, bool);
+		      const struct bkey_i_extent *, u64, int, bool);
 
 static inline bool bkey_extent_cached(const struct bkey *k)
 {
@@ -57,30 +57,28 @@ static inline bool bkey_extent_cached(const struct bkey *k)
 		EXTENT_CACHED(&bkey_i_to_extent_c(k)->v);
 }
 
-static inline unsigned bch_extent_ptrs(const struct bkey *k)
+static inline unsigned bch_extent_ptrs(const struct bkey_i_extent *e)
 {
-	BUG_ON(k->type != BCH_EXTENT);
-	return bkey_val_u64s(k);
+	return bkey_val_u64s(&e->k);
 }
 
-static inline void bch_set_extent_ptrs(struct bkey *k, unsigned i)
+static inline void bch_set_extent_ptrs(struct bkey_i_extent *e, unsigned i)
 {
-	BUG_ON(k->type != BCH_EXTENT);
 	BUG_ON(i > BKEY_EXTENT_PTRS_MAX);
-	set_bkey_val_u64s(k, i);
+	set_bkey_val_u64s(&e->k, i);
 }
 
 static inline void bch_extent_drop_ptr(struct bkey *k, unsigned ptr)
 {
 	struct bkey_i_extent *e = bkey_i_to_extent(k);
 
-	BUG_ON(bch_extent_ptrs(&e->k) > BKEY_EXTENT_PTRS_MAX);
-	BUG_ON(ptr >= bch_extent_ptrs(&e->k));
+	BUG_ON(bch_extent_ptrs(e) > BKEY_EXTENT_PTRS_MAX);
+	BUG_ON(ptr >= bch_extent_ptrs(e));
 
 	e->k.u64s--;
 	memmove(&e->v.ptr[ptr],
 		&e->v.ptr[ptr + 1],
-		(bch_extent_ptrs(&e->k) - ptr) * sizeof(u64));
+		(bch_extent_ptrs(e) - ptr) * sizeof(u64));
 }
 
 static inline unsigned bch_extent_replicas_needed(const struct cache_set *c,
@@ -96,12 +94,12 @@ static inline bool bch_extent_ptr_is_dirty(const struct cache_set *c,
 	/* Dirty pointers come last */
 
 	return ptr + bch_extent_replicas_needed(c, e) >=
-		e->v.ptr + bch_extent_ptrs(&e->k);
+		e->v.ptr + bch_extent_ptrs(e);
 }
 
 #define extent_for_each_ptr(_extent, _ptr)				\
 	for ((_ptr) = (_extent)->v.ptr;					\
-	     (_ptr) < (_extent)->v.ptr + bch_extent_ptrs(&(_extent)->k);\
+	     (_ptr) < (_extent)->v.ptr + bch_extent_ptrs(_extent);	\
 	     (_ptr)++)
 
 /*
@@ -109,7 +107,7 @@ static inline bool bch_extent_ptr_is_dirty(const struct cache_set *c,
  * Any reason we shouldn't just always do this?
  */
 #define extent_for_each_ptr_backwards(_extent, _ptr)			\
-	for ((_ptr) = (_extent)->v.ptr + bch_extent_ptrs(&(_extent)->k) - 1;\
+	for ((_ptr) = (_extent)->v.ptr + bch_extent_ptrs(_extent) - 1;	\
 	     (_ptr) >= (_extent)->v.ptr;				\
 	     --(_ptr))
 
@@ -117,7 +115,7 @@ static inline bool bch_extent_ptr_is_dirty(const struct cache_set *c,
 ({									\
 	(_ca) = NULL;							\
 									\
-	while ((_ptr) < (_extent)->v.ptr + bch_extent_ptrs(&(_extent)->k) &&\
+	while ((_ptr) < (_extent)->v.ptr + bch_extent_ptrs(_extent) &&\
 	       !((_ca) = PTR_CACHE(_c, _ptr)))				\
 		(_ptr)++;						\
 	(_ca);								\

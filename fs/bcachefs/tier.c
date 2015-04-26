@@ -33,16 +33,16 @@ static bool tiering_pred(struct scan_keylist *kl, const struct bkey *k)
 		 * Should not happen except in a pathological situation (too
 		 * many pointers on the wrong tier?
 		 */
-		if (bch_extent_ptrs(k) == BKEY_EXTENT_PTRS_MAX)
+		if (bch_extent_ptrs(e) == BKEY_EXTENT_PTRS_MAX)
 			return false;
 
 		/*
 		 * Need at least CACHE_SET_DATA_REPLICAS_WANT ptrs not on tier 0
 		 */
-		if (bch_extent_ptrs(k) < replicas)
+		if (bch_extent_ptrs(e) < replicas)
 			return true;
 
-		dev = PTR_DEV(&e->v.ptr[bch_extent_ptrs(k) - replicas]);
+		dev = PTR_DEV(&e->v.ptr[bch_extent_ptrs(e) - replicas]);
 		mi = cache_member_info_get(c);
 		ret = dev < mi->nr_in_set && !CACHE_TIER(&mi->m[dev]);
 		cache_member_info_put();
