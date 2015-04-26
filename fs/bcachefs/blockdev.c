@@ -262,7 +262,7 @@ void bch_cached_dev_run(struct cached_dev *dc)
 	char buf[SB_LABEL_SIZE + 1];
 	char *env[] = {
 		"DRIVER=bcache",
-		kasprintf(GFP_KERNEL, "CACHED_UUID=%pU", dc->sb.uuid.b),
+		kasprintf(GFP_KERNEL, "CACHED_UUID=%pU", dc->sb.disk_uuid.b),
 		NULL,
 		NULL,
 	};
@@ -387,7 +387,7 @@ int bch_cached_dev_attach(struct cached_dev *dc, struct cache_set *c)
 		return -EINVAL;
 	}
 
-	found = !bch_blockdev_inode_find_by_uuid(c, &dc->sb.uuid,
+	found = !bch_blockdev_inode_find_by_uuid(c, &dc->sb.disk_uuid,
 						 &dc->disk.inode);
 
 	if (!found && BDEV_STATE(&dc->sb) == BDEV_STATE_DIRTY) {
@@ -412,7 +412,7 @@ int bch_cached_dev_attach(struct cached_dev *dc, struct cache_set *c)
 		closure_init_stack(&cl);
 
 		bkey_inode_blockdev_init(&dc->disk.inode.k);
-		dc->disk.inode.v.i_uuid = dc->sb.uuid;
+		dc->disk.inode.v.i_uuid = dc->sb.disk_uuid;
 		memcpy(dc->disk.inode.v.i_label, dc->sb.label, SB_LABEL_SIZE);
 		dc->disk.inode.v.i_inode.i_ctime = rtime;
 		dc->disk.inode.v.i_inode.i_mtime = rtime;
@@ -540,7 +540,7 @@ static int cached_dev_init(struct cached_dev *dc, unsigned block_size)
 			q->limits.raid_partial_stripes_expensive;
 
 	ret = bcache_device_init(&dc->disk, block_size,
-			 dc->bdev->bd_part->nr_sects - dc->sb.data_offset);
+			 dc->bdev->bd_part->nr_sects - dc->sb.bdev_data_offset);
 	if (ret)
 		return ret;
 

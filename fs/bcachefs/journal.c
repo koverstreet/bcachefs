@@ -190,8 +190,8 @@ static int journal_read_bucket(struct cache *ca, struct journal_list *jlist,
 
 	pr_debug("reading %u", bucket_index);
 
-	while (offset < ca->sb.bucket_size) {
-reread:		left = ca->sb.bucket_size - offset;
+	while (offset < ca->mi.bucket_size) {
+reread:		left = ca->mi.bucket_size - offset;
 		len = min_t(unsigned, left, PAGE_SECTORS << JSET_BITS);
 
 		bio_reset(bio);
@@ -601,13 +601,13 @@ int bch_cache_journal_alloc(struct cache *ca)
 	/* clamp journal size to 512MB (in sectors) */
 
 	ret = bch_set_nr_journal_buckets(ca,
-			clamp_t(unsigned, ca->sb.nbuckets >> 8,
-				2, (1 << 20) / ca->sb.bucket_size));
+			clamp_t(unsigned, ca->mi.nbuckets >> 8,
+				2, (1 << 20) / ca->mi.bucket_size));
 	if (ret)
 		return ret;
 
 	for (i = 0; i < bch_nr_journal_buckets(&ca->sb); i++) {
-		unsigned long r = ca->sb.first_bucket + i;
+		unsigned long r = ca->mi.first_bucket + i;
 
 		bch_mark_metadata_bucket(ca, &ca->buckets[r], true);
 		set_journal_bucket(ca, i, r);
@@ -845,7 +845,7 @@ static bool journal_reclaim(struct cache_set *c, u64 *oldest_seq)
 
 		BUG_ON(bch_extent_ptrs(e) >= BKEY_EXTENT_PTRS_MAX);
 
-		ja->sectors_free = ca->sb.bucket_size;
+		ja->sectors_free = ca->mi.bucket_size;
 
 		ja->cur_idx = next;
 		e->v.ptr[bch_extent_ptrs(e)] =

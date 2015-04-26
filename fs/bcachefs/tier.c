@@ -398,7 +398,7 @@ void bch_tiering_init_cache(struct cache *ca)
 		       TIERING_WRITE_NR,
 		       false);
 
-	ca->tiering_stripe_size = ca->sb.bucket_size * 2;
+	ca->tiering_stripe_size = ca->mi.bucket_size * 2;
 }
 
 int bch_tiering_write_start(struct cache *ca)

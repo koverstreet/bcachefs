@@ -15,15 +15,11 @@ static inline sector_t bucket_to_sector(const struct cache *ca, size_t b)
 
 static inline sector_t bucket_remainder(const struct cache *ca, sector_t s)
 {
-	return s & (ca->sb.bucket_size - 1);
+	return s & (ca->mi.bucket_size - 1);
 }
 
-static inline struct cache_member_rcu *
-cache_member_info_get(struct cache_set *c)
-{
-	rcu_read_lock();
-	return rcu_dereference(c->members);
-}
+#define cache_member_info_get(_c)					\
+	(rcu_read_lock(), rcu_dereference((_c)->members))
 
 #define cache_member_info_put()	rcu_read_unlock()
 

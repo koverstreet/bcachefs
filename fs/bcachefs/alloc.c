@@ -149,8 +149,8 @@ static void pd_controllers_update(struct work_struct *work)
 				((stats.sectors_dirty +
 				  stats.sectors_cached) << 9);
 
-			u64 dev_size = (ca->sb.nbuckets -
-					ca->sb.first_bucket) << bucket_bits;
+			u64 dev_size = (ca->mi.nbuckets -
+					ca->mi.first_bucket) << bucket_bits;
 
 			u64 free = __buckets_free_cache(ca, stats,
 						RESERVE_NONE) << bucket_bits;
@@ -239,7 +239,7 @@ static int prio_io(struct cache *ca, uint64_t bucket, int op)
 
 	ca->bio_prio->bi_max_vecs	= bucket_pages(ca);
 	ca->bio_prio->bi_io_vec		= ca->bio_prio->bi_inline_vecs;
-	ca->bio_prio->bi_iter.bi_sector	= bucket * ca->sb.bucket_size;
+	ca->bio_prio->bi_iter.bi_sector	= bucket * ca->mi.bucket_size;
 	ca->bio_prio->bi_bdev		= ca->bdev;
 	ca->bio_prio->bi_iter.bi_size	= bucket_bytes(ca);
 	bch_bio_map(ca->bio_prio, ca->disk_buckets);
@@ -257,7 +257,7 @@ static void bch_prio_write(struct cache *ca)
 
 	trace_bcache_prio_write_start(ca);
 
-	atomic_long_add(ca->sb.bucket_size * prio_buckets(ca),
+	atomic_long_add(ca->mi.bucket_size * prio_buckets(ca),
 			&ca->meta_sectors_written);
 
 	for (i = prio_buckets(ca) - 1; i >= 0; --i) {
@@ -268,7 +268,7 @@ static void bch_prio_write(struct cache *ca)
 		size_t r;
 
 		for (r = i * prios_per_bucket(ca);
-		     r < ca->sb.nbuckets && d < end;
+		     r < ca->mi.nbuckets && d < end;
 		     r++, d++) {
 			g = ca->buckets + r;
 			d->read_prio = cpu_to_le16(g->read_prio);
@@ -352,7 +352,7 @@ int bch_prio_read(struct cache *ca)
 	if (!bucket)
 		return 0;
 
-	if (bucket < ca->sb.first_bucket && bucket >= ca->sb.nbuckets) {
+	if (bucket < ca->mi.first_bucket && bucket >= ca->mi.nbuckets) {
 		bch_cache_error(ca, "bad prio bucket %llu", bucket);
 		return -EIO;
 	}
@@ -361,7 +361,7 @@ int bch_prio_read(struct cache *ca)
 	c->journal.prio_buckets[ca->sb.nr_this_dev] = bucket;
 	spin_unlock(&c->journal.lock);
 
-	for (b = 0; b < ca->sb.nbuckets; b++, d++) {
+	for (b = 0; b < ca->mi.nbuckets; b++, d++) {
 		if (d == end) {
 			ca->prio_last_buckets[bucket_nr] = bucket;
 			bucket_nr++;
@@ -671,16 +671,16 @@ static void invalidate_buckets_fifo(struct cache *ca)
 	size_t checked = 0;
 
 	while (!fifo_full(&ca->free_inc)) {
-		if (ca->fifo_last_bucket <  ca->sb.first_bucket ||
-		    ca->fifo_last_bucket >= ca->sb.nbuckets)
-			ca->fifo_last_bucket = ca->sb.first_bucket;
+		if (ca->fifo_last_bucket <  ca->mi.first_bucket ||
+		    ca->fifo_last_bucket >= ca->mi.nbuckets)
+			ca->fifo_last_bucket = ca->mi.first_bucket;
 
 		g = ca->buckets + ca->fifo_last_bucket++;
 
 		if (bch_can_invalidate_bucket(ca, g))
 			bch_invalidate_one_bucket(ca, g);
 
-		if (++checked >= ca->sb.nbuckets)
+		if (++checked >= ca->mi.nbuckets)
 			return;
 	}
 }
@@ -691,16 +691,16 @@ static void invalidate_buckets_random(struct cache *ca)
 	size_t checked = 0;
 
 	while (!fifo_full(&ca->free_inc)) {
-		size_t n = bch_rand_range(ca->sb.nbuckets -
-					  ca->sb.first_bucket) +
-			ca->sb.first_bucket;
+		size_t n = bch_rand_range(ca->mi.nbuckets -
+					  ca->mi.first_bucket) +
+			ca->mi.first_bucket;
 
 		g = ca->buckets + n;
 
 		if (bch_can_invalidate_bucket(ca, g))
 			bch_invalidate_one_bucket(ca, g);
 
-		if (++checked >= ca->sb.nbuckets / 2)
+		if (++checked >= ca->mi.nbuckets / 2)
 			return;
 	}
 }
@@ -784,7 +784,7 @@ static int bch_allocator_thread(void *arg)
 			    blk_queue_discard(bdev_get_queue(ca->bdev)))
 				blkdev_issue_discard(ca->bdev,
 					bucket_to_sector(ca, bucket),
-					ca->sb.bucket_size, GFP_KERNEL, 0);
+					ca->mi.bucket_size, GFP_KERNEL, 0);
 
 			while (1) {
 				set_current_state(TASK_INTERRUPTIBLE);
@@ -1206,7 +1206,7 @@ static struct open_bucket *bch_open_bucket_alloc(struct cache_set *c,
 	/* This is still wrong - we waste space with different sized buckets */
 	extent_for_each_online_device(c, e, ptr, ca)
 		b->sectors_free = min_t(unsigned, b->sectors_free,
-					ca->sb.bucket_size);
+					ca->mi.bucket_size);
 
 	rcu_read_unlock();
 

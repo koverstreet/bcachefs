@@ -134,115 +134,115 @@ static const char *bch_blkdev_open(const char *path, void *holder,
 
 /* Superblock */
 
+const char *validate_cache_member(struct cache_sb *sb,
+				  struct cache_member *mi)
+{
+	if (mi->nbuckets > LONG_MAX)
+		return "Too many buckets";
+
+	if (mi->nbuckets < 1 << 8)
+		return "Not enough buckets";
+
+	if (!is_power_of_2(mi->bucket_size) ||
+	    mi->bucket_size < PAGE_SECTORS ||
+	    mi->bucket_size < sb->block_size)
+		return "Bad bucket size";
+
+	return NULL;
+}
+
 const char *validate_super(struct bcache_superblock *disk_sb,
 			   struct block_device *bdev,
 			   struct cache_sb *sb)
 {
 	const char *err;
 	struct cache_sb *s = disk_sb->sb;
+	struct cache_member *mi;
 
 	sb->offset		= le64_to_cpu(s->offset);
 	sb->version		= le64_to_cpu(s->version);
+	sb->seq			= le64_to_cpu(s->seq);
 
 	sb->magic		= s->magic;
-	sb->uuid		= s->uuid;
+	sb->disk_uuid		= s->disk_uuid;
+	sb->user_uuid		= s->user_uuid;
 	sb->set_uuid		= s->set_uuid;
 	memcpy(sb->label,	s->label, SB_LABEL_SIZE);
 
 	sb->flags		= le64_to_cpu(s->flags);
-	sb->seq			= le64_to_cpu(s->seq);
 	sb->block_size		= le16_to_cpu(s->block_size);
-	sb->last_mount		= le32_to_cpu(s->last_mount);
-	sb->first_bucket	= le16_to_cpu(s->first_bucket);
 	sb->u64s		= le16_to_cpu(s->u64s);
 
 	switch (sb->version) {
 	case BCACHE_SB_VERSION_BDEV:
-		sb->data_offset	= BDEV_DATA_START_DEFAULT;
+		sb->bdev_data_offset	= BDEV_DATA_START_DEFAULT;
+		sb->bdev_last_mount	= le32_to_cpu(s->bdev_last_mount);
+		sb->bdev_last_mount	= get_seconds();
 		break;
 	case BCACHE_SB_VERSION_BDEV_WITH_OFFSET:
-		sb->data_offset	= le64_to_cpu(s->data_offset);
+		sb->bdev_data_offset	= le64_to_cpu(s->bdev_data_offset);
+		sb->bdev_last_mount	= le32_to_cpu(s->bdev_last_mount);
+		/* hrm. */
+		sb->bdev_last_mount	= get_seconds();
 
-		err = "Bad data offset";
-		if (sb->data_offset < BDEV_DATA_START_DEFAULT)
-			goto err;
+		if (sb->bdev_data_offset < BDEV_DATA_START_DEFAULT)
+			return "Bad data offset";
 
 		break;
 	case BCACHE_SB_VERSION_CDEV_V0:
 	case BCACHE_SB_VERSION_CDEV_WITH_UUID:
 	case BCACHE_SB_VERSION_CDEV_V2:
 	case BCACHE_SB_VERSION_CDEV_V3:
-		sb->nbuckets	= le64_to_cpu(s->nbuckets);
-		sb->bucket_size	= le16_to_cpu(s->bucket_size);
-
 		sb->nr_in_set	= le16_to_cpu(s->nr_in_set);
 		sb->nr_this_dev	= le16_to_cpu(s->nr_this_dev);
 
-		err = "Too many buckets";
-		if (sb->nbuckets > LONG_MAX)
-			goto err;
-
-		err = "Not enough buckets";
-		if (sb->nbuckets < 1 << 8)
-			goto err;
-
-		err = "Bad block/bucket size";
 		if (!is_power_of_2(sb->block_size) ||
-		    sb->block_size > PAGE_SECTORS ||
-		    !is_power_of_2(sb->bucket_size) ||
-		    sb->bucket_size < PAGE_SECTORS)
-			goto err;
+		    sb->block_size > PAGE_SECTORS)
+			return "Bad block size";
 
-		err = "Invalid superblock: device too small";
-		if (get_capacity(bdev->bd_disk) < sb->bucket_size * sb->nbuckets)
-			goto err;
+		if (bch_is_zero(sb->disk_uuid.b, sizeof(uuid_le)))
+			return "Bad disk UUID";
 
-		err = "Bad UUID";
-		if (bch_is_zero(sb->set_uuid.b, sizeof(sb->set_uuid)))
-			goto err;
+		if (bch_is_zero(sb->user_uuid.b, sizeof(uuid_le)))
+			return "Bad user UUID";
 
-		err = "Bad cache device number in set";
+		if (bch_is_zero(sb->set_uuid.b, sizeof(uuid_le)))
+			return "Bad set UUID";
+
 		if (!sb->nr_in_set ||
 		    sb->nr_in_set <= sb->nr_this_dev ||
 		    sb->nr_in_set > MAX_CACHES_PER_SET)
-			goto err;
+			return "Bad cache device number in set";
 
-		err = "Invalid superblock: first bucket comes before end of super";
-		if (sb->first_bucket * sb->bucket_size < 16)
-			goto err;
-
-		err = "Invalid superblock: member info area missing";
-		if (sb->u64s < bch_journal_buckets_offset(sb))
-			goto err;
-
-		err = "Invalid number of metadata replicas";
 		if (!CACHE_SET_META_REPLICAS_WANT(sb) ||
 		    CACHE_SET_META_REPLICAS_WANT(sb) >= BKEY_EXTENT_PTRS_MAX)
-			goto err;
+			return "Invalid number of metadata replicas";
 
-		err = "Invalid number of data replicas";
 		if (!CACHE_SET_DATA_REPLICAS_WANT(sb) ||
 		    CACHE_SET_DATA_REPLICAS_WANT(sb) >= BKEY_EXTENT_PTRS_MAX)
-			goto err;
+			return "Invalid number of data replicas";
 
-		err = "Invalid checksum type";
 		if (CACHE_SB_CSUM_TYPE(sb) >= BCH_CSUM_NR)
-			goto err;
+			return "Invalid checksum type";
 
-		err = "Btree node size not set";
 		if (!CACHE_BTREE_NODE_SIZE(sb))
-			goto err;
+			return "Btree node size not set";
+
+		if (sb->u64s < bch_journal_buckets_offset(sb))
+			return "Invalid superblock: member info area missing";
+
+		for (mi = s->members;
+		     mi < s->members + sb->nr_in_set;
+		     mi++)
+			if ((err = validate_cache_member(sb, mi)))
+				return err;
 
 		break;
 	default:
-		err = "Unsupported superblock version";
-		goto err;
+		return"Unsupported superblock version";
 	}
 
-	sb->last_mount = get_seconds();
 	return NULL;
-err:
-	return err;
 }
 
 static void free_super(struct bcache_superblock *sb)
@@ -294,10 +294,10 @@ int bch_super_realloc(struct cache *ca, unsigned u64s)
 	size_t bytes = __set_bytes((struct cache_sb *) NULL, u64s);
 	size_t want = bytes + (SB_SECTOR << 9);
 
-	if (want > ca->sb.first_bucket * bucket_bytes(ca)) {
+	if (want > ca->mi.first_bucket * bucket_bytes(ca)) {
 		pr_err("%s: superblock too big: want %zu but have %u",
 		       bdevname(ca->bdev, buf), want,
-		       ca->sb.first_bucket * bucket_bytes(ca));
+		       ca->mi.first_bucket * bucket_bytes(ca));
 		return -ENOSPC;
 	}
 
@@ -328,9 +328,6 @@ retry:
 
 	if (uuid_le_cmp(sb->sb->magic, BCACHE_MAGIC))
 		return "Not a bcache superblock";
-
-	if (bch_is_zero(sb->sb->uuid.b, sizeof(sb->sb->uuid)))
-		return "Bad UUID";
 
 	pr_debug("read sb version %llu, flags %llu, seq %llu, journal size %u",
 		 le64_to_cpu(sb->sb->version),
@@ -374,19 +371,23 @@ void __write_super(struct cache_set *c, struct bcache_superblock *disk_sb,
 
 	out->offset		= cpu_to_le64(sb->offset);
 	out->version		= cpu_to_le64(sb->version);
+	out->seq		= cpu_to_le64(sb->seq);
 
-	out->uuid		= sb->uuid;
+	out->disk_uuid		= sb->disk_uuid;
+	out->user_uuid		= sb->user_uuid;
 	out->set_uuid		= sb->set_uuid;
 	memcpy(out->label,	sb->label, SB_LABEL_SIZE);
 
-	out->flags		= cpu_to_le64(sb->flags);
-	out->seq		= cpu_to_le64(sb->seq);
+	if (__SB_IS_BDEV(sb->version)) {
+		out->bdev_data_offset	= cpu_to_le64(sb->bdev_data_offset);
+		out->bdev_last_mount	= cpu_to_le32(sb->bdev_last_mount);
+	} else {
+		out->nr_in_set		= cpu_to_le16(sb->nr_in_set);
+		out->nr_this_dev	= cpu_to_le16(sb->nr_this_dev);
+	}
 
-	out->last_mount		= cpu_to_le32(sb->last_mount);
-	out->first_bucket	= cpu_to_le16(sb->first_bucket);
+	out->flags		= cpu_to_le64(sb->flags);
 	out->u64s		= cpu_to_le16(sb->u64s);
-	out->nr_in_set		= cpu_to_le16(sb->nr_in_set);
-	out->nr_this_dev	= cpu_to_le16(sb->nr_this_dev);
 	out->csum		=
 		csum_set(out, sb->version < BCACHE_SB_VERSION_CDEV_V3
 			 ? BCH_CSUM_CRC64
@@ -433,13 +434,11 @@ static int cache_sb_to_cache_set(struct cache_set *c, struct cache *ca)
 		kfree_rcu(old, rcu);
 
 	c->sb.version		= ca->sb.version;
-	c->sb.set_uuid		= ca->sb.set_uuid;
-	c->sb.flags		= ca->sb.flags;
 	c->sb.seq		= ca->sb.seq;
-	c->sb.block_size	= ca->sb.block_size;
-	c->sb.bucket_size	= ca->sb.bucket_size;
+	c->sb.user_uuid		= ca->sb.user_uuid;
+	memcpy(c->sb.label, ca->sb.label, SB_LABEL_SIZE);
 	c->sb.nr_in_set		= ca->sb.nr_in_set;
-	c->sb.last_mount	= ca->sb.last_mount;
+	c->sb.flags		= ca->sb.flags;
 
 	pr_debug("set version = %llu", c->sb.version);
 	return 0;
@@ -474,10 +473,11 @@ static int cache_sb_from_cache_set(struct cache_set *c, struct cache *ca)
 	cache_member_info_put();
 
 	ca->sb.version		= BCACHE_SB_VERSION_CDEV;
-	ca->sb.flags		= c->sb.flags;
 	ca->sb.seq		= c->sb.seq;
+	ca->sb.user_uuid	= c->sb.user_uuid;
+	memcpy(ca->sb.label, c->sb.label, SB_LABEL_SIZE);
 	ca->sb.nr_in_set	= c->sb.nr_in_set;
-	ca->sb.last_mount	= c->sb.last_mount;
+	ca->sb.flags		= c->sb.flags;
 
 	return 0;
 }
@@ -559,13 +559,13 @@ static void bch_recalc_capacity(struct cache_set *c)
 			for (i = 0; i < tier->nr_devices; i++) {
 				struct cache *ca = tier->devices[i];
 
-				capacity += (ca->sb.nbuckets -
-					     ca->sb.first_bucket) <<
+				capacity += (ca->mi.nbuckets -
+					     ca->mi.first_bucket) <<
 					ca->bucket_bits;
 
 				ca->reserve_buckets_count =
-				div_u64((ca->sb.nbuckets -
-					 ca->sb.first_bucket) *
+				div_u64((ca->mi.nbuckets -
+					 ca->mi.first_bucket) *
 					c->bucket_reserve_percent, 100);
 
 			}
@@ -941,6 +941,7 @@ static const char *run_cache_set(struct cache_set *c)
 	struct cache *ca;
 	struct closure cl;
 	unsigned i, id;
+	long now;
 
 	BUG_ON(test_bit(CACHE_SET_RUNNING, &c->flags));
 
@@ -1095,7 +1096,13 @@ static const char *run_cache_set(struct cache_set *c)
 	schedule_delayed_work(&c->pd_controllers_update, 5 * HZ);
 
 	closure_sync(&cl);
-	c->sb.last_mount = get_seconds();
+
+	now = get_seconds();
+	mi = cache_member_info_get(c);
+	for_each_cache_rcu(ca, c, i)
+		mi->m[ca->sb.nr_this_dev].last_mount = now;
+	cache_member_info_put();
+
 	bcache_write_super(c);
 
 	flash_devs_run(c);
@@ -1127,7 +1134,8 @@ static const char *can_add_cache(struct cache *ca, struct cache_set *c)
 	else if (memcmp(&ca->sb.set_uuid, &c->sb.set_uuid,
 				sizeof(ca->sb.set_uuid)))
 		return "new cache has wrong cacheset uuid";
-	else if (ca->sb.bucket_size < c->btree_pages * PAGE_SECTORS)
+	else if (ca->sb.members[ca->sb.nr_this_dev].bucket_size <
+		 c->btree_pages * PAGE_SECTORS)
 		return "new cache bucket_size is too small";
 
 	return NULL;
@@ -1152,7 +1160,7 @@ static const char *can_attach_cache(struct cache *ca, struct cache_set *c)
 	match = !(ca->sb.seq <= c->sb.seq &&
 		  (ca->sb.nr_this_dev >= mi->nr_in_set ||
 		   memcmp(&mi->m[ca->sb.nr_this_dev].uuid,
-			  &ca->sb.uuid,
+			  &ca->sb.disk_uuid,
 			  sizeof(uuid_le))));
 
 	cache_member_info_put();
@@ -1737,7 +1745,7 @@ static void bch_cache_remove_work(struct work_struct *work)
 	if (meta_off) {
 		allmi = cache_member_info_get(c);
 		mi = &allmi->m[ca->sb.nr_this_dev];
-		memset(mi, 0, sizeof(*mi));
+		memset(&mi->uuid, 0, sizeof(mi->uuid));
 		/* No need to copy to struct cache as we are removing */
 		cache_member_info_put();
 	}
@@ -1772,18 +1780,43 @@ static void cache_init_motion(struct cache *ca, struct cache_set *c)
 	bch_tiering_init_cache(ca);
 }
 
-static int cache_init(struct cache *ca, struct cache_set *c)
+static const char *cache_init(struct cache *ca, struct cache_set *c)
 {
+	struct cache_member_rcu *mi;
 	size_t reserve_none, movinggc_reserve, free_inc_reserve, total_reserve;
 	size_t heap_size;
 	unsigned i;
 
 	if (cache_set_init_fault("cache_alloc"))
-		return -ENOMEM;
+		return "dynamic fault";
+
+	mi = cache_member_info_get(c);
+	ca->mi = mi->m[ca->sb.nr_this_dev];
+	cache_member_info_put();
+
+	ca->bucket_bits = ilog2(ca->mi.bucket_size);
+
+	if (CACHE_SYNC(&ca->sb) &&
+	    ca->sb.version != BCACHE_SB_VERSION_CDEV_V3)
+		return "Unsupported superblock version";
+
+	if (get_capacity(ca->bdev->bd_disk) <
+	    ca->mi.bucket_size * ca->mi.nbuckets)
+		return "Invalid superblock: device too small";
+
+	if (ca->sb.offset +
+	    (set_blocks(&ca->sb, block_bytes(c)) << c->block_bits) >
+	    ca->mi.first_bucket << ca->bucket_bits)
+		return "Invalid superblock: first bucket comes before end of super";
+
+	for (i = 0; i < bch_nr_journal_buckets(&ca->sb); i++)
+		if (journal_bucket(ca, i) <  ca->mi.first_bucket ||
+		    journal_bucket(ca, i) >= ca->mi.nbuckets)
+			return "bad journal bucket";
 
 	if (percpu_ref_init(&ca->ref, bch_cache_percpu_ref_release,
 			    0, GFP_KERNEL))
-		return -ENOMEM;
+		return "cannot allocate memory";
 
 	seqcount_init(&ca->self.lock);
 	ca->self.nr_devices = 1;
@@ -1799,14 +1832,14 @@ static int cache_init(struct cache *ca, struct cache_set *c)
 
 	/* XXX: tune these */
 	movinggc_reserve = max_t(size_t, NUM_GC_GENS * 2,
-				 ca->sb.nbuckets >> 7);
-	reserve_none = max_t(size_t, 4, ca->sb.nbuckets >> 9);
+				 ca->mi.nbuckets >> 7);
+	reserve_none = max_t(size_t, 4, ca->mi.nbuckets >> 9);
 	free_inc_reserve = reserve_none << 1;
 	heap_size = max_t(size_t, free_inc_reserve, movinggc_reserve);
 
 	for (i = 0; i < BTREE_ID_NR; i++)
 		if (!init_fifo(&ca->free[i], BTREE_NODE_RESERVE, GFP_KERNEL))
-			return -ENOMEM;
+			return "cannot allocate memory";
 
 	if (!init_fifo(&ca->free[RESERVE_PRIO], prio_buckets(ca), GFP_KERNEL) ||
 	    !init_fifo(&ca->free[RESERVE_MOVINGGC_BTREE],
@@ -1820,9 +1853,9 @@ static int cache_init(struct cache *ca, struct cache_set *c)
 	    !init_fifo(&ca->free_inc,	free_inc_reserve, GFP_KERNEL) ||
 	    !init_heap(&ca->heap,	heap_size, GFP_KERNEL) ||
 	    !(ca->bucket_gens	= vzalloc(sizeof(u8) *
-					  ca->sb.nbuckets)) ||
+					  ca->mi.nbuckets)) ||
 	    !(ca->buckets	= vzalloc(sizeof(struct bucket) *
-					  ca->sb.nbuckets)) ||
+					  ca->mi.nbuckets)) ||
 	    !(ca->prio_buckets	= kzalloc(sizeof(uint64_t) * prio_buckets(ca) *
 					  2, GFP_KERNEL)) ||
 	    !(ca->disk_buckets	= alloc_bucket_pages(GFP_KERNEL, ca)) ||
@@ -1831,10 +1864,9 @@ static int cache_init(struct cache *ca, struct cache_set *c)
 	    !(ca->journal.seq	= kcalloc(bch_nr_journal_buckets(&ca->sb),
 					  sizeof(u64), GFP_KERNEL)) ||
 	    !(ca->bio_prio = bio_kmalloc(GFP_NOIO, bucket_pages(ca))))
-		return -ENOMEM;
+		return "cannot allocate memory";
 
 	ca->prio_last_buckets = ca->prio_buckets + prio_buckets(ca);
-	ca->bucket_bits = ilog2(ca->sb.bucket_size);
 
 	total_reserve = ca->free_inc.size;
 	for (i = 0; i < RESERVE_NR; i++)
@@ -1860,7 +1892,7 @@ static int cache_init(struct cache *ca, struct cache_set *c)
 	 */
 	if (c != NULL)
 		cache_init_motion(ca, c);
-	return 0;
+	return NULL;
 }
 
 static const char *__register_cache(struct bcache_superblock *sb,
@@ -1870,8 +1902,6 @@ static const char *__register_cache(struct bcache_superblock *sb,
 {
 	const char *err = NULL; /* must be set for any error case */
 	struct cache *ca;
-	int ret2 = 0;
-	unsigned i;
 
 	err = "cannot allocate memory";
 	ca = kzalloc(sizeof(*ca), GFP_KERNEL);
@@ -1893,25 +1923,9 @@ static const char *__register_cache(struct bcache_superblock *sb,
 	if (err)
 		goto err;
 
-	err = "Unsupported superblock version";
-	if (CACHE_SYNC(&ca->sb) &&
-	    ca->sb.version != BCACHE_SB_VERSION_CDEV_V3)
+	err = cache_init(ca, c);
+	if (err)
 		goto err;
-
-	ret2 = cache_init(ca, c);
-	if (ret2 != 0) {
-		if (ret2 == -ENOMEM)
-			err = "cache_alloc(): -ENOMEM";
-		else
-			err = "cache_alloc(): unknown error";
-		goto err;
-	}
-
-	err = "bad journal bucket";
-	for (i = 0; i < bch_nr_journal_buckets(&ca->sb); i++)
-		if (journal_bucket(ca, i) <  ca->sb.first_bucket ||
-		    journal_bucket(ca, i) >= ca->sb.nbuckets)
-			goto err;
 
 	err = "error creating kobject";
 	if (kobject_add(&ca->kobj, &part_to_dev(bdev->bd_part)->kobj, "bcache"))
@@ -2041,7 +2055,7 @@ have_slot:
 
 	/* Are there other fields to preserve besides the uuid and tier? */
 	mi = &new_mi->m[nr_this_dev];
-	mi->uuid = ca->sb.uuid;
+	mi->uuid = ca->sb.disk_uuid;
 	SET_CACHE_TIER(mi, (CACHE_TIER(&orig_mi)));
 
 	/* commit new member info */
@@ -2053,6 +2067,10 @@ have_slot:
 	err = "sysfs error";
 	if (cache_set_add_device(c, ca))
 		goto err_put;
+
+	mi = &cache_member_info_get(c)->m[ca->sb.nr_this_dev];
+	mi->last_mount = get_seconds();
+	cache_member_info_put();
 
 	bcache_write_super(c);
 

@@ -298,9 +298,14 @@ BITMASK(INODE_FLASH_ONLY,	struct bch_inode_blockdev,
 #define BDEV_DATA_START_DEFAULT		16	/* sectors */
 
 struct cache_member {
+	uuid_le			uuid;
+	__u64			nbuckets;	/* device size */
+	__u16			first_bucket;   /* index of first bucket used */
+	__u16			bucket_size;	/* sectors */
+	__u32			last_mount;	/* time_t */
+
 	__u64			f1;
 	__u64			f2;
-	uuid_le			uuid;
 };
 
 BITMASK(CACHE_STATE,		struct cache_member, f1, 0,  4)
@@ -337,52 +342,60 @@ struct cache_sb {
 	__u64			offset;	/* sector where this sb was written */
 	__u64			version; /* of on disk format */
 
-	uuid_le			magic;
+	uuid_le			magic;	/* bcache superblock UUID */
 
-	uuid_le			uuid;   /* specific to this disk */
+	/* Identifies this disk within the cache set: */
+	uuid_le			disk_uuid;
 
-	/* Specific to this cache set - xored with various magic numbers and
-	 * thus must never change:
+	/*
+	 * Internal cache set UUID - xored with various magic numbers and thus
+	 * must never change:
 	 */
 	union {
 		uuid_le		set_uuid;
 		__u64		set_magic;
 	};
+
 	__u8			label[SB_LABEL_SIZE];
 
 	__u64			flags;
+
+	/* Incremented each time superblock is written: */
 	__u64			seq;
-	__u64			pad[8];
+
+	/*
+	 * User visible UUID for identifying the cache set the user is allowed
+	 * to change:
+	 */
+	uuid_le			user_uuid;
+	__u64			pad[6];
 
 	union {
 	struct {
 		/* Cache devices */
-		__u64		nbuckets;	/* device size */
 
-		__u16		block_size;	/* sectors */
-		__u16		bucket_size;	/* sectors */
+		/* Number of cache_member entries: */
+		__u8		nr_in_set;
 
-		__u16		nr_in_set;
-		__u16		nr_this_dev;
+		/*
+		 * Index of this device - for PTR_DEV(), and also this device's
+		 * slot in the cache_member array:
+		 */
+		__u8		nr_this_dev;
 	};
 	struct {
 		/* Backing devices */
-		__u64		data_offset;
-
-		/*
-		 * block_size from the cache device section is still used by
-		 * backing devices, so don't add anything here until we fix
-		 * things to not need it for backing devices anymore
-		 */
+		__u64		bdev_data_offset;
 	};
 	};
 
-	__u32			last_mount;	/* time_t */
+	__u16			block_size;	/* sectors */
+	__u16			pad2[3];
 
-	/* Index of the first bucket used: */
-	__u16			first_bucket;
-	/* Size of variable length portion: */
-	__u16			u64s;
+	__u32			bdev_last_mount;	/* time_t */
+	__u16			pad3;
+	__u16			u64s;	/* size of variable length portion */
+
 	union {
 		struct cache_member	members[0];
 		/*

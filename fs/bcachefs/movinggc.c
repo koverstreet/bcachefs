@@ -178,7 +178,7 @@ static bool bch_moving_gc(struct cache *ca)
 	 */
 
 	spin_lock(&ca->freelist_lock);
-	reserve_sectors = ca->sb.bucket_size *
+	reserve_sectors = ca->mi.bucket_size *
 		(fifo_used(&ca->free[RESERVE_MOVINGGC]) - NUM_GC_GENS);
 	spin_unlock(&ca->freelist_lock);
 
@@ -212,7 +212,7 @@ static bool bch_moving_gc(struct cache *ca)
 
 		sectors_used = bucket_sectors_used(g);
 
-		if (sectors_used >= ca->sb.bucket_size)
+		if (sectors_used >= ca->mi.bucket_size)
 			continue;
 
 		bucket_heap_push(ca, g, sectors_used);

@@ -11,8 +11,8 @@
 #include "super.h"
 
 #define for_each_bucket(b, ca)						\
-	for (b = (ca)->buckets + (ca)->sb.first_bucket;			\
-	     b < (ca)->buckets + (ca)->sb.nbuckets; b++)
+	for (b = (ca)->buckets + (ca)->mi.first_bucket;			\
+	     b < (ca)->buckets + (ca)->mi.nbuckets; b++)
 
 /*
  * bucket_gc_gen() returns the difference between the bucket's current gen and
@@ -194,7 +194,7 @@ static inline size_t __buckets_available_cache(struct cache *ca,
 					       struct bucket_stats stats)
 {
 	return max_t(s64, 0,
-		     ca->sb.nbuckets - ca->sb.first_bucket -
+		     ca->mi.nbuckets - ca->mi.first_bucket -
 		     stats.buckets_dirty -
 		     stats.buckets_alloc -
 		     stats.buckets_meta);

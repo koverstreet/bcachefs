@@ -304,7 +304,7 @@ STORE(__cached_dev)
 		if (!env)
 			return -ENOMEM;
 		add_uevent_var(env, "DRIVER=bcache");
-		add_uevent_var(env, "CACHED_UUID=%pU", dc->sb.uuid.b),
+		add_uevent_var(env, "CACHED_UUID=%pU", dc->sb.disk_uuid.b),
 		add_uevent_var(env, "CACHED_LABEL=%s", buf);
 		kobject_uevent_env(
 			&disk_to_dev(dc->disk.disk)->kobj, KOBJ_CHANGE, env->envp);
@@ -986,16 +986,16 @@ static ssize_t show_quantiles(struct cache *ca, char *buf,
 	int cmp(const void *l, const void *r)
 	{	return *((unsigned *) r) - *((unsigned *) l); }
 
-	size_t n = ca->sb.nbuckets, i;
+	size_t n = ca->mi.nbuckets, i;
 	/* Compute 31 quantiles */
 	unsigned q[31], *p;
 	ssize_t ret = 0;
 
-	p = vzalloc(ca->sb.nbuckets * sizeof(unsigned));
+	p = vzalloc(ca->mi.nbuckets * sizeof(unsigned));
 	if (!p)
 		return -ENOMEM;
 
-	for (i = ca->sb.first_bucket; i < n; i++)
+	for (i = ca->mi.first_bucket; i < n; i++)
 		p[i] = fn(ca, &ca->buckets[i], private);
 
 	sort(p, n, sizeof(unsigned), cmp, NULL);
@@ -1050,8 +1050,8 @@ SHOW(bch_cache)
 	sysfs_print(bucket_size_bytes,	bucket_bytes(ca));
 	sysfs_hprint(block_size,	block_bytes(ca));
 	sysfs_print(block_size_bytes,	block_bytes(ca));
-	sysfs_print(first_bucket,	ca->sb.first_bucket);
-	sysfs_print(nbuckets,		ca->sb.nbuckets);
+	sysfs_print(first_bucket,	ca->mi.first_bucket);
+	sysfs_print(nbuckets,		ca->mi.nbuckets);
 	sysfs_print(discard,		CACHE_DISCARD(&ca->mi));
 	sysfs_hprint(written, atomic_long_read(&ca->sectors_written) << 9);
 	sysfs_hprint(btree_written,

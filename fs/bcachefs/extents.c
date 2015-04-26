@@ -192,7 +192,7 @@ static bool __ptr_invalid(const struct cache_set *c, const struct bkey *k)
 {
 	const struct bkey_i_extent *e;
 	const struct bch_extent_ptr *ptr;
-	struct cache *ca;
+	struct cache_member *mi;
 	bool ret = true;
 
 	if (k->u64s < BKEY_U64s)
@@ -205,21 +205,32 @@ static bool __ptr_invalid(const struct cache_set *c, const struct bkey *k)
 		if (bch_extent_ptrs(e) > BKEY_EXTENT_PTRS_MAX)
 			return true;
 
-		rcu_read_lock();
+		mi = cache_member_info_get(c)->m;
 
-		extent_for_each_online_device(c, e, ptr, ca) {
-			size_t bucket = PTR_BUCKET_NR(ca, ptr);
-			size_t r = bucket_remainder(ca, PTR_OFFSET(ptr));
+		extent_for_each_ptr(e, ptr) {
+			u64 offset = PTR_OFFSET(ptr);
+			unsigned dev = PTR_DEV(ptr);
+			struct cache_member *m = mi + dev;
 
-			if (k->size + r > c->sb.bucket_size ||
-			    bucket <  ca->sb.first_bucket ||
-			    bucket >= ca->sb.nbuckets)
+			if (dev > c->sb.nr_in_set) {
+				if (dev != PTR_LOST_DEV)
+					goto invalid;
+
+				continue;
+			}
+
+			if ((offset + e->k.size >
+			     m->bucket_size * m->nbuckets) ||
+			    (offset <
+			     m->bucket_size * m->first_bucket) ||
+			    ((offset & (m->bucket_size - 1)) + e->k.size >
+			     m->bucket_size))
 				goto invalid;
 		}
 
 		ret = false;
 invalid:
-		rcu_read_unlock();
+		cache_member_info_put();
 	}
 
 	return ret;
@@ -229,10 +240,10 @@ invalid:
  * Should match __extent_invalid() - returns the reason an extent is invalid
  */
 static const char *bch_ptr_status(const struct cache_set *c,
+				  struct cache_member *mi,
 				  const struct bkey_i_extent *e)
 {
 	const struct bch_extent_ptr *ptr;
-	struct cache *ca;
 
 	if (!bch_extent_ptrs(e))
 		return "invalid: no pointers";
@@ -240,17 +251,31 @@ static const char *bch_ptr_status(const struct cache_set *c,
 	if (bch_extent_ptrs(e) > BKEY_EXTENT_PTRS_MAX)
 		return "invalid: too many pointers";
 
-	extent_for_each_online_device(c, e, ptr, ca) {
-		size_t bucket = PTR_BUCKET_NR(ca, ptr);
-		size_t r = bucket_remainder(ca, PTR_OFFSET(ptr));
+	extent_for_each_ptr(e, ptr) {
+		u64 offset = PTR_OFFSET(ptr);
+		unsigned dev = PTR_DEV(ptr);
+		struct cache_member *m = mi + dev;
+		struct cache *ca;
 
-		if (e->k.size + r > ca->sb.bucket_size)
-			return "bad, length too big";
-		if (bucket <  ca->sb.first_bucket)
-			return "bad, short offset";
-		if (bucket >= ca->sb.nbuckets)
-			return "bad, offset past end of device";
-		if (ptr_stale(ca, ptr))
+		if (dev > c->sb.nr_in_set) {
+			if (dev != PTR_LOST_DEV)
+				return "pointer to invalid device";
+
+			continue;
+		}
+
+		if (offset + e->k.size > m->bucket_size * m->nbuckets)
+			return "invalid: offset past end of device";
+
+		if (offset < m->bucket_size * m->first_bucket)
+			return "invalid: offset before first bucket";
+
+		if ((offset & (m->bucket_size - 1)) +
+		    e->k.size > m->bucket_size)
+			return "invalid: spans multiple buckets";
+
+		if ((ca = PTR_CACHE(c, ptr)) &&
+		    ptr_stale(ca, ptr))
 			return "stale";
 	}
 
@@ -262,6 +287,7 @@ static const char *bch_ptr_status(const struct cache_set *c,
 static void bch_extent_to_text(const struct btree *b, char *buf,
 			       size_t size, const struct bkey *k)
 {
+	struct cache_set *c = b->c;
 	const struct bkey_i_extent *e;
 	char *out = buf, *end = buf + size;
 	const struct bch_extent_ptr *ptr;
@@ -287,9 +313,8 @@ static void bch_extent_to_text(const struct btree *b, char *buf,
 			p(" cs%llu %llx", KEY_CSUM(k), k->val[1]);
 #endif
 
-		rcu_read_lock();
-		p(" %s", bch_ptr_status(b->c, e));
-		rcu_read_unlock();
+		p(" %s", bch_ptr_status(c, cache_member_info_get(c)->m, e));
+		cache_member_info_put();
 	}
 #undef p
 }

@@ -653,12 +653,12 @@ struct bbio {
 
 static inline unsigned bucket_pages(const struct cache *ca)
 {
-	return ca->sb.bucket_size / PAGE_SECTORS;
+	return ca->mi.bucket_size / PAGE_SECTORS;
 }
 
 static inline unsigned bucket_bytes(const struct cache *ca)
 {
-	return ca->sb.bucket_size << 9;
+	return ca->mi.bucket_size << 9;
 }
 
 #define block_bytes(c)		((c)->sb.block_size << 9)
@@ -667,7 +667,7 @@ static inline unsigned bucket_bytes(const struct cache *ca)
 	((bucket_bytes(ca) - sizeof(struct prio_set)) /	\
 	 sizeof(struct bucket_disk))
 #define prio_buckets(ca)					\
-	DIV_ROUND_UP((size_t) (ca)->sb.nbuckets, prios_per_bucket(ca))
+	DIV_ROUND_UP((size_t) (ca)->mi.nbuckets, prios_per_bucket(ca))
 
 /* Error handling macros */
 
