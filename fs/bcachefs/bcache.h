@@ -387,6 +387,10 @@ struct cache_set {
 	struct kobject		internal;
 	unsigned long		flags;
 
+	/* Counts outstanding writes, for clean transition to read-only */
+	struct percpu_ref	writes;
+	struct completion	write_disable_complete;
+
 	struct cache __rcu	*cache[MAX_CACHES_PER_SET];
 	struct cache_member_rcu	*members;
 	unsigned long	cache_slots_used[BITS_TO_LONGS(MAX_CACHES_PER_SET)];

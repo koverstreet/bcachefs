@@ -285,6 +285,7 @@ static void bch_write_done(struct closure *cl)
 	if (!op->write_done)
 		continue_at(cl, __bch_write, op->io_wq);
 
+	percpu_ref_put(&op->c->writes);
 	bch_keylist_free(&op->insert_keys);
 	closure_return(cl);
 }
@@ -542,6 +543,11 @@ void bch_write(struct closure *cl)
 
 	if (!bio_sectors(op->bio)) {
 		WARN_ONCE(1, "bch_write() called with empty bio");
+		closure_return(cl);
+	}
+
+	if (!percpu_ref_tryget(&c->writes)) {
+		op->error = -EROFS;
 		closure_return(cl);
 	}
 
