@@ -362,7 +362,9 @@ int bch_cached_dev_attach(struct cached_dev *dc, struct cache_set *c)
 	char buf[BDEVNAME_SIZE];
 	bool found;
 	int ret;
+	struct closure cl;
 
+	closure_init_stack(&cl);
 	bdevname(dc->disk_sb.bdev, buf);
 
 	if (memcmp(&dc->sb.set_uuid, &c->sb.set_uuid, sizeof(c->sb.set_uuid)))
@@ -408,10 +410,6 @@ int bch_cached_dev_attach(struct cached_dev *dc, struct cache_set *c)
 	 */
 
 	if (!found) {
-		struct closure cl;
-
-		closure_init_stack(&cl);
-
 		bkey_inode_blockdev_init(&dc->disk.inode.k_i);
 		dc->disk.inode.v.i_uuid = dc->sb.disk_uuid;
 		memcpy(dc->disk.inode.v.i_label, dc->sb.label, SB_LABEL_SIZE);
@@ -432,11 +430,12 @@ int bch_cached_dev_attach(struct cached_dev *dc, struct cache_set *c)
 		SET_BDEV_STATE(&dc->sb, BDEV_STATE_CLEAN);
 
 		bch_write_bdev_super(dc, &cl);
-		closure_sync(&cl);
 	} else {
 		dc->disk.inode.v.i_inode.i_mtime = rtime;
-		bch_inode_update(c, &dc->disk.inode.k_i);
+		bch_inode_update(c, &dc->disk.inode.k_i, &cl, NULL);
 	}
+
+	closure_sync(&cl);
 
 	/* Count dirty sectors before attaching */
 	if (BDEV_STATE(&dc->sb) == BDEV_STATE_DIRTY)

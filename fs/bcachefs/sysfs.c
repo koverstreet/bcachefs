@@ -249,6 +249,9 @@ STORE(__cached_dev)
 	unsigned v = size;
 	struct cache_set *c;
 	struct kobj_uevent_env *env;
+	struct closure cl;
+
+	closure_init_stack(&cl);
 
 #define d_strtoul(var)		sysfs_strtoul(var, dc->var)
 #define d_strtoul_nonzero(var)	sysfs_strtoul_clamp(var, dc->var, 1, INT_MAX)
@@ -302,9 +305,12 @@ STORE(__cached_dev)
 		bch_write_bdev_super(dc, NULL);
 
 		if (dc->disk.c)
-			bch_inode_update(dc->disk.c, &dc->disk.inode.k_i);
+			bch_inode_update(dc->disk.c, &dc->disk.inode.k_i,
+					 &cl, NULL);
 
 		mutex_unlock(&dc->disk.inode_lock);
+
+		closure_sync(&cl);
 
 		env = kzalloc(sizeof(struct kobj_uevent_env), GFP_KERNEL);
 		if (!env)
@@ -411,6 +417,9 @@ STORE(__bch_flash_dev)
 {
 	struct bcache_device *d = container_of(kobj, struct bcache_device,
 					       kobj);
+	struct closure cl;
+
+	closure_init_stack(&cl);
 
 	sysfs_strtoul(data_csum,	d->data_csum);
 
@@ -422,19 +431,23 @@ STORE(__bch_flash_dev)
 		if (v < d->inode.v.i_inode.i_size)
 			bch_inode_truncate(d->c, d->inode.k.p.inode, v >> 9);
 		d->inode.v.i_inode.i_size = v;
-		bch_inode_update(d->c, &d->inode.k_i);
+		bch_inode_update(d->c, &d->inode.k_i, &cl, NULL);
 		set_capacity(d->disk, d->inode.v.i_inode.i_size >> 9);
 
 		mutex_unlock(&d->inode_lock);
+
+		closure_sync(&cl);
 	}
 
 	if (attr == &sysfs_label) {
 		mutex_lock(&d->inode_lock);
 
 		memcpy(d->inode.v.i_label, buf, SB_LABEL_SIZE);
-		bch_inode_update(d->c, &d->inode.k_i);
+		bch_inode_update(d->c, &d->inode.k_i, &cl, NULL);
 
 		mutex_unlock(&d->inode_lock);
+
+		closure_sync(&cl);
 	}
 
 	if (attr == &sysfs_unregister) {
