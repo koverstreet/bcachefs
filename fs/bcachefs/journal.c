@@ -55,10 +55,10 @@ static struct jset_entry *bch_journal_find_entry(struct jset *j, unsigned type,
 	return NULL;
 }
 
-struct bkey *bch_journal_find_btree_root(struct cache_set *c, struct jset *j,
-					 enum btree_id id, unsigned *level)
+struct bkey_i *bch_journal_find_btree_root(struct cache_set *c, struct jset *j,
+					   enum btree_id id, unsigned *level)
 {
-	struct bkey *k;
+	struct bkey_i *k;
 	struct jset_entry *jkeys =
 		bch_journal_find_entry(j, JKEYS_BTREE_ROOT, id);
 
@@ -68,8 +68,8 @@ struct bkey *bch_journal_find_btree_root(struct cache_set *c, struct jset *j,
 	k = jkeys->start;
 	*level = jkeys->level;
 
-	if (!jkeys->u64s || jkeys->u64s != k->u64s ||
-	    bkey_invalid(c, BKEY_TYPE_BTREE, k)) {
+	if (!jkeys->u64s || jkeys->u64s != k->k.u64s ||
+	    bkey_invalid(c, BKEY_TYPE_BTREE, bkey_i_to_s_c(k))) {
 		bch_cache_set_error(c, "invalid btree root in journal");
 		return NULL;
 	}
@@ -79,9 +79,9 @@ struct bkey *bch_journal_find_btree_root(struct cache_set *c, struct jset *j,
 }
 
 static void bch_journal_add_btree_root(struct jset *j, enum btree_id id,
-				       struct bkey *k, unsigned level)
+				       struct bkey_i *k, unsigned level)
 {
-	bch_journal_add_entry(j, k, k->u64s, JKEYS_BTREE_ROOT, id, level);
+	bch_journal_add_entry(j, k, k->k.u64s, JKEYS_BTREE_ROOT, id, level);
 }
 
 static inline void bch_journal_add_prios(struct cache_set *c, struct jset *j)
@@ -484,7 +484,7 @@ const char *bch_journal_read(struct cache_set *c, struct list_head *list)
 
 void bch_journal_mark(struct cache_set *c, struct list_head *list)
 {
-	struct bkey *k;
+	struct bkey_i *k;
 	struct jset_entry *j;
 	struct journal_replay *r;
 
@@ -492,19 +492,21 @@ void bch_journal_mark(struct cache_set *c, struct list_head *list)
 		for_each_jset_key(k, j, &r->j) {
 			if ((j->level || j->btree_id == BTREE_ID_EXTENTS) &&
 			    !bkey_invalid(c, j->level
-					  ? BKEY_TYPE_BTREE : j->btree_id, k))
-				__bch_btree_mark_key(c, j->level, k);
+					  ? BKEY_TYPE_BTREE : j->btree_id,
+					  bkey_i_to_s_c(k)))
+				__bch_btree_mark_key(c, j->level,
+						     bkey_i_to_s_c(k));
 		}
 }
 
 static int bch_journal_replay_key(struct cache_set *c, enum btree_id id,
-				  struct bkey *k)
+				  struct bkey_i *k)
 {
 	int ret;
 	BKEY_PADDED(key) temp;
-	bool do_subtract = id == BTREE_ID_EXTENTS && k->type == BCH_EXTENT;
+	bool do_subtract = id == BTREE_ID_EXTENTS && k->k.type == BCH_EXTENT;
 
-	trace_bcache_journal_replay_key(k);
+	trace_bcache_journal_replay_key(&k->k);
 
 	if (do_subtract)
 		bkey_copy(&temp.key, k);
@@ -518,9 +520,9 @@ static int bch_journal_replay_key(struct cache_set *c, enum btree_id id,
 	 * them again
 	 */
 	if (do_subtract)
-		__bch_add_sectors(c, NULL, bkey_i_to_extent_c(&temp.key),
-				  bkey_start_offset(&temp.key),
-				  -temp.key.size, false);
+		__bch_add_sectors(c, NULL, bkey_i_to_s_c_extent(&temp.key),
+				  bkey_start_offset(&temp.key.k),
+				  -temp.key.k.size, false);
 
 	return 0;
 }
@@ -528,7 +530,7 @@ static int bch_journal_replay_key(struct cache_set *c, enum btree_id id,
 int bch_journal_replay(struct cache_set *c, struct list_head *list)
 {
 	int ret = 0, keys = 0, entries = 0;
-	struct bkey *k;
+	struct bkey_i *k;
 	struct jset_entry *jkeys;
 	struct journal_replay *i =
 		list_entry(list->prev, struct journal_replay, list);
@@ -725,14 +727,14 @@ static size_t journal_write_u64s_remaining(struct cache_set *c)
 
 static void journal_entry_no_room(struct cache_set *c)
 {
-	struct bkey_i_extent *e = bkey_i_to_extent(&c->journal.key);
+	struct bkey_s_extent e = bkey_i_to_s_extent(&c->journal.key);
 	struct bch_extent_ptr *ptr;
 	struct cache *ca;
 
 	extent_for_each_ptr_backwards(e, ptr)
 		if (!(ca = PTR_CACHE(c, ptr)) ||
 		    ca->journal.sectors_free <= c->journal.sectors_free)
-			bch_extent_drop_ptr(&e->k, ptr - e->v.ptr);
+			bch_extent_drop_ptr(e, ptr - e.v->ptr);
 
 	c->journal.sectors_free = 0;
 	c->journal.u64s_remaining = 0;
@@ -883,7 +885,7 @@ static bool journal_reclaim_fast(struct cache_set *c)
  */
 static void journal_next_bucket(struct cache_set *c)
 {
-	struct bkey_i_extent *e = bkey_i_to_extent(&c->journal.key);
+	struct bkey_s_extent e = bkey_i_to_s_extent(&c->journal.key);
 	struct bch_extent_ptr *ptr;
 	struct cache *ca;
 	unsigned iter;
@@ -911,7 +913,7 @@ static void journal_next_bucket(struct cache_set *c)
 		if (!(ca = PTR_CACHE(c, ptr)) ||
 		    !ca->journal.sectors_free ||
 		    CACHE_STATE(&ca->mi) != CACHE_ACTIVE)
-			bch_extent_drop_ptr(&e->k, ptr - e->v.ptr);
+			bch_extent_drop_ptr(e, ptr - e.v->ptr);
 
 	/*
 	 * Determine location of the next journal write:
@@ -931,7 +933,8 @@ static void journal_next_bucket(struct cache_set *c)
 		 */
 		if ((CACHE_TIER(&ca->mi) != 0) ||
 		    (CACHE_STATE(&ca->mi) != CACHE_ACTIVE) ||
-		    bch_extent_has_device(e, ca->sb.nr_this_dev))
+		    bch_extent_has_device(extent_s_to_s_c(e),
+					  ca->sb.nr_this_dev))
 			continue;
 
 		/* No journal buckets available for writing on this device */
@@ -943,7 +946,7 @@ static void journal_next_bucket(struct cache_set *c)
 		ja->sectors_free = ca->mi.bucket_size;
 
 		ja->cur_idx = next;
-		e->v.ptr[bch_extent_ptrs(e)] =
+		e.v->ptr[bch_extent_ptrs(e)] =
 			PTR(0, bucket_to_sector(ca,
 					journal_bucket(ca, ja->cur_idx)),
 			    ca->sb.nr_this_dev);
@@ -1023,7 +1026,7 @@ static void journal_write_locked(struct closure *cl)
 	struct cache_set *c = container_of(cl, struct cache_set, journal.io);
 	struct cache *ca;
 	struct journal_write *w = c->journal.cur;
-	struct bkey_i_extent *e = bkey_i_to_extent(&c->journal.key);
+	struct bkey_s_extent e = bkey_i_to_s_extent(&c->journal.key);
 	struct bch_extent_ptr *ptr;
 	BKEY_PADDED(k) tmp;
 	unsigned i, sectors;
@@ -1120,7 +1123,7 @@ static void journal_write_locked(struct closure *cl)
 	 * Make a copy of the key we're writing to for check_mark_super, since
 	 * journal_next_bucket will change it
 	 */
-	bkey_copy(&tmp.k, &e->k);
+	bkey_reassemble(&tmp.k, to_bkey_s_c(e));
 
 	atomic_dec_bug(&fifo_back(&c->journal.pin));
 	bch_journal_next(&c->journal);
@@ -1316,17 +1319,17 @@ void bch_journal_set_dirty(struct cache_set *c)
 }
 
 void bch_journal_add_keys(struct cache_set *c, struct journal_res *res,
-			  enum btree_id id, const struct bkey *k,
+			  enum btree_id id, const struct bkey_i *k,
 			  unsigned level)
 {
-	unsigned actual = jset_u64s(k->u64s);
+	unsigned actual = jset_u64s(k->k.u64s);
 
 	BUG_ON(!res->ref);
 	BUG_ON(actual > res->nkeys);
 	res->nkeys -= actual;
 
 	spin_lock(&c->journal.lock);
-	bch_journal_add_entry(c->journal.cur->data, k, k->u64s,
+	bch_journal_add_entry(c->journal.cur->data, k, k->k.u64s,
 			      JKEYS_BTREE_KEYS, id, level);
 	bch_journal_set_dirty(c);
 	spin_unlock(&c->journal.lock);
@@ -1405,7 +1408,7 @@ static bool bch_journal_writing_to_device(struct cache *ca)
 	bool ret;
 
 	spin_lock(&c->journal.lock);
-	ret = bch_extent_has_device(bkey_i_to_extent(&c->journal.key),
+	ret = bch_extent_has_device(bkey_i_to_s_c_extent(&c->journal.key),
 				    ca->sb.nr_this_dev);
 	spin_unlock(&c->journal.lock);
 

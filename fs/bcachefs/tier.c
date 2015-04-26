@@ -15,20 +15,20 @@
 /**
  * tiering_pred - check if tiering should copy an extent to tier 1
  */
-static bool tiering_pred(struct scan_keylist *kl, const struct bkey *k)
+static bool tiering_pred(struct scan_keylist *kl, struct bkey_s_c k)
 {
 	struct cache *ca = container_of(kl, struct cache,
 					tiering_queue.keys);
 	struct cache_set *c = ca->set;
 	struct cache_member_rcu *mi;
-	const struct bkey_i_extent *e;
+	struct bkey_s_c_extent e;
 	unsigned replicas = CACHE_SET_DATA_REPLICAS_WANT(&c->sb);
 	unsigned dev;
 	bool ret = false;
 
-	switch (k->type) {
+	switch (k.k->type) {
 	case BCH_EXTENT:
-		e = bkey_i_to_extent_c(k);
+		e = bkey_s_c_to_extent(k);
 		/*
 		 * Should not happen except in a pathological situation (too
 		 * many pointers on the wrong tier?
@@ -42,7 +42,7 @@ static bool tiering_pred(struct scan_keylist *kl, const struct bkey *k)
 		if (bch_extent_ptrs(e) < replicas)
 			return true;
 
-		dev = PTR_DEV(&e->v.ptr[bch_extent_ptrs(e) - replicas]);
+		dev = PTR_DEV(&e.v->ptr[bch_extent_ptrs(e) - replicas]);
 		mi = cache_member_info_get(c);
 		ret = dev < mi->nr_in_set && !CACHE_TIER(&mi->m[dev]);
 		cache_member_info_put();
@@ -152,7 +152,7 @@ static void tiering_refill(struct cache_set *c, struct tiering_refill *refill)
 {
 	struct scan_keylist *keys;
 	struct btree_iter iter;
-	const struct bkey *k;
+	struct bkey_s_c k;
 
 	if (bkey_cmp(refill->start, POS_MAX) >= 0)
 		return;
@@ -169,7 +169,7 @@ static void tiering_refill(struct cache_set *c, struct tiering_refill *refill)
 		keys = &refill->ca->tiering_queue.keys;
 
 		if (!tiering_pred(keys, k)) {
-			refill->start = k->p;
+			refill->start = k.k->p;
 			goto next;
 		}
 
@@ -178,8 +178,8 @@ static void tiering_refill(struct cache_set *c, struct tiering_refill *refill)
 			goto done;
 
 		/* TODO: split key if refill->sectors is now > stripe_size */
-		refill->sectors += k->size;
-		refill->start = k->p;
+		refill->sectors += k.k->size;
+		refill->start = k.k->p;
 
 		/* Check if we've added enough keys to this keylist */
 		if (tiering_keylist_full(refill)) {
@@ -214,7 +214,7 @@ done:
 
 static int issue_tiering_move(struct moving_queue *q,
 			      struct moving_context *ctxt,
-			      struct bkey *k)
+			      struct bkey_s_c k)
 {
 	struct cache *ca = container_of(q, struct cache, tiering_queue);
 	struct cache_set *c = ca->set;
@@ -222,17 +222,18 @@ static int issue_tiering_move(struct moving_queue *q,
 
 	io = moving_io_alloc(k);
 	if (!io) {
-		trace_bcache_tiering_alloc_fail(c, k->size);
+		trace_bcache_tiering_alloc_fail(c, k.k->size);
 		return -ENOMEM;
 	}
 
 	bch_write_op_init(&io->op, c, &io->bio.bio,
 			  &ca->tiering_write_point,
-			  &io->key, &io->key, 0);
+			  bkey_i_to_s_c(&io->key),
+			  bkey_i_to_s_c(&io->key), 0);
 	io->op.io_wq = q->wq;
 	io->op.btree_alloc_reserve = RESERVE_TIERING_BTREE;
 
-	trace_bcache_tiering_copy(k);
+	trace_bcache_tiering_copy(k.k);
 
 	/*
 	 * IMPORTANT: We must call bch_data_move before we dequeue so
@@ -259,7 +260,6 @@ static int tiering_next_cache(struct cache_set *c,
 	struct cache_group *tier;
 	int start = *cache_iter;
 	struct cache *ca;
-	struct bkey *k;
 
 	/* If true at the end of the loop, all keylists were empty, so we
 	 * have reached the end of the keyspace */
@@ -300,9 +300,11 @@ static int tiering_next_cache(struct cache_set *c,
 		if (bch_queue_full(&ca->tiering_queue)) {
 			done = false;
 		} else {
-			k = bch_scan_keylist_next(&ca->tiering_queue.keys);
+			struct bkey_i *k =
+				bch_scan_keylist_next(&ca->tiering_queue.keys);
 			if (k) {
-				issue_tiering_move(&ca->tiering_queue, ctxt, k);
+				issue_tiering_move(&ca->tiering_queue, ctxt,
+						   bkey_i_to_s_c(k));
 				done = false;
 				full = false;
 			}

@@ -207,7 +207,7 @@ static ssize_t bch_dump_read(struct file *file, char __user *buf,
 {
 	struct dump_iter *i = file->private_data;
 	struct btree_iter iter;
-	const struct bkey *k;
+	struct bkey_s_c k;
 	int err;
 
 	i->ubuf = buf;
@@ -222,8 +222,7 @@ static ssize_t bch_dump_read(struct file *file, char __user *buf,
 		return i->ret;
 
 	for_each_btree_key(&iter, i->c, BTREE_ID_EXTENTS, i->from, k) {
-		bch_bkey_val_to_text(iter.nodes[0], i->buf,
-				     sizeof(i->buf), k);
+		bch_bkey_val_to_text(iter.nodes[0], i->buf, sizeof(i->buf), k);
 		i->bytes = strlen(i->buf);
 		BUG_ON(i->bytes >= PAGE_SIZE);
 		i->buf[i->bytes] = '\n';
@@ -233,7 +232,7 @@ static ssize_t bch_dump_read(struct file *file, char __user *buf,
 		if (err)
 			break;
 
-		i->from = k->p;
+		i->from = k.k->p;
 
 		if (!i->size)
 			break;

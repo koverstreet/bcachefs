@@ -78,10 +78,10 @@ do {									\
 	for (; _j * 2 + 1 < (h)->used; _j = _r) {			\
 		_r = _j * 2 + 1;					\
 		if (_r + 1 < (h)->used &&				\
-		    (cmp)((h)->data[_r], (h)->data[_r + 1]))		\
+		    cmp((h)->data[_r], (h)->data[_r + 1]))		\
 			_r++;						\
 									\
-		if ((cmp)((h)->data[_r], (h)->data[_j]))		\
+		if (cmp((h)->data[_r], (h)->data[_j]))			\
 			break;						\
 		heap_swap(h, _r, _j);					\
 	}								\
@@ -91,7 +91,7 @@ do {									\
 do {									\
 	while (i) {							\
 		size_t p = (i - 1) / 2;					\
-		if ((cmp)((h)->data[i], (h)->data[p]))			\
+		if (cmp((h)->data[i], (h)->data[p]))			\
 			break;						\
 		heap_swap(h, i, p);					\
 		i = p;							\

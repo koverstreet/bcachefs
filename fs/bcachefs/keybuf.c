@@ -14,9 +14,9 @@
 static inline int keybuf_cmp(struct keybuf_key *l, struct keybuf_key *r)
 {
 	/* Overlapping keys compare equal */
-	if (bkey_cmp(l->key.p, bkey_start_pos(&r->key)) <= 0)
+	if (bkey_cmp(l->key.k.p, bkey_start_pos(&r->key.k)) <= 0)
 		return -1;
-	if (bkey_cmp(bkey_start_pos(&l->key), r->key.p) >= 0)
+	if (bkey_cmp(bkey_start_pos(&l->key.k), r->key.k.p) >= 0)
 		return 1;
 	return 0;
 }
@@ -24,7 +24,7 @@ static inline int keybuf_cmp(struct keybuf_key *l, struct keybuf_key *r)
 static inline int keybuf_nonoverlapping_cmp(struct keybuf_key *l,
 					    struct keybuf_key *r)
 {
-	return clamp_t(s64, bkey_cmp(l->key.p, r->key.p), -1, 1);
+	return clamp_t(s64, bkey_cmp(l->key.k.p, r->key.k.p), -1, 1);
 }
 
 void bch_refill_keybuf(struct cache_set *c, struct keybuf *buf,
@@ -32,12 +32,12 @@ void bch_refill_keybuf(struct cache_set *c, struct keybuf *buf,
 {
 	struct bpos start = buf->last_scanned;
 	struct btree_iter iter;
-	const struct bkey *k;
+	struct bkey_s_c k;
 	unsigned nr_found = 0;
 
 	for_each_btree_key(&iter, c, BTREE_ID_EXTENTS, buf->last_scanned, k) {
-		if (bkey_cmp(k->p, end) >= 0) {
-			buf->last_scanned = k->p;
+		if (bkey_cmp(k.k->p, end) >= 0) {
+			buf->last_scanned = k.k->p;
 			goto done;
 		}
 
@@ -52,7 +52,7 @@ void bch_refill_keybuf(struct cache_set *c, struct keybuf *buf,
 				goto done;
 			}
 
-			bkey_copy(&w->key, k);
+			bkey_reassemble(&w->key, k);
 			atomic_set(&w->ref, -1); /* -1 means hasn't started */
 
 			if (RB_INSERT(&buf->keys, w, node, keybuf_cmp))
@@ -63,7 +63,7 @@ void bch_refill_keybuf(struct cache_set *c, struct keybuf *buf,
 			spin_unlock(&buf->lock);
 		}
 
-		buf->last_scanned = k->p;
+		buf->last_scanned = k.k->p;
 		bch_btree_iter_cond_resched(&iter);
 	}
 
@@ -87,10 +87,10 @@ done:
 		struct keybuf_key *w;
 
 		w = RB_FIRST(&buf->keys, struct keybuf_key, node);
-		buf->start	= bkey_start_pos(&w->key);
+		buf->start	= bkey_start_pos(&w->key.k);
 
 		w = RB_LAST(&buf->keys, struct keybuf_key, node);
-		buf->end	= w->key.p;
+		buf->end	= w->key.k.p;
 	} else {
 		buf->start	= POS_MAX;
 		buf->end	= POS_MAX;
@@ -126,7 +126,8 @@ void bch_keybuf_recalc_oldest_gens(struct cache_set *c, struct keybuf *buf)
 	rcu_read_lock();
 	rbtree_postorder_for_each_entry_safe(w, n,
 				&buf->keys, node)
-		bch_btree_key_recalc_oldest_gen(c, bkey_i_to_extent(&w->key));
+		bch_btree_key_recalc_oldest_gen(c,
+					bkey_i_to_s_c_extent(&w->key));
 	rcu_read_unlock();
 	spin_unlock(&buf->lock);
 }
@@ -135,7 +136,7 @@ bool bch_keybuf_check_overlapping(struct keybuf *buf, struct bpos start,
 				  struct bpos end)
 {
 	bool ret = false;
-	struct keybuf_key *w, *next, s = { .key.p = start };
+	struct keybuf_key *w, *next, s = { .key.k.p = start };
 
 	if (bkey_cmp(end, buf->start) <= 0 ||
 	    bkey_cmp(start, buf->end) >= 0)
@@ -144,7 +145,7 @@ bool bch_keybuf_check_overlapping(struct keybuf *buf, struct bpos start,
 	spin_lock(&buf->lock);
 
 	for (w = RB_GREATER(&buf->keys, s, node, keybuf_nonoverlapping_cmp);
-	     w && bkey_cmp(bkey_start_pos(&w->key), end) < 0;
+	     w && bkey_cmp(bkey_start_pos(&w->key.k), end) < 0;
 	     w = next) {
 		next = RB_NEXT(w, node);
 

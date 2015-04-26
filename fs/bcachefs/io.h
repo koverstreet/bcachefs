@@ -71,7 +71,7 @@ enum bch_write_flags {
 
 void bch_write_op_init(struct bch_write_op *, struct cache_set *,
 		       struct bio *, struct write_point *,
-		       const struct bkey *, const struct bkey *, unsigned);
+		       struct bkey_s_c, struct bkey_s_c, unsigned);
 void bch_write(struct closure *);
 
 int bch_read(struct cache_set *, struct bio *, u64);
@@ -86,16 +86,16 @@ struct bio *bch_bbio_alloc(struct cache_set *);
 void bch_generic_make_request(struct bio *, struct cache_set *);
 void bch_bio_submit_work(struct work_struct *);
 void bch_bbio_prep(struct bbio *, struct cache *);
-void bch_submit_bbio(struct bbio *, struct cache *, const struct bkey *,
+void bch_submit_bbio(struct bbio *, struct cache *, const struct bkey_i *,
 		     const struct bch_extent_ptr *, bool);
 void bch_submit_bbio_replicas(struct bio *, struct cache_set *,
-			      const struct bkey *, unsigned, bool);
+			      const struct bkey_i *, unsigned, bool);
 
 int bch_discard(struct cache_set *, struct bpos, struct bpos, u64);
 
-void __cache_promote(struct cache_set *, struct bbio *, const struct bkey *,
-		     const struct bkey *, unsigned);
-bool cache_promote(struct cache_set *, struct bbio *, const struct bkey *);
+void __cache_promote(struct cache_set *, struct bbio *,
+		     struct bkey_s_c, struct bkey_s_c, unsigned);
+bool cache_promote(struct cache_set *, struct bbio *, struct bkey_s_c);
 
 void bch_read_race_work(struct work_struct *);
 void bch_wake_delayed_writes(unsigned long data);

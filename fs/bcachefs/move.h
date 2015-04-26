@@ -94,7 +94,7 @@ struct moving_io {
 	struct bbio		bio;
 };
 
-struct moving_io *moving_io_alloc(const struct bkey *);
+struct moving_io *moving_io_alloc(struct bkey_s_c);
 
 typedef struct moving_io *(moving_queue_fn)(struct moving_queue *,
 					    struct moving_context *);

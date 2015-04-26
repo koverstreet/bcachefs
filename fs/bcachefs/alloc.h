@@ -41,15 +41,16 @@ static inline void bch_increment_clock(struct cache_set *c,
 }
 
 void __bch_bucket_free(struct cache *, struct bucket *);
-void bch_bucket_free(struct cache_set *, struct bkey *);
+void bch_bucket_free(struct cache_set *, struct bkey_i *);
 
-int bch_bucket_alloc_set(struct cache_set *, enum alloc_reserve, struct bkey *,
-			 int, struct cache_group *, struct closure *);
+int bch_bucket_alloc_set(struct cache_set *, enum alloc_reserve,
+			 struct bkey_i *, int,
+			 struct cache_group *, struct closure *);
 
 void bch_open_bucket_put(struct cache_set *, struct open_bucket *);
 
 struct open_bucket *bch_alloc_sectors(struct cache_set *, struct write_point *,
-				      struct bkey *, struct closure *, bool);
+				      struct bkey_i *, struct closure *, bool);
 
 static inline void bch_wake_allocator(struct cache *ca)
 {

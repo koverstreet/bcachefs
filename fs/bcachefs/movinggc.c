@@ -19,18 +19,18 @@
 
 /* Moving GC - IO loop */
 
-static bool moving_pred(struct scan_keylist *kl, const struct bkey *k)
+static bool moving_pred(struct scan_keylist *kl, struct bkey_s_c k)
 {
 	struct cache *ca = container_of(kl, struct cache,
 					moving_gc_queue.keys);
 	struct cache_set *c = ca->set;
-	const struct bkey_i_extent *e;
+	struct bkey_s_c_extent e;
 	const struct bch_extent_ptr *ptr;
 	bool ret = false;
 
-	switch (k->type) {
+	switch (k.k->type) {
 	case BCH_EXTENT:
-		e = bkey_i_to_extent_c(k);
+		e = bkey_s_c_to_extent(k);
 
 		rcu_read_lock();
 		extent_for_each_ptr(e, ptr)
@@ -47,16 +47,16 @@ static bool moving_pred(struct scan_keylist *kl, const struct bkey *k)
 
 static int issue_moving_gc_move(struct moving_queue *q,
 				struct moving_context *ctxt,
-				const struct bkey *k)
+				struct bkey_i *k)
 {
 	struct cache *ca = container_of(q, struct cache, moving_gc_queue);
 	struct cache_set *c = ca->set;
-	const struct bkey_i_extent *e = bkey_i_to_extent_c(k);
+	struct bkey_s_c_extent e = bkey_i_to_s_c_extent(k);
 	const struct bch_extent_ptr *ptr;
 	struct moving_io *io;
 	struct write_point *wp;
 	unsigned gen;
-	bool cached = EXTENT_CACHED(&e->v);
+	bool cached = EXTENT_CACHED(e.v);
 	u64 sort_key;
 
 	extent_for_each_ptr(e, ptr)
@@ -73,9 +73,9 @@ static int issue_moving_gc_move(struct moving_queue *q,
 	return 0;
 
 found:
-	io = moving_io_alloc(k);
+	io = moving_io_alloc(bkey_i_to_s_c(k));
 	if (!io) {
-		trace_bcache_moving_gc_alloc_fail(c, k->size);
+		trace_bcache_moving_gc_alloc_fail(c, e.k->size);
 		return -ENOMEM;
 	}
 
@@ -85,14 +85,15 @@ found:
 	 * key here, since extent_drop_ptr() might delete the
 	 * first pointer, losing the cached status
 	 */
-	bch_write_op_init(&io->op, c, &io->bio.bio, wp, k, k,
+	bch_write_op_init(&io->op, c, &io->bio.bio, wp,
+			  bkey_i_to_s_c(k), bkey_i_to_s_c(k),
 			  cached ? BCH_WRITE_CACHED : 0);
-	io->op.btree_alloc_reserve = RESERVE_MOVINGGC_BTREE;
 	io->sort_key		   = sort_key;
 
-	bch_extent_drop_ptr(&io->op.insert_key, ptr - e->v.ptr);
+	bch_extent_drop_ptr(bkey_i_to_s_extent(&io->op.insert_key),
+			    ptr - e.v->ptr);
 
-	trace_bcache_gc_copy(k);
+	trace_bcache_gc_copy(e.k);
 
 	/*
 	 * IMPORTANT: We must call bch_data_move before we dequeue so
@@ -109,7 +110,7 @@ found:
 
 static void read_moving(struct cache *ca, struct moving_context *ctxt)
 {
-	struct bkey *k;
+	struct bkey_i *k;
 	bool again;
 
 	bch_ratelimit_reset(&ca->moving_gc_pd.rate);

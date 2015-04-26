@@ -14,18 +14,17 @@ struct bkey;
 
 struct bkey_ops {
 	bool		(*key_invalid)(const struct cache_set *,
-				       const struct bkey *);
-	void		(*key_debugcheck)(struct btree *,
-					  const struct bkey *);
-	void		(*val_to_text)(const struct btree *, char *,
-				       size_t, const struct bkey *);
+				       struct bkey_s_c);
+	void		(*key_debugcheck)(struct btree *, struct bkey_s_c);
+	void		(*val_to_text)(const struct btree *, char *, size_t,
+				       struct bkey_s_c);
 
 	bool		is_extents;
 };
 
-bool bkey_invalid(struct cache_set *, enum bkey_type, const struct bkey *);
-void bkey_debugcheck(struct btree *, struct bkey *);
-void bch_bkey_val_to_text(struct btree *, char *, size_t, const struct bkey *);
+bool bkey_invalid(struct cache_set *, enum bkey_type, struct bkey_s_c);
+void bkey_debugcheck(struct btree *, struct bkey_s_c);
+void bch_bkey_val_to_text(struct btree *, char *, size_t, struct bkey_s_c);
 
 #undef DEF_BTREE_ID
 

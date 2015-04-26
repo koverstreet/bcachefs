@@ -46,19 +46,16 @@ DECLARE_EVENT_CLASS(bkey,
 		__field(u32,	size				)
 		__field(u32,	inode				)
 		__field(u64,	offset				)
-		__field(bool,	cached				)
 	),
 
 	TP_fast_assign(
 		__entry->inode	= k->p.inode;
 		__entry->offset	= k->p.offset;
 		__entry->size	= k->size;
-		__entry->cached	= bkey_extent_cached(k);
 	),
 
-	TP_printk("%u:%llu len %u%s", __entry->inode,
-		  __entry->offset, __entry->size,
-		  __entry->cached ? " cached" : "")
+	TP_printk("%u:%llu len %u", __entry->inode,
+		  __entry->offset, __entry->size)
 );
 
 /* request.c */
@@ -401,8 +398,8 @@ DECLARE_EVENT_CLASS(btree_node,
 		__entry->bucket		= PTR_BUCKET_NR_TRACE(b->c, &b->key, 0);
 		__entry->level		= b->level;
 		__entry->id		= b->btree_id;
-		__entry->inode		= b->key.p.inode;
-		__entry->offset		= b->key.p.offset;
+		__entry->inode		= b->key.k.p.inode;
+		__entry->offset		= b->key.k.p.offset;
 	),
 
 	TP_printk("%pU bucket %llu(%u) id %u: %u:%llu",
@@ -588,7 +585,7 @@ DEFINE_EVENT(btree_node_op, bcache_btree_intent_lock_fail,
 );
 
 TRACE_EVENT(bcache_btree_insert_key,
-	TP_PROTO(struct btree *b, struct bkey *k, unsigned op,
+	TP_PROTO(struct btree *b, struct bkey_i *k, unsigned op,
 		 bool insert_done),
 	TP_ARGS(b, k, op, insert_done),
 
@@ -611,13 +608,13 @@ TRACE_EVENT(bcache_btree_insert_key,
 		__entry->b_bucket	= PTR_BUCKET_NR_TRACE(b->c, &b->key, 0);
 		__entry->level		= b->level;
 		__entry->id		= b->btree_id;
-		__entry->b_inode	= b->key.p.inode;
-		__entry->b_offset	= b->key.p.offset;
+		__entry->b_inode	= b->key.k.p.inode;
+		__entry->b_offset	= b->key.k.p.offset;
 		__entry->bucket		= PTR_BUCKET_NR_TRACE(b->c, k, 0);
-		__entry->inode		= k->p.inode;
-		__entry->offset		= k->p.offset;
-		__entry->size		= k->size;
-		__entry->cached		= bkey_extent_cached(k);
+		__entry->inode		= k->k.p.inode;
+		__entry->offset		= k->k.p.offset;
+		__entry->size		= k->k.size;
+		__entry->cached		= bkey_extent_cached(bkey_i_to_s_c(k));
 		__entry->op		= op;
 		__entry->insert_done	= insert_done;
 	),
@@ -648,8 +645,8 @@ DECLARE_EVENT_CLASS(btree_split,
 		__entry->bucket	= PTR_BUCKET_NR_TRACE(b->c, &b->key, 0);
 		__entry->level	= b->level;
 		__entry->id	= b->btree_id;
-		__entry->inode	= b->key.p.inode;
-		__entry->offset	= b->key.p.offset;
+		__entry->inode	= b->key.k.p.inode;
+		__entry->offset	= b->key.k.p.offset;
 		__entry->keys	= keys;
 	),
 
@@ -692,8 +689,8 @@ TRACE_EVENT(bcache_btree_gc_coalesce,
 		__entry->bucket		= PTR_BUCKET_NR_TRACE(b->c, &b->key, 0);
 		__entry->level		= b->level;
 		__entry->id		= b->btree_id;
-		__entry->inode		= b->key.p.inode;
-		__entry->offset		= b->key.p.offset;
+		__entry->inode		= b->key.k.p.inode;
+		__entry->offset		= b->key.k.p.offset;
 		__entry->nodes		= nodes;
 	),
 
@@ -728,8 +725,8 @@ TRACE_EVENT(bcache_btree_node_alloc_replacement,
 		__entry->bucket		= PTR_BUCKET_NR_TRACE(b->c, &b->key, 0);
 		__entry->level		= b->level;
 		__entry->id		= b->btree_id;
-		__entry->inode		= b->key.p.inode;
-		__entry->offset		= b->key.p.offset;
+		__entry->inode		= b->key.k.p.inode;
+		__entry->offset		= b->key.k.p.offset;
 	),
 
 	TP_printk("%pU for %llu bucket %llu(%u) id %u: %u:%llu",
@@ -789,10 +786,10 @@ DEFINE_EVENT(cache_set, bcache_gc_periodic,
 );
 
 TRACE_EVENT(bcache_add_sectors,
-	TP_PROTO(struct cache *ca, const struct bkey_i_extent *e,
+	TP_PROTO(struct cache *ca, const struct bkey *k,
 		 const struct bch_extent_ptr *ptr, u64 offset,
 		 int sectors, bool dirty),
-	TP_ARGS(ca, e, ptr, offset, sectors, dirty),
+	TP_ARGS(ca, k, ptr, offset, sectors, dirty),
 
 	TP_STRUCT__entry(
 		__array(char,		uuid,		16	)
@@ -805,8 +802,8 @@ TRACE_EVENT(bcache_add_sectors,
 
 	TP_fast_assign(
 		memcpy(__entry->uuid, ca->sb.disk_uuid.b, 16);
-		__entry->inode		= e->k.p.inode;
-		__entry->offset		= e->k.p.offset;
+		__entry->inode		= k->p.inode;
+		__entry->offset		= k->p.offset;
 		__entry->sectors	= sectors;
 		__entry->bucket		= PTR_BUCKET_NR(ca, ptr);
 		__entry->dirty		= dirty;
@@ -1228,7 +1225,6 @@ TRACE_EVENT(bcache_writeback_error,
 		__field(u32,	size				)
 		__field(u32,	inode				)
 		__field(u64,	offset				)
-		__field(bool,	cached				)
 		__field(bool,	write				)
 		__field(int,	error				)
 	),
@@ -1237,14 +1233,12 @@ TRACE_EVENT(bcache_writeback_error,
 		__entry->inode	= k->p.inode;
 		__entry->offset	= k->p.offset;
 		__entry->size	= k->size;
-		__entry->cached	= bkey_extent_cached(k);
 		__entry->write	= write;
 		__entry->error	= error;
 	),
 
-	TP_printk("%u:%llu len %u%s %s error %d", __entry->inode,
+	TP_printk("%u:%llu len %u %s error %d", __entry->inode,
 		  __entry->offset, __entry->size,
-		  __entry->cached ? " cached" : "",
 		  __entry->write ? "write" : "read",
 		  __entry->error)
 );

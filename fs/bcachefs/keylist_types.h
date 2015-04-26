@@ -25,22 +25,22 @@
 struct keylist {
 	/* This is a pointer to the LSB (inline_keys until realloc'd) */
 	union {
-		struct bkey		*start_keys;
+		struct bkey_i		*start_keys;
 		u64			*start_keys_p;
 	};
 	/* This is a pointer to the next to enqueue */
 	union {
-		struct bkey		*top;
+		struct bkey_i		*top;
 		u64			*top_p;
 	};
 	/* This is a pointer to the next to dequeue */
 	union {
-		struct bkey		*bot;
+		struct bkey_i		*bot;
 		u64			*bot_p;
 	};
 	/* This is a pointer to beyond the MSB */
 	union {
-		struct bkey		*end_keys;
+		struct bkey_i		*end_keys;
 		u64			*end_keys_p;
 	};
 	/* Enough room for btree_split's keys without realloc */
@@ -100,6 +100,6 @@ struct scan_keylist {
 	struct moving_queue	*owner;
 };
 
-typedef bool (scan_keylist_pred_fn)(struct scan_keylist *, const struct bkey *);
+typedef bool (scan_keylist_pred_fn)(struct scan_keylist *, struct bkey_s_c);
 
 #endif /* _BCACHE_KEYLIST_TYPES_H */

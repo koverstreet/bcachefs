@@ -81,9 +81,9 @@ static void dirty_init(struct dirty_io *io)
 	if (!io->dc->writeback_percent)
 		bio_set_prio(bio, IOPRIO_PRIO_VALUE(IOPRIO_CLASS_IDLE, 0));
 
-	bio->bi_iter.bi_size	= io->replace.key.size << 9;
+	bio->bi_iter.bi_size	= io->replace.key.k.size << 9;
 	bio->bi_max_vecs	=
-		DIV_ROUND_UP(io->replace.key.size, PAGE_SECTORS);
+		DIV_ROUND_UP(io->replace.key.k.size, PAGE_SECTORS);
 	bio->bi_io_vec		= bio->bi_inline_vecs;
 	bch_bio_map(bio, NULL);
 }
@@ -121,7 +121,7 @@ static void write_dirty_finish(struct closure *cl)
 		ret = bch_btree_insert(dc->disk.c, BTREE_ID_EXTENTS,
 				       &keys, &io->replace, NULL);
 		if (io->replace.successes == 0)
-			trace_bcache_writeback_collision(&io->replace.key);
+			trace_bcache_writeback_collision(&io->replace.key.k);
 
 		atomic_long_inc(ret
 				? &dc->disk.c->writeback_keys_failed
@@ -138,7 +138,7 @@ static void dirty_endio(struct bio *bio)
 	struct dirty_io *io = container_of(bio, struct dirty_io, bio);
 
 	if (bio->bi_error) {
-		trace_bcache_writeback_error(&io->replace.key,
+		trace_bcache_writeback_error(&io->replace.key.k,
 					     op_is_write(bio_op(&io->bio)),
 					     bio->bi_error);
 		io->error = bio->bi_error;
@@ -154,7 +154,8 @@ static void write_dirty(struct closure *cl)
 	if (!io->error) {
 		dirty_init(io);
 		bio_set_op_attrs(&io->bio, REQ_OP_WRITE, 0);
-		io->bio.bi_iter.bi_sector = bkey_start_offset(&io->replace.key);
+		io->bio.bi_iter.bi_sector =
+			bkey_start_offset(&io->replace.key.k);
 		io->bio.bi_bdev		= io->dc->disk_sb.bdev;
 		io->bio.bi_end_io	= dirty_endio;
 
@@ -209,18 +210,20 @@ static void read_dirty(struct cached_dev *dc)
 
 		bkey_copy(&tmp.k, &w->key);
 
-		while (tmp.k.size) {
-			ca = bch_extent_pick_ptr(dc->disk.c, &tmp.k, &ptr);
+		while (tmp.k.k.size) {
+			ca = bch_extent_pick_ptr(dc->disk.c,
+						 bkey_i_to_s_c(&tmp.k),
+						 &ptr);
 			if (IS_ERR_OR_NULL(ca))
 				break;
 
 			io = kzalloc(sizeof(*io) + sizeof(struct bio_vec) *
-				     DIV_ROUND_UP(tmp.k.size,
+				     DIV_ROUND_UP(tmp.k.k.size,
 						  PAGE_SECTORS),
 				     GFP_KERNEL);
 			if (!io) {
 				trace_bcache_writeback_alloc_fail(ca->set,
-								  tmp.k.size);
+								  tmp.k.k.size);
 				io = mempool_alloc(dc->writeback_io_pool,
 						   GFP_KERNEL);
 				memset(io, 0, sizeof(*io) +
@@ -231,8 +234,8 @@ static void read_dirty(struct cached_dev *dc)
 				bkey_copy(&io->replace.key, &tmp.k);
 
 				if (DIRTY_IO_MEMPOOL_SECTORS <
-				    io->replace.key.size)
-					bch_key_resize(&io->replace.key,
+				    io->replace.key.k.size)
+					bch_key_resize(&io->replace.key.k,
 						DIRTY_IO_MEMPOOL_SECTORS);
 			} else {
 				bkey_copy(&io->replace.key, &tmp.k);
@@ -262,17 +265,17 @@ static void read_dirty(struct cached_dev *dc)
 					io->bio.bi_iter.bi_size =
 						io->bio.bi_vcnt * PAGE_SIZE;
 
-					bch_key_resize(&io->replace.key,
+					bch_key_resize(&io->replace.key.k,
 						       bio_sectors(&io->bio));
 					break;
 				}
 			}
 
-			bch_cut_front(io->replace.key.p, &tmp.k);
-			trace_bcache_writeback(&io->replace.key);
+			bch_cut_front(io->replace.key.k.p, &tmp.k);
+			trace_bcache_writeback(&io->replace.key.k);
 
 			bch_ratelimit_increment(&dc->writeback_pd.rate,
-						io->replace.key.size << 9);
+						io->replace.key.k.size << 9);
 
 			closure_call(&io->cl, read_dirty_submit, NULL, &cl);
 		}
@@ -338,13 +341,13 @@ void bcache_dev_sectors_dirty_add(struct cache_set *c, unsigned inode,
 	rcu_read_unlock();
 }
 
-static bool dirty_pred(struct keybuf *buf, const struct bkey *k)
+static bool dirty_pred(struct keybuf *buf, struct bkey_s_c k)
 {
 	struct cached_dev *dc = container_of(buf, struct cached_dev, writeback_keys);
 
-	BUG_ON(k->p.inode != bcache_dev_inum(&dc->disk));
+	BUG_ON(k.k->p.inode != bcache_dev_inum(&dc->disk));
 
-	return k->type == BCH_EXTENT &&
+	return k.k->type == BCH_EXTENT &&
 		!bkey_extent_cached(k);
 }
 
@@ -515,7 +518,7 @@ void bch_sectors_dirty_init(struct cached_dev *dc, struct cache_set *c)
 {
 	struct bcache_device *d = &dc->disk;
 	struct btree_iter iter;
-	const struct bkey *k;
+	struct bkey_s_c k;
 
 	/*
 	 * We have to do this before the disk is added to the radix tree or we
@@ -523,15 +526,14 @@ void bch_sectors_dirty_init(struct cached_dev *dc, struct cache_set *c)
 	 */
 	for_each_btree_key(&iter, c, BTREE_ID_EXTENTS,
 			   POS(bcache_dev_inum(d), 0), k) {
-		if (k->p.inode > bcache_dev_inum(d))
+		if (k.k->p.inode > bcache_dev_inum(d))
 			break;
 
-		if (k->type != BCH_EXTENT)
-			continue;
-
-		if (!bkey_extent_cached(k))
-			__bcache_dev_sectors_dirty_add(d, bkey_start_offset(k),
-						       k->size);
+		if (k.k->type == BCH_EXTENT &&
+		    !bkey_extent_cached(k))
+			__bcache_dev_sectors_dirty_add(d,
+						       bkey_start_offset(k.k),
+						       k.k->size);
 
 		bch_btree_iter_cond_resched(&iter);
 	}

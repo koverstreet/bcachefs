@@ -24,7 +24,8 @@ static inline bool bch_keylist_fits(struct keylist *l, size_t u64s)
 		return true;
 }
 
-static inline struct bkey *__bch_keylist_next(struct keylist *l, struct bkey *k)
+static inline struct bkey_i *__bch_keylist_next(struct keylist *l,
+						struct bkey_i *k)
 {
 	k = bkey_next(k);
 	BUG_ON(k > l->end_keys);
@@ -41,11 +42,11 @@ static inline struct bkey *__bch_keylist_next(struct keylist *l, struct bkey *k)
 
 static inline void bch_keylist_enqueue(struct keylist *l)
 {
-	BUG_ON(!bch_keylist_fits(l, l->top->u64s));
+	BUG_ON(!bch_keylist_fits(l, l->top->k.u64s));
 	l->top = __bch_keylist_next(l, l->top);
 }
 
-static inline void bch_keylist_add(struct keylist *l, const struct bkey *k)
+static inline void bch_keylist_add(struct keylist *l, const struct bkey_i *k)
 {
 	bkey_copy(l->top, k);
 	bch_keylist_enqueue(l);
@@ -81,7 +82,7 @@ static inline size_t bch_keylist_nkeys(struct keylist *l)
 			(l->end_keys_p - l->bot_p));
 }
 
-static inline struct bkey *bch_keylist_front(struct keylist *l)
+static inline struct bkey_i *bch_keylist_front(struct keylist *l)
 {
 	return l->bot;
 }
@@ -100,7 +101,7 @@ static inline void bch_keylist_dequeue(struct keylist *l)
 	.end_keys = bkey_next(k)					\
 })
 
-void bch_keylist_add_in_order(struct keylist *, struct bkey *);
+void bch_keylist_add_in_order(struct keylist *, struct bkey_i *);
 int bch_keylist_realloc(struct keylist *, unsigned);
 int bch_keylist_realloc_max(struct keylist *, unsigned, unsigned);
 
@@ -136,15 +137,15 @@ void bch_scan_keylist_destroy(struct scan_keylist *kl);
  * copying the structure.
  */
 
-struct bkey *bch_scan_keylist_next(struct scan_keylist *);
+struct bkey_i *bch_scan_keylist_next(struct scan_keylist *);
 
-struct bkey *bch_scan_keylist_next_rescan(struct cache_set *c,
-					  struct scan_keylist *kl,
-					  struct bpos *last_scanned,
-					  struct bpos end,
-					  scan_keylist_pred_fn *pred);
+struct bkey_i *bch_scan_keylist_next_rescan(struct cache_set *c,
+					    struct scan_keylist *kl,
+					    struct bpos *last_scanned,
+					    struct bpos end,
+					    scan_keylist_pred_fn *pred);
 
-int bch_scan_keylist_add(struct scan_keylist *, const struct bkey *);
+int bch_scan_keylist_add(struct scan_keylist *, struct bkey_s_c);
 void bch_scan_keylist_dequeue(struct scan_keylist *);
 
 void bch_keylist_recalc_oldest_gens(struct cache_set *, struct scan_keylist *);

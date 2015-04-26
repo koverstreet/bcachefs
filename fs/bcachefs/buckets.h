@@ -47,13 +47,13 @@ static inline size_t PTR_BUCKET_NR(const struct cache *ca,
  * Returns 0 if no pointers or device offline - only for tracepoints!
  */
 static inline size_t PTR_BUCKET_NR_TRACE(const struct cache_set *c,
-					 const struct bkey *k,
+					 const struct bkey_i *k,
 					 unsigned ptr)
 {
 	const struct cache *ca;
 	size_t bucket = 0;
 
-	if (k->type == BCH_EXTENT) {
+	if (k->k.type == BCH_EXTENT) {
 		const struct bkey_i_extent *e = bkey_i_to_extent_c(k);
 		const struct bch_extent_ptr *p = &e->v.ptr[ptr];
 

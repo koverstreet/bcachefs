@@ -351,7 +351,9 @@ static int cached_dev_cache_miss(struct btree_iter *iter, struct search *s,
 #endif
 	sectors = min(sectors, bio_sectors(bio) + reada);
 
-	replace.key = KEY(s->inode, bio->bi_iter.bi_sector + sectors, sectors);
+	replace.key.k = KEY(s->inode,
+			    bio->bi_iter.bi_sector + sectors,
+			    sectors);
 
 	ret = bch_btree_insert_check_key(iter, &replace.key);
 	if (ret == -EINTR || ret == -EAGAIN)
@@ -362,17 +364,17 @@ static int cached_dev_cache_miss(struct btree_iter *iter, struct search *s,
 	miss->bi_end_io		= request_endio;
 	miss->bi_private	= &s->cl;
 
-	to_bbio(miss)->key = KEY(s->inode,
-				 bio_end_sector(miss),
-				 bio_sectors(miss));
+	to_bbio(miss)->key.k = KEY(s->inode,
+				   bio_end_sector(miss),
+				   bio_sectors(miss));
 	to_bbio(miss)->ca = NULL;
 
 	closure_get(&s->cl);
 	__cache_promote(s->iop.c, to_bbio(miss),
-			&replace.key,
-			&KEY(replace.key.p.inode,
-			     replace.key.p.offset,
-			     replace.key.size),
+			bkey_i_to_s_c(&replace.key),
+			bkey_to_s_c(&KEY(replace.key.k.p.inode,
+					 replace.key.k.p.offset,
+					 replace.key.k.size)),
 			BCH_WRITE_ALLOC_NOWAIT|BCH_WRITE_CACHED);
 
 	return 0;
@@ -408,7 +410,7 @@ static void cached_dev_read(struct cached_dev *dc, struct search *s)
 	struct closure *cl = &s->cl;
 	struct bio *bio = &s->bio.bio;
 	struct btree_iter iter;
-	const struct bkey *k;
+	struct bkey_s_c k;
 
 	bch_increment_clock(s->iop.c, bio_sectors(&s->bio.bio), READ);
 
@@ -421,13 +423,13 @@ static void cached_dev_read(struct cached_dev *dc, struct search *s)
 		struct cache *ca;
 		bool done;
 retry:
-		BUG_ON(bkey_cmp(bkey_start_pos(k),
+		BUG_ON(bkey_cmp(bkey_start_pos(k.k),
 				POS(s->inode, bio->bi_iter.bi_sector)) > 0);
 
-		BUG_ON(bkey_cmp(k->p,
+		BUG_ON(bkey_cmp(k.k->p,
 				POS(s->inode, bio->bi_iter.bi_sector)) <= 0);
 
-		sectors = k->p.offset - bio->bi_iter.bi_sector;
+		sectors = k.k->p.offset - bio->bi_iter.bi_sector;
 		done = sectors >= bio_sectors(bio);
 
 		ca = bch_extent_pick_ptr(s->iop.c, k, &ptr);
@@ -445,25 +447,25 @@ retry:
 				goto retry;
 			}
 		} else {
-			const struct bkey_i_extent *e = bkey_i_to_extent_c(k);
+			struct bkey_s_c_extent e = bkey_s_c_to_extent(k);
 
 			PTR_BUCKET(ca, ptr)->read_prio =
 				s->iop.c->prio_clock[READ].hand;
 
-			if (!EXTENT_CACHED(&e->v))
+			if (!EXTENT_CACHED(e.v))
 				s->read_dirty_data = true;
 
 			n = bio_next_split(bio, sectors, GFP_NOIO,
 					   s->d->bio_split);
 
 			bbio = to_bbio(n);
-			bch_bkey_copy_single_ptr(&bbio->key, k, ptr - e->v.ptr);
+			bch_bkey_copy_single_ptr(&bbio->key, k, ptr - e.v->ptr);
 
 			/* Trim the key to match what we're actually reading */
 			bch_cut_front(POS(s->inode, n->bi_iter.bi_sector),
 				      &bbio->key);
 			bch_cut_back(POS(s->inode, bio_end_sector(n)),
-				     &bbio->key);
+				     &bbio->key.k);
 
 			bch_bbio_prep(bbio, ca);
 
@@ -586,7 +588,7 @@ static void cached_dev_write(struct cached_dev *dc, struct search *s)
 		flags |= BCH_WRITE_DISCARD;
 
 	bch_write_op_init(&s->iop, dc->disk.c, insert_bio, NULL,
-			  &insert_key, NULL, flags);
+			  bkey_to_s_c(&insert_key), bkey_s_c_null, flags);
 
 	closure_call(&s->iop.cl, bch_write, NULL, cl);
 	continue_at(cl, cached_dev_write_complete, NULL);
@@ -740,7 +742,8 @@ static void __flash_dev_make_request(struct request_queue *q, struct bio *bio)
 			flags |= BCH_WRITE_DISCARD;
 
 		bch_write_op_init(&s->iop, d->c, bio, NULL,
-				  &KEY(s->inode, 0, 0), NULL, flags);
+				  bkey_to_s_c(&KEY(s->inode, 0, 0)),
+				  bkey_s_c_null, flags);
 
 		closure_call(&s->iop.cl, bch_write, NULL, &s->cl);
 		continue_at(&s->cl, search_free, NULL);

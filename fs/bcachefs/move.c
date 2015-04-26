@@ -83,25 +83,25 @@ static void moving_init(struct moving_io *io)
 	bio_get(bio);
 	bio_set_prio(bio, IOPRIO_PRIO_VALUE(IOPRIO_CLASS_IDLE, 0));
 
-	bio->bi_iter.bi_size	= io->key.size << 9;
-	bio->bi_max_vecs	= DIV_ROUND_UP(io->key.size,
+	bio->bi_iter.bi_size	= io->key.k.size << 9;
+	bio->bi_max_vecs	= DIV_ROUND_UP(io->key.k.size,
 					       PAGE_SECTORS);
 	bio->bi_private		= &io->cl;
 	bio->bi_io_vec		= bio->bi_inline_vecs;
 	bch_bio_map(bio, NULL);
 }
 
-struct moving_io *moving_io_alloc(const struct bkey *k)
+struct moving_io *moving_io_alloc(struct bkey_s_c k)
 {
 	struct moving_io *io;
 
 	io = kzalloc(sizeof(struct moving_io) + sizeof(struct bio_vec)
-		     * DIV_ROUND_UP(k->size, PAGE_SECTORS),
+		     * DIV_ROUND_UP(k.k->size, PAGE_SECTORS),
 		     GFP_KERNEL);
 	if (!io)
 		return NULL;
 
-	bkey_copy(&io->key, k);
+	bkey_reassemble(&io->key, k);
 
 	moving_init(io);
 
@@ -134,7 +134,7 @@ static void moving_io_destructor(struct closure *cl)
 	bool kick_writes = true;
 
 	if (io->op.replace_collision)
-		trace_bcache_copy_collision(q, &io->key);
+		trace_bcache_copy_collision(q, &io->key.k);
 
 	spin_lock_irqsave(&q->lock, flags);
 
@@ -149,7 +149,7 @@ static void moving_io_destructor(struct closure *cl)
 	if (io->write_issued) {
 		BUG_ON(!q->write_count);
 		q->write_count--;
-		trace_bcache_move_write_done(q, &io->key);
+		trace_bcache_move_write_done(q, &io->key.k);
 	}
 
 	list_del_init(&io->list);
@@ -208,7 +208,7 @@ static void write_moving(struct moving_io *io)
 	else {
 		moving_init(io);
 
-		op->bio->bi_iter.bi_sector = bkey_start_offset(&io->key);
+		op->bio->bi_iter.bi_sector = bkey_start_offset(&io->key.k);
 
 		closure_call(&op->cl, bch_write, NULL, &io->cl);
 		closure_return_with_destructor(&io->cl, moving_io_after_write);
@@ -249,7 +249,7 @@ static void bch_queue_write_work(struct work_struct *work)
 		io->write_issued = 1;
 		list_del(&io->list);
 		list_add_tail(&io->list, &q->write_pending);
-		trace_bcache_move_write(q, &io->key);
+		trace_bcache_move_write(q, &io->key.k);
 		spin_unlock_irqrestore(&q->lock, flags);
 		write_moving(io);
 		spin_lock_irqsave(&q->lock, flags);
@@ -414,7 +414,8 @@ static void pending_recalc_oldest_gens(struct cache_set *c, struct list_head *l)
 		 * to open buckets until the write completes
 		 */
 		rcu_read_lock();
-		bch_btree_key_recalc_oldest_gen(c, bkey_i_to_extent(&io->key));
+		bch_btree_key_recalc_oldest_gen(c,
+					bkey_i_to_s_c_extent(&io->key));
 		rcu_read_unlock();
 	}
 }
@@ -457,7 +458,7 @@ static void read_moving_endio(struct bio *bio)
 
 	spin_lock_irqsave(&q->lock, flags);
 
-	trace_bcache_move_read_done(q, &io->key);
+	trace_bcache_move_read_done(q, &io->key.k);
 
 	BUG_ON(!io->read_issued);
 	BUG_ON(io->read_completed);
@@ -483,11 +484,11 @@ static void __bch_data_move(struct closure *cl)
 {
 	struct moving_io *io = container_of(cl, struct moving_io, cl);
 	struct cache *ca;
-	u64 size = io->key.size;
 	const struct bch_extent_ptr *ptr;
+	u64 size = io->key.k.size;
 
-	ca = bch_extent_pick_ptr_avoiding(io->op.c, &io->key, &ptr,
-					  io->context->avoid);
+	ca = bch_extent_pick_ptr_avoiding(io->op.c, bkey_i_to_s_c(&io->key),
+					  &ptr, io->context->avoid);
 	if (IS_ERR_OR_NULL(ca))
 		closure_return_with_destructor(cl, moving_io_destructor);
 
@@ -560,7 +561,7 @@ void bch_data_move(struct moving_queue *q,
 
 	q->count++;
 	list_add_tail(&io->list, &q->pending);
-	trace_bcache_move_read(q, &io->key);
+	trace_bcache_move_read(q, &io->key.k);
 
 	if (q->rotational)
 		BUG_ON(RB_INSERT(&q->tree, io, node, moving_io_cmp));
@@ -645,14 +646,18 @@ sync:
 	closure_sync(&ctxt->cl);
 }
 
-static bool migrate_data_pred(struct scan_keylist *kl, const struct bkey *k)
+static bool migrate_data_pred(struct scan_keylist *kl, struct bkey_s_c k)
 {
 	struct cache *ca = container_of(kl, struct cache,
 					moving_gc_queue.keys);
 
-	return k->type == BCH_EXTENT &&
-		bch_extent_has_device(bkey_i_to_extent_c(k),
-				      ca->sb.nr_this_dev);
+	switch (k.k->type) {
+	case BCH_EXTENT:
+		return bch_extent_has_device(bkey_s_c_to_extent(k),
+					     ca->sb.nr_this_dev);
+	default:
+		return false;
+	}
 }
 
 #if (0)
@@ -751,17 +756,17 @@ enum migrate_option {
 };
 
 static enum migrate_option migrate_cleanup_key(struct cache_set *c,
-					       struct bkey *k,
+					       struct bkey_i *k,
 					       struct cache *ca)
 {
-	struct bkey_i_extent *e = bkey_i_to_extent(k);
+	struct bkey_s_extent e = bkey_i_to_s_extent(k);
 	struct bch_extent_ptr *ptr;
 	bool found;
 
 	found = false;
 	extent_for_each_ptr_backwards(e, ptr)
 		if (PTR_DEV(ptr) == ca->sb.nr_this_dev) {
-			bch_extent_drop_ptr(&e->k, ptr - e->v.ptr);
+			bch_extent_drop_ptr(e, ptr - e.v->ptr);
 			found = true;
 		}
 
@@ -783,7 +788,7 @@ static enum migrate_option migrate_cleanup_key(struct cache_set *c,
 
 static int issue_migration_move(struct cache *ca,
 				struct moving_context *ctxt,
-				struct bkey *k,
+				struct bkey_s_c k,
 				u64 *seen_key_count)
 {
 	enum migrate_option option;
@@ -816,9 +821,7 @@ static int issue_migration_move(struct cache *ca,
 	BUG_ON(q->wq == NULL);
 	io->op.io_wq = q->wq;
 
-	k = &io->op.insert_key;
-
-	option = migrate_cleanup_key(c, k, ca);
+	option = migrate_cleanup_key(c, &io->op.insert_key, ca);
 
 	switch (option) {
 	default:
@@ -875,7 +878,7 @@ static int issue_migration_move(struct cache *ca,
 int bch_move_data_off_device(struct cache *ca)
 {
 	int ret;
-	struct bkey *k;
+	struct bkey_i *k;
 	unsigned pass;
 	u64 seen_key_count;
 	unsigned last_error_count;
@@ -967,7 +970,7 @@ again:
 			if (k == NULL)
 				break;
 
-			if (issue_migration_move(ca, &context, k,
+			if (issue_migration_move(ca, &context, bkey_i_to_s_c(k),
 						 &seen_key_count)) {
 				/*
 				 * Memory allocation failed; we will wait for
@@ -1030,10 +1033,11 @@ static int bch_move_btree_off(struct cache *ca,
 		int ret;
 
 		for_each_btree_node(&iter, ca->set, id, POS_MIN, b) {
+			struct bkey_s_c_extent e =
+				bkey_i_to_s_c_extent(&b->key);
 			seen++;
 retry:
-			if (!bch_extent_has_device(bkey_i_to_extent_c(&b->key),
-						   ca->sb.nr_this_dev))
+			if (!bch_extent_has_device(e, ca->sb.nr_this_dev))
 				continue;
 
 			if (bch_btree_node_rewrite(b, &iter, true)) {
@@ -1148,18 +1152,18 @@ int bch_move_meta_data_off_device(struct cache *ca)
 
 static int bch_flag_key_bad(struct btree_iter *iter,
 			    struct cache *ca,
-			    const struct bkey_i_extent *orig)
+			    struct bkey_s_c_extent orig)
 {
 	BKEY_PADDED(key) tmp;
-	struct bkey_i_extent *e;
+	struct bkey_s_extent e;
 	struct bch_extent_ptr *ptr;
 	struct cache_set *c = ca->set;
 	bool found = false;
 
 	/* Iterate backwards because we might drop pointers */
 
-	bkey_copy(&tmp.key, &orig->k);
-	e = bkey_i_to_extent(&tmp.key);
+	bkey_reassemble(&tmp.key, to_bkey_s_c(orig));
+	e = bkey_i_to_s_extent(&tmp.key);
 
 	extent_for_each_ptr_backwards(e, ptr)
 		if (PTR_DEV(ptr) == ca->sb.nr_this_dev) {
@@ -1175,10 +1179,10 @@ static int bch_flag_key_bad(struct btree_iter *iter,
 			 * because bch_extent_normalize() will sort it
 			 * incorrectly but fortunately we don't need to.
 			 */
-			if (bch_extent_ptr_is_dirty(c, e, ptr))
+			if (bch_extent_ptr_is_dirty(c, extent_s_to_s_c(e), ptr))
 				*ptr = PTR(0, 0, PTR_LOST_DEV);
 			else
-				bch_extent_drop_ptr(&e->k, ptr - e->v.ptr);
+				bch_extent_drop_ptr(e, ptr - e.v->ptr);
 		}
 
 	if (!found)
@@ -1194,10 +1198,10 @@ static int bch_flag_key_bad(struct btree_iter *iter,
 	 * in this case, bch_extent_normalize() will change the key type to
 	 * DISCARD.
 	 */
-	bch_extent_normalize(c, &e->k);
+	bch_extent_normalize(c, bkey_i_to_s(&tmp.key));
 
 	return bch_btree_insert_at(iter,
-				   &keylist_single(&e->k),
+				   &keylist_single(&tmp.key),
 				   NULL, /* replace_info */
 				   NULL, /* closure */
 				   0,    /* reserve */
@@ -1218,7 +1222,7 @@ static int bch_flag_key_bad(struct btree_iter *iter,
 int bch_flag_data_bad(struct cache *ca)
 {
 	int ret = 0, ret2;
-	const struct bkey *k;
+	struct bkey_s_c k;
 	struct btree_iter iter;
 
 	if (MIGRATION_DEBUG)
@@ -1226,10 +1230,10 @@ int bch_flag_data_bad(struct cache *ca)
 
 	bch_btree_iter_init(&iter, ca->set, BTREE_ID_EXTENTS, POS_MIN);
 
-	while ((k = bch_btree_iter_peek(&iter))) {
-		if (k->type == BCH_EXTENT) {
+	while ((k = bch_btree_iter_peek(&iter)).k) {
+		if (k.k->type == BCH_EXTENT) {
 			ret = bch_flag_key_bad(&iter, ca,
-					       bkey_i_to_extent_c(k));
+					       bkey_s_c_to_extent(k));
 			if (ret == -EINTR || ret == -EAGAIN)
 				continue;
 
@@ -1245,8 +1249,8 @@ int bch_flag_data_bad(struct cache *ca)
 #ifdef CONFIG_BCACHEFS_DEBUG
 	if (!ret && !ret2)
 		for_each_btree_key(&iter, ca->set, BTREE_ID_EXTENTS, POS_MIN, k)
-			BUG_ON(k->type == BCH_EXTENT &&
-			       bch_extent_has_device(bkey_i_to_extent_c(k),
+			BUG_ON(k.k->type == BCH_EXTENT &&
+			       bch_extent_has_device(bkey_s_c_to_extent(k),
 						     ca->sb.nr_this_dev));
 
 	bch_btree_iter_unlock(&iter);

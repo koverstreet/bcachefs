@@ -888,21 +888,21 @@ void __bch_bucket_free(struct cache *ca, struct bucket *g)
 	g->write_prio = ca->set->prio_clock[WRITE].hand;
 }
 
-void bch_bucket_free(struct cache_set *c, struct bkey *k)
+void bch_bucket_free(struct cache_set *c, struct bkey_i *k)
 {
-	struct bkey_i_extent *e = bkey_i_to_extent(k);
+	struct bkey_s_extent e = bkey_i_to_s_extent(k);
 	struct bch_extent_ptr *ptr;
 	struct cache *ca;
 
 	rcu_read_lock();
 	extent_for_each_online_device(c, e, ptr, ca)
-			__bch_bucket_free(ca, PTR_BUCKET(ca, ptr));
+		__bch_bucket_free(ca, PTR_BUCKET(ca, ptr));
 	rcu_read_unlock();
 }
 
-static void bch_bucket_free_never_used(struct cache_set *c, struct bkey *k)
+static void bch_bucket_free_never_used(struct cache_set *c, struct bkey_i *k)
 {
-	struct bkey_i_extent *e = bkey_i_to_extent(k);
+	struct bkey_s_extent e = bkey_i_to_s_extent(k);
 	struct bch_extent_ptr *ptr;
 	struct cache *ca;
 	struct bucket *g;
@@ -991,7 +991,7 @@ static struct cache *bch_next_cache(struct cache_set *c,
 
 static enum bucket_alloc_ret __bch_bucket_alloc_set(struct cache_set *c,
 						    enum alloc_reserve reserve,
-						    struct bkey *k, int n,
+						    struct bkey_i *k, int n,
 						    struct cache_group *devs)
 {
 	struct bkey_i_extent *e;
@@ -1055,7 +1055,7 @@ static enum bucket_alloc_ret __bch_bucket_alloc_set(struct cache_set *c,
 		e->v.ptr[i] = PTR(ca->bucket_gens[r],
 				  bucket_to_sector(ca, r),
 				  ca->sb.nr_this_dev);
-		bch_set_extent_ptrs(e, i + 1);
+		bch_set_extent_ptrs(extent_i_to_s(e), i + 1);
 	}
 
 	rcu_read_unlock();
@@ -1067,7 +1067,7 @@ err:
 }
 
 int bch_bucket_alloc_set(struct cache_set *c, enum alloc_reserve reserve,
-			 struct bkey *k, int n, struct cache_group *devs,
+			 struct bkey_i *k, int n, struct cache_group *devs,
 			 struct closure *cl)
 {
 	struct closure_waitlist *waitlist = NULL;
@@ -1114,7 +1114,7 @@ int bch_bucket_alloc_set(struct cache_set *c, enum alloc_reserve reserve,
 
 static void __bch_open_bucket_put(struct cache_set *c, struct open_bucket *b)
 {
-	const struct bkey_i_extent *e = bkey_i_to_extent_c(&b->key);
+	struct bkey_s_extent e = bkey_i_to_s_extent(&b->key);
 	const struct bch_extent_ptr *ptr;
 	struct cache *ca;
 
@@ -1176,7 +1176,7 @@ static struct open_bucket *bch_open_bucket_alloc(struct cache_set *c,
 {
 	int ret;
 	struct open_bucket *b;
-	struct bkey_i_extent *e;
+	struct bkey_s_extent e;
 	struct bch_extent_ptr *ptr;
 	struct cache *ca;
 
@@ -1202,7 +1202,7 @@ static struct open_bucket *bch_open_bucket_alloc(struct cache_set *c,
 	b->sectors_free = UINT_MAX;
 
 	rcu_read_lock();
-	e = bkey_i_to_extent(&b->key);
+	e = bkey_i_to_s_extent(&b->key);
 
 	/* This is still wrong - we waste space with different sized buckets */
 	extent_for_each_online_device(c, e, ptr, ca)
@@ -1265,10 +1265,10 @@ static struct open_bucket *lock_and_refill_writepoint(struct cache_set *c,
 	}
 }
 
-static void verify_not_stale(struct cache_set *c, const struct bkey *k)
+static void verify_not_stale(struct cache_set *c, const struct bkey_i *k)
 {
 #ifdef CONFIG_BCACHEFS_DEBUG
-	const struct bkey_i_extent *e = bkey_i_to_extent_c(k);
+	struct bkey_s_c_extent e = bkey_i_to_s_c_extent(k);
 	const struct bch_extent_ptr *ptr;
 	struct cache *ca;
 
@@ -1298,12 +1298,12 @@ static void verify_not_stale(struct cache_set *c, const struct bkey *k)
  */
 struct open_bucket *bch_alloc_sectors(struct cache_set *c,
 				      struct write_point *wp,
-				      struct bkey *k,
+				      struct bkey_i *k,
 				      struct closure *cl,
 				      bool contiguous)
 {
 	bool first_time = true;
-	struct bkey_i_extent *src, *dst;
+	struct bkey_s_extent src, dst;
 	struct bch_extent_ptr *ptr;
 	struct open_bucket *b;
 	struct cache *ca;
@@ -1316,7 +1316,7 @@ retry:
 
 	BUG_ON(!b->sectors_free);
 
-	if (contiguous && b->sectors_free < k->size) {
+	if (contiguous && b->sectors_free < k->k.size) {
 		if (!first_time)
 			return NULL;
 
@@ -1329,22 +1329,22 @@ retry:
 
 	verify_not_stale(c, &b->key);
 
-	src = bkey_i_to_extent(&b->key);
-	dst = bkey_i_to_extent(k);
+	src = bkey_i_to_s_extent(&b->key);
+	dst = bkey_i_to_s_extent(k);
 
 	nptrs = (bch_extent_ptrs(dst) + bch_extent_ptrs(src));
 	BUG_ON(nptrs > BKEY_EXTENT_PTRS_MAX);
 
 	/* Set up the pointer to the space we're allocating: */
-	memcpy(&dst->v.ptr[bch_extent_ptrs(dst)],
-	       src->v.ptr,
+	memcpy(&dst.v->ptr[bch_extent_ptrs(dst)],
+	       src.v->ptr,
 	       bch_extent_ptrs(src) * sizeof(u64));
 
 	bch_set_extent_ptrs(dst, nptrs);
 
-	sectors = min_t(unsigned, dst->k.size, b->sectors_free);
+	sectors = min_t(unsigned, dst.k->size, b->sectors_free);
 
-	bch_key_resize(&dst->k, sectors);
+	bch_key_resize(dst.k, sectors);
 
 	/* update open bucket for next time: */
 
@@ -1408,7 +1408,7 @@ static bool bch_stop_write_point(struct cache *ca,
 		return false;
 	}
 
-	if (!bch_extent_has_device(bkey_i_to_extent(&b->key),
+	if (!bch_extent_has_device(bkey_i_to_s_c_extent(&b->key),
 				   ca->sb.nr_this_dev)) {
 		spin_unlock(&b->lock);
 		return false;
@@ -1471,7 +1471,7 @@ void bch_stop_new_data_writes(struct cache *ca)
 
 static bool bucket_still_writeable(struct open_bucket *b, struct cache_set *c)
 {
-	const struct bkey_i_extent *e = bkey_i_to_extent_c(&b->key);
+	struct bkey_s_c_extent e = bkey_i_to_s_c_extent(&b->key);
 	const struct bch_extent_ptr *ptr;
 	struct cache *ca;
 
@@ -1504,7 +1504,7 @@ retry:
 
 	list_for_each_entry(b, &c->open_buckets_open, list) {
 		spin_lock(&b->lock);
-		if (bch_extent_has_device(bkey_i_to_extent(&b->key),
+		if (bch_extent_has_device(bkey_i_to_s_c_extent(&b->key),
 					  ca->sb.nr_this_dev))
 			found = true;
 		spin_unlock(&b->lock);

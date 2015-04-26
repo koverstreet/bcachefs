@@ -28,13 +28,19 @@ static inline void SET_##name(type *k, __u64 v)				\
 	k->field |= (v & ~(~0ULL << (end - offset))) << offset;		\
 }
 
+struct bkey_format {
+	__u8		key_u64s;
+	__u8		nr_fields;
+	/* One unused slot for now: */
+	__u8		bits_per_field[6];
+	__u64		field_offset[6];
+};
+
 /* Btree keys - all units are in sectors */
 
 struct bpos {
 	/* Word order matches machine byte order */
 #if defined(__LITTLE_ENDIAN)
-	__u32		kw[0];
-	/* key starts here */
 	__u32		snapshot;
 	__u64		offset;
 	__u64		inode;
@@ -42,7 +48,6 @@ struct bpos {
 	__u64		inode;
 	__u64		offset;		/* Points to end of extent - sectors */
 	__u32		snapshot;
-	__u32		kw[0];
 #else
 #error edit for your odd byteorder.
 #endif
@@ -71,6 +76,29 @@ struct bch_val {
 	__u64		__nothing[0];
 };
 
+struct bkey_packed {
+	__u64		_data[0];
+
+	/* Size of combined key and value, in u64s */
+	__u8		u64s;
+
+	/* Format of key (0 for format local to btree node */
+	__u8		format;
+
+	/* Type of the value */
+	__u8		type;
+	__u8		key_start[0];
+
+	/*
+	 * We copy bkeys with struct assignment in various places, and while
+	 * that shouldn't be done with packed bkeys we can't disallow it in C,
+	 * and it's legal to cast a bkey to a bkey_packed  - so padding it out
+	 * to the same size as struct bkey should hopefully be safest.
+	 */
+	__u8		pad[5];
+	__u64		pad2[4];
+} __attribute__((packed)) __attribute__((aligned(8)));
+
 struct bkey {
 	__u64		_data[0];
 
@@ -84,19 +112,55 @@ struct bkey {
 	__u8		type;
 
 	__u8		pad[1];
+#if defined(__LITTLE_ENDIAN)
+	__u32		version;
+	__u32		size;		/* extent size, in sectors */
+	struct bpos	p;
+#elif defined(__BIG_ENDIAN)
 	struct bpos	p;
 	__u32		size;		/* extent size, in sectors */
 	__u32		version;
-
-	struct bch_val	_val;
+#endif
 } __attribute__((packed)) __attribute__((aligned(8)));
 
 #define BKEY_U64s			(sizeof(struct bkey) / sizeof(__u64))
+#define KEY_PACKED_BITS_START		24
 
 #define KEY_SIZE_MAX			((__u32)~0U)
 
 #define KEY_FORMAT_LOCAL_BTREE		0
 #define KEY_FORMAT_CURRENT		1
+
+enum bch_bkey_fields {
+	BKEY_FIELD_INODE,
+	BKEY_FIELD_OFFSET,
+	BKEY_FIELD_SNAPSHOT,
+	BKEY_FIELD_SIZE,
+	BKEY_FIELD_VERSION,
+	BKEY_NR_FIELDS,
+};
+
+#define bkey_format_field(name, field)					\
+	[BKEY_FIELD_##name] = (sizeof(((struct bkey *) NULL)->field) * 8)
+
+#define BKEY_FORMAT_CURRENT						\
+((struct bkey_format) {							\
+	.key_u64s	= BKEY_U64s,					\
+	.nr_fields	= BKEY_NR_FIELDS,				\
+	.bits_per_field = {						\
+		bkey_format_field(INODE,	p.inode),		\
+		bkey_format_field(OFFSET,	p.offset),		\
+		bkey_format_field(SNAPSHOT,	p.snapshot),		\
+		bkey_format_field(SIZE,		size),			\
+		bkey_format_field(VERSION,	version),		\
+	},								\
+})
+
+/* bkey with inline value */
+struct bkey_i {
+	struct bkey	k;
+	struct bch_val	v;
+};
 
 #ifndef __cplusplus
 
@@ -131,20 +195,23 @@ static inline void bkey_init(struct bkey *k)
 	*k = KEY(0, 0, 0);
 }
 
-static inline unsigned long bkey_bytes(const struct bkey *k)
+#define bkey_bytes(_k)		((_k)->u64s * sizeof(__u64))
+
+static inline void bkey_copy(struct bkey_i *dst, const struct bkey_i *src)
 {
-	return k->u64s * sizeof(__u64);
+	memcpy(dst, src, bkey_bytes(&src->k));
 }
 
-#define bkey_copy(_dst, _src)	memcpy(_dst, _src, bkey_bytes(_src))
-
 #define __BKEY_PADDED(key, pad)					\
-	struct { struct bkey key; __u64 key ## _pad[pad]; }
+	struct { struct bkey_i key; __u64 key ## _pad[pad]; }
 
 #define BKEY_VAL_TYPE(name, nr)						\
 struct bkey_i_##name {							\
-	struct bkey		k;					\
-	struct bch_##name	v;					\
+	union {								\
+		struct bkey		k;				\
+		struct bkey_i		k_i;				\
+	};								\
+	struct bch_##name		v;				\
 }
 
 /*
@@ -258,6 +325,7 @@ struct bch_inode {
 BKEY_VAL_TYPE(inode,		BCH_INODE_FS);
 
 struct bch_inode_blockdev {
+	struct bch_val		v;
 	struct bch_inode	i_inode;
 
 	uuid_le			i_uuid;
@@ -523,7 +591,7 @@ struct jset_entry {
 	__u32			flags; /* designates what this jset holds */
 
 	union {
-		struct bkey	start[0];
+		struct bkey_i	start[0];
 		__u64		_data[0];
 	};
 };
@@ -603,8 +671,11 @@ struct bset {
 	__u32			pad;
 	__u32			u64s; /* count of d[] in u64s */
 
+	/* NOTE: all bsets in the same btree node must have the same format */
+	struct bkey_format	format;
+
 	union {
-		struct bkey	start[0];
+		struct bkey_packed start[0];
 		__u64		_data[0];
 	};
 };

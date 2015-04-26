@@ -51,25 +51,25 @@ ssize_t bch_inode_status(char *buf, size_t len, const struct bkey *k)
 	}
 }
 
-static bool bch_inode_invalid(const struct cache_set *c, const struct bkey *k)
+static bool bch_inode_invalid(const struct cache_set *c, struct bkey_s_c k)
 {
-	if (k->p.offset)
+	if (k.k->p.offset)
 		return true;
 
-	switch (k->type) {
+	switch (k.k->type) {
 	case BCH_INODE_FS:
-		if (bkey_bytes(k) != sizeof(struct bkey_i_inode))
+		if (bkey_val_bytes(k.k) != sizeof(struct bch_inode))
 			return true;
 
-		if (k->p.inode < BLOCKDEV_INODE_MAX)
+		if (k.k->p.inode < BLOCKDEV_INODE_MAX)
 			return true;
 
 		return false;
 	case BCH_INODE_BLOCKDEV:
-		if (bkey_bytes(k) != sizeof(struct bkey_i_inode_blockdev))
+		if (bkey_val_bytes(k.k) != sizeof(struct bch_inode_blockdev))
 			return true;
 
-		if (k->p.inode >= BLOCKDEV_INODE_MAX)
+		if (k.k->p.inode >= BLOCKDEV_INODE_MAX)
 			return true;
 
 		return false;
@@ -85,11 +85,11 @@ const struct bkey_ops bch_bkey_inode_ops = {
 	.key_invalid	= bch_inode_invalid,
 };
 
-int bch_inode_create(struct cache_set *c, struct bkey *inode,
+int bch_inode_create(struct cache_set *c, struct bkey_i *inode,
 		     u64 min, u64 max, u64 *hint)
 {
 	struct btree_iter iter;
-	const struct bkey *k;
+	struct bkey_s_c k;
 	bool searched_from_start = false;
 	int ret;
 
@@ -101,15 +101,15 @@ int bch_inode_create(struct cache_set *c, struct bkey *inode,
 again:
 	bch_btree_iter_init_intent(&iter, c, BTREE_ID_INODES, POS(*hint, 0));
 
-	while ((k = bch_btree_iter_peek_with_holes(&iter))) {
-		if (max && k->p.inode >= max)
+	while ((k = bch_btree_iter_peek_with_holes(&iter)).k) {
+		if (max && k.k->p.inode >= max)
 			break;
 
-		if (!bkey_val_u64s(k)) {
-			inode->p = k->p;
+		if (k.k->type < BCH_INODE_FS) {
+			inode->k.p = k.k->p;
 
 			pr_debug("inserting inode %llu (size %u)",
-				 inode->p.inode, inode->u64s);
+				 inode->k.p.inode, inode->k.u64s);
 
 			ret = bch_btree_insert_at(&iter,
 					&keylist_single(inode),
@@ -120,7 +120,7 @@ again:
 
 			bch_btree_iter_unlock(&iter);
 			if (!ret)
-				*hint = k->p.inode + 1;
+				*hint = k.k->p.inode + 1;
 
 			return ret;
 		} else {
@@ -140,7 +140,7 @@ again:
 	return -ENOSPC;
 }
 
-int bch_inode_update(struct cache_set *c, struct bkey *inode)
+int bch_inode_update(struct cache_set *c, struct bkey_i *inode)
 {
 	return bch_btree_insert(c, BTREE_ID_INODES,
 				&keylist_single(inode),
@@ -154,7 +154,7 @@ int bch_inode_truncate(struct cache_set *c, u64 inode_nr, u64 new_size)
 
 int bch_inode_rm(struct cache_set *c, u64 inode_nr)
 {
-	struct bkey delete;
+	struct bkey_i delete;
 	int ret;
 
 	ret = bch_discard(c, POS(inode_nr, 0),
@@ -162,8 +162,8 @@ int bch_inode_rm(struct cache_set *c, u64 inode_nr)
 	if (ret < 0)
 		return ret;
 
-	bkey_init(&delete);
-	delete.p.inode = inode_nr;
+	bkey_init(&delete.k);
+	delete.k.p.inode = inode_nr;
 
 	return bch_btree_insert(c, BTREE_ID_INODES,
 				&keylist_single(&delete),
@@ -174,21 +174,22 @@ int bch_blockdev_inode_find_by_uuid(struct cache_set *c, uuid_le *uuid,
 				    struct bkey_i_inode_blockdev *ret)
 {
 	struct btree_iter iter;
-	const struct bkey *k;
+	struct bkey_s_c k;
 
 	for_each_btree_key(&iter, c, BTREE_ID_INODES, POS(0, 0), k) {
-		if (k->p.inode >= BLOCKDEV_INODE_MAX)
+		if (k.k->p.inode >= BLOCKDEV_INODE_MAX)
 			break;
 
-		if (k->type == BCH_INODE_BLOCKDEV) {
-			const struct bkey_i_inode_blockdev *inode =
-				bkey_i_to_inode_blockdev_c(k);
+		if (k.k->type == BCH_INODE_BLOCKDEV) {
+			struct bkey_s_c_inode_blockdev inode =
+				bkey_s_c_to_inode_blockdev(k);
 
 			pr_debug("found inode %llu: %pU (u64s %u)",
-				 k->p.inode, inode->v.i_uuid.b, k->u64s);
+				 inode.k->p.inode, inode.v->i_uuid.b,
+				 inode.k->u64s);
 
-			if (!memcmp(uuid, &inode->v.i_uuid, 16)) {
-				*ret = *inode;
+			if (!memcmp(uuid, &inode.v->i_uuid, 16)) {
+				bkey_reassemble(&ret->k_i, k);
 				bch_btree_iter_unlock(&iter);
 				return 0;
 			}

@@ -138,8 +138,8 @@ struct closure;
 struct cache_set;
 struct keylist;
 
-struct bkey *bch_journal_find_btree_root(struct cache_set *, struct jset *,
-					 enum btree_id, unsigned *);
+struct bkey_i *bch_journal_find_btree_root(struct cache_set *, struct jset *,
+					   enum btree_id, unsigned *);
 
 struct journal_res {
 	unsigned		ref:1;
@@ -152,7 +152,7 @@ void bch_journal_res_get(struct cache_set *, struct journal_res *,
 			 unsigned, unsigned);
 void bch_journal_set_dirty(struct cache_set *);
 void bch_journal_add_keys(struct cache_set *, struct journal_res *,
-			  enum btree_id, const struct bkey *,
+			  enum btree_id, const struct bkey_i *,
 			  unsigned);
 
 static inline void bch_journal_res_put(struct cache_set *c,

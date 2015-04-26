@@ -300,7 +300,7 @@ STORE(__cached_dev)
 		bch_write_bdev_super(dc, NULL);
 
 		if (dc->disk.c)
-			bch_inode_update(dc->disk.c, &dc->disk.inode.k);
+			bch_inode_update(dc->disk.c, &dc->disk.inode.k_i);
 
 		mutex_unlock(&dc->disk.inode_lock);
 
@@ -420,7 +420,7 @@ STORE(__bch_flash_dev)
 		if (v < d->inode.v.i_inode.i_size)
 			bch_inode_truncate(d->c, d->inode.k.p.inode, v >> 9);
 		d->inode.v.i_inode.i_size = v;
-		bch_inode_update(d->c, &d->inode.k);
+		bch_inode_update(d->c, &d->inode.k_i);
 		set_capacity(d->disk, d->inode.v.i_inode.i_size >> 9);
 
 		mutex_unlock(&d->inode_lock);
@@ -430,7 +430,7 @@ STORE(__bch_flash_dev)
 		mutex_lock(&d->inode_lock);
 
 		memcpy(d->inode.v.i_label, buf, SB_LABEL_SIZE);
-		bch_inode_update(d->c, &d->inode.k);
+		bch_inode_update(d->c, &d->inode.k_i);
 
 		mutex_unlock(&d->inode_lock);
 	}
@@ -490,7 +490,7 @@ static int bch_bset_print_stats(struct cache_set *c, char *buf)
 static unsigned bch_root_usage(struct cache_set *c)
 {
 	unsigned bytes = 0;
-	struct bkey *k;
+	struct bkey_packed *k;
 	struct btree *b;
 	struct btree_node_iter iter;
 

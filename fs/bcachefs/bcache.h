@@ -177,6 +177,7 @@
 
 #define pr_fmt(fmt) "bcache: %s() " fmt "\n", __func__
 
+#include <linux/bug.h>
 #include <linux/bio.h>
 #include <linux/closure.h>
 #include <linux/kobject.h>
@@ -651,7 +652,7 @@ struct bbio {
 	unsigned int            bi_bvec_done;	/* number of bytes completed in
 						   current bvec */
 	unsigned		submit_time_us;
-	struct bkey		key;
+	struct bkey_i		key;
 	struct bch_extent_ptr	ptr;
 	/* Only ever have a single pointer (the one we're doing io to/from) */
 	struct bio		bio;
