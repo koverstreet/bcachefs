@@ -306,7 +306,7 @@ int bch_btree_keys_alloc(struct btree_keys *, unsigned, gfp_t);
 void bch_btree_keys_init(struct btree_keys *, const struct btree_keys_ops *,
 			 bool *);
 
-void bch_bset_init_next(struct btree_keys *, struct bset *, uint64_t);
+void bch_bset_init_next(struct btree_keys *, struct bset *);
 void bch_bset_build_written_tree(struct btree_keys *);
 void bch_bset_fix_invalidated_key(struct btree_keys *, struct bkey *);
 bool bch_bkey_try_merge(struct btree_keys *, struct bkey *, struct bkey *);

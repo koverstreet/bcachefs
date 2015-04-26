@@ -204,9 +204,12 @@ static void bch_btree_init_next(struct btree *b)
 	if (nsets && !b->keys.nsets)
 		bch_btree_verify(b);
 
-	if (b->written < btree_blocks(b))
-		bch_bset_init_next(&b->keys, write_block(b),
-				   bset_magic(&b->c->sb));
+	if (b->written < btree_blocks(b)) {
+		struct bset *i = write_block(b);
+
+		bch_bset_init_next(&b->keys, i);
+		i->magic = bset_magic(&b->c->sb);
+	}
 }
 
 /* Btree IO */
@@ -324,9 +327,6 @@ void bch_btree_node_read_done(struct btree *b)
 	    bkey_cmp(&b->key, &b->keys.set[0].end) < 0)
 		goto err;
 
-	if (b->written < btree_blocks(b))
-		bch_bset_init_next(&b->keys, write_block(b),
-				   bset_magic(&b->c->sb));
 out:
 	mempool_free(iter, b->c->fill_iter);
 	return;
@@ -1301,7 +1301,8 @@ retry:
 
 	b->accessed = 1;
 	b->parent = parent;
-	bch_bset_init_next(&b->keys, b->keys.set->data, bset_magic(&b->c->sb));
+	bch_bset_init_next(&b->keys, b->keys.set->data);
+	b->keys.set->data->magic = bset_magic(&b->c->sb);
 	set_btree_node_dirty(b);
 
 	trace_bcache_btree_node_alloc(b);
