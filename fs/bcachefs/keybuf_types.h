@@ -8,7 +8,7 @@ struct keybuf_key {
 };
 
 struct keybuf {
-	struct bkey		last_scanned;
+	struct bpos		last_scanned;
 	spinlock_t		lock;
 
 	/*
@@ -16,8 +16,8 @@ struct keybuf {
 	 * lock and checking the rb tree when we need to check for overlapping
 	 * keys.
 	 */
-	struct bkey		start;
-	struct bkey		end;
+	struct bpos		start;
+	struct bpos		end;
 
 	struct rb_root		keys;
 

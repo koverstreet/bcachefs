@@ -24,17 +24,25 @@ static bool moving_pred(struct scan_keylist *kl, const struct bkey *k)
 	struct cache *ca = container_of(kl, struct cache,
 					moving_gc_queue.keys);
 	struct cache_set *c = ca->set;
+	const struct bkey_i_extent *e;
 	bool ret = false;
 	unsigned i;
 
-	rcu_read_lock();
-	for (i = 0; i < bch_extent_ptrs(k); i++)
-		if (PTR_CACHE(c, k, i) == ca &&
-		    PTR_BUCKET(ca, k, i)->copygc_gen)
-			ret = true;
-	rcu_read_unlock();
+	switch (k->type) {
+	case BCH_EXTENT:
+		e = bkey_i_to_extent_c(k);
 
-	return ret;
+		rcu_read_lock();
+		for (i = 0; i < bch_extent_ptrs(&e->k); i++)
+			if (PTR_CACHE(c, &e->v, i) == ca &&
+			    PTR_BUCKET(ca, &e->v, i)->copygc_gen)
+				ret = true;
+		rcu_read_unlock();
+
+		return ret;
+	default:
+		return false;
+	}
 }
 
 static int issue_moving_gc_move(struct moving_queue *q,
@@ -43,13 +51,15 @@ static int issue_moving_gc_move(struct moving_queue *q,
 {
 	struct cache *ca = container_of(q, struct cache, moving_gc_queue);
 	struct cache_set *c = ca->set;
+	const struct bkey_i_extent *e = bkey_i_to_extent_c(k);
 	struct moving_io *io;
 	struct write_point *wp;
 	unsigned ptr, gen;
 
-	for (ptr = 0; ptr < bch_extent_ptrs(k); ptr++)
-		if ((ca->sb.nr_this_dev == PTR_DEV(k, ptr)) &&
-		    (gen = PTR_BUCKET(ca, k, ptr)->copygc_gen)) {
+
+	for (ptr = 0; ptr < bch_extent_ptrs(&e->k); ptr++)
+		if ((ca->sb.nr_this_dev == PTR_DEV(&e->v.ptr[ptr])) &&
+		    (gen = PTR_BUCKET(ca, &e->v, ptr)->copygc_gen)) {
 			gen--;
 			BUG_ON(gen > ARRAY_SIZE(ca->gc_buckets));
 			wp = &ca->gc_buckets[gen];
@@ -62,7 +72,7 @@ static int issue_moving_gc_move(struct moving_queue *q,
 found:
 	io = moving_io_alloc(k);
 	if (!io) {
-		trace_bcache_moving_gc_alloc_fail(c, KEY_SIZE(k));
+		trace_bcache_moving_gc_alloc_fail(c, k->size);
 		return -ENOMEM;
 	}
 
@@ -105,7 +115,7 @@ static void read_moving(struct cache *ca, struct moving_context *ctxt)
 		k = bch_scan_keylist_next_rescan(ca->set,
 						 &ca->moving_gc_queue.keys,
 						 &ctxt->last_scanned,
-						 &MAX_KEY,
+						 POS_MAX,
 						 moving_pred);
 		if (k == NULL)
 			break;

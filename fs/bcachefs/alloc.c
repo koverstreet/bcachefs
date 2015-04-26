@@ -877,20 +877,22 @@ void __bch_bucket_free(struct cache *ca, struct bucket *g)
 
 void bch_bucket_free(struct cache_set *c, struct bkey *k)
 {
+	struct bkey_i_extent *e = bkey_i_to_extent(k);
 	struct cache *ca;
 	unsigned i;
 
 	rcu_read_lock();
 
-	for (i = 0; i < bch_extent_ptrs(k); i++)
-		if ((ca = PTR_CACHE(c, k, i)))
-			__bch_bucket_free(ca, PTR_BUCKET(ca, k, i));
+	for (i = 0; i < bch_extent_ptrs(&e->k); i++)
+		if ((ca = PTR_CACHE(c, &e->v, i)))
+			__bch_bucket_free(ca, PTR_BUCKET(ca, &e->v, i));
 
 	rcu_read_unlock();
 }
 
 static void bch_bucket_free_never_used(struct cache_set *c, struct bkey *k)
 {
+	struct bkey_i_extent *e = bkey_i_to_extent(k);
 	struct cache *ca;
 	struct bucket *g;
 	unsigned i;
@@ -898,10 +900,10 @@ static void bch_bucket_free_never_used(struct cache_set *c, struct bkey *k)
 
 	rcu_read_lock();
 
-	for (i = 0; i < bch_extent_ptrs(k); i++)
-		if ((ca = PTR_CACHE(c, k, i))) {
-			r = PTR_BUCKET_NR(ca, k, i);
-			g = PTR_BUCKET(ca, k, i);
+	for (i = 0; i < bch_extent_ptrs(&e->k); i++)
+		if ((ca = PTR_CACHE(c, &e->v, i))) {
+			r = PTR_BUCKET_NR(ca, &e->v, i);
+			g = PTR_BUCKET(ca, &e->v, i);
 
 			spin_lock(&ca->freelist_lock);
 			verify_not_on_freelist(ca, r);
@@ -913,7 +915,7 @@ static void bch_bucket_free_never_used(struct cache_set *c, struct bkey *k)
 			spin_unlock(&ca->freelist_lock);
 		}
 
-	bch_set_extent_ptrs(k, 0);
+	bch_set_extent_ptrs(&e->k, 0);
 
 	rcu_read_unlock();
 }
@@ -983,6 +985,7 @@ static enum bucket_alloc_ret __bch_bucket_alloc_set(struct cache_set *c,
 						    struct bkey *k, int n,
 						    struct cache_group *devs)
 {
+	struct bkey_i_extent *e;
 	long caches_used[BITS_TO_LONGS(MAX_CACHES_PER_SET)];
 	enum bucket_alloc_ret ret;
 	int i;
@@ -993,7 +996,7 @@ static enum bucket_alloc_ret __bch_bucket_alloc_set(struct cache_set *c,
 	    (reserve == RESERVE_NONE && cache_set_full(c)))
 		return CACHE_SET_FULL;
 
-	bkey_init(k);
+	e = bkey_extent_init(k);
 	memset(caches_used, 0, sizeof(caches_used));
 
 	rcu_read_lock();
@@ -1040,10 +1043,10 @@ static enum bucket_alloc_ret __bch_bucket_alloc_set(struct cache_set *c,
 		}
 
 		BUG_ON(i < 0 || i > BKEY_EXTENT_PTRS_MAX);
-		k->val[i] = PTR(ca->bucket_gens[r],
-				bucket_to_sector(ca, r),
-				ca->sb.nr_this_dev);
-		bch_set_extent_ptrs(k, i + 1);
+		e->v.ptr[i] = PTR(ca->bucket_gens[r],
+				  bucket_to_sector(ca, r),
+				  ca->sb.nr_this_dev);
+		bch_set_extent_ptrs(&e->k, i + 1);
 	}
 
 	rcu_read_unlock();
@@ -1102,16 +1105,16 @@ int bch_bucket_alloc_set(struct cache_set *c, enum alloc_reserve reserve,
 
 static void __bch_open_bucket_put(struct cache_set *c, struct open_bucket *b)
 {
-	struct bkey *k = &b->key;
+	const struct bkey_i_extent *e = bkey_i_to_extent_c(&b->key);
 	struct cache *ca;
 	unsigned i;
 
 	lockdep_assert_held(&c->open_buckets_lock);
 
 	rcu_read_lock();
-	for (i = 0; i < bch_extent_ptrs(k); i++)
-		if ((ca = PTR_CACHE(c, k, i)))
-			bch_unmark_open_bucket(ca, PTR_BUCKET(ca, k, i));
+	for (i = 0; i < bch_extent_ptrs(&e->k); i++)
+		if ((ca = PTR_CACHE(c, &e->v, i)))
+			bch_unmark_open_bucket(ca, PTR_BUCKET(ca, &e->v, i));
 	rcu_read_unlock();
 
 	list_move(&b->list, &c->open_buckets_free);
@@ -1141,7 +1144,7 @@ static struct open_bucket *bch_open_bucket_get(struct cache_set *c,
 				       struct open_bucket, list);
 		list_move(&ret->list, &c->open_buckets_open);
 		atomic_set(&ret->pin, 1);
-		bkey_init(&ret->key);
+		bkey_extent_init(&ret->key);
 		c->open_buckets_nr_free--;
 		trace_bcache_open_bucket_alloc(c, cl);
 	} else {
@@ -1165,6 +1168,7 @@ static struct open_bucket *bch_open_bucket_alloc(struct cache_set *c,
 {
 	int ret;
 	struct open_bucket *b;
+	struct bkey_i_extent *e;
 	struct cache *ca;
 	unsigned i;
 
@@ -1190,10 +1194,11 @@ static struct open_bucket *bch_open_bucket_alloc(struct cache_set *c,
 	b->sectors_free = UINT_MAX;
 
 	rcu_read_lock();
+	e = bkey_i_to_extent(&b->key);
 
 	/* This is still wrong - we waste space with different sized buckets */
-	for (i = 0; i < bch_extent_ptrs(&b->key); i++)
-		if ((ca = PTR_CACHE(c, &b->key, i)))
+	for (i = 0; i < bch_extent_ptrs(&e->k); i++)
+		if ((ca = PTR_CACHE(c, &e->v, i)))
 			b->sectors_free = min_t(unsigned, b->sectors_free,
 						ca->sb.bucket_size);
 
@@ -1253,26 +1258,27 @@ static struct open_bucket *lock_and_refill_writepoint(struct cache_set *c,
 	}
 }
 
-static void verify_not_stale(struct cache_set *c, struct bkey *k)
+static void verify_not_stale(struct cache_set *c, const struct bkey *k)
 {
 #ifdef CONFIG_BCACHEFS_DEBUG
+	const struct bkey_i_extent *e = bkey_i_to_extent_c(k);
 	struct cache *ca;
 	unsigned ptr;
 
 	rcu_read_lock();
-	for (ptr = 0; ptr < bch_extent_ptrs(k); ptr++)
-		if ((ca = PTR_CACHE(c, k, ptr)))
-			BUG_ON(ptr_stale(ca, k, ptr));
+	for (ptr = 0; ptr < bch_extent_ptrs(&e->k); ptr++)
+		if ((ca = PTR_CACHE(c, &e->v, ptr)))
+			BUG_ON(ptr_stale(ca, &e->v, ptr));
 	rcu_read_unlock();
 #endif
 }
 
 /*
  * Allocates some space in the cache to write to, and k to point to the newly
- * allocated space, and updates KEY_SIZE(k) and KEY_OFFSET(k) (to point to the
+ * allocated space, and updates k->size and k->offset (to point to the
  * end of the newly allocated space).
  *
- * May allocate fewer sectors than @sectors, KEY_SIZE(k) indicates how many
+ * May allocate fewer sectors than @sectors, k->size indicates how many
  * sectors were actually allocated.
  *
  * Return codes:
@@ -1291,6 +1297,7 @@ struct open_bucket *bch_alloc_sectors(struct cache_set *c,
 				      bool contiguous)
 {
 	bool first_time = true;
+	struct bkey_i_extent *src, *dst;
 	struct open_bucket *b;
 	unsigned i, sectors, nptrs;
 
@@ -1301,7 +1308,7 @@ retry:
 
 	BUG_ON(!b->sectors_free);
 
-	if (contiguous && b->sectors_free < KEY_SIZE(k)) {
+	if (contiguous && b->sectors_free < k->size) {
 		if (!first_time)
 			return NULL;
 
@@ -1317,16 +1324,19 @@ retry:
 	nptrs = (bch_extent_ptrs(k) + bch_extent_ptrs(&b->key));
 	BUG_ON(nptrs > BKEY_EXTENT_PTRS_MAX);
 
+	src = bkey_i_to_extent(&b->key);
+	dst = bkey_i_to_extent(k);
+
 	/* Set up the pointer to the space we're allocating: */
-	memcpy(&k->val[bch_extent_ptrs(k)],
-	       &b->key.val[0],
-	       bch_extent_ptrs(&b->key) * sizeof(u64));
+	memcpy(&dst->v.ptr[bch_extent_ptrs(&dst->k)],
+	       src->v.ptr,
+	       bch_extent_ptrs(&src->k) * sizeof(u64));
 
-	bch_set_extent_ptrs(k, nptrs);
+	bch_set_extent_ptrs(&dst->k, nptrs);
 
-	sectors = min_t(unsigned, KEY_SIZE(k), b->sectors_free);
+	sectors = min_t(unsigned, dst->k.size, b->sectors_free);
 
-	bch_key_resize(k, sectors);
+	bch_key_resize(&dst->k, sectors);
 
 	/* update open bucket for next time: */
 
@@ -1341,10 +1351,10 @@ retry:
 		struct cache *ca;
 
 		if (b->sectors_free)
-			SET_PTR_OFFSET(&b->key, i,
-				       PTR_OFFSET(&b->key, i) + sectors);
+			SET_PTR_OFFSET(&src->v.ptr[i],
+				       PTR_OFFSET(&src->v.ptr[i]) + sectors);
 
-		if ((ca = PTR_CACHE(c, &b->key, i)))
+		if ((ca = PTR_CACHE(c, &src->v, i)))
 			atomic_long_add(sectors, &ca->sectors_written);
 	}
 	rcu_read_unlock();
@@ -1394,7 +1404,8 @@ static bool bch_stop_write_point(struct cache *ca,
 		return false;
 	}
 
-	if (!bch_extent_has_device(&b->key, ca->sb.nr_this_dev)) {
+	if (!bch_extent_has_device(bkey_i_to_extent(&b->key),
+				   ca->sb.nr_this_dev)) {
 		spin_unlock(&b->lock);
 		return false;
 	}
@@ -1456,12 +1467,13 @@ void bch_stop_new_data_writes(struct cache *ca)
 
 static bool bucket_still_writeable(struct open_bucket *b, struct cache_set *c)
 {
+	const struct bkey_i_extent *e = bkey_i_to_extent_c(&b->key);
 	unsigned repno;
 
 	rcu_read_lock();
 
-	for (repno = 0; repno < bch_extent_ptrs(&b->key); repno++) {
-		struct cache *ca = PTR_CACHE(c, &b->key, repno);
+	for (repno = 0; repno < bch_extent_ptrs(&e->k); repno++) {
+		struct cache *ca = PTR_CACHE(c, &e->v, repno);
 
 		if (CACHE_STATE(&ca->mi) != CACHE_ACTIVE) {
 			rcu_read_unlock();
@@ -1489,7 +1501,8 @@ retry:
 
 	list_for_each_entry(b, &c->open_buckets_open, list) {
 		spin_lock(&b->lock);
-		if (bch_extent_has_device(&b->key, ca->sb.nr_this_dev))
+		if (bch_extent_has_device(bkey_i_to_extent(&b->key),
+					  ca->sb.nr_this_dev))
 			found = true;
 		spin_unlock(&b->lock);
 	}
@@ -1528,6 +1541,7 @@ void bch_open_buckets_init(struct cache_set *c)
 
 	for (i = 0; i < ARRAY_SIZE(c->open_buckets); i++) {
 		spin_lock_init(&c->open_buckets[i].lock);
+		bkey_extent_init(&c->open_buckets[i].key);
 		c->open_buckets_nr_free++;
 		list_add(&c->open_buckets[i].list, &c->open_buckets_free);
 	}

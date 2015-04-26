@@ -9,7 +9,8 @@ static inline void set_gc_sectors(struct cache_set *c)
 void bch_gc(struct cache_set *);
 int bch_gc_thread_start(struct cache_set *);
 int bch_initial_gc(struct cache_set *, struct list_head *);
-u8 bch_btree_key_recalc_oldest_gen(struct cache_set *, const struct bkey *);
+u8 bch_btree_key_recalc_oldest_gen(struct cache_set *,
+				   const struct bkey_i_extent *);
 u8 __bch_btree_mark_key(struct cache_set *, int, const struct bkey *);
 
 bool btree_gc_mark_node(struct cache_set *, struct btree *,
@@ -27,8 +28,8 @@ static inline bool __gc_will_visit_node(struct cache_set *c,
 {
 	return b->btree_id != c->gc_cur_btree
 		? b->btree_id > c->gc_cur_btree
-		: bkey_cmp(&b->key, &c->gc_cur_key)
-		? bkey_cmp(&b->key, &c->gc_cur_key) > 0
+		: bkey_cmp(b->key.p, c->gc_cur_pos)
+		? bkey_cmp(b->key.p, c->gc_cur_pos) > 0
 		: b->level > c->gc_cur_level;
 }
 

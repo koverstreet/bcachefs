@@ -77,7 +77,8 @@ void bch_bbio_prep(struct bbio *b, struct cache *ca)
 	struct bvec_iter *iter = &b->bio.bi_iter;
 
 	b->ca				= ca;
-	b->bio.bi_iter.bi_sector	= PTR_OFFSET(&b->key, 0);
+	b->bio.bi_iter.bi_sector	=
+		PTR_OFFSET(&bkey_i_to_extent_c(&b->key)->v.ptr[0]);
 	b->bio.bi_bdev			= ca ? ca->bdev : NULL;
 
 	b->bi_idx			= iter->bi_idx;
@@ -105,31 +106,32 @@ void bch_submit_bbio_replicas(struct bio *bio, struct cache_set *c,
 			      const struct bkey *k, unsigned ptrs_from,
 			      bool punt)
 {
+	const struct bkey_i_extent *e = bkey_i_to_extent_c(k);
 	struct cache *ca;
 	unsigned ptr;
 
 	for (ptr = ptrs_from;
-	     ptr < bch_extent_ptrs(k);
+	     ptr < bch_extent_ptrs(&e->k);
 	     ptr++) {
 		rcu_read_lock();
-		ca = PTR_CACHE(c, k, ptr);
+		ca = PTR_CACHE(c, &e->v, ptr);
 		if (ca)
 			percpu_ref_get(&ca->ref);
 		rcu_read_unlock();
 
 		if (!ca) {
-			bch_submit_bbio(to_bbio(bio), ca, k, ptr, punt);
+			bch_submit_bbio(to_bbio(bio), ca, &e->k, ptr, punt);
 			break;
 		}
 
-		if (ptr + 1 < bch_extent_ptrs(k)) {
+		if (ptr + 1 < bch_extent_ptrs(&e->k)) {
 			struct bio *n = bio_clone_fast(bio, GFP_NOIO,
 						       ca->replica_set);
 			n->bi_end_io		= bio->bi_end_io;
 			n->bi_private		= bio->bi_private;
-			bch_submit_bbio(to_bbio(n), ca, k, ptr, punt);
+			bch_submit_bbio(to_bbio(n), ca, &e->k, ptr, punt);
 		} else {
-			bch_submit_bbio(to_bbio(bio), ca, k, ptr, punt);
+			bch_submit_bbio(to_bbio(bio), ca, &e->k, ptr, punt);
 		}
 	}
 }
@@ -139,8 +141,8 @@ static void bch_bbio_reset(struct bbio *b)
 	struct bvec_iter *iter = &b->bio.bi_iter;
 
 	bio_reset(&b->bio);
-	iter->bi_sector		= KEY_START(&b->key);
-	iter->bi_size		= KEY_SIZE(&b->key) << 9;
+	iter->bi_sector		= bkey_start_offset(&b->key);
+	iter->bi_size		= b->key.size << 9;
 	iter->bi_idx		= b->bi_idx;
 	iter->bi_bvec_done	= b->bi_bvec_done;
 }
@@ -256,6 +258,7 @@ static inline bool version_stress_test(struct cache_set *c)
 
 static void __bch_write(struct closure *);
 
+#if 0
 static void bio_csum(struct bio *bio, struct bkey *k)
 {
 	struct bio_vec bv;
@@ -271,6 +274,7 @@ static void bio_csum(struct bio *bio, struct bkey *k)
 
 	k->val[bch_extent_ptrs(k)] = crc;
 }
+#endif
 
 static void bch_write_done(struct closure *cl)
 {
@@ -320,12 +324,12 @@ static void bch_write_discard(struct closure *cl)
 {
 	struct bch_write_op *op = container_of(cl, struct bch_write_op, cl);
 	struct bio *bio = op->bio;
-	u64 inode = KEY_INODE(&op->insert_key);
+	u64 inode = op->insert_key.p.inode;
 
 	op->error = bch_discard(op->c,
-		    &KEY(inode, bio->bi_iter.bi_sector, 0),
-		    &KEY(inode, bio_end_sector(bio), 0),
-		    KEY_VERSION(&op->insert_key));
+				POS(inode, bio->bi_iter.bi_sector),
+				POS(inode, bio_end_sector(bio)),
+				op->insert_key.version);
 }
 
 static void bch_write_error(struct closure *cl)
@@ -366,7 +370,7 @@ static void bch_write_endio(struct bio *bio)
 
 	if (bio->bi_error) {
 		/* TODO: We could try to recover from this. */
-		if (!KEY_CACHED(&op->insert_key)) {
+		if (!bkey_extent_cached(&op->insert_key)) {
 			__bcache_io_error(op->c, "IO error writing data");
 			op->error = bio->bi_error;
 		} else if (!op->replace)
@@ -407,7 +411,7 @@ static void __bch_write(struct closure *cl)
 		struct bkey *k;
 		struct bio_set *split = op->c->bio_split;
 
-		BUG_ON(bio_sectors(bio) != KEY_SIZE(&op->insert_key));
+		BUG_ON(bio_sectors(bio) != op->insert_key.size);
 
 		if (open_bucket_nr == ARRAY_SIZE(op->open_buckets))
 			continue_at(cl, bch_write_index,
@@ -415,8 +419,7 @@ static void __bch_write(struct closure *cl)
 
 		/* for the device pointers and 1 for the chksum */
 		if (bch_keylist_realloc(&op->insert_keys,
-					BKEY_EXTENT_MAX_U64s +
-					(KEY_CSUM(&op->insert_key) ? 1 : 0)))
+					BKEY_EXTENT_MAX_U64s))
 			continue_at(cl, bch_write_index, op->c->wq);
 
 		k = op->insert_keys.top;
@@ -442,15 +445,15 @@ static void __bch_write(struct closure *cl)
 
 		op->open_buckets[open_bucket_nr++] = b;
 
-		bch_cut_front(k, &op->insert_key);
+		bch_cut_front(k->p, &op->insert_key);
 
-		n = bio_next_split(bio, KEY_SIZE(k), GFP_NOIO, split);
+		n = bio_next_split(bio, k->size, GFP_NOIO, split);
 		n->bi_end_io	= bch_write_endio;
 		n->bi_private	= cl;
-
+#if 0
 		if (KEY_CSUM(k))
 			bio_csum(n, k);
-
+#endif
 		trace_bcache_cache_insert(k);
 
 		bio_set_op_attrs(n, REQ_OP_WRITE, 0);
@@ -465,7 +468,7 @@ static void __bch_write(struct closure *cl)
 	op->write_done = true;
 	continue_at(cl, bch_write_index, op->c->wq);
 err:
-	if (KEY_CACHED(&op->insert_key)) {
+	if (bkey_extent_cached(&op->insert_key)) {
 		/*
 		 * If we were writing cached data, not doing the write is fine
 		 * so long as we discard whatever would have been overwritten -
@@ -544,9 +547,10 @@ void bch_write(struct closure *cl)
 {
 	struct bch_write_op *op = container_of(cl, struct bch_write_op, cl);
 	struct cache_set *c = op->c;
-	u64 inode = KEY_INODE(&op->insert_key);
+	u64 inode = op->insert_key.p.inode;
 
-	trace_bcache_write(c, inode, op->bio, !KEY_CACHED(&op->insert_key),
+	trace_bcache_write(c, inode, op->bio,
+			   !bkey_extent_cached(&op->insert_key),
 			   op->discard);
 
 	if (!bio_sectors(op->bio)) {
@@ -561,8 +565,7 @@ void bch_write(struct closure *cl)
 	}
 
 	if (version_stress_test(c))
-		SET_KEY_VERSION(&op->insert_key,
-				bch_rand_range(UINT_MAX));
+		op->insert_key.version = bch_rand_range(UINT_MAX);
 
 	/*
 	 * This ought to be initialized in bch_write_op_init(), but struct
@@ -586,8 +589,8 @@ void bch_write(struct closure *cl)
 		wake_up_process(c->gc_thread);
 	}
 
-	SET_KEY_OFFSET(&op->insert_key, bio_end_sector(op->bio));
-	SET_KEY_SIZE(&op->insert_key, bio_sectors(op->bio));
+	op->insert_key.p.offset	= bio_end_sector(op->bio);
+	op->insert_key.size	= bio_sectors(op->bio);
 
 	bch_keylist_init(&op->insert_keys);
 	bio_get(op->bio);
@@ -663,8 +666,13 @@ void bch_write_op_init(struct bch_write_op *op, struct cache_set *c,
 	bch_keylist_init(&op->insert_keys);
 	bkey_copy(&op->insert_key, insert_key);
 
-	if (op->cached)
-		SET_KEY_CACHED(&op->insert_key, true);
+	if (!bkey_val_u64s(&op->insert_key))
+		op->insert_key.type = op->discard
+			? KEY_TYPE_DELETED
+			: BCH_EXTENT;
+
+	if (op->cached && op->insert_key.type == BCH_EXTENT)
+		SET_EXTENT_CACHED(&bkey_i_to_extent(&op->insert_key)->v, true);
 
 	if (replace_key) {
 		op->replace = true;
@@ -679,7 +687,7 @@ void bch_write_op_init(struct bch_write_op *op, struct cache_set *c,
 /* bch_discard - discard a range of keys from start_key to end_key.
  * @c		cache set
  * @start_key	pointer to start location
- *		NOTE: discard starts at KEY_START(start_key)
+ *		NOTE: discard starts at bkey_start_offset(start_key)
  * @end_key	pointer to end location
  *		NOTE: discard ends at KEY_OFFSET(end_key)
  * @version	version of discard (0ULL if none)
@@ -691,44 +699,40 @@ void bch_write_op_init(struct bch_write_op *op, struct cache_set *c,
  * XXX: this needs to be refactored with inode_truncate, or more
  *	appropriately inode_truncate should call this
  */
-int bch_discard(struct cache_set *c, const struct bkey *start_key,
-		const struct bkey *end_key, u64 version)
+int bch_discard(struct cache_set *c, struct bpos start,
+		struct bpos end, u64 version)
 {
 	struct btree_iter iter;
 	const struct bkey *k;
 	int ret = 0;
 
-	bch_btree_iter_init_intent(&iter, c, BTREE_ID_EXTENTS, start_key);
+	bch_btree_iter_init_intent(&iter, c, BTREE_ID_EXTENTS, start);
 
 	while ((k = bch_btree_iter_peek(&iter)) &&
-	       bkey_cmp(&START_KEY(k), end_key) < 0) {
+	       bkey_cmp(bkey_start_pos(k), end) < 0) {
 		unsigned max_sectors = KEY_SIZE_MAX & (~0 << c->block_bits);
-		struct bkey erase_key, n;
+		struct bkey erase;
+		struct bpos n;
 
 		/* create the biggest key we can, to minimize writes */
-		erase_key = KEY(KEY_INODE(k),
-				KEY_START(k) + max_sectors,
-				max_sectors);
-		bch_cut_front(&iter.pos, &erase_key);
-		n = erase_key;
+		bkey_init(&erase);
+		erase.p = iter.pos;
+		bch_key_resize(&erase, max_sectors);
+		n = erase.p;
 
-		if ((version) == 0ULL) {
-			/* This is probably wrong but retains legacy behavior */
-			SET_KEY_DELETED(&erase_key, 1);
-		} else {
-			SET_KEY_WIPED(&erase_key, 1);
-			SET_KEY_VERSION(&erase_key, version);
-		}
+		erase.version = version;
+		erase.type = version
+			? KEY_TYPE_DISCARD
+			: KEY_TYPE_DELETED;
 
-		bch_cut_back(end_key, &erase_key);
+		bch_cut_back(end, &erase);
 
-		ret = bch_btree_insert_at(&iter,
-					  &keylist_single(&erase_key),
+		ret = bch_btree_insert_at(&iter, &keylist_single(&erase),
 					  NULL, NULL, 0, 0);
 		if (ret)
 			break;
 
-		bch_btree_iter_set_pos(&iter, &n);
+		bch_btree_iter_set_pos(&iter, n);
 		bch_btree_iter_cond_resched(&iter);
 	}
 	bch_btree_iter_unlock(&iter);
@@ -768,8 +772,8 @@ static void cache_promote_write(struct closure *cl)
 	struct bio *bio = op->iop.bio;
 
 	bio_reset(bio);
-	bio->bi_iter.bi_sector	= KEY_START(&op->iop.insert_key);
-	bio->bi_iter.bi_size	= KEY_SIZE(&op->iop.insert_key) << 9;
+	bio->bi_iter.bi_sector	= bkey_start_offset(&op->iop.insert_key);
+	bio->bi_iter.bi_size	= op->iop.insert_key.size << 9;
 	/* needed to reinit bi_vcnt so pages can be freed later */
 	bch_bio_map(bio, NULL);
 
@@ -800,7 +804,7 @@ static void cache_promote_endio(struct bio *bio)
 
 	if (bio->bi_error)
 		op->iop.error = bio->bi_error;
-	else if (b->ca && ptr_stale(b->ca, &b->key, 0))
+	else if (b->ca && ptr_stale(b->ca, &bkey_i_to_extent_c(&b->key)->v, 0))
 		op->stale = 1;
 
 	bch_bbio_endio(b, bio->bi_error, "reading from cache");
@@ -814,7 +818,8 @@ static void cache_promote_endio(struct bio *bio)
  * @orig_bio must actually be a bbio with a valid key.
  */
 void __cache_promote(struct cache_set *c, struct bbio *orig_bio,
-		     const struct bkey *replace_key,
+		     const struct bkey *old,
+		     const struct bkey *new,
 		     unsigned write_flags)
 {
 	struct cache_promote_op *op;
@@ -852,11 +857,10 @@ void __cache_promote(struct cache_set *c, struct bbio *orig_bio,
 
 	bch_write_op_init(&op->iop, c, bio,
 			  &c->promote_write_point,
-			  replace_key, replace_key,
-			  write_flags);
+			  new, old, write_flags);
 
-	bch_cut_front(&START_KEY(&orig_bio->key), &op->iop.insert_key);
-	bch_cut_back(&orig_bio->key, &op->iop.insert_key);
+	bch_cut_front(bkey_start_pos(&orig_bio->key), &op->iop.insert_key);
+	bch_cut_back(orig_bio->key.p, &op->iop.insert_key);
 
 	trace_bcache_promote(&orig_bio->bio);
 
@@ -885,7 +889,7 @@ bool cache_promote(struct cache_set *c, struct bbio *bio,
 		return 0;
 	}
 
-	__cache_promote(c, bio, k, BCH_WRITE_ALLOC_NOWAIT);
+	__cache_promote(c, bio, k, k, BCH_WRITE_ALLOC_NOWAIT);
 	return 1;
 }
 
@@ -910,7 +914,8 @@ static void bch_read_endio(struct bio *bio)
 	bch_bbio_count_io_errors(b, bio->bi_error, "reading from cache");
 
 	if (!bio->bi_error && ca &&
-	    (race_fault() || ptr_stale(ca, &b->key, 0))) {
+	    (race_fault() ||
+	     ptr_stale(ca, &bkey_i_to_extent_c(&b->key)->v, 0))) {
 		/* Read bucket invalidate race */
 		atomic_long_inc(&ca->set->cache_read_races);
 		bch_read_requeue(ca->set, bio);
@@ -942,31 +947,32 @@ int bch_read(struct cache_set *c, struct bio *bio, u64 inode)
 	bch_increment_clock(c, bio_sectors(bio), READ);
 
 	for_each_btree_key_with_holes(&iter, c, BTREE_ID_EXTENTS,
-				      &KEY(inode, bio->bi_iter.bi_sector, 0),
-				      k) {
+				      POS(inode, bio->bi_iter.bi_sector), k) {
 		struct bio *n;
 		struct bbio *bbio;
 		struct cache *ca;
 		unsigned sectors, ptr;
 		bool done;
 
-		BUG_ON(bkey_cmp(&START_KEY(k),
-				&KEY(inode, bio->bi_iter.bi_sector, 0)) > 0);
+		BUG_ON(bkey_cmp(bkey_start_pos(k),
+				POS(inode, bio->bi_iter.bi_sector)) > 0);
 
-		BUG_ON(bkey_cmp(k,
-				&KEY(inode, bio->bi_iter.bi_sector, 0)) <= 0);
+		BUG_ON(bkey_cmp(k->p,
+				POS(inode, bio->bi_iter.bi_sector)) <= 0);
 
-		sectors = KEY_OFFSET(k) - bio->bi_iter.bi_sector;
+		sectors = k->p.offset - bio->bi_iter.bi_sector;
 		done = sectors >= bio_sectors(bio);
 
 		ca = bch_extent_pick_ptr(c, k, &ptr);
-		if (IS_ERR(ca) || (!ca && KEY_BAD(k))) {
+		if (IS_ERR(ca)) {
 			bcache_io_error(c, bio, "no device to read from");
 			bch_btree_iter_unlock(&iter);
 			return 0;
 		}
 		if (ca) {
-			PTR_BUCKET(ca, k, ptr)->read_prio =
+			const struct bkey_i_extent *e = bkey_i_to_extent_c(k);
+
+			PTR_BUCKET(ca, &e->v, ptr)->read_prio =
 				c->prio_clock[READ].hand;
 
 			n = sectors >= bio_sectors(bio)
@@ -982,9 +988,9 @@ int bch_read(struct cache_set *c, struct bio *bio, u64 inode)
 			bch_bkey_copy_single_ptr(&bbio->key, k, ptr);
 
 			/* Trim the key to match what we're actually reading */
-			bch_cut_front(&KEY(inode, n->bi_iter.bi_sector, 0),
+			bch_cut_front(POS(inode, n->bi_iter.bi_sector),
 				      &bbio->key);
-			bch_cut_back(&KEY(inode, bio_end_sector(n), 0),
+			bch_cut_back(POS(inode, bio_end_sector(n)),
 				     &bbio->key);
 			bch_bbio_prep(bbio, ca);
 
@@ -1038,7 +1044,7 @@ static void bch_read_retry(struct bbio *bbio)
 	 * The inode, offset and size come from the bbio's key,
 	 * which was set by bch_read_fn().
 	 */
-	inode = KEY_INODE(&bbio->key);
+	inode = bbio->key.p.inode;
 	parent = bio->bi_private;
 
 	bch_bbio_reset(bbio);

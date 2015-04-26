@@ -41,7 +41,7 @@ static inline struct bkey *__bch_keylist_next(struct keylist *l, struct bkey *k)
 
 static inline void bch_keylist_enqueue(struct keylist *l)
 {
-	BUG_ON(!bch_keylist_fits(l, KEY_U64s(l->top)));
+	BUG_ON(!bch_keylist_fits(l, l->top->u64s));
 	l->top = __bch_keylist_next(l, l->top);
 }
 
@@ -140,8 +140,8 @@ struct bkey *bch_scan_keylist_next(struct scan_keylist *);
 
 struct bkey *bch_scan_keylist_next_rescan(struct cache_set *c,
 					  struct scan_keylist *kl,
-					  struct bkey *last_scanned,
-					  struct bkey *end,
+					  struct bpos *last_scanned,
+					  struct bpos end,
 					  scan_keylist_pred_fn *pred);
 
 int bch_scan_keylist_add(struct scan_keylist *, const struct bkey *);

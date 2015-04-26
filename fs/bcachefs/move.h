@@ -37,7 +37,7 @@ struct moving_context {
 	u64			sectors_moved;
 
 	/* Last key scanned */
-	struct bkey		last_scanned;
+	struct bpos		last_scanned;
 
 	/* Rate-limiter counting submitted reads */
 	struct bch_ratelimit	*rate;
@@ -78,7 +78,7 @@ static inline struct moving_io *moving_io_alloc(const struct bkey *k)
 	struct moving_io *io;
 
 	io = kzalloc(sizeof(struct moving_io) + sizeof(struct bio_vec)
-		     * DIV_ROUND_UP(KEY_SIZE(k), PAGE_SECTORS),
+		     * DIV_ROUND_UP(k->size, PAGE_SECTORS),
 		     GFP_KERNEL);
 	if (!io)
 		return NULL;

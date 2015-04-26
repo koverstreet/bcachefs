@@ -6,6 +6,7 @@
  */
 
 #ifdef __cplusplus
+typedef bool _Bool;
 extern "C" {
 #endif
 
@@ -29,120 +30,82 @@ static inline void SET_##name(type *k, __u64 v)				\
 
 /* Btree keys - all units are in sectors */
 
-struct bkey {
-	__u64	header;
+struct bpos {
 	/* Word order matches machine byte order */
 #if defined(__LITTLE_ENDIAN)
-	__u32	kw[0];
-	__u64	k2;
-	__u64	k1;
+	__u32		kw[0];
+	/* key starts here */
+	__u32		snapshot;
+	__u64		offset;
+	__u64		inode;
 #elif defined(__BIG_ENDIAN)
-	__u64	k1;
-	__u64	k2;
-	__u32	kw[0];
+	__u64		inode;
+	__u64		offset;		/* Points to end of extent - sectors */
+	__u32		snapshot;
+	__u32		kw[0];
 #else
 #error edit for your odd byteorder.
 #endif
-	__u64	val[0];
+} __attribute__((packed)) __attribute__((aligned(4)));
+
+#define KEY_INODE_MAX			((__u64)~0ULL)
+#define KEY_OFFSET_MAX			((__u64)~0ULL)
+#define KEY_SNAPSHOT_MAX		((__u32)~0U)
+
+static inline struct bpos POS(__u64 inode, __u64 offset)
+{
+	struct bpos ret;
+
+	ret.inode	= inode;
+	ret.offset	= offset;
+	ret.snapshot	= 0;
+
+	return ret;
+}
+
+#define POS_MIN				POS(0, 0)
+#define POS_MAX				POS(KEY_INODE_MAX, KEY_OFFSET_MAX)
+
+/* Empty placeholder struct, for container_of() */
+struct bch_val {
+	__u64		__nothing[0];
 };
 
-#define BKEY_U64s	(sizeof(struct bkey) / sizeof(__u64))
+struct bkey {
+	__u64		_data[0];
 
-#define KEY_FIELD(name, field, offset, end)				\
-	BITMASK(name, struct bkey, field, offset, end)
+	/* Size of combined key and value, in u64s */
+	__u8		u64s;
 
-#define PTR_FIELD(name, offset, end)					\
-static inline __u64 name(const struct bkey *k, unsigned i)		\
-{ return (k->val[i] >> offset) & ~(~0ULL << (end - offset)); }		\
-									\
-static inline void SET_##name(struct bkey *k, unsigned i, __u64 v)	\
-{									\
-	k->val[i] &= ~(~(~0ULL << (end - offset)) << offset);		\
-	k->val[i] |= (v & ~(~0ULL << (end - offset))) << offset;	\
-}
+	/* Format of key (0 for format local to btree node */
+	__u8		format;
 
-#define KEY_OFFSET_BITS		(KEY_OFFSET_H_BITS + KEY_OFFSET_L_BITS)
-#define KEY_OFFSET_MAX		(~(~0ULL << KEY_OFFSET_BITS))
+	/* Type of the value */
+	__u8		type;
 
-/*
- * DELETED keys are used internally to mark keys that should be ignored but
- * override keys in composition order.  Their version number is ignored.
- * WIPED keys indicate that the data is all 0s because it has been discarded.
- * Unlike DELETED keys, WIPED keys have version numbers so that discarded
- * regions don't revert when a server that was offline during the discard
- * comes back on line.
- * Unlike DELETED keys, which can be eliminated by (node-) local GC,
- * WIPED keys can only be eliminated by:
- * - cluster-wide GC, when all the servers are online and the WIPED keys
- *   are no longer overriding any older keys, or
- * - local GC when completely overridden by younger writes/discards.
- * Note that a key can be DELETED and WIPED, in which case the DELETED
- * behavior overrides the WIPED behavior.  A key can be both when it was
- * originally WIPED and subsequently becomes DELETED through overwrites.
- * Modulo how they source data on reads (they source 0s rather than data
- * from an actual real extent), WIPED keys are regular keys.
- *
- * BAD keys are similar to WIPED KEYS except that any read of the data
- * causes a read error, as the data was lost due to a failing device.
- * Like WIPED keys, they can be removed (overridden) by new writes or
- * cluster-wide GC.  Node repair can also overwrite them with the same
- * or a more recent version number, but not with an older version
- * number.
- * As with WIPED keys, a key can be both BAD and DELETED (but not both
- * BAD and WIPED!), in which case the DELETED behavior wins.
- */
+	__u8		pad[1];
+	struct bpos	p;
+	__u32		size;		/* extent size, in sectors */
+	__u32		version;
 
-KEY_FIELD(KEY_U64s,	header, 56, 64)
-KEY_FIELD(KEY_DELETED,	header, 55, 56)
-KEY_FIELD(KEY_CACHED,	header, 54, 55)
-KEY_FIELD(KEY_CSUM,	header, 50, 54)
-KEY_FIELD(KEY_WIPED,	header, 49, 50)
-KEY_FIELD(KEY_BAD,	header, 48, 49)
+	struct bch_val	_val;
+} __attribute__((packed)) __attribute__((aligned(8)));
 
-/*
- * Sequence number used to determine which extent is the newer one, when dealing
- * with overlapping extents from different servers.
- */
-KEY_FIELD(KEY_VERSION,	header, 0,  32)
+#define BKEY_U64s			(sizeof(struct bkey) / sizeof(__u64))
 
-/* start of actual key: */
+#define KEY_SIZE_MAX			((__u32)~0U)
 
-KEY_FIELD(KEY_SNAPSHOT,	k2,  0, 20)
-
-KEY_FIELD(KEY_OFFSET_L,	k2, 20, 64)
-KEY_FIELD(KEY_OFFSET_H,	k1,  0, 8)
-
-KEY_FIELD(KEY_INODE,	k1, 8,  48)
-
-#define KEY_HIGH_BITS	48
-#define KEY_HIGH_MASK	(~(~0ULL << KEY_HIGH_BITS))
-
-/* actual key ends here (don't compare against the rest) */
-
-KEY_FIELD(KEY_SIZE,	k1, 48, 64)	/* Extent size, in sectors */
-
-static inline __u64 KEY_OFFSET(const struct bkey *k)
-{
-	return KEY_OFFSET_L(k) | (KEY_OFFSET_H(k) << KEY_OFFSET_L_BITS);
-}
-
-static inline void SET_KEY_OFFSET(struct bkey *k, __u64 v)
-{
-	SET_KEY_OFFSET_L(k, v);
-	SET_KEY_OFFSET_H(k, v >> KEY_OFFSET_L_BITS);
-}
+#define KEY_FORMAT_LOCAL_BTREE		0
+#define KEY_FORMAT_CURRENT		1
 
 #ifndef __cplusplus
 
-#define KEY(inode, offset, size)					\
+#define KEY(_inode, _offset, _size)					\
 ((struct bkey) {							\
-	.header	= (__u64) BKEY_U64s << KEY_U64s_OFFSET,			\
-	.k1	= (((((__u64) (size)) & KEY_SIZE_MAX) << KEY_SIZE_OFFSET)|\
-		   ((((__u64) (inode)) & KEY_INODE_MAX) << KEY_INODE_OFFSET)|\
-		   ((((__u64) (offset)) >> KEY_OFFSET_L_BITS) &		\
-		    KEY_OFFSET_H_MAX)),					\
-	.k2	= ((((__u64) (offset)) &				\
-		    KEY_OFFSET_L_MAX) << KEY_OFFSET_L_OFFSET),		\
+	.u64s		= BKEY_U64s,					\
+	.format		= KEY_FORMAT_CURRENT,				\
+	.p		= POS(_inode, _offset),				\
+	.size		= _size,					\
 })
 
 #else
@@ -151,86 +114,120 @@ static inline struct bkey KEY(__u64 inode, __u64 offset, __u64 size)
 {
 	struct bkey ret;
 
-	ret.header = (__u64) BKEY_U64s << KEY_U64s_OFFSET;
-	ret.k1 = (((size & KEY_SIZE_MAX) << KEY_SIZE_OFFSET)|
-		  ((inode & KEY_INODE_MAX) << KEY_INODE_OFFSET)|
-		  ((offset >> KEY_OFFSET_L_BITS) & KEY_OFFSET_H_MAX));
-	ret.k2 = (offset & KEY_OFFSET_L_MAX) << KEY_OFFSET_L_OFFSET;
+	memset(&ret, 0, sizeof(ret));
+	ret.u64s	= BKEY_U64s;
+	ret.format	= KEY_FORMAT_CURRENT;
+	ret.p.inode	= inode;
+	ret.p.offset	= offset;
+	ret.size	= size;
 
 	return ret;
 }
 
 #endif
 
-#define ZERO_KEY			KEY(0, 0, 0)
-#define MAX_KEY				KEY(~0ULL, ~0ULL, 0)
-
-#define KEY_START(k)			(KEY_OFFSET(k) - KEY_SIZE(k))
-#define START_KEY(k)			KEY(KEY_INODE(k), KEY_START(k), 0)
-
-#define PTR_DEV_BITS			12
-
-PTR_FIELD(PTR_GEN,			0,  8)
-PTR_FIELD(PTR_OFFSET,			8,  51)
-PTR_FIELD(PTR_DEV,			51, 51 + PTR_DEV_BITS)
-
-/* Dummy DEV numbers: */
-
-/*
- * PTR_CHECK_DEV is used when inserting dummy keys.
- */
-
-#define PTR_CHECK_DEV			((1 << PTR_DEV_BITS) - 1)
-
-/*
- * When removing devices, if there are valid pointers left in a key,
- * we replace the ones to the device removed with PTR_LOST_DEV.
- */
-
-#define PTR_LOST_DEV			((1 << PTR_DEV_BITS) - 2)
-
-#define PTR(gen, offset, dev)						\
-	((((__u64) dev) << 51) | ((__u64) offset) << 8 | gen)
-
-/* Bkey utility code */
+static inline void bkey_init(struct bkey *k)
+{
+	*k = KEY(0, 0, 0);
+}
 
 static inline unsigned long bkey_bytes(const struct bkey *k)
 {
-	return KEY_U64s(k) * sizeof(__u64);
+	return k->u64s * sizeof(__u64);
 }
 
-#define bkey_copy(_dest, _src)	memcpy(_dest, _src, bkey_bytes(_src))
-
-static inline void bkey_copy_key(struct bkey *dest, const struct bkey *src)
-{
-	SET_KEY_INODE(dest, KEY_INODE(src));
-	SET_KEY_OFFSET(dest, KEY_OFFSET(src));
-}
-
-static inline struct bkey *bkey_next(const struct bkey *k)
-{
-	__u64 *d = (__u64 *) k;
-	return (struct bkey *) (d + KEY_U64s(k));
-}
-
-static inline struct bkey *bkey_idx(const struct bkey *k, unsigned nr_keys)
-{
-	__u64 *d = (__u64 *) k;
-	return (struct bkey *) (d + nr_keys);
-}
-
-#define bset_bkey_last(i)	bkey_idx((struct bkey *) (i)->d, (i)->keys)
+#define bkey_copy(_dst, _src)	memcpy(_dst, _src, bkey_bytes(_src))
 
 #define __BKEY_PADDED(key, pad)					\
 	struct { struct bkey key; __u64 key ## _pad[pad]; }
+
+#define BKEY_VAL_TYPE(name, nr)						\
+struct bkey_i_##name {							\
+	struct bkey		k;					\
+	struct bch_##name	v;					\
+}
+
+/*
+ * - DELETED keys are used internally to mark keys that should be ignored but
+ *   override keys in composition order.  Their version number is ignored.
+ *
+ * - DISCARDED keys indicate that the data is all 0s because it has been
+ *   discarded.  Unlike DELETED keys, DISCARDED keys have version numbers so
+ *   that discarded regions don't revert when a server that was offline during
+ *   the discard comes back on line.  Unlike DELETED keys, which can be
+ *   eliminated by (node-) local GC, DISCARDED keys can only be eliminated by:
+ * - cluster-wide GC, when all the servers are online and the DISCARDED keys are
+ *   no longer overriding any older keys, or
+ * - local GC when completely overridden by younger writes/discards.
+ *
+ * - ERROR: any read of the data returns a read error, as the data was lost due
+ *   to a failing device. Like DISCARDED keys, they can be removed (overridden)
+ *   by new writes or cluster-wide GC. Node repair can also overwrite them with
+ *   the same or a more recent version number, but not with an older version
+ *   number.
+*/
+#define KEY_TYPE_DELETED		0
+#define KEY_TYPE_DISCARD		1
+#define KEY_TYPE_ERROR			2
+#define KEY_TYPE_COOKIE			3
+#define KEY_TYPE_GENERIC_NR		128
+
+struct bch_cookie {
+	struct bch_val		v;
+	__u64			cookie;
+};
+BKEY_VAL_TYPE(cookie,		KEY_TYPE_COOKIE);
+
+/* Extents */
+
+/*
+ * bcache keys index the end of the extent as the offset
+ * The end is exclusive, while the start is inclusive
+ */
+
+struct bch_extent_ptr {
+	__u64			_val;
+};
+
+BITMASK(PTR_GEN,	struct bch_extent_ptr, _val, 0,  8);
+BITMASK(PTR_DEV,	struct bch_extent_ptr, _val, 8,  16);
+BITMASK(PTR_OFFSET,	struct bch_extent_ptr, _val, 16, 63);
+
+/* high bit of the first pointer is used for EXTENT_CACHED, blech */
+
+static inline struct bch_extent_ptr PTR(__u64 gen, __u64 offset, __u64 dev)
+{
+	return (struct bch_extent_ptr) {
+		._val = ((gen		<< PTR_GEN_OFFSET) |
+			 (dev		<< PTR_DEV_OFFSET) |
+			 (offset	<< PTR_OFFSET_OFFSET))
+	};
+}
+
+/* Dummy DEV numbers: */
+
+#define PTR_LOST_DEV			PTR_DEV_MAX
+
+enum {
+	BCH_EXTENT		= 128,
+};
+
+struct bch_extent {
+	struct bch_val		v;
+	struct bch_extent_ptr	ptr[0];
+	__u64			data[0]; /* hack for EXTENT_CACHED */
+};
+BKEY_VAL_TYPE(extent,		BCH_EXTENT);
+
+BITMASK(EXTENT_CACHED, struct bch_extent, data[0], 63, 64)
 
 /* Inodes */
 
 #define BLOCKDEV_INODE_MAX	4096
 
 enum bch_inode_types {
-	BCH_INODE_BLOCKDEV	= 0,
-	BCH_INODE_FS		= 1,
+	BCH_INODE_FS		= 128,
+	BCH_INODE_BLOCKDEV	= 129,
 };
 
 enum {
@@ -243,10 +240,10 @@ enum {
 #define BCH_INODE_I_SIZE_DIRTY	(1 << __BCH_INODE_I_SIZE_DIRTY)
 
 struct bch_inode {
-	struct bkey		i_key;
+	struct bch_val		v;
 
 	__u16			i_mode;
-	__u16			i_inode_format;
+	__u16			pad;
 	__u32			i_flags;
 
 	/* Nanoseconds */
@@ -262,6 +259,7 @@ struct bch_inode {
 
 	__u32			i_dev;
 } __attribute__((packed));
+BKEY_VAL_TYPE(inode,		BCH_INODE_FS);
 
 struct bch_inode_blockdev {
 	struct bch_inode	i_inode;
@@ -269,41 +267,10 @@ struct bch_inode_blockdev {
 	uuid_le			i_uuid;
 	__u8			i_label[32];
 } __attribute__((packed));
+BKEY_VAL_TYPE(inode_blockdev,	BCH_INODE_BLOCKDEV);
 
 BITMASK(INODE_FLASH_ONLY,	struct bch_inode_blockdev,
 				i_inode.i_flags, 0, 1);
-
-#ifdef __cplusplus
-}
-/*
- * neither __builtin_types_compatible_p nor typeof really works in C++, but an
- * inline function works:
- */
-static inline void BCH_INODE_INIT(struct bch_inode_blockdev *inode)
-{
-	memset(inode, 0, sizeof(*(inode)));
-	SET_KEY_U64s(&(inode)->i_inode.i_key, sizeof(*inode) / sizeof(__u64));
-	(inode)->i_inode.i_inode_format = BCH_INODE_BLOCKDEV;
-}
-
-extern "C" {
-#else
-
-#define BCH_INODE_INIT(inode)					\
-do {								\
-	struct bch_inode *_i = (void *) inode;			\
-								\
-	memset(inode, 0, sizeof(*(inode)));			\
-	SET_KEY_U64s(&_i->i_key, sizeof(*inode) / sizeof(__u64));\
-								\
-	if (__builtin_types_compatible_p(typeof(inode),		\
-			struct bch_inode *))			\
-		_i->i_inode_format = BCH_INODE_FS;		\
-	else if (__builtin_types_compatible_p(typeof(inode),	\
-			struct bch_inode_blockdev *))		\
-		_i->i_inode_format = BCH_INODE_BLOCKDEV;	\
-} while (0)
-#endif
 
 /* Superblock */
 
@@ -422,7 +389,7 @@ struct cache_sb {
 		 * Journal buckets also in the variable length portion, after
 		 * the member info:
 		 */
-		__u64			d[0];
+		__u64			_data[0];
 	};
 };
 
@@ -527,11 +494,11 @@ static inline __u64 bset_magic(struct cache_sb *sb)
 #define BCACHE_JSET_VERSION_JKEYS	2
 #define BCACHE_JSET_VERSION		2
 
-#define DEFINE_BCH_BTREE_IDS()						\
-	DEF_BTREE_ID(BTREE_ID_EXTENTS, 0, "extents")			\
-	DEF_BTREE_ID(BTREE_ID_INODES,  1, "inodes")
+#define DEFINE_BCH_BTREE_IDS()					\
+	DEF_BTREE_ID(EXTENTS, 0, "extents")			\
+	DEF_BTREE_ID(INODES,  1, "inodes")
 
-#define DEF_BTREE_ID(kwd, val, name) kwd = val,
+#define DEF_BTREE_ID(kwd, val, name) BTREE_ID_##kwd = val,
 
 enum btree_id {
 	DEFINE_BCH_BTREE_IDS()
@@ -548,7 +515,7 @@ struct jset_keys {
 
 	union {
 		struct bkey	start[0];
-		__u64		d[0];
+		__u64		_data[0];
 	};
 };
 
@@ -575,7 +542,7 @@ struct jset {
 
 	union {
 		struct jset_keys start[0];
-		__u64		d[0];
+		__u64		_data[0];
 	};
 };
 
@@ -629,7 +596,7 @@ struct bset {
 
 	union {
 		struct bkey	start[0];
-		__u64		d[0];
+		__u64		_data[0];
 	};
 };
 

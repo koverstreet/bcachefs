@@ -352,7 +352,6 @@ static int cached_dev_cache_miss(struct btree_iter *iter, struct search *s,
 	sectors = min(sectors, bio_sectors(bio) + reada);
 
 	replace.key = KEY(s->inode, bio->bi_iter.bi_sector + sectors, sectors);
-	SET_KEY_CACHED(&replace.key, true);
 
 	ret = bch_btree_insert_check_key(iter, &replace.key);
 	if (ret == -EINTR || ret == -EAGAIN)
@@ -369,7 +368,11 @@ static int cached_dev_cache_miss(struct btree_iter *iter, struct search *s,
 	to_bbio(miss)->ca = NULL;
 
 	closure_get(&s->cl);
-	__cache_promote(s->iop.c, to_bbio(miss), &replace.key,
+	__cache_promote(s->iop.c, to_bbio(miss),
+			&replace.key,
+			&KEY(replace.key.p.inode,
+			     replace.key.p.offset,
+			     replace.key.size),
 			BCH_WRITE_ALLOC_NOWAIT|BCH_WRITE_CACHED);
 
 	return 0;
@@ -391,7 +394,7 @@ static void bch_cache_read_endio(struct bio *bio)
 
 	if (bio->bi_error)
 		s->iop.error = bio->bi_error;
-	else if (ptr_stale(b->ca, &b->key, 0)) {
+	else if (ptr_stale(b->ca, &bkey_i_to_extent_c(&b->key)->v, 0)) {
 		/* Read bucket invalidate race */
 		atomic_long_inc(&s->iop.c->cache_read_races);
 		s->iop.error = -EINTR;
@@ -410,33 +413,31 @@ static void cached_dev_read(struct cached_dev *dc, struct search *s)
 	bch_increment_clock(s->iop.c, bio_sectors(&s->bio.bio), READ);
 
 	for_each_btree_key_with_holes(&iter, s->iop.c, BTREE_ID_EXTENTS,
-				      &KEY(s->inode,
-					   bio->bi_iter.bi_sector, 0), k) {
+				POS(s->inode, bio->bi_iter.bi_sector), k) {
 		struct bio *n;
 		struct bbio *bbio;
 		unsigned sectors, ptr;
 		struct cache *ca;
 		bool done;
 retry:
-		BUG_ON(bkey_cmp(&START_KEY(k),
-				&KEY(s->inode, bio->bi_iter.bi_sector, 0)) > 0);
+		BUG_ON(bkey_cmp(bkey_start_pos(k),
+				POS(s->inode, bio->bi_iter.bi_sector)) > 0);
 
-		BUG_ON(bkey_cmp(k, &KEY(s->inode,
-					bio->bi_iter.bi_sector, 0)) <= 0);
+		BUG_ON(bkey_cmp(k->p,
+				POS(s->inode, bio->bi_iter.bi_sector)) <= 0);
 
-		sectors = KEY_OFFSET(k) - bio->bi_iter.bi_sector;
+		sectors = k->p.offset - bio->bi_iter.bi_sector;
 		done = sectors >= bio_sectors(bio);
 
 		ca = bch_extent_pick_ptr(s->iop.c, k, &ptr);
-		if (IS_ERR(ca) || (!ca && KEY_BAD(k))) {
-			/* If KEY_BAD, the data was lost due to a bad device. */
+		if (IS_ERR(ca)) {
 			bcache_io_error(s->iop.c, bio,
 					"no device to read from");
 			bch_btree_iter_unlock(&iter);
 			goto out;
 		}
 
-		if (!ca && KEY_WIPED(k)) {
+		if (!ca && k->type == KEY_TYPE_DISCARD) {
 			/* The data is zeros.  Instantiate them. */
 			unsigned bytes = min_t(unsigned, sectors,
 					       bio_sectors(bio)) << 9;
@@ -447,16 +448,18 @@ retry:
 
 			bio_advance(bio, bytes);
 		} else if (!ca) {
-			/* not present (hole), or stale cached data*/
+			/* not present (hole), or stale cached data */
 			if (cached_dev_cache_miss(&iter, s, bio, sectors)) {
 				k = bch_btree_iter_peek_with_holes(&iter);
 				goto retry;
 			}
 		} else {
-			PTR_BUCKET(ca, k, ptr)->read_prio =
+			const struct bkey_i_extent *e = bkey_i_to_extent_c(k);
+
+			PTR_BUCKET(ca, &e->v, ptr)->read_prio =
 				s->iop.c->prio_clock[READ].hand;
 
-			if (!KEY_CACHED(k))
+			if (!EXTENT_CACHED(&e->v))
 				s->read_dirty_data = true;
 
 			n = bio_next_split(bio, sectors, GFP_NOIO,
@@ -466,9 +469,9 @@ retry:
 			bch_bkey_copy_single_ptr(&bbio->key, k, ptr);
 
 			/* Trim the key to match what we're actually reading */
-			bch_cut_front(&KEY(s->inode, n->bi_iter.bi_sector, 0),
+			bch_cut_front(POS(s->inode, n->bi_iter.bi_sector),
 				      &bbio->key);
-			bch_cut_back(&KEY(s->inode, bio_end_sector(n), 0),
+			bch_cut_back(POS(s->inode, bio_end_sector(n)),
 				     &bbio->key);
 
 			bch_bbio_prep(bbio, ca);
@@ -516,8 +519,6 @@ static void cached_dev_write(struct cached_dev *dc, struct search *s)
 	struct closure *cl = &s->cl;
 	struct bio *bio = &s->bio.bio;
 	unsigned inode = bcache_dev_inum(&dc->disk);
-	struct bkey start = KEY(inode, bio->bi_iter.bi_sector, 0);
-	struct bkey end = KEY(inode, bio_end_sector(bio), 0);
 	bool writeback = false;
 	bool bypass = s->bypass;
 	struct bkey insert_key = KEY(s->inode, 0, 0);
@@ -525,7 +526,9 @@ static void cached_dev_write(struct cached_dev *dc, struct search *s)
 	unsigned flags = 0;
 
 	down_read_non_owner(&dc->writeback_lock);
-	if (bch_keybuf_check_overlapping(&dc->writeback_keys, &start, &end)) {
+	if (bch_keybuf_check_overlapping(&dc->writeback_keys,
+					 POS(inode, bio->bi_iter.bi_sector),
+					 POS(inode, bio_end_sector(bio)))) {
 		/*
 		 * We overlap with some dirty data undergoing background
 		 * writeback, force this write to writeback

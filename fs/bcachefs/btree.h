@@ -213,7 +213,7 @@ struct btree_iter {
 	struct cache_set	*c;
 
 	/* Current position of the iterator */
-	struct bkey		pos;
+	struct bpos		pos;
 
 	/*
 	 * Previous key returned - so that bch_btree_iter_next()/
@@ -259,22 +259,22 @@ static inline void mark_btree_node_unlocked(struct btree_iter *iter,
 
 int bch_btree_iter_unlock(struct btree_iter *);
 void __bch_btree_iter_init(struct btree_iter *, struct cache_set *,
-			   enum btree_id, const struct bkey *, int);
+			   enum btree_id, struct bpos, int);
 
 static inline void bch_btree_iter_init(struct btree_iter *iter,
 				       struct cache_set *c,
 				       enum btree_id btree_id,
-				       const struct bkey *search)
+				       struct bpos pos)
 {
-	__bch_btree_iter_init(iter, c, btree_id, search, -1);
+	__bch_btree_iter_init(iter, c, btree_id, pos, -1);
 }
 
 static inline void bch_btree_iter_init_intent(struct btree_iter *iter,
 					      struct cache_set *c,
 					      enum btree_id btree_id,
-					      const struct bkey *search)
+					      struct bpos pos)
 {
-	__bch_btree_iter_init(iter, c, btree_id, search, 0);
+	__bch_btree_iter_init(iter, c, btree_id, pos, 0);
 }
 
 struct btree *bch_btree_iter_peek_node(struct btree_iter *);
@@ -282,28 +282,28 @@ struct btree *bch_btree_iter_next_node(struct btree_iter *);
 
 const struct bkey *bch_btree_iter_peek(struct btree_iter *);
 const struct bkey *bch_btree_iter_peek_with_holes(struct btree_iter *);
-void bch_btree_iter_set_pos(struct btree_iter *, const struct bkey *);
+void bch_btree_iter_set_pos(struct btree_iter *, struct bpos);
 void bch_btree_iter_advance_pos(struct btree_iter *);
 bool bch_btree_iter_upgrade(struct btree_iter *);
 
 static inline void __btree_iter_node_set(struct btree_iter *iter,
 					 struct btree *b,
-					 const struct bkey *pos)
+					 struct bpos pos)
 {
-	struct bkey search = iter->is_extents && bkey_cmp(pos, &MAX_KEY)
+	struct bpos search = iter->is_extents && bkey_cmp(pos, POS_MAX)
 		? bkey_successor(pos)
-		: *pos;
+		: pos;
 
 	iter->lock_seq[b->level] = b->lock.state.seq;
 	iter->nodes[b->level] = b;
 	bch_btree_node_iter_init(&b->keys,
 				 &iter->node_iters[b->level],
-				 &search);
+				 search);
 }
 
 static inline void btree_iter_node_set(struct btree_iter *iter, struct btree *b)
 {
-	__btree_iter_node_set(iter, b, &iter->pos);
+	__btree_iter_node_set(iter, b, iter->pos);
 }
 
 #define for_each_btree_node(_iter, _c, _btree_id, _start, _b)		\

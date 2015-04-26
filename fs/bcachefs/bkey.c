@@ -9,18 +9,24 @@ int bch_bkey_to_text(char *buf, size_t size, const struct bkey *k)
 
 #define p(...)	(out += scnprintf(out, end - out, __VA_ARGS__))
 
-	p("%llu:%llu snap %llu len %llu ver %llu",
-	  KEY_INODE(k), KEY_OFFSET(k), KEY_SNAPSHOT(k),
-	  KEY_SIZE(k), KEY_VERSION(k));
+	p("u64s %u format %u %llu:%llu snap %u len %u ver %u",
+	  k->u64s, k->format, k->p.inode, k->p.offset,
+	  k->p.snapshot, k->size, k->version);
 
-	if (KEY_DELETED(k))
+	switch (k->type) {
+	case KEY_TYPE_DELETED:
 		p(" deleted");
-	if (KEY_WIPED(k))
-		p(" wiped");
-	if (KEY_BAD(k))
-		p(" bad");
-
-
+		break;
+	case KEY_TYPE_DISCARD:
+		p(" discard");
+		break;
+	case KEY_TYPE_ERROR:
+		p(" error");
+		break;
+	case KEY_TYPE_COOKIE:
+		p(" cookie");
+		break;
+	}
 #undef p
 
 	return out - buf;

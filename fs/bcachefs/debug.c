@@ -32,6 +32,7 @@ static struct dentry *debug;
 
 void bch_btree_verify(struct btree *b)
 {
+	const struct bkey_i_extent *e = bkey_i_to_extent_c(&b->key);
 	struct btree *v = b->c->verify_data;
 	struct bset *ondisk, *sorted, *inmemory;
 	struct cache *ca;
@@ -52,10 +53,10 @@ void bch_btree_verify(struct btree *b)
 	v->level = b->level;
 	v->keys.ops = b->keys.ops;
 
-	ca = PTR_CACHE(b->c, &b->key, 0);
+	ca = PTR_CACHE(b->c, &e->v, 0);
 	bio = bch_bbio_alloc(b->c);
 	bio->bi_bdev		= ca->bdev;
-	bio->bi_iter.bi_sector	= PTR_OFFSET(&b->key, 0);
+	bio->bi_iter.bi_sector	= PTR_OFFSET(&e->v.ptr[0]);
 	bio->bi_iter.bi_size	= btree_bytes(b->c);
 	bio_set_op_attrs(bio, REQ_OP_READ, REQ_META|READ_SYNC);
 	bch_bio_map(bio, sorted);
@@ -95,7 +96,7 @@ void bch_btree_verify(struct btree *b)
 		       ((void *) i - (void *) ondisk) / block_bytes(b->c));
 
 		for (j = 0; j < inmemory->keys; j++)
-			if (inmemory->d[j] != sorted->d[j])
+			if (inmemory->_data[j] != sorted->_data[j])
 				break;
 
 		printk(KERN_ERR "b->written %u\n", b->written);
@@ -152,7 +153,7 @@ out_put:
 /* XXX: cache set refcounting */
 
 struct dump_iter {
-	struct bkey		from;
+	struct bpos		from;
 	struct cache_set	*c;
 
 	char			buf[PAGE_SIZE];
@@ -201,7 +202,7 @@ static ssize_t bch_dump_read(struct file *file, char __user *buf,
 	if (!i->size)
 		return i->ret;
 
-	for_each_btree_key(&iter, i->c, BTREE_ID_EXTENTS, &i->from, k) {
+	for_each_btree_key(&iter, i->c, BTREE_ID_EXTENTS, i->from, k) {
 		bch_bkey_val_to_text(&iter.nodes[0]->keys,
 				     i->buf, sizeof(i->buf), k);
 		i->bytes = strlen(i->buf);
@@ -213,7 +214,7 @@ static ssize_t bch_dump_read(struct file *file, char __user *buf,
 		if (err)
 			break;
 
-		i->from = *k;
+		i->from = k->p;
 
 		if (!i->size)
 			break;
@@ -233,7 +234,7 @@ static int bch_dump_open(struct inode *inode, struct file *file)
 		return -ENOMEM;
 
 	file->private_data = i;
-	bkey_init(&i->from);
+	i->from = POS_MIN;
 	i->c = c;
 
 	return 0;

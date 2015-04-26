@@ -105,14 +105,14 @@ void bch_keylist_add_in_order(struct keylist *l, struct bkey *insert)
 	BUG_ON(l->top_p < l->bot_p);
 
 	while (where != l->top &&
-	       bkey_cmp(insert, where) >= 0)
+	       bkey_cmp(insert->p, where->p) >= 0)
 		where = bkey_next(where);
 
-	memmove((u64 *) where + KEY_U64s(insert),
+	memmove((u64 *) where + insert->u64s,
 		where,
 		((void *) l->top) - ((void *) where));
 
-	l->top_p += KEY_U64s(insert);
+	l->top_p += insert->u64s;
 	BUG_ON(l->top_p > l->end_keys_p);
 	bkey_copy(where, insert);
 }
@@ -204,7 +204,7 @@ void bch_keylist_recalc_oldest_gens(struct cache_set *c,
 
 	keylist_for_each(k, &kl->list) {
 		rcu_read_lock();
-		bch_btree_key_recalc_oldest_gen(c, k);
+		bch_btree_key_recalc_oldest_gen(c, bkey_i_to_extent(k));
 		rcu_read_unlock();
 	}
 
@@ -217,12 +217,12 @@ int bch_scan_keylist_add(struct scan_keylist *kl, const struct bkey *k)
 
 	mutex_lock(&kl->lock);
 	ret = bch_keylist_realloc_max(&kl->list,
-				      KEY_U64s(k),
+				      k->u64s,
 				      kl->max_size);
 
 	if (!ret) {
 		bch_keylist_add(&kl->list, k);
-		atomic64_add(KEY_SIZE(k), &kl->sectors);
+		atomic64_add(k->size, &kl->sectors);
 	}
 	mutex_unlock(&kl->lock);
 
@@ -233,18 +233,18 @@ int bch_scan_keylist_add(struct scan_keylist *kl, const struct bkey *k)
 
 static void bch_refill_scan_keylist(struct cache_set *c,
 				    struct scan_keylist *kl,
-				    struct bkey *last_scanned,
-				    struct bkey *end,
+				    struct bpos *last_scanned,
+				    struct bpos end,
 				    scan_keylist_pred_fn *pred)
 {
-	struct bkey start = *last_scanned;
+	struct bpos start = *last_scanned;
 	struct btree_iter iter;
 	const struct bkey *k;
 	unsigned nr_found = 0;
 
-	for_each_btree_key(&iter, c, BTREE_ID_EXTENTS, last_scanned, k) {
-		if (bkey_cmp(k, end) >= 0) {
-			*last_scanned = *k;
+	for_each_btree_key(&iter, c, BTREE_ID_EXTENTS, *last_scanned, k) {
+		if (bkey_cmp(k->p, end) >= 0) {
+			*last_scanned = k->p;
 			goto done;
 		}
 
@@ -255,7 +255,7 @@ static void bch_refill_scan_keylist(struct cache_set *c,
 			nr_found++;
 		}
 
-		*last_scanned = *k;
+		*last_scanned = k->p;
 		bch_btree_iter_cond_resched(&iter);
 	}
 
@@ -264,14 +264,14 @@ static void bch_refill_scan_keylist(struct cache_set *c,
 	 * - the map_fn didn't see the end key
 	 * - there were no more keys to map over
 	 * Therefore, we are at the end of the key space */
-	*last_scanned = MAX_KEY;
+	*last_scanned = POS_MAX;
 done:
 	bch_btree_iter_unlock(&iter);
 
 	trace_bcache_keyscan(nr_found,
-			     KEY_INODE(&start), KEY_OFFSET(&start),
-			     KEY_INODE(last_scanned),
-			     KEY_OFFSET(last_scanned));
+			     start.inode, start.offset,
+			     last_scanned->inode,
+			     last_scanned->offset);
 }
 
 struct bkey *bch_scan_keylist_next(struct scan_keylist *kl)
@@ -284,12 +284,12 @@ struct bkey *bch_scan_keylist_next(struct scan_keylist *kl)
 
 struct bkey *bch_scan_keylist_next_rescan(struct cache_set *c,
 					  struct scan_keylist *kl,
-					  struct bkey *last_scanned,
-					  struct bkey *end,
+					  struct bpos *last_scanned,
+					  struct bpos end,
 					  scan_keylist_pred_fn *pred)
 {
 	if (bch_keylist_empty(&kl->list)) {
-		if (bkey_cmp(last_scanned, end) >= 0)
+		if (bkey_cmp(*last_scanned, end) >= 0)
 			return NULL;
 
 		bch_refill_scan_keylist(c, kl, last_scanned, end, pred);
@@ -303,7 +303,7 @@ void bch_scan_keylist_dequeue(struct scan_keylist *kl)
 	u64 sectors;
 
 	mutex_lock(&kl->lock);
-	sectors = KEY_SIZE(kl->list.bot);
+	sectors = kl->list.bot->size;
 	bch_keylist_dequeue(&kl->list);
 	mutex_unlock(&kl->lock);
 

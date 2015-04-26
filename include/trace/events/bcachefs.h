@@ -50,10 +50,10 @@ DECLARE_EVENT_CLASS(bkey,
 	),
 
 	TP_fast_assign(
-		__entry->inode	= KEY_INODE(k);
-		__entry->offset	= KEY_OFFSET(k);
-		__entry->size	= KEY_SIZE(k);
-		__entry->cached = KEY_CACHED(k);
+		__entry->inode	= k->p.inode;
+		__entry->offset	= k->p.offset;
+		__entry->size	= k->size;
+		__entry->cached	= bkey_extent_cached(k);
 	),
 
 	TP_printk("%u:%llu len %u%s", __entry->inode,
@@ -382,8 +382,8 @@ DECLARE_EVENT_CLASS(btree_node,
 		__entry->bucket		= PTR_BUCKET_NR_TRACE(b->c, &b->key, 0);
 		__entry->level		= b->level;
 		__entry->id		= b->btree_id;
-		__entry->inode		= KEY_INODE(&b->key);
-		__entry->offset		= KEY_OFFSET(&b->key);
+		__entry->inode		= b->key.p.inode;
+		__entry->offset		= b->key.p.offset;
 	),
 
 	TP_printk("%pU bucket %llu(%u) id %u: %u:%llu",
@@ -592,18 +592,13 @@ TRACE_EVENT(bcache_btree_insert_key,
 		__entry->b_bucket	= PTR_BUCKET_NR_TRACE(b->c, &b->key, 0);
 		__entry->level		= b->level;
 		__entry->id		= b->btree_id;
-		__entry->b_inode	= KEY_INODE(&b->key);
-		__entry->b_offset	= KEY_OFFSET(&b->key);
-		/*
-		 * Make sure that this key has ptrs otherwise
-		 * we'll trigger a BUG_ON since there is no
-		 * PTR_DEV set
-		 */
+		__entry->b_inode	= b->key.p.inode;
+		__entry->b_offset	= b->key.p.offset;
 		__entry->bucket		= PTR_BUCKET_NR_TRACE(b->c, k, 0);
-		__entry->inode		= KEY_INODE(k);
-		__entry->offset		= KEY_OFFSET(k);
-		__entry->size		= KEY_SIZE(k);
-		__entry->cached		= KEY_CACHED(k);
+		__entry->inode		= k->p.inode;
+		__entry->offset		= k->p.offset;
+		__entry->size		= k->size;
+		__entry->cached		= bkey_extent_cached(k);
 		__entry->op		= op;
 		__entry->insert_done	= insert_done;
 	),
@@ -634,8 +629,8 @@ DECLARE_EVENT_CLASS(btree_split,
 		__entry->bucket	= PTR_BUCKET_NR_TRACE(b->c, &b->key, 0);
 		__entry->level	= b->level;
 		__entry->id	= b->btree_id;
-		__entry->inode	= KEY_INODE(&b->key);
-		__entry->offset	= KEY_OFFSET(&b->key);
+		__entry->inode	= b->key.p.inode;
+		__entry->offset	= b->key.p.offset;
 		__entry->keys	= keys;
 	),
 
@@ -678,8 +673,8 @@ TRACE_EVENT(bcache_btree_gc_coalesce,
 		__entry->bucket		= PTR_BUCKET_NR_TRACE(b->c, &b->key, 0);
 		__entry->level		= b->level;
 		__entry->id		= b->btree_id;
-		__entry->inode		= KEY_INODE(&b->key);
-		__entry->offset		= KEY_OFFSET(&b->key);
+		__entry->inode		= b->key.p.inode;
+		__entry->offset		= b->key.p.offset;
 		__entry->nodes		= nodes;
 	),
 
@@ -714,8 +709,8 @@ TRACE_EVENT(bcache_btree_node_alloc_replacement,
 		__entry->bucket		= PTR_BUCKET_NR_TRACE(b->c, &b->key, 0);
 		__entry->level		= b->level;
 		__entry->id		= b->btree_id;
-		__entry->inode		= KEY_INODE(&b->key);
-		__entry->offset		= KEY_OFFSET(&b->key);
+		__entry->inode		= b->key.p.inode;
+		__entry->offset		= b->key.p.offset;
 	),
 
 	TP_printk("%pU for %llu bucket %llu(%u) id %u: %u:%llu",
@@ -775,9 +770,9 @@ DEFINE_EVENT(cache_set, bcache_gc_periodic,
 );
 
 TRACE_EVENT(bcache_add_sectors,
-	TP_PROTO(struct cache *ca, const struct bkey *k, unsigned i,
-		 u64 offset, int sectors, bool dirty),
-	TP_ARGS(ca, k, i, offset, sectors, dirty),
+	TP_PROTO(struct cache *ca, const struct bkey_i_extent *e,
+		 unsigned i, u64 offset, int sectors, bool dirty),
+	TP_ARGS(ca, e, i, offset, sectors, dirty),
 
 	TP_STRUCT__entry(
 		__array(char,		uuid,		16	)
@@ -790,10 +785,10 @@ TRACE_EVENT(bcache_add_sectors,
 
 	TP_fast_assign(
 		memcpy(__entry->uuid, ca->sb.uuid.b, 16);
-		__entry->inode		= KEY_INODE(k);
-		__entry->offset		= KEY_OFFSET(k);
+		__entry->inode		= e->k.p.inode;
+		__entry->offset		= e->k.p.offset;
 		__entry->sectors	= sectors;
-		__entry->bucket		= PTR_BUCKET_NR(ca, k, i);
+		__entry->bucket		= PTR_BUCKET_NR(ca, &e->v, i);
 		__entry->dirty		= dirty;
 	),
 
@@ -1055,9 +1050,9 @@ DECLARE_EVENT_CLASS(moving_io,
 
 	TP_fast_assign(
 		__entry->q		= q;
-		__entry->inode		= KEY_INODE(k);
-		__entry->offset		= KEY_OFFSET(k);
-		__entry->sectors	= KEY_SIZE(k);
+		__entry->inode		= k->p.inode;
+		__entry->offset		= k->p.offset;
+		__entry->sectors	= k->size;
 		__entry->count		= q->count;
 		__entry->read_count	= q->read_count;
 		__entry->write_count	= q->write_count;
@@ -1219,10 +1214,10 @@ TRACE_EVENT(bcache_writeback_error,
 	),
 
 	TP_fast_assign(
-		__entry->inode	= KEY_INODE(k);
-		__entry->offset	= KEY_OFFSET(k);
-		__entry->size	= KEY_SIZE(k);
-		__entry->cached = KEY_CACHED(k);
+		__entry->inode	= k->p.inode;
+		__entry->offset	= k->p.offset;
+		__entry->size	= k->size;
+		__entry->cached	= bkey_extent_cached(k);
 		__entry->write	= write;
 		__entry->error	= error;
 	),

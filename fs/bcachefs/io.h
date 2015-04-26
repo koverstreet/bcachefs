@@ -90,10 +90,9 @@ void bch_submit_bbio(struct bbio *, struct cache *, const struct bkey *,
 void bch_submit_bbio_replicas(struct bio *, struct cache_set *,
 			      const struct bkey *, unsigned, bool);
 
-int bch_discard(struct cache_set *, const struct bkey *,
-		const struct bkey *, u64);
+int bch_discard(struct cache_set *, struct bpos, struct bpos, u64);
 
-void __cache_promote(struct cache_set *, struct bbio *,
+void __cache_promote(struct cache_set *, struct bbio *, const struct bkey *,
 		     const struct bkey *, unsigned);
 bool cache_promote(struct cache_set *, struct bbio *,
 		   const struct bkey *, unsigned);

@@ -17,16 +17,6 @@
  * We use two different functions for validating bkeys, bkey_invalid and
  * bkey_deleted().
  *
- * bch_ptr_invalid() primarily filters out keys and pointers that would be
- * invalid due to some sort of bug, whereas bkey_deleted() filters out keys and
- * pointer that occur in normal practice but don't point to real data.
- * Note, however, that bkey_deleted does _not_ filter out WIPED keys, as these
- * need to act persistently as a source of 0s until cluster-wide GC removes
- * them or they are completely overridden locally through overwrites.
- * Reads treat WIPED keys as a source of 0s, and list extents treat them
- * as real keys.  The latter is the really crucial part, as they have valid
- * meaningful version numbers that may override what other servers have.
- *
  * The one exception to the rule that ptr_invalid() filters out invalid keys is
  * that it also filters out keys of size 0 - these are keys that have been
  * completely overwritten. It'd be safe to delete these in memory while leaving
@@ -206,8 +196,8 @@ struct btree_keys_ops {
 				       size_t, const struct bkey *);
 
 	/*
-	 * Only used for deciding whether to use START_KEY(k) or just the key
-	 * itself in a couple places
+	 * Only used for deciding whether to use bkey_start_pos(k) or just the
+	 * key itself in a couple places
 	 */
 	bool		is_extents;
 };
@@ -271,16 +261,6 @@ static inline unsigned bset_sector_offset(struct btree_keys *b, struct bset *i)
 	return bset_byte_offset(b, i) >> 9;
 }
 
-static inline unsigned bch_val_u64s(const struct bkey *k)
-{
-	return KEY_U64s(k) - BKEY_U64s;
-}
-
-static inline void bch_set_val_u64s(struct bkey *k, unsigned i)
-{
-	SET_KEY_U64s(k, i + BKEY_U64s);
-}
-
 #define __set_bytes(i, nr_keys)	(sizeof(*(i)) + (nr_keys) * sizeof(u64))
 #define set_bytes(i)		__set_bytes(i, i->keys)
 
@@ -332,43 +312,24 @@ void bch_bset_insert(struct btree_keys *, struct btree_node_iter *,
 
 #define BKEY_PADDED(key)	__BKEY_PADDED(key, BKEY_EXTENT_PTRS_MAX)
 
+#define __bkey_idx(_set, _offset)				\
+	((_set)->_data + (_offset))
+
+#define bkey_idx(_set, _offset)					\
+	((typeof(&(_set)->start[0])) __bkey_idx((_set), (_offset)))
+
+#define bkey_next(_k)						\
+	((typeof(_k)) __bkey_idx(_k, (_k)->u64s))
+
+#define __bset_bkey_last(_set)					\
+	 __bkey_idx((_set), (_set)->keys)
+
+#define bset_bkey_last(_set)					\
+	 bkey_idx((_set), (_set)->keys)
+
 static inline struct bkey *bset_bkey_idx(struct bset *i, unsigned idx)
 {
-	return bkey_idx(i->start, idx);
-}
-
-static inline void bkey_init(struct bkey *k)
-{
-	*k = ZERO_KEY;
-}
-
-static __always_inline int64_t bkey_cmp(const struct bkey *l,
-					const struct bkey *r)
-{
-	if ((l->k1 & KEY_HIGH_MASK) != (r->k1 & KEY_HIGH_MASK))
-		return (s64) (l->k1 & KEY_HIGH_MASK) -
-			(s64) (r->k1 & KEY_HIGH_MASK);
-
-	if (l->k2 < r->k2)
-		return -1;
-
-	if (l->k2 > r->k2)
-		return 1;
-
-	return 0;
-}
-
-static inline struct bkey bkey_successor(const struct bkey *k)
-{
-	struct bkey ret = *k;
-
-	SET_KEY_OFFSET(&ret, KEY_OFFSET(&ret) + 1);
-	if (!KEY_OFFSET(&ret)) {
-		SET_KEY_INODE(&ret, KEY_INODE(&ret) + 1);
-		BUG_ON(!KEY_INODE(&ret));
-	}
-
-	return ret;
+	return bkey_idx(i, idx);
 }
 
 static inline bool bkey_invalid(struct btree_keys *b, struct bkey *k)
@@ -382,11 +343,6 @@ static inline void bkey_debugcheck(struct btree_keys *b, struct bkey *k)
 		b->ops->key_debugcheck(b, k);
 }
 
-static inline bool bkey_deleted(const struct bkey *k)
-{
-	return KEY_DELETED(k);
-}
-
 static inline void bch_bkey_val_to_text(struct btree_keys *b, char *buf,
 					size_t size, const struct bkey *k)
 {
@@ -398,30 +354,6 @@ static inline void bch_bkey_val_to_text(struct btree_keys *b, char *buf,
 		out += scnprintf(out, end - out, " -> ");
 		b->ops->val_to_text(b, out, end - out, k);
 	}
-}
-
-/*
- * This is used to determine whether it is possible for cmpxchg to succeed
- * because the keys differ in the number of extent ptrs.
- * For example, one has one more or fewer replica/cache.
-*/
-static inline bool bch_bkey_maybe_compatible(const struct bkey *l,
-					     const struct bkey *r)
-{
-	bool result = (KEY_CACHED(l) == KEY_CACHED(r) &&
-		       KEY_DELETED(l) == KEY_DELETED(r) &&
-		       KEY_WIPED(l) == KEY_WIPED(r) &&
-		       KEY_BAD(l) == KEY_BAD(r) &&
-		       KEY_VERSION(l) == KEY_VERSION(r));
-	return result;
-}
-
-static inline bool bch_bkey_equal_header(const struct bkey *l,
-					 const struct bkey *r)
-{
-	return bch_bkey_maybe_compatible(l, r) &&
-		KEY_U64s(l) == KEY_U64s(r) &&
-		KEY_CSUM(l) == KEY_CSUM(r);
 }
 
 /*
@@ -448,13 +380,15 @@ enum bch_extent_overlap {
 static inline enum bch_extent_overlap bch_extent_overlap(const struct bkey *k,
 							 const struct bkey *m)
 {
-	if (bkey_cmp(k, m) < 0) {
-		if (bkey_cmp(&START_KEY(k), &START_KEY(m)) > 0)
+	if (bkey_cmp(k->p, m->p) < 0) {
+		if (bkey_cmp(bkey_start_pos(k),
+			     bkey_start_pos(m)) > 0)
 			return BCH_EXTENT_OVERLAP_MIDDLE;
 		else
 			return BCH_EXTENT_OVERLAP_FRONT;
 	} else {
-		if (bkey_cmp(&START_KEY(k), &START_KEY(m)) <= 0)
+		if (bkey_cmp(bkey_start_pos(k),
+			     bkey_start_pos(m)) <= 0)
 			return BCH_EXTENT_OVERLAP_ALL;
 		else
 			return BCH_EXTENT_OVERLAP_BACK;
@@ -464,7 +398,7 @@ static inline enum bch_extent_overlap bch_extent_overlap(const struct bkey *k,
 /* Btree key iteration */
 
 struct btree_node_iter {
-	/* If true, compare START_KEY(k) and not k itself. */
+	/* If true, compare bkey_start_pos(k) and not k itself. */
 	u8		is_extents;
 
 	unsigned	size:24;
@@ -501,7 +435,7 @@ struct bkey *bch_btree_node_iter_next_all(struct btree_node_iter *);
 static inline bool btree_node_iter_cmp(struct btree_node_iter_set l,
 				       struct btree_node_iter_set r)
 {
-	s64 c = bkey_cmp(l.k, r.k);
+	s64 c = bkey_cmp(l.k->p, r.k->p);
 
 	return c ? c > 0 : l.k < r.k;
 }
@@ -509,7 +443,7 @@ static inline bool btree_node_iter_cmp(struct btree_node_iter_set l,
 static inline bool btree_node_iter_extent_cmp(struct btree_node_iter_set l,
 					      struct btree_node_iter_set r)
 {
-	s64 c = bkey_cmp(&START_KEY(l.k), &START_KEY(r.k));
+	s64 c = bkey_cmp(bkey_start_pos(l.k), bkey_start_pos(r.k));
 
 	return c ? c > 0 : l.k < r.k;
 }
@@ -570,10 +504,10 @@ bch_btree_node_iter_peek_overlapping(struct btree_node_iter *iter,
 	struct bkey *k;
 
 	while ((k = bch_btree_node_iter_peek_all(iter)) &&
-	       (bkey_cmp(k, &START_KEY(end)) <= 0))
+	       (bkey_cmp(k->p, bkey_start_pos(end)) <= 0))
 		bch_btree_node_iter_next_all(iter);
 
-	return k && bkey_cmp(&START_KEY(k), end) < 0 ? k : NULL;
+	return k && bkey_cmp(bkey_start_pos(k), end->p) < 0 ? k : NULL;
 }
 
 static inline void bch_btree_node_iter_push(struct btree_node_iter *iter,
@@ -587,7 +521,7 @@ static inline void bch_btree_node_iter_push(struct btree_node_iter *iter,
 }
 
 void bch_btree_node_iter_init(struct btree_keys *, struct btree_node_iter *,
-			      struct bkey *);
+			      struct bpos);
 void bch_btree_node_iter_init_from_start(struct btree_keys *,
 					 struct btree_node_iter *);
 
@@ -654,7 +588,7 @@ static inline void verify_nr_live_keys(struct btree_keys *b)
 
 #ifdef CONFIG_BCACHEFS_DEBUG
 
-int __bch_count_data(struct btree_keys *);
+s64 __bch_count_data(struct btree_keys *);
 void __bch_count_data_verify(struct btree_keys *, int);
 void __bch_check_keys(struct btree_keys *, const char *, ...);
 void bch_dump_bucket(struct btree_keys *);
@@ -662,7 +596,7 @@ void bch_btree_node_iter_verify(struct btree_keys *, struct btree_node_iter *);
 
 #else
 
-static inline int __bch_count_data(struct btree_keys *b) { return -1; }
+static inline s64 __bch_count_data(struct btree_keys *b) { return -1; }
 static inline void __bch_count_data_verify(struct btree_keys *b, int oldsize ) {}
 static inline void __bch_check_keys(struct btree_keys *b, const char *fmt, ...) {}
 static inline void bch_dump_bucket(struct btree_keys *b) {}

@@ -73,7 +73,7 @@ u64 bch_checksum(unsigned, const void *, size_t);
 #define csum_set(i, type)						\
 ({									\
 	void *start = ((void *) (i)) + sizeof(u64);			\
-	void *end = bset_bkey_last(i);					\
+	void *end = __bset_bkey_last(i);				\
 									\
 	bch_checksum(type, start, end - start);				\
 })
@@ -84,14 +84,15 @@ void bch_check_mark_super_slowpath(struct cache_set *,
 static inline bool bch_check_super_marked(struct cache_set *c,
 					  const struct bkey *k, bool meta)
 {
+	const struct bkey_i_extent *e = bkey_i_to_extent_c(k);
 	struct cache_member_rcu *mi = cache_member_info_get(c);
 	bool ret = true;
 	unsigned ptr;
 
-	for (ptr = 0; ptr < bch_extent_ptrs(k); ptr++)
+	for (ptr = 0; ptr < bch_extent_ptrs(&e->k); ptr++)
 		if (!(meta
 		      ? CACHE_HAS_METADATA
-		      : CACHE_HAS_DATA)(mi->m + PTR_DEV(k, ptr))) {
+		      : CACHE_HAS_DATA)(mi->m + PTR_DEV(&e->v.ptr[ptr]))) {
 			ret = false;
 			break;
 		}

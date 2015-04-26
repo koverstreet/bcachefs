@@ -14,7 +14,7 @@ struct bcache_device {
 	struct cache_set	*c;
 
 	struct rb_node		node;
-	struct bch_inode_blockdev inode;
+	struct bkey_i_inode_blockdev inode;
 	struct mutex		inode_lock;
 
 #define BCACHEDEVNAME_SIZE	12

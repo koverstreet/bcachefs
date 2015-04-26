@@ -14,9 +14,9 @@
 static inline int keybuf_cmp(struct keybuf_key *l, struct keybuf_key *r)
 {
 	/* Overlapping keys compare equal */
-	if (bkey_cmp(&l->key, &START_KEY(&r->key)) <= 0)
+	if (bkey_cmp(l->key.p, bkey_start_pos(&r->key)) <= 0)
 		return -1;
-	if (bkey_cmp(&START_KEY(&l->key), &r->key) >= 0)
+	if (bkey_cmp(bkey_start_pos(&l->key), r->key.p) >= 0)
 		return 1;
 	return 0;
 }
@@ -24,20 +24,20 @@ static inline int keybuf_cmp(struct keybuf_key *l, struct keybuf_key *r)
 static inline int keybuf_nonoverlapping_cmp(struct keybuf_key *l,
 					    struct keybuf_key *r)
 {
-	return clamp_t(s64, bkey_cmp(&l->key, &r->key), -1, 1);
+	return clamp_t(s64, bkey_cmp(l->key.p, r->key.p), -1, 1);
 }
 
 void bch_refill_keybuf(struct cache_set *c, struct keybuf *buf,
-		       struct bkey *end, keybuf_pred_fn *pred)
+		       struct bpos end, keybuf_pred_fn *pred)
 {
-	struct bkey start = buf->last_scanned;
+	struct bpos start = buf->last_scanned;
 	struct btree_iter iter;
 	const struct bkey *k;
 	unsigned nr_found = 0;
 
-	for_each_btree_key(&iter, c, BTREE_ID_EXTENTS, &buf->last_scanned, k) {
-		if (bkey_cmp(k, end) >= 0) {
-			buf->last_scanned = *k;
+	for_each_btree_key(&iter, c, BTREE_ID_EXTENTS, buf->last_scanned, k) {
+		if (bkey_cmp(k->p, end) >= 0) {
+			buf->last_scanned = k->p;
 			goto done;
 		}
 
@@ -63,7 +63,7 @@ void bch_refill_keybuf(struct cache_set *c, struct keybuf *buf,
 			spin_unlock(&buf->lock);
 		}
 
-		buf->last_scanned = *k;
+		buf->last_scanned = k->p;
 		bch_btree_iter_cond_resched(&iter);
 	}
 
@@ -72,14 +72,14 @@ void bch_refill_keybuf(struct cache_set *c, struct keybuf *buf,
 	 * - the map_fn didn't see the end key
 	 * - there were no more keys to map over
 	 * Therefore, we are at the end of the key space */
-	buf->last_scanned = MAX_KEY;
+	buf->last_scanned = POS_MAX;
 done:
 	bch_btree_iter_unlock(&iter);
 
 	trace_bcache_keyscan(nr_found,
-			     KEY_INODE(&start), KEY_OFFSET(&start),
-			     KEY_INODE(&buf->last_scanned),
-			     KEY_OFFSET(&buf->last_scanned));
+			     start.inode, start.offset,
+			     buf->last_scanned.inode,
+			     buf->last_scanned.offset);
 
 	spin_lock(&buf->lock);
 
@@ -87,13 +87,13 @@ done:
 		struct keybuf_key *w;
 
 		w = RB_FIRST(&buf->keys, struct keybuf_key, node);
-		buf->start	= START_KEY(&w->key);
+		buf->start	= bkey_start_pos(&w->key);
 
 		w = RB_LAST(&buf->keys, struct keybuf_key, node);
-		buf->end	= w->key;
+		buf->end	= w->key.p;
 	} else {
-		buf->start	= MAX_KEY;
-		buf->end	= MAX_KEY;
+		buf->start	= POS_MAX;
+		buf->end	= POS_MAX;
 	}
 
 	spin_unlock(&buf->lock);
@@ -126,25 +126,25 @@ void bch_keybuf_recalc_oldest_gens(struct cache_set *c, struct keybuf *buf)
 	rcu_read_lock();
 	rbtree_postorder_for_each_entry_safe(w, n,
 				&buf->keys, node)
-		bch_btree_key_recalc_oldest_gen(c, &w->key);
+		bch_btree_key_recalc_oldest_gen(c, bkey_i_to_extent(&w->key));
 	rcu_read_unlock();
 	spin_unlock(&buf->lock);
 }
 
-bool bch_keybuf_check_overlapping(struct keybuf *buf, struct bkey *start,
-				  struct bkey *end)
+bool bch_keybuf_check_overlapping(struct keybuf *buf, struct bpos start,
+				  struct bpos end)
 {
 	bool ret = false;
-	struct keybuf_key *w, *next, s = { .key = *start };
+	struct keybuf_key *w, *next, s = { .key.p = start };
 
-	if (bkey_cmp(end, &buf->start) <= 0 ||
-	    bkey_cmp(start, &buf->end) >= 0)
+	if (bkey_cmp(end, buf->start) <= 0 ||
+	    bkey_cmp(start, buf->end) >= 0)
 		return false;
 
 	spin_lock(&buf->lock);
 
 	for (w = RB_GREATER(&buf->keys, s, node, keybuf_nonoverlapping_cmp);
-	     w && bkey_cmp(&START_KEY(&w->key), end) < 0;
+	     w && bkey_cmp(bkey_start_pos(&w->key), end) < 0;
 	     w = next) {
 		next = RB_NEXT(w, node);
 
@@ -186,7 +186,10 @@ void bch_keybuf_init(struct keybuf *buf)
 {
 	sema_init(&buf->in_flight, BTREE_SCAN_BATCH / 2);
 
-	buf->last_scanned	= MAX_KEY;
+	buf->last_scanned	= POS_MAX;
+	buf->start		= POS_MIN;
+	buf->end		= POS_MIN;
+
 	buf->keys		= RB_ROOT;
 
 	spin_lock_init(&buf->lock);

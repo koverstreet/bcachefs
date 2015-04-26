@@ -1,6 +1,7 @@
 #ifndef _BCACHE_EXTENTS_H
 #define _BCACHE_EXTENTS_H
 
+#include "bkey.h"
 #include "bset.h"
 #include "journal_types.h"
 
@@ -11,7 +12,7 @@ bool bch_insert_fixup_key(struct btree *,
 			  struct bkey *,
 			  struct btree_node_iter *,
 			  struct bch_replace_info *,
-			  struct bkey *,
+			  struct bpos *,
 			  struct journal_res *);
 
 extern const struct btree_keys_ops bch_btree_interior_node_ops;
@@ -39,7 +40,7 @@ static inline struct cache *bch_extent_pick_ptr(struct cache_set *c,
 
 bool bch_insert_fixup_extent(struct btree *, struct bkey *,
 			     struct btree_node_iter *,
-			     struct bch_replace_info *, struct bkey *,
+			     struct bch_replace_info *, struct bpos *,
 			     struct journal_res *);
 
 unsigned bch_extent_nr_ptrs_after_normalize(const struct cache_set *,
@@ -50,31 +51,42 @@ bool bch_extent_normalize(struct cache_set *, struct bkey *);
 int __bch_add_sectors(struct cache_set *, struct btree *,
 		      const struct bkey *, u64, int, bool);
 
+static inline bool bkey_extent_cached(const struct bkey *k)
+{
+	return k->type == BCH_EXTENT &&
+		EXTENT_CACHED(&bkey_i_to_extent_c(k)->v);
+}
+
 static inline unsigned bch_extent_ptrs(const struct bkey *k)
 {
-	return bch_val_u64s(k);
+	BUG_ON(k->type != BCH_EXTENT);
+	return bkey_val_u64s(k);
 }
 
 static inline void bch_set_extent_ptrs(struct bkey *k, unsigned i)
 {
+	BUG_ON(k->type != BCH_EXTENT);
 	BUG_ON(i > BKEY_EXTENT_PTRS_MAX);
-	bch_set_val_u64s(k, i);
+	set_bkey_val_u64s(k, i);
 }
 
 static inline void bch_extent_drop_ptr(struct bkey *k, unsigned ptr)
 {
-	BUG_ON(bch_extent_ptrs(k) > BKEY_EXTENT_PTRS_MAX);
-	BUG_ON(ptr >= bch_extent_ptrs(k));
-	bch_set_extent_ptrs(k, bch_extent_ptrs(k) - 1);
-	memmove(&k->val[ptr],
-		&k->val[ptr + 1],
-		(bch_extent_ptrs(k) - ptr) * sizeof(u64));
+	struct bkey_i_extent *e = bkey_i_to_extent(k);
+
+	BUG_ON(bch_extent_ptrs(&e->k) > BKEY_EXTENT_PTRS_MAX);
+	BUG_ON(ptr >= bch_extent_ptrs(&e->k));
+
+	e->k.u64s--;
+	memmove(&e->v.ptr[ptr],
+		&e->v.ptr[ptr + 1],
+		(bch_extent_ptrs(&e->k) - ptr) * sizeof(u64));
 }
 
 static inline unsigned bch_extent_replicas_needed(const struct cache_set *c,
 						  const struct bkey *k)
 {
-	return KEY_CACHED(k) ? 0 : CACHE_SET_DATA_REPLICAS_WANT(&c->sb);
+	return bkey_extent_cached(k) ? 0 : CACHE_SET_DATA_REPLICAS_WANT(&c->sb);
 }
 
 static inline bool bch_extent_ptr_is_dirty(const struct cache_set *c,
@@ -86,12 +98,12 @@ static inline bool bch_extent_ptr_is_dirty(const struct cache_set *c,
 	return ptr + bch_extent_replicas_needed(c, k) >= bch_extent_ptrs(k);
 }
 
-bool bch_extent_has_device(const struct bkey *, unsigned);
+bool bch_extent_has_device(const struct bkey_i_extent *, unsigned);
 void bch_bkey_copy_single_ptr(struct bkey *, const struct bkey *,
 			      unsigned);
 
-bool bch_cut_front(const struct bkey *, struct bkey *);
-bool bch_cut_back(const struct bkey *, struct bkey *);
+bool bch_cut_front(struct bpos, struct bkey *);
+bool bch_cut_back(struct bpos, struct bkey *);
 void bch_key_resize(struct bkey *, unsigned);
 void bch_insert_check_key(struct btree_keys *, struct bkey *);
 

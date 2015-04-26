@@ -80,9 +80,9 @@ static void dirty_init(struct dirty_io *io)
 	if (!io->dc->writeback_percent)
 		bio_set_prio(bio, IOPRIO_PRIO_VALUE(IOPRIO_CLASS_IDLE, 0));
 
-	bio->bi_iter.bi_size	= KEY_SIZE(&io->replace.key) << 9;
+	bio->bi_iter.bi_size	= io->replace.key.size << 9;
 	bio->bi_max_vecs	=
-		DIV_ROUND_UP(KEY_SIZE(&io->replace.key), PAGE_SECTORS);
+		DIV_ROUND_UP(io->replace.key.size, PAGE_SECTORS);
 	bio->bi_io_vec		= bio->bi_inline_vecs;
 	bch_bio_map(bio, NULL);
 }
@@ -114,7 +114,7 @@ static void write_dirty_finish(struct closure *cl)
 		bch_keylist_init(&keys);
 
 		bkey_copy(keys.top, &io->replace.key);
-		SET_KEY_CACHED(keys.top, true);
+		SET_EXTENT_CACHED(&bkey_i_to_extent(keys.top)->v, true);
 		bch_keylist_enqueue(&keys);
 
 		ret = bch_btree_insert(dc->disk.c, BTREE_ID_EXTENTS,
@@ -153,7 +153,7 @@ static void write_dirty(struct closure *cl)
 	if (!io->error) {
 		dirty_init(io);
 		bio_set_op_attrs(&io->bio, REQ_OP_WRITE, 0);
-		io->bio.bi_iter.bi_sector = KEY_START(&io->replace.key);
+		io->bio.bi_iter.bi_sector = bkey_start_offset(&io->replace.key);
 		io->bio.bi_bdev		= io->dc->bdev;
 		io->bio.bi_end_io	= dirty_endio;
 
@@ -171,7 +171,8 @@ static void read_dirty_endio(struct bio *bio)
 			    "reading dirty data from cache");
 	percpu_ref_put(&io->ca->ref);
 
-	if (ptr_stale(io->ca, &io->replace.key, io->ptr))
+	if (ptr_stale(io->ca, &bkey_i_to_extent_c(&io->replace.key)->v,
+		      io->ptr))
 		bio->bi_error = -EINTR;
 
 	dirty_endio(bio);
@@ -192,6 +193,7 @@ static void read_dirty(struct cached_dev *dc)
 	struct dirty_io *io;
 	struct closure cl;
 	struct cache *ca;
+	const struct bkey_i_extent *e;
 	unsigned ptr, i;
 	struct bio_vec *bv;
 	BKEY_PADDED(k) tmp;
@@ -206,18 +208,18 @@ static void read_dirty(struct cached_dev *dc)
 
 		bkey_copy(&tmp.k, &w->key);
 
-		while (KEY_SIZE(&tmp.k)) {
+		while (tmp.k.size) {
 			ca = bch_extent_pick_ptr(dc->disk.c, &tmp.k, &ptr);
 			if (IS_ERR_OR_NULL(ca))
 				break;
 
 			io = kzalloc(sizeof(*io) + sizeof(struct bio_vec) *
-				     DIV_ROUND_UP(KEY_SIZE(&tmp.k),
+				     DIV_ROUND_UP(tmp.k.size,
 						  PAGE_SECTORS),
 				     GFP_KERNEL);
 			if (!io) {
 				trace_bcache_writeback_alloc_fail(ca->set,
-							KEY_SIZE(&tmp.k));
+								  tmp.k.size);
 				io = mempool_alloc(dc->writeback_io_pool,
 						   GFP_KERNEL);
 				memset(io, 0, sizeof(*io) +
@@ -228,7 +230,7 @@ static void read_dirty(struct cached_dev *dc)
 				bkey_copy(&io->replace.key, &tmp.k);
 
 				if (DIRTY_IO_MEMPOOL_SECTORS <
-				    KEY_SIZE(&io->replace.key))
+				    io->replace.key.size)
 					bch_key_resize(&io->replace.key,
 						DIRTY_IO_MEMPOOL_SECTORS);
 			} else {
@@ -243,8 +245,9 @@ static void read_dirty(struct cached_dev *dc)
 
 			dirty_init(io);
 			bio_set_op_attrs(&io->bio, REQ_OP_READ, 0);
-			io->bio.bi_iter.bi_sector
-				= PTR_OFFSET(&io->replace.key, ptr);
+			e = bkey_i_to_extent_c(&io->replace.key);
+
+			io->bio.bi_iter.bi_sector = PTR_OFFSET(&e->v.ptr[ptr]);
 			io->bio.bi_bdev		= ca->bdev;
 			io->bio.bi_end_io	= read_dirty_endio;
 
@@ -266,12 +269,11 @@ static void read_dirty(struct cached_dev *dc)
 				}
 			}
 
-			bch_cut_front(&io->replace.key, &tmp.k);
+			bch_cut_front(io->replace.key.p, &tmp.k);
 			trace_bcache_writeback(&io->replace.key);
 
 			bch_ratelimit_increment(&dc->writeback_pd.rate,
-						(KEY_SIZE(&io->replace.key)
-						 << 9));
+						io->replace.key.size << 9);
 
 			closure_call(&io->cl, read_dirty_submit, NULL, &cl);
 		}
@@ -341,9 +343,10 @@ static bool dirty_pred(struct keybuf *buf, const struct bkey *k)
 {
 	struct cached_dev *dc = container_of(buf, struct cached_dev, writeback_keys);
 
-	BUG_ON(KEY_INODE(k) != bcache_dev_inum(&dc->disk));
+	BUG_ON(k->p.inode != bcache_dev_inum(&dc->disk));
 
-	return !KEY_CACHED(k);
+	return k->type == BCH_EXTENT &&
+		!bkey_extent_cached(k);
 }
 
 static void refill_full_stripes(struct cached_dev *dc)
@@ -353,7 +356,7 @@ static void refill_full_stripes(struct cached_dev *dc)
 	unsigned start_stripe, stripe, next_stripe;
 	bool wrapped = false;
 
-	stripe = offset_to_stripe(&dc->disk, KEY_OFFSET(&buf->last_scanned));
+	stripe = offset_to_stripe(&dc->disk, buf->last_scanned.offset);
 
 	if (stripe >= dc->disk.nr_stripes)
 		stripe = 0;
@@ -370,12 +373,12 @@ static void refill_full_stripes(struct cached_dev *dc)
 		next_stripe = find_next_zero_bit(dc->disk.full_dirty_stripes,
 						 dc->disk.nr_stripes, stripe);
 
-		buf->last_scanned = KEY(inode,
-					stripe * dc->disk.stripe_size, 0);
+		buf->last_scanned = POS(inode,
+					stripe * dc->disk.stripe_size);
 
 		bch_refill_keybuf(dc->disk.c, buf,
-				  &KEY(inode,
-				       next_stripe * dc->disk.stripe_size, 0),
+				  POS(inode,
+				      next_stripe * dc->disk.stripe_size),
 				  dirty_pred);
 
 		if (array_freelist_empty(&buf->freelist))
@@ -397,13 +400,13 @@ static void bch_writeback(struct cached_dev *dc)
 {
 	struct keybuf *buf = &dc->writeback_keys;
 	unsigned inode = bcache_dev_inum(&dc->disk);
-	struct bkey start = KEY(inode, 0, 0);
-	struct bkey end = KEY(inode, KEY_OFFSET_MAX, 0);
-	struct bkey start_pos;
+	struct bpos start = POS(inode, 0);
+	struct bpos end = POS(inode, KEY_OFFSET_MAX);
+	struct bpos start_pos;
 
-	buf->last_scanned = KEY(inode, 0, 0);
+	buf->last_scanned = POS(inode, 0);
 
-	while (bkey_cmp(&buf->last_scanned, &end) < 0 &&
+	while (bkey_cmp(buf->last_scanned, end) < 0 &&
 	       !kthread_should_stop()) {
 		down_write(&dc->writeback_lock);
 
@@ -419,8 +422,8 @@ static void bch_writeback(struct cached_dev *dc)
 			return;
 		}
 
-		if (bkey_cmp(&buf->last_scanned, &end) >= 0)
-			buf->last_scanned = KEY(inode, 0, 0);
+		if (bkey_cmp(buf->last_scanned, end) >= 0)
+			buf->last_scanned = POS(inode, 0);
 
 		if (dc->partial_stripes_expensive) {
 			refill_full_stripes(dc);
@@ -429,16 +432,16 @@ static void bch_writeback(struct cached_dev *dc)
 		}
 
 		start_pos = buf->last_scanned;
-		bch_refill_keybuf(dc->disk.c, buf, &end, dirty_pred);
+		bch_refill_keybuf(dc->disk.c, buf, end, dirty_pred);
 
-		if (bkey_cmp(&buf->last_scanned, &end) >= 0) {
+		if (bkey_cmp(buf->last_scanned, end) >= 0) {
 			/*
 			 * If we get to the end start scanning again from the
 			 * beginning, and only scan up to where we initially
 			 * started scanning from:
 			 */
 			buf->last_scanned = start;
-			bch_refill_keybuf(dc->disk.c, buf, &start_pos,
+			bch_refill_keybuf(dc->disk.c, buf, start_pos,
 					  dirty_pred);
 		}
 
@@ -497,7 +500,7 @@ void bch_writeback_recalc_oldest_gens(struct cache_set *c)
 
 		d = radix_tree_deref_slot(slot);
 
-		if (INODE_FLASH_ONLY(&d->inode))
+		if (INODE_FLASH_ONLY(&d->inode.v))
 			continue;
 		dc = container_of(d, struct cached_dev, disk);
 
@@ -520,13 +523,13 @@ void bch_sectors_dirty_init(struct cached_dev *dc, struct cache_set *c)
 	 * race with moving GC
 	 */
 	for_each_btree_key(&iter, c, BTREE_ID_EXTENTS,
-			   &KEY(bcache_dev_inum(d), 0, 0), k) {
-		if (KEY_INODE(k) > bcache_dev_inum(d))
+			   POS(bcache_dev_inum(d), 0), k) {
+		if (k->p.inode > bcache_dev_inum(d))
 			break;
 
-		if (!KEY_CACHED(k))
-			__bcache_dev_sectors_dirty_add(d, KEY_START(k),
-						       KEY_SIZE(k));
+		if (!bkey_extent_cached(k))
+			__bcache_dev_sectors_dirty_add(d, bkey_start_offset(k),
+						       k->size);
 
 		bch_btree_iter_cond_resched(&iter);
 	}

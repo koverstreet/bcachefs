@@ -517,12 +517,12 @@ struct cache_set {
 	atomic64_t		sectors_until_gc;
 
 	/*
-	 * Tracks GC's progress - everything in the range [ZERO_KEY..gc_cur_key]
+	 * Tracks GC's progress - everything in the range [ZERO_KEY..gc_cur_pos]
 	 * has been marked by GC.
 	 *
 	 * (Note that it starts out at ZERO_KEY, but since the extents btree
 	 * comes first and an extent equal to ZERO_KEY would have zero size,
-	 * gc_cur_key == ZERO_KEY and gc_cur_btree == BTREE_ID_EXTENTS does
+	 * gc_cur_pos == ZERO_KEY and gc_cur_btree == BTREE_ID_EXTENTS does
 	 * correctly mean nothing has been marked)
 	 *
 	 * gc_cur_btree > BTREE_ID_NR indicates gc has finished and gc marks are
@@ -535,7 +535,7 @@ struct cache_set {
 	seqlock_t		gc_cur_lock;
 	enum btree_id		gc_cur_btree;
 	unsigned		gc_cur_level;
-	struct bkey		gc_cur_key;
+	struct bpos		gc_cur_pos;
 
 	/*
 	 * The allocation code needs gc_mark in struct bucket to be correct, but

@@ -112,7 +112,7 @@
 
 static inline struct jset_keys *jset_keys_next(struct jset_keys *j)
 {
-	return (void *) (&j->d[j->keys]);
+	return (void *) __bset_bkey_last(j);
 }
 
 /*
@@ -175,7 +175,7 @@ static inline unsigned jset_u64s(unsigned u64s)
 static inline bool journal_res_full(struct journal_res *res,
 				    struct bkey *k)
 {
-	return (res->ref && jset_u64s(KEY_U64s(k)) * 2 > res->nkeys);
+	return (res->ref && jset_u64s(k->u64s) * 2 > res->nkeys);
 }
 
 void bch_journal_next(struct journal *);
@@ -193,7 +193,7 @@ int bch_cache_journal_alloc(struct cache *);
 
 static inline u64 *__journal_buckets(struct cache *ca)
 {
-	return ca->disk_sb.sb->d + bch_journal_buckets_offset(&ca->sb);
+	return ca->disk_sb.sb->_data + bch_journal_buckets_offset(&ca->sb);
 }
 
 static inline u64 journal_bucket(struct cache *ca, unsigned nr)

@@ -291,13 +291,13 @@ STORE(__cached_dev)
 		if (size && dc->sb.label[size - 1] == '\n')
 			dc->sb.label[size - 1] = '\0';
 
-		memcpy(dc->disk.inode.i_label,
+		memcpy(dc->disk.inode.v.i_label,
 		       dc->sb.label, SB_LABEL_SIZE);
 
 		bch_write_bdev_super(dc, NULL);
 
 		if (dc->disk.c)
-			bch_inode_update(dc->disk.c, &dc->disk.inode.i_inode);
+			bch_inode_update(dc->disk.c, &dc->disk.inode.k);
 
 		mutex_unlock(&dc->disk.inode_lock);
 
@@ -390,10 +390,10 @@ SHOW(bch_flash_dev)
 					       kobj);
 
 	sysfs_printf(data_csum,	"%i", d->data_csum);
-	sysfs_hprint(size,	d->inode.i_inode.i_size);
+	sysfs_hprint(size,	d->inode.v.i_inode.i_size);
 
 	if (attr == &sysfs_label) {
-		memcpy(buf, d->inode.i_label, SB_LABEL_SIZE);
+		memcpy(buf, d->inode.v.i_label, SB_LABEL_SIZE);
 		buf[SB_LABEL_SIZE + 1] = '\0';
 		strcat(buf, "\n");
 		return strlen(buf);
@@ -411,15 +411,14 @@ STORE(__bch_flash_dev)
 
 	if (attr == &sysfs_size) {
 		u64 v = strtoi_h_or_return(buf);
-		u64 inode = KEY_INODE(&d->inode.i_inode.i_key);
 
 		mutex_lock(&d->inode_lock);
 
-		if (v < d->inode.i_inode.i_size)
-			bch_inode_truncate(d->c, inode, v >> 9);
-		d->inode.i_inode.i_size = v;
-		bch_inode_update(d->c, &d->inode.i_inode);
-		set_capacity(d->disk, d->inode.i_inode.i_size >> 9);
+		if (v < d->inode.v.i_inode.i_size)
+			bch_inode_truncate(d->c, d->inode.k.p.inode, v >> 9);
+		d->inode.v.i_inode.i_size = v;
+		bch_inode_update(d->c, &d->inode.k);
+		set_capacity(d->disk, d->inode.v.i_inode.i_size >> 9);
 
 		mutex_unlock(&d->inode_lock);
 	}
@@ -427,8 +426,8 @@ STORE(__bch_flash_dev)
 	if (attr == &sysfs_label) {
 		mutex_lock(&d->inode_lock);
 
-		memcpy(d->inode.i_label, buf, SB_LABEL_SIZE);
-		bch_inode_update(d->c, &d->inode.i_inode);
+		memcpy(d->inode.v.i_label, buf, SB_LABEL_SIZE);
+		bch_inode_update(d->c, &d->inode.k);
 
 		mutex_unlock(&d->inode_lock);
 	}

@@ -44,7 +44,7 @@ static inline bool cached_dev_get(struct cached_dev *dc)
 
 static inline u64 bcache_dev_inum(struct bcache_device *d)
 {
-	return KEY_INODE(&d->inode.i_inode.i_key);
+	return d->inode.k.p.inode;
 }
 
 static inline struct bcache_device *bch_dev_find(struct cache_set *c, u64 inode)

@@ -40,8 +40,7 @@ struct bkey *bch_journal_find_btree_root(struct cache_set *c, struct jset *j,
 			k = jkeys->start;
 			*level = jkeys->level;
 
-			if (!jkeys->keys ||
-			    jkeys->keys != KEY_U64s(k))
+			if (!jkeys->keys || jkeys->keys != k->u64s)
 				goto err;
 
 			goto found;
@@ -71,7 +70,7 @@ static inline void bch_journal_add_prios(struct cache_set *c, struct jset *j)
 
 	for_each_cache(ca, c, i) {
 		spin_lock(&ca->prio_buckets_lock);
-		prio_set->d[ca->sb.nr_this_dev] = ca->prio_journal_bucket;
+		prio_set->_data[ca->sb.nr_this_dev] = ca->prio_journal_bucket;
 		spin_unlock(&ca->prio_buckets_lock);
 	}
 
@@ -453,7 +452,7 @@ static int bch_journal_replay_key(struct cache_set *c, enum btree_id id,
 
 	trace_bcache_journal_replay_key(k);
 
-	if (id == BTREE_ID_EXTENTS)
+	if (id == BTREE_ID_EXTENTS && k->type == BCH_EXTENT)
 		bkey_copy(&temp.key, k);
 
 	ret = bch_btree_insert(c, id, &keylist_single(k), NULL, NULL);
@@ -464,9 +463,10 @@ static int bch_journal_replay_key(struct cache_set *c, enum btree_id id,
 	 * Subtract sectors after replay since bch_btree_insert() added
 	 * them again
 	 */
-	if (id == BTREE_ID_EXTENTS)
-		__bch_add_sectors(c, NULL, k, KEY_START(&temp.key),
-				  -KEY_SIZE(&temp.key), false);
+	if (id == BTREE_ID_EXTENTS && k->type == BCH_EXTENT)
+		__bch_add_sectors(c, NULL, &temp.key,
+				  bkey_start_offset(&temp.key),
+				  -temp.key.size, false);
 
 	return 0;
 }
@@ -657,14 +657,14 @@ static size_t journal_write_u64s_remaining(struct cache_set *c,
 
 static void journal_entry_no_room(struct cache_set *c)
 {
-	struct bkey *k = &c->journal.key;
+	struct bkey_i_extent *e = bkey_i_to_extent(&c->journal.key);
 	struct cache *ca;
 	int i;
 
-	for (i = bch_extent_ptrs(k) - 1; i >= 0; --i)
-		if (!(ca = PTR_CACHE(c, k, i)) ||
+	for (i = bch_extent_ptrs(&e->k) - 1; i >= 0; --i)
+		if (!(ca = PTR_CACHE(c, &e->v, i)) ||
 		    ca->journal.sectors_free <= c->journal.sectors_free)
-			bch_extent_drop_ptr(k, i);
+			bch_extent_drop_ptr(&e->k, i);
 
 	c->journal.sectors_free = 0;
 	c->journal.u64s_remaining = 0;
@@ -685,7 +685,7 @@ static void journal_entry_no_room(struct cache_set *c)
  */
 static bool journal_reclaim(struct cache_set *c, u64 *oldest_seq)
 {
-	struct bkey *k = &c->journal.key;
+	struct bkey_i_extent *e = bkey_i_to_extent(&c->journal.key);
 	struct cache *ca;
 	uint64_t last_seq;
 	unsigned iter;
@@ -748,11 +748,11 @@ static bool journal_reclaim(struct cache_set *c, u64 *oldest_seq)
 	 * Drop any pointers to devices that have been removed, are no longer
 	 * empty, or filled up their current journal bucket:
 	 */
-	for (i = bch_extent_ptrs(k) - 1; i >= 0; --i)
-		if (!(ca = PTR_CACHE(c, k, i)) ||
+	for (i = bch_extent_ptrs(&e->k) - 1; i >= 0; --i)
+		if (!(ca = PTR_CACHE(c, &e->v, i)) ||
 		    !ca->journal.sectors_free ||
 		    CACHE_STATE(&ca->mi) != CACHE_ACTIVE)
-			bch_extent_drop_ptr(k, i);
+			bch_extent_drop_ptr(&e->k, i);
 
 	/*
 	 * Determine location of the next journal write:
@@ -763,7 +763,8 @@ static bool journal_reclaim(struct cache_set *c, u64 *oldest_seq)
 		unsigned next = (ja->cur_idx + 1) %
 			bch_nr_journal_buckets(&ca->sb);
 
-		if (bch_extent_ptrs(k) == CACHE_SET_META_REPLICAS_WANT(&c->sb))
+		if (bch_extent_ptrs(&e->k) ==
+		    CACHE_SET_META_REPLICAS_WANT(&c->sb))
 			break;
 
 		/*
@@ -772,7 +773,7 @@ static bool journal_reclaim(struct cache_set *c, u64 *oldest_seq)
 		 */
 		if ((CACHE_TIER(&ca->mi) != 0) ||
 		    (CACHE_STATE(&ca->mi) != CACHE_ACTIVE) ||
-		    bch_extent_has_device(k, ca->sb.nr_this_dev))
+		    bch_extent_has_device(e, ca->sb.nr_this_dev))
 			continue;
 
 		/* No journal buckets available for writing on this device */
@@ -792,25 +793,25 @@ static bool journal_reclaim(struct cache_set *c, u64 *oldest_seq)
 			continue;
 		}
 
-		BUG_ON(bch_extent_ptrs(k) >= BKEY_EXTENT_PTRS_MAX);
+		BUG_ON(bch_extent_ptrs(&e->k) >= BKEY_EXTENT_PTRS_MAX);
 
 		ja->sectors_free = ca->sb.bucket_size;
 
 		ja->cur_idx = next;
-		k->val[bch_extent_ptrs(k)] =
+		e->v.ptr[bch_extent_ptrs(&e->k)] =
 			PTR(0, bucket_to_sector(ca,
 					journal_bucket(ca, ja->cur_idx)),
 			    ca->sb.nr_this_dev);
 
-		bch_set_extent_ptrs(k, bch_extent_ptrs(k) + 1);
+		bch_set_extent_ptrs(&e->k, bch_extent_ptrs(&e->k) + 1);
 	}
 
 	/* set c->journal.sectors_free to the min of any device */
 	c->journal.sectors_free = UINT_MAX;
 
-	for (i = 0; i < bch_extent_ptrs(k); i++)
+	for (i = 0; i < bch_extent_ptrs(&e->k); i++)
 		c->journal.sectors_free = min(c->journal.sectors_free,
-					     (ca = PTR_CACHE(c, k, i))
+					     (ca = PTR_CACHE(c, &e->v, i))
 					     ? ca->journal.sectors_free : 0);
 	if (c->journal.sectors_free == UINT_MAX)
 		c->journal.sectors_free = 0;
@@ -898,7 +899,7 @@ static void journal_write_locked(struct closure *cl)
 	struct cache_set *c = container_of(cl, struct cache_set, journal.io);
 	struct cache *ca;
 	struct journal_write *w = c->journal.cur;
-	struct bkey *k = &c->journal.key;
+	struct bkey_i_extent *e = bkey_i_to_extent(&c->journal.key);
 	BKEY_PADDED(k) tmp;
 	unsigned i, sectors;
 
@@ -941,9 +942,9 @@ static void journal_write_locked(struct closure *cl)
 	BUG_ON(sectors > c->journal.sectors_free);
 	c->journal.sectors_free -= sectors;
 
-	for (i = 0; i < bch_extent_ptrs(k); i++) {
+	for (i = 0; i < bch_extent_ptrs(&e->k); i++) {
 		rcu_read_lock();
-		ca = PTR_CACHE(c, k, i);
+		ca = PTR_CACHE(c, &e->v, i);
 		if (ca)
 			percpu_ref_get(&ca->ref);
 		rcu_read_unlock();
@@ -962,7 +963,7 @@ static void journal_write_locked(struct closure *cl)
 		atomic_long_add(sectors, &ca->meta_sectors_written);
 
 		bio_reset(bio);
-		bio->bi_iter.bi_sector	= PTR_OFFSET(k, i);
+		bio->bi_iter.bi_sector	= PTR_OFFSET(&e->v.ptr[i]);
 		bio->bi_bdev		= ca->bdev;
 		bio->bi_iter.bi_size	= sectors << 9;
 		bio->bi_end_io		= journal_write_endio;
@@ -974,7 +975,8 @@ static void journal_write_locked(struct closure *cl)
 		trace_bcache_journal_write(bio);
 		bio_list_add(&list, bio);
 
-		SET_PTR_OFFSET(k, i, PTR_OFFSET(k, i) + sectors);
+		SET_PTR_OFFSET(&e->v.ptr[i],
+			       PTR_OFFSET(&e->v.ptr[i]) + sectors);
 
 		ca->journal.seq[ca->journal.cur_idx] = w->data->seq;
 	}
@@ -983,7 +985,7 @@ static void journal_write_locked(struct closure *cl)
 	 * Make a copy of the key we're writing to for check_mark_super, since
 	 * journal_reclaim will change it
 	 */
-	bkey_copy(&tmp.k, k);
+	bkey_copy(&tmp.k, &e->k);
 
 	atomic_dec_bug(&fifo_back(&c->journal.pin));
 	bch_journal_next(&c->journal);
@@ -1180,24 +1182,22 @@ static inline void __bch_journal_add_keys(struct jset *j, enum btree_id id,
 					  unsigned type)
 {
 	struct jset_keys *jkeys = (struct jset_keys *) bset_bkey_last(j);
-	unsigned u64s = KEY_U64s(k);
 
-	jkeys->keys = u64s;
+	jkeys->keys = k->u64s;
 	jkeys->btree_id = id;
 	jkeys->level = level;
 	jkeys->flags = 0;
 	SET_JKEYS_TYPE(jkeys, type);
 
-	memcpy(jkeys->start, k, sizeof(u64) * u64s);
-	j->keys += jset_u64s(u64s);
+	memcpy(jkeys->start, k, bkey_bytes(k));
+	j->keys += jset_u64s(k->u64s);
 }
 
 void bch_journal_add_keys(struct cache_set *c, struct journal_res *res,
 			  enum btree_id id, const struct bkey *k,
 			  unsigned level)
 {
-	unsigned u64s = KEY_U64s(k);
-	unsigned actual = jset_u64s(u64s);
+	unsigned actual = jset_u64s(k->u64s);
 
 	BUG_ON(!res->ref);
 	BUG_ON(actual > res->nkeys);
@@ -1244,7 +1244,7 @@ int bch_journal_alloc(struct cache_set *c)
 
 	c->journal.delay_ms = 10;
 
-	bkey_init(&j->key);
+	bkey_extent_init(&j->key);
 
 	j->w[0].c = c;
 	j->w[1].c = c;
@@ -1282,7 +1282,7 @@ static bool bch_journal_writing_to_device(struct cache *ca)
 	bool ret;
 
 	spin_lock(&c->journal.lock);
-	ret = bch_extent_has_device(&c->journal.key,
+	ret = bch_extent_has_device(bkey_i_to_extent(&c->journal.key),
 				    ca->sb.nr_this_dev);
 	spin_unlock(&c->journal.lock);
 
