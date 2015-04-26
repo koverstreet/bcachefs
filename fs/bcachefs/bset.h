@@ -369,7 +369,7 @@ static __always_inline int64_t bkey_cmp(const struct bkey *l,
 void bch_bkey_copy_single_ptr(struct bkey *, const struct bkey *,
 			      unsigned);
 
-static inline struct bkey bkey_successor(struct bkey *k)
+static inline struct bkey bkey_successor(const struct bkey *k)
 {
 	struct bkey ret = *k;
 
