@@ -62,34 +62,36 @@ static void read_moving_endio(struct bio *bio)
 	struct bbio *b = container_of(bio, struct bbio, bio);
 	struct moving_io *io = container_of(bio->bi_private,
 					    struct moving_io, cl);
-
 	if (bio->bi_error)
 		io->op.error = bio->bi_error;
-	else if (ptr_stale(io->op.c, &b->key, 0))
+	else if (ptr_stale(b->ca->set, b->ca, &b->key, 0))
 		io->op.error = -EINTR;
 
-	bch_bbio_endio(io->op.c, bio, bio->bi_error, "reading data to move");
+	bch_bbio_endio(b, bio->bi_error, "reading data to move");
 }
 
 void bch_data_move(struct closure *cl)
 {
 	struct moving_io *io = container_of(cl, struct moving_io, cl);
+	struct cache *ca;
 	int ptr;
 
 	/* bail out if all pointers are stale */
-	ptr = bch_extent_pick_ptr(io->op.c, &io->w->key);
-	if (ptr < 0)
+	ca = bch_extent_pick_ptr(io->op.c, &io->w->key, &ptr);
+	if (!ca)
 		closure_return_with_destructor(cl, moving_io_destructor);
 
 	moving_init(io);
 
-	if (bio_alloc_pages(&io->bio.bio, GFP_KERNEL))
+	if (bio_alloc_pages(&io->bio.bio, GFP_KERNEL)) {
+		percpu_ref_put(&ca->ref);
 		closure_return_with_destructor(cl, moving_io_destructor);
+	}
 
 	bio_set_op_attrs(&io->bio.bio, REQ_OP_READ, 0);
 	io->bio.bio.bi_end_io	= read_moving_endio;
 
-	bch_submit_bbio(&io->bio, io->op.c, &io->w->key, ptr, false);
+	bch_submit_bbio(&io->bio, ca, &io->w->key, ptr, false);
 
 	continue_at(cl, write_moving, io->op.c->wq);
 }

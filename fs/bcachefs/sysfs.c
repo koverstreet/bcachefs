@@ -991,6 +991,9 @@ found:
 		}
 	}
 
+	if (attr == &sysfs_unregister)
+		bch_cache_remove(ca);
+
 	if (attr == &sysfs_clear_stats) {
 		atomic_long_set(&ca->sectors_written, 0);
 		atomic_long_set(&ca->btree_sectors_written, 0);
@@ -1004,6 +1007,7 @@ found:
 STORE_LOCKED(bch_cache)
 
 static struct attribute *bch_cache_files[] = {
+	&sysfs_unregister,
 	&sysfs_bucket_size,
 	&sysfs_block_size,
 	&sysfs_nbuckets,

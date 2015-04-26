@@ -281,7 +281,7 @@ static void bch_data_insert_endio(struct bio *bio)
 			set_closure_fn(cl, NULL, NULL);
 	}
 
-	bch_bbio_endio(op->c, bio, bio->bi_error, "writing data to cache");
+	bch_bbio_endio(to_bbio(bio), bio->bi_error, "writing data to cache");
 }
 
 static void bch_data_insert_start(struct closure *cl)
@@ -537,10 +537,10 @@ static void cache_promote_endio(struct bio *bio)
 
 	if (bio->bi_error)
 		op->iop.error = bio->bi_error;
-	else if (ptr_stale(op->iop.c, &b->key, 0))
+	else if (ptr_stale(b->ca->set, b->ca, &b->key, 0))
 		op->stale = 1;
 
-	bch_bbio_endio(op->iop.c, bio, bio->bi_error, "reading from cache");
+	bch_bbio_endio(b, bio->bi_error, "reading from cache");
 }
 
 /**
@@ -563,7 +563,9 @@ static void __cache_promote(struct cache_set *c, struct bbio *orig_bio,
 	if (!op)
 		goto out_submit;
 
-	bkey_copy(&op->bio.key, &orig_bio->key);
+	/* clone the bbio */
+	memcpy(&op->bio, orig_bio, offsetof(struct bbio, bio));
+
 	bio = &op->bio.bio;
 	bio_init(bio);
 	bio_get(bio);
@@ -577,6 +579,9 @@ static void __cache_promote(struct cache_set *c, struct bbio *orig_bio,
 
 	if (bio_alloc_pages(bio, __GFP_NOWARN|GFP_NOIO))
 		goto out_free;
+
+	if (op->bio.ca)
+		percpu_ref_get(&op->bio.ca->ref);
 
 	closure_init(&op->cl, &c->cl);
 	op->orig_bio		= &orig_bio->bio;
@@ -613,17 +618,15 @@ out_submit:
  *
  * @bio must actually be a bbio with valid key.
  */
-static bool cache_promote(struct cache_set *c, struct bbio *bio,
+static bool cache_promote(struct cache *ca, struct bbio *bio,
 			  struct bkey *k, unsigned ptr)
 {
-	struct cache *ca = PTR_CACHE(c, k, ptr);
-
 	if (!CACHE_TIER(&ca->sb)) {
 		generic_make_request(&bio->bio);
 		return 0;
 	}
 
-	__cache_promote(c, bio, k, cache_promote_endio);
+	__cache_promote(ca->set, bio, k, cache_promote_endio);
 	return 1;
 }
 
@@ -795,24 +798,27 @@ static void bch_read_requeue(struct cache_set *c, struct bio *bio)
 
 static void bch_read_endio(struct bio *bio)
 {
-	struct bbio *b = container_of(bio, struct bbio, bio);
-	struct cache_set *c = b->c;
+	struct bbio *b = to_bbio(bio);
+	struct cache *ca = b->ca;
+	struct cache_set *c = b->ca->set;
 	struct bio *orig = bio->bi_private;
 
-	if (!bio->bi_error && (race_fault() || ptr_stale(c, &b->key, 0))) {
+	bch_bbio_count_io_errors(b, bio->bi_error, "reading from cache");
+
+	if (!bio->bi_error &&
+	    (race_fault() || ptr_stale(c, ca, &b->key, 0))) {
 		/* Read bucket invalidate race */
 		atomic_long_inc(&c->cache_read_races);
 		bch_read_requeue(c, bio);
-		return;
+	} else {
+		if (bio->bi_error)
+			orig->bi_error = bio->bi_error;
+
+		bio_endio(orig);
+		bio_put(bio);
 	}
 
-	bch_bbio_count_io_errors(c, bio, bio->bi_error, "reading from cache");
-
-	if (bio->bi_error)
-		orig->bi_error = bio->bi_error;
-
-	bio_endio(orig);
-	bio_put(bio);
+	percpu_ref_put(&ca->ref);
 }
 
 static inline void __bio_inc_remaining(struct bio *bio)
@@ -830,7 +836,8 @@ static int bch_read_fn(struct btree_op *b_op, struct btree *b, struct bkey *k)
 	struct bio *n, *bio = op->bio;
 	struct bbio *bbio;
 	int sectors, ret;
-	int ptr = 0;
+	unsigned ptr;
+	struct cache *ca;
 
 	BUG_ON(bkey_cmp(&START_KEY(k),
 			&KEY(op->inode, bio->bi_iter.bi_sector, 0)) > 0);
@@ -839,11 +846,11 @@ static int bch_read_fn(struct btree_op *b_op, struct btree *b, struct bkey *k)
 
 	sectors = KEY_OFFSET(k) - bio->bi_iter.bi_sector;
 
-	ptr = bch_extent_pick_ptr(b->c, k);
-	if (ptr < 0)
+	ca = bch_extent_pick_ptr(b->c, k, &ptr);
+	if (!ca)
 		return bch_read_hole(bio, sectors);
 
-	PTR_BUCKET(b->c, k, ptr)->read_prio = b->c->prio_clock[READ].hand;
+	PTR_BUCKET(b->c, ca, k, ptr)->read_prio = b->c->prio_clock[READ].hand;
 
 	if (sectors >= bio_sectors(bio)) {
 		n = bio_clone_fast(bio, GFP_NOIO, b->c->bio_split);
@@ -864,9 +871,9 @@ static int bch_read_fn(struct btree_op *b_op, struct btree *b, struct bkey *k)
 	bch_cut_front(&KEY(op->inode, n->bi_iter.bi_sector, 0), &bbio->key);
 	bch_cut_back(&KEY(op->inode, bio_end_sector(n), 0), &bbio->key);
 
-	bch_bbio_prep(bbio, b->c);
+	bch_bbio_prep(bbio, ca);
 
-	cache_promote(b->c, bbio, k, ptr);
+	cache_promote(ca, bbio, k, ptr);
 
 	return ret;
 }
@@ -917,7 +924,7 @@ static void bch_read_retry(struct bbio *bbio)
 	bch_bbio_reset(bbio);
 	bio_chain(bio, parent);
 
-	bch_read(bbio->c, bio, inode);
+	bch_read(bbio->ca->set, bio, inode);
 	bio_endio(parent);  /* for bio_chain() in bch_read_fn() */
 	bio_endio(bio);
 }
@@ -989,13 +996,13 @@ static void bch_cache_read_endio(struct bio *bio)
 
 	if (bio->bi_error)
 		s->iop.error = bio->bi_error;
-	else if (ptr_stale(s->iop.c, &b->key, 0)) {
+	else if (ptr_stale(b->ca->set, b->ca, &b->key, 0)) {
 		/* Read bucket invalidate race */
 		atomic_long_inc(&s->iop.c->cache_read_races);
 		s->iop.error = -EINTR;
 	}
 
-	bch_bbio_endio(s->iop.c, bio, bio->bi_error, "reading from cache");
+	bch_bbio_endio(b, bio->bi_error, "reading from cache");
 }
 
 /*
@@ -1007,8 +1014,8 @@ static int cache_lookup_fn(struct btree_op *op, struct btree *b, struct bkey *k)
 	struct search *s = container_of(op, struct search, op);
 	struct bio *n, *bio = &s->bio.bio;
 	struct bbio *bbio;
-	unsigned sectors;
-	int ptr;
+	unsigned sectors, ptr;
+	struct cache *ca;
 
 	BUG_ON(bkey_cmp(&START_KEY(k),
 			&KEY(s->inode, bio->bi_iter.bi_sector, 0)) > 0);
@@ -1017,11 +1024,11 @@ static int cache_lookup_fn(struct btree_op *op, struct btree *b, struct bkey *k)
 
 	sectors = KEY_OFFSET(k) - bio->bi_iter.bi_sector;
 
-	ptr = bch_extent_pick_ptr(b->c, k);
-	if (ptr < 0) /* no pointers (hole), or all stale */
+	ca = bch_extent_pick_ptr(b->c, k, &ptr);
+	if (!ca) /* no pointers (hole), or all stale */
 		return s->d->cache_miss(b, s, bio, sectors);
 
-	PTR_BUCKET(b->c, k, ptr)->read_prio = b->c->prio_clock[READ].hand;
+	PTR_BUCKET(b->c, ca, k, ptr)->read_prio = b->c->prio_clock[READ].hand;
 
 	if (!KEY_CACHED(k))
 		s->read_dirty_data = true;
@@ -1035,14 +1042,14 @@ static int cache_lookup_fn(struct btree_op *op, struct btree *b, struct bkey *k)
 	bch_cut_front(&KEY(s->inode, n->bi_iter.bi_sector, 0), &bbio->key);
 	bch_cut_back(&KEY(s->inode, bio_end_sector(n), 0), &bbio->key);
 
-	bch_bbio_prep(bbio, b->c);
+	bch_bbio_prep(bbio, ca);
 
 	n->bi_end_io		= bch_cache_read_endio;
 	n->bi_private		= &s->cl;
 
 	closure_get(&s->cl);
 	if (!s->bypass) {
-		if (cache_promote(b->c, bbio, k, ptr))
+		if (cache_promote(ca, bbio, k, ptr))
 			s->cache_miss = 1;
 	} else
 		submit_bio(n);
@@ -1270,6 +1277,7 @@ static int cached_dev_cache_miss(struct btree *b, struct search *s,
 	to_bbio(miss)->key = KEY(s->inode,
 				 bio_end_sector(miss),
 				 bio_sectors(miss));
+	to_bbio(miss)->ca = NULL;
 
 	closure_get(&s->cl);
 	__cache_promote(b->c, to_bbio(miss), &replace.key, request_endio);

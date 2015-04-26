@@ -63,54 +63,69 @@ struct bio *bch_bbio_alloc(struct cache_set *c)
 	return bio;
 }
 
-void bch_bbio_prep(struct bbio *b, struct cache_set *c)
+void bch_bbio_prep(struct bbio *b, struct cache *ca)
 {
 	struct bvec_iter *iter = &b->bio.bi_iter;
 
-	b->c				= c;
-
+	b->ca				= ca;
 	b->bio.bi_iter.bi_sector	= PTR_OFFSET(&b->key, 0);
-	b->bio.bi_bdev			= PTR_CACHE(c, &b->key, 0)->bdev;
+	b->bio.bi_bdev			= ca ? ca->bdev : NULL;
 
 	b->bi_idx			= iter->bi_idx;
 	b->bi_bvec_done			= iter->bi_bvec_done;
 }
 
-void bch_submit_bbio(struct bbio *b, struct cache_set *c,
+void bch_submit_bbio(struct bbio *b, struct cache *ca,
 		     struct bkey *k, unsigned ptr, bool punt)
 {
 	struct bio *bio = &b->bio;
 
 	bch_bkey_copy_single_ptr(&b->key, k, ptr);
-	bch_bbio_prep(b, c);
+	bch_bbio_prep(b, ca);
 	b->submit_time_us = local_clock_us();
 
-	if (punt)
-		closure_bio_submit_punt(bio, bio->bi_private, c);
+	if (!ca) {
+		closure_get(bio->bi_private);
+		bio_io_error(bio);
+	} else if (punt)
+		closure_bio_submit_punt(bio, bio->bi_private, ca->set);
 	else
 		closure_bio_submit(bio, bio->bi_private);
 }
 
-void bch_submit_bbio_replicas(struct bio *bio_src, struct cache_set *c,
+void bch_submit_bbio_replicas(struct bio *bio, struct cache_set *c,
 			      struct bkey *k, unsigned long *ptrs_to_write,
 			      bool punt)
 {
-	struct bio *bio;
-	unsigned first, i;
+	struct cache *ca;
+	unsigned ptr, next, nr_ptrs = bch_extent_ptrs(k);
 
-	first = find_first_bit(ptrs_to_write, bch_extent_ptrs(k));
+	for (ptr = find_first_bit(ptrs_to_write, nr_ptrs);
+	     ptr != nr_ptrs;
+	     ptr = next) {
+		next = find_next_bit(ptrs_to_write, nr_ptrs, ptr + 1);
 
-	i = first + 1;
-	for_each_set_bit_from(i, ptrs_to_write, bch_extent_ptrs(k)) {
-		bio = bio_clone_fast(bio_src, GFP_NOIO,
-				     PTR_CACHE(c, k, i)->replica_set);
-		bio->bi_end_io		= bio_src->bi_end_io;
-		bio->bi_private		= bio_src->bi_private;
+		rcu_read_lock();
+		ca = PTR_CACHE(c, k, ptr);
+		if (ca)
+			percpu_ref_get(&ca->ref);
+		rcu_read_unlock();
 
-		bch_submit_bbio(to_bbio(bio), c, k, i, punt);
+		if (!ca) {
+			bch_submit_bbio(to_bbio(bio), ca, k, ptr, punt);
+			break;
+		}
+
+		if (next != nr_ptrs) {
+			struct bio *n = bio_clone_fast(bio, GFP_NOIO,
+						       ca->replica_set);
+			n->bi_end_io		= bio->bi_end_io;
+			n->bi_private		= bio->bi_private;
+			bch_submit_bbio(to_bbio(n), ca, k, ptr, punt);
+		} else {
+			bch_submit_bbio(to_bbio(bio), ca, k, ptr, punt);
+		}
 	}
-
-	bch_submit_bbio(to_bbio(bio_src), c, k, first, punt);
 }
 
 void bch_bbio_reset(struct bbio *b)
@@ -168,30 +183,34 @@ void bch_count_io_errors(struct cache *ca, int error, const char *m)
 						    &ca->io_errors);
 		errors >>= IO_ERROR_SHIFT;
 
-		if (errors < ca->set->error_limit)
+		if (errors < ca->set->error_limit) {
 			pr_err("%s: IO error on %s, recovering",
 			       bdevname(ca->bdev, buf), m);
-		else
-			bch_cache_set_error(ca->set,
-					    "%s: too many IO errors %s",
-					    bdevname(ca->bdev, buf), m);
+		} else {
+			pr_err("%s: too many IO errors on %s, removing",
+			       bdevname(ca->bdev, buf), m);
+			bch_cache_remove(ca);
+		}
 	}
 }
 
-void bch_bbio_count_io_errors(struct cache_set *c, struct bio *bio,
-			      int error, const char *m)
+void bch_bbio_count_io_errors(struct bbio *bio, int error, const char *m)
 {
-	struct bbio *b = container_of(bio, struct bbio, bio);
-	struct cache *ca = PTR_CACHE(c, &b->key, 0);
+	struct cache_set *c;
+	unsigned threshold;
 
-	unsigned threshold = op_is_write(bio_op(bio))
+	if (!bio->ca)
+		return;
+
+	c = bio->ca->set;
+	threshold = op_is_write(bio_op(&bio->bio))
 		? c->congested_write_threshold_us
 		: c->congested_read_threshold_us;
 
-	if (threshold && b->submit_time_us) {
+	if (threshold && bio->submit_time_us) {
 		unsigned t = local_clock_us();
 
-		int us = t - b->submit_time_us;
+		int us = t - bio->submit_time_us;
 		int congested = atomic_read(&c->congested);
 
 		if (us > (int) threshold) {
@@ -204,15 +223,17 @@ void bch_bbio_count_io_errors(struct cache_set *c, struct bio *bio,
 			atomic_inc(&c->congested);
 	}
 
-	bch_count_io_errors(ca, error, m);
+	bch_count_io_errors(bio->ca, error, m);
 }
 
-void bch_bbio_endio(struct cache_set *c, struct bio *bio,
-		    int error, const char *m)
+void bch_bbio_endio(struct bbio *bio, int error, const char *m)
 {
-	struct closure *cl = bio->bi_private;
+	struct closure *cl = bio->bio.bi_private;
+	struct cache *ca = bio->ca;
 
-	bch_bbio_count_io_errors(c, bio, error, m);
-	bio_put(bio);
+	bch_bbio_count_io_errors(bio, error, m);
+	bio_put(&bio->bio);
+	if (ca)
+		percpu_ref_put(&ca->ref);
 	closure_put(cl);
 }

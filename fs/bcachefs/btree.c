@@ -311,8 +311,7 @@ err:
 
 static void btree_node_read_endio(struct bio *bio)
 {
-	struct closure *cl = bio->bi_private;
-	closure_put(cl);
+	bch_bbio_endio(to_bbio(bio), bio->bi_error, "reading btree");
 }
 
 static void bch_btree_node_read(struct btree *b)
@@ -320,14 +319,15 @@ static void bch_btree_node_read(struct btree *b)
 	uint64_t start_time = local_clock();
 	struct closure cl;
 	struct bbio *bio;
-	int ptr;
+	struct cache *ca;
+	unsigned ptr;
 
 	trace_bcache_btree_read(b);
 
 	closure_init_stack(&cl);
 
-	ptr = bch_btree_pick_ptr(b->c, &b->key);
-	if (ptr < 0) {
+	ca = bch_btree_pick_ptr(b->c, &b->key, &ptr);
+	if (!ca) {
 		set_btree_node_io_error(b);
 		goto err;
 	}
@@ -340,7 +340,8 @@ static void bch_btree_node_read(struct btree *b)
 
 	bch_bio_map(&bio->bio, b->keys.set[0].data);
 
-	bch_submit_bbio(bio, b->c, &b->key, ptr, true);
+	bio_get(&bio->bio);
+	bch_submit_bbio(bio, ca, &b->key, ptr, true);
 
 	closure_sync(&cl);
 
@@ -409,13 +410,7 @@ static void btree_node_write_endio(struct bio *bio)
 	if (bio->bi_error)
 		set_btree_node_io_error(b);
 
-	bch_bbio_count_io_errors(b->c, bio, bio->bi_error, "writing btree");
-
-	/* This won't free b->bio because we took an extra reference, but it
-	 * will free any replica bios from bch_submit_bbio_replicas() */
-	bio_put(bio);
-
-	closure_put(cl);
+	bch_bbio_endio(to_bbio(bio), bio->bi_error, "writing btree");
 }
 
 static void do_btree_node_write(struct btree *b)
@@ -494,6 +489,8 @@ void __bch_btree_node_write(struct btree *b, struct closure *parent)
 {
 	struct bset *i = btree_bset_last(b);
 	size_t blocks_to_write = set_blocks(i, block_bytes(b->c));
+	struct cache *ca;
+	unsigned ptr;
 
 	if (!test_and_clear_bit(BTREE_NODE_dirty, &b->flags))
 		return;
@@ -516,8 +513,12 @@ void __bch_btree_node_write(struct btree *b, struct closure *parent)
 
 	do_btree_node_write(b);
 
-	atomic_long_add(blocks_to_write * b->c->sb.block_size,
-			&PTR_CACHE(b->c, &b->key, 0)->btree_sectors_written);
+	rcu_read_lock();
+	for (ptr = 0; ptr < bch_extent_ptrs(&b->key); ptr++)
+		if ((ca = PTR_CACHE(b->c, &b->key, ptr)))
+			atomic_long_add(blocks_to_write * b->c->sb.block_size,
+					&ca->btree_sectors_written);
+	rcu_read_unlock();
 
 	b->written += blocks_to_write;
 }
@@ -1308,19 +1309,22 @@ static int __btree_check_reserve(struct cache_set *c,
 	int ret;
 
 	mutex_lock(&c->bucket_lock);
+	rcu_read_lock();
 
-	for_each_cache(ca, c, i) {
+	for_each_cache_rcu(ca, c, i) {
 		if (fifo_used(&ca->free[reserve]) < required) {
 			trace_bcache_btree_check_reserve_fail(ca,
 					fifo_used(&ca->free[reserve]),
 					reserve, cl);
 
 			ret = bch_bucket_wait(c, reserve, cl);
+			rcu_read_unlock();
 			mutex_unlock(&c->bucket_lock);
 			return ret;
 		}
 	}
 
+	rcu_read_unlock();
 	mutex_unlock(&c->bucket_lock);
 
 	return mca_cannibalize_lock(c, cl);
@@ -1398,20 +1402,24 @@ int bch_btree_root_read(struct cache_set *c, enum btree_id id,
 void bch_mark_keybuf_keys(struct cache_set *c, struct keybuf *buf)
 {
 	struct keybuf_key *w, *n;
+	struct cache *ca;
 	struct bucket *g;
 	struct bkey *k;
 	unsigned i;
 
 	spin_lock(&buf->lock);
+	rcu_read_lock();
 	rbtree_postorder_for_each_entry_safe(w, n,
 				&buf->keys, node) {
 		k = &w->key;
-		for (i = 0; i < bch_extent_ptrs(k); i++) {
-			g = PTR_BUCKET(c, k, i);
-			if (gen_after(g->last_gc, PTR_GEN(k, i)))
-				g->last_gc = PTR_GEN(k, i);
-		}
+		for (i = 0; i < bch_extent_ptrs(k); i++)
+			if ((ca = PTR_CACHE(c, k, i))) {
+				g = PTR_BUCKET(c, ca, k, i);
+				if (gen_after(g->last_gc, PTR_GEN(k, i)))
+					g->last_gc = PTR_GEN(k, i);
+			}
 	}
+	rcu_read_unlock();
 	spin_unlock(&buf->lock);
 }
 
@@ -1430,29 +1438,30 @@ u8 __bch_btree_mark_key(struct cache_set *c, int level, struct bkey *k)
 	if (KEY_CACHED(k))
 		replicas_needed = 0;
 
-	for (i = bch_extent_ptrs(k) - 1; i >= 0; --i) {
-		if (!ptr_available(c, k, i))
-			continue;
+	rcu_read_lock();
 
-		ca = PTR_CACHE(c, k, i);
-		g = PTR_BUCKET(c, k, i);
+	for (i = bch_extent_ptrs(k) - 1; i >= 0; --i)
+		if ((ca = PTR_CACHE(c, k, i))) {
+			g = PTR_BUCKET(c, ca, k, i);
 
-		if (gen_after(g->last_gc, PTR_GEN(k, i)))
-			g->last_gc = PTR_GEN(k, i);
+			if (gen_after(g->last_gc, PTR_GEN(k, i)))
+				g->last_gc = PTR_GEN(k, i);
 
-		stale = max(stale, ptr_stale(c, k, i));
+			stale = max(stale, ptr_stale(c, ca, k, i));
 
-		if (!level && ptr_stale(c, k, i))
-			continue;
+			if (!level && ptr_stale(c, ca, k, i))
+				continue;
 
-		if (level)
-			bch_mark_metadata_bucket(ca, g);
-		else
-			bch_mark_data_bucket(ca, g, KEY_SIZE(k),
-					     replicas_found < replicas_needed);
+			if (level)
+				bch_mark_metadata_bucket(ca, g);
+			else
+				bch_mark_data_bucket(ca, g, KEY_SIZE(k),
+					replicas_found < replicas_needed);
 
-		replicas_found++;
-	}
+			replicas_found++;
+		}
+
+	rcu_read_unlock();
 
 	return stale;
 }

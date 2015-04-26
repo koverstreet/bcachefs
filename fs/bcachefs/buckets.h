@@ -43,8 +43,10 @@ static inline size_t buckets_available(struct cache_set *c)
 	unsigned i;
 	size_t ret = 0;
 
-	for_each_cache(ca, c, i)
+	rcu_read_lock();
+	for_each_cache_rcu(ca, c, i)
 		ret += buckets_available_cache(ca);
+	rcu_read_unlock();
 
 	return ret;
 }

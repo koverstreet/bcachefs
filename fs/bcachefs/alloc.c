@@ -259,7 +259,6 @@ void bch_prio_init(struct cache_set *c)
 	}
 
 	mutex_unlock(&c->bucket_lock);
-
 }
 
 /*
@@ -596,14 +595,17 @@ void __bch_bucket_free(struct cache *ca, struct bucket *g)
 
 void bch_bucket_free(struct cache_set *c, struct bkey *k)
 {
+	struct cache *ca;
 	unsigned i;
 
 	mutex_lock(&c->bucket_lock);
+	rcu_read_lock();
 
 	for (i = 0; i < bch_extent_ptrs(k); i++)
-		__bch_bucket_free(PTR_CACHE(c, k, i),
-				  PTR_BUCKET(c, k, i));
+		if ((ca = PTR_CACHE(c, k, i)))
+			__bch_bucket_free(ca, PTR_BUCKET(c, ca, k, i));
 
+	rcu_read_unlock();
 	mutex_unlock(&c->bucket_lock);
 }
 
@@ -615,20 +617,22 @@ static void bch_bucket_free_never_used(struct cache_set *c, struct bkey *k)
 	long r;
 
 	mutex_lock(&c->bucket_lock);
+	rcu_read_lock();
 
-	for (i = 0; i < bch_extent_ptrs(k); i++) {
-		ca = PTR_CACHE(c, k, i);
-		r = PTR_BUCKET_NR(c, k, i);
-		g = PTR_BUCKET(c, k, i);
+	for (i = 0; i < bch_extent_ptrs(k); i++)
+		if ((ca = PTR_CACHE(c, k, i))) {
+			r = PTR_BUCKET_NR(c, k, i);
+			g = PTR_BUCKET(c, ca, k, i);
 
-		if (!bch_allocator_push(ca, r))
-			__bch_bucket_free(ca, g);
-		else
-			bch_mark_alloc_bucket(ca, g);
-	}
+			if (!bch_allocator_push(ca, r))
+				__bch_bucket_free(ca, g);
+			else
+				bch_mark_alloc_bucket(ca, g);
+		}
 
 	bch_set_extent_ptrs(k, 0);
 
+	rcu_read_unlock();
 	mutex_unlock(&c->bucket_lock);
 }
 
@@ -656,6 +660,9 @@ static struct cache *bch_next_cache(struct cache_set *c,
 	}
 
 	for (i = 0; i < nr_devices; i++) {
+		if (!devices[i])
+			continue;
+
 		if (test_bit(devices[i]->sb.nr_this_dev, cache_used))
 			continue;
 
@@ -681,6 +688,9 @@ static struct cache *bch_next_cache(struct cache_set *c,
 	device = NULL;
 
 	for (i = 0; i < nr_devices; i++) {
+		if (!devices[i])
+			continue;
+
 		if (test_bit(devices[i]->sb.nr_this_dev, cache_used))
 			continue;
 
@@ -752,13 +762,16 @@ err:
 static void __bch_open_bucket_put(struct cache_set *c, struct open_bucket *b)
 {
 	struct bkey *k = &b->key;
+	struct cache *ca;
 	unsigned i;
 
 	lockdep_assert_held(&c->open_buckets_lock);
 
+	rcu_read_lock();
 	for (i = 0; i < bch_extent_ptrs(k); i++)
-		bch_unmark_open_bucket(PTR_CACHE(c, k, i),
-				       PTR_BUCKET(c, k, i));
+		if ((ca = PTR_CACHE(c, k, i)))
+			bch_unmark_open_bucket(ca, PTR_BUCKET(c, ca, k, i));
+	rcu_read_unlock();
 
 	list_move(&b->list, &c->open_buckets_free);
 	c->open_buckets_nr_free++;
@@ -923,6 +936,20 @@ found:
 	return b;
 }
 
+static void verify_not_stale(struct cache_set *c, struct bkey *k)
+{
+#ifdef CONFIG_BCACHEFS_DEBUG
+	struct cache *ca;
+	unsigned ptr;
+
+	rcu_read_lock();
+	for (ptr = 0; ptr < bch_extent_ptrs(k); ptr++)
+		if ((ca = PTR_CACHE(c, k, ptr)))
+			BUG_ON(ptr_stale(c, ca, k, ptr));
+	rcu_read_unlock();
+#endif
+}
+
 /*
  * Allocates some space in the cache to write to, and k to point to the newly
  * allocated space, and updates KEY_SIZE(k) and KEY_OFFSET(k) (to point to the
@@ -957,8 +984,7 @@ struct open_bucket *bch_alloc_sectors(struct cache_set *c, struct bkey *k,
 
 	BUG_ON(b != tier->data_buckets[0]);
 
-	for (i = 0; i < bch_extent_ptrs(&b->key); i++)
-		EBUG_ON(ptr_stale(c, &b->key, i));
+	verify_not_stale(c, &b->key);
 
 	/* Set up the pointer to the space we're allocating: */
 
@@ -978,14 +1004,19 @@ struct open_bucket *bch_alloc_sectors(struct cache_set *c, struct bkey *k,
 	/* update open bucket for next time: */
 
 	b->sectors_free	-= sectors;
+
+	rcu_read_lock();
 	for (i = 0; i < bch_extent_ptrs(&b->key); i++) {
+		struct cache *ca;
+
 		if (b->sectors_free)
 			SET_PTR_OFFSET(&b->key, i,
 				       PTR_OFFSET(&b->key, i) + sectors);
 
-		atomic_long_add(sectors,
-				&PTR_CACHE(c, &b->key, i)->sectors_written);
+		if ((ca = PTR_CACHE(c, &b->key, i)))
+			atomic_long_add(sectors, &ca->sectors_written);
 	}
+	rcu_read_unlock();
 
 	/*
 	 * k takes refcounts on the buckets it points to until it's inserted
@@ -1020,17 +1051,20 @@ struct open_bucket *bch_gc_alloc_sectors(struct cache_set *c, struct bkey *k,
 	mutex_lock(&c->bucket_lock);
 retry:
 	/* Check if we raced with a foreground write */
-	for (i = 0; i < bch_extent_ptrs(k); i++)
-		if (ptr_available(c, k, i) &&
-		    PTR_BUCKET(c, k, i)->copygc_gen)
-			goto found;
 
+	rcu_read_lock();
+	for (i = 0; i < bch_extent_ptrs(k); i++)
+		if ((ca = PTR_CACHE(c, k, i)) &&
+		    (gen = PTR_BUCKET(c, ca, k, i)->copygc_gen)) {
+			gen--;
+			percpu_ref_get(&ca->ref);
+			rcu_read_unlock();
+			goto found;
+		}
+	rcu_read_unlock();
 	mutex_unlock(&c->bucket_lock);
 	return ERR_PTR(-ESRCH);
 found:
-	ca = PTR_CACHE(c, k, i);
-	gen = PTR_BUCKET(c, k, i)->copygc_gen - 1;
-
 	b = ca->gc_buckets[gen];
 	if (!b) {
 		mutex_unlock(&c->bucket_lock);
@@ -1038,8 +1072,10 @@ found:
 		b = bch_open_bucket_get(c, true, NULL);
 		if (WARN_ONCE(IS_ERR(b),
 			      "bcache: movinggc bucket allocation failed with %ld",
-			      PTR_ERR(b)))
-			return ERR_PTR(-ENOSPC);
+			      PTR_ERR(b))) {
+			b = ERR_PTR(-ENOSPC);
+			goto out_put;
+		}
 
 		mutex_lock(&c->bucket_lock);
 
@@ -1049,7 +1085,8 @@ found:
 			      bucket)) {
 			mutex_unlock(&c->bucket_lock);
 			bch_open_bucket_put(c, b);
-			return ERR_PTR(-ENOSPC);
+			b = ERR_PTR(-ENOSPC);
+			goto out_put;
 		}
 
 		b->key.val[0] = PTR(ca->bucket_gens[bucket],
@@ -1072,11 +1109,11 @@ found:
 		 * GC_GEN() might also have been reset... don't strictly need to
 		 * recheck though
 		 */
+		percpu_ref_put(&ca->ref);
 		goto retry;
 	}
 
-	/* check to make sure bucket wasn't used while pinned */
-	EBUG_ON(ptr_stale(c, &b->key, 0));
+	verify_not_stale(c, &b->key);
 
 	k->val[i] = b->key.val[0];
 	__set_bit(i, ptrs_to_write);
@@ -1095,10 +1132,10 @@ found:
 	} else
 		ca->gc_buckets[gen] = NULL;
 
-	mutex_unlock(&c->bucket_lock);
-
 	atomic_long_add(sectors, &ca->sectors_written);
-
+	mutex_unlock(&c->bucket_lock);
+out_put:
+	percpu_ref_put(&ca->ref);
 	return b;
 }
 
@@ -1128,12 +1165,15 @@ void bch_mark_open_buckets(struct cache_set *c)
 	}
 
 	spin_lock(&c->open_buckets_lock);
+	rcu_read_lock();
 
 	list_for_each_entry(b, &c->open_buckets_open, list)
 		for (i = 0; i < bch_extent_ptrs(&b->key); i++)
-			bch_mark_alloc_bucket(PTR_CACHE(c, &b->key, i),
-					      PTR_BUCKET(c, &b->key, i));
+			if ((ca = PTR_CACHE(c, &b->key, i)))
+				bch_mark_alloc_bucket(ca,
+					      PTR_BUCKET(c, ca, &b->key, i));
 
+	rcu_read_unlock();
 	spin_unlock(&c->open_buckets_lock);
 }
 

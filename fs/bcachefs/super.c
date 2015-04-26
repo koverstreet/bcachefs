@@ -64,6 +64,8 @@ static DEFINE_IDA(bcache_minor);
 static wait_queue_head_t unregister_wait;
 struct workqueue_struct *bcache_io_wq;
 
+static void __bch_cache_remove(struct cache *);
+
 #define BTREE_MAX_PAGES		(256 * 1024 / PAGE_SIZE)
 
 struct bcache_device *bch_dev_get_by_inode(struct cache_set *c, u64 inode)
@@ -299,6 +301,7 @@ static void write_super_endio(struct bio *bio)
 
 	bch_count_io_errors(ca, bio->bi_error, "writing superblock");
 	closure_put(&ca->set->sb_write);
+	percpu_ref_put(&ca->ref);
 }
 
 static void bcache_write_super_unlock(struct closure *cl)
@@ -334,6 +337,7 @@ void bcache_write_super(struct cache_set *c)
 		bio->bi_private = ca;
 
 		closure_get(cl);
+		percpu_ref_get(&ca->ref);
 		__write_super(&ca->sb, bio);
 	}
 
@@ -1250,12 +1254,10 @@ static void cache_set_free(struct closure *cl)
 	bch_btree_cache_free(c);
 	bch_journal_free(c);
 
+	mutex_lock(&bch_register_lock);
 	for_each_cache(ca, c, i)
-		if (ca) {
-			ca->set = NULL;
-			c->cache[ca->sb.nr_this_dev] = NULL;
-			kobject_put(&ca->kobj);
-		}
+		__bch_cache_remove(ca);
+	mutex_unlock(&bch_register_lock);
 
 	bch_bset_sort_state_free(&c->sort);
 
@@ -1286,14 +1288,10 @@ static void cache_set_flush(struct closure *cl)
 	struct cache *ca;
 	unsigned i;
 
-	for_each_cache(ca, c, i) {
-		ca->moving_gc_pd.rate.rate = UINT_MAX;
-		bch_ratelimit_reset(&ca->moving_gc_pd.rate);
-		if (ca->moving_gc_thread)
-			kthread_stop(ca->moving_gc_thread);
-
-		cancel_delayed_work_sync(&ca->moving_gc_pd.update);
-	}
+	mutex_lock(&bch_register_lock);
+	for_each_cache(ca, c, i)
+		bch_moving_gc_stop(ca);
+	mutex_unlock(&bch_register_lock);
 
 	bch_cache_accounting_destroy(&c->accounting);
 
@@ -1313,9 +1311,15 @@ static void cache_set_flush(struct closure *cl)
 	/* Should skip this if we're unregistering because of an error */
 	bch_btree_flush(c);
 
-	for_each_cache(ca, c, i)
+	mutex_lock(&bch_register_lock);
+
+	for_each_cache(ca, c, i) {
 		if (ca->alloc_thread)
 			kthread_stop(ca->alloc_thread);
+		ca->alloc_thread = NULL;
+	}
+
+	mutex_unlock(&bch_register_lock);
 
 	if (c->journal.cur) {
 		cancel_delayed_work_sync(&c->journal.work);
@@ -1573,8 +1577,10 @@ static const char *run_cache_set(struct cache_set *c)
 
 		err = "error starting allocator thread";
 		for_each_cache(ca, c, i)
-			if (bch_cache_allocator_start(ca))
+			if (bch_cache_allocator_start(ca)) {
+				percpu_ref_put(&ca->ref);
 				goto err;
+			}
 
 		bch_journal_replay(c, &journal);
 		set_bit(JOURNAL_REPLAY_DONE, &c->journal.flags);
@@ -1595,8 +1601,10 @@ static const char *run_cache_set(struct cache_set *c)
 
 		err = "error starting allocator thread";
 		for_each_cache(ca, c, i)
-			if (bch_cache_allocator_start(ca))
+			if (bch_cache_allocator_start(ca)) {
+				percpu_ref_put(&ca->ref);
 				goto err;
+			}
 
 		mutex_lock(&c->bucket_lock);
 		for_each_cache(ca, c, i)
@@ -1626,8 +1634,10 @@ static const char *run_cache_set(struct cache_set *c)
 
 	err = "error starting moving GC thread";
 	for_each_cache(ca, c, i)
-		if (bch_moving_gc_thread_start(ca))
+		if (bch_moving_gc_thread_start(ca)) {
+			percpu_ref_put(&ca->ref);
 			goto err;
+		}
 
 	err = "error starting tiering thread";
 	if (bch_tiering_thread_start(c))
@@ -1744,11 +1754,6 @@ void bch_cache_release(struct kobject *kobj)
 	struct cache *ca = container_of(kobj, struct cache, kobj);
 	unsigned i;
 
-	if (ca->set) {
-		BUG_ON(ca->set->cache[ca->sb.nr_this_dev] != ca);
-		ca->set->cache[ca->sb.nr_this_dev] = NULL;
-	}
-
 	if (ca->replica_set)
 		bioset_free(ca->replica_set);
 
@@ -1769,8 +1774,85 @@ void bch_cache_release(struct kobject *kobj)
 	if (!IS_ERR_OR_NULL(ca->bdev))
 		blkdev_put(ca->bdev, FMODE_READ|FMODE_WRITE|FMODE_EXCL);
 
+	percpu_ref_exit(&ca->ref);
 	kfree(ca);
 	module_put(THIS_MODULE);
+}
+
+static void bch_cache_kill_work(struct work_struct *work)
+{
+	struct cache *ca = container_of(work, struct cache, kill_work);
+
+	kobject_put(&ca->kobj);
+}
+
+static void bch_cache_percpu_ref_release(struct percpu_ref *ref)
+{
+	struct cache *ca = container_of(ref, struct cache, ref);
+
+	schedule_work(&ca->kill_work);
+}
+
+static void bch_cache_kill_rcu(struct rcu_head *rcu)
+{
+	struct cache *ca = container_of(rcu, struct cache, kill_rcu);
+
+	percpu_ref_kill(&ca->ref);
+}
+
+static void __bch_cache_remove(struct cache *ca)
+{
+	struct cache_set *c = ca->set;
+	struct cache_tier *tier = &c->cache_by_alloc[CACHE_TIER(&ca->sb)];
+	unsigned i;
+
+	lockdep_assert_held(&bch_register_lock);
+
+	/* already ran? */
+	if (c->cache[ca->sb.nr_this_dev] != ca)
+		return;
+
+	c->cache[ca->sb.nr_this_dev] = NULL;
+
+	if (c->kobj.state_in_sysfs) {
+		char buf[12];
+
+		sprintf(buf, "cache%i", ca->sb.nr_this_dev);
+		sysfs_remove_link(&c->kobj, buf);
+	}
+
+	mutex_lock(&c->bucket_lock);
+	for (i = 0; i < tier->nr_devices; i++)
+		if (tier->devices[i] == ca) {
+			tier->nr_devices--;
+			memmove(&tier->devices[i],
+				&tier->devices[i + 1],
+				(tier->nr_devices - i) * sizeof(ca));
+			break;
+		}
+	mutex_unlock(&c->bucket_lock);
+
+	bch_moving_gc_stop(ca);
+
+	if (ca->alloc_thread)
+		kthread_stop(ca->alloc_thread);
+	ca->alloc_thread = NULL;
+
+	call_rcu(&ca->kill_rcu, bch_cache_kill_rcu);
+}
+
+static void bch_cache_remove_work(struct work_struct *work)
+{
+	struct cache *ca = container_of(work, struct cache, remove_work);
+
+	mutex_lock(&bch_register_lock);
+	__bch_cache_remove(ca);
+	mutex_unlock(&bch_register_lock);
+}
+
+void bch_cache_remove(struct cache *ca)
+{
+	schedule_work(&ca->remove_work);
 }
 
 static int cache_alloc(struct cache *ca)
@@ -1784,6 +1866,12 @@ static int cache_alloc(struct cache *ca)
 	if (cache_set_init_fault("cache_alloc"))
 		return -ENOMEM;
 
+	if (percpu_ref_init(&ca->ref, bch_cache_percpu_ref_release,
+			    0, GFP_KERNEL))
+		return -ENOMEM;
+
+	INIT_WORK(&ca->kill_work, bch_cache_kill_work);
+	INIT_WORK(&ca->remove_work, bch_cache_remove_work);
 	bio_init(&ca->journal.bio);
 	ca->journal.bio.bi_max_vecs = 8;
 	ca->journal.bio.bi_io_vec = ca->journal.bio.bi_inline_vecs;
@@ -1912,10 +2000,14 @@ static bool bch_is_open_cache(struct block_device *bdev) {
 	struct cache *ca;
 	unsigned i;
 
+	rcu_read_lock();
 	list_for_each_entry_safe(c, tc, &bch_cache_sets, list)
-		for_each_cache(ca, c, i)
-			if (ca->bdev == bdev)
+		for_each_cache_rcu(ca, c, i)
+			if (ca->bdev == bdev) {
+				rcu_read_unlock();
 				return true;
+			}
+	rcu_read_unlock();
 	return false;
 }
 

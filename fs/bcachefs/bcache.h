@@ -182,6 +182,7 @@
 #include <linux/kobject.h>
 #include <linux/list.h>
 #include <linux/mutex.h>
+#include <linux/percpu-refcount.h>
 #include <linux/radix-tree.h>
 #include <linux/rbtree.h>
 #include <linux/rhashtable.h>
@@ -493,6 +494,11 @@ struct bucket_stats {
 };
 
 struct cache {
+	struct percpu_ref	ref;
+	struct rcu_head		kill_rcu;
+	struct work_struct	kill_work;
+	struct work_struct	remove_work;
+
 	struct cache_set	*set;
 	/* Cache tier is protected by bucket_lock */
 	struct cache_sb		sb;
@@ -639,7 +645,7 @@ struct cache_set {
 	struct kobject		internal;
 	unsigned long		flags;
 
-	struct cache		*cache[MAX_CACHES_PER_SET];
+	struct cache __rcu	*cache[MAX_CACHES_PER_SET];
 
 	struct cache_sb		sb;
 	size_t			nbuckets;
@@ -838,7 +844,7 @@ struct cache_set {
 };
 
 struct bbio {
-	struct cache_set	*c;
+	struct cache		*ca;
 
 	unsigned int		bi_idx;		/* current index into bvl_vec */
 
@@ -891,13 +897,11 @@ static inline struct cache *PTR_CACHE(struct cache_set *c,
 				      const struct bkey *k,
 				      unsigned ptr)
 {
-	return c->cache[PTR_DEV(k, ptr)];
-}
+	unsigned dev = PTR_DEV(k, ptr);
 
-static inline unsigned PTR_TIER(struct cache_set *c,
-				const struct bkey *k, unsigned ptr)
-{
-	return CACHE_TIER(&PTR_CACHE(c, k, ptr)->sb);
+	return dev < MAX_CACHES_PER_SET
+		? rcu_dereference(c->cache[dev])
+		: NULL;
 }
 
 static inline size_t PTR_BUCKET_NR(struct cache_set *c,
@@ -908,17 +912,19 @@ static inline size_t PTR_BUCKET_NR(struct cache_set *c,
 }
 
 static inline u8 PTR_BUCKET_GEN(struct cache_set *c,
+				struct cache *ca,
 				const struct bkey *k,
 				unsigned ptr)
 {
-	return PTR_CACHE(c, k, ptr)->bucket_gens[PTR_BUCKET_NR(c, k, ptr)];
+	return ca->bucket_gens[PTR_BUCKET_NR(c, k, ptr)];
 }
 
 static inline struct bucket *PTR_BUCKET(struct cache_set *c,
+					struct cache *ca,
 					const struct bkey *k,
 					unsigned ptr)
 {
-	return PTR_CACHE(c, k, ptr)->buckets + PTR_BUCKET_NR(c, k, ptr);
+	return ca->buckets + PTR_BUCKET_NR(c, k, ptr);
 }
 
 static inline uint8_t gen_after(uint8_t a, uint8_t b)
@@ -927,16 +933,10 @@ static inline uint8_t gen_after(uint8_t a, uint8_t b)
 	return r > 128U ? 0 : r;
 }
 
-static inline uint8_t ptr_stale(struct cache_set *c, const struct bkey *k,
-				unsigned i)
+static inline u8 ptr_stale(struct cache_set *c, struct cache *ca,
+			   const struct bkey *k, unsigned ptr)
 {
-	return gen_after(PTR_BUCKET_GEN(c, k, i), PTR_GEN(k, i));
-}
-
-static inline bool ptr_available(struct cache_set *c, const struct bkey *k,
-				 unsigned i)
-{
-	return (PTR_DEV(k, i) < MAX_CACHES_PER_SET) && PTR_CACHE(c, k, i);
+	return gen_after(PTR_BUCKET_GEN(c, ca, k, ptr), PTR_GEN(k, ptr));
 }
 
 /* Btree key macros */
@@ -984,19 +984,41 @@ do {									\
 
 /* Looping macros */
 
-static inline struct cache *__next_cache(struct cache_set *c, unsigned *iter)
+static inline struct cache *bch_next_cache_rcu(struct cache_set *c,
+					       unsigned *iter)
 {
 	struct cache *ret = NULL;
 
 	while (*iter < c->sb.nr_in_set &&
-	       !(ret = c->cache[*iter]))
+	       !(ret = rcu_dereference(c->cache[*iter])))
 		(*iter)++;
 
 	return ret;
 }
 
+#define for_each_cache_rcu(ca, c, iter)					\
+	for ((iter) = 0; ((ca) = bch_next_cache_rcu((c), &(iter))); (iter)++)
+
+static inline struct cache *bch_get_next_cache(struct cache_set *c,
+					       unsigned *iter)
+{
+	struct cache *ret;
+
+	rcu_read_lock();
+	if ((ret = bch_next_cache_rcu(c, iter)))
+		percpu_ref_get(&ret->ref);
+	rcu_read_unlock();
+
+	return ret;
+}
+
+/*
+ * If you break early, you must drop your ref on the current cache
+ */
 #define for_each_cache(ca, c, iter)					\
-	for ((iter) = 0; ((ca) = __next_cache((c), &(iter))); (iter)++)
+	for ((iter) = 0;						\
+	     (ca = bch_get_next_cache(c, &(iter)));			\
+	     percpu_ref_put(&ca->ref), (iter)++)
 
 #define for_each_bucket(b, ca)						\
 	for (b = (ca)->buckets + (ca)->sb.first_bucket;			\
@@ -1038,16 +1060,15 @@ static inline struct bcache_device *bch_dev_find(struct cache_set *c, u64 inode)
 /* Forward declarations */
 
 void bch_count_io_errors(struct cache *, int, const char *);
-void bch_bbio_count_io_errors(struct cache_set *, struct bio *,
-			      int, const char *);
-void bch_bbio_endio(struct cache_set *, struct bio *, int, const char *);
+void bch_bbio_count_io_errors(struct bbio *, int, const char *);
+void bch_bbio_endio(struct bbio *, int, const char *);
 void bch_bbio_free(struct bio *, struct cache_set *);
 struct bio *bch_bbio_alloc(struct cache_set *);
 
 void bch_generic_make_request(struct bio *, struct cache_set *);
 void bch_bio_submit_work(struct work_struct *);
-void bch_bbio_prep(struct bbio *, struct cache_set *);
-void bch_submit_bbio(struct bbio *, struct cache_set *, struct bkey *,
+void bch_bbio_prep(struct bbio *, struct cache *);
+void bch_submit_bbio(struct bbio *, struct cache *, struct bkey *,
 		     unsigned, bool);
 void bch_submit_bbio_replicas(struct bio *, struct cache_set *,
 			      struct bkey *, unsigned long *, bool);
@@ -1088,6 +1109,8 @@ void bcache_device_stop(struct bcache_device *);
 
 void bch_cache_set_unregister(struct cache_set *);
 void bch_cache_set_stop(struct cache_set *);
+
+void bch_cache_remove(struct cache *);
 
 struct cache_set *bch_cache_set_alloc(struct cache_sb *);
 void bch_btree_cache_free(struct cache_set *);

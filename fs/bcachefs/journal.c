@@ -220,8 +220,10 @@ int bch_journal_read(struct cache_set *c, struct list_head *list)
 	({								\
 		int ret = journal_read_bucket(ca, list, b);		\
 		__set_bit(b, bitmap);					\
-		if (ret < 0)						\
+		if (ret < 0) {						\
+			percpu_ref_put(&ca->ref);			\
 			return ret;					\
+		}							\
 		ret;							\
 	})
 
@@ -566,7 +568,9 @@ static void journal_reclaim(struct cache_set *c)
 
 	/* Update last_idx */
 
-	for_each_cache(ca, c, iter) {
+	rcu_read_lock();
+
+	for_each_cache_rcu(ca, c, iter) {
 		struct journal_device *ja = &ca->journal;
 
 		while (ja->last_idx != ja->cur_idx &&
@@ -575,7 +579,7 @@ static void journal_reclaim(struct cache_set *c)
 				ca->sb.njournal_buckets;
 	}
 
-	for_each_cache(ca, c, iter)
+	for_each_cache_rcu(ca, c, iter)
 		do_journal_discard(ca);
 
 	if (!journal_write_u64s_remaining(c, c->journal.cur)) {
@@ -597,7 +601,7 @@ static void journal_reclaim(struct cache_set *c)
 
 	bkey_init(k);
 
-	for_each_cache(ca, c, iter) {
+	for_each_cache_rcu(ca, c, iter) {
 		struct journal_device *ja = &ca->journal;
 		unsigned next = (ja->cur_idx + 1) % ca->sb.njournal_buckets;
 
@@ -622,6 +626,8 @@ static void journal_reclaim(struct cache_set *c)
 	if (bch_extent_ptrs(k))
 		c->journal.blocks_free = c->sb.bucket_size >> c->block_bits;
 out:
+	rcu_read_unlock();
+
 	if (!journal_full(&c->journal)) {
 		c->journal.u64s_remaining =
 			journal_write_u64s_remaining(c, c->journal.cur);
@@ -655,10 +661,12 @@ void bch_journal_next(struct journal *j)
 
 static void journal_write_endio(struct bio *bio)
 {
+	struct cache *ca = container_of(bio, struct cache, journal.bio);
 	struct journal_write *w = bio->bi_private;
 
 	cache_set_err_on(bio->bi_error, w->c, "journal io error");
 	closure_put(&w->c->journal.io);
+	percpu_ref_put(&ca->ref);
 }
 
 static void journal_write_done(struct closure *cl)
@@ -723,7 +731,18 @@ static void journal_write_locked(struct closure *cl)
 	sectors = set_blocks(w->data, block_bytes(c)) * c->sb.block_size;
 
 	for (i = 0; i < bch_extent_ptrs(k); i++) {
+		rcu_read_lock();
 		ca = PTR_CACHE(c, k, i);
+		if (ca)
+			percpu_ref_get(&ca->ref);
+		rcu_read_unlock();
+
+		if (!ca) {
+			/* XXX: fix this */
+			pr_err("missing journal write\n");
+			continue;
+		}
+
 		bio = &ca->journal.bio;
 
 		atomic_long_add(sectors, &ca->meta_sectors_written);

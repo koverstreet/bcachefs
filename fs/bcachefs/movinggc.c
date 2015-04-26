@@ -53,15 +53,17 @@ static bool moving_pred(struct keybuf *buf, struct bkey *k)
 	struct cache *ca = container_of(buf, struct cache,
 					moving_gc_keys);
 	struct cache_set *c = ca->set;
+	bool ret = false;
 	unsigned i;
 
+	rcu_read_lock();
 	for (i = 0; i < bch_extent_ptrs(k); i++)
-		if (ptr_available(c, k, i) &&
-		    PTR_BUCKET(c, k, i)->copygc_gen &&
-		    PTR_CACHE(c, k, i) == ca)
-			return true;
+		if (PTR_CACHE(c, k, i) == ca &&
+		    PTR_BUCKET(c, ca, k, i)->copygc_gen)
+			ret = true;
+	rcu_read_unlock();
 
-	return false;
+	return ret;
 }
 
 static void read_moving(struct cache *ca, struct moving_io_stats *stats)
@@ -257,6 +259,17 @@ static int bch_moving_gc_thread(void *arg)
 					     c->btree_scan_ratelimit * HZ));
 
 	return 0;
+}
+
+void bch_moving_gc_stop(struct cache *ca)
+{
+	ca->moving_gc_pd.rate.rate = UINT_MAX;
+	bch_ratelimit_reset(&ca->moving_gc_pd.rate);
+	if (ca->moving_gc_thread)
+		kthread_stop(ca->moving_gc_thread);
+	ca->moving_gc_thread = NULL;
+
+	cancel_delayed_work_sync(&ca->moving_gc_pd.update);
 }
 
 int bch_moving_gc_thread_start(struct cache *ca)

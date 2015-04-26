@@ -55,10 +55,16 @@ static void update_tiering_rate(struct work_struct *work)
 static bool tiering_pred(struct keybuf *buf, struct bkey *k)
 {
 	struct cache_set *c = container_of(buf, struct cache_set, tiering_keys);
+	struct cache *ca;
+	bool ret;
 
-	return bch_extent_ptrs(k) &&
-		ptr_available(c, k, bch_extent_ptrs(k) - 1) &&
-		!PTR_TIER(c, k, bch_extent_ptrs(k) - 1);
+	rcu_read_lock();
+	ret = bch_extent_ptrs(k) &&
+		(ca = PTR_CACHE(c, k, bch_extent_ptrs(k) - 1)) &&
+		!CACHE_TIER(&ca->sb);
+	rcu_read_unlock();
+
+	return ret;
 }
 
 static void read_tiering(struct cache_set *c)
@@ -87,11 +93,6 @@ static void read_tiering(struct cache_set *c)
 		if (!w)
 			break;
 
-		if (ptr_stale(c, &w->key, 0)) {
-			bch_keybuf_del(&c->tiering_keys, w);
-			continue;
-		}
-
 		io = kzalloc(sizeof(struct moving_io) + sizeof(struct bio_vec)
 			     * DIV_ROUND_UP(KEY_SIZE(&w->key), PAGE_SECTORS),
 			     GFP_KERNEL);
@@ -108,9 +109,7 @@ static void read_tiering(struct cache_set *c)
 					write_point, false, false, false,
 					&io->w->key, &io->w->key);
 		io->op.tiering	= 1;
-
-		io->op.tier	= PTR_TIER(c, &w->key,
-					   bch_extent_ptrs(&w->key) - 1) + 1;
+		io->op.tier	= 1;
 
 		trace_bcache_tiering_copy(&w->key);
 
