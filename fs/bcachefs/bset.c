@@ -1589,27 +1589,25 @@ static void btree_mergesort_extents(struct btree_keys *dst,
 	pr_debug("sorted %i keys", dst_set->u64s);
 }
 
-static void __btree_sort(struct btree_keys *b, struct btree_node_iter *iter,
-			 unsigned start, unsigned order,
-			 btree_keys_sort_fn sort,
-			 struct bset_sort_state *state)
+void bch_sort_bsets(struct bset *dst, struct btree_keys *b,
+		    unsigned from, struct btree_node_iter *iter,
+		    btree_keys_sort_fn sort,
+		    struct bset_sort_state *state)
 {
-	u64 start_time;
-	bool used_mempool = false;
-	struct bset *out = (void *) __get_free_pages(__GFP_NOWARN|GFP_NOWAIT,
-						     order);
-	if (!out) {
-		struct page *outp;
+	u64 start_time = local_clock();
+	struct btree_node_iter _iter;
 
-		BUG_ON(order > state->page_order);
+	if (!iter) {
+		struct bset_tree *t;
 
-		outp = mempool_alloc(state->pool, GFP_NOIO);
-		out = page_address(outp);
-		used_mempool = true;
-		order = state->page_order;
+		iter = &_iter;
+		__bch_btree_node_iter_init(iter, b);
+
+		for (t = b->set + from; t <= b->set + b->nsets; t++)
+			bch_btree_node_iter_push(iter, b,
+						 t->data->start,
+						 bset_bkey_last(t->data));
 	}
-
-	start_time = local_clock();
 
 	/*
 	 * If we're only doing a partial sort (start != 0), then we can't merge
@@ -1617,79 +1615,14 @@ static void __btree_sort(struct btree_keys *b, struct btree_node_iter *iter,
 	 * extents in bsets we aren't sorting:
 	 */
 	if (sort)
-		sort(b, out, iter);
-	else if (b->ops->is_extents && !start)
-		btree_mergesort_extents(b, out, b, iter, NULL);
+		sort(b, dst, iter);
+	else if (b->ops->is_extents && !from)
+		btree_mergesort_extents(b, dst, b, iter, NULL);
 	else
-		btree_mergesort_simple(b, out, iter);
+		btree_mergesort_simple(b, dst, iter);
 
-	BUG_ON(set_bytes(out) > (PAGE_SIZE << b->page_order));
-
-	b->nsets = start;
-
-	/* XXX: reenable */
-	if (0 && !start && order == b->page_order) {
-		unsigned u64s = out->u64s;
-		/*
-		 * Our temporary buffer is the same size as the btree node's
-		 * buffer, we can just swap buffers instead of doing a big
-		 * memcpy()
-		 */
-
-		*out = *b->set->data;
-		out->u64s = u64s;
-		swap(out, b->set->data);
-	} else {
-		b->set[start].data->u64s = out->u64s;
-		memcpy(b->set[start].data->start, out->start,
-		       (void *) bset_bkey_last(out) - (void *) out->start);
-	}
-
-	if (used_mempool)
-		mempool_free(virt_to_page(out), state->pool);
-	else
-		free_pages((unsigned long) out, order);
-
-	bch_bset_build_written_tree(b);
-
-	bch_verify_btree_keys_accounting(b);
-
-	if (!start)
+	if (!from)
 		bch_time_stats_update(&state->time, start_time);
-}
-
-void bch_btree_sort_partial(struct btree_keys *b, unsigned start,
-			    struct bset_sort_state *state)
-{
-	size_t order = b->page_order, u64s = 0;
-	struct btree_node_iter iter;
-	struct bset_tree *t;
-
-	__bch_btree_node_iter_init(&iter, b);
-
-	for (t = b->set + start; t <= b->set + b->nsets; t++)
-		bch_btree_node_iter_push(&iter, b,
-					 t->data->start,
-					 bset_bkey_last(t->data));
-
-	if (start) {
-		for (t = b->set + start; t <= b->set + b->nsets; t++)
-			u64s += t->data->u64s;
-
-		order = get_order(__set_bytes(b->set->data, u64s));
-	}
-
-	__btree_sort(b, &iter, start, order, false, state);
-}
-EXPORT_SYMBOL(bch_btree_sort_partial);
-
-void bch_btree_sort_and_fix_extents(struct btree_keys *b,
-				    struct btree_node_iter *iter,
-				    btree_keys_sort_fn sort,
-				    struct bset_sort_state *state)
-{
-	BUG_ON(!sort);
-	__btree_sort(b, iter, 0, b->page_order, sort, state);
 }
 
 /**
@@ -1725,38 +1658,6 @@ void bch_btree_sort_into(struct btree_keys *dst,
 
 	bch_verify_btree_keys_accounting(dst);
 }
-
-#define SORT_CRIT	(4096 / sizeof(u64))
-
-void bch_btree_sort_lazy(struct btree_keys *b,
-			 struct bset_sort_state *state)
-{
-	unsigned crit = SORT_CRIT;
-	int i;
-
-	/* Don't sort if nothing to do */
-	if (!b->nsets)
-		goto out;
-
-	for (i = b->nsets - 1; i >= 0; --i) {
-		crit *= state->crit_factor;
-
-		if (b->set[i].data->u64s < crit) {
-			bch_btree_sort_partial(b, i, state);
-			return;
-		}
-	}
-
-	/* Sort if we'd overflow */
-	if (b->nsets + 1 == MAX_BSETS) {
-		bch_btree_sort(b, state);
-		return;
-	}
-
-out:
-	bch_bset_build_written_tree(b);
-}
-EXPORT_SYMBOL(bch_btree_sort_lazy);
 
 void bch_btree_keys_stats(struct btree_keys *b, struct bset_stats *stats)
 {

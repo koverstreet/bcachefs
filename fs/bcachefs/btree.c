@@ -199,34 +199,126 @@ static inline struct btree_node_entry *write_block(struct cache_set *c,
 	return (void *) b->data + (b->written << (c->block_bits + 9));
 }
 
+static void btree_node_sort(struct cache_set *c, struct btree *b,
+			    unsigned from, struct btree_node_iter *iter,
+			    btree_keys_sort_fn sort)
+{
+	struct btree_node *out;
+	bool used_mempool = false;
+	unsigned order = b->keys.page_order;
+
+	if (from) {
+		struct bset_tree *t;
+		unsigned u64s = 0;
+
+		for (t = b->keys.set + from;
+		     t <= b->keys.set + b->keys.nsets; t++)
+			u64s += t->data->u64s;
+
+		order = get_order(__set_bytes(b->data, u64s));
+	}
+
+	out = (void *) __get_free_pages(__GFP_NOWARN|GFP_NOWAIT, order);
+	if (!out) {
+		struct page *outp;
+
+		outp = mempool_alloc(c->sort.pool, GFP_NOIO);
+		out = page_address(outp);
+		used_mempool = true;
+	}
+
+	bch_sort_bsets(&out->keys, &b->keys, from, iter, sort, &c->sort);
+
+	if (!from) {
+		unsigned u64s = out->keys.u64s;
+
+		BUG_ON(order != b->keys.page_order);
+
+		/*
+		 * Our temporary buffer is the same size as the btree node's
+		 * buffer, we can just swap buffers instead of doing a big
+		 * memcpy()
+		 */
+		*out = *b->data;
+		out->keys.u64s = u64s;
+		swap(out, b->data);
+		b->keys.set->data = &b->data->keys;
+	} else {
+		b->keys.set[from].data->u64s = out->keys.u64s;
+		memcpy(b->keys.set[from].data->start, out->keys.start,
+		       (void *) bset_bkey_last(&out->keys) -
+		       (void *) out->keys.start);
+	}
+
+	b->keys.nsets = from;
+	bch_bset_build_written_tree(&b->keys);
+
+	if (used_mempool)
+		mempool_free(virt_to_page(out), c->sort.pool);
+	else
+		free_pages((unsigned long) out, order);
+
+	bch_verify_btree_keys_accounting(&b->keys);
+}
+
+#define SORT_CRIT	(4096 / sizeof(u64))
+
+/*
+ * We're about to add another bset to the btree node, so if there's currently
+ * too many bsets - sort some of them together:
+ */
+static bool btree_node_compact(struct cache_set *c, struct btree *b)
+{
+	unsigned crit = SORT_CRIT;
+	int i = 0;
+
+	/* Don't sort if nothing to do */
+	if (!b->keys.nsets)
+		goto nosort;
+
+	/* If not a leaf node, always sort */
+	if (b->level)
+		goto sort;
+
+	for (i = b->keys.nsets - 1; i >= 0; --i) {
+		crit *= c->sort.crit_factor;
+
+		if (b->keys.set[i].data->u64s < crit)
+			goto sort;
+	}
+
+	/* Sort if we'd overflow */
+	if (b->keys.nsets + 1 == MAX_BSETS) {
+		i = 0;
+		goto sort;
+	}
+
+nosort:
+	bch_bset_build_written_tree(&b->keys);
+	return false;
+sort:
+	btree_node_sort(c, b, i, NULL, NULL);
+	return true;
+}
+
 /* Returns true if we sorted (i.e. invalidated iterators */
 static void bch_btree_init_next(struct cache_set *c, struct btree *b,
 				struct btree_iter *iter)
 {
-	unsigned nsets = b->keys.nsets;
-	bool sorted;
+	bool did_sort;
 
 	BUG_ON(iter && iter->nodes[b->level] != b);
 
-	/* If not a leaf node, always sort */
-	if (b->level && b->keys.nsets)
-		bch_btree_sort(&b->keys, &c->sort);
-	else
-		bch_btree_sort_lazy(&b->keys, &c->sort);
+	did_sort = btree_node_compact(c, b);
 
-	sorted = nsets != b->keys.nsets;
-
-	/*
-	 * do verify if there was more than one set initially (i.e. we did a
-	 * sort) and we sorted down to a single set:
-	 */
-	if (nsets && !b->keys.nsets)
+	/* do verify if we sorted down to a single set: */
+	if (did_sort && !b->keys.nsets)
 		bch_btree_verify(c, b);
 
 	if (b->written < btree_blocks(c))
 		bch_bset_init_next(&b->keys, &write_block(c, b)->keys);
 
-	if (iter && sorted)
+	if (iter && did_sort)
 		btree_iter_node_set(iter, b);
 
 	clear_btree_node_need_init_next(b);
@@ -416,11 +508,10 @@ void bch_btree_node_read_done(struct cache_set *c, struct btree *b,
 		if (bne->keys.seq == b->data->keys.seq)
 			goto err;
 
-	bch_btree_sort_and_fix_extents(&b->keys, iter,
-				       b->keys.ops->is_extents
-				       ? bch_extent_sort_fix_overlapping
-				       : bch_key_sort_fix_overlapping,
-				       &c->sort);
+	btree_node_sort(c, b, 0, iter,
+			b->keys.ops->is_extents
+			? bch_extent_sort_fix_overlapping
+			: bch_key_sort_fix_overlapping);
 
 	err = "short btree key";
 	if (b->keys.set[0].size &&

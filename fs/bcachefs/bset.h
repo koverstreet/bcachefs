@@ -559,21 +559,14 @@ typedef void (*btree_keys_sort_fn)(struct btree_keys *, struct bset *,
 
 void bch_bset_sort_state_free(struct bset_sort_state *);
 int bch_bset_sort_state_init(struct bset_sort_state *, unsigned);
+
+void bch_sort_bsets(struct bset *, struct btree_keys *, unsigned,
+		    struct btree_node_iter *, btree_keys_sort_fn,
+		    struct bset_sort_state *);
+
 void bch_btree_sort_lazy(struct btree_keys *, struct bset_sort_state *);
 void bch_btree_sort_into(struct btree_keys *, struct btree_keys *,
 			 ptr_filter_fn, struct bset_sort_state *);
-void bch_btree_sort_and_fix_extents(struct btree_keys *,
-				    struct btree_node_iter *,
-				    btree_keys_sort_fn,
-				    struct bset_sort_state *);
-void bch_btree_sort_partial(struct btree_keys *, unsigned,
-			    struct bset_sort_state *);
-
-static inline void bch_btree_sort(struct btree_keys *b,
-				  struct bset_sort_state *state)
-{
-	bch_btree_sort_partial(b, 0, state);
-}
 
 struct bset_stats {
 	size_t sets_written, sets_unwritten;
