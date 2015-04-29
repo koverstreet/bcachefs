@@ -53,10 +53,6 @@ const char *bch_btree_id_names[BTREE_ID_NR] = {
 #undef DEF_BTREE_ID
 
 static int bch_btree_iter_traverse(struct btree_iter *);
-static int __bch_btree_insert_node(struct btree *, struct btree_iter *,
-				   struct keylist *, struct bch_replace_info *,
-				   u64 *, unsigned, struct keylist *,
-				   struct closure *);
 
 static inline void mark_btree_node_intent_locked(struct btree_iter *iter,
 						 unsigned level)
@@ -2203,12 +2199,18 @@ do_init_next:		bch_btree_init_next(iter->c, b, iter);
 		 inserted ? BTREE_INSERT_INSERTED : BTREE_INSERT_NO_INSERT;
 }
 
-static int btree_split(struct btree *b,
-		       struct btree_iter *iter,
-		       struct keylist *insert_keys,
-		       unsigned flags,
-		       struct keylist *parent_keys,
-		       struct closure *stack_cl)
+struct btree_split_state {
+	struct closure		stack_cl;
+	struct keylist		parent_keys;
+};
+
+static int __bch_btree_insert_node(struct btree *, struct btree_iter *,
+				   struct keylist *, struct bch_replace_info *,
+				   u64 *, unsigned, struct btree_split_state *);
+
+static void btree_split(struct btree *b, struct btree_iter *iter,
+			struct keylist *insert_keys, unsigned flags,
+			struct btree_split_state *state)
 {
 	struct cache_set *c = iter->c;
 	struct btree *parent = iter->nodes[b->level + 1];
@@ -2219,26 +2221,11 @@ static int btree_split(struct btree *b,
 	enum btree_insert_status status;
 	unsigned u64s_to_insert = b->level
 		? bch_keylist_nkeys(insert_keys) : 0;
-	int ret;
 
 	BUG_ON(!parent && (b != btree_node_root(b)));
 	BUG_ON(!btree_node_intent_locked(iter, btree_node_root(b)->level));
 
-	/* After this check we cannot return -EAGAIN anymore */
-	ret = btree_check_reserve(c, b, iter, iter->btree_id, 0,
-				  !(flags & BTREE_INSERT_NOFAIL));
-	if (ret) {
-		/* If splitting an interior node, we've already split a leaf,
-		 * so we should have checked for sufficient reserve. We can't
-		 * just restart splitting an interior node since we've already
-		 * modified the btree. */
-		if (!b->level)
-			return ret;
-		else
-			WARN(1, "insufficient reserve for split\n");
-	}
-
-	bch_btree_push_journal_seq(c, b, stack_cl);
+	bch_btree_push_journal_seq(c, b, &state->stack_cl);
 
 	n1 = btree_node_alloc_replacement(c, b);
 	set1 = btree_bset_first(n1);
@@ -2338,10 +2325,10 @@ static int btree_split(struct btree *b,
 		 * can't start adding new keys to parent_keys before emptying it
 		 * out (by doing the insert, which we just did above)
 		 */
-		bch_keylist_add(parent_keys, &n1->key);
-		bch_keylist_add(parent_keys, &n2->key);
+		bch_keylist_add(&state->parent_keys, &n1->key);
+		bch_keylist_add(&state->parent_keys, &n2->key);
 
-		bch_btree_node_write(n2, stack_cl, NULL);
+		bch_btree_node_write(n2, &state->stack_cl, NULL);
 
 		/*
 		 * Just created a new node - if gc is still going to visit the
@@ -2365,10 +2352,10 @@ static int btree_split(struct btree *b,
 			iter->nodes[b->level] = b; /* still have b locked */
 		}
 
-		bch_keylist_add(parent_keys, &n1->key);
+		bch_keylist_add(&state->parent_keys, &n1->key);
 	}
 
-	bch_btree_node_write(n1, stack_cl, NULL);
+	bch_btree_node_write(n1, &state->stack_cl, NULL);
 
 	if (n3) {
 		/* Depth increases, make a new root */
@@ -2377,9 +2364,9 @@ static int btree_split(struct btree *b,
 		/* once for bch_btree_insert_keys(): */
 		btree_iter_node_set(iter, n3);
 
-		bch_btree_insert_keys(n3, iter, parent_keys,
+		bch_btree_insert_keys(n3, iter, &state->parent_keys,
 				      NULL, NULL, 0);
-		bch_btree_node_write(n3, stack_cl, NULL);
+		bch_btree_node_write(n3, &state->stack_cl, NULL);
 
 		/*
 		 * then again so the node iterator points to the keys we just
@@ -2387,26 +2374,28 @@ static int btree_split(struct btree *b,
 		 */
 		btree_iter_node_set(iter, n3);
 
-		closure_sync(stack_cl);
+		closure_sync(&state->stack_cl);
 
 		bch_btree_set_root(c, n3);
 	} else if (!parent) {
-		BUG_ON(parent_keys->start_keys_p
-		       != &parent_keys->inline_keys[0]);
-		bch_keylist_init(parent_keys);
+		BUG_ON(state->parent_keys.start_keys_p !=
+		       state->parent_keys.inline_keys);
+		bch_keylist_init(&state->parent_keys);
 
 		/* Root filled up but didn't need to be split */
-		closure_sync(stack_cl);
+		closure_sync(&state->stack_cl);
 
 		bch_btree_set_root(c, n1);
 	} else {
-		/* Split a non root node */
-		closure_sync(stack_cl);
+		int ret;
 
-		ret = __bch_btree_insert_node(parent, iter, parent_keys, NULL,
-					      NULL, BTREE_INSERT_NOFAIL,
-					      parent_keys, stack_cl);
-		BUG_ON(ret || !bch_keylist_empty(parent_keys));
+		/* Split a non root node */
+		closure_sync(&state->stack_cl);
+
+		ret = __bch_btree_insert_node(parent, iter, &state->parent_keys,
+					      NULL, NULL, BTREE_INSERT_NOFAIL,
+					      state);
+		BUG_ON(ret || !bch_keylist_empty(&state->parent_keys));
 	}
 
 	btree_node_free(c, b);
@@ -2426,8 +2415,6 @@ static int btree_split(struct btree *b,
 	}
 
 	bch_time_stats_update(&c->btree_split_time, start_time);
-
-	return 0;
 }
 
 static int __bch_btree_insert_node(struct btree *b,
@@ -2435,8 +2422,7 @@ static int __bch_btree_insert_node(struct btree *b,
 				   struct keylist *insert_keys,
 				   struct bch_replace_info *replace,
 				   u64 *journal_seq, unsigned flags,
-				   struct keylist *split_keys,
-				   struct closure *stack_cl)
+				   struct btree_split_state *state)
 {
 	BUG_ON(iter->nodes[b->level] != b);
 	BUG_ON(!btree_node_intent_locked(iter, b->level));
@@ -2447,14 +2433,29 @@ static int __bch_btree_insert_node(struct btree *b,
 
 	if (bch_btree_insert_keys(b, iter, insert_keys, replace, journal_seq,
 				  flags) == BTREE_INSERT_NEED_SPLIT) {
+		int ret;
+
 		if (!b->level) {
 			iter->locks_want = BTREE_MAX_DEPTH;
 			if (!bch_btree_iter_upgrade(iter))
 				return -EINTR;
 		}
 
-		return btree_split(b, iter, insert_keys, flags,
-				   split_keys, stack_cl);
+		/* After this check we cannot return -EAGAIN anymore */
+		ret = btree_check_reserve(iter->c, b, iter, iter->btree_id, 0,
+					  !(flags & BTREE_INSERT_NOFAIL));
+		if (ret) {
+			/* If splitting an interior node, we've already split a leaf,
+			 * so we should have checked for sufficient reserve. We can't
+			 * just restart splitting an interior node since we've already
+			 * modified the btree. */
+			if (!b->level)
+				return ret;
+			else
+				WARN(1, "insufficient reserve for split\n");
+		}
+
+		btree_split(b, iter, insert_keys, flags, state);
 	}
 
 	return 0;
@@ -2479,18 +2480,16 @@ int bch_btree_insert_node(struct btree *b,
 			  struct bch_replace_info *replace,
 			  u64 *journal_seq, unsigned flags)
 {
-	struct closure stack_cl;
-	struct keylist split_keys;
+	struct btree_split_state state;
 
-	closure_init_stack(&stack_cl);
-	bch_keylist_init(&split_keys);
+	closure_init_stack(&state.stack_cl);
+	bch_keylist_init(&state.parent_keys);
 
 	if (replace)
 		flags |= FAIL_IF_STALE;
 
 	return __bch_btree_insert_node(b, iter, insert_keys, replace,
-				       journal_seq, flags,
-				       &split_keys, &stack_cl);
+				       journal_seq, flags, &state);
 }
 
 /**
