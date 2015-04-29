@@ -404,6 +404,13 @@ struct btree_node_iter {
 	} data[MAX_BSETS];
 };
 
+static inline void __bch_btree_node_iter_init(struct btree_node_iter *iter,
+					      struct btree_keys *b)
+{
+	iter->used = 0;
+	iter->is_extents = b->ops->is_extents;
+}
+
 void bch_btree_node_iter_push(struct btree_node_iter *, struct btree_keys *,
 			      struct bkey_packed *, struct bkey_packed *);
 void bch_btree_node_iter_init(struct btree_node_iter *, struct btree_keys *,

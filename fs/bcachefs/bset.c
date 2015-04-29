@@ -1180,14 +1180,6 @@ void bch_btree_node_iter_push(struct btree_node_iter *iter,
 	}
 }
 
-static void __bch_btree_node_iter_init(struct btree_node_iter *iter,
-				       struct btree_keys *b,
-				       struct bset_tree *start)
-{
-	iter->used = 0;
-	iter->is_extents = b->ops->is_extents;
-}
-
 /**
  * bch_btree_node_iter_init - initialize a btree node iterator, starting from a
  * given position
@@ -1254,7 +1246,7 @@ void bch_btree_node_iter_init(struct btree_node_iter *iter,
 		BUG();
 	}
 
-	__bch_btree_node_iter_init(iter, b, b->set);
+	__bch_btree_node_iter_init(iter, b);
 
 	for (t = b->set; t <= b->set + b->nsets; t++)
 		bch_btree_node_iter_push(iter, b,
@@ -1279,7 +1271,7 @@ void bch_btree_node_iter_init_from_start(struct btree_node_iter *iter,
 {
 	struct bset_tree *t;
 
-	__bch_btree_node_iter_init(iter, b, b->set);
+	__bch_btree_node_iter_init(iter, b);
 
 	for (t = b->set; t <= b->set + b->nsets; t++)
 		bch_btree_node_iter_push(iter, b,
@@ -1673,7 +1665,7 @@ void bch_btree_sort_partial(struct btree_keys *b, unsigned start,
 	struct btree_node_iter iter;
 	struct bset_tree *t;
 
-	__bch_btree_node_iter_init(&iter, b, &b->set[start]);
+	__bch_btree_node_iter_init(&iter, b);
 
 	for (t = b->set + start; t <= b->set + b->nsets; t++)
 		bch_btree_node_iter_push(&iter, b,

@@ -327,8 +327,7 @@ void bch_btree_node_read_done(struct cache_set *c, struct btree *b,
 	int ret;
 
 	iter = mempool_alloc(c->fill_iter, GFP_NOIO);
-	iter->used = 0;
-	iter->is_extents = b->keys.ops->is_extents;
+	__bch_btree_node_iter_init(iter, &b->keys);
 
 	err = "dynamic fault";
 	if (bch_meta_read_fault("btree"))
