@@ -429,6 +429,7 @@ void bch_btree_node_read_done(struct cache_set *c, struct btree *b,
 			    &b->keys.set[0].end) < 0)
 		goto err;
 
+	set_btree_node_need_init_next(b);
 out:
 	mempool_free(iter, c->fill_iter);
 	return;

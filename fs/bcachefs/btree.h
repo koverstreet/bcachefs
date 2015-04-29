@@ -176,21 +176,6 @@ static inline unsigned bset_byte_offset(struct btree *b, void *i)
 	return i - (void *) b->data;
 }
 
-static inline size_t bch_btree_keys_u64s_remaining(struct btree *b)
-{
-	struct bset *i = btree_bset_last(b);
-
-	BUG_ON((PAGE_SIZE << b->keys.page_order) <
-	       (bset_byte_offset(b, i) + set_bytes(i)));
-
-	if (!b->keys.last_set_unwritten)
-		return 0;
-
-	return ((PAGE_SIZE << b->keys.page_order) -
-		(bset_byte_offset(b, i) + set_bytes(i))) /
-		sizeof(u64);
-}
-
 static inline size_t btree_bytes(struct cache_set *c)
 {
 	return c->btree_pages * PAGE_SIZE;
@@ -206,7 +191,22 @@ static inline unsigned btree_blocks(struct cache_set *c)
 	return btree_sectors(c) >> c->block_bits;
 }
 
-/* Looping macros */
+static inline size_t bch_btree_keys_u64s_remaining(struct btree *b)
+{
+	struct bset *i = btree_bset_last(b);
+
+	BUG_ON((PAGE_SIZE << b->keys.page_order) <
+	       (bset_byte_offset(b, i) + set_bytes(i)));
+
+	if (!b->keys.last_set_unwritten) {
+		BUG_ON(b->written < btree_blocks(b->c));
+		return 0;
+	}
+
+	return ((PAGE_SIZE << b->keys.page_order) -
+		(bset_byte_offset(b, i) + set_bytes(i))) /
+		sizeof(u64);
+}
 
 #define for_each_cached_btree(_b, _c, _tbl, _iter, _pos)		\
 	for ((_tbl) = rht_dereference_rcu((_c)->btree_cache_table.tbl,	\
