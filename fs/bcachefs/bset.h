@@ -311,7 +311,8 @@ void bch_bset_init_next(struct btree_keys *, struct bset *);
 void bch_bset_build_written_tree(struct btree_keys *);
 void bch_bset_fix_invalidated_key(struct btree_keys *, struct bkey *);
 bool bch_bkey_try_merge(struct btree_keys *, struct bkey *, struct bkey *);
-void bch_bset_insert(struct btree_keys *, struct bkey *, struct bkey *);
+unsigned bch_bset_insert_with_hint(struct btree_keys *, struct btree_iter *,
+				   struct bkey *, struct bkey *);
 unsigned bch_btree_insert_key(struct btree_keys *, struct bkey *,
 			      struct bkey *);
 
@@ -563,8 +564,6 @@ bch_btree_iter_next_overlapping(struct btree_iter *iter,
 void bch_btree_iter_push(struct btree_iter *, struct bkey *, struct bkey *);
 struct bkey *bch_btree_iter_init(struct btree_keys *, struct btree_iter *,
 				 struct bkey *);
-void bch_btree_iter_fix(struct btree_iter *iter, struct bkey *top,
-			struct bkey *new);
 
 struct bkey *__bch_bset_search(struct btree_keys *, struct bset_tree *,
 			       const struct bkey *);

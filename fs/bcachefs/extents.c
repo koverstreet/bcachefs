@@ -689,7 +689,6 @@ static bool handle_existing_key_newer(struct cache_set *c,
 				      struct btree_iter *iter)
 {
 	BKEY_PADDED(key) temp;
-	struct bkey *top;
 
 	switch (bch_extent_overlap(k, insert)) {
 	case BCH_EXTENT_OVERLAP_FRONT:
@@ -708,28 +707,18 @@ static bool handle_existing_key_newer(struct cache_set *c,
 		bch_subtract_sectors(c, insert, KEY_START(k),
 				     KEY_SIZE(k));
 
-		/* We have an overlap where @k (newer version splits
-		 * @insert (ker version) in two. */
+		/*
+		 * We have an overlap where @k (newer version splits
+		 * @insert (older version) in two.
+		 *
+		 * Insert the first half of @insert ourselves, then update
+		 * @insert to to represent the other half of the split.
+		 */
 		bkey_copy(&temp.key, insert);
+		bch_cut_front(k, insert);
 		bch_cut_back(&START_KEY(k), &temp.key);
 
-		if (bkey_written(b, k)) {
-			struct bset_tree *l = bset_tree_last(b);
-
-			top = bch_bset_search(b, l, &START_KEY(&temp.key));
-			while (top != bset_bkey_last(l->data) &&
-			       bkey_cmp(&temp.key, &START_KEY(top)) > 0)
-				top = bkey_next(top);
-		} else
-			top = k;
-
-		/* The caller will insert the second half of the new
-		 * key, we just have to update @insert. */
-		bch_cut_front(k, insert);
-
-		/* Insert the first half of @insert ourselves. */
-		bch_bset_insert(b, top, &temp.key);
-		bch_btree_iter_fix(iter, top, &temp.key);
+		bch_bset_insert_with_hint(b, iter, k, &temp.key);
 		break;
 
 	case BCH_EXTENT_OVERLAP_ALL:
@@ -748,7 +737,8 @@ static bool bch_extent_insert_fixup(struct btree_keys *b,
 {
 	struct cache_set *c = container_of(b, struct btree, keys)->c;
 	unsigned sectors_found = 0;  /* for cmpxchg */
-	struct bkey *k, *top;
+	struct bkey *k;
+	BKEY_PADDED(key) temp;
 
 	BUG_ON(!KEY_SIZE(insert));
 
@@ -838,41 +828,18 @@ static bool bch_extent_insert_fixup(struct btree_keys *b,
 
 			/*
 			 * We overlapped in the middle of an existing key: that
-			 * means we have to split the old key. But we have to do
-			 * slightly different things depending on whether the
-			 * old key has been written out yet.
+			 * means we have to split the old key: the old key will
+			 * represent one half of the split, and we have to
+			 * insert a new key to represent the other half.
 			 */
-			if (bkey_written(b, k)) {
-				/*
-				 * We insert a new key to cover the top of the
-				 * old key, and the old key is modified in place
-				 * to represent the bottom split.
-				 *
-				 * It's completely arbitrary whether the new key
-				 * is the top or the bottom, but it has to match
-				 * up with what btree_sort_fixup() does - it
-				 * doesn't check for this kind of overlap, it
-				 * depends on us inserting a new key for the top
-				 * here.
-				 */
-				top = bch_bset_search(b, bset_tree_last(b),
-						      insert);
-				bch_bset_insert(b, top, k);
-			} else {
-				BKEY_PADDED(key) temp;
-				bkey_copy(&temp.key, k);
-				bch_bset_insert(b, k, &temp.key);
-				top = bkey_next(k);
-			}
+			bkey_copy(&temp.key, k);
 
-			bch_cut_front(insert, top);
+			bch_cut_front(insert, &temp.key);
 			bch_cut_back(&START_KEY(insert), k);
 			bch_bset_fix_invalidated_key(b, k);
 
-			/*
-			 * Warning: the iterator is no longer valid, since we
-			 * moved keys from underneath iter->data[n].k and .end
-			 */
+			bch_bset_insert_with_hint(b, iter, k, &temp.key);
+
 			return false;
 		}
 	}

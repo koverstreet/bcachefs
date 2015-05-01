@@ -676,6 +676,28 @@ EXPORT_SYMBOL(bch_bset_build_written_tree);
 
 /* Insert */
 
+/**
+ * Used by extent fixup functions which insert entries into the bset.
+ * We have to update the iterator's cached ->end pointer.
+ *
+ * @top must be in the last bset.
+ */
+static void bch_btree_iter_fix(struct btree_iter *iter, struct bkey *where,
+			       struct bkey *new)
+{
+	struct btree_iter_set *set;
+	u64 n = KEY_U64s(new);
+
+	for (set = iter->data;
+	     set < iter->data + iter->used;
+	     set++) {
+		if (set->k >= where)
+			set->k = (struct bkey *) ((u64 *) set->k + n);
+		if (set->end >= where)
+			set->end = (struct bkey *) ((u64 *) set->end + n);
+	}
+}
+
 void bch_bset_fix_invalidated_key(struct btree_keys *b, struct bkey *k)
 {
 	struct bset_tree *t;
@@ -794,12 +816,11 @@ bool bch_bkey_try_merge(struct btree_keys *b, struct bkey *l, struct bkey *r)
 }
 EXPORT_SYMBOL(bch_bkey_try_merge);
 
-void bch_bset_insert(struct btree_keys *b, struct bkey *where,
-		     struct bkey *insert)
+static void __bch_bset_insert(struct btree_keys *b, struct bkey *where,
+			      struct bkey *insert)
 {
 	struct bset_tree *t = bset_tree_last(b);
 
-	BUG_ON(!b->last_set_unwritten);
 	BUG_ON(bset_byte_offset(b, t->data) +
 	       __set_bytes(t->data, t->data->keys + KEY_U64s(insert)) >
 	       PAGE_SIZE << b->page_order);
@@ -812,7 +833,69 @@ void bch_bset_insert(struct btree_keys *b, struct bkey *where,
 	bkey_copy(where, insert);
 	bch_bset_fix_lookup_table(b, t, where);
 }
-EXPORT_SYMBOL(bch_bset_insert);
+
+static unsigned bch_bset_insert(struct btree_keys *b, struct btree_iter *iter,
+				struct bkey *where, struct bkey *insert)
+{
+	struct bset *i = bset_tree_last(b)->data;
+	struct bkey *prev = NULL;
+	BKEY_PADDED(k) tmp;
+
+	BUG_ON(b->ops->is_extents && !KEY_SIZE(insert));
+	BUG_ON(!b->last_set_unwritten);
+
+	while (where != bset_bkey_last(i) &&
+	       bkey_cmp(insert, b->ops->is_extents
+			? &START_KEY(where) : where) > 0)
+		prev = where, where = bkey_next(where);
+
+	/* prev is in the tree, if we merge we're done */
+	if (prev &&
+	    bch_bkey_try_merge(b, prev, insert))
+		return BTREE_INSERT_STATUS_BACK_MERGE;
+
+	if (where != bset_bkey_last(i) &&
+	    b->ops->is_extents &&
+	    bch_val_u64s(where) == bch_val_u64s(insert) && !KEY_SIZE(where)) {
+		bkey_copy(where, insert);
+		return BTREE_INSERT_STATUS_OVERWROTE;
+	}
+
+	if (where != bset_bkey_last(i) &&
+	    bkey_bytes(insert) <= sizeof(tmp)) {
+		bkey_copy(&tmp.k, insert);
+		insert = &tmp.k;
+
+		/*
+		 * bch_bkey_try_merge() modifies the left argument, but we can't
+		 * modify insert since the caller needs to be able to journal
+		 * the key that was actually inserted (and it can't just pass us
+		 * a copy of insert, since ->insert_fixup() might trim insert if
+		 * this is a replace operation)
+		 */
+		if (bch_bkey_try_merge(b, insert, where)) {
+			bkey_copy(where, insert);
+			return BTREE_INSERT_STATUS_FRONT_MERGE;
+		}
+	}
+
+	__bch_bset_insert(b, where, insert);
+	bch_btree_iter_fix(iter, where, insert);
+	return BTREE_INSERT_STATUS_INSERT;
+}
+
+unsigned bch_bset_insert_with_hint(struct btree_keys *b,
+				   struct btree_iter *iter,
+				   struct bkey *where,
+				   struct bkey *insert)
+{
+	if (bkey_written(b, where))
+		where = bch_bset_search(b, bset_tree_last(b),
+					&START_KEY(insert));
+
+	return bch_bset_insert(b, iter, where, insert);
+}
+EXPORT_SYMBOL(bch_bset_insert_with_hint);
 
 /**
  * bch_btree_insert_key - insert a single key @k into @b
@@ -824,60 +907,25 @@ EXPORT_SYMBOL(bch_bset_insert);
  * @replace_key was only partially present @k will be modified to represent what
  * was actually inserted.
  */
-unsigned bch_btree_insert_key(struct btree_keys *b, struct bkey *k,
-			      struct bkey *replace_key)
+unsigned bch_btree_insert_key(struct btree_keys *b,
+			      struct bkey *insert,
+			      struct bkey *replace)
 {
 	int oldsize = bch_count_data(b);
 	unsigned status = BTREE_INSERT_STATUS_NO_INSERT;
-	struct bset *i = bset_tree_last(b)->data;
-	struct bkey *m, *prev = NULL;
+	struct bkey *where;
 	struct btree_iter iter;
-	BKEY_PADDED(k) tmp;
 
-	BUG_ON(b->ops->is_extents && !KEY_SIZE(k));
+	BUG_ON(b->ops->is_extents && !KEY_SIZE(insert));
 
-	m = bch_btree_iter_init(b, &iter, b->ops->is_extents
-				? &START_KEY(k) : k);
+	where = bch_btree_iter_init(b, &iter, b->ops->is_extents
+				    ? &START_KEY(insert)
+				    : insert);
 
-	if (b->ops->insert_fixup(b, k, &iter, replace_key))
+	if (b->ops->insert_fixup(b, insert, &iter, replace))
 		goto done;
 
-	while (m != bset_bkey_last(i) &&
-	       bkey_cmp(k, b->ops->is_extents ? &START_KEY(m) : m) > 0)
-		prev = m, m = bkey_next(m);
-
-	/* prev is in the tree, if we merge we're done */
-	status = BTREE_INSERT_STATUS_BACK_MERGE;
-	if (prev &&
-	    bch_bkey_try_merge(b, prev, k))
-		goto done;
-
-	status = BTREE_INSERT_STATUS_OVERWROTE;
-	if (m != bset_bkey_last(i) &&
-	    b->ops->is_extents &&
-	    bch_val_u64s(m) == bch_val_u64s(k) && !KEY_SIZE(m))
-		goto copy;
-
-	status = BTREE_INSERT_STATUS_FRONT_MERGE;
-	if (m != bset_bkey_last(i) &&
-	    bkey_bytes(k) <= sizeof(tmp)) {
-		bkey_copy(&tmp.k, k);
-		k = &tmp.k;
-
-		/*
-		 * bch_bkey_try_merge() modifies the left argument, but we can't
-		 * modify k since the caller needs to be able to journal the key
-		 * that was actually inserted (and it can't just pass us a copy
-		 * of k, since ->insert_fixup() might trim k if this is a
-		 * replace operation)
-		 */
-		if (bch_bkey_try_merge(b, k, m))
-			goto copy;
-	}
-
-	status = BTREE_INSERT_STATUS_INSERT;
-	bch_bset_insert(b, m, k);
-copy:	bkey_copy(m, k);
+	status = bch_bset_insert(b, &iter, where, insert);
 done:
 	BUG_ON(bch_count_data(b) < oldsize);
 	return status;
@@ -1118,29 +1166,6 @@ struct bkey *bch_btree_iter_next_all(struct btree_iter *iter)
 
 }
 EXPORT_SYMBOL(bch_btree_iter_next_all);
-
-/**
- * Used by extent fixup functions which insert entries into the bset.
- * We have to update the iterator's cached ->end pointer.
- *
- * @top must be in the last bset.
- */
-void bch_btree_iter_fix(struct btree_iter *iter, struct bkey *top,
-			struct bkey *new)
-{
-	struct btree_iter_set *set;
-	u64 n = KEY_U64s(new);
-
-	for (set = iter->data;
-	     set < iter->data + iter->used;
-	     set++) {
-		if (set->k >= top)
-			set->k = (struct bkey *) ((u64 *) set->k + n);
-		if (set->end >= top)
-			set->end = (struct bkey *) ((u64 *) set->end + n);
-	}
-}
-EXPORT_SYMBOL(bch_btree_iter_fix);
 
 /* Mergesort */
 
