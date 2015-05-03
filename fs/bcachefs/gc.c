@@ -417,8 +417,7 @@ static void bch_coalesce_nodes(struct btree *old_nodes[GC_MERGE_NODES],
 			 block_bytes(c)) > blocks)
 		return;
 
-	res = bch_btree_reserve_get(c, parent, NULL, iter->btree_id,
-				    nr_old_nodes, false);
+	res = bch_btree_reserve_get(c, parent, NULL, nr_old_nodes, false);
 	if (IS_ERR(res))
 		return;
 
@@ -489,6 +488,7 @@ static void bch_coalesce_nodes(struct btree *old_nodes[GC_MERGE_NODES],
 			s1->u64s += s2->u64s;
 
 			six_unlock_write(&n2->lock);
+			btree_open_bucket_put(c, n2);
 			btree_node_free(c, n2);
 			six_unlock_intent(&n2->lock);
 
@@ -563,6 +563,9 @@ static void bch_coalesce_nodes(struct btree *old_nodes[GC_MERGE_NODES],
 	BUG_ON(iter->nodes[old_nodes[0]->level] != old_nodes[0]);
 
 	btree_iter_node_set(iter, new_nodes[0]);
+
+	for (i = 0; i < nr_new_nodes; i++)
+		btree_open_bucket_put(c, new_nodes[i]);
 
 	/* Free the old nodes and update our sliding window */
 	for (i = 0; i < nr_old_nodes; i++) {

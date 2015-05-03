@@ -217,7 +217,7 @@ static inline size_t __buckets_free_cache(struct cache *ca,
 		fifo_used(&ca->free[reserve]) +
 		fifo_used(&ca->free_inc);
 
-	if (reserve == RESERVE_NONE || reserve == RESERVE_TIERING)
+	if (reserve == RESERVE_NONE)
 		free = max_t(ssize_t, 0, free - ca->reserve_buckets_count);
 
 	return free;
@@ -264,5 +264,6 @@ void bch_mark_metadata_bucket(struct cache *, struct bucket *, bool);
 u8 bch_mark_data_bucket(struct cache_set *, struct cache *, struct btree *,
 			const struct bch_extent_ptr *, int, bool);
 void bch_unmark_open_bucket(struct cache *, struct bucket *);
+void bch_unmark_meta_bucket(struct cache *, struct bucket *g);
 
 #endif /* _BUCKETS_H */

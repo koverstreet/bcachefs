@@ -1885,15 +1885,10 @@ static const char *cache_alloc(struct bcache_superblock *sb,
 	free_inc_reserve = reserve_none << 1;
 	heap_size = max_t(size_t, free_inc_reserve, movinggc_reserve);
 
-	err = "cannot allocate memory";
-	for (i = 0; i < BTREE_ID_NR; i++)
-		if (!init_fifo(&ca->free[i], BTREE_NODE_RESERVE, GFP_KERNEL))
-			goto err;
-
 	if (!init_fifo(&ca->free[RESERVE_PRIO], prio_buckets(ca), GFP_KERNEL) ||
+	    !init_fifo(&ca->free[RESERVE_BTREE], BTREE_NODE_RESERVE, GFP_KERNEL) ||
 	    !init_fifo(&ca->free[RESERVE_MOVINGGC],
 		       movinggc_reserve, GFP_KERNEL) ||
-	    !init_fifo(&ca->free[RESERVE_TIERING], 0, GFP_KERNEL) ||
 	    !init_fifo(&ca->free[RESERVE_NONE], reserve_none, GFP_KERNEL) ||
 	    !init_fifo(&ca->free_inc,	free_inc_reserve, GFP_KERNEL) ||
 	    !init_heap(&ca->heap,	heap_size, GFP_KERNEL) ||
@@ -1925,7 +1920,7 @@ static const char *cache_alloc(struct bcache_superblock *sb,
 	}
 
 	ca->tiering_write_point.nr_replicas = 1;
-	ca->tiering_write_point.reserve = RESERVE_TIERING;
+	ca->tiering_write_point.reserve = RESERVE_NONE;
 	ca->tiering_write_point.group = &ca->self;
 
 	kobject_get(&c->kobj);

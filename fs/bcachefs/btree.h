@@ -80,10 +80,13 @@
  */
 
 #include "bcache.h"
+#include "alloc.h"
 #include "bset.h"
 #include "debug.h"
 #include "six.h"
 #include "journal_types.h"
+
+struct open_bucket;
 
 extern const char *bch_btree_id_names[BTREE_ID_NR];
 
@@ -114,6 +117,8 @@ struct btree {
 	struct btree_node	*data;
 
 	struct cache_set	*c;
+
+	struct open_bucket	*ob;
 
 	/* lru list */
 	struct list_head	list;
@@ -445,8 +450,13 @@ void bch_btree_reserve_put(struct cache_set *, struct btree_reserve *);
 struct btree_reserve *bch_btree_reserve_get(struct cache_set *c,
 					    struct btree *,
 					    struct btree_iter *,
-					    enum alloc_reserve,
 					    unsigned, bool);
+
+static inline void btree_open_bucket_put(struct cache_set *c, struct btree *b)
+{
+	bch_open_bucket_put(c, b->ob);
+	b->ob = NULL;
+}
 
 struct btree *__btree_node_alloc_replacement(struct cache_set *,
 					     struct btree *,

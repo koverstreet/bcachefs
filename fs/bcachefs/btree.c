@@ -1550,9 +1550,16 @@ retry:
 
 void btree_node_free(struct cache_set *c, struct btree *b)
 {
+	struct bch_extent_ptr *ptr;
+	struct cache *ca;
+	BKEY_PADDED(k) tmp;
+
+	bkey_copy(&tmp.k, &b->key);
+
 	trace_bcache_btree_node_free(b);
 
 	BUG_ON(b == btree_node_root(b));
+	BUG_ON(b->ob);
 
 	if (btree_node_dirty(b))
 		btree_complete_write(c, b, btree_current_write(b));
@@ -1567,13 +1574,16 @@ void btree_node_free(struct cache_set *c, struct btree *b)
 
 	six_lock_write(&b->lock);
 
-	bch_bucket_free(c, &b->key);
-
 	mutex_lock(&c->btree_cache_lock);
 	mca_bucket_free(c, b);
 	mutex_unlock(&c->btree_cache_lock);
 
 	six_unlock_write(&b->lock);
+
+	rcu_read_lock();
+	extent_for_each_online_device(c, bkey_i_to_s_extent(&tmp.k), ptr, ca)
+		bch_unmark_meta_bucket(ca, PTR_BUCKET(ca, ptr));
+	rcu_read_unlock();
 }
 
 /**
@@ -1644,27 +1654,28 @@ static void bch_btree_set_root(struct cache_set *c, struct btree *b)
 }
 
 static struct btree *__bch_btree_node_alloc(struct cache_set *c,
-					    enum alloc_reserve alloc_reserve,
-					    bool check_enospc)
+					    bool check_enospc,
+					    struct closure *cl)
 {
-	BKEY_PADDED(key) k;
+	struct open_bucket *ob;
 	struct btree *b;
-	int ret;
 
-	ret = bch_bucket_alloc_set(c, alloc_reserve, &k.key,
-				   CACHE_SET_META_REPLICAS_WANT(&c->sb),
-				   &c->cache_all, check_enospc, NULL);
-	if (ret)
-		return ERR_PTR(ret);
+	ob = bch_open_bucket_alloc(c, &c->btree_write_point, check_enospc, cl);
+	if (IS_ERR(ob))
+		return ERR_CAST(ob);
 
-	BUG_ON(k.key.k.size);
+	spin_unlock(&ob->lock);
+
+	BUG_ON(ob->key.k.size);
 
 	b = mca_alloc(c, NULL, 0, 0, NULL);
 
 	/* we hold cannibalize_lock: */
 	BUG_ON(IS_ERR_OR_NULL(b));
+	BUG_ON(b->ob);
 
-	bkey_copy(&b->key, &k.key);
+	bkey_copy(&b->key, &ob->key);
+	b->ob = ob;
 
 	return b;
 }
@@ -1781,6 +1792,9 @@ void bch_btree_reserve_put(struct cache_set *c, struct btree_reserve *reserve)
 {
 	while (reserve->nr) {
 		struct btree *b = reserve->b[--reserve->nr];
+		struct open_bucket *ob = b->ob;
+
+		b->ob = NULL;
 
 		/* Mark that it's not actually hashed: */
 		bkey_i_to_extent(&b->key)->v.ptr->_val = 0;
@@ -1791,13 +1805,14 @@ void bch_btree_reserve_put(struct cache_set *c, struct btree_reserve *reserve)
 
 		six_unlock_write(&b->lock);
 		six_unlock_intent(&b->lock);
+
+		bch_open_bucket_put(c, ob);
 	}
 
 	mempool_free(reserve, c->btree_reserve_pool);
 }
 
 static struct btree_reserve *__bch_btree_reserve_get(struct cache_set *c,
-					enum alloc_reserve alloc_reserve,
 					bool check_enospc,
 					unsigned nr_nodes,
 					struct closure *cl)
@@ -1808,6 +1823,10 @@ static struct btree_reserve *__bch_btree_reserve_get(struct cache_set *c,
 
 	BUG_ON(nr_nodes > BTREE_RESERVE_MAX);
 
+	/*
+	 * Protects reaping from the btree node cache and using the btree node
+	 * open bucket reserve:
+	 */
 	ret = mca_cannibalize_lock(c, cl);
 	if (ret)
 		return ERR_PTR(ret);
@@ -1817,8 +1836,7 @@ static struct btree_reserve *__bch_btree_reserve_get(struct cache_set *c,
 	reserve->nr = 0;
 
 	while (reserve->nr < nr_nodes) {
-		b = __bch_btree_node_alloc(c, alloc_reserve,
-					   check_enospc);
+		b = __bch_btree_node_alloc(c, check_enospc, cl);
 		if (IS_ERR(b)) {
 			ret = PTR_ERR(b);
 			goto err_free;
@@ -1832,23 +1850,21 @@ static struct btree_reserve *__bch_btree_reserve_get(struct cache_set *c,
 err_free:
 	bch_btree_reserve_put(c, reserve);
 	mca_cannibalize_unlock(c);
-	trace_bcache_btree_reserve_get_fail(c, alloc_reserve,
-					    nr_nodes, cl);
+	trace_bcache_btree_reserve_get_fail(c, nr_nodes, cl);
 	return ERR_PTR(ret);
 }
 
 struct btree_reserve *bch_btree_reserve_get(struct cache_set *c,
 					    struct btree *b,
 					    struct btree_iter *iter,
-					    enum alloc_reserve alloc_reserve,
 					    unsigned extra_nodes,
 					    bool check_enospc)
 {
 	unsigned depth = btree_node_root(b)->level - b->level;
 	unsigned nr_nodes = btree_reserve_required_nodes(depth) + extra_nodes;
 
-	return __bch_btree_reserve_get(c, alloc_reserve, check_enospc,
-				       nr_nodes, iter ? &iter->cl : NULL);
+	return __bch_btree_reserve_get(c, check_enospc, nr_nodes,
+				       iter ? &iter->cl : NULL);
 
 }
 
@@ -1878,7 +1894,7 @@ int bch_btree_root_alloc(struct cache_set *c, enum btree_id id,
 	closure_init_stack(&cl);
 
 	while (1) {
-		reserve = __bch_btree_reserve_get(c, id, true, 1, &cl);
+		reserve = __bch_btree_reserve_get(c, true, 1, &cl);
 		if (!IS_ERR(reserve))
 			break;
 
@@ -1894,6 +1910,7 @@ int bch_btree_root_alloc(struct cache_set *c, enum btree_id id,
 	bch_btree_node_write(b, writes, NULL);
 
 	bch_btree_set_root(c, b);
+	btree_open_bucket_put(c, b);
 	six_unlock_intent(&b->lock);
 
 	return 0;
@@ -1947,8 +1964,7 @@ int bch_btree_node_rewrite(struct btree *b, struct btree_iter *iter, bool wait)
 	if (!bch_btree_iter_upgrade(iter))
 		return -EINTR;
 
-	reserve = bch_btree_reserve_get(c, b, wait ? iter : NULL,
-					iter->btree_id, 1, true);
+	reserve = bch_btree_reserve_get(c, b, wait ? iter : NULL, 1, true);
 	if (IS_ERR(reserve)) {
 		trace_bcache_btree_gc_rewrite_node_fail(b);
 		return PTR_ERR(reserve);
@@ -1975,6 +1991,7 @@ int bch_btree_node_rewrite(struct btree *b, struct btree_iter *iter, bool wait)
 		bch_btree_set_root(c, n);
 	}
 
+	btree_open_bucket_put(iter->c, n);
 	btree_node_free(iter->c, b);
 
 	BUG_ON(iter->nodes[b->level] != b);
@@ -2464,6 +2481,12 @@ static void btree_split(struct btree *b, struct btree_iter *iter,
 		BUG_ON(ret || !bch_keylist_empty(&state->parent_keys));
 	}
 
+	btree_open_bucket_put(c, n1);
+	if (n2)
+		btree_open_bucket_put(c, n2);
+	if (n3)
+		btree_open_bucket_put(c, n3);
+
 	btree_node_free(c, b);
 
 	/* Update iterator, and finish insert now that new nodes are visible: */
@@ -2514,8 +2537,7 @@ static int __bch_btree_insert_node(struct btree *b,
 			if (!bch_btree_iter_upgrade(iter))
 				return -EINTR;
 
-			res = bch_btree_reserve_get(iter->c, b, iter,
-						iter->btree_id, 0,
+			res = bch_btree_reserve_get(iter->c, b, iter, 0,
 						!(flags & BTREE_INSERT_NOFAIL));
 			if (IS_ERR(res))
 				return PTR_ERR(res);

@@ -68,6 +68,7 @@
 #include <trace/events/bcachefs.h>
 
 static size_t bch_bucket_alloc(struct cache *, enum alloc_reserve);
+static void __bch_bucket_free(struct cache *, struct bucket *);
 
 /* Allocation groups: */
 
@@ -727,10 +728,6 @@ static bool __bch_allocator_push(struct cache *ca, long bucket)
 {
 	unsigned i;
 
-	/* Prios/gens are actually the most important reserve */
-	if (fifo_push(&ca->free[RESERVE_PRIO], bucket))
-		goto success;
-
 	for (i = 0; i < RESERVE_NR; i++)
 		if (fifo_push(&ca->free[i], bucket))
 			goto success;
@@ -852,7 +849,6 @@ out:
  * */
 static size_t bch_bucket_alloc(struct cache *ca, enum alloc_reserve reserve)
 {
-	bool meta = reserve <= RESERVE_METADATA_LAST;
 	struct bucket *g;
 	long r;
 
@@ -875,7 +871,7 @@ out:
 
 	g = ca->buckets + r;
 
-	if (meta)
+	if (allocation_is_metadata(reserve))
 		bch_mark_metadata_bucket(ca, g, false);
 
 	g->read_prio = ca->set->prio_clock[READ].hand;
@@ -884,24 +880,12 @@ out:
 	return r;
 }
 
-void __bch_bucket_free(struct cache *ca, struct bucket *g)
+static void __bch_bucket_free(struct cache *ca, struct bucket *g)
 {
 	bch_mark_free_bucket(ca, g);
 
 	g->read_prio = ca->set->prio_clock[READ].hand;
 	g->write_prio = ca->set->prio_clock[WRITE].hand;
-}
-
-void bch_bucket_free(struct cache_set *c, struct bkey_i *k)
-{
-	struct bkey_s_extent e = bkey_i_to_s_extent(k);
-	struct bch_extent_ptr *ptr;
-	struct cache *ca;
-
-	rcu_read_lock();
-	extent_for_each_online_device(c, e, ptr, ca)
-		__bch_bucket_free(ca, PTR_BUCKET(ca, ptr));
-	rcu_read_unlock();
 }
 
 static void bch_bucket_free_never_used(struct cache_set *c, struct bkey_i *k)
@@ -995,7 +979,8 @@ static struct cache *bch_next_cache(struct cache_set *c,
 
 static enum bucket_alloc_ret __bch_bucket_alloc_set(struct cache_set *c,
 						    enum alloc_reserve reserve,
-						    struct bkey_i *k, int n,
+						    struct bkey_i *k,
+						    int nr_replicas,
 						    struct cache_group *devs,
 						    bool check_enospc)
 {
@@ -1004,7 +989,7 @@ static enum bucket_alloc_ret __bch_bucket_alloc_set(struct cache_set *c,
 	enum bucket_alloc_ret ret;
 	int i;
 
-	BUG_ON(n <= 0 || n > BKEY_EXTENT_PTRS_MAX);
+	BUG_ON(nr_replicas <= 0 || nr_replicas > BKEY_EXTENT_PTRS_MAX);
 
 	if (!devs->nr_devices ||
 	    (check_enospc && cache_set_full(c)))
@@ -1017,7 +1002,7 @@ static enum bucket_alloc_ret __bch_bucket_alloc_set(struct cache_set *c,
 
 	/* sort by free space/prio of oldest data in caches */
 
-	for (i = 0; i < n; i++) {
+	for (i = 0; i < nr_replicas; i++) {
 		struct cache *ca;
 		unsigned seq;
 		size_t r;
@@ -1071,15 +1056,16 @@ err:
 	return ret;
 }
 
-int bch_bucket_alloc_set(struct cache_set *c, enum alloc_reserve reserve,
-			 struct bkey_i *k, int n, struct cache_group *devs,
-			 bool check_enospc, struct closure *cl)
+static int bch_bucket_alloc_set(struct cache_set *c, enum alloc_reserve reserve,
+				struct bkey_i *k, int nr_replicas,
+				struct cache_group *devs,
+				bool check_enospc, struct closure *cl)
 {
 	struct closure_waitlist *waitlist = NULL;
 	bool waiting = false;
 
 	while (1) {
-		switch (__bch_bucket_alloc_set(c, reserve, k, n,
+		switch (__bch_bucket_alloc_set(c, reserve, k, nr_replicas,
 					       devs, check_enospc)) {
 		case ALLOC_SUCCESS:
 			if (waitlist)
@@ -1146,13 +1132,14 @@ void bch_open_bucket_put(struct cache_set *c, struct open_bucket *b)
 }
 
 static struct open_bucket *bch_open_bucket_get(struct cache_set *c,
+					       unsigned nr_reserved,
 					       struct closure *cl)
 {
 	struct open_bucket *ret;
 
 	spin_lock(&c->open_buckets_lock);
 
-	if (c->open_buckets_nr_free) {
+	if (c->open_buckets_nr_free > nr_reserved) {
 		BUG_ON(list_empty(&c->open_buckets_free));
 		ret = list_first_entry(&c->open_buckets_free,
 				       struct open_bucket, list);
@@ -1176,18 +1163,25 @@ static struct open_bucket *bch_open_bucket_get(struct cache_set *c,
 	return ret;
 }
 
-static struct open_bucket *bch_open_bucket_alloc(struct cache_set *c,
-						 struct write_point *wp,
-						 bool check_enospc,
-						 struct closure *cl)
+struct open_bucket *bch_open_bucket_alloc(struct cache_set *c,
+					  struct write_point *wp,
+					  bool check_enospc,
+					  struct closure *cl)
 {
 	int ret;
 	struct open_bucket *b;
 	struct bkey_s_extent e;
 	struct bch_extent_ptr *ptr;
 	struct cache *ca;
+	unsigned open_buckets_reserved = allocation_is_metadata(wp->reserve)
+		? 0
+		: BTREE_NODE_RESERVE;
+	unsigned nr_replicas = wp->nr_replicas ?:
+		allocation_is_metadata(wp->reserve)
+		? CACHE_SET_META_REPLICAS_WANT(&c->sb)
+		: CACHE_SET_DATA_REPLICAS_WANT(&c->sb);
 
-	b = bch_open_bucket_get(c, cl);
+	b = bch_open_bucket_get(c, open_buckets_reserved, cl);
 	if (IS_ERR_OR_NULL(b))
 		return b;
 
@@ -1195,9 +1189,7 @@ static struct open_bucket *bch_open_bucket_alloc(struct cache_set *c,
 	BUG_ON(!wp->reserve);
 
 	spin_lock(&b->lock);
-	ret = bch_bucket_alloc_set(c, wp->reserve, &b->key,
-				   wp->nr_replicas ?:
-				   CACHE_SET_DATA_REPLICAS_WANT(&c->sb),
+	ret = bch_bucket_alloc_set(c, wp->reserve, &b->key, nr_replicas,
 				   wp->group, check_enospc, cl);
 
 	if (ret) {
@@ -1454,6 +1446,7 @@ void bch_stop_new_data_writes(struct cache *ca)
 	bch_stop_write_points(ca, &c->migration_write_point, 1);
 	bch_stop_write_points(ca, &ca->gc_buckets[0], NUM_GC_GENS);
 	bch_stop_write_points(ca, &ca->tiering_write_point, 1);
+	bch_stop_write_points(ca, &c->btree_write_point, 1);
 }
 
 /*
@@ -1557,11 +1550,14 @@ void bch_open_buckets_init(struct cache_set *c)
 
 	c->promote_write_point.group = &c->cache_tiers[0];
 	c->promote_write_point.nr_replicas = 1;
-	c->promote_write_point.reserve = RESERVE_TIERING;
+	c->promote_write_point.reserve = RESERVE_NONE;
 
 	c->migration_write_point.group = &c->cache_all;
 	c->migration_write_point.nr_replicas = 1;
 	c->migration_write_point.reserve = RESERVE_NONE;
+
+	c->btree_write_point.group = &c->cache_tiers[0];
+	c->btree_write_point.reserve = RESERVE_BTREE;
 
 	c->pd_controllers_update_seconds = 5;
 	INIT_DELAYED_WORK(&c->pd_controllers_update, pd_controllers_update);

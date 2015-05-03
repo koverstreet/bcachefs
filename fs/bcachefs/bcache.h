@@ -514,6 +514,8 @@ struct cache_set {
 	spinlock_t		open_buckets_lock;
 	struct open_bucket	open_buckets[OPEN_BUCKETS_COUNT];
 
+	struct write_point	btree_write_point;
+
 	struct write_point	write_points[WRITE_POINT_COUNT];
 	struct write_point	promote_write_point;
 

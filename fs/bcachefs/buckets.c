@@ -285,3 +285,12 @@ void bch_unmark_open_bucket(struct cache *ca, struct bucket *g)
 		new.owned_by_allocator = 0;
 	}));
 }
+
+void bch_unmark_meta_bucket(struct cache *ca, struct bucket *g)
+{
+	struct bucket_mark old, new;
+
+	bucket_cmpxchg(g, old, new, false, ({
+		new.is_metadata = 0;
+	}));
+}
