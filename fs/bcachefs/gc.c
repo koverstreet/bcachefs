@@ -161,13 +161,7 @@ static int bch_gc_btree(struct cache_set *c, enum btree_id btree_id,
 	bool should_rewrite;
 	struct bpos next_min = POS_MIN;
 
-	bch_btree_iter_init(&iter, c, btree_id, POS_MIN);
-	iter.is_extents = false;
-	iter.locks_want = BTREE_MAX_DEPTH;
-
-	for (b = bch_btree_iter_peek_node(&iter);
-	     b;
-	     b = bch_btree_iter_next_node(&iter)) {
+	for_each_btree_node(&iter, c, btree_id, POS_MIN, b) {
 		if (!b->level) {
 			cache_set_bug_on(bkey_cmp(b->data->min_key, next_min),
 				c,
