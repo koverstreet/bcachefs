@@ -201,7 +201,7 @@ static inline struct btree_node_entry *write_block(struct cache_set *c,
 
 static void btree_node_sort(struct cache_set *c, struct btree *b,
 			    unsigned from, struct btree_node_iter *iter,
-			    btree_keys_sort_fn sort)
+			    btree_keys_sort_fn sort, bool is_write_locked)
 {
 	struct btree_node *out;
 	bool used_mempool = false;
@@ -230,6 +230,9 @@ static void btree_node_sort(struct cache_set *c, struct btree *b,
 
 	nr = bch_sort_bsets(&out->keys, &b->keys, from, iter, sort, &c->sort);
 
+	if (!is_write_locked)
+		six_lock_write(&b->lock);
+
 	if (!from) {
 		unsigned u64s = out->keys.u64s;
 
@@ -254,6 +257,9 @@ static void btree_node_sort(struct cache_set *c, struct btree *b,
 	b->keys.nsets = from;
 	b->keys.nr = nr;
 	bch_bset_build_written_tree(&b->keys);
+
+	if (!is_write_locked)
+		six_unlock_write(&b->lock);
 
 	if (used_mempool)
 		mempool_free(virt_to_page(out), c->sort.pool);
@@ -296,10 +302,12 @@ static bool btree_node_compact(struct cache_set *c, struct btree *b)
 	}
 
 nosort:
+	six_lock_write(&b->lock);
 	bch_bset_build_written_tree(&b->keys);
+	six_unlock_write(&b->lock);
 	return false;
 sort:
-	btree_node_sort(c, b, i, NULL, NULL);
+	btree_node_sort(c, b, i, NULL, NULL, false);
 	return true;
 }
 
@@ -317,8 +325,11 @@ static void bch_btree_init_next(struct cache_set *c, struct btree *b,
 	if (did_sort && !b->keys.nsets)
 		bch_btree_verify(c, b);
 
-	if (b->written < btree_blocks(c))
+	if (b->written < btree_blocks(c)) {
+		six_lock_write(&b->lock);
 		bch_bset_init_next(&b->keys, &write_block(c, b)->keys);
+		six_unlock_write(&b->lock);
+	}
 
 	if (iter && did_sort)
 		btree_iter_node_set(iter, b);
@@ -513,7 +524,8 @@ void bch_btree_node_read_done(struct cache_set *c, struct btree *b,
 	btree_node_sort(c, b, 0, iter,
 			b->keys.ops->is_extents
 			? bch_extent_sort_fix_overlapping
-			: bch_key_sort_fix_overlapping);
+			: bch_key_sort_fix_overlapping,
+			true);
 
 	err = "short btree key";
 	if (b->keys.set[0].size &&
@@ -761,6 +773,9 @@ static void do_btree_node_write(struct closure *cl)
 	}
 }
 
+/*
+ * Only requires a read lock:
+ */
 static void __bch_btree_node_write(struct btree *b, struct closure *parent,
 				   int idx_to_write)
 {
@@ -794,14 +809,15 @@ static void __bch_btree_node_write(struct btree *b, struct closure *parent,
 	closure_call(&b->io, do_btree_node_write, NULL, parent ?: &b->c->cl);
 }
 
+/*
+ * Use this one if the node is intent locked:
+ */
 void bch_btree_node_write(struct btree *b, struct closure *parent,
 			  struct btree_iter *iter)
 {
 	__bch_btree_node_write(b, parent, -1);
 
-	six_lock_write(&b->lock);
 	bch_btree_init_next(b->c, b, iter);
-	six_unlock_write(&b->lock);
 }
 
 static void bch_btree_node_write_sync(struct btree *b, struct btree_iter *iter)
@@ -1530,11 +1546,10 @@ void btree_node_free(struct cache_set *c, struct btree *b)
 
 	BUG_ON(b == btree_node_root(b));
 
-	six_lock_write(&b->lock);
-
 	if (btree_node_dirty(b))
 		btree_complete_write(c, b, btree_current_write(b));
 	clear_btree_node_dirty(b);
+	cancel_delayed_work(&b->work);
 
 	if (!list_empty_careful(&b->journal_seq_blacklisted)) {
 		mutex_lock(&c->journal.blacklist_lock);
@@ -1542,7 +1557,7 @@ void btree_node_free(struct cache_set *c, struct btree *b)
 		mutex_unlock(&c->journal.blacklist_lock);
 	}
 
-	cancel_delayed_work(&b->work);
+	six_lock_write(&b->lock);
 
 	bch_bucket_free(c, &b->key);
 
@@ -2109,11 +2124,21 @@ bch_btree_insert_keys(struct btree *b,
 			bch_journal_res_get(&iter->c->journal, &res,
 					    actual_min, actual_max);
 
-		six_lock_write(&b->lock);
-
 		/* just wrote a set? */
 		if (btree_node_need_init_next(b))
-			bch_btree_init_next(iter->c, b, iter);
+do_init_next:		bch_btree_init_next(iter->c, b, iter);
+
+		six_lock_write(&b->lock);
+
+		/*
+		 * Recheck after taking the write lock, because it can be set
+		 * (because of the btree node being written) with only a read
+		 * lock:
+		 */
+		if (btree_node_need_init_next(b)) {
+			six_unlock_write(&b->lock);
+			goto do_init_next;
+		}
 
 		while (!bch_keylist_empty(insert_keys)) {
 			k = bch_keylist_front(insert_keys);
