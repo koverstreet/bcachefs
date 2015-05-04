@@ -415,15 +415,15 @@ static inline bool btree_node_format_fits(struct btree *b,
 	/* stupid integer promotion rules */
 	ssize_t new_u64s =
 	    (((int) new_f->key_u64s - old_f->key_u64s) *
-	     (int) b->keys.nr_packed_keys) +
+	     (int) b->keys.nr.packed_keys) +
 	    (((int) new_f->key_u64s - BKEY_U64s) *
-	     (int) b->keys.nr_unpacked_keys);
+	     (int) b->keys.nr.unpacked_keys);
 
-	bch_verify_btree_keys_accounting(&b->keys);
+	bch_verify_btree_nr_keys(&b->keys);
 
-	BUG_ON(new_u64s + b->keys.nr_live_u64s < 0);
+	BUG_ON(new_u64s + b->keys.nr.live_u64s < 0);
 
-	return __set_bytes(b->data, b->keys.nr_live_u64s + new_u64s) <
+	return __set_bytes(b->data, b->keys.nr.live_u64s + new_u64s) <
 		PAGE_SIZE << b->keys.page_order;
 }
 

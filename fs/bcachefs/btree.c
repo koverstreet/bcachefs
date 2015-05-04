@@ -206,6 +206,7 @@ static void btree_node_sort(struct cache_set *c, struct btree *b,
 	struct btree_node *out;
 	bool used_mempool = false;
 	unsigned order = b->keys.page_order;
+	struct btree_nr_keys nr;
 
 	if (from) {
 		struct bset_tree *t;
@@ -227,7 +228,7 @@ static void btree_node_sort(struct cache_set *c, struct btree *b,
 		used_mempool = true;
 	}
 
-	bch_sort_bsets(&out->keys, &b->keys, from, iter, sort, &c->sort);
+	nr = bch_sort_bsets(&out->keys, &b->keys, from, iter, sort, &c->sort);
 
 	if (!from) {
 		unsigned u64s = out->keys.u64s;
@@ -251,6 +252,7 @@ static void btree_node_sort(struct cache_set *c, struct btree *b,
 	}
 
 	b->keys.nsets = from;
+	b->keys.nr = nr;
 	bch_bset_build_written_tree(&b->keys);
 
 	if (used_mempool)
@@ -258,7 +260,7 @@ static void btree_node_sort(struct cache_set *c, struct btree *b,
 	else
 		free_pages((unsigned long) out, order);
 
-	bch_verify_btree_keys_accounting(&b->keys);
+	bch_verify_btree_nr_keys(&b->keys);
 }
 
 #define SORT_CRIT	(4096 / sizeof(u64))
@@ -2258,15 +2260,15 @@ static int btree_split(struct btree *b,
 		set2->u64s = (u64 *) bset_bkey_last(set1) - (u64 *) k;
 		set1->u64s -= set2->u64s;
 
-		n2->keys.nr_live_u64s = set2->u64s;
-		n2->keys.nr_packed_keys
-			= n1->keys.nr_packed_keys - nr_packed;
-		n2->keys.nr_unpacked_keys
-			= n1->keys.nr_unpacked_keys - nr_unpacked;
+		n2->keys.nr.live_u64s = set2->u64s;
+		n2->keys.nr.packed_keys
+			= n1->keys.nr.packed_keys - nr_packed;
+		n2->keys.nr.unpacked_keys
+			= n1->keys.nr.unpacked_keys - nr_unpacked;
 
-		n1->keys.nr_live_u64s = set1->u64s;
-		n1->keys.nr_packed_keys = nr_packed;
-		n1->keys.nr_unpacked_keys = nr_unpacked;
+		n1->keys.nr.live_u64s = set1->u64s;
+		n1->keys.nr.packed_keys = nr_packed;
+		n1->keys.nr.unpacked_keys = nr_unpacked;
 
 		BUG_ON(!set1->u64s);
 		BUG_ON(!set2->u64s);
@@ -2283,8 +2285,8 @@ static int btree_split(struct btree *b,
 		six_unlock_write(&n1->lock);
 		six_unlock_write(&n2->lock);
 
-		bch_verify_btree_keys_accounting(&n1->keys);
-		bch_verify_btree_keys_accounting(&n2->keys);
+		bch_verify_btree_nr_keys(&n1->keys);
+		bch_verify_btree_nr_keys(&n2->keys);
 
 		/*
 		 * For updates to interior nodes, we've got to do the insert
