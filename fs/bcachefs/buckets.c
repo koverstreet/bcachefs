@@ -77,11 +77,11 @@ struct bucket_stats bch_bucket_stats_read(struct cache *ca)
 	unsigned seq;
 
 	do {
-		seq = read_seqbegin(&c->gc_cur_lock);
+		seq = read_seqcount_begin(&c->gc_cur_lock);
 		ret = c->gc_cur_btree > BTREE_ID_NR
 			? __bucket_stats_read(ca)
 			: ca->bucket_stats_cached;
-	} while (read_seqretry(&c->gc_cur_lock, seq));
+	} while (read_seqcount_retry(&c->gc_cur_lock, seq));
 
 	return ret;
 }

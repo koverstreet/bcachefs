@@ -185,10 +185,10 @@ static int bch_gc_btree(struct cache_set *c, enum btree_id btree_id,
 		BUG_ON(bkey_cmp(c->gc_cur_pos, b->key.k.p) > 0);
 		BUG_ON(!gc_will_visit_node(c, b));
 
-		write_seqlock(&c->gc_cur_lock);
+		write_seqcount_begin(&c->gc_cur_lock);
 		c->gc_cur_level = b->level;
 		c->gc_cur_pos = b->key.k.p;
-		write_sequnlock(&c->gc_cur_lock);
+		write_seqcount_end(&c->gc_cur_lock);
 
 		BUG_ON(gc_will_visit_node(c, b));
 
@@ -203,9 +203,9 @@ static int bch_gc_btree(struct cache_set *c, enum btree_id btree_id,
 	b = c->btree_roots[btree_id];
 	__bch_btree_mark_key(c, b->level + 1, bkey_i_to_s_c(&b->key));
 
-	write_seqlock(&c->gc_cur_lock);
+	write_seqcount_begin(&c->gc_cur_lock);
 	c->gc_cur_level = b->level + 1;
-	write_sequnlock(&c->gc_cur_lock);
+	write_seqcount_end(&c->gc_cur_lock);
 	spin_unlock(&c->btree_root_lock);
 	return 0;
 }
@@ -252,14 +252,14 @@ static void bch_gc_start(struct cache_set *c)
 	struct bucket *g;
 	unsigned i;
 
-	write_seqlock(&c->gc_cur_lock);
+	write_seqcount_begin(&c->gc_cur_lock);
 	for_each_cache(ca, c, i)
 		ca->bucket_stats_cached = __bucket_stats_read(ca);
 
 	c->gc_cur_btree = 0;
 	c->gc_cur_level = 0;
 	c->gc_cur_pos	= POS_MIN;
-	write_sequnlock(&c->gc_cur_lock);
+	write_seqcount_end(&c->gc_cur_lock);
 
 	memset(c->cache_slots_used, 0, sizeof(c->cache_slots_used));
 
@@ -319,9 +319,9 @@ static void bch_gc_finish(struct cache_set *c)
 
 	set_gc_sectors(c);
 
-	write_seqlock(&c->gc_cur_lock);
+	write_seqcount_begin(&c->gc_cur_lock);
 	c->gc_cur_btree = BTREE_ID_NR + 1;
-	write_sequnlock(&c->gc_cur_lock);
+	write_seqcount_end(&c->gc_cur_lock);
 }
 
 /**
@@ -354,11 +354,11 @@ void bch_gc(struct cache_set *c)
 			return;
 		}
 
-		write_seqlock(&c->gc_cur_lock);
+		write_seqcount_begin(&c->gc_cur_lock);
 		c->gc_cur_btree++;
 		c->gc_cur_level = 0;
 		c->gc_cur_pos	= POS_MIN;
-		write_sequnlock(&c->gc_cur_lock);
+		write_seqcount_end(&c->gc_cur_lock);
 	}
 
 	bch_gc_finish(c);

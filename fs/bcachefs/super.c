@@ -960,7 +960,7 @@ static const char *bch_cache_set_alloc(struct cache_sb *sb,
 	spin_lock_init(&c->read_race_lock);
 	INIT_WORK(&c->read_race_work, bch_read_race_work);
 
-	seqlock_init(&c->gc_cur_lock);
+	seqcount_init(&c->gc_cur_lock);
 
 	c->prio_clock[READ].hand = 1;
 	c->prio_clock[READ].min_prio = 0;

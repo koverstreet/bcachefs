@@ -549,7 +549,7 @@ struct cache_set {
 	 * Protected by gc_cur_lock. Only written to by GC thread, so GC thread
 	 * can read without a lock.
 	 */
-	seqlock_t		gc_cur_lock;
+	seqcount_t		gc_cur_lock;
 	enum btree_id		gc_cur_btree;
 	unsigned		gc_cur_level;
 	struct bpos		gc_cur_pos;

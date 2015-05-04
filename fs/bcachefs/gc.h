@@ -46,9 +46,9 @@ static inline bool gc_will_visit_node(struct cache_set *c,
 	bool ret;
 
 	do {
-		seq = read_seqbegin(&c->gc_cur_lock);
+		seq = read_seqcount_begin(&c->gc_cur_lock);
 		ret = __gc_will_visit_node(c, b);
-	} while (read_seqretry(&c->gc_cur_lock, seq));
+	} while (read_seqcount_retry(&c->gc_cur_lock, seq));
 
 	return ret;
 }
