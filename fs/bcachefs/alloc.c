@@ -1152,10 +1152,10 @@ static struct open_bucket *bch_open_bucket_get(struct cache_set *c,
 	return ret;
 }
 
-struct open_bucket *bch_open_bucket_alloc(struct cache_set *c,
-					  struct write_point *wp,
-					  bool check_enospc,
-					  struct closure *cl)
+static struct open_bucket *bch_open_bucket_alloc(struct cache_set *c,
+						 struct write_point *wp,
+						 bool check_enospc,
+						 struct closure *cl)
 {
 	int ret;
 	struct open_bucket *ob;

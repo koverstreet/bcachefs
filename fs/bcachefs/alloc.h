@@ -17,10 +17,6 @@ int bch_prio_read(struct cache *);
 void bch_recalc_min_prio(struct cache *, int);
 void bch_prio_timer_start(struct cache_set *, int);
 
-struct open_bucket *bch_open_bucket_alloc(struct cache_set *,
-					  struct write_point *,
-					  bool, struct closure *);
-
 void bch_open_bucket_put(struct cache_set *, struct open_bucket *);
 
 struct open_bucket *bch_alloc_sectors(struct cache_set *, struct write_point *,

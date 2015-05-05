@@ -1684,14 +1684,23 @@ static struct btree *__bch_btree_node_alloc(struct cache_set *c,
 					    bool check_enospc,
 					    struct closure *cl)
 {
+	BKEY_PADDED(k) tmp;
 	struct open_bucket *ob;
 	struct btree *b;
+retry:
+	/* alloc_sectors is weird, I suppose */
+	bkey_extent_init(&tmp.k);
+	tmp.k.k.size = CACHE_BTREE_NODE_SIZE(&c->sb),
 
-	ob = bch_open_bucket_alloc(c, &c->btree_write_point, check_enospc, cl);
+	ob = bch_alloc_sectors(c, &c->btree_write_point, &tmp.k,
+			       check_enospc, cl);
 	if (IS_ERR(ob))
 		return ERR_CAST(ob);
 
-	spin_unlock(&ob->lock);
+	if (tmp.k.k.size < CACHE_BTREE_NODE_SIZE(&c->sb)) {
+		bch_open_bucket_put(c, ob);
+		goto retry;
+	}
 
 	b = mca_alloc(c, NULL, 0, 0, NULL);
 
@@ -1699,11 +1708,8 @@ static struct btree *__bch_btree_node_alloc(struct cache_set *c,
 	BUG_ON(IS_ERR_OR_NULL(b));
 	BUG_ON(b->ob);
 
-	bkey_extent_init(&b->key);
-	memcpy(&b->key.v, ob->ptrs,
-	       sizeof(struct bch_extent_ptr) * ob->nr_ptrs);
-	bch_set_extent_ptrs(bkey_i_to_s_extent(&b->key), ob->nr_ptrs);
-
+	bkey_copy(&b->key, &tmp.k);
+	b->key.k.size = 0;
 	b->ob = ob;
 
 	return b;
