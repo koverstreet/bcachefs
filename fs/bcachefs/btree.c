@@ -28,6 +28,7 @@
 #include <linux/slab.h>
 #include <linux/bitops.h>
 #include <linux/hash.h>
+#include <linux/jhash.h>
 #include <linux/kthread.h>
 #include <linux/prefetch.h>
 #include <linux/random.h>
@@ -88,9 +89,6 @@
 #define MAX_SAVE_PRIO		72
 
 #define PTR_DIRTY_BIT		(((uint64_t) 1 << 36))
-
-#define PTR_HASH(c, k)							\
-	(((k)->ptr[0] >> c->bucket_bits) | PTR_GEN(k, 0))
 
 #define insert_lock(s, b)	((b)->level <= (s)->lock)
 
@@ -564,12 +562,22 @@ static void mca_data_free(struct btree *b)
 	list_move(&b->list, &b->c->btree_cache_freed);
 }
 
+static const struct rhashtable_params bch_btree_cache_params = {
+	.head_offset	= offsetof(struct btree, hash),
+	.key_offset	= offsetof(struct btree, key.ptr[0]),
+	.key_len	= sizeof(u64),
+	.hashfn		= jhash,
+};
+
 static void mca_bucket_free(struct btree *b)
 {
 	BUG_ON(btree_node_dirty(b));
 
+	rhashtable_remove_fast(&b->c->btree_cache_table, &b->hash,
+			       bch_btree_cache_params);
+
+	/* Cause future lookups for this node to fail: */
 	b->key.ptr[0] = 0;
-	hlist_del_init_rcu(&b->hash);
 	list_move(&b->list, &b->c->btree_cache_freeable);
 }
 
@@ -770,12 +778,18 @@ void bch_btree_cache_free(struct cache_set *c)
 		kfree(b);
 	}
 
+	rhashtable_destroy(&c->btree_cache_table);
 	mutex_unlock(&c->bucket_lock);
 }
 
 int bch_btree_cache_alloc(struct cache_set *c)
 {
 	unsigned i;
+	int ret;
+
+	ret = rhashtable_init(&c->btree_cache_table, &bch_btree_cache_params);
+	if (ret)
+		return ret;
 
 	for (i = 0; i < mca_reserve(c); i++)
 		if (!mca_bucket_alloc(c, &ZERO_KEY, GFP_KERNEL))
@@ -810,23 +824,12 @@ int bch_btree_cache_alloc(struct cache_set *c)
 
 /* Btree in memory cache - hash table */
 
-static struct hlist_head *mca_hash(struct cache_set *c, struct bkey *k)
-{
-	return &c->bucket_hash[hash_32(PTR_HASH(c, k), BUCKET_HASH_BITS)];
-}
+#define PTR_HASH(_k)	((_k)->ptr[0])
 
 static struct btree *mca_find(struct cache_set *c, struct bkey *k)
 {
-	struct btree *b;
-
-	rcu_read_lock();
-	hlist_for_each_entry_rcu(b, mca_hash(c, k), hash)
-		if (PTR_HASH(c, &b->key) == PTR_HASH(c, k))
-			goto out;
-	b = NULL;
-out:
-	rcu_read_unlock();
-	return b;
+	return rhashtable_lookup_fast(&c->btree_cache_table, &PTR_HASH(k),
+				      bch_btree_cache_params);
 }
 
 static int mca_cannibalize_lock(struct cache_set *c, struct btree_op *op)
@@ -856,14 +859,17 @@ static struct btree *mca_cannibalize(struct cache_set *c, struct btree_op *op,
 
 	list_for_each_entry_reverse(b, &c->btree_cache, list)
 		if (!mca_reap(b, btree_order(k), false))
-			return b;
+			goto out;
 
 	list_for_each_entry_reverse(b, &c->btree_cache, list)
 		if (!mca_reap(b, btree_order(k), true))
-			return b;
+			goto out;
 
 	WARN(1, "btree cache cannibalize failed\n");
 	return ERR_PTR(-ENOMEM);
+out:
+	mca_bucket_free(b);
+	return b;
 }
 
 /*
@@ -919,12 +925,13 @@ static struct btree *mca_alloc(struct cache_set *c, struct btree_op *op,
 	if (!b->keys.set->data)
 		goto err;
 out:
+	BUG_ON(PTR_HASH(&b->key));
 	BUG_ON(b->io_mutex.count != 1);
 
 	bkey_copy(&b->key, k);
 	list_move(&b->list, &c->btree_cache);
-	hlist_del_init_rcu(&b->hash);
-	hlist_add_head_rcu(&b->hash, mca_hash(c, k));
+	BUG_ON(rhashtable_insert_fast(&c->btree_cache_table, &b->hash,
+				      bch_btree_cache_params));
 
 	lock_set_subclass(&b->lock.dep_map, level + 1, _THIS_IP_);
 	b->parent	= (void *) ~0UL;
@@ -969,9 +976,11 @@ struct btree *bch_btree_node_get(struct cache_set *c, struct btree_op *op,
 
 	BUG_ON(level < 0);
 retry:
+	rcu_read_lock();
 	b = mca_find(c, k);
+	rcu_read_unlock();
 
-	if (!b) {
+	if (unlikely(!b)) {
 		if (current->bio_list)
 			return ERR_PTR(-EAGAIN);
 
@@ -990,7 +999,7 @@ retry:
 			downgrade_write(&b->lock);
 	} else {
 		rw_lock(write, b, level);
-		if (PTR_HASH(c, &b->key) != PTR_HASH(c, k)) {
+		if (PTR_HASH(&b->key) != PTR_HASH(k)) {
 			rw_unlock(write, b);
 			goto retry;
 		}

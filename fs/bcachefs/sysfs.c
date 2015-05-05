@@ -43,7 +43,6 @@ read_attribute(tree_depth);
 read_attribute(root_usage_percent);
 read_attribute(priority_stats);
 read_attribute(btree_cache_size);
-read_attribute(btree_cache_max_chain);
 read_attribute(cache_available_percent);
 read_attribute(written);
 read_attribute(btree_written);
@@ -474,29 +473,6 @@ static size_t bch_cache_size(struct cache_set *c)
 	return ret;
 }
 
-static unsigned bch_cache_max_chain(struct cache_set *c)
-{
-	unsigned ret = 0;
-	struct hlist_head *h;
-
-	mutex_lock(&c->bucket_lock);
-
-	for (h = c->bucket_hash;
-	     h < c->bucket_hash + (1 << BUCKET_HASH_BITS);
-	     h++) {
-		unsigned i = 0;
-		struct hlist_node *p;
-
-		hlist_for_each(p, h)
-			i++;
-
-		ret = max(ret, i);
-	}
-
-	mutex_unlock(&c->bucket_lock);
-	return ret;
-}
-
 static unsigned bch_btree_used(struct cache_set *c)
 {
 	return div64_u64(c->gc_stats.key_bytes * 100,
@@ -522,7 +498,6 @@ SHOW(__bch_cache_set)
 	sysfs_print(root_usage_percent,		bch_root_usage(c));
 
 	sysfs_hprint(btree_cache_size,		bch_cache_size(c));
-	sysfs_print(btree_cache_max_chain,	bch_cache_max_chain(c));
 	sysfs_print(cache_available_percent,	100 - c->gc_stats.in_use);
 
 	sysfs_print_time_stats(&c->btree_gc_time,	btree_gc, sec, ms);
@@ -709,7 +684,6 @@ static struct attribute *bch_cache_set_internal_files[] = {
 
 	&sysfs_btree_nodes,
 	&sysfs_btree_used_percent,
-	&sysfs_btree_cache_max_chain,
 
 	&sysfs_bset_tree_stats,
 	&sysfs_cache_read_races,

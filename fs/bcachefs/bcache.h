@@ -183,6 +183,7 @@
 #include <linux/list.h>
 #include <linux/mutex.h>
 #include <linux/rbtree.h>
+#include <linux/rhashtable.h>
 #include <linux/rwsem.h>
 #include <linux/types.h>
 #include <linux/workqueue.h>
@@ -508,6 +509,8 @@ struct cache_set {
 	 */
 	unsigned		btree_pages;
 
+	struct rhashtable	btree_cache_table;
+
 	/*
 	 * Lists of struct btrees; lru is the list for structs that have memory
 	 * allocated for actual btree node, freed is for structs that do not.
@@ -653,9 +656,6 @@ struct cache_set {
 	unsigned		shrinker_disabled:1;
 	unsigned		copy_gc_enabled:1;
 	unsigned		btree_scan_ratelimit;
-
-#define BUCKET_HASH_BITS	12
-	struct hlist_head	bucket_hash[1 << BUCKET_HASH_BITS];
 };
 
 struct bbio {

@@ -115,7 +115,7 @@ struct btree_write {
 
 struct btree {
 	/* Hottest entries first */
-	struct hlist_node	hash;
+	struct rhash_head	hash;
 
 	/* Key/pointer for this btree node */
 	BKEY_PADDED(key);
@@ -197,11 +197,11 @@ void bkey_put(struct cache_set *c, struct bkey *k);
 
 /* Looping macros */
 
-#define for_each_cached_btree(b, c, iter)				\
-	for (iter = 0;							\
-	     iter < ARRAY_SIZE((c)->bucket_hash);			\
-	     iter++)							\
-		hlist_for_each_entry_rcu((b), (c)->bucket_hash + iter, hash)
+#define for_each_cached_btree(_b, _c, _tbl, _iter, _pos)		\
+	for ((_tbl) = rht_dereference_rcu((_c)->btree_cache_table.tbl,	\
+					  &(_c)->btree_cache_table),	\
+	     _iter = 0;	_iter < (_tbl)->size; _iter++)			\
+		rht_for_each_entry_rcu((_b), (_pos), _tbl, _iter, hash)
 
 /* Recursing down the btree */
 

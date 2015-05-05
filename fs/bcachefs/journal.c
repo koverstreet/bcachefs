@@ -370,11 +370,14 @@ static void btree_flush_write(struct cache_set *c)
 	 * entry, best is our current candidate and is locked if non NULL:
 	 */
 	struct btree *b, *best;
+	struct bucket_table *tbl;
+	struct rhash_head *pos;
 	unsigned i;
 retry:
 	best = NULL;
 
-	for_each_cached_btree(b, c, i)
+	rcu_read_lock();
+	for_each_cached_btree(b, c, tbl, i, pos)
 		if (btree_current_write(b)->journal) {
 			if (!best)
 				best = b;
@@ -384,6 +387,7 @@ retry:
 				best = b;
 			}
 		}
+	rcu_read_unlock();
 
 	b = best;
 	if (b) {
