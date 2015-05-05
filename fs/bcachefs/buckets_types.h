@@ -40,6 +40,7 @@ struct bucket_stats {
 
 	u64			sectors_dirty;
 	u64			sectors_cached;
+	u64			sectors_meta;
 };
 
 struct bucket_heap_entry {

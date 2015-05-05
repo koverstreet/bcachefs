@@ -54,9 +54,6 @@ unsigned bch_extent_nr_ptrs_after_normalize(struct cache_set *,
 void bch_extent_drop_stale(struct cache_set *c, struct bkey_s);
 bool bch_extent_normalize(struct cache_set *, struct bkey_s);
 
-int __bch_add_sectors(struct cache_set *, struct btree *,
-		      struct bkey_s_c_extent, u64, int, bool);
-
 static inline bool bkey_extent_cached(struct bkey_s_c k)
 {
 	return k.k->type == BCH_EXTENT &&

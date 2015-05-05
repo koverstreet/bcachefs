@@ -57,26 +57,15 @@ u8 bch_btree_key_recalc_oldest_gen(struct cache_set *c, struct bkey_s_c k)
 
 void __bch_btree_mark_key(struct cache_set *c, int level, struct bkey_s_c k)
 {
-	const struct bch_extent_ptr *ptr;
 	struct bkey_s_c_extent e;
-	struct cache *ca;
 
 	switch (k.k->type) {
 	case BCH_EXTENT:
 		e = bkey_s_c_to_extent(k);
 
-		rcu_read_lock();
-
-		if (level) {
-			extent_for_each_online_device(c, e, ptr, ca)
-				bch_mark_metadata_bucket(ca,
-						PTR_BUCKET(ca, ptr), true);
-		} else {
-			__bch_add_sectors(c, NULL, e, bkey_start_offset(e.k),
-					  e.k->size, false);
-		}
-
-		rcu_read_unlock();
+		bch_mark_pointers(c, NULL, e, level
+				  ? CACHE_BTREE_NODE_SIZE(&c->sb)
+				  : e.k->size, false, level != 0);
 	}
 }
 
@@ -491,9 +480,8 @@ static void bch_coalesce_nodes(struct btree *old_nodes[GC_MERGE_NODES],
 			       s2->u64s * sizeof(u64));
 			s1->u64s += s2->u64s;
 
+			bch_btree_node_free_never_used(c, n2);
 			six_unlock_write(&n2->lock);
-			btree_open_bucket_put(c, n2);
-			btree_node_free(c, n2);
 			six_unlock_intent(&n2->lock);
 
 			memmove(new_nodes + i - 1,
@@ -573,7 +561,7 @@ static void bch_coalesce_nodes(struct btree *old_nodes[GC_MERGE_NODES],
 
 	/* Free the old nodes and update our sliding window */
 	for (i = 0; i < nr_old_nodes; i++) {
-		btree_node_free(c, old_nodes[i]);
+		bch_btree_node_free(c, old_nodes[i]);
 		six_unlock_intent(&old_nodes[i]->lock);
 		old_nodes[i] = new_nodes[i];
 	}

@@ -1550,14 +1550,8 @@ retry:
 
 /* Btree alloc */
 
-void btree_node_free(struct cache_set *c, struct btree *b)
+static void __btree_node_free(struct cache_set *c, struct btree *b)
 {
-	struct bch_extent_ptr *ptr;
-	struct cache *ca;
-	BKEY_PADDED(k) tmp;
-
-	bkey_copy(&tmp.k, &b->key);
-
 	trace_bcache_btree_node_free(b);
 
 	BUG_ON(b == btree_node_root(b));
@@ -1574,18 +1568,38 @@ void btree_node_free(struct cache_set *c, struct btree *b)
 		mutex_unlock(&c->journal.blacklist_lock);
 	}
 
-	six_lock_write(&b->lock);
-
 	mutex_lock(&c->btree_cache_lock);
 	mca_bucket_free(c, b);
 	mutex_unlock(&c->btree_cache_lock);
+}
+
+void bch_btree_node_free_never_used(struct cache_set *c, struct btree *b)
+{
+	struct open_bucket *ob = b->ob;
+
+	b->ob = NULL;
+
+	__btree_node_free(c, b);
+
+	bch_open_bucket_put(c, ob);
+}
+
+void bch_btree_node_free(struct cache_set *c, struct btree *b)
+{
+	BKEY_PADDED(k) tmp;
+
+	bkey_copy(&tmp.k, &b->key);
+
+	/* Cause future btree_node_relock() calls to fail: */
+	six_lock_write(&b->lock);
+
+	__btree_node_free(c, b);
 
 	six_unlock_write(&b->lock);
 
-	rcu_read_lock();
-	extent_for_each_online_device(c, bkey_i_to_s_extent(&tmp.k), ptr, ca)
-		bch_unmark_meta_bucket(ca, PTR_BUCKET(ca, ptr));
-	rcu_read_unlock();
+	bch_mark_pointers(c, b, bkey_i_to_s_c_extent(&tmp.k),
+			  -CACHE_BTREE_NODE_SIZE(&c->sb),
+			  false, true);
 }
 
 /**
@@ -1632,13 +1646,12 @@ static void bch_btree_set_root(struct cache_set *c, struct btree *b)
 	if (b->btree_id != c->gc_cur_btree
 	    ? b->btree_id < c->gc_cur_btree
 	    : b->level <= c->gc_cur_level) {
-		struct bch_extent_ptr *ptr;
-		struct cache *ca;
+		bool stale = bch_mark_pointers(c, NULL,
+					       bkey_i_to_s_c_extent(&b->key),
+					       CACHE_BTREE_NODE_SIZE(&c->sb),
+					       true, true);
 
-		rcu_read_lock();
-		extent_for_each_online_device(c, bkey_i_to_s_extent(&b->key), ptr, ca)
-			bch_mark_metadata_bucket(ca, PTR_BUCKET(ca, ptr), false);
-		rcu_read_unlock();
+		BUG_ON(stale);
 	}
 	spin_unlock(&c->btree_root_lock);
 
@@ -1808,21 +1821,10 @@ void bch_btree_reserve_put(struct cache_set *c, struct btree_reserve *reserve)
 {
 	while (reserve->nr) {
 		struct btree *b = reserve->b[--reserve->nr];
-		struct open_bucket *ob = b->ob;
 
-		b->ob = NULL;
-
-		/* Mark that it's not actually hashed: */
-		bkey_i_to_extent(&b->key)->v.ptr->_val = 0;
-
-		mutex_lock(&c->btree_cache_lock);
-		list_move(&b->list, &c->btree_cache_freeable);
-		mutex_unlock(&c->btree_cache_lock);
-
+		bch_btree_node_free_never_used(c, b);
 		six_unlock_write(&b->lock);
 		six_unlock_intent(&b->lock);
-
-		bch_open_bucket_put(c, ob);
 	}
 
 	mempool_free(reserve, &c->btree_reserve_pool);
@@ -2008,7 +2010,7 @@ int bch_btree_node_rewrite(struct btree *b, struct btree_iter *iter, bool wait)
 	}
 
 	btree_open_bucket_put(iter->c, n);
-	btree_node_free(iter->c, b);
+	bch_btree_node_free(iter->c, b);
 
 	BUG_ON(iter->nodes[b->level] != b);
 
@@ -2510,7 +2512,7 @@ static void btree_split(struct btree *b, struct btree_iter *iter,
 	if (n3)
 		btree_open_bucket_put(c, n3);
 
-	btree_node_free(c, b);
+	bch_btree_node_free(c, b);
 
 	/* Update iterator, and finish insert now that new nodes are visible: */
 	BUG_ON(iter->nodes[b->level] != b);

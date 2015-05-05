@@ -144,17 +144,16 @@ bool bch_insert_fixup_btree_ptr(struct cache_set *c, struct btree *b,
 				struct journal_res *res)
 {
 	struct bkey_s_c_extent e;
-	const struct bch_extent_ptr *ptr;
-	struct cache *ca;
+	bool stale;
 
 	switch (insert->k.type) {
 	case BCH_EXTENT:
 		e = bkey_i_to_s_c_extent(insert);
 
-		rcu_read_lock();
-		extent_for_each_online_device(c, e, ptr, ca)
-			bch_mark_metadata_bucket(ca, PTR_BUCKET(ca, ptr), false);
-		rcu_read_unlock();
+		stale = bch_mark_pointers(c, b, e,
+				CACHE_BTREE_NODE_SIZE(&c->sb),
+				true, true);
+		BUG_ON(stale);
 		break;
 	}
 
@@ -791,69 +790,6 @@ struct btree_nr_keys bch_extent_sort_fix_overlapping(struct btree_keys *b,
 	return nr;
 }
 
-int __bch_add_sectors(struct cache_set *c, struct btree *b,
-		      struct bkey_s_c_extent e, u64 offset,
-		      int sectors, bool fail_if_stale)
-{
-	const struct bch_extent_ptr *ptr;
-	struct cache *ca;
-
-	rcu_read_lock();
-	extent_for_each_online_device(c, e, ptr, ca) {
-		bool stale, dirty = bch_extent_ptr_is_dirty(c, e, ptr);
-
-		trace_bcache_add_sectors(ca, e.k, ptr, offset,
-					 sectors, dirty);
-
-		/*
-		 * Two ways a dirty pointer could be stale here:
-		 *
-		 * - A bkey_cmpxchg() operation could be trying to replace a key
-		 *   that no longer exists. The new key, which can have some of
-		 *   the same pointers as the old key, gets added here before
-		 *   checking if the cmpxchg operation succeeds or not to avoid
-		 *   another race.
-		 *
-		 *   If that's the case, we just bail out of the cmpxchg
-		 *   operation early - a dirty pointer can only be stale if the
-		 *   actual dirty pointer in the btree was overwritten.
-		 *
-		 *   And in that case we _have_ to bail out here instead of
-		 *   letting bkey_cmpxchg() fail and undoing the accounting we
-		 *   did here with subtract_sectors() (like we do otherwise),
-		 *   because buckets going stale out from under us changes which
-		 *   pointers we count as dirty.
-		 *
-		 * - Journal replay
-		 *
-		 *   A dirty pointer could be stale in journal replay if we
-		 *   haven't finished journal replay - if it's going to get
-		 *   overwritten again later in replay.
-		 *
-		 *   In that case, we don't want to fail the insert (just for
-		 *   mental health) - but, since extent_normalize() drops stale
-		 *   pointers, we need to count replicas in a way that's
-		 *   invariant under normalize.
-		 *
-		 *   Fuck me, I hate my life.
-		 */
-		stale = bch_mark_data_bucket(c, ca, b, ptr, sectors, dirty);
-		if (stale && dirty && fail_if_stale)
-			goto stale;
-	}
-	rcu_read_unlock();
-
-	return 0;
-stale:
-	while (--ptr >= e.v->ptr)
-		if ((ca = PTR_CACHE(c, ptr)))
-			bch_mark_data_bucket(c, ca, b, ptr, -sectors,
-				bch_extent_ptr_is_dirty(c, e, ptr));
-	rcu_read_unlock();
-
-	return -1;
-}
-
 static int bch_add_sectors(struct cache_set *c, struct btree *b,
 			   struct bkey_s_c k, u64 offset,
 			   int sectors, bool fail_if_stale)
@@ -862,8 +798,7 @@ static int bch_add_sectors(struct cache_set *c, struct btree *b,
 		struct bkey_s_c_extent e = bkey_s_c_to_extent(k);
 		int ret;
 
-		ret = __bch_add_sectors(c, b, e, offset,
-					sectors, fail_if_stale);
+		ret = bch_mark_pointers(c, b, e, sectors, fail_if_stale, false);
 		if (ret)
 			return ret;
 

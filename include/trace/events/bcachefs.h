@@ -810,11 +810,11 @@ DEFINE_EVENT(cache_set, bcache_gc_periodic,
 	TP_ARGS(c)
 );
 
-TRACE_EVENT(bcache_add_sectors,
+TRACE_EVENT(bcache_mark_bucket,
 	TP_PROTO(struct cache *ca, const struct bkey *k,
-		 const struct bch_extent_ptr *ptr, u64 offset,
+		 const struct bch_extent_ptr *ptr,
 		 int sectors, bool dirty),
-	TP_ARGS(ca, k, ptr, offset, sectors, dirty),
+	TP_ARGS(ca, k, ptr, sectors, dirty),
 
 	TP_STRUCT__entry(
 		__array(char,		uuid,		16	)

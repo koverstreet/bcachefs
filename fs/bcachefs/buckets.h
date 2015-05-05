@@ -261,9 +261,9 @@ static inline bool is_available_bucket(struct bucket_mark mark)
 void bch_mark_free_bucket(struct cache *, struct bucket *);
 void bch_mark_alloc_bucket(struct cache *, struct bucket *);
 void bch_mark_metadata_bucket(struct cache *, struct bucket *, bool);
-u8 bch_mark_data_bucket(struct cache_set *, struct cache *, struct btree *,
-			const struct bch_extent_ptr *, int, bool);
 void bch_unmark_open_bucket(struct cache *, struct bucket *);
-void bch_unmark_meta_bucket(struct cache *, struct bucket *g);
+
+int bch_mark_pointers(struct cache_set *, struct btree *,
+		      struct bkey_s_c_extent, int, bool, bool);
 
 #endif /* _BUCKETS_H */

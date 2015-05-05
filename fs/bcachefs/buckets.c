@@ -93,7 +93,7 @@ static inline int is_meta_bucket(struct bucket_mark m)
 
 static inline int is_dirty_bucket(struct bucket_mark m)
 {
-	return !m.owned_by_allocator && !!m.dirty_sectors;
+	return !m.owned_by_allocator && !m.is_metadata && !!m.dirty_sectors;
 }
 
 static inline int is_cached_bucket(struct bucket_mark m)
@@ -119,8 +119,12 @@ static void bucket_stats_update(struct cache *ca,
 	stats->sectors_cached +=
 		(int) new.cached_sectors - (int) old.cached_sectors;
 
-	stats->sectors_dirty +=
-		(int) new.dirty_sectors - (int) old.dirty_sectors;
+	if (old.is_metadata || new.is_metadata)
+		stats->sectors_meta +=
+			(int) new.dirty_sectors - (int) old.dirty_sectors;
+	else
+		stats->sectors_dirty +=
+			(int) new.dirty_sectors - (int) old.dirty_sectors;
 
 	stats->buckets_alloc +=
 		(int) new.owned_by_allocator - (int) old.owned_by_allocator;
@@ -203,9 +207,10 @@ do {								\
 	}							\
 } while (0)
 
-u8 bch_mark_data_bucket(struct cache_set *c, struct cache *ca, struct btree *b,
-			const struct bch_extent_ptr *ptr,
-			int sectors, bool dirty)
+static u8 bch_mark_bucket(struct cache_set *c, struct cache *ca,
+			  struct btree *b,
+			  const struct bch_extent_ptr *ptr,
+			  int sectors, bool dirty, bool metadata)
 {
 	struct bucket_mark old, new;
 	unsigned long bucket_nr = PTR_BUCKET_NR(ca, ptr);
@@ -248,7 +253,10 @@ u8 bch_mark_data_bucket(struct cache_set *c, struct cache *ca, struct btree *b,
 		if (!is_gc && dirty && is_available_bucket(old))
 			return 1;
 
-		BUG_ON(old.is_metadata);
+		BUG_ON((old.dirty_sectors ||
+			old.cached_sectors) &&
+		       old.is_metadata != metadata);
+
 		if (dirty &&
 		    new.dirty_sectors == GC_MAX_SECTORS_USED &&
 		    sectors < 0)
@@ -260,6 +268,13 @@ u8 bch_mark_data_bucket(struct cache_set *c, struct cache *ca, struct btree *b,
 		else
 			saturated_add(ca, new.cached_sectors, sectors,
 				      GC_MAX_SECTORS_USED);
+
+		if (!new.dirty_sectors &&
+		    !new.cached_sectors)
+			new.is_metadata = false;
+		else
+			new.is_metadata = metadata;
+
 	}));
 
 	if (saturated &&
@@ -272,8 +287,77 @@ u8 bch_mark_data_bucket(struct cache_set *c, struct cache *ca, struct btree *b,
 		}
 	}
 
+	return 0;
+}
+
+/*
+ * Returns 0 on success, -1 on failure (pointer was stale)
+ */
+int bch_mark_pointers(struct cache_set *c, struct btree *b,
+		      struct bkey_s_c_extent e, int sectors,
+		      bool fail_if_stale, bool metadata)
+{
+	const struct bch_extent_ptr *ptr;
+	struct cache *ca;
+
+	BUG_ON(metadata && EXTENT_CACHED(e.v));
+	BUG_ON(!sectors);
+
+	rcu_read_lock();
+	extent_for_each_online_device(c, e, ptr, ca) {
+		bool stale, dirty = bch_extent_ptr_is_dirty(c, e, ptr);
+
+		trace_bcache_mark_bucket(ca, e.k, ptr, sectors, dirty);
+
+		/*
+		 * Two ways a dirty pointer could be stale here:
+		 *
+		 * - A bkey_cmpxchg() operation could be trying to replace a key
+		 *   that no longer exists. The new key, which can have some of
+		 *   the same pointers as the old key, gets added here before
+		 *   checking if the cmpxchg operation succeeds or not to avoid
+		 *   another race.
+		 *
+		 *   If that's the case, we just bail out of the cmpxchg
+		 *   operation early - a dirty pointer can only be stale if the
+		 *   actual dirty pointer in the btree was overwritten.
+		 *
+		 *   And in that case we _have_ to bail out here instead of
+		 *   letting bkey_cmpxchg() fail and undoing the accounting we
+		 *   did here with subtract_sectors() (like we do otherwise),
+		 *   because buckets going stale out from under us changes which
+		 *   pointers we count as dirty.
+		 *
+		 * - Journal replay
+		 *
+		 *   A dirty pointer could be stale in journal replay if we
+		 *   haven't finished journal replay - if it's going to get
+		 *   overwritten again later in replay.
+		 *
+		 *   In that case, we don't want to fail the insert (just for
+		 *   mental health) - but, since extent_normalize() drops stale
+		 *   pointers, we need to count replicas in a way that's
+		 *   invariant under normalize.
+		 *
+		 *   Fuck me, I hate my life.
+		 */
+		stale = bch_mark_bucket(c, ca, b, ptr, sectors,
+					dirty, metadata);
+		if (stale && dirty && fail_if_stale)
+			goto stale;
+	}
+	rcu_read_unlock();
 
 	return 0;
+stale:
+	while (--ptr >= e.v->ptr)
+		if ((ca = PTR_CACHE(c, ptr)))
+			bch_mark_bucket(c, ca, b, ptr, -sectors,
+					bch_extent_ptr_is_dirty(c, e, ptr),
+					metadata);
+	rcu_read_unlock();
+
+	return -1;
 }
 
 void bch_unmark_open_bucket(struct cache *ca, struct bucket *g)
@@ -282,14 +366,5 @@ void bch_unmark_open_bucket(struct cache *ca, struct bucket *g)
 
 	bucket_cmpxchg(g, old, new, false, ({
 		new.owned_by_allocator = 0;
-	}));
-}
-
-void bch_unmark_meta_bucket(struct cache *ca, struct bucket *g)
-{
-	struct bucket_mark old, new;
-
-	bucket_cmpxchg(g, old, new, false, ({
-		new.is_metadata = 0;
 	}));
 }

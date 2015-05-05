@@ -396,7 +396,8 @@ static inline void bch_btree_iter_cond_resched(struct btree_iter *iter)
 
 #define btree_node_root(_b)	((_b)->c->btree_roots[(_b)->btree_id])
 
-void btree_node_free(struct cache_set *, struct btree *);
+void bch_btree_node_free(struct cache_set *, struct btree *);
+void bch_btree_node_free_never_used(struct cache_set *, struct btree *);
 
 void bch_btree_node_write(struct btree *, struct closure *,
 			  struct btree_iter *);
