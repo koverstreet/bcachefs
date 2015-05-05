@@ -56,24 +56,6 @@ void bch_bio_submit_work(struct work_struct *work)
 
 /* Bios with headers */
 
-void bch_bbio_free(struct bio *bio, struct cache_set *c)
-{
-	struct bbio *b = container_of(bio, struct bbio, bio);
-	mempool_free(b, &c->bio_meta);
-}
-
-struct bio *bch_bbio_alloc(struct cache_set *c)
-{
-	struct bbio *b = mempool_alloc(&c->bio_meta, GFP_NOIO);
-	struct bio *bio = &b->bio;
-
-	bio_init(bio);
-	bio->bi_max_vecs	 = c->btree_pages;
-	bio->bi_io_vec		 = bio->bi_inline_vecs;
-
-	return bio;
-}
-
 void bch_bbio_prep(struct bbio *b, struct cache *ca)
 {
 	struct bvec_iter *iter = &b->bio.bi_iter;

@@ -770,10 +770,10 @@ static void cache_set_free(struct closure *cl)
 	percpu_ref_exit(&c->writes);
 	bch_io_clock_exit(&c->io_clock[WRITE]);
 	bch_io_clock_exit(&c->io_clock[READ]);
+	bioset_exit(&c->btree_bio);
 	bioset_exit(&c->bio_split);
 	mempool_exit(&c->btree_reserve_pool);
 	mempool_exit(&c->fill_iter);
-	mempool_exit(&c->bio_meta);
 	mempool_exit(&c->search);
 
 	if (c->wq)
@@ -924,7 +924,6 @@ static const char *bch_cache_set_alloc(struct cache_sb *sb,
 		goto err;
 
 	c->block_bits		= ilog2(c->sb.block_size);
-	c->btree_pages		= CACHE_BTREE_NODE_SIZE(&c->sb) / PAGE_SECTORS;
 
 	sema_init(&c->sb_write_mutex, 1);
 	INIT_RADIX_TREE(&c->devices, GFP_KERNEL);
@@ -991,18 +990,16 @@ static const char *bch_cache_set_alloc(struct cache_sb *sb,
 
 	if (!(c->wq = alloc_workqueue("bcache", WQ_MEM_RECLAIM, 0)) ||
 	    mempool_init_slab_pool(&c->search, 1, bch_search_cache) ||
-	    mempool_init_kmalloc_pool(&c->bio_meta, 1,
-				sizeof(struct bbio) + sizeof(struct bio_vec) *
-				c->btree_pages) ||
 	    mempool_init_kmalloc_pool(&c->btree_reserve_pool, 1,
 					BTREE_RESERVE_SIZE) ||
 	    mempool_init_kmalloc_pool(&c->fill_iter, 1, iter_size) ||
 	    bioset_init(&c->bio_split, 4, offsetof(struct bbio, bio)) ||
+	    bioset_init(&c->btree_bio, 1, offsetof(struct bbio, bio)) ||
 	    bch_io_clock_init(&c->io_clock[READ]) ||
 	    bch_io_clock_init(&c->io_clock[WRITE]) ||
 	    bch_journal_alloc(&c->journal) ||
 	    bch_btree_cache_alloc(c) ||
-	    bch_bset_sort_state_init(&c->sort, ilog2(c->btree_pages)))
+	    bch_bset_sort_state_init(&c->sort, ilog2(btree_pages(c))))
 		goto err;
 
 	err = "error creating kobject";
@@ -1238,7 +1235,7 @@ static const char *can_add_cache(struct cache_sb *sb,
 		return "mismatched block size";
 
 	if (sb->members[le16_to_cpu(sb->nr_this_dev)].bucket_size <
-	    c->btree_pages * PAGE_SECTORS)
+	    CACHE_BTREE_NODE_SIZE(&c->sb))
 		return "new cache bucket_size is too small";
 
 	return NULL;

@@ -183,17 +183,17 @@ static inline unsigned bset_byte_offset(struct btree *b, void *i)
 
 static inline size_t btree_bytes(struct cache_set *c)
 {
-	return c->btree_pages * PAGE_SIZE;
+	return CACHE_BTREE_NODE_SIZE(&c->sb) << 9;
 }
 
-static inline unsigned btree_sectors(struct cache_set *c)
+static inline size_t btree_pages(struct cache_set *c)
 {
-	return c->btree_pages << (PAGE_SHIFT - 9);
+	return CACHE_BTREE_NODE_SIZE(&c->sb) >> (PAGE_SHIFT - 9);
 }
 
 static inline unsigned btree_blocks(struct cache_set *c)
 {
-	return btree_sectors(c) >> c->block_bits;
+	return CACHE_BTREE_NODE_SIZE(&c->sb) >> c->block_bits;
 }
 
 static inline size_t bch_btree_keys_u64s_remaining(struct btree *b)

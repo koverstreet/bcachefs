@@ -421,7 +421,6 @@ struct cache_set {
 	struct closure		sb_write;
 	struct semaphore	sb_write_mutex;
 
-	mempool_t		bio_meta;
 	struct bio_set		bio_split;
 
 	struct bio_list		bio_submit_list;
@@ -429,11 +428,7 @@ struct cache_set {
 	spinlock_t		bio_submit_lock;
 
 	/* BTREE CACHE */
-	/*
-	 * Default number of pages for a new btree node - may be less than a
-	 * full bucket
-	 */
-	unsigned		btree_pages;
+	struct bio_set		btree_bio;
 
 	spinlock_t		btree_root_lock;
 	struct btree		*btree_roots[BTREE_ID_NR];

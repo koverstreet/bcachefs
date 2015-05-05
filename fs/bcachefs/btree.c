@@ -548,7 +548,7 @@ static void bch_btree_node_read(struct cache_set *c, struct btree *b)
 {
 	uint64_t start_time = local_clock();
 	struct closure cl;
-	struct bbio *bio;
+	struct bio *bio;
 	struct cache *ca;
 	const struct bch_extent_ptr *ptr;
 
@@ -564,24 +564,24 @@ static void bch_btree_node_read(struct cache_set *c, struct btree *b)
 
 	percpu_ref_get(&ca->ref);
 
-	bio = to_bbio(bch_bbio_alloc(c));
-	bio->bio.bi_iter.bi_size	= btree_bytes(c);
-	bio->bio.bi_end_io		= btree_node_read_endio;
-	bio->bio.bi_private		= &cl;
-	bio_set_op_attrs(&bio->bio, REQ_OP_READ, REQ_META|READ_SYNC);
+	bio = bio_alloc_bioset(GFP_NOIO, btree_pages(c), &c->btree_bio);
+	bio->bi_iter.bi_size	= btree_bytes(c);
+	bio->bi_end_io		= btree_node_read_endio;
+	bio->bi_private		= &cl;
+	bio_set_op_attrs(bio, REQ_OP_READ, REQ_META|READ_SYNC);
 
-	bch_bio_map(&bio->bio, b->data);
+	bch_bio_map(bio, b->data);
 
-	bio_get(&bio->bio);
-	bch_submit_bbio(bio, ca, &b->key, ptr, true);
+	bio_get(bio);
+	bch_submit_bbio(to_bbio(bio), ca, &b->key, ptr, true);
 
 	closure_sync(&cl);
 
-	if (bio->bio.bi_error ||
+	if (bio->bi_error ||
 	    bch_meta_read_fault("btree"))
 		set_btree_node_io_error(b);
 
-	bch_bbio_free(&bio->bio, c);
+	bio_put(bio);
 
 	if (btree_node_io_error(b))
 		goto err;
@@ -624,7 +624,7 @@ static void __btree_node_write_done(struct closure *cl)
 	struct btree_write *w = btree_prev_write(b);
 	struct cache_set *c = b->c;
 
-	bch_bbio_free(b->bio, c);
+	bio_put(b->bio);
 	b->bio = NULL;
 	btree_complete_write(c, b, w);
 
@@ -703,10 +703,12 @@ static void do_btree_node_write(struct closure *cl)
 	BUG_ON(b->written + blocks_to_write > btree_blocks(c));
 
 	BUG_ON(b->bio);
-	b->bio = bch_bbio_alloc(c);
+	b->bio = bio_alloc_bioset(GFP_NOIO, btree_pages(c), &c->btree_bio);
 
-	/* Take an extra reference so that the bio_put() in
-	 * btree_node_write_endio() doesn't call bio_free() */
+	/*
+	 * Take an extra reference so that the bio_put() in
+	 * btree_node_write_endio() doesn't call bio_free()
+	 */
 	bio_get(b->bio);
 
 	b->bio->bi_end_io	= btree_node_write_endio;
@@ -954,7 +956,7 @@ static void mca_bucket_free(struct cache_set *c, struct btree *b)
 
 static void mca_data_alloc(struct cache_set *c, struct btree *b, gfp_t gfp)
 {
-	unsigned order = ilog2(c->btree_pages);
+	unsigned order = ilog2(btree_pages(c));
 
 	b->data = (void *) __get_free_pages(gfp, order);
 	if (!b->data)
@@ -1087,7 +1089,7 @@ static unsigned long bch_mca_scan(struct shrinker *shrink,
 	 * succeed, so that inserting keys into the btree can always succeed and
 	 * IO can always make forward progress:
 	 */
-	nr /= c->btree_pages;
+	nr /= btree_pages(c);
 	can_free = mca_can_free(c);
 	nr = min_t(unsigned long, nr, can_free);
 
@@ -1133,12 +1135,12 @@ static unsigned long bch_mca_scan(struct shrinker *shrink,
 	bch_time_stats_update(&c->mca_scan_time, start_time);
 
 	trace_bcache_mca_scan(c,
-			      touched * c->btree_pages,
-			      freed * c->btree_pages,
-			      can_free * c->btree_pages,
+			      touched * btree_pages(c),
+			      freed * btree_pages(c),
+			      can_free * btree_pages(c),
 			      sc->nr_to_scan);
 
-	return (unsigned long) freed * c->btree_pages;
+	return (unsigned long) freed * btree_pages(c);
 }
 
 static unsigned long bch_mca_count(struct shrinker *shrink,
@@ -1153,7 +1155,7 @@ static unsigned long bch_mca_count(struct shrinker *shrink,
 	if (c->btree_cache_alloc_lock)
 		return 0;
 
-	return mca_can_free(c) * c->btree_pages;
+	return mca_can_free(c) * btree_pages(c);
 }
 
 void bch_btree_cache_free(struct cache_set *c)
@@ -1173,7 +1175,7 @@ void bch_btree_cache_free(struct cache_set *c)
 	if (c->verify_data)
 		list_move(&c->verify_data->list, &c->btree_cache);
 
-	free_pages((unsigned long) c->verify_ondisk, ilog2(c->btree_pages));
+	free_pages((unsigned long) c->verify_ondisk, ilog2(btree_pages(c)));
 #endif
 
 	for (i = 0; i < BTREE_ID_NR; i++)
@@ -1227,7 +1229,7 @@ int bch_btree_cache_alloc(struct cache_set *c)
 	mutex_init(&c->verify_lock);
 
 	c->verify_ondisk = (void *)
-		__get_free_pages(GFP_KERNEL, ilog2(c->btree_pages));
+		__get_free_pages(GFP_KERNEL, ilog2(btree_pages(c)));
 
 	c->verify_data = mca_bucket_alloc(c, GFP_KERNEL);
 	if (c->verify_data)
@@ -1237,7 +1239,7 @@ int bch_btree_cache_alloc(struct cache_set *c)
 	c->btree_cache_shrink.count_objects = bch_mca_count;
 	c->btree_cache_shrink.scan_objects = bch_mca_scan;
 	c->btree_cache_shrink.seeks = 4;
-	c->btree_cache_shrink.batch = c->btree_pages * 2;
+	c->btree_cache_shrink.batch = btree_pages(c) * 2;
 	register_shrinker(&c->btree_cache_shrink);
 
 	return 0;
