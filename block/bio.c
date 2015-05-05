@@ -1906,31 +1906,35 @@ int biovec_init_pool(mempool_t *pool, int pool_entries)
 	return mempool_init_slab_pool(pool, pool_entries, bp->slab);
 }
 
-void bioset_free(struct bio_set *bs)
+void bioset_exit(struct bio_set *bs)
 {
 	if (bs->rescue_workqueue)
 		destroy_workqueue(bs->rescue_workqueue);
+	bs->rescue_workqueue = NULL;
 
 	mempool_exit(&bs->bio_pool);
 	mempool_exit(&bs->bvec_pool);
 
 	bioset_integrity_free(bs);
-	bio_put_slab(bs);
+	if (bs->bio_slab)
+		bio_put_slab(bs);
+	bs->bio_slab = NULL;
+}
+EXPORT_SYMBOL(bioset_exit);
 
+void bioset_free(struct bio_set *bs)
+{
+	bioset_exit(bs);
 	kfree(bs);
 }
 EXPORT_SYMBOL(bioset_free);
 
-static struct bio_set *__bioset_create(unsigned int pool_size,
-				       unsigned int front_pad,
-				       bool create_bvec_pool)
+static int __bioset_init(struct bio_set *bs,
+			 unsigned int pool_size,
+			 unsigned int front_pad,
+			 bool create_bvec_pool)
 {
 	unsigned int back_pad = BIO_INLINE_VECS * sizeof(struct bio_vec);
-	struct bio_set *bs;
-
-	bs = kzalloc(sizeof(*bs), GFP_KERNEL);
-	if (!bs)
-		return NULL;
 
 	bs->front_pad = front_pad;
 
@@ -1939,10 +1943,8 @@ static struct bio_set *__bioset_create(unsigned int pool_size,
 	INIT_WORK(&bs->rescue_work, bio_alloc_rescue);
 
 	bs->bio_slab = bio_find_or_create_slab(front_pad + back_pad);
-	if (!bs->bio_slab) {
-		kfree(bs);
-		return NULL;
-	}
+	if (!bs->bio_slab)
+		return -ENOMEM;
 
 	if (mempool_init_slab_pool(&bs->bio_pool, pool_size, bs->bio_slab))
 		goto bad;
@@ -1955,10 +1957,41 @@ static struct bio_set *__bioset_create(unsigned int pool_size,
 	if (!bs->rescue_workqueue)
 		goto bad;
 
-	return bs;
+	return 0;
 bad:
-	bioset_free(bs);
-	return NULL;
+	bioset_exit(bs);
+	return -ENOMEM;
+}
+
+int bioset_init(struct bio_set *bs, unsigned pool_size, unsigned front_pad)
+{
+	return __bioset_init(bs, pool_size, front_pad, true);
+}
+EXPORT_SYMBOL(bioset_init);
+
+int bioset_init_nobvec(struct bio_set *bs, unsigned pool_size,
+		       unsigned front_pad)
+{
+	return __bioset_init(bs, pool_size, front_pad, false);
+}
+EXPORT_SYMBOL(bioset_init_nobvec);
+
+static struct bio_set *__bioset_create(unsigned int pool_size,
+				       unsigned int front_pad,
+				       bool create_bvec_pool)
+{
+	struct bio_set *bs;
+
+	bs = kzalloc(sizeof(*bs), GFP_KERNEL);
+	if (!bs)
+		return NULL;
+
+	if (__bioset_init(bs, pool_size, front_pad, create_bvec_pool)) {
+		kfree(bs);
+		return NULL;
+	}
+
+	return bs;
 }
 
 /**
