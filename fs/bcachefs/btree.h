@@ -429,13 +429,31 @@ static inline bool btree_node_format_fits(struct btree *b,
 
 void __bch_btree_calc_format(struct bkey_format_state *, struct btree *);
 
+#define BTREE_RESERVE_MAX						\
+	(btree_reserve_required_nodes(BTREE_MAX_DEPTH) + GC_MERGE_NODES)
+
+struct btree_reserve {
+	unsigned		nr;
+	struct btree		*b[];
+};
+
+#define BTREE_RESERVE_SIZE						\
+	(sizeof(struct btree_reserve) +					\
+	 sizeof(struct btree *) * BTREE_RESERVE_MAX)
+
+void bch_btree_reserve_put(struct cache_set *, struct btree_reserve *);
+struct btree_reserve *bch_btree_reserve_get(struct cache_set *c,
+					    struct btree *,
+					    struct btree_iter *,
+					    enum alloc_reserve,
+					    unsigned, bool);
+
 struct btree *__btree_node_alloc_replacement(struct cache_set *,
 					     struct btree *,
-					     struct bkey_format);
-struct btree *btree_node_alloc_replacement(struct cache_set *, struct btree *);
-int btree_check_reserve(struct cache_set *c, struct btree *,
-			struct btree_iter *, enum alloc_reserve,
-			unsigned, bool);
+					     struct bkey_format,
+					     struct btree_reserve *);
+struct btree *btree_node_alloc_replacement(struct cache_set *, struct btree *,
+					   struct btree_reserve *);
 
 int bch_btree_root_alloc(struct cache_set *, enum btree_id, struct closure *);
 int bch_btree_root_read(struct cache_set *, enum btree_id,
@@ -450,7 +468,7 @@ struct bch_replace_info;
 
 int bch_btree_insert_node(struct btree *, struct btree_iter *,
 			  struct keylist *, struct bch_replace_info *,
-			  u64 *, unsigned);
+			  u64 *, unsigned, struct btree_reserve *);
 
 /*
  * Don't drop/retake locks: instead return -EINTR if need to upgrade to intent

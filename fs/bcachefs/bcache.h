@@ -472,6 +472,8 @@ struct cache_set {
 	struct closure_waitlist	mca_wait;
 	struct task_struct	*btree_cache_alloc_lock;
 
+	mempool_t		*btree_reserve_pool;
+
 	struct workqueue_struct	*wq;
 
 	/* ALLOCATION */

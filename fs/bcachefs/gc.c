@@ -389,6 +389,7 @@ static void bch_coalesce_nodes(struct btree *old_nodes[GC_MERGE_NODES],
 	unsigned i, nr_old_nodes, nr_new_nodes, u64s = 0;
 	unsigned blocks = btree_blocks(c) * 2 / 3;
 	struct btree *new_nodes[GC_MERGE_NODES];
+	struct btree_reserve *res;
 	struct keylist keylist;
 	struct closure cl;
 	struct bpos saved_pos;
@@ -416,9 +417,12 @@ static void bch_coalesce_nodes(struct btree *old_nodes[GC_MERGE_NODES],
 			 block_bytes(c)) > blocks)
 		return;
 
-	if (btree_check_reserve(c, parent, NULL, iter->btree_id,
-				nr_old_nodes, false) ||
-	    bch_keylist_realloc(&keylist,
+	res = bch_btree_reserve_get(c, parent, NULL, iter->btree_id,
+				    nr_old_nodes, false);
+	if (IS_ERR(res))
+		return;
+
+	if (bch_keylist_realloc(&keylist,
 			(BKEY_U64s + BKEY_EXTENT_MAX_U64s) * nr_old_nodes)) {
 		trace_bcache_btree_gc_coalesce_fail(c);
 		goto out;
@@ -449,7 +453,7 @@ static void bch_coalesce_nodes(struct btree *old_nodes[GC_MERGE_NODES],
 	/* Repack everything with @new_format and sort down to one bset */
 	for (i = 0; i < nr_old_nodes; i++)
 		new_nodes[i] = __btree_node_alloc_replacement(c, old_nodes[i],
-							      new_format);
+							      new_format, res);
 
 	/*
 	 * Conceptually we concatenate the nodes together and slice them
@@ -550,8 +554,8 @@ static void bch_coalesce_nodes(struct btree *old_nodes[GC_MERGE_NODES],
 	btree_iter_node_set(iter, parent);
 
 	/* Insert the newly coalesced nodes */
-	ret = bch_btree_insert_node(parent, iter, &keylist,
-				    NULL, NULL, BTREE_INSERT_NOFAIL);
+	ret = bch_btree_insert_node(parent, iter, &keylist, NULL, NULL,
+				    BTREE_INSERT_NOFAIL, res);
 	BUG_ON(ret || !bch_keylist_empty(&keylist));
 
 	iter->pos = saved_pos;
@@ -568,6 +572,7 @@ static void bch_coalesce_nodes(struct btree *old_nodes[GC_MERGE_NODES],
 	}
 out:
 	bch_keylist_free(&keylist);
+	bch_btree_reserve_put(c, res);
 }
 
 static int bch_coalesce_btree(struct cache_set *c, enum btree_id btree_id)

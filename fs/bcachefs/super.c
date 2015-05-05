@@ -774,6 +774,7 @@ static void cache_set_free(struct closure *cl)
 		destroy_workqueue(c->wq);
 	if (c->bio_split)
 		bioset_free(c->bio_split);
+	mempool_destroy(c->btree_reserve_pool);
 	mempool_destroy(c->fill_iter);
 	mempool_destroy(c->bio_meta);
 	mempool_destroy(c->search);
@@ -995,6 +996,8 @@ static const char *bch_cache_set_alloc(struct cache_sb *sb,
 	if (!(c->bio_meta = mempool_create_kmalloc_pool(2,
 				sizeof(struct bbio) + sizeof(struct bio_vec) *
 				c->btree_pages)) ||
+	    !(c->btree_reserve_pool =
+	      mempool_create_kmalloc_pool(1, BTREE_RESERVE_SIZE)) ||
 	    !(c->fill_iter = mempool_create_kmalloc_pool(1, iter_size)) ||
 	    !(c->bio_split = bioset_create(4, offsetof(struct bbio, bio))) ||
 	    !(c->wq = alloc_workqueue("bcache", WQ_MEM_RECLAIM, 0)) ||

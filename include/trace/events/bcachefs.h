@@ -861,30 +861,27 @@ TRACE_EVENT(bcache_alloc_batch,
 		__entry->uuid, __entry->free, __entry->total)
 );
 
-TRACE_EVENT(bcache_btree_check_reserve_fail,
-	TP_PROTO(struct cache *ca, enum btree_id id, size_t free,
+TRACE_EVENT(bcache_btree_reserve_get_fail,
+	TP_PROTO(struct cache_set *c, enum btree_id id,
 		 size_t required, struct closure *cl),
-	TP_ARGS(ca, id, free, required, cl),
+	TP_ARGS(c, id, required, cl),
 
 	TP_STRUCT__entry(
 		__array(char,			uuid,	16	)
 		__field(enum btree_id,		id		)
-		__field(size_t,			free		)
 		__field(size_t,			required	)
 		__field(struct closure *,	cl		)
 	),
 
 	TP_fast_assign(
-		memcpy(__entry->uuid, ca->sb.disk_uuid.b, 16);
+		memcpy(__entry->uuid, c->sb.user_uuid.b, 16);
 		__entry->id = id;
-		__entry->free = free;
 		__entry->required = required;
 		__entry->cl = cl;
 	),
 
-	TP_printk("%pU id %u free %zu required %zu by %p",
-		__entry->uuid, __entry->id, __entry->free, __entry->required,
-		__entry->cl)
+	TP_printk("%pU id %u required %zu by %p", __entry->uuid,
+		  __entry->id, __entry->required, __entry->cl)
 );
 
 DEFINE_EVENT(cache, bcache_prio_write_start,
