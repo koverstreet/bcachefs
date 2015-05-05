@@ -2286,10 +2286,10 @@ do_init_next:		bch_btree_init_next(iter->c, b, iter);
 					     struct btree_node_entry, keys);
 			unsigned long bytes = __set_bytes(bne, bne->keys.u64s);
 
-			if (b->io_mutex.count > 0 &&
-			    ((max(roundup(bytes, block_bytes(iter->c)),
-				  PAGE_SIZE) - bytes < 48) ||
-			     bytes > (16 << 10)))
+			if ((max(round_up(bytes, block_bytes(iter->c)),
+				 PAGE_SIZE) - bytes < 48 ||
+			     bytes > 16 << 10) &&
+			    b->io_mutex.count > 0)
 				bch_btree_node_write(b, NULL, iter);
 		}
 	}

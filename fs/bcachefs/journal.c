@@ -1554,9 +1554,11 @@ void bch_journal_res_put(struct journal *j, struct journal_res *res)
 		res->u64s	-= actual;
 	}
 
-	if (!test_and_set_bit(JOURNAL_DIRTY, &j->flags))
+	if (!test_bit(JOURNAL_DIRTY, &j->flags)) {
+		set_bit(JOURNAL_DIRTY, &j->flags);
 		schedule_delayed_work(&j->write_work,
 				      msecs_to_jiffies(j->delay_ms));
+	}
 
 	if (test_bit(JOURNAL_NEED_WRITE, &j->flags) &&
 	    !test_bit(JOURNAL_IO_IN_FLIGHT, &j->flags)) {
