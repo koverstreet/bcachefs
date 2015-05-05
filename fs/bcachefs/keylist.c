@@ -204,11 +204,8 @@ void bch_keylist_recalc_oldest_gens(struct cache_set *c,
 
 	mutex_lock(&kl->lock);
 
-	keylist_for_each(k, &kl->list) {
-		rcu_read_lock();
-		bch_btree_key_recalc_oldest_gen(c, bkey_i_to_s_c_extent(k));
-		rcu_read_unlock();
-	}
+	keylist_for_each(k, &kl->list)
+		bch_btree_key_recalc_oldest_gen(c, bkey_i_to_s_c(k));
 
 	mutex_unlock(&kl->lock);
 }

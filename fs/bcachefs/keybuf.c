@@ -123,12 +123,9 @@ void bch_keybuf_recalc_oldest_gens(struct cache_set *c, struct keybuf *buf)
 	struct keybuf_key *w, *n;
 
 	spin_lock(&buf->lock);
-	rcu_read_lock();
 	rbtree_postorder_for_each_entry_safe(w, n,
 				&buf->keys, node)
-		bch_btree_key_recalc_oldest_gen(c,
-					bkey_i_to_s_c_extent(&w->key));
-	rcu_read_unlock();
+		bch_btree_key_recalc_oldest_gen(c, bkey_i_to_s_c(&w->key));
 	spin_unlock(&buf->lock);
 }
 

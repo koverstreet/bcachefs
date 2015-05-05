@@ -23,35 +23,12 @@
 #include <linux/delay.h>
 #include <trace/events/bcachefs.h>
 
-u8 bch_btree_key_recalc_oldest_gen(struct cache_set *c,
-				   struct bkey_s_c_extent e)
-{
-	const struct bch_extent_ptr *ptr;
-	struct cache *ca;
-	u8 max_stale = 0;
-
-	extent_for_each_ptr(e, ptr)
-		if (PTR_DEV(ptr) < MAX_CACHES_PER_SET)
-			__set_bit(PTR_DEV(ptr), c->cache_slots_used);
-
-	extent_for_each_online_device(c, e, ptr, ca) {
-		struct bucket *g = PTR_BUCKET(ca, ptr);
-
-		if (__gen_after(g->oldest_gen, PTR_GEN(ptr)))
-			g->oldest_gen = PTR_GEN(ptr);
-
-		max_stale = max(max_stale, ptr_stale(ca, ptr));
-	}
-
-	return max_stale;
-}
-
-u8 __bch_btree_mark_key(struct cache_set *c, int level, struct bkey_s_c k)
+u8 bch_btree_key_recalc_oldest_gen(struct cache_set *c, struct bkey_s_c k)
 {
 	struct bkey_s_c_extent e;
 	const struct bch_extent_ptr *ptr;
 	struct cache *ca;
-	u8 max_stale;
+	u8 max_stale = 0;
 
 	switch (k.k->type) {
 	case BCH_EXTENT:
@@ -59,7 +36,36 @@ u8 __bch_btree_mark_key(struct cache_set *c, int level, struct bkey_s_c k)
 
 		rcu_read_lock();
 
-		max_stale = bch_btree_key_recalc_oldest_gen(c, e);
+		extent_for_each_ptr(e, ptr)
+			if (PTR_DEV(ptr) < MAX_CACHES_PER_SET)
+				__set_bit(PTR_DEV(ptr), c->cache_slots_used);
+
+		extent_for_each_online_device(c, e, ptr, ca) {
+			struct bucket *g = PTR_BUCKET(ca, ptr);
+
+			if (__gen_after(g->oldest_gen, PTR_GEN(ptr)))
+				g->oldest_gen = PTR_GEN(ptr);
+
+			max_stale = max(max_stale, ptr_stale(ca, ptr));
+		}
+
+		rcu_read_unlock();
+	}
+
+	return max_stale;
+}
+
+void __bch_btree_mark_key(struct cache_set *c, int level, struct bkey_s_c k)
+{
+	const struct bch_extent_ptr *ptr;
+	struct bkey_s_c_extent e;
+	struct cache *ca;
+
+	switch (k.k->type) {
+	case BCH_EXTENT:
+		e = bkey_s_c_to_extent(k);
+
+		rcu_read_lock();
 
 		if (level) {
 			extent_for_each_online_device(c, e, ptr, ca)
@@ -71,17 +77,13 @@ u8 __bch_btree_mark_key(struct cache_set *c, int level, struct bkey_s_c k)
 		}
 
 		rcu_read_unlock();
-
-		return max_stale;
-	default:
-		return 0;
 	}
 }
 
-static u8 btree_mark_key(struct cache_set *c, struct btree *b,
+static void btree_mark_key(struct cache_set *c, struct btree *b,
 			 struct bkey_s_c k)
 {
-	return __bch_btree_mark_key(c, b->level, k);
+	__bch_btree_mark_key(c, b->level, k);
 }
 
 /* Only the extent btree has leafs whose keys point to data */
@@ -107,26 +109,29 @@ bool btree_gc_mark_node(struct cache_set *c, struct btree *b,
 
 	if (btree_node_has_ptrs(b)) {
 		struct btree_node_iter iter;
-		struct bkey_packed *k;
+		struct bkey_packed *k_p;
 		struct bkey_tup tup;
+		struct bkey_s_c k;
 		unsigned keys = 0, good_keys = 0, u64s;
 		u8 stale = 0;
 
-		for_each_btree_node_key(&b->keys, k, &iter) {
-			bkey_disassemble(&tup, f, k);
+		for_each_btree_node_key(&b->keys, k_p, &iter) {
+			bkey_disassemble(&tup, f, k_p);
+			k = bkey_tup_to_s_c(&tup);
 
-			bkey_debugcheck(c, b, bkey_tup_to_s_c(&tup));
+			bkey_debugcheck(c, b, k);
+
+			btree_mark_key(c, b, k);
 
 			stale = max(stale,
-				    btree_mark_key(c, b,
-						   bkey_tup_to_s_c(&tup)));
+				    bch_btree_key_recalc_oldest_gen(c, k));
 			keys++;
 
-			u64s = bch_extent_nr_ptrs_after_normalize(c, b, k);
+			u64s = bch_extent_nr_ptrs_after_normalize(c, b, k_p);
 			if (stat && u64s) {
 				good_keys++;
 
-				stat->key_bytes += k->u64s;
+				stat->key_bytes += k_p->u64s;
 				stat->nkeys++;
 				stat->data += tup.k.size;
 			}

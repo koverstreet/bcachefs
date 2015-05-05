@@ -411,10 +411,7 @@ static void pending_recalc_oldest_gens(struct cache_set *c, struct list_head *l)
 		 * don't need to be marked because they are pointing
 		 * to open buckets until the write completes
 		 */
-		rcu_read_lock();
-		bch_btree_key_recalc_oldest_gen(c,
-					bkey_i_to_s_c_extent(&io->key));
-		rcu_read_unlock();
+		bch_btree_key_recalc_oldest_gen(c, bkey_i_to_s_c(&io->key));
 	}
 }
 
