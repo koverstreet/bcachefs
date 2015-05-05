@@ -1151,7 +1151,7 @@ static void flush_current_bio_list(struct blk_plug_cb *cb, bool from_schedule)
 
 		while ((bio = bio_list_pop(&list))) {
 			struct bio_set *bs = bio->bi_pool;
-			if (unlikely(!bs) || bs == fs_bio_set ||
+			if (unlikely(!bs) || bs == &fs_bio_set ||
 			    !bs->rescue_workqueue) {
 				bio_list_add(&current->bio_list[i], bio);
 				continue;
