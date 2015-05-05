@@ -105,9 +105,6 @@ bool btree_gc_mark_node(struct cache_set *c, struct btree *b,
 	if (stat)
 		stat->nodes++;
 
-	/* only actually needed for the root */
-	__bch_btree_mark_key(c, b->level + 1, bkey_i_to_s_c(&b->key));
-
 	if (btree_node_has_ptrs(b)) {
 		struct btree_node_iter iter;
 		struct bkey_packed *k;
@@ -200,7 +197,17 @@ static int bch_gc_btree(struct cache_set *c, enum btree_id btree_id,
 
 		bch_btree_iter_cond_resched(&iter);
 	}
-	return bch_btree_iter_unlock(&iter);
+	bch_btree_iter_unlock(&iter);
+
+	spin_lock(&c->btree_root_lock);
+	b = c->btree_roots[btree_id];
+	__bch_btree_mark_key(c, b->level + 1, bkey_i_to_s_c(&b->key));
+
+	write_seqlock(&c->gc_cur_lock);
+	c->gc_cur_level = b->level + 1;
+	write_sequnlock(&c->gc_cur_lock);
+	spin_unlock(&c->btree_root_lock);
+	return 0;
 }
 
 static void bch_mark_allocator_buckets(struct cache_set *c)
