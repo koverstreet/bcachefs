@@ -1678,15 +1678,17 @@ static struct btree *__bch_btree_node_alloc(struct cache_set *c,
 
 	spin_unlock(&ob->lock);
 
-	BUG_ON(ob->key.k.size);
-
 	b = mca_alloc(c, NULL, 0, 0, NULL);
 
 	/* we hold cannibalize_lock: */
 	BUG_ON(IS_ERR_OR_NULL(b));
 	BUG_ON(b->ob);
 
-	bkey_copy(&b->key, &ob->key);
+	bkey_extent_init(&b->key);
+	memcpy(&b->key.v, ob->ptrs,
+	       sizeof(struct bch_extent_ptr) * ob->nr_ptrs);
+	bch_set_extent_ptrs(bkey_i_to_s_extent(&b->key), ob->nr_ptrs);
+
 	b->ob = ob;
 
 	return b;

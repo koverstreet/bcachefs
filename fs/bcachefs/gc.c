@@ -206,7 +206,7 @@ static int bch_gc_btree(struct cache_set *c, enum btree_id btree_id,
 static void bch_mark_allocator_buckets(struct cache_set *c)
 {
 	struct cache *ca;
-	struct open_bucket *b;
+	struct open_bucket *ob;
 	size_t i, j, iter;
 	unsigned ci;
 
@@ -226,15 +226,13 @@ static void bch_mark_allocator_buckets(struct cache_set *c)
 	spin_lock(&c->open_buckets_lock);
 	rcu_read_lock();
 
-	list_for_each_entry(b, &c->open_buckets_open, list) {
-		struct bkey_s_c_extent e;
+	list_for_each_entry(ob, &c->open_buckets_open, list) {
 		const struct bch_extent_ptr *ptr;
 
-		spin_lock(&b->lock);
-		e = bkey_i_to_s_c_extent(&b->key);
-		extent_for_each_online_device(c, e, ptr, ca)
+		spin_lock(&ob->lock);
+		extent_ptr_for_each_online_device(c, ob->ptrs, ob->nr_ptrs, ptr, ca)
 			bch_mark_alloc_bucket(ca, PTR_BUCKET(ca, ptr));
-		spin_unlock(&b->lock);
+		spin_unlock(&ob->lock);
 	}
 
 	rcu_read_unlock();

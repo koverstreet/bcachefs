@@ -71,7 +71,8 @@ struct open_bucket {
 	spinlock_t		lock;
 	atomic_t		pin;
 	unsigned		sectors_free;
-	BKEY_PADDED(key);
+	unsigned		nr_ptrs;
+	struct bch_extent_ptr	ptrs[BKEY_EXTENT_PTRS_MAX];
 };
 
 struct write_point {
