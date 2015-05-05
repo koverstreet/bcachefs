@@ -4894,7 +4894,7 @@ static struct bio *chunk_aligned_read(struct mddev *mddev, struct bio *raid_bio)
 		unsigned sectors = chunk_sects - (sector & (chunk_sects-1));
 
 		if (sectors < bio_sectors(raid_bio)) {
-			split = bio_split(raid_bio, sectors, GFP_NOIO, fs_bio_set);
+			split = bio_split(raid_bio, sectors, GFP_NOIO, &fs_bio_set);
 			bio_chain(split, raid_bio);
 		} else
 			split = raid_bio;

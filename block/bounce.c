@@ -194,7 +194,7 @@ static void __blk_queue_bounce(struct request_queue *q, struct bio **bio_orig,
 
 	return;
 bounce:
-	bio = bio_clone_bioset(*bio_orig, GFP_NOIO, fs_bio_set);
+	bio = bio_clone(*bio_orig, GFP_NOIO);
 
 	bio_for_each_segment_all(to, bio, i) {
 		struct page *page = to->bv_page;
