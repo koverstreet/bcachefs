@@ -255,7 +255,7 @@ struct cache {
 	struct kobject		kobj;
 
 	/* biosets used in cloned bios for replicas and moving_gc */
-	struct bio_set		*replica_set;
+	struct bio_set		replica_set;
 
 	struct task_struct	*alloc_thread;
 
@@ -421,8 +421,8 @@ struct cache_set {
 	struct closure		sb_write;
 	struct semaphore	sb_write_mutex;
 
-	mempool_t		*bio_meta;
-	struct bio_set		*bio_split;
+	mempool_t		bio_meta;
+	struct bio_set		bio_split;
 
 	struct bio_list		bio_submit_list;
 	struct work_struct	bio_submit_work;
@@ -472,7 +472,7 @@ struct cache_set {
 	struct closure_waitlist	mca_wait;
 	struct task_struct	*btree_cache_alloc_lock;
 
-	mempool_t		*btree_reserve_pool;
+	mempool_t		btree_reserve_pool;
 
 	struct workqueue_struct	*wq;
 
@@ -595,7 +595,7 @@ struct cache_set {
 	 * A btree node on disk could have too many bsets for an iterator to fit
 	 * on the stack - have to dynamically allocate them
 	 */
-	mempool_t		*fill_iter;
+	mempool_t		fill_iter;
 
 	struct bset_sort_state	sort;
 
@@ -603,7 +603,7 @@ struct cache_set {
 	unsigned		btree_flush_delay;
 
 	/* CACHING OTHER BLOCK DEVICES */
-	mempool_t		*search;
+	mempool_t		search;
 	struct radix_tree_root	devices;
 	struct list_head	cached_devs;
 	u64			cached_dev_sectors;

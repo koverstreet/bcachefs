@@ -180,8 +180,7 @@ static void bcache_device_free(struct bcache_device *d)
 		put_disk(d->disk);
 	}
 
-	if (d->bio_split)
-		bioset_free(d->bio_split);
+	bioset_exit(&d->bio_split);
 
 	closure_debug_destroy(&d->cl);
 }
@@ -200,8 +199,8 @@ static int bcache_device_init(struct bcache_device *d, unsigned block_size,
 		return minor;
 	}
 
-	if (!(d->bio_split = bioset_create(4, offsetof(struct bbio, bio))) ||
-	    !(d->disk = alloc_disk(1))) {
+	if (!(d->disk = alloc_disk(1)) ||
+	    bioset_init(&d->bio_split, 4, offsetof(struct bbio, bio))) {
 		pr_err("cannot allocate disk");
 		ida_simple_remove(&bch_blockdev_minor, minor);
 		return -ENOMEM;

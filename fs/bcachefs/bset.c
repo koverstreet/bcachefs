@@ -1429,7 +1429,7 @@ EXPORT_SYMBOL(bch_btree_node_iter_next_unpack);
 
 void bch_bset_sort_state_free(struct bset_sort_state *state)
 {
-	mempool_destroy(state->pool);
+	mempool_exit(&state->pool);
 }
 
 int bch_bset_sort_state_init(struct bset_sort_state *state, unsigned page_order)
@@ -1439,8 +1439,7 @@ int bch_bset_sort_state_init(struct bset_sort_state *state, unsigned page_order)
 	state->page_order = page_order;
 	state->crit_factor = int_sqrt(1 << page_order);
 
-	state->pool = mempool_create_page_pool(1, page_order);
-	if (!state->pool)
+	if (mempool_init_page_pool(&state->pool, 1, page_order))
 		return -ENOMEM;
 
 	return 0;

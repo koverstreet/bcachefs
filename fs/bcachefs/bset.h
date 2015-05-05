@@ -551,7 +551,7 @@ bool bch_btree_node_iter_next_unpack(struct btree_node_iter *,
 /* Sorting */
 
 struct bset_sort_state {
-	mempool_t		*pool;
+	mempool_t		pool;
 
 	unsigned		page_order;
 	unsigned		crit_factor;

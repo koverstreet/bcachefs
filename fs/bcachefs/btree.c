@@ -219,7 +219,7 @@ static void btree_node_sort(struct cache_set *c, struct btree *b,
 	if (!out) {
 		struct page *outp;
 
-		outp = mempool_alloc(c->sort.pool, GFP_NOIO);
+		outp = mempool_alloc(&c->sort.pool, GFP_NOIO);
 		out = page_address(outp);
 		used_mempool = true;
 	}
@@ -258,7 +258,7 @@ static void btree_node_sort(struct cache_set *c, struct btree *b,
 		six_unlock_write(&b->lock);
 
 	if (used_mempool)
-		mempool_free(virt_to_page(out), c->sort.pool);
+		mempool_free(virt_to_page(out), &c->sort.pool);
 	else
 		free_pages((unsigned long) out, order);
 
@@ -427,7 +427,7 @@ void bch_btree_node_read_done(struct cache_set *c, struct btree *b,
 	const char *err;
 	int ret;
 
-	iter = mempool_alloc(c->fill_iter, GFP_NOIO);
+	iter = mempool_alloc(&c->fill_iter, GFP_NOIO);
 	__bch_btree_node_iter_init(iter, &b->keys);
 
 	err = "dynamic fault";
@@ -531,7 +531,7 @@ void bch_btree_node_read_done(struct cache_set *c, struct btree *b,
 
 	set_btree_node_need_init_next(b);
 out:
-	mempool_free(iter, c->fill_iter);
+	mempool_free(iter, &c->fill_iter);
 	return;
 err:
 	set_btree_node_io_error(b);
@@ -1821,7 +1821,7 @@ void bch_btree_reserve_put(struct cache_set *c, struct btree_reserve *reserve)
 		bch_open_bucket_put(c, ob);
 	}
 
-	mempool_free(reserve, c->btree_reserve_pool);
+	mempool_free(reserve, &c->btree_reserve_pool);
 }
 
 static struct btree_reserve *__bch_btree_reserve_get(struct cache_set *c,
@@ -1843,7 +1843,7 @@ static struct btree_reserve *__bch_btree_reserve_get(struct cache_set *c,
 	if (ret)
 		return ERR_PTR(ret);
 
-	reserve = mempool_alloc(c->btree_reserve_pool, GFP_NOIO);
+	reserve = mempool_alloc(&c->btree_reserve_pool, GFP_NOIO);
 
 	reserve->nr = 0;
 

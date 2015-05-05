@@ -94,7 +94,7 @@ static void dirty_io_destructor(struct closure *cl)
 	struct dirty_io *io = container_of(cl, struct dirty_io, cl);
 
 	if (io->from_mempool)
-		mempool_free(io, io->dc->writeback_io_pool);
+		mempool_free(io, &io->dc->writeback_io_pool);
 	else
 		kfree(io);
 }
@@ -107,7 +107,7 @@ static void write_dirty_finish(struct closure *cl)
 	int i;
 
 	bio_for_each_segment_all(bv, &io->bio, i)
-		mempool_free(bv->bv_page, dc->writeback_page_pool);
+		mempool_free(bv->bv_page, &dc->writeback_page_pool);
 
 	if (!io->error) {
 		int ret;
@@ -227,7 +227,7 @@ static u64 read_dirty(struct cached_dev *dc)
 			if (!io) {
 				trace_bcache_writeback_alloc_fail(ca->set,
 								  tmp.k.k.size);
-				io = mempool_alloc(dc->writeback_io_pool,
+				io = mempool_alloc(&dc->writeback_io_pool,
 						   GFP_KERNEL);
 				memset(io, 0, sizeof(*io) +
 				       sizeof(struct bio_vec) *
@@ -258,7 +258,7 @@ static u64 read_dirty(struct cached_dev *dc)
 
 			bio_for_each_segment_all(bv, &io->bio, i) {
 				bv->bv_page =
-					mempool_alloc(dc->writeback_page_pool,
+					mempool_alloc(&dc->writeback_page_pool,
 						      i ? GFP_NOWAIT
 						      : GFP_KERNEL);
 				if (!bv->bv_page) {
@@ -569,8 +569,8 @@ void bch_cached_dev_writeback_free(struct cached_dev *dc)
 {
 	struct bcache_device *d = &dc->disk;
 
-	mempool_destroy(dc->writeback_page_pool);
-	mempool_destroy(dc->writeback_io_pool);
+	mempool_exit(&dc->writeback_page_pool);
+	mempool_exit(&dc->writeback_io_pool);
 	kvfree(d->full_dirty_stripes);
 	kvfree(d->stripe_sectors_dirty);
 }
@@ -620,16 +620,12 @@ int bch_cached_dev_writeback_init(struct cached_dev *dc)
 		return -ENOMEM;
 	}
 
-	dc->writeback_io_pool =
-		mempool_create_kmalloc_pool(4, sizeof(struct dirty_io) +
-					    sizeof(struct bio_vec) *
-					    DIRTY_IO_MEMPOOL_BVECS);
-	if (!dc->writeback_io_pool)
-		return -ENOMEM;
-
-	dc->writeback_page_pool =
-		mempool_create_page_pool((64 << 10) / PAGE_SIZE, 0);
-	if (!dc->writeback_page_pool)
+	if (mempool_init_kmalloc_pool(&dc->writeback_io_pool, 4,
+				      sizeof(struct dirty_io) +
+				      sizeof(struct bio_vec) *
+				      DIRTY_IO_MEMPOOL_BVECS) ||
+	    mempool_init_page_pool(&dc->writeback_page_pool,
+				   (64 << 10) / PAGE_SIZE, 0))
 		return -ENOMEM;
 
 	init_rwsem(&dc->writeback_lock);

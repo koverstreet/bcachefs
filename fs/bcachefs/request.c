@@ -229,7 +229,7 @@ static void search_free(struct closure *cl)
 		bio_put(s->iop.bio);
 
 	closure_debug_destroy(cl);
-	mempool_free(s, s->d->c->search);
+	mempool_free(s, &s->d->c->search);
 }
 
 static inline struct search *search_alloc(struct bio *bio,
@@ -237,7 +237,7 @@ static inline struct search *search_alloc(struct bio *bio,
 {
 	struct search *s;
 
-	s = mempool_alloc(d->c->search, GFP_NOIO);
+	s = mempool_alloc(&d->c->search, GFP_NOIO);
 
 	closure_init(&s->cl, NULL);
 	do_bio_hook(s, bio);
@@ -359,7 +359,7 @@ static int cached_dev_cache_miss(struct btree_iter *iter, struct search *s,
 	if (ret == -EINTR || ret == -EAGAIN)
 		return ret;
 
-	miss = bio_next_split(bio, sectors, GFP_NOIO, s->d->bio_split);
+	miss = bio_next_split(bio, sectors, GFP_NOIO, &s->d->bio_split);
 
 	miss->bi_end_io		= request_endio;
 	miss->bi_private	= &s->cl;
@@ -379,7 +379,7 @@ static int cached_dev_cache_miss(struct btree_iter *iter, struct search *s,
 
 	return 0;
 nopromote:
-	miss = bio_next_split(bio, sectors, GFP_NOIO, s->d->bio_split);
+	miss = bio_next_split(bio, sectors, GFP_NOIO, &s->d->bio_split);
 
 	miss->bi_end_io		= request_endio;
 	miss->bi_private	= &s->cl;
@@ -456,7 +456,7 @@ retry:
 				s->read_dirty_data = true;
 
 			n = bio_next_split(bio, sectors, GFP_NOIO,
-					   s->d->bio_split);
+					   &s->d->bio_split);
 
 			bbio = to_bbio(n);
 			bch_bkey_copy_single_ptr(&bbio->key, k, ptr - e.v->ptr);
@@ -565,7 +565,7 @@ static void cached_dev_write(struct cached_dev *dc, struct search *s)
 		if (bio->bi_opf & REQ_PREFLUSH) {
 			/* Also need to send a flush to the backing device */
 			struct bio *flush = bio_alloc_bioset(GFP_NOIO, 0,
-							     dc->disk.bio_split);
+							     &dc->disk.bio_split);
 
 			flush->bi_bdev	= bio->bi_bdev;
 			flush->bi_end_io = request_endio;
@@ -575,7 +575,7 @@ static void cached_dev_write(struct cached_dev *dc, struct search *s)
 			closure_bio_submit(flush, cl);
 		}
 	} else {
-		insert_bio = bio_clone_fast(bio, GFP_NOIO, dc->disk.bio_split);
+		insert_bio = bio_clone_fast(bio, GFP_NOIO, &dc->disk.bio_split);
 		closure_bio_submit(bio, cl);
 
 		flags |= BCH_WRITE_CACHED;

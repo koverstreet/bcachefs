@@ -770,14 +770,14 @@ static void cache_set_free(struct closure *cl)
 	percpu_ref_exit(&c->writes);
 	bch_io_clock_exit(&c->io_clock[WRITE]);
 	bch_io_clock_exit(&c->io_clock[READ]);
+	bioset_exit(&c->bio_split);
+	mempool_exit(&c->btree_reserve_pool);
+	mempool_exit(&c->fill_iter);
+	mempool_exit(&c->bio_meta);
+	mempool_exit(&c->search);
+
 	if (c->wq)
 		destroy_workqueue(c->wq);
-	if (c->bio_split)
-		bioset_free(c->bio_split);
-	mempool_destroy(c->btree_reserve_pool);
-	mempool_destroy(c->fill_iter);
-	mempool_destroy(c->bio_meta);
-	mempool_destroy(c->search);
 
 	mutex_lock(&bch_register_lock);
 	list_del(&c->list);
@@ -983,24 +983,21 @@ static const char *bch_cache_set_alloc(struct cache_sb *sb,
 
 	mutex_init(&c->uevent_lock);
 
-	c->search = mempool_create_slab_pool(32, bch_search_cache);
-	if (!c->search)
-		goto err;
-
 	iter_size = (btree_blocks(c) + 1) *
 		sizeof(struct btree_node_iter_set);
 
 	if (cache_set_init_fault("cache_set_alloc"))
 		goto err;
 
-	if (!(c->bio_meta = mempool_create_kmalloc_pool(2,
+	if (!(c->wq = alloc_workqueue("bcache", WQ_MEM_RECLAIM, 0)) ||
+	    mempool_init_slab_pool(&c->search, 1, bch_search_cache) ||
+	    mempool_init_kmalloc_pool(&c->bio_meta, 1,
 				sizeof(struct bbio) + sizeof(struct bio_vec) *
-				c->btree_pages)) ||
-	    !(c->btree_reserve_pool =
-	      mempool_create_kmalloc_pool(1, BTREE_RESERVE_SIZE)) ||
-	    !(c->fill_iter = mempool_create_kmalloc_pool(1, iter_size)) ||
-	    !(c->bio_split = bioset_create(4, offsetof(struct bbio, bio))) ||
-	    !(c->wq = alloc_workqueue("bcache", WQ_MEM_RECLAIM, 0)) ||
+				c->btree_pages) ||
+	    mempool_init_kmalloc_pool(&c->btree_reserve_pool, 1,
+					BTREE_RESERVE_SIZE) ||
+	    mempool_init_kmalloc_pool(&c->fill_iter, 1, iter_size) ||
+	    bioset_init(&c->bio_split, 4, offsetof(struct bbio, bio)) ||
 	    bch_io_clock_init(&c->io_clock[READ]) ||
 	    bch_io_clock_init(&c->io_clock[WRITE]) ||
 	    bch_journal_alloc(&c->journal) ||
@@ -1505,9 +1502,8 @@ static void bch_cache_free_work(struct work_struct *work)
 	 * As such, not all the sub-structures may be initialized.
 	 * However, they were zeroed when the object was allocated.
 	 */
-	if (ca->replica_set != NULL)
-		bioset_free(ca->replica_set);
 
+	bioset_exit(&ca->replica_set);
 	free_percpu(ca->bucket_stats_percpu);
 	kfree(ca->journal.bucket_seq);
 	free_pages((unsigned long) ca->disk_buckets, ilog2(bucket_pages(ca)));
@@ -1899,11 +1895,11 @@ static const char *cache_alloc(struct bcache_superblock *sb,
 	    !(ca->prio_buckets	= kzalloc(sizeof(uint64_t) * prio_buckets(ca) *
 					  2, GFP_KERNEL)) ||
 	    !(ca->disk_buckets	= alloc_bucket_pages(GFP_KERNEL, ca)) ||
-	    !(ca->replica_set = bioset_create(4, offsetof(struct bbio, bio))) ||
 	    !(ca->bucket_stats_percpu = alloc_percpu(struct bucket_stats)) ||
 	    !(ca->journal.bucket_seq = kcalloc(bch_nr_journal_buckets(&ca->sb),
 					       sizeof(u64), GFP_KERNEL)) ||
-	    !(ca->bio_prio = bio_kmalloc(GFP_NOIO, bucket_pages(ca))))
+	    !(ca->bio_prio = bio_kmalloc(GFP_NOIO, bucket_pages(ca))) ||
+	    bioset_init(&ca->replica_set, 4, offsetof(struct bbio, bio)))
 		goto err;
 
 	ca->prio_last_buckets = ca->prio_buckets + prio_buckets(ca);

@@ -59,12 +59,12 @@ void bch_bio_submit_work(struct work_struct *work)
 void bch_bbio_free(struct bio *bio, struct cache_set *c)
 {
 	struct bbio *b = container_of(bio, struct bbio, bio);
-	mempool_free(b, c->bio_meta);
+	mempool_free(b, &c->bio_meta);
 }
 
 struct bio *bch_bbio_alloc(struct cache_set *c)
 {
-	struct bbio *b = mempool_alloc(c->bio_meta, GFP_NOIO);
+	struct bbio *b = mempool_alloc(&c->bio_meta, GFP_NOIO);
 	struct bio *bio = &b->bio;
 
 	bio_init(bio);
@@ -131,7 +131,7 @@ void bch_submit_bbio_replicas(struct bio *bio, struct cache_set *c,
 
 		if (ptr + 1 < bch_extent_ptrs(e)) {
 			struct bio *n = bio_clone_fast(bio, GFP_NOIO,
-						       ca->replica_set);
+						       &ca->replica_set);
 			n->bi_end_io		= bio->bi_end_io;
 			n->bi_private		= bio->bi_private;
 			bch_submit_bbio(to_bbio(n), ca, k,
@@ -429,7 +429,6 @@ static void __bch_write(struct closure *cl)
 
 	do {
 		struct bkey_i *k;
-		struct bio_set *split = op->c->bio_split;
 
 		BUG_ON(bio_sectors(bio) != op->insert_key.k.size);
 
@@ -467,7 +466,8 @@ static void __bch_write(struct closure *cl)
 
 		bch_cut_front(k->k.p, &op->insert_key);
 
-		n = bio_next_split(bio, k->k.size, GFP_NOIO, split);
+		n = bio_next_split(bio, k->k.size, GFP_NOIO,
+				   &op->c->bio_split);
 		n->bi_end_io	= bch_write_endio;
 		n->bi_private	= cl;
 #if 0
@@ -1011,9 +1011,9 @@ int bch_read(struct cache_set *c, struct bio *bio, u64 inode)
 				c->prio_clock[READ].hand;
 
 			n = sectors >= bio_sectors(bio)
-				? bio_clone_fast(bio, GFP_NOIO, c->bio_split)
+				? bio_clone_fast(bio, GFP_NOIO, &c->bio_split)
 				: bio_split(bio, sectors, GFP_NOIO,
-					    c->bio_split);
+					    &c->bio_split);
 
 			n->bi_private		= bio;
 			n->bi_end_io		= bch_read_endio;

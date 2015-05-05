@@ -32,7 +32,7 @@ struct bcache_device {
 	atomic_t		*stripe_sectors_dirty;
 	unsigned long		*full_dirty_stripes;
 
-	struct bio_set		*bio_split;
+	struct bio_set		bio_split;
 
 	unsigned		data_csum:1;
 
@@ -88,8 +88,8 @@ struct cached_dev {
 
 	struct task_struct	*writeback_thread;
 	struct keybuf		writeback_keys;
-	mempool_t		*writeback_io_pool;
-	mempool_t		*writeback_page_pool;
+	mempool_t		writeback_io_pool;
+	mempool_t		writeback_page_pool;
 
 	/* For tracking sequential IO */
 #define RECENT_IO_BITS	7
