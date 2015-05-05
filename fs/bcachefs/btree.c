@@ -1624,7 +1624,7 @@ static void bch_btree_set_root(struct cache_set *c, struct btree *b)
 	list_del_init(&b->list);
 	mutex_unlock(&c->btree_cache_lock);
 
-	spin_lock_irq(&c->btree_root_lock);
+	spin_lock(&c->btree_root_lock);
 	btree_node_root(b) = b;
 
 	if (b->btree_id != c->gc_cur_btree
@@ -1638,7 +1638,7 @@ static void bch_btree_set_root(struct cache_set *c, struct btree *b)
 			bch_mark_metadata_bucket(ca, PTR_BUCKET(ca, ptr), false);
 		rcu_read_unlock();
 	}
-	spin_unlock_irq(&c->btree_root_lock);
+	spin_unlock(&c->btree_root_lock);
 
 	bch_recalc_btree_reserve(c);
 

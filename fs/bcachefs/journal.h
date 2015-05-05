@@ -126,10 +126,13 @@ struct journal_replay {
 
 #define JOURNAL_PIN	((32 * 1024) - 1)
 
-static inline void __journal_pin_add(struct journal_entry_pin_list *pin_list,
-				     struct journal_entry_pin *pin,
-				     journal_pin_flush_fn flush_fn)
+static inline void journal_pin_add(struct journal *j,
+				   struct journal_entry_pin_list *pin_list,
+				   struct journal_entry_pin *pin,
+				   journal_pin_flush_fn flush_fn)
 {
+	spin_lock_irq(&j->pin_lock);
+
 	atomic_inc(&pin_list->count);
 	pin->pin_list	= pin_list;
 	pin->flush	= flush_fn;
@@ -138,26 +141,8 @@ static inline void __journal_pin_add(struct journal_entry_pin_list *pin_list,
 		list_add(&pin->list, &pin_list->list);
 	else
 		INIT_LIST_HEAD(&pin->list);
-}
 
-static inline void journal_pin_add(struct journal *j,
-				   struct journal_entry_pin_list *pin_list,
-				   struct journal_entry_pin *pin,
-				   journal_pin_flush_fn flush_fn)
-{
-	spin_lock_irq(&j->lock);
-	__journal_pin_add(pin_list, pin, flush_fn);
-	spin_unlock_irq(&j->lock);
-}
-
-static inline void __journal_pin_drop(struct journal *j,
-				      struct journal_entry_pin *pin)
-{
-	if (!list_empty_careful(&pin->list))
-		list_del_init(&pin->list);
-
-	if (atomic_dec_and_test(&pin->pin_list->count))
-		wake_up(&j->wait);
+	spin_unlock_irq(&j->pin_lock);
 }
 
 static inline void journal_pin_drop(struct journal *j,
@@ -167,9 +152,9 @@ static inline void journal_pin_drop(struct journal *j,
 
 	/* journal_reclaim_work() might have already taken us off the list */
 	if (!list_empty_careful(&pin->list)) {
-		spin_lock_irqsave(&j->lock, flags);
+		spin_lock_irqsave(&j->pin_lock, flags);
 		list_del_init(&pin->list);
-		spin_unlock_irqrestore(&j->lock, flags);
+		spin_unlock_irqrestore(&j->pin_lock, flags);
 	}
 
 	if (atomic_dec_and_test(&pin->pin_list->count)) {
@@ -242,10 +227,10 @@ int bch_journal_replay(struct cache_set *, struct list_head *);
 
 static inline void bch_journal_set_replay_done(struct journal *j)
 {
-	spin_lock_irq(&j->lock);
+	spin_lock(&j->lock);
 	set_bit(JOURNAL_REPLAY_DONE, &j->flags);
 	j->cur_pin_list = &fifo_back(&j->pin);
-	spin_unlock_irq(&j->lock);
+	spin_unlock(&j->lock);
 }
 
 void bch_journal_free(struct journal *);

@@ -657,8 +657,8 @@ static int journal_seq_blacklist_read(struct cache_set *c,
 				return -ENOMEM;
 			}
 
-			__journal_pin_add(p, &bl->pin,
-					  journal_seq_blacklist_flush);
+			journal_pin_add(&c->journal, p, &bl->pin,
+					journal_seq_blacklist_flush);
 			bl->written = true;
 			break;
 		}
@@ -847,7 +847,7 @@ void bch_journal_start(struct cache_set *c)
 	list_for_each_entry(bl, &j->seq_blacklist, list)
 		new_seq = max(new_seq, bl->seq);
 
-	spin_lock_irq(&j->lock);
+	spin_lock(&j->lock);
 
 	while (j->seq < new_seq) {
 		struct journal_entry_pin_list pin_list, *p;
@@ -874,8 +874,8 @@ void bch_journal_start(struct cache_set *c)
 					      JKEYS_JOURNAL_SEQ_BLACKLISTED,
 					      0, 0);
 
-			__journal_pin_add(&fifo_back(&j->pin), &bl->pin,
-					  journal_seq_blacklist_flush);
+			journal_pin_add(j, &fifo_back(&j->pin), &bl->pin,
+					journal_seq_blacklist_flush);
 			bl->written = true;
 		}
 
@@ -884,7 +884,7 @@ void bch_journal_start(struct cache_set *c)
 	 * reservations
 	 */
 	journal_entry_open(j);
-	spin_unlock_irq(&j->lock);
+	spin_unlock(&j->lock);
 
 	queue_work(system_long_wq, &j->reclaim_work);
 }
@@ -1094,9 +1094,9 @@ static void journal_reclaim_work(struct work_struct *work)
 		unsigned nr = bch_nr_journal_buckets(&ca->sb),
 			 cur_idx, bucket_to_flush;
 
-		spin_lock_irq(&j->lock);
+		spin_lock(&j->lock);
 		cur_idx = ja->cur_idx;
-		spin_unlock_irq(&j->lock);
+		spin_unlock(&j->lock);
 
 		/* We're the only thread that modifies last_idx: */
 
@@ -1110,9 +1110,9 @@ static void journal_reclaim_work(struct work_struct *work)
 							       ja->last_idx)),
 					ca->mi.bucket_size, GFP_NOIO, 0);
 
-			spin_lock_irq(&j->lock);
+			spin_lock(&j->lock);
 			ja->last_idx = (ja->last_idx + 1) % nr;
-			spin_unlock_irq(&j->lock);
+			spin_unlock(&j->lock);
 
 			wake_up(&j->wait);
 		}
@@ -1121,20 +1121,23 @@ static void journal_reclaim_work(struct work_struct *work)
 		 * Write out enough btree nodes to free up 50% journal
 		 * buckets
 		 */
-		spin_lock_irq(&j->lock);
+		spin_lock(&j->lock);
 		bucket_to_flush = (cur_idx + (nr >> 1)) % nr;
 		seq_to_flush = max_t(u64, seq_to_flush,
 				     ja->bucket_seq[bucket_to_flush]);
-		spin_unlock_irq(&j->lock);
+		spin_unlock(&j->lock);
 	}
 
-	spin_lock_irq(&j->lock);
+	spin_lock(&j->lock);
 
 	/* Also flush if the pin fifo is more than half full */
 	seq_to_flush = max_t(s64, seq_to_flush,
 			     (s64) j->seq - (j->pin.size >> 1));
 
 	journal_reclaim_fast(j);
+	spin_unlock(&j->lock);
+
+	spin_lock_irq(&j->pin_lock);
 
 restart_flush:
 	/* Now do the actual flushing */
@@ -1147,16 +1150,16 @@ restart_flush:
 					       struct journal_entry_pin,
 					       list);
 			list_del_init(&pin->list);
-			spin_unlock_irq(&j->lock);
+			spin_unlock_irq(&j->pin_lock);
 
 			pin->flush(pin);
 
-			spin_lock_irq(&j->lock);
+			spin_lock_irq(&j->pin_lock);
 			goto restart_flush;
 		}
 	}
 
-	spin_unlock_irq(&j->lock);
+	spin_unlock_irq(&j->pin_lock);
 }
 
 /**
@@ -1328,21 +1331,16 @@ static void journal_write_done(struct closure *cl)
 {
 	struct journal *j = container_of(cl, struct journal, io);
 	struct journal_write *w = journal_prev_write(j);
-	unsigned long flags;
-
-	spin_lock_irqsave(&j->lock, flags);
 
 	j->last_seq_ondisk = w->data->last_seq;
 
-	__closure_wake_up(&w->wait);
-
 	clear_bit(JOURNAL_IO_IN_FLIGHT, &j->flags);
+
+	closure_wake_up(&w->wait);
 	wake_up(&j->wait);
 
 	if (test_bit(JOURNAL_NEED_WRITE, &j->flags))
 		mod_delayed_work(system_wq, &j->write_work, 0);
-
-	spin_unlock_irqrestore(&j->lock, flags);
 
 	/*
 	 * Updating last_seq_ondisk may let journal_reclaim_work() discard more
@@ -1462,7 +1460,7 @@ static void journal_write_locked(struct closure *cl)
 	bch_journal_next_entry(j);
 	wake_up(&j->wait);
 
-	spin_unlock_irq(&j->lock);
+	spin_unlock(&j->lock);
 
 	bch_check_mark_super(c, &tmp.k, true);
 
@@ -1490,7 +1488,7 @@ static bool __journal_write(struct journal *j)
 	closure_call(&j->io, journal_write_locked, NULL, &c->cl);
 	return true;
 nowrite:
-	spin_unlock_irq(&j->lock);
+	spin_unlock(&j->lock);
 	return false;
 }
 
@@ -1505,14 +1503,14 @@ static void journal_unlock(struct journal *j)
 	if (test_bit(JOURNAL_NEED_WRITE, &j->flags))
 		__journal_write(j);
 	else
-		spin_unlock_irq(&j->lock);
+		spin_unlock(&j->lock);
 }
 
 static void journal_write_work(struct work_struct *work)
 {
 	struct journal *j = container_of(to_delayed_work(work),
 					 struct journal, write_work);
-	spin_lock_irq(&j->lock);
+	spin_lock(&j->lock);
 	if (test_bit(JOURNAL_DIRTY, &j->flags))
 		set_bit(JOURNAL_NEED_WRITE, &j->flags);
 	journal_unlock(j);
@@ -1572,7 +1570,7 @@ void bch_journal_res_put(struct journal *j, struct journal_res *res)
 
 	if (!s.count) {
 		if (do_write) {
-			spin_lock_irq(&j->lock);
+			spin_lock(&j->lock);
 			journal_unlock(j);
 		}
 
@@ -1626,7 +1624,7 @@ static bool __journal_res_get(struct journal *j, struct journal_res *res,
 		if (journal_res_get_fast(j, res, u64s_min, u64s_max))
 			return true;
 
-		spin_lock_irq(&j->lock);
+		spin_lock(&j->lock);
 
 		/*
 		 * Recheck after taking the lock, so we don't race with another
@@ -1634,7 +1632,7 @@ static bool __journal_res_get(struct journal *j, struct journal_res *res,
 		 * journal_entry_close() unnecessarily
 		 */
 		if (journal_res_get_fast(j, res, u64s_min, u64s_max)) {
-			spin_unlock_irq(&j->lock);
+			spin_unlock(&j->lock);
 			return true;
 		}
 
@@ -1643,7 +1641,7 @@ static bool __journal_res_get(struct journal *j, struct journal_res *res,
 			*start_time = local_clock();
 
 		if (!journal_entry_close(j)) {
-			spin_unlock_irq(&j->lock);
+			spin_unlock(&j->lock);
 			return false;
 		}
 
@@ -1664,12 +1662,12 @@ static bool __journal_res_get(struct journal *j, struct journal_res *res,
 
 			if (!journal_bucket_has_room(j)) {
 				/* Still no room, we have to wait */
-				spin_unlock_irq(&j->lock);
+				spin_unlock(&j->lock);
 				trace_bcache_journal_full(c);
 				return false;
 			}
 
-			spin_unlock_irq(&j->lock);
+			spin_unlock(&j->lock);
 		}
 	}
 }
@@ -1703,7 +1701,7 @@ void bch_journal_res_get(struct journal *j, struct journal_res *res,
 
 void bch_journal_push_seq(struct journal *j, u64 seq, struct closure *parent)
 {
-	spin_lock_irq(&j->lock);
+	spin_lock(&j->lock);
 
 	BUG_ON(seq > j->seq);
 
@@ -1742,16 +1740,16 @@ void bch_journal_flush(struct journal *j, struct closure *parent)
 {
 	u64 seq;
 
-	spin_lock_irq(&j->lock);
+	spin_lock(&j->lock);
 	if (test_bit(JOURNAL_DIRTY, &j->flags)) {
 		seq = j->seq;
 	} else if (j->seq) {
 		seq = j->seq - 1;
 	} else {
-		spin_unlock_irq(&j->lock);
+		spin_unlock(&j->lock);
 		return;
 	}
-	spin_unlock_irq(&j->lock);
+	spin_unlock(&j->lock);
 
 	bch_journal_push_seq(j, seq, parent);
 }
@@ -1766,6 +1764,7 @@ void bch_journal_free(struct journal *j)
 int bch_journal_alloc(struct journal *j)
 {
 	spin_lock_init(&j->lock);
+	spin_lock_init(&j->pin_lock);
 	init_waitqueue_head(&j->wait);
 	INIT_DELAYED_WORK(&j->write_work, journal_write_work);
 	INIT_WORK(&j->reclaim_work, journal_reclaim_work);
@@ -1799,7 +1798,7 @@ ssize_t bch_journal_print_debug(struct journal *j, char *buf)
 	ssize_t ret = 0;
 
 	rcu_read_lock();
-	spin_lock_irq(&j->lock);
+	spin_lock(&j->lock);
 
 	ret += scnprintf(buf + ret, PAGE_SIZE - ret,
 			 "active journal entries:\t%zu\n"
@@ -1840,7 +1839,7 @@ ssize_t bch_journal_print_debug(struct journal *j, char *buf)
 				 ja->last_idx,	ja->bucket_seq[ja->last_idx]);
 	}
 
-	spin_unlock_irq(&j->lock);
+	spin_unlock(&j->lock);
 	rcu_read_unlock();
 
 	return ret;
@@ -1851,10 +1850,10 @@ static bool bch_journal_writing_to_device(struct cache *ca)
 	struct journal *j = &ca->set->journal;
 	bool ret;
 
-	spin_lock_irq(&j->lock);
+	spin_lock(&j->lock);
 	ret = bch_extent_has_device(bkey_i_to_s_c_extent(&j->key),
 				    ca->sb.nr_this_dev);
-	spin_unlock_irq(&j->lock);
+	spin_unlock(&j->lock);
 
 	return ret;
 }
@@ -1915,9 +1914,9 @@ int bch_journal_move(struct cache *ca)
 	 * Verify that we no longer need any of the journal entries in
 	 * the device
 	 */
-	spin_lock_irq(&j->lock);
+	spin_lock(&j->lock);
 	last_flushed_seq = last_seq(j);
-	spin_unlock_irq(&j->lock);
+	spin_unlock(&j->lock);
 
 	nr_buckets = bch_nr_journal_buckets(&ca->sb);
 
