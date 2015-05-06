@@ -182,29 +182,6 @@ struct keybuf_key *bch_keybuf_next(struct keybuf *buf)
 	return w;
 }
 
-struct keybuf_key *bch_keybuf_next_rescan(struct cache_set *c,
-					  struct keybuf *buf,
-					  struct bkey *end,
-					  keybuf_pred_fn *pred)
-{
-	struct keybuf_key *ret;
-
-	while (1) {
-		ret = bch_keybuf_next(buf);
-		if (ret)
-			break;
-
-		if (bkey_cmp(&buf->last_scanned, end) >= 0) {
-			pr_debug("scan finished");
-			break;
-		}
-
-		bch_refill_keybuf(c, buf, end, pred);
-	}
-
-	return ret;
-}
-
 void bch_keybuf_init(struct keybuf *buf)
 {
 	sema_init(&buf->in_flight, BTREE_SCAN_BATCH / 2);
