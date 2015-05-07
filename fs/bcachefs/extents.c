@@ -1355,6 +1355,9 @@ static void bch_extent_debugcheck(struct cache_set *c, struct btree *b,
 			continue;
 		}
 
+		if (!test_bit(JOURNAL_REPLAY_DONE, &c->journal.flags))
+			continue;
+
 		tier = CACHE_TIER(&mi->m[dev]);
 		ptrs_per_tier[tier]++;
 
