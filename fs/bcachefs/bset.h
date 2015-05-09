@@ -288,7 +288,9 @@ static inline struct bset *bset_next_set(struct btree_keys *b,
 {
 	struct bset *i = bset_tree_last(b)->data;
 
-	return ((void *) i) + roundup(set_bytes(i), block_bytes);
+	EBUG_ON(!is_power_of_2(block_bytes));
+
+	return ((void *) i) + round_up(set_bytes(i), block_bytes);
 }
 
 void bch_btree_keys_free(struct btree_keys *);

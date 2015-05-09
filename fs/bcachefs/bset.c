@@ -558,8 +558,8 @@ static void make_bfloat(struct bkey_format *format,
 static void bset_alloc_tree(struct btree_keys *b, struct bset_tree *t)
 {
 	if (t != b->set) {
-		unsigned j = roundup(t[-1].size,
-				     64 / sizeof(struct bkey_float));
+		unsigned j = round_up(t[-1].size,
+				      64 / sizeof(struct bkey_float));
 
 		t->tree = t[-1].tree + j;
 		t->prev = t[-1].prev + j;

@@ -165,7 +165,7 @@ bool bch_btree_iter_upgrade(struct btree_iter *iter)
 {
 	int i;
 
-	BUG_ON(iter->locks_want > BTREE_MAX_DEPTH);
+	EBUG_ON(iter->locks_want > BTREE_MAX_DEPTH);
 
 	for (i = iter->locks_want; i >= iter->level; --i)
 		if (iter->nodes[i] && !btree_lock_upgrade(iter, i)) {
@@ -190,7 +190,7 @@ bool bch_btree_iter_upgrade(struct btree_iter *iter)
 static inline struct btree_node_entry *write_block(struct cache_set *c,
 						   struct btree *b)
 {
-	BUG_ON(!b->written);
+	EBUG_ON(!b->written);
 
 	return (void *) b->data + (b->written << (c->block_bits + 9));
 }
@@ -2600,6 +2600,7 @@ static int __bch_btree_insert_node(struct btree *b,
  * If a split occurred, this function will return early. This can only happen
  * for leaf nodes -- inserts into interior nodes have to be atomic.
  */
+inline
 int bch_btree_insert_node(struct btree *b,
 			  struct btree_iter *iter,
 			  struct keylist *insert_keys,
@@ -2662,11 +2663,11 @@ int bch_btree_insert_at(struct btree_iter *iter,
 
 	BUG_ON(iter->level);
 
-	if (!percpu_ref_tryget(&iter->c->writes))
+	if (unlikely(!percpu_ref_tryget(&iter->c->writes)))
 		return -EROFS;
 
 	iter->locks_want = 0;
-	if (!bch_btree_iter_upgrade(iter))
+	if (unlikely(!bch_btree_iter_upgrade(iter)))
 		goto traverse;
 
 	while (1) {
@@ -3005,12 +3006,12 @@ struct btree *bch_btree_iter_peek_node(struct btree_iter *iter)
 {
 	struct btree *b;
 
-	BUG_ON(iter->is_extents);
+	EBUG_ON(iter->is_extents);
 
 	bch_btree_iter_traverse(iter);
 
 	if ((b = iter->nodes[iter->level])) {
-		BUG_ON(bkey_cmp(b->key.k.p, iter->pos) < 0);
+		EBUG_ON(bkey_cmp(b->key.k.p, iter->pos) < 0);
 		iter->pos = b->key.k.p;
 	}
 
@@ -3022,7 +3023,7 @@ struct btree *bch_btree_iter_next_node(struct btree_iter *iter)
 	struct btree *b;
 	int ret;
 
-	BUG_ON(iter->is_extents);
+	EBUG_ON(iter->is_extents);
 
 	btree_iter_up(iter);
 
@@ -3052,7 +3053,7 @@ struct btree *bch_btree_iter_next_node(struct btree_iter *iter)
 
 void bch_btree_iter_set_pos(struct btree_iter *iter, struct bpos new_pos)
 {
-	BUG_ON(bkey_cmp(new_pos, iter->pos) < 0);
+	EBUG_ON(bkey_cmp(new_pos, iter->pos) < 0);
 	iter->pos = new_pos;
 }
 
@@ -3074,7 +3075,7 @@ struct bkey_s_c bch_btree_iter_peek(struct btree_iter *iter)
 			return bkey_s_c_null;
 
 		if (likely((k = __btree_iter_peek(iter)).k)) {
-			BUG_ON(bkey_cmp(k.k->p, pos) < 0);
+			EBUG_ON(bkey_cmp(k.k->p, pos) < 0);
 			return k;
 		}
 
@@ -3121,7 +3122,7 @@ recheck:
 					      : KEY_OFFSET_MAX) -
 					     n.p.offset));
 
-				BUG_ON(!n.size);
+				EBUG_ON(!n.size);
 			}
 
 			iter->tup.k = n;
@@ -3133,10 +3134,10 @@ recheck:
 		}
 	}
 
-	BUG_ON(!iter->error &&
-	       (iter->btree_id != BTREE_ID_INODES
-		? bkey_cmp(iter->pos, POS_MAX)
-		: iter->pos.inode != KEY_INODE_MAX));
+	EBUG_ON(!iter->error &&
+		(iter->btree_id != BTREE_ID_INODES
+		 ? bkey_cmp(iter->pos, POS_MAX)
+		 : iter->pos.inode != KEY_INODE_MAX));
 
 	return bkey_s_c_null;
 }
