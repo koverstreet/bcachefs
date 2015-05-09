@@ -1419,6 +1419,17 @@ struct cache_set *bch_cache_set_alloc(struct cache_sb *sb)
 	INIT_WORK(&c->bio_submit_work, bch_bio_submit_work);
 	spin_lock_init(&c->bio_submit_lock);
 
+	c->congested_read_threshold_us	= 2000;
+	c->congested_write_threshold_us	= 20000;
+	c->error_limit	= 8 << IO_ERROR_SHIFT;
+
+	c->btree_scan_ratelimit = 30 * HZ;
+
+	c->meta_replicas = 1;
+	c->data_replicas = 1;
+	c->copy_gc_enabled = 1;
+	c->tiering_enabled = 1;
+
 	c->search = mempool_create_slab_pool(32, bch_search_cache);
 	if (!c->search)
 		goto err;
@@ -1441,15 +1452,6 @@ struct cache_set *bch_cache_set_alloc(struct cache_sb *sb)
 	    bch_btree_cache_alloc(c) ||
 	    bch_bset_sort_state_init(&c->sort, ilog2(c->btree_pages)))
 		goto err;
-
-	c->congested_read_threshold_us	= 2000;
-	c->congested_write_threshold_us	= 20000;
-	c->error_limit	= 8 << IO_ERROR_SHIFT;
-
-	c->btree_scan_ratelimit = 30 * HZ;
-
-	c->meta_replicas = 1;
-	c->data_replicas = 1;
 
 	return c;
 err:
