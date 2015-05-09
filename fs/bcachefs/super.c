@@ -598,47 +598,53 @@ void bch_check_mark_super_slowpath(struct cache_set *c, const struct bkey_i *k,
 static void bch_recalc_capacity(struct cache_set *c)
 {
 	struct cache_group *tier = c->cache_tiers + ARRAY_SIZE(c->cache_tiers);
+	struct cache *ca;
 	u64 capacity = 0;
 	unsigned i, j;
 
-	while (--tier >= c->cache_tiers)
-		if (tier->nr_devices) {
-			for (i = 0; i < tier->nr_devices; i++) {
-				struct cache *ca = tier->devices[i];
-				size_t reserve = 0;
+	/*
+	 * Capacity of the cache set is the capacity of all the devices in the
+	 * slowest (highest) tier - we don't include lower tier devices.
+	 */
+	for (tier = c->cache_tiers + ARRAY_SIZE(c->cache_tiers) - 1;
+	     tier > c->cache_tiers && !tier->nr_devices;
+	     --tier)
+		;
 
-				/*
-				 * We need to reserve buckets (from the number
-				 * of currently available buckets) against
-				 * foreground writes so that mainly copygc can
-				 * make forward progress.
-				 *
-				 * We need enough to refill the various reserves
-				 * from scratch - copygc will use its entire
-				 * reserve all at once, then run against when
-				 * its reserve is refilled (from the formerly
-				 * available buckets).
-				 *
-				 * This reserve is just used when considering if
-				 * allocations for foreground writes must wait -
-				 * not -ENOSPC calculations.
-				 */
-				for (j = 0; j < RESERVE_NR; j++)
-					reserve += ca->free[j].size;
+	group_for_each_cache_rcu(ca, tier, i) {
+		size_t reserve = 0;
 
-				reserve += ca->free_inc.size;
+		/*
+		 * We need to reserve buckets (from the number
+		 * of currently available buckets) against
+		 * foreground writes so that mainly copygc can
+		 * make forward progress.
+		 *
+		 * We need enough to refill the various reserves
+		 * from scratch - copygc will use its entire
+		 * reserve all at once, then run against when
+		 * its reserve is refilled (from the formerly
+		 * available buckets).
+		 *
+		 * This reserve is just used when considering if
+		 * allocations for foreground writes must wait -
+		 * not -ENOSPC calculations.
+		 */
+		for (j = 0; j < RESERVE_NR; j++)
+			reserve += ca->free[j].size;
 
-				ca->reserve_buckets_count = reserve;
+		reserve += ca->free_inc.size;
 
-				capacity += (ca->mi.nbuckets -
-					     ca->mi.first_bucket) <<
-					ca->bucket_bits;
-			}
+		ca->reserve_buckets_count = reserve;
 
-			capacity *= (100 - c->sector_reserve_percent);
-			capacity = div64_u64(capacity, 100);
-			break;
-		}
+		capacity += (ca->mi.nbuckets -
+			     ca->mi.first_bucket) <<
+			ca->bucket_bits;
+	}
+	rcu_read_unlock();
+
+	capacity *= (100 - c->sector_reserve_percent);
+	capacity = div64_u64(capacity, 100);
 
 	c->capacity = capacity;
 
