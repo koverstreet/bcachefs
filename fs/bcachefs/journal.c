@@ -173,6 +173,7 @@ out:
 static int journal_read_bucket(struct cache *ca, struct journal_list *jlist,
 			       unsigned bucket_index, u64 *seq)
 {
+	struct cache_set *c = ca->set;
 	struct journal_device *ja = &ca->journal;
 	struct bio *bio = &ja->bio;
 	struct jset *j, *data;
@@ -185,7 +186,7 @@ static int journal_read_bucket(struct cache *ca, struct journal_list *jlist,
 	data = (void *) __get_free_pages(GFP_KERNEL, JSET_BITS);
 	if (!data) {
 		mutex_lock(&jlist->cache_set_buffer_lock);
-		data = ca->set->journal.w[0].data;
+		data = c->journal.w[0].data;
 	}
 
 	pr_debug("reading %u", bucket_index);
@@ -195,7 +196,7 @@ reread:		left = ca->mi.bucket_size - offset;
 		len = min_t(unsigned, left, PAGE_SECTORS << JSET_BITS);
 
 		bio_reset(bio);
-		bio->bi_bdev		= ca->bdev;
+		bio->bi_bdev		= ca->disk_sb.bdev;
 		bio->bi_iter.bi_sector	= bucket + offset;
 		bio->bi_iter.bi_size	= len << 9;
 		bio_set_op_attrs(bio, REQ_OP_READ, 0);
@@ -223,7 +224,7 @@ reread:		left = ca->mi.bucket_size - offset;
 			if (cache_set_init_fault("journal_read"))
 				goto err;
 
-			if (j->magic != jset_magic(&ca->sb)) {
+			if (j->magic != jset_magic(&c->sb)) {
 				pr_debug("%u: bad magic", bucket_index);
 				goto err;
 			}
@@ -268,7 +269,7 @@ reread:		left = ca->mi.bucket_size - offset;
 			if (j->seq > *seq)
 				*seq = j->seq;
 
-			blocks = set_blocks(j, block_bytes(ca->set));
+			blocks = set_blocks(j, block_bytes(c));
 
 			pr_debug("next");
 			offset	+= blocks * ca->sb.block_size;
@@ -279,7 +280,7 @@ reread:		left = ca->mi.bucket_size - offset;
 
 	ret = entries_found;
 err:
-	if (data == ca->set->journal.w[0].data)
+	if (data == c->journal.w[0].data)
 		mutex_unlock(&jlist->cache_set_buffer_lock);
 	else
 		free_pages((unsigned long) data, JSET_BITS);
@@ -316,7 +317,7 @@ static void bch_journal_read_device(struct closure *cl)
 	bitmap_zero(bitmap, nr_buckets);
 	pr_debug("%u journal buckets", nr_buckets);
 
-	if (!blk_queue_nonrot(bdev_get_queue(ca->bdev)))
+	if (!blk_queue_nonrot(bdev_get_queue(ca->disk_sb.bdev)))
 		goto linear_scan;
 
 	/*
@@ -576,7 +577,7 @@ static int bch_set_nr_journal_buckets(struct cache *ca, unsigned nr)
 	u64 *p;
 	int ret;
 
-	ret = bch_super_realloc(ca, u64s);
+	ret = bch_super_realloc(&ca->disk_sb, u64s);
 	if (ret)
 		return ret;
 
@@ -644,7 +645,7 @@ static bool do_journal_discard(struct cache *ca)
 	struct bio *bio = &ja->discard_bio;
 
 	if (!CACHE_DISCARD(&ca->mi) ||
-	    !blk_queue_discard(bdev_get_queue(ca->bdev))) {
+	    !blk_queue_discard(bdev_get_queue(ca->disk_sb.bdev))) {
 		ja->discard_idx = ja->last_idx;
 		return true;
 	}
@@ -671,7 +672,7 @@ static bool do_journal_discard(struct cache *ca)
 		bio->bi_iter.bi_sector	=
 			bucket_to_sector(ca,
 					 journal_bucket(ca, ja->discard_idx));
-		bio->bi_bdev		= ca->bdev;
+		bio->bi_bdev		= ca->disk_sb.bdev;
 		bio->bi_max_vecs	= 1;
 		bio->bi_io_vec		= bio->bi_inline_vecs;
 		bio->bi_iter.bi_size	= bucket_bytes(ca);
@@ -1017,7 +1018,7 @@ static void journal_write_locked(struct closure *cl)
 
 		bio_reset(bio);
 		bio->bi_iter.bi_sector	= PTR_OFFSET(ptr);
-		bio->bi_bdev		= ca->bdev;
+		bio->bi_bdev		= ca->disk_sb.bdev;
 		bio->bi_iter.bi_size	= sectors << 9;
 		bio->bi_end_io		= journal_write_endio;
 		bio->bi_private		= w;

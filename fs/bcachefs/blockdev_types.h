@@ -52,7 +52,6 @@ struct io {
 struct cached_dev {
 	struct list_head	list;
 	struct bcache_device	disk;
-	struct block_device	*bdev;
 
 	struct cache_sb		sb;
 	struct bcache_superblock disk_sb;

@@ -27,8 +27,9 @@ static void __update_writeback_rate(struct cached_dev *dc)
 	struct cache_set *c = dc->disk.c;
 	u64 cache_dirty_target =
 		div_u64(c->capacity * dc->writeback_percent, 100);
-	s64 target = div64_u64(cache_dirty_target * bdev_sectors(dc->bdev),
-				   c->cached_dev_sectors);
+	s64 target = div64_u64(cache_dirty_target *
+			       bdev_sectors(dc->disk_sb.bdev),
+			       c->cached_dev_sectors);
 	s64 dirty = bcache_dev_sectors_dirty(&dc->disk);
 
 	bch_pd_controller_update(&dc->writeback_pd, target << 9,
@@ -154,7 +155,7 @@ static void write_dirty(struct closure *cl)
 		dirty_init(io);
 		bio_set_op_attrs(&io->bio, REQ_OP_WRITE, 0);
 		io->bio.bi_iter.bi_sector = bkey_start_offset(&io->replace.key);
-		io->bio.bi_bdev		= io->dc->bdev;
+		io->bio.bi_bdev		= io->dc->disk_sb.bdev;
 		io->bio.bi_end_io	= dirty_endio;
 
 		closure_bio_submit(&io->bio, cl);
@@ -246,7 +247,7 @@ static void read_dirty(struct cached_dev *dc)
 			dirty_init(io);
 			bio_set_op_attrs(&io->bio, REQ_OP_READ, 0);
 			io->bio.bi_iter.bi_sector = PTR_OFFSET(ptr);
-			io->bio.bi_bdev		= ca->bdev;
+			io->bio.bi_bdev		= ca->disk_sb.bdev;
 			io->bio.bi_end_io	= read_dirty_endio;
 
 			bio_for_each_segment_all(bv, &io->bio, i) {

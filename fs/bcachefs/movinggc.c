@@ -300,7 +300,7 @@ static int bch_moving_gc_thread(void *arg)
 
 void bch_moving_init_cache(struct cache *ca)
 {
-	bool rotational = !blk_queue_nonrot(bdev_get_queue(ca->bdev));
+	bool rotational = !blk_queue_nonrot(bdev_get_queue(ca->disk_sb.bdev));
 
 	bch_pd_controller_init(&ca->moving_gc_pd);
 	bch_queue_init(&ca->moving_gc_queue,

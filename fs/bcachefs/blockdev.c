@@ -44,7 +44,7 @@ void bch_write_bdev_super(struct cached_dev *dc, struct closure *parent)
 	bio->bi_private = dc;
 
 	closure_get(cl);
-	__write_super(dc->disk.c, &dc->disk_sb, dc->bdev, &dc->sb);
+	__write_super(dc->disk.c, &dc->disk_sb, &dc->sb);
 
 	closure_return_with_destructor(cl, bch_write_bdev_super_unlock);
 }
@@ -56,10 +56,10 @@ bool bch_is_open_backing(struct block_device *bdev)
 
 	list_for_each_entry_safe(c, tc, &bch_cache_sets, list)
 		list_for_each_entry_safe(dc, t, &c->cached_devs, list)
-			if (dc->bdev == bdev)
+			if (dc->disk_sb.bdev == bdev)
 				return true;
 	list_for_each_entry_safe(dc, t, &uncached_devices, list)
-		if (dc->bdev == bdev)
+		if (dc->disk_sb.bdev == bdev)
 			return true;
 	return false;
 }
@@ -251,7 +251,7 @@ static void calc_cached_dev_sectors(struct cache_set *c)
 	struct cached_dev *dc;
 
 	list_for_each_entry(dc, &c->cached_devs, list)
-		sectors += bdev_sectors(dc->bdev);
+		sectors += bdev_sectors(dc->disk_sb.bdev);
 
 	c->cached_dev_sectors = sectors;
 }
@@ -289,7 +289,7 @@ void bch_cached_dev_run(struct cached_dev *dc)
 	}
 
 	add_disk(d->disk);
-	bd_link_disk_holder(dc->bdev, dc->disk.disk);
+	bd_link_disk_holder(dc->disk_sb.bdev, dc->disk.disk);
 	/* won't show up in the uevent file, use udevadm monitor -e instead
 	 * only class / kset properties are persistent */
 	kobject_uevent_env(&disk_to_dev(d->disk)->kobj, KOBJ_CHANGE, env);
@@ -328,7 +328,7 @@ static void cached_dev_detach_finish(struct work_struct *w)
 
 	mutex_unlock(&bch_register_lock);
 
-	pr_info("Caching disabled for %s", bdevname(dc->bdev, buf));
+	pr_info("Caching disabled for %s", bdevname(dc->disk_sb.bdev, buf));
 
 	/* Drop ref we took in cached_dev_detach() */
 	closure_put(&dc->disk.cl);
@@ -362,7 +362,7 @@ int bch_cached_dev_attach(struct cached_dev *dc, struct cache_set *c)
 	bool found;
 	int ret;
 
-	bdevname(dc->bdev, buf);
+	bdevname(dc->disk_sb.bdev, buf);
 
 	if (memcmp(&dc->sb.set_uuid, &c->sb.set_uuid, sizeof(c->sb.set_uuid)))
 		return -ENOENT;
@@ -467,7 +467,7 @@ int bch_cached_dev_attach(struct cached_dev *dc, struct cache_set *c)
 	bcache_device_link(&dc->disk, c, "bdev");
 
 	pr_info("Caching %s as %s on set %pU",
-		bdevname(dc->bdev, buf), dc->disk.disk->disk_name,
+		bdevname(dc->disk_sb.bdev, buf), dc->disk.disk->disk_name,
 		dc->disk.c->sb.set_uuid.b);
 	return 0;
 }
@@ -493,14 +493,13 @@ static void cached_dev_free(struct closure *cl)
 	mutex_lock(&bch_register_lock);
 
 	if (atomic_read(&dc->running))
-		bd_unlink_disk_holder(dc->bdev, dc->disk.disk);
+		bd_unlink_disk_holder(dc->disk_sb.bdev, dc->disk.disk);
 	bcache_device_free(&dc->disk);
 	list_del(&dc->list);
 
 	mutex_unlock(&bch_register_lock);
 
-	if (!IS_ERR_OR_NULL(dc->bdev))
-		blkdev_put(dc->bdev, FMODE_READ|FMODE_WRITE|FMODE_EXCL);
+	free_super(&dc->disk_sb);
 
 	kobject_put(&dc->disk.kobj);
 }
@@ -524,7 +523,7 @@ static int cached_dev_init(struct cached_dev *dc, unsigned block_size)
 {
 	int ret;
 	struct io *io;
-	struct request_queue *q = bdev_get_queue(dc->bdev);
+	struct request_queue *q = bdev_get_queue(dc->disk_sb.bdev);
 
 	dc->sequential_cutoff		= 4 << 20;
 
@@ -540,7 +539,8 @@ static int cached_dev_init(struct cached_dev *dc, unsigned block_size)
 			q->limits.raid_partial_stripes_expensive;
 
 	ret = bcache_device_init(&dc->disk, block_size,
-			 dc->bdev->bd_part->nr_sects - dc->sb.bdev_data_offset);
+			 dc->disk_sb.bdev->bd_part->nr_sects -
+			 dc->sb.bdev_data_offset);
 	if (ret)
 		return ret;
 
@@ -558,19 +558,16 @@ static int cached_dev_init(struct cached_dev *dc, unsigned block_size)
 
 /* Cached device - bcache superblock */
 
-const char *bch_register_bdev(struct bcache_superblock *sb,
-			      struct block_device *bdev)
+const char *bch_register_bdev(struct bcache_superblock *sb)
 {
 	char name[BDEVNAME_SIZE];
-	const char *err = "cannot allocate memory";
+	const char *err;
 	struct cache_set *c;
 	struct cached_dev *dc;
 
 	dc = kzalloc(sizeof(*dc), GFP_KERNEL);
-	if (!dc) {
-		blkdev_put(bdev, FMODE_READ|FMODE_WRITE|FMODE_EXCL);
-		return err;
-	}
+	if (!dc)
+		return "cannot allocate memory";
 
 	__module_get(THIS_MODULE);
 	INIT_LIST_HEAD(&dc->list);
@@ -583,13 +580,11 @@ const char *bch_register_bdev(struct bcache_superblock *sb,
 	spin_lock_init(&dc->io_lock);
 	bch_cache_accounting_init(&dc->accounting, &dc->disk.cl);
 
-	dc->bdev = bdev;
-	dc->bdev->bd_holder = dc;
-
 	dc->disk_sb = *sb;
+	dc->disk_sb.bdev->bd_holder = dc;
 	memset(sb, 0, sizeof(*sb));
 
-	err = validate_super(&dc->disk_sb, bdev, &dc->sb);
+	err = validate_super(&dc->disk_sb, &dc->sb);
 	if (err)
 		goto err;
 
@@ -597,7 +592,8 @@ const char *bch_register_bdev(struct bcache_superblock *sb,
 		goto err;
 
 	err = "error creating kobject";
-	if (kobject_add(&dc->disk.kobj, &part_to_dev(bdev->bd_part)->kobj,
+	if (kobject_add(&dc->disk.kobj,
+			&part_to_dev(dc->disk_sb.bdev->bd_part)->kobj,
 			"bcache"))
 		goto err;
 
@@ -605,7 +601,8 @@ const char *bch_register_bdev(struct bcache_superblock *sb,
 	if (bch_cache_accounting_add_kobjs(&dc->accounting, &dc->disk.kobj))
 		goto err;
 
-	pr_info("registered backing device %s", bdevname(bdev, name));
+	pr_info("registered backing device %s",
+		bdevname(dc->disk_sb.bdev, name));
 
 	mutex_lock(&bch_register_lock);
 

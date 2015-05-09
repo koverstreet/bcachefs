@@ -240,7 +240,7 @@ static int prio_io(struct cache *ca, uint64_t bucket, int op)
 	ca->bio_prio->bi_max_vecs	= bucket_pages(ca);
 	ca->bio_prio->bi_io_vec		= ca->bio_prio->bi_inline_vecs;
 	ca->bio_prio->bi_iter.bi_sector	= bucket * ca->mi.bucket_size;
-	ca->bio_prio->bi_bdev		= ca->bdev;
+	ca->bio_prio->bi_bdev		= ca->disk_sb.bdev;
 	ca->bio_prio->bi_iter.bi_size	= bucket_bytes(ca);
 	bch_bio_map(ca->bio_prio, ca->disk_buckets);
 
@@ -277,7 +277,7 @@ static void bch_prio_write(struct cache *ca)
 		}
 
 		p->next_bucket	= ca->prio_buckets[i + 1];
-		p->magic	= pset_magic(&ca->sb);
+		p->magic	= pset_magic(&c->sb);
 
 		SET_PSET_CSUM_TYPE(p, CACHE_PREFERRED_CSUM_TYPE(&c->sb));
 		p->csum		= bch_checksum(PSET_CSUM_TYPE(p),
@@ -375,7 +375,7 @@ int bch_prio_read(struct cache *ca)
 			}
 
 			got = p->magic;
-			expect = pset_magic(&ca->sb);
+			expect = pset_magic(&c->sb);
 			if (got != expect) {
 				bch_cache_error(ca,
 					"bad magic (got %llu expect %llu) while reading prios from bucket %llu",
@@ -781,8 +781,8 @@ static int bch_allocator_thread(void *arg)
 			 */
 
 			if (CACHE_DISCARD(&ca->mi) &&
-			    blk_queue_discard(bdev_get_queue(ca->bdev)))
-				blkdev_issue_discard(ca->bdev,
+			    blk_queue_discard(bdev_get_queue(ca->disk_sb.bdev)))
+				blkdev_issue_discard(ca->disk_sb.bdev,
 					bucket_to_sector(ca, bucket),
 					ca->mi.bucket_size, GFP_KERNEL, 0);
 

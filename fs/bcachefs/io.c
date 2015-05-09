@@ -78,7 +78,7 @@ void bch_bbio_prep(struct bbio *b, struct cache *ca)
 
 	b->ca				= ca;
 	b->bio.bi_iter.bi_sector	= PTR_OFFSET(&b->ptr);
-	b->bio.bi_bdev			= ca ? ca->bdev : NULL;
+	b->bio.bi_bdev			= ca ? ca->disk_sb.bdev : NULL;
 
 	b->bi_idx			= iter->bi_idx;
 	b->bi_bvec_done			= iter->bi_bvec_done;
@@ -196,11 +196,11 @@ void bch_count_io_errors(struct cache *ca, int error, const char *m)
 
 		if (errors < ca->set->error_limit) {
 			pr_err("%s: IO error on %s, recovering",
-			       bdevname(ca->bdev, buf), m);
+			       bdevname(ca->disk_sb.bdev, buf), m);
 		} else {
 			if (bch_cache_remove(ca, true))
 				pr_err("%s: too many IO errors on %s, removing",
-				       bdevname(ca->bdev, buf), m);
+				       bdevname(ca->disk_sb.bdev, buf), m);
 		}
 	}
 }

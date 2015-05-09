@@ -805,15 +805,6 @@ STORE(__bch_cache_set)
 	sysfs_strtoul(tiering_percent,		c->tiering_percent);
 	sysfs_pd_controller_store(tiering,	&c->tiering_pd);
 
-	if (attr == &sysfs_add_device) {
-		char *path = kstrdup(buf, GFP_KERNEL);
-		int r = bch_cache_add(c, strim(path));
-
-		kfree(path);
-		if (r)
-			return r;
-	}
-
 	if (!test_bit(CACHE_SET_RUNNING, &c->flags))
 		return -EPERM;
 
@@ -856,7 +847,26 @@ STORE(__bch_cache_set)
 
 	return size;
 }
-STORE_LOCKED(bch_cache_set)
+
+STORE(bch_cache_set)
+{
+	struct cache_set *c = container_of(kobj, struct cache_set, kobj);
+
+	mutex_lock(&bch_register_lock);
+	size = __bch_cache_set_store(kobj, attr, buf, size);
+	mutex_unlock(&bch_register_lock);
+
+	if (attr == &sysfs_add_device) {
+		char *path = kstrdup(buf, GFP_KERNEL);
+		int r = bch_cache_set_add_cache(c, strim(path));
+
+		kfree(path);
+		if (r)
+			return r;
+	}
+
+	return size;
+}
 
 SHOW(bch_cache_set_internal)
 {
@@ -1179,7 +1189,7 @@ STORE(__bch_cache)
 			err = bch_cache_read_write(ca);
 			if (err) {
 				pr_err("can't set %s read-write: %s",
-				       bdevname(ca->bdev, name), err);
+				       bdevname(ca->disk_sb.bdev, name), err);
 
 				return -EINVAL;
 			}

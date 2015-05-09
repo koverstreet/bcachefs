@@ -228,8 +228,8 @@ struct cache_group {
 
 struct cache {
 	struct percpu_ref	ref;
-	struct rcu_head		kill_rcu;
-	struct work_struct	kill_work;
+	struct rcu_head		free_rcu;
+	struct work_struct	free_work;
 	struct work_struct	remove_work;
 	unsigned long		flags;
 
@@ -247,7 +247,6 @@ struct cache {
 	struct bcache_superblock disk_sb;
 
 	struct kobject		kobj;
-	struct block_device	*bdev;
 
 	/* biosets used in cloned bios for replicas and moving_gc */
 	struct bio_set		*replica_set;
@@ -679,7 +678,7 @@ static inline unsigned bucket_bytes(const struct cache *ca)
 do {									\
 	char _buf[BDEVNAME_SIZE];					\
 	__bch_cache_set_error((ca)->set, "%s: " fmt,			\
-			      bdevname((ca)->bdev, _buf),		\
+			      bdevname((ca)->disk_sb.bdev, _buf),	\
 			      ##__VA_ARGS__);				\
 } while (0)
 

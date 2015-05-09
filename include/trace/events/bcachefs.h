@@ -867,7 +867,7 @@ TRACE_EVENT(bcache_invalidate,
 	),
 
 	TP_fast_assign(
-		__entry->dev		= ca->bdev->bd_dev;
+		__entry->dev		= ca->disk_sb.bdev->bd_dev;
 		__entry->offset		= bucket << ca->bucket_bits;
 		__entry->sectors	= sectors;
 	),
