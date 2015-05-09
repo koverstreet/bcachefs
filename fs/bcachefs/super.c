@@ -56,6 +56,7 @@ LIST_HEAD(bch_cache_sets);
 struct workqueue_struct *bcache_io_wq;
 
 static void bch_cache_stop(struct cache *);
+static int bch_cache_online(struct cache *);
 
 u64 bch_checksum_update(unsigned type, u64 crc, const void *data, size_t len)
 {
@@ -893,18 +894,14 @@ static void bch_writes_disabled(struct percpu_ref *writes)
 #define alloc_bucket_pages(gfp, ca)			\
 	((void *) __get_free_pages(__GFP_ZERO|gfp, ilog2(bucket_pages(ca))))
 
-static const char *bch_cache_set_alloc(struct cache_sb *sb,
-				       struct cache_set **ret)
+static struct cache_set *bch_cache_set_alloc(struct cache_sb *sb)
 {
-	const char *err = "cannot allocate memory";
 	struct cache_set *c;
 	unsigned iter_size;
 
-	lockdep_assert_held(&bch_register_lock);
-
 	c = kzalloc(sizeof(struct cache_set), GFP_KERNEL);
 	if (!c)
-		return err;
+		return NULL;
 
 	if (percpu_ref_init(&c->writes, bch_writes_disabled, 0, GFP_KERNEL))
 		goto err_free;
@@ -1008,23 +1005,36 @@ static const char *bch_cache_set_alloc(struct cache_sb *sb,
 	    bch_bset_sort_state_init(&c->sort, ilog2(btree_pages(c))))
 		goto err;
 
-	err = "error creating kobject";
-	if (kobject_add(&c->kobj, NULL, "%pU", c->sb.user_uuid.b) ||
-	    kobject_add(&c->internal, &c->kobj, "internal") ||
-	    bch_cache_accounting_add_kobjs(&c->accounting, &c->kobj))
-		goto err;
-
-	list_add(&c->list, &bch_cache_sets);
-
-	*ret = c;
-	return NULL;
+	return c;
 err:
 	bch_cache_set_stop(c);
-	return err;
+	return NULL;
 
 err_free:
 	kfree(c);
-	return err;
+	return NULL;
+}
+
+static int bch_cache_set_online(struct cache_set *c)
+{
+	struct cache *ca;
+	unsigned i;
+
+	lockdep_assert_held(&bch_register_lock);
+
+	if (kobject_add(&c->kobj, NULL, "%pU", c->sb.user_uuid.b) ||
+	    kobject_add(&c->internal, &c->kobj, "internal") ||
+	    bch_cache_accounting_add_kobjs(&c->accounting, &c->kobj))
+		return -1;
+
+	for_each_cache(ca, c, i)
+		if (bch_cache_online(ca)) {
+			percpu_ref_put(&ca->ref);
+			return -1;
+		}
+
+	list_add(&c->list, &bch_cache_sets);
+	return 0;
 }
 
 static const char *__bch_cache_read_write(struct cache *ca);
@@ -1039,6 +1049,7 @@ static const char *run_cache_set(struct cache_set *c)
 	unsigned i, id;
 	long now;
 
+	lockdep_assert_held(&bch_register_lock);
 	BUG_ON(test_bit(CACHE_SET_RUNNING, &c->flags));
 
 	closure_init_stack(&cl);
@@ -1800,6 +1811,24 @@ bool bch_cache_remove(struct cache *ca, bool force)
 	return true;
 }
 
+static int bch_cache_online(struct cache *ca)
+{
+	char buf[12];
+
+	lockdep_assert_held(&bch_register_lock);
+
+	sprintf(buf, "cache%u", ca->sb.nr_this_dev);
+
+	if (kobject_add(&ca->kobj,
+			&part_to_dev(ca->disk_sb.bdev->bd_part)->kobj,
+			"bcache") ||
+	    sysfs_create_link(&ca->kobj, &ca->set->kobj, "set") ||
+	    sysfs_create_link(&ca->set->kobj, &ca->kobj, buf))
+		return -1;
+
+	return 0;
+}
+
 static const char *cache_alloc(struct bcache_superblock *sb,
 			       struct cache_set *c,
 			       struct cache **ret)
@@ -1807,7 +1836,6 @@ static const char *cache_alloc(struct bcache_superblock *sb,
 	struct cache_member_rcu *mi;
 	size_t reserve_none, movinggc_reserve, free_inc_reserve, total_reserve;
 	size_t heap_size;
-	char buf[12];
 	unsigned i;
 	const char *err = "cannot allocate memory";
 	struct cache *ca;
@@ -1931,63 +1959,81 @@ static const char *cache_alloc(struct bcache_superblock *sb,
 	bch_moving_init_cache(ca);
 	bch_tiering_init_cache(ca);
 
-	sprintf(buf, "cache%u", ca->sb.nr_this_dev);
-
-	err = "error creating kobject";
-	if (kobject_add(&ca->kobj,
-			&part_to_dev(ca->disk_sb.bdev->bd_part)->kobj,
-			"bcache") ||
-	    sysfs_create_link(&ca->kobj, &c->kobj, "set") ||
-	    sysfs_create_link(&c->kobj, &ca->kobj, buf))
-		goto err;
-
 	if (ca->sb.seq > c->sb.seq)
 		cache_sb_to_cache_set(c, ca->disk_sb.sb);
 
-	*ret = ca;
+	err = "error creating kobject";
+	if (c->kobj.state_in_sysfs &&
+	    bch_cache_online(ca))
+		goto err;
+
+	if (ret)
+		*ret = ca;
+	else
+		kobject_put(&ca->kobj);
 	return NULL;
 err:
 	bch_cache_stop(ca);
 	return err;
 }
 
+static struct cache_set *cache_set_lookup(uuid_le uuid)
+{
+	struct cache_set *c;
+
+	lockdep_assert_held(&bch_register_lock);
+
+	list_for_each_entry(c, &bch_cache_sets, list)
+		if (!memcmp(&c->sb.set_uuid, &uuid, sizeof(uuid_le)))
+			return c;
+
+	return NULL;
+}
+
 static const char *register_cache(struct bcache_superblock *sb)
 {
 	char name[BDEVNAME_SIZE];
-	const char *err;
-	struct cache *ca;
+	const char *err = "cannot allocate memory";
 	struct cache_set *c;
 
+	bdevname(sb->bdev, name);
+
 	mutex_lock(&bch_register_lock);
+	c = cache_set_lookup(sb->sb->set_uuid);
+	if (c) {
+		if ((err = (can_attach_cache(sb->sb, c) ?:
+			    cache_alloc(sb, c, NULL))))
+			goto err;
 
-	list_for_each_entry(c, &bch_cache_sets, list)
-		if (!memcmp(&c->sb.set_uuid, &sb->sb->set_uuid,
-			    sizeof(uuid_le))) {
-			err = can_attach_cache(sb->sb, c);
+		if (cache_set_nr_online_devices(c) == cache_set_nr_devices(c)) {
+			err = run_cache_set(c);
 			if (err)
-				return err;
-
-			goto found;
+				goto err;
 		}
+		goto out;
+	}
 
-	err = bch_cache_set_alloc(sb->sb, &c);
-	if (err)
+	c = bch_cache_set_alloc(sb->sb);
+	if (!c)
 		goto err;
-found:
-	err = cache_alloc(sb, c, &ca);
+
+	err = cache_alloc(sb, c, NULL);
 	if (err)
 		goto err_stop;
 
-	err = NULL;
-	if (cache_set_nr_online_devices(c) == cache_set_nr_devices(c))
+	if (cache_set_nr_online_devices(c) == cache_set_nr_devices(c)) {
 		err = run_cache_set(c);
-	if (err)
-		goto err;
+		if (err)
+			goto err_stop;
+	}
 
-	kobject_put(&ca->kobj);
+	err = "error creating kobject";
+	if (bch_cache_set_online(c))
+		goto err_stop;
+out:
 	mutex_unlock(&bch_register_lock);
 
-	pr_info("registered cache device %s", bdevname(ca->disk_sb.bdev, name));
+	pr_info("registered cache device %s", name);
 	return NULL;
 err_stop:
 	bch_cache_set_stop(c);
@@ -2113,33 +2159,106 @@ err:
 	return ret ?: -EINVAL;
 }
 
-const char *remove_bcache_device(char *path, bool force, struct cache_set *c)
+const char *bch_register_cache_set(char * const *devices, unsigned nr_devices,
+				   struct cache_set **ret)
 {
 	const char *err;
-	struct cache *ca = NULL;
-	struct block_device *bdev = NULL;
-	int i;
+	struct cache_set *c = NULL;
+	struct bcache_superblock *sb;
+	uuid_le uuid;
+	unsigned i;
 
-	bdev = lookup_bdev(strim(path));
-	if (IS_ERR(bdev))
-		return "failed to open device, bad device name";
+	memset(&uuid, 0, sizeof(uuid_le));
 
-	rcu_read_lock();
-	for_each_cache_rcu(ca, c, i) {
-		if (ca->disk_sb.bdev == bdev) {
-			rcu_read_unlock();
-			if (!bch_cache_remove(ca, force))
-				err = "Unable to remove cache";
-			else
-				err = NULL;
-			goto out;
-		}
+	if (!nr_devices)
+		return "need at least one device";
+
+	if (!try_module_get(THIS_MODULE))
+		return "module unloading";
+
+	err = "cannot allocate memory";
+	sb = kcalloc(nr_devices, sizeof(*sb), GFP_KERNEL);
+	if (!sb)
+		goto err;
+
+	for (i = 0; i < nr_devices; i++) {
+		err = read_super(&sb[i], devices[i]);
+		if (err)
+			goto err;
+
+		err = "attempting to register backing device";
+		if (__SB_IS_BDEV(le64_to_cpu(sb[i].sb->version)))
+			goto err;
 	}
-	rcu_read_unlock();
 
-	err = "Could not find cache for this path";
+	err = "cache set already registered";
+	mutex_lock(&bch_register_lock);
+	if (cache_set_lookup(sb->sb->set_uuid))
+		goto err;
+
+	err = "cannot allocate memory";
+	c = bch_cache_set_alloc(sb[0].sb);
+	if (!c)
+		goto err_unlock;
+
+	for (i = 0; i < nr_devices; i++) {
+		err = cache_alloc(&sb[i], c, NULL);
+		if (err)
+			goto err_unlock;
+	}
+
+	err = "insufficient devices";
+	if (cache_set_nr_online_devices(c) != cache_set_nr_devices(c))
+		goto err_unlock;
+
+	err = run_cache_set(c);
+	if (err)
+		goto err_unlock;
+
+	err = "error creating kobject";
+	if (bch_cache_set_online(c))
+		goto err_unlock;
+
+	if (ret) {
+		closure_get(&c->cl);
+		*ret = c;
+	}
+
+	mutex_unlock(&bch_register_lock);
+
+	err = NULL;
 out:
-	bdput(bdev);
+	kfree(sb);
+	module_put(THIS_MODULE);
+	return err;
+err_unlock:
+	if (c)
+		bch_cache_set_stop(c);
+	mutex_unlock(&bch_register_lock);
+err:
+	for (i = 0; i < nr_devices; i++)
+		free_super(&sb[i]);
+	goto out;
+}
+
+const char *bch_register_one(const char *path)
+{
+	struct bcache_superblock sb;
+	const char *err;
+
+	err = read_super(&sb, path);
+	if (err)
+		return err;
+
+	if (__SB_IS_BDEV(le64_to_cpu(sb.sb->version))) {
+		mutex_lock(&bch_register_lock);
+		err = bch_register_bdev(&sb);
+		mutex_unlock(&bch_register_lock);
+	} else {
+		err = register_cache(&sb);
+	}
+
+	free_super(&sb);
 	return err;
 }
 
@@ -2164,9 +2283,6 @@ static ssize_t register_bcache(struct kobject *k, struct kobj_attribute *attr,
 	ssize_t ret = -EINVAL;
 	const char *err = "cannot allocate memory";
 	char *path = NULL;
-	struct bcache_superblock sb;
-
-	memset(&sb, 0, sizeof(sb));
 
 	if (!try_module_get(THIS_MODULE))
 		return -EBUSY;
@@ -2174,17 +2290,7 @@ static ssize_t register_bcache(struct kobject *k, struct kobj_attribute *attr,
 	if (!(path = kstrndup(skip_spaces(buffer), size, GFP_KERNEL)))
 		goto err;
 
-	err = read_super(&sb, strim(path));
-	if (err)
-		goto err;
-
-	if (__SB_IS_BDEV(le64_to_cpu(sb.sb->version))) {
-		mutex_lock(&bch_register_lock);
-		err = bch_register_bdev(&sb);
-		mutex_unlock(&bch_register_lock);
-	} else {
-		err = register_cache(&sb);
-	}
+	err = bch_register_one(strim(path));
 	if (err)
 		goto err;
 
@@ -2193,10 +2299,8 @@ out:
 	kfree(path);
 	module_put(THIS_MODULE);
 	return ret;
-
 err:
 	pr_err("error opening %s: %s", path, err);
-	free_super(&sb);
 	goto out;
 }
 

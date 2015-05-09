@@ -158,8 +158,9 @@ void bch_cache_release(struct kobject *);
 void bch_cache_set_unregister(struct cache_set *);
 void bch_cache_set_stop(struct cache_set *);
 
-const char *register_bcache_devices(char **, int, struct cache_set **);
-const char *bch_run_cache_set(struct cache_set *);
+const char *bch_register_one(const char *path);
+const char *bch_register_cache_set(char * const *, unsigned,
+				   struct cache_set **);
 
 void bch_cache_read_only(struct cache *);
 const char *bch_cache_read_write(struct cache *);
