@@ -409,6 +409,9 @@ struct cache_set {
 	struct completion	*stop_completion;
 	unsigned long		flags;
 
+	int			minor;
+	struct device		*chardev;
+
 	/* Counts outstanding writes, for clean transition to read-only */
 	struct percpu_ref	writes;
 	struct completion	write_disable_complete;
@@ -770,6 +773,8 @@ do {									\
 } while (0)
 
 /* Forward declarations */
+
+long bch_chardev_ioctl(struct file *, unsigned, unsigned long);
 
 void bch_debug_exit(void);
 int bch_debug_init(void);

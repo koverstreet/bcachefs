@@ -55,6 +55,11 @@ static struct kset *bcache_kset;
 struct mutex bch_register_lock;
 LIST_HEAD(bch_cache_sets);
 
+static int bch_chardev_major;
+static struct class *bch_chardev_class;
+static struct device *bch_chardev;
+static DEFINE_IDR(bch_chardev_minor);
+
 struct workqueue_struct *bcache_io_wq;
 
 static void bch_cache_stop(struct cache *);
@@ -840,6 +845,8 @@ static void cache_set_free(struct closure *cl)
 
 	mutex_lock(&bch_register_lock);
 	list_del(&c->list);
+	if (c->minor >= 0)
+		idr_remove(&bch_chardev_minor, c->minor);
 	mutex_unlock(&bch_register_lock);
 
 	bch_notify_cache_set_stopped(c);
@@ -853,6 +860,9 @@ static void cache_set_free(struct closure *cl)
 static void cache_set_flush(struct closure *cl)
 {
 	struct cache_set *c = container_of(cl, struct cache_set, caching);
+
+	if (!IS_ERR_OR_NULL(c->chardev))
+		device_unregister(c->chardev);
 
 	mutex_lock(&bch_register_lock);
 	bch_cache_set_read_only(c);
@@ -978,6 +988,7 @@ static struct cache_set *bch_cache_set_alloc(struct cache_sb *sb)
 	if (cache_sb_to_cache_set(c, sb))
 		goto err;
 
+	c->minor		= -1;
 	c->block_bits		= ilog2(c->sb.block_size);
 
 	sema_init(&c->sb_write_mutex, 1);
@@ -1078,6 +1089,16 @@ static int bch_cache_set_online(struct cache_set *c)
 	unsigned i;
 
 	lockdep_assert_held(&bch_register_lock);
+
+	c->minor = idr_alloc(&bch_chardev_minor, c, 0, 0, GFP_KERNEL);
+	if (c->minor < 0)
+		return c->minor;
+
+	c->chardev = device_create(bch_chardev_class, NULL,
+				   MKDEV(bch_chardev_major, c->minor), NULL,
+				   "bcache%u-ctl", c->minor);
+	if (IS_ERR(c->chardev))
+		return PTR_ERR(c->chardev);
 
 	if (kobject_add(&c->kobj, NULL, "%pU", c->sb.user_uuid.b) ||
 	    kobject_add(&c->internal, &c->kobj, "internal") ||
@@ -2424,8 +2445,21 @@ static void bcache_exit(void)
 		kset_unregister(bcache_kset);
 	if (bcache_io_wq)
 		destroy_workqueue(bcache_io_wq);
+	if (!IS_ERR_OR_NULL(bch_chardev_class))
+		device_destroy(bch_chardev_class,
+			       MKDEV(bch_chardev_major, 0));
+	if (!IS_ERR_OR_NULL(bch_chardev_class))
+		class_destroy(bch_chardev_class);
+	if (bch_chardev_major > 0)
+		unregister_chrdev(bch_chardev_major, "bcache");
 	unregister_reboot_notifier(&reboot);
 }
+
+static const struct file_operations bch_chardev_fops = {
+	.owner		= THIS_MODULE,
+	.unlocked_ioctl = bch_chardev_ioctl,
+	.open		= nonseekable_open,
+};
 
 static int __init bcache_init(void)
 {
@@ -2439,6 +2473,20 @@ static int __init bcache_init(void)
 	mutex_init(&bch_register_lock);
 	register_reboot_notifier(&reboot);
 	bkey_pack_test();
+
+	bch_chardev_major = register_chrdev(0, "bcache-ctl", &bch_chardev_fops);
+	if (bch_chardev_major < 0)
+		goto err;
+
+	bch_chardev_class = class_create(THIS_MODULE, "bcache");
+	if (IS_ERR(bch_chardev_class))
+		goto err;
+
+	bch_chardev = device_create(bch_chardev_class, NULL,
+				    MKDEV(bch_chardev_major, 255),
+				    NULL, "bcache-ctl");
+	if (IS_ERR(bch_chardev))
+		goto err;
 
 	if (!(bcache_io_wq = alloc_workqueue("bcache_io", WQ_MEM_RECLAIM, 0)) ||
 	    !(bcache_kset = kset_create_and_add("bcache", NULL, fs_kobj)) ||
