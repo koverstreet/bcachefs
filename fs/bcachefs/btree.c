@@ -1291,7 +1291,8 @@ static struct btree *bch_btree_node_alloc(struct cache_set *c,
 
 retry:
 	if (bch_bucket_alloc_set(c, reserve, &k.key,
-				 c->meta_replicas, 0, NULL))
+				 CACHE_SET_META_REPLICAS_WANT(&c->sb),
+				 0, NULL))
 		goto err;
 
 	SET_KEY_SIZE(&k.key, c->btree_pages * PAGE_SECTORS);
@@ -1469,7 +1470,8 @@ u8 __bch_btree_mark_key(struct cache_set *c, int level, struct bkey *k)
 {
 	uint8_t stale = 0;
 	unsigned replicas_found = 0, replicas_needed = level
-		? c->meta_replicas : c->data_replicas;
+		? CACHE_SET_META_REPLICAS_WANT(&c->sb)
+		: CACHE_SET_DATA_REPLICAS_WANT(&c->sb);
 	struct cache *ca;
 	struct bucket *g;
 	int i;

@@ -174,6 +174,16 @@ static const char *validate_super(struct bcache_superblock *disk_sb,
 		if (sb->keys < bch_journal_buckets_offset(sb))
 			goto err;
 
+		err = "Invalid number of metadata replicas";
+		if (!CACHE_SET_META_REPLICAS_WANT(sb) ||
+		    CACHE_SET_META_REPLICAS_WANT(sb) >= BKEY_EXTENT_PTRS_MAX)
+			goto err;
+
+		err = "Invalid number of data replicas";
+		if (!CACHE_SET_DATA_REPLICAS_WANT(sb) ||
+		    CACHE_SET_DATA_REPLICAS_WANT(sb) >= BKEY_EXTENT_PTRS_MAX)
+			goto err;
+
 		err = "Invalid checksum type";
 		if (CACHE_SB_CSUM_TYPE(sb) >= BCH_CSUM_NR)
 			goto err;
@@ -1579,8 +1589,6 @@ static struct cache_set *bch_cache_set_alloc(struct cache *ca)
 
 	c->btree_scan_ratelimit = 30;
 
-	c->meta_replicas = 1;
-	c->data_replicas = 1;
 	c->copy_gc_enabled = 1;
 	c->tiering_enabled = 1;
 	c->tiering_percent = 10;

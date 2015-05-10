@@ -534,7 +534,8 @@ static void bch_add_sectors(struct bkey *k,
 			    u64 offset,
 			    int sectors)
 {
-	unsigned replicas_found = 0, replicas_needed = c->data_replicas;
+	unsigned replicas_found = 0, replicas_needed =
+		CACHE_SET_DATA_REPLICAS_WANT(&c->sb);
 	struct cache *ca;
 	int i;
 
@@ -821,7 +822,8 @@ static bool bch_extent_debug_invalid(struct btree_keys *bk, struct bkey *k)
 		return true;
 	}
 
-	replicas_needed = KEY_CACHED(k) ? 0 : c->data_replicas;
+	replicas_needed = KEY_CACHED(k) ? 0
+		: CACHE_SET_DATA_REPLICAS_WANT(&c->sb);
 
 	rcu_read_lock();
 

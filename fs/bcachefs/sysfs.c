@@ -364,8 +364,7 @@ STORE(__bch_flash_dev)
 	sysfs_strtoul(data_csum,	d->data_csum);
 
 	if (attr == &sysfs_size) {
-		uint64_t v;
-		strtoi_h_or_return(buf, v);
+		u64 v = strtoi_h_or_return(buf);
 
 		mutex_lock(&d->inode_lock);
 
@@ -582,8 +581,10 @@ SHOW(__bch_cache_set)
 	sysfs_print(btree_scan_ratelimit,	c->btree_scan_ratelimit);
 	sysfs_print(tiering_percent,		c->tiering_percent);
 
-	sysfs_printf(meta_replicas,		"%u", c->meta_replicas);
-	sysfs_printf(data_replicas,		"%u", c->data_replicas);
+	sysfs_printf(meta_replicas,		"%llu",
+		     CACHE_SET_META_REPLICAS_WANT(&c->sb));
+	sysfs_printf(data_replicas,		"%llu",
+		     CACHE_SET_DATA_REPLICAS_WANT(&c->sb));
 
 	if (!test_bit(CACHE_SET_RUNNING, &c->flags))
 		return -EPERM;
@@ -692,10 +693,25 @@ STORE(__bch_cache_set)
 
 	sysfs_pd_controller_store(tiering,	&c->tiering_pd);
 
-	sysfs_strtoul_clamp(meta_replicas,
-			    c->meta_replicas, 1, BKEY_EXTENT_PTRS_MAX);
-	sysfs_strtoul_clamp(data_replicas,
-			    c->data_replicas, 1, BKEY_EXTENT_PTRS_MAX);
+	if (attr == &sysfs_meta_replicas) {
+		unsigned v = strtoul_restrict_or_return(buf, 1,
+						BKEY_EXTENT_PTRS_MAX - 1);
+
+		if (v != CACHE_SET_META_REPLICAS_WANT(&c->sb)) {
+			SET_CACHE_SET_META_REPLICAS_WANT(&c->sb, v);
+			bcache_write_super(c);
+		}
+	}
+
+	if (attr == &sysfs_data_replicas) {
+		unsigned v = strtoul_restrict_or_return(buf, 1,
+						BKEY_EXTENT_PTRS_MAX - 1);
+
+		if (v != CACHE_SET_DATA_REPLICAS_WANT(&c->sb)) {
+			SET_CACHE_SET_DATA_REPLICAS_WANT(&c->sb, v);
+			bcache_write_super(c);
+		}
+	}
 
 	if (!test_bit(CACHE_SET_RUNNING, &c->flags))
 		return -EPERM;
@@ -718,11 +734,9 @@ STORE(__bch_cache_set)
 	}
 
 	if (attr == &sysfs_flash_vol_create) {
-		int r;
-		u64 v;
+		u64 v = strtoi_h_or_return(buf);
+		int r = bch_flash_dev_create(c, v);
 
-		strtoi_h_or_return(buf, v);
-		r = bch_flash_dev_create(c, v);
 		if (r)
 			return r;
 	}

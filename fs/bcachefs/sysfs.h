@@ -1,6 +1,8 @@
 #ifndef _BCACHE_SYSFS_H_
 #define _BCACHE_SYSFS_H_
 
+#include "util.h"
+
 #define KTYPE(type)							\
 struct kobj_type type ## _ktype = {					\
 	.release	= type ## _release,				\
@@ -94,12 +96,23 @@ do {									\
 	_v;								\
 })
 
-#define strtoi_h_or_return(cp, v)					\
-do {									\
-	int _r = strtoi_h(cp, &v);					\
+#define strtoul_restrict_or_return(cp, min, max)			\
+({									\
+	unsigned long _v = 0;						\
+	int _r = strtoul_safe_restrict(cp, _v, min, max);		\
 	if (_r)								\
 		return _r;						\
-} while (0)
+	_v;								\
+})
+
+#define strtoi_h_or_return(cp)						\
+({									\
+	u64 _v;								\
+	int _r = strtoi_h(cp, &_v);					\
+	if (_r)								\
+		return _r;						\
+	_v;								\
+})
 
 #define sysfs_hatoi(file, var)						\
 do {									\

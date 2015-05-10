@@ -358,6 +358,17 @@ static inline int bch_strtoul_h(const char *cp, long *res)
 	_r;								\
 })
 
+#define strtoul_safe_restrict(cp, var, min, max)			\
+({									\
+	unsigned long _v;						\
+	int _r = kstrtoul(cp, 10, &_v);					\
+	if (!_r && _v >= min && _v <= max)				\
+		var = _v;						\
+	else								\
+		_r = -EINVAL;						\
+	_r;								\
+})
+
 #define snprint(buf, size, var)						\
 	snprintf(buf, size,						\
 		__builtin_types_compatible_p(typeof(var), int)		\

@@ -634,7 +634,7 @@ static void journal_reclaim(struct cache_set *c)
 
 		bch_set_extent_ptrs(k, bch_extent_ptrs(k) + 1);
 
-		if (bch_extent_ptrs(k) == c->meta_replicas)
+		if (bch_extent_ptrs(k) == CACHE_SET_META_REPLICAS_WANT(&c->sb))
 			break;
 	}
 

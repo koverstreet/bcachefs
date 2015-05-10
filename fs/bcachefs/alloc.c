@@ -733,7 +733,7 @@ int bch_bucket_alloc_set(struct cache_set *c, enum alloc_reserve reserve,
 	int i, ret;
 
 	mutex_lock(&c->bucket_lock);
-	BUG_ON(!n || n > c->sb.nr_in_set || n > MAX_CACHES_PER_SET);
+	BUG_ON(!n || n > BKEY_EXTENT_PTRS_MAX);
 
 	bkey_init(k);
 	memset(caches_used, 0, sizeof(caches_used));
@@ -915,7 +915,8 @@ retry:
 		goto found;
 
 	spin_unlock(&c->open_buckets_lock);
-	b = bch_open_bucket_alloc(c, RESERVE_NONE, c->data_replicas,
+	b = bch_open_bucket_alloc(c, RESERVE_NONE,
+				  CACHE_SET_DATA_REPLICAS_WANT(&c->sb),
 				  tier_idx, cl);
 	spin_lock(&c->open_buckets_lock);
 

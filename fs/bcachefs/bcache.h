@@ -856,10 +856,6 @@ struct cache_set {
 	unsigned		tiering_enabled:1;
 	unsigned		tiering_percent;
 	unsigned		btree_scan_ratelimit;
-
-	/* number of caches to replicate data on */
-	unsigned short		meta_replicas;
-	unsigned short		data_replicas;
 };
 
 struct bbio {
