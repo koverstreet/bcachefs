@@ -87,42 +87,6 @@ void __bch_count_data_verify(struct btree_keys *b, int oldsize)
 	}
 }
 
-static void bch_btree_node_iter_next_check(struct btree_node_iter *iter,
-					   struct bkey *k)
-{
-	if (!bch_btree_node_iter_end(iter) &&
-	    keys_out_of_order(k, iter->data->k, iter->is_extents)) {
-		char buf1[80], buf2[80];
-
-		bch_dump_bucket(iter->b);
-		bch_bkey_to_text(buf1, sizeof(buf1), k);
-		bch_bkey_to_text(buf2, sizeof(buf2), iter->data->k);
-		panic("out of order/overlapping:\n%s\n%s\n", buf1, buf2);
-	}
-}
-
-void bch_btree_node_iter_verify(struct btree_keys *b,
-				struct btree_node_iter *iter)
-{
-	struct btree_node_iter_set *set;
-	struct bset_tree *t;
-
-	BUG_ON(iter->used > MAX_BSETS);
-
-	for (set = iter->data;
-	     set < iter->data + iter->used;
-	     set++) {
-		for (t =  b->set;
-		     t <= b->set + b->nsets;
-		     t++)
-			if (set->end == bset_bkey_last(t->data))
-				goto next;
-		BUG();
-next:
-		;
-	}
-}
-
 #endif
 
 /* Auxiliary search trees */
@@ -1140,6 +1104,45 @@ void bch_btree_node_iter_advance(struct btree_node_iter *iter)
 EXPORT_SYMBOL(bch_btree_node_iter_advance);
 
 #ifdef CONFIG_BCACHEFS_DEBUG
+void bch_btree_node_iter_verify(struct btree_keys *b,
+				struct btree_node_iter *iter)
+{
+	struct btree_node_iter_set *set;
+	struct bset_tree *t;
+
+	BUG_ON(iter->used > MAX_BSETS);
+
+	for (set = iter->data;
+	     set < iter->data + iter->used;
+	     set++) {
+		BUG_ON(set + 1 < iter->data + iter->used &&
+		       btree_node_iter_cmp(iter, set[0], set[1]));
+
+		for (t =  b->set;
+		     t <= b->set + b->nsets;
+		     t++)
+			if (set->end == bset_bkey_last(t->data))
+				goto next;
+		BUG();
+next:
+		;
+	}
+}
+
+static void bch_btree_node_iter_next_check(struct btree_node_iter *iter,
+					   struct bkey *k)
+{
+	if (!bch_btree_node_iter_end(iter) &&
+	    keys_out_of_order(k, iter->data->k, iter->is_extents)) {
+		char buf1[80], buf2[80];
+
+		bch_dump_bucket(iter->b);
+		bch_bkey_to_text(buf1, sizeof(buf1), k);
+		bch_bkey_to_text(buf2, sizeof(buf2), iter->data->k);
+		panic("out of order/overlapping:\n%s\n%s\n", buf1, buf2);
+	}
+}
+
 struct bkey *bch_btree_node_iter_next_all(struct btree_node_iter *iter)
 {
 	struct bkey *ret = bch_btree_node_iter_peek_all(iter);
