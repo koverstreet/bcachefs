@@ -1059,6 +1059,7 @@ static struct btree *bch_btree_node_get(struct cache_set *c,
 {
 	int i = 0;
 	struct btree *b;
+	bool dropped_locks = false;
 
 	BUG_ON(level < 0);
 retry:
@@ -1086,22 +1087,74 @@ retry:
 			BUG_ON(!six_trylock_convert(&b->lock, intent, read));
 		}
 	} else {
-		if (b->level == op->locks_want) {
+		if (level == op->locks_want) {
+			struct btree *p, *n;
+			BKEY_PADDED(k) tmp;
+
 			/*
-			 * XXX:
-			 * drop read lock on parent, lock next node, check for
-			 * race (with free)
+			 * k points into the parent, which we're about to
+			 * unlock, so save us a copy
 			 */
+			bkey_copy(&tmp.k, k);
+			k = &tmp.k;
+
+			/*
+			 * There's a potential deadlock with splits and
+			 * insertions into interior nodes we have to avoid:
+			 *
+			 * The other thread might be holding an intent lock on
+			 * the node we want, and they want to update its parent
+			 * node so they're going to upgrade their intent lock on
+			 * the parent node to a write lock.
+			 *
+			 * But if we're holding a read lock on the parent, and
+			 * we're trying to get the intent lock they're holding,
+			 * we deadlock.
+			 *
+			 * So to avoid this we drop the read locks on parent
+			 * nodes when we're starting to take intent locks - and
+			 * handle the race.
+			 *
+			 * The race is that they might be about to free the node
+			 * we want, and dropping our read lock lets them add the
+			 * replacement node's pointer to the parent and then
+			 * free the old node (the node we're trying to lock).
+			 *
+			 * After we take the intent lock on the node we want
+			 * (which protects against it being freed), we check if
+			 * we might have raced (and the node was freed before we
+			 * locked it) with a global sequence number for freed
+			 * btree nodes.
+			 */
+
+			for (p = parent; p; p = n) {
+				n = p->parent;
+				btree_node_unlock(op, p, p->level);
+			}
+
+			dropped_locks = true;
 		}
 
 		if (!btree_node_lock(b, op, level,
-				     (PTR_HASH(&b->key) != PTR_HASH(k))))
+				     (PTR_HASH(&b->key) != PTR_HASH(k)))) {
+			if (dropped_locks) {
+				trace_bcache_btree_intent_lock_fail(b, op);
+				return ERR_PTR(-EINTR);
+			}
+
 			goto retry;
+		}
 
 		BUG_ON(b->level != level);
 	}
 
-	b->parent = parent;
+	/*
+	 * Parent can't change without taking a write lock on the parent.
+	 * If we don't have the parent locked, it makes no sense to use
+	 * b->parent
+	 */
+	if (!dropped_locks)
+		b->parent = parent;
 	b->accessed = 1;
 
 	for (; i <= b->keys.nsets && b->keys.set[i].size; i++) {
@@ -2613,12 +2666,12 @@ int bch_btree_insert(struct cache_set *c, enum btree_id id,
 	struct btree_insert_op op;
 	int ret = 0;
 
-	bch_btree_op_init(&op.op, id, S8_MAX);
+	bch_btree_op_init(&op.op, id, 0);
 	op.keys		= keys;
 	op.replace_key	= replace_key;
 
 	while (!ret && !bch_keylist_empty(keys)) {
-		op.op.locks_want = S8_MAX;
+		op.op.locks_want = 0;
 		ret = bch_btree_map_nodes(&op.op, c,
 			       id == BTREE_ID_EXTENTS
 					  ? &START_KEY(keys->keys)
@@ -2642,8 +2695,9 @@ static int bch_btree_map_nodes_recurse(struct btree *b, struct btree_op *op,
 				       btree_map_nodes_fn *fn, int flags)
 {
 	int ret = MAP_CONTINUE;
+	unsigned level = b->level;
 
-	if (b->level) {
+	if (level) {
 		struct bkey *k;
 		struct btree_iter iter;
 
@@ -2657,10 +2711,14 @@ static int bch_btree_map_nodes_recurse(struct btree *b, struct btree_op *op,
 
 			if (ret != MAP_CONTINUE)
 				return ret;
+
+			if (!test_bit(level, (void *) &op->locks_intent) &&
+			    !test_bit(level, (void *) &op->locks_read))
+				return -EINTR;
 		}
 	}
 
-	if (!b->level || (flags & MAP_ALL_NODES)) {
+	if (!level || (flags & MAP_ALL_NODES)) {
 		ret = fn(op, b);
 
 		if (ret == MAP_CONTINUE && op->iterator_invalidated)
@@ -2762,6 +2820,7 @@ static int bch_btree_map_keys_recurse(struct btree *b, struct btree_op *op,
 	int ret = MAP_CONTINUE;
 	struct bkey *k, search = *from;
 	struct btree_iter iter;
+	unsigned level = b->level;
 
 	if (b->btree_id == BTREE_ID_EXTENTS)
 		search = NEXT_KEY(&search);
@@ -2771,7 +2830,7 @@ static int bch_btree_map_keys_recurse(struct btree *b, struct btree_op *op,
 	while ((k = bch_btree_iter_next_filter(&iter, &b->keys, bch_ptr_bad))) {
 		BUG_ON(bkey_cmp(k, from) < 0);
 
-		if (!b->level) {
+		if (!level) {
 			if (flags & MAP_HOLES) {
 				ret = map_hole(b, op, from, k, fn);
 
@@ -2787,10 +2846,16 @@ static int bch_btree_map_keys_recurse(struct btree *b, struct btree_op *op,
 
 		if (ret != MAP_CONTINUE)
 			goto out;
+
+		if (!test_bit(level, (void *) &op->locks_intent) &&
+		    !test_bit(level, (void *) &op->locks_read)) {
+			ret = -EINTR;
+			goto out;
+		}
 	}
 
 	/* whatever is left up to the end of the btree node is a hole */
-	if (!b->level) {
+	if (!level) {
 		/*
 		 * map_hole() expects a half open interval - [from, next)
 		 *

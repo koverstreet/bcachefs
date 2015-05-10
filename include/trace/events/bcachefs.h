@@ -390,6 +390,11 @@ DEFINE_EVENT(btree_node_op, bcache_btree_upgrade_lock_fail,
 	TP_ARGS(b, op)
 );
 
+DEFINE_EVENT(btree_node_op, bcache_btree_intent_lock_fail,
+	TP_PROTO(struct btree *b, void *op),
+	TP_ARGS(b, op)
+);
+
 DEFINE_EVENT(btree_node_op, bcache_btree_iterator_invalidated,
 	TP_PROTO(struct btree *b, void *op),
 	TP_ARGS(b, op)

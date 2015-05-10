@@ -150,7 +150,7 @@ static void __bch_data_insert_keys(struct closure *cl)
 	int ret = 0;
 
 	while (!ret && !bch_keylist_empty(keys)) {
-		op->op.locks_want = S8_MAX;
+		op->op.locks_want = 0;
 		ret = bch_btree_map_nodes(&op->op, op->c,
 					  &START_KEY(keys->keys),
 					  btree_insert_fn,
@@ -173,7 +173,7 @@ static void bch_data_insert_keys(struct closure *cl)
 	enum alloc_reserve reserve;
 
 	reserve = bch_btree_reserve(op);
-	__bch_btree_op_init(&op->op, id, reserve, S8_MAX);
+	__bch_btree_op_init(&op->op, id, reserve, 0);
 
 	closure_call(&op->op.cl, __bch_data_insert_keys, NULL, cl);
 	continue_at(cl, bch_data_insert_keys_done, op->c->wq);
