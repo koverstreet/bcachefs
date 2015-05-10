@@ -709,7 +709,9 @@ int bch_discard(struct cache_set *c, struct bkey *start_key,
 		ret = bch_btree_insert_at(&iter,
 					  &keylist_single(&erase_key),
 					  NULL, NULL, 0, 0);
-		BUG_ON(ret);
+		if (ret)
+			break;
+
 		bch_btree_iter_set_pos(&iter, &n);
 		bch_btree_iter_cond_resched(&iter);
 	}

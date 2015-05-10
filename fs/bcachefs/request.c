@@ -336,15 +336,8 @@ static int cached_dev_cache_miss(struct btree_iter *iter, struct search *s,
 
 	s->cache_miss = 1;
 
-	if (s->bypass) {
-		miss = bio_next_split(bio, sectors, GFP_NOIO, s->d->bio_split);
-
-		miss->bi_end_io		= request_endio;
-		miss->bi_private	= &s->cl;
-		closure_bio_submit(miss, &s->cl);
-
-		return 0;
-	}
+	if (s->bypass)
+		goto nopromote;
 #if 0
 	struct cached_dev *dc = container_of(s->d, struct cached_dev, disk);
 
@@ -362,7 +355,7 @@ static int cached_dev_cache_miss(struct btree_iter *iter, struct search *s,
 	SET_KEY_CACHED(&replace.key, true);
 
 	ret = bch_btree_insert_check_key(iter, &replace.key);
-	if (ret)
+	if (ret == -EINTR || ret == -EAGAIN)
 		return ret;
 
 	miss = bio_next_split(bio, sectors, GFP_NOIO, s->d->bio_split);
@@ -377,6 +370,14 @@ static int cached_dev_cache_miss(struct btree_iter *iter, struct search *s,
 
 	closure_get(&s->cl);
 	__cache_promote(s->iop.c, to_bbio(miss), &replace.key);
+
+	return 0;
+nopromote:
+	miss = bio_next_split(bio, sectors, GFP_NOIO, s->d->bio_split);
+
+	miss->bi_end_io		= request_endio;
+	miss->bi_private	= &s->cl;
+	closure_bio_submit(miss, &s->cl);
 
 	return 0;
 }

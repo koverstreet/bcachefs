@@ -2687,6 +2687,7 @@ static int bch_btree_insert_node(struct btree *b,
  * Return values:
  * -EAGAIN: @op->cl was put on a waitlist waiting for btree node allocation.
  * -EINTR: locking changed, this function should be called again.
+ * -EROFS: cache set read only
  */
 int bch_btree_insert_at(struct btree_iter *iter,
 			struct keylist *insert_keys,
@@ -2698,6 +2699,9 @@ int bch_btree_insert_at(struct btree_iter *iter,
 	int ret = -EINTR;
 
 	BUG_ON(iter->level);
+
+	if (!percpu_ref_tryget(&iter->c->writes))
+		return -EROFS;
 
 	iter->locks_want = 0;
 	if (!bch_btree_iter_upgrade(iter))
@@ -2711,7 +2715,8 @@ traverse:
 			bch_btree_iter_unlock(iter);
 
 		if (bch_keylist_empty(insert_keys) ||
-		    (flags & BTREE_INSERT_ATOMIC))
+		    (flags & BTREE_INSERT_ATOMIC) ||
+		    ret == -EROFS)
 			break;
 
 		bch_btree_iter_set_pos(iter,
@@ -2721,6 +2726,7 @@ traverse:
 		if (ret)
 			break;
 	}
+	percpu_ref_put(&iter->c->writes);
 
 	return ret;
 }
