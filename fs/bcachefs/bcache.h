@@ -553,11 +553,14 @@ static inline bool bucket_max_cmp(struct bucket_heap_entry l,
 	return l.val > r.val;
 }
 
+#define CACHE_DEV_REMOVING	0
+
 struct cache {
 	struct percpu_ref	ref;
 	struct rcu_head		kill_rcu;
 	struct work_struct	kill_work;
 	struct work_struct	remove_work;
+	unsigned long		flags;
 
 	struct cache_set	*set;
 	struct cache_sb		sb;
@@ -685,6 +688,7 @@ struct gc_stat {
 #define CACHE_SET_UNREGISTERING		0
 #define	CACHE_SET_STOPPING		1
 #define	CACHE_SET_RUNNING		2
+#define	CACHE_SET_RO			3
 
 struct cache_group {
 	seqcount_t		lock;
@@ -893,10 +897,6 @@ struct cache_set {
 	atomic_long_t		writeback_keys_done;
 	atomic_long_t		writeback_keys_failed;
 
-	enum			{
-		ON_ERROR_UNREGISTER,
-		ON_ERROR_PANIC,
-	}			on_error;
 	unsigned		error_limit;
 	unsigned		error_decay;
 
@@ -1216,6 +1216,7 @@ void bcache_device_stop(struct bcache_device *);
 void bch_cache_set_unregister(struct cache_set *);
 void bch_cache_set_stop(struct cache_set *);
 
+void bch_cache_read_only(struct cache *);
 void bch_cache_remove(struct cache *);
 int bch_cache_add(struct cache_set *, const char *);
 

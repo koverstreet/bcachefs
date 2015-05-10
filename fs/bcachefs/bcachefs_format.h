@@ -385,6 +385,11 @@ struct cache_sb {
 
 BITMASK(CACHE_SYNC,			struct cache_sb, flags, 0, 1);
 
+BITMASK(CACHE_ERROR_ACTION,		struct cache_sb, flags, 1, 4);
+#define BCH_ON_ERROR_CONTINUE		0U
+#define BCH_ON_ERROR_RO			1U
+#define BCH_ON_ERROR_PANIC		2U
+
 BITMASK(CACHE_SET_META_REPLICAS_WANT,	struct cache_sb, flags, 4, 8);
 BITMASK(CACHE_SET_DATA_REPLICAS_WANT,	struct cache_sb, flags, 8, 12);
 

@@ -823,6 +823,11 @@ static bool bch_extent_debug_invalid(struct btree_keys *bk, struct bkey *k)
 		if (PTR_DEV(k, i) >= c->sb.nr_in_set)
 			continue;
 
+		if (replicas_needed &&
+		    bch_is_zero(c->members[PTR_DEV(k, i)].uuid.b,
+				sizeof(uuid_le)))
+			goto bad_device;
+
 		tier = CACHE_TIER(&c->members[dev]);
 		ptrs_per_tier[tier]++;
 
@@ -876,6 +881,13 @@ static bool bch_extent_debug_invalid(struct btree_keys *bk, struct bkey *k)
 bad_key:
 	bch_extent_to_text(buf, sizeof(buf), k);
 	cache_bug(c, "extent key bad: %s", buf);
+	rcu_read_unlock();
+	return true;
+
+bad_device:
+	bch_extent_to_text(buf, sizeof(buf), k);
+	cache_bug(c, "extent pointer %i device missing: %s:\nbucket %zu",
+		  i, buf, PTR_BUCKET_NR(c, k, i));
 	rcu_read_unlock();
 	return true;
 

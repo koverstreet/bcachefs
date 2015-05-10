@@ -41,8 +41,17 @@ static const char * const bch_cache_modes[] = {
 };
 
 static const char * const error_actions[] = {
-	"unregister",
+	"continue",
+	"readonly",
 	"panic",
+	NULL
+};
+
+static const char * const bch_cache_state[] = {
+	"active",
+	"readonly",
+	"failed",
+	"spare",
 	NULL
 };
 
@@ -146,6 +155,11 @@ rw_attribute(meta_replicas);
 rw_attribute(data_replicas);
 rw_attribute(tier);
 sysfs_pd_controller_attribute(copy_gc);
+
+static struct attribute sysfs_state_rw = {
+	.name = "state",
+	.mode = S_IRUGO|S_IWUSR
+};
 
 SHOW(__bch_cached_dev)
 {
@@ -554,7 +568,7 @@ SHOW(__bch_cache_set)
 
 	if (attr == &sysfs_errors)
 		return bch_snprint_string_list(buf, PAGE_SIZE, error_actions,
-					       c->on_error);
+					       CACHE_ERROR_ACTION(&c->sb));
 
 	/* See count_io_errors for why 88 */
 	sysfs_print(io_error_halflife,	c->error_decay * 88);
@@ -647,7 +661,11 @@ STORE(__bch_cache_set)
 		if (v < 0)
 			return v;
 
-		c->on_error = v;
+		if (v != CACHE_ERROR_ACTION(&c->sb)) {
+			SET_CACHE_ERROR_ACTION(&c->sb, v);
+			bcache_write_super(c);
+		}
+
 		return size;
 	}
 
@@ -975,6 +993,11 @@ SHOW(__bch_cache)
 
 	sysfs_print(tier,		CACHE_TIER(mi));
 
+	if (attr == &sysfs_state_rw)
+		return bch_snprint_string_list(buf, PAGE_SIZE,
+					       bch_cache_state,
+					       CACHE_STATE(mi));
+
 	if (attr == &sysfs_read_priority_stats)
 		return show_quantiles(ca, buf, bucket_priority_fn, (void *) 0);
 	if (attr == &sysfs_write_priority_stats)
@@ -1023,17 +1046,46 @@ STORE(__bch_cache)
 		if (v >= CACHE_TIERS)
 			return -EINVAL;
 
-		if (v != CACHE_TIER(mi)) {
+		if (v != CACHE_TIER(mi) &&
+		    CACHE_STATE(mi) == CACHE_ACTIVE) {
 			struct cache_group *tier;
-
-			tier = &c->cache_tiers[CACHE_TIER(mi)];
-			bch_cache_group_remove_cache(tier, ca);
 
 			tier = &c->cache_tiers[v];
 			bch_cache_group_add_cache(tier, ca);
 
+			tier = &c->cache_tiers[CACHE_TIER(mi)];
+			bch_cache_group_remove_cache(tier, ca);
+		}
+
+		if (v != CACHE_TIER(mi)) {
 			SET_CACHE_TIER(mi, v);
 			bcache_write_super(c);
+		}
+	}
+
+	if (attr == &sysfs_state_rw) {
+		ssize_t v = bch_read_string_list(buf, bch_cache_state);
+
+		if (v < 0)
+			return v;
+
+		if (v == CACHE_STATE(mi))
+			return size;
+
+		switch (v) {
+		case CACHE_ACTIVE:
+			return -EINVAL;
+		case CACHE_RO:
+			bch_cache_read_only(ca);
+			SET_CACHE_STATE(mi, v);
+			bcache_write_super(c);
+			break;
+		case CACHE_FAILED:
+			bch_cache_read_only(ca);
+			break;
+		case CACHE_SPARE:
+			bch_cache_read_only(ca);
+			break;
 		}
 	}
 
@@ -1082,6 +1134,7 @@ static struct attribute *bch_cache_files[] = {
 	&sysfs_clear_stats,
 	&sysfs_cache_replacement_policy,
 	&sysfs_tier,
+	&sysfs_state_rw,
 	sysfs_pd_controller_files(copy_gc),
 	NULL
 };

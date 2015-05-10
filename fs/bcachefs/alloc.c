@@ -78,11 +78,9 @@ void bch_cache_group_remove_cache(struct cache_group *grp, struct cache *ca)
 			memmove(&grp->devices[i],
 				&grp->devices[i + 1],
 				(grp->nr_devices - i) * sizeof(ca));
-			goto done;
+			break;
 		}
 
-	WARN(1, "cache device not found in tier\n");
-done:
 	write_seqcount_end(&grp->lock);
 }
 

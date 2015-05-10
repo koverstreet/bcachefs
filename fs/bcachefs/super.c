@@ -49,7 +49,7 @@ static DEFINE_IDA(bcache_minor);
 static wait_queue_head_t unregister_wait;
 struct workqueue_struct *bcache_io_wq;
 
-static void __bch_cache_remove(struct cache *);
+static void bch_cache_stop(struct cache *);
 
 #define BTREE_MAX_PAGES		(256 * 1024 / PAGE_SIZE)
 
@@ -592,8 +592,8 @@ void bcache_write_super(struct cache_set *c)
  * disk.
  */
 
-static void prio_io(struct cache *ca, uint64_t bucket, int op,
-		    unsigned long op_flags)
+static int prio_io(struct cache *ca, uint64_t bucket, int op,
+		   unsigned long op_flags)
 {
 	struct bio *bio = bch_bbio_alloc(ca->set);
 	int ret;
@@ -606,13 +606,13 @@ static void prio_io(struct cache *ca, uint64_t bucket, int op,
 
 	ret = submit_bio_wait(bio);
 
-	cache_set_err_on(ret, ca->set, "accessing priorities");
 	bch_bbio_free(bio, ca->set);
+	return ret;
 }
 
 void bch_prio_write(struct cache *ca)
 {
-	int i;
+	int i, ret;
 	struct closure cl;
 
 	closure_init_stack(&cl);
@@ -657,7 +657,8 @@ void bch_prio_write(struct cache *ca)
 		ca->prio_buckets[i] = r;
 		spin_unlock(&ca->prio_buckets_lock);
 
-		prio_io(ca, r, REQ_OP_WRITE, 0);
+		ret = prio_io(ca, r, REQ_OP_WRITE, 0);
+		cache_set_err_on(ret, ca->set, "writing priorities");
 	}
 
 	spin_lock(&ca->prio_buckets_lock);
@@ -687,7 +688,7 @@ void bch_prio_write(struct cache *ca)
 	trace_bcache_prio_write_end(ca);
 }
 
-static void prio_read(struct cache *ca, uint64_t bucket)
+static const char *prio_read(struct cache *ca, u64 bucket)
 {
 	struct prio_set *p = ca->disk_buckets;
 	struct bucket_disk *d = p->data + prios_per_bucket(ca), *end = d;
@@ -695,7 +696,7 @@ static void prio_read(struct cache *ca, uint64_t bucket)
 	unsigned bucket_nr = 0;
 
 	if (cache_set_init_fault("prio_read"))
-		bch_cache_set_error(ca->set, "reading prios");
+		return "prio_read() dynamic fault";
 
 	ca->prio_journal_bucket = bucket;
 
@@ -704,15 +705,16 @@ static void prio_read(struct cache *ca, uint64_t bucket)
 			ca->prio_last_buckets[bucket_nr] = bucket;
 			bucket_nr++;
 
-			prio_io(ca, bucket, REQ_OP_READ, READ_SYNC);
+			if (prio_io(ca, bucket, REQ_OP_READ, READ_SYNC))
+				return "IO error reading priorities";
 
 			if (p->magic != pset_magic(&ca->sb))
-				pr_warn("bad magic reading priorities");
+				return "bad magic reading priorities";
 
 			if (p->csum != bch_checksum(PSET_CSUM_TYPE(p),
 						    &p->magic,
 						    bucket_bytes(ca) - 8))
-				pr_warn("bad csum reading priorities");
+				return "bad csum reading priorities";
 
 			bucket = p->next_bucket;
 			d = p->data;
@@ -723,6 +725,8 @@ static void prio_read(struct cache *ca, uint64_t bucket)
 		ca->buckets[b].last_gc = d->gen;
 		ca->bucket_gens[b] = d->gen;
 	}
+
+	return NULL;
 }
 
 void bch_check_mark_super_slowpath(struct cache_set *c,
@@ -1456,10 +1460,6 @@ bool bch_cache_set_error(struct cache_set *c, const char *fmt, ...)
 {
 	va_list args;
 
-	if (c->on_error != ON_ERROR_PANIC &&
-	    test_bit(CACHE_SET_STOPPING, &c->flags))
-		return false;
-
 	/* XXX: we can be called from atomic context
 	acquire_console_sem();
 	*/
@@ -1470,12 +1470,19 @@ bool bch_cache_set_error(struct cache_set *c, const char *fmt, ...)
 	vprintk(fmt, args);
 	va_end(args);
 
-	printk(", disabling caching\n");
+	switch (CACHE_ERROR_ACTION(&c->sb)) {
+	case BCH_ON_ERROR_CONTINUE:
+		printk(", continuing\n");
+		break;
+	case BCH_ON_ERROR_RO:
+		printk(", going read only\n");
+		set_bit(CACHE_SET_RO, &c->flags);
+		break;
+	case BCH_ON_ERROR_PANIC:
+		panic(", panic forced after error\n");
+		break;
+	}
 
-	if (c->on_error == ON_ERROR_PANIC)
-		panic("panic forced after error\n");
-
-	bch_cache_set_unregister(c);
 	return true;
 }
 
@@ -1500,7 +1507,7 @@ static void cache_set_free(struct closure *cl)
 
 	mutex_lock(&bch_register_lock);
 	for_each_cache(ca, c, i)
-		__bch_cache_remove(ca);
+		bch_cache_stop(ca);
 	mutex_unlock(&bch_register_lock);
 
 	bch_bset_sort_state_free(&c->sort);
@@ -1532,16 +1539,6 @@ static void cache_set_flush(struct closure *cl)
 	struct cache *ca;
 	unsigned i;
 
-	mutex_lock(&bch_register_lock);
-	for_each_cache(ca, c, i)
-		bch_moving_gc_stop(ca);
-	mutex_unlock(&bch_register_lock);
-
-	bch_cache_accounting_destroy(&c->accounting);
-
-	kobject_put(&c->internal);
-	kobject_del(&c->kobj);
-
 	cancel_delayed_work_sync(&c->tiering_pd.update);
 
 	c->tiering_pd.rate.rate = UINT_MAX;
@@ -1555,18 +1552,18 @@ static void cache_set_flush(struct closure *cl)
 	if (!IS_ERR_OR_NULL(c->gc_thread))
 		kthread_stop(c->gc_thread);
 
+	mutex_lock(&bch_register_lock);
+	for_each_cache(ca, c, i)
+		bch_cache_read_only(ca);
+	mutex_unlock(&bch_register_lock);
+
+	bch_cache_accounting_destroy(&c->accounting);
+
+	kobject_put(&c->internal);
+	kobject_del(&c->kobj);
+
 	/* Should skip this if we're unregistering because of an error */
 	bch_btree_flush(c);
-
-	mutex_lock(&bch_register_lock);
-
-	for_each_cache(ca, c, i) {
-		if (ca->alloc_thread)
-			kthread_stop(ca->alloc_thread);
-		ca->alloc_thread = NULL;
-	}
-
-	mutex_unlock(&bch_register_lock);
 
 	if (c->journal.cur) {
 		cancel_delayed_work_sync(&c->journal.work);
@@ -1796,14 +1793,20 @@ static const char *run_cache_set(struct cache_set *c)
 				break;
 			}
 
-		err = "IO error reading priorities";
+		err = "prio bucket ptrs not found";
 		if (!prio_bucket_ptrs)
 			goto err;
 
-		for_each_cache(ca, c, i)
-			if (prio_bucket_ptrs[ca->sb.nr_this_dev])
-				prio_read(ca,
-					prio_bucket_ptrs[ca->sb.nr_this_dev]);
+		err = "error reading priorities";
+		for_each_cache(ca, c, i) {
+			size_t bucket = prio_bucket_ptrs[ca->sb.nr_this_dev];
+
+			if (bucket &&
+			    (err = prio_read(ca, bucket))) {
+				percpu_ref_put(&ca->ref);
+				goto err;
+			}
+		}
 
 		c->prio_clock[READ].hand = j->read_clock;
 		c->prio_clock[WRITE].hand = j->write_clock;
@@ -1851,7 +1854,9 @@ static const char *run_cache_set(struct cache_set *c)
 
 		err = "error starting allocator thread";
 		for_each_cache(ca, c, i)
-			if (bch_cache_allocator_start(ca)) {
+			if (CACHE_STATE(cache_member_info(ca)) ==
+			    CACHE_ACTIVE &&
+			    bch_cache_allocator_start(ca)) {
 				percpu_ref_put(&ca->ref);
 				goto err;
 			}
@@ -1872,7 +1877,9 @@ static const char *run_cache_set(struct cache_set *c)
 
 		err = "error starting allocator thread";
 		for_each_cache(ca, c, i)
-			if (bch_cache_allocator_start(ca)) {
+			if (CACHE_STATE(cache_member_info(ca)) ==
+			    CACHE_ACTIVE &&
+			    bch_cache_allocator_start(ca)) {
 				percpu_ref_put(&ca->ref);
 				goto err;
 			}
@@ -1900,7 +1907,8 @@ static const char *run_cache_set(struct cache_set *c)
 
 	err = "error starting moving GC thread";
 	for_each_cache(ca, c, i)
-		if (bch_moving_gc_thread_start(ca)) {
+		if (CACHE_STATE(cache_member_info(ca)) == CACHE_ACTIVE &&
+		    bch_moving_gc_thread_start(ca)) {
 			percpu_ref_put(&ca->ref);
 			goto err;
 		}
@@ -1930,7 +1938,7 @@ static const char *run_cache_set(struct cache_set *c)
 	return NULL;
 err:
 	closure_sync(&cl);
-	bch_cache_set_error(c, "%s", err);
+	bch_cache_set_unregister(c);
 	closure_put(&c->caching);
 	return err;
 }
@@ -1957,7 +1965,7 @@ static const char *can_attach_cache(struct cache *ca, struct cache_set *c)
 
 static int cache_set_add_device(struct cache_set *c, struct cache *ca)
 {
-	struct cache_group *tier;
+	struct cache_member *mi = c->members + ca->sb.nr_this_dev;
 	char buf[12];
 	int ret;
 
@@ -1980,10 +1988,12 @@ static int cache_set_add_device(struct cache_set *c, struct cache *ca)
 
 	rcu_assign_pointer(c->cache[ca->sb.nr_this_dev], ca);
 
-	tier = &c->cache_tiers[CACHE_TIER(cache_member_info(ca))];
+	if (CACHE_STATE(mi) == CACHE_ACTIVE) {
+		struct cache_group *tier = &c->cache_tiers[CACHE_TIER(mi)];
 
-	bch_cache_group_add_cache(tier, ca);
-	bch_cache_group_add_cache(&c->cache_all, ca);
+		bch_cache_group_add_cache(tier, ca);
+		bch_cache_group_add_cache(&c->cache_all, ca);
+	}
 
 	return 0;
 }
@@ -2035,6 +2045,23 @@ err:
 }
 
 /* Cache device */
+
+void bch_cache_read_only(struct cache *ca)
+{
+	struct cache_set *c = ca->set;
+	struct cache_group *tier;
+
+	bch_moving_gc_stop(ca);
+
+	tier = &c->cache_tiers[CACHE_TIER(cache_member_info(ca))];
+
+	bch_cache_group_remove_cache(tier, ca);
+	bch_cache_group_remove_cache(&c->cache_all, ca);
+
+	if (ca->alloc_thread)
+		kthread_stop(ca->alloc_thread);
+	ca->alloc_thread = NULL;
+}
 
 void bch_cache_release(struct kobject *kobj)
 {
@@ -2089,17 +2116,13 @@ static void bch_cache_kill_rcu(struct rcu_head *rcu)
 	percpu_ref_kill(&ca->ref);
 }
 
-static void __bch_cache_remove(struct cache *ca)
+static void bch_cache_stop(struct cache *ca)
 {
 	struct cache_set *c = ca->set;
-	struct cache_group *tier =
-		&c->cache_tiers[CACHE_TIER(cache_member_info(ca))];
 
 	lockdep_assert_held(&bch_register_lock);
 
-	/* already ran? */
-	if (rcu_access_pointer(c->cache[ca->sb.nr_this_dev]) != ca)
-		return;
+	BUG_ON(rcu_access_pointer(c->cache[ca->sb.nr_this_dev]) != ca);
 
 	if (c->kobj.state_in_sysfs) {
 		char buf[12];
@@ -2107,15 +2130,6 @@ static void __bch_cache_remove(struct cache *ca)
 		sprintf(buf, "cache%i", ca->sb.nr_this_dev);
 		sysfs_remove_link(&c->kobj, buf);
 	}
-
-	bch_moving_gc_stop(ca);
-
-	bch_cache_group_remove_cache(&c->cache_all, ca);
-	bch_cache_group_remove_cache(tier, ca);
-
-	if (ca->alloc_thread)
-		kthread_stop(ca->alloc_thread);
-	ca->alloc_thread = NULL;
 
 	rcu_assign_pointer(c->cache[ca->sb.nr_this_dev], NULL);
 
@@ -2125,21 +2139,40 @@ static void __bch_cache_remove(struct cache *ca)
 static void bch_cache_remove_work(struct work_struct *work)
 {
 	struct cache *ca = container_of(work, struct cache, remove_work);
+	struct cache_member *mi = cache_member_info(ca);
 	struct cache_set *c = ca->set;
 
 	mutex_lock(&bch_register_lock);
 
-	memset(&c->members[ca->sb.nr_this_dev].uuid, 0, sizeof(uuid_le));
-	bcache_write_super(c);
+	if (CACHE_STATE(mi) == CACHE_ACTIVE) {
+		bch_cache_read_only(ca);
 
-	__bch_cache_remove(ca);
+		SET_CACHE_STATE(mi, CACHE_RO);
+		bcache_write_super(c);
+	}
 
+	down(&c->sb_write_mutex);
+	/*
+	 * XXX: haven't cleared out open buckets, someone might still mark this
+	 * device as having data/metadata
+	 */
+
+	if (!CACHE_HAS_METADATA(mi) &&
+	    !CACHE_HAS_DATA(mi)) {
+		memset(mi, 0, sizeof(*mi));
+		__bcache_write_super(c);
+	} else {
+		up(&c->sb_write_mutex);
+	}
+
+	bch_cache_stop(ca);
 	mutex_unlock(&bch_register_lock);
 }
 
 void bch_cache_remove(struct cache *ca)
 {
-	schedule_work(&ca->remove_work);
+	if (!test_and_set_bit(CACHE_DEV_REMOVING, &ca->flags))
+		queue_work(system_long_wq, &ca->remove_work);
 }
 
 static int cache_init(struct cache *ca)
