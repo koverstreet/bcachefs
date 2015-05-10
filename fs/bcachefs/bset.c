@@ -87,6 +87,18 @@ void __bch_count_data_verify(struct btree_keys *b, int oldsize)
 	}
 }
 
+void bch_verify_nr_live_u64s(struct btree_keys *b)
+{
+	struct bkey *k;
+	struct btree_node_iter iter;
+	size_t u64s = 0;
+
+	for_each_btree_node_key(b, k, &iter)
+		u64s += k->u64s;
+
+	BUG_ON(b->nr_live_u64s != u64s);
+}
+
 #endif
 
 /* Auxiliary search trees */
@@ -1162,21 +1174,6 @@ EXPORT_SYMBOL(bch_btree_node_iter_next_all);
 
 /* Mergesort */
 
-/**
- * btree_count_keys - count live keys in a btree node
- */
-size_t bch_btree_count_u64s(struct btree_keys *b)
-{
-	struct bkey *k;
-	struct btree_node_iter iter;
-	size_t ret = 0;
-
-	for_each_btree_node_key(b, k, &iter)
-		ret += k->u64s;
-
-	return ret;
-}
-
 void bch_bset_sort_state_free(struct bset_sort_state *state)
 {
 	mempool_destroy(state->pool);
@@ -1284,12 +1281,14 @@ static void __btree_sort(struct btree_keys *b, struct btree_node_iter *iter,
 
 	bch_bset_build_written_tree(b);
 
-	/* sort can merge keys - need to recalculate */
-	b->nr_live_u64s = start
-		? bch_btree_count_u64s(b)
-		: b->set->data->u64s;
+	/*
+	 * sort can merge keys, but we only merge only if it was a full sort -
+	 * and if it was a full sort we dropped all the deleted keys
+	 */
+	if (!start)
+		b->nr_live_u64s = b->set->data->u64s;
 
-	verify_nr_live_u64s(b);
+	bch_verify_nr_live_u64s(b);
 
 	if (!start)
 		bch_time_stats_update(&state->time, start_time);

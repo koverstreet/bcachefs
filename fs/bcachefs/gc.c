@@ -159,7 +159,7 @@ static int bch_gc_btree(struct cache_set *c, enum btree_id btree_id,
 	for (b = bch_btree_iter_peek_node(&iter);
 	     b;
 	     b = bch_btree_iter_next_node(&iter)) {
-		verify_nr_live_u64s(&b->keys);
+		bch_verify_nr_live_u64s(&b->keys);
 
 		should_rewrite = btree_gc_mark_node(c, b, stat);
 
