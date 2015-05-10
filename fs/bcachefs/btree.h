@@ -100,6 +100,7 @@
 
 #include "bset.h"
 #include "debug.h"
+#include "six.h"
 
 struct btree_write {
 	atomic_t		*journal;
@@ -114,12 +115,11 @@ struct btree {
 
 	/* Single bit - set when accessed, cleared by shrinker */
 	unsigned long		accessed;
-	unsigned long		seq;
-	struct rw_semaphore	lock;
+
+	struct six_lock		lock;
+
 	struct cache_set	*c;
 	struct btree		*parent;
-
-	struct mutex		write_lock;
 
 	unsigned long		flags;
 	u16			written;	/* would be nice to kill */
@@ -245,20 +245,6 @@ static inline void bch_btree_op_init(struct btree_op *op, enum btree_id id,
 {
 	closure_init_stack(&op->cl);
 	__bch_btree_op_init(op, id, id, write_lock_level);
-}
-
-static inline void rw_lock(bool w, struct btree *b)
-{
-	w ? down_write(&b->lock) : down_read(&b->lock);
-	if (w)
-		b->seq++;
-}
-
-static inline void rw_unlock(bool w, struct btree *b)
-{
-	if (w)
-		b->seq++;
-	(w ? up_write : up_read)(&b->lock);
 }
 
 #define btree_node_root(b)	((b)->c->btree_roots[(b)->btree_id])

@@ -436,15 +436,15 @@ retry:
 
 	b = best;
 	if (b) {
-		mutex_lock(&b->write_lock);
+		six_lock_read(&b->lock);
 		if (!btree_current_write(b)->journal) {
-			mutex_unlock(&b->write_lock);
+			six_unlock_read(&b->lock);
 			/* We raced */
 			goto retry;
 		}
 
 		__bch_btree_node_write(b, NULL);
-		mutex_unlock(&b->write_lock);
+		six_unlock_read(&b->lock);
 	}
 }
 

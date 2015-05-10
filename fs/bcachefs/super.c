@@ -1339,10 +1339,10 @@ static void cache_set_flush(struct closure *cl)
 
 	/* Should skip this if we're unregistering because of an error */
 	list_for_each_entry(b, &c->btree_cache, list) {
-		mutex_lock(&b->write_lock);
+		six_lock_read(&b->lock);
 		if (btree_node_dirty(b))
 			__bch_btree_node_write(b, NULL);
-		mutex_unlock(&b->write_lock);
+		six_unlock_read(&b->lock);
 	}
 
 	for_each_cache(ca, c, i)

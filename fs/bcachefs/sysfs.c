@@ -428,16 +428,16 @@ static unsigned bch_root_usage(struct cache_set *c)
 	goto lock_root;
 
 	do {
-		rw_unlock(false, b);
+		six_unlock_read(&b->lock);
 lock_root:
 		b = c->btree_roots[BTREE_ID_EXTENTS];
-		rw_lock(false, b);
+		six_lock_read(&b->lock);
 	} while (b != c->btree_roots[BTREE_ID_EXTENTS]);
 
 	for_each_key_filter(&b->keys, k, &iter, bch_ptr_bad)
 		bytes += bkey_bytes(k);
 
-	rw_unlock(false, b);
+	six_unlock_read(&b->lock);
 
 	return (bytes * 100) / btree_bytes(c);
 }
