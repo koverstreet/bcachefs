@@ -435,7 +435,7 @@ struct migrate_data_op {
 	unsigned		dev;
 };
 
-static bool migrate_data_pred(struct scan_keylist *kl, struct bkey *k)
+static bool migrate_data_pred(struct scan_keylist *kl, const struct bkey *k)
 {
 	struct cache *ca = container_of(kl, struct cache,
 					moving_gc_queue.keys);

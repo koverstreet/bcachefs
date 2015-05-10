@@ -176,18 +176,7 @@ void bch_mark_scan_keylist_keys(struct cache_set *c, struct scan_keylist *kl)
 	mutex_unlock(&kl->lock);
 }
 
-/* Actual scanning functionality of scan_keylists */
-
-struct skl_refill {
-	struct btree_op		op;
-	unsigned		nr_found;
-	struct scan_keylist	*kl;
-	struct bkey		*last_scanned;
-	struct bkey		*end;
-	scan_keylist_pred_fn	*pred;
-};
-
-int bch_scan_keylist_add(struct scan_keylist *kl, struct bkey *k)
+int bch_scan_keylist_add(struct scan_keylist *kl, const struct bkey *k)
 {
 	int ret;
 
@@ -202,26 +191,7 @@ int bch_scan_keylist_add(struct scan_keylist *kl, struct bkey *k)
 	return ret;
 }
 
-static int refill_scan_keylist_fn(struct btree_op *op,
-				  struct btree *b,
-				  struct bkey *k)
-{
-	struct skl_refill *refill = container_of(op, struct skl_refill, op);
-	struct scan_keylist *kl = refill->kl;
-	int ret = MAP_CONTINUE;
-
-	if (bkey_cmp(k, refill->end) >= 0)
-		ret = MAP_DONE;
-	else if (refill->pred(kl, k)) {
-		if (bch_scan_keylist_add(kl, k))
-			ret = MAP_DONE;
-		else
-			refill->nr_found += 1;
-	}
-
-	*refill->last_scanned = *k;
-	return ret;
-}
+/* Actual scanning functionality of scan_keylists */
 
 static void bch_refill_scan_keylist(struct cache_set *c,
 				    struct scan_keylist *kl,
@@ -230,31 +200,37 @@ static void bch_refill_scan_keylist(struct cache_set *c,
 				    scan_keylist_pred_fn *pred)
 {
 	struct bkey start = *last_scanned;
-	struct skl_refill refill;
-	int ret;
+	struct btree_iter iter;
+	const struct bkey *k;
+	unsigned nr_found = 0;
 
-	cond_resched();
+	for_each_btree_key(&iter, c, BTREE_ID_EXTENTS, last_scanned, k) {
+		if (bkey_cmp(k, end) >= 0) {
+			*last_scanned = *k;
+			goto done;
+		}
 
-	bch_btree_op_init(&refill.op, BTREE_ID_EXTENTS, -1);
-	refill.nr_found		= 0;
-	refill.kl		= kl;
-	refill.last_scanned	= last_scanned;
-	refill.end		= end;
-	refill.pred		= pred;
+		if (pred(kl, k)) {
+			if (bch_scan_keylist_add(kl, k))
+				break;
 
-	ret = bch_btree_map_keys(&refill.op, c,
-				 last_scanned,
-				 refill_scan_keylist_fn, 0);
-	if (ret == MAP_CONTINUE) {
-		/* If we end up here, it means:
-		 * - the map_fn didn't fill up the keylist
-		 * - the map_fn didn't see the end key
-		 * - there were no more keys to map over
-		 * Therefore, we are at the end of the key space */
-		*last_scanned = MAX_KEY;
+			nr_found++;
+		}
+
+		*last_scanned = *k;
+		bch_btree_iter_cond_resched(&iter);
 	}
 
-	trace_bcache_keyscan(refill.nr_found,
+	/* If we end up here, it means:
+	 * - the map_fn didn't fill up the keybuf
+	 * - the map_fn didn't see the end key
+	 * - there were no more keys to map over
+	 * Therefore, we are at the end of the key space */
+	*last_scanned = MAX_KEY;
+done:
+	bch_btree_iter_unlock(&iter);
+
+	trace_bcache_keyscan(nr_found,
 			     KEY_INODE(&start), KEY_OFFSET(&start),
 			     KEY_INODE(last_scanned),
 			     KEY_OFFSET(last_scanned));

@@ -152,7 +152,6 @@ out_put:
 /* XXX: cache set refcounting */
 
 struct dump_iter {
-	struct btree_op		op;
 	struct bkey		from;
 	struct cache_set	*c;
 
@@ -183,36 +182,13 @@ static int flush_buf(struct dump_iter *i)
 	return 0;
 }
 
-static int bch_dump_read_fn(struct btree_op *b_op, struct btree *b,
-			    struct bkey *k)
-{
-	struct dump_iter *i = container_of(b_op, struct dump_iter, op);
-	int err;
-
-	BUG_ON(i->bytes);
-	bch_bkey_val_to_text(&b->keys, i->buf, sizeof(i->buf), k);
-
-	i->bytes = strlen(i->buf);
-	BUG_ON(i->bytes >= PAGE_SIZE);
-	i->buf[i->bytes] = '\n';
-	i->bytes++;
-
-	err = flush_buf(i);
-	if (err)
-		return err;
-
-	i->from = *k;
-
-	return i->size ? MAP_CONTINUE : MAP_DONE;
-}
-
 static ssize_t bch_dump_read(struct file *file, char __user *buf,
 			     size_t size, loff_t *ppos)
 {
 	struct dump_iter *i = file->private_data;
+	struct btree_iter iter;
+	const struct bkey *k;
 	int err;
-
-	bch_btree_op_init(&i->op, BTREE_ID_EXTENTS, -1);
 
 	i->ubuf = buf;
 	i->size	= size;
@@ -225,7 +201,24 @@ static ssize_t bch_dump_read(struct file *file, char __user *buf,
 	if (!i->size)
 		return i->ret;
 
-	err = bch_btree_map_keys(&i->op, i->c, &i->from, bch_dump_read_fn, 0);
+	for_each_btree_key(&iter, i->c, BTREE_ID_EXTENTS, &i->from, k) {
+		bch_bkey_val_to_text(&iter.nodes[0]->keys,
+				     i->buf, sizeof(i->buf), k);
+		i->bytes = strlen(i->buf);
+		BUG_ON(i->bytes >= PAGE_SIZE);
+		i->buf[i->bytes] = '\n';
+		i->bytes++;
+
+		err = flush_buf(i);
+		if (err)
+			break;
+
+		i->from = *k;
+
+		if (!i->size)
+			break;
+	}
+	bch_btree_iter_unlock(&iter);
 
 	return err < 0 ? err : i->ret;
 }

@@ -623,7 +623,8 @@ void bch_write(struct closure *cl)
 void bch_write_op_init(struct bch_write_op *op, struct cache_set *c,
 		       struct bio *bio, struct write_point *wp,
 		       bool wait, bool discard, bool flush,
-		       struct bkey *insert_key, struct bkey *replace_key)
+		       const struct bkey *insert_key,
+		       const struct bkey *replace_key)
 {
 	if (!wp) {
 		unsigned wp_idx = hash_long((unsigned long) current,
@@ -806,7 +807,7 @@ static void cache_promote_endio(struct bio *bio)
  * @orig_bio must actually be a bbio with a valid key.
  */
 void __cache_promote(struct cache_set *c, struct bbio *orig_bio,
-		     struct bkey *replace_key)
+		     const struct bkey *replace_key)
 {
 	struct cache_promote_op *op;
 	struct bio *bio;
@@ -869,7 +870,7 @@ out_submit:
  * @bio must actually be a bbio with valid key.
  */
 bool cache_promote(struct cache_set *c, struct bbio *bio,
-		   struct bkey *k, unsigned ptr)
+		   const struct bkey *k, unsigned ptr)
 {
 	if (!CACHE_TIER(&bio->ca->mi)) {
 		generic_make_request(&bio->bio);
@@ -881,13 +882,6 @@ bool cache_promote(struct cache_set *c, struct bbio *bio,
 }
 
 /* Read */
-
-struct bch_read_op {
-	struct btree_op		op;
-	struct cache_set	*c;
-	struct bio		*bio;
-	u64			inode;
-};
 
 static void bch_read_requeue(struct cache_set *c, struct bio *bio)
 {
@@ -932,89 +926,88 @@ static inline void __bio_inc_remaining(struct bio *bio)
 }
 
 /* XXX: this looks a lot like cache_lookup_fn() */
-static int bch_read_fn(struct btree_op *b_op, struct btree *b, struct bkey *k)
-{
-	struct bch_read_op *op = container_of(b_op,
-			struct bch_read_op, op);
-	struct bio *n, *bio = op->bio;
-	struct bbio *bbio;
-	int sectors, ret;
-	unsigned ptr;
-	struct cache *ca;
-
-	BUG_ON(bkey_cmp(&START_KEY(k),
-			&KEY(op->inode, bio->bi_iter.bi_sector, 0)) > 0);
-
-	BUG_ON(bkey_cmp(k, &KEY(op->inode, bio->bi_iter.bi_sector, 0)) <= 0);
-
-	sectors = KEY_OFFSET(k) - bio->bi_iter.bi_sector;
-
-	ca = bch_extent_pick_ptr(b->c, k, &ptr);
-	if (IS_ERR(ca)) {
-		__bio_inc_remaining(bio);
-		bio_io_error(bio);
-		return MAP_DONE;
-	}
-
-	if (!ca) {
-		unsigned bytes = min_t(unsigned, sectors,
-				       bio_sectors(bio)) << 9;
-
-		swap(bio->bi_iter.bi_size, bytes);
-		zero_fill_bio(bio);
-		swap(bio->bi_iter.bi_size, bytes);
-
-		bio_advance(bio, bytes);
-
-		return bio->bi_iter.bi_size ? MAP_CONTINUE : MAP_DONE;
-	}
-
-	PTR_BUCKET(b->c, ca, k, ptr)->read_prio = b->c->prio_clock[READ].hand;
-
-	if (sectors >= bio_sectors(bio)) {
-		n = bio_clone_fast(bio, GFP_NOIO, b->c->bio_split);
-		ret = MAP_DONE;
-	} else {
-		n = bio_split(bio, sectors, GFP_NOIO, b->c->bio_split);
-		ret = MAP_CONTINUE;
-	}
-
-	n->bi_private		= bio;
-	n->bi_end_io		= bch_read_endio;
-	__bio_inc_remaining(bio);
-
-	bbio = to_bbio(n);
-	bch_bkey_copy_single_ptr(&bbio->key, k, ptr);
-
-	/* Trim the key to match what we're actually reading */
-	bch_cut_front(&KEY(op->inode, n->bi_iter.bi_sector, 0), &bbio->key);
-	bch_cut_back(&KEY(op->inode, bio_end_sector(n), 0), &bbio->key);
-
-	bch_bbio_prep(bbio, ca);
-
-	cache_promote(b->c, bbio, k, ptr);
-
-	return ret;
-}
-
 int bch_read(struct cache_set *c, struct bio *bio, u64 inode)
 {
-	struct bch_read_op op;
-	int ret;
+	struct btree_iter iter;
+	const struct bkey *k;
 
 	bch_increment_clock(c, bio_sectors(bio), READ);
 
-	bch_btree_op_init(&op.op, BTREE_ID_EXTENTS, -1);
-	op.c = c;
-	op.bio = bio;
-	op.inode = inode;
+	for_each_btree_key_with_holes(&iter, c, BTREE_ID_EXTENTS,
+				      &KEY(inode, bio->bi_iter.bi_sector, 0),
+				      k) {
+		struct bio *n;
+		struct bbio *bbio;
+		struct cache *ca;
+		unsigned sectors, ptr;
+		bool done;
 
-	ret = bch_btree_map_keys(&op.op, c,
-				 &KEY(inode, bio->bi_iter.bi_sector, 0),
-				 bch_read_fn, MAP_HOLES);
-	BUG_ON(ret == MAP_CONTINUE);
+		BUG_ON(bkey_cmp(&START_KEY(k),
+				&KEY(inode, bio->bi_iter.bi_sector, 0)) > 0);
 
-	return ret;
+		BUG_ON(bkey_cmp(k,
+				&KEY(inode, bio->bi_iter.bi_sector, 0)) <= 0);
+
+		sectors = KEY_OFFSET(k) - bio->bi_iter.bi_sector;
+		done = sectors >= bio_sectors(bio);
+
+		ca = bch_extent_pick_ptr(c, k, &ptr);
+		if (IS_ERR(ca)) {
+			__bio_inc_remaining(bio);
+			bio_io_error(bio);
+			bch_btree_iter_unlock(&iter);
+			return 0;
+		}
+
+		if (ca) {
+			PTR_BUCKET(c, ca, k, ptr)->read_prio =
+				c->prio_clock[READ].hand;
+
+			n = sectors >= bio_sectors(bio)
+				? bio_clone_fast(bio, GFP_NOIO, c->bio_split)
+				: bio_split(bio, sectors, GFP_NOIO,
+					    c->bio_split);
+
+			n->bi_private		= bio;
+			n->bi_end_io		= bch_read_endio;
+			__bio_inc_remaining(bio);
+
+			bbio = to_bbio(n);
+			bch_bkey_copy_single_ptr(&bbio->key, k, ptr);
+
+			/* Trim the key to match what we're actually reading */
+			bch_cut_front(&KEY(inode, n->bi_iter.bi_sector, 0),
+				      &bbio->key);
+			bch_cut_back(&KEY(inode, bio_end_sector(n), 0),
+				     &bbio->key);
+			bch_bbio_prep(bbio, ca);
+
+			cache_promote(c, bbio, k, ptr);
+		} else {
+			unsigned bytes = min_t(unsigned, sectors,
+					       bio_sectors(bio)) << 9;
+
+			swap(bio->bi_iter.bi_size, bytes);
+			zero_fill_bio(bio);
+			swap(bio->bi_iter.bi_size, bytes);
+
+			bio_advance(bio, bytes);
+		}
+
+		if (done) {
+			bch_btree_iter_unlock(&iter);
+			return 0;
+		}
+	}
+
+	/*
+	 * If we get here, it better have been because there was an error
+	 * reading a btree node
+	 */
+	BUG_ON(!bch_btree_iter_unlock(&iter));
+	bio_io_error(bio);
+
+	return 0;
 }
 EXPORT_SYMBOL(bch_read);
 

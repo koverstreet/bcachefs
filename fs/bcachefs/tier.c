@@ -15,7 +15,7 @@
 /**
  * tiering_pred - check if tiering should copy an extent to tier 1
  */
-static bool tiering_pred(struct scan_keylist *kl, struct bkey *k)
+static bool tiering_pred(struct scan_keylist *kl, const struct bkey *k)
 {
 	struct cache *ca = container_of(kl, struct cache,
 					tiering_queue.keys);
@@ -46,7 +46,6 @@ static bool tiering_pred(struct scan_keylist *kl, struct bkey *k)
 }
 
 struct tiering_refill {
-	struct btree_op		op;
 	struct bkey		start;
 	struct cache		*ca;
 	int			cache_iter;
@@ -135,55 +134,6 @@ static bool tiering_keylist_empty(struct cache *ca)
 		<= ca->tiering_stripe_size);
 }
 
-static int tiering_refill_fn(struct btree_op *op, struct btree *b,
-			     struct bkey *k)
-{
-	struct tiering_refill *refill =
-		container_of(op, struct tiering_refill, op);
-	struct scan_keylist *keys = &refill->ca->tiering_queue.keys;
-	int ret = MAP_CONTINUE;
-
-	if (!tiering_pred(keys, k))
-		goto out;
-
-	/* Growing the keylist might fail */
-	if (bch_scan_keylist_add(keys, k)) {
-		ret = MAP_DONE;
-		goto out;
-	}
-
-	/* TODO: split key if refill->sectors is now > stripe_size */
-	refill->sectors += KEY_SIZE(k);
-
-	/* Check if we've added enough keys to this keylist */
-	if (tiering_keylist_full(refill)) {
-		/* Make sure what we thought we added got added */
-		BUG_ON(bch_scan_keylist_sectors(keys) < refill->sectors);
-
-		/* Move on to refill the next cache device's keylist */
-		refill->sectors = 0;
-		refill->cache_iter++;
-		refill_next(b->c, refill);
-
-		/* All cache devices got removed somehow */
-		if (refill->ca == NULL)
-			ret = MAP_DONE;
-
-		/*
-		 * If the next cache's keylist is not sufficiently empty,
-		 * wait for it to drain before refilling anything.
-		 * We prioritize even distribution of data over maximizing
-		 * write bandwidth.
-		 */
-		if (!tiering_keylist_empty(refill->ca))
-			ret = MAP_DONE;
-	}
-
-out:
-	refill->start = *k;
-	return ret;
-}
-
 /**
  * tiering_refill - to keep all queues busy as much as possible, we add
  * up to a single stripe of sectors to each cache device's queue, iterating
@@ -192,7 +142,9 @@ out:
  */
 static void tiering_refill(struct cache_set *c, struct tiering_refill *refill)
 {
-	int ret;
+	struct scan_keylist *keys;
+	struct btree_iter iter;
+	const struct bkey *k;
 
 	if (bkey_cmp(&refill->start, &MAX_KEY) >= 0)
 		return;
@@ -205,14 +157,53 @@ static void tiering_refill(struct cache_set *c, struct tiering_refill *refill)
 
 	trace_bcache_tiering_refill_start(c);
 
-	bch_btree_op_init(&refill->op, BTREE_ID_EXTENTS, -1);
-	ret = bch_btree_map_keys(&refill->op, c,
-				 &refill->start,
-				 tiering_refill_fn, 0);
-	if (ret == MAP_CONTINUE) {
-		/* Reached the end of the keyspace */
-		refill->start = MAX_KEY;
+	for_each_btree_key(&iter, c, BTREE_ID_EXTENTS, &refill->start, k) {
+		keys = &refill->ca->tiering_queue.keys;
+
+		if (!tiering_pred(keys, k)) {
+			refill->start = *k;
+			goto next;
+		}
+
+		/* Growing the keylist might fail */
+		if (bch_scan_keylist_add(keys, k))
+			goto done;
+
+		/* TODO: split key if refill->sectors is now > stripe_size */
+		refill->sectors += KEY_SIZE(k);
+		refill->start = *k;
+
+		/* Check if we've added enough keys to this keylist */
+		if (tiering_keylist_full(refill)) {
+			/* Make sure what we thought we added got added */
+			BUG_ON(bch_scan_keylist_sectors(keys) <
+			       refill->sectors);
+
+			/* Move on to refill the next cache device's keylist */
+			refill->sectors = 0;
+			refill->cache_iter++;
+			refill_next(c, refill);
+
+			/* All cache devices got removed somehow */
+			if (refill->ca == NULL)
+				goto done;
+
+			/*
+			 * If the next cache's keylist is not sufficiently
+			 * empty, wait for it to drain before refilling
+			 * anything.  We prioritize even distribution of data
+			 * over maximizing write bandwidth.
+			 */
+			if (!tiering_keylist_empty(refill->ca))
+				goto done;
+		}
+next:
+		bch_btree_iter_cond_resched(&iter);
 	}
+	/* Reached the end of the keyspace */
+	refill->start = MAX_KEY;
+done:
+	bch_btree_iter_unlock(&iter);
 
 	trace_bcache_tiering_refill_end(c);
 }

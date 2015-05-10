@@ -59,8 +59,8 @@ struct bch_write_op {
 };
 
 void bch_write_op_init(struct bch_write_op *, struct cache_set *,
-		       struct bio *, struct write_point *, bool,
-		       bool, bool, struct bkey *, struct bkey *);
+		       struct bio *, struct write_point *, bool, bool,
+		       bool, const struct bkey *, const struct bkey *);
 void bch_write(struct closure *);
 
 int bch_read(struct cache_set *, struct bio *, u64);
@@ -81,8 +81,9 @@ void bch_submit_bbio_replicas(struct bio *, struct cache_set *,
 
 int bch_discard(struct cache_set *, struct bkey *, struct bkey *, u64);
 
-void __cache_promote(struct cache_set *, struct bbio *, struct bkey *);
-bool cache_promote(struct cache_set *, struct bbio *, struct bkey *, unsigned);
+void __cache_promote(struct cache_set *, struct bbio *, const struct bkey *);
+bool cache_promote(struct cache_set *, struct bbio *,
+		   const struct bkey *, unsigned);
 
 void bch_read_race_work(struct work_struct *);
 void bch_wake_delayed_writes(unsigned long data);

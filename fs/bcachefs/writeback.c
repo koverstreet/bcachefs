@@ -338,7 +338,7 @@ void bcache_dev_sectors_dirty_add(struct cache_set *c, unsigned inode,
 	rcu_read_unlock();
 }
 
-static bool dirty_pred(struct keybuf *buf, struct bkey *k)
+static bool dirty_pred(struct keybuf *buf, const struct bkey *k)
 {
 	struct cached_dev *dc = container_of(buf, struct cached_dev, writeback_keys);
 
@@ -504,41 +504,28 @@ void bch_mark_writeback_keys(struct cache_set *c)
 
 /* Init */
 
-struct sectors_dirty_init {
-	struct btree_op	op;
-	unsigned	inode;
-	struct		bcache_device *d;
-};
-
-static int sectors_dirty_init_fn(struct btree_op *_op, struct btree *b,
-				 struct bkey *k)
-{
-	struct sectors_dirty_init *op = container_of(_op,
-						struct sectors_dirty_init, op);
-	if (KEY_INODE(k) > op->inode)
-		return MAP_DONE;
-
-	if (!KEY_CACHED(k)) {
-		/* We have to do this before the disk is added to the
-		 * radix tree or we race with moving GC */
-		__bcache_dev_sectors_dirty_add(op->d,
-					       KEY_START(k), KEY_SIZE(k));
-	}
-
-	return MAP_CONTINUE;
-}
-
 void bch_sectors_dirty_init(struct cached_dev *dc, struct cache_set *c)
 {
 	struct bcache_device *d = &dc->disk;
-	struct sectors_dirty_init op;
+	struct btree_iter iter;
+	const struct bkey *k;
 
-	bch_btree_op_init(&op.op, BTREE_ID_EXTENTS, -1);
-	op.inode = bcache_dev_inum(d);
-	op.d = d;
+	/*
+	 * We have to do this before the disk is added to the radix tree or we
+	 * race with moving GC
+	 */
+	for_each_btree_key(&iter, c, BTREE_ID_EXTENTS,
+			   &KEY(bcache_dev_inum(d), 0, 0), k) {
+		if (KEY_INODE(k) > bcache_dev_inum(d))
+			break;
 
-	bch_btree_map_keys(&op.op, c,
-			   &KEY(op.inode, 0, 0), sectors_dirty_init_fn, 0);
+		if (!KEY_CACHED(k))
+			__bcache_dev_sectors_dirty_add(d, KEY_START(k),
+						       KEY_SIZE(k));
+
+		bch_btree_iter_cond_resched(&iter);
+	}
+	bch_btree_iter_unlock(&iter);
 
 	dc->writeback_pd.last_actual = bcache_dev_sectors_dirty(d);
 }

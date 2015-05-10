@@ -3,7 +3,7 @@
 
 #include "keybuf_types.h"
 
-typedef bool (keybuf_pred_fn)(struct keybuf *, struct bkey *);
+typedef bool (keybuf_pred_fn)(struct keybuf *, const struct bkey *);
 
 void bch_keybuf_init(struct keybuf *);
 void bch_refill_keybuf(struct cache_set *, struct keybuf *,
