@@ -21,10 +21,6 @@
  * we do is resort all the sets of keys with a mergesort, and in the same pass
  * we check for overlapping extents and adjust them appropriately.
  *
- * struct btree_op is a central interface to the btree code. It's used for
- * specifying read vs. write locking, and the embedded closure is used for
- * waiting on IO or reserve memory.
- *
  * BTREE CACHE:
  *
  * Btree nodes are cached in memory; traversing the btree might require reading
@@ -194,62 +190,10 @@ static inline unsigned btree_blocks(struct cache_set *c)
 	     _iter = 0;	_iter < (_tbl)->size; _iter++)			\
 		rht_for_each_entry_rcu((_b), (_pos), _tbl, _iter, hash)
 
-/* Recursing down the btree */
-
 #define BTREE_MAX_DEPTH		4
 
-struct btree_op {
-	struct closure		cl;
-
-	/*
-	 * Sequence number of the corresponding btree node's six lock. Used so
-	 * that we can unlock, and then relock later iff the btree node hasn't
-	 * been modified in the meantime.
-	 */
-	u32			lock_seq[BTREE_MAX_DEPTH];
-
-	/* Bitmasks for read/intent locks held per level */
-	u8			nodes_locked;
-	u8			nodes_intent_locked;
-
-	/* Btree level below which we start taking intent locks */
-	s8			locks_want;
-
-	enum btree_id		id:8;
-
-	/* State used by btree insertion is also stored here for convenience */
-	unsigned		insert_collision:1;
-};
-
-/**
- * __bch_btree_op_init - initialize btree op
- *
- * @write_lock_level: -1 for read locks only
- *                    0 for write lock on leaf
- *                    SHRT_MAX for write locks only
- *
- * Does not initialize @op->cl -- you must do that yourself.
- */
-static inline void __bch_btree_op_init(struct btree_op *op, enum btree_id id,
-					int write_lock_level)
-{
-	op->id = id;
-	op->locks_want = write_lock_level;
-	op->insert_collision = 0;
-}
-
-/**
- * bch_btree_op_init - initialize synchronous btree op
- */
-static inline void bch_btree_op_init(struct btree_op *op, enum btree_id id,
-				     int write_lock_level)
-{
-	closure_init_stack(&op->cl);
-	__bch_btree_op_init(op, id, write_lock_level);
-}
-
 struct btree_iter {
-	struct btree_op		op;
+	struct closure		cl;
 
 	/* Current btree depth */
 	u8			level;
@@ -260,7 +204,19 @@ struct btree_iter {
 	 */
 	u8			is_extents;
 
+	/* Bitmasks for read/intent locks held per level */
+	u8			nodes_locked;
+	u8			nodes_intent_locked;
+
+	/* Btree level below which we start taking intent locks */
+	s8			locks_want;
+
+	enum btree_id		btree_id:8;
+
 	s8			error;
+
+	/* State used by btree insertion is also stored here for convenience */
+	unsigned		insert_collision:1;
 
 	struct cache_set	*c;
 
@@ -277,6 +233,8 @@ struct btree_iter {
 	 */
 	struct bkey		k;
 
+	u32			lock_seq[BTREE_MAX_DEPTH];
+
 	/*
 	 * NOTE: Never set iter->nodes to NULL except in btree_iter_lock_root().
 	 *
@@ -292,7 +250,6 @@ struct btree_iter {
 	 * One extra slot for a sentinel NULL:
 	 */
 	struct btree		*nodes[BTREE_MAX_DEPTH + 1];
-
 	struct btree_node_iter	node_iters[BTREE_MAX_DEPTH];
 };
 
