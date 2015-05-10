@@ -443,47 +443,6 @@ int bch_cache_journal_alloc(struct cache *ca)
 
 /* Journalling */
 
-void btree_write_oldest(struct cache_set *c)
-{
-	/*
-	 * Try to find the btree node with that references the oldest journal
-	 * entry, best is our current candidate and is locked if non NULL:
-	 */
-	struct btree *b, *best;
-	struct bucket_table *tbl;
-	struct rhash_head *pos;
-	unsigned i;
-retry:
-	cond_resched();
-	best = NULL;
-
-	rcu_read_lock();
-	for_each_cached_btree(b, c, tbl, i, pos)
-		if (btree_current_write(b)->journal) {
-			if (!best)
-				best = b;
-			else if (journal_pin_cmp(c,
-					btree_current_write(best)->journal,
-					btree_current_write(b)->journal)) {
-				best = b;
-			}
-		}
-	rcu_read_unlock();
-
-	b = best;
-	if (b) {
-		six_lock_read(&b->lock);
-		if (!btree_current_write(b)->journal) {
-			six_unlock_read(&b->lock);
-			/* We raced */
-			goto retry;
-		}
-
-		__bch_btree_node_write(b, NULL);
-		six_unlock_read(&b->lock);
-	}
-}
-
 #define last_seq(j)	((j)->seq - fifo_used(&(j)->pin) + 1)
 
 static void journal_discard_endio(struct bio *bio)
@@ -911,7 +870,7 @@ static bool __journal_res_get(struct cache_set *c, struct journal_res *res,
 			if (!c->journal.u64s_remaining) {
 				spin_unlock(&c->journal.lock);
 				trace_bcache_journal_full(c);
-				btree_write_oldest(c);
+				bch_btree_write_oldest(c);
 				return false;
 			}
 		} else {
