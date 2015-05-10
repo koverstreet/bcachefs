@@ -494,7 +494,6 @@ static void do_btree_node_write(struct closure *cl)
 	BUG_ON(b->written + blocks_to_write > btree_blocks(b->c));
 	BUG_ON(b->written && !i->u64s);
 	BUG_ON(btree_bset_first(b)->seq != i->seq);
-	bch_check_keys(&b->keys, "writing");
 
 	cancel_delayed_work(&b->work);
 
@@ -1677,8 +1676,6 @@ static bool btree_insert_key(struct btree_iter *iter, struct btree *b,
 
 	newsize = bch_count_data(&b->keys);
 	BUG_ON(newsize != -1 && newsize < oldsize);
-	bch_check_keys(&b->keys, "%u for %s", do_insert,
-		       replace ? "replace" : "insert");
 
 	trace_bcache_btree_insert_key(b, insert, replace != NULL, do_insert);
 
