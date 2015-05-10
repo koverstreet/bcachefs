@@ -1763,7 +1763,6 @@ static void btree_gc_coalesce(struct btree *old_nodes[GC_MERGE_NODES],
 
 	iter->pos = saved_pos;
 
-	BUG_ON(btree_node_locked(iter, old_nodes[0]->level));
 	BUG_ON(iter->nodes[old_nodes[0]->level] != old_nodes[0]);
 
 	btree_iter_node_set(iter, new_nodes[0]);
@@ -1826,25 +1825,17 @@ int bch_btree_node_rewrite(struct btree *b, struct btree_iter *iter, bool wait)
 	return 0;
 }
 
-static void gc_merge_nodes_unlock(struct btree *nodes[GC_MERGE_NODES])
-{
-	unsigned i;
-
-	for (i = 0; i < GC_MERGE_NODES && nodes[i]; i++) {
-		six_unlock_intent(&nodes[i]->lock);
-		nodes[i] = NULL;
-	}
-}
-
 static int bch_gc_btree(struct cache_set *c, enum btree_id btree_id,
 			struct gc_stat *stat)
 {
 	struct btree_iter iter;
 	struct btree *b;
 	bool should_rewrite;
+	unsigned i;
 
 	/* Sliding window of adjacent btree nodes */
 	struct btree *merge[GC_MERGE_NODES];
+	u32 lock_seq[GC_MERGE_NODES];
 
 	memset(merge, 0, sizeof(merge));
 
@@ -1874,36 +1865,42 @@ static int bch_gc_btree(struct cache_set *c, enum btree_id btree_id,
 
 		b = iter.nodes[iter.level]; /* might have been rewritten */
 
-		if (merge[0] && merge[0]->level != b->level)
-			gc_merge_nodes_unlock(merge);
+		memmove(merge + 1, merge,
+			sizeof(merge) - sizeof(merge[0]));
+		memmove(lock_seq + 1, lock_seq,
+			sizeof(lock_seq) - sizeof(lock_seq[0]));
 
-		if (merge[GC_MERGE_NODES - 1])
-			six_unlock_intent(&merge[GC_MERGE_NODES - 1]->lock);
-
-		memmove(merge + 1, merge, sizeof(merge) - sizeof(merge[0]));
 		merge[0] = b;
-		mark_btree_node_unlocked(&iter, b->level); /* we'll unlock */
+
+		for (i = 1; i < GC_MERGE_NODES; i++) {
+			if (!merge[i] ||
+			    !six_relock_intent(&merge[i]->lock, lock_seq[i]))
+				break;
+
+			if (merge[i]->level != merge[0]->level) {
+				six_unlock_intent(&merge[i]->lock);
+				break;
+			}
+		}
+		memset(merge + i, 0, (GC_MERGE_NODES - i) * sizeof(merge[0]));
 
 		btree_gc_coalesce(merge, &iter, stat);
 
+		for (i = 1; i < GC_MERGE_NODES && merge[i]; i++) {
+			lock_seq[i] = merge[i]->lock.state.seq;
+			six_unlock_intent(&merge[i]->lock);
+		}
+
+		lock_seq[0] = merge[0]->lock.state.seq;
+
 		if (kthread_should_stop() &&
 		    test_bit(CACHE_SET_STOPPING, &c->flags)) {
-			gc_merge_nodes_unlock(merge);
 			bch_btree_iter_unlock(&iter);
 			return -ESHUTDOWN;
 		}
 
-		if (need_resched() ||
-		    race_fault()) {
-			gc_merge_nodes_unlock(merge);
-			bch_btree_iter_unlock(&iter);
-
-			schedule();
-
-			bch_btree_iter_upgrade(&iter);
-		}
+		bch_btree_iter_cond_resched(&iter);
 	}
-	gc_merge_nodes_unlock(merge);
 	return bch_btree_iter_unlock(&iter);
 }
 
