@@ -1594,18 +1594,18 @@ void bch_btree_insert_and_journal(struct btree *b,
 					      c->btree_flush_delay * HZ);
 	}
 
-	if (res->ref) {
+	if (res->ref ||
+	    !test_bit(JOURNAL_REPLAY_DONE, &c->journal.flags)) {
 		struct btree_write *w = btree_current_write(b);
 
-		BUG_ON(!test_bit(JOURNAL_REPLAY_DONE, &c->journal.flags));
-
 		if (!w->journal) {
-			w->journal = &fifo_back(&c->journal.pin);
+			w->journal = c->journal.cur_pin;
 			atomic_inc(w->journal);
 		}
-
-		bch_journal_add_keys(c, res, b->btree_id, insert, b->level);
 	}
+
+	if (res->ref)
+		bch_journal_add_keys(c, res, b->btree_id, insert, b->level);
 }
 
 /**
@@ -1742,7 +1742,8 @@ bch_btree_insert_keys(struct btree *b,
 		unsigned actual_max = max_t(unsigned, actual_min,
 					    jset_u64s(n_max));
 
-		if (!b->level)
+		if (!b->level &&
+		    test_bit(JOURNAL_REPLAY_DONE, &iter->c->journal.flags))
 			bch_journal_res_get(iter->c, &res,
 					    actual_min, actual_max);
 

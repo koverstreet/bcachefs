@@ -17,6 +17,9 @@
 
 #include <trace/events/bcachefs.h>
 
+/* Sequence number of oldest dirty journal entry */
+#define last_seq(j)	((j)->seq - fifo_used(&(j)->pin) + 1)
+
 #define for_each_jset_key(k, jkeys, jset)			\
 	for_each_jset_jkeys(jkeys, jset)			\
 		if (JKEYS_TYPE(jkeys) == JKEYS_BTREE_KEYS)	\
@@ -422,6 +425,7 @@ const char *bch_journal_read(struct cache_set *c, struct list_head *list)
 	struct jset_keys *prio_ptrs;
 	struct journal_list jlist;
 	struct jset *j;
+	struct list_head *l;
 	struct cache *ca;
 	unsigned iter;
 
@@ -450,9 +454,19 @@ const char *bch_journal_read(struct cache_set *c, struct list_head *list)
 	if (list_empty(list))
 		return "no journal entries found";
 
+	/* XXX: this can't tolerate missing journal entries */
+	list_for_each(l, list) {
+		atomic_t p = { 1 };
+
+		BUG_ON(!fifo_push(&c->journal.pin, p));
+		atomic_set(&fifo_back(&c->journal.pin), 1);
+	}
+
 	j = &list_entry(list->prev, struct journal_replay, list)->j;
 
 	c->journal.seq = j->seq;
+
+	BUG_ON(last_seq(&c->journal) != j->last_seq);
 
 	prio_ptrs = bch_journal_find_entry(j, JKEYS_PRIO_PTRS, 0);
 	if (!prio_ptrs)
@@ -523,6 +537,13 @@ int bch_journal_replay(struct cache_set *c, struct list_head *list)
 "bcache: journal entries %llu-%llu missing! (replaying %llu-%llu)",
 				 n, i->j.seq - 1, start, end);
 
+		c->journal.cur_pin =
+			&c->journal.pin.data[((c->journal.pin.back - 1 -
+					       (c->journal.seq - i->j.seq)) &
+					      c->journal.pin.mask)];
+
+		BUG_ON(atomic_read(c->journal.cur_pin) != 1);
+
 		for_each_jset_key(k, jkeys, &i->j) {
 			cond_resched();
 			ret = bch_journal_replay_key(c, jkeys->btree_id, k);
@@ -532,11 +553,11 @@ int bch_journal_replay(struct cache_set *c, struct list_head *list)
 			keys++;
 		}
 
+		atomic_dec(c->journal.cur_pin);
+
 		n = i->j.seq + 1;
 		entries++;
 	}
-
-	bch_btree_flush(c);
 
 	pr_info("journal replay done, %i keys in %i entries, seq %llu",
 		keys, entries, end);
@@ -596,9 +617,6 @@ int bch_cache_journal_alloc(struct cache *ca)
 }
 
 /* Journalling */
-
-/* Sequence number of oldest dirty journal entry */
-#define last_seq(j)	((j)->seq - fifo_used(&(j)->pin) + 1)
 
 static void journal_discard_endio(struct bio *bio)
 {
@@ -890,6 +908,9 @@ void bch_journal_next(struct journal *j)
 	BUG_ON(!fifo_push(&j->pin, p));
 	atomic_set(&fifo_back(&j->pin), 1);
 
+	if (test_bit(JOURNAL_REPLAY_DONE, &j->flags))
+		j->cur_pin = &fifo_back(&j->pin);
+
 	j->cur->data->seq	= ++j->seq;
 	j->cur->data->keys	= 0;
 	j->u64s_remaining	= 0;
@@ -1108,9 +1129,6 @@ static bool __journal_res_get(struct cache_set *c, struct journal_res *res,
 
 	BUG_ON(res->ref);
 	BUG_ON(u64s_max < u64s_min);
-
-	if (!test_bit(JOURNAL_REPLAY_DONE, &c->journal.flags))
-		return true;
 
 	spin_lock(&c->journal.lock);
 

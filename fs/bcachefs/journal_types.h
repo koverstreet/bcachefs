@@ -59,6 +59,7 @@ struct journal {
 	 * longer needed, the bucket can be discarded and reused.
 	 */
 	DECLARE_FIFO(atomic_t, pin);
+	atomic_t		*cur_pin;
 
 	BKEY_PADDED(key);
 
