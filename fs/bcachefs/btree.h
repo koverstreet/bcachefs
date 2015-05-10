@@ -217,8 +217,6 @@ struct btree_op {
 
 	enum btree_id		id:8;
 
-	unsigned		iterator_invalidated:1;
-
 	/* State used by btree insertion is also stored here for convenience */
 	unsigned		insert_collision:1;
 };
@@ -237,7 +235,6 @@ static inline void __bch_btree_op_init(struct btree_op *op, enum btree_id id,
 {
 	op->id = id;
 	op->locks_want = write_lock_level;
-	op->iterator_invalidated = 0;
 	op->insert_collision = 0;
 }
 

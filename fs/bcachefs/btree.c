@@ -272,7 +272,6 @@ bool bch_btree_iter_upgrade(struct btree_iter *iter)
 									\
 		(op)->nodes_locked = 0;					\
 		(op)->nodes_intent_locked = 0;				\
-		(op)->iterator_invalidated = 0;				\
 									\
 		_b = (c)->btree_roots[(op)->id];			\
 		_l = _b->level;						\
@@ -1852,6 +1851,11 @@ static void btree_gc_coalesce(struct btree *old_nodes[GC_MERGE_NODES],
 
 	iter->pos = saved_pos;
 
+	BUG_ON(btree_node_locked(&iter->op, old_nodes[0]->level));
+	BUG_ON(iter->nodes[old_nodes[0]->level] != old_nodes[0]);
+
+	btree_iter_node_set(iter, new_nodes[0]);
+
 	/* Free the old nodes and update our sliding window */
 	for (i = 0; i < nr_old_nodes; i++) {
 		btree_node_free(old_nodes[i]);
@@ -1862,8 +1866,6 @@ static void btree_gc_coalesce(struct btree *old_nodes[GC_MERGE_NODES],
 	stat->nodes -= nr_old_nodes - nr_new_nodes;
 
 	bch_keylist_free(&keylist);
-
-	iter->op.iterator_invalidated = true;
 }
 
 /**
@@ -1905,9 +1907,11 @@ int bch_btree_node_rewrite(struct btree *b, struct btree_iter *iter, bool wait)
 	}
 
 	btree_node_free(b);
-	six_unlock_intent(&n->lock);
 
-	iter->op.iterator_invalidated = true;
+	BUG_ON(iter->nodes[b->level] != b);
+
+	six_unlock_intent(&b->lock);
+	btree_iter_node_set(iter, n);
 	return 0;
 }
 
@@ -1986,9 +1990,6 @@ static int bch_gc_btree(struct cache_set *c, enum btree_id btree_id,
 
 			bch_btree_iter_upgrade(&iter);
 		}
-
-		if (iter.op.iterator_invalidated)
-			gc_merge_nodes_unlock(merge);
 	}
 	gc_merge_nodes_unlock(merge);
 	return bch_btree_iter_unlock(&iter);
@@ -2400,10 +2401,8 @@ bch_btree_insert_keys(struct btree *b,
 			if (btree_insert_key(iter, b, insert_keys,
 					     replace, &res,
 					     bch_keylist_is_last(insert_keys, k)
-					     ? persistent : NULL)) {
-				iter->op.iterator_invalidated = 1;
+					     ? persistent : NULL))
 				inserted = true;
-			}
 		}
 
 		six_unlock_write(&b->lock);
@@ -2431,6 +2430,8 @@ bch_btree_insert_keys(struct btree *b,
 				bch_btree_node_write(b, NULL, iter);
 		}
 	}
+
+	iter->op.lock_seq[b->level] = b->lock.state.seq;
 
 	if (attempted && !inserted)
 		iter->op.insert_collision = true;
@@ -2645,7 +2646,6 @@ static int btree_split(struct btree *b,
 	}
 
 	btree_node_free(b);
-	iter->op.iterator_invalidated = 1;
 
 	/* Update iterator, and finish insert now that new nodes are visible: */
 	BUG_ON(iter->nodes[b->level] != b);
@@ -2894,12 +2894,8 @@ static int bch_btree_map_nodes_recurse(struct btree *b, struct btree_op *op,
 		}
 	}
 
-	if ((level == 0) || ((flags & MAP_ALL_NODES) != 0)) {
+	if ((level == 0) || ((flags & MAP_ALL_NODES) != 0))
 		ret = fn(op, b);
-
-		if (ret == MAP_CONTINUE && op->iterator_invalidated)
-			ret = -EINTR;
-	}
 
 	return ret;
 }
@@ -2931,11 +2927,6 @@ static int do_map_fn(struct btree *b, struct btree_op *op, struct bkey *from,
 
 	if (ret == MAP_CONTINUE)
 		*from = next;
-
-	if (ret == MAP_CONTINUE && op->iterator_invalidated) {
-		trace_bcache_btree_iterator_invalidated(b, op);
-		ret = -EINTR;
-	}
 
 	if (ret == MAP_CONTINUE && need_resched())
 		ret = -EINTR;
@@ -3182,7 +3173,6 @@ static void btree_iter_lock_root(struct btree_iter *iter, struct bkey *pos)
 {
 	iter->op.nodes_locked		= 0;
 	iter->op.nodes_intent_locked	= 0;
-	iter->op.iterator_invalidated	= 0;
 	memset(iter->nodes, 0, sizeof(iter->nodes));
 
 	while (1) {
@@ -3228,11 +3218,6 @@ static int __bch_btree_iter_traverse(struct btree_iter *iter, unsigned l,
 {
 	if (!iter->nodes[iter->level])
 		return 0;
-
-	if (iter->op.iterator_invalidated) {
-		bch_btree_iter_unlock(iter);
-		iter->level = BTREE_MAX_DEPTH;
-	}
 retry:
 	/*
 	 * If the current node isn't locked, go up until we have a locked node
@@ -3461,7 +3446,6 @@ void __bch_btree_iter_init(struct btree_iter *iter, struct cache_set *c,
 	iter->op.nodes_intent_locked	= 0;
 	iter->op.id			= btree_id;
 	iter->op.locks_want		= locks_want;
-	iter->op.iterator_invalidated	= 0;
 	iter->op.insert_collision	= 0;
 	iter->error			= 0;
 	iter->c				= c;
