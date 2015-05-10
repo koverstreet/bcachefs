@@ -878,14 +878,14 @@ void __bch_bucket_free(struct cache *ca, struct bucket *g)
 void bch_bucket_free(struct cache_set *c, struct bkey *k)
 {
 	struct bkey_i_extent *e = bkey_i_to_extent(k);
+	struct bch_extent_ptr *ptr;
 	struct cache *ca;
-	unsigned i;
 
 	rcu_read_lock();
 
-	for (i = 0; i < bch_extent_ptrs(&e->k); i++)
-		if ((ca = PTR_CACHE(c, &e->v, i)))
-			__bch_bucket_free(ca, PTR_BUCKET(ca, &e->v, i));
+	extent_for_each_ptr(e, ptr)
+		if ((ca = PTR_CACHE(c, ptr)))
+			__bch_bucket_free(ca, PTR_BUCKET(ca, ptr));
 
 	rcu_read_unlock();
 }
@@ -893,17 +893,17 @@ void bch_bucket_free(struct cache_set *c, struct bkey *k)
 static void bch_bucket_free_never_used(struct cache_set *c, struct bkey *k)
 {
 	struct bkey_i_extent *e = bkey_i_to_extent(k);
+	struct bch_extent_ptr *ptr;
 	struct cache *ca;
 	struct bucket *g;
-	unsigned i;
 	long r;
 
 	rcu_read_lock();
 
-	for (i = 0; i < bch_extent_ptrs(&e->k); i++)
-		if ((ca = PTR_CACHE(c, &e->v, i))) {
-			r = PTR_BUCKET_NR(ca, &e->v, i);
-			g = PTR_BUCKET(ca, &e->v, i);
+	extent_for_each_ptr(e, ptr)
+		if ((ca = PTR_CACHE(c, ptr))) {
+			r = PTR_BUCKET_NR(ca, ptr);
+			g = PTR_BUCKET(ca, ptr);
 
 			spin_lock(&ca->freelist_lock);
 			verify_not_on_freelist(ca, r);
@@ -1106,15 +1106,15 @@ int bch_bucket_alloc_set(struct cache_set *c, enum alloc_reserve reserve,
 static void __bch_open_bucket_put(struct cache_set *c, struct open_bucket *b)
 {
 	const struct bkey_i_extent *e = bkey_i_to_extent_c(&b->key);
+	const struct bch_extent_ptr *ptr;
 	struct cache *ca;
-	unsigned i;
 
 	lockdep_assert_held(&c->open_buckets_lock);
 
 	rcu_read_lock();
-	for (i = 0; i < bch_extent_ptrs(&e->k); i++)
-		if ((ca = PTR_CACHE(c, &e->v, i)))
-			bch_unmark_open_bucket(ca, PTR_BUCKET(ca, &e->v, i));
+	extent_for_each_ptr(e, ptr)
+		if ((ca = PTR_CACHE(c, ptr)))
+			bch_unmark_open_bucket(ca, PTR_BUCKET(ca, ptr));
 	rcu_read_unlock();
 
 	list_move(&b->list, &c->open_buckets_free);
@@ -1169,8 +1169,8 @@ static struct open_bucket *bch_open_bucket_alloc(struct cache_set *c,
 	int ret;
 	struct open_bucket *b;
 	struct bkey_i_extent *e;
+	struct bch_extent_ptr *ptr;
 	struct cache *ca;
-	unsigned i;
 
 	b = bch_open_bucket_get(c, cl);
 	if (IS_ERR_OR_NULL(b))
@@ -1197,8 +1197,8 @@ static struct open_bucket *bch_open_bucket_alloc(struct cache_set *c,
 	e = bkey_i_to_extent(&b->key);
 
 	/* This is still wrong - we waste space with different sized buckets */
-	for (i = 0; i < bch_extent_ptrs(&e->k); i++)
-		if ((ca = PTR_CACHE(c, &e->v, i)))
+	extent_for_each_ptr(e, ptr)
+		if ((ca = PTR_CACHE(c, ptr)))
 			b->sectors_free = min_t(unsigned, b->sectors_free,
 						ca->sb.bucket_size);
 
@@ -1262,13 +1262,13 @@ static void verify_not_stale(struct cache_set *c, const struct bkey *k)
 {
 #ifdef CONFIG_BCACHEFS_DEBUG
 	const struct bkey_i_extent *e = bkey_i_to_extent_c(k);
+	const struct bch_extent_ptr *ptr;
 	struct cache *ca;
-	unsigned ptr;
 
 	rcu_read_lock();
-	for (ptr = 0; ptr < bch_extent_ptrs(&e->k); ptr++)
-		if ((ca = PTR_CACHE(c, &e->v, ptr)))
-			BUG_ON(ptr_stale(ca, &e->v, ptr));
+	extent_for_each_ptr(e, ptr)
+		if ((ca = PTR_CACHE(c, ptr)))
+			BUG_ON(ptr_stale(ca, ptr));
 	rcu_read_unlock();
 #endif
 }
@@ -1298,8 +1298,9 @@ struct open_bucket *bch_alloc_sectors(struct cache_set *c,
 {
 	bool first_time = true;
 	struct bkey_i_extent *src, *dst;
+	struct bch_extent_ptr *ptr;
 	struct open_bucket *b;
-	unsigned i, sectors, nptrs;
+	unsigned sectors, nptrs;
 
 retry:
 	b = lock_and_refill_writepoint(c, wp, cl);
@@ -1347,14 +1348,13 @@ retry:
 		BUG_ON(xchg(&wp->b, NULL) != b);
 
 	rcu_read_lock();
-	for (i = 0; i < bch_extent_ptrs(&b->key); i++) {
+	extent_for_each_ptr(src, ptr) {
 		struct cache *ca;
 
 		if (b->sectors_free)
-			SET_PTR_OFFSET(&src->v.ptr[i],
-				       PTR_OFFSET(&src->v.ptr[i]) + sectors);
+			SET_PTR_OFFSET(ptr, PTR_OFFSET(ptr) + sectors);
 
-		if ((ca = PTR_CACHE(c, &src->v, i)))
+		if ((ca = PTR_CACHE(c, ptr)))
 			atomic_long_add(sectors, &ca->sectors_written);
 	}
 	rcu_read_unlock();
@@ -1468,18 +1468,17 @@ void bch_stop_new_data_writes(struct cache *ca)
 static bool bucket_still_writeable(struct open_bucket *b, struct cache_set *c)
 {
 	const struct bkey_i_extent *e = bkey_i_to_extent_c(&b->key);
-	unsigned repno;
+	const struct bch_extent_ptr *ptr;
+	struct cache *ca;
 
 	rcu_read_lock();
 
-	for (repno = 0; repno < bch_extent_ptrs(&e->k); repno++) {
-		struct cache *ca = PTR_CACHE(c, &e->v, repno);
-
-		if (CACHE_STATE(&ca->mi) != CACHE_ACTIVE) {
+	extent_for_each_ptr(e, ptr)
+		if (!(ca = PTR_CACHE(c, ptr)) ||
+		    CACHE_STATE(&ca->mi) != CACHE_ACTIVE) {
 			rcu_read_unlock();
 			return false;
 		}
-	}
 
 	rcu_read_unlock();
 

@@ -771,8 +771,9 @@ DEFINE_EVENT(cache_set, bcache_gc_periodic,
 
 TRACE_EVENT(bcache_add_sectors,
 	TP_PROTO(struct cache *ca, const struct bkey_i_extent *e,
-		 unsigned i, u64 offset, int sectors, bool dirty),
-	TP_ARGS(ca, e, i, offset, sectors, dirty),
+		 const struct bch_extent_ptr *ptr, u64 offset,
+		 int sectors, bool dirty),
+	TP_ARGS(ca, e, ptr, offset, sectors, dirty),
 
 	TP_STRUCT__entry(
 		__array(char,		uuid,		16	)
@@ -788,7 +789,7 @@ TRACE_EVENT(bcache_add_sectors,
 		__entry->inode		= e->k.p.inode;
 		__entry->offset		= e->k.p.offset;
 		__entry->sectors	= sectors;
-		__entry->bucket		= PTR_BUCKET_NR(ca, &e->v, i);
+		__entry->bucket		= PTR_BUCKET_NR(ca, ptr);
 		__entry->dirty		= dirty;
 	),
 

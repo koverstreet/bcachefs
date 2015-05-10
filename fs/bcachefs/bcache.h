@@ -645,7 +645,7 @@ struct bbio {
 						   current bvec */
 	unsigned		submit_time_us;
 	struct bkey		key;
-	u64			pad;
+	struct bch_extent_ptr	ptr;
 	/* Only ever have a single pointer (the one we're doing io to/from) */
 	struct bio		bio;
 };

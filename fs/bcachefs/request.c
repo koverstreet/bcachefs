@@ -394,7 +394,7 @@ static void bch_cache_read_endio(struct bio *bio)
 
 	if (bio->bi_error)
 		s->iop.error = bio->bi_error;
-	else if (ptr_stale(b->ca, &bkey_i_to_extent_c(&b->key)->v, 0)) {
+	else if (ptr_stale(b->ca, &bkey_i_to_extent_c(&b->key)->v.ptr[0])) {
 		/* Read bucket invalidate race */
 		atomic_long_inc(&s->iop.c->cache_read_races);
 		s->iop.error = -EINTR;
@@ -416,7 +416,8 @@ static void cached_dev_read(struct cached_dev *dc, struct search *s)
 				POS(s->inode, bio->bi_iter.bi_sector), k) {
 		struct bio *n;
 		struct bbio *bbio;
-		unsigned sectors, ptr;
+		const struct bch_extent_ptr *ptr;
+		unsigned sectors;
 		struct cache *ca;
 		bool done;
 retry:
@@ -456,7 +457,7 @@ retry:
 		} else {
 			const struct bkey_i_extent *e = bkey_i_to_extent_c(k);
 
-			PTR_BUCKET(ca, &e->v, ptr)->read_prio =
+			PTR_BUCKET(ca, ptr)->read_prio =
 				s->iop.c->prio_clock[READ].hand;
 
 			if (!EXTENT_CACHED(&e->v))
@@ -466,7 +467,7 @@ retry:
 					   s->d->bio_split);
 
 			bbio = to_bbio(n);
-			bch_bkey_copy_single_ptr(&bbio->key, k, ptr);
+			bch_bkey_copy_single_ptr(&bbio->key, k, ptr - e->v.ptr);
 
 			/* Trim the key to match what we're actually reading */
 			bch_cut_front(POS(s->inode, n->bi_iter.bi_sector),
@@ -481,7 +482,7 @@ retry:
 
 			closure_get(&s->cl);
 			if (!s->bypass) {
-				if (cache_promote(s->iop.c, bbio, k, ptr))
+				if (cache_promote(s->iop.c, bbio, k))
 					s->cache_miss = 1;
 			} else
 				submit_bio(n);

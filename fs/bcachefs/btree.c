@@ -234,11 +234,11 @@ static u64 btree_csum_set(struct btree *b, struct bset *i)
 		"btree node error at btree %u level %u/%u bucket %zu block %u keys %u: " fmt,\
 		(b)->btree_id, (b)->level, btree_node_root(b)		\
 			    ? btree_node_root(b)->level : -1,		\
-		PTR_BUCKET_NR(ca, &bkey_i_to_extent_c(&(b)->key)->v, ptr),\
-		bset_block_offset(b, i),				\
+		PTR_BUCKET_NR(ca, ptr), bset_block_offset(b, i),	\
 		i->keys, ##__VA_ARGS__)
 
-void bch_btree_node_read_done(struct btree *b, struct cache *ca, unsigned ptr)
+void bch_btree_node_read_done(struct btree *b, struct cache *ca,
+			      const struct bch_extent_ptr *ptr)
 {
 	struct cache_set *c = b->c;
 	const char *err = "bad btree header";
@@ -362,7 +362,7 @@ static void bch_btree_node_read(struct btree *b)
 	struct closure cl;
 	struct bbio *bio;
 	struct cache *ca;
-	unsigned ptr;
+	const struct bch_extent_ptr *ptr;
 
 	trace_bcache_btree_read(b);
 
@@ -406,7 +406,7 @@ missing:
 
 err:
 	bch_cache_error(ca, "IO error reading bucket %zu",
-			PTR_BUCKET_NR(ca, &bkey_i_to_extent_c(&b->key)->v, 0));
+			PTR_BUCKET_NR(ca, ptr));
 }
 
 static void btree_complete_write(struct btree *b, struct btree_write *w)
@@ -467,7 +467,7 @@ static void do_btree_node_write(struct btree *b)
 	struct bset *i = btree_bset_last(b);
 	BKEY_PADDED(key) k;
 	struct bkey_i_extent *e;
-	int n;
+	struct bch_extent_ptr *ptr;
 
 	i->version	= BCACHE_BSET_VERSION;
 
@@ -505,8 +505,8 @@ static void do_btree_node_write(struct btree *b)
 	bkey_copy(&k.key, &b->key);
 	e = bkey_i_to_extent(&k.key);
 
-	for (n = 0; n < bch_extent_ptrs(&e->k); n++)
-		SET_PTR_OFFSET(&e->v.ptr[n], PTR_OFFSET(&e->v.ptr[n]) +
+	extent_for_each_ptr(e, ptr)
+		SET_PTR_OFFSET(ptr, PTR_OFFSET(ptr) +
 			       bset_sector_offset(&b->keys, i));
 
 	if (!bio_alloc_pages(b->bio, __GFP_NOWARN|GFP_NOWAIT)) {
@@ -537,9 +537,9 @@ static void __bch_btree_node_write(struct btree *b, struct closure *parent)
 {
 	struct bset *i = btree_bset_last(b);
 	struct bkey_i_extent *e = bkey_i_to_extent(&b->key);
-	size_t blocks_to_write = set_blocks(i, block_bytes(b->c));
+	struct bch_extent_ptr *ptr;
 	struct cache *ca;
-	unsigned ptr;
+	size_t blocks_to_write = set_blocks(i, block_bytes(b->c));
 
 	if (!test_and_clear_bit(BTREE_NODE_dirty, &b->flags))
 		return;
@@ -565,8 +565,9 @@ static void __bch_btree_node_write(struct btree *b, struct closure *parent)
 	do_btree_node_write(b); /* will drop b->io_mutex */
 
 	rcu_read_lock();
-	for (ptr = 0; ptr < bch_extent_ptrs(&e->k); ptr++)
-		if ((ca = PTR_CACHE(b->c, &e->v, ptr)))
+
+	extent_for_each_ptr(e, ptr)
+		if ((ca = PTR_CACHE(b->c, ptr)))
 			atomic_long_add(blocks_to_write * b->c->sb.block_size,
 					&ca->btree_sectors_written);
 	rcu_read_unlock();

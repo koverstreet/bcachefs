@@ -522,9 +522,9 @@ void bcache_write_super(struct cache_set *c)
 void bch_check_mark_super_slowpath(struct cache_set *c, const struct bkey *k,
 				   bool meta)
 {
-	unsigned ptr;
 	struct cache_member *mi;
 	const struct bkey_i_extent *e = bkey_i_to_extent_c(k);
+	const struct bch_extent_ptr *ptr;
 
 	down(&c->sb_write_mutex);
 
@@ -536,10 +536,10 @@ void bch_check_mark_super_slowpath(struct cache_set *c, const struct bkey *k,
 
 	mi = cache_member_info_get(c)->m;
 
-	for (ptr = 0; ptr < bch_extent_ptrs(&e->k); ptr++)
+	extent_for_each_ptr(e, ptr)
 		(meta
 		 ? SET_CACHE_HAS_METADATA
-		 : SET_CACHE_HAS_DATA)(mi + PTR_DEV(&e->v.ptr[ptr]), true);
+		 : SET_CACHE_HAS_DATA)(mi + PTR_DEV(ptr), true);
 
 	cache_member_info_put();
 

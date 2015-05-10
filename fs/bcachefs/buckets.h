@@ -26,10 +26,9 @@ static inline u8 bucket_gc_gen(struct cache *ca, struct bucket *g)
 }
 
 static inline struct cache *PTR_CACHE(const struct cache_set *c,
-				      const struct bch_extent *e,
-				      unsigned ptr)
+				      const struct bch_extent_ptr *ptr)
 {
-	unsigned dev = PTR_DEV(&e->ptr[ptr]);
+	unsigned dev = PTR_DEV(ptr);
 
 	/* The range test covers PTR_LOST_DEV and PTR_CHECK_DEV  */
 
@@ -39,10 +38,9 @@ static inline struct cache *PTR_CACHE(const struct cache_set *c,
 }
 
 static inline size_t PTR_BUCKET_NR(const struct cache *ca,
-				   const struct bch_extent *e,
-				   unsigned ptr)
+				   const struct bch_extent_ptr *ptr)
 {
-	return sector_to_bucket(ca, PTR_OFFSET(&e->ptr[ptr]));
+	return sector_to_bucket(ca, PTR_OFFSET(ptr));
 }
 
 /*
@@ -57,10 +55,11 @@ static inline size_t PTR_BUCKET_NR_TRACE(const struct cache_set *c,
 
 	if (k->type == BCH_EXTENT) {
 		const struct bkey_i_extent *e = bkey_i_to_extent_c(k);
+		const struct bch_extent_ptr *p = &e->v.ptr[ptr];
 
 		rcu_read_lock();
-		if ((ca = PTR_CACHE(c, &e->v, ptr)))
-			bucket = PTR_BUCKET_NR(ca, &e->v, ptr);
+		if ((ca = PTR_CACHE(c, p)))
+			bucket = PTR_BUCKET_NR(ca, p);
 		rcu_read_unlock();
 	}
 
@@ -68,17 +67,15 @@ static inline size_t PTR_BUCKET_NR_TRACE(const struct cache_set *c,
 }
 
 static inline u8 PTR_BUCKET_GEN(const struct cache *ca,
-				const struct bch_extent *e,
-				unsigned ptr)
+				const struct bch_extent_ptr *ptr)
 {
-	return ca->bucket_gens[PTR_BUCKET_NR(ca, e, ptr)];
+	return ca->bucket_gens[PTR_BUCKET_NR(ca, ptr)];
 }
 
 static inline struct bucket *PTR_BUCKET(struct cache *ca,
-					const struct bch_extent *e,
-					unsigned ptr)
+					const struct bch_extent_ptr *ptr)
 {
-	return ca->buckets + PTR_BUCKET_NR(ca, e, ptr);
+	return ca->buckets + PTR_BUCKET_NR(ca, ptr);
 }
 
 static inline u8 __gen_after(u8 a, u8 b)
@@ -104,10 +101,9 @@ static inline u8 gen_after(u8 a, u8 b)
  * Warning: PTR_CACHE(c, k, ptr) must equal ca.
  */
 static inline u8 ptr_stale(const struct cache *ca,
-			   const struct bch_extent *e,
-			   unsigned ptr)
+			   const struct bch_extent_ptr *ptr)
 {
-	return gen_after(PTR_BUCKET_GEN(ca, e, ptr), PTR_GEN(&e->ptr[ptr]));
+	return gen_after(PTR_BUCKET_GEN(ca, ptr), PTR_GEN(ptr));
 }
 
 /* bucket heaps */
@@ -277,7 +273,7 @@ void bch_mark_free_bucket(struct cache *, struct bucket *);
 void bch_mark_alloc_bucket(struct cache *, struct bucket *);
 void bch_mark_metadata_bucket(struct cache *, struct bucket *, bool);
 u8 bch_mark_data_bucket(struct cache_set *, struct cache *, struct btree *,
-			const struct bkey *, unsigned, int, bool);
+			const struct bch_extent_ptr *, int, bool);
 void bch_unmark_open_bucket(struct cache *, struct bucket *);
 
 #endif /* _BUCKETS_H */

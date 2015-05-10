@@ -26,21 +26,21 @@
 u8 bch_btree_key_recalc_oldest_gen(struct cache_set *c,
 				   const struct bkey_i_extent *e)
 {
+	const struct bch_extent_ptr *ptr;
 	struct cache *ca;
 	u8 max_stale = 0;
-	unsigned i;
 
-	for (i = 0; i < bch_extent_ptrs(&e->k); i++) {
-		if (PTR_DEV(&e->v.ptr[i]) < MAX_CACHES_PER_SET)
-			__set_bit(PTR_DEV(&e->v.ptr[i]), c->cache_slots_used);
+	extent_for_each_ptr(e, ptr) {
+		if (PTR_DEV(ptr) < MAX_CACHES_PER_SET)
+			__set_bit(PTR_DEV(ptr), c->cache_slots_used);
 
-		if ((ca = PTR_CACHE(c, &e->v, i))) {
-			struct bucket *g = PTR_BUCKET(ca, &e->v, i);
+		if ((ca = PTR_CACHE(c, ptr))) {
+			struct bucket *g = PTR_BUCKET(ca, ptr);
 
-			if (__gen_after(g->oldest_gen, PTR_GEN(&e->v.ptr[i])))
-				g->oldest_gen = PTR_GEN(&e->v.ptr[i]);
+			if (__gen_after(g->oldest_gen, PTR_GEN(ptr)))
+				g->oldest_gen = PTR_GEN(ptr);
 
-			max_stale = max(max_stale, ptr_stale(ca, &e->v, i));
+			max_stale = max(max_stale, ptr_stale(ca, ptr));
 		}
 	}
 
@@ -50,9 +50,9 @@ u8 bch_btree_key_recalc_oldest_gen(struct cache_set *c,
 u8 __bch_btree_mark_key(struct cache_set *c, int level, const struct bkey *k)
 {
 	const struct bkey_i_extent *e;
+	const struct bch_extent_ptr *ptr;
 	struct cache *ca;
 	u8 max_stale;
-	unsigned i;
 
 	switch (k->type) {
 	case BCH_EXTENT:
@@ -63,10 +63,10 @@ u8 __bch_btree_mark_key(struct cache_set *c, int level, const struct bkey *k)
 		max_stale = bch_btree_key_recalc_oldest_gen(c, e);
 
 		if (level) {
-			for (i = 0; i < bch_extent_ptrs(&e->k); i++)
-				if ((ca = PTR_CACHE(c, &e->v, i)))
+			extent_for_each_ptr(e, ptr)
+				if ((ca = PTR_CACHE(c, ptr)))
 					bch_mark_metadata_bucket(ca,
-						PTR_BUCKET(ca, &e->v, i), true);
+						PTR_BUCKET(ca, ptr), true);
 		} else {
 			__bch_add_sectors(c, NULL, k, bkey_start_offset(k),
 					  k->size, false);
@@ -208,13 +208,13 @@ static void bch_mark_allocator_buckets(struct cache_set *c)
 
 	list_for_each_entry(b, &c->open_buckets_open, list) {
 		const struct bkey_i_extent *e;
+		const struct bch_extent_ptr *ptr;
 
 		spin_lock(&b->lock);
 		e = bkey_i_to_extent_c(&b->key);
-		for (i = 0; i < bch_extent_ptrs(&e->k); i++)
-			if ((ca = PTR_CACHE(c, &e->v, i)))
-				bch_mark_alloc_bucket(ca,
-					PTR_BUCKET(ca, &e->v, i));
+		extent_for_each_ptr(e, ptr)
+			if ((ca = PTR_CACHE(c, ptr)))
+				bch_mark_alloc_bucket(ca, PTR_BUCKET(ca, ptr));
 		spin_unlock(&b->lock);
 	}
 

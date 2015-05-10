@@ -25,17 +25,17 @@ static bool moving_pred(struct scan_keylist *kl, const struct bkey *k)
 					moving_gc_queue.keys);
 	struct cache_set *c = ca->set;
 	const struct bkey_i_extent *e;
+	const struct bch_extent_ptr *ptr;
 	bool ret = false;
-	unsigned i;
 
 	switch (k->type) {
 	case BCH_EXTENT:
 		e = bkey_i_to_extent_c(k);
 
 		rcu_read_lock();
-		for (i = 0; i < bch_extent_ptrs(&e->k); i++)
-			if (PTR_CACHE(c, &e->v, i) == ca &&
-			    PTR_BUCKET(ca, &e->v, i)->copygc_gen)
+		extent_for_each_ptr(e, ptr)
+			if (PTR_CACHE(c, ptr) == ca &&
+			    PTR_BUCKET(ca, ptr)->copygc_gen)
 				ret = true;
 		rcu_read_unlock();
 
@@ -52,14 +52,14 @@ static int issue_moving_gc_move(struct moving_queue *q,
 	struct cache *ca = container_of(q, struct cache, moving_gc_queue);
 	struct cache_set *c = ca->set;
 	const struct bkey_i_extent *e = bkey_i_to_extent_c(k);
+	const struct bch_extent_ptr *ptr;
 	struct moving_io *io;
 	struct write_point *wp;
-	unsigned ptr, gen;
+	unsigned gen;
 
-
-	for (ptr = 0; ptr < bch_extent_ptrs(&e->k); ptr++)
-		if ((ca->sb.nr_this_dev == PTR_DEV(&e->v.ptr[ptr])) &&
-		    (gen = PTR_BUCKET(ca, &e->v, ptr)->copygc_gen)) {
+	extent_for_each_ptr(e, ptr)
+		if ((ca->sb.nr_this_dev == PTR_DEV(ptr)) &&
+		    (gen = PTR_BUCKET(ca, ptr)->copygc_gen)) {
 			gen--;
 			BUG_ON(gen > ARRAY_SIZE(ca->gc_buckets));
 			wp = &ca->gc_buckets[gen];
@@ -81,7 +81,7 @@ found:
 	io->op.io_wq		= ca->moving_gc_write;
 	io->op.btree_alloc_reserve = RESERVE_MOVINGGC_BTREE;
 
-	bch_extent_drop_ptr(&io->op.insert_key, ptr);
+	bch_extent_drop_ptr(&io->op.insert_key, ptr - e->v.ptr);
 
 	trace_bcache_gc_copy(k);
 

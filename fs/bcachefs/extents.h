@@ -25,15 +25,15 @@ bool __bch_btree_ptr_invalid(const struct cache_set *, const struct bkey *);
 bool __bch_extent_invalid(const struct cache_set *, const struct bkey *);
 
 struct cache *bch_btree_pick_ptr(struct cache_set *, const struct bkey *,
-				 unsigned *);
+				 const struct bch_extent_ptr **);
 struct cache *bch_extent_pick_ptr_avoiding(struct cache_set *,
 					   const struct bkey *,
-					   unsigned *,
+					   const struct bch_extent_ptr **,
 					   struct cache *);
 
 static inline struct cache *bch_extent_pick_ptr(struct cache_set *c,
-						const struct bkey *k,
-						unsigned *ptr)
+					const struct bkey *k,
+					const struct bch_extent_ptr **ptr)
 {
 	return bch_extent_pick_ptr_avoiding(c, k, ptr, NULL);
 }
@@ -84,19 +84,25 @@ static inline void bch_extent_drop_ptr(struct bkey *k, unsigned ptr)
 }
 
 static inline unsigned bch_extent_replicas_needed(const struct cache_set *c,
-						  const struct bkey *k)
+						  const struct bkey_i_extent *e)
 {
-	return bkey_extent_cached(k) ? 0 : CACHE_SET_DATA_REPLICAS_WANT(&c->sb);
+	return EXTENT_CACHED(&e->v) ? 0 : CACHE_SET_DATA_REPLICAS_WANT(&c->sb);
 }
 
 static inline bool bch_extent_ptr_is_dirty(const struct cache_set *c,
-					   const struct bkey *k,
-					   unsigned ptr)
+					   const struct bkey_i_extent *e,
+					   const struct bch_extent_ptr *ptr)
 {
 	/* Dirty pointers come last */
 
-	return ptr + bch_extent_replicas_needed(c, k) >= bch_extent_ptrs(k);
+	return ptr + bch_extent_replicas_needed(c, e) >=
+		e->v.ptr + bch_extent_ptrs(&e->k);
 }
+
+#define extent_for_each_ptr(_extent, _ptr)				\
+	for ((_ptr) = (_extent)->v.ptr;					\
+	     (_ptr) < (_extent)->v.ptr + bch_extent_ptrs(&(_extent)->k);\
+	     (_ptr)++)
 
 bool bch_extent_has_device(const struct bkey_i_extent *, unsigned);
 void bch_bkey_copy_single_ptr(struct bkey *, const struct bkey *,

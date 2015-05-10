@@ -53,7 +53,7 @@ void bch_btree_verify(struct btree *b)
 	v->level = b->level;
 	v->keys.ops = b->keys.ops;
 
-	ca = PTR_CACHE(b->c, &e->v, 0);
+	ca = PTR_CACHE(b->c, &e->v.ptr[0]);
 	bio = bch_bbio_alloc(b->c);
 	bio->bi_bdev		= ca->bdev;
 	bio->bi_iter.bi_sector	= PTR_OFFSET(&e->v.ptr[0]);

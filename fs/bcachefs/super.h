@@ -85,14 +85,14 @@ static inline bool bch_check_super_marked(struct cache_set *c,
 					  const struct bkey *k, bool meta)
 {
 	const struct bkey_i_extent *e = bkey_i_to_extent_c(k);
+	const struct bch_extent_ptr *ptr;
 	struct cache_member_rcu *mi = cache_member_info_get(c);
 	bool ret = true;
-	unsigned ptr;
 
-	for (ptr = 0; ptr < bch_extent_ptrs(&e->k); ptr++)
+	extent_for_each_ptr(e, ptr)
 		if (!(meta
 		      ? CACHE_HAS_METADATA
-		      : CACHE_HAS_DATA)(mi->m + PTR_DEV(&e->v.ptr[ptr]))) {
+		      : CACHE_HAS_DATA)(mi->m + PTR_DEV(ptr))) {
 			ret = false;
 			break;
 		}
