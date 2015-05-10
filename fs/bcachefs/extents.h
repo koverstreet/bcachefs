@@ -30,13 +30,13 @@ bool bch_insert_fixup_extent(struct btree *, struct bkey *,
 			     struct btree_node_iter *,
 			     struct bch_replace_info *, struct bkey *);
 
-unsigned bch_extent_nr_ptrs_after_normalize(struct cache_set *,
+unsigned bch_extent_nr_ptrs_after_normalize(const struct cache_set *,
 					    const struct bkey *);
 void bch_extent_drop_stale(struct cache_set *, struct bkey *);
 bool bch_extent_normalize(struct cache_set *, struct bkey *);
 
 int __bch_add_sectors(struct cache_set *, struct btree *,
-		      struct bkey *, u64, int, bool);
+		      const struct bkey *, u64, int, bool);
 
 static inline unsigned bch_extent_ptrs(const struct bkey *k)
 {
@@ -58,6 +58,9 @@ static inline void bch_extent_drop_ptr(struct bkey *k, unsigned ptr)
 		&k->val[ptr + 1],
 		(bch_extent_ptrs(k) - ptr) * sizeof(u64));
 }
+
+void bch_bkey_copy_single_ptr(struct bkey *, const struct bkey *,
+			      unsigned);
 
 bool bch_cut_front(const struct bkey *, struct bkey *);
 bool bch_cut_back(const struct bkey *, struct bkey *);

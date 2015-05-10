@@ -188,7 +188,8 @@ do {								\
 } while (0)
 
 u8 bch_mark_data_bucket(struct cache_set *c, struct cache *ca, struct btree *b,
-			struct bkey *k, unsigned i, int sectors, bool dirty)
+			const struct bkey *k, unsigned i,
+			int sectors, bool dirty)
 {
 	struct bucket_mark old, new;
 	unsigned long bucket_nr = PTR_BUCKET_NR(c, k, i);

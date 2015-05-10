@@ -70,7 +70,7 @@ struct moving_io {
 	struct bbio		bio;
 };
 
-static inline struct moving_io *moving_io_alloc(struct bkey *k)
+static inline struct moving_io *moving_io_alloc(const struct bkey *k)
 {
 	struct moving_io *io;
 

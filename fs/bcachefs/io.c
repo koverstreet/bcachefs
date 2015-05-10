@@ -85,7 +85,7 @@ void bch_bbio_prep(struct bbio *b, struct cache *ca)
 }
 
 void bch_submit_bbio(struct bbio *b, struct cache *ca,
-		     struct bkey *k, unsigned ptr, bool punt)
+		     const struct bkey *k, unsigned ptr, bool punt)
 {
 	struct bio *bio = &b->bio;
 
@@ -103,7 +103,8 @@ void bch_submit_bbio(struct bbio *b, struct cache *ca,
 }
 
 void bch_submit_bbio_replicas(struct bio *bio, struct cache_set *c,
-			      struct bkey *k, unsigned ptrs_from, bool punt)
+			      const struct bkey *k, unsigned ptrs_from,
+			      bool punt)
 {
 	struct cache *ca;
 	unsigned ptr;
@@ -677,8 +678,8 @@ void bch_write_op_init(struct bch_write_op *op, struct cache_set *c,
  * XXX: this needs to be refactored with inode_truncate, or more
  *	appropriately inode_truncate should call this
  */
-int bch_discard(struct cache_set *c, struct bkey *start_key,
-		struct bkey *end_key, u64 version)
+int bch_discard(struct cache_set *c, const struct bkey *start_key,
+		const struct bkey *end_key, u64 version)
 {
 	struct btree_iter iter;
 	const struct bkey *k;

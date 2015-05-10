@@ -991,7 +991,7 @@ int bch_btree_cache_alloc(struct cache_set *c)
 
 #define PTR_HASH(_k)	((_k)->val[0])
 
-static struct btree *mca_find(struct cache_set *c, const struct bkey *k)
+static inline struct btree *mca_find(struct cache_set *c, const struct bkey *k)
 {
 	return rhashtable_lookup_fast(&c->btree_cache_table, &PTR_HASH(k),
 				      bch_btree_cache_params);
@@ -1446,7 +1446,7 @@ int bch_btree_root_alloc(struct cache_set *c, enum btree_id id,
 }
 
 int bch_btree_root_read(struct cache_set *c, enum btree_id id,
-			struct bkey *k, unsigned level)
+			const struct bkey *k, unsigned level)
 {
 	struct closure cl;
 	struct btree *b;

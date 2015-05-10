@@ -78,10 +78,11 @@ u64 bch_checksum(unsigned, const void *, size_t);
 	bch_checksum(type, start, end - start);				\
 })
 
-void bch_check_mark_super_slowpath(struct cache_set *, struct bkey *, bool);
+void bch_check_mark_super_slowpath(struct cache_set *,
+				   const struct bkey *, bool);
 
 static inline bool bch_check_super_marked(struct cache_set *c,
-					  struct bkey *k, bool meta)
+					  const struct bkey *k, bool meta)
 {
 	struct cache_member_rcu *mi = cache_member_info_get(c);
 	bool ret = true;
@@ -101,7 +102,7 @@ static inline bool bch_check_super_marked(struct cache_set *c,
 }
 
 static inline void bch_check_mark_super(struct cache_set *c,
-					struct bkey *k, bool meta)
+					const struct bkey *k, bool meta)
 {
 	if (bch_check_super_marked(c, k, meta))
 		return;

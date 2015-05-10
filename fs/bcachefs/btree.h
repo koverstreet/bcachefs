@@ -266,7 +266,7 @@ void __bch_btree_iter_init(struct btree_iter *, struct cache_set *,
 static inline void bch_btree_iter_init(struct btree_iter *iter,
 				       struct cache_set *c,
 				       enum btree_id btree_id,
-				       struct bkey *search)
+				       const struct bkey *search)
 {
 	__bch_btree_iter_init(iter, c, btree_id, search, -1);
 }
@@ -274,7 +274,7 @@ static inline void bch_btree_iter_init(struct btree_iter *iter,
 static inline void bch_btree_iter_init_intent(struct btree_iter *iter,
 					      struct cache_set *c,
 					      enum btree_id btree_id,
-					      struct bkey *search)
+					      const struct bkey *search)
 {
 	__bch_btree_iter_init(iter, c, btree_id, search, 0);
 }
@@ -375,7 +375,7 @@ int btree_check_reserve(struct btree *, struct btree_iter *,
 
 int bch_btree_root_alloc(struct cache_set *, enum btree_id, struct closure *);
 int bch_btree_root_read(struct cache_set *, enum btree_id,
-			struct bkey *, unsigned);
+			const struct bkey *, unsigned);
 
 struct bch_replace_info;
 

@@ -87,7 +87,7 @@ bool bch_insert_fixup_key(struct btree *b, struct bkey *insert,
 
 /* Common among btree and extent ptrs */
 
-static bool should_drop_ptr(struct cache_set *c, const struct bkey *k,
+static bool should_drop_ptr(const struct cache_set *c, const struct bkey *k,
 			    unsigned ptr)
 {
 	struct cache *ca;
@@ -105,7 +105,7 @@ static bool should_drop_ptr(struct cache_set *c, const struct bkey *k,
 		ptr_stale(c, ca, k, ptr);
 }
 
-unsigned bch_extent_nr_ptrs_after_normalize(struct cache_set *c,
+unsigned bch_extent_nr_ptrs_after_normalize(const struct cache_set *c,
 					    const struct bkey *k)
 {
 	unsigned ret = 0, ptr;
@@ -490,8 +490,9 @@ static struct bkey *bch_extent_sort_fixup(struct btree_node_iter *iter,
 	return NULL;
 }
 
-int __bch_add_sectors(struct cache_set *c, struct btree *b, struct bkey *k,
-		      u64 offset, int sectors, bool fail_if_stale)
+int __bch_add_sectors(struct cache_set *c, struct btree *b,
+		      const struct bkey *k, u64 offset,
+		      int sectors, bool fail_if_stale)
 {
 	unsigned replicas_found = 0, replicas_needed =
 		CACHE_SET_DATA_REPLICAS_WANT(&c->sb);
@@ -564,7 +565,7 @@ stale:
 	return -1;
 }
 
-static int bch_add_sectors(struct btree *b, struct bkey *k, u64 offset,
+static int bch_add_sectors(struct btree *b, const struct bkey *k, u64 offset,
 			   int sectors, bool fail_if_stale)
 {
 	int ret;
