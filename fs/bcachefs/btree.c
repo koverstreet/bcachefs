@@ -1886,7 +1886,8 @@ static bool btree_insert_key(struct btree *b, struct bkey *k,
 		BUG_ON(KEY_U64s(k) >
 		       journal_write_u64s_remaining(b->c, journal_write));
 
-		bch_journal_add_keys(journal_write->data, k, KEY_U64s(k));
+		bch_journal_add_keys(journal_write->data, BTREE_ID_EXTENTS, k,
+				     KEY_U64s(k), b->level, false);
 	}
 
 	bch_check_keys(&b->keys, "%u for %s", status,
