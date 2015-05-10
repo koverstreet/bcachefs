@@ -95,10 +95,10 @@ void bch_submit_bbio_replicas(struct bio *bio_src, struct cache_set *c,
 	struct bio *bio;
 	unsigned first, i;
 
-	first = find_first_bit(ptrs_to_write, KEY_PTRS(k));
+	first = find_first_bit(ptrs_to_write, bch_extent_ptrs(k));
 
 	i = first + 1;
-	for_each_set_bit_from(i, ptrs_to_write, KEY_PTRS(k)) {
+	for_each_set_bit_from(i, ptrs_to_write, bch_extent_ptrs(k)) {
 		bio = bio_clone_fast(bio_src, GFP_NOIO,
 				     PTR_CACHE(c, k, i)->replica_set);
 		bio->bi_end_io		= bio_src->bi_end_io;

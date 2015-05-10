@@ -46,18 +46,19 @@ DECLARE_EVENT_CLASS(bkey,
 		__field(u32,	size				)
 		__field(u32,	inode				)
 		__field(u64,	offset				)
-		__field(bool,	dirty				)
+		__field(bool,	cached				)
 	),
 
 	TP_fast_assign(
 		__entry->inode	= KEY_INODE(k);
 		__entry->offset	= KEY_OFFSET(k);
 		__entry->size	= KEY_SIZE(k);
-		__entry->dirty	= KEY_DIRTY(k);
+		__entry->cached = KEY_CACHED(k);
 	),
 
-	TP_printk("%u:%llu len %u dirty %u", __entry->inode,
-		  __entry->offset, __entry->size, __entry->dirty)
+	TP_printk("%u:%llu len %u%s", __entry->inode,
+		  __entry->offset, __entry->size,
+		  __entry->cached ? " cached" : "")
 );
 
 DECLARE_EVENT_CLASS(btree_node,
@@ -321,7 +322,7 @@ TRACE_EVENT(bcache_btree_insert_key,
 		__field(u32,	inode				)
 		__field(u64,	offset				)
 		__field(u32,	size				)
-		__field(u8,	dirty				)
+		__field(u8,	cached				)
 		__field(u8,	op				)
 		__field(u8,	status				)
 	),
@@ -332,16 +333,16 @@ TRACE_EVENT(bcache_btree_insert_key,
 		__entry->inode	= KEY_INODE(k);
 		__entry->offset	= KEY_OFFSET(k);
 		__entry->size	= KEY_SIZE(k);
-		__entry->dirty	= KEY_DIRTY(k);
+		__entry->cached	= KEY_CACHED(k);
 		__entry->op = op;
 		__entry->status = status;
 	),
 
-	TP_printk("%u for %u at %llu(%u): %u:%llu len %u dirty %u",
+	TP_printk("%u for %u at %llu(%u): %u:%llu len %u%s",
 		  __entry->status, __entry->op,
 		  __entry->btree_node, __entry->btree_level,
 		  __entry->inode, __entry->offset,
-		  __entry->size, __entry->dirty)
+		  __entry->size, __entry->cached ? " cached" : "")
 );
 
 DECLARE_EVENT_CLASS(btree_split,

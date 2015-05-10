@@ -16,4 +16,14 @@ int bch_btree_pick_ptr(struct cache_set *, const struct bkey *);
 int bch_extent_pick_ptr(struct cache_set *, const struct bkey *);
 void bch_extent_normalize(struct cache_set *, struct bkey *);
 
+static inline unsigned bch_extent_ptrs(const struct bkey *k)
+{
+	return bch_val_u64s(k);
+}
+
+static inline void bch_set_extent_ptrs(struct bkey *k, unsigned i)
+{
+	bch_set_val_u64s(k, i);
+}
+
 #endif /* _BCACHE_EXTENTS_H */

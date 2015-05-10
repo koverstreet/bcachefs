@@ -55,7 +55,7 @@ static bool moving_pred(struct keybuf *buf, struct bkey *k)
 					   moving_gc_keys);
 	unsigned i;
 
-	for (i = 0; i < KEY_PTRS(k); i++)
+	for (i = 0; i < bch_extent_ptrs(k); i++)
 		if (ptr_available(c, k, i) &&
 		    GC_GEN(PTR_BUCKET(c, k, i)))
 			return true;

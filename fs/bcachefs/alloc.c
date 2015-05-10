@@ -63,6 +63,7 @@
 #include "bcache.h"
 #include "alloc.h"
 #include "btree.h"
+#include "extents.h"
 
 #include <linux/blkdev.h>
 #include <linux/kthread.h>
@@ -482,7 +483,7 @@ void bch_bucket_free(struct cache_set *c, struct bkey *k)
 {
 	unsigned i;
 
-	for (i = 0; i < KEY_PTRS(k); i++)
+	for (i = 0; i < bch_extent_ptrs(k); i++)
 		__bch_bucket_free(PTR_CACHE(c, k, i),
 				  PTR_BUCKET(c, k, i));
 }
@@ -521,11 +522,11 @@ int bch_bucket_alloc_set(struct cache_set *c, unsigned reserve,
 		if (b == -1)
 			goto err;
 
-		k->ptr[i] = PTR(ca->buckets[b].gen,
+		k->val[i] = PTR(ca->buckets[b].gen,
 				bucket_to_sector(c, b),
 				ca->sb.nr_this_dev);
 
-		SET_KEY_PTRS(k, i + 1);
+		bch_set_extent_ptrs(k, i + 1);
 	}
 
 	mutex_unlock(&c->bucket_lock);
@@ -714,15 +715,17 @@ struct open_bucket *bch_alloc_sectors(struct cache_set *c, struct bkey *k,
 
 	BUG_ON(b != tier->data_buckets[0]);
 
-	for (i = 0; i < KEY_PTRS(&b->key); i++)
+	for (i = 0; i < bch_extent_ptrs(&b->key); i++)
 		EBUG_ON(ptr_stale(c, &b->key, i));
 
 	/* Set up the pointer to the space we're allocating: */
 
-	for (i = 0; i < KEY_PTRS(&b->key); i++) {
-		k->ptr[KEY_PTRS(k)] = b->key.ptr[i];
-		__set_bit(KEY_PTRS(k), ptrs_to_write);
-		SET_KEY_PTRS(k, KEY_PTRS(k) + 1);
+	for (i = 0; i < bch_extent_ptrs(&b->key); i++) {
+		unsigned ptrs = bch_extent_ptrs(k);
+
+		k->val[ptrs] = b->key.val[i];
+		__set_bit(ptrs, ptrs_to_write);
+		bch_set_extent_ptrs(k, ptrs + 1);
 	}
 
 	sectors = min_t(unsigned, KEY_SIZE(k), b->sectors_free);
@@ -733,7 +736,7 @@ struct open_bucket *bch_alloc_sectors(struct cache_set *c, struct bkey *k,
 	/* update open bucket for next time: */
 
 	b->sectors_free	-= sectors;
-	for (i = 0; i < KEY_PTRS(&b->key); i++) {
+	for (i = 0; i < bch_extent_ptrs(&b->key); i++) {
 		if (b->sectors_free)
 			SET_PTR_OFFSET(&b->key, i,
 				       PTR_OFFSET(&b->key, i) + sectors);
@@ -773,7 +776,7 @@ struct open_bucket *bch_gc_alloc_sectors(struct cache_set *c, struct bkey *k,
 
 	mutex_lock(&c->bucket_lock);
 retry:
-	for (i = 0; i < KEY_PTRS(k); i++)
+	for (i = 0; i < bch_extent_ptrs(k); i++)
 		if (ptr_available(c, k, i) &&
 		    GC_GEN(PTR_BUCKET(c, k, i)))
 			goto found;
@@ -794,10 +797,10 @@ found:
 		mutex_lock(&c->bucket_lock);
 
 		bucket = bch_bucket_alloc(ca, RESERVE_MOVINGGC, true);
-		b->key.ptr[0] = PTR(ca->buckets[bucket].gen,
+		b->key.val[0] = PTR(ca->buckets[bucket].gen,
 				    bucket_to_sector(ca->set, bucket),
 				    ca->sb.nr_this_dev);
-		SET_KEY_PTRS(&b->key, 1);
+		bch_set_extent_ptrs(&b->key, 1);
 
 		/* we dropped bucket_lock, might've raced */
 		if (ca->gc_buckets[gen]) {
@@ -818,7 +821,7 @@ found:
 	/* check to make sure bucket wasn't used while pinned */
 	EBUG_ON(ptr_stale(c, &b->key, 0));
 
-	k->ptr[i] = b->key.ptr[0];
+	k->val[i] = b->key.val[0];
 	__set_bit(i, ptrs_to_write);
 
 	sectors = min_t(unsigned, sectors, b->sectors_free);
@@ -872,7 +875,7 @@ void bch_mark_open_buckets(struct cache_set *c)
 	spin_lock(&c->open_buckets_lock);
 
 	list_for_each_entry(b, &c->open_buckets_open, list)
-		for (i = 0; i < KEY_PTRS(&b->key); i++)
+		for (i = 0; i < bch_extent_ptrs(&b->key); i++)
 			alloc_mark_bucket(PTR_CACHE(c, &b->key, i),
 					  PTR_BUCKET_NR(c, &b->key, i));
 

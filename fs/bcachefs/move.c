@@ -67,10 +67,8 @@ static void read_moving_endio(struct bio *bio)
 
 	if (bio->bi_error)
 		io->op.error = bio->bi_error;
-	else if (!KEY_DIRTY(&b->key) &&
-		 ptr_stale(io->op.c, &b->key, 0)) {
+	else if (ptr_stale(io->op.c, &b->key, 0))
 		io->op.error = -EINTR;
-	}
 
 	bch_bbio_endio(io->op.c, bio, bio->bi_error, "reading data to move");
 }

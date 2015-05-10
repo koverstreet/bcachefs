@@ -57,6 +57,8 @@ static void update_writeback_rate(struct work_struct *work)
 struct dirty_io {
 	struct closure		cl;
 	struct cached_dev	*dc;
+	int			error;
+	/* Must be last */
 	struct bio		bio;
 };
 
@@ -90,15 +92,14 @@ static void write_dirty_finish(struct closure *cl)
 
 	bio_free_pages(&io->bio);
 
-	/* This is kind of a dumb way of signalling errors. */
-	if (KEY_DIRTY(&w->key)) {
+	if (!io->error) {
 		int ret;
 		struct keylist keys;
 
 		bch_keylist_init(&keys);
 
 		bkey_copy(keys.top, &w->key);
-		SET_KEY_DIRTY(keys.top, false);
+		SET_KEY_CACHED(keys.top, true);
 		bch_keylist_push(&keys);
 
 		ret = bch_btree_insert(dc->disk.c, &keys, &w->key, NULL);
@@ -121,7 +122,7 @@ static void dirty_endio(struct bio *bio)
 	struct dirty_io *io = w->private;
 
 	if (bio->bi_error)
-		SET_KEY_DIRTY(&w->key, false);
+		io->error = bio->bi_error;
 
 	closure_put(&io->cl);
 }
@@ -131,13 +132,15 @@ static void write_dirty(struct closure *cl)
 	struct dirty_io *io = container_of(cl, struct dirty_io, cl);
 	struct keybuf_key *w = io->bio.bi_private;
 
-	dirty_init(w);
-	bio_set_op_attrs(&io->bio, REQ_OP_WRITE, 0);
-	io->bio.bi_iter.bi_sector = KEY_START(&w->key);
-	io->bio.bi_bdev		= io->dc->bdev;
-	io->bio.bi_end_io	= dirty_endio;
+	if (!io->error) {
+		dirty_init(w);
+		bio_set_op_attrs(&io->bio, REQ_OP_WRITE, 0);
+		io->bio.bi_iter.bi_sector = KEY_START(&w->key);
+		io->bio.bi_bdev		= io->dc->bdev;
+		io->bio.bi_end_io	= dirty_endio;
 
-	closure_bio_submit(&io->bio, cl);
+		closure_bio_submit(&io->bio, cl);
+	}
 
 	continue_at(cl, write_dirty_finish, io->dc->disk.c->btree_insert_wq);
 }
@@ -273,7 +276,7 @@ static bool dirty_pred(struct keybuf *buf, struct bkey *k)
 
 	BUG_ON(KEY_INODE(k) != dc->disk.id);
 
-	return KEY_DIRTY(k);
+	return !KEY_CACHED(k);
 }
 
 static void refill_full_stripes(struct cached_dev *dc)
@@ -437,7 +440,7 @@ void bch_mark_writeback_keys(struct cache_set *c)
 		spin_lock(&dc->writeback_keys.lock);
 		rbtree_postorder_for_each_entry_safe(w, n,
 					&dc->writeback_keys.keys, node)
-			for (j = 0; j < KEY_PTRS(&w->key); j++)
+			for (j = 0; j < bch_extent_ptrs(&w->key); j++)
 				SET_GC_MARK(PTR_BUCKET(c, &w->key, j),
 					    GC_MARK_DIRTY);
 		spin_unlock(&dc->writeback_keys.lock);
@@ -461,7 +464,7 @@ static int sectors_dirty_init_fn(struct btree_op *_op, struct btree *b,
 	if (KEY_INODE(k) > op->inode)
 		return MAP_DONE;
 
-	if (KEY_DIRTY(k))
+	if (!KEY_CACHED(k))
 		bcache_dev_sectors_dirty_add(b->c, KEY_INODE(k),
 					     KEY_START(k), KEY_SIZE(k));
 

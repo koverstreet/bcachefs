@@ -186,6 +186,7 @@ struct bset_tree {
 };
 
 struct btree_keys_ops {
+	bool		(*cmp)(struct bkey *, struct bkey *);
 	bool		(*sort_cmp)(struct btree_iter_set,
 				    struct btree_iter_set);
 	struct bkey	*(*sort_fixup)(struct btree_iter *, struct bkey *);
@@ -247,6 +248,16 @@ static inline unsigned bset_byte_offset(struct btree_keys *b, struct bset *i)
 static inline unsigned bset_sector_offset(struct btree_keys *b, struct bset *i)
 {
 	return bset_byte_offset(b, i) >> 9;
+}
+
+static inline unsigned bch_val_u64s(const struct bkey *k)
+{
+	return KEY_U64s(k) - BKEY_U64s;
+}
+
+static inline void bch_set_val_u64s(struct bkey *k, unsigned i)
+{
+	SET_KEY_U64s(k, i + BKEY_U64s);
 }
 
 #define __set_bytes(i, k)	(sizeof(*(i)) + (k) * sizeof(uint64_t))
@@ -396,9 +407,17 @@ static inline void bkey_init(struct bkey *k)
 static __always_inline int64_t bkey_cmp(const struct bkey *l,
 					const struct bkey *r)
 {
-	return unlikely(KEY_INODE(l) != KEY_INODE(r))
-		? (int64_t) KEY_INODE(l) - (int64_t) KEY_INODE(r)
-		: (int64_t) KEY_OFFSET(l) - (int64_t) KEY_OFFSET(r);
+	if ((l->k1 & KEY_HIGH_MASK) != (r->k1 & KEY_HIGH_MASK))
+		return (s64) (l->k1 & KEY_HIGH_MASK) -
+			(s64) (r->k1 & KEY_HIGH_MASK);
+
+	if (l->k2 < r->k2)
+		return -1;
+
+	if (l->k2 > r->k2)
+		return 1;
+
+	return 0;
 }
 
 void bch_bkey_copy_single_ptr(struct bkey *, const struct bkey *,
@@ -422,12 +441,13 @@ static inline bool bch_cut_back(const struct bkey *where, struct bkey *k)
 ({								\
 	struct bkey *_ret = NULL;				\
 								\
-	if (KEY_INODE(_k) || KEY_OFFSET(_k)) {			\
+	if ((_k)->k2) {						\
 		_ret = &KEY(KEY_INODE(_k), KEY_OFFSET(_k), 0);	\
-								\
-		if (!_ret->low)					\
-			_ret->high--;				\
-		_ret->low--;					\
+		_ret->k2--;					\
+	} else if ((_k)->k1 & KEY_HIGH_MASK) {			\
+		_ret = &KEY(KEY_INODE(_k), KEY_OFFSET(_k), 0);	\
+		_ret->k1--;					\
+		_ret->k2--;					\
 	}							\
 								\
 	_ret;							\
@@ -452,8 +472,10 @@ static inline void bch_bkey_to_text(struct btree_keys *b, char *buf,
 static inline bool bch_bkey_equal_header(const struct bkey *l,
 					 const struct bkey *r)
 {
-	return (KEY_DIRTY(l) == KEY_DIRTY(r) &&
-		KEY_PTRS(l) == KEY_PTRS(r) &&
+	return (KEY_CACHED(l) == KEY_CACHED(r) &&
+		KEY_DELETED(l) == KEY_DELETED(r) &&
+		KEY_VERSION(l) == KEY_VERSION(r) &&
+		KEY_U64s(l) == KEY_U64s(r) &&
 		KEY_CSUM(l) == KEY_CSUM(r));
 }
 

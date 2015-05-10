@@ -188,65 +188,11 @@ struct bkey *bch_keylist_pop(struct keylist *l)
 
 void bch_keylist_pop_front(struct keylist *l)
 {
-	l->top_p -= bkey_u64s(l->keys);
+	l->top_p -= KEY_U64s(l->keys);
 
 	memmove(l->keys,
 		bkey_next(l->keys),
 		bch_keylist_bytes(l));
-}
-
-/* Key/pointer manipulation */
-
-void bch_bkey_copy_single_ptr(struct bkey *dest, const struct bkey *src,
-			      unsigned i)
-{
-	BUG_ON(i > KEY_PTRS(src));
-
-	/* Only copy the header, key, and one pointer. */
-	memcpy(dest, src, 2 * sizeof(uint64_t));
-	dest->ptr[0] = src->ptr[i];
-	SET_KEY_PTRS(dest, 1);
-	/* We didn't copy the checksum so clear that bit. */
-	SET_KEY_CSUM(dest, 0);
-}
-
-bool __bch_cut_front(const struct bkey *where, struct bkey *k)
-{
-	unsigned i, len = 0;
-
-	if (bkey_cmp(where, &START_KEY(k)) <= 0)
-		return false;
-
-	if (bkey_cmp(where, k) < 0)
-		len = KEY_OFFSET(k) - KEY_OFFSET(where);
-	else
-		bkey_copy_key(k, where);
-
-	for (i = 0; i < KEY_PTRS(k); i++)
-		SET_PTR_OFFSET(k, i, PTR_OFFSET(k, i) + KEY_SIZE(k) - len);
-
-	BUG_ON(len > KEY_SIZE(k));
-	SET_KEY_SIZE(k, len);
-	return true;
-}
-
-bool __bch_cut_back(const struct bkey *where, struct bkey *k)
-{
-	unsigned len = 0;
-
-	if (bkey_cmp(where, k) >= 0)
-		return false;
-
-	BUG_ON(KEY_INODE(where) != KEY_INODE(k));
-
-	if (bkey_cmp(where, &START_KEY(k)) > 0)
-		len = KEY_OFFSET(where) - KEY_START(k);
-
-	bkey_copy_key(k, where);
-
-	BUG_ON(len > KEY_SIZE(k));
-	SET_KEY_SIZE(k, len);
-	return true;
 }
 
 /* Auxiliary search trees */
@@ -557,18 +503,23 @@ static struct bkey *table_to_bkey(struct bset_tree *t, unsigned cacheline)
 	return cacheline_to_bkey(t, cacheline, t->prev[cacheline]);
 }
 
-static inline uint64_t shrd128(uint64_t high, uint64_t low, uint8_t shift)
-{
-	low >>= shift;
-	low  |= (high << 1) << (63U - shift);
-	return low;
-}
-
 static inline unsigned bfloat_mantissa(const struct bkey *k,
 				       struct bkey_float *f)
 {
-	const uint64_t *p = &k->low - (f->exponent >> 6);
-	return shrd128(p[-1], p[0], f->exponent & 63) & BKEY_MANTISSA_MASK;
+	unsigned w = f->exponent >> 5;
+	u64 low, high;
+
+#if defined(__LITTLE_ENDIAN)
+	low  = k->kw[w];
+	high = k->kw[w + 1];
+#elif defined(__BIG_ENDIAN)
+	low  = k->kw[-w - 1];
+	high = k->kw[-w - 2];
+#else
+#error edit for your odd byteorder.
+#endif
+	return ((low | (high << 32)) >> (f->exponent & 31)) &
+		BKEY_MANTISSA_MASK;
 }
 
 static void make_bfloat(struct bset_tree *t, unsigned j)
@@ -582,16 +533,16 @@ static void make_bfloat(struct bset_tree *t, unsigned j)
 		: tree_to_prev_bkey(t, j >> ffs(j));
 
 	struct bkey *r = is_power_of_2(j + 1)
-		? bset_bkey_idx(t->data, t->data->keys - bkey_u64s(&t->end))
+		? bset_bkey_idx(t->data, t->data->keys - KEY_U64s(&t->end))
 		: tree_to_bkey(t, j >> (ffz(j) + 1));
 
 	BUG_ON(m < l || m > r);
 	BUG_ON(bkey_next(p) != m);
 
-	if (KEY_INODE(l) != KEY_INODE(r))
-		f->exponent = fls64(KEY_INODE(r) ^ KEY_INODE(l)) + 64;
+	if ((l->k1 ^ r->k1) & KEY_HIGH_MASK)
+		f->exponent = fls64((l->k1 ^ r->k1) & KEY_HIGH_MASK) + 64;
 	else
-		f->exponent = fls64(r->low ^ l->low);
+		f->exponent = fls64(r->k2 ^ l->k2);
 
 	f->exponent = max_t(int, f->exponent - BKEY_MANTISSA_BITS, 0);
 
@@ -679,7 +630,7 @@ void bch_bset_build_written_tree(struct btree_keys *b)
 		while (bkey_to_cacheline(t, k) < cacheline)
 			prev = k, k = bkey_next(k);
 
-		t->prev[j] = bkey_u64s(prev);
+		t->prev[j] = KEY_U64s(prev);
 		t->tree[j].m = bkey_to_cacheline_offset(t, cacheline++, k);
 	}
 
@@ -748,7 +699,7 @@ static void bch_bset_fix_lookup_table(struct btree_keys *b,
 				      struct bset_tree *t,
 				      struct bkey *k)
 {
-	unsigned shift = bkey_u64s(k);
+	unsigned shift = KEY_U64s(k);
 	unsigned j = bkey_to_cacheline(t, k);
 
 	/* We're getting called from btree_split() or btree_gc, just bail out */
@@ -823,14 +774,14 @@ void bch_bset_insert(struct btree_keys *b, struct bkey *where,
 
 	BUG_ON(!b->last_set_unwritten);
 	BUG_ON(bset_byte_offset(b, t->data) +
-	       __set_bytes(t->data, t->data->keys + bkey_u64s(insert)) >
+	       __set_bytes(t->data, t->data->keys + KEY_U64s(insert)) >
 	       PAGE_SIZE << b->page_order);
 
-	memmove((uint64_t *) where + bkey_u64s(insert),
+	memmove((u64 *) where + KEY_U64s(insert),
 		where,
 		(void *) bset_bkey_last(t->data) - (void *) where);
 
-	t->data->keys += bkey_u64s(insert);
+	t->data->keys += KEY_U64s(insert);
 	bkey_copy(where, insert);
 	bch_bset_fix_lookup_table(b, t, where);
 }
@@ -869,12 +820,12 @@ unsigned bch_btree_insert_key(struct btree_keys *b, struct bkey *k,
 	status = BTREE_INSERT_STATUS_OVERWROTE;
 	if (m != bset_bkey_last(i) &&
 	    b->ops->is_extents &&
-	    KEY_PTRS(m) == KEY_PTRS(k) && !KEY_SIZE(m))
+	    bch_val_u64s(m) == bch_val_u64s(k) && !KEY_SIZE(m))
 		goto copy;
 
 	status = BTREE_INSERT_STATUS_FRONT_MERGE;
 	if (m != bset_bkey_last(i) &&
-	    KEY_PTRS(k) <= BKEY_PAD_PTRS) {
+	    bch_val_u64s(k) <= BKEY_PAD_PTRS) {
 		bkey_copy(&tmp.k, k);
 		k = &tmp.k;
 

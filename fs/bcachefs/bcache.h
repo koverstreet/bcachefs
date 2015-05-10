@@ -760,14 +760,9 @@ struct cache_set {
 
 struct bbio {
 	unsigned		submit_time_us;
-	union {
-		struct bkey	key;
-		uint64_t	_pad[3];
-		/*
-		 * We only need pad = 3 here because we only ever carry around a
-		 * single pointer - i.e. the pointer we're doing io to/from.
-		 */
-	};
+	struct bkey		key;
+	u64			pad;
+	/* Only ever have a single pointer (the one we're doing io to/from) */
 	struct bio		bio;
 };
 

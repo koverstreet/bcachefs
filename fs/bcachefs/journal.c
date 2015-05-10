@@ -480,17 +480,17 @@ static void journal_reclaim(struct cache_set *c)
 			continue;
 
 		ja->cur_idx = next;
-		k->ptr[KEY_PTRS(k)] =
+		k->val[bch_extent_ptrs(k)] =
 			PTR(0, bucket_to_sector(c, ca->sb.d[ja->cur_idx]),
 			    ca->sb.nr_this_dev);
 
-		SET_KEY_PTRS(k, KEY_PTRS(k) + 1);
+		bch_set_extent_ptrs(k, bch_extent_ptrs(k) + 1);
 
-		if (KEY_PTRS(k) == c->meta_replicas)
+		if (bch_extent_ptrs(k) == c->meta_replicas)
 			break;
 	}
 
-	if (KEY_PTRS(k))
+	if (bch_extent_ptrs(k))
 		c->journal.blocks_free = c->sb.bucket_size >> c->block_bits;
 out:
 	if (!journal_full(&c->journal))
@@ -579,7 +579,7 @@ static void journal_write_locked(struct closure *cl)
 	w->data->last_seq	= last_seq(&c->journal);
 	w->data->csum		= csum_set(w->data);
 
-	for (i = 0; i < KEY_PTRS(k); i++) {
+	for (i = 0; i < bch_extent_ptrs(k); i++) {
 		ca = PTR_CACHE(c, k, i);
 		bio = &ca->journal.bio;
 

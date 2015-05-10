@@ -6,6 +6,7 @@
  */
 
 #include <asm/types.h>
+#include <asm/byteorder.h>
 #include <linux/uuid.h>
 
 #define BITMASK(name, type, field, offset, size)		\
@@ -21,64 +22,103 @@ static inline void SET_##name(type *k, __u64 v)			\
 /* Btree keys - all units are in sectors */
 
 struct bkey {
-	__u64	high;
-	__u64	low;
-	__u64	ptr[];
+	__u64	header;
+	/* Word order matches machine byte order */
+#if defined(__LITTLE_ENDIAN)
+	__u32	kw[0];
+	__u64	k2;
+	__u64	k1;
+#elif defined(__BIG_ENDIAN)
+	__u64	k1;
+	__u64	k2;
+	__u32	kw[0];
+#else
+#error edit for your odd byteorder.
+#endif
+	__u64	val[];
 };
+
+#define BKEY_U64s	(sizeof(struct bkey) / sizeof(__u64))
 
 #define KEY_FIELD(name, field, offset, size)				\
 	BITMASK(name, struct bkey, field, offset, size)
 
 #define PTR_FIELD(name, offset, size)					\
 static inline __u64 name(const struct bkey *k, unsigned i)		\
-{ return (k->ptr[i] >> offset) & ~(~0ULL << size); }			\
+{ return (k->val[i] >> offset) & ~(~0ULL << size); }			\
 									\
 static inline void SET_##name(struct bkey *k, unsigned i, __u64 v)	\
 {									\
-	k->ptr[i] &= ~(~(~0ULL << size) << offset);			\
-	k->ptr[i] |= (v & ~(~0ULL << size)) << offset;			\
+	k->val[i] &= ~(~(~0ULL << size) << offset);			\
+	k->val[i] |= (v & ~(~0ULL << size)) << offset;			\
 }
 
+#define KEY_INODE_BITS		40
+
+#define KEY_OFFSET_H_BITS	8
+#define KEY_OFFSET_L_BITS	44
+#define KEY_OFFSET_BITS		(KEY_OFFSET_H_BITS + KEY_OFFSET_L_BITS)
+
+#define KEY_OFFSET_H_MAX	(~(~0ULL << KEY_OFFSET_H_BITS))
+#define KEY_OFFSET_L_MAX	(~(~0ULL << KEY_OFFSET_L_BITS))
+
+#define MAX_KEY_INODE		(~(~0ULL << KEY_INODE_BITS))
+#define MAX_KEY_OFFSET		(~(~0ULL << KEY_OFFSET_BITS))
+
 #define KEY_SIZE_BITS		16
-#define KEY_MAX_U64S		8
+#define KEY_SIZE_MAX		((1U << KEY_SIZE_BITS) - 1)
 
-KEY_FIELD(KEY_PTRS,	high, 60, 3)
-KEY_FIELD(HEADER_SIZE,	high, 58, 2)
-KEY_FIELD(KEY_CSUM,	high, 56, 2)
-KEY_FIELD(KEY_PINNED,	high, 55, 1)
-KEY_FIELD(KEY_DIRTY,	high, 36, 1)
+#define KEY_MAX_U64S		64
 
-KEY_FIELD(KEY_SIZE,	high, 20, KEY_SIZE_BITS)
-KEY_FIELD(KEY_INODE,	high, 0,  20)
+KEY_FIELD(KEY_U64s,	header, 56, 8)
+KEY_FIELD(KEY_DELETED,	header, 55, 1)
+KEY_FIELD(KEY_CACHED,	header, 54, 1)
+KEY_FIELD(KEY_CSUM,	header, 52, 2)
 
-/* Next time I change the on disk format, KEY_OFFSET() won't be 64 bits */
+KEY_FIELD(UNUSED,	header, 32, 20)
+
+/*
+ * Sequence number used to determine which extent is the newer one, when dealing
+ * with overlapping extents from different servers.
+ */
+KEY_FIELD(KEY_VERSION,	header, 0,  32)
+
+/* Extent size, in sectors */
+KEY_FIELD(KEY_SIZE,	k1, 48, KEY_SIZE_BITS)
+
+KEY_FIELD(KEY_INODE,	k1, 8,  KEY_INODE_BITS)
+
+KEY_FIELD(KEY_OFFSET_H,	k1,  0, KEY_OFFSET_H_BITS)
+KEY_FIELD(KEY_OFFSET_L,	k2, 20, KEY_OFFSET_L_BITS)
+
+KEY_FIELD(KEY_SNAPSHOT,	k2,  0, 20)
+
+#define KEY_HIGH_BITS	48
+#define KEY_HIGH_MASK	(~(~0ULL << KEY_HIGH_BITS))
 
 static inline __u64 KEY_OFFSET(const struct bkey *k)
 {
-	return k->low;
+	return KEY_OFFSET_L(k)|(KEY_OFFSET_H(k) << 44);
 }
 
 static inline void SET_KEY_OFFSET(struct bkey *k, __u64 v)
 {
-	k->low = v;
+	SET_KEY_OFFSET_L(k, v);
+	SET_KEY_OFFSET_H(k, v >> 44);
 }
 
-/*
- * The high bit being set is a relic from when we used it to do binary
- * searches - it told you where a key started. It's not used anymore,
- * and can probably be safely dropped.
- */
 #define KEY(inode, offset, size)					\
 ((struct bkey) {							\
-	.high = (1ULL << 63) | ((__u64) (size) << 20) | (inode),	\
-	.low = (offset)							\
+	.header	= BKEY_U64s << 56,					\
+	.k1	= (((((__u64) (size)) & KEY_SIZE_MAX) << 48)|		\
+		   ((((__u64) (inode)) & MAX_KEY_INODE) << 8)|		\
+		   ((((__u64) (offset)) >> 44) & KEY_OFFSET_H_MAX)),	\
+	.k2	= ((((__u64) (offset)) & KEY_OFFSET_L_MAX) << 20),	\
 })
 
 #define ZERO_KEY			KEY(0, 0, 0)
 
-#define MAX_KEY_INODE			(~(~0 << 20))
-#define MAX_KEY_OFFSET			(~0ULL >> 1)
-#define MAX_KEY				KEY(MAX_KEY_INODE, MAX_KEY_OFFSET, 0)
+#define MAX_KEY				KEY(~0ULL, ~0ULL, 0)
 
 #define KEY_START(k)			(KEY_OFFSET(k) - KEY_SIZE(k))
 #define START_KEY(k)			KEY(KEY_INODE(k), KEY_START(k), 0)
@@ -96,14 +136,9 @@ PTR_FIELD(PTR_GEN,			0,  8)
 
 /* Bkey utility code */
 
-static inline unsigned long bkey_u64s(const struct bkey *k)
-{
-	return (sizeof(struct bkey) / sizeof(__u64)) + KEY_PTRS(k);
-}
-
 static inline unsigned long bkey_bytes(const struct bkey *k)
 {
-	return bkey_u64s(k) * sizeof(__u64);
+	return KEY_U64s(k) * sizeof(__u64);
 }
 
 #define bkey_copy(_dest, _src)	memcpy(_dest, _src, bkey_bytes(_src))
@@ -117,7 +152,7 @@ static inline void bkey_copy_key(struct bkey *dest, const struct bkey *src)
 static inline struct bkey *bkey_next(const struct bkey *k)
 {
 	__u64 *d = (void *) k;
-	return (struct bkey *) (d + bkey_u64s(k));
+	return (struct bkey *) (d + KEY_U64s(k));
 }
 
 static inline struct bkey *bkey_idx(const struct bkey *k, unsigned nr_keys)
@@ -343,7 +378,8 @@ BITMASK(UUID_FLASH_ONLY,	struct uuid_entry, flags, 0, 1);
 /* Version 1: Seed pointer into btree node checksum
  */
 #define BCACHE_BSET_CSUM		1
-#define BCACHE_BSET_VERSION		1
+#define BCACHE_BSET_KEY_v1		2
+#define BCACHE_BSET_VERSION		2
 
 /*
  * Btree nodes
@@ -365,6 +401,34 @@ struct bset {
 };
 
 /* OBSOLETE */
+
+struct bkey_v0 {
+	__u64	high;
+	__u64	low;
+	__u64	ptr[];
+};
+
+#define KEY0_FIELD(name, field, offset, size)				\
+	BITMASK(name, struct bkey_v0, field, offset, size)
+
+KEY0_FIELD(KEY0_PTRS,		high, 60, 3)
+KEY0_FIELD(KEY0_CSUM,		high, 56, 2)
+KEY0_FIELD(KEY0_DIRTY,		high, 36, 1)
+
+KEY0_FIELD(KEY0_SIZE,		high, 20, 16)
+KEY0_FIELD(KEY0_INODE,		high, 0,  20)
+
+static inline unsigned long bkey_v0_u64s(const struct bkey_v0 *k)
+{
+	return (sizeof(struct bkey_v0) / sizeof(__u64)) + KEY0_PTRS(k);
+}
+
+static inline struct bkey_v0 *bkey_v0_next(const struct bkey_v0 *k)
+{
+	__u64 *d = (void *) k;
+
+	return (struct bkey_v0 *) (d + bkey_v0_u64s(k));
+}
 
 /* UUIDS - per backing device/flash only volume metadata */
 

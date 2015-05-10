@@ -55,9 +55,9 @@ static bool tiering_pred(struct keybuf *buf, struct bkey *k)
 {
 	struct cache_set *c = container_of(buf, struct cache_set, tiering_keys);
 
-	return KEY_PTRS(k) &&
-		ptr_available(c, k, KEY_PTRS(k) - 1) &&
-		!PTR_TIER(c, k, KEY_PTRS(k) - 1);
+	return bch_extent_ptrs(k) &&
+		ptr_available(c, k, bch_extent_ptrs(k) - 1) &&
+		!PTR_TIER(c, k, bch_extent_ptrs(k) - 1);
 }
 
 static void read_tiering(struct cache_set *c)
@@ -100,7 +100,7 @@ static void read_tiering(struct cache_set *c)
 					&io->w->key, &io->w->key);
 
 		io->op.tier	= PTR_TIER(c, &w->key,
-					   KEY_PTRS(&w->key) - 1) + 1;
+					   bch_extent_ptrs(&w->key) - 1) + 1;
 
 		bch_ratelimit_increment(&c->tiering_pd.rate,
 					KEY_SIZE(&w->key) << 9);
