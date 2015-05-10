@@ -1219,7 +1219,11 @@ static struct btree *bch_btree_node_get(struct cache_set *c,
 {
 	int i = 0;
 	struct btree *b;
-	bool dropped_locks = false;
+	BKEY_PADDED(k) tmp;
+
+	/* k points into the parent which we'll unlock, save us a copy */
+	bkey_copy(&tmp.k, k);
+	k = &tmp.k;
 
 	BUG_ON(level < 0);
 retry:
@@ -1234,6 +1238,18 @@ retry:
 		if (IS_ERR(b))
 			return b;
 
+		/*
+		 * If the btree node wasn't cached, we can't drop our lock on
+		 * the parent until after it's added to the cache - because
+		 * otherwise we could race with a btree_split() freeing the node
+		 * we're trying to lock.
+		 *
+		 * But the deadlock described below doesn't exist in this case,
+		 * so it's safe to not drop the parent lock until here:
+		 */
+		if (btree_node_read_locked(op, level + 1))
+			btree_node_unlock(op, parent, level + 1);
+
 		bch_btree_node_read(b);
 		six_unlock_write(&b->lock);
 
@@ -1243,54 +1259,40 @@ retry:
 			mark_btree_node_read_locked(op, level);
 			BUG_ON(!six_trylock_convert(&b->lock, intent, read));
 		}
+
+		op->lock_seq[level] = b->lock.state.seq;
 	} else {
-		BKEY_PADDED(k) tmp;
-
 		/*
-		 * k points into the parent which we're about to
-		 * unlock, so save us a copy
+		 * There's a potential deadlock with splits and insertions into
+		 * interior nodes we have to avoid:
+		 *
+		 * The other thread might be holding an intent lock on the node
+		 * we want, and they want to update its parent node so they're
+		 * going to upgrade their intent lock on the parent node to a
+		 * write lock.
+		 *
+		 * But if we're holding a read lock on the parent, and we're
+		 * trying to get the intent lock they're holding, we deadlock.
+		 *
+		 * So to avoid this we drop the read locks on parent nodes when
+		 * we're starting to take intent locks - and handle the race.
+		 *
+		 * The race is that they might be about to free the node we
+		 * want, and dropping our read lock lets them add the
+		 * replacement node's pointer to the parent and then free the
+		 * old node (the node we're trying to lock).
+		 *
+		 * After we take the intent lock on the node we want (which
+		 * protects against it being freed), we check if we might have
+		 * raced (and the node was freed before we locked it) with a
+		 * global sequence number for freed btree nodes.
 		 */
-		bkey_copy(&tmp.k, k);
-		k = &tmp.k;
-
-		if (btree_node_read_locked(op, level + 1)) {
-			/*
-			 * There's a potential deadlock with splits and
-			 * insertions into interior nodes we have to avoid:
-			 *
-			 * The other thread might be holding an intent lock on
-			 * the node we want, and they want to update its parent
-			 * node so they're going to upgrade their intent lock on
-			 * the parent node to a write lock.
-			 *
-			 * But if we're holding a read lock on the parent, and
-			 * we're trying to get the intent lock they're holding,
-			 * we deadlock.
-			 *
-			 * So to avoid this we drop the read locks on parent
-			 * nodes when we're starting to take intent locks - and
-			 * handle the race.
-			 *
-			 * The race is that they might be about to free the node
-			 * we want, and dropping our read lock lets them add the
-			 * replacement node's pointer to the parent and then
-			 * free the old node (the node we're trying to lock).
-			 *
-			 * After we take the intent lock on the node we want
-			 * (which protects against it being freed), we check if
-			 * we might have raced (and the node was freed before we
-			 * locked it) with a global sequence number for freed
-			 * btree nodes.
-			 */
-
+		if (btree_node_read_locked(op, level + 1))
 			btree_node_unlock(op, parent, level + 1);
-			dropped_locks = true;
-		}
 
 		if (!btree_node_lock(b, op, level,
 				     (PTR_HASH(&b->key) != PTR_HASH(k)))) {
-			if (dropped_locks &&
-			    !btree_node_relock(parent, op, level + 1)) {
+			if (!btree_node_relock(parent, op, level + 1)) {
 				trace_bcache_btree_intent_lock_fail(b, op);
 				return ERR_PTR(-EINTR);
 			}
@@ -1306,7 +1308,7 @@ retry:
 	 * If we don't have the parent locked, it makes no sense to use
 	 * b->parent
 	 */
-	if (!dropped_locks)
+	if (btree_node_locked(op, level + 1))
 		b->parent = parent;
 	b->accessed = 1;
 
@@ -1543,22 +1545,23 @@ int bch_btree_root_alloc(struct cache_set *c, enum btree_id id,
 int bch_btree_root_read(struct cache_set *c, enum btree_id id,
 			struct bkey *k, unsigned level)
 {
-	struct btree_op op;
+	struct closure cl;
 	struct btree *b;
 
-	bch_btree_op_init(&op, id, S8_MAX);
+	closure_init_stack(&cl);
 
-	while (IS_ERR(b = bch_btree_node_get(c, &op, k, level, NULL))) {
-		if (PTR_ERR(b) == -EAGAIN)
-			closure_sync(&op.cl);
-		else if (PTR_ERR(b) == -EINTR)
-			BUG();
-		else
+	while (IS_ERR(b = mca_alloc(c, k, level, id, &cl))) {
+		if (PTR_ERR(b) != -EAGAIN)
 			return PTR_ERR(b);
+		closure_sync(&cl);
 	}
+	BUG_ON(!b);
+
+	bch_btree_node_read(b);
+	six_unlock_write(&b->lock);
 
 	bch_btree_set_root(b);
-	btree_node_unlock(&op, b, b->level);
+	six_unlock_intent(&b->lock);
 
 	return 0;
 }
