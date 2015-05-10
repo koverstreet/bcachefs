@@ -69,4 +69,6 @@ bool cache_promote(struct cache_set *, struct bbio *, struct bkey *, unsigned);
 
 void bch_read_race_work(struct work_struct *work);
 
+extern struct workqueue_struct *bcache_io_wq;
+
 #endif /* _BCACHE_IO_H */

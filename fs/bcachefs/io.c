@@ -9,11 +9,13 @@
 #include "alloc.h"
 #include "bset.h"
 #include "btree.h"
+#include "buckets.h"
 #include "debug.h"
 #include "extents.h"
 #include "io.h"
 #include "keybuf.h"
 #include "stats.h"
+#include "super.h"
 
 #include <linux/blkdev.h>
 

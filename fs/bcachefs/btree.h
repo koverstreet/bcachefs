@@ -171,6 +171,21 @@ static inline void set_gc_sectors(struct cache_set *c)
 	atomic64_set(&c->sectors_until_gc, c->capacity / 16);
 }
 
+static inline size_t btree_bytes(struct cache_set *c)
+{
+	return c->btree_pages * PAGE_SIZE;
+}
+
+static inline unsigned btree_blocks(struct btree *b)
+{
+	return KEY_SIZE(&b->key) >> b->c->block_bits;
+}
+
+static inline unsigned btree_default_blocks(struct cache_set *c)
+{
+	return (PAGE_SECTORS * c->btree_pages) >> c->block_bits;
+}
+
 /* Looping macros */
 
 #define for_each_cached_btree(_b, _c, _tbl, _iter, _pos)		\
@@ -253,6 +268,9 @@ int bch_gc_thread_start(struct cache_set *);
 int bch_initial_gc(struct cache_set *, struct list_head *);
 void bch_mark_keybuf_keys(struct cache_set *, struct keybuf *);
 u8 __bch_btree_mark_key(struct cache_set *, int, struct bkey *);
+
+void bch_btree_cache_free(struct cache_set *);
+int bch_btree_cache_alloc(struct cache_set *);
 
 /* Return values from @fn parameter to map_keys and map_nodes */
 #define MAP_DONE	0  /* We're done */

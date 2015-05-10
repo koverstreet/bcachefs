@@ -107,6 +107,8 @@
  * nodes that are pinning the oldest journal entries first.
  */
 
+#include "journal_types.h"
+
 static inline struct jset_keys *jset_keys_next(struct jset_keys *j)
 {
 	return (void *) (&j->d[j->keys]);

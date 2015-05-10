@@ -7,10 +7,12 @@
 
 #include "bcache.h"
 #include "btree.h"
+#include "buckets.h"
 #include "debug.h"
 #include "extents.h"
 #include "io.h"
 #include "keybuf.h"
+#include "super.h"
 
 #include <linux/console.h>
 #include <linux/debugfs.h>

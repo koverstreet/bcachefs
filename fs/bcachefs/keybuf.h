@@ -1,10 +1,7 @@
 #ifndef _BCACHE_KEYBUF_H
 #define _BCACHE_KEYBUF_H
 
-struct bkey;
-struct cache_set;
-struct keybuf;
-struct keybuf_key;
+#include "keybuf_types.h"
 
 typedef bool (keybuf_pred_fn)(struct keybuf *, struct bkey *);
 

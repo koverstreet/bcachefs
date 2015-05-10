@@ -29,6 +29,7 @@
 #include "io.h"
 #include "journal.h"
 #include "movinggc.h"
+#include "super.h"
 #include "writeback.h"
 
 #include <linux/slab.h>

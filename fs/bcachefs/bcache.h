@@ -179,7 +179,6 @@
 
 #include <linux/bio.h>
 #include <linux/closure.h>
-#include <linux/crc32c.h>
 #include <linux/kobject.h>
 #include <linux/list.h>
 #include <linux/mutex.h>
@@ -194,7 +193,6 @@
 
 #include "bcachefs_format.h"
 #include "bset.h"
-#include "extents.h"
 #include "util.h"
 
 #include <linux/dynamic_fault.h>
@@ -208,148 +206,13 @@
 
 #define CACHE_RESERVE_PERCENT		20
 
-struct bucket_mark {
-	union {
-	struct {
-		u32		counter;
-	};
-
-	struct {
-		unsigned	owned_by_allocator:1;
-		unsigned	cached_sectors:15;
-		unsigned	is_metadata:1;
-		unsigned	dirty_sectors:15;
-	};
-	};
-};
-
-struct bucket {
-	union {
-		struct {
-			u16	read_prio;
-			u16	write_prio;
-		};
-		u16		prio[2];
-	};
-	struct bucket_mark	mark;
-	u8			last_gc; /* Most out of date gen in the btree */
-
-	/* generation copygc is going to move this bucket into */
-	u8			copygc_gen;
-};
-
+#include "alloc_types.h"
+#include "buckets_types.h"
+#include "journal_types.h"
+#include "keybuf_types.h"
 #include "stats_types.h"
-#include "inode.h"
-struct search;
+
 struct btree;
-struct keybuf;
-
-/*
- * We put two of these in struct journal; we used them for writes to the
- * journal that are being staged or in flight.
- */
-struct journal_write {
-	struct jset		*data;
-#define JSET_BITS		5
-
-	struct cache_set	*c;
-	struct closure_waitlist	wait;
-};
-
-/* Embedded in struct cache_set */
-struct journal {
-	unsigned long		flags;
-#define JOURNAL_NEED_WRITE	0
-#define JOURNAL_DIRTY		1
-#define JOURNAL_REPLAY_DONE	2
-	atomic_t		in_flight;
-
-	spinlock_t		lock;
-
-	unsigned		u64s_remaining;
-	unsigned		res_count;
-
-	/* Number of blocks free in the bucket(s) we're currently writing to */
-	unsigned		blocks_free;
-
-	/* used when waiting because the journal was full */
-	wait_queue_head_t	wait;
-	struct closure		io;
-	struct delayed_work	work;
-
-	unsigned		delay_ms;
-
-	u64			seq;
-	DECLARE_FIFO(atomic_t, pin);
-
-	BKEY_PADDED(key);
-
-	struct journal_write	w[2], *cur;
-};
-
-/*
- * Embedded in struct cache. First three fields refer to the array of journal
- * buckets, in cache_sb.
- */
-struct journal_device {
-	/*
-	 * For each journal bucket, contains the max sequence number of the
-	 * journal writes it contains - so we know when a bucket can be reused.
-	 */
-	u64			*seq;
-
-	/* Journal bucket we're currently writing to */
-	unsigned		cur_idx;
-
-	/* Last journal bucket that still contains an open journal entry */
-	unsigned		last_idx;
-
-	/* Next journal bucket to be discarded */
-	unsigned		discard_idx;
-
-#define DISCARD_READY		0
-#define DISCARD_IN_FLIGHT	1
-#define DISCARD_DONE		2
-	/* 1 - discard in flight, -1 - discard completed */
-	atomic_t		discard_in_flight;
-
-	struct work_struct	discard_work;
-	struct bio		discard_bio;
-	struct bio_vec		discard_bv;
-
-	/* Bio for journal reads/writes to this device */
-	struct bio		bio;
-	struct bio_vec		bv[1 << JSET_BITS];
-
-	/* for bch_journal_read_device */
-	struct closure		read;
-};
-
-struct keybuf_key {
-	struct rb_node		node;
-	BKEY_PADDED(key);
-	atomic_t		ref;
-};
-
-struct keybuf {
-	struct bkey		last_scanned;
-	spinlock_t		lock;
-
-	/*
-	 * Beginning and end of range in rb tree - so that we can skip taking
-	 * lock and checking the rb tree when we need to check for overlapping
-	 * keys.
-	 */
-	struct bkey		start;
-	struct bkey		end;
-
-	struct rb_root		keys;
-
-	struct semaphore	in_flight;
-
-#define KEYBUF_NR		500
-	DECLARE_ARRAY_ALLOCATOR(struct keybuf_key, freelist, KEYBUF_NR);
-};
 
 struct bcache_device {
 	struct closure		cl;
@@ -463,101 +326,6 @@ struct cached_dev {
 	unsigned char		writeback_percent;
 };
 
-/* There is one reserve for each type of btree, one for prios and gens
- * and one for moving GC */
-enum alloc_reserve {
-	RESERVE_PRIO	= BTREE_ID_NR,
-	/*
-	 * free_inc.size buckets are set aside for moving GC btree node
-	 * allocations. This means that if moving GC runs out of new buckets for
-	 * btree nodes, it will have put back at least free_inc.size buckets
-	 * back on free_inc, preventing a deadlock.
-	 *
-	 * XXX: figure out a less stupid way of achieving this
-	 */
-	RESERVE_MOVINGGC_BTREE,
-	/*
-	 * Tiering needs a btree node reserve because of how
-	 * btree_check_reserve() works -- if the cache tier is full, we don't
-	 * want tiering to block forever.
-	 */
-	RESERVE_TIERING_BTREE,
-	RESERVE_METADATA_LAST = RESERVE_TIERING_BTREE,
-	RESERVE_MOVINGGC,
-	RESERVE_NONE,
-	RESERVE_NR,
-};
-
-/*
- * The btree node reserve needs to contain enough buckets so that in a tree of
- * depth 2, we can split each level of node, and then allocate a new root.
- * See btree_check_reserve().
- */
-#define BTREE_NODE_RESERVE 7
-
-/* Enough for 16 cache devices, 2 tiers and some left over for pipelining */
-#define OPEN_BUCKETS_COUNT 256
-
-#define WRITE_POINT_COUNT	16
-
-struct open_bucket {
-	struct list_head	list;
-	spinlock_t		lock;
-	atomic_t		pin;
-	unsigned		sectors_free;
-	BKEY_PADDED(key);
-};
-
-struct write_point {
-	struct open_bucket	*b;
-
-	/*
-	 * If not NULL, refill from that device (this write point is a member of
-	 * that struct cache)
-	 *
-	 * If NULL, do a normal replicated bucket allocation
-	 */
-	struct cache		*ca;
-
-	/*
-	 * If not NULL, tier specific writepoint used by tiering/promotion -
-	 * always allocates a single replica
-	 */
-	struct cache_group	*tier;
-
-	/*
-	 * Otherwise do a normal replicated bucket allocation that could come
-	 * from any tier (foreground write)
-	 */
-};
-
-struct bucket_stats {
-	u64			buckets_dirty;
-	u64			buckets_cached;
-	u64			buckets_meta;
-	u64			buckets_alloc;
-
-	u64			sectors_dirty;
-	u64			sectors_cached;
-};
-
-struct bucket_heap_entry {
-	struct bucket *g;
-	unsigned long val;
-};
-
-static inline bool bucket_min_cmp(struct bucket_heap_entry l,
-				  struct bucket_heap_entry r)
-{
-	return l.val < r.val;
-}
-
-static inline bool bucket_max_cmp(struct bucket_heap_entry l,
-				  struct bucket_heap_entry r)
-{
-	return l.val > r.val;
-}
-
 #define CACHE_DEV_REMOVING	0
 
 struct cache {
@@ -656,19 +424,6 @@ struct cache {
 	atomic_long_t		btree_sectors_written;
 	atomic_long_t		sectors_written;
 };
-
-static inline void bucket_heap_push(struct cache *ca, struct bucket *g,
-				    unsigned long val)
-{
-	struct bucket_heap_entry new = { g, val };
-
-	if (!heap_full(&ca->heap))
-		heap_add(&ca->heap, new, bucket_min_cmp);
-	else if (bucket_min_cmp(new, heap_peek(&ca->heap))) {
-		ca->heap.data[0] = new;
-		heap_sift(&ca->heap, 0, bucket_min_cmp);
-	}
-}
 
 struct gc_stat {
 	size_t			nodes;
@@ -934,13 +689,6 @@ struct bbio {
 
 #define to_bbio(_bio)		container_of((_bio), struct bbio, bio)
 
-#define btree_bytes(c)		((c)->btree_pages * PAGE_SIZE)
-#define btree_blocks(b)							\
-	((unsigned) (KEY_SIZE(&b->key) >> (b)->c->block_bits))
-
-#define btree_default_blocks(c)						\
-	((unsigned) ((PAGE_SECTORS * (c)->btree_pages) >> (c)->block_bits))
-
 #define bucket_pages(c)		((c)->sb.bucket_size / PAGE_SECTORS)
 #define bucket_bytes(c)		((c)->sb.bucket_size << 9)
 #define block_bytes(c)		((c)->sb.block_size << 9)
@@ -950,89 +698,6 @@ struct bbio {
 	 sizeof(struct bucket_disk))
 #define prio_buckets(c)					\
 	DIV_ROUND_UP((size_t) (c)->sb.nbuckets, prios_per_bucket(c))
-
-static inline size_t sector_to_bucket(struct cache_set *c, sector_t s)
-{
-	return s >> c->bucket_bits;
-}
-
-static inline sector_t bucket_to_sector(struct cache_set *c, size_t b)
-{
-	return ((sector_t) b) << c->bucket_bits;
-}
-
-static inline sector_t bucket_remainder(struct cache_set *c, sector_t s)
-{
-	return s & (c->sb.bucket_size - 1);
-}
-
-static inline struct cache_member *cache_member_info(struct cache *ca)
-{
-	return ca->set->members + ca->sb.nr_this_dev;
-}
-
-static inline struct cache *PTR_CACHE(struct cache_set *c,
-				      const struct bkey *k,
-				      unsigned ptr)
-{
-	unsigned dev = PTR_DEV(k, ptr);
-
-	return dev < MAX_CACHES_PER_SET
-		? rcu_dereference(c->cache[dev])
-		: NULL;
-}
-
-static inline size_t PTR_BUCKET_NR(struct cache_set *c,
-				   const struct bkey *k,
-				   unsigned ptr)
-{
-	return sector_to_bucket(c, PTR_OFFSET(k, ptr));
-}
-
-static inline u8 PTR_BUCKET_GEN(struct cache_set *c,
-				struct cache *ca,
-				const struct bkey *k,
-				unsigned ptr)
-{
-	return ca->bucket_gens[PTR_BUCKET_NR(c, k, ptr)];
-}
-
-static inline struct bucket *PTR_BUCKET(struct cache_set *c,
-					struct cache *ca,
-					const struct bkey *k,
-					unsigned ptr)
-{
-	return ca->buckets + PTR_BUCKET_NR(c, k, ptr);
-}
-
-static inline uint8_t gen_after(uint8_t a, uint8_t b)
-{
-	uint8_t r = a - b;
-	return r > 128U ? 0 : r;
-}
-
-static inline u8 ptr_stale(struct cache_set *c, struct cache *ca,
-			   const struct bkey *k, unsigned ptr)
-{
-	return gen_after(PTR_BUCKET_GEN(c, ca, k, ptr), PTR_GEN(k, ptr));
-}
-
-/* checksumming */
-
-u64 bch_checksum_update(unsigned, u64, const void *, size_t);
-u64 bch_checksum(unsigned, const void *, size_t);
-
-/*
- * This is used for various on disk data structures - cache_sb, prio_set, bset,
- * jset: The checksum is _always_ the first 8 bytes of these structs
- */
-#define csum_set(i, type)						\
-({									\
-	void *start = ((void *) (i)) + sizeof(u64);			\
-	void *end = bset_bkey_last(i);					\
-									\
-	bch_checksum(type, start, end - start);				\
-})
 
 /* Error handling macros */
 
@@ -1066,153 +731,8 @@ do {									\
 		bch_cache_set_error(c, __VA_ARGS__);			\
 } while (0)
 
-/* Looping macros */
-
-static inline struct cache *bch_next_cache_rcu(struct cache_set *c,
-					       unsigned *iter)
-{
-	struct cache *ret = NULL;
-
-	while (*iter < c->sb.nr_in_set &&
-	       !(ret = rcu_dereference(c->cache[*iter])))
-		(*iter)++;
-
-	return ret;
-}
-
-#define for_each_cache_rcu(ca, c, iter)					\
-	for ((iter) = 0; ((ca) = bch_next_cache_rcu((c), &(iter))); (iter)++)
-
-static inline struct cache *bch_get_next_cache(struct cache_set *c,
-					       unsigned *iter)
-{
-	struct cache *ret;
-
-	rcu_read_lock();
-	if ((ret = bch_next_cache_rcu(c, iter)))
-		percpu_ref_get(&ret->ref);
-	rcu_read_unlock();
-
-	return ret;
-}
-
-/*
- * If you break early, you must drop your ref on the current cache
- */
-#define for_each_cache(ca, c, iter)					\
-	for ((iter) = 0;						\
-	     (ca = bch_get_next_cache(c, &(iter)));			\
-	     percpu_ref_put(&ca->ref), (iter)++)
-
-#define for_each_bucket(b, ca)						\
-	for (b = (ca)->buckets + (ca)->sb.first_bucket;			\
-	     b < (ca)->buckets + (ca)->sb.nbuckets; b++)
-
-static inline void cached_dev_put(struct cached_dev *dc)
-{
-	if (atomic_dec_and_test(&dc->count))
-		schedule_work(&dc->detach);
-}
-
-static inline bool cached_dev_get(struct cached_dev *dc)
-{
-	if (!atomic_inc_not_zero(&dc->count))
-		return false;
-
-	/* Paired with the mb in cached_dev_attach */
-	smp_mb__after_atomic();
-	return true;
-}
-
-static inline u64 bcache_dev_inum(struct bcache_device *d)
-{
-	return KEY_INODE(&d->inode.i_inode.i_key);
-}
-
-static inline struct bcache_device *bch_dev_find(struct cache_set *c, u64 inode)
-{
-	return radix_tree_lookup(&c->devices, inode);
-}
-
-#define kobj_attribute_write(n, fn)					\
-	static struct kobj_attribute ksysfs_##n = __ATTR(n, S_IWUSR, NULL, fn)
-
-#define kobj_attribute_rw(n, show, store)				\
-	static struct kobj_attribute ksysfs_##n =			\
-		__ATTR(n, S_IWUSR|S_IRUSR, show, store)
-
-/* superblock */
-
-void bch_check_mark_super_slowpath(struct cache_set *, struct bkey *, bool);
-
-static inline bool bch_check_super_marked(struct cache_set *c,
-					  struct bkey *k, bool meta)
-{
-	unsigned ptr;
-	struct cache_member *mi;
-
-	for (ptr = 0; ptr < bch_extent_ptrs(k); ptr++) {
-		mi = c->members + PTR_DEV(k, ptr);
-
-		if (!(meta ? CACHE_HAS_METADATA : CACHE_HAS_DATA)(mi))
-			return false;
-	}
-
-	return true;
-}
-
-static inline void bch_check_mark_super(struct cache_set *c,
-					struct bkey *k, bool meta)
-{
-	if (bch_check_super_marked(c, k, meta))
-		return;
-
-	bch_check_mark_super_slowpath(c, k, meta);
-}
-
 /* Forward declarations */
 
-__printf(2, 3)
-bool bch_cache_set_error(struct cache_set *, const char *, ...);
-
-void bch_prio_write(struct cache *);
-void bch_write_bdev_super(struct cached_dev *, struct closure *);
-
-extern struct workqueue_struct *bcache_io_wq;
-extern struct mutex bch_register_lock;
-extern struct list_head bch_cache_sets;
-
-extern struct kobj_type bch_cached_dev_ktype;
-extern struct kobj_type bch_flash_dev_ktype;
-extern struct kobj_type bch_cache_set_ktype;
-extern struct kobj_type bch_cache_set_internal_ktype;
-extern struct kobj_type bch_cache_ktype;
-
-void bch_cached_dev_release(struct kobject *);
-void bch_flash_dev_release(struct kobject *);
-void bch_cache_set_release(struct kobject *);
-void bch_cache_release(struct kobject *);
-
-int bch_super_realloc(struct cache *, unsigned);
-void bcache_write_super(struct cache_set *);
-
-int bch_flash_dev_create(struct cache_set *, u64);
-
-int bch_cached_dev_attach(struct cached_dev *, struct cache_set *);
-void bch_cached_dev_detach(struct cached_dev *);
-void bch_cached_dev_run(struct cached_dev *);
-void bcache_device_stop(struct bcache_device *);
-
-void bch_cache_set_unregister(struct cache_set *);
-void bch_cache_set_stop(struct cache_set *);
-
-void bch_cache_read_only(struct cache *);
-const char *bch_cache_read_write(struct cache *);
-void bch_cache_remove(struct cache *);
-int bch_cache_add(struct cache_set *, const char *);
-
-void bch_btree_cache_free(struct cache_set *);
-int bch_btree_cache_alloc(struct cache_set *);
 void bch_tiering_init_cache_set(struct cache_set *);
 int bch_tiering_thread_start(struct cache_set *c);
 

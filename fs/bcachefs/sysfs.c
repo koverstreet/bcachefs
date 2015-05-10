@@ -9,8 +9,10 @@
 #include "alloc.h"
 #include "sysfs.h"
 #include "btree.h"
+#include "inode.h"
 #include "journal.h"
 #include "request.h"
+#include "super.h"
 #include "writeback.h"
 
 #include <linux/blkdev.h>

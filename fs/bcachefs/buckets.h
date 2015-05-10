@@ -7,7 +7,88 @@
 #ifndef _BUCKETS_H
 #define _BUCKETS_H
 
-#include "bcache.h"
+#include "buckets_types.h"
+#include "super.h"
+
+#define for_each_bucket(b, ca)						\
+	for (b = (ca)->buckets + (ca)->sb.first_bucket;			\
+	     b < (ca)->buckets + (ca)->sb.nbuckets; b++)
+
+static inline struct cache *PTR_CACHE(struct cache_set *c,
+				      const struct bkey *k,
+				      unsigned ptr)
+{
+	unsigned dev = PTR_DEV(k, ptr);
+
+	return dev < MAX_CACHES_PER_SET
+		? rcu_dereference(c->cache[dev])
+		: NULL;
+}
+
+static inline size_t PTR_BUCKET_NR(struct cache_set *c,
+				   const struct bkey *k,
+				   unsigned ptr)
+{
+	return sector_to_bucket(c, PTR_OFFSET(k, ptr));
+}
+
+static inline u8 PTR_BUCKET_GEN(struct cache_set *c,
+				struct cache *ca,
+				const struct bkey *k,
+				unsigned ptr)
+{
+	return ca->bucket_gens[PTR_BUCKET_NR(c, k, ptr)];
+}
+
+static inline struct bucket *PTR_BUCKET(struct cache_set *c,
+					struct cache *ca,
+					const struct bkey *k,
+					unsigned ptr)
+{
+	return ca->buckets + PTR_BUCKET_NR(c, k, ptr);
+}
+
+static inline u8 gen_after(u8 a, u8 b)
+{
+	u8 r = a - b;
+
+	return r > 128U ? 0 : r;
+}
+
+static inline u8 ptr_stale(struct cache_set *c, struct cache *ca,
+			   const struct bkey *k, unsigned ptr)
+{
+	return gen_after(PTR_BUCKET_GEN(c, ca, k, ptr), PTR_GEN(k, ptr));
+}
+
+/* bucket heaps */
+
+static inline bool bucket_min_cmp(struct bucket_heap_entry l,
+				  struct bucket_heap_entry r)
+{
+	return l.val < r.val;
+}
+
+static inline bool bucket_max_cmp(struct bucket_heap_entry l,
+				  struct bucket_heap_entry r)
+{
+	return l.val > r.val;
+}
+
+static inline void bucket_heap_push(struct cache *ca, struct bucket *g,
+				    unsigned long val)
+{
+	struct bucket_heap_entry new = { g, val };
+
+	if (!heap_full(&ca->heap))
+		heap_add(&ca->heap, new, bucket_min_cmp);
+	else if (bucket_min_cmp(new, heap_peek(&ca->heap))) {
+		ca->heap.data[0] = new;
+		heap_sift(&ca->heap, 0, bucket_min_cmp);
+	}
+}
+
+/* bucket gc marks */
 
 /* The dirty and cached sector counts saturate. If this occurs,
  * reference counting alone will not free the bucket, and a btree
@@ -141,4 +222,4 @@ u8 bch_mark_data_bucket(struct cache_set *, struct cache *, struct bkey *,
 			unsigned, int, bool, bool);
 void bch_unmark_open_bucket(struct cache *, struct bucket *);
 
-#endif
+#endif /* _BUCKETS_H */

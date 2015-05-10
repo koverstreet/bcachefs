@@ -10,6 +10,7 @@
 #include "debug.h"
 #include "extents.h"
 #include "inode.h"
+#include "super.h"
 #include "writeback.h"
 
 #include <trace/events/bcachefs.h>

@@ -58,6 +58,7 @@
 #include "btree.h"
 #include "buckets.h"
 #include "extents.h"
+#include "super.h"
 
 #include <linux/blkdev.h>
 #include <linux/kthread.h>
