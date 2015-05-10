@@ -193,9 +193,6 @@ static inline void set_gc_sectors(struct cache_set *c)
 	atomic_set(&c->sectors_until_gc, c->sb.bucket_size * c->nbuckets / 16);
 }
 
-void bkey_put(struct cache_set *c, struct bkey *k);
-void bkey_get(struct cache_set *c, struct bkey *k);
-
 /* Looping macros */
 
 #define for_each_cached_btree(_b, _c, _tbl, _iter, _pos)		\

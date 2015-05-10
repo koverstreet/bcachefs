@@ -431,7 +431,6 @@ static int __uuid_write(struct cache_set *c)
 	closure_sync(&cl);
 
 	bkey_copy(&c->uuid_bucket, &b->key);
-	bkey_put(c, &b->key);
 
 	bch_open_bucket_put(c, b);
 	return 0;
@@ -537,9 +536,6 @@ void bch_prio_write(struct cache *ca)
 	atomic_long_add(ca->sb.bucket_size * prio_buckets(ca),
 			&ca->meta_sectors_written);
 
-	//pr_debug("free %zu, free_inc %zu, unused %zu", fifo_used(&ca->free),
-	//	 fifo_used(&ca->free_inc), fifo_used(&ca->unused));
-
 	for (i = prio_buckets(ca) - 1; i >= 0; --i) {
 		long bucket;
 		struct prio_set *p = ca->disk_buckets;
@@ -565,7 +561,6 @@ void bch_prio_write(struct cache *ca)
 		 * getting gc'd from under us
 		 */
 		ca->prio_buckets[i] = bucket;
-		atomic_dec_bug(&ca->buckets[bucket].pin);
 
 		mutex_unlock(&ca->set->bucket_lock);
 		prio_io(ca, bucket, REQ_OP_WRITE, 0);
@@ -1831,7 +1826,6 @@ void bch_cache_release(struct kobject *kobj)
 static int cache_alloc(struct cache *ca)
 {
 	size_t free;
-	struct bucket *b;
 
 	__module_get(THIS_MODULE);
 	kobject_init(&ca->kobj, &bch_cache_ktype);
@@ -1856,9 +1850,6 @@ static int cache_alloc(struct cache *ca)
 		return -ENOMEM;
 
 	ca->prio_last_buckets = ca->prio_buckets + prio_buckets(ca);
-
-	for_each_bucket(b, ca)
-		atomic_set(&b->pin, 0);
 
 	return 0;
 }

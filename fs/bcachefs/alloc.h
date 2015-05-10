@@ -29,6 +29,18 @@ static inline void wake_up_allocators(struct cache_set *c)
 		wake_up_process(ca->alloc_thread);
 }
 
+static inline size_t buckets_available(struct cache_set *c)
+{
+	struct cache *ca;
+	unsigned i;
+	size_t ret = 0;
+
+	for_each_cache(ca, c, i)
+		ret += ca->buckets_free;
+
+	return ret;
+}
+
 u8 bch_inc_gen(struct cache *, struct bucket *);
 void bch_rescale_priorities(struct cache_set *, int);
 

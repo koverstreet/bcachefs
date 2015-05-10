@@ -181,26 +181,6 @@ static void bch_btree_init_next(struct btree *b)
 				   bset_magic(&b->c->sb));
 }
 
-/* Btree key manipulation */
-
-void bkey_put(struct cache_set *c, struct bkey *k)
-{
-	unsigned i;
-
-	for (i = 0; i < KEY_PTRS(k); i++)
-		if (ptr_available(c, k, i))
-			atomic_dec_bug(&PTR_BUCKET(c, k, i)->pin);
-}
-
-void bkey_get(struct cache_set *c, struct bkey *k)
-{
-	unsigned i;
-
-	for (i = 0; i < KEY_PTRS(k); i++)
-		if (ptr_available(c, k, i))
-			atomic_inc(&PTR_BUCKET(c, k, i)->pin);
-}
-
 /* Btree IO */
 
 static uint64_t btree_csum_set(struct btree *b, struct bset *i)
@@ -1096,7 +1076,6 @@ retry:
 	if (bch_bucket_alloc_set(c, RESERVE_BTREE, &k.key, 1, wait))
 		goto err;
 
-	bkey_put(c, &k.key);
 	SET_KEY_SIZE(&k.key, c->btree_pages * PAGE_SECTORS);
 
 	b = mca_alloc(c, op, &k.key, level);
@@ -1651,10 +1630,8 @@ static void btree_gc_start(struct cache_set *c)
 	for_each_cache(ca, c, i)
 		for_each_bucket(b, ca) {
 			b->last_gc = b->gen;
-			if (!atomic_read(&b->pin)) {
-				SET_GC_MARK(b, 0);
-				SET_GC_SECTORS_USED(b, 0);
-			}
+			SET_GC_MARK(b, 0);
+			SET_GC_SECTORS_USED(b, 0);
 		}
 
 	/*
@@ -1667,9 +1644,8 @@ static void btree_gc_start(struct cache_set *c)
 	mutex_unlock(&c->bucket_lock);
 }
 
-static size_t bch_btree_gc_finish(struct cache_set *c)
+static void bch_btree_gc_finish(struct cache_set *c)
 {
-	size_t available = 0;
 	struct bucket *b;
 	struct cache *ca;
 	unsigned i;
@@ -1687,6 +1663,7 @@ static size_t bch_btree_gc_finish(struct cache_set *c)
 	bch_mark_writeback_keys(c);
 
 	for_each_cache(ca, c, i) {
+		size_t buckets_free = 0;
 		uint64_t *i;
 
 		ca->invalidate_needs_gc = 0;
@@ -1701,24 +1678,19 @@ static size_t bch_btree_gc_finish(struct cache_set *c)
 		for_each_bucket(b, ca) {
 			c->need_gc	= max(c->need_gc, bucket_gc_gen(b));
 
-			if (atomic_read(&b->pin))
-				continue;
-
-			BUG_ON(!GC_MARK(b) && GC_SECTORS_USED(b));
-
 			if (!GC_MARK(b) || GC_MARK(b) == GC_MARK_RECLAIMABLE)
-				available++;
+				buckets_free++;
 		}
+
+		ca->buckets_free = buckets_free;
 	}
 
 	mutex_unlock(&c->bucket_lock);
-	return available;
 }
 
 static void bch_btree_gc(struct cache_set *c)
 {
 	int ret;
-	unsigned long available;
 	struct gc_stat stats;
 	struct btree_op op;
 	uint64_t start_time = local_clock();
@@ -1738,14 +1710,13 @@ static void bch_btree_gc(struct cache_set *c)
 			pr_warn("gc failed!");
 	} while (ret);
 
-	available = bch_btree_gc_finish(c);
+	bch_btree_gc_finish(c);
 	wake_up_allocators(c);
 
 	bch_time_stats_update(&c->btree_gc_time, start_time);
 
 	stats.key_bytes *= sizeof(uint64_t);
 	stats.data	<<= 9;
-	stats.in_use	= (c->nbuckets - available) * 100 / c->nbuckets;
 	memcpy(&c->gc_stats, &stats, sizeof(struct gc_stat));
 
 	trace_bcache_gc_end(c);
@@ -2039,16 +2010,13 @@ static enum btree_insert_status bch_btree_insert_keys(struct btree *b,
 
 		BUG_ON(write_block(b) != btree_bset_last(b));
 
-		if (b->keys.ops->is_extents) {
-			if (bkey_cmp(k, &b->key) > 0) {
-				bkey_copy(&temp.key, k);
+		if (b->keys.ops->is_extents &&
+		    bkey_cmp(k, &b->key) > 0) {
+			bkey_copy(&temp.key, k);
 
-				bch_cut_back(&b->key, &temp.key);
-				bch_cut_front(&b->key, k);
-				k = &temp.key;
-			} else {
-				bkey_put(b->c, k);
-			}
+			bch_cut_back(&b->key, &temp.key);
+			bch_cut_front(&b->key, k);
+			k = &temp.key;
 		}
 
 		inserted |= btree_insert_key(b, k, replace_key, journal_write);
@@ -2378,14 +2346,9 @@ int bch_btree_insert(struct cache_set *c, struct keylist *keys,
 					       btree_insert_fn);
 	}
 
-	if (ret) {
-		struct bkey *k;
-
+	if (ret)
 		pr_err("error %i", ret);
-
-		while ((k = bch_keylist_pop(keys)))
-			bkey_put(c, k);
-	} else if (op.op.insert_collision)
+	else if (op.op.insert_collision)
 		ret = -ESRCH;
 
 	return ret;

@@ -138,11 +138,7 @@ static void write_dirty_finish(struct closure *cl)
 		SET_KEY_DIRTY(keys.top, false);
 		bch_keylist_push(&keys);
 
-		/* XXX: hack */
-		bkey_get(dc->disk.c, &w->key);
-
 		ret = bch_btree_insert(dc->disk.c, &keys, &w->key, NULL);
-
 		if (ret)
 			trace_bcache_writeback_collision(&w->key);
 

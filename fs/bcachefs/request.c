@@ -23,8 +23,8 @@
 
 #include <trace/events/bcachefs.h>
 
-#define CUTOFF_CACHE_ADD	95
-#define CUTOFF_CACHE_READA	90
+#define CUTOFF_CACHE_ADD	10
+#define CUTOFF_CACHE_READA	15
 
 struct kmem_cache *bch_search_cache;
 
@@ -369,9 +369,10 @@ static bool check_should_bypass(struct cached_dev *dc, struct bio *bio)
 	unsigned sectors, congested = bch_get_congested(c);
 	struct task_struct *task = current;
 	struct io *i;
+	u64 available = buckets_available(dc->disk.c);
 
 	if (test_bit(BCACHE_DEV_DETACHING, &dc->disk.flags) ||
-	    c->gc_stats.in_use > CUTOFF_CACHE_ADD ||
+	    available * 100 < (u64) dc->disk.c->nbuckets * CUTOFF_CACHE_ADD ||
 	    (bio_op(bio) == REQ_OP_DISCARD))
 		goto skip;
 
@@ -784,7 +785,8 @@ static int cached_dev_cache_miss(struct btree *b, struct search *s,
 
 	if (!(bio->bi_opf & REQ_RAHEAD) &&
 	    !(bio->bi_opf & REQ_META) &&
-	    s->iop.c->gc_stats.in_use < CUTOFF_CACHE_READA)
+	    ((u64) buckets_available(dc->disk.c) * 100 <
+	     (u64) b->c->nbuckets * CUTOFF_CACHE_READA))
 		reada = min_t(sector_t, dc->readahead >> 9,
 			      bdev_sectors(bio->bi_bdev) - bio_end_sector(bio));
 

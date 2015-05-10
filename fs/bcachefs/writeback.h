@@ -1,8 +1,10 @@
 #ifndef _BCACHE_WRITEBACK_H
 #define _BCACHE_WRITEBACK_H
 
-#define CUTOFF_WRITEBACK	40
-#define CUTOFF_WRITEBACK_SYNC	70
+#include "alloc.h"
+
+#define CUTOFF_WRITEBACK	60
+#define CUTOFF_WRITEBACK_SYNC	30
 
 static inline uint64_t bcache_dev_sectors_dirty(struct bcache_device *d)
 {
@@ -42,11 +44,12 @@ static inline bool bcache_dev_stripe_dirty(struct cached_dev *dc,
 static inline bool should_writeback(struct cached_dev *dc, struct bio *bio,
 				    unsigned cache_mode, bool would_skip)
 {
-	unsigned in_use = dc->disk.c->gc_stats.in_use;
+	u64 available = buckets_available(dc->disk.c);
+	u64 nbuckets = dc->disk.c->nbuckets;
 
 	if (cache_mode != CACHE_MODE_WRITEBACK ||
 	    test_bit(BCACHE_DEV_DETACHING, &dc->disk.flags) ||
-	    in_use > CUTOFF_WRITEBACK_SYNC)
+	    available * 100 < nbuckets * CUTOFF_WRITEBACK_SYNC)
 		return false;
 
 	if (dc->partial_stripes_expensive &&
@@ -58,7 +61,7 @@ static inline bool should_writeback(struct cached_dev *dc, struct bio *bio,
 		return false;
 
 	return bio->bi_opf & REQ_SYNC ||
-		in_use <= CUTOFF_WRITEBACK;
+		available * 100 < nbuckets * CUTOFF_WRITEBACK;
 }
 
 static inline void bch_writeback_queue(struct cached_dev *dc)

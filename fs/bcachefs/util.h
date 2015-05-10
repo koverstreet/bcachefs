@@ -217,6 +217,9 @@ do {									\
 #define fifo_push(fifo, i)	fifo_push_back(fifo, (i))
 #define fifo_pop(fifo, i)	fifo_pop_front(fifo, (i))
 
+#define fifo_peek_front(fifo)	((fifo)->data[(fifo)->front])
+#define fifo_peek(fifo)		fifo_peek_front(fifo)
+
 #define fifo_swap(l, r)							\
 do {									\
 	swap((l)->front, (r)->front);					\

@@ -473,6 +473,11 @@ static size_t bch_cache_size(struct cache_set *c)
 	return ret;
 }
 
+static unsigned bch_cache_available_percent(struct cache_set *c)
+{
+	return div64_u64((u64) buckets_available(c) * 100, c->nbuckets);
+}
+
 static unsigned bch_btree_used(struct cache_set *c)
 {
 	return div64_u64(c->gc_stats.key_bytes * 100,
@@ -498,7 +503,7 @@ SHOW(__bch_cache_set)
 	sysfs_print(root_usage_percent,		bch_root_usage(c));
 
 	sysfs_hprint(btree_cache_size,		bch_cache_size(c));
-	sysfs_print(cache_available_percent,	100 - c->gc_stats.in_use);
+	sysfs_print(cache_available_percent,	bch_cache_available_percent(c));
 
 	sysfs_print_time_stats(&c->btree_gc_time,	btree_gc, sec, ms);
 	sysfs_print_time_stats(&c->btree_split_time,	btree_split, sec, us);

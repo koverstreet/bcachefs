@@ -269,20 +269,12 @@ void bch_journal_mark(struct cache_set *c, struct list_head *list)
 	struct bkey *k;
 	struct journal_replay *i;
 
-	list_for_each_entry(i, list, list) {
+	list_for_each_entry(i, list, list)
 		for (k = i->j.start;
 		     k < bset_bkey_last(&i->j);
 		     k = bkey_next(k))
-			if (!__bch_extent_invalid(c, k)) {
-				unsigned j;
-
-				for (j = 0; j < KEY_PTRS(k); j++)
-					if (ptr_available(c, k, j))
-						atomic_inc(&PTR_BUCKET(c, k, j)->pin);
-
+			if (!__bch_extent_invalid(c, k))
 				bch_initial_mark_key(c, 0, k);
-			}
-	}
 }
 
 int bch_journal_replay(struct cache_set *c, struct list_head *list)

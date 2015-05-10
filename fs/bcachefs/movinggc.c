@@ -207,8 +207,7 @@ void bch_moving_gc(struct cache_set *c)
 		for_each_bucket(b, ca) {
 			if (GC_MARK(b) == GC_MARK_METADATA ||
 			    !GC_SECTORS_USED(b) ||
-			    GC_SECTORS_USED(b) == ca->sb.bucket_size ||
-			    atomic_read(&b->pin))
+			    GC_SECTORS_USED(b) == ca->sb.bucket_size)
 				continue;
 
 			if (!heap_full(&ca->heap)) {

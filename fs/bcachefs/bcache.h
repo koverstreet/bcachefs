@@ -193,7 +193,6 @@
 #include "util.h"
 
 struct bucket {
-	atomic_t	pin;
 	uint16_t	prio;
 	uint8_t		gen;
 	uint8_t		last_gc; /* Most out of date gen in the btree */
@@ -491,6 +490,9 @@ struct cache {
 	/* Allocation stuff: */
 	struct bucket		*buckets;
 
+	/* count of currently available buckets */
+	size_t			buckets_free;
+
 	DECLARE_HEAP(struct bucket *, heap);
 
 	/*
@@ -520,7 +522,6 @@ struct gc_stat {
 
 	size_t			nkeys;
 	uint64_t		data;	/* sectors */
-	unsigned		in_use; /* percent */
 };
 
 /*
