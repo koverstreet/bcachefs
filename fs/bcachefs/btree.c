@@ -2255,13 +2255,14 @@ int bch_initial_gc(struct cache_set *c, struct list_head *journal)
  */
 static bool btree_insert_key(struct btree *b, struct keylist *insert_keys,
 			     struct bkey *replace, struct btree_node_iter *iter,
-			     struct bkey *where, struct journal_res *res,
-			     struct closure *flush_cl)
+			     struct journal_res *res, struct closure *flush_cl)
 {
 	struct bkey done, *insert = bch_keylist_front(insert_keys);
 	struct cache_set *c = b->c;
 	BKEY_PADDED(key) temp;
-	unsigned status;
+	unsigned status = BTREE_INSERT_STATUS_NO_INSERT;
+	int newsize, oldsize = bch_count_data(&b->keys);
+	bool do_insert;
 
 	bch_btree_node_iter_verify(&b->keys, iter);
 	BUG_ON(write_block(b) != btree_bset_last(b));
@@ -2276,23 +2277,23 @@ static bool btree_insert_key(struct btree *b, struct keylist *insert_keys,
 		if (bkey_cmp(insert, &b->key) > 0)
 			bch_cut_back(&b->key, insert);
 
-		status = __bch_btree_insert_key(&b->keys, iter, insert,
-						replace, where, &done);
-
+		do_insert = !bch_insert_fixup_extent(b, insert, iter,
+						     replace, &done);
 		bch_cut_front(&done, orig);
 		if (!KEY_SIZE(orig))
 			bch_keylist_pop_front(insert_keys);
 	} else {
 		BUG_ON(bkey_cmp(insert, &b->key) > 0);
 
-		status = __bch_btree_insert_key(&b->keys, iter, insert,
-						replace, where, &done);
-
+		do_insert = !bch_insert_fixup_key(b, insert, iter,
+						  replace, &done);
 		bch_keylist_pop_front(insert_keys);
 	}
 
-	if (status == BTREE_INSERT_STATUS_NO_INSERT)
-		return false;
+	if (!do_insert)
+		goto out;
+
+	status = bch_bset_insert(&b->keys, iter, insert);
 
 	if (!btree_node_dirty(b)) {
 		set_btree_node_dirty(b);
@@ -2316,12 +2317,15 @@ static bool btree_insert_key(struct btree *b, struct keylist *insert_keys,
 				     bch_keylist_empty(insert_keys)
 				     ? flush_cl : NULL);
 	}
-
+out:
+	newsize = bch_count_data(&b->keys);
+	BUG_ON(newsize != -1 && newsize < oldsize);
 	bch_check_keys(&b->keys, "%u for %s", status,
 		       replace ? "replace" : "insert");
 
 	trace_bcache_btree_insert_key(b, insert, replace != NULL, status);
-	return true;
+
+	return status != BTREE_INSERT_STATUS_NO_INSERT;
 }
 
 enum btree_insert_status {
@@ -2345,12 +2349,12 @@ static bool have_enough_space(struct btree *b, struct keylist *insert_keys)
 	return u64s <= bch_btree_keys_u64s_remaining(&b->keys);
 }
 
-static struct bkey *insert_iter_init(struct btree *b,
-				     struct btree_node_iter *iter,
-				     struct bkey *k)
+static void insert_iter_init(struct btree *b,
+			     struct btree_node_iter *iter,
+			     struct bkey *k)
 {
-	return bch_btree_node_iter_init(&b->keys, iter, b->keys.ops->is_extents
-				   ? &START_KEY(k) : k);
+	bch_btree_node_iter_init(&b->keys, iter, b->keys.ops->is_extents
+				 ? &START_KEY(k) : k);
 }
 
 static void verify_keys_sorted(struct keylist *l)
@@ -2386,14 +2390,14 @@ bch_btree_insert_keys(struct btree *b, struct btree_op *op,
 	     attempted = false, need_split = false;
 	struct journal_res res;
 	struct btree_node_iter iter;
-	struct bkey *where, *k = bch_keylist_front(insert_keys);
+	struct bkey *k = bch_keylist_front(insert_keys);
 
 	memset(&res, 0, sizeof(res));
 
 	verify_keys_sorted(insert_keys);
 
 	/* index lookup before locks/journal reservation */
-	where = insert_iter_init(b, &iter, k);
+	insert_iter_init(b, &iter, k);
 
 	while (!done && !bch_keylist_empty(insert_keys)) {
 		unsigned n_min = KEY_U64s(bch_keylist_front(insert_keys));
@@ -2408,10 +2412,9 @@ bch_btree_insert_keys(struct btree *b, struct btree_op *op,
 		    b->keys.last_set_unwritten) {
 			/* just wrote a set */
 			if (bch_btree_init_next(b)) {
-				where = insert_iter_init(b, &iter, k);
+				insert_iter_init(b, &iter, k);
 				op->iterator_invalidated = 1;
-			} else
-				where = btree_bset_last(b)->start;
+			}
 		}
 
 		while (!bch_keylist_empty(insert_keys)) {
@@ -2437,7 +2440,7 @@ bch_btree_insert_keys(struct btree *b, struct btree_op *op,
 
 			attempted = true;
 			if (btree_insert_key(b, insert_keys, replace_key,
-					     &iter, where, &res,
+					     &iter, &res,
 					     bch_keylist_is_last(insert_keys, k)
 					     ? flush_cl : NULL)) {
 				op->iterator_invalidated = 1;

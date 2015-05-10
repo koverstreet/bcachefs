@@ -60,10 +60,10 @@ struct bkey *bch_generic_sort_fixup(struct btree_node_iter *iter,
 	return NULL;
 }
 
-bool bch_generic_insert_fixup(struct btree_keys *b, struct bkey *insert,
-			      struct btree_node_iter *iter,
-			      struct bkey *replace_key,
-			      struct bkey *done)
+bool bch_insert_fixup_key(struct btree *b, struct bkey *insert,
+			  struct btree_node_iter *iter,
+			  struct bkey *replace_key,
+			  struct bkey *done)
 {
 	BUG_ON(replace_key);
 
@@ -75,7 +75,7 @@ bool bch_generic_insert_fixup(struct btree_keys *b, struct bkey *insert,
 
 		if (!bkey_cmp(k, insert) && !KEY_DELETED(k)) {
 			SET_KEY_DELETED(k, 1);
-			b->nr_live_keys -= KEY_U64s(k);
+			b->keys.nr_live_keys -= KEY_U64s(k);
 		}
 
 		bch_btree_node_iter_next_all(iter);
@@ -346,7 +346,6 @@ struct cache *bch_btree_pick_ptr(struct cache_set *c, const struct bkey *k,
 
 const struct btree_keys_ops bch_btree_interior_node_ops = {
 	.sort_fixup	= bch_generic_sort_fixup,
-	.insert_fixup	= bch_generic_insert_fixup,
 
 	.key_invalid	= bch_btree_ptr_invalid,
 	.key_debugcheck	= btree_ptr_debugcheck,
@@ -706,7 +705,7 @@ static bool bkey_cmpxchg(struct cache_set *c,
 	if (bkey_cmp(&START_KEY(k), done) > 0) {
 		/* insert previous partial match: */
 		if (bkey_cmp(done, &START_KEY(new)) > 0)
-			bch_bset_insert_with_hint(b, iter, NULL,
+			bch_bset_insert(b, iter,
 					bch_key_split(done, new));
 
 		bch_cut_subtract_front(c, &START_KEY(k), new);
@@ -717,7 +716,7 @@ static bool bkey_cmpxchg(struct cache_set *c,
 	if (!ret) {
 		/* failed: */
 		if (bkey_cmp(done, &START_KEY(new)) > 0)
-			bch_bset_insert_with_hint(b, iter, NULL,
+			bch_bset_insert(b, iter,
 					bch_key_split(done, new));
 
 		if (bkey_cmp(k, new) > 0)
@@ -762,7 +761,7 @@ static void handle_existing_key_newer(struct cache_set *c,
 		 * Insert the start of @insert ourselves, then update
 		 * @insert to to represent the end.
 		 */
-		bch_bset_insert_with_hint(b, iter, NULL,
+		bch_bset_insert(b, iter,
 				bch_key_split(&START_KEY(k), insert));
 		bch_cut_subtract_front(c, k, insert);
 		break;
@@ -805,13 +804,11 @@ static void handle_existing_key_newer(struct cache_set *c,
  * there may be another 0 size key between them in another bset, and it will
  * thus overlap with the merged key.
  */
-static bool bch_extent_insert_fixup(struct btree_keys *b,
-				    struct bkey *insert,
-				    struct btree_node_iter *iter,
-				    struct bkey *replace_key,
-				    struct bkey *done)
+bool bch_insert_fixup_extent(struct btree *b, struct bkey *insert,
+			     struct btree_node_iter *iter,
+			     struct bkey *replace_key, struct bkey *done)
 {
-	struct cache_set *c = container_of(b, struct btree, keys)->c;
+	struct cache_set *c = b->c;
 	struct bkey *k, *split, orig_insert = *insert;
 
 	BUG_ON(!KEY_SIZE(insert));
@@ -849,7 +846,7 @@ static bool bch_extent_insert_fixup(struct btree_keys *b,
 		 * check if we have space for the insert plus one potential
 		 * split:
 		 */
-		if (bch_btree_keys_u64s_remaining(b) <
+		if (bch_btree_keys_u64s_remaining(&b->keys) <
 		    BKEY_EXTENT_MAX_U64s * 2) {
 			/*
 			 * XXX: would be better to explicitly signal that we
@@ -869,13 +866,13 @@ static bool bch_extent_insert_fixup(struct btree_keys *b,
 		if (!replace_key)
 			*done = bkey_cmp(k, insert) < 0 ? *k : *insert;
 		else if (KEY_SIZE(k) &&
-			 !bkey_cmpxchg(c, b, iter, k, replace_key,
+			 !bkey_cmpxchg(c, &b->keys, iter, k, replace_key,
 				       insert, done))
 			continue;
 
 		if (KEY_SIZE(k) && !KEY_DELETED(insert) &&
 		    KEY_VERSION(insert) < KEY_VERSION(k)) {
-			handle_existing_key_newer(c, b, iter, insert, k);
+			handle_existing_key_newer(c, &b->keys, iter, insert, k);
 			continue;
 		}
 
@@ -895,13 +892,13 @@ static bool bch_extent_insert_fixup(struct btree_keys *b,
 			 * key and we've just changed the end, update the
 			 * auxiliary tree.
 			 */
-			bch_bset_fix_invalidated_key(b, k);
+			bch_bset_fix_invalidated_key(&b->keys, k);
 			break;
 
 		case BCH_EXTENT_OVERLAP_ALL:
 			/* The insert key completely covers k, invalidate k */
 			if (!KEY_DELETED(k))
-				b->nr_live_keys -= KEY_U64s(k);
+				b->keys.nr_live_keys -= KEY_U64s(k);
 
 			bch_drop_subtract(c, k);
 
@@ -915,7 +912,7 @@ static bool bch_extent_insert_fixup(struct btree_keys *b,
 			 * note: peek_overlapping() will think we still overlap,
 			 * so we need the explicit iter_next() call.
 			 */
-			if (!bkey_written(b, k))
+			if (!bkey_written(&b->keys, k))
 				SET_KEY_OFFSET(k, KEY_START(insert));
 
 			bch_btree_node_iter_next_all(iter);
@@ -938,7 +935,7 @@ static bool bch_extent_insert_fixup(struct btree_keys *b,
 			 */
 			split = bch_key_split(&START_KEY(insert), k);
 			bch_cut_subtract_front(c, insert, k);
-			bch_bset_insert_with_hint(b, iter, NULL, split);
+			bch_bset_insert(&b->keys, iter, split);
 			break;
 		}
 	}
@@ -1212,7 +1209,6 @@ static bool bch_extent_merge(struct btree_keys *bk, struct bkey *l, struct bkey 
 
 static const struct btree_keys_ops bch_extent_ops = {
 	.sort_fixup	= bch_extent_sort_fixup,
-	.insert_fixup	= bch_extent_insert_fixup,
 	.key_invalid	= bch_extent_invalid,
 	.key_debugcheck	= bch_extent_debugcheck,
 	.key_normalize	= bch_ptr_normalize,

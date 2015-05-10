@@ -194,9 +194,6 @@ struct bset_tree {
 
 struct btree_keys_ops {
 	struct bkey *	(*sort_fixup)(struct btree_node_iter *, struct bkey *);
-	bool		(*insert_fixup)(struct btree_keys *, struct bkey *,
-					struct btree_node_iter *, struct bkey *,
-					struct bkey *);
 	bool		(*key_invalid)(const struct btree_keys *,
 				       const struct bkey *);
 	void		(*key_debugcheck)(struct btree_keys *,
@@ -324,15 +321,9 @@ void bch_btree_keys_init(struct btree_keys *, const struct btree_keys_ops *,
 void bch_bset_init_next(struct btree_keys *, struct bset *);
 void bch_bset_build_written_tree(struct btree_keys *);
 void bch_bset_fix_invalidated_key(struct btree_keys *, struct bkey *);
-unsigned bch_bset_insert_with_hint(struct btree_keys *,
-				   struct btree_node_iter *,
-				   struct bkey *, struct bkey *);
 
-unsigned __bch_btree_insert_key(struct btree_keys *, struct btree_node_iter *,
-				struct bkey *, struct bkey *,
-				struct bkey *, struct bkey *);
-unsigned bch_btree_insert_key(struct btree_keys *, struct bkey *,
-			      struct bkey *);
+unsigned bch_bset_insert(struct btree_keys *, struct btree_node_iter *,
+			 struct bkey *);
 
 enum {
 	BTREE_INSERT_STATUS_NO_INSERT = 0,
@@ -599,9 +590,8 @@ bch_btree_node_iter_peek_overlapping(struct btree_node_iter *iter,
 
 void bch_btree_node_iter_push(struct btree_node_iter *, struct bkey *,
 			      struct bkey *);
-struct bkey *bch_btree_node_iter_init(struct btree_keys *,
-				      struct btree_node_iter *,
-				      struct bkey *);
+void bch_btree_node_iter_init(struct btree_keys *, struct btree_node_iter *,
+			      struct bkey *);
 
 /*
  * Iterates over all _live_ keys - skipping deleted (and potentially

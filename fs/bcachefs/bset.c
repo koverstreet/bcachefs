@@ -640,6 +640,20 @@ EXPORT_SYMBOL(bch_bset_build_written_tree);
 
 /* Insert */
 
+static struct bkey *bch_btree_node_insert_pos(struct btree_keys *b,
+					      struct btree_node_iter *iter)
+{
+	struct btree_node_iter_set *set;
+
+	for (set = iter->data;
+	     set < iter->data + iter->used;
+	     set++)
+		if (set->k >= b->set[b->nsets].data->start)
+			return set->k;
+
+	return bset_bkey_last(bset_tree_last(b)->data);
+}
+
 /**
  * Used by extent fixup functions which insert entries into the bset.
  * We have to update the iterator's cached ->end pointer.
@@ -758,42 +772,24 @@ static void bch_bset_fix_lookup_table(struct btree_keys *b,
 		}
 }
 
-static void __bch_bset_insert(struct btree_keys *b, struct bkey *where,
-			      struct bkey *insert)
+unsigned bch_bset_insert(struct btree_keys *b,
+			 struct btree_node_iter *iter,
+			 struct bkey *insert)
 {
 	struct bset_tree *t = bset_tree_last(b);
-
-	BUG_ON(where < t->data->start);
-	BUG_ON(where > bset_bkey_last(t->data));
-	BUG_ON(KEY_U64s(insert) > bch_btree_keys_u64s_remaining(b));
-
-	memmove((u64 *) where + KEY_U64s(insert),
-		where,
-		(void *) bset_bkey_last(t->data) - (void *) where);
-
-	bkey_copy(where, insert);
-	t->data->keys += KEY_U64s(insert);
-
-	if (!KEY_DELETED(insert))
-		b->nr_live_keys += KEY_U64s(insert);
-
-	bch_bset_fix_lookup_table(b, t, where);
-}
-
-static unsigned bch_bset_insert(struct btree_keys *b,
-				struct btree_node_iter *iter,
-				struct bkey *where, struct bkey *insert)
-{
-	struct bset *i = bset_tree_last(b)->data;
+	struct bset *i = t->data;
 	struct bkey *prev = NULL;
+	struct bkey *where = bch_btree_node_insert_pos(b, iter);
 	BKEY_PADDED(k) tmp;
 
+	BUG_ON(KEY_U64s(insert) > bch_btree_keys_u64s_remaining(b));
 	BUG_ON(b->ops->is_extents && !KEY_SIZE(insert));
 	BUG_ON(!b->last_set_unwritten);
+	BUG_ON(where < i->start);
+	BUG_ON(where > bset_bkey_last(i));
 
 	while (where != bset_bkey_last(i) &&
-	       bkey_cmp(insert, b->ops->is_extents
-			? &START_KEY(where) : where) > 0)
+	       bkey_cmp(insert, &START_KEY(where)) > 0)
 		prev = where, where = bkey_next(where);
 
 	/* prev is in the tree, if we merge we're done */
@@ -829,66 +825,24 @@ static unsigned bch_bset_insert(struct btree_keys *b,
 		}
 	}
 
-	__bch_bset_insert(b, where, insert);
+	memmove((u64 *) where + KEY_U64s(insert),
+		where,
+		(void *) bset_bkey_last(i) - (void *) where);
+
+	bkey_copy(where, insert);
+	i->keys += KEY_U64s(insert);
+
+	if (!KEY_DELETED(insert))
+		b->nr_live_keys += KEY_U64s(insert);
+
+	bch_bset_fix_lookup_table(b, t, where);
 	bch_btree_node_iter_fix(iter, where, insert);
+
+	bch_btree_node_iter_verify(b, iter);
+
 	return BTREE_INSERT_STATUS_INSERT;
 }
-
-unsigned bch_bset_insert_with_hint(struct btree_keys *b,
-				   struct btree_node_iter *iter,
-				   struct bkey *where,
-				   struct bkey *insert)
-{
-	if (!where || bkey_written(b, where))
-		where = bch_bset_search(b, bset_tree_last(b),
-					&START_KEY(insert));
-
-	return bch_bset_insert(b, iter, where, insert);
-}
-EXPORT_SYMBOL(bch_bset_insert_with_hint);
-
-unsigned __bch_btree_insert_key(struct btree_keys *b,
-				struct btree_node_iter *iter,
-				struct bkey *insert,
-				struct bkey *replace,
-				struct bkey *where, struct bkey *done)
-{
-	int oldsize = bch_count_data(b);
-	unsigned status;
-
-	BUG_ON(b->ops->is_extents && !KEY_SIZE(insert));
-
-	status = b->ops->insert_fixup(b, insert, iter, replace, done)
-		? BTREE_INSERT_STATUS_NO_INSERT
-		: bch_bset_insert(b, iter, where, insert);
-
-	BUG_ON(bch_count_data(b) < oldsize);
-	return status;
-}
-
-/**
- * bch_btree_insert_key - insert a single key @k into @b
- *
- * This does the real work of looking up where to insert, doing the insert, and
- * merging extents if possible. It also handles replace (cmpxchg) insertions
- * when @replace_key != NULL; the insert might fail (and return
- * BTREE_INSERT_STATUS_NO_INSERT) if @replace_key wasn't present, or if
- * @replace_key was only partially present @k will be modified to represent what
- * was actually inserted.
- */
-unsigned bch_btree_insert_key(struct btree_keys *b, struct bkey *insert,
-			      struct bkey *replace)
-{
-	struct bkey *where;
-	struct btree_node_iter iter;
-	struct bkey done;
-
-	where = bch_btree_node_iter_init(b, &iter, b->ops->is_extents
-				    ? &START_KEY(insert) : insert);
-
-	return __bch_btree_insert_key(b, &iter, insert, replace, where, &done);
-}
-EXPORT_SYMBOL(bch_btree_insert_key);
+EXPORT_SYMBOL(bch_bset_insert);
 
 /* Lookup */
 
@@ -1054,13 +1008,11 @@ void bch_btree_node_iter_push(struct btree_node_iter *iter, struct bkey *k,
 				 iter_cmp(iter)));
 }
 
-static struct bkey *__bch_btree_node_iter_init(struct btree_keys *b,
-					       struct btree_node_iter *iter,
-					       struct bkey *search,
-					       struct bset_tree *start)
+static void __bch_btree_node_iter_init(struct btree_keys *b,
+				       struct btree_node_iter *iter,
+				       struct bkey *search,
+				       struct bset_tree *start)
 {
-	struct bkey *ret = NULL;
-
 	iter->size = ARRAY_SIZE(iter->data);
 	iter->used = 0;
 	iter->is_extents = b->ops->is_extents;
@@ -1069,20 +1021,17 @@ static struct bkey *__bch_btree_node_iter_init(struct btree_keys *b,
 	iter->b = b;
 #endif
 
-	for (; start <= bset_tree_last(b); start++) {
-		ret = bch_bset_search(b, start, search);
-		bch_btree_node_iter_push(iter, ret,
+	for (; start <= bset_tree_last(b); start++)
+		bch_btree_node_iter_push(iter,
+					 bch_bset_search(b, start, search),
 					 bset_bkey_last(start->data));
-	}
-
-	return ret;
 }
 
-struct bkey *bch_btree_node_iter_init(struct btree_keys *b,
-				      struct btree_node_iter *iter,
-				      struct bkey *search)
+void bch_btree_node_iter_init(struct btree_keys *b,
+			      struct btree_node_iter *iter,
+			      struct bkey *search)
 {
-	return __bch_btree_node_iter_init(b, iter, search, b->set);
+	__bch_btree_node_iter_init(b, iter, search, b->set);
 }
 EXPORT_SYMBOL(bch_btree_node_iter_init);
 
