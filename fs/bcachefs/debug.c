@@ -26,7 +26,7 @@ static struct dentry *debug;
 
 #define for_each_written_bset(b, start, i)				\
 	for (i = (start);						\
-	     (void *) i < (void *) (start) + (KEY_SIZE(&b->key) << 9) &&\
+	     (void *) i < (void *) (start) + btree_bytes(b->c) &&\
 	     i->seq == (start)->seq;					\
 	     i = (void *) i + set_blocks(i, block_bytes(b->c)) *	\
 		 block_bytes(b->c))
@@ -57,14 +57,14 @@ void bch_btree_verify(struct btree *b)
 	bio = bch_bbio_alloc(b->c);
 	bio->bi_bdev		= ca->bdev;
 	bio->bi_iter.bi_sector	= PTR_OFFSET(&b->key, 0);
-	bio->bi_iter.bi_size	= KEY_SIZE(&v->key) << 9;
+	bio->bi_iter.bi_size	= btree_bytes(b->c);
 	bio_set_op_attrs(bio, REQ_OP_READ, REQ_META|READ_SYNC);
 	bch_bio_map(bio, sorted);
 
 	submit_bio_wait(bio);
 	bch_bbio_free(bio, b->c);
 
-	memcpy(ondisk, sorted, KEY_SIZE(&v->key) << 9);
+	memcpy(ondisk, sorted, btree_bytes(b->c));
 
 	bch_btree_node_read_done(v, ca, 0);
 	sorted = v->keys.set->data;

@@ -277,6 +277,7 @@ static void bch_bkey_dump(struct btree_keys *keys, const struct bkey *k)
 bool __bch_btree_ptr_invalid(struct cache_set *c, const struct bkey *k)
 {
 	return (KEY_CACHED(k) ||
+		KEY_SIZE(k) ||
 		(!KEY_DELETED(k) && !bch_extent_ptrs(k)) ||
 		__ptr_invalid(c, k));
 }

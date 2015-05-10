@@ -176,14 +176,14 @@ static inline size_t btree_bytes(struct cache_set *c)
 	return c->btree_pages * PAGE_SIZE;
 }
 
-static inline unsigned btree_blocks(struct btree *b)
+static inline unsigned btree_sectors(struct cache_set *c)
 {
-	return KEY_SIZE(&b->key) >> b->c->block_bits;
+	return c->btree_pages * PAGE_SECTORS;
 }
 
-static inline unsigned btree_default_blocks(struct cache_set *c)
+static inline unsigned btree_blocks(struct cache_set *c)
 {
-	return (PAGE_SECTORS * c->btree_pages) >> c->block_bits;
+	return btree_sectors(c) >> c->block_bits;
 }
 
 /* Looping macros */

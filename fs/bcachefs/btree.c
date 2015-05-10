@@ -210,7 +210,7 @@ static bool bch_btree_init_next(struct btree *b)
 	if (nsets && !b->keys.nsets)
 		bch_btree_verify(b);
 
-	if (b->written < btree_blocks(b)) {
+	if (b->written < btree_blocks(b->c)) {
 		struct bset *i = write_block(b);
 
 		bch_bset_init_next(&b->keys, i);
@@ -243,13 +243,14 @@ static u64 btree_csum_set(struct btree *b, struct bset *i)
 
 void bch_btree_node_read_done(struct btree *b, struct cache *ca, unsigned ptr)
 {
+	struct cache_set *c = b->c;
 	const char *err = "bad btree header";
 	struct bset *i = btree_bset_first(b);
 	struct btree_iter *iter;
 	struct bkey *k;
 
 	iter = mempool_alloc(b->c->fill_iter, GFP_NOIO);
-	iter->size = b->c->sb.bucket_size / b->c->sb.block_size;
+	iter->size = btree_blocks(c);
 	iter->used = 0;
 	iter->is_extents = b->keys.ops->is_extents;
 
@@ -261,20 +262,20 @@ void bch_btree_node_read_done(struct btree *b, struct cache *ca, unsigned ptr)
 		goto err;
 
 	for (;
-	     b->written < btree_blocks(b) && i->seq == b->keys.set[0].data->seq;
+	     b->written < btree_blocks(c) && i->seq == b->keys.set[0].data->seq;
 	     i = write_block(b)) {
-		b->written += set_blocks(i, block_bytes(b->c));
+		b->written += set_blocks(i, block_bytes(c));
 
 		err = "unsupported bset version";
 		if (i->version != BCACHE_BSET_VERSION)
 			goto err;
 
 		err = "bad btree header";
-		if (b->written > btree_blocks(b))
+		if (b->written > btree_blocks(c))
 			goto err;
 
 		err = "bad magic";
-		if (i->magic != bset_magic(&b->c->sb))
+		if (i->magic != bset_magic(&c->sb))
 			goto err;
 
 		err = "unknown checksum type";
@@ -330,12 +331,12 @@ void bch_btree_node_read_done(struct btree *b, struct cache *ca, unsigned ptr)
 
 	err = "corrupted btree";
 	for (i = write_block(b);
-	     bset_sector_offset(&b->keys, i) < KEY_SIZE(&b->key);
-	     i = ((void *) i) + block_bytes(b->c))
+	     bset_sector_offset(&b->keys, i) < btree_sectors(c);
+	     i = ((void *) i) + block_bytes(c))
 		if (i->seq == b->keys.set[0].data->seq)
 			goto err;
 
-	bch_btree_sort_and_fix_extents(&b->keys, iter, NULL, &b->c->sort);
+	bch_btree_sort_and_fix_extents(&b->keys, iter, NULL, &c->sort);
 
 	i = b->keys.set[0].data;
 	err = "short btree key";
@@ -344,7 +345,7 @@ void bch_btree_node_read_done(struct btree *b, struct cache *ca, unsigned ptr)
 		goto err;
 
 out:
-	mempool_free(iter, b->c->fill_iter);
+	mempool_free(iter, c->fill_iter);
 	return;
 err:
 	set_btree_node_io_error(b);
@@ -376,7 +377,7 @@ static void bch_btree_node_read(struct btree *b)
 	}
 
 	bio = to_bbio(bch_bbio_alloc(b->c));
-	bio->bio.bi_iter.bi_size	= KEY_SIZE(&b->key) << 9;
+	bio->bio.bi_iter.bi_size	= btree_bytes(b->c);
 	bio->bio.bi_end_io		= btree_node_read_endio;
 	bio->bio.bi_private		= &cl;
 	bio_set_op_attrs(&bio->bio, REQ_OP_READ, REQ_META|READ_SYNC);
@@ -543,8 +544,8 @@ static void __bch_btree_node_write(struct btree *b, struct closure *parent)
 
 	trace_bcache_btree_write(b);
 
-	BUG_ON(b->written >= btree_blocks(b));
-	BUG_ON(b->written + blocks_to_write > btree_blocks(b));
+	BUG_ON(b->written >= btree_blocks(b->c));
+	BUG_ON(b->written + blocks_to_write > btree_blocks(b->c));
 	BUG_ON(b->written && !i->keys);
 	BUG_ON(btree_bset_first(b)->seq != i->seq);
 	bch_check_keys(&b->keys, "writing");
@@ -735,18 +736,9 @@ static void mca_bucket_free(struct btree *b)
 	list_move(&b->list, &b->c->btree_cache_freeable);
 }
 
-static unsigned btree_order(struct bkey *k)
+static void mca_data_alloc(struct btree *b, gfp_t gfp)
 {
-	return ilog2(KEY_SIZE(k) / PAGE_SECTORS ?: 1);
-}
-
-static void mca_data_alloc(struct btree *b, struct bkey *k, gfp_t gfp)
-{
-	if (!bch_btree_keys_alloc(&b->keys,
-				  max_t(unsigned,
-					ilog2(b->c->btree_pages),
-					btree_order(k)),
-				  gfp)) {
+	if (!bch_btree_keys_alloc(&b->keys, ilog2(b->c->btree_pages), gfp)) {
 		b->c->btree_cache_used++;
 		list_move(&b->list, &b->c->btree_cache);
 	} else {
@@ -754,8 +746,7 @@ static void mca_data_alloc(struct btree *b, struct bkey *k, gfp_t gfp)
 	}
 }
 
-static struct btree *mca_bucket_alloc(struct cache_set *c,
-				      struct bkey *k, gfp_t gfp)
+static struct btree *mca_bucket_alloc(struct cache_set *c, gfp_t gfp)
 {
 	struct btree *b = kzalloc(sizeof(struct btree), gfp);
 	if (!b)
@@ -767,7 +758,7 @@ static struct btree *mca_bucket_alloc(struct cache_set *c,
 	b->c = c;
 	sema_init(&b->io_mutex, 1);
 
-	mca_data_alloc(b, k, gfp);
+	mca_data_alloc(b, gfp);
 	return b;
 }
 
@@ -775,7 +766,7 @@ static struct btree *mca_bucket_alloc(struct cache_set *c,
  * this version is for btree nodes that have already been freed (we're not
  * reaping a real btree node)
  */
-static int mca_reap_notrace(struct btree *b, unsigned min_order, bool flush)
+static int mca_reap_notrace(struct btree *b, bool flush)
 {
 	struct closure cl;
 
@@ -789,9 +780,6 @@ static int mca_reap_notrace(struct btree *b, unsigned min_order, bool flush)
 		goto out_unlock_intent;
 
 	BUG_ON(btree_node_dirty(b) && !b->keys.set[0].data);
-
-	if (b->keys.page_order < min_order)
-		goto out_unlock;
 
 	if (!flush) {
 		if (btree_node_dirty(b))
@@ -819,9 +807,9 @@ out_unlock_intent:
 	return -ENOMEM;
 }
 
-static int mca_reap(struct btree *b, unsigned min_order, bool flush)
+static int mca_reap(struct btree *b, bool flush)
 {
-	int ret = mca_reap_notrace(b, min_order, flush);
+	int ret = mca_reap_notrace(b, flush);
 
 	trace_bcache_mca_reap(b, ret);
 	return ret;
@@ -864,7 +852,7 @@ static unsigned long bch_mca_scan(struct shrinker *shrink,
 			break;
 
 		if (++i > 3 &&
-		    !mca_reap_notrace(b, 0, false)) {
+		    !mca_reap_notrace(b, false)) {
 			mca_data_free(b);
 			six_unlock_write(&b->lock);
 			six_unlock_intent(&b->lock);
@@ -880,7 +868,7 @@ static unsigned long bch_mca_scan(struct shrinker *shrink,
 		list_rotate_left(&c->btree_cache);
 
 		if (!b->accessed &&
-		    !mca_reap(b, 0, false)) {
+		    !mca_reap(b, false)) {
 			mca_bucket_free(b);
 			mca_data_free(b);
 			six_unlock_write(&b->lock);
@@ -970,7 +958,7 @@ int bch_btree_cache_alloc(struct cache_set *c)
 	bch_recalc_btree_reserve(c);
 
 	for (i = 0; i < c->btree_cache_reserve; i++)
-		if (!mca_bucket_alloc(c, &ZERO_KEY, GFP_KERNEL))
+		if (!mca_bucket_alloc(c, GFP_KERNEL))
 			return -ENOMEM;
 
 	list_splice_init(&c->btree_cache,
@@ -982,7 +970,7 @@ int bch_btree_cache_alloc(struct cache_set *c)
 	c->verify_ondisk = (void *)
 		__get_free_pages(GFP_KERNEL, ilog2(bucket_pages(c)));
 
-	c->verify_data = mca_bucket_alloc(c, &ZERO_KEY, GFP_KERNEL);
+	c->verify_data = mca_bucket_alloc(c, GFP_KERNEL);
 
 	if (c->verify_data &&
 	    c->verify_data->keys.set->data)
@@ -1029,8 +1017,7 @@ static int mca_cannibalize_lock(struct cache_set *c, struct closure *cl)
 	return 0;
 }
 
-static struct btree *mca_cannibalize(struct cache_set *c, struct bkey *k,
-				     struct closure *cl)
+static struct btree *mca_cannibalize(struct cache_set *c, struct closure *cl)
 {
 	struct btree *b;
 	int ret;
@@ -1042,11 +1029,11 @@ static struct btree *mca_cannibalize(struct cache_set *c, struct bkey *k,
 	trace_bcache_mca_cannibalize(c, cl);
 
 	list_for_each_entry_reverse(b, &c->btree_cache, list)
-		if (!mca_reap(b, btree_order(k), false))
+		if (!mca_reap(b, false))
 			goto out;
 
 	list_for_each_entry_reverse(b, &c->btree_cache, list)
-		if (!mca_reap(b, btree_order(k), true))
+		if (!mca_reap(b, true))
 			goto out;
 
 	WARN(1, "btree cache cannibalize failed\n");
@@ -1085,22 +1072,22 @@ static struct btree *mca_alloc(struct cache_set *c, struct bkey *k, int level,
 	 * the list. Check if there's any freed nodes there:
 	 */
 	list_for_each_entry(b, &c->btree_cache_freeable, list)
-		if (!mca_reap_notrace(b, btree_order(k), false))
+		if (!mca_reap_notrace(b, false))
 			goto out;
 
 	/* We never free struct btree itself, just the memory that holds the on
 	 * disk node. Check the freed list before allocating a new one:
 	 */
 	list_for_each_entry(b, &c->btree_cache_freed, list)
-		if (!mca_reap_notrace(b, 0, false)) {
-			mca_data_alloc(b, k, __GFP_NOWARN|GFP_NOIO);
+		if (!mca_reap_notrace(b, false)) {
+			mca_data_alloc(b, __GFP_NOWARN|GFP_NOIO);
 			if (!b->keys.set[0].data)
 				goto err;
 			else
 				goto out;
 		}
 
-	b = mca_bucket_alloc(c, k, __GFP_NOWARN|GFP_NOIO);
+	b = mca_bucket_alloc(c, __GFP_NOWARN|GFP_NOIO);
 	if (!b)
 		goto err;
 
@@ -1137,7 +1124,7 @@ err:
 		six_unlock_intent(&b->lock);
 	}
 
-	b = mca_cannibalize(c, k, cl);
+	b = mca_cannibalize(c, cl);
 	if (!IS_ERR(b))
 		goto out;
 
@@ -1373,7 +1360,7 @@ retry:
 				 &c->cache_all, NULL))
 		goto err;
 
-	SET_KEY_SIZE(&k.key, c->btree_pages * PAGE_SECTORS);
+	BUG_ON(KEY_SIZE(&k.key));
 
 	b = mca_alloc(c, &k.key, level, id, NULL);
 	if (IS_ERR(b))
@@ -1655,7 +1642,7 @@ static int btree_gc_coalesce(struct btree *b, struct btree_op *op,
 			     struct gc_stat *gc, struct gc_merge_info *r)
 {
 	unsigned i, nodes, old_nodes, keys = 0;
-	unsigned blocks = btree_default_blocks(b->c) * 2 / 3;
+	unsigned blocks = btree_blocks(b->c) * 2 / 3;
 	struct btree *new_nodes[GC_MERGE_NODES];
 	struct keylist keylist;
 	struct closure cl;
@@ -2527,7 +2514,7 @@ static int btree_split(struct btree *b, struct btree_op *op,
 	 * insert, which we just did above)
 	 */
 
-	if (set_blocks(set1, block_bytes(n1->c)) > btree_blocks(b) * 3 / 4) {
+	if (set_blocks(set1, block_bytes(n1->c)) > btree_blocks(b->c) * 3 / 4) {
 		trace_bcache_btree_node_split(b, set1->keys);
 
 		n2 = bch_btree_node_alloc(b->c, op, b->level,
@@ -3012,8 +2999,7 @@ static int bch_btree_map_keys_recurse(struct btree *b, struct btree_op *op,
 		 * for extents (which are half open intervals) this all works
 		 * out magically, but for non extents we need to pass b->key + 1
 		 */
-		struct bkey next = KEY(KEY_INODE(&b->key),
-				       KEY_OFFSET(&b->key), 0);
+		struct bkey next = b->key;
 
 		if (b->btree_id != BTREE_ID_EXTENTS &&
 		    bkey_cmp(&b->key, &MAX_KEY))
