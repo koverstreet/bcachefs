@@ -433,41 +433,23 @@ static struct attribute *bch_flash_dev_files[] = {
 };
 KTYPE(bch_flash_dev);
 
-struct bset_stats_op {
-	struct btree_op op;
-	size_t nodes;
-	struct bset_stats stats;
-};
-
-static int bch_btree_bset_stats(struct btree_op *b_op, struct btree *b)
-{
-	struct bset_stats_op *op = container_of(b_op, struct bset_stats_op, op);
-
-	op->nodes++;
-	bch_btree_keys_stats(&b->keys, &op->stats);
-
-	return MAP_CONTINUE;
-}
-
 static int bch_bset_print_stats(struct cache_set *c, char *buf)
 {
-	struct bset_stats_op op;
-	unsigned id;
-	int ret;
+	struct bset_stats stats;
+	size_t nodes = 0;
+	struct btree *b;
+	struct bucket_table *tbl;
+	struct rhash_head *pos;
+	unsigned iter;
 
-	memset(&op, 0, sizeof(op));
+	memset(&stats, 0, sizeof(stats));
 
-	for (id = 0; id < BTREE_ID_NR; id++) {
-		bch_btree_op_init(&op.op, id, -1);
-
-		if (c->btree_roots[id]) {
-			ret = bch_btree_map_nodes(&op.op, c, NULL,
-						  bch_btree_bset_stats,
-						  MAP_ALL_NODES);
-			if (ret < 0)
-				return ret;
-		}
+	rcu_read_lock();
+	for_each_cached_btree(b, c, tbl, iter, pos) {
+		bch_btree_keys_stats(&b->keys, &stats);
+		nodes++;
 	}
+	rcu_read_unlock();
 
 	return snprintf(buf, PAGE_SIZE,
 			"btree nodes:		%zu\n"
@@ -477,10 +459,10 @@ static int bch_bset_print_stats(struct cache_set *c, char *buf)
 			"unwritten key bytes:	%zu\n"
 			"floats:			%zu\n"
 			"failed:			%zu\n",
-			op.nodes,
-			op.stats.sets_written, op.stats.sets_unwritten,
-			op.stats.bytes_written, op.stats.bytes_unwritten,
-			op.stats.floats, op.stats.failed);
+			nodes,
+			stats.sets_written, stats.sets_unwritten,
+			stats.bytes_written, stats.bytes_unwritten,
+			stats.floats, stats.failed);
 }
 
 static unsigned bch_root_usage(struct cache_set *c)

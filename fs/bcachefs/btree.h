@@ -276,13 +276,8 @@ int bch_btree_cache_alloc(struct cache_set *);
 #define MAP_DONE	0  /* We're done */
 #define MAP_CONTINUE	1  /* Continue and advance the iterator */
 
-/* Only map_nodes */
-#define MAP_ALL_NODES	0
-#define MAP_LEAF_NODES	1
-
-/* Only map_keys */
-#define MAP_HOLES	1
-
+/* Values for @flags parameter to map_nodes and map_keys */
+#define MAP_HOLES	1  /* Only map_keys */
 #define MAP_ASYNC	2
 
 typedef int (btree_map_nodes_fn)(struct btree_op *, struct btree *);

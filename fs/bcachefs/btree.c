@@ -2865,7 +2865,7 @@ static int bch_btree_map_nodes_recurse(struct btree *b, struct btree_op *op,
 		}
 	}
 
-	if (!level || (flags & MAP_ALL_NODES)) {
+	if (!level) {
 		ret = fn(op, b);
 
 		if (ret == MAP_CONTINUE && op->iterator_invalidated)
