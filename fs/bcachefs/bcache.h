@@ -540,26 +540,19 @@ struct cache_set {
 	struct list_head	list;
 	struct kobject		kobj;
 	struct kobject		internal;
-	struct dentry		*debug;
-	struct cache_accounting accounting;
-
 	unsigned long		flags;
 
-	struct cache_sb		sb;
-
 	struct cache		*cache[MAX_CACHES_PER_SET];
-	struct cache		*cache_by_alloc[MAX_CACHES_PER_SET];
 	int			caches_loaded;
 
-	struct bcache_device	**devices;
-	struct list_head	cached_devs;
-	uint64_t		cached_dev_sectors;
-	struct closure		caching;
+	struct cache_sb		sb;
+	size_t			nbuckets;
+	unsigned short		bucket_bits;	/* ilog2(bucket_size) */
+	unsigned short		block_bits;	/* ilog2(block_size) */
 
 	struct closure		sb_write;
 	struct semaphore	sb_write_mutex;
 
-	mempool_t		*search;
 	mempool_t		*bio_meta;
 	struct bio_set		*bio_split;
 
@@ -567,30 +560,18 @@ struct cache_set {
 	struct work_struct	bio_submit_work;
 	spinlock_t		bio_submit_lock;
 
-	/* For the btree cache */
-	struct shrinker		shrink;
-
-	/* For the btree cache and anything allocation related */
-	struct mutex		bucket_lock;
-
-	/* log2(bucket_size), in sectors */
-	unsigned short		bucket_bits;
-
-	/* log2(block_size), in sectors */
-	unsigned short		block_bits;
-
+	/* BTREE CACHE */
 	/*
 	 * Default number of pages for a new btree node - may be less than a
 	 * full bucket
 	 */
 	unsigned		btree_pages;
 
+	struct btree		*root;
+
 	struct rhashtable	btree_cache_table;
 
 	/*
-	 * Lists of struct btrees; lru is the list for structs that have memory
-	 * allocated for actual btree node, freed is for structs that do not.
-	 *
 	 * We never free a struct btree, except on shutdown - we just put it on
 	 * the btree_cache_freed list and reuse it later. This simplifies the
 	 * code, and it doesn't cost us much memory as the memory usage is
@@ -610,6 +591,7 @@ struct cache_set {
 
 	/* Number of elements in btree_cache + btree_cache_freeable lists */
 	unsigned		btree_cache_used;
+	struct shrinker		btree_cache_shrink;
 
 	/*
 	 * If we need to allocate memory for a new btree node and that
@@ -619,6 +601,11 @@ struct cache_set {
 	 */
 	wait_queue_head_t	btree_cache_wait;
 	struct task_struct	*btree_cache_alloc_lock;
+
+	/* ALLOCATION */
+	struct cache		*cache_by_alloc[MAX_CACHES_PER_SET];
+	struct mutex		bucket_lock;
+	wait_queue_head_t	bucket_wait;
 
 	/*
 	 * When we free a btree node, we increment the gen of the bucket the
@@ -631,7 +618,6 @@ struct cache_set {
 	 * written.
 	 */
 	atomic_t		prio_blocked;
-	wait_queue_head_t	bucket_wait;
 
 	/*
 	 * For any bio we don't skip we subtract the number of sectors from
@@ -646,15 +632,16 @@ struct cache_set {
 	 */
 	uint16_t		min_prio;
 
-	/*
-	 * max(gen - last_gc) for all buckets. When it gets too big we have to gc
-	 * to keep gens from wrapping around.
-	 */
-	uint8_t			need_gc;
-	struct gc_stat		gc_stats;
-	size_t			nbuckets;
+	/* SECTOR ALLOCATOR */
+	struct list_head	data_buckets;
+	spinlock_t		data_bucket_lock;
 
+	/* GARBAGE COLLECTION */
 	struct task_struct	*gc_thread;
+
+	/* Counts how many sectors bch_data_insert has added to the cache */
+	atomic_t		sectors_until_gc;
+
 	/* Where in the btree gc currently is */
 	struct bkey		gc_done;
 
@@ -664,18 +651,21 @@ struct cache_set {
 	 */
 	int			gc_mark_valid;
 
-	/* Counts how many sectors bio_insert has added to the cache */
-	atomic_t		sectors_to_gc;
+	/*
+	 * max(gen - last_gc) for all buckets. When it gets too big we have to
+	 * gc to keep gens from wrapping around.
+	 */
+	u8			need_gc;
+	struct gc_stat		gc_stats;
 
-	wait_queue_head_t	moving_gc_wait;
+	/* MOVING GC */
+	struct workqueue_struct	*moving_gc_wq;
 	struct keybuf		moving_gc_keys;
 	/* Number of moving GC bios in flight */
 	struct semaphore	moving_in_flight;
 
-	struct workqueue_struct	*moving_gc_wq;
-
-	struct btree		*root;
-
+	/* DEBUG JUNK */
+	struct dentry		*debug;
 #ifdef CONFIG_BCACHEFS_DEBUG
 	struct btree		*verify_data;
 	struct bset		*verify_ondisk;
@@ -696,11 +686,14 @@ struct cache_set {
 
 	struct bset_sort_state	sort;
 
-	/* List of buckets we're currently writing data to */
-	struct list_head	data_buckets;
-	spinlock_t		data_bucket_lock;
-
 	struct journal		journal;
+
+	/* CACHING OTHER BLOCK DEVICES */
+	mempool_t		*search;
+	struct bcache_device	**devices;
+	struct list_head	cached_devs;
+	u64			cached_dev_sectors;
+	struct closure		caching;
 
 #define CONGESTED_MAX		1024
 	unsigned		congested_last_us;
@@ -714,6 +707,7 @@ struct cache_set {
 	struct time_stats	btree_split_time;
 	struct time_stats	btree_read_time;
 
+	struct cache_accounting accounting;
 	atomic_long_t		cache_read_races;
 	atomic_long_t		writeback_keys_done;
 	atomic_long_t		writeback_keys_failed;

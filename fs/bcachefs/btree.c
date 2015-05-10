@@ -683,7 +683,8 @@ out_unlock:
 static unsigned long bch_mca_scan(struct shrinker *shrink,
 				  struct shrink_control *sc)
 {
-	struct cache_set *c = container_of(shrink, struct cache_set, shrink);
+	struct cache_set *c = container_of(shrink, struct cache_set,
+					   btree_cache_shrink);
 	struct btree *b, *t;
 	unsigned long i, nr = sc->nr_to_scan;
 	unsigned long freed = 0;
@@ -747,7 +748,8 @@ out:
 static unsigned long bch_mca_count(struct shrinker *shrink,
 				   struct shrink_control *sc)
 {
-	struct cache_set *c = container_of(shrink, struct cache_set, shrink);
+	struct cache_set *c = container_of(shrink, struct cache_set,
+					   btree_cache_shrink);
 
 	if (c->shrinker_disabled)
 		return 0;
@@ -764,8 +766,8 @@ void bch_btree_cache_free(struct cache_set *c)
 	struct closure cl;
 	closure_init_stack(&cl);
 
-	if (c->shrink.list.next)
-		unregister_shrinker(&c->shrink);
+	if (c->btree_cache_shrink.list.next)
+		unregister_shrinker(&c->btree_cache_shrink);
 
 	mutex_lock(&c->btree_cache_lock);
 
@@ -832,11 +834,11 @@ int bch_btree_cache_alloc(struct cache_set *c)
 		c->verify_data = NULL;
 #endif
 
-	c->shrink.count_objects = bch_mca_count;
-	c->shrink.scan_objects = bch_mca_scan;
-	c->shrink.seeks = 4;
-	c->shrink.batch = c->btree_pages * 2;
-	register_shrinker(&c->shrink);
+	c->btree_cache_shrink.count_objects = bch_mca_count;
+	c->btree_cache_shrink.scan_objects = bch_mca_scan;
+	c->btree_cache_shrink.seeks = 4;
+	c->btree_cache_shrink.batch = c->btree_pages * 2;
+	register_shrinker(&c->btree_cache_shrink);
 
 	return 0;
 }
