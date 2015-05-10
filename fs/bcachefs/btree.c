@@ -89,10 +89,20 @@ static int __bch_btree_insert_node(struct btree *, struct btree_op *,
  * call you again and you'll have the correct lock.
  */
 
+static inline bool btree_node_read_locked(struct btree_op *op, int level)
+{
+	return test_bit(level, (void *) &op->locks_read);
+}
+
+static inline bool btree_node_intent_locked(struct btree_op *op, int level)
+{
+	return test_bit(level, (void *) &op->locks_intent);
+}
+
 static inline bool btree_node_locked(struct btree_op *op, int level)
 {
-	return test_bit(level, (void *) &op->locks_intent) ||
-		test_bit(level, (void *) &op->locks_read);
+	return btree_node_read_locked(op, level) ||
+		btree_node_intent_locked(op, level);
 }
 
 static inline bool btree_want_intent(struct btree_op *op, int level)
@@ -113,10 +123,12 @@ static void btree_node_unlock(struct btree_op *op, struct btree *b, int level)
 	bool _raced;							\
 									\
 	six_lock_##type(&(b)->lock);					\
-	if ((_raced = ((check_if_raced) || ((b)->level != _level))))	\
+	if ((_raced = ((check_if_raced) || ((b)->level != _level)))) {	\
 		six_unlock_##type(&(b)->lock);				\
-	else								\
-		__set_bit(_level, (void *) &op->locks_##type);		\
+	} else {							\
+		__set_bit(_level, (void *) &(op)->locks_##type);	\
+		(op)->lock_seq[_level] = (b)->lock.state.seq;		\
+	}								\
 									\
 	!_raced;							\
 })
@@ -125,6 +137,46 @@ static void btree_node_unlock(struct btree_op *op, struct btree *b, int level)
 	(btree_want_intent(op, level)					\
 	 ? __btree_node_lock(b, op, level, check_if_raced, intent)	\
 	 : __btree_node_lock(b, op, level, check_if_raced, read))
+
+#define __btree_node_relock(b, op, _level, type)			\
+({									\
+	bool _locked = six_relock_##type(&(b)->lock,			\
+					 (op)->lock_seq[_level]);	\
+									\
+	if (_locked)							\
+		__set_bit((_level), (void *) &(op)->locks_##type);	\
+									\
+	_locked;							\
+})
+
+static bool btree_node_relock(struct btree *b, struct btree_op *op,
+			      unsigned level)
+{
+	return btree_node_locked(op, level) ||
+		(btree_want_intent(op, level)
+		 ? __btree_node_relock(b, op, level, intent)
+		 : __btree_node_relock(b, op, level, read));
+}
+
+static int btree_lock_upgrade(struct btree *b, struct btree_op *op,
+			      unsigned level)
+{
+	if (btree_node_intent_locked(op, level))
+		return 0;
+
+	if (btree_node_read_locked(op, level)
+	    ? six_trylock_convert(&b->lock, read, intent)
+	    : six_relock_intent(&b->lock, op->lock_seq[level])) {
+		__clear_bit(level, (void *) &op->locks_read);
+		__set_bit(level, (void *) &op->locks_intent);
+
+		trace_bcache_btree_upgrade_lock(b, op);
+		return 0;
+	}
+
+	trace_bcache_btree_upgrade_lock_fail(b, op);
+	return -EINTR;
+}
 
 /**
  * btree - recurse down the btree on a specified key
@@ -1174,17 +1226,16 @@ retry:
 			BUG_ON(!six_trylock_convert(&b->lock, intent, read));
 		}
 	} else {
-		if (level == op->locks_want) {
-			struct btree *p, *n;
-			BKEY_PADDED(k) tmp;
+		BKEY_PADDED(k) tmp;
 
-			/*
-			 * k points into the parent, which we're about to
-			 * unlock, so save us a copy
-			 */
-			bkey_copy(&tmp.k, k);
-			k = &tmp.k;
+		/*
+		 * k points into the parent which we're about to
+		 * unlock, so save us a copy
+		 */
+		bkey_copy(&tmp.k, k);
+		k = &tmp.k;
 
+		if (btree_node_read_locked(op, level + 1)) {
 			/*
 			 * There's a potential deadlock with splits and
 			 * insertions into interior nodes we have to avoid:
@@ -1214,17 +1265,14 @@ retry:
 			 * btree nodes.
 			 */
 
-			for (p = parent; p; p = n) {
-				n = p->parent;
-				btree_node_unlock(op, p, p->level);
-			}
-
+			btree_node_unlock(op, parent, level + 1);
 			dropped_locks = true;
 		}
 
 		if (!btree_node_lock(b, op, level,
 				     (PTR_HASH(&b->key) != PTR_HASH(k)))) {
-			if (dropped_locks) {
+			if (dropped_locks &&
+			    !btree_node_relock(parent, op, level + 1)) {
 				trace_bcache_btree_intent_lock_fail(b, op);
 				return ERR_PTR(-EINTR);
 			}
@@ -2449,7 +2497,7 @@ static int btree_split(struct btree *b, struct btree_op *op,
 	enum btree_insert_status status;
 	int ret;
 
-	BUG_ON(!btree_node_locked(op, btree_node_root(b)->level));
+	BUG_ON(!btree_node_intent_locked(op, btree_node_root(b)->level));
 
 	/* After this check we cannot return -EAGAIN anymore */
 	ret = btree_check_reserve(b, op, 0);
@@ -2629,25 +2677,6 @@ static int btree_split(struct btree *b, struct btree_op *op,
 	return 0;
 }
 
-static int btree_lock_upgrade(struct btree *b, struct btree_op *op)
-{
-	if (!test_bit(b->level, (void *) &op->locks_intent)) {
-		BUG_ON(!test_bit(b->level, (void *) &op->locks_read));
-
-		if (!six_trylock_convert(&b->lock, read, intent)) {
-			op->locks_want = b->level;
-			trace_bcache_btree_upgrade_lock_fail(b, op);
-			return -EINTR;
-		}
-
-		__clear_bit(b->level, (void *) &op->locks_read);
-		__set_bit(b->level, (void *) &op->locks_intent);
-		trace_bcache_btree_upgrade_lock(b, op);
-	}
-
-	return 0;
-}
-
 static int __bch_btree_insert_node(struct btree *b, struct btree_op *op,
 				   struct keylist *insert_keys,
 				   struct bkey *replace_key,
@@ -2655,31 +2684,17 @@ static int __bch_btree_insert_node(struct btree *b, struct btree_op *op,
 				   struct keylist *split_keys,
 				   struct closure *stack_cl)
 {
-	struct btree *p;
-	int level;
-
-	if (btree_lock_upgrade(b, op))
+	if (btree_lock_upgrade(b, op, b->level))
 		return -EINTR;
 
 	BUG_ON(b->level && replace_key);
 	BUG_ON(!b->written);
 
-	/*
-	 * Release any read locks we are holding on parent nodes, so that if
-	 * we block in bch_journal_res_get(), other threads who are holding
-	 * intent locks can take a write lock on the root if there is a new
-	 * root
-	 */
-	for (p = b->parent, level = b->level + 1;
-	     p;
-	     p = p->parent, level++) {
-		if (!__test_and_clear_bit(level, (void *) &op->locks_read))
-			break;
-		six_unlock_read(&p->lock);
-	}
-
 	if (bch_btree_insert_keys(b, op, insert_keys, replace_key,
 				  flush_cl) == BTREE_INSERT_NEED_SPLIT) {
+		struct btree *p;
+		int level;
+
 		/*
 		 * Check if we have intent locks on all parent nodes, if not
 		 * try again
@@ -2687,7 +2702,7 @@ static int __bch_btree_insert_node(struct btree *b, struct btree_op *op,
 		for (p = b->parent, level = b->level + 1;
 		     p;
 		     p = p->parent, level++)
-			if (!test_bit(level, (void *) &op->locks_intent)) {
+			if (!btree_node_intent_locked(op, level)) {
 				op->locks_want = btree_node_root(b)->level + 1;
 				return -EINTR;
 			}
@@ -2850,7 +2865,7 @@ static int bch_btree_map_nodes_recurse(struct btree *b, struct btree_op *op,
 			if (ret != MAP_CONTINUE)
 				return ret;
 
-			if (!btree_node_locked(op, level))
+			if (!btree_node_relock(b, op, level))
 				return -EINTR;
 
 			if (ret == MAP_CONTINUE && need_resched())
@@ -2990,7 +3005,7 @@ static int bch_btree_map_keys_recurse(struct btree *b, struct btree_op *op,
 		if (ret != MAP_CONTINUE)
 			goto out;
 
-		if (!btree_node_locked(op, level)) {
+		if (!btree_node_relock(b, op, level)) {
 			ret = -EINTR;
 			goto out;
 		}

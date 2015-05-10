@@ -196,8 +196,17 @@ static inline unsigned btree_blocks(struct cache_set *c)
 
 /* Recursing down the btree */
 
+#define BTREE_MAX_DEPTH		4
+
 struct btree_op {
 	struct closure		cl;
+
+	/*
+	 * Sequence number of the corresponding btree node's six lock. Used so
+	 * that we can unlock, and then relock later iff the btree node hasn't
+	 * been modified in the meantime.
+	 */
+	u32			lock_seq[BTREE_MAX_DEPTH];
 
 	/* Bitmasks for intent/read locks held per level */
 	u8			locks_intent;
