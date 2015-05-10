@@ -1487,6 +1487,7 @@ struct cache_set *bch_cache_set_alloc(struct cache_sb *sb)
 				       BTREE_MAX_PAGES);
 
 	sema_init(&c->sb_write_mutex, 1);
+	mutex_init(&c->btree_cache_lock);
 	mutex_init(&c->bucket_lock);
 	init_waitqueue_head(&c->btree_cache_wait);
 	init_waitqueue_head(&c->bucket_wait);

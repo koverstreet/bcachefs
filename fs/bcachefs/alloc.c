@@ -457,12 +457,12 @@ void bch_bucket_free(struct cache_set *c, struct bkey *k)
 				  PTR_BUCKET(c, k, i));
 }
 
-int __bch_bucket_alloc_set(struct cache_set *c, unsigned reserve,
-			   struct bkey *k, int n, bool wait)
+int bch_bucket_alloc_set(struct cache_set *c, unsigned reserve,
+			 struct bkey *k, int n, bool wait)
 {
 	int i;
 
-	lockdep_assert_held(&c->bucket_lock);
+	mutex_lock(&c->bucket_lock);
 	BUG_ON(!n || n > c->caches_loaded || n > 8);
 
 	bkey_init(k);
@@ -483,21 +483,13 @@ int __bch_bucket_alloc_set(struct cache_set *c, unsigned reserve,
 		SET_KEY_PTRS(k, i + 1);
 	}
 
+	mutex_unlock(&c->bucket_lock);
 	return 0;
 err:
 	bch_bucket_free(c, k);
+	mutex_unlock(&c->bucket_lock);
 	bkey_put(c, k);
 	return -1;
-}
-
-int bch_bucket_alloc_set(struct cache_set *c, unsigned reserve,
-			 struct bkey *k, int n, bool wait)
-{
-	int ret;
-	mutex_lock(&c->bucket_lock);
-	ret = __bch_bucket_alloc_set(c, reserve, k, n, wait);
-	mutex_unlock(&c->bucket_lock);
-	return ret;
 }
 
 /* Sector allocator */

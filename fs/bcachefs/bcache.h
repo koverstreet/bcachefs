@@ -603,6 +603,7 @@ struct cache_set {
 	 * common to delete and allocate btree nodes in quick succession. It
 	 * should never grow past ~2-3 nodes in practice.
 	 */
+	struct mutex		btree_cache_lock;
 	struct list_head	btree_cache;
 	struct list_head	btree_cache_freeable;
 	struct list_head	btree_cache_freed;
@@ -943,8 +944,6 @@ void __bch_bucket_free(struct cache *, struct bucket *);
 void bch_bucket_free(struct cache_set *, struct bkey *);
 
 long bch_bucket_alloc(struct cache *, unsigned, bool);
-int __bch_bucket_alloc_set(struct cache_set *, unsigned,
-			   struct bkey *, int, bool);
 int bch_bucket_alloc_set(struct cache_set *, unsigned,
 			 struct bkey *, int, bool);
 bool bch_alloc_sectors(struct cache_set *, struct bkey *, unsigned,

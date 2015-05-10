@@ -644,7 +644,7 @@ static int mca_reap(struct btree *b, unsigned min_order, bool flush)
 	struct closure cl;
 
 	closure_init_stack(&cl);
-	lockdep_assert_held(&b->c->bucket_lock);
+	lockdep_assert_held(&b->c->btree_cache_lock);
 
 	if (!down_write_trylock(&b->lock))
 		return -ENOMEM;
@@ -696,8 +696,8 @@ static unsigned long bch_mca_scan(struct shrinker *shrink,
 
 	/* Return -1 if we can't do anything right now */
 	if (sc->gfp_mask & __GFP_IO)
-		mutex_lock(&c->bucket_lock);
-	else if (!mutex_trylock(&c->bucket_lock))
+		mutex_lock(&c->btree_cache_lock);
+	else if (!mutex_trylock(&c->btree_cache_lock))
 		return -1;
 
 	/*
@@ -740,7 +740,7 @@ static unsigned long bch_mca_scan(struct shrinker *shrink,
 			b->accessed = 0;
 	}
 out:
-	mutex_unlock(&c->bucket_lock);
+	mutex_unlock(&c->btree_cache_lock);
 	return freed;
 }
 
@@ -767,7 +767,7 @@ void bch_btree_cache_free(struct cache_set *c)
 	if (c->shrink.list.next)
 		unregister_shrinker(&c->shrink);
 
-	mutex_lock(&c->bucket_lock);
+	mutex_lock(&c->btree_cache_lock);
 
 #ifdef CONFIG_BCACHEFS_DEBUG
 	if (c->verify_data)
@@ -798,7 +798,7 @@ void bch_btree_cache_free(struct cache_set *c)
 	}
 
 	rhashtable_destroy(&c->btree_cache_table);
-	mutex_unlock(&c->bucket_lock);
+	mutex_unlock(&c->btree_cache_lock);
 }
 
 int bch_btree_cache_alloc(struct cache_set *c)
@@ -908,12 +908,12 @@ static void bch_cannibalize_unlock(struct cache_set *c)
 static struct btree *mca_alloc(struct cache_set *c, struct btree_op *op,
 			       struct bkey *k, int level)
 {
-	struct btree *b;
+	struct btree *b = NULL;
 
-	lockdep_assert_held(&c->bucket_lock);
+	mutex_lock(&c->btree_cache_lock);
 
 	if (mca_find(c, k))
-		return NULL;
+		goto out_unlock;
 
 	/* btree_free() doesn't free memory; it sticks the node on the end of
 	 * the list. Check if there's any freed nodes there:
@@ -963,6 +963,8 @@ out:
 		bch_btree_keys_init(&b->keys, &bch_btree_keys_ops,
 				    &b->c->expensive_debug_checks);
 
+out_unlock:
+	mutex_unlock(&c->btree_cache_lock);
 	return b;
 err:
 	if (b)
@@ -972,7 +974,7 @@ err:
 	if (!IS_ERR(b))
 		goto out;
 
-	return b;
+	goto out_unlock;
 }
 
 /**
@@ -1001,10 +1003,7 @@ retry:
 		if (current->bio_list)
 			return ERR_PTR(-EAGAIN);
 
-		mutex_lock(&c->bucket_lock);
 		b = mca_alloc(c, op, k, level);
-		mutex_unlock(&c->bucket_lock);
-
 		if (!b)
 			goto retry;
 		if (IS_ERR(b))
@@ -1048,10 +1047,7 @@ static void btree_node_prefetch(struct btree *parent, struct bkey *k)
 {
 	struct btree *b;
 
-	mutex_lock(&parent->c->bucket_lock);
 	b = mca_alloc(parent->c, NULL, k, parent->level - 1);
-	mutex_unlock(&parent->c->bucket_lock);
-
 	if (!IS_ERR_OR_NULL(b)) {
 		b->parent = parent;
 		bch_btree_node_read(b);
@@ -1079,8 +1075,11 @@ static void btree_node_free(struct btree *b)
 
 	mutex_lock(&b->c->bucket_lock);
 	bch_bucket_free(b->c, &b->key);
-	mca_bucket_free(b);
 	mutex_unlock(&b->c->bucket_lock);
+
+	mutex_lock(&b->c->btree_cache_lock);
+	mca_bucket_free(b);
+	mutex_unlock(&b->c->btree_cache_lock);
 }
 
 struct btree *__bch_btree_node_alloc(struct cache_set *c, struct btree_op *op,
@@ -1089,10 +1088,8 @@ struct btree *__bch_btree_node_alloc(struct cache_set *c, struct btree_op *op,
 {
 	BKEY_PADDED(key) k;
 	struct btree *b = ERR_PTR(-EAGAIN);
-
-	mutex_lock(&c->bucket_lock);
 retry:
-	if (__bch_bucket_alloc_set(c, RESERVE_BTREE, &k.key, 1, wait))
+	if (bch_bucket_alloc_set(c, RESERVE_BTREE, &k.key, 1, wait))
 		goto err;
 
 	bkey_put(c, &k.key);
@@ -1112,15 +1109,13 @@ retry:
 	b->parent = parent;
 	bch_bset_init_next(&b->keys, b->keys.set->data, bset_magic(&b->c->sb));
 
-	mutex_unlock(&c->bucket_lock);
-
 	trace_bcache_btree_node_alloc(b);
 	return b;
 err_free:
+	mutex_lock(&c->bucket_lock);
 	bch_bucket_free(c, &k.key);
-err:
 	mutex_unlock(&c->bucket_lock);
-
+err:
 	trace_bcache_btree_node_alloc_fail(c);
 	return b;
 }
@@ -2419,9 +2414,9 @@ void bch_btree_set_root(struct btree *b)
 	for (i = 0; i < KEY_PTRS(&b->key); i++)
 		BUG_ON(PTR_BUCKET(b->c, &b->key, i)->prio != BTREE_PRIO);
 
-	mutex_lock(&b->c->bucket_lock);
+	mutex_lock(&b->c->btree_cache_lock);
 	list_del_init(&b->list);
-	mutex_unlock(&b->c->bucket_lock);
+	mutex_unlock(&b->c->btree_cache_lock);
 
 	b->c->root = b;
 
