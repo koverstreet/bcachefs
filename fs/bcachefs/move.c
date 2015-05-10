@@ -777,162 +777,61 @@ out:
 	return ret;
 }
 
-struct btree_move {
-	struct btree_op	op;	/* Tree traversal info */
-	unsigned	dev;	/* Device to move btree from */
-	unsigned	err;	/* Something went awry */
-	unsigned	seen;	/* How many were examined */
-	unsigned	found;	/* How many were found. */
-	unsigned	moved;	/* How many were moved. */
-	struct bkey	start;	/* Where to re-start walk */
-};
-
-#define MOVE_DEBUG	0
-
 /*
- * Note: btree_map_nodes implements a post-order traversal,
- * i.e. the children of this node have already been processed.
- */
-
-static int move_btree_off_fn(struct btree_op *op, struct btree *b)
-{
-	unsigned i;
-	struct bkey *k = &b->key;
-	struct btree_move *mov = container_of(op, struct btree_move, op);
-
-	mov->seen += 1;
-
-	if (MOVE_DEBUG) {
-		char buf[256];
-
-		(void) bch_bkey_to_text(buf, sizeof(buf), k);
-		pr_notice("Examining bkey %s (%u pointers)",
-			  buf, bch_extent_ptrs(k));
-		for (i = 0; i < bch_extent_ptrs(k); i++)
-			pr_notice("device %u", ((unsigned) PTR_DEV(k, i)));
-	}
-
-	for (i = 0; i < bch_extent_ptrs(k); i++)
-		if (PTR_DEV(k, i) == mov->dev)
-			goto found;
-
-	/* Not found */
-	return MAP_CONTINUE;
-
-found:
-	mov->found += 1;
-
-	if (btree_move_node(b, op)) {
-		mov->moved += 1;
-		return MAP_CONTINUE;
-	}
-
-	/*
-	 * Assume failure due to inability to allocate space.
-	 * Remember where to start again, and punt.
-	 * btree_move_node has already made op.cl wait in the bucket
-	 * freelist.
-	 */
-	mov->start = START_KEY(k);
-	return MAP_DONE;
-}
-
-/*
- * This walks the btree without walking the leaves, and for any
- * pointer to a node in the relevant device, it moves the interior
+ * This walks the btree, and for any node on the relevant device it moves the
  * node elsewhere.
- *
- * Note: If the number of meta-data replicas desired is > 1, ideally,
- * any new copies would not be made in the same device that already
- * have a copy (if there are enough devices).
- *
- * This is _not_ currently implemented.  The multiple replicas can
- * land in the same device even if there are others available.
  */
-
-/*
- * Note: Since this intent-locks the whole btree (including the root),
- * perhaps we want to do something similar to btree gc, and
- * periodically give up, to prevent foreground writes from being
- * stalled for a long time.
- */
-
 static int bch_move_btree_off(struct cache *ca,
 			      enum btree_id id,
 			      const char *name)
 {
-	int val, ret;
 	unsigned pass;
-	struct bkey start;
-	struct btree_move mov;
 
-	if (MOVE_DEBUG) {
-		/* Debugging */
-		pr_notice("Moving %s btree off device %u",
-			  name, ca->sb.nr_this_dev);
-	}
+	pr_debug("Moving %s btree off device %u",
+		 name, ca->sb.nr_this_dev);
 
 	for (pass = 0; (pass < MAX_DATA_OFF_ITER); pass++) {
-		bch_btree_op_init(&mov.op, id, S8_MAX);
-		mov.dev = ca->sb.nr_this_dev;
-		mov.err = mov.seen = mov.found = mov.moved = 0;
-		mov.start = ZERO_KEY;
+		struct btree_iter iter;
+		struct btree *b;
+		unsigned i, moved = 0, seen = 0;
+		int ret;
 
-		while (1) {
-			start = mov.start;
-			mov.start = MAX_KEY;
-			val = bch_btree_map_nodes(&mov.op,
-						  ca->set,
-						  &start,
-						  move_btree_off_fn,
-						  (MAP_ASYNC
-						   |MAP_ALL_NODES));
+		for_each_btree_node(&iter, ca->set, id, NULL, b) {
+			seen++;
+retry:
+			for (i = 0; i < bch_extent_ptrs(&b->key); i++)
+				if (PTR_DEV(&b->key, i) == ca->sb.nr_this_dev)
+					goto move;
 
-			/*
-			 * Actually wait on the bucket freelist.
-			 * The call to closure_wait is all the way in
-			 * __btree_check_reserve called (eventually)
-			 * by btree_move_node when there aren't enough
-			 * buckets available.
-			 * That way, we wait after unlocking the tree,
-			 * rather than in the guts, with the tree
-			 * write-locked.
-			 * Note that if we didn't fail to allocate, we
-			 * won't wait at all, since we won't be in the
-			 * waitlist.
-			 */
-			closure_sync(&mov.op.cl);
-
-			if (val < 0) {
-				ret = 1; /* Failure */
-				break;
-			} else if (bkey_cmp(&mov.start, &MAX_KEY) == 0) {
-				ret = 0; /* Success */
-				break;
+			continue;
+move:
+			if (bch_btree_node_rewrite(b, &iter, true)) {
+				/*
+				 * Drop locks to upgrade locks or wait on
+				 * reserve: after retaking, recheck in case we
+				 * raced.
+				 */
+				bch_btree_iter_unlock(&iter);
+				b = bch_btree_iter_peek_node(&iter);
+				goto retry;
 			}
+
+			moved++;
+			iter.op.locks_want = -1;
 		}
+		ret = bch_btree_iter_unlock(&iter);
+		if (ret)
+			return ret; /* btree IO error */
 
-		if (MOVE_DEBUG) {
-			/* Debugging */
-			pr_notice("%s pass %u: seen %u, found %u, moved %u.",
-				  name, pass, mov.seen, mov.found, mov.moved);
+		if (!moved)
+			return 0;
 
-			if (mov.moved != 0)
-				pr_notice("moved %u %s nodes in pass %u.",
-					  mov.moved, name, pass);
-		}
-
-		if (ret != 0)
-			pr_err("pass %u: Unable to move %s meta-data in %pU.",
-			       pass, name, ca->set->sb.set_uuid.b);
-		else if (mov.found == 0)
-			break;
+		pr_debug("%s pass %u: seen %u, moved %u.",
+			 name, pass, seen, moved);
 	}
 
-	if (mov.found != 0)
-		ret = -1;	/* We don't know if we succeeded */
-
-	return ret;
+	/* Failed: */
+	return -1;
 }
 
 /*

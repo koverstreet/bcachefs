@@ -398,6 +398,8 @@ int bch_btree_insert_node(struct btree *, struct btree_op *, struct keylist *,
 			  struct bch_replace_info *,
 			  struct closure *, enum alloc_reserve);
 
+int bch_btree_node_rewrite(struct btree *, struct btree_iter *, bool);
+
 int bch_gc_thread_start(struct cache_set *);
 int bch_initial_gc(struct cache_set *, struct list_head *);
 u8 bch_btree_mark_last_gc(struct cache_set *, struct bkey *);
@@ -461,7 +463,5 @@ static inline bool gc_will_visit_node(struct cache_set *c,
 
 	return ret;
 }
-
-bool btree_move_node(struct btree *, struct btree_op *);
 
 #endif
