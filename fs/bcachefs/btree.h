@@ -199,18 +199,22 @@ static inline void set_gc_sectors(struct cache_set *c)
 struct btree_op {
 	struct closure		cl;
 
-	enum btree_id		id;
+	/* Bitmasks for intent/read locks held per level */
+	u8			locks_intent;
+	u8			locks_read;
 
-	/* For allocating new nodes */
-	enum alloc_reserve	reserve;
+	/* Btree level below which we start taking intent locks */
+	s8			locks_want;
 
-	/* Btree level at which we start taking write locks */
-	short			lock;
+	enum btree_id		id:8;
+
+	unsigned		iterator_invalidated:1;
 
 	/* State used by btree insertion is also stored here for convenience */
-	u8			iterator_invalidated;
-
 	unsigned		insert_collision:1;
+
+	/* For allocating new nodes */
+	u8			reserve;
 };
 
 /**
@@ -228,7 +232,7 @@ static inline void __bch_btree_op_init(struct btree_op *op, enum btree_id id,
 {
 	op->id = id;
 	op->reserve = reserve;
-	op->lock = write_lock_level;
+	op->locks_want = write_lock_level;
 	op->iterator_invalidated = 0;
 	op->insert_collision = 0;
 }
@@ -243,10 +247,9 @@ static inline void bch_btree_op_init(struct btree_op *op, enum btree_id id,
 	__bch_btree_op_init(op, id, id, write_lock_level);
 }
 
-static inline void rw_lock(bool w, struct btree *b, int level)
+static inline void rw_lock(bool w, struct btree *b)
 {
-	w ? down_write_nested(&b->lock, level + 1)
-	  : down_read_nested(&b->lock, level + 1);
+	w ? down_write(&b->lock) : down_read(&b->lock);
 	if (w)
 		b->seq++;
 }

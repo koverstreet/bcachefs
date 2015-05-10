@@ -431,7 +431,7 @@ static unsigned bch_root_usage(struct cache_set *c)
 		rw_unlock(false, b);
 lock_root:
 		b = c->btree_roots[BTREE_ID_EXTENTS];
-		rw_lock(false, b, b->level);
+		rw_lock(false, b);
 	} while (b != c->btree_roots[BTREE_ID_EXTENTS]);
 
 	for_each_key_filter(&b->keys, k, &iter, bch_ptr_bad)

@@ -92,8 +92,6 @@
 #define MAX_NEED_GC		64
 #define MAX_SAVE_PRIO		72
 
-#define insert_lock(s, b)	((b)->level <= (s)->lock)
-
 /*
  * These macros are for recursing down the btree - they handle the details of
  * locking and looking up nodes in the cache for you. They're best treated as
@@ -105,6 +103,38 @@
  * call you again and you'll have the correct lock.
  */
 
+static inline bool btree_want_intent(struct btree_op *op, int level)
+{
+	return level <= op->locks_want;
+}
+
+static void btree_node_unlock(struct btree_op *op, struct btree *b, int level)
+{
+	if (__test_and_clear_bit(level, (void *) &op->locks_intent)) {
+		b->seq++;
+		up_write(&b->lock);
+	} else if (__test_and_clear_bit(level, (void *) &op->locks_read))
+		up_read(&b->lock);
+}
+
+#define __btree_node_lock(b, op, _level, check_if_raced, type, var)	\
+({									\
+	bool _raced;							\
+									\
+	down_##type(&(b)->lock);					\
+	if ((_raced = ((check_if_raced) || ((b)->level != _level))))	\
+		up_##type(&(b)->lock);					\
+	else								\
+		__set_bit(_level, (void *) &op->locks_##var);		\
+									\
+	!_raced;							\
+})
+
+#define btree_node_lock(b, op, level, check_if_raced)			\
+	(btree_want_intent(op, level)					\
+	 ? __btree_node_lock(b, op, level, check_if_raced, write, intent)\
+	 : __btree_node_lock(b, op, level, check_if_raced, read, read))
+
 /**
  * btree - recurse down the btree on a specified key
  * @fn:		function to call, which will be passed the child node
@@ -115,12 +145,12 @@
 #define btree(fn, key, b, op, ...)					\
 ({									\
 	int _r, l = (b)->level - 1;					\
-	bool _w = l <= (op)->lock;					\
-	struct btree *_child = bch_btree_node_get((b)->c, op, key, l,	\
-						  _w, b);		\
+	struct btree *_child;						\
+									\
+	_child = bch_btree_node_get((b)->c, op, key, l, b);		\
 	if (!IS_ERR(_child)) {						\
-		_r = bch_btree_ ## fn(_child, op, ##__VA_ARGS__);	\
-		rw_unlock(_w, _child);					\
+		_r = bch_btree_##fn(_child, op, ##__VA_ARGS__);		\
+		btree_node_unlock(op, _child, l);			\
 	} else								\
 		_r = PTR_ERR(_child);					\
 	_r;								\
@@ -135,18 +165,23 @@
  */
 #define btree_root(fn, c, op, async, ...)				\
 ({									\
-	int _r = -EINTR;						\
+	int _l, _r = -EINTR;						\
+									\
 	while (1) {							\
-		struct btree *_b = (c)->btree_roots[(op)->id];		\
-		bool _w = insert_lock(op, _b);				\
-		rw_lock(_w, _b, _b->level);				\
-		if (_b == (c)->btree_roots[(op)->id] &&			\
-		    _w == insert_lock(op, _b)) {			\
-			_r = bch_btree_ ## fn(_b, op, ##__VA_ARGS__);	\
-		}							\
-		rw_unlock(_w, _b);					\
-		bch_cannibalize_unlock(c);				\
+		struct btree *_b;					\
+									\
+		(op)->locks_intent	= 0;				\
+		(op)->locks_read	= 0;				\
 		(op)->iterator_invalidated = 0;				\
+									\
+		_b = (c)->btree_roots[(op)->id];			\
+		_l = _b->level;						\
+		if (btree_node_lock(_b, (op), _l,			\
+				(_b != (c)->btree_roots[(op)->id]))) {	\
+			_r = bch_btree_ ## fn(_b, (op), ##__VA_ARGS__);	\
+			btree_node_unlock((op), _b, _l);		\
+		}							\
+		bch_cannibalize_unlock(c);				\
 		if (_r == -EINTR)					\
 			continue;					\
 		else if (!(async) && _r == -EAGAIN)			\
@@ -1024,8 +1059,7 @@ err:
  */
 static struct btree *bch_btree_node_get(struct cache_set *c,
 					struct btree_op *op, struct bkey *k,
-					int level, bool write,
-					struct btree *parent)
+					int level, struct btree *parent)
 {
 	int i = 0;
 	struct btree *b;
@@ -1049,14 +1083,17 @@ retry:
 		bch_btree_node_read(b);
 		mutex_unlock(&b->write_lock);
 
-		if (!write)
+		if (btree_want_intent(op, level)) {
+			__set_bit(level, (void *) &op->locks_intent);
+		} else {
+			__set_bit(level, (void *) &op->locks_read);
 			downgrade_write(&b->lock);
-	} else {
-		rw_lock(write, b, level);
-		if (PTR_HASH(&b->key) != PTR_HASH(k)) {
-			rw_unlock(write, b);
-			goto retry;
 		}
+	} else {
+		if (!btree_node_lock(b, op, level,
+				     (PTR_HASH(&b->key) != PTR_HASH(k))))
+			goto retry;
+
 		BUG_ON(b->level != level);
 	}
 
@@ -1072,7 +1109,7 @@ retry:
 		prefetch(b->keys.set[i].data);
 
 	if (btree_node_io_error(b)) {
-		rw_unlock(write, b);
+		btree_node_unlock(op, b, level);
 		return ERR_PTR(-EIO);
 	}
 
@@ -1239,7 +1276,7 @@ int bch_btree_root_alloc(struct cache_set *c, enum btree_id id,
 	struct btree_op op;
 	struct btree *b;
 
-	bch_btree_op_init(&op, id, SHRT_MAX);
+	bch_btree_op_init(&op, id, S8_MAX);
 
 	while (__btree_check_reserve(c, id, 1, &op.cl))
 		closure_sync(&op.cl);
@@ -1264,9 +1301,9 @@ int bch_btree_root_read(struct cache_set *c, enum btree_id id,
 	struct btree_op op;
 	struct btree *b;
 
-	bch_btree_op_init(&op, id, SHRT_MAX);
+	bch_btree_op_init(&op, id, S8_MAX);
 
-	while (IS_ERR(b = bch_btree_node_get(c, &op, k, level, true, NULL))) {
+	while (IS_ERR(b = bch_btree_node_get(c, &op, k, level, NULL))) {
 		if (PTR_ERR(b) == -EAGAIN)
 			closure_sync(&op.cl);
 		else if (PTR_ERR(b) == -EINTR)
@@ -1276,7 +1313,7 @@ int bch_btree_root_read(struct cache_set *c, enum btree_id id,
 	}
 
 	list_del_init(&b->list);
-	rw_unlock(true, b);
+	btree_node_unlock(&op, b, b->level);
 
 	c->btree_roots[id] = b;
 
@@ -1648,8 +1685,7 @@ static int btree_gc_recurse(struct btree *b, struct btree_op *op,
 	while (1) {
 		k = bch_btree_iter_next_filter(&iter, &b->keys, bch_ptr_bad);
 		if (k) {
-			r->b = bch_btree_node_get(b->c, op, k, b->level - 1,
-						  true, b);
+			r->b = bch_btree_node_get(b->c, op, k, b->level - 1, b);
 			if (IS_ERR(r->b)) {
 				/* XXX: handle IO error better */
 				ret = PTR_ERR(r->b);
@@ -1836,7 +1872,7 @@ static void bch_btree_gc(struct cache_set *c)
 		int ret = 0;
 
 		/* Write lock all nodes */
-		bch_btree_op_init(&op, id, SHRT_MAX);
+		bch_btree_op_init(&op, id, S8_MAX);
 
 		if (c->btree_roots[id]) {
 			ret = btree_root(gc_root, c, &op, false, &stats);
@@ -1972,7 +2008,7 @@ int bch_btree_check(struct cache_set *c)
 	int ret;
 
 	for (id = 0; id < BTREE_ID_NR; id++) {
-		bch_btree_op_init(&op, id, SHRT_MAX);
+		bch_btree_op_init(&op, id, S8_MAX);
 
 		if (c->btree_roots[id]) {
 			ret = btree_root(check_recurse, c, &op, false);
@@ -2474,9 +2510,10 @@ int bch_btree_insert_node(struct btree *b, struct btree_op *op,
 
 		/* The first time this is called, we don't have a write lock
 		 * on the parent yet, so update op->lock and start again. */
-		if (op->lock <= btree_node_root(b)->level) {
+		if (!test_bit(btree_node_root(b)->level,
+			      (void *) &op->locks_intent)) {
 			trace_bcache_btree_upgrade_lock_fail(b, op);
-			op->lock = btree_node_root(b)->level + 1;
+			op->locks_want = btree_node_root(b)->level + 1;
 			return -EINTR;
 		} else {
 			return btree_split(b, op, insert_keys,
@@ -2502,23 +2539,24 @@ int bch_btree_insert_node(struct btree *b, struct btree_op *op,
 int bch_btree_insert_check_key(struct btree *b, struct btree_op *op,
 			       struct bkey *check_key)
 {
-	int ret = -EINTR;
 	u64 btree_ptr = b->key.val[0];
 	unsigned long seq = b->seq;
 	struct keylist insert;
-	bool upgrade = op->lock == -1;
 
 	bch_keylist_init(&insert);
 
-	if (upgrade) {
+	if (!test_bit(b->level, (void *) &op->locks_intent)) {
 		rw_unlock(false, b);
-		rw_lock(true, b, b->level);
+		rw_lock(true, b);
+		__clear_bit(b->level, (void *) &op->locks_read);
+		__set_bit(b->level, (void *) &op->locks_intent);
 
 		if (b->key.val[0] != btree_ptr ||
 		    b->seq != seq + 1) {
+			op->locks_want = b->level;
 			trace_bcache_btree_upgrade_lock_fail(b, op);
-			op->lock = b->level;
-			goto out;
+			op->locks_want = b->level;
+			return -EINTR;
 		}
 
 		trace_bcache_btree_upgrade_lock(b, op);
@@ -2532,11 +2570,7 @@ int bch_btree_insert_check_key(struct btree *b, struct btree_op *op,
 
 	bch_keylist_add(&insert, check_key);
 
-	ret = bch_btree_insert_node(b, op, &insert, NULL, false);
-out:
-	if (upgrade)
-		downgrade_write(&b->lock);
-	return ret;
+	return bch_btree_insert_node(b, op, &insert, NULL, false);
 }
 
 struct btree_insert_op {
@@ -2574,7 +2608,7 @@ int bch_btree_insert(struct cache_set *c, enum btree_id id,
 	op.replace_key	= replace_key;
 
 	while (!ret && !bch_keylist_empty(keys)) {
-		op.op.lock = 0;
+		op.op.locks_want = 0;
 		ret = bch_btree_map_nodes(&op.op, c,
 			       id == BTREE_ID_EXTENTS
 					  ? &START_KEY(keys->keys)

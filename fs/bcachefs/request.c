@@ -150,7 +150,7 @@ static void __bch_data_insert_keys(struct closure *cl)
 	int ret = 0;
 
 	while (!ret && !bch_keylist_empty(keys)) {
-		op->op.lock = 0;
+		op->op.locks_want = 0;
 		ret = bch_btree_map_nodes(&op->op, op->c,
 					  &START_KEY(keys->keys),
 					  btree_insert_fn,
