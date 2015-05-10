@@ -184,16 +184,10 @@ struct bset_tree {
 
 struct btree_keys_ops {
 	struct bkey *	(*sort_fixup)(struct btree_node_iter *, struct bkey *);
-	bool		(*key_invalid)(const struct btree_keys *,
-				       const struct bkey *);
-	void		(*key_debugcheck)(struct btree_keys *,
-					  const struct bkey *);
 
 	bool		(*key_normalize)(struct btree_keys *, struct bkey *);
 	bool		(*key_merge)(struct btree_keys *,
 				     struct bkey *, struct bkey *);
-	void		(*val_to_text)(const struct btree_keys *, char *,
-				       size_t, const struct bkey *);
 
 	/*
 	 * Only used for deciding whether to use bkey_start_pos(k) or just the
@@ -330,30 +324,6 @@ void bch_bset_insert(struct btree_keys *, struct btree_node_iter *,
 static inline struct bkey *bset_bkey_idx(struct bset *i, unsigned idx)
 {
 	return bkey_idx(i, idx);
-}
-
-static inline bool bkey_invalid(struct btree_keys *b, struct bkey *k)
-{
-	return b->ops->key_invalid(b, k);
-}
-
-static inline void bkey_debugcheck(struct btree_keys *b, struct bkey *k)
-{
-	if (b->ops->key_debugcheck)
-		b->ops->key_debugcheck(b, k);
-}
-
-static inline void bch_bkey_val_to_text(struct btree_keys *b, char *buf,
-					size_t size, const struct bkey *k)
-{
-	char *out = buf, *end = buf + size;
-
-	out += bch_bkey_to_text(out, end - out, k);
-
-	if (b->ops->val_to_text) {
-		out += scnprintf(out, end - out, " -> ");
-		b->ops->val_to_text(b, out, end - out, k);
-	}
 }
 
 /*

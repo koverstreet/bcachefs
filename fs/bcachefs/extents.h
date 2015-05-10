@@ -15,14 +15,14 @@ bool bch_insert_fixup_key(struct btree *,
 			  struct bpos *,
 			  struct journal_res *);
 
+extern const struct bkey_ops bch_bkey_btree_ops;
+extern const struct bkey_ops bch_bkey_extent_ops;
+
 extern const struct btree_keys_ops bch_btree_interior_node_ops;
 extern const struct btree_keys_ops *bch_btree_ops[];
 
 struct bkey;
 struct cache_set;
-
-bool __bch_btree_ptr_invalid(const struct cache_set *, const struct bkey *);
-bool __bch_extent_invalid(const struct cache_set *, const struct bkey *);
 
 struct cache *bch_btree_pick_ptr(struct cache_set *, const struct bkey *,
 				 const struct bch_extent_ptr **);
@@ -133,6 +133,5 @@ void bch_bkey_copy_single_ptr(struct bkey *, const struct bkey *,
 bool bch_cut_front(struct bpos, struct bkey *);
 bool bch_cut_back(struct bpos, struct bkey *);
 void bch_key_resize(struct bkey *, unsigned);
-void bch_insert_check_key(struct btree_keys *, struct bkey *);
 
 #endif /* _BCACHE_EXTENTS_H */

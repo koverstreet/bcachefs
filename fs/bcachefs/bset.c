@@ -21,12 +21,12 @@
 void bch_dump_bset(struct btree_keys *b, struct bset *i, unsigned set)
 {
 	struct bkey *k, *next;
-	char buf[160];
+	char buf[80];
 
 	for (k = i->start; k < bset_bkey_last(i); k = next) {
 		next = bkey_next(k);
 
-		bch_bkey_val_to_text(b, buf, sizeof(buf), k);
+		bch_bkey_to_text(buf, sizeof(buf), k);
 		printk(KERN_ERR "block %u key %u/%u: %s\n", set,
 		       (unsigned) ((u64 *) k - i->_data), i->keys, buf);
 
@@ -129,9 +129,6 @@ static void bch_btree_node_iter_next_check(struct btree_node_iter *iter)
 		bch_bkey_to_text(buf2, sizeof(buf2), next);
 		panic("out of order/overlapping:\n%s\n%s\n", buf1, buf2);
 	}
-
-	if (btree_keys_expensive_checks(b))
-		bkey_debugcheck(b, k);
 }
 
 void bch_btree_node_iter_verify(struct btree_keys *b,

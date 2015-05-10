@@ -114,7 +114,7 @@ bool btree_gc_mark_node(struct cache_set *c, struct btree *b,
 		struct btree_node_iter iter;
 
 		for_each_btree_node_key(&b->keys, k, &iter) {
-			bkey_debugcheck(&b->keys, k);
+			bkey_debugcheck(b, k);
 
 			stale = max(stale, btree_mark_key(c, b, k));
 			keys++;

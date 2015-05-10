@@ -1,0 +1,82 @@
+
+#include "bcache.h"
+#include "bkey_methods.h"
+#include "btree.h"
+#include "extents.h"
+#include "inode.h"
+
+static const struct bkey_ops *bch_bkey_ops[] = {
+	[BKEY_TYPE_EXTENTS]	= &bch_bkey_extent_ops,
+	[BKEY_TYPE_INODES]	= &bch_bkey_inode_ops,
+	[BKEY_TYPE_BTREE]	= &bch_bkey_btree_ops,
+};
+
+bool bkey_invalid(struct cache_set *c,
+		  enum bkey_type type,
+		  const struct bkey *k)
+{
+	const struct bkey_ops *ops = bch_bkey_ops[type];
+
+	if (k->size && !ops->is_extents)
+		return true;
+
+	if (k->u64s < BKEY_U64s)
+		return true;
+
+	switch (k->type) {
+	case KEY_TYPE_DELETED:
+		return false;
+
+	case KEY_TYPE_DISCARD:
+	case KEY_TYPE_ERROR:
+		return bkey_val_bytes(k) != 0;
+
+	case KEY_TYPE_COOKIE:
+		return (bkey_val_bytes(k) != sizeof(struct bch_cookie));
+
+	default:
+		if (k->type < KEY_TYPE_GENERIC_NR)
+			return true;
+
+		return ops->key_invalid(c, k);
+	}
+}
+
+void bkey_debugcheck(struct btree *b, struct bkey *k)
+{
+	enum bkey_type type = b->level ? BKEY_TYPE_BTREE : b->btree_id;
+	const struct bkey_ops *ops = bch_bkey_ops[type];
+
+	BUG_ON(!k->u64s);
+
+	cache_set_bug_on(bkey_cmp(k->p, b->key.p) > 0,
+			 b->c, "key past end of btree node");
+
+	if (bkey_invalid(b->c, type, k)) {
+		char buf[160];
+
+		bch_bkey_val_to_text(b, buf, sizeof(buf), k);
+		cache_set_bug(b->c, "invalid bkey %s", buf);
+		return;
+	}
+
+	if (k->type >= KEY_TYPE_GENERIC_NR &&
+	    ops->key_debugcheck)
+		ops->key_debugcheck(b, k);
+}
+
+void bch_bkey_val_to_text(struct btree *b, char *buf,
+			  size_t size, const struct bkey *k)
+{
+	enum bkey_type type = b->level ? BKEY_TYPE_BTREE : b->btree_id;
+	const struct bkey_ops *ops = bch_bkey_ops[type];
+	char *out = buf, *end = buf + size;
+
+	out += bch_bkey_to_text(out, end - out, k);
+
+	if (k->type >= KEY_TYPE_GENERIC_NR &&
+	    ops->val_to_text) {
+		out += scnprintf(out, end - out, " -> ");
+		ops->val_to_text(b, out, end - out, k);
+	}
+}

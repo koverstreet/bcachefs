@@ -207,6 +207,7 @@
 #define BTREE_SCAN_BATCH	500
 
 #include "alloc_types.h"
+#include "bkey_methods.h"
 #include "blockdev_types.h"
 #include "buckets_types.h"
 #include "journal_types.h"
@@ -217,7 +218,6 @@
 #include "super_types.h"
 
 struct btree;
-
 struct cache;
 
 struct cache_group {

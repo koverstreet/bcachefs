@@ -48,7 +48,7 @@ struct bkey *bch_journal_find_btree_root(struct cache_set *c, struct jset *j,
 
 	return NULL;
 found:
-	if (!__bch_btree_ptr_invalid(c, k))
+	if (!bkey_invalid(c, BKEY_TYPE_BTREE, k))
 		return k;
 
 err:
@@ -434,13 +434,10 @@ void bch_journal_mark(struct cache_set *c, struct list_head *list)
 
 	list_for_each_entry(r, list, list)
 		for_each_jset_key(k, j, &r->j) {
-			if (j->level) {
-				if (!__bch_btree_ptr_invalid(c, k))
-					__bch_btree_mark_key(c, j->level, k);
-			} else if (j->btree_id == BTREE_ID_EXTENTS) {
-				if (!__bch_extent_invalid(c, k))
-					__bch_btree_mark_key(c, j->level, k);
-			}
+			if ((j->level || j->btree_id == BTREE_ID_EXTENTS) &&
+			    !bkey_invalid(c, j->level
+					  ? BKEY_TYPE_BTREE : j->btree_id, k))
+				__bch_btree_mark_key(c, j->level, k);
 		}
 }
 

@@ -306,11 +306,12 @@ void bch_btree_node_read_done(struct btree *b, struct cache *ca,
 				break;
 			}
 
-			if (bkey_invalid(&b->keys, k)) {
+			if (bkey_invalid(c, b->level
+					 ? BKEY_TYPE_BTREE
+					 : b->btree_id, k)) {
 				char buf[80];
 
-				bch_bkey_val_to_text(&b->keys, buf,
-						     sizeof(buf), k);
+				bch_bkey_val_to_text(b, buf, sizeof(buf), k);
 				btree_node_error(b, ca, ptr,
 						 "invalid bkey %s", buf);
 
@@ -2252,12 +2253,28 @@ int bch_btree_iter_unlock(struct btree_iter *iter)
 /* peek_all() doesn't skip deleted keys */
 static const struct bkey *__btree_iter_peek_all(struct btree_iter *iter)
 {
-	return bch_btree_node_iter_peek_all(&iter->node_iters[iter->level]);
+	struct bkey *k =
+		bch_btree_node_iter_peek_all(&iter->node_iters[iter->level]);
+
+	if (k && expensive_debug_checks(iter->c))
+		bkey_debugcheck(iter->nodes[iter->level], k);
+
+	return k;
 }
 
 static const struct bkey *__btree_iter_peek(struct btree_iter *iter)
 {
-	return bch_btree_node_iter_peek(&iter->node_iters[iter->level]);
+	const struct bkey *ret;
+
+	while (1) {
+		ret = __btree_iter_peek_all(iter);
+		if (!ret || !bkey_deleted(ret))
+			break;
+
+		bch_btree_node_iter_next_all(&iter->node_iters[iter->level]);
+	}
+
+	return ret;
 }
 
 static inline void __btree_iter_next_all(struct btree_iter *iter)

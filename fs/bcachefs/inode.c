@@ -51,21 +51,12 @@ ssize_t bch_inode_status(char *buf, size_t len, const struct bkey *k)
 	}
 }
 
-bool bch_inode_invalid(const struct bkey *k)
+static bool bch_inode_invalid(const struct cache_set *c, const struct bkey *k)
 {
 	if (k->p.offset)
 		return true;
 
-	if (k->size)
-		return true;
-
 	switch (k->type) {
-	case KEY_TYPE_DELETED:
-	case KEY_TYPE_DISCARD:
-	case KEY_TYPE_ERROR:
-	case KEY_TYPE_COOKIE:
-		return false;
-
 	case BCH_INODE_FS:
 		if (bkey_bytes(k) != sizeof(struct bkey_i_inode))
 			return true;
@@ -73,7 +64,7 @@ bool bch_inode_invalid(const struct bkey *k)
 		if (k->p.inode < BLOCKDEV_INODE_MAX)
 			return true;
 
-		break;
+		return false;
 	case BCH_INODE_BLOCKDEV:
 		if (bkey_bytes(k) != sizeof(struct bkey_i_inode_blockdev))
 			return true;
@@ -81,22 +72,18 @@ bool bch_inode_invalid(const struct bkey *k)
 		if (k->p.inode >= BLOCKDEV_INODE_MAX)
 			return true;
 
-		break;
+		return false;
 	default:
 		return true;
 	}
-
-	return false;
-}
-
-static bool __inode_invalid(const struct btree_keys *bk, const struct bkey *k)
-{
-	return bch_inode_invalid(k);
 }
 
 const struct btree_keys_ops bch_inode_ops = {
 	.sort_fixup	= bch_generic_sort_fixup,
-	.key_invalid	= __inode_invalid,
+};
+
+const struct bkey_ops bch_bkey_inode_ops = {
+	.key_invalid	= bch_inode_invalid,
 };
 
 int bch_inode_create(struct cache_set *c, struct bkey *inode,
