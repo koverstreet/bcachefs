@@ -99,8 +99,6 @@ bool bch_cut_back(const struct bkey *, struct bkey *);
 void bch_key_resize(struct bkey *, unsigned);
 void bch_insert_check_key(struct btree_keys *, struct bkey *);
 
-bool bch_extent_key_valid(struct cache_set *, struct bkey *);
-
 static inline bool bch_same_extent(const struct bkey *l, const struct bkey *r)
 {
 	return bch_bkey_maybe_compatible(l, r)

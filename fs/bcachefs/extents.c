@@ -1108,65 +1108,6 @@ static bool bch_extent_invalid(const struct btree_keys *bk,
 	return __bch_extent_invalid(b->c, k);
 }
 
-/*
- * This is a subset of bch_extent_debugcheck but doesn't complain,
- * just returns a boolean.
- */
-
-bool bch_extent_key_valid(struct cache_set *c, struct bkey *k)
-{
-	int i;
-	bool ret = true;
-	struct cache *ca;
-	struct cache_member_rcu *mi;
-	unsigned dev, stale, replicas_needed;
-
-	if (__bch_extent_invalid(c, k))
-		return false;
-
-	if (bkey_deleted(k) || KEY_WIPED(k) || KEY_BAD(k))
-		return true;
-
-	replicas_needed = KEY_CACHED(k) ? 0
-		: CACHE_SET_DATA_REPLICAS_WANT(&c->sb);
-
-	mi = cache_member_info_get(c);
-
-	for (i = bch_extent_ptrs(k) - 1; i >= 0; --i) {
-		dev = PTR_DEV(k, i);
-
-		/* Could be a special pointer such as PTR_CHECK_DEV */
-		if (dev >= mi->nr_in_set) {
-			/*
-			 * PTR_LOST_DEV counts as a valid replica...
-			 * Since it is a valid state (data loss due to device
-			 * removal with unsuccessful data motion).
-			 */
-			if ((dev == PTR_LOST_DEV) && replicas_needed)
-				replicas_needed--;
-			continue;
-		}
-
-		if (replicas_needed &&
-		    bch_is_zero(mi->m[dev].uuid.b, sizeof(uuid_le)))
-			break;
-
-		ca = PTR_CACHE(c, k, i);
-		if (ca == NULL)
-			continue;
-
-		stale = ptr_stale(ca, k, i);
-		if (replicas_needed && !stale)
-			replicas_needed--;
-	}
-
-	if (replicas_needed && KEY_SIZE(k))
-		ret = false;
-
-	cache_member_info_put();
-	return ret;
-}
-
 static void bch_extent_debugcheck(struct btree_keys *bk, const struct bkey *k)
 {
 	struct btree *b = container_of(bk, struct btree, keys);
@@ -1320,6 +1261,17 @@ bool bch_extent_normalize(struct cache_set *c, struct bkey *k)
 	} while (swapped);
 
 	cache_member_info_put();
+
+	if (bch_extent_ptrs(k)) {
+		bool have_data = false;
+
+		for (i = 0; i < bch_extent_ptrs(k); i++)
+			if (PTR_DEV(k, i) != PTR_LOST_DEV)
+				have_data = true;
+
+		if (!have_data)
+			SET_KEY_BAD(k, 1);
+	}
 
 	if (!bch_extent_ptrs(k) && !KEY_WIPED(k) && !KEY_BAD(k))
 		SET_KEY_DELETED(k, 1);

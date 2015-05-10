@@ -944,71 +944,52 @@ int bch_move_meta_data_off_device(struct cache *ca)
  * migrate the data off the device.
  */
 
-static bool flag_data_pred(struct cache *ca, const struct bkey *k)
-{
-	unsigned dev = ca->sb.nr_this_dev;
-	unsigned i;
-
-	for (i = 0; i < bch_extent_ptrs(k); i++)
-		if (PTR_DEV(k, i) == dev)
-			return true;
-
-	return false;
-}
-
 static int bch_flag_key_bad(struct btree_iter *iter,
 			    struct cache *ca,
 			    const struct bkey *orig_k)
 {
-	unsigned i, n_ptrs;
-	bool found = false;
 	BKEY_PADDED(key) tmp;
 	struct bkey *k = &tmp.key;
 	struct cache_set *c = ca->set;
 	unsigned dev = ca->sb.nr_this_dev;
+	bool found = false;
+	int ptr;
 
-	bkey_copy(k, orig_k);
+	/* Iterate backwards because we might drop pointers */
 
-	for (i = 0; i < bch_extent_ptrs(k); i++)
-		if (PTR_DEV(k, i) == dev) {
-			found = true;
-			bch_extent_drop_ptr(k, i);
+	for (ptr = bch_extent_ptrs(orig_k) - 1; ptr >= 0; ptr--)
+		if (PTR_DEV(orig_k, ptr) == dev) {
+			if (!found) {
+				bkey_copy(k, orig_k);
+				found = true;
+			}
+
+			/*
+			 * If it was dirty, replace it with a ptr to
+			 * PTR_LOST_DEV, so counting dirty replicas still works
+			 * (and so we know we lost data)
+			 *
+			 * If the pointer was considered cached, just drop it -
+			 * we can't replace it with a ptr to PTR_LOST_DEV
+			 * because bch_extent_normalize() will sort it
+			 * incorrectly but fortunately we don't need to.
+			 */
+			if (bch_extent_ptr_is_dirty(c, k, ptr))
+				k->val[ptr] = PTR(0, 0, PTR_LOST_DEV);
+			else
+				bch_extent_drop_ptr(k, ptr);
 		}
 
-	BUG_ON(!found);
-
-	bch_extent_drop_stale(c, k);
+	if (!found)
+		return 0;
 
 	/*
-	 * The key can still be valid because the pointers to the bad
-	 * device were just cache pointers, and not 'dirty' pointers.
-	 * Or because there was more than one replica yet we were unable
-	 * to move the data due to lack of space.
+	 * bch_extent_normalize() needs to know how to turn a key with only
+	 * pointers to PTR_LOST_DEV into a KEY_BAD() key anyways - because we
+	 * might have a cached pointer that will go stale later - so just call
+	 * it here:
 	 */
-
-	n_ptrs = bch_extent_ptrs(k);
-
-	if (n_ptrs == 0) {
-		/* The key is just bad, no sense faking it. */
-		SET_KEY_BAD(k, 1);
-	} else {
-		/*
-		 * We have some valid pointers -- add PTR_LOST_DEV
-		 * pointers to make the key valid again.
-		 *
-		 * This should not happen very often at all, but can
-		 * in degenerate cases, such as being unable to
-		 * migrate the data due to lack of space, and yet we
-		 * still have some valid pointer either due to caching
-		 * or multiple replicas.
-		 */
-		while (!bch_extent_key_valid(c, k)
-		       && n_ptrs < BKEY_EXTENT_PTRS_MAX) {
-			k->val[n_ptrs] = PTR(0, 0, PTR_LOST_DEV);
-			n_ptrs += 1;
-			bch_set_extent_ptrs(k, n_ptrs);
-		}
-	}
+	bch_extent_normalize(c, k);
 
 	return bch_btree_insert_at(iter,
 				   &keylist_single(k),
@@ -1031,60 +1012,41 @@ static int bch_flag_key_bad(struct btree_iter *iter,
 
 int bch_flag_data_bad(struct cache *ca)
 {
-	int ret2, ret = 0;
-	unsigned pass;
+	int ret = 0, ret2;
 	const struct bkey *k;
 	struct btree_iter iter;
-	u64 seen_key_count = 1;
 
 	if (MIGRATION_DEBUG)
 		pr_notice("Flagging bad data.");
 
-	/*
-	 * It should not be necessary to run more than one pass,
-	 * but at most one extra pass will be run, and it serves
-	 * as verification.
-	 */
+	bch_btree_iter_init(&iter,
+			    ca->set,
+			    BTREE_ID_EXTENTS,
+			    &ZERO_KEY);
 
-	for (pass = 0;
-	     (seen_key_count != 0 && (pass < MAX_FLAG_DATA_BAD_ITER));
-	     pass++) {
-		seen_key_count = 0;
+	while ((k = bch_btree_iter_peek(&iter))) {
+		ret = bch_flag_key_bad(&iter, ca, k);
+		if (ret == -EINTR || ret == -EAGAIN)
+			continue;
 
-		bch_btree_iter_init(&iter,
-				    ca->set,
-				    BTREE_ID_EXTENTS,
-				    &ZERO_KEY);
+		if (ret)
+			break;
 
-		while ((k = bch_btree_iter_peek(&iter))) {
-			if (!flag_data_pred(ca, k)) {
-				bch_btree_iter_advance_pos(&iter);
-				continue;
-			}
-
-			seen_key_count += 1;
-
-			ret2 = bch_flag_key_bad(&iter, ca, k);
-			if (ret2 == -EINTR || ret == -EAGAIN)
-				continue;
-
-			bch_btree_iter_advance_pos(&iter);
-		}
-
-		bch_btree_iter_unlock(&iter);
-
-		if ((pass >= PASS_LOW_LIMIT)
-		    && (seen_key_count != (MIGRATION_DEBUG ? ~0ULL : 0))) {
-			pr_notice("found %llu keys on pass %u.",
-				  seen_key_count, pass);
-		}
+		bch_btree_iter_advance_pos(&iter);
 	}
 
-	if ((MAX_FLAG_DATA_BAD_ITER != 1) && (seen_key_count != 0)) {
-		pr_err("Unable to flag device data as bad in %d iterations.",
-		       MAX_DATA_OFF_ITER);
-		ret = -1;
-	}
+	ret2 = bch_btree_iter_unlock(&iter);
 
-	return ret;
+#ifdef CONFIG_BCACHEFS_DEBUG
+	if (!ret && !ret2) {
+		unsigned ptr;
+
+		for_each_btree_key(&iter, ca->set,
+				   BTREE_ID_EXTENTS, &ZERO_KEY, k)
+			for (ptr = 0; ptr < bch_extent_ptrs(k); ptr++)
+				BUG_ON(k->val[ptr] == ca->sb.nr_this_dev);
+	}
+#endif
+
+	return ret ?: ret2;
 }
