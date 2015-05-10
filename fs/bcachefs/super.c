@@ -45,7 +45,6 @@ static struct kobject *bcache_kobj;
 struct mutex bch_register_lock;
 LIST_HEAD(bch_cache_sets);
 
-wait_queue_head_t unregister_wait;
 struct workqueue_struct *bcache_io_wq;
 
 static void bch_cache_stop(struct cache *);
@@ -576,6 +575,44 @@ static void bch_recalc_capacity(struct cache_set *c)
 	closure_wake_up(&c->bucket_wait);
 }
 
+static void bch_cache_set_read_only(struct cache_set *c)
+{
+	struct cache *ca;
+	unsigned i;
+
+	lockdep_assert_held(&bch_register_lock);
+
+	if (test_and_set_bit(CACHE_SET_RO, &c->flags))
+		return;
+
+	bch_wake_delayed_writes((unsigned long) c);
+	del_timer_sync(&c->foreground_write_wakeup);
+	cancel_delayed_work_sync(&c->pd_controllers_update);
+
+	c->tiering_pd.rate.rate = UINT_MAX;
+	bch_ratelimit_reset(&c->tiering_pd.rate);
+	if (!IS_ERR_OR_NULL(c->tiering_read))
+		kthread_stop(c->tiering_read);
+
+	if (c->tiering_write)
+		destroy_workqueue(c->tiering_write);
+
+	if (!IS_ERR_OR_NULL(c->gc_thread))
+		kthread_stop(c->gc_thread);
+
+	for_each_cache(ca, c, i)
+		bch_cache_read_only(ca);
+
+	/* Should skip this if we're unregistering because of an error */
+	bch_btree_flush(c);
+
+	if (c->journal.cur) {
+		cancel_delayed_work_sync(&c->journal.work);
+		/* flush last journal entry if needed */
+		c->journal.work.work.func(&c->journal.work.work);
+	}
+}
+
 void bch_cache_set_fail(struct cache_set *c)
 {
 	switch (CACHE_ERROR_ACTION(&c->sb)) {
@@ -584,7 +621,7 @@ void bch_cache_set_fail(struct cache_set *c)
 	case BCH_ON_ERROR_RO:
 		printk(KERN_ERR "bcache: %pU going read only\n",
 		       c->sb.set_uuid.b);
-		set_bit(CACHE_SET_RO, &c->flags);
+		bch_cache_set_read_only(c);
 		break;
 	case BCH_ON_ERROR_PANIC:
 		panic("bcache: %pU panic after error\n",
@@ -634,7 +671,6 @@ static void cache_set_free(struct closure *cl)
 	mutex_unlock(&bch_register_lock);
 
 	pr_info("Cache set %pU unregistered", c->sb.set_uuid.b);
-	wake_up(&unregister_wait);
 
 	closure_debug_destroy(&c->cl);
 	kobject_put(&c->kobj);
@@ -643,42 +679,15 @@ static void cache_set_free(struct closure *cl)
 static void cache_set_flush(struct closure *cl)
 {
 	struct cache_set *c = container_of(cl, struct cache_set, caching);
-	struct cache *ca;
-	unsigned i;
-
-	bch_wake_delayed_writes((unsigned long) c);
-	del_timer_sync(&c->foreground_write_wakeup);
-	cancel_delayed_work_sync(&c->pd_controllers_update);
-
-	c->tiering_pd.rate.rate = UINT_MAX;
-	bch_ratelimit_reset(&c->tiering_pd.rate);
-	if (!IS_ERR_OR_NULL(c->tiering_read))
-		kthread_stop(c->tiering_read);
-
-	if (c->tiering_write)
-		destroy_workqueue(c->tiering_write);
-
-	if (!IS_ERR_OR_NULL(c->gc_thread))
-		kthread_stop(c->gc_thread);
 
 	mutex_lock(&bch_register_lock);
-	for_each_cache(ca, c, i)
-		bch_cache_read_only(ca);
+	bch_cache_set_read_only(c);
 	mutex_unlock(&bch_register_lock);
 
 	bch_cache_accounting_destroy(&c->accounting);
 
 	kobject_put(&c->internal);
 	kobject_del(&c->kobj);
-
-	/* Should skip this if we're unregistering because of an error */
-	bch_btree_flush(c);
-
-	if (c->journal.cur) {
-		cancel_delayed_work_sync(&c->journal.work);
-		/* flush last journal entry if needed */
-		c->journal.work.work.func(&c->journal.work.work);
-	}
 
 	closure_return(cl);
 }
@@ -1701,57 +1710,16 @@ static int bcache_reboot(struct notifier_block *n, unsigned long code, void *x)
 	if (code == SYS_DOWN ||
 	    code == SYS_HALT ||
 	    code == SYS_POWER_OFF) {
-		DEFINE_WAIT(wait);
-		bool stopped = false;
-
-		struct cache_set *c, *tc;
-		struct cached_dev *dc, *tdc;
-
-		unsigned long timeout;
+		struct cache_set *c;
 
 		mutex_lock(&bch_register_lock);
 
-		if (list_empty(&bch_cache_sets) &&
-		    list_empty(&uncached_devices))
-			goto out;
+		if (!list_empty(&bch_cache_sets))
+			pr_info("Setting all devices read only:");
 
-		pr_info("Stopping all devices:");
+		list_for_each_entry(c, &bch_cache_sets, list)
+			bch_cache_set_read_only(c);
 
-		list_for_each_entry_safe(c, tc, &bch_cache_sets, list)
-			bch_cache_set_stop(c);
-
-		list_for_each_entry_safe(dc, tdc, &uncached_devices, list)
-			bcache_device_stop(&dc->disk);
-
-		/* If we're testing, n == NULL so wait forever */
-		if (n)
-			timeout = 2 * HZ;
-		else
-			timeout = MAX_SCHEDULE_TIMEOUT;
-
-		/* What's a condition variable? */
-		while (1) {
-			stopped = list_empty(&bch_cache_sets) &&
-				list_empty(&uncached_devices);
-
-			if (timeout <= 0 || stopped)
-				break;
-
-			prepare_to_wait(&unregister_wait, &wait,
-					TASK_UNINTERRUPTIBLE);
-
-			mutex_unlock(&bch_register_lock);
-			timeout = schedule_timeout(timeout);
-			mutex_lock(&bch_register_lock);
-		}
-
-		finish_wait(&unregister_wait, &wait);
-
-		if (stopped)
-			pr_info("All devices stopped");
-		else
-			pr_notice("Timeout waiting for devices to be closed");
-out:
 		mutex_unlock(&bch_register_lock);
 	}
 
@@ -1793,7 +1761,6 @@ static int __init bcache_init(void)
 	};
 
 	mutex_init(&bch_register_lock);
-	init_waitqueue_head(&unregister_wait);
 	register_reboot_notifier(&reboot);
 
 	if (!(bcache_io_wq = alloc_workqueue("bcache_io", WQ_MEM_RECLAIM, 0)) ||

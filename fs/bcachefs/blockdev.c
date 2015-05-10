@@ -502,8 +502,6 @@ static void cached_dev_free(struct closure *cl)
 	if (!IS_ERR_OR_NULL(dc->bdev))
 		blkdev_put(dc->bdev, FMODE_READ|FMODE_WRITE|FMODE_EXCL);
 
-	wake_up(&unregister_wait);
-
 	kobject_put(&dc->disk.kobj);
 }
 
