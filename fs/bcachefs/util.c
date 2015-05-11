@@ -13,6 +13,9 @@
 #include <linux/seq_file.h>
 #include <linux/types.h>
 
+#include <linux/freezer.h>
+#include <linux/kthread.h>
+
 #include "util.h"
 
 #define simple_strtoint(c, end, base)	simple_strtol(c, end, base)
@@ -378,4 +381,19 @@ uint64_t bch_crc64(const void *data, size_t len)
 	crc = bch_crc64_update(crc, data, len);
 
 	return crc ^ 0xffffffffffffffffULL;
+}
+
+int bch_kthread_loop_ratelimit(unsigned long *last, unsigned long delay)
+{
+	unsigned long next = *last + delay;
+
+	set_current_state(TASK_INTERRUPTIBLE);
+	if (kthread_should_stop())
+		return -1;
+
+	try_to_freeze();
+	schedule_timeout(max_t(long, 0, next - jiffies));
+	*last = jiffies;
+
+	return 0;
 }

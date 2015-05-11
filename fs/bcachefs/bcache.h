@@ -357,7 +357,6 @@ struct cached_dev {
 	unsigned		writeback_metadata:1;
 	unsigned		writeback_running:1;
 	unsigned char		writeback_percent;
-	unsigned		writeback_delay;
 
 	uint64_t		writeback_rate_target;
 	int64_t			writeback_rate_proportional;
@@ -659,6 +658,7 @@ struct cache_set {
 	unsigned		gc_always_rewrite:1;
 	unsigned		shrinker_disabled:1;
 	unsigned		copy_gc_enabled:1;
+	unsigned		btree_scan_ratelimit;
 
 #define BUCKET_HASH_BITS	12
 	struct hlist_head	bucket_hash[1 << BUCKET_HASH_BITS];

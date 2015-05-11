@@ -13,6 +13,7 @@
 #include "writeback.h"
 
 #include <linux/delay.h>
+#include <linux/freezer.h>
 #include <linux/kthread.h>
 #include <trace/events/bcachefs.h>
 
@@ -413,50 +414,53 @@ static bool refill_dirty(struct cached_dev *dc)
 	return bkey_cmp(&buf->last_scanned, &start_pos) >= 0;
 }
 
+static void bch_writeback(struct cached_dev *dc)
+{
+	bool searched_full_index;
+
+	down_write(&dc->writeback_lock);
+
+	if (!atomic_read(&dc->has_dirty) ||
+	    (!test_bit(BCACHE_DEV_DETACHING, &dc->disk.flags) &&
+	     !dc->writeback_running)) {
+		up_write(&dc->writeback_lock);
+		set_current_state(TASK_INTERRUPTIBLE);
+
+		if (kthread_should_stop())
+			return;
+
+		try_to_freeze();
+		schedule();
+		return;
+	}
+
+	searched_full_index = refill_dirty(dc);
+
+	if (searched_full_index &&
+	    RB_EMPTY_ROOT(&dc->writeback_keys.keys)) {
+		atomic_set(&dc->has_dirty, 0);
+		cached_dev_put(dc);
+		SET_BDEV_STATE(&dc->sb, BDEV_STATE_CLEAN);
+		bch_write_bdev_super(dc, NULL);
+	}
+
+	up_write(&dc->writeback_lock);
+
+	bch_ratelimit_reset(&dc->writeback_rate);
+	read_dirty(dc);
+}
+
 static int bch_writeback_thread(void *arg)
 {
 	struct cached_dev *dc = arg;
-	bool searched_full_index;
+	struct cache_set *c = dc->disk.c;
+	unsigned long last = jiffies;
 
-	while (!kthread_should_stop()) {
-		down_write(&dc->writeback_lock);
-		if (!atomic_read(&dc->has_dirty) ||
-		    (!test_bit(BCACHE_DEV_DETACHING, &dc->disk.flags) &&
-		     !dc->writeback_running)) {
-			up_write(&dc->writeback_lock);
-			set_current_state(TASK_INTERRUPTIBLE);
-
-			if (kthread_should_stop())
-				return 0;
-
-			schedule();
-			continue;
-		}
-
-		searched_full_index = refill_dirty(dc);
-
-		if (searched_full_index &&
-		    RB_EMPTY_ROOT(&dc->writeback_keys.keys)) {
-			atomic_set(&dc->has_dirty, 0);
-			cached_dev_put(dc);
-			SET_BDEV_STATE(&dc->sb, BDEV_STATE_CLEAN);
-			bch_write_bdev_super(dc, NULL);
-		}
-
-		up_write(&dc->writeback_lock);
-
-		bch_ratelimit_reset(&dc->writeback_rate);
-		read_dirty(dc);
-
-		if (searched_full_index) {
-			unsigned delay = dc->writeback_delay * HZ;
-
-			while (delay &&
-			       !kthread_should_stop() &&
-			       !test_bit(BCACHE_DEV_DETACHING, &dc->disk.flags))
-				delay = schedule_timeout_interruptible(delay);
-		}
-	}
+	do {
+		bch_writeback(dc);
+	} while (bch_kthread_loop_ratelimit(&last,
+				test_bit(BCACHE_DEV_DETACHING, &dc->disk.flags)
+				? 0 : c->btree_scan_ratelimit * HZ));
 
 	return 0;
 }
@@ -505,7 +509,6 @@ void bch_cached_dev_writeback_init(struct cached_dev *dc)
 	dc->writeback_metadata		= true;
 	dc->writeback_running		= true;
 	dc->writeback_percent		= 10;
-	dc->writeback_delay		= 30;
 	dc->writeback_rate.rate		= 1024;
 
 	dc->writeback_rate_update_seconds = 5;

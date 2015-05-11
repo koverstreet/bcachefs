@@ -579,4 +579,6 @@ do {									\
 uint64_t bch_crc64_update(uint64_t, const void *, size_t);
 uint64_t bch_crc64(const void *, size_t);
 
+int bch_kthread_loop_ratelimit(unsigned long *, unsigned long);
+
 #endif /* _BCACHE_UTIL_H */
