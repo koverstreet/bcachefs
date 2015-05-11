@@ -1292,7 +1292,7 @@ static int bch_btree_insert_node(struct btree *, struct btree_op *,
 static int btree_gc_coalesce(struct btree *b, struct btree_op *op,
 			     struct gc_stat *gc, struct gc_merge_info *r)
 {
-	unsigned i, nodes = 0, keys = 0, blocks;
+	unsigned i, nodes = 0, old_nodes, keys = 0, blocks;
 	struct btree *new_nodes[GC_MERGE_NODES];
 	struct keylist keylist;
 	struct closure cl;
@@ -1300,6 +1300,7 @@ static int btree_gc_coalesce(struct btree *b, struct btree_op *op,
 
 	bch_keylist_init(&keylist);
 
+	/* If we can't allocate new nodes, just keep going */
 	if (btree_check_reserve(b, NULL))
 		return 0;
 
@@ -1309,11 +1310,14 @@ static int btree_gc_coalesce(struct btree *b, struct btree_op *op,
 	while (nodes < GC_MERGE_NODES && !IS_ERR_OR_NULL(r[nodes].b))
 		keys += r[nodes++].keys;
 
+	old_nodes = nodes;
+
 	blocks = btree_default_blocks(b->c) * 2 / 3;
 
-	if (nodes < 2 ||
-	    __set_blocks(b->keys.set[0].data, keys,
-			 block_bytes(b->c)) > blocks * (nodes - 1))
+	if (nodes <= 1 ||
+	    __set_blocks(b->keys.set[0].data,
+			 DIV_ROUND_UP(keys, nodes - 1),
+			 block_bytes(b->c)) > blocks)
 		return 0;
 
 	for (i = 0; i < nodes; i++) {
@@ -1334,6 +1338,11 @@ static int btree_gc_coalesce(struct btree *b, struct btree_op *op,
 	for (i = 0; i < nodes; i++)
 		mutex_lock(&new_nodes[i]->write_lock);
 
+	/*
+	 * Conceptually we concatenate the nodes' keys together and slice them
+	 * up at different boundaries. This means the new nodes will different
+	 * keys in their parent nodes.
+	 */
 	for (i = nodes - 1; i > 0; --i) {
 		struct bset *n1 = btree_bset_first(new_nodes[i]);
 		struct bset *n2 = btree_bset_first(new_nodes[i - 1]);
@@ -1341,77 +1350,64 @@ static int btree_gc_coalesce(struct btree *b, struct btree_op *op,
 
 		keys = 0;
 
-		if (i > 1) {
-			for (k = n2->start;
-			     k < bset_bkey_last(n2);
-			     k = bkey_next(k)) {
-				if (__set_blocks(n1, n1->keys + keys +
-						 bkey_u64s(k),
-						 block_bytes(b->c)) > blocks)
-					break;
-
-				last = k;
-				keys += bkey_u64s(k);
-			}
-		} else {
-			/*
-			 * Last node we're not getting rid of - we're getting
-			 * rid of the node at r[0]. Have to try and fit all of
-			 * the remaining keys into this node; we can't ensure
-			 * they will always fit due to rounding and variable
-			 * length keys (shouldn't be possible in practice,
-			 * though)
-			 */
-			if (__set_blocks(n1, n1->keys + n2->keys,
-					 block_bytes(b->c)) >
-			    btree_blocks(new_nodes[i]))
-				goto out_nocoalesce;
-
-			keys = n2->keys;
-			/* Take the key of the node we're getting rid of */
-			last = &r->b->key;
+		for (k = n2->start;
+		     k < bset_bkey_last(n2) &&
+		     __set_blocks(n1, n1->keys + keys + bkey_u64s(k),
+				  block_bytes(b->c)) <= blocks;
+		     k = bkey_next(k)) {
+			last = k;
+			keys += bkey_u64s(k);
 		}
 
-		BUG_ON(__set_blocks(n1, n1->keys + keys, block_bytes(b->c)) >
-		       btree_blocks(new_nodes[i]));
+		if (keys == n2->keys) {
+			/* n2 fits entirely in n1 */
+			bkey_copy_key(&new_nodes[i]->key,
+				      &new_nodes[i - 1]->key);
 
-		if (last)
+			memcpy(bset_bkey_last(n1),
+			       n2->start,
+			       n2->keys * sizeof(u64));
+			n1->keys += n2->keys;
+
+			mutex_unlock(&new_nodes[i - 1]->write_lock);
+			btree_node_free(new_nodes[i - 1]);
+			rw_unlock(true, new_nodes[i - 1]);
+
+			memmove(new_nodes + i - 1,
+				new_nodes + i,
+				sizeof(new_nodes[0]) * (nodes - i));
+			--nodes;
+		} else if (keys) {
+			/* move part of n2 into n1 */
 			bkey_copy_key(&new_nodes[i]->key, last);
 
-		memcpy(bset_bkey_last(n1),
-		       n2->start,
-		       (void *) bset_bkey_idx(n2, keys) - (void *) n2->start);
+			memcpy(bset_bkey_last(n1),
+			       n2->start,
+			       keys * sizeof(u64));
+			n1->keys += keys;
 
-		n1->keys += keys;
-		r[i].keys = n1->keys;
+			memmove(n2->start,
+				bset_bkey_idx(n2, keys),
+				(n2->keys - keys) * sizeof(u64));
+			n2->keys -= keys;
+		}
+	}
 
-		memmove(n2->start,
-			bset_bkey_idx(n2, keys),
-			(void *) bset_bkey_last(n2) -
-			(void *) bset_bkey_idx(n2, keys));
-
-		n2->keys -= keys;
-
+	for (i = 0; i < nodes; i++) {
 		if (__bch_keylist_realloc(&keylist,
 					  bkey_u64s(&new_nodes[i]->key)))
 			goto out_nocoalesce;
 
 		bch_btree_node_write(new_nodes[i], &cl);
 		bch_keylist_add(&keylist, &new_nodes[i]->key);
+		mutex_unlock(&new_nodes[i]->write_lock);
 	}
 
-	for (i = 0; i < nodes; i++)
-		mutex_unlock(&new_nodes[i]->write_lock);
-
+	/* Wait for all the writes to finish */
 	closure_sync(&cl);
 
-	/* We emptied out this node */
-	BUG_ON(btree_bset_first(new_nodes[0])->keys);
-	btree_node_free(new_nodes[0]);
-	rw_unlock(true, new_nodes[0]);
-	new_nodes[0] = NULL;
-
-	for (i = 0; i < nodes; i++) {
+	/* The keys for the old nodes get deleted */
+	for (i = 0; i < old_nodes; i++) {
 		if (__bch_keylist_realloc(&keylist, bkey_u64s(&r[i].b->key)))
 			goto out_nocoalesce;
 
@@ -1419,21 +1415,25 @@ static int btree_gc_coalesce(struct btree *b, struct btree_op *op,
 		bch_keylist_push(&keylist);
 	}
 
+	/* Insert the newly coalesced nodes */
 	bch_btree_insert_node(b, op, &keylist, NULL, NULL);
 	BUG_ON(!bch_keylist_empty(&keylist));
 
-	for (i = 0; i < nodes; i++) {
+	/* Free the old nodes and update our sliding window */
+	for (i = 0; i < old_nodes; i++) {
 		btree_node_free(r[i].b);
 		rw_unlock(true, r[i].b);
 
-		r[i].b = new_nodes[i];
+		r[i].b = ERR_PTR(-EINTR);
 	}
 
-	memmove(r, r + 1, sizeof(r[0]) * (nodes - 1));
-	r[nodes - 1].b = ERR_PTR(-EINTR);
+	for (i = 0; i < nodes; i++) {
+		r[i].b = new_nodes[i];
+		r[i].keys = btree_bset_first(r[i].b)->keys;
+	}
 
 	trace_bcache_btree_gc_coalesce(nodes);
-	gc->nodes--;
+	gc->nodes -= old_nodes - nodes;
 
 	bch_keylist_free(&keylist);
 
