@@ -2823,23 +2823,6 @@ int bch_btree_insert_check_key(struct btree *b, struct btree_op *op,
 				     NULL, NULL, op->id);
 }
 
-struct btree_insert_op {
-	struct btree_op	op;
-	struct keylist	*keys;
-	struct bch_replace_info *replace;
-	struct closure	*persistent;
-};
-
-static int btree_insert_fn(struct btree_op *b_op, struct btree *b)
-{
-	struct btree_insert_op *op = container_of(b_op,
-					struct btree_insert_op, op);
-
-	int ret = bch_btree_insert_node(b, &op->op, op->keys, op->replace,
-					op->persistent, b_op->id);
-	return bch_keylist_empty(op->keys) ? MAP_DONE : ret;
-}
-
 /**
  * bch_btree_insert - insert keys into the extent btree
  * @c:			pointer to struct cache_set
@@ -2852,27 +2835,33 @@ int bch_btree_insert(struct cache_set *c, enum btree_id id,
 		     struct keylist *keys, struct bch_replace_info *replace,
 		     struct closure *persistent)
 {
-	struct btree_insert_op op;
+	struct btree_iter iter;
+	const struct bkey *k;
 	int ret = 0;
 
-	bch_btree_op_init(&op.op, id, 0);
-	op.keys		= keys;
-	op.replace	= replace;
-	op.persistent	= persistent;
+	bch_btree_iter_init_intent(&iter, c, id,
+				   id == BTREE_ID_EXTENTS
+				   ? &START_KEY(bch_keylist_front(keys))
+				   : (bch_keylist_front(keys)));
 
-	while (!ret && !bch_keylist_empty(keys)) {
-		op.op.locks_want = 0;
-		ret = bch_btree_map_nodes(&op.op, c,
-			       id == BTREE_ID_EXTENTS
-					  ? &START_KEY(bch_keylist_front(keys))
-					  : (bch_keylist_front(keys)),
-					  btree_insert_fn,
-					  0);
+	while ((k = bch_btree_iter_peek_with_holes(&iter))) {
+		ret = bch_btree_insert_node(iter.nodes[0], &iter.op, keys,
+					    replace, persistent, 0);
+
+		if (bch_keylist_empty(keys)) {
+			bch_btree_iter_unlock(&iter);
+			BUG_ON(ret);
+			break;
+		}
+
+		if (ret)
+			bch_btree_iter_unlock(&iter);
+		else
+			bch_btree_iter_advance_pos(&iter);
 	}
+	bch_btree_iter_unlock(&iter);
 
-	BUG_ON(ret);
-
-	if (op.op.insert_collision)
+	if (iter.op.insert_collision)
 		return -ESRCH;
 
 	return 0;

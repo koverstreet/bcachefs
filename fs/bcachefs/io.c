@@ -656,46 +656,6 @@ void bch_write_op_init(struct bch_write_op *op, struct cache_set *c,
 
 /* Discard */
 
-struct bch_discard_op {
-	struct btree_op	op;
-	struct bkey *start_key;
-	struct bkey *end_key;
-	u64 version;
-};
-
-static int bch_discard_fn(struct btree_op *b_op, struct btree *b,
-			  struct bkey *k)
-{
-	struct bch_discard_op *op =
-	container_of(b_op, struct bch_discard_op, op);
-	unsigned max_sectors = KEY_SIZE_MAX & (~0 << b->c->block_bits);
-	struct bkey erase_key;
-	int ret;
-
-	BUG_ON(bkey_cmp(k, &START_KEY(op->start_key)) <= 0);
-
-	/* TODO replace with extent overlap. maybe? */
-	if (bkey_cmp(&START_KEY(k), op->end_key) >= 0)
-		return MAP_DONE;
-
-	/* create the biggest key we can, to minimize writes */
-	erase_key = KEY(KEY_INODE(k), KEY_START(k) + max_sectors, max_sectors);
-	bch_cut_front(&START_KEY(op->start_key), &erase_key);
-	bch_cut_back(op->end_key, &erase_key);
-	if ((op->version) == 0ULL) {
-		/* This is probably wrong but retains legacy behavior */
-		SET_KEY_DELETED(&erase_key, 1);
-	} else {
-		SET_KEY_WIPED(&erase_key, 1);
-		SET_KEY_VERSION(&erase_key, op->version);
-	}
-
-	ret = bch_btree_insert_node(b, b_op, &keylist_single(&erase_key),
-				    NULL, NULL, 0);
-
-	return ret ?: MAP_CONTINUE;
-}
-
 /* bch_discard - discard a range of keys from start_key to end_key.
  * @c		cache set
  * @start_key	pointer to start location
@@ -714,19 +674,49 @@ static int bch_discard_fn(struct btree_op *b_op, struct btree *b,
 int bch_discard(struct cache_set *c, struct bkey *start_key,
 		struct bkey *end_key, u64 version)
 {
-	struct bch_discard_op op;
-	int ret;
+	struct btree_iter iter;
+	const struct bkey *k;
+	int ret = 0;
 
-	bch_btree_op_init(&op.op, BTREE_ID_EXTENTS, 0);
-	op.start_key = start_key;
-	op.end_key = end_key;
-	op.version = version;
+	bch_btree_iter_init_intent(&iter, c, BTREE_ID_EXTENTS, start_key);
 
-	ret = bch_btree_map_keys(&op.op, c, start_key, bch_discard_fn, 0);
-	if (ret < 0)
-		return ret;
+	while ((k = bch_btree_iter_peek(&iter))) {
+		unsigned max_sectors = KEY_SIZE_MAX & (~0 << c->block_bits);
+		struct bkey erase_key;
 
-	return 0;
+		BUG_ON(bkey_cmp(k, &START_KEY(start_key)) <= 0);
+
+		/* TODO replace with extent overlap. maybe? */
+		if (bkey_cmp(&START_KEY(k), end_key) >= 0)
+			break;
+
+		/* create the biggest key we can, to minimize writes */
+		erase_key = KEY(KEY_INODE(k),
+				KEY_START(k) + max_sectors,
+				max_sectors);
+		bch_cut_front(&START_KEY(start_key), &erase_key);
+		bch_cut_back(end_key, &erase_key);
+		if ((version) == 0ULL) {
+			/* This is probably wrong but retains legacy behavior */
+			SET_KEY_DELETED(&erase_key, 1);
+		} else {
+			SET_KEY_WIPED(&erase_key, 1);
+			SET_KEY_VERSION(&erase_key, version);
+		}
+
+		ret = bch_btree_insert_node(iter.nodes[0], &iter.op,
+					    &keylist_single(&erase_key),
+					    NULL, NULL, 0);
+		if (ret) {
+			bch_btree_iter_unlock(&iter);
+			continue;
+		}
+		bch_btree_iter_advance_pos(&iter);
+		bch_btree_iter_cond_resched(&iter);
+	}
+	bch_btree_iter_unlock(&iter);
+
+	return ret;
 }
 
 /* Cache promotion on read */

@@ -78,9 +78,6 @@ struct search {
 
 	unsigned long		start_time;
 
-	/* Only used for reads */
-	struct btree_op		op;
-
 	/*
 	 * Mostly only used for writes. For reads, we still make use of
 	 * some trivial fields:

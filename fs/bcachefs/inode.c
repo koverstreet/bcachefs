@@ -114,65 +114,57 @@ const struct btree_keys_ops bch_inode_ops = {
 	.key_invalid	= __inode_invalid,
 };
 
-struct create_op {
-	struct btree_op		op;
-	struct bch_inode	 *inode;
-	u64			max;
-};
-
-static int bch_inode_create_fn(struct btree_op *b_op, struct btree *b,
-			       struct bkey *k)
-{
-	struct create_op *op = container_of(b_op, struct create_op, op);
-
-	/* slot used? */
-	if (bch_val_u64s(k))
-		return MAP_CONTINUE;
-
-	/* hole: */
-
-	if (op->max && KEY_INODE(k) >= op->max)
-		return -ENOSPC;
-
-	bkey_copy_key(&op->inode->i_key, k);
-
-	pr_debug("inserting inode %llu (size %llu)",
-		 KEY_INODE(&op->inode->i_key), KEY_U64s(&op->inode->i_key));
-
-	return bch_btree_insert_node(b, b_op,
-			&keylist_single(&op->inode->i_key), NULL, NULL, 0);
-}
-
 int bch_inode_create(struct cache_set *c, struct bch_inode *inode,
 		     u64 min, u64 max, u64 *hint)
 {
-	int ret;
-	struct create_op op;
+	struct btree_iter iter;
+	const struct bkey *k;
 	bool searched_from_start = false;
+	int ret;
 
 	if ((max && *hint >= max) || *hint < min)
 		*hint = min;
 
 	if (*hint == min)
 		searched_from_start = true;
-
-	bch_btree_op_init(&op.op, BTREE_ID_INODES, 0);
-	op.inode	= inode;
-	op.max		= max;
 again:
-	ret = bch_btree_map_keys(&op.op, c,
-				 &KEY(*hint, 0, 0),
-				 bch_inode_create_fn, MAP_HOLES);
-	if (ret == MAP_CONTINUE)
-		ret = -ENOSPC;
+	bch_btree_iter_init_intent(&iter, c, BTREE_ID_INODES,
+				   &KEY(*hint, 0, 0));
 
-	if (ret == -ENOSPC && !searched_from_start) {
+	while ((k = bch_btree_iter_peek_with_holes(&iter))) {
+		if (max && KEY_INODE(k) >= max)
+			break;
+
+		if (!bch_val_u64s(k)) {
+			bkey_copy_key(&inode->i_key, k);
+
+			pr_debug("inserting inode %llu (size %llu)",
+				 KEY_INODE(&inode->i_key),
+				 KEY_U64s(&inode->i_key));
+
+			ret = bch_btree_insert_node(iter.nodes[0], &iter.op,
+					&keylist_single(&inode->i_key),
+					NULL, NULL, 0);
+			bch_btree_iter_unlock(&iter);
+
+			if (!ret)
+				goto out;
+		} else {
+			/* slot used */
+			bch_btree_iter_advance_pos(&iter);
+		}
+	}
+	bch_btree_iter_unlock(&iter);
+
+	if (!searched_from_start) {
 		/* Retry from start */
 		*hint = min;
 		searched_from_start = true;
 		goto again;
 	}
 
+	ret = -ENOSPC;
+out:
 	if (!ret)
 		*hint = KEY_INODE(&inode->i_key) + 1;
 

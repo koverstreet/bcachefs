@@ -326,7 +326,7 @@ static void cached_dev_read_done_bh(struct closure *cl)
  *
  * We don't write to the cache if s->bypass is set.
  */
-static int cached_dev_cache_miss(struct btree *b, struct search *s,
+static int cached_dev_cache_miss(struct btree_iter *iter, struct search *s,
 				 struct bio *bio, unsigned sectors)
 {
 	int ret;
@@ -343,7 +343,7 @@ static int cached_dev_cache_miss(struct btree *b, struct search *s,
 		miss->bi_private	= &s->cl;
 		closure_bio_submit(miss, &s->cl);
 
-		return miss == bio ? MAP_DONE : MAP_CONTINUE;
+		return 0;
 	}
 #if 0
 	struct cached_dev *dc = container_of(s->d, struct cached_dev, disk);
@@ -361,7 +361,8 @@ static int cached_dev_cache_miss(struct btree *b, struct search *s,
 	replace.key = KEY(s->inode, bio->bi_iter.bi_sector + sectors, sectors);
 	SET_KEY_CACHED(&replace.key, true);
 
-	ret = bch_btree_insert_check_key(b, &s->op, &replace.key);
+	ret = bch_btree_insert_check_key(iter->nodes[0], &iter->op,
+					 &replace.key);
 	if (ret)
 		return ret;
 
@@ -376,9 +377,9 @@ static int cached_dev_cache_miss(struct btree *b, struct search *s,
 	to_bbio(miss)->ca = NULL;
 
 	closure_get(&s->cl);
-	__cache_promote(b->c, to_bbio(miss), &replace.key);
+	__cache_promote(s->iop.c, to_bbio(miss), &replace.key);
 
-	return miss == bio ? MAP_DONE : MAP_CONTINUE;
+	return 0;
 }
 
 static void bch_cache_read_endio(struct bio *bio)
@@ -398,110 +399,101 @@ static void bch_cache_read_endio(struct bio *bio)
 	bch_bbio_endio(b, bio->bi_error, "reading from cache");
 }
 
-/*
- * Read from a single key, handling the initial cache miss if the key starts in
- * the middle of the bio
- */
-static int cache_lookup_fn(struct btree_op *op, struct btree *b, struct bkey *k)
-{
-	struct search *s = container_of(op, struct search, op);
-	struct bio *n, *bio = &s->bio.bio;
-	struct bbio *bbio;
-	unsigned sectors, ptr;
-	struct cache *ca;
-
-	BUG_ON(bkey_cmp(&START_KEY(k),
-			&KEY(s->inode, bio->bi_iter.bi_sector, 0)) > 0);
-
-	BUG_ON(bkey_cmp(k, &KEY(s->inode, bio->bi_iter.bi_sector, 0)) <= 0);
-
-	sectors = KEY_OFFSET(k) - bio->bi_iter.bi_sector;
-
-	ca = bch_extent_pick_ptr(b->c, k, &ptr);
-	if (IS_ERR(ca)) {
-		bio_io_error(bio);
-		return MAP_DONE;
-	}
-
-	if (!ca && KEY_WIPED(k)) {
-		/* The data is zeros.  Instantiate them. */
-		unsigned bytes = min_t(unsigned, sectors,
-				       bio_sectors(bio)) << 9;
-
-		swap(bio->bi_iter.bi_size, bytes);
-		zero_fill_bio(bio);
-		swap(bio->bi_iter.bi_size, bytes);
-
-		bio_advance(bio, bytes);
-		return bio->bi_iter.bi_size ? MAP_CONTINUE : MAP_DONE;
-	}
-
-	if (!ca) {
-		/* not present (hole), or stale cached data*/
-		return cached_dev_cache_miss(b, s, bio, sectors);
-	}
-
-	PTR_BUCKET(b->c, ca, k, ptr)->read_prio = b->c->prio_clock[READ].hand;
-
-	if (!KEY_CACHED(k))
-		s->read_dirty_data = true;
-
-	n = bio_next_split(bio, sectors, GFP_NOIO, s->d->bio_split);
-
-	bbio = to_bbio(n);
-	bch_bkey_copy_single_ptr(&bbio->key, k, ptr);
-
-	/* Trim the key to match what we're actually reading */
-	bch_cut_front(&KEY(s->inode, n->bi_iter.bi_sector, 0), &bbio->key);
-	bch_cut_back(&KEY(s->inode, bio_end_sector(n), 0), &bbio->key);
-
-	bch_bbio_prep(bbio, ca);
-
-	n->bi_end_io		= bch_cache_read_endio;
-	n->bi_private		= &s->cl;
-
-	closure_get(&s->cl);
-	if (!s->bypass) {
-		if (cache_promote(b->c, bbio, k, ptr))
-			s->cache_miss = 1;
-	} else
-		submit_bio(n);
-
-	return n == bio ? MAP_DONE : MAP_CONTINUE;
-}
-
-/**
- * cache_lookup - handle a read from a cache or flash only volume
- */
-static void cache_lookup(struct closure *cl)
-{
-	struct search *s = container_of(cl, struct search, op.cl);
-	enum btree_id id = BTREE_ID_EXTENTS;
-	struct bio *bio = &s->bio.bio;
-	int ret;
-
-	__bch_btree_op_init(&s->op, id, -1);
-
-	ret = bch_btree_map_keys(&s->op, s->iop.c,
-				 &KEY(s->inode, bio->bi_iter.bi_sector, 0),
-				 cache_lookup_fn, MAP_HOLES | MAP_ASYNC);
-	BUG_ON(ret == MAP_CONTINUE);
-
-	if (ret == -EAGAIN)
-		continue_at(cl, cache_lookup, s->iop.c->wq);
-	else if (ret)
-		pr_err("error %i", ret);
-
-	closure_return(cl);
-}
-
 static void cached_dev_read(struct cached_dev *dc, struct search *s)
 {
 	struct closure *cl = &s->cl;
+	struct bio *bio = &s->bio.bio;
+	struct btree_iter iter;
+	const struct bkey *k;
 
 	bch_increment_clock(s->iop.c, bio_sectors(&s->bio.bio), READ);
 
-	closure_call(&s->op.cl, cache_lookup, NULL, cl);
+	for_each_btree_key_with_holes(&iter, s->iop.c, BTREE_ID_EXTENTS,
+				      &KEY(s->inode,
+					   bio->bi_iter.bi_sector, 0), k) {
+		struct bio *n;
+		struct bbio *bbio;
+		unsigned sectors, ptr;
+		struct cache *ca;
+		bool done;
+retry:
+		BUG_ON(bkey_cmp(&START_KEY(k),
+				&KEY(s->inode, bio->bi_iter.bi_sector, 0)) > 0);
+
+		BUG_ON(bkey_cmp(k, &KEY(s->inode,
+					bio->bi_iter.bi_sector, 0)) <= 0);
+
+		sectors = KEY_OFFSET(k) - bio->bi_iter.bi_sector;
+		done = sectors >= bio_sectors(bio);
+
+		ca = bch_extent_pick_ptr(s->iop.c, k, &ptr);
+		if (IS_ERR(ca)) {
+			bio_io_error(bio);
+			bch_btree_iter_unlock(&iter);
+			goto out;
+		}
+
+		if (!ca && KEY_WIPED(k)) {
+			/* The data is zeros.  Instantiate them. */
+			unsigned bytes = min_t(unsigned, sectors,
+					       bio_sectors(bio)) << 9;
+
+			swap(bio->bi_iter.bi_size, bytes);
+			zero_fill_bio(bio);
+			swap(bio->bi_iter.bi_size, bytes);
+
+			bio_advance(bio, bytes);
+		} else if (!ca) {
+			/* not present (hole), or stale cached data*/
+			if (cached_dev_cache_miss(&iter, s, bio, sectors)) {
+				k = bch_btree_iter_peek_with_holes(&iter);
+				goto retry;
+			}
+		} else {
+			PTR_BUCKET(s->iop.c, ca, k, ptr)->read_prio =
+				s->iop.c->prio_clock[READ].hand;
+
+			if (!KEY_CACHED(k))
+				s->read_dirty_data = true;
+
+			n = bio_next_split(bio, sectors, GFP_NOIO,
+					   s->d->bio_split);
+
+			bbio = to_bbio(n);
+			bch_bkey_copy_single_ptr(&bbio->key, k, ptr);
+
+			/* Trim the key to match what we're actually reading */
+			bch_cut_front(&KEY(s->inode, n->bi_iter.bi_sector, 0),
+				      &bbio->key);
+			bch_cut_back(&KEY(s->inode, bio_end_sector(n), 0),
+				     &bbio->key);
+
+			bch_bbio_prep(bbio, ca);
+
+			n->bi_end_io		= bch_cache_read_endio;
+			n->bi_private		= &s->cl;
+
+			closure_get(&s->cl);
+			if (!s->bypass) {
+				if (cache_promote(s->iop.c, bbio, k, ptr))
+					s->cache_miss = 1;
+			} else
+				submit_bio(n);
+		}
+
+		if (done) {
+			bch_btree_iter_unlock(&iter);
+			goto out;
+		}
+	}
+
+	/*
+	 * If we get here, it better have been because there was an error
+	 * reading a btree node
+	 */
+	BUG_ON(!bch_btree_iter_unlock(&iter));
+	bio_io_error(bio);
+out:
 	continue_at(cl, cached_dev_read_done_bh, NULL);
 }
 
