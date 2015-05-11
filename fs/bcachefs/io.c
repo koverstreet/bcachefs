@@ -11,6 +11,36 @@
 
 #include <linux/blkdev.h>
 
+void bch_generic_make_request(struct bio *bio, struct cache_set *c)
+{
+	if (current->bio_list) {
+		spin_lock(&c->bio_submit_lock);
+		bio_list_add(&c->bio_submit_list, bio);
+		spin_unlock(&c->bio_submit_lock);
+		queue_work(bcache_io_wq, &c->bio_submit_work);
+	} else {
+		generic_make_request(bio);
+	}
+}
+
+void bch_bio_submit_work(struct work_struct *work)
+{
+	struct cache_set *c = container_of(work, struct cache_set,
+					   bio_submit_work);
+	struct bio *bio;
+
+	while (1) {
+		spin_lock(&c->bio_submit_lock);
+		bio = bio_list_pop(&c->bio_submit_list);
+		spin_unlock(&c->bio_submit_lock);
+
+		if (!bio)
+			break;
+
+		bch_generic_make_request(bio, c);
+	}
+}
+
 /* Bios with headers */
 
 void bch_bbio_free(struct bio *bio, struct cache_set *c)
@@ -31,7 +61,7 @@ struct bio *bch_bbio_alloc(struct cache_set *c)
 	return bio;
 }
 
-void __bch_submit_bbio(struct bio *bio, struct cache_set *c)
+void __bch_bbio_prep(struct bio *bio, struct cache_set *c)
 {
 	struct bbio *b = container_of(bio, struct bbio, bio);
 
@@ -39,6 +69,20 @@ void __bch_submit_bbio(struct bio *bio, struct cache_set *c)
 	bio->bi_bdev		= PTR_CACHE(c, &b->key, 0)->bdev;
 
 	b->submit_time_us = local_clock_us();
+}
+
+void bch_bbio_prep(struct bio *bio, struct cache_set *c,
+		   struct bkey *k, unsigned ptr)
+{
+	struct bbio *b = container_of(bio, struct bbio, bio);
+
+	bch_bkey_copy_single_ptr(&b->key, k, ptr);
+	__bch_bbio_prep(bio, c);
+}
+
+void __bch_submit_bbio(struct bio *bio, struct cache_set *c)
+{
+	__bch_bbio_prep(bio, c);
 	closure_bio_submit(bio, bio->bi_private);
 }
 

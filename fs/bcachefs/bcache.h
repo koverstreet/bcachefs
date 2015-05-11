@@ -491,6 +491,10 @@ struct cache_set {
 	mempool_t		*bio_meta;
 	struct bio_set		*bio_split;
 
+	struct bio_list		bio_submit_list;
+	struct work_struct	bio_submit_work;
+	spinlock_t		bio_submit_lock;
+
 	/* For the btree cache */
 	struct shrinker		shrink;
 
@@ -850,6 +854,10 @@ void bch_bbio_endio(struct cache_set *, struct bio *, int, const char *);
 void bch_bbio_free(struct bio *, struct cache_set *);
 struct bio *bch_bbio_alloc(struct cache_set *);
 
+void bch_generic_make_request(struct bio *, struct cache_set *);
+void bch_bio_submit_work(struct work_struct *);
+void __bch_bbio_prep(struct bio *, struct cache_set *);
+void bch_bbio_prep(struct bio *, struct cache_set *, struct bkey *, unsigned);
 void __bch_submit_bbio(struct bio *, struct cache_set *);
 void bch_submit_bbio(struct bio *, struct cache_set *, struct bkey *, unsigned);
 
@@ -876,7 +884,7 @@ bool bch_cache_set_error(struct cache_set *, const char *, ...);
 void bch_prio_write(struct cache *);
 void bch_write_bdev_super(struct cached_dev *, struct closure *);
 
-extern struct workqueue_struct *bcache_wq;
+extern struct workqueue_struct *bcache_wq, *bcache_io_wq;
 extern const char * const bch_cache_modes[];
 extern struct mutex bch_register_lock;
 extern struct list_head bch_cache_sets;

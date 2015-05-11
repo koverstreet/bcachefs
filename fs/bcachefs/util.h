@@ -581,6 +581,12 @@ do {									\
 	generic_make_request(bio);					\
 } while (0)
 
+#define closure_bio_submit_punt(bio, cl, c)				\
+do {									\
+	closure_get(cl);						\
+	bch_generic_make_request(bio, c);				\
+} while (0)
+
 uint64_t bch_crc64_update(uint64_t, const void *, size_t);
 uint64_t bch_crc64(const void *, size_t);
 

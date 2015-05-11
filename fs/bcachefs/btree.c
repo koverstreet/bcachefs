@@ -299,7 +299,8 @@ static void bch_btree_node_read(struct btree *b)
 
 	bch_bio_map(bio, b->keys.set[0].data);
 
-	bch_submit_bbio(bio, b->c, &b->key, 0);
+	bch_bbio_prep(bio, b->c, &b->key, 0);
+	closure_bio_submit_punt(bio, &cl, b->c);
 	closure_sync(&cl);
 
 	if (bio->bi_error)
@@ -422,14 +423,16 @@ static void do_btree_node_write(struct btree *b)
 			memcpy(page_address(bv->bv_page),
 			       base + j * PAGE_SIZE, PAGE_SIZE);
 
-		bch_submit_bbio(b->bio, b->c, &k.key, 0);
+		bch_bbio_prep(b->bio, b->c, &k.key, 0);
+		closure_bio_submit_punt(b->bio, cl, b->c);
 
 		continue_at(cl, btree_node_write_done, NULL);
 	} else {
 		b->bio->bi_vcnt = 0;
 		bch_bio_map(b->bio, i);
 
-		bch_submit_bbio(b->bio, b->c, &k.key, 0);
+		bch_bbio_prep(b->bio, b->c, &k.key, 0);
+		closure_bio_submit_punt(b->bio, cl, b->c);
 
 		closure_sync(cl);
 		continue_at_nobarrier(cl, __btree_node_write_done, NULL);
@@ -444,7 +447,6 @@ void __bch_btree_node_write(struct btree *b, struct closure *parent)
 
 	trace_bcache_btree_write(b);
 
-	BUG_ON(current->bio_list);
 	BUG_ON(b->written >= btree_blocks(b));
 	BUG_ON(b->written && !i->keys);
 	BUG_ON(btree_bset_first(b)->seq != i->seq);
@@ -537,8 +539,7 @@ static void bch_btree_leaf_dirty(struct btree *b, atomic_t *journal_ref)
 	}
 
 	/* Force write if set is too big */
-	if (set_bytes(i) > PAGE_SIZE - 48 &&
-	    !current->bio_list)
+	if (set_bytes(i) > PAGE_SIZE - 48)
 		bch_btree_node_write(b, NULL);
 }
 
@@ -890,8 +891,6 @@ static struct btree *mca_alloc(struct cache_set *c, struct btree_op *op,
 			       struct bkey *k, int level)
 {
 	struct btree *b;
-
-	BUG_ON(current->bio_list);
 
 	lockdep_assert_held(&c->bucket_lock);
 
@@ -2149,10 +2148,7 @@ static int bch_btree_insert_node(struct btree *b, struct btree_op *op,
 
 	return 0;
 split:
-	if (current->bio_list) {
-		op->lock = b->c->root->level + 1;
-		return -EAGAIN;
-	} else if (op->lock <= b->c->root->level) {
+	if (op->lock <= b->c->root->level) {
 		op->lock = b->c->root->level + 1;
 		return -EINTR;
 	} else {
@@ -2231,7 +2227,6 @@ int bch_btree_insert(struct cache_set *c, struct keylist *keys,
 	struct btree_insert_op op;
 	int ret = 0;
 
-	BUG_ON(current->bio_list);
 	BUG_ON(bch_keylist_empty(keys));
 
 	bch_btree_op_init(&op.op, 0);

@@ -651,7 +651,7 @@ static void journal_write_unlocked(struct closure *cl)
 	spin_unlock(&c->journal.lock);
 
 	while ((bio = bio_list_pop(&list)))
-		closure_bio_submit(bio, cl);
+		closure_bio_submit_punt(bio, cl, c);
 
 	continue_at(cl, journal_write_done, NULL);
 }

@@ -55,7 +55,7 @@ static LIST_HEAD(uncached_devices);
 static int bcache_major;
 static DEFINE_IDA(bcache_minor);
 static wait_queue_head_t unregister_wait;
-struct workqueue_struct *bcache_wq;
+struct workqueue_struct *bcache_wq, *bcache_io_wq;
 
 #define BTREE_MAX_PAGES		(256 * 1024 / PAGE_SIZE)
 
@@ -1504,6 +1504,9 @@ struct cache_set *bch_cache_set_alloc(struct cache_sb *sb)
 	INIT_LIST_HEAD(&c->btree_cache_freed);
 	INIT_LIST_HEAD(&c->data_buckets);
 
+	INIT_WORK(&c->bio_submit_work, bch_bio_submit_work);
+	spin_lock_init(&c->bio_submit_lock);
+
 	c->search = mempool_create_slab_pool(32, bch_search_cache);
 	if (!c->search)
 		goto err;
@@ -2083,6 +2086,8 @@ static void bcache_exit(void)
 	bch_request_exit();
 	if (bcache_kobj)
 		kobject_put(bcache_kobj);
+	if (bcache_io_wq)
+		destroy_workqueue(bcache_io_wq);
 	if (bcache_wq)
 		destroy_workqueue(bcache_wq);
 	if (bcache_major)
@@ -2109,6 +2114,7 @@ static int __init bcache_init(void)
 	}
 
 	if (!(bcache_wq = alloc_workqueue("bcache", WQ_MEM_RECLAIM, 0)) ||
+	    !(bcache_io_wq = alloc_workqueue("bcache_io", WQ_MEM_RECLAIM, 0)) ||
 	    !(bcache_kobj = kobject_create_and_add("bcache", fs_kobj)) ||
 	    sysfs_create_files(bcache_kobj, files) ||
 	    bch_request_init() ||
