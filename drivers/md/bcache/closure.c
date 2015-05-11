@@ -18,10 +18,6 @@ static inline void closure_put_after_sub(struct closure *cl, int flags)
 	BUG_ON(flags & CLOSURE_GUARD_MASK);
 	BUG_ON(!r && (flags & ~CLOSURE_DESTRUCTOR));
 
-	/* Must deliver precisely one wakeup */
-	if (r == 1 && (flags & CLOSURE_SLEEPING))
-		wake_up_process(cl->task);
-
 	if (!r) {
 		if (cl->fn && !(flags & CLOSURE_DESTRUCTOR)) {
 			atomic_set(&cl->remaining,
@@ -111,28 +107,21 @@ bool closure_wait(struct closure_waitlist *waitlist, struct closure *cl)
 }
 EXPORT_SYMBOL(closure_wait);
 
-/**
- * closure_sync - sleep until a closure has nothing left to wait on
- *
- * Sleeps until the refcount hits 1 - the thread that's running the closure owns
- * the last refcount.
- */
-void closure_sync(struct closure *cl)
+static void closure_sync_fn(struct closure *cl)
 {
-	while (1) {
-		__closure_start_sleep(cl);
-		closure_set_ret_ip(cl);
-
-		if ((atomic_read(&cl->remaining) &
-		     CLOSURE_REMAINING_MASK) == 1)
-			break;
-
-		schedule();
-	}
-
-	__closure_end_sleep(cl);
+	complete(cl->complete);
 }
-EXPORT_SYMBOL(closure_sync);
+
+void __closure_sync(struct closure *cl)
+{
+	DECLARE_COMPLETION_ONSTACK(wait);
+
+	cl->complete = &wait;
+	continue_at_noreturn(cl, closure_sync_fn, NULL);
+
+	wait_for_completion(&wait);
+}
+EXPORT_SYMBOL(__closure_sync);
 
 #ifdef CONFIG_BCACHE_CLOSURES_DEBUG
 
@@ -179,12 +168,10 @@ static int debug_seq_show(struct seq_file *f, void *data)
 			   cl, (void *) cl->ip, cl->fn, cl->parent,
 			   r & CLOSURE_REMAINING_MASK);
 
-		seq_printf(f, "%s%s%s%s\n",
+		seq_printf(f, "%s%s\n",
 			   test_bit(WORK_STRUCT_PENDING_BIT,
 				    work_data_bits(&cl->work)) ? "Q" : "",
-			   r & CLOSURE_RUNNING	? "R" : "",
-			   r & CLOSURE_STACK	? "S" : "",
-			   r & CLOSURE_SLEEPING	? "Sl" : "");
+			   r & CLOSURE_RUNNING	? "R" : "");
 
 		if (r & CLOSURE_WAITING)
 			seq_printf(f, " W %pF\n",
