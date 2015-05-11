@@ -1955,11 +1955,12 @@ static int btree_split(struct btree *b, struct btree_op *op,
 		       struct keylist *insert_keys,
 		       struct bkey *replace_key)
 {
-	bool split;
 	struct btree *n1, *n2 = NULL, *n3 = NULL;
+	struct bset *set1, *set2;
 	uint64_t start_time = local_clock();
 	struct closure cl;
 	struct keylist parent_keys;
+	struct bkey *k;
 
 	closure_init_stack(&cl);
 	bch_keylist_init(&parent_keys);
@@ -1972,63 +1973,94 @@ static int btree_split(struct btree *b, struct btree_op *op,
 	}
 
 	n1 = btree_node_alloc_replacement(b, op);
-	if (IS_ERR(n1))
-		goto err;
+	set1 = btree_bset_first(n1);
 
-	split = set_blocks(btree_bset_first(n1),
-			   block_bytes(n1->c)) > (btree_blocks(b) * 4) / 5;
+	mutex_lock(&n1->write_lock);
 
-	if (split) {
-		unsigned keys = 0;
+	/*
+	 * For updates to interior nodes, we've got to do the insert before we
+	 * split because the stuff we're inserting has to be inserted
+	 * atomically. Post split, the keys might have to go in different nodes
+	 * and the split would no longer be atomic.
+	 *
+	 * But for updates to leaf nodes (in the extent btree, anyways) - we
+	 * can't update the new replacement node while the old node is still
+	 * visible. Reason being as we do the update we're updating garbage
+	 * collection information on the fly, possibly causing a bucket to
+	 * become unreferenced and available to the allocator to reuse - we
+	 * don't want that to happen while other threads can still use the old
+	 * version of the btree node.
+	 */
+	if (b->level) {
+		bch_btree_insert_keys(n1, op, insert_keys, replace_key);
 
-		trace_bcache_btree_node_split(b, btree_bset_first(n1)->keys);
+		/*
+		 * There might be duplicate (deleted) keys after the
+		 * bch_btree_insert_keys() call - we need to remove them before
+		 * we split, as it would be rather bad if we picked a duplicate
+		 * for the pivot.
+		 *
+		 * Additionally, inserting might overwrite a bunch of existing
+		 * keys (i.e. a big discard when there were a bunch of small
+		 * extents previously) - we might not want to split after the
+		 * insert. Splitting a node that's too small to be split would
+		 * be bad (if the node had only one key, we wouldn't be able to
+		 * assign the new node a key different from the original node)
+		 */
+		k = set1->start;
+		while (k != bset_bkey_last(set1))
+			if (bch_ptr_bad(&b->keys, k)) {
+				set1->keys -= bkey_u64s(k);
+				memmove(k, bkey_next(k),
+					(void *) bset_bkey_last(set1) -
+					(void *) k);
+			} else
+				k = bkey_next(k);
+	}
+
+	if (set_blocks(set1, block_bytes(n1->c)) > btree_blocks(b) * 3 / 4) {
+		trace_bcache_btree_node_split(b, set1->keys);
 
 		n2 = bch_btree_node_alloc(b->c, op, b->level, b->parent);
-		if (IS_ERR(n2))
-			goto err_free1;
+		set2 = btree_bset_first(n2);
 
 		if (!b->parent) {
 			n3 = bch_btree_node_alloc(b->c, op, b->level + 1, NULL);
-			if (IS_ERR(n3))
-				goto err_free2;
+			BUG_ON(!n3);
 		}
 
-		mutex_lock(&n1->write_lock);
 		mutex_lock(&n2->write_lock);
-
-		bch_btree_insert_keys(n1, op, insert_keys, replace_key);
 
 		/*
 		 * Has to be a linear search because we don't have an auxiliary
 		 * search tree yet
 		 */
+		for (k = set1->start;
+		     ((u64 *) k - set1->d) < (set1->keys * 3) / 5;
+		     k = bkey_next(k))
+			;
 
-		while (keys < (btree_bset_first(n1)->keys * 3) / 5)
-			keys += bkey_u64s(bset_bkey_idx(btree_bset_first(n1),
-							keys));
+		bkey_copy_key(&n1->key, k);
 
-		bkey_copy_key(&n1->key,
-			      bset_bkey_idx(btree_bset_first(n1), keys));
-		keys += bkey_u64s(bset_bkey_idx(btree_bset_first(n1), keys));
+		k = bkey_next(k);
 
-		btree_bset_first(n2)->keys = btree_bset_first(n1)->keys - keys;
-		btree_bset_first(n1)->keys = keys;
+		set2->keys = (u64 *) bset_bkey_last(set1) - (u64 *) k;
+		set1->keys -= set2->keys;
 
-		memcpy(btree_bset_first(n2)->start,
-		       bset_bkey_last(btree_bset_first(n1)),
-		       btree_bset_first(n2)->keys * sizeof(uint64_t));
+		BUG_ON(!set1->keys);
+		BUG_ON(!set2->keys);
+
+		memcpy(set2->start,
+		       bset_bkey_last(set1),
+		       set2->keys * sizeof(u64));
 
 		bkey_copy_key(&n2->key, &b->key);
 
 		bch_keylist_add(&parent_keys, &n2->key);
 		bch_btree_node_write(n2, &cl);
 		mutex_unlock(&n2->write_lock);
-		rw_unlock(true, n2);
 	} else {
-		trace_bcache_btree_node_compact(b, btree_bset_first(n1)->keys);
-
-		mutex_lock(&n1->write_lock);
-		bch_btree_insert_keys(n1, op, insert_keys, replace_key);
+		trace_bcache_btree_node_compact(b, set1->keys);
 	}
 
 	bch_keylist_add(&parent_keys, &n1->key);
@@ -2061,28 +2093,13 @@ static int btree_split(struct btree *b, struct btree_op *op,
 	}
 
 	btree_node_free(b);
+	if (n2)
+		rw_unlock(true, n2);
 	rw_unlock(true, n1);
 
 	bch_time_stats_update(&b->c->btree_split_time, start_time);
 
 	return 0;
-err_free2:
-	bkey_put(b->c, &n2->key);
-	btree_node_free(n2);
-	rw_unlock(true, n2);
-err_free1:
-	bkey_put(b->c, &n1->key);
-	btree_node_free(n1);
-	rw_unlock(true, n1);
-err:
-	WARN(1, "bcache: btree split failed (level %u)", b->level);
-
-	if (n3 == ERR_PTR(-EAGAIN) ||
-	    n2 == ERR_PTR(-EAGAIN) ||
-	    n1 == ERR_PTR(-EAGAIN))
-		return -EAGAIN;
-
-	return -ENOMEM;
 }
 
 static int bch_btree_insert_node(struct btree *b, struct btree_op *op,
