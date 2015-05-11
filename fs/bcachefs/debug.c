@@ -9,6 +9,7 @@
 #include "btree.h"
 #include "debug.h"
 #include "extents.h"
+#include "keybuf.h"
 
 #include <linux/console.h>
 #include <linux/debugfs.h>

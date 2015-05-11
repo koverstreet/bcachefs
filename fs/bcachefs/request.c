@@ -9,6 +9,7 @@
 #include "bcache.h"
 #include "btree.h"
 #include "debug.h"
+#include "keybuf.h"
 #include "request.h"
 #include "writeback.h"
 
