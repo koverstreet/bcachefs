@@ -61,6 +61,15 @@ int __bch_count_data(struct btree_keys *b)
 	return ret;
 }
 
+void __bch_count_data_verify(struct btree_keys *b, int oldsize)
+{
+	if (oldsize != -1) {
+		int newsize = __bch_count_data(b);
+
+		BUG_ON(newsize != -1 && newsize < oldsize);
+	}
+}
+
 void __bch_check_keys(struct btree_keys *b, const char *fmt, ...)
 {
 	va_list args;

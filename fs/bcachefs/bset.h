@@ -530,6 +530,7 @@ int __bch_keylist_realloc(struct keylist *, unsigned);
 #ifdef CONFIG_BCACHEFS_DEBUG
 
 int __bch_count_data(struct btree_keys *);
+void __bch_count_data_verify(struct btree_keys *, int);
 void __bch_check_keys(struct btree_keys *, const char *, ...);
 void bch_dump_bset(struct btree_keys *, struct bset *, unsigned);
 void bch_dump_bucket(struct btree_keys *);
@@ -537,6 +538,7 @@ void bch_dump_bucket(struct btree_keys *);
 #else
 
 static inline int __bch_count_data(struct btree_keys *b) { return -1; }
+static inline void __bch_count_data_verify(struct btree_keys *b, int oldsize ) {}
 static inline void __bch_check_keys(struct btree_keys *b, const char *fmt, ...) {}
 static inline void bch_dump_bucket(struct btree_keys *b) {}
 void bch_dump_bset(struct btree_keys *, struct bset *, unsigned);
@@ -555,6 +557,12 @@ static inline bool btree_keys_expensive_checks(struct btree_keys *b)
 static inline int bch_count_data(struct btree_keys *b)
 {
 	return btree_keys_expensive_checks(b) ? __bch_count_data(b) : -1;
+}
+
+static inline void bch_count_data_verify(struct btree_keys *b, int oldsize)
+{
+	if (btree_keys_expensive_checks(b))
+		__bch_count_data_verify(b, oldsize);
 }
 
 #define bch_check_keys(b, ...)						\

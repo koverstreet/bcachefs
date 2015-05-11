@@ -1947,7 +1947,7 @@ static bool bch_btree_insert_keys(struct btree *b, struct btree_op *op,
 
 	BUG_ON(!bch_keylist_empty(insert_keys) && b->level);
 
-	BUG_ON(bch_count_data(&b->keys) < oldsize);
+	bch_count_data_verify(&b->keys, oldsize);
 	return ret;
 }
 
