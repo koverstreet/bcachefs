@@ -350,15 +350,6 @@ struct cache {
 	atomic_long_t		sectors_written;
 };
 
-struct gc_stat {
-	u64			nodes;
-	u64			key_bytes;
-	u64			nkeys;
-
-	u64			data;	/* sectors */
-	u64			inodes;
-};
-
 /*
  * Flag bits for what phase of startup/shutdown the cache set is at, how we're
  * shutting down, etc.:
@@ -575,8 +566,6 @@ struct cache_set {
 	 * it's not while a gc is in progress.
 	 */
 	struct rw_semaphore	gc_lock;
-	struct gc_stat		gc_stats;
-
 
 	/* IO PATH */
 	struct bio_list		read_race_list;

@@ -48,9 +48,6 @@ bool bch_insert_fixup_extent(struct cache_set *, struct btree *,
 			     struct bch_replace_info *, struct bpos *,
 			     struct journal_res *, unsigned);
 
-unsigned bch_extent_nr_ptrs_after_normalize(struct cache_set *,
-					    const struct btree *,
-					    const struct bkey_packed *);
 void bch_extent_drop_stale(struct cache_set *c, struct bkey_s);
 bool bch_extent_normalize(struct cache_set *, struct bkey_s);
 
@@ -80,25 +77,17 @@ static inline void bch_extent_drop_ptr(struct bkey_s_extent e,
 		(bch_extent_ptrs(extent_s_to_s_c(e)) - ptr) * sizeof(u64));
 }
 
-static inline bool __bch_extent_ptr_is_dirty(const struct cache_set *c,
-					     const struct bch_extent *e,
-					     const struct bch_extent_ptr *ptr,
-					     unsigned nr_ptrs)
-{
-	/* Dirty pointers come last */
-
-	if (EXTENT_CACHED(e))
-		return false;
-
-	return ptr + CACHE_SET_DATA_REPLICAS_WANT(&c->sb) >=
-		e->ptr + nr_ptrs;
-}
-
 static inline bool bch_extent_ptr_is_dirty(const struct cache_set *c,
 					   struct bkey_s_c_extent e,
 					   const struct bch_extent_ptr *ptr)
 {
-	return __bch_extent_ptr_is_dirty(c, e.v, ptr, bch_extent_ptrs(e));
+	/* Dirty pointers come last */
+
+	if (EXTENT_CACHED(e.v))
+		return false;
+
+	return ptr + CACHE_SET_DATA_REPLICAS_WANT(&c->sb) >=
+		e.v->ptr + bch_extent_ptrs(e);
 }
 
 #define extent_for_each_ptr(_extent, _ptr)				\

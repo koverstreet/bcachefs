@@ -12,7 +12,7 @@ int bch_initial_gc(struct cache_set *, struct list_head *);
 u8 bch_btree_key_recalc_oldest_gen(struct cache_set *, struct bkey_s_c);
 void __bch_btree_mark_key(struct cache_set *, int, struct bkey_s_c);
 
-bool btree_gc_mark_node(struct cache_set *, struct btree *, struct gc_stat *);
+bool btree_gc_mark_node(struct cache_set *, struct btree *);
 
 /**
  * __gc_will_visit_node - for checking GC marks while holding a btree read lock

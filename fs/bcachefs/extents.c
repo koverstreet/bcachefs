@@ -19,14 +19,6 @@
 
 #include <trace/events/bcachefs.h>
 
-#define bkey_extent_p(_f, _k)	val_to_extent(bkeyp_val(_f, _k))
-
-static inline unsigned bkeyp_extent_ptrs(const struct bkey_format *f,
-					 const struct bkey_packed *k)
-{
-	return bkeyp_val_u64s(f, k);
-}
-
 static void sort_key_next(struct btree_node_iter *iter,
 			  struct btree_keys *b,
 			  struct btree_node_iter_set *i)
@@ -176,9 +168,8 @@ bool bch_extent_has_device(struct bkey_s_c_extent e, unsigned dev)
 }
 
 static bool should_drop_ptr(const struct cache_set *c,
-			    const struct bch_extent *e,
-			    const struct bch_extent_ptr *ptr,
-			    unsigned nr_ptrs)
+			    struct bkey_s_c_extent e,
+			    const struct bch_extent_ptr *ptr)
 {
 	unsigned dev;
 	struct cache *ca;
@@ -196,48 +187,10 @@ static bool should_drop_ptr(const struct cache_set *c,
 	if (bch_is_zero(mi[dev].uuid.b, sizeof(uuid_le)))
 		return true;
 
-	if (__bch_extent_ptr_is_dirty(c, e, ptr, nr_ptrs))
+	if (bch_extent_ptr_is_dirty(c, e, ptr))
 		return false;
 
 	return (ca = PTR_CACHE(c, ptr)) && ptr_stale(ca, ptr);
-}
-
-unsigned bch_extent_nr_ptrs_after_normalize(struct cache_set *c,
-					    const struct btree *b,
-					    const struct bkey_packed *k)
-{
-	const struct bkey_format *f = &b->keys.format;
-	const struct bch_extent *e;
-	unsigned ret = 0, ptr;
-
-	switch (k->type) {
-	case KEY_TYPE_DELETED:
-	case KEY_TYPE_COOKIE:
-		return 0;
-
-	case KEY_TYPE_DISCARD:
-		return bkey_unpack_key(f, k).version ? BKEY_U64s : 0;
-
-	case KEY_TYPE_ERROR:
-		return bkeyp_key_u64s(f, k);
-
-	case BCH_EXTENT:
-		e = bkey_p_c_extent_val(f, k);
-
-		rcu_read_lock();
-		for (ptr = 0; ptr < bkeyp_extent_ptrs(f, k); ptr++)
-			if (!should_drop_ptr(c, e, &e->ptr[ptr],
-					     bkeyp_extent_ptrs(f, k)))
-				ret++;
-		rcu_read_unlock();
-
-		if (ret)
-			ret += bkeyp_key_u64s(f, k);
-
-		return ret;
-	default:
-		BUG();
-	}
 }
 
 void bch_extent_drop_stale(struct cache_set *c, struct bkey_s k)
@@ -248,8 +201,7 @@ void bch_extent_drop_stale(struct cache_set *c, struct bkey_s k)
 	rcu_read_lock();
 
 	extent_for_each_ptr_backwards(e, ptr)
-		if (should_drop_ptr(c, extent_s_to_s_c(e).v,
-				    ptr, bch_extent_ptrs(e)))
+		if (should_drop_ptr(c, extent_s_to_s_c(e), ptr))
 			bch_extent_drop_ptr(e, ptr - e.v->ptr);
 
 	rcu_read_unlock();
@@ -1568,14 +1520,6 @@ struct cache *bch_extent_pick_ptr_avoiding(struct cache_set *c,
 		BUG();
 	}
 }
-
-#if 0
-static uint64_t merge_chksums(struct bkey *l, struct bkey *r)
-{
-	return (l->val[bkeyp_extent_ptrs(l)] + r->val[bkeyp_extent_ptrs(r)]) &
-		~((uint64_t)1 << 63);
-}
-#endif
 
 static enum merge_result bch_extent_merge(struct btree_keys *bk,
 					  struct bkey_i *l, struct bkey_i *r)

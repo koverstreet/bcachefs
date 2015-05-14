@@ -2451,7 +2451,7 @@ static void btree_split(struct btree *b, struct btree_iter *iter,
 		six_lock_write(&b->lock);
 		if (gc_will_visit_node(c, n2) &&
 		    !gc_will_visit_node(c, n1))
-			btree_gc_mark_node(c, n1, NULL);
+			btree_gc_mark_node(c, n1);
 		six_unlock_write(&b->lock);
 	} else {
 		trace_bcache_btree_node_compact(b, set1->u64s);

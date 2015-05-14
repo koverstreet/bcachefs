@@ -81,8 +81,7 @@ static inline bool btree_node_has_ptrs(struct btree *b)
 	return b->btree_id == BTREE_ID_EXTENTS || b->level > 0;
 }
 
-bool btree_gc_mark_node(struct cache_set *c, struct btree *b,
-			struct gc_stat *stat)
+bool btree_gc_mark_node(struct cache_set *c, struct btree *b)
 {
 	struct bkey_format *f = &b->keys.format;
 	struct bset_tree *t;
@@ -93,15 +92,11 @@ bool btree_gc_mark_node(struct cache_set *c, struct btree *b,
 			     bkey_cmp_packed(f, &b->key.k, &t->end) < 0,
 			     b, "found short btree key in gc");
 
-	if (stat)
-		stat->nodes++;
-
 	if (btree_node_has_ptrs(b)) {
 		struct btree_node_iter iter;
 		struct bkey_packed *k_p;
 		struct bkey_tup tup;
 		struct bkey_s_c k;
-		unsigned keys = 0, good_keys = 0, u64s;
 		u8 stale = 0;
 
 		for_each_btree_node_key(&b->keys, k_p, &iter) {
@@ -114,25 +109,12 @@ bool btree_gc_mark_node(struct cache_set *c, struct btree *b,
 
 			stale = max(stale,
 				    bch_btree_key_recalc_oldest_gen(c, k));
-			keys++;
-
-			u64s = bch_extent_nr_ptrs_after_normalize(c, b, k_p);
-			if (stat && u64s) {
-				good_keys++;
-
-				stat->key_bytes += k_p->u64s;
-				stat->nkeys++;
-				stat->data += tup.k.size;
-			}
 		}
 
 		if (c->gc_rewrite_disabled)
 			return false;
 
 		if (stale > 10)
-			return true;
-
-		if ((keys - good_keys) * 2 > keys)
 			return true;
 	}
 
@@ -142,8 +124,7 @@ bool btree_gc_mark_node(struct cache_set *c, struct btree *b,
 	return false;
 }
 
-static int bch_gc_btree(struct cache_set *c, enum btree_id btree_id,
-			struct gc_stat *stat)
+static int bch_gc_btree(struct cache_set *c, enum btree_id btree_id)
 {
 	struct btree_iter iter;
 	struct btree *b;
@@ -168,7 +149,7 @@ static int bch_gc_btree(struct cache_set *c, enum btree_id btree_id,
 
 		bch_verify_btree_nr_keys(&b->keys);
 
-		should_rewrite = btree_gc_mark_node(c, b, stat);
+		should_rewrite = btree_gc_mark_node(c, b);
 
 		BUG_ON(bkey_cmp(c->gc_cur_pos, b->key.k.p) > 0);
 		BUG_ON(!gc_will_visit_node(c, b));
@@ -317,7 +298,6 @@ static void bch_gc_finish(struct cache_set *c)
  */
 void bch_gc(struct cache_set *c)
 {
-	struct gc_stat stats;
 	u64 start_time = local_clock();
 
 	if (test_bit(CACHE_SET_GC_FAILURE, &c->flags))
@@ -325,14 +305,12 @@ void bch_gc(struct cache_set *c)
 
 	trace_bcache_gc_start(c);
 
-	memset(&stats, 0, sizeof(struct gc_stat));
-
 	down_write(&c->gc_lock);
 	bch_gc_start(c);
 
 	while (c->gc_cur_btree < BTREE_ID_NR) {
 		int ret = c->btree_roots[c->gc_cur_btree]
-			? bch_gc_btree(c, c->gc_cur_btree, &stats)
+			? bch_gc_btree(c, c->gc_cur_btree)
 			: 0;
 
 		if (ret) {
@@ -353,10 +331,6 @@ void bch_gc(struct cache_set *c)
 	up_write(&c->gc_lock);
 
 	bch_time_stats_update(&c->btree_gc_time, start_time);
-
-	stats.key_bytes *= sizeof(u64);
-	stats.data	<<= 9;
-	memcpy(&c->gc_stats, &stats, sizeof(struct gc_stat));
 
 	trace_bcache_gc_end(c);
 }

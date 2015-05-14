@@ -548,6 +548,7 @@ static unsigned bch_cache_available_percent(struct cache_set *c)
 			 c->capacity ?: 1);
 }
 
+#if 0
 static unsigned bch_btree_used(struct cache_set *c)
 {
 	return div64_u64(c->gc_stats.key_bytes * 100,
@@ -560,6 +561,7 @@ static unsigned bch_average_key_size(struct cache_set *c)
 		? div64_u64(c->gc_stats.data, c->gc_stats.nkeys)
 		: 0;
 }
+#endif
 
 static ssize_t show_cache_set_alloc_debug(struct cache_set *c, char *buf)
 {
@@ -611,9 +613,12 @@ SHOW(bch_cache_set)
 	sysfs_print_time_stats(&c->btree_read_time, btree_read, ms, us);
 	sysfs_print_time_stats(&c->journal.full_time, journal_full, sec, ms);
 
+#if 0
+	/* XXX: reimplement */
 	sysfs_print(btree_used_percent,	bch_btree_used(c));
 	sysfs_print(btree_nodes,	c->gc_stats.nodes);
 	sysfs_hprint(average_key_size,	bch_average_key_size(c));
+#endif
 
 	sysfs_print(cache_read_races,
 		    atomic_long_read(&c->cache_read_races));
@@ -711,8 +716,6 @@ STORE(__bch_cache_set)
 	if (attr == &sysfs_clear_stats) {
 		atomic_long_set(&c->writeback_keys_done,	0);
 		atomic_long_set(&c->writeback_keys_failed,	0);
-
-		memset(&c->gc_stats, 0, sizeof(struct gc_stat));
 		bch_cache_accounting_clear(&c->accounting);
 
 		return size;
