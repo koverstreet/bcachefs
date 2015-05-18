@@ -997,27 +997,12 @@ int bio_alloc_pages(struct bio *bio, gfp_t gfp_mask)
 }
 EXPORT_SYMBOL(bio_alloc_pages);
 
-/**
- * bio_copy_data - copy contents of data buffers from one chain of bios to
- * another
- * @src: source bio list
- * @dst: destination bio list
- *
- * If @src and @dst are single bios, bi_next must be NULL - otherwise, treats
- * @src and @dst as linked lists of bios.
- *
- * Stops when it reaches the end of either @src or @dst - that is, copies
- * min(src->bi_size, dst->bi_size) bytes (or the equivalent for lists of bios).
- */
-void bio_copy_data(struct bio *dst, struct bio *src)
+void bio_copy_data_iter(struct bio *dst, struct bvec_iter dst_iter,
+			struct bio *src, struct bvec_iter src_iter)
 {
-	struct bvec_iter src_iter, dst_iter;
 	struct bio_vec src_bv, dst_bv;
 	void *src_p, *dst_p;
 	unsigned bytes;
-
-	src_iter = src->bi_iter;
-	dst_iter = dst->bi_iter;
 
 	while (1) {
 		if (!src_iter.bi_size) {
@@ -1054,6 +1039,24 @@ void bio_copy_data(struct bio *dst, struct bio *src)
 		bio_advance_iter(src, &src_iter, bytes);
 		bio_advance_iter(dst, &dst_iter, bytes);
 	}
+}
+
+/**
+ * bio_copy_data - copy contents of data buffers from one chain of bios to
+ * another
+ * @src: source bio list
+ * @dst: destination bio list
+ *
+ * If @src and @dst are single bios, bi_next must be NULL - otherwise, treats
+ * @src and @dst as linked lists of bios.
+ *
+ * Stops when it reaches the end of either @src or @dst - that is, copies
+ * min(src->bi_size, dst->bi_size) bytes (or the equivalent for lists of bios).
+ */
+void bio_copy_data(struct bio *dst, struct bio *src)
+{
+	bio_copy_data_iter(dst, dst->bi_iter,
+			   src, src->bi_iter);
 }
 EXPORT_SYMBOL(bio_copy_data);
 
