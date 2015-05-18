@@ -1393,7 +1393,7 @@ static void journal_write_locked(struct closure *cl)
 	w->data->version	= BCACHE_JSET_VERSION;
 	w->data->last_seq	= last_seq(j);
 
-	SET_JSET_CSUM_TYPE(w->data, CACHE_PREFERRED_CSUM_TYPE(&c->sb));
+	SET_JSET_CSUM_TYPE(w->data, CACHE_META_PREFERRED_CSUM_TYPE(&c->sb));
 	w->data->csum		= csum_set(w->data, JSET_CSUM_TYPE(w->data));
 
 	sectors = set_blocks(w->data, block_bytes(c)) * c->sb.block_size;

@@ -631,7 +631,7 @@ SHOW(bch_cache_set)
 	if (attr == &sysfs_checksum_type)
 		return bch_snprint_string_list(buf, PAGE_SIZE,
 				bch_csum_types,
-				CACHE_PREFERRED_CSUM_TYPE(&c->sb));
+				CACHE_META_PREFERRED_CSUM_TYPE(&c->sb));
 
 	if (attr == &sysfs_errors)
 		return bch_snprint_string_list(buf, PAGE_SIZE, error_actions,
@@ -845,8 +845,8 @@ STORE(__bch_cache_set)
 		if (v < 0)
 			return v;
 
-		if (v != CACHE_PREFERRED_CSUM_TYPE(&c->sb)) {
-			SET_CACHE_PREFERRED_CSUM_TYPE(&c->sb, v);
+		if (v != CACHE_META_PREFERRED_CSUM_TYPE(&c->sb)) {
+			SET_CACHE_META_PREFERRED_CSUM_TYPE(&c->sb, v);
 			bcache_write_super(c);
 		}
 

@@ -266,7 +266,7 @@ static void bch_prio_write(struct cache *ca)
 		p->next_bucket	= ca->prio_buckets[i + 1];
 		p->magic	= pset_magic(&c->sb);
 
-		SET_PSET_CSUM_TYPE(p, CACHE_PREFERRED_CSUM_TYPE(&c->sb));
+		SET_PSET_CSUM_TYPE(p, CACHE_META_PREFERRED_CSUM_TYPE(&c->sb));
 		p->csum		= bch_checksum(PSET_CSUM_TYPE(p),
 					       &p->magic,
 					       bucket_bytes(ca) - 8);

@@ -588,7 +588,7 @@ static void __bcache_write_super(struct cache_set *c)
 		cache_sb_from_cache_set(c, ca);
 
 		SET_CACHE_SB_CSUM_TYPE(&ca->sb,
-				       CACHE_PREFERRED_CSUM_TYPE(&c->sb));
+				       CACHE_META_PREFERRED_CSUM_TYPE(&c->sb));
 
 		bio_reset(bio);
 		bio->bi_bdev	= ca->disk_sb.bdev;

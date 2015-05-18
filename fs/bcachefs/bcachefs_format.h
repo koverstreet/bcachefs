@@ -532,13 +532,13 @@ BITMASK(CACHE_SET_META_REPLICAS_WANT,	struct cache_sb, flags, 4, 8);
 BITMASK(CACHE_SET_DATA_REPLICAS_WANT,	struct cache_sb, flags, 8, 12);
 
 BITMASK(CACHE_SB_CSUM_TYPE,		struct cache_sb, flags, 12, 16);
-BITMASK(CACHE_PREFERRED_CSUM_TYPE,	struct cache_sb, flags, 16, 20);
+
+BITMASK(CACHE_META_PREFERRED_CSUM_TYPE,	struct cache_sb, flags, 16, 20);
 #define BCH_CSUM_NONE			0U
 #define BCH_CSUM_CRC32C			1U
 #define BCH_CSUM_CRC64			2U
 #define BCH_CSUM_NR			3U
 
-/* Node size for variable sized buckets */
 BITMASK(CACHE_BTREE_NODE_SIZE,		struct cache_sb, flags, 20, 36);
 
 BITMASK(CACHE_SET_META_REPLICAS_HAVE,	struct cache_sb, flags, 36, 40);
