@@ -65,7 +65,7 @@ void bkey_debugcheck(struct cache_set *c, struct btree *b, struct bkey_s_c k)
 	if (bkey_invalid(c, type, k)) {
 		char buf[160];
 
-		bch_bkey_val_to_text(c, b, buf, sizeof(buf), k);
+		bch_bkey_val_to_text(c, type, buf, sizeof(buf), k);
 		cache_set_bug(c, "invalid bkey %s", buf);
 		return;
 	}
@@ -75,10 +75,9 @@ void bkey_debugcheck(struct cache_set *c, struct btree *b, struct bkey_s_c k)
 		ops->key_debugcheck(c, b, k);
 }
 
-void bch_bkey_val_to_text(struct cache_set *c, struct btree *b,
+void bch_bkey_val_to_text(struct cache_set *c, enum bkey_type type,
 			  char *buf, size_t size, struct bkey_s_c k)
 {
-	enum bkey_type type = btree_node_type(b);
 	const struct bkey_ops *ops = bch_bkey_ops[type];
 	char *out = buf, *end = buf + size;
 

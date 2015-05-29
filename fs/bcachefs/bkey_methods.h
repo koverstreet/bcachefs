@@ -27,7 +27,7 @@ struct bkey_ops {
 
 bool bkey_invalid(struct cache_set *, enum bkey_type, struct bkey_s_c);
 void bkey_debugcheck(struct cache_set *, struct btree *, struct bkey_s_c);
-void bch_bkey_val_to_text(struct cache_set *, struct btree *,
+void bch_bkey_val_to_text(struct cache_set *, enum bkey_type,
 			  char *, size_t, struct bkey_s_c);
 
 #undef DEF_BTREE_ID

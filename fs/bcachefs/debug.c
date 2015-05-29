@@ -196,7 +196,7 @@ void bch_verify_inode_refs(struct cache_set *c)
 
 		if (k.k->p.inode != cur_inum &&
 		    bch_inode_find_by_inum(c, k.k->p.inode, &inode)) {
-			bch_bkey_val_to_text(c, iter.nodes[0], buf,
+			bch_bkey_val_to_text(c, BTREE_ID_EXTENTS, buf,
 					     sizeof(buf), k);
 			bch_cache_set_error(c,
 				"extent for missing inode %llu\n%s",
@@ -216,7 +216,7 @@ void bch_verify_inode_refs(struct cache_set *c)
 		BUG_ON(inode.v.i_flags & BCH_INODE_I_SIZE_DIRTY);
 
 		if (k.k->p.offset > round_up(inode.v.i_size, PAGE_SIZE) >> 9) {
-			bch_bkey_val_to_text(c, iter.nodes[0], buf,
+			bch_bkey_val_to_text(c, BTREE_ID_EXTENTS, buf,
 					     sizeof(buf), k);
 			bch_cache_set_error(c,
 				"extent past end of inode %llu: i_size %llu extent\n%s",
@@ -353,7 +353,7 @@ static ssize_t bch_read_btree(struct file *file, char __user *buf,
 	bch_btree_iter_init(&iter, i->c, i->id, i->from);
 
 	while ((k = bch_btree_iter_peek(&iter)).k) {
-		bch_bkey_val_to_text(i->c, iter.nodes[0], i->buf,
+		bch_bkey_val_to_text(i->c, i->id, i->buf,
 				     sizeof(i->buf), k);
 		i->bytes = strlen(i->buf);
 		BUG_ON(i->bytes >= PAGE_SIZE);

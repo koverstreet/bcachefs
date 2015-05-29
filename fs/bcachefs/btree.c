@@ -399,7 +399,8 @@ static const char *validate_bset(struct cache_set *c, struct btree *b,
 			char buf[160];
 
 			bkey_disassemble(&tup, f, k);
-			bch_bkey_val_to_text(c, b, buf, sizeof(buf),
+			bch_bkey_val_to_text(c, btree_node_type(b),
+					     buf, sizeof(buf),
 					     bkey_tup_to_s_c(&tup));
 			btree_node_error(b, ca, ptr,
 					 "invalid bkey %s", buf);
