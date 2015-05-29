@@ -48,49 +48,40 @@ static int issue_moving_gc_move(struct moving_queue *q,
 {
 	struct cache *ca = container_of(q, struct cache, moving_gc_queue);
 	struct cache_set *c = ca->set;
-	struct bkey_s_c_extent e = bkey_i_to_s_c_extent(k);
-	const struct bch_extent_ptr *ptr;
+	struct bkey_s_extent e;
+	struct bch_extent_ptr *ptr;
 	struct moving_io *io;
-	struct write_point *wp;
 	unsigned gen;
-	u64 sort_key;
+
+	io = moving_io_alloc(bkey_i_to_s_c(k));
+	if (!io) {
+		trace_bcache_moving_gc_alloc_fail(c, k->k.size);
+		return -ENOMEM;
+	}
+
+	bch_write_op_init(&io->op, c, &io->bio.bio, NULL,
+			  bkey_i_to_s_c(k), bkey_i_to_s_c(k),
+			  bkey_extent_is_cached(&k->k)
+			  ? BCH_WRITE_CACHED : 0);
+
+	e = bkey_i_to_s_extent(&io->op.insert_key);
 
 	extent_for_each_ptr(e, ptr)
 		if ((ca->sb.nr_this_dev == ptr->dev) &&
 		    (gen = PTR_BUCKET(ca, ptr)->copygc_gen)) {
 			gen--;
 			BUG_ON(gen > ARRAY_SIZE(ca->gc_buckets));
-			wp = &ca->gc_buckets[gen];
-			sort_key = ptr->offset;
+			io->op.wp = &ca->gc_buckets[gen];
+			io->sort_key = ptr->offset;
+			bch_extent_drop_ptr(e, ptr);
 			goto found;
 		}
 
-	bch_scan_keylist_dequeue(&q->keys);
-	return 0;
-
+	/* We raced - bucket's been reused */
+	moving_io_free(io);
+	goto out;
 found:
-	io = moving_io_alloc(bkey_i_to_s_c(k));
-	if (!io) {
-		trace_bcache_moving_gc_alloc_fail(c, e.k->size);
-		return -ENOMEM;
-	}
-
-	/*
-	 * This also copies k into both insert_key and replace_key.
-	 * Notice that we must preserve the cached status of the
-	 * key here, since extent_drop_ptr() might delete the
-	 * first pointer, losing the cached status
-	 */
-	bch_write_op_init(&io->op, c, &io->bio.bio, wp,
-			  bkey_i_to_s_c(k), bkey_i_to_s_c(k),
-			  bkey_extent_is_cached(&k->k)
-			  ? BCH_WRITE_CACHED : 0);
-	io->sort_key		   = sort_key;
-
-	bch_extent_drop_ptr(bkey_i_to_s_extent(&io->op.insert_key),
-			    ptr - e.v->ptr);
-
-	trace_bcache_gc_copy(e.k);
+	trace_bcache_gc_copy(&k->k);
 
 	/*
 	 * IMPORTANT: We must call bch_data_move before we dequeue so
@@ -101,6 +92,7 @@ found:
 	 * by btree gc marking.
 	 */
 	bch_data_move(q, ctxt, io);
+out:
 	bch_scan_keylist_dequeue(&q->keys);
 	return 0;
 }

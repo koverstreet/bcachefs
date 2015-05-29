@@ -195,7 +195,7 @@ void bch_extent_drop_stale(struct cache_set *c, struct bkey_s k)
 
 	extent_for_each_ptr_backwards(e, ptr)
 		if (should_drop_ptr(c, e.c, ptr))
-			bch_extent_drop_ptr(e, ptr - e.v->ptr);
+			bch_extent_drop_ptr(e, ptr);
 
 	rcu_read_unlock();
 }

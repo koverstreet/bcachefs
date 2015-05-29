@@ -127,7 +127,7 @@ static enum migrate_option migrate_cleanup_key(struct cache_set *c,
 	found = false;
 	extent_for_each_ptr_backwards(e, ptr)
 		if (ptr->dev == ca->sb.nr_this_dev) {
-			bch_extent_drop_ptr(e, ptr - e.v->ptr);
+			bch_extent_drop_ptr(e, ptr);
 			found = true;
 		}
 
@@ -530,7 +530,7 @@ static int bch_flag_key_bad(struct btree_iter *iter,
 			if (bch_extent_ptr_is_dirty(c, e.c, ptr))
 				ptr->dev = PTR_LOST_DEV;
 			else
-				bch_extent_drop_ptr(e, ptr - e.v->ptr);
+				bch_extent_drop_ptr(e, ptr);
 		}
 
 	if (!found)

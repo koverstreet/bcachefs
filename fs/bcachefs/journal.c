@@ -1198,7 +1198,7 @@ static void journal_next_bucket(struct cache_set *c)
 		if (!(ca = PTR_CACHE(c, ptr)) ||
 		    CACHE_STATE(&ca->mi) != CACHE_ACTIVE ||
 		    ca->journal.sectors_free <= j->sectors_free)
-			bch_extent_drop_ptr(e, ptr - e.v->ptr);
+			bch_extent_drop_ptr(e, ptr);
 
 	/*
 	 * Determine location of the next journal write:
