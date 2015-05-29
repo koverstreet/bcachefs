@@ -36,10 +36,9 @@ void bch_btree_verify(struct cache_set *c, struct btree *b)
 	struct btree *v = c->verify_data;
 	struct btree_node *n_ondisk, *n_sorted, *n_inmemory;
 	struct bset *sorted, *inmemory;
-	struct cache *ca;
+	struct extent_pick_ptr pick;
 	struct bio *bio;
 	struct closure cl;
-	const struct bch_extent_ptr *ptr;
 
 	if (!c->verify || !c->verify_ondisk)
 		return;
@@ -63,27 +62,29 @@ void bch_btree_verify(struct cache_set *c, struct btree *b)
 			    : bch_btree_ops[v->btree_id],
 			    &v->c->expensive_debug_checks);
 
-	ca = bch_btree_pick_ptr(c, b, &ptr);
+	pick = bch_btree_pick_ptr(c, b);
+	if (IS_ERR_OR_NULL(pick.ca))
+		return;
 
 	bio = bio_alloc_bioset(GFP_NOIO, btree_pages(c), &c->btree_bio);
-	bio->bi_bdev		= ca->disk_sb.bdev;
+	bio->bi_bdev		= pick.ca->disk_sb.bdev;
 	bio->bi_iter.bi_size	= btree_bytes(c);
 	bio_set_op_attrs(bio, REQ_OP_READ, REQ_META|READ_SYNC);
 	bio->bi_private		= &cl;
 	bio->bi_end_io		= btree_verify_endio;
 	bch_bio_map(bio, n_sorted);
 
-	bch_submit_bbio(to_bbio(bio), ca, &b->key, ptr, true);
+	bch_submit_bbio(to_bbio(bio), pick.ca, &b->key, &pick.ptr, true);
 
 	closure_sync(&cl);
 	bio_put(bio);
 
 	memcpy(n_ondisk, n_sorted, btree_bytes(c));
 
-	bch_btree_node_read_done(c, v, ca, ptr);
+	bch_btree_node_read_done(c, v, pick.ca, &pick.ptr);
 	n_sorted = c->verify_data->data;
 
-	percpu_ref_put(&ca->ref);
+	percpu_ref_put(&pick.ca->ref);
 
 	sorted = &n_sorted->keys;
 	inmemory = &n_inmemory->keys;

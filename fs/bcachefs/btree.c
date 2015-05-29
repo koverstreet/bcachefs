@@ -550,20 +550,19 @@ static void bch_btree_node_read(struct cache_set *c, struct btree *b)
 	uint64_t start_time = local_clock();
 	struct closure cl;
 	struct bio *bio;
-	struct cache *ca;
-	const struct bch_extent_ptr *ptr;
+	struct extent_pick_ptr pick;
 
 	trace_bcache_btree_read(b);
 
 	closure_init_stack(&cl);
 
-	ca = bch_btree_pick_ptr(c, b, &ptr);
-	if (!ca) {
+	pick = bch_btree_pick_ptr(c, b);
+	if (!pick.ca) {
 		set_btree_node_io_error(b);
 		goto missing;
 	}
 
-	percpu_ref_get(&ca->ref);
+	percpu_ref_get(&pick.ca->ref);
 
 	bio = bio_alloc_bioset(GFP_NOIO, btree_pages(c), &c->btree_bio);
 	bio->bi_iter.bi_size	= btree_bytes(c);
@@ -574,7 +573,7 @@ static void bch_btree_node_read(struct cache_set *c, struct btree *b)
 	bch_bio_map(bio, b->data);
 
 	bio_get(bio);
-	bch_submit_bbio(to_bbio(bio), ca, &b->key, ptr, true);
+	bch_submit_bbio(to_bbio(bio), pick.ca, &b->key, &pick.ptr, true);
 
 	closure_sync(&cl);
 
@@ -587,21 +586,21 @@ static void bch_btree_node_read(struct cache_set *c, struct btree *b)
 	if (btree_node_io_error(b))
 		goto err;
 
-	bch_btree_node_read_done(c, b, ca, ptr);
+	bch_btree_node_read_done(c, b, pick.ca, &pick.ptr);
 	bch_time_stats_update(&c->btree_read_time, start_time);
 
-	percpu_ref_put(&ca->ref);
+	percpu_ref_put(&pick.ca->ref);
 	return;
 
 missing:
 	bch_cache_set_error(c, "no cache device for btree node");
-	percpu_ref_put(&ca->ref);
+	percpu_ref_put(&pick.ca->ref);
 	return;
 
 err:
-	bch_cache_error(ca, "IO error reading bucket %zu",
-			PTR_BUCKET_NR(ca, ptr));
-	percpu_ref_put(&ca->ref);
+	bch_cache_error(pick.ca, "IO error reading bucket %zu",
+			PTR_BUCKET_NR(pick.ca, &pick.ptr));
+	percpu_ref_put(&pick.ca->ref);
 }
 
 static void btree_complete_write(struct cache_set *c, struct btree *b,

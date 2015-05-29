@@ -30,17 +30,22 @@ extern const struct btree_keys_ops *bch_btree_ops[];
 struct cache_set;
 struct journal_res;
 
-struct cache *bch_btree_pick_ptr(struct cache_set *, const struct btree *,
-				 const struct bch_extent_ptr **);
-struct cache *bch_extent_pick_ptr_avoiding(struct cache_set *, struct bkey_s_c,
-					   const struct bch_extent_ptr **,
-					   struct cache *);
+struct extent_pick_ptr {
+	struct bch_extent_ptr		ptr;
+	struct cache			*ca;
+};
 
-static inline struct cache *bch_extent_pick_ptr(struct cache_set *c,
-					struct bkey_s_c k,
-					const struct bch_extent_ptr **ptr)
+struct extent_pick_ptr
+bch_btree_pick_ptr(struct cache_set *, const struct btree *);
+
+struct extent_pick_ptr
+bch_extent_pick_ptr_avoiding(struct cache_set *, struct bkey_s_c,
+			     struct cache *);
+
+static inline struct extent_pick_ptr
+bch_extent_pick_ptr(struct cache_set *c, struct bkey_s_c k)
 {
-	return bch_extent_pick_ptr_avoiding(c, k, ptr, NULL);
+	return bch_extent_pick_ptr_avoiding(c, k, NULL);
 }
 
 bool bch_insert_fixup_extent(struct cache_set *, struct btree *,
@@ -139,7 +144,6 @@ static inline bool bch_extent_ptr_is_dirty(const struct cache_set *c,
 	     (_ptr)++)
 
 bool bch_extent_has_device(struct bkey_s_c_extent, unsigned);
-void bch_bkey_copy_single_ptr(struct bkey_i *, struct bkey_s_c, unsigned);
 
 bool bch_cut_front(struct bpos, struct bkey_i *);
 bool bch_cut_back(struct bpos, struct bkey *);

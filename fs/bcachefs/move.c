@@ -478,13 +478,12 @@ static void read_moving_endio(struct bio *bio)
 static void __bch_data_move(struct closure *cl)
 {
 	struct moving_io *io = container_of(cl, struct moving_io, cl);
-	struct cache *ca;
-	const struct bch_extent_ptr *ptr;
+	struct extent_pick_ptr pick;
 	u64 size = io->key.k.size;
 
-	ca = bch_extent_pick_ptr_avoiding(io->op.c, bkey_i_to_s_c(&io->key),
-					  &ptr, io->context->avoid);
-	if (IS_ERR_OR_NULL(ca))
+	pick = bch_extent_pick_ptr_avoiding(io->op.c, bkey_i_to_s_c(&io->key),
+					    io->context->avoid);
+	if (IS_ERR_OR_NULL(pick.ca))
 		closure_return_with_destructor(cl, moving_io_destructor);
 
 	io->context->keys_moved++;
@@ -495,7 +494,7 @@ static void __bch_data_move(struct closure *cl)
 	bio_set_op_attrs(&io->bio.bio, REQ_OP_READ, 0);
 	io->bio.bio.bi_end_io	= read_moving_endio;
 
-	bch_submit_bbio(&io->bio, ca, &io->key, ptr, false);
+	bch_submit_bbio(&io->bio, pick.ca, &io->key, &pick.ptr, false);
 }
 
 /*

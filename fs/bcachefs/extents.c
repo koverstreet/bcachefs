@@ -404,33 +404,34 @@ err:
 	rcu_read_unlock();
 }
 
-struct cache *bch_btree_pick_ptr(struct cache_set *c,
-				 const struct btree *b,
-				 const struct bch_extent_ptr **ptr)
+struct extent_pick_ptr
+bch_btree_pick_ptr(struct cache_set *c, const struct btree *b)
 {
 	struct bkey_s_c_extent e = bkey_i_to_s_c_extent(&b->key);
+	const struct bch_extent_ptr *ptr;
 	struct cache *ca;
 
 	rcu_read_lock();
 
-	extent_for_each_online_device(c, e, *ptr, ca) {
-		if (ptr_stale(ca, *ptr)) {
+	extent_for_each_online_device(c, e, ptr, ca) {
+		if (ptr_stale(ca, ptr)) {
 			bch_cache_error(ca,
 				"stale btree node pointer at btree %u level %u/%u bucket %zu",
 				b->btree_id, b->level, btree_node_root(b)
 				? btree_node_root(b)->level : -1,
-				PTR_BUCKET_NR(ca, *ptr));
+				PTR_BUCKET_NR(ca, ptr));
 			continue;
 		}
 
 		percpu_ref_get(&ca->ref);
 		rcu_read_unlock();
-		return ca;
+
+		return (struct extent_pick_ptr) { .ptr = *ptr, .ca = ca };
 	}
 
 	rcu_read_unlock();
 
-	return NULL;
+	return (struct extent_pick_ptr) { .ca = NULL, };
 }
 
 const struct btree_keys_ops bch_btree_interior_node_ops = {
@@ -443,28 +444,6 @@ const struct bkey_ops bch_bkey_btree_ops = {
 };
 
 /* Extents */
-
-void bch_bkey_copy_single_ptr(struct bkey_i *dst,
-			      struct bkey_s_c _src,
-			      unsigned i)
-{
-	struct bkey_s_c_extent srce = bkey_s_c_to_extent(_src);
-	struct bkey_i_extent *dste;
-
-	BUG_ON(i > bch_extent_ptrs(srce));
-
-	/* Only copy the header, key, and one pointer. */
-	dst->k = *srce.k;
-	dste = bkey_i_to_extent(dst);
-
-	dste->v.ptr[0] = srce.v->ptr[i];
-
-	bch_set_extent_ptrs(extent_i_to_s(dste), 1);
-#if 0
-	/* We didn't copy the checksum so clear that bit. */
-	SET_KEY_CSUM(dst, 0);
-#endif
-}
 
 bool __bch_cut_front(struct bpos where, struct bkey_s k)
 {
@@ -1433,23 +1412,23 @@ bool bch_extent_normalize(struct cache_set *c, struct bkey_s k)
  * as the pointers are sorted by tier, hence preferring pointers to tier 0
  * rather than pointers to tier 1.
  */
-struct cache *bch_extent_pick_ptr_avoiding(struct cache_set *c,
-					   struct bkey_s_c k,
-					   const struct bch_extent_ptr **ptr,
-					   struct cache *avoid)
+struct extent_pick_ptr
+bch_extent_pick_ptr_avoiding(struct cache_set *c, struct bkey_s_c k,
+			     struct cache *avoid)
 {
 	struct bkey_s_c_extent e;
-	const struct bch_extent_ptr *i;
-	struct cache *ca, *picked = NULL;
+	const struct bch_extent_ptr *ptr;
+	struct cache *ca;
+	struct extent_pick_ptr ret = { .ca = NULL };
 
 	switch (k.k->type) {
 	case KEY_TYPE_DELETED:
 	case KEY_TYPE_DISCARD:
 	case KEY_TYPE_COOKIE:
-		return NULL;
+		return (struct extent_pick_ptr) { .ca = NULL };
 
 	case KEY_TYPE_ERROR:
-		return ERR_PTR(-EIO);
+		return (struct extent_pick_ptr) { .ca = ERR_PTR(-EIO) };
 
 	case BCH_EXTENT:
 	case BCH_EXTENT_CACHED:
@@ -1460,26 +1439,24 @@ struct cache *bch_extent_pick_ptr_avoiding(struct cache_set *c,
 		e = bkey_s_c_to_extent(k);
 		rcu_read_lock();
 
-		extent_for_each_online_device(c, e, i, ca)
-			if (!ptr_stale(ca, i)) {
-				picked = ca;
-				*ptr = i;
+		extent_for_each_online_device(c, e, ptr, ca)
+			if (!ptr_stale(ca, ptr)) {
+				ret = (struct extent_pick_ptr) {
+					.ptr = *ptr,
+					.ca = ca,
+				};
+
 				if (ca != avoid)
 					break;
 			}
 
-		if (picked != NULL) {
-			percpu_ref_get(&picked->ref);
-			rcu_read_unlock();
-			return picked;
-		}
+		if (ret.ca)
+			percpu_ref_get(&ret.ca->ref);
+		else if (!bkey_extent_is_cached(e.k))
+			ret.ca = ERR_PTR(-EIO);
 
 		rcu_read_unlock();
-
-		/* data missing that's not supposed to be? */
-		return bkey_extent_is_cached(e.k)
-			? NULL
-			: ERR_PTR(-EIO);
+		return ret;
 
 	default:
 		BUG();

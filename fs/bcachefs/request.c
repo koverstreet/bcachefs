@@ -416,11 +416,10 @@ static void cached_dev_read(struct cached_dev *dc, struct search *s)
 
 	for_each_btree_key_with_holes(&iter, s->iop.c, BTREE_ID_EXTENTS,
 				POS(s->inode, bio->bi_iter.bi_sector), k) {
+		struct extent_pick_ptr pick;
 		struct bio *n;
 		struct bbio *bbio;
-		const struct bch_extent_ptr *ptr;
 		unsigned sectors;
-		struct cache *ca;
 		bool done;
 retry:
 		BUG_ON(bkey_cmp(bkey_start_pos(k.k),
@@ -432,24 +431,22 @@ retry:
 		sectors = k.k->p.offset - bio->bi_iter.bi_sector;
 		done = sectors >= bio_sectors(bio);
 
-		ca = bch_extent_pick_ptr(s->iop.c, k, &ptr);
-		if (IS_ERR(ca)) {
+		pick = bch_extent_pick_ptr(s->iop.c, k);
+		if (IS_ERR(pick.ca)) {
 			bcache_io_error(s->iop.c, bio,
 					"no device to read from");
 			bch_btree_iter_unlock(&iter);
 			goto out;
 		}
 
-		if (!ca) {
+		if (!pick.ca) {
 			/* not present (hole), or stale cached data */
 			if (cached_dev_cache_miss(&iter, s, bio, sectors)) {
 				k = bch_btree_iter_peek_with_holes(&iter);
 				goto retry;
 			}
 		} else {
-			struct bkey_s_c_extent e = bkey_s_c_to_extent(k);
-
-			PTR_BUCKET(ca, ptr)->read_prio =
+			PTR_BUCKET(pick.ca, &pick.ptr)->read_prio =
 				s->iop.c->prio_clock[READ].hand;
 
 			if (!bkey_extent_is_cached(k.k))
@@ -459,7 +456,9 @@ retry:
 					   &s->d->bio_split);
 
 			bbio = to_bbio(n);
-			bch_bkey_copy_single_ptr(&bbio->key, k, ptr - e.v->ptr);
+			bbio->key.k = *k.k;
+			bbio->ptr = pick.ptr;
+			bch_set_extent_ptrs(bkey_i_to_s_extent(&bbio->key), 1);
 
 			/* Trim the key to match what we're actually reading */
 			bch_cut_front(POS(s->inode, n->bi_iter.bi_sector),
@@ -467,7 +466,7 @@ retry:
 			bch_cut_back(POS(s->inode, bio_end_sector(n)),
 				     &bbio->key.k);
 
-			bch_bbio_prep(bbio, ca);
+			bch_bbio_prep(bbio, pick.ca);
 
 			n->bi_end_io		= bch_cache_read_endio;
 			n->bi_private		= &s->cl;

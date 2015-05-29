@@ -64,7 +64,7 @@ struct dirty_io {
 	struct cached_dev	*dc;
 	struct cache		*ca;
 	struct keybuf_key	*w;
-	unsigned		ptr;
+	struct bch_extent_ptr	ptr;
 	int			error;
 	bool			from_mempool;
 	/* Must be last */
@@ -172,8 +172,7 @@ static void read_dirty_endio(struct bio *bio)
 			    "reading dirty data from cache");
 	percpu_ref_put(&io->ca->ref);
 
-	if (ptr_stale(io->ca,
-		      &bkey_i_to_extent_c(&io->replace.key)->v.ptr[io->ptr]))
+	if (ptr_stale(io->ca, &io->ptr))
 		bio->bi_error = -EINTR;
 
 	dirty_endio(bio);
@@ -193,8 +192,6 @@ static u64 read_dirty(struct cached_dev *dc)
 	struct keybuf_key *w;
 	struct dirty_io *io;
 	struct closure cl;
-	struct cache *ca;
-	const struct bch_extent_ptr *ptr;
 	unsigned i;
 	struct bio_vec *bv;
 	u64 sectors_written = 0;
@@ -212,10 +209,11 @@ static u64 read_dirty(struct cached_dev *dc)
 		bkey_copy(&tmp.k, &w->key);
 
 		while (tmp.k.k.size) {
-			ca = bch_extent_pick_ptr(dc->disk.c,
-						 bkey_i_to_s_c(&tmp.k),
-						 &ptr);
-			if (IS_ERR_OR_NULL(ca))
+			struct extent_pick_ptr pick;
+
+			pick = bch_extent_pick_ptr(dc->disk.c,
+						   bkey_i_to_s_c(&tmp.k));
+			if (IS_ERR_OR_NULL(pick.ca))
 				break;
 
 			io = kzalloc(sizeof(*io) + sizeof(struct bio_vec) *
@@ -223,7 +221,7 @@ static u64 read_dirty(struct cached_dev *dc)
 						  PAGE_SECTORS),
 				     GFP_KERNEL);
 			if (!io) {
-				trace_bcache_writeback_alloc_fail(ca->set,
+				trace_bcache_writeback_alloc_fail(pick.ca->set,
 								  tmp.k.k.size);
 				io = mempool_alloc(&dc->writeback_io_pool,
 						   GFP_KERNEL);
@@ -243,15 +241,15 @@ static u64 read_dirty(struct cached_dev *dc)
 			}
 
 			io->dc		= dc;
-			io->ca		= ca;
+			io->ca		= pick.ca;
 			io->w		= w;
-			io->ptr		= ptr - bkey_i_to_extent(&tmp.k)->v.ptr;
+			io->ptr		= pick.ptr;
 			atomic_inc(&w->ref);
 
 			dirty_init(io);
 			bio_set_op_attrs(&io->bio, REQ_OP_READ, 0);
-			io->bio.bi_iter.bi_sector = ptr->offset;
-			io->bio.bi_bdev		= ca->disk_sb.bdev;
+			io->bio.bi_iter.bi_sector = pick.ptr.offset;
+			io->bio.bi_bdev		= pick.ca->disk_sb.bdev;
 			io->bio.bi_end_io	= read_dirty_endio;
 
 			bio_for_each_segment_all(bv, &io->bio, i) {

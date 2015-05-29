@@ -955,11 +955,10 @@ int bch_read(struct cache_set *c, struct bio *bio, u64 inode)
 
 	for_each_btree_key_with_holes(&iter, c, BTREE_ID_EXTENTS,
 				      POS(inode, bio->bi_iter.bi_sector), k) {
+		struct extent_pick_ptr pick;
 		struct bio *n;
 		struct bbio *bbio;
-		struct cache *ca;
 		unsigned sectors;
-		const struct bch_extent_ptr *ptr;
 		bool done;
 
 		BUG_ON(bkey_cmp(bkey_start_pos(k.k),
@@ -971,16 +970,14 @@ int bch_read(struct cache_set *c, struct bio *bio, u64 inode)
 		sectors = k.k->p.offset - bio->bi_iter.bi_sector;
 		done = sectors >= bio_sectors(bio);
 
-		ca = bch_extent_pick_ptr(c, k, &ptr);
-		if (IS_ERR(ca)) {
+		pick = bch_extent_pick_ptr(c, k);
+		if (IS_ERR(pick.ca)) {
 			bcache_io_error(c, bio, "no device to read from");
 			bch_btree_iter_unlock(&iter);
 			return 0;
 		}
-		if (ca) {
-			struct bkey_s_c_extent e = bkey_s_c_to_extent(k);
-
-			PTR_BUCKET(ca, ptr)->read_prio =
+		if (pick.ca) {
+			PTR_BUCKET(pick.ca, &pick.ptr)->read_prio =
 				c->prio_clock[READ].hand;
 
 			n = sectors >= bio_sectors(bio)
@@ -993,15 +990,16 @@ int bch_read(struct cache_set *c, struct bio *bio, u64 inode)
 			__bio_inc_remaining(bio);
 
 			bbio = to_bbio(n);
-			bch_bkey_copy_single_ptr(&bbio->key, k,
-						 ptr - e.v->ptr);
+			bbio->key.k = *k.k;
+			bbio->ptr = pick.ptr;
+			bch_set_extent_ptrs(bkey_i_to_s_extent(&bbio->key), 1);
 
 			/* Trim the key to match what we're actually reading */
 			bch_cut_front(POS(inode, n->bi_iter.bi_sector),
 				      &bbio->key);
 			bch_cut_back(POS(inode, bio_end_sector(n)),
 				     &bbio->key.k);
-			bch_bbio_prep(bbio, ca);
+			bch_bbio_prep(bbio, pick.ca);
 
 			cache_promote(c, bbio, k);
 		} else {
