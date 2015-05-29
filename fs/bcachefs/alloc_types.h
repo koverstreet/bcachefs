@@ -1,6 +1,8 @@
 #ifndef _BCACHE_ALLOC_TYPES_H
 #define _BCACHE_ALLOC_TYPES_H
 
+#include <linux/mutex.h>
+
 #include "clock_types.h"
 
 /*
@@ -68,7 +70,7 @@ static inline bool allocation_is_metadata(enum alloc_reserve id)
 
 struct open_bucket {
 	struct list_head	list;
-	spinlock_t		lock;
+	struct mutex		lock;
 	atomic_t		pin;
 	unsigned		sectors_free;
 	unsigned		nr_ptrs;

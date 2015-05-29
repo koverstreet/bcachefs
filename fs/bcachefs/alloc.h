@@ -9,9 +9,6 @@ struct cache;
 struct cache_set;
 struct cache_group;
 
-void bch_cache_group_remove_cache(struct cache_group *, struct cache *);
-void bch_cache_group_add_cache(struct cache_group *, struct cache *);
-
 int bch_prio_read(struct cache *);
 
 void bch_recalc_min_prio(struct cache *, int);
@@ -34,10 +31,8 @@ static inline void bch_wake_allocator(struct cache *ca)
 	closure_wake_up(&ca->set->buckets_available_wait);
 }
 
-void bch_open_buckets_init(struct cache_set *);
+void bch_cache_allocator_stop(struct cache *);
 const char *bch_cache_allocator_start(struct cache *);
-
-void bch_stop_new_data_writes(struct cache *);
-void bch_await_scheduled_data_writes(struct cache *);
+void bch_open_buckets_init(struct cache_set *);
 
 #endif /* _BCACHE_ALLOC_H */

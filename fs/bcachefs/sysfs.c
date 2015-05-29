@@ -187,7 +187,7 @@ rw_attribute(meta_replicas_want);
 read_attribute(meta_replicas_have);
 rw_attribute(data_replicas_want);
 read_attribute(data_replicas_have);
-rw_attribute(tier);
+read_attribute(tier);
 
 static struct attribute sysfs_state_rw = {
 	.name = "state",
@@ -1191,29 +1191,6 @@ STORE(__bch_cache)
 
 		if ((unsigned) v != CACHE_REPLACEMENT(mi)) {
 			SET_CACHE_REPLACEMENT(mi, v);
-			bcache_write_super(c);
-		}
-	}
-
-	if (attr == &sysfs_tier) {
-		unsigned long v = strtoul_or_return(buf);
-
-		if (v >= CACHE_TIERS)
-			return -EINVAL;
-
-		if (v != CACHE_TIER(mi) &&
-		    CACHE_STATE(mi) == CACHE_ACTIVE) {
-			struct cache_group *tier;
-
-			tier = &c->cache_tiers[v];
-			bch_cache_group_add_cache(tier, ca);
-
-			tier = &c->cache_tiers[CACHE_TIER(mi)];
-			bch_cache_group_remove_cache(tier, ca);
-		}
-
-		if (v != CACHE_TIER(mi)) {
-			SET_CACHE_TIER(mi, v);
 			bcache_write_super(c);
 		}
 	}

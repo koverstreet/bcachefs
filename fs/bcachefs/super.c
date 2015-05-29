@@ -638,75 +638,6 @@ void bch_check_mark_super_slowpath(struct cache_set *c, const struct bkey_i *k,
 
 /* Cache set */
 
-static void bch_recalc_capacity(struct cache_set *c)
-{
-	struct cache_group *tier = c->cache_tiers + ARRAY_SIZE(c->cache_tiers);
-	struct cache *ca;
-	u64 capacity = 0;
-	unsigned long ra_pages = 0;
-	unsigned i, j;
-
-	rcu_read_lock();
-	for_each_cache_rcu(ca, c, i) {
-		struct backing_dev_info *bdi =
-			blk_get_backing_dev_info(ca->disk_sb.bdev);
-
-		ra_pages += bdi->ra_pages;
-	}
-
-	c->bdi.ra_pages = ra_pages;
-
-	/*
-	 * Capacity of the cache set is the capacity of all the devices in the
-	 * slowest (highest) tier - we don't include lower tier devices.
-	 */
-	for (tier = c->cache_tiers + ARRAY_SIZE(c->cache_tiers) - 1;
-	     tier > c->cache_tiers && !tier->nr_devices;
-	     --tier)
-		;
-
-	group_for_each_cache_rcu(ca, tier, i) {
-		size_t reserve = 0;
-
-		/*
-		 * We need to reserve buckets (from the number
-		 * of currently available buckets) against
-		 * foreground writes so that mainly copygc can
-		 * make forward progress.
-		 *
-		 * We need enough to refill the various reserves
-		 * from scratch - copygc will use its entire
-		 * reserve all at once, then run against when
-		 * its reserve is refilled (from the formerly
-		 * available buckets).
-		 *
-		 * This reserve is just used when considering if
-		 * allocations for foreground writes must wait -
-		 * not -ENOSPC calculations.
-		 */
-		for (j = 0; j < RESERVE_NR; j++)
-			reserve += ca->free[j].size;
-
-		reserve += ca->free_inc.size;
-
-		ca->reserve_buckets_count = reserve;
-
-		capacity += (ca->mi.nbuckets -
-			     ca->mi.first_bucket) <<
-			ca->bucket_bits;
-	}
-	rcu_read_unlock();
-
-	capacity *= (100 - c->sector_reserve_percent);
-	capacity = div64_u64(capacity, 100);
-
-	c->capacity = capacity;
-
-	/* Wake up case someone was waiting for buckets */
-	closure_wake_up(&c->freelist_wait);
-	closure_wake_up(&c->buckets_available_wait);
-}
-
 static void __bch_cache_read_only(struct cache *ca);
 
 static void bch_cache_set_read_only(struct cache_set *c)
@@ -1390,51 +1321,17 @@ static const char *can_attach_cache(struct cache_sb *sb, struct cache_set *c)
 
 static void __bch_cache_read_only(struct cache *ca)
 {
-	struct cache_set *c = ca->set;
-	struct cache_member_rcu *mi = cache_member_info_get(c);
-	struct cache_group *tier = &c->cache_tiers[
-		CACHE_TIER(&mi->m[ca->sb.nr_this_dev])];
-	struct task_struct *p;
-
-	cache_member_info_put();
-
 	trace_bcache_cache_read_only(ca);
 
 	bch_moving_gc_stop(ca);
 	bch_tiering_write_stop(ca);
 
 	/*
-	 * These remove this cache device from the list from which new
-	 * buckets can be allocated.
-	 */
-	bch_cache_group_remove_cache(tier, ca);
-	bch_cache_group_remove_cache(&c->cache_all, ca);
-
-	/*
-	 * Stopping the allocator thread stops the writing of any
-	 * prio/gen information to the device.
-	 */
-	p = ca->alloc_thread;
-	ca->alloc_thread = NULL;
-	smp_wmb(); /* XXX */
-	if (p)
-		kthread_stop(p);
-
-	bch_recalc_capacity(c);
-
-	/*
 	 * This stops new data writes (e.g. to existing open data
 	 * buckets) and then waits for all existing writes to
 	 * complete.
-	 *
-	 * The access (read) barrier is in bch_cache_percpu_ref_release.
 	 */
-	bch_stop_new_data_writes(ca);
-
-	/*
-	 * This will suspend the running task until outstanding writes complete.
-	 */
-	bch_await_scheduled_data_writes(ca);
+	bch_cache_allocator_stop(ca);
 
 	/*
 	 * Device data write barrier -- no non-meta-data writes should
@@ -1518,13 +1415,7 @@ void bch_cache_read_only(struct cache *ca)
 
 static const char *__bch_cache_read_write(struct cache *ca)
 {
-	struct cache_set *c = ca->set;
-	struct cache_member_rcu *mi = cache_member_info_get(c);
-	struct cache_group *tier = &c->cache_tiers[
-		CACHE_TIER(&mi->m[ca->sb.nr_this_dev])];
 	const char *err;
-
-	cache_member_info_put();
 
 	trace_bcache_cache_read_write(ca);
 
@@ -1535,11 +1426,6 @@ static const char *__bch_cache_read_write(struct cache *ca)
 	err = "error starting tiering write workqueue";
 	if (bch_tiering_write_start(ca))
 		return err;
-
-	bch_cache_group_add_cache(tier, ca);
-	bch_cache_group_add_cache(&c->cache_all, ca);
-
-	bch_recalc_capacity(c);
 
 	trace_bcache_cache_read_write_done(ca);
 
@@ -1644,14 +1530,6 @@ static void bch_cache_percpu_ref_release(struct percpu_ref *ref)
 {
 	struct cache *ca = container_of(ref, struct cache, ref);
 
-	/*
-	 * Device access barrier -- no non-superblock accesses should occur
-	 * after this point.
-	 * The write barrier is in bch_cache_read_only.
-	 *
-	 * This results in bch_cache_release being called which
-	 * frees up the storage.
-	 */
 	schedule_work(&ca->free_work);
 }
 

@@ -199,20 +199,18 @@ static void bch_mark_allocator_buckets(struct cache_set *c)
 		spin_unlock(&ca->freelist_lock);
 	}
 
-	spin_lock(&c->open_buckets_lock);
-	rcu_read_lock();
-
-	list_for_each_entry(ob, &c->open_buckets_open, list) {
+	for (ob = c->open_buckets;
+	     ob < c->open_buckets + ARRAY_SIZE(c->open_buckets);
+	     ob++) {
 		const struct bch_extent_ptr *ptr;
 
-		spin_lock(&ob->lock);
+		mutex_lock(&ob->lock);
+		rcu_read_lock();
 		extent_ptr_for_each_online_device(c, ob->ptrs, ob->nr_ptrs, ptr, ca)
 			bch_mark_alloc_bucket(ca, PTR_BUCKET(ca, ptr));
-		spin_unlock(&ob->lock);
+		rcu_read_unlock();
+		mutex_unlock(&ob->lock);
 	}
-
-	rcu_read_unlock();
-	spin_unlock(&c->open_buckets_lock);
 }
 
 static void bch_gc_start(struct cache_set *c)
