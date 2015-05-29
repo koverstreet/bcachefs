@@ -165,14 +165,21 @@ static inline void journal_pin_drop(struct journal *j,
 {
 	unsigned long flags;
 
+	/* journal_reclaim_work() might have already taken us off the list */
 	if (!list_empty_careful(&pin->list)) {
 		spin_lock_irqsave(&j->lock, flags);
 		list_del_init(&pin->list);
 		spin_unlock_irqrestore(&j->lock, flags);
 	}
 
-	if (atomic_dec_and_test(&pin->pin_list->count))
-		queue_work(system_long_wq, &j->reclaim_work);
+	if (atomic_dec_and_test(&pin->pin_list->count)) {
+		/*
+		 * Unpinning a journal entry make make journal_next_bucket()
+		 * succeed, if writing a new last_seq will now make another
+		 * bucket available:
+		 */
+		wake_up(&j->wait);
+	}
 
 	pin->pin_list = NULL;
 }

@@ -807,7 +807,7 @@ static bool journal_entry_close(struct journal *j)
 }
 
 /* Number of u64s we can write to the current journal bucket */
-static void journal_calc_entry_size(struct journal *j)
+static void journal_entry_open(struct journal *j)
 {
 	struct journal_write *w = journal_cur_write(j);
 	ssize_t u64s;
@@ -886,7 +886,7 @@ void bch_journal_start(struct cache_set *c)
 	 * Recalculate, since we just added entries directly bypassing
 	 * reservations
 	 */
-	journal_calc_entry_size(j);
+	journal_entry_open(j);
 	spin_unlock_irq(&j->lock);
 
 	queue_work(system_long_wq, &j->reclaim_work);
@@ -1173,7 +1173,6 @@ static void journal_next_bucket(struct cache_set *c)
 	struct cache *ca;
 	unsigned iter;
 
-	pr_debug("started");
 	lockdep_assert_held(&j->lock);
 
 	/*
@@ -1181,6 +1180,9 @@ static void journal_next_bucket(struct cache_set *c)
 	 * new journal entry
 	 */
 	BUG_ON(test_bit(JOURNAL_DIRTY, &j->flags));
+
+	/* We use last_idx() below, make sure it's up to date: */
+	journal_reclaim_fast(j);
 
 	rcu_read_lock();
 
@@ -1223,26 +1225,26 @@ static void journal_next_bucket(struct cache_set *c)
 		remaining = (ja->last_idx + nr_buckets - next) % nr_buckets;
 
 		/*
+		 * Hack to avoid a deadlock during journal replay:
+		 * journal replay might require setting a new btree
+		 * root, which requires writing another journal entry -
+		 * thus, if the journal is full (and this happens when
+		 * replaying the first journal bucket's entries) we're
+		 * screwed.
+		 *
+		 * So don't let the journal fill up unless we're in
+		 * replay:
+		 */
+		if (test_bit(JOURNAL_REPLAY_DONE, &j->flags))
+			remaining = max((int) remaining - 2, 0);
+
+		/*
 		 * Don't use the last bucket unless writing the new last_seq
 		 * will make another bucket available:
 		 */
-		if (ja->bucket_seq[(next + 1) % nr_buckets] >= last_seq(j)) {
-			/*
-			 * Hack to avoid a deadlock during journal replay:
-			 * journal replay might require setting a new btree
-			 * root, which requires writing another journal entry -
-			 * thus, if the journal is full (and this happens when
-			 * replaying the first journal bucket's entries) we're
-			 * screwed.
-			 *
-			 * So don't let the journal fill up unless we're in
-			 * replay:
-			 */
-			if (test_bit(JOURNAL_REPLAY_DONE, &j->flags))
-				remaining = max((int) remaining - 3, 0);
-			else
-				remaining = max((int) remaining - 1, 0);
-		}
+		if (remaining == 1 &&
+		    ja->bucket_seq[ja->last_idx] >= last_seq(j))
+			continue;
 
 		if (!remaining)
 			continue;
@@ -1266,13 +1268,15 @@ static void journal_next_bucket(struct cache_set *c)
 	/* set j->sectors_free to the min of any device */
 	j->sectors_free = UINT_MAX;
 
-	extent_for_each_online_device(c, e, ptr, ca)
-		j->sectors_free = min(j->sectors_free,
-				      ca->journal.sectors_free);
+	if (bch_extent_ptrs(e) == CACHE_SET_META_REPLICAS_WANT(&c->sb))
+		extent_for_each_online_device(c, e, ptr, ca)
+			j->sectors_free = min(j->sectors_free,
+					      ca->journal.sectors_free);
+
 	if (j->sectors_free == UINT_MAX)
 		j->sectors_free = 0;
 
-	journal_calc_entry_size(j);
+	journal_entry_open(j);
 
 	rcu_read_unlock();
 
@@ -1307,7 +1311,7 @@ static void __bch_journal_next_entry(struct journal *j)
 static void bch_journal_next_entry(struct journal *j)
 {
 	__bch_journal_next_entry(j);
-	journal_calc_entry_size(j);
+	journal_entry_open(j);
 }
 
 static void journal_write_endio(struct bio *bio)
@@ -1342,6 +1346,12 @@ static void journal_write_done(struct closure *cl)
 		mod_delayed_work(system_wq, &j->write_work, 0);
 
 	spin_unlock_irqrestore(&j->lock, flags);
+
+	/*
+	 * Updating last_seq_ondisk may let journal_reclaim_work() discard more
+	 * buckets:
+	 */
+	queue_work(system_long_wq, &j->reclaim_work);
 }
 
 static void journal_write_locked(struct closure *cl)
@@ -1569,8 +1579,7 @@ void bch_journal_res_put(struct journal *j, struct journal_res *res)
 			journal_unlock(j);
 		}
 
-		if (!list_empty_careful(&j->wait.task_list))
-			wake_up(&j->wait);
+		wake_up(&j->wait);
 	}
 }
 
@@ -1624,7 +1633,7 @@ static bool __journal_res_get(struct journal *j, struct journal_res *res,
 
 		/*
 		 * Recheck after taking the lock, so we don't race with another
-		 * thread that just did journal_calc_entry_size() and call
+		 * thread that just did journal_entry_open() and call
 		 * journal_entry_close() unnecessarily
 		 */
 		if (journal_res_get_fast(j, res, u64s_min, u64s_max)) {
@@ -1800,6 +1809,7 @@ ssize_t bch_journal_print_debug(struct journal *j, char *buf)
 			 "seq:\t\t\t%llu\n"
 			 "last_seq:\t\t%llu\n"
 			 "last_seq_ondisk:\t%llu\n"
+			 "sectors_free:\t\t%u\n"
 			 "reservation count:\t%u\n"
 			 "reservation offset:\t%u\n"
 			 "current entry u64s:\t%u\n"
@@ -1811,6 +1821,7 @@ ssize_t bch_journal_print_debug(struct journal *j, char *buf)
 			 j->seq,
 			 last_seq(j),
 			 j->last_seq_ondisk,
+			 j->sectors_free,
 			 j->reservations.count,
 			 j->reservations.cur_entry_offset,
 			 j->cur_entry_u64s,
@@ -1823,10 +1834,13 @@ ssize_t bch_journal_print_debug(struct journal *j, char *buf)
 		struct journal_device *ja = &ca->journal;
 
 		ret += scnprintf(buf + ret, PAGE_SIZE - ret,
-				 "dev %u: nr %u cur_idx %u last_idx %u next bucket_seq %llu\n",
+				 "dev %u:\n"
+				 "\tnr\t\t%u\n"
+				 "\tcur_idx\t\t%u (seq %llu)\n"
+				 "\tlast_idx\t%u (seq %llu)\n",
 				 iter, bch_nr_journal_buckets(&ca->sb),
-				 ja->cur_idx, ja->last_idx,
-				 ja->bucket_seq[ja->last_idx]);
+				 ja->cur_idx,	ja->bucket_seq[ja->cur_idx],
+				 ja->last_idx,	ja->bucket_seq[ja->last_idx]);
 	}
 
 	spin_unlock_irq(&j->lock);
@@ -1837,13 +1851,13 @@ ssize_t bch_journal_print_debug(struct journal *j, char *buf)
 
 static bool bch_journal_writing_to_device(struct cache *ca)
 {
-	struct cache_set *c = ca->set;
+	struct journal *j = &ca->set->journal;
 	bool ret;
 
-	spin_lock_irq(&c->journal.lock);
-	ret = bch_extent_has_device(bkey_i_to_s_c_extent(&c->journal.key),
+	spin_lock_irq(&j->lock);
+	ret = bch_extent_has_device(bkey_i_to_s_c_extent(&j->key),
 				    ca->sb.nr_this_dev);
-	spin_unlock_irq(&c->journal.lock);
+	spin_unlock_irq(&j->lock);
 
 	return ret;
 }
@@ -1904,9 +1918,9 @@ int bch_journal_move(struct cache *ca)
 	 * Verify that we no longer need any of the journal entries in
 	 * the device
 	 */
-	spin_lock_irq(&c->journal.lock);
-	last_flushed_seq = last_seq(&c->journal);
-	spin_unlock_irq(&c->journal.lock);
+	spin_lock_irq(&j->lock);
+	last_flushed_seq = last_seq(j);
+	spin_unlock_irq(&j->lock);
 
 	nr_buckets = bch_nr_journal_buckets(&ca->sb);
 
