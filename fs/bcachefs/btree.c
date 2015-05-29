@@ -564,7 +564,7 @@ static void bch_btree_node_read(struct cache_set *c, struct btree *b)
 
 	percpu_ref_get(&pick.ca->ref);
 
-	bio = bio_alloc_bioset(GFP_NOIO, btree_pages(c), &c->btree_bio);
+	bio = bio_alloc_bioset(GFP_NOIO, btree_pages(c), &c->btree_read_bio);
 	bio->bi_iter.bi_size	= btree_bytes(c);
 	bio->bi_end_io		= btree_node_read_endio;
 	bio->bi_private		= &cl;
@@ -618,14 +618,12 @@ static void btree_node_write_unlock(struct closure *cl)
 	up(&b->io_mutex);
 }
 
-static void __btree_node_write_done(struct closure *cl)
+static void btree_node_write_done(struct closure *cl)
 {
 	struct btree *b = container_of(cl, struct btree, io);
 	struct btree_write *w = btree_prev_write(b);
 	struct cache_set *c = b->c;
 
-	bio_put(b->bio);
-	b->bio = NULL;
 	btree_complete_write(c, b, w);
 
 	if (btree_node_dirty(b) && c->btree_flush_delay)
@@ -634,21 +632,19 @@ static void __btree_node_write_done(struct closure *cl)
 	closure_return_with_destructor(cl, btree_node_write_unlock);
 }
 
-static void btree_node_write_done(struct closure *cl)
-{
-	struct btree *b = container_of(cl, struct btree, io);
-
-	bio_free_pages(b->bio);
-	__btree_node_write_done(cl);
-}
-
 static void btree_node_write_endio(struct bio *bio)
 {
 	struct closure *cl = bio->bi_private;
 	struct btree *b = container_of(cl, struct btree, io);
+	struct bch_write_bio *wbio = to_wbio(bio);
 
 	if (bio->bi_error || bch_meta_write_fault("btree"))
 		set_btree_node_io_error(b);
+
+	if (wbio->orig)
+		bio_endio(wbio->orig);
+	else if (wbio->bounce)
+		bio_free_pages(bio);
 
 	bch_bbio_endio(to_bbio(bio), bio->bi_error, "writing btree");
 }
@@ -656,6 +652,8 @@ static void btree_node_write_endio(struct bio *bio)
 static void do_btree_node_write(struct closure *cl)
 {
 	struct btree *b = container_of(cl, struct btree, io);
+	struct bio *bio;
+	struct bch_write_bio *wbio;
 	struct cache_set *c = b->c;
 	struct bset *i = btree_bset_last(b);
 	BKEY_PADDED(key) k;
@@ -702,20 +700,17 @@ static void do_btree_node_write(struct closure *cl)
 
 	BUG_ON(b->written + blocks_to_write > btree_blocks(c));
 
-	BUG_ON(b->bio);
-	b->bio = bio_alloc_bioset(GFP_NOIO, btree_pages(c), &c->btree_bio);
+	bio = bio_alloc_bioset(GFP_NOIO, btree_pages(c), &c->bio_write);
 
-	/*
-	 * Take an extra reference so that the bio_put() in
-	 * btree_node_write_endio() doesn't call bio_free()
-	 */
-	bio_get(b->bio);
+	wbio		= to_wbio(bio);
+	wbio->orig	= NULL;
+	wbio->bounce	= false;
 
-	b->bio->bi_end_io	= btree_node_write_endio;
-	b->bio->bi_private	= cl;
-	b->bio->bi_iter.bi_size	= blocks_to_write << (c->block_bits + 9);
-	bio_set_op_attrs(b->bio, REQ_OP_WRITE, REQ_META|WRITE_SYNC|REQ_FUA);
-	bch_bio_map(b->bio, data);
+	bio->bi_end_io		= btree_node_write_endio;
+	bio->bi_private		= cl;
+	bio->bi_iter.bi_size	= blocks_to_write << (c->block_bits + 9);
+	bio_set_op_attrs(bio, REQ_OP_WRITE, REQ_META|WRITE_SYNC|REQ_FUA);
+	bch_bio_map(bio, data);
 
 	/*
 	 * If we're appending to a leaf node, we don't technically need FUA -
@@ -746,27 +741,29 @@ static void do_btree_node_write(struct closure *cl)
 
 	b->written += blocks_to_write;
 
-	if (!bio_alloc_pages(b->bio, __GFP_NOWARN|GFP_NOWAIT)) {
+	if (!bio_alloc_pages(bio, __GFP_NOWARN|GFP_NOWAIT)) {
 		int j;
 		struct bio_vec *bv;
 		void *base = (void *) ((unsigned long) data & ~(PAGE_SIZE - 1));
 
-		bio_for_each_segment_all(bv, b->bio, j)
+		bio_for_each_segment_all(bv, bio, j)
 			memcpy(page_address(bv->bv_page),
 			       base + (j << PAGE_SHIFT), PAGE_SIZE);
 
-		bch_submit_bbio_replicas(b->bio, c, &k.key, 0, true);
+		wbio->bounce = true;
+
+		bch_submit_bbio_replicas(wbio, c, &k.key, 0, true);
 		continue_at(cl, btree_node_write_done, NULL);
 	} else {
 		trace_bcache_btree_bounce_write_fail(b);
 
-		b->bio->bi_vcnt = 0;
-		bch_bio_map(b->bio, data);
+		bio->bi_vcnt = 0;
+		bch_bio_map(bio, data);
 
-		bch_submit_bbio_replicas(b->bio, c, &k.key, 0, true);
+		bch_submit_bbio_replicas(wbio, c, &k.key, 0, true);
 
 		closure_sync(cl);
-		continue_at_nobarrier(cl, __btree_node_write_done, NULL);
+		continue_at_nobarrier(cl, btree_node_write_done, NULL);
 	}
 }
 

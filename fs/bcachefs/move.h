@@ -91,7 +91,7 @@ struct moving_io {
 	int			read_completed : 1;
 	int			write_issued : 1;
 	/* Must be last since it is variable size */
-	struct bbio		bio;
+	struct bch_write_bio	bio;
 };
 
 struct moving_io *moving_io_alloc(struct bkey_s_c);

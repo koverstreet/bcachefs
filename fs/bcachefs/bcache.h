@@ -420,15 +420,10 @@ struct cache_set {
 
 	struct bio_set		bio_split;
 
-	/* For punting bio submissions to workqueue, io.c */
-	struct bio_list		bio_submit_list;
-	struct work_struct	bio_submit_work;
-	spinlock_t		bio_submit_lock;
-
 	struct backing_dev_info bdi;
 
 	/* BTREE CACHE */
-	struct bio_set		btree_bio;
+	struct bio_set		btree_read_bio;
 
 	spinlock_t		btree_root_lock;
 	struct btree		*btree_roots[BTREE_ID_NR];
@@ -568,6 +563,13 @@ struct cache_set {
 	struct rw_semaphore	gc_lock;
 
 	/* IO PATH */
+	struct bio_set		bio_write;
+
+	/* For punting bio submissions to workqueue, io.c */
+	struct bio_list		bio_submit_list;
+	struct work_struct	bio_submit_work;
+	spinlock_t		bio_submit_lock;
+
 	struct bio_list		read_race_list;
 	struct work_struct	read_race_work;
 	spinlock_t		read_race_lock;
@@ -658,22 +660,6 @@ struct cache_set {
 	 */
 	unsigned		sector_reserve_percent;
 };
-
-struct bbio {
-	struct cache		*ca;
-
-	unsigned int		bi_idx;		/* current index into bvl_vec */
-
-	unsigned int            bi_bvec_done;	/* number of bytes completed in
-						   current bvec */
-	unsigned		submit_time_us;
-	struct bkey_i		key;
-	struct bch_extent_ptr	ptr;
-	/* Only ever have a single pointer (the one we're doing io to/from) */
-	struct bio		bio;
-};
-
-#define to_bbio(_bio)		container_of((_bio), struct bbio, bio)
 
 static inline unsigned bucket_pages(const struct cache *ca)
 {

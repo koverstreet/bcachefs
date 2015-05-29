@@ -24,6 +24,13 @@
 
 #include <trace/events/bcachefs.h>
 
+static inline void __bio_inc_remaining(struct bio *bio)
+{
+	bio->bi_flags |= (1 << BIO_CHAIN);
+	smp_mb__before_atomic();
+	atomic_inc(&bio->__bi_remaining);
+}
+
 void bch_generic_make_request(struct bio *bio, struct cache_set *c)
 {
 	if (current->bio_list) {
@@ -88,13 +95,15 @@ void bch_submit_bbio(struct bbio *b, struct cache *ca, const struct bkey_i *k,
 		closure_bio_submit(bio, bio->bi_private);
 }
 
-void bch_submit_bbio_replicas(struct bio *bio, struct cache_set *c,
+void bch_submit_bbio_replicas(struct bch_write_bio *bio, struct cache_set *c,
 			      const struct bkey_i *k, unsigned ptrs_from,
 			      bool punt)
 {
 	struct bkey_s_c_extent e = bkey_i_to_s_c_extent(k);
 	struct cache *ca;
 	unsigned ptr;
+
+	BUG_ON(bio->orig);
 
 	for (ptr = ptrs_from;
 	     ptr < bch_extent_ptrs(e);
@@ -106,20 +115,24 @@ void bch_submit_bbio_replicas(struct bio *bio, struct cache_set *c,
 		rcu_read_unlock();
 
 		if (!ca) {
-			bch_submit_bbio(to_bbio(bio), ca, k,
+			bch_submit_bbio(&bio->bio, ca, k,
 					&e.v->ptr[ptr], punt);
 			break;
 		}
 
 		if (ptr + 1 < bch_extent_ptrs(e)) {
-			struct bio *n = bio_clone_fast(bio, GFP_NOIO,
-						       &ca->replica_set);
-			n->bi_end_io		= bio->bi_end_io;
-			n->bi_private		= bio->bi_private;
-			bch_submit_bbio(to_bbio(n), ca, k,
-					&e.v->ptr[ptr], punt);
+			struct bch_write_bio *n =
+				to_wbio(bio_clone_fast(&bio->bio.bio, GFP_NOIO,
+						       &ca->replica_set));
+
+			n->bio.bio.bi_end_io	= bio->bio.bio.bi_end_io;
+			n->bio.bio.bi_private	= bio->bio.bio.bi_private;
+			n->orig			= &bio->bio.bio;
+			__bio_inc_remaining(n->orig);
+
+			bch_submit_bbio(&n->bio, ca, k, &e.v->ptr[ptr], punt);
 		} else {
-			bch_submit_bbio(to_bbio(bio), ca, k,
+			bch_submit_bbio(&bio->bio, ca, k,
 					&e.v->ptr[ptr], punt);
 		}
 	}
@@ -323,7 +336,7 @@ static void bch_write_index(struct closure *cl)
 static void bch_write_discard(struct closure *cl)
 {
 	struct bch_write_op *op = container_of(cl, struct bch_write_op, cl);
-	struct bio *bio = op->bio;
+	struct bio *bio = &op->bio->bio.bio;
 	u64 inode = op->insert_key.k.p.inode;
 
 	op->error = bch_discard(op->c,
@@ -386,7 +399,7 @@ static void bch_write_endio(struct bio *bio)
 static void __bch_write(struct closure *cl)
 {
 	struct bch_write_op *op = container_of(cl, struct bch_write_op, cl);
-	struct bio *bio = op->bio, *n;
+	struct bio *bio = &op->bio->bio.bio, *n;
 	unsigned open_bucket_nr = 0, ptrs_from;
 	struct open_bucket *b;
 
@@ -448,7 +461,7 @@ static void __bch_write(struct closure *cl)
 		bch_cut_front(k->k.p, &op->insert_key);
 
 		n = bio_next_split(bio, k->k.size, GFP_NOIO,
-				   &op->c->bio_split);
+				   &op->c->bio_write);
 		if (n == bio)
 			bio_get(bio);
 
@@ -461,7 +474,8 @@ static void __bch_write(struct closure *cl)
 		trace_bcache_cache_insert(&k->k);
 
 		bio_set_op_attrs(n, REQ_OP_WRITE, 0);
-		bch_submit_bbio_replicas(n, op->c, k, ptrs_from, false);
+		bch_submit_bbio_replicas(to_wbio(n), op->c, k,
+					 ptrs_from, false);
 
 		BUG_ON(bch_extent_normalize(op->c, bkey_i_to_s(k)));
 		bch_check_mark_super(op->c, k, false);
@@ -548,14 +562,15 @@ void bch_wake_delayed_writes(unsigned long data)
 void bch_write(struct closure *cl)
 {
 	struct bch_write_op *op = container_of(cl, struct bch_write_op, cl);
+	struct bio *bio = &op->bio->bio.bio;
 	struct cache_set *c = op->c;
 	u64 inode = op->insert_key.k.p.inode;
 
-	trace_bcache_write(c, inode, op->bio,
+	trace_bcache_write(c, inode, bio,
 			   !bkey_extent_is_cached(&op->insert_key.k),
 			   op->discard);
 
-	if (!bio_sectors(op->bio)) {
+	if (!bio_sectors(bio)) {
 		WARN_ONCE(1, "bch_write() called with empty bio");
 		closure_return(cl);
 	}
@@ -577,22 +592,22 @@ void bch_write(struct closure *cl)
 		op->io_wq = op->c->wq;
 
 	if (!op->discard)
-		bch_increment_clock(c, bio_sectors(op->bio), WRITE);
+		bch_increment_clock(c, bio_sectors(bio), WRITE);
 
 	if (!op->discard)
-		bch_mark_foreground_write(c, bio_sectors(op->bio));
+		bch_mark_foreground_write(c, bio_sectors(bio));
 	else
-		bch_mark_discard(c, bio_sectors(op->bio));
+		bch_mark_discard(c, bio_sectors(bio));
 
-	if (atomic64_sub_return(bio_sectors(op->bio),
+	if (atomic64_sub_return(bio_sectors(bio),
 				&c->sectors_until_gc) < 0) {
 		trace_bcache_gc_periodic(c);
 		set_gc_sectors(c);
 		wake_up_process(c->gc_thread);
 	}
 
-	op->insert_key.k.p.offset	= bio_end_sector(op->bio);
-	op->insert_key.k.size		= bio_sectors(op->bio);
+	op->insert_key.k.p.offset	= bio_end_sector(bio);
+	op->insert_key.k.size		= bio_sectors(bio);
 
 	/* Don't call bch_next_delay() if rate is >= 1 GB/sec */
 
@@ -603,12 +618,12 @@ void bch_write(struct closure *cl)
 
 		spin_lock_irqsave(&c->foreground_write_pd_lock, flags);
 		bch_ratelimit_increment(&c->foreground_write_pd.rate,
-					op->bio->bi_iter.bi_size);
+					bio->bi_iter.bi_size);
 
 		delay = bch_ratelimit_delay(&c->foreground_write_pd.rate);
 
 		if (delay >= HZ / 100) {
-			trace_bcache_write_throttle(c, inode, op->bio, delay);
+			trace_bcache_write_throttle(c, inode, bio, delay);
 
 			closure_get(&op->cl); /* list takes a ref */
 
@@ -637,7 +652,7 @@ void bch_write(struct closure *cl)
 }
 
 void bch_write_op_init(struct bch_write_op *op, struct cache_set *c,
-		       struct bio *bio, struct write_point *wp,
+		       struct bch_write_bio *bio, struct write_point *wp,
 		       struct bkey_s_c insert_key,
 		       struct bkey_s_c replace_key,
 		       unsigned flags)
@@ -755,7 +770,7 @@ struct cache_promote_op {
 	struct bio		*orig_bio;
 	struct bch_write_op	iop;
 	bool			stale; /* was the ptr stale after the read? */
-	struct bbio		bio; /* must be last */
+	struct bch_write_bio	bio; /* must be last */
 };
 
 static void cache_promote_done(struct closure *cl)
@@ -769,7 +784,7 @@ static void cache_promote_done(struct closure *cl)
 		atomic_inc(&c->accounting.collector.cache_miss_collisions);
 	}
 
-	bio_free_pages(op->iop.bio);
+	bio_free_pages(&op->iop.bio->bio.bio);
 	kfree(op);
 }
 
@@ -777,7 +792,7 @@ static void cache_promote_write(struct closure *cl)
 {
 	struct cache_promote_op *op = container_of(cl,
 					struct cache_promote_op, cl);
-	struct bio *bio = op->iop.bio;
+	struct bio *bio = &op->iop.bio->bio.bio;
 
 	bio_reset(bio);
 	bio->bi_iter.bi_sector	= bkey_start_offset(&op->iop.insert_key.k);
@@ -801,8 +816,8 @@ static void cache_promote_write(struct closure *cl)
 static void cache_promote_endio(struct bio *bio)
 {
 	struct bbio *b = to_bbio(bio);
-	struct cache_promote_op *op = container_of(b,
-					struct cache_promote_op, bio);
+	struct cache_promote_op *op =
+		container_of(bio, struct cache_promote_op, bio.bio.bio);
 
 	/*
 	 * If the bucket was reused while our bio was in flight, we might have
@@ -844,7 +859,7 @@ void __cache_promote(struct cache_set *c, struct bbio *orig_bio,
 	/* clone the bbio */
 	memcpy(&op->bio, orig_bio, offsetof(struct bbio, bio));
 
-	bio = &op->bio.bio;
+	bio = &op->bio.bio.bio;
 	bio_init(bio);
 	bio_get(bio);
 	bio->bi_bdev		= orig_bio->bio.bi_bdev;
@@ -864,7 +879,7 @@ void __cache_promote(struct cache_set *c, struct bbio *orig_bio,
 	op->orig_bio		= &orig_bio->bio;
 	op->stale		= 0;
 
-	bch_write_op_init(&op->iop, c, bio, &c->promote_write_point,
+	bch_write_op_init(&op->iop, c, &op->bio, &c->promote_write_point,
 			  new, old, BCH_WRITE_CHECK_ENOSPC|write_flags);
 
 	bch_cut_front(bkey_start_pos(&orig_bio->key.k), &op->iop.insert_key);
@@ -872,7 +887,7 @@ void __cache_promote(struct cache_set *c, struct bbio *orig_bio,
 
 	trace_bcache_promote(&orig_bio->bio);
 
-	op->bio.submit_time_us = local_clock_us();
+	op->bio.bio.submit_time_us = local_clock_us();
 	closure_bio_submit(bio, &op->cl);
 
 	continue_at(&op->cl, cache_promote_write, c->wq);
@@ -936,13 +951,6 @@ static void bch_read_endio(struct bio *bio)
 
 	if (ca)
 		percpu_ref_put(&ca->ref);
-}
-
-static inline void __bio_inc_remaining(struct bio *bio)
-{
-	bio->bi_flags |= (1 << BIO_CHAIN);
-	smp_mb__before_atomic();
-	atomic_inc(&bio->__bi_remaining);
 }
 
 /* XXX: this looks a lot like cache_lookup_fn() */

@@ -209,7 +209,7 @@ static void bio_complete(struct search *s)
 
 static void do_bio_hook(struct search *s, struct bio *orig_bio)
 {
-	struct bio *bio = &s->bio.bio;
+	struct bio *bio = &s->bio.bio.bio;
 
 	bio_init(bio);
 	__bio_clone_fast(bio, orig_bio);
@@ -226,7 +226,7 @@ static void search_free(struct closure *cl)
 	bio_complete(s);
 
 	if (s->iop.bio)
-		bio_put(s->iop.bio);
+		bio_put(&s->iop.bio->bio.bio);
 
 	closure_debug_destroy(cl);
 	mempool_free(s, &s->d->c->search);
@@ -275,7 +275,7 @@ static void cached_dev_bio_complete(struct closure *cl)
 static void cached_dev_read_error(struct closure *cl)
 {
 	struct search *s = container_of(cl, struct search, cl);
-	struct bio *bio = &s->bio.bio;
+	struct bio *bio = &s->bio.bio.bio;
 
 	if (s->recoverable) {
 		/* Read bucket invalidate races are handled here, also plain
@@ -396,7 +396,7 @@ static void bch_cache_read_endio(struct bio *bio)
 
 	if (bio->bi_error)
 		s->iop.error = bio->bi_error;
-	else if (ptr_stale(b->ca, &bkey_i_to_extent_c(&b->key)->v.ptr[0])) {
+	else if (ptr_stale(b->ca, &b->ptr)) {
 		/* Read bucket invalidate race */
 		atomic_long_inc(&s->iop.c->cache_read_races);
 		s->iop.error = -EINTR;
@@ -408,11 +408,11 @@ static void bch_cache_read_endio(struct bio *bio)
 static void cached_dev_read(struct cached_dev *dc, struct search *s)
 {
 	struct closure *cl = &s->cl;
-	struct bio *bio = &s->bio.bio;
+	struct bio *bio = &s->bio.bio.bio;
 	struct btree_iter iter;
 	struct bkey_s_c k;
 
-	bch_increment_clock(s->iop.c, bio_sectors(&s->bio.bio), READ);
+	bch_increment_clock(s->iop.c, bio_sectors(bio), READ);
 
 	for_each_btree_key_with_holes(&iter, s->iop.c, BTREE_ID_EXTENTS,
 				POS(s->inode, bio->bi_iter.bi_sector), k) {
@@ -509,12 +509,11 @@ static void cached_dev_write_complete(struct closure *cl)
 static void cached_dev_write(struct cached_dev *dc, struct search *s)
 {
 	struct closure *cl = &s->cl;
-	struct bio *bio = &s->bio.bio;
+	struct bio *bio = &s->bio.bio.bio;
 	unsigned inode = bcache_dev_inum(&dc->disk);
 	bool writeback = false;
 	bool bypass = s->bypass;
 	struct bkey insert_key = KEY(s->inode, 0, 0);
-	struct bio *insert_bio;
 	unsigned flags = 0;
 
 	down_read_non_owner(&dc->writeback_lock);
@@ -546,19 +545,17 @@ static void cached_dev_write(struct cached_dev *dc, struct search *s)
 	}
 
 	if (bypass) {
-		insert_bio = s->orig_bio;
-		bio_get(insert_bio);
-
-		/* If this is a bypass-write (as opposed to a discard), send
+		/*
+		 * If this is a bypass-write (as opposed to a discard), send
 		 * it down to the backing device. If this is a discard, only
 		 * send it to the backing device if the backing device
 		 * supports discards. Otherwise, we simply discard the key
-		 * range from the cache and don't touch the backing device. */
+		 * range from the cache and don't touch the backing device.
+		 */
 		if ((bio_op(bio) != REQ_OP_DISCARD) ||
 		    blk_queue_discard(bdev_get_queue(dc->disk_sb.bdev)))
-			closure_bio_submit(bio, cl);
+			closure_bio_submit(s->orig_bio, cl);
 	} else if (writeback) {
-		insert_bio = bio;
 		bch_writeback_add(dc);
 
 		if (bio->bi_opf & REQ_PREFLUSH) {
@@ -574,8 +571,10 @@ static void cached_dev_write(struct cached_dev *dc, struct search *s)
 			closure_bio_submit(flush, cl);
 		}
 	} else {
-		insert_bio = bio_clone_fast(bio, GFP_NOIO, &dc->disk.bio_split);
-		closure_bio_submit(bio, cl);
+		struct bio *writethrough =
+			bio_clone_fast(bio, GFP_NOIO, &dc->disk.bio_split);
+
+		closure_bio_submit(writethrough, cl);
 
 		flags |= BCH_WRITE_CACHED;
 		flags |= BCH_WRITE_ALLOC_NOWAIT;
@@ -586,7 +585,7 @@ static void cached_dev_write(struct cached_dev *dc, struct search *s)
 	if (bypass)
 		flags |= BCH_WRITE_DISCARD;
 
-	bch_write_op_init(&s->iop, dc->disk.c, insert_bio, NULL,
+	bch_write_op_init(&s->iop, dc->disk.c, &s->bio, NULL,
 			  bkey_to_s_c(&insert_key), bkey_s_c_null, flags);
 
 	closure_call(&s->iop.cl, bch_write, NULL, cl);
@@ -619,7 +618,7 @@ static void __cached_dev_make_request(struct request_queue *q, struct bio *bio)
 			 * If it's a flush, we send the flush to the backing
 			 * device too
 			 */
-			closure_bio_submit(&s->bio.bio, &s->cl);
+			closure_bio_submit(&s->bio.bio.bio, &s->cl);
 
 			continue_at(&s->cl, cached_dev_bio_complete, NULL);
 		} else {
@@ -709,15 +708,14 @@ static void __flash_dev_make_request(struct request_queue *q, struct bio *bio)
 	} else if (rw) {
 		unsigned flags = 0;
 
-		s = search_alloc(bio, d);
-		bio = &s->bio.bio;
-
 		if (bio->bi_opf & (REQ_PREFLUSH|REQ_FUA))
 			flags |= BCH_WRITE_FLUSH;
 		if (bio_op(bio) == REQ_OP_DISCARD)
 			flags |= BCH_WRITE_DISCARD;
 
-		bch_write_op_init(&s->iop, d->c, bio, NULL,
+		s = search_alloc(bio, d);
+
+		bch_write_op_init(&s->iop, d->c, &s->bio, NULL,
 				  bkey_to_s_c(&KEY(s->inode, 0, 0)),
 				  bkey_s_c_null, flags);
 

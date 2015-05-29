@@ -226,7 +226,7 @@ static int issue_tiering_move(struct moving_queue *q,
 		return -ENOMEM;
 	}
 
-	bch_write_op_init(&io->op, c, &io->bio.bio,
+	bch_write_op_init(&io->op, c, &io->bio,
 			  &ca->tiering_write_point,
 			  bkey_i_to_s_c(&io->key),
 			  bkey_i_to_s_c(&io->key), 0);

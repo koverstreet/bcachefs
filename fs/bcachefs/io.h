@@ -1,10 +1,30 @@
 #ifndef _BCACHE_IO_H
 #define _BCACHE_IO_H
 
-/*
- * Adding a wrapper around the replace_key allows easy addition of
- * statistics and other fields for debugging, etc.
- */
+struct bbio {
+	struct cache		*ca;
+
+	unsigned int		bi_idx;		/* current index into bvl_vec */
+
+	unsigned int            bi_bvec_done;	/* number of bytes completed in
+						   current bvec */
+	unsigned		submit_time_us;
+	struct bkey_i		key;
+	struct bch_extent_ptr	ptr;
+	/* Only ever have a single pointer (the one we're doing io to/from) */
+	struct bio		bio;
+};
+
+#define to_bbio(_bio)		container_of((_bio), struct bbio, bio)
+
+struct bch_write_bio {
+	struct bio		*orig;
+	unsigned		bounce:1;
+	struct bbio		bio;
+};
+
+#define to_wbio(_bio)			\
+	container_of((_bio), struct bch_write_bio, bio.bio)
 
 struct bch_replace_info {
 	unsigned successes;	/* How many insertions succeeded */
@@ -16,7 +36,7 @@ struct bch_write_op {
 	struct closure		cl;
 	struct cache_set	*c;
 	struct workqueue_struct	*io_wq;
-	struct bio		*bio;
+	struct bch_write_bio	*bio;
 
 	short			error;
 
@@ -71,7 +91,7 @@ enum bch_write_flags {
 };
 
 void bch_write_op_init(struct bch_write_op *, struct cache_set *,
-		       struct bio *, struct write_point *,
+		       struct bch_write_bio *, struct write_point *,
 		       struct bkey_s_c, struct bkey_s_c, unsigned);
 void bch_write(struct closure *);
 
@@ -87,7 +107,7 @@ void bch_bio_submit_work(struct work_struct *);
 void bch_bbio_prep(struct bbio *, struct cache *);
 void bch_submit_bbio(struct bbio *, struct cache *, const struct bkey_i *,
 		     const struct bch_extent_ptr *, bool);
-void bch_submit_bbio_replicas(struct bio *, struct cache_set *,
+void bch_submit_bbio_replicas(struct bch_write_bio *, struct cache_set *,
 			      const struct bkey_i *, unsigned, bool);
 
 int bch_discard(struct cache_set *, struct bpos, struct bpos, u64);

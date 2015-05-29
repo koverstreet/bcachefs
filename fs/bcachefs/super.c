@@ -764,7 +764,8 @@ static void cache_set_free(struct closure *cl)
 	bch_io_clock_exit(&c->io_clock[WRITE]);
 	bch_io_clock_exit(&c->io_clock[READ]);
 	bdi_destroy(&c->bdi);
-	bioset_exit(&c->btree_bio);
+	bioset_exit(&c->btree_read_bio);
+	bioset_exit(&c->bio_write);
 	bioset_exit(&c->bio_split);
 	mempool_exit(&c->btree_reserve_pool);
 	mempool_exit(&c->fill_iter);
@@ -992,7 +993,8 @@ static struct cache_set *bch_cache_set_alloc(struct cache_sb *sb)
 					BTREE_RESERVE_SIZE) ||
 	    mempool_init_kmalloc_pool(&c->fill_iter, 1, iter_size) ||
 	    bioset_init(&c->bio_split, 4, offsetof(struct bbio, bio)) ||
-	    bioset_init(&c->btree_bio, 1, offsetof(struct bbio, bio)) ||
+	    bioset_init(&c->bio_write, 4, offsetof(struct bch_write_bio, bio.bio)) ||
+	    bioset_init(&c->btree_read_bio, 1, offsetof(struct bbio, bio)) ||
 	    bdi_setup_and_register(&c->bdi, "bcache") ||
 	    bch_io_clock_init(&c->io_clock[READ]) ||
 	    bch_io_clock_init(&c->io_clock[WRITE]) ||
@@ -1906,7 +1908,8 @@ static const char *cache_alloc(struct bcache_superblock *sb,
 	    !(ca->journal.bucket_seq = kcalloc(bch_nr_journal_buckets(&ca->sb),
 					       sizeof(u64), GFP_KERNEL)) ||
 	    !(ca->bio_prio = bio_kmalloc(GFP_NOIO, bucket_pages(ca))) ||
-	    bioset_init(&ca->replica_set, 4, offsetof(struct bbio, bio)))
+	    bioset_init(&ca->replica_set, 4,
+			offsetof(struct bch_write_bio, bio.bio)))
 		goto err;
 
 	ca->prio_last_buckets = ca->prio_buckets + prio_buckets(ca);

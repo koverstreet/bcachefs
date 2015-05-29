@@ -129,7 +129,6 @@ struct btree {
 	struct delayed_work	work;
 
 	struct btree_write	writes[2];
-	struct bio		*bio;
 
 	struct list_head	journal_seq_blacklisted;
 };

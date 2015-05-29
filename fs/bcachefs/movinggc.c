@@ -59,7 +59,7 @@ static int issue_moving_gc_move(struct moving_queue *q,
 		return -ENOMEM;
 	}
 
-	bch_write_op_init(&io->op, c, &io->bio.bio, NULL,
+	bch_write_op_init(&io->op, c, &io->bio, NULL,
 			  bkey_i_to_s_c(k), bkey_i_to_s_c(k),
 			  bkey_extent_is_cached(&k->k)
 			  ? BCH_WRITE_CACHED : 0);
