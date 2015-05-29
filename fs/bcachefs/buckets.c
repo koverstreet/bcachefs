@@ -233,7 +233,7 @@ static u8 bch_mark_bucket(struct cache_set *c, struct cache *ca,
 		 * the allocator invalidating a bucket after we've already
 		 * checked the gen
 		 */
-		stale = gen_after(ca->bucket_gens[bucket_nr], PTR_GEN(ptr));
+		stale = gen_after(ca->bucket_gens[bucket_nr], ptr->gen);
 		if (stale)
 			return stale;
 
@@ -300,7 +300,7 @@ int bch_mark_pointers(struct cache_set *c, struct btree *b,
 	const struct bch_extent_ptr *ptr;
 	struct cache *ca;
 
-	BUG_ON(metadata && EXTENT_CACHED(e.v));
+	BUG_ON(metadata && bkey_extent_is_cached(e.k));
 	BUG_ON(!sectors);
 
 	rcu_read_lock();

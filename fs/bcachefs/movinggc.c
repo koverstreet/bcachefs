@@ -25,13 +25,11 @@ static bool moving_pred(struct scan_keylist *kl, struct bkey_s_c k)
 	struct cache *ca = container_of(kl, struct cache,
 					moving_gc_queue.keys);
 	struct cache_set *c = ca->set;
-	struct bkey_s_c_extent e;
 	const struct bch_extent_ptr *ptr;
 	bool ret = false;
 
-	switch (k.k->type) {
-	case BCH_EXTENT:
-		e = bkey_s_c_to_extent(k);
+	if (bkey_extent_is_data(k.k)) {
+		struct bkey_s_c_extent e = bkey_s_c_to_extent(k);
 
 		rcu_read_lock();
 		extent_for_each_ptr(e, ptr)
@@ -39,11 +37,9 @@ static bool moving_pred(struct scan_keylist *kl, struct bkey_s_c k)
 			    PTR_BUCKET(ca, ptr)->copygc_gen)
 				ret = true;
 		rcu_read_unlock();
-
-		return ret;
-	default:
-		return false;
 	}
+
+	return ret;
 }
 
 static int issue_moving_gc_move(struct moving_queue *q,
@@ -57,16 +53,15 @@ static int issue_moving_gc_move(struct moving_queue *q,
 	struct moving_io *io;
 	struct write_point *wp;
 	unsigned gen;
-	bool cached = EXTENT_CACHED(e.v);
 	u64 sort_key;
 
 	extent_for_each_ptr(e, ptr)
-		if ((ca->sb.nr_this_dev == PTR_DEV(ptr)) &&
+		if ((ca->sb.nr_this_dev == ptr->dev) &&
 		    (gen = PTR_BUCKET(ca, ptr)->copygc_gen)) {
 			gen--;
 			BUG_ON(gen > ARRAY_SIZE(ca->gc_buckets));
 			wp = &ca->gc_buckets[gen];
-			sort_key = PTR_OFFSET(ptr);
+			sort_key = ptr->offset;
 			goto found;
 		}
 
@@ -88,7 +83,8 @@ found:
 	 */
 	bch_write_op_init(&io->op, c, &io->bio.bio, wp,
 			  bkey_i_to_s_c(k), bkey_i_to_s_c(k),
-			  cached ? BCH_WRITE_CACHED : 0);
+			  bkey_extent_is_cached(&k->k)
+			  ? BCH_WRITE_CACHED : 0);
 	io->sort_key		   = sort_key;
 
 	bch_extent_drop_ptr(bkey_i_to_s_extent(&io->op.insert_key),

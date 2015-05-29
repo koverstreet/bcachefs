@@ -639,7 +639,7 @@ TRACE_EVENT(bcache_btree_insert_key,
 		__entry->inode		= k->k.p.inode;
 		__entry->offset		= k->k.p.offset;
 		__entry->size		= k->k.size;
-		__entry->cached		= bkey_extent_cached(bkey_i_to_s_c(k));
+		__entry->cached		= bkey_extent_is_cached(&k->k);
 		__entry->op		= op;
 		__entry->insert_done	= insert_done;
 	),

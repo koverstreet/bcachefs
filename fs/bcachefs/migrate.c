@@ -16,13 +16,9 @@ static bool migrate_data_pred(struct scan_keylist *kl, struct bkey_s_c k)
 	struct cache *ca = container_of(kl, struct cache,
 					moving_gc_queue.keys);
 
-	switch (k.k->type) {
-	case BCH_EXTENT:
-		return bch_extent_has_device(bkey_s_c_to_extent(k),
-					     ca->sb.nr_this_dev);
-	default:
-		return false;
-	}
+	return bkey_extent_is_data(k.k) &&
+		bch_extent_has_device(bkey_s_c_to_extent(k),
+				      ca->sb.nr_this_dev);
 }
 
 #if (0)
@@ -130,7 +126,7 @@ static enum migrate_option migrate_cleanup_key(struct cache_set *c,
 
 	found = false;
 	extent_for_each_ptr_backwards(e, ptr)
-		if (PTR_DEV(ptr) == ca->sb.nr_this_dev) {
+		if (ptr->dev == ca->sb.nr_this_dev) {
 			bch_extent_drop_ptr(e, ptr - e.v->ptr);
 			found = true;
 		}
@@ -518,7 +514,7 @@ static int bch_flag_key_bad(struct btree_iter *iter,
 	e = bkey_i_to_s_extent(&tmp.key);
 
 	extent_for_each_ptr_backwards(e, ptr)
-		if (PTR_DEV(ptr) == ca->sb.nr_this_dev) {
+		if (ptr->dev == ca->sb.nr_this_dev) {
 			found = true;
 
 			/*
@@ -532,7 +528,7 @@ static int bch_flag_key_bad(struct btree_iter *iter,
 			 * incorrectly but fortunately we don't need to.
 			 */
 			if (bch_extent_ptr_is_dirty(c, e.c, ptr))
-				*ptr = PTR(0, 0, PTR_LOST_DEV);
+				ptr->dev = PTR_LOST_DEV;
 			else
 				bch_extent_drop_ptr(e, ptr - e.v->ptr);
 		}
@@ -579,7 +575,7 @@ int bch_flag_data_bad(struct cache *ca)
 	bch_btree_iter_init(&iter, ca->set, BTREE_ID_EXTENTS, POS_MIN);
 
 	while ((k = bch_btree_iter_peek(&iter)).k) {
-		if (k.k->type == BCH_EXTENT) {
+		if (bkey_extent_is_data(k.k)) {
 			ret = bch_flag_key_bad(&iter, ca,
 					       bkey_s_c_to_extent(k));
 			if (ret == -EINTR || ret == -EAGAIN)
@@ -597,7 +593,7 @@ int bch_flag_data_bad(struct cache *ca)
 #ifdef CONFIG_BCACHEFS_DEBUG
 	if (!ret && !ret2)
 		for_each_btree_key(&iter, ca->set, BTREE_ID_EXTENTS, POS_MIN, k)
-			BUG_ON(k.k->type == BCH_EXTENT &&
+			BUG_ON(bkey_extent_is_data(k.k) &&
 			       bch_extent_has_device(bkey_s_c_to_extent(k),
 						     ca->sb.nr_this_dev));
 

@@ -357,7 +357,7 @@ static inline struct bkey_s_c bkey_i_to_s_c(const struct bkey_i *k)
  * bkey_i_extent to a bkey_i - since that's always safe, instead of conversion
  * functions.
  */
-#define BKEY_VAL_ACCESSORS(name, nr)					\
+#define __BKEY_VAL_ACCESSORS(name, nr, _assert)				\
 struct bkey_s_c_##name {						\
 	union {								\
 	struct {							\
@@ -382,20 +382,20 @@ struct bkey_s_##name {							\
 									\
 static inline struct bkey_i_##name *bkey_i_to_##name(struct bkey_i *k)	\
 {									\
-	EBUG_ON(k->k.type != nr);					\
+	_assert(k->k.type, nr);						\
 	return container_of(&k->k, struct bkey_i_##name, k);		\
 }									\
 									\
 static inline const struct bkey_i_##name *				\
 bkey_i_to_##name##_c(const struct bkey_i *k)				\
 {									\
-	EBUG_ON(k->k.type != nr);					\
+	_assert(k->k.type, nr);						\
 	return container_of(&k->k, struct bkey_i_##name, k);		\
 }									\
 									\
 static inline struct bkey_s_##name bkey_s_to_##name(struct bkey_s k)	\
 {									\
-	EBUG_ON(k.k->type != nr);					\
+	_assert(k.k->type, nr);						\
 	return (struct bkey_s_##name) {					\
 		.k = k.k,						\
 		.v = container_of(k.v, struct bch_##name, v),		\
@@ -404,7 +404,7 @@ static inline struct bkey_s_##name bkey_s_to_##name(struct bkey_s k)	\
 									\
 static inline struct bkey_s_c_##name bkey_s_c_to_##name(struct bkey_s_c k)\
 {									\
-	EBUG_ON(k.k->type != nr);					\
+	_assert(k.k->type, nr);						\
 	return (struct bkey_s_c_##name) {				\
 		.k = k.k,						\
 		.v = container_of(k.v, struct bch_##name, v),		\
@@ -430,7 +430,7 @@ name##_i_to_s_c(const struct bkey_i_##name *k)				\
 									\
 static inline struct bkey_s_##name bkey_i_to_s_##name(struct bkey_i *k)	\
 {									\
-	EBUG_ON(k->k.type != nr);					\
+	_assert(k->k.type, nr);						\
 	return (struct bkey_s_##name) {					\
 		.k = &k->k,						\
 		.v = container_of(&k->v, struct bch_##name, v),		\
@@ -440,7 +440,7 @@ static inline struct bkey_s_##name bkey_i_to_s_##name(struct bkey_i *k)	\
 static inline struct bkey_s_c_##name					\
 bkey_i_to_s_c_##name(const struct bkey_i *k)				\
 {									\
-	EBUG_ON(k->k.type != nr);					\
+	_assert(k->k.type, nr);						\
 	return (struct bkey_s_c_##name) {				\
 		.k = &k->k,						\
 		.v = container_of(&k->v, struct bch_##name, v),		\
@@ -474,9 +474,24 @@ static inline struct bkey_i_##name *bkey_##name##_init(struct bkey_i *_k)\
 	return k;							\
 }
 
+#define __BKEY_VAL_ASSERT(_type, _nr)	EBUG_ON(_type != _nr)
+
+#define BKEY_VAL_ACCESSORS(name, _nr)					\
+	static inline void __bch_##name##_assert(u8 type, u8 nr)	\
+	{								\
+		EBUG_ON(type != _nr);					\
+	}								\
+									\
+	__BKEY_VAL_ACCESSORS(name, _nr, __bch_##name##_assert)
+
 BKEY_VAL_ACCESSORS(cookie,		KEY_TYPE_COOKIE);
 
-BKEY_VAL_ACCESSORS(extent,		BCH_EXTENT);
+static inline void __bch_extent_assert(u8 type, u8 nr)
+{
+	EBUG_ON(type != BCH_EXTENT && type != BCH_EXTENT_CACHED);
+}
+
+__BKEY_VAL_ACCESSORS(extent,		BCH_EXTENT, __bch_extent_assert);
 
 BKEY_VAL_ACCESSORS(inode,		BCH_INODE_FS);
 BKEY_VAL_ACCESSORS(inode_blockdev,	BCH_INODE_BLOCKDEV);

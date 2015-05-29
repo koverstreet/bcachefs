@@ -452,7 +452,7 @@ retry:
 			PTR_BUCKET(ca, ptr)->read_prio =
 				s->iop.c->prio_clock[READ].hand;
 
-			if (!EXTENT_CACHED(e.v))
+			if (!bkey_extent_is_cached(k.k))
 				s->read_dirty_data = true;
 
 			n = bio_next_split(bio, sectors, GFP_NOIO,

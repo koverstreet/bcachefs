@@ -51,10 +51,28 @@ bool bch_insert_fixup_extent(struct cache_set *, struct btree *,
 void bch_extent_drop_stale(struct cache_set *c, struct bkey_s);
 bool bch_extent_normalize(struct cache_set *, struct bkey_s);
 
-static inline bool bkey_extent_cached(struct bkey_s_c k)
+static inline bool bkey_extent_is_data(const struct bkey *k)
 {
-	return k.k->type == BCH_EXTENT &&
-		EXTENT_CACHED(bkey_s_c_to_extent(k).v);
+	switch (k->type) {
+	case BCH_EXTENT:
+	case BCH_EXTENT_CACHED:
+		return true;
+	default:
+		return false;
+	}
+}
+
+static inline bool bkey_extent_is_cached(const struct bkey *k)
+{
+	return k->type == BCH_EXTENT_CACHED;
+}
+
+static inline void bkey_extent_set_cached(struct bkey *k, bool cached)
+{
+	EBUG_ON(k->type != BCH_EXTENT &&
+		k->type != BCH_EXTENT_CACHED);
+
+	k->type = cached ? BCH_EXTENT_CACHED : BCH_EXTENT;
 }
 
 #define bch_extent_ptrs(_e)	bkey_val_u64s((_e).k)
@@ -83,7 +101,7 @@ static inline bool bch_extent_ptr_is_dirty(const struct cache_set *c,
 {
 	/* Dirty pointers come last */
 
-	if (EXTENT_CACHED(e.v))
+	if (bkey_extent_is_cached(e.k))
 		return false;
 
 	return ptr + CACHE_SET_DATA_REPLICAS_WANT(&c->sb) >=

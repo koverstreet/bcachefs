@@ -25,26 +25,24 @@
 
 u8 bch_btree_key_recalc_oldest_gen(struct cache_set *c, struct bkey_s_c k)
 {
-	struct bkey_s_c_extent e;
 	const struct bch_extent_ptr *ptr;
 	struct cache *ca;
 	u8 max_stale = 0;
 
-	switch (k.k->type) {
-	case BCH_EXTENT:
-		e = bkey_s_c_to_extent(k);
+	if (bkey_extent_is_data(k.k)) {
+		struct bkey_s_c_extent e = bkey_s_c_to_extent(k);
 
 		rcu_read_lock();
 
 		extent_for_each_ptr(e, ptr)
-			if (PTR_DEV(ptr) < MAX_CACHES_PER_SET)
-				__set_bit(PTR_DEV(ptr), c->cache_slots_used);
+			if (ptr->dev < MAX_CACHES_PER_SET)
+				__set_bit(ptr->dev, c->cache_slots_used);
 
 		extent_for_each_online_device(c, e, ptr, ca) {
 			struct bucket *g = PTR_BUCKET(ca, ptr);
 
-			if (__gen_after(g->oldest_gen, PTR_GEN(ptr)))
-				g->oldest_gen = PTR_GEN(ptr);
+			if (__gen_after(g->oldest_gen, ptr->gen))
+				g->oldest_gen = ptr->gen;
 
 			max_stale = max(max_stale, ptr_stale(ca, ptr));
 		}
@@ -57,11 +55,8 @@ u8 bch_btree_key_recalc_oldest_gen(struct cache_set *c, struct bkey_s_c k)
 
 void __bch_btree_mark_key(struct cache_set *c, int level, struct bkey_s_c k)
 {
-	struct bkey_s_c_extent e;
-
-	switch (k.k->type) {
-	case BCH_EXTENT:
-		e = bkey_s_c_to_extent(k);
+	if (bkey_extent_is_data(k.k)) {
+		struct bkey_s_c_extent e = bkey_s_c_to_extent(k);
 
 		bch_mark_pointers(c, NULL, e, level
 				  ? CACHE_BTREE_NODE_SIZE(&c->sb)

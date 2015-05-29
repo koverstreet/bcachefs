@@ -114,7 +114,7 @@ static void write_dirty_finish(struct closure *cl)
 		int ret;
 
 		bkey_copy(&tmp.k, &io->replace.key);
-		SET_EXTENT_CACHED(&bkey_i_to_extent(&tmp.k)->v, true);
+		bkey_extent_set_cached(&tmp.k.k, true);
 
 		ret = bch_btree_insert(dc->disk.c, BTREE_ID_EXTENTS,
 				       &keylist_single(&tmp.k),
@@ -250,7 +250,7 @@ static u64 read_dirty(struct cached_dev *dc)
 
 			dirty_init(io);
 			bio_set_op_attrs(&io->bio, REQ_OP_READ, 0);
-			io->bio.bi_iter.bi_sector = PTR_OFFSET(ptr);
+			io->bio.bi_iter.bi_sector = ptr->offset;
 			io->bio.bi_bdev		= ca->disk_sb.bdev;
 			io->bio.bi_end_io	= read_dirty_endio;
 
@@ -350,8 +350,8 @@ static bool dirty_pred(struct keybuf *buf, struct bkey_s_c k)
 
 	BUG_ON(k.k->p.inode != bcache_dev_inum(&dc->disk));
 
-	return k.k->type == BCH_EXTENT &&
-		!bkey_extent_cached(k);
+	return bkey_extent_is_data(k.k) &&
+		!bkey_extent_is_cached(k.k);
 }
 
 static void refill_full_stripes(struct cached_dev *dc)
@@ -541,8 +541,8 @@ void bch_sectors_dirty_init(struct cached_dev *dc, struct cache_set *c)
 		if (k.k->p.inode > bcache_dev_inum(d))
 			break;
 
-		if (k.k->type == BCH_EXTENT &&
-		    !bkey_extent_cached(k))
+		if (bkey_extent_is_data(k.k) &&
+		    !bkey_extent_is_cached(k.k))
 			__bcache_dev_sectors_dirty_add(d,
 						       bkey_start_offset(k.k),
 						       k.k->size);

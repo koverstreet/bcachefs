@@ -1033,9 +1033,11 @@ static enum bucket_alloc_ret __bch_bucket_alloc_set(struct cache_set *c,
 			goto err;
 		}
 
-		ob->ptrs[ob->nr_ptrs++] = PTR(ca->bucket_gens[r],
-					      bucket_to_sector(ca, r),
-					      ca->sb.nr_this_dev);
+		ob->ptrs[ob->nr_ptrs++] = (struct bch_extent_ptr) {
+			.gen	= ca->bucket_gens[r],
+			.offset	= bucket_to_sector(ca, r),
+			.dev	= ca->sb.nr_this_dev,
+		};
 	}
 
 	rcu_read_unlock();
@@ -1331,7 +1333,7 @@ struct open_bucket *bch_alloc_sectors(struct cache_set *c,
 
 	if (ob->sectors_free)
 		for (ptr = ob->ptrs; ptr < ob->ptrs + ob->nr_ptrs; ptr++)
-			SET_PTR_OFFSET(ptr, PTR_OFFSET(ptr) + sectors);
+			ptr->offset += sectors;
 
 	rcu_read_lock();
 	extent_ptr_for_each_online_device(c, ob->ptrs, ob->nr_ptrs, ptr, ca)
@@ -1426,7 +1428,7 @@ static void bch_stop_write_point(struct cache *ca,
 		return;
 
 	for (ptr = ob->ptrs; ptr < ob->ptrs + ob->nr_ptrs; ptr++)
-		if (PTR_DEV(ptr) == ca->sb.nr_this_dev)
+		if (ptr->dev == ca->sb.nr_this_dev)
 			goto found;
 
 	mutex_unlock(&ob->lock);
@@ -1502,7 +1504,7 @@ void bch_cache_allocator_stop(struct cache *ca)
 		     ob++) {
 			mutex_lock(&ob->lock);
 			for (ptr = ob->ptrs; ptr < ob->ptrs + ob->nr_ptrs; ptr++)
-				if (PTR_DEV(ptr) == ca->sb.nr_this_dev) {
+				if (ptr->dev == ca->sb.nr_this_dev) {
 					BUG_ON(!atomic_read(&ob->pin));
 					closure_wait(&c->open_buckets_wait, &cl);
 					found = true;

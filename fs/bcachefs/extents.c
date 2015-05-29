@@ -137,18 +137,13 @@ bool bch_insert_fixup_btree_ptr(struct cache_set *c, struct btree *b,
 				struct bpos *done,
 				struct journal_res *res)
 {
-	struct bkey_s_c_extent e;
-	bool stale;
+	if (bkey_extent_is_data(&insert->k)) {
+		bool stale;
 
-	switch (insert->k.type) {
-	case BCH_EXTENT:
-		e = bkey_i_to_s_c_extent(insert);
-
-		stale = bch_mark_pointers(c, b, e,
-				CACHE_BTREE_NODE_SIZE(&c->sb),
-				true, true);
+		stale = bch_mark_pointers(c, b, bkey_i_to_s_c_extent(insert),
+					  CACHE_BTREE_NODE_SIZE(&c->sb),
+					  true, true);
 		BUG_ON(stale);
-		break;
 	}
 
 	return bch_insert_fixup_key(c, b, insert, iter, replace, done, res);
@@ -161,7 +156,7 @@ bool bch_extent_has_device(struct bkey_s_c_extent e, unsigned dev)
 	const struct bch_extent_ptr *ptr;
 
 	extent_for_each_ptr(e, ptr)
-		if (PTR_DEV(ptr) == dev)
+		if (ptr->dev == dev)
 			return true;
 
 	return false;
@@ -171,20 +166,18 @@ static bool should_drop_ptr(const struct cache_set *c,
 			    struct bkey_s_c_extent e,
 			    const struct bch_extent_ptr *ptr)
 {
-	unsigned dev;
 	struct cache *ca;
 	struct cache_member *mi;
 
-	dev = PTR_DEV(ptr);
-	if (dev == PTR_LOST_DEV)
+	if (ptr->dev == PTR_LOST_DEV)
 		return false;
 
-	if (dev >= c->sb.nr_in_set)
+	if (ptr->dev >= c->sb.nr_in_set)
 		return true;
 
 	mi = rcu_dereference(c->members)->m;
 
-	if (bch_is_zero(mi[dev].uuid.b, sizeof(uuid_le)))
+	if (bch_is_zero(mi[ptr->dev].uuid.b, sizeof(uuid_le)))
 		return true;
 
 	if (bch_extent_ptr_is_dirty(c, e, ptr))
@@ -229,6 +222,7 @@ static bool __ptr_invalid(const struct cache_set *c, struct bkey_s_c k)
 
 	switch (k.k->type) {
 	case BCH_EXTENT:
+	case BCH_EXTENT_CACHED:
 		e = bkey_s_c_to_extent(k);
 
 		if (bch_extent_ptrs(e) > BKEY_EXTENT_PTRS_MAX)
@@ -237,22 +231,20 @@ static bool __ptr_invalid(const struct cache_set *c, struct bkey_s_c k)
 		mi = cache_member_info_get(c)->m;
 
 		extent_for_each_ptr(e, ptr) {
-			u64 offset = PTR_OFFSET(ptr);
-			unsigned dev = PTR_DEV(ptr);
-			struct cache_member *m = mi + dev;
+			struct cache_member *m = mi + ptr->dev;
 
-			if (dev > c->sb.nr_in_set) {
-				if (dev != PTR_LOST_DEV)
+			if (ptr->dev > c->sb.nr_in_set) {
+				if (ptr->dev != PTR_LOST_DEV)
 					goto invalid;
 
 				continue;
 			}
 
-			if ((offset + e.k->size >
+			if ((ptr->offset + e.k->size >
 			     m->bucket_size * m->nbuckets) ||
-			    (offset <
+			    (ptr->offset <
 			     m->bucket_size * m->first_bucket) ||
-			    ((offset & (m->bucket_size - 1)) + e.k->size >
+			    ((ptr->offset & (m->bucket_size - 1)) + e.k->size >
 			     m->bucket_size))
 				goto invalid;
 		}
@@ -284,25 +276,23 @@ static const char *bch_ptr_status(const struct cache_set *c,
 		return "invalid: too many pointers";
 
 	extent_for_each_ptr(e, ptr) {
-		u64 offset = PTR_OFFSET(ptr);
-		unsigned dev = PTR_DEV(ptr);
-		struct cache_member *m = mi + dev;
+		struct cache_member *m = mi + ptr->dev;
 		struct cache *ca;
 
-		if (dev > c->sb.nr_in_set) {
-			if (dev != PTR_LOST_DEV)
+		if (ptr->dev > c->sb.nr_in_set) {
+			if (ptr->dev != PTR_LOST_DEV)
 				return "pointer to invalid device";
 
 			continue;
 		}
 
-		if (offset + e.k->size > m->bucket_size * m->nbuckets)
+		if (ptr->offset + e.k->size > m->bucket_size * m->nbuckets)
 			return "invalid: offset past end of device";
 
-		if (offset < m->bucket_size * m->first_bucket)
+		if (ptr->offset < m->bucket_size * m->first_bucket)
 			return "invalid: offset before first bucket";
 
-		if ((offset & (m->bucket_size - 1)) +
+		if ((ptr->offset & (m->bucket_size - 1)) +
 		    e.k->size > m->bucket_size)
 			return "invalid: spans multiple buckets";
 
@@ -325,19 +315,18 @@ static void bch_extent_to_text(struct cache_set *c, char *buf,
 
 #define p(...)	(out += scnprintf(out, end - out, __VA_ARGS__))
 
-	switch (k.k->type) {
-	case BCH_EXTENT:
+	if (bkey_extent_is_data(k.k)) {
 		e = bkey_s_c_to_extent(k);
 
 		extent_for_each_ptr(e, ptr) {
 			if (ptr != e.v->ptr)
 				p(", ");
 
-			p("%llu:%llu gen %llu", PTR_DEV(ptr),
-			  PTR_OFFSET(ptr), PTR_GEN(ptr));
+			p("%u:%llu gen %u", ptr->dev,
+			  (u64) ptr->offset, ptr->gen);
 		}
 
-		if (EXTENT_CACHED(e.v))
+		if (bkey_extent_is_cached(e.k))
 			p(" cached");
 #if 0
 		if (KEY_CSUM(k))
@@ -354,7 +343,7 @@ static void bch_extent_to_text(struct cache_set *c, char *buf,
 
 static bool bch_btree_ptr_invalid(const struct cache_set *c, struct bkey_s_c k)
 {
-	return bkey_extent_cached(k) ||
+	return bkey_extent_is_cached(k.k) ||
 		k.k->size ||
 		__ptr_invalid(c, k);
 }
@@ -370,11 +359,6 @@ static void btree_ptr_debugcheck(struct cache_set *c, struct btree *b,
 	struct bucket *g;
 	struct cache *ca;
 	bool bad;
-
-	if (EXTENT_CACHED(e.v)) {
-		btree_bug(b, "btree ptr marked as cached");
-		return;
-	}
 
 	if (bch_extent_ptrs(e) < CACHE_SET_META_REPLICAS_HAVE(&c->sb)) {
 		bch_bkey_val_to_text(c, btree_node_type(b),
@@ -484,8 +468,6 @@ void bch_bkey_copy_single_ptr(struct bkey_i *dst,
 
 bool __bch_cut_front(struct bpos where, struct bkey_s k)
 {
-	struct bkey_s_extent e;
-	struct bch_extent_ptr *ptr;
 	u64 len = 0;
 
 	if (bkey_cmp(where, bkey_start_pos(k.k)) <= 0)
@@ -501,20 +483,15 @@ bool __bch_cut_front(struct bpos where, struct bkey_s k)
 	 * Don't readjust offset if the key size is now 0, because that could
 	 * cause offset to point to the next bucket:
 	 */
-	if (len)
-		switch (k.k->type) {
-		case BCH_EXTENT:
-			e = bkey_s_to_extent(k);
-
-			extent_for_each_ptr(e, ptr)
-				SET_PTR_OFFSET(ptr, PTR_OFFSET(ptr) +
-					       e.k->size - len);
-			break;
-		default:
-			break;
-		}
-	else
+	if (!len)
 		__set_bkey_deleted(k.k);
+	else if (bkey_extent_is_data(k.k)) {
+		struct bkey_s_extent e = bkey_s_to_extent(k);
+		struct bch_extent_ptr *ptr;
+
+		extent_for_each_ptr(e, ptr)
+			ptr->offset += e.k->size - len;
+	}
 
 	k.k->size = len;
 
@@ -749,7 +726,7 @@ static int bch_add_sectors(struct cache_set *c, struct btree *b,
 			   struct bkey_s_c k, u64 offset,
 			   int sectors, bool fail_if_stale)
 {
-	if (sectors && k.k->type == BCH_EXTENT) {
+	if (sectors && bkey_extent_is_data(k.k)) {
 		struct bkey_s_c_extent e = bkey_s_c_to_extent(k);
 		int ret;
 
@@ -757,7 +734,7 @@ static int bch_add_sectors(struct cache_set *c, struct btree *b,
 		if (ret)
 			return ret;
 
-		if (!EXTENT_CACHED(e.v))
+		if (!bkey_extent_is_cached(e.k))
 			bcache_dev_sectors_dirty_add(c, e.k->p.inode,
 						     offset, sectors);
 	}
@@ -825,6 +802,7 @@ static bool bkey_cmpxchg_cmp(struct bkey_s_c l, struct bkey_s_c r)
 			       sizeof(struct bch_cookie));
 
 	case BCH_EXTENT:
+	case BCH_EXTENT_CACHED:
 		le = bkey_s_c_to_extent(l);
 		re = bkey_s_c_to_extent(r);
 
@@ -840,33 +818,26 @@ static bool bkey_cmpxchg_cmp(struct bkey_s_c l, struct bkey_s_c r)
 		 */
 		offset = bkey_start_offset(l.k) - bkey_start_offset(r.k);
 
-		if (bch_extent_ptrs(le) == bch_extent_ptrs(re)) {
-			for (i = 0; i < bch_extent_ptrs(le); i++)
-				if (le.v->ptr[i]._val !=
-				    re.v->ptr[i]._val +
-				    (offset << PTR_OFFSET_OFFSET))
-					goto try_partial;
+		/*
+		 * XXX: perhaps we only raced with copygc or tiering replacing
+		 * one of the pointers: it should suffice to find _any_ matching
+		 * pointer
+		 */
 
-			return true;
+		if (bch_extent_ptrs(le) != bch_extent_ptrs(re))
+			return false;
+
+		for (i = 0; i < bch_extent_ptrs(le); i++) {
+			const struct bch_extent_ptr *lp = le.v->ptr + i;
+			const struct bch_extent_ptr *rp = re.v->ptr + i;
+
+			if (lp->offset	!= rp->offset + offset ||
+			    lp->dev	!= rp->dev ||
+			    lp->gen	!= rp->gen)
+				return false;
 		}
 
-try_partial:
-#if (0)
-		unsigned j;
-
-		/*
-		 * Maybe we just raced with copygc or tiering replacing one of
-		 * the pointers: it should suffice to find _any_ matching
-		 * pointer:
-		 */
-		for (i = 0; i < bch_extent_ptrs(l); i++)
-			for (j = 0; j < bch_extent_ptrs(r); j++)
-				if (le->v.ptr[i]._val !=
-				    re->v.ptr[i]._val +
-				    (offset << PTR_OFFSET_OFFSET))
-					return true;
-#endif
-		return false;
+		return true;
 	default:
 		return false;
 	}
@@ -1263,8 +1234,7 @@ out:
 
 static bool bch_extent_invalid(const struct cache_set *c, struct bkey_s_c k)
 {
-	return (k.k->type == BCH_EXTENT &&
-		!k.k->size) ||
+	return (bkey_extent_is_data(k.k) && !k.k->size) ||
 		__ptr_invalid(c, k);
 }
 
@@ -1280,11 +1250,11 @@ static void bch_extent_debugcheck(struct cache_set *c, struct btree *b,
 	char buf[160];
 	bool bad;
 	unsigned ptrs_per_tier[CACHE_TIERS];
-	unsigned i, dev, tier, replicas;
+	unsigned i, tier, replicas;
 
 	memset(ptrs_per_tier, 0, sizeof(ptrs_per_tier));
 
-	if (!EXTENT_CACHED(e.v) &&
+	if (!bkey_extent_is_cached(e.k) &&
 	    bch_extent_ptrs(e) < CACHE_SET_DATA_REPLICAS_HAVE(&c->sb)) {
 		bch_bkey_val_to_text(c, btree_node_type(b),
 				     buf, sizeof(buf), k);
@@ -1301,11 +1271,9 @@ static void bch_extent_debugcheck(struct cache_set *c, struct btree *b,
 	extent_for_each_ptr(e, ptr) {
 		bool dirty = bch_extent_ptr_is_dirty(c, e, ptr);
 
-		dev = PTR_DEV(ptr);
-
 		/* Could be a special pointer such as PTR_CHECK_DEV */
-		if (dev >= mi->nr_in_set) {
-			if (dev != PTR_LOST_DEV)
+		if (ptr->dev >= mi->nr_in_set) {
+			if (ptr->dev != PTR_LOST_DEV)
 				goto bad_device;
 
 			continue;
@@ -1314,7 +1282,7 @@ static void bch_extent_debugcheck(struct cache_set *c, struct btree *b,
 		if (!test_bit(JOURNAL_REPLAY_DONE, &c->journal.flags))
 			continue;
 
-		tier = CACHE_TIER(&mi->m[dev]);
+		tier = CACHE_TIER(&mi->m[ptr->dev]);
 		ptrs_per_tier[tier]++;
 
 		stale = 0;
@@ -1389,7 +1357,7 @@ static unsigned PTR_TIER(struct cache_member_rcu *mi,
 			 const struct bch_extent *e,
 			 unsigned ptr)
 {
-	unsigned dev = PTR_DEV(&e->ptr[ptr]);
+	unsigned dev = e->ptr[ptr].dev;
 
 	return dev < mi->nr_in_set ? CACHE_TIER(&mi->m[dev]) : UINT_MAX;
 }
@@ -1401,7 +1369,6 @@ bool bch_extent_normalize(struct cache_set *c, struct bkey_s k)
 	struct cache_member_rcu *mi;
 	unsigned i;
 	bool swapped, have_data = false;
-	bool cached;
 
 	switch (k.k->type) {
 	case KEY_TYPE_ERROR:
@@ -1415,13 +1382,9 @@ bool bch_extent_normalize(struct cache_set *c, struct bkey_s k)
 		return !k.k->version;
 
 	case BCH_EXTENT:
+	case BCH_EXTENT_CACHED:
 		e = bkey_s_to_extent(k);
 
-		/*
-		 * Preserve cached status since its stored in the
-		 * first pointer
-		 */
-		cached = EXTENT_CACHED(e.v);
 
 		bch_extent_drop_stale(c, k);
 
@@ -1442,20 +1405,18 @@ bool bch_extent_normalize(struct cache_set *c, struct bkey_s k)
 		cache_member_info_put();
 
 		extent_for_each_ptr(e, ptr)
-			if (PTR_DEV(ptr) != PTR_LOST_DEV)
+			if (ptr->dev != PTR_LOST_DEV)
 				have_data = true;
 
 		if (!have_data) {
 			bch_set_extent_ptrs(e, 0);
-			if (cached) {
+			if (bkey_extent_is_cached(e.k)) {
 				k.k->type = KEY_TYPE_DISCARD;
 				if (!k.k->version)
 					return true;
 			} else {
 				k.k->type = KEY_TYPE_ERROR;
 			}
-		} else {
-			SET_EXTENT_CACHED(e.v, cached);
 		}
 
 		return false;
@@ -1491,6 +1452,7 @@ struct cache *bch_extent_pick_ptr_avoiding(struct cache_set *c,
 		return ERR_PTR(-EIO);
 
 	case BCH_EXTENT:
+	case BCH_EXTENT_CACHED:
 		/*
 		 * Note: If DEV is PTR_LOST_DEV, PTR_CACHE returns NULL so if
 		 * there are no other pointers, we'll return ERR_PTR(-EIO).
@@ -1515,7 +1477,7 @@ struct cache *bch_extent_pick_ptr_avoiding(struct cache_set *c,
 		rcu_read_unlock();
 
 		/* data missing that's not supposed to be? */
-		return EXTENT_CACHED(e.v)
+		return bkey_extent_is_cached(e.k)
 			? NULL
 			: ERR_PTR(-EIO);
 
@@ -1530,7 +1492,6 @@ static enum merge_result bch_extent_merge(struct btree_keys *bk,
 	struct btree *b = container_of(bk, struct btree, keys);
 	struct cache_set *c = b->c;
 	struct bkey_s_extent el, er;
-	struct cache *ca;
 	unsigned i;
 
 	if (key_merging_disabled(c))
@@ -1556,31 +1517,30 @@ static enum merge_result bch_extent_merge(struct btree_keys *bk,
 		break;
 
 	case BCH_EXTENT:
+	case BCH_EXTENT_CACHED:
 		el = bkey_i_to_s_extent(l);
 		er = bkey_i_to_s_extent(r);
 
 		for (i = 0; i < bch_extent_ptrs(el); i++) {
-			/*
-			 * compare all the pointer fields at once, adding the
-			 * size to the left pointer's offset:
-			 */
-			if (el.v->ptr[i]._val + PTR(0, el.k->size, 0)._val !=
-			    er.v->ptr[i]._val)
+			struct bch_extent_ptr *lp = el.v->ptr + i;
+			struct bch_extent_ptr *rp = er.v->ptr + i;
+			struct cache_member *m;
+
+			if (lp->offset + el.k->size	!= rp->offset ||
+			    lp->dev			!= rp->dev ||
+			    lp->gen			!= rp->gen)
 				return BCH_MERGE_NOMERGE;
 
-			/*
-			 * we don't allow extent pointers to straddle buckets -
-			 * if the device is offline, we don't know the bucket
-			 * size so we can't check
-			 */
-			rcu_read_lock();
-			if (!(ca = PTR_CACHE(c, &el.v->ptr[i])) ||
-			    PTR_BUCKET_NR(ca, &el.v->ptr[i]) !=
-			    PTR_BUCKET_NR(ca, &er.v->ptr[i])) {
-				rcu_read_unlock();
+			/* We don't allow extents to straddle buckets: */
+
+			m = cache_member_info_get(c)->m + lp->dev;
+			if ((lp->offset & ~((u64) m->bucket_size - 1)) !=
+			    (rp->offset & ~((u64) m->bucket_size - 1))) {
+				cache_member_info_put();
 				return BCH_MERGE_NOMERGE;
+
 			}
-			rcu_read_unlock();
+			cache_member_info_put();
 		}
 
 		break;

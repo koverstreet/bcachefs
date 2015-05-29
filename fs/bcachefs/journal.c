@@ -894,7 +894,7 @@ static int bch_journal_replay_key(struct cache_set *c, enum btree_id id,
 {
 	int ret;
 	BKEY_PADDED(key) temp;
-	bool do_subtract = id == BTREE_ID_EXTENTS && k->k.type == BCH_EXTENT;
+	bool do_subtract = id == BTREE_ID_EXTENTS && bkey_extent_is_data(&k->k);
 
 	trace_bcache_journal_replay_key(&k->k);
 
@@ -1252,10 +1252,12 @@ static void journal_next_bucket(struct cache_set *c)
 		ja->sectors_free = ca->mi.bucket_size;
 
 		ja->cur_idx = next;
-		e.v->ptr[bch_extent_ptrs(e)] =
-			PTR(0, bucket_to_sector(ca,
+		e.v->ptr[bch_extent_ptrs(e)] = (struct bch_extent_ptr) {
+			.gen = 0,
+			.dev = ca->sb.nr_this_dev,
+			.offset = bucket_to_sector(ca,
 					journal_bucket(ca, ja->cur_idx)),
-			    ca->sb.nr_this_dev);
+		};
 
 		ja->bucket_seq[ja->cur_idx] = j->seq;
 
@@ -1431,7 +1433,7 @@ static void journal_write_locked(struct closure *cl)
 		atomic_long_add(sectors, &ca->meta_sectors_written);
 
 		bio_reset(bio);
-		bio->bi_iter.bi_sector	= PTR_OFFSET(ptr);
+		bio->bi_iter.bi_sector	= ptr->offset;
 		bio->bi_bdev		= ca->disk_sb.bdev;
 		bio->bi_iter.bi_size	= sectors << 9;
 		bio->bi_end_io		= journal_write_endio;
@@ -1443,7 +1445,7 @@ static void journal_write_locked(struct closure *cl)
 		trace_bcache_journal_write(bio);
 		bio_list_add(&list, bio);
 
-		SET_PTR_OFFSET(ptr, PTR_OFFSET(ptr) + sectors);
+		ptr->offset += sectors;
 
 		ca->journal.bucket_seq[ca->journal.cur_idx] = w->data->seq;
 	}

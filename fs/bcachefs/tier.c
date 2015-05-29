@@ -21,15 +21,14 @@ static bool tiering_pred(struct scan_keylist *kl, struct bkey_s_c k)
 	struct cache *ca = container_of(kl, struct cache,
 					tiering_queue.keys);
 	struct cache_set *c = ca->set;
-	struct cache_member_rcu *mi;
-	struct bkey_s_c_extent e;
-	unsigned replicas = CACHE_SET_DATA_REPLICAS_WANT(&c->sb);
-	unsigned dev;
-	bool ret = false;
 
-	switch (k.k->type) {
-	case BCH_EXTENT:
-		e = bkey_s_c_to_extent(k);
+	if (bkey_extent_is_data(k.k)) {
+		struct bkey_s_c_extent e = bkey_s_c_to_extent(k);
+		struct cache_member_rcu *mi;
+		unsigned replicas = CACHE_SET_DATA_REPLICAS_WANT(&c->sb);
+		unsigned dev;
+		bool ret = false;
+
 		/*
 		 * Should not happen except in a pathological situation (too
 		 * many pointers on the wrong tier?
@@ -43,15 +42,15 @@ static bool tiering_pred(struct scan_keylist *kl, struct bkey_s_c k)
 		if (bch_extent_ptrs(e) < replicas)
 			return true;
 
-		dev = PTR_DEV(&e.v->ptr[bch_extent_ptrs(e) - replicas]);
+		dev = e.v->ptr[bch_extent_ptrs(e) - replicas].dev;
 		mi = cache_member_info_get(c);
 		ret = dev < mi->nr_in_set && !CACHE_TIER(&mi->m[dev]);
 		cache_member_info_put();
 
 		return ret;
-	default:
-		return false;
 	}
+
+	return false;
 }
 
 struct tiering_refill {

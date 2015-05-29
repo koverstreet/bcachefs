@@ -341,7 +341,7 @@ static void bch_btree_init_next(struct cache_set *c, struct btree *b,
 	void *_end = bset_bkey_last(&(_i)->keys);			\
 									\
 	bch_checksum_update(BSET_CSUM_TYPE(&(_i)->keys),		\
-			    bkey_i_to_extent_c(&(_b)->key)->v.ptr[0]._val,\
+			    bkey_i_to_extent_c(&(_b)->key)->v._data[0],	\
 			    _data,					\
 			    _end - _data) ^ 0xffffffffffffffffULL;	\
 })
@@ -737,8 +737,7 @@ static void do_btree_node_write(struct closure *cl)
 	e = bkey_i_to_s_extent(&k.key);
 
 	extent_for_each_ptr(e, ptr)
-		SET_PTR_OFFSET(ptr, PTR_OFFSET(ptr) +
-			       (b->written << c->block_bits));
+		ptr->offset += b->written << c->block_bits;
 
 	rcu_read_lock();
 	extent_for_each_online_device(c, e, ptr, ca)
@@ -983,7 +982,7 @@ static struct btree *mca_bucket_alloc(struct cache_set *c, gfp_t gfp)
 
 /* Btree in memory cache - hash table */
 
-#define PTR_HASH(_k)	(bkey_i_to_extent_c(_k)->v.ptr[0]._val)
+#define PTR_HASH(_k)	(bkey_i_to_extent_c(_k)->v._data[0])
 
 static void mca_hash_remove(struct cache_set *c, struct btree *b)
 {
@@ -997,7 +996,7 @@ static void mca_hash_remove(struct cache_set *c, struct btree *b)
 			       bch_btree_cache_params);
 
 	/* Cause future lookups for this node to fail: */
-	bkey_i_to_extent(&b->key)->v.ptr[0]._val = 0;
+	bkey_i_to_extent(&b->key)->v._data[0] = 0;
 }
 
 static int mca_hash_insert(struct cache_set *c, struct btree *b,
@@ -1406,7 +1405,7 @@ static struct btree *mca_alloc(struct cache_set *c, struct closure *cl)
 	BUG_ON(!six_trylock_intent(&b->lock));
 	BUG_ON(!six_trylock_write(&b->lock));
 out_unlock:
-	BUG_ON(b->key.k.type == BCH_EXTENT && PTR_HASH(&b->key));
+	BUG_ON(bkey_extent_is_data(&b->key.k) && PTR_HASH(&b->key));
 	BUG_ON(b->io_mutex.count != 1);
 
 	list_del_init(&b->list);
@@ -1457,7 +1456,7 @@ static noinline struct btree *bch_btree_node_fill(struct btree_iter *iter,
 		/* raced with another fill: */
 
 		/* mark as unhashed... */
-		bkey_i_to_extent(&b->key)->v.ptr[0]._val = 0;
+		bkey_i_to_extent(&b->key)->v._data[0] = 0;
 
 		mutex_lock(&c->btree_cache_lock);
 		list_add(&b->list, &c->btree_cache_freeable);

@@ -61,7 +61,7 @@ void bch_bbio_prep(struct bbio *b, struct cache *ca)
 	struct bvec_iter *iter = &b->bio.bi_iter;
 
 	b->ca				= ca;
-	b->bio.bi_iter.bi_sector	= PTR_OFFSET(&b->ptr);
+	b->bio.bi_iter.bi_sector	= b->ptr.offset;
 	b->bio.bi_bdev			= ca ? ca->disk_sb.bdev : NULL;
 
 	b->bi_idx			= iter->bi_idx;
@@ -371,7 +371,7 @@ static void bch_write_endio(struct bio *bio)
 
 	if (bio->bi_error) {
 		/* TODO: We could try to recover from this. */
-		if (!bkey_extent_cached(bkey_i_to_s_c(&op->insert_key))) {
+		if (!bkey_extent_is_cached(&op->insert_key.k)) {
 			__bcache_io_error(op->c, "IO error writing data");
 			op->error = bio->bi_error;
 		} else if (!op->replace)
@@ -466,12 +466,7 @@ static void __bch_write(struct closure *cl)
 		BUG_ON(bch_extent_normalize(op->c, bkey_i_to_s(k)));
 		bch_check_mark_super(op->c, k, false);
 
-		/*
-		 * Do this after normalize since EXTENT_CACHED is stored
-		 * in the first pointer
-		 */
-		if (op->cached && k->k.type == BCH_EXTENT)
-			SET_EXTENT_CACHED(&bkey_i_to_extent(k)->v, true);
+		bkey_extent_set_cached(&k->k, op->cached);
 
 		bch_keylist_enqueue(&op->insert_keys);
 	} while (n != bio);
@@ -557,7 +552,7 @@ void bch_write(struct closure *cl)
 	u64 inode = op->insert_key.k.p.inode;
 
 	trace_bcache_write(c, inode, op->bio,
-			   !bkey_extent_cached(bkey_i_to_s_c(&op->insert_key)),
+			   !bkey_extent_is_cached(&op->insert_key.k),
 			   op->discard);
 
 	if (!bio_sectors(op->bio)) {
@@ -679,8 +674,8 @@ void bch_write_op_init(struct bch_write_op *op, struct cache_set *c,
 		 * discard or we're writing new data and we're going to
 		 * allocate pointers
 		 */
-		op->insert_key.k.type = op->discard
-			? KEY_TYPE_DISCARD
+		op->insert_key.k.type = op->discard ? KEY_TYPE_DISCARD
+			: op->cached ? BCH_EXTENT_CACHED
 			: BCH_EXTENT;
 	}
 

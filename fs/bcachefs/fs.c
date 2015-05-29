@@ -621,7 +621,7 @@ static int bch_fill_extent(struct fiemap_extent_info *info,
 	extent_for_each_ptr(e, ptr) {
 		int ret = fiemap_fill_next_extent(info,
 					      bkey_start_offset(e.k) << 9,
-					      PTR_OFFSET(ptr) << 9,
+					      ptr->offset << 9,
 					      e.k->size << 9, flags);
 		if (ret)
 			return ret;
@@ -645,7 +645,7 @@ static int bch_fiemap(struct inode *inode, struct fiemap_extent_info *info,
 
 	for_each_btree_key(&iter, c, BTREE_ID_EXTENTS,
 			   POS(inode->i_ino, start >> 9), k)
-		if (k.k->type == BCH_EXTENT) {
+		if (bkey_extent_is_data(k.k)) {
 			if (bkey_cmp(bkey_start_pos(k.k),
 				     POS(inode->i_ino, (start + len) >> 9)) >= 0)
 				break;

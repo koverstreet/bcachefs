@@ -28,19 +28,17 @@ static inline u8 bucket_gc_gen(struct cache *ca, struct bucket *g)
 static inline struct cache *PTR_CACHE(const struct cache_set *c,
 				      const struct bch_extent_ptr *ptr)
 {
-	unsigned dev = PTR_DEV(ptr);
-
 	/* The range test covers PTR_LOST_DEV and PTR_CHECK_DEV  */
 
-	return dev < MAX_CACHES_PER_SET
-		? rcu_dereference(c->cache[dev])
+	return ptr->dev < MAX_CACHES_PER_SET
+		? rcu_dereference(c->cache[ptr->dev])
 		: NULL;
 }
 
 static inline size_t PTR_BUCKET_NR(const struct cache *ca,
 				   const struct bch_extent_ptr *ptr)
 {
-	return sector_to_bucket(ca, PTR_OFFSET(ptr));
+	return sector_to_bucket(ca, ptr->offset);
 }
 
 /*
@@ -53,7 +51,7 @@ static inline size_t PTR_BUCKET_NR_TRACE(const struct cache_set *c,
 	const struct cache *ca;
 	size_t bucket = 0;
 
-	if (k->k.type == BCH_EXTENT) {
+	if (bkey_extent_is_data(&k->k)) {
 		const struct bkey_i_extent *e = bkey_i_to_extent_c(k);
 		const struct bch_extent_ptr *p = &e->v.ptr[ptr];
 
@@ -103,7 +101,7 @@ static inline u8 gen_after(u8 a, u8 b)
 static inline u8 ptr_stale(const struct cache *ca,
 			   const struct bch_extent_ptr *ptr)
 {
-	return gen_after(PTR_BUCKET_GEN(ca, ptr), PTR_GEN(ptr));
+	return gen_after(PTR_BUCKET_GEN(ca, ptr), ptr->gen);
 }
 
 /* bucket heaps */

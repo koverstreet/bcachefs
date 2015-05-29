@@ -123,7 +123,7 @@ static inline bool bch_check_super_marked(struct cache_set *c,
 	extent_for_each_ptr(e, ptr)
 		if (!(meta
 		      ? CACHE_HAS_METADATA
-		      : CACHE_HAS_DATA)(mi->m + PTR_DEV(ptr))) {
+		      : CACHE_HAS_DATA)(mi->m + ptr->dev)) {
 			ret = false;
 			break;
 		}

@@ -249,40 +249,38 @@ BKEY_VAL_TYPE(cookie,		KEY_TYPE_COOKIE);
  */
 
 struct bch_extent_ptr {
-	__u64			_val;
-};
-
-BITMASK(PTR_GEN,	struct bch_extent_ptr, _val, 0,  8);
-BITMASK(PTR_DEV,	struct bch_extent_ptr, _val, 8,  16);
-BITMASK(PTR_OFFSET,	struct bch_extent_ptr, _val, 16, 63);
-
-/* high bit of the first pointer is used for EXTENT_CACHED, blech */
-
-static inline struct bch_extent_ptr PTR(__u64 gen, __u64 offset, __u64 dev)
-{
-	return (struct bch_extent_ptr) {
-		._val = ((gen		<< PTR_GEN_OFFSET) |
-			 (dev		<< PTR_DEV_OFFSET) |
-			 (offset	<< PTR_OFFSET_OFFSET))
-	};
-}
+#if defined(__LITTLE_ENDIAN_BITFIELD)
+	__u64			gen:8,
+				dev:8,
+				offset:48;
+#elif defined (__BIG_ENDIAN_BITFIELD)
+	__u64			offset:48,
+				dev:8,
+				gen:8;
+#endif
+} __attribute__((packed)) __attribute__((aligned(8)));
 
 /* Dummy DEV numbers: */
 
-#define PTR_LOST_DEV			PTR_DEV_MAX
+#define PTR_LOST_DEV			255 /* XXX: kill */
 
 enum {
 	BCH_EXTENT		= 128,
+
+	/*
+	 * This is kind of a hack, we're overloading the type for a boolean that
+	 * really should be part of the value - BCH_EXTENT and BCH_EXTENT_CACHED
+	 * have the same value type:
+	 */
+	BCH_EXTENT_CACHED	= 129,
 };
 
 struct bch_extent {
 	struct bch_val		v;
 	struct bch_extent_ptr	ptr[0];
-	__u64			data[0]; /* hack for EXTENT_CACHED */
+	__u64			_data[0];
 };
 BKEY_VAL_TYPE(extent,		BCH_EXTENT);
-
-BITMASK(EXTENT_CACHED, struct bch_extent, data[0], 63, 64)
 
 /* Inodes */
 
