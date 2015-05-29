@@ -3,16 +3,23 @@
 
 #include "keylist_types.h"
 
-static inline void bch_keylist_init(struct keylist *l)
+static inline void bch_keylist_init(struct keylist *l, u64 *inline_keys,
+				    size_t nr_inline_u64s)
 {
-	l->bot_p = l->top_p = l->start_keys_p = l->inline_keys;
-	l->end_keys_p = &l->inline_keys[KEYLIST_INLINE];
+	l->bot_p = l->top_p = l->start_keys_p = inline_keys;
+	l->end_keys_p = l->start_keys_p + nr_inline_u64s;
+	l->has_buf = false;
 }
 
 static inline size_t bch_keylist_capacity(struct keylist *l)
 {
 	return l->end_keys_p - l->start_keys_p;
 }
+
+/*
+ * XXX: why are we using BKEY_EXTENT_MAX_U64s here? keylists aren't used just
+ * for extents, this doesn't make any sense
+ */
 
 static inline bool bch_keylist_fits(struct keylist *l, size_t u64s)
 {
@@ -59,10 +66,9 @@ static inline bool bch_keylist_empty(struct keylist *l)
 
 static inline void bch_keylist_free(struct keylist *l)
 {
-	if (l->start_keys_p != l->inline_keys) {
+	if (l->has_buf)
 		kfree(l->start_keys_p);
-		bch_keylist_init(l);
-	}
+	memset(l, 0, sizeof(*l));
 }
 
 /*

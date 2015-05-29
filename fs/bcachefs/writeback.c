@@ -110,16 +110,14 @@ static void write_dirty_finish(struct closure *cl)
 		mempool_free(bv->bv_page, &dc->writeback_page_pool);
 
 	if (!io->error) {
+		BKEY_PADDED(k) tmp;
 		int ret;
-		struct keylist keys;
 
-		bch_keylist_init(&keys);
+		bkey_copy(&tmp.k, &io->replace.key);
+		SET_EXTENT_CACHED(&bkey_i_to_extent(&tmp.k)->v, true);
 
-		bkey_copy(keys.top, &io->replace.key);
-		SET_EXTENT_CACHED(&bkey_i_to_extent(keys.top)->v, true);
-		bch_keylist_enqueue(&keys);
-
-		ret = bch_btree_insert(dc->disk.c, BTREE_ID_EXTENTS, &keys,
+		ret = bch_btree_insert(dc->disk.c, BTREE_ID_EXTENTS,
+				       &keylist_single(&tmp.k),
 				       &io->replace, NULL, NULL, 0);
 		if (io->replace.successes == 0)
 			trace_bcache_writeback_collision(&io->replace.key.k);

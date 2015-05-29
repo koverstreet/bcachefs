@@ -22,6 +22,8 @@
  * full.
  */
 
+#define KEYLIST_MAX		(1 << 18)
+
 struct keylist {
 	/* This is a pointer to the LSB (inline_keys until realloc'd) */
 	union {
@@ -43,18 +45,7 @@ struct keylist {
 		struct bkey_i		*end_keys;
 		u64			*end_keys_p;
 	};
-	/* Enough room for btree_split's keys without realloc */
-#define KEYLIST_INLINE		roundup_pow_of_two(BKEY_EXTENT_MAX_U64s * 3)
-	/* Prevent key lists from growing too big */
-	/*
-	 * This should always be big enough to allow btree_gc_coalesce and
-	 * btree_split to complete.
-	 * The current value is the (current) size of a bucket, so it
-	 * is far more than enough, as those two operations require only
-	 * a handful of keys.
-	 */
-#define KEYLIST_MAX		(1 << 18)
-	u64			inline_keys[KEYLIST_INLINE];
+	bool				has_buf;
 };
 
 /*

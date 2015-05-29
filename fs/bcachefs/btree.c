@@ -2313,6 +2313,13 @@ do_init_next:		bch_btree_init_next(iter->c, b, iter);
 struct btree_split_state {
 	struct closure		stack_cl;
 	struct keylist		parent_keys;
+	/*
+	 * Enough room for btree_split's keys without realloc - btree node
+	 * pointers never have crc/compression info, so we only need to acount
+	 * for the pointers for three keys
+	 */
+	u64			inline_keys[(BKEY_U64s +
+					     BKEY_EXTENT_PTRS_MAX) * 3];
 	struct btree_reserve	*reserve;
 };
 
@@ -2492,9 +2499,9 @@ static void btree_split(struct btree *b, struct btree_iter *iter,
 
 		bch_btree_set_root(c, n3);
 	} else if (!parent) {
-		BUG_ON(state->parent_keys.start_keys_p !=
-		       state->parent_keys.inline_keys);
-		bch_keylist_init(&state->parent_keys);
+		bch_keylist_init(&state->parent_keys,
+				 state->inline_keys,
+				 ARRAY_SIZE(state->inline_keys));
 
 		/* Root filled up but didn't need to be split */
 		closure_sync(&state->stack_cl);
@@ -2611,7 +2618,9 @@ int bch_btree_insert_node(struct btree *b,
 	struct btree_split_state state;
 
 	closure_init_stack(&state.stack_cl);
-	bch_keylist_init(&state.parent_keys);
+	bch_keylist_init(&state.parent_keys,
+			 state.inline_keys,
+			 ARRAY_SIZE(state.inline_keys));
 	state.reserve = reserve;
 
 	if (replace)

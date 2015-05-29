@@ -13,7 +13,7 @@ int bch_keylist_realloc_max(struct keylist *l,
 			    unsigned maxu64s)
 {
 	size_t oldcap = bch_keylist_capacity(l);
-	size_t newsize = oldcap + needu64s;
+	size_t newsize = max(oldcap, BKEY_EXTENT_MAX_U64s) + needu64s;
 	u64 *new_keys;
 
 	if (bch_keylist_fits(l, needu64s))
@@ -78,8 +78,9 @@ int bch_keylist_realloc_max(struct keylist *l,
 		l->bot_p = new_keys;
 	}
 
-	if (l->start_keys_p != l->inline_keys)
+	if (l->has_buf)
 		kfree(l->start_keys_p);
+	l->has_buf = true;
 
 	l->start_keys_p = new_keys;
 	l->end_keys_p = new_keys + newsize;
@@ -129,7 +130,7 @@ void bch_scan_keylist_init(struct scan_keylist *kl,
 
 	mutex_init(&kl->lock);
 	kl->max_size = max_size;
-	bch_keylist_init(&kl->list);
+	bch_keylist_init(&kl->list, NULL, 0);
 
 	/*
 	 * Order of initialization is tricky, and this makes sure that

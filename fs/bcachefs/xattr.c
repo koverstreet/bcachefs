@@ -186,7 +186,6 @@ int bch_xattr_set(struct inode *inode, const char *name,
 	struct cache_set *c = inode->i_sb->s_fs_info;
 	struct btree_iter iter;
 	struct bkey_s_c k;
-	struct keylist keys;
 	struct qstr qname = (struct qstr) QSTR_INIT((char *) name,
 						    strlen(name));
 	int ret = -EINVAL;
@@ -226,9 +225,8 @@ int bch_xattr_set(struct inode *inode, const char *name,
 			break;
 		}
 
-		bch_keylist_init(&keys);
-
 		if (value) {
+			struct keylist keys;
 			struct bkey_i_xattr *xattr;
 			unsigned u64s = BKEY_U64s +
 				DIV_ROUND_UP(sizeof(struct bch_xattr) +
@@ -239,6 +237,8 @@ int bch_xattr_set(struct inode *inode, const char *name,
 				ret = -ERANGE;
 				break;
 			}
+
+			bch_keylist_init(&keys, NULL, 0);
 
 			if (bch_keylist_realloc(&keys, u64s)) {
 				ret = -ENOMEM;
@@ -255,19 +255,25 @@ int bch_xattr_set(struct inode *inode, const char *name,
 			memcpy(xattr_val(&xattr->v), value, size);
 
 			BUG_ON(xattr_cmp(&xattr->v, type, &qname));
+
+			bch_keylist_enqueue(&keys);
+
+			ret = bch_btree_insert_at(&iter, &keys, NULL,
+						  &ei->journal_seq,
+						  insert_flags);
+			bch_keylist_free(&keys);
 		} else {
+			struct bkey_i whiteout;
 			/* removing */
-			bkey_init(&keys.top->k);
-			keys.top->k.type = BCH_XATTR_WHITEOUT;
-			keys.top->k.p = k.k->p;
+			bkey_init(&whiteout.k);
+			whiteout.k.type = BCH_XATTR_WHITEOUT;
+			whiteout.k.p = k.k->p;
+
+			ret = bch_btree_insert_at(&iter,
+						  &keylist_single(&whiteout),
+						  NULL, &ei->journal_seq,
+						  insert_flags);
 		}
-
-		bch_keylist_enqueue(&keys);
-
-		ret = bch_btree_insert_at(&iter, &keys, NULL,
-					  &ei->journal_seq,
-					  insert_flags);
-		bch_keylist_free(&keys);
 
 		if (ret != -EINTR && ret != -EAGAIN)
 			break;

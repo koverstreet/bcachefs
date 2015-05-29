@@ -368,7 +368,7 @@ static void bch_coalesce_nodes(struct btree *old_nodes[GC_MERGE_NODES],
 		return;
 
 	memset(new_nodes, 0, sizeof(new_nodes));
-	bch_keylist_init(&keylist);
+	bch_keylist_init(&keylist, NULL, 0);
 	closure_init_stack(&cl);
 
 	/* Count keys that are not deleted */

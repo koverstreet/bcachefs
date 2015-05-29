@@ -602,7 +602,6 @@ void bch_write(struct closure *cl)
 	op->insert_key.k.p.offset	= bio_end_sector(op->bio);
 	op->insert_key.k.size		= bio_sectors(op->bio);
 
-	bch_keylist_init(&op->insert_keys);
 	bio_get(op->bio);
 
 	/* Don't call bch_next_delay() if rate is >= 1 GB/sec */
@@ -674,7 +673,9 @@ void bch_write_op_init(struct bch_write_op *op, struct cache_set *c,
 	op->wp		= wp;
 	op->journal_seq	= NULL;
 
-	bch_keylist_init(&op->insert_keys);
+	bch_keylist_init(&op->insert_keys,
+			 op->inline_keys,
+			 ARRAY_SIZE(op->inline_keys));
 	bkey_reassemble(&op->insert_key, insert_key);
 
 	if (!bkey_val_u64s(&op->insert_key.k)) {

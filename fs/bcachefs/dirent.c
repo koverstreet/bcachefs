@@ -144,7 +144,7 @@ static int __bch_dirent_create(struct cache_set *c, u64 dir_inum,
 			     sizeof(u64));
 	int ret = -ENOENT;
 
-	bch_keylist_init(&keys);
+	bch_keylist_init(&keys, NULL, 0);
 
 	if (bch_keylist_realloc(&keys, u64s))
 		return -ENOMEM;
