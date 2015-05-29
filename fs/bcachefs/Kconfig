@@ -7,6 +7,8 @@ config BCACHE_FS
 	select CLOSURES
 	select LIBCRC32C
 	select FS_POSIX_ACL
+	select ZLIB_INFLATE
+	select ZLIB_DEFLATE
 	---help---
 	The bcachefs filesystem - a modern, copy on write filesystem, with
 	support for multiple devices, compression, checksumming, etc.

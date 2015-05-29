@@ -335,6 +335,12 @@ static void bch_btree_init_next(struct cache_set *c, struct btree *b,
 
 /* Btree IO */
 
+/*
+ * We seed the checksum with the entire first pointer (dev, gen and offset),
+ * since for btree nodes we have to store the checksum with the data instead of
+ * the pointer - this helps guard against reading a valid btree node that is not
+ * the node we actually wanted:
+ */
 #define btree_csum_set(_b, _i)						\
 ({									\
 	void *_data = (void *) (_i) + 8;				\
@@ -573,7 +579,7 @@ static void bch_btree_node_read(struct cache_set *c, struct btree *b)
 	bch_bio_map(bio, b->data);
 
 	bio_get(bio);
-	bch_submit_bbio(to_bbio(bio), pick.ca, &b->key, &pick.ptr, true);
+	bch_submit_bbio(to_bbio(bio), pick.ca, &pick.ptr, true);
 
 	closure_sync(&cl);
 
@@ -2351,8 +2357,7 @@ struct btree_split_state {
 	 * pointers never have crc/compression info, so we only need to acount
 	 * for the pointers for three keys
 	 */
-	u64			inline_keys[(BKEY_U64s +
-					     BKEY_EXTENT_PTRS_MAX) * 3];
+	u64			inline_keys[BKEY_BTREE_PTR_U64s_MAX * 3];
 	struct btree_reserve	*reserve;
 };
 

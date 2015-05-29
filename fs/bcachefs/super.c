@@ -142,6 +142,8 @@ static const char *bch_blkdev_open(const char *path, void *holder,
 	if (IS_ERR(bdev))
 		return "failed to open device";
 
+	bdev_get_queue(bdev)->backing_dev_info.capabilities |= BDI_CAP_STABLE_WRITES;
+
 	*ret = bdev;
 	return NULL;
 }
@@ -764,9 +766,12 @@ static void cache_set_free(struct closure *cl)
 	bch_io_clock_exit(&c->io_clock[WRITE]);
 	bch_io_clock_exit(&c->io_clock[READ]);
 	bdi_destroy(&c->bdi);
-	bioset_exit(&c->btree_read_bio);
+	free_percpu(c->bio_decompress_worker);
+	mempool_exit(&c->compression_workspace_pool);
+	mempool_exit(&c->bio_bounce_pages);
 	bioset_exit(&c->bio_write);
-	bioset_exit(&c->bio_split);
+	bioset_exit(&c->bio_read);
+	bioset_exit(&c->btree_read_bio);
 	mempool_exit(&c->btree_reserve_pool);
 	mempool_exit(&c->fill_iter);
 	mempool_exit(&c->search);
@@ -893,6 +898,7 @@ static struct cache_set *bch_cache_set_alloc(struct cache_sb *sb)
 {
 	struct cache_set *c;
 	unsigned iter_size;
+	int cpu;
 
 	c = kzalloc(sizeof(struct cache_set), GFP_KERNEL);
 	if (!c)
@@ -952,9 +958,9 @@ static struct cache_set *bch_cache_set_alloc(struct cache_sb *sb)
 	INIT_LIST_HEAD(&c->btree_cache_freeable);
 	INIT_LIST_HEAD(&c->btree_cache_freed);
 
+	mutex_init(&c->bio_bounce_pages_lock);
 	INIT_WORK(&c->bio_submit_work, bch_bio_submit_work);
 	spin_lock_init(&c->bio_submit_lock);
-
 	bio_list_init(&c->read_race_list);
 	spin_lock_init(&c->read_race_lock);
 	INIT_WORK(&c->read_race_work, bch_read_race_work);
@@ -992,9 +998,14 @@ static struct cache_set *bch_cache_set_alloc(struct cache_sb *sb)
 	    mempool_init_kmalloc_pool(&c->btree_reserve_pool, 1,
 					BTREE_RESERVE_SIZE) ||
 	    mempool_init_kmalloc_pool(&c->fill_iter, 1, iter_size) ||
-	    bioset_init(&c->bio_split, 4, offsetof(struct bbio, bio)) ||
-	    bioset_init(&c->bio_write, 4, offsetof(struct bch_write_bio, bio.bio)) ||
 	    bioset_init(&c->btree_read_bio, 1, offsetof(struct bbio, bio)) ||
+	    bioset_init(&c->bio_read, 4, offsetof(struct bch_read_bio, bio.bio)) ||
+	    bioset_init(&c->bio_write, 4, offsetof(struct bch_write_bio, bio.bio)) ||
+	    mempool_init_page_pool(&c->bio_bounce_pages,
+				   CRC32_EXTENT_SIZE_MAX / PAGE_SECTORS, 0) ||
+	    mempool_init_page_pool(&c->compression_workspace_pool, 1,
+				   get_order(COMPRESSION_WORKSPACE_SIZE)) ||
+	    !(c->bio_decompress_worker = alloc_percpu(*c->bio_decompress_worker)) ||
 	    bdi_setup_and_register(&c->bdi, "bcache") ||
 	    bch_io_clock_init(&c->io_clock[READ]) ||
 	    bch_io_clock_init(&c->io_clock[WRITE]) ||
@@ -1003,9 +1014,18 @@ static struct cache_set *bch_cache_set_alloc(struct cache_sb *sb)
 	    bch_bset_sort_state_init(&c->sort, ilog2(btree_pages(c))))
 		goto err;
 
+	for_each_possible_cpu(cpu) {
+		struct bio_decompress_worker *d =
+			per_cpu_ptr(c->bio_decompress_worker, cpu);
+
+		INIT_WORK(&d->work, bch_bio_decompress_work);
+		init_llist_head(&d->bio_list);
+	}
+
 	c->bdi.ra_pages		= VM_MAX_READAHEAD * 1024 / PAGE_SIZE;
 	c->bdi.congested_fn	= bch_congested_fn;
 	c->bdi.congested_data	= c;
+	c->bdi.capabilities	|= BDI_CAP_STABLE_WRITES;
 
 	return c;
 err:

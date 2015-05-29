@@ -1271,6 +1271,63 @@ static void verify_not_stale(struct cache_set *c, const struct open_bucket *ob)
 }
 
 /*
+ * Get us an open_bucket we can allocate from, return with it locked:
+ */
+struct open_bucket *bch_alloc_sectors_start(struct cache_set *c,
+					    struct write_point *wp,
+					    bool check_enospc,
+					    struct closure *cl)
+{
+	struct open_bucket *ob;
+
+	ob = lock_and_refill_writepoint(c, wp, check_enospc, cl);
+	if (IS_ERR_OR_NULL(ob))
+		return ob;
+
+	BUG_ON(!ob->sectors_free);
+	verify_not_stale(c, ob);
+
+	return ob;
+}
+
+/*
+ * Append pointers to the space we just allocated to @k, and mark @sectors space
+ * as allocated out of @ob
+ */
+void bch_alloc_sectors_done(struct cache_set *c, struct write_point *wp,
+			    struct bkey_i *k, struct open_bucket *ob,
+			    unsigned sectors)
+{
+	struct bch_extent_ptr *ptr;
+	struct cache *ca;
+	unsigned i;
+
+	/*
+	 * We're keeping any existing pointer k has, and appending new pointers:
+	 * __bch_write() will only write to the pointers we add here:
+	 */
+	for (i = 0; i < ob->nr_ptrs; i++)
+		extent_ptr_append(bkey_i_to_extent(k), ob->ptrs[i]);
+
+	ob->sectors_free -= sectors;
+	if (ob->sectors_free)
+		atomic_inc(&ob->pin);
+	else
+		BUG_ON(xchg(&wp->b, NULL) != ob);
+
+	if (ob->sectors_free)
+		for (ptr = ob->ptrs; ptr < ob->ptrs + ob->nr_ptrs; ptr++)
+			ptr->offset += sectors;
+
+	rcu_read_lock();
+	open_bucket_for_each_online_device(c, ob, ptr, ca)
+		atomic_long_add(sectors, &ca->sectors_written);
+	rcu_read_unlock();
+
+	mutex_unlock(&ob->lock);
+}
+
+/*
  * Allocates some space in the cache to write to, and k to point to the newly
  * allocated space, and updates k->size and k->offset (to point to the
  * end of the newly allocated space).
@@ -1293,54 +1350,16 @@ struct open_bucket *bch_alloc_sectors(struct cache_set *c,
 				      bool check_enospc,
 				      struct closure *cl)
 {
-	struct bkey_s_extent dst;
-	struct bch_extent_ptr *ptr;
 	struct open_bucket *ob;
-	struct cache *ca;
-	unsigned sectors;
 
-	ob = lock_and_refill_writepoint(c, wp, check_enospc, cl);
+	ob = bch_alloc_sectors_start(c, wp, check_enospc, cl);
 	if (IS_ERR_OR_NULL(ob))
 		return ob;
 
-	BUG_ON(!ob->sectors_free);
+	if (k->k.size > ob->sectors_free)
+		bch_key_resize(&k->k, ob->sectors_free);
 
-	verify_not_stale(c, ob);
-
-	/*
-	 * We're keeping any existing pointer k has, and appending new pointers:
-	 * __bch_write() will only write to the pointers we add here:
-	 */
-	dst = bkey_i_to_s_extent(k);
-
-	/* Set up the pointer to the space we're allocating: */
-	memcpy(&dst.v->ptr[bch_extent_ptrs(dst)],
-	       ob->ptrs, ob->nr_ptrs * sizeof(u64));
-
-	bch_set_extent_ptrs(dst, bch_extent_ptrs(dst) + ob->nr_ptrs);
-
-	sectors = min_t(unsigned, dst.k->size, ob->sectors_free);
-
-	bch_key_resize(dst.k, sectors);
-
-	/* update open bucket for next time: */
-
-	ob->sectors_free -= sectors;
-	if (ob->sectors_free)
-		atomic_inc(&ob->pin);
-	else
-		BUG_ON(xchg(&wp->b, NULL) != ob);
-
-	if (ob->sectors_free)
-		for (ptr = ob->ptrs; ptr < ob->ptrs + ob->nr_ptrs; ptr++)
-			ptr->offset += sectors;
-
-	rcu_read_lock();
-	open_bucket_for_each_online_device(c, ob, ptr, ca)
-		atomic_long_add(sectors, &ca->sectors_written);
-	rcu_read_unlock();
-
-	mutex_unlock(&ob->lock);
+	bch_alloc_sectors_done(c, wp, k, ob, k->k.size);
 
 	return ob;
 }

@@ -136,14 +136,6 @@ static enum migrate_option migrate_cleanup_key(struct cache_set *c,
 		return MIGRATE_IGNORE;
 	}
 
-	/*
-	 * Remove all pointers, to avoid too many in a tier.
-	 * migrate_compact_key above does the same when nr_replicas is 1, and
-	 * doesn't actually work if nr_replicas > 1, so do something simple
-	 * instead.  Effectively, every migration copy is a fresh 'foreground'
-	 * write.
-	 */
-	bch_set_extent_ptrs(e, 0);
 	return MIGRATE_COPY;
 }
 

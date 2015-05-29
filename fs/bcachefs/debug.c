@@ -74,7 +74,7 @@ void bch_btree_verify(struct cache_set *c, struct btree *b)
 	bio->bi_end_io		= btree_verify_endio;
 	bch_bio_map(bio, n_sorted);
 
-	bch_submit_bbio(to_bbio(bio), pick.ca, &b->key, &pick.ptr, true);
+	bch_submit_bbio(to_bbio(bio), pick.ca, &pick.ptr, true);
 
 	closure_sync(&cl);
 	bio_put(bio);

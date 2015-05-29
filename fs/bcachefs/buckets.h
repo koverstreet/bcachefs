@@ -48,19 +48,20 @@ static inline size_t PTR_BUCKET_NR_TRACE(const struct cache_set *c,
 					 const struct bkey_i *k,
 					 unsigned ptr)
 {
-	const struct cache *ca;
 	size_t bucket = 0;
-
+#if 0
 	if (bkey_extent_is_data(&k->k)) {
-		const struct bkey_i_extent *e = bkey_i_to_extent_c(k);
-		const struct bch_extent_ptr *p = &e->v.ptr[ptr];
+		const struct bch_extent_ptr *ptr;
+		const struct cache *ca;
 
 		rcu_read_lock();
-		if ((ca = PTR_CACHE(c, p)))
-			bucket = PTR_BUCKET_NR(ca, p);
+		extent_for_each_online_device(c, bkey_i_to_s_c_extent(k), ptr, ca) {
+			bucket = PTR_BUCKET_NR(ca, ptr);
+			break;
+		}
 		rcu_read_unlock();
 	}
-
+#endif
 	return bucket;
 }
 

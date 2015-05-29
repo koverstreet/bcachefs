@@ -433,9 +433,8 @@ void bch_queue_recalc_oldest_gens(struct cache_set *c, struct moving_queue *q)
 
 static void read_moving_endio(struct bio *bio)
 {
-	struct bbio *b = container_of(bio, struct bbio, bio);
-	struct moving_io *io = container_of(bio->bi_private,
-					    struct moving_io, cl);
+	struct closure *cl = bio->bi_private;
+	struct moving_io *io = container_of(cl, struct moving_io, cl);
 	struct moving_queue *q = io->q;
 	struct moving_context *ctxt = io->context;
 	bool stopped;
@@ -445,11 +444,9 @@ static void read_moving_endio(struct bio *bio)
 	if (bio->bi_error) {
 		io->op.error = bio->bi_error;
 		moving_error(io->context, MOVING_FLAG_READ);
-	} else if (ptr_stale(b->ca, &bkey_i_to_extent_c(&b->key)->v.ptr[0])) {
-		io->op.error = -EINTR;
 	}
 
-	bch_bbio_endio(b, bio->bi_error, "reading data to move");
+	bio_put(bio);
 
 	spin_lock_irqsave(&q->lock, flags);
 
@@ -494,7 +491,10 @@ static void __bch_data_move(struct closure *cl)
 	bio_set_op_attrs(&io->bio.bio.bio, REQ_OP_READ, 0);
 	io->bio.bio.bio.bi_end_io	= read_moving_endio;
 
-	bch_submit_bbio(&io->bio.bio, pick.ca, &io->key, &pick.ptr, false);
+	bch_read_extent(io->op.c, &io->bio.bio.bio,
+			bkey_i_to_s_c(&io->key),
+			&pick, 0, 0);
+	bio_endio(&io->bio.bio.bio);
 }
 
 /*

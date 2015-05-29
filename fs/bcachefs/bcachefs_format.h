@@ -244,25 +244,152 @@ BKEY_VAL_TYPE(cookie,		KEY_TYPE_COOKIE);
 /* Extents */
 
 /*
- * bcache keys index the end of the extent as the offset
- * The end is exclusive, while the start is inclusive
+ * In extent bkeys, the value is a list of pointers (bch_extent_ptr), optionally
+ * preceded by checksum/compression information (bch_extent_crc32 or
+ * bch_extent_crc64).
+ *
+ * One major determining factor in the format of extents is how we handle and
+ * represent extents that have been partially overwritten and thus trimmed:
+ *
+ * If an extent is not checksummed or compressed, when the extent is trimmed we
+ * don't have to remember the extent we originally allocated and wrote: we can
+ * merely adjust ptr->offset to point to the start of the start of the data that
+ * is currently live. The size field in struct bkey records the current (live)
+ * size of the extent, and is also used to mean "size of region on disk that we
+ * point to" in this case.
+ *
+ * Thus an extent that is not checksummed or compressed will consist only of a
+ * list of bch_extent_ptrs, with none of the fields in
+ * bch_extent_crc32/bch_extent_crc64.
+ *
+ * When an extent is checksummed or compressed, it's not possible to read only
+ * the data that is currently live: we have to read the entire extent that was
+ * originally written, and then return only the part of the extent that is
+ * currently live.
+ *
+ * Thus, in addition to the current size of the extent in struct bkey, we need
+ * to store the size of the originally allocated space - this is the
+ * compressed_size and uncompressed_size fields in bch_extent_crc32/64. Also,
+ * when the extent is trimmed, instead of modifying the offset field of the
+ * pointer, we keep a second smaller offset field - "offset into the original
+ * extent of the currently live region".
+ *
+ * The other major determining factor is replication and data migration:
+ *
+ * Each pointer may have its own bch_extent_crc32/64. When doing a replicated
+ * write, we will initially write all the replicas in the same format, with the
+ * same checksum type and compression format - however, when copygc runs later (or
+ * tiering/cache promotion, anything that moves data), it is not in general
+ * going to rewrite all the pointers at once - one of the replicas may be in a
+ * bucket on one device that has very little fragmentation while another lives
+ * in a bucket that has become heavily fragmented, and thus is being rewritten
+ * sooner than the rest.
+ *
+ * Thus it will only move a subset of the pointers (or in the case of
+ * tiering/cache promotion perhaps add a single pointer without dropping any
+ * current pointers), and if the extent has been partially overwritten it must
+ * write only the currently live portion (or copygc would not be able to reduce
+ * fragmentation!) - which necessitates a different bch_extent_crc format for
+ * the new pointer.
+ *
+ * But in the interests of space efficiency, we don't want to store one
+ * bch_extent_crc for each pointer if we don't have to.
+ *
+ * Thus, a bch_extent consists of bch_extent_crc32s, bch_extent_crc64s, and
+ * bch_extent_ptrs appended arbitrarily one after the other. We determine the
+ * type of a given entry with a scheme similar to utf8 (except we're encoding a
+ * type, not a size), encoding the type in the position of the first set bit:
+ *
+ * bch_extent_crc32	- 0b1
+ * bch_extent_ptr	- 0b10
+ * bch_extent_crc64	- 0b100
+ *
+ * We do it this way because bch_extent_crc32 is _very_ constrained on bits (and
+ * bch_extent_crc64 is the least constrained).
+ *
+ * Then, each bch_extent_crc32/64 applies to the pointers that follow after it,
+ * until the next bch_extent_crc32/64.
+ *
+ * If there are no bch_extent_crcs preceding a bch_extent_ptr, then that pointer
+ * is neither checksummed nor compressed.
  */
+
+enum bch_extent_entry_type {
+	BCH_EXTENT_ENTRY_crc32		= 0,
+	BCH_EXTENT_ENTRY_ptr		= 1,
+	BCH_EXTENT_ENTRY_crc64		= 2,
+};
+
+#define BCH_EXTENT_ENTRY_MAX		3
+
+struct bch_extent_crc32 {
+#if defined(__LITTLE_ENDIAN_BITFIELD)
+	__u32			type:1,
+				offset:7,
+				compressed_size:8,
+				uncompressed_size:8,
+				csum_type:4,
+				compression_type:4;
+#elif defined (__BIG_ENDIAN_BITFIELD)
+	__u32			csum_type:4,
+				compression_type:4,
+				uncompressed_size:8,
+				compressed_size:8,
+				offset:7,
+				type:1;
+#endif
+	__u32			csum;
+} __attribute__((packed)) __attribute__((aligned(8)));
+
+#define CRC32_EXTENT_SIZE_MAX	(1U << 7)
+
+struct bch_extent_crc64 {
+#if defined(__LITTLE_ENDIAN_BITFIELD)
+	__u64			type:3,
+				compressed_size:18,
+				uncompressed_size:18,
+				offset:17,
+				csum_type:4,
+				compression_type:4;
+#elif defined (__BIG_ENDIAN_BITFIELD)
+	__u64			csum_type:4,
+				compression_type:4,
+				offset:17,
+				uncompressed_size:18,
+				compressed_size:18,
+				type:3;
+#endif
+	__u64			csum;
+} __attribute__((packed)) __attribute__((aligned(8)));
+
+#define CRC64_EXTENT_SIZE_MAX	(1U << 17)
 
 struct bch_extent_ptr {
 #if defined(__LITTLE_ENDIAN_BITFIELD)
-	__u64			gen:8,
-				dev:8,
-				offset:48;
-#elif defined (__BIG_ENDIAN_BITFIELD)
-	__u64			offset:48,
+	__u64			type:2,
+				erasure_coded:1,
+				offset:45, /* 16 petabytes */
 				dev:8,
 				gen:8;
+#elif defined (__BIG_ENDIAN_BITFIELD)
+	__u64			gen:8,
+				dev:8,
+				offset:45,
+				erasure_coded:1,
+				type:2;
 #endif
 } __attribute__((packed)) __attribute__((aligned(8)));
 
 /* Dummy DEV numbers: */
 
 #define PTR_LOST_DEV			255 /* XXX: kill */
+
+union bch_extent_entry {
+	__u8				type;
+	struct bch_extent_crc32		crc32;
+	struct bch_extent_crc64		crc64;
+	struct bch_extent_ptr		ptr;
+};
 
 enum {
 	BCH_EXTENT		= 128,
@@ -277,9 +404,10 @@ enum {
 
 struct bch_extent {
 	struct bch_val		v;
-	struct bch_extent_ptr	ptr[0];
+
+	union bch_extent_entry	start[0];
 	__u64			_data[0];
-};
+} __attribute__((packed)) __attribute__((aligned(8)));
 BKEY_VAL_TYPE(extent,		BCH_EXTENT);
 
 /* Inodes */
@@ -551,6 +679,18 @@ enum {
 	BCH_DIRENT_CSUM_SIPHASH		= 2,
 	BCH_DIRENT_CSUM_SHA1		= 3,
 };
+
+BITMASK(CACHE_DATA_PREFERRED_CSUM_TYPE,	struct cache_sb, flags, 48, 52);
+
+BITMASK(CACHE_COMPRESSION_TYPE,		struct cache_sb, flags, 52, 56);
+enum {
+	BCH_COMPRESSION_NONE		= 0,
+	BCH_COMPRESSION_LZO1X		= 1,
+	BCH_COMPRESSION_GZIP		= 2,
+	BCH_COMPRESSION_XZ		= 3,
+};
+
+/* backing device specific stuff: */
 
 BITMASK(BDEV_CACHE_MODE,		struct cache_sb, flags, 0, 4);
 #define CACHE_MODE_WRITETHROUGH		0U

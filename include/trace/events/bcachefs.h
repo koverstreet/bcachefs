@@ -618,13 +618,11 @@ TRACE_EVENT(bcache_btree_insert_key,
 		__field(u64,		b_bucket		)
 		__field(u64,		b_offset		)
 		__field(u64,		offset			)
-		__field(u64,		bucket			)
 		__field(u32,		b_inode			)
 		__field(u32,		inode			)
 		__field(u32,		size			)
 		__field(u8,		level			)
 		__field(u8,		id			)
-		__field(u8,		cached			)
 		__field(u8,		op			)
 		__field(u8,		insert_done		)
 	),
@@ -635,22 +633,18 @@ TRACE_EVENT(bcache_btree_insert_key,
 		__entry->id		= b->btree_id;
 		__entry->b_inode	= b->key.k.p.inode;
 		__entry->b_offset	= b->key.k.p.offset;
-		__entry->bucket		= PTR_BUCKET_NR_TRACE(b->c, k, 0);
 		__entry->inode		= k->k.p.inode;
 		__entry->offset		= k->k.p.offset;
 		__entry->size		= k->k.size;
-		__entry->cached		= bkey_extent_is_cached(&k->k);
 		__entry->op		= op;
 		__entry->insert_done	= insert_done;
 	),
 
-	TP_printk("%u for %u bucket %llu(%u) id %u: %u:%llu %u:%llu len %u%s -> %llu",
+	TP_printk("%u for %u bucket %llu(%u) id %u: %u:%llu %u:%llu len %u",
 		  __entry->insert_done, __entry->op,
 		  __entry->b_bucket, __entry->level, __entry->id,
 		  __entry->b_inode, __entry->b_offset,
-		  __entry->inode, __entry->offset,
-		  __entry->size, __entry->cached ? " cached" : "",
-		  __entry->bucket)
+		  __entry->inode, __entry->offset, __entry->size)
 );
 
 DECLARE_EVENT_CLASS(btree_split,

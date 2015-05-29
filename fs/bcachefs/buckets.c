@@ -297,7 +297,7 @@ int bch_mark_pointers(struct cache_set *c, struct btree *b,
 		      struct bkey_s_c_extent e, int sectors,
 		      bool fail_if_stale, bool metadata)
 {
-	const struct bch_extent_ptr *ptr;
+	const struct bch_extent_ptr *ptr, *ptr2;
 	struct cache *ca;
 
 	BUG_ON(metadata && bkey_extent_is_cached(e.k));
@@ -350,11 +350,14 @@ int bch_mark_pointers(struct cache_set *c, struct btree *b,
 
 	return 0;
 stale:
-	while (--ptr >= e.v->ptr)
-		if ((ca = PTR_CACHE(c, ptr)))
-			bch_mark_bucket(c, ca, b, ptr, -sectors,
-					bch_extent_ptr_is_dirty(c, e, ptr),
-					metadata);
+	extent_for_each_online_device(c, e, ptr2, ca) {
+		if (ptr2 == ptr)
+			break;
+
+		bch_mark_bucket(c, ca, b, ptr, -sectors,
+				bch_extent_ptr_is_dirty(c, e, ptr),
+				metadata);
+	}
 	rcu_read_unlock();
 
 	return -1;

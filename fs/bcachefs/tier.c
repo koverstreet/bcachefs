@@ -24,30 +24,23 @@ static bool tiering_pred(struct scan_keylist *kl, struct bkey_s_c k)
 
 	if (bkey_extent_is_data(k.k)) {
 		struct bkey_s_c_extent e = bkey_s_c_to_extent(k);
+		const struct bch_extent_ptr *ptr;
 		struct cache_member_rcu *mi;
-		unsigned replicas = CACHE_SET_DATA_REPLICAS_WANT(&c->sb);
-		unsigned dev;
-		bool ret = false;
+		unsigned replicas = 0;
 
-		/*
-		 * Should not happen except in a pathological situation (too
-		 * many pointers on the wrong tier?
-		 */
-		if (bch_extent_ptrs(e) == BKEY_EXTENT_PTRS_MAX)
+		/* Make sure we have room to add a new pointer: */
+		if (bkey_val_u64s(e.k) + BKEY_EXTENT_PTR_MAX_U64s >
+		    BKEY_EXTENT_VAL_U64s_MAX)
 			return false;
 
-		/*
-		 * Need at least CACHE_SET_DATA_REPLICAS_WANT ptrs not on tier 0
-		 */
-		if (bch_extent_ptrs(e) < replicas)
-			return true;
-
-		dev = e.v->ptr[bch_extent_ptrs(e) - replicas].dev;
 		mi = cache_member_info_get(c);
-		ret = dev < mi->nr_in_set && !CACHE_TIER(&mi->m[dev]);
+		extent_for_each_ptr(e, ptr)
+			if (ptr->dev < mi->nr_in_set &&
+			    CACHE_TIER(&mi->m[ptr->dev]))
+				replicas++;
 		cache_member_info_put();
 
-		return ret;
+		return replicas < CACHE_SET_DATA_REPLICAS_WANT(&c->sb);
 	}
 
 	return false;

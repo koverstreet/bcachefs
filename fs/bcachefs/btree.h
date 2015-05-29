@@ -101,7 +101,7 @@ struct btree {
 	struct rhash_head	hash;
 
 	/* Key/pointer for this btree node */
-	BKEY_PADDED(key);
+	__BKEY_PADDED(key, BKEY_BTREE_PTR_VAL_U64s_MAX);
 
 	/* Single bit - set when accessed, cleared by shrinker */
 	unsigned long		accessed;

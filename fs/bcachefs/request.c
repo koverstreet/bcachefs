@@ -364,9 +364,9 @@ static int cached_dev_cache_miss(struct btree_iter *iter, struct search *s,
 	miss->bi_end_io		= request_endio;
 	miss->bi_private	= &s->cl;
 
-	to_bbio(miss)->key.k = KEY(s->inode,
-				   bio_end_sector(miss),
-				   bio_sectors(miss));
+	//to_bbio(miss)->key.k = KEY(s->inode,
+	//			   bio_end_sector(miss),
+	//			   bio_sectors(miss));
 	to_bbio(miss)->ca = NULL;
 
 	closure_get(&s->cl);
@@ -375,7 +375,7 @@ static int cached_dev_cache_miss(struct btree_iter *iter, struct search *s,
 			bkey_to_s_c(&KEY(replace.key.k.p.inode,
 					 replace.key.k.p.offset,
 					 replace.key.k.size)),
-			BCH_WRITE_ALLOC_NOWAIT|BCH_WRITE_CACHED);
+			BCH_WRITE_CACHED);
 
 	return 0;
 nopromote:
@@ -386,23 +386,6 @@ nopromote:
 	closure_bio_submit(miss, &s->cl);
 
 	return 0;
-}
-
-static void bch_cache_read_endio(struct bio *bio)
-{
-	struct bbio *b = to_bbio(bio);
-	struct closure *cl = bio->bi_private;
-	struct search *s = container_of(cl, struct search, cl);
-
-	if (bio->bi_error)
-		s->iop.error = bio->bi_error;
-	else if (ptr_stale(b->ca, &b->ptr)) {
-		/* Read bucket invalidate race */
-		atomic_long_inc(&s->iop.c->cache_read_races);
-		s->iop.error = -EINTR;
-	}
-
-	bch_bbio_endio(b, bio->bi_error, "reading from cache");
 }
 
 static void cached_dev_read(struct cached_dev *dc, struct search *s)
@@ -417,9 +400,7 @@ static void cached_dev_read(struct cached_dev *dc, struct search *s)
 	for_each_btree_key_with_holes(&iter, s->iop.c, BTREE_ID_EXTENTS,
 				POS(s->inode, bio->bi_iter.bi_sector), k) {
 		struct extent_pick_ptr pick;
-		struct bio *n;
-		struct bbio *bbio;
-		unsigned sectors;
+		unsigned sectors, bytes;
 		bool done;
 retry:
 		BUG_ON(bkey_cmp(bkey_start_pos(k.k),
@@ -428,8 +409,12 @@ retry:
 		BUG_ON(bkey_cmp(k.k->p,
 				POS(s->inode, bio->bi_iter.bi_sector)) <= 0);
 
-		sectors = k.k->p.offset - bio->bi_iter.bi_sector;
-		done = sectors >= bio_sectors(bio);
+		sectors = min_t(u64, k.k->p.offset, bio_end_sector(bio)) -
+			bio->bi_iter.bi_sector;
+		bytes = sectors << 9;
+		done = bytes == bio->bi_iter.bi_size;
+
+		swap(bio->bi_iter.bi_size, bytes);
 
 		pick = bch_extent_pick_ptr(s->iop.c, k);
 		if (IS_ERR(pick.ca)) {
@@ -452,32 +437,16 @@ retry:
 			if (!bkey_extent_is_cached(k.k))
 				s->read_dirty_data = true;
 
-			n = bio_next_split(bio, sectors, GFP_NOIO,
-					   &s->d->bio_split);
-
-			bbio = to_bbio(n);
-			bbio->key.k = *k.k;
-			bbio->ptr = pick.ptr;
-			bch_set_extent_ptrs(bkey_i_to_s_extent(&bbio->key), 1);
-
-			/* Trim the key to match what we're actually reading */
-			bch_cut_front(POS(s->inode, n->bi_iter.bi_sector),
-				      &bbio->key);
-			bch_cut_back(POS(s->inode, bio_end_sector(n)),
-				     &bbio->key.k);
-
-			bch_bbio_prep(bbio, pick.ca);
-
-			n->bi_end_io		= bch_cache_read_endio;
-			n->bi_private		= &s->cl;
-
-			closure_get(&s->cl);
-			if (!s->bypass) {
-				if (cache_promote(s->iop.c, bbio, k))
-					s->cache_miss = 1;
-			} else
-				submit_bio(n);
+			bch_read_extent(s->iop.c, bio, k, &pick,
+					bio->bi_iter.bi_sector -
+					bkey_start_offset(k.k),
+					BCH_READ_FORCE_BOUNCE|
+					BCH_READ_RETRY_IF_STALE|
+					(!s->bypass ? BCH_READ_PROMOTE : 0));
 		}
+
+		swap(bio->bi_iter.bi_size, bytes);
+		bio_advance(bio, bytes);
 
 		if (done) {
 			bch_btree_iter_unlock(&iter);

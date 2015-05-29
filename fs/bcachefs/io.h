@@ -1,17 +1,16 @@
 #ifndef _BCACHE_IO_H
 #define _BCACHE_IO_H
 
+#include <linux/zlib.h>
+
+#define COMPRESSION_WORKSPACE_SIZE					\
+	max(zlib_deflate_workspacesize(MAX_WBITS, MAX_MEM_LEVEL),	\
+	    zlib_inflate_workspacesize())
+
 struct bbio {
 	struct cache		*ca;
-
-	unsigned int		bi_idx;		/* current index into bvl_vec */
-
-	unsigned int            bi_bvec_done;	/* number of bytes completed in
-						   current bvec */
-	unsigned		submit_time_us;
-	struct bkey_i		key;
 	struct bch_extent_ptr	ptr;
-	/* Only ever have a single pointer (the one we're doing io to/from) */
+	unsigned		submit_time_us;
 	struct bio		bio;
 };
 
@@ -95,6 +94,41 @@ void bch_write_op_init(struct bch_write_op *, struct cache_set *,
 		       struct bkey_s_c, struct bkey_s_c, unsigned);
 void bch_write(struct closure *);
 
+struct cache_promote_op;
+
+struct bch_read_bio {
+	struct bio		*parent;
+	struct bvec_iter	parent_iter;
+
+	struct cache_set	*c;
+	unsigned		flags;
+
+	/* fields align with bch_extent_crc64 */
+	u64			bounce:3,
+				compressed_size:18,
+				uncompressed_size:18,
+				offset:17,
+				csum_type:4,
+				compression_type:4;
+	u64			csum;
+
+	struct cache_promote_op *promote;
+
+	struct llist_node	list;
+	struct bbio		bio;
+};
+
+struct extent_pick_ptr;
+
+void bch_read_extent(struct cache_set *, struct bio *, struct bkey_s_c,
+		     struct extent_pick_ptr *, unsigned, unsigned);
+
+enum bch_read_flags {
+	BCH_READ_FORCE_BOUNCE		= 1 << 0,
+	BCH_READ_RETRY_IF_STALE		= 1 << 1,
+	BCH_READ_PROMOTE		= 1 << 2,
+};
+
 int bch_read(struct cache_set *, struct bio *, u64);
 
 void bch_cache_io_error_work(struct work_struct *);
@@ -104,8 +138,7 @@ void bch_bbio_endio(struct bbio *, int, const char *);
 
 void bch_generic_make_request(struct bio *, struct cache_set *);
 void bch_bio_submit_work(struct work_struct *);
-void bch_bbio_prep(struct bbio *, struct cache *);
-void bch_submit_bbio(struct bbio *, struct cache *, const struct bkey_i *,
+void bch_submit_bbio(struct bbio *, struct cache *,
 		     const struct bch_extent_ptr *, bool);
 void bch_submit_bbio_replicas(struct bch_write_bio *, struct cache_set *,
 			      const struct bkey_i *, unsigned, bool);
@@ -118,6 +151,8 @@ bool cache_promote(struct cache_set *, struct bbio *, struct bkey_s_c);
 
 void bch_read_race_work(struct work_struct *);
 void bch_wake_delayed_writes(unsigned long data);
+
+void bch_bio_decompress_work(struct work_struct *);
 
 extern struct workqueue_struct *bcache_io_wq;
 

@@ -4,6 +4,7 @@
 #include "bkey.h"
 
 struct bch_replace_info;
+union bch_extent_crc;
 
 struct btree_nr_keys bch_key_sort_fix_overlapping(struct btree_keys *,
 						  struct bset *,
@@ -31,6 +32,7 @@ struct cache_set;
 struct journal_res;
 
 struct extent_pick_ptr {
+	struct bch_extent_crc64		crc;
 	struct bch_extent_ptr		ptr;
 	struct cache			*ca;
 };
@@ -53,7 +55,7 @@ bool bch_insert_fixup_extent(struct cache_set *, struct btree *,
 			     struct bch_replace_info *, struct bpos *,
 			     struct journal_res *, unsigned);
 
-void bch_extent_drop_stale(struct cache_set *c, struct bkey_s);
+void bch_extent_drop_stale(struct cache_set *c, struct bkey_s_extent);
 bool bch_extent_normalize(struct cache_set *, struct bkey_s);
 
 static inline bool bkey_extent_is_data(const struct bkey *k)
@@ -80,69 +82,269 @@ static inline void bkey_extent_set_cached(struct bkey *k, bool cached)
 	k->type = cached ? BCH_EXTENT_CACHED : BCH_EXTENT;
 }
 
-#define bch_extent_ptrs(_e)	bkey_val_u64s((_e).k)
-
-static inline void bch_set_extent_ptrs(struct bkey_s_extent e, unsigned i)
+static inline enum bch_extent_entry_type
+extent_entry_type(const union bch_extent_entry *e)
 {
-	BUG_ON(i > BKEY_EXTENT_PTRS_MAX);
-	set_bkey_val_u64s(e.k, i);
+	int ret = __ffs(e->type);
+
+	EBUG_ON(ret < 0 || ret >= BCH_EXTENT_ENTRY_MAX);
+
+	return ret;
 }
 
-static inline void bch_extent_drop_ptr(struct bkey_s_extent e,
-				       struct bch_extent_ptr *ptr)
+static inline size_t __extent_entry_bytes(enum bch_extent_entry_type type)
 {
-	BUG_ON(ptr < e.v->ptr ||
-	       ptr >= e.v->ptr + bch_extent_ptrs(e.c));
-
-	memmove(ptr, ptr + 1,
-		(void *) (e.v->ptr + bch_extent_ptrs(e.c)) -
-		(void *) (ptr + 1));
-	e.k->u64s -= sizeof(*ptr) / sizeof(u64);
+	switch (type) {
+	case BCH_EXTENT_ENTRY_crc32:
+		return sizeof(struct bch_extent_crc32);
+	case BCH_EXTENT_ENTRY_crc64:
+		return sizeof(struct bch_extent_crc64);
+	case BCH_EXTENT_ENTRY_ptr:
+		return sizeof(struct bch_extent_ptr);
+	default:
+		BUG();
+	}
 }
 
+static inline size_t __extent_entry_u64s(enum bch_extent_entry_type type)
+{
+	return __extent_entry_bytes(type) / sizeof(u64);
+}
+
+static inline size_t extent_entry_bytes(const union bch_extent_entry *e)
+{
+	return __extent_entry_bytes(extent_entry_type(e));
+}
+
+static inline size_t extent_entry_u64s(const union bch_extent_entry *e)
+{
+	return extent_entry_bytes(e) / sizeof(u64);
+}
+
+static inline bool extent_entry_is_ptr(const union bch_extent_entry *e)
+{
+	return extent_entry_type(e) == BCH_EXTENT_ENTRY_ptr;
+}
+
+static inline bool extent_entry_is_crc(const union bch_extent_entry *e)
+{
+	return !extent_entry_is_ptr(e);
+}
+
+union bch_extent_crc {
+	u8				type;
+	struct bch_extent_crc32		crc32;
+	struct bch_extent_crc64		crc64;
+};
+
+enum bch_extent_crc_type {
+	BCH_EXTENT_CRC_NONE,
+	BCH_EXTENT_CRC32,
+	BCH_EXTENT_CRC64,
+};
+
+static inline enum bch_extent_crc_type
+bch_extent_crc_type(const union bch_extent_crc *crc)
+{
+	if (!crc)
+		return BCH_EXTENT_CRC_NONE;
+
+	switch (extent_entry_type((void *) crc)) {
+	case BCH_EXTENT_ENTRY_crc32:
+		return BCH_EXTENT_CRC32;
+	case BCH_EXTENT_ENTRY_crc64:
+		return BCH_EXTENT_CRC64;
+	default:
+		BUG();
+	}
+}
+
+#define extent_entry_next(_entry)					\
+	((typeof(_entry)) ((void *) (_entry) + extent_entry_bytes(_entry)))
+
+#define extent_entry_last(_e)						\
+	bkey_idx((_e).v, bkey_val_u64s((_e).k))
+
+#define extent_for_each_entry_from(_e, _entry, _start)			\
+	for ((_entry) = _start;						\
+	     (_entry) < extent_entry_last(_e);				\
+	     (_entry) = extent_entry_next(_entry))
+
+#define extent_for_each_entry(_e, _entry)				\
+	extent_for_each_entry_from(_e, _entry, (_e).v->start)
+
+/* Iterates through entries until it hits a pointer: */
+#define extent_ptr_crc_next_filter(_e, _crc, _ptr, _filter)		\
+({									\
+	__label__ out;							\
+	const union bch_extent_entry *_entry;				\
+									\
+	extent_for_each_entry_from(_e, _entry, (void *) _ptr)		\
+		if (extent_entry_is_crc(_entry)) {			\
+			(_crc) = (void *) _entry;			\
+		} else {						\
+			_ptr = (typeof(_ptr)) &_entry->ptr;		\
+			if (_filter)					\
+				goto out;				\
+		}							\
+									\
+	_ptr = NULL;							\
+out:									\
+	_ptr;								\
+})
+
+#define extent_ptr_next_filter(_e, _ptr, _filter)			\
+({									\
+	union bch_extent_crc *_crc;					\
+									\
+	extent_ptr_crc_next_filter(_e, _crc, _ptr, _filter);		\
+})
+
+#define extent_ptr_crc_next(_e, _crc, _ptr)				\
+	extent_ptr_crc_next_filter(_e, _crc, _ptr, true)
+
+#define extent_ptr_next(_e, _ptr)					\
+	extent_ptr_next_filter(_e, _ptr, true)
+
+#define extent_for_each_ptr_crc_filter(_e, _ptr, _crc, _filter)		\
+	for ((_crc) = NULL,						\
+	     (_ptr) = &(_e).v->start->ptr;				\
+	     ((_ptr) = extent_ptr_crc_next_filter(_e, _crc, _ptr, _filter));\
+	     (_ptr)++)
+
+#define extent_for_each_ptr_from_filter(_e, _ptr, _start, _filter)	\
+	for ((_ptr) = (_start);				\
+	     ((_ptr) = extent_ptr_next_filter(_e, _ptr, _filter));	\
+	     (_ptr)++)
+
+#define extent_for_each_ptr_filter(_e, _ptr, _filter)			\
+	extent_for_each_ptr_from_filter(_e, _ptr, &(_e).v->start->ptr, _filter)
+
+#define extent_for_each_ptr_crc(_e, _ptr, _crc)				\
+	extent_for_each_ptr_crc_filter(_e, _ptr, _crc, true)
+
+#define extent_for_each_ptr_from(_e, _ptr, _start)			\
+	extent_for_each_ptr_from_filter(_e, _ptr, _start, true)
+
+#define extent_for_each_ptr(_e, _ptr)					\
+	extent_for_each_ptr_filter(_e, _ptr, true)
+
+#define extent_for_each_online_device_crc(_c, _e, _crc, _ptr, _ca)	\
+	extent_for_each_ptr_crc_filter(_e, _ptr, _crc,			\
+				       ((_ca) = PTR_CACHE(_c, _ptr)))
+
+#define extent_for_each_online_device(_c, _e, _ptr, _ca)		\
+	extent_for_each_ptr_filter(_e, _ptr,				\
+				   ((_ca) = PTR_CACHE(_c, _ptr)))
+
+#define extent_ptr_prev(_e, _ptr)					\
+({									\
+	typeof(&(_e).v->start->ptr) _p;					\
+	typeof(&(_e).v->start->ptr) _prev = NULL;			\
+									\
+	extent_for_each_ptr(_e, _p) {					\
+		if (_p == (_ptr))					\
+			break;						\
+		_prev = _p;						\
+	}								\
+									\
+	_prev;								\
+})
+
+/*
+ * Use this when you'll be dropping pointers as you iterate. Quadratic,
+ * unfortunately:
+ */
+#define extent_for_each_ptr_backwards(_e, _ptr)				\
+	for ((_ptr) = extent_ptr_prev(_e, NULL);			\
+	     (_ptr);							\
+	     (_ptr) = extent_ptr_prev(_e, _ptr))
+
+/*
+ * make sure the type field gets set correctly:
+ */
+#define __extent_entry_append(_e, _type, _val)				\
+do {									\
+	union bch_extent_entry *_new =					\
+		extent_entry_last(extent_i_to_s((_e)));			\
+									\
+	(_e)->k.u64s += __extent_entry_u64s(BCH_EXTENT_ENTRY_##_type);	\
+	BUG_ON(bkey_val_u64s(&(_e)->k) > BKEY_EXTENT_VAL_U64s_MAX);	\
+									\
+	_new->_type = _val;						\
+	_new->_type.type = 1 << BCH_EXTENT_ENTRY_##_type;		\
+									\
+	BUG_ON(extent_entry_type(_new) != BCH_EXTENT_ENTRY_##_type);	\
+} while (0)
+
+static inline void extent_crc32_append(struct bkey_i_extent *e,
+				       struct bch_extent_crc32 crc)
+{
+	__extent_entry_append(e, crc32, crc);
+}
+
+static inline void extent_crc64_append(struct bkey_i_extent *e,
+				       struct bch_extent_crc64 crc)
+{
+	__extent_entry_append(e, crc64, crc);
+}
+
+static inline void extent_ptr_append(struct bkey_i_extent *e,
+				     struct bch_extent_ptr ptr)
+{
+	__extent_entry_append(e, ptr, ptr);
+}
+
+/* XXX: inefficient */
 static inline bool bch_extent_ptr_is_dirty(const struct cache_set *c,
 					   struct bkey_s_c_extent e,
 					   const struct bch_extent_ptr *ptr)
 {
-	/* Dirty pointers come last */
+	const struct bch_extent_ptr *i;
+	unsigned seen = 0;
 
 	if (bkey_extent_is_cached(e.k))
 		return false;
 
-	return ptr + CACHE_SET_DATA_REPLICAS_WANT(&c->sb) >=
-		e.v->ptr + bch_extent_ptrs(e);
+	/* Dirty pointers come last */
+	extent_for_each_ptr_from(e, i, ptr)
+		seen++;
+
+	return seen <= CACHE_SET_DATA_REPLICAS_WANT(&c->sb);
 }
 
-#define extent_for_each_ptr(_extent, _ptr)				\
-	for ((_ptr) = (_extent).v->ptr;					\
-	     (_ptr) < (_extent).v->ptr + bch_extent_ptrs(_extent);	\
-	     (_ptr)++)
+static inline struct bch_extent_crc64 crc_to_64(const union bch_extent_crc *crc)
+{
+	switch (bch_extent_crc_type(crc)) {
+	case BCH_EXTENT_CRC_NONE:
+		return (struct bch_extent_crc64) { 0 };
+	case BCH_EXTENT_CRC32:
+		return (struct bch_extent_crc64) {
+			.compressed_size	= crc->crc32.compressed_size,
+			.uncompressed_size	= crc->crc32.uncompressed_size,
+			.offset			= crc->crc32.offset,
+			.csum_type		= crc->crc32.csum_type,
+			.compression_type	= crc->crc32.compression_type,
+			.csum			= crc->crc32.csum,
+		};
+	case BCH_EXTENT_CRC64:
+		return crc->crc64;
+	default:
+		BUG();
+	}
+}
 
-/*
- * Use this when you'll be dropping pointers as you iterate.
- * Any reason we shouldn't just always do this?
- */
-#define extent_for_each_ptr_backwards(_extent, _ptr)			\
-	for ((_ptr) = (_extent).v->ptr + bch_extent_ptrs(_extent) - 1;	\
-	     (_ptr) >= (_extent).v->ptr;				\
-	     --(_ptr))
+void extent_adjust_pointers(struct bkey_s_extent, union bch_extent_entry *);
 
-#define __extent_ptr_next_online_device(_c, _extent, _ptr, _ca)		\
-({									\
-	(_ca) = NULL;							\
-									\
-	while ((_ptr) < (_extent).v->ptr + bch_extent_ptrs(_extent) &&	\
-	       !((_ca) = PTR_CACHE(_c, _ptr)))				\
-		(_ptr)++;						\
-	(_ca);								\
-})
+/* Doesn't cleanup redundant crcs */
+static inline void __bch_extent_drop_ptr(struct bkey_s_extent e,
+					 struct bch_extent_ptr *ptr)
+{
+	memmove(ptr, ptr + 1, (void *) extent_entry_last(e) - (void *) (ptr + 1));
+	e.k->u64s -= sizeof(*ptr) / sizeof(u64);
+}
 
-#define extent_for_each_online_device(_c, _extent, _ptr, _ca)		\
-	for ((_ptr) = (_extent).v->ptr;					\
-	     ((_ca) = __extent_ptr_next_online_device(_c, _extent,	\
-						      _ptr, _ca));	\
-	     (_ptr)++)
-
+void bch_extent_drop_ptr(struct bkey_s_extent, struct bch_extent_ptr *);
 bool bch_extent_has_device(struct bkey_s_c_extent, unsigned);
 
 bool bch_cut_front(struct bpos, struct bkey_i *);

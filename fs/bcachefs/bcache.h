@@ -213,6 +213,7 @@
 #include "blockdev_types.h"
 #include "buckets_types.h"
 #include "clock_types.h"
+#include "io_types.h"
 #include "journal_types.h"
 #include "keylist_types.h"
 #include "keybuf_types.h"
@@ -418,8 +419,6 @@ struct cache_set {
 	struct closure		sb_write;
 	struct semaphore	sb_write_mutex;
 
-	struct bio_set		bio_split;
-
 	struct backing_dev_info bdi;
 
 	/* BTREE CACHE */
@@ -563,7 +562,13 @@ struct cache_set {
 	struct rw_semaphore	gc_lock;
 
 	/* IO PATH */
+	struct bio_set		bio_read;
 	struct bio_set		bio_write;
+	struct mutex		bio_bounce_pages_lock;
+	mempool_t		bio_bounce_pages;
+	mempool_t		compression_workspace_pool;
+	struct bio_decompress_worker __percpu
+				*bio_decompress_worker;
 
 	/* For punting bio submissions to workqueue, io.c */
 	struct bio_list		bio_submit_list;

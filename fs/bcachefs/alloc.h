@@ -16,6 +16,12 @@ void bch_prio_timer_start(struct cache_set *, int);
 
 void bch_open_bucket_put(struct cache_set *, struct open_bucket *);
 
+struct open_bucket *bch_alloc_sectors_start(struct cache_set *,
+					    struct write_point *,
+					    bool, struct closure *);
+void bch_alloc_sectors_done(struct cache_set *, struct write_point *,
+			    struct bkey_i *, struct open_bucket *, unsigned);
+
 struct open_bucket *bch_alloc_sectors(struct cache_set *, struct write_point *,
 				      struct bkey_i *, bool, struct closure *);
 

@@ -1170,7 +1170,7 @@ static void journal_next_bucket(struct cache_set *c)
 	struct bkey_s_extent e = bkey_i_to_s_extent(&j->key);
 	struct bch_extent_ptr *ptr;
 	struct cache *ca;
-	unsigned iter;
+	unsigned iter, replicas;
 
 	lockdep_assert_held(&j->lock);
 
@@ -1198,7 +1198,11 @@ static void journal_next_bucket(struct cache_set *c)
 		if (!(ca = PTR_CACHE(c, ptr)) ||
 		    CACHE_STATE(&ca->mi) != CACHE_ACTIVE ||
 		    ca->journal.sectors_free <= j->sectors_free)
-			bch_extent_drop_ptr(e, ptr);
+			__bch_extent_drop_ptr(e, ptr);
+
+	replicas = 0;
+	extent_for_each_ptr(e, ptr)
+		replicas++;
 
 	/*
 	 * Determine location of the next journal write:
@@ -1209,7 +1213,7 @@ static void journal_next_bucket(struct cache_set *c)
 		unsigned next, remaining, nr_buckets =
 			bch_nr_journal_buckets(&ca->sb);
 
-		if (bch_extent_ptrs(e) == CACHE_SET_META_REPLICAS_WANT(&c->sb))
+		if (replicas >= CACHE_SET_META_REPLICAS_WANT(&c->sb))
 			break;
 
 		/*
@@ -1247,28 +1251,25 @@ static void journal_next_bucket(struct cache_set *c)
 		if (!remaining)
 			continue;
 
-		BUG_ON(bch_extent_ptrs(e) >= BKEY_EXTENT_PTRS_MAX);
-
 		ja->sectors_free = ca->mi.bucket_size;
-
 		ja->cur_idx = next;
-		e.v->ptr[bch_extent_ptrs(e)] = (struct bch_extent_ptr) {
-			.gen = 0,
-			.dev = ca->sb.nr_this_dev,
-			.offset = bucket_to_sector(ca,
-					journal_bucket(ca, ja->cur_idx)),
-		};
-
 		ja->bucket_seq[ja->cur_idx] = j->seq;
 
+		extent_ptr_append(bkey_i_to_extent(&j->key),
+			(struct bch_extent_ptr) {
+				  .offset = bucket_to_sector(ca,
+					journal_bucket(ca, ja->cur_idx)),
+				  .dev = ca->sb.nr_this_dev,
+		});
+		replicas++;
+
 		trace_bcache_journal_next_bucket(ca, ja->cur_idx, ja->last_idx);
-		bch_set_extent_ptrs(e, bch_extent_ptrs(e) + 1);
 	}
 
 	/* set j->sectors_free to the min of any device */
 	j->sectors_free = UINT_MAX;
 
-	if (bch_extent_ptrs(e) == CACHE_SET_META_REPLICAS_WANT(&c->sb))
+	if (replicas >= CACHE_SET_META_REPLICAS_WANT(&c->sb))
 		extent_for_each_online_device(c, e, ptr, ca)
 			j->sectors_free = min(j->sectors_free,
 					      ca->journal.sectors_free);
