@@ -122,26 +122,21 @@ static inline bool bch_extent_ptr_is_dirty(const struct cache_set *c,
 	     (_ptr) >= (_extent).v->ptr;				\
 	     --(_ptr))
 
-#define __extent_ptr_next_online_device(_c, _ptrs, _nr_ptrs, _ptr, _ca)	\
+#define __extent_ptr_next_online_device(_c, _extent, _ptr, _ca)		\
 ({									\
 	(_ca) = NULL;							\
 									\
-	while ((_ptr) < (_ptrs) + (_nr_ptrs) &&				\
+	while ((_ptr) < (_extent).v->ptr + bch_extent_ptrs(_extent) &&	\
 	       !((_ca) = PTR_CACHE(_c, _ptr)))				\
 		(_ptr)++;						\
 	(_ca);								\
 })
 
-#define extent_ptr_for_each_online_device(_c, _ptrs, _nr_ptrs,		\
-					  _ptr, _ca)			\
-	for ((_ptr) = _ptrs;						\
-	     ((_ca) = __extent_ptr_next_online_device(_c, _ptrs, _nr_ptrs,\
+#define extent_for_each_online_device(_c, _extent, _ptr, _ca)		\
+	for ((_ptr) = (_extent).v->ptr;					\
+	     ((_ca) = __extent_ptr_next_online_device(_c, _extent,	\
 						      _ptr, _ca));	\
 	     (_ptr)++)
-
-#define extent_for_each_online_device(_c, _extent, _ptr, _ca)		\
-	extent_ptr_for_each_online_device(_c, (_extent).v->ptr,		\
-			bch_extent_ptrs(_extent), _ptr, _ca)
 
 bool bch_extent_has_device(struct bkey_s_c_extent, unsigned);
 void bch_bkey_copy_single_ptr(struct bkey_i *, struct bkey_s_c, unsigned);

@@ -893,7 +893,7 @@ static void bch_bucket_free_never_used(struct cache_set *c,
 	struct cache *ca;
 
 	rcu_read_lock();
-	extent_ptr_for_each_online_device(c, ob->ptrs, ob->nr_ptrs, ptr, ca) {
+	open_bucket_for_each_online_device(c, ob, ptr, ca) {
 		size_t r = PTR_BUCKET_NR(ca, ptr);
 		struct bucket *g = PTR_BUCKET(ca, ptr);
 
@@ -1096,7 +1096,7 @@ static int bch_bucket_alloc_set(struct cache_set *c, struct open_bucket *ob,
 	}
 }
 
-static void __bch_open_bucket_put(struct cache_set *c, struct open_bucket *b)
+static void __bch_open_bucket_put(struct cache_set *c, struct open_bucket *ob)
 {
 	const struct bch_extent_ptr *ptr;
 	struct cache *ca;
@@ -1104,13 +1104,13 @@ static void __bch_open_bucket_put(struct cache_set *c, struct open_bucket *b)
 	lockdep_assert_held(&c->open_buckets_lock);
 
 	rcu_read_lock();
-	extent_ptr_for_each_online_device(c, b->ptrs, b->nr_ptrs, ptr, ca)
+	open_bucket_for_each_online_device(c, ob, ptr, ca)
 		bch_unmark_open_bucket(ca, PTR_BUCKET(ca, ptr));
 	rcu_read_unlock();
 
-	b->nr_ptrs = 0;
+	ob->nr_ptrs = 0;
 
-	list_move(&b->list, &c->open_buckets_free);
+	list_move(&ob->list, &c->open_buckets_free);
 	c->open_buckets_nr_free++;
 	closure_wake_up(&c->open_buckets_wait);
 }
@@ -1212,7 +1212,7 @@ static struct open_bucket *bch_open_bucket_alloc(struct cache_set *c,
 	rcu_read_lock();
 
 	/* This is still wrong - we waste space with different sized buckets */
-	extent_ptr_for_each_online_device(c, ob->ptrs, ob->nr_ptrs, ptr, ca)
+	open_bucket_for_each_online_device(c, ob, ptr, ca)
 		ob->sectors_free = min_t(unsigned, ob->sectors_free,
 					ca->mi.bucket_size);
 
@@ -1264,7 +1264,7 @@ static void verify_not_stale(struct cache_set *c, const struct open_bucket *ob)
 	struct cache *ca;
 
 	rcu_read_lock();
-	extent_ptr_for_each_online_device(c, ob->ptrs, ob->nr_ptrs, ptr, ca)
+	open_bucket_for_each_online_device(c, ob, ptr, ca)
 		BUG_ON(ptr_stale(ca, ptr));
 	rcu_read_unlock();
 #endif
@@ -1336,7 +1336,7 @@ struct open_bucket *bch_alloc_sectors(struct cache_set *c,
 			ptr->offset += sectors;
 
 	rcu_read_lock();
-	extent_ptr_for_each_online_device(c, ob->ptrs, ob->nr_ptrs, ptr, ca)
+	open_bucket_for_each_online_device(c, ob, ptr, ca)
 		atomic_long_add(sectors, &ca->sectors_written);
 	rcu_read_unlock();
 

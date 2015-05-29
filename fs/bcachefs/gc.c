@@ -201,7 +201,7 @@ static void bch_mark_allocator_buckets(struct cache_set *c)
 
 		mutex_lock(&ob->lock);
 		rcu_read_lock();
-		extent_ptr_for_each_online_device(c, ob->ptrs, ob->nr_ptrs, ptr, ca)
+		open_bucket_for_each_online_device(c, ob, ptr, ca)
 			bch_mark_alloc_bucket(ca, PTR_BUCKET(ca, ptr));
 		rcu_read_unlock();
 		mutex_unlock(&ob->lock);

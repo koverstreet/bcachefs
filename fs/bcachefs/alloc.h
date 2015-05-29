@@ -31,6 +31,21 @@ static inline void bch_wake_allocator(struct cache *ca)
 	closure_wake_up(&ca->set->buckets_available_wait);
 }
 
+#define __open_bucket_next_online_device(_c, _ob, _ptr, _ca)            \
+({									\
+	(_ca) = NULL;							\
+									\
+	while ((_ptr) < (_ob)->ptrs + (_ob)->nr_ptrs &&			\
+	       !((_ca) = PTR_CACHE(_c, _ptr)))				\
+		(_ptr)++;						\
+	(_ca);								\
+})
+
+#define open_bucket_for_each_online_device(_c, _ob, _ptr, _ca)		\
+	for ((_ptr) = (_ob)->ptrs;					\
+	     ((_ca) = __open_bucket_next_online_device(_c, _ob,	_ptr, _ca));\
+	     (_ptr)++)
+
 void bch_cache_allocator_stop(struct cache *);
 const char *bch_cache_allocator_start(struct cache *);
 void bch_open_buckets_init(struct cache_set *);
