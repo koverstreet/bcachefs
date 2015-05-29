@@ -8,16 +8,21 @@
 
 int bch_bkey_to_text(char *, size_t, const struct bkey *);
 
-/* bkey with split value */
-struct bkey_s {
-	struct bkey	*k;
-	struct bch_val	*v;
-};
-
 /* bkey with split value, const */
 struct bkey_s_c {
 	const struct bkey	*k;
 	const struct bch_val	*v;
+};
+
+/* bkey with split value */
+struct bkey_s {
+	union {
+	struct {
+		struct bkey	*k;
+		struct bch_val	*v;
+	};
+	struct bkey_s_c		s_c;
+	};
 };
 
 #define type_is(_val, _type)						\
@@ -343,17 +348,6 @@ static inline struct bkey_s_c bkey_i_to_s_c(const struct bkey_i *k)
 	return (struct bkey_s_c) { .k = &k->k, .v = &k->v };
 }
 
-static inline struct bkey_s_c bkey_s_to_s_c(const struct bkey_s k)
-{
-	return (struct bkey_s_c) { .k = k.k, .v = k.v };
-}
-
-#define to_bkey_s_c(_k)							\
-	((struct bkey_s_c) {						\
-		.k = (_k).k,						\
-		.v = &(_k).v->v,					\
-	})
-
 /*
  * For a given type of value (e.g. struct bch_extent), generates the types for
  * bkey + bch_extent - inline, split, split const - and also all the conversion
@@ -364,22 +358,24 @@ static inline struct bkey_s_c bkey_s_to_s_c(const struct bkey_s k)
  * functions.
  */
 #define BKEY_VAL_ACCESSORS(name, nr)					\
-struct bkey_s_##name {							\
-	union {								\
-	struct {							\
-		struct bkey		*k;				\
-		struct bch_##name	*v;				\
-	};								\
-	struct bkey_s			s;				\
-	};								\
-};									\
-									\
 struct bkey_s_c_##name {						\
 	union {								\
 	struct {							\
 		const struct bkey	*k;				\
 		const struct bch_##name	*v;				\
 	};								\
+	struct bkey_s_c			s_c;				\
+	};								\
+};									\
+									\
+struct bkey_s_##name {							\
+	union {								\
+	struct {							\
+		struct bkey		*k;				\
+		struct bch_##name	*v;				\
+	};								\
+	struct bkey_s_c_##name		c;				\
+	struct bkey_s			s;				\
 	struct bkey_s_c			s_c;				\
 	};								\
 };									\
@@ -429,14 +425,6 @@ name##_i_to_s_c(const struct bkey_i_##name *k)				\
 	return (struct bkey_s_c_##name) {				\
 		.k = &k->k,						\
 		.v = &k->v,						\
-	};								\
-}									\
-									\
-static inline struct bkey_s_c_##name name##_s_to_s_c(struct bkey_s_##name k)\
-{									\
-	return (struct bkey_s_c_##name) {				\
-		.k = k.k,						\
-		.v = k.v,						\
 	};								\
 }									\
 									\

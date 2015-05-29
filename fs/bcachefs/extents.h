@@ -68,13 +68,13 @@ static inline void bch_set_extent_ptrs(struct bkey_s_extent e, unsigned i)
 static inline void bch_extent_drop_ptr(struct bkey_s_extent e,
 				       unsigned ptr)
 {
-	BUG_ON(bch_extent_ptrs(extent_s_to_s_c(e)) > BKEY_EXTENT_PTRS_MAX);
-	BUG_ON(ptr >= bch_extent_ptrs(extent_s_to_s_c(e)));
+	BUG_ON(bch_extent_ptrs(e.c) > BKEY_EXTENT_PTRS_MAX);
+	BUG_ON(ptr >= bch_extent_ptrs(e.c));
 
 	e.k->u64s--;
 	memmove(&e.v->ptr[ptr],
 		&e.v->ptr[ptr + 1],
-		(bch_extent_ptrs(extent_s_to_s_c(e)) - ptr) * sizeof(u64));
+		(bch_extent_ptrs(e.c) - ptr) * sizeof(u64));
 }
 
 static inline bool bch_extent_ptr_is_dirty(const struct cache_set *c,

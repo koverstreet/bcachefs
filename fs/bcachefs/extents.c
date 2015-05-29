@@ -201,7 +201,7 @@ void bch_extent_drop_stale(struct cache_set *c, struct bkey_s k)
 	rcu_read_lock();
 
 	extent_for_each_ptr_backwards(e, ptr)
-		if (should_drop_ptr(c, extent_s_to_s_c(e), ptr))
+		if (should_drop_ptr(c, e.c, ptr))
 			bch_extent_drop_ptr(e, ptr - e.v->ptr);
 
 	rcu_read_unlock();
@@ -775,7 +775,7 @@ static void bch_subtract_sectors(struct cache_set *c, struct btree *b,
 static void bch_cut_subtract_back(struct cache_set *c, struct btree *b,
 				  struct bpos where, struct bkey_s k)
 {
-	bch_subtract_sectors(c, b, bkey_s_to_s_c(k), where.offset,
+	bch_subtract_sectors(c, b, k.s_c, where.offset,
 			     k.k->p.offset - where.offset);
 	bch_cut_back(where, k.k);
 }
@@ -783,7 +783,7 @@ static void bch_cut_subtract_back(struct cache_set *c, struct btree *b,
 static void bch_cut_subtract_front(struct cache_set *c, struct btree *b,
 				   struct bpos where, struct bkey_s k)
 {
-	bch_subtract_sectors(c, b, bkey_s_to_s_c(k), bkey_start_offset(k.k),
+	bch_subtract_sectors(c, b, k.s_c, bkey_start_offset(k.k),
 			     where.offset - bkey_start_offset(k.k));
 	__bch_cut_front(where, k);
 }
@@ -792,7 +792,7 @@ static void bch_drop_subtract(struct cache_set *c, struct btree *b,
 			      struct bkey_s k)
 {
 	if (k.k->size)
-		bch_subtract_sectors(c, b, bkey_s_to_s_c(k),
+		bch_subtract_sectors(c, b, k.s_c,
 				     bkey_start_offset(k.k), k.k->size);
 	k.k->size = 0;
 	__set_bkey_deleted(k.k);
@@ -1164,7 +1164,7 @@ bool bch_insert_fixup_extent(struct cache_set *c, struct btree *b,
 			*done = bkey_cmp(k.k->p, insert->k.p) < 0
 				? k.k->p : insert->k.p;
 		else if (k.k->size &&
-			 !bkey_cmpxchg(c, b, iter, bkey_s_to_s_c(k), replace,
+			 !bkey_cmpxchg(c, b, iter, k.s_c, replace,
 				       insert, done, &inserted, res))
 			continue;
 
@@ -1227,7 +1227,7 @@ bool bch_insert_fixup_extent(struct cache_set *c, struct btree *b,
 			 * modify k _before_ doing the insert (which will move
 			 * what k points to)
 			 */
-			bkey_reassemble(&split.k, bkey_s_to_s_c(k));
+			bkey_reassemble(&split.k, k.s_c);
 			bch_cut_back(bkey_start_pos(&insert->k), &split.k.k);
 
 			__bch_cut_front(bkey_start_pos(&insert->k), k);

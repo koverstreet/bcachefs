@@ -1216,8 +1216,7 @@ static void journal_next_bucket(struct cache_set *c)
 		 * Check that we can use this device, and aren't already using
 		 * it:
 		 */
-		if (bch_extent_has_device(extent_s_to_s_c(e),
-					  ca->sb.nr_this_dev))
+		if (bch_extent_has_device(e.c, ca->sb.nr_this_dev))
 			continue;
 
 		next = (ja->cur_idx + 1) % nr_buckets;
@@ -1453,7 +1452,7 @@ static void journal_write_locked(struct closure *cl)
 	 * Make a copy of the key we're writing to for check_mark_super, since
 	 * journal_next_bucket will change it
 	 */
-	bkey_reassemble(&tmp.k, to_bkey_s_c(e));
+	bkey_reassemble(&tmp.k, e.s_c);
 
 	atomic_dec_bug(&fifo_back(&j->pin).count);
 	bch_journal_next_entry(j);

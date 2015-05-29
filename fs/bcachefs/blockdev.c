@@ -660,7 +660,7 @@ static int flash_dev_run(struct cache_set *c,
 	if (!d)
 		return ret;
 
-	bkey_reassemble(&d->inode.k_i, to_bkey_s_c(inode));
+	bkey_reassemble(&d->inode.k_i, inode.s_c);
 
 	closure_init(&d->cl, NULL);
 	set_closure_fn(&d->cl, flash_dev_flush, system_wq);

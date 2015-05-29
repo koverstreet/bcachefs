@@ -514,7 +514,7 @@ static int bch_flag_key_bad(struct btree_iter *iter,
 
 	/* Iterate backwards because we might drop pointers */
 
-	bkey_reassemble(&tmp.key, to_bkey_s_c(orig));
+	bkey_reassemble(&tmp.key, orig.s_c);
 	e = bkey_i_to_s_extent(&tmp.key);
 
 	extent_for_each_ptr_backwards(e, ptr)
@@ -531,7 +531,7 @@ static int bch_flag_key_bad(struct btree_iter *iter,
 			 * because bch_extent_normalize() will sort it
 			 * incorrectly but fortunately we don't need to.
 			 */
-			if (bch_extent_ptr_is_dirty(c, extent_s_to_s_c(e), ptr))
+			if (bch_extent_ptr_is_dirty(c, e.c, ptr))
 				*ptr = PTR(0, 0, PTR_LOST_DEV);
 			else
 				bch_extent_drop_ptr(e, ptr - e.v->ptr);
