@@ -818,8 +818,6 @@ static void cache_set_free(struct closure *cl)
 	struct cache *ca;
 	unsigned i;
 
-	bch_debug_exit_cache_set(c);
-
 	bch_btree_cache_free(c);
 	bch_journal_free(&c->journal);
 
@@ -830,6 +828,7 @@ static void cache_set_free(struct closure *cl)
 
 	bch_bset_sort_state_free(&c->sort);
 
+	kfree(c->members);
 	percpu_ref_exit(&c->writes);
 	bch_io_clock_exit(&c->io_clock[WRITE]);
 	bch_io_clock_exit(&c->io_clock[READ]);
@@ -860,6 +859,8 @@ static void cache_set_free(struct closure *cl)
 static void cache_set_flush(struct closure *cl)
 {
 	struct cache_set *c = container_of(cl, struct cache_set, caching);
+
+	bch_debug_exit_cache_set(c);
 
 	if (!IS_ERR_OR_NULL(c->chardev))
 		device_unregister(c->chardev);

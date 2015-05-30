@@ -450,6 +450,9 @@ static void __bch_write(struct closure *cl)
 
 		n = bio_next_split(bio, k->k.size, GFP_NOIO,
 				   &op->c->bio_split);
+		if (n == bio)
+			bio_get(bio);
+
 		n->bi_end_io	= bch_write_endio;
 		n->bi_private	= cl;
 #if 0
@@ -495,7 +498,6 @@ err:
 	}
 
 	op->write_done = true;
-	bio_put(bio);
 
 	/*
 	 * No reason not to insert keys for whatever data was successfully
@@ -601,8 +603,6 @@ void bch_write(struct closure *cl)
 
 	op->insert_key.k.p.offset	= bio_end_sector(op->bio);
 	op->insert_key.k.size		= bio_sectors(op->bio);
-
-	bio_get(op->bio);
 
 	/* Don't call bch_next_delay() if rate is >= 1 GB/sec */
 
