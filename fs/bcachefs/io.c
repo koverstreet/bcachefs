@@ -304,8 +304,7 @@ static void bch_write_index(struct closure *cl)
 	int ret = bch_btree_insert(op->c, BTREE_ID_EXTENTS, &op->insert_keys,
 				   op->replace ? &op->replace_info : NULL,
 				   op->flush ? &op->cl : NULL,
-				   op->journal_seq,
-				   op->check_enospc ? 0 : BTREE_INSERT_NOFAIL);
+				   op->journal_seq, BTREE_INSERT_NOFAIL);
 	if (ret) {
 		__bcache_io_error(op->c, "btree IO error");
 		op->error = ret;
@@ -490,10 +489,6 @@ err:
 
 		bch_write_discard(cl);
 	} else {
-		if (!op->replace)
-			__bcache_io_error(op->c,
-				"out of space for write %li nowait %i",
-				PTR_ERR(b), op->nowait);
 		op->error = -ENOSPC;
 	}
 
