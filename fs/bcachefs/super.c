@@ -1396,6 +1396,49 @@ static const char *can_attach_cache(struct cache_sb *sb, struct cache_set *c)
 
 /* Cache device */
 
+/*
+ * Update the cache set's member info and then the various superblocks from one
+ * device's member info:
+ */
+void bch_cache_member_info_update(struct cache *ca)
+{
+	struct cache_set *c = ca->set;
+	struct cache_member *mi;
+
+	lockdep_assert_held(&bch_register_lock);
+
+	mi = cache_member_info_get(c)->m;
+	mi[ca->sb.nr_this_dev] = ca->mi;
+	cache_member_info_put();
+
+	bcache_write_super(c);
+}
+
+static bool cache_may_remove(struct cache *ca)
+{
+	struct cache_set *c = ca->set;
+
+	/*
+	 * Right now, we can't remove the last device from a tier,
+	 * - For tier 0, because all metadata lives in tier 0 and because
+	 *   there is no way to have foreground writes go directly to tier 1.
+	 * - For tier 1, because the code doesn't completely support an
+	 *   empty tier 1.
+	 */
+
+	/*
+	 * Turning a device read-only removes it from the cache group,
+	 * so there may only be one read-write device in a tier, and yet
+	 * the device we are removing is in the same tier, so we have
+	 * to check for identity.
+	 * Removing the last RW device from a tier requires turning the
+	 * whole cache set RO.
+	 */
+
+	return c->cache_tiers[CACHE_TIER(&ca->mi)].nr_devices != 1 ||
+		c->cache_tiers[CACHE_TIER(&ca->mi)].devices[0] != ca;
+}
+
 static void __bch_cache_read_only(struct cache *ca)
 {
 	trace_bcache_cache_read_only(ca);
@@ -1418,83 +1461,53 @@ static void __bch_cache_read_only(struct cache *ca)
 	trace_bcache_cache_read_only_done(ca);
 }
 
-static bool bch_last_rw_tier0_device(struct cache *ca)
-{
-	unsigned i;
-	bool ret = true;
-	struct cache *ca2;
-
-	rcu_read_lock();
-
-	for_each_cache_rcu(ca2, ca->set, i) {
-		if ((CACHE_TIER(&ca2->mi) == 0)
-		    && (CACHE_STATE(&ca2->mi) == CACHE_ACTIVE)
-		    && (ca2 != ca)) {
-			ret = false;
-		}
-	}
-
-	rcu_read_unlock();
-	return ret;
-}
-
-/* This does not write the super-block, should it? */
-
 void bch_cache_read_only(struct cache *ca)
 {
-	unsigned tier;
-	bool has_meta, meta_off;
+	struct cache_set *c = ca->set;
 	char buf[BDEVNAME_SIZE];
-	struct cache_member *mi;
-	struct cache_member_rcu *allmi;
+
+	bdevname(ca->disk_sb.bdev, buf);
+
+	lockdep_assert_held(&bch_register_lock);
+
+	if (CACHE_STATE(&ca->mi) != CACHE_ACTIVE)
+		return;
+
+	if (!cache_may_remove(ca)) {
+		pr_warning("Required member %s for %pU going RO, cache set going RO",
+			   buf, &c->sb.set_uuid);
+		bch_cache_set_read_only(c);
+	}
 
 	/*
 	 * Stop data writes.
 	 */
 	__bch_cache_read_only(ca);
 
-	pr_notice("%s read only (data)", bdevname(ca->disk_sb.bdev, buf));
+	pr_notice("%s read only", bdevname(ca->disk_sb.bdev, buf));
 	bch_notify_cache_read_only(ca);
 
-	/*
-	 * Mark as RO.
-	 */
-	allmi = cache_member_info_get(ca->set);
-	mi = &allmi->m[ca->sb.nr_this_dev];
-	tier = CACHE_TIER(mi);
-	has_meta = CACHE_HAS_METADATA(mi);
-	SET_CACHE_STATE(mi, CACHE_RO);
-	ca->mi = *mi;		/* Update cache_member cache in struct cache */
-	cache_member_info_put();
-
-	meta_off = false;
-
-	/*
-	 * The only way to stop meta-data writes is to actually move
-	 * the meta-data off!
-	 */
-	if (has_meta) {
-		if ((tier == 0) && (bch_last_rw_tier0_device(ca)))
-			pr_err("Tier 0 needs to allow meta-data writes in %pU.",
-			       ca->set->sb.set_uuid.b);
-		else if (bch_move_meta_data_off_device(ca) != 0)
-			pr_err("Unable to stop writing meta-data in %pU.",
-			       ca->set->sb.set_uuid.b);
-		else
-			meta_off = true;
-	}
-
-	if (has_meta && meta_off)
-		pr_notice("%s read only (meta-data)",
-			  bdevname(ca->disk_sb.bdev, buf));
-	return;
+	SET_CACHE_STATE(&ca->mi, CACHE_RO);
+	bch_cache_member_info_update(ca);
 }
 
-/* This does not write the super-block, should it? */
+static void bch_cache_read_only_work(struct work_struct *work)
+{
+	struct cache *ca = container_of(work, struct cache, read_only_work);
 
-const char *bch_cache_read_write(struct cache *ca)
+	/* Going RO because of an error: */
+
+	mutex_lock(&bch_register_lock);
+	bch_cache_read_only(ca);
+	mutex_unlock(&bch_register_lock);
+}
+
+static const char *__bch_cache_read_write(struct cache *ca)
 {
 	const char *err;
+
+	BUG_ON(CACHE_STATE(&ca->mi) != CACHE_ACTIVE);
+	lockdep_assert_held(&bch_register_lock);
 
 	trace_bcache_cache_read_write(ca);
 
@@ -1519,6 +1532,28 @@ const char *bch_cache_read_write(struct cache *ca)
 	bch_notify_cache_read_write(ca);
 
 	return err;
+}
+
+const char *bch_cache_read_write(struct cache *ca)
+{
+	const char *err;
+
+	lockdep_assert_held(&bch_register_lock);
+
+	if (CACHE_STATE(&ca->mi) == CACHE_ACTIVE)
+		return NULL;
+
+	if (test_bit(CACHE_DEV_REMOVING, &ca->flags))
+		return "removing";
+
+	err = __bch_cache_read_write(ca);
+	if (err)
+		return err;
+
+	SET_CACHE_STATE(&ca->mi, CACHE_ACTIVE);
+	bch_cache_member_info_update(ca);
+
+	return NULL;
 }
 
 /*
@@ -1635,218 +1670,116 @@ static void bch_cache_stop(struct cache *ca)
 
 static void bch_cache_remove_work(struct work_struct *work)
 {
-	unsigned tier;
-	bool has_data, has_meta, data_off, meta_off;
 	struct cache *ca = container_of(work, struct cache, remove_work);
 	struct cache_set *c = ca->set;
-	struct cache_member_rcu *allmi;
 	struct cache_member *mi;
-	char buf[BDEVNAME_SIZE];
-	bool force = (test_bit(CACHE_DEV_FORCE_REMOVE, &ca->flags));
+	char name[BDEVNAME_SIZE];
+	bool force = test_bit(CACHE_DEV_FORCE_REMOVE, &ca->flags);
+	unsigned dev = ca->sb.nr_this_dev;
 	struct closure cl;
 
 	closure_init_stack(&cl);
-
-	bch_notify_cache_removing(ca);
-
-	mutex_lock(&bch_register_lock);
-	allmi = cache_member_info_get(c);
-	mi = &allmi->m[ca->sb.nr_this_dev];
+	bdevname(ca->disk_sb.bdev, name);
 
 	/*
-	 * Right now, we can't remove the last device from a tier,
-	 * - For tier 0, because all metadata lives in tier 0 and because
-	 *   there is no way to have foreground writes go directly to tier 1.
-	 * - For tier 1, because the code doesn't completely support an
-	 *   empty tier 1.
+	 * Device should already be RO, now migrate data off:
+	 *
+	 * XXX: locking is sketchy, bch_cache_read_write() has to check
+	 * CACHE_DEV_REMOVING bit
 	 */
+	if (!CACHE_HAS_DATA(&ca->mi)) {
+		/* Nothing to do: */
+	} else if (!bch_move_data_off_device(ca)) {
+		SET_CACHE_HAS_DATA(&ca->mi, false);
+		bch_cache_member_info_update(ca);
+	} else if (force) {
+		bch_flag_data_bad(ca);
 
-	tier = CACHE_TIER(mi);
-
-	/*
-	 * Turning a device read-only removes it from the cache group,
-	 * so there may only be one read-write device in a tier, and yet
-	 * the device we are removing is in the same tier, so we have
-	 * to check for identity.
-	 * Removing the last RW device from a tier requires turning the
-	 * whole cache set RO.
-	 */
-
-	if ((c->cache_tiers[tier].nr_devices == 1)
-	    && (c->cache_tiers[tier].devices[0] == ca)) {
-		cache_member_info_put();
-		mutex_unlock(&bch_register_lock);
-		clear_bit(CACHE_DEV_FORCE_REMOVE, &ca->flags);
-		clear_bit(CACHE_DEV_REMOVING, &ca->flags);
-		pr_err("Can't remove last device in tier %u of %pU.",
-		       tier, c->sb.set_uuid.b);
-		bch_notify_cache_remove_failed(ca);
-		return;
-	}
-
-	/* CACHE_ACTIVE means Read/Write. */
-
-	if (CACHE_STATE(mi) != CACHE_ACTIVE) {
-		has_data = CACHE_HAS_DATA(mi);
-		cache_member_info_put();
+		SET_CACHE_HAS_DATA(&ca->mi, false);
+		bch_cache_member_info_update(ca);
 	} else {
-		cache_member_info_put();
-		/*
-		 * The following quiesces data writes but not meta-data writes.
-		 */
-		__bch_cache_read_only(ca);
-
-		/* Update the state to read-only */
-
-		allmi = cache_member_info_get(c);
-		mi = &allmi->m[ca->sb.nr_this_dev];
-		SET_CACHE_STATE(mi, CACHE_RO);
-		ca->mi = *mi;	/* Update cache_member cache in struct cache */
-		has_data = CACHE_HAS_DATA(mi);
-		cache_member_info_put();
-		bcache_write_super(c);
-	}
-
-	mutex_unlock(&bch_register_lock);
-
-	/*
-	 * The call to __bch_cache_read_only above has quiesced all data writes.
-	 * Move the data off the device, if there is any.
-	 */
-
-	data_off = (!has_data || (bch_move_data_off_device(ca) == 0));
-
-	if (has_data && !data_off && force)
-		/* Ignore the return value and proceed anyway */
-		(void) bch_flag_data_bad(ca);
-
-	allmi = cache_member_info_get(c);
-	mi = &allmi->m[ca->sb.nr_this_dev];
-	if (has_data && (data_off || force)) {
-		/* We've just moved all the data off! */
-		SET_CACHE_HAS_DATA(mi, false);
-		/* Update cache_member cache in struct cache */
-		ca->mi = *mi;
-	}
-	has_meta = CACHE_HAS_METADATA(mi);
-	cache_member_info_put();
-
-	/*
-	 * If there is no meta data, claim it has been moved off.
-	 * Else, try to move it off -- this also quiesces meta-data writes.
-	 */
-
-	meta_off = (!has_meta || (bch_move_meta_data_off_device(ca) == 0));
-
-	/*
-	 * If we successfully moved meta-data off, mark as having none.
-	 */
-
-	if (has_meta && meta_off) {
-		allmi = cache_member_info_get(c);
-		mi = &allmi->m[ca->sb.nr_this_dev];
-		/* We've just moved all the meta-data off! */
-		SET_CACHE_HAS_METADATA(mi, false);
-		/* Update cache_member cache in struct cache */
-		ca->mi = *mi;
-		cache_member_info_put();
-	}
-
-	/* Now, complain as necessary */
-
-	/*
-	 * Note: These error messages are messy because pr_err is a macro
-	 * that concatenates its first must-be-string argument.
-	 */
-
-	if (has_data && !data_off)
-		pr_err("%s in %pU%s",
-		       (force
-			? "Forcing device removal with live data"
-			: "Unable to move data off device"),
-		       c->sb.set_uuid.b,
-		       (force ? "!" : "."));
-
-	if (has_meta && !meta_off)
-		pr_err("%s in %pU%s",
-		       (force
-			? "Forcing device removal with live meta-data"
-			: "Unable to move meta-data off device"),
-		       c->sb.set_uuid.b,
-		       (force ? "!" : "."));
-
-	/* If there is (meta-) data left, and not forcing, abort */
-
-	if ((!data_off || !meta_off) && !force) {
+		pr_err("Remove of %s failed, unable to migrate data off", name);
 		clear_bit(CACHE_DEV_REMOVING, &ca->flags);
-		bch_notify_cache_remove_failed(ca);
 		return;
 	}
 
-	if (has_meta && meta_off)
-		pr_notice("%s read only (meta-data)",
-			  bdevname(ca->disk_sb.bdev, buf));
+	/* Now metadata: */
 
-	/* Update the super block */
-
-	down(&c->sb_write_mutex);
-
-	/* Mark it as failed in the super block */
-
-	if (meta_off) {
-		allmi = cache_member_info_get(c);
-		mi = &allmi->m[ca->sb.nr_this_dev];
-		SET_CACHE_STATE(mi, CACHE_FAILED);
-		/* Update cache_member cache in struct cache */
-		ca->mi = *mi;
-		cache_member_info_put();
+	if (!CACHE_HAS_METADATA(&ca->mi)) {
+		/* Nothing to do: */
+	} else if (!bch_move_meta_data_off_device(ca)) {
+		SET_CACHE_HAS_METADATA(&ca->mi, false);
+		bch_cache_member_info_update(ca);
+	} else {
+		pr_err("Remove of %s failed, unable to migrate metadata off",
+		       name);
+		clear_bit(CACHE_DEV_REMOVING, &ca->flags);
+		return;
 	}
+
+	/*
+	 * Ok, really doing the remove:
+	 * Drop device's prio pointer before removing it from superblock:
+	 */
+	bch_notify_cache_removed(ca);
 
 	spin_lock(&c->journal.lock);
-	c->journal.prio_buckets[ca->sb.nr_this_dev] = 0;
+	c->journal.prio_buckets[dev] = 0;
 	spin_unlock(&c->journal.lock);
 
-	/* write new prio pointers */
 	bch_journal_meta(&c->journal, &cl);
 	closure_sync(&cl);
 
-	__bcache_write_super(c); /* ups sb_write_mutex */
-
 	/*
-	 * Now mark the slot as 0 in memory so that the slot can be reused.
-	 * It won't actually be reused until btree_gc makes sure that there
-	 * are no pointers to the device at all.
+	 * Stop device before removing it from the cache set's list of devices -
+	 * and get our own ref on cache set since ca is going away:
 	 */
-
-	if (meta_off) {
-		allmi = cache_member_info_get(c);
-		mi = &allmi->m[ca->sb.nr_this_dev];
-		memset(&mi->uuid, 0, sizeof(mi->uuid));
-		/* No need to copy to struct cache as we are removing */
-		cache_member_info_put();
-	}
-
-	/*
-	 * This completes asynchronously, with bch_cache_stop scheduling
-	 * the final teardown when there are no (read) bios outstanding.
-	 */
+	closure_get(&c->cl);
 
 	mutex_lock(&bch_register_lock);
 	bch_cache_stop(ca);
+
+	/*
+	 * RCU barrier between dropping between c->cache and dropping from
+	 * member info:
+	 */
+	synchronize_rcu();
+
+	mi = cache_member_info_get(c)->m;
+	memset(&mi[dev].uuid, 0, sizeof(mi[dev].uuid));
+	cache_member_info_put();
+
+	bcache_write_super(c);
 	mutex_unlock(&bch_register_lock);
 
-	bch_notify_cache_removed(ca);
-
-	return;
+	closure_put(&c->cl);
 }
 
 bool bch_cache_remove(struct cache *ca, bool force)
 {
-	if (test_and_set_bit(CACHE_DEV_REMOVING, &ca->flags))
+	mutex_lock(&bch_register_lock);
+
+	if (test_bit(CACHE_DEV_REMOVING, &ca->flags))
 		return false;
+
+	if (!cache_may_remove(ca)) {
+		pr_err("Can't remove last device in tier %llu of %pU.",
+		       CACHE_TIER(&ca->mi), ca->set->sb.set_uuid.b);
+		bch_notify_cache_remove_failed(ca);
+		return false;
+	}
+
+	/* First, go RO before we try to migrate data off: */
+	bch_cache_read_only(ca);
 
 	if (force)
 		set_bit(CACHE_DEV_FORCE_REMOVE, &ca->flags);
+	set_bit(CACHE_DEV_REMOVING, &ca->flags);
+	bch_notify_cache_removing(ca);
+
+	mutex_unlock(&bch_register_lock);
+
+	/* Migrate the data and finish removal asynchronously: */
 
 	queue_work(system_long_wq, &ca->remove_work);
 	return true;
@@ -1901,6 +1834,7 @@ static const char *cache_alloc(struct bcache_superblock *sb,
 	ca->self.devices[0] = ca;
 
 	INIT_WORK(&ca->free_work, bch_cache_free_work);
+	INIT_WORK(&ca->read_only_work, bch_cache_read_only_work);
 	INIT_WORK(&ca->remove_work, bch_cache_remove_work);
 	bio_init(&ca->journal.bio);
 	ca->journal.bio.bi_max_vecs = 8;
@@ -2183,7 +2117,7 @@ have_slot:
 
 	bch_notify_cache_added(ca);
 
-	err = bch_cache_read_write(ca);
+	err = __bch_cache_read_write(ca);
 	if (err)
 		goto err_put;
 

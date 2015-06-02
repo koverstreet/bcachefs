@@ -294,12 +294,6 @@ again:
 		again = false;
 
 		while (1) {
-			if (CACHE_STATE(&ca->mi) != CACHE_RO &&
-			    CACHE_STATE(&ca->mi) != CACHE_ACTIVE) {
-				ret = -EACCES;
-				goto out;
-			}
-
 			if (bch_queue_full(queue)) {
 				if (queue->rotational) {
 					again = true;
@@ -356,7 +350,6 @@ again:
 	} else if (MIGRATION_DEBUG)
 		pr_notice("Migrated all data in %d iterations", pass);
 
-out:
 	bch_queue_run(queue, &context);
 	return ret;
 }

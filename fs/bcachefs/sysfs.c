@@ -1197,39 +1197,39 @@ STORE(__bch_cache)
 
 	if (attr == &sysfs_state_rw) {
 		char name[BDEVNAME_SIZE];
-		const char *err;
+		const char *err = NULL;
 		ssize_t v = bch_read_string_list(buf, bch_cache_state);
 
 		if (v < 0)
 			return v;
 
-		if (v == CACHE_STATE(mi))
+		if (v == CACHE_STATE(&ca->mi))
 			return size;
 
 		switch (v) {
 		case CACHE_ACTIVE:
 			err = bch_cache_read_write(ca);
-			if (err) {
-				pr_err("can't set %s read-write: %s",
-				       bdevname(ca->disk_sb.bdev, name), err);
-
-				return -EINVAL;
-			}
-
 			break;
 		case CACHE_RO:
 			bch_cache_read_only(ca);
 			break;
 		case CACHE_FAILED:
-			bch_cache_read_only(ca);
-			break;
 		case CACHE_SPARE:
-			bch_cache_read_only(ca);
-			break;
+			/*
+			 * XXX: need to migrate data off and set correct state
+			 */
+			pr_err("can't set %s %s: not supported",
+			       bdevname(ca->disk_sb.bdev, name),
+			       bch_cache_state[v]);
+			return -EINVAL;
 		}
 
-		SET_CACHE_STATE(mi, v);
-		bcache_write_super(c);
+		if (err) {
+			pr_err("can't set %s %s: %s",
+			       bdevname(ca->disk_sb.bdev, name),
+			       bch_cache_state[v], err);
+			return -EINVAL;
+		}
 	}
 
 	if (attr == &sysfs_unregister) {

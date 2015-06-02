@@ -250,9 +250,9 @@ void bch_cache_io_error_work(struct work_struct *work)
 		bch_notify_cache_error(ca, false);
 	} else {
 		bch_notify_cache_error(ca, true);
-		printk_ratelimited(KERN_ERR "%s: too many IO errors, removing",
+		printk_ratelimited(KERN_ERR "%s: too many IO errors, going RO",
 		       bdevname(ca->disk_sb.bdev, buf));
-		bch_cache_remove(ca, true);
+		queue_work(system_long_wq, &ca->read_only_work);
 	}
 }
 

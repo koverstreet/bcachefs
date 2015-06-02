@@ -237,6 +237,7 @@ struct cache {
 	struct percpu_ref	ref;
 	struct rcu_head		free_rcu;
 	struct work_struct	free_work;
+	struct work_struct	read_only_work;
 	struct work_struct	remove_work;
 	unsigned long		flags;
 
