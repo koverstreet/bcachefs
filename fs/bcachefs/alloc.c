@@ -1540,6 +1540,30 @@ void bch_cache_allocator_stop(struct cache *ca)
 }
 
 /*
+ * Startup the allocator thread for transition to RW mode:
+ */
+const char *bch_cache_allocator_start(struct cache *ca)
+{
+	struct cache_set *c = ca->set;
+	struct cache_group *tier = &c->cache_tiers[CACHE_TIER(&ca->mi)];
+	struct task_struct *k;
+
+	k = kthread_create(bch_allocator_thread, ca, "bcache_allocator");
+	if (IS_ERR(k))
+		return "error starting allocator thread";
+
+	ca->alloc_thread = k;
+	wake_up_process(k);
+
+	bch_cache_group_add_cache(tier, ca);
+	bch_cache_group_add_cache(&c->cache_all, ca);
+
+	bch_recalc_capacity(c);
+
+	return NULL;
+}
+
+/*
  * bch_cache_allocator_start - fill freelists directly with completely unused
  * buckets
  *
@@ -1562,11 +1586,8 @@ void bch_cache_allocator_stop(struct cache *ca)
  * should always be some of when this function is called, since the last time
  * we shut down there should have been unused buckets stranded on freelists.
  */
-const char *bch_cache_allocator_start(struct cache *ca)
+const char *bch_cache_allocator_start_once(struct cache *ca)
 {
-	struct cache_set *c = ca->set;
-	struct cache_group *tier = &c->cache_tiers[CACHE_TIER(&ca->mi)];
-	struct task_struct *k;
 	struct bucket *g;
 
 	spin_lock(&ca->freelist_lock);
@@ -1588,19 +1609,7 @@ const char *bch_cache_allocator_start(struct cache *ca)
 	if (!fifo_full(&ca->free[RESERVE_PRIO]))
 		return "couldn't find enough available buckets to write prios";
 
-	k = kthread_create(bch_allocator_thread, ca, "bcache_allocator");
-	if (IS_ERR(k))
-		return "error starting allocator thread";
-
-	ca->alloc_thread = k;
-	wake_up_process(k);
-
-	bch_cache_group_add_cache(tier, ca);
-	bch_cache_group_add_cache(&c->cache_all, ca);
-
-	bch_recalc_capacity(c);
-
-	return NULL;
+	return bch_cache_allocator_start(ca);
 }
 
 void bch_open_buckets_init(struct cache_set *c)

@@ -638,23 +638,65 @@ void bch_check_mark_super_slowpath(struct cache_set *c, const struct bkey_i *k,
 	__bcache_write_super(c);
 }
 
-/* Cache set */
+/* Cache set RO/RW: */
+
+/*
+ * For startup/shutdown of RW stuff, the dependencies are:
+ *
+ * - foreground writes depend on copygc and tiering (to free up space)
+ *
+ * - copygc and tiering depend on mark and sweep gc (they actually probably
+ *   don't because they either reserve ahead of time or don't block if
+ *   allocations fail, but allocations can require mark and sweep gc to run
+ *   because of generation number wraparound)
+ *
+ * - all of the above depends on the allocator threads
+ *
+ * - allocator depends on the journal (when it rewrites prios and gens)
+ */
 
 static void __bch_cache_read_only(struct cache *ca);
 
-static void bch_cache_set_read_only(struct cache_set *c)
+static void __bch_cache_set_read_only(struct cache_set *c)
 {
-	struct cached_dev *dc;
-	struct bcache_device *d;
-	struct radix_tree_iter iter;
 	struct closure cl;
-	void **slot;
-
 	struct cache *ca;
 	unsigned i;
 
-	lockdep_assert_held(&bch_register_lock);
 	closure_init_stack(&cl);
+
+	c->tiering_pd.rate.rate = UINT_MAX;
+	bch_ratelimit_reset(&c->tiering_pd.rate);
+	bch_tiering_read_stop(c);
+
+	for_each_cache(ca, c, i) {
+		bch_tiering_write_stop(ca);
+		bch_moving_gc_stop(ca);
+	}
+
+	bch_gc_thread_stop(c);
+
+	bch_btree_flush(c);
+
+	for_each_cache(ca, c, i)
+		bch_cache_allocator_stop(ca);
+
+	bch_journal_flush(&c->journal, &cl);
+	closure_sync(&cl);
+
+	cancel_delayed_work_sync(&c->journal.write_work);
+}
+
+static void bch_writes_disabled(struct percpu_ref *writes)
+{
+	struct cache_set *c = container_of(writes, struct cache_set, writes);
+
+	complete(&c->write_disable_complete);
+}
+
+void bch_cache_set_read_only(struct cache_set *c)
+{
+	lockdep_assert_held(&bch_register_lock);
 
 	if (test_and_set_bit(CACHE_SET_RO, &c->flags))
 		return;
@@ -664,7 +706,12 @@ static void bch_cache_set_read_only(struct cache_set *c)
 	/*
 	 * Block new foreground-end write operations from starting - any new
 	 * writes will return -EROFS:
+	 *
+	 * (This is really blocking new _allocations_, writes to previously
+	 * allocated space can still happen until stopping the allocator in
+	 * bch_cache_allocator_stop()).
 	 */
+	init_completion(&c->write_disable_complete);
 	percpu_ref_kill(&c->writes);
 
 	bch_wake_delayed_writes((unsigned long) c);
@@ -674,39 +721,78 @@ static void bch_cache_set_read_only(struct cache_set *c)
 	/* Wait for outstanding writes to complete: */
 	wait_for_completion(&c->write_disable_complete);
 
-	radix_tree_for_each_slot(slot, &c->devices, &iter, 0) {
-		d = rcu_dereference_protected(*slot,
-				lockdep_is_held(&bch_register_lock));
-
-		if (!INODE_FLASH_ONLY(&d->inode.v)) {
-			dc = container_of(d, struct cached_dev, disk);
-			bch_cached_dev_writeback_stop(dc);
-		}
-	}
-
-	c->tiering_pd.rate.rate = UINT_MAX;
-	bch_ratelimit_reset(&c->tiering_pd.rate);
-	bch_tiering_read_stop(c);
-
-	set_bit(CACHE_SET_GC_STOPPING, &c->flags);
-
-	if (!IS_ERR_OR_NULL(c->gc_thread))
-		kthread_stop(c->gc_thread);
-
-	/* Should skip this if we're unregistering because of an error */
-	bch_btree_flush(c);
-
-	for_each_cache(ca, c, i)
-		__bch_cache_read_only(ca);
-
-	bch_journal_flush(&c->journal, &cl);
-	closure_sync(&cl);
-
-	cancel_delayed_work_sync(&c->journal.write_work);
+	__bch_cache_set_read_only(c);
 
 	bch_notify_cache_set_read_only(c);
-
 	trace_bcache_cache_set_read_only_done(c);
+}
+
+static const char *__bch_cache_set_read_write(struct cache_set *c)
+{
+	struct cache *ca;
+	const char *err;
+	unsigned i;
+
+	err = "error starting btree GC thread";
+	if (bch_gc_thread_start(c))
+		goto err;
+
+	for_each_cache(ca, c, i) {
+		if (CACHE_STATE(&ca->mi) != CACHE_ACTIVE)
+			continue;
+
+		err = "error starting moving GC thread";
+		if (bch_moving_gc_thread_start(ca)) {
+			percpu_ref_put(&ca->ref);
+			goto err;
+		}
+
+		err = "error starting tiering write workqueue";
+		if (bch_tiering_write_start(ca))
+			return err;
+	}
+
+	err = "error starting tiering thread";
+	if (bch_tiering_read_start(c))
+		goto err;
+
+	schedule_delayed_work(&c->pd_controllers_update, 5 * HZ);
+
+	return NULL;
+err:
+	__bch_cache_set_read_only(c);
+	return err;
+}
+
+const char *bch_cache_set_read_write(struct cache_set *c)
+{
+	struct cache *ca;
+	const char *err;
+	unsigned i;
+
+	lockdep_assert_held(&bch_register_lock);
+
+	if (!test_bit(CACHE_SET_RO, &c->flags))
+		return NULL;
+
+	for_each_cache(ca, c, i)
+		if (CACHE_STATE(&ca->mi) == CACHE_ACTIVE &&
+		    (err = bch_cache_allocator_start(ca))) {
+			percpu_ref_put(&ca->ref);
+			goto err;
+		}
+
+	err = __bch_cache_set_read_write(c);
+	if (err)
+		return err;
+
+	percpu_ref_reinit(&c->writes);
+	clear_bit(CACHE_SET_RO, &c->flags);
+
+	return NULL;
+err:
+	__bch_cache_set_read_only(c);
+	return err;
 }
 
 static void bch_cache_set_read_only_work(struct work_struct *work)
@@ -718,6 +804,8 @@ static void bch_cache_set_read_only_work(struct work_struct *work)
 	bch_cache_set_read_only(c);
 	mutex_unlock(&bch_register_lock);
 }
+
+/* Cache set startup/shutdown: */
 
 void bch_cache_set_fail(struct cache_set *c)
 {
@@ -884,13 +972,6 @@ static unsigned cache_set_nr_online_devices(struct cache_set *c)
 	return nr;
 }
 
-static void bch_writes_disabled(struct percpu_ref *writes)
-{
-	struct cache_set *c = container_of(writes, struct cache_set, writes);
-
-	complete(&c->write_disable_complete);
-}
-
 #define alloc_bucket_pages(gfp, ca)			\
 	((void *) __get_free_pages(__GFP_ZERO|gfp, ilog2(bucket_pages(ca))))
 
@@ -903,9 +984,6 @@ static struct cache_set *bch_cache_set_alloc(struct cache_sb *sb)
 	c = kzalloc(sizeof(struct cache_set), GFP_KERNEL);
 	if (!c)
 		return NULL;
-
-	if (percpu_ref_init(&c->writes, bch_writes_disabled, 0, GFP_KERNEL))
-		goto err_free;
 
 	__module_get(THIS_MODULE);
 	closure_init(&c->cl, NULL);
@@ -935,7 +1013,6 @@ static struct cache_set *bch_cache_set_alloc(struct cache_sb *sb)
 	mutex_init(&c->btree_cache_lock);
 	mutex_init(&c->bucket_lock);
 	spin_lock_init(&c->btree_root_lock);
-	init_completion(&c->write_disable_complete);
 	INIT_WORK(&c->read_only_work, bch_cache_set_read_only_work);
 
 	init_rwsem(&c->gc_lock);
@@ -994,6 +1071,7 @@ static struct cache_set *bch_cache_set_alloc(struct cache_sb *sb)
 		goto err;
 
 	if (!(c->wq = alloc_workqueue("bcache", WQ_MEM_RECLAIM, 0)) ||
+	    percpu_ref_init(&c->writes, bch_writes_disabled, 0, GFP_KERNEL) ||
 	    mempool_init_slab_pool(&c->search, 1, bch_search_cache) ||
 	    mempool_init_kmalloc_pool(&c->btree_reserve_pool, 1,
 					BTREE_RESERVE_SIZE) ||
@@ -1031,10 +1109,6 @@ static struct cache_set *bch_cache_set_alloc(struct cache_sb *sb)
 err:
 	bch_cache_set_stop(c);
 	return NULL;
-
-err_free:
-	kfree(c);
-	return NULL;
 }
 
 static int bch_cache_set_online(struct cache_set *c)
@@ -1068,8 +1142,6 @@ static int bch_cache_set_online(struct cache_set *c)
 	list_add(&c->list, &bch_cache_sets);
 	return 0;
 }
-
-static const char *__bch_cache_read_write(struct cache *ca);
 
 static const char *run_cache_set(struct cache_set *c)
 {
@@ -1170,7 +1242,7 @@ static const char *run_cache_set(struct cache_set *c)
 
 		for_each_cache(ca, c, i)
 			if (CACHE_STATE(&ca->mi) == CACHE_ACTIVE &&
-			    (err = __bch_cache_read_write(ca))) {
+			    (err = bch_cache_allocator_start_once(ca))) {
 				percpu_ref_put(&ca->ref);
 				goto err;
 			}
@@ -1204,7 +1276,7 @@ static const char *run_cache_set(struct cache_set *c)
 
 		for_each_cache(ca, c, i)
 			if (CACHE_STATE(&ca->mi) == CACHE_ACTIVE &&
-			    (err = __bch_cache_read_write(ca))) {
+			    (err = bch_cache_allocator_start_once(ca))) {
 				percpu_ref_put(&ca->ref);
 				goto err;
 			}
@@ -1241,28 +1313,11 @@ static const char *run_cache_set(struct cache_set *c)
 	bch_prio_timer_start(c, READ);
 	bch_prio_timer_start(c, WRITE);
 
-	err = "error starting btree GC thread";
-	if (bch_gc_thread_start(c))
-		goto err;
-
-	for_each_cache(ca, c, i) {
-		if (CACHE_STATE(&ca->mi) != CACHE_ACTIVE)
-			continue;
-
-		err = "error starting moving GC thread";
-		if (bch_moving_gc_thread_start(ca)) {
-			percpu_ref_put(&ca->ref);
-			goto err;
-		}
-	}
-
-	err = "error starting tiering thread";
-	if (bch_tiering_read_start(c))
-		goto err;
-
-	schedule_delayed_work(&c->pd_controllers_update, 5 * HZ);
-
 	closure_sync(&cl);
+
+	err = __bch_cache_set_read_write(c);
+	if (err)
+		goto err;
 
 	now = get_seconds();
 	mi = cache_member_info_get(c);
@@ -1345,8 +1400,8 @@ static void __bch_cache_read_only(struct cache *ca)
 {
 	trace_bcache_cache_read_only(ca);
 
-	bch_moving_gc_stop(ca);
 	bch_tiering_write_stop(ca);
+	bch_moving_gc_stop(ca);
 
 	/*
 	 * This stops new data writes (e.g. to existing open data
@@ -1435,7 +1490,9 @@ void bch_cache_read_only(struct cache *ca)
 	return;
 }
 
-static const char *__bch_cache_read_write(struct cache *ca)
+/* This does not write the super-block, should it? */
+
+const char *bch_cache_read_write(struct cache *ca)
 {
 	const char *err;
 
@@ -1452,16 +1509,6 @@ static const char *__bch_cache_read_write(struct cache *ca)
 	trace_bcache_cache_read_write_done(ca);
 
 	return NULL;
-}
-
-/* This does not write the super-block, should it? */
-
-const char *bch_cache_read_write(struct cache *ca)
-{
-	const char *err = __bch_cache_read_write(ca);
-
-	if (err != NULL)
-		return err;
 
 	err = "error starting moving GC thread";
 	if (!bch_moving_gc_thread_start(ca))
@@ -1491,7 +1538,6 @@ static void bch_cache_free_work(struct work_struct *work)
 {
 	struct cache *ca = container_of(work, struct cache, free_work);
 	struct cache_set *c = ca->set;
-	char buf[BDEVNAME_SIZE];
 	unsigned i;
 
 	/*
@@ -1536,9 +1582,6 @@ static void bch_cache_free_work(struct work_struct *work)
 
 	for (i = 0; i < RESERVE_NR; i++)
 		free_fifo(&ca->free[i]);
-
-	if (ca->disk_sb.bdev)
-		pr_notice("%s removed", bdevname(ca->disk_sb.bdev, buf));
 
 	free_super(&ca->disk_sb);
 

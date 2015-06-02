@@ -54,6 +54,7 @@ static inline void bch_wake_allocator(struct cache *ca)
 
 void bch_cache_allocator_stop(struct cache *);
 const char *bch_cache_allocator_start(struct cache *);
+const char *bch_cache_allocator_start_once(struct cache *);
 void bch_open_buckets_init(struct cache_set *);
 
 #endif /* _BCACHE_ALLOC_H */

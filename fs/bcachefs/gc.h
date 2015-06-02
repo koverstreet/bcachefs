@@ -7,6 +7,7 @@ static inline void set_gc_sectors(struct cache_set *c)
 }
 
 void bch_gc(struct cache_set *);
+void bch_gc_thread_stop(struct cache_set *);
 int bch_gc_thread_start(struct cache_set *);
 int bch_initial_gc(struct cache_set *, struct list_head *);
 u8 bch_btree_key_recalc_oldest_gen(struct cache_set *, struct bkey_s_c);

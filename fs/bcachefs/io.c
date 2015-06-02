@@ -1009,7 +1009,6 @@ void bch_wake_delayed_writes(unsigned long data)
 	}
 
 	spin_unlock_irqrestore(&c->foreground_write_pd_lock, flags);
-
 }
 
 /**

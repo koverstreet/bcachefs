@@ -660,8 +660,18 @@ static int bch_gc_thread(void *arg)
 	return 0;
 }
 
+void bch_gc_thread_stop(struct cache_set *c)
+{
+	set_bit(CACHE_SET_GC_STOPPING, &c->flags);
+
+	if (!IS_ERR_OR_NULL(c->gc_thread))
+		kthread_stop(c->gc_thread);
+}
+
 int bch_gc_thread_start(struct cache_set *c)
 {
+	clear_bit(CACHE_SET_GC_STOPPING, &c->flags);
+
 	c->gc_thread = kthread_create(bch_gc_thread, c, "bcache_gc");
 	if (IS_ERR(c->gc_thread))
 		return PTR_ERR(c->gc_thread);

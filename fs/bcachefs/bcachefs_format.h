@@ -105,7 +105,7 @@ struct bkey {
 	/* Size of combined key and value, in u64s */
 	__u8		u64s;
 
-	/* Format of key (0 for format local to btree node */
+	/* Format of key (0 for format local to btree node) */
 	__u8		format;
 
 	/* Type of the value */

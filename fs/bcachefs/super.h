@@ -162,6 +162,9 @@ const char *bch_register_one(const char *path);
 const char *bch_register_cache_set(char * const *, unsigned,
 				   struct cache_set **);
 
+void bch_cache_set_read_only(struct cache_set *);
+const char *bch_cache_set_read_write(struct cache_set *);
+
 void bch_cache_read_only(struct cache *);
 const char *bch_cache_read_write(struct cache *);
 bool bch_cache_remove(struct cache *, bool force);
