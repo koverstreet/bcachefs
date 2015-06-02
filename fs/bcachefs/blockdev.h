@@ -8,22 +8,25 @@
 void bch_write_bdev_super(struct cached_dev *, struct closure *);
 
 void bch_cached_dev_release(struct kobject *);
-void bch_flash_dev_release(struct kobject *);
+void bch_blockdev_volume_release(struct kobject *);
 
 int bch_cached_dev_attach(struct cached_dev *, struct cache_set *);
+void bch_attach_backing_devs(struct cache_set *);
+
 void bch_cached_dev_detach(struct cached_dev *);
 void bch_cached_dev_run(struct cached_dev *);
-void bcache_device_stop(struct bcache_device *);
+void bch_blockdev_stop(struct bcache_device *);
 
-bool bch_is_open_backing(struct block_device *);
-const char *bch_register_bdev(struct bcache_superblock *);
-int flash_devs_run(struct cache_set *);
-int bch_flash_dev_create(struct cache_set *, u64);
+bool bch_is_open_backing_dev(struct block_device *);
+const char *bch_backing_dev_register(struct bcache_superblock *);
+
+int bch_blockdev_volume_create(struct cache_set *, u64);
+int bch_blockdev_volumes_start(struct cache_set *);
+
+void bch_blockdevs_stop(struct cache_set *);
 
 void bch_blockdev_exit(void);
 int bch_blockdev_init(void);
-
-extern struct list_head uncached_devices;
 
 static inline void cached_dev_put(struct cached_dev *dc)
 {
@@ -89,6 +92,6 @@ struct search {
 extern struct kmem_cache *bch_search_cache;
 
 extern struct kobj_type bch_cached_dev_ktype;
-extern struct kobj_type bch_flash_dev_ktype;
+extern struct kobj_type bch_blockdev_volume_ktype;
 
 #endif /* _BCACHE_BLOCKDEV_H */

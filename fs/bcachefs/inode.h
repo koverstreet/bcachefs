@@ -18,7 +18,7 @@ static inline int bch_inode_update(struct cache_set *c, struct bkey_i *inode,
 }
 
 int bch_inode_find_by_inum(struct cache_set *, u64, struct bkey_i_inode *);
-int bch_blockdev_inode_find_by_uuid(struct cache_set *, uuid_le *,
-				    struct bkey_i_inode_blockdev *);
+int bch_cached_dev_inode_find_by_uuid(struct cache_set *, uuid_le *,
+				      struct bkey_i_inode_blockdev *);
 
 #endif

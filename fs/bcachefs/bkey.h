@@ -494,7 +494,14 @@ static inline void __bch_extent_assert(u8 type, u8 nr)
 __BKEY_VAL_ACCESSORS(extent,		BCH_EXTENT, __bch_extent_assert);
 
 BKEY_VAL_ACCESSORS(inode,		BCH_INODE_FS);
-BKEY_VAL_ACCESSORS(inode_blockdev,	BCH_INODE_BLOCKDEV);
+
+static inline void __bch_inode_blockdev_assert(u8 type, u8 nr)
+{
+	EBUG_ON(type != BCH_INODE_BLOCKDEV && type != BCH_INODE_CACHED_DEV);
+}
+
+__BKEY_VAL_ACCESSORS(inode_blockdev,	BCH_INODE_BLOCKDEV,
+		     __bch_inode_blockdev_assert);
 
 BKEY_VAL_ACCESSORS(dirent,		BCH_DIRENT);
 

@@ -13,7 +13,7 @@
 
 static int bch_blockdev_major;
 static DEFINE_IDA(bch_blockdev_minor);
-LIST_HEAD(uncached_devices);
+static LIST_HEAD(uncached_devices);
 struct kmem_cache *bch_search_cache;
 
 static void write_bdev_super_endio(struct bio *bio)
@@ -49,7 +49,7 @@ void bch_write_bdev_super(struct cached_dev *dc, struct closure *parent)
 	closure_return_with_destructor(cl, bch_write_bdev_super_unlock);
 }
 
-bool bch_is_open_backing(struct block_device *bdev)
+bool bch_is_open_backing_dev(struct block_device *bdev)
 {
 	struct cache_set *c, *tc;
 	struct cached_dev *dc, *t;
@@ -97,7 +97,7 @@ static const struct block_device_operations bcache_ops = {
 	.owner		= THIS_MODULE,
 };
 
-void bcache_device_stop(struct bcache_device *d)
+void bch_blockdev_stop(struct bcache_device *d)
 {
 	if (!test_and_set_bit(BCACHE_DEV_CLOSING, &d->flags))
 		closure_queue(&d->cl);
@@ -389,7 +389,7 @@ int bch_cached_dev_attach(struct cached_dev *dc, struct cache_set *c)
 		return -EINVAL;
 	}
 
-	found = !bch_blockdev_inode_find_by_uuid(c, &dc->sb.disk_uuid,
+	found = !bch_cached_dev_inode_find_by_uuid(c, &dc->sb.disk_uuid,
 						 &dc->disk.inode);
 
 	if (!found && BDEV_STATE(&dc->sb) == BDEV_STATE_DIRTY) {
@@ -410,6 +410,7 @@ int bch_cached_dev_attach(struct cached_dev *dc, struct cache_set *c)
 
 	if (!found) {
 		bkey_inode_blockdev_init(&dc->disk.inode.k_i);
+		dc->disk.inode.k.type = BCH_INODE_CACHED_DEV;
 		dc->disk.inode.v.i_uuid = dc->sb.disk_uuid;
 		memcpy(dc->disk.inode.v.i_label, dc->sb.label, SB_LABEL_SIZE);
 		dc->disk.inode.v.i_inode.i_ctime = rtime;
@@ -469,6 +470,16 @@ int bch_cached_dev_attach(struct cached_dev *dc, struct cache_set *c)
 		bdevname(dc->disk_sb.bdev, buf), dc->disk.disk->disk_name,
 		dc->disk.c->sb.set_uuid.b);
 	return 0;
+}
+
+void bch_attach_backing_devs(struct cache_set *c)
+{
+	struct cached_dev *dc, *t;
+
+	lockdep_assert_held(&bch_register_lock);
+
+	list_for_each_entry_safe(dc, t, &uncached_devices, list)
+		bch_cached_dev_attach(dc, c);
 }
 
 void bch_cached_dev_release(struct kobject *kobj)
@@ -554,7 +565,7 @@ static int cached_dev_init(struct cached_dev *dc, unsigned block_size)
 
 /* Cached device - bcache superblock */
 
-const char *bch_register_bdev(struct bcache_superblock *sb)
+const char *bch_backing_dev_register(struct bcache_superblock *sb)
 {
 	char name[BDEVNAME_SIZE];
 	const char *err;
@@ -613,20 +624,20 @@ const char *bch_register_bdev(struct bcache_superblock *sb)
 	mutex_unlock(&bch_register_lock);
 	return NULL;
 err:
-	bcache_device_stop(&dc->disk);
+	bch_blockdev_stop(&dc->disk);
 	return err;
 }
 
 /* Flash only volumes */
 
-void bch_flash_dev_release(struct kobject *kobj)
+void bch_blockdev_volume_release(struct kobject *kobj)
 {
 	struct bcache_device *d = container_of(kobj, struct bcache_device,
 					       kobj);
 	kfree(d);
 }
 
-static void flash_dev_free(struct closure *cl)
+static void blockdev_volume_free(struct closure *cl)
 {
 	struct bcache_device *d = container_of(cl, struct bcache_device, cl);
 
@@ -636,7 +647,7 @@ static void flash_dev_free(struct closure *cl)
 	kobject_put(&d->kobj);
 }
 
-static void flash_dev_flush(struct closure *cl)
+static void blockdev_volume_flush(struct closure *cl)
 {
 	struct bcache_device *d = container_of(cl, struct bcache_device, cl);
 
@@ -644,11 +655,11 @@ static void flash_dev_flush(struct closure *cl)
 	bcache_device_unlink(d);
 	mutex_unlock(&bch_register_lock);
 	kobject_del(&d->kobj);
-	continue_at(cl, flash_dev_free, system_wq);
+	continue_at(cl, blockdev_volume_free, system_wq);
 }
 
-static int flash_dev_run(struct cache_set *c,
-			 struct bkey_s_c_inode_blockdev inode)
+static int blockdev_volume_run(struct cache_set *c,
+			       struct bkey_s_c_inode_blockdev inode)
 {
 	struct bcache_device *d = kzalloc(sizeof(struct bcache_device),
 					  GFP_KERNEL);
@@ -660,9 +671,9 @@ static int flash_dev_run(struct cache_set *c,
 	bkey_reassemble(&d->inode.k_i, inode.s_c);
 
 	closure_init(&d->cl, NULL);
-	set_closure_fn(&d->cl, flash_dev_flush, system_wq);
+	set_closure_fn(&d->cl, blockdev_volume_flush, system_wq);
 
-	kobject_init(&d->kobj, &bch_flash_dev_ktype);
+	kobject_init(&d->kobj, &bch_blockdev_volume_ktype);
 
 	ret = bcache_device_init(d, block_bytes(c),
 				 inode.v->i_inode.i_size >> 9);
@@ -673,7 +684,7 @@ static int flash_dev_run(struct cache_set *c,
 	if (ret)
 		goto err;
 
-	bch_flash_dev_request_init(d);
+	bch_blockdev_volume_request_init(d);
 	add_disk(d->disk);
 
 	if (kobject_add(&d->kobj, &disk_to_dev(d->disk)->kobj, "bcache"))
@@ -687,7 +698,7 @@ err:
 	return ret;
 }
 
-int flash_devs_run(struct cache_set *c)
+int bch_blockdev_volumes_start(struct cache_set *c)
 {
 	struct btree_iter iter;
 	struct bkey_s_c k;
@@ -706,14 +717,12 @@ int flash_devs_run(struct cache_set *c)
 
 		inode = bkey_s_c_to_inode_blockdev(k);
 
-		if (INODE_FLASH_ONLY(inode.v)) {
-			ret = flash_dev_run(c, inode);
-			if (ret) {
-				bch_cache_set_error(c,
-					"can't bring up flash volumes: %i",
-					ret);
-				break;
-			}
+		ret = blockdev_volume_run(c, inode);
+		if (ret) {
+			bch_cache_set_error(c,
+				"can't bring up blockdev volumes: %i",
+				ret);
+			break;
 		}
 	}
 	bch_btree_iter_unlock(&iter);
@@ -721,7 +730,7 @@ int flash_devs_run(struct cache_set *c)
 	return ret;
 }
 
-int bch_flash_dev_create(struct cache_set *c, u64 size)
+int bch_blockdev_volume_create(struct cache_set *c, u64 size)
 {
 	struct timespec ts = CURRENT_TIME;
 	s64 rtime = timespec_to_ns(&ts);
@@ -733,7 +742,6 @@ int bch_flash_dev_create(struct cache_set *c, u64 size)
 	inode.v.i_inode.i_ctime = rtime;
 	inode.v.i_inode.i_mtime = rtime;
 	inode.v.i_inode.i_size = size;
-	SET_INODE_FLASH_ONLY(&inode.v, 1);
 
 	ret = bch_inode_create(c, &inode.k_i, 0, BLOCKDEV_INODE_MAX,
 			       &c->unused_inode_hint);
@@ -742,7 +750,33 @@ int bch_flash_dev_create(struct cache_set *c, u64 size)
 		return ret;
 	}
 
-	return flash_dev_run(c, inode_blockdev_i_to_s_c(&inode));
+	return blockdev_volume_run(c, inode_blockdev_i_to_s_c(&inode));
+}
+
+void bch_blockdevs_stop(struct cache_set *c)
+{
+	struct cached_dev *dc;
+	struct bcache_device *d;
+	struct radix_tree_iter iter;
+	void **slot;
+
+	mutex_lock(&bch_register_lock);
+	rcu_read_lock();
+
+	radix_tree_for_each_slot(slot, &c->devices, &iter, 0) {
+		d = radix_tree_deref_slot(slot);
+
+		if (d->inode.k.type == BCH_INODE_CACHED_DEV &&
+		    test_bit(CACHE_SET_UNREGISTERING, &c->flags)) {
+			dc = container_of(d, struct cached_dev, disk);
+			bch_cached_dev_detach(dc);
+		} else {
+			bch_blockdev_stop(d);
+		}
+	}
+
+	rcu_read_unlock();
+	mutex_unlock(&bch_register_lock);
 }
 
 void bch_blockdev_exit(void)

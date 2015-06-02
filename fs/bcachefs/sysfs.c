@@ -68,7 +68,7 @@ write_attribute(stop);
 write_attribute(clear_stats);
 write_attribute(trigger_gc);
 write_attribute(prune_cache);
-write_attribute(flash_vol_create);
+write_attribute(blockdev_volume_create);
 write_attribute(add_device);
 
 read_attribute(uuid);
@@ -339,7 +339,7 @@ STORE(__cached_dev)
 		bch_cached_dev_detach(dc);
 
 	if (attr == &sysfs_stop)
-		bcache_device_stop(&dc->disk);
+		bch_blockdev_stop(&dc->disk);
 
 	return size;
 }
@@ -393,7 +393,7 @@ static struct attribute *bch_cached_dev_files[] = {
 };
 KTYPE(bch_cached_dev);
 
-SHOW(bch_flash_dev)
+SHOW(bch_blockdev_volume)
 {
 	struct bcache_device *d = container_of(kobj, struct bcache_device,
 					       kobj);
@@ -411,7 +411,7 @@ SHOW(bch_flash_dev)
 	return 0;
 }
 
-STORE(__bch_flash_dev)
+STORE(__bch_blockdev_volume)
 {
 	struct bcache_device *d = container_of(kobj, struct bcache_device,
 					       kobj);
@@ -450,14 +450,14 @@ STORE(__bch_flash_dev)
 
 	if (attr == &sysfs_unregister) {
 		set_bit(BCACHE_DEV_DETACHING, &d->flags);
-		bcache_device_stop(d);
+		bch_blockdev_stop(d);
 	}
 
 	return size;
 }
-STORE_LOCKED(bch_flash_dev)
+STORE_LOCKED(bch_blockdev_volume)
 
-static struct attribute *bch_flash_dev_files[] = {
+static struct attribute *bch_blockdev_volume_files[] = {
 	&sysfs_unregister,
 #if 0
 	&sysfs_data_csum,
@@ -466,7 +466,7 @@ static struct attribute *bch_flash_dev_files[] = {
 	&sysfs_size,
 	NULL
 };
-KTYPE(bch_flash_dev);
+KTYPE(bch_blockdev_volume);
 
 static int bch_bset_print_stats(struct cache_set *c, char *buf)
 {
@@ -853,9 +853,9 @@ STORE(__bch_cache_set)
 		return size;
 	}
 
-	if (attr == &sysfs_flash_vol_create) {
+	if (attr == &sysfs_blockdev_volume_create) {
 		u64 v = strtoi_h_or_return(buf);
-		int r = bch_flash_dev_create(c, v);
+		int r = bch_blockdev_volume_create(c, v);
 
 		if (r)
 			return r;
@@ -916,7 +916,7 @@ static struct attribute *bch_cache_set_files[] = {
 	&sysfs_unregister,
 	&sysfs_stop,
 	&sysfs_journal_delay_ms,
-	&sysfs_flash_vol_create,
+	&sysfs_blockdev_volume_create,
 	&sysfs_add_device,
 
 	&sysfs_block_size,

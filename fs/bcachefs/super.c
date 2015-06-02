@@ -110,7 +110,7 @@ static bool bch_is_open(struct block_device *bdev)
 	bool ret;
 
 	mutex_lock(&bch_register_lock);
-	ret = bch_is_open_cache(bdev) || bch_is_open_backing(bdev);
+	ret = bch_is_open_cache(bdev) || bch_is_open_backing_dev(bdev);
 	mutex_unlock(&bch_register_lock);
 
 	return ret;
@@ -907,30 +907,8 @@ static void cache_set_flush(struct closure *cl)
 static void __cache_set_unregister(struct closure *cl)
 {
 	struct cache_set *c = container_of(cl, struct cache_set, caching);
-	struct cached_dev *dc;
-	struct bcache_device *d;
-	struct radix_tree_iter iter;
-	void **slot;
 
-	mutex_lock(&bch_register_lock);
-
-	rcu_read_lock();
-
-	radix_tree_for_each_slot(slot, &c->devices, &iter, 0) {
-		d = radix_tree_deref_slot(slot);
-
-		if (!INODE_FLASH_ONLY(&d->inode.v) &&
-		    test_bit(CACHE_SET_UNREGISTERING, &c->flags)) {
-			dc = container_of(d, struct cached_dev, disk);
-			bch_cached_dev_detach(dc);
-		} else {
-			bcache_device_stop(d);
-		}
-	}
-
-	rcu_read_unlock();
-
-	mutex_unlock(&bch_register_lock);
+	bch_blockdevs_stop(c);
 
 	continue_at(cl, cache_set_flush, system_wq);
 }
@@ -1158,7 +1136,6 @@ static const char *run_cache_set(struct cache_set *c)
 {
 	const char *err = "cannot allocate memory";
 	struct cache_member_rcu *mi;
-	struct cached_dev *dc, *t;
 	struct cache *ca;
 	struct closure cl;
 	unsigned i, id;
@@ -1342,7 +1319,7 @@ static const char *run_cache_set(struct cache_set *c)
 
 	bcache_write_super(c);
 
-	flash_devs_run(c);
+	bch_blockdev_volumes_start(c);
 
 	bch_debug_init_cache_set(c);
 
@@ -1351,8 +1328,7 @@ static const char *run_cache_set(struct cache_set *c)
 		goto err;
 
 	set_bit(CACHE_SET_RUNNING, &c->flags);
-	list_for_each_entry_safe(dc, t, &uncached_devices, list)
-		bch_cached_dev_attach(dc, c);
+	bch_attach_backing_devs(c);
 
 	closure_put(&c->caching);
 
@@ -2245,7 +2221,7 @@ const char *bch_register_one(const char *path)
 
 	if (__SB_IS_BDEV(le64_to_cpu(sb.sb->version))) {
 		mutex_lock(&bch_register_lock);
-		err = bch_register_bdev(&sb);
+		err = bch_backing_dev_register(&sb);
 		mutex_unlock(&bch_register_lock);
 	} else {
 		err = register_cache(&sb, cache_set_opts_empty());

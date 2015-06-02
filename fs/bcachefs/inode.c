@@ -225,8 +225,8 @@ int bch_inode_find_by_inum(struct cache_set *c, u64 inode_nr,
 	return ret;
 }
 
-int bch_blockdev_inode_find_by_uuid(struct cache_set *c, uuid_le *uuid,
-				    struct bkey_i_inode_blockdev *ret)
+int bch_cached_dev_inode_find_by_uuid(struct cache_set *c, uuid_le *uuid,
+				      struct bkey_i_inode_blockdev *ret)
 {
 	struct btree_iter iter;
 	struct bkey_s_c k;
@@ -235,7 +235,7 @@ int bch_blockdev_inode_find_by_uuid(struct cache_set *c, uuid_le *uuid,
 		if (k.k->p.inode >= BLOCKDEV_INODE_MAX)
 			break;
 
-		if (k.k->type == BCH_INODE_BLOCKDEV) {
+		if (k.k->type == BCH_INODE_CACHED_DEV) {
 			struct bkey_s_c_inode_blockdev inode =
 				bkey_s_c_to_inode_blockdev(k);
 

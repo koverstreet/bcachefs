@@ -419,6 +419,7 @@ BKEY_VAL_TYPE(extent,		BCH_EXTENT);
 enum bch_inode_types {
 	BCH_INODE_FS		= 128,
 	BCH_INODE_BLOCKDEV	= 129,
+	BCH_INODE_CACHED_DEV	= 130,
 };
 
 enum {
@@ -460,9 +461,6 @@ struct bch_inode_blockdev {
 	__u8			i_label[32];
 } __attribute__((packed));
 BKEY_VAL_TYPE(inode_blockdev,	BCH_INODE_BLOCKDEV);
-
-BITMASK(INODE_FLASH_ONLY,	struct bch_inode_blockdev,
-				i_inode.i_flags, 0, 1);
 
 /* Dirents */
 
