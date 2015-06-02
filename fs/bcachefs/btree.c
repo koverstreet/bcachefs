@@ -52,7 +52,7 @@ const char *bch_btree_id_names[BTREE_ID_NR] = {
 
 #undef DEF_BTREE_ID
 
-static int bch_btree_iter_traverse(struct btree_iter *);
+static int __must_check bch_btree_iter_traverse(struct btree_iter *);
 
 static inline void mark_btree_node_intent_locked(struct btree_iter *iter,
 						 unsigned level)
@@ -2980,9 +2980,14 @@ static void btree_iter_up(struct btree_iter *iter)
 /*
  * This is the main state machine for walking down the btree - walks down to a
  * specified depth
+ *
+ * Returns 0 on success, -EIO on error (error reading in a btree node).
+ *
+ * On error, caller (peek_node()/peek_key()) must return NULL; the error is
+ * stashed in the iterator and returned from bch_btree_iter_unlock().
  */
-static int __bch_btree_iter_traverse(struct btree_iter *iter, unsigned l,
-				     struct bpos pos)
+static int __must_check __bch_btree_iter_traverse(struct btree_iter *iter,
+						  unsigned l, struct bpos pos)
 {
 	if (!iter->nodes[iter->level])
 		return 0;
@@ -3042,7 +3047,7 @@ retry:
 	return 0;
 }
 
-static int bch_btree_iter_traverse(struct btree_iter *iter)
+static int __must_check bch_btree_iter_traverse(struct btree_iter *iter)
 {
 	return __bch_btree_iter_traverse(iter, iter->level, iter->pos);
 }
@@ -3052,15 +3057,18 @@ static int bch_btree_iter_traverse(struct btree_iter *iter)
 struct btree *bch_btree_iter_peek_node(struct btree_iter *iter)
 {
 	struct btree *b;
+	int ret;
 
 	EBUG_ON(iter->is_extents);
 
-	bch_btree_iter_traverse(iter);
+	ret = bch_btree_iter_traverse(iter);
+	if (ret)
+		return NULL;
 
-	if ((b = iter->nodes[iter->level])) {
-		EBUG_ON(bkey_cmp(b->key.k.p, iter->pos) < 0);
-		iter->pos = b->key.k.p;
-	}
+	b = iter->nodes[iter->level];
+
+	EBUG_ON(bkey_cmp(b->key.k.p, iter->pos) < 0);
+	iter->pos = b->key.k.p;
 
 	return b;
 }
@@ -3087,7 +3095,10 @@ struct btree *bch_btree_iter_next_node(struct btree_iter *iter)
 	if (bkey_cmp(iter->pos, b->key.k.p) < 0) {
 		struct bpos pos = bkey_successor(iter->pos);
 
-		__bch_btree_iter_traverse(iter, 0, pos);
+		ret = __bch_btree_iter_traverse(iter, 0, pos);
+		if (ret)
+			return NULL;
+
 		b = iter->nodes[iter->level];
 	}
 
