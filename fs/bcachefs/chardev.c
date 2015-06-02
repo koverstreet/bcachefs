@@ -52,7 +52,9 @@ static long bch_ioctl_assemble(struct bch_ioctl_assemble __user *user_arg)
 		}
 	}
 
-	err = bch_register_cache_set(devs, arg.nr_devs, NULL);
+	err = bch_register_cache_set(devs, arg.nr_devs,
+				     cache_set_opts_empty(),
+				     NULL);
 	if (err) {
 		pr_err("Could not register cache set: %s", err);
 		ret = -EINVAL;

@@ -809,7 +809,7 @@ static void bch_cache_set_read_only_work(struct work_struct *work)
 
 void bch_cache_set_fail(struct cache_set *c)
 {
-	switch (CACHE_ERROR_ACTION(&c->sb)) {
+	switch (c->opts.on_error_action) {
 	case BCH_ON_ERROR_CONTINUE:
 		break;
 	case BCH_ON_ERROR_RO:
@@ -975,7 +975,8 @@ static unsigned cache_set_nr_online_devices(struct cache_set *c)
 #define alloc_bucket_pages(gfp, ca)			\
 	((void *) __get_free_pages(__GFP_ZERO|gfp, ilog2(bucket_pages(ca))))
 
-static struct cache_set *bch_cache_set_alloc(struct cache_sb *sb)
+static struct cache_set *bch_cache_set_alloc(struct cache_sb *sb,
+					     struct cache_set_opts opts)
 {
 	struct cache_set *c;
 	unsigned iter_size;
@@ -1004,6 +1005,16 @@ static struct cache_set *bch_cache_set_alloc(struct cache_sb *sb)
 
 	if (cache_sb_to_cache_set(c, sb))
 		goto err;
+
+	c->opts = (struct cache_set_opts) {
+		   .read_only = 0,
+		   .on_error_action = CACHE_ERROR_ACTION(&c->sb),
+	};
+
+	if (opts.read_only >= 0)
+		c->opts.read_only = opts.read_only;
+	if (opts.on_error_action >= 0)
+		c->opts.on_error_action = opts.on_error_action;
 
 	c->minor		= -1;
 	c->block_bits		= ilog2(c->sb.block_size);
@@ -1315,9 +1326,13 @@ static const char *run_cache_set(struct cache_set *c)
 
 	closure_sync(&cl);
 
-	err = __bch_cache_set_read_write(c);
-	if (err)
-		goto err;
+	if (c->opts.read_only) {
+		bch_cache_set_read_only(c);
+	} else {
+		err = __bch_cache_set_read_write(c);
+		if (err)
+			goto err;
+	}
 
 	now = get_seconds();
 	mi = cache_member_info_get(c);
@@ -1966,7 +1981,8 @@ static struct cache_set *cache_set_lookup(uuid_le uuid)
 	return NULL;
 }
 
-static const char *register_cache(struct bcache_superblock *sb)
+static const char *register_cache(struct bcache_superblock *sb,
+				  struct cache_set_opts opts)
 {
 	char name[BDEVNAME_SIZE];
 	const char *err = "cannot allocate memory";
@@ -1989,7 +2005,7 @@ static const char *register_cache(struct bcache_superblock *sb)
 		goto out;
 	}
 
-	c = bch_cache_set_alloc(sb->sb);
+	c = bch_cache_set_alloc(sb->sb, opts);
 	if (!c)
 		goto err;
 
@@ -2136,6 +2152,7 @@ err:
 }
 
 const char *bch_register_cache_set(char * const *devices, unsigned nr_devices,
+				   struct cache_set_opts opts,
 				   struct cache_set **ret)
 {
 	const char *err;
@@ -2173,7 +2190,7 @@ const char *bch_register_cache_set(char * const *devices, unsigned nr_devices,
 		goto err;
 
 	err = "cannot allocate memory";
-	c = bch_cache_set_alloc(sb[0].sb);
+	c = bch_cache_set_alloc(sb[0].sb, opts);
 	if (!c)
 		goto err_unlock;
 
@@ -2231,7 +2248,7 @@ const char *bch_register_one(const char *path)
 		err = bch_register_bdev(&sb);
 		mutex_unlock(&bch_register_lock);
 	} else {
-		err = register_cache(&sb);
+		err = register_cache(&sb, cache_set_opts_empty());
 	}
 
 	free_super(&sb);

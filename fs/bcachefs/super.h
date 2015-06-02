@@ -160,8 +160,17 @@ void bch_cache_release(struct kobject *);
 void bch_cache_set_unregister(struct cache_set *);
 void bch_cache_set_stop(struct cache_set *);
 
+static inline struct cache_set_opts cache_set_opts_empty(void)
+{
+	struct cache_set_opts ret;
+
+	memset(&ret, 255, sizeof(ret));
+	return ret;
+}
+
 const char *bch_register_one(const char *path);
 const char *bch_register_cache_set(char * const *, unsigned,
+				   struct cache_set_opts,
 				   struct cache_set **);
 
 void bch_cache_set_read_only(struct cache_set *);

@@ -1835,23 +1835,8 @@ static int bch_sync_fs(struct super_block *sb, int wait)
 	return 0;
 }
 
-static const struct super_operations bch_super_operations = {
-	.alloc_inode	= bch_alloc_inode,
-	.destroy_inode	= bch_destroy_inode,
-	.write_inode	= bch_write_inode,
-	.evict_inode	= bch_evict_inode,
-	.sync_fs	= bch_sync_fs,
-	.statfs		= bch_statfs,
-	.show_options	= generic_show_options,
-#if 0
-	.put_super	= bch_put_super,
-	.freeze_fs	= bch_freeze,
-	.unfreeze_fs	= bch_unfreeze,
-	.remount_fs	= bch_remount,
-#endif
-};
-
-static struct cache_set *bch_open_as_blockdevs(const char *_dev_name)
+static struct cache_set *bch_open_as_blockdevs(const char *_dev_name,
+					       struct cache_set_opts opts)
 {
 	size_t nr_devs = 0, i = 0;
 	char *dev_name, *s, **devs;
@@ -1874,7 +1859,7 @@ static struct cache_set *bch_open_as_blockdevs(const char *_dev_name)
 	     (s = strchr(s, ':')) && (*s++ = '\0'))
 		devs[i++] = s;
 
-	err = bch_register_cache_set(devs, nr_devs, &c);
+	err = bch_register_cache_set(devs, nr_devs, opts, &c);
 	if (err) {
 		pr_err("register_cache_set err %s", err);
 		goto out;
@@ -1906,11 +1891,14 @@ static const match_table_t tokens = {
 	{Opt_err, NULL}
 };
 
-static int parse_options(struct cache_set *c, struct super_block *sb,
-			 char *options)
+static int parse_options(struct cache_set_opts *opts, int flags, char *options)
 {
 	char *p;
 	substring_t args[MAX_OPT_ARGS];
+
+	*opts = cache_set_opts_empty();
+
+	opts->read_only = (flags & MS_RDONLY) != 0;
 
 	if (!options)
 		return 1;
@@ -1924,33 +1912,88 @@ static int parse_options(struct cache_set *c, struct super_block *sb,
 		token = match_token(p, tokens, args);
 		switch (token) {
 		case Opt_err_panic:
-			/*
-			 * XXX: this will get written to the superblock, don't
-			 * want this option to be persistent
-			 */
-			SET_CACHE_ERROR_ACTION(&c->sb, BCH_ON_ERROR_PANIC);
+			opts->on_error_action = BCH_ON_ERROR_PANIC;
 			break;
 		case Opt_err_ro:
-			SET_CACHE_ERROR_ACTION(&c->sb, BCH_ON_ERROR_RO);
+			opts->on_error_action = BCH_ON_ERROR_RO;
 			break;
 		case Opt_err_cont:
-			SET_CACHE_ERROR_ACTION(&c->sb, BCH_ON_ERROR_CONTINUE);
+			opts->on_error_action = BCH_ON_ERROR_CONTINUE;
 			break;
 		case Opt_user_xattr:
 		case Opt_nouser_xattr:
 			break;
 		case Opt_acl:
-			sb->s_flags |= MS_POSIXACL;
+			opts->posix_acl = true;
 			break;
 		case Opt_noacl:
-			sb->s_flags &= ~MS_POSIXACL;
+			opts->posix_acl = false;
 			break;
 		default:
 			return 0;
 		}
 	}
+
 	return 1;
 }
+
+static int bch_remount(struct super_block *sb, int *flags, char *data)
+{
+	struct cache_set *c = sb->s_fs_info;
+	struct cache_set_opts opts;
+	int ret = 0;
+
+	if (!parse_options(&opts, *flags, data))
+		return EINVAL;
+
+	mutex_lock(&bch_register_lock);
+
+	if (opts.read_only >= 0 &&
+	    opts.read_only != c->opts.read_only) {
+		const char *err = NULL;
+
+		if (opts.read_only) {
+			bch_cache_set_read_only(c);
+
+			sb->s_flags |= MS_RDONLY;
+		} else {
+			err = bch_cache_set_read_write(c);
+			if (err) {
+				pr_info("error going rw");
+				ret = -EINVAL;
+				goto unlock;
+			}
+
+			sb->s_flags &= ~MS_RDONLY;
+		}
+
+		c->opts.read_only = opts.read_only;
+	}
+
+	if (opts.on_error_action >= 0)
+		c->opts.on_error_action = opts.on_error_action;
+
+unlock:
+	mutex_unlock(&bch_register_lock);
+
+	return ret;
+}
+
+static const struct super_operations bch_super_operations = {
+	.alloc_inode	= bch_alloc_inode,
+	.destroy_inode	= bch_destroy_inode,
+	.write_inode	= bch_write_inode,
+	.evict_inode	= bch_evict_inode,
+	.sync_fs	= bch_sync_fs,
+	.statfs		= bch_statfs,
+	.show_options	= generic_show_options,
+	.remount_fs	= bch_remount,
+#if 0
+	.put_super	= bch_put_super,
+	.freeze_fs	= bch_freeze,
+	.unfreeze_fs	= bch_unfreeze,
+#endif
+};
 
 static struct dentry *bch_mount(struct file_system_type *fs_type,
 				int flags, const char *dev_name, void *data)
@@ -1958,9 +2001,13 @@ static struct dentry *bch_mount(struct file_system_type *fs_type,
 	struct cache_set *c;
 	struct super_block *sb;
 	struct inode *inode;
+	struct cache_set_opts opts;
 	int ret;
 
-	c = bch_open_as_blockdevs(dev_name);
+	if (!parse_options(&opts, flags, data))
+		return ERR_PTR(-EINVAL);
+
+	c = bch_open_as_blockdevs(dev_name, opts);
 	if (!c)
 		return ERR_PTR(-ENOENT);
 
@@ -1970,7 +2017,7 @@ static struct dentry *bch_mount(struct file_system_type *fs_type,
 		goto err;
 	}
 
-	/* XXX: */
+	/* XXX: blocksize */
 	sb->s_blocksize		= PAGE_SIZE;
 	sb->s_blocksize_bits	= PAGE_SHIFT;
 	sb->s_maxbytes		= MAX_LFS_FILESIZE;
@@ -1980,16 +2027,14 @@ static struct dentry *bch_mount(struct file_system_type *fs_type,
 	sb->s_time_gran		= 1;
 	sb->s_fs_info		= c;
 
-	sb->s_flags		|= MS_POSIXACL;
+	if (opts.posix_acl < 0)
+		sb->s_flags	|= MS_POSIXACL;
+	else
+		sb->s_flags	|= opts.posix_acl ? MS_POSIXACL : 0;
 
-	/* XXX */
+	/* XXX: do we even need s_bdev? */
 	sb->s_bdev		= c->cache[0]->disk_sb.bdev;
 	sb->s_bdi		= &c->bdi;
-
-	if (!parse_options(c, sb, (char *) data)) {
-		ret = -EINVAL;
-		goto err_put_super;
-	}
 
 	inode = bch_vfs_inode_get(sb, BCACHE_ROOT_INO);
 	if (IS_ERR(inode)) {

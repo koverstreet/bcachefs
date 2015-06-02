@@ -414,6 +414,8 @@ struct cache_set {
 	struct cache_member_rcu	*members;
 	unsigned long	cache_slots_used[BITS_TO_LONGS(MAX_CACHES_PER_SET)];
 
+	struct cache_set_opts	opts;
+
 	struct cache_sb		sb;
 	unsigned short		block_bits;	/* ilog2(block_size) */
 
