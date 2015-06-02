@@ -1330,10 +1330,6 @@ struct gc_merge_info {
 	unsigned	keys;
 };
 
-static int bch_btree_insert_node(struct btree *, struct btree_op *,
-				 struct keylist *, struct bkey *,
-				 struct closure *);
-
 static int btree_gc_coalesce(struct btree *b, struct btree_op *op,
 			     struct gc_stat *gc, struct gc_merge_info *r)
 {
@@ -1695,10 +1691,6 @@ static void bch_btree_gc_finish(struct cache_set *c)
 	set_gc_sectors(c);
 	c->gc_mark_valid = 1;
 	c->need_gc	= 0;
-
-	for (i = 0; i < bch_extent_ptrs(&c->uuid_bucket); i++)
-		SET_GC_MARK(PTR_BUCKET(c, &c->uuid_bucket, i),
-			    GC_MARK_METADATA);
 
 	bch_mark_writeback_keys(c);
 
@@ -2264,10 +2256,10 @@ static int btree_split(struct btree *b, struct btree_op *op,
  * The @parent closure is used to wait on the journal write. The wait
  * will only happen if the full list is inserted.
  */
-static int bch_btree_insert_node(struct btree *b, struct btree_op *op,
-				 struct keylist *insert_keys,
-				 struct bkey *replace_key,
-				 struct closure *parent)
+int bch_btree_insert_node(struct btree *b, struct btree_op *op,
+			  struct keylist *insert_keys,
+			  struct bkey *replace_key,
+			  struct closure *parent)
 {
 	struct closure cl;
 

@@ -198,17 +198,25 @@ STORE(__cached_dev)
 	if (attr == &sysfs_label) {
 		if (size > SB_LABEL_SIZE)
 			return -EINVAL;
+
+		mutex_lock(&dc->disk.inode_lock);
+
 		memcpy(dc->sb.label, buf, size);
 		if (size < SB_LABEL_SIZE)
 			dc->sb.label[size] = '\0';
 		if (size && dc->sb.label[size - 1] == '\n')
 			dc->sb.label[size - 1] = '\0';
+
+		memcpy(dc->disk.inode.i_label,
+		       dc->sb.label, SB_LABEL_SIZE);
+
 		bch_write_bdev_super(dc, NULL);
-		if (dc->disk.c) {
-			memcpy(dc->disk.c->uuids[dc->disk.id].label,
-			       buf, SB_LABEL_SIZE);
-			bch_uuid_write(dc->disk.c);
-		}
+
+		if (dc->disk.c)
+			bch_inode_update(dc->disk.c, &dc->disk.inode.i_inode);
+
+		mutex_unlock(&dc->disk.inode_lock);
+
 		env = kzalloc(sizeof(struct kobj_uevent_env), GFP_KERNEL);
 		if (!env)
 			return -ENOMEM;
@@ -295,13 +303,12 @@ SHOW(bch_flash_dev)
 {
 	struct bcache_device *d = container_of(kobj, struct bcache_device,
 					       kobj);
-	struct uuid_entry *u = &d->c->uuids[d->id];
 
 	sysfs_printf(data_csum,	"%i", d->data_csum);
-	sysfs_hprint(size,	u->sectors << 9);
+	sysfs_hprint(size,	d->inode.i_inode.i_size);
 
 	if (attr == &sysfs_label) {
-		memcpy(buf, u->label, SB_LABEL_SIZE);
+		memcpy(buf, d->inode.i_label, SB_LABEL_SIZE);
 		buf[SB_LABEL_SIZE + 1] = '\0';
 		strcat(buf, "\n");
 		return strlen(buf);
@@ -314,7 +321,6 @@ STORE(__bch_flash_dev)
 {
 	struct bcache_device *d = container_of(kobj, struct bcache_device,
 					       kobj);
-	struct uuid_entry *u = &d->c->uuids[d->id];
 
 	sysfs_strtoul(data_csum,	d->data_csum);
 
@@ -322,14 +328,22 @@ STORE(__bch_flash_dev)
 		uint64_t v;
 		strtoi_h_or_return(buf, v);
 
-		u->sectors = v >> 9;
-		bch_uuid_write(d->c);
-		set_capacity(d->disk, u->sectors);
+		mutex_lock(&d->inode_lock);
+
+		d->inode.i_inode.i_size = v;
+		bch_inode_update(d->c, &d->inode.i_inode);
+		set_capacity(d->disk, d->inode.i_inode.i_size >> 9);
+
+		mutex_unlock(&d->inode_lock);
 	}
 
 	if (attr == &sysfs_label) {
-		memcpy(u->label, buf, SB_LABEL_SIZE);
-		bch_uuid_write(d->c);
+		mutex_lock(&d->inode_lock);
+
+		memcpy(d->inode.i_label, buf, SB_LABEL_SIZE);
+		bch_inode_update(d->c, &d->inode.i_inode);
+
+		mutex_unlock(&d->inode_lock);
 	}
 
 	if (attr == &sysfs_unregister) {

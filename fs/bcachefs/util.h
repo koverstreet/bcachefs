@@ -668,4 +668,12 @@ int bch_kthread_loop_ratelimit(unsigned long *, unsigned long);
 	_ret;								\
 })
 
+static inline s64 timekeeping_clocktai_ns(void)
+{
+	struct timespec ts;
+
+	timekeeping_clocktai(&ts);
+	return (s64) ts.tv_sec * NSEC_PER_SEC + (s64) ts.tv_nsec;
+}
+
 #endif /* _BCACHE_UTIL_H */

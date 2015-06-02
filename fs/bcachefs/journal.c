@@ -679,9 +679,6 @@ static void journal_write_locked(struct closure *cl)
 
 	spin_unlock(&c->btree_root_lock);
 
-	bch_journal_add_btree_root(w->data, BTREE_ID_UUIDS,
-				   &c->uuid_bucket, 0);
-
 	c->journal.blocks_free -= set_blocks(w->data, block_bytes(c));
 
 	for_each_cache(ca, c, i)

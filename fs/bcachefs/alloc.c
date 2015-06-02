@@ -564,8 +564,9 @@ static struct open_bucket *bch_open_bucket_get(struct cache_set *c)
 	return ret;
 }
 
-struct open_bucket *bch_open_bucket_alloc(struct cache_set *c, unsigned reserve,
-					  int n, unsigned tier, bool wait)
+static struct open_bucket *bch_open_bucket_alloc(struct cache_set *c,
+						 unsigned reserve, int n,
+						 unsigned tier, bool wait)
 {
 	int ret;
 	struct open_bucket *b;

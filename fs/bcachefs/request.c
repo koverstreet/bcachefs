@@ -813,7 +813,7 @@ static inline struct search *search_alloc(struct bio *bio,
 	s->read_dirty_data	= 0;
 	s->cache_miss		= 0;
 	s->start_time		= jiffies;
-	s->inode		= d->id;
+	s->inode		= bcache_dev_inum(d);
 
 	s->iop.c		= d->c;
 	s->iop.bio		= NULL;
@@ -957,7 +957,7 @@ static void cached_dev_write(struct cached_dev *dc, struct search *s)
 {
 	struct closure *cl = &s->cl;
 	struct bio *bio = &s->bio.bio;
-	unsigned inode = dc->disk.id;
+	unsigned inode = bcache_dev_inum(&dc->disk);
 	struct bkey start = KEY(inode, bio->bi_iter.bi_sector, 0);
 	struct bkey end = KEY(inode, bio_end_sector(bio), 0);
 	bool writeback = false;
