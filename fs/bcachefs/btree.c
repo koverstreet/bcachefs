@@ -541,7 +541,7 @@ out:
 	mempool_free(iter, &c->fill_iter);
 	return;
 err:
-	set_btree_node_io_error(b);
+	set_btree_node_read_error(b);
 	btree_node_error(b, ca, ptr, "%s", err);
 	goto out;
 }
@@ -564,7 +564,7 @@ static void bch_btree_node_read(struct cache_set *c, struct btree *b)
 
 	pick = bch_btree_pick_ptr(c, b);
 	if (!pick.ca) {
-		set_btree_node_io_error(b);
+		set_btree_node_read_error(b);
 		goto missing;
 	}
 
@@ -585,11 +585,11 @@ static void bch_btree_node_read(struct cache_set *c, struct btree *b)
 
 	if (bio->bi_error ||
 	    bch_meta_read_fault("btree"))
-		set_btree_node_io_error(b);
+		set_btree_node_read_error(b);
 
 	bio_put(bio);
 
-	if (btree_node_io_error(b))
+	if (btree_node_read_error(b))
 		goto err;
 
 	bch_btree_node_read_done(c, b, pick.ca, &pick.ptr);
@@ -630,7 +630,9 @@ static void btree_node_write_done(struct closure *cl)
 	struct btree_write *w = btree_prev_write(b);
 	struct cache_set *c = b->c;
 
-	btree_complete_write(c, b, w);
+	/* XXX: pin btree node in memory somehow */
+	if (!btree_node_write_error(b))
+		btree_complete_write(c, b, w);
 
 	if (btree_node_dirty(b) && c->btree_flush_delay)
 		schedule_delayed_work(&b->work, c->btree_flush_delay * HZ);
@@ -644,8 +646,13 @@ static void btree_node_write_endio(struct bio *bio)
 	struct btree *b = container_of(cl, struct btree, io);
 	struct bch_write_bio *wbio = to_wbio(bio);
 
-	if (bio->bi_error || bch_meta_write_fault("btree"))
-		set_btree_node_io_error(b);
+	if (bio->bi_error || bch_meta_write_fault("btree")) {
+		set_btree_node_write_error(b);
+
+		__bch_cache_error(wbio->bio.ca, "IO error %d writing btree",
+				  bio->bi_error);
+		bch_cache_set_io_error(wbio->bio.ca->set);
+	}
 
 	if (wbio->orig)
 		bio_endio(wbio->orig);
@@ -1596,7 +1603,7 @@ retry:
 		prefetch(b->keys.set[i].data);
 	}
 
-	if (btree_node_io_error(b)) {
+	if (btree_node_read_error(b)) {
 		__btree_node_unlock(iter, level, b);
 		return ERR_PTR(-EIO);
 	}
@@ -2020,7 +2027,7 @@ int bch_btree_root_read(struct cache_set *c, enum btree_id id,
 	bch_btree_node_read(c, b);
 	six_unlock_write(&b->lock);
 
-	if (btree_node_io_error(b)) {
+	if (btree_node_read_error(b)) {
 		six_unlock_intent(&b->lock);
 		return -EIO;
 	}
@@ -2067,7 +2074,8 @@ int bch_btree_node_rewrite(struct btree *b, struct btree_iter *iter, bool wait)
 	bch_btree_node_write(n, &cl, NULL);
 	closure_sync(&cl);
 
-	if (bch_journal_error(&c->journal)) {
+	if (bch_journal_error(&c->journal) ||
+	    btree_node_write_error(n)) {
 		bch_btree_node_free_never_inserted(c, n);
 		six_unlock_intent(&n->lock);
 		return -EIO;
@@ -2220,9 +2228,9 @@ static bool btree_insert_key(struct cache_set *c, struct btree *b,
 }
 
 enum btree_insert_status {
-	BTREE_INSERT_NO_INSERT,
-	BTREE_INSERT_INSERTED,
+	BTREE_INSERT_OK,
 	BTREE_INSERT_NEED_SPLIT,
+	BTREE_INSERT_ERROR,
 };
 
 static bool have_enough_space(struct btree *b, struct keylist *insert_keys)
@@ -2297,9 +2305,11 @@ bch_btree_insert_keys(struct btree *b,
 					    jset_u64s(n_max));
 
 		if (!b->level &&
-		    test_bit(JOURNAL_REPLAY_DONE, &iter->c->journal.flags))
-			bch_journal_res_get(&iter->c->journal, &res,
-					    actual_min, actual_max);
+		    test_bit(JOURNAL_REPLAY_DONE, &iter->c->journal.flags)) {
+			if (bch_journal_res_get(&iter->c->journal, &res,
+						actual_min, actual_max))
+				return BTREE_INSERT_ERROR;
+		}
 
 		/* just wrote a set? */
 		if (btree_node_need_init_next(b))
@@ -2381,8 +2391,7 @@ do_init_next:		bch_btree_init_next(iter->c, b, iter);
 
 	BUG_ON(!bch_keylist_empty(insert_keys) && inserted && b->level);
 
-	return need_split ? BTREE_INSERT_NEED_SPLIT :
-		 inserted ? BTREE_INSERT_INSERTED : BTREE_INSERT_NO_INSERT;
+	return need_split ? BTREE_INSERT_NEED_SPLIT : BTREE_INSERT_OK;
 }
 
 struct btree_split_state {
@@ -2588,7 +2597,10 @@ static int btree_split(struct btree *b, struct btree_iter *iter,
 	closure_sync(&state->stack_cl);
 
 	/* Check for journal error after waiting on the journal flush: */
-	if (bch_journal_error(&c->journal))
+	if (bch_journal_error(&c->journal) ||
+	    (n3 && btree_node_write_error(n3)) ||
+	    (n2 && btree_node_write_error(n2)) ||
+	    btree_node_write_error(n1))
 		goto err;
 
 	/* New nodes all written, now make them visible: */
@@ -2669,6 +2681,8 @@ static int __bch_btree_insert_node(struct btree *b,
 				   u64 *journal_seq, unsigned flags,
 				   struct btree_split_state *state)
 {
+	int ret;
+
 	BUG_ON(iter->nodes[b->level] != b);
 	BUG_ON(!btree_node_intent_locked(iter, b->level));
 	BUG_ON(b->level &&
@@ -2677,8 +2691,12 @@ static int __bch_btree_insert_node(struct btree *b,
 	BUG_ON(b->level && !state->reserve);
 	BUG_ON(!b->written);
 
-	if (bch_btree_insert_keys(b, iter, insert_keys, replace, journal_seq,
-				  flags) == BTREE_INSERT_NEED_SPLIT) {
+	switch (bch_btree_insert_keys(b, iter, insert_keys, replace,
+				      journal_seq, flags)) {
+	case BTREE_INSERT_OK:
+		return 0;
+
+	case BTREE_INSERT_NEED_SPLIT:
 		if (!b->level) {
 			struct btree_reserve *res;
 
@@ -2701,15 +2719,21 @@ static int __bch_btree_insert_node(struct btree *b,
 			state->reserve = res;
 		}
 
-		btree_split(b, iter, insert_keys, flags, state);
+		ret = btree_split(b, iter, insert_keys, flags, state);
 
 		if (!b->level) {
 			bch_btree_reserve_put(iter->c, state->reserve);
 			state->reserve = NULL;
 		}
-	}
 
-	return 0;
+		return ret;
+
+	case BTREE_INSERT_ERROR:
+		/* Journal error, so we couldn't get a journal reservation: */
+		return -EIO;
+	default:
+		BUG();
+	}
 }
 
 /**

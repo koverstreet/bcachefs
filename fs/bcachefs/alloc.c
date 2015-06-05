@@ -284,9 +284,10 @@ static int bch_prio_write(struct cache *ca)
 		if (bch_meta_write_fault("prio"))
 			ret = -EIO;
 		if (ret) {
-			bch_cache_error(ca,
+			__bch_cache_error(ca,
 				"IO error %d writing prios to bucket %lu",
-					ret, r);
+				ret, r);
+			bch_cache_set_io_error(c);
 			return ret;
 		}
 	}

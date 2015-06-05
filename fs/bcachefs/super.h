@@ -152,6 +152,7 @@ const char *validate_super(struct bcache_superblock *, struct cache_sb *);
 
 void bch_cache_member_info_update(struct cache *);
 
+void bch_cache_set_io_error(struct cache_set *);
 void bch_cache_set_fail(struct cache_set *);
 
 void bch_cache_set_release(struct kobject *);

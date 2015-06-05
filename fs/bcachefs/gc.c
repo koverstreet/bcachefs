@@ -515,7 +515,10 @@ static void bch_coalesce_nodes(struct btree *old_nodes[GC_MERGE_NODES],
 	/* Insert the newly coalesced nodes */
 	ret = bch_btree_insert_node(parent, iter, &keylist, NULL, NULL,
 				    BTREE_INSERT_NOFAIL, res);
-	BUG_ON(ret || !bch_keylist_empty(&keylist));
+	if (ret)
+		goto err;
+
+	BUG_ON(!bch_keylist_empty(&keylist));
 
 	iter->pos = saved_pos;
 
@@ -535,6 +538,13 @@ static void bch_coalesce_nodes(struct btree *old_nodes[GC_MERGE_NODES],
 out:
 	bch_keylist_free(&keylist);
 	bch_btree_reserve_put(c, res);
+	return;
+err:
+	for (i = 0; i < nr_new_nodes; i++) {
+		bch_btree_node_free_never_inserted(c, new_nodes[i]);
+		six_unlock_intent(&new_nodes[i]->lock);
+	}
+	goto out;
 }
 
 static int bch_coalesce_btree(struct cache_set *c, enum btree_id btree_id)

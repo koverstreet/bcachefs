@@ -198,8 +198,8 @@ void bch_journal_add_keys(struct journal *, struct journal_res *,
 			  unsigned);
 
 void bch_journal_res_put(struct journal *, struct journal_res *);
-void bch_journal_res_get(struct journal *, struct journal_res *,
-			 unsigned, unsigned);
+int bch_journal_res_get(struct journal *, struct journal_res *,
+			unsigned, unsigned);
 
 void bch_journal_flush_seq_async(struct journal *, u64, struct closure *);
 void bch_journal_flush_async(struct journal *, struct closure *);

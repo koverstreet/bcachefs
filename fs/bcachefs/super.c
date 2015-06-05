@@ -801,7 +801,11 @@ static void bch_cache_set_read_only_work(struct work_struct *work)
 	mutex_unlock(&bch_register_lock);
 }
 
-/* Cache set startup/shutdown: */
+void bch_cache_set_io_error(struct cache_set *c)
+{
+	pr_err("%pU going read only", c->sb.set_uuid.b);
+	schedule_work(&c->read_only_work);
+}
 
 void bch_cache_set_fail(struct cache_set *c)
 {
@@ -818,6 +822,8 @@ void bch_cache_set_fail(struct cache_set *c)
 		break;
 	}
 }
+
+/* Cache set startup/shutdown: */
 
 void bch_cache_set_release(struct kobject *kobj)
 {
@@ -1228,7 +1234,9 @@ static const char *run_cache_set(struct cache_set *c)
 				goto err;
 			}
 
-		bch_journal_replay(c, &journal);
+		err = "journal replay failed";
+		if (bch_journal_replay(c, &journal))
+			goto err;
 
 		err = "error gcing inode nlinks";
 		if (bch_gc_inode_nlinks(c))
