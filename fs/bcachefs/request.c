@@ -582,7 +582,8 @@ static void __cached_dev_make_request(struct request_queue *q, struct bio *bio)
 
 		if (!bio->bi_iter.bi_size) {
 			if (s->orig_bio->bi_opf & (REQ_PREFLUSH|REQ_FUA))
-				bch_journal_meta(&s->iop.c->journal, &s->cl);
+				bch_journal_flush_async(&s->iop.c->journal,
+							&s->cl);
 
 			/*
 			 * If it's a flush, we send the flush to the backing
@@ -673,7 +674,8 @@ static void __blockdev_volume_make_request(struct request_queue *q,
 		s = search_alloc(bio, d);
 
 		if (s->orig_bio->bi_opf & (REQ_PREFLUSH|REQ_FUA))
-			bch_journal_meta(&s->iop.c->journal, &s->cl);
+			bch_journal_flush_async(&s->iop.c->journal,
+						&s->cl);
 
 		continue_at(&s->cl, search_free, NULL);
 	} else if (rw) {

@@ -86,6 +86,7 @@ enum {
 	JOURNAL_IO_IN_FLIGHT,
 	JOURNAL_WRITE_IDX,
 	JOURNAL_REPLAY_DONE,
+	JOURNAL_ERROR,
 };
 
 /* Embedded in struct cache_set */

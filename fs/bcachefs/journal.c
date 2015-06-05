@@ -1321,8 +1321,7 @@ static void journal_write_endio(struct bio *bio)
 	struct journal_write *w = bio->bi_private;
 
 	if (bio->bi_error || bch_meta_write_fault("journal"))
-		bch_cache_error(ca, "IO error %d writing journal",
-				bio->bi_error);
+		set_bit(JOURNAL_ERROR, &ca->set->journal.flags);
 
 	closure_put(&w->j->io);
 	percpu_ref_put(&ca->ref);
@@ -1702,7 +1701,7 @@ void bch_journal_res_get(struct journal *j, struct journal_res *res,
 		bch_time_stats_update(&j->full_time, start_time);
 }
 
-void bch_journal_push_seq(struct journal *j, u64 seq, struct closure *parent)
+void bch_journal_flush_seq_async(struct journal *j, u64 seq, struct closure *parent)
 {
 	spin_lock(&j->lock);
 
@@ -1724,7 +1723,18 @@ void bch_journal_push_seq(struct journal *j, u64 seq, struct closure *parent)
 	journal_unlock(j);
 }
 
-void bch_journal_meta(struct journal *j, struct closure *parent)
+int bch_journal_flush_seq(struct journal *j, u64 seq)
+{
+	struct closure cl;
+
+	closure_init_stack(&cl);
+	bch_journal_flush_seq_async(j, seq, &cl);
+	closure_sync(&cl);
+
+	return bch_journal_error(j);
+}
+
+void bch_journal_meta_async(struct journal *j, struct closure *parent)
 {
 	struct journal_res res;
 	unsigned u64s = jset_u64s(0);
@@ -1736,10 +1746,25 @@ void bch_journal_meta(struct journal *j, struct closure *parent)
 	seq = j->seq;
 	bch_journal_res_put(j, &res);
 
-	bch_journal_push_seq(j, seq, parent);
+	bch_journal_flush_seq_async(j, seq, parent);
 }
 
-void bch_journal_flush(struct journal *j, struct closure *parent)
+int bch_journal_meta(struct journal *j)
+{
+	struct journal_res res;
+	unsigned u64s = jset_u64s(0);
+	u64 seq;
+
+	memset(&res, 0, sizeof(res));
+
+	bch_journal_res_get(j, &res, u64s, u64s);
+	seq = j->seq;
+	bch_journal_res_put(j, &res);
+
+	return bch_journal_flush_seq(j, seq);
+}
+
+void bch_journal_flush_async(struct journal *j, struct closure *parent)
 {
 	u64 seq;
 
@@ -1754,7 +1779,25 @@ void bch_journal_flush(struct journal *j, struct closure *parent)
 	}
 	spin_unlock(&j->lock);
 
-	bch_journal_push_seq(j, seq, parent);
+	bch_journal_flush_seq_async(j, seq, parent);
+}
+
+int bch_journal_flush(struct journal *j)
+{
+	u64 seq;
+
+	spin_lock(&j->lock);
+	if (test_bit(JOURNAL_DIRTY, &j->flags)) {
+		seq = j->seq;
+	} else if (j->seq) {
+		seq = j->seq - 1;
+	} else {
+		spin_unlock(&j->lock);
+		return 0;
+	}
+	spin_unlock(&j->lock);
+
+	return bch_journal_flush_seq(j, seq);
 }
 
 void bch_journal_free(struct journal *j)
@@ -1875,14 +1918,11 @@ static bool bch_journal_writing_to_device(struct cache *ca)
 
 int bch_journal_move(struct cache *ca)
 {
-	struct closure cl;
 	unsigned i, nr_buckets;
 	u64 last_flushed_seq;
 	struct cache_set *c = ca->set;
 	struct journal *j = &c->journal;
 	int ret = 0;		/* Success */
-
-	closure_init_stack(&cl);
 
 	if (bch_journal_writing_to_device(ca)) {
 		/*
@@ -1892,9 +1932,7 @@ int bch_journal_move(struct cache *ca)
 		 * will call journal_next_bucket which notices that the
 		 * device is no longer writeable, and picks a new one.
 		 */
-		bch_journal_meta(j, &cl);
-		/* Wait for the meta-data write */
-		closure_sync(&cl);
+		bch_journal_meta(j);
 		BUG_ON(bch_journal_writing_to_device(ca));
 	}
 
@@ -1910,8 +1948,7 @@ int bch_journal_move(struct cache *ca)
 	 * we have newer journal entries in devices other than ca,
 	 * and wait for the meta data write to complete.
 	 */
-	bch_journal_meta(j, &cl);
-	closure_sync(&cl);
+	bch_journal_meta(j);
 
 	/*
 	 * Verify that we no longer need any of the journal entries in

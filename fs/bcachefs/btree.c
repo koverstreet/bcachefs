@@ -913,7 +913,7 @@ void bch_btree_node_flush_journal_entries(struct cache_set *c,
 		u64 seq = b->keys.set[i].data->journal_seq;
 
 		if (seq) {
-			bch_journal_push_seq(&c->journal, seq, cl);
+			bch_journal_flush_seq_async(&c->journal, seq, cl);
 			break;
 		}
 	}
@@ -1710,12 +1710,9 @@ static void bch_btree_set_root_initial(struct cache_set *c, struct btree *b)
  * is nothing new to be done.  This just guarantees that there is a
  * journal write.
  */
-static void bch_btree_set_root(struct cache_set *c, struct btree *b)
+static int bch_btree_set_root(struct cache_set *c, struct btree *b)
 {
 	struct btree *old;
-	struct closure cl;
-
-	closure_init_stack(&cl);
 
 	trace_bcache_btree_set_root(b);
 	BUG_ON(!b->written);
@@ -1743,8 +1740,7 @@ static void bch_btree_set_root(struct cache_set *c, struct btree *b)
 	 * Ensure new btree root is persistent (reachable via the
 	 * journal) before returning and the caller unlocking it:
 	 */
-	bch_journal_meta(&c->journal, &cl);
-	closure_sync(&cl);
+	return bch_journal_meta(&c->journal);
 }
 
 static struct btree *__bch_btree_node_alloc(struct cache_set *c,
@@ -2070,6 +2066,12 @@ int bch_btree_node_rewrite(struct btree *b, struct btree_iter *iter, bool wait)
 
 	bch_btree_node_write(n, &cl, NULL);
 	closure_sync(&cl);
+
+	if (bch_journal_error(&c->journal)) {
+		bch_btree_node_free_never_inserted(c, n);
+		six_unlock_intent(&n->lock);
+		return -EIO;
+	}
 
 	if (parent) {
 		ret = bch_btree_insert_node(parent, iter,
@@ -2585,13 +2587,21 @@ static int btree_split(struct btree *b, struct btree_iter *iter,
 	/* Wait on journal flush and btree node writes: */
 	closure_sync(&state->stack_cl);
 
+	/* Check for journal error after waiting on the journal flush: */
+	if (bch_journal_error(&c->journal))
+		goto err;
+
 	/* New nodes all written, now make them visible: */
 
 	if (n3) {
-		bch_btree_set_root(c, n3);
+		ret = bch_btree_set_root(c, n3);
+		if (ret)
+			goto err;
 	} else if (!parent) {
 		/* Root filled up but didn't need to be split */
-		bch_btree_set_root(c, n1);
+		ret = bch_btree_set_root(c, n1);
+		if (ret)
+			goto err;
 
 		/* Drop key we ended up not using: */
 		bch_keylist_init(&state->parent_keys,

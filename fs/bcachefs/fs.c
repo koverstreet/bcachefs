@@ -672,10 +672,7 @@ static int bch_fsync(struct file *file, loff_t start, loff_t end, int datasync)
 	struct inode *inode = file->f_mapping->host;
 	struct bch_inode_info *ei = to_bch_ei(inode);
 	struct cache_set *c = inode->i_sb->s_fs_info;
-	struct closure cl;
 	int ret;
-
-	closure_init_stack(&cl);
 
 	/*
 	 * We really just want to sync all the PageAppend pages:
@@ -706,10 +703,10 @@ static int bch_fsync(struct file *file, loff_t start, loff_t end, int datasync)
 out:
 	inode_unlock(inode);
 
-	bch_journal_push_seq(&c->journal, ei->journal_seq, &cl);
-	closure_sync(&cl);
+	if (ret)
+		return ret;
 
-	return ret;
+	return bch_journal_flush_seq(&c->journal, ei->journal_seq);
 }
 
 /* Flags that are appropriate for non-directories/regular files. */
@@ -1748,13 +1745,8 @@ static int bch_write_inode(struct inode *inode, struct writeback_control *wbc)
 	ret = __bch_write_inode(inode);
 	mutex_unlock(&ei->update_lock);
 
-	if (!ret && wbc->sync_mode == WB_SYNC_ALL) {
-		struct closure cl;
-
-		closure_init_stack(&cl);
-		bch_journal_push_seq(&c->journal, ei->journal_seq, &cl);
-		closure_sync(&cl);
-	}
+	if (!ret && wbc->sync_mode == WB_SYNC_ALL)
+		ret = bch_journal_flush_seq(&c->journal, ei->journal_seq);
 
 	return ret;
 }
@@ -1825,14 +1817,13 @@ static int bch_statfs(struct dentry *dentry, struct kstatfs *buf)
 static int bch_sync_fs(struct super_block *sb, int wait)
 {
 	struct cache_set *c = sb->s_fs_info;
-	struct closure cl;
 
-	closure_init_stack(&cl);
+	if (!wait) {
+		bch_journal_flush_async(&c->journal, NULL);
+		return 0;
+	}
 
-	/* XXX: should only push a journal write if it's dirty */
-	bch_journal_flush(&c->journal, wait ? &cl : NULL);
-	closure_sync(&cl);
-	return 0;
+	return bch_journal_flush(&c->journal);
 }
 
 static struct cache_set *bch_open_as_blockdevs(const char *_dev_name,

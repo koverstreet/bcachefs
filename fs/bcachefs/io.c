@@ -517,7 +517,7 @@ static void bch_write_done(struct closure *cl)
 	BUG_ON(!op->write_done);
 
 	if (!op->error && op->flush)
-		bch_journal_push_seq(&op->c->journal, *op_journal_seq(op), cl);
+		op->error = bch_journal_error(&op->c->journal);
 
 	if (op->replace_collision) {
 		trace_bcache_promote_collision(&op->replace_info.key.k);
@@ -553,10 +553,17 @@ static void bch_write_index(struct closure *cl)
 			op->open_buckets[i] = NULL;
 		}
 
-	if (op->write_done)
-		continue_at_nobarrier(cl, bch_write_done, NULL);
-	else
+	if (!op->write_done)
 		continue_at(cl, __bch_write, op->io_wq);
+
+	if (!op->error && op->flush) {
+		bch_journal_flush_seq_async(&op->c->journal,
+					    *op_journal_seq(op),
+					    cl);
+		continue_at(cl, bch_write_done, op->c->wq);
+	} else {
+		continue_at_nobarrier(cl, bch_write_done, NULL);
+	}
 }
 
 /**

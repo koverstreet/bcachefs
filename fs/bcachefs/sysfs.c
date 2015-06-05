@@ -247,9 +247,6 @@ STORE(__cached_dev)
 	unsigned v = size;
 	struct cache_set *c;
 	struct kobj_uevent_env *env;
-	struct closure cl;
-
-	closure_init_stack(&cl);
 
 #define d_strtoul(var)		sysfs_strtoul(var, dc->var)
 #define d_strtoul_nonzero(var)	sysfs_strtoul_clamp(var, dc->var, 1, INT_MAX)
@@ -315,9 +312,10 @@ STORE(__cached_dev)
 			return ret;
 
 		if (dc->disk.c)
-			bch_journal_push_seq(&dc->disk.c->journal,
-					     journal_seq, &cl);
-		closure_sync(&cl);
+			ret = bch_journal_flush_seq(&dc->disk.c->journal,
+						    journal_seq);
+		if (ret)
+			return ret;
 
 		env = kzalloc(sizeof(struct kobj_uevent_env), GFP_KERNEL);
 		if (!env)
@@ -424,9 +422,6 @@ STORE(__bch_blockdev_volume)
 {
 	struct bcache_device *d = container_of(kobj, struct bcache_device,
 					       kobj);
-	struct closure cl;
-
-	closure_init_stack(&cl);
 
 	sysfs_strtoul(data_csum,	d->data_csum);
 
@@ -453,8 +448,9 @@ STORE(__bch_blockdev_volume)
 		if (ret)
 			return ret;
 
-		bch_journal_push_seq(&d->c->journal, journal_seq, &cl);
-		closure_sync(&cl);
+		ret = bch_journal_flush_seq(&d->c->journal, journal_seq);
+		if (ret)
+			return ret;
 
 		set_capacity(d->disk, d->inode.v.i_inode.i_size >> 9);
 	}
@@ -470,11 +466,7 @@ STORE(__bch_blockdev_volume)
 
 		mutex_unlock(&d->inode_lock);
 
-		if (ret)
-			return ret;
-
-		bch_journal_push_seq(&d->c->journal, journal_seq, &cl);
-		closure_sync(&cl);
+		return ret ?: bch_journal_flush_seq(&d->c->journal, journal_seq);
 	}
 
 	if (attr == &sysfs_unregister) {
@@ -845,11 +837,7 @@ STORE(__bch_cache_set)
 	sysfs_strtoul(btree_flush_delay, c->btree_flush_delay);
 
 	if (attr == &sysfs_journal_flush) {
-		struct closure cl;
-
-		closure_init_stack(&cl);
-		bch_journal_meta(&c->journal, &cl);
-		closure_sync(&cl);
+		bch_journal_meta_async(&c->journal, NULL);
 
 		return size;
 	}

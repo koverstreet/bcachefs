@@ -659,11 +659,8 @@ static void __bch_cache_read_only(struct cache *ca);
 
 static void __bch_cache_set_read_only(struct cache_set *c)
 {
-	struct closure cl;
 	struct cache *ca;
 	unsigned i;
-
-	closure_init_stack(&cl);
 
 	c->tiering_pd.rate.rate = UINT_MAX;
 	bch_ratelimit_reset(&c->tiering_pd.rate);
@@ -681,8 +678,7 @@ static void __bch_cache_set_read_only(struct cache_set *c)
 	for_each_cache(ca, c, i)
 		bch_cache_allocator_stop(ca);
 
-	bch_journal_flush(&c->journal, &cl);
-	closure_sync(&cl);
+	bch_journal_flush(&c->journal);
 
 	cancel_delayed_work_sync(&c->journal.write_work);
 }
@@ -1137,14 +1133,11 @@ static const char *run_cache_set(struct cache_set *c)
 	const char *err = "cannot allocate memory";
 	struct cache_member_rcu *mi;
 	struct cache *ca;
-	struct closure cl;
 	unsigned i, id;
 	long now;
 
 	lockdep_assert_held(&bch_register_lock);
 	BUG_ON(test_bit(CACHE_SET_RUNNING, &c->flags));
-
-	closure_init_stack(&cl);
 
 	/* We don't want bch_cache_set_error() to free underneath us */
 	closure_get(&c->caching);
@@ -1244,6 +1237,9 @@ static const char *run_cache_set(struct cache_set *c)
 		bch_verify_inode_refs(c);
 	} else {
 		struct bkey_i_inode inode;
+		struct closure cl;
+
+		closure_init_stack(&cl);
 
 		pr_notice("invalidating existing data");
 
@@ -1272,8 +1268,10 @@ static const char *run_cache_set(struct cache_set *c)
 
 		err = "cannot allocate new btree root";
 		for (id = 0; id < BTREE_ID_NR; id++)
-			if (bch_btree_root_alloc(c, id, &cl))
+			if (bch_btree_root_alloc(c, id, &cl)) {
+				closure_sync(&cl);
 				goto err;
+			}
 
 		/* Wait for new btree roots to be written: */
 		closure_sync(&cl);
@@ -1289,8 +1287,9 @@ static const char *run_cache_set(struct cache_set *c)
 				     NULL, NULL, 0))
 			goto err;
 
-		bch_journal_meta(&c->journal, &cl);
-		closure_sync(&cl);
+		err = "error writing first journal entry";
+		if (bch_journal_meta(&c->journal))
+			goto err;
 
 		/* Mark cache set as initialized: */
 		SET_CACHE_SYNC(&c->sb, true);
@@ -1332,7 +1331,6 @@ static const char *run_cache_set(struct cache_set *c)
 
 	return NULL;
 err:
-	closure_sync(&cl);
 	bch_cache_set_unregister(c);
 	closure_put(&c->caching);
 	return err;
@@ -1663,9 +1661,7 @@ static void bch_cache_remove_work(struct work_struct *work)
 	char name[BDEVNAME_SIZE];
 	bool force = test_bit(CACHE_DEV_FORCE_REMOVE, &ca->flags);
 	unsigned dev = ca->sb.nr_this_dev;
-	struct closure cl;
 
-	closure_init_stack(&cl);
 	bdevname(ca->disk_sb.bdev, name);
 
 	/*
@@ -1714,8 +1710,7 @@ static void bch_cache_remove_work(struct work_struct *work)
 	c->journal.prio_buckets[dev] = 0;
 	spin_unlock(&c->journal.lock);
 
-	bch_journal_meta(&c->journal, &cl);
-	closure_sync(&cl);
+	bch_journal_meta(&c->journal);
 
 	/*
 	 * Stop device before removing it from the cache set's list of devices -

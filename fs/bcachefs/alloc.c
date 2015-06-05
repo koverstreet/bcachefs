@@ -234,13 +234,10 @@ static int prio_io(struct cache *ca, uint64_t bucket, int op)
 	return submit_bio_wait(ca->bio_prio);
 }
 
-static void bch_prio_write(struct cache *ca)
+static int bch_prio_write(struct cache *ca)
 {
 	struct cache_set *c = ca->set;
 	int i, ret;
-	struct closure cl;
-
-	closure_init_stack(&cl);
 
 	trace_bcache_prio_write_start(ca);
 
@@ -286,10 +283,12 @@ static void bch_prio_write(struct cache *ca)
 		ret = prio_io(ca, r, REQ_OP_WRITE);
 		if (bch_meta_write_fault("prio"))
 			ret = -EIO;
-		if (ret)
+		if (ret) {
 			bch_cache_error(ca,
 				"IO error %d writing prios to bucket %lu",
 					ret, r);
+			return ret;
+		}
 	}
 
 	spin_lock(&c->journal.lock);
@@ -299,8 +298,12 @@ static void bch_prio_write(struct cache *ca)
 					   c->journal.nr_prio_buckets);
 	spin_unlock(&c->journal.lock);
 
-	bch_journal_meta(&c->journal, &cl);
-	closure_sync(&cl);
+	ret = bch_journal_meta(&c->journal);
+	if (ret) {
+		__bch_cache_set_error(c,
+			"IO error %d journalling new prios", ret);
+		return ret;
+	}
 
 	/*
 	 * Don't want the old priorities to get garbage collected until after we
@@ -320,6 +323,7 @@ static void bch_prio_write(struct cache *ca)
 	spin_unlock(&ca->prio_buckets_lock);
 
 	trace_bcache_prio_write_end(ca);
+	return 0;
 }
 
 int bch_prio_read(struct cache *ca)
@@ -764,6 +768,7 @@ static int bch_allocator_thread(void *arg)
 {
 	struct cache *ca = arg;
 	struct cache_set *c = ca->set;
+	int ret;
 
 	while (1) {
 		/*
@@ -830,7 +835,10 @@ static int bch_allocator_thread(void *arg)
 		 * free_inc is full of newly-invalidated buckets, must write out
 		 * prios and gens before they can be re-used
 		 */
-		bch_prio_write(ca);
+		ret = bch_prio_write(ca);
+		if (ret) {
+			/* XXX: need to stop the allocator thread */
+		}
 	}
 out:
 	/*

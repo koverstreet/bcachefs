@@ -201,9 +201,18 @@ void bch_journal_res_put(struct journal *, struct journal_res *);
 void bch_journal_res_get(struct journal *, struct journal_res *,
 			 unsigned, unsigned);
 
-void bch_journal_push_seq(struct journal *, u64, struct closure *);
-void bch_journal_meta(struct journal *, struct closure *);
-void bch_journal_flush(struct journal *, struct closure *);
+void bch_journal_flush_seq_async(struct journal *, u64, struct closure *);
+void bch_journal_flush_async(struct journal *, struct closure *);
+void bch_journal_meta_async(struct journal *, struct closure *);
+
+int bch_journal_flush_seq(struct journal *, u64);
+int bch_journal_flush(struct journal *);
+int bch_journal_meta(struct journal *);
+
+static inline int bch_journal_error(struct journal *j)
+{
+	return test_bit(JOURNAL_ERROR, &j->flags) ? -EIO : 0;
+}
 
 /*
  * Amount of space that will be taken up by some keys in the journal (i.e.
