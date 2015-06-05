@@ -1261,6 +1261,7 @@ static const char *run_cache_set(struct cache_set *c)
 		 * set up the journal.pin FIFO and journal.cur pointer:
 		 */
 		bch_journal_start(c);
+		bch_journal_set_replay_done(&c->journal);
 
 		for_each_cache(ca, c, i)
 			if (CACHE_STATE(&ca->mi) == CACHE_ACTIVE &&
@@ -1274,16 +1275,7 @@ static const char *run_cache_set(struct cache_set *c)
 			if (bch_btree_root_alloc(c, id, &cl))
 				goto err;
 
-		/*
-		 * We don't want to write the first journal entry until
-		 * everything is set up - fortunately journal entries won't be
-		 * written until the SET_CACHE_SYNC() here:
-		 */
-		SET_CACHE_SYNC(&c->sb, true);
-		bch_journal_set_replay_done(&c->journal);
-
-		/* XXX: necessary? */
-		bch_journal_meta(&c->journal, &cl);
+		/* Wait for new btree roots to be written: */
 		closure_sync(&cl);
 
 		bkey_inode_init(&inode.k_i);
@@ -1294,14 +1286,18 @@ static const char *run_cache_set(struct cache_set *c)
 		err = "error creating root directory";
 		if (bch_btree_insert(c, BTREE_ID_INODES,
 				     &keylist_single(&inode.k_i),
-				     NULL, &cl, NULL, 0))
+				     NULL, NULL, NULL, 0))
 			goto err;
+
+		bch_journal_meta(&c->journal, &cl);
+		closure_sync(&cl);
+
+		/* Mark cache set as initialized: */
+		SET_CACHE_SYNC(&c->sb, true);
 	}
 
 	bch_prio_timer_start(c, READ);
 	bch_prio_timer_start(c, WRITE);
-
-	closure_sync(&cl);
 
 	if (c->opts.read_only) {
 		bch_cache_set_read_only(c);

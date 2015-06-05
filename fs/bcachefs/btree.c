@@ -1662,39 +1662,8 @@ void bch_btree_node_free(struct cache_set *c, struct btree *b)
 			  false, true);
 }
 
-/**
- * bch_btree_set_root - update the root in memory and on disk
- *
- * To ensure forward progress, the current task must not be holding any
- * btree node write locks. However, you must hold an intent lock on the
- * old root.
- *
- * Frees the old root.
- *
- * Note: This allocates a journal entry but doesn't add any keys to
- * it.  All the btree roots are part of every journal write, so there
- * is nothing new to be done.  This just guarantees that there is a
- * journal write.
- */
-static void bch_btree_set_root(struct cache_set *c, struct btree *b)
+static void __bch_btree_set_root(struct cache_set *c, struct btree *b)
 {
-	struct journal_res res;
-	struct btree *old;
-
-	memset(&res, 0, sizeof(res));
-
-	trace_bcache_btree_set_root(b);
-	BUG_ON(!b->written);
-
-	old = btree_node_root(b);
-	if (old) {
-		/*
-		 * Ensure no one is using the old root while we switch to the
-		 * new root:
-		 */
-		six_lock_write(&old->lock);
-	}
-
 	/* Root nodes cannot be reaped */
 	mutex_lock(&c->btree_cache_lock);
 	list_del_init(&b->list);
@@ -1716,28 +1685,66 @@ static void bch_btree_set_root(struct cache_set *c, struct btree *b)
 	spin_unlock(&c->btree_root_lock);
 
 	bch_recalc_btree_reserve(c);
+}
 
-	if (old) {
-		struct closure cl;
+/*
+ * Only for cache set bringup, when first reading the btree roots or allocating
+ * btree roots when initializing a new cache set:
+ */
+static void bch_btree_set_root_initial(struct cache_set *c, struct btree *b)
+{
+	BUG_ON(btree_node_root(b));
 
-		closure_init_stack(&cl);
+	__bch_btree_set_root(c, b);
+}
 
-		/*
-		 * Unlock old root after new root is visible:
-		 *
-		 * The new root isn't persistent, but that's ok: we still have
-		 * an intent lock on the new root, and any updates that would
-		 * depend on the new root would have to update the new root.
-		 */
-		six_unlock_write(&old->lock);
+/**
+ * bch_btree_set_root - update the root in memory and on disk
+ *
+ * To ensure forward progress, the current task must not be holding any
+ * btree node write locks. However, you must hold an intent lock on the
+ * old root.
+ *
+ * Note: This allocates a journal entry but doesn't add any keys to
+ * it.  All the btree roots are part of every journal write, so there
+ * is nothing new to be done.  This just guarantees that there is a
+ * journal write.
+ */
+static void bch_btree_set_root(struct cache_set *c, struct btree *b)
+{
+	struct btree *old;
+	struct closure cl;
 
-		/*
-		 * Ensure new btree root is persistent (reachable via the
-		 * journal) before returning and the caller unlocking it:
-		 */
-		bch_journal_meta(&c->journal, &cl);
-		closure_sync(&cl);
-	}
+	closure_init_stack(&cl);
+
+	trace_bcache_btree_set_root(b);
+	BUG_ON(!b->written);
+
+	old = btree_node_root(b);
+
+	/*
+	 * Ensure no one is using the old root while we switch to the
+	 * new root:
+	 */
+	six_lock_write(&old->lock);
+
+	__bch_btree_set_root(c, b);
+
+	/*
+	 * Unlock old root after new root is visible:
+	 *
+	 * The new root isn't persistent, but that's ok: we still have
+	 * an intent lock on the new root, and any updates that would
+	 * depend on the new root would have to update the new root.
+	 */
+	six_unlock_write(&old->lock);
+
+	/*
+	 * Ensure new btree root is persistent (reachable via the
+	 * journal) before returning and the caller unlocking it:
+	 */
+	bch_journal_meta(&c->journal, &cl);
+	closure_sync(&cl);
 }
 
 static struct btree *__bch_btree_node_alloc(struct cache_set *c,
@@ -1991,7 +1998,7 @@ int bch_btree_root_alloc(struct cache_set *c, enum btree_id id,
 
 	bch_btree_node_write(b, writes, NULL);
 
-	bch_btree_set_root(c, b);
+	bch_btree_set_root_initial(c, b);
 	btree_open_bucket_put(c, b);
 	six_unlock_intent(&b->lock);
 
@@ -2022,7 +2029,7 @@ int bch_btree_root_read(struct cache_set *c, enum btree_id id,
 		return -EIO;
 	}
 
-	bch_btree_set_root(c, b);
+	bch_btree_set_root_initial(c, b);
 	six_unlock_intent(&b->lock);
 
 	return 0;
