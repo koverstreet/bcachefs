@@ -118,7 +118,7 @@ static void write_dirty_finish(struct closure *cl)
 
 		ret = bch_btree_insert(dc->disk.c, BTREE_ID_EXTENTS,
 				       &keylist_single(&tmp.k),
-				       &io->replace, NULL, NULL, 0);
+				       &io->replace, NULL, 0);
 		if (io->replace.successes == 0)
 			trace_bcache_writeback_collision(&io->replace.key.k);
 

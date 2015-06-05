@@ -40,7 +40,7 @@ struct bch_write_op {
 	short			error;
 
 	union {
-		u8		flags;
+		u16		flags;
 
 	struct {
 		/* Return -ENOSPC if cache set is full? */
@@ -58,6 +58,8 @@ struct bch_write_op {
 
 		/* Set on completion, if cmpxchg index update failed */
 		unsigned	replace_collision:1;
+		/* Are we using the prt member of journal_seq union? */
+		unsigned	journal_seq_ptr:1;
 		/* Internal */
 		unsigned	write_done:1;
 	};
@@ -73,7 +75,14 @@ struct bch_write_op {
 	};
 	};
 
-	u64			*journal_seq;
+	/*
+	 * If caller wants to flush but hasn't passed us a journal_seq ptr, we
+	 * still need to stash the journal_seq somewhere:
+	 */
+	union {
+		u64			*journal_seq_p;
+		u64			journal_seq;
+	};
 
 	struct keylist		insert_keys;
 	BKEY_PADDED(insert_key);
@@ -91,7 +100,7 @@ enum bch_write_flags {
 
 void bch_write_op_init(struct bch_write_op *, struct cache_set *,
 		       struct bch_write_bio *, struct write_point *,
-		       struct bkey_s_c, struct bkey_s_c, unsigned);
+		       struct bkey_s_c, struct bkey_s_c, u64 *, unsigned);
 void bch_write(struct closure *);
 
 struct cache_promote_op;

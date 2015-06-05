@@ -15,6 +15,7 @@
 #include "extents.h"
 #include "gc.h"
 #include "io.h"
+#include "journal.h"
 #include "keylist.h"
 #include "notify.h"
 #include "stats.h"
@@ -504,19 +505,19 @@ copy:
 
 static void __bch_write(struct closure *);
 
+static inline u64 *op_journal_seq(struct bch_write_op *op)
+{
+	return op->journal_seq_ptr ? op->journal_seq_p : &op->journal_seq;
+}
+
 static void bch_write_done(struct closure *cl)
 {
 	struct bch_write_op *op = container_of(cl, struct bch_write_op, cl);
-	unsigned i;
 
-	for (i = 0; i < ARRAY_SIZE(op->open_buckets); i++)
-		if (op->open_buckets[i]) {
-			bch_open_bucket_put(op->c, op->open_buckets[i]);
-			op->open_buckets[i] = NULL;
-		}
+	BUG_ON(!op->write_done);
 
-	if (!op->write_done)
-		continue_at(cl, __bch_write, op->io_wq);
+	if (!op->error && op->flush)
+		bch_journal_push_seq(&op->c->journal, *op_journal_seq(op), cl);
 
 	if (op->replace_collision) {
 		trace_bcache_promote_collision(&op->replace_info.key.k);
@@ -534,18 +535,28 @@ static void bch_write_done(struct closure *cl)
 static void bch_write_index(struct closure *cl)
 {
 	struct bch_write_op *op = container_of(cl, struct bch_write_op, cl);
+	unsigned i;
+	int ret;
 
-	int ret = bch_btree_insert(op->c, BTREE_ID_EXTENTS, &op->insert_keys,
-				   op->replace ? &op->replace_info : NULL,
-				   op->flush ? &op->cl : NULL,
-				   op->journal_seq, BTREE_INSERT_NOFAIL);
+	ret = bch_btree_insert(op->c, BTREE_ID_EXTENTS, &op->insert_keys,
+			       op->replace ? &op->replace_info : NULL,
+			       op_journal_seq(op), BTREE_INSERT_NOFAIL);
 	if (ret) {
 		__bcache_io_error(op->c, "btree IO error");
 		op->error = ret;
 	} else if (op->replace && op->replace_info.successes == 0)
 		op->replace_collision = true;
 
-	continue_at(cl, bch_write_done, op->c->wq);
+	for (i = 0; i < ARRAY_SIZE(op->open_buckets); i++)
+		if (op->open_buckets[i]) {
+			bch_open_bucket_put(op->c, op->open_buckets[i]);
+			op->open_buckets[i] = NULL;
+		}
+
+	if (op->write_done)
+		continue_at_nobarrier(cl, bch_write_done, NULL);
+	else
+		continue_at(cl, __bch_write, op->io_wq);
 }
 
 /**
@@ -1126,7 +1137,7 @@ void bch_write_op_init(struct bch_write_op *op, struct cache_set *c,
 		       struct bch_write_bio *bio, struct write_point *wp,
 		       struct bkey_s_c insert_key,
 		       struct bkey_s_c replace_key,
-		       unsigned flags)
+		       u64 *journal_seq, unsigned flags)
 {
 	if (!wp) {
 		unsigned wp_idx = hash_long((unsigned long) current,
@@ -1147,7 +1158,12 @@ void bch_write_op_init(struct bch_write_op *op, struct cache_set *c,
 	op->cached	= (flags & BCH_WRITE_CACHED) != 0;
 	op->flush	= (flags & BCH_WRITE_FLUSH) != 0;
 	op->wp		= wp;
-	op->journal_seq	= NULL;
+	op->journal_seq_ptr = journal_seq != NULL;
+
+	if (op->journal_seq_ptr)
+		op->journal_seq_p = journal_seq;
+	else
+		op->journal_seq = 0;
 
 	bch_keylist_init(&op->insert_keys,
 			 op->inline_keys,
@@ -1625,7 +1641,7 @@ void bch_read_extent(struct cache_set *c, struct bio *orig,
 		bch_write_op_init(&promote_op->iop, c,
 				  &promote_op->bio,
 				  &c->promote_write_point,
-				  k, k,
+				  k, k, NULL,
 				  BCH_WRITE_CHECK_ENOSPC|
 				  BCH_WRITE_ALLOC_NOWAIT);
 

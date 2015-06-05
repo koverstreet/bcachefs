@@ -2870,14 +2870,10 @@ int bch_btree_insert_check_key(struct btree_iter *iter,
  */
 int bch_btree_insert(struct cache_set *c, enum btree_id id,
 		     struct keylist *keys, struct bch_replace_info *replace,
-		     struct closure *persistent, u64 *journal_seq, int flags)
+		     u64 *journal_seq, int flags)
 {
 	struct btree_iter iter;
-	u64 jseq = 0;
 	int ret, ret2;
-
-	if (!journal_seq)
-		journal_seq = &jseq;
 
 	bch_btree_iter_init_intent(&iter, c, id,
 				   bkey_start_pos(&bch_keylist_front(keys)->k));
@@ -2890,9 +2886,6 @@ int bch_btree_insert(struct cache_set *c, enum btree_id id,
 				  journal_seq, flags);
 out:	ret2 = bch_btree_iter_unlock(&iter);
 
-	if (persistent)
-		bch_journal_push_seq(&c->journal, *journal_seq, persistent);
-
 	return ret ?: ret2;
 }
 
@@ -2900,16 +2893,12 @@ out:	ret2 = bch_btree_iter_unlock(&iter);
  * bch_btree_update - like bch_btree_insert(), but asserts that we're
  * overwriting an existing key
  */
-int bch_btree_update(struct cache_set *c, enum btree_id id, struct bkey_i *k,
-		     struct closure *persistent, u64 *journal_seq)
+int bch_btree_update(struct cache_set *c, enum btree_id id,
+		     struct bkey_i *k, u64 *journal_seq)
 {
 	struct btree_iter iter;
 	struct bkey_s_c u;
-	u64 jseq = 0;
 	int ret, ret2;
-
-	if (!journal_seq)
-		journal_seq = &jseq;
 
 	EBUG_ON(id == BTREE_ID_EXTENTS);
 
@@ -2925,9 +2914,6 @@ int bch_btree_update(struct cache_set *c, enum btree_id id, struct bkey_i *k,
 	ret = bch_btree_insert_at(&iter, &keylist_single(k), NULL,
 				  journal_seq, 0);
 out:	ret2 = bch_btree_iter_unlock(&iter);
-
-	if (persistent)
-		bch_journal_push_seq(&c->journal, *journal_seq, persistent);
 
 	return ret ?: ret2;
 }

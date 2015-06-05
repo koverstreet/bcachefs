@@ -11,10 +11,9 @@ int bch_inode_truncate(struct cache_set *, u64, u64);
 int bch_inode_rm(struct cache_set *, u64);
 
 static inline int bch_inode_update(struct cache_set *c, struct bkey_i *inode,
-				   struct closure *cl, u64 *journal_seq)
+				   u64 *journal_seq)
 {
-	return bch_btree_update(c, BTREE_ID_INODES, inode,
-				cl, journal_seq);
+	return bch_btree_update(c, BTREE_ID_INODES, inode, journal_seq);
 }
 
 int bch_inode_find_by_inum(struct cache_set *, u64, struct bkey_i_inode *);

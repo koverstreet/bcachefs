@@ -113,7 +113,7 @@ static int __bch_write_inode(struct inode *inode)
 	bi->i_mtime	= timespec_to_ns(&inode->i_mtime);
 	bi->i_ctime	= timespec_to_ns(&inode->i_ctime);
 
-	return bch_inode_update(c, &ei->inode.k_i, NULL, &ei->journal_seq);
+	return bch_inode_update(c, &ei->inode.k_i, &ei->journal_seq);
 }
 
 static struct inode *bch_vfs_inode_get(struct super_block *sb, u64 inum)
@@ -1107,8 +1107,8 @@ do_io:
 		closure_init(&w->io->cl, NULL);
 		bch_write_op_init(&w->io->op, w->c, &w->io->bio, NULL,
 				  bkey_to_s_c(&KEY(w->inum, 0, 0)),
-				  bkey_s_c_null, 0);
-		w->io->op.journal_seq = &ei->journal_seq;
+				  bkey_s_c_null,
+				  &ei->journal_seq, 0);
 	}
 
 	if (bch_bio_add_page(&w->io->bio.bio.bio, page)) {
@@ -1568,8 +1568,8 @@ static int bch_direct_IO_write(struct cache_set *c, struct kiocb *req,
 				  bkey_to_s_c(&KEY(inum,
 						   bio_end_sector(bio),
 						   bio_sectors(bio))),
-				  bkey_s_c_null, flags);
-		op->iop.journal_seq = &ei->journal_seq;
+				  bkey_s_c_null,
+				  &ei->journal_seq, flags);
 
 		task_io_account_write(bio->bi_iter.bi_size);
 

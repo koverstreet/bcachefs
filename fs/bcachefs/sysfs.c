@@ -286,6 +286,9 @@ STORE(__cached_dev)
 	}
 
 	if (attr == &sysfs_label) {
+		u64 journal_seq = 0;
+		int ret = 0;
+
 		if (size > SB_LABEL_SIZE)
 			return -EINVAL;
 
@@ -303,11 +306,17 @@ STORE(__cached_dev)
 		bch_write_bdev_super(dc, NULL);
 
 		if (dc->disk.c)
-			bch_inode_update(dc->disk.c, &dc->disk.inode.k_i,
-					 &cl, NULL);
+			ret = bch_inode_update(dc->disk.c, &dc->disk.inode.k_i,
+					       &journal_seq);
 
 		mutex_unlock(&dc->disk.inode_lock);
 
+		if (ret)
+			return ret;
+
+		if (dc->disk.c)
+			bch_journal_push_seq(&dc->disk.c->journal,
+					     journal_seq, &cl);
 		closure_sync(&cl);
 
 		env = kzalloc(sizeof(struct kobj_uevent_env), GFP_KERNEL);
@@ -422,29 +431,49 @@ STORE(__bch_blockdev_volume)
 	sysfs_strtoul(data_csum,	d->data_csum);
 
 	if (attr == &sysfs_size) {
+		u64 journal_seq = 0;
 		u64 v = strtoi_h_or_return(buf);
+		int ret;
 
 		mutex_lock(&d->inode_lock);
 
-		if (v < d->inode.v.i_inode.i_size)
-			bch_inode_truncate(d->c, d->inode.k.p.inode, v >> 9);
+		if (v < d->inode.v.i_inode.i_size) {
+			ret = bch_inode_truncate(d->c, d->inode.k.p.inode,
+						 v >> 9);
+			if (ret) {
+				mutex_unlock(&d->inode_lock);
+				return ret;
+			}
+		}
 		d->inode.v.i_inode.i_size = v;
-		bch_inode_update(d->c, &d->inode.k_i, &cl, NULL);
-		set_capacity(d->disk, d->inode.v.i_inode.i_size >> 9);
+		ret = bch_inode_update(d->c, &d->inode.k_i, &journal_seq);
 
 		mutex_unlock(&d->inode_lock);
 
+		if (ret)
+			return ret;
+
+		bch_journal_push_seq(&d->c->journal, journal_seq, &cl);
 		closure_sync(&cl);
+
+		set_capacity(d->disk, d->inode.v.i_inode.i_size >> 9);
 	}
 
 	if (attr == &sysfs_label) {
+		u64 journal_seq = 0;
+		int ret;
+
 		mutex_lock(&d->inode_lock);
 
 		memcpy(d->inode.v.i_label, buf, SB_LABEL_SIZE);
-		bch_inode_update(d->c, &d->inode.k_i, &cl, NULL);
+		ret = bch_inode_update(d->c, &d->inode.k_i, &journal_seq);
 
 		mutex_unlock(&d->inode_lock);
 
+		if (ret)
+			return ret;
+
+		bch_journal_push_seq(&d->c->journal, journal_seq, &cl);
 		closure_sync(&cl);
 	}
 
