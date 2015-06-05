@@ -138,8 +138,8 @@ static int bch_gc_btree(struct cache_set *c, enum btree_id btree_id)
 
 			if (bkey_cmp(b->data->max_key, POS_MAX))
 				next_min =
-					__bch_btree_iter_advance_pos(&iter,
-							b->data->max_key);
+					btree_type_successor(iter.btree_id,
+							     b->data->max_key);
 		}
 
 		bch_verify_btree_nr_keys(&b->keys);
@@ -406,7 +406,7 @@ static void bch_coalesce_nodes(struct btree *old_nodes[GC_MERGE_NODES],
 
 	for (i = 0; i < nr_old_nodes; i++) {
 		closure_sync(&cl);
-		bch_btree_push_journal_seq(c, old_nodes[i], &cl);
+		bch_btree_node_flush_journal_entries(c, old_nodes[i], &cl);
 	}
 
 	/* Repack everything with @new_format and sort down to one bset */
@@ -447,8 +447,8 @@ static void bch_coalesce_nodes(struct btree *old_nodes[GC_MERGE_NODES],
 			       s2->u64s * sizeof(u64));
 			s1->u64s += s2->u64s;
 
-			bch_btree_node_free_never_used(c, n2);
 			six_unlock_write(&n2->lock);
+			bch_btree_node_free_never_inserted(c, n2);
 			six_unlock_intent(&n2->lock);
 
 			memmove(new_nodes + i - 1,
@@ -461,8 +461,8 @@ static void bch_coalesce_nodes(struct btree *old_nodes[GC_MERGE_NODES],
 				bkey_unpack_key(&n1->keys.format, last).p;
 
 			n2->data->min_key =
-				__bch_btree_iter_advance_pos(iter,
-						n1->data->max_key);
+				btree_type_successor(iter->btree_id,
+						     n1->data->max_key);
 
 			memcpy(bset_bkey_last(s1),
 			       s2->start,

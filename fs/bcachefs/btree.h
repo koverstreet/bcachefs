@@ -315,13 +315,13 @@ void bch_btree_iter_set_pos(struct btree_iter *, struct bpos);
 void bch_btree_iter_advance_pos(struct btree_iter *);
 bool bch_btree_iter_upgrade(struct btree_iter *);
 
-static inline struct bpos __bch_btree_iter_advance_pos(struct btree_iter *iter,
-						       struct bpos pos)
+static inline struct bpos btree_type_successor(enum btree_id id,
+					       struct bpos pos)
 {
-	if (iter->btree_id == BTREE_ID_INODES) {
+	if (id == BTREE_ID_INODES) {
 		pos.inode++;
 		pos.offset = 0;
-	} else if (iter->btree_id != BTREE_ID_EXTENTS) {
+	} else if (id != BTREE_ID_EXTENTS) {
 		pos = bkey_successor(pos);
 	}
 
@@ -396,15 +396,15 @@ static inline void bch_btree_iter_cond_resched(struct btree_iter *iter)
 #define btree_node_root(_b)	((_b)->c->btree_roots[(_b)->btree_id])
 
 void bch_btree_node_free(struct cache_set *, struct btree *);
-void bch_btree_node_free_never_used(struct cache_set *, struct btree *);
+void bch_btree_node_free_never_inserted(struct cache_set *, struct btree *);
 
 void bch_btree_node_write(struct btree *, struct closure *,
 			  struct btree_iter *);
 void bch_btree_node_read_done(struct cache_set *, struct btree *,
 			      struct cache *, const struct bch_extent_ptr *);
 void bch_btree_flush(struct cache_set *);
-void bch_btree_push_journal_seq(struct cache_set *, struct btree *,
-				struct closure *);
+void bch_btree_node_flush_journal_entries(struct cache_set *, struct btree *,
+					  struct closure *);
 
 /**
  * btree_node_format_fits - check if we could rewrite node with a new format

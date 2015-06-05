@@ -1221,7 +1221,7 @@ void bch_btree_node_iter_push(struct btree_node_iter *iter,
  */
 void bch_btree_node_iter_init(struct btree_node_iter *iter,
 			      struct btree_keys *b, struct bpos search,
-			      bool is_for_extents)
+			      bool strictly_greater)
 {
 	struct bset_tree *t;
 	struct bkey_packed p, *packed_search, *lossy_packed_search;
@@ -1254,7 +1254,7 @@ void bch_btree_node_iter_init(struct btree_node_iter *iter,
 							 lossy_packed_search),
 					 bset_bkey_last(t->data));
 
-	if (is_for_extents) {
+	if (strictly_greater) {
 		struct bkey_packed *m;
 
 		while ((m = bch_btree_node_iter_peek_all(iter, b)) &&
