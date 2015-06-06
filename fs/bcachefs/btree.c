@@ -2804,6 +2804,7 @@ int bch_btree_insert_node(struct btree *b,
  * Return values:
  * -EINTR: locking changed, this function should be called again.
  * -EROFS: cache set read only
+ * -EIO: journal or btree node IO error
  */
 int bch_btree_insert_at(struct btree_iter *iter,
 			struct keylist *insert_keys,
@@ -2837,9 +2838,12 @@ int bch_btree_insert_at(struct btree_iter *iter,
 		 * -EAGAIN means we have to drop locks and wait on
 		 *  mca_cannibalize_lock - btree_iter_unlock() does this
 		 */
-		if (ret == -EAGAIN)
+		if (ret == -EAGAIN) {
 			bch_btree_iter_unlock(iter);
-		else if (ret && ret != -EINTR)
+			ret = -EINTR;
+		}
+
+		if (ret && ret != -EINTR)
 			break;
 traverse:
 		/*
@@ -2938,16 +2942,14 @@ int bch_btree_update(struct cache_set *c, enum btree_id id,
 
 	bch_btree_iter_init_intent(&iter, c, id, k->k.p);
 
-	ret = bch_btree_iter_traverse(&iter);
-	if (unlikely(ret))
-		goto out;
-
 	u = bch_btree_iter_peek_with_holes(&iter);
-	BUG_ON(!u.k || bkey_deleted(u.k));
+
+	if (!u.k || bkey_deleted(u.k))
+		return -ENOENT;
 
 	ret = bch_btree_insert_at(&iter, &keylist_single(k), NULL,
 				  journal_seq, 0);
-out:	ret2 = bch_btree_iter_unlock(&iter);
+	ret2 = bch_btree_iter_unlock(&iter);
 
 	return ret ?: ret2;
 }

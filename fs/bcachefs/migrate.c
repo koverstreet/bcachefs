@@ -563,7 +563,7 @@ int bch_flag_data_bad(struct cache *ca)
 		if (bkey_extent_is_data(k.k)) {
 			ret = bch_flag_key_bad(&iter, ca,
 					       bkey_s_c_to_extent(k));
-			if (ret == -EINTR || ret == -EAGAIN)
+			if (ret == -EINTR)
 				continue;
 
 			if (ret)

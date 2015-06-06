@@ -130,7 +130,7 @@ again:
 						  NULL, NULL,
 						  BTREE_INSERT_ATOMIC);
 
-			if (ret == -EINTR || ret == -EAGAIN)
+			if (ret == -EINTR)
 				continue;
 
 			bch_btree_iter_unlock(&iter);

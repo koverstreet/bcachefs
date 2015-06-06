@@ -275,7 +275,7 @@ int bch_xattr_set(struct inode *inode, const char *name,
 						  insert_flags);
 		}
 
-		if (ret != -EINTR && ret != -EAGAIN)
+		if (ret != -EINTR)
 			break;
 	}
 out:

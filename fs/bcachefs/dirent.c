@@ -187,7 +187,7 @@ insert:
 			ret = bch_btree_insert_at(&iter, &keys, NULL,
 						  journal_seq,
 						  BTREE_INSERT_ATOMIC);
-			if (ret != -EINTR && ret != -EAGAIN)
+			if (ret != -EINTR)
 				break;
 		} else {
 			/* collision */
@@ -247,7 +247,7 @@ int bch_dirent_delete(struct cache_set *c, u64 dir_inum,
 						NULL, NULL,
 						BTREE_INSERT_NOFAIL|
 						BTREE_INSERT_ATOMIC);
-				if (ret == -EINTR || ret == -EAGAIN)
+				if (ret == -EINTR)
 					continue;
 			}
 			break;

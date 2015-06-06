@@ -150,7 +150,7 @@ static int bch_gc_walk_inodes(struct cache_set *c, u64 pos, struct nlink *links)
 			ret = bch_gc_do_inode(c, &iter,
 					      bkey_s_c_to_inode(k),
 					      links[i]);
-			if (ret == -EAGAIN || ret == -EINTR)
+			if (ret == -EINTR)
 				continue;
 			if (ret)
 				goto out;

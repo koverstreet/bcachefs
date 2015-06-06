@@ -356,7 +356,7 @@ static int cached_dev_cache_miss(struct btree_iter *iter, struct search *s,
 			    sectors);
 
 	ret = bch_btree_insert_check_key(iter, &replace.key);
-	if (ret == -EINTR || ret == -EAGAIN)
+	if (ret == -EINTR)
 		return ret;
 
 	miss = bio_next_split(bio, sectors, GFP_NOIO, &s->d->bio_split);
