@@ -2,6 +2,7 @@
 #include "bcache.h"
 #include "blockdev.h"
 #include "btree.h"
+#include "error.h"
 #include "inode.h"
 #include "request.h"
 #include "super.h"
@@ -719,12 +720,8 @@ int bch_blockdev_volumes_start(struct cache_set *c)
 		inode = bkey_s_c_to_inode_blockdev(k);
 
 		ret = blockdev_volume_run(c, inode);
-		if (ret) {
-			bch_cache_set_error(c,
-				"can't bring up blockdev volumes: %i",
-				ret);
+		if (ret)
 			break;
-		}
 	}
 	bch_btree_iter_unlock(&iter);
 

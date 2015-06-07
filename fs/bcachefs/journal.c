@@ -8,6 +8,7 @@
 #include "buckets.h"
 #include "btree.h"
 #include "debug.h"
+#include "error.h"
 #include "extents.h"
 #include "gc.h"
 #include "io.h"
@@ -98,11 +99,11 @@ struct bkey_i *bch_journal_find_btree_root(struct cache_set *c, struct jset *j,
 	k = jkeys->start;
 	*level = jkeys->level;
 
-	if (!jkeys->u64s || jkeys->u64s != k->k.u64s ||
-	    bkey_invalid(c, BKEY_TYPE_BTREE, bkey_i_to_s_c(k))) {
-		bch_cache_set_error(c, "invalid btree root in journal");
+	if (cache_set_inconsistent_on(!jkeys->u64s ||
+			jkeys->u64s != k->k.u64s ||
+			bkey_invalid(c, BKEY_TYPE_BTREE, bkey_i_to_s_c(k)),
+			c, "invalid btree root in journal"))
 		return NULL;
-	}
 
 	*level = jkeys->level;
 	return k;
@@ -217,7 +218,7 @@ static int __bch_journal_seq_blacklisted(struct cache_set *c, u64 seq,
 	if (seq <= j->seq)
 		return 0;
 
-	cache_set_err_on(seq > j->seq + 1, c,
+	cache_set_inconsistent_on(seq > j->seq + 1, c,
 			 "bset journal seq too far in the future: %llu > %llu",
 			 seq, j->seq);
 
@@ -357,38 +358,33 @@ static enum {
 
 	got = j->version;
 	expect = BCACHE_JSET_VERSION;
-	if (got != expect) {
-		__bch_cache_error(ca,
-			"bad journal version (got %llu expect %llu) sector %lluu",
-			got, expect, sector);
-		return JOURNAL_ENTRY_BAD;
-	}
 
-	if (bytes > bucket_sectors_left << 9 ||
-	    bytes > PAGE_SIZE << JSET_BITS) {
-		__bch_cache_error(ca,
-			"journal entry too big (%zu bytes), sector %lluu",
-			bytes, sector);
+	if (cache_inconsistent_on(got != expect, ca,
+			"bad journal version (got %llu expect %llu) sector %lluu",
+			got, expect, sector))
 		return JOURNAL_ENTRY_BAD;
-	}
+
+	if (cache_inconsistent_on(bytes > bucket_sectors_left << 9 ||
+				  bytes > PAGE_SIZE << JSET_BITS, ca,
+			"journal entry too big (%zu bytes), sector %lluu",
+			bytes, sector))
+		return JOURNAL_ENTRY_BAD;
 
 	if (bytes > sectors_read << 9)
 		return JOURNAL_ENTRY_REREAD;
 
+	/* XXX: retry on checksum error */
+
 	got = j->csum;
 	expect = csum_set(j, JSET_CSUM_TYPE(j));
-	if (got != expect) {
-		__bch_cache_error(ca,
+	if (cache_inconsistent_on(got != expect, ca,
 			"journal checksum bad (got %llu expect %llu), sector %lluu",
-			got, expect, sector);
+			got, expect, sector))
 		return JOURNAL_ENTRY_BAD;
-	}
 
-	if (j->last_seq > j->seq) {
-		__bch_cache_error(ca,
-				  "invalid journal entry: last_seq > seq");
+	if (cache_inconsistent_on(j->last_seq > j->seq, ca,
+				  "invalid journal entry: last_seq > seq"))
 		return JOURNAL_ENTRY_BAD;
-	}
 
 	return JOURNAL_ENTRY_OK;
 }
@@ -427,12 +423,12 @@ reread:
 		bch_bio_map(bio, data);
 
 		ret = submit_bio_wait(bio);
-		if (bch_meta_read_fault("journal"))
+
+		if (cache_fatal_io_err_on(ret, ca,
+					  "journal read from sector %llu",
+					  sector + bucket_offset) ||
+		    bch_meta_read_fault("journal")) {
 			ret = -EIO;
-		if (ret) {
-			__bch_cache_error(ca,
-				"IO error %d reading journal from bucket_offset %llu",
-				ret, sector + bucket_offset);
 			goto err;
 		}
 
@@ -965,13 +961,13 @@ int bch_journal_replay(struct cache_set *c, struct list_head *list)
 		       journal_seq_blacklist_find(j, cur_seq))
 			cur_seq++;
 
-		cache_set_err_on(journal_seq_blacklist_find(j, i->j.seq), c,
+		cache_set_inconsistent_on(journal_seq_blacklist_find(j, i->j.seq), c,
 				 "found blacklisted journal entry %llu",
 				 i->j.seq);
 
 		mutex_unlock(&j->blacklist_lock);
 
-		cache_set_err_on(i->j.seq != cur_seq, c,
+		cache_set_inconsistent_on(i->j.seq != cur_seq, c,
 			"journal entries %llu-%llu missing! (replaying %llu-%llu)",
 			cur_seq, i->j.seq - 1, last_seq(j), end_seq);
 
@@ -1353,13 +1349,10 @@ static void journal_write_endio(struct bio *bio)
 	struct journal_write *w = bio->bi_private;
 	struct journal *j = w->j;
 
-	if (bio->bi_error || bch_meta_write_fault("journal")) {
+	if (cache_fatal_io_err_on(bio->bi_error, ca, "journal write") ||
+	    bch_meta_write_fault("journal")) {
 		set_bit(JOURNAL_ERROR, &j->flags);
 		__journal_entry_close(j, JOURNAL_ENTRY_ERROR);
-
-		__bch_cache_error(ca, "IO error %d writing journal",
-				  bio->bi_error);
-		bch_cache_set_io_error(ca->set);
 	}
 
 	closure_put(&j->io);

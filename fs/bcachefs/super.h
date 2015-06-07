@@ -152,9 +152,6 @@ const char *validate_super(struct bcache_superblock *, struct cache_sb *);
 
 void bch_cache_member_info_update(struct cache *);
 
-void bch_cache_set_io_error(struct cache_set *);
-void bch_cache_set_fail(struct cache_set *);
-
 void bch_cache_set_release(struct kobject *);
 void bch_cache_release(struct kobject *);
 
@@ -174,7 +171,8 @@ const char *bch_register_cache_set(char * const *, unsigned,
 				   struct cache_set_opts,
 				   struct cache_set **);
 
-void bch_cache_set_read_only(struct cache_set *);
+bool bch_cache_set_read_only(struct cache_set *);
+void bch_cache_set_read_only_sync(struct cache_set *);
 const char *bch_cache_set_read_write(struct cache_set *);
 
 void bch_cache_read_only(struct cache *);

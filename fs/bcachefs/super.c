@@ -12,6 +12,7 @@
 #include "btree.h"
 #include "clock.h"
 #include "debug.h"
+#include "error.h"
 #include "fs-gc.h"
 #include "gc.h"
 #include "inode.h"
@@ -59,6 +60,7 @@ static int bch_chardev_major;
 static struct class *bch_chardev_class;
 static struct device *bch_chardev;
 static DEFINE_IDR(bch_chardev_minor);
+static DECLARE_WAIT_QUEUE_HEAD(bch_read_only_wait);
 
 struct workqueue_struct *bcache_io_wq;
 
@@ -491,7 +493,12 @@ static void write_super_endio(struct bio *bio)
 {
 	struct cache *ca = bio->bi_private;
 
-	bch_count_io_errors(ca, bio->bi_error, "writing superblock");
+	/* XXX: return errors directly */
+
+	cache_fatal_io_err_on(bio->bi_error, ca, "superblock write");
+
+	bch_account_io_completion(ca);
+
 	closure_put(&ca->set->sb_write);
 	percpu_ref_put(&ca->ref);
 }
@@ -690,14 +697,40 @@ static void bch_writes_disabled(struct percpu_ref *writes)
 	complete(&c->write_disable_complete);
 }
 
-void bch_cache_set_read_only(struct cache_set *c)
+static void bch_cache_set_read_only_work(struct work_struct *work)
 {
-	lockdep_assert_held(&bch_register_lock);
+	struct cache_set *c =
+		container_of(work, struct cache_set, read_only_work);
 
+	init_completion(&c->write_disable_complete);
+	percpu_ref_put(&c->writes);
+
+	del_timer_sync(&c->foreground_write_wakeup);
+	cancel_delayed_work_sync(&c->pd_controllers_update);
+
+	c->foreground_write_pd.rate.rate = UINT_MAX;
+	bch_wake_delayed_writes((unsigned long) c);
+
+	/* Wait for outstanding writes to complete: */
+	wait_for_completion(&c->write_disable_complete);
+
+	__bch_cache_set_read_only(c);
+
+	bch_notify_cache_set_read_only(c);
+	trace_bcache_cache_set_read_only_done(c);
+
+	set_bit(CACHE_SET_RO_COMPLETE, &c->flags);
+	wake_up(&bch_read_only_wait);
+}
+
+bool bch_cache_set_read_only(struct cache_set *c)
+{
 	if (test_and_set_bit(CACHE_SET_RO, &c->flags))
-		return;
+		return false;
 
 	trace_bcache_cache_set_read_only(c);
+
+	percpu_ref_get(&c->writes);
 
 	/*
 	 * Block new foreground-end write operations from starting - any new
@@ -707,20 +740,18 @@ void bch_cache_set_read_only(struct cache_set *c)
 	 * allocated space can still happen until stopping the allocator in
 	 * bch_cache_allocator_stop()).
 	 */
-	init_completion(&c->write_disable_complete);
 	percpu_ref_kill(&c->writes);
 
-	bch_wake_delayed_writes((unsigned long) c);
-	del_timer_sync(&c->foreground_write_wakeup);
-	cancel_delayed_work_sync(&c->pd_controllers_update);
+	queue_work(system_unbound_wq, &c->read_only_work);
+	return true;
+}
 
-	/* Wait for outstanding writes to complete: */
-	wait_for_completion(&c->write_disable_complete);
+void bch_cache_set_read_only_sync(struct cache_set *c)
+{
+	bch_cache_set_read_only(c);
 
-	__bch_cache_set_read_only(c);
-
-	bch_notify_cache_set_read_only(c);
-	trace_bcache_cache_set_read_only_done(c);
+	wait_event(bch_read_only_wait,
+		   test_bit(CACHE_SET_RO_COMPLETE, &c->flags));
 }
 
 static const char *__bch_cache_set_read_write(struct cache_set *c)
@@ -768,7 +799,7 @@ const char *bch_cache_set_read_write(struct cache_set *c)
 
 	lockdep_assert_held(&bch_register_lock);
 
-	if (!test_bit(CACHE_SET_RO, &c->flags))
+	if (!test_bit(CACHE_SET_RO_COMPLETE, &c->flags))
 		return NULL;
 
 	for_each_cache(ca, c, i)
@@ -783,44 +814,14 @@ const char *bch_cache_set_read_write(struct cache_set *c)
 		return err;
 
 	percpu_ref_reinit(&c->writes);
+
+	clear_bit(CACHE_SET_RO_COMPLETE, &c->flags);
 	clear_bit(CACHE_SET_RO, &c->flags);
 
 	return NULL;
 err:
 	__bch_cache_set_read_only(c);
 	return err;
-}
-
-static void bch_cache_set_read_only_work(struct work_struct *work)
-{
-	struct cache_set *c =
-		container_of(work, struct cache_set, read_only_work);
-
-	mutex_lock(&bch_register_lock);
-	bch_cache_set_read_only(c);
-	mutex_unlock(&bch_register_lock);
-}
-
-void bch_cache_set_io_error(struct cache_set *c)
-{
-	pr_err("%pU going read only", c->sb.set_uuid.b);
-	schedule_work(&c->read_only_work);
-}
-
-void bch_cache_set_fail(struct cache_set *c)
-{
-	switch (c->opts.on_error_action) {
-	case BCH_ON_ERROR_CONTINUE:
-		break;
-	case BCH_ON_ERROR_RO:
-		pr_err("%pU going read only", c->sb.set_uuid.b);
-		schedule_work(&c->read_only_work);
-		break;
-	case BCH_ON_ERROR_PANIC:
-		panic("bcache: %pU panic after error\n",
-		      c->sb.set_uuid.b);
-		break;
-	}
 }
 
 /* Cache set startup/shutdown: */
@@ -893,7 +894,7 @@ static void cache_set_flush(struct closure *cl)
 		device_unregister(c->chardev);
 
 	mutex_lock(&bch_register_lock);
-	bch_cache_set_read_only(c);
+	bch_cache_set_read_only_sync(c);
 
 	if (c->kobj.state_in_sysfs)
 		kobject_del(&c->kobj);
@@ -985,6 +986,8 @@ static struct cache_set *bch_cache_set_alloc(struct cache_sb *sb,
 
 	if (cache_sb_to_cache_set(c, sb))
 		goto err;
+
+	scnprintf(c->uuid, sizeof(c->uuid), "%pU", &c->sb.user_uuid);
 
 	c->opts = (struct cache_set_opts) {
 		   .read_only = 0,
@@ -1145,7 +1148,7 @@ static const char *run_cache_set(struct cache_set *c)
 	lockdep_assert_held(&bch_register_lock);
 	BUG_ON(test_bit(CACHE_SET_RUNNING, &c->flags));
 
-	/* We don't want bch_cache_set_error() to free underneath us */
+	/* We don't want bch_fatal_error() to free underneath us */
 	closure_get(&c->caching);
 
 	/*
@@ -1307,7 +1310,7 @@ static const char *run_cache_set(struct cache_set *c)
 	bch_prio_timer_start(c, WRITE);
 
 	if (c->opts.read_only) {
-		bch_cache_set_read_only(c);
+		bch_cache_set_read_only_sync(c);
 	} else {
 		err = __bch_cache_set_read_write(c);
 		if (err)
@@ -1322,7 +1325,9 @@ static const char *run_cache_set(struct cache_set *c)
 
 	bcache_write_super(c);
 
-	bch_blockdev_volumes_start(c);
+	err = "can't bring up blockdev volumes";
+	if (bch_blockdev_volumes_start(c))
+		goto err;
 
 	bch_debug_init_cache_set(c);
 
@@ -1467,9 +1472,9 @@ void bch_cache_read_only(struct cache *ca)
 		return;
 
 	if (!cache_may_remove(ca)) {
-		pr_warning("Required member %s for %pU going RO, cache set going RO",
-			   buf, &c->sb.set_uuid);
-		bch_cache_set_read_only(c);
+		printk(__bch_err_fmt(c, "required member %s going RO, forcing fs RO",
+				     buf));
+		bch_cache_set_read_only_sync(c);
 	}
 
 	/*
@@ -1482,17 +1487,6 @@ void bch_cache_read_only(struct cache *ca)
 
 	SET_CACHE_STATE(&ca->mi, CACHE_RO);
 	bch_cache_member_info_update(ca);
-}
-
-static void bch_cache_read_only_work(struct work_struct *work)
-{
-	struct cache *ca = container_of(work, struct cache, read_only_work);
-
-	/* Going RO because of an error: */
-
-	mutex_lock(&bch_register_lock);
-	bch_cache_read_only(ca);
-	mutex_unlock(&bch_register_lock);
 }
 
 static const char *__bch_cache_read_write(struct cache *ca)
@@ -1824,7 +1818,6 @@ static const char *cache_alloc(struct bcache_superblock *sb,
 	ca->self.devices[0] = ca;
 
 	INIT_WORK(&ca->free_work, bch_cache_free_work);
-	INIT_WORK(&ca->read_only_work, bch_cache_read_only_work);
 	INIT_WORK(&ca->remove_work, bch_cache_remove_work);
 	bio_init(&ca->journal.bio);
 	ca->journal.bio.bi_max_vecs = 8;
@@ -1837,7 +1830,7 @@ static const char *cache_alloc(struct bcache_superblock *sb,
 	ca->disk_sb.bdev->bd_holder = ca;
 	memset(sb, 0, sizeof(*sb));
 
-	INIT_WORK(&ca->io_error_work, bch_cache_io_error_work);
+	INIT_WORK(&ca->io_error_work, bch_nonfatal_io_error_work);
 
 	err = "dynamic fault";
 	if (cache_set_init_fault("cache_alloc"))
@@ -2286,6 +2279,9 @@ static int bcache_reboot(struct notifier_block *n, unsigned long code, void *x)
 
 		list_for_each_entry(c, &bch_cache_sets, list)
 			bch_cache_set_read_only(c);
+
+		list_for_each_entry(c, &bch_cache_sets, list)
+			bch_cache_set_read_only_sync(c);
 
 		mutex_unlock(&bch_register_lock);
 	}

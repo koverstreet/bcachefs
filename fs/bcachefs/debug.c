@@ -9,6 +9,7 @@
 #include "btree.h"
 #include "buckets.h"
 #include "debug.h"
+#include "error.h"
 #include "extents.h"
 #include "inode.h"
 #include "io.h"
@@ -166,13 +167,12 @@ void bch_data_verify(struct cached_dev *dc, struct bio *bio)
 		void *p1 = kmap_atomic(bv.bv_page);
 		void *p2 = page_address(check->bi_io_vec[iter.bi_idx].bv_page);
 
-		cache_set_err_on(memcmp(p1 + bv.bv_offset,
-					p2 + bv.bv_offset,
-					bv.bv_len),
-				 dc->disk.c,
-				 "verify failed at dev %s sector %llu",
-				 bdevname(dc->disk_sb.bdev, name),
-				 (uint64_t) bio->bi_iter.bi_sector);
+		if (memcmp(p1 + bv.bv_offset,
+			   p2 + bv.bv_offset,
+			   bv.bv_len))
+			panic("verify failed at dev %s sector %llu\n",
+			      bdevname(dc->disk_sb.bdev, name),
+			      (uint64_t) bio->bi_iter.bi_sector);
 
 		kunmap_atomic(p1);
 	}
@@ -199,7 +199,7 @@ void bch_verify_inode_refs(struct cache_set *c)
 		    bch_inode_find_by_inum(c, k.k->p.inode, &inode)) {
 			bch_bkey_val_to_text(c, BTREE_ID_EXTENTS, buf,
 					     sizeof(buf), k);
-			bch_cache_set_error(c,
+			cache_set_inconsistent(c,
 				"extent for missing inode %llu\n%s",
 				k.k->p.inode, buf);
 			bch_btree_iter_unlock(&iter);
@@ -210,7 +210,7 @@ void bch_verify_inode_refs(struct cache_set *c)
 
 		if (!S_ISREG(inode.v.i_mode) &&
 		    !S_ISLNK(inode.v.i_mode))
-			bch_cache_set_error(c,
+			cache_set_inconsistent(c,
 				"extent for non regular file, inode %llu mode %u",
 				k.k->p.inode, inode.v.i_mode);
 
@@ -219,7 +219,7 @@ void bch_verify_inode_refs(struct cache_set *c)
 		if (k.k->p.offset > round_up(inode.v.i_size, PAGE_SIZE) >> 9) {
 			bch_bkey_val_to_text(c, BTREE_ID_EXTENTS, buf,
 					     sizeof(buf), k);
-			bch_cache_set_error(c,
+			cache_set_inconsistent(c,
 				"extent past end of inode %llu: i_size %llu extent\n%s",
 				k.k->p.inode, inode.v.i_size, buf);
 		}
@@ -234,7 +234,7 @@ void bch_verify_inode_refs(struct cache_set *c)
 
 		if (k.k->p.inode != cur_inum &&
 		    bch_inode_find_by_inum(c, k.k->p.inode, &inode)) {
-			bch_cache_set_error(c, "dirent for missing inode %llu",
+			cache_set_inconsistent(c, "dirent for missing inode %llu",
 					    k.k->p.inode);
 			bch_btree_iter_unlock(&iter);
 			return;
@@ -243,7 +243,7 @@ void bch_verify_inode_refs(struct cache_set *c)
 		cur_inum = k.k->p.inode;
 
 		if (!S_ISDIR(inode.v.i_mode))
-			bch_cache_set_error(c,
+			cache_set_inconsistent(c,
 				"dirent for non directory, inode %llu mode %u",
 				k.k->p.inode, inode.v.i_mode);
 	}
@@ -253,7 +253,7 @@ void bch_verify_inode_refs(struct cache_set *c)
 			   POS(BCACHE_ROOT_INO, 0), k) {
 		if (k.k->p.inode != cur_inum &&
 		    bch_inode_find_by_inum(c, k.k->p.inode, &inode)) {
-			bch_cache_set_error(c,
+			cache_set_inconsistent(c,
 				"xattr for missing inode %llu",
 					    k.k->p.inode);
 			bch_btree_iter_unlock(&iter);
@@ -262,11 +262,10 @@ void bch_verify_inode_refs(struct cache_set *c)
 
 		cur_inum = k.k->p.inode;
 
-		if (!S_ISREG(inode.v.i_mode) &&
-		    !S_ISDIR(inode.v.i_mode))
-			bch_cache_set_error(c,
-				"xattr for non file/directory, inode %llu mode %u",
-				k.k->p.inode, inode.v.i_mode);
+		cache_set_inconsistent_on(!S_ISREG(inode.v.i_mode) &&
+					  !S_ISDIR(inode.v.i_mode), c,
+			"xattr for non file/directory, inode %llu mode %u",
+			k.k->p.inode, inode.v.i_mode);
 	}
 	bch_btree_iter_unlock(&iter);
 }

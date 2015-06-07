@@ -51,30 +51,31 @@ ssize_t bch_inode_status(char *buf, size_t len, const struct bkey *k)
 	}
 }
 
-static bool bch_inode_invalid(const struct cache_set *c, struct bkey_s_c k)
+static const char *bch_inode_invalid(const struct cache_set *c,
+				     struct bkey_s_c k)
 {
 	if (k.k->p.offset)
-		return true;
+		return "nonzero offset";
 
 	switch (k.k->type) {
 	case BCH_INODE_FS:
 		if (bkey_val_bytes(k.k) != sizeof(struct bch_inode))
-			return true;
+			return "incorrect value size";
 
 		if (k.k->p.inode < BLOCKDEV_INODE_MAX)
-			return true;
+			return "fs inode in blockdev range";
 
-		return false;
+		return NULL;
 	case BCH_INODE_BLOCKDEV:
 		if (bkey_val_bytes(k.k) != sizeof(struct bch_inode_blockdev))
-			return true;
+			return "incorrect value size";
 
 		if (k.k->p.inode >= BLOCKDEV_INODE_MAX)
-			return true;
+			return "blockdev inode in fs range";
 
-		return false;
+		return NULL;
 	default:
-		return true;
+		return "invalid type";
 	}
 }
 

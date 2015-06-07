@@ -15,7 +15,8 @@ struct btree;
 struct bkey;
 
 struct bkey_ops {
-	bool		(*key_invalid)(const struct cache_set *,
+	/* Returns reason for being invalid if invalid, else NULL: */
+	const char *	(*key_invalid)(const struct cache_set *,
 				       struct bkey_s_c);
 	void		(*key_debugcheck)(struct cache_set *, struct btree *,
 					  struct bkey_s_c);
@@ -25,7 +26,10 @@ struct bkey_ops {
 	bool		is_extents;
 };
 
-bool bkey_invalid(struct cache_set *, enum bkey_type, struct bkey_s_c);
+const char *bkey_invalid(struct cache_set *, enum bkey_type, struct bkey_s_c);
+const char *btree_bkey_invalid(struct cache_set *, struct btree *,
+			       struct bkey_s_c);
+
 void bkey_debugcheck(struct cache_set *, struct btree *, struct bkey_s_c);
 void bch_bkey_val_to_text(struct cache_set *, enum bkey_type,
 			  char *, size_t, struct bkey_s_c);

@@ -9,6 +9,7 @@
 #include "btree.h"
 #include "debug.h"
 #include "dirent.h"
+#include "error.h"
 #include "extents.h"
 #include "gc.h"
 #include "inode.h"
@@ -340,8 +341,8 @@ static size_t extent_print_ptrs(struct cache_set *c, char *buf,
 
 /* Btree ptrs */
 
-static const char *bch_btree_ptr_invalid_reason(const struct cache_set *c,
-						struct bkey_s_c k)
+static const char *bch_btree_ptr_invalid(const struct cache_set *c,
+					 struct bkey_s_c k)
 {
 	if (bkey_extent_is_cached(k.k))
 		return "cached";
@@ -383,11 +384,6 @@ static const char *bch_btree_ptr_invalid_reason(const struct cache_set *c,
 	}
 }
 
-static bool bch_btree_ptr_invalid(const struct cache_set *c, struct bkey_s_c k)
-{
-	return bch_btree_ptr_invalid_reason(c, k);
-}
-
 static void btree_ptr_debugcheck(struct cache_set *c, struct btree *b,
 				 struct bkey_s_c k)
 {
@@ -400,11 +396,6 @@ static void btree_ptr_debugcheck(struct cache_set *c, struct btree *b,
 	struct cache *ca;
 	unsigned replicas = 0;
 	bool bad;
-
-	if (bkey_extent_is_cached(k.k)) {
-		btree_bug(b, "btree ptr marked as cached");
-		return;
-	}
 
 	rcu_read_lock();
 
@@ -444,11 +435,11 @@ static void btree_ptr_debugcheck(struct cache_set *c, struct btree *b,
 	return;
 err:
 	bch_bkey_val_to_text(c, btree_node_type(b), buf, sizeof(buf), k);
-	btree_bug(b, "%s btree pointer %s: bucket %zi prio %i "
-		  "gen %i last_gc %i mark %08x",
-		  err, buf, PTR_BUCKET_NR(ca, ptr),
-		  g->read_prio, PTR_BUCKET_GEN(ca, ptr),
-		  g->oldest_gen, g->mark.counter);
+	cache_set_bug(c, "%s btree pointer %s: bucket %zi prio %i "
+		      "gen %i last_gc %i mark %08x",
+		      err, buf, PTR_BUCKET_NR(ca, ptr),
+		      g->read_prio, PTR_BUCKET_GEN(ca, ptr),
+		      g->oldest_gen, g->mark.counter);
 	rcu_read_unlock();
 }
 
@@ -463,7 +454,7 @@ static void bch_btree_ptr_to_text(struct cache_set *c, char *buf,
 	if (bkey_extent_is_data(k.k))
 		out += extent_print_ptrs(c, buf, size, bkey_s_c_to_extent(k));
 
-	invalid = bch_btree_ptr_invalid_reason(c, k);
+	invalid = bch_btree_ptr_invalid(c, k);
 	if (invalid)
 		p(" invalid: %s", invalid);
 #undef p
@@ -480,23 +471,19 @@ bch_btree_pick_ptr(struct cache_set *c, const struct btree *b)
 	rcu_read_lock();
 
 	extent_for_each_online_device_crc(c, e, crc, ptr, ca) {
-		if (crc) {
-			bch_cache_error(ca,
+		if (cache_set_inconsistent_on(crc, c,
 				"btree node pointer with crc at btree %u level %u/%u bucket %zu",
 				b->btree_id, b->level, btree_node_root(b)
 				? btree_node_root(b)->level : -1,
-				PTR_BUCKET_NR(ca, ptr));
+				PTR_BUCKET_NR(ca, ptr)))
 			break;
-		}
 
-		if (ptr_stale(ca, ptr)) {
-			bch_cache_error(ca,
+		if (cache_inconsistent_on(ptr_stale(ca, ptr), ca,
 				"stale btree node pointer at btree %u level %u/%u bucket %zu",
 				b->btree_id, b->level, btree_node_root(b)
 				? btree_node_root(b)->level : -1,
-				PTR_BUCKET_NR(ca, ptr));
+				PTR_BUCKET_NR(ca, ptr)))
 			continue;
-		}
 
 		percpu_ref_get(&ca->ref);
 		rcu_read_unlock();
@@ -1306,8 +1293,8 @@ out:
 	return inserted;
 }
 
-static const char *bch_extent_invalid_reason(const struct cache_set *c,
-					     struct bkey_s_c k)
+static const char *bch_extent_invalid(const struct cache_set *c,
+				      struct bkey_s_c k)
 {
 	if (bkey_val_u64s(k.k) > BKEY_EXTENT_VAL_U64s_MAX)
 		return "value too big";
@@ -1360,11 +1347,6 @@ invalid:
 	}
 }
 
-static bool bch_extent_invalid(const struct cache_set *c, struct bkey_s_c k)
-{
-	return bch_extent_invalid_reason(c, k);
-}
-
 static void bch_extent_debugcheck(struct cache_set *c, struct btree *b,
 				  struct bkey_s_c k)
 {
@@ -1378,6 +1360,15 @@ static void bch_extent_debugcheck(struct cache_set *c, struct btree *b,
 	bool bad;
 	unsigned ptrs_per_tier[CACHE_TIERS];
 	unsigned i, tier, replicas = 0;
+
+	/*
+	 * XXX: we should be doing most/all of these checks at startup time,
+	 * where we check bkey_invalid() in btree_node_read_done()
+	 *
+	 * But note that we can't check for stale pointers or incorrect gc marks
+	 * until after journal replay is done (it might be an extent that's
+	 * going to get overwritten during replay)
+	 */
 
 	memset(ptrs_per_tier, 0, sizeof(ptrs_per_tier));
 
@@ -1491,7 +1482,7 @@ static void bch_extent_to_text(struct cache_set *c, char *buf,
 	if (bkey_extent_is_data(k.k))
 		out += extent_print_ptrs(c, buf, size, bkey_s_c_to_extent(k));
 
-	invalid = bch_extent_invalid_reason(c, k);
+	invalid = bch_extent_invalid(c, k);
 	if (invalid)
 		p(" invalid: %s", invalid);
 #undef p

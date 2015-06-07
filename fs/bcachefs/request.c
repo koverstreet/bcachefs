@@ -28,6 +28,7 @@
 #include "btree.h"
 #include "clock.h"
 #include "debug.h"
+#include "error.h"
 #include "extents.h"
 #include "io.h"
 #include "journal.h"

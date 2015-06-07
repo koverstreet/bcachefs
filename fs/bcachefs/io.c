@@ -12,6 +12,7 @@
 #include "buckets.h"
 #include "clock.h"
 #include "debug.h"
+#include "error.h"
 #include "extents.h"
 #include "gc.h"
 #include "io.h"
@@ -195,106 +196,13 @@ static void bch_bbio_reset(struct bbio *b)
 
 /* IO errors */
 
-void bch_count_io_errors(struct cache *ca, int error, const char *m)
-{
-	/*
-	 * The halflife of an error is:
-	 * log2(1/2)/log2(127/128) * refresh ~= 88 * refresh
-	 */
-
-	if (ca->set->error_decay) {
-		unsigned count = atomic_inc_return(&ca->io_count);
-
-		while (count > ca->set->error_decay) {
-			unsigned errors;
-			unsigned old = count;
-			unsigned new = count - ca->set->error_decay;
-
-			/*
-			 * First we subtract refresh from count; each time we
-			 * succesfully do so, we rescale the errors once:
-			 */
-
-			count = atomic_cmpxchg(&ca->io_count, old, new);
-
-			if (count == old) {
-				count = new;
-
-				errors = atomic_read(&ca->io_errors);
-				do {
-					old = errors;
-					new = ((uint64_t) errors * 127) / 128;
-					errors = atomic_cmpxchg(&ca->io_errors,
-								old, new);
-				} while (old != errors);
-			}
-		}
-	}
-
-	if (error) {
-		char buf[BDEVNAME_SIZE];
-
-		atomic_add(1 << IO_ERROR_SHIFT, &ca->io_errors);
-		queue_work(system_long_wq, &ca->io_error_work);
-		printk_ratelimited(KERN_ERR "%s: IO error on %s",
-		       bdevname(ca->disk_sb.bdev, buf), m);
-	}
-}
-
-void bch_cache_io_error_work(struct work_struct *work)
-{
-	struct cache *ca = container_of(work, struct cache, io_error_work);
-	unsigned errors = atomic_read(&ca->io_errors);
-	char buf[BDEVNAME_SIZE];
-
-	if (errors < ca->set->error_limit) {
-		bch_notify_cache_error(ca, false);
-	} else {
-		bch_notify_cache_error(ca, true);
-		printk_ratelimited(KERN_ERR "%s: too many IO errors, going RO",
-		       bdevname(ca->disk_sb.bdev, buf));
-		queue_work(system_long_wq, &ca->read_only_work);
-	}
-}
-
-void bch_bbio_count_io_errors(struct bbio *bio, int error, const char *m)
-{
-	struct cache_set *c;
-	unsigned threshold;
-
-	if (!bio->ca)
-		return;
-
-	c = bio->ca->set;
-	threshold = op_is_write(bio_op(&bio->bio))
-		? c->congested_write_threshold_us
-		: c->congested_read_threshold_us;
-
-	if (threshold && bio->submit_time_us) {
-		unsigned t = local_clock_us();
-
-		int us = t - bio->submit_time_us;
-		int congested = atomic_read(&c->congested);
-
-		if (us > (int) threshold) {
-			int ms = us / 1024;
-			c->congested_last_us = t;
-
-			ms = min(ms, CONGESTED_MAX + congested);
-			atomic_sub(ms, &c->congested);
-		} else if (congested < 0)
-			atomic_inc(&c->congested);
-	}
-
-	bch_count_io_errors(bio->ca, error, m);
-}
-
-void bch_bbio_endio(struct bbio *bio, int error, const char *m)
+void bch_bbio_endio(struct bbio *bio)
 {
 	struct closure *cl = bio->bio.bi_private;
 	struct cache *ca = bio->ca;
 
-	bch_bbio_count_io_errors(bio, error, m);
+	bch_account_bbio_completion(bio);
+
 	bio_put(&bio->bio);
 	if (ca)
 		percpu_ref_put(&ca->ref);
@@ -622,10 +530,10 @@ static void bch_write_endio(struct bio *bio)
 	struct bch_write_op *op = container_of(cl, struct bch_write_op, cl);
 	struct bch_write_bio *wbio = to_wbio(bio);
 
-	if (bio->bi_error) {
+	if (cache_nonfatal_io_err_on(bio->bi_error, wbio->bio.ca,
+				     "data write")) {
 		/* TODO: We could try to recover from this. */
 		if (!bkey_extent_is_cached(&op->insert_key.k)) {
-			__bcache_io_error(op->c, "IO error writing data");
 			op->error = bio->bi_error;
 		} else if (!op->replace)
 			set_closure_fn(cl, bch_write_error, op->c->wq);
@@ -638,7 +546,7 @@ static void bch_write_endio(struct bio *bio)
 	else if (wbio->bounce)
 		bch_bio_free_pages_pool(op->c, bio);
 
-	bch_bbio_endio(&wbio->bio, bio->bi_error, "writing data to cache");
+	bch_bbio_endio(&wbio->bio);
 }
 
 static const unsigned bch_crc_size[] = {
@@ -1438,11 +1346,7 @@ static int bio_checksum_uncompress(struct bch_read_bio *rbio)
 
 	if (rbio->csum_type != BCH_CSUM_NONE &&
 	    rbio->csum != checksum_bio(bio, rbio->csum_type)) {
-		/*
-		 * XXX: bch_bbio_count_io_errors() isn't counting checksum
-		 * errors
-		 */
-		__bcache_io_error(rbio->c, "checksum error");
+		cache_nonfatal_io_error(rbio->bio.ca, "checksum error");
 		return -EIO;
 	}
 
@@ -1530,7 +1434,10 @@ static void bch_read_endio(struct bio *bio)
 		ptr_stale(rbio->bio.ca, &rbio->bio.ptr);
 	int error = bio->bi_error;
 
-	bch_bbio_count_io_errors(&rbio->bio, error, "reading from cache");
+	bch_account_bbio_completion(&rbio->bio);
+
+	cache_nonfatal_io_err_on(error, rbio->bio.ca, "data read");
+
 	percpu_ref_put(&rbio->bio.ca->ref);
 
 	if (error)

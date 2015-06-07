@@ -75,21 +75,22 @@ static int xattr_cmp(const struct bch_xattr *xattr,
 		memcmp(xattr->x_name, q->name, q->len);
 }
 
-static bool bch_xattr_invalid(const struct cache_set *c, struct bkey_s_c k)
+static const char *bch_xattr_invalid(const struct cache_set *c,
+				     struct bkey_s_c k)
 {
 	switch (k.k->type) {
 	case BCH_XATTR:
-		if (bkey_val_bytes(k.k) < sizeof(struct bch_xattr))
-			return true;
+		return bkey_val_bytes(k.k) < sizeof(struct bch_xattr)
+			? "value too small"
+			: NULL;
 
-		return false;
 	case BCH_XATTR_WHITEOUT:
-		if (bkey_val_bytes(k.k))
-			return true;
+		return bkey_val_bytes(k.k) != 0
+			? "value size should be zero"
+			: NULL;
 
-		return false;
 	default:
-		return true;
+		return "invalid type";
 	}
 }
 

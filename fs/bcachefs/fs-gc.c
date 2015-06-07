@@ -2,6 +2,7 @@
 #include "bcache.h"
 #include "btree.h"
 #include "dirent.h"
+#include "error.h"
 #include "fs.h"
 #include "inode.h"
 #include "keylist.h"
@@ -74,13 +75,13 @@ static int bch_gc_do_inode(struct cache_set *c, struct btree_iter *iter,
 	struct bkey_i_inode update;
 	int ret;
 
-	cache_set_err_on(inode.v->i_nlink < link.count, c,
+	cache_set_inconsistent_on(inode.v->i_nlink < link.count, c,
 			 "i_link too small (%u < %u, type %i)",
 			 inode.v->i_nlink, link.count + link.dir_count,
 			 mode_to_type(inode.v->i_mode));
 
 	if (!link.count) {
-		cache_set_err_on(S_ISDIR(inode.v->i_mode) &&
+		cache_set_inconsistent_on(S_ISDIR(inode.v->i_mode) &&
 			bch_empty_dir(c, inode.k->p.inode), c,
 			"non empty directory with link count 0,inode nlink %u, dir links found %u",
 			inode.v->i_nlink, link.dir_count);
@@ -139,7 +140,7 @@ static int bch_gc_walk_inodes(struct cache_set *c, u64 pos, struct nlink *links)
 			break;
 
 		while (i < k.k->p.inode - pos) {
-			cache_set_err_on(links[i].count, c,
+			cache_set_inconsistent_on(links[i].count, c,
 					 "missing inode %llu",
 					 pos + i);
 			i++;
@@ -157,7 +158,7 @@ static int bch_gc_walk_inodes(struct cache_set *c, u64 pos, struct nlink *links)
 
 			break;
 		default:
-			cache_set_err_on(links[i].count, c,
+			cache_set_inconsistent_on(links[i].count, c,
 					 "missing inode %llu",
 					 pos + i);
 			break;

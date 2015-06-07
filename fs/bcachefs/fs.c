@@ -2049,7 +2049,7 @@ static int bch_remount(struct super_block *sb, int *flags, char *data)
 		const char *err = NULL;
 
 		if (opts.read_only) {
-			bch_cache_set_read_only(c);
+			bch_cache_set_read_only_sync(c);
 
 			sb->s_flags |= MS_RDONLY;
 		} else {
@@ -2095,9 +2095,11 @@ static struct dentry *bch_mount(struct file_system_type *fs_type,
 				int flags, const char *dev_name, void *data)
 {
 	struct cache_set *c;
+	struct cache *ca;
 	struct super_block *sb;
 	struct inode *inode;
 	struct cache_set_opts opts;
+	unsigned i;
 	int ret;
 
 	if (!parse_options(&opts, flags, data))
@@ -2122,6 +2124,17 @@ static struct dentry *bch_mount(struct file_system_type *fs_type,
 	sb->s_magic		= BCACHE_STATFS_MAGIC;
 	sb->s_time_gran		= 1;
 	sb->s_fs_info		= c;
+	c->vfs_sb		= sb;
+
+	rcu_read_lock();
+	for_each_cache_rcu(ca, c, i) {
+		char b[BDEVNAME_SIZE];
+
+		strlcpy(sb->s_id, bdevname(ca->disk_sb.bdev, b),
+			sizeof(sb->s_id));
+		break;
+	}
+	rcu_read_unlock();
 
 	if (opts.posix_acl < 0)
 		sb->s_flags	|= MS_POSIXACL;

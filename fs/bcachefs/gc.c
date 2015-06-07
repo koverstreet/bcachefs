@@ -8,6 +8,7 @@
 #include "btree.h"
 #include "buckets.h"
 #include "debug.h"
+#include "error.h"
 #include "extents.h"
 #include "gc.h"
 #include "journal.h"
@@ -79,13 +80,6 @@ static inline bool btree_node_has_ptrs(struct btree *b)
 bool btree_gc_mark_node(struct cache_set *c, struct btree *b)
 {
 	struct bkey_format *f = &b->keys.format;
-	struct bset_tree *t;
-
-	for (t = b->keys.set; t <= &b->keys.set[b->keys.nsets]; t++)
-		btree_bug_on(t->size &&
-			     bset_written(&b->keys, t) &&
-			     bkey_cmp_packed(f, &b->key.k, &t->end) < 0,
-			     b, "found short btree key in gc");
 
 	if (btree_node_has_ptrs(b)) {
 		struct btree_node_iter iter;
@@ -128,8 +122,12 @@ static int bch_gc_btree(struct cache_set *c, enum btree_id btree_id)
 
 	for_each_btree_node(&iter, c, btree_id, POS_MIN, b) {
 		if (!b->level) {
-			cache_set_bug_on(bkey_cmp(b->data->min_key, next_min),
-				c,
+			/*
+			 * XXX: this check should be elsewhere - also, we should
+			 * be checking all nodes, not just leaf nodes
+			 */
+			cache_set_inconsistent_on(bkey_cmp(b->data->min_key,
+							   next_min), c,
 				"btree node has incorrect min key: %llu:%llu != %llu:%llu",
 				b->data->min_key.inode,
 				b->data->min_key.offset,

@@ -58,6 +58,7 @@
 #include "btree.h"
 #include "buckets.h"
 #include "clock.h"
+#include "error.h"
 #include "extents.h"
 #include "io.h"
 #include "journal.h"
@@ -281,15 +282,10 @@ static int bch_prio_write(struct cache *ca)
 		spin_unlock(&ca->prio_buckets_lock);
 
 		ret = prio_io(ca, r, REQ_OP_WRITE);
-		if (bch_meta_write_fault("prio"))
-			ret = -EIO;
-		if (ret) {
-			__bch_cache_error(ca,
-				"IO error %d writing prios to bucket %lu",
-				ret, r);
-			bch_cache_set_io_error(c);
+		if (cache_fatal_io_err_on(ret, ca,
+					  "prio write to bucket %lu", r) ||
+		    bch_meta_write_fault("prio"))
 			return ret;
-		}
 	}
 
 	spin_lock(&c->journal.lock);
@@ -300,11 +296,8 @@ static int bch_prio_write(struct cache *ca)
 	spin_unlock(&c->journal.lock);
 
 	ret = bch_journal_meta(&c->journal);
-	if (ret) {
-		__bch_cache_set_error(c,
-			"IO error %d journalling new prios", ret);
+	if (cache_set_fatal_err_on(ret, c, "journalling new prios"))
 		return ret;
-	}
 
 	/*
 	 * Don't want the old priorities to get garbage collected until after we
@@ -347,7 +340,7 @@ int bch_prio_read(struct cache *ca)
 
 	if ((bucket < ca->mi.first_bucket && bucket >= ca->mi.nbuckets) ||
 	    bch_meta_read_fault("prio")) {
-		bch_cache_error(ca, "bad prio bucket %llu", bucket);
+		cache_inconsistent(ca, "bad prio bucket %llu", bucket);
 		return -EIO;
 	}
 
@@ -361,32 +354,27 @@ int bch_prio_read(struct cache *ca)
 			bucket_nr++;
 
 			ret = prio_io(ca, bucket, REQ_OP_READ);
-			if (ret || bch_meta_read_fault("prio")) {
-				bch_cache_error(ca,
-					"IO error %d reading prios from bucket %llu",
-					ret, bucket);
+			if (cache_fatal_io_err_on(ret, ca,
+					"prior read from bucket %llu",
+					bucket) ||
+			    bch_meta_read_fault("prio"))
 				return -EIO;
-			}
 
 			got = p->magic;
 			expect = pset_magic(&c->sb);
-			if (got != expect) {
-				bch_cache_error(ca,
+			if (cache_inconsistent_on(got != expect, ca,
 					"bad magic (got %llu expect %llu) while reading prios from bucket %llu",
-					got, expect, bucket);
+					got, expect, bucket))
 				return -EIO;
-			}
 
 			got = p->csum;
 			expect = bch_checksum(PSET_CSUM_TYPE(p),
 					      &p->magic,
 					      bucket_bytes(ca) - 8);
-			if (got != expect) {
-				bch_cache_error(ca,
+			if (cache_inconsistent_on(got != expect, ca,
 					"bad checksum (got %llu expect %llu) while reading prios from bucket %llu",
-					got, expect, bucket);
+					got, expect, bucket))
 				return -EIO;
-			}
 
 			bucket = p->next_bucket;
 			d = p->data;

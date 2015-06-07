@@ -24,6 +24,7 @@
 #include "alloc.h"
 #include "btree.h"
 #include "debug.h"
+#include "error.h"
 #include "extents.h"
 #include "gc.h"
 #include "io.h"
@@ -352,8 +353,8 @@ static void bch_btree_init_next(struct cache_set *c, struct btree *b,
 			    _end - _data) ^ 0xffffffffffffffffULL;	\
 })
 
-#define btree_node_error(b, ca, ptr, fmt, ...)				\
-	bch_cache_error(ca,						\
+#define btree_node_error(b, c, ptr, fmt, ...)				\
+	cache_set_inconsistent(c,					\
 		"btree node error at btree %u level %u/%u bucket %zu block %u u64s %u: " fmt,\
 		(b)->btree_id, (b)->level, btree_node_root(b)		\
 			    ? btree_node_root(b)->level : -1,		\
@@ -375,14 +376,16 @@ static const char *validate_bset(struct cache_set *c, struct btree *b,
 		return  "bset past end of btree node";
 
 	if (i != &b->data->keys && !i->u64s)
-		btree_node_error(b, ca, ptr, "empty set");
+		btree_node_error(b, c, ptr, "empty set");
 
 	for (k = i->start;
 	     k != bset_bkey_last(i);) {
 		struct bkey_tup tup;
+		struct bkey_s_c u;
+		const char *invalid;
 
 		if (!k->u64s) {
-			btree_node_error(b, ca, ptr,
+			btree_node_error(b, c, ptr,
 				"KEY_U64s 0: %zu bytes of metadata lost",
 				(void *) bset_bkey_last(i) - (void *) k);
 
@@ -391,7 +394,7 @@ static const char *validate_bset(struct cache_set *c, struct btree *b,
 		}
 
 		if (bkey_next(k) > bset_bkey_last(i)) {
-			btree_node_error(b, ca, ptr,
+			btree_node_error(b, c, ptr,
 					 "key extends past end of bset");
 
 			i->u64s = (u64 *) k - i->_data;
@@ -399,16 +402,15 @@ static const char *validate_bset(struct cache_set *c, struct btree *b,
 		}
 
 		bkey_disassemble(&tup, f, k);
+		u = bkey_tup_to_s_c(&tup);
 
-		if (bkey_invalid(c, btree_node_type(b),
-				 bkey_tup_to_s_c(&tup))) {
+		invalid = btree_bkey_invalid(c, b, u);
+		if (invalid) {
 			char buf[160];
 
-			bkey_disassemble(&tup, f, k);
 			bch_bkey_val_to_text(c, btree_node_type(b),
-					     buf, sizeof(buf),
-					     bkey_tup_to_s_c(&tup));
-			btree_node_error(b, ca, ptr,
+					     buf, sizeof(buf), u);
+			btree_node_error(b, c, ptr,
 					 "invalid bkey %s", buf);
 
 			i->u64s -= k->u64s;
@@ -473,6 +475,8 @@ void bch_btree_node_read_done(struct cache_set *c, struct btree *b,
 			err = "unknown checksum type";
 			if (BSET_CSUM_TYPE(i) >= BCH_CSUM_NR)
 				goto err;
+
+			/* XXX: retry checksum errors */
 
 			err = "bad checksum";
 			if (b->data->csum != btree_csum_set(b, b->data))
@@ -542,13 +546,13 @@ out:
 	return;
 err:
 	set_btree_node_read_error(b);
-	btree_node_error(b, ca, ptr, "%s", err);
+	btree_node_error(b, c, ptr, "%s", err);
 	goto out;
 }
 
 static void btree_node_read_endio(struct bio *bio)
 {
-	bch_bbio_endio(to_bbio(bio), bio->bi_error, "reading btree");
+	bch_bbio_endio(to_bbio(bio));
 }
 
 static void bch_btree_node_read(struct cache_set *c, struct btree *b)
@@ -563,9 +567,10 @@ static void bch_btree_node_read(struct cache_set *c, struct btree *b)
 	closure_init_stack(&cl);
 
 	pick = bch_btree_pick_ptr(c, b);
-	if (!pick.ca) {
+	if (cache_set_fatal_err_on(!pick.ca, c,
+				   "no cache device for btree node")) {
 		set_btree_node_read_error(b);
-		goto missing;
+		return;
 	}
 
 	percpu_ref_get(&pick.ca->ref);
@@ -583,29 +588,18 @@ static void bch_btree_node_read(struct cache_set *c, struct btree *b)
 
 	closure_sync(&cl);
 
-	if (bio->bi_error ||
-	    bch_meta_read_fault("btree"))
+	if (cache_fatal_io_err_on(bio->bi_error,
+				  pick.ca, "IO error reading bucket %zu",
+				  PTR_BUCKET_NR(pick.ca, &pick.ptr)) ||
+	    bch_meta_read_fault("btree")) {
 		set_btree_node_read_error(b);
-
-	bio_put(bio);
-
-	if (btree_node_read_error(b))
-		goto err;
+		goto out;
+	}
 
 	bch_btree_node_read_done(c, b, pick.ca, &pick.ptr);
 	bch_time_stats_update(&c->btree_read_time, start_time);
-
-	percpu_ref_put(&pick.ca->ref);
-	return;
-
-missing:
-	bch_cache_set_error(c, "no cache device for btree node");
-	percpu_ref_put(&pick.ca->ref);
-	return;
-
-err:
-	bch_cache_error(pick.ca, "IO error reading bucket %zu",
-			PTR_BUCKET_NR(pick.ca, &pick.ptr));
+out:
+	bio_put(bio);
 	percpu_ref_put(&pick.ca->ref);
 }
 
@@ -646,20 +640,16 @@ static void btree_node_write_endio(struct bio *bio)
 	struct btree *b = container_of(cl, struct btree, io);
 	struct bch_write_bio *wbio = to_wbio(bio);
 
-	if (bio->bi_error || bch_meta_write_fault("btree")) {
+	if (cache_fatal_io_err_on(bio->bi_error, wbio->bio.ca, "btree write") ||
+	    bch_meta_write_fault("btree"))
 		set_btree_node_write_error(b);
-
-		__bch_cache_error(wbio->bio.ca, "IO error %d writing btree",
-				  bio->bi_error);
-		bch_cache_set_io_error(wbio->bio.ca->set);
-	}
 
 	if (wbio->orig)
 		bio_endio(wbio->orig);
 	else if (wbio->bounce)
 		bio_free_pages(bio);
 
-	bch_bbio_endio(to_bbio(bio), bio->bi_error, "writing btree");
+	bch_bbio_endio(to_bbio(bio));
 }
 
 static void do_btree_node_write(struct closure *cl)

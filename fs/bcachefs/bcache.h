@@ -237,7 +237,6 @@ struct cache {
 	struct percpu_ref	ref;
 	struct rcu_head		free_rcu;
 	struct work_struct	free_work;
-	struct work_struct	read_only_work;
 	struct work_struct	remove_work;
 	unsigned long		flags;
 
@@ -376,6 +375,7 @@ enum {
 	CACHE_SET_STOPPING,
 	CACHE_SET_RUNNING,
 	CACHE_SET_RO,
+	CACHE_SET_RO_COMPLETE,
 	CACHE_SET_GC_STOPPING,
 	CACHE_SET_GC_FAILURE,
 	CACHE_SET_BDEV_MOUNTED,
@@ -404,6 +404,8 @@ struct cache_set {
 
 	int			minor;
 	struct device		*chardev;
+	struct super_block	*vfs_sb;
+	char			uuid[40];
 
 	/* Counts outstanding writes, for clean transition to read-only */
 	struct percpu_ref	writes;
@@ -686,74 +688,6 @@ static inline unsigned bucket_bytes(const struct cache *ca)
 	 sizeof(struct bucket_disk))
 #define prio_buckets(ca)					\
 	DIV_ROUND_UP((size_t) (ca)->mi.nbuckets, prios_per_bucket(ca))
-
-/* Error handling macros */
-
-/* The underscore versions merely log an error, they don't fail the cache set */
-#define __bch_cache_set_error(c, fmt, ...)				\
-	printk(KERN_ERR "bcache: error on %pU: " fmt "\n",		\
-	       (c)->sb.set_uuid.b, ##__VA_ARGS__)
-
-#define __bch_cache_error(ca, fmt, ...)					\
-do {									\
-	char _buf[BDEVNAME_SIZE];					\
-	__bch_cache_set_error((ca)->set, "%s: " fmt,			\
-			      bdevname((ca)->disk_sb.bdev, _buf),	\
-			      ##__VA_ARGS__);				\
-} while (0)
-
-/* These do fail the cache set */
-#define bch_cache_set_error(c, ...)					\
-do {									\
-	__bch_cache_set_error(c, __VA_ARGS__);				\
-	bch_cache_set_fail(c);						\
-} while (0)
-
-#define bch_cache_error(ca, ...)					\
-do {									\
-	__bch_cache_error(ca, __VA_ARGS__);				\
-	bch_cache_set_fail((ca)->set);					\
-} while (0)
-
-#define btree_bug(b, ...)						\
-do {									\
-	__bch_cache_set_error((b)->c, __VA_ARGS__);			\
-	BUG();								\
-} while (0)
-
-#define cache_set_bug(c, ...)						\
-do {									\
-	__bch_cache_set_error(c, __VA_ARGS__);				\
-	BUG();								\
-} while (0)
-
-#define btree_bug_on(cond, b, ...)					\
-do {									\
-	if (cond)							\
-		btree_bug(b, __VA_ARGS__);				\
-} while (0)
-
-#define cache_set_bug_on(cond, c, ...)					\
-do {									\
-	if (cond)							\
-		cache_set_bug(c, __VA_ARGS__);				\
-} while (0)
-
-#define cache_set_err_on(cond, c, ...)					\
-do {									\
-	if (cond)							\
-		bch_cache_set_error(c, __VA_ARGS__);			\
-} while (0)
-
-#define __bcache_io_error(c, fmt, ...)					\
-	printk_ratelimited(KERN_ERR "bcache: IO error on %pU: " fmt "\n",\
-	       (c)->sb.set_uuid.b, ##__VA_ARGS__)
-
-#define bcache_io_error(c, bio, fmt, ...)				\
-do {									\
-	__bcache_io_error(c, fmt, ##__VA_ARGS__);			\
-	(bio)->bi_error = -EIO;						\
-} while (0)
 
 /* Forward declarations */
 
