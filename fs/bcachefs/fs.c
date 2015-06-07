@@ -9,6 +9,7 @@
 #include "inode.h"
 #include "io.h"
 #include "journal.h"
+#include "keylist.h"
 #include "super.h"
 #include "xattr.h"
 
@@ -27,15 +28,11 @@
 /*
  * our page flags:
  *
- * allocated - page has space on disk reserved for it (-ENOSPC was checked then,
- * shouldn't be checked later)
- *
- * corresponds to c->sectors_reserved
+ * allocated - page has space on disk reserved for it (c->sectors_reserved) -
+ * -ENOSPC was checked then, shouldn't be checked later
  *
  * append - page is dirty from an append write, new i_size can't be written
- * until after page is written
- *
- * corresponds to ei->append_count
+ * until after page is written; ref held on ei->i_size_dirty_count
  */
 
 #define PF_ANY(page, enforce)	page
@@ -50,7 +47,7 @@ static struct bio_set *bch_writepage_bioset;
 static struct kmem_cache *bch_inode_cache;
 static DECLARE_WAIT_QUEUE_HEAD(bch_append_wait);
 
-static void bch_inode_init(struct bch_inode_info *);
+static void bch_inode_init(struct bch_inode_info *, struct bkey_s_c_inode);
 static int bch_read_single_page(struct page *, struct address_space *);
 
 #define SECTORS_CACHE	1024
@@ -73,10 +70,17 @@ static int reserve_sectors(struct cache_set *c, unsigned sectors)
 	return -ENOSPC;
 }
 
-static void bch_append_put(struct bch_inode_info *ei)
+static void i_size_dirty_put(struct bch_inode_info *ei)
 {
-	if (atomic_long_dec_and_test(&ei->append_count))
+	if (atomic_long_dec_and_test(&ei->i_size_dirty_count))
 		wake_up(&bch_append_wait);
+}
+
+static void i_size_dirty_get(struct bch_inode_info *ei)
+{
+	lockdep_assert_held(&ei->vfs_inode.i_rwsem);
+
+	atomic_long_inc(&ei->i_size_dirty_count);
 }
 
 static void bch_clear_page_bits(struct cache_set *c, struct bch_inode_info *ei,
@@ -86,41 +90,143 @@ static void bch_clear_page_bits(struct cache_set *c, struct bch_inode_info *ei,
 		atomic_long_sub_bug(PAGE_SECTORS, &c->sectors_reserved);
 
 	if (TestClearPageAppend(page))
-		bch_append_put(ei);
+		i_size_dirty_put(ei);
 }
 
-static int __bch_write_inode(struct inode *inode)
+/* returns true if we want to do the update */
+typedef int (*inode_set_fn)(struct bch_inode_info *, struct bch_inode *);
+
+/*
+ * I_SIZE_DIRTY requires special handling:
+ *
+ * To the recovery code, the flag means that there is stale data past i_size
+ * that needs to be deleted; it's used for implementing atomic appends and
+ * truncates.
+ *
+ * On append, we set I_SIZE_DIRTY before doing the write, then after the write
+ * we clear I_SIZE_DIRTY atomically with updating i_size to the new larger size
+ * that exposes the data we just wrote.
+ *
+ * On truncate, it's the reverse: We set I_SIZE_DIRTY atomically with setting
+ * i_size to the new smaller size, then we delete the data that we just made
+ * invisible, and then we clear I_SIZE_DIRTY.
+ *
+ * Because there can be multiple appends in flight at a time, we need a refcount
+ * (i_size_dirty_count) instead of manipulating the flag directly. Nonzero
+ * refcount means I_SIZE_DIRTY is set, zero means it's cleared.
+ *
+ * Because write_inode() can be called at any time, i_size_dirty_count means
+ * something different to the runtime code - it means to write_inode() "don't
+ * update i_size yet".
+ *
+ * We don't clear I_SIZE_DIRTY directly, we let write_inode() clear it when
+ * i_size_dirty_count is zero - but the reverse is not true, I_SIZE_DIRTY must
+ * be set explicitly.
+ */
+
+static int inode_maybe_clear_dirty(struct bch_inode_info *ei,
+				    struct bch_inode *bi)
 {
-	struct cache_set *c = inode->i_sb->s_fs_info;
-	struct bch_inode_info *ei = to_bch_ei(inode);
-	struct bch_inode *bi = &ei->inode.v;
+	lockdep_assert_held(&ei->update_lock);
+
+	/* we kind of want i_size_dirty_count to be a rwlock */
+
+	if (!atomic_long_read(&ei->i_size_dirty_count)) {
+		bi->i_flags	&= ~BCH_INODE_I_SIZE_DIRTY;
+		bi->i_size	= i_size_read(&ei->vfs_inode);
+	}
+	return 0;
+}
+
+/*
+ * For truncate: We need to set I_SIZE_DIRTY atomically with setting the new
+ * (truncated, smaller) size
+ */
+static int inode_set_size_and_dirty(struct bch_inode_info *ei,
+				    struct bch_inode *bi)
+{
+	bi->i_flags |= BCH_INODE_I_SIZE_DIRTY;
+	bi->i_size = ei->vfs_inode.i_size;
+	return 0;
+}
+
+static int inode_set_dirty(struct bch_inode_info *ei,
+			   struct bch_inode *bi)
+{
+	if (bi->i_flags & BCH_INODE_I_SIZE_DIRTY)
+		return 1;
+
+	bi->i_flags |= BCH_INODE_I_SIZE_DIRTY;
+	return 0;
+}
+
+static int __must_check __bch_write_inode(struct cache_set *c,
+					  struct bch_inode_info *ei,
+					  inode_set_fn set)
+{
+	struct btree_iter iter;
+	struct inode *vfs_inode = &ei->vfs_inode;
+	struct bkey_i_inode inode;
+	struct bch_inode *bi;
+	u64 inum = vfs_inode->i_ino;
+	int ret;
 
 	lockdep_assert_held(&ei->update_lock);
-	BUG_ON(ei->inode.k.p.inode != inode->i_ino);
-	BUG_ON(ei->inode.k.type != BCH_INODE_FS);
 
-	if (!atomic_long_read(&ei->append_count)) {
-		bi->i_flags	&= ~BCH_INODE_I_SIZE_DIRTY;
-		bi->i_size	= inode->i_size;
+	bch_btree_iter_init_intent(&iter, c, BTREE_ID_INODES, POS(inum, 0));
+
+	do {
+		struct bkey_s_c k = bch_btree_iter_peek_with_holes(&iter);
+
+		if (WARN_ONCE(!k.k || k.k->type != BCH_INODE_FS,
+			      "inode %llu not found when updating", inum)) {
+			bch_btree_iter_unlock(&iter);
+			return -ENOENT;
+		}
+
+		bkey_reassemble(&inode.k_i, k);
+		bi = &inode.v;
+
+		ret = set(ei, bi);
+		if (ret)
+			goto out;
+
+		bi->i_mode	= vfs_inode->i_mode;
+		bi->i_uid	= i_uid_read(vfs_inode);
+		bi->i_gid	= i_gid_read(vfs_inode);
+		bi->i_nlink	= vfs_inode->i_nlink;
+		bi->i_dev	= vfs_inode->i_rdev;
+		bi->i_atime	= timespec_to_ns(&vfs_inode->i_atime);
+		bi->i_mtime	= timespec_to_ns(&vfs_inode->i_mtime);
+		bi->i_ctime	= timespec_to_ns(&vfs_inode->i_ctime);
+
+		ret = bch_btree_insert_at(&iter, &keylist_single(&inode.k_i),
+					  NULL, &ei->journal_seq,
+					  BTREE_INSERT_ATOMIC);
+	} while (ret == -EINTR);
+
+	if (!ret) {
+		ei->i_size	= bi->i_size;
+		ei->i_flags	= bi->i_flags;
 	}
+out:
+	bch_btree_iter_unlock(&iter);
 
-	bi->i_mode	= inode->i_mode;
-	bi->i_uid	= i_uid_read(inode);
-	bi->i_gid	= i_gid_read(inode);
-	bi->i_nlink	= inode->i_nlink;
-	bi->i_dev	= inode->i_rdev;
-	bi->i_atime	= timespec_to_ns(&inode->i_atime);
-	bi->i_mtime	= timespec_to_ns(&inode->i_mtime);
-	bi->i_ctime	= timespec_to_ns(&inode->i_ctime);
+	return ret < 0 ? ret : 0;
+}
 
-	return bch_inode_update(c, &ei->inode.k_i, &ei->journal_seq);
+static int __must_check bch_write_inode(struct cache_set *c,
+					struct bch_inode_info *ei)
+{
+	return __bch_write_inode(c, ei, inode_maybe_clear_dirty);
 }
 
 static struct inode *bch_vfs_inode_get(struct super_block *sb, u64 inum)
 {
 	struct cache_set *c = sb->s_fs_info;
-	struct bch_inode_info *ei;
 	struct inode *inode;
+	struct btree_iter iter;
+	struct bkey_s_c k;
 	int ret;
 
 	pr_debug("inum %llu", inum);
@@ -131,23 +237,25 @@ static struct inode *bch_vfs_inode_get(struct super_block *sb, u64 inum)
 	if (!(inode->i_state & I_NEW))
 		return inode;
 
-	ei = to_bch_ei(inode);
-
-	ret = bch_inode_find_by_inum(c, inum, &ei->inode);
-	if (unlikely(ret)) {
+	bch_btree_iter_init(&iter, c, BTREE_ID_INODES, POS(inum, 0));
+	k = bch_btree_iter_peek_with_holes(&iter);
+	if (!k.k || k.k->type != BCH_INODE_FS) {
+		ret = bch_btree_iter_unlock(&iter);
 		iget_failed(inode);
-		return ERR_PTR(ret);
+		return ERR_PTR(ret ?: -ENOENT);
 	}
 
-	bch_inode_init(ei);
+	bch_inode_init(to_bch_ei(inode), bkey_s_c_to_inode(k));
 	unlock_new_inode(inode);
+
+	bch_btree_iter_unlock(&iter);
 
 	return inode;
 }
 
 static void bch_set_inode_flags(struct inode *inode)
 {
-	unsigned flags = to_bch_ei(inode)->inode.v.i_flags;
+	unsigned flags = to_bch_ei(inode)->i_flags;
 
 	inode->i_flags &= ~(S_SYNC|S_APPEND|S_IMMUTABLE|S_NOATIME);
 	if (flags & FS_SYNC_FL)
@@ -168,6 +276,7 @@ static struct inode *bch_vfs_inode_create(struct cache_set *c,
 	struct bch_inode_info *ei;
 	struct bch_inode *bi;
 	struct timespec ts = CURRENT_TIME;
+	struct bkey_i_inode bkey_inode;
 	s64 now = timespec_to_ns(&ts);
 	int ret;
 
@@ -179,7 +288,7 @@ static struct inode *bch_vfs_inode_create(struct cache_set *c,
 
 	ei = to_bch_ei(inode);
 
-	bi = &bkey_inode_init(&ei->inode.k_i)->v;
+	bi = &bkey_inode_init(&bkey_inode.k_i)->v;
 	bi->i_uid	= i_uid_read(inode);
 	bi->i_gid	= i_gid_read(inode);
 
@@ -190,7 +299,7 @@ static struct inode *bch_vfs_inode_create(struct cache_set *c,
 	bi->i_ctime	= now;
 	bi->i_nlink	= S_ISDIR(mode) ? 2 : 1;
 
-	ret = bch_inode_create(c, &ei->inode.k_i,
+	ret = bch_inode_create(c, &bkey_inode.k_i,
 			       BLOCKDEV_INODE_MAX, 0,
 			       &c->unused_inode_hint);
 	if (unlikely(ret)) {
@@ -198,11 +307,11 @@ static struct inode *bch_vfs_inode_create(struct cache_set *c,
 		 * indicate to bch_evict_inode that the inode was never actually
 		 * created:
 		 */
-		bkey_init(&ei->inode.k);
+		make_bad_inode(inode);
 		goto err;
 	}
 
-	bch_inode_init(ei);
+	bch_inode_init(ei, inode_i_to_s_c(&bkey_inode));
 
 	ret = bch_init_acl(inode, parent);
 	if (unlikely(ret))
@@ -294,8 +403,11 @@ static int bch_link(struct dentry *old_dentry, struct inode *dir,
 	mutex_lock(&ei->update_lock);
 	inode->i_ctime = CURRENT_TIME;
 	inc_nlink(inode);
-	__bch_write_inode(inode);
+	ret = bch_write_inode(c, ei);
 	mutex_unlock(&ei->update_lock);
+
+	if (ret)
+		return ret;
 
 	ihold(inode);
 
@@ -481,19 +593,15 @@ static int bch_rename(struct inode *old_dir, struct dentry *old_dentry,
 	mark_inode_dirty_sync(old_dir);
 	mark_inode_dirty_sync(new_dir);
 
-	/*
-	 * Like most other Unix systems, set the ctime for inodes on a
-	 * rename.
-	 */
+	/* XXX: error handling */
+	bch_dirent_delete(c, old_dir->i_ino, &old_dentry->d_name);
+
 	mutex_lock(&ei->update_lock);
 	old_inode->i_ctime = now;
 	if (new_inode)
 		old_inode->i_mtime = now;
-	__bch_write_inode(old_inode);
+	ret = bch_write_inode(c, ei);
 	mutex_unlock(&ei->update_lock);
-
-	/* XXX: error handling */
-	bch_dirent_delete(c, old_dir->i_ino, &old_dentry->d_name);
 
 	return 0;
 }
@@ -549,21 +657,18 @@ static int bch_setattr(struct dentry *dentry, struct iattr *iattr)
 		inode_dio_wait(inode);
 
 		/*
-		 * __bch_write_inode() clears I_SIZE_DIRTY if append_count == 0:
-		 */
-		atomic_long_inc(&ei->append_count);
-
-		/*
 		 * I_SIZE_DIRTY indicates that there's extents past the end of
 		 * i_size, and must be set atomically with setting the new
 		 * i_size:
 		 */
 		mutex_lock(&ei->update_lock);
+		i_size_dirty_get(ei);
 		i_size_write(inode, iattr->ia_size);
-		ei->inode.v.i_flags |= BCH_INODE_I_SIZE_DIRTY;
-		ei->inode.v.i_size = iattr->ia_size;
-		__bch_write_inode(inode);
+		ret = __bch_write_inode(c, ei, inode_set_size_and_dirty);
 		mutex_unlock(&ei->update_lock);
+
+		if (unlikely(ret))
+			return ret;
 
 		ret = bch_truncate_page(inode->i_mapping, iattr->ia_size);
 		if (unlikely(ret))
@@ -581,16 +686,19 @@ static int bch_setattr(struct dentry *dentry, struct iattr *iattr)
 
 		/*
 		 * Extents discarded, now clear I_SIZE_DIRTY (which write_inode
-		 * does when append_count is 0
+		 * does when i_size_dirty_count is 0
 		 */
-		bch_append_put(ei);
+		i_size_dirty_put(ei);
 		inode->i_mtime = inode->i_ctime = CURRENT_TIME;
 	}
 
 	mutex_lock(&ei->update_lock);
 	setattr_copy(inode, iattr);
-	__bch_write_inode(inode);
+	ret = bch_write_inode(c, ei); /* clears I_SIZE_DIRTY */
 	mutex_unlock(&ei->update_lock);
+
+	if (unlikely(ret))
+		return ret;
 
 	if (iattr->ia_valid & ATTR_MODE)
 		ret = posix_acl_chmod(inode, inode->i_mode);
@@ -685,7 +793,7 @@ static int bch_fsync(struct file *file, loff_t start, loff_t end, int datasync)
 		return ret;
 
 	inode_lock(inode);
-	if (datasync && end <= ei->inode.v.i_size)
+	if (datasync && end <= ei->i_size)
 		goto out;
 
 	/*
@@ -694,11 +802,11 @@ static int bch_fsync(struct file *file, loff_t start, loff_t end, int datasync)
 	filemap_write_and_wait_range(inode->i_mapping, start, end);
 
 	wait_event(bch_append_wait,
-		   !atomic_long_read(&ei->append_count));
+		   !atomic_long_read(&ei->i_size_dirty_count));
 
 	mutex_lock(&ei->update_lock);
-	BUG_ON(atomic_long_read(&ei->append_count));
-	ret = __bch_write_inode(inode);
+	BUG_ON(atomic_long_read(&ei->i_size_dirty_count));
+	ret = bch_write_inode(c, ei);
 	mutex_unlock(&ei->update_lock);
 out:
 	inode_unlock(inode);
@@ -725,21 +833,38 @@ static inline bool bch_flags_allowed(umode_t mode, u32 flags)
 	return true;
 }
 
+static int bch_inode_set_flags(struct bch_inode_info *ei, struct bch_inode *bi)
+{
+	unsigned oldflags = bi->i_flags;
+	unsigned newflags = ei->newflags;
+
+	if (((newflags ^ oldflags) & (FS_APPEND_FL|FS_IMMUTABLE_FL)) &&
+	    !capable(CAP_LINUX_IMMUTABLE))
+		return -EPERM;
+
+	newflags = newflags & BCH_FL_USER_FLAGS;
+	newflags |= oldflags & ~BCH_FL_USER_FLAGS;
+	bi->i_flags = newflags;
+
+	ei->vfs_inode.i_ctime = CURRENT_TIME_SEC;
+
+	return 0;
+}
+
 static long bch_fs_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 {
 	struct inode *inode = file_inode(filp);
+	struct cache_set *c = inode->i_sb->s_fs_info;
 	struct bch_inode_info *ei = to_bch_ei(inode);
 	unsigned flags;
 	int ret;
 
 	switch (cmd) {
 	case FS_IOC_GETFLAGS:
-		flags = ei->inode.v.i_flags & BCH_FL_USER_FLAGS;
+		flags = ei->i_flags & BCH_FL_USER_FLAGS;
 		return put_user(flags, (int __user *) arg);
 
 	case FS_IOC_SETFLAGS: {
-		unsigned oldflags;
-
 		ret = mnt_want_write_file(filp);
 		if (ret)
 			return ret;
@@ -760,24 +885,16 @@ static long bch_fs_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 		}
 
 		inode_lock(inode);
-		oldflags = ei->inode.v.i_flags;
 
-		if (((flags ^ oldflags) & (FS_APPEND_FL|FS_IMMUTABLE_FL)) &&
-		    !capable(CAP_LINUX_IMMUTABLE)) {
-			inode_unlock(inode);
-			ret = -EPERM;
-			goto setflags_out;
-		}
+		mutex_lock(&ei->update_lock);
+		ei->newflags = flags;
+		ret = __bch_write_inode(c, ei, bch_inode_set_flags);
+		mutex_unlock(&ei->update_lock);
 
-		flags = flags & BCH_FL_USER_FLAGS;
-		flags |= oldflags & ~BCH_FL_USER_FLAGS;
-		ei->inode.v.i_flags = flags;
+		if (!ret)
+			bch_set_inode_flags(inode);
 
-		inode->i_ctime = CURRENT_TIME_SEC;
-		bch_set_inode_flags(inode);
 		inode_unlock(inode);
-
-		mark_inode_dirty(inode);
 setflags_out:
 		mnt_drop_write_file(filp);
 		return ret;
@@ -1057,6 +1174,7 @@ static int __bch_writepage(struct page *page, struct writeback_control *wbc,
 			   void *data)
 {
 	struct inode *inode = page->mapping->host;
+	struct cache_set *c = inode->i_sb->s_fs_info;
 	struct bch_inode_info *ei = to_bch_ei(inode);
 	struct bch_writepage *w = data;
 	struct bio *bio;
@@ -1084,17 +1202,17 @@ static int __bch_writepage(struct page *page, struct writeback_control *wbc,
 	 */
 	zero_user_segment(page, offset, PAGE_SIZE);
 do_io:
-	/* XXX: how we gonna make this synchronization efficient? */
-	mutex_lock(&ei->update_lock);
+	if (PageAppend(page) &&
+	    !(ei->i_flags & BCH_INODE_I_SIZE_DIRTY)) {
+		int ret;
 
-	if (ei->inode.v.i_size < i_size &&
-	    page->index >= (ei->inode.v.i_size >> PAGE_SHIFT) &&
-	    !(ei->inode.v.i_flags & BCH_INODE_I_SIZE_DIRTY)) {
-		ei->inode.v.i_flags |= BCH_INODE_I_SIZE_DIRTY;
-		__bch_write_inode(inode);
+		mutex_lock(&ei->update_lock);
+		ret = __bch_write_inode(c, ei, inode_set_dirty);
+		mutex_unlock(&ei->update_lock);
+
+		if (ret)
+			return ret;
 	}
-
-	mutex_unlock(&ei->update_lock);
 
 	if (!w->io) {
 		bio = bio_alloc_bioset(GFP_NOFS, BIO_MAX_PAGES,
@@ -1293,15 +1411,13 @@ static int bch_write_end(struct file *filp, struct address_space *mapping,
 		set_page_dirty(page);
 
 	if (last_pos > inode->i_size) {
-		mutex_lock(&ei->update_lock);
-
-		if (!TestSetPageAppend(page))
-			atomic_long_inc(&ei->append_count);
+		if (!TestSetPageAppend(page)) {
+			mutex_lock(&ei->update_lock);
+			i_size_dirty_get(ei);
+			mutex_unlock(&ei->update_lock);
+		}
 
 		i_size_write(inode, last_pos);
-		mark_inode_dirty(inode);
-
-		mutex_unlock(&ei->update_lock);
 	}
 
 	unlock_page(page);
@@ -1461,7 +1577,7 @@ static void __bch_dio_write_complete(struct dio_write *dio)
 	struct bch_inode_info *ei = to_bch_ei(dio->req->ki_filp->f_inode);
 
 	if (dio->append)
-		bch_append_put(ei);
+		i_size_dirty_put(ei);
 	inode_dio_end(dio->req->ki_filp->f_inode);
 	kfree(dio);
 }
@@ -1502,7 +1618,7 @@ static int bch_direct_IO_write(struct cache_set *c, struct kiocb *req,
 	struct bio *bio;
 	unsigned long inum = inode->i_ino;
 	unsigned flags = BCH_WRITE_CHECK_ENOSPC;
-	ssize_t ret = 0;
+	ssize_t ret;
 
 	lockdep_assert_held(&inode->i_rwsem);
 
@@ -1513,22 +1629,25 @@ static int bch_direct_IO_write(struct cache_set *c, struct kiocb *req,
 	if (!dio)
 		return -ENOMEM;
 
-	closure_init(&dio->cl, NULL);
 	dio->req	= req;
 	dio->ret	= iter->count;
 	dio->append	= false;
 
 	if (offset + iter->count > inode->i_size) {
 		dio->append = true;
-		atomic_long_inc(&ei->append_count);
 
 		mutex_lock(&ei->update_lock);
-		if (!(ei->inode.v.i_flags & BCH_INODE_I_SIZE_DIRTY)) {
-			ei->inode.v.i_flags |= BCH_INODE_I_SIZE_DIRTY;
-			__bch_write_inode(inode);
-		}
+		i_size_dirty_get(ei);
+		ret = __bch_write_inode(c, ei, inode_set_dirty);
 		mutex_unlock(&ei->update_lock);
+
+		if (ret) {
+			kfree(dio);
+			return ret;
+		}
 	}
+
+	closure_init(&dio->cl, NULL);
 
 	/* Decremented by inode_dio_done(): */
 	atomic_inc(&inode->i_dio_count);
@@ -1585,10 +1704,8 @@ static int bch_direct_IO_write(struct cache_set *c, struct kiocb *req,
 		ret = dio->ret;
 
 		if (ret > 0 &&
-		    offset > inode->i_size) {
+		    offset > inode->i_size)
 			i_size_write(inode, offset);
-			mark_inode_dirty(inode);
-		}
 
 		__bch_dio_write_complete(dio);
 		return ret;
@@ -1660,21 +1777,23 @@ static const struct address_space_operations bch_address_space_operations = {
 	.error_remove_page	= generic_error_remove_page,
 };
 
-static void bch_inode_init(struct bch_inode_info *ei)
+static void bch_inode_init(struct bch_inode_info *ei,
+			   struct bkey_s_c_inode bkey_inode)
 {
 	struct inode *inode = &ei->vfs_inode;
-	struct bch_inode *bi = &ei->inode.v;
+	const struct bch_inode *bi = bkey_inode.v;
 
 	pr_debug("init inode %llu with mode %o",
-		 ei->inode.k.p.inode, bi->i_mode);
+		 bkey_inode.k->p.inode, bi->i_mode);
 
-	BUG_ON(atomic_long_read(&ei->append_count));
+	ei->i_flags	= bi->i_flags;
+	ei->i_size	= bi->i_size;
 
 	inode->i_mode	= bi->i_mode;
 	i_uid_write(inode, bi->i_uid);
 	i_gid_write(inode, bi->i_gid);
 
-	inode->i_ino	= ei->inode.k.p.inode;
+	inode->i_ino	= bkey_inode.k->p.inode;
 	set_nlink(inode, bi->i_nlink);
 	inode->i_rdev	= bi->i_dev;
 	inode->i_size	= bi->i_size;
@@ -1718,7 +1837,7 @@ static struct inode *bch_alloc_inode(struct super_block *sb)
 	inode_init_once(&ei->vfs_inode);
 	mutex_init(&ei->update_lock);
 	ei->journal_seq = 0;
-	atomic_long_set(&ei->append_count, 0);
+	atomic_long_set(&ei->i_size_dirty_count, 0);
 
 	return &ei->vfs_inode;
 }
@@ -1735,14 +1854,15 @@ static void bch_destroy_inode(struct inode *inode)
 	call_rcu(&inode->i_rcu, bch_i_callback);
 }
 
-static int bch_write_inode(struct inode *inode, struct writeback_control *wbc)
+static int bch_vfs_write_inode(struct inode *inode,
+			       struct writeback_control *wbc)
 {
 	struct cache_set *c = inode->i_sb->s_fs_info;
 	struct bch_inode_info *ei = to_bch_ei(inode);
 	int ret;
 
 	mutex_lock(&ei->update_lock);
-	ret = __bch_write_inode(inode);
+	ret = bch_write_inode(c, ei);
 	mutex_unlock(&ei->update_lock);
 
 	if (!ret && wbc->sync_mode == WB_SYNC_ALL)
@@ -1756,44 +1876,29 @@ static void bch_evict_inode(struct inode *inode)
 	struct cache_set *c = inode->i_sb->s_fs_info;
 	struct bch_inode_info *ei = to_bch_ei(inode);
 
-	if (inode->i_nlink) {
+	if (is_bad_inode(inode)) {
+		/* bch_inode_create() failed: */
+		clear_inode(inode);
+	} else if (inode->i_nlink) {
 		truncate_inode_pages_final(&inode->i_data);
 
 		mutex_lock(&ei->update_lock);
-		BUG_ON(atomic_long_read(&ei->append_count));
+		BUG_ON(atomic_long_read(&ei->i_size_dirty_count));
 
 		if (!(inode->i_state & I_NEW) &&
-		    (ei->inode.v.i_flags & BCH_INODE_I_SIZE_DIRTY ||
-		     inode->i_size != ei->inode.v.i_size))
-			__bch_write_inode(inode);
+		    (ei->i_flags & BCH_INODE_I_SIZE_DIRTY ||
+		     inode->i_size != ei->i_size))
+			WARN(bch_write_inode(c, ei),
+			     "failed to write inode before evicting\n");
 		mutex_unlock(&ei->update_lock);
 
 		clear_inode(inode);
-	} else if (!bkey_deleted(&ei->inode.k)) {
-		atomic_long_inc(&ei->append_count);
-
-		mutex_lock(&ei->update_lock);
-		ei->inode.v.i_flags |= BCH_INODE_I_SIZE_DIRTY;
-		ei->inode.v.i_size = 0;
-		i_size_write(inode, 0);
-		__bch_write_inode(inode);
-		mutex_unlock(&ei->update_lock);
-
+	} else {
 		truncate_inode_pages_final(&inode->i_data);
 		clear_inode(inode);
-
-		/*
-		 * write_inode() shouldn't be called again - this will cause it
-		 * to BUG():
-		 */
-		ei->inode.k.type = KEY_TYPE_DELETED;
-		atomic_long_dec_bug(&ei->append_count);
 
 		bch_inode_rm(c, inode->i_ino);
 		atomic_long_dec(&c->nr_inodes);
-	} else {
-		/* bch_inode_create() failed: */
-		clear_inode(inode);
 	}
 }
 
@@ -1973,7 +2078,7 @@ unlock:
 static const struct super_operations bch_super_operations = {
 	.alloc_inode	= bch_alloc_inode,
 	.destroy_inode	= bch_destroy_inode,
-	.write_inode	= bch_write_inode,
+	.write_inode	= bch_vfs_write_inode,
 	.evict_inode	= bch_evict_inode,
 	.sync_fs	= bch_sync_fs,
 	.statfs		= bch_statfs,
