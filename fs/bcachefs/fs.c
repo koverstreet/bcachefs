@@ -1210,8 +1210,11 @@ do_io:
 		ret = __bch_write_inode(c, ei, inode_set_dirty);
 		mutex_unlock(&ei->update_lock);
 
-		if (ret)
-			return ret;
+		if (ret) {
+			redirty_page_for_writepage(wbc, page);
+			unlock_page(page);
+			return 0;
+		}
 	}
 
 	if (!w->io) {
@@ -1260,14 +1263,19 @@ static int bch_writepages(struct address_space *mapping,
 static int bch_writepage(struct page *page, struct writeback_control *wbc)
 {
 	struct inode *inode = page->mapping->host;
+	int ret;
 	struct bch_writepage w = {
 		.c = inode->i_sb->s_fs_info,
 		.inum = inode->i_ino,
 		.io = NULL,
 	};
 
-	__bch_writepage(page, NULL, &w);
-	bch_writepage_do_io(w.io);
+	ret = __bch_writepage(page, NULL, &w);
+	if (ret)
+		return ret;
+
+	if (w.io)
+		bch_writepage_do_io(w.io);
 
 	return 0;
 }
@@ -1883,12 +1891,14 @@ static void bch_evict_inode(struct inode *inode)
 		truncate_inode_pages_final(&inode->i_data);
 
 		mutex_lock(&ei->update_lock);
-		BUG_ON(atomic_long_read(&ei->i_size_dirty_count));
+		BUG_ON((inode->i_sb->s_flags & MS_ACTIVE) &&
+		       atomic_long_read(&ei->i_size_dirty_count));
 
 		if (!(inode->i_state & I_NEW) &&
 		    (ei->i_flags & BCH_INODE_I_SIZE_DIRTY ||
 		     inode->i_size != ei->i_size))
-			WARN(bch_write_inode(c, ei),
+			WARN(bch_write_inode(c, ei) &&
+			     (inode->i_sb->s_flags & MS_ACTIVE),
 			     "failed to write inode before evicting\n");
 		mutex_unlock(&ei->update_lock);
 
