@@ -680,7 +680,8 @@ static int bch_setattr(struct dentry *dentry, struct iattr *iattr)
 		truncate_pagecache(inode, iattr->ia_size);
 
 		ret = bch_inode_truncate(c, inode->i_ino,
-				round_up(iattr->ia_size, PAGE_SIZE) >> 9);
+				round_up(iattr->ia_size, PAGE_SIZE) >> 9,
+				&ei->journal_seq);
 		if (unlikely(ret))
 			return ret;
 

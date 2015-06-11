@@ -489,7 +489,8 @@ static void bch_write_discard(struct closure *cl)
 	op->error = bch_discard(op->c,
 				POS(inode, bio->bi_iter.bi_sector),
 				POS(inode, bio_end_sector(bio)),
-				op->insert_key.k.version);
+				op->insert_key.k.version,
+				NULL);
 }
 
 static void bch_write_error(struct closure *cl)
@@ -1122,7 +1123,7 @@ void bch_write_op_init(struct bch_write_op *op, struct cache_set *c,
  *	appropriately inode_truncate should call this
  */
 int bch_discard(struct cache_set *c, struct bpos start,
-		struct bpos end, u64 version)
+		struct bpos end, u64 version, u64 *journal_seq)
 {
 	struct btree_iter iter;
 	struct bkey_s_c k;
@@ -1153,7 +1154,8 @@ int bch_discard(struct cache_set *c, struct bpos start,
 		n = erase.k.p;
 
 		ret = bch_btree_insert_at(&iter, &keylist_single(&erase),
-					  NULL, NULL, BTREE_INSERT_NOFAIL);
+					  NULL, journal_seq,
+					  BTREE_INSERT_NOFAIL);
 		if (ret)
 			break;
 

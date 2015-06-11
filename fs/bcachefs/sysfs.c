@@ -434,7 +434,7 @@ STORE(__bch_blockdev_volume)
 
 		if (v < d->inode.v.i_inode.i_size) {
 			ret = bch_inode_truncate(d->c, d->inode.k.p.inode,
-						 v >> 9);
+						 v >> 9, NULL);
 			if (ret) {
 				mutex_unlock(&d->inode_lock);
 				return ret;

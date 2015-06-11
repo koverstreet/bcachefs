@@ -100,7 +100,8 @@ static int bch_gc_do_inode(struct cache_set *c, struct btree_iter *iter,
 		 */
 
 		ret = bch_inode_truncate(c, inode.k->p.inode,
-				round_up(inode.v->i_size, PAGE_SIZE) >> 9);
+				round_up(inode.v->i_size, PAGE_SIZE) >> 9,
+				NULL);
 		if (ret)
 			return ret;
 	}

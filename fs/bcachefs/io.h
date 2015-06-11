@@ -149,7 +149,7 @@ void bch_submit_bbio(struct bbio *, struct cache *,
 void bch_submit_bbio_replicas(struct bch_write_bio *, struct cache_set *,
 			      const struct bkey_i *, unsigned, bool);
 
-int bch_discard(struct cache_set *, struct bpos, struct bpos, u64);
+int bch_discard(struct cache_set *, struct bpos, struct bpos, u64, u64 *);
 
 void __cache_promote(struct cache_set *, struct bbio *,
 		     struct bkey_s_c, struct bkey_s_c, unsigned);
