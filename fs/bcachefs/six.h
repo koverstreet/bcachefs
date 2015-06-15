@@ -33,8 +33,8 @@ union six_lock_state {
 	};
 
 	struct {
-		unsigned	read_lock:28;
-		unsigned	intent_lock:1;
+		unsigned	read_lock:26;
+		unsigned	intent_lock:3;
 		unsigned	waiters:3;
 		/*
 		 * seq works much like in seqlocks: it's incremented every time
@@ -65,7 +65,7 @@ struct six_lock {
 #endif
 };
 
-static inline void __six_lock_init(struct six_lock *lock, const char *name,
+static __always_inline void __six_lock_init(struct six_lock *lock, const char *name,
 				   struct lock_class_key *key)
 {
 	atomic64_set(&lock->state.counter, 0);
@@ -86,12 +86,13 @@ do {									\
 	__six_lock_init((lock), #lock, &__key);				\
 } while (0)
 
-bool __six_trylock_convert(struct six_lock *, unsigned long, unsigned long,
-			   unsigned long, unsigned);
-bool __six_trylock(struct six_lock *, unsigned long, unsigned long);
-bool __six_relock(struct six_lock *, unsigned long, unsigned long, unsigned);
-void __six_lock(struct six_lock *, unsigned long, unsigned long, unsigned);
-void __six_unlock(struct six_lock *, unsigned long, unsigned);
+bool __six_trylock_type(struct six_lock *, enum six_lock_type);
+bool __six_relock_type(struct six_lock *, enum six_lock_type, unsigned);
+void __six_lock_type(struct six_lock *, enum six_lock_type);
+void __six_unlock_type(struct six_lock *, enum six_lock_type);
+bool six_trylock_convert(struct six_lock *, enum six_lock_type,
+			 enum six_lock_type);
+void __six_lock_increment(struct six_lock *, enum six_lock_type);
 
 #ifdef CONFIG_DEBUG_LOCK_ALLOC
 
@@ -107,80 +108,71 @@ void __six_unlock(struct six_lock *, unsigned long, unsigned);
 
 #define __SIX_VAL(field, _v)	(((union six_lock_state) { .field = _v }).v)
 
-#define __SIX_VAL_WAIT			__SIX_VAL(waiters, 1)
+static __always_inline bool six_trylock_type(struct six_lock *lock,
+					     enum six_lock_type type)
+{
+	if (!__six_trylock_type(lock, type))
+		return false;
 
-#define __SIX_LOCK_HELD_read		__SIX_VAL(read_lock, ~0)
-#define __SIX_LOCK_HELD_intent		__SIX_VAL(intent_lock, 1)
-#define __SIX_LOCK_HELD_write		__SIX_VAL(seq, 1)
+	six_acquire(&lock->dep_map);
+	return true;
+}
 
-#define __SIX_LOCK_FAIL_read		__SIX_LOCK_HELD_write
-#define __SIX_LOCK_VAL_read		__SIX_VAL(read_lock, 1)
-#define __SIX_UNLOCK_VAL_read		(-__SIX_VAL(read_lock, 1))
-#define __SIX_UNLOCK_WAKEUP_read	SIX_LOCK_write
+static __always_inline bool six_relock_type(struct six_lock *lock,
+					    enum six_lock_type type,
+					    u32 seq)
+{
+	if (!__six_relock_type(lock, type, seq))
+		return false;
 
-#define __SIX_LOCK_FAIL_intent		__SIX_LOCK_HELD_intent
-#define __SIX_LOCK_VAL_intent		__SIX_VAL(intent_lock, 1)
-#define __SIX_UNLOCK_VAL_intent		(-__SIX_VAL(intent_lock, 1))
-#define __SIX_UNLOCK_WAKEUP_intent	SIX_LOCK_intent
+	six_acquire(&lock->dep_map);
+	return true;
+}
 
-#define __SIX_LOCK_FAIL_write		__SIX_LOCK_HELD_read
-#define __SIX_LOCK_VAL_write		__SIX_VAL(seq, 1)
-#define __SIX_UNLOCK_VAL_write		__SIX_VAL(seq, 1)
-#define __SIX_UNLOCK_WAKEUP_write	SIX_LOCK_read
+static __always_inline void six_lock_type(struct six_lock *lock,
+					  enum six_lock_type type)
+{
+	__six_lock_type(lock, type);
+	six_acquire(&lock->dep_map);
+}
 
-#define SIX_LOCK_SPIN_COUNT		1
+static __always_inline void six_unlock_type(struct six_lock *lock,
+					    enum six_lock_type type)
+{
+	six_release(&lock->dep_map);
+	__six_unlock_type(lock, type);
+}
+
+static __always_inline void six_lock_increment(struct six_lock *lock,
+					       enum six_lock_type type)
+{
+	__six_lock_increment(lock, type);
+	six_acquire(&lock->dep_map);
+}
 
 #define __SIX_LOCK(type)						\
-	static inline bool six_trylock_##type(struct six_lock *lock)	\
-	{								\
-		if (__six_trylock(lock,					\
-				  __SIX_LOCK_VAL_##type,		\
-				  __SIX_LOCK_FAIL_##type)) {		\
-			six_acquire(&lock->dep_map);			\
-			return true;					\
-		}							\
-		return false;						\
-	}								\
+static __always_inline bool six_trylock_##type(struct six_lock *lock)	\
+{									\
+	return six_trylock_type(lock, SIX_LOCK_##type);			\
+}									\
 									\
-	static inline bool six_relock_##type(struct six_lock *lock, u32 seq)\
-	{								\
-		if (__six_relock(lock,					\
-				 __SIX_LOCK_VAL_##type,			\
-				 __SIX_LOCK_FAIL_##type,		\
-				 seq)) {				\
-			six_acquire(&lock->dep_map);			\
-			return true;					\
-		}							\
-		return false;						\
-	}								\
+static __always_inline bool six_relock_##type(struct six_lock *lock, u32 seq)\
+{									\
+	return six_relock_type(lock, SIX_LOCK_##type, seq);		\
+}									\
 									\
-	static inline void six_lock_##type(struct six_lock *lock)	\
-	{								\
-		__six_lock(lock,					\
-			   __SIX_LOCK_VAL_##type,			\
-			   __SIX_LOCK_FAIL_##type,			\
-			   SIX_LOCK_##type);				\
-		six_acquire(&lock->dep_map);				\
-	}								\
+static __always_inline void six_lock_##type(struct six_lock *lock)	\
+{									\
+	six_lock_type(lock, SIX_LOCK_##type);				\
+}									\
 									\
-	static inline void six_unlock_##type(struct six_lock *lock)	\
-	{								\
-		six_release(&lock->dep_map);				\
-									\
-		__six_unlock(lock,					\
-			     __SIX_UNLOCK_VAL_##type,			\
-			     __SIX_UNLOCK_WAKEUP_##type);		\
-	}
+static __always_inline void six_unlock_##type(struct six_lock *lock)	\
+{									\
+	six_unlock_type(lock, SIX_LOCK_##type);				\
+}
 
 __SIX_LOCK(read)
 __SIX_LOCK(intent)
 __SIX_LOCK(write)
-
-#define six_trylock_convert(lock, from, to)				\
-	__six_trylock_convert(lock,					\
-			      __SIX_UNLOCK_VAL_##from,			\
-			      __SIX_LOCK_VAL_##to,			\
-			      __SIX_LOCK_FAIL_##to,			\
-			      __SIX_UNLOCK_WAKEUP_##from)
 
 #endif /* _BCACHE_SIX_H */

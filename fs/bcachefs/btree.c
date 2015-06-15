@@ -151,7 +151,7 @@ static bool btree_lock_upgrade(struct btree_iter *iter, unsigned level)
 		return true;
 
 	if (btree_node_locked(iter, level)
-	    ? six_trylock_convert(&b->lock, read, intent)
+	    ? six_trylock_convert(&b->lock, SIX_LOCK_read, SIX_LOCK_intent)
 	    : six_relock_intent(&b->lock, iter->lock_seq[level])) {
 		mark_btree_node_intent_locked(iter, level);
 		trace_bcache_btree_upgrade_lock(b, iter);
@@ -1506,7 +1506,9 @@ static noinline struct btree *bch_btree_node_fill(struct btree_iter *iter,
 		mark_btree_node_intent_locked(iter, level);
 	} else {
 		mark_btree_node_read_locked(iter, level);
-		BUG_ON(!six_trylock_convert(&b->lock, intent, read));
+		BUG_ON(!six_trylock_convert(&b->lock,
+					    SIX_LOCK_intent,
+					    SIX_LOCK_read));
 	}
 
 	return b;
