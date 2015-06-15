@@ -852,10 +852,13 @@ static int bch_inode_set_flags(struct bch_inode_info *ei, struct bch_inode *bi)
 	return 0;
 }
 
+#define FS_IOC_GOINGDOWN	     _IOR ('X', 125, __u32)
+
 static long bch_fs_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 {
 	struct inode *inode = file_inode(filp);
-	struct cache_set *c = inode->i_sb->s_fs_info;
+	struct super_block *sb = inode->i_sb;
+	struct cache_set *c = sb->s_fs_info;
 	struct bch_inode_info *ei = to_bch_ei(inode);
 	unsigned flags;
 	int ret;
@@ -900,7 +903,16 @@ setflags_out:
 		mnt_drop_write_file(filp);
 		return ret;
 	}
+	case FS_IOC_GOINGDOWN:
+		if (!capable(CAP_SYS_ADMIN))
+			return -EPERM;
+
+		down_write(&sb->s_umount);
+		sb->s_flags |= MS_RDONLY;
+		bch_cache_set_read_only(c);
+		up_write(&sb->s_umount);
 		return 0;
+
 	default:
 		return -ENOTTY;
 	}
