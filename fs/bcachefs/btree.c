@@ -2377,6 +2377,8 @@ static bool btree_insert_key(struct btree_iter *iter, struct btree *b,
 						    &done, res, flags);
 		bch_cut_front(done, orig);
 		dequeue = (orig->k.size == 0);
+
+		bch_btree_iter_set_pos(iter, done);
 	}
 
 	if (dequeue)
