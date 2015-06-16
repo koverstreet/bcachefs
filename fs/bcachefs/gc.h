@@ -53,4 +53,20 @@ static inline bool gc_will_visit_node(struct cache_set *c,
 	return ret;
 }
 
+static inline bool gc_will_visit_root(struct cache_set *c, enum btree_id id)
+{
+	unsigned seq;
+	bool ret;
+
+	do {
+		seq = read_seqcount_begin(&c->gc_cur_lock);
+		ret = id != c->gc_cur_btree
+			? id > c->gc_cur_btree
+			: c->gc_cur_level != U8_MAX;
+	} while (read_seqcount_retry(&c->gc_cur_lock, seq));
+
+	return ret;
+
+}
+
 #endif

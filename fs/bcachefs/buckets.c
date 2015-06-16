@@ -208,15 +208,13 @@ do {								\
 } while (0)
 
 static u8 bch_mark_bucket(struct cache_set *c, struct cache *ca,
-			  struct btree *b,
-			  const struct bch_extent_ptr *ptr,
-			  int sectors, bool dirty, bool metadata)
+			  struct btree *b, const struct bch_extent_ptr *ptr,
+			  int sectors, bool dirty, bool metadata, bool is_gc)
 {
 	struct bucket_mark old, new;
 	unsigned long bucket_nr = PTR_BUCKET_NR(ca, ptr);
 	unsigned saturated;
 	u8 stale;
-	bool is_gc = !b;
 
 	bucket_cmpxchg(&ca->buckets[bucket_nr], old, new, is_gc, ({
 		saturated = 0;
@@ -237,21 +235,25 @@ static u8 bch_mark_bucket(struct cache_set *c, struct cache *ca,
 		if (stale)
 			return stale;
 
-		/*
-		 * Check this after reading bucket mark to guard against
-		 * GC starting between when we check gc_cur_key and when
-		 * the GC zeroes out marks
-		 */
-		if (!is_gc && gc_will_visit_node(c, b))
-			return 0;
+		if (!is_gc) {
+			/*
+			 * Check this after reading bucket mark to guard against
+			 * GC starting between when we check gc_cur_key and when
+			 * the GC zeroes out marks
+			 */
+			if (b
+			    ? gc_will_visit_node(c, b)
+			    : gc_will_visit_root(c, BTREE_ID_EXTENTS))
+				return 0;
 
-		/*
-		 * Disallowed state transition - this means a bkey_cmpxchg()
-		 * operation is racing; just treat it like the pointer was
-		 * already stale
-		 */
-		if (!is_gc && dirty && is_available_bucket(old))
-			return 1;
+			/*
+			 * Disallowed state transition - this means a bkey_cmpxchg()
+			 * operation is racing; just treat it like the pointer was
+			 * already stale
+			 */
+			if (dirty && is_available_bucket(old))
+				return 1;
+		}
 
 		BUG_ON((old.dirty_sectors ||
 			old.cached_sectors) &&
@@ -295,7 +297,7 @@ static u8 bch_mark_bucket(struct cache_set *c, struct cache *ca,
  */
 int bch_mark_pointers(struct cache_set *c, struct btree *b,
 		      struct bkey_s_c_extent e, int sectors,
-		      bool fail_if_stale, bool metadata)
+		      bool fail_if_stale, bool metadata, bool is_gc)
 {
 	const struct bch_extent_ptr *ptr, *ptr2;
 	struct cache *ca;
@@ -342,7 +344,7 @@ int bch_mark_pointers(struct cache_set *c, struct btree *b,
 		 *   Fuck me, I hate my life.
 		 */
 		stale = bch_mark_bucket(c, ca, b, ptr, sectors,
-					dirty, metadata);
+					dirty, metadata, is_gc);
 		if (stale && dirty && fail_if_stale)
 			goto stale;
 	}
@@ -356,7 +358,7 @@ stale:
 
 		bch_mark_bucket(c, ca, b, ptr, -sectors,
 				bch_extent_ptr_is_dirty(c, e, ptr),
-				metadata);
+				metadata, is_gc);
 	}
 	rcu_read_unlock();
 

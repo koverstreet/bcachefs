@@ -264,6 +264,6 @@ void bch_mark_metadata_bucket(struct cache *, struct bucket *, bool);
 void bch_unmark_open_bucket(struct cache *, struct bucket *);
 
 int bch_mark_pointers(struct cache_set *, struct btree *,
-		      struct bkey_s_c_extent, int, bool, bool);
+		      struct bkey_s_c_extent, int, bool, bool, bool);
 
 #endif /* _BUCKETS_H */

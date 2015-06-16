@@ -143,7 +143,7 @@ bool bch_insert_fixup_btree_ptr(struct cache_set *c, struct btree *b,
 
 		stale = bch_mark_pointers(c, b, bkey_i_to_s_c_extent(insert),
 					  CACHE_BTREE_NODE_SIZE(&c->sb),
-					  true, true);
+					  true, true, false);
 		BUG_ON(stale);
 	}
 
@@ -786,7 +786,8 @@ static int bch_add_sectors(struct cache_set *c, struct btree *b,
 		struct bkey_s_c_extent e = bkey_s_c_to_extent(k);
 		int ret;
 
-		ret = bch_mark_pointers(c, b, e, sectors, fail_if_stale, false);
+		ret = bch_mark_pointers(c, b, e, sectors, fail_if_stale,
+					false, false);
 		if (ret)
 			return ret;
 

@@ -1654,9 +1654,10 @@ void bch_btree_node_free(struct cache_set *c, struct btree *b)
 
 	__btree_node_free(c, b);
 
+	/* XX: this isn't right */
 	bch_mark_pointers(c, b, bkey_i_to_s_c_extent(&tmp.k),
 			  -CACHE_BTREE_NODE_SIZE(&c->sb),
-			  false, true);
+			  false, true, false);
 }
 
 static void __bch_btree_set_root(struct cache_set *c, struct btree *b)
@@ -1675,7 +1676,7 @@ static void __bch_btree_set_root(struct cache_set *c, struct btree *b)
 		bool stale = bch_mark_pointers(c, NULL,
 					       bkey_i_to_s_c_extent(&b->key),
 					       CACHE_BTREE_NODE_SIZE(&c->sb),
-					       true, true);
+					       true, true, false);
 
 		BUG_ON(stale);
 	}

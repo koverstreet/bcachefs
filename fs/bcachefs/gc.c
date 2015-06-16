@@ -110,7 +110,7 @@ void __bch_btree_mark_key(struct cache_set *c, int level, struct bkey_s_c k)
 
 		bch_mark_pointers(c, NULL, e, level
 				  ? CACHE_BTREE_NODE_SIZE(&c->sb)
-				  : e.k->size, false, level != 0);
+				  : e.k->size, false, level != 0, true);
 	}
 }
 
@@ -200,7 +200,7 @@ static int bch_gc_btree(struct cache_set *c, enum btree_id btree_id)
 	__bch_btree_mark_key(c, b->level + 1, bkey_i_to_s_c(&b->key));
 
 	write_seqcount_begin(&c->gc_cur_lock);
-	c->gc_cur_level = b->level + 1;
+	c->gc_cur_level = U8_MAX;
 	write_seqcount_end(&c->gc_cur_lock);
 	spin_unlock(&c->btree_root_lock);
 	return 0;
