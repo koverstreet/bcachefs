@@ -1583,6 +1583,7 @@ void bch_journal_res_put(struct journal *j, struct journal_res *res)
 	bool do_write = false;
 
 	BUG_ON(!res->ref);
+	lock_release(&j->res_map, 0, _RET_IP_);
 
 	res->ref = false;
 
@@ -1749,6 +1750,7 @@ int bch_journal_res_get(struct journal *j, struct journal_res *res,
 	if (ret < 0)
 		return ret;
 
+	lock_acquire_shared(&j->res_map, 0, 0, NULL, _RET_IP_);
 	BUG_ON(!res->ref);
 	return 0;
 }
@@ -1861,6 +1863,8 @@ void bch_journal_free(struct journal *j)
 
 int bch_journal_alloc(struct journal *j)
 {
+	static struct lock_class_key res_key;
+
 	spin_lock_init(&j->lock);
 	spin_lock_init(&j->pin_lock);
 	init_waitqueue_head(&j->wait);
@@ -1869,6 +1873,8 @@ int bch_journal_alloc(struct journal *j)
 	mutex_init(&j->blacklist_lock);
 	INIT_LIST_HEAD(&j->seq_blacklist);
 	spin_lock_init(&j->full_time.lock);
+
+	lockdep_init_map(&j->res_map, "journal res", &res_key, 0);
 
 	j->delay_ms = 10;
 

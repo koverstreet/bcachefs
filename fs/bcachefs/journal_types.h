@@ -159,6 +159,9 @@ struct journal {
 	unsigned		nr_prio_buckets;
 
 	struct time_stats	full_time;
+#ifdef CONFIG_DEBUG_LOCK_ALLOC
+	struct lockdep_map	res_map;
+#endif
 };
 
 /*
