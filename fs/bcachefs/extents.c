@@ -110,7 +110,8 @@ bool bch_insert_fixup_key(struct btree_iter *iter,
 			  struct btree_node_iter *node_iter,
 			  struct bch_replace_info *replace,
 			  struct bpos *done,
-			  struct journal_res *res)
+			  struct journal_res *res,
+			  u64 *journal_seq)
 {
 	const struct bkey_format *f = &b->keys.format;
 	struct bkey_packed *k;
@@ -128,7 +129,8 @@ bool bch_insert_fixup_key(struct btree_iter *iter,
 		bch_btree_node_iter_next_all(node_iter, &b->keys);
 	}
 
-	bch_btree_insert_and_journal(iter, b, node_iter, insert, res);
+	bch_btree_insert_and_journal(iter, b, node_iter, insert,
+				     res, journal_seq);
 	return true;
 }
 
@@ -138,7 +140,8 @@ bool bch_insert_fixup_btree_ptr(struct btree_iter *iter,
 				struct btree_node_iter *node_iter,
 				struct bch_replace_info *replace,
 				struct bpos *done,
-				struct journal_res *res)
+				struct journal_res *res,
+				u64 *journal_seq)
 {
 	struct cache_set *c = iter->c;
 
@@ -152,7 +155,7 @@ bool bch_insert_fixup_btree_ptr(struct btree_iter *iter,
 	}
 
 	return bch_insert_fixup_key(iter, b, insert, node_iter,
-				    replace, done, res);
+				    replace, done, res, journal_seq);
 }
 
 /* Common among btree and extent ptrs */
@@ -928,7 +931,8 @@ static bool bkey_cmpxchg(struct btree_iter *iter, struct btree *b,
 			 struct bkey_i *new,
 			 struct bpos *done,
 			 bool *inserted,
-			 struct journal_res *res)
+			 struct journal_res *res,
+			 u64 *journal_seq)
 {
 	struct cache_set *c = iter->c;
 	struct bkey_i *old = &replace->key;
@@ -964,7 +968,7 @@ static bool bkey_cmpxchg(struct btree_iter *iter, struct btree *b,
 			 */
 			bch_btree_insert_and_journal(iter, b, node_iter,
 						     bch_key_split(*done, new),
-						     res);
+						     res, journal_seq);
 			*inserted = true;
 		}
 
@@ -992,7 +996,7 @@ static bool bkey_cmpxchg(struct btree_iter *iter, struct btree *b,
 			 */
 			bch_btree_insert_and_journal(iter, b, node_iter,
 						     bch_key_split(*done, new),
-						     res);
+						     res, journal_seq);
 			*inserted = true;
 		}
 
@@ -1015,7 +1019,8 @@ static void handle_existing_key_newer(struct btree_iter *iter, struct btree *b,
 				      struct bkey_i *insert,
 				      const struct bkey *k,
 				      bool *inserted,
-				      struct journal_res *res)
+				      struct journal_res *res,
+				      u64 *journal_seq)
 {
 	struct cache_set *c = iter->c;
 	struct bkey_i *split;
@@ -1051,7 +1056,8 @@ static void handle_existing_key_newer(struct btree_iter *iter, struct btree *b,
 		 */
 		split = bch_key_split(bkey_start_pos(k), insert),
 		bch_cut_subtract_front(c, b, k->p, bkey_i_to_s(insert));
-		bch_btree_insert_and_journal(iter, b, node_iter, split, res);
+		bch_btree_insert_and_journal(iter, b, node_iter, split,
+					     res, journal_seq);
 		*inserted = true;
 		break;
 
@@ -1111,6 +1117,7 @@ bool bch_insert_fixup_extent(struct btree_iter *iter, struct btree *b,
 			     struct bch_replace_info *replace,
 			     struct bpos *done,
 			     struct journal_res *res,
+			     u64 *journal_seq,
 			     unsigned flags)
 {
 	struct cache_set *c = iter->c;
@@ -1205,14 +1212,16 @@ bool bch_insert_fixup_extent(struct btree_iter *iter, struct btree *b,
 			*done = bkey_cmp(k.k->p, insert->k.p) < 0
 				? k.k->p : insert->k.p;
 		else if (k.k->size &&
-			 !bkey_cmpxchg(iter, b, node_iter, k.s_c, replace,
-				       insert, done, &inserted, res))
+			 !bkey_cmpxchg(iter, b, node_iter, k.s_c,
+				       replace, insert, done,
+				       &inserted, res, journal_seq))
 			continue;
 
 		if (k.k->size && insert->k.version &&
 		    insert->k.version < k.k->version) {
-			handle_existing_key_newer(iter, b, node_iter, insert,
-						  k.k, &inserted, res);
+			handle_existing_key_newer(iter, b, node_iter,
+						  insert, k.k, &inserted,
+						  res, journal_seq);
 			continue;
 		}
 
@@ -1295,7 +1304,8 @@ bool bch_insert_fixup_extent(struct btree_iter *iter, struct btree *b,
 
 out:
 	if (insert->k.size) {
-		bch_btree_insert_and_journal(iter, b, node_iter, insert, res);
+		bch_btree_insert_and_journal(iter, b, node_iter,
+					     insert, res, journal_seq);
 		inserted = true;
 	}
 

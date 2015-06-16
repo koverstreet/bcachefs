@@ -476,7 +476,7 @@ void bch_btree_bset_insert(struct btree_iter *, struct btree *,
 void bch_btree_insert_and_journal(struct btree_iter *, struct btree *,
 				  struct btree_node_iter *,
 				  struct bkey_i *,
-				  struct journal_res *);
+				  struct journal_res *, u64 *);
 
 struct bch_replace_info;
 

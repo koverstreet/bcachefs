@@ -2286,7 +2286,8 @@ void bch_btree_insert_and_journal(struct btree_iter *iter,
 				  struct btree *b,
 				  struct btree_node_iter *node_iter,
 				  struct bkey_i *insert,
-				  struct journal_res *res)
+				  struct journal_res *res,
+				  u64 *journal_seq)
 {
 	struct cache_set *c = iter->c;
 
@@ -2317,6 +2318,8 @@ void bch_btree_insert_and_journal(struct btree_iter *iter,
 		bch_journal_add_keys(&c->journal, res, b->btree_id,
 				     insert, b->level);
 		btree_bset_last(b)->journal_seq = c->journal.seq;
+		if (journal_seq)
+			*journal_seq = iter->c->journal.seq;
 	}
 }
 
@@ -2340,7 +2343,8 @@ static bool btree_insert_key(struct btree_iter *iter, struct btree *b,
 			     struct btree_node_iter *node_iter,
 			     struct keylist *insert_keys,
 			     struct bch_replace_info *replace,
-			     struct journal_res *res, unsigned flags)
+			     struct journal_res *res,
+			     u64 *journal_seq, unsigned flags)
 {
 	bool dequeue = false;
 	struct bkey_i *insert = bch_keylist_front(insert_keys), *orig = insert;
@@ -2356,14 +2360,15 @@ static bool btree_insert_key(struct btree_iter *iter, struct btree *b,
 		BUG_ON(bkey_cmp(insert->k.p, b->key.k.p) > 0);
 
 		do_insert = bch_insert_fixup_btree_ptr(iter, b, insert,
-						       node_iter, replace,
-						       &done, res);
+						       node_iter, replace, &done,
+						       res, journal_seq);
 		dequeue = true;
 	} else if (!b->keys.ops->is_extents) {
 		BUG_ON(bkey_cmp(insert->k.p, b->key.k.p) > 0);
 
 		do_insert = bch_insert_fixup_key(iter, b, insert, node_iter,
-						 replace, &done, res);
+						 replace, &done,
+						 res, journal_seq);
 		dequeue = true;
 	} else {
 		bkey_copy(&temp.key, insert);
@@ -2373,8 +2378,8 @@ static bool btree_insert_key(struct btree_iter *iter, struct btree *b,
 			bch_cut_back(b->key.k.p, &insert->k);
 
 		do_insert = bch_insert_fixup_extent(iter, b, insert,
-						    node_iter, replace,
-						    &done, res, flags);
+						    node_iter, replace, &done,
+						    res, journal_seq, flags);
 		bch_cut_front(done, orig);
 		dequeue = (orig->k.size == 0);
 
@@ -2517,12 +2522,9 @@ do_init_next:		bch_btree_init_next(iter->c, b, iter);
 
 			if (btree_insert_key(iter, b,
 					     &iter->node_iters[b->level],
-					     insert_keys,
-					     replace, &res, flags)) {
+					     insert_keys, replace,
+					     &res, journal_seq, flags))
 				inserted = true;
-				if (journal_seq)
-					*journal_seq = iter->c->journal.seq;
-			}
 		}
 
 		btree_node_unlock_write(b, iter);
@@ -2671,7 +2673,8 @@ static void btree_split_insert_keys(struct btree_iter *iter, struct btree *b,
 			break;
 		}
 
-		btree_insert_key(iter, b, &node_iter, keys, NULL, &res, 0);
+		btree_insert_key(iter, b, &node_iter, keys,
+				 NULL, &res, NULL, 0);
 	}
 
 	btree_node_unlock_write(b, iter);
