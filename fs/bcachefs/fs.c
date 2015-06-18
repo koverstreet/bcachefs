@@ -2010,6 +2010,7 @@ enum {
 	Opt_err_cont, Opt_err_panic, Opt_err_ro,
 	Opt_user_xattr, Opt_nouser_xattr,
 	Opt_acl, Opt_noacl,
+	Opt_verbose_recovery,
 	Opt_err
 };
 
@@ -2021,6 +2022,7 @@ static const match_table_t tokens = {
 	{Opt_nouser_xattr, "nouser_xattr"},
 	{Opt_acl, "acl"},
 	{Opt_noacl, "noacl"},
+	{Opt_verbose_recovery, "verbose_recovery"},
 	{Opt_err, NULL}
 };
 
@@ -2061,6 +2063,9 @@ static int parse_options(struct cache_set_opts *opts, int flags, char *options)
 			break;
 		case Opt_noacl:
 			opts->posix_acl = false;
+			break;
+		case Opt_verbose_recovery:
+			opts->verbose_recovery = true;
 			break;
 		default:
 			return 0;

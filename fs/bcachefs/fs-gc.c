@@ -85,14 +85,17 @@ static int bch_gc_do_inode(struct cache_set *c, struct btree_iter *iter,
 			bch_empty_dir(c, inode.k->p.inode), c,
 			"non empty directory with link count 0,inode nlink %u, dir links found %u",
 			inode.v->i_nlink, link.dir_count);
-		pr_info("deleting inum %llu", inode.k->p.inode);
+
+		if (c->opts.verbose_recovery)
+			pr_info("deleting inum %llu", inode.k->p.inode);
 
 		bch_btree_iter_unlock(iter);
 		return bch_inode_rm(c, inode.k->p.inode);
 	}
 
 	if (inode.v->i_flags & BCH_INODE_I_SIZE_DIRTY) {
-		pr_info("truncating inode %llu", inode.k->p.inode);
+		if (c->opts.verbose_recovery)
+			pr_info("truncating inode %llu", inode.k->p.inode);
 
 		/*
 		 * XXX: need to truncate partial blocks too here - or ideally
@@ -108,7 +111,8 @@ static int bch_gc_do_inode(struct cache_set *c, struct btree_iter *iter,
 
 	if (inode.v->i_nlink != link.count + link.dir_count ||
 	    inode.v->i_flags & BCH_INODE_I_SIZE_DIRTY) {
-		if (inode.v->i_nlink != link.count + link.dir_count)
+		if (c->opts.verbose_recovery &&
+		    inode.v->i_nlink != link.count + link.dir_count)
 			pr_info("setting inum %llu nlinks from %u to %u",
 				inode.k->p.inode, inode.v->i_nlink,
 				link.count + link.dir_count);

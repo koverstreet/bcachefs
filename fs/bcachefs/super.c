@@ -992,6 +992,7 @@ static struct cache_set *bch_cache_set_alloc(struct cache_sb *sb,
 	c->opts = (struct cache_set_opts) {
 		   .read_only = 0,
 		   .on_error_action = CACHE_ERROR_ACTION(&c->sb),
+		   .verbose_recovery = 0,
 	};
 
 	if (opts.read_only >= 0)

@@ -16,6 +16,7 @@ struct cache_set_opts {
 
 	/* filesystem options: */
 	int		posix_acl:2;
+	int		verbose_recovery:2;
 };
 
 #endif /* _BCACHE_SUPER_TYPES_H */
