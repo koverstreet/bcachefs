@@ -384,7 +384,6 @@ static void bch_coalesce_nodes(struct btree *old_nodes[GC_MERGE_NODES],
 	struct btree_reserve *res;
 	struct keylist keylist;
 	struct closure cl;
-	struct bpos saved_pos;
 	struct bkey_format_state format_state;
 	struct bkey_format new_format;
 	int ret;
@@ -539,10 +538,11 @@ static void bch_coalesce_nodes(struct btree *old_nodes[GC_MERGE_NODES],
 	for (i = 0; i < nr_new_nodes; i++)
 		bch_keylist_add_in_order(&keylist, &new_nodes[i]->key);
 
-	/* hack: */
-	saved_pos = iter->pos;
-	iter->pos = bch_keylist_front(&keylist)->k.p;
-	btree_iter_node_set(iter, parent);
+	/* hack - need to rewind parent iterator: */
+	bch_btree_node_iter_init(&iter->node_iters[parent->level],
+				 &parent->keys,
+				 bch_keylist_front(&keylist)->k.p,
+				 iter->is_extents);
 
 	/* Insert the newly coalesced nodes */
 	ret = bch_btree_insert_node(parent, iter, &keylist, NULL, NULL,
@@ -552,18 +552,16 @@ static void bch_coalesce_nodes(struct btree *old_nodes[GC_MERGE_NODES],
 
 	BUG_ON(!bch_keylist_empty(&keylist));
 
-	iter->pos = saved_pos;
-
 	BUG_ON(iter->nodes[old_nodes[0]->level] != old_nodes[0]);
 
-	btree_iter_node_set(iter, new_nodes[0]);
+	BUG_ON(!bch_btree_iter_node_replace(iter, new_nodes[0]));
 
 	for (i = 0; i < nr_new_nodes; i++)
 		btree_open_bucket_put(c, new_nodes[i]);
 
 	/* Free the old nodes and update our sliding window */
 	for (i = 0; i < nr_old_nodes; i++) {
-		bch_btree_node_free(c, old_nodes[i]);
+		bch_btree_node_free(iter, old_nodes[i]);
 		six_unlock_intent(&old_nodes[i]->lock);
 		old_nodes[i] = new_nodes[i];
 	}

@@ -303,8 +303,10 @@ void bch_bset_init_next(struct btree_keys *, struct bset *);
 void bch_bset_build_written_tree(struct btree_keys *);
 void bch_bset_fix_invalidated_key(struct btree_keys *, struct bkey_packed *);
 
+void bch_btree_node_iter_fix(struct btree_node_iter *, struct btree_keys *,
+			     const struct bkey_packed *);
 void bch_bset_insert(struct btree_keys *, struct btree_node_iter *,
-		     struct bkey_i *);
+		     struct bkey_i *, struct bkey_packed **);
 
 static inline void btree_keys_account_key(struct btree_nr_keys *n,
 					  struct bkey_packed *k,

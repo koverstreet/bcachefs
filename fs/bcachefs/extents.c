@@ -104,9 +104,10 @@ struct btree_nr_keys bch_key_sort_fix_overlapping(struct btree_keys *b,
 
 /* This returns true if insert should be inserted, false otherwise */
 
-bool bch_insert_fixup_key(struct cache_set *c, struct btree *b,
+bool bch_insert_fixup_key(struct btree_iter *iter,
+			  struct btree *b,
 			  struct bkey_i *insert,
-			  struct btree_node_iter *iter,
+			  struct btree_node_iter *node_iter,
 			  struct bch_replace_info *replace,
 			  struct bpos *done,
 			  struct journal_res *res)
@@ -117,27 +118,30 @@ bool bch_insert_fixup_key(struct cache_set *c, struct btree *b,
 
 	BUG_ON(replace);
 
-	while ((k = bch_btree_node_iter_peek_all(iter, &b->keys)) &&
+	while ((k = bch_btree_node_iter_peek_all(node_iter, &b->keys)) &&
 	       (cmp = bkey_cmp_packed(f, k, &insert->k)) <= 0) {
 		if (!cmp && !bkey_deleted(k)) {
 			k->type = KEY_TYPE_DELETED;
 			btree_keys_account_key_drop(&b->keys.nr, k);
 		}
 
-		bch_btree_node_iter_next_all(iter, &b->keys);
+		bch_btree_node_iter_next_all(node_iter, &b->keys);
 	}
 
-	bch_btree_insert_and_journal(c, b, iter, insert, res);
+	bch_btree_insert_and_journal(iter, b, node_iter, insert, res);
 	return true;
 }
 
-bool bch_insert_fixup_btree_ptr(struct cache_set *c, struct btree *b,
+bool bch_insert_fixup_btree_ptr(struct btree_iter *iter,
+				struct btree *b,
 				struct bkey_i *insert,
-				struct btree_node_iter *iter,
+				struct btree_node_iter *node_iter,
 				struct bch_replace_info *replace,
 				struct bpos *done,
 				struct journal_res *res)
 {
+	struct cache_set *c = iter->c;
+
 	if (bkey_extent_is_data(&insert->k)) {
 		bool stale;
 
@@ -147,7 +151,8 @@ bool bch_insert_fixup_btree_ptr(struct cache_set *c, struct btree *b,
 		BUG_ON(stale);
 	}
 
-	return bch_insert_fixup_key(c, b, insert, iter, replace, done, res);
+	return bch_insert_fixup_key(iter, b, insert, node_iter,
+				    replace, done, res);
 }
 
 /* Common among btree and extent ptrs */
@@ -916,8 +921,8 @@ static bool bkey_cmpxchg_cmp(struct bkey_s_c l, struct bkey_s_c r)
  * On return, there is room in @res for at least one more key of the same size
  * as @new.
  */
-static bool bkey_cmpxchg(struct cache_set *c, struct btree *b,
-			 struct btree_node_iter *iter,
+static bool bkey_cmpxchg(struct btree_iter *iter, struct btree *b,
+			 struct btree_node_iter *node_iter,
 			 struct bkey_s_c k,
 			 struct bch_replace_info *replace,
 			 struct bkey_i *new,
@@ -925,8 +930,9 @@ static bool bkey_cmpxchg(struct cache_set *c, struct btree *b,
 			 bool *inserted,
 			 struct journal_res *res)
 {
-	bool ret;
+	struct cache_set *c = iter->c;
 	struct bkey_i *old = &replace->key;
+	bool ret;
 
 	/* must have something to compare against */
 	BUG_ON(!bkey_val_u64s(&old->k));
@@ -956,7 +962,7 @@ static bool bkey_cmpxchg(struct cache_set *c, struct btree *b,
 			 *
 			 * The [**] are already known to match, so insert them.
 			 */
-			bch_btree_insert_and_journal(c, b, iter,
+			bch_btree_insert_and_journal(iter, b, node_iter,
 						     bch_key_split(*done, new),
 						     res);
 			*inserted = true;
@@ -984,7 +990,7 @@ static bool bkey_cmpxchg(struct cache_set *c, struct btree *b,
 			 *
 			 * The [**] are already known to match, so insert them.
 			 */
-			bch_btree_insert_and_journal(c, b, iter,
+			bch_btree_insert_and_journal(iter, b, node_iter,
 						     bch_key_split(*done, new),
 						     res);
 			*inserted = true;
@@ -1004,13 +1010,14 @@ static bool bkey_cmpxchg(struct cache_set *c, struct btree *b,
 }
 
 /* We are trying to insert a key with an older version than the existing one */
-static void handle_existing_key_newer(struct cache_set *c, struct btree *b,
-				      struct btree_node_iter *iter,
+static void handle_existing_key_newer(struct btree_iter *iter, struct btree *b,
+				      struct btree_node_iter *node_iter,
 				      struct bkey_i *insert,
 				      const struct bkey *k,
 				      bool *inserted,
 				      struct journal_res *res)
 {
+	struct cache_set *c = iter->c;
 	struct bkey_i *split;
 
 	/* k is the key currently in the tree, 'insert' the new key */
@@ -1044,7 +1051,7 @@ static void handle_existing_key_newer(struct cache_set *c, struct btree *b,
 		 */
 		split = bch_key_split(bkey_start_pos(k), insert),
 		bch_cut_subtract_front(c, b, k->p, bkey_i_to_s(insert));
-		bch_btree_insert_and_journal(c, b, iter, split, res);
+		bch_btree_insert_and_journal(iter, b, node_iter, split, res);
 		*inserted = true;
 		break;
 
@@ -1098,14 +1105,15 @@ static void handle_existing_key_newer(struct cache_set *c, struct btree *b,
  * If the end of done is not the same as the end of insert, then
  * key insertion needs to continue/be retried.
  */
-bool bch_insert_fixup_extent(struct cache_set *c, struct btree *b,
+bool bch_insert_fixup_extent(struct btree_iter *iter, struct btree *b,
 			     struct bkey_i *insert,
-			     struct btree_node_iter *iter,
+			     struct btree_node_iter *node_iter,
 			     struct bch_replace_info *replace,
 			     struct bpos *done,
 			     struct journal_res *res,
 			     unsigned flags)
 {
+	struct cache_set *c = iter->c;
 	const struct bkey_format *f = &b->keys.format;
 	struct bpos orig_insert = insert->k.p;
 	struct bkey_packed *_k;
@@ -1156,7 +1164,7 @@ bool bch_insert_fixup_extent(struct cache_set *c, struct btree *b,
 	}
 
 	while (insert->k.size &&
-	       (_k = bch_btree_node_iter_peek_overlapping(iter, &b->keys,
+	       (_k = bch_btree_node_iter_peek_overlapping(node_iter, &b->keys,
 							  &insert->k))) {
 		bool needs_split, res_full;
 
@@ -1197,14 +1205,14 @@ bool bch_insert_fixup_extent(struct cache_set *c, struct btree *b,
 			*done = bkey_cmp(k.k->p, insert->k.p) < 0
 				? k.k->p : insert->k.p;
 		else if (k.k->size &&
-			 !bkey_cmpxchg(c, b, iter, k.s_c, replace,
+			 !bkey_cmpxchg(iter, b, node_iter, k.s_c, replace,
 				       insert, done, &inserted, res))
 			continue;
 
 		if (k.k->size && insert->k.version &&
 		    insert->k.version < k.k->version) {
-			handle_existing_key_newer(c, b, iter, insert, k.k,
-						  &inserted, res);
+			handle_existing_key_newer(iter, b, node_iter, insert,
+						  k.k, &inserted, res);
 			continue;
 		}
 
@@ -1229,7 +1237,7 @@ bool bch_insert_fixup_extent(struct cache_set *c, struct btree *b,
 			 * auxiliary tree.
 			 */
 			bch_bset_fix_invalidated_key(&b->keys, _k);
-			bch_btree_node_iter_advance(iter, &b->keys);
+			bch_btree_node_iter_advance(node_iter, &b->keys);
 			break;
 
 		case BCH_EXTENT_OVERLAP_ALL:
@@ -1242,7 +1250,7 @@ bool bch_insert_fixup_extent(struct cache_set *c, struct btree *b,
 			extent_save(_k, k.k, f);
 
 			bch_bset_fix_invalidated_key(&b->keys, _k);
-			bch_btree_node_iter_advance(iter, &b->keys);
+			bch_btree_node_iter_advance(node_iter, &b->keys);
 			break;
 
 		case BCH_EXTENT_OVERLAP_MIDDLE:
@@ -1267,7 +1275,7 @@ bool bch_insert_fixup_extent(struct cache_set *c, struct btree *b,
 			bch_cut_subtract_front(c, b, insert->k.p, k);
 			extent_save(_k, k.k, f);
 
-			bch_bset_insert(&b->keys, iter, &split.k);
+			bch_btree_bset_insert(iter, b, node_iter, &split.k);
 			break;
 		}
 	}
@@ -1287,7 +1295,7 @@ bool bch_insert_fixup_extent(struct cache_set *c, struct btree *b,
 
 out:
 	if (insert->k.size) {
-		bch_btree_insert_and_journal(c, b, iter, insert, res);
+		bch_btree_insert_and_journal(iter, b, node_iter, insert, res);
 		inserted = true;
 	}
 

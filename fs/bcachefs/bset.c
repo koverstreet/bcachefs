@@ -719,9 +719,9 @@ static void verify_insert_pos(struct btree_keys *b,
  *
  * @top must be in the last bset.
  */
-static void bch_btree_node_iter_fix(struct btree_node_iter *iter,
-				    struct btree_keys *b,
-				    const struct bkey_packed *where)
+void bch_btree_node_iter_fix(struct btree_node_iter *iter,
+			     struct btree_keys *b,
+			     const struct bkey_packed *where)
 {
 	struct btree_node_iter_set *set;
 	unsigned offset = __btree_node_key_to_offset(b, where);
@@ -854,7 +854,8 @@ static void bch_bset_fix_lookup_table(struct btree_keys *b,
 
 void bch_bset_insert(struct btree_keys *b,
 		     struct btree_node_iter *iter,
-		     struct bkey_i *insert)
+		     struct bkey_i *insert,
+		     struct bkey_packed **where_ret)
 {
 	struct bkey_format *f = &b->format;
 	struct bset_tree *t = bset_tree_last(b);
@@ -929,6 +930,8 @@ void bch_bset_insert(struct btree_keys *b,
 					      where, false))
 			return;
 	}
+
+	*where_ret = where;
 
 	src = bkey_pack_key(&packed, &insert->k, f)
 		? &packed

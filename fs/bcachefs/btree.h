@@ -274,6 +274,14 @@ struct btree_iter {
 	 * bch_btree_iter_next_with_holes() can correctly advance pos.
 	 */
 	struct bkey_tup		tup;
+
+	/*
+	 * Circular linked list of linked iterators: linked iterators share
+	 * locks (e.g. two linked iterators may have the same node intent
+	 * locked, or read and write locked, at the same time), and insertions
+	 * through one iterator won't invalidate the other linked iterators.
+	 */
+	struct btree_iter	*next;
 };
 
 static inline bool btree_node_locked(struct btree_iter *iter, unsigned level)
@@ -291,6 +299,7 @@ static inline void mark_btree_node_unlocked(struct btree_iter *iter,
 int bch_btree_iter_unlock(struct btree_iter *);
 void __bch_btree_iter_init(struct btree_iter *, struct cache_set *,
 			   enum btree_id, struct bpos, int);
+void bch_btree_iter_link(struct btree_iter *, struct btree_iter *);
 
 static inline void bch_btree_iter_init(struct btree_iter *iter,
 				       struct cache_set *c,
@@ -308,6 +317,11 @@ static inline void bch_btree_iter_init_intent(struct btree_iter *iter,
 	__bch_btree_iter_init(iter, c, btree_id, pos, 0);
 }
 
+bool bch_btree_iter_node_replace(struct btree_iter *, struct btree *);
+void bch_btree_iter_node_drop(struct btree_iter *, struct btree *);
+
+int __must_check bch_btree_iter_traverse(struct btree_iter *);
+
 struct btree *bch_btree_iter_peek_node(struct btree_iter *);
 struct btree *bch_btree_iter_next_node(struct btree_iter *);
 
@@ -315,6 +329,7 @@ struct bkey_s_c bch_btree_iter_peek(struct btree_iter *);
 struct bkey_s_c bch_btree_iter_peek_with_holes(struct btree_iter *);
 void bch_btree_iter_set_pos(struct btree_iter *, struct bpos);
 void bch_btree_iter_advance_pos(struct btree_iter *);
+void bch_btree_iter_rewind(struct btree_iter *, struct bpos);
 bool bch_btree_iter_upgrade(struct btree_iter *);
 
 static inline struct bpos btree_type_successor(enum btree_id id,
@@ -328,21 +343,6 @@ static inline struct bpos btree_type_successor(enum btree_id id,
 	}
 
 	return pos;
-}
-
-static inline void __btree_iter_node_set(struct btree_iter *iter,
-					 struct btree *b,
-					 struct bpos pos)
-{
-	iter->lock_seq[b->level] = b->lock.state.seq;
-	iter->nodes[b->level] = b;
-	bch_btree_node_iter_init(&iter->node_iters[b->level], &b->keys,
-				 pos, iter->is_extents);
-}
-
-static inline void btree_iter_node_set(struct btree_iter *iter, struct btree *b)
-{
-	__btree_iter_node_set(iter, b, iter->pos);
 }
 
 #define for_each_btree_node(_iter, _c, _btree_id, _start, _b)		\
@@ -397,7 +397,7 @@ static inline void bch_btree_iter_cond_resched(struct btree_iter *iter)
 
 #define btree_node_root(_b)	((_b)->c->btree_roots[(_b)->btree_id])
 
-void bch_btree_node_free(struct cache_set *, struct btree *);
+void bch_btree_node_free(struct btree_iter *, struct btree *);
 void bch_btree_node_free_never_inserted(struct cache_set *, struct btree *);
 
 void bch_btree_node_write(struct btree *, struct closure *,
@@ -471,7 +471,9 @@ int bch_btree_root_alloc(struct cache_set *, enum btree_id, struct closure *);
 int bch_btree_root_read(struct cache_set *, enum btree_id,
 			const struct bkey_i *, unsigned);
 
-void bch_btree_insert_and_journal(struct cache_set *, struct btree *,
+void bch_btree_bset_insert(struct btree_iter *, struct btree *,
+			   struct btree_node_iter *, struct bkey_i *);
+void bch_btree_insert_and_journal(struct btree_iter *, struct btree *,
 				  struct btree_node_iter *,
 				  struct bkey_i *,
 				  struct journal_res *);
