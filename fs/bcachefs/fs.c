@@ -722,16 +722,30 @@ static int bch_tmpfile(struct inode *dir, struct dentry *dentry, umode_t mode)
 }
 
 static int bch_fill_extent(struct fiemap_extent_info *info,
-			   struct bkey_i *k, int flags)
+			   struct bkey_i *k, unsigned flags)
 {
 	struct bkey_s_c_extent e = bkey_i_to_s_c_extent(k);
 	const struct bch_extent_ptr *ptr;
+	const union bch_extent_crc *crc;
+	int ret;
 
-	extent_for_each_ptr(e, ptr) {
-		int ret = fiemap_fill_next_extent(info,
+	extent_for_each_ptr_crc(e, ptr, crc) {
+		int flags2 = 0;
+		u64 offset = ptr->offset;
+
+		if (crc_to_64(crc).compression_type)
+			flags2 |= FIEMAP_EXTENT_ENCODED;
+		else
+			offset += crc_to_64(crc).offset;
+
+		if ((offset & (PAGE_SECTORS - 1)) ||
+		    (e.k->size & (PAGE_SECTORS - 1)))
+			flags2 |= FIEMAP_EXTENT_NOT_ALIGNED;
+
+		ret = fiemap_fill_next_extent(info,
 					      bkey_start_offset(e.k) << 9,
-					      ptr->offset << 9,
-					      e.k->size << 9, flags);
+					      offset << 9,
+					      e.k->size << 9, flags|flags2);
 		if (ret)
 			return ret;
 	}
