@@ -109,6 +109,10 @@ u64 bch_checksum(unsigned, const void *, size_t);
 	bch_checksum(type, start, end - start);				\
 })
 
+extern const char * const bch_error_actions[];
+extern const char * const bch_csum_types[];
+extern const char * const bch_compression_types[];
+
 void bch_check_mark_super_slowpath(struct cache_set *,
 				   const struct bkey_i *, bool);
 
@@ -157,14 +161,6 @@ void bch_cache_release(struct kobject *);
 
 void bch_cache_set_unregister(struct cache_set *);
 void bch_cache_set_stop(struct cache_set *);
-
-static inline struct cache_set_opts cache_set_opts_empty(void)
-{
-	struct cache_set_opts ret;
-
-	memset(&ret, 255, sizeof(ret));
-	return ret;
-}
 
 const char *bch_register_one(const char *path);
 const char *bch_register_cache_set(char * const *, unsigned,

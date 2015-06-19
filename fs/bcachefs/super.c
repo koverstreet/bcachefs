@@ -45,6 +45,28 @@
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Kent Overstreet <kent.overstreet@gmail.com>");
 
+const char * const bch_error_actions[] = {
+	"continue",
+	"remount-ro",
+	"panic",
+	NULL
+};
+
+const char * const bch_csum_types[] = {
+	"none",
+	"crc32c",
+	"crc64",
+	NULL
+};
+
+const char * const bch_compression_types[] = {
+	"none",
+	"lzo1x",
+	"gzip",
+	"xz",
+	NULL
+};
+
 static const uuid_le invalid_uuid = {
 	.b = {
 		0xa0, 0x3e, 0xf8, 0xed, 0x3e, 0xe1, 0xb8, 0x78,
@@ -596,8 +618,7 @@ static void __bcache_write_super(struct cache_set *c)
 
 		cache_sb_from_cache_set(c, ca);
 
-		SET_CACHE_SB_CSUM_TYPE(&ca->sb,
-				       CACHE_META_PREFERRED_CSUM_TYPE(&c->sb));
+		SET_CACHE_SB_CSUM_TYPE(&ca->sb, c->opts.meta_csum_type);
 
 		bio_reset(bio);
 		bio->bi_bdev	= ca->disk_sb.bdev;
@@ -989,16 +1010,8 @@ static struct cache_set *bch_cache_set_alloc(struct cache_sb *sb,
 
 	scnprintf(c->uuid, sizeof(c->uuid), "%pU", &c->sb.user_uuid);
 
-	c->opts = (struct cache_set_opts) {
-		   .read_only = 0,
-		   .on_error_action = CACHE_ERROR_ACTION(&c->sb),
-		   .verbose_recovery = 0,
-	};
-
-	if (opts.read_only >= 0)
-		c->opts.read_only = opts.read_only;
-	if (opts.on_error_action >= 0)
-		c->opts.on_error_action = opts.on_error_action;
+	c->opts = cache_superblock_opts(sb);
+	cache_set_opts_apply(&c->opts, opts);
 
 	c->minor		= -1;
 	c->block_bits		= ilog2(c->sb.block_size);

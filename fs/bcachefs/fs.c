@@ -2007,22 +2007,23 @@ out:
 }
 
 enum {
-	Opt_err_cont, Opt_err_panic, Opt_err_ro,
-	Opt_user_xattr, Opt_nouser_xattr,
+	Opt_err_action,
+	Opt_meta_checksum,
+	Opt_data_checksum,
+	Opt_compression,
 	Opt_acl, Opt_noacl,
 	Opt_verbose_recovery,
 	Opt_err
 };
 
 static const match_table_t tokens = {
-	{Opt_err_cont, "errors=continue"},
-	{Opt_err_panic, "errors=panic"},
-	{Opt_err_ro, "errors=remount-ro"},
-	{Opt_user_xattr, "user_xattr"},
-	{Opt_nouser_xattr, "nouser_xattr"},
+	{Opt_err_action, "errors=%s"},
+	{Opt_meta_checksum, "metadata_checksum=%s"},
+	{Opt_data_checksum, "data_checksum=%s"},
+	{Opt_compression, "compression=%s"},
+	{Opt_verbose_recovery, "verbose_recovery"},
 	{Opt_acl, "acl"},
 	{Opt_noacl, "noacl"},
-	{Opt_verbose_recovery, "verbose_recovery"},
 	{Opt_err, NULL}
 };
 
@@ -2030,6 +2031,8 @@ static int parse_options(struct cache_set_opts *opts, int flags, char *options)
 {
 	char *p;
 	substring_t args[MAX_OPT_ARGS];
+	char arg[80];
+	ssize_t v;
 
 	*opts = cache_set_opts_empty();
 
@@ -2046,26 +2049,46 @@ static int parse_options(struct cache_set_opts *opts, int flags, char *options)
 
 		token = match_token(p, tokens, args);
 		switch (token) {
-		case Opt_err_panic:
-			opts->on_error_action = BCH_ON_ERROR_PANIC;
+		case Opt_err_action:
+			match_strlcpy(arg, &args[0], sizeof(arg));
+			v = bch_read_string_list(arg, bch_error_actions);
+			if (v < 0)
+				return 0;
+
+			opts->on_error_action = v;
 			break;
-		case Opt_err_ro:
-			opts->on_error_action = BCH_ON_ERROR_RO;
+		case Opt_meta_checksum:
+			match_strlcpy(arg, &args[0], sizeof(arg));
+			v = bch_read_string_list(arg, bch_csum_types);
+			if (v < 0)
+				return 0;
+
+			opts->meta_csum_type = v;
 			break;
-		case Opt_err_cont:
-			opts->on_error_action = BCH_ON_ERROR_CONTINUE;
+		case Opt_data_checksum:
+			match_strlcpy(arg, &args[0], sizeof(arg));
+			v = bch_read_string_list(arg, bch_csum_types);
+			if (v < 0)
+				return 0;
+
+			opts->data_csum_type = v;
 			break;
-		case Opt_user_xattr:
-		case Opt_nouser_xattr:
+		case Opt_compression:
+			match_strlcpy(arg, &args[0], sizeof(arg));
+			v = bch_read_string_list(arg, bch_compression_types);
+			if (v < 0)
+				return 0;
+
+			opts->compression_type = v;
+			break;
+		case Opt_verbose_recovery:
+			opts->verbose_recovery = true;
 			break;
 		case Opt_acl:
 			opts->posix_acl = true;
 			break;
 		case Opt_noacl:
 			opts->posix_acl = false;
-			break;
-		case Opt_verbose_recovery:
-			opts->verbose_recovery = true;
 			break;
 		default:
 			return 0;
