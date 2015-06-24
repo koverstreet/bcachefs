@@ -1626,6 +1626,18 @@ static void bch_btree_set_root(struct cache_set *c, struct btree *b)
 
 	spin_lock_irq(&c->btree_root_lock);
 	btree_node_root(b) = b;
+
+	if (b->btree_id != c->gc_cur_btree
+	    ? b->btree_id < c->gc_cur_btree
+	    : b->level <= c->gc_cur_level) {
+		struct bch_extent_ptr *ptr;
+		struct cache *ca;
+
+		rcu_read_lock();
+		extent_for_each_online_device(c, bkey_i_to_s_extent(&b->key), ptr, ca)
+			bch_mark_metadata_bucket(ca, PTR_BUCKET(ca, ptr), false);
+		rcu_read_unlock();
+	}
 	spin_unlock_irq(&c->btree_root_lock);
 
 	bch_recalc_btree_reserve(c);
@@ -2087,7 +2099,20 @@ static bool btree_insert_key(struct btree_iter *iter, struct btree *b,
 	       bkey_cmp(bkey_start_pos(&insert->k), iter->pos) < 0);
 	bch_btree_node_iter_verify(node_iter, &b->keys);
 
-	if (b->keys.ops->is_extents) {
+	if (b->level) {
+		BUG_ON(bkey_cmp(insert->k.p, b->key.k.p) > 0);
+
+		do_insert = bch_insert_fixup_btree_ptr(iter->c, b, insert,
+						       node_iter, replace,
+						       &done, res);
+		dequeue = true;
+	} else if (!b->keys.ops->is_extents) {
+		BUG_ON(bkey_cmp(insert->k.p, b->key.k.p) > 0);
+
+		do_insert = bch_insert_fixup_key(iter->c, b, insert, node_iter,
+						 replace, &done, res);
+		dequeue = true;
+	} else {
 		bkey_copy(&temp.key, insert);
 		insert = &temp.key;
 
@@ -2099,12 +2124,6 @@ static bool btree_insert_key(struct btree_iter *iter, struct btree *b,
 						    &done, res, flags);
 		bch_cut_front(done, orig);
 		dequeue = (orig->k.size == 0);
-	} else {
-		BUG_ON(bkey_cmp(insert->k.p, b->key.k.p) > 0);
-
-		do_insert = bch_insert_fixup_key(iter->c, b, insert, node_iter,
-						 replace, &done, res);
-		dequeue = true;
 	}
 
 	if (dequeue)

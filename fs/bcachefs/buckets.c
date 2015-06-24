@@ -281,7 +281,6 @@ void bch_unmark_open_bucket(struct cache *ca, struct bucket *g)
 	struct bucket_mark old, new;
 
 	bucket_cmpxchg(g, old, new, false, ({
-		BUG_ON(old.is_metadata);
 		new.owned_by_allocator = 0;
 	}));
 }

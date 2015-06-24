@@ -136,6 +136,31 @@ bool bch_insert_fixup_key(struct cache_set *c, struct btree *b,
 	return true;
 }
 
+bool bch_insert_fixup_btree_ptr(struct cache_set *c, struct btree *b,
+				struct bkey_i *insert,
+				struct btree_node_iter *iter,
+				struct bch_replace_info *replace,
+				struct bpos *done,
+				struct journal_res *res)
+{
+	struct bkey_s_c_extent e;
+	const struct bch_extent_ptr *ptr;
+	struct cache *ca;
+
+	switch (insert->k.type) {
+	case BCH_EXTENT:
+		e = bkey_i_to_s_c_extent(insert);
+
+		rcu_read_lock();
+		extent_for_each_online_device(c, e, ptr, ca)
+			bch_mark_metadata_bucket(ca, PTR_BUCKET(ca, ptr), false);
+		rcu_read_unlock();
+		break;
+	}
+
+	return bch_insert_fixup_key(c, b, insert, iter, replace, done, res);
+}
+
 /* Common among btree and extent ptrs */
 
 bool bch_extent_has_device(struct bkey_s_c_extent e, unsigned dev)

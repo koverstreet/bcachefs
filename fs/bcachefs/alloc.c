@@ -280,6 +280,7 @@ static void bch_prio_write(struct cache *ca)
 		 * it getting gc'd from under us
 		 */
 		ca->prio_buckets[i] = r;
+		bch_mark_metadata_bucket(ca, ca->buckets + r, false);
 		spin_unlock(&ca->prio_buckets_lock);
 
 		ret = prio_io(ca, r, REQ_OP_WRITE);
@@ -870,9 +871,6 @@ out:
 	bch_wake_allocator(ca);
 
 	g = ca->buckets + r;
-
-	if (allocation_is_metadata(reserve))
-		bch_mark_metadata_bucket(ca, g, false);
 
 	g->read_prio = ca->set->prio_clock[READ].hand;
 	g->write_prio = ca->set->prio_clock[WRITE].hand;

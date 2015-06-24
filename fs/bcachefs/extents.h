@@ -16,6 +16,10 @@ bool bch_insert_fixup_key(struct cache_set *, struct btree *,
 			  struct bkey_i *, struct btree_node_iter *,
 			  struct bch_replace_info *, struct bpos *,
 			  struct journal_res *);
+bool bch_insert_fixup_btree_ptr(struct cache_set *, struct btree *,
+				struct bkey_i *, struct btree_node_iter *,
+				struct bch_replace_info *, struct bpos *,
+				struct journal_res *);
 
 extern const struct bkey_ops bch_bkey_btree_ops;
 extern const struct bkey_ops bch_bkey_extent_ops;
