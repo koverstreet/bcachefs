@@ -3,11 +3,6 @@
 
 #include "btree_types.h"
 
-static inline void set_gc_sectors(struct cache_set *c)
-{
-	atomic64_set(&c->sectors_until_gc, c->capacity / 16);
-}
-
 void bch_gc(struct cache_set *);
 void bch_gc_thread_stop(struct cache_set *);
 int bch_gc_thread_start(struct cache_set *);

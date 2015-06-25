@@ -9,7 +9,6 @@
 #include "alloc.h"
 #include "bset.h"
 #include "btree_update.h"
-#include "btree_gc.h"
 #include "buckets.h"
 #include "clock.h"
 #include "debug.h"
@@ -996,13 +995,6 @@ void bch_write(struct closure *cl)
 		bch_mark_foreground_write(c, bio_sectors(bio));
 	else
 		bch_mark_discard(c, bio_sectors(bio));
-
-	if (atomic64_sub_return(bio_sectors(bio),
-				&c->sectors_until_gc) < 0) {
-		trace_bcache_gc_periodic(c);
-		set_gc_sectors(c);
-		wake_up_process(c->gc_thread);
-	}
 
 	op->insert_key.k.p.offset	= bio_end_sector(bio);
 	op->insert_key.k.size		= bio_sectors(bio);

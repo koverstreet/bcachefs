@@ -10,6 +10,7 @@
 #include "btree_io.h"
 #include "btree_gc.h"
 #include "buckets.h"
+#include "clock.h"
 #include "debug.h"
 #include "error.h"
 #include "extents.h"
@@ -312,8 +313,6 @@ static void bch_gc_finish(struct cache_set *c)
 		atomic_long_set(&ca->saturated_count, 0);
 		ca->inc_gen_needs_gc = 0;
 	}
-
-	set_gc_sectors(c);
 
 	write_seqcount_begin(&c->gc_cur_lock);
 	c->gc_cur_btree = BTREE_ID_NR + 1;
@@ -672,10 +671,21 @@ static void bch_coalesce(struct cache_set *c)
 static int bch_gc_thread(void *arg)
 {
 	struct cache_set *c = arg;
+	struct io_clock *clock = &c->io_clock[WRITE];
+	unsigned long last = atomic_long_read(&clock->now);
 	struct cache *ca;
 	unsigned i;
 
 	while (1) {
+		bch_kthread_io_clock_wait(clock, last + c->capacity / 16);
+
+		if (kthread_should_stop()) {
+			__set_current_state(TASK_RUNNING);
+			break;
+		}
+
+		last = atomic_long_read(&clock->now);
+
 		bch_gc(c);
 		bch_coalesce(c);
 
@@ -689,14 +699,6 @@ static int bch_gc_thread(void *arg)
 		 */
 		for_each_cache(ca, c, i)
 			bch_wake_allocator(ca);
-
-		if (kthread_should_stop()) {
-			__set_current_state(TASK_RUNNING);
-			break;
-		}
-
-		schedule();
-		try_to_freeze();
 	}
 
 	return 0;

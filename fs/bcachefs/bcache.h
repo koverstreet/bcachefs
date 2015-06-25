@@ -534,9 +534,6 @@ struct cache_set {
 	struct list_head	gc_scan_keylists;
 	struct mutex		gc_scan_keylist_lock;
 
-	/* Counts how many sectors bch_data_insert has added to the cache */
-	atomic64_t		sectors_until_gc;
-
 	/*
 	 * Tracks GC's progress - everything in the range [ZERO_KEY..gc_cur_pos]
 	 * has been marked by GC.
