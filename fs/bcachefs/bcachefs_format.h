@@ -775,21 +775,6 @@ static inline __u64 bset_magic(struct cache_sb *sb)
 #define BCACHE_JSET_VERSION_JKEYS	2
 #define BCACHE_JSET_VERSION		2
 
-#define DEFINE_BCH_BTREE_IDS()					\
-	DEF_BTREE_ID(EXTENTS, 0, "extents")			\
-	DEF_BTREE_ID(INODES,  1, "inodes")			\
-	DEF_BTREE_ID(DIRENTS, 2, "dirents")			\
-	DEF_BTREE_ID(XATTRS,  3, "xattrs")
-
-#define DEF_BTREE_ID(kwd, val, name) BTREE_ID_##kwd = val,
-
-enum btree_id {
-	DEFINE_BCH_BTREE_IDS()
-	BTREE_ID_NR
-};
-
-#undef DEF_BTREE_ID
-
 struct jset_entry {
 	__u16			u64s;
 	__u8			btree_id;
@@ -864,6 +849,25 @@ struct prio_set {
 };
 
 BITMASK(PSET_CSUM_TYPE,		struct prio_set, flags, 0, 4);
+
+/* Btree: */
+
+#define DEFINE_BCH_BTREE_IDS()					\
+	DEF_BTREE_ID(EXTENTS, 0, "extents")			\
+	DEF_BTREE_ID(INODES,  1, "inodes")			\
+	DEF_BTREE_ID(DIRENTS, 2, "dirents")			\
+	DEF_BTREE_ID(XATTRS,  3, "xattrs")
+
+#define DEF_BTREE_ID(kwd, val, name) BTREE_ID_##kwd = val,
+
+enum btree_id {
+	DEFINE_BCH_BTREE_IDS()
+	BTREE_ID_NR
+};
+
+#undef DEF_BTREE_ID
+
+#define BTREE_MAX_DEPTH		4
 
 /* Btree nodes */
 

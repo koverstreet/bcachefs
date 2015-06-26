@@ -1,6 +1,7 @@
 
 #include "bcache.h"
-#include "btree.h"
+#include "bkey_methods.h"
+#include "btree_update.h"
 #include "extents.h"
 #include "inode.h"
 #include "io.h"
@@ -198,6 +199,12 @@ int bch_inode_rm(struct cache_set *c, u64 inode_nr)
 	return bch_btree_insert(c, BTREE_ID_INODES,
 				&keylist_single(&delete),
 				NULL, NULL, BTREE_INSERT_NOFAIL);
+}
+
+int bch_inode_update(struct cache_set *c, struct bkey_i *inode,
+		     u64 *journal_seq)
+{
+	return bch_btree_update(c, BTREE_ID_INODES, inode, journal_seq);
 }
 
 int bch_inode_find_by_inum(struct cache_set *c, u64 inode_nr,

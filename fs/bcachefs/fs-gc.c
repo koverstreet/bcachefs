@@ -1,6 +1,6 @@
 
 #include "bcache.h"
-#include "btree.h"
+#include "btree_update.h"
 #include "dirent.h"
 #include "error.h"
 #include "fs.h"

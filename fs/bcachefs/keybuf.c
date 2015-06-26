@@ -1,7 +1,7 @@
 
 #include "bcache.h"
-#include "btree.h"
-#include "gc.h"
+#include "btree_gc.h"
+#include "btree_iter.h"
 #include "keybuf.h"
 
 #include <trace/events/bcachefs.h>
@@ -182,7 +182,7 @@ struct keybuf_key *bch_keybuf_next(struct keybuf *buf)
 
 void bch_keybuf_init(struct keybuf *buf)
 {
-	sema_init(&buf->in_flight, BTREE_SCAN_BATCH / 2);
+	sema_init(&buf->in_flight, KEYBUF_REFILL_BATCH / 2);
 
 	buf->last_scanned	= POS_MAX;
 	buf->start		= POS_MIN;

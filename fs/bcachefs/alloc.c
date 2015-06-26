@@ -55,9 +55,10 @@
 
 #include "bcache.h"
 #include "alloc.h"
-#include "btree.h"
+#include "btree_update.h"
 #include "buckets.h"
 #include "clock.h"
+#include "debug.h"
 #include "error.h"
 #include "extents.h"
 #include "io.h"

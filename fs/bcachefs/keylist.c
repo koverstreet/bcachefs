@@ -1,7 +1,7 @@
 
 #include "bcache.h"
-#include "btree.h"
-#include "gc.h"
+#include "btree_gc.h"
+#include "btree_iter.h"
 #include "keylist.h"
 
 #include <trace/events/bcachefs.h>

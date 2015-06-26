@@ -1,6 +1,8 @@
 #ifndef _BCACHE_GC_H
 #define _BCACHE_GC_H
 
+#include "btree_types.h"
+
 static inline void set_gc_sectors(struct cache_set *c)
 {
 	atomic64_set(&c->sectors_until_gc, c->capacity / 16);

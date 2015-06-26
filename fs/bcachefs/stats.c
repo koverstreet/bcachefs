@@ -6,8 +6,6 @@
 
 #include "bcache.h"
 #include "stats.h"
-#include "btree.h"
-#include "stats.h"
 #include "sysfs.h"
 
 /*

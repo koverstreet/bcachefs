@@ -5,12 +5,14 @@
 
 #include "bcache.h"
 #include "alloc.h"
-#include "btree.h"
+#include "bkey_methods.h"
+#include "btree_update.h"
+#include "btree_io.h"
+#include "btree_gc.h"
 #include "buckets.h"
 #include "debug.h"
 #include "error.h"
 #include "extents.h"
-#include "gc.h"
 #include "journal.h"
 #include "keylist.h"
 #include "move.h"
@@ -430,7 +432,7 @@ static void bch_coalesce_nodes(struct btree *old_nodes[GC_MERGE_NODES],
 
 	/* Check if repacking would make any nodes too big to fit */
 	for (i = 0; i < nr_old_nodes; i++)
-		if (!btree_node_format_fits(old_nodes[i], &new_format)) {
+		if (!bch_btree_node_format_fits(old_nodes[i], &new_format)) {
 			trace_bcache_btree_gc_coalesce_fail(c);
 			goto out;
 		}

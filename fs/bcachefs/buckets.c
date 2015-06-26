@@ -64,9 +64,8 @@
 
 #include "bcache.h"
 #include "alloc.h"
-#include "btree.h"
+#include "btree_gc.h"
 #include "buckets.h"
-#include "gc.h"
 
 #include <trace/events/bcachefs.h>
 

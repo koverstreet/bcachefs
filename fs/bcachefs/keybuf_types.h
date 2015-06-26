@@ -7,6 +7,8 @@ struct keybuf_key {
 	atomic_t		ref;
 };
 
+#define KEYBUF_REFILL_BATCH	500
+
 struct keybuf {
 	struct bpos		last_scanned;
 	spinlock_t		lock;
@@ -24,7 +26,8 @@ struct keybuf {
 	unsigned		max_in_flight;
 	struct semaphore	in_flight;
 
-	DECLARE_ARRAY_ALLOCATOR(struct keybuf_key, freelist, BTREE_SCAN_BATCH);
+	DECLARE_ARRAY_ALLOCATOR(struct keybuf_key, freelist,
+				KEYBUF_REFILL_BATCH);
 };
 
 #endif /* _BCACHE_KEYBUF_TYPES_H */

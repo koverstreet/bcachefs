@@ -5,12 +5,14 @@
  */
 
 #include "bcache.h"
+#include "bkey_methods.h"
 #include "buckets.h"
-#include "btree.h"
+#include "btree_gc.h"
+#include "btree_update.h"
+#include "btree_io.h"
 #include "debug.h"
 #include "error.h"
 #include "extents.h"
-#include "gc.h"
 #include "io.h"
 #include "keylist.h"
 #include "journal.h"

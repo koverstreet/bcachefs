@@ -1,6 +1,6 @@
 
 #include "bcache.h"
-#include "btree.h"
+#include "btree_iter.h"
 #include "buckets.h"
 #include "clock.h"
 #include "extents.h"

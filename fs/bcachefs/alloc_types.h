@@ -49,20 +49,6 @@ static inline bool allocation_is_metadata(enum alloc_reserve id)
 	return id <= RESERVE_METADATA_LAST;
 }
 
-/* Number of nodes btree coalesce will try to coalesce at once */
-#define GC_MERGE_NODES		4U
-
-/*
- * Number of nodes we might have to allocate in a worst case btree split
- * operation - we split all the way up to the root, then allocate a new root.
- */
-#define btree_reserve_required_nodes(depth)	(((depth) + 1) * 2 + 1)
-
-/*
- * BTREE_RESERVE_MAX = maximum number of nodes we're allowed to reserve at once
- */
-#define BTREE_NODE_RESERVE		(BTREE_RESERVE_MAX * 2)
-
 /* Enough for 16 cache devices, 2 tiers and some left over for pipelining */
 #define OPEN_BUCKETS_COUNT	256
 

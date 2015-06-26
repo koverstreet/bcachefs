@@ -25,7 +25,8 @@
 
 #include "bcache.h"
 #include "blockdev.h"
-#include "btree.h"
+#include "btree_update.h"
+#include "btree_iter.h"
 #include "clock.h"
 #include "debug.h"
 #include "error.h"

@@ -2,8 +2,7 @@
 #define _BCACHE_BLOCKDEV_H
 
 #include "blockdev_types.h"
-#include "btree.h"
-#include "io.h"
+#include "io_types.h"
 
 void bch_write_bdev_super(struct cached_dev *, struct closure *);
 

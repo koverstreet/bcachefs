@@ -207,10 +207,7 @@
 #define bch_meta_write_fault(name)					\
 	 dynamic_fault("bcache:meta:write:" name)
 
-#define BTREE_SCAN_BATCH	500
-
 #include "alloc_types.h"
-#include "bkey_methods.h"
 #include "blockdev_types.h"
 #include "buckets_types.h"
 #include "clock_types.h"

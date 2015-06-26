@@ -1,6 +1,7 @@
 
 #include "bcache.h"
-#include "btree.h"
+#include "bkey_methods.h"
+#include "btree_update.h"
 #include "extents.h"
 #include "fs.h"
 #include "keylist.h"

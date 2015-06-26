@@ -6,7 +6,10 @@
  */
 
 #include "bcache.h"
-#include "btree.h"
+#include "bkey_methods.h"
+#include "btree_cache.h"
+#include "btree_io.h"
+#include "btree_iter.h"
 #include "buckets.h"
 #include "debug.h"
 #include "error.h"

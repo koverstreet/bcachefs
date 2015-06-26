@@ -6,12 +6,13 @@
  */
 
 #include "bcache.h"
-#include "btree.h"
+#include "bkey_methods.h"
+#include "btree_gc.h"
+#include "btree_update.h"
 #include "debug.h"
 #include "dirent.h"
 #include "error.h"
 #include "extents.h"
-#include "gc.h"
 #include "inode.h"
 #include "journal.h"
 #include "super.h"

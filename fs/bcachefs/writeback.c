@@ -7,7 +7,7 @@
  */
 
 #include "bcache.h"
-#include "btree.h"
+#include "btree_update.h"
 #include "clock.h"
 #include "debug.h"
 #include "error.h"

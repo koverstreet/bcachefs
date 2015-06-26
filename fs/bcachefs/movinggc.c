@@ -5,7 +5,6 @@
  */
 
 #include "bcache.h"
-#include "btree.h"
 #include "buckets.h"
 #include "clock.h"
 #include "extents.h"
