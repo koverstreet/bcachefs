@@ -61,7 +61,7 @@ struct keylist {
  * bios.  That must be done externally, if necessary.
  */
 
-#define DFLT_SCAN_KEYLIST_MAX_SIZE	(1 << 14)
+#define DFLT_SCAN_KEYLIST_MAX_SIZE	512
 
 struct scan_keylist {
 	struct list_head	mark_list;	/* For GC marking */
