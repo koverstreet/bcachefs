@@ -178,7 +178,6 @@ rw_attribute(tiering_stripe_size);
 sysfs_pd_controller_attribute(foreground_write);
 
 rw_attribute(btree_flush_delay);
-rw_attribute(btree_scan_ratelimit);
 rw_attribute(pd_controllers_update_seconds);
 
 rw_attribute(foreground_target_percent);
@@ -656,7 +655,6 @@ SHOW(bch_cache_set)
 	sysfs_printf(copy_gc_enabled, "%i", c->copy_gc_enabled);
 	sysfs_pd_controller_show(foreground_write, &c->foreground_write_pd);
 
-	sysfs_print(btree_scan_ratelimit, c->btree_scan_ratelimit);
 	sysfs_print(pd_controllers_update_seconds,
 		    c->pd_controllers_update_seconds);
 	sysfs_print(foreground_target_percent, c->foreground_target_percent);
@@ -832,22 +830,6 @@ STORE(__bch_cache_set)
 		return size;
 	}
 
-	if (attr == &sysfs_btree_scan_ratelimit) {
-		struct cache *ca;
-		unsigned i;
-		ssize_t ret = strtoul_safe(buf, c->btree_scan_ratelimit)
-			?: (ssize_t) size;
-
-		for_each_cache(ca, c, i)
-			if (ca->moving_gc_read)
-				wake_up_process(ca->moving_gc_read);
-
-		if (c->tiering_read)
-			wake_up_process(c->tiering_read);
-
-		return ret;
-	}
-
 	sysfs_strtoul(pd_controllers_update_seconds,
 		      c->pd_controllers_update_seconds);
 	sysfs_strtoul(foreground_target_percent, c->foreground_target_percent);
@@ -969,7 +951,6 @@ static struct attribute *bch_cache_set_files[] = {
 	&sysfs_data_replicas_have,
 
 	&sysfs_btree_flush_delay,
-	&sysfs_btree_scan_ratelimit,
 	&sysfs_foreground_target_percent,
 	&sysfs_sector_reserve_percent,
 	&sysfs_tiering_percent,

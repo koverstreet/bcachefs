@@ -8,6 +8,7 @@
 
 #include "bcache.h"
 #include "btree.h"
+#include "clock.h"
 #include "debug.h"
 #include "extents.h"
 #include "io.h"
@@ -189,7 +190,7 @@ static void read_dirty_submit(struct closure *cl)
 	continue_at(cl, write_dirty, system_wq);
 }
 
-static void read_dirty(struct cached_dev *dc)
+static u64 read_dirty(struct cached_dev *dc)
 {
 	struct keybuf_key *w;
 	struct dirty_io *io;
@@ -198,6 +199,7 @@ static void read_dirty(struct cached_dev *dc)
 	const struct bch_extent_ptr *ptr;
 	unsigned i;
 	struct bio_vec *bv;
+	u64 sectors_written = 0;
 	BKEY_PADDED(k) tmp;
 
 	closure_init_stack(&cl);
@@ -208,6 +210,7 @@ static void read_dirty(struct cached_dev *dc)
 		if (!w)
 			break;
 
+		sectors_written += w->key.k.size;
 		bkey_copy(&tmp.k, &w->key);
 
 		while (tmp.k.k.size) {
@@ -288,6 +291,8 @@ static void read_dirty(struct cached_dev *dc)
 	 * freed) before refilling again
 	 */
 	closure_sync(&cl);
+
+	return sectors_written;
 }
 
 /* Scan for dirty data */
@@ -398,13 +403,14 @@ next:
 	}
 }
 
-static void bch_writeback(struct cached_dev *dc)
+static u64 bch_writeback(struct cached_dev *dc)
 {
 	struct keybuf *buf = &dc->writeback_keys;
 	unsigned inode = bcache_dev_inum(&dc->disk);
 	struct bpos start = POS(inode, 0);
 	struct bpos end = POS(inode, KEY_OFFSET_MAX);
 	struct bpos start_pos;
+	u64 sectors_written = 0;
 
 	buf->last_scanned = POS(inode, 0);
 
@@ -417,11 +423,11 @@ static void bch_writeback(struct cached_dev *dc)
 			set_current_state(TASK_INTERRUPTIBLE);
 
 			if (kthread_should_stop())
-				return;
+				return sectors_written;
 
 			schedule();
 			try_to_freeze();
-			return;
+			return sectors_written;
 		}
 
 		if (bkey_cmp(buf->last_scanned, end) >= 0)
@@ -458,26 +464,34 @@ refill_done:
 		up_write(&dc->writeback_lock);
 
 		bch_ratelimit_reset(&dc->writeback_pd.rate);
-		read_dirty(dc);
+		sectors_written += read_dirty(dc);
 	}
+
+	return sectors_written;
 }
 
 static int bch_writeback_thread(void *arg)
 {
 	struct cached_dev *dc = arg;
 	struct cache_set *c = dc->disk.c;
-	unsigned long last = jiffies;
+	struct io_clock *clock = &c->io_clock[WRITE];
+	unsigned long last;
+	u64 sectors_written;
 
-	do {
+	while (!kthread_should_stop()) {
 		if (kthread_wait_freezable(dc->writeback_running ||
 				test_bit(BCACHE_DEV_DETACHING,
 					 &dc->disk.flags)))
 			break;
 
-		bch_writeback(dc);
-	} while (!bch_kthread_loop_ratelimit(&last,
-				test_bit(BCACHE_DEV_DETACHING, &dc->disk.flags)
-				? 0 : c->btree_scan_ratelimit * HZ));
+		last = atomic_long_read(&clock->now);
+
+		sectors_written = bch_writeback(dc);
+
+		if (sectors_written < c->capacity >> 4)
+			bch_kthread_io_clock_wait(clock,
+					  last + (c->capacity >> 5));
+	}
 
 	return 0;
 }

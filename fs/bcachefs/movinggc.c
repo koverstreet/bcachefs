@@ -7,6 +7,7 @@
 #include "bcache.h"
 #include "btree.h"
 #include "buckets.h"
+#include "clock.h"
 #include "extents.h"
 #include "io.h"
 #include "keylist.h"
@@ -223,6 +224,8 @@ static bool bch_moving_gc(struct cache *ca)
 	for (i = 0; i < ca->heap.used; i++)
 		sectors_to_move += ca->heap.data[i].val;
 
+	/* XXX: calculate this threshold rigorously */
+
 	if (ca->heap.used < ca->free_inc.size / 2 &&
 	    sectors_to_move < reserve_sectors) {
 		mutex_unlock(&ca->heap_lock);
@@ -281,15 +284,26 @@ static int bch_moving_gc_thread(void *arg)
 {
 	struct cache *ca = arg;
 	struct cache_set *c = ca->set;
-	unsigned long last = jiffies;
+	struct io_clock *clock = &c->io_clock[WRITE];
+	unsigned long last;
+	bool moved;
 
-	do {
+	while (!kthread_should_stop()) {
 		if (kthread_wait_freezable(c->copy_gc_enabled))
 			break;
 
-		bch_moving_gc(ca);
-	} while (!bch_kthread_loop_ratelimit(&last,
-					     c->btree_scan_ratelimit * HZ));
+		last = atomic_long_read(&clock->now);
+
+		moved = bch_moving_gc(ca);
+
+		/*
+		 * This really should be a library code, but it has to be
+		 * kthread specific... ugh
+		 */
+		if (!moved)
+			bch_kthread_io_clock_wait(clock,
+					last + ca->free_inc.size / 2);
+	}
 
 	return 0;
 }

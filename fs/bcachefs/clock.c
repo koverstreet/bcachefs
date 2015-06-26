@@ -1,6 +1,9 @@
 #include "bcache.h"
 #include "clock.h"
 
+#include <linux/freezer.h>
+#include <linux/kthread.h>
+
 static inline bool io_timer_cmp(struct io_timer *l, struct io_timer *r)
 {
 	return time_after(l->expire, r->expire);
@@ -11,6 +14,53 @@ void bch_io_timer_add(struct io_clock *clock, struct io_timer *timer)
 	spin_lock(&clock->timer_lock);
 	BUG_ON(!heap_add(&clock->timers, timer, io_timer_cmp));
 	spin_unlock(&clock->timer_lock);
+}
+
+struct io_clock_wait {
+	struct io_timer		timer;
+	struct task_struct	*task;
+	int			expired;
+};
+
+static void io_clock_wait_fn(struct io_timer *timer)
+{
+	struct io_clock_wait *wait = container_of(timer,
+				struct io_clock_wait, timer);
+
+	wait->expired = 1;
+	wake_up_process(wait->task);
+}
+
+/*
+ * _only_ to be used from a kthread
+ */
+void bch_kthread_io_clock_wait(struct io_clock *clock,
+			       unsigned long until)
+{
+	struct io_clock_wait wait;
+
+	/* XXX: calculate sleep time rigorously */
+	wait.timer.expire	= until;
+	wait.timer.fn		= io_clock_wait_fn;
+	wait.task		= current;
+	wait.expired		= 0;
+	bch_io_timer_add(clock, &wait.timer);
+
+	while (1) {
+		set_current_state(TASK_INTERRUPTIBLE);
+		if (kthread_should_stop()) {
+			__set_current_state(TASK_RUNNING);
+			break;
+		}
+
+		if (wait.expired) {
+			__set_current_state(TASK_RUNNING);
+			break;
+		}
+
+		schedule();
+		try_to_freeze();
+	}
 }
 
 static struct io_timer *get_expired_timer(struct io_clock *clock,

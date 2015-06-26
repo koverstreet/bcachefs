@@ -501,23 +501,6 @@ uint64_t bch_crc64_update(uint64_t crc, const void *_data, size_t len)
 	return crc;
 }
 
-int bch_kthread_loop_ratelimit(unsigned long *last, unsigned long delay)
-{
-	unsigned long next = *last + delay;
-
-	set_current_state(TASK_INTERRUPTIBLE);
-	if (kthread_should_stop()) {
-		__set_current_state(TASK_RUNNING);
-		return -1;
-	}
-
-	schedule_timeout(max_t(long, 0, next - jiffies));
-	try_to_freeze();
-	*last = jiffies;
-
-	return 0;
-}
-
 size_t bch_rand_range(size_t max)
 {
 	size_t rand;

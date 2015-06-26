@@ -972,8 +972,6 @@ static const char *bch_cache_set_alloc(struct cache_sb *sb,
 
 	c->btree_flush_delay = 30;
 
-	c->btree_scan_ratelimit = 30;
-
 	c->copy_gc_enabled = 1;
 	c->tiering_enabled = 1;
 	c->tiering_percent = 10;

@@ -2,6 +2,7 @@
 #include "bcache.h"
 #include "btree.h"
 #include "buckets.h"
+#include "clock.h"
 #include "extents.h"
 #include "io.h"
 #include "keylist.h"
@@ -332,7 +333,7 @@ static int tiering_next_cache(struct cache_set *c,
 	}
 }
 
-static void read_tiering(struct cache_set *c)
+static u64 read_tiering(struct cache_set *c)
 {
 	struct moving_context ctxt;
 	struct tiering_refill refill;
@@ -360,21 +361,40 @@ static void read_tiering(struct cache_set *c)
 	refill_done(&refill);
 
 	trace_bcache_tiering_end(c, ctxt.sectors_moved, ctxt.keys_moved);
+
+	return ctxt.sectors_moved;
 }
 
 static int bch_tiering_thread(void *arg)
 {
 	struct cache_set *c = arg;
-	unsigned long last = jiffies;
+	struct io_clock *clock = &c->io_clock[WRITE];
+	struct cache *ca;
+	u64 sectors, tier_capacity;
+	unsigned long last;
+	unsigned i;
 
-	do {
+	while (!kthread_should_stop()) {
 		if (kthread_wait_freezable(c->tiering_enabled &&
 					   c->cache_tiers[1].nr_devices))
 			break;
 
-		read_tiering(c);
-	} while (!bch_kthread_loop_ratelimit(&last,
-					     c->btree_scan_ratelimit * HZ));
+		last = atomic_long_read(&clock->now);
+
+		sectors = read_tiering(c);
+
+		tier_capacity = 0;
+		rcu_read_lock();
+		group_for_each_cache_rcu(ca, &c->cache_tiers[0], i)
+			tier_capacity +=
+				(ca->mi.nbuckets -
+				 ca->mi.first_bucket) << ca->bucket_bits;
+		rcu_read_unlock();
+
+		if (sectors < tier_capacity >> 4)
+			bch_kthread_io_clock_wait(clock,
+					  last + (tier_capacity >> 5));
+	}
 
 	return 0;
 }
