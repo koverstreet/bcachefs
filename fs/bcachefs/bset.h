@@ -214,6 +214,31 @@ struct bset_tree {
 	struct bset		*data;
 };
 
+enum bset_tree_type {
+	BSET_TREE_NONE,
+	BSET_TREE_UNWRITTEN,
+	BSET_TREE_WRITTEN,
+};
+
+#define BSET_TREE_NR_TYPES	3
+
+#define BSET_TREE_NONE_VAL	(UINT_MAX)
+#define BSET_TREE_UNWRITTEN_VAL	(UINT_MAX - 1)
+
+static inline enum bset_tree_type bset_tree_type(struct bset_tree *t)
+{
+	switch (t->extra) {
+	case BSET_TREE_NONE_VAL:
+		return BSET_TREE_NONE;
+	case BSET_TREE_UNWRITTEN_VAL:
+		EBUG_ON(!t->size);
+		return BSET_TREE_UNWRITTEN;
+	default:
+		EBUG_ON(!t->size);
+		return BSET_TREE_WRITTEN;
+	}
+}
+
 struct btree_nr_keys {
 
 	/*
@@ -230,8 +255,7 @@ struct btree_nr_keys {
 struct btree_keys {
 	const struct btree_keys_ops	*ops;
 	u8			nsets;
-	unsigned		page_order:7;
-	unsigned		last_set_unwritten:1;
+	u8			page_order;
 
 	struct btree_nr_keys	nr;
 
@@ -264,14 +288,9 @@ static inline struct bset_tree *bset_tree_last(struct btree_keys *b)
 	return b->set + b->nsets;
 }
 
-static inline bool bset_written(struct btree_keys *b, struct bset_tree *t)
+static inline bool bset_written(struct bset_tree *t)
 {
-	return t <= b->set + b->nsets - b->last_set_unwritten;
-}
-
-static inline bool bkey_written(struct btree_keys *b, struct bkey_packed *k)
-{
-	return !b->last_set_unwritten || k < b->set[b->nsets].data->start;
+	return bset_tree_type(t) == BSET_TREE_WRITTEN;
 }
 
 #define __set_bytes(_i, _u64s)	(sizeof(*(_i)) + (_u64s) * sizeof(u64))
@@ -368,8 +387,7 @@ static inline struct bkey_packed *bset_bkey_idx(struct bset *i, unsigned idx)
 	return bkey_idx(i, idx);
 }
 
-struct bkey_packed *bkey_prev(struct btree_keys *, struct bset_tree *,
-			      struct bkey_packed *);
+struct bkey_packed *bkey_prev(struct bset_tree *, struct bkey_packed *);
 
 /*
  * Tries to merge l and r: l should be lower than r
@@ -600,8 +618,10 @@ void bch_btree_sort_into(struct btree_keys *, struct btree_keys *,
 			 ptr_filter_fn, struct bset_sort_state *);
 
 struct bset_stats {
-	size_t sets_written, sets_unwritten;
-	size_t bytes_written, bytes_unwritten;
+	struct {
+		size_t nr, bytes;
+	} sets[BSET_TREE_NR_TYPES];
+
 	size_t floats;
 	size_t failed_unpacked;
 	size_t failed_prev;

@@ -565,7 +565,7 @@ void bch_btree_bset_insert(struct btree_iter *iter,
 	struct btree_iter *linked;
 	struct bkey_packed *where = NULL;
 
-	BUG_ON(insert->k.u64s > bch_btree_keys_u64s_remaining(b));
+	BUG_ON(insert->k.u64s > bch_btree_keys_u64s_remaining(iter->c, b));
 
 	bch_bset_insert(&b->keys, node_iter, insert, &where);
 
@@ -716,7 +716,8 @@ enum btree_insert_status {
 	BTREE_INSERT_ERROR,
 };
 
-static bool have_enough_space(struct btree *b, struct keylist *insert_keys)
+static bool have_enough_space(struct cache_set *c, struct btree *b,
+			      struct keylist *insert_keys)
 {
 	/*
 	 * For updates to interior nodes, everything on the
@@ -732,7 +733,7 @@ static bool have_enough_space(struct btree *b, struct keylist *insert_keys)
 		? BKEY_EXTENT_MAX_U64s * 3
 		: bch_keylist_front(insert_keys)->k.u64s;
 
-	return u64s <= bch_btree_keys_u64s_remaining(b);
+	return u64s <= bch_btree_keys_u64s_remaining(c, b);
 }
 
 static void verify_keys_sorted(struct keylist *l)
@@ -824,7 +825,7 @@ do_init_next:		bch_btree_init_next(iter->c, b, iter);
 				break;
 			}
 
-			if (!have_enough_space(b, insert_keys)) {
+			if (!have_enough_space(iter->c, b, insert_keys)) {
 				done = true;
 				need_split = true;
 				break;
@@ -951,7 +952,9 @@ static struct btree *__btree_split_node(struct btree_iter *iter, struct btree *n
 	       set2->u64s * sizeof(u64));
 
 	n1->keys.set->size = 0;
+	n1->keys.set->extra = BSET_TREE_NONE_VAL;
 	n2->keys.set->size = 0;
+	n2->keys.set->extra = BSET_TREE_NONE_VAL;
 
 	six_unlock_write(&n2->lock);
 
@@ -978,7 +981,7 @@ static void btree_split_insert_keys(struct btree_iter *iter, struct btree *b,
 	while (!bch_keylist_empty(keys)) {
 		k = bch_keylist_front(keys);
 
-		BUG_ON(!have_enough_space(b, keys));
+		BUG_ON(!have_enough_space(iter->c, b, keys));
 		BUG_ON(bkey_cmp(k->k.p, b->data->min_key) < 0);
 
 		if (bkey_cmp(k->k.p, b->key.k.p) > 0) {

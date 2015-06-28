@@ -1165,7 +1165,7 @@ bool bch_insert_fixup_extent(struct btree_iter *iter, struct btree *b,
 		 * iteration of this room will insert one key, so we need
 		 * room for three keys.
 		 */
-		needs_split = (bch_btree_keys_u64s_remaining(b) <
+		needs_split = (bch_btree_keys_u64s_remaining(c, b) <
 			       BKEY_EXTENT_MAX_U64s * 3);
 		res_full = journal_res_full(res, &insert->k);
 
@@ -1866,7 +1866,7 @@ static bool bch_extent_merge_inline(struct btree_keys *b,
 		 * the end of that bset, so start searching from the end.
 		 */
 		k = bch_btree_node_iter_bset_pos(iter, b, t->data) ?:
-			bkey_prev(b, t, bset_bkey_last(t->data));
+			bkey_prev(t, bset_bkey_last(t->data));
 
 		if (back_merge) {
 			/*
@@ -1878,7 +1878,7 @@ static bool bch_extent_merge_inline(struct btree_keys *b,
 			     k &&
 			     (uk = bkey_unpack_key(f, k),
 			      bkey_cmp(uk.p, bkey_start_pos(&li.k.k)) > 0);
-			     k = bkey_prev(b, t, k)) {
+			     k = bkey_prev(t, k)) {
 				if (bkey_cmp(uk.p, li.k.k.p) >= 0)
 					continue;
 

@@ -497,16 +497,22 @@ static int bch_bset_print_stats(struct cache_set *c, char *buf)
 	return snprintf(buf, PAGE_SIZE,
 			"btree nodes:		%zu\n"
 			"written sets:		%zu\n"
-			"unwritten sets:		%zu\n"
 			"written key bytes:	%zu\n"
+			"unwritten sets:		%zu\n"
 			"unwritten key bytes:	%zu\n"
+			"no table sets:		%zu\n"
+			"no table key bytes:	%zu\n"
 			"floats:			%zu\n"
 			"failed unpacked:	%zu\n"
 			"failed prev:		%zu\n"
 			"failed overflow:	%zu\n",
 			nodes,
-			stats.sets_written, stats.sets_unwritten,
-			stats.bytes_written, stats.bytes_unwritten,
+			stats.sets[BSET_TREE_WRITTEN].nr,
+			stats.sets[BSET_TREE_WRITTEN].bytes,
+			stats.sets[BSET_TREE_UNWRITTEN].nr,
+			stats.sets[BSET_TREE_UNWRITTEN].bytes,
+			stats.sets[BSET_TREE_NONE].nr,
+			stats.sets[BSET_TREE_NONE].bytes,
 			stats.floats,
 			stats.failed_unpacked,
 			stats.failed_prev,

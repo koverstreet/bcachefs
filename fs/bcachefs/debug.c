@@ -406,7 +406,9 @@ static ssize_t bch_read_btree_formats(struct file *file, char __user *buf,
 
 	for_each_btree_node(&iter, i->c, i->id, i->from, b) {
 		const struct bkey_format *f = &b->keys.format;
-		struct bset_stats stats = { 0 };
+		struct bset_stats stats;
+
+		memset(&stats, 0, sizeof(stats));
 
 		bch_btree_keys_stats(&b->keys, &stats);
 

@@ -15,14 +15,6 @@
 
 #include <trace/events/bcachefs.h>
 
-static inline struct btree_node_entry *write_block(struct cache_set *c,
-						   struct btree *b)
-{
-	EBUG_ON(!b->written);
-
-	return (void *) b->data + (b->written << (c->block_bits + 9));
-}
-
 static void btree_node_sort(struct cache_set *c, struct btree *b,
 			    struct btree_iter *iter, unsigned from,
 			    struct btree_node_iter *node_iter,

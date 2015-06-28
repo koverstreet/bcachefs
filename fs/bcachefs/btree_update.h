@@ -83,21 +83,59 @@ void bch_btree_insert_and_journal(struct btree_iter *, struct btree *,
 				  struct bkey_i *,
 				  struct journal_res *, u64 *);
 
-static inline size_t bch_btree_keys_u64s_remaining(struct btree *b)
+static inline struct btree_node_entry *write_block(struct cache_set *c,
+						   struct btree *b)
+{
+	EBUG_ON(!b->written);
+
+	return (void *) b->data + (b->written << (c->block_bits + 9));
+}
+
+static inline size_t bch_btree_keys_u64s_remaining(struct cache_set *c,
+						   struct btree *b)
 {
 	struct bset *i = btree_bset_last(b);
 
 	BUG_ON((PAGE_SIZE << b->keys.page_order) <
 	       (bset_byte_offset(b, i) + set_bytes(i)));
 
-	if (!b->keys.last_set_unwritten) {
-		BUG_ON(b->written < btree_blocks(b->c));
+	if (b->written == btree_blocks(c))
 		return 0;
-	}
+
+#if 1
+	EBUG_ON(i != (b->written
+		      ? &write_block(c, b)->keys
+		      : &b->data->keys));
 
 	return ((PAGE_SIZE << b->keys.page_order) -
 		(bset_byte_offset(b, i) + set_bytes(i))) /
 		sizeof(u64);
+#else
+	/*
+	 * first bset is embedded in a struct btree_node, not a
+	 * btree_node_entry, so write_block() when b->written == 0 doesn't
+	 * work... ugh
+	 */
+
+	if (!b->written ||
+	    &write_block(c, b)->keys == i)
+		return ((PAGE_SIZE << b->keys.page_order) -
+			(bset_byte_offset(b, i) + set_bytes(i))) /
+			sizeof(u64);
+
+	/* haven't initialized the next bset: */
+
+	BUG_ON(&write_block(c, b)->keys < i);
+
+	BUG_ON(!b->written);
+
+	return ((((btree_blocks(c) - b->written) <<
+		  (c->block_bits + 9)) -
+		 sizeof(struct btree_node_entry)) /
+		sizeof(u64));
+
+	return b->written < btree_blocks(c);
+#endif
 }
 
 int bch_btree_insert_node(struct btree *, struct btree_iter *,
