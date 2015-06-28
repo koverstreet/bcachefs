@@ -152,8 +152,6 @@ void bch_btree_init_next(struct cache_set *c, struct btree *b,
 
 	if (iter && did_sort)
 		bch_btree_iter_reinit_node(iter, b);
-
-	clear_btree_node_need_init_next(b);
 }
 
 /*
@@ -360,7 +358,6 @@ void bch_btree_node_read_done(struct cache_set *c, struct btree *b,
 			    &b->keys.set[0].end) < 0)
 		goto err;
 
-	set_btree_node_need_init_next(b);
 out:
 	mempool_free(iter, &c->fill_iter);
 	return;
@@ -525,7 +522,6 @@ static void do_btree_node_write(struct closure *cl)
 	cancel_delayed_work(&b->work);
 
 	change_bit(BTREE_NODE_write_idx, &b->flags);
-	set_btree_node_need_init_next(b);
 
 	i->version	= BCACHE_BSET_VERSION;
 

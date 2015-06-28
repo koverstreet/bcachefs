@@ -71,14 +71,12 @@ enum btree_flags {
 	BTREE_NODE_write_error,
 	BTREE_NODE_dirty,
 	BTREE_NODE_write_idx,
-	BTREE_NODE_need_init_next,
 };
 
 BTREE_FLAG(read_error);
 BTREE_FLAG(write_error);
 BTREE_FLAG(dirty);
 BTREE_FLAG(write_idx);
-BTREE_FLAG(need_init_next);
 
 static inline struct btree_write *btree_current_write(struct btree *b)
 {

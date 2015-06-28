@@ -750,20 +750,21 @@ static void verify_keys_sorted(struct keylist *l)
 
 static void btree_node_lock_for_insert(struct btree *b, struct btree_iter *iter)
 {
-	/* just wrote a set? */
-	if (btree_node_need_init_next(b))
-do_init_next:	bch_btree_init_next(iter->c, b, iter);
-
+relock:
 	btree_node_lock_write(b, iter);
 
+	BUG_ON(&write_block(iter->c, b)->keys < btree_bset_last(b));
+
 	/*
-	 * Recheck after taking the write lock, because it can be set
-	 * (because of the btree node being written) with only a read
+	 * If the last bset has been written, initialize a new one - check after
+	 * taking the write lock because it can be written with only a read
 	 * lock:
 	 */
-	if (btree_node_need_init_next(b)) {
+	if (b->written != btree_blocks(iter->c) &&
+	    &write_block(iter->c, b)->keys > btree_bset_last(b)) {
 		btree_node_unlock_write(b, iter);
-		goto do_init_next;
+		bch_btree_init_next(iter->c, b, iter);
+		goto relock;
 	}
 }
 
