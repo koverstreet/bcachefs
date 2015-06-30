@@ -165,6 +165,16 @@ bool btree_gc_mark_node(struct cache_set *c, struct btree *b)
 	return false;
 }
 
+static void gc_set_pos(struct cache_set *c, enum btree_id id,
+		       struct bpos pos, unsigned level)
+{
+	write_seqcount_begin(&c->gc_cur_lock);
+	c->gc_cur_btree	= id;
+	c->gc_cur_pos	= pos;
+	c->gc_cur_level = level;
+	write_seqcount_end(&c->gc_cur_lock);
+}
+
 static int bch_gc_btree(struct cache_set *c, enum btree_id btree_id)
 {
 	struct btree_iter iter;
@@ -184,10 +194,7 @@ static int bch_gc_btree(struct cache_set *c, enum btree_id btree_id)
 		BUG_ON(bkey_cmp(c->gc_cur_pos, b->key.k.p) > 0);
 		BUG_ON(!gc_will_visit_node(c, b));
 
-		write_seqcount_begin(&c->gc_cur_lock);
-		c->gc_cur_level = b->level;
-		c->gc_cur_pos = b->key.k.p;
-		write_seqcount_end(&c->gc_cur_lock);
+		gc_set_pos(c, b->btree_id, b->key.k.p, b->level);
 
 		BUG_ON(gc_will_visit_node(c, b));
 
@@ -199,12 +206,11 @@ static int bch_gc_btree(struct cache_set *c, enum btree_id btree_id)
 	bch_btree_iter_unlock(&iter);
 
 	spin_lock(&c->btree_root_lock);
+
 	b = c->btree_roots[btree_id];
 	__bch_btree_mark_key(c, b->level + 1, bkey_i_to_s_c(&b->key));
+	gc_set_pos(c, b->btree_id, POS_MAX, U8_MAX);
 
-	write_seqcount_begin(&c->gc_cur_lock);
-	c->gc_cur_level = U8_MAX;
-	write_seqcount_end(&c->gc_cur_lock);
 	spin_unlock(&c->btree_root_lock);
 	return 0;
 }
@@ -243,47 +249,13 @@ static void bch_mark_allocator_buckets(struct cache_set *c)
 	}
 }
 
-static void bch_gc_start(struct cache_set *c)
+static void bch_mark_scan_keylists(struct cache_set *c)
 {
-	struct cache *ca;
-	struct bucket *g;
-	unsigned i;
-
-	write_seqcount_begin(&c->gc_cur_lock);
-	for_each_cache(ca, c, i)
-		ca->bucket_stats_cached = __bucket_stats_read(ca);
-
-	c->gc_cur_btree = 0;
-	c->gc_cur_level = 0;
-	c->gc_cur_pos	= POS_MIN;
-	write_seqcount_end(&c->gc_cur_lock);
-
-	memset(c->cache_slots_used, 0, sizeof(c->cache_slots_used));
-
-	for_each_cache(ca, c, i)
-		for_each_bucket(g, ca) {
-			g->oldest_gen = ca->bucket_gens[g - ca->buckets];
-			bch_mark_free_bucket(ca, g);
-		}
-
-	/*
-	 * must happen before traversing the btree, as pointers move from open
-	 * buckets into the btree - if we race and an open_bucket has been freed
-	 * before we marked it, it's in the btree now
-	 */
-	bch_mark_allocator_buckets(c);
-}
-
-static void bch_gc_finish(struct cache_set *c)
-{
-	struct cache *ca;
 	struct scan_keylist *kl;
-	unsigned i;
-
-	bch_writeback_recalc_oldest_gens(c);
 
 	mutex_lock(&c->gc_scan_keylist_lock);
 
+	/* What the goddamn fuck? */
 	list_for_each_entry(kl, &c->gc_scan_keylists, mark_list) {
 		if (kl->owner == NULL)
 			bch_keylist_recalc_oldest_gens(c, kl);
@@ -292,6 +264,15 @@ static void bch_gc_finish(struct cache_set *c)
 	}
 
 	mutex_unlock(&c->gc_scan_keylist_lock);
+}
+
+/*
+ * Mark non btree metadata - prios, journal
+ */
+static void bch_mark_metadata(struct cache_set *c)
+{
+	struct cache *ca;
+	unsigned i;
 
 	for_each_cache(ca, c, i) {
 		unsigned j;
@@ -309,14 +290,7 @@ static void bch_gc_finish(struct cache_set *c)
 			bch_mark_metadata_bucket(ca, &ca->buckets[*i], true);
 
 		spin_unlock(&ca->prio_buckets_lock);
-
-		atomic_long_set(&ca->saturated_count, 0);
-		ca->inc_gen_needs_gc = 0;
 	}
-
-	write_seqcount_begin(&c->gc_cur_lock);
-	c->gc_cur_btree = BTREE_ID_NR + 1;
-	write_seqcount_end(&c->gc_cur_lock);
 }
 
 /**
@@ -324,16 +298,56 @@ static void bch_gc_finish(struct cache_set *c)
  */
 void bch_gc(struct cache_set *c)
 {
+	struct cache *ca;
+	struct bucket *g;
 	u64 start_time = local_clock();
+	unsigned i;
+
+	/*
+	 * Walk _all_ references to buckets, and recompute them:
+	 *
+	 * Order matters here:
+	 *  - Concurrent GC relies on the fact that we have a total ordering for
+	 *    everything that GC walks - see  gc_will_visit_node(),
+	 *    gc_will_visit_root()
+	 *
+	 *  - also, references move around in the course of index updates and
+	 *    various other crap: everything needs to agree on the ordering
+	 *    references are allowed to move around in - e.g., we're allowed to
+	 *    start with a reference owned by an open_bucket (the allocator) and
+	 *    move it to the btree, but not the reverse.
+	 *
+	 *    This is necessary to ensure that gc doesn't miss references that
+	 *    move around - if references move backwards in the ordering GC
+	 *    uses, GC could skip past them
+	 */
+
+	memset(c->cache_slots_used, 0, sizeof(c->cache_slots_used));
 
 	if (test_bit(CACHE_SET_GC_FAILURE, &c->flags))
 		return;
 
 	trace_bcache_gc_start(c);
-
 	down_write(&c->gc_lock);
-	bch_gc_start(c);
 
+	/* Save a copy of the existing bucket stats while we recompute them: */
+	for_each_cache(ca, c, i)
+		ca->bucket_stats_cached = __bucket_stats_read(ca);
+
+	/* Indicates to buckets code that gc is now in progress: */
+	gc_set_pos(c, 0, POS_MIN, 0);
+
+	/* Clear bucket marks: */
+	for_each_cache(ca, c, i)
+		for_each_bucket(g, ca) {
+			g->oldest_gen = ca->bucket_gens[g - ca->buckets];
+			bch_mark_free_bucket(ca, g);
+		}
+
+	/* Walk allocator's references: */
+	bch_mark_allocator_buckets(c);
+
+	/* Walk btree: */
 	while (c->gc_cur_btree < BTREE_ID_NR) {
 		int ret = c->btree_roots[c->gc_cur_btree]
 			? bch_gc_btree(c, c->gc_cur_btree)
@@ -346,19 +360,24 @@ void bch_gc(struct cache_set *c)
 			return;
 		}
 
-		write_seqcount_begin(&c->gc_cur_lock);
-		c->gc_cur_btree++;
-		c->gc_cur_level = 0;
-		c->gc_cur_pos	= POS_MIN;
-		write_seqcount_end(&c->gc_cur_lock);
+		gc_set_pos(c, c->gc_cur_btree + 1, POS_MIN, 0);
 	}
 
-	bch_gc_finish(c);
+	bch_mark_metadata(c);
+	bch_writeback_recalc_oldest_gens(c);
+	bch_mark_scan_keylists(c);
+
+	for_each_cache(ca, c, i) {
+		atomic_long_set(&ca->saturated_count, 0);
+		ca->inc_gen_needs_gc = 0;
+	}
+
+	/* Indicate to buckets code that gc is no longer in progress: */
+	gc_set_pos(c, BTREE_ID_NR + 1, POS_MIN, 0);
+
 	up_write(&c->gc_lock);
-
-	bch_time_stats_update(&c->btree_gc_time, start_time);
-
 	trace_bcache_gc_end(c);
+	bch_time_stats_update(&c->btree_gc_time, start_time);
 }
 
 /* Btree coalescing */
@@ -769,8 +788,9 @@ int bch_initial_gc(struct cache_set *c, struct list_head *journal)
 		bch_journal_mark(c, journal);
 	}
 
-	bch_gc_finish(c);
-
+	bch_mark_metadata(c);
+	gc_set_pos(c, BTREE_ID_NR + 1, POS_MIN, 0);
 	set_bit(CACHE_SET_INITIAL_GC_DONE, &c->flags);
+
 	return 0;
 }
