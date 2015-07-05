@@ -781,6 +781,7 @@ bch_btree_insert_keys_interior(struct btree *b,
 			       struct bch_replace_info *replace,
 			       u64 *journal_seq, unsigned flags)
 {
+	struct btree_node_iter *node_iter = &iter->node_iters[b->level];
 	struct journal_res res = { 0, 0 };
 
 	BUG_ON(replace);
@@ -793,9 +794,23 @@ bch_btree_insert_keys_interior(struct btree *b,
 		return BTREE_INSERT_NEED_SPLIT;
 	}
 
-	while (!bch_keylist_empty(insert_keys))
-		btree_insert_key(iter, b, &iter->node_iters[b->level],
-				 insert_keys, NULL, &res, NULL, flags);
+	while (!bch_keylist_empty(insert_keys)) {
+		const struct bkey_format *f = &b->keys.format;
+		struct bkey_i *insert = bch_keylist_front(insert_keys);
+		struct bkey_packed *k;
+
+		/*
+		 * btree_split(), btree_gc_coalesce() will insert keys before
+		 * the iterator's current position - they know the keys go in
+		 * the node the iterator points to:
+		 */
+		while ((k = bch_btree_node_iter_prev_all(node_iter, &b->keys)) &&
+		       (bkey_cmp_packed(f, k, &insert->k) >= 0))
+			;
+
+		btree_insert_key(iter, b, node_iter, insert_keys,
+				 NULL, &res, NULL, flags);
+	}
 
 	btree_node_unlock_write(b, iter);
 

@@ -606,12 +606,6 @@ next:
 	for (i = 0; i < nr_new_nodes; i++)
 		bch_keylist_add_in_order(&keylist, &new_nodes[i]->key);
 
-	/* hack - need to rewind parent iterator: */
-	bch_btree_node_iter_init(&iter->node_iters[parent->level],
-				 &parent->keys,
-				 bch_keylist_front(&keylist)->k.p,
-				 iter->is_extents);
-
 	/* Insert the newly coalesced nodes */
 	ret = bch_btree_insert_node(parent, iter, &keylist, NULL, NULL,
 				    BTREE_INSERT_NOFAIL, res);
