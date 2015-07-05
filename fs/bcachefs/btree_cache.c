@@ -163,6 +163,9 @@ static int mca_reap_notrace(struct cache_set *c, struct btree *b, bool flush)
 	if (!six_trylock_write(&b->lock))
 		goto out_unlock_intent;
 
+	if (atomic_read(&b->write_blocked))
+		goto out_unlock;
+
 	i = btree_bset_last(b);
 	BUG_ON(!i && btree_node_dirty(b));
 	BUG_ON(i && i->u64s &&

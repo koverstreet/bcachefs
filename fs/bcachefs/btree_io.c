@@ -456,6 +456,7 @@ void bch_btree_complete_write(struct cache_set *c, struct btree *b,
 	if (w->have_pin)
 		journal_pin_drop(&c->journal, &w->journal);
 	w->have_pin = false;
+	closure_wake_up(&w->wait);
 }
 
 static void btree_node_write_unlock(struct closure *cl)
@@ -488,8 +489,10 @@ static void btree_node_write_endio(struct bio *bio)
 	struct bch_write_bio *wbio = to_wbio(bio);
 
 	if (cache_fatal_io_err_on(bio->bi_error, wbio->bio.ca, "btree write") ||
-	    bch_meta_write_fault("btree"))
+	    bch_meta_write_fault("btree")) {
 		set_btree_node_write_error(b);
+		set_bit(CACHE_SET_BTREE_WRITE_ERROR, &b->c->flags);
+	}
 
 	if (wbio->orig)
 		bio_endio(wbio->orig);
@@ -631,6 +634,8 @@ void __bch_btree_node_write(struct btree *b, struct closure *parent,
 	 */
 	if (!test_and_clear_bit(BTREE_NODE_dirty, &b->flags))
 		return;
+
+	BUG_ON(atomic_read(&b->write_blocked));
 
 	/*
 	 * io_mutex ensures only a single IO in flight to a btree node at a

@@ -1331,8 +1331,10 @@ static void __bch_journal_next_entry(struct journal *j)
 	INIT_LIST_HEAD(&p->list);
 	atomic_set(&p->count, 1);
 
-	if (test_bit(JOURNAL_REPLAY_DONE, &j->flags))
+	if (test_bit(JOURNAL_REPLAY_DONE, &j->flags)) {
+		smp_wmb();
 		j->cur_pin_list = p;
+	}
 
 	jset = journal_cur_write(j)->data;
 	jset->seq	= ++j->seq;
@@ -1734,7 +1736,7 @@ static int __journal_res_get(struct journal *j, struct journal_res *res,
  * btree node write locks.
  */
 int bch_journal_res_get(struct journal *j, struct journal_res *res,
-			 unsigned u64s_min, unsigned u64s_max)
+			unsigned u64s_min, unsigned u64s_max)
 {
 	u64 start_time = 0;
 	int ret;

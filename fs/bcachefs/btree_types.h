@@ -17,6 +17,7 @@ struct btree_write {
 	unsigned			index;
 	bool				have_pin;
 	struct journal_entry_pin	journal;
+	struct closure_waitlist		wait;
 };
 
 struct btree {
@@ -35,6 +36,7 @@ struct btree {
 	u16			written;	/* would be nice to kill */
 	u8			level;
 	u8			btree_id;
+	atomic_t		write_blocked;
 
 	struct btree_keys	keys;
 	struct btree_node	*data;
@@ -42,6 +44,13 @@ struct btree {
 	struct cache_set	*c;
 
 	struct open_bucket	*ob;
+
+	/*
+	 * When a node is going to be freed while write_blocked nonzero, we have
+	 * to preserve the write ordering - this then points to the async_split
+	 * that's waiting on writes before making the new node visible:
+	 */
+	struct async_split	*as;
 
 	/* lru list */
 	struct list_head	list;

@@ -382,6 +382,7 @@ enum {
 	CACHE_SET_GC_STOPPING,
 	CACHE_SET_GC_FAILURE,
 	CACHE_SET_BDEV_MOUNTED,
+	CACHE_SET_BTREE_WRITE_ERROR,
 };
 
 struct cache_member_rcu {
@@ -470,6 +471,7 @@ struct cache_set {
 	struct task_struct	*btree_cache_alloc_lock;
 
 	mempool_t		btree_reserve_pool;
+	mempool_t		btree_async_split_pool;
 
 	struct list_head	btree_node_pending_free;
 	struct mutex		btree_node_pending_free_lock;

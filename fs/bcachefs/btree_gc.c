@@ -426,10 +426,9 @@ static void bch_coalesce_nodes(struct btree *old_nodes[GC_MERGE_NODES],
 	unsigned i, nr_old_nodes, nr_new_nodes, u64s = 0;
 	unsigned blocks = btree_blocks(c) * 2 / 3;
 	struct btree *new_nodes[GC_MERGE_NODES];
-	struct pending_btree_node_free pending[GC_MERGE_NODES];
+	struct async_split *as;
 	struct btree_reserve *res;
 	struct keylist keylist;
-	struct closure cl;
 	struct bkey_format_state format_state;
 	struct bkey_format new_format;
 	int ret;
@@ -439,7 +438,6 @@ static void bch_coalesce_nodes(struct btree *old_nodes[GC_MERGE_NODES],
 
 	memset(new_nodes, 0, sizeof(new_nodes));
 	bch_keylist_init(&keylist, NULL, 0);
-	closure_init_stack(&cl);
 
 	/* Count keys that are not deleted */
 	for (i = 0; i < GC_MERGE_NODES && old_nodes[i]; i++)
@@ -481,9 +479,10 @@ static void bch_coalesce_nodes(struct btree *old_nodes[GC_MERGE_NODES],
 			goto out;
 		}
 
-	for (i = 0; i < nr_old_nodes; i++) {
-		closure_sync(&cl);
-		bch_btree_node_flush_journal_entries(c, old_nodes[i], &cl);
+	as = __bch_async_split_alloc(old_nodes, nr_old_nodes, iter);
+	if (!as) {
+		trace_bcache_btree_gc_coalesce_fail(c);
+		goto out;
 	}
 
 	/* Repack everything with @new_format and sort down to one bset */
@@ -558,18 +557,8 @@ static void bch_coalesce_nodes(struct btree *old_nodes[GC_MERGE_NODES],
 
 		recalc_packed_keys(n);
 		six_unlock_write(&n->lock);
-		bch_btree_node_write(n, &cl, NULL);
+		bch_btree_node_write(n, &as->cl, NULL);
 	}
-
-	/* Wait for all the writes to finish */
-	closure_sync(&cl);
-
-	if (bch_journal_error(&c->journal))
-		goto err;
-
-	for (i = 0; i < nr_new_nodes; i++)
-		if (btree_node_write_error(new_nodes[i]))
-			goto err;
 
 	/*
 	 * The keys for the old nodes get deleted. We don't want to insert keys
@@ -583,7 +572,7 @@ static void bch_coalesce_nodes(struct btree *old_nodes[GC_MERGE_NODES],
 		struct bkey_i delete;
 		unsigned j;
 
-		bch_pending_btree_node_free_init(c, &pending[i], old_nodes[i]);
+		bch_pending_btree_node_free_init(c, as, old_nodes[i]);
 
 		for (j = 0; j < nr_new_nodes; j++)
 			if (!bkey_cmp(old_nodes[i]->key.k.p,
@@ -608,7 +597,7 @@ next:
 
 	/* Insert the newly coalesced nodes */
 	ret = bch_btree_insert_node(parent, iter, &keylist, NULL, NULL,
-				    BTREE_INSERT_NOFAIL, res);
+				    BTREE_INSERT_NOFAIL, res, as);
 	if (ret)
 		goto err;
 
@@ -623,7 +612,7 @@ next:
 
 	/* Free the old nodes and update our sliding window */
 	for (i = 0; i < nr_old_nodes; i++) {
-		bch_btree_node_free(iter, old_nodes[i], &pending[i]);
+		bch_btree_node_free(iter, old_nodes[i]);
 		six_unlock_intent(&old_nodes[i]->lock);
 		old_nodes[i] = new_nodes[i];
 	}

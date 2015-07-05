@@ -47,13 +47,37 @@ struct pending_btree_node_free {
 	__BKEY_PADDED(key, BKEY_BTREE_PTR_VAL_U64s_MAX);
 };
 
-void bch_pending_btree_node_free_init(struct cache_set *,
-				      struct pending_btree_node_free *,
+struct async_split {
+	struct closure			cl;
+
+	struct cache_set		*c;
+	struct btree			*b;
+
+	/* for setting a new btree root: */
+	struct journal_res		res;
+
+	struct journal_entry_pin	journal;
+
+	struct closure_waitlist		wait;
+
+	struct pending_btree_node_free	pending[BTREE_MAX_DEPTH + GC_MERGE_NODES];
+	unsigned			nr_pending;
+
+	/* Only here to reduce stack usage on recursive splits: */
+	struct keylist			parent_keys;
+	/*
+	 * Enough room for btree_split's keys without realloc - btree node
+	 * pointers never have crc/compression info, so we only need to acount
+	 * for the pointers for three keys
+	 */
+	u64				inline_keys[BKEY_BTREE_PTR_U64s_MAX * 3];
+};
+
+void bch_pending_btree_node_free_init(struct cache_set *, struct async_split *,
 				      struct btree *);
 
 void bch_btree_node_free_never_inserted(struct cache_set *, struct btree *);
-void bch_btree_node_free(struct btree_iter *, struct btree *,
-			 struct pending_btree_node_free *);
+void bch_btree_node_free(struct btree_iter *, struct btree *);
 
 void btree_open_bucket_put(struct cache_set *c, struct btree *);
 
@@ -63,6 +87,10 @@ struct btree *__btree_node_alloc_replacement(struct cache_set *,
 					     struct btree_reserve *);
 struct btree *btree_node_alloc_replacement(struct cache_set *, struct btree *,
 					   struct btree_reserve *);
+
+struct async_split *__bch_async_split_alloc(struct btree *[], unsigned,
+					    struct btree_iter *);
+struct async_split *bch_async_split_alloc(struct btree *, struct btree_iter *);
 
 void bch_btree_set_root_initial(struct cache_set *, struct btree *);
 
@@ -140,7 +168,8 @@ static inline size_t bch_btree_keys_u64s_remaining(struct cache_set *c,
 
 int bch_btree_insert_node(struct btree *, struct btree_iter *,
 			  struct keylist *, struct bch_replace_info *,
-			  u64 *, unsigned, struct btree_reserve *);
+			  u64 *, unsigned, struct btree_reserve *,
+			  struct async_split *as);
 
 /* Normal update interface: */
 

@@ -886,6 +886,7 @@ static void cache_set_free(struct closure *cl)
 	bioset_exit(&c->bio_write);
 	bioset_exit(&c->bio_read);
 	bioset_exit(&c->btree_read_bio);
+	mempool_exit(&c->btree_async_split_pool);
 	mempool_exit(&c->btree_reserve_pool);
 	mempool_exit(&c->fill_iter);
 	mempool_exit(&c->search);
@@ -1087,7 +1088,9 @@ static struct cache_set *bch_cache_set_alloc(struct cache_sb *sb,
 	    percpu_ref_init(&c->writes, bch_writes_disabled, 0, GFP_KERNEL) ||
 	    mempool_init_slab_pool(&c->search, 1, bch_search_cache) ||
 	    mempool_init_kmalloc_pool(&c->btree_reserve_pool, 1,
-					BTREE_RESERVE_SIZE) ||
+				      BTREE_RESERVE_SIZE) ||
+	    mempool_init_kmalloc_pool(&c->btree_async_split_pool, 1,
+				      sizeof(struct async_split)) ||
 	    mempool_init_kmalloc_pool(&c->fill_iter, 1, iter_size) ||
 	    bioset_init(&c->btree_read_bio, 1, offsetof(struct bbio, bio)) ||
 	    bioset_init(&c->bio_read, 4, offsetof(struct bch_read_bio, bio.bio)) ||
