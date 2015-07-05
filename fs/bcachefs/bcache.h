@@ -654,6 +654,7 @@ struct cache_set {
 	unsigned		gc_rewrite_disabled:1;
 	unsigned		gc_coalesce_disabled:1;
 	unsigned		shrinker_disabled:1;
+	unsigned		foreground_write_ratelimit_enabled:1;
 	unsigned		copy_gc_enabled:1;
 	unsigned		tiering_enabled:1;
 	unsigned		tiering_percent;

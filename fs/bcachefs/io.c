@@ -1001,7 +1001,8 @@ void bch_write(struct closure *cl)
 
 	/* Don't call bch_next_delay() if rate is >= 1 GB/sec */
 
-	if (c->foreground_write_pd.rate.rate < (1 << 30) &&
+	if (c->foreground_write_ratelimit_enabled &&
+	    c->foreground_write_pd.rate.rate < (1 << 30) &&
 	    !op->discard && op->wp->throttle) {
 		unsigned long flags;
 		u64 delay;

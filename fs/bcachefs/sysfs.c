@@ -151,6 +151,7 @@ rw_attribute(cache_replacement_policy);
 rw_attribute(checksum_type);
 rw_attribute(btree_shrinker_disabled);
 
+rw_attribute(foreground_write_ratelimit_enabled);
 rw_attribute(copy_gc_enabled);
 sysfs_queue_attribute(copy_gc);
 sysfs_pd_controller_attribute(copy_gc);
@@ -674,6 +675,8 @@ SHOW(bch_cache_set)
 	sysfs_printf(btree_gc_rewrite_disabled,	"%i", c->gc_rewrite_disabled);
 	sysfs_printf(btree_gc_coalesce_disabled, "%i", c->gc_coalesce_disabled);
 	sysfs_printf(btree_shrinker_disabled, "%i", c->shrinker_disabled);
+	sysfs_printf(foreground_write_ratelimit_enabled, "%i",
+		     c->foreground_write_ratelimit_enabled);
 	sysfs_printf(copy_gc_enabled, "%i", c->copy_gc_enabled);
 	sysfs_pd_controller_show(foreground_write, &c->foreground_write_pd);
 
@@ -783,6 +786,8 @@ STORE(__bch_cache_set)
 	sysfs_strtoul(btree_gc_rewrite_disabled, c->gc_rewrite_disabled);
 	sysfs_strtoul(btree_gc_coalesce_disabled, c->gc_coalesce_disabled);
 	sysfs_strtoul(btree_shrinker_disabled, c->shrinker_disabled);
+	sysfs_strtoul(foreground_write_ratelimit_enabled,
+		      c->foreground_write_ratelimit_enabled);
 
 	if (attr == &sysfs_copy_gc_enabled) {
 		struct cache *ca;
@@ -1000,6 +1005,7 @@ static struct attribute *bch_cache_set_internal_files[] = {
 	&sysfs_btree_gc_rewrite_disabled,
 	&sysfs_btree_gc_coalesce_disabled,
 	&sysfs_btree_shrinker_disabled,
+	&sysfs_foreground_write_ratelimit_enabled,
 	&sysfs_copy_gc_enabled,
 	&sysfs_tiering_enabled,
 	sysfs_pd_controller_files(tiering),
