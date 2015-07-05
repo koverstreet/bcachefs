@@ -1,6 +1,7 @@
 #ifndef _BCACHE_JOURNAL_TYPES_H
 #define _BCACHE_JOURNAL_TYPES_H
 
+#include <linux/workqueue.h>
 #include "fifo.h"
 
 struct journal_res;
@@ -15,6 +16,25 @@ struct journal_write {
 
 	struct cache_set	*c;
 	struct closure_waitlist	wait;
+};
+
+/*
+ * Something that makes a journal entry dirty - i.e. a btree node that has to be
+ * flushed:
+ */
+
+struct journal_entry_pin_list {
+	struct list_head		list;
+	atomic_t			count;
+};
+
+struct journal_entry_pin;
+typedef void (*journal_pin_flush_fn)(struct journal_entry_pin *);
+
+struct journal_entry_pin {
+	struct list_head		list;
+	journal_pin_flush_fn		flush;
+	struct journal_entry_pin_list	*pin_list;
 };
 
 /* Embedded in struct cache_set */
@@ -63,8 +83,8 @@ struct journal {
 	 * needed. When all journal entries in the oldest journal bucket are no
 	 * longer needed, the bucket can be discarded and reused.
 	 */
-	DECLARE_FIFO(atomic_t, pin);
-	atomic_t		*cur_pin;
+	DECLARE_FIFO(struct journal_entry_pin_list, pin);
+	struct journal_entry_pin_list *cur_pin_list;
 
 	BKEY_PADDED(key);
 

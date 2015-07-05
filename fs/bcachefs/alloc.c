@@ -289,12 +289,12 @@ static void bch_prio_write(struct cache *ca)
 					ret, r);
 	}
 
-	spin_lock(&c->journal.lock);
+	spin_lock_irq(&c->journal.lock);
 	c->journal.prio_buckets[ca->sb.nr_this_dev] = ca->prio_buckets[0];
 	c->journal.nr_prio_buckets = max_t(unsigned,
 					   ca->sb.nr_this_dev + 1,
 					   c->journal.nr_prio_buckets);
-	spin_unlock(&c->journal.lock);
+	spin_unlock_irq(&c->journal.lock);
 
 	bch_journal_meta(c, &cl);
 	closure_sync(&cl);
@@ -343,9 +343,9 @@ int bch_prio_read(struct cache *ca)
 		return -EIO;
 	}
 
-	spin_lock(&c->journal.lock);
+	spin_lock_irq(&c->journal.lock);
 	c->journal.prio_buckets[ca->sb.nr_this_dev] = bucket;
-	spin_unlock(&c->journal.lock);
+	spin_unlock_irq(&c->journal.lock);
 
 	for (b = 0; b < ca->mi.nbuckets; b++, d++) {
 		if (d == end) {

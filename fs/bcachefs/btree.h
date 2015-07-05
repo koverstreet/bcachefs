@@ -87,7 +87,9 @@
 extern const char *bch_btree_id_names[BTREE_ID_NR];
 
 struct btree_write {
-	atomic_t		*journal;
+	unsigned			index;
+	bool				have_pin;
+	struct journal_entry_pin	journal;
 };
 
 struct btree {
@@ -396,7 +398,6 @@ void bch_btree_node_write(struct btree *, struct closure *,
 void bch_btree_node_read_done(struct btree *, struct cache *,
 			      const struct bch_extent_ptr *);
 void bch_btree_flush(struct cache_set *);
-void bch_btree_write_oldest(struct cache_set *, u64);
 
 /**
  * btree_node_format_fits - check if we could rewrite node with a new format

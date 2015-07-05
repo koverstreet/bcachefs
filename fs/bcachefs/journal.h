@@ -126,6 +126,57 @@ struct journal_replay {
 
 #define JOURNAL_PIN	((32 * 1024) - 1)
 
+static inline void __journal_pin_add(struct journal_entry_pin_list *pin_list,
+				     struct journal_entry_pin *pin,
+				     journal_pin_flush_fn flush_fn)
+{
+	atomic_inc(&pin_list->count);
+	pin->pin_list	= pin_list;
+	pin->flush	= flush_fn;
+
+	if (flush_fn)
+		list_add(&pin->list, &pin_list->list);
+	else
+		INIT_LIST_HEAD(&pin->list);
+}
+
+static inline void journal_pin_add(struct journal *j,
+				   struct journal_entry_pin_list *pin_list,
+				   struct journal_entry_pin *pin,
+				   journal_pin_flush_fn flush_fn)
+{
+	spin_lock_irq(&j->lock);
+	__journal_pin_add(pin_list, pin, flush_fn);
+	spin_unlock_irq(&j->lock);
+}
+
+static inline void __journal_pin_drop(struct journal *j,
+				      struct journal_entry_pin *pin)
+{
+	if (!list_empty_careful(&pin->list))
+		list_del_init(&pin->list);
+
+	if (atomic_dec_and_test(&pin->pin_list->count))
+		wake_up(&j->wait);
+}
+
+static inline void journal_pin_drop(struct journal *j,
+				    struct journal_entry_pin *pin)
+{
+	unsigned long flags;
+
+	if (!list_empty_careful(&pin->list)) {
+		spin_lock_irqsave(&j->lock, flags);
+		list_del_init(&pin->list);
+		spin_unlock_irqrestore(&j->lock, flags);
+	}
+
+	if (atomic_dec_and_test(&pin->pin_list->count))
+		wake_up(&j->wait);
+
+	pin->pin_list = NULL;
+}
+
 #define journal_full(j)						\
 	(!(j)->sectors_free || fifo_free(&(j)->pin) <= 1)
 
@@ -159,7 +210,7 @@ static inline void bch_journal_res_put(struct cache_set *c,
 				       struct journal_res *res,
 				       struct closure *parent)
 {
-	spin_lock(&c->journal.lock);
+	spin_lock_irq(&c->journal.lock);
 	__bch_journal_res_put(c, res, parent);
 }
 

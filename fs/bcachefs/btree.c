@@ -490,12 +490,9 @@ err:
 
 static void btree_complete_write(struct btree *b, struct btree_write *w)
 {
-	if (w->journal) {
-		if (atomic_dec_and_test(w->journal))
-			wake_up(&b->c->journal.wait);
-	}
-
-	w->journal	= NULL;
+	if (w->have_pin)
+		journal_pin_drop(&b->c->journal, &w->journal);
+	w->have_pin = false;
 }
 
 static void btree_node_write_unlock(struct closure *cl)
@@ -722,47 +719,6 @@ static void btree_node_write_work(struct work_struct *w)
 	bch_btree_node_write_dirty(b, NULL);
 }
 
-/**
- * bch_btree_write_oldest - write all btree nodes with sequence numbers older
- * than @oldest_seq
- */
-void bch_btree_write_oldest(struct cache_set *c, u64 oldest_seq)
-{
-	/*
-	 * Try to find the btree node with that references the oldest journal
-	 * entry, best is our current candidate and is locked if non NULL:
-	 */
-	struct btree *b;
-	struct bucket_table *tbl;
-	struct rhash_head *pos;
-	unsigned i;
-	int written = 0;
-	struct closure cl;
-
-	closure_init_stack(&cl);
-
-	trace_bcache_journal_write_oldest(c, oldest_seq);
-
-	rcu_read_lock();
-	for_each_cached_btree(b, c, tbl, i, pos)
-		if (btree_current_write(b)->journal) {
-			if (fifo_entry_idx(&c->journal.pin,
-					   btree_current_write(b)->journal)
-				<= oldest_seq) {
-				six_lock_read(&b->lock);
-				if (btree_current_write(b)->journal) {
-					written++;
-					__bch_btree_node_write(b, &cl, -1);
-				}
-				six_unlock_read(&b->lock);
-			}
-		}
-	rcu_read_unlock();
-
-	closure_sync(&cl);
-	trace_bcache_journal_write_oldest_done(c, oldest_seq, written);
-}
-
 /*
  * Write all dirty btree nodes to disk, including roots
  */
@@ -887,6 +843,7 @@ static struct btree *mca_bucket_alloc(struct cache_set *c, gfp_t gfp)
 	INIT_DELAYED_WORK(&b->work, btree_node_write_work);
 	b->c = c;
 	sema_init(&b->io_mutex, 1);
+	b->writes[1].index = 1;
 
 	mca_data_alloc(b, gfp);
 	return b->data ? b : NULL;
@@ -1482,9 +1439,9 @@ static void bch_btree_set_root(struct btree *b)
 	list_del_init(&b->list);
 	mutex_unlock(&c->btree_cache_lock);
 
-	spin_lock(&c->btree_root_lock);
+	spin_lock_irq(&c->btree_root_lock);
 	btree_node_root(b) = b;
-	spin_unlock(&c->btree_root_lock);
+	spin_unlock_irq(&c->btree_root_lock);
 
 	bch_recalc_btree_reserve(c);
 
@@ -1769,6 +1726,16 @@ int bch_btree_node_rewrite(struct btree *b, struct btree_iter *iter, bool wait)
 	return 0;
 }
 
+static void btree_node_flush(struct journal_entry_pin *pin)
+{
+	struct btree_write *w = container_of(pin, struct btree_write, journal);
+	struct btree *b = container_of(w, struct btree, writes[w->index]);
+
+	six_lock_read(&b->lock);
+	__bch_btree_node_write(b, NULL, w->index);
+	six_unlock_read(&b->lock);
+}
+
 /* Btree insertion */
 
 /**
@@ -1799,9 +1766,12 @@ void bch_btree_insert_and_journal(struct btree *b,
 	    !test_bit(JOURNAL_REPLAY_DONE, &c->journal.flags)) {
 		struct btree_write *w = btree_current_write(b);
 
-		if (!w->journal) {
-			w->journal = c->journal.cur_pin;
-			atomic_inc(w->journal);
+		if (!w->have_pin) {
+			journal_pin_add(&c->journal,
+					c->journal.cur_pin_list,
+					&w->journal,
+					btree_node_flush);
+			w->have_pin = true;
 		}
 	}
 
