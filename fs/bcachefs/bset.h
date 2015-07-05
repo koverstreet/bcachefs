@@ -570,6 +570,9 @@ bch_btree_node_iter_peek_overlapping(struct btree_node_iter *iter,
 	return bkey_cmp(bkey_start_pos(&u), end->p) < 0 ? ret : NULL;
 }
 
+struct bkey_packed *bch_btree_node_iter_prev_all(struct btree_node_iter *,
+						 struct btree_keys *);
+
 /*
  * Iterates over all _live_ keys - skipping deleted (and potentially
  * overlapping) keys

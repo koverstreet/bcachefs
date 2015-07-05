@@ -516,6 +516,12 @@ static bool bch_insert_fixup_btree_ptr(struct btree_iter *iter,
 	struct bkey_packed *k;
 	int cmp;
 
+	BUG_ON(replace);
+	EBUG_ON((k = bch_btree_node_iter_prev_all(node_iter, &b->keys)) &&
+		(bkey_deleted(k)
+		 ? bkey_cmp_packed(f, k, &insert->k) > 0
+		 : bkey_cmp_packed(f, k, &insert->k) >= 0));
+
 	if (bkey_extent_is_data(&insert->k)) {
 		bool stale;
 

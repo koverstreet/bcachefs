@@ -119,6 +119,10 @@ bool bch_insert_fixup_key(struct btree_iter *iter,
 	int cmp;
 
 	BUG_ON(replace);
+	EBUG_ON((k = bch_btree_node_iter_prev_all(node_iter, &b->keys)) &&
+		(bkey_deleted(k)
+		 ? bkey_cmp_packed(f, k, &insert->k) > 0
+		 : bkey_cmp_packed(f, k, &insert->k) >= 0));
 
 	while ((k = bch_btree_node_iter_peek_all(node_iter, &b->keys)) &&
 	       (cmp = bkey_cmp_packed(f, k, &insert->k)) <= 0) {
