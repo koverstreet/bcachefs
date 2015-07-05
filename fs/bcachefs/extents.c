@@ -135,30 +135,6 @@ bool bch_insert_fixup_key(struct btree_iter *iter,
 	return true;
 }
 
-bool bch_insert_fixup_btree_ptr(struct btree_iter *iter,
-				struct btree *b,
-				struct bkey_i *insert,
-				struct btree_node_iter *node_iter,
-				struct bch_replace_info *replace,
-				struct bpos *done,
-				struct journal_res *res,
-				u64 *journal_seq)
-{
-	struct cache_set *c = iter->c;
-
-	if (bkey_extent_is_data(&insert->k)) {
-		bool stale;
-
-		stale = bch_mark_pointers(c, b, bkey_i_to_s_c_extent(insert),
-					  CACHE_BTREE_NODE_SIZE(&c->sb),
-					  true, true, false);
-		BUG_ON(stale);
-	}
-
-	return bch_insert_fixup_key(iter, b, insert, node_iter,
-				    replace, done, res, journal_seq);
-}
-
 /* Common among btree and extent ptrs */
 
 bool bch_extent_has_device(struct bkey_s_c_extent e, unsigned dev)

@@ -609,7 +609,7 @@ SHOW(bch_cache_set)
 	sysfs_hprint(btree_cache_size,		bch_cache_size(c));
 	sysfs_print(cache_available_percent,	bch_cache_available_percent(c));
 
-	sysfs_print(btree_gc_running,		c->gc_cur_btree <= BTREE_ID_NR);
+	sysfs_print(btree_gc_running,		c->gc_cur_phase != GC_PHASE_DONE);
 
 	sysfs_print_time_stats(&c->mca_alloc_time, mca_alloc, sec, us);
 	sysfs_print_time_stats(&c->mca_scan_time, mca_scan, sec, ms);

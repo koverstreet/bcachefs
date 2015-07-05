@@ -225,6 +225,11 @@
 struct btree;
 struct cache;
 
+enum gc_phase {
+	GC_PHASE_PENDING_DELETE		= BTREE_ID_NR + 1,
+	GC_PHASE_DONE
+};
+
 struct cache_group {
 	seqcount_t		lock;
 	unsigned		nr_devices;
@@ -466,6 +471,9 @@ struct cache_set {
 
 	mempool_t		btree_reserve_pool;
 
+	struct list_head	btree_node_pending_free;
+	struct mutex		btree_node_pending_free_lock;
+
 	struct workqueue_struct	*wq;
 
 	/* ALLOCATION */
@@ -538,20 +546,16 @@ struct cache_set {
 	 * Tracks GC's progress - everything in the range [ZERO_KEY..gc_cur_pos]
 	 * has been marked by GC.
 	 *
-	 * (Note that it starts out at ZERO_KEY, but since the extents btree
-	 * comes first and an extent equal to ZERO_KEY would have zero size,
-	 * gc_cur_pos == ZERO_KEY and gc_cur_btree == BTREE_ID_EXTENTS does
-	 * correctly mean nothing has been marked)
+	 * gc_cur_phase is a superset of btree_ids (BTREE_ID_EXTENTS etc.)
 	 *
-	 * gc_cur_btree > BTREE_ID_NR indicates gc has finished and gc marks are
-	 * currently valid (when gc_cur_btree == BTREE_ID_NR gc has only
-	 * finished sweeping the btrees, there's still a bit more work to do).
+	 * gc_cur_phase == GC_PHASE_DONE indicates that gc is finished/not
+	 * currently running, and gc marks are currently valid
 	 *
 	 * Protected by gc_cur_lock. Only written to by GC thread, so GC thread
 	 * can read without a lock.
 	 */
 	seqcount_t		gc_cur_lock;
-	enum btree_id		gc_cur_btree;
+	enum gc_phase		gc_cur_phase;
 	unsigned		gc_cur_level;
 	struct bpos		gc_cur_pos;
 

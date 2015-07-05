@@ -84,7 +84,54 @@ bool bch_btree_node_format_fits(struct btree *b, struct bkey_format *new_f)
 		PAGE_SIZE << b->keys.page_order;
 }
 
-/* Node allocation: */
+/* Btree node freeing/allocation: */
+
+void bch_pending_btree_node_free_init(struct cache_set *c,
+				      struct pending_btree_node_free *d,
+				      struct btree *b)
+{
+	d->index_update_done = false;
+	bkey_copy(&d->key, &b->key);
+
+	mutex_lock(&c->btree_node_pending_free_lock);
+	list_add(&d->list, &c->btree_node_pending_free);
+	mutex_unlock(&c->btree_node_pending_free_lock);
+}
+
+static void bch_pending_btree_node_free_insert_done(struct cache_set *c,
+						    struct btree *b,
+						    enum btree_id id,
+						    struct bkey_s_c k)
+{
+	struct pending_btree_node_free *d;
+
+	mutex_lock(&c->btree_node_pending_free_lock);
+
+	list_for_each_entry(d, &c->btree_node_pending_free, list)
+		if (!bkey_cmp(k.k->p, d->key.k.p) &&
+		    bkey_val_bytes(k.k) == bkey_val_bytes(&d->key.k) &&
+		    !memcmp(k.v, &d->key.v, bkey_val_bytes(k.k)))
+			goto found;
+
+	BUG();
+found:
+	d->index_update_done = true;
+
+	if ((b
+	     ? !gc_will_visit_node(c, b)
+	     : !gc_will_visit_root(c, id)) &&
+	    gc_will_visit(c, GC_PHASE_PENDING_DELETE, POS_MIN, 0))
+		bch_mark_pointers(c, NULL,
+				  bkey_i_to_s_c_extent(&d->key),
+				  CACHE_BTREE_NODE_SIZE(&c->sb),
+				  false, true, true);
+
+	/*
+	 * XXX; check gc position and mark/unmark as needed
+	 */
+
+	mutex_unlock(&c->btree_node_pending_free_lock);
+}
 
 static void __btree_node_free(struct cache_set *c, struct btree *b,
 			      struct btree_iter *iter)
@@ -128,18 +175,24 @@ void bch_btree_node_free_never_inserted(struct cache_set *c, struct btree *b)
 	bch_open_bucket_put(c, ob);
 }
 
-void bch_btree_node_free(struct btree_iter *iter, struct btree *b)
+void bch_btree_node_free(struct btree_iter *iter, struct btree *b,
+			 struct pending_btree_node_free *pending)
 {
-	BKEY_PADDED(k) tmp;
+	struct cache_set *c = iter->c;
 
-	bkey_copy(&tmp.k, &b->key);
+	BUG_ON(!pending->index_update_done);
 
-	__btree_node_free(iter->c, b, iter);
+	__btree_node_free(c, b, iter);
 
-	/* XXX: this isn't right */
-	bch_mark_pointers(iter->c, b, bkey_i_to_s_c_extent(&tmp.k),
-			  -CACHE_BTREE_NODE_SIZE(&iter->c->sb),
-			  false, true, false);
+	mutex_lock(&c->btree_node_pending_free_lock);
+	list_del(&pending->list);
+
+	if (!gc_will_visit(c, GC_PHASE_PENDING_DELETE, POS_MIN, 0))
+		bch_mark_pointers(c, NULL, bkey_i_to_s_c_extent(&pending->key),
+				  -CACHE_BTREE_NODE_SIZE(&c->sb),
+				  false, true, true);
+
+	mutex_unlock(&c->btree_node_pending_free_lock);
 }
 
 void btree_open_bucket_put(struct cache_set *c, struct btree *b)
@@ -258,8 +311,8 @@ static void __bch_btree_set_root(struct cache_set *c, struct btree *b)
 	spin_lock(&c->btree_root_lock);
 	btree_node_root(b) = b;
 
-	if (b->btree_id != c->gc_cur_btree
-	    ? b->btree_id < c->gc_cur_btree
+	if (b->btree_id != c->gc_cur_phase
+	    ? b->btree_id < c->gc_cur_phase
 	    : b->level <= c->gc_cur_level) {
 		bool stale = bch_mark_pointers(c, NULL,
 					       bkey_i_to_s_c_extent(&b->key),
@@ -321,6 +374,9 @@ static int bch_btree_set_root(struct btree_iter *iter, struct btree *b)
 	 * depend on the new root would have to update the new root.
 	 */
 	btree_node_unlock_write(old, iter);
+
+	bch_pending_btree_node_free_insert_done(iter->c, NULL, old->btree_id,
+						bkey_i_to_s_c(&old->key));
 
 	/*
 	 * Ensure new btree root is persistent (reachable via the
@@ -445,6 +501,60 @@ int bch_btree_root_alloc(struct cache_set *c, enum btree_id id,
 
 	return 0;
 }
+
+static bool bch_insert_fixup_btree_ptr(struct btree_iter *iter,
+				       struct btree *b,
+				       struct bkey_i *insert,
+				       struct btree_node_iter *node_iter,
+				       struct bch_replace_info *replace,
+				       struct bpos *done,
+				       struct journal_res *res,
+				       u64 *journal_seq)
+{
+	struct cache_set *c = iter->c;
+	const struct bkey_format *f = &b->keys.format;
+	struct bkey_packed *k;
+	int cmp;
+
+	if (bkey_extent_is_data(&insert->k)) {
+		bool stale;
+
+		stale = bch_mark_pointers(c, b, bkey_i_to_s_c_extent(insert),
+					  CACHE_BTREE_NODE_SIZE(&c->sb),
+					  true, true, false);
+		BUG_ON(stale);
+	}
+
+	while ((k = bch_btree_node_iter_peek_all(node_iter, &b->keys))) {
+		struct bkey_tup tup;
+		struct bkey_s_c u;
+
+		bkey_disassemble(&tup, f, k);
+		u = bkey_tup_to_s_c(&tup);
+
+		cmp = bkey_cmp(u.k->p, insert->k.p);
+		if (cmp > 0)
+			break;
+
+		if (!cmp && !bkey_deleted(k)) {
+			bch_pending_btree_node_free_insert_done(c, b, b->btree_id, u);
+			/*
+			 * Look up pending delete, mark so that gc marks it on
+			 * the pending delete list
+			 */
+			k->type = KEY_TYPE_DELETED;
+			btree_keys_account_key_drop(&b->keys.nr, k);
+		}
+
+		bch_btree_node_iter_next_all(node_iter, &b->keys);
+	}
+
+	bch_btree_insert_and_journal(iter, b, node_iter, insert,
+				     res, journal_seq);
+	return true;
+}
+
+/* Inserting into a given leaf node (last stage of insert): */
 
 /* Wrapper around bch_bset_insert() that fixes linked iterators: */
 void bch_btree_bset_insert(struct btree_iter *iter,
@@ -633,7 +743,7 @@ static void verify_keys_sorted(struct keylist *l)
 	for (k = l->bot;
 	     k < l->top && bkey_next(k) < l->top;
 	     k = bkey_next(k))
-		BUG_ON(bkey_cmp(k->k.p, bkey_next(k)->k.p) > 0);
+		BUG_ON(bkey_cmp(k->k.p, bkey_next(k)->k.p) >= 0);
 #endif
 }
 
@@ -890,6 +1000,7 @@ static int btree_split(struct btree *b, struct btree_iter *iter,
 	struct cache_set *c = iter->c;
 	struct btree *parent = iter->nodes[b->level + 1];
 	struct btree *n1, *n2 = NULL, *n3 = NULL;
+	struct pending_btree_node_free pending;
 	uint64_t start_time = local_clock();
 	unsigned u64s_to_insert = b->level
 		? bch_keylist_nkeys(insert_keys) : 0;
@@ -972,6 +1083,8 @@ static int btree_split(struct btree *b, struct btree_iter *iter,
 	    btree_node_write_error(n1))
 		goto err;
 
+	bch_pending_btree_node_free_init(c, &pending, b);
+
 	/* New nodes all written, now make them visible: */
 
 	if (n3) {
@@ -1005,7 +1118,7 @@ static int btree_split(struct btree *b, struct btree_iter *iter,
 	if (n3)
 		btree_open_bucket_put(c, n3);
 
-	bch_btree_node_free(iter, b);
+	bch_btree_node_free(iter, b, &pending);
 	bch_btree_iter_node_drop(iter, b);
 
 	/* Successful split, update the iterator to point to the new nodes: */
@@ -1118,6 +1231,8 @@ int bch_btree_insert_node(struct btree *b,
 {
 	struct btree_split_state state;
 
+	verify_keys_sorted(insert_keys);
+
 	closure_init_stack(&state.stack_cl);
 	bch_keylist_init(&state.parent_keys,
 			 state.inline_keys,
@@ -1130,6 +1245,8 @@ int bch_btree_insert_node(struct btree *b,
 	return __bch_btree_insert_node(b, iter, insert_keys, replace,
 				       journal_seq, flags, &state);
 }
+
+/* Normal update interface: */
 
 /**
  * bch_btree_insert_at - insert bkeys starting at a given btree node
@@ -1332,6 +1449,7 @@ int bch_btree_node_rewrite(struct btree *b, struct btree_iter *iter, bool wait)
 	struct cache_set *c = iter->c;
 	struct btree *n, *parent = iter->nodes[b->level + 1];
 	struct btree_reserve *reserve;
+	struct pending_btree_node_free pending;
 	struct closure cl;
 	int ret;
 
@@ -1364,6 +1482,8 @@ int bch_btree_node_rewrite(struct btree *b, struct btree_iter *iter, bool wait)
 		return -EIO;
 	}
 
+	bch_pending_btree_node_free_init(c, &pending, b);
+
 	if (parent) {
 		ret = bch_btree_insert_node(parent, iter,
 					    &keylist_single(&n->key),
@@ -1377,7 +1497,7 @@ int bch_btree_node_rewrite(struct btree *b, struct btree_iter *iter, bool wait)
 
 	btree_open_bucket_put(iter->c, n);
 
-	bch_btree_node_free(iter, b);
+	bch_btree_node_free(iter, b, &pending);
 	bch_btree_iter_node_drop(iter, b);
 
 	BUG_ON(!bch_btree_iter_node_replace(iter, n));

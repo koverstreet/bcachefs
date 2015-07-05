@@ -77,7 +77,7 @@ struct bucket_stats bch_bucket_stats_read(struct cache *ca)
 
 	do {
 		seq = read_seqcount_begin(&c->gc_cur_lock);
-		ret = c->gc_cur_btree > BTREE_ID_NR
+		ret = c->gc_cur_phase == GC_PHASE_DONE
 			? __bucket_stats_read(ca)
 			: ca->bucket_stats_cached;
 	} while (read_seqcount_retry(&c->gc_cur_lock, seq));
@@ -110,7 +110,7 @@ static void bucket_stats_update(struct cache *ca,
 	BUG_ON(!may_make_unavailable &&
 	       is_available_bucket(old) &&
 	       !is_available_bucket(new) &&
-	       ca->set->gc_cur_btree > BTREE_ID_NR);
+	       ca->set->gc_cur_phase == GC_PHASE_DONE);
 
 	preempt_disable();
 	stats = this_cpu_ptr(ca->bucket_stats_percpu);

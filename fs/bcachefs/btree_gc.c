@@ -165,14 +165,22 @@ bool btree_gc_mark_node(struct cache_set *c, struct btree *b)
 	return false;
 }
 
-static void gc_set_pos(struct cache_set *c, enum btree_id id,
-		       struct bpos pos, unsigned level)
+static inline void __gc_set_pos(struct cache_set *c, enum gc_phase phase,
+				struct bpos pos, unsigned level)
 {
 	write_seqcount_begin(&c->gc_cur_lock);
-	c->gc_cur_btree	= id;
+	c->gc_cur_phase = phase;
 	c->gc_cur_pos	= pos;
 	c->gc_cur_level = level;
 	write_seqcount_end(&c->gc_cur_lock);
+}
+
+static inline void gc_set_pos(struct cache_set *c, enum gc_phase phase,
+			      struct bpos pos, unsigned level)
+{
+	BUG_ON(!__gc_will_visit(c, phase, pos, level));
+
+	__gc_set_pos(c, phase, pos, level);
 }
 
 static int bch_gc_btree(struct cache_set *c, enum btree_id btree_id)
@@ -249,23 +257,6 @@ static void bch_mark_allocator_buckets(struct cache_set *c)
 	}
 }
 
-static void bch_mark_scan_keylists(struct cache_set *c)
-{
-	struct scan_keylist *kl;
-
-	mutex_lock(&c->gc_scan_keylist_lock);
-
-	/* What the goddamn fuck? */
-	list_for_each_entry(kl, &c->gc_scan_keylists, mark_list) {
-		if (kl->owner == NULL)
-			bch_keylist_recalc_oldest_gens(c, kl);
-		else
-			bch_queue_recalc_oldest_gens(c, kl->owner);
-	}
-
-	mutex_unlock(&c->gc_scan_keylist_lock);
-}
-
 /*
  * Mark non btree metadata - prios, journal
  */
@@ -291,6 +282,39 @@ static void bch_mark_metadata(struct cache_set *c)
 
 		spin_unlock(&ca->prio_buckets_lock);
 	}
+}
+
+static void bch_mark_pending_btree_node_frees(struct cache_set *c)
+{
+	struct pending_btree_node_free *d;
+
+	mutex_lock(&c->btree_node_pending_free_lock);
+	gc_set_pos(c, GC_PHASE_PENDING_DELETE, POS_MIN, 0);
+
+	list_for_each_entry(d, &c->btree_node_pending_free, list)
+		if (d->index_update_done)
+			bch_mark_pointers(c, NULL,
+					  bkey_i_to_s_c_extent(&d->key),
+					  CACHE_BTREE_NODE_SIZE(&c->sb),
+					  false, true, true);
+	mutex_unlock(&c->btree_node_pending_free_lock);
+}
+
+static void bch_mark_scan_keylists(struct cache_set *c)
+{
+	struct scan_keylist *kl;
+
+	mutex_lock(&c->gc_scan_keylist_lock);
+
+	/* What the goddamn fuck? */
+	list_for_each_entry(kl, &c->gc_scan_keylists, mark_list) {
+		if (kl->owner == NULL)
+			bch_keylist_recalc_oldest_gens(c, kl);
+		else
+			bch_queue_recalc_oldest_gens(c, kl->owner);
+	}
+
+	mutex_unlock(&c->gc_scan_keylist_lock);
 }
 
 /**
@@ -335,7 +359,7 @@ void bch_gc(struct cache_set *c)
 		ca->bucket_stats_cached = __bucket_stats_read(ca);
 
 	/* Indicates to buckets code that gc is now in progress: */
-	gc_set_pos(c, 0, POS_MIN, 0);
+	__gc_set_pos(c, 0, POS_MIN, 0);
 
 	/* Clear bucket marks: */
 	for_each_cache(ca, c, i)
@@ -348,9 +372,9 @@ void bch_gc(struct cache_set *c)
 	bch_mark_allocator_buckets(c);
 
 	/* Walk btree: */
-	while (c->gc_cur_btree < BTREE_ID_NR) {
-		int ret = c->btree_roots[c->gc_cur_btree]
-			? bch_gc_btree(c, c->gc_cur_btree)
+	while (c->gc_cur_phase < (int) BTREE_ID_NR) {
+		int ret = c->btree_roots[c->gc_cur_phase]
+			? bch_gc_btree(c, c->gc_cur_phase)
 			: 0;
 
 		if (ret) {
@@ -360,10 +384,11 @@ void bch_gc(struct cache_set *c)
 			return;
 		}
 
-		gc_set_pos(c, c->gc_cur_btree + 1, POS_MIN, 0);
+		gc_set_pos(c, c->gc_cur_phase + 1, POS_MIN, 0);
 	}
 
 	bch_mark_metadata(c);
+	bch_mark_pending_btree_node_frees(c);
 	bch_writeback_recalc_oldest_gens(c);
 	bch_mark_scan_keylists(c);
 
@@ -373,7 +398,7 @@ void bch_gc(struct cache_set *c)
 	}
 
 	/* Indicate to buckets code that gc is no longer in progress: */
-	gc_set_pos(c, BTREE_ID_NR + 1, POS_MIN, 0);
+	gc_set_pos(c, GC_PHASE_DONE, POS_MIN, 0);
 
 	up_write(&c->gc_lock);
 	trace_bcache_gc_end(c);
@@ -401,6 +426,7 @@ static void bch_coalesce_nodes(struct btree *old_nodes[GC_MERGE_NODES],
 	unsigned i, nr_old_nodes, nr_new_nodes, u64s = 0;
 	unsigned blocks = btree_blocks(c) * 2 / 3;
 	struct btree *new_nodes[GC_MERGE_NODES];
+	struct pending_btree_node_free pending[GC_MERGE_NODES];
 	struct btree_reserve *res;
 	struct keylist keylist;
 	struct closure cl;
@@ -538,15 +564,37 @@ static void bch_coalesce_nodes(struct btree *old_nodes[GC_MERGE_NODES],
 	/* Wait for all the writes to finish */
 	closure_sync(&cl);
 
-	/*
-	 * The keys for the old nodes get deleted. We don't need a deleted
-	 * key for old_nodes[0], since new_nodes[0] must have the same key
-	 */
-	for (i = nr_old_nodes - 1; i > 0; --i) {
-		*keylist.top = old_nodes[i]->key;
-		set_bkey_deleted(&keylist.top->k);
+	if (bch_journal_error(&c->journal))
+		goto err;
 
-		bch_keylist_enqueue(&keylist);
+	for (i = 0; i < nr_new_nodes; i++)
+		if (btree_node_write_error(new_nodes[i]))
+			goto err;
+
+	/*
+	 * The keys for the old nodes get deleted. We don't want to insert keys
+	 * that compare equal to the keys for the new nodes we'll also be
+	 * inserting - we can't because keys on a keylist must be strictly
+	 * greater than the previous keys, and we also don't need to since the
+	 * key for the new node will serve the same purpose (overwriting the key
+	 * for the old node).
+	 */
+	for (i = 0; i < nr_old_nodes; i++) {
+		struct bkey_i delete;
+		unsigned j;
+
+		bch_pending_btree_node_free_init(c, &pending[i], old_nodes[i]);
+
+		for (j = 0; j < nr_new_nodes; j++)
+			if (!bkey_cmp(old_nodes[i]->key.k.p,
+				      new_nodes[j]->key.k.p))
+				goto next;
+
+		bkey_init(&delete.k);
+		delete.k.p = old_nodes[i]->key.k.p;
+		bch_keylist_add_in_order(&keylist, &delete);
+next:
+		i = i;
 	}
 
 	/*
@@ -581,7 +629,7 @@ static void bch_coalesce_nodes(struct btree *old_nodes[GC_MERGE_NODES],
 
 	/* Free the old nodes and update our sliding window */
 	for (i = 0; i < nr_old_nodes; i++) {
-		bch_btree_node_free(iter, old_nodes[i]);
+		bch_btree_node_free(iter, old_nodes[i], &pending[i]);
 		six_unlock_intent(&old_nodes[i]->lock);
 		old_nodes[i] = new_nodes[i];
 	}
@@ -789,7 +837,7 @@ int bch_initial_gc(struct cache_set *c, struct list_head *journal)
 	}
 
 	bch_mark_metadata(c);
-	gc_set_pos(c, BTREE_ID_NR + 1, POS_MIN, 0);
+	gc_set_pos(c, GC_PHASE_DONE, POS_MIN, 0);
 	set_bit(CACHE_SET_INITIAL_GC_DONE, &c->flags);
 
 	return 0;

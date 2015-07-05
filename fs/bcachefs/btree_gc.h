@@ -12,6 +12,30 @@ void __bch_btree_mark_key(struct cache_set *, int, struct bkey_s_c);
 
 bool btree_gc_mark_node(struct cache_set *, struct btree *);
 
+static inline bool __gc_will_visit(struct cache_set *c, enum gc_phase phase,
+				   struct bpos pos, unsigned level)
+{
+	return phase != c->gc_cur_phase
+		? phase > c->gc_cur_phase
+		: bkey_cmp(pos, c->gc_cur_pos)
+		? bkey_cmp(pos, c->gc_cur_pos) > 0
+		: level > c->gc_cur_level;
+}
+
+static inline bool gc_will_visit(struct cache_set *c, enum gc_phase phase,
+				 struct bpos pos, unsigned level)
+{
+	unsigned seq;
+	bool ret;
+
+	do {
+		seq = read_seqcount_begin(&c->gc_cur_lock);
+		ret = __gc_will_visit(c, phase, pos, level);
+	} while (read_seqcount_retry(&c->gc_cur_lock, seq));
+
+	return ret;
+}
+
 /**
  * __gc_will_visit_node - for checking GC marks while holding a btree read lock
  *
@@ -19,14 +43,9 @@ bool btree_gc_mark_node(struct cache_set *, struct btree *);
  * this case the entire reading of the mark has to be surrounded with the
  * seqlock.
  */
-static inline bool __gc_will_visit_node(struct cache_set *c,
-					struct btree *b)
+static inline bool __gc_will_visit_node(struct cache_set *c, struct btree *b)
 {
-	return b->btree_id != c->gc_cur_btree
-		? b->btree_id > c->gc_cur_btree
-		: bkey_cmp(b->key.k.p, c->gc_cur_pos)
-		? bkey_cmp(b->key.k.p, c->gc_cur_pos) > 0
-		: b->level > c->gc_cur_level;
+	return __gc_will_visit(c, b->btree_id, b->key.k.p, b->level);
 }
 
 /**
@@ -36,34 +55,14 @@ static inline bool __gc_will_visit_node(struct cache_set *c,
  * If so, we don't have to update reference counts for buckets this key points
  * into -- the GC will do it before the current pass ends.
  */
-static inline bool gc_will_visit_node(struct cache_set *c,
-				      struct btree *b)
+static inline bool gc_will_visit_node(struct cache_set *c, struct btree *b)
 {
-	unsigned seq;
-	bool ret;
-
-	do {
-		seq = read_seqcount_begin(&c->gc_cur_lock);
-		ret = __gc_will_visit_node(c, b);
-	} while (read_seqcount_retry(&c->gc_cur_lock, seq));
-
-	return ret;
+	return gc_will_visit(c, b->btree_id, b->key.k.p, b->level);
 }
 
 static inline bool gc_will_visit_root(struct cache_set *c, enum btree_id id)
 {
-	unsigned seq;
-	bool ret;
-
-	do {
-		seq = read_seqcount_begin(&c->gc_cur_lock);
-		ret = id != c->gc_cur_btree
-			? id > c->gc_cur_btree
-			: c->gc_cur_level != U8_MAX;
-	} while (read_seqcount_retry(&c->gc_cur_lock, seq));
-
-	return ret;
-
+	return gc_will_visit(c, (int) id, POS_MAX, U8_MAX);
 }
 
 #endif

@@ -38,8 +38,22 @@ struct btree_reserve {
 void __bch_btree_calc_format(struct bkey_format_state *, struct btree *);
 bool bch_btree_node_format_fits(struct btree *, struct bkey_format *);
 
+/* Btree node freeing/allocation: */
+
+struct pending_btree_node_free {
+	struct list_head	list;
+	bool			index_update_done;
+
+	__BKEY_PADDED(key, BKEY_BTREE_PTR_VAL_U64s_MAX);
+};
+
+void bch_pending_btree_node_free_init(struct cache_set *,
+				      struct pending_btree_node_free *,
+				      struct btree *);
+
 void bch_btree_node_free_never_inserted(struct cache_set *, struct btree *);
-void bch_btree_node_free(struct btree_iter *, struct btree *);
+void bch_btree_node_free(struct btree_iter *, struct btree *,
+			 struct pending_btree_node_free *);
 
 void btree_open_bucket_put(struct cache_set *c, struct btree *);
 
@@ -59,6 +73,8 @@ struct btree_reserve *bch_btree_reserve_get(struct cache_set *c,
 					    unsigned, bool);
 
 int bch_btree_root_alloc(struct cache_set *, enum btree_id, struct closure *);
+
+/* Inserting into a given leaf node (last stage of insert): */
 
 void bch_btree_bset_insert(struct btree_iter *, struct btree *,
 			   struct btree_node_iter *, struct bkey_i *);
@@ -87,6 +103,8 @@ static inline size_t bch_btree_keys_u64s_remaining(struct btree *b)
 int bch_btree_insert_node(struct btree *, struct btree_iter *,
 			  struct keylist *, struct bch_replace_info *,
 			  u64 *, unsigned, struct btree_reserve *);
+
+/* Normal update interface: */
 
 /*
  * Don't drop/retake locks: instead return -EINTR if need to upgrade to intent
