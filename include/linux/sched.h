@@ -82,9 +82,10 @@ struct task_group;
 #define TASK_PARKED			512
 #define TASK_NOLOAD			1024
 #define TASK_NEW			2048
-#define TASK_STATE_MAX			4096
+#define TASK_IDLE_WORKER		4096
+#define TASK_STATE_MAX			8192
 
-#define TASK_STATE_TO_CHAR_STR		"RSDTtXZxKWPNn"
+#define TASK_STATE_TO_CHAR_STR		"RSDTtXZxKWPNIn"
 
 /* Convenience macros for the sake of set_current_state: */
 #define TASK_KILLABLE			(TASK_WAKEKILL | TASK_UNINTERRUPTIBLE)

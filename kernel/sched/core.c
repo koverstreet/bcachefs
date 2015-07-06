@@ -5161,7 +5161,8 @@ void show_state_filter(unsigned long state_filter)
 		 */
 		touch_nmi_watchdog();
 		touch_all_softlockup_watchdogs();
-		if (!state_filter || (p->state & state_filter))
+		if (!(p->state & TASK_IDLE_WORKER) &&
+		    (!state_filter || (p->state & state_filter)))
 			sched_show_task(p);
 	}
 
