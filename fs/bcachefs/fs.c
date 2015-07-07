@@ -614,10 +614,36 @@ static int bch_truncate_page(struct address_space *mapping, loff_t from)
 	if (!offset)
 		return 0;
 
-	page = grab_cache_page(mapping, from >> PAGE_SHIFT);
-	if (unlikely(!page)) {
-		ret = -ENOMEM;
-		goto out;
+	page = find_lock_page(mapping, from >> PAGE_SHIFT);
+	if (!page) {
+		struct inode *inode = mapping->host;
+		struct cache_set *c = inode->i_sb->s_fs_info;
+		struct btree_iter iter;
+		struct bkey_s_c k;
+
+		/*
+		 * XXX: we're doing two index lookups when we end up reading the
+		 * page
+		 */
+		for_each_btree_key(&iter, c, BTREE_ID_EXTENTS,
+				   POS(inode->i_ino,
+				       (from & PAGE_MASK) >> 9),
+				   k)
+			if (bkey_cmp(bkey_start_pos(k.k),
+				     POS(inode->i_ino,
+					 ((from + PAGE_SIZE) &
+					  PAGE_MASK) >> 9)) < 0) {
+				bch_btree_iter_unlock(&iter);
+				goto grab;
+			}
+		bch_btree_iter_unlock(&iter);
+		return 0;
+grab:
+		page = grab_cache_page(mapping, from >> PAGE_SHIFT);
+		if (unlikely(!page)) {
+			ret = -ENOMEM;
+			goto out;
+		}
 	}
 
 	if (!PageUptodate(page))
