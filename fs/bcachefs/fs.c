@@ -45,7 +45,6 @@ TESTSCFLAG(Append, private_2, PF_ANY)
 
 static struct bio_set *bch_writepage_bioset;
 static struct kmem_cache *bch_inode_cache;
-static DECLARE_WAIT_QUEUE_HEAD(bch_append_wait);
 
 static void bch_inode_init(struct bch_inode_info *, struct bkey_s_c_inode);
 static int bch_read_single_page(struct page *, struct address_space *);
@@ -72,8 +71,7 @@ static int reserve_sectors(struct cache_set *c, unsigned sectors)
 
 static void i_size_dirty_put(struct bch_inode_info *ei)
 {
-	if (atomic_long_dec_and_test(&ei->i_size_dirty_count))
-		wake_up(&bch_append_wait);
+	atomic_long_dec_bug(&ei->i_size_dirty_count);
 }
 
 static void i_size_dirty_get(struct bch_inode_info *ei)
@@ -797,12 +795,6 @@ static int bch_fsync(struct file *file, loff_t start, loff_t end, int datasync)
 	struct cache_set *c = inode->i_sb->s_fs_info;
 	int ret;
 
-	/*
-	 * We really just want to sync all the PageAppend pages:
-	 */
-	start = 0;
-	end = S64_MAX;
-
 	ret = filemap_write_and_wait_range(inode->i_mapping, start, end);
 	if (ret)
 		return ret;
@@ -811,13 +803,14 @@ static int bch_fsync(struct file *file, loff_t start, loff_t end, int datasync)
 	if (datasync && end <= ei->i_size)
 		goto out;
 
-	/*
-	 * redo after locking inode:
-	 */
-	filemap_write_and_wait_range(inode->i_mapping, start, end);
-
-	wait_event(bch_append_wait,
-		   !atomic_long_read(&ei->i_size_dirty_count));
+	/* lock inode before checking i_size_dirty_count: */
+	if (atomic_long_read(&ei->i_size_dirty_count)) {
+		/*
+		 * We really just want to sync all the PageAppend pages:
+		 */
+		filemap_write_and_wait_range(inode->i_mapping, 0, LLONG_MAX);
+		inode_dio_wait(inode);
+	}
 
 	mutex_lock(&ei->update_lock);
 	BUG_ON(atomic_long_read(&ei->i_size_dirty_count));
