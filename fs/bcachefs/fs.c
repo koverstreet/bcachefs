@@ -788,6 +788,55 @@ out:
 	return ret < 0 ? ret : 0;
 }
 
+static int bch_page_mkwrite(struct vm_area_struct *vma, struct vm_fault *vmf)
+{
+	struct page *page = vmf->page;
+	struct inode *inode = file_inode(vma->vm_file);
+	struct address_space *mapping = inode->i_mapping;
+	struct cache_set *c = inode->i_sb->s_fs_info;
+	int ret = VM_FAULT_LOCKED;
+
+	sb_start_pagefault(inode->i_sb);
+	file_update_time(vma->vm_file);
+	lock_page(page);
+	if (page->mapping != mapping ||
+	    page_offset(page) > i_size_read(inode)) {
+		unlock_page(page);
+		ret = VM_FAULT_NOPAGE;
+		goto out;
+	}
+
+	if (!PageAllocated(page)) {
+		if (reserve_sectors(c, PAGE_SECTORS)) {
+			unlock_page(page);
+			ret = VM_FAULT_SIGBUS;
+			goto out;
+		}
+
+		SetPageAllocated(page);
+	}
+
+	set_page_dirty(page);
+	wait_for_stable_page(page);
+out:
+	sb_end_pagefault(inode->i_sb);
+	return ret;
+}
+
+static const struct vm_operations_struct bch_vm_ops = {
+	.fault		= filemap_fault,
+	.map_pages	= filemap_map_pages,
+	.page_mkwrite   = bch_page_mkwrite,
+};
+
+static int bch_mmap(struct file *file, struct vm_area_struct *vma)
+{
+	file_accessed(file);
+
+	vma->vm_ops = &bch_vm_ops;
+	return 0;
+}
+
 static int bch_fsync(struct file *file, loff_t start, loff_t end, int datasync)
 {
 	struct inode *inode = file->f_mapping->host;
@@ -953,7 +1002,7 @@ static const struct file_operations bch_file_operations = {
 	.llseek		= generic_file_llseek,
 	.read_iter	= generic_file_read_iter,
 	.write_iter	= generic_file_write_iter,
-	.mmap		= generic_file_mmap,
+	.mmap		= bch_mmap,
 	.open		= generic_file_open,
 	.fsync		= bch_fsync,
 	.splice_read	= generic_file_splice_read,
