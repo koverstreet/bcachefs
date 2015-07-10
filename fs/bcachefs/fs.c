@@ -546,10 +546,10 @@ static int bch_rename(struct inode *old_dir, struct dentry *old_dentry,
 		if (bch_empty_dir(c, new_inode->i_ino))
 			return -ENOTEMPTY;
 
-		ret = bch_dirent_update(c, new_dir->i_ino,
-					&new_dentry->d_name,
-					old_inode->i_ino,
-					&ei->journal_seq);
+		ret = bch_dirent_rename(c,
+					old_dir->i_ino, &old_dentry->d_name,
+					new_dir->i_ino, &new_dentry->d_name,
+					&ei->journal_seq, true);
 		if (unlikely(ret))
 			return ret;
 
@@ -558,30 +558,30 @@ static int bch_rename(struct inode *old_dir, struct dentry *old_dentry,
 	} else if (new_inode) {
 		lockdep_assert_held(&new_inode->i_rwsem);
 
-		ret = bch_dirent_update(c, new_dir->i_ino,
-					&new_dentry->d_name,
-					old_inode->i_ino,
-					&ei->journal_seq);
+		ret = bch_dirent_rename(c,
+					old_dir->i_ino, &old_dentry->d_name,
+					new_dir->i_ino, &new_dentry->d_name,
+					&ei->journal_seq, true);
 		if (unlikely(ret))
 			return ret;
 
 		new_inode->i_ctime = now;
 		inode_dec_link_count(new_inode);
 	} else if (S_ISDIR(old_inode->i_mode)) {
-		ret = bch_vfs_dirent_create(c, new_dir,
-					    mode_to_type(old_inode->i_mode),
-					    &new_dentry->d_name,
-					    old_inode);
+		ret = bch_dirent_rename(c,
+					old_dir->i_ino, &old_dentry->d_name,
+					new_dir->i_ino, &new_dentry->d_name,
+					&ei->journal_seq, false);
 		if (unlikely(ret))
 			return ret;
 
 		inode_inc_link_count(new_dir);
 		inode_dec_link_count(old_dir);
 	} else {
-		ret = bch_vfs_dirent_create(c, new_dir,
-					    mode_to_type(old_inode->i_mode),
-					    &new_dentry->d_name,
-					    old_inode);
+		ret = bch_dirent_rename(c,
+					old_dir->i_ino, &old_dentry->d_name,
+					new_dir->i_ino, &new_dentry->d_name,
+					&ei->journal_seq, false);
 		if (unlikely(ret))
 			return ret;
 	}
@@ -590,9 +590,6 @@ static int bch_rename(struct inode *old_dir, struct dentry *old_dentry,
 	new_dir->i_ctime = new_dir->i_mtime = now;
 	mark_inode_dirty_sync(old_dir);
 	mark_inode_dirty_sync(new_dir);
-
-	/* XXX: error handling */
-	bch_dirent_delete(c, old_dir->i_ino, &old_dentry->d_name);
 
 	mutex_lock(&ei->update_lock);
 	old_inode->i_ctime = now;

@@ -261,38 +261,94 @@ int bch_dirent_create(struct cache_set *c, u64 dir_inum, u8 type,
 	return ret;
 }
 
-int bch_dirent_update(struct cache_set *c, u64 dir_inum,
-		      const struct qstr *name, u64 dst_inum,
-		      u64 *journal_seq)
+int bch_dirent_rename(struct cache_set *c,
+		      u64 src_dir, const struct qstr *src_name,
+		      u64 dst_dir, const struct qstr *dst_name,
+		      u64 *journal_seq, bool overwriting)
 {
-	struct btree_iter iter;
+	struct btree_iter src_iter;
+	struct btree_iter dst_iter;
 	struct bkey_s_c k;
+	struct bkey_s_c_dirent src;
+	struct bkey_i_dirent *dst;
+	struct bkey_i delete;
 	struct keylist keys;
-	struct bkey_i_dirent *dirent;
-	int ret = -ENOENT;
+	int ret;
 
-	dirent = dirent_create_key(&keys, 0, name, dst_inum);
-	if (!dirent)
+	dst = dirent_create_key(&keys, 0, dst_name, 0);
+	if (!dst)
 		return -ENOMEM;
 
-	bch_btree_iter_init_intent(&iter, c, BTREE_ID_DIRENTS,
-				   POS(dir_inum, bch_dirent_hash(name)));
+	bch_btree_iter_init_intent(&src_iter, c, BTREE_ID_DIRENTS,
+				   POS(src_dir, bch_dirent_hash(src_name)));
+	bch_btree_iter_init_intent(&dst_iter, c, BTREE_ID_DIRENTS,
+				   POS(dst_dir, bch_dirent_hash(dst_name)));
+	bch_btree_iter_link(&src_iter, &dst_iter);
 
 	do {
-		k = __dirent_find(&iter, dir_inum, name);
-		if (IS_ERR(k.k))
-			return bch_btree_iter_unlock(&iter) ?: PTR_ERR(k.k);
+		/*
+		 * Have to traverse lower btree nodes before higher - due to
+		 * lock ordering.
+		 */
+		if (bkey_cmp(src_iter.pos, dst_iter.pos) < 0) {
+			k = __dirent_find(&src_iter, src_dir, src_name);
+			if (IS_ERR(k.k)) {
+				ret = PTR_ERR(k.k);
+				goto err;
+			}
 
-		dirent->k.p = k.k->p;
-		dirent->v.d_type = bkey_s_c_to_dirent(k).v->d_type;
+			src = bkey_s_c_to_dirent(k);
 
-		ret = bch_btree_insert_at(&iter, &keys, NULL,
-					  journal_seq,
-					  BTREE_INSERT_ATOMIC);
+			k = overwriting
+				? __dirent_find(&dst_iter, dst_dir, dst_name)
+				: __dirent_find_hole(&dst_iter, dst_dir, dst_name);
+			if (IS_ERR(k.k)) {
+				ret = PTR_ERR(k.k);
+				goto err;
+			}
+
+			dst->k.p = k.k->p;
+		} else {
+			k = overwriting
+				? __dirent_find(&dst_iter, dst_dir, dst_name)
+				: __dirent_find_hole(&dst_iter, dst_dir, dst_name);
+			if (IS_ERR(k.k)) {
+				ret = PTR_ERR(k.k);
+				goto err;
+			}
+
+			dst->k.p = k.k->p;
+
+			k = __dirent_find(&src_iter, src_dir, src_name);
+			if (IS_ERR(k.k)) {
+				ret = PTR_ERR(k.k);
+				goto err;
+			}
+
+			src = bkey_s_c_to_dirent(k);
+		}
+
+		bkey_init(&delete.k);
+		delete.k.p = src.k->p;
+		delete.k.type = BCH_DIRENT_WHITEOUT;
+
+		dst->v.d_inum = src.v->d_inum;
+		dst->v.d_type = src.v->d_type;
+
+		ret = bch_btree_insert_at_multi((struct btree_insert_multi[]) {
+				{ &src_iter, &delete, },
+				{ &dst_iter, &dst->k_i, }}, 2,
+				journal_seq, 0);
+		bch_btree_iter_unlock(&src_iter);
+		bch_btree_iter_unlock(&dst_iter);
 	} while (ret == -EINTR);
 
-	bch_btree_iter_unlock(&iter);
-
+	bch_keylist_free(&keys);
+	return ret;
+err:
+	ret = bch_btree_iter_unlock(&src_iter) ?: ret;
+	ret = bch_btree_iter_unlock(&dst_iter) ?: ret;
+	bch_keylist_free(&keys);
 	return ret;
 }
 
