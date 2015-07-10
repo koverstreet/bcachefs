@@ -748,6 +748,55 @@ static void verify_keys_sorted(struct keylist *l)
 #endif
 }
 
+static void btree_node_lock_for_insert(struct btree *b, struct btree_iter *iter)
+{
+	/* just wrote a set? */
+	if (btree_node_need_init_next(b))
+do_init_next:	bch_btree_init_next(iter->c, b, iter);
+
+	btree_node_lock_write(b, iter);
+
+	/*
+	 * Recheck after taking the write lock, because it can be set
+	 * (because of the btree node being written) with only a read
+	 * lock:
+	 */
+	if (btree_node_need_init_next(b)) {
+		btree_node_unlock_write(b, iter);
+		goto do_init_next;
+	}
+}
+
+static enum btree_insert_status
+bch_btree_insert_keys_interior(struct btree *b,
+			       struct btree_iter *iter,
+			       struct keylist *insert_keys,
+			       struct bch_replace_info *replace,
+			       u64 *journal_seq, unsigned flags)
+{
+	struct journal_res res = { 0, 0 };
+
+	BUG_ON(replace);
+	BUG_ON(journal_seq);
+
+	btree_node_lock_for_insert(b, iter);
+
+	if (!have_enough_space(iter->c, b, insert_keys)) {
+		btree_node_unlock_write(b, iter);
+		return BTREE_INSERT_NEED_SPLIT;
+	}
+
+	while (!bch_keylist_empty(insert_keys))
+		btree_insert_key(iter, b, &iter->node_iters[b->level],
+				 insert_keys, NULL, &res, NULL, flags);
+
+	btree_node_unlock_write(b, iter);
+
+	bch_btree_node_write_sync(b, iter);
+
+	return BTREE_INSERT_OK;
+}
+
 /**
  * bch_btree_insert_keys - insert keys from @insert_keys into btree node @b,
  * until the node is full.
@@ -760,19 +809,15 @@ static void verify_keys_sorted(struct keylist *l)
  * read locks on any nodes.
  */
 static enum btree_insert_status
-bch_btree_insert_keys(struct btree *b,
-		      struct btree_iter *iter,
-		      struct keylist *insert_keys,
-		      struct bch_replace_info *replace,
-		      u64 *journal_seq, unsigned flags)
+bch_btree_insert_keys_leaf(struct btree *b,
+			   struct btree_iter *iter,
+			   struct keylist *insert_keys,
+			   struct bch_replace_info *replace,
+			   u64 *journal_seq, unsigned flags)
 {
 	bool done = false, inserted = false, need_split = false;
 	struct journal_res res = { 0, 0 };
 	struct bkey_i *k = bch_keylist_front(insert_keys);
-
-	verify_keys_sorted(insert_keys);
-	BUG_ON(!btree_node_intent_locked(iter, b->level));
-	BUG_ON(iter->nodes[b->level] != b);
 
 	while (!done && !bch_keylist_empty(insert_keys)) {
 		/*
@@ -788,34 +833,17 @@ bch_btree_insert_keys(struct btree *b,
 		unsigned actual_max = max_t(unsigned, actual_min,
 					    jset_u64s(n_max));
 
-		if (!b->level &&
-		    test_bit(JOURNAL_REPLAY_DONE, &iter->c->journal.flags)) {
-			if (bch_journal_res_get(&iter->c->journal, &res,
-						actual_min, actual_max))
-				return BTREE_INSERT_ERROR;
-		}
+		if (test_bit(JOURNAL_REPLAY_DONE, &iter->c->journal.flags) &&
+		    bch_journal_res_get(&iter->c->journal, &res,
+					actual_min, actual_max))
+			return BTREE_INSERT_ERROR;
 
-		/* just wrote a set? */
-		if (btree_node_need_init_next(b))
-do_init_next:		bch_btree_init_next(iter->c, b, iter);
-
-		btree_node_lock_write(b, iter);
-
-		/*
-		 * Recheck after taking the write lock, because it can be set
-		 * (because of the btree node being written) with only a read
-		 * lock:
-		 */
-		if (btree_node_need_init_next(b)) {
-			btree_node_unlock_write(b, iter);
-			goto do_init_next;
-		}
+		btree_node_lock_for_insert(b, iter);
 
 		while (!bch_keylist_empty(insert_keys)) {
 			k = bch_keylist_front(insert_keys);
 
-			BUG_ON(!b->level &&
-			       bkey_cmp(bkey_start_pos(&k->k), iter->pos) < 0);
+			BUG_ON(bkey_cmp(bkey_start_pos(&k->k), iter->pos) < 0);
 
 			/* finished for this node */
 			if (b->keys.ops->is_extents
@@ -831,7 +859,7 @@ do_init_next:		bch_btree_init_next(iter->c, b, iter);
 				break;
 			}
 
-			if (!b->level && journal_res_full(&res, &k->k))
+			if (journal_res_full(&res, &k->k))
 				break;
 
 			if (btree_insert_key(iter, b,
@@ -847,30 +875,29 @@ do_init_next:		bch_btree_init_next(iter->c, b, iter);
 			bch_journal_res_put(&iter->c->journal, &res);
 	}
 
-	if (inserted && b->written) {
-		/*
-		 * Force write if set is too big (or if it's an interior
-		 * node, since those aren't journalled yet)
-		 */
-		if (b->level)
-			bch_btree_node_write_sync(b, iter);
-		else {
-			struct btree_node_entry *bne =
-				container_of(btree_bset_last(b),
-					     struct btree_node_entry, keys);
-			unsigned long bytes = __set_bytes(bne, bne->keys.u64s);
-
-			if ((max(round_up(bytes, block_bytes(iter->c)),
-				 PAGE_SIZE) - bytes < 48 ||
-			     bytes > 16 << 10) &&
-			    b->io_mutex.count > 0)
-				bch_btree_node_write(b, NULL, iter);
-		}
-	}
-
-	BUG_ON(!bch_keylist_empty(insert_keys) && inserted && b->level);
+	if (inserted)
+		bch_btree_node_write_lazy(b, iter);
 
 	return need_split ? BTREE_INSERT_NEED_SPLIT : BTREE_INSERT_OK;
+}
+
+static enum btree_insert_status
+bch_btree_insert_keys(struct btree *b,
+		      struct btree_iter *iter,
+		      struct keylist *insert_keys,
+		      struct bch_replace_info *replace,
+		      u64 *journal_seq, unsigned flags)
+{
+	verify_keys_sorted(insert_keys);
+	BUG_ON(!btree_node_intent_locked(iter, b->level));
+	BUG_ON(iter->nodes[b->level] != b);
+	BUG_ON(!b->written);
+
+	return !b->level
+		? bch_btree_insert_keys_leaf(b, iter, insert_keys,
+					     replace, journal_seq, flags)
+		: bch_btree_insert_keys_interior(b, iter, insert_keys,
+						 replace, journal_seq, flags);
 }
 
 struct btree_split_state {

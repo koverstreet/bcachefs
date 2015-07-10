@@ -684,6 +684,23 @@ static void bch_btree_node_write_dirty(struct btree *b, struct closure *parent)
 	six_unlock_read(&b->lock);
 }
 
+/*
+ * Write leaf nodes if the unwritten bset is getting too big:
+ */
+void bch_btree_node_write_lazy(struct btree *b, struct btree_iter *iter)
+{
+	struct btree_node_entry *bne =
+		container_of(btree_bset_last(b),
+			     struct btree_node_entry, keys);
+	unsigned long bytes = __set_bytes(bne, bne->keys.u64s);
+
+	if ((max(round_up(bytes, block_bytes(iter->c)),
+		 PAGE_SIZE) - bytes < 48 ||
+	     bytes > 16 << 10) &&
+	    b->io_mutex.count > 0)
+		bch_btree_node_write(b, NULL, iter);
+}
+
 void btree_node_write_work(struct work_struct *w)
 {
 	struct btree *b = container_of(to_delayed_work(w), struct btree, work);

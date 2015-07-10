@@ -22,6 +22,7 @@ void __bch_btree_node_write(struct btree *, struct closure *, int);
 void bch_btree_node_write(struct btree *, struct closure *,
 			  struct btree_iter *);
 void bch_btree_node_write_sync(struct btree *, struct btree_iter *);
+void bch_btree_node_write_lazy(struct btree *, struct btree_iter *);
 void btree_node_write_work(struct work_struct *);
 
 void bch_btree_flush(struct cache_set *);
