@@ -874,7 +874,7 @@ bch_btree_insert_keys_leaf(struct btree *b,
 		while (!bch_keylist_empty(insert_keys)) {
 			k = bch_keylist_front(insert_keys);
 
-			BUG_ON(bkey_cmp(bkey_start_pos(&k->k), iter->pos) < 0);
+			EBUG_ON(bkey_cmp(bkey_start_pos(&k->k), iter->pos));
 
 			/* finished for this node */
 			if (b->keys.ops->is_extents
@@ -1393,9 +1393,6 @@ traverse:
 			ret = ret ?: -EINTR;
 			break;
 		}
-
-		bch_btree_iter_set_pos(iter,
-			bkey_start_pos(&bch_keylist_front(insert_keys)->k));
 
 		ret = bch_btree_iter_traverse(iter);
 		if (ret)

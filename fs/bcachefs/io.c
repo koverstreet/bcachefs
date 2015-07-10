@@ -1129,17 +1129,14 @@ int bch_discard(struct cache_set *c, struct bpos start,
 		/* really shouldn't be using a bare, unpadded bkey_i */
 		struct bkey_i erase;
 
+		if (bkey_cmp(iter.pos, end) >= 0)
+			break;
+
 		/* create the biggest key we can, to minimize writes */
 		bkey_init(&erase.k);
 		erase.k.type	= KEY_TYPE_DISCARD;
 		erase.k.version	= version;
-		erase.k.p	= bkey_cmp(bkey_start_pos(k.k),
-					   iter.pos) > 0
-			? bkey_start_pos(k.k)
-			: iter.pos;
-
-		if (bkey_cmp(erase.k.p, end) >= 0)
-			break;
+		erase.k.p	= iter.pos;
 
 		bch_key_resize(&erase.k, max_sectors);
 		bch_cut_back(end, &erase.k);

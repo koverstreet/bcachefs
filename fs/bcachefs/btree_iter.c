@@ -582,6 +582,10 @@ struct bkey_s_c bch_btree_iter_peek(struct btree_iter *iter)
 
 		if (likely((k = __btree_iter_peek(iter)).k)) {
 			EBUG_ON(bkey_cmp(k.k->p, pos) < 0);
+
+			/* extents... */
+			if (bkey_cmp(bkey_start_pos(k.k), iter->pos) > 0)
+				bch_btree_iter_set_pos(iter, bkey_start_pos(k.k));
 			return k;
 		}
 
