@@ -101,6 +101,7 @@ read_attribute(btree_nodes);
 read_attribute(btree_used_percent);
 read_attribute(average_key_size);
 read_attribute(available_buckets);
+read_attribute(free_buckets);
 read_attribute(dirty_data);
 read_attribute(dirty_bytes);
 read_attribute(dirty_buckets);
@@ -1141,6 +1142,7 @@ SHOW(bch_cache)
 	sysfs_print(meta_buckets,	stats.buckets_meta);
 	sysfs_print(alloc_buckets,	stats.buckets_alloc);
 	sysfs_print(available_buckets,	buckets_available_cache(ca));
+	sysfs_print(free_buckets,	buckets_free_cache(ca, RESERVE_NONE));
 	sysfs_print(has_data,		CACHE_HAS_DATA(&ca->mi));
 	sysfs_print(has_metadata,	CACHE_HAS_METADATA(&ca->mi));
 
@@ -1284,6 +1286,7 @@ static struct attribute *bch_cache_files[] = {
 	&sysfs_oldest_gen_stats,
 	&sysfs_reserve_stats,
 	&sysfs_available_buckets,
+	&sysfs_free_buckets,
 	&sysfs_dirty_data,
 	&sysfs_dirty_bytes,
 	&sysfs_dirty_buckets,

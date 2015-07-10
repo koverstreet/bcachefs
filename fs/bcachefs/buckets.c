@@ -118,12 +118,15 @@ static void bucket_stats_update(struct cache *ca,
 	stats->sectors_cached +=
 		(int) new.cached_sectors - (int) old.cached_sectors;
 
-	if (old.is_metadata || new.is_metadata)
-		stats->sectors_meta +=
-			(int) new.dirty_sectors - (int) old.dirty_sectors;
+	if (old.is_metadata)
+		stats->sectors_meta -= old.dirty_sectors;
 	else
-		stats->sectors_dirty +=
-			(int) new.dirty_sectors - (int) old.dirty_sectors;
+		stats->sectors_dirty -= old.dirty_sectors;
+
+	if (new.is_metadata)
+		stats->sectors_meta += new.dirty_sectors;
+	else
+		stats->sectors_dirty += new.dirty_sectors;
 
 	stats->buckets_alloc +=
 		(int) new.owned_by_allocator - (int) old.owned_by_allocator;

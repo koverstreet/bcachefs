@@ -981,8 +981,7 @@ static enum bucket_alloc_ret __bch_bucket_alloc_set(struct cache_set *c,
 
 	BUG_ON(nr_replicas <= 0 || nr_replicas > BKEY_EXTENT_PTRS_MAX);
 
-	if (!devs->nr_devices ||
-	    (check_enospc && cache_set_full(c)))
+	if (!devs->nr_devices)
 		return CACHE_SET_FULL;
 
 	ob->nr_ptrs = 0;
@@ -1010,7 +1009,7 @@ static enum bucket_alloc_ret __bch_bucket_alloc_set(struct cache_set *c,
 
 			ca = devs->nr_devices
 				? bch_next_cache(c, reserve, d, caches_used)
-				: ERR_PTR(-BUCKETS_NOT_AVAILABLE);
+				: ERR_PTR(-CACHE_SET_FULL);
 
 			/*
 			 * If ca == NULL, we raced because of bucket counters
@@ -1036,11 +1035,19 @@ static enum bucket_alloc_ret __bch_bucket_alloc_set(struct cache_set *c,
 			.offset	= bucket_to_sector(ca, r),
 			.dev	= ca->sb.nr_this_dev,
 		};
+
+		if (check_enospc && cache_set_full(c)) {
+			ret = CACHE_SET_FULL;
+			goto err_nocheck;
+		}
 	}
 
 	rcu_read_unlock();
 	return ALLOC_SUCCESS;
 err:
+	if (check_enospc && cache_set_full(c))
+		ret = CACHE_SET_FULL;
+err_nocheck:
 	rcu_read_unlock();
 	bch_bucket_free_never_used(c, ob);
 	return ret;
@@ -1368,7 +1375,7 @@ static void bch_recalc_capacity(struct cache_set *c)
 {
 	struct cache_group *tier = c->cache_tiers + ARRAY_SIZE(c->cache_tiers);
 	struct cache *ca;
-	u64 capacity = 0;
+	u64 total_capacity, capacity = 0, reserved_sectors = 0;
 	unsigned long ra_pages = 0;
 	unsigned i, j;
 
@@ -1417,14 +1424,20 @@ static void bch_recalc_capacity(struct cache_set *c)
 
 		ca->reserve_buckets_count = reserve;
 
+		reserved_sectors += reserve << ca->bucket_bits;
+
 		capacity += (ca->mi.nbuckets -
 			     ca->mi.first_bucket) <<
 			ca->bucket_bits;
 	}
 	rcu_read_unlock();
 
+	total_capacity = capacity;
+
 	capacity *= (100 - c->sector_reserve_percent);
 	capacity = div64_u64(capacity, 100);
+
+	BUG_ON(capacity + reserved_sectors > total_capacity);
 
 	c->capacity = capacity;
 

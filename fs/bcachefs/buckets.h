@@ -186,26 +186,11 @@ static inline size_t __buckets_available_cache(struct cache *ca,
 }
 
 /*
- * This is for the allocator thread - it's waiting on buckets that it can
- * invalidate and put on a freelist:
+ * Number of reclaimable buckets - only for use by the allocator thread:
  */
 static inline size_t buckets_available_cache(struct cache *ca)
 {
 	return __buckets_available_cache(ca, bch_bucket_stats_read(ca));
-}
-
-static inline u64 sectors_available(struct cache_set *c)
-{
-	struct cache *ca;
-	unsigned i;
-	u64 ret = 0;
-
-	rcu_read_lock();
-	for_each_cache_rcu(ca, c, i)
-		ret += buckets_available_cache(ca) << ca->bucket_bits;
-	rcu_read_unlock();
-
-	return ret;
 }
 
 static inline size_t __buckets_free_cache(struct cache *ca,
@@ -228,7 +213,7 @@ static inline size_t buckets_free_cache(struct cache *ca,
 	return __buckets_free_cache(ca, bch_bucket_stats_read(ca), reserve);
 }
 
-static inline u64 cache_set_sectors_used(struct cache_set *c)
+static inline u64 __cache_set_sectors_used(struct cache_set *c)
 {
 	struct cache *ca;
 	unsigned i;
@@ -238,17 +223,41 @@ static inline u64 cache_set_sectors_used(struct cache_set *c)
 	for_each_cache_rcu(ca, c, i) {
 		struct bucket_stats stats = bch_bucket_stats_read(ca);
 
-		used += (stats.buckets_meta << ca->bucket_bits) +
+		used += (((stats.buckets_alloc -
+			   fifo_used(&ca->free[RESERVE_NONE]) -
+			   fifo_used(&ca->free_inc)) +
+			  stats.buckets_meta) <<
+			 ca->bucket_bits) +
 			stats.sectors_dirty;
 	}
 	rcu_read_unlock();
 
-	return min(c->capacity, used + atomic_long_read(&c->sectors_reserved));
+	return used + atomic_long_read(&c->sectors_reserved);
+}
+
+static inline u64 cache_set_sectors_used(struct cache_set *c)
+{
+	return min(c->capacity, __cache_set_sectors_used(c));
 }
 
 static inline bool cache_set_full(struct cache_set *c)
 {
-	return cache_set_sectors_used(c) >= c->capacity;
+	return __cache_set_sectors_used(c) >= c->capacity;
+}
+
+/* XXX: kill? */
+static inline u64 sectors_available(struct cache_set *c)
+{
+	struct cache *ca;
+	unsigned i;
+	u64 ret = 0;
+
+	rcu_read_lock();
+	for_each_cache_rcu(ca, c, i)
+		ret += buckets_available_cache(ca) << ca->bucket_bits;
+	rcu_read_unlock();
+
+	return ret;
 }
 
 static inline bool is_available_bucket(struct bucket_mark mark)
