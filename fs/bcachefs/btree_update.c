@@ -782,6 +782,8 @@ bch_btree_insert_keys_interior(struct btree *b,
 			       u64 *journal_seq, unsigned flags)
 {
 	struct btree_node_iter *node_iter = &iter->node_iters[b->level];
+	const struct bkey_format *f = &b->keys.format;
+	struct bkey_packed *k;
 	struct journal_res res = { 0, 0 };
 
 	BUG_ON(replace);
@@ -795,9 +797,7 @@ bch_btree_insert_keys_interior(struct btree *b,
 	}
 
 	while (!bch_keylist_empty(insert_keys)) {
-		const struct bkey_format *f = &b->keys.format;
 		struct bkey_i *insert = bch_keylist_front(insert_keys);
-		struct bkey_packed *k;
 
 		/*
 		 * btree_split(), btree_gc_coalesce() will insert keys before
@@ -813,6 +813,15 @@ bch_btree_insert_keys_interior(struct btree *b,
 	}
 
 	btree_node_unlock_write(b, iter);
+
+	/*
+	 * insert_fixup_btree_ptr() will advance the node iterator to _after_
+	 * the last key it inserted, which is not what we want
+	 */
+
+	while ((k = bch_btree_node_iter_prev_all(node_iter, &b->keys)) &&
+	       (bkey_cmp_left_packed(f, k, iter->pos) >= 0))
+		;
 
 	bch_btree_node_write_sync(b, iter);
 

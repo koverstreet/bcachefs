@@ -724,6 +724,7 @@ void bch_btree_node_iter_fix(struct btree_node_iter *iter,
 			     struct btree_keys *b,
 			     const struct bkey_packed *where)
 {
+	const struct bkey_packed *end = bset_bkey_last(bset_tree_last(b)->data);
 	struct btree_node_iter_set *set;
 	unsigned offset = __btree_node_key_to_offset(b, where);
 	unsigned shift = where->u64s;
@@ -733,13 +734,16 @@ void bch_btree_node_iter_fix(struct btree_node_iter *iter,
 	for (set = iter->data;
 	     set < iter->data + iter->used;
 	     set++)
-		if (set->end >= offset) {
+		if (__btree_node_offset_to_key(b, set->end + shift) == end) {
 			set->end += shift;
 
-			if (set->k >= offset)
+			if (set->k > offset)
 				set->k += shift;
-			break;
+			bch_btree_node_iter_sort(iter, b);
+			return;
 		}
+
+	bch_btree_node_iter_push(iter, b, where, end);
 }
 
 /**
@@ -1174,8 +1178,8 @@ static inline bool btree_node_iter_cmp(struct btree_node_iter *iter,
 
 void bch_btree_node_iter_push(struct btree_node_iter *iter,
 			      struct btree_keys *b,
-			      struct bkey_packed *k,
-			      struct bkey_packed *end)
+			      const struct bkey_packed *k,
+			      const struct bkey_packed *end)
 {
 	if (k != end) {
 		struct btree_node_iter_set n =

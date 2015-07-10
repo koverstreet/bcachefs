@@ -459,7 +459,8 @@ static inline void __bch_btree_node_iter_init(struct btree_node_iter *iter,
 }
 
 void bch_btree_node_iter_push(struct btree_node_iter *, struct btree_keys *,
-			      struct bkey_packed *, struct bkey_packed *);
+			      const struct bkey_packed *,
+			      const struct bkey_packed *);
 void bch_btree_node_iter_init(struct btree_node_iter *, struct btree_keys *,
 			      struct bpos, bool);
 void bch_btree_node_iter_init_from_start(struct btree_node_iter *,
