@@ -56,7 +56,10 @@ void bch_dump_bset(struct btree_keys *b, struct bset *i, unsigned set)
 	struct bkey_format *f = &b->format;
 	struct bkey_packed *_k, *_n;
 	struct bkey k, n;
-	char buf[80];
+	char buf[120];
+
+	if (!i->u64s)
+		return;
 
 	for (_k = i->start, k = bkey_unpack_key(f, _k);
 	     _k < bset_bkey_last(i);
