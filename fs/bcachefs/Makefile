@@ -7,5 +7,3 @@ bcachefs-y		:= acl.o alloc.o bkey.o bkey_methods.o blockdev.o\
 	fs-gc.o inode.o io.o journal.o keybuf.o keylist.o migrate.o move.o\
 	movinggc.o notify.o request.o siphash.o six.o stats.o super.o sysfs.o\
 	tier.o trace.o util.o writeback.o xattr.o
-
-subdir-ccflags-y	:= -Werror
