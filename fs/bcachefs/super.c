@@ -116,12 +116,12 @@ u64 bch_checksum(unsigned type, const void *data, size_t len)
 
 static bool bch_is_open_cache(struct block_device *bdev)
 {
-	struct cache_set *c, *tc;
+	struct cache_set *c;
 	struct cache *ca;
 	unsigned i;
 
 	rcu_read_lock();
-	list_for_each_entry_safe(c, tc, &bch_cache_sets, list)
+	list_for_each_entry(c, &bch_cache_sets, list)
 		for_each_cache_rcu(ca, c, i)
 			if (ca->disk_sb.bdev == bdev) {
 				rcu_read_unlock();
@@ -133,13 +133,9 @@ static bool bch_is_open_cache(struct block_device *bdev)
 
 static bool bch_is_open(struct block_device *bdev)
 {
-	bool ret;
+	lockdep_assert_held(&bch_register_lock);
 
-	mutex_lock(&bch_register_lock);
-	ret = bch_is_open_cache(bdev) || bch_is_open_backing_dev(bdev);
-	mutex_unlock(&bch_register_lock);
-
-	return ret;
+	return bch_is_open_cache(bdev) || bch_is_open_backing_dev(bdev);
 }
 
 static const char *bch_blkdev_open(const char *path, void *holder,
@@ -406,6 +402,8 @@ static const char *read_super(struct bcache_superblock *sb,
 {
 	const char *err;
 	unsigned order = 0;
+
+	lockdep_assert_held(&bch_register_lock);
 
 	memset(sb, 0, sizeof(*sb));
 
@@ -1593,18 +1591,20 @@ static void bch_cache_free_work(struct work_struct *work)
 	bch_moving_gc_destroy(ca);
 	bch_tiering_write_destroy(ca);
 
-	if (c) {
-		mutex_lock(&bch_register_lock);
-		if (c->kobj.state_in_sysfs) {
-			char buf[12];
+	if (c && c->kobj.state_in_sysfs) {
+		char buf[12];
 
-			sprintf(buf, "cache%u", ca->sb.nr_this_dev);
-			sysfs_remove_link(&c->kobj, buf);
-		}
-		mutex_unlock(&bch_register_lock);
-
-		kobject_put(&c->kobj);
+		sprintf(buf, "cache%u", ca->sb.nr_this_dev);
+		sysfs_remove_link(&c->kobj, buf);
 	}
+
+	if (ca->kobj.state_in_sysfs)
+		kobject_del(&ca->kobj);
+
+	free_super(&ca->disk_sb);
+
+	if (c)
+		kobject_put(&c->kobj);
 
 	/*
 	 * bch_cache_stop can be called in the middle of initialization
@@ -1626,11 +1626,6 @@ static void bch_cache_free_work(struct work_struct *work)
 
 	for (i = 0; i < RESERVE_NR; i++)
 		free_fifo(&ca->free[i]);
-
-	free_super(&ca->disk_sb);
-
-	if (ca->kobj.state_in_sysfs)
-		kobject_del(&ca->kobj);
 
 	kobject_put(&ca->kobj);
 }
@@ -1980,24 +1975,23 @@ static const char *register_cache(struct bcache_superblock *sb,
 
 	bdevname(sb->bdev, name);
 
-	mutex_lock(&bch_register_lock);
 	c = cache_set_lookup(sb->sb->set_uuid);
 	if (c) {
 		if ((err = (can_attach_cache(sb->sb, c) ?:
 			    cache_alloc(sb, c, NULL))))
-			goto err;
+			return err;
 
 		if (cache_set_nr_online_devices(c) == cache_set_nr_devices(c)) {
 			err = run_cache_set(c);
 			if (err)
-				goto err;
+				return err;
 		}
 		goto out;
 	}
 
 	c = bch_cache_set_alloc(sb->sb, opts);
 	if (!c)
-		goto err;
+		return err;
 
 	err = cache_alloc(sb, c, NULL);
 	if (err)
@@ -2013,14 +2007,11 @@ static const char *register_cache(struct bcache_superblock *sb,
 	if (bch_cache_set_online(c))
 		goto err_stop;
 out:
-	mutex_unlock(&bch_register_lock);
 
 	pr_info("registered cache device %s", name);
 	return NULL;
 err_stop:
 	bch_cache_set_stop(c);
-err:
-	mutex_unlock(&bch_register_lock);
 	return err;
 }
 
@@ -2034,13 +2025,15 @@ int bch_cache_set_add_cache(struct cache_set *c, const char *path)
 	unsigned nr_this_dev, nr_in_set, u64s;
 	int ret = -EINVAL;
 
+	mutex_lock(&bch_register_lock);
+
 	err = read_super(&sb, path);
 	if (err)
-		goto err;
+		goto err_unlock;
 
 	err = can_add_cache(sb.sb, c);
 	if (err)
-		goto err;
+		goto err_unlock;
 
 	/*
 	 * Preserve the old cache member information (esp. tier)
@@ -2049,7 +2042,6 @@ int bch_cache_set_add_cache(struct cache_set *c, const char *path)
 	mi = sb.sb->members[le16_to_cpu(sb.sb->nr_this_dev)];
 	mi.last_mount = get_seconds();
 
-	mutex_lock(&bch_register_lock);
 	down_read(&c->gc_lock);
 
 	if (dynamic_fault("bcache:add:no_slot"))
@@ -2134,7 +2126,6 @@ err_put:
 	bch_cache_stop(ca);
 err_unlock:
 	mutex_unlock(&bch_register_lock);
-err:
 	free_super(&sb);
 
 	pr_err("Unable to add device: %s", err);
@@ -2164,20 +2155,26 @@ const char *bch_register_cache_set(char * const *devices, unsigned nr_devices,
 	if (!sb)
 		goto err;
 
+	/*
+	 * read_super() needs to happen under register_lock, so that the
+	 * exclusive open is atomic with adding the new cache set to the list of
+	 * cache sets:
+	 */
+	mutex_lock(&bch_register_lock);
+
 	for (i = 0; i < nr_devices; i++) {
 		err = read_super(&sb[i], devices[i]);
 		if (err)
-			goto err;
+			goto err_unlock;
 
 		err = "attempting to register backing device";
 		if (__SB_IS_BDEV(le64_to_cpu(sb[i].sb->version)))
-			goto err;
+			goto err_unlock;
 	}
 
 	err = "cache set already registered";
-	mutex_lock(&bch_register_lock);
 	if (cache_set_lookup(sb->sb->set_uuid))
-		goto err;
+		goto err_unlock;
 
 	err = "cannot allocate memory";
 	c = bch_cache_set_alloc(sb[0].sb, opts);
@@ -2229,19 +2226,20 @@ const char *bch_register_one(const char *path)
 	struct bcache_superblock sb;
 	const char *err;
 
+	mutex_lock(&bch_register_lock);
+
 	err = read_super(&sb, path);
 	if (err)
-		return err;
+		goto err;
 
-	if (__SB_IS_BDEV(le64_to_cpu(sb.sb->version))) {
-		mutex_lock(&bch_register_lock);
+	if (__SB_IS_BDEV(le64_to_cpu(sb.sb->version)))
 		err = bch_backing_dev_register(&sb);
-		mutex_unlock(&bch_register_lock);
-	} else {
+	else
 		err = register_cache(&sb, cache_set_opts_empty());
-	}
 
 	free_super(&sb);
+err:
+	mutex_unlock(&bch_register_lock);
 	return err;
 }
 
