@@ -755,24 +755,26 @@ enum btree_insert_status {
 	BTREE_INSERT_ERROR,
 };
 
-static bool have_enough_space(struct cache_set *c, struct btree *b,
-			      struct keylist *insert_keys)
+static bool __have_enough_space(struct cache_set *c, struct btree *b,
+				unsigned u64s)
 {
 	/*
-	 * For updates to interior nodes, everything on the
-	 * keylist has to be inserted atomically.
-	 *
 	 * For updates to extents, bch_insert_fixup_extent()
 	 * needs room for at least three keys to make forward
 	 * progress.
 	 */
-	unsigned u64s = b->level
-		? bch_keylist_nkeys(insert_keys)
-		: b->keys.ops->is_extents
-		? BKEY_EXTENT_MAX_U64s * 3
-		: bch_keylist_front(insert_keys)->k.u64s;
+	u64s = b->keys.ops->is_extents ? BKEY_EXTENT_MAX_U64s * 3 : u64s;
 
 	return u64s <= bch_btree_keys_u64s_remaining(c, b);
+
+}
+
+static bool have_enough_space(struct cache_set *c, struct btree *b,
+			      struct keylist *insert_keys)
+{
+	return __have_enough_space(c, b, b->level
+			? bch_keylist_nkeys(insert_keys)
+			: bch_keylist_front(insert_keys)->k.u64s);
 }
 
 static void verify_keys_sorted(struct keylist *l)
@@ -1559,6 +1561,165 @@ traverse:
 	percpu_ref_put(&iter->c->writes);
 
 	return ret;
+}
+
+static void multi_lock_write(struct btree_insert_multi *first,
+			     struct btree_insert_multi *m)
+{
+	/*
+	 * Because we sorted the transaction entries, if multiple iterators
+	 * point to the same leaf node they'll always be adjacent now:
+	 */
+	if (m != first &&
+	    (m[0].iter->nodes[0] == m[-1].iter->nodes[0]))
+		return; /* already locked */
+
+	btree_node_lock_for_insert(m->iter->nodes[0], m->iter);
+}
+
+static void multi_unlock_write(struct btree_insert_multi *first,
+			       struct btree_insert_multi *m)
+{
+	if (m != first &&
+	    (m[0].iter->nodes[0] == m[-1].iter->nodes[0]))
+		return; /* already locked */
+
+	btree_node_unlock_write(m->iter->nodes[0], m->iter);
+}
+
+int bch_btree_insert_at_multi(struct btree_insert_multi *m, unsigned nr,
+			      u64 *journal_seq, unsigned flags)
+{
+	struct cache_set *c = m[0].iter->c;
+	struct journal_res res = { 0, 0 };
+	struct btree_insert_multi *i;
+	struct btree_iter *split;
+	unsigned u64s = 0;
+	bool swapped;
+	int ret;
+
+	/* Sort transaction entries by iterator position, for lock ordering: */
+	do {
+		swapped = false;
+
+		for (i = m; i + 1 < m + nr; i++)
+			if (bkey_cmp(i[0].iter->pos, i[1].iter->pos) > 0) {
+				swap(i[0], i[1]);
+				swapped = true;
+			}
+	} while (swapped);
+
+	if (unlikely(!percpu_ref_tryget(&c->writes)))
+		return -EROFS;
+
+	for (i = m; i < m + nr; i++)
+		u64s += jset_u64s(i->k->k.u64s);
+
+	for (i = m; i < m + nr; i++) {
+		i->iter->locks_want = 0;
+		if (unlikely(!bch_btree_iter_upgrade(i->iter))) {
+			ret = -EINTR;
+			goto err;
+		}
+	}
+retry:
+	ret = bch_journal_res_get(&c->journal, &res, u64s, u64s);
+	if (ret)
+		goto err;
+
+	for (i = m; i < m + nr; i++) {
+		multi_lock_write(m, i);
+
+		/*
+		 * Check against total, not just the key for this iterator,
+		 * because multiple inserts might be going to the same node:
+		 */
+		if (!__have_enough_space(c, i->iter->nodes[0], u64s))
+			goto split;
+	}
+
+	for (i = m; i < m + nr; i++)
+		BUG_ON(!btree_insert_key(i->iter, i->iter->nodes[0],
+					 &i->iter->node_iters[0],
+					 &keylist_single(i->k), NULL,
+					 &res, journal_seq, flags));
+
+	do {
+		multi_unlock_write(m, --i);
+	} while (i != m);
+
+	bch_journal_res_put(&c->journal, &res);
+
+	for (i = m; i < m + nr; i++) {
+		if (i != m &&
+		    (i[0].iter->nodes[0] == i[-1].iter->nodes[0]))
+			continue;
+
+		bch_btree_node_write_lazy(i->iter->nodes[0], i->iter);
+	}
+
+out:
+	percpu_ref_put(&c->writes);
+	return ret;
+split:
+	split = i->iter;
+	do {
+		multi_unlock_write(m, i);
+	} while (i-- != m);
+
+	/*
+	 * XXX: Do we need to drop our journal res for the split?
+	 *
+	 * yes, because otherwise we're potentially blocking other things that
+	 * need the journal, which includes the allocator - and we're going to
+	 * be allocating new nodes in the split
+	 */
+	bch_journal_res_put(&c->journal, &res);
+
+	{
+		struct btree *b = split->nodes[0];
+		struct btree_reserve *reserve;
+		struct async_split *as;
+
+		/*
+		 * XXX: figure out how far we might need to split,
+		 * instead of locking/reserving all the way to the root:
+		 */
+		split->locks_want = BTREE_MAX_DEPTH;
+		if (!bch_btree_iter_upgrade(split)) {
+			ret = -EINTR;
+			goto err;
+		}
+
+		reserve = bch_btree_reserve_get(c, b, split, 0,
+					    !(flags & BTREE_INSERT_NOFAIL));
+		if (IS_ERR(reserve)) {
+			ret = PTR_ERR(reserve);
+			goto err;
+		}
+
+		as = bch_async_split_alloc(b, split);
+		if (!as) {
+			bch_btree_reserve_put(c, reserve);
+			ret = -EIO;
+			goto err;
+		}
+
+		ret = btree_split(b, split, NULL, flags, reserve, as);
+
+		bch_btree_reserve_put(c, reserve);
+
+		if (ret)
+			goto err;
+		goto retry;
+	}
+err:
+	if (ret == -EAGAIN) {
+		for (i = m; i < m + nr; i++)
+			bch_btree_iter_unlock(i->iter);
+		ret = -EINTR;
+	}
+	goto out;
 }
 
 /**
