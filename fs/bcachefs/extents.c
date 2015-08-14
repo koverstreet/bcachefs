@@ -1914,7 +1914,6 @@ static bool bch_extent_merge_inline(struct btree_keys *b,
 		}
 	}
 
-	bch_btree_node_iter_sort(iter, b);
 	return ret;
 }
 

@@ -65,13 +65,53 @@ struct btree_iter {
 	struct btree_iter	*next;
 };
 
+/**
+ * for_each_linked_btree_iter - iterate over all iterators linked with @_iter
+ */
 #define for_each_linked_btree_iter(_iter, _linked)			\
 	for ((_linked) = (_iter)->next;					\
 	     (_linked) != (_iter);					\
 	     (_linked) = (_linked)->next)
 
-void bch_btree_fix_linked_iter(struct btree_iter *, struct btree *,
-			       struct bkey_packed *);
+static inline struct btree_iter *
+__next_linked_btree_node(struct btree_iter *iter, struct btree *b,
+			 struct btree_iter *linked)
+{
+	do {
+		linked = linked->next;
+
+		if (linked == iter)
+			return NULL;
+
+		/*
+		 * We don't compare the low bits of the lock sequence numbers
+		 * because @iter might have taken a write lock on @b, and we
+		 * don't want to skip the linked iterator if the sequence
+		 * numbers were equal before taking that write lock. The lock
+		 * sequence number is incremented by taking and releasing write
+		 * locks and is even when unlocked:
+		 */
+	} while (linked->nodes[b->level] != b ||
+		 linked->lock_seq[b->level] >> 1 != b->lock.state.seq >> 1);
+
+	return linked;
+}
+
+/**
+ * for_each_linked_btree_node - iterate over all iterators linked with @_iter
+ * that also point to @_b
+ *
+ * @_b is assumed to be locked by @_iter
+ *
+ * Filters out iterators that don't have a valid btree_node iterator for @_b -
+ * i.e. iterators for which btree_node_relock() would not succeed.
+ */
+#define for_each_linked_btree_node(_iter, _b, _linked)			\
+	for ((_linked) = (_iter);					\
+	     ((_linked) = __next_linked_btree_node(_iter, _b, _linked));)
+
+void bch_btree_node_iter_fix(struct btree_iter *, struct btree_keys *,
+			     struct btree_node_iter *, struct bkey_packed *);
 
 bool bch_btree_iter_upgrade(struct btree_iter *);
 int bch_btree_iter_unlock(struct btree_iter *);

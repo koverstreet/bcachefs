@@ -1,6 +1,7 @@
 
 #include "bcache.h"
 #include "alloc.h"
+#include "bkey_methods.h"
 #include "btree_cache.h"
 #include "btree_gc.h"
 #include "btree_update.h"
@@ -148,7 +149,7 @@ static void __btree_node_free(struct cache_set *c, struct btree *b,
 	BUG_ON(atomic_read(&b->write_blocked));
 
 	/* Cause future btree_node_relock() calls to fail: */
-	btree_node_lock_write(b, iter);
+	six_lock_write(&b->lock);
 
 	if (btree_node_dirty(b))
 		bch_btree_complete_write(c, b, btree_current_write(b));
@@ -167,7 +168,7 @@ static void __btree_node_free(struct cache_set *c, struct btree *b,
 	list_move(&b->list, &c->btree_cache_freeable);
 	mutex_unlock(&c->btree_cache_lock);
 
-	btree_node_unlock_write(b, iter);
+	six_unlock_write(&b->lock);
 }
 
 void bch_btree_node_free_never_inserted(struct cache_set *c, struct btree *b)
@@ -582,19 +583,41 @@ void bch_btree_bset_insert(struct btree_iter *iter,
 			   struct bkey_i *insert)
 {
 	struct btree_iter *linked;
-	struct bkey_packed *where = NULL;
+	struct bkey_packed *where;
 
-	BUG_ON(insert->k.u64s > bch_btree_keys_u64s_remaining(iter->c, b));
+	EBUG_ON(insert->k.u64s > bch_btree_keys_u64s_remaining(iter->c, b));
+	EBUG_ON(bkey_cmp(bkey_start_pos(&insert->k), b->data->min_key) < 0 ||
+		bkey_cmp(insert->k.p, b->data->max_key) > 0);
 
-	bch_bset_insert(&b->keys, node_iter, insert, &where);
+	/*
+	 * Note: when we're called from btree_split(), @b is not in @iter - and
+	 * thus we can't use the node iter in @iter either, that's why it's
+	 * passed in separately. This isn't an issue for the linked iterators,
+	 * though.
+	 */
 
-	for_each_linked_btree_iter(iter, linked)
-		if (linked->nodes[b->level] == b) {
-			if (where)
-				bch_btree_fix_linked_iter(linked, b, where);
+	where = bch_bset_insert(&b->keys, node_iter, insert);
+
+	if (where) {
+		bch_btree_node_iter_fix(iter, &b->keys, node_iter, where);
+
+		for_each_linked_btree_node(iter, b, linked)
+			bch_btree_node_iter_fix(linked, &b->keys,
+					&linked->node_iters[b->level],
+					where);
+	} else {
+		bch_btree_node_iter_sort(node_iter, &b->keys);
+
+		for_each_linked_btree_node(iter, b, linked)
 			bch_btree_node_iter_sort(&linked->node_iters[b->level],
 						 &b->keys);
-		}
+	}
+
+	bch_btree_node_iter_verify(node_iter, &b->keys);
+
+	for_each_linked_btree_node(iter, b, linked)
+		bch_btree_node_iter_verify(&linked->node_iters[b->level],
+					   &b->keys);
 }
 
 static void btree_node_flush(struct journal_entry_pin *pin)
@@ -689,14 +712,11 @@ static bool btree_insert_key(struct btree_iter *iter, struct btree *b,
 	bch_btree_node_iter_verify(node_iter, &b->keys);
 
 	if (b->level) {
-		BUG_ON(bkey_cmp(insert->k.p, b->key.k.p) > 0);
-
 		do_insert = bch_insert_fixup_btree_ptr(iter, b, insert,
 						       node_iter, replace, &done,
 						       res, journal_seq);
 		dequeue = true;
 	} else if (!b->keys.ops->is_extents) {
-		BUG_ON(bkey_cmp(insert->k.p, b->key.k.p) > 0);
 
 		do_insert = bch_insert_fixup_key(iter, b, insert, node_iter,
 						 replace, &done,
@@ -820,8 +840,19 @@ struct async_split *__bch_async_split_alloc(struct btree *nodes[],
 			 ARRAY_SIZE(as->inline_keys));
 
 	/* block btree node from being written and write_idx changing: */
-	for (i = 0; i < nr_nodes; i++)
-		btree_node_lock_write(nodes[i], iter);
+	for (i = 0; i < nr_nodes; i++) {
+		/*
+		 * It's not legal to call btree_node_lock_write() when @iter
+		 * does not point to nodes[i] - which happens in
+		 * bch_coalesce_nodes(), unfortunately.
+		 *
+		 * So far this is the only place where we have this issue:
+		 */
+		if (iter->nodes[nodes[i]->level] == nodes[i])
+			btree_node_lock_write(nodes[i], iter);
+		else
+			six_lock_write(&nodes[i]->lock);
+	}
 
 	for (i = 0; i < nr_nodes; i++) {
 		struct btree_write *w = btree_current_write(nodes[i]);
@@ -849,8 +880,12 @@ struct async_split *__bch_async_split_alloc(struct btree *nodes[],
 
 	journal_pin_add(&c->journal, pin_list, &as->journal, NULL);
 
-	for (i = 0; i < nr_nodes; i++)
-		btree_node_unlock_write(nodes[i], iter);
+	for (i = 0; i < nr_nodes; i++) {
+		if (iter->nodes[nodes[i]->level] == nodes[i])
+			btree_node_unlock_write(nodes[i], iter);
+		else
+			six_unlock_write(&nodes[i]->lock);
+	}
 
 	return as;
 }
@@ -1172,7 +1207,7 @@ static void btree_split_insert_keys(struct btree_iter *iter, struct btree *b,
 
 	bch_btree_node_iter_init(&node_iter, &b->keys, k->k.p, false);
 
-	btree_node_lock_write(b, iter);
+	six_lock_write(&b->lock);
 
 	while (!bch_keylist_empty(keys)) {
 		k = bch_keylist_front(keys);
@@ -1189,7 +1224,7 @@ static void btree_split_insert_keys(struct btree_iter *iter, struct btree *b,
 				 NULL, &res, NULL, 0);
 	}
 
-	btree_node_unlock_write(b, iter);
+	six_unlock_write(&b->lock);
 }
 
 static int btree_split(struct btree *b, struct btree_iter *iter,

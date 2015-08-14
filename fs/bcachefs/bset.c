@@ -715,38 +715,6 @@ static void verify_insert_pos(struct btree_keys *b,
 }
 
 /**
- * Used by extent fixup functions which insert entries into the bset.
- * We have to update the iterator's cached ->end pointer.
- *
- * @top must be in the last bset.
- */
-void bch_btree_node_iter_fix(struct btree_node_iter *iter,
-			     struct btree_keys *b,
-			     const struct bkey_packed *where)
-{
-	const struct bkey_packed *end = bset_bkey_last(bset_tree_last(b)->data);
-	struct btree_node_iter_set *set;
-	unsigned offset = __btree_node_key_to_offset(b, where);
-	unsigned shift = where->u64s;
-
-	BUG_ON(iter->used > MAX_BSETS);
-
-	for (set = iter->data;
-	     set < iter->data + iter->used;
-	     set++)
-		if (__btree_node_offset_to_key(b, set->end + shift) == end) {
-			set->end += shift;
-
-			if (set->k > offset)
-				set->k += shift;
-			bch_btree_node_iter_sort(iter, b);
-			return;
-		}
-
-	bch_btree_node_iter_push(iter, b, where, end);
-}
-
-/**
  * bch_bset_fix_invalidated_key() - given an existing  key @k that has been
  * modified, fix any auxiliary search tree by remaking all the nodes in the
  * auxiliary search tree that @k corresponds to
@@ -858,10 +826,27 @@ static void bch_bset_fix_lookup_table(struct btree_keys *b,
 		}
 }
 
-void bch_bset_insert(struct btree_keys *b,
-		     struct btree_node_iter *iter,
-		     struct bkey_i *insert,
-		     struct bkey_packed **where_ret)
+/**
+ * bch_bset_insert - insert the key @insert into @b
+ *
+ * Attempts front and back merges (if @b has a method for key merging).
+ *
+ * @iter is used as a hint for where to insert at, but it's not
+ * fixed/revalidated for the insertion, that's the caller's responsibility
+ * (because there may be other iterators to fix, it's easier to just do all of
+ * them the same way).
+ *
+ * If an insert was done (and not a merge), returns the position of the insert:
+ * it is the caller's responsibility to update all iterators that point to @b
+ * with bch_btree_node_iter_fix().
+ *
+ * If NULL is returned, the caller must sort all iterators that point to @b
+ * with bch_btree_node_iter_sort(), because we may have done a merge that
+ * modified one of the keys the iterator currently points to.
+ */
+struct bkey_packed *bch_bset_insert(struct btree_keys *b,
+				    struct btree_node_iter *iter,
+				    struct bkey_i *insert)
 {
 	struct bkey_format *f = &b->format;
 	struct bset_tree *t = bset_tree_last(b);
@@ -896,28 +881,7 @@ void bch_bset_insert(struct btree_keys *b,
 	if (prev &&
 	    bch_bkey_try_merge_inline(b, iter, prev,
 				      bkey_to_packed(insert), true))
-		return;
-
-	if (b->ops->is_extents &&
-	    where != bset_bkey_last(i) &&
-	    where->u64s == insert->k.u64s &&
-	    bkey_deleted(where)) {
-		if (!bkey_deleted(&insert->k))
-			btree_keys_account_key_add(&b->nr,
-					bkey_to_packed(insert));
-
-		bkey_copy((void *) where, insert);
-
-		/*
-		 * We're modifying a key that might be the btree node iter's
-		 * current position for that bset, so we have to resort it -
-		 * this isn't an issue for back merges because then the insert
-		 * key comes after the key being modified, so the iter will have
-		 * advanced past it.
-		 */
-		bch_btree_node_iter_sort(iter, b);
-		return;
-	}
+		return NULL;
 
 	if (where != bset_bkey_last(i) &&
 	    bkey_bytes(&insert->k) <= sizeof(tmp)) {
@@ -934,10 +898,28 @@ void bch_bset_insert(struct btree_keys *b,
 		if (bch_bkey_try_merge_inline(b, iter,
 					      bkey_to_packed(insert),
 					      where, false))
-			return;
+			return NULL;
 	}
 
-	*where_ret = where;
+	/*
+	 * Can we overwrite the current key, instead of doing a memmove()?
+	 *
+	 * This is only legal for extents that are marked as deleted - because
+	 * extents are marked as deleted iff they are 0 size, deleted extents
+	 * don't overlap with any other existing keys. Non extents marked as
+	 * deleted may be needed as whiteouts, until the node is rewritten.
+	 */
+	if (b->ops->is_extents &&
+	    where != bset_bkey_last(i) &&
+	    where->u64s == insert->k.u64s &&
+	    bkey_deleted(where)) {
+		if (!bkey_deleted(&insert->k))
+			btree_keys_account_key_add(&b->nr,
+					bkey_to_packed(insert));
+
+		bkey_copy((void *) where, insert);
+		return NULL;
+	}
 
 	src = bkey_pack_key(&packed, &insert->k, f)
 		? &packed
@@ -957,10 +939,9 @@ void bch_bset_insert(struct btree_keys *b,
 		btree_keys_account_key_add(&b->nr, src);
 
 	bch_bset_fix_lookup_table(b, t, where);
-	bch_btree_node_iter_fix(iter, b, where);
-
-	bch_btree_node_iter_verify(iter, b);
 	bch_verify_btree_nr_keys(b);
+
+	return where;
 }
 EXPORT_SYMBOL(bch_bset_insert);
 
