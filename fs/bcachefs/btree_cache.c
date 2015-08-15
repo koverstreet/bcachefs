@@ -601,14 +601,12 @@ static noinline struct btree *bch_btree_node_fill(struct btree_iter *iter,
 	bch_btree_node_read(c, b);
 	six_unlock_write(&b->lock);
 
-	if (btree_want_intent(iter, level)) {
-		mark_btree_node_intent_locked(iter, level);
-	} else {
-		mark_btree_node_read_locked(iter, level);
+	mark_btree_node_locked(iter, level, btree_lock_want(iter, level));
+
+	if (btree_lock_want(iter, level) == SIX_LOCK_read)
 		BUG_ON(!six_trylock_convert(&b->lock,
 					    SIX_LOCK_intent,
 					    SIX_LOCK_read));
-	}
 
 	return b;
 }

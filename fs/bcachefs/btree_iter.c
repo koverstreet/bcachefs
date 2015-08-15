@@ -81,17 +81,18 @@ static bool btree_lock_upgrade(struct btree_iter *iter, unsigned level)
 	if (btree_node_intent_locked(iter, level))
 		return true;
 
-	if (is_btree_node(iter, level) &&
-	    (btree_node_locked(iter, level)
-	     ? six_trylock_convert(&b->lock, SIX_LOCK_read, SIX_LOCK_intent)
-	     : six_relock_intent(&b->lock, iter->lock_seq[level]))) {
+	if (!is_btree_node(iter, level))
+		return false;
+
+	if (btree_node_locked(iter, level)
+	    ? six_trylock_convert(&b->lock, SIX_LOCK_read, SIX_LOCK_intent)
+	    : six_relock_intent(&b->lock, iter->lock_seq[level])) {
 		mark_btree_node_intent_locked(iter, level);
 		trace_bcache_btree_upgrade_lock(b, iter);
 		return true;
 	}
 
-	if (is_btree_node(iter, level))
-		trace_bcache_btree_upgrade_lock_fail(b, iter);
+	trace_bcache_btree_upgrade_lock_fail(b, iter);
 	return false;
 }
 
@@ -135,27 +136,22 @@ int bch_btree_iter_unlock(struct btree_iter *iter)
 	return iter->error;
 }
 
-#define __btree_node_relock(b, iter, _level, type)			\
-({									\
-	bool _locked = six_relock_##type(&(b)->lock,			\
-					 (iter)->lock_seq[_level]);	\
-									\
-	if (_locked)							\
-		mark_btree_node_##type##_locked((iter), (_level));	\
-									\
-	_locked;							\
-})
-
 bool btree_node_relock(struct btree_iter *iter, unsigned level)
 {
 	struct btree *b = iter->nodes[level];
+	enum six_lock_type type = btree_lock_want(iter, level);
 
-	return btree_node_locked(iter, level) ||
-		(!race_fault() &&
-		 is_btree_node(iter, level) &&
-		 (btree_want_intent(iter, level)
-		  ? __btree_node_relock(b, iter, level, intent)
-		  : __btree_node_relock(b, iter, level, read)));
+	if (btree_node_locked(iter, level))
+		return true;
+
+	if (!race_fault() &&
+	    is_btree_node(iter, level) &&
+	    six_relock_type(&b->lock, iter->lock_seq[level], type)) {
+		mark_btree_node_locked(iter, level, type);
+		return true;
+	}
+
+	return false;
 }
 
 /* Btree iterator: */
