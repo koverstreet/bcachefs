@@ -123,18 +123,31 @@ static void bch_pending_btree_node_free_insert_done(struct cache_set *c,
 found:
 	d->index_update_done = true;
 
+	/*
+	 * We're dropping @k from the btree, but it's still live until the index
+	 * update is persistent so we need to keep a reference around for mark
+	 * and sweep to find - that's primarily what the btree_node_pending_free
+	 * list is for.
+	 *
+	 * So here (when we set index_update_done = true), we're moving an
+	 * existing reference to a different part of the larger "gc keyspace" -
+	 * and the new position comes after the old position, since GC marks the
+	 * pending free list after it walks the btree.
+	 *
+	 * If we move the reference while mark and sweep is _between_ the old
+	 * and the new position, mark and sweep will see the reference twice and
+	 * it'll get double accounted - so check for that here and subtract to
+	 * cancel out one of mark and sweep's markings if necessary:
+	 */
+
 	if ((b
 	     ? !gc_will_visit_node(c, b)
 	     : !gc_will_visit_root(c, id)) &&
 	    gc_will_visit(c, GC_PHASE_PENDING_DELETE, POS_MIN, 0))
 		bch_mark_pointers(c, NULL,
 				  bkey_i_to_s_c_extent(&d->key),
-				  CACHE_BTREE_NODE_SIZE(&c->sb),
+				  -CACHE_BTREE_NODE_SIZE(&c->sb),
 				  false, true, true);
-
-	/*
-	 * XXX; check gc position and mark/unmark as needed
-	 */
 
 	mutex_unlock(&c->btree_node_pending_free_lock);
 }
