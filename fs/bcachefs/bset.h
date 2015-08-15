@@ -274,10 +274,12 @@ struct btree_keys {
 #endif
 };
 
+extern bool bch_expensive_debug_checks;
+
 static inline bool btree_keys_expensive_checks(struct btree_keys *b)
 {
 #ifdef CONFIG_BCACHEFS_DEBUG
-	return *b->expensive_debug_checks;
+	return bch_expensive_debug_checks || *b->expensive_debug_checks;
 #else
 	return false;
 #endif
@@ -641,7 +643,7 @@ s64 __bch_count_data(struct btree_keys *);
 void __bch_count_data_verify(struct btree_keys *, int);
 void bch_dump_bucket(struct btree_keys *);
 void bch_btree_node_iter_verify(struct btree_node_iter *, struct btree_keys *);
-void bch_verify_btree_nr_keys(struct btree_keys *);
+void __bch_verify_btree_nr_keys(struct btree_keys *);
 
 #else
 
@@ -650,21 +652,27 @@ static inline void __bch_count_data_verify(struct btree_keys *b, int oldsize ) {
 static inline void bch_dump_bucket(struct btree_keys *b) {}
 static inline void bch_btree_node_iter_verify(struct btree_node_iter *iter,
 					      struct btree_keys *b) {}
-static inline void bch_verify_btree_nr_keys(struct btree_keys *b) {}
+static inline void __bch_verify_btree_nr_keys(struct btree_keys *b) {}
 
 #endif
 
 void bch_dump_bset(struct btree_keys *, struct bset *, unsigned);
 
-static inline int bch_count_data(struct btree_keys *b)
+static inline s64 bch_count_data(struct btree_keys *b)
 {
 	return btree_keys_expensive_checks(b) ? __bch_count_data(b) : -1;
 }
 
-static inline void bch_count_data_verify(struct btree_keys *b, int oldsize)
+static inline void bch_count_data_verify(struct btree_keys *b, s64 oldsize)
 {
 	if (btree_keys_expensive_checks(b))
-		__bch_count_data_verify(b, oldsize);
+		BUG_ON(oldsize != -1 && __bch_count_data(b) < oldsize);
+}
+
+static inline void bch_verify_btree_nr_keys(struct btree_keys *b)
+{
+	if (btree_keys_expensive_checks(b))
+		__bch_verify_btree_nr_keys(b);
 }
 
 #endif

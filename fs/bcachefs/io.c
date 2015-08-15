@@ -210,15 +210,6 @@ void bch_bbio_endio(struct bbio *bio)
 
 /* Writes */
 
-static inline bool version_stress_test(struct cache_set *c)
-{
-#ifdef CONFIG_BCACHEFS_DEBUG
-	return c->version_stress_test;
-#else
-	return false;
-#endif
-}
-
 static u32 checksum_bio(struct bio *bio, unsigned type)
 {
 	struct bio_vec bv;

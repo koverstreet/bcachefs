@@ -2389,5 +2389,12 @@ err:
 	return -ENOMEM;
 }
 
+#define BCH_DEBUG_PARAM(name, description)			\
+	bool bch_##name;					\
+	module_param_named(name, bch_##name, bool, 0644);	\
+	MODULE_PARM_DESC(name, description);
+BCH_DEBUG_PARAMS()
+#undef BCH_DEBUG_PARAM
+
 module_exit(bcache_exit);
 module_init(bcache_init);

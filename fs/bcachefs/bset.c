@@ -100,9 +100,6 @@ s64 __bch_count_data(struct btree_keys *b)
 	struct bkey_tup k;
 	u64 ret = 0;
 
-	if (!btree_keys_expensive_checks(b))
-		return -1;
-
 	if (b->ops->is_extents)
 		for_each_btree_node_key_unpack(b, &k, &iter)
 			ret += k.k.size;
@@ -110,23 +107,11 @@ s64 __bch_count_data(struct btree_keys *b)
 	return ret;
 }
 
-void __bch_count_data_verify(struct btree_keys *b, int oldsize)
-{
-	if (oldsize != -1) {
-		int newsize = __bch_count_data(b);
-
-		BUG_ON(newsize != -1 && newsize < oldsize);
-	}
-}
-
-void bch_verify_btree_nr_keys(struct btree_keys *b)
+void __bch_verify_btree_nr_keys(struct btree_keys *b)
 {
 	struct btree_node_iter iter;
 	struct bkey_packed *k;
 	unsigned u64s = 0, packed = 0, unpacked = 0;
-
-	if (!btree_keys_expensive_checks(b))
-		return;
 
 	for_each_btree_node_key(b, k, &iter) {
 		u64s += k->u64s;

@@ -93,9 +93,6 @@ sysfs_time_stats_attribute(btree_read, ms, us);
 sysfs_time_stats_attribute(journal_full, sec, ms);
 
 read_attribute(btree_gc_running);
-rw_attribute(btree_gc_always_rewrite);
-rw_attribute(btree_gc_rewrite_disabled);
-rw_attribute(btree_gc_coalesce_disabled);
 
 read_attribute(btree_nodes);
 read_attribute(btree_used_percent);
@@ -145,12 +142,8 @@ rw_attribute(io_error_limit);
 rw_attribute(io_error_halflife);
 rw_attribute(verify);
 rw_attribute(bypass_torture_test);
-rw_attribute(key_merging_disabled);
-rw_attribute(expensive_debug_checks);
-rw_attribute(version_stress_test);
 rw_attribute(cache_replacement_policy);
 rw_attribute(checksum_type);
-rw_attribute(btree_shrinker_disabled);
 
 rw_attribute(foreground_write_ratelimit_enabled);
 rw_attribute(copy_gc_enabled);
@@ -177,6 +170,10 @@ read_attribute(meta_replicas_have);
 rw_attribute(data_replicas_want);
 read_attribute(data_replicas_have);
 read_attribute(tier);
+
+#define BCH_DEBUG_PARAM(name, description) rw_attribute(name);
+	BCH_DEBUG_PARAMS()
+#undef BCH_DEBUG_PARAM
 
 static struct attribute sysfs_state_rw = {
 	.name = "state",
@@ -664,18 +661,6 @@ SHOW(bch_cache_set)
 	sysfs_print(congested_write_threshold_us,
 		    c->congested_write_threshold_us);
 
-	if (attr == &sysfs_journal_debug)
-		return bch_journal_print_debug(&c->journal, buf);
-
-	sysfs_printf(verify, "%i", c->verify);
-	sysfs_printf(key_merging_disabled, "%i", c->key_merging_disabled);
-	sysfs_printf(expensive_debug_checks,
-		     "%i", c->expensive_debug_checks);
-	sysfs_printf(version_stress_test, "%i", c->version_stress_test);
-	sysfs_printf(btree_gc_always_rewrite, "%i", c->gc_always_rewrite);
-	sysfs_printf(btree_gc_rewrite_disabled,	"%i", c->gc_rewrite_disabled);
-	sysfs_printf(btree_gc_coalesce_disabled, "%i", c->gc_coalesce_disabled);
-	sysfs_printf(btree_shrinker_disabled, "%i", c->shrinker_disabled);
 	sysfs_printf(foreground_write_ratelimit_enabled, "%i",
 		     c->foreground_write_ratelimit_enabled);
 	sysfs_printf(copy_gc_enabled, "%i", c->copy_gc_enabled);
@@ -700,6 +685,15 @@ SHOW(bch_cache_set)
 		     CACHE_SET_DATA_REPLICAS_WANT(&c->sb));
 	sysfs_printf(data_replicas_have, "%llu",
 		     CACHE_SET_DATA_REPLICAS_HAVE(&c->sb));
+
+	/* Debugging: */
+
+	if (attr == &sysfs_journal_debug)
+		return bch_journal_print_debug(&c->journal, buf);
+
+#define BCH_DEBUG_PARAM(name, description) sysfs_print(name, c->name);
+	BCH_DEBUG_PARAMS()
+#undef BCH_DEBUG_PARAM
 
 	if (!test_bit(CACHE_SET_RUNNING, &c->flags))
 		return -EPERM;
@@ -779,14 +773,6 @@ STORE(__bch_cache_set)
 	sysfs_clear_time_stats(&c->journal.full_time, journal_full);
 
 	sysfs_strtoul(journal_delay_ms, c->journal.delay_ms);
-	sysfs_strtoul(verify, c->verify);
-	sysfs_strtoul(key_merging_disabled, c->key_merging_disabled);
-	sysfs_strtoul(expensive_debug_checks, c->expensive_debug_checks);
-	sysfs_strtoul(version_stress_test, c->version_stress_test);
-	sysfs_strtoul(btree_gc_always_rewrite, c->gc_always_rewrite);
-	sysfs_strtoul(btree_gc_rewrite_disabled, c->gc_rewrite_disabled);
-	sysfs_strtoul(btree_gc_coalesce_disabled, c->gc_coalesce_disabled);
-	sysfs_strtoul(btree_shrinker_disabled, c->shrinker_disabled);
 	sysfs_strtoul(foreground_write_ratelimit_enabled,
 		      c->foreground_write_ratelimit_enabled);
 
@@ -849,6 +835,12 @@ STORE(__bch_cache_set)
 	sysfs_strtoul(tiering_percent,		c->tiering_percent);
 	sysfs_pd_controller_store(tiering,	&c->tiering_pd);
 
+	/* Debugging: */
+
+#define BCH_DEBUG_PARAM(name, description) sysfs_strtoul(name, c->name);
+	BCH_DEBUG_PARAMS()
+#undef BCH_DEBUG_PARAM
+
 	if (!test_bit(CACHE_SET_RUNNING, &c->flags))
 		return -EPERM;
 
@@ -877,9 +869,10 @@ STORE(__bch_cache_set)
 			return r;
 	}
 
-	if (attr == &sysfs_trigger_gc) {
+	/* Debugging: */
+
+	if (attr == &sysfs_trigger_gc)
 		bch_gc(c);
-	}
 
 	if (attr == &sysfs_prune_cache) {
 		struct shrink_control sc;
@@ -996,22 +989,16 @@ static struct attribute *bch_cache_set_internal_files[] = {
 
 	&sysfs_trigger_gc,
 	&sysfs_prune_cache,
-#ifdef CONFIG_BCACHEFS_DEBUG
-	&sysfs_verify,
-	&sysfs_key_merging_disabled,
-	&sysfs_expensive_debug_checks,
-	&sysfs_version_stress_test,
-#endif
-	&sysfs_btree_gc_always_rewrite,
-	&sysfs_btree_gc_rewrite_disabled,
-	&sysfs_btree_gc_coalesce_disabled,
-	&sysfs_btree_shrinker_disabled,
 	&sysfs_foreground_write_ratelimit_enabled,
 	&sysfs_copy_gc_enabled,
 	&sysfs_tiering_enabled,
 	sysfs_pd_controller_files(tiering),
 	sysfs_pd_controller_files(foreground_write),
 	&sysfs_internal_uuid,
+
+#define BCH_DEBUG_PARAM(name, description) &sysfs_##name,
+	BCH_DEBUG_PARAMS()
+#undef BCH_DEBUG_PARAM
 
 	NULL
 };

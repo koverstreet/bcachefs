@@ -207,6 +207,44 @@
 #define bch_meta_write_fault(name)					\
 	 dynamic_fault("bcache:meta:write:" name)
 
+/* Parameters that are useful for debugging, but should always be compiled in: */
+#define BCH_DEBUG_PARAMS_ALWAYS()					\
+	BCH_DEBUG_PARAM(key_merging_disabled,				\
+		"Disables merging of extents")				\
+	BCH_DEBUG_PARAM(btree_gc_always_rewrite,			\
+		"Causes mark and sweep to compact and rewrite every "	\
+		"btree node it traverses")				\
+	BCH_DEBUG_PARAM(btree_gc_rewrite_disabled,			\
+		"Disables rewriting of btree nodes during mark and sweep")\
+	BCH_DEBUG_PARAM(btree_gc_coalesce_disabled,			\
+		"Disables coalescing of btree nodes")			\
+	BCH_DEBUG_PARAM(btree_shrinker_disabled,			\
+		"Disables the shrinker callback for the btree node cache")
+
+/* Parameters that should only be compiled in in debug mode: */
+#define BCH_DEBUG_PARAMS_DEBUG()					\
+	BCH_DEBUG_PARAM(expensive_debug_checks,				\
+		"Enables various runtime debugging checks that "	\
+		"significantly affect performance")			\
+	BCH_DEBUG_PARAM(debug_check_bkeys,				\
+		"Run bkey_debugcheck (primarily checking GC/allocation "\
+		"information) when iterating over keys")		\
+	BCH_DEBUG_PARAM(version_stress_test,				\
+		"Assigns random version numbers to newly written "	\
+		"extents, to test overlapping extent cases")		\
+	BCH_DEBUG_PARAM(verify_btree_ondisk,				\
+		"Reread btree nodes at various points to verify the "	\
+		"mergesort in the read path against modifications "	\
+		"done in memory")					\
+
+#define BCH_DEBUG_PARAMS_ALL() BCH_DEBUG_PARAMS_ALWAYS() BCH_DEBUG_PARAMS_DEBUG()
+
+#ifdef CONFIG_BCACHEFS_DEBUG
+#define BCH_DEBUG_PARAMS() BCH_DEBUG_PARAMS_ALL()
+#else
+#define BCH_DEBUG_PARAMS() BCH_DEBUG_PARAMS_ALWAYS()
+#endif
+
 #include "alloc_types.h"
 #include "blockdev_types.h"
 #include "buckets_types.h"
@@ -648,14 +686,6 @@ struct cache_set {
 	unsigned		error_limit;
 	unsigned		error_decay;
 
-	bool			expensive_debug_checks;
-	unsigned		version_stress_test:1;
-	unsigned		verify:1;
-	unsigned		key_merging_disabled:1;
-	unsigned		gc_always_rewrite:1;
-	unsigned		gc_rewrite_disabled:1;
-	unsigned		gc_coalesce_disabled:1;
-	unsigned		shrinker_disabled:1;
 	unsigned		foreground_write_ratelimit_enabled:1;
 	unsigned		copy_gc_enabled:1;
 	unsigned		tiering_enabled:1;
@@ -671,6 +701,10 @@ struct cache_set {
 	 * below this percentage
 	 */
 	unsigned		sector_reserve_percent;
+
+#define BCH_DEBUG_PARAM(name, description) bool name;
+	BCH_DEBUG_PARAMS_ALL()
+#undef BCH_DEBUG_PARAM
 };
 
 static inline unsigned bucket_pages(const struct cache *ca)

@@ -4,6 +4,7 @@
 #include "btree_io.h"
 #include "btree_iter.h"
 #include "btree_locking.h"
+#include "debug.h"
 #include "extents.h"
 
 #include <trace/events/bcachefs.h>
@@ -230,7 +231,7 @@ static unsigned long bch_mca_scan(struct shrinker *shrink,
 
 	u64 start_time = local_clock();
 
-	if (c->shrinker_disabled)
+	if (btree_shrinker_disabled(c))
 		return SHRINK_STOP;
 
 	if (c->btree_cache_alloc_lock)
@@ -324,7 +325,7 @@ static unsigned long bch_mca_count(struct shrinker *shrink,
 	struct cache_set *c = container_of(shrink, struct cache_set,
 					   btree_cache_shrink);
 
-	if (c->shrinker_disabled)
+	if (btree_shrinker_disabled(c))
 		return 0;
 
 	if (c->btree_cache_alloc_lock)
@@ -403,10 +404,14 @@ int bch_btree_cache_alloc(struct cache_set *c)
 
 	c->verify_ondisk = (void *)
 		__get_free_pages(GFP_KERNEL, ilog2(btree_pages(c)));
+	if (!c->verify_ondisk)
+		return -ENOMEM;
 
 	c->verify_data = mca_bucket_alloc(c, GFP_KERNEL);
-	if (c->verify_data)
-		list_del_init(&c->verify_data->list);
+	if (!c->verify_data)
+		return -ENOMEM;
+
+	list_del_init(&c->verify_data->list);
 #endif
 
 	c->btree_cache_shrink.count_objects = bch_mca_count;

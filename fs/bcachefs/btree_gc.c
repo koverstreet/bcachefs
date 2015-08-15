@@ -152,14 +152,14 @@ bool btree_gc_mark_node(struct cache_set *c, struct btree *b)
 				    bch_btree_key_recalc_oldest_gen(c, k));
 		}
 
-		if (c->gc_rewrite_disabled)
+		if (btree_gc_rewrite_disabled(c))
 			return false;
 
 		if (stale > 10)
 			return true;
 	}
 
-	if (c->gc_always_rewrite)
+	if (btree_gc_always_rewrite(c))
 		return true;
 
 	return false;
@@ -433,9 +433,6 @@ static void bch_coalesce_nodes(struct btree *old_nodes[GC_MERGE_NODES],
 	struct bkey_format new_format;
 	int ret;
 
-	if (c->gc_coalesce_disabled)
-		return;
-
 	memset(new_nodes, 0, sizeof(new_nodes));
 	bch_keylist_init(&keylist, NULL, 0);
 
@@ -692,6 +689,9 @@ static void bch_coalesce(struct cache_set *c)
 {
 	u64 start_time = local_clock();
 	enum btree_id id;
+
+	if (btree_gc_coalesce_disabled(c))
+		return;
 
 	if (test_bit(CACHE_SET_GC_FAILURE, &c->flags))
 		return;

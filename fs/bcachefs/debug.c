@@ -35,7 +35,7 @@ static void btree_verify_endio(struct bio *bio)
 	closure_put(cl);
 }
 
-void bch_btree_verify(struct cache_set *c, struct btree *b)
+void __bch_btree_verify(struct cache_set *c, struct btree *b)
 {
 	struct btree *v = c->verify_data;
 	struct btree_node *n_ondisk, *n_sorted, *n_inmemory;
@@ -43,9 +43,6 @@ void bch_btree_verify(struct cache_set *c, struct btree *b)
 	struct extent_pick_ptr pick;
 	struct bio *bio;
 	struct closure cl;
-
-	if (!c->verify || !c->verify_ondisk)
-		return;
 
 	closure_init_stack(&cl);
 

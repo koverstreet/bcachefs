@@ -215,7 +215,7 @@ static inline struct bkey_s_c __btree_iter_peek_all(struct btree_iter *iter)
 	bkey_disassemble(&iter->tup, f, k);
 	ret = bkey_tup_to_s_c(&iter->tup);
 
-	if (expensive_debug_checks(iter->c))
+	if (debug_check_bkeys(iter->c))
 		bkey_debugcheck(iter->c, iter->nodes[iter->level], ret);
 
 	return ret;
@@ -235,7 +235,7 @@ static inline struct bkey_s_c __btree_iter_peek(struct btree_iter *iter)
 	bkey_disassemble(&iter->tup, f, k);
 	ret = bkey_tup_to_s_c(&iter->tup);
 
-	if (expensive_debug_checks(iter->c))
+	if (debug_check_bkeys(iter->c))
 		bkey_debugcheck(iter->c, iter->nodes[iter->level], ret);
 
 	return ret;
