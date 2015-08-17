@@ -287,6 +287,16 @@ int bch_dirent_rename(struct cache_set *c,
 
 	do {
 		/*
+		 * When taking intent locks, we have to take interior node locks
+		 * before leaf node locks; if the second iter we traverse has
+		 * locks_want > the first iter, we could end up taking an intent
+		 * lock on an interior node after traversing the first iterator
+		 * only took an intent lock on a leaf.
+		 */
+		src_iter.locks_want = dst_iter.locks_want =
+			max(src_iter.locks_want, dst_iter.locks_want);
+
+		/*
 		 * Have to traverse lower btree nodes before higher - due to
 		 * lock ordering.
 		 */

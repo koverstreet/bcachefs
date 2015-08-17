@@ -399,15 +399,34 @@ static void btree_iter_up(struct btree_iter *iter)
 	btree_node_unlock(iter, iter->level++);
 }
 
-static void verify_no_read_locks_held(struct btree_iter *iter)
+static void btree_iter_verify_locking(struct btree_iter *iter)
 {
 #ifdef CONFIG_BCACHEFS_DEBUG
 	struct btree_iter *linked;
 	unsigned level;
 
+	/*
+	 * Can't hold _any_ read locks (including in linked iterators) when
+	 * taking intent locks, that leads to a fun deadlock involving write
+	 * locks and journal reservations
+	 *
+	 * We could conceivably drop read locks, then retake them and if
+	 * retaking fails then return -EINTR... but, let's keep things simple
+	 * for now:
+	 */
+
 	for_each_linked_btree_iter(iter, linked)
 		for (level = 0; level < BTREE_MAX_DEPTH; level++)
 			BUG_ON(btree_node_read_locked(linked, level));
+
+	/*
+	 * Also, we have to take intent locks on interior nodes before leaf
+	 * nodes - verify that linked iterators don't have intent locks held at
+	 * depths lower than where we're at:
+	 */
+	for_each_linked_btree_iter(iter, linked)
+		for (level = 0; level < iter->level; level++)
+			BUG_ON(btree_node_intent_locked(linked, level));
 #endif
 }
 
@@ -426,17 +445,8 @@ static int __must_check __bch_btree_iter_traverse(struct btree_iter *iter,
 	if (!iter->nodes[iter->level])
 		return 0;
 
-	/*
-	 * Can't hold _any_ read locks (including in linked iterators) when
-	 * taking intent locks, that leads to a fun deadlock involving write
-	 * locks and journal reservations
-	 *
-	 * We could conceivably drop read locks, then retake them and if
-	 * retaking fails then return -EINTR... but, let's keep things simple
-	 * for now:
-	 */
 	if (iter->locks_want >= 0)
-		verify_no_read_locks_held(iter);
+		btree_iter_verify_locking(iter);
 retry:
 	/*
 	 * If the current node isn't locked, go up until we have a locked node
