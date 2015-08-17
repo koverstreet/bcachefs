@@ -1278,16 +1278,6 @@ static int btree_split(struct btree *b, struct btree_iter *iter,
 		bch_btree_node_write(n2, &as->cl, NULL);
 
 		/*
-		 * Just created a new node - if gc is still going to visit the
-		 * old node, but not the node we just created, mark it:
-		 */
-		btree_node_lock_write(b, iter);
-		if (gc_will_visit_node(c, n2) &&
-		    !gc_will_visit_node(c, n1))
-			btree_gc_mark_node(c, n1);
-		btree_node_unlock_write(b, iter);
-
-		/*
 		 * Note that on recursive parent_keys == insert_keys, so we
 		 * can't start adding new keys to parent_keys before emptying it
 		 * out (which we did with btree_split_insert_keys() above)
@@ -1448,12 +1438,17 @@ int bch_btree_insert_node(struct btree *b,
 				bch_btree_reserve_put(c, reserve);
 				return -EIO;
 			}
+
+			/* Hack, because gc and splitting nodes doesn't mix yet: */
+			down_read(&c->gc_lock);
 		}
 
 		ret = btree_split(b, iter, insert_keys, flags, reserve, as);
 
-		if (!b->level)
+		if (!b->level) {
+			up_read(&c->gc_lock);
 			bch_btree_reserve_put(c, reserve);
+		}
 
 		return ret;
 
@@ -1704,7 +1699,9 @@ split:
 			goto err;
 		}
 
+		down_read(&c->gc_lock);
 		ret = btree_split(b, split, NULL, flags, reserve, as);
+		up_read(&c->gc_lock);
 
 		bch_btree_reserve_put(c, reserve);
 

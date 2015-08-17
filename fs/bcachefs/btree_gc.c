@@ -129,7 +129,7 @@ static inline bool btree_node_has_ptrs(struct btree *b)
 	return b->btree_id == BTREE_ID_EXTENTS || b->level > 0;
 }
 
-bool btree_gc_mark_node(struct cache_set *c, struct btree *b)
+static bool btree_gc_mark_node(struct cache_set *c, struct btree *b)
 {
 	struct bkey_format *f = &b->keys.format;
 
