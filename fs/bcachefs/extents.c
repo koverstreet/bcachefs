@@ -399,10 +399,10 @@ static void btree_ptr_debugcheck(struct cache_set *c, struct btree *b,
 				goto err;
 
 			do {
-				seq = read_seqcount_begin(&c->gc_cur_lock);
-				bad = (!__gc_will_visit_node(c, b) &&
-				       !g->mark.is_metadata);
-			} while (read_seqcount_retry(&c->gc_cur_lock, seq));
+				seq = read_seqcount_begin(&c->gc_pos_lock);
+				bad = gc_pos_cmp(c->gc_pos, gc_pos_btree_node(b)) > 0 &&
+				       !g->mark.is_metadata;
+			} while (read_seqcount_retry(&c->gc_pos_lock, seq));
 
 			err = "inconsistent";
 			if (bad)
@@ -775,8 +775,9 @@ static int bch_add_sectors(struct cache_set *c, struct btree *b,
 		struct bkey_s_c_extent e = bkey_s_c_to_extent(k);
 		int ret;
 
-		ret = bch_mark_pointers(c, b, e, sectors, fail_if_stale,
-					false, false);
+		ret = bch_mark_pointers(c, e, sectors, fail_if_stale,
+					false, false,
+					gc_pos_btree_node(b));
 		if (ret)
 			return ret;
 
@@ -1401,7 +1402,7 @@ static void bch_extent_debugcheck(struct cache_set *c, struct btree *b,
 			do {
 				struct bucket_mark mark;
 
-				seq = read_seqcount_begin(&c->gc_cur_lock);
+				seq = read_seqcount_begin(&c->gc_pos_lock);
 				mark = READ_ONCE(g->mark);
 
 				/* between mark and bucket gen */
@@ -1416,13 +1417,16 @@ static void bch_extent_debugcheck(struct cache_set *c, struct btree *b,
 						 "key too stale: %i",
 						 stale);
 
-				bad = (!stale &&
-				       !__gc_will_visit_node(c, b) &&
-				       (mark.is_metadata ||
-					(!mark.dirty_sectors &&
-					 !mark.owned_by_allocator &&
-					 dirty)));
-			} while (read_seqcount_retry(&c->gc_cur_lock, seq));
+				if (stale)
+					break;
+
+				bad = (mark.is_metadata ||
+				       (gc_pos_cmp(c->gc_pos, gc_pos_btree_node(b)) > 0 &&
+					!mark.owned_by_allocator &&
+					!(dirty
+					  ? mark.dirty_sectors
+					  : mark.cached_sectors)));
+			} while (read_seqcount_retry(&c->gc_pos_lock, seq));
 
 			if (bad)
 				goto bad_ptr;

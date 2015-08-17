@@ -268,6 +268,12 @@ enum gc_phase {
 	GC_PHASE_DONE
 };
 
+struct gc_pos {
+	enum gc_phase		phase;
+	struct bpos		pos;
+	unsigned		level;
+};
+
 struct cache_group {
 	seqcount_t		lock;
 	unsigned		nr_devices;
@@ -591,13 +597,11 @@ struct cache_set {
 	 * gc_cur_phase == GC_PHASE_DONE indicates that gc is finished/not
 	 * currently running, and gc marks are currently valid
 	 *
-	 * Protected by gc_cur_lock. Only written to by GC thread, so GC thread
+	 * Protected by gc_pos_lock. Only written to by GC thread, so GC thread
 	 * can read without a lock.
 	 */
-	seqcount_t		gc_cur_lock;
-	enum gc_phase		gc_cur_phase;
-	unsigned		gc_cur_level;
-	struct bpos		gc_cur_pos;
+	seqcount_t		gc_pos_lock;
+	struct gc_pos		gc_pos;
 
 	/*
 	 * The allocation code needs gc_mark in struct bucket to be correct, but

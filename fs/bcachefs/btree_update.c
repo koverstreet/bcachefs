@@ -140,14 +140,12 @@ found:
 	 * cancel out one of mark and sweep's markings if necessary:
 	 */
 
-	if ((b
-	     ? !gc_will_visit_node(c, b)
-	     : !gc_will_visit_root(c, id)) &&
-	    gc_will_visit(c, GC_PHASE_PENDING_DELETE, POS_MIN, 0))
-		bch_mark_pointers(c, NULL,
-				  bkey_i_to_s_c_extent(&d->key),
+	if (gc_pos_cmp(c->gc_pos, gc_phase(GC_PHASE_PENDING_DELETE)) < 0)
+		bch_mark_pointers(c, bkey_i_to_s_c_extent(&d->key),
 				  -CACHE_BTREE_NODE_SIZE(&c->sb),
-				  false, true, true);
+				  false, true, false, b
+				  ? gc_pos_btree_node(b)
+				  : gc_pos_btree_root(id));
 
 	mutex_unlock(&c->btree_node_pending_free_lock);
 }
@@ -208,10 +206,9 @@ static void bch_btree_node_free_ondisk(struct cache_set *c,
 	mutex_lock(&c->btree_node_pending_free_lock);
 	list_del(&pending->list);
 
-	if (!gc_will_visit(c, GC_PHASE_PENDING_DELETE, POS_MIN, 0))
-		bch_mark_pointers(c, NULL, bkey_i_to_s_c_extent(&pending->key),
-				  -CACHE_BTREE_NODE_SIZE(&c->sb),
-				  false, true, true);
+	bch_mark_pointers(c, bkey_i_to_s_c_extent(&pending->key),
+			  -CACHE_BTREE_NODE_SIZE(&c->sb), false, true,
+			  false, gc_phase(GC_PHASE_PENDING_DELETE));
 
 	mutex_unlock(&c->btree_node_pending_free_lock);
 }
@@ -324,6 +321,8 @@ struct btree *btree_node_alloc_replacement(struct cache_set *c,
 
 static void __bch_btree_set_root(struct cache_set *c, struct btree *b)
 {
+	bool stale;
+
 	/* Root nodes cannot be reaped */
 	mutex_lock(&c->btree_cache_lock);
 	list_del_init(&b->list);
@@ -332,16 +331,10 @@ static void __bch_btree_set_root(struct cache_set *c, struct btree *b)
 	spin_lock(&c->btree_root_lock);
 	btree_node_root(b) = b;
 
-	if (b->btree_id != c->gc_cur_phase
-	    ? b->btree_id < c->gc_cur_phase
-	    : b->level <= c->gc_cur_level) {
-		bool stale = bch_mark_pointers(c, NULL,
-					       bkey_i_to_s_c_extent(&b->key),
-					       CACHE_BTREE_NODE_SIZE(&c->sb),
-					       true, true, false);
-
-		BUG_ON(stale);
-	}
+	stale = bch_mark_pointers(c, bkey_i_to_s_c_extent(&b->key),
+				  CACHE_BTREE_NODE_SIZE(&c->sb), true, true,
+				  false, gc_pos_btree_root(b->btree_id));
+	BUG_ON(stale);
 	spin_unlock(&c->btree_root_lock);
 
 	bch_recalc_btree_reserve(c);
@@ -552,9 +545,10 @@ static bool bch_insert_fixup_btree_ptr(struct btree_iter *iter,
 	if (bkey_extent_is_data(&insert->k)) {
 		bool stale;
 
-		stale = bch_mark_pointers(c, b, bkey_i_to_s_c_extent(insert),
+		stale = bch_mark_pointers(c, bkey_i_to_s_c_extent(insert),
 					  CACHE_BTREE_NODE_SIZE(&c->sb),
-					  true, true, false);
+					  true, true, false,
+					  gc_pos_btree_node(b));
 		BUG_ON(stale);
 	}
 

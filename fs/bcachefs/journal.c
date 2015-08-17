@@ -940,8 +940,9 @@ static int bch_journal_replay_key(struct cache_set *c, enum btree_id id,
 	 * them again
 	 */
 	if (do_subtract)
-		bch_mark_pointers(c, NULL, bkey_i_to_s_c_extent(&temp.key),
-				  -temp.key.k.size, false, false, true);
+		bch_mark_pointers(c, bkey_i_to_s_c_extent(&temp.key),
+				  -temp.key.k.size, false, false,
+				  true, GC_POS_MIN);
 
 	return 0;
 }

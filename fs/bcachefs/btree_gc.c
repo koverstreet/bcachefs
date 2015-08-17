@@ -111,9 +111,10 @@ void __bch_btree_mark_key(struct cache_set *c, int level, struct bkey_s_c k)
 	if (bkey_extent_is_data(k.k)) {
 		struct bkey_s_c_extent e = bkey_s_c_to_extent(k);
 
-		bch_mark_pointers(c, NULL, e, level
+		bch_mark_pointers(c, e, level
 				  ? CACHE_BTREE_NODE_SIZE(&c->sb)
-				  : e.k->size, false, level != 0, true);
+				  : e.k->size, false, level != 0,
+				  true, GC_POS_MIN);
 	}
 }
 
@@ -165,22 +166,17 @@ static bool btree_gc_mark_node(struct cache_set *c, struct btree *b)
 	return false;
 }
 
-static inline void __gc_set_pos(struct cache_set *c, enum gc_phase phase,
-				struct bpos pos, unsigned level)
+static inline void __gc_pos_set(struct cache_set *c, struct gc_pos new_pos)
 {
-	write_seqcount_begin(&c->gc_cur_lock);
-	c->gc_cur_phase = phase;
-	c->gc_cur_pos	= pos;
-	c->gc_cur_level = level;
-	write_seqcount_end(&c->gc_cur_lock);
+	write_seqcount_begin(&c->gc_pos_lock);
+	c->gc_pos = new_pos;
+	write_seqcount_end(&c->gc_pos_lock);
 }
 
-static inline void gc_set_pos(struct cache_set *c, enum gc_phase phase,
-			      struct bpos pos, unsigned level)
+static inline void gc_pos_set(struct cache_set *c, struct gc_pos new_pos)
 {
-	BUG_ON(!__gc_will_visit(c, phase, pos, level));
-
-	__gc_set_pos(c, phase, pos, level);
+	BUG_ON(gc_pos_cmp(new_pos, c->gc_pos) <= 0);
+	__gc_pos_set(c, new_pos);
 }
 
 static int bch_gc_btree(struct cache_set *c, enum btree_id btree_id)
@@ -199,12 +195,7 @@ static int bch_gc_btree(struct cache_set *c, enum btree_id btree_id)
 
 		should_rewrite = btree_gc_mark_node(c, b);
 
-		BUG_ON(bkey_cmp(c->gc_cur_pos, b->key.k.p) > 0);
-		BUG_ON(!gc_will_visit_node(c, b));
-
-		gc_set_pos(c, b->btree_id, b->key.k.p, b->level);
-
-		BUG_ON(gc_will_visit_node(c, b));
+		gc_pos_set(c, gc_pos_btree_node(b));
 
 		if (should_rewrite)
 			bch_btree_node_rewrite(b, &iter, false);
@@ -217,7 +208,7 @@ static int bch_gc_btree(struct cache_set *c, enum btree_id btree_id)
 
 	b = c->btree_roots[btree_id];
 	__bch_btree_mark_key(c, b->level + 1, bkey_i_to_s_c(&b->key));
-	gc_set_pos(c, b->btree_id, POS_MAX, U8_MAX);
+	gc_pos_set(c, gc_pos_btree_root(b->btree_id));
 
 	spin_unlock(&c->btree_root_lock);
 	return 0;
@@ -289,14 +280,14 @@ static void bch_mark_pending_btree_node_frees(struct cache_set *c)
 	struct pending_btree_node_free *d;
 
 	mutex_lock(&c->btree_node_pending_free_lock);
-	gc_set_pos(c, GC_PHASE_PENDING_DELETE, POS_MIN, 0);
+	gc_pos_set(c, gc_phase(GC_PHASE_PENDING_DELETE));
 
 	list_for_each_entry(d, &c->btree_node_pending_free, list)
 		if (d->index_update_done)
-			bch_mark_pointers(c, NULL,
-					  bkey_i_to_s_c_extent(&d->key),
+			bch_mark_pointers(c, bkey_i_to_s_c_extent(&d->key),
 					  CACHE_BTREE_NODE_SIZE(&c->sb),
-					  false, true, true);
+					  false, true,
+					  true, GC_POS_MIN);
 	mutex_unlock(&c->btree_node_pending_free_lock);
 }
 
@@ -359,7 +350,7 @@ void bch_gc(struct cache_set *c)
 		ca->bucket_stats_cached = __bucket_stats_read(ca);
 
 	/* Indicates to buckets code that gc is now in progress: */
-	__gc_set_pos(c, 0, POS_MIN, 0);
+	__gc_pos_set(c, GC_POS_MIN);
 
 	/* Clear bucket marks: */
 	for_each_cache(ca, c, i)
@@ -372,9 +363,9 @@ void bch_gc(struct cache_set *c)
 	bch_mark_allocator_buckets(c);
 
 	/* Walk btree: */
-	while (c->gc_cur_phase < (int) BTREE_ID_NR) {
-		int ret = c->btree_roots[c->gc_cur_phase]
-			? bch_gc_btree(c, c->gc_cur_phase)
+	while (c->gc_pos.phase < (int) BTREE_ID_NR) {
+		int ret = c->btree_roots[c->gc_pos.phase]
+			? bch_gc_btree(c, c->gc_pos.phase)
 			: 0;
 
 		if (ret) {
@@ -384,7 +375,7 @@ void bch_gc(struct cache_set *c)
 			return;
 		}
 
-		gc_set_pos(c, c->gc_cur_phase + 1, POS_MIN, 0);
+		gc_pos_set(c, gc_phase(c->gc_pos.phase + 1));
 	}
 
 	bch_mark_metadata(c);
@@ -397,8 +388,8 @@ void bch_gc(struct cache_set *c)
 		ca->inc_gen_needs_gc = 0;
 	}
 
-	/* Indicate to buckets code that gc is no longer in progress: */
-	gc_set_pos(c, GC_PHASE_DONE, POS_MIN, 0);
+	/* Indicates that gc is no longer in progress: */
+	gc_pos_set(c, gc_phase(GC_PHASE_DONE));
 
 	up_write(&c->gc_lock);
 	trace_bcache_gc_end(c);
@@ -820,7 +811,7 @@ int bch_initial_gc(struct cache_set *c, struct list_head *journal)
 	}
 
 	bch_mark_metadata(c);
-	gc_set_pos(c, GC_PHASE_DONE, POS_MIN, 0);
+	gc_pos_set(c, gc_phase(GC_PHASE_DONE));
 	set_bit(CACHE_SET_INITIAL_GC_DONE, &c->flags);
 
 	return 0;

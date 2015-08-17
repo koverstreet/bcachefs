@@ -76,11 +76,11 @@ struct bucket_stats bch_bucket_stats_read(struct cache *ca)
 	unsigned seq;
 
 	do {
-		seq = read_seqcount_begin(&c->gc_cur_lock);
-		ret = c->gc_cur_phase == GC_PHASE_DONE
+		seq = read_seqcount_begin(&c->gc_pos_lock);
+		ret = c->gc_pos.phase == GC_PHASE_DONE
 			? __bucket_stats_read(ca)
 			: ca->bucket_stats_cached;
-	} while (read_seqcount_retry(&c->gc_cur_lock, seq));
+	} while (read_seqcount_retry(&c->gc_pos_lock, seq));
 
 	return ret;
 }
@@ -110,7 +110,7 @@ static void bucket_stats_update(struct cache *ca,
 	BUG_ON(!may_make_unavailable &&
 	       is_available_bucket(old) &&
 	       !is_available_bucket(new) &&
-	       ca->set->gc_cur_phase == GC_PHASE_DONE);
+	       ca->set->gc_pos.phase == GC_PHASE_DONE);
 
 	preempt_disable();
 	stats = this_cpu_ptr(ca->bucket_stats_percpu);
@@ -209,9 +209,17 @@ do {								\
 	}							\
 } while (0)
 
+/*
+ * If is_gc is false, marks iff gc's position is _after_ gc_pos
+ *
+ * Checking against gc's position has to be done here, inside the cmpxchg()
+ * loop, to avoid racing with the start of gc clearing all the marks - GC does
+ * that with the gc pos seqlock held.
+ */
 static u8 bch_mark_bucket(struct cache_set *c, struct cache *ca,
-			  struct btree *b, const struct bch_extent_ptr *ptr,
-			  int sectors, bool dirty, bool metadata, bool is_gc)
+			  const struct bch_extent_ptr *ptr, int sectors,
+			  bool dirty, bool metadata, bool is_gc,
+			  struct gc_pos gc_pos)
 {
 	struct bucket_mark old, new;
 	unsigned long bucket_nr = PTR_BUCKET_NR(ca, ptr);
@@ -243,9 +251,7 @@ static u8 bch_mark_bucket(struct cache_set *c, struct cache *ca,
 			 * GC starting between when we check gc_cur_key and when
 			 * the GC zeroes out marks
 			 */
-			if (b
-			    ? gc_will_visit_node(c, b)
-			    : gc_will_visit_root(c, BTREE_ID_EXTENTS))
+			if (gc_will_visit(c, gc_pos))
 				return 0;
 
 			/*
@@ -297,9 +303,9 @@ static u8 bch_mark_bucket(struct cache_set *c, struct cache *ca,
 /*
  * Returns 0 on success, -1 on failure (pointer was stale)
  */
-int bch_mark_pointers(struct cache_set *c, struct btree *b,
-		      struct bkey_s_c_extent e, int sectors,
-		      bool fail_if_stale, bool metadata, bool is_gc)
+int bch_mark_pointers(struct cache_set *c, struct bkey_s_c_extent e,
+		      int sectors, bool fail_if_stale, bool metadata,
+		      bool is_gc, struct gc_pos pos)
 {
 	const struct bch_extent_ptr *ptr, *ptr2;
 	struct cache *ca;
@@ -345,8 +351,8 @@ int bch_mark_pointers(struct cache_set *c, struct btree *b,
 		 *
 		 *   Fuck me, I hate my life.
 		 */
-		stale = bch_mark_bucket(c, ca, b, ptr, sectors,
-					dirty, metadata, is_gc);
+		stale = bch_mark_bucket(c, ca, ptr, sectors, dirty,
+					metadata, is_gc, pos);
 		if (stale && dirty && fail_if_stale)
 			goto stale;
 	}
@@ -358,9 +364,9 @@ stale:
 		if (ptr2 == ptr)
 			break;
 
-		bch_mark_bucket(c, ca, b, ptr, -sectors,
+		bch_mark_bucket(c, ca, ptr, -sectors,
 				bch_extent_ptr_is_dirty(c, e, ptr),
-				metadata, is_gc);
+				metadata, is_gc, pos);
 	}
 	rcu_read_unlock();
 
