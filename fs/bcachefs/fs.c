@@ -136,18 +136,6 @@ static int inode_maybe_clear_dirty(struct bch_inode_info *ei,
 	return 0;
 }
 
-/*
- * For truncate: We need to set I_SIZE_DIRTY atomically with setting the new
- * (truncated, smaller) size
- */
-static int inode_set_size_and_dirty(struct bch_inode_info *ei,
-				    struct bch_inode *bi)
-{
-	bi->i_flags |= BCH_INODE_I_SIZE_DIRTY;
-	bi->i_size = ei->vfs_inode.i_size;
-	return 0;
-}
-
 static int inode_set_dirty(struct bch_inode_info *ei,
 			   struct bch_inode *bi)
 {
@@ -200,7 +188,8 @@ static int __must_check __bch_write_inode(struct cache_set *c,
 
 		ret = bch_btree_insert_at(&iter, &keylist_single(&inode.k_i),
 					  NULL, &ei->journal_seq,
-					  BTREE_INSERT_ATOMIC);
+					  BTREE_INSERT_ATOMIC|
+					  BTREE_INSERT_NOFAIL);
 	} while (ret == -EINTR);
 
 	if (!ret) {
@@ -658,6 +647,30 @@ out:
 	return ret;
 }
 
+/*
+ * For truncate: We need to set I_SIZE_DIRTY atomically with setting the new
+ * (truncated, smaller) size
+ */
+static int inode_set_size_and_dirty(struct bch_inode_info *ei,
+				    struct bch_inode *bi)
+{
+	bi->i_flags |= BCH_INODE_I_SIZE_DIRTY;
+	bi->i_size = ei->vfs_inode.i_size;
+	return 0;
+}
+
+static int inode_set_size(struct bch_inode_info *ei,
+			  struct bch_inode *bi)
+{
+	if (!atomic_long_read(&ei->i_size_dirty_count)) {
+		bi->i_flags	&= ~BCH_INODE_I_SIZE_DIRTY;
+		bi->i_size = ei->vfs_inode.i_size;
+	} else if (ei->vfs_inode.i_size < ei->i_size) {
+		bi->i_size = ei->vfs_inode.i_size;
+	}
+	return 0;
+}
+
 static int bch_setattr(struct dentry *dentry, struct iattr *iattr)
 {
 	struct inode *inode = dentry->d_inode;
@@ -682,6 +695,11 @@ static int bch_setattr(struct dentry *dentry, struct iattr *iattr)
 		 * i_size, and must be set atomically with setting the new
 		 * i_size:
 		 */
+
+		/*
+		 * XXX: do the i_size_write after the inode update succeeds, so
+		 * we're not inconsistent on failure
+		 */
 		mutex_lock(&ei->update_lock);
 		i_size_dirty_get(ei);
 		i_size_write(inode, iattr->ia_size);
@@ -694,6 +712,11 @@ static int bch_setattr(struct dentry *dentry, struct iattr *iattr)
 		ret = bch_truncate_page(inode->i_mapping, iattr->ia_size);
 		if (unlikely(ret))
 			return ret;
+
+		/*
+		 * XXX: if we error, we leak i_size_dirty count - and we can't
+		 * just put it, because it actually is still dirty
+		 */
 
 		if (iattr->ia_size > inode->i_size)
 			pagecache_isize_extended(inode, inode->i_size,
@@ -712,12 +735,20 @@ static int bch_setattr(struct dentry *dentry, struct iattr *iattr)
 		 */
 		i_size_dirty_put(ei);
 		inode->i_mtime = inode->i_ctime = CURRENT_TIME;
+
+		mutex_lock(&ei->update_lock);
+		setattr_copy(inode, iattr);
+		ret = __bch_write_inode(c, ei, inode_set_size);
+		mutex_unlock(&ei->update_lock);
+	} else {
+		mutex_lock(&ei->update_lock);
+		setattr_copy(inode, iattr);
+		ret = bch_write_inode(c, ei);
+		mutex_unlock(&ei->update_lock);
+
 	}
 
-	mutex_lock(&ei->update_lock);
-	setattr_copy(inode, iattr);
-	ret = bch_write_inode(c, ei); /* clears I_SIZE_DIRTY */
-	mutex_unlock(&ei->update_lock);
+	BUG_ON(inode->i_size < ei->i_size);
 
 	if (unlikely(ret))
 		return ret;
@@ -860,6 +891,13 @@ static int bch_mmap(struct file *file, struct vm_area_struct *vma)
 	return 0;
 }
 
+static int inode_set_partial_size(struct bch_inode_info *ei,
+				  struct bch_inode *bi)
+{
+	bi->i_size = ei->i_size;
+	return 0;
+}
+
 static int bch_fsync(struct file *file, loff_t start, loff_t end, int datasync)
 {
 	struct inode *inode = file->f_mapping->host;
@@ -875,18 +913,28 @@ static int bch_fsync(struct file *file, loff_t start, loff_t end, int datasync)
 	if (datasync && end <= ei->i_size)
 		goto out;
 
-	/* lock inode before checking i_size_dirty_count: */
-	if (atomic_long_read(&ei->i_size_dirty_count)) {
-		/*
-		 * We really just want to sync all the PageAppend pages:
-		 */
-		filemap_write_and_wait_range(inode->i_mapping, 0, LLONG_MAX);
-		inode_dio_wait(inode);
-	}
+	/*
+	 * If i_size is dirty, and disk i_size < end < memory i_size, then -
+	 * it's safe to write an i_size out that's intermediate, because... XXX
+	 * explain
+	 */
 
 	mutex_lock(&ei->update_lock);
-	BUG_ON(atomic_long_read(&ei->i_size_dirty_count));
-	ret = bch_write_inode(c, ei);
+
+	if (inode->i_size == ei->i_size) {
+		/* nothing to do */
+	} else if (!atomic_long_read(&ei->i_size_dirty_count)) {
+		ret = bch_write_inode(c, ei);
+	} else if (inode->i_size > ei->i_size) {
+		ei->i_size = min_t(u64, inode->i_size,
+				   roundup(end, PAGE_SIZE));
+
+		ret = __bch_write_inode(c, ei, inode_set_partial_size);
+	} else {
+		/* truncate.. */
+		BUG();
+	}
+
 	mutex_unlock(&ei->update_lock);
 out:
 	inode_unlock(inode);
