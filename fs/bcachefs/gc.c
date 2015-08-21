@@ -165,7 +165,7 @@ static int bch_gc_btree(struct cache_set *c, enum btree_id btree_id,
 	for (b = bch_btree_iter_peek_node(&iter);
 	     b;
 	     b = bch_btree_iter_next_node(&iter)) {
-		bch_verify_nr_live_u64s(&b->keys);
+		bch_verify_btree_keys_accounting(&b->keys);
 
 		should_rewrite = btree_gc_mark_node(c, b, stat);
 
@@ -354,6 +354,21 @@ void bch_gc(struct cache_set *c)
 
 /* Btree coalescing */
 
+static void recalc_packed_keys(struct btree *b)
+{
+	struct btree_node_iter iter;
+	struct bkey_packed *k;
+
+	b->keys.nr_packed_keys = 0;
+	b->keys.nr_unpacked_keys = 0;
+
+	for_each_btree_node_key(&b->keys, k, &iter)
+		if (bkey_packed(k))
+			b->keys.nr_packed_keys++;
+		else
+			b->keys.nr_unpacked_keys++;
+}
+
 static void bch_coalesce_nodes(struct btree *old_nodes[GC_MERGE_NODES],
 			       struct btree_iter *iter)
 {
@@ -406,6 +421,12 @@ static void bch_coalesce_nodes(struct btree *old_nodes[GC_MERGE_NODES],
 	}
 
 	bch_bkey_format_done(&new_format);
+
+	for (i = 0; i < nr_old_nodes; i++)
+		if (!btree_node_format_fits(old_nodes[i], &new_format)) {
+			trace_bcache_btree_gc_coalesce_fail(c);
+			return;
+		}
 
 	for (i = 0; i < nr_old_nodes; i++)
 		new_nodes[i] = __btree_node_alloc_replacement(old_nodes[i],
@@ -469,6 +490,7 @@ static void bch_coalesce_nodes(struct btree *old_nodes[GC_MERGE_NODES],
 	for (i = 0; i < nr_new_nodes; i++) {
 		new_nodes[i]->keys.nr_live_u64s =
 			new_nodes[i]->keys.set[0].data->u64s;
+		recalc_packed_keys(new_nodes[i]);
 
 		six_unlock_write(&new_nodes[i]->lock);
 		bch_btree_node_write(new_nodes[i], &cl, NULL);

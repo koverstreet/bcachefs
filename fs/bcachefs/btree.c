@@ -206,9 +206,9 @@ static void bch_btree_init_next(struct btree *b, struct btree_iter *iter)
 
 	/* If not a leaf node, always sort */
 	if (b->level && b->keys.nsets)
-		bch_btree_sort(&b->keys, NULL, &b->c->sort);
+		bch_btree_sort(&b->keys, &b->c->sort);
 	else
-		bch_btree_sort_lazy(&b->keys, NULL, &b->c->sort);
+		bch_btree_sort_lazy(&b->keys, &b->c->sort);
 
 	sorted = nsets != b->keys.nsets;
 
@@ -1461,8 +1461,12 @@ struct btree *__btree_node_alloc_replacement(struct btree *b,
 struct btree *btree_node_alloc_replacement(struct btree *b,
 					   enum alloc_reserve reserve)
 {
-	return __btree_node_alloc_replacement(b, reserve,
-					      btree_keys_calc_format(&b->keys));
+	struct bkey_format new_f = btree_keys_calc_format(&b->keys);
+
+	if (!btree_node_format_fits(b, &new_f))
+		new_f = b->keys.set->data->format;
+
+	return __btree_node_alloc_replacement(b, reserve, new_f);
 }
 
 static int __btree_check_reserve(struct cache_set *c,
@@ -1952,6 +1956,8 @@ static int btree_split(struct btree *b,
 
 	if (set_blocks(set1,
 		       block_bytes(n1->c)) > btree_blocks(iter->c) * 3 / 4) {
+		size_t nr_packed = 0, nr_unpacked = 0;
+
 		trace_bcache_btree_node_split(b, set1->u64s);
 
 		n2 = bch_btree_node_alloc(iter->c, b->level,
@@ -1971,20 +1977,32 @@ static int btree_split(struct btree *b,
 		 * Has to be a linear search because we don't have an auxiliary
 		 * search tree yet
 		 */
-		for (k = set1->start;
-		     ((u64 *) k - set1->_data) < (set1->u64s * 3) / 5;
-		     k = bkey_next(k))
-			;
+		k = set1->start;
+		while (1) {
+			if (bkey_packed(k))
+				nr_packed++;
+			else
+				nr_unpacked++;
+			if (k->_data - set1->_data >= (set1->u64s * 3) / 5)
+				break;
+			k = bkey_next(k);
+		}
 
-		n1->key.k.p = bkey_unpack_key(&n1->keys.set->data->format, k).p;
-
+		n1->key.k.p = bkey_unpack_key(&set1->format, k).p;
 		k = bkey_next(k);
 
 		set2->u64s = (u64 *) bset_bkey_last(set1) - (u64 *) k;
 		set1->u64s -= set2->u64s;
 
-		n1->keys.nr_live_u64s = set1->u64s;
 		n2->keys.nr_live_u64s = set2->u64s;
+		n2->keys.nr_packed_keys
+			= n1->keys.nr_packed_keys - nr_packed;
+		n2->keys.nr_unpacked_keys
+			= n1->keys.nr_unpacked_keys - nr_unpacked;
+
+		n1->keys.nr_live_u64s = set1->u64s;
+		n1->keys.nr_packed_keys = nr_packed;
+		n1->keys.nr_unpacked_keys = nr_unpacked;
 
 		BUG_ON(!set1->u64s);
 		BUG_ON(!set2->u64s);
@@ -1997,6 +2015,9 @@ static int btree_split(struct btree *b,
 
 		six_unlock_write(&n1->lock);
 		six_unlock_write(&n2->lock);
+
+		bch_verify_btree_keys_accounting(&n1->keys);
+		bch_verify_btree_keys_accounting(&n2->keys);
 
 		bch_keylist_add(parent_keys, &n1->key);
 		bch_keylist_add(parent_keys, &n2->key);

@@ -83,12 +83,20 @@ void bch_key_sort_fix_overlapping(struct btree_keys *b,
 {
 	struct bkey_packed *out = bset->start;
 
+	b->nr_packed_keys	= 0;
+	b->nr_unpacked_keys	= 0;
+
 	heap_resort(iter, key_sort_cmp);
 
 	while (!bch_btree_node_iter_end(iter)) {
 		if (!should_drop_next_key(iter, b)) {
 			struct bkey_packed *k =
 				__btree_node_offset_to_key(b, iter->data->k);
+
+			if (bkey_packed(k))
+				b->nr_packed_keys++;
+			else
+				b->nr_unpacked_keys++;
 
 			/* XXX: need better bkey_copy */
 			memcpy(out, k, bkey_bytes(k));
@@ -100,6 +108,7 @@ void bch_key_sort_fix_overlapping(struct btree_keys *b,
 	}
 
 	bset->u64s = (u64 *) out - bset->_data;
+	b->nr_live_u64s = bset->u64s;
 
 	pr_debug("sorted %i keys", bset->u64s);
 }
@@ -122,7 +131,7 @@ bool bch_insert_fixup_key(struct btree *b, struct bkey_i *insert,
 	       (c = bkey_cmp_packed(f, k, &insert->k)) <= 0) {
 		if (!c && !bkey_deleted(k)) {
 			k->type = KEY_TYPE_DELETED;
-			b->keys.nr_live_u64s -= k->u64s;
+			btree_keys_account_key_drop(&b->keys, k);
 		}
 
 		bch_btree_node_iter_next_all(iter, &b->keys);
@@ -646,6 +655,11 @@ static struct bkey_packed *extent_sort_append(struct btree_keys *b,
 	if (bkey_deleted(k))
 		return out;
 
+	if (bkey_packed(k))
+		b->nr_packed_keys++;
+	else
+		b->nr_unpacked_keys++;
+
 	/* XXX: need better bkey_copy */
 	memcpy(out, k, bkey_bytes(k));
 
@@ -671,6 +685,9 @@ void bch_extent_sort_fix_overlapping(struct btree_keys *b,
 	struct btree_node_iter_set *_l = iter->data, *_r;
 	struct bkey_packed *prev = NULL, *out = bset->start, *lk, *rk;
 	struct bkey_tup l, r;
+
+	b->nr_packed_keys	= 0;
+	b->nr_unpacked_keys	= 0;
 
 	heap_resort(iter, extent_sort_cmp);
 
@@ -749,6 +766,7 @@ void bch_extent_sort_fix_overlapping(struct btree_keys *b,
 	}
 
 	bset->u64s = (u64 *) out - bset->_data;
+	b->nr_live_u64s = bset->u64s;
 
 	pr_debug("sorted %i keys", bset->u64s);
 }
@@ -1284,7 +1302,7 @@ bool bch_insert_fixup_extent(struct btree *b, struct bkey_i *insert,
 		case BCH_EXTENT_OVERLAP_ALL:
 			/* The insert key completely covers k, invalidate k */
 			if (!bkey_deleted(_k))
-				b->keys.nr_live_u64s -= _k->u64s;
+				btree_keys_account_key_drop(&b->keys, _k);
 
 			bch_drop_subtract(b, k);
 			k.k->p = bkey_start_pos(&insert->k);

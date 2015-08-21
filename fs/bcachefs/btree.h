@@ -364,6 +364,29 @@ void bch_btree_node_read_done(struct btree *, struct cache *,
 void bch_btree_flush(struct cache_set *);
 void bch_btree_write_oldest(struct cache_set *, u64);
 
+static inline bool btree_node_format_fits(struct btree *b,
+					  struct bkey_format *new_f)
+{
+	struct bkey_format *old_f = &b->keys.set->data->format;
+
+	/* stupid integer promotion rules */
+	ssize_t new_u64s =
+	    (((int) new_f->key_u64s - old_f->key_u64s) *
+	     (int) b->keys.nr_packed_keys) +
+	    (((int) new_f->key_u64s - BKEY_U64s) *
+	     (int) b->keys.nr_unpacked_keys);
+
+	BUG_ON(new_u64s + b->keys.nr_live_u64s < 0);
+
+	/*
+	 * The keys might expand with the new format - if they wouldn't fit in
+	 * the btree node anymore, use the old format for now:
+	 */
+
+	return __set_bytes(b->keys.set->data, b->keys.nr_live_u64s + new_u64s) <
+		PAGE_SIZE << b->keys.page_order;
+}
+
 struct btree *__btree_node_alloc_replacement(struct btree *,
 					     enum alloc_reserve,
 					     struct bkey_format);

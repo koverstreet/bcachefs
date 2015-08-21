@@ -216,15 +216,19 @@ struct btree_keys_ops {
 
 struct btree_keys {
 	const struct btree_keys_ops	*ops;
-	u8			page_order;
 	u8			nsets;
+	unsigned		page_order:7;
 	unsigned		last_set_unwritten:1;
 
 	/*
 	 * Amount of live metadata (i.e. size of node after a compaction) in
 	 * units of u64s
 	 */
-	unsigned		nr_live_u64s;
+	u16			nr_live_u64s;
+
+	/* live keys only: */
+	u16			nr_packed_keys;
+	u16			nr_unpacked_keys;
 
 	/*
 	 * Sets of sorted keys - the real btree node - plus a binary search tree
@@ -316,6 +320,22 @@ void bch_bset_fix_invalidated_key(struct btree_keys *, struct bkey_packed *);
 
 void bch_bset_insert(struct btree_keys *, struct btree_node_iter *,
 		     struct bkey_i *);
+
+static inline void btree_keys_account_key(struct btree_keys *b,
+					  struct bkey_packed *k,
+					  int sign)
+{
+	b->nr_live_u64s += k->u64s * sign;
+	if (bkey_packed(k))
+		b->nr_packed_keys += sign;
+	else
+		b->nr_unpacked_keys += sign;
+}
+
+#define btree_keys_account_key_add(_b, _k)			\
+	btree_keys_account_key(_b, _k, 1)
+#define btree_keys_account_key_drop(_b, _k)			\
+	btree_keys_account_key(_b, _k, -1)
 
 /* Bkey utility code */
 
@@ -553,8 +573,7 @@ typedef void (*btree_keys_sort_fn)(struct btree_keys *, struct bset *,
 
 void bch_bset_sort_state_free(struct bset_sort_state *);
 int bch_bset_sort_state_init(struct bset_sort_state *, unsigned);
-void bch_btree_sort_lazy(struct btree_keys *, ptr_filter_fn,
-			 struct bset_sort_state *);
+void bch_btree_sort_lazy(struct btree_keys *, struct bset_sort_state *);
 void bch_btree_sort_into(struct btree_keys *, struct btree_keys *,
 			 ptr_filter_fn, struct bset_sort_state *);
 void bch_btree_sort_and_fix_extents(struct btree_keys *,
@@ -562,13 +581,12 @@ void bch_btree_sort_and_fix_extents(struct btree_keys *,
 				    btree_keys_sort_fn,
 				    struct bset_sort_state *);
 void bch_btree_sort_partial(struct btree_keys *, unsigned,
-			    ptr_filter_fn, struct bset_sort_state *);
+			    struct bset_sort_state *);
 
 static inline void bch_btree_sort(struct btree_keys *b,
-				  ptr_filter_fn filter,
 				  struct bset_sort_state *state)
 {
-	bch_btree_sort_partial(b, 0, filter, state);
+	bch_btree_sort_partial(b, 0, state);
 }
 
 struct bset_stats {
@@ -587,7 +605,7 @@ s64 __bch_count_data(struct btree_keys *);
 void __bch_count_data_verify(struct btree_keys *, int);
 void bch_dump_bucket(struct btree_keys *);
 void bch_btree_node_iter_verify(struct btree_node_iter *, struct btree_keys *);
-void bch_verify_nr_live_u64s(struct btree_keys *);
+void bch_verify_btree_keys_accounting(struct btree_keys *);
 
 #else
 
@@ -596,7 +614,7 @@ static inline void __bch_count_data_verify(struct btree_keys *b, int oldsize ) {
 static inline void bch_dump_bucket(struct btree_keys *b) {}
 static inline void bch_btree_node_iter_verify(struct btree_node_iter *iter,
 					      struct btree_keys *b) {}
-static inline void bch_verify_nr_live_u64s(struct btree_keys *b) {}
+static inline void bch_verify_btree_keys_accounting(struct btree_keys *b) {}
 
 #endif
 

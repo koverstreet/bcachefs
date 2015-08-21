@@ -304,6 +304,7 @@ static ssize_t bch_read_btree_formats(struct file *file, char __user *buf,
 		i->bytes = scnprintf(i->buf, sizeof(i->buf),
 				     "l %u %llu:%llu:\n"
 				     "\tformat: u64s %u fields %u %u %u %u %u\n"
+				     "\tpacked %u unpacked %u u64s %u\n"
 				     "\tfloats %zu failed %zu\n",
 				     b->level,
 				     b->key.k.p.inode,
@@ -314,6 +315,9 @@ static ssize_t bch_read_btree_formats(struct file *file, char __user *buf,
 				     f->bits_per_field[2],
 				     f->bits_per_field[3],
 				     f->bits_per_field[4],
+				     b->keys.nr_packed_keys,
+				     b->keys.nr_unpacked_keys,
+				     b->keys.nr_live_u64s,
 				     stats.floats,
 				     stats.failed);
 
