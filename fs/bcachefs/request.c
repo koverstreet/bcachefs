@@ -847,8 +847,13 @@ static int bch_read_fn(struct btree_op *b_op, struct btree *b, struct bkey *k)
 	sectors = KEY_OFFSET(k) - bio->bi_iter.bi_sector;
 
 	ca = bch_extent_pick_ptr(b->c, k, &ptr);
-	if (!ca)
-		return bch_read_hole(bio, sectors);
+	if (!ca) {
+		if (!KEY_CACHED(k) && bch_extent_ptrs(k)) {
+			bio_io_error(bio);
+			return MAP_DONE;
+		} else
+			return bch_read_hole(bio, sectors);
+	}
 
 	PTR_BUCKET(b->c, ca, k, ptr)->read_prio = b->c->prio_clock[READ].hand;
 
@@ -1025,8 +1030,16 @@ static int cache_lookup_fn(struct btree_op *op, struct btree *b, struct bkey *k)
 	sectors = KEY_OFFSET(k) - bio->bi_iter.bi_sector;
 
 	ca = bch_extent_pick_ptr(b->c, k, &ptr);
-	if (!ca) /* no pointers (hole), or all stale */
-		return s->d->cache_miss(b, s, bio, sectors);
+	if (!ca) {
+		if (!KEY_CACHED(k) && bch_extent_ptrs(k)) {
+			/* data missing that's not supposed to be */
+			bio_io_error(bio);
+			return MAP_DONE;
+		} else {
+			/* no pointers (hole), or all stale */
+			return s->d->cache_miss(b, s, bio, sectors);
+		}
+	}
 
 	PTR_BUCKET(b->c, ca, k, ptr)->read_prio = b->c->prio_clock[READ].hand;
 
