@@ -820,7 +820,10 @@ static int cache_lookup_fn(struct btree_op *op, struct btree *b, struct bkey *k)
 	 * error up anywhere).
 	 */
 	closure_get(&s->cl);
-	cache_promote(b->c, n, bio_key);
+	if (!s->iop.bypass)
+		cache_promote(b->c, n, bio_key);
+	else
+		submit_bio(n);
 
 	return n == bio ? MAP_DONE : MAP_CONTINUE;
 }
