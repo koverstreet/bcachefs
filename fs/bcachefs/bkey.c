@@ -595,6 +595,26 @@ struct bkey_format bch_bkey_format_done(struct bkey_format_state *s)
 	return ret;
 }
 
+const char *bch_bkey_format_validate(struct bkey_format *f)
+{
+	unsigned i, bits = KEY_PACKED_BITS_START;
+
+	if (f->nr_fields != BKEY_NR_FIELDS)
+		return "invalid format: incorrect number of fields";
+
+	for (i = 0; i < f->nr_fields; i++) {
+		if (f->bits_per_field[i] > 64)
+			return "invalid format: field too large";
+
+		bits += f->bits_per_field[i];
+	}
+
+	if (f->key_u64s != DIV_ROUND_UP(bits, 64))
+		return "invalid format: incorrect key_u64s";
+
+	return NULL;
+}
+
 /* Most significant differing bit */
 unsigned bkey_greatest_differing_bit(const struct bkey_format *format,
 				     const struct bkey_packed *l_k,

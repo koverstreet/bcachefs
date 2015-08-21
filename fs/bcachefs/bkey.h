@@ -82,6 +82,7 @@ void bch_bkey_format_init(struct bkey_format_state *);
 void bch_bkey_format_add_key(struct bkey_format_state *, struct bkey *);
 void bch_bkey_format_add_pos(struct bkey_format_state *, struct bpos);
 struct bkey_format bch_bkey_format_done(struct bkey_format_state *);
+const char *bch_bkey_format_validate(struct bkey_format *);
 
 unsigned bkey_greatest_differing_bit(const struct bkey_format *,
 				     const struct bkey_packed *,

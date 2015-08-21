@@ -349,6 +349,10 @@ void bch_btree_node_read_done(struct btree *b, struct cache *ca,
 	if (BSET_BTREE_LEVEL(i) != b->level)
 		goto err;
 
+	err = bch_bkey_format_validate(&b->data->format);
+	if (err)
+		goto err;
+
 	b->keys.format = b->data->format;
 	b->keys.set->data = &b->data->keys;
 
