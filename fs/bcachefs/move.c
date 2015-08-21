@@ -33,8 +33,12 @@ static void moving_init(struct moving_io *io)
 static void moving_io_destructor(struct closure *cl)
 {
 	struct moving_io *io = container_of(cl, struct moving_io, cl);
+	struct bio_vec *bv;
+	int i;
 
-	bio_free_pages(&io->bio.bio);
+	bio_for_each_segment_all(bv, &io->bio.bio, i)
+		if (bv->bv_page)
+			__free_page(bv->bv_page);
 
 	if (io->op.replace_collision)
 		trace_bcache_copy_collision(&io->w->key);
