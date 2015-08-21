@@ -1010,7 +1010,7 @@ void __bch_bbio_prep(struct bio *, struct cache_set *);
 void bch_bbio_prep(struct bio *, struct cache_set *, struct bkey *, unsigned);
 void bch_submit_bbio(struct bio *, struct cache_set *, struct bkey *, unsigned);
 void bch_submit_bbio_replicas(struct bio *, struct cache_set *,
-			      struct bkey *, unsigned long *);
+			      struct bkey *, unsigned long *, bool);
 
 __printf(2, 3)
 bool bch_cache_set_error(struct cache_set *, const char *, ...);

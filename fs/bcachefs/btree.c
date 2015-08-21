@@ -436,8 +436,8 @@ static void do_btree_node_write(struct btree *b)
 			memcpy(page_address(bv->bv_page),
 			       base + j * PAGE_SIZE, PAGE_SIZE);
 
-
-		bch_submit_bbio_replicas(b->bio, b->c, &k.key, ptrs_to_write);
+		bch_submit_bbio_replicas(b->bio, b->c, &k.key,
+					 ptrs_to_write, true);
 		continue_at(cl, btree_node_write_done, NULL);
 	} else {
 		trace_bcache_btree_write_sync(b);
@@ -445,7 +445,8 @@ static void do_btree_node_write(struct btree *b)
 		b->bio->bi_vcnt = 0;
 		bch_bio_map(b->bio, i);
 
-		bch_submit_bbio_replicas(b->bio, b->c, &k.key, ptrs_to_write);
+		bch_submit_bbio_replicas(b->bio, b->c, &k.key,
+					 ptrs_to_write, true);
 
 		closure_sync(cl);
 		continue_at_nobarrier(cl, __btree_node_write_done, NULL);

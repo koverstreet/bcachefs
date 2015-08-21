@@ -90,7 +90,8 @@ void bch_submit_bbio(struct bio *bio, struct cache_set *c,
 }
 
 void bch_submit_bbio_replicas(struct bio *bio_src, struct cache_set *c,
-			      struct bkey *k, unsigned long *ptrs_to_write)
+			      struct bkey *k, unsigned long *ptrs_to_write,
+			      bool punt)
 {
 	struct bio *bio;
 	unsigned first, i;
@@ -105,11 +106,17 @@ void bch_submit_bbio_replicas(struct bio *bio_src, struct cache_set *c,
 		bio->bi_private		= bio_src->bi_private;
 
 		bch_bbio_prep(bio, c, k, i);
-		closure_bio_submit_punt(bio, bio->bi_private, c);
+		if (punt)
+			closure_bio_submit_punt(bio, bio->bi_private, c);
+		else
+			closure_bio_submit(bio, bio->bi_private);
 	}
 
 	bch_bbio_prep(bio_src, c, k, first);
-	closure_bio_submit_punt(bio_src, bio_src->bi_private, c);
+	if (punt)
+		closure_bio_submit_punt(bio_src, bio_src->bi_private, c);
+	else
+		closure_bio_submit(bio_src, bio_src->bi_private);
 }
 
 /* IO errors */
