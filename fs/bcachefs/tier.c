@@ -60,9 +60,15 @@ static bool tiering_pred(struct keybuf *buf, struct bkey *k)
 	struct cache_set *c = container_of(buf, struct cache_set, tiering_keys);
 	unsigned dev;
 
-	return bch_extent_ptrs(k) &&
-		((dev = PTR_DEV(k, bch_extent_ptrs(k) - 1)) <
-		 c->sb.nr_in_set) &&
+	if (!bch_extent_ptrs(k))
+		return false;
+
+	/* need at least CACHE_SET_DATA_REPLICAS_WANT ptrs not on tier 0 */
+
+	dev = max_t(int, 0, PTR_DEV(k, bch_extent_ptrs(k) -
+				    CACHE_SET_DATA_REPLICAS_WANT(&c->sb)));
+
+	return dev < c->sb.nr_in_set &&
 		!CACHE_TIER(&c->members[dev]);
 }
 
