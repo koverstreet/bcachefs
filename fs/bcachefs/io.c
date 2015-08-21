@@ -82,18 +82,11 @@ void bch_bbio_prep(struct bio *bio, struct cache_set *c,
 	__bch_bbio_prep(bio, c);
 }
 
-void __bch_submit_bbio(struct bio *bio, struct cache_set *c)
-{
-	__bch_bbio_prep(bio, c);
-	closure_bio_submit(bio, bio->bi_private);
-}
-
 void bch_submit_bbio(struct bio *bio, struct cache_set *c,
 		     struct bkey *k, unsigned ptr)
 {
-	struct bbio *b = container_of(bio, struct bbio, bio);
-	bch_bkey_copy_single_ptr(&b->key, k, ptr);
-	__bch_submit_bbio(bio, c);
+	bch_bbio_prep(bio, c, k, ptr);
+	closure_bio_submit(bio, bio->bi_private);
 }
 
 void bch_submit_bbio_replicas(struct bio *bio_src, struct cache_set *c,
@@ -183,7 +176,7 @@ void bch_bbio_count_io_errors(struct cache_set *c, struct bio *bio,
 		? c->congested_write_threshold_us
 		: c->congested_read_threshold_us;
 
-	if (threshold) {
+	if (threshold && b->submit_time_us) {
 		unsigned t = local_clock_us();
 
 		int us = t - b->submit_time_us;

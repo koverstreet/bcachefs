@@ -331,6 +331,149 @@ void bch_data_insert(struct closure *cl)
 	bch_data_insert_start(cl);
 }
 
+/* Cache promotion */
+
+struct cache_promote_op {
+	struct closure		cl;
+	struct bio		*orig_bio;
+	struct data_insert_op	iop;
+	struct bbio		bio; /* must be last */
+};
+
+static void cache_promote_done(struct closure *cl)
+{
+	struct cache_promote_op *op = container_of(cl,
+					struct cache_promote_op, cl);
+	struct cache_set *c = op->iop.c;
+
+	if (op->iop.replace_collision)
+		atomic_inc(&c->accounting.collector.cache_miss_collisions);
+
+	bio_free_pages(op->iop.bio);
+	kfree(op);
+}
+
+static void cache_promote_write(struct closure *cl)
+{
+	struct cache_promote_op *op = container_of(cl,
+					struct cache_promote_op, cl);
+	struct bio *bio = op->iop.bio;
+
+	bio_reset(bio);
+	bio->bi_iter.bi_sector	= KEY_START(&op->iop.insert_key);
+	bio->bi_iter.bi_size	= KEY_SIZE(&op->iop.insert_key) << 9;
+	/* needed to reinit bi_vcnt so pages can be freed later */
+	bch_bio_map(bio, NULL);
+
+	bio_copy_data(op->orig_bio, bio);
+	op->orig_bio->bi_error = op->iop.error;
+	bio_endio(op->orig_bio);
+
+	if (!op->iop.error &&
+	    !test_bit(CACHE_SET_STOPPING, &op->iop.c->flags))
+		closure_call(&op->iop.cl, bch_data_insert, NULL, cl);
+
+	closure_return_with_destructor(cl, cache_promote_done);
+}
+
+static void cache_promote_endio(struct bio *bio)
+{
+	struct bbio *b = container_of(bio, struct bbio, bio);
+	struct cache_promote_op *op = container_of(bio,
+					struct cache_promote_op, bio.bio);
+
+	/*
+	 * If the bucket was reused while our bio was in flight, we might have
+	 * read the wrong data. Set s->error but not error so it doesn't get
+	 * counted against the cache device, but we'll still reread the data
+	 * from the backing device.
+	 */
+
+	if (bio->bi_error)
+		op->iop.error = bio->bi_error;
+	else if (ptr_stale(op->iop.c, &b->key, 0)) {
+		atomic_long_inc(&op->iop.c->cache_read_races);
+		op->iop.error = -EINTR;
+	}
+
+	bch_bbio_endio(op->iop.c, bio, bio->bi_error, "reading from cache");
+}
+
+static void __cache_promote(struct cache_set *c, struct bio *orig_bio,
+			    struct bkey *replace_key, bio_end_io_t *bi_end_io)
+{
+	struct cache_promote_op *op;
+	struct bio *bio;
+	struct bbio *bbio;
+	unsigned pages = DIV_ROUND_UP(orig_bio->bi_iter.bi_size, PAGE_SIZE);
+
+	BUG_ON(bio_sectors(orig_bio) != KEY_SIZE(replace_key));
+
+	/* XXX: readahead? */
+
+	op = kmalloc(sizeof(*op) + sizeof(struct bio_vec) * pages, GFP_NOIO);
+	if (!op)
+		goto out_submit;
+
+	bio = &op->bio.bio;
+	bio_init(bio);
+	bio_get(bio);
+	bio->bi_bdev		= orig_bio->bi_bdev;
+	bio->bi_iter.bi_sector	= orig_bio->bi_iter.bi_sector;
+	bio->bi_iter.bi_size	= orig_bio->bi_iter.bi_size;
+	bio->bi_end_io		= bi_end_io;
+	bio->bi_private		= &op->cl;
+	bio->bi_io_vec		= bio->bi_inline_vecs;
+	bch_bio_map(bio, NULL);
+
+	if (bio_alloc_pages(bio, __GFP_NOWARN|GFP_NOIO))
+		goto out_free;
+
+	closure_init(&op->cl, &c->cl);
+	op->orig_bio	= orig_bio;
+
+	bch_data_insert_op_init(&op->iop, c,
+				bcache_wq,
+				bio,
+				hash_long((unsigned long) current, 16),
+				false,
+				false,
+				false,
+				replace_key,
+				replace_key);
+
+	SET_KEY_PTRS(&op->iop.insert_key, 0);
+
+	bbio = container_of(bio, struct bbio, bio);
+	bkey_copy(&bbio->key, &container_of(orig_bio, struct bbio, bio)->key);
+
+	bbio->submit_time_us = local_clock_us();
+	closure_bio_submit(bio, &op->cl);
+
+	continue_at(&op->cl, cache_promote_write, bcache_wq);
+out_free:
+	kfree(op);
+out_submit:
+	generic_make_request(orig_bio);
+}
+
+static void cache_promote(struct cache_set *c, struct bio *bio,
+			  struct bkey *k)
+{
+	unsigned i;
+
+	for (i = 0; i < KEY_PTRS(k); i++) {
+		struct cache *ca = PTR_CACHE(c, k, i);
+
+		if (!CACHE_TIER(&ca->sb)) {
+			generic_make_request(bio);
+			return;
+		}
+	}
+
+	__cache_promote(c, bio, k, cache_promote_endio);
+}
+
 /* Congested? */
 
 unsigned bch_get_congested(struct cache_set *c)
@@ -470,14 +613,13 @@ struct search {
 
 	struct bbio		bio;
 	struct bio		*orig_bio;
-	struct bio		*cache_miss;
 	struct bcache_device	*d;
 
-	unsigned		insert_bio_sectors;
 	unsigned		inode;
 	unsigned		recoverable:1;
 	unsigned		write:1;
 	unsigned		read_dirty_data:1;
+	unsigned		cache_miss:1;
 
 	unsigned long		start_time;
 
@@ -560,8 +702,11 @@ static int cache_lookup_fn(struct btree_op *op, struct btree *b, struct bkey *k)
 	bch_cut_front(&KEY(s->inode, n->bi_iter.bi_sector, 0), bio_key);
 	bch_cut_back(&KEY(s->inode, bio_end_sector(n), 0), bio_key);
 
-	n->bi_end_io	= bch_cache_read_endio;
-	n->bi_private	= &s->cl;
+	n->bi_iter.bi_sector	= PTR_OFFSET(bio_key, 0);
+	n->bi_bdev		= PTR_CACHE(b->c, bio_key, 0)->bdev;
+
+	n->bi_end_io		= bch_cache_read_endio;
+	n->bi_private		= &s->cl;
 
 	/*
 	 * The bucket we're reading from might be reused while our bio
@@ -573,8 +718,9 @@ static int cache_lookup_fn(struct btree_op *op, struct btree *b, struct bkey *k)
 	 * and reread from the backing device (but we don't pass that
 	 * error up anywhere).
 	 */
+	closure_get(&s->cl);
+	cache_promote(b->c, n, bio_key);
 
-	__bch_submit_bbio(n, b->c);
 	return n == bio ? MAP_DONE : MAP_CONTINUE;
 }
 
@@ -660,11 +806,11 @@ static inline struct search *search_alloc(struct bio *bio,
 	do_bio_hook(s, bio);
 
 	s->orig_bio		= bio;
-	s->cache_miss		= NULL;
 	s->d			= d;
 	s->recoverable		= 1;
 	s->write		= op_is_write(bio_op(bio));
 	s->read_dirty_data	= 0;
+	s->cache_miss		= 0;
 	s->start_time		= jiffies;
 	s->inode		= d->id;
 
@@ -688,19 +834,6 @@ static void cached_dev_bio_complete(struct closure *cl)
 
 /* Process reads */
 
-static void cached_dev_cache_miss_done(struct closure *cl)
-{
-	struct search *s = container_of(cl, struct search, cl);
-
-	if (s->iop.replace_collision)
-		bch_mark_cache_miss_collision(s->iop.c, s->d);
-
-	if (s->iop.bio)
-		bio_free_pages(s->iop.bio);
-
-	cached_dev_bio_complete(cl);
-}
-
 static void cached_dev_read_error(struct closure *cl)
 {
 	struct search *s = container_of(cl, struct search, cl);
@@ -718,7 +851,7 @@ static void cached_dev_read_error(struct closure *cl)
 		closure_bio_submit(bio, cl);
 	}
 
-	continue_at(cl, cached_dev_cache_miss_done, NULL);
+	continue_at(cl, cached_dev_bio_complete, NULL);
 }
 
 static void cached_dev_read_done(struct closure *cl)
@@ -726,38 +859,10 @@ static void cached_dev_read_done(struct closure *cl)
 	struct search *s = container_of(cl, struct search, cl);
 	struct cached_dev *dc = container_of(s->d, struct cached_dev, disk);
 
-	/*
-	 * We had a cache miss; cache_bio now contains data ready to be inserted
-	 * into the cache.
-	 *
-	 * First, we copy the data we just read from cache_bio's bounce buffers
-	 * to the buffers the original bio pointed to:
-	 */
-
-	if (s->iop.bio) {
-		bio_reset(s->iop.bio);
-		s->iop.bio->bi_iter.bi_sector = s->cache_miss->bi_iter.bi_sector;
-		s->iop.bio->bi_bdev = s->cache_miss->bi_bdev;
-		s->iop.bio->bi_iter.bi_size = s->insert_bio_sectors << 9;
-		bch_bio_map(s->iop.bio, NULL);
-
-		bio_copy_data(s->cache_miss, s->iop.bio);
-
-		bio_put(s->cache_miss);
-		s->cache_miss = NULL;
-		s->iop.wait = false;
-	}
-
 	if (dc->verify && s->recoverable && !s->read_dirty_data)
 		bch_data_verify(dc, s->orig_bio);
 
-	bio_complete(s);
-
-	if (s->iop.bio &&
-	    !test_bit(CACHE_SET_STOPPING, &s->iop.c->flags))
-		closure_call(&s->iop.cl, bch_data_insert, NULL, cl);
-
-	continue_at(cl, cached_dev_cache_miss_done, NULL);
+	continue_at_nobarrier(cl, cached_dev_bio_complete, NULL);
 }
 
 static void cached_dev_read_done_bh(struct closure *cl)
@@ -771,7 +876,7 @@ static void cached_dev_read_done_bh(struct closure *cl)
 
 	if (s->iop.error)
 		continue_at_nobarrier(cl, cached_dev_read_error, bcache_wq);
-	else if (s->iop.bio || dc->verify)
+	else if (dc->verify)
 		continue_at_nobarrier(cl, cached_dev_read_done, bcache_wq);
 	else
 		continue_at_nobarrier(cl, cached_dev_bio_complete, NULL);
@@ -782,28 +887,32 @@ static int cached_dev_cache_miss(struct btree *b, struct search *s,
 {
 	int ret = MAP_CONTINUE;
 	unsigned reada = 0;
-	struct cached_dev *dc = container_of(s->d, struct cached_dev, disk);
-	struct bio *miss, *cache_bio;
+	struct bio *miss;
 	BKEY_PADDED(key) replace;
 
-	if (s->cache_miss || s->iop.bypass) {
+	if (s->iop.bypass) {
 		miss = bio_next_split(bio, sectors, GFP_NOIO, s->d->bio_split);
 		ret = miss == bio ? MAP_DONE : MAP_CONTINUE;
-		goto out_submit;
-	}
 
+		miss->bi_end_io		= request_endio;
+		miss->bi_private	= &s->cl;
+		closure_bio_submit(miss, &s->cl);
+		return ret;
+	}
+#if 0
+	struct cached_dev *dc = container_of(s->d, struct cached_dev, disk);
+
+	/* XXX: broken */
 	if (!(bio->bi_opf & REQ_RAHEAD) &&
 	    !(bio->bi_opf & REQ_META) &&
 	    ((u64) buckets_available(dc->disk.c) * 100 <
 	     (u64) b->c->nbuckets * CUTOFF_CACHE_READA))
 		reada = min_t(sector_t, dc->readahead >> 9,
 			      bdev_sectors(bio->bi_bdev) - bio_end_sector(bio));
+#endif
+	sectors = min(sectors, bio_sectors(bio) + reada);
 
-	s->insert_bio_sectors = min(sectors, bio_sectors(bio) + reada);
-
-	replace.key = KEY(s->inode,
-			  bio->bi_iter.bi_sector + s->insert_bio_sectors,
-			  s->insert_bio_sectors);
+	replace.key = KEY(s->inode, bio->bi_iter.bi_sector + sectors, sectors);
 
 	ret = bch_btree_insert_check_key(b, &s->op, &replace.key);
 	if (ret)
@@ -814,43 +923,13 @@ static int cached_dev_cache_miss(struct btree *b, struct search *s,
 	/* btree_search_recurse()'s btree iterator is no good anymore */
 	ret = miss == bio ? MAP_DONE : -EINTR;
 
-	cache_bio = bio_alloc_bioset(GFP_NOWAIT,
-			DIV_ROUND_UP(s->insert_bio_sectors, PAGE_SECTORS),
-			dc->disk.bio_split);
-	if (!cache_bio)
-		goto out_submit;
-
-	cache_bio->bi_iter.bi_sector	= miss->bi_iter.bi_sector;
-	cache_bio->bi_bdev		= miss->bi_bdev;
-	cache_bio->bi_iter.bi_size	= s->insert_bio_sectors << 9;
-
-	cache_bio->bi_end_io	= request_endio;
-	cache_bio->bi_private	= &s->cl;
-
-	bch_bio_map(cache_bio, NULL);
-	if (bio_alloc_pages(cache_bio, __GFP_NOWARN|GFP_NOIO))
-		goto out_put;
-
-	if (reada)
-		bch_mark_cache_readahead(s->iop.c, s->d);
-
-	bch_data_insert_op_init(&s->iop, b->c, bcache_wq, cache_bio,
-				hash_long((unsigned long) current, 16),
-				false, false, false,
-				&KEY(s->inode, 0, 0), &replace.key);
-
-	s->cache_miss	= miss;
-	s->iop.bio	= cache_bio;
-	bio_get(cache_bio);
-	closure_bio_submit(cache_bio, &s->cl);
-
-	return ret;
-out_put:
-	bio_put(cache_bio);
-out_submit:
 	miss->bi_end_io		= request_endio;
 	miss->bi_private	= &s->cl;
-	closure_bio_submit(miss, &s->cl);
+
+	bkey_init(&container_of(miss, struct bbio, bio)->key);
+
+	closure_get(&s->cl);
+	__cache_promote(b->c, miss, &replace.key, request_endio);
 	return ret;
 }
 

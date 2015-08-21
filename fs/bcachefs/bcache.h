@@ -937,7 +937,6 @@ void bch_generic_make_request(struct bio *, struct cache_set *);
 void bch_bio_submit_work(struct work_struct *);
 void __bch_bbio_prep(struct bio *, struct cache_set *);
 void bch_bbio_prep(struct bio *, struct cache_set *, struct bkey *, unsigned);
-void __bch_submit_bbio(struct bio *, struct cache_set *);
 void bch_submit_bbio(struct bio *, struct cache_set *, struct bkey *, unsigned);
 void bch_submit_bbio_replicas(struct bio *, struct cache_set *,
 			      struct bkey *, unsigned long *);
