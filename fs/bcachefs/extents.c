@@ -673,7 +673,7 @@ static bool handle_existing_key_newer(struct cache_set *c,
 				      struct bkey *insert,
 				      struct bkey *k)
 {
-	switch (bch_extent_overlap(insert, k)) {
+	switch (bch_extent_overlap(k, insert)) {
 	case BCH_EXTENT_OVERLAP_FRONT:
 		bch_subtract_sectors(insert, c, KEY_START(insert),
 				     KEY_OFFSET(k) - KEY_START(insert));
