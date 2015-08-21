@@ -293,7 +293,7 @@ do {								\
 #define SB_LABEL_SIZE			32
 #define SB_JOURNAL_BUCKETS		256U
 /* SB_JOURNAL_BUCKETS must be divisible by BITS_PER_LONG */
-#define MAX_CACHES_PER_SET		8
+#define MAX_CACHES_PER_SET		64
 
 #define BDEV_DATA_START_DEFAULT		16	/* sectors */
 
