@@ -1139,10 +1139,7 @@ struct bkey *bch_btree_iter_next_all(struct btree_iter *iter)
 		ret = iter->data->k;
 		iter->data->k = bkey_next(iter->data->k);
 
-		if (iter->data->k > iter->data->end) {
-			WARN_ONCE(1, "bset was corrupt!\n");
-			iter->data->k = iter->data->end;
-		}
+		BUG_ON(iter->data->k > iter->data->end);
 
 		if (iter->data->k == iter->data->end)
 			BUG_ON(!heap_pop(iter, unused, iter_cmp(iter)));
