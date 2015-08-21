@@ -217,10 +217,15 @@ struct btree_keys_ops {
 
 struct btree_keys {
 	const struct btree_keys_ops	*ops;
-	uint8_t			page_order;
-	uint8_t			nsets;
+	u8			page_order;
+	u8			nsets;
 	unsigned		last_set_unwritten:1;
-	bool			*expensive_debug_checks;
+
+	/*
+	 * Amount of live metadata (i.e. size of node after a compaction) in
+	 * units of u64s
+	 */
+	unsigned		nr_live_keys;
 
 	/*
 	 * Sets of sorted keys - the real btree node - plus a binary search tree
@@ -230,6 +235,9 @@ struct btree_keys {
 	 * set[0]->data points to the entire btree node as it exists on disk.
 	 */
 	struct bset_tree	set[MAX_BSETS];
+#ifdef CONFIG_BCACHEFS_DEBUG
+	bool			*expensive_debug_checks;
+#endif
 };
 
 static inline bool btree_keys_expensive_checks(struct btree_keys *b)
@@ -710,13 +718,17 @@ void bch_btree_iter_push(struct btree_iter *, struct bkey *, struct bkey *);
 struct bkey *bch_btree_iter_init(struct btree_keys *, struct btree_iter *,
 				 struct bkey *);
 
-#define for_each_key_all(b, k, iter)					\
-	for (bch_btree_iter_init((b), (iter), NULL);			\
-	     ((k) = bch_btree_iter_next_all(iter));)
-
+/*
+ * Iterates over all _live_ keys - skipping deleted (and potentially
+ * overlapping) keys
+ */
 #define for_each_key(b, k, iter)					\
 	for (bch_btree_iter_init((b), (iter), NULL);			\
 	     ((k) = bch_btree_iter_next(iter));)
+
+#define for_each_key_all(b, k, iter)					\
+	for (bch_btree_iter_init((b), (iter), NULL);			\
+	     ((k) = bch_btree_iter_next_all(iter));)
 
 /* Sorting */
 
@@ -754,6 +766,15 @@ struct bset_stats {
 };
 
 void bch_btree_keys_stats(struct btree_keys *, struct bset_stats *);
+
+size_t bch_btree_count_keys(struct btree_keys *);
+
+static inline void verify_nr_live_keys(struct btree_keys *b)
+{
+#ifdef CONFIG_BCACHEFS_DEBUG
+	BUG_ON(b->nr_live_keys != bch_btree_count_keys(b));
+#endif
+}
 
 /* Debug stuff */
 

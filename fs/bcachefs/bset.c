@@ -350,10 +350,13 @@ void bch_btree_keys_init(struct btree_keys *b, const struct btree_keys_ops *ops,
 {
 	unsigned i;
 
-	b->ops = ops;
+	b->ops			= ops;
+	b->nsets		= 0;
+	b->last_set_unwritten	= 0;
+	b->nr_live_keys		= 0;
+#ifdef CONFIG_BCACHEFS_DEBUG
 	b->expensive_debug_checks = expensive_debug_checks;
-	b->nsets = 0;
-	b->last_set_unwritten = 0;
+#endif
 
 	/* XXX: shouldn't be needed */
 	for (i = 0; i < MAX_BSETS; i++)
@@ -827,8 +830,12 @@ static void __bch_bset_insert(struct btree_keys *b, struct bkey *where,
 		where,
 		(void *) bset_bkey_last(t->data) - (void *) where);
 
-	t->data->keys += KEY_U64s(insert);
 	bkey_copy(where, insert);
+	t->data->keys += KEY_U64s(insert);
+
+	if (!KEY_DELETED(insert))
+		b->nr_live_keys += KEY_U64s(insert);
+
 	bch_bset_fix_lookup_table(b, t, where);
 }
 
@@ -855,6 +862,9 @@ static unsigned bch_bset_insert(struct btree_keys *b, struct btree_iter *iter,
 	if (where != bset_bkey_last(i) &&
 	    b->ops->is_extents &&
 	    bch_val_u64s(where) == bch_val_u64s(insert) && !KEY_SIZE(where)) {
+		if (!KEY_DELETED(insert))
+			b->nr_live_keys += KEY_U64s(insert);
+
 		bkey_copy(where, insert);
 		return BTREE_INSERT_STATUS_OVERWROTE;
 	}
@@ -1156,6 +1166,21 @@ EXPORT_SYMBOL(bch_btree_iter_next_all);
 
 /* Mergesort */
 
+/**
+ * btree_count_keys - count live keys in a btree node
+ */
+size_t bch_btree_count_keys(struct btree_keys *b)
+{
+	struct bkey *k;
+	struct btree_iter iter;
+	size_t ret = 0;
+
+	for_each_key(b, k, &iter)
+		ret += KEY_U64s(k);
+
+	return ret;
+}
+
 void bch_bset_sort_state_free(struct bset_sort_state *state)
 {
 	mempool_destroy(state->pool);
@@ -1261,6 +1286,13 @@ static void __btree_sort(struct btree_keys *b, struct btree_iter *iter,
 
 	bch_bset_build_written_tree(b);
 
+	/* sort can merge keys - need to recalculate */
+	b->nr_live_keys = start
+		? bch_btree_count_keys(b)
+		: b->set->data->keys;
+
+	verify_nr_live_keys(b);
+
 	if (!start)
 		bch_time_stats_update(&state->time, start_time);
 }
@@ -1315,6 +1347,7 @@ void bch_btree_sort_into(struct btree_keys *dst,
 
 	bch_time_stats_update(&state->time, start_time);
 
+	dst->nr_live_keys = dst->set->data->keys;
 	dst->nsets = 0;
 	/* No auxiliary search tree yet */
 	dst->set->size = 0;

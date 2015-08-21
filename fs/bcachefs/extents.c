@@ -75,7 +75,10 @@ bool bch_generic_insert_fixup(struct btree_keys *b, struct bkey *insert,
 		if (bkey_cmp(k, insert) < 0)
 			goto next;
 
-		SET_KEY_DELETED(k, 1);
+		if (!KEY_DELETED(k)) {
+			SET_KEY_DELETED(k, 1);
+			b->nr_live_keys -= KEY_U64s(k);
+		}
 next:
 		bch_btree_iter_next_all(iter);
 	}
@@ -866,6 +869,9 @@ static bool bch_extent_insert_fixup(struct btree_keys *b,
 			break;
 
 		case BCH_EXTENT_OVERLAP_ALL:
+			if (!KEY_DELETED(k))
+				b->nr_live_keys -= KEY_U64s(k);
+
 			bch_drop_subtract(c, k);
 
 			/*

@@ -1399,6 +1399,7 @@ static struct btree *btree_node_alloc_replacement(struct btree *b,
 		bch_btree_sort_into(&n->keys, &b->keys,
 				    b->keys.ops->key_normalize,
 				    &b->c->sort);
+
 		bkey_copy_key(&n->key, &b->key);
 		trace_bcache_btree_node_alloc_replacement(b, n);
 	}
@@ -1642,7 +1643,6 @@ static bool btree_gc_mark_node(struct btree *b, struct gc_stat *gc)
 
 struct gc_merge_info {
 	struct btree	*b;
-	unsigned	keys;
 };
 
 static int btree_gc_coalesce(struct btree *b, struct btree_op *op,
@@ -1662,7 +1662,7 @@ static int btree_gc_coalesce(struct btree *b, struct btree_op *op,
 	for (nodes = 0;
 	     nodes < GC_MERGE_NODES && !IS_ERR_OR_NULL(r[nodes].b);
 	     nodes++)
-		keys += r[nodes].keys;
+		keys += r[nodes].b->keys.nr_live_keys;
 
 	old_nodes = nodes;
 
@@ -1741,6 +1741,9 @@ static int btree_gc_coalesce(struct btree *b, struct btree_op *op,
 	}
 
 	for (i = 0; i < nodes; i++) {
+		new_nodes[i]->keys.nr_live_keys =
+			new_nodes[i]->keys.set[0].data->keys;
+
 		six_unlock_write(&new_nodes[i]->lock);
 		bch_btree_node_write(new_nodes[i], &cl);
 	}
@@ -1776,10 +1779,8 @@ static int btree_gc_coalesce(struct btree *b, struct btree_op *op,
 		r[i].b = ERR_PTR(-EINTR);
 	}
 
-	for (i = 0; i < nodes; i++) {
+	for (i = 0; i < nodes; i++)
 		r[i].b = new_nodes[i];
-		r[i].keys = btree_bset_first(r[i].b)->keys;
-	}
 
 	gc->nodes -= old_nodes - nodes;
 
@@ -1816,24 +1817,6 @@ static int btree_gc_rewrite_node(struct btree *b, struct btree_op *op,
 
 	/* Invalidated our iterator */
 	return -EINTR;
-}
-
-/**
- * btree_gc_count_keys - count keys in a btree node to see if we must coalesce
- */
-static unsigned btree_gc_count_keys(struct btree *b)
-{
-	struct bkey *k;
-	struct btree_iter iter;
-	unsigned ret = 0;
-
-	for_each_key(&b->keys, k, &iter)
-		if (btree_node_has_ptrs(b, b->level))
-			ret += bch_extent_nr_ptrs_after_normalize(b->c, k);
-		else
-			ret += KEY_U64s(k);
-
-	return ret;
 }
 
 /**
@@ -1875,7 +1858,7 @@ static int btree_gc_recurse(struct btree *b, struct btree_op *op,
 				break;
 			}
 
-			r->keys = btree_gc_count_keys(r->b);
+			verify_nr_live_keys(&r->b->keys);
 
 			/* See if we should coalesce */
 			ret = btree_gc_coalesce(b, op, gc, r);
@@ -2240,6 +2223,7 @@ static bool btree_insert_key(struct btree *b, struct keylist *insert_keys,
 
 	bch_btree_iter_verify(&b->keys, iter);
 	BUG_ON(write_block(b) != btree_bset_last(b));
+	BUG_ON(KEY_DELETED(insert) && bch_val_u64s(insert));
 
 	if (b->keys.ops->is_extents) {
 		struct bkey *orig = insert;
@@ -2569,6 +2553,9 @@ static int btree_split(struct btree *b, struct btree_op *op,
 
 		set2->keys = (u64 *) bset_bkey_last(set1) - (u64 *) k;
 		set1->keys -= set2->keys;
+
+		n1->keys.nr_live_keys = set1->keys;
+		n2->keys.nr_live_keys = set2->keys;
 
 		BUG_ON(!set1->keys);
 		BUG_ON(!set2->keys);
