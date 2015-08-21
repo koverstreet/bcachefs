@@ -369,7 +369,8 @@ static int cached_dev_cache_miss(struct btree_iter *iter, struct search *s,
 	to_bbio(miss)->ca = NULL;
 
 	closure_get(&s->cl);
-	__cache_promote(s->iop.c, to_bbio(miss), &replace.key);
+	__cache_promote(s->iop.c, to_bbio(miss), &replace.key,
+			BCH_WRITE_ALLOC_NOWAIT|BCH_WRITE_CACHED);
 
 	return 0;
 nopromote:
@@ -519,6 +520,7 @@ static void cached_dev_write(struct cached_dev *dc, struct search *s)
 	bool bypass = s->bypass;
 	struct bkey insert_key = KEY(s->inode, 0, 0);
 	struct bio *insert_bio;
+	unsigned flags = 0;
 
 	down_read_non_owner(&dc->writeback_lock);
 	if (bch_keybuf_check_overlapping(&dc->writeback_keys, &start, &end)) {
@@ -576,15 +578,19 @@ static void cached_dev_write(struct cached_dev *dc, struct search *s)
 		}
 	} else {
 		insert_bio = bio_clone_fast(bio, GFP_NOIO, dc->disk.bio_split);
-		SET_KEY_CACHED(&insert_key, true);
-
 		closure_bio_submit(bio, cl);
+
+		flags |= BCH_WRITE_CACHED;
+		flags |= BCH_WRITE_ALLOC_NOWAIT;
 	}
 
+	if (bio->bi_opf & (REQ_PREFLUSH|REQ_FUA))
+		flags |= BCH_WRITE_FLUSH;
+	if (bypass)
+		flags |= BCH_WRITE_DISCARD;
+
 	bch_write_op_init(&s->iop, dc->disk.c, insert_bio, NULL,
-			  !KEY_CACHED(&insert_key), bypass,
-			  bio->bi_opf & (REQ_PREFLUSH|REQ_FUA),
-			  &insert_key, NULL);
+			  &insert_key, NULL, flags);
 
 	closure_call(&s->iop.cl, bch_write, NULL, cl);
 	continue_at(cl, cached_dev_write_complete, NULL);
@@ -727,14 +733,18 @@ static void __flash_dev_make_request(struct request_queue *q, struct bio *bio)
 				      flash_dev_nodata,
 				      d->c->wq);
 	} else if (rw) {
+		unsigned flags = 0;
+
 		s = search_alloc(bio, d);
 		bio = &s->bio.bio;
 
+		if (bio->bi_opf & (REQ_PREFLUSH|REQ_FUA))
+			flags |= BCH_WRITE_FLUSH;
+		if (bio_op(bio) == REQ_OP_DISCARD)
+			flags |= BCH_WRITE_DISCARD;
+
 		bch_write_op_init(&s->iop, d->c, bio, NULL,
-				  true,
-				  bio_op(bio) == REQ_OP_DISCARD,
-				  bio->bi_opf & (REQ_PREFLUSH|REQ_FUA),
-				  &KEY(s->inode, 0, 0), NULL);
+				  &KEY(s->inode, 0, 0), NULL, flags);
 
 		closure_call(&s->iop.cl, bch_write, NULL, &s->cl);
 		continue_at(&s->cl, search_free, NULL);

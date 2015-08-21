@@ -220,8 +220,7 @@ static int issue_tiering_move(struct moving_queue *q,
 
 	bch_write_op_init(&io->op, c, &io->bio.bio,
 			  &ca->tiering_write_point,
-			  true, false, false,
-			  &io->key, &io->key);
+			  &io->key, &io->key, 0);
 	io->op.io_wq = q->wq;
 	io->op.btree_alloc_reserve = RESERVE_TIERING_BTREE;
 

@@ -629,9 +629,9 @@ void bch_write(struct closure *cl)
 
 void bch_write_op_init(struct bch_write_op *op, struct cache_set *c,
 		       struct bio *bio, struct write_point *wp,
-		       bool wait, bool discard, bool flush,
 		       const struct bkey *insert_key,
-		       const struct bkey *replace_key)
+		       const struct bkey *replace_key,
+		       unsigned flags)
 {
 	if (!wp) {
 		unsigned wp_idx = hash_long((unsigned long) current,
@@ -646,14 +646,18 @@ void bch_write_op_init(struct bch_write_op *op, struct cache_set *c,
 	op->bio		= bio;
 	op->error	= 0;
 	op->flags	= 0;
-	op->wait	= wait;
-	op->discard	= discard;
-	op->flush	= flush;
+	op->wait	= !(flags & BCH_WRITE_ALLOC_NOWAIT);
+	op->discard	= (flags & BCH_WRITE_DISCARD) != 0;
+	op->cached	= (flags & BCH_WRITE_CACHED) != 0;
+	op->flush	= (flags & BCH_WRITE_FLUSH) != 0;
 	op->wp		= wp;
 	op->btree_alloc_reserve = BTREE_ID_EXTENTS;
 
 	bch_keylist_init(&op->insert_keys);
 	bkey_copy(&op->insert_key, insert_key);
+
+	if (op->cached)
+		SET_KEY_CACHED(&op->insert_key, true);
 
 	if (replace_key) {
 		op->replace = true;
@@ -800,7 +804,8 @@ static void cache_promote_endio(struct bio *bio)
  * @orig_bio must actually be a bbio with a valid key.
  */
 void __cache_promote(struct cache_set *c, struct bbio *orig_bio,
-		     const struct bkey *replace_key)
+		     const struct bkey *replace_key,
+		     unsigned write_flags)
 {
 	struct cache_promote_op *op;
 	struct bio *bio;
@@ -837,8 +842,8 @@ void __cache_promote(struct cache_set *c, struct bbio *orig_bio,
 
 	bch_write_op_init(&op->iop, c, bio,
 			  &c->promote_write_point,
-			  false, false, false,
-			  replace_key, replace_key);
+			  replace_key, replace_key,
+			  write_flags);
 
 	bch_cut_front(&START_KEY(&orig_bio->key), &op->iop.insert_key);
 	bch_cut_back(&orig_bio->key, &op->iop.insert_key);
@@ -870,7 +875,7 @@ bool cache_promote(struct cache_set *c, struct bbio *bio,
 		return 0;
 	}
 
-	__cache_promote(c, bio, k);
+	__cache_promote(c, bio, k, BCH_WRITE_ALLOC_NOWAIT);
 	return 1;
 }
 

@@ -67,9 +67,7 @@ found:
 	}
 
 	/* This also copies k into both insert_key and replace_key */
-	bch_write_op_init(&io->op, c, &io->bio.bio, wp,
-			  false, false, false,
-			  k, k);
+	bch_write_op_init(&io->op, c, &io->bio.bio, wp, k, k, 0);
 	io->op.io_wq		= ca->moving_gc_write;
 	io->op.btree_alloc_reserve = RESERVE_MOVINGGC_BTREE;
 
