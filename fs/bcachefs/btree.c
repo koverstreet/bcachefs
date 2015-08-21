@@ -1886,7 +1886,8 @@ static int bch_gc_btree(struct cache_set *c, enum btree_id btree_id,
 
 		btree_gc_coalesce(merge, &iter, stat);
 
-		if (kthread_should_stop()) {
+		if (kthread_should_stop() &&
+		    test_bit(CACHE_SET_STOPPING, &c->flags)) {
 			gc_merge_nodes_unlock(merge);
 			bch_btree_iter_unlock(&iter);
 			return -ESHUTDOWN;
@@ -2049,6 +2050,12 @@ static void bch_gc(struct cache_set *c)
 	return;
 
 gc_failed:
+	write_seqlock(&c->gc_cur_lock);
+	c->gc_cur_btree = BTREE_ID_NR + 1;
+	c->gc_cur_level = 0;
+	c->gc_cur_key = ZERO_KEY;
+	write_sequnlock(&c->gc_cur_lock);
+
 	set_bit(CACHE_SET_GC_FAILURE, &c->flags);
 	up_write(&c->gc_lock);
 }
