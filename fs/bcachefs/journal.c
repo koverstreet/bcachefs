@@ -445,7 +445,7 @@ static int bch_journal_replay_key(struct cache_set *c, enum btree_id id,
 {
 	trace_bcache_journal_replay_key(k);
 
-	return bch_btree_insert(c, id, &keylist_single(k), NULL);
+	return bch_btree_insert(c, id, &keylist_single(k), NULL, NULL);
 }
 
 int bch_journal_replay(struct cache_set *c, struct list_head *list)

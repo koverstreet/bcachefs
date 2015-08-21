@@ -182,7 +182,8 @@ again:
 int bch_inode_update(struct cache_set *c, struct bch_inode *inode)
 {
 	return bch_btree_insert(c, BTREE_ID_INODES,
-				&keylist_single(&inode->i_key), NULL);
+				&keylist_single(&inode->i_key),
+				NULL, NULL);
 }
 
 int bch_inode_rm(struct cache_set *c, u64 inode_nr)
@@ -199,7 +200,8 @@ int bch_inode_rm(struct cache_set *c, u64 inode_nr)
 	SET_KEY_DELETED(&inode, 1);
 
 	return bch_btree_insert(c, BTREE_ID_INODES,
-				&keylist_single(&inode), NULL);
+				&keylist_single(&inode),
+				NULL, NULL);
 }
 
 struct find_op {

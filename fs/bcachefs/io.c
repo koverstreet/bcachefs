@@ -271,29 +271,10 @@ static void bio_csum(struct bio *bio, struct bkey *k)
 	k->val[bch_extent_ptrs(k)] = crc;
 }
 
-static int btree_insert_fn(struct btree_op *b_op, struct btree *b)
-{
-	int ret;
-	struct bch_write_op *op = container_of(b_op,
-					struct bch_write_op, op);
-	struct bch_replace_info *replace = (op->replace
-					    ? &op->replace_info
-					    : NULL);
-
-	ret = bch_btree_insert_node(b, &op->op, &op->insert_keys,
-				    replace,
-				    op->flush ? &op->cl : NULL,
-				    op->btree_alloc_reserve);
-	return bch_keylist_empty(&op->insert_keys) ? MAP_DONE : ret;
-}
-
 static void bch_write_done(struct closure *cl)
 {
 	struct bch_write_op *op = container_of(cl, struct bch_write_op, cl);
 	unsigned i;
-
-	if (op->op.insert_collision)
-		op->replace_collision = true;
 
 	for (i = 0; i < ARRAY_SIZE(op->open_buckets); i++)
 		if (op->open_buckets[i]) {
@@ -308,38 +289,22 @@ static void bch_write_done(struct closure *cl)
 	closure_return(cl);
 }
 
-static void __bch_write_index(struct closure *cl)
-{
-	struct bch_write_op *op = container_of(cl, struct bch_write_op,
-					op.cl);
-	struct keylist *keys = &op->insert_keys;
-	int ret = 0;
-
-	while (!ret && !bch_keylist_empty(keys)) {
-		op->op.locks_want = 0;
-		ret = bch_btree_map_nodes(&op->op, op->c,
-					  &START_KEY(bch_keylist_front(keys)),
-					  btree_insert_fn,
-					  MAP_ASYNC);
-	}
-
-	if (ret == -EAGAIN)
-		continue_at(cl, __bch_write_index, op->c->wq);
-
-	closure_return(cl);
-}
-
 /**
  * bch_write_index - after a write, update index to point to new data
  */
 static void bch_write_index(struct closure *cl)
 {
 	struct bch_write_op *op = container_of(cl, struct bch_write_op, cl);
-	enum btree_id id = BTREE_ID_EXTENTS;
 
-	__bch_btree_op_init(&op->op, id, 0);
+	int ret = bch_btree_insert(op->c, BTREE_ID_EXTENTS, &op->insert_keys,
+				   op->replace ? &op->replace_info : NULL,
+				   op->flush ? &op->cl : NULL);
 
-	closure_call(&op->op.cl, __bch_write_index, NULL, cl);
+	if (ret == -ESRCH)
+		op->replace_collision = true;
+	else if (ret)
+		op->error = ret;
+
 	continue_at(cl, bch_write_done, op->c->wq);
 }
 

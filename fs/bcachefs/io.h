@@ -17,9 +17,6 @@ struct bch_write_op {
 	struct workqueue_struct	*io_wq;
 	struct bio		*bio;
 
-	/* Used internally, do not touch */
-	struct btree_op		op;
-
 	short			error;
 
 	union {
