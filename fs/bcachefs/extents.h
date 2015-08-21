@@ -3,7 +3,6 @@
 
 #include "bset.h"
 
-bool bch_generic_sort_cmp(struct btree_iter_set, struct btree_iter_set);
 struct bkey *bch_generic_sort_fixup(struct btree_iter *, struct bkey *);
 bool bch_generic_insert_fixup(struct btree_keys *, struct bkey *,
 			      struct btree_iter *, struct bkey *);

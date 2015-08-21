@@ -117,7 +117,6 @@ static bool __inode_invalid(struct btree_keys *bk, struct bkey *k)
 }
 
 const struct btree_keys_ops bch_inode_ops = {
-	.sort_cmp	= bch_generic_sort_cmp,
 	.sort_fixup	= bch_generic_sort_fixup,
 	.insert_fixup	= bch_generic_insert_fixup,
 

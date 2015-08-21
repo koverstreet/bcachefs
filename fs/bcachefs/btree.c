@@ -250,6 +250,7 @@ void bch_btree_node_read_done(struct btree *b)
 	iter = mempool_alloc(b->c->fill_iter, GFP_NOIO);
 	iter->size = b->c->sb.bucket_size / b->c->sb.block_size;
 	iter->used = 0;
+	iter->is_extents = b->keys.ops->is_extents;
 
 #ifdef CONFIG_BCACHEFS_DEBUG
 	iter->b = &b->keys;

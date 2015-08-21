@@ -1048,15 +1048,6 @@ EXPORT_SYMBOL(__bch_bset_search);
 
 /* Btree iterator */
 
-typedef bool (btree_iter_cmp_fn)(struct btree_iter_set,
-				 struct btree_iter_set);
-
-static inline bool btree_iter_cmp(struct btree_iter_set l,
-				  struct btree_iter_set r)
-{
-	return bkey_cmp(l.k, r.k) > 0;
-}
-
 static inline bool btree_iter_end(struct btree_iter *iter)
 {
 	return !iter->used;
@@ -1068,7 +1059,7 @@ void bch_btree_iter_push(struct btree_iter *iter, struct bkey *k,
 	if (k != end)
 		BUG_ON(!heap_add(iter,
 				 ((struct btree_iter_set) { k, end }),
-				 btree_iter_cmp));
+				 iter_cmp(iter)));
 }
 
 static struct bkey *__bch_btree_iter_init(struct btree_keys *b,
@@ -1077,8 +1068,10 @@ static struct bkey *__bch_btree_iter_init(struct btree_keys *b,
 					  struct bset_tree *start)
 {
 	struct bkey *ret = NULL;
+
 	iter->size = ARRAY_SIZE(iter->data);
 	iter->used = 0;
+	iter->is_extents = b->ops->is_extents;
 
 #ifdef CONFIG_BCACHEFS_DEBUG
 	iter->b = b;
@@ -1100,8 +1093,7 @@ struct bkey *bch_btree_iter_init(struct btree_keys *b,
 }
 EXPORT_SYMBOL(bch_btree_iter_init);
 
-static inline struct bkey *__bch_btree_iter_next(struct btree_iter *iter,
-						 btree_iter_cmp_fn *cmp)
+struct bkey *bch_btree_iter_next_all(struct btree_iter *iter)
 {
 	struct btree_iter_set unused;
 	struct bkey *ret = NULL;
@@ -1118,18 +1110,12 @@ static inline struct bkey *__bch_btree_iter_next(struct btree_iter *iter,
 		}
 
 		if (iter->data->k == iter->data->end)
-			BUG_ON(!heap_pop(iter, unused, cmp));
+			BUG_ON(!heap_pop(iter, unused, iter_cmp(iter)));
 		else
-			heap_sift(iter, 0, cmp);
+			btree_iter_sift(iter, 0);
 	}
 
 	return ret;
-}
-
-struct bkey *bch_btree_iter_next_all(struct btree_iter *iter)
-{
-	return __bch_btree_iter_next(iter, btree_iter_cmp);
-
 }
 EXPORT_SYMBOL(bch_btree_iter_next_all);
 
@@ -1162,9 +1148,6 @@ static void btree_mergesort(struct btree_keys *b, struct bset *bset,
 	struct bkey *k, *prev = NULL, *out = bset->start;
 	BKEY_PADDED(k) tmp;
 
-	/* Heapify the iterator, using our comparison function */
-	heap_resort(iter, b->ops->sort_cmp);
-
 	while (!btree_iter_end(iter)) {
 		if (fixup && b->ops->sort_fixup)
 			k = b->ops->sort_fixup(iter, &tmp.k);
@@ -1172,7 +1155,7 @@ static void btree_mergesort(struct btree_keys *b, struct bset *bset,
 			k = NULL;
 
 		if (!k)
-			k = __bch_btree_iter_next(iter, b->ops->sort_cmp);
+			k = bch_btree_iter_next_all(iter);
 
 		bkey_copy(out, k);
 

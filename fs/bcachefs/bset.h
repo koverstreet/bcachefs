@@ -186,8 +186,6 @@ struct bset_tree {
 };
 
 struct btree_keys_ops {
-	bool		(*sort_cmp)(struct btree_iter_set,
-				    struct btree_iter_set);
 	struct bkey	*(*sort_fixup)(struct btree_iter *, struct bkey *);
 	bool		(*insert_fixup)(struct btree_keys *, struct bkey *,
 					struct btree_iter *, struct bkey *);
@@ -584,6 +582,10 @@ static inline enum bch_extent_overlap bch_extent_overlap(const struct bkey *k,
 
 struct btree_iter {
 	size_t size, used;
+
+	/* If true, compare START_KEY(k) and not k itself. */
+	bool		is_extents;
+
 #ifdef CONFIG_BCACHEFS_DEBUG
 	struct btree_keys *b;
 #endif
@@ -604,6 +606,37 @@ static inline struct btree_keys *__iter_keys_ptr(struct btree_iter *iter)
 typedef bool (*ptr_filter_fn)(struct btree_keys *, struct bkey *);
 
 struct bkey *bch_btree_iter_next_all(struct btree_iter *);
+
+/*
+ * Returns true if l > r - unless l == r, in which case returns true if l is
+ * older than r.
+ *
+ * Necessary for btree_sort_fixup() - if there are multiple keys that compare
+ * equal in different sets, we have to process them newest to oldest.
+ */
+static inline bool btree_iter_cmp(struct btree_iter_set l,
+				  struct btree_iter_set r)
+{
+	s64 c = bkey_cmp(l.k, r.k);
+
+	return c ? c > 0 : l.k < r.k;
+}
+
+static inline bool btree_iter_extent_cmp(struct btree_iter_set l,
+					 struct btree_iter_set r)
+{
+	s64 c = bkey_cmp(&START_KEY(l.k), &START_KEY(r.k));
+
+	return c ? c > 0 : l.k < r.k;
+}
+
+#define iter_cmp(iter)							\
+	(iter->is_extents ? btree_iter_extent_cmp : btree_iter_cmp)
+
+static inline void btree_iter_sift(struct btree_iter *iter, size_t i)
+{
+	heap_sift(iter, i, iter_cmp(iter));
+}
 
 static inline struct bkey *bch_btree_iter_next(struct btree_iter *iter)
 {
