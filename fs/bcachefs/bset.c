@@ -1040,11 +1040,6 @@ EXPORT_SYMBOL(__bch_bset_search);
 
 /* Btree iterator */
 
-static inline bool btree_iter_end(struct btree_iter *iter)
-{
-	return !iter->used;
-}
-
 void bch_btree_iter_push(struct btree_iter *iter, struct bkey *k,
 			 struct bkey *end)
 {
@@ -1090,7 +1085,7 @@ struct bkey *bch_btree_iter_next_all(struct btree_iter *iter)
 	struct btree_iter_set unused;
 	struct bkey *ret = NULL;
 
-	if (!btree_iter_end(iter)) {
+	if (!bch_btree_iter_end(iter)) {
 		bch_btree_iter_next_check(iter);
 
 		ret = iter->data->k;
@@ -1140,7 +1135,7 @@ static void btree_mergesort(struct btree_keys *b, struct bset *bset,
 	struct bkey *k, *prev = NULL, *out = bset->start;
 	BKEY_PADDED(k) tmp;
 
-	while (!btree_iter_end(iter)) {
+	while (!bch_btree_iter_end(iter)) {
 		if (fixup && b->ops->sort_fixup)
 			k = b->ops->sort_fixup(iter, &tmp.k);
 		else

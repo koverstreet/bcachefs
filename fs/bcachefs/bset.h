@@ -638,6 +638,11 @@ static inline void btree_iter_sift(struct btree_iter *iter, size_t i)
 	heap_sift(iter, i, iter_cmp(iter));
 }
 
+static inline bool bch_btree_iter_end(struct btree_iter *iter)
+{
+	return !iter->used;
+}
+
 static inline struct bkey *bch_btree_iter_next(struct btree_iter *iter)
 {
 	struct bkey *ret;
@@ -649,24 +654,23 @@ static inline struct bkey *bch_btree_iter_next(struct btree_iter *iter)
 	return ret;
 }
 
+static inline struct bkey *bch_btree_iter_peek(struct btree_iter *iter)
+{
+	return bch_btree_iter_end(iter)
+		? NULL
+		: iter->data->k;
+}
+
 static inline struct bkey *
-bch_btree_iter_next_overlapping(struct btree_iter *iter,
-				struct bkey *end)
+bch_btree_iter_peek_overlapping(struct btree_iter *iter, struct bkey *end)
 {
 	struct bkey *k;
 
-	while ((k = bch_btree_iter_next_all(iter))) {
-		if (bkey_cmp(&START_KEY(k), end) >= 0) {
-			if (!KEY_SIZE(k))
-				continue;
-			return NULL;
-		}
+	while ((k = bch_btree_iter_peek(iter)) &&
+	       (bkey_cmp(k, &START_KEY(end)) <= 0))
+		bch_btree_iter_next_all(iter);
 
-		if (bkey_cmp(k, &START_KEY(end)) > 0)
-			break;
-	}
-
-	return k;
+	return k && bkey_cmp(&START_KEY(k), end) < 0 ? k : NULL;
 }
 
 void bch_btree_iter_push(struct btree_iter *, struct bkey *, struct bkey *);
