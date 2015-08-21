@@ -1394,6 +1394,8 @@ static void bch_btree_set_root(struct btree *b)
 		six_lock_write(&old->lock);
 	}
 
+	b->parent = NULL;
+
 	/* Root nodes cannot be reaped */
 	mutex_lock(&c->btree_cache_lock);
 	list_del_init(&b->list);
@@ -1555,10 +1557,8 @@ int bch_btree_root_read(struct cache_set *c, enum btree_id id,
 			return PTR_ERR(b);
 	}
 
-	list_del_init(&b->list);
+	bch_btree_set_root(b);
 	btree_node_unlock(&op, b, b->level);
-
-	c->btree_roots[id] = b;
 
 	return 0;
 }
@@ -2678,16 +2678,15 @@ static int __bch_btree_insert_node(struct btree *b, struct btree_op *op,
 
 	if (bch_btree_insert_keys(b, op, insert_keys, replace_key,
 				  flush_cl) == BTREE_INSERT_NEED_SPLIT) {
-		struct btree *p;
 		int level;
 
 		/*
 		 * Check if we have intent locks on all parent nodes, if not
 		 * try again
 		 */
-		for (p = b->parent, level = b->level + 1;
-		     p;
-		     p = p->parent, level++)
+		for (level = b->level + 1;
+		     level <= btree_node_root(b)->level;
+		     level++)
 			if (!btree_node_intent_locked(op, level)) {
 				op->locks_want = btree_node_root(b)->level + 1;
 				return -EINTR;
