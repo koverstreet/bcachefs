@@ -186,7 +186,6 @@ struct bset_tree {
 };
 
 struct btree_keys_ops {
-	bool		(*cmp)(struct bkey *, struct bkey *);
 	bool		(*sort_cmp)(struct btree_iter_set,
 				    struct btree_iter_set);
 	struct bkey	*(*sort_fixup)(struct btree_iter *, struct bkey *);
