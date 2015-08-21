@@ -1151,11 +1151,12 @@ err:
 static struct btree *btree_node_alloc_replacement(struct btree *b,
 						  struct btree_op *op)
 {
-	struct btree *n = bch_btree_node_alloc(b->c, op, b->level, b->btree_id,
-					       b->parent);
+	struct btree *n;
+
+	n = bch_btree_node_alloc(b->c, op, b->level, b->btree_id, b->parent);
 	if (n) {
 		mutex_lock(&n->write_lock);
-		bch_btree_sort_into(&b->keys, &n->keys, &b->c->sort);
+		bch_btree_sort_into(&n->keys, &b->keys, &b->c->sort);
 		bkey_copy_key(&n->key, &b->key);
 		mutex_unlock(&n->write_lock);
 	}

@@ -1157,9 +1157,7 @@ static void btree_mergesort(struct btree_keys *b, struct bset *bset,
 {
 	struct bkey *k, *prev = NULL, *out = bset->start;
 	BKEY_PADDED(k) tmp;
-	bool (*bad)(struct btree_keys *, const struct bkey *) = remove_stale
-		? bch_ptr_bad
-		: bch_ptr_invalid;
+	ptr_filter_fn filter = remove_stale ? bch_ptr_bad : bch_ptr_invalid;
 
 	/* Heapify the iterator, using our comparison function */
 	heap_resort(iter, b->ops->sort_cmp);
@@ -1178,7 +1176,7 @@ static void btree_mergesort(struct btree_keys *b, struct bset *bset,
 		if (remove_stale && b->ops->key_normalize)
 			b->ops->key_normalize(b, out);
 
-		if (bad(b, out))
+		if (filter(b, out))
 			continue;
 
 		if (prev && bch_bkey_try_merge(b, prev, out))
@@ -1276,19 +1274,28 @@ void bch_btree_sort_and_fix_extents(struct btree_keys *b,
 	__btree_sort(b, iter, 0, b->page_order, true, state);
 }
 
-void bch_btree_sort_into(struct btree_keys *b, struct btree_keys *new,
+/**
+ * bch_btree_sort_into - sort with a specified output, instead of allocating
+ * temporary space
+ *
+ * does not create the auxiliary search tree
+ */
+void bch_btree_sort_into(struct btree_keys *dst,
+			 struct btree_keys *src,
 			 struct bset_sort_state *state)
 {
 	uint64_t start_time = local_clock();
 
 	struct btree_iter iter;
-	bch_btree_iter_init(b, &iter, NULL);
+	bch_btree_iter_init(src, &iter, NULL);
 
-	btree_mergesort(b, new->set->data, &iter, false, true);
+	btree_mergesort(src, dst->set->data, &iter, false, true);
 
 	bch_time_stats_update(&state->time, start_time);
 
-	new->set->size = 0; // XXX: why?
+	dst->nsets = 0;
+	/* No auxiliary search tree yet */
+	dst->set->size = 0;
 }
 
 #define SORT_CRIT	(4096 / sizeof(uint64_t))
