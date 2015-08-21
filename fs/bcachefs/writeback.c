@@ -61,9 +61,13 @@ struct dirty_io {
 	struct cache		*ca;
 	struct keybuf_key	*w;
 	int			error;
+	bool			from_mempool;
 	/* Must be last */
 	struct bio		bio;
 };
+
+#define DIRTY_IO_MEMPOOL_BVECS		64
+#define DIRTY_IO_MEMPOOL_SECTORS	(DIRTY_IO_MEMPOOL_BVECS * PAGE_SECTORS)
 
 static void dirty_init(struct dirty_io *io)
 {
@@ -83,7 +87,11 @@ static void dirty_init(struct dirty_io *io)
 static void dirty_io_destructor(struct closure *cl)
 {
 	struct dirty_io *io = container_of(cl, struct dirty_io, cl);
-	kfree(io);
+
+	if (io->from_mempool)
+		mempool_free(io, io->dc->writeback_io_pool);
+	else
+		kfree(io);
 }
 
 static void write_dirty_finish(struct closure *cl)
@@ -188,11 +196,6 @@ static void read_dirty(struct cached_dev *dc)
 
 	closure_init_stack(&cl);
 
-	/*
-	 * XXX: if we error, background writeback just spins. Should use some
-	 * mempools.
-	 */
-
 	while (!bch_ratelimit_wait_freezable_stoppable(&dc->writeback_pd.rate,
 						       &cl)) {
 		w = bch_keybuf_next(&dc->writeback_keys);
@@ -211,11 +214,27 @@ static void read_dirty(struct cached_dev *dc)
 						  PAGE_SECTORS),
 				     GFP_KERNEL);
 			if (!io) {
-				percpu_ref_put(&ca->ref);
-				break;
+				io = mempool_alloc(dc->writeback_io_pool,
+						   GFP_KERNEL);
+				memset(io, 0, sizeof(*io) +
+				       sizeof(struct bio_vec) *
+				       DIRTY_IO_MEMPOOL_BVECS);
+				io->from_mempool = true;
+
+				bkey_copy(&io->key, &tmp.k);
+
+				if (DIRTY_IO_MEMPOOL_SECTORS <
+				    KEY_SIZE(&io->key)) {
+					SET_KEY_OFFSET(&io->key,
+						KEY_START(&io->key) +
+						DIRTY_IO_MEMPOOL_SECTORS);
+					SET_KEY_SIZE(&io->key,
+						DIRTY_IO_MEMPOOL_SECTORS);
+				}
+			} else {
+				bkey_copy(&io->key, &tmp.k);
 			}
 
-			bkey_copy(&io->key, &tmp.k);
 			io->dc		= dc;
 			io->ca		= ca;
 			io->w		= w;
@@ -265,6 +284,8 @@ static void read_dirty(struct cached_dev *dc)
 	 * freed) before refilling again
 	 */
 	closure_sync(&cl);
+
+	BUG_ON(!RB_EMPTY_ROOT(&dc->writeback_keys.keys));
 }
 
 /* Scan for dirty data */
@@ -540,6 +561,7 @@ void bch_cached_dev_writeback_free(struct cached_dev *dc)
 	struct bcache_device *d = &dc->disk;
 
 	mempool_destroy(dc->writeback_page_pool);
+	mempool_destroy(dc->writeback_io_pool);
 	kvfree(d->full_dirty_stripes);
 	kvfree(d->stripe_sectors_dirty);
 }
@@ -588,6 +610,13 @@ int bch_cached_dev_writeback_init(struct cached_dev *dc)
 		pr_err("cannot allocate full_dirty_stripes");
 		return -ENOMEM;
 	}
+
+	dc->writeback_io_pool =
+		mempool_create_kmalloc_pool(4, sizeof(struct dirty_io) +
+					    sizeof(struct bio_vec) *
+					    DIRTY_IO_MEMPOOL_BVECS);
+	if (!dc->writeback_io_pool)
+		return -ENOMEM;
 
 	dc->writeback_page_pool =
 		mempool_create_page_pool((64 << 10) / PAGE_SIZE, 0);

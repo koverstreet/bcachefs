@@ -427,6 +427,7 @@ struct cached_dev {
 	struct bch_pd_controller writeback_pd;
 	struct task_struct	*writeback_thread;
 	struct keybuf		writeback_keys;
+	mempool_t		*writeback_io_pool;
 	mempool_t		*writeback_page_pool;
 
 	/* For tracking sequential IO */
