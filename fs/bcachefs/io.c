@@ -481,10 +481,9 @@ err:
 	 * written (especially for a cmpxchg operation that's moving data
 	 * around)
 	 */
-	if (!bch_keylist_empty(&op->insert_keys))
-		continue_at(cl, bch_write_index, op->c->wq);
-	else
-		closure_return(cl);
+	continue_at(cl, !bch_keylist_empty(&op->insert_keys)
+		    ? bch_write_index
+		    : bch_write_done, op->c->wq);
 }
 
 void bch_wake_delayed_writes(unsigned long data)
