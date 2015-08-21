@@ -88,7 +88,8 @@ bool bch_generic_insert_fixup(struct btree_keys *b, struct bkey *insert,
 
 /* Common among btree and extent ptrs */
 
-static bool should_drop_ptr(struct cache_set *c, struct bkey *k, unsigned ptr)
+static bool should_drop_ptr(struct cache_set *c, const struct bkey *k,
+			    unsigned ptr)
 {
 	struct cache *ca;
 
@@ -105,6 +106,23 @@ static unsigned PTR_TIER(struct cache_set *c, const struct bkey *k,
 	struct cache *ca = PTR_CACHE(c, k, ptr);
 
 	return ca ? CACHE_TIER(&ca->sb) : UINT_MAX;
+}
+
+unsigned bch_extent_nr_ptrs_after_normalize(struct cache_set *c,
+					    const struct bkey *k)
+{
+	unsigned ret = 0, ptr;
+
+	rcu_read_lock();
+	for (ptr = 0; ptr < bch_extent_ptrs(k); ptr++)
+		if (!should_drop_ptr(c, k, ptr))
+			ret++;
+	rcu_read_unlock();
+
+	if (ret)
+		ret += BKEY_U64s;
+
+	return ret;
 }
 
 bool bch_extent_normalize(struct cache_set *c, struct bkey *k)

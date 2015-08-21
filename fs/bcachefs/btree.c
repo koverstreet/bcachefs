@@ -1516,7 +1516,7 @@ u8 __bch_btree_mark_key(struct cache_set *c, int level, struct bkey *k)
 static bool btree_gc_mark_node(struct btree *b, struct gc_stat *gc)
 {
 	uint8_t stale = 0;
-	unsigned keys = 0, good_keys = 0;
+	unsigned keys = 0, good_keys = 0, u64s;
 	struct bkey *k;
 	struct btree_iter iter;
 	struct bset_tree *t;
@@ -1530,14 +1530,14 @@ static bool btree_gc_mark_node(struct btree *b, struct gc_stat *gc)
 		stale = max(stale, btree_mark_key(b, k));
 		keys++;
 
-		if (bch_ptr_bad(&b->keys, k))
-			continue;
+		u64s = bch_extent_nr_ptrs_after_normalize(b->c, k);
+		if (u64s) {
+			good_keys++;
 
-		gc->key_bytes += KEY_U64s(k);
-		gc->nkeys++;
-		good_keys++;
-
-		gc->data += KEY_SIZE(k);
+			gc->key_bytes += KEY_U64s(k);
+			gc->nkeys++;
+			gc->data += KEY_SIZE(k);
+		}
 	}
 
 	for (t = b->keys.set; t <= &b->keys.set[b->keys.nsets]; t++)
@@ -1793,7 +1793,7 @@ static unsigned btree_gc_count_keys(struct btree *b)
 	unsigned ret = 0;
 
 	for_each_key_filter(&b->keys, k, &iter, bch_ptr_bad)
-		ret += KEY_U64s(k);
+		ret += bch_extent_nr_ptrs_after_normalize(b->c, k);
 
 	return ret;
 }
