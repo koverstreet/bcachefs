@@ -657,21 +657,23 @@ void bch_prio_write(struct cache *ca)
 					       &p->magic,
 					       bucket_bytes(ca) - 8);
 
-		mutex_lock(&ca->set->bucket_lock);
+		spin_lock(&ca->prio_buckets_lock);
 		r = bch_bucket_alloc(ca, RESERVE_PRIO, NULL);
-		mutex_unlock(&ca->set->bucket_lock);
 		BUG_ON(r < 0);
 
 		/*
-		 * goes here before dropping bucket_lock to guard against it
-		 * getting gc'd from under us
+		 * goes here before dropping prio_buckets_lock to guard against
+		 * it getting gc'd from under us
 		 */
 		ca->prio_buckets[i] = r;
+		spin_unlock(&ca->prio_buckets_lock);
 
 		prio_io(ca, r, REQ_OP_WRITE, 0);
 	}
 
+	spin_lock(&ca->prio_buckets_lock);
 	ca->prio_journal_bucket = ca->prio_buckets[0];
+	spin_unlock(&ca->prio_buckets_lock);
 
 	bch_journal_meta(ca->set, &cl);
 	closure_sync(&cl);
@@ -681,7 +683,7 @@ void bch_prio_write(struct cache *ca)
 	 * finish writing the new ones, and they're journalled
 	 */
 
-	mutex_lock(&ca->set->bucket_lock);
+	spin_lock(&ca->prio_buckets_lock);
 
 	for (i = 0; i < prio_buckets(ca); i++) {
 		if (ca->prio_last_buckets[i])
@@ -691,7 +693,7 @@ void bch_prio_write(struct cache *ca)
 		ca->prio_last_buckets[i] = ca->prio_buckets[i];
 	}
 
-	mutex_unlock(&ca->set->bucket_lock);
+	spin_unlock(&ca->prio_buckets_lock);
 
 	trace_bcache_prio_write_end(ca);
 }
@@ -1986,15 +1988,13 @@ static int cache_set_add_device(struct cache_set *c, struct cache *ca)
 	kobject_get(&ca->kobj);
 	ca->set = c;
 
-	mutex_lock(&c->bucket_lock);
 	rcu_assign_pointer(c->cache[ca->sb.nr_this_dev], ca);
 
 	tier = &c->cache_by_alloc[CACHE_TIER(cache_member_info(ca))];
 
 	BUG_ON(tier->nr_devices >= MAX_CACHES_PER_SET);
 
-	tier->devices[tier->nr_devices++] = ca;
-	mutex_unlock(&c->bucket_lock);
+	rcu_assign_pointer(tier->devices[tier->nr_devices++], ca);
 
 	return 0;
 }
@@ -2122,7 +2122,6 @@ static void __bch_cache_remove(struct cache *ca)
 		sysfs_remove_link(&c->kobj, buf);
 	}
 
-	mutex_lock(&c->bucket_lock);
 	for (i = 0; i < tier->nr_devices; i++)
 		if (tier->devices[i] == ca) {
 			tier->nr_devices--;
@@ -2131,7 +2130,6 @@ static void __bch_cache_remove(struct cache *ca)
 				(tier->nr_devices - i) * sizeof(ca));
 			break;
 		}
-	mutex_unlock(&c->bucket_lock);
 
 	bch_moving_gc_stop(ca);
 
@@ -2179,6 +2177,8 @@ static int cache_init(struct cache *ca)
 	bio_init(&ca->journal.bio);
 	ca->journal.bio.bi_max_vecs = 8;
 	ca->journal.bio.bi_io_vec = ca->journal.bio.bi_inline_vecs;
+	spin_lock_init(&ca->freelist_lock);
+	spin_lock_init(&ca->prio_buckets_lock);
 
 	/* XXX: tune these */
 	movinggc_reserve = max_t(size_t, NUM_GC_GENS * 2,
@@ -2224,7 +2224,6 @@ static int cache_init(struct cache *ca)
 		ca->gc_buckets[i].ca = ca;
 
 	mutex_init(&ca->heap_lock);
-	init_waitqueue_head(&ca->fifo_wait);
 	bch_moving_init_cache(ca);
 
 	return 0;

@@ -60,8 +60,11 @@ static inline void bch_journal_add_prios(struct cache_set *c, struct jset *j)
 	struct cache *ca;
 	unsigned i;
 
-	for_each_cache(ca, c, i)
+	for_each_cache(ca, c, i) {
+		spin_lock(&ca->prio_buckets_lock);
 		prio_set->d[ca->sb.nr_this_dev] = ca->prio_journal_bucket;
+		spin_unlock(&ca->prio_buckets_lock);
+	}
 
 	prio_set->keys = c->sb.nr_in_set;
 	SET_JKEYS_TYPE(prio_set, JKEYS_PRIO_PTRS);

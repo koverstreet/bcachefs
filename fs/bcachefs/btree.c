@@ -1343,24 +1343,27 @@ static int __btree_check_reserve(struct cache_set *c,
 	unsigned i;
 	int ret;
 
-	mutex_lock(&c->bucket_lock);
 	rcu_read_lock();
 
 	for_each_cache_rcu(ca, c, i) {
+		spin_lock(&ca->freelist_lock);
+
 		if (fifo_used(&ca->free[reserve]) < required) {
 			trace_bcache_btree_check_reserve_fail(ca, reserve,
 					fifo_used(&ca->free[reserve]),
 					required, cl);
 
 			ret = bch_bucket_wait(c, reserve, cl);
+
+			spin_unlock(&ca->freelist_lock);
 			rcu_read_unlock();
-			mutex_unlock(&c->bucket_lock);
 			return ret;
 		}
+
+		spin_unlock(&ca->freelist_lock);
 	}
 
 	rcu_read_unlock();
-	mutex_unlock(&c->bucket_lock);
 
 	return mca_cannibalize_lock(c, cl);
 }
@@ -1955,8 +1958,6 @@ static void btree_gc_start(struct cache_set *c)
 	struct bucket *g;
 	unsigned i;
 
-	mutex_lock(&c->bucket_lock);
-
 	write_seqlock(&c->gc_cur_lock);
 	for_each_cache(ca, c, i)
 		ca->bucket_stats_cached = __bucket_stats_read(ca);
@@ -1978,19 +1979,13 @@ static void btree_gc_start(struct cache_set *c)
 	 * buckets into the btree - if we race and an open_bucket has been freed
 	 * before we marked it, it's in the btree now
 	 */
-	bch_mark_open_buckets(c);
-
-	mutex_unlock(&c->bucket_lock);
+	bch_mark_allocator_buckets(c);
 }
 
 static void bch_btree_gc_finish(struct cache_set *c)
 {
 	struct cache *ca;
 	unsigned i;
-
-	mutex_lock(&c->bucket_lock);
-
-	set_gc_sectors(c);
 
 	bch_mark_writeback_keys(c);
 	bch_mark_keybuf_keys(c, &c->tiering_keys);
@@ -2005,12 +2000,16 @@ static void bch_btree_gc_finish(struct cache_set *c)
 			bch_mark_metadata_bucket(ca,
 					&ca->buckets[journal_bucket(ca, j)]);
 
+		spin_lock(&ca->prio_buckets_lock);
+
 		for (i = ca->prio_buckets;
 		     i < ca->prio_buckets + prio_buckets(ca) * 2; i++)
 			bch_mark_metadata_bucket(ca, &ca->buckets[*i]);
+
+		spin_unlock(&ca->prio_buckets_lock);
 	}
 
-	mutex_unlock(&c->bucket_lock);
+	set_gc_sectors(c);
 
 	write_seqlock(&c->gc_cur_lock);
 	c->gc_cur_btree = BTREE_ID_NR + 1;

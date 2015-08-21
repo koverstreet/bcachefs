@@ -163,14 +163,16 @@ static bool bch_moving_gc(struct cache *ca)
 
 	memset(&stats, 0, sizeof(stats));
 
-	mutex_lock(&c->bucket_lock);
-
-	/* We won't fill up the moving GC reserve completely if the data
+	/*
+	 * We won't fill up the moving GC reserve completely if the data
 	 * being copied is from different generations. In the worst case,
-	 * there will be NUM_GC_GENS buckets of internal fragmentation */
+	 * there will be NUM_GC_GENS buckets of internal fragmentation
+	 */
+
+	spin_lock(&ca->freelist_lock);
 	reserve_sectors = ca->sb.bucket_size *
 		(fifo_used(&ca->free[RESERVE_MOVINGGC]) - NUM_GC_GENS);
-	mutex_unlock(&c->bucket_lock);
+	spin_unlock(&ca->freelist_lock);
 
 	if (reserve_sectors < (int) ca->sb.block_size)
 		return false;
@@ -231,6 +233,7 @@ static bool bch_moving_gc(struct cache *ca)
 	 * keep hot and cold data in the same locality.
 	 */
 
+	mutex_lock(&ca->set->bucket_lock);
 	heap_resort(&ca->heap, bucket_write_prio_max_cmp);
 
 	sectors_gen = sectors_to_move / NUM_GC_GENS;
@@ -244,6 +247,7 @@ static bool bch_moving_gc(struct cache *ca)
 		    sectors_total >= sectors_gen * gen_current)
 			gen_current++;
 	}
+	mutex_unlock(&ca->set->bucket_lock);
 
 	mutex_unlock(&ca->heap_lock);
 

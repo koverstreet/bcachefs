@@ -51,7 +51,7 @@ void bch_open_bucket_put(struct cache_set *, struct open_bucket *);
 struct open_bucket *bch_alloc_sectors(struct cache_set *, struct write_point *,
 				      struct bkey *, struct closure *);
 
-void bch_mark_open_buckets(struct cache_set *);
+void bch_mark_allocator_buckets(struct cache_set *);
 
 void bch_open_buckets_init(struct cache_set *);
 int bch_cache_allocator_start(struct cache *);
