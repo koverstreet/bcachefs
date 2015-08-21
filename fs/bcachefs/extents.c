@@ -447,6 +447,20 @@ bool bch_cut_back(const struct bkey *where, struct bkey *k)
 	return true;
 }
 
+/*
+ * Returns a key corresponding to the end of @k split at @where, @k will be the
+ * first half of the split
+ */
+#define bch_key_split(where, k)					\
+({								\
+	BKEY_PADDED(k) __tmp;					\
+								\
+	bkey_copy(&__tmp.k, k);					\
+	bch_cut_back(where, &__tmp.k);				\
+	bch_cut_front(where, k);				\
+	&__tmp.k;						\
+})
+
 /**
  * bch_key_resize - adjust size of @k
  *
@@ -626,6 +640,32 @@ static void bch_subtract_sectors(struct cache_set *c, struct bkey *k,
 	bch_add_sectors(c, k, offset, -sectors, false);
 }
 
+/* These wrappers subtract exactly the sectors that we're removing from @k */
+static void bch_cut_subtract_back(struct cache_set *c, const struct bkey *where,
+				  struct bkey *k)
+{
+	bch_subtract_sectors(c, k, KEY_OFFSET(where),
+			     KEY_OFFSET(k) - KEY_OFFSET(where));
+	bch_cut_back(where, k);
+}
+
+static void bch_cut_subtract_front(struct cache_set *c,
+				   const struct bkey *where,
+				   struct bkey *k)
+{
+	bch_subtract_sectors(c, k, KEY_START(k),
+			     KEY_OFFSET(where) - KEY_START(k));
+	bch_cut_front(where, k);
+}
+
+static void bch_drop_subtract(struct cache_set *c, struct bkey *k)
+{
+	if (KEY_SIZE(k))
+		bch_subtract_sectors(c, k, KEY_START(k), KEY_SIZE(k));
+	SET_KEY_SIZE(k, 0);
+	SET_KEY_DELETED(k, true);
+}
+
 static bool bkey_cmpxchg_cmp(struct bkey *k, struct bkey *old)
 {
 	/* skip past gen */
@@ -663,18 +703,14 @@ static bool bkey_cmpxchg(struct cache_set *c,
 		if (*sectors_found)
 			return false;
 
-		bch_subtract_sectors(c, new, KEY_START(new),
-				     KEY_START(k) - KEY_START(new));
-		bch_cut_front(&START_KEY(k), new);
+		bch_cut_subtract_front(c, &START_KEY(k), new);
 	}
 
 	if (!bkey_cmpxchg_cmp(k, old)) {
 		if (*sectors_found || bkey_cmp(k, new) >= 0)
 			return false;
 
-		bch_subtract_sectors(c, new, KEY_START(new),
-				     KEY_OFFSET(k) - KEY_START(new));
-		bch_cut_front(k, new);
+		bch_cut_subtract_front(c, k, new);
 	} else {
 		*sectors_found = KEY_OFFSET(k) - KEY_START(new);
 	}
@@ -688,25 +724,16 @@ static bool handle_existing_key_newer(struct cache_set *c,
 				      struct bkey *k,
 				      struct btree_iter *iter)
 {
-	BKEY_PADDED(key) temp;
-
 	switch (bch_extent_overlap(k, insert)) {
 	case BCH_EXTENT_OVERLAP_FRONT:
-		bch_subtract_sectors(c, insert, KEY_START(insert),
-				     KEY_OFFSET(k) - KEY_START(insert));
-		bch_cut_front(k, insert);
+		bch_cut_subtract_front(c, k, insert);
 		break;
 
 	case BCH_EXTENT_OVERLAP_BACK:
-		bch_subtract_sectors(c, insert, KEY_START(k),
-				     KEY_OFFSET(insert) - KEY_START(k));
-		bch_cut_back(&START_KEY(k), insert);
+		bch_cut_subtract_back(c, &START_KEY(k), insert);
 		break;
 
 	case BCH_EXTENT_OVERLAP_MIDDLE:
-		bch_subtract_sectors(c, insert, KEY_START(k),
-				     KEY_SIZE(k));
-
 		/*
 		 * We have an overlap where @k (newer version splits
 		 * @insert (older version) in two.
@@ -714,16 +741,13 @@ static bool handle_existing_key_newer(struct cache_set *c,
 		 * Insert the first half of @insert ourselves, then update
 		 * @insert to to represent the other half of the split.
 		 */
-		bkey_copy(&temp.key, insert);
-		bch_cut_front(k, insert);
-		bch_cut_back(&START_KEY(k), &temp.key);
-
-		bch_bset_insert_with_hint(b, iter, k, &temp.key);
+		bch_bset_insert_with_hint(b, iter, NULL,
+				bch_key_split(&START_KEY(k), insert));
+		bch_cut_subtract_front(c, k, insert);
 		break;
 
 	case BCH_EXTENT_OVERLAP_ALL:
-		bch_subtract_sectors(c, insert, KEY_START(insert),
-				     KEY_SIZE(insert));
+		bch_drop_subtract(c, insert);
 		return true;
 	}
 
@@ -737,8 +761,7 @@ static bool bch_extent_insert_fixup(struct btree_keys *b,
 {
 	struct cache_set *c = container_of(b, struct btree, keys)->c;
 	unsigned sectors_found = 0;  /* for cmpxchg */
-	struct bkey *k;
-	BKEY_PADDED(key) temp;
+	struct bkey *k, *split;
 
 	BUG_ON(!KEY_SIZE(insert));
 
@@ -794,53 +817,40 @@ static bool bch_extent_insert_fixup(struct btree_keys *b,
 
 		switch (bch_extent_overlap(insert, k)) {
 		case BCH_EXTENT_OVERLAP_FRONT:
-			bch_subtract_sectors(c, k, KEY_START(k),
-					     KEY_OFFSET(insert) - KEY_START(k));
-			bch_cut_front(insert, k);
+			bch_cut_subtract_front(c, insert, k);
 			break;
 
 		case BCH_EXTENT_OVERLAP_BACK:
-			bch_subtract_sectors(c, k, KEY_START(insert),
-					     KEY_OFFSET(k) - KEY_START(insert));
-			bch_cut_back(&START_KEY(insert), k);
+			bch_cut_subtract_back(c, &START_KEY(insert), k);
 			bch_bset_fix_invalidated_key(b, k);
 			break;
 
 		case BCH_EXTENT_OVERLAP_ALL:
-			if (KEY_SIZE(k))
-				bch_subtract_sectors(c, k, KEY_START(k),
-						     KEY_SIZE(k));
+			bch_drop_subtract(c, k);
 
 			/*
 			 * Completely overwrote, so we don't have to invalidate
 			 * the binary search tree
 			 */
-			SET_KEY_SIZE(k, 0);
-			SET_KEY_DELETED(k, true);
 			if (!bkey_written(b, k))
 				SET_KEY_OFFSET(k, KEY_START(insert));
 
 			break;
 
 		case BCH_EXTENT_OVERLAP_MIDDLE:
-			bch_subtract_sectors(c, k, KEY_START(insert),
-					     KEY_SIZE(insert));
-
 			/*
 			 * We overlapped in the middle of an existing key: that
 			 * means we have to split the old key: the old key will
 			 * represent one half of the split, and we have to
 			 * insert a new key to represent the other half.
+			 *
+			 * modify k _before_ doing the insert (which will move
+			 * what k points to)
 			 */
-			bkey_copy(&temp.key, k);
-
-			bch_cut_front(insert, &temp.key);
-			bch_cut_back(&START_KEY(insert), k);
-			bch_bset_fix_invalidated_key(b, k);
-
-			bch_bset_insert_with_hint(b, iter, k, &temp.key);
-
-			return false;
+			split = bch_key_split(&START_KEY(insert), k);
+			bch_cut_subtract_front(c, insert, k);
+			bch_bset_insert_with_hint(b, iter, NULL, split);
+			break;
 		}
 	}
 

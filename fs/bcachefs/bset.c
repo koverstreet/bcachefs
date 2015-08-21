@@ -855,7 +855,7 @@ unsigned bch_bset_insert_with_hint(struct btree_keys *b,
 				   struct bkey *where,
 				   struct bkey *insert)
 {
-	if (bkey_written(b, where))
+	if (!where || bkey_written(b, where))
 		where = bch_bset_search(b, bset_tree_last(b),
 					&START_KEY(insert));
 
