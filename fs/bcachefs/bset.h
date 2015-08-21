@@ -420,20 +420,6 @@ static __always_inline int64_t bkey_cmp(const struct bkey *l,
 
 void bch_bkey_copy_single_ptr(struct bkey *, const struct bkey *,
 			      unsigned);
-bool __bch_cut_front(const struct bkey *, struct bkey *);
-bool __bch_cut_back(const struct bkey *, struct bkey *);
-
-static inline bool bch_cut_front(const struct bkey *where, struct bkey *k)
-{
-	BUG_ON(bkey_cmp(where, k) > 0);
-	return __bch_cut_front(where, k);
-}
-
-static inline bool bch_cut_back(const struct bkey *where, struct bkey *k)
-{
-	BUG_ON(bkey_cmp(where, &START_KEY(k)) < 0);
-	return __bch_cut_back(where, k);
-}
 
 #define NEXT_KEY(_k)						\
 ({								\

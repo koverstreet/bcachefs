@@ -34,4 +34,7 @@ static inline void bch_set_extent_ptrs(struct bkey *k, unsigned i)
 	bch_set_val_u64s(k, i);
 }
 
+bool bch_cut_front(const struct bkey *, struct bkey *);
+bool bch_cut_back(const struct bkey *, struct bkey *);
+
 #endif /* _BCACHE_EXTENTS_H */
