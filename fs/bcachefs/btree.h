@@ -436,7 +436,9 @@ static inline bool __gc_will_visit_node(struct cache_set *c,
 {
 	return b->btree_id != c->gc_cur_btree
 		? b->btree_id > c->gc_cur_btree
-		: bkey_cmp(&b->key, &c->gc_cur_key) > 0;
+		: bkey_cmp(&b->key, &c->gc_cur_key)
+		? bkey_cmp(&b->key, &c->gc_cur_key) > 0
+		: b->level > c->gc_cur_level;
 }
 
 /**

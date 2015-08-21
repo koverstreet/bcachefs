@@ -523,6 +523,7 @@ struct cache_set {
 	 */
 	seqlock_t		gc_cur_lock;
 	enum btree_id		gc_cur_btree;
+	unsigned		gc_cur_level;
 	struct bkey		gc_cur_key;
 
 	/*
