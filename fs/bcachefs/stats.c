@@ -7,6 +7,7 @@
 #include "bcache.h"
 #include "stats.h"
 #include "btree.h"
+#include "stats.h"
 #include "sysfs.h"
 
 /*
@@ -49,8 +50,9 @@ read_attribute(cache_readaheads);
 read_attribute(cache_miss_collisions);
 read_attribute(bypassed);
 read_attribute(foreground_write_ratio);
-read_attribute(foreground_write_sectors);
-read_attribute(gc_write_sectors);
+read_attribute(foreground_writes);
+read_attribute(gc_writes);
+read_attribute(discards);
 
 SHOW(bch_stats)
 {
@@ -68,10 +70,12 @@ SHOW(bch_stats)
 
 	var_print(cache_readaheads);
 	var_print(cache_miss_collisions);
-	sysfs_hprint(bypassed,	var(sectors_bypassed) << 9);
 
-	var_print(foreground_write_sectors);
-	var_print(gc_write_sectors);
+	sysfs_hprint(bypassed,		var(sectors_bypassed) << 9);
+	sysfs_hprint(foreground_writes,	var(foreground_write_sectors) << 9);
+	sysfs_hprint(gc_writes,		var(gc_write_sectors) << 9);
+	sysfs_hprint(discards,		var(discard_sectors) << 9);
+
 	sysfs_print(foreground_write_ratio,
 		    DIV_SAFE(var(foreground_write_sectors) * 100,
 			     var(foreground_write_sectors) +
@@ -99,8 +103,9 @@ static struct attribute *bch_stats_files[] = {
 	&sysfs_cache_miss_collisions,
 	&sysfs_bypassed,
 	&sysfs_foreground_write_ratio,
-	&sysfs_foreground_write_sectors,
-	&sysfs_gc_write_sectors,
+	&sysfs_foreground_writes,
+	&sysfs_gc_writes,
+	&sysfs_discards,
 	NULL
 };
 static KTYPE(bch_stats);
@@ -158,6 +163,7 @@ static void scale_stats(struct cache_stats *stats, unsigned long rescale_at)
 		scale_stat(&stats->sectors_bypassed);
 		scale_stat(&stats->foreground_write_sectors);
 		scale_stat(&stats->gc_write_sectors);
+		scale_stat(&stats->discard_sectors);
 	}
 }
 
@@ -183,6 +189,7 @@ static void scale_accounting(unsigned long data)
 	move_stat(sectors_bypassed);
 	move_stat(foreground_write_sectors);
 	move_stat(gc_write_sectors);
+	move_stat(discard_sectors);
 
 	scale_stats(&acc->total, 0);
 	scale_stats(&acc->day, DAY_RESCALE);
@@ -195,60 +202,6 @@ static void scale_accounting(unsigned long data)
 		add_timer(&acc->timer);
 	else
 		closure_return(&acc->cl);
-}
-
-static void mark_cache_stats(struct cache_stat_collector *stats,
-			     bool hit, bool bypass)
-{
-	if (!bypass)
-		if (hit)
-			atomic_inc(&stats->cache_hits);
-		else
-			atomic_inc(&stats->cache_misses);
-	else
-		if (hit)
-			atomic_inc(&stats->cache_bypass_hits);
-		else
-			atomic_inc(&stats->cache_bypass_misses);
-}
-
-void bch_mark_cache_accounting(struct cache_set *c, struct bcache_device *d,
-			       bool hit, bool bypass)
-{
-	struct cached_dev *dc = container_of(d, struct cached_dev, disk);
-	mark_cache_stats(&dc->accounting.collector, hit, bypass);
-	mark_cache_stats(&c->accounting.collector, hit, bypass);
-}
-
-void bch_mark_cache_readahead(struct cache_set *c, struct bcache_device *d)
-{
-	struct cached_dev *dc = container_of(d, struct cached_dev, disk);
-	atomic_inc(&dc->accounting.collector.cache_readaheads);
-	atomic_inc(&c->accounting.collector.cache_readaheads);
-}
-
-void bch_mark_cache_miss_collision(struct cache_set *c, struct bcache_device *d)
-{
-	struct cached_dev *dc = container_of(d, struct cached_dev, disk);
-	atomic_inc(&dc->accounting.collector.cache_miss_collisions);
-	atomic_inc(&c->accounting.collector.cache_miss_collisions);
-}
-
-void bch_mark_sectors_bypassed(struct cache_set *c, struct cached_dev *dc,
-			       int sectors)
-{
-	atomic_add(sectors, &dc->accounting.collector.sectors_bypassed);
-	atomic_add(sectors, &c->accounting.collector.sectors_bypassed);
-}
-
-void bch_mark_foreground_write(struct cache_set *c, int sectors)
-{
-	atomic_add(sectors, &c->accounting.collector.foreground_write_sectors);
-}
-
-void bch_mark_gc_write(struct cache_set *c, int sectors)
-{
-	atomic_add(sectors, &c->accounting.collector.gc_write_sectors);
 }
 
 void bch_cache_accounting_init(struct cache_accounting *acc,

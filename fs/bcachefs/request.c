@@ -29,6 +29,43 @@
 
 struct kmem_cache *bch_search_cache;
 
+static inline void mark_cache_stats(struct cache_stat_collector *stats,
+				    bool hit, bool bypass)
+{
+	atomic_inc(&stats->cache_hit_array[!bypass][!hit]);
+}
+
+static inline void bch_mark_cache_accounting(struct cache_set *c,
+					     struct cached_dev *dc,
+					     bool hit, bool bypass)
+{
+	mark_cache_stats(&dc->accounting.collector, hit, bypass);
+	mark_cache_stats(&c->accounting.collector, hit, bypass);
+}
+
+static inline void bch_mark_sectors_bypassed(struct cache_set *c,
+					     struct cached_dev *dc,
+					     unsigned sectors)
+{
+	atomic_add(sectors, &dc->accounting.collector.sectors_bypassed);
+	atomic_add(sectors, &c->accounting.collector.sectors_bypassed);
+}
+
+static inline void bch_mark_gc_write(struct cache_set *c, int sectors)
+{
+	atomic_add(sectors, &c->accounting.collector.gc_write_sectors);
+}
+
+static inline void bch_mark_foreground_write(struct cache_set *c, int sectors)
+{
+	atomic_add(sectors, &c->accounting.collector.foreground_write_sectors);
+}
+
+static inline void bch_mark_discard(struct cache_set *c, int sectors)
+{
+	atomic_add(sectors, &c->accounting.collector.discard_sectors);
+}
+
 static void bch_data_insert_start(struct closure *);
 
 static void bio_csum(struct bio *bio, struct bkey *k)
@@ -401,6 +438,8 @@ void bch_data_insert(struct closure *cl)
 		bch_mark_gc_write(c, bio_sectors(op->bio));
 	else if (!op->discard)
 		bch_mark_foreground_write(c, bio_sectors(op->bio));
+	else
+		bch_mark_discard(c, bio_sectors(op->bio));
 
 	if (atomic_sub_return(bio_sectors(op->bio),
 			      &c->sectors_until_gc) < 0) {
@@ -1078,8 +1117,7 @@ static void cached_dev_read_done_bh(struct closure *cl)
 	struct search *s = container_of(cl, struct search, cl);
 	struct cached_dev *dc = container_of(s->d, struct cached_dev, disk);
 
-	bch_mark_cache_accounting(s->iop.c, s->d,
-				  !s->cache_miss, s->bypass);
+	bch_mark_cache_accounting(s->iop.c, dc, !s->cache_miss, s->bypass);
 	trace_bcache_read(s->orig_bio, !s->cache_miss, s->bypass);
 
 	if (s->iop.error)
