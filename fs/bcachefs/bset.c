@@ -818,7 +818,8 @@ void bch_bset_insert(struct btree_keys *b,
 	BKEY_PADDED(k) tmp;
 
 	BUG_ON(insert->u64s > bch_btree_keys_u64s_remaining(b));
-	BUG_ON(b->ops->is_extents && !insert->size);
+	BUG_ON(b->ops->is_extents &&
+	       (!insert->size || bkey_deleted(insert)));
 	BUG_ON(!b->last_set_unwritten);
 	BUG_ON(where < i->start);
 	BUG_ON(where > bset_bkey_last(i));

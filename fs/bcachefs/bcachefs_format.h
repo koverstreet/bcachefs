@@ -152,13 +152,9 @@ struct bkey_i_##name {							\
  *   override keys in composition order.  Their version number is ignored.
  *
  * - DISCARDED keys indicate that the data is all 0s because it has been
- *   discarded.  Unlike DELETED keys, DISCARDED keys have version numbers so
- *   that discarded regions don't revert when a server that was offline during
- *   the discard comes back on line.  Unlike DELETED keys, which can be
- *   eliminated by (node-) local GC, DISCARDED keys can only be eliminated by:
- * - cluster-wide GC, when all the servers are online and the DISCARDED keys are
- *   no longer overriding any older keys, or
- * - local GC when completely overridden by younger writes/discards.
+ *   discarded. DISCARDs may have a version; if the version is nonzero the key
+ *   will be persistent, otherwise the key will be dropped whenever the btree
+ *   node is rewritten (like DELETED keys).
  *
  * - ERROR: any read of the data returns a read error, as the data was lost due
  *   to a failing device. Like DISCARDED keys, they can be removed (overridden)

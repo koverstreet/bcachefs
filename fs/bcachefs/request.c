@@ -438,17 +438,7 @@ retry:
 			goto out;
 		}
 
-		if (!ca && k->type == KEY_TYPE_DISCARD) {
-			/* The data is zeros.  Instantiate them. */
-			unsigned bytes = min_t(unsigned, sectors,
-					       bio_sectors(bio)) << 9;
-
-			swap(bio->bi_iter.bi_size, bytes);
-			zero_fill_bio(bio);
-			swap(bio->bi_iter.bi_size, bytes);
-
-			bio_advance(bio, bytes);
-		} else if (!ca) {
+		if (!ca) {
 			/* not present (hole), or stale cached data */
 			if (cached_dev_cache_miss(&iter, s, bio, sectors)) {
 				k = bch_btree_iter_peek_with_holes(&iter);

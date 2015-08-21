@@ -17,10 +17,11 @@ bool bkey_invalid(struct cache_set *c,
 {
 	const struct bkey_ops *ops = bch_bkey_ops[type];
 
-	if (k->size && !ops->is_extents)
+	if (k->u64s < BKEY_U64s)
 		return true;
 
-	if (k->u64s < BKEY_U64s)
+	if (k->size &&
+	    (bkey_deleted(k) || !ops->is_extents))
 		return true;
 
 	switch (k->type) {

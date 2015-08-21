@@ -166,6 +166,8 @@ unsigned bch_extent_nr_ptrs_after_normalize(const struct cache_set *c,
 		return 0;
 
 	case KEY_TYPE_DISCARD:
+		return k->version ? BKEY_U64s : 0;
+
 	case KEY_TYPE_ERROR:
 		return BKEY_U64s;
 
@@ -1101,6 +1103,7 @@ bool bch_insert_fixup_extent(struct btree *b, struct bkey *insert,
 	struct bpos orig_insert = insert->p;
 	bool inserted = false;
 
+	BUG_ON(bkey_deleted(insert));
 	BUG_ON(!insert->size);
 
 	/*
@@ -1180,7 +1183,7 @@ bool bch_insert_fixup_extent(struct btree *b, struct bkey *insert,
 				       &inserted, res))
 			continue;
 
-		if (k->size && !bkey_deleted(insert) &&
+		if (k->size &&
 		    insert->version < k->version) {
 			handle_existing_key_newer(b, iter, insert, k,
 						  &inserted, res);
@@ -1390,8 +1393,12 @@ bool bch_extent_normalize(struct cache_set *c, struct bkey *k)
 
 	switch (k->type) {
 	case KEY_TYPE_DELETED:
-	case KEY_TYPE_DISCARD:
 	case KEY_TYPE_ERROR:
+		break;
+
+	case KEY_TYPE_DISCARD:
+		if (!k->version)
+			set_bkey_deleted(k);
 		break;
 
 	case KEY_TYPE_COOKIE:

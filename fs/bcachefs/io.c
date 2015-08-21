@@ -361,7 +361,7 @@ static void bch_write_error(struct closure *cl)
 		struct bkey *n = bkey_next(src);
 
 		set_bkey_val_u64s(src, 0);
-		src->type = KEY_TYPE_DELETED;
+		src->type = KEY_TYPE_DISCARD;
 		memmove(dst, src, bkey_bytes(src));
 
 		dst = bkey_next(dst);
@@ -691,7 +691,7 @@ void bch_write_op_init(struct bch_write_op *op, struct cache_set *c,
 		 * allocate pointers
 		 */
 		op->insert_key.type = op->discard
-			? KEY_TYPE_DELETED
+			? KEY_TYPE_DISCARD
 			: BCH_EXTENT;
 	}
 
@@ -737,15 +737,12 @@ int bch_discard(struct cache_set *c, struct bpos start,
 
 		/* create the biggest key we can, to minimize writes */
 		bkey_init(&erase);
-		erase.p = bkey_start_pos(k);
+		erase.type	= KEY_TYPE_DISCARD;
+		erase.version	= version;
+		erase.p		= bkey_start_pos(k);
 		bch_key_resize(&erase, max_sectors);
 		bch_cut_front(iter.pos, &erase);
 		n = erase.p;
-
-		erase.version = version;
-		erase.type = version
-			? KEY_TYPE_DISCARD
-			: KEY_TYPE_DELETED;
 
 		bch_cut_back(end, &erase);
 
