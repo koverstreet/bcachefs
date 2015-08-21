@@ -269,7 +269,22 @@ static void invalidate_buckets_random(struct cache *ca)
 
 static void invalidate_buckets(struct cache *ca)
 {
+	size_t dirty = 0, meta = 0, gen = 0;
+	struct bucket *b;
+
 	BUG_ON(ca->invalidate_needs_gc);
+
+	for_each_bucket(b, ca) {
+		if (GC_MARK(b) == GC_MARK_DIRTY)
+			dirty++;
+		if (GC_MARK(b) == GC_MARK_METADATA)
+			meta++;
+		if (!can_inc_bucket_gen(b))
+			gen++;
+	}
+
+	pr_debug("dirty %zu meta %zu gen %zu total %llu",
+		 dirty, meta, gen, ca->sb.nbuckets - ca->sb.first_bucket);
 
 	switch (CACHE_REPLACEMENT(&ca->sb)) {
 	case CACHE_REPLACEMENT_LRU:
