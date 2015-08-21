@@ -183,8 +183,6 @@ struct bset_tree {
 };
 
 struct btree_keys_ops {
-	struct bkey *	(*sort_fixup)(struct btree_node_iter *, struct bkey *);
-
 	bool		(*key_normalize)(struct btree_keys *, struct bkey *);
 	bool		(*key_merge)(struct btree_keys *,
 				     struct bkey *, struct bkey *);
@@ -391,31 +389,18 @@ static inline struct btree_keys *__iter_keys_ptr(struct btree_node_iter *iter)
 #endif
 }
 
-typedef bool (*ptr_filter_fn)(struct btree_keys *, struct bkey *);
-
 struct bkey *bch_btree_node_iter_next_all(struct btree_node_iter *);
 
-/*
- * Returns true if l > r - unless l == r, in which case returns true if l is
- * older than r.
- *
- * Necessary for btree_sort_fixup() - if there are multiple keys that compare
- * equal in different sets, we have to process them newest to oldest.
- */
 static inline bool btree_node_iter_cmp(struct btree_node_iter_set l,
 				       struct btree_node_iter_set r)
 {
-	s64 c = bkey_cmp(l.k->p, r.k->p);
-
-	return c ? c > 0 : l.k < r.k;
+	return bkey_cmp(l.k->p, r.k->p) > 0;
 }
 
 static inline bool btree_node_iter_extent_cmp(struct btree_node_iter_set l,
 					      struct btree_node_iter_set r)
 {
-	s64 c = bkey_cmp(bkey_start_pos(l.k), bkey_start_pos(r.k));
-
-	return c ? c > 0 : l.k < r.k;
+	return bkey_cmp(bkey_start_pos(l.k), bkey_start_pos(r.k)) > 0;
 }
 
 #define iter_cmp(iter)							\
@@ -518,6 +503,11 @@ struct bset_sort_state {
 	struct time_stats	time;
 };
 
+typedef bool (*ptr_filter_fn)(struct btree_keys *, struct bkey *);
+
+typedef void (*btree_keys_sort_fn)(struct btree_keys *, struct bset *,
+				   struct btree_node_iter *iter);
+
 void bch_bset_sort_state_free(struct bset_sort_state *);
 int bch_bset_sort_state_init(struct bset_sort_state *, unsigned);
 void bch_btree_sort_lazy(struct btree_keys *, ptr_filter_fn,
@@ -526,7 +516,8 @@ void bch_btree_sort_into(struct btree_keys *, struct btree_keys *,
 			 ptr_filter_fn, struct bset_sort_state *);
 void bch_btree_sort_and_fix_extents(struct btree_keys *,
 				    struct btree_node_iter *,
-				    ptr_filter_fn, struct bset_sort_state *);
+				    btree_keys_sort_fn,
+				    struct bset_sort_state *);
 void bch_btree_sort_partial(struct btree_keys *, unsigned,
 			    ptr_filter_fn, struct bset_sort_state *);
 

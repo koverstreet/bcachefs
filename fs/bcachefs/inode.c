@@ -79,7 +79,6 @@ static bool bch_inode_invalid(const struct cache_set *c, const struct bkey *k)
 }
 
 const struct btree_keys_ops bch_inode_ops = {
-	.sort_fixup	= bch_generic_sort_fixup,
 };
 
 const struct bkey_ops bch_bkey_inode_ops = {

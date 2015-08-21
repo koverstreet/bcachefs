@@ -26,40 +26,64 @@ static void sort_key_next(struct btree_node_iter *iter,
 		*i = iter->data[--iter->used];
 }
 
-struct bkey *bch_generic_sort_fixup(struct btree_node_iter *iter,
-				    struct bkey *tmp)
+/*
+ * Returns true if l > r - unless l == r, in which case returns true if l is
+ * older than r.
+ *
+ * Necessary for btree_sort_fixup() - if there are multiple keys that compare
+ * equal in different sets, we have to process them newest to oldest.
+ */
+static inline bool key_sort_cmp(struct btree_node_iter_set l,
+				struct btree_node_iter_set r)
 {
-	while (iter->used > 1) {
-		struct btree_node_iter_set *top = iter->data, *i = top + 1;
+	s64 c = bkey_cmp(l.k->p, r.k->p);
 
-		if (iter->used > 2 &&
-		    iter_cmp(iter)(i[0], i[1]))
-			i++;
+	return c ? c > 0 : l.k > r.k;
+}
 
-		/*
-		 * If this key and the next key don't compare equal, we're done.
-		 */
+static inline bool should_drop_next_key(struct btree_node_iter *iter)
+{
+	struct btree_node_iter_set *l = iter->data, *r = iter->data + 1;
 
-		if (bkey_cmp(top->k->p, i->k->p))
-			break;
+	if (bkey_deleted(l->k))
+		return true;
 
-		/*
-		 * If they do compare equal, the newer key overwrote the older
-		 * key and we need to drop the older key.
-		 *
-		 * iter_cmp() ensures that when keys compare equal the newer key
-		 * comes first; so i->k is older than top->k and we drop i->k.
-		 */
+	if (iter->used < 2)
+		return false;
 
-		i->k = bkey_next(i->k);
+	if (iter->used > 2 &&
+	    key_sort_cmp(r[0], r[1]))
+		r++;
 
-		if (i->k == i->end)
-			*i = iter->data[--iter->used];
+	/*
+	 * key_sort_cmp() ensures that when keys compare equal the older key
+	 * comes first; so if l->k compares equal to r->k then l->k is older and
+	 * should be dropped.
+	 */
+	return !bkey_cmp(l->k->p, r->k->p);
+}
 
-		btree_node_iter_sift(iter, i - top);
+void bch_key_sort_fix_overlapping(struct btree_keys *b,
+				  struct bset *bset,
+				  struct btree_node_iter *iter)
+{
+	struct bkey *out = bset->start;
+
+	heap_resort(iter, key_sort_cmp);
+
+	while (!bch_btree_node_iter_end(iter)) {
+		if (!should_drop_next_key(iter)) {
+			bkey_copy(out, iter->data->k);
+			out = bkey_next(out);
+		}
+
+		sort_key_next(iter, iter->data);
+		heap_sift(iter, 0, key_sort_cmp);
 	}
 
-	return NULL;
+	bset->u64s = (u64 *) out - bset->_data;
+
+	pr_debug("sorted %i keys", bset->u64s);
 }
 
 /* This returns true if insert should be inserted, false otherwise */
@@ -409,7 +433,6 @@ struct cache *bch_btree_pick_ptr(struct cache_set *c,
 }
 
 const struct btree_keys_ops bch_btree_interior_node_ops = {
-	.sort_fixup	= bch_generic_sort_fixup,
 };
 
 const struct bkey_ops bch_bkey_btree_ops = {
@@ -534,24 +557,79 @@ void bch_key_resize(struct bkey *k, unsigned new_size)
 	k->size = new_size;
 }
 
-static struct bkey *bch_extent_sort_fixup(struct btree_node_iter *iter,
-					  struct bkey *tmp)
+/*
+ * Returns true if l > r - unless l == r, in which case returns true if l is
+ * older than r.
+ *
+ * Necessary for sort_fix_overlapping() - if there are multiple keys that
+ * compare equal in different sets, we have to process them newest to oldest.
+ */
+static inline bool extent_sort_cmp(struct btree_node_iter_set l,
+				   struct btree_node_iter_set r)
 {
-	while (iter->used > 1) {
-		struct btree_node_iter_set *l = iter->data, *r = l + 1;
+	s64 c = bkey_cmp(bkey_start_pos(l.k), bkey_start_pos(r.k));
 
+	return c ? c > 0 : l.k < r.k;
+}
+
+static inline void extent_sort_sift(struct btree_node_iter *iter, size_t i)
+{
+	heap_sift(iter, i, extent_sort_cmp);
+}
+
+static inline void extent_sort_next(struct btree_node_iter *iter,
+				    struct btree_node_iter_set *i)
+{
+	sort_key_next(iter, i);
+	heap_sift(iter, i - iter->data, extent_sort_cmp);
+}
+
+static struct bkey *extent_sort_append(struct btree_keys *b, struct bkey *out,
+				       struct bkey **prev, struct bkey *k)
+{
+	if (bkey_deleted(k))
+		return out;
+
+	bkey_copy(out, k);
+
+	if (*prev && bch_bkey_try_merge(b, *prev, out))
+		return out;
+
+	*prev = out;
+	return bkey_next(out);
+}
+
+void bch_extent_sort_fix_overlapping(struct btree_keys *b,
+				     struct bset *bset,
+				     struct btree_node_iter *iter)
+{
+	struct btree_node_iter_set *l = iter->data, *r;
+	struct bkey *prev = NULL, *out = bset->start;
+
+	heap_resort(iter, extent_sort_cmp);
+
+	while (!bch_btree_node_iter_end(iter)) {
+		if (iter->used == 1) {
+			out = extent_sort_append(b, out, &prev, l->k);
+			extent_sort_next(iter, l);
+			continue;
+		}
+
+		r = iter->data + 1;
 		if (iter->used > 2 &&
-		    iter_cmp(iter)(r[0], r[1]))
+		    extent_sort_cmp(r[0], r[1]))
 			r++;
 
-		/* If they don't overlap, we're done */
-		if (bkey_cmp(l->k->p, bkey_start_pos(r->k)) <= 0)
-			break;
+		/* If current key and next key don't overlap, just append */
+		if (bkey_cmp(l->k->p, bkey_start_pos(r->k)) <= 0) {
+			out = extent_sort_append(b, out, &prev, l->k);
+			extent_sort_next(iter, l);
+			continue;
+		}
 
 		/* Skip 0 size keys */
 		if (!r->k->size) {
-			sort_key_next(iter, r);
-			btree_node_iter_sift(iter, r - iter->data);
+			extent_sort_next(iter, r);
 			continue;
 		}
 
@@ -572,25 +650,29 @@ static struct bkey *bch_extent_sort_fixup(struct btree_node_iter *iter,
 			else
 				bch_cut_front(l->k->p, r->k);
 
-			btree_node_iter_sift(iter, r - iter->data);
+			extent_sort_sift(iter, r - iter->data);
 		} else if (bkey_cmp(l->k->p, r->k->p) > 0) {
+			BKEY_PADDED(k) tmp;
+
 			/*
 			 * r wins, but it overlaps in the middle of l - split l:
 			 */
-			bkey_copy(tmp, l->k);
+			bkey_copy(&tmp.k, l->k);
 
-			bch_cut_back(bkey_start_pos(r->k), tmp);
+			bch_cut_back(bkey_start_pos(r->k), &tmp.k);
 			bch_cut_front(r->k->p, l->k);
-			btree_node_iter_sift(iter, 0);
+			extent_sort_sift(iter, 0);
 
-			return tmp;
+			out = extent_sort_append(b, out, &prev, &tmp.k);
 		} else {
 			/* r wins, no split: */
 			bch_cut_back(bkey_start_pos(r->k), l->k);
 		}
 	}
 
-	return NULL;
+	bset->u64s = (u64 *) out - bset->_data;
+
+	pr_debug("sorted %i keys", bset->u64s);
 }
 
 int __bch_add_sectors(struct cache_set *c, struct btree *b,
@@ -1522,7 +1604,6 @@ static bool bch_extent_merge(struct btree_keys *bk, struct bkey *l, struct bkey 
 }
 
 static const struct btree_keys_ops bch_extent_ops = {
-	.sort_fixup	= bch_extent_sort_fixup,
 	.key_normalize	= bch_ptr_normalize,
 	.key_merge	= bch_extent_merge,
 	.is_extents	= true,

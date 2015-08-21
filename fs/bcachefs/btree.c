@@ -346,7 +346,11 @@ void bch_btree_node_read_done(struct btree *b, struct cache *ca,
 		if (i->seq == b->keys.set[0].data->seq)
 			goto err;
 
-	bch_btree_sort_and_fix_extents(&b->keys, iter, NULL, &c->sort);
+	bch_btree_sort_and_fix_extents(&b->keys, iter,
+				       b->keys.ops->is_extents
+				       ? bch_extent_sort_fix_overlapping
+				       : bch_key_sort_fix_overlapping,
+				       &c->sort);
 
 	i = b->keys.set[0].data;
 	err = "short btree key";
