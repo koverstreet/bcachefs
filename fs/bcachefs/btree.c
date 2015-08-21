@@ -2301,7 +2301,8 @@ static inline struct bkey_s_c __btree_iter_peek_all(struct btree_iter *iter)
 	const struct bkey_format *f =
 		&iter->nodes[iter->level]->keys.set->data->format;
 	struct bkey_packed *k =
-		bch_btree_node_iter_peek_all(&iter->node_iters[iter->level]);
+		bch_btree_node_iter_peek_all(&iter->node_iters[iter->level],
+					     &iter->nodes[iter->level]->keys);
 	struct bkey_s_c ret;
 
 	if (!k)
