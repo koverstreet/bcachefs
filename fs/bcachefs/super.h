@@ -77,8 +77,6 @@ u64 bch_checksum(unsigned, const void *, size_t);
 	bch_checksum(type, start, end - start);				\
 })
 
-void bch_prio_write(struct cache *);
-
 void bch_check_mark_super_slowpath(struct cache_set *, struct bkey *, bool);
 
 static inline bool bch_check_super_marked(struct cache_set *c,

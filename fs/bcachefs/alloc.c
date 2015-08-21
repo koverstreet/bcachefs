@@ -58,6 +58,8 @@
 #include "btree.h"
 #include "buckets.h"
 #include "extents.h"
+#include "io.h"
+#include "journal.h"
 #include "super.h"
 
 #include <linux/blkdev.h>
@@ -91,6 +93,169 @@ void bch_cache_group_add_cache(struct cache_group *grp, struct cache *ca)
 
 	rcu_assign_pointer(grp->devices[grp->nr_devices++], ca);
 	write_seqcount_end(&grp->lock);
+}
+
+/*
+ * Bucket priorities/gens:
+ *
+ * For each bucket, we store on disk its
+   * 8 bit gen
+   * 16 bit priority
+ *
+ * See alloc.c for an explanation of the gen. The priority is used to implement
+ * lru (and in the future other) cache replacement policies; for most purposes
+ * it's just an opaque integer.
+ *
+ * The gens and the priorities don't have a whole lot to do with each other, and
+ * it's actually the gens that must be written out at specific times - it's no
+ * big deal if the priorities don't get written, if we lose them we just reuse
+ * buckets in suboptimal order.
+ *
+ * On disk they're stored in a packed array, and in as many buckets are required
+ * to fit them all. The buckets we use to store them form a list; the journal
+ * header points to the first bucket, the first bucket points to the second
+ * bucket, et cetera.
+ *
+ * This code is used by the allocation code; periodically (whenever it runs out
+ * of buckets to allocate from) the allocation code will invalidate some
+ * buckets, but it can't use those buckets until their new gens are safely on
+ * disk.
+ */
+
+static int prio_io(struct cache *ca, uint64_t bucket, int op)
+{
+	struct bio *bio = bch_bbio_alloc(ca->set);
+	int ret;
+
+	bio->bi_iter.bi_sector	= bucket * ca->sb.bucket_size;
+	bio->bi_bdev		= ca->bdev;
+	bio->bi_iter.bi_size	= bucket_bytes(ca);
+	bio_set_op_attrs(bio, op, REQ_SYNC|REQ_META);
+	bch_bio_map(bio, ca->disk_buckets);
+
+	ret = submit_bio_wait(bio);
+
+	bch_bbio_free(bio, ca->set);
+	return ret;
+}
+
+static void bch_prio_write(struct cache *ca)
+{
+	int i, ret;
+	struct closure cl;
+
+	closure_init_stack(&cl);
+
+	trace_bcache_prio_write_start(ca);
+
+	atomic_long_add(ca->sb.bucket_size * prio_buckets(ca),
+			&ca->meta_sectors_written);
+
+	for (i = prio_buckets(ca) - 1; i >= 0; --i) {
+		long r;
+		struct bucket *g;
+		struct prio_set *p = ca->disk_buckets;
+		struct bucket_disk *d = p->data;
+		struct bucket_disk *end = d + prios_per_bucket(ca);
+
+		for (r = i * prios_per_bucket(ca);
+		     r < ca->sb.nbuckets && d < end;
+		     r++, d++) {
+			g = ca->buckets + r;
+			d->read_prio = cpu_to_le16(g->read_prio);
+			d->write_prio = cpu_to_le16(g->write_prio);
+			d->gen = ca->bucket_gens[r];
+		}
+
+		p->next_bucket	= ca->prio_buckets[i + 1];
+		p->magic	= pset_magic(&ca->sb);
+
+		SET_PSET_CSUM_TYPE(p, CACHE_PREFERRED_CSUM_TYPE(&ca->set->sb));
+		p->csum		= bch_checksum(PSET_CSUM_TYPE(p),
+					       &p->magic,
+					       bucket_bytes(ca) - 8);
+
+		spin_lock(&ca->prio_buckets_lock);
+		r = bch_bucket_alloc(ca, RESERVE_PRIO);
+		BUG_ON(r < 0);
+
+		/*
+		 * goes here before dropping prio_buckets_lock to guard against
+		 * it getting gc'd from under us
+		 */
+		ca->prio_buckets[i] = r;
+		spin_unlock(&ca->prio_buckets_lock);
+
+		ret = prio_io(ca, r, REQ_OP_WRITE);
+		cache_set_err_on(ret, ca->set, "writing priorities");
+	}
+
+	spin_lock(&ca->prio_buckets_lock);
+	ca->prio_journal_bucket = ca->prio_buckets[0];
+	spin_unlock(&ca->prio_buckets_lock);
+
+	bch_journal_meta(ca->set, &cl);
+	closure_sync(&cl);
+
+	/*
+	 * Don't want the old priorities to get garbage collected until after we
+	 * finish writing the new ones, and they're journalled
+	 */
+
+	spin_lock(&ca->prio_buckets_lock);
+
+	for (i = 0; i < prio_buckets(ca); i++) {
+		if (ca->prio_last_buckets[i])
+			__bch_bucket_free(ca,
+				&ca->buckets[ca->prio_last_buckets[i]]);
+
+		ca->prio_last_buckets[i] = ca->prio_buckets[i];
+	}
+
+	spin_unlock(&ca->prio_buckets_lock);
+
+	trace_bcache_prio_write_end(ca);
+}
+
+const char *prio_read(struct cache *ca, u64 bucket)
+{
+	struct prio_set *p = ca->disk_buckets;
+	struct bucket_disk *d = p->data + prios_per_bucket(ca), *end = d;
+	size_t b;
+	unsigned bucket_nr = 0;
+
+	if (cache_set_init_fault("prio_read"))
+		return "prio_read() dynamic fault";
+
+	ca->prio_journal_bucket = bucket;
+
+	for (b = 0; b < ca->sb.nbuckets; b++, d++) {
+		if (d == end) {
+			ca->prio_last_buckets[bucket_nr] = bucket;
+			bucket_nr++;
+
+			if (prio_io(ca, bucket, REQ_OP_READ))
+				return "IO error reading priorities";
+
+			if (p->magic != pset_magic(&ca->sb))
+				return "bad magic reading priorities";
+
+			if (p->csum != bch_checksum(PSET_CSUM_TYPE(p),
+						    &p->magic,
+						    bucket_bytes(ca) - 8))
+				return "bad csum reading priorities";
+
+			bucket = p->next_bucket;
+			d = p->data;
+		}
+
+		ca->buckets[b].read_prio = le16_to_cpu(d->read_prio);
+		ca->buckets[b].write_prio = le16_to_cpu(d->write_prio);
+		ca->buckets[b].last_gc = d->gen;
+		ca->bucket_gens[b] = d->gen;
+	}
+
+	return NULL;
 }
 
 /*
