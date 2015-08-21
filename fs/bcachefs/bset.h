@@ -309,6 +309,10 @@ void bch_bset_build_written_tree(struct btree_keys *);
 void bch_bset_fix_invalidated_key(struct btree_keys *, struct bkey *);
 unsigned bch_bset_insert_with_hint(struct btree_keys *, struct btree_iter *,
 				   struct bkey *, struct bkey *);
+
+unsigned __bch_btree_insert_key(struct btree_keys *, struct bkey *,
+				struct bkey *, struct btree_iter *,
+				struct bkey *);
 unsigned bch_btree_insert_key(struct btree_keys *, struct bkey *,
 			      struct bkey *);
 

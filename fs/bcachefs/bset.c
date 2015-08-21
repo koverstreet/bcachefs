@@ -872,6 +872,24 @@ unsigned bch_bset_insert_with_hint(struct btree_keys *b,
 }
 EXPORT_SYMBOL(bch_bset_insert_with_hint);
 
+unsigned __bch_btree_insert_key(struct btree_keys *b, struct bkey *insert,
+				struct bkey *replace, struct btree_iter *iter,
+				struct bkey *where)
+{
+	int oldsize = bch_count_data(b);
+	unsigned status = BTREE_INSERT_STATUS_NO_INSERT;
+
+	BUG_ON(b->ops->is_extents && !KEY_SIZE(insert));
+
+	if (b->ops->insert_fixup(b, insert, iter, replace))
+		goto done;
+
+	status = bch_bset_insert(b, iter, where, insert);
+done:
+	BUG_ON(bch_count_data(b) < oldsize);
+	return status;
+}
+
 /**
  * bch_btree_insert_key - insert a single key @k into @b
  *
@@ -882,28 +900,16 @@ EXPORT_SYMBOL(bch_bset_insert_with_hint);
  * @replace_key was only partially present @k will be modified to represent what
  * was actually inserted.
  */
-unsigned bch_btree_insert_key(struct btree_keys *b,
-			      struct bkey *insert,
+unsigned bch_btree_insert_key(struct btree_keys *b, struct bkey *insert,
 			      struct bkey *replace)
 {
-	int oldsize = bch_count_data(b);
-	unsigned status = BTREE_INSERT_STATUS_NO_INSERT;
 	struct bkey *where;
 	struct btree_iter iter;
 
-	BUG_ON(b->ops->is_extents && !KEY_SIZE(insert));
-
 	where = bch_btree_iter_init(b, &iter, b->ops->is_extents
-				    ? &START_KEY(insert)
-				    : insert);
+				    ? &START_KEY(insert) : insert);
 
-	if (b->ops->insert_fixup(b, insert, &iter, replace))
-		goto done;
-
-	status = bch_bset_insert(b, &iter, where, insert);
-done:
-	BUG_ON(bch_count_data(b) < oldsize);
-	return status;
+	return __bch_btree_insert_key(b, insert, replace, &iter, where);
 }
 EXPORT_SYMBOL(bch_btree_insert_key);
 
