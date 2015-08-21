@@ -523,7 +523,7 @@ static inline size_t bch_keylist_bytes(struct keylist *l)
 
 struct bkey *bch_keylist_pop(struct keylist *);
 void bch_keylist_pop_front(struct keylist *);
-int __bch_keylist_realloc(struct keylist *, unsigned);
+int bch_keylist_realloc(struct keylist *, unsigned);
 
 /* Debug stuff */
 

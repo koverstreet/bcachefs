@@ -135,7 +135,7 @@ static inline void bch_btree_iter_next_check(struct btree_iter *iter) {}
 
 /* Keylists */
 
-int __bch_keylist_realloc(struct keylist *l, unsigned u64s)
+int bch_keylist_realloc(struct keylist *l, unsigned u64s)
 {
 	size_t oldsize = bch_keylist_nkeys(l);
 	size_t newsize = oldsize + u64s;
