@@ -271,16 +271,16 @@ void bch_btree_node_read_done(struct btree *b, struct cache *ca, unsigned ptr)
 		if (i->version != BCACHE_BSET_VERSION)
 			goto err;
 
-		err = "bad btree header";
-		if (b->written > btree_blocks(c))
-			goto err;
-
 		err = "bad magic";
 		if (i->magic != bset_magic(&c->sb))
 			goto err;
 
 		err = "unknown checksum type";
 		if (BSET_CSUM_TYPE(i) >= BCH_CSUM_NR)
+			goto err;
+
+		err = "bad btree header";
+		if (b->written > btree_blocks(c))
 			goto err;
 
 		err = "bad checksum";
