@@ -709,6 +709,11 @@ static void bch_btree_node_iter_fix(struct btree_node_iter *iter,
 	}
 }
 
+/**
+ * bch_bset_fix_invalidated_key() - given an existing  key @k that has been
+ * modified, fix any auxiliary search tree by remaking all the nodes in the
+ * auxiliary search tree that @k corresponds to
+ */
 void bch_bset_fix_invalidated_key(struct btree_keys *b, struct bkey *k)
 {
 	struct bset_tree *t;
@@ -726,32 +731,40 @@ found_set:
 	inorder = bkey_to_cacheline(t, k);
 
 	if (k == t->data->start)
-		goto fix_left;
+		for (j = 1; j < t->size; j = j * 2)
+			make_bfloat(t, j);
 
 	if (bkey_next(k) == bset_bkey_last(t->data)) {
 		t->end = *k;
-		goto fix_right;
+
+		for (j = 1; j < t->size; j = j * 2 + 1)
+			make_bfloat(t, j);
 	}
 
 	j = inorder_to_tree(inorder, t);
 
 	if (j &&
 	    j < t->size &&
-	    k == tree_to_bkey(t, j))
-fix_left:	do {
+	    k == tree_to_bkey(t, j)) {
+		/* Fix the auxiliary search tree node this key corresponds to */
+		make_bfloat(t, j);
+
+		/* Children for which this key is the right side boundary */
+		for (j = j * 2; j < t->size; j = j * 2 + 1)
 			make_bfloat(t, j);
-			j = j * 2;
-		} while (j < t->size);
+	}
 
 	j = inorder_to_tree(inorder + 1, t);
 
 	if (j &&
 	    j < t->size &&
-	    k == tree_to_prev_bkey(t, j))
-fix_right:	do {
+	    k == tree_to_prev_bkey(t, j)) {
+		make_bfloat(t, j);
+
+		/* Children for which this key is the left side boundary */
+		for (j = j * 2 + 1; j < t->size; j = j * 2)
 			make_bfloat(t, j);
-			j = j * 2 + 1;
-		} while (j < t->size);
+	}
 }
 EXPORT_SYMBOL(bch_bset_fix_invalidated_key);
 
