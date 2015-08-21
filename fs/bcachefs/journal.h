@@ -149,17 +149,19 @@ struct journal_res {
 	unsigned		nkeys:31;
 };
 
-void __bch_journal_res_put(struct cache_set *, struct journal_res *,
-			   struct closure *);
+void __bch_journal_res_put(struct cache_set *, struct journal_res *);
 void bch_journal_res_get(struct cache_set *, struct journal_res *,
 			 unsigned, unsigned);
+void bch_journal_set_dirty(struct cache_set *, struct closure *);
+void bch_journal_add_keys(struct cache_set *, struct journal_res *,
+			  enum btree_id, const struct bkey *,
+			  unsigned, unsigned, struct closure *);
 
 static inline void bch_journal_res_put(struct cache_set *c,
-				       struct journal_res *res,
-				       struct closure *parent)
+				       struct journal_res *res)
 {
 	spin_lock(&c->journal.lock);
-	__bch_journal_res_put(c, res, parent);
+	__bch_journal_res_put(c, res);
 }
 
 /*
@@ -169,45 +171,6 @@ static inline void bch_journal_res_put(struct cache_set *c,
 static inline unsigned jset_u64s(unsigned nkeys)
 {
 	return nkeys + sizeof(struct jset_keys) / sizeof(u64);
-}
-
-static inline void __bch_journal_add_keys(struct jset *j, enum btree_id id,
-					  const struct bkey *k, unsigned nkeys,
-					  unsigned level, unsigned type)
-{
-	struct jset_keys *jkeys = (struct jset_keys *) bset_bkey_last(j);
-
-	jkeys->keys = nkeys;
-	jkeys->btree_id = id;
-	jkeys->level = level;
-	jkeys->flags = 0;
-	SET_JKEYS_TYPE(jkeys, type);
-
-	memcpy(jkeys->start, k, sizeof(u64) * nkeys);
-	j->keys += jset_u64s(nkeys);
-}
-
-static inline void bch_journal_add_keys(struct cache_set *c,
-					struct journal_res *res,
-					enum btree_id id,
-					const struct bkey *k,
-					unsigned nkeys, unsigned level,
-					struct closure *parent)
-{
-	unsigned actual = jset_u64s(nkeys);
-
-	BUG_ON(!res->ref);
-	BUG_ON(actual > res->nkeys);
-	res->nkeys -= actual;
-
-	spin_lock(&c->journal.lock);
-	__bch_journal_add_keys(c->journal.cur->data, id, k, nkeys,
-			       level, JKEYS_BTREE_KEYS);
-
-	if (!res->nkeys)
-		__bch_journal_res_put(c, res, parent);
-	else
-		spin_unlock(&c->journal.lock);
 }
 
 void bch_journal_next(struct journal *);
