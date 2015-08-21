@@ -50,7 +50,12 @@ void bkey_debugcheck(struct btree *b, struct bkey_s_c k)
 
 	BUG_ON(!k.k->u64s);
 
-	cache_set_bug_on(bkey_cmp(k.k->p, b->key.k.p) > 0,
+	cache_set_bug_on(bkey_cmp(bkey_start_pos(k.k),
+				  b->data->min_key) < 0,
+			 b->c, "key before start of btree node");
+
+	cache_set_bug_on(bkey_cmp(k.k->p,
+				  b->data->max_key) > 0,
 			 b->c, "key past end of btree node");
 
 	if (bkey_invalid(b->c, type, k)) {

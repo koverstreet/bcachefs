@@ -341,8 +341,16 @@ void bch_btree_node_read_done(struct btree *b, struct cache *ca,
 	if (!b->data->keys.seq)
 		goto err;
 
+	err = "incorrect max key";
+	if (bkey_cmp(b->data->max_key, b->key.k.p))
+		goto err;
+
+	err = "incorrect level";
+	if (BSET_BTREE_LEVEL(i) != b->level)
+		goto err;
+
 	b->keys.format = b->data->format;
-	i = b->keys.set->data = &b->data->keys;
+	b->keys.set->data = &b->data->keys;
 
 	while (b->written < btree_blocks(c)) {
 		unsigned blocks;
@@ -1500,9 +1508,11 @@ static struct btree *bch_btree_node_alloc(struct cache_set *c, int level,
 	bch_check_mark_super(c, &b->key, true);
 
 	b->accessed = 1;
-	b->data->magic = bset_magic(&c->sb);
-	bch_bset_init_first(&b->keys, &b->data->keys);
 	set_btree_node_dirty(b);
+
+	bch_bset_init_first(&b->keys, &b->data->keys);
+	b->data->magic = bset_magic(&c->sb);
+	SET_BSET_BTREE_LEVEL(&b->data->keys, level);
 
 	trace_bcache_btree_node_alloc(b);
 	return b;
@@ -1517,7 +1527,11 @@ struct btree *__btree_node_alloc_replacement(struct btree *b,
 	bch_verify_btree_keys_accounting(&b->keys);
 
 	n = bch_btree_node_alloc(b->c, b->level, b->btree_id, reserve);
-	n->keys.format = format;
+
+	n->data->min_key	= b->data->min_key;
+	n->data->max_key	= b->data->max_key;
+	n->data->format		= format;
+	n->keys.format		= format;
 
 	bch_btree_sort_into(&n->keys, &b->keys,
 			    b->keys.ops->key_normalize,
@@ -1544,19 +1558,19 @@ void __bch_btree_calc_format(struct bkey_format_state *s, struct btree *b)
 		 * place, and successfully repack, when insert an overlapping
 		 * extent:
 		 */
-		bch_bkey_format_add_pos(s, b->key.k.p);
-
-		s->field_min[1] = max_t(s64, 0, s->field_min[1] - UINT_MAX);
+		bch_bkey_format_add_pos(s, b->data->min_key);
+		bch_bkey_format_add_pos(s, b->data->max_key);
 
 		/*
 		 * If we span multiple inodes, need to be able to store an
 		 * offset of 0:
 		 */
-		if (s->field_min[0] != s->field_max[0])
-			s->field_min[1] = 0;
+		if (s->field_min[BKEY_FIELD_INODE] !=
+		    s->field_max[BKEY_FIELD_INODE])
+			s->field_min[BKEY_FIELD_OFFSET] = 0;
 
 		/* Make sure we can store a size of 0: */
-		s->field_min[3] = 0;
+		s->field_min[BKEY_FIELD_SIZE] = 0;
 	}
 }
 
@@ -1634,6 +1648,22 @@ int btree_check_reserve(struct btree *b, struct btree_iter *iter,
 			iter ? &iter->cl : NULL);
 }
 
+static struct btree *__btree_root_alloc(struct cache_set *c, unsigned level,
+					enum btree_id id,
+					enum alloc_reserve reserve)
+{
+	struct btree *b = bch_btree_node_alloc(c, level, id, reserve);
+
+	b->data->min_key = POS_MIN;
+	b->data->max_key = POS_MAX;
+	b->data->format = bch_btree_calc_format(b);
+	b->key.k.p = POS_MAX;
+
+	six_unlock_write(&b->lock);
+
+	return b;
+}
+
 int bch_btree_root_alloc(struct cache_set *c, enum btree_id id,
 			 struct closure *writes)
 {
@@ -1645,10 +1675,7 @@ int bch_btree_root_alloc(struct cache_set *c, enum btree_id id,
 	while (__btree_check_reserve(c, id, 1, &cl))
 		closure_sync(&cl);
 
-	b = bch_btree_node_alloc(c, 0, id, id);
-
-	b->key.k.p = POS_MAX;
-	six_unlock_write(&b->lock);
+	b = __btree_root_alloc(c, 0, id, id);
 
 	bch_btree_node_write(b, writes, NULL);
 
@@ -2078,16 +2105,13 @@ static int btree_split(struct btree *b,
 
 		n2 = bch_btree_node_alloc(iter->c, b->level,
 					  iter->btree_id, reserve);
+		n2->data->max_key = n1->data->max_key;
 		n2->keys.format = n1->keys.format;
 		set2 = btree_bset_first(n2);
 
-		if (!parent) {
-			n3 = bch_btree_node_alloc(iter->c, b->level + 1,
-						  iter->btree_id, reserve);
-
-			n3->key.k.p = POS_MAX;
-			six_unlock_write(&n3->lock);
-		}
+		if (!parent)
+			n3 = __btree_root_alloc(iter->c, b->level + 1,
+						iter->btree_id, reserve);
 
 		/*
 		 * Has to be a linear search because we don't have an auxiliary
@@ -2106,6 +2130,10 @@ static int btree_split(struct btree *b,
 
 		n1->key.k.p = bkey_unpack_key(&n1->keys.format, k).p;
 		k = bkey_next(k);
+
+		n1->data->max_key = n1->key.k.p;
+		n2->data->min_key =
+			__bch_btree_iter_advance_pos(iter, n1->key.k.p);
 
 		set2->u64s = (u64 *) bset_bkey_last(set1) - (u64 *) k;
 		set1->u64s -= set2->u64s;
@@ -2666,19 +2694,6 @@ void bch_btree_iter_set_pos(struct btree_iter *iter, struct bpos new_pos)
 {
 	BUG_ON(bkey_cmp(new_pos, iter->pos) < 0);
 	iter->pos = new_pos;
-}
-
-static struct bpos __bch_btree_iter_advance_pos(struct btree_iter *iter,
-						struct bpos pos)
-{
-	if (iter->btree_id == BTREE_ID_INODES) {
-		pos.inode++;
-		pos.offset = 0;
-	} else if (iter->btree_id != BTREE_ID_EXTENTS) {
-		pos = bkey_successor(pos);
-	}
-
-	return pos;
 }
 
 void bch_btree_iter_advance_pos(struct btree_iter *iter)

@@ -582,19 +582,6 @@ struct bkey_format bch_bkey_format_done(struct bkey_format_state *s)
 		.nr_fields = BKEY_NR_FIELDS,
 	};
 
-	/*
-	 * Hack to make sure we can always repack keys in
-	 * bch_insert_fixup_extent(), when trimming makes the offset smaller
-	 */
-	s->field_min[BKEY_FIELD_OFFSET] =
-		max_t(s64, 0, s->field_min[BKEY_FIELD_OFFSET] - UINT_MAX);
-
-	/*
-	 * Make sure we can always store a size of 0, also because of
-	 * bch_insert_fixup_extent
-	 */
-	s->field_min[BKEY_FIELD_SIZE] = 0;
-
 	for (i = 0; i < ARRAY_SIZE(s->field_min); i++) {
 		ret.field_offset[i]	= min(s->field_min[i], s->field_max[i]);
 		ret.bits_per_field[i]	= fls64(s->field_max[i] -

@@ -305,6 +305,19 @@ void bch_btree_iter_set_pos(struct btree_iter *, struct bpos);
 void bch_btree_iter_advance_pos(struct btree_iter *);
 bool bch_btree_iter_upgrade(struct btree_iter *);
 
+static inline struct bpos __bch_btree_iter_advance_pos(struct btree_iter *iter,
+						       struct bpos pos)
+{
+	if (iter->btree_id == BTREE_ID_INODES) {
+		pos.inode++;
+		pos.offset = 0;
+	} else if (iter->btree_id != BTREE_ID_EXTENTS) {
+		pos = bkey_successor(pos);
+	}
+
+	return pos;
+}
+
 static inline void __btree_iter_node_set(struct btree_iter *iter,
 					 struct btree *b,
 					 struct bpos pos)

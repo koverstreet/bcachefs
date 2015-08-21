@@ -302,13 +302,15 @@ static ssize_t bch_read_btree_formats(struct file *file, char __user *buf,
 		bch_btree_keys_stats(&b->keys, &stats);
 
 		i->bytes = scnprintf(i->buf, sizeof(i->buf),
-				     "l %u %llu:%llu:\n"
+				     "l %u %llu:%llu - %llu:%llu:\n"
 				     "\tformat: u64s %u fields %u %u %u %u %u\n"
 				     "\tpacked %u unpacked %u u64s %u\n"
 				     "\tfloats %zu failed %zu\n",
 				     b->level,
-				     b->key.k.p.inode,
-				     b->key.k.p.offset,
+				     b->data->min_key.inode,
+				     b->data->min_key.offset,
+				     b->data->max_key.inode,
+				     b->data->max_key.offset,
 				     f->key_u64s,
 				     f->bits_per_field[0],
 				     f->bits_per_field[1],
