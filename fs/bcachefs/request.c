@@ -307,6 +307,9 @@ void bch_data_insert(struct closure *cl)
 
 		bch_keybuf_check_overlapping(&op->c->moving_gc_keys,
 					     &start, &end);
+
+		bch_keybuf_check_overlapping(&op->c->tiering_keys,
+					     &start, &end);
 	}
 
 	if (op->moving_gc)

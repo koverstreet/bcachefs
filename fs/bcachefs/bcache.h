@@ -681,6 +681,11 @@ struct cache_set {
 	struct keybuf		moving_gc_keys;
 	struct bch_pd_controller moving_gc_pd;
 
+	struct task_struct	*tiering_thread;
+	struct workqueue_struct	*tiering_wq;
+	struct keybuf		tiering_keys;
+	struct bch_pd_controller tiering_pd;
+
 	/* DEBUG JUNK */
 	struct dentry		*debug;
 #ifdef CONFIG_BCACHEFS_DEBUG
@@ -743,6 +748,7 @@ struct cache_set {
 	unsigned		gc_always_rewrite:1;
 	unsigned		shrinker_disabled:1;
 	unsigned		copy_gc_enabled:1;
+	unsigned		tiering_enabled:1;
 	unsigned		btree_scan_ratelimit;
 
 	/* number of caches to replicate data on */
@@ -803,6 +809,12 @@ static inline struct cache *PTR_CACHE(struct cache_set *c,
 				      unsigned ptr)
 {
 	return c->cache[PTR_DEV(k, ptr)];
+}
+
+static inline unsigned PTR_TIER(struct cache_set *c,
+				const struct bkey *k, unsigned ptr)
+{
+	return CACHE_TIER(&PTR_CACHE(c, k, ptr)->sb);
 }
 
 static inline size_t PTR_BUCKET_NR(struct cache_set *c,
@@ -969,6 +981,8 @@ struct cache_set *bch_cache_set_alloc(struct cache_sb *);
 void bch_btree_cache_free(struct cache_set *);
 int bch_btree_cache_alloc(struct cache_set *);
 void bch_moving_init_cache_set(struct cache_set *);
+void bch_tiering_init_cache_set(struct cache_set *);
+int bch_tiering_thread_start(struct cache_set *c);
 
 void bch_debug_exit(void);
 int bch_debug_init(struct kobject *);

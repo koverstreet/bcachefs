@@ -100,6 +100,8 @@ rw_attribute(btree_shrinker_disabled);
 
 rw_attribute(copy_gc_enabled);
 sysfs_pd_controller_attribute(copy_gc);
+rw_attribute(tiering_enabled);
+sysfs_pd_controller_attribute(tiering);
 
 rw_attribute(size);
 rw_attribute(meta_replicas);
@@ -502,6 +504,8 @@ SHOW(__bch_cache_set)
 	sysfs_printf(btree_shrinker_disabled,	"%i", c->shrinker_disabled);
 	sysfs_printf(copy_gc_enabled,		"%i", c->copy_gc_enabled);
 	sysfs_pd_controller_show(copy_gc,	&c->moving_gc_pd);
+	sysfs_printf(tiering_enabled,		"%i", c->tiering_enabled);
+	sysfs_pd_controller_show(tiering,	&c->tiering_pd);
 
 	sysfs_print(btree_scan_ratelimit,	c->btree_scan_ratelimit);
 
@@ -593,6 +597,16 @@ STORE(__bch_cache_set)
 	sysfs_strtoul(btree_scan_ratelimit,	c->btree_scan_ratelimit);
 	sysfs_pd_controller_store(copy_gc,	&c->moving_gc_pd);
 
+	if (attr == &sysfs_tiering_enabled) {
+		ssize_t ret = strtoul_safe(buf, c->tiering_enabled)
+			?: (ssize_t) size;
+
+		wake_up_process(c->tiering_thread);
+		return ret;
+	}
+
+	sysfs_pd_controller_store(tiering,	&c->tiering_pd);
+
 	sysfs_strtoul_clamp(meta_replicas,
 			    c->meta_replicas, 1, BKEY_PAD_PTRS);
 	sysfs_strtoul_clamp(data_replicas,
@@ -675,6 +689,8 @@ static struct attribute *bch_cache_set_internal_files[] = {
 	&sysfs_btree_shrinker_disabled,
 	&sysfs_copy_gc_enabled,
 	sysfs_pd_controller_files(copy_gc),
+	&sysfs_tiering_enabled,
+	sysfs_pd_controller_files(tiering),
 	NULL
 };
 KTYPE(bch_cache_set_internal);

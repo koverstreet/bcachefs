@@ -1350,6 +1350,8 @@ static void cache_set_free(struct closure *cl)
 	bch_bset_sort_state_free(&c->sort);
 	free_pages((unsigned long) c->uuids, ilog2(bucket_pages(c)));
 
+	if (c->tiering_wq)
+		destroy_workqueue(c->tiering_wq);
 	if (c->btree_insert_wq)
 		destroy_workqueue(c->btree_insert_wq);
 	if (c->moving_gc_wq)
@@ -1384,6 +1386,13 @@ static void cache_set_flush(struct closure *cl)
 
 	kobject_put(&c->internal);
 	kobject_del(&c->kobj);
+
+	c->tiering_pd.rate.rate = UINT_MAX;
+	bch_ratelimit_reset(&c->tiering_pd.rate);
+	if (!IS_ERR_OR_NULL(c->tiering_thread))
+		kthread_stop(c->tiering_thread);
+
+	cancel_delayed_work_sync(&c->tiering_pd.update);
 
 	if (!IS_ERR_OR_NULL(c->gc_thread))
 		kthread_stop(c->gc_thread);
@@ -1502,6 +1511,7 @@ struct cache_set *bch_cache_set_alloc(struct cache_sb *sb)
 
 	bch_open_buckets_init(c);
 	bch_moving_init_cache_set(c);
+	bch_tiering_init_cache_set(c);
 
 	INIT_LIST_HEAD(&c->list);
 	INIT_LIST_HEAD(&c->cached_devs);
@@ -1530,6 +1540,8 @@ struct cache_set *bch_cache_set_alloc(struct cache_sb *sb)
 						WQ_MEM_RECLAIM, 0)) ||
 	    !(c->btree_insert_wq = alloc_workqueue("bcache_btree",
 						   WQ_MEM_RECLAIM, 0)) ||
+	    !(c->tiering_wq = alloc_workqueue("bcache_tier",
+					      WQ_MEM_RECLAIM, 0)) ||
 	    bch_journal_alloc(c) ||
 	    bch_btree_cache_alloc(c) ||
 	    bch_bset_sort_state_init(&c->sort, ilog2(c->btree_pages)))
@@ -1702,6 +1714,10 @@ static void run_cache_set(struct cache_set *c)
 
 	err = "error starting gc thread";
 	if (bch_gc_thread_start(c))
+		goto err;
+
+	err = "error starting tiering thread";
+	if (bch_tiering_thread_start(c))
 		goto err;
 
 	closure_sync(&cl);
