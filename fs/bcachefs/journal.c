@@ -576,7 +576,8 @@ static void journal_write_locked(struct closure *cl)
 	bkey_copy(&w->data->uuid_bucket, &c->uuid_bucket);
 
 	for_each_cache(ca, c, i)
-		w->data->prio_bucket[ca->sb.nr_this_dev] = ca->prio_buckets[0];
+		w->data->prio_bucket[ca->sb.nr_this_dev] =
+			ca->prio_journal_bucket;
 
 	w->data->magic		= jset_magic(&c->sb);
 	w->data->version	= BCACHE_JSET_VERSION;

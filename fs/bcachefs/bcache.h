@@ -470,8 +470,9 @@ struct cache {
 	 * gc can mark them as metadata), prio_next[] contains the buckets
 	 * allocated for the next prio write.
 	 */
-	uint64_t		*prio_buckets;
-	uint64_t		*prio_last_buckets;
+	u64			*prio_buckets;
+	u64			*prio_last_buckets;
+	u64			prio_journal_bucket;
 
 	/*
 	 * free: Buckets that are ready to be used

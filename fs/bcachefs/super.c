@@ -334,8 +334,8 @@ static void uuid_io_unlock(struct closure *cl)
 	up(&c->uuid_write_mutex);
 }
 
-static void uuid_io(struct cache_set *c, int op, unsigned long op_flags,
-		    struct bkey *k, struct closure *parent)
+static void uuid_io(struct cache_set *c, int op, struct bkey *k,
+		    struct closure *parent)
 {
 	struct closure *cl = &c->uuid_write;
 	struct uuid_entry *u;
@@ -349,12 +349,10 @@ static void uuid_io(struct cache_set *c, int op, unsigned long op_flags,
 	for (i = 0; i < KEY_PTRS(k); i++) {
 		struct bio *bio = bch_bbio_alloc(c);
 
-		bio->bi_opf = REQ_SYNC | REQ_META | op_flags;
 		bio->bi_iter.bi_size = KEY_SIZE(k) << 9;
-
 		bio->bi_end_io	= uuid_endio;
 		bio->bi_private = cl;
-		bio_set_op_attrs(bio, op, REQ_SYNC|REQ_META|op_flags);
+		bio_set_op_attrs(bio, op, REQ_SYNC|REQ_META);
 		bch_bio_map(bio, c->uuids);
 
 		bch_submit_bbio(bio, c, k, i);
@@ -383,7 +381,7 @@ static char *uuid_read(struct cache_set *c, struct jset *j, struct closure *cl)
 		return "bad uuid pointer";
 
 	bkey_copy(&c->uuid_bucket, k);
-	uuid_io(c, REQ_OP_READ, READ_SYNC, k, cl);
+	uuid_io(c, REQ_OP_READ, k, cl);
 
 	if (j->version < BCACHE_JSET_VERSION_UUIDv1) {
 		struct uuid_entry_v0	*u0 = (void *) c->uuids;
@@ -418,21 +416,24 @@ static char *uuid_read(struct cache_set *c, struct jset *j, struct closure *cl)
 
 static int __uuid_write(struct cache_set *c)
 {
-	BKEY_PADDED(key) k;
+	struct open_bucket *b;
 	struct closure cl;
 	closure_init_stack(&cl);
 
 	lockdep_assert_held(&bch_register_lock);
 
-	if (bch_bucket_alloc_set(c, RESERVE_BTREE, &k.key, 1, true))
-		return 1;
+	b = bch_open_bucket_alloc(c, RESERVE_BTREE, 1, true);
 
-	SET_KEY_SIZE(&k.key, c->sb.bucket_size);
-	uuid_io(c, REQ_OP_WRITE, 0, &k.key, &cl);
+	SET_KEY_SIZE(&b->key, min_t(unsigned, c->sb.bucket_size,
+				    1U << (KEY_SIZE_BITS - 1)));
+
+	uuid_io(c, REQ_OP_WRITE, &b->key, &cl);
 	closure_sync(&cl);
 
-	bkey_copy(&c->uuid_bucket, &k.key);
-	bkey_put(c, &k.key);
+	bkey_copy(&c->uuid_bucket, &b->key);
+	bkey_put(c, &b->key);
+
+	bch_open_bucket_put(c, b);
 	return 0;
 }
 
@@ -559,15 +560,21 @@ void bch_prio_write(struct cache *ca)
 		bucket = bch_bucket_alloc(ca, RESERVE_PRIO, true);
 		BUG_ON(bucket == -1);
 
+		/*
+		 * goes here before dropping bucket_lock to guard against it
+		 * getting gc'd from under us
+		 */
+		ca->prio_buckets[i] = bucket;
+		atomic_dec_bug(&ca->buckets[bucket].pin);
+
 		mutex_unlock(&ca->set->bucket_lock);
 		prio_io(ca, bucket, REQ_OP_WRITE, 0);
 		mutex_lock(&ca->set->bucket_lock);
-
-		ca->prio_buckets[i] = bucket;
-		atomic_dec_bug(&ca->buckets[bucket].pin);
 	}
 
 	mutex_unlock(&ca->set->bucket_lock);
+
+	ca->prio_journal_bucket = ca->prio_buckets[0];
 
 	bch_journal_meta(ca->set, &cl);
 	closure_sync(&cl);
@@ -594,11 +601,12 @@ static void prio_read(struct cache *ca, uint64_t bucket)
 	struct bucket *b;
 	unsigned bucket_nr = 0;
 
+	ca->prio_journal_bucket = bucket;
+
 	for (b = ca->buckets;
 	     b < ca->buckets + ca->sb.nbuckets;
 	     b++, d++) {
 		if (d == end) {
-			ca->prio_buckets[bucket_nr] = bucket;
 			ca->prio_last_buckets[bucket_nr] = bucket;
 			bucket_nr++;
 
