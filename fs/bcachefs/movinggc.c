@@ -142,7 +142,7 @@ static bool bch_moving_gc(struct cache *ca)
 	unsigned bucket_move_threshold =
 		ca->sb.bucket_size - (ca->sb.bucket_size >> 3);
 	u64 sectors_to_move = 0, sectors_gen, gen_current, sectors_total;
-	u64 buckets_to_move;
+	size_t buckets_to_move, buckets_unused = 0;
 	int reserve_sectors;
 	struct moving_io_stats stats;
 
@@ -172,6 +172,9 @@ static bool bch_moving_gc(struct cache *ca)
 	for_each_bucket(b, ca) {
 		SET_GC_GEN(b, 0);
 
+		if (!GC_SECTORS_USED(b) && !GC_MARK(b))
+			buckets_unused++;
+
 		if (GC_MARK(b) == GC_MARK_METADATA ||
 		    !GC_SECTORS_USED(b) ||
 		    GC_SECTORS_USED(b) >= bucket_move_threshold)
@@ -187,6 +190,13 @@ static bool bch_moving_gc(struct cache *ca)
 			ca->heap.data[0] = b;
 			heap_sift(&ca->heap, 0, bucket_sectors_cmp);
 		}
+	}
+
+	if ((buckets_unused > ca->sb.nbuckets / 10) ||
+	    (ca->heap.used < ca->heap.size / 4 &&
+	     sectors_to_move < reserve_sectors)) {
+		mutex_unlock(&ca->heap_lock);
+		return false;
 	}
 
 	while (sectors_to_move > reserve_sectors) {
@@ -260,6 +270,10 @@ int bch_moving_gc_thread_start(struct cache *ca)
 		return PTR_ERR(ca->moving_gc_thread);
 
 	wake_up_process(ca->moving_gc_thread);
+
+	bch_pd_controller_start(&ca->moving_gc_pd);
+
+	ca->moving_gc_pd.d_term = 0;
 
 	return 0;
 }
