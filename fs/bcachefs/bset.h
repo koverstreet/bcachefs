@@ -683,19 +683,6 @@ void bch_btree_iter_push(struct btree_iter *, struct bkey *, struct bkey *);
 struct bkey *bch_btree_iter_init(struct btree_keys *, struct btree_iter *,
 				 struct bkey *);
 
-struct bkey *__bch_bset_search(struct btree_keys *, struct bset_tree *,
-			       const struct bkey *);
-
-/*
- * Returns the first key greater than or equal to @search
- */
-static inline struct bkey *bch_bset_search(struct btree_keys *b,
-					   struct bset_tree *t,
-					   const struct bkey *search)
-{
-	return search ? __bch_bset_search(b, t, search) : t->data->start;
-}
-
 #define for_each_key_all(b, k, iter)					\
 	for (bch_btree_iter_init((b), (iter), NULL);			\
 	     ((k) = bch_btree_iter_next_all(iter));)

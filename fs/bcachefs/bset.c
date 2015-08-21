@@ -15,6 +15,9 @@
 #include <linux/random.h>
 #include <linux/prefetch.h>
 
+static struct bkey *bch_bset_search(struct btree_keys *, struct bset_tree *,
+				    const struct bkey *);
+
 #ifdef CONFIG_BCACHEFS_DEBUG
 
 void bch_dump_bset(struct btree_keys *b, struct bset *i, unsigned set)
@@ -1018,11 +1021,17 @@ static struct bkey *bset_search_tree(struct bset_tree *t,
 	}
 }
 
+/*
+ * Returns the first key greater than or equal to @search
+ */
 __attribute__((flatten))
-struct bkey *__bch_bset_search(struct btree_keys *b, struct bset_tree *t,
-			       const struct bkey *search)
+static struct bkey *bch_bset_search(struct btree_keys *b, struct bset_tree *t,
+				    const struct bkey *search)
 {
 	struct bkey *m;
+
+	if (!search)
+		return t->data->start;
 
 	/*
 	 * First, we search for a cacheline, then lastly we do a linear search
@@ -1076,7 +1085,6 @@ struct bkey *__bch_bset_search(struct btree_keys *b, struct bset_tree *t,
 
 	return m;
 }
-EXPORT_SYMBOL(__bch_bset_search);
 
 /* Btree iterator */
 
