@@ -84,18 +84,78 @@ static inline void bch_journal_add_prios(struct cache_set *c, struct jset *j)
  * bit.
  */
 
-static int journal_read_bucket(struct cache *ca, struct list_head *list,
+struct journal_list {
+	struct mutex		lock;
+	struct list_head	*head;
+};
+
+static int journal_add_entry(struct journal_list *jlist, struct jset *j)
+{
+	struct journal_replay *i;
+	struct list_head *where;
+	size_t bytes = set_bytes(j);
+	int ret = 0;
+
+	mutex_lock(&jlist->lock);
+
+	/* Drop entries we don't need anymore */
+	while (!list_empty(jlist->head)) {
+		i = list_first_entry(jlist->head, struct journal_replay, list);
+		if (i->j.seq >= j->last_seq)
+			break;
+		list_del(&i->list);
+		kfree(i);
+	}
+
+	list_for_each_entry_reverse(i, jlist->head, list) {
+		if (j->seq == i->j.seq) {
+			pr_debug("j->seq %llu i->j.seq %llu",
+				 j->seq, i->j.seq);
+			goto out;
+		}
+
+		if (j->seq < i->j.last_seq) {
+			pr_debug("j->seq %llu i->j.seq %llu",
+				 j->seq, i->j.seq);
+			goto out;
+		}
+
+		if (j->seq > i->j.seq) {
+			where = &i->list;
+			goto add;
+		}
+	}
+
+	where = jlist->head;
+add:
+	i = kmalloc(offsetof(struct journal_replay, j) +
+		    bytes, GFP_KERNEL);
+	if (!i) {
+		ret = -ENOMEM;
+		goto out;
+	}
+
+	memcpy(&i->j, j, bytes);
+	list_add(&i->list, where);
+	ret = 1;
+
+	pr_debug("seq %llu", j->seq);
+out:
+	mutex_unlock(&jlist->lock);
+	return ret;
+}
+
+static int journal_read_bucket(struct cache *ca, struct journal_list *jlist,
 			       unsigned bucket_index)
 {
 	struct journal_device *ja = &ca->journal;
 	struct bio *bio = &ja->bio;
-
-	struct journal_replay *i;
 	struct jset *j, *data = ca->set->journal.w[0].data;
 	unsigned len, left, offset = 0;
-	int ret = 0;
 	sector_t bucket = bucket_to_sector(ca->set,
 				journal_bucket(ca, bucket_index));
+	bool entries_found = false;
+	int ret;
 
 	pr_debug("reading %u", bucket_index);
 
@@ -122,7 +182,6 @@ reread:		left = ca->sb.bucket_size - offset;
 
 		j = data;
 		while (len) {
-			struct list_head *where;
 			size_t blocks, bytes = set_bytes(j);
 
 			if (cache_set_init_fault("journal_read"))
@@ -154,49 +213,16 @@ reread:		left = ca->sb.bucket_size - offset;
 				return ret;
 			}
 
+			ret = journal_add_entry(jlist, j);
+			if (ret < 0)
+				return ret;
+			if (ret) {
+				ja->seq[bucket_index] = j->seq;
+				entries_found = true;
+			}
+
 			blocks = set_blocks(j, block_bytes(ca->set));
 
-			while (!list_empty(list)) {
-				i = list_first_entry(list,
-					struct journal_replay, list);
-				if (i->j.seq >= j->last_seq)
-					break;
-				list_del(&i->list);
-				kfree(i);
-			}
-
-			list_for_each_entry_reverse(i, list, list) {
-				if (j->seq == i->j.seq) {
-					pr_debug("j->seq %llu i->j.seq %llu",
-						 j->seq, i->j.seq);
-					goto next_set;
-				}
-
-				if (j->seq < i->j.last_seq) {
-					pr_debug("j->seq %llu i->j.seq %llu",
-						 j->seq, i->j.seq);
-					goto next_set;
-				}
-
-				if (j->seq > i->j.seq) {
-					where = &i->list;
-					goto add;
-				}
-			}
-
-			where = list;
-add:
-			i = kmalloc(offsetof(struct journal_replay, j) +
-				    bytes, GFP_KERNEL);
-			if (!i)
-				return -ENOMEM;
-			memcpy(&i->j, j, bytes);
-			list_add(&i->list, where);
-			ret = 1;
-
-			ja->seq[bucket_index] = j->seq;
-			pr_debug("seq %llu", j->seq);
-next_set:
 			pr_debug("next");
 			offset	+= blocks * ca->sb.block_size;
 			len	-= blocks * ca->sb.block_size;
@@ -204,127 +230,154 @@ next_set:
 		}
 	}
 
-	return ret;
+	return entries_found;
+}
+
+static u64 newest_journal_seq(struct journal_list *jlist)
+{
+	u64 seq;
+
+	mutex_lock(&jlist->lock);
+	seq = list_entry(jlist->head->prev, struct journal_replay,
+			 list)->j.seq;
+	mutex_unlock(&jlist->lock);
+
+	return seq;
+}
+
+static int bch_journal_read_device(struct cache *ca, struct journal_list *jlist)
+{
+#define read_bucket(b)							\
+	({								\
+		int ret = journal_read_bucket(ca, jlist, b);		\
+		__set_bit(b, bitmap);					\
+		if (ret < 0)						\
+			return ret;					\
+		ret;							\
+	 })
+
+	struct journal_device *ja = &ca->journal;
+	unsigned nr_buckets = bch_nr_journal_buckets(&ca->sb);
+	DECLARE_BITMAP(bitmap, nr_buckets);
+	unsigned i, l, r, m;
+	u64 seq;
+
+	bitmap_zero(bitmap, nr_buckets);
+	pr_debug("%u journal buckets", nr_buckets);
+
+	if (!blk_queue_nonrot(bdev_get_queue(ca->bdev)))
+		goto linear_scan;
+
+	/*
+	 * Read journal buckets ordered by golden ratio hash to quickly
+	 * find a sequence of buckets with valid journal entries
+	 */
+	for (i = 0; i < nr_buckets; i++) {
+		l = (i * 2654435769U) % nr_buckets;
+
+		if (test_bit(l, bitmap))
+			break;
+
+		if (read_bucket(l))
+			goto bsearch;
+	}
+
+	/*
+	 * If that fails, check all the buckets we haven't checked
+	 * already
+	 */
+	pr_debug("falling back to linear search");
+linear_scan:
+	for (l = find_first_zero_bit(bitmap, nr_buckets);
+	     l < nr_buckets;
+	     l = find_next_zero_bit(bitmap, nr_buckets, l + 1))
+		if (read_bucket(l))
+			goto bsearch;
+
+	/* no journal entries on this device? */
+	if (l == nr_buckets)
+		return 0;
+bsearch:
+	mutex_lock(&jlist->lock);
+	BUG_ON(list_empty(jlist->head));
+	mutex_unlock(&jlist->lock);
+
+	/* Binary search */
+	m = l;
+	r = find_next_bit(bitmap, nr_buckets, l + 1);
+	pr_debug("starting binary search, l %u r %u", l, r);
+
+	while (l + 1 < r) {
+		seq = newest_journal_seq(jlist);
+
+		m = (l + r) >> 1;
+		read_bucket(m);
+
+		if (seq != newest_journal_seq(jlist))
+			l = m;
+		else
+			r = m;
+	}
+
+	/*
+	 * Read buckets in reverse order until we stop finding more
+	 * journal entries
+	 */
+	pr_debug("finishing up: m %u njournal_buckets %u",
+		 m, nr_buckets);
+	l = m;
+
+	while (1) {
+		if (!l--)
+			l = nr_buckets - 1;
+
+		if (l == m)
+			break;
+
+		if (test_bit(l, bitmap))
+			continue;
+
+		if (!read_bucket(l))
+			break;
+	}
+
+	seq = 0;
+
+	for (i = 0; i < nr_buckets; i++)
+		if (ja->seq[i] > seq) {
+			seq = ja->seq[i];
+			/*
+			 * When journal_reclaim() goes to allocate for
+			 * the first time, it'll use the bucket after
+			 * ja->cur_idx
+			 */
+			ja->cur_idx = i;
+			ja->last_idx = ja->discard_idx = (i + 1) %
+				nr_buckets;
+			pr_debug("cur_idx %d last_idx %d",
+				 ja->cur_idx, ja->last_idx);
+		}
+
+	return 0;
+#undef read_bucket
 }
 
 int bch_journal_read(struct cache_set *c, struct list_head *list)
 {
-#define read_bucket(b)							\
-	({								\
-		int ret = journal_read_bucket(ca, list, b);		\
-		__set_bit(b, bitmap);					\
-		if (ret < 0) {						\
-			percpu_ref_put(&ca->ref);			\
-			return ret;					\
-		}							\
-		ret;							\
-	})
-
+	struct journal_list jlist;
 	struct cache *ca;
 	unsigned iter;
+	int ret;
+
+	mutex_init(&jlist.lock);
+	jlist.head = list;
 
 	for_each_cache(ca, c, iter) {
-		struct journal_device *ja = &ca->journal;
-		unsigned nr_buckets = bch_nr_journal_buckets(&ca->sb);
-		DECLARE_BITMAP(bitmap, nr_buckets);
-		unsigned i, l, r, m;
-		uint64_t seq;
-
-		bitmap_zero(bitmap, nr_buckets);
-		pr_debug("%u journal buckets", nr_buckets);
-
-		if (!blk_queue_nonrot(bdev_get_queue(ca->bdev)))
-			goto linear_scan;
-
-		/*
-		 * Read journal buckets ordered by golden ratio hash to quickly
-		 * find a sequence of buckets with valid journal entries
-		 */
-		for (i = 0; i < nr_buckets; i++) {
-			l = (i * 2654435769U) % nr_buckets;
-
-			if (test_bit(l, bitmap))
-				break;
-
-			if (read_bucket(l))
-				goto bsearch;
+		ret = bch_journal_read_device(ca, &jlist);
+		if (ret) {
+			percpu_ref_put(&ca->ref);
+			break;
 		}
-
-		/*
-		 * If that fails, check all the buckets we haven't checked
-		 * already
-		 */
-		pr_debug("falling back to linear search");
-linear_scan:
-		for (l = find_first_zero_bit(bitmap, nr_buckets);
-		     l < nr_buckets;
-		     l = find_next_zero_bit(bitmap, nr_buckets, l + 1))
-			if (read_bucket(l))
-				goto bsearch;
-
-		/* no journal entries on this device? */
-		if (l == nr_buckets)
-			continue;
-bsearch:
-		BUG_ON(list_empty(list));
-
-		/* Binary search */
-		m = l;
-		r = find_next_bit(bitmap, nr_buckets, l + 1);
-		pr_debug("starting binary search, l %u r %u", l, r);
-
-		while (l + 1 < r) {
-			seq = list_entry(list->prev, struct journal_replay,
-					 list)->j.seq;
-
-			m = (l + r) >> 1;
-			read_bucket(m);
-
-			if (seq != list_entry(list->prev, struct journal_replay,
-					      list)->j.seq)
-				l = m;
-			else
-				r = m;
-		}
-
-		/*
-		 * Read buckets in reverse order until we stop finding more
-		 * journal entries
-		 */
-		pr_debug("finishing up: m %u njournal_buckets %u",
-			 m, nr_buckets);
-		l = m;
-
-		while (1) {
-			if (!l--)
-				l = nr_buckets - 1;
-
-			if (l == m)
-				break;
-
-			if (test_bit(l, bitmap))
-				continue;
-
-			if (!read_bucket(l))
-				break;
-		}
-
-		seq = 0;
-
-		for (i = 0; i < nr_buckets; i++)
-			if (ja->seq[i] > seq) {
-				seq = ja->seq[i];
-				/*
-				 * When journal_reclaim() goes to allocate for
-				 * the first time, it'll use the bucket after
-				 * ja->cur_idx
-				 */
-				ja->cur_idx = i;
-				ja->last_idx = ja->discard_idx = (i + 1) %
-					nr_buckets;
-				pr_debug("cur_idx %d last_idx %d",
-					 ja->cur_idx, ja->last_idx);
-			}
 	}
 
 	if (!list_empty(list))
@@ -332,7 +385,7 @@ bsearch:
 					    struct journal_replay,
 					    list)->j.seq;
 
-	return 0;
+	return ret;
 #undef read_bucket
 }
 
