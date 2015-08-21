@@ -31,7 +31,7 @@ struct closure;
 
 #else /* DEBUG */
 
-#define EBUG_ON(cond)		(false && (cond))
+#define EBUG_ON(cond)
 #define atomic_dec_bug(v)	atomic_dec(v)
 #define atomic_inc_bug(v, i)	atomic_inc(v)
 #define atomic_sub_bug(i, v)	atomic_sub(i, v)
