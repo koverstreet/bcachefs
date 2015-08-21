@@ -101,7 +101,7 @@ void __bch_check_keys(struct btree_keys *b, const char *fmt, ...)
 				goto bug;
 			}
 
-			if (bch_ptr_invalid(b, k))
+			if (bch_ptr_bad(b, k))
 				continue;
 
 			err =  "Overlapping keys";

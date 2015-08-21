@@ -1484,7 +1484,7 @@ static bool btree_gc_mark_node(struct btree *b, struct gc_stat *gc)
 	if (b->btree_id != BTREE_ID_EXTENTS && b->level == 0)
 		return 0;
 
-	for_each_key_filter(&b->keys, k, &iter, bch_ptr_invalid) {
+	for_each_key_filter(&b->keys, k, &iter, bch_ptr_bad) {
 		stale = max(stale, btree_mark_key(b, k));
 		keys++;
 
@@ -2096,7 +2096,7 @@ static int bch_btree_check_recurse(struct btree *b, struct btree_op *op)
 	struct btree_iter iter;
 
 	if (b->btree_id == BTREE_ID_EXTENTS || b->level)
-		for_each_key_filter(&b->keys, k, &iter, bch_ptr_invalid)
+		for_each_key_filter(&b->keys, k, &iter, bch_ptr_bad)
 			btree_mark_key(b, k);
 
 	__bch_btree_mark_key(b->c, b->level + 1, &b->key);

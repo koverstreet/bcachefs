@@ -800,9 +800,6 @@ bool __bch_extent_invalid(struct cache_set *c, const struct bkey *k)
 	if (KEY_U64s(k) < BKEY_U64s)
 		goto bad;
 
-	if (!KEY_SIZE(k))
-		return true;
-
 	if (KEY_SIZE(k) > KEY_OFFSET(k))
 		goto bad;
 
