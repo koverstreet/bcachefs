@@ -566,10 +566,9 @@ static void __bch_btree_node_write(struct btree *b, struct closure *parent)
 
 	rcu_read_lock();
 
-	extent_for_each_ptr(e, ptr)
-		if ((ca = PTR_CACHE(b->c, ptr)))
-			atomic_long_add(blocks_to_write * b->c->sb.block_size,
-					&ca->btree_sectors_written);
+	extent_for_each_online_device(b->c, e, ptr, ca)
+		atomic_long_add(blocks_to_write * b->c->sb.block_size,
+				&ca->btree_sectors_written);
 	rcu_read_unlock();
 }
 

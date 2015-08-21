@@ -214,19 +214,17 @@ static bool __ptr_invalid(const struct cache_set *c, const struct bkey *k)
 		e = bkey_i_to_extent_c(k);
 		rcu_read_lock();
 
-		extent_for_each_ptr(e, ptr)
-			if ((ca = PTR_CACHE(c, ptr))) {
-				size_t bucket = PTR_BUCKET_NR(ca, ptr);
-				size_t r =
-					bucket_remainder(ca, PTR_OFFSET(ptr));
+		extent_for_each_online_device(c, e, ptr, ca) {
+			size_t bucket = PTR_BUCKET_NR(ca, ptr);
+			size_t r = bucket_remainder(ca, PTR_OFFSET(ptr));
 
-				if (k->size + r > c->sb.bucket_size ||
-				    bucket <  ca->sb.first_bucket ||
-				    bucket >= ca->sb.nbuckets) {
-					rcu_read_unlock();
-					return true;
-				}
+			if (k->size + r > c->sb.bucket_size ||
+			    bucket <  ca->sb.first_bucket ||
+			    bucket >= ca->sb.nbuckets) {
+				rcu_read_unlock();
+				return true;
 			}
+		}
 
 		rcu_read_unlock();
 
@@ -243,20 +241,19 @@ static const char *bch_ptr_status(const struct cache_set *c,
 	const struct bch_extent_ptr *ptr;
 	struct cache *ca;
 
-	extent_for_each_ptr(e, ptr)
-		if ((ca = PTR_CACHE(c, ptr))) {
-			size_t bucket = PTR_BUCKET_NR(ca, ptr);
-			size_t r = bucket_remainder(ca, PTR_OFFSET(ptr));
+	extent_for_each_online_device(c, e, ptr, ca) {
+		size_t bucket = PTR_BUCKET_NR(ca, ptr);
+		size_t r = bucket_remainder(ca, PTR_OFFSET(ptr));
 
-			if (k->size + r > ca->sb.bucket_size)
-				return "bad, length too big";
-			if (bucket <  ca->sb.first_bucket)
-				return "bad, short offset";
-			if (bucket >= ca->sb.nbuckets)
-				return "bad, offset past end of device";
-			if (ptr_stale(ca, ptr))
-				return "stale";
-		}
+		if (k->size + r > ca->sb.bucket_size)
+			return "bad, length too big";
+		if (bucket <  ca->sb.first_bucket)
+			return "bad, short offset";
+		if (bucket >= ca->sb.nbuckets)
+			return "bad, offset past end of device";
+		if (ptr_stale(ca, ptr))
+			return "stale";
+	}
 
 	if (!bkey_cmp(k->p, POS_MIN))
 		return "bad, null key";
@@ -351,19 +348,18 @@ static void btree_ptr_debugcheck(struct btree_keys *bk, const struct bkey *k)
 
 	rcu_read_lock();
 
-	extent_for_each_ptr(e, ptr)
-		if ((ca = PTR_CACHE(c, ptr))) {
-			g = PTR_BUCKET(ca, ptr);
+	extent_for_each_online_device(c, e, ptr, ca) {
+		g = PTR_BUCKET(ca, ptr);
 
-			do {
-				seq = read_seqbegin(&c->gc_cur_lock);
-				bad = (!__gc_will_visit_node(c, b) &&
-				       !g->mark.is_metadata);
-			} while (read_seqretry(&c->gc_cur_lock, seq));
+		do {
+			seq = read_seqbegin(&c->gc_cur_lock);
+			bad = (!__gc_will_visit_node(c, b) &&
+			       !g->mark.is_metadata);
+		} while (read_seqretry(&c->gc_cur_lock, seq));
 
-			if (bad)
-				goto err;
-		}
+		if (bad)
+			goto err;
+	}
 
 	rcu_read_unlock();
 
@@ -386,12 +382,11 @@ struct cache *bch_btree_pick_ptr(struct cache_set *c, const struct bkey *k,
 
 	rcu_read_lock();
 
-	extent_for_each_ptr(e, *ptr)
-		if ((ca = PTR_CACHE(c, *ptr))) {
-			percpu_ref_get(&ca->ref);
-			rcu_read_unlock();
-			return ca;
-		}
+	extent_for_each_online_device(c, e, *ptr, ca) {
+		percpu_ref_get(&ca->ref);
+		rcu_read_unlock();
+		return ca;
+	}
 
 	rcu_read_unlock();
 
@@ -587,53 +582,48 @@ int __bch_add_sectors(struct cache_set *c, struct btree *b,
 	struct cache *ca;
 
 	rcu_read_lock();
-	extent_for_each_ptr(e, ptr)
-		if ((ca = PTR_CACHE(c, ptr))) {
-			bool stale, dirty = bch_extent_ptr_is_dirty(c, e, ptr);
+	extent_for_each_online_device(c, e, ptr, ca) {
+		bool stale, dirty = bch_extent_ptr_is_dirty(c, e, ptr);
 
-			trace_bcache_add_sectors(ca, e, ptr, offset,
-						 sectors, dirty);
+		trace_bcache_add_sectors(ca, e, ptr, offset,
+					 sectors, dirty);
 
-			/*
-			 * Two ways a dirty pointer could be stale here:
-			 *
-			 * - A bkey_cmpxchg() operation could be trying to
-			 *   replace a key that no longer exists. The new key,
-			 *   which can have some of the same pointers as the old
-			 *   key, gets added here before checking if the cmpxchg
-			 *   operation succeeds or not to avoid another race.
-			 *
-			 *   If that's the case, we just bail out of the
-			 *   cmpxchg operation early - a dirty pointer can only
-			 *   be stale if the actual dirty pointer in the btree
-			 *   was overwritten.
-			 *
-			 *   And in that case we _have_ to bail out here instead
-			 *   of letting bkey_cmpxchg() fail and undoing the
-			 *   accounting we did here with subtract_sectors()
-			 *   (like we do otherwise), because buckets going stale
-			 *   out from under us changes which pointers we count
-			 *   as dirty.
-			 *
-			 * - Journal replay
-			 *
-			 *   A dirty pointer could be stale in journal replay
-			 *   if we haven't finished journal replay - if it's
-			 *   going to get overwritten again later in replay.
-			 *
-			 *   In that case, we don't want to fail the insert
-			 *   (just for mental health) - but, since
-			 *   extent_normalize() drops stale pointers, we need to
-			 *   count replicas in a way that's invariant under
-			 *   normalize.
-			 *
-			 *   Fuck me, I hate my life.
-			 */
-			stale = bch_mark_data_bucket(c, ca, b, ptr,
-						     sectors, dirty);
-			if (stale && dirty && fail_if_stale)
-				goto stale;
-		}
+		/*
+		 * Two ways a dirty pointer could be stale here:
+		 *
+		 * - A bkey_cmpxchg() operation could be trying to replace a key
+		 *   that no longer exists. The new key, which can have some of
+		 *   the same pointers as the old key, gets added here before
+		 *   checking if the cmpxchg operation succeeds or not to avoid
+		 *   another race.
+		 *
+		 *   If that's the case, we just bail out of the cmpxchg
+		 *   operation early - a dirty pointer can only be stale if the
+		 *   actual dirty pointer in the btree was overwritten.
+		 *
+		 *   And in that case we _have_ to bail out here instead of
+		 *   letting bkey_cmpxchg() fail and undoing the accounting we
+		 *   did here with subtract_sectors() (like we do otherwise),
+		 *   because buckets going stale out from under us changes which
+		 *   pointers we count as dirty.
+		 *
+		 * - Journal replay
+		 *
+		 *   A dirty pointer could be stale in journal replay if we
+		 *   haven't finished journal replay - if it's going to get
+		 *   overwritten again later in replay.
+		 *
+		 *   In that case, we don't want to fail the insert (just for
+		 *   mental health) - but, since extent_normalize() drops stale
+		 *   pointers, we need to count replicas in a way that's
+		 *   invariant under normalize.
+		 *
+		 *   Fuck me, I hate my life.
+		 */
+		stale = bch_mark_data_bucket(c, ca, b, ptr, sectors, dirty);
+		if (stale && dirty && fail_if_stale)
+			goto stale;
+	}
 	rcu_read_unlock();
 
 	return 0;
@@ -1411,9 +1401,8 @@ struct cache *bch_extent_pick_ptr_avoiding(struct cache_set *c,
 		e = bkey_i_to_extent_c(k);
 		rcu_read_lock();
 
-		extent_for_each_ptr(e, i)
-			if ((ca = PTR_CACHE(c, i)) &&
-			    !ptr_stale(ca, i)) {
+		extent_for_each_online_device(c, e, i, ca)
+			if (!ptr_stale(ca, i)) {
 				picked = ca;
 				*ptr = i;
 				if (ca != avoid)

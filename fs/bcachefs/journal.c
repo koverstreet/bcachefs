@@ -693,7 +693,6 @@ static bool journal_reclaim(struct cache_set *c, u64 *oldest_seq)
 	atomic_t p;
 	bool ret = false;
 	bool discard_done = true;
-	int i;
 
 	pr_debug("started");
 	lockdep_assert_held(&c->journal.lock);
@@ -810,10 +809,9 @@ static bool journal_reclaim(struct cache_set *c, u64 *oldest_seq)
 	/* set c->journal.sectors_free to the min of any device */
 	c->journal.sectors_free = UINT_MAX;
 
-	for (i = 0; i < bch_extent_ptrs(&e->k); i++)
+	extent_for_each_online_device(c, e, ptr, ca)
 		c->journal.sectors_free = min(c->journal.sectors_free,
-					     (ca = PTR_CACHE(c, &e->v.ptr[i]))
-					     ? ca->journal.sectors_free : 0);
+					     ca->journal.sectors_free);
 	if (c->journal.sectors_free == UINT_MAX)
 		c->journal.sectors_free = 0;
 

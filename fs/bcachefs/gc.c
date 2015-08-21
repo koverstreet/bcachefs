@@ -30,18 +30,17 @@ u8 bch_btree_key_recalc_oldest_gen(struct cache_set *c,
 	struct cache *ca;
 	u8 max_stale = 0;
 
-	extent_for_each_ptr(e, ptr) {
+	extent_for_each_ptr(e, ptr)
 		if (PTR_DEV(ptr) < MAX_CACHES_PER_SET)
 			__set_bit(PTR_DEV(ptr), c->cache_slots_used);
 
-		if ((ca = PTR_CACHE(c, ptr))) {
-			struct bucket *g = PTR_BUCKET(ca, ptr);
+	extent_for_each_online_device(c, e, ptr, ca) {
+		struct bucket *g = PTR_BUCKET(ca, ptr);
 
-			if (__gen_after(g->oldest_gen, PTR_GEN(ptr)))
-				g->oldest_gen = PTR_GEN(ptr);
+		if (__gen_after(g->oldest_gen, PTR_GEN(ptr)))
+			g->oldest_gen = PTR_GEN(ptr);
 
-			max_stale = max(max_stale, ptr_stale(ca, ptr));
-		}
+		max_stale = max(max_stale, ptr_stale(ca, ptr));
 	}
 
 	return max_stale;
@@ -63,9 +62,8 @@ u8 __bch_btree_mark_key(struct cache_set *c, int level, const struct bkey *k)
 		max_stale = bch_btree_key_recalc_oldest_gen(c, e);
 
 		if (level) {
-			extent_for_each_ptr(e, ptr)
-				if ((ca = PTR_CACHE(c, ptr)))
-					bch_mark_metadata_bucket(ca,
+			extent_for_each_online_device(c, e, ptr, ca)
+				bch_mark_metadata_bucket(ca,
 						PTR_BUCKET(ca, ptr), true);
 		} else {
 			__bch_add_sectors(c, NULL, k, bkey_start_offset(k),
@@ -212,9 +210,8 @@ static void bch_mark_allocator_buckets(struct cache_set *c)
 
 		spin_lock(&b->lock);
 		e = bkey_i_to_extent_c(&b->key);
-		extent_for_each_ptr(e, ptr)
-			if ((ca = PTR_CACHE(c, ptr)))
-				bch_mark_alloc_bucket(ca, PTR_BUCKET(ca, ptr));
+		extent_for_each_online_device(c, e, ptr, ca)
+			bch_mark_alloc_bucket(ca, PTR_BUCKET(ca, ptr));
 		spin_unlock(&b->lock);
 	}
 
