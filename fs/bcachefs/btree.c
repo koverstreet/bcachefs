@@ -286,10 +286,17 @@ static void bch_btree_node_read(struct btree *b)
 	uint64_t start_time = local_clock();
 	struct closure cl;
 	struct bio *bio;
+	int ptr;
 
 	trace_bcache_btree_read(b);
 
 	closure_init_stack(&cl);
+
+	ptr = bch_btree_pick_ptr(b->c, &b->key);
+	if (ptr < 0) {
+		set_btree_node_io_error(b);
+		goto err;
+	}
 
 	bio = bch_bbio_alloc(b->c);
 	bio->bi_iter.bi_size = KEY_SIZE(&b->key) << 9;
@@ -299,7 +306,7 @@ static void bch_btree_node_read(struct btree *b)
 
 	bch_bio_map(bio, b->keys.set[0].data);
 
-	bch_bbio_prep(bio, b->c, &b->key, 0);
+	bch_bbio_prep(bio, b->c, &b->key, ptr);
 	closure_bio_submit_punt(bio, &cl, b->c);
 	closure_sync(&cl);
 

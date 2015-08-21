@@ -10,6 +10,7 @@
 #include "alloc.h"
 #include "btree.h"
 #include "debug.h"
+#include "extents.h"
 #include "journal.h"
 #include "keybuf.h"
 #include "request.h"
@@ -506,7 +507,7 @@ static int cache_lookup_fn(struct btree_op *op, struct btree *b, struct bkey *k)
 	struct search *s = container_of(op, struct search, op);
 	struct bio *n, *bio = &s->bio.bio;
 	struct bkey *bio_key;
-	unsigned ptr;
+	int ptr;
 
 	if (!k)
 		k = &KEY(KEY_INODE(&b->key), KEY_OFFSET(&b->key), 0);
@@ -530,11 +531,9 @@ static int cache_lookup_fn(struct btree_op *op, struct btree *b, struct bkey *k)
 		BUG_ON(bio_sectors <= sectors);
 	}
 
-	if (!KEY_SIZE(k))
+	ptr = bch_extent_pick_ptr(b->c, k);
+	if (ptr < 0) /* all stale? */
 		return MAP_CONTINUE;
-
-	/* XXX: figure out best pointer - for multiple cache devices */
-	ptr = 0;
 
 	PTR_BUCKET(b->c, k, ptr)->prio = INITIAL_PRIO;
 

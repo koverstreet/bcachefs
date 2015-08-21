@@ -10,5 +10,7 @@ struct cache_set;
 void bch_extent_to_text(char *, size_t, const struct bkey *);
 bool __bch_btree_ptr_invalid(struct cache_set *, const struct bkey *);
 bool __bch_extent_invalid(struct cache_set *, const struct bkey *);
+int bch_btree_pick_ptr(struct cache_set *, const struct bkey *);
+int bch_extent_pick_ptr(struct cache_set *, const struct bkey *);
 
 #endif /* _BCACHE_EXTENTS_H */

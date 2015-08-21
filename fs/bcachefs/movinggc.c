@@ -8,6 +8,7 @@
 #include "alloc.h"
 #include "btree.h"
 #include "debug.h"
+#include "extents.h"
 #include "keybuf.h"
 #include "request.h"
 
@@ -143,8 +144,14 @@ static void read_moving_submit(struct closure *cl)
 {
 	struct moving_io *io = container_of(cl, struct moving_io, cl);
 	struct bio *bio = &io->bio.bio;
+	int ptr;
 
-	bch_submit_bbio(bio, io->op.c, &io->w->key, 0);
+	/* bail out if all pointers are stale */
+	ptr = bch_extent_pick_ptr(io->op.c, &io->w->key);
+	if (ptr < 0)
+		closure_return_with_destructor(cl, moving_io_destructor);
+
+	bch_submit_bbio(bio, io->op.c, &io->w->key, ptr);
 
 	continue_at(cl, write_moving, io->op.wq);
 }

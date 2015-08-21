@@ -9,6 +9,7 @@
 #include "bcache.h"
 #include "btree.h"
 #include "debug.h"
+#include "extents.h"
 #include "keybuf.h"
 #include "writeback.h"
 
@@ -163,6 +164,7 @@ static void read_dirty_submit(struct closure *cl)
 
 static void read_dirty(struct cached_dev *dc)
 {
+	int ptr;
 	struct keybuf_key *w;
 	struct dirty_io *io;
 	struct closure cl;
@@ -180,7 +182,12 @@ static void read_dirty(struct cached_dev *dc)
 		if (!w)
 			break;
 
-		BUG_ON(ptr_stale(dc->disk.c, &w->key, 0));
+		ptr = bch_extent_pick_ptr(dc->disk.c, &w->key);
+		if (ptr < 0) {
+			cache_bug(dc->disk.c, "all ptrs stale in writeback");
+			bch_keybuf_del(&dc->writeback_keys, w);
+			continue;
+		}
 
 		io = kzalloc(sizeof(struct dirty_io) + sizeof(struct bio_vec)
 			     * DIV_ROUND_UP(KEY_SIZE(&w->key), PAGE_SECTORS),
@@ -193,9 +200,9 @@ static void read_dirty(struct cached_dev *dc)
 
 		dirty_init(w);
 		bio_set_op_attrs(&io->bio, REQ_OP_READ, 0);
-		io->bio.bi_iter.bi_sector = PTR_OFFSET(&w->key, 0);
+		io->bio.bi_iter.bi_sector = PTR_OFFSET(&w->key, ptr);
 		io->bio.bi_bdev		= PTR_CACHE(dc->disk.c,
-						    &w->key, 0)->bdev;
+						    &w->key, ptr)->bdev;
 		io->bio.bi_end_io	= read_dirty_endio;
 
 		if (bio_alloc_pages(&io->bio, GFP_KERNEL))

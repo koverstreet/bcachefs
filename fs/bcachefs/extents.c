@@ -235,6 +235,20 @@ static bool bch_btree_ptr_insert_fixup(struct btree_keys *bk,
 	return false;
 }
 
+int bch_btree_pick_ptr(struct cache_set *c, const struct bkey *k)
+{
+	unsigned i;
+
+	if (!KEY_SIZE(k))
+		return -1;
+
+	for (i = 0; i < KEY_PTRS(k); i++)
+		if (ptr_available(c, k, i))
+			return i;
+
+	return -1;
+}
+
 const struct btree_keys_ops bch_btree_keys_ops = {
 	.sort_cmp	= bch_key_sort_cmp,
 	.insert_fixup	= bch_btree_ptr_insert_fixup,
@@ -500,54 +514,20 @@ static bool bch_extent_invalid(struct btree_keys *bk, const struct bkey *k)
 	return __bch_extent_invalid(b->c, k);
 }
 
-static bool bch_extent_bad_expensive(struct btree *b, const struct bkey *k,
-				     unsigned ptr)
+static bool bch_extent_bad_expensive(struct btree *b, const struct bkey *k)
 {
-	struct bucket *g = PTR_BUCKET(b->c, k, ptr);
+	unsigned i, stale, replicas_needed, locked;
+	struct bucket *g;
 	char buf[80];
 
-	if (mutex_trylock(&b->c->bucket_lock)) {
-		if (b->c->gc_mark_valid &&
-		    (!GC_MARK(g) ||
-		     GC_MARK(g) == GC_MARK_METADATA ||
-		     (GC_MARK(g) != GC_MARK_DIRTY && KEY_DIRTY(k))))
-			goto err;
+	locked = mutex_trylock(&b->c->bucket_lock);
 
-		if (g->prio == BTREE_PRIO)
-			goto err;
-
-		mutex_unlock(&b->c->bucket_lock);
-	}
-
-	return false;
-err:
-	mutex_unlock(&b->c->bucket_lock);
-	bch_extent_to_text(buf, sizeof(buf), k);
-	btree_bug(b,
-"inconsistent extent pointer %s:\nbucket %zu prio %i gen %i last_gc %i mark %llu",
-		  buf, PTR_BUCKET_NR(b->c, k, ptr),
-		  g->prio, g->gen, g->last_gc, GC_MARK(g));
-	return true;
-}
-
-static bool bch_extent_bad(struct btree_keys *bk, const struct bkey *k)
-{
-	struct btree *b = container_of(bk, struct btree, keys);
-	struct bucket *g;
-	unsigned i, stale;
-
-	if (!KEY_PTRS(k) ||
-	    bch_extent_invalid(bk, k))
-		return true;
-
-	for (i = 0; i < KEY_PTRS(k); i++)
-		if (!ptr_available(b->c, k, i))
-			return true;
-
-	if (!expensive_debug_checks(b->c) && KEY_DIRTY(k))
-		return false;
+	replicas_needed = !KEY_DIRTY(k) ? 0 : 1;
 
 	for (i = 0; i < KEY_PTRS(k); i++) {
+		if (!ptr_available(b->c, k, i))
+			continue;
+
 		g = PTR_BUCKET(b->c, k, i);
 		stale = ptr_stale(b->c, k, i);
 
@@ -555,18 +535,67 @@ static bool bch_extent_bad(struct btree_keys *bk, const struct bkey *k)
 			     "key too stale: %i, need_gc %u",
 			     stale, b->c->need_gc);
 
-		btree_bug_on(stale && KEY_DIRTY(k) && KEY_SIZE(k),
+		btree_bug_on(stale && replicas_needed && KEY_SIZE(k),
 			     b, "stale dirty pointer");
 
 		if (stale)
-			return true;
+			continue;
 
-		if (expensive_debug_checks(b->c) &&
-		    bch_extent_bad_expensive(b, k, i))
-			return true;
+		if (locked &&
+		    b->c->gc_mark_valid &&
+		    (!GC_MARK(g) ||
+		     GC_MARK(g) == GC_MARK_METADATA ||
+		     (GC_MARK(g) != GC_MARK_DIRTY &&
+		      replicas_needed)))
+			goto err;
+
+		if (g->prio == BTREE_PRIO)
+			goto err;
+
+		if (replicas_needed)
+			replicas_needed--;
 	}
 
+	if (locked)
+		mutex_unlock(&b->c->bucket_lock);
+
 	return false;
+err:
+	mutex_unlock(&b->c->bucket_lock);
+	bch_extent_to_text(buf, sizeof(buf), k);
+	btree_bug(b,
+"inconsistent extent pointer %s:\nbucket %zu prio %i gen %i last_gc %i mark %llu",
+		  buf, PTR_BUCKET_NR(b->c, k, i),
+		  g->prio, g->gen, g->last_gc, GC_MARK(g));
+	return true;
+}
+
+static bool bch_extent_bad(struct btree_keys *bk, const struct bkey *k)
+{
+	struct btree *b = container_of(bk, struct btree, keys);
+
+	if (!KEY_PTRS(k) ||
+	    bch_extent_invalid(bk, k))
+		return true;
+
+	if (expensive_debug_checks(b->c))
+		bch_extent_bad_expensive(b, k);
+
+	return false;
+}
+
+int bch_extent_pick_ptr(struct cache_set *c, const struct bkey *k)
+{
+	unsigned i;
+
+	if (!KEY_SIZE(k))
+		return -1;
+
+	for (i = 0; i < KEY_PTRS(k); i++)
+		if (ptr_available(c, k, i) && !ptr_stale(c, k, i))
+			return i;
+
+	return -1;
 }
 
 static uint64_t merge_chksums(struct bkey *l, struct bkey *r)
