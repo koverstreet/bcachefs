@@ -99,10 +99,10 @@ static void read_tiering(struct cache_set *c)
 		io = kzalloc(sizeof(struct moving_io) + sizeof(struct bio_vec)
 			     * DIV_ROUND_UP(KEY_SIZE(&w->key), PAGE_SECTORS),
 			     GFP_KERNEL);
-		if (!io)
-			goto err;
-
-		w->private = io;
+		if (!io) {
+			bch_keybuf_put(&c->tiering_keys, w);
+			break;
+		}
 
 		io->w = w;
 		io->keybuf = &c->tiering_keys;
@@ -127,13 +127,6 @@ static void read_tiering(struct cache_set *c)
 		write_point++;
 		if (write_point == c->sb.nr_in_set)
 			write_point = 0;
-	}
-
-	if (0) {
-err:		if (!IS_ERR_OR_NULL(w->private))
-			kfree(w->private);
-
-		bch_keybuf_del(&c->tiering_keys, w);
 	}
 
 	closure_sync(&cl);

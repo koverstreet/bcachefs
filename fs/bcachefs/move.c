@@ -37,7 +37,7 @@ static void moving_io_destructor(struct closure *cl)
 	if (io->op.replace_collision)
 		trace_bcache_copy_collision(&io->w->key);
 
-	bch_keybuf_del(io->keybuf, io->w);
+	bch_keybuf_put(io->keybuf, io->w);
 	kfree(io);
 }
 

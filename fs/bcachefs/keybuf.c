@@ -57,8 +57,8 @@ static int refill_keybuf_fn(struct btree_op *op, struct btree *b,
 			return MAP_DONE;
 		}
 
-		w->private = NULL;
 		bkey_copy(&w->key, k);
+		atomic_set(&w->ref, -1); /* -1 means hasn't started */
 
 		if (RB_INSERT(&buf->keys, w, node, keybuf_cmp))
 			array_free(&buf->freelist, w);
@@ -125,43 +125,46 @@ void bch_refill_keybuf(struct cache_set *c, struct keybuf *buf,
 	spin_unlock(&buf->lock);
 }
 
-static void __bch_keybuf_del(struct keybuf *buf, struct keybuf_key *w)
+static void bch_keybuf_del(struct keybuf *buf, struct keybuf_key *w)
 {
-	if (w->private)
-		up(&buf->in_flight);
-
 	rb_erase(&w->node, &buf->keys);
 	array_free(&buf->freelist, w);
 }
 
-void bch_keybuf_del(struct keybuf *buf, struct keybuf_key *w)
+void bch_keybuf_put(struct keybuf *buf, struct keybuf_key *w)
 {
-	spin_lock(&buf->lock);
-	__bch_keybuf_del(buf, w);
-	spin_unlock(&buf->lock);
+	BUG_ON(atomic_read(&w->ref) <= 0);
+
+	if (atomic_dec_and_test(&w->ref)) {
+		up(&buf->in_flight);
+
+		spin_lock(&buf->lock);
+		bch_keybuf_del(buf, w);
+		spin_unlock(&buf->lock);
+	}
 }
 
 bool bch_keybuf_check_overlapping(struct keybuf *buf, struct bkey *start,
 				  struct bkey *end)
 {
 	bool ret = false;
-	struct keybuf_key *p, *w, s = { .key = *start };
+	struct keybuf_key *w, *next, s = { .key = *start };
 
 	if (bkey_cmp(end, &buf->start) <= 0 ||
 	    bkey_cmp(start, &buf->end) >= 0)
 		return false;
 
 	spin_lock(&buf->lock);
-	w = RB_GREATER(&buf->keys, s, node, keybuf_nonoverlapping_cmp);
 
-	while (w && bkey_cmp(&START_KEY(&w->key), end) < 0) {
-		p = w;
-		w = RB_NEXT(w, node);
+	for (w = RB_GREATER(&buf->keys, s, node, keybuf_nonoverlapping_cmp);
+	     w && bkey_cmp(&START_KEY(&w->key), end) < 0;
+	     w = next) {
+		next = RB_NEXT(w, node);
 
-		if (p->private)
-			ret = true;
+		if (atomic_read(&w->ref) == -1)
+			bch_keybuf_del(buf, w);
 		else
-			__bch_keybuf_del(buf, p);
+			ret = true;
 	}
 
 	spin_unlock(&buf->lock);
@@ -176,7 +179,7 @@ struct keybuf_key *bch_keybuf_next(struct keybuf *buf)
 
 	w = RB_FIRST(&buf->keys, struct keybuf_key, node);
 
-	while (w && w->private)
+	while (w && atomic_read(&w->ref) != -1)
 		w = RB_NEXT(w, node);
 
 	if (!w) {
@@ -184,7 +187,7 @@ struct keybuf_key *bch_keybuf_next(struct keybuf *buf)
 		return NULL;
 	}
 
-	w->private = ERR_PTR(-EINTR);
+	atomic_set(&w->ref, 1);
 	spin_unlock(&buf->lock);
 
 	down(&buf->in_flight);

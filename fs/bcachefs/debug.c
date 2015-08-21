@@ -189,7 +189,7 @@ static ssize_t bch_dump_read(struct file *file, char __user *buf,
 
 		bch_extent_to_text(kbuf, sizeof(kbuf), &w->key);
 		i->bytes = snprintf(i->buf, PAGE_SIZE, "%s\n", kbuf);
-		bch_keybuf_del(&i->keys, w);
+		bch_keybuf_put(&i->keys, w);
 	}
 
 	return ret;

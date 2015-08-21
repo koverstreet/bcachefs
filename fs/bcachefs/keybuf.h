@@ -13,7 +13,7 @@ void bch_refill_keybuf(struct cache_set *, struct keybuf *,
 		       struct bkey *, keybuf_pred_fn *);
 bool bch_keybuf_check_overlapping(struct keybuf *, struct bkey *,
 				  struct bkey *);
-void bch_keybuf_del(struct keybuf *, struct keybuf_key *);
+void bch_keybuf_put(struct keybuf *, struct keybuf_key *);
 struct keybuf_key *bch_keybuf_next(struct keybuf *);
 struct keybuf_key *bch_keybuf_next_rescan(struct cache_set *, struct keybuf *,
 					  struct bkey *, keybuf_pred_fn *);

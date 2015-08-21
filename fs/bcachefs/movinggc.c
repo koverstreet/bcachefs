@@ -88,10 +88,11 @@ static void read_moving(struct cache *ca, struct moving_io_stats *stats)
 		io = kzalloc(sizeof(struct moving_io) + sizeof(struct bio_vec)
 			     * DIV_ROUND_UP(KEY_SIZE(&w->key), PAGE_SECTORS),
 			     GFP_KERNEL);
-		if (!io)
-			goto err;
+		if (!io) {
+			bch_keybuf_put(&ca->moving_gc_keys, w);
+			break;
+		}
 
-		w->private		= io;
 		io->w			= w;
 		io->keybuf		= &ca->moving_gc_keys;
 		io->stats		= stats;
@@ -108,13 +109,6 @@ static void read_moving(struct cache *ca, struct moving_io_stats *stats)
 					KEY_SIZE(&w->key) << 9);
 
 		closure_call(&io->cl, bch_data_move, NULL, &cl);
-	}
-
-	if (0) {
-err:		if (!IS_ERR_OR_NULL(w->private))
-			kfree(w->private);
-
-		bch_keybuf_del(&ca->moving_gc_keys, w);
 	}
 
 	closure_sync(&cl);
