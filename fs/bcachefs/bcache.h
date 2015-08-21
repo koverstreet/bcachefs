@@ -292,7 +292,7 @@ struct journal_device {
 	 * For each journal bucket, contains the max sequence number of the
 	 * journal writes it contains - so we know when a bucket can be reused.
 	 */
-	u64			seq[SB_JOURNAL_BUCKETS];
+	u64			*seq;
 
 	/* Journal bucket we're currently writing to */
 	unsigned		cur_idx;
@@ -389,14 +389,19 @@ struct io {
 	sector_t		last;
 };
 
+struct bcache_superblock {
+	struct bio		*bio;
+	struct cache_sb		*sb;
+	unsigned		page_order;
+};
+
 struct cached_dev {
 	struct list_head	list;
 	struct bcache_device	disk;
 	struct block_device	*bdev;
 
 	struct cache_sb		sb;
-	struct bio		sb_bio;
-	struct bio_vec		sb_bv[1];
+	struct bcache_superblock disk_sb;
 	struct closure		sb_write;
 	struct semaphore	sb_write_mutex;
 
@@ -505,8 +510,7 @@ struct cache {
 	struct cache_set	*set;
 	/* Cache tier is protected by bucket_lock */
 	struct cache_sb		sb;
-	struct bio		sb_bio;
-	struct bio_vec		sb_bv[1];
+	struct bcache_superblock disk_sb;
 
 	struct kobject		kobj;
 	struct block_device	*bdev;
@@ -1108,6 +1112,7 @@ void bch_flash_dev_release(struct kobject *);
 void bch_cache_set_release(struct kobject *);
 void bch_cache_release(struct kobject *);
 
+int bch_super_realloc(struct cache *, unsigned);
 void bcache_write_super(struct cache_set *);
 
 int bch_flash_dev_create(struct cache_set *, u64);
@@ -1122,7 +1127,6 @@ void bch_cache_set_stop(struct cache_set *);
 
 void bch_cache_remove(struct cache *);
 
-struct cache_set *bch_cache_set_alloc(struct cache_sb *);
 void bch_btree_cache_free(struct cache_set *);
 int bch_btree_cache_alloc(struct cache_set *);
 void bch_tiering_init_cache_set(struct cache_set *);

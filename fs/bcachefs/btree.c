@@ -1981,12 +1981,14 @@ static void bch_btree_gc_finish(struct cache_set *c)
 	bch_mark_keybuf_keys(c, &c->tiering_keys);
 
 	for_each_cache(ca, c, i) {
+		unsigned j;
 		uint64_t *i;
 
 		bch_mark_keybuf_keys(c, &ca->moving_gc_keys);
 
-		for (i = ca->sb.d; i < ca->sb.d + ca->sb.keys; i++)
-			bch_mark_metadata_bucket(ca, &ca->buckets[*i]);
+		for (j = 0; j < bch_nr_journal_buckets(&ca->sb); j++)
+			bch_mark_metadata_bucket(ca,
+					&ca->buckets[journal_bucket(ca, j)]);
 
 		for (i = ca->prio_buckets;
 		     i < ca->prio_buckets + prio_buckets(ca) * 2; i++)

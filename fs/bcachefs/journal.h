@@ -220,4 +220,26 @@ int bch_journal_alloc(struct cache_set *);
 
 ssize_t bch_journal_print_debug(struct journal *, char *);
 
+int bch_set_nr_journal_buckets(struct cache *, unsigned);
+
+static inline unsigned bch_nr_journal_buckets(struct cache_sb *sb)
+{
+	return sb->keys;
+}
+
+static inline u64 *__journal_buckets(struct cache *ca)
+{
+	return ca->disk_sb.sb->d;
+}
+
+static inline u64 journal_bucket(struct cache *ca, unsigned nr)
+{
+	return le64_to_cpu(__journal_buckets(ca)[nr]);
+}
+
+static inline void set_journal_bucket(struct cache *ca, unsigned nr, u64 bucket)
+{
+	__journal_buckets(ca)[nr] = cpu_to_le64(bucket);
+}
+
 #endif /* _BCACHE_JOURNAL_H */

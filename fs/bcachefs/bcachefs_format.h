@@ -344,10 +344,15 @@ struct cache_sb {
 	__u64			d[SB_JOURNAL_BUCKETS];	/* journal buckets */
 };
 
+static inline _Bool __SB_IS_BDEV(__u64 version)
+{
+	return version == BCACHE_SB_VERSION_BDEV
+		|| version == BCACHE_SB_VERSION_BDEV_WITH_OFFSET;
+}
+
 static inline _Bool SB_IS_BDEV(const struct cache_sb *sb)
 {
-	return sb->version == BCACHE_SB_VERSION_BDEV
-		|| sb->version == BCACHE_SB_VERSION_BDEV_WITH_OFFSET;
+	return __SB_IS_BDEV(sb->version);
 }
 
 BITMASK(CACHE_SYNC,			struct cache_sb, flags, 0, 1);

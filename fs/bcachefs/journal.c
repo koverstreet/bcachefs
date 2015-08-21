@@ -98,7 +98,8 @@ static int journal_read_bucket(struct cache *ca, struct list_head *list,
 	struct closure cl;
 	unsigned len, left, offset = 0;
 	int ret = 0;
-	sector_t bucket = bucket_to_sector(ca->set, ca->sb.d[bucket_index]);
+	sector_t bucket = bucket_to_sector(ca->set,
+				journal_bucket(ca, bucket_index));
 
 	closure_init_stack(&cl);
 
@@ -232,19 +233,20 @@ int bch_journal_read(struct cache_set *c, struct list_head *list)
 
 	for_each_cache(ca, c, iter) {
 		struct journal_device *ja = &ca->journal;
-		DECLARE_BITMAP(bitmap, SB_JOURNAL_BUCKETS);
+		unsigned nr_buckets = bch_nr_journal_buckets(&ca->sb);
+		DECLARE_BITMAP(bitmap, nr_buckets);
 		unsigned i, l, r, m;
 		uint64_t seq;
 
-		bitmap_zero(bitmap, SB_JOURNAL_BUCKETS);
-		pr_debug("%u journal buckets", ca->sb.njournal_buckets);
+		bitmap_zero(bitmap, nr_buckets);
+		pr_debug("%u journal buckets", nr_buckets);
 
 		/*
 		 * Read journal buckets ordered by golden ratio hash to quickly
 		 * find a sequence of buckets with valid journal entries
 		 */
-		for (i = 0; i < ca->sb.njournal_buckets; i++) {
-			l = (i * 2654435769U) % ca->sb.njournal_buckets;
+		for (i = 0; i < nr_buckets; i++) {
+			l = (i * 2654435769U) % nr_buckets;
 
 			if (test_bit(l, bitmap))
 				break;
@@ -259,21 +261,21 @@ int bch_journal_read(struct cache_set *c, struct list_head *list)
 		 */
 		pr_debug("falling back to linear search");
 
-		for (l = find_first_zero_bit(bitmap, ca->sb.njournal_buckets);
-		     l < ca->sb.njournal_buckets;
-		     l = find_next_zero_bit(bitmap, ca->sb.njournal_buckets, l + 1))
+		for (l = find_first_zero_bit(bitmap, nr_buckets);
+		     l < nr_buckets;
+		     l = find_next_zero_bit(bitmap, nr_buckets, l + 1))
 			if (read_bucket(l))
 				goto bsearch;
 
 		/* no journal entries on this device? */
-		if (l == ca->sb.njournal_buckets)
+		if (l == nr_buckets)
 			continue;
 bsearch:
 		BUG_ON(list_empty(list));
 
 		/* Binary search */
 		m = l;
-		r = find_next_bit(bitmap, ca->sb.njournal_buckets, l + 1);
+		r = find_next_bit(bitmap, nr_buckets, l + 1);
 		pr_debug("starting binary search, l %u r %u", l, r);
 
 		while (l + 1 < r) {
@@ -295,12 +297,12 @@ bsearch:
 		 * journal entries
 		 */
 		pr_debug("finishing up: m %u njournal_buckets %u",
-			 m, ca->sb.njournal_buckets);
+			 m, nr_buckets);
 		l = m;
 
 		while (1) {
 			if (!l--)
-				l = ca->sb.njournal_buckets - 1;
+				l = nr_buckets - 1;
 
 			if (l == m)
 				break;
@@ -314,7 +316,7 @@ bsearch:
 
 		seq = 0;
 
-		for (i = 0; i < ca->sb.njournal_buckets; i++)
+		for (i = 0; i < nr_buckets; i++)
 			if (ja->seq[i] > seq) {
 				seq = ja->seq[i];
 				/*
@@ -324,10 +326,9 @@ bsearch:
 				 */
 				ja->cur_idx = i;
 				ja->last_idx = ja->discard_idx = (i + 1) %
-					ca->sb.njournal_buckets;
+					nr_buckets;
 				pr_debug("cur_idx %d last_idx %d",
 					 ja->cur_idx, ja->last_idx);
-
 			}
 	}
 
@@ -411,6 +412,25 @@ err:
 	return ret;
 }
 
+int bch_set_nr_journal_buckets(struct cache *ca, unsigned nr)
+{
+	u64 *p;
+	int ret;
+
+	ret = bch_super_realloc(ca, nr);
+	if (ret)
+		return ret;
+
+	p = krealloc(ca->journal.seq, nr * sizeof(u64), GFP_KERNEL|__GFP_ZERO);
+	if (!p)
+		return -ENOMEM;
+
+	ca->journal.seq = p;
+	ca->sb.keys = nr;
+
+	return 0;
+}
+
 /* Journalling */
 
 void btree_write_oldest(struct cache_set *c)
@@ -492,7 +512,7 @@ static void do_journal_discard(struct cache *ca)
 
 	case DISCARD_DONE:
 		ja->discard_idx = (ja->discard_idx + 1) %
-			ca->sb.njournal_buckets;
+			bch_nr_journal_buckets(&ca->sb);
 
 		atomic_set(&ja->discard_in_flight, DISCARD_READY);
 		/* fallthrough */
@@ -505,8 +525,9 @@ static void do_journal_discard(struct cache *ca)
 
 		bio_init(bio);
 		bio_set_op_attrs(bio, REQ_OP_DISCARD, 0);
-		bio->bi_iter.bi_sector	= bucket_to_sector(ca->set,
-						ca->sb.d[ja->discard_idx]);
+		bio->bi_iter.bi_sector	=
+			bucket_to_sector(ca->set,
+					 journal_bucket(ca, ja->discard_idx));
 		bio->bi_bdev		= ca->bdev;
 		bio->bi_max_vecs	= 1;
 		bio->bi_io_vec		= bio->bi_inline_vecs;
@@ -567,7 +588,7 @@ static void journal_reclaim(struct cache_set *c)
 		while (ja->last_idx != ja->cur_idx &&
 		       ja->seq[ja->last_idx] < last_seq)
 			ja->last_idx = (ja->last_idx + 1) %
-				ca->sb.njournal_buckets;
+				bch_nr_journal_buckets(&ca->sb);
 	}
 
 	for_each_cache_rcu(ca, c, iter)
@@ -594,7 +615,8 @@ static void journal_reclaim(struct cache_set *c)
 
 	for_each_cache_rcu(ca, c, iter) {
 		struct journal_device *ja = &ca->journal;
-		unsigned next = (ja->cur_idx + 1) % ca->sb.njournal_buckets;
+		unsigned next = (ja->cur_idx + 1) %
+			bch_nr_journal_buckets(&ca->sb);
 
 		if (CACHE_TIER(&ca->sb))
 			continue;
@@ -605,7 +627,8 @@ static void journal_reclaim(struct cache_set *c)
 
 		ja->cur_idx = next;
 		k->val[bch_extent_ptrs(k)] =
-			PTR(0, bucket_to_sector(c, ca->sb.d[ja->cur_idx]),
+			PTR(0, bucket_to_sector(c,
+					journal_bucket(ca, ja->cur_idx)),
 			    ca->sb.nr_this_dev);
 
 		bch_set_extent_ptrs(k, bch_extent_ptrs(k) + 1);
