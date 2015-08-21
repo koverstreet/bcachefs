@@ -307,7 +307,7 @@ int bch_btree_map_keys(struct btree_op *, struct cache_set *, struct bkey *,
  * If so, we don't have to update reference counts for buckets this key points
  * into -- the GC will do it before the current pass ends.
  */
-static inline bool gc_will_visit_key(struct cache_set *c, struct bkey *k)
+static inline bool gc_will_visit_key(struct cache_set *c, const struct bkey *k)
 {
 	unsigned seq;
 	bool ret;
@@ -315,7 +315,7 @@ static inline bool gc_will_visit_key(struct cache_set *c, struct bkey *k)
 	do {
 		seq = read_seqbegin(&c->gc_cur_lock);
 		ret = (c->gc_cur_btree == BTREE_ID_EXTENTS &&
-		       bkey_cmp(&c->gc_cur_key, k) <= 0);
+		       bkey_cmp(&c->gc_cur_key, k) < 0);
 	} while (read_seqretry(&c->gc_cur_lock, seq));
 
 	return ret;

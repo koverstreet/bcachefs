@@ -738,9 +738,13 @@ struct cache_set {
 	atomic64_t		sectors_until_gc;
 
 	/*
-	 * Where in the btree GC currently is.
+	 * Tracks GC's progress - everything in the range [ZERO_KEY..gc_cur_key]
+	 * has been marked by GC.
 	 *
-	 * All keys strictly smaller than gc_cur_key have been visited.
+	 * (Note that it starts out at ZERO_KEY, but since the extents btree
+	 * comes first and an extent equal to ZERO_KEY would have zero size,
+	 * gc_cur_key == ZERO_KEY and gc_cur_btree == BTREE_ID_EXTENTS does
+	 * correctly mean nothing has been marked)
 	 *
 	 * Protected by gc_cur_lock. Only written to by GC thread, so GC thread
 	 * can read without a lock.
