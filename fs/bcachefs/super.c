@@ -1803,8 +1803,8 @@ static int cache_alloc(struct cache *ca)
 	/* XXX: tune these */
 	movinggc_reserve = max_t(size_t, NUM_GC_GENS * 2,
 				 ca->sb.nbuckets >> 7);
-	reserve_none = max_t(size_t, 4, ca->sb.nbuckets >> 10);
-	free_inc_reserve = reserve_none << 2;
+	reserve_none = max_t(size_t, 4, ca->sb.nbuckets >> 9);
+	free_inc_reserve = reserve_none << 1;
 
 	for (i = 0; i < BTREE_ID_NR; i++)
 		if (!init_fifo(&ca->free[i], BTREE_NODE_RESERVE, GFP_KERNEL))
