@@ -1385,7 +1385,12 @@ void bch_open_buckets_init(struct cache_set *c)
 	c->pd_controllers_update_seconds = 5;
 	INIT_DELAYED_WORK(&c->pd_controllers_update, pd_controllers_update);
 
+	spin_lock_init(&c->foreground_write_pd_lock);
 	bch_pd_controller_init(&c->foreground_write_pd);
+	init_timer(&c->foreground_write_wakeup);
+
+	c->foreground_write_wakeup.data = (unsigned long) c;
+	c->foreground_write_wakeup.function = bch_wake_delayed_writes;
 }
 
 /*

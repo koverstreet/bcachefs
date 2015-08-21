@@ -634,6 +634,7 @@ static void cache_set_flush(struct closure *cl)
 	struct cache *ca;
 	unsigned i;
 
+	del_timer_sync(&c->foreground_write_wakeup);
 	cancel_delayed_work_sync(&c->pd_controllers_update);
 
 	c->tiering_pd.rate.rate = UINT_MAX;

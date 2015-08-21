@@ -424,6 +424,8 @@ static void __bch_write(struct closure *cl)
 	unsigned open_bucket_nr = 0, ptrs_from;
 	struct open_bucket *b;
 
+	memset(op->open_buckets, 0, sizeof(op->open_buckets));
+
 	if (op->discard)
 		return bch_discard(cl);
 
@@ -523,6 +525,31 @@ err:
 		closure_return(cl);
 }
 
+void bch_wake_delayed_writes(unsigned long data)
+{
+	struct cache_set *c = (void *) data;
+	struct bch_write_op *op;
+	unsigned long flags;
+
+	spin_lock_irqsave(&c->foreground_write_pd_lock, flags);
+
+	while ((op = c->write_wait_head)) {
+		if (time_after(op->expires, jiffies)) {
+			c->foreground_write_wakeup.expires = op->expires;
+			add_timer(&c->foreground_write_wakeup);
+			break;
+		}
+
+		c->write_wait_head = op->next;
+		if (!c->write_wait_head)
+			c->write_wait_tail = NULL;
+
+		closure_put(&op->cl);
+	}
+
+	spin_unlock_irqrestore(&c->foreground_write_pd_lock, flags);
+}
+
 /**
  * bch_write - handle a write to a cache device or flash only volume
  *
@@ -601,6 +628,44 @@ void bch_write(struct closure *cl)
 
 	bch_keylist_init(&op->insert_keys);
 	bio_get(op->bio);
+
+	/* Don't call bch_next_delay() if rate is >= 1 GB/sec */
+
+	if (c->foreground_write_pd.rate.rate < (1 << 30) &&
+	    !op->discard) {
+		unsigned long flags;
+		u64 next, now = local_clock();
+
+		spin_lock_irqsave(&c->foreground_write_pd_lock, flags);
+		bch_ratelimit_increment(&c->foreground_write_pd.rate,
+					op->bio->bi_iter.bi_size);
+
+		next = c->foreground_write_pd.rate.next;
+
+		if (time_after64(next, now + NSEC_PER_MSEC * 10)) {
+			closure_get(&op->cl); /* list takes a ref */
+
+			op->expires = div_u64(next, NSEC_PER_SEC / HZ);
+			op->next = NULL;
+
+			if (c->write_wait_tail)
+				c->write_wait_tail->next = op;
+			else
+				c->write_wait_head = op;
+			c->write_wait_tail = op;
+
+			if (!timer_pending(&c->foreground_write_wakeup))
+				mod_timer(&c->foreground_write_wakeup,
+					  op->expires);
+
+			spin_unlock_irqrestore(&c->foreground_write_pd_lock,
+					       flags);
+			continue_at(cl, __bch_write, op->c->wq);
+		}
+
+		spin_unlock_irqrestore(&c->foreground_write_pd_lock, flags);
+	}
+
 	continue_at_nobarrier(cl, __bch_write, NULL);
 }
 
@@ -628,7 +693,6 @@ void bch_write_op_init(struct bch_write_op *op, struct cache_set *c,
 	op->wp		= wp;
 	op->btree_alloc_reserve = BTREE_ID_EXTENTS;
 
-	memset(op->open_buckets, 0, sizeof(op->open_buckets));
 	bch_keylist_init(&op->insert_keys);
 	bkey_copy(&op->insert_key, insert_key);
 
