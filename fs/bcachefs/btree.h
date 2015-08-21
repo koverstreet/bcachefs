@@ -311,8 +311,8 @@ static inline bool gc_will_visit_key(struct cache_set *c, struct bkey *k)
 	unsigned seq;
 	bool ret;
 
-	seq = read_seqbegin(&c->gc_cur_lock);
 	do {
+		seq = read_seqbegin(&c->gc_cur_lock);
 		ret = (c->gc_cur_btree == BTREE_ID_EXTENTS &&
 		       bkey_cmp(&c->gc_cur_key, k) <= 0);
 	} while (read_seqretry(&c->gc_cur_lock, seq));
