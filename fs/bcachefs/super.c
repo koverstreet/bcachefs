@@ -119,6 +119,10 @@ static const char *read_super(struct cache_sb *sb, struct block_device *bdev,
 	if (sb->offset != SB_SECTOR)
 		goto err;
 
+	err = "dynamic fault";
+	if (cache_set_init_fault("read_super"))
+		goto err;
+
 	if (memcmp(sb->magic, bcache_magic, 16))
 		goto err;
 
@@ -471,6 +475,9 @@ static void prio_read(struct cache *ca, uint64_t bucket)
 	struct bucket_disk *d = p->data + prios_per_bucket(ca), *end = d;
 	struct bucket *b;
 	unsigned bucket_nr = 0;
+
+	if (cache_set_init_fault("prio_read"))
+		bch_cache_set_error(ca->set, "reading prios");
 
 	ca->prio_journal_bucket = bucket;
 
@@ -1656,6 +1663,10 @@ static void run_cache_set(struct cache_set *c)
 		bch_cached_dev_attach(dc, c);
 
 	flash_devs_run(c);
+
+	err = "dynamic fault";
+	if (cache_set_init_fault("run_cache_set"))
+		goto err;
 
 	set_bit(CACHE_SET_RUNNING, &c->flags);
 	closure_put(&c->caching);

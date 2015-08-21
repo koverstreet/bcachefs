@@ -132,6 +132,9 @@ reread:		left = ca->sb.bucket_size - offset;
 			struct list_head *where;
 			size_t blocks, bytes = set_bytes(j);
 
+			if (cache_set_init_fault("journal_read"))
+				return ret;
+
 			if (j->magic != jset_magic(&ca->sb)) {
 				pr_debug("%u: bad magic", bucket_index);
 				return ret;
