@@ -485,10 +485,11 @@ static inline enum bch_extent_overlap bch_extent_overlap(const struct bkey *k,
 /* Btree key iteration */
 
 struct btree_node_iter {
-	unsigned	size, used;
-
 	/* If true, compare START_KEY(k) and not k itself. */
-	bool		is_extents;
+	u8		is_extents;
+
+	unsigned	size:24;
+	unsigned	used;
 
 #ifdef CONFIG_BCACHEFS_DEBUG
 	struct btree_keys *b;
