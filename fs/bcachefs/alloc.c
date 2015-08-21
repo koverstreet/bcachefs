@@ -592,10 +592,8 @@ out:
 	if (meta)
 		bch_mark_metadata_bucket(ca, g);
 
-	if (reserve == RESERVE_PRIO)
-		meta = false;
-
-	if (!(meta ? CACHE_HAS_METADATA : CACHE_HAS_DATA)(mi)) {
+	if (reserve != RESERVE_PRIO &&
+	    !(meta ? CACHE_HAS_METADATA : CACHE_HAS_DATA)(mi)) {
 		(meta
 		 ? SET_CACHE_HAS_METADATA
 		 : SET_CACHE_HAS_DATA)(mi, true);
