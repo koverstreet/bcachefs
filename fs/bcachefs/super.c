@@ -1866,8 +1866,10 @@ static const char *run_cache_set(struct cache_set *c)
 
 		err = "unable to allocate journal buckets";
 		for_each_cache(ca, c, i)
-			if (bch_cache_journal_alloc(ca))
+			if (bch_cache_journal_alloc(ca)) {
+				percpu_ref_put(&ca->ref);
 				goto err;
+			}
 
 		bch_initial_gc(c, NULL);
 
