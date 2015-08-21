@@ -1523,7 +1523,7 @@ static unsigned btree_gc_count_keys(struct btree *b)
 }
 
 static int btree_gc_recurse(struct btree *b, struct btree_op *op,
-			    struct closure *writes, struct gc_stat *gc)
+			    struct gc_stat *gc)
 {
 	int ret = 0;
 	bool should_rewrite;
@@ -1566,21 +1566,12 @@ static int btree_gc_recurse(struct btree *b, struct btree_op *op,
 			}
 
 			if (last->b->level) {
-				ret = btree_gc_recurse(last->b, op, writes, gc);
+				ret = btree_gc_recurse(last->b, op, gc);
 				if (ret)
 					break;
 			}
 
 			bkey_copy_key(&b->c->gc_done, &last->b->key);
-
-			/*
-			 * Must flush leaf nodes before gc ends, since replace
-			 * operations aren't journalled
-			 */
-			mutex_lock(&last->b->write_lock);
-			if (btree_node_dirty(last->b))
-				bch_btree_node_write(last->b, writes);
-			mutex_unlock(&last->b->write_lock);
 			rw_unlock(true, last->b);
 		}
 
@@ -1594,19 +1585,14 @@ static int btree_gc_recurse(struct btree *b, struct btree_op *op,
 	}
 
 	for (i = r; i < r + ARRAY_SIZE(r); i++)
-		if (!IS_ERR_OR_NULL(i->b)) {
-			mutex_lock(&i->b->write_lock);
-			if (btree_node_dirty(i->b))
-				bch_btree_node_write(i->b, writes);
-			mutex_unlock(&i->b->write_lock);
+		if (!IS_ERR_OR_NULL(i->b))
 			rw_unlock(true, i->b);
-		}
 
 	return ret;
 }
 
 static int bch_btree_gc_root(struct btree *b, struct btree_op *op,
-			     struct closure *writes, struct gc_stat *gc)
+			     struct gc_stat *gc)
 {
 	struct btree *n = NULL;
 	int ret = 0;
@@ -1630,7 +1616,7 @@ static int bch_btree_gc_root(struct btree *b, struct btree_op *op,
 	__bch_btree_mark_key(b->c, b->level + 1, &b->key);
 
 	if (b->level) {
-		ret = btree_gc_recurse(b, op, writes, gc);
+		ret = btree_gc_recurse(b, op, gc);
 		if (ret)
 			return ret;
 	}
@@ -1739,21 +1725,18 @@ static void bch_btree_gc(struct cache_set *c)
 	int ret;
 	unsigned long available;
 	struct gc_stat stats;
-	struct closure writes;
 	struct btree_op op;
 	uint64_t start_time = local_clock();
 
 	trace_bcache_gc_start(c);
 
 	memset(&stats, 0, sizeof(struct gc_stat));
-	closure_init_stack(&writes);
 	bch_btree_op_init(&op, SHRT_MAX);
 
 	btree_gc_start(c);
 
 	do {
-		ret = btree_root(gc_root, c, &op, &writes, &stats);
-		closure_sync(&writes);
+		ret = btree_root(gc_root, c, &op, &stats);
 		cond_resched();
 
 		if (ret && ret != -EAGAIN)
