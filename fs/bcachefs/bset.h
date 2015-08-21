@@ -422,7 +422,7 @@ struct keylist {
 	};
 
 	/* Enough room for btree_split's keys without realloc */
-#define KEYLIST_INLINE		16
+#define KEYLIST_INLINE		roundup_pow_of_two(BKEY_EXTENT_MAX_U64s * 2)
 	uint64_t		inline_keys[KEYLIST_INLINE];
 };
 

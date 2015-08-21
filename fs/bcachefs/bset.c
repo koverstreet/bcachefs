@@ -166,6 +166,11 @@ int bch_keylist_realloc(struct keylist *l, unsigned u64s)
 	uint64_t *old_keys = l->keys_p == l->inline_keys ? NULL : l->keys_p;
 	uint64_t *new_keys;
 
+	/*
+	 * The idea here is that the allocated size is always a power of two:
+	 * thus, we know we need to reallocate if current_space_used and
+	 * current_space_used + new_space spans a power of two
+	 */
 	newsize = roundup_pow_of_two(newsize);
 
 	if (newsize <= KEYLIST_INLINE ||
