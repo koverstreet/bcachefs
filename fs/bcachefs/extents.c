@@ -257,6 +257,9 @@ static bool __ptr_invalid(const struct cache_set *c, const struct bkey *k)
 		ret = false;
 invalid:
 		cache_member_info_put();
+		break;
+	default:
+		return true;
 	}
 
 	return ret;

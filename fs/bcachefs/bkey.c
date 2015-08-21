@@ -9,8 +9,8 @@ int bch_bkey_to_text(char *buf, size_t size, const struct bkey *k)
 
 #define p(...)	(out += scnprintf(out, end - out, __VA_ARGS__))
 
-	p("u64s %u format %u %llu:%llu snap %u len %u ver %u",
-	  k->u64s, k->format, k->p.inode, k->p.offset,
+	p("u64s %u type %u %llu:%llu snap %u len %u ver %u",
+	  k->u64s, k->type, k->p.inode, k->p.offset,
 	  k->p.snapshot, k->size, k->version);
 
 	switch (k->type) {
