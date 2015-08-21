@@ -181,7 +181,8 @@ static bool __ptr_invalid(struct cache_set *c, const struct bkey *k)
 	struct cache *ca;
 	unsigned i;
 
-	if (KEY_U64s(k) < BKEY_U64s)
+	if (KEY_U64s(k) < BKEY_U64s ||
+	    bch_extent_ptrs(k) > BKEY_EXTENT_PTRS_MAX)
 		return true;
 
 	if (!bch_extent_ptrs(k) && !KEY_DELETED(k))
@@ -793,8 +794,7 @@ check_failed:
 
 bool __bch_extent_invalid(struct cache_set *c, const struct bkey *k)
 {
-	return (KEY_U64s(k) < BKEY_U64s ||
-		KEY_SIZE(k) > KEY_OFFSET(k) ||
+	return (KEY_SIZE(k) > KEY_OFFSET(k) ||
 		(!KEY_SIZE(k) && !KEY_DELETED(k)) ||
 		__ptr_invalid(c, k));
 }
