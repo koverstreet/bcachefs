@@ -380,7 +380,6 @@ static inline enum bch_extent_overlap bch_extent_overlap(const struct bkey *k,
 /* Btree key iteration */
 
 struct btree_node_iter {
-	/* If true, compare bkey_start_pos(k) and not k itself. */
 	u8		is_extents;
 
 	unsigned	size:24;

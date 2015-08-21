@@ -1026,30 +1026,6 @@ static void handle_existing_key_newer(struct btree *b,
 	}
 }
 
-static void overwrite_full_key(struct btree *b, struct bkey *insert,
-			       struct btree_node_iter *iter,
-			       struct bkey *k)
-{
-	if (!bkey_deleted(k))
-		b->keys.nr_live_u64s -= k->u64s;
-
-	bch_drop_subtract(b, k);
-	/*
-	 * Completely overwrote, so if this key isn't in the
-	 * same bset as the one we're going to insert into we
-	 * can just set its size to 0, and not modify the
-	 * offset, and not have to invalidate/fix the auxiliary
-	 * search tree.
-	 *
-	 * Note: peek_overlapping() will think we still overlap,
-	 * so we need the explicit iter_next() call.
-	 */
-	if (!bkey_written(&b->keys, k))
-		k->p.offset = bkey_start_offset(insert);
-
-	bch_btree_node_iter_advance(iter);
-}
-
 /**
  * bch_extent_insert_fixup - insert a new extent and deal with overlaps
  *
@@ -1207,11 +1183,19 @@ bool bch_insert_fixup_extent(struct btree *b, struct bkey *insert,
 			 * auxiliary tree.
 			 */
 			bch_bset_fix_invalidated_key(&b->keys, k);
+			bch_btree_node_iter_advance(iter);
 			break;
 
 		case BCH_EXTENT_OVERLAP_ALL:
 			/* The insert key completely covers k, invalidate k */
-			overwrite_full_key(b, insert, iter, k);
+			if (!bkey_deleted(k))
+				b->keys.nr_live_u64s -= k->u64s;
+
+			bch_drop_subtract(b, k);
+			k->p = bkey_start_pos(insert);
+
+			bch_bset_fix_invalidated_key(&b->keys, k);
+			bch_btree_node_iter_advance(iter);
 			break;
 
 		case BCH_EXTENT_OVERLAP_MIDDLE:

@@ -16,6 +16,16 @@
 #include <linux/random.h>
 #include <linux/prefetch.h>
 
+static bool keys_out_of_order(struct bkey *prev, struct bkey *next,
+			      bool is_extents)
+{
+	return bkey_cmp(prev->p, bkey_start_pos(next)) > 0 ||
+		((is_extents
+		  ? !bkey_deleted(next)
+		  : !bkey_deleted(prev)) &&
+		 !bkey_cmp(prev->p, next->p));
+}
+
 #ifdef CONFIG_BCACHEFS_DEBUG
 
 void bch_dump_bset(struct btree_keys *b, struct bset *i, unsigned set)
@@ -104,15 +114,6 @@ void __bch_check_keys(struct btree_keys *b, const char *fmt, ...)
 
 		p = k;
 	}
-}
-
-static bool keys_out_of_order(struct bkey *prev, struct bkey *next,
-			      bool is_extents)
-{
-	return bkey_cmp(prev->p, bkey_start_pos(next)) > 0 ||
-		(!is_extents &&
-		 !bkey_deleted(prev) &&
-		 !bkey_cmp(prev->p, next->p));
 }
 
 static void bch_btree_node_iter_next_check(struct btree_node_iter *iter)
@@ -825,7 +826,7 @@ void bch_bset_insert(struct btree_keys *b,
 	BUG_ON(where > bset_bkey_last(i));
 
 	while (where != bset_bkey_last(i) &&
-	       bkey_cmp(insert->p, bkey_start_pos(where)) > 0)
+	       keys_out_of_order(insert, where, b->ops->is_extents))
 		prev = where, where = bkey_next(where);
 
 	if (!prev)
@@ -1036,9 +1037,20 @@ static inline bool btree_node_iter_cmp(struct btree_node_iter *iter,
 				       struct btree_node_iter_set l,
 				       struct btree_node_iter_set r)
 {
-	return iter->is_extents
-		? bkey_cmp(bkey_start_pos(l.k), bkey_start_pos(r.k)) > 0
-		: bkey_cmp(l.k->p, r.k->p) > 0;
+	s64 c = bkey_cmp(l.k->p, r.k->p);
+
+	/*
+	 * For non extents, when keys compare equal the deleted keys have to
+	 * come first - so that bch_btree_node_iter_next_check() can detect
+	 * duplicate nondeleted keys (and possibly other reasons?)
+	 *
+	 * For extents, bkey_deleted() is used as a proxy for k->size == 0, so
+	 * deleted keys have to sort last.
+	 */
+	return c ? c > 0
+		: iter->is_extents
+		? bkey_deleted(l.k) > bkey_deleted(r.k)
+		: bkey_deleted(l.k) < bkey_deleted(r.k);
 }
 
 void bch_btree_node_iter_push(struct btree_node_iter *iter,
