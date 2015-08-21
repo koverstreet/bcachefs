@@ -82,41 +82,60 @@ static inline u8 bucket_gc_gen(struct cache *ca, size_t r)
  * We couldn't find enough buckets in invalidate_buckets(). Ask
  * btree GC to run, hoping it will find more clean buckets.
  */
-static void alloc_failed(struct cache *ca)
+static void wait_buckets_available(struct cache *ca)
 {
 	struct cache_set *c = ca->set;
-	unsigned i, gc_count;
+	unsigned i;
 
-	gc_count = bch_gc_count(c);
+	while (1) {
+		set_current_state(TASK_INTERRUPTIBLE);
+		if (kthread_should_stop())
+			break;
 
-	/* Journal replay shouldn't run out of buckets, but the allocator
-	 * might fail to find more buckets to invalidate once it fills up
-	 * free lists. If this happens, bch_run_cache_set() will kick off
-	 * a btree GC and wake us up after journal replay completes. */
-	if (!test_bit(CACHE_SET_RUNNING, &c->flags))
-		goto wait;
+		if (buckets_available_cache(ca) >= fifo_free(&ca->free_inc))
+			break;
 
-	/* Check if there are caches in higher tiers; we could potentially
-	 * make room on our cache by tiering */
-	for (i = CACHE_TIER(cache_member_info(ca)) + 1;
-	     i < ARRAY_SIZE(c->cache_by_alloc);
-	     i++)
-		if (c->cache_by_alloc[i].nr_devices) {
-			c->tiering_pd.rate.rate = UINT_MAX;
-			bch_ratelimit_reset(&c->tiering_pd.rate);
-			wake_up_process(c->tiering_read);
-			trace_bcache_alloc_wake_tiering(ca);
-			goto wait;
+		/*
+		 * Journal replay shouldn't run out of buckets, but the
+		 * allocator might fail to find more buckets to invalidate once
+		 * it fills up free lists.
+		 */
+		if (!test_bit(CACHE_SET_RUNNING, &c->flags)) {
+			schedule();
+			continue;
 		}
 
-	/* If this is the highest tier cache, just do a btree GC */
-	ca->moving_gc_pd.rate.rate = UINT_MAX;
-	bch_ratelimit_reset(&ca->moving_gc_pd.rate);
-	wake_up_process(ca->moving_gc_read);
-	trace_bcache_alloc_wake_moving(ca);
+		if (atomic_long_read(&ca->saturated_count) >=
+		    ca->free_inc.size << c->bucket_bits)
+			wake_up_process(c->gc_thread);
 
-wait:
-	bch_wait_for_next_gc(c, gc_count);
+		if (ca->inc_gen_needs_gc > ca->free_inc.size)
+			wake_up_process(c->gc_thread);
+
+		/*
+		 * Check if there are caches in higher tiers; we could
+		 * potentially make room on our cache by tiering
+		 */
+		for (i = CACHE_TIER(cache_member_info(ca)) + 1;
+		     i < ARRAY_SIZE(c->cache_by_alloc);
+		     i++)
+			if (c->cache_by_alloc[i].nr_devices) {
+				c->tiering_pd.rate.rate = UINT_MAX;
+				bch_ratelimit_reset(&c->tiering_pd.rate);
+				wake_up_process(c->tiering_read);
+				trace_bcache_alloc_wake_tiering(ca);
+			}
+
+		/* If this is the highest tier cache, just do a btree GC */
+		ca->moving_gc_pd.rate.rate = UINT_MAX;
+		bch_ratelimit_reset(&ca->moving_gc_pd.rate);
+		wake_up_process(ca->moving_gc_read);
+		trace_bcache_alloc_wake_moving(ca);
+
+		schedule();
+	}
+
+	__set_current_state(TASK_RUNNING);
 }
 
 static void verify_not_on_freelist(struct cache *ca, size_t bucket)
@@ -222,12 +241,15 @@ static inline bool can_inc_bucket_gen(struct cache *ca, size_t r)
 
 static bool bch_can_invalidate_bucket(struct cache *ca, struct bucket *g)
 {
-	struct bucket_mark mark = READ_ONCE(g->mark);
+	if (!is_available_bucket(READ_ONCE(g->mark)))
+		return false;
 
-	return (!mark.owned_by_allocator &&
-		!mark.is_metadata &&
-		!mark.dirty_sectors &&
-		can_inc_bucket_gen(ca, g - ca->buckets));
+	if (!can_inc_bucket_gen(ca, g - ca->buckets)) {
+		ca->inc_gen_needs_gc++;
+		return false;
+	}
+
+	return true;
 }
 
 static void __bch_invalidate_one_bucket(struct cache *ca, struct bucket *g)
@@ -454,6 +476,8 @@ static int bch_allocator_thread(void *arg)
 
 		/* We've run out of free buckets! */
 retry_invalidate:
+		wait_buckets_available(ca);
+
 		if (kthread_should_stop())
 			return 0;
 
@@ -476,10 +500,8 @@ retry_invalidate:
 			 * free_inc, try to invalidate some more. This will
 			 * limit the amount of metadata writes we issue below
 			 */
-			if (!fifo_full(&ca->free_inc)) {
-				alloc_failed(ca);
+			if (!fifo_full(&ca->free_inc))
 				goto retry_invalidate;
-			}
 
 			/*
 			 * free_inc is full of newly-invalidated buckets, must
@@ -495,25 +517,6 @@ retry_invalidate:
 int bch_bucket_wait(struct cache_set *c, enum alloc_reserve reserve,
 		    struct closure *cl)
 {
-	/*
-	 * If we're waiting on buckets in one of these special reserves,
-	 * it means tiering or moving GC is out of space. In this case, we
-	 * kick btree GC immediately. Usually the allocator thread is
-	 * responsible for kicking btree GC, but in this case it might be
-	 * waiting for us to make progress, so we have to do this ourselves
-	 * to avoid deadlock.
-	 */
-
-	switch (reserve) {
-	case RESERVE_MOVINGGC:
-	case RESERVE_MOVINGGC_BTREE:
-	case RESERVE_TIERING_BTREE:
-		wake_up_gc(c, true);
-		break;
-	default:
-		break;
-	}
-
 	if (cl) {
 		closure_wait(&c->bucket_wait, cl);
 		return -EAGAIN;

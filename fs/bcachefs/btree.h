@@ -255,15 +255,6 @@ int bch_initial_gc(struct cache_set *, struct list_head *);
 void bch_mark_keybuf_keys(struct cache_set *, struct keybuf *);
 u8 __bch_btree_mark_key(struct cache_set *, int, struct bkey *);
 
-static inline void wake_up_gc(struct cache_set *c, bool always)
-{
-	if (c->gc_thread && (always || atomic_read(&c->gc_waiters)))
-		wake_up_process(c->gc_thread);
-}
-
-unsigned bch_gc_count(struct cache_set *);
-void bch_wait_for_next_gc(struct cache_set *, unsigned);
-
 /* Return values from @fn parameter to map_keys and map_nodes */
 #define MAP_DONE	0  /* We're done */
 #define MAP_CONTINUE	1  /* Continue and advance the iterator */

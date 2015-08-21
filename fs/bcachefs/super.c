@@ -1693,7 +1693,6 @@ static struct cache_set *bch_cache_set_alloc(struct cache *ca)
 	INIT_RADIX_TREE(&c->devices, GFP_KERNEL);
 	mutex_init(&c->btree_cache_lock);
 	mutex_init(&c->bucket_lock);
-	init_waitqueue_head(&c->gc_wait);
 	init_rwsem(&c->gc_lock);
 	spin_lock_init(&c->btree_root_lock);
 
@@ -1927,12 +1926,6 @@ static const char *run_cache_set(struct cache_set *c)
 		bch_cached_dev_attach(dc, c);
 
 	closure_put(&c->caching);
-
-	/*
-	 * If the allocator thread ran out of buckets during journal replay,
-	 * do a GC here so that we can wake up the allocator.
-	 */
-	wake_up_gc(c, false);
 
 	return NULL;
 err:

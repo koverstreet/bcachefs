@@ -2002,6 +2002,9 @@ static void bch_btree_gc_finish(struct cache_set *c)
 			bch_mark_metadata_bucket(ca, &ca->buckets[*i]);
 
 		spin_unlock(&ca->prio_buckets_lock);
+
+		atomic_long_set(&ca->saturated_count, 0);
+		ca->inc_gen_needs_gc = 0;
 	}
 
 	set_gc_sectors(c);
@@ -2009,6 +2012,16 @@ static void bch_btree_gc_finish(struct cache_set *c)
 	write_seqlock(&c->gc_cur_lock);
 	c->gc_cur_btree = BTREE_ID_NR + 1;
 	write_sequnlock(&c->gc_cur_lock);
+
+	/*
+	 * Setting gc_cur_btree marks gc as finished, and the allocator threads
+	 * will now see the new buckets_available - wake them up in case they
+	 * were waiting on it
+	 */
+
+	for_each_cache(ca, c, i)
+		if (ca->alloc_thread)
+			wake_up_process(ca->alloc_thread);
 }
 
 /**
@@ -2079,9 +2092,6 @@ static int bch_gc_thread(void *arg)
 		 * up while we're finishing up, we will start another GC pass
 		 * immediately */
 		set_current_state(TASK_INTERRUPTIBLE);
-		atomic_inc(&c->gc_count);
-		wake_up_all(&c->gc_wait);
-
 		if (kthread_should_stop())
 			break;
 
@@ -2100,40 +2110,6 @@ int bch_gc_thread_start(struct cache_set *c)
 
 	wake_up_process(c->gc_thread);
 	return 0;
-}
-
-unsigned bch_gc_count(struct cache_set *c)
-{
-	return atomic_read(&c->gc_count);
-}
-
-static bool next_gc_check(struct cache_set *c, unsigned gc_check)
-{
-	unsigned count = bch_gc_count(c);
-	bool ret;
-
-	if (kthread_should_stop())
-		return true;
-
-	ret = ((int) (count - gc_check) > 0);
-	trace_bcache_wait_for_next_gc(c, count, gc_check);
-
-	return ret;
-}
-
-/**
- * bch_wait_for_next_gc - wait for the next GC to finish
- *
- * @c:		pointer to struct cache_set
- * @gc_count:	value returned by bch_gc_count()
- */
-void bch_wait_for_next_gc(struct cache_set *c, unsigned gc_count)
-{
-	atomic_inc(&c->gc_waiters);
-	while (wait_event_interruptible(c->gc_wait,
-					next_gc_check(c, gc_count)) != 0)
-		;
-	atomic_dec(&c->gc_waiters);
 }
 
 /* Initial partial gc */

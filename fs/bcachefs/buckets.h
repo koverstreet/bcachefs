@@ -97,6 +97,13 @@ static inline size_t buckets_free_cache(struct cache *ca,
 		fifo_used(&ca->free_inc);
 }
 
+static inline bool is_available_bucket(struct bucket_mark mark)
+{
+	return (!mark.owned_by_allocator &&
+		!mark.is_metadata &&
+		!mark.dirty_sectors);
+}
+
 void bch_mark_free_bucket(struct cache *, struct bucket *);
 void bch_mark_alloc_bucket(struct cache *, struct bucket *);
 void bch_mark_metadata_bucket(struct cache *, struct bucket *);

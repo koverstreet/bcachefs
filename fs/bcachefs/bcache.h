@@ -601,6 +601,9 @@ struct cache {
 	struct bucket_stats __percpu *bucket_stats_percpu;
 	struct bucket_stats	bucket_stats_cached;
 
+	atomic_long_t		saturated_count;
+	size_t			inc_gen_needs_gc;
+
 	struct mutex		heap_lock;
 	DECLARE_HEAP(struct bucket *, heap);
 
@@ -805,17 +808,6 @@ struct cache_set {
 	 * it's not while a gc is in progress.
 	 */
 	struct rw_semaphore	gc_lock;
-
-	/*
-	 * Number of GC iterations completed. To wait for the next GC to finish,
-	 * add yourself to gc_wait and wait for this to change.
-	 */
-	atomic_t		gc_count;
-
-	/* Allocator threads might be waiting for GC */
-	wait_queue_head_t	gc_wait;
-	atomic_t		gc_waiters;
-
 	struct gc_stat		gc_stats;
 
 
