@@ -941,7 +941,6 @@ static const char *run_cache_set(struct cache_set *c)
 	struct cache *ca;
 	struct closure cl;
 	unsigned i, id;
-	int ret;
 
 	BUG_ON(test_bit(CACHE_SET_RUNNING, &c->flags));
 
@@ -969,46 +968,21 @@ static const char *run_cache_set(struct cache_set *c)
 	if (CACHE_SYNC(&c->sb)) {
 		LIST_HEAD(journal);
 		struct jset *j;
-		struct jset_keys *jk;
-		u64 *prio_bucket_ptrs = NULL;
 
-		ret = bch_journal_read(c, &journal);
-
-		err = "cannot allocate memory for journal";
-		if (ret == -ENOMEM)
-			goto err;
-
-		err = "error reading journal";
-		if (ret)
+		err = bch_journal_read(c, &journal);
+		if (err)
 			goto err;
 
 		pr_debug("btree_journal_read() done");
 
-		err = "no journal entries found";
-		if (list_empty(&journal))
-			goto err;
-
 		j = &list_entry(journal.prev, struct journal_replay, list)->j;
 
-		for_each_jset_jkeys(jk, j)
-			if (JKEYS_TYPE(jk) == JKEYS_PRIO_PTRS) {
-				prio_bucket_ptrs = jk->_data;
-				break;
-			}
-
-		err = "prio bucket ptrs not found";
-		if (!prio_bucket_ptrs)
-			goto err;
-
 		err = "error reading priorities";
-		for_each_cache(ca, c, i) {
-			size_t bucket = prio_bucket_ptrs[ca->sb.nr_this_dev];
-
-			if (bucket && bch_prio_read(ca, bucket)) {
+		for_each_cache(ca, c, i)
+			if (bch_prio_read(ca)) {
 				percpu_ref_put(&ca->ref);
 				goto err;
 			}
-		}
 
 		c->prio_clock[READ].hand = j->read_clock;
 		c->prio_clock[WRITE].hand = j->write_clock;

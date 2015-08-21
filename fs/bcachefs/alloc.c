@@ -249,6 +249,7 @@ static int prio_io(struct cache *ca, uint64_t bucket, int op)
 
 static void bch_prio_write(struct cache *ca)
 {
+	struct cache_set *c = ca->set;
 	int i, ret;
 	struct closure cl;
 
@@ -278,7 +279,7 @@ static void bch_prio_write(struct cache *ca)
 		p->next_bucket	= ca->prio_buckets[i + 1];
 		p->magic	= pset_magic(&ca->sb);
 
-		SET_PSET_CSUM_TYPE(p, CACHE_PREFERRED_CSUM_TYPE(&ca->set->sb));
+		SET_PSET_CSUM_TYPE(p, CACHE_PREFERRED_CSUM_TYPE(&c->sb));
 		p->csum		= bch_checksum(PSET_CSUM_TYPE(p),
 					       &p->magic,
 					       bucket_bytes(ca) - 8);
@@ -301,9 +302,9 @@ static void bch_prio_write(struct cache *ca)
 					ret, r);
 	}
 
-	spin_lock(&ca->prio_buckets_lock);
-	ca->prio_journal_bucket = ca->prio_buckets[0];
-	spin_unlock(&ca->prio_buckets_lock);
+	spin_lock(&c->journal.lock);
+	c->journal.prio_buckets[ca->sb.nr_this_dev] = ca->prio_buckets[0];
+	spin_unlock(&c->journal.lock);
 
 	bch_journal_meta(ca->set, &cl);
 	closure_sync(&cl);
@@ -328,12 +329,13 @@ static void bch_prio_write(struct cache *ca)
 	trace_bcache_prio_write_end(ca);
 }
 
-int bch_prio_read(struct cache *ca, u64 bucket)
+int bch_prio_read(struct cache *ca)
 {
+	struct cache_set *c = ca->set;
 	struct prio_set *p = ca->disk_buckets;
 	struct bucket_disk *d = p->data + prios_per_bucket(ca), *end = d;
 	unsigned bucket_nr = 0;
-	u64 expect, got;
+	u64 bucket, expect, got;
 	size_t b;
 	int ret;
 
@@ -342,12 +344,22 @@ int bch_prio_read(struct cache *ca, u64 bucket)
 		return -EIO;
 	}
 
+	bucket = c->journal.prio_buckets[ca->sb.nr_this_dev];
+
+	/*
+	 * If the device hasn't been used yet, there won't be a prio bucket ptr
+	 */
+	if (!bucket)
+		return 0;
+
 	if (bucket < ca->sb.first_bucket && bucket >= ca->sb.nbuckets) {
 		bch_cache_error(ca, "bad prio bucket %llu", bucket);
 		return -EIO;
 	}
 
-	ca->prio_journal_bucket = bucket;
+	spin_lock(&c->journal.lock);
+	c->journal.prio_buckets[ca->sb.nr_this_dev] = bucket;
+	spin_unlock(&c->journal.lock);
 
 	for (b = 0; b < ca->sb.nbuckets; b++, d++) {
 		if (d == end) {

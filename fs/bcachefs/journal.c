@@ -24,59 +24,67 @@
 			     k < bset_bkey_last(jkeys);		\
 			     k = bkey_next(k))
 
-static inline void __bch_journal_add_keys(struct jset *, enum btree_id,
-					  const struct bkey *,
-					  unsigned, unsigned);
+static inline void bch_journal_add_entry(struct jset *j, const void *data,
+					 size_t u64s, unsigned type,
+					 enum btree_id id, unsigned level)
+{
+	struct jset_keys *jkeys = (struct jset_keys *) bset_bkey_last(j);
+
+	jkeys->keys = u64s;
+	jkeys->btree_id = id;
+	jkeys->level = level;
+	jkeys->flags = 0;
+	SET_JKEYS_TYPE(jkeys, type);
+
+	memcpy(jkeys->_data, data, u64s * sizeof(u64));
+	j->keys += jset_u64s(u64s);
+}
+
+static struct jset_keys *bch_journal_find_entry(struct jset *j, unsigned type,
+						enum btree_id id)
+{
+	struct jset_keys *jkeys;
+
+	for_each_jset_jkeys(jkeys, j)
+		if (JKEYS_TYPE(jkeys) == type && jkeys->btree_id == id)
+			return jkeys;
+
+	return NULL;
+}
 
 struct bkey *bch_journal_find_btree_root(struct cache_set *c, struct jset *j,
 					 enum btree_id id, unsigned *level)
 {
 	struct bkey *k;
-	struct jset_keys *jkeys;
+	struct jset_keys *jkeys =
+		bch_journal_find_entry(j, JKEYS_BTREE_ROOT, id);
 
-	for_each_jset_jkeys(jkeys, j)
-		if (JKEYS_TYPE(jkeys) == JKEYS_BTREE_ROOT &&
-		    jkeys->btree_id == id) {
-			k = jkeys->start;
-			*level = jkeys->level;
+	if (!jkeys)
+		return NULL;
 
-			if (!jkeys->keys || jkeys->keys != k->u64s)
-				goto err;
+	k = jkeys->start;
+	*level = jkeys->level;
 
-			goto found;
-		}
+	if (!jkeys->keys || jkeys->keys != k->u64s ||
+	    bkey_invalid(c, BKEY_TYPE_BTREE, k)) {
+		bch_cache_set_error(c, "invalid btree root in journal");
+		return NULL;
+	}
 
-	return NULL;
-found:
-	if (!bkey_invalid(c, BKEY_TYPE_BTREE, k))
-		return k;
-
-err:
-	bch_cache_set_error(c, "invalid btree root in journal");
-	return NULL;
+	*level = jkeys->level;
+	return k;
 }
 
 static void bch_journal_add_btree_root(struct jset *j, enum btree_id id,
 				       struct bkey *k, unsigned level)
 {
-	__bch_journal_add_keys(j, id, k, level, JKEYS_BTREE_ROOT);
+	bch_journal_add_entry(j, k, k->u64s, JKEYS_BTREE_ROOT, id, level);
 }
 
 static inline void bch_journal_add_prios(struct cache_set *c, struct jset *j)
 {
-	struct jset_keys *prio_set = (struct jset_keys *) bset_bkey_last(j);
-	struct cache *ca;
-	unsigned i;
-
-	for_each_cache(ca, c, i) {
-		spin_lock(&ca->prio_buckets_lock);
-		prio_set->_data[ca->sb.nr_this_dev] = ca->prio_journal_bucket;
-		spin_unlock(&ca->prio_buckets_lock);
-	}
-
-	prio_set->keys = c->sb.nr_in_set;
-	SET_JKEYS_TYPE(prio_set, JKEYS_PRIO_PTRS);
-	j->keys += sizeof(struct jset_keys) / sizeof(u64) + c->sb.nr_in_set;
+	bch_journal_add_entry(j, c->journal.prio_buckets, c->sb.nr_in_set,
+			      JKEYS_PRIO_PTRS, 0, 0);
 }
 
 /*
@@ -398,9 +406,22 @@ bsearch:
 #undef read_bucket
 }
 
-int bch_journal_read(struct cache_set *c, struct list_head *list)
+static void journal_entries_free(struct list_head *list)
 {
+
+	while (!list_empty(list)) {
+		struct journal_replay *i =
+			list_first_entry(list, struct journal_replay, list);
+		list_del(&i->list);
+		kfree(i);
+	}
+}
+
+const char *bch_journal_read(struct cache_set *c, struct list_head *list)
+{
+	struct jset_keys *prio_ptrs;
 	struct journal_list jlist;
+	struct jset *j;
 	struct cache *ca;
 	unsigned iter;
 
@@ -418,12 +439,30 @@ int bch_journal_read(struct cache_set *c, struct list_head *list)
 
 	closure_sync(&jlist.cl);
 
-	if (!list_empty(list))
-		c->journal.seq = list_entry(list->prev,
-					    struct journal_replay,
-					    list)->j.seq;
+	if (jlist.ret) {
+		journal_entries_free(list);
 
-	return jlist.ret;
+		return jlist.ret == -ENOMEM
+			? "cannot allocate memory for journal"
+			: "error reading journal";
+	}
+
+	if (list_empty(list))
+		return "no journal entries found";
+
+	j = &list_entry(list->prev, struct journal_replay, list)->j;
+
+	c->journal.seq = j->seq;
+
+	prio_ptrs = bch_journal_find_entry(j, JKEYS_PRIO_PTRS, 0);
+	if (!prio_ptrs)
+		return "prio bucket ptrs not found";
+
+	memcpy(c->journal.prio_buckets,
+	       prio_ptrs->_data,
+	       prio_ptrs->keys * sizeof(u64));
+
+	return 0;
 }
 
 void bch_journal_mark(struct cache_set *c, struct list_head *list)
@@ -505,11 +544,7 @@ err:
 	if (ret)
 		pr_err("journal replay error: %d", ret);
 
-	while (!list_empty(list)) {
-		i = list_first_entry(list, struct journal_replay, list);
-		list_del(&i->list);
-		kfree(i);
-	}
+	journal_entries_free(list);
 
 	return ret;
 }
@@ -1173,22 +1208,6 @@ void bch_journal_set_dirty(struct cache_set *c)
 				      msecs_to_jiffies(c->journal.delay_ms));
 }
 
-static inline void __bch_journal_add_keys(struct jset *j, enum btree_id id,
-					  const struct bkey *k, unsigned level,
-					  unsigned type)
-{
-	struct jset_keys *jkeys = (struct jset_keys *) bset_bkey_last(j);
-
-	jkeys->keys = k->u64s;
-	jkeys->btree_id = id;
-	jkeys->level = level;
-	jkeys->flags = 0;
-	SET_JKEYS_TYPE(jkeys, type);
-
-	memcpy(jkeys->start, k, bkey_bytes(k));
-	j->keys += jset_u64s(k->u64s);
-}
-
 void bch_journal_add_keys(struct cache_set *c, struct journal_res *res,
 			  enum btree_id id, const struct bkey *k,
 			  unsigned level)
@@ -1200,8 +1219,8 @@ void bch_journal_add_keys(struct cache_set *c, struct journal_res *res,
 	res->nkeys -= actual;
 
 	spin_lock(&c->journal.lock);
-	__bch_journal_add_keys(c->journal.cur->data, id, k,
-			       level, JKEYS_BTREE_KEYS);
+	bch_journal_add_entry(c->journal.cur->data, k, k->u64s,
+			      JKEYS_BTREE_KEYS, id, level);
 	bch_journal_set_dirty(c);
 	spin_unlock(&c->journal.lock);
 }

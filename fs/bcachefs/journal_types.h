@@ -67,6 +67,8 @@ struct journal {
 	 * other is possibly being written out.
 	 */
 	struct journal_write	w[2], *cur;
+
+	u64			prio_buckets[MAX_CACHES_PER_SET];
 };
 
 /*

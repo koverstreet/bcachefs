@@ -264,7 +264,6 @@ struct cache {
 	 */
 	u64			*prio_buckets;
 	u64			*prio_last_buckets;
-	u64			prio_journal_bucket;
 	spinlock_t		prio_buckets_lock;
 	struct bio		*bio_prio;
 
