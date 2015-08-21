@@ -1549,8 +1549,7 @@ u8 __bch_btree_mark_key(struct cache_set *c, int level, struct bkey *k)
 					true);
 				if (stale)
 					max_stale = max(max_stale, stale);
-				else
-					replicas_found++;
+				replicas_found++;
 			}
 		}
 	}

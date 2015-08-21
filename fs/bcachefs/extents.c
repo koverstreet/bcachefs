@@ -518,10 +518,11 @@ static struct bkey *bch_extent_sort_fixup(struct btree_iter *iter,
 	return NULL;
 }
 
-static void bch_add_sectors(struct bkey *k,
-			    struct cache_set *c,
-			    u64 offset,
-			    int sectors)
+static int bch_add_sectors(struct bkey *k,
+			   struct cache_set *c,
+			   u64 offset,
+			   int sectors,
+			   bool fail_if_stale)
 {
 	unsigned replicas_found = 0, replicas_needed =
 		CACHE_SET_DATA_REPLICAS_WANT(&c->sb);
@@ -529,10 +530,10 @@ static void bch_add_sectors(struct bkey *k,
 	int i;
 
 	if (!bch_extent_ptrs(k))
-		return;
+		return 0;
 
 	if (!sectors)
-		return;
+		return 0;
 
 	BUG_ON(KEY_DELETED(k));
 
@@ -550,11 +551,27 @@ static void bch_add_sectors(struct bkey *k,
 
 			trace_bcache_add_sectors(ca, k, i, offset,
 						 sectors, dirty);
-			if (!bch_mark_data_bucket(c, ca, k, i, sectors,
-						  dirty, false))
-				replicas_found++;
+			if (bch_mark_data_bucket(c, ca, k, i, sectors,
+						 dirty, false) &&
+			    dirty && fail_if_stale)
+				goto stale;
+			replicas_found++;
 		}
 	rcu_read_unlock();
+
+	return 0;
+stale:
+	while (++i < bch_extent_ptrs(k))
+		if ((ca = PTR_CACHE(c, k, i)))
+			bch_mark_data_bucket(c, ca, k, i, -sectors,
+					     true, false);
+	rcu_read_unlock();
+
+	if (!KEY_CACHED(k))
+		bcache_dev_sectors_dirty_add(c, KEY_INODE(k),
+					     offset, -sectors);
+
+	return -1;
 }
 
 static void bch_subtract_sectors(struct bkey *k,
@@ -562,7 +579,7 @@ static void bch_subtract_sectors(struct bkey *k,
 				 u64 offset,
 				 int sectors)
 {
-	bch_add_sectors(k, c, offset, -sectors);
+	bch_add_sectors(k, c, offset, -sectors, false);
 }
 
 static bool bkey_cmpxchg_cmp(struct bkey *k, struct bkey *old)
@@ -663,7 +680,27 @@ static bool bch_extent_insert_fixup(struct btree_keys *b,
 
 	BUG_ON(!KEY_SIZE(insert));
 
-	bch_add_sectors(insert, c, KEY_START(insert), KEY_SIZE(insert));
+	/*
+	 * If this is a cmpxchg operation, @insert doesn't necessarily exist in
+	 * the btree, and may have pointers not pinned by open buckets; thus
+	 * some of the pointers might be stale because we raced with foreground
+	 * writes.
+	 *
+	 * If that happens bkey_cmpxchg() is going to fail; bail out here
+	 * instead of calling subtract_sectors() in the fail path to avoid
+	 * various races (we definitely don't want to increment/decrement
+	 * sectors_dirty on a bucket that's been reused, or worse have a bucket
+	 * go stale between here and subtract_sectors()).
+	 *
+	 * But only bail out here for cmpxchg operations - in journal replay we
+	 * can also insert keys with stale pointers, but for those we still need
+	 * to proceed with the insertion.
+	 */
+	if (bch_add_sectors(insert, c, KEY_START(insert),
+			    KEY_SIZE(insert), replace_key)) {
+		/* We raced - a dirty pointer was stale */
+		return true;
+	}
 
 	while ((k = bch_btree_iter_next_overlapping(iter, insert))) {
 		/*
@@ -863,7 +900,7 @@ static bool bch_extent_debug_invalid(struct btree_keys *bk, struct bkey *k)
 				goto bad_ptr;
 		}
 
-		if (replicas_needed && !stale)
+		if (replicas_needed)
 			replicas_needed--;
 	}
 
