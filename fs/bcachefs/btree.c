@@ -312,7 +312,8 @@ void bch_btree_node_read_done(struct btree *b, struct cache *ca, unsigned ptr)
 			if (bkey_invalid(&b->keys, k)) {
 				char buf[80];
 
-				bch_bkey_to_text(&b->keys, buf, sizeof(buf), k);
+				bch_bkey_val_to_text(&b->keys, buf,
+						     sizeof(buf), k);
 				btree_node_error(b, ca, ptr,
 						 "invalid bkey %s", buf);
 
@@ -1580,7 +1581,12 @@ u8 __bch_btree_mark_key(struct cache_set *c, int level, struct bkey *k)
 	return max_stale;
 }
 
-#define btree_mark_key(b, k)	__bch_btree_mark_key(b->c, b->level, k)
+static u8 btree_mark_key(struct btree *b, struct bkey *k)
+{
+	bkey_debugcheck(&b->keys, k);
+
+	return __bch_btree_mark_key(b->c, b->level, k);
+}
 
 /* Only the extent btree has leafs whose keys point to data */
 static inline bool btree_node_has_ptrs(struct btree *b, unsigned level)
@@ -2514,7 +2520,7 @@ static int btree_split(struct btree *b, struct btree_op *op,
 		 */
 		k = set1->start;
 		while (k != bset_bkey_last(set1))
-			if (bkey_deleted(&b->keys, k)) {
+			if (bkey_deleted(k)) {
 				set1->keys -= KEY_U64s(k);
 				memmove(k, bkey_next(k),
 					(void *) bset_bkey_last(set1) -

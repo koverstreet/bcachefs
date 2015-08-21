@@ -23,17 +23,14 @@ static struct bkey *bch_bset_search(struct btree_keys *, struct bset_tree *,
 void bch_dump_bset(struct btree_keys *b, struct bset *i, unsigned set)
 {
 	struct bkey *k, *next;
+	char buf[160];
 
 	for (k = i->start; k < bset_bkey_last(i); k = next) {
 		next = bkey_next(k);
 
-		printk(KERN_ERR "block %u key %u/%u: ", set,
-		       (unsigned) ((u64 *) k - i->d), i->keys);
-
-		if (b->ops->key_dump)
-			b->ops->key_dump(b, k);
-		else
-			printk("%llu:%llu\n", KEY_INODE(k), KEY_OFFSET(k));
+		bch_bkey_val_to_text(b, buf, sizeof(buf), k);
+		printk(KERN_ERR "block %u key %u/%u: %s\n", set,
+		       (unsigned) ((u64 *) k - i->d), i->keys, buf);
 
 		if (next < bset_bkey_last(i)) {
 			if (b->ops->is_extents) {
@@ -100,7 +97,7 @@ void __bch_check_keys(struct btree_keys *b, const char *fmt, ...)
 			if (p && bkey_cmp(p, &START_KEY(k)) > 0)
 				goto bug;
 		} else {
-			if (bkey_deleted(b, k))
+			if (bkey_deleted(k))
 				continue;
 
 			err = "duplicate keys";
@@ -122,24 +119,30 @@ bug:
 	vprintk(fmt, args);
 	va_end(args);
 
-	bch_bkey_to_text(b, buf1, sizeof(buf1), p);
-	bch_bkey_to_text(b, buf2, sizeof(buf2), k);
+	bch_bkey_to_text(buf1, sizeof(buf1), p);
+	bch_bkey_to_text(buf2, sizeof(buf2), k);
 	panic("bch_check_keys error:  %s %s, %s\n", err, buf1, buf2);
 }
 
 static void bch_btree_iter_next_check(struct btree_iter *iter)
 {
+	struct btree_keys *b = iter->b;
 	struct bkey *k = iter->data->k, *next = bkey_next(k);
 
+	if (!btree_keys_expensive_checks(b))
+		return;
+
+	bkey_debugcheck(b, k);
+
 	if (next < iter->data->end &&
-	    bkey_cmp(k, iter->b->ops->is_extents ?
+	    bkey_cmp(k, b->ops->is_extents ?
 		     &START_KEY(next) : next) > 0) {
 		char buf1[80], buf2[80];
 
-		bch_dump_bucket(iter->b);
+		bch_dump_bucket(b);
 
-		bch_bkey_to_text(iter->b, buf1, sizeof(buf1), k);
-		bch_bkey_to_text(iter->b, buf2, sizeof(buf2), next);
+		bch_bkey_to_text(buf1, sizeof(buf1), k);
+		bch_bkey_to_text(buf2, sizeof(buf2), next);
 		panic("Key skipped backwards - %s > %s\n", buf1, buf2);
 	}
 }

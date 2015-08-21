@@ -57,23 +57,6 @@ ssize_t bch_inode_status(char *buf, size_t len, const struct bkey *k)
 	return 0;
 }
 
-static void bch_inode_to_text(char *buf, size_t size, const struct bkey *k)
-{
-	char *out = buf, *end = buf + size;
-
-#define p(...)	(out += scnprintf(out, end - out, __VA_ARGS__))
-
-	p("%llu ver %llu", KEY_INODE(k), KEY_VERSION(k));
-}
-
-static void bch_inode_dump(struct btree_keys *keys, const struct bkey *k)
-{
-	char buf[80];
-
-	bch_inode_to_text(buf, sizeof(buf), k);
-	printk(" %s\n", buf);
-}
-
 bool bch_inode_invalid(const struct bkey *k)
 {
 	struct bch_inode *inode = key_to_inode(k);
@@ -119,7 +102,7 @@ bool bch_inode_invalid(const struct bkey *k)
 	return false;
 }
 
-static bool __inode_invalid(struct btree_keys *bk, struct bkey *k)
+static bool __inode_invalid(const struct btree_keys *bk, const struct bkey *k)
 {
 	return bch_inode_invalid(k);
 }
@@ -127,10 +110,7 @@ static bool __inode_invalid(struct btree_keys *bk, struct bkey *k)
 const struct btree_keys_ops bch_inode_ops = {
 	.sort_fixup	= bch_generic_sort_fixup,
 	.insert_fixup	= bch_generic_insert_fixup,
-
 	.key_invalid	= __inode_invalid,
-	.key_to_text	= bch_inode_to_text,
-	.key_dump	= bch_inode_dump,
 };
 
 struct create_op {

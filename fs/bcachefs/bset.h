@@ -5,6 +5,7 @@
 #include <linux/types.h>
 
 #include "bcachefs_format.h"
+#include "bkey.h"
 #include "util.h" /* for time_stats */
 
 /*
@@ -196,15 +197,16 @@ struct btree_keys_ops {
 	bool		(*insert_fixup)(struct btree_keys *, struct bkey *,
 					struct btree_iter *, struct bkey *,
 					struct bkey *);
-	bool		(*key_invalid)(struct btree_keys *, struct bkey *);
-	bool		(*key_debug_invalid)(struct btree_keys *,
-					     struct bkey *);
+	bool		(*key_invalid)(const struct btree_keys *,
+				       const struct bkey *);
+	void		(*key_debugcheck)(struct btree_keys *,
+					  const struct bkey *);
 
 	bool		(*key_normalize)(struct btree_keys *, struct bkey *);
 	bool		(*key_merge)(struct btree_keys *,
 				     struct bkey *, struct bkey *);
-	void		(*key_to_text)(char *, size_t, const struct bkey *);
-	void		(*key_dump)(struct btree_keys *, const struct bkey *);
+	void		(*val_to_text)(const struct btree_keys *, char *,
+				       size_t, const struct bkey *);
 
 	/*
 	 * Only used for deciding whether to use START_KEY(k) or just the key
@@ -385,24 +387,28 @@ static inline bool bkey_invalid(struct btree_keys *b, struct bkey *k)
 	return b->ops->key_invalid(b, k);
 }
 
-static inline bool bkey_deleted(struct btree_keys *b, struct bkey *k)
+static inline void bkey_debugcheck(struct btree_keys *b, struct bkey *k)
 {
-	if (KEY_DELETED(k))
-		return true;
-
-#ifdef CONFIG_BCACHEFS_DEBUG
-	if (btree_keys_expensive_checks(b) &&
-	    b->ops->key_debug_invalid &&
-	    b->ops->key_debug_invalid(b, k))
-		return true;
-#endif
-	return false;
+	if (b->ops->key_debugcheck)
+		b->ops->key_invalid(b, k);
 }
 
-static inline void bch_bkey_to_text(struct btree_keys *b, char *buf,
-				    size_t size, const struct bkey *k)
+static inline bool bkey_deleted(struct bkey *k)
 {
-	return b->ops->key_to_text(buf, size, k);
+	return KEY_DELETED(k);
+}
+
+static inline void bch_bkey_val_to_text(struct btree_keys *b, char *buf,
+					size_t size, const struct bkey *k)
+{
+	char *out = buf, *end = buf + size;
+
+	out += bch_bkey_to_text(out, end - out, k);
+
+	if (b->ops->val_to_text) {
+		out += scnprintf(out, end - out, " -> ");
+		b->ops->val_to_text(b, out, end - out, k);
+	}
 }
 
 static inline bool bch_bkey_equal_header(const struct bkey *l,
@@ -662,7 +668,7 @@ static inline struct bkey *bch_btree_iter_next(struct btree_iter *iter)
 
 	do {
 		ret = bch_btree_iter_next_all(iter);
-	} while (ret && bkey_deleted(__iter_keys_ptr(iter), ret));
+	} while (ret && bkey_deleted(ret));
 
 	return ret;
 }
