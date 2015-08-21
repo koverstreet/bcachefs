@@ -738,8 +738,7 @@ pick_new_devices:
 
 		BUG_ON(bch_extent_ptrs(k) >= BKEY_EXTENT_PTRS_MAX);
 
-		ja->sectors_free = CACHE_BTREE_NODE_SIZE(&ca->sb) >>
-			c->block_bits;
+		ja->sectors_free = ca->sb.bucket_size;
 
 		ja->cur_idx = next;
 		k->val[bch_extent_ptrs(k)] =
