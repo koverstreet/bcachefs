@@ -1484,7 +1484,10 @@ u8 __bch_btree_mark_key(struct cache_set *c, int level, struct bkey *k)
 
 	rcu_read_lock();
 
-	for (i = bch_extent_ptrs(k) - 1; i >= 0; --i)
+	for (i = bch_extent_ptrs(k) - 1; i >= 0; --i) {
+		if (PTR_DEV(k, i) < MAX_CACHES_PER_SET)
+			__set_bit(PTR_DEV(k, i), c->cache_slots_used);
+
 		if ((ca = PTR_CACHE(c, k, i))) {
 			g = PTR_BUCKET(c, ca, k, i);
 
@@ -1502,6 +1505,7 @@ u8 __bch_btree_mark_key(struct cache_set *c, int level, struct bkey *k)
 
 			replicas_found++;
 		}
+	}
 
 	rcu_read_unlock();
 
@@ -1965,6 +1969,8 @@ static void btree_gc_start(struct cache_set *c)
 	c->gc_cur_btree = 0;
 	c->gc_cur_key = ZERO_KEY;
 	write_sequnlock(&c->gc_cur_lock);
+
+	memset(c->cache_slots_used, 0, sizeof(c->cache_slots_used));
 
 	for_each_cache(ca, c, i)
 		for_each_bucket(g, ca) {

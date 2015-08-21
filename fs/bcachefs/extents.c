@@ -98,6 +98,9 @@ static bool should_drop_ptr(struct cache_set *c, const struct bkey *k,
 	if (PTR_DEV(k, ptr) > c->sb.nr_in_set)
 		return true;
 
+	if (bch_is_zero(c->members[PTR_DEV(k, ptr)].uuid.b, sizeof(uuid_le)))
+		return true;
+
 	return (ca = PTR_CACHE(c, k, ptr)) &&
 		ptr_stale(c, ca, k, ptr);
 }
