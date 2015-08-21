@@ -208,9 +208,9 @@ struct btree_op {
 	 */
 	u32			lock_seq[BTREE_MAX_DEPTH];
 
-	/* Bitmasks for intent/read locks held per level */
-	u8			locks_intent;
-	u8			locks_read;
+	/* Bitmasks for read/intent locks held per level */
+	u8			nodes_locked;
+	u8			nodes_intent_locked;
 
 	/* Btree level below which we start taking intent locks */
 	s8			locks_want;
