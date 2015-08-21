@@ -15,10 +15,27 @@
 #include <linux/blkdev.h>
 #include <linux/sort.h>
 
+static const char * const bch_csum_types[] = {
+	"none",
+	"crc32c",
+	"crc64",
+	NULL
+};
+
 static const char * const cache_replacement_policies[] = {
 	"lru",
 	"fifo",
 	"random",
+	NULL
+};
+
+/* Default is -1; we skip past it for struct cached_dev's cache mode */
+static const char * const bch_cache_modes[] = {
+	"default",
+	"writethrough",
+	"writeback",
+	"writearound",
+	"none",
 	NULL
 };
 
@@ -113,6 +130,7 @@ rw_attribute(key_merging_disabled);
 rw_attribute(gc_always_rewrite);
 rw_attribute(expensive_debug_checks);
 rw_attribute(cache_replacement_policy);
+rw_attribute(checksum_type);
 rw_attribute(btree_shrinker_disabled);
 
 rw_attribute(copy_gc_enabled);
@@ -528,6 +546,11 @@ SHOW(__bch_cache_set)
 	sysfs_print(writeback_keys_failed,
 		    atomic_long_read(&c->writeback_keys_failed));
 
+	if (attr == &sysfs_checksum_type)
+		return bch_snprint_string_list(buf, PAGE_SIZE,
+				bch_csum_types,
+				CACHE_PREFERRED_CSUM_TYPE(&c->sb));
+
 	if (attr == &sysfs_errors)
 		return bch_snprint_string_list(buf, PAGE_SIZE, error_actions,
 					       c->on_error);
@@ -680,6 +703,20 @@ STORE(__bch_cache_set)
 	if (test_bit(CACHE_SET_STOPPING, &c->flags))
 		return -EINTR;
 
+	if (attr == &sysfs_checksum_type) {
+		ssize_t v = bch_read_string_list(buf, bch_csum_types);
+
+		if (v < 0)
+			return v;
+
+		if (v != CACHE_PREFERRED_CSUM_TYPE(&c->sb)) {
+			SET_CACHE_PREFERRED_CSUM_TYPE(&c->sb, v);
+			bcache_write_super(c);
+		}
+
+		return size;
+	}
+
 	if (attr == &sysfs_flash_vol_create) {
 		int r;
 		u64 v;
@@ -747,6 +784,7 @@ static struct attribute *bch_cache_set_files[] = {
 	&sysfs_congested_write_threshold_us,
 	&sysfs_clear_stats,
 
+	&sysfs_checksum_type,
 	&sysfs_meta_replicas,
 	&sysfs_data_replicas,
 

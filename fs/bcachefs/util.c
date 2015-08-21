@@ -464,15 +464,6 @@ uint64_t bch_crc64_update(uint64_t crc, const void *_data, size_t len)
 	return crc;
 }
 
-uint64_t bch_crc64(const void *data, size_t len)
-{
-	uint64_t crc = 0xffffffffffffffffULL;
-
-	crc = bch_crc64_update(crc, data, len);
-
-	return crc ^ 0xffffffffffffffffULL;
-}
-
 int bch_kthread_loop_ratelimit(unsigned long *last, unsigned long delay)
 {
 	unsigned long next = *last + delay;

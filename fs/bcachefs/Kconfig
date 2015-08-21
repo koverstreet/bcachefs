@@ -5,6 +5,7 @@ config BCACHE_FS
 	depends on (64BIT || LBDAF)
 	select EXPORTFS
 	select CLOSURES
+	select LIBCRC32C
 	---help---
 	The bcachefs filesystem - a modern, copy on write filesystem, with
 	support for multiple devices, compression, checksumming, etc.

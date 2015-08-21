@@ -39,16 +39,6 @@ static const uuid_le invalid_uuid = {
 	}
 };
 
-/* Default is -1; we skip past it for struct cached_dev's cache mode */
-const char * const bch_cache_modes[] = {
-	"default",
-	"writethrough",
-	"writeback",
-	"writearound",
-	"none",
-	NULL
-};
-
 static struct kobject *bcache_kobj;
 struct mutex bch_register_lock;
 LIST_HEAD(bch_cache_sets);
@@ -62,6 +52,29 @@ struct workqueue_struct *bcache_io_wq;
 static void __bch_cache_remove(struct cache *);
 
 #define BTREE_MAX_PAGES		(256 * 1024 / PAGE_SIZE)
+
+u64 bch_checksum_update(unsigned type, u64 crc, const void *data, size_t len)
+{
+	switch (type) {
+	case BCH_CSUM_NONE:
+		return 0;
+	case BCH_CSUM_CRC32C:
+		return crc32c(crc, data, len);
+	case BCH_CSUM_CRC64:
+		return bch_crc64_update(crc, data, len);
+	default:
+		BUG();
+	}
+}
+
+u64 bch_checksum(unsigned type, const void *data, size_t len)
+{
+	u64 crc = 0xffffffffffffffffULL;
+
+	crc = bch_checksum_update(type, crc, data, len);
+
+	return crc ^ 0xffffffffffffffffULL;
+}
 
 struct bcache_device *bch_dev_get_by_inode(struct cache_set *c, u64 inode)
 {
@@ -159,6 +172,10 @@ static const char *validate_super(struct bcache_superblock *disk_sb,
 
 		err = "Invalid superblock: member info area missing";
 		if (sb->keys < bch_journal_buckets_offset(sb))
+			goto err;
+
+		err = "Invalid checksum type";
+		if (CACHE_SB_CSUM_TYPE(sb) >= BCH_CSUM_NR)
 			goto err;
 
 		break;
@@ -268,7 +285,11 @@ retry:
 	if (order > sb->page_order)
 		goto retry;
 
-	if (sb->sb->csum != csum_set(sb->sb))
+	if (sb->sb->csum != csum_set(sb->sb,
+				     le64_to_cpu(sb->sb->version) <
+				     BCACHE_SB_VERSION_CDEV_V3
+				     ? BCH_CSUM_CRC64
+				     : CACHE_SB_CSUM_TYPE(sb->sb)))
 		return "Bad checksum";
 
 	if (cache_set_init_fault("read_super"))
@@ -312,7 +333,10 @@ static void __write_super(struct bcache_superblock *disk_sb,
 	out->last_mount		= cpu_to_le32(sb->last_mount);
 	out->first_bucket	= cpu_to_le16(sb->first_bucket);
 	out->keys		= cpu_to_le16(sb->keys);
-	out->csum		= csum_set(out);
+	out->csum		=
+		csum_set(out, sb->version < BCACHE_SB_VERSION_CDEV_V3
+			 ? BCH_CSUM_CRC64
+			 : CACHE_SB_CSUM_TYPE(sb));
 
 	pr_debug("ver %llu, flags %llu, seq %llu",
 		 sb->version, sb->flags, sb->seq);
@@ -398,11 +422,10 @@ static void cache_sb_from_cache_set(struct cache_set *c, struct cache *ca)
 	       ca->sb.nr_in_set * sizeof(struct cache_member));
 
 	ca->sb.version		= BCACHE_SB_VERSION_CDEV;
+	ca->sb.flags		= c->sb.flags;
 	ca->sb.seq		= c->sb.seq;
 	ca->sb.nr_in_set	= c->sb.nr_in_set;
 	ca->sb.last_mount	= c->sb.last_mount;
-
-	SET_CACHE_SYNC(&ca->sb, CACHE_SYNC(&c->sb));
 }
 
 void bcache_write_super(struct cache_set *c)
@@ -420,6 +443,9 @@ void bcache_write_super(struct cache_set *c)
 		struct bio *bio = ca->disk_sb.bio;
 
 		cache_sb_from_cache_set(c, ca);
+
+		SET_CACHE_SB_CSUM_TYPE(&ca->sb,
+				       CACHE_PREFERRED_CSUM_TYPE(&c->sb));
 
 		bio_reset(bio);
 		bio->bi_bdev	= ca->bdev;
@@ -523,7 +549,11 @@ void bch_prio_write(struct cache *ca)
 
 		p->next_bucket	= ca->prio_buckets[i + 1];
 		p->magic	= pset_magic(&ca->sb);
-		p->csum		= bch_crc64(&p->magic, bucket_bytes(ca) - 8);
+
+		SET_PSET_CSUM_TYPE(p, CACHE_PREFERRED_CSUM_TYPE(&ca->set->sb));
+		p->csum		= bch_checksum(PSET_CSUM_TYPE(p),
+					       &p->magic,
+					       bucket_bytes(ca) - 8);
 
 		r = bch_bucket_alloc(ca, RESERVE_PRIO, NULL);
 		BUG_ON(r < 0);
@@ -582,11 +612,13 @@ static void prio_read(struct cache *ca, uint64_t bucket)
 
 			prio_io(ca, bucket, REQ_OP_READ, READ_SYNC);
 
-			if (p->csum != bch_crc64(&p->magic, bucket_bytes(ca) - 8))
-				pr_warn("bad csum reading priorities");
-
 			if (p->magic != pset_magic(&ca->sb))
 				pr_warn("bad magic reading priorities");
+
+			if (p->csum != bch_checksum(PSET_CSUM_TYPE(p),
+						    &p->magic,
+						    bucket_bytes(ca) - 8))
+				pr_warn("bad csum reading priorities");
 
 			bucket = p->next_bucket;
 			d = p->data;

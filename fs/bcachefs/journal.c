@@ -156,7 +156,7 @@ reread:		left = ca->sb.bucket_size - offset;
 			if (bytes > len << 9)
 				goto reread;
 
-			if (j->csum != csum_set(j)) {
+			if (j->csum != csum_set(j, JSET_CSUM_TYPE(j))) {
 				pr_info("%u: bad csum, %zu bytes, offset %u",
 					bucket_index, bytes, offset);
 				return ret;
@@ -741,7 +741,9 @@ static void journal_write_locked(struct closure *cl)
 	w->data->magic		= jset_magic(&c->sb);
 	w->data->version	= BCACHE_JSET_VERSION;
 	w->data->last_seq	= last_seq(&c->journal);
-	w->data->csum		= csum_set(w->data);
+
+	SET_JSET_CSUM_TYPE(w->data, CACHE_PREFERRED_CSUM_TYPE(&c->sb));
+	w->data->csum		= csum_set(w->data, JSET_CSUM_TYPE(w->data));
 
 	sectors = set_blocks(w->data, block_bytes(c)) * c->sb.block_size;
 

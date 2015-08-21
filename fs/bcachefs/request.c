@@ -89,15 +89,16 @@ static void bio_csum(struct bio *bio, struct bkey *k)
 {
 	struct bio_vec bv;
 	struct bvec_iter iter;
-	uint64_t csum = 0;
+	u64 crc = 0xffffffffffffffffULL;
 
 	bio_for_each_segment(bv, bio, iter) {
 		void *d = kmap(bv.bv_page) + bv.bv_offset;
-		csum = bch_crc64_update(csum, d, bv.bv_len);
+
+		crc = bch_checksum_update(KEY_CSUM(k), crc, d, bv.bv_len);
 		kunmap(bv.bv_page);
 	}
 
-	k->val[bch_extent_ptrs(k)] = csum & (~0ULL >> 1);
+	k->val[bch_extent_ptrs(k)] = crc;
 }
 
 /* Insert data into cache */

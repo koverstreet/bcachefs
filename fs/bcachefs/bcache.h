@@ -179,6 +179,7 @@
 
 #include <linux/bio.h>
 #include <linux/closure.h>
+#include <linux/crc32c.h>
 #include <linux/kobject.h>
 #include <linux/list.h>
 #include <linux/mutex.h>
@@ -960,16 +961,22 @@ static inline u8 ptr_stale(struct cache_set *c, struct cache *ca,
 	return gen_after(PTR_BUCKET_GEN(c, ca, k, ptr), PTR_GEN(k, ptr));
 }
 
-/* Btree key macros */
+/* checksumming */
+
+u64 bch_checksum_update(unsigned, u64, const void *, size_t);
+u64 bch_checksum(unsigned, const void *, size_t);
 
 /*
  * This is used for various on disk data structures - cache_sb, prio_set, bset,
  * jset: The checksum is _always_ the first 8 bytes of these structs
  */
-#define csum_set(i)							\
-	bch_crc64(((void *) (i)) + sizeof(uint64_t),			\
-		  ((void *) bset_bkey_last(i)) -			\
-		  (((void *) (i)) + sizeof(uint64_t)))
+#define csum_set(i, type)						\
+({									\
+	void *start = ((void *) (i)) + sizeof(u64);			\
+	void *end = bset_bkey_last(i);					\
+									\
+	bch_checksum(type, start, end - start);				\
+})
 
 /* Error handling macros */
 
@@ -1104,7 +1111,6 @@ void bch_write_bdev_super(struct cached_dev *, struct closure *);
 struct bcache_device *bch_dev_get_by_inode(struct cache_set *, u64);
 
 extern struct workqueue_struct *bcache_io_wq;
-extern const char * const bch_cache_modes[];
 extern struct mutex bch_register_lock;
 extern struct list_head bch_cache_sets;
 
