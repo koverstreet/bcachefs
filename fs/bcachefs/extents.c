@@ -753,7 +753,7 @@ try_partial:
  */
 static bool bkey_cmpxchg(struct btree *b,
 			 struct btree_node_iter *iter,
-			 struct bkey *k,
+			 const struct bkey *k,
 			 struct bch_replace_info *replace,
 			 struct bkey *new,
 			 struct bpos *done,
@@ -854,7 +854,7 @@ static bool bkey_cmpxchg(struct btree *b,
 static void handle_existing_key_newer(struct btree *b,
 				      struct btree_node_iter *iter,
 				      struct bkey *insert,
-				      struct bkey *k,
+				      const struct bkey *k,
 				      bool *inserted,
 				      struct journal_res *res)
 {
