@@ -21,16 +21,6 @@ static ssize_t fn ## _show(struct kobject *kobj, struct attribute *attr,\
 static ssize_t fn ## _store(struct kobject *kobj, struct attribute *attr,\
 			    const char *buf, size_t size)		\
 
-#define SHOW_LOCKED(fn)							\
-SHOW(fn)								\
-{									\
-	ssize_t ret;							\
-	mutex_lock(&bch_register_lock);					\
-	ret = __ ## fn ## _show(kobj, attr, buf);			\
-	mutex_unlock(&bch_register_lock);				\
-	return ret;							\
-}
-
 #define STORE_LOCKED(fn)						\
 STORE(fn)								\
 {									\
