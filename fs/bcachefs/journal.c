@@ -628,7 +628,7 @@ static void journal_write_done(struct closure *cl)
 
 	__closure_wake_up(&w->wait);
 
-	clear_bit(JOURNAL_IO_IN_FLIGHT, &j->flags);
+	atomic_set(&j->in_flight, 0);
 	wake_up(&j->wait);
 
 	if (test_bit(JOURNAL_NEED_WRITE, &j->flags))
@@ -721,7 +721,7 @@ static bool __journal_write(struct cache_set *c)
 {
 	BUG_ON(!test_bit(JOURNAL_DIRTY, &c->journal.flags));
 
-	if (!test_and_set_bit(JOURNAL_IO_IN_FLIGHT, &c->journal.flags)) {
+	if (!atomic_xchg(&c->journal.in_flight, 1)) {
 		closure_call(&c->journal.io, journal_write_locked,
 			     NULL, &c->cl);
 		return true;
@@ -884,7 +884,7 @@ ssize_t bch_journal_print_debug(struct journal *j, char *buf)
 			"replay done:\t\t%i\n",
 			fifo_used(&j->pin),
 			j->seq,
-			test_bit(JOURNAL_IO_IN_FLIGHT,	&j->flags),
+			atomic_read(&j->in_flight),
 			test_bit(JOURNAL_NEED_WRITE,	&j->flags),
 			test_bit(JOURNAL_DIRTY,		&j->flags),
 			test_bit(JOURNAL_REPLAY_DONE,	&j->flags));

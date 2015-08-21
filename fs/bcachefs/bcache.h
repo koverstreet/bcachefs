@@ -247,10 +247,10 @@ struct journal_write {
 /* Embedded in struct cache_set */
 struct journal {
 	unsigned long		flags;
-#define JOURNAL_IO_IN_FLIGHT	0
-#define JOURNAL_NEED_WRITE	1
-#define JOURNAL_DIRTY		2
-#define JOURNAL_REPLAY_DONE	3
+#define JOURNAL_NEED_WRITE	0
+#define JOURNAL_DIRTY		1
+#define JOURNAL_REPLAY_DONE	2
+	atomic_t		in_flight;
 
 	spinlock_t		lock;
 
