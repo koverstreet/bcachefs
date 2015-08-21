@@ -814,7 +814,12 @@ DEFINE_EVENT(bucket_alloc, bcache_bucket_alloc,
 	TP_ARGS(ca, reserve)
 );
 
-TRACE_EVENT(bcache_bucket_alloc_set_fail,
+DEFINE_EVENT(bucket_alloc, bcache_bucket_alloc_fail,
+	TP_PROTO(struct cache *ca, enum alloc_reserve reserve),
+	TP_ARGS(ca, reserve)
+);
+
+TRACE_EVENT(bcache_buckets_unavailable_fail,
 	TP_PROTO(struct cache_set *c, enum alloc_reserve reserve,
 		 struct closure *cl),
 	TP_ARGS(c, reserve, cl),

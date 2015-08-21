@@ -1427,7 +1427,7 @@ static int __btree_check_reserve(struct cache_set *c,
 					required, cl);
 
 			if (cl) {
-				closure_wait(&c->bucket_wait, cl);
+				closure_wait(&c->freelist_wait, cl);
 				ret = -EAGAIN;
 			} else {
 				ret = -ENOSPC;

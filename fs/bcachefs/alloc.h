@@ -43,7 +43,6 @@ static inline void bch_increment_clock(struct cache_set *c,
 void __bch_bucket_free(struct cache *, struct bucket *);
 void bch_bucket_free(struct cache_set *, struct bkey *);
 
-long bch_bucket_alloc(struct cache *, enum alloc_reserve);
 int bch_bucket_alloc_set(struct cache_set *, enum alloc_reserve, struct bkey *,
 			 int, struct cache_group *, struct closure *);
 
@@ -61,7 +60,7 @@ static inline void bch_wake_allocator(struct cache *ca)
 		wake_up_process(p);
 	rcu_read_unlock();
 
-	closure_wake_up(&ca->set->bucket_wait);
+	closure_wake_up(&ca->set->buckets_available_wait);
 }
 
 void bch_mark_allocator_buckets(struct cache_set *);

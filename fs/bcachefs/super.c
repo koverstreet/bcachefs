@@ -572,7 +572,8 @@ static void bch_recalc_capacity(struct cache_set *c)
 	c->capacity = capacity;
 
 	/* Wake up case someone was waiting for buckets */
-	closure_wake_up(&c->bucket_wait);
+	closure_wake_up(&c->freelist_wait);
+	closure_wake_up(&c->buckets_available_wait);
 }
 
 static void bch_cache_set_read_only(struct cache_set *c)

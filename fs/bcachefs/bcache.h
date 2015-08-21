@@ -453,8 +453,8 @@ struct cache_set {
 
 	struct mutex		bucket_lock;
 
-	/* Protected by freelist_lock */
-	struct closure_waitlist	bucket_wait;
+	struct closure_waitlist	freelist_wait;
+	struct closure_waitlist	buckets_available_wait;
 
 
 	/*

@@ -66,6 +66,8 @@
 #include <linux/kthread.h>
 #include <trace/events/bcachefs.h>
 
+static size_t bch_bucket_alloc(struct cache *, enum alloc_reserve);
+
 /* Allocation groups: */
 
 void bch_cache_group_remove_cache(struct cache_group *grp, struct cache *ca)
@@ -259,11 +261,11 @@ static void bch_prio_write(struct cache *ca)
 			&ca->meta_sectors_written);
 
 	for (i = prio_buckets(ca) - 1; i >= 0; --i) {
-		long r;
 		struct bucket *g;
 		struct prio_set *p = ca->disk_buckets;
 		struct bucket_disk *d = p->data;
 		struct bucket_disk *end = d + prios_per_bucket(ca);
+		size_t r;
 
 		for (r = i * prios_per_bucket(ca);
 		     r < ca->sb.nbuckets && d < end;
@@ -284,7 +286,7 @@ static void bch_prio_write(struct cache *ca)
 
 		spin_lock(&ca->prio_buckets_lock);
 		r = bch_bucket_alloc(ca, RESERVE_PRIO);
-		BUG_ON(r < 0);
+		BUG_ON(!r);
 
 		/*
 		 * goes here before dropping prio_buckets_lock to guard against
@@ -708,7 +710,7 @@ static bool __bch_allocator_push(struct cache *ca, long bucket)
 
 	return false;
 success:
-	closure_wake_up(&ca->set->bucket_wait);
+	closure_wake_up(&ca->set->freelist_wait);
 	return true;
 }
 
@@ -815,7 +817,12 @@ out:
 
 /* Allocation */
 
-long bch_bucket_alloc(struct cache *ca, enum alloc_reserve reserve)
+/**
+ * bch_bucket_alloc - allocate a single bucket from a specific device
+ *
+ * Returns index of bucket on success, 0 on failure
+ * */
+static size_t bch_bucket_alloc(struct cache *ca, enum alloc_reserve reserve)
 {
 	bool meta = reserve <= RESERVE_METADATA_LAST;
 	struct bucket *g;
@@ -827,11 +834,14 @@ long bch_bucket_alloc(struct cache *ca, enum alloc_reserve reserve)
 		goto out;
 
 	spin_unlock(&ca->freelist_lock);
-	return -ENOSPC;
+
+	trace_bcache_bucket_alloc_fail(ca, reserve);
+	return 0;
 out:
 	verify_not_on_freelist(ca, r);
-	trace_bcache_bucket_alloc(ca, reserve);
 	spin_unlock(&ca->freelist_lock);
+
+	trace_bcache_bucket_alloc(ca, reserve);
 
 	bch_wake_allocator(ca);
 
@@ -897,6 +907,9 @@ static void bch_bucket_free_never_used(struct cache_set *c, struct bkey *k)
 	rcu_read_unlock();
 }
 
+#define BUCKETS_NOT_AVAILABLE		1
+#define FREELIST_EMPTY			2
+
 static struct cache *bch_next_cache(struct cache_set *c,
 				    enum alloc_reserve reserve,
 				    struct cache_group *devs,
@@ -920,7 +933,7 @@ static struct cache *bch_next_cache(struct cache_set *c,
 	}
 
 	if (!bucket_count)
-		return ERR_PTR(-ENOSPC);
+		return ERR_PTR(-BUCKETS_NOT_AVAILABLE);
 
 	/*
 	 * We create a weighted selection by using the number of free buckets
@@ -970,7 +983,7 @@ static int __bch_bucket_alloc_set(struct cache_set *c,
 	for (i = 0; i < n; i++) {
 		struct cache *ca;
 		unsigned seq;
-		long r;
+		size_t r;
 
 		/* first ptr goes to the specified tier, the rest to any */
 		do {
@@ -985,7 +998,7 @@ static int __bch_bucket_alloc_set(struct cache_set *c,
 
 			ca = devs->nr_devices
 				? bch_next_cache(c, reserve, d, caches_used)
-				: ERR_PTR(-ENOSPC);
+				: ERR_PTR(-BUCKETS_NOT_AVAILABLE);
 
 			/*
 			 * If ca == NULL, we raced because of bucket counters
@@ -1001,8 +1014,8 @@ static int __bch_bucket_alloc_set(struct cache_set *c,
 		__set_bit(ca->sb.nr_this_dev, caches_used);
 
 		r = bch_bucket_alloc(ca, reserve);
-		if (r < 0) {
-			ret = r;
+		if (!r) {
+			ret = -FREELIST_EMPTY;
 			goto err;
 		}
 
@@ -1024,10 +1037,14 @@ int bch_bucket_alloc_set(struct cache_set *c, enum alloc_reserve reserve,
 			 struct bkey *k, int n, struct cache_group *tier,
 			 struct closure *cl)
 {
-	if (!__bch_bucket_alloc_set(c, reserve, k, n, tier))
+	int ret;
+
+	ret = __bch_bucket_alloc_set(c, reserve, k, n, tier);
+	if (!ret)
 		return 0;
 
-	trace_bcache_bucket_alloc_set_fail(c, reserve, cl);
+	if (ret == -BUCKETS_NOT_AVAILABLE)
+		trace_bcache_buckets_unavailable_fail(c, reserve, cl);
 
 	if (!tier->nr_devices)
 		return -ENOSPC;
@@ -1037,12 +1054,17 @@ int bch_bucket_alloc_set(struct cache_set *c, enum alloc_reserve reserve,
 		return -ENOSPC;
 
 	if (cl) {
-		closure_wait(&c->bucket_wait, cl);
+		struct closure_waitlist *waitlist =
+			ret == -BUCKETS_NOT_AVAILABLE
+			? &c->buckets_available_wait
+			: &c->freelist_wait;
+
+		closure_wait(waitlist, cl);
 
 		/* Must retry allocation after adding ourself to waitlist */
 
 		if (!__bch_bucket_alloc_set(c, reserve, k, n, tier)) {
-			closure_wake_up(&c->bucket_wait);
+			closure_wake_up(waitlist);
 			return 0;
 		}
 
@@ -1126,11 +1148,11 @@ static struct open_bucket *bch_open_bucket_alloc(struct cache_set *c,
 	spin_lock(&b->lock);
 
 	if (wp->ca) {
-		long bucket;
+		size_t bucket;
 
 		bucket = bch_bucket_alloc(wp->ca, RESERVE_MOVINGGC);
-		if (bucket < 0) {
-			ret = bucket;
+		if (!bucket) {
+			ret = -ENOSPC;
 			goto err;
 		}
 
