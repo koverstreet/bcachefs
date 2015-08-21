@@ -28,7 +28,7 @@ void bch_dump_bset(struct btree_keys *b, struct bset *i, unsigned set)
 
 		bch_bkey_to_text(buf, sizeof(buf), k);
 		printk(KERN_ERR "block %u key %u/%u: %s\n", set,
-		       (unsigned) ((u64 *) k - i->_data), i->keys, buf);
+		       (unsigned) ((u64 *) k - i->_data), i->u64s, buf);
 
 		if (next == bset_bkey_last(i))
 			continue;
@@ -279,7 +279,7 @@ void bch_btree_keys_init(struct btree_keys *b, const struct btree_keys_ops *ops,
 	b->ops			= ops;
 	b->nsets		= 0;
 	b->last_set_unwritten	= 0;
-	b->nr_live_keys		= 0;
+	b->nr_live_u64s		= 0;
 #ifdef CONFIG_BCACHEFS_DEBUG
 	b->expensive_debug_checks = expensive_debug_checks;
 #endif
@@ -497,7 +497,7 @@ static void make_bfloat(struct bset_tree *t, unsigned j)
 		: tree_to_prev_bkey(t, j >> ffs(j));
 
 	struct bkey *r = is_power_of_2(j + 1)
-		? bset_bkey_idx(t->data, t->data->keys - t->end.u64s)
+		? bset_bkey_idx(t->data, t->data->u64s - t->end.u64s)
 		: tree_to_bkey(t, j >> (ffz(j) + 1));
 
 	BUG_ON(m < l || m > r);
@@ -846,7 +846,7 @@ void bch_bset_insert(struct btree_keys *b,
 	    b->ops->is_extents &&
 	    where->u64s == insert->u64s && !where->size) {
 		if (!bkey_deleted(insert))
-			b->nr_live_keys += insert->u64s;
+			b->nr_live_u64s += insert->u64s;
 
 		bkey_copy(where, insert);
 		return;
@@ -875,10 +875,10 @@ void bch_bset_insert(struct btree_keys *b,
 		(void *) bset_bkey_last(i) - (void *) where);
 
 	bkey_copy(where, insert);
-	i->keys += insert->u64s;
+	i->u64s += insert->u64s;
 
 	if (!bkey_deleted(insert))
-		b->nr_live_keys += insert->u64s;
+		b->nr_live_u64s += insert->u64s;
 
 	bch_bset_fix_lookup_table(b, t, where);
 	bch_btree_node_iter_fix(iter, where, insert);
@@ -1097,7 +1097,7 @@ EXPORT_SYMBOL(bch_btree_node_iter_next_all);
 /**
  * btree_count_keys - count live keys in a btree node
  */
-size_t bch_btree_count_keys(struct btree_keys *b)
+size_t bch_btree_count_u64s(struct btree_keys *b)
 {
 	struct bkey *k;
 	struct btree_node_iter iter;
@@ -1160,9 +1160,9 @@ static void btree_mergesort(struct btree_keys *b, struct bset *bset,
 		out = bkey_next(out);
 	}
 
-	bset->keys = (u64 *) out - bset->_data;
+	bset->u64s = (u64 *) out - bset->_data;
 
-	pr_debug("sorted %i keys", bset->keys);
+	pr_debug("sorted %i keys", bset->u64s);
 }
 
 static void __btree_sort(struct btree_keys *b, struct btree_node_iter *iter,
@@ -1202,7 +1202,7 @@ static void __btree_sort(struct btree_keys *b, struct btree_node_iter *iter,
 		out->version	= b->set->data->version;
 		swap(out, b->set->data);
 	} else {
-		b->set[start].data->keys = out->keys;
+		b->set[start].data->u64s = out->u64s;
 		memcpy(b->set[start].data->start, out->start,
 		       (void *) bset_bkey_last(out) - (void *) out->start);
 	}
@@ -1215,11 +1215,11 @@ static void __btree_sort(struct btree_keys *b, struct btree_node_iter *iter,
 	bch_bset_build_written_tree(b);
 
 	/* sort can merge keys - need to recalculate */
-	b->nr_live_keys = start
-		? bch_btree_count_keys(b)
-		: b->set->data->keys;
+	b->nr_live_u64s = start
+		? bch_btree_count_u64s(b)
+		: b->set->data->u64s;
 
-	verify_nr_live_keys(b);
+	verify_nr_live_u64s(b);
 
 	if (!start)
 		bch_time_stats_update(&state->time, start_time);
@@ -1229,7 +1229,7 @@ void bch_btree_sort_partial(struct btree_keys *b, unsigned start,
 			    ptr_filter_fn filter,
 			    struct bset_sort_state *state)
 {
-	size_t order = b->page_order, keys = 0;
+	size_t order = b->page_order, u64s = 0;
 	struct btree_node_iter iter;
 	struct bset_tree *t;
 
@@ -1242,9 +1242,9 @@ void bch_btree_sort_partial(struct btree_keys *b, unsigned start,
 
 	if (start) {
 		for (t = b->set + start; t <= b->set + b->nsets; t++)
-			keys += t->data->keys;
+			u64s += t->data->u64s;
 
-		order = get_order(__set_bytes(b->set->data, keys));
+		order = get_order(__set_bytes(b->set->data, u64s));
 	}
 
 	__btree_sort(b, &iter, start, order, filter, false, state);
@@ -1279,7 +1279,7 @@ void bch_btree_sort_into(struct btree_keys *dst,
 
 	bch_time_stats_update(&state->time, start_time);
 
-	dst->nr_live_keys = dst->set->data->keys;
+	dst->nr_live_u64s = dst->set->data->u64s;
 	dst->nsets = 0;
 	/* No auxiliary search tree yet */
 	dst->set->size = 0;
@@ -1301,7 +1301,7 @@ void bch_btree_sort_lazy(struct btree_keys *b,
 	for (i = b->nsets - 1; i >= 0; --i) {
 		crit *= state->crit_factor;
 
-		if (b->set[i].data->keys < crit) {
+		if (b->set[i].data->u64s < crit) {
 			bch_btree_sort_partial(b, i, filter, state);
 			return;
 		}
@@ -1324,7 +1324,7 @@ void bch_btree_keys_stats(struct btree_keys *b, struct bset_stats *stats)
 
 	for (i = 0; i <= b->nsets; i++) {
 		struct bset_tree *t = &b->set[i];
-		size_t bytes = t->data->keys * sizeof(uint64_t);
+		size_t bytes = t->data->u64s * sizeof(u64);
 		size_t j;
 
 		if (bset_written(b, t)) {

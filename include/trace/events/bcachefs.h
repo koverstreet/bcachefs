@@ -403,17 +403,17 @@ TRACE_EVENT(bcache_btree_write,
 	TP_STRUCT__entry(
 		__field(u64,		bucket			)
 		__field(unsigned,	block			)
-		__field(unsigned,	keys			)
+		__field(unsigned,	u64s			)
 	),
 
 	TP_fast_assign(
 		__entry->bucket	= PTR_BUCKET_NR_TRACE(b->c, &b->key, 0);
 		__entry->block	= b->written;
-		__entry->keys	= b->keys.set[b->keys.nsets].data->keys;
+		__entry->u64s	= b->keys.set[b->keys.nsets].data->u64s;
 	),
 
-	TP_printk("bucket %llu block %u keys %u",
-		  __entry->bucket, __entry->block, __entry->keys)
+	TP_printk("bucket %llu block %u u64s %u",
+		  __entry->bucket, __entry->block, __entry->u64s)
 );
 
 DEFINE_EVENT(btree_node, bcache_btree_bounce_write_fail,

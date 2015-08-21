@@ -154,7 +154,7 @@ const char *validate_super(struct bcache_superblock *disk_sb,
 	sb->block_size		= le16_to_cpu(s->block_size);
 	sb->last_mount		= le32_to_cpu(s->last_mount);
 	sb->first_bucket	= le16_to_cpu(s->first_bucket);
-	sb->keys		= le16_to_cpu(s->keys);
+	sb->u64s		= le16_to_cpu(s->u64s);
 
 	switch (sb->version) {
 	case BCACHE_SB_VERSION_BDEV:
@@ -212,7 +212,7 @@ const char *validate_super(struct bcache_superblock *disk_sb,
 			goto err;
 
 		err = "Invalid superblock: member info area missing";
-		if (sb->keys < bch_journal_buckets_offset(sb))
+		if (sb->u64s < bch_journal_buckets_offset(sb))
 			goto err;
 
 		err = "Invalid number of metadata replicas";
@@ -288,10 +288,10 @@ static int __bch_super_realloc(struct bcache_superblock *sb, unsigned order)
 	return 0;
 }
 
-int bch_super_realloc(struct cache *ca, unsigned keys)
+int bch_super_realloc(struct cache *ca, unsigned u64s)
 {
 	char buf[BDEVNAME_SIZE];
-	size_t bytes = __set_bytes((struct cache_sb *) NULL, keys);
+	size_t bytes = __set_bytes((struct cache_sb *) NULL, u64s);
 	size_t want = bytes + (SB_SECTOR << 9);
 
 	if (want > ca->sb.first_bucket * bucket_bytes(ca)) {
@@ -336,13 +336,13 @@ retry:
 		 le64_to_cpu(sb->sb->version),
 		 le64_to_cpu(sb->sb->flags),
 		 le64_to_cpu(sb->sb->seq),
-		 le16_to_cpu(sb->sb->keys));
+		 le16_to_cpu(sb->sb->u64s));
 
 	if (le16_to_cpu(sb->sb->block_size) << 9 <
 	    bdev_logical_block_size(bdev))
 		return "Superblock block size smaller than device block size";
 
-	order = get_order(__set_bytes(sb->sb, le16_to_cpu(sb->sb->keys)));
+	order = get_order(__set_bytes(sb->sb, le16_to_cpu(sb->sb->u64s)));
 	if (order > sb->page_order)
 		goto retry;
 
@@ -384,7 +384,7 @@ void __write_super(struct cache_set *c, struct bcache_superblock *disk_sb,
 
 	out->last_mount		= cpu_to_le32(sb->last_mount);
 	out->first_bucket	= cpu_to_le16(sb->first_bucket);
-	out->keys		= cpu_to_le16(sb->keys);
+	out->u64s		= cpu_to_le16(sb->u64s);
 	out->nr_in_set		= cpu_to_le16(sb->nr_in_set);
 	out->nr_this_dev	= cpu_to_le16(sb->nr_this_dev);
 	out->csum		=
@@ -451,15 +451,15 @@ static int cache_sb_from_cache_set(struct cache_set *c, struct cache *ca)
 
 	if (ca->sb.nr_in_set != c->sb.nr_in_set) {
 		unsigned old_offset = bch_journal_buckets_offset(&ca->sb);
-		unsigned keys = bch_journal_buckets_offset(&c->sb)
+		unsigned u64s = bch_journal_buckets_offset(&c->sb)
 			+ bch_nr_journal_buckets(&ca->sb);
-		int ret = bch_super_realloc(ca, keys);
+		int ret = bch_super_realloc(ca, u64s);
 
 		if (ret)
 			return ret;
 
 		ca->sb.nr_in_set = c->sb.nr_in_set;
-		ca->sb.keys = keys;
+		ca->sb.u64s = u64s;
 
 		memmove(__journal_buckets(ca),
 			ca->disk_sb.sb->_data + old_offset,

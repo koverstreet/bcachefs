@@ -159,7 +159,7 @@ static int bch_gc_btree(struct cache_set *c, enum btree_id btree_id,
 	for (b = bch_btree_iter_peek_node(&iter);
 	     b;
 	     b = bch_btree_iter_next_node(&iter)) {
-		verify_nr_live_keys(&b->keys);
+		verify_nr_live_u64s(&b->keys);
 
 		should_rewrite = btree_gc_mark_node(c, b, stat);
 
@@ -353,7 +353,7 @@ static void bch_coalesce_nodes(struct btree *old_nodes[GC_MERGE_NODES],
 {
 	struct btree *parent = iter->nodes[old_nodes[0]->level + 1];
 	struct cache_set *c = iter->c;
-	unsigned i, nr_old_nodes, nr_new_nodes, keys = 0;
+	unsigned i, nr_old_nodes, nr_new_nodes, u64s = 0;
 	unsigned blocks = btree_blocks(c) * 2 / 3;
 	struct btree *new_nodes[GC_MERGE_NODES];
 	struct keylist keylist;
@@ -369,13 +369,13 @@ static void bch_coalesce_nodes(struct btree *old_nodes[GC_MERGE_NODES],
 	closure_init_stack(&cl);
 
 	for (i = 0; i < GC_MERGE_NODES && old_nodes[i]; i++)
-		keys += old_nodes[i]->keys.nr_live_keys;
+		u64s += old_nodes[i]->keys.nr_live_u64s;
 
 	nr_old_nodes = nr_new_nodes = i;
 
 	if (nr_old_nodes <= 1 ||
 	    __set_blocks(old_nodes[0]->keys.set[0].data,
-			 DIV_ROUND_UP(keys, nr_old_nodes - 1),
+			 DIV_ROUND_UP(u64s, nr_old_nodes - 1),
 			 block_bytes(c)) > blocks)
 		return;
 
@@ -401,25 +401,25 @@ static void bch_coalesce_nodes(struct btree *old_nodes[GC_MERGE_NODES],
 		struct bset *n2 = btree_bset_first(new_nodes[i - 1]);
 		struct bkey *k, *last = NULL;
 
-		keys = 0;
+		u64s = 0;
 
 		for (k = n2->start;
 		     k < bset_bkey_last(n2) &&
-		     __set_blocks(n1, n1->keys + keys + k->u64s,
+		     __set_blocks(n1, n1->u64s + u64s + k->u64s,
 				  block_bytes(c)) <= blocks;
 		     k = bkey_next(k)) {
 			last = k;
-			keys += k->u64s;
+			u64s += k->u64s;
 		}
 
-		if (keys == n2->keys) {
+		if (u64s == n2->u64s) {
 			/* n2 fits entirely in n1 */
 			new_nodes[i]->key.p = new_nodes[i - 1]->key.p;
 
 			memcpy(bset_bkey_last(n1),
 			       n2->start,
-			       n2->keys * sizeof(u64));
-			n1->keys += n2->keys;
+			       n2->u64s * sizeof(u64));
+			n1->u64s += n2->u64s;
 
 			six_unlock_write(&new_nodes[i - 1]->lock);
 			btree_node_free(new_nodes[i - 1]);
@@ -429,25 +429,25 @@ static void bch_coalesce_nodes(struct btree *old_nodes[GC_MERGE_NODES],
 				new_nodes + i,
 				sizeof(new_nodes[0]) * (nr_new_nodes - i));
 			new_nodes[--nr_new_nodes] = NULL;
-		} else if (keys) {
+		} else if (u64s) {
 			/* move part of n2 into n1 */
 			new_nodes[i]->key.p = last->p;
 
 			memcpy(bset_bkey_last(n1),
 			       n2->start,
-			       keys * sizeof(u64));
-			n1->keys += keys;
+			       u64s * sizeof(u64));
+			n1->u64s += u64s;
 
 			memmove(n2->start,
-				bset_bkey_idx(n2, keys),
-				(n2->keys - keys) * sizeof(u64));
-			n2->keys -= keys;
+				bset_bkey_idx(n2, u64s),
+				(n2->u64s - u64s) * sizeof(u64));
+			n2->u64s -= u64s;
 		}
 	}
 
 	for (i = 0; i < nr_new_nodes; i++) {
-		new_nodes[i]->keys.nr_live_keys =
-			new_nodes[i]->keys.set[0].data->keys;
+		new_nodes[i]->keys.nr_live_u64s =
+			new_nodes[i]->keys.set[0].data->u64s;
 
 		six_unlock_write(&new_nodes[i]->lock);
 		bch_btree_node_write(new_nodes[i], &cl, NULL);

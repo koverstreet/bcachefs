@@ -381,8 +381,8 @@ struct cache_sb {
 
 	/* Index of the first bucket used: */
 	__u16			first_bucket;
-	/* Size of variable length portion, in u64s: */
-	__u16			keys;
+	/* Size of variable length portion: */
+	__u16			u64s;
 	union {
 		struct cache_member	members[0];
 		/*
@@ -432,7 +432,7 @@ static inline unsigned bch_journal_buckets_offset(struct cache_sb *sb)
 
 static inline unsigned bch_nr_journal_buckets(struct cache_sb *sb)
 {
-	return sb->keys - bch_journal_buckets_offset(sb);
+	return sb->u64s - bch_journal_buckets_offset(sb);
 }
 
 static inline _Bool __SB_IS_BDEV(__u64 version)
@@ -507,8 +507,8 @@ enum btree_id {
 
 #undef DEF_BTREE_ID
 
-struct jset_keys {
-	__u16			keys;
+struct jset_entry {
+	__u16			u64s;
 	__u8			btree_id;
 	__u8			level;
 	__u32			flags; /* designates what this jset holds */
@@ -519,9 +519,9 @@ struct jset_keys {
 	};
 };
 
-#define JSET_KEYS_U64s	(sizeof(struct jset_keys) / sizeof(__u64))
+#define JSET_KEYS_U64s	(sizeof(struct jset_entry) / sizeof(__u64))
 
-BITMASK(JKEYS_TYPE,	struct jset_keys, flags, 0, 2);
+BITMASK(JKEYS_TYPE,	struct jset_entry, flags, 0, 2);
 #define JKEYS_BTREE_KEYS	0
 #define JKEYS_BTREE_ROOT	1
 #define JKEYS_PRIO_PTRS		2
@@ -538,10 +538,10 @@ struct jset {
 
 	__u16			read_clock;
 	__u16			write_clock;
-	__u32			keys; /* size of d[] in u64s */
+	__u32			u64s; /* size of d[] in u64s */
 
 	union {
-		struct jset_keys start[0];
+		struct jset_entry start[0];
 		__u64		_data[0];
 	};
 };
@@ -592,7 +592,7 @@ struct bset {
 	__u64			journal_seq;
 
 	__u32			pad;
-	__u32			keys; /* count of d[] in u64s */
+	__u32			u64s; /* count of d[] in u64s */
 
 	union {
 		struct bkey	start[0];

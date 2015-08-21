@@ -231,11 +231,11 @@ static u64 btree_csum_set(struct btree *b, struct bset *i)
 
 #define btree_node_error(b, ca, ptr, fmt, ...)				\
 	bch_cache_error(ca,						\
-		"btree node error at btree %u level %u/%u bucket %zu block %u keys %u: " fmt,\
+		"btree node error at btree %u level %u/%u bucket %zu block %u u64s %u: " fmt,\
 		(b)->btree_id, (b)->level, btree_node_root(b)		\
 			    ? btree_node_root(b)->level : -1,		\
 		PTR_BUCKET_NR(ca, ptr), bset_block_offset(b, i),	\
-		i->keys, ##__VA_ARGS__)
+		i->u64s, ##__VA_ARGS__)
 
 void bch_btree_node_read_done(struct btree *b, struct cache *ca,
 			      const struct bch_extent_ptr *ptr)
@@ -283,7 +283,7 @@ void bch_btree_node_read_done(struct btree *b, struct cache *ca,
 		if (i->csum != btree_csum_set(b, i))
 			goto err;
 
-		if (i != b->keys.set[0].data && !i->keys)
+		if (i != b->keys.set[0].data && !i->u64s)
 			btree_node_error(b, ca, ptr, "empty set");
 
 		for (k = i->start;
@@ -294,7 +294,7 @@ void bch_btree_node_read_done(struct btree *b, struct cache *ca,
 					(void *) bset_bkey_last(i) -
 					(void *) k);
 
-				i->keys = (u64 *) k - i->_data;
+				i->u64s = (u64 *) k - i->_data;
 				break;
 			}
 
@@ -302,7 +302,7 @@ void bch_btree_node_read_done(struct btree *b, struct cache *ca,
 				btree_node_error(b, ca, ptr,
 					"key extends past end of bset");
 
-				i->keys = (u64 *) k - i->_data;
+				i->u64s = (u64 *) k - i->_data;
 				break;
 			}
 
@@ -315,7 +315,7 @@ void bch_btree_node_read_done(struct btree *b, struct cache *ca,
 				btree_node_error(b, ca, ptr,
 						 "invalid bkey %s", buf);
 
-				i->keys -= k->u64s;
+				i->u64s -= k->u64s;
 				memmove(k, bkey_next(k),
 					(void *) bset_bkey_last(i) -
 					(void *) k);
@@ -476,7 +476,7 @@ static void do_btree_node_write(struct closure *cl)
 
 	BUG_ON(b->written >= btree_blocks(b->c));
 	BUG_ON(b->written + blocks_to_write > btree_blocks(b->c));
-	BUG_ON(b->written && !i->keys);
+	BUG_ON(b->written && !i->u64s);
 	BUG_ON(btree_bset_first(b)->seq != i->seq);
 	bch_check_keys(&b->keys, "writing");
 
@@ -1891,7 +1891,7 @@ static int btree_split(struct btree *b,
 		k = set1->start;
 		while (k != bset_bkey_last(set1))
 			if (bkey_deleted(k)) {
-				set1->keys -= k->u64s;
+				set1->u64s -= k->u64s;
 				memmove(k, bkey_next(k),
 					(void *) bset_bkey_last(set1) -
 					(void *) k);
@@ -1907,7 +1907,7 @@ static int btree_split(struct btree *b,
 
 	if (set_blocks(set1,
 		       block_bytes(n1->c)) > btree_blocks(iter->c) * 3 / 4) {
-		trace_bcache_btree_node_split(b, set1->keys);
+		trace_bcache_btree_node_split(b, set1->u64s);
 
 		n2 = bch_btree_node_alloc(iter->c, b->level,
 					  iter->btree_id, reserve);
@@ -1926,7 +1926,7 @@ static int btree_split(struct btree *b,
 		 * search tree yet
 		 */
 		for (k = set1->start;
-		     ((u64 *) k - set1->_data) < (set1->keys * 3) / 5;
+		     ((u64 *) k - set1->_data) < (set1->u64s * 3) / 5;
 		     k = bkey_next(k))
 			;
 
@@ -1934,18 +1934,18 @@ static int btree_split(struct btree *b,
 
 		k = bkey_next(k);
 
-		set2->keys = (u64 *) bset_bkey_last(set1) - (u64 *) k;
-		set1->keys -= set2->keys;
+		set2->u64s = (u64 *) bset_bkey_last(set1) - (u64 *) k;
+		set1->u64s -= set2->u64s;
 
-		n1->keys.nr_live_keys = set1->keys;
-		n2->keys.nr_live_keys = set2->keys;
+		n1->keys.nr_live_u64s = set1->u64s;
+		n2->keys.nr_live_u64s = set2->u64s;
 
-		BUG_ON(!set1->keys);
-		BUG_ON(!set2->keys);
+		BUG_ON(!set1->u64s);
+		BUG_ON(!set2->u64s);
 
 		memcpy(set2->start,
 		       bset_bkey_last(set1),
-		       set2->keys * sizeof(u64));
+		       set2->u64s * sizeof(u64));
 
 		n2->key.p = b->key.p;
 
@@ -1967,7 +1967,7 @@ static int btree_split(struct btree *b,
 			btree_gc_mark_node(b->c, n1, NULL);
 		six_unlock_write(&b->lock);
 	} else {
-		trace_bcache_btree_node_compact(b, set1->keys);
+		trace_bcache_btree_node_compact(b, set1->u64s);
 
 		six_unlock_write(&n1->lock);
 		bch_keylist_add(parent_keys, &n1->key);

@@ -31,22 +31,22 @@ static inline void bch_journal_add_entry(struct jset *j, const void *data,
 					 size_t u64s, unsigned type,
 					 enum btree_id id, unsigned level)
 {
-	struct jset_keys *jkeys = (struct jset_keys *) bset_bkey_last(j);
+	struct jset_entry *jkeys = (struct jset_entry *) bset_bkey_last(j);
 
-	jkeys->keys = u64s;
+	jkeys->u64s = u64s;
 	jkeys->btree_id = id;
 	jkeys->level = level;
 	jkeys->flags = 0;
 	SET_JKEYS_TYPE(jkeys, type);
 
 	memcpy(jkeys->_data, data, u64s * sizeof(u64));
-	j->keys += jset_u64s(u64s);
+	j->u64s += jset_u64s(u64s);
 }
 
-static struct jset_keys *bch_journal_find_entry(struct jset *j, unsigned type,
+static struct jset_entry *bch_journal_find_entry(struct jset *j, unsigned type,
 						enum btree_id id)
 {
-	struct jset_keys *jkeys;
+	struct jset_entry *jkeys;
 
 	for_each_jset_jkeys(jkeys, j)
 		if (JKEYS_TYPE(jkeys) == type && jkeys->btree_id == id)
@@ -59,7 +59,7 @@ struct bkey *bch_journal_find_btree_root(struct cache_set *c, struct jset *j,
 					 enum btree_id id, unsigned *level)
 {
 	struct bkey *k;
-	struct jset_keys *jkeys =
+	struct jset_entry *jkeys =
 		bch_journal_find_entry(j, JKEYS_BTREE_ROOT, id);
 
 	if (!jkeys)
@@ -68,7 +68,7 @@ struct bkey *bch_journal_find_btree_root(struct cache_set *c, struct jset *j,
 	k = jkeys->start;
 	*level = jkeys->level;
 
-	if (!jkeys->keys || jkeys->keys != k->u64s ||
+	if (!jkeys->u64s || jkeys->u64s != k->u64s ||
 	    bkey_invalid(c, BKEY_TYPE_BTREE, k)) {
 		bch_cache_set_error(c, "invalid btree root in journal");
 		return NULL;
@@ -422,7 +422,7 @@ static void journal_entries_free(struct list_head *list)
 
 const char *bch_journal_read(struct cache_set *c, struct list_head *list)
 {
-	struct jset_keys *prio_ptrs;
+	struct jset_entry *prio_ptrs;
 	struct journal_list jlist;
 	struct jset *j;
 	struct list_head *l;
@@ -474,7 +474,7 @@ const char *bch_journal_read(struct cache_set *c, struct list_head *list)
 
 	memcpy(c->journal.prio_buckets,
 	       prio_ptrs->_data,
-	       prio_ptrs->keys * sizeof(u64));
+	       prio_ptrs->u64s * sizeof(u64));
 
 	return 0;
 }
@@ -482,7 +482,7 @@ const char *bch_journal_read(struct cache_set *c, struct list_head *list)
 void bch_journal_mark(struct cache_set *c, struct list_head *list)
 {
 	struct bkey *k;
-	struct jset_keys *j;
+	struct jset_entry *j;
 	struct journal_replay *r;
 
 	list_for_each_entry(r, list, list)
@@ -526,7 +526,7 @@ int bch_journal_replay(struct cache_set *c, struct list_head *list)
 {
 	int ret = 0, keys = 0, entries = 0;
 	struct bkey *k;
-	struct jset_keys *jkeys;
+	struct jset_entry *jkeys;
 	struct journal_replay *i =
 		list_entry(list->prev, struct journal_replay, list);
 
@@ -572,11 +572,11 @@ err:
 
 static int bch_set_nr_journal_buckets(struct cache *ca, unsigned nr)
 {
-	unsigned keys = bch_journal_buckets_offset(&ca->sb) + nr;
+	unsigned u64s = bch_journal_buckets_offset(&ca->sb) + nr;
 	u64 *p;
 	int ret;
 
-	ret = bch_super_realloc(ca, keys);
+	ret = bch_super_realloc(ca, u64s);
 	if (ret)
 		return ret;
 
@@ -585,7 +585,7 @@ static int bch_set_nr_journal_buckets(struct cache *ca, unsigned nr)
 		return -ENOMEM;
 
 	ca->journal.seq = p;
-	ca->sb.keys = keys;
+	ca->sb.u64s = u64s;
 
 	return 0;
 }
@@ -912,7 +912,7 @@ void bch_journal_next(struct journal *j)
 		j->cur_pin = &fifo_back(&j->pin);
 
 	j->cur->data->seq	= ++j->seq;
-	j->cur->data->keys	= 0;
+	j->cur->data->u64s	= 0;
 	j->u64s_remaining	= 0;
 }
 
@@ -1182,7 +1182,7 @@ static bool __journal_res_get(struct cache_set *c, struct journal_res *res,
 			 * a journal bucket) but there's nothing in this journal
 			 * entry yet - skip it and allocate a new journal entry
 			 */
-			if (!c->journal.cur->data->keys) {
+			if (!c->journal.cur->data->u64s) {
 				BUG_ON(test_bit(JOURNAL_DIRTY,
 						&c->journal.flags));
 

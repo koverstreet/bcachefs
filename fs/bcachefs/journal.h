@@ -38,14 +38,14 @@
  * JOURNAL ENTRIES:
  *
  * A journal entry is variable size (struct jset), it's got a fixed length
- * header and then a variable number of struct jset_keys entries.
+ * header and then a variable number of struct jset_entry entries.
  *
  * Journal entries are identified by monotonically increasing 64 bit sequence
  * numbers - jset->seq; other places in the code refer to this sequence number.
  *
- * A jset_keys entry contains one or more bkeys (which is what gets inserted
+ * A jset_entry entry contains one or more bkeys (which is what gets inserted
  * into the b-tree). We need a container to indicate which b-tree the key is
- * for; also, the roots of the various b-trees are stored in jset_keys entries
+ * for; also, the roots of the various b-trees are stored in jset_entry entries
  * (one for each b-tree) - this lets us add new b-tree types without changing
  * the on disk format.
  *
@@ -110,7 +110,7 @@
 
 #include "journal_types.h"
 
-static inline struct jset_keys *jset_keys_next(struct jset_keys *j)
+static inline struct jset_entry *jset_keys_next(struct jset_entry *j)
 {
 	return (void *) __bset_bkey_last(j);
 }
@@ -131,7 +131,7 @@ struct journal_replay {
 
 #define for_each_jset_jkeys(jkeys, jset)			\
 	for (jkeys = (jset)->start;				\
-	     jkeys < (struct jset_keys *) bset_bkey_last(jset);	\
+	     jkeys < (struct jset_entry *) bset_bkey_last(jset);	\
 	     jkeys = jset_keys_next(jkeys))
 
 struct closure;
@@ -169,7 +169,7 @@ static inline void bch_journal_res_put(struct cache_set *c,
  */
 static inline unsigned jset_u64s(unsigned u64s)
 {
-	return u64s + sizeof(struct jset_keys) / sizeof(u64);
+	return u64s + sizeof(struct jset_entry) / sizeof(u64);
 }
 
 static inline bool journal_res_full(struct journal_res *res,

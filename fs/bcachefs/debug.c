@@ -69,7 +69,7 @@ void bch_btree_verify(struct btree *b)
 	bch_btree_node_read_done(v, ca, 0);
 	sorted = v->keys.set->data;
 
-	if (inmemory->keys != sorted->keys ||
+	if (inmemory->u64s != sorted->u64s ||
 	    memcmp(inmemory->start,
 		   sorted->start,
 		   (void *) bset_bkey_last(inmemory) - (void *) inmemory->start)) {
@@ -95,7 +95,7 @@ void bch_btree_verify(struct btree *b)
 		printk(KERN_ERR "*** block %zu not written\n",
 		       ((void *) i - (void *) ondisk) / block_bytes(b->c));
 
-		for (j = 0; j < inmemory->keys; j++)
+		for (j = 0; j < inmemory->u64s; j++)
 			if (inmemory->_data[j] != sorted->_data[j])
 				break;
 
