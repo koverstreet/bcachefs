@@ -1328,7 +1328,7 @@ static struct btree *bch_btree_node_alloc(struct cache_set *c,
 retry:
 	if (bch_bucket_alloc_set(c, reserve, &k.key,
 				 CACHE_SET_META_REPLICAS_WANT(&c->sb),
-				 NULL, NULL))
+				 &c->cache_all, NULL))
 		goto err;
 
 	SET_KEY_SIZE(&k.key, c->btree_pages * PAGE_SECTORS);
@@ -1394,7 +1394,12 @@ static int __btree_check_reserve(struct cache_set *c,
 					fifo_used(&ca->free[reserve]),
 					required, cl);
 
-			ret = bch_bucket_wait(c, reserve, cl);
+			if (cl) {
+				closure_wait(&c->bucket_wait, cl);
+				ret = -EAGAIN;
+			} else {
+				ret = -ENOSPC;
+			}
 
 			spin_unlock(&ca->freelist_lock);
 			rcu_read_unlock();

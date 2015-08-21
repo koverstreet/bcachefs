@@ -544,17 +544,6 @@ static int bch_allocator_thread(void *arg)
 
 /* Allocation */
 
-int bch_bucket_wait(struct cache_set *c, enum alloc_reserve reserve,
-		    struct closure *cl)
-{
-	if (cl) {
-		closure_wait(&c->bucket_wait, cl);
-		return -EAGAIN;
-	}
-
-	return -ENOSPC;
-}
-
 long bch_bucket_alloc(struct cache *ca, enum alloc_reserve reserve)
 {
 	bool meta = reserve <= RESERVE_METADATA_LAST;
@@ -640,8 +629,7 @@ static void bch_bucket_free_never_used(struct cache_set *c, struct bkey *k)
 static struct cache *bch_next_cache(struct cache_set *c,
 				    enum alloc_reserve reserve,
 				    struct cache_group *devs,
-				    long *cache_used,
-				    struct closure *cl)
+				    long *cache_used)
 {
 	struct cache *ca;
 	size_t bucket_count = 0, rand;
@@ -663,10 +651,8 @@ static struct cache *bch_next_cache(struct cache_set *c,
 		bucket_count += buckets_free_cache(ca, reserve);
 	}
 
-	if (!bucket_count) {
-		trace_bcache_bucket_alloc_set_fail(c, reserve, cl);
-		return ERR_PTR(bch_bucket_wait(c, reserve, cl));
-	}
+	if (!bucket_count)
+		return ERR_PTR(-ENOSPC);
 
 	/*
 	 * We create a weighted selection by using the number of free buckets
@@ -679,8 +665,6 @@ static struct cache *bch_next_cache(struct cache_set *c,
 	get_random_bytes(&rand, sizeof(rand));
 	rand %= bucket_count;
 
-	ca = NULL;
-
 	for (i = 0; i < devs->nr_devices; i++) {
 		if (!(ca = rcu_dereference(devs->devices[i])))
 			continue;
@@ -691,23 +675,22 @@ static struct cache *bch_next_cache(struct cache_set *c,
 		bucket_count -= buckets_free_cache(ca, reserve);
 
 		if (rand >= bucket_count)
-			break;
+			return ca;
 	}
 
 	/*
-	 * If the bucket free counters changed while we were running, we might
-	 * fall off the end, so just return the last dev we saw
+	 * If we fall off the end, it means we raced because of bucket counters
+	 * changing - return NULL so __bch_bucket_alloc_set() knows to retry
 	 */
 
-	return ca;
+	return NULL;
 }
 
-int bch_bucket_alloc_set(struct cache_set *c, enum alloc_reserve reserve,
-			 struct bkey *k, int n,
-			 struct cache_group *tier,
-			 struct closure *cl)
+static int __bch_bucket_alloc_set(struct cache_set *c,
+				  enum alloc_reserve reserve,
+				  struct bkey *k, int n,
+				  struct cache_group *devs)
 {
-	struct cache_group *devs = tier ?: &c->cache_tiers[0];
 	long caches_used[BITS_TO_LONGS(MAX_CACHES_PER_SET)];
 	int i, ret;
 
@@ -724,24 +707,29 @@ int bch_bucket_alloc_set(struct cache_set *c, enum alloc_reserve reserve,
 		struct cache *ca;
 		unsigned seq;
 		long r;
-retry:
+
 		/* first ptr goes to the specified tier, the rest to any */
 		do {
+			struct cache_group *d;
+
 			seq = read_seqcount_begin(&devs->lock);
-			ca = bch_next_cache(c, reserve, devs,
-					    caches_used, cl);
-		} while (read_seqcount_retry(&devs->lock, seq));
 
-		/* tier went away? */
-		if (!ca) {
-			/* we were asked for a specific tier */
-			if (tier)
-				return -ENOSPC;
-			devs = &c->cache_all;
-			goto retry;
-		}
+			d = (!i && devs == &c->cache_all &&
+			     c->cache_tiers[0].nr_devices)
+				? &c->cache_tiers[0]
+				: devs;
 
-		if (IS_ERR_OR_NULL(ca)) {
+			ca = devs->nr_devices
+				? bch_next_cache(c, reserve, d, caches_used)
+				: ERR_PTR(-ENOSPC);
+
+			/*
+			 * If ca == NULL, we raced because of bucket counters
+			 * changing
+			 */
+		} while (read_seqcount_retry(&devs->lock, seq) || !ca);
+
+		if (IS_ERR(ca)) {
 			ret = PTR_ERR(ca);
 			goto err;
 		}
@@ -757,10 +745,7 @@ retry:
 		k->val[i] = PTR(ca->bucket_gens[r],
 				bucket_to_sector(c, r),
 				ca->sb.nr_this_dev);
-
 		bch_set_extent_ptrs(k, i + 1);
-
-		devs = &c->cache_all;
 	}
 
 	rcu_read_unlock();
@@ -769,6 +754,34 @@ err:
 	rcu_read_unlock();
 	bch_bucket_free_never_used(c, k);
 	return ret;
+}
+
+int bch_bucket_alloc_set(struct cache_set *c, enum alloc_reserve reserve,
+			 struct bkey *k, int n, struct cache_group *tier,
+			 struct closure *cl)
+{
+	if (!__bch_bucket_alloc_set(c, reserve, k, n, tier))
+		return 0;
+
+	trace_bcache_bucket_alloc_set_fail(c, reserve, cl);
+
+	if (!tier->nr_devices)
+		return -ENOSPC;
+
+	if (cl) {
+		closure_wait(&c->bucket_wait, cl);
+
+		/* Must retry allocation after adding ourself to waitlist */
+
+		if (!__bch_bucket_alloc_set(c, reserve, k, n, tier)) {
+			closure_wake_up(&c->bucket_wait);
+			return 0;
+		}
+
+		return -EAGAIN;
+	}
+
+	return -ENOSPC;
 }
 
 static void __bch_open_bucket_put(struct cache_set *c, struct open_bucket *b)
@@ -865,7 +878,7 @@ static struct open_bucket *bch_open_bucket_alloc(struct cache_set *c,
 	} else {
 		ret = bch_bucket_alloc_set(c, RESERVE_NONE, &b->key,
 				CACHE_SET_DATA_REPLICAS_WANT(&c->sb),
-				NULL, cl);
+				&c->cache_all, cl);
 		if (ret)
 			goto err;
 	}
