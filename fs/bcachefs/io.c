@@ -131,7 +131,7 @@ void bch_submit_bbio_replicas(struct bio *bio, struct cache_set *c,
 	}
 }
 
-void bch_bbio_reset(struct bbio *b)
+static void bch_bbio_reset(struct bbio *b)
 {
 	struct bvec_iter *iter = &b->bio.bi_iter;
 
@@ -241,9 +241,9 @@ void bch_bbio_endio(struct bbio *bio, int error, const char *m)
 	closure_put(cl);
 }
 
-/* */
+/* Writes */
 
-static void bch_data_insert_start(struct closure *);
+static void __bch_write(struct closure *);
 
 static void bio_csum(struct bio *bio, struct bkey *k)
 {
@@ -261,12 +261,10 @@ static void bio_csum(struct bio *bio, struct bkey *k)
 	k->val[bch_extent_ptrs(k)] = crc;
 }
 
-/* Writes */
-
 static int btree_insert_fn(struct btree_op *b_op, struct btree *b)
 {
-	struct data_insert_op *op = container_of(b_op,
-					struct data_insert_op, op);
+	struct bch_write_op *op = container_of(b_op,
+					struct bch_write_op, op);
 	struct bkey *replace_key = op->replace ? &op->replace_key : NULL;
 
 	int ret = bch_btree_insert_node(b, &op->op, &op->insert_keys,
@@ -275,9 +273,9 @@ static int btree_insert_fn(struct btree_op *b_op, struct btree *b)
 	return bch_keylist_empty(&op->insert_keys) ? MAP_DONE : ret;
 }
 
-static void bch_data_insert_keys_done(struct closure *cl)
+static void bch_write_done(struct closure *cl)
 {
-	struct data_insert_op *op = container_of(cl, struct data_insert_op, cl);
+	struct bch_write_op *op = container_of(cl, struct bch_write_op, cl);
 	unsigned i;
 
 	if (op->op.insert_collision)
@@ -289,16 +287,16 @@ static void bch_data_insert_keys_done(struct closure *cl)
 			op->open_buckets[i] = NULL;
 		}
 
-	if (!op->insert_data_done)
-		continue_at(cl, bch_data_insert_start, op->io_wq);
+	if (!op->write_done)
+		continue_at(cl, __bch_write, op->io_wq);
 
 	bch_keylist_free(&op->insert_keys);
 	closure_return(cl);
 }
 
-static void __bch_data_insert_keys(struct closure *cl)
+static void __bch_write_index(struct closure *cl)
 {
-	struct data_insert_op *op = container_of(cl, struct data_insert_op,
+	struct bch_write_op *op = container_of(cl, struct bch_write_op,
 					op.cl);
 	struct keylist *keys = &op->insert_keys;
 	int ret = 0;
@@ -312,34 +310,34 @@ static void __bch_data_insert_keys(struct closure *cl)
 	}
 
 	if (ret == -EAGAIN)
-		continue_at(cl, __bch_data_insert_keys, op->c->wq);
+		continue_at(cl, __bch_write_index, op->c->wq);
 
 	closure_return(cl);
 }
 
 /**
- * bch_data_insert_keys - insert extent btree keys for a write
+ * bch_write_index - after a write, update index to point to new data
  */
-static void bch_data_insert_keys(struct closure *cl)
+static void bch_write_index(struct closure *cl)
 {
-	struct data_insert_op *op = container_of(cl, struct data_insert_op, cl);
+	struct bch_write_op *op = container_of(cl, struct bch_write_op, cl);
 	enum btree_id id = BTREE_ID_EXTENTS;
 
 	__bch_btree_op_init(&op->op, id, op->btree_alloc_reserve, 0);
 
-	closure_call(&op->op.cl, __bch_data_insert_keys, NULL, cl);
-	continue_at(cl, bch_data_insert_keys_done, op->c->wq);
+	closure_call(&op->op.cl, __bch_write_index, NULL, cl);
+	continue_at(cl, bch_write_done, op->c->wq);
 }
 
 /**
- * bch_data_invalidate - discard range of keys
+ * bch_discard - discard range of keys
  *
  * Used to implement discard, and to handle when writethrough write hits
  * a write error on the cache device.
  */
-static void bch_data_invalidate(struct closure *cl)
+static void bch_discard(struct closure *cl)
 {
-	struct data_insert_op *op = container_of(cl, struct data_insert_op, cl);
+	struct bch_write_op *op = container_of(cl, struct bch_write_op, cl);
 	struct keylist *keys = &op->insert_keys;
 	struct bio *bio = op->bio;
 
@@ -363,15 +361,15 @@ static void bch_data_invalidate(struct closure *cl)
 		bch_keylist_push(keys);
 	}
 
-	op->insert_data_done = true;
+	op->write_done = true;
 	bio_put(bio);
 out:
-	continue_at(cl, bch_data_insert_keys, op->c->wq);
+	continue_at(cl, bch_write_index, op->c->wq);
 }
 
-static void bch_data_insert_error(struct closure *cl)
+static void bch_write_error(struct closure *cl)
 {
-	struct data_insert_op *op = container_of(cl, struct data_insert_op, cl);
+	struct bch_write_op *op = container_of(cl, struct bch_write_op, cl);
 
 	/*
 	 * Our data write just errored, which means we've got a bunch of keys to
@@ -396,21 +394,20 @@ static void bch_data_insert_error(struct closure *cl)
 
 	op->insert_keys.top = dst;
 
-	bch_data_insert_keys(cl);
+	bch_write_index(cl);
 }
 
-static void bch_data_insert_endio(struct bio *bio)
+static void bch_write_endio(struct bio *bio)
 {
 	struct closure *cl = bio->bi_private;
-	struct data_insert_op *op = container_of(cl, struct data_insert_op, cl);
+	struct bch_write_op *op = container_of(cl, struct bch_write_op, cl);
 
 	if (bio->bi_error) {
 		/* TODO: We could try to recover from this. */
 		if (!KEY_CACHED(&op->insert_key))
 			op->error = bio->bi_error;
 		else if (!op->replace)
-			set_closure_fn(cl, bch_data_insert_error,
-				       op->c->wq);
+			set_closure_fn(cl, bch_write_error, op->c->wq);
 		else
 			set_closure_fn(cl, NULL, NULL);
 	}
@@ -418,15 +415,15 @@ static void bch_data_insert_endio(struct bio *bio)
 	bch_bbio_endio(to_bbio(bio), bio->bi_error, "writing data to cache");
 }
 
-static void bch_data_insert_start(struct closure *cl)
+static void __bch_write(struct closure *cl)
 {
-	struct data_insert_op *op = container_of(cl, struct data_insert_op, cl);
+	struct bch_write_op *op = container_of(cl, struct bch_write_op, cl);
 	struct bio *bio = op->bio, *n;
 	unsigned open_bucket_nr = 0, ptrs_from;
 	struct open_bucket *b;
 
 	if (op->discard)
-		return bch_data_invalidate(cl);
+		return bch_discard(cl);
 
 	bch_extent_drop_stale(op->c, &op->insert_key);
 	ptrs_from = bch_extent_ptrs(&op->insert_key);
@@ -444,14 +441,14 @@ static void bch_data_insert_start(struct closure *cl)
 		BUG_ON(bio_sectors(bio) != KEY_SIZE(&op->insert_key));
 
 		if (open_bucket_nr == ARRAY_SIZE(op->open_buckets))
-			continue_at(cl, bch_data_insert_keys,
+			continue_at(cl, bch_write_index,
 				    op->c->wq);
 
 		/* for the device pointers and 1 for the chksum */
 		if (bch_keylist_realloc(&op->insert_keys,
 					BKEY_EXTENT_MAX_U64s +
 					(KEY_CSUM(&op->insert_key) ? 1 : 0)))
-			continue_at(cl, bch_data_insert_keys, op->c->wq);
+			continue_at(cl, bch_write_index, op->c->wq);
 
 		k = op->insert_keys.top;
 		bkey_copy(k, &op->insert_key);
@@ -464,10 +461,10 @@ static void bch_data_insert_start(struct closure *cl)
 			 * before allocating another open bucket. We only hit
 			 * this case if open_bucket_nr > 1. */
 			if (bch_keylist_empty(&op->insert_keys))
-				continue_at(cl, bch_data_insert_start,
+				continue_at(cl, __bch_write,
 					    op->io_wq);
 			else
-				continue_at(cl, bch_data_insert_keys,
+				continue_at(cl, bch_write_index,
 					    op->c->wq);
 		} else if (IS_ERR(b))
 			goto err;
@@ -477,7 +474,7 @@ static void bch_data_insert_start(struct closure *cl)
 		bch_cut_front(k, &op->insert_key);
 
 		n = bio_next_split(bio, KEY_SIZE(k), GFP_NOIO, split);
-		n->bi_end_io	= bch_data_insert_endio;
+		n->bi_end_io	= bch_write_endio;
 		n->bi_private	= cl;
 
 		if (KEY_CSUM(k))
@@ -494,8 +491,8 @@ static void bch_data_insert_start(struct closure *cl)
 		bch_keylist_push(&op->insert_keys);
 	} while (n != bio);
 
-	op->insert_data_done = true;
-	continue_at(cl, bch_data_insert_keys, op->c->wq);
+	op->write_done = true;
+	continue_at(cl, bch_write_index, op->c->wq);
 err:
 	if (KEY_CACHED(&op->insert_key)) {
 		/*
@@ -506,11 +503,11 @@ err:
 		 */
 
 		op->discard = true;
-		return bch_data_invalidate(cl);
+		return bch_discard(cl);
 	}
 
 	op->error		= -ENOSPC;
-	op->insert_data_done	= true;
+	op->write_done	= true;
 	bio_put(bio);
 
 	/*
@@ -519,13 +516,13 @@ err:
 	 * around)
 	 */
 	if (!bch_keylist_empty(&op->insert_keys))
-		continue_at(cl, bch_data_insert_keys, op->c->wq);
+		continue_at(cl, bch_write_index, op->c->wq);
 	else
 		closure_return(cl);
 }
 
 /**
- * bch_data_insert - handle a write to a cache device or flash only volume
+ * bch_write - handle a write to a cache device or flash only volume
  *
  * This is the starting point for any data to end up in a cache device; it could
  * be from a normal write, or a writeback write, or a write to a flash only
@@ -543,9 +540,9 @@ err:
  * If op->discard is true, instead of inserting the data it invalidates the
  * region of the cache represented by op->bio and op->inode.
  */
-void bch_data_insert(struct closure *cl)
+void bch_write(struct closure *cl)
 {
-	struct data_insert_op *op = container_of(cl, struct data_insert_op, cl);
+	struct bch_write_op *op = container_of(cl, struct bch_write_op, cl);
 	struct cache_set *c = op->c;
 	u64 inode = KEY_INODE(&op->insert_key);
 
@@ -553,12 +550,12 @@ void bch_data_insert(struct closure *cl)
 			   op->discard);
 
 	if (!bio_sectors(op->bio)) {
-		WARN_ONCE(1, "bch_data_insert() called with empty bio");
+		WARN_ONCE(1, "bch_write() called with empty bio");
 		closure_return(cl);
 	}
 
 	/*
-	 * This ought to be initialized in bch_data_insert_op_init(), but struct
+	 * This ought to be initialized in bch_write_op_init(), but struct
 	 * cache_set isn't exported
 	 */
 	if (!op->io_wq)
@@ -602,16 +599,13 @@ void bch_data_insert(struct closure *cl)
 
 	bch_keylist_init(&op->insert_keys);
 	bio_get(op->bio);
-	continue_at_nobarrier(cl, bch_data_insert_start, NULL);
+	continue_at_nobarrier(cl, __bch_write, NULL);
 }
 
-void bch_data_insert_op_init(struct data_insert_op *op,
-			     struct cache_set *c,
-			     struct bio *bio,
-			     struct write_point *wp,
-			     bool wait, bool discard, bool flush,
-			     struct bkey *insert_key,
-			     struct bkey *replace_key)
+void bch_write_op_init(struct bch_write_op *op, struct cache_set *c,
+		       struct bio *bio, struct write_point *wp,
+		       bool wait, bool discard, bool flush,
+		       struct bkey *insert_key, struct bkey *replace_key)
 {
 	if (!wp) {
 		unsigned wp_idx = hash_long((unsigned long) current,
@@ -647,7 +641,7 @@ void bch_data_insert_op_init(struct data_insert_op *op,
 struct cache_promote_op {
 	struct closure		cl;
 	struct bio		*orig_bio;
-	struct data_insert_op	iop;
+	struct bch_write_op	iop;
 	bool			stale; /* was the ptr stale after the read? */
 	struct bbio		bio; /* must be last */
 };
@@ -686,7 +680,7 @@ static void cache_promote_write(struct closure *cl)
 	if (!op->stale &&
 	    !op->iop.error &&
 	    !test_bit(CACHE_SET_STOPPING, &op->iop.c->flags))
-		closure_call(&op->iop.cl, bch_data_insert, NULL, cl);
+		closure_call(&op->iop.cl, bch_write, NULL, cl);
 
 	closure_return_with_destructor(cl, cache_promote_done);
 }
@@ -755,11 +749,10 @@ void __cache_promote(struct cache_set *c, struct bbio *orig_bio,
 	op->orig_bio		= &orig_bio->bio;
 	op->stale		= 0;
 
-	bch_data_insert_op_init(&op->iop, c, bio,
-				&c->tier_write_points[0],
-				false, false, false,
-				replace_key,
-				replace_key);
+	bch_write_op_init(&op->iop, c, bio,
+			  &c->tier_write_points[0],
+			  false, false, false,
+			  replace_key, replace_key);
 
 	bch_cut_front(&START_KEY(&orig_bio->key), &op->iop.insert_key);
 	bch_cut_back(&orig_bio->key, &op->iop.insert_key);

@@ -114,9 +114,9 @@ found:
 		io->keybuf		= &ca->moving_gc_keys;
 		io->stats		= stats;
 
-		bch_data_insert_op_init(&io->op, c, &io->bio.bio, wp,
-					false, false, false,
-					&io->w->key, &io->w->key);
+		bch_write_op_init(&io->op, c, &io->bio.bio, wp,
+				  false, false, false,
+				  &io->w->key, &io->w->key);
 		io->op.io_wq		= ca->moving_gc_write;
 		io->op.btree_alloc_reserve = RESERVE_MOVINGGC_BTREE;
 

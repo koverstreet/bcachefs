@@ -212,7 +212,7 @@ struct search {
 	 * - c
 	 * - error
 	 */
-	struct data_insert_op	iop;
+	struct bch_write_op	iop;
 };
 
 /* Common code for the make_request functions */
@@ -616,12 +616,12 @@ static void cached_dev_write(struct cached_dev *dc, struct search *s)
 		closure_bio_submit(bio, cl);
 	}
 
-	bch_data_insert_op_init(&s->iop, dc->disk.c, insert_bio, NULL,
-				!KEY_CACHED(&insert_key), bypass,
-				bio->bi_opf & (REQ_PREFLUSH|REQ_FUA),
-				&insert_key, NULL);
+	bch_write_op_init(&s->iop, dc->disk.c, insert_bio, NULL,
+			  !KEY_CACHED(&insert_key), bypass,
+			  bio->bi_opf & (REQ_PREFLUSH|REQ_FUA),
+			  &insert_key, NULL);
 
-	closure_call(&s->iop.cl, bch_data_insert, NULL, cl);
+	closure_call(&s->iop.cl, bch_write, NULL, cl);
 	continue_at(cl, cached_dev_write_complete, NULL);
 }
 
@@ -765,13 +765,13 @@ static void __flash_dev_make_request(struct request_queue *q, struct bio *bio)
 		s = search_alloc(bio, d);
 		bio = &s->bio.bio;
 
-		bch_data_insert_op_init(&s->iop, d->c, bio, NULL,
-					true,
-					bio_op(bio) == REQ_OP_DISCARD,
-					bio->bi_opf & (REQ_PREFLUSH|REQ_FUA),
-					&KEY(s->inode, 0, 0), NULL);
+		bch_write_op_init(&s->iop, d->c, bio, NULL,
+				  true,
+				  bio_op(bio) == REQ_OP_DISCARD,
+				  bio->bi_opf & (REQ_PREFLUSH|REQ_FUA),
+				  &KEY(s->inode, 0, 0), NULL);
 
-		closure_call(&s->iop.cl, bch_data_insert, NULL, &s->cl);
+		closure_call(&s->iop.cl, bch_write, NULL, &s->cl);
 		continue_at(&s->cl, search_free, NULL);
 	} else {
 		int ret = bch_read(d->c, bio, bcache_dev_inum(d));

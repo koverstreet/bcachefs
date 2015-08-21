@@ -45,14 +45,14 @@ static void moving_io_destructor(struct closure *cl)
 static void write_moving(struct closure *cl)
 {
 	struct moving_io *io = container_of(cl, struct moving_io, cl);
-	struct data_insert_op *op = &io->op;
+	struct bch_write_op *op = &io->op;
 
 	if (!op->error)	{
 		moving_init(io);
 
 		op->bio->bi_iter.bi_sector = KEY_START(&io->w->key);
 
-		closure_call(&op->cl, bch_data_insert, NULL, cl);
+		closure_call(&op->cl, bch_write, NULL, cl);
 	}
 
 	closure_return_with_destructor(cl, moving_io_destructor);

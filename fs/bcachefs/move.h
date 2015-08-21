@@ -12,7 +12,7 @@ struct moving_io {
 	struct closure		cl;
 	struct keybuf_key	*w;
 	struct keybuf		*keybuf;
-	struct data_insert_op	op;
+	struct bch_write_op	op;
 	/* Stats to update from submission context */
 	struct moving_io_stats	*stats;
 	/* Must be last */

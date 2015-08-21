@@ -1,7 +1,7 @@
 #ifndef _BCACHE_IO_H
 #define _BCACHE_IO_H
 
-struct data_insert_op {
+struct bch_write_op {
 	struct closure		cl;
 	struct cache_set	*c;
 	struct workqueue_struct	*io_wq;
@@ -29,7 +29,7 @@ struct data_insert_op {
 		/* Set on completion, if cmpxchg index update failed */
 		unsigned	replace_collision:1;
 		/* Internal */
-		unsigned	insert_data_done:1;
+		unsigned	write_done:1;
 	};
 	};
 
@@ -43,10 +43,10 @@ struct data_insert_op {
 	BKEY_PADDED(replace_key);
 };
 
-void bch_data_insert_op_init(struct data_insert_op *, struct cache_set *,
-			     struct bio *, struct write_point *, bool,
-			     bool, bool, struct bkey *, struct bkey *);
-void bch_data_insert(struct closure *cl);
+void bch_write_op_init(struct bch_write_op *, struct cache_set *,
+		       struct bio *, struct write_point *, bool,
+		       bool, bool, struct bkey *, struct bkey *);
+void bch_write(struct closure *);
 
 int bch_read(struct cache_set *, struct bio *, u64);
 
@@ -63,7 +63,6 @@ void bch_submit_bbio(struct bbio *, struct cache *, struct bkey *,
 		     unsigned, bool);
 void bch_submit_bbio_replicas(struct bio *, struct cache_set *,
 			      struct bkey *, unsigned, bool);
-void bch_bbio_reset(struct bbio *bio);
 
 void __cache_promote(struct cache_set *, struct bbio *, struct bkey *);
 bool cache_promote(struct cache_set *, struct bbio *, struct bkey *, unsigned);

@@ -109,10 +109,10 @@ static void read_tiering(struct cache_set *c)
 		io->keybuf = &c->tiering_keys;
 		io->stats = &stats;
 
-		bch_data_insert_op_init(&io->op, c, &io->bio.bio,
-					&c->tier_write_points[1],
-					true, false, false,
-					&io->w->key, &io->w->key);
+		bch_write_op_init(&io->op, c, &io->bio.bio,
+				  &c->tier_write_points[1],
+				  true, false, false,
+				  &io->w->key, &io->w->key);
 		io->op.io_wq	= c->tiering_write;
 		io->op.btree_alloc_reserve = RESERVE_TIERING_BTREE;
 
