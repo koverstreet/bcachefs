@@ -28,8 +28,8 @@ struct journal {
 	unsigned		u64s_remaining;
 	unsigned		res_count;
 
-	/* minimum sectors free in the bucket(s) we're currently writing to */
-	unsigned		sectors_free;
+	/* minimum blocks free in the bucket(s) we're currently writing to */
+	unsigned		blocks_free;
 
 	/* used when waiting because the journal was full */
 	wait_queue_head_t	wait;
@@ -57,7 +57,7 @@ struct journal_device {
 	 */
 	u64			*seq;
 
-	unsigned		sectors_free;
+	unsigned		blocks_free;
 
 	/* Journal bucket we're currently writing to */
 	unsigned		cur_idx;

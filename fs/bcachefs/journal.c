@@ -614,7 +614,7 @@ static size_t journal_write_u64s_remaining(struct cache_set *c,
 					   struct journal_write *w)
 {
 	ssize_t u64s = (min_t(size_t,
-			     c->journal.sectors_free * block_bytes(c),
+			     c->journal.blocks_free * block_bytes(c),
 			     PAGE_SIZE << JSET_BITS) -
 			set_bytes(w->data)) / sizeof(u64);
 
@@ -671,10 +671,10 @@ static void journal_reclaim(struct cache_set *c)
 		 * journal write
 		 */
 
-		c->journal.sectors_free = 0;
+		c->journal.blocks_free = 0;
 	}
 
-	if (c->journal.sectors_free) {
+	if (c->journal.blocks_free) {
 		/*
 		 * Check that the devices we are writing the journal
 		 * to are still writable, and if not, pick new
@@ -705,7 +705,7 @@ pick_new_devices:
 		 */
 		ca = PTR_CACHE(c, k, i);
 
-		if (!ca->journal.sectors_free)
+		if (!ca->journal.blocks_free)
 			bch_extent_drop_ptr(k, i);
 		else
 			i++;
@@ -738,7 +738,7 @@ pick_new_devices:
 
 		BUG_ON(bch_extent_ptrs(k) >= BKEY_EXTENT_PTRS_MAX);
 
-		ja->sectors_free = ca->sb.bucket_size;
+		ja->blocks_free = ca->sb.bucket_size >> c->block_bits;
 
 		ja->cur_idx = next;
 		k->val[bch_extent_ptrs(k)] =
@@ -754,9 +754,9 @@ pick_new_devices:
 
 	for (i = 0; i < bch_extent_ptrs(k); i++) {
 		ca = PTR_CACHE(c, k, i);
-		if (!c->journal.sectors_free ||
-			(c->journal.sectors_free > ca->journal.sectors_free))
-			c->journal.sectors_free = ca->journal.sectors_free;
+		if (!c->journal.blocks_free ||
+		    (c->journal.blocks_free > ca->journal.blocks_free))
+			c->journal.blocks_free = ca->journal.blocks_free;
 	}
 
 out:
@@ -858,8 +858,8 @@ static void journal_write_locked(struct closure *cl)
 
 	bch_journal_add_prios(c, w->data);
 
-	BUG_ON(c->journal.sectors_free < set_blocks(w->data, block_bytes(c)));
-	c->journal.sectors_free -= set_blocks(w->data, block_bytes(c));
+	BUG_ON(c->journal.blocks_free < set_blocks(w->data, block_bytes(c)));
+	c->journal.blocks_free -= set_blocks(w->data, block_bytes(c));
 
 	w->data->read_clock	= c->prio_clock[READ].hand;
 	w->data->write_clock	= c->prio_clock[WRITE].hand;
@@ -885,7 +885,7 @@ static void journal_write_locked(struct closure *cl)
 			continue;
 		}
 
-		ca->journal.sectors_free -= set_blocks(w->data, block_bytes(c));
+		ca->journal.blocks_free -= set_blocks(w->data, block_bytes(c));
 
 		bio = &ca->journal.bio;
 
@@ -1048,7 +1048,7 @@ static bool __journal_res_get(struct cache_set *c, struct journal_res *res,
 			if (!c->journal.cur->data->keys) {
 				BUG_ON(test_bit(JOURNAL_DIRTY,
 						&c->journal.flags));
-				c->journal.sectors_free = 0;
+				c->journal.blocks_free = 0;
 				c->journal.u64s_remaining = 0;
 				continue;
 			}
