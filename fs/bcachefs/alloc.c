@@ -1013,11 +1013,6 @@ void bch_mark_open_buckets(struct cache_set *c)
 	lockdep_assert_held(&c->bucket_lock);
 
 	for_each_cache(ca, c, ci) {
-		for (i = 0; i < prio_buckets(ca) * 2; i++)
-			if (ca->prio_buckets[i])
-				bch_mark_alloc_bucket(ca,
-					&ca->buckets[ca->prio_buckets[i]]);
-
 		for (j = 0; j < RESERVE_NR; j++)
 			fifo_for_each(i, &ca->free[j], iter)
 				bch_mark_alloc_bucket(ca,
