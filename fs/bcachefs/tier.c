@@ -15,7 +15,9 @@
 static bool tiering_pred(struct keybuf *buf, struct bkey *k)
 {
 	struct cache_set *c = container_of(buf, struct cache_set, tiering_keys);
+	struct cache_member_rcu *mi;
 	unsigned dev;
+	bool ret;
 
 	if (!bch_extent_ptrs(k))
 		return false;
@@ -25,8 +27,11 @@ static bool tiering_pred(struct keybuf *buf, struct bkey *k)
 	dev = max_t(int, 0, PTR_DEV(k, bch_extent_ptrs(k) -
 				    CACHE_SET_DATA_REPLICAS_WANT(&c->sb)));
 
-	return dev < c->sb.nr_in_set &&
-		!CACHE_TIER(&c->members[dev]);
+	mi = cache_member_info_get(c);
+	ret = dev < mi->nr_in_set && !CACHE_TIER(&mi->m[dev]);
+	cache_member_info_put();
+
+	return ret;
 }
 
 static void read_tiering(struct cache_set *c)

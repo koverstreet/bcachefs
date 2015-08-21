@@ -18,10 +18,14 @@ static inline sector_t bucket_remainder(struct cache_set *c, sector_t s)
 	return s & (c->sb.bucket_size - 1);
 }
 
-static inline struct cache_member *cache_member_info(struct cache *ca)
+static inline struct cache_member_rcu *
+cache_member_info_get(struct cache_set *c)
 {
-	return ca->set->members + ca->sb.nr_this_dev;
+	rcu_read_lock();
+	return rcu_dereference(c->members);
 }
+
+#define cache_member_info_put()	rcu_read_unlock()
 
 static inline struct cache *bch_next_cache_rcu(struct cache_set *c,
 					       unsigned *iter)
@@ -79,17 +83,21 @@ void bch_check_mark_super_slowpath(struct cache_set *, struct bkey *, bool);
 static inline bool bch_check_super_marked(struct cache_set *c,
 					  struct bkey *k, bool meta)
 {
+	struct cache_member_rcu *mi = cache_member_info_get(c);
+	bool ret = true;
 	unsigned ptr;
-	struct cache_member *mi;
 
-	for (ptr = 0; ptr < bch_extent_ptrs(k); ptr++) {
-		mi = c->members + PTR_DEV(k, ptr);
+	for (ptr = 0; ptr < bch_extent_ptrs(k); ptr++)
+		if (!(meta
+		      ? CACHE_HAS_METADATA
+		      : CACHE_HAS_DATA)(mi->m + PTR_DEV(k, ptr))) {
+			ret = false;
+			break;
+		}
 
-		if (!(meta ? CACHE_HAS_METADATA : CACHE_HAS_DATA)(mi))
-			return false;
-	}
+	cache_member_info_put();
 
-	return true;
+	return ret;
 }
 
 static inline void bch_check_mark_super(struct cache_set *c,

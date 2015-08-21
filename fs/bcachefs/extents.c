@@ -89,11 +89,14 @@ static bool should_drop_ptr(struct cache_set *c, const struct bkey *k,
 			    unsigned ptr)
 {
 	struct cache *ca;
+	struct cache_member *mi;
 
 	if (PTR_DEV(k, ptr) >= c->sb.nr_in_set)
 		return true;
 
-	if (bch_is_zero(c->members[PTR_DEV(k, ptr)].uuid.b, sizeof(uuid_le)))
+	mi = rcu_dereference(c->members)->m;
+
+	if (bch_is_zero(mi[PTR_DEV(k, ptr)].uuid.b, sizeof(uuid_le)))
 		return true;
 
 	return (ca = PTR_CACHE(c, k, ptr)) &&
@@ -130,14 +133,6 @@ void bch_extent_drop_stale(struct cache_set *c, struct bkey *k)
 			i++;
 
 	rcu_read_unlock();
-}
-
-static unsigned PTR_TIER(struct cache_set *c, const struct bkey *k,
-			 unsigned ptr)
-{
-	unsigned dev = PTR_DEV(k, ptr);
-
-	return dev < c->sb.nr_in_set ? CACHE_TIER(&c->members[dev]) : UINT_MAX;
 }
 
 static bool bch_ptr_normalize(struct btree_keys *bk,
@@ -942,6 +937,7 @@ static bool bch_extent_invalid(struct btree_keys *bk, struct bkey *k)
 static bool bch_extent_debug_invalid(struct btree_keys *bk, struct bkey *k)
 {
 	struct btree *b = container_of(bk, struct btree, keys);
+	struct cache_member_rcu *mi;
 	struct cache_set *c = b->c;
 	struct cache *ca;
 	struct bucket *g;
@@ -963,21 +959,21 @@ static bool bch_extent_debug_invalid(struct btree_keys *bk, struct bkey *k)
 	replicas_needed = KEY_CACHED(k) ? 0
 		: CACHE_SET_DATA_REPLICAS_WANT(&c->sb);
 
-	rcu_read_lock();
+	mi = cache_member_info_get(c);
 
 	for (i = bch_extent_ptrs(k) - 1; i >= 0; --i) {
 		dev = PTR_DEV(k, i);
 
 		/* could be PTR_CHECK_DEV */
-		if (PTR_DEV(k, i) >= c->sb.nr_in_set)
+		if (PTR_DEV(k, i) >= mi->nr_in_set)
 			continue;
 
 		if (replicas_needed &&
-		    bch_is_zero(c->members[PTR_DEV(k, i)].uuid.b,
+		    bch_is_zero(mi->m[PTR_DEV(k, i)].uuid.b,
 				sizeof(uuid_le)))
 			goto bad_device;
 
-		tier = CACHE_TIER(&c->members[dev]);
+		tier = CACHE_TIER(&mi->m[dev]);
 		ptrs_per_tier[tier]++;
 
 		stale = 0;
@@ -1025,20 +1021,20 @@ static bool bch_extent_debug_invalid(struct btree_keys *bk, struct bkey *k)
 		if (ptrs_per_tier[i] > replicas)
 			goto bad_key;
 
-	rcu_read_unlock();
+	cache_member_info_put();
 	return false;
 
 bad_key:
 	bch_extent_to_text(buf, sizeof(buf), k);
 	cache_set_bug(c, "extent key bad: %s", buf);
-	rcu_read_unlock();
+	cache_member_info_put();
 	return true;
 
 bad_device:
 	bch_extent_to_text(buf, sizeof(buf), k);
 	cache_set_bug(c, "extent pointer %i device missing: %s:\nbucket %zu",
 		      i, buf, PTR_BUCKET_NR(c, k, i));
-	rcu_read_unlock();
+	cache_member_info_put();
 	return true;
 
 bad_ptr:
@@ -1048,12 +1044,21 @@ bad_ptr:
 		      buf, PTR_BUCKET_NR(c, k, i),
 		      g->read_prio, PTR_BUCKET_GEN(c, ca, k, i),
 		      g->last_gc, g->mark.counter);
-	rcu_read_unlock();
+	cache_member_info_put();
 	return true;
+}
+
+static unsigned PTR_TIER(struct cache_member_rcu *mi, const struct bkey *k,
+			 unsigned ptr)
+{
+	unsigned dev = PTR_DEV(k, ptr);
+
+	return dev < mi->nr_in_set ? CACHE_TIER(&mi->m[dev]) : UINT_MAX;
 }
 
 bool bch_extent_normalize(struct cache_set *c, struct bkey *k)
 {
+	struct cache_member_rcu *mi;
 	unsigned i;
 	bool swapped;
 
@@ -1065,16 +1070,20 @@ bool bch_extent_normalize(struct cache_set *c, struct bkey *k)
 
 	bch_extent_drop_stale(c, k);
 
+	mi = cache_member_info_get(c);
+
 	/* Bubble sort pointers by tier, lowest (fastest) tier first */
 	do {
 		swapped = false;
 		for (i = 0; i + 1 < bch_extent_ptrs(k); i++) {
-			if (PTR_TIER(c, k, i) > PTR_TIER(c, k, i + 1)) {
+			if (PTR_TIER(mi, k, i) > PTR_TIER(mi, k, i + 1)) {
 				swap(k->val[i], k->val[i + 1]);
 				swapped = true;
 			}
 		}
 	} while (swapped);
+
+	cache_member_info_put();
 
 	if (!bch_extent_ptrs(k) && !KEY_WIPED(k))
 		SET_KEY_DELETED(k, 1);

@@ -224,6 +224,12 @@ struct cache {
 	struct cache_set	*set;
 	struct cache_sb		sb;
 
+	/*
+	 * Cached version of this device's member info from superblock
+	 * Committed by write_super()
+	 */
+	struct cache_member	mi;
+
 	struct bcache_superblock disk_sb;
 
 	struct kobject		kobj;
@@ -352,6 +358,12 @@ struct prio_clock {
 	unsigned __percpu	*rescale_percpu;
 };
 
+struct cache_member_rcu {
+	struct rcu_head		rcu;
+	unsigned		nr_in_set;
+	struct cache_member	m[];
+};
+
 struct cache_set {
 	struct closure		cl;
 
@@ -361,7 +373,7 @@ struct cache_set {
 	unsigned long		flags;
 
 	struct cache __rcu	*cache[MAX_CACHES_PER_SET];
-	struct cache_member	*members;
+	struct cache_member_rcu	*members;
 	unsigned long	cache_slots_used[BITS_TO_LONGS(MAX_CACHES_PER_SET)];
 
 	struct cache_sb		sb;

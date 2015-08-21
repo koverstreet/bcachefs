@@ -407,17 +407,21 @@ static void bcache_write_super_unlock(struct closure *cl)
 
 static int cache_sb_to_cache_set(struct cache_set *c, struct cache *ca)
 {
-	struct cache_member *m;
+	struct cache_member_rcu *new, *old = c->members;
 
-	m = kcalloc(ca->sb.nr_in_set, sizeof(*m), GFP_KERNEL);
-	if (!m)
+	new = kzalloc(sizeof(struct cache_member_rcu) +
+		      sizeof(struct cache_member) * ca->sb.nr_in_set,
+		      GFP_KERNEL);
+	if (!new)
 		return -ENOMEM;
 
-	memcpy(m, ca->disk_sb.sb->d,
-	       ca->sb.nr_in_set * sizeof(*m));
+	new->nr_in_set = ca->sb.nr_in_set;
+	memcpy(&new->m, ca->disk_sb.sb->d,
+	       ca->sb.nr_in_set * sizeof(new->m[0]));
 
-	kfree(c->members);
-	c->members = m;
+	rcu_assign_pointer(c->members, new);
+	if (old)
+		kfree_rcu(old, rcu);
 
 	c->sb.version		= ca->sb.version;
 	c->sb.set_uuid		= ca->sb.set_uuid;
@@ -434,6 +438,8 @@ static int cache_sb_to_cache_set(struct cache_set *c, struct cache *ca)
 
 static int cache_sb_from_cache_set(struct cache_set *c, struct cache *ca)
 {
+	struct cache_member_rcu *mi;
+
 	if (ca->sb.nr_in_set != c->sb.nr_in_set) {
 		unsigned old_offset = bch_journal_buckets_offset(&ca->sb);
 		unsigned keys = bch_journal_buckets_offset(&c->sb)
@@ -451,9 +457,11 @@ static int cache_sb_from_cache_set(struct cache_set *c, struct cache *ca)
 			bch_nr_journal_buckets(&ca->sb) * sizeof(u64));
 	}
 
-	memcpy(ca->disk_sb.sb->d,
-	       c->members,
-	       ca->sb.nr_in_set * sizeof(struct cache_member));
+	mi = cache_member_info_get(c);
+	ca->mi = mi->m[ca->sb.nr_this_dev];
+
+	memcpy(ca->disk_sb.sb->d, mi->m, mi->nr_in_set * sizeof(mi->m[0]));
+	cache_member_info_put();
 
 	ca->sb.version		= BCACHE_SB_VERSION_CDEV;
 	ca->sb.flags		= c->sb.flags;
@@ -515,13 +523,14 @@ void bch_check_mark_super_slowpath(struct cache_set *c, struct bkey *k,
 		return;
 	}
 
-	for (ptr = 0; ptr < bch_extent_ptrs(k); ptr++) {
-		mi = c->members + PTR_DEV(k, ptr);
+	mi = cache_member_info_get(c)->m;
 
+	for (ptr = 0; ptr < bch_extent_ptrs(k); ptr++)
 		(meta
 		 ? SET_CACHE_HAS_METADATA
-		 : SET_CACHE_HAS_DATA)(mi, true);
-	}
+		 : SET_CACHE_HAS_DATA)(mi + PTR_DEV(k, ptr), true);
+
+	cache_member_info_put();
 
 	__bcache_write_super(c);
 }
@@ -714,10 +723,14 @@ void bch_cache_set_unregister(struct cache_set *c)
 static unsigned cache_set_nr_devices(struct cache_set *c)
 {
 	unsigned i, nr = 0;
+	struct cache_member_rcu *mi = cache_member_info_get(c);
 
-	for (i = 0; i < c->sb.nr_in_set; i++)
-		if (!bch_is_zero(c->members[i].uuid.b, sizeof(uuid_le)))
+	for (i = 0; i < mi->nr_in_set; i++)
+		if (!bch_is_zero(mi->m[i].uuid.b, sizeof(uuid_le)))
 			nr++;
+
+	cache_member_info_put();
+
 	return nr;
 }
 
@@ -945,8 +958,7 @@ static const char *run_cache_set(struct cache_set *c)
 		bch_journal_next(&c->journal);
 
 		for_each_cache(ca, c, i)
-			if (CACHE_STATE(cache_member_info(ca)) ==
-			    CACHE_ACTIVE &&
+			if (CACHE_STATE(&ca->mi) == CACHE_ACTIVE &&
 			    (err = bch_cache_read_write(ca))) {
 				percpu_ref_put(&ca->ref);
 				goto err;
@@ -967,8 +979,7 @@ static const char *run_cache_set(struct cache_set *c)
 		bch_initial_gc(c, NULL);
 
 		for_each_cache(ca, c, i)
-			if (CACHE_STATE(cache_member_info(ca)) ==
-			    CACHE_ACTIVE &&
+			if (CACHE_STATE(&ca->mi) == CACHE_ACTIVE &&
 			    (err = bch_cache_read_write(ca))) {
 				percpu_ref_put(&ca->ref);
 				goto err;
@@ -997,7 +1008,7 @@ static const char *run_cache_set(struct cache_set *c)
 
 	err = "error starting moving GC thread";
 	for_each_cache(ca, c, i)
-		if (CACHE_STATE(cache_member_info(ca)) == CACHE_ACTIVE &&
+		if (CACHE_STATE(&ca->mi) == CACHE_ACTIVE &&
 		    bch_moving_gc_thread_start(ca)) {
 			percpu_ref_put(&ca->ref);
 			goto err;
@@ -1037,16 +1048,25 @@ err:
 
 static const char *can_attach_cache(struct cache *ca, struct cache_set *c)
 {
+	struct cache_member_rcu *mi;
+	bool match;
+
 	if (ca->sb.block_size	!= c->sb.block_size ||
 	    ca->sb.bucket_size	!= c->sb.bucket_size ||
 	    ca->sb.nr_in_set	!= c->sb.nr_in_set)
 		return "cache sb does not match set";
 
-	if (ca->sb.seq <= c->sb.seq &&
-	    (ca->sb.nr_this_dev >= c->sb.nr_in_set ||
-	     memcmp(&c->members[ca->sb.nr_this_dev].uuid,
-		    &ca->sb.uuid,
-		    sizeof(uuid_le))))
+	mi = cache_member_info_get(c);
+
+	match = !(ca->sb.seq <= c->sb.seq &&
+		  (ca->sb.nr_this_dev >= mi->nr_in_set ||
+		   memcmp(&mi->m[ca->sb.nr_this_dev].uuid,
+			  &ca->sb.uuid,
+			  sizeof(uuid_le))));
+
+	cache_member_info_put();
+
+	if (!match)
 		return "cache sb does not match set";
 
 	if (c->cache[ca->sb.nr_this_dev])
@@ -1133,8 +1153,7 @@ err:
 void bch_cache_read_only(struct cache *ca)
 {
 	struct cache_set *c = ca->set;
-	struct cache_member *mi = cache_member_info(ca);
-	struct cache_group *tier = &c->cache_tiers[CACHE_TIER(mi)];
+	struct cache_group *tier = &c->cache_tiers[CACHE_TIER(&ca->mi)];
 	struct task_struct *p;
 	char buf[BDEVNAME_SIZE];
 
@@ -1156,8 +1175,7 @@ void bch_cache_read_only(struct cache *ca)
 const char *bch_cache_read_write(struct cache *ca)
 {
 	struct cache_set *c = ca->set;
-	struct cache_member *mi = cache_member_info(ca);
-	struct cache_group *tier = &c->cache_tiers[CACHE_TIER(mi)];
+	struct cache_group *tier = &c->cache_tiers[CACHE_TIER(&ca->mi)];
 	const char *err;
 
 	err = bch_cache_allocator_start(ca);
@@ -1253,10 +1271,11 @@ static void bch_cache_stop(struct cache *ca)
 static void bch_cache_remove_work(struct work_struct *work)
 {
 	struct cache *ca = container_of(work, struct cache, remove_work);
-	struct cache_member *mi = cache_member_info(ca);
+	struct cache_member *mi;
 	struct cache_set *c = ca->set;
 
 	mutex_lock(&bch_register_lock);
+	mi = &c->members->m[ca->sb.nr_this_dev];
 
 	if (CACHE_STATE(mi) == CACHE_ACTIVE) {
 		bch_cache_read_only(ca);
@@ -1453,10 +1472,10 @@ int bch_cache_add(struct cache_set *c, const char *path)
 	struct block_device *bdev;
 	const char *err;
 	struct cache *ca;
-	unsigned i, nr_this_dev;
+	struct cache_member_rcu *new_mi, *old_mi;
+	unsigned i, nr_this_dev, new_size;
 	int ret = -EINVAL;
-	struct cache_member *omi, *mi, saved_mi;
-	unsigned old_nr_this_dev;
+	struct cache_member *mi, orig_mi;
 
 	lockdep_assert_held(&bch_register_lock);
 
@@ -1467,7 +1486,7 @@ int bch_cache_add(struct cache_set *c, const char *path)
 	for (i = 0; i < MAX_CACHES_PER_SET; i++)
 		if (!test_bit(i, c->cache_slots_used) &&
 		    (i >= c->sb.nr_in_set ||
-		     bch_is_zero(c->members[i].uuid.b, sizeof(uuid_le))))
+		     bch_is_zero(c->members->m[i].uuid.b, sizeof(uuid_le))))
 			goto have_slot;
 
 	up_read(&c->gc_lock);
@@ -1480,23 +1499,6 @@ have_slot:
 	nr_this_dev = i;
 	set_bit(nr_this_dev, c->cache_slots_used);
 	up_read(&c->gc_lock);
-
-	if (nr_this_dev >= c->sb.nr_in_set) {
-		struct cache_member *p = kcalloc(nr_this_dev + 1,
-						 sizeof(struct cache_member),
-						 GFP_KERNEL);
-		if (!p) {
-			err = "cannot allocate memory";
-			ret = -ENOMEM;
-			goto err;
-		}
-
-		memcpy(p, c->members,
-		       c->sb.nr_in_set * sizeof(struct cache_member));
-
-		c->members = p;
-		c->sb.nr_in_set = nr_this_dev + 1;
-	}
 
 	err = bch_blkdev_open(path, &sb, &bdev);
 	if (err)
@@ -1514,10 +1516,7 @@ have_slot:
 	/* Preserve the old cache member information (esp. tier)
 	 * before we start bashing the disk stuff.
 	 */
-
-	old_nr_this_dev = le16_to_cpu(sb.sb->nr_this_dev);
-	omi = &sb.sb->members[old_nr_this_dev];
-	saved_mi = *omi;
+	orig_mi = sb.sb->members[le16_to_cpu(sb.sb->nr_this_dev)];
 
 	err = __register_cache(&sb, bdev, &ca);
 	if (err)
@@ -1531,15 +1530,38 @@ have_slot:
 	if (bch_cache_journal_alloc(ca))
 		goto err_put;
 
-	/* Are there other fields to preserve besides the uuid and tier? */
-	mi = &c->members[nr_this_dev];
-	mi->uuid = ca->sb.uuid;
-	SET_CACHE_TIER(mi, (CACHE_TIER(&saved_mi)));
-	bcache_write_super(c);
-
 	err = can_attach_cache(ca, c);
 	if (err)
 		goto err_put;
+
+	new_size = max_t(unsigned, nr_this_dev + 1, c->sb.nr_in_set);
+
+	old_mi = c->members;
+	new_mi = kzalloc(sizeof(struct cache_member_rcu) +
+			 sizeof(struct cache_member) * new_size,
+			 GFP_KERNEL);
+	if (!new_mi) {
+		err = "cannot allocate memory";
+		ret = -ENOMEM;
+		goto err;
+	}
+
+	new_mi->nr_in_set = new_size;
+	memcpy(new_mi->m,
+	       old_mi->m,
+	       c->sb.nr_in_set * sizeof(struct cache_member));
+
+	/* Are there other fields to preserve besides the uuid and tier? */
+	mi = &new_mi->m[nr_this_dev];
+	mi->uuid = ca->sb.uuid;
+	SET_CACHE_TIER(mi, (CACHE_TIER(&orig_mi)));
+
+	/* commit new member info */
+	rcu_assign_pointer(c->members, new_mi);
+	c->sb.nr_in_set = new_mi->nr_in_set;
+
+	bcache_write_super(c);
+	kfree_rcu(old_mi, rcu);
 
 	err = "sysfs error";
 	if (cache_set_add_device(c, ca))

@@ -564,7 +564,7 @@ static void do_journal_discard(struct cache *ca)
 	struct journal_device *ja = &ca->journal;
 	struct bio *bio = &ja->discard_bio;
 
-	if (!CACHE_DISCARD(cache_member_info(ca)) ||
+	if (!CACHE_DISCARD(&ca->mi) ||
 	    !blk_queue_discard(bdev_get_queue(ca->bdev))) {
 		ja->discard_idx = ja->last_idx;
 		return;
@@ -682,7 +682,7 @@ static void journal_reclaim(struct cache_set *c)
 		unsigned next = (ja->cur_idx + 1) %
 			bch_nr_journal_buckets(&ca->sb);
 
-		if (CACHE_TIER(cache_member_info(ca)))
+		if (CACHE_TIER(&ca->mi))
 			continue;
 
 		/* No space available on this device */

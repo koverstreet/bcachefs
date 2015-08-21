@@ -680,7 +680,7 @@ static void invalidate_buckets_random(struct cache *ca)
 
 static void invalidate_buckets(struct cache *ca)
 {
-	switch (CACHE_REPLACEMENT(cache_member_info(ca))) {
+	switch (CACHE_REPLACEMENT(&ca->mi)) {
 	case CACHE_REPLACEMENT_LRU:
 		invalidate_buckets_lru(ca);
 		break;
@@ -753,7 +753,7 @@ static int bch_allocator_thread(void *arg)
 			 * dropped bucket lock
 			 */
 
-			if (CACHE_DISCARD(cache_member_info(ca)) &&
+			if (CACHE_DISCARD(&ca->mi) &&
 			    blk_queue_discard(bdev_get_queue(ca->bdev)))
 				blkdev_issue_discard(ca->bdev,
 					bucket_to_sector(c, bucket),

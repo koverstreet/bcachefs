@@ -1416,7 +1416,7 @@ static int __btree_check_reserve(struct cache_set *c,
 	rcu_read_lock();
 
 	for_each_cache_rcu(ca, c, i) {
-		if (CACHE_STATE(cache_member_info(ca)) != CACHE_ACTIVE)
+		if (CACHE_STATE(&ca->mi) != CACHE_ACTIVE)
 			continue;
 
 		spin_lock(&ca->freelist_lock);

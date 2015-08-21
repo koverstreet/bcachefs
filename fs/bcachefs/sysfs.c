@@ -1005,7 +1005,6 @@ static ssize_t show_reserve_stats(struct cache *ca, char *buf)
 SHOW(__bch_cache)
 {
 	struct cache *ca = container_of(kobj, struct cache, kobj);
-	struct cache_member *mi = cache_member_info(ca);
 	struct bucket_stats stats = bucket_stats_read(ca);
 
 	sysfs_hprint(bucket_size,	bucket_bytes(ca));
@@ -1013,7 +1012,7 @@ SHOW(__bch_cache)
 	sysfs_hprint(block_size,	block_bytes(ca));
 	sysfs_print(block_size_bytes,	block_bytes(ca));
 	sysfs_print(nbuckets,		ca->sb.nbuckets);
-	sysfs_print(discard,		CACHE_DISCARD(mi));
+	sysfs_print(discard,		CACHE_DISCARD(&ca->mi));
 	sysfs_hprint(written, atomic_long_read(&ca->sectors_written) << 9);
 	sysfs_hprint(btree_written,
 		     atomic_long_read(&ca->btree_sectors_written) << 9);
@@ -1033,22 +1032,22 @@ SHOW(__bch_cache)
 	sysfs_print(meta_buckets,	stats.buckets_meta);
 	sysfs_print(alloc_buckets,	stats.buckets_alloc);
 	sysfs_print(available_buckets,	buckets_available_cache(ca));
-	sysfs_print(has_data,		CACHE_HAS_DATA(mi));
-	sysfs_print(has_metadata,	CACHE_HAS_METADATA(mi));
+	sysfs_print(has_data,		CACHE_HAS_DATA(&ca->mi));
+	sysfs_print(has_metadata,	CACHE_HAS_METADATA(&ca->mi));
 
 	sysfs_pd_controller_show(copy_gc, &ca->moving_gc_pd);
 
 	if (attr == &sysfs_cache_replacement_policy)
 		return bch_snprint_string_list(buf, PAGE_SIZE,
 					       cache_replacement_policies,
-					       CACHE_REPLACEMENT(mi));
+					       CACHE_REPLACEMENT(&ca->mi));
 
-	sysfs_print(tier,		CACHE_TIER(mi));
+	sysfs_print(tier,		CACHE_TIER(&ca->mi));
 
 	if (attr == &sysfs_state_rw)
 		return bch_snprint_string_list(buf, PAGE_SIZE,
 					       bch_cache_state,
-					       CACHE_STATE(mi));
+					       CACHE_STATE(&ca->mi));
 
 	if (attr == &sysfs_read_priority_stats)
 		return show_quantiles(ca, buf, bucket_priority_fn, (void *) 0);
@@ -1066,8 +1065,8 @@ SHOW_LOCKED(bch_cache)
 STORE(__bch_cache)
 {
 	struct cache *ca = container_of(kobj, struct cache, kobj);
-	struct cache_member *mi = cache_member_info(ca);
 	struct cache_set *c = ca->set;
+	struct cache_member *mi = &c->members->m[ca->sb.nr_this_dev];
 
 	sysfs_pd_controller_store(copy_gc, &ca->moving_gc_pd);
 

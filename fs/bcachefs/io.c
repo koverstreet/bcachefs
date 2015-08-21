@@ -861,7 +861,7 @@ out_submit:
 bool cache_promote(struct cache_set *c, struct bbio *bio,
 		   struct bkey *k, unsigned ptr)
 {
-	if (!CACHE_TIER(&c->members[PTR_DEV(k, ptr)])) {
+	if (!CACHE_TIER(&bio->ca->mi)) {
 		generic_make_request(&bio->bio);
 		return 0;
 	}
