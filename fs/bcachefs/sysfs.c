@@ -463,11 +463,11 @@ static size_t bch_cache_size(struct cache_set *c)
 	size_t ret = 0;
 	struct btree *b;
 
-	mutex_lock(&c->bucket_lock);
+	mutex_lock(&c->btree_cache_lock);
 	list_for_each_entry(b, &c->btree_cache, list)
 		ret += 1 << (b->keys.page_order + PAGE_SHIFT);
 
-	mutex_unlock(&c->bucket_lock);
+	mutex_unlock(&c->btree_cache_lock);
 	return ret;
 }
 
