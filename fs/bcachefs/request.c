@@ -481,6 +481,9 @@ static int cache_lookup_fn(struct btree_op *op, struct btree *b, struct bkey *k)
 	struct bkey *bio_key;
 	unsigned ptr;
 
+	if (!k)
+		k = &KEY(KEY_INODE(&b->key), KEY_OFFSET(&b->key), 0);
+
 	if (bkey_cmp(k, &KEY(s->iop.inode, bio->bi_iter.bi_sector, 0)) <= 0)
 		return MAP_CONTINUE;
 

@@ -2478,8 +2478,7 @@ static int bch_btree_map_keys_recurse(struct btree *b, struct btree_op *op,
 	}
 
 	if (!b->level && (flags & MAP_END_KEY))
-		ret = fn(op, b, &KEY(KEY_INODE(&b->key),
-				     KEY_OFFSET(&b->key), 0));
+		ret = fn(op, b, NULL);
 
 	return ret;
 }
