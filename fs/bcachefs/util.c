@@ -141,34 +141,6 @@ bool bch_is_zero(const char *p, size_t n)
 	return true;
 }
 
-int bch_parse_uuid(const char *s, char *uuid)
-{
-	size_t i, j, x;
-	memset(uuid, 0, 16);
-
-	for (i = 0, j = 0;
-	     i < strspn(s, "-0123456789:ABCDEFabcdef") && j < 32;
-	     i++) {
-		x = s[i] | 32;
-
-		switch (x) {
-		case '0'...'9':
-			x -= '0';
-			break;
-		case 'a'...'f':
-			x -= 'a' - 10;
-			break;
-		default:
-			continue;
-		}
-
-		if (!(j & 1))
-			x <<= 4;
-		uuid[j++ >> 1] |= x;
-	}
-	return i;
-}
-
 void bch_time_stats_update(struct time_stats *stats, uint64_t start_time)
 {
 	uint64_t now, duration, last;

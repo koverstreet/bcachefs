@@ -366,7 +366,6 @@ static inline int bch_strtoul_h(const char *cp, long *res)
 ssize_t bch_hprint(char *buf, int64_t v);
 
 bool bch_is_zero(const char *p, size_t n);
-int bch_parse_uuid(const char *s, char *uuid);
 
 ssize_t bch_snprint_string_list(char *buf, size_t size, const char * const list[],
 			    size_t selected);

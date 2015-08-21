@@ -221,7 +221,7 @@ STORE(__cached_dev)
 	}
 
 	if (attr == &sysfs_attach) {
-		if (bch_parse_uuid(buf, dc->sb.set_uuid.b) < 16)
+		if (uuid_parse(buf, &dc->sb.set_uuid))
 			return -EINVAL;
 
 		list_for_each_entry(c, &bch_cache_sets, list) {
