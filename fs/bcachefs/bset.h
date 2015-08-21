@@ -399,6 +399,8 @@ void bch_btree_node_iter_init(struct btree_keys *, struct btree_node_iter *,
 			      struct bpos);
 void bch_btree_node_iter_init_from_start(struct btree_keys *,
 					 struct btree_node_iter *);
+struct bkey *bch_btree_node_iter_bset_pos(struct btree_node_iter *,
+					  struct bset *);
 
 void bch_btree_node_iter_sort(struct btree_node_iter *);
 void bch_btree_node_iter_advance(struct btree_node_iter *);

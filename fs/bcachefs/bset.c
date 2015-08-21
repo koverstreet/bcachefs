@@ -597,22 +597,6 @@ static void verify_insert_pos(struct btree_keys *b,
 #endif
 }
 
-static struct bkey *bch_btree_node_insert_pos(struct btree_keys *b,
-					      struct btree_node_iter *iter)
-{
-	struct btree_node_iter_set *set;
-
-	BUG_ON(iter->used > MAX_BSETS);
-
-	for (set = iter->data;
-	     set < iter->data + iter->used;
-	     set++)
-		if (set->k >= b->set[b->nsets].data->start)
-			return set->k;
-
-	return bset_bkey_last(bset_tree_last(b)->data);
-}
-
 /**
  * Used by extent fixup functions which insert entries into the bset.
  * We have to update the iterator's cached ->end pointer.
@@ -754,7 +738,8 @@ void bch_bset_insert(struct btree_keys *b,
 	struct bset_tree *t = bset_tree_last(b);
 	struct bset *i = t->data;
 	struct bkey *prev = NULL;
-	struct bkey *where = bch_btree_node_insert_pos(b, iter);
+	struct bkey *where = bch_btree_node_iter_bset_pos(iter, i) ?:
+		bset_bkey_last(i);
 	BKEY_PADDED(k) tmp;
 
 	BUG_ON(insert->u64s > bch_btree_keys_u64s_remaining(b));
@@ -1056,6 +1041,22 @@ void bch_btree_node_iter_init_from_start(struct btree_keys *b,
 					 bset_bkey_last(t->data));
 }
 EXPORT_SYMBOL(bch_btree_node_iter_init_from_start);
+
+struct bkey *bch_btree_node_iter_bset_pos(struct btree_node_iter *iter,
+					  struct bset *i)
+{
+	struct btree_node_iter_set *set;
+
+	BUG_ON(iter->used > MAX_BSETS);
+
+	for (set = iter->data;
+	     set < iter->data + iter->used;
+	     set++)
+		if (bset_bkey_last(i) == set->end)
+			return set->k;
+
+	return NULL;
+}
 
 static inline void btree_node_iter_sift(struct btree_node_iter *iter,
 					unsigned start)

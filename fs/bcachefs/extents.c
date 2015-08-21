@@ -1594,7 +1594,6 @@ static bool bch_extent_merge_inline(struct btree_keys *b,
 				    struct btree_node_iter *iter,
 				    struct bkey *l, struct bkey *r)
 {
-	struct btree_node_iter_set *set;
 	struct bset_tree *t;
 	struct bkey *k, *m;
 
@@ -1625,22 +1624,13 @@ static bool bch_extent_merge_inline(struct btree_keys *b,
 		     m < bset_bkey_last(t->data)))
 			continue;
 
-		for (set = iter->data;
-		     set < iter->data + iter->used;
-		     set++)
-			if (bset_bkey_last(t->data) == set->end) {
-				k = set->k;
-				goto found_pos;
-			}
-
 		/*
-		 * if we didn't find this bset in the iterator, we already got
-		 * to the end of that bset, so start searching from the end of
-		 * the bset.
+		 * if we don't find this bset in the iterator we already got to
+		 * the end of that bset, so start searching from the end.
 		 */
+		k = bch_btree_node_iter_bset_pos(iter, t->data) ?:
+			bkey_prev(b, t, bset_bkey_last(t->data));
 
-		k = bkey_prev(b, t, bset_bkey_last(t->data));
-found_pos:
 		if (m == l) {
 			/*
 			 * Back merge: 0 size extents will be before the key
