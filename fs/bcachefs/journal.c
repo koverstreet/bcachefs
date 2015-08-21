@@ -361,19 +361,9 @@ void bch_journal_mark(struct cache_set *c, struct list_head *list)
 static int bch_journal_replay_key(struct cache_set *c, enum btree_id id,
 				  struct bkey *k)
 {
-	int ret;
-	struct keylist keys;
-
 	trace_bcache_journal_replay_key(k);
 
-	bch_keylist_init_single(&keys, k);
-
-	ret = bch_btree_insert(c, id, &keys, NULL);
-	BUG_ON(!bch_keylist_empty(&keys));
-
-	cond_resched();
-
-	return ret;
+	return bch_btree_insert(c, id, &keylist_single(k), NULL);
 }
 
 int bch_journal_replay(struct cache_set *c, struct list_head *list)
@@ -392,6 +382,7 @@ int bch_journal_replay(struct cache_set *c, struct list_head *list)
 				 n, i->j.seq - 1, start, end);
 
 		for_each_jset_key(k, jkeys, &i->j) {
+			cond_resched();
 			bch_journal_replay_key(c, jkeys->btree_id, k);
 			if (ret)
 				goto err;

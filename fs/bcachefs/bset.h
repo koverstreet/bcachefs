@@ -425,12 +425,6 @@ static inline void bch_keylist_init(struct keylist *l)
 	l->top_p = l->keys_p = l->inline_keys;
 }
 
-static inline void bch_keylist_init_single(struct keylist *l, struct bkey *k)
-{
-	l->keys = k;
-	l->top = bkey_next(k);
-}
-
 static inline void bch_keylist_push(struct keylist *l)
 {
 	l->top = bkey_next(l->top);
@@ -472,6 +466,9 @@ static inline size_t bch_keylist_bytes(struct keylist *l)
 {
 	return bch_keylist_nkeys(l) * sizeof(uint64_t);
 }
+
+#define keylist_single(k)					\
+	((struct keylist) { .keys = k, .top = bkey_next(k) })
 
 struct bkey *bch_keylist_pop(struct keylist *);
 void bch_keylist_pop_front(struct keylist *);
