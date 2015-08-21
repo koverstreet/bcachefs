@@ -989,15 +989,10 @@ out:
 	b->level	= level;
 	b->btree_id	= id;
 
-	if (!b->level && id == BTREE_ID_EXTENTS)
-		bch_btree_keys_init(&b->keys, &bch_extent_keys_ops,
-				    &b->c->expensive_debug_checks);
-	else if (!b->level)
-		bch_btree_keys_init(&b->keys, &bch_generic_keys_ops,
-				    &b->c->expensive_debug_checks);
-	else
-		bch_btree_keys_init(&b->keys, &bch_btree_keys_ops,
-				    &b->c->expensive_debug_checks);
+	bch_btree_keys_init(&b->keys, b->level
+			    ? &bch_btree_interior_node_ops
+			    : bch_btree_ops[id],
+			    &b->c->expensive_debug_checks);
 
 out_unlock:
 	mutex_unlock(&c->btree_cache_lock);

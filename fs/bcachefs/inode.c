@@ -1,9 +1,114 @@
 
 #include "bcache.h"
 #include "btree.h"
+#include "extents.h"
 #include "inode.h"
 
-/* XXX: need ptr_invalid() method for inodes */
+#define key_to_inode(k)	container_of(k, struct bch_inode, i_key)
+
+static void bch_inode_to_text(char *buf, size_t size, const struct bkey *k)
+{
+	char *out = buf, *end = buf + size;
+
+#define p(...)	(out += scnprintf(out, end - out, __VA_ARGS__))
+
+	p("%llu ver %llu", KEY_INODE(k), KEY_VERSION(k));
+}
+
+static void bch_inode_dump(struct btree_keys *keys, const struct bkey *k)
+{
+	char buf[80];
+
+	bch_inode_to_text(buf, sizeof(buf), k);
+	printk(" %s\n", buf);
+}
+
+static bool bch_inode_invalid(struct btree_keys *bk, const struct bkey *k)
+{
+	struct btree *b = container_of(bk, struct btree, keys);
+	struct bch_inode *inode = key_to_inode(k);
+	char ibuf[80], buf[80];
+
+	if (KEY_DELETED(k))
+		return false;
+
+	if (bkey_bytes(k) < sizeof(struct bch_inode)) {
+		scnprintf(buf, sizeof(buf), "key too small: %zu",
+			  bkey_bytes(k));
+		goto bad;
+	}
+
+	if (KEY_OFFSET(k)) {
+		scnprintf(buf, sizeof(buf), "offset nonzero: %llu",
+			  KEY_OFFSET(k));
+		goto bad;
+	}
+
+	if (KEY_SIZE(k)) {
+		scnprintf(buf, sizeof(buf), "size nonzero: %llu",
+			  KEY_SIZE(k));
+		goto bad;
+	}
+
+	switch (inode->i_inode_format) {
+	case BCH_INODE_FS:
+		if (KEY_INODE(k) < BLOCKDEV_INODE_MAX) {
+			scnprintf(buf, sizeof(buf),
+				  "fs inode in blockdev range: %llu",
+				  KEY_INODE(k));
+			goto bad;
+		}
+
+		if (bkey_bytes(k) != sizeof(struct bch_inode)) {
+			scnprintf(buf, sizeof(buf), "bad key size: %zu",
+				  bkey_bytes(k));
+			goto bad;
+		}
+
+		break;
+	case BCH_INODE_BLOCKDEV:
+		if (KEY_INODE(k) >= BLOCKDEV_INODE_MAX) {
+			scnprintf(buf, sizeof(buf),
+				  "blockdev inode in fs range: %llu",
+				  KEY_INODE(k));
+			goto bad;
+		}
+
+		if (bkey_bytes(k) != sizeof(struct bch_inode_blockdev)) {
+			scnprintf(buf, sizeof(buf), "bad key size: %zu",
+				  bkey_bytes(k));
+			goto bad;
+		}
+
+		break;
+	default:
+		scnprintf(buf, sizeof(buf), "unknown inode format: %u",
+			  inode->i_inode_format);
+		goto bad;
+	}
+
+	return false;
+bad:
+	bch_inode_to_text(ibuf, sizeof(ibuf), k);
+	cache_bug(b->c, "spotted bad inode: %s: %s", ibuf, buf);
+	return true;
+}
+
+static bool bch_inode_bad(struct btree_keys *bk, const struct bkey *k)
+{
+	return KEY_DELETED(k);
+}
+
+const struct btree_keys_ops bch_inode_ops = {
+	.sort_cmp	= bch_generic_sort_cmp,
+	.sort_fixup	= bch_generic_sort_fixup,
+	.insert_fixup	= bch_generic_insert_fixup,
+
+	.key_invalid	= bch_inode_invalid,
+	.key_bad	= bch_inode_bad,
+	.key_to_text	= bch_inode_to_text,
+	.key_dump	= bch_inode_dump,
+};
 
 struct create_op {
 	struct btree_op		op;
@@ -155,7 +260,7 @@ static int blockdev_inode_find_fn(struct btree_op *b_op, struct btree *b,
 				  struct bkey *k)
 {
 	struct find_op *op = container_of(b_op, struct find_op, op);
-	struct bch_inode *inode = container_of(k, struct bch_inode, i_key);
+	struct bch_inode *inode = key_to_inode(k);
 
 	if (KEY_INODE(k) >= BLOCKDEV_INODE_MAX)
 		return -ENOENT;

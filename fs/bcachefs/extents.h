@@ -3,9 +3,13 @@
 
 #include "bset.h"
 
-extern const struct btree_keys_ops bch_btree_keys_ops;
-extern const struct btree_keys_ops bch_generic_keys_ops;
-extern const struct btree_keys_ops bch_extent_keys_ops;
+bool bch_generic_sort_cmp(struct btree_iter_set, struct btree_iter_set);
+struct bkey *bch_generic_sort_fixup(struct btree_iter *, struct bkey *);
+bool bch_generic_insert_fixup(struct btree_keys *, struct bkey *,
+			      struct btree_iter *, struct bkey *);
+
+extern const struct btree_keys_ops bch_btree_interior_node_ops;
+extern const struct btree_keys_ops *bch_btree_ops[];
 
 struct bkey;
 struct cache_set;
