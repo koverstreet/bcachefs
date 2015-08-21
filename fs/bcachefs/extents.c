@@ -95,7 +95,7 @@ static bool should_drop_ptr(struct cache_set *c, const struct bkey *k,
 {
 	struct cache *ca;
 
-	if (PTR_DEV(k, ptr) > c->sb.nr_in_set)
+	if (PTR_DEV(k, ptr) >= c->sb.nr_in_set)
 		return true;
 
 	if (bch_is_zero(c->members[PTR_DEV(k, ptr)].uuid.b, sizeof(uuid_le)))
@@ -818,6 +818,11 @@ static bool bch_extent_debug_invalid(struct btree_keys *bk, struct bkey *k)
 
 	for (i = bch_extent_ptrs(k) - 1; i >= 0; --i) {
 		dev = PTR_DEV(k, i);
+
+		/* could be PTR_CHECK_DEV */
+		if (PTR_DEV(k, i) >= c->sb.nr_in_set)
+			continue;
+
 		tier = CACHE_TIER(&c->members[dev]);
 		ptrs_per_tier[tier]++;
 
