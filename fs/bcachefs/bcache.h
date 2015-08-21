@@ -602,9 +602,10 @@ struct cache_tier {
 
 struct prio_clock {
 	/* All fields protected by bucket_lock */
-	u16		hand;
-	u16		min_prio;
-	atomic_long_t	rescale;
+	u16			hand;
+	u16			min_prio;
+	atomic_long_t		rescale;
+	unsigned __percpu	*rescale_percpu;
 };
 
 struct cache_set {

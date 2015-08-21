@@ -22,6 +22,7 @@
 #include <linux/idr.h>
 #include <linux/kthread.h>
 #include <linux/module.h>
+#include <linux/percpu.h>
 #include <linux/random.h>
 #include <linux/reboot.h>
 #include <linux/sysfs.h>
@@ -1275,6 +1276,8 @@ static void cache_set_free(struct closure *cl)
 
 	bch_bset_sort_state_free(&c->sort);
 
+	free_percpu(c->write_clock.rescale_percpu);
+	free_percpu(c->read_clock.rescale_percpu);
 	if (c->wq)
 		destroy_workqueue(c->wq);
 	if (c->bio_split)
@@ -1481,6 +1484,8 @@ struct cache_set *bch_cache_set_alloc(struct cache_sb *sb)
 	    !(c->fill_iter = mempool_create_kmalloc_pool(1, iter_size)) ||
 	    !(c->bio_split = bioset_create(4, offsetof(struct bbio, bio))) ||
 	    !(c->wq = alloc_workqueue("bcache", WQ_MEM_RECLAIM, 0)) ||
+	    !(c->read_clock.rescale_percpu = alloc_percpu(unsigned)) ||
+	    !(c->write_clock.rescale_percpu = alloc_percpu(unsigned)) ||
 	    bch_journal_alloc(c) ||
 	    bch_btree_cache_alloc(c) ||
 	    bch_bset_sort_state_init(&c->sort, ilog2(c->btree_pages)))
