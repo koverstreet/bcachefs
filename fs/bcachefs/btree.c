@@ -24,6 +24,7 @@
 #include "btree.h"
 #include "debug.h"
 #include "extents.h"
+#include "journal.h"
 
 #include <linux/slab.h>
 #include <linux/bitops.h>
@@ -328,7 +329,7 @@ static void btree_complete_write(struct btree *b, struct btree_write *w)
 
 	if (w->journal) {
 		atomic_dec_bug(w->journal);
-		__closure_wake_up(&b->c->journal.wait);
+		wake_up(&b->c->journal.wait);
 	}
 
 	w->prio_blocked	= 0;
@@ -508,6 +509,49 @@ static void btree_node_write_work(struct work_struct *w)
 	if (btree_node_dirty(b))
 		__bch_btree_node_write(b, NULL);
 	mutex_unlock(&b->write_lock);
+}
+
+/*
+ * Write all dirty btree nodes to disk, including roots
+ */
+void bch_btree_flush(struct cache_set *c)
+{
+	struct closure cl;
+	struct btree *b;
+	struct bucket_table *tbl;
+	struct rhash_head *pos;
+	bool dropped_lock;
+	unsigned i;
+
+	closure_init_stack(&cl);
+
+	rcu_read_lock();
+
+	do {
+		dropped_lock = false;
+		i = 0;
+restart:
+		tbl = rht_dereference_rcu(c->btree_cache_table.tbl,
+					  &c->btree_cache_table);
+
+		for (; i < tbl->size; i++)
+			rht_for_each_entry_rcu(b, pos, tbl, i, hash)
+				if (btree_node_dirty(b)) {
+					rcu_read_unlock();
+
+					mutex_lock(&b->write_lock);
+					__bch_btree_node_write(b, &cl);
+					mutex_unlock(&b->write_lock);
+					dropped_lock = true;
+
+					rcu_read_lock();
+					goto restart;
+				}
+	} while (dropped_lock);
+
+	rcu_read_unlock();
+
+	closure_sync(&cl);
 }
 
 static void bch_btree_leaf_dirty(struct btree *b, atomic_t *journal_ref)

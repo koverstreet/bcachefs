@@ -81,76 +81,7 @@
  */
 struct journal_replay {
 	struct list_head	list;
-	atomic_t		*pin;
 	struct jset		j;
-};
-
-/*
- * We put two of these in struct journal; we used them for writes to the
- * journal that are being staged or in flight.
- */
-struct journal_write {
-	struct jset		*data;
-#define JSET_BITS		3
-
-	struct cache_set	*c;
-	struct closure_waitlist	wait;
-	bool			dirty;
-	bool			need_write;
-};
-
-/* Embedded in struct cache_set */
-struct journal {
-	spinlock_t		lock;
-	/* used when waiting because the journal was full */
-	struct closure_waitlist	wait;
-	struct closure		io;
-	int			io_in_flight;
-	struct delayed_work	work;
-
-	/* Number of blocks free in the bucket(s) we're currently writing to */
-	unsigned		blocks_free;
-	uint64_t		seq;
-	DECLARE_FIFO(atomic_t, pin);
-
-	BKEY_PADDED(key);
-
-	struct journal_write	w[2], *cur;
-};
-
-/*
- * Embedded in struct cache. First three fields refer to the array of journal
- * buckets, in cache_sb.
- */
-struct journal_device {
-	/*
-	 * For each journal bucket, contains the max sequence number of the
-	 * journal writes it contains - so we know when a bucket can be reused.
-	 */
-	uint64_t		seq[SB_JOURNAL_BUCKETS];
-
-	/* Journal bucket we're currently writing to */
-	unsigned		cur_idx;
-
-	/* Last journal bucket that still contains an open journal entry */
-	unsigned		last_idx;
-
-	/* Next journal bucket to be discarded */
-	unsigned		discard_idx;
-
-#define DISCARD_READY		0
-#define DISCARD_IN_FLIGHT	1
-#define DISCARD_DONE		2
-	/* 1 - discard in flight, -1 - discard completed */
-	atomic_t		discard_in_flight;
-
-	struct work_struct	discard_work;
-	struct bio		discard_bio;
-	struct bio_vec		discard_bv;
-
-	/* Bio for journal reads/writes to this device */
-	struct bio		bio;
-	struct bio_vec		bv[8];
 };
 
 #define journal_pin_cmp(c, l, r)				\
@@ -167,6 +98,31 @@ struct btree_op;
 struct keylist;
 
 atomic_t *bch_journal(struct cache_set *, struct keylist *, struct closure *);
+void btree_flush_write(struct cache_set *);
+struct journal_write *bch_journal_write_get(struct cache_set *, unsigned)
+	__acquires(c->journal.lock);
+void bch_journal_write_put(struct cache_set *, struct journal_write *,
+			   struct closure *)
+	__releases(c->journal.lock);
+
+static inline size_t journal_write_u64s_remaining(struct cache_set *c,
+						  struct journal_write *w)
+{
+	ssize_t bytes = min_t(size_t,
+			      c->journal.blocks_free * block_bytes(c),
+			      PAGE_SIZE << JSET_BITS) -
+		set_bytes(w->data);
+
+	return max_t(ssize_t, 0L, bytes / sizeof(u64));
+}
+
+static inline void bch_journal_add_keys(struct jset *j, struct bkey *k,
+					unsigned nkeys)
+{
+	memcpy(bset_bkey_last(j), k, nkeys * sizeof(u64));
+	j->keys += nkeys;
+}
+
 void bch_journal_next(struct journal *);
 void bch_journal_mark(struct cache_set *, struct list_head *);
 void bch_journal_meta(struct cache_set *, struct closure *);

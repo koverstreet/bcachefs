@@ -240,6 +240,7 @@ static inline void rw_unlock(bool w, struct btree *b)
 void bch_btree_node_read_done(struct btree *);
 void __bch_btree_node_write(struct btree *, struct closure *);
 void bch_btree_node_write(struct btree *, struct closure *);
+void bch_btree_flush(struct cache_set *);
 
 void bch_btree_set_root(struct btree *);
 struct btree *__bch_btree_node_alloc(struct cache_set *, struct btree_op *,
