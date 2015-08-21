@@ -2187,19 +2187,36 @@ int bch_initial_gc(struct cache_set *c, struct list_head *journal)
  *
  * Wrapper around bch_btree_insert_key() which does the real heavy lifting, this
  * function journals the key that bch_btree_insert_key() actually inserted
- * (which may have been different than @k if e.g. @replace_key was only
- * partially present, or not present).
+ * (which may have been different than @k if e.g. @replace was only partially
+ * present, or not present).
  */
-static bool btree_insert_key(struct btree *b, struct bkey *k,
-			     struct bkey *replace_key,
+static bool btree_insert_key(struct btree *b, struct keylist *insert_keys,
+			     struct bkey *replace,
 			     struct journal_res *res,
 			     struct closure *flush_cl)
 {
+	struct bkey *insert = bch_keylist_front(insert_keys);
+	BKEY_PADDED(key) temp;
 	unsigned status;
 
-	BUG_ON(bkey_cmp(k, &b->key) > 0);
+	BUG_ON(write_block(b) != btree_bset_last(b));
 
-	status = bch_btree_insert_key(&b->keys, k, replace_key);
+	if (b->keys.ops->is_extents &&
+	    bkey_cmp(insert, &b->key) > 0) {
+		bkey_copy(&temp.key, insert);
+
+		bch_cut_back(&b->key, &temp.key);
+		bch_cut_front(&b->key, insert);
+		insert = &temp.key;
+	}
+
+	BUG_ON(bkey_cmp(insert, &b->key) > 0);
+
+	status = bch_btree_insert_key(&b->keys, insert, replace);
+
+	if (insert != &temp.key)
+		bch_keylist_pop_front(insert_keys);
+
 	if (status == BTREE_INSERT_STATUS_NO_INSERT)
 		return false;
 
@@ -2217,14 +2234,16 @@ static bool btree_insert_key(struct btree *b, struct bkey *k,
 			atomic_inc(w->journal);
 		}
 
-		bch_journal_add_keys(b->c, res, b->btree_id, k,
-				     KEY_U64s(k), b->level, flush_cl);
+		bch_journal_add_keys(b->c, res, b->btree_id, insert,
+				     KEY_U64s(insert), b->level,
+				     bch_keylist_empty(insert_keys)
+				     ? flush_cl : NULL);
 	}
 
 	bch_check_keys(&b->keys, "%u for %s", status,
-		       replace_key ? "replace" : "insert");
+		       replace ? "replace" : "insert");
 
-	trace_bcache_btree_insert_key(b, k, replace_key != NULL, status);
+	trace_bcache_btree_insert_key(b, insert, replace != NULL, status);
 	return true;
 }
 
@@ -2322,7 +2341,6 @@ bch_btree_insert_keys(struct btree *b, struct btree_op *op,
 			op->iterator_invalidated = 1;
 
 		while (!bch_keylist_empty(insert_keys)) {
-			BKEY_PADDED(key) temp;
 			struct bkey *k = (bch_keylist_front(insert_keys));
 
 			/* finished for this node */
@@ -2343,27 +2361,13 @@ bch_btree_insert_keys(struct btree *b, struct btree_op *op,
 			    jset_u64s(KEY_U64s(k)) > res.nkeys)
 				break;
 
-			BUG_ON(write_block(b) != btree_bset_last(b));
-
-			if (b->keys.ops->is_extents &&
-			    bkey_cmp(k, &b->key) > 0) {
-				bkey_copy(&temp.key, k);
-
-				bch_cut_back(&b->key, &temp.key);
-				bch_cut_front(&b->key, k);
-				k = &temp.key;
-			}
-
 			attempted = true;
-			if (btree_insert_key(b, k, replace_key, &res,
+			if (btree_insert_key(b, insert_keys, replace_key, &res,
 					     bch_keylist_is_last(insert_keys, k)
 					     ? flush_cl : NULL)) {
 				op->iterator_invalidated = 1;
 				inserted = true;
 			}
-
-			if (k == (bch_keylist_front(insert_keys)))
-				bch_keylist_pop_front(insert_keys);
 		}
 
 		if (inserted && b->written) {
