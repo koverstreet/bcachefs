@@ -493,7 +493,10 @@ static unsigned bkey_to_cacheline_offset(struct bset_tree *t,
 					 unsigned cacheline,
 					 struct bkey *k)
 {
-	return (u64 *) k - (u64 *) cacheline_to_bkey(t, cacheline, 0);
+	size_t m = (u64 *) k - (u64 *) cacheline_to_bkey(t, cacheline, 0);
+
+	BUG_ON(m > (1U << BKEY_MID_BITS) - 1);
+	return m;
 }
 
 static struct bkey *tree_to_bkey(struct bset_tree *t, unsigned j)
@@ -649,6 +652,9 @@ retry:
 
 		t->prev[j] = KEY_U64s(prev);
 		t->tree[j].m = bkey_to_cacheline_offset(t, cacheline++, k);
+
+		BUG_ON(tree_to_prev_bkey(t, j) != prev);
+		BUG_ON(tree_to_bkey(t, j) != k);
 	}
 
 	while (bkey_next(k) != bset_bkey_last(t->data))
