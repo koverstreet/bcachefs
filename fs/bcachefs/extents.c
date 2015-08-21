@@ -294,7 +294,7 @@ static bool bch_btree_ptr_invalid(struct btree_keys *bk, struct bkey *k)
 	return __bch_btree_ptr_invalid(b->c, k);
 }
 
-static bool btree_ptr_bad_expensive(struct btree_keys *bk, struct bkey *k)
+static bool btree_ptr_debug_invalid(struct btree_keys *bk, struct bkey *k)
 {
 	struct btree *b = container_of(bk, struct btree, keys);
 	unsigned i, seq;
@@ -343,20 +343,6 @@ err:
 	return true;
 }
 
-static bool bch_btree_ptr_bad(struct btree_keys *bk, struct bkey *k)
-{
-	struct btree *b = container_of(bk, struct btree, keys);
-
-	if (KEY_DELETED(k))
-		return true;
-
-	if (expensive_debug_checks(b->c) &&
-	    btree_ptr_bad_expensive(bk, k))
-		return true;
-
-	return false;
-}
-
 struct cache *bch_btree_pick_ptr(struct cache_set *c, const struct bkey *k,
 				 unsigned *ptr)
 {
@@ -383,7 +369,7 @@ const struct btree_keys_ops bch_btree_interior_node_ops = {
 	.insert_fixup	= bch_generic_insert_fixup,
 
 	.key_invalid	= bch_btree_ptr_invalid,
-	.key_bad	= bch_btree_ptr_bad,
+	.key_debug_invalid = btree_ptr_debug_invalid,
 	.key_to_text	= bch_extent_to_text,
 	.key_dump	= bch_bkey_dump,
 };
@@ -798,14 +784,13 @@ static bool bch_extent_invalid(struct btree_keys *bk, struct bkey *k)
 	return __bch_extent_invalid(b->c, k);
 }
 
-static bool bch_extent_bad_expensive(struct btree_keys *bk, struct bkey *k)
+static bool bch_extent_debug_invalid(struct btree_keys *bk, struct bkey *k)
 {
 	struct btree *b = container_of(bk, struct btree, keys);
-	unsigned stale, replicas_needed;
 	struct cache_set *c = b->c;
 	struct cache *ca;
 	struct bucket *g;
-	unsigned seq;
+	unsigned seq, stale, replicas_needed;
 	char buf[80];
 	bool bad;
 	int i;
@@ -876,19 +861,6 @@ err:
 		  g->last_gc, g->mark.counter);
 	rcu_read_unlock();
 	return true;
-}
-
-static bool bch_extent_bad(struct btree_keys *bk, struct bkey *k)
-{
-	struct btree *b = container_of(bk, struct btree, keys);
-
-	if (KEY_DELETED(k))
-		return true;
-
-	if (expensive_debug_checks(b->c))
-		bch_extent_bad_expensive(bk, k);
-
-	return false;
 }
 
 struct cache *bch_extent_pick_ptr(struct cache_set *c, const struct bkey *k,
@@ -962,7 +934,7 @@ static const struct btree_keys_ops bch_extent_ops = {
 	.sort_fixup	= bch_extent_sort_fixup,
 	.insert_fixup	= bch_extent_insert_fixup,
 	.key_invalid	= bch_extent_invalid,
-	.key_bad	= bch_extent_bad,
+	.key_debug_invalid = bch_extent_debug_invalid,
 	.key_normalize	= bch_ptr_normalize,
 	.key_merge	= bch_extent_merge,
 	.key_to_text	= bch_extent_to_text,

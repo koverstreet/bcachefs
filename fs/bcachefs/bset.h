@@ -193,7 +193,9 @@ struct btree_keys_ops {
 	bool		(*insert_fixup)(struct btree_keys *, struct bkey *,
 					struct btree_iter *, struct bkey *);
 	bool		(*key_invalid)(struct btree_keys *, struct bkey *);
-	bool		(*key_bad)(struct btree_keys *, struct bkey *);
+	bool		(*key_debug_invalid)(struct btree_keys *,
+					     struct bkey *);
+
 	bool		(*key_normalize)(struct btree_keys *, struct bkey *);
 	bool		(*key_merge)(struct btree_keys *,
 				     struct bkey *, struct bkey *);
@@ -223,6 +225,15 @@ struct btree_keys {
 	 */
 	struct bset_tree	set[MAX_BSETS];
 };
+
+static inline bool btree_keys_expensive_checks(struct btree_keys *b)
+{
+#ifdef CONFIG_BCACHEFS_DEBUG
+	return *b->expensive_debug_checks;
+#else
+	return false;
+#endif
+}
 
 static inline struct bset_tree *bset_tree_last(struct btree_keys *b)
 {
@@ -444,7 +455,16 @@ static inline bool bch_ptr_invalid(struct btree_keys *b, struct bkey *k)
 
 static inline bool bch_ptr_bad(struct btree_keys *b, struct bkey *k)
 {
-	return b->ops->key_bad ? b->ops->key_bad(b, k) : KEY_DELETED(k);
+	if (KEY_DELETED(k))
+		return true;
+
+#ifdef CONFIG_BCACHEFS_DEBUG
+	if (btree_keys_expensive_checks(b) &&
+	    b->ops->key_debug_invalid &&
+	    b->ops->key_debug_invalid(b, k))
+		return true;
+#endif
+	return false;
 }
 
 static inline void bch_bkey_to_text(struct btree_keys *b, char *buf,
@@ -556,15 +576,6 @@ static inline void bch_dump_bucket(struct btree_keys *b) {}
 void bch_dump_bset(struct btree_keys *, struct bset *, unsigned);
 
 #endif
-
-static inline bool btree_keys_expensive_checks(struct btree_keys *b)
-{
-#ifdef CONFIG_BCACHEFS_DEBUG
-	return *b->expensive_debug_checks;
-#else
-	return false;
-#endif
-}
 
 static inline int bch_count_data(struct btree_keys *b)
 {

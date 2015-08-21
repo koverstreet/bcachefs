@@ -117,18 +117,12 @@ static bool __inode_invalid(struct btree_keys *bk, struct bkey *k)
 	return bch_inode_invalid(k);
 }
 
-static bool bch_inode_bad(struct btree_keys *bk, struct bkey *k)
-{
-	return KEY_DELETED(k);
-}
-
 const struct btree_keys_ops bch_inode_ops = {
 	.sort_cmp	= bch_generic_sort_cmp,
 	.sort_fixup	= bch_generic_sort_fixup,
 	.insert_fixup	= bch_generic_insert_fixup,
 
 	.key_invalid	= __inode_invalid,
-	.key_bad	= bch_inode_bad,
 	.key_to_text	= bch_inode_to_text,
 	.key_dump	= bch_inode_dump,
 };
