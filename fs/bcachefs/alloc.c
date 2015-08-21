@@ -116,9 +116,7 @@ static void alloc_failed(struct cache *ca)
 	trace_bcache_alloc_wake_moving(ca);
 
 wait:
-	mutex_unlock(&c->bucket_lock);
 	bch_wait_for_next_gc(c, gc_count);
-	mutex_lock(&c->bucket_lock);
 }
 
 /* Bucket heap / gen */
@@ -208,7 +206,6 @@ static bool bch_can_invalidate_bucket(struct cache *ca, struct bucket *g)
 {
 	struct bucket_mark mark = READ_ONCE(g->mark);
 
-	BUG_ON(!ca->set->gc_mark_valid);
 	return (!mark.owned_by_allocator &&
 		!mark.is_metadata &&
 		!mark.dirty_sectors &&
@@ -217,7 +214,6 @@ static bool bch_can_invalidate_bucket(struct cache *ca, struct bucket *g)
 
 static void __bch_invalidate_one_bucket(struct cache *ca, struct bucket *g)
 {
-	lockdep_assert_held(&ca->set->bucket_lock);
 	BUG_ON(!bch_can_invalidate_bucket(ca, g));
 
 	/* Ordering matters: see bch_mark_data_bucket() */
@@ -319,19 +315,13 @@ static void invalidate_buckets_lru(struct cache *ca)
 
 	heap_resort(&ca->heap, bucket_min_cmp);
 
-	while (!fifo_full(&ca->free_inc)) {
-		if (!heap_pop(&ca->heap, g, bucket_min_cmp)) {
-			/*
-			 * We don't want to be calling invalidate_buckets()
-			 * multiple times when it can't do anything
-			 */
-			mutex_unlock(&ca->heap_lock);
-			alloc_failed(ca);
-			return;
-		}
-
+	/*
+	 * If we run out of buckets to invalidate, bch_allocator_thread() will
+	 * kick stuff and retry us
+	 */
+	while (!fifo_full(&ca->free_inc) &&
+	       heap_pop(&ca->heap, g, bucket_min_cmp))
 		bch_invalidate_one_bucket(ca, g);
-	}
 
 	mutex_unlock(&ca->heap_lock);
 }
@@ -351,10 +341,8 @@ static void invalidate_buckets_fifo(struct cache *ca)
 		if (bch_can_invalidate_bucket(ca, g))
 			bch_invalidate_one_bucket(ca, g);
 
-		if (++checked >= ca->sb.nbuckets) {
-			alloc_failed(ca);
+		if (++checked >= ca->sb.nbuckets)
 			return;
-		}
 	}
 }
 
@@ -375,17 +363,13 @@ static void invalidate_buckets_random(struct cache *ca)
 		if (bch_can_invalidate_bucket(ca, g))
 			bch_invalidate_one_bucket(ca, g);
 
-		if (++checked >= ca->sb.nbuckets / 2) {
-			alloc_failed(ca);
+		if (++checked >= ca->sb.nbuckets / 2)
 			return;
-		}
 	}
 }
 
 static void invalidate_buckets(struct cache *ca)
 {
-	BUG_ON(!ca->set->gc_mark_valid);
-
 	switch (CACHE_REPLACEMENT(cache_member_info(ca))) {
 	case CACHE_REPLACEMENT_LRU:
 		invalidate_buckets_lru(ca);
@@ -445,14 +429,15 @@ static int bch_allocator_thread(void *arg)
 	struct cache *ca = arg;
 	struct cache_set *c = ca->set;
 
-	mutex_lock(&c->bucket_lock);
-
 	while (1) {
 		/*
 		 * First, we pull buckets off of the free_inc list, possibly
 		 * issue discards to them, then we add the bucket to a
 		 * free list:
 		 */
+
+		mutex_lock(&c->bucket_lock);
+
 		while (!fifo_empty(&ca->free_inc)) {
 			long bucket = fifo_peek(&ca->free_inc);
 
@@ -482,18 +467,19 @@ static int bch_allocator_thread(void *arg)
 			closure_wake_up(&c->bucket_wait);
 		}
 
+		mutex_unlock(&c->bucket_lock);
+
 		/* We've run out of free buckets! */
-
 retry_invalidate:
-		/* Wait for in-progress GC to finish if there is one */
-		allocator_wait(c, c->gc_wait, c->gc_mark_valid);
-
 		/*
 		 * Find some buckets that we can invalidate, either they're
 		 * completely unused, or only contain clean data that's been
 		 * written back to the backing device or another cache tier
 		 */
+
+		down_read(&c->gc_lock);
 		invalidate_buckets(ca);
+		up_read(&c->gc_lock);
 
 		if (CACHE_SYNC(&ca->set->sb)) {
 			trace_bcache_alloc_batch(ca,
@@ -505,8 +491,10 @@ retry_invalidate:
 			 * free_inc, try to invalidate some more. This will
 			 * limit the amount of metadata writes we issue below
 			 */
-			if (!fifo_full(&ca->free_inc))
+			if (!fifo_full(&ca->free_inc)) {
+				alloc_failed(ca);
 				goto retry_invalidate;
+			}
 
 			/*
 			 * free_inc is full of newly-invalidated buckets, must

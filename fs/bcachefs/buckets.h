@@ -46,7 +46,7 @@ static inline struct bucket_stats bucket_stats_read(struct cache *ca)
 
 	do {
 		seq = read_seqbegin(&c->gc_cur_lock);
-		ret = c->gc_mark_valid
+		ret = c->gc_cur_btree > BTREE_ID_NR
 			? __bucket_stats_read(ca)
 			: ca->bucket_stats_cached;
 	} while (read_seqretry(&c->gc_cur_lock, seq));

@@ -793,6 +793,10 @@ struct cache_set {
 	 * gc_cur_key == ZERO_KEY and gc_cur_btree == BTREE_ID_EXTENTS does
 	 * correctly mean nothing has been marked)
 	 *
+	 * gc_cur_btree > BTREE_ID_NR indicates gc has finished and gc marks are
+	 * currently valid (when gc_cur_btree == BTREE_ID_NR gc has only
+	 * finished sweeping the btrees, there's still a bit more work to do).
+	 *
 	 * Protected by gc_cur_lock. Only written to by GC thread, so GC thread
 	 * can read without a lock.
 	 */
@@ -802,9 +806,9 @@ struct cache_set {
 
 	/*
 	 * The allocation code needs gc_mark in struct bucket to be correct, but
-	 * it's not while a gc is in progress. Protected by bucket_lock.
+	 * it's not while a gc is in progress.
 	 */
-	int			gc_mark_valid;
+	struct rw_semaphore	gc_lock;
 
 	/*
 	 * Number of GC iterations completed. To wait for the next GC to finish,

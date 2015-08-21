@@ -623,8 +623,6 @@ void bch_prio_write(struct cache *ca)
 
 	closure_init_stack(&cl);
 
-	lockdep_assert_held(&ca->set->bucket_lock);
-
 	trace_bcache_prio_write_start(ca);
 
 	atomic_long_add(ca->sb.bucket_size * prio_buckets(ca),
@@ -654,7 +652,9 @@ void bch_prio_write(struct cache *ca)
 					       &p->magic,
 					       bucket_bytes(ca) - 8);
 
+		mutex_lock(&ca->set->bucket_lock);
 		r = bch_bucket_alloc(ca, RESERVE_PRIO, NULL);
+		mutex_unlock(&ca->set->bucket_lock);
 		BUG_ON(r < 0);
 
 		/*
@@ -663,24 +663,21 @@ void bch_prio_write(struct cache *ca)
 		 */
 		ca->prio_buckets[i] = r;
 
-		mutex_unlock(&ca->set->bucket_lock);
 		prio_io(ca, r, REQ_OP_WRITE, 0);
-		mutex_lock(&ca->set->bucket_lock);
 	}
-
-	mutex_unlock(&ca->set->bucket_lock);
 
 	ca->prio_journal_bucket = ca->prio_buckets[0];
 
 	bch_journal_meta(ca->set, &cl);
 	closure_sync(&cl);
 
-	mutex_lock(&ca->set->bucket_lock);
-
 	/*
 	 * Don't want the old priorities to get garbage collected until after we
 	 * finish writing the new ones, and they're journalled
 	 */
+
+	mutex_lock(&ca->set->bucket_lock);
+
 	for (i = 0; i < prio_buckets(ca); i++) {
 		if (ca->prio_last_buckets[i])
 			__bch_bucket_free(ca,
@@ -688,6 +685,8 @@ void bch_prio_write(struct cache *ca)
 
 		ca->prio_last_buckets[i] = ca->prio_buckets[i];
 	}
+
+	mutex_unlock(&ca->set->bucket_lock);
 
 	trace_bcache_prio_write_end(ca);
 }
@@ -1663,6 +1662,7 @@ static struct cache_set *bch_cache_set_alloc(struct cache *ca)
 	mutex_init(&c->btree_cache_lock);
 	mutex_init(&c->bucket_lock);
 	init_waitqueue_head(&c->gc_wait);
+	init_rwsem(&c->gc_lock);
 	spin_lock_init(&c->btree_root_lock);
 
 	spin_lock_init(&c->btree_gc_time.lock);
@@ -1846,10 +1846,8 @@ static const char *run_cache_set(struct cache_set *c)
 				goto err;
 			}
 
-		mutex_lock(&c->bucket_lock);
 		for_each_cache(ca, c, i)
 			bch_prio_write(ca);
-		mutex_unlock(&c->bucket_lock);
 
 		err = "cannot allocate new btree root";
 		for (id = 0; id < BTREE_ID_NR; id++)
@@ -2286,15 +2284,6 @@ err:
 	return err;
 }
 
-static bool __wait_gc_mark_valid(struct cache_set *c)
-{
-	mutex_lock(&c->bucket_lock);
-	if (c->gc_mark_valid)
-		return true;
-	mutex_unlock(&c->bucket_lock);
-	return false;
-}
-
 int bch_cache_add(struct cache_set *c, const char *path)
 {
 	struct bcache_superblock sb;
@@ -2308,16 +2297,15 @@ int bch_cache_add(struct cache_set *c, const char *path)
 
 	memset(&sb, 0, sizeof(sb));
 
-	wait_event(c->gc_wait, __wait_gc_mark_valid(c));
+	down_read(&c->gc_lock);
 
 	for (i = 0; i < MAX_CACHES_PER_SET; i++)
 		if (!test_bit(i, c->cache_slots_used) &&
 		    (i > c->sb.nr_in_set ||
-		     bch_is_zero(c->members[i].uuid.b, sizeof(uuid_le)))) {
+		     bch_is_zero(c->members[i].uuid.b, sizeof(uuid_le))))
 			goto have_slot;
-		}
 
-	mutex_unlock(&c->bucket_lock);
+	up_read(&c->gc_lock);
 
 	err = "no slots available in superblock";
 	ret = -ENOSPC;
@@ -2326,7 +2314,7 @@ int bch_cache_add(struct cache_set *c, const char *path)
 have_slot:
 	nr_this_dev = i;
 	set_bit(nr_this_dev, c->cache_slots_used);
-	mutex_unlock(&c->bucket_lock);
+	up_read(&c->gc_lock);
 
 	if (nr_this_dev > c->sb.nr_in_set) {
 		struct cache_member *p = kcalloc(nr_this_dev + 1,

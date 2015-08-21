@@ -529,7 +529,7 @@ SHOW(__bch_cache_set)
 	sysfs_print(cache_available_percent,	bch_cache_available_percent(c));
 
 	sysfs_print(btree_gc_count,		bch_gc_count(c));
-	sysfs_print(btree_gc_running,		!c->gc_mark_valid);
+	sysfs_print(btree_gc_running,		c->gc_cur_btree <= BTREE_ID_NR);
 
 	sysfs_print_time_stats(&c->btree_gc_time,	btree_gc, sec, ms);
 	sysfs_print_time_stats(&c->btree_split_time,	btree_split, sec, us);
