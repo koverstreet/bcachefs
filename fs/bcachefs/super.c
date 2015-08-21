@@ -1983,9 +1983,9 @@ static int cache_set_add_device(struct cache_set *c, struct cache *ca)
 	if (ca->sb.seq > c->sb.seq)
 		cache_sb_to_cache_set(c, ca);
 
-	kobject_get(&ca->kobj);
 	ca->set = c;
 
+	kobject_get(&ca->kobj);
 	rcu_assign_pointer(c->cache[ca->sb.nr_this_dev], ca);
 
 	if (CACHE_STATE(mi) == CACHE_ACTIVE) {
@@ -2345,7 +2345,7 @@ int bch_cache_add(struct cache_set *c, const char *path)
 
 	for (i = 0; i < MAX_CACHES_PER_SET; i++)
 		if (!test_bit(i, c->cache_slots_used) &&
-		    (i > c->sb.nr_in_set ||
+		    (i >= c->sb.nr_in_set ||
 		     bch_is_zero(c->members[i].uuid.b, sizeof(uuid_le))))
 			goto have_slot;
 
@@ -2360,7 +2360,7 @@ have_slot:
 	set_bit(nr_this_dev, c->cache_slots_used);
 	up_read(&c->gc_lock);
 
-	if (nr_this_dev > c->sb.nr_in_set) {
+	if (nr_this_dev >= c->sb.nr_in_set) {
 		struct cache_member *p = kcalloc(nr_this_dev + 1,
 						 sizeof(struct cache_member),
 						 GFP_KERNEL);
@@ -2396,15 +2396,22 @@ have_slot:
 
 	ca->sb.nr_this_dev	= nr_this_dev;
 	ca->sb.nr_in_set	= c->sb.nr_in_set;
+	ca->set			= c;
 
 	err = "journal alloc failed";
 	if (bch_cache_journal_alloc(ca))
 		goto err_put;
 
+	err = "error starting allocator thread";
+	if (bch_cache_allocator_start(ca))
+		goto err_put;
+
 	c->members[nr_this_dev].uuid = ca->sb.uuid;
 	bcache_write_super(c);
 
-	BUG_ON(can_attach_cache(ca, c));
+	err = can_attach_cache(ca, c);
+	if (err)
+		goto err_put;
 
 	err = "sysfs error";
 	if (cache_set_add_device(c, ca))
