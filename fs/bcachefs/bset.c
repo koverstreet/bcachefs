@@ -683,20 +683,21 @@ static struct bkey *bch_btree_node_insert_pos(struct btree_keys *b,
  * @top must be in the last bset.
  */
 static void bch_btree_node_iter_fix(struct btree_node_iter *iter,
-				    struct bkey *where,
-				    struct bkey *new)
+				    const struct bkey *where)
 {
 	struct btree_node_iter_set *set;
-	u64 n = new->u64s;
+	u64 n = where->u64s;
 
 	for (set = iter->data;
 	     set < iter->data + iter->used;
-	     set++) {
-		if (set->k >= where)
-			set->k = (struct bkey *) ((u64 *) set->k + n);
-		if (set->end >= where)
+	     set++)
+		if (set->end >= where) {
 			set->end = (struct bkey *) ((u64 *) set->end + n);
-	}
+
+			if (set->k >= where)
+				set->k = (struct bkey *) ((u64 *) set->k + n);
+			break;
+		}
 }
 
 /**
@@ -885,7 +886,7 @@ void bch_bset_insert(struct btree_keys *b,
 		b->nr_live_u64s += insert->u64s;
 
 	bch_bset_fix_lookup_table(b, t, where);
-	bch_btree_node_iter_fix(iter, where, insert);
+	bch_btree_node_iter_fix(iter, where);
 
 	bch_btree_node_iter_verify(b, iter);
 }
