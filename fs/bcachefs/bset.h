@@ -359,20 +359,18 @@ static __always_inline int64_t bkey_cmp(const struct bkey *l,
 void bch_bkey_copy_single_ptr(struct bkey *, const struct bkey *,
 			      unsigned);
 
-#define NEXT_KEY(_k)						\
-({								\
-	struct bkey _ret = *_k;					\
-								\
-	SET_KEY_OFFSET(&_ret, KEY_OFFSET(&_ret) + 1);		\
-	if (!KEY_OFFSET(&_ret)) {				\
-		SET_KEY_INODE(&_ret, KEY_INODE(&_ret) + 1);	\
-								\
-		if (!KEY_INODE(&_ret))				\
-			BUG();					\
-	}							\
-								\
-	_ret;							\
-})
+static inline struct bkey bkey_successor(struct bkey *k)
+{
+	struct bkey ret = *k;
+
+	SET_KEY_OFFSET(&ret, KEY_OFFSET(&ret) + 1);
+	if (!KEY_OFFSET(&ret)) {
+		SET_KEY_INODE(&ret, KEY_INODE(&ret) + 1);
+		BUG_ON(!KEY_INODE(&ret));
+	}
+
+	return ret;
+}
 
 static inline bool bkey_invalid(struct btree_keys *b, struct bkey *k)
 {
@@ -568,7 +566,7 @@ enum bch_extent_overlap {
 
 /* Returns how k overlaps with m */
 static inline enum bch_extent_overlap bch_extent_overlap(const struct bkey *k,
-						  const struct bkey *m)
+							 const struct bkey *m)
 {
 	if (bkey_cmp(k, m) < 0) {
 		if (bkey_cmp(&START_KEY(k), &START_KEY(m)) > 0)

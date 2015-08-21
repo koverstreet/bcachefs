@@ -1869,7 +1869,7 @@ static int btree_gc_recurse(struct btree *b, struct btree_op *op,
 	/* Sliding window of GC_MERGE_NODES adjacent btree nodes */
 	struct gc_merge_info r[GC_MERGE_NODES];
 	struct gc_merge_info *i, *last = r + ARRAY_SIZE(r) - 1;
-	struct bkey tmp = NEXT_KEY(&c->gc_cur_key);
+	struct bkey tmp = bkey_successor(&c->gc_cur_key);
 
 	bch_btree_iter_init(&b->keys, &iter, &tmp);
 
@@ -2856,7 +2856,7 @@ int bch_btree_map_nodes(struct btree_op *op, struct cache_set *c,
 	struct bkey from = _from ? *_from : KEY(0, 0, 0);
 
 	if (op->id == BTREE_ID_EXTENTS)
-		from = NEXT_KEY(&from);
+		from = bkey_successor(&from);
 
 	return btree_root(map_nodes_recurse, c, op, flags & MAP_ASYNC,
 			  &from, fn, flags);
@@ -2871,7 +2871,7 @@ static int do_map_fn(struct btree *b, struct btree_op *op, struct bkey *from,
 	if (b->btree_id == BTREE_ID_INODES)
 		SET_KEY_INODE(&next, KEY_INODE(&next) + 1);
 	else if (b->btree_id != BTREE_ID_EXTENTS)
-		next = NEXT_KEY(&next);
+		next = bkey_successor(&next);
 
 	ret = fn(op, b, k);
 
@@ -2948,7 +2948,7 @@ static int bch_btree_map_keys_recurse(struct btree *b, struct btree_op *op,
 	unsigned level = b->level;
 
 	if (b->btree_id == BTREE_ID_EXTENTS)
-		search = NEXT_KEY(&search);
+		search = bkey_successor(&search);
 
 	bch_btree_iter_init(&b->keys, &iter, &search);
 
@@ -2993,7 +2993,7 @@ static int bch_btree_map_keys_recurse(struct btree *b, struct btree_op *op,
 
 		if (b->btree_id != BTREE_ID_EXTENTS &&
 		    bkey_cmp(&b->key, &MAX_KEY))
-			next = NEXT_KEY(&next);
+			next = bkey_successor(&next);
 
 		/* If we're not mapping holes, we need to advance @from to
 		 * ensure that we don't re-visit the same leaf node again in
@@ -3005,8 +3005,10 @@ static int bch_btree_map_keys_recurse(struct btree *b, struct btree_op *op,
 	}
 
 out:
-	/* If there's no more work to be done, don't do the lookup again,
-	 * we will crash in the NEXT_KEY() call at the top here */
+	/*
+	 * If there's no more work to be done, don't do the lookup again,
+	 * we will crash in the bkey_successor() call at the top here
+	 */
 	if (ret == -EINTR && bkey_cmp(from, &MAX_KEY) == 0)
 		ret = 0;
 	return ret;
