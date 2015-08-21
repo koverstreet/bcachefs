@@ -1903,16 +1903,16 @@ static void btree_gc_start(struct cache_set *c)
 	c->gc_mark_valid = 0;
 	c->gc_cur_btree = 0;
 	c->gc_cur_key = ZERO_KEY;
+
+	for_each_cache(ca, c, i)
+		ca->bucket_stats[1] = ca->bucket_stats[0];
 	write_sequnlock(&c->gc_cur_lock);
 
-	for_each_cache(ca, c, i) {
-		ca->bucket_stats[1] = ca->bucket_stats[0];
-
+	for_each_cache(ca, c, i)
 		for_each_bucket(g, ca) {
 			g->last_gc = ca->bucket_gens[g - ca->buckets];
 			bch_mark_free_bucket(ca, g);
 		}
-	}
 
 	/*
 	 * must happen before traversing the btree, as pointers move from open
