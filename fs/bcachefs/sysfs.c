@@ -74,6 +74,7 @@ read_attribute(bucket_size);
 read_attribute(bucket_size_bytes);
 read_attribute(block_size);
 read_attribute(block_size_bytes);
+read_attribute(first_bucket);
 read_attribute(nbuckets);
 read_attribute(tree_depth);
 read_attribute(root_usage_percent);
@@ -1020,6 +1021,7 @@ SHOW(__bch_cache)
 	sysfs_print(bucket_size_bytes,	bucket_bytes(ca));
 	sysfs_hprint(block_size,	block_bytes(ca));
 	sysfs_print(block_size_bytes,	block_bytes(ca));
+	sysfs_print(first_bucket,	ca->sb.first_bucket);
 	sysfs_print(nbuckets,		ca->sb.nbuckets);
 	sysfs_print(discard,		CACHE_DISCARD(&ca->mi));
 	sysfs_hprint(written, atomic_long_read(&ca->sectors_written) << 9);
@@ -1195,6 +1197,7 @@ static struct attribute *bch_cache_files[] = {
 	&sysfs_bucket_size_bytes,
 	&sysfs_block_size,
 	&sysfs_block_size_bytes,
+	&sysfs_first_bucket,
 	&sysfs_nbuckets,
 	&sysfs_read_priority_stats,
 	&sysfs_write_priority_stats,
