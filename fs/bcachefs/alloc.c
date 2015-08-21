@@ -599,6 +599,24 @@ void bch_bucket_free(struct cache_set *c, struct bkey *k)
 	mutex_unlock(&c->bucket_lock);
 }
 
+static void bch_bucket_free_never_used(struct cache_set *c, struct bkey *k)
+{
+	unsigned i;
+
+	mutex_lock(&c->bucket_lock);
+
+	for (i = 0; i < bch_extent_ptrs(k); i++) {
+		struct cache *ca = PTR_CACHE(c, k, i);
+		long bucket = PTR_BUCKET_NR(c, k, i);
+
+		if (!bch_allocator_push(ca, bucket))
+			__bch_bucket_free(PTR_CACHE(c, k, i),
+					  PTR_BUCKET(c, k, i));
+	}
+
+	mutex_unlock(&c->bucket_lock);
+}
+
 static struct cache *bch_next_cache(struct cache_set *c,
 				    enum alloc_reserve reserve,
 				    int tier_idx, long *cache_used,
@@ -708,7 +726,7 @@ int bch_bucket_alloc_set(struct cache_set *c, enum alloc_reserve reserve,
 	return 0;
 err:
 	mutex_unlock(&c->bucket_lock);
-	bch_bucket_free(c, k);
+	bch_bucket_free_never_used(c, k);
 	return ret;
 }
 
@@ -852,7 +870,7 @@ retry:
 	if (tier->data_buckets[i]) {
 		/* we raced - and we must unlock to call bch_bucket_free()... */
 		spin_unlock(&c->open_buckets_lock);
-		bch_bucket_free(c, &b->key);
+		bch_bucket_free_never_used(c, &b->key);
 		spin_lock(&c->open_buckets_lock);
 
 		__bch_open_bucket_put(c, b);
@@ -1017,7 +1035,7 @@ found:
 		if (ca->gc_buckets[gen] || race_fault()) {
 			/* we raced */
 			mutex_unlock(&c->bucket_lock);
-			bch_bucket_free(c, &b->key);
+			bch_bucket_free_never_used(c, &b->key);
 			bch_open_bucket_put(c, b);
 			mutex_lock(&c->bucket_lock);
 		} else {
