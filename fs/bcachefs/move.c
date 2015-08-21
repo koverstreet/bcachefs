@@ -457,14 +457,8 @@ static bool migrate_data_pred(struct scan_keylist *kl, const struct bkey *k)
 {
 	struct cache *ca = container_of(kl, struct cache,
 					moving_gc_queue.keys);
-	unsigned dev = ca->sb.nr_this_dev;
-	unsigned i;
 
-	for (i = 0; i < bch_extent_ptrs(k); i++)
-		if (PTR_DEV(k, i) == dev)
-			return true;
-
-	return false;
+	return bch_extent_has_device(k, ca->sb.nr_this_dev);
 }
 
 #if (0)
@@ -822,18 +816,16 @@ static int bch_move_btree_off(struct cache *ca,
 	for (pass = 0; (pass < MAX_DATA_OFF_ITER); pass++) {
 		struct btree_iter iter;
 		struct btree *b;
-		unsigned i, moved = 0, seen = 0;
+		unsigned moved = 0, seen = 0;
 		int ret;
 
 		for_each_btree_node(&iter, ca->set, id, NULL, b) {
 			seen++;
 retry:
-			for (i = 0; i < bch_extent_ptrs(&b->key); i++)
-				if (PTR_DEV(&b->key, i) == ca->sb.nr_this_dev)
-					goto move;
+			if (!bch_extent_has_device(&b->key,
+						   ca->sb.nr_this_dev))
+				continue;
 
-			continue;
-move:
 			if (bch_btree_node_rewrite(b, &iter, true)) {
 				/*
 				 * Drop locks to upgrade locks or wait on
@@ -1038,14 +1030,10 @@ int bch_flag_data_bad(struct cache *ca)
 	ret2 = bch_btree_iter_unlock(&iter);
 
 #ifdef CONFIG_BCACHEFS_DEBUG
-	if (!ret && !ret2) {
-		unsigned ptr;
-
+	if (!ret && !ret2)
 		for_each_btree_key(&iter, ca->set,
 				   BTREE_ID_EXTENTS, &ZERO_KEY, k)
-			for (ptr = 0; ptr < bch_extent_ptrs(k); ptr++)
-				BUG_ON(k->val[ptr] == ca->sb.nr_this_dev);
-	}
+			BUG_ON(bch_extent_has_device(k, ca->sb.nr_this_dev));
 #endif
 
 	return ret ?: ret2;

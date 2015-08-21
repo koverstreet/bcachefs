@@ -92,6 +92,17 @@ bool bch_insert_fixup_key(struct btree *b, struct bkey *insert,
 
 /* Common among btree and extent ptrs */
 
+bool bch_extent_has_device(const struct bkey *k, unsigned dev)
+{
+	unsigned ptr;
+
+	for (ptr = 0; ptr < bch_extent_ptrs(k); ptr++)
+		if (PTR_DEV(k, ptr) == dev)
+			return true;
+
+	return false;
+}
+
 static bool should_drop_ptr(const struct cache_set *c, const struct bkey *k,
 			    unsigned ptr)
 {

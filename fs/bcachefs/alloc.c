@@ -1373,7 +1373,6 @@ retry:
 static bool bch_stop_write_point(struct cache *ca,
 				 struct write_point *wp)
 {
-	unsigned ptr;
 	struct open_bucket *b;
 	struct cache_set *c = ca->set;
 
@@ -1387,17 +1386,11 @@ static bool bch_stop_write_point(struct cache *ca,
 		return false;
 	}
 
-	/* Walk over all the replicas in the key */
+	if (!bch_extent_has_device(&b->key, ca->sb.nr_this_dev)) {
+		spin_unlock(&b->lock);
+		return false;
+	}
 
-	for (ptr = 0; ptr < bch_extent_ptrs(&b->key); ptr++)
-		if (PTR_DEV(&b->key, ptr) == ca->sb.nr_this_dev)
-			goto found_it;
-
-	/* Not found */
-	spin_unlock(&b->lock);
-	return false;
-
-found_it:
 	/*
 	 * Remove the bucket from the write point, effectively
 	 * truncating it.
@@ -1475,32 +1468,25 @@ static bool bucket_still_writeable(struct open_bucket *b, struct cache_set *c)
 
 void bch_await_scheduled_data_writes(struct cache *ca)
 {
-	unsigned i;
-	unsigned matching;
 	struct open_bucket *b;
 	struct closure cl;
 	struct cache_set *c = ca->set;
+	bool found;
 
 	closure_init_stack(&cl);
-
 retry:
-	matching = 0;
+	found = false;
 	spin_lock(&c->open_buckets_lock);
 	rcu_read_lock();
 
 	list_for_each_entry(b, &c->open_buckets_open, list) {
 		spin_lock(&b->lock);
-		for (i = 0; i < bch_extent_ptrs(&b->key); i++) {
-			if (ca == PTR_CACHE(c, &b->key, i)) {
-				/* We found an open bucket for this dev */
-				matching += 1;
-				break;
-			}
-		}
+		if (bch_extent_has_device(&b->key, ca->sb.nr_this_dev))
+			found = true;
 		spin_unlock(&b->lock);
 	}
 
-	if (matching != 0) {
+	if (found) {
 		/*
 		 * closure_wait doesn't actually wait -- it adds to the
 		 * wait list.

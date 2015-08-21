@@ -772,17 +772,9 @@ pick_new_devices:
 		struct journal_device *ja = &ca->journal;
 		unsigned next = (ja->cur_idx + 1) %
 			bch_nr_journal_buckets(&ca->sb);
-		int same_cache = 0;
 
 		/* Check that we don't already have a ptr to this cache */
-		for (i = 0; i < bch_extent_ptrs(k); i++) {
-			if (PTR_CACHE(c, k, i) == ca) {
-				same_cache = 1;
-				break;
-			}
-		}
-
-		if (same_cache)
+		if (bch_extent_has_device(k, ca->sb.nr_this_dev))
 			continue;
 
 		if ((CACHE_TIER(&ca->mi) != 0)
@@ -1293,23 +1285,15 @@ ssize_t bch_journal_print_debug(struct journal *j, char *buf)
 
 static bool bch_journal_writing_to_device(struct cache *ca)
 {
-	struct bkey *k;
-	bool found = false;
 	struct cache_set *c = ca->set;
-	unsigned i, mov_dev = ca->sb.nr_this_dev;
+	bool ret;
 
 	spin_lock(&c->journal.lock);
-
-	k = &c->journal.key;
-	for (i = 0; i < bch_extent_ptrs(k); i++) {
-		if (PTR_DEV(k, i) == mov_dev) {
-			found = true;
-			break;
-		}
-	}
-
+	ret = bch_extent_has_device(&c->journal.key,
+				    ca->sb.nr_this_dev);
 	spin_unlock(&c->journal.lock);
-	return found;
+
+	return ret;
 }
 
 /*

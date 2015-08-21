@@ -86,6 +86,7 @@ static inline bool bch_extent_ptr_is_dirty(struct cache_set *c,
 	return ptr + bch_extent_replicas_needed(c, k) >= bch_extent_ptrs(k);
 }
 
+bool bch_extent_has_device(const struct bkey *, unsigned);
 void bch_bkey_copy_single_ptr(struct bkey *, const struct bkey *,
 			      unsigned);
 
