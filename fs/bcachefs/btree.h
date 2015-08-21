@@ -390,13 +390,18 @@ int bch_btree_root_read(struct cache_set *, enum btree_id,
 
 struct bch_replace_info;
 
-int bch_btree_insert_check_key(struct btree *, struct btree_op *,
-			       struct bkey *);
+/*
+ * Don't drop/retake locks: instead return -EINTR if need to upgrade to intent
+ * locks, -EAGAIN if need to wait on btree reserve
+ */
+#define BTREE_INSERT_ATOMIC		1
+
+int bch_btree_insert_at(struct btree_iter *, struct keylist *,
+			struct bch_replace_info *, struct closure *,
+			enum alloc_reserve, unsigned);
+int bch_btree_insert_check_key(struct btree_iter *, struct bkey *);
 int bch_btree_insert(struct cache_set *, enum btree_id, struct keylist *,
 		     struct bch_replace_info *, struct closure *);
-int bch_btree_insert_node(struct btree *, struct btree_op *, struct keylist *,
-			  struct bch_replace_info *,
-			  struct closure *, enum alloc_reserve);
 
 int bch_btree_node_rewrite(struct btree *, struct btree_iter *, bool);
 
