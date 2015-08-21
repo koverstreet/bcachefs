@@ -2408,14 +2408,13 @@ static ssize_t register_bcache(struct kobject *k, struct kobj_attribute *attr,
 	if (!try_module_get(THIS_MODULE))
 		return -EBUSY;
 
-	if (!(path = kstrndup(buffer, size, GFP_KERNEL)))
+	if (!(path = kstrndup(skip_spaces(buffer), size, GFP_KERNEL)))
 		goto err;
 
 	err = "failed to open device";
 	bdev = blkdev_get_by_path(strim(path),
 				  FMODE_READ|FMODE_WRITE|FMODE_EXCL,
 				  &sb);
-	kfree(path);
 
 	if (IS_ERR(bdev)) {
 		if (bdev == ERR_PTR(-EBUSY)) {
@@ -2454,6 +2453,7 @@ static ssize_t register_bcache(struct kobject *k, struct kobj_attribute *attr,
 
 	ret = size;
 out:
+	kfree(path);
 	module_put(THIS_MODULE);
 	return ret;
 
