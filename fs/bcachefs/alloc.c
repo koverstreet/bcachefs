@@ -77,20 +77,29 @@ static inline u8 bucket_gc_gen(struct cache *ca, size_t r)
 #define BUCKET_GC_GEN_MAX	96U
 
 /**
- * alloc_failed - kick off external processes to free up buckets
+ * wait_buckets_available - wait on reclaimable buckets
  *
- * We couldn't find enough buckets in invalidate_buckets(). Ask
- * btree GC to run, hoping it will find more clean buckets.
+ * If there aren't enough available buckets for invalidate_buckets(), kick
+ * various things and wait.
  */
-static void wait_buckets_available(struct cache *ca)
+static int wait_buckets_available(struct cache *ca)
 {
 	struct cache_set *c = ca->set;
 	unsigned i;
+	int ret = 0;
 
 	while (1) {
 		set_current_state(TASK_INTERRUPTIBLE);
-		if (kthread_should_stop())
+		if (kthread_should_stop()) {
+			ret = -1;
 			break;
+		}
+
+		if (ca->inc_gen_needs_gc > ca->free_inc.size) {
+			if (c->gc_thread)
+				wake_up_process(c->gc_thread);
+			goto wait;
+		}
 
 		if (buckets_available_cache(ca) >= fifo_free(&ca->free_inc))
 			break;
@@ -100,16 +109,11 @@ static void wait_buckets_available(struct cache *ca)
 		 * allocator might fail to find more buckets to invalidate once
 		 * it fills up free lists.
 		 */
-		if (!test_bit(CACHE_SET_RUNNING, &c->flags)) {
-			schedule();
-			continue;
-		}
+		if (!test_bit(CACHE_SET_RUNNING, &c->flags))
+			goto wait;
 
 		if (atomic_long_read(&ca->saturated_count) >=
 		    ca->free_inc.size << c->bucket_bits)
-			wake_up_process(c->gc_thread);
-
-		if (ca->inc_gen_needs_gc > ca->free_inc.size)
 			wake_up_process(c->gc_thread);
 
 		/*
@@ -131,11 +135,14 @@ static void wait_buckets_available(struct cache *ca)
 		bch_ratelimit_reset(&ca->moving_gc_pd.rate);
 		wake_up_process(ca->moving_gc_read);
 		trace_bcache_alloc_wake_moving(ca);
-
+wait:
+		up_read(&c->gc_lock);
 		schedule();
+		down_read(&c->gc_lock);
 	}
 
 	__set_current_state(TASK_RUNNING);
+	return ret;
 }
 
 static void verify_not_on_freelist(struct cache *ca, size_t bucket)
@@ -475,40 +482,35 @@ static int bch_allocator_thread(void *arg)
 		}
 
 		/* We've run out of free buckets! */
-retry_invalidate:
-		wait_buckets_available(ca);
-
-		if (kthread_should_stop())
-			return 0;
-
-		/*
-		 * Find some buckets that we can invalidate, either they're
-		 * completely unused, or only contain clean data that's been
-		 * written back to the backing device or another cache tier
-		 */
 
 		down_read(&c->gc_lock);
-		invalidate_buckets(ca);
-		up_read(&c->gc_lock);
 
-		if (CACHE_SYNC(&ca->set->sb)) {
+		do {
+			if (wait_buckets_available(ca)) {
+				up_read(&c->gc_lock);
+				return 0;
+			}
+
+			/*
+			 * Find some buckets that we can invalidate, either
+			 * they're completely unused, or only contain clean data
+			 * that's been written back to the backing device or
+			 * another cache tier
+			 */
+
+			invalidate_buckets(ca);
 			trace_bcache_alloc_batch(ca, fifo_used(&ca->free_inc),
 						 ca->free_inc.size);
+		} while (!fifo_full(&ca->free_inc));
 
-			/*
-			 * If we didn't invalidate enough buckets to fill up
-			 * free_inc, try to invalidate some more. This will
-			 * limit the amount of metadata writes we issue below
-			 */
-			if (!fifo_full(&ca->free_inc))
-				goto retry_invalidate;
+		up_read(&c->gc_lock);
 
-			/*
-			 * free_inc is full of newly-invalidated buckets, must
-			 * write out prios and gens before they can be re-used
-			 */
+		/*
+		 * free_inc is full of newly-invalidated buckets, must write out
+		 * prios and gens before they can be re-used
+		 */
+		if (CACHE_SYNC(&ca->set->sb))
 			bch_prio_write(ca);
-		}
 	}
 }
 
