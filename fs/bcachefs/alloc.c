@@ -258,42 +258,6 @@ static void bch_invalidate_one_bucket(struct cache *ca, struct bucket *g)
 }
 
 /*
- * bch_prio_init - put some unused buckets directly on the prio freelist.
- *
- * This allows the allocator thread to get started - it needs freed buckets
- * to rewrite the prios and gens, and it needs to rewrite prios and gens in
- * order to free buckets.
- *
- * This is only safe for buckets that have no live data in them, which
- * there should always be some of when this function is called.
- */
-void bch_prio_init(struct cache_set *c)
-{
-	struct cache *ca;
-	struct bucket *g;
-	unsigned i;
-
-	for_each_cache(ca, c, i) {
-		for_each_bucket(g, ca) {
-			spin_lock(&ca->freelist_lock);
-			if (fifo_full(&ca->free[RESERVE_PRIO])) {
-				spin_unlock(&ca->freelist_lock);
-				break;
-			}
-
-			if (bch_can_invalidate_bucket(ca, g) &&
-			    !g->mark.cached_sectors) {
-				__bch_invalidate_one_bucket(ca, g);
-				fifo_push(&ca->free[RESERVE_PRIO],
-					  g - ca->buckets);
-			}
-
-			spin_unlock(&ca->freelist_lock);
-		}
-	}
-}
-
-/*
  * Determines what order we're going to reuse buckets, smallest bucket_prio()
  * first: we also take into account the number of sectors of live data in that
  * bucket, and in order for that multiply to make sense we have to scale bucket
@@ -1050,10 +1014,42 @@ void bch_open_buckets_init(struct cache_set *c)
 		c->cache_by_alloc[i].wp.tier = &c->cache_by_alloc[i];
 }
 
+/*
+ * bch_cache_allocator_start - put some unused buckets directly on the prio
+ * freelist, start allocator
+ *
+ * The allocator thread needs freed buckets to rewrite the prios and gens, and
+ * it needs to rewrite prios and gens in order to free buckets.
+ *
+ * This is only safe for buckets that have no live data in them, which
+ * there should always be some of when this function is called.
+ */
 int bch_cache_allocator_start(struct cache *ca)
 {
-	struct task_struct *k = kthread_run(bch_allocator_thread,
-					    ca, "bcache_allocator");
+	struct task_struct *k;
+	struct bucket *g;
+
+	for_each_bucket(g, ca) {
+		spin_lock(&ca->freelist_lock);
+		if (fifo_used(&ca->free_inc) >= prio_buckets(ca)) {
+			spin_unlock(&ca->freelist_lock);
+			goto done;
+		}
+
+		if (bch_can_invalidate_bucket(ca, g) &&
+		    !g->mark.cached_sectors) {
+			__bch_invalidate_one_bucket(ca, g);
+			fifo_push(&ca->free_inc, g - ca->buckets);
+		}
+
+		spin_unlock(&ca->freelist_lock);
+	}
+
+	bch_cache_set_error(ca->set,
+			    "couldn't find enough available buckets to write prios");
+	return -1;
+done:
+	k = kthread_run(bch_allocator_thread, ca, "bcache_allocator");
 	if (IS_ERR(k))
 		return PTR_ERR(k);
 

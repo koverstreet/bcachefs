@@ -1878,9 +1878,6 @@ static const char *run_cache_set(struct cache_set *c)
 				goto err;
 			}
 
-		for_each_cache(ca, c, i)
-			bch_prio_write(ca);
-
 		err = "cannot allocate new btree root";
 		for (id = 0; id < BTREE_ID_NR; id++)
 			if (bch_btree_root_alloc(c, id, &cl))

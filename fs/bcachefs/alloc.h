@@ -34,8 +34,6 @@ static inline void bch_increment_clock(struct cache_set *c,
 		bch_increment_clock_slowpath(c, rw);
 }
 
-void bch_prio_init(struct cache_set *);
-
 void __bch_bucket_free(struct cache *, struct bucket *);
 void bch_bucket_free(struct cache_set *, struct bkey *);
 

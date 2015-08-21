@@ -2204,7 +2204,6 @@ int bch_initial_gc(struct cache_set *c, struct list_head *journal)
 	}
 
 	bch_btree_gc_finish(c);
-	bch_prio_init(c);
 	return 0;
 }
 
