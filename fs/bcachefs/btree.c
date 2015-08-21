@@ -21,6 +21,7 @@
  */
 
 #include "bcache.h"
+#include "alloc.h"
 #include "btree.h"
 #include "debug.h"
 #include "extents.h"

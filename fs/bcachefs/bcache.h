@@ -884,33 +884,12 @@ static inline bool cached_dev_get(struct cached_dev *dc)
 	return true;
 }
 
-/*
- * bucket_gc_gen() returns the difference between the bucket's current gen and
- * the oldest gen of any pointer into that bucket in the btree (last_gc).
- */
-
-static inline uint8_t bucket_gc_gen(struct bucket *b)
-{
-	return b->gen - b->last_gc;
-}
-
-#define BUCKET_GC_GEN_MAX	96U
-
 #define kobj_attribute_write(n, fn)					\
 	static struct kobj_attribute ksysfs_##n = __ATTR(n, S_IWUSR, NULL, fn)
 
 #define kobj_attribute_rw(n, show, store)				\
 	static struct kobj_attribute ksysfs_##n =			\
 		__ATTR(n, S_IWUSR|S_IRUSR, show, store)
-
-static inline void wake_up_allocators(struct cache_set *c)
-{
-	struct cache *ca;
-	unsigned i;
-
-	for_each_cache(ca, c, i)
-		wake_up_process(ca->alloc_thread);
-}
 
 /* Forward declarations */
 
@@ -927,21 +906,6 @@ void __bch_bbio_prep(struct bio *, struct cache_set *);
 void bch_bbio_prep(struct bio *, struct cache_set *, struct bkey *, unsigned);
 void __bch_submit_bbio(struct bio *, struct cache_set *);
 void bch_submit_bbio(struct bio *, struct cache_set *, struct bkey *, unsigned);
-
-uint8_t bch_inc_gen(struct cache *, struct bucket *);
-void bch_rescale_priorities(struct cache_set *, int);
-
-bool bch_can_invalidate_bucket(struct cache *, struct bucket *);
-void __bch_invalidate_one_bucket(struct cache *, struct bucket *);
-
-void __bch_bucket_free(struct cache *, struct bucket *);
-void bch_bucket_free(struct cache_set *, struct bkey *);
-
-long bch_bucket_alloc(struct cache *, unsigned, bool);
-int bch_bucket_alloc_set(struct cache_set *, unsigned,
-			 struct bkey *, int, bool);
-bool bch_alloc_sectors(struct cache_set *, struct bkey *, unsigned,
-		       unsigned, unsigned, bool);
 
 __printf(2, 3)
 bool bch_cache_set_error(struct cache_set *, const char *, ...);
@@ -982,10 +946,6 @@ struct cache_set *bch_cache_set_alloc(struct cache_sb *);
 void bch_btree_cache_free(struct cache_set *);
 int bch_btree_cache_alloc(struct cache_set *);
 void bch_moving_init_cache_set(struct cache_set *);
-int bch_open_buckets_alloc(struct cache_set *);
-void bch_open_buckets_free(struct cache_set *);
-
-int bch_cache_allocator_start(struct cache *ca);
 
 void bch_debug_exit(void);
 int bch_debug_init(struct kobject *);
