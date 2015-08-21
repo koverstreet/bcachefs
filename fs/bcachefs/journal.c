@@ -233,6 +233,9 @@ int bch_journal_read(struct cache_set *c, struct list_head *list)
 		bitmap_zero(bitmap, nr_buckets);
 		pr_debug("%u journal buckets", nr_buckets);
 
+		if (!blk_queue_nonrot(bdev_get_queue(ca->bdev)))
+			goto linear_scan;
+
 		/*
 		 * Read journal buckets ordered by golden ratio hash to quickly
 		 * find a sequence of buckets with valid journal entries
@@ -252,7 +255,7 @@ int bch_journal_read(struct cache_set *c, struct list_head *list)
 		 * already
 		 */
 		pr_debug("falling back to linear search");
-
+linear_scan:
 		for (l = find_first_zero_bit(bitmap, nr_buckets);
 		     l < nr_buckets;
 		     l = find_next_zero_bit(bitmap, nr_buckets, l + 1))
