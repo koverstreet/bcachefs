@@ -162,7 +162,7 @@ TRACE_EVENT(bcache_write,
 	),
 
 	TP_fast_assign(
-		memcpy(__entry->uuid, c->sb.set_uuid.b, 16);
+		memcpy(__entry->uuid, c->sb.user_uuid.b, 16);
 		__entry->inode		= inode;
 		__entry->sector		= bio->bi_iter.bi_sector;
 		__entry->nr_sector	= bio->bi_iter.bi_size >> 9;
@@ -192,7 +192,7 @@ TRACE_EVENT(bcache_write_throttle,
 	),
 
 	TP_fast_assign(
-		memcpy(__entry->uuid, c->sb.set_uuid.b, 16);
+		memcpy(__entry->uuid, c->sb.user_uuid.b, 16);
 		__entry->inode		= inode;
 		__entry->sector		= bio->bi_iter.bi_sector;
 		__entry->nr_sector	= bio->bi_iter.bi_size >> 9;
@@ -227,7 +227,7 @@ DECLARE_EVENT_CLASS(page_alloc_fail,
 	),
 
 	TP_fast_assign(
-		memcpy(__entry->uuid, c->sb.set_uuid.b, 16);
+		memcpy(__entry->uuid, c->sb.user_uuid.b, 16);
 		__entry->size = size;
 	),
 
@@ -245,7 +245,7 @@ DECLARE_EVENT_CLASS(cache_set,
 	),
 
 	TP_fast_assign(
-		memcpy(__entry->uuid, c->sb.set_uuid.b, 16);
+		memcpy(__entry->uuid, c->sb.user_uuid.b, 16);
 	),
 
 	TP_printk("%pU", __entry->uuid)
@@ -266,7 +266,7 @@ TRACE_EVENT(bcache_journal_write_oldest,
 	),
 
 	TP_fast_assign(
-		memcpy(__entry->uuid, c->sb.set_uuid.b, 16);
+		memcpy(__entry->uuid, c->sb.user_uuid.b, 16);
 		__entry->seq		= seq;
 	),
 
@@ -284,7 +284,7 @@ TRACE_EVENT(bcache_journal_write_oldest_done,
 	),
 
 	TP_fast_assign(
-		memcpy(__entry->uuid, c->sb.set_uuid.b, 16);
+		memcpy(__entry->uuid, c->sb.user_uuid.b, 16);
 		__entry->seq		= seq;
 		__entry->written	= written;
 	),
@@ -378,7 +378,7 @@ DECLARE_EVENT_CLASS(btree_node,
 	),
 
 	TP_fast_assign(
-		memcpy(__entry->uuid, b->c->sb.set_uuid.b, 16);
+		memcpy(__entry->uuid, b->c->sb.user_uuid.b, 16);
 		__entry->bucket		= PTR_BUCKET_NR_TRACE(b->c, &b->key, 0);
 		__entry->level		= b->level;
 		__entry->id		= b->btree_id;
@@ -436,7 +436,7 @@ TRACE_EVENT(bcache_btree_node_alloc_fail,
 	),
 
 	TP_fast_assign(
-		memcpy(__entry->uuid, c->sb.set_uuid.b, 16);
+		memcpy(__entry->uuid, c->sb.user_uuid.b, 16);
 		__entry->id = id;
 	),
 
@@ -479,7 +479,7 @@ TRACE_EVENT(bcache_mca_scan,
 	),
 
 	TP_fast_assign(
-		memcpy(__entry->uuid, c->sb.set_uuid.b, 16);
+		memcpy(__entry->uuid, c->sb.user_uuid.b, 16);
 		__entry->touched	= touched;
 		__entry->freed		= freed;
 		__entry->can_free	= can_free;
@@ -501,7 +501,7 @@ DECLARE_EVENT_CLASS(mca_cannibalize_lock,
 	),
 
 	TP_fast_assign(
-		memcpy(__entry->uuid, c->sb.set_uuid.b, 16);
+		memcpy(__entry->uuid, c->sb.user_uuid.b, 16);
 		__entry->cl = cl;
 	),
 
@@ -541,7 +541,7 @@ DECLARE_EVENT_CLASS(btree_node_op,
 	),
 
 	TP_fast_assign(
-		memcpy(__entry->uuid, b->c->sb.set_uuid.b, 16);
+		memcpy(__entry->uuid, b->c->sb.user_uuid.b, 16);
 		__entry->bucket	= PTR_BUCKET_NR_TRACE(b->c, &b->key, 0);
 		__entry->level	= b->level;
 		__entry->id	= b->btree_id;
@@ -703,7 +703,7 @@ TRACE_EVENT(bcache_btree_node_alloc_replacement,
 	),
 
 	TP_fast_assign(
-		memcpy(__entry->uuid, b->c->sb.set_uuid.b, 16);
+		memcpy(__entry->uuid, b->c->sb.user_uuid.b, 16);
 		__entry->old_bucket	= PTR_BUCKET_NR_TRACE(old->c,
 							      &old->key, 0);
 		__entry->bucket		= PTR_BUCKET_NR_TRACE(b->c, &b->key, 0);
@@ -921,7 +921,7 @@ DECLARE_EVENT_CLASS(cache_set_bucket_alloc,
 	),
 
 	TP_fast_assign(
-		memcpy(__entry->uuid, c->sb.set_uuid.b, 16);
+		memcpy(__entry->uuid, c->sb.user_uuid.b, 16);
 		__entry->reserve = reserve;
 		__entry->cl = cl;
 	),
@@ -952,7 +952,7 @@ DECLARE_EVENT_CLASS(open_bucket_alloc,
 	),
 
 	TP_fast_assign(
-		memcpy(__entry->uuid, c->sb.set_uuid.b, 16);
+		memcpy(__entry->uuid, c->sb.user_uuid.b, 16);
 		__entry->cl = cl;
 	),
 
@@ -1175,7 +1175,7 @@ TRACE_EVENT(bcache_tiering_end,
 	),
 
 	TP_fast_assign(
-		memcpy(__entry->uuid, c->sb.set_uuid.b, 16);
+		memcpy(__entry->uuid, c->sb.user_uuid.b, 16);
 		__entry->sectors_moved = sectors_moved;
 		__entry->keys_moved = keys_moved;
 	),

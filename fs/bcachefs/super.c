@@ -958,7 +958,7 @@ static const char *bch_cache_set_alloc(struct cache_sb *sb,
 		goto err;
 
 	err = "error creating kobject";
-	if (kobject_add(&c->kobj, bcache_kobj, "%pU", c->sb.set_uuid.b) ||
+	if (kobject_add(&c->kobj, bcache_kobj, "%pU", c->sb.user_uuid.b) ||
 	    kobject_add(&c->internal, &c->kobj, "internal") ||
 	    bch_cache_accounting_add_kobjs(&c->accounting, &c->kobj))
 		goto err;
