@@ -603,18 +603,15 @@ static void bch_cache_set_read_only(struct cache_set *c)
 	del_timer_sync(&c->foreground_write_wakeup);
 	cancel_delayed_work_sync(&c->pd_controllers_update);
 
-	rcu_read_lock();
-
 	radix_tree_for_each_slot(slot, &c->devices, &iter, 0) {
-		d = radix_tree_deref_slot(slot);
+		d = rcu_dereference_protected(*slot,
+				lockdep_is_held(&bch_register_lock));
 
 		if (!INODE_FLASH_ONLY(&d->inode)) {
 			dc = container_of(d, struct cached_dev, disk);
 			bch_cached_dev_writeback_stop(dc);
 		}
 	}
-
-	rcu_read_unlock();
 
 	c->tiering_pd.rate.rate = UINT_MAX;
 	bch_ratelimit_reset(&c->tiering_pd.rate);
