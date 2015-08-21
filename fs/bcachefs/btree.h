@@ -100,7 +100,6 @@ struct btree {
 	struct six_lock		lock;
 
 	struct cache_set	*c;
-	struct btree		*parent;
 
 	unsigned long		flags;
 	u16			written;	/* would be nice to kill */

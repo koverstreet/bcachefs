@@ -1147,7 +1147,6 @@ out:
 	BUG_ON(rhashtable_insert_fast(&c->btree_cache_table, &b->hash,
 				      bch_btree_cache_params));
 
-	b->parent	= (void *) ~0UL;
 	b->flags	= 0;
 	b->written	= 0;
 	b->level	= level;
@@ -1184,8 +1183,7 @@ err:
  * the @write parameter.
  */
 static struct btree *bch_btree_node_get(struct btree_iter *iter,
-					const struct bkey *k, int level,
-					struct btree *parent)
+					const struct bkey *k, int level)
 {
 	int i = 0;
 	struct btree *b;
@@ -1271,13 +1269,6 @@ retry:
 		BUG_ON(b->level != level);
 	}
 
-	/*
-	 * Parent can't change without taking a write lock on the parent.
-	 * If we don't have the parent locked, it makes no sense to use
-	 * b->parent
-	 */
-	if (btree_node_locked(iter, level + 1))
-		b->parent = parent;
 	b->accessed = 1;
 
 	for (; i <= b->keys.nsets && b->keys.set[i].size; i++) {
@@ -1356,8 +1347,6 @@ static void bch_btree_set_root(struct btree *b)
 		six_lock_write(&old->lock);
 	}
 
-	b->parent = NULL;
-
 	/* Root nodes cannot be reaped */
 	mutex_lock(&c->btree_cache_lock);
 	list_del_init(&b->list);
@@ -1379,7 +1368,6 @@ static void bch_btree_set_root(struct btree *b)
 
 static struct btree *bch_btree_node_alloc(struct cache_set *c, int level,
 					  enum btree_id id,
-					  struct btree *parent,
 					  enum alloc_reserve reserve)
 {
 	BKEY_PADDED(key) k;
@@ -1400,9 +1388,8 @@ static struct btree *bch_btree_node_alloc(struct cache_set *c, int level,
 	bch_check_mark_super(c, &b->key, true);
 
 	b->accessed = 1;
-	b->parent = parent;
 	bch_bset_init_next(&b->keys, b->keys.set->data);
-	b->keys.set->data->magic = bset_magic(&b->c->sb);
+	b->keys.set->data->magic = bset_magic(&c->sb);
 	set_btree_node_dirty(b);
 
 	trace_bcache_btree_node_alloc(b);
@@ -1414,8 +1401,7 @@ static struct btree *btree_node_alloc_replacement(struct btree *b,
 {
 	struct btree *n;
 
-	n = bch_btree_node_alloc(b->c, b->level, b->btree_id,
-				 b->parent, reserve);
+	n = bch_btree_node_alloc(b->c, b->level, b->btree_id, reserve);
 	bch_btree_sort_into(&n->keys, &b->keys,
 			    b->keys.ops->key_normalize,
 			    &b->c->sort);
@@ -1490,7 +1476,7 @@ int bch_btree_root_alloc(struct cache_set *c, enum btree_id id,
 	while (__btree_check_reserve(c, id, 1, &cl))
 		closure_sync(&cl);
 
-	b = bch_btree_node_alloc(c, 0, id, NULL, id);
+	b = bch_btree_node_alloc(c, 0, id, id);
 
 	bkey_copy_key(&b->key, &MAX_KEY);
 	six_unlock_write(&b->lock);
@@ -2463,20 +2449,16 @@ static int btree_split(struct btree *b,
 		       block_bytes(n1->c)) > btree_blocks(iter->c) * 3 / 4) {
 		trace_bcache_btree_node_split(b, set1->keys);
 
-		n2 = bch_btree_node_alloc(iter->c, b->level, iter->btree_id,
-					  b->parent, reserve);
+		n2 = bch_btree_node_alloc(iter->c, b->level,
+					  iter->btree_id, reserve);
 		set2 = btree_bset_first(n2);
 
 		if (!parent) {
 			n3 = bch_btree_node_alloc(iter->c, b->level + 1,
-						  iter->btree_id,
-						  NULL, reserve);
+						  iter->btree_id, reserve);
 
 			bkey_copy_key(&n3->key, &MAX_KEY);
 			six_unlock_write(&n3->lock);
-
-			n1->parent = n3;
-			n2->parent = n3;
 		}
 
 		/*
@@ -2869,8 +2851,7 @@ static void btree_iter_lock_root(struct btree_iter *iter, struct bkey *pos)
 static int btree_iter_down(struct btree_iter *iter, const struct bkey *pos)
 {
 	const struct bkey *k = __btree_iter_peek(iter);
-	struct btree *p = iter->nodes[iter->level];
-	struct btree *b = bch_btree_node_get(iter, k, iter->level - 1, p);
+	struct btree *b = bch_btree_node_get(iter, k, iter->level - 1);
 
 	if (unlikely(IS_ERR(b)))
 		return PTR_ERR(b);
