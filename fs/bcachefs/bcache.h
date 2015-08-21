@@ -723,6 +723,16 @@ do {									\
 		bch_cache_set_error(c, __VA_ARGS__);			\
 } while (0)
 
+#define __bcache_io_error(c, fmt, ...)					\
+	printk(KERN_ERR "bcache: IO error on %pU: " fmt "\n",		\
+	       (c)->sb.set_uuid.b, ##__VA_ARGS__)
+
+#define bcache_io_error(c, bio, fmt, ...)				\
+do {									\
+	__bcache_io_error(c, fmt, ##__VA_ARGS__);			\
+	(bio)->bi_error = -EIO;						\
+} while (0)
+
 /* Forward declarations */
 
 void bch_debug_exit(void);

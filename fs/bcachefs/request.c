@@ -429,7 +429,8 @@ retry:
 
 		ca = bch_extent_pick_ptr(s->iop.c, k, &ptr);
 		if (IS_ERR(ca)) {
-			bio_io_error(bio);
+			bcache_io_error(s->iop.c, bio,
+					"no device to read from");
 			bch_btree_iter_unlock(&iter);
 			goto out;
 		}
@@ -493,7 +494,7 @@ retry:
 	 * reading a btree node
 	 */
 	BUG_ON(!bch_btree_iter_unlock(&iter));
-	bio_io_error(bio);
+	bcache_io_error(s->iop.c, bio, "btree IO error");
 out:
 	continue_at(cl, cached_dev_read_done_bh, NULL);
 }
