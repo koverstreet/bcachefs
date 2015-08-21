@@ -39,6 +39,15 @@ static inline void bch_set_extent_ptrs(struct bkey *k, unsigned i)
 	bch_set_val_u64s(k, i);
 }
 
+static inline void bch_extent_drop_ptr(struct bkey *k, unsigned ptr)
+{
+	BUG_ON(ptr >= bch_extent_ptrs(k));
+	bch_set_extent_ptrs(k, bch_extent_ptrs(k) - 1);
+	memmove(&k->val[ptr],
+		&k->val[ptr + 1],
+		(bch_extent_ptrs(k) - ptr) * sizeof(u64));
+}
+
 bool bch_cut_front(const struct bkey *, struct bkey *);
 bool bch_cut_back(const struct bkey *, struct bkey *);
 

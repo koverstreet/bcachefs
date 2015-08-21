@@ -129,12 +129,9 @@ void bch_extent_drop_stale(struct cache_set *c, struct bkey *k)
 	rcu_read_lock();
 
 	while (i < bch_extent_ptrs(k))
-		if (should_drop_ptr(c, k, i)) {
-			bch_set_extent_ptrs(k, bch_extent_ptrs(k) - 1);
-			memmove(&k->val[i],
-				&k->val[i + 1],
-				(bch_extent_ptrs(k) - i) * sizeof(u64));
-		} else
+		if (should_drop_ptr(c, k, i))
+			bch_extent_drop_ptr(k, i);
+		else
 			i++;
 
 	rcu_read_unlock();
