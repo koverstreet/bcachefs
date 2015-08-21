@@ -537,8 +537,6 @@ static void __cache_promote(struct cache_set *c, struct bbio *orig_bio,
 	struct bio *bio;
 	unsigned pages = DIV_ROUND_UP(orig_bio->bio.bi_iter.bi_size, PAGE_SIZE);
 
-	BUG_ON(bio_sectors(&orig_bio->bio) != KEY_SIZE(replace_key));
-
 	/* XXX: readahead? */
 
 	op = kmalloc(sizeof(*op) + sizeof(struct bio_vec) * pages, GFP_NOIO);
@@ -573,7 +571,8 @@ static void __cache_promote(struct cache_set *c, struct bbio *orig_bio,
 				replace_key,
 				replace_key);
 
-	bch_set_extent_ptrs(&op->iop.insert_key, 0);
+	bch_cut_front(&START_KEY(&orig_bio->key), &op->iop.insert_key);
+	bch_cut_back(&orig_bio->key, &op->iop.insert_key);
 
 	trace_bcache_promote(&orig_bio->bio);
 
@@ -1164,7 +1163,9 @@ static int cached_dev_cache_miss(struct btree *b, struct search *s,
 	miss->bi_end_io		= request_endio;
 	miss->bi_private	= &s->cl;
 
-	bkey_init(&to_bbio(miss)->key);
+	to_bbio(miss)->key = KEY(s->inode,
+				 bio_end_sector(miss),
+				 bio_sectors(miss));
 
 	closure_get(&s->cl);
 	__cache_promote(b->c, to_bbio(miss), &replace.key, request_endio);
