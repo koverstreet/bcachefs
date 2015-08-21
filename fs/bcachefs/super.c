@@ -1491,7 +1491,7 @@ bool bch_cache_set_error(struct cache_set *c, const char *fmt, ...)
 		set_bit(CACHE_SET_RO, &c->flags);
 		break;
 	case BCH_ON_ERROR_PANIC:
-		panic(", panic forced after error\n");
+		panic("panic forced after error\n");
 		break;
 	}
 
