@@ -32,10 +32,15 @@ void bch_dump_bset(struct btree_keys *b, struct bset *i, unsigned set)
 		else
 			printk("%llu:%llu\n", KEY_INODE(k), KEY_OFFSET(k));
 
-		if (next < bset_bkey_last(i) &&
-		    bkey_cmp(k, b->ops->is_extents ?
-			     &START_KEY(next) : next) > 0)
-			printk(KERN_ERR "Key skipped backwards\n");
+		if (next < bset_bkey_last(i)) {
+			if (b->ops->is_extents) {
+				if (bkey_cmp(k, &START_KEY(next)) > 0)
+					printk(KERN_ERR "Key skipped backwards\n");
+			} else {
+				if (!bkey_cmp(k, next))
+					printk(KERN_ERR "Duplicate keys\n");
+			}
+		}
 	}
 }
 
@@ -80,6 +85,13 @@ void __bch_check_keys(struct btree_keys *b, const char *fmt, ...)
 	const char *err;
 
 	for_each_key(b, k, &iter) {
+		if (p && bkey_cmp(p, k) > 0) {
+			bch_bkey_to_text(b, buf1, sizeof(buf1), p);
+			bch_bkey_to_text(b, buf2, sizeof(buf2), k);
+			printk("%s > %s", buf1, buf2);
+			goto bug;
+		}
+
 		if (b->ops->is_extents) {
 			err = "Keys out of order";
 			if (p && bkey_cmp(&START_KEY(p), &START_KEY(k)) > 0) {

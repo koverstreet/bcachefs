@@ -490,6 +490,7 @@ static void do_btree_node_write(struct btree *b)
 void __bch_btree_node_write(struct btree *b, struct closure *parent)
 {
 	struct bset *i = btree_bset_last(b);
+	size_t blocks_to_write = set_blocks(i, block_bytes(b->c));
 
 	if (!test_and_clear_bit(BTREE_NODE_dirty, &b->flags))
 		return;
@@ -497,6 +498,7 @@ void __bch_btree_node_write(struct btree *b, struct closure *parent)
 	trace_bcache_btree_write(b);
 
 	BUG_ON(b->written >= btree_blocks(b));
+	BUG_ON(b->written + blocks_to_write > btree_blocks(b));
 	BUG_ON(b->written && !i->keys);
 	BUG_ON(btree_bset_first(b)->seq != i->seq);
 	bch_check_keys(&b->keys, "writing");
@@ -511,10 +513,10 @@ void __bch_btree_node_write(struct btree *b, struct closure *parent)
 
 	do_btree_node_write(b);
 
-	atomic_long_add(set_blocks(i, block_bytes(b->c)) * b->c->sb.block_size,
+	atomic_long_add(blocks_to_write * b->c->sb.block_size,
 			&PTR_CACHE(b->c, &b->key, 0)->btree_sectors_written);
 
-	b->written += set_blocks(i, block_bytes(b->c));
+	b->written += blocks_to_write;
 }
 
 static void bch_btree_node_write(struct btree *b, struct closure *parent)
