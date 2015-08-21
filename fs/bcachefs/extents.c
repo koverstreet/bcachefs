@@ -563,6 +563,25 @@ static void bch_subtract_sectors(struct bkey *k,
 	bch_add_sectors(k, c, offset, -sectors);
 }
 
+static struct bkey *bch_btree_iter_next_overlapping(struct btree_iter *iter,
+						    struct bkey *end)
+{
+	struct bkey *k;
+
+	while ((k = bch_btree_iter_next(iter))) {
+		if (bkey_cmp(&START_KEY(k), end) >= 0) {
+			if (!KEY_SIZE(k))
+				continue;
+			return NULL;
+		}
+
+		if (bkey_cmp(k, &START_KEY(end)) > 0)
+			break;
+	}
+
+	return k;
+}
+
 static bool bkey_cmpxchg(struct bkey *k,
 			 struct bkey *old,
 			 struct bkey *new,
@@ -622,26 +641,13 @@ static bool bch_extent_insert_fixup(struct btree_keys *b,
 	unsigned insert_size = KEY_SIZE(insert);
 
 	unsigned sectors_found = 0;  /* for cmpxchg */
+	struct bkey *k;
 
 	BUG_ON(!insert_size);
 
 	bch_add_sectors(insert, c, insert_offset, insert_size);
 
-	while (1) {
-		struct bkey *k = bch_btree_iter_next(iter);
-		if (!k)
-			break;
-
-		if (bkey_cmp(&START_KEY(k), insert) >= 0) {
-			if (KEY_SIZE(k))
-				break;
-			else
-				continue;
-		}
-
-		if (bkey_cmp(k, &START_KEY(insert)) <= 0)
-			continue;
-
+	while ((k = bch_btree_iter_next_overlapping(iter, insert))) {
 		old_offset = KEY_START(k);
 		old_size = KEY_SIZE(k);
 
