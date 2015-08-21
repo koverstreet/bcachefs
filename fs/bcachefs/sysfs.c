@@ -870,12 +870,7 @@ static ssize_t show_reserve_stats(struct cache *ca, char *buf)
 SHOW(__bch_cache)
 {
 	struct cache *ca = container_of(kobj, struct cache, kobj);
-	struct bucket_stats stats;
-
-	mutex_lock(&ca->set->bucket_lock);
-	memcpy(&stats, &ca->bucket_stats[ca->set->gc_mark_valid ? 0 : 1],
-	       sizeof(stats));
-	mutex_unlock(&ca->set->bucket_lock);
+	struct bucket_stats stats = bucket_stats_read(ca);
 
 	sysfs_hprint(bucket_size,	bucket_bytes(ca));
 	sysfs_hprint(block_size,	block_bytes(ca));

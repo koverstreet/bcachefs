@@ -1893,25 +1893,21 @@ static void btree_gc_start(struct cache_set *c)
 	struct cache *ca;
 	struct bucket *g;
 	unsigned i;
-	struct bucket_stats *stats;
 
 	/* We should not be doing a GC while trying to start GC */
 	BUG_ON(!c->gc_mark_valid);
 
 	mutex_lock(&c->bucket_lock);
 
-	c->gc_mark_valid = 0;
-
 	write_seqlock(&c->gc_cur_lock);
+	c->gc_mark_valid = 0;
 	c->gc_cur_btree = 0;
 	c->gc_cur_key = ZERO_KEY;
 	write_sequnlock(&c->gc_cur_lock);
 
 	for_each_cache(ca, c, i) {
-		stats = &ca->bucket_stats[0];
-
-		memcpy(&ca->bucket_stats[1], stats, sizeof(*stats));
-		memset(stats, 0, sizeof(*stats));
+		ca->bucket_stats[1] = ca->bucket_stats[0];
+		memset(&ca->bucket_stats[0], 0, sizeof(struct bucket_stats));
 
 		for_each_bucket(g, ca) {
 			g->last_gc = ca->bucket_gens[g - ca->buckets];
@@ -1937,7 +1933,10 @@ static void bch_btree_gc_finish(struct cache_set *c)
 	mutex_lock(&c->bucket_lock);
 
 	set_gc_sectors(c);
+
+	write_seqlock(&c->gc_cur_lock);
 	c->gc_mark_valid = 1;
+	write_sequnlock(&c->gc_cur_lock);
 
 	bch_mark_writeback_keys(c);
 	bch_mark_keybuf_keys(c, &c->tiering_keys);

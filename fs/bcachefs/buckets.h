@@ -14,6 +14,20 @@
  * GC must be performed. */
 #define GC_MAX_SECTORS_USED ((1U << 15) - 1)
 
+static inline struct bucket_stats bucket_stats_read(struct cache *ca)
+{
+	struct cache_set *c = ca->set;
+	struct bucket_stats ret;
+	unsigned seq;
+
+	do {
+		seq = read_seqbegin(&c->gc_cur_lock);
+		ret = ca->bucket_stats[c->gc_mark_valid ? 0 : 1];
+	} while (read_seqretry(&c->gc_cur_lock, seq));
+
+	return ret;
+}
+
 static inline bool bucket_unused(struct bucket *b)
 {
 	return !b->mark.counter;
@@ -27,13 +41,13 @@ static inline unsigned bucket_sectors_used(struct bucket *b)
 static inline size_t buckets_available_cache(struct cache *ca)
 {
 	size_t buckets = ca->sb.nbuckets - ca->sb.first_bucket;
-	struct bucket_stats *stats = &ca->bucket_stats[0];
+	struct bucket_stats stats = bucket_stats_read(ca);
 
 	/* XXX: awkward? */
 	return buckets -
-		atomic_read(&stats->buckets_dirty) -
-		atomic_read(&stats->buckets_alloc) -
-		atomic_read(&stats->buckets_meta);
+		atomic_read(&stats.buckets_dirty) -
+		atomic_read(&stats.buckets_alloc) -
+		atomic_read(&stats.buckets_meta);
 }
 
 static inline size_t buckets_available(struct cache_set *c)
