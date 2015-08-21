@@ -941,8 +941,19 @@ do {									\
 
 /* Looping macros */
 
-#define for_each_cache(ca, cs, iter)					\
-	for (iter = 0; ca = cs->cache[iter], iter < (cs)->sb.nr_in_set; iter++)
+static inline struct cache *__next_cache(struct cache_set *c, unsigned *iter)
+{
+	struct cache *ret = NULL;
+
+	while (*iter < c->sb.nr_in_set &&
+	       !(ret = c->cache[*iter]))
+		(*iter)++;
+
+	return ret;
+}
+
+#define for_each_cache(ca, c, iter)					\
+	for ((iter) = 0; ((ca) = __next_cache((c), &(iter))); (iter)++)
 
 #define for_each_bucket(b, ca)						\
 	for (b = (ca)->buckets + (ca)->sb.first_bucket;			\

@@ -1039,7 +1039,8 @@ void bch_mark_open_buckets(struct cache_set *c)
 {
 	struct cache *ca;
 	struct open_bucket *b;
-	size_t ci, i, j, iter;
+	size_t i, j, iter;
+	unsigned ci;
 
 	lockdep_assert_held(&c->bucket_lock);
 
