@@ -1368,7 +1368,7 @@ static struct btree *btree_node_alloc_replacement(struct btree *b,
 	n = bch_btree_node_alloc(b->c, op, b->level, b->btree_id, b->parent);
 	if (n) {
 		bch_btree_sort_into(&n->keys, &b->keys,
-				    b->keys.ops->key_normalize ?: bkey_deleted,
+				    b->keys.ops->key_normalize,
 				    &b->c->sort);
 		bkey_copy_key(&n->key, &b->key);
 		trace_bcache_btree_node_alloc_replacement(b, n);
