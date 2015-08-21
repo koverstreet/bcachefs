@@ -1893,8 +1893,7 @@ static int bch_gc_btree(struct cache_set *c, enum btree_id btree_id,
 
 		lock_seq[0] = merge[0]->lock.state.seq;
 
-		if (kthread_should_stop() &&
-		    test_bit(CACHE_SET_STOPPING, &c->flags)) {
+		if (test_bit(CACHE_SET_STOPPING, &c->flags)) {
 			bch_btree_iter_unlock(&iter);
 			return -ESHUTDOWN;
 		}
@@ -1999,7 +1998,7 @@ static void bch_gc_finish(struct cache_set *c)
  * contain too many bsets are merged up and re-written, and adjacent nodes
  * with low occupancy are coalesced together.
  */
-static void bch_gc(struct cache_set *c)
+void bch_gc(struct cache_set *c)
 {
 	struct gc_stat stats;
 	uint64_t start_time = local_clock();

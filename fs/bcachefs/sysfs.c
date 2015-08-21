@@ -805,8 +805,9 @@ STORE(__bch_cache_set)
 			return r;
 	}
 
-	if (attr == &sysfs_trigger_gc)
-		wake_up_process(c->gc_thread);
+	if (attr == &sysfs_trigger_gc) {
+		bch_gc(c);
+	}
 
 	if (attr == &sysfs_prune_cache) {
 		struct shrink_control sc;
