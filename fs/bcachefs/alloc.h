@@ -7,6 +7,10 @@ struct bkey;
 struct bucket;
 struct cache;
 struct cache_set;
+struct cache_group;
+
+void bch_cache_group_remove_cache(struct cache_group *, struct cache *);
+void bch_cache_group_add_cache(struct cache_group *, struct cache *);
 
 void bch_recalc_min_prio(struct cache *, int);
 void bch_increment_clock_slowpath(struct cache_set *, int);
@@ -42,7 +46,7 @@ int bch_bucket_wait(struct cache_set *, enum alloc_reserve,
 
 long bch_bucket_alloc(struct cache *, enum alloc_reserve, struct closure *);
 int bch_bucket_alloc_set(struct cache_set *, enum alloc_reserve, struct bkey *,
-			 int, unsigned, struct closure *);
+			 int, struct cache_group *, struct closure *);
 
 void bch_open_bucket_put(struct cache_set *, struct open_bucket *);
 

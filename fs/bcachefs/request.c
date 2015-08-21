@@ -602,7 +602,7 @@ static void __cache_promote(struct cache_set *c, struct bbio *orig_bio,
 	op->stale		= 0;
 
 	bch_data_insert_op_init(&op->iop, c, bio,
-				&c->cache_by_alloc[0].wp,
+				&c->tier_write_points[0],
 				false, false, false,
 				replace_key,
 				replace_key);

@@ -21,7 +21,7 @@ static void __update_tiering_rate(struct cache_set *c)
 	bucket_bits = c->bucket_bits + 9;
 
 	for (i = 0; i < CACHE_TIERS; i++) {
-		struct cache_tier *tier = c->cache_by_alloc + i;
+		struct cache_group *tier = c->cache_tiers + i;
 
 		tier_size[i] = 0;
 		tier_dirty[i] = 0;
@@ -109,7 +109,7 @@ static void read_tiering(struct cache_set *c)
 		io->stats = &stats;
 
 		bch_data_insert_op_init(&io->op, c, &io->bio.bio,
-					&c->cache_by_alloc[1].wp,
+					&c->tier_write_points[1],
 					true, false, false,
 					&io->w->key, &io->w->key);
 		io->op.io_wq	= c->tiering_write;
@@ -135,7 +135,7 @@ static int bch_tiering_thread(void *arg)
 
 	do {
 		if (kthread_wait_freezable(c->tiering_enabled &&
-					   c->cache_by_alloc[1].nr_devices))
+					   c->cache_tiers[1].nr_devices))
 			break;
 
 		read_tiering(c);

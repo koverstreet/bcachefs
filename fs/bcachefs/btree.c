@@ -1287,7 +1287,7 @@ static struct btree *bch_btree_node_alloc(struct cache_set *c,
 retry:
 	if (bch_bucket_alloc_set(c, reserve, &k.key,
 				 CACHE_SET_META_REPLICAS_WANT(&c->sb),
-				 0, NULL))
+				 NULL, NULL))
 		goto err;
 
 	SET_KEY_SIZE(&k.key, c->btree_pages * PAGE_SECTORS);

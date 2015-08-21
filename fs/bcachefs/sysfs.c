@@ -6,6 +6,7 @@
  */
 
 #include "bcache.h"
+#include "alloc.h"
 #include "sysfs.h"
 #include "btree.h"
 #include "journal.h"
@@ -1023,25 +1024,13 @@ STORE(__bch_cache)
 			return -EINVAL;
 
 		if (v != CACHE_TIER(mi)) {
-			unsigned i;
-			struct cache_tier *tier;
+			struct cache_group *tier;
 
-			tier = &c->cache_by_alloc[CACHE_TIER(mi)];
+			tier = &c->cache_tiers[CACHE_TIER(mi)];
+			bch_cache_group_remove_cache(tier, ca);
 
-			for (i = 0; i < tier->nr_devices; i++)
-				if (tier->devices[i] == ca)
-					goto found;
-
-			/* Not found */
-			WARN(1, "cache device not found in tier\n");
-			return -EINVAL;
-found:
-			memmove(&tier->devices[i],
-				&tier->devices[i + 1],
-				sizeof(ca) * (tier->nr_devices - i - 1));
-
-			tier = &c->cache_by_alloc[v];
-			tier->devices[tier->nr_devices++] = ca;
+			tier = &c->cache_tiers[v];
+			bch_cache_group_add_cache(tier, ca);
 
 			SET_CACHE_TIER(mi, v);
 			bcache_write_super(c);
