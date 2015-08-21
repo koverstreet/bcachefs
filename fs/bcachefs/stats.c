@@ -36,7 +36,7 @@ static const unsigned DAY_RESCALE		= 288;
 static const unsigned HOUR_RESCALE		= 12;
 static const unsigned FIVE_MINUTE_RESCALE	= 1;
 static const unsigned accounting_delay		= (HZ * 300) / 22;
-static const unsigned accounting_weight		= 32;
+static const unsigned accounting_weight		= 5;
 
 /* sysfs reading/writing */
 
@@ -142,7 +142,7 @@ void bch_cache_accounting_destroy(struct cache_accounting *acc)
 
 static void scale_stat(unsigned long *stat)
 {
-	*stat =  ewma_add(*stat, 0, accounting_weight, 0);
+	*stat =  ewma_add(*stat, 0, accounting_weight);
 }
 
 static void scale_stats(struct cache_stats *stats, unsigned long rescale_at)

@@ -156,14 +156,17 @@ void bch_time_stats_update(struct time_stats *stats, uint64_t start_time)
 	stats->max_duration = max(stats->max_duration, duration);
 
 	if (stats->last) {
-		ewma_add(stats->average_duration, duration, 8, 8);
+		stats->average_duration = ewma_add(stats->average_duration,
+						   duration << 8, 3);
 
 		if (stats->average_frequency)
-			ewma_add(stats->average_frequency, last, 8, 8);
+			stats->average_frequency =
+				ewma_add(stats->average_frequency,
+					 last << 8, 3);
 		else
 			stats->average_frequency  = last << 8;
 	} else {
-		stats->average_duration  = duration << 8;
+		stats->average_duration = duration << 8;
 	}
 
 	stats->last = now ?: 1;
@@ -249,7 +252,7 @@ void bch_pd_controller_update(struct bch_pd_controller *pd,
 	derivative = actual - pd->last_actual;
 	derivative = div_s64(derivative, pd->update_seconds);
 	derivative = ewma_add(pd->smoothed_derivative, derivative,
-			      pd->d_smooth, 0);
+			      pd->d_smooth);
 	derivative = derivative * pd->d_term;
 	derivative = div_s64(derivative, pd->p_term_inverse);
 

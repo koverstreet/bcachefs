@@ -510,9 +510,8 @@ unsigned bch_get_congested(struct cache_set *c)
 
 static void add_sequential(struct task_struct *t)
 {
-	ewma_add(t->sequential_io_avg,
-		 t->sequential_io, 8, 0);
-
+	t->sequential_io_avg = ewma_add(t->sequential_io_avg,
+					t->sequential_io, 3);
 	t->sequential_io = 0;
 }
 
