@@ -1114,6 +1114,10 @@ struct cache *bch_extent_pick_ptr(struct cache_set *c, const struct bkey *k,
 
 	rcu_read_unlock();
 
+	/* data missing that's not supposed to be? */
+	if (!KEY_CACHED(k) && bch_extent_ptrs(k))
+		return ERR_PTR(-EIO);
+
 	return NULL;
 }
 

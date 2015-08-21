@@ -208,7 +208,7 @@ static void read_dirty(struct cached_dev *dc)
 
 		while (KEY_SIZE(&tmp.k)) {
 			ca = bch_extent_pick_ptr(dc->disk.c, &tmp.k, &ptr);
-			if (!ca)
+			if (IS_ERR_OR_NULL(ca))
 				break;
 
 			io = kzalloc(sizeof(*io) + sizeof(struct bio_vec) *

@@ -923,22 +923,22 @@ static int bch_read_fn(struct btree_op *b_op, struct btree *b, struct bkey *k)
 	sectors = KEY_OFFSET(k) - bio->bi_iter.bi_sector;
 
 	ca = bch_extent_pick_ptr(b->c, k, &ptr);
+	if (IS_ERR(ca)) {
+		bio_io_error(bio);
+		return MAP_DONE;
+	}
+
 	if (!ca) {
-		if (!KEY_WIPED(k) && !KEY_CACHED(k) && bch_extent_ptrs(k)) {
-			bio_io_error(bio);
-			return MAP_DONE;
-		} else {
-			unsigned bytes = min_t(unsigned, sectors,
-					       bio_sectors(bio)) << 9;
+		unsigned bytes = min_t(unsigned, sectors,
+				       bio_sectors(bio)) << 9;
 
-			swap(bio->bi_iter.bi_size, bytes);
-			zero_fill_bio(bio);
-			swap(bio->bi_iter.bi_size, bytes);
+		swap(bio->bi_iter.bi_size, bytes);
+		zero_fill_bio(bio);
+		swap(bio->bi_iter.bi_size, bytes);
 
-			bio_advance(bio, bytes);
+		bio_advance(bio, bytes);
 
-			return bio->bi_iter.bi_size ? MAP_CONTINUE : MAP_DONE;
-		}
+		return bio->bi_iter.bi_size ? MAP_CONTINUE : MAP_DONE;
 	}
 
 	PTR_BUCKET(b->c, ca, k, ptr)->read_prio = b->c->prio_clock[READ].hand;

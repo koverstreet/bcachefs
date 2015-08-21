@@ -126,7 +126,7 @@ void bch_data_move(struct closure *cl)
 
 	/* bail out if all pointers are stale */
 	ca = bch_extent_pick_ptr(io->op.c, &io->key, &ptr);
-	if (!ca)
+	if (IS_ERR_OR_NULL(ca))
 		closure_return_with_destructor(cl, moving_io_destructor);
 
 	moving_init(io);

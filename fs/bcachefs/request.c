@@ -418,27 +418,27 @@ static int cache_lookup_fn(struct btree_op *op, struct btree *b, struct bkey *k)
 	sectors = KEY_OFFSET(k) - bio->bi_iter.bi_sector;
 
 	ca = bch_extent_pick_ptr(b->c, k, &ptr);
+	if (IS_ERR(ca)) {
+		bio_io_error(bio);
+		return MAP_DONE;
+	}
+
+	if (!ca && KEY_WIPED(k)) {
+		/* The data is zeros.  Instantiate them. */
+		unsigned bytes = min_t(unsigned, sectors,
+				       bio_sectors(bio)) << 9;
+
+		swap(bio->bi_iter.bi_size, bytes);
+		zero_fill_bio(bio);
+		swap(bio->bi_iter.bi_size, bytes);
+
+		bio_advance(bio, bytes);
+		return bio->bi_iter.bi_size ? MAP_CONTINUE : MAP_DONE;
+	}
+
 	if (!ca) {
-		if (!KEY_WIPED(k) && !KEY_CACHED(k) && bch_extent_ptrs(k)) {
-			/* data missing that's not supposed to be */
-			bio_io_error(bio);
-			return MAP_DONE;
-		} else if (KEY_WIPED(k)) {
-			/* The data is zeros.  Instantiate them. */
-			unsigned bytes = min_t(unsigned, sectors,
-					       bio_sectors(bio)) << 9;
-
-			swap(bio->bi_iter.bi_size, bytes);
-			zero_fill_bio(bio);
-			swap(bio->bi_iter.bi_size, bytes);
-
-			bio_advance(bio, bytes);
-
-			return bio->bi_iter.bi_size ? MAP_CONTINUE : MAP_DONE;
-		} else {
-			/* no pointers (hole), or all stale */
-			return cached_dev_cache_miss(b, s, bio, sectors);
-		}
+		/* not present (hole), or stale cached data*/
+		return cached_dev_cache_miss(b, s, bio, sectors);
 	}
 
 	PTR_BUCKET(b->c, ca, k, ptr)->read_prio = b->c->prio_clock[READ].hand;
