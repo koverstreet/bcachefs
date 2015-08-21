@@ -798,7 +798,8 @@ static void journal_write_locked(struct closure *cl)
 static bool __journal_write(struct cache_set *c)
 	__releases(c->journal.lock)
 {
-	BUG_ON(!test_bit(JOURNAL_DIRTY, &c->journal.flags));
+	BUG_ON(!c->journal.res_count &&
+	       !test_bit(JOURNAL_DIRTY, &c->journal.flags));
 
 	if (!c->journal.res_count &&
 	    !atomic_xchg(&c->journal.in_flight, 1)) {
