@@ -349,33 +349,17 @@ static void bch_write_index(struct closure *cl)
 static void bch_write_discard(struct closure *cl)
 {
 	struct bch_write_op *op = container_of(cl, struct bch_write_op, cl);
-	struct keylist *keys = &op->insert_keys;
 	struct bio *bio = op->bio;
-
-	pr_debug("invalidating %i sectors from %llu",
-		 bio_sectors(bio), (u64) bio->bi_iter.bi_sector);
-
-	while (bio_sectors(bio)) {
-		unsigned sectors = min(bio_sectors(bio),
-				       1U << (KEY_SIZE_BITS - 1));
-
-		if (bch_keylist_realloc(keys, BKEY_U64s))
-			goto out;
-
-		bio->bi_iter.bi_sector	+= sectors;
-		bio->bi_iter.bi_size	-= sectors << 9;
-
-		*keys->top = KEY(KEY_INODE(&op->insert_key),
-				 bio->bi_iter.bi_sector, sectors);
-		SET_KEY_DELETED(keys->top, 1);
-
-		__bch_keylist_push(keys);
-	}
+	u64 inode = KEY_INODE(&op->insert_key);
 
 	op->write_done = true;
+	op->error = bch_discard(op->c,
+		    &KEY(inode, bio->bi_iter.bi_sector, 0),
+		    &KEY(inode, bio_end_sector(bio), 0),
+		    KEY_VERSION(&op->insert_key));
 	bio_put(bio);
-out:
-	continue_at(cl, bch_write_index, op->c->wq);
+
+	continue_at(cl, bch_write_done, op->c->wq);
 }
 
 static void bch_write_error(struct closure *cl)
@@ -700,6 +684,81 @@ void bch_write_op_init(struct bch_write_op *op, struct cache_set *c,
 		op->replace = true;
 		bkey_copy(&op->replace_key, replace_key);
 	}
+}
+
+/* Discard */
+
+struct bch_discard_op {
+	struct btree_op	op;
+	struct bkey *start_key;
+	struct bkey *end_key;
+	u64 version;
+};
+
+static int bch_discard_fn(struct btree_op *b_op, struct btree *b,
+			  struct bkey *k)
+{
+	struct bch_discard_op *op =
+		container_of(b_op, struct bch_discard_op, op);
+	struct bkey erase_key;
+	int ret;
+
+	BUG_ON(bkey_cmp(k, &START_KEY(op->start_key)) <= 0);
+
+	/* TODO replace with extent overlap. maybe? */
+	if (bkey_cmp(&START_KEY(k), op->end_key) >= 0)
+		return MAP_DONE;
+
+	/* create the biggest key we can, to minimize writes */
+	erase_key = KEY(KEY_INODE(k), KEY_START(k) + KEY_SIZE_MAX,
+			KEY_SIZE_MAX);
+	bch_cut_front(&START_KEY(op->start_key), &erase_key);
+	bch_cut_back(op->end_key, &erase_key);
+	if ((op->version) == 0ULL) {
+		/* This is probably wrong but retains legacy behavior */
+		SET_KEY_DELETED(&erase_key, 1);
+	} else {
+		SET_KEY_WIPED(&erase_key, 1);
+		SET_KEY_VERSION(&erase_key, op->version);
+	}
+
+	ret = bch_btree_insert_node(b, b_op, &keylist_single(&erase_key),
+				    NULL, NULL, 0);
+
+	return ret ?: MAP_CONTINUE;
+}
+
+/* bch_discard - discard a range of keys from start_key to end_key.
+ * @c		cache set
+ * @start_key	pointer to start location
+ *		NOTE: discard starts at KEY_START(start_key)
+ * @end_key	pointer to end location
+ *		NOTE: discard ends at KEY_OFFSET(end_key)
+ * @version	version of discard (0ULL if none)
+ *
+ * Returns:
+ *	 0 on success
+ *	<0 on error
+ *
+ * XXX: this needs to be refactored with inode_truncate, or more
+ *	appropriately inode_truncate should call this
+ */
+int bch_discard(struct cache_set *c, struct bkey *start_key,
+		struct bkey *end_key, u64 version)
+{
+	struct bch_discard_op op;
+	int ret;
+
+	bch_btree_op_init(&op.op, BTREE_ID_EXTENTS, 0);
+	op.start_key = start_key;
+	op.end_key = end_key;
+	op.version = version;
+
+	ret = bch_btree_map_keys(&op.op, c, start_key, bch_discard_fn, 0);
+	if (ret < 0)
+		return ret;
+
+	return 0;
 }
 
 /* Cache promotion on read */
