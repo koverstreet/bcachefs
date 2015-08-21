@@ -50,5 +50,6 @@ static inline void bch_extent_drop_ptr(struct bkey *k, unsigned ptr)
 
 bool bch_cut_front(const struct bkey *, struct bkey *);
 bool bch_cut_back(const struct bkey *, struct bkey *);
+void bch_key_resize(struct bkey *, unsigned);
 
 #endif /* _BCACHE_EXTENTS_H */

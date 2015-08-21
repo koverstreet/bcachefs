@@ -445,6 +445,17 @@ bool bch_cut_back(const struct bkey *where, struct bkey *k)
 	return true;
 }
 
+/**
+ * bch_key_resize - adjust size of @k
+ *
+ * KEY_START(k) will be preserved, modifies where the extent ends
+ */
+void bch_key_resize(struct bkey *k, unsigned new_size)
+{
+	SET_KEY_OFFSET(k, KEY_START(k) + new_size);
+	SET_KEY_SIZE(k, new_size);
+}
+
 /*
  * Returns true if l > r - unless l == r, in which case returns true if l is
  * older than r.
@@ -757,10 +768,7 @@ check_failed:
 		bch_subtract_sectors(insert, c,
 				     KEY_START(insert) + sectors_found,
 				     KEY_SIZE(insert) - sectors_found);
-
-		SET_KEY_OFFSET(insert, KEY_OFFSET(insert) -
-			       (KEY_SIZE(insert) - sectors_found));
-		SET_KEY_SIZE(insert, sectors_found);
+		bch_key_resize(insert, sectors_found);
 
 		if (!sectors_found)
 			return true;
@@ -952,10 +960,8 @@ static bool bch_extent_merge(struct btree_keys *bk, struct bkey *l, struct bkey 
 	/* Keys with no pointers aren't restricted to one bucket and could
 	 * overflow KEY_SIZE
 	 */
-	if (KEY_SIZE(l) + KEY_SIZE(r) > USHRT_MAX) {
-		SET_KEY_OFFSET(l, KEY_OFFSET(l) + USHRT_MAX - KEY_SIZE(l));
-		SET_KEY_SIZE(l, USHRT_MAX);
-
+	if (KEY_SIZE(l) + KEY_SIZE(r) > KEY_SIZE_MAX) {
+		bch_key_resize(l, KEY_SIZE_MAX);
 		bch_cut_front(l, r);
 		return false;
 	}
@@ -967,8 +973,7 @@ static bool bch_extent_merge(struct btree_keys *bk, struct bkey *l, struct bkey 
 			SET_KEY_CSUM(l, 0);
 	}
 
-	SET_KEY_OFFSET(l, KEY_OFFSET(l) + KEY_SIZE(r));
-	SET_KEY_SIZE(l, KEY_SIZE(l) + KEY_SIZE(r));
+	bch_key_resize(l, KEY_SIZE(l) + KEY_SIZE(r));
 
 	return true;
 }

@@ -934,8 +934,7 @@ struct open_bucket *bch_alloc_sectors(struct cache_set *c,
 
 	sectors = min_t(unsigned, KEY_SIZE(k), b->sectors_free);
 
-	SET_KEY_OFFSET(k, KEY_START(k) + sectors);
-	SET_KEY_SIZE(k, sectors);
+	bch_key_resize(k, sectors);
 
 	/* update open bucket for next time: */
 

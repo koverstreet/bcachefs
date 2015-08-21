@@ -215,7 +215,7 @@ static void read_dirty(struct cached_dev *dc)
 				     GFP_KERNEL);
 			if (!io) {
 				trace_bcache_writeback_alloc_fail(ca->set,
-							KEY_SIZE(&w->key));
+							KEY_SIZE(&tmp.k));
 				io = mempool_alloc(dc->writeback_io_pool,
 						   GFP_KERNEL);
 				memset(io, 0, sizeof(*io) +
@@ -226,13 +226,9 @@ static void read_dirty(struct cached_dev *dc)
 				bkey_copy(&io->key, &tmp.k);
 
 				if (DIRTY_IO_MEMPOOL_SECTORS <
-				    KEY_SIZE(&io->key)) {
-					SET_KEY_OFFSET(&io->key,
-						KEY_START(&io->key) +
+				    KEY_SIZE(&io->key))
+					bch_key_resize(&io->key,
 						DIRTY_IO_MEMPOOL_SECTORS);
-					SET_KEY_SIZE(&io->key,
-						DIRTY_IO_MEMPOOL_SECTORS);
-				}
 			} else {
 				bkey_copy(&io->key, &tmp.k);
 			}
@@ -260,11 +256,8 @@ static void read_dirty(struct cached_dev *dc)
 					io->bio.bi_iter.bi_size =
 						io->bio.bi_vcnt * PAGE_SIZE;
 
-					SET_KEY_OFFSET(&io->key,
-						       KEY_START(&io->key) +
+					bch_key_resize(&io->key,
 						       bio_sectors(&io->bio));
-					SET_KEY_SIZE(&io->key,
-						     bio_sectors(&io->bio));
 					break;
 				}
 			}
