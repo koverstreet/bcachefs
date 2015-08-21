@@ -1185,13 +1185,23 @@ static void btree_mergesort(struct btree_keys *b, struct bset *out,
 		if (!last) {
 			last = out->start;
 			bkey_copy(last, k);
+		} else if (bad(b, last)) {
+			bkey_copy(last, k);
 		} else if (!bch_bkey_try_merge(b, last, k)) {
 			last = bkey_next(last);
 			bkey_copy(last, k);
 		}
+
+		if (b->ops->key_normalize)
+			b->ops->key_normalize(b, last);
 	}
 
-	out->keys = last ? (uint64_t *) bkey_next(last) - out->d : 0;
+	if (!last)
+		last = out->start;
+	else if (!bad(b, last))
+		last = bkey_next(last);
+
+	out->keys = (u64 *) last - out->d;
 
 	pr_debug("sorted %i keys", out->keys);
 }

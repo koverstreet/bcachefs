@@ -64,6 +64,29 @@ static bool __ptr_invalid(struct cache_set *c, const struct bkey *k)
 
 /* Common among btree and extent ptrs */
 
+void bch_extent_normalize(struct cache_set *c, struct bkey *k)
+{
+	unsigned i;
+
+	for (i = 0; i < KEY_PTRS(k); i++)
+		if (!ptr_available(c, k, i) ||
+		    ptr_stale(c, k, i)) {
+			SET_KEY_PTRS(k, KEY_PTRS(k) - 1);
+			memmove(&k->ptr[i],
+				&k->ptr[i + 1],
+				(KEY_PTRS(k) - i) * sizeof(u64));
+			continue;
+		}
+}
+
+static void bch_ptr_normalize(struct btree_keys *bk,
+			      struct bkey *k)
+{
+	struct btree *b = container_of(bk, struct btree, keys);
+
+	bch_extent_normalize(b->c, k);
+}
+
 static const char *bch_ptr_status(struct cache_set *c, const struct bkey *k)
 {
 	unsigned i;
@@ -647,6 +670,7 @@ const struct btree_keys_ops bch_extent_keys_ops = {
 	.insert_fixup	= bch_extent_insert_fixup,
 	.key_invalid	= bch_extent_invalid,
 	.key_bad	= bch_extent_bad,
+	.key_normalize	= bch_ptr_normalize,
 	.key_merge	= bch_extent_merge,
 	.key_to_text	= bch_extent_to_text,
 	.key_dump	= bch_bkey_dump,

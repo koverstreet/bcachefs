@@ -194,6 +194,7 @@ struct btree_keys_ops {
 	bool		(*key_invalid)(struct btree_keys *,
 				       const struct bkey *);
 	bool		(*key_bad)(struct btree_keys *, const struct bkey *);
+	void		(*key_normalize)(struct btree_keys *, struct bkey *);
 	bool		(*key_merge)(struct btree_keys *,
 				     struct bkey *, struct bkey *);
 	void		(*key_to_text)(char *, size_t, const struct bkey *);
