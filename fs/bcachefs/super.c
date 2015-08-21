@@ -1136,6 +1136,7 @@ void bch_cache_read_only(struct cache *ca)
 	struct cache_member *mi = cache_member_info(ca);
 	struct cache_group *tier = &c->cache_tiers[CACHE_TIER(mi)];
 	struct task_struct *p;
+	char buf[BDEVNAME_SIZE];
 
 	bch_moving_gc_stop(ca);
 
@@ -1149,6 +1150,7 @@ void bch_cache_read_only(struct cache *ca)
 		kthread_stop(p);
 
 	bch_recalc_capacity(c);
+	pr_notice("%s read only", bdevname(ca->bdev, buf));
 }
 
 const char *bch_cache_read_write(struct cache *ca)
@@ -1173,7 +1175,10 @@ const char *bch_cache_read_write(struct cache *ca)
 void bch_cache_release(struct kobject *kobj)
 {
 	struct cache *ca = container_of(kobj, struct cache, kobj);
+	char buf[BDEVNAME_SIZE];
 	unsigned i;
+
+	bdevname(ca->bdev, buf);
 
 	kfree(ca->journal.seq);
 	free_percpu(ca->bucket_stats_percpu);
@@ -1200,6 +1205,8 @@ void bch_cache_release(struct kobject *kobj)
 	percpu_ref_exit(&ca->ref);
 	kfree(ca);
 	module_put(THIS_MODULE);
+
+	pr_notice("%s removed", buf);
 }
 
 static void bch_cache_kill_work(struct work_struct *work)
@@ -1276,10 +1283,13 @@ static void bch_cache_remove_work(struct work_struct *work)
 	mutex_unlock(&bch_register_lock);
 }
 
-void bch_cache_remove(struct cache *ca)
+bool bch_cache_remove(struct cache *ca)
 {
-	if (!test_and_set_bit(CACHE_DEV_REMOVING, &ca->flags))
-		queue_work(system_long_wq, &ca->remove_work);
+	if (test_and_set_bit(CACHE_DEV_REMOVING, &ca->flags))
+		return false;
+
+	queue_work(system_long_wq, &ca->remove_work);
+	return true;
 }
 
 static int cache_init(struct cache *ca)

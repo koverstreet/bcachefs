@@ -191,9 +191,9 @@ void bch_count_io_errors(struct cache *ca, int error, const char *m)
 			pr_err("%s: IO error on %s, recovering",
 			       bdevname(ca->bdev, buf), m);
 		} else {
-			pr_err("%s: too many IO errors on %s, removing",
-			       bdevname(ca->bdev, buf), m);
-			bch_cache_remove(ca);
+			if (bch_cache_remove(ca))
+				pr_err("%s: too many IO errors on %s, removing",
+				       bdevname(ca->bdev, buf), m);
 		}
 	}
 }
