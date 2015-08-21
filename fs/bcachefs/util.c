@@ -10,6 +10,7 @@
 #include <linux/ctype.h>
 #include <linux/debugfs.h>
 #include <linux/module.h>
+#include <linux/random.h>
 #include <linux/seq_file.h>
 #include <linux/types.h>
 
@@ -477,4 +478,16 @@ int bch_kthread_loop_ratelimit(unsigned long *last, unsigned long delay)
 	*last = jiffies;
 
 	return 0;
+}
+
+size_t bch_rand_range(size_t max)
+{
+	size_t rand;
+
+	do {
+		get_random_bytes(&rand, sizeof(rand));
+		rand &= roundup_pow_of_two(max) - 1;
+	} while (rand >= max);
+
+	return rand;
 }

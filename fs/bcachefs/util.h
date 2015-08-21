@@ -703,4 +703,6 @@ static inline s64 timekeeping_clocktai_ns(void)
 	return (s64) ts.tv_sec * NSEC_PER_SEC + (s64) ts.tv_nsec;
 }
 
+size_t bch_rand_range(size_t);
+
 #endif /* _BCACHE_UTIL_H */

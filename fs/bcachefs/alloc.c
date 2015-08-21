@@ -61,7 +61,6 @@
 
 #include <linux/blkdev.h>
 #include <linux/kthread.h>
-#include <linux/random.h>
 #include <trace/events/bcachefs.h>
 
 /* Allocation groups: */
@@ -399,11 +398,9 @@ static void invalidate_buckets_random(struct cache *ca)
 	size_t checked = 0;
 
 	while (!fifo_full(&ca->free_inc)) {
-		size_t n;
-		get_random_bytes(&n, sizeof(n));
-
-		n %= (size_t) (ca->sb.nbuckets - ca->sb.first_bucket);
-		n += ca->sb.first_bucket;
+		size_t n = bch_rand_range(ca->sb.nbuckets -
+					  ca->sb.first_bucket) +
+			ca->sb.first_bucket;
 
 		g = ca->buckets + n;
 
@@ -662,8 +659,7 @@ static struct cache *bch_next_cache(struct cache_set *c,
 	 * within that range.
 	 */
 
-	get_random_bytes(&rand, sizeof(rand));
-	rand %= bucket_count;
+	rand = bch_rand_range(bucket_count);
 
 	for (i = 0; i < devs->nr_devices; i++) {
 		if (!(ca = rcu_dereference(devs->devices[i])))
