@@ -1419,7 +1419,6 @@ static void bch_btree_set_root(struct btree *b)
 		closure_sync(&cl);
 
 		six_unlock_write(&old->lock);
-		btree_node_free(old);
 	}
 }
 
@@ -1976,6 +1975,8 @@ static int bch_btree_gc_root(struct btree *b, struct btree_op *op,
 		bch_btree_node_write_sync(n);
 
 		bch_btree_set_root(n);
+
+		btree_node_free(b);
 		six_unlock_intent(&n->lock);
 
 		return -EINTR;
@@ -2649,10 +2650,9 @@ static int btree_split(struct btree *b, struct btree_op *op,
 		__bch_btree_insert_node(b->parent, op, parent_keys, NULL,
 					NULL, reserve, parent_keys, stack_cl);
 		BUG_ON(!bch_keylist_empty(parent_keys));
-
-		btree_node_free(b);
 	}
 
+	btree_node_free(b);
 	op->iterator_invalidated = 1;
 
 	/* New nodes now visible, can finish insert */
