@@ -1767,6 +1767,8 @@ void bch_cache_release(struct kobject *kobj)
 	struct cache *ca = container_of(kobj, struct cache, kobj);
 	unsigned i;
 
+	free_percpu(ca->bucket_stats_percpu);
+
 	if (ca->replica_set)
 		bioset_free(ca->replica_set);
 
@@ -1916,7 +1918,8 @@ static int cache_alloc(struct cache *ca)
 	    !(ca->prio_buckets	= kzalloc(sizeof(uint64_t) * prio_buckets(ca) *
 					  2, GFP_KERNEL)) ||
 	    !(ca->disk_buckets	= alloc_bucket_pages(GFP_KERNEL, ca)) ||
-	    !(ca->replica_set = bioset_create(4, offsetof(struct bbio, bio))))
+	    !(ca->replica_set = bioset_create(4, offsetof(struct bbio, bio))) ||
+	    !(ca->bucket_stats_percpu = alloc_percpu(struct bucket_stats)))
 		return -ENOMEM;
 
 	ca->prio_last_buckets = ca->prio_buckets + prio_buckets(ca);
