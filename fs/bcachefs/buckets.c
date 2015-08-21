@@ -92,10 +92,10 @@ static void bucket_stats_update(struct cache *ca,
 	if ((v = (is_meta_bucket(new) - is_meta_bucket(old))))
 		atomic_add_bug(v, &stats->buckets_meta);
 
-	if ((v = (is_cached_bucket(old) - is_cached_bucket(new))))
+	if ((v = (is_cached_bucket(new) - is_cached_bucket(old))))
 		atomic_add_bug(v, &stats->buckets_cached);
 
-	if ((v = (is_dirty_bucket(old) - is_dirty_bucket(new))))
+	if ((v = (is_dirty_bucket(new) - is_dirty_bucket(old))))
 		atomic_add_bug(v, &stats->buckets_dirty);
 }
 
