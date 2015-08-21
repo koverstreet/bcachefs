@@ -166,13 +166,13 @@ unsigned bch_extent_nr_ptrs_after_normalize(const struct cache_set *c,
 void bch_extent_drop_stale(struct cache_set *c, struct bkey *k)
 {
 	struct bkey_i_extent *e = bkey_i_to_extent(k);
-	int i;
+	struct bch_extent_ptr *ptr;
 
 	rcu_read_lock();
 
-	for (i = bch_extent_ptrs(&e->k) - 1; i >= 0; --i)
-		if (should_drop_ptr(c, e, &e->v.ptr[i]))
-			bch_extent_drop_ptr(&e->k, i);
+	extent_for_each_ptr_backwards(e, ptr)
+		if (should_drop_ptr(c, e, ptr))
+			bch_extent_drop_ptr(&e->k, ptr - e->v.ptr);
 
 	rcu_read_unlock();
 }
@@ -583,16 +583,15 @@ int __bch_add_sectors(struct cache_set *c, struct btree *b,
 		      int sectors, bool fail_if_stale)
 {
 	const struct bkey_i_extent *e = bkey_i_to_extent_c(k);
+	const struct bch_extent_ptr *ptr;
 	struct cache *ca;
-	int i;
 
 	rcu_read_lock();
-	for (i = bch_extent_ptrs(&e->k) - 1; i >= 0; --i)
-		if ((ca = PTR_CACHE(c, &e->v.ptr[i]))) {
-			bool stale, dirty =
-				bch_extent_ptr_is_dirty(c, e, &e->v.ptr[i]);
+	extent_for_each_ptr(e, ptr)
+		if ((ca = PTR_CACHE(c, ptr))) {
+			bool stale, dirty = bch_extent_ptr_is_dirty(c, e, ptr);
 
-			trace_bcache_add_sectors(ca, e, &e->v.ptr[i], offset,
+			trace_bcache_add_sectors(ca, e, ptr, offset,
 						 sectors, dirty);
 
 			/*
@@ -630,7 +629,7 @@ int __bch_add_sectors(struct cache_set *c, struct btree *b,
 			 *
 			 *   Fuck me, I hate my life.
 			 */
-			stale = bch_mark_data_bucket(c, ca, b, &e->v.ptr[i],
+			stale = bch_mark_data_bucket(c, ca, b, ptr,
 						     sectors, dirty);
 			if (stale && dirty && fail_if_stale)
 				goto stale;
@@ -639,10 +638,10 @@ int __bch_add_sectors(struct cache_set *c, struct btree *b,
 
 	return 0;
 stale:
-	while (++i < bch_extent_ptrs(&e->k))
-		if ((ca = PTR_CACHE(c, &e->v.ptr[i])))
-			bch_mark_data_bucket(c, ca, b, &e->v.ptr[i], -sectors,
-					     true);
+	while (--ptr >= e->v.ptr)
+		if ((ca = PTR_CACHE(c, ptr)))
+			bch_mark_data_bucket(c, ca, b, ptr, -sectors,
+				bch_extent_ptr_is_dirty(c, e, ptr));
 	rcu_read_unlock();
 
 	return -1;

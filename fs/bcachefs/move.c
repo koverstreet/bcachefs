@@ -562,13 +562,13 @@ static enum migrate_option migrate_cleanup_key(struct cache_set *c,
 					       struct cache *ca)
 {
 	struct bkey_i_extent *e = bkey_i_to_extent(k);
-	unsigned i, dev = ca->sb.nr_this_dev;
+	struct bch_extent_ptr *ptr;
 	bool found;
 
 	found = false;
-	for (i = 0; i < bch_extent_ptrs(&e->k); i++)
-		if (PTR_DEV(&e->v.ptr[i]) == dev) {
-			bch_extent_drop_ptr(&e->k, i--);
+	extent_for_each_ptr_backwards(e, ptr)
+		if (PTR_DEV(ptr) == ca->sb.nr_this_dev) {
+			bch_extent_drop_ptr(&e->k, ptr - e->v.ptr);
 			found = true;
 		}
 
@@ -945,20 +945,18 @@ static int bch_flag_key_bad(struct btree_iter *iter,
 {
 	BKEY_PADDED(key) tmp;
 	struct bkey_i_extent *e;
+	struct bch_extent_ptr *ptr;
 	struct cache_set *c = ca->set;
-	unsigned dev = ca->sb.nr_this_dev;
 	bool found = false;
-	int ptr;
 
 	/* Iterate backwards because we might drop pointers */
 
-	for (ptr = bch_extent_ptrs(&orig->k) - 1; ptr >= 0; ptr--)
-		if (PTR_DEV(&orig->v.ptr[ptr]) == dev) {
-			if (!found) {
-				bkey_copy(&tmp.key, &orig->k);
-				e = bkey_i_to_extent(&tmp.key);
-				found = true;
-			}
+	bkey_copy(&tmp.key, &orig->k);
+	e = bkey_i_to_extent(&tmp.key);
+
+	extent_for_each_ptr_backwards(e, ptr)
+		if (PTR_DEV(ptr) == ca->sb.nr_this_dev) {
+			found = true;
 
 			/*
 			 * If it was dirty, replace it with a ptr to
@@ -970,10 +968,10 @@ static int bch_flag_key_bad(struct btree_iter *iter,
 			 * because bch_extent_normalize() will sort it
 			 * incorrectly but fortunately we don't need to.
 			 */
-			if (bch_extent_ptr_is_dirty(c, e, &e->v.ptr[ptr]))
-				e->v.ptr[ptr] = PTR(0, 0, PTR_LOST_DEV);
+			if (bch_extent_ptr_is_dirty(c, e, ptr))
+				*ptr = PTR(0, 0, PTR_LOST_DEV);
 			else
-				bch_extent_drop_ptr(&e->k, ptr);
+				bch_extent_drop_ptr(&e->k, ptr - e->v.ptr);
 		}
 
 	if (!found)

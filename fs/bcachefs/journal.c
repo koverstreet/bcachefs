@@ -658,13 +658,13 @@ static size_t journal_write_u64s_remaining(struct cache_set *c,
 static void journal_entry_no_room(struct cache_set *c)
 {
 	struct bkey_i_extent *e = bkey_i_to_extent(&c->journal.key);
+	struct bch_extent_ptr *ptr;
 	struct cache *ca;
-	int i;
 
-	for (i = bch_extent_ptrs(&e->k) - 1; i >= 0; --i)
-		if (!(ca = PTR_CACHE(c, &e->v.ptr[i])) ||
+	extent_for_each_ptr_backwards(e, ptr)
+		if (!(ca = PTR_CACHE(c, ptr)) ||
 		    ca->journal.sectors_free <= c->journal.sectors_free)
-			bch_extent_drop_ptr(&e->k, i);
+			bch_extent_drop_ptr(&e->k, ptr - e->v.ptr);
 
 	c->journal.sectors_free = 0;
 	c->journal.u64s_remaining = 0;
@@ -686,6 +686,7 @@ static void journal_entry_no_room(struct cache_set *c)
 static bool journal_reclaim(struct cache_set *c, u64 *oldest_seq)
 {
 	struct bkey_i_extent *e = bkey_i_to_extent(&c->journal.key);
+	struct bch_extent_ptr *ptr;
 	struct cache *ca;
 	uint64_t last_seq;
 	unsigned iter;
@@ -748,11 +749,11 @@ static bool journal_reclaim(struct cache_set *c, u64 *oldest_seq)
 	 * Drop any pointers to devices that have been removed, are no longer
 	 * empty, or filled up their current journal bucket:
 	 */
-	for (i = bch_extent_ptrs(&e->k) - 1; i >= 0; --i)
-		if (!(ca = PTR_CACHE(c, &e->v.ptr[i])) ||
+	extent_for_each_ptr_backwards(e, ptr)
+		if (!(ca = PTR_CACHE(c, ptr)) ||
 		    !ca->journal.sectors_free ||
 		    CACHE_STATE(&ca->mi) != CACHE_ACTIVE)
-			bch_extent_drop_ptr(&e->k, i);
+			bch_extent_drop_ptr(&e->k, ptr - e->v.ptr);
 
 	/*
 	 * Determine location of the next journal write:

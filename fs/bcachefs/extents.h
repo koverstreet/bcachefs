@@ -104,6 +104,15 @@ static inline bool bch_extent_ptr_is_dirty(const struct cache_set *c,
 	     (_ptr) < (_extent)->v.ptr + bch_extent_ptrs(&(_extent)->k);\
 	     (_ptr)++)
 
+/*
+ * Use this when you'll be dropping pointers as you iterate.
+ * Any reason we shouldn't just always do this?
+ */
+#define extent_for_each_ptr_backwards(_extent, _ptr)			\
+	for ((_ptr) = (_extent)->v.ptr + bch_extent_ptrs(&(_extent)->k) - 1;\
+	     (_ptr) >= (_extent)->v.ptr;				\
+	     --(_ptr))
+
 bool bch_extent_has_device(const struct bkey_i_extent *, unsigned);
 void bch_bkey_copy_single_ptr(struct bkey *, const struct bkey *,
 			      unsigned);
