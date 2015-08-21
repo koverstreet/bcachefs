@@ -1148,7 +1148,7 @@ static void btree_mergesort(struct btree_keys *b, struct bset *bset,
 	heap_resort(iter, b->ops->sort_cmp);
 
 	while (!btree_iter_end(iter)) {
-		if (b->ops->sort_fixup && (fixup || !b->ops->is_extents))
+		if (fixup && b->ops->sort_fixup)
 			k = b->ops->sort_fixup(iter, &tmp.k);
 		else
 			k = NULL;
@@ -1158,11 +1158,10 @@ static void btree_mergesort(struct btree_keys *b, struct bset *bset,
 
 		bkey_copy(out, k);
 
-		/* zero size extents can by definition be dropped */
-		if (b->ops->is_extents && !KEY_SIZE(out))
+		if (filter && filter(b, out))
 			continue;
 
-		if (filter && filter(b, out))
+		if (KEY_DELETED(out))
 			continue;
 
 		if (prev && bch_bkey_try_merge(b, prev, out))
