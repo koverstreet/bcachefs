@@ -377,6 +377,9 @@ void bch_data_insert(struct closure *cl)
 		closure_return(cl);
 	}
 
+	if (!op->discard)
+		bch_increment_clock(c, bio_sectors(op->bio), WRITE);
+
 	if (!op->replace) {
 		/* XXX: discards may be for more sectors than max key size */
 
@@ -681,7 +684,6 @@ found:
 	}
 
 rescale:
-	bch_increment_clock(c, bio_sectors(bio), rw);
 	return false;
 skip:
 	bch_mark_sectors_bypassed(c, dc, bio_sectors(bio));
@@ -768,6 +770,8 @@ int bch_read(struct cache_set *c, struct bio *bio, u64 inode)
 {
 	struct bch_read_op op;
 	int ret;
+
+	bch_increment_clock(c, bio_sectors(bio), READ);
 
 	zero_fill_bio(bio);
 
@@ -1129,6 +1133,8 @@ static void cached_dev_read(struct cached_dev *dc, struct search *s)
 {
 	struct closure *cl = &s->cl;
 
+	bch_increment_clock(s->iop.c, bio_sectors(&s->bio.bio), READ);
+
 	closure_call(&s->op.cl, cache_lookup, NULL, cl);
 	continue_at(cl, cached_dev_read_done_bh, NULL);
 }
@@ -1390,8 +1396,6 @@ static void __flash_dev_make_request(struct request_queue *q, struct bio *bio)
 				      d->c->wq);
 	}
 
-	bch_increment_clock(d->c, bio->bi_iter.bi_size, rw);
-
 	if (rw) {
 		bch_data_insert_op_init(&s->iop, d->c, bio,
 					hash_long((unsigned long) current, 16),
@@ -1402,6 +1406,7 @@ static void __flash_dev_make_request(struct request_queue *q, struct bio *bio)
 
 		closure_call(&s->iop.cl, bch_data_insert, NULL, cl);
 	} else {
+		bch_increment_clock(d->c, bio_sectors(bio), READ);
 		closure_call(&s->op.cl, cache_lookup, NULL, cl);
 	}
 
