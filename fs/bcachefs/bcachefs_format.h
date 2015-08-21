@@ -43,7 +43,7 @@ struct bkey {
 #else
 #error edit for your odd byteorder.
 #endif
-	__u64	val[];
+	__u64	val[0];
 };
 
 #define BKEY_U64s	(sizeof(struct bkey) / sizeof(__u64))
