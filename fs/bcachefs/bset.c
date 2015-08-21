@@ -32,15 +32,15 @@ void bch_dump_bset(struct btree_keys *b, struct bset *i, unsigned set)
 		printk(KERN_ERR "block %u key %u/%u: %s\n", set,
 		       (unsigned) ((u64 *) k - i->d), i->keys, buf);
 
-		if (next < bset_bkey_last(i)) {
-			if (b->ops->is_extents) {
-				if (bkey_cmp(k, &START_KEY(next)) > 0)
-					printk(KERN_ERR "Key skipped backwards\n");
-			} else {
-				if (!bkey_cmp(k, next))
-					printk(KERN_ERR "Duplicate keys\n");
-			}
-		}
+		if (next == bset_bkey_last(i))
+			continue;
+
+		if (bkey_cmp(&START_KEY(next), k) < 0)
+			printk(KERN_ERR "Key skipped backwards\n");
+		else if (!b->ops->is_extents &&
+			 !KEY_DELETED(k) &&
+			 !bkey_cmp(next, k))
+			printk(KERN_ERR "Duplicate keys\n");
 	}
 }
 
@@ -78,50 +78,40 @@ void __bch_count_data_verify(struct btree_keys *b, int oldsize)
 
 void __bch_check_keys(struct btree_keys *b, const char *fmt, ...)
 {
-	va_list args;
 	struct bkey *k, *p = NULL;
 	struct btree_node_iter iter;
-	char buf1[80], buf2[80];
-	const char *err;
 
-	for_each_btree_node_key_all(b, k, &iter) {
-		if (b->ops->is_extents) {
-			err = "keys out of order";
-			if (p && bkey_cmp(&START_KEY(p), &START_KEY(k)) > 0)
-				goto bug;
+	for_each_btree_node_key(b, k, &iter) {
+		if (p &&
+		    (b->ops->is_extents
+		     ? bkey_cmp(p, &START_KEY(k)) > 0
+		     : !bkey_cmp(p, k))) {
+			va_list args;
+			char buf1[80], buf2[80];
 
-			if (!KEY_SIZE(k))
-				continue;
+			bch_dump_bucket(b);
 
-			err =  "overlapping keys";
-			if (p && bkey_cmp(p, &START_KEY(k)) > 0)
-				goto bug;
-		} else {
-			if (bkey_deleted(k))
-				continue;
+			va_start(args, fmt);
+			vprintk(fmt, args);
+			va_end(args);
 
-			err = "duplicate keys";
-			if (p && !bkey_cmp(p, k))
-				goto bug;
+			bch_bkey_to_text(buf1, sizeof(buf1), p);
+			bch_bkey_to_text(buf2, sizeof(buf2), k);
+			panic("bch_check_keys dup/overlapping:\n%s\n%s\n",
+			      buf1, buf2);
 		}
+
 		p = k;
 	}
-#if 0
-	err = "Key larger than btree node key";
-	if (p && bkey_cmp(p, &b->key) > 0)
-		goto bug;
-#endif
-	return;
-bug:
-	bch_dump_bucket(b);
+}
 
-	va_start(args, fmt);
-	vprintk(fmt, args);
-	va_end(args);
-
-	bch_bkey_to_text(buf1, sizeof(buf1), p);
-	bch_bkey_to_text(buf2, sizeof(buf2), k);
-	panic("bch_check_keys error:  %s %s, %s\n", err, buf1, buf2);
+static bool keys_out_of_order(struct bkey *prev, struct bkey *next,
+			      bool is_extents)
+{
+	return bkey_cmp(prev, &START_KEY(next)) > 0 ||
+		(!is_extents &&
+		 !KEY_DELETED(prev) &&
+		 !bkey_cmp(prev, next));
 }
 
 static void bch_btree_node_iter_next_check(struct btree_node_iter *iter)
@@ -129,22 +119,18 @@ static void bch_btree_node_iter_next_check(struct btree_node_iter *iter)
 	struct btree_keys *b = iter->b;
 	struct bkey *k = iter->data->k, *next = bkey_next(k);
 
-	if (!btree_keys_expensive_checks(b))
-		return;
-
-	bkey_debugcheck(b, k);
-
 	if (next < iter->data->end &&
-	    bkey_cmp(k, b->ops->is_extents ?
-		     &START_KEY(next) : next) > 0) {
+	    keys_out_of_order(k, next, b->ops->is_extents)) {
 		char buf1[80], buf2[80];
 
 		bch_dump_bucket(b);
-
 		bch_bkey_to_text(buf1, sizeof(buf1), k);
 		bch_bkey_to_text(buf2, sizeof(buf2), next);
-		panic("Key skipped backwards - %s > %s\n", buf1, buf2);
+		panic("out of order/overlapping:\n%s\n%s\n", buf1, buf2);
 	}
+
+	if (btree_keys_expensive_checks(b))
+		bkey_debugcheck(b, k);
 }
 
 void bch_btree_node_iter_verify(struct btree_keys *b,
@@ -640,6 +626,64 @@ EXPORT_SYMBOL(bch_bset_build_written_tree);
 
 /* Insert */
 
+#ifdef CONFIG_BCACHEFS_DEBUG
+
+static struct bkey *bkey_prev(struct btree_keys *b,
+			      struct bset_tree *t,
+			      struct bkey *k)
+{
+	struct bkey *p;
+	int j;
+
+	if (k == t->data->start)
+		return NULL;
+
+	j = min(bkey_to_cacheline(t, k), t->size);
+
+	do {
+		if (--j <= 0) {
+			p = t->data->start;
+			break;
+
+		}
+
+		p = bset_written(b, t)
+			? tree_to_bkey(t, inorder_to_tree(j, t))
+			: table_to_bkey(t, j);
+	} while (p == k);
+
+	while (bkey_next(p) != k)
+		p = bkey_next(p);
+
+	return p;
+}
+
+static void verify_insert_pos(struct btree_keys *b,
+			      struct bkey *where,
+			      struct bkey *insert)
+{
+	struct bset_tree *t = bset_tree_last(b);
+	struct bkey *prev = bkey_prev(b, t, where);
+
+	BUG_ON(prev &&
+	       keys_out_of_order(prev, insert, b->ops->is_extents));
+
+	BUG_ON(where != bset_bkey_last(t->data) &&
+	       keys_out_of_order(insert, where, b->ops->is_extents));
+}
+
+#else
+
+static struct bkey *bkey_prev(struct btree_keys *b,
+			      struct bset_tree *t,
+			      struct bkey *k) { return NULL; }
+
+static void verify_insert_pos(struct btree_keys *b,
+			      struct bkey *where,
+			      struct bkey *insert) {}
+
+#endif
+
 static struct bkey *bch_btree_node_insert_pos(struct btree_keys *b,
 					      struct btree_node_iter *iter)
 {
@@ -791,6 +835,8 @@ unsigned bch_bset_insert(struct btree_keys *b,
 	while (where != bset_bkey_last(i) &&
 	       bkey_cmp(insert, &START_KEY(where)) > 0)
 		prev = where, where = bkey_next(where);
+
+	verify_insert_pos(b, where, insert);
 
 	/* prev is in the tree, if we merge we're done */
 	if (prev &&
@@ -985,13 +1031,9 @@ static struct bkey *bch_bset_search(struct btree_keys *b, struct bset_tree *t,
 		m = bkey_next(m);
 
 	if (btree_keys_expensive_checks(b)) {
-		struct bkey *p = t->data->start;
+		struct bkey *p = bkey_prev(b, t, m);
 
-		while (p < m &&
-		       bkey_next(p) < m)
-			p = bkey_next(p);
-
-		BUG_ON(p < m && bkey_cmp(p, search) >= 0);
+		BUG_ON(p && bkey_cmp(p, search) >= 0);
 	}
 
 	return m;
