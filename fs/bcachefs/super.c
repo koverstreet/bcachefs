@@ -1124,6 +1124,7 @@ static int cache_set_add_device(struct cache_set *c, struct cache *ca)
 	if (ca->sb.seq > c->sb.seq)
 		cache_sb_to_cache_set(c, ca);
 
+	kobject_get(&c->kobj);
 	ca->set = c;
 
 	kobject_get(&ca->kobj);
@@ -1306,6 +1307,8 @@ static void bch_cache_kill_work(struct work_struct *work)
 	}
 
 	mutex_unlock(&bch_register_lock);
+
+	kobject_put(&c->kobj);
 
 	/*
 	 * This results in bch_cache_release being called which
@@ -1698,6 +1701,7 @@ have_slot:
 
 	ca->sb.nr_this_dev	= nr_this_dev;
 	ca->sb.nr_in_set	= c->sb.nr_in_set;
+	kobject_get(&c->kobj);
 	ca->set			= c;
 
 	err = "journal alloc failed";
