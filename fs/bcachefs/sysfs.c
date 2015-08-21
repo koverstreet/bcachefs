@@ -452,7 +452,7 @@ lock_root:
 		six_lock_read(&b->lock);
 	} while (b != c->btree_roots[BTREE_ID_EXTENTS]);
 
-	for_each_key_filter(&b->keys, k, &iter, bch_ptr_bad)
+	for_each_key_filter(&b->keys, k, &iter, bkey_deleted)
 		bytes += bkey_bytes(k);
 
 	six_unlock_read(&b->lock);

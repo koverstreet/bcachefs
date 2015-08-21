@@ -300,7 +300,7 @@ void bch_btree_node_read_done(struct btree *b)
 				break;
 			}
 
-			if (bch_ptr_invalid(&b->keys, k)) {
+			if (bkey_invalid(&b->keys, k)) {
 				char buf[80];
 
 				bch_bkey_to_text(&b->keys, buf, sizeof(buf), k);
@@ -1331,8 +1331,7 @@ static struct btree *btree_node_alloc_replacement(struct btree *b,
 	n = bch_btree_node_alloc(b->c, op, b->level, b->btree_id, b->parent);
 	if (n) {
 		bch_btree_sort_into(&n->keys, &b->keys,
-				    b->keys.ops->key_normalize ?:
-				    bch_ptr_bad,
+				    b->keys.ops->key_normalize ?: bkey_deleted,
 				    &b->c->sort);
 		bkey_copy_key(&n->key, &b->key);
 		trace_bcache_btree_node_alloc_replacement(b, n);
@@ -1526,7 +1525,7 @@ static bool btree_gc_mark_node(struct btree *b, struct gc_stat *gc)
 	if (b->btree_id != BTREE_ID_EXTENTS && b->level == 0)
 		return 0;
 
-	for_each_key_filter(&b->keys, k, &iter, bch_ptr_bad) {
+	for_each_key_filter(&b->keys, k, &iter, bkey_deleted) {
 		stale = max(stale, btree_mark_key(b, k));
 		keys++;
 
@@ -1792,7 +1791,7 @@ static unsigned btree_gc_count_keys(struct btree *b)
 	struct btree_iter iter;
 	unsigned ret = 0;
 
-	for_each_key_filter(&b->keys, k, &iter, bch_ptr_bad)
+	for_each_key_filter(&b->keys, k, &iter, bkey_deleted)
 		ret += bch_extent_nr_ptrs_after_normalize(b->c, k);
 
 	return ret;
@@ -1826,7 +1825,7 @@ static int btree_gc_recurse(struct btree *b, struct btree_op *op,
 		i->b = ERR_PTR(-EINTR);
 
 	while (1) {
-		k = bch_btree_iter_next_filter(&iter, &b->keys, bch_ptr_bad);
+		k = bch_btree_iter_next_filter(&iter, &b->keys, bkey_deleted);
 		if (k) {
 			r->b = bch_btree_node_get(c, op, k, b->level - 1, b);
 			if (IS_ERR(r->b)) {
@@ -2138,7 +2137,7 @@ static int bch_btree_check_recurse(struct btree *b, struct btree_op *op)
 	struct btree_iter iter;
 
 	if (b->btree_id == BTREE_ID_EXTENTS || b->level)
-		for_each_key_filter(&b->keys, k, &iter, bch_ptr_bad)
+		for_each_key_filter(&b->keys, k, &iter, bkey_deleted)
 			btree_mark_key(b, k);
 
 	__bch_btree_mark_key(b->c, b->level + 1, &b->key);
@@ -2148,7 +2147,7 @@ static int bch_btree_check_recurse(struct btree *b, struct btree_op *op)
 
 		do {
 			k = bch_btree_iter_next_filter(&iter, &b->keys,
-						       bch_ptr_bad);
+						       bkey_deleted);
 			if (k)
 				btree_node_prefetch(b, k);
 
@@ -2486,7 +2485,7 @@ static int btree_split(struct btree *b, struct btree_op *op,
 		 */
 		k = set1->start;
 		while (k != bset_bkey_last(set1))
-			if (bch_ptr_bad(&b->keys, k)) {
+			if (bkey_deleted(&b->keys, k)) {
 				set1->keys -= KEY_U64s(k);
 				memmove(k, bkey_next(k),
 					(void *) bset_bkey_last(set1) -
@@ -2776,7 +2775,7 @@ static int bch_btree_map_nodes_recurse(struct btree *b, struct btree_op *op,
 		bch_btree_iter_init(&b->keys, &iter, from);
 
 		while ((k = bch_btree_iter_next_filter(&iter, &b->keys,
-						       bch_ptr_bad))) {
+						       bkey_deleted))) {
 			ret = btree(map_nodes_recurse, k, b,
 				    op, from, fn, flags);
 			from = NULL;
@@ -2905,7 +2904,8 @@ static int bch_btree_map_keys_recurse(struct btree *b, struct btree_op *op,
 
 	bch_btree_iter_init(&b->keys, &iter, &search);
 
-	while ((k = bch_btree_iter_next_filter(&iter, &b->keys, bch_ptr_bad))) {
+	while ((k = bch_btree_iter_next_filter(&iter, &b->keys,
+					       bkey_deleted))) {
 		BUG_ON(bkey_cmp(k, from) < 0);
 
 		if (!level) {

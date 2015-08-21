@@ -13,11 +13,11 @@
  * A bkey contains a key, a size field, a variable number of pointers, and some
  * ancillary flag bits.
  *
- * We use two different functions for validating bkeys, bch_ptr_invalid and
- * bch_ptr_bad().
+ * We use two different functions for validating bkeys, bkey_invalid and
+ * bkey_deleted().
  *
  * bch_ptr_invalid() primarily filters out keys and pointers that would be
- * invalid due to some sort of bug, whereas bch_ptr_bad() filters out keys and
+ * invalid due to some sort of bug, whereas bkey_deleted() filters out keys and
  * pointer that occur in normal practice but don't point to real data.
  *
  * The one exception to the rule that ptr_invalid() filters out invalid keys is
@@ -448,12 +448,12 @@ void bch_bkey_copy_single_ptr(struct bkey *, const struct bkey *,
 	_ret;							\
 })
 
-static inline bool bch_ptr_invalid(struct btree_keys *b, struct bkey *k)
+static inline bool bkey_invalid(struct btree_keys *b, struct bkey *k)
 {
-	return b->ops->key_invalid ? b->ops->key_invalid(b, k) : false;
+	return b->ops->key_invalid(b, k);
 }
 
-static inline bool bch_ptr_bad(struct btree_keys *b, struct bkey *k)
+static inline bool bkey_deleted(struct btree_keys *b, struct bkey *k)
 {
 	if (KEY_DELETED(k))
 		return true;

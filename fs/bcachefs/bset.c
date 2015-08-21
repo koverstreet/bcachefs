@@ -101,14 +101,14 @@ void __bch_check_keys(struct btree_keys *b, const char *fmt, ...)
 				goto bug;
 			}
 
-			if (bch_ptr_bad(b, k))
+			if (bkey_deleted(b, k))
 				continue;
 
 			err =  "Overlapping keys";
 			if (p && bkey_cmp(p, &START_KEY(k)) > 0)
 				goto bug;
 		} else {
-			if (bch_ptr_bad(b, k))
+			if (bkey_deleted(b, k))
 				continue;
 
 			err = "Duplicate keys";
