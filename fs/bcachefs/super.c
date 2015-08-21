@@ -1737,10 +1737,13 @@ found:
 
 	kobject_get(&ca->kobj);
 	ca->set = c;
-	ca->set->cache[ca->sb.nr_this_dev] = ca;
+
+	mutex_lock(&c->bucket_lock);
+	rcu_assign_pointer(c->cache[ca->sb.nr_this_dev], ca);
 
 	tier = &c->cache_by_alloc[CACHE_TIER(&ca->sb)];
 	tier->devices[tier->nr_devices++] = ca;
+	mutex_unlock(&c->bucket_lock);
 
 	for (i = 0; i < CACHE_TIERS; i++)
 		caches_loaded += c->cache_by_alloc[i].nr_devices;
@@ -1819,10 +1822,10 @@ static void __bch_cache_remove(struct cache *ca)
 	lockdep_assert_held(&bch_register_lock);
 
 	/* already ran? */
-	if (c->cache[ca->sb.nr_this_dev] != ca)
+	if (rcu_access_pointer(c->cache[ca->sb.nr_this_dev]) != ca)
 		return;
 
-	c->cache[ca->sb.nr_this_dev] = NULL;
+	rcu_assign_pointer(c->cache[ca->sb.nr_this_dev], NULL);
 
 	if (c->kobj.state_in_sysfs) {
 		char buf[12];

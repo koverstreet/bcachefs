@@ -655,7 +655,11 @@ static struct cache *bch_next_cache(struct cache_set *c,
 	 * it is likely to go that tier. */
 
 	if (tier_idx == -1) {
-		devices = c->cache;
+		/*
+		 * Cast away __rcu - don't need rcu_dereference() because
+		 * bucket_lock held
+		 */
+		devices = (struct cache **) c->cache;
 		nr_devices = c->sb.nr_in_set;
 	} else {
 		struct cache_tier *tier = &c->cache_by_alloc[tier_idx];

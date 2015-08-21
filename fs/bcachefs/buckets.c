@@ -99,8 +99,9 @@ static void bucket_stats_update(struct cache *ca,
 		atomic_add_bug(v, &stats->buckets_dirty);
 }
 
-struct bucket_mark bch_bucket_mark_set(struct cache *ca, struct bucket *g,
-				       struct bucket_mark new)
+static struct bucket_mark bch_bucket_mark_set(struct cache *ca,
+					      struct bucket *g,
+					      struct bucket_mark new)
 {
 	struct bucket_mark old = xchg(&g->mark, new);
 

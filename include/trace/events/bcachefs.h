@@ -15,7 +15,7 @@ DECLARE_EVENT_CLASS(bcache_request,
 		__field(unsigned int,	orig_major		)
 		__field(unsigned int,	orig_minor		)
 		__field(sector_t,	sector			)
-		__field(dev_t,		orig_sector		)
+		__field(sector_t,	orig_sector		)
 		__field(unsigned int,	nr_sector		)
 		__array(char,		rwbs,	6		)
 	),

@@ -42,8 +42,8 @@ void bch_bucket_free(struct cache_set *, struct bkey *);
 int bch_bucket_wait(struct cache_set *, enum alloc_reserve,
 		    struct closure *);
 
-long bch_bucket_alloc(struct cache *, unsigned, struct closure *);
-int bch_bucket_alloc_set(struct cache_set *, unsigned, struct bkey *,
+long bch_bucket_alloc(struct cache *, enum alloc_reserve, struct closure *);
+int bch_bucket_alloc_set(struct cache_set *, enum alloc_reserve, struct bkey *,
 			 int, unsigned, struct closure *);
 
 void bch_open_bucket_put(struct cache_set *, struct open_bucket *);
