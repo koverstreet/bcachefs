@@ -230,6 +230,8 @@ struct btree_keys {
 	u16			nr_packed_keys;
 	u16			nr_unpacked_keys;
 
+	struct bkey_format	format;
+
 	/*
 	 * Sets of sorted keys - the real btree node - plus a binary search tree
 	 *
@@ -267,16 +269,6 @@ static inline bool bkey_written(struct btree_keys *b, struct bkey_packed *k)
 	return !b->last_set_unwritten || k < b->set[b->nsets].data->start;
 }
 
-static inline unsigned bset_byte_offset(struct btree_keys *b, struct bset *i)
-{
-	return ((size_t) i) - ((size_t) b->set->data);
-}
-
-static inline unsigned bset_sector_offset(struct btree_keys *b, struct bset *i)
-{
-	return bset_byte_offset(b, i) >> 9;
-}
-
 #define __set_bytes(_i, _u64s)	(sizeof(*(_i)) + (_u64s) * sizeof(u64))
 #define set_bytes(_i)		__set_bytes(_i, (_i)->u64s)
 
@@ -285,21 +277,6 @@ static inline unsigned bset_sector_offset(struct btree_keys *b, struct bset *i)
 
 #define set_blocks(_i, _block_bytes)					\
 	__set_blocks((_i), (_i)->u64s, (_block_bytes))
-
-static inline size_t bch_btree_keys_u64s_remaining(struct btree_keys *b)
-{
-	struct bset_tree *t = bset_tree_last(b);
-
-	BUG_ON((PAGE_SIZE << b->page_order) <
-	       (bset_byte_offset(b, t->data) + set_bytes(t->data)));
-
-	if (!b->last_set_unwritten)
-		return 0;
-
-	return ((PAGE_SIZE << b->page_order) -
-		(bset_byte_offset(b, t->data) + set_bytes(t->data))) /
-		sizeof(u64);
-}
 
 static inline struct bset *bset_next_set(struct btree_keys *b,
 					 unsigned block_bytes)
@@ -314,6 +291,7 @@ int bch_btree_keys_alloc(struct btree_keys *, unsigned, gfp_t);
 void bch_btree_keys_init(struct btree_keys *, const struct btree_keys_ops *,
 			 bool *);
 
+void bch_bset_init_first(struct btree_keys *, struct bset *);
 void bch_bset_init_next(struct btree_keys *, struct bset *);
 void bch_bset_build_written_tree(struct btree_keys *);
 void bch_bset_fix_invalidated_key(struct btree_keys *, struct bkey_packed *);
@@ -521,7 +499,7 @@ bch_btree_node_iter_peek_overlapping(struct btree_node_iter *iter,
 				     struct btree_keys *b,
 				     struct bkey *end)
 {
-	const struct bkey_format *f = &b->set->data->format;
+	const struct bkey_format *f = &b->format;
 	struct bkey_packed *ret;
 	struct bkey u;
 

@@ -110,6 +110,7 @@ struct btree {
 	u8			btree_id;
 
 	struct btree_keys	keys;
+	struct btree_node	*data;
 
 	/* For outstanding btree writes, used as a lock - protects write_idx */
 	struct closure		io;
@@ -128,16 +129,21 @@ static inline bool btree_node_ ## flag(struct btree *b)			\
 									\
 static inline void set_btree_node_ ## flag(struct btree *b)		\
 {	set_bit(BTREE_NODE_ ## flag, &b->flags); }			\
+									\
+static inline void clear_btree_node_ ## flag(struct btree *b)		\
+{	clear_bit(BTREE_NODE_ ## flag, &b->flags); }
 
 enum btree_flags {
 	BTREE_NODE_io_error,
 	BTREE_NODE_dirty,
 	BTREE_NODE_write_idx,
+	BTREE_NODE_need_init_next,
 };
 
 BTREE_FLAG(io_error);
 BTREE_FLAG(dirty);
 BTREE_FLAG(write_idx);
+BTREE_FLAG(need_init_next);
 
 static inline struct btree_write *btree_current_write(struct btree *b)
 {
@@ -159,9 +165,24 @@ static inline struct bset *btree_bset_last(struct btree *b)
 	return bset_tree_last(&b->keys)->data;
 }
 
-static inline unsigned bset_block_offset(struct btree *b, struct bset *i)
+static inline unsigned bset_byte_offset(struct btree *b, void *i)
 {
-	return bset_sector_offset(&b->keys, i) >> b->c->block_bits;
+	return i - (void *) b->data;
+}
+
+static inline size_t bch_btree_keys_u64s_remaining(struct btree *b)
+{
+	struct bset *i = btree_bset_last(b);
+
+	BUG_ON((PAGE_SIZE << b->keys.page_order) <
+	       (bset_byte_offset(b, i) + set_bytes(i)));
+
+	if (!b->keys.last_set_unwritten)
+		return 0;
+
+	return ((PAGE_SIZE << b->keys.page_order) -
+		(bset_byte_offset(b, i) + set_bytes(i))) /
+		sizeof(u64);
 }
 
 static inline size_t btree_bytes(struct cache_set *c)
@@ -171,7 +192,7 @@ static inline size_t btree_bytes(struct cache_set *c)
 
 static inline unsigned btree_sectors(struct cache_set *c)
 {
-	return c->btree_pages * PAGE_SECTORS;
+	return c->btree_pages << (PAGE_SHIFT - 9);
 }
 
 static inline unsigned btree_blocks(struct cache_set *c)
@@ -367,7 +388,7 @@ void bch_btree_write_oldest(struct cache_set *, u64);
 static inline bool btree_node_format_fits(struct btree *b,
 					  struct bkey_format *new_f)
 {
-	struct bkey_format *old_f = &b->keys.set->data->format;
+	struct bkey_format *old_f = &b->keys.format;
 
 	/* stupid integer promotion rules */
 	ssize_t new_u64s =

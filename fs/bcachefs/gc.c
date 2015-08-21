@@ -93,7 +93,7 @@ static inline bool btree_node_has_ptrs(struct btree *b)
 bool btree_gc_mark_node(struct cache_set *c, struct btree *b,
 			struct gc_stat *stat)
 {
-	struct bkey_format *f = &b->keys.set->data->format;
+	struct bkey_format *f = &b->keys.format;
 	struct bset_tree *t;
 
 	for (t = b->keys.set; t <= &b->keys.set[b->keys.nsets]; t++)

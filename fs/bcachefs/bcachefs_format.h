@@ -579,7 +579,7 @@ static inline __u64 bset_magic(struct cache_sb *sb)
 
 enum btree_id {
 	DEFINE_BCH_BTREE_IDS()
-	BTREE_ID_NR			= 4,
+	BTREE_ID_NR
 };
 
 #undef DEF_BTREE_ID
@@ -660,27 +660,40 @@ BITMASK(PSET_CSUM_TYPE,		struct prio_set, flags, 0, 4);
  * sorted
  */
 struct bset {
-	__u64			csum;
-	__u64			magic;
-	__u32			version;
-	__u32			flags;
-
 	__u64			seq;
 	__u64			journal_seq;
 
-	__u32			pad;
-	__u32			u64s; /* count of d[] in u64s */
-
-	/* NOTE: all bsets in the same btree node must have the same format */
-	struct bkey_format	format;
+	__u32			flags;
+	__u16			version;
+	__u16			u64s; /* count of d[] in u64s */
 
 	union {
 		struct bkey_packed start[0];
 		__u64		_data[0];
 	};
-};
+} __attribute__((packed));
 
 BITMASK(BSET_CSUM_TYPE,		struct bset, flags, 0, 4);
+
+/* Only used in first bset */
+BITMASK(BSET_BTREE_LEVEL,	struct bset, flags, 4, 8);
+
+struct btree_node {
+	__u64			csum;
+	__u64			magic;
+
+	/* Closed interval: */
+	struct bpos		min_key;
+	struct bpos		max_key;
+	struct bkey_format	format;
+
+	struct bset		keys;
+} __attribute__((packed));
+
+struct btree_node_entry {
+	__u64			csum;
+	struct bset		keys;
+} __attribute__((packed));
 
 /* OBSOLETE */
 

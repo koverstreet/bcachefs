@@ -44,7 +44,7 @@ static void sort_key_next(struct btree_node_iter *iter,
  */
 #define key_sort_cmp(l, r)						\
 ({									\
-	int _c = bkey_cmp_packed(&b->set->data->format,			\
+	int _c = bkey_cmp_packed(&b->format,				\
 				 __btree_node_offset_to_key(b, (l).k),	\
 				 __btree_node_offset_to_key(b, (r).k));	\
 									\
@@ -54,7 +54,7 @@ static void sort_key_next(struct btree_node_iter *iter,
 static inline bool should_drop_next_key(struct btree_node_iter *iter,
 					struct btree_keys *b)
 {
-	const struct bkey_format *f = &b->set->data->format;
+	const struct bkey_format *f = &b->format;
 	struct btree_node_iter_set *l = iter->data, *r = iter->data + 1;
 
 	if (bkey_deleted(__btree_node_offset_to_key(b, l->k)))
@@ -121,7 +121,7 @@ bool bch_insert_fixup_key(struct btree *b, struct bkey_i *insert,
 			  struct bpos *done,
 			  struct journal_res *res)
 {
-	const struct bkey_format *f = &b->keys.set->data->format;
+	const struct bkey_format *f = &b->keys.format;
 	struct bkey_packed *k;
 	int c;
 
@@ -184,7 +184,7 @@ static bool should_drop_ptr(const struct cache_set *c,
 unsigned bch_extent_nr_ptrs_after_normalize(const struct btree *b,
 					    const struct bkey_packed *k)
 {
-	const struct bkey_format *f = &b->keys.set->data->format;
+	const struct bkey_format *f = &b->keys.format;
 	const struct bch_extent *e;
 	unsigned ret = 0, ptr;
 
@@ -623,7 +623,7 @@ static void extent_save(struct bkey_packed *dst, struct bkey *src,
  */
 #define extent_sort_cmp(l, r)						\
 ({									\
-	const struct bkey_format *_f = &b->set->data->format;		\
+	const struct bkey_format *_f = &b->format;			\
 	struct bkey _ul = bkey_unpack_key(_f,				\
 				__btree_node_offset_to_key(b, (l).k));	\
 	struct bkey _ur = bkey_unpack_key(_f,				\
@@ -681,7 +681,7 @@ void bch_extent_sort_fix_overlapping(struct btree_keys *b,
 				     struct bset *bset,
 				     struct btree_node_iter *iter)
 {
-	struct bkey_format *f = &b->set->data->format;
+	struct bkey_format *f = &b->format;
 	struct btree_node_iter_set *_l = iter->data, *_r;
 	struct bkey_packed *prev = NULL, *out = bset->start, *lk, *rk;
 	struct bkey_tup l, r;
@@ -1174,7 +1174,7 @@ bool bch_insert_fixup_extent(struct btree *b, struct bkey_i *insert,
 			     struct bpos *done,
 			     struct journal_res *res)
 {
-	const struct bkey_format *f = &b->keys.set->data->format;
+	const struct bkey_format *f = &b->keys.format;
 	struct bpos orig_insert = insert->k.p;
 	struct bkey_packed *_k;
 	struct bkey_tup tup;
@@ -1241,7 +1241,7 @@ bool bch_insert_fixup_extent(struct btree *b, struct bkey_i *insert,
 		 * iteration of this room will insert one key, so we need
 		 * room for three keys.
 		 */
-		needs_split = (bch_btree_keys_u64s_remaining(&b->keys) <
+		needs_split = (bch_btree_keys_u64s_remaining(b) <
 			       BKEY_EXTENT_MAX_U64s * 3);
 		res_full = journal_res_full(res, &insert->k);
 
@@ -1737,7 +1737,7 @@ static bool bch_extent_merge_inline(struct btree_keys *b,
 				    struct bkey_packed *l,
 				    struct bkey_packed *r)
 {
-	const struct bkey_format *f = &b->set->data->format;
+	const struct bkey_format *f = &b->format;
 	struct bset_tree *t;
 	struct bkey_packed *k, *m;
 	struct bkey uk;
