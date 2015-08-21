@@ -387,6 +387,7 @@ void bch_btree_node_iter_init(struct btree_keys *, struct btree_node_iter *,
 void bch_btree_node_iter_init_from_start(struct btree_keys *,
 					 struct btree_node_iter *);
 
+void bch_btree_node_iter_sort(struct btree_node_iter *);
 void bch_btree_node_iter_advance(struct btree_node_iter *);
 
 static inline bool bch_btree_node_iter_end(struct btree_node_iter *iter)

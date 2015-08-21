@@ -844,6 +844,15 @@ void bch_bset_insert(struct btree_keys *b,
 			b->nr_live_u64s += insert->u64s;
 
 		bkey_copy(where, insert);
+
+		/*
+		 * We're modifying a key that might be the btree node iter's
+		 * current position for that bset, so we have to resort it -
+		 * this isn't an issue for back merges because then the insert
+		 * key comes after the key being modified, so the iter will have
+		 * advanced past it.
+		 */
+		bch_btree_node_iter_sort(iter);
 		return;
 	}
 
@@ -1095,6 +1104,27 @@ void bch_btree_node_iter_init_from_start(struct btree_keys *b,
 }
 EXPORT_SYMBOL(bch_btree_node_iter_init_from_start);
 
+static inline void btree_node_iter_sift(struct btree_node_iter *iter,
+					unsigned start)
+{
+	unsigned i;
+
+	for (i = start;
+	     i + 1 < iter->used &&
+	     btree_node_iter_cmp(iter, iter->data[i], iter->data[i + 1]);
+	     i++)
+		swap(iter->data[i], iter->data[i + 1]);
+}
+
+void bch_btree_node_iter_sort(struct btree_node_iter *iter)
+{
+	int i;
+
+	for (i = iter->used - 1; i >= 0; --i)
+		btree_node_iter_sift(iter, i);
+}
+EXPORT_SYMBOL(bch_btree_node_iter_sort);
+
 /**
  * bch_btree_node_iter_advance - advance @iter by one key
  *
@@ -1103,8 +1133,6 @@ EXPORT_SYMBOL(bch_btree_node_iter_init_from_start);
  */
 void bch_btree_node_iter_advance(struct btree_node_iter *iter)
 {
-	unsigned i;
-
 	iter->data->k = bkey_next(iter->data->k);
 
 	BUG_ON(iter->data->k > iter->data->end);
@@ -1112,11 +1140,7 @@ void bch_btree_node_iter_advance(struct btree_node_iter *iter)
 	if (iter->data->k == iter->data->end)
 		iter->data[0] = iter->data[--iter->used];
 
-	for (i = 0;
-	     i + 1 < iter->used &&
-	     btree_node_iter_cmp(iter, iter->data[i], iter->data[i + 1]);
-	     i++)
-		swap(iter->data[i], iter->data[i + 1]);
+	btree_node_iter_sift(iter, 0);
 }
 EXPORT_SYMBOL(bch_btree_node_iter_advance);
 
