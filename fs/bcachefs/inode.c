@@ -6,6 +6,55 @@
 
 #define key_to_inode(k)	container_of(k, struct bch_inode, i_key)
 
+ssize_t bch_inode_status(char *buf, size_t len, const struct bkey *k)
+{
+	struct bch_inode *inode = key_to_inode(k);
+
+	if (KEY_DELETED(k))
+		return scnprintf(buf, len, "deleted");
+
+	if (bkey_bytes(k) < sizeof(struct bch_inode))
+		return scnprintf(buf, len, "key too small: %zu",
+				 bkey_bytes(k));
+
+	if (KEY_OFFSET(k))
+		return scnprintf(buf, len, "offset nonzero: %llu",
+				 KEY_OFFSET(k));
+
+	if (KEY_SIZE(k))
+		return scnprintf(buf, len, "size nonzero: %llu", KEY_SIZE(k));
+
+	switch (inode->i_inode_format) {
+	case BCH_INODE_FS:
+		if (KEY_INODE(k) < BLOCKDEV_INODE_MAX)
+			return scnprintf(buf, len,
+					 "fs inode in blockdev range: %llu",
+					 KEY_INODE(k));
+
+		if (bkey_bytes(k) != sizeof(struct bch_inode))
+			return scnprintf(buf, len, "bad key size: %zu",
+					 bkey_bytes(k));
+
+		break;
+	case BCH_INODE_BLOCKDEV:
+		if (KEY_INODE(k) >= BLOCKDEV_INODE_MAX)
+			return scnprintf(buf, len,
+					 "blockdev inode in fs range: %llu",
+					 KEY_INODE(k));
+
+		if (bkey_bytes(k) != sizeof(struct bch_inode_blockdev))
+			return scnprintf(buf, len, "bad key size: %zu",
+					 bkey_bytes(k));
+
+		break;
+	default:
+		return scnprintf(buf, len, "unknown inode format: %u",
+				 inode->i_inode_format);
+	}
+
+	return 0;
+}
+
 static void bch_inode_to_text(char *buf, size_t size, const struct bkey *k)
 {
 	char *out = buf, *end = buf + size;
@@ -23,75 +72,60 @@ static void bch_inode_dump(struct btree_keys *keys, const struct bkey *k)
 	printk(" %s\n", buf);
 }
 
-static bool bch_inode_invalid(struct btree_keys *bk, const struct bkey *k)
+bool bch_inode_invalid(const struct bkey *k)
 {
-	struct btree *b = container_of(bk, struct btree, keys);
 	struct bch_inode *inode = key_to_inode(k);
-	char ibuf[80], buf[80];
 
 	if (KEY_DELETED(k))
 		return false;
 
-	if (bkey_bytes(k) < sizeof(struct bch_inode)) {
-		scnprintf(buf, sizeof(buf), "key too small: %zu",
-			  bkey_bytes(k));
-		goto bad;
-	}
+	if (bkey_bytes(k) < sizeof(struct bch_inode))
+		return true;
 
-	if (KEY_OFFSET(k)) {
-		scnprintf(buf, sizeof(buf), "offset nonzero: %llu",
-			  KEY_OFFSET(k));
-		goto bad;
-	}
+	if (KEY_OFFSET(k))
+		return true;
 
-	if (KEY_SIZE(k)) {
-		scnprintf(buf, sizeof(buf), "size nonzero: %llu",
-			  KEY_SIZE(k));
-		goto bad;
-	}
+	if (KEY_SIZE(k))
+		return true;
 
 	switch (inode->i_inode_format) {
 	case BCH_INODE_FS:
-		if (KEY_INODE(k) < BLOCKDEV_INODE_MAX) {
-			scnprintf(buf, sizeof(buf),
-				  "fs inode in blockdev range: %llu",
-				  KEY_INODE(k));
-			goto bad;
-		}
+		if (KEY_INODE(k) < BLOCKDEV_INODE_MAX)
+			return true;
 
-		if (bkey_bytes(k) != sizeof(struct bch_inode)) {
-			scnprintf(buf, sizeof(buf), "bad key size: %zu",
-				  bkey_bytes(k));
-			goto bad;
-		}
+		if (bkey_bytes(k) != sizeof(struct bch_inode))
+			return true;
 
 		break;
 	case BCH_INODE_BLOCKDEV:
-		if (KEY_INODE(k) >= BLOCKDEV_INODE_MAX) {
-			scnprintf(buf, sizeof(buf),
-				  "blockdev inode in fs range: %llu",
-				  KEY_INODE(k));
-			goto bad;
-		}
+		if (KEY_INODE(k) >= BLOCKDEV_INODE_MAX)
+			return true;
 
-		if (bkey_bytes(k) != sizeof(struct bch_inode_blockdev)) {
-			scnprintf(buf, sizeof(buf), "bad key size: %zu",
-				  bkey_bytes(k));
-			goto bad;
-		}
+		if (bkey_bytes(k) != sizeof(struct bch_inode_blockdev))
+			return true;
 
 		break;
 	default:
-		scnprintf(buf, sizeof(buf), "unknown inode format: %u",
-			  inode->i_inode_format);
-		goto bad;
+		return true;
 	}
 
 	return false;
-bad:
-	bch_inode_to_text(ibuf, sizeof(ibuf), k);
-	cache_bug(b->c, "spotted bad inode: %s: %s", ibuf, buf);
-	return true;
+}
+
+static bool __inode_invalid(struct btree_keys *bk, const struct bkey *k)
+{
+	if (bch_inode_invalid(k)) {
+		struct btree *b = container_of(bk, struct btree, keys);
+		char buf[80], status[80];
+
+		bch_inode_to_text(buf, sizeof(buf), k);
+		bch_inode_status(status, sizeof(status), k);
+
+		cache_bug(b->c, "spotted bad inode: %s: %s", buf, status);
+		return true;
+	}
+
+	return false;
 }
 
 static bool bch_inode_bad(struct btree_keys *bk, const struct bkey *k)
@@ -104,7 +138,7 @@ const struct btree_keys_ops bch_inode_ops = {
 	.sort_fixup	= bch_generic_sort_fixup,
 	.insert_fixup	= bch_generic_insert_fixup,
 
-	.key_invalid	= bch_inode_invalid,
+	.key_invalid	= __inode_invalid,
 	.key_bad	= bch_inode_bad,
 	.key_to_text	= bch_inode_to_text,
 	.key_dump	= bch_inode_dump,
