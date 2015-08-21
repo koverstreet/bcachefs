@@ -86,7 +86,6 @@ void bch_keylist_add_in_order(struct keylist *l, struct bkey *insert)
 void bch_scan_keylist_init(struct scan_keylist *kl,
 			   unsigned max_size)
 {
-	spin_lock_init(&kl->lock);
 	kl->last_scanned = MAX_KEY;
 	kl->max_size = max_size;
 	bch_keylist_init(&kl->list);
@@ -105,9 +104,7 @@ void bch_scan_keylist_destroy(struct scan_keylist *kl)
 void bch_scan_keylist_resize(struct scan_keylist *kl,
 			     unsigned max_size)
 {
-	spin_lock(&kl->lock);
 	kl->max_size = max_size;	/* May be smaller than current size */
-	spin_unlock(&kl->lock);
 }
 
 /*
@@ -119,19 +116,9 @@ void bch_scan_keylist_resize(struct scan_keylist *kl,
 
 bool bch_scan_keylist_full(struct scan_keylist *kl)
 {
-	bool ret = false;
-
-	spin_lock(&kl->lock);
-
-	if (((bch_keylist_capacity(&kl->list)) >= kl->max_size)
-	    && (((bch_keylist_capacity(&kl->list))
-		 - (bch_keylist_size(&kl->list)))
-		< BKEY_EXTENT_MAX_U64s)) {
-		ret = true;
-	}
-	spin_unlock(&kl->lock);
-
-	return ret;
+	return (bch_keylist_capacity(&kl->list) >= kl->max_size &&
+		((bch_keylist_capacity(&kl->list) -
+		  bch_keylist_size(&kl->list)) < BKEY_EXTENT_MAX_U64s));
 }
 
 /* Actual scanning functionality of scan_keylists */
@@ -155,16 +142,12 @@ static int refill_scan_keylist_fn(struct btree_op *op,
 	if (bkey_cmp(k, refill->end) >= 0)
 		ret = MAP_DONE;
 	else if (refill->pred(kl, k)) {
-		spin_lock(&kl->lock);
-
 		if (bch_keylist_realloc(&kl->list, KEY_U64s(k)))
 			ret = MAP_DONE;
 		else {
 			__bch_keylist_add(&kl->list, k);
 			refill->nr_found += 1;
 		}
-
-		spin_unlock(&kl->lock);
 	}
 
 	kl->last_scanned = *k;

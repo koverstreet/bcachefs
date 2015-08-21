@@ -56,7 +56,6 @@ struct keylist {
 #define DFLT_SCAN_KEYLIST_MAX_SIZE	(1 << 14)
 
 struct scan_keylist {
-	spinlock_t		lock;
 	struct bkey		last_scanned;
 	unsigned		max_size;
 	struct keylist		list;
