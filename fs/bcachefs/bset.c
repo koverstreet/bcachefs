@@ -916,40 +916,42 @@ static struct bkey *bset_search_write_set(struct bset_tree *t,
 static struct bkey *bset_search_tree(struct bset_tree *t,
 				     const struct bkey *search)
 {
-	struct bkey_float *f;
-	unsigned inorder, j, n = 1;
+	struct bkey_float *f = &t->tree[1];
+	unsigned inorder, n = 1;
 
-	do {
-		unsigned p = n << 4;
-		p &= ((int) (p - t->size)) >> 31;
+	while (1) {
+		if (likely(n << 4 < t->size)) {
+			prefetch(&t->tree[n << 4]);
+		} else if (n << 3 < t->size) {
+			inorder = to_inorder(n, t);
+			prefetch(cacheline_to_bkey(t, inorder, 0));
+			prefetch(cacheline_to_bkey(t, inorder + 1, 0));
+			prefetch(cacheline_to_bkey(t, inorder + 2, 0));
+			prefetch(cacheline_to_bkey(t, inorder + 3, 0));
+		} else if (n >= t->size)
+			break;
 
-		/* Prefetch the cacheline we'll be working on four
-		 * iterations from now. If out of bounds, just prefetch
-		 * root to avoid a branch. */
-		prefetch(&t->tree[p]);
-
-		j = n;
-		f = &t->tree[j];
+		f = &t->tree[n];
 
 		/*
 		 * n = (f->mantissa > bfloat_mantissa())
-		 *	? j * 2
-		 *	: j * 2 + 1;
+		 *	? n * 2
+		 *	: n * 2 + 1;
 		 *
 		 * We need to subtract 1 from f->mantissa for the sign bit trick
 		 * to work  - that's done in make_bfloat()
 		 */
 		if (likely(f->exponent != 127))
-			n = j * 2 + (((unsigned)
+			n = n * 2 + (((unsigned)
 				      (f->mantissa -
 				       bfloat_mantissa(search, f))) >> 31);
 		else
-			n = (bkey_cmp(tree_to_bkey(t, j), search) > 0)
-				? j * 2
-				: j * 2 + 1;
-	} while (n < t->size);
+			n = (bkey_cmp(tree_to_bkey(t, n), search) > 0)
+				? n * 2
+				: n * 2 + 1;
+	}
 
-	inorder = to_inorder(j, t);
+	inorder = to_inorder(n >> 1, t);
 
 	/*
 	 * n would have been the node we recursed to - the low bit tells us if
@@ -959,7 +961,7 @@ static struct bkey *bset_search_tree(struct bset_tree *t,
 		return cacheline_to_bkey(t, inorder, f->m);
 	} else {
 		if (--inorder) {
-			f = &t->tree[inorder_prev(j, t->size)];
+			f = &t->tree[inorder_prev(n >> 1, t->size)];
 			return cacheline_to_bkey(t, inorder, f->m);
 		} else
 			return t->data->start;
