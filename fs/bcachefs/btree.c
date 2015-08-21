@@ -42,8 +42,6 @@
 
 /*
  * Todo:
- * register_bcache: Return errors out to userspace correctly
- *
  * Writeback: don't undirty key until after a cache flush
  *
  * Create an iterator for key pointers
@@ -52,37 +50,16 @@
  *
  * Journalling:
  *   Check for bad keys in replay
- *   Propagate barriers
- *   Refcount journal entries in journal_replay
  *
  * Garbage collection:
- *   Finish incremental gc
  *   Gc should free old UUIDs, data for invalid UUIDs
  *
  * Provide a way to list backing device UUIDs we have data cached for, and
  * probably how long it's been since we've seen them, and a way to invalidate
  * dirty data for devices that will never be attached again
  *
- * Keep 1 min/5 min/15 min statistics of how busy a block device has been, so
- * that based on that and how much dirty data we have we can keep writeback
- * from being starved
- *
- * Add a tracepoint or somesuch to watch for writeback starvation
- *
- * When btree depth > 1 and splitting an interior node, we have to make sure
- * alloc_bucket() cannot fail. This should be true but is not completely
- * obvious.
- *
- * Plugging?
- *
  * If data write is less than hard sector size of ssd, round up offset in open
  * bucket to the next whole sector
- *
- * Superblock needs to be fleshed out for multiple cache devices
- *
- * Add a sysfs tunable for the number of writeback IOs in flight
- *
- * Add a sysfs tunable for the number of open data buckets
  *
  * IO tracking: Can we track when one process is doing io on behalf of another?
  * IO tracking: Don't use just an average, weigh more recent stuff higher
@@ -2997,6 +2974,36 @@ out:
 	return ret;
 }
 
+/**
+ * bch_btree_map_keys - iterate over keys in the b-tree
+ * @op:			private to the b-tree code, caller must initialize with
+ *			bch_btree_op_init()
+ * @c:			cache set to run against
+ * @from:		key to start iterating from
+ * @fn:			function to apply to each key
+ * @flags:		optional arguments
+ *
+ * Iterates over the b-tree in sorted order (low to high) starting at @from, and
+ * applies @fn to each key it finds.
+ *
+ * @fn should return either MAP_DONE, MAP_CONTINUE, or an error:
+ *
+ *  - if @fn returns MAP_DONE, bch_btree_map_keys() will return success (0).
+ *  - if @fn returns MAP_CONTINUE, bch_btree_map_keys() advances to the next key
+ *  - if @fn returns an error, bch_btree_map_keys() will return that error
+ *    - unless that error was -EINTR, which means "redo the previous lookup" -
+ *      we won't advance to the next key, instead we redo the b-tree traversal
+ *      from the root and @fn will be passed the same key again (unless it races
+ *      with other threads modifying the b-tree). This is used for e.g.
+ *      upgrading to intent locks without deadlocking.
+ *
+ * If MAP_HOLES is passed in @flags, @fn is also called for holes in the
+ * keyspace - it will cover everything in the given range of the keyspace
+ * precisely once, and bch_btree_map_keys() will synthesize keys to pass to @fn
+ * for the holes. @fn can check whether the key it was passed corresponds to a
+ * hole by checking whether bch_val_u64s() is nonzero - a nonempty value
+ * indicates a real key.
+ */
 int bch_btree_map_keys(struct btree_op *op, struct cache_set *c,
 		       struct bkey *_from, btree_map_keys_fn *fn,
 		       int flags)

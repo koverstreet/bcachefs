@@ -4,12 +4,49 @@
 /*
  * THE JOURNAL:
  *
- * The journal is treated as a circular buffer of buckets - a journal entry
- * never spans two buckets. This means (not implemented yet) we can resize the
- * journal at runtime, and will be needed for bcache on raw flash support.
+ * The primary purpose of the journal is to log updates (insertions) to the
+ * b-tree, to avoid having to do synchronous updates to the b-tree on disk.
  *
- * Journal entries contain a list of keys, ordered by the time they were
- * inserted; thus journal replay just has to reinsert the keys.
+ * Without the journal, the b-tree is always internally consistent on
+ * disk - and in fact, in the earliest incarnations bcache didn't have a journal
+ * but did handle unclean shutdowns by doing all index updates synchronously
+ * (with coalescing).
+ *
+ * Updates to interior nodes still happen synchronously and without the journal
+ * (for simplicity) - this may change eventually but updates to interior nodes
+ * are rare enough it's not a huge priority.
+ *
+ * This means the journal is relatively separate from the b-tree; it consists of
+ * just a list of keys and journal replay consists of just redoing those
+ * insertions in same order that they appear in the journal.
+ *
+ * PERSISTENCE:
+ *
+ * For synchronous updates (where we're waiting on the index update to hit
+ * disk), the journal entry will be written out immediately (or as soon as
+ * possible, if the write for the previous journal entry was still in flight).
+ *
+ * Synchronous updates are specified by passing a closure (@flush_cl) to
+ * bch_btree_insert() or bch_btree_insert_node(), which then pass that parameter
+ * down to the journalling code. That closure will will wait on the journal
+ * write to complete (via closure_wait()).
+ *
+ * If the index update wasn't synchronous, the journal entry will be written out
+ * after 100 ms has elapsed, by default (the delay_ms field in struct journal).
+ *
+ * JOURNAL ENTRIES:
+ *
+ * A journal entry is variable size (struct jset), it's got a fixed length
+ * header and then a variable number of struct jset_keys entries.
+ *
+ * Journal entries are identified by monotonically increasing 64 bit sequence
+ * numbers - jset->seq; other places in the code refer to this sequence number.
+ *
+ * A jset_keys entry contains one or more bkeys (which is what gets inserted
+ * into the b-tree). We need a container to indicate which b-tree the key is
+ * for; also, the roots of the various b-trees are stored in jset_keys entries
+ * (one for each b-tree) - this lets us add new b-tree types without changing
+ * the on disk format.
  *
  * We also keep some things in the journal header that are logically part of the
  * superblock - all the things that are frequently updated. This is for future
@@ -18,49 +55,44 @@
  * information to find the main journal, and the superblock only has to be
  * rewritten when we want to move/wear level the main journal.
  *
- * Currently, we don't journal BTREE_REPLACE operations - this will hopefully be
- * fixed eventually. This isn't a bug - BTREE_REPLACE is used for insertions
- * from cache misses, which don't have to be journaled, and for writeback and
- * moving gc we work around it by flushing the btree to disk before updating the
- * gc information. But it is a potential issue with incremental garbage
- * collection, and it's fragile.
+ * JOURNAL LAYOUT ON DISK:
  *
- * OPEN JOURNAL ENTRIES:
+ * The journal is written to a ringbuffer of buckets (which is kept in the
+ * superblock); the individual buckets are not necessarily contiguous on disk
+ * which means that journal entries are not allowed to span buckets, but also
+ * that we can resize the journal at runtime if desired (unimplemented).
  *
- * Each journal entry contains, in the header, the sequence number of the last
- * journal entry still open - i.e. that has keys that haven't been flushed to
- * disk in the btree.
+ * The journal buckets exist in the same pool as all the other buckets that are
+ * managed by the allocator and garbage collection - garbage collection marks
+ * the journal buckets as metadata buckets.
  *
- * We track this by maintaining a refcount for every open journal entry, in a
- * fifo; each entry in the fifo corresponds to a particular journal
- * entry/sequence number. When the refcount at the tail of the fifo goes to
- * zero, we pop it off - thus, the size of the fifo tells us the number of open
- * journal entries
+ * OPEN/DIRTY JOURNAL ENTRIES:
  *
- * We take a refcount on a journal entry when we add some keys to a journal
- * entry that we're going to insert (held by struct btree_op), and then when we
- * insert those keys into the btree the btree write we're setting up takes a
- * copy of that refcount (held by struct btree_write). That refcount is dropped
- * when the btree write completes.
+ * Open/dirty journal entries are journal entries that contain b-tree updates
+ * that have not yet been written out to the b-tree on disk. We have to track
+ * which journal entries are dirty, and we also have to avoid wrapping around
+ * the journal and overwriting old but still dirty journal entries with new
+ * journal entries.
  *
- * A struct btree_write can only hold a refcount on a single journal entry, but
- * might contain keys for many journal entries - we handle this by making sure
- * it always has a refcount on the _oldest_ journal entry of all the journal
- * entries it has keys for.
+ * On disk, this is represented with the "last_seq" field of struct jset;
+ * last_seq is the first sequence number that journal replay has to replay.
  *
- * JOURNAL RECLAIM:
+ * To avoid overwriting dirty journal entries on disk, we keep a mapping (in
+ * journal_device->seq) of for each journal bucket, the highest sequence number
+ * any journal entry it contains. Then, by comparing that against last_seq we
+ * can determine whether that journal bucket contains dirty journal entries or
+ * not.
  *
- * As mentioned previously, our fifo of refcounts tells us the number of open
- * journal entries; from that and the current journal sequence number we compute
- * last_seq - the oldest journal entry we still need. We write last_seq in each
- * journal entry, and we also have to keep track of where it exists on disk so
- * we don't overwrite it when we loop around the journal.
+ * To track which journal entries are dirty, we maintain a fifo of refcounts
+ * (where each entry corresponds to a specific sequence number) - when a ref
+ * goes to 0, that journal entry is no longer dirty.
  *
- * To do that we track, for each journal bucket, the sequence number of the
- * newest journal entry it contains - if we don't need that journal entry we
- * don't need anything in that bucket anymore. From that we track the last
- * journal bucket we still need; all this is tracked in struct journal_device
- * and updated by journal_reclaim().
+ * Journalling of index updates is done at the same time as the b-tree itself is
+ * being modified (see btree_insert_key()); when we add the key to the journal
+ * the pending b-tree write takes a ref on the journal entry the key was added
+ * to. If a pending b-tree write would need to take refs on multiple dirty
+ * journal entries, it only keeps the ref on the oldest one (since a newer
+ * journal entry will still be replayed if an older entry was dirty).
  *
  * JOURNAL FILLING UP:
  *
@@ -78,7 +110,6 @@
 static inline struct jset_keys *jset_keys_next(struct jset_keys *j)
 {
 	return (void *) (&j->d[j->keys]);
-
 }
 
 /*

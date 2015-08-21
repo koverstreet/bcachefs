@@ -56,21 +56,6 @@
  * For writing, we have two btree_write structs embeddded in struct btree - one
  * write in flight, and one being set up, and we toggle between them.
  *
- * Writing is done with a single function -  bch_btree_write() really serves two
- * different purposes and should be broken up into two different functions. When
- * passing now = false, it merely indicates that the node is now dirty - calling
- * it ensures that the dirty keys will be written at some point in the future.
- *
- * When passing now = true, bch_btree_write() causes a write to happen
- * "immediately" (if there was already a write in flight, it'll cause the write
- * to happen as soon as the previous write completes). It returns immediately
- * though - but it takes a refcount on the closure in struct btree_op you passed
- * to it, so a closure_sync() later can be used to wait for the write to
- * complete.
- *
- * This is handy because btree_split() and garbage collection can issue writes
- * in parallel, reducing the amount of time they have to hold write locks.
- *
  * LOCKING:
  *
  * When traversing the btree, we may need write locks starting at some level -
