@@ -669,6 +669,37 @@ static bool bkey_cmpxchg(struct cache_set *c,
 	return true;
 }
 
+static bool handle_existing_key_newer(struct cache_set *c,
+				      struct bkey *insert,
+				      struct bkey *k)
+{
+	switch (bch_extent_overlap(insert, k)) {
+	case BCH_EXTENT_OVERLAP_FRONT:
+		bch_subtract_sectors(insert, c, KEY_START(insert),
+				     KEY_OFFSET(k) - KEY_START(insert));
+		bch_cut_front(k, insert);
+		break;
+
+	case BCH_EXTENT_OVERLAP_BACK:
+	case BCH_EXTENT_OVERLAP_MIDDLE:
+		/*
+		 * We don't bother with splitting the key we're
+		 * inserting:
+		 */
+		bch_subtract_sectors(insert, c, KEY_START(k),
+				     KEY_OFFSET(insert) - KEY_START(k));
+		bch_cut_back(&START_KEY(k), insert);
+		break;
+
+	case BCH_EXTENT_OVERLAP_ALL:
+		bch_subtract_sectors(insert, c, KEY_START(insert),
+				     KEY_SIZE(insert));
+		return true;
+	}
+
+	return false;
+}
+
 static bool bch_extent_insert_fixup(struct btree_keys *b,
 				    struct bkey *insert,
 				    struct btree_iter *iter,
@@ -701,6 +732,14 @@ static bool bch_extent_insert_fixup(struct btree_keys *b,
 				continue;
 		}
 
+		if (KEY_VERSION(insert) < KEY_VERSION(k) && KEY_SIZE(k)) {
+			if (handle_existing_key_newer(c, insert, k))
+				return true;
+
+			if (bkey_cmp(k, &START_KEY(insert)) <= 0)
+				continue;
+		}
+
 		switch (bch_extent_overlap(insert, k)) {
 		case BCH_EXTENT_OVERLAP_FRONT:
 			bch_subtract_sectors(k, c, KEY_START(k),
@@ -717,7 +756,7 @@ static bool bch_extent_insert_fixup(struct btree_keys *b,
 
 		case BCH_EXTENT_OVERLAP_ALL:
 			if (KEY_SIZE(k))
-				bch_subtract_sectors(k, c, KEY_OFFSET(k),
+				bch_subtract_sectors(k, c, KEY_START(k),
 						     KEY_SIZE(k));
 
 			/*
