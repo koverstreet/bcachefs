@@ -78,6 +78,7 @@ static void bucket_stats_update(struct cache *ca,
 				struct bucket_mark new)
 {
 	struct bucket_stats *stats;
+	struct task_struct *p;
 
 	preempt_disable();
 	stats = this_cpu_ptr(ca->bucket_stats_percpu);
@@ -95,11 +96,12 @@ static void bucket_stats_update(struct cache *ca,
 	stats->buckets_cached += is_cached_bucket(new) - is_cached_bucket(old);
 	stats->buckets_dirty += is_dirty_bucket(new) - is_dirty_bucket(old);
 
-	preempt_enable();
-
 	if (!is_available_bucket(old) &&
-	    is_available_bucket(new))
-		wake_up_process(ca->alloc_thread);
+	    is_available_bucket(new) &&
+	    (p = ACCESS_ONCE(ca->alloc_thread)))
+		wake_up_process(p);
+
+	preempt_enable();
 }
 
 static struct bucket_mark bch_bucket_mark_set(struct cache *ca,
