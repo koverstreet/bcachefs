@@ -506,9 +506,9 @@ static void cache_promote_write(struct closure *cl)
 
 static void cache_promote_endio(struct bio *bio)
 {
-	struct bbio *b = container_of(bio, struct bbio, bio);
-	struct cache_promote_op *op = container_of(bio,
-					struct cache_promote_op, bio.bio);
+	struct bbio *b = to_bbio(bio);
+	struct cache_promote_op *op = container_of(b,
+					struct cache_promote_op, bio);
 
 	/*
 	 * If the bucket was reused while our bio was in flight, we might have
@@ -530,15 +530,14 @@ static void cache_promote_endio(struct bio *bio)
  *
  * @orig_bio must actually be a bbio with a valid key.
  */
-static void __cache_promote(struct cache_set *c, struct bio *orig_bio,
+static void __cache_promote(struct cache_set *c, struct bbio *orig_bio,
 			    struct bkey *replace_key, bio_end_io_t *bi_end_io)
 {
 	struct cache_promote_op *op;
 	struct bio *bio;
-	struct bbio *bbio;
-	unsigned pages = DIV_ROUND_UP(orig_bio->bi_iter.bi_size, PAGE_SIZE);
+	unsigned pages = DIV_ROUND_UP(orig_bio->bio.bi_iter.bi_size, PAGE_SIZE);
 
-	BUG_ON(bio_sectors(orig_bio) != KEY_SIZE(replace_key));
+	BUG_ON(bio_sectors(&orig_bio->bio) != KEY_SIZE(replace_key));
 
 	/* XXX: readahead? */
 
@@ -546,12 +545,13 @@ static void __cache_promote(struct cache_set *c, struct bio *orig_bio,
 	if (!op)
 		goto out_submit;
 
+	bkey_copy(&op->bio.key, &orig_bio->key);
 	bio = &op->bio.bio;
 	bio_init(bio);
 	bio_get(bio);
-	bio->bi_bdev		= orig_bio->bi_bdev;
-	bio->bi_iter.bi_sector	= orig_bio->bi_iter.bi_sector;
-	bio->bi_iter.bi_size	= orig_bio->bi_iter.bi_size;
+	bio->bi_bdev		= orig_bio->bio.bi_bdev;
+	bio->bi_iter.bi_sector	= orig_bio->bio.bi_iter.bi_sector;
+	bio->bi_iter.bi_size	= orig_bio->bio.bi_iter.bi_size;
 	bio->bi_end_io		= bi_end_io;
 	bio->bi_private		= &op->cl;
 	bio->bi_io_vec		= bio->bi_inline_vecs;
@@ -561,7 +561,7 @@ static void __cache_promote(struct cache_set *c, struct bio *orig_bio,
 		goto out_free;
 
 	closure_init(&op->cl, &c->cl);
-	op->orig_bio		= orig_bio;
+	op->orig_bio		= &orig_bio->bio;
 	op->stale		= 0;
 
 	bch_data_insert_op_init(&op->iop, c,
@@ -575,19 +575,16 @@ static void __cache_promote(struct cache_set *c, struct bio *orig_bio,
 
 	bch_set_extent_ptrs(&op->iop.insert_key, 0);
 
-	bbio = container_of(bio, struct bbio, bio);
-	bkey_copy(&bbio->key, &container_of(orig_bio, struct bbio, bio)->key);
+	trace_bcache_promote(&orig_bio->bio);
 
-	trace_bcache_promote(orig_bio);
-
-	bbio->submit_time_us = local_clock_us();
+	op->bio.submit_time_us = local_clock_us();
 	closure_bio_submit(bio, &op->cl);
 
 	continue_at(&op->cl, cache_promote_write, c->wq);
 out_free:
 	kfree(op);
 out_submit:
-	generic_make_request(orig_bio);
+	generic_make_request(&orig_bio->bio);
 }
 
 /**
@@ -595,13 +592,13 @@ out_submit:
  *
  * @bio must actually be a bbio with valid key.
  */
-static bool cache_promote(struct cache_set *c, struct bio *bio,
+static bool cache_promote(struct cache_set *c, struct bbio *bio,
 			  struct bkey *k, unsigned ptr)
 {
 	struct cache *ca = PTR_CACHE(c, k, ptr);
 
 	if (!CACHE_TIER(&ca->sb)) {
-		generic_make_request(bio);
+		generic_make_request(&bio->bio);
 		return 0;
 	}
 
@@ -755,7 +752,7 @@ static int bch_read_fn(struct btree_op *b_op, struct btree *b, struct bkey *k)
 	struct bch_read_op *op = container_of(b_op,
 			struct bch_read_op, op);
 	struct bio *n, *bio = op->bio;
-	struct bkey *bio_key;
+	struct bbio *bbio;
 	int sectors, ret;
 	int ptr = 0;
 
@@ -796,17 +793,16 @@ static int bch_read_fn(struct btree_op *b_op, struct btree *b, struct bkey *k)
 
 	bio_chain(n, bio);
 
-	bio_key = &container_of(n, struct bbio, bio)->key;
-	bch_bkey_copy_single_ptr(bio_key, k, ptr);
+	bbio = to_bbio(n);
+	bch_bkey_copy_single_ptr(&bbio->key, k, ptr);
 
 	/* Trim the key to match what we're actually reading */
-	bch_cut_front(&KEY(op->inode, n->bi_iter.bi_sector, 0), bio_key);
-	bch_cut_back(&KEY(op->inode, bio_end_sector(n), 0), bio_key);
+	bch_cut_front(&KEY(op->inode, n->bi_iter.bi_sector, 0), &bbio->key);
+	bch_cut_back(&KEY(op->inode, bio_end_sector(n), 0), &bbio->key);
 
-	n->bi_iter.bi_sector	= PTR_OFFSET(bio_key, 0);
-	n->bi_bdev		= PTR_CACHE(b->c, bio_key, 0)->bdev;
+	__bch_bbio_prep(bbio, b->c);
 
-	cache_promote(b->c, n, k, ptr);
+	cache_promote(b->c, bbio, k, ptr);
 
 	return ret;
 }
@@ -874,7 +870,7 @@ struct search {
 
 static void bch_cache_read_endio(struct bio *bio)
 {
-	struct bbio *b = container_of(bio, struct bbio, bio);
+	struct bbio *b = to_bbio(bio);
 	struct closure *cl = bio->bi_private;
 	struct search *s = container_of(cl, struct search, cl);
 
@@ -902,7 +898,7 @@ static int cache_lookup_fn(struct btree_op *op, struct btree *b, struct bkey *k)
 {
 	struct search *s = container_of(op, struct search, op);
 	struct bio *n, *bio = &s->bio.bio;
-	struct bkey *bio_key;
+	struct bbio *bbio;
 	unsigned sectors;
 	int ptr;
 
@@ -924,15 +920,14 @@ static int cache_lookup_fn(struct btree_op *op, struct btree *b, struct bkey *k)
 
 	n = bio_next_split(bio, sectors, GFP_NOIO, s->d->bio_split);
 
-	bio_key = &container_of(n, struct bbio, bio)->key;
-	bch_bkey_copy_single_ptr(bio_key, k, ptr);
+	bbio = to_bbio(n);
+	bch_bkey_copy_single_ptr(&bbio->key, k, ptr);
 
 	/* Trim the key to match what we're actually reading */
-	bch_cut_front(&KEY(s->inode, n->bi_iter.bi_sector, 0), bio_key);
-	bch_cut_back(&KEY(s->inode, bio_end_sector(n), 0), bio_key);
+	bch_cut_front(&KEY(s->inode, n->bi_iter.bi_sector, 0), &bbio->key);
+	bch_cut_back(&KEY(s->inode, bio_end_sector(n), 0), &bbio->key);
 
-	n->bi_iter.bi_sector	= PTR_OFFSET(bio_key, 0);
-	n->bi_bdev		= PTR_CACHE(b->c, bio_key, 0)->bdev;
+	__bch_bbio_prep(bbio, b->c);
 
 	n->bi_end_io		= bch_cache_read_endio;
 	n->bi_private		= &s->cl;
@@ -949,7 +944,7 @@ static int cache_lookup_fn(struct btree_op *op, struct btree *b, struct bkey *k)
 	 */
 	closure_get(&s->cl);
 	if (!s->bypass) {
-		if (cache_promote(b->c, n, k, ptr))
+		if (cache_promote(b->c, bbio, k, ptr))
 			s->cache_miss = 1;
 	} else
 		submit_bio(n);
@@ -1169,10 +1164,10 @@ static int cached_dev_cache_miss(struct btree *b, struct search *s,
 	miss->bi_end_io		= request_endio;
 	miss->bi_private	= &s->cl;
 
-	bkey_init(&container_of(miss, struct bbio, bio)->key);
+	bkey_init(&to_bbio(miss)->key);
 
 	closure_get(&s->cl);
-	__cache_promote(b->c, miss, &replace.key, request_endio);
+	__cache_promote(b->c, to_bbio(miss), &replace.key, request_endio);
 
 	return miss == bio ? MAP_DONE : MAP_CONTINUE;
 }

@@ -282,7 +282,7 @@ static void bch_btree_node_read(struct btree *b)
 {
 	uint64_t start_time = local_clock();
 	struct closure cl;
-	struct bio *bio;
+	struct bbio *bio;
 	int ptr;
 
 	trace_bcache_btree_read(b);
@@ -295,22 +295,22 @@ static void bch_btree_node_read(struct btree *b)
 		goto err;
 	}
 
-	bio = bch_bbio_alloc(b->c);
-	bio->bi_iter.bi_size = KEY_SIZE(&b->key) << 9;
-	bio->bi_end_io	= btree_node_read_endio;
-	bio->bi_private	= &cl;
-	bio_set_op_attrs(bio, REQ_OP_READ, REQ_META|READ_SYNC);
+	bio = to_bbio(bch_bbio_alloc(b->c));
+	bio->bio.bi_iter.bi_size	= KEY_SIZE(&b->key) << 9;
+	bio->bio.bi_end_io		= btree_node_read_endio;
+	bio->bio.bi_private		= &cl;
+	bio_set_op_attrs(&bio->bio, REQ_OP_READ, REQ_META|READ_SYNC);
 
-	bch_bio_map(bio, b->keys.set[0].data);
+	bch_bio_map(&bio->bio, b->keys.set[0].data);
 
-	bch_bbio_prep(bio, b->c, &b->key, ptr);
-	closure_bio_submit_punt(bio, &cl, b->c);
+	bch_submit_bbio(bio, b->c, &b->key, ptr);
+
 	closure_sync(&cl);
 
-	if (bio->bi_error)
+	if (bio->bio.bi_error)
 		set_btree_node_io_error(b);
 
-	bch_bbio_free(bio, b->c);
+	bch_bbio_free(&bio->bio, b->c);
 
 	if (btree_node_io_error(b))
 		goto err;

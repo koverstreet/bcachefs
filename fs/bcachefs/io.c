@@ -63,30 +63,25 @@ struct bio *bch_bbio_alloc(struct cache_set *c)
 	return bio;
 }
 
-void __bch_bbio_prep(struct bio *bio, struct cache_set *c)
+void __bch_bbio_prep(struct bbio *b, struct cache_set *c)
 {
-	struct bbio *b = container_of(bio, struct bbio, bio);
+	b->bio.bi_iter.bi_sector	= PTR_OFFSET(&b->key, 0);
+	b->bio.bi_bdev			= PTR_CACHE(c, &b->key, 0)->bdev;
+}
 
-	bio->bi_iter.bi_sector	= PTR_OFFSET(&b->key, 0);
-	bio->bi_bdev		= PTR_CACHE(c, &b->key, 0)->bdev;
-
+static void bch_bbio_prep(struct bbio *b, struct cache_set *c,
+			  struct bkey *k, unsigned ptr)
+{
+	bch_bkey_copy_single_ptr(&b->key, k, ptr);
+	__bch_bbio_prep(b, c);
 	b->submit_time_us = local_clock_us();
 }
 
-void bch_bbio_prep(struct bio *bio, struct cache_set *c,
-		   struct bkey *k, unsigned ptr)
-{
-	struct bbio *b = container_of(bio, struct bbio, bio);
-
-	bch_bkey_copy_single_ptr(&b->key, k, ptr);
-	__bch_bbio_prep(bio, c);
-}
-
-void bch_submit_bbio(struct bio *bio, struct cache_set *c,
+void bch_submit_bbio(struct bbio *b, struct cache_set *c,
 		     struct bkey *k, unsigned ptr)
 {
-	bch_bbio_prep(bio, c, k, ptr);
-	closure_bio_submit(bio, bio->bi_private);
+	bch_bbio_prep(b, c, k, ptr);
+	closure_bio_submit_punt(&b->bio, b->bio.bi_private, c);
 }
 
 void bch_submit_bbio_replicas(struct bio *bio_src, struct cache_set *c,
@@ -105,14 +100,14 @@ void bch_submit_bbio_replicas(struct bio *bio_src, struct cache_set *c,
 		bio->bi_end_io		= bio_src->bi_end_io;
 		bio->bi_private		= bio_src->bi_private;
 
-		bch_bbio_prep(bio, c, k, i);
+		bch_bbio_prep(to_bbio(bio), c, k, i);
 		if (punt)
 			closure_bio_submit_punt(bio, bio->bi_private, c);
 		else
 			closure_bio_submit(bio, bio->bi_private);
 	}
 
-	bch_bbio_prep(bio_src, c, k, first);
+	bch_bbio_prep(to_bbio(bio_src), c, k, first);
 	if (punt)
 		closure_bio_submit_punt(bio_src, bio_src->bi_private, c);
 	else
