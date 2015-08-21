@@ -189,15 +189,19 @@ static inline struct bset *write_block(struct btree *b)
 	return ((void *) btree_bset_first(b)) + b->written * block_bytes(b->c);
 }
 
-static void bch_btree_init_next(struct btree *b)
+/* Returns true if we sorted (i.e. invalidated iterators */
+static bool bch_btree_init_next(struct btree *b)
 {
 	unsigned nsets = b->keys.nsets;
+	bool sorted;
 
 	/* If not a leaf node, always sort */
 	if (b->level && b->keys.nsets)
 		bch_btree_sort(&b->keys, NULL, &b->c->sort);
 	else
 		bch_btree_sort_lazy(&b->keys, NULL, &b->c->sort);
+
+	sorted = nsets != b->keys.nsets;
 
 	/*
 	 * do verify if there was more than one set initially (i.e. we did a
@@ -212,6 +216,8 @@ static void bch_btree_init_next(struct btree *b)
 		bch_bset_init_next(&b->keys, i);
 		i->magic = bset_magic(&b->c->sb);
 	}
+
+	return sorted;
 }
 
 /* Btree IO */
@@ -2238,19 +2244,24 @@ static size_t insert_u64s_remaining(struct btree *b)
 	return max(ret, 0L);
 }
 
-static void btree_node_lock_for_insert(struct btree *b)
+/* returns true if iterator invalidated */
+static bool btree_node_lock_for_insert(struct btree *b)
 	__acquires(b->write_lock)
 {
+	bool ret = false;
+
 	six_lock_write(&b->lock);
 
 	if (write_block(b) != btree_bset_last(b) &&
 	    b->keys.last_set_unwritten)
-		bch_btree_init_next(b); /* just wrote a set */
+		ret = bch_btree_init_next(b); /* just wrote a set */
 
 	BUG_ON(b->written > btree_blocks(b));
 
 	BUG_ON(b->written == btree_blocks(b) &&
 	       b->keys.last_set_unwritten);
+
+	return ret;
 }
 
 enum btree_insert_status {
@@ -2307,7 +2318,8 @@ bch_btree_insert_keys(struct btree *b, struct btree_op *op,
 					    n_min,
 					    bch_keylist_nkeys(insert_keys));
 
-		btree_node_lock_for_insert(b);
+		if (btree_node_lock_for_insert(b))
+			op->iterator_invalidated = 1;
 
 		while (!bch_keylist_empty(insert_keys)) {
 			BKEY_PADDED(key) temp;
@@ -2354,7 +2366,7 @@ bch_btree_insert_keys(struct btree *b, struct btree_op *op,
 				bch_keylist_pop_front(insert_keys);
 		}
 
-		if (attempted && b->written) {
+		if (inserted && b->written) {
 			/*
 			 * Force write if set is too big (or if it's an interior
 			 * node, since those aren't journalled yet)
