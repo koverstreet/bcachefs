@@ -335,6 +335,7 @@ static void btree_ptr_debugcheck(struct btree *b, const struct bkey *k)
 	const struct bch_extent_ptr *ptr;
 	struct cache_set *c = b->c;
 	unsigned seq;
+	const char *err;
 	char buf[160];
 	struct bucket *g;
 	struct cache *ca;
@@ -350,12 +351,17 @@ static void btree_ptr_debugcheck(struct btree *b, const struct bkey *k)
 	extent_for_each_online_device(c, e, ptr, ca) {
 		g = PTR_BUCKET(ca, ptr);
 
+		err = "stale";
+		if (ptr_stale(ca, ptr))
+			goto err;
+
 		do {
 			seq = read_seqbegin(&c->gc_cur_lock);
 			bad = (!__gc_will_visit_node(c, b) &&
 			       !g->mark.is_metadata);
 		} while (read_seqretry(&c->gc_cur_lock, seq));
 
+		err = "inconsistent";
 		if (bad)
 			goto err;
 	}
@@ -365,23 +371,33 @@ static void btree_ptr_debugcheck(struct btree *b, const struct bkey *k)
 	return;
 err:
 	bch_bkey_val_to_text(b, buf, sizeof(buf), k);
-	btree_bug(b, "inconsistent btree pointer %s: bucket %zi prio %i "
+	btree_bug(b, "%s btree pointer %s: bucket %zi prio %i "
 		  "gen %i last_gc %i mark %08x",
-		  buf, PTR_BUCKET_NR(ca, ptr),
+		  err, buf, PTR_BUCKET_NR(ca, ptr),
 		  g->read_prio, PTR_BUCKET_GEN(ca, ptr),
 		  g->oldest_gen, g->mark.counter);
 	rcu_read_unlock();
 }
 
-struct cache *bch_btree_pick_ptr(struct cache_set *c, const struct bkey *k,
+struct cache *bch_btree_pick_ptr(struct cache_set *c,
+				 const struct btree *b,
 				 const struct bch_extent_ptr **ptr)
 {
-	const struct bkey_i_extent *e = bkey_i_to_extent_c(k);
+	const struct bkey_i_extent *e = bkey_i_to_extent_c(&b->key);
 	struct cache *ca;
 
 	rcu_read_lock();
 
 	extent_for_each_online_device(c, e, *ptr, ca) {
+		if (ptr_stale(ca, *ptr)) {
+			bch_cache_error(ca,
+				"stale btree node pointer at btree %u level %u/%u bucket %zu",
+				b->btree_id, b->level, btree_node_root(b)
+				? btree_node_root(b)->level : -1,
+				PTR_BUCKET_NR(ca, *ptr));
+			continue;
+		}
+
 		percpu_ref_get(&ca->ref);
 		rcu_read_unlock();
 		return ca;

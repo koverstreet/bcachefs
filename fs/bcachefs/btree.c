@@ -369,7 +369,7 @@ static void bch_btree_node_read(struct btree *b)
 
 	closure_init_stack(&cl);
 
-	ca = bch_btree_pick_ptr(b->c, &b->key, &ptr);
+	ca = bch_btree_pick_ptr(b->c, b, &ptr);
 	if (!ca) {
 		set_btree_node_io_error(b);
 		goto missing;

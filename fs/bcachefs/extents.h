@@ -24,7 +24,7 @@ extern const struct btree_keys_ops *bch_btree_ops[];
 struct bkey;
 struct cache_set;
 
-struct cache *bch_btree_pick_ptr(struct cache_set *, const struct bkey *,
+struct cache *bch_btree_pick_ptr(struct cache_set *, const struct btree *,
 				 const struct bch_extent_ptr **);
 struct cache *bch_extent_pick_ptr_avoiding(struct cache_set *,
 					   const struct bkey *,
