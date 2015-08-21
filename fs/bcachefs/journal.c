@@ -453,21 +453,20 @@ static int bch_journal_replay_key(struct cache_set *c, enum btree_id id,
 
 	trace_bcache_journal_replay_key(k);
 
-	bkey_copy(&temp.key, k);
+	if (id == BTREE_ID_EXTENTS)
+		bkey_copy(&temp.key, k);
 
 	ret = bch_btree_insert(c, id, &keylist_single(k), NULL, NULL);
 	if (ret)
 		return ret;
-
-	k = &temp.key;
 
 	/*
 	 * Subtract sectors after replay since bch_btree_insert() added
 	 * them again
 	 */
 	if (id == BTREE_ID_EXTENTS)
-		__bch_add_sectors(c, NULL, k, KEY_START(k), -KEY_SIZE(k),
-				  false);
+		__bch_add_sectors(c, NULL, k, KEY_START(&temp.key),
+				  -KEY_SIZE(&temp.key), false);
 
 	return 0;
 }
