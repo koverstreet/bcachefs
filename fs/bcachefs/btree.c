@@ -301,10 +301,12 @@ static inline struct bset *write_block(struct btree *b)
 }
 
 /* Returns true if we sorted (i.e. invalidated iterators */
-static bool bch_btree_init_next(struct btree *b)
+static void bch_btree_init_next(struct btree *b, struct btree_iter *iter)
 {
 	unsigned nsets = b->keys.nsets;
 	bool sorted;
+
+	BUG_ON(iter && iter->nodes[b->level] != b);
 
 	/* If not a leaf node, always sort */
 	if (b->level && b->keys.nsets)
@@ -328,7 +330,8 @@ static bool bch_btree_init_next(struct btree *b)
 		i->magic = bset_magic(&b->c->sb);
 	}
 
-	return sorted;
+	if (iter && sorted)
+		btree_iter_node_set(iter, b);
 }
 
 /* Btree IO */
@@ -682,22 +685,23 @@ static void __bch_btree_node_write(struct btree *b, struct closure *parent)
 	rcu_read_unlock();
 }
 
-static void bch_btree_node_write(struct btree *b, struct closure *parent)
+static void bch_btree_node_write(struct btree *b, struct closure *parent,
+				 struct btree_iter *iter)
 {
 	__bch_btree_node_write(b, parent);
 
 	six_lock_write(&b->lock);
-	bch_btree_init_next(b);
+	bch_btree_init_next(b, iter);
 	six_unlock_write(&b->lock);
 }
 
-static void bch_btree_node_write_sync(struct btree *b)
+static void bch_btree_node_write_sync(struct btree *b, struct btree_iter *iter)
 {
 	struct closure cl;
 
 	closure_init_stack(&cl);
 
-	bch_btree_node_write(b, &cl);
+	bch_btree_node_write(b, &cl, iter);
 	closure_sync(&cl);
 }
 
@@ -1566,7 +1570,7 @@ int bch_btree_root_alloc(struct cache_set *c, enum btree_id id,
 	bkey_copy_key(&b->key, &MAX_KEY);
 	six_unlock_write(&b->lock);
 
-	bch_btree_node_write(b, cl);
+	bch_btree_node_write(b, cl, NULL);
 
 	bch_btree_set_root(b);
 	six_unlock_intent(&b->lock);
@@ -1814,7 +1818,7 @@ static void btree_gc_coalesce(struct btree *old_nodes[GC_MERGE_NODES],
 			new_nodes[i]->keys.set[0].data->keys;
 
 		six_unlock_write(&new_nodes[i]->lock);
-		bch_btree_node_write(new_nodes[i], &cl);
+		bch_btree_node_write(new_nodes[i], &cl, NULL);
 	}
 
 	/* Wait for all the writes to finish */
@@ -1889,7 +1893,7 @@ int bch_btree_node_rewrite(struct btree *b, struct btree_iter *iter, bool wait)
 
 	trace_bcache_btree_gc_rewrite_node(b);
 
-	bch_btree_node_write_sync(n);
+	bch_btree_node_write_sync(n, NULL);
 
 	if (parent) {
 		ret = bch_btree_insert_node(parent, iter,
@@ -2366,14 +2370,10 @@ bch_btree_insert_keys(struct btree *b,
 
 		six_lock_write(&b->lock);
 
+		/* just wrote a set? */
 		if (write_block(b) != btree_bset_last(b) &&
-		    b->keys.last_set_unwritten) {
-			/* just wrote a set */
-			if (bch_btree_init_next(b)) {
-				btree_iter_node_set(iter, b);
-				iter->op.iterator_invalidated = 1;
-			}
-		}
+		    b->keys.last_set_unwritten)
+			bch_btree_init_next(b, iter);
 
 		while (!bch_keylist_empty(insert_keys)) {
 			k = bch_keylist_front(insert_keys);
@@ -2420,7 +2420,7 @@ bch_btree_insert_keys(struct btree *b,
 		 * node, since those aren't journalled yet)
 		 */
 		if (b->level)
-			bch_btree_node_write_sync(b);
+			bch_btree_node_write_sync(b, iter);
 		else {
 			unsigned long bytes = set_bytes(btree_bset_last(b));
 
@@ -2428,7 +2428,7 @@ bch_btree_insert_keys(struct btree *b,
 			    ((max(roundup(bytes, block_bytes(iter->c)),
 				  PAGE_SIZE) - bytes < 48) ||
 			     bytes > (16 << 10)))
-				bch_btree_node_write(b, NULL);
+				bch_btree_node_write(b, NULL, iter);
 		}
 	}
 
@@ -2586,7 +2586,7 @@ static int btree_split(struct btree *b,
 		bch_keylist_add(parent_keys, &n1->key);
 		bch_keylist_add(parent_keys, &n2->key);
 
-		bch_btree_node_write(n2, stack_cl);
+		bch_btree_node_write(n2, stack_cl, NULL);
 
 		/*
 		 * Just created a new node - if gc is still going to visit the
@@ -2604,7 +2604,7 @@ static int btree_split(struct btree *b,
 		bch_keylist_add(parent_keys, &n1->key);
 	}
 
-	bch_btree_node_write(n1, stack_cl);
+	bch_btree_node_write(n1, stack_cl, NULL);
 
 	if (n3) {
 		/* Depth increases, make a new root */
@@ -2614,7 +2614,7 @@ static int btree_split(struct btree *b,
 		btree_iter_node_set(iter, n3);
 
 		bch_btree_insert_keys(n3, iter, parent_keys, NULL, false);
-		bch_btree_node_write(n3, stack_cl);
+		bch_btree_node_write(n3, stack_cl, NULL);
 
 		/*
 		 * then again so the node iterator points to the keys we just
