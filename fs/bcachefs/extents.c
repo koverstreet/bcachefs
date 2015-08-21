@@ -92,6 +92,9 @@ void bch_extent_normalize(struct cache_set *c, struct bkey *k)
 			}
 		}
 	} while (swapped);
+
+	if (!bch_extent_ptrs(k))
+		SET_KEY_DELETED(k, true);
 }
 
 static void bch_ptr_normalize(struct btree_keys *bk,
@@ -185,6 +188,47 @@ static void bch_bkey_dump(struct btree_keys *keys, const struct bkey *k)
 
 /* Btree ptrs */
 
+static struct bkey *bch_btree_ptr_sort_fixup(struct btree_iter *iter,
+					     struct bkey *tmp)
+{
+	while (iter->used > 1) {
+		struct btree_iter_set *top = iter->data, *i = top + 1;
+
+		if (iter->used > 2 &&
+		    bch_key_sort_cmp(i[0], i[1]))
+			i++;
+
+		/* Old style freeing keys - don't check for duplicates */
+		if (!bkey_cmp(top->k, &ZERO_KEY))
+			break;
+
+		/*
+		 * If this key and the next key don't compare equal, we're done.
+		 */
+
+		if (bkey_cmp(top->k, i->k))
+			break;
+
+		/*
+		 * If they do compare equal, the newer key overwrote the older
+		 * key and we need to drop the older key.
+		 *
+		 * bch_key_sort_cmp() ensures that when keys compare equal the
+		 * newer key comes first; so i->k is older than top->k and we
+		 * drop i->k.
+		 */
+
+		i->k = bkey_next(i->k);
+
+		if (i->k == i->end)
+			*i = iter->data[--iter->used];
+
+		heap_sift(iter, i - top, bch_key_sort_cmp);
+	}
+
+	return NULL;
+}
+
 bool __bch_btree_ptr_invalid(struct cache_set *c, const struct bkey *k)
 {
 	char buf[80];
@@ -247,7 +291,8 @@ static bool bch_btree_ptr_bad(struct btree_keys *bk, const struct bkey *k)
 	struct btree *b = container_of(bk, struct btree, keys);
 	unsigned i;
 
-	if (!bkey_cmp(k, &ZERO_KEY) ||
+	if (KEY_DELETED(k) ||
+	    !bkey_cmp(k, &ZERO_KEY) ||
 	    !bch_extent_ptrs(k) ||
 	    bch_ptr_invalid(bk, k))
 		return true;
@@ -271,8 +316,25 @@ static bool bch_btree_ptr_insert_fixup(struct btree_keys *bk,
 {
 	struct btree *b = container_of(bk, struct btree, keys);
 
-	if (!KEY_OFFSET(insert))
+	BUG_ON(replace_key);
+
+	/* Btree freeing keys - don't check for duplicates */
+	if (!bkey_cmp(insert, &ZERO_KEY)) {
 		btree_current_write(b)->prio_blocked++;
+		return false;
+	}
+
+	while (1) {
+		struct bkey *k = bch_btree_iter_next(iter);
+
+		if (!k || bkey_cmp(k, insert) > 0)
+			break;
+
+		if (bkey_cmp(k, insert) < 0)
+			continue;
+
+		SET_KEY_DELETED(k, 1);
+	}
 
 	return false;
 }
@@ -293,6 +355,7 @@ int bch_btree_pick_ptr(struct cache_set *c, const struct bkey *k)
 
 const struct btree_keys_ops bch_btree_keys_ops = {
 	.sort_cmp	= bch_key_sort_cmp,
+	.sort_fixup	= bch_btree_ptr_sort_fixup,
 	.insert_fixup	= bch_btree_ptr_insert_fixup,
 	.key_invalid	= bch_btree_ptr_invalid,
 	.key_bad	= bch_btree_ptr_bad,
@@ -674,7 +737,8 @@ static bool bch_extent_bad(struct btree_keys *bk, const struct bkey *k)
 {
 	struct btree *b = container_of(bk, struct btree, keys);
 
-	if (!bch_extent_ptrs(k) ||
+	if (KEY_DELETED(k) ||
+	    !bch_extent_ptrs(k) ||
 	    bch_extent_invalid(bk, k))
 		return true;
 

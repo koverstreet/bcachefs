@@ -1236,6 +1236,9 @@ static uint8_t __bch_btree_mark_key(struct cache_set *c, int level,
 	int i;
 	struct bucket *g;
 
+	if (KEY_DELETED(k))
+		return stale;
+
 	/*
 	 * ptr_invalid() can't return true for the keys that mark btree nodes as
 	 * freed, but since ptr_bad() returns true we'll never actually use them
