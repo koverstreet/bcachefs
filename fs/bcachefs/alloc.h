@@ -50,6 +50,16 @@ void bch_open_bucket_put(struct cache_set *, struct open_bucket *);
 struct open_bucket *bch_alloc_sectors(struct cache_set *, struct write_point *,
 				      struct bkey *, struct closure *);
 
+static inline void bch_wake_allocator(struct cache *ca)
+{
+	struct task_struct *p;
+
+	rcu_read_lock();
+	if ((p = ACCESS_ONCE(ca->alloc_thread)))
+		wake_up_process(p);
+	rcu_read_unlock();
+}
+
 void bch_mark_allocator_buckets(struct cache_set *);
 
 void bch_open_buckets_init(struct cache_set *);

@@ -2066,8 +2066,7 @@ static void bch_btree_gc_finish(struct cache_set *c)
 	 */
 
 	for_each_cache(ca, c, i)
-		if (ca->alloc_thread)
-			wake_up_process(ca->alloc_thread);
+		bch_wake_allocator(ca);
 }
 
 /**

@@ -566,7 +566,7 @@ out:
 	trace_bcache_bucket_alloc(ca, reserve);
 	spin_unlock(&ca->freelist_lock);
 
-	wake_up_process(ca->alloc_thread);
+	bch_wake_allocator(ca);
 
 	g = ca->buckets + r;
 
