@@ -272,13 +272,14 @@ void bch_btree_node_read_done(struct btree *b)
 	for (;
 	     b->written < btree_blocks(b) && i->seq == b->keys.set[0].data->seq;
 	     i = write_block(b)) {
+		b->written += set_blocks(i, block_bytes(b->c));
+
 		err = "unsupported bset version";
 		if (i->version != BCACHE_BSET_VERSION)
 			goto err;
 
 		err = "bad btree header";
-		if (b->written + set_blocks(i, block_bytes(b->c)) >
-		    btree_blocks(b))
+		if (b->written > btree_blocks(b))
 			goto err;
 
 		err = "bad magic";
@@ -329,8 +330,6 @@ void bch_btree_node_read_done(struct btree *b)
 		}
 
 		bch_btree_iter_push(iter, i->start, bset_bkey_last(i));
-
-		b->written += set_blocks(i, block_bytes(b->c));
 	}
 
 	err = "corrupted btree";
