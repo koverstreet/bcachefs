@@ -518,6 +518,8 @@ out:
 
 	if (reserve <= RESERVE_MOVINGGC_BTREE)
 		SET_GC_MARK(b, GC_MARK_METADATA);
+	else
+		SET_GC_MARK(b, GC_MARK_DIRTY);
 
 	b->read_prio = ca->set->read_clock.hand;
 	b->write_prio = ca->set->write_clock.hand;
