@@ -134,7 +134,7 @@ do {									\
 #define heap_resort(heap, cmp)						\
 do {									\
 	ssize_t _i;							\
-	for (_i = (heap)->used / 2 - 1; _i >= 0; --_i)			\
+	for (_i = (ssize_t) (heap)->used / 2 -  1; _i >= 0; --_i)	\
 		heap_sift(heap, _i, cmp);				\
 } while (0)
 
