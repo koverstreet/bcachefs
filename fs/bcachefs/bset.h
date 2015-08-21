@@ -188,7 +188,8 @@ struct bset_tree {
 struct btree_keys_ops {
 	struct bkey	*(*sort_fixup)(struct btree_iter *, struct bkey *);
 	bool		(*insert_fixup)(struct btree_keys *, struct bkey *,
-					struct btree_iter *, struct bkey *);
+					struct btree_iter *, struct bkey *,
+					struct bkey *);
 	bool		(*key_invalid)(struct btree_keys *, struct bkey *);
 	bool		(*key_debug_invalid)(struct btree_keys *,
 					     struct bkey *);
@@ -312,7 +313,7 @@ unsigned bch_bset_insert_with_hint(struct btree_keys *, struct btree_iter *,
 
 unsigned __bch_btree_insert_key(struct btree_keys *, struct bkey *,
 				struct bkey *, struct btree_iter *,
-				struct bkey *);
+				struct bkey *, struct bkey *);
 unsigned bch_btree_insert_key(struct btree_keys *, struct bkey *,
 			      struct bkey *);
 

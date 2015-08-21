@@ -2196,31 +2196,39 @@ int bch_initial_gc(struct cache_set *c, struct list_head *journal)
  */
 static bool btree_insert_key(struct btree *b, struct keylist *insert_keys,
 			     struct bkey *replace, struct btree_iter *iter,
-			     struct bkey *m, struct journal_res *res,
+			     struct bkey *where, struct journal_res *res,
 			     struct closure *flush_cl)
 {
-	struct bkey *insert = bch_keylist_front(insert_keys);
+	struct bkey done, *insert = bch_keylist_front(insert_keys);
 	BKEY_PADDED(key) temp;
 	unsigned status;
 
 	bch_btree_iter_verify(&b->keys, iter);
 	BUG_ON(write_block(b) != btree_bset_last(b));
 
-	if (b->keys.ops->is_extents &&
-	    bkey_cmp(insert, &b->key) > 0) {
+	if (b->keys.ops->is_extents) {
+		struct bkey *orig = insert;
+
 		bkey_copy(&temp.key, insert);
-
-		bch_cut_back(&b->key, &temp.key);
-		bch_cut_front(&b->key, insert);
 		insert = &temp.key;
-	}
 
-	BUG_ON(bkey_cmp(insert, &b->key) > 0);
+		if (bkey_cmp(insert, &b->key) > 0)
+			bch_cut_back(&b->key, insert);
 
-	status = __bch_btree_insert_key(&b->keys, insert, replace, iter, m);
+		status = __bch_btree_insert_key(&b->keys, insert, replace,
+						iter, where, &done);
 
-	if (insert != &temp.key)
+		bch_cut_front(&done, orig);
+		if (!KEY_SIZE(orig))
+			bch_keylist_pop_front(insert_keys);
+	} else {
+		BUG_ON(bkey_cmp(insert, &b->key) > 0);
+
+		status = __bch_btree_insert_key(&b->keys, insert, replace,
+						iter, where, &done);
+
 		bch_keylist_pop_front(insert_keys);
+	}
 
 	if (status == BTREE_INSERT_STATUS_NO_INSERT)
 		return false;
@@ -2252,22 +2260,6 @@ static bool btree_insert_key(struct btree *b, struct keylist *insert_keys,
 	return true;
 }
 
-/**
- * insert_u64s_remaining - returns the amount of remaining space in a btree node
- */
-static size_t insert_u64s_remaining(struct btree *b)
-{
-	long ret = bch_btree_keys_u64s_remaining(&b->keys);
-
-	/*
-	 * Might land in the middle of an existing extent and have to split it
-	 */
-	if (b->keys.ops->is_extents)
-		ret -= BKEY_EXTENT_MAX_U64s;
-
-	return max(ret, 0L);
-}
-
 enum btree_insert_status {
 	BTREE_INSERT_NO_INSERT,
 	BTREE_INSERT_INSERTED,
@@ -2282,9 +2274,11 @@ static bool have_enough_space(struct btree *b, struct keylist *insert_keys)
 	 */
 	unsigned u64s = b->level
 		? bch_keylist_nkeys(insert_keys)
+		: b->keys.ops->is_extents
+		? BKEY_EXTENT_MAX_U64s * 2
 		: KEY_U64s(bch_keylist_front(insert_keys));
 
-	return u64s <= insert_u64s_remaining(b);
+	return u64s <= bch_btree_keys_u64s_remaining(&b->keys);
 }
 
 static struct bkey *insert_iter_init(struct btree *b, struct btree_iter *iter,
@@ -2724,13 +2718,17 @@ int bch_btree_insert_node(struct btree *b, struct btree_op *op,
 int bch_btree_insert_check_key(struct btree *b, struct btree_op *op,
 			       struct bkey *check_key)
 {
+	BKEY_PADDED(key) tmp;
+
 	bch_set_extent_ptrs(check_key, 1);
 	get_random_bytes(&check_key->val[0], sizeof(u64));
 
 	SET_PTR_DEV(check_key, 0, PTR_CHECK_DEV);
 	SET_KEY_CACHED(check_key, 1);
 
-	return bch_btree_insert_node(b, op, &keylist_single(check_key),
+	bkey_copy(&tmp.key, check_key);
+
+	return bch_btree_insert_node(b, op, &keylist_single(&tmp.key),
 				     NULL, NULL);
 }
 

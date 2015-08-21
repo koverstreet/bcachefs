@@ -61,7 +61,8 @@ struct bkey *bch_generic_sort_fixup(struct btree_iter *iter,
 }
 
 bool bch_generic_insert_fixup(struct btree_keys *b, struct bkey *insert,
-			      struct btree_iter *iter, struct bkey *replace_key)
+			      struct btree_iter *iter, struct bkey *replace_key,
+			      struct bkey *done)
 {
 	BUG_ON(replace_key);
 
@@ -667,7 +668,7 @@ static bool bkey_cmpxchg(struct cache_set *c,
 			 struct bkey *k,
 			 struct bkey *old,
 			 struct bkey *new,
-			 unsigned *sectors_found)
+			 struct bkey *done)
 {
 	/* must have something to compare against */
 	BUG_ON(!bch_extent_ptrs(old));
@@ -680,15 +681,16 @@ static bool bkey_cmpxchg(struct cache_set *c,
 	 * first, check if there was a hole - part of the new key that we
 	 * haven't checked against any existing key
 	 */
-	if (KEY_START(new) + *sectors_found < KEY_START(k)) {
+	if (bkey_cmp(&START_KEY(k), done) > 0) {
 		/*
 		 * If we've already found some go with that, otherwise chop off
 		 * the hole and keep going:
 		 */
-		if (*sectors_found)
+		if (bkey_cmp(done, &START_KEY(new)) > 0)
 			goto cut_back;
 
 		bch_cut_subtract_front(c, &START_KEY(k), new);
+		*done = START_KEY(new);
 	}
 
 	if (!bkey_cmpxchg_cmp(k, old)) {
@@ -696,32 +698,32 @@ static bool bkey_cmpxchg(struct cache_set *c,
 		 * Failure - if we found some previous sectors go with that,
 		 * otherwise chop off the part that overlaps with this key
 		 */
-		if (*sectors_found)
+		if (bkey_cmp(done, &START_KEY(new)) > 0)
 			goto cut_back;
 
 		if (bkey_cmp(k, new) > 0)
 			bch_drop_subtract(c, new);
 		else
 			bch_cut_subtract_front(c, k, new);
+		*done = START_KEY(new);
 		return false;
 	}
 
 	/* Success! */
-	*sectors_found = KEY_OFFSET(k) - KEY_START(new);
+	*done = bkey_cmp(k, new) < 0 ? *k : *new;
 	return true;
 cut_back:
-	bch_subtract_sectors(c, new,
-			     KEY_START(new) + *sectors_found,
-			     KEY_SIZE(new)  - *sectors_found);
-	bch_key_resize(new, *sectors_found);
+	bch_subtract_sectors(c, new, KEY_OFFSET(done),
+			     KEY_OFFSET(done) - KEY_START(new));
+	bch_cut_back(done, new);
 	return false;
 }
 
 static void handle_existing_key_newer(struct cache_set *c,
 				      struct btree_keys *b,
+				      struct btree_iter *iter,
 				      struct bkey *insert,
-				      struct bkey *k,
-				      struct btree_iter *iter)
+				      struct bkey *k)
 {
 	switch (bch_extent_overlap(k, insert)) {
 	case BCH_EXTENT_OVERLAP_FRONT:
@@ -784,13 +786,15 @@ static void handle_existing_key_newer(struct cache_set *c,
 static bool bch_extent_insert_fixup(struct btree_keys *b,
 				    struct bkey *insert,
 				    struct btree_iter *iter,
-				    struct bkey *replace_key)
+				    struct bkey *replace_key,
+				    struct bkey *done)
 {
 	struct cache_set *c = container_of(b, struct btree, keys)->c;
-	unsigned sectors_found = 0;  /* for cmpxchg */
-	struct bkey *k, *split;
+	struct bkey *k, *split, orig_insert = *insert;
 
 	BUG_ON(!KEY_SIZE(insert));
+
+	*done = START_KEY(insert);
 
 	/*
 	 * If this is a cmpxchg operation, @insert doesn't necessarily exist in
@@ -811,10 +815,28 @@ static bool bch_extent_insert_fixup(struct btree_keys *b,
 	if (bch_add_sectors(c, insert, KEY_START(insert),
 			    KEY_SIZE(insert), replace_key)) {
 		/* We raced - a dirty pointer was stale */
+		*done = *insert;
 		return true;
 	}
 
-	while ((k = bch_btree_iter_peek_overlapping(iter, insert))) {
+	while (KEY_SIZE(insert) &&
+	       (k = bch_btree_iter_peek_overlapping(iter, insert))) {
+		/*
+		 * Incrementing @done indicates to the caller that we've
+		 * finished with @insert up to that point: before setting @done,
+		 * check if we have space for the insert plus one potential
+		 * split:
+		 */
+		if (bch_btree_keys_u64s_remaining(b) <
+		    BKEY_EXTENT_MAX_U64s * 2) {
+			/*
+			 * XXX: would be better to explicitly signal that we
+			 * need to split
+			 */
+			bch_cut_subtract_back(c, done, insert);
+			goto out;
+		}
+
 		/*
 		 * We might overlap with 0 size extents; we can't skip these
 		 * because if they're in the set we're inserting to we have to
@@ -822,22 +844,15 @@ static bool bch_extent_insert_fixup(struct btree_keys *b,
 		 * inserting. But we don't want to check them for replace
 		 * operations.
 		 */
-
-		if (replace_key && KEY_SIZE(k) &&
-		    !bkey_cmpxchg(c, k, replace_key, insert,
-				  &sectors_found)) {
-			/* Not overlapping anymore */
-			if (!KEY_SIZE(insert))
-				return true;
+		if (!replace_key)
+			*done = bkey_cmp(k, insert) < 0 ? *k : *insert;
+		else if (KEY_SIZE(k) &&
+			 !bkey_cmpxchg(c, k, replace_key, insert, done))
 			continue;
-		}
 
 		if (KEY_SIZE(k) && !KEY_DELETED(insert) &&
 		    KEY_VERSION(insert) < KEY_VERSION(k)) {
-			handle_existing_key_newer(c, b, insert, k, iter);
-			/* Not overlapping anymore */
-			if (!KEY_SIZE(insert))
-				return true;
+			handle_existing_key_newer(c, b, iter, insert, k);
 			continue;
 		}
 
@@ -887,17 +902,20 @@ static bool bch_extent_insert_fixup(struct btree_keys *b,
 		}
 	}
 
-	if (replace_key && sectors_found < KEY_SIZE(insert)) {
-		bch_subtract_sectors(c, insert,
-				     KEY_START(insert) + sectors_found,
-				     KEY_SIZE(insert) - sectors_found);
-		bch_key_resize(insert, sectors_found);
+	/* Was there a hole? */
+	if (bkey_cmp(done, insert) < 0) {
+		/*
+		 * Holes not allowed for cmpxchg operations, so chop off
+		 * whatever we're not inserting (but done needs to reflect what
+		 * we've processed, i.e. what insert was)
+		 */
+		if (replace_key)
+			bch_cut_subtract_back(c, done, insert);
 
-		if (!KEY_SIZE(insert))
-			return true;
+		*done = orig_insert;
 	}
-
-	return false;
+out:
+	return !KEY_SIZE(insert);
 }
 
 bool __bch_extent_invalid(struct cache_set *c, const struct bkey *k)
