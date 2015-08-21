@@ -863,7 +863,16 @@ int bch_journal_res_get(struct cache_set *c, unsigned nkeys,
 				return -ENOSPC;
 			}
 		} else {
-			BUG_ON(!c->journal.cur->data->keys);
+			/*
+			 * Not much room for this journal entry (near the end of
+			 * a journal bucket) but there's nothing in this journal
+			 * entry yet - skip it and allocate a new journal entry
+			 */
+			if (!c->journal.cur->data->keys) {
+				c->journal.blocks_free = 0;
+				c->journal.u64s_remaining = 0;
+				continue;
+			}
 
 			if (!journal_try_write(c)) {
 				trace_bcache_journal_entry_full(c);
