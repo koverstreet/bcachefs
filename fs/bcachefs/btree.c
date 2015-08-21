@@ -2379,6 +2379,7 @@ static int btree_split(struct btree *b, struct btree_op *op,
 	struct closure cl;
 	struct keylist parent_keys;
 	struct bkey *k;
+	enum btree_insert_status status;
 	int ret;
 
 	closure_init_stack(&cl);
@@ -2416,7 +2417,9 @@ static int btree_split(struct btree *b, struct btree_op *op,
 	 */
 	if (b->level) {
 		six_unlock_write(&n1->lock);
-		bch_btree_insert_keys(n1, op, insert_keys, replace_key, parent);
+		status = bch_btree_insert_keys(n1, op, insert_keys,
+					       replace_key, parent);
+		BUG_ON(status != BTREE_INSERT_INSERTED);
 		six_lock_write(&n1->lock);
 
 		/*
@@ -2484,7 +2487,6 @@ static int btree_split(struct btree *b, struct btree_op *op,
 		bch_keylist_add(&parent_keys, &n2->key);
 		bch_btree_node_write(n2, &cl);
 		six_unlock_write(&n2->lock);
-		six_unlock_intent(&n2->lock);
 	} else {
 		trace_bcache_btree_node_compact(b, set1->keys);
 	}
@@ -2531,6 +2533,17 @@ static int btree_split(struct btree *b, struct btree_op *op,
 	six_unlock_write(&b->lock);
 	op->iterator_invalidated = 1;
 
+	/* New nodes now visible, can finish insert */
+	if (!n1->level) {
+		status = bch_btree_insert_keys(n1, op, insert_keys,
+					       replace_key, parent);
+		if (n2 && status != BTREE_INSERT_NEED_SPLIT)
+			bch_btree_insert_keys(n2, op, insert_keys,
+					      replace_key, parent);
+	}
+
+	if (n2)
+		six_unlock_intent(&n2->lock);
 	six_unlock_intent(&n1->lock);
 
 	bch_time_stats_update(&b->c->btree_split_time, start_time);
