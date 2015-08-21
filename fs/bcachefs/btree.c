@@ -205,9 +205,9 @@ static void bch_btree_init_next(struct btree *b)
 
 	/* If not a leaf node, always sort */
 	if (b->level && b->keys.nsets)
-		bch_btree_sort(&b->keys, &b->c->sort);
+		bch_btree_sort(&b->keys, NULL, &b->c->sort);
 	else
-		bch_btree_sort_lazy(&b->keys, &b->c->sort);
+		bch_btree_sort_lazy(&b->keys, NULL, &b->c->sort);
 
 	/*
 	 * do verify if there was more than one set initially (i.e. we did a
@@ -285,7 +285,7 @@ void bch_btree_node_read_done(struct btree *b)
 		if (i->seq == b->keys.set[0].data->seq)
 			goto err;
 
-	bch_btree_sort_and_fix_extents(&b->keys, iter, &b->c->sort);
+	bch_btree_sort_and_fix_extents(&b->keys, iter, NULL, &b->c->sort);
 
 	i = b->keys.set[0].data;
 	err = "short btree key";
@@ -1288,7 +1288,10 @@ static struct btree *btree_node_alloc_replacement(struct btree *b,
 
 	n = bch_btree_node_alloc(b->c, op, b->level, b->btree_id, b->parent);
 	if (n) {
-		bch_btree_sort_into(&n->keys, &b->keys, &b->c->sort);
+		bch_btree_sort_into(&n->keys, &b->keys,
+				    b->keys.ops->key_normalize ?:
+				    b->keys.ops->key_bad,
+				    &b->c->sort);
 		bkey_copy_key(&n->key, &b->key);
 		trace_bcache_btree_node_alloc_replacement(b, n);
 	}

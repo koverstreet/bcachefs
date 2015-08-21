@@ -22,7 +22,7 @@ struct cache *bch_btree_pick_ptr(struct cache_set *, const struct bkey *,
 				 unsigned *);
 struct cache *bch_extent_pick_ptr(struct cache_set *, const struct bkey *,
 				  unsigned *);
-void bch_extent_normalize(struct cache_set *, struct bkey *);
+bool bch_extent_normalize(struct cache_set *, struct bkey *);
 
 static inline unsigned bch_extent_ptrs(const struct bkey *k)
 {

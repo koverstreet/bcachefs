@@ -107,7 +107,7 @@ static unsigned PTR_TIER(struct cache_set *c, const struct bkey *k,
 	return ca ? CACHE_TIER(&ca->sb) : UINT_MAX;
 }
 
-void bch_extent_normalize(struct cache_set *c, struct bkey *k)
+bool bch_extent_normalize(struct cache_set *c, struct bkey *k)
 {
 	unsigned i = 0;
 	bool swapped;
@@ -115,7 +115,7 @@ void bch_extent_normalize(struct cache_set *c, struct bkey *k)
 	if (!KEY_SIZE(k)) {
 		bch_set_extent_ptrs(k, 0);
 		SET_KEY_DELETED(k, true);
-		return;
+		return true;
 	}
 
 	rcu_read_lock();
@@ -144,14 +144,16 @@ void bch_extent_normalize(struct cache_set *c, struct bkey *k)
 
 	if (!bch_extent_ptrs(k))
 		SET_KEY_DELETED(k, true);
+
+	return KEY_DELETED(k);
 }
 
-static void bch_ptr_normalize(struct btree_keys *bk,
+static bool bch_ptr_normalize(struct btree_keys *bk,
 			      struct bkey *k)
 {
 	struct btree *b = container_of(bk, struct btree, keys);
 
-	bch_extent_normalize(b->c, k);
+	return bch_extent_normalize(b->c, k);
 }
 
 static bool __ptr_invalid(struct cache_set *c, const struct bkey *k)
@@ -299,7 +301,7 @@ bad:
 	return true;
 }
 
-static bool bch_btree_ptr_invalid(struct btree_keys *bk, const struct bkey *k)
+static bool bch_btree_ptr_invalid(struct btree_keys *bk, struct bkey *k)
 {
 	struct btree *b = container_of(bk, struct btree, keys);
 	return __bch_btree_ptr_invalid(b->c, k);
@@ -349,7 +351,7 @@ err:
 	return true;
 }
 
-static bool bch_btree_ptr_bad(struct btree_keys *bk, const struct bkey *k)
+static bool bch_btree_ptr_bad(struct btree_keys *bk, struct bkey *k)
 {
 	struct btree *b = container_of(bk, struct btree, keys);
 
@@ -805,7 +807,7 @@ bad:
 	return true;
 }
 
-static bool bch_extent_invalid(struct btree_keys *bk, const struct bkey *k)
+static bool bch_extent_invalid(struct btree_keys *bk, struct bkey *k)
 {
 	struct btree *b = container_of(bk, struct btree, keys);
 	return __bch_extent_invalid(b->c, k);
@@ -885,7 +887,7 @@ err:
 	return true;
 }
 
-static bool bch_extent_bad(struct btree_keys *bk, const struct bkey *k)
+static bool bch_extent_bad(struct btree_keys *bk, struct bkey *k)
 {
 	struct btree *b = container_of(bk, struct btree, keys);
 

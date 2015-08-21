@@ -112,7 +112,7 @@ bool bch_inode_invalid(const struct bkey *k)
 	return false;
 }
 
-static bool __inode_invalid(struct btree_keys *bk, const struct bkey *k)
+static bool __inode_invalid(struct btree_keys *bk, struct bkey *k)
 {
 	if (bch_inode_invalid(k)) {
 		struct btree *b = container_of(bk, struct btree, keys);
@@ -128,7 +128,7 @@ static bool __inode_invalid(struct btree_keys *bk, const struct bkey *k)
 	return false;
 }
 
-static bool bch_inode_bad(struct btree_keys *bk, const struct bkey *k)
+static bool bch_inode_bad(struct btree_keys *bk, struct bkey *k)
 {
 	return KEY_DELETED(k);
 }

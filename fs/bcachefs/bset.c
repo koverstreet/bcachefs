@@ -1151,11 +1151,10 @@ EXPORT_SYMBOL(bch_bset_sort_state_init);
 
 static void btree_mergesort(struct btree_keys *b, struct bset *bset,
 			    struct btree_iter *iter,
-			    bool fixup, bool remove_stale)
+			    ptr_filter_fn filter, bool fixup)
 {
 	struct bkey *k, *prev = NULL, *out = bset->start;
 	BKEY_PADDED(k) tmp;
-	ptr_filter_fn filter = remove_stale ? bch_ptr_bad : bch_ptr_invalid;
 
 	/* Heapify the iterator, using our comparison function */
 	heap_resort(iter, b->ops->sort_cmp);
@@ -1171,10 +1170,11 @@ static void btree_mergesort(struct btree_keys *b, struct bset *bset,
 
 		bkey_copy(out, k);
 
-		if (remove_stale && b->ops->key_normalize)
-			b->ops->key_normalize(b, out);
+		/* zero size extents can by definition be dropped */
+		if (b->ops->is_extents && !KEY_SIZE(out))
+			continue;
 
-		if (filter(b, out))
+		if (filter && filter(b, out))
 			continue;
 
 		if (prev && bch_bkey_try_merge(b, prev, out))
@@ -1190,7 +1190,8 @@ static void btree_mergesort(struct btree_keys *b, struct bset *bset,
 }
 
 static void __btree_sort(struct btree_keys *b, struct btree_iter *iter,
-			 unsigned start, unsigned order, bool fixup,
+			 unsigned start, unsigned order,
+			 ptr_filter_fn filter, bool fixup,
 			 struct bset_sort_state *state)
 {
 	uint64_t start_time;
@@ -1210,7 +1211,7 @@ static void __btree_sort(struct btree_keys *b, struct btree_iter *iter,
 
 	start_time = local_clock();
 
-	btree_mergesort(b, out, iter, fixup, false);
+	btree_mergesort(b, out, iter, filter, fixup);
 	b->nsets = start;
 
 	if (!start && order == b->page_order) {
@@ -1242,6 +1243,7 @@ static void __btree_sort(struct btree_keys *b, struct btree_iter *iter,
 }
 
 void bch_btree_sort_partial(struct btree_keys *b, unsigned start,
+			    ptr_filter_fn filter,
 			    struct bset_sort_state *state)
 {
 	size_t order = b->page_order, keys = 0;
@@ -1259,7 +1261,7 @@ void bch_btree_sort_partial(struct btree_keys *b, unsigned start,
 		order = get_order(__set_bytes(b->set->data, keys));
 	}
 
-	__btree_sort(b, &iter, start, order, false, state);
+	__btree_sort(b, &iter, start, order, filter, false, state);
 
 	EBUG_ON(oldsize >= 0 && bch_count_data(b) != oldsize);
 }
@@ -1267,9 +1269,10 @@ EXPORT_SYMBOL(bch_btree_sort_partial);
 
 void bch_btree_sort_and_fix_extents(struct btree_keys *b,
 				    struct btree_iter *iter,
+				    ptr_filter_fn filter,
 				    struct bset_sort_state *state)
 {
-	__btree_sort(b, iter, 0, b->page_order, true, state);
+	__btree_sort(b, iter, 0, b->page_order, filter, true, state);
 }
 
 /**
@@ -1280,6 +1283,7 @@ void bch_btree_sort_and_fix_extents(struct btree_keys *b,
  */
 void bch_btree_sort_into(struct btree_keys *dst,
 			 struct btree_keys *src,
+			 ptr_filter_fn filter,
 			 struct bset_sort_state *state)
 {
 	uint64_t start_time = local_clock();
@@ -1287,7 +1291,7 @@ void bch_btree_sort_into(struct btree_keys *dst,
 	struct btree_iter iter;
 	bch_btree_iter_init(src, &iter, NULL);
 
-	btree_mergesort(src, dst->set->data, &iter, false, true);
+	btree_mergesort(src, dst->set->data, &iter, filter, false);
 
 	bch_time_stats_update(&state->time, start_time);
 
@@ -1298,7 +1302,9 @@ void bch_btree_sort_into(struct btree_keys *dst,
 
 #define SORT_CRIT	(4096 / sizeof(uint64_t))
 
-void bch_btree_sort_lazy(struct btree_keys *b, struct bset_sort_state *state)
+void bch_btree_sort_lazy(struct btree_keys *b,
+			 ptr_filter_fn filter,
+			 struct bset_sort_state *state)
 {
 	unsigned crit = SORT_CRIT;
 	int i;
@@ -1311,14 +1317,14 @@ void bch_btree_sort_lazy(struct btree_keys *b, struct bset_sort_state *state)
 		crit *= state->crit_factor;
 
 		if (b->set[i].data->keys < crit) {
-			bch_btree_sort_partial(b, i, state);
+			bch_btree_sort_partial(b, i, filter, state);
 			return;
 		}
 	}
 
 	/* Sort if we'd overflow */
 	if (b->nsets + 1 == MAX_BSETS) {
-		bch_btree_sort(b, state);
+		bch_btree_sort(b, filter, state);
 		return;
 	}
 

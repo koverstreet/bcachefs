@@ -192,10 +192,9 @@ struct btree_keys_ops {
 	struct bkey	*(*sort_fixup)(struct btree_iter *, struct bkey *);
 	bool		(*insert_fixup)(struct btree_keys *, struct bkey *,
 					struct btree_iter *, struct bkey *);
-	bool		(*key_invalid)(struct btree_keys *,
-				       const struct bkey *);
-	bool		(*key_bad)(struct btree_keys *, const struct bkey *);
-	void		(*key_normalize)(struct btree_keys *, struct bkey *);
+	bool		(*key_invalid)(struct btree_keys *, struct bkey *);
+	bool		(*key_bad)(struct btree_keys *, struct bkey *);
+	bool		(*key_normalize)(struct btree_keys *, struct bkey *);
 	bool		(*key_merge)(struct btree_keys *,
 				     struct bkey *, struct bkey *);
 	void		(*key_to_text)(char *, size_t, const struct bkey *);
@@ -324,7 +323,7 @@ struct btree_iter {
 	} data[MAX_BSETS];
 };
 
-typedef bool (*ptr_filter_fn)(struct btree_keys *, const struct bkey *);
+typedef bool (*ptr_filter_fn)(struct btree_keys *, struct bkey *);
 
 struct bkey *bch_btree_iter_next(struct btree_iter *);
 struct bkey *bch_btree_iter_next_filter(struct btree_iter *,
@@ -368,18 +367,20 @@ struct bset_sort_state {
 
 void bch_bset_sort_state_free(struct bset_sort_state *);
 int bch_bset_sort_state_init(struct bset_sort_state *, unsigned);
-void bch_btree_sort_lazy(struct btree_keys *, struct bset_sort_state *);
-void bch_btree_sort_into(struct btree_keys *, struct btree_keys *,
+void bch_btree_sort_lazy(struct btree_keys *, ptr_filter_fn,
 			 struct bset_sort_state *);
+void bch_btree_sort_into(struct btree_keys *, struct btree_keys *,
+			 ptr_filter_fn, struct bset_sort_state *);
 void bch_btree_sort_and_fix_extents(struct btree_keys *, struct btree_iter *,
-				    struct bset_sort_state *);
+				    ptr_filter_fn, struct bset_sort_state *);
 void bch_btree_sort_partial(struct btree_keys *, unsigned,
-			    struct bset_sort_state *);
+			    ptr_filter_fn, struct bset_sort_state *);
 
 static inline void bch_btree_sort(struct btree_keys *b,
+				  ptr_filter_fn filter,
 				  struct bset_sort_state *state)
 {
-	bch_btree_sort_partial(b, 0, state);
+	bch_btree_sort_partial(b, 0, filter, state);
 }
 
 struct bset_stats {
@@ -436,12 +437,12 @@ void bch_bkey_copy_single_ptr(struct bkey *, const struct bkey *,
 	_ret;							\
 })
 
-static inline bool bch_ptr_invalid(struct btree_keys *b, const struct bkey *k)
+static inline bool bch_ptr_invalid(struct btree_keys *b, struct bkey *k)
 {
 	return b->ops->key_invalid ? b->ops->key_invalid(b, k) : false;
 }
 
-static inline bool bch_ptr_bad(struct btree_keys *b, const struct bkey *k)
+static inline bool bch_ptr_bad(struct btree_keys *b, struct bkey *k)
 {
 	return b->ops->key_bad ? b->ops->key_bad(b, k) : KEY_DELETED(k);
 }
