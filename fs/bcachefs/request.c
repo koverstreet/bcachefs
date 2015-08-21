@@ -416,12 +416,6 @@ void bch_data_insert(struct closure *cl)
 	continue_at_nobarrier(cl, bch_data_insert_start, NULL);
 }
 
-/* Reads that race with invalidation are retried */
-static bool bch_bbio_stale(struct cache_set *c, struct bbio *b)
-{
-	return race_fault() || ptr_stale(c, &b->key, 0);
-}
-
 /* Cache promotion on read */
 
 struct cache_promote_op {
@@ -486,7 +480,7 @@ static void cache_promote_endio(struct bio *bio)
 
 	if (bio->bi_error)
 		op->iop.error = bio->bi_error;
-	else if (bch_bbio_stale(op->iop.c, b))
+	else if (ptr_stale(op->iop.c, &b->key, 0))
 		op->stale = 1;
 
 	bch_bbio_endio(op->iop.c, bio, bio->bi_error, "reading from cache");
@@ -857,7 +851,7 @@ static void bch_cache_read_endio(struct bio *bio)
 
 	if (bio->bi_error)
 		s->iop.error = bio->bi_error;
-	else if (bch_bbio_stale(s->iop.c, b)) {
+	else if (ptr_stale(s->iop.c, &b->key, 0)) {
 		atomic_long_inc(&s->iop.c->cache_read_races);
 		s->iop.error = -EINTR;
 	}
