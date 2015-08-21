@@ -84,12 +84,6 @@ static inline void bch_journal_add_prios(struct cache_set *c, struct jset *j)
  * bit.
  */
 
-static void journal_read_endio(struct bio *bio)
-{
-	struct closure *cl = bio->bi_private;
-	closure_put(cl);
-}
-
 static int journal_read_bucket(struct cache *ca, struct list_head *list,
 			       unsigned bucket_index)
 {
@@ -98,13 +92,10 @@ static int journal_read_bucket(struct cache *ca, struct list_head *list,
 
 	struct journal_replay *i;
 	struct jset *j, *data = ca->set->journal.w[0].data;
-	struct closure cl;
 	unsigned len, left, offset = 0;
 	int ret = 0;
 	sector_t bucket = bucket_to_sector(ca->set,
 				journal_bucket(ca, bucket_index));
-
-	closure_init_stack(&cl);
 
 	pr_debug("reading %u", bucket_index);
 
@@ -113,17 +104,15 @@ reread:		left = ca->sb.bucket_size - offset;
 		len = min_t(unsigned, left, PAGE_SECTORS << JSET_BITS);
 
 		bio_reset(bio);
+		bio->bi_bdev		= ca->bdev;
 		bio->bi_iter.bi_sector	= bucket + offset;
-		bio->bi_bdev	= ca->bdev;
 		bio->bi_iter.bi_size	= len << 9;
-
-		bio->bi_end_io	= journal_read_endio;
-		bio->bi_private = &cl;
 		bio_set_op_attrs(bio, REQ_OP_READ, 0);
 		bch_bio_map(bio, data);
 
-		closure_bio_submit(bio, &cl);
-		closure_sync(&cl);
+		ret = submit_bio_wait(bio);
+		if (ret)
+			return -EIO;
 
 		/* This function could be simpler now since we no longer write
 		 * journal entries that overlap bucket boundaries; this means
