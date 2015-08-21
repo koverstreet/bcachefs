@@ -53,8 +53,6 @@ static void write_moving_finish(struct closure *cl)
 
 	bch_keybuf_del(&io->op.c->moving_gc_keys, io->w);
 
-	up(&io->op.c->moving_in_flight);
-
 	closure_return_with_destructor(cl, moving_io_destructor);
 }
 
@@ -169,7 +167,6 @@ static void read_moving(struct cache_set *c)
 
 		trace_bcache_gc_copy(&w->key);
 
-		down(&c->moving_in_flight);
 		closure_call(&io->cl, read_moving_submit, NULL, &cl);
 	}
 
@@ -250,5 +247,4 @@ void bch_moving_gc(struct cache_set *c)
 void bch_moving_init_cache_set(struct cache_set *c)
 {
 	bch_keybuf_init(&c->moving_gc_keys);
-	sema_init(&c->moving_in_flight, 64);
 }

@@ -152,7 +152,6 @@ static void write_dirty_finish(struct closure *cl)
 	}
 
 	bch_keybuf_del(&dc->writeback_keys, w);
-	up(&dc->in_flight);
 
 	closure_return_with_destructor(cl, dirty_io_destructor);
 }
@@ -249,7 +248,6 @@ static void read_dirty(struct cached_dev *dc)
 		bch_ratelimit_increment(&dc->writeback_rate,
 					KEY_SIZE(&w->key) << 9);
 
-		down(&dc->in_flight);
 		closure_call(&io->cl, read_dirty_submit, NULL, &cl);
 	}
 
@@ -491,7 +489,6 @@ void bch_sectors_dirty_init(struct cached_dev *dc)
 
 void bch_cached_dev_writeback_init(struct cached_dev *dc)
 {
-	sema_init(&dc->in_flight, 64);
 	init_rwsem(&dc->writeback_lock);
 	bch_keybuf_init(&dc->writeback_keys);
 

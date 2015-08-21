@@ -123,6 +123,9 @@ void bch_refill_keybuf(struct cache_set *c, struct keybuf *buf,
 
 static void __bch_keybuf_del(struct keybuf *buf, struct keybuf_key *w)
 {
+	if (w->private)
+		up(&buf->in_flight);
+
 	rb_erase(&w->node, &buf->keys);
 	array_free(&buf->freelist, w);
 }
@@ -172,10 +175,16 @@ struct keybuf_key *bch_keybuf_next(struct keybuf *buf)
 	while (w && w->private)
 		w = RB_NEXT(w, node);
 
-	if (w)
-		w->private = ERR_PTR(-EINTR);
+	if (!w) {
+		spin_unlock(&buf->lock);
+		return NULL;
+	}
 
+	w->private = ERR_PTR(-EINTR);
 	spin_unlock(&buf->lock);
+
+	down(&buf->in_flight);
+
 	return w;
 }
 
@@ -204,6 +213,8 @@ struct keybuf_key *bch_keybuf_next_rescan(struct cache_set *c,
 
 void bch_keybuf_init(struct keybuf *buf)
 {
+	sema_init(&buf->in_flight, KEYBUF_NR / 2);
+
 	buf->last_scanned	= MAX_KEY;
 	buf->keys		= RB_ROOT;
 

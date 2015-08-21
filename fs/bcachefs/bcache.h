@@ -312,6 +312,8 @@ struct keybuf {
 
 	struct rb_root		keys;
 
+	struct semaphore	in_flight;
+
 #define KEYBUF_NR		500
 	DECLARE_ARRAY_ALLOCATOR(struct keybuf_key, freelist, KEYBUF_NR);
 };
@@ -396,11 +398,7 @@ struct cached_dev {
 
 	struct bch_ratelimit	writeback_rate;
 	struct delayed_work	writeback_rate_update;
-
-	/* Limit number of writeback bios in flight */
-	struct semaphore	in_flight;
 	struct task_struct	*writeback_thread;
-
 	struct keybuf		writeback_keys;
 
 	/* For tracking sequential IO */
@@ -661,8 +659,6 @@ struct cache_set {
 	/* MOVING GC */
 	struct workqueue_struct	*moving_gc_wq;
 	struct keybuf		moving_gc_keys;
-	/* Number of moving GC bios in flight */
-	struct semaphore	moving_in_flight;
 
 	/* DEBUG JUNK */
 	struct dentry		*debug;
