@@ -409,8 +409,9 @@ static int bch_bset_print_stats(struct cache_set *c, char *buf)
 	unsigned id;
 	int ret;
 
+	memset(&op, 0, sizeof(op));
+
 	for (id = 0; id < BTREE_ID_NR; id++) {
-		memset(&op, 0, sizeof(op));
 		bch_btree_op_init(&op.op, id, -1);
 
 		if (c->btree_roots[id]) {
