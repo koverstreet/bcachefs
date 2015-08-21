@@ -846,40 +846,36 @@ void __bch_journal_res_put(struct cache_set *c,
 	journal_unlock(c);
 }
 
-/*
- * Essentially the entry function to the journaling code. When bcache is doing
- * a btree insert, it calls this function to get the current journal write.
- * Journal write is the structure used set up journal writes. The calling
- * function will then add its keys to the structure, queuing them for the
- * next write.
- */
-int bch_journal_res_get(struct cache_set *c, unsigned nkeys,
-			struct journal_res *res)
+static bool __journal_res_get(struct cache_set *c, struct journal_res *res,
+			      unsigned u64s_min, unsigned u64s_max)
 {
-	unsigned actual = nkeys + sizeof(struct jset_keys) / sizeof(u64);
+	unsigned actual_min = u64s_min + sizeof(struct jset_keys) / sizeof(u64);
+	unsigned actual_max = u64s_max + sizeof(struct jset_keys) / sizeof(u64);
 
 	BUG_ON(res->ref);
 
 	spin_lock(&c->journal.lock);
 
 	while (1) {
-		if (actual < c->journal.u64s_remaining) {
-			c->journal.u64s_remaining -= actual;
-			c->journal.res_count++;
-			res->nkeys = actual;
+		if (actual_min < c->journal.u64s_remaining) {
+			res->nkeys = min_t(unsigned, actual_max,
+					   c->journal.u64s_remaining - 1);
 			res->ref = 1;
+
+			c->journal.u64s_remaining -= res->nkeys;
+			c->journal.res_count++;
 			spin_unlock(&c->journal.lock);
-			return 0;
+			return true;
 		}
 
 		if (!c->journal.u64s_remaining) {
 			journal_reclaim(c);
 
 			if (!c->journal.u64s_remaining) {
-				/* Caller needs to flush btree nodes */
 				spin_unlock(&c->journal.lock);
 				trace_bcache_journal_full(c);
-				return -ENOSPC;
+				btree_write_oldest(c);
+				return false;
 			}
 		} else {
 			/*
@@ -895,7 +891,7 @@ int bch_journal_res_get(struct cache_set *c, unsigned nkeys,
 
 			if (!journal_try_write(c)) {
 				trace_bcache_journal_entry_full(c);
-				return -EINTR;
+				return false;
 			}
 
 			spin_lock(&c->journal.lock);
@@ -903,15 +899,18 @@ int bch_journal_res_get(struct cache_set *c, unsigned nkeys,
 	}
 }
 
-static int __journal_meta_write_get(struct cache_set *c,
-				    struct journal_res *res)
+/*
+ * Essentially the entry function to the journaling code. When bcache is doing
+ * a btree insert, it calls this function to get the current journal write.
+ * Journal write is the structure used set up journal writes. The calling
+ * function will then add its keys to the structure, queuing them for the
+ * next write.
+ */
+void bch_journal_res_get(struct cache_set *c, struct journal_res *res,
+			 unsigned u64s_min, unsigned u64s_max)
 {
-	int ret = bch_journal_res_get(c, 0, res);
-
-	if (ret == -ENOSPC)
-		btree_write_oldest(c);
-
-	return ret;
+	wait_event(c->journal.wait,
+		   __journal_res_get(c, res, u64s_min, u64s_max));
 }
 
 void bch_journal_meta(struct cache_set *c, struct closure *parent)
@@ -923,8 +922,7 @@ void bch_journal_meta(struct cache_set *c, struct closure *parent)
 	if (!CACHE_SYNC(&c->sb))
 		return;
 
-	wait_event(c->journal.wait,
-		   !__journal_meta_write_get(c, &res));
+	bch_journal_res_get(c, &res, 0, 0);
 	bch_journal_res_put(c, &res, parent);
 }
 

@@ -120,7 +120,8 @@ struct journal_res {
 
 void __bch_journal_res_put(struct cache_set *, struct journal_res *,
 			   struct closure *);
-int bch_journal_res_get(struct cache_set *, unsigned, struct journal_res *);
+void bch_journal_res_get(struct cache_set *, struct journal_res *,
+			 unsigned, unsigned);
 
 static inline void bch_journal_res_put(struct cache_set *c,
 				       struct journal_res *res,
@@ -128,6 +129,15 @@ static inline void bch_journal_res_put(struct cache_set *c,
 {
 	spin_lock(&c->journal.lock);
 	__bch_journal_res_put(c, res, parent);
+}
+
+/*
+ * Amount of space that will be taken up by some keys in the journal (i.e.
+ * including the jset header)
+ */
+static inline unsigned jset_u64s(unsigned nkeys)
+{
+	return nkeys + sizeof(struct jset_keys) / sizeof(u64);
 }
 
 static inline void __bch_journal_add_keys(struct jset *j, enum btree_id id,
@@ -143,7 +153,7 @@ static inline void __bch_journal_add_keys(struct jset *j, enum btree_id id,
 	SET_JKEYS_TYPE(jkeys, type);
 
 	memcpy(jkeys->start, k, sizeof(u64) * nkeys);
-	j->keys += sizeof(struct jset_keys) / sizeof(u64) + nkeys;
+	j->keys += jset_u64s(nkeys);
 }
 
 static inline void bch_journal_add_keys(struct cache_set *c,
@@ -152,7 +162,7 @@ static inline void bch_journal_add_keys(struct cache_set *c,
 					unsigned nkeys, unsigned level,
 					struct closure *parent)
 {
-	unsigned actual = nkeys + sizeof(struct jset_keys) / sizeof(u64);
+	unsigned actual = jset_u64s(nkeys);
 
 	BUG_ON(!res->ref);
 	BUG_ON(actual > res->nkeys);
