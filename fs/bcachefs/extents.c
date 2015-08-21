@@ -957,6 +957,9 @@ static void bch_extent_debugcheck(struct btree_keys *bk, const struct bkey *k)
 		return;
 	}
 
+	if (bkey_deleted(k))
+		return;
+
 	memset(ptrs_per_tier, 0, sizeof(ptrs_per_tier));
 
 	replicas_needed = KEY_CACHED(k) ? 0
@@ -1042,7 +1045,7 @@ bad_device:
 
 bad_ptr:
 	bch_extent_to_text(c, buf, sizeof(buf), k);
-	cache_set_bug(c, "extent pointer %i bad: %s:\nbucket %zu prio %i "
+	cache_set_bug(c, "extent pointer %i bad gc mark: %s:\nbucket %zu prio %i "
 		      "gen %i last_gc %i mark 0x%08x", i,
 		      buf, PTR_BUCKET_NR(c, k, i),
 		      g->read_prio, PTR_BUCKET_GEN(c, ca, k, i),

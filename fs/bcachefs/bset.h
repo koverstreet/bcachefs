@@ -402,7 +402,7 @@ static inline void bkey_debugcheck(struct btree_keys *b, struct bkey *k)
 		b->ops->key_invalid(b, k);
 }
 
-static inline bool bkey_deleted(struct bkey *k)
+static inline bool bkey_deleted(const struct bkey *k)
 {
 	return KEY_DELETED(k);
 }
