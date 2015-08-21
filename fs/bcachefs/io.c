@@ -94,17 +94,14 @@ void bch_submit_bbio(struct bbio *b, struct cache *ca,
 }
 
 void bch_submit_bbio_replicas(struct bio *bio, struct cache_set *c,
-			      struct bkey *k, unsigned long *ptrs_to_write,
-			      bool punt)
+			      struct bkey *k, unsigned ptrs_from, bool punt)
 {
 	struct cache *ca;
-	unsigned ptr, next, nr_ptrs = bch_extent_ptrs(k);
+	unsigned ptr;
 
-	for (ptr = find_first_bit(ptrs_to_write, nr_ptrs);
-	     ptr != nr_ptrs;
-	     ptr = next) {
-		next = find_next_bit(ptrs_to_write, nr_ptrs, ptr + 1);
-
+	for (ptr = ptrs_from;
+	     ptr < bch_extent_ptrs(k);
+	     ptr++) {
 		rcu_read_lock();
 		ca = PTR_CACHE(c, k, ptr);
 		if (ca)
@@ -116,7 +113,7 @@ void bch_submit_bbio_replicas(struct bio *bio, struct cache_set *c,
 			break;
 		}
 
-		if (next != nr_ptrs) {
+		if (ptr + 1 < bch_extent_ptrs(k)) {
 			struct bio *n = bio_clone_fast(bio, GFP_NOIO,
 						       ca->replica_set);
 			n->bi_end_io		= bio->bi_end_io;

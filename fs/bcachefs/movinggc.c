@@ -71,6 +71,8 @@ static void read_moving(struct cache *ca, struct moving_io_stats *stats)
 	struct keybuf_key *w;
 	struct moving_io *io;
 	struct closure cl;
+	struct write_point *wp;
+	unsigned ptr, gen;
 
 	closure_init_stack(&cl);
 	bch_ratelimit_reset(&ca->moving_gc_pd.rate);
@@ -85,6 +87,19 @@ static void read_moving(struct cache *ca, struct moving_io_stats *stats)
 		if (!w)
 			break;
 
+		for (ptr = 0; ptr < bch_extent_ptrs(&w->key); ptr++)
+			if ((ca->sb.nr_this_dev == PTR_DEV(&w->key, ptr)) &&
+			    (gen = PTR_BUCKET(c, ca, &w->key,
+					      ptr)->copygc_gen)) {
+				gen--;
+				BUG_ON(gen > ARRAY_SIZE(ca->gc_buckets));
+				wp = &ca->gc_buckets[gen];
+				goto found;
+			}
+
+		bch_keybuf_put(&ca->moving_gc_keys, w);
+		continue;
+found:
 		io = kzalloc(sizeof(struct moving_io) + sizeof(struct bio_vec)
 			     * DIV_ROUND_UP(KEY_SIZE(&w->key), PAGE_SECTORS),
 			     GFP_KERNEL);
@@ -98,11 +113,13 @@ static void read_moving(struct cache *ca, struct moving_io_stats *stats)
 		io->keybuf		= &ca->moving_gc_keys;
 		io->stats		= stats;
 
-		bch_data_insert_op_init(&io->op, c, &io->bio.bio, 0,
+		bch_data_insert_op_init(&io->op, c, &io->bio.bio, wp,
 					false, false, false,
 					&io->w->key, &io->w->key);
 		io->op.io_wq		= ca->moving_gc_write;
-		io->op.moving_gc	= true;
+		io->op.btree_alloc_reserve = RESERVE_MOVINGGC_BTREE;
+
+		bch_extent_drop_ptr(&io->op.insert_key, ptr);
 
 		trace_bcache_gc_copy(&w->key);
 

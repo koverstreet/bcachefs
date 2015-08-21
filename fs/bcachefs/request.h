@@ -17,11 +17,10 @@ struct data_insert_op {
 	/* Used internally, do not touch */
 	struct btree_op		op;
 
-	uint16_t		write_point;
 	short			error;
 
 	union {
-		uint16_t	flags;
+		u8		flags;
 
 	struct {
 		/* Wait for data bucket allocation or just
@@ -33,20 +32,17 @@ struct data_insert_op {
 		unsigned	flush:1;
 		/* Perform a compare-exchange with replace_key? */
 		unsigned	replace:1;
-		/* Tier to write to */
-		unsigned	tier:2;
-		/* Use moving GC reserves for buckets, btree nodes and
-		 * open buckets? */
-		unsigned	moving_gc:1;
-		/* Use tiering reserves for btree nodes? */
-		unsigned	tiering:1;
-		/* Set on completion */
+
+		/* Set on completion, if cmpxchg index update failed */
 		unsigned	replace_collision:1;
 		/* Internal */
 		unsigned	insert_data_done:1;
 	};
 	};
 
+	u8			btree_alloc_reserve;
+
+	struct write_point	*wp;
 	struct open_bucket	*open_buckets[2];
 
 	struct keylist		insert_keys;
@@ -54,33 +50,9 @@ struct data_insert_op {
 	BKEY_PADDED(replace_key);
 };
 
-static inline void bch_data_insert_op_init(struct data_insert_op *op,
-					   struct cache_set *c,
-					   struct bio *bio,
-					   unsigned write_point,
-					   bool wait, bool discard, bool flush,
-					   struct bkey *insert_key,
-					   struct bkey *replace_key)
-{
-	op->c		= c;
-	op->io_wq	= NULL;
-	op->bio		= bio;
-	op->write_point	= write_point;
-	op->error	= 0;
-	op->flags	= 0;
-	op->wait	= wait;
-	op->discard	= discard;
-	op->flush	= flush;
-
-	memset(op->open_buckets, 0, sizeof(op->open_buckets));
-	bch_keylist_init(&op->insert_keys);
-	bkey_copy(&op->insert_key, insert_key);
-
-	if (replace_key) {
-		op->replace = true;
-		bkey_copy(&op->replace_key, replace_key);
-	}
-}
+void bch_data_insert_op_init(struct data_insert_op *, struct cache_set *,
+			     struct bio *, struct write_point *, bool,
+			     bool, bool, struct bkey *, struct bkey *);
 
 unsigned bch_get_congested(struct cache_set *);
 int bch_read(struct cache_set *, struct bio *, u64);

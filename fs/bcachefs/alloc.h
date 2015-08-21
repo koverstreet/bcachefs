@@ -48,11 +48,8 @@ int bch_bucket_alloc_set(struct cache_set *, enum alloc_reserve, struct bkey *,
 
 void bch_open_bucket_put(struct cache_set *, struct open_bucket *);
 
-struct open_bucket *bch_alloc_sectors(struct cache_set *, struct bkey *,
-				      unsigned, unsigned,
-				      unsigned long *, struct closure *);
-struct open_bucket *bch_gc_alloc_sectors(struct cache_set *, struct bkey *,
-					 unsigned long *, struct closure *);
+struct open_bucket *bch_alloc_sectors(struct cache_set *, struct write_point *,
+				      struct bkey *, struct closure *);
 
 void bch_mark_open_buckets(struct cache_set *);
 

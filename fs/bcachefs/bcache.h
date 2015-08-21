@@ -463,7 +463,20 @@ struct cached_dev {
  * and one for moving GC */
 enum alloc_reserve {
 	RESERVE_PRIO	= BTREE_ID_NR,
+	/*
+	 * free_inc.size buckets are set aside for moving GC btree node
+	 * allocations. This means that if moving GC runs out of new buckets for
+	 * btree nodes, it will have put back at least free_inc.size buckets
+	 * back on free_inc, preventing a deadlock.
+	 *
+	 * XXX: figure out a less stupid way of achieving this
+	 */
 	RESERVE_MOVINGGC_BTREE,
+	/*
+	 * Tiering needs a btree node reserve because of how
+	 * btree_check_reserve() works -- if the cache tier is full, we don't
+	 * want tiering to block forever.
+	 */
 	RESERVE_TIERING_BTREE,
 	RESERVE_METADATA_LAST = RESERVE_TIERING_BTREE,
 	RESERVE_MOVINGGC,
@@ -481,12 +494,37 @@ enum alloc_reserve {
 /* Enough for 16 cache devices, 2 tiers and some left over for pipelining */
 #define OPEN_BUCKETS_COUNT 256
 
+#define WRITE_POINT_COUNT	16
+
 struct open_bucket {
 	struct list_head	list;
+	spinlock_t		lock;
 	atomic_t		pin;
-	unsigned		last_write_point;
 	unsigned		sectors_free;
 	BKEY_PADDED(key);
+};
+
+struct write_point {
+	struct open_bucket	*b;
+
+	/*
+	 * If not NULL, refill from that device (this write point is a member of
+	 * that struct cache)
+	 *
+	 * If NULL, do a normal replicated bucket allocation
+	 */
+	struct cache		*ca;
+
+	/*
+	 * If not NULL, tier specific writepoint used by tiering/promotion -
+	 * always allocates a single replica
+	 */
+	struct cache_tier	*tier;
+
+	/*
+	 * Otherwise do a normal replicated bucket allocation that could come
+	 * from any tier (foreground write)
+	 */
 };
 
 struct bucket_stats {
@@ -583,7 +621,7 @@ struct cache {
 	 * Protected by bucket_lock.
 	 */
 #define NUM_GC_GENS 7
-	struct open_bucket	*gc_buckets[NUM_GC_GENS];
+	struct write_point	gc_buckets[NUM_GC_GENS];
 
 	struct journal_device	journal;
 
@@ -623,12 +661,15 @@ struct gc_stat {
 #define	CACHE_SET_STOPPING		1
 #define	CACHE_SET_RUNNING		2
 
-#define TIER_OPEN_BUCKETS_COUNT		16
-
 struct cache_tier {
 	unsigned		nr_devices;
 	struct cache		*devices[MAX_CACHES_PER_SET];
-	struct open_bucket	*data_buckets[TIER_OPEN_BUCKETS_COUNT];
+
+	/*
+	 * writepoint specific to this tier, for cache promote/background
+	 * tiering
+	 */
+	struct write_point	wp;
 };
 
 struct prio_clock {
@@ -734,6 +775,8 @@ struct cache_set {
 	struct closure_waitlist	open_buckets_wait;
 	spinlock_t		open_buckets_lock;
 	struct open_bucket	open_buckets[OPEN_BUCKETS_COUNT];
+
+	struct write_point	write_points[WRITE_POINT_COUNT];
 
 	/* GARBAGE COLLECTION */
 	struct task_struct	*gc_thread;
@@ -1087,7 +1130,7 @@ void bch_bbio_prep(struct bbio *, struct cache *);
 void bch_submit_bbio(struct bbio *, struct cache *, struct bkey *,
 		     unsigned, bool);
 void bch_submit_bbio_replicas(struct bio *, struct cache_set *,
-			      struct bkey *, unsigned long *, bool);
+			      struct bkey *, unsigned, bool);
 void bch_bbio_reset(struct bbio *bio);
 
 __printf(2, 3)

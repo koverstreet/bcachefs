@@ -103,31 +103,6 @@ static void bio_csum(struct bio *bio, struct bkey *k)
 
 /* Insert data into cache */
 
-static enum alloc_reserve bch_btree_reserve(struct data_insert_op *op)
-{
-	if (op->moving_gc) {
-		/*
-		 * free_inc.size buckets are set aside for moving GC
-		 * btree node allocations. This means that if moving GC
-		 * runs out of new buckets for btree nodes, it will have
-		 * put back at least free_inc.size buckets back on
-		 * free_inc, preventing a deadlock.
-		 *
-		 * XXX: figure out a less stupid way of achieving this
-		 */
-		return RESERVE_MOVINGGC_BTREE;
-	} else if (op->tiering) {
-		/*
-		 * Tiering needs a btree node reserve because of how
-		 * btree_check_reserve() works -- if the cache tier is
-		 * full, we don't want tiering to block forever.
-		 */
-		return RESERVE_TIERING_BTREE;
-	}
-
-	return BTREE_ID_EXTENTS;
-}
-
 static int btree_insert_fn(struct btree_op *b_op, struct btree *b)
 {
 	struct data_insert_op *op = container_of(b_op,
@@ -189,10 +164,8 @@ static void bch_data_insert_keys(struct closure *cl)
 {
 	struct data_insert_op *op = container_of(cl, struct data_insert_op, cl);
 	enum btree_id id = BTREE_ID_EXTENTS;
-	enum alloc_reserve reserve;
 
-	reserve = bch_btree_reserve(op);
-	__bch_btree_op_init(&op->op, id, reserve, 0);
+	__bch_btree_op_init(&op->op, id, op->btree_alloc_reserve, 0);
 
 	closure_call(&op->op.cl, __bch_data_insert_keys, NULL, cl);
 	continue_at(cl, bch_data_insert_keys_done, op->c->wq);
@@ -288,13 +261,15 @@ static void bch_data_insert_endio(struct bio *bio)
 static void bch_data_insert_start(struct closure *cl)
 {
 	struct data_insert_op *op = container_of(cl, struct data_insert_op, cl);
-	unsigned long ptrs_to_write[BITS_TO_LONGS(MAX_CACHES_PER_SET)];
 	struct bio *bio = op->bio, *n;
-	unsigned open_bucket_nr = 0;
+	unsigned open_bucket_nr = 0, ptrs_from;
 	struct open_bucket *b;
 
 	if (op->discard)
 		return bch_data_invalidate(cl);
+
+	bch_extent_drop_stale(op->c, &op->insert_key);
+	ptrs_from = bch_extent_ptrs(&op->insert_key);
 
 	/*
 	 * Journal writes are marked REQ_PREFLUSH; if the original write was a
@@ -321,15 +296,9 @@ static void bch_data_insert_start(struct closure *cl)
 		k = op->insert_keys.top;
 		bkey_copy(k, &op->insert_key);
 
-		bch_extent_drop_stale(op->c, k);
-		memset(ptrs_to_write, 0, sizeof(ptrs_to_write));
-
-		b = op->moving_gc
-			? bch_gc_alloc_sectors(op->c, k, ptrs_to_write, cl)
-			: bch_alloc_sectors(op->c, k, op->write_point, op->tier,
-					    ptrs_to_write,
-					    op->wait ? cl : NULL);
+		b = bch_alloc_sectors(op->c, op->wp, k, op->wait ? cl : NULL);
 		BUG_ON(!b);
+
 		if (PTR_ERR(b) == -EAGAIN) {
 			/* If we already have some keys, must insert them first
 			 * before allocating another open bucket. We only hit
@@ -357,7 +326,7 @@ static void bch_data_insert_start(struct closure *cl)
 		trace_bcache_cache_insert(k);
 
 		bio_set_op_attrs(n, REQ_OP_WRITE, 0);
-		bch_submit_bbio_replicas(n, op->c, k, ptrs_to_write, false);
+		bch_submit_bbio_replicas(n, op->c, k, ptrs_from, false);
 
 		bch_extent_normalize(op->c, k);
 		bch_keylist_push(&op->insert_keys);
@@ -458,7 +427,7 @@ void bch_data_insert(struct closure *cl)
 					     &start, &end);
 	}
 
-	if (op->moving_gc)
+	if (op->wp->ca)
 		bch_mark_gc_write(c, bio_sectors(op->bio));
 	else if (!op->discard)
 		bch_mark_foreground_write(c, bio_sectors(op->bio));
@@ -478,6 +447,44 @@ void bch_data_insert(struct closure *cl)
 	bio_get(op->bio);
 	continue_at_nobarrier(cl, bch_data_insert_start, NULL);
 }
+
+void bch_data_insert_op_init(struct data_insert_op *op,
+			     struct cache_set *c,
+			     struct bio *bio,
+			     struct write_point *wp,
+			     bool wait, bool discard, bool flush,
+			     struct bkey *insert_key,
+			     struct bkey *replace_key)
+{
+	if (!wp) {
+		unsigned wp_idx = hash_long((unsigned long) current,
+					    ilog2(ARRAY_SIZE(c->write_points)));
+
+		BUG_ON(wp_idx > ARRAY_SIZE(c->write_points));
+		wp = &c->write_points[wp_idx];
+	}
+
+	op->c		= c;
+	op->io_wq	= NULL;
+	op->bio		= bio;
+	op->error	= 0;
+	op->flags	= 0;
+	op->wait	= wait;
+	op->discard	= discard;
+	op->flush	= flush;
+	op->wp		= wp;
+	op->btree_alloc_reserve = BTREE_ID_EXTENTS;
+
+	memset(op->open_buckets, 0, sizeof(op->open_buckets));
+	bch_keylist_init(&op->insert_keys);
+	bkey_copy(&op->insert_key, insert_key);
+
+	if (replace_key) {
+		op->replace = true;
+		bkey_copy(&op->replace_key, replace_key);
+	}
+}
+EXPORT_SYMBOL(bch_data_insert_op_init);
 
 /* Cache promotion on read */
 
@@ -593,12 +600,9 @@ static void __cache_promote(struct cache_set *c, struct bbio *orig_bio,
 	op->orig_bio		= &orig_bio->bio;
 	op->stale		= 0;
 
-	bch_data_insert_op_init(&op->iop, c,
-				bio,
-				hash_long((unsigned long) current, 16),
-				false,
-				false,
-				false,
+	bch_data_insert_op_init(&op->iop, c, bio,
+				&c->cache_by_alloc[0].wp,
+				false, false, false,
 				replace_key,
 				replace_key);
 
@@ -1399,8 +1403,7 @@ static void cached_dev_write(struct cached_dev *dc, struct search *s)
 		closure_bio_submit(bio, cl);
 	}
 
-	bch_data_insert_op_init(&s->iop, dc->disk.c, insert_bio,
-				hash_long((unsigned long) current, 16),
+	bch_data_insert_op_init(&s->iop, dc->disk.c, insert_bio, NULL,
 				!KEY_CACHED(&insert_key), bypass,
 				bio->bi_opf & (REQ_PREFLUSH|REQ_FUA),
 				&insert_key, NULL);
@@ -1550,8 +1553,7 @@ static void __flash_dev_make_request(struct request_queue *q, struct bio *bio)
 		s = search_alloc(bio, d);
 		bio = &s->bio.bio;
 
-		bch_data_insert_op_init(&s->iop, d->c, bio,
-					hash_long((unsigned long) current, 16),
+		bch_data_insert_op_init(&s->iop, d->c, bio, NULL,
 					true,
 					bio_op(bio) == REQ_OP_DISCARD,
 					bio->bi_opf & (REQ_PREFLUSH|REQ_FUA),
