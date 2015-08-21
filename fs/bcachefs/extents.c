@@ -155,6 +155,9 @@ static bool __ptr_invalid(struct cache_set *c, const struct bkey *k)
 	if (KEY_U64s(k) < BKEY_U64s)
 		return true;
 
+	if (!bch_extent_ptrs(k) && !KEY_DELETED(k))
+		return true;
+
 	for (i = 0; i < bch_extent_ptrs(k); i++)
 		if (ptr_available(c, k, i)) {
 			struct cache *ca = PTR_CACHE(c, k, i);
@@ -724,7 +727,6 @@ static bool bch_extent_bad(struct btree_keys *bk, const struct bkey *k)
 	struct btree *b = container_of(bk, struct btree, keys);
 
 	if (KEY_DELETED(k) ||
-	    !bch_extent_ptrs(k) ||
 	    bch_extent_invalid(bk, k))
 		return true;
 

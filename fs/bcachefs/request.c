@@ -91,6 +91,7 @@ static void bch_data_insert_keys(struct closure *cl)
 static void bch_data_invalidate(struct closure *cl)
 {
 	struct data_insert_op *op = container_of(cl, struct data_insert_op, cl);
+	struct keylist *keys = &op->insert_keys;
 	struct bio *bio = op->bio;
 
 	pr_debug("invalidating %i sectors from %llu",
@@ -100,15 +101,17 @@ static void bch_data_invalidate(struct closure *cl)
 		unsigned sectors = min(bio_sectors(bio),
 				       1U << (KEY_SIZE_BITS - 1));
 
-		if (bch_keylist_realloc(&op->insert_keys, BKEY_U64s))
+		if (bch_keylist_realloc(keys, BKEY_U64s))
 			goto out;
 
 		bio->bi_iter.bi_sector	+= sectors;
 		bio->bi_iter.bi_size	-= sectors << 9;
 
-		bch_keylist_add(&op->insert_keys,
-				&KEY(KEY_INODE(&op->insert_key),
-				     bio->bi_iter.bi_sector, sectors));
+		*keys->top = KEY(KEY_INODE(&op->insert_key),
+				 bio->bi_iter.bi_sector, sectors);
+		SET_KEY_DELETED(keys->top, true);
+
+		bch_keylist_push(keys);
 	}
 
 	op->insert_data_done = true;
