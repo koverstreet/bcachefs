@@ -592,34 +592,22 @@ void bcache_write_super(struct cache_set *c)
  * disk.
  */
 
-static void prio_endio(struct bio *bio)
-{
-	struct cache *ca = bio->bi_private;
-
-	cache_set_err_on(bio->bi_error, ca->set, "accessing priorities");
-	bch_bbio_free(bio, ca->set);
-	closure_put(&ca->prio);
-}
-
 static void prio_io(struct cache *ca, uint64_t bucket, int op,
 		    unsigned long op_flags)
 {
-	struct closure *cl = &ca->prio;
 	struct bio *bio = bch_bbio_alloc(ca->set);
-
-	closure_init_stack(cl);
+	int ret;
 
 	bio->bi_iter.bi_sector	= bucket * ca->sb.bucket_size;
 	bio->bi_bdev		= ca->bdev;
 	bio->bi_iter.bi_size	= bucket_bytes(ca);
-
-	bio->bi_end_io	= prio_endio;
-	bio->bi_private = ca;
 	bio_set_op_attrs(bio, op, REQ_SYNC|REQ_META|op_flags);
 	bch_bio_map(bio, ca->disk_buckets);
 
-	closure_bio_submit(bio, &ca->prio);
-	closure_sync(cl);
+	ret = submit_bio_wait(bio);
+
+	cache_set_err_on(ret, ca->set, "accessing priorities");
+	bch_bbio_free(bio, ca->set);
 }
 
 void bch_prio_write(struct cache *ca)
