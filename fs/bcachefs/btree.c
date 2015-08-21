@@ -246,7 +246,8 @@ static u64 btree_csum_set(struct btree *b, struct bset *i)
 #define btree_node_error(b, msg, ...)					\
 	bch_cache_set_error((b)->c,					\
 		"btree node error at btree %u level %u/%u bucket %zu block %u keys %u: " msg,\
-		(b)->btree_id, b->level, btree_node_root(b)->level,	\
+		(b)->btree_id, b->level, btree_node_root(b)		\
+			    ? btree_node_root(b)->level : -1,		\
 		PTR_BUCKET_NR(b->c, &b->key, 0), bset_block_offset(b, i),\
 		i->keys, ##__VA_ARGS__)
 
