@@ -904,6 +904,8 @@ static struct btree *mca_cannibalize(struct cache_set *c, struct bkey *k,
 	if (ret)
 		return ERR_PTR(ret);
 
+	trace_bcache_mca_cannibalize(c, cl);
+
 	list_for_each_entry_reverse(b, &c->btree_cache, list)
 		if (!mca_reap(b, btree_order(k), false))
 			goto out;
@@ -1178,9 +1180,9 @@ static int __btree_check_reserve(struct cache_set *c,
 
 	for_each_cache(ca, c, i) {
 		if (fifo_used(&ca->free[reserve]) < required) {
-			trace_bcache_btree_check_reserve(ca,
+			trace_bcache_btree_check_reserve_fail(ca,
 					fifo_used(&ca->free[reserve]),
-					reserve);
+					reserve, cl);
 
 			ret = bch_bucket_wait(c, reserve, cl);
 			mutex_unlock(&c->bucket_lock);

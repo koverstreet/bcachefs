@@ -338,6 +338,11 @@ DEFINE_EVENT(mca_cannibalize_lock, bcache_mca_cannibalize_lock,
 	TP_ARGS(c, cl)
 );
 
+DEFINE_EVENT(mca_cannibalize_lock, bcache_mca_cannibalize,
+	TP_PROTO(struct cache_set *c, struct closure *cl),
+	TP_ARGS(c, cl)
+);
+
 DEFINE_EVENT(cache_set, bcache_mca_cannibalize_unlock,
 	TP_PROTO(struct cache_set *c),
 	TP_ARGS(c)
@@ -468,24 +473,27 @@ TRACE_EVENT(bcache_alloc_batch,
 		__entry->uuid, __entry->free, __entry->total)
 );
 
-TRACE_EVENT(bcache_btree_check_reserve,
-	TP_PROTO(struct cache *ca, enum btree_id id, size_t free),
-	TP_ARGS(ca, id, free),
+TRACE_EVENT(bcache_btree_check_reserve_fail,
+	TP_PROTO(struct cache *ca, enum btree_id id, size_t free,
+		 struct closure *cl),
+	TP_ARGS(ca, id, free, cl),
 
 	TP_STRUCT__entry(
 		__array(char,		uuid,	16	)
 		__field(enum btree_id,	id		)
 		__field(size_t,		free		)
+		__field(struct closure *,	cl	  )
 	),
 
 	TP_fast_assign(
 		memcpy(__entry->uuid, ca->sb.uuid.b, 16);
 		__entry->id = id;
 		__entry->free = free;
+		__entry->cl = cl;
 	),
 
-	TP_printk("%pU id %u free %zu",
-		__entry->uuid, __entry->id, __entry->free)
+	TP_printk("%pU id %u free %zu by %p",
+		__entry->uuid, __entry->id, __entry->free, __entry->cl)
 );
 
 DEFINE_EVENT(cache, bcache_moving_gc_start,
