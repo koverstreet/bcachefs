@@ -636,7 +636,7 @@ static void bch_drop_subtract(struct btree *b, struct bkey *k)
  * caching is difficult.
  */
 
-static bool bkey_cmpxchg_cmp(struct bkey *k, struct bkey *old, bool exact)
+static bool bkey_cmpxchg_cmp(struct bkey *k, struct bkey *old)
 {
 	/* skip past gen */
 	s64 offset = (KEY_START(k) - KEY_START(old)) << 8;
@@ -650,15 +650,12 @@ static bool bkey_cmpxchg_cmp(struct bkey *k, struct bkey *old, bool exact)
 	if (bch_bkey_equal_header(k, old)) {
 		for (i = 0; i < bch_extent_ptrs(old); i++)
 			if (k->val[i] != old->val[i] + offset)
-				goto try_partial_match;
+				goto try_partial;
 
 		return true;
 	}
 
-try_partial_match:
-	if (exact)
-		/* Non-exact matches not allowed */
-		return false;
+try_partial:
 #if (0)
 	/* This does not compare KEY_U64s or KEY_CSUM either */
 
@@ -706,6 +703,20 @@ static bool bkey_cmpxchg(struct btree *b,
 	BUG_ON(bkey_cmp(new, old) > 0 ||
 	       bkey_cmp(&START_KEY(new), &START_KEY(old)) < 0);
 
+	/* if an exact match was requested, those are simple: */
+	if (replace->replace_exact) {
+		ret = (KEY_U64s(k) == KEY_U64s(old) &&
+		       !memcmp(k, old, bkey_bytes(old)));
+
+		if (ret)
+			replace->successes += 1;
+		else
+			replace->failures += 1;
+
+		*done = *new;
+		return ret;
+	}
+
 	/*
 	 * first, check if there was a hole - part of the new key that we
 	 * haven't checked against any existing key
@@ -736,7 +747,7 @@ static bool bkey_cmpxchg(struct btree *b,
 		*done = START_KEY(k);
 	}
 
-	ret = bkey_cmpxchg_cmp(k, old, false);
+	ret = bkey_cmpxchg_cmp(k, old);
 	if (!ret) {
 		/* failed: */
 		replace->failures += 1;
@@ -830,72 +841,6 @@ static void overwrite_full_key(struct btree *b, struct bkey *insert,
 		SET_KEY_OFFSET(k, KEY_START(insert));
 
 	bch_btree_node_iter_next_all(iter);
-}
-
-/*
- * bch_insert_exact_extent is similar to bch_insert_fixup_extent but it
- * is always used to replace and does not fragment the key.
- * It is pre-checked by the caller to make sure that it would be a
- * complete replacement.
- *
- * This returns true if it inserted, false otherwise.  It can return
- * false because the comparison fails or because there is no room --
- * the caller needs to split the btree node.
- */
-bool bch_insert_exact_extent(struct btree *b,
-			     struct bkey *insert,
-			     struct btree_node_iter *iter,
-			     struct bch_replace_info *replace,
-			     struct bkey *done,
-			     struct journal_res *res)
-{
-	bool ret;
-	struct bkey *k;
-
-	BUG_ON(!KEY_SIZE(insert));
-	BUG_ON(replace == NULL || !replace->replace_exact);
-	BUG_ON(!bch_same_extent(insert, &replace->key));
-
-	/* Make sure there is enough room for the insertion */
-
-	if (bch_btree_keys_u64s_remaining(&b->keys) < BKEY_EXTENT_MAX_U64s) {
-		/*
-		 * XXX: would be better to explicitly signal that we
-		 * need to split
-		 */
-		*done = START_KEY(insert);
-		return false;
-	}
-
-	/* Whether we succeed or fail, it is all or nothing */
-	*done = *insert;
-
-	k = bch_btree_node_iter_peek_overlapping(iter, insert);
-
-	ret = (k != NULL
-	       && !KEY_DELETED(k)
-	       && bch_same_extent(k, &replace->key)
-	       && bkey_cmpxchg_cmp(k, &replace->key, true));
-
-	if (ret) {
-		/*
-		 * Do not insert if the pointers being inserted are stale.
-		 */
-		if (bch_add_sectors(b, insert, KEY_START(insert),
-				    KEY_SIZE(insert), true)) {
-			/* We raced - a dirty pointer was stale */
-			ret = false;
-		} else {
-			overwrite_full_key(b, insert, iter, k);
-			bch_btree_insert_and_journal(b, iter, insert, res);
-			replace->successes += 1;
-		}
-	}
-
-	if (!ret)
-		replace->failures += 1;
-
-	return ret;
 }
 
 /**

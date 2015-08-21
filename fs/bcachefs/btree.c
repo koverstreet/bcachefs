@@ -1596,13 +1596,7 @@ static bool btree_insert_key(struct btree_iter *iter, struct btree *b,
 	BUG_ON(!b->level &&
 	       bkey_cmp(&START_KEY(insert), &iter->pos) < 0);
 
-	if (!b->keys.ops->is_extents) {
-		BUG_ON(bkey_cmp(insert, &b->key) > 0);
-
-		do_insert = bch_insert_fixup_key(b, insert, node_iter,
-						 replace, &done, res);
-		dequeue = true;
-	} else if (replace == NULL || !replace->replace_exact) {
+	if (b->keys.ops->is_extents) {
 		bkey_copy(&temp.key, insert);
 		insert = &temp.key;
 
@@ -1616,11 +1610,9 @@ static bool btree_insert_key(struct btree_iter *iter, struct btree *b,
 	} else {
 		BUG_ON(bkey_cmp(insert, &b->key) > 0);
 
-		do_insert = bch_insert_exact_extent(b, insert, node_iter,
-						    replace, &done, res);
-
-		dequeue = (KEY_OFFSET(&done) == KEY_OFFSET(insert));
-		BUG_ON(do_insert && !dequeue);
+		do_insert = bch_insert_fixup_key(b, insert, node_iter,
+						 replace, &done, res);
+		dequeue = true;
 	}
 
 	if (dequeue)

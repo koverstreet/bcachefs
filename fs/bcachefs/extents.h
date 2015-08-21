@@ -42,11 +42,6 @@ bool bch_insert_fixup_extent(struct btree *, struct bkey *,
 			     struct bch_replace_info *, struct bkey *,
 			     struct journal_res *);
 
-bool bch_insert_exact_extent(struct btree *, struct bkey *,
-			     struct btree_node_iter *,
-			     struct bch_replace_info *, struct bkey *,
-			     struct journal_res *);
-
 unsigned bch_extent_nr_ptrs_after_normalize(const struct cache_set *,
 					    const struct bkey *);
 void bch_extent_drop_stale(struct cache_set *, struct bkey *);
@@ -98,14 +93,5 @@ bool bch_cut_front(const struct bkey *, struct bkey *);
 bool bch_cut_back(const struct bkey *, struct bkey *);
 void bch_key_resize(struct bkey *, unsigned);
 void bch_insert_check_key(struct btree_keys *, struct bkey *);
-
-static inline bool bch_same_extent(const struct bkey *l, const struct bkey *r)
-{
-	return bch_bkey_maybe_compatible(l, r)
-		&& (KEY_INODE(l) == KEY_INODE(r))
-		&& (KEY_SNAPSHOT(l) == KEY_SNAPSHOT(r))
-		&& (KEY_OFFSET(l) == KEY_OFFSET(r))
-		&& (KEY_SIZE(l) == KEY_SIZE(r));
-}
 
 #endif /* _BCACHE_EXTENTS_H */
