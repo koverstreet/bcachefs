@@ -85,6 +85,7 @@ void __bch_check_keys(struct btree_keys *b, const char *fmt, ...)
 	const char *err;
 
 	for_each_key_all(b, k, &iter) {
+		err = "Keys out of order";
 		if (p && bkey_cmp(p, k) > 0) {
 			bch_bkey_to_text(b, buf1, sizeof(buf1), p);
 			bch_bkey_to_text(b, buf2, sizeof(buf2), k);
