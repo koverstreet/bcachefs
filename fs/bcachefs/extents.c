@@ -109,7 +109,7 @@ static unsigned PTR_TIER(struct cache_set *c, const struct bkey *k,
 
 void bch_extent_normalize(struct cache_set *c, struct bkey *k)
 {
-	unsigned i;
+	unsigned i = 0;
 	bool swapped;
 
 	if (!KEY_SIZE(k)) {
@@ -120,14 +120,14 @@ void bch_extent_normalize(struct cache_set *c, struct bkey *k)
 
 	rcu_read_lock();
 
-	for (i = 0; i < bch_extent_ptrs(k); i++)
+	while (i < bch_extent_ptrs(k))
 		if (should_drop_ptr(c, k, i)) {
 			bch_set_extent_ptrs(k, bch_extent_ptrs(k) - 1);
 			memmove(&k->val[i],
 				&k->val[i + 1],
 				(bch_extent_ptrs(k) - i) * sizeof(u64));
-			continue;
-		}
+		} else
+			i++;
 
 	/* Bubble sort pointers by tier, lowest (fastest) tier first */
 	do {
