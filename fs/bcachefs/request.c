@@ -843,7 +843,7 @@ static int bch_read_fn(struct btree_op *b_op, struct btree *b, struct bkey *k)
 	if (ptr < 0)
 		return bch_read_hole(bio, sectors);
 
-	PTR_BUCKET(b->c, k, ptr)->read_prio = b->c->read_clock.hand;
+	PTR_BUCKET(b->c, k, ptr)->read_prio = b->c->prio_clock[READ].hand;
 
 	if (sectors >= bio_sectors(bio)) {
 		n = bio_clone_fast(bio, GFP_NOIO, b->c->bio_split);
@@ -1021,7 +1021,7 @@ static int cache_lookup_fn(struct btree_op *op, struct btree *b, struct bkey *k)
 	if (ptr < 0) /* no pointers (hole), or all stale */
 		return s->d->cache_miss(b, s, bio, sectors);
 
-	PTR_BUCKET(b->c, k, ptr)->read_prio = b->c->read_clock.hand;
+	PTR_BUCKET(b->c, k, ptr)->read_prio = b->c->prio_clock[READ].hand;
 
 	if (!KEY_CACHED(k))
 		s->read_dirty_data = true;

@@ -130,7 +130,7 @@ static unsigned bucket_sectors_heap_top(struct cache *ca)
 	return (b = heap_peek(&ca->heap)) ? GC_SECTORS_USED(b) : 0;
 }
 
-#define bucket_w_prio(b) (c->write_clock.hand - b->write_prio)
+#define bucket_w_prio(b) (c->prio_clock[WRITE].hand - b->write_prio)
 
 #define bucket_write_prio_max_cmp(l, r)	(bucket_w_prio(l) > bucket_w_prio(r))
 

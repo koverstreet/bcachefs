@@ -101,80 +101,68 @@ wait:
 
 /* Bucket heap / gen */
 
-void bch_recalc_min_prio(struct cache *ca)
+void bch_recalc_min_prio(struct cache *ca, int rw)
 {
 	struct cache_set *c = ca->set;
+	struct prio_clock *clock = &c->prio_clock[rw];
 	struct bucket *b;
+	u16 max_delta = 0;
 	unsigned i;
 
 	/* Determine min prio for this particular cache */
-	u16 max_read_delta = 0;
-	u16 max_write_delta = 0;
+	for_each_bucket(b, ca)
+		max_delta = max(max_delta, (u16) (clock->hand - b->prio[rw]));
 
-	for_each_bucket(b, ca) {
-		max_read_delta = max(max_read_delta,
-			(u16)(c->read_clock.hand - b->read_prio));
+	ca->min_prio[rw] = clock->hand - max_delta;
 
-		max_write_delta = max(max_write_delta,
-			(u16)(c->write_clock.hand - b->write_prio));
-	}
-	ca->min_read_prio = c->read_clock.hand - max_read_delta;
-	ca->min_write_prio = c->write_clock.hand - max_write_delta;
+	/*
+	 * This may possibly increase the min prio for the whole cache, check
+	 * that as well.
+	 */
+	max_delta = 0;
 
-	/* This may possibly increase the min prio for the whole
-	 * cache, check that as well. */
-	max_read_delta = 0;
-	max_write_delta = 0;
-	for_each_cache(ca, c, i) {
-		max_read_delta = max(max_read_delta,
-			(u16)(c->read_clock.hand - ca->min_read_prio));
+	for_each_cache(ca, c, i)
+		max_delta = max(max_delta,
+				(u16) (clock->hand - ca->min_prio[rw]));
 
-		max_write_delta = max(max_write_delta,
-			(u16)(c->write_clock.hand - ca->min_write_prio));
-	}
-	c->read_clock.min_prio = c->read_clock.hand - max_read_delta;
-	c->write_clock.min_prio = c->write_clock.hand - max_write_delta;
+	clock->min_prio = clock->hand - max_delta;
 }
 
 static void bch_rescale_prios(struct cache_set *c, int rw)
 {
+	struct prio_clock *clock = &c->prio_clock[rw];
 	struct cache *ca;
 	struct bucket *b;
 	unsigned i;
 
 	for_each_cache(ca, c, i) {
-		for_each_bucket(b, ca) {
-			if (rw)
-				b->write_prio = c->write_clock.hand -
-					(c->write_clock.hand - b->write_prio)/2;
-			else
-				b->read_prio = c->read_clock.hand -
-					(c->read_clock.hand - b->read_prio)/2;
-		}
+		for_each_bucket(b, ca)
+			b->prio[rw] = clock->hand -
+				(clock->hand - b->prio[rw]) / 2;
 
-		bch_recalc_min_prio(ca);
+		bch_recalc_min_prio(ca, rw);
 	}
 }
 
 void bch_increment_clock_slowpath(struct cache_set *c, int rw)
 {
+	struct prio_clock *clock = &c->prio_clock[rw];
 	long next = (c->nbuckets * c->sb.bucket_size) / 1024;
-	struct prio_clock *clock = rw ? &c->write_clock : &c->read_clock;
-	long r;
+	long old, v = atomic_long_read(&clock->rescale);
 
 	do {
-		r = atomic_long_read(&clock->rescale);
-
-		if (r >= 0)
+		old = v;
+		if (old >= 0)
 			return;
-	} while (atomic_long_cmpxchg(&clock->rescale, r, r + next) != r);
+	} while ((v = atomic_long_cmpxchg(&clock->rescale,
+					  old, old + next)) != old);
 
 	mutex_lock(&c->bucket_lock);
 
 	clock->hand++;
 
 	/* if clock cannot be advanced more, rescale prio */
-	if (clock->hand == (u16)(clock->min_prio - 1))
+	if (clock->hand == (u16) (clock->min_prio - 1))
 		bch_rescale_prios(c, rw);
 
 	mutex_unlock(&c->bucket_lock);
@@ -213,8 +201,8 @@ static void __bch_invalidate_one_bucket(struct cache *ca, struct bucket *b)
 	b->gen++;
 	/* this is what makes ptrs to the bucket invalid */
 
-	b->read_prio = ca->set->read_clock.hand;
-	b->write_prio = ca->set->write_clock.hand;
+	b->read_prio = ca->set->prio_clock[READ].hand;
+	b->write_prio = ca->set->prio_clock[WRITE].hand;
 	SET_GC_MARK(b, GC_MARK_DIRTY);
 	SET_GC_GEN(b, 0);
 	SET_GC_SECTORS_USED(b, min_t(unsigned, ca->sb.bucket_size,
@@ -277,11 +265,11 @@ void bch_prio_init(struct cache_set *c)
 
 #define bucket_prio(b)							\
 ({									\
-	u16 prio = b->read_prio - ca->min_read_prio;			\
-	prio = (prio * 7) / (ca->set->read_clock.hand -			\
-			     ca->min_read_prio);			\
+	u16 prio = b->read_prio - ca->min_prio[READ];			\
+	prio = (prio * 7) / (ca->set->prio_clock[READ].hand -		\
+			     ca->min_prio[READ]);			\
 									\
-	(prio+1) * GC_SECTORS_USED(b);					\
+	(prio + 1) * GC_SECTORS_USED(b);				\
 })
 
 #define bucket_max_cmp(l, r)	(bucket_prio(l) < bucket_prio(r))
@@ -295,7 +283,8 @@ static void invalidate_buckets_lru(struct cache *ca)
 
 	ca->heap.used = 0;
 
-	bch_recalc_min_prio(ca);
+	bch_recalc_min_prio(ca, READ);
+	bch_recalc_min_prio(ca, WRITE);
 
 	for_each_bucket(b, ca) {
 		if (!bch_can_invalidate_bucket(ca, b))
@@ -601,8 +590,8 @@ out:
 	else
 		SET_GC_MARK(b, GC_MARK_DIRTY);
 
-	b->read_prio = ca->set->read_clock.hand;
-	b->write_prio = ca->set->write_clock.hand;
+	b->read_prio = ca->set->prio_clock[READ].hand;
+	b->write_prio = ca->set->prio_clock[WRITE].hand;
 
 	return r;
 }
@@ -618,8 +607,8 @@ void __bch_bucket_free(struct cache *ca, struct bucket *b)
 
 	SET_GC_MARK(b, 0);
 	SET_GC_SECTORS_USED(b, 0);
-	b->read_prio = ca->set->read_clock.hand;
-	b->write_prio = ca->set->write_clock.hand;
+	b->read_prio = ca->set->prio_clock[READ].hand;
+	b->write_prio = ca->set->prio_clock[WRITE].hand;
 }
 
 void bch_bucket_free(struct cache_set *c, struct bkey *k)

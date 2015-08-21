@@ -40,13 +40,13 @@ static inline size_t buckets_free_cache(struct cache *ca,
 		fifo_used(&ca->free_inc);
 }
 
-void bch_recalc_min_prio(struct cache *);
+void bch_recalc_min_prio(struct cache *, int);
 void bch_increment_clock_slowpath(struct cache_set *, int);
 
 static inline void bch_increment_clock(struct cache_set *c,
 				       unsigned sectors, int rw)
 {
-	struct prio_clock *clock = rw ? &c->write_clock : &c->read_clock;
+	struct prio_clock *clock = &c->prio_clock[rw];
 
 	/* Buffer up one megabyte worth of IO in the percpu counter */
 	preempt_disable();

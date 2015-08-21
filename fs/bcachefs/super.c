@@ -1259,8 +1259,8 @@ static void cache_set_free(struct closure *cl)
 
 	bch_bset_sort_state_free(&c->sort);
 
-	free_percpu(c->write_clock.rescale_percpu);
-	free_percpu(c->read_clock.rescale_percpu);
+	free_percpu(c->prio_clock[WRITE].rescale_percpu);
+	free_percpu(c->prio_clock[READ].rescale_percpu);
 	if (c->wq)
 		destroy_workqueue(c->wq);
 	if (c->bio_split)
@@ -1435,6 +1435,11 @@ struct cache_set *bch_cache_set_alloc(struct cache_sb *sb)
 	spin_lock_init(&c->read_race_lock);
 	INIT_WORK(&c->read_race_work, bch_read_race_work);
 
+	c->prio_clock[READ].hand = 1;
+	c->prio_clock[READ].min_prio = 0;
+	c->prio_clock[WRITE].hand = 1;
+	c->prio_clock[WRITE].min_prio = 0;
+
 	c->congested_read_threshold_us	= 2000;
 	c->congested_write_threshold_us	= 20000;
 	c->error_limit	= 8 << IO_ERROR_SHIFT;
@@ -1445,11 +1450,6 @@ struct cache_set *bch_cache_set_alloc(struct cache_sb *sb)
 	c->data_replicas = 1;
 	c->copy_gc_enabled = 1;
 	c->tiering_enabled = 1;
-
-	c->read_clock.hand = 1;
-	c->read_clock.min_prio = 0;
-	c->write_clock.hand = 1;
-	c->write_clock.min_prio = 0;
 
 	c->search = mempool_create_slab_pool(32, bch_search_cache);
 	if (!c->search)
@@ -1464,8 +1464,8 @@ struct cache_set *bch_cache_set_alloc(struct cache_sb *sb)
 	    !(c->fill_iter = mempool_create_kmalloc_pool(1, iter_size)) ||
 	    !(c->bio_split = bioset_create(4, offsetof(struct bbio, bio))) ||
 	    !(c->wq = alloc_workqueue("bcache", WQ_MEM_RECLAIM, 0)) ||
-	    !(c->read_clock.rescale_percpu = alloc_percpu(unsigned)) ||
-	    !(c->write_clock.rescale_percpu = alloc_percpu(unsigned)) ||
+	    !(c->prio_clock[READ].rescale_percpu = alloc_percpu(unsigned)) ||
+	    !(c->prio_clock[WRITE].rescale_percpu = alloc_percpu(unsigned)) ||
 	    bch_journal_alloc(c) ||
 	    bch_btree_cache_alloc(c) ||
 	    bch_bset_sort_state_init(&c->sort, ilog2(c->btree_pages)))
@@ -1524,11 +1524,13 @@ static const char *run_cache_set(struct cache_set *c)
 		for_each_cache(ca, c, i)
 			prio_read(ca, prio_bucket_ptrs[ca->sb.nr_this_dev]);
 
-		c->read_clock.hand = j->read_clock;
-		c->write_clock.hand = j->write_clock;
+		c->prio_clock[READ].hand = j->read_clock;
+		c->prio_clock[WRITE].hand = j->write_clock;
 
-		for_each_cache(ca, c, i)
-			bch_recalc_min_prio(ca);
+		for_each_cache(ca, c, i) {
+			bch_recalc_min_prio(ca, READ);
+			bch_recalc_min_prio(ca, WRITE);
+		}
 
 		/*
 		 * If prio_read() fails it'll call cache_set_error and we'll
