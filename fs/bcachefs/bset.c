@@ -890,34 +890,26 @@ EXPORT_SYMBOL(bch_btree_insert_key);
 	_ret;							\
 })
 
-struct bset_search_iter {
-	struct bkey *l, *r;
-};
-
-static struct bset_search_iter bset_search_write_set(struct bset_tree *t,
-						     const struct bkey *search)
+static struct bkey *bset_search_write_set(struct bset_tree *t,
+					  const struct bkey *search)
 {
 	unsigned li = 0, ri = t->size;
 
 	while (li + 1 != ri) {
 		unsigned m = (li + ri) >> 1;
 
-		if (bkey_cmp(table_to_bkey(t, m), search) > 0)
+		if (bkey_cmp(table_to_bkey(t, m), search) >= 0)
 			ri = m;
 		else
 			li = m;
 	}
 
-	return (struct bset_search_iter) {
-		table_to_bkey(t, li),
-		ri < t->size ? table_to_bkey(t, ri) : bset_bkey_last(t->data)
-	};
+	return table_to_bkey(t, li);
 }
 
-static struct bset_search_iter bset_search_tree(struct bset_tree *t,
-						const struct bkey *search)
+static struct bkey *bset_search_tree(struct bset_tree *t,
+				     const struct bkey *search)
 {
-	struct bkey *l, *r;
 	struct bkey_float *f;
 	unsigned inorder, j, n = 1;
 
@@ -958,34 +950,20 @@ static struct bset_search_iter bset_search_tree(struct bset_tree *t,
 	 * we recursed left or recursed right.
 	 */
 	if (n & 1) {
-		l = cacheline_to_bkey(t, inorder, f->m);
-
-		if (++inorder != t->size) {
-			f = &t->tree[inorder_next(j, t->size)];
-			r = cacheline_to_bkey(t, inorder, f->m);
-		} else
-			r = bset_bkey_last(t->data);
+		return cacheline_to_bkey(t, inorder, f->m);
 	} else {
-		r = cacheline_to_bkey(t, inorder, f->m);
-
 		if (--inorder) {
 			f = &t->tree[inorder_prev(j, t->size)];
-			l = cacheline_to_bkey(t, inorder, f->m);
+			return cacheline_to_bkey(t, inorder, f->m);
 		} else
-			l = t->data->start;
+			return t->data->start;
 	}
-
-	return (struct bset_search_iter) {l, r};
 }
 
 struct bkey *__bch_bset_search(struct btree_keys *b, struct bset_tree *t,
 			       const struct bkey *search)
 {
-	struct bset_search_iter i;
-
-	search = PRECEDING_KEY(search);
-	if (unlikely(!search))
-		return t->data->start;
+	struct bkey *m;
 
 	/*
 	 * First, we search for a cacheline, then lastly we do a linear search
@@ -1003,8 +981,7 @@ struct bkey *__bch_bset_search(struct btree_keys *b, struct bset_tree *t,
 	 */
 
 	if (unlikely(!t->size)) {
-		i.l = t->data->start;
-		i.r = bset_bkey_last(t->data);
+		m = t->data->start;
 	} else if (bset_written(b, t)) {
 		/*
 		 * Each node in the auxiliary search tree covers a certain range
@@ -1013,36 +990,35 @@ struct bkey *__bch_bset_search(struct btree_keys *b, struct bset_tree *t,
 		 * start and end - handle that here:
 		 */
 
-		if (unlikely(bkey_cmp(search, &t->end) >= 0))
+		if (unlikely(bkey_cmp(search, &t->end) > 0))
 			return bset_bkey_last(t->data);
 
-		if (unlikely(bkey_cmp(search, t->data->start) < 0))
+		if (unlikely(bkey_cmp(search, t->data->start) <= 0))
 			return t->data->start;
 
-		i = bset_search_tree(t, search);
+		m = bset_search_tree(t, PRECEDING_KEY(search));
 	} else {
 		BUG_ON(!b->nsets &&
 		       t->size < bkey_to_cacheline(t, bset_bkey_last(t->data)));
 
-		i = bset_search_write_set(t, search);
+		m = bset_search_write_set(t, search);
 	}
+
+	while (m != bset_bkey_last(t->data) &&
+	       bkey_cmp(m, search) < 0)
+		m = bkey_next(m);
 
 	if (btree_keys_expensive_checks(b)) {
-		BUG_ON(bset_written(b, t) &&
-		       i.l != t->data->start &&
-		       bkey_cmp(tree_to_prev_bkey(t,
-			  inorder_to_tree(bkey_to_cacheline(t, i.l), t)),
-				search) > 0);
+		struct bkey *p = t->data->start;
 
-		BUG_ON(i.r != bset_bkey_last(t->data) &&
-		       bkey_cmp(i.r, search) <= 0);
+		while (p < m &&
+		       bkey_next(p) < m)
+			p = bkey_next(p);
+
+		BUG_ON(p < m && bkey_cmp(p, search) >= 0);
 	}
 
-	while (likely(i.l != i.r) &&
-	       bkey_cmp(i.l, search) <= 0)
-		i.l = bkey_next(i.l);
-
-	return i.l;
+	return m;
 }
 EXPORT_SYMBOL(__bch_bset_search);
 
