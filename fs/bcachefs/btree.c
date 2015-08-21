@@ -440,7 +440,7 @@ static void do_btree_node_write(struct btree *b)
 					 ptrs_to_write, true);
 		continue_at(cl, btree_node_write_done, NULL);
 	} else {
-		trace_bcache_btree_write_sync(b);
+		trace_bcache_btree_bounce_write_fail(b);
 
 		b->bio->bi_vcnt = 0;
 		bch_bio_map(b->bio, i);

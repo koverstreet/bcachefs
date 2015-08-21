@@ -35,7 +35,7 @@ static void moving_io_destructor(struct closure *cl)
 	bio_free_pages(&io->bio.bio);
 
 	if (io->op.replace_collision)
-		trace_bcache_gc_copy_collision(&io->w->key);
+		trace_bcache_copy_collision(&io->w->key);
 
 	bch_keybuf_del(io->keybuf, io->w);
 	kfree(io);

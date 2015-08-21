@@ -111,6 +111,8 @@ static void read_tiering(struct cache_set *c)
 		io->op.tier	= PTR_TIER(c, &w->key,
 					   bch_extent_ptrs(&w->key) - 1) + 1;
 
+		trace_bcache_tiering_copy(&w->key);
+
 		bch_ratelimit_increment(&c->tiering_pd.rate,
 					KEY_SIZE(&w->key) << 9);
 

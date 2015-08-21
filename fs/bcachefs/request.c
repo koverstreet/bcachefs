@@ -433,7 +433,7 @@ static void cache_promote_done(struct closure *cl)
 	struct cache_set *c = op->iop.c;
 
 	if (op->iop.replace_collision) {
-		trace_bcache_cache_miss_collision(c);
+		trace_bcache_promote_collision(&op->iop.replace_key);
 		atomic_inc(&c->accounting.collector.cache_miss_collisions);
 	}
 
@@ -539,7 +539,7 @@ static void __cache_promote(struct cache_set *c, struct bio *orig_bio,
 	bbio = container_of(bio, struct bbio, bio);
 	bkey_copy(&bbio->key, &container_of(orig_bio, struct bbio, bio)->key);
 
-	trace_bcache_cache_promote(orig_bio);
+	trace_bcache_promote(orig_bio);
 
 	bbio->submit_time_us = local_clock_us();
 	closure_bio_submit(bio, &op->cl);
