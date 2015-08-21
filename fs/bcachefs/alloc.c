@@ -476,32 +476,35 @@ void bch_bucket_free(struct cache_set *c, struct bkey *k)
 				  PTR_BUCKET(c, k, i));
 }
 
-static struct cache *bch_get_next_cache_alloc(struct cache_set *c)
+static struct cache *bch_get_next_cache_alloc(struct cache_tier *tier)
 {
-	int i;
-	struct cache *tmp;
+	struct cache *ret;
 
-	tmp = c->cache_by_alloc[0];
-	for (i = 0; i < c->caches_loaded-1; i++)
-		c->cache_by_alloc[i] = c->cache_by_alloc[i+1];
+	ret = tier->devices[0];
+	memmove(&tier->devices[0],
+		&tier->devices[1],
+		sizeof(struct cache *) * (tier->nr_devices - 1));
+	tier->devices[tier->nr_devices - 1] = ret;
 
-	return c->cache_by_alloc[c->caches_loaded-1] = tmp;
+	return ret;
 }
 
 int bch_bucket_alloc_set(struct cache_set *c, unsigned reserve,
-			 struct bkey *k, int n, bool wait)
+			 struct bkey *k, int n,
+			 unsigned tier_idx, bool wait)
 {
 	int i;
+	struct cache_tier *tier = &c->cache_by_alloc[tier_idx];
 
 	mutex_lock(&c->bucket_lock);
-	BUG_ON(!n || n > c->caches_loaded || n > 8);
+	BUG_ON(!n || n > tier->nr_devices || n > 8);
 
 	bkey_init(k);
 
 	/* sort by free space/prio of oldest data in caches */
 
 	for (i = 0; i < n; i++) {
-		struct cache *ca = bch_get_next_cache_alloc(c);
+		struct cache *ca = bch_get_next_cache_alloc(tier);
 		long b = bch_bucket_alloc(ca, reserve, wait);
 
 		if (b == -1)
@@ -558,7 +561,7 @@ static struct open_bucket *bch_open_bucket_get(struct cache_set *c)
 }
 
 struct open_bucket *bch_open_bucket_alloc(struct cache_set *c, unsigned reserve,
-					  int n, bool wait)
+					  int n, unsigned tier, bool wait)
 {
 	int ret;
 	struct open_bucket *b;
@@ -566,7 +569,7 @@ struct open_bucket *bch_open_bucket_alloc(struct cache_set *c, unsigned reserve,
 	wait_event(c->open_buckets_wait,
 		   (b = bch_open_bucket_get(c)));
 
-	ret = bch_bucket_alloc_set(c, reserve, &b->key, n, wait);
+	ret = bch_bucket_alloc_set(c, reserve, &b->key, n, tier, wait);
 	if (ret) {
 		bch_open_bucket_put(c, b);
 		b = NULL;
@@ -599,16 +602,18 @@ struct open_bucket *bch_open_bucket_alloc(struct cache_set *c, unsigned reserve,
 static struct open_bucket *pick_data_bucket(struct cache_set *c,
 					    const struct bkey *search,
 					    unsigned write_point,
+					    unsigned tier_idx,
 					    bool wait)
 	__releases(c->open_buckets_lock)
 	__acquires(c->open_buckets_lock)
 {
+	struct cache_tier *tier = &c->cache_by_alloc[tier_idx];
 	struct open_bucket *b;
 	int i, wp = -1;
 retry:
 	for (i = 0;
-	     i < ARRAY_SIZE(c->data_buckets) &&
-	     (b = c->data_buckets[i]); i++) {
+	     i < ARRAY_SIZE(tier->data_buckets) &&
+	     (b = tier->data_buckets[i]); i++) {
 		if (!bkey_cmp(&b->key, &START_KEY(search)))
 			goto found;
 		else if (b->last_write_point == write_point)
@@ -619,19 +624,19 @@ retry:
 	if (i >= 0)
 		goto found;
 
-	i = ARRAY_SIZE(c->data_buckets) - 1;
-	if (c->data_buckets[i])
+	i = ARRAY_SIZE(tier->data_buckets) - 1;
+	if (tier->data_buckets[i])
 		goto found;
 
 	spin_unlock(&c->open_buckets_lock);
-	b = bch_open_bucket_alloc(c, RESERVE_NONE,
-				  c->data_replicas, wait);
+	b = bch_open_bucket_alloc(c, RESERVE_NONE, c->data_replicas,
+				  tier_idx, wait);
 	spin_lock(&c->open_buckets_lock);
 
 	if (!b)
 		return NULL;
 
-	if (c->data_buckets[i]) {
+	if (tier->data_buckets[i]) {
 		/* we raced - and we must unlock to call bch_bucket_free()... */
 		spin_unlock(&c->open_buckets_lock);
 
@@ -644,20 +649,20 @@ retry:
 		mutex_unlock(&c->bucket_lock);
 		goto retry;
 	} else {
-		c->data_buckets[i] = b;
+		tier->data_buckets[i] = b;
 	}
 found:
-	b = c->data_buckets[i];
+	b = tier->data_buckets[i];
 
 	/*
 	 * Move b to the end of the lru, and keep track of what
 	 * this bucket was last used for:
 	 */
-	memmove(&c->data_buckets[1],
-		&c->data_buckets[0],
+	memmove(&tier->data_buckets[1],
+		&tier->data_buckets[0],
 		sizeof(struct open_bucket *) * i);
 
-	c->data_buckets[0] = b;
+	tier->data_buckets[0] = b;
 
 	b->last_write_point = write_point;
 	bkey_copy_key(&b->key, search);
@@ -681,21 +686,22 @@ found:
  * @wait - should the write wait for a bucket or fail if there isn't
  */
 struct open_bucket *bch_alloc_sectors(struct cache_set *c, struct bkey *k,
-				      unsigned write_point, bool wait,
-				      unsigned long *ptrs_to_write)
+				      unsigned write_point, unsigned tier_idx,
+				      bool wait, unsigned long *ptrs_to_write)
 {
+	struct cache_tier *tier = &c->cache_by_alloc[tier_idx];
 	struct open_bucket *b;
 	unsigned i, sectors;
 
 	spin_lock(&c->open_buckets_lock);
 
-	b = pick_data_bucket(c, k, write_point, wait);
+	b = pick_data_bucket(c, k, write_point, tier_idx, wait);
 	if (!b) {
 		spin_unlock(&c->open_buckets_lock);
 		return NULL;
 	}
 
-	BUG_ON(b != c->data_buckets[0]);
+	BUG_ON(b != tier->data_buckets[0]);
 
 	for (i = 0; i < KEY_PTRS(&b->key); i++)
 		EBUG_ON(ptr_stale(c, &b->key, i));
@@ -734,11 +740,11 @@ struct open_bucket *bch_alloc_sectors(struct cache_set *c, struct bkey *k,
 	if (b->sectors_free) {
 		atomic_inc(&b->pin);
 	} else {
-		memmove(&c->data_buckets[0],
-			&c->data_buckets[1],
+		memmove(&tier->data_buckets[0],
+			&tier->data_buckets[1],
 			sizeof(struct open_bucket *) *
-			(ARRAY_SIZE(c->data_buckets) - 1));
-		c->data_buckets[ARRAY_SIZE(c->data_buckets) - 1] = NULL;
+			(ARRAY_SIZE(tier->data_buckets) - 1));
+		tier->data_buckets[ARRAY_SIZE(tier->data_buckets) - 1] = NULL;
 	}
 
 	spin_unlock(&c->open_buckets_lock);

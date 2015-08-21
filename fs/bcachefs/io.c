@@ -102,8 +102,6 @@ void bch_submit_bbio_replicas(struct bio *bio_src, struct cache_set *c,
 	struct bio *bio;
 	unsigned first, i;
 
-	BUG_ON(KEY_PTRS(k) < 1 || KEY_PTRS(k) > c->caches_loaded);
-
 	first = find_first_bit(ptrs_to_write, KEY_PTRS(k));
 
 	i = first + 1;

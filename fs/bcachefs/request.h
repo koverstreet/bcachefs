@@ -19,6 +19,7 @@ struct data_insert_op {
 		unsigned	flush:1;
 		unsigned	replace:1;
 
+		unsigned	tier:2;
 		unsigned	moving_gc:1;
 
 		unsigned	replace_collision:1;

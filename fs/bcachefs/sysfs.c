@@ -104,6 +104,7 @@ sysfs_pd_controller_attribute(copy_gc);
 rw_attribute(size);
 rw_attribute(meta_replicas);
 rw_attribute(data_replicas);
+rw_attribute(tier);
 
 SHOW(__bch_cached_dev)
 {
@@ -701,6 +702,8 @@ SHOW(__bch_cache)
 					       cache_replacement_policies,
 					       CACHE_REPLACEMENT(&ca->sb));
 
+	sysfs_print(tier,		CACHE_TIER(&ca->sb));
+
 	if (attr == &sysfs_priority_stats) {
 		int cmp(const void *l, const void *r)
 		{	return *((uint16_t *) r) - *((uint16_t *) l); }
@@ -788,6 +791,7 @@ SHOW_LOCKED(bch_cache)
 STORE(__bch_cache)
 {
 	struct cache *ca = container_of(kobj, struct cache, kobj);
+	struct cache_set *c = ca->set;
 
 	if (attr == &sysfs_discard) {
 		bool v = strtoul_or_return(buf);
@@ -797,7 +801,7 @@ STORE(__bch_cache)
 
 		if (v != CACHE_DISCARD(&ca->sb)) {
 			SET_CACHE_DISCARD(&ca->sb, v);
-			bcache_write_super(ca->set);
+			bcache_write_super(c);
 		}
 	}
 
@@ -808,11 +812,46 @@ STORE(__bch_cache)
 			return v;
 
 		if ((unsigned) v != CACHE_REPLACEMENT(&ca->sb)) {
-			mutex_lock(&ca->set->bucket_lock);
+			mutex_lock(&c->bucket_lock);
 			SET_CACHE_REPLACEMENT(&ca->sb, v);
-			mutex_unlock(&ca->set->bucket_lock);
+			mutex_unlock(&c->bucket_lock);
 
-			bcache_write_super(ca->set);
+			bcache_write_super(c);
+		}
+	}
+
+	if (attr == &sysfs_tier) {
+		unsigned long v = strtoul_or_return(buf);
+
+		if (v >= CACHE_TIERS)
+			return -EINVAL;
+
+		if (v != CACHE_TIER(&ca->sb)) {
+			unsigned i;
+			struct cache_tier *tier;
+
+			mutex_lock(&c->bucket_lock);
+			tier = &c->cache_by_alloc[CACHE_TIER(&ca->sb)];
+
+			for (i = 0; i < tier->nr_devices; i++)
+				if (tier->devices[i] == ca)
+					goto found;
+
+			/* Not found */
+			WARN(1, "cache device not found in tier\n");
+			return -EINVAL;
+found:
+			memmove(&tier->devices[i],
+				&tier->devices[i + 1],
+				sizeof(ca) * (tier->nr_devices - i - 1));
+
+			tier = &c->cache_by_alloc[v];
+			tier->devices[tier->nr_devices++] = ca;
+
+			mutex_unlock(&c->bucket_lock);
+
+			SET_CACHE_TIER(&ca->sb, v);
+			bcache_write_super(c);
 		}
 	}
 
@@ -840,6 +879,7 @@ static struct attribute *bch_cache_files[] = {
 	&sysfs_io_errors,
 	&sysfs_clear_stats,
 	&sysfs_cache_replacement_policy,
+	&sysfs_tier,
 	NULL
 };
 KTYPE(bch_cache);

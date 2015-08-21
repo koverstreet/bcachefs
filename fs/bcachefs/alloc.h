@@ -51,15 +51,16 @@ void __bch_bucket_free(struct cache *, struct bucket *);
 void bch_bucket_free(struct cache_set *, struct bkey *);
 
 long bch_bucket_alloc(struct cache *, unsigned, bool);
-int bch_bucket_alloc_set(struct cache_set *, unsigned,
-			 struct bkey *, int, bool);
+int bch_bucket_alloc_set(struct cache_set *, unsigned, struct bkey *,
+			 int, unsigned, bool);
 
 void bch_open_bucket_put(struct cache_set *, struct open_bucket *);
-struct open_bucket *bch_open_bucket_alloc(struct cache_set *,
-					  unsigned, int, bool);
+struct open_bucket *bch_open_bucket_alloc(struct cache_set *, unsigned,
+					  int, unsigned, bool);
 
 struct open_bucket *bch_alloc_sectors(struct cache_set *, struct bkey *,
-				      unsigned, bool, unsigned long *);
+				      unsigned, unsigned, bool,
+				      unsigned long *);
 struct open_bucket *bch_gc_alloc_sectors(struct cache_set *, struct bkey *,
 					 unsigned long *);
 

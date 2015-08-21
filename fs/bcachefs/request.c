@@ -209,7 +209,7 @@ static void bch_data_insert_start(struct closure *cl)
 
 		b = op->moving_gc
 			? bch_gc_alloc_sectors(op->c, k, ptrs_to_write)
-			: bch_alloc_sectors(op->c, k, op->write_point,
+			: bch_alloc_sectors(op->c, k, op->write_point, op->tier,
 					    op->wait, ptrs_to_write);
 		if (!b)
 			goto err;

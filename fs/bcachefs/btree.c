@@ -1093,7 +1093,7 @@ struct btree *__bch_btree_node_alloc(struct cache_set *c, struct btree_op *op,
 	struct btree *b = ERR_PTR(-EAGAIN);
 retry:
 	if (bch_bucket_alloc_set(c, RESERVE_BTREE, &k.key,
-				 c->meta_replicas, wait))
+				 c->meta_replicas, 0, wait))
 		goto err;
 
 	SET_KEY_SIZE(&k.key, c->btree_pages * PAGE_SECTORS);

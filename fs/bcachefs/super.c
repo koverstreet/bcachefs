@@ -422,7 +422,7 @@ static int __uuid_write(struct cache_set *c)
 
 	lockdep_assert_held(&bch_register_lock);
 
-	b = bch_open_bucket_alloc(c, RESERVE_BTREE, c->meta_replicas, true);
+	b = bch_open_bucket_alloc(c, RESERVE_BTREE, c->meta_replicas, 0, true);
 
 	SET_KEY_SIZE(&b->key, min_t(unsigned, c->sb.bucket_size,
 				    1U << (KEY_SIZE_BITS - 1)));
@@ -1736,6 +1736,8 @@ static const char *register_cache_set(struct cache *ca)
 	char buf[12];
 	const char *err = "cannot allocate memory";
 	struct cache_set *c;
+	struct cache_tier *tier;
+	unsigned i, caches_loaded = 0;
 
 	list_for_each_entry(c, &bch_cache_sets, list)
 		if (!memcmp(c->sb.set_uuid, ca->sb.set_uuid, 16)) {
@@ -1783,9 +1785,14 @@ found:
 	kobject_get(&ca->kobj);
 	ca->set = c;
 	ca->set->cache[ca->sb.nr_this_dev] = ca;
-	c->cache_by_alloc[c->caches_loaded++] = ca;
 
-	if (c->caches_loaded == c->sb.nr_in_set)
+	tier = &c->cache_by_alloc[CACHE_TIER(&ca->sb)];
+	tier->devices[tier->nr_devices++] = ca;
+
+	for (i = 0; i < CACHE_TIERS; i++)
+		caches_loaded += c->cache_by_alloc[i].nr_devices;
+
+	if (caches_loaded == c->sb.nr_in_set)
 		run_cache_set(c);
 
 	return NULL;
