@@ -58,6 +58,9 @@ int __bch_count_data(struct btree_keys *b)
 	struct btree_node_iter iter;
 	struct bkey *k;
 
+	if (!btree_keys_expensive_checks(b))
+		return -1;
+
 	if (b->ops->is_extents)
 		for_each_btree_node_key_all(b, k, &iter)
 			ret += KEY_SIZE(k);
