@@ -14,8 +14,7 @@ ssize_t bch_inode_status(char *buf, size_t len, const struct bkey *k)
 		return scnprintf(buf, len, "deleted");
 
 	if (bkey_bytes(k) < sizeof(struct bch_inode))
-		return scnprintf(buf, len, "key too small: %zu",
-				 bkey_bytes(k));
+		return scnprintf(buf, len, "key too small: %lu", bkey_bytes(k));
 
 	if (KEY_OFFSET(k))
 		return scnprintf(buf, len, "offset nonzero: %llu",
@@ -32,7 +31,7 @@ ssize_t bch_inode_status(char *buf, size_t len, const struct bkey *k)
 					 KEY_INODE(k));
 
 		if (bkey_bytes(k) != sizeof(struct bch_inode))
-			return scnprintf(buf, len, "bad key size: %zu",
+			return scnprintf(buf, len, "bad key size: %lu",
 					 bkey_bytes(k));
 
 		break;
@@ -43,7 +42,7 @@ ssize_t bch_inode_status(char *buf, size_t len, const struct bkey *k)
 					 KEY_INODE(k));
 
 		if (bkey_bytes(k) != sizeof(struct bch_inode_blockdev))
-			return scnprintf(buf, len, "bad key size: %zu",
+			return scnprintf(buf, len, "bad key size: %lu",
 					 bkey_bytes(k));
 
 		break;

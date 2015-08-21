@@ -188,7 +188,7 @@ u64 bch_ratelimit_delay(struct bch_ratelimit *d)
 	u64 now = local_clock();
 
 	return time_after64(d->next, now)
-		? div_u64(d->next - now, NSEC_PER_SEC / HZ)
+		? nsecs_to_jiffies(d->next - now)
 		: 0;
 }
 

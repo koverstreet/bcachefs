@@ -542,8 +542,9 @@ static void bch_recalc_capacity(struct cache_set *c)
 					c->bucket_bits;
 
 				ca->reserve_buckets_count =
-					((ca->sb.nbuckets - ca->sb.first_bucket)
-					 * c->bucket_reserve_percent) / 100;
+					div_u64((ca->sb.nbuckets -
+						 ca->sb.first_bucket) *
+						c->bucket_reserve_percent, 100);
 
 			}
 

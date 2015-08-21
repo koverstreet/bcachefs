@@ -106,7 +106,7 @@ static inline void SET_KEY_OFFSET(struct bkey *k, __u64 v)
 
 #define KEY(inode, offset, size)					\
 ((struct bkey) {							\
-	.header	= BKEY_U64s << KEY_U64s_OFFSET,				\
+	.header	= (__u64) BKEY_U64s << KEY_U64s_OFFSET,			\
 	.k1	= (((((__u64) (size)) & KEY_SIZE_MAX) << KEY_SIZE_OFFSET)|\
 		   ((((__u64) (inode)) & KEY_INODE_MAX) << KEY_INODE_OFFSET)|\
 		   ((((__u64) (offset)) >> KEY_OFFSET_L_BITS) &		\

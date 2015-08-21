@@ -296,7 +296,7 @@ struct cache {
 	 * NOTE: GC_GEN == 0 signifies no moving gc, so accessing the
 	 * gc_buckets array is always GC_GEN-1.
 	 */
-#define NUM_GC_GENS 7
+#define NUM_GC_GENS 8
 	struct write_point	gc_buckets[NUM_GC_GENS];
 
 	struct journal_device	journal;

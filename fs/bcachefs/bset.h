@@ -270,12 +270,13 @@ static inline void bch_set_val_u64s(struct bkey *k, unsigned i)
 	SET_KEY_U64s(k, i + BKEY_U64s);
 }
 
-#define __set_bytes(i, k)	(sizeof(*(i)) + (k) * sizeof(uint64_t))
+#define __set_bytes(i, nr_keys)	(sizeof(*(i)) + (nr_keys) * sizeof(u64))
 #define set_bytes(i)		__set_bytes(i, i->keys)
 
-#define __set_blocks(i, k, block_bytes)				\
-	DIV_ROUND_UP(__set_bytes(i, k), block_bytes)
-#define set_blocks(i, block_bytes)				\
+#define __set_blocks(i, nr_keys, block_bytes)				\
+	DIV_ROUND_UP((size_t) __set_bytes(i, nr_keys), block_bytes)
+
+#define set_blocks(i, block_bytes)					\
 	__set_blocks(i, (i)->keys, block_bytes)
 
 static inline size_t bch_btree_keys_u64s_remaining(struct btree_keys *b)
