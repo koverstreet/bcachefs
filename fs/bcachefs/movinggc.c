@@ -131,24 +131,27 @@ static unsigned bucket_write_prio_cmp(struct bucket *l, struct bucket *r)
 	return l->write_prio < r->write_prio;
 }
 
-void bch_moving_gc(struct cache_set *c)
+bool bch_moving_gc(struct cache_set *c)
 {
 	struct cache *ca;
 	struct bucket *b;
 	unsigned i;
+	bool moved = false;
 
 	if (!c->copy_gc_enabled)
-		return;
+		return false;
 
 	mutex_lock(&c->bucket_lock);
 
 	for_each_cache(ca, c, i) {
+		unsigned bucket_move_threshold =
+			ca->sb.bucket_size - (ca->sb.bucket_size >> 3);
 		unsigned sectors_to_move = 0, sectors_gen,
 			 gen_current, sectors_total;
 		int reserve_sectors = ca->sb.bucket_size *
 			(fifo_used(&ca->free[RESERVE_MOVINGGC]) - NUM_GC_GENS);
 
-		if (reserve_sectors < ca->sb.block_size)
+		if (reserve_sectors < (int) ca->sb.block_size)
 			continue;
 
 		/*
@@ -162,7 +165,7 @@ void bch_moving_gc(struct cache_set *c)
 
 			if (GC_MARK(b) == GC_MARK_METADATA ||
 			    !GC_SECTORS_USED(b) ||
-			    GC_SECTORS_USED(b) == ca->sb.bucket_size)
+			    GC_SECTORS_USED(b) >= bucket_move_threshold)
 				continue;
 
 			if (!heap_full(&ca->heap)) {
@@ -182,6 +185,9 @@ void bch_moving_gc(struct cache_set *c)
 			heap_pop(&ca->heap, b, bucket_sectors_cmp);
 			sectors_to_move -= GC_SECTORS_USED(b);
 		}
+
+		if (sectors_to_move)
+			moved = true;
 
 		/*
 		 * resort by write_prio to group into generations, attempts to
@@ -209,6 +215,7 @@ void bch_moving_gc(struct cache_set *c)
 	c->moving_gc_keys.last_scanned = ZERO_KEY;
 
 	read_moving(c);
+	return moved;
 }
 
 void bch_moving_init_cache_set(struct cache_set *c)

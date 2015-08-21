@@ -70,6 +70,22 @@
 #include <linux/random.h>
 #include <trace/events/bcachefs.h>
 
+static void alloc_failed(struct cache *ca)
+{
+	unsigned i;
+
+	for (i = CACHE_TIER(&ca->sb) + 1;
+	     i < ARRAY_SIZE(ca->set->cache_by_alloc);
+	     i++)
+		if (ca->set->cache_by_alloc[i].nr_devices) {
+			ca->set->tiering_pd.rate.rate = UINT_MAX;
+			bch_ratelimit_reset(&ca->set->tiering_pd.rate);
+		}
+
+	ca->invalidate_needs_gc = 1;
+	wake_up_gc(ca->set);
+}
+
 /* Bucket heap / gen */
 
 void bch_rescale_priorities(struct cache_set *c, int sectors)
@@ -203,8 +219,7 @@ static void invalidate_buckets_lru(struct cache *ca)
 			 * We don't want to be calling invalidate_buckets()
 			 * multiple times when it can't do anything
 			 */
-			ca->invalidate_needs_gc = 1;
-			wake_up_gc(ca->set);
+			alloc_failed(ca);
 			return;
 		}
 
@@ -228,8 +243,7 @@ static void invalidate_buckets_fifo(struct cache *ca)
 			bch_invalidate_one_bucket(ca, b);
 
 		if (++checked >= ca->sb.nbuckets) {
-			ca->invalidate_needs_gc = 1;
-			wake_up_gc(ca->set);
+			alloc_failed(ca);
 			return;
 		}
 	}
@@ -253,8 +267,7 @@ static void invalidate_buckets_random(struct cache *ca)
 			bch_invalidate_one_bucket(ca, b);
 
 		if (++checked >= ca->sb.nbuckets / 2) {
-			ca->invalidate_needs_gc = 1;
-			wake_up_gc(ca->set);
+			alloc_failed(ca);
 			return;
 		}
 	}

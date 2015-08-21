@@ -1712,8 +1712,6 @@ static void bch_btree_gc(struct cache_set *c)
 	memcpy(&c->gc_stats, &stats, sizeof(struct gc_stat));
 
 	trace_bcache_gc_end(c);
-
-	bch_moving_gc(c);
 }
 
 static int bch_gc_thread(void *arg)
@@ -1725,6 +1723,8 @@ static int bch_gc_thread(void *arg)
 	while (1) {
 again:
 		bch_btree_gc(c);
+		if (bch_moving_gc(c))
+			continue;
 
 		set_current_state(TASK_INTERRUPTIBLE);
 		if (kthread_should_stop())
