@@ -452,6 +452,35 @@ static int bch_writeback_thread(void *arg)
 	return 0;
 }
 
+void bch_mark_writeback_keys(struct cache_set *c)
+{
+	unsigned i;
+
+	/* don't reclaim buckets to which writeback keys point */
+	rcu_read_lock();
+
+	for (i = 0; i < c->nr_uuids; i++) {
+		struct bcache_device *d = c->devices[i];
+		struct cached_dev *dc;
+		struct keybuf_key *w, *n;
+		unsigned j;
+
+		if (!d || UUID_FLASH_ONLY(&c->uuids[i]))
+			continue;
+		dc = container_of(d, struct cached_dev, disk);
+
+		spin_lock(&dc->writeback_keys.lock);
+		rbtree_postorder_for_each_entry_safe(w, n,
+					&dc->writeback_keys.keys, node)
+			for (j = 0; j < KEY_PTRS(&w->key); j++)
+				SET_GC_MARK(PTR_BUCKET(c, &w->key, j),
+					    GC_MARK_DIRTY);
+		spin_unlock(&dc->writeback_keys.lock);
+	}
+
+	rcu_read_unlock();
+}
+
 /* Init */
 
 struct sectors_dirty_init {
