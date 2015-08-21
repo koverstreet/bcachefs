@@ -605,10 +605,14 @@ static int bcache_device_attach(struct bcache_device *d, struct cache_set *c)
 	lockdep_assert_held(&bch_register_lock);
 
 	ret = radix_tree_insert(&c->devices, bcache_dev_inum(d), d);
-	if (!ret) {
-		d->c = c;
-		closure_get(&c->caching);
+	if (ret) {
+		pr_err("radix_tree_insert() error for inum %llu",
+		       bcache_dev_inum(d));
+		return ret;
 	}
+
+	d->c = c;
+	closure_get(&c->caching);
 
 	return ret;
 }
@@ -1166,7 +1170,8 @@ static int flash_dev_map_fn(struct btree_op *op, struct btree *b,
 			    struct bkey *k)
 {
 	int ret = 0;
-	struct bch_inode_blockdev *inode = (void *) k;
+	struct bch_inode_blockdev *inode =
+		container_of(k, struct bch_inode_blockdev, i_inode.i_key);
 
 	if (KEY_INODE(k) >= BLOCKDEV_INODE_MAX)
 		return MAP_DONE;
