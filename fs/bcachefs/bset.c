@@ -614,9 +614,8 @@ retry:
 }
 EXPORT_SYMBOL(bch_bset_build_written_tree);
 
-static struct bkey *bkey_prev(struct btree_keys *b,
-			      struct bset_tree *t,
-			      struct bkey *k)
+struct bkey *bkey_prev(struct btree_keys *b, struct bset_tree *t,
+		       struct bkey *k)
 {
 	struct bkey *p;
 	int j;
@@ -835,7 +834,7 @@ void bch_bset_insert(struct btree_keys *b,
 
 	/* prev is in the tree, if we merge we're done */
 	if (prev &&
-	    bch_bkey_try_merge(b, prev, insert))
+	    bch_bkey_try_merge_inline(b, iter, prev, insert))
 		return;
 
 	if (where != bset_bkey_last(i) &&
@@ -869,7 +868,7 @@ void bch_bset_insert(struct btree_keys *b,
 		 * a copy of insert, since ->insert_fixup() might trim insert if
 		 * this is a replace operation)
 		 */
-		if (bch_bkey_try_merge(b, insert, where)) {
+		if (bch_bkey_try_merge_inline(b, iter, insert, where)) {
 			bkey_copy(where, insert);
 			return;
 		}
@@ -1199,7 +1198,7 @@ EXPORT_SYMBOL(bch_bset_sort_state_init);
 
 static void btree_mergesort(struct btree_keys *b, struct bset *bset,
 			    struct btree_node_iter *iter,
-			    ptr_filter_fn filter)
+			    ptr_filter_fn filter, bool merge)
 {
 	struct bkey *k, *prev = NULL, *out = bset->start;
 
@@ -1214,7 +1213,7 @@ static void btree_mergesort(struct btree_keys *b, struct bset *bset,
 		if (bkey_deleted(out))
 			continue;
 
-		if (prev && bch_bkey_try_merge(b, prev, out))
+		if (merge && prev && bch_bkey_try_merge(b, prev, out))
 			continue;
 
 		prev = out;
@@ -1248,8 +1247,13 @@ static void __btree_sort(struct btree_keys *b, struct btree_node_iter *iter,
 
 	start_time = local_clock();
 
+	/*
+	 * If we're only doing a partial sort (start != 0), then we can't merge
+	 * extents because that might produce extents that overlap with 0 size
+	 * extents in bsets we aren't sorting:
+	 */
 	if (!sort)
-		btree_mergesort(b, out, iter, filter);
+		btree_mergesort(b, out, iter, filter, !start);
 	else
 		sort(b, out, iter);
 
@@ -1341,7 +1345,7 @@ void bch_btree_sort_into(struct btree_keys *dst,
 
 	bch_btree_node_iter_init_from_start(src, &iter);
 
-	btree_mergesort(src, dst->set->data, &iter, filter);
+	btree_mergesort(src, dst->set->data, &iter, filter, true);
 
 	bch_time_stats_update(&state->time, start_time);
 

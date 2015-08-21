@@ -186,6 +186,9 @@ struct btree_keys_ops {
 	bool		(*key_normalize)(struct btree_keys *, struct bkey *);
 	bool		(*key_merge)(struct btree_keys *,
 				     struct bkey *, struct bkey *);
+	bool		(*key_merge_inline)(struct btree_keys *,
+					    struct btree_node_iter *,
+					    struct bkey *, struct bkey *);
 
 	/*
 	 * Only used for deciding whether to use bkey_start_pos(k) or just the
@@ -324,6 +327,8 @@ static inline struct bkey *bset_bkey_idx(struct bset *i, unsigned idx)
 	return bkey_idx(i, idx);
 }
 
+struct bkey *bkey_prev(struct btree_keys *, struct bset_tree *, struct bkey *);
+
 /*
  * Tries to merge l and r: l should be lower than r
  * Returns true if we were able to merge. If we did merge, l will be the merged
@@ -334,6 +339,15 @@ static inline bool bch_bkey_try_merge(struct btree_keys *b,
 {
 	return b->ops->key_merge
 		? b->ops->key_merge(b, l, r)
+		: false;
+}
+
+static inline bool bch_bkey_try_merge_inline(struct btree_keys *b,
+					     struct btree_node_iter *iter,
+					     struct bkey *l, struct bkey *r)
+{
+	return b->ops->key_merge_inline
+		? b->ops->key_merge_inline(b, iter, l, r)
 		: false;
 }
 

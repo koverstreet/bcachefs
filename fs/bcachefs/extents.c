@@ -1603,9 +1603,99 @@ static bool bch_extent_merge(struct btree_keys *bk, struct bkey *l, struct bkey 
 	return true;
 }
 
+static bool bch_extent_merge_inline(struct btree_keys *b,
+				    struct btree_node_iter *iter,
+				    struct bkey *l, struct bkey *r)
+{
+	struct btree_node_iter_set *set;
+	struct bset_tree *t;
+	struct bkey *k, *m;
+
+	if (!bch_extent_merge(b, l, r))
+		return false;
+
+	if (l >= b->set->data->start &&
+	    l < bset_bkey_last(bset_tree_last(b)->data))
+		m = l;
+	else if (r >= b->set->data->start &&
+		 r < bset_bkey_last(bset_tree_last(b)->data))
+		m = r;
+	else
+		BUG();
+
+	/*
+	 * l is the output of bch_extent_merge(), m is the extent that was in
+	 * the btree.
+	 *
+	 * Iterate over every bset that doesn't contain m, find the iterator's
+	 * position and search from there for 0 size extents that overlap with
+	 * m.
+	 */
+
+	for (t = b->set; t <= b->set + b->nsets; t++) {
+		if (!t->data->u64s ||
+		    (m >= t->data->start &&
+		     m < bset_bkey_last(t->data)))
+			continue;
+
+		for (set = iter->data;
+		     set < iter->data + iter->used;
+		     set++)
+			if (bset_bkey_last(t->data) == set->end) {
+				k = set->k;
+				goto found_pos;
+			}
+
+		/*
+		 * if we didn't find this bset in the iterator, we already got
+		 * to the end of that bset, so start searching from the end of
+		 * the bset.
+		 */
+
+		k = bkey_prev(b, t, bset_bkey_last(t->data));
+found_pos:
+		if (m == l) {
+			/*
+			 * Back merge: 0 size extents will be before the key
+			 * that was just inserted (and thus the iterator
+			 * position) - walk backwards to find them
+			 */
+			for (;
+			     k && bkey_cmp(k->p, bkey_start_pos(l)) > 0;
+			     k = bkey_prev(b, t, k)) {
+				if (bkey_cmp(k->p, l->p) >= 0)
+					continue;
+
+				BUG_ON(!bkey_deleted(k));
+
+				k->p = bkey_start_pos(l);
+				bch_bset_fix_invalidated_key(b, k);
+			}
+		} else {
+			/* Front merge - walk forwards */
+			for (;
+			     k != bset_bkey_last(t->data) &&
+			     bkey_cmp(k->p, l->p) < 0;
+			     k = bkey_next(k)) {
+				if (bkey_cmp(k->p, bkey_start_pos(l)) <= 0)
+					continue;
+
+				BUG_ON(!bkey_deleted(k));
+
+				k->p = l->p;
+				bch_bset_fix_invalidated_key(b, k);
+			}
+		}
+	}
+
+	bch_btree_node_iter_sort(iter);
+	return true;
+}
+
 static const struct btree_keys_ops bch_extent_ops = {
 	.key_normalize	= bch_ptr_normalize,
 	.key_merge	= bch_extent_merge,
+	.key_merge_inline = bch_extent_merge_inline,
 	.is_extents	= true,
 };
 
