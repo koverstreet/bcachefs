@@ -1907,11 +1907,10 @@ static void btree_gc_start(struct cache_set *c)
 
 	for_each_cache(ca, c, i) {
 		ca->bucket_stats[1] = ca->bucket_stats[0];
-		memset(&ca->bucket_stats[0], 0, sizeof(struct bucket_stats));
 
 		for_each_bucket(g, ca) {
 			g->last_gc = ca->bucket_gens[g - ca->buckets];
-			g->mark.counter = 0;
+			bch_mark_free_bucket(ca, g);
 		}
 	}
 

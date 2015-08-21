@@ -57,6 +57,41 @@
 
 #include <trace/events/bcachefs.h>
 
+static void bucket_stats_update(struct cache *ca,
+				struct bucket_mark old,
+				struct bucket_mark new)
+{
+	struct bucket_stats *stats = &ca->bucket_stats[0];
+	int v;
+
+	if ((v = ((int) new.owned_by_allocator - (int) old.owned_by_allocator)))
+		atomic_add_bug(v, &stats->buckets_alloc);
+
+	if ((v = ((int) new.is_metadata - (int) old.is_metadata)))
+		atomic_add_bug(v, &stats->buckets_meta);
+
+	if ((v = ((int) new.cached_sectors - (int) old.cached_sectors)))
+		atomic64_add_bug(v, &stats->sectors_cached);
+
+	if ((v = ((int) !!new.cached_sectors - (int) !!old.cached_sectors)))
+		atomic_add_bug(v, &stats->buckets_cached);
+
+	if ((v = ((int) new.dirty_sectors - (int) old.dirty_sectors)))
+		atomic64_add_bug(v, &stats->sectors_dirty);
+
+	if ((v = ((int) !!new.dirty_sectors - (int) !!old.dirty_sectors)))
+		atomic_add_bug(v, &stats->buckets_dirty);
+}
+
+struct bucket_mark bch_bucket_mark_set(struct cache *ca, struct bucket *g,
+				       struct bucket_mark new)
+{
+	struct bucket_mark old = xchg(&g->mark, new);
+
+	bucket_stats_update(ca, old, new);
+	return old;
+}
+
 #define bucket_cmpxchg(g, old, new, expr)			\
 do {								\
 	old = (g)->mark;					\
@@ -68,71 +103,38 @@ do {								\
 		_v = cmpxchg(&(g)->mark.counter,		\
 			     old.counter,			\
 			     new.counter);			\
-		if (old.counter == _v)				\
+		if (old.counter == _v) {			\
+			bucket_stats_update(ca, old, new);	\
 			break;					\
+		}						\
 		old.counter = _v;				\
 	}							\
 } while (0)
 
 void bch_mark_free_bucket(struct cache *ca, struct bucket *g)
 {
-	struct bucket_mark old, new;
-	struct bucket_stats *stats = &ca->bucket_stats[0];
-
-	bucket_cmpxchg(g, old, new, ({
-		BUG_ON(old.dirty_sectors);
-		BUG_ON(old.cached_sectors);
-		new.counter = 0;
-	}));
-
-	if (old.owned_by_allocator)
-		atomic_dec_bug(&stats->buckets_alloc);
-	else if (old.is_metadata)
-		atomic_dec_bug(&stats->buckets_meta);
+	bch_bucket_mark_set(ca, g, (struct bucket_mark) { .counter = 0 });
 }
 
 void bch_mark_alloc_bucket(struct cache *ca, struct bucket *g)
 {
-	struct bucket_mark old, new;
-	struct bucket_stats *stats = &ca->bucket_stats[0];
+	struct bucket_mark old = bch_bucket_mark_set(ca, g,
+			(struct bucket_mark) { .owned_by_allocator = 1 });
 
-	bucket_cmpxchg(g, old, new, ({
-		BUG_ON(old.dirty_sectors);
-		new.counter = 0;
-		new.owned_by_allocator = 1;
-	}));
+	BUG_ON(old.dirty_sectors);
 
-	if (!old.owned_by_allocator) {
-		if (old.cached_sectors) {
-			atomic64_sub_bug(old.cached_sectors,
-					 &stats->sectors_cached);
-			atomic_dec_bug(&stats->buckets_cached);
-			trace_bcache_invalidate(ca, g - ca->buckets,
-						old.cached_sectors);
-		} else if (old.is_metadata)
-			atomic_dec_bug(&stats->buckets_meta);
-
-		atomic_inc(&stats->buckets_alloc);
-	}
+	if (!old.owned_by_allocator && old.cached_sectors)
+		trace_bcache_invalidate(ca, g - ca->buckets,
+					old.cached_sectors);
 }
 
 void bch_mark_metadata_bucket(struct cache *ca, struct bucket *g)
 {
-	struct bucket_mark old, new;
-	struct bucket_stats *stats = &ca->bucket_stats[0];
+	struct bucket_mark old = bch_bucket_mark_set(ca, g,
+			(struct bucket_mark) { .is_metadata = 1 });
 
-	bucket_cmpxchg(g, old, new, ({
-		BUG_ON(old.cached_sectors);
-		BUG_ON(old.dirty_sectors);
-		new.is_metadata = 1;
-		new.owned_by_allocator = 0;
-	}));
-
-	if (old.owned_by_allocator) {
-		atomic_inc(&stats->buckets_meta);
-		atomic_dec_bug(&stats->buckets_alloc);
-	} else if (!old.is_metadata)
-		atomic_inc(&stats->buckets_meta);
+	BUG_ON(old.cached_sectors);
+	BUG_ON(old.dirty_sectors);
 }
 
 #define saturated_add(ca, dst, src, max)			\
@@ -152,7 +154,6 @@ void bch_mark_data_bucket(struct cache *ca, struct bucket *g,
 			  int sectors, bool dirty)
 {
 	struct bucket_mark old, new;
-	struct bucket_stats *stats = &ca->bucket_stats[0];
 
 	bucket_cmpxchg(g, old, new, ({
 		BUG_ON(old.is_metadata);
@@ -163,55 +164,14 @@ void bch_mark_data_bucket(struct cache *ca, struct bucket *g,
 			saturated_add(ca, new.cached_sectors, sectors,
 				      GC_MAX_SECTORS_USED);
 	}));
-
-	if (!old.owned_by_allocator) {
-		if (dirty) {
-			atomic64_add_bug(sectors, &stats->sectors_dirty);
-
-			if (!old.dirty_sectors && new.dirty_sectors) {
-				if (old.cached_sectors)
-					atomic_dec_bug(&stats->buckets_cached);
-				atomic_inc(&stats->buckets_dirty);
-			} else if (old.dirty_sectors && !new.dirty_sectors) {
-				if (old.cached_sectors)
-					atomic_inc(&stats->buckets_cached);
-				atomic_dec(&stats->buckets_dirty);
-			}
-		} else {
-			atomic64_add_bug(sectors, &stats->sectors_cached);
-
-			if (old.dirty_sectors)
-				/* don't count buckets twice */;
-			else if (!old.cached_sectors && new.cached_sectors)
-				atomic_inc(&stats->buckets_cached);
-			else if (old.cached_sectors && !new.cached_sectors)
-				atomic_dec_bug(&stats->buckets_cached);
-		}
-	}
 }
 
 void bch_unmark_open_bucket(struct cache *ca, struct bucket *g)
 {
 	struct bucket_mark old, new;
-	struct bucket_stats *stats = &ca->bucket_stats[0];
 
 	bucket_cmpxchg(g, old, new, ({
 		BUG_ON(old.is_metadata);
 		new.owned_by_allocator = 0;
 	}));
-
-	if (old.owned_by_allocator) {
-		if (old.dirty_sectors) {
-			atomic64_add_bug(old.dirty_sectors,
-					 &stats->sectors_dirty);
-			atomic64_add_bug(old.cached_sectors,
-					 &stats->sectors_cached);
-			atomic_inc(&stats->buckets_dirty);
-		} else if (old.cached_sectors) {
-			atomic64_add_bug(old.cached_sectors,
-					 &stats->sectors_cached);
-			atomic_inc(&stats->buckets_cached);
-		}
-		atomic_dec(&stats->buckets_alloc);
-	}
 }

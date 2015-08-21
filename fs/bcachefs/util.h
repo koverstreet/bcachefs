@@ -23,6 +23,7 @@ struct closure;
 #define atomic_dec_bug(v)	BUG_ON(atomic_dec_return(v) < 0)
 #define atomic_inc_bug(v, i)	BUG_ON(atomic_inc_return(v) <= i)
 #define atomic_sub_bug(i, v)	BUG_ON(atomic_sub_return(i, v) < 0)
+#define atomic_add_bug(i, v)	BUG_ON(atomic_add_return(i, v) < 0)
 #define atomic64_dec_bug(v)	BUG_ON(atomic64_dec_return(v) < 0)
 #define atomic64_inc_bug(v, i)	BUG_ON(atomic64_inc_return(v) <= i)
 #define atomic64_sub_bug(i, v)	BUG_ON(atomic64_sub_return(i, v) < 0)
