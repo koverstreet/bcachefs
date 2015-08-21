@@ -33,7 +33,8 @@ unsigned bch_extent_nr_ptrs_after_normalize(struct cache_set *,
 void bch_extent_drop_stale(struct cache_set *, struct bkey *);
 bool bch_extent_normalize(struct cache_set *, struct bkey *);
 
-int __bch_add_sectors(struct cache_set *, struct bkey *, u64, int, bool, bool);
+int __bch_add_sectors(struct cache_set *, struct btree *,
+		      struct bkey *, u64, int, bool);
 
 static inline unsigned bch_extent_ptrs(const struct bkey *k)
 {

@@ -302,8 +302,7 @@ static void btree_ptr_debugcheck(struct btree_keys *bk, const struct bkey *k)
 
 			do {
 				seq = read_seqbegin(&c->gc_cur_lock);
-				bad = (!__gc_will_visit_key(c, b->btree_id,
-							    k) &&
+				bad = (!__gc_will_visit_node(c, b) &&
 				       !g->mark.is_metadata);
 			} while (read_seqretry(&c->gc_cur_lock, seq));
 
@@ -497,9 +496,8 @@ static struct bkey *bch_extent_sort_fixup(struct btree_node_iter *iter,
 	return NULL;
 }
 
-int __bch_add_sectors(struct cache_set *c, struct bkey *k,
-		      u64 offset, int sectors,
-		      bool fail_if_stale, bool gc)
+int __bch_add_sectors(struct cache_set *c, struct btree *b, struct bkey *k,
+		      u64 offset, int sectors, bool fail_if_stale)
 {
 	unsigned replicas_found = 0, replicas_needed =
 		CACHE_SET_DATA_REPLICAS_WANT(&c->sb);
@@ -553,8 +551,8 @@ int __bch_add_sectors(struct cache_set *c, struct bkey *k,
 			 *   Fuck me, I hate my life.
 			 */
 
-			if (!bch_mark_data_bucket(c, ca, k, i, sectors,
-						  dirty, gc))
+			if (!bch_mark_data_bucket(c, ca, b, k, i, sectors,
+						  dirty))
 				replicas_found++;
 			else if (dirty && fail_if_stale)
 				goto stale;
@@ -565,16 +563,15 @@ int __bch_add_sectors(struct cache_set *c, struct bkey *k,
 stale:
 	while (++i < bch_extent_ptrs(k))
 		if ((ca = PTR_CACHE(c, k, i)))
-			bch_mark_data_bucket(c, ca, k, i, -sectors,
-					     true, gc);
+			bch_mark_data_bucket(c, ca, b, k, i, -sectors,
+					     true);
 	rcu_read_unlock();
 
 	return -1;
 }
 
-static int bch_add_sectors(struct cache_set *c, struct bkey *k,
-			   u64 offset, int sectors,
-			   bool fail_if_stale)
+static int bch_add_sectors(struct btree *b, struct bkey *k, u64 offset,
+			   int sectors, bool fail_if_stale)
 {
 	int ret;
 
@@ -586,45 +583,44 @@ static int bch_add_sectors(struct cache_set *c, struct bkey *k,
 
 	BUG_ON(KEY_DELETED(k));
 
-	ret = __bch_add_sectors(c, k, offset, sectors, fail_if_stale, false);
+	ret = __bch_add_sectors(b->c, b, k, offset, sectors, fail_if_stale);
 	if (ret)
 		return ret;
 
 	if (!KEY_CACHED(k))
-		bcache_dev_sectors_dirty_add(c, KEY_INODE(k),
+		bcache_dev_sectors_dirty_add(b->c, KEY_INODE(k),
 					     offset, sectors);
 
 	return 0;
 }
 
-static void bch_subtract_sectors(struct cache_set *c, struct bkey *k,
+static void bch_subtract_sectors(struct btree *b, struct bkey *k,
 				 u64 offset, int sectors)
 {
-	bch_add_sectors(c, k, offset, -sectors, false);
+	bch_add_sectors(b, k, offset, -sectors, false);
 }
 
 /* These wrappers subtract exactly the sectors that we're removing from @k */
-static void bch_cut_subtract_back(struct cache_set *c, const struct bkey *where,
+static void bch_cut_subtract_back(struct btree *b, const struct bkey *where,
 				  struct bkey *k)
 {
-	bch_subtract_sectors(c, k, KEY_OFFSET(where),
+	bch_subtract_sectors(b, k, KEY_OFFSET(where),
 			     KEY_OFFSET(k) - KEY_OFFSET(where));
 	bch_cut_back(where, k);
 }
 
-static void bch_cut_subtract_front(struct cache_set *c,
-				   const struct bkey *where,
+static void bch_cut_subtract_front(struct btree *b, const struct bkey *where,
 				   struct bkey *k)
 {
-	bch_subtract_sectors(c, k, KEY_START(k),
+	bch_subtract_sectors(b, k, KEY_START(k),
 			     KEY_OFFSET(where) - KEY_START(k));
 	bch_cut_front(where, k);
 }
 
-static void bch_drop_subtract(struct cache_set *c, struct bkey *k)
+static void bch_drop_subtract(struct btree *b, struct bkey *k)
 {
 	if (KEY_SIZE(k))
-		bch_subtract_sectors(c, k, KEY_START(k), KEY_SIZE(k));
+		bch_subtract_sectors(b, k, KEY_START(k), KEY_SIZE(k));
 	SET_KEY_SIZE(k, 0);
 	SET_KEY_DELETED(k, true);
 }
@@ -681,8 +677,7 @@ static bool bkey_cmpxchg_cmp(struct bkey *k, struct bkey *old)
  * Returns true on success, false on failure (and false means @new no longer
  * overlaps with @k)
  */
-static bool bkey_cmpxchg(struct cache_set *c,
-			 struct btree_keys *b,
+static bool bkey_cmpxchg(struct btree *b,
 			 struct btree_node_iter *iter,
 			 struct bkey *k,
 			 struct bkey *old,
@@ -705,10 +700,10 @@ static bool bkey_cmpxchg(struct cache_set *c,
 	if (bkey_cmp(&START_KEY(k), done) > 0) {
 		/* insert previous partial match: */
 		if (bkey_cmp(done, &START_KEY(new)) > 0)
-			bch_bset_insert(b, iter,
+			bch_bset_insert(&b->keys, iter,
 					bch_key_split(done, new));
 
-		bch_cut_subtract_front(c, &START_KEY(k), new);
+		bch_cut_subtract_front(b, &START_KEY(k), new);
 		*done = START_KEY(k);
 	}
 
@@ -716,13 +711,13 @@ static bool bkey_cmpxchg(struct cache_set *c,
 	if (!ret) {
 		/* failed: */
 		if (bkey_cmp(done, &START_KEY(new)) > 0)
-			bch_bset_insert(b, iter,
+			bch_bset_insert(&b->keys, iter,
 					bch_key_split(done, new));
 
 		if (bkey_cmp(k, new) > 0)
-			bch_drop_subtract(c, new);
+			bch_drop_subtract(b, new);
 		else
-			bch_cut_subtract_front(c, k, new);
+			bch_cut_subtract_front(b, k, new);
 	}
 
 	*done = bkey_cmp(k, new) < 0 ? *k : *new;
@@ -730,9 +725,7 @@ static bool bkey_cmpxchg(struct cache_set *c,
 }
 
 /* We are trying to insert a key with an older version than the existing one */
-
-static void handle_existing_key_newer(struct cache_set *c,
-				      struct btree_keys *b,
+static void handle_existing_key_newer(struct btree *b,
 				      struct btree_node_iter *iter,
 				      struct bkey *insert,
 				      struct bkey *k)
@@ -742,12 +735,12 @@ static void handle_existing_key_newer(struct cache_set *c,
 	switch (bch_extent_overlap(k, insert)) {
 	case BCH_EXTENT_OVERLAP_FRONT:
 		/* k and insert share the start, remove it from insert */
-		bch_cut_subtract_front(c, k, insert);
+		bch_cut_subtract_front(b, k, insert);
 		break;
 
 	case BCH_EXTENT_OVERLAP_BACK:
 		/* k and insert share the end, remove it from insert */
-		bch_cut_subtract_back(c, &START_KEY(k), insert);
+		bch_cut_subtract_back(b, &START_KEY(k), insert);
 		break;
 
 	case BCH_EXTENT_OVERLAP_MIDDLE:
@@ -761,14 +754,14 @@ static void handle_existing_key_newer(struct cache_set *c,
 		 * Insert the start of @insert ourselves, then update
 		 * @insert to to represent the end.
 		 */
-		bch_bset_insert(b, iter,
+		bch_bset_insert(&b->keys, iter,
 				bch_key_split(&START_KEY(k), insert));
-		bch_cut_subtract_front(c, k, insert);
+		bch_cut_subtract_front(b, k, insert);
 		break;
 
 	case BCH_EXTENT_OVERLAP_ALL:
 		/* k completely covers insert -- drop insert */
-		bch_drop_subtract(c, insert);
+		bch_drop_subtract(b, insert);
 		break;
 	}
 }
@@ -808,7 +801,6 @@ bool bch_insert_fixup_extent(struct btree *b, struct bkey *insert,
 			     struct btree_node_iter *iter,
 			     struct bkey *replace_key, struct bkey *done)
 {
-	struct cache_set *c = b->c;
 	struct bkey *k, *split, orig_insert = *insert;
 
 	BUG_ON(!KEY_SIZE(insert));
@@ -831,7 +823,7 @@ bool bch_insert_fixup_extent(struct btree *b, struct bkey *insert,
 	 * can also insert keys with stale pointers, but for those we still need
 	 * to proceed with the insertion.
 	 */
-	if (bch_add_sectors(c, insert, KEY_START(insert),
+	if (bch_add_sectors(b, insert, KEY_START(insert),
 			    KEY_SIZE(insert), replace_key)) {
 		/* We raced - a dirty pointer was stale */
 		*done = *insert;
@@ -852,7 +844,7 @@ bool bch_insert_fixup_extent(struct btree *b, struct bkey *insert,
 			 * XXX: would be better to explicitly signal that we
 			 * need to split
 			 */
-			bch_cut_subtract_back(c, done, insert);
+			bch_cut_subtract_back(b, done, insert);
 			goto out;
 		}
 
@@ -866,13 +858,12 @@ bool bch_insert_fixup_extent(struct btree *b, struct bkey *insert,
 		if (!replace_key)
 			*done = bkey_cmp(k, insert) < 0 ? *k : *insert;
 		else if (KEY_SIZE(k) &&
-			 !bkey_cmpxchg(c, &b->keys, iter, k, replace_key,
-				       insert, done))
+			 !bkey_cmpxchg(b, iter, k, replace_key, insert, done))
 			continue;
 
 		if (KEY_SIZE(k) && !KEY_DELETED(insert) &&
 		    KEY_VERSION(insert) < KEY_VERSION(k)) {
-			handle_existing_key_newer(c, &b->keys, iter, insert, k);
+			handle_existing_key_newer(b, iter, insert, k);
 			continue;
 		}
 
@@ -881,12 +872,12 @@ bool bch_insert_fixup_extent(struct btree *b, struct bkey *insert,
 		switch (bch_extent_overlap(insert, k)) {
 		case BCH_EXTENT_OVERLAP_FRONT:
 			/* insert and k share the start, invalidate in k */
-			bch_cut_subtract_front(c, insert, k);
+			bch_cut_subtract_front(b, insert, k);
 			break;
 
 		case BCH_EXTENT_OVERLAP_BACK:
 			/* insert and k share the end, invalidate in k */
-			bch_cut_subtract_back(c, &START_KEY(insert), k);
+			bch_cut_subtract_back(b, &START_KEY(insert), k);
 			/*
 			 * As the auxiliary tree is indexed by the end of the
 			 * key and we've just changed the end, update the
@@ -900,7 +891,7 @@ bool bch_insert_fixup_extent(struct btree *b, struct bkey *insert,
 			if (!KEY_DELETED(k))
 				b->keys.nr_live_keys -= KEY_U64s(k);
 
-			bch_drop_subtract(c, k);
+			bch_drop_subtract(b, k);
 
 			/*
 			 * Completely overwrote, so if this key isn't in the
@@ -934,7 +925,7 @@ bool bch_insert_fixup_extent(struct btree *b, struct bkey *insert,
 			 * what k points to)
 			 */
 			split = bch_key_split(&START_KEY(insert), k);
-			bch_cut_subtract_front(c, insert, k);
+			bch_cut_subtract_front(b, insert, k);
 			bch_bset_insert(&b->keys, iter, split);
 			break;
 		}
@@ -948,7 +939,7 @@ bool bch_insert_fixup_extent(struct btree *b, struct bkey *insert,
 		 * we've processed, i.e. what insert was)
 		 */
 		if (replace_key)
-			bch_cut_subtract_back(c, done, insert);
+			bch_cut_subtract_back(b, done, insert);
 
 		*done = orig_insert;
 	}
@@ -1037,8 +1028,7 @@ static void bch_extent_debugcheck(struct btree_keys *bk, const struct bkey *k)
 						 stale);
 
 				bad = (!stale &&
-				       !__gc_will_visit_key(c, b->btree_id,
-							    k) &&
+				       !__gc_will_visit_node(c, b) &&
 				       (mark.is_metadata ||
 					(!mark.dirty_sectors &&
 					 !mark.owned_by_allocator &&

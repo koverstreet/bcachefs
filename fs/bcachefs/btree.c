@@ -1614,7 +1614,7 @@ u8 __bch_btree_mark_key(struct cache_set *c, int level, struct bkey *k)
 				bch_mark_metadata_bucket(ca,
 					PTR_BUCKET(c, ca, k, i), true);
 	} else {
-		__bch_add_sectors(c, k, KEY_START(k), KEY_SIZE(k), false, true);
+		__bch_add_sectors(c, NULL, k, KEY_START(k), KEY_SIZE(k), false);
 	}
 
 	rcu_read_unlock();
