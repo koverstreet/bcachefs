@@ -382,8 +382,6 @@ enum btree_id {
 	BTREE_ID_INODES			= 1,
 	BTREE_ID_DIRS			= 2,
 	BTREE_ID_NR			= 3,
-
-	BTREE_ID_UUIDS			= 255,
 };
 
 struct jset_keys {

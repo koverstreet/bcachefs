@@ -30,24 +30,6 @@ struct bkey *bch_journal_find_btree_root(struct cache_set *c, struct jset *j,
 	struct bkey *k;
 	struct jset_keys *jkeys;
 
-	if (j->version < BCACHE_JSET_VERSION_JKEYS) {
-		struct jset_v0 *j0 = (void *) &j;
-
-		switch (id) {
-		case BTREE_ID_EXTENTS:
-			k = &j0->btree_root;
-			*level = j0->btree_level;
-			goto found;
-
-		case BTREE_ID_UUIDS:
-			k = &j0->uuid_bucket;
-			*level = 0;
-			goto found;
-		default:
-			return NULL;
-		}
-	}
-
 	for_each_jset_jkeys(jkeys, j)
 		if (jkeys->btree_id == id &&
 		    JKEYS_BTREE_ROOT(jkeys)) {
@@ -143,6 +125,11 @@ reread:		left = ca->sb.bucket_size - offset;
 
 			if (j->magic != jset_magic(&ca->sb)) {
 				pr_debug("%u: bad magic", bucket_index);
+				return ret;
+			}
+
+			if (j->version != BCACHE_JSET_VERSION) {
+				pr_info("unsupported journal version");
 				return ret;
 			}
 
@@ -336,26 +323,15 @@ void bch_journal_mark(struct cache_set *c, struct list_head *list)
 	struct journal_replay *r;
 
 	list_for_each_entry(r, list, list)
-		if (r->j.version < BCACHE_JSET_VERSION_JKEYS) {
-			struct jset_v0 *j0 = (void *) &r->j;
-
-			for (k = j0->start;
-			     k < bset_bkey_last(j0);
-			     k = bkey_next(k))
+		for_each_jset_key(k, j, &r->j) {
+			if (j->level) {
+				if (!__bch_btree_ptr_invalid(c, k))
+					__bch_btree_mark_key(c, j->level, k);
+			} else if (j->btree_id == BTREE_ID_EXTENTS) {
 				if (!__bch_extent_invalid(c, k))
-					__bch_btree_mark_key(c, 0, k);
-		} else
-			for_each_jset_key(k, j, &r->j) {
-				if (j->level) {
-					if (!__bch_btree_ptr_invalid(c, k))
-						__bch_btree_mark_key(c,
-								j->level, k);
-				} else if (j->btree_id == BTREE_ID_EXTENTS) {
-					if (!__bch_extent_invalid(c, k))
-						__bch_btree_mark_key(c,
-								j->level, k);
-				}
+					__bch_btree_mark_key(c, j->level, k);
 			}
+		}
 }
 
 static int bch_journal_replay_key(struct cache_set *c, enum btree_id id,
@@ -391,27 +367,12 @@ int bch_journal_replay(struct cache_set *c, struct list_head *list)
 "bcache: journal entries %llu-%llu missing! (replaying %llu-%llu)",
 				 n, i->j.seq - 1, start, end);
 
-		if (i->j.version < BCACHE_JSET_VERSION_JKEYS) {
-			struct jset_v0 *j0 = (void *) &i->j;
+		for_each_jset_key(k, jkeys, &i->j) {
+			bch_journal_replay_key(c, jkeys->btree_id, k);
+			if (ret)
+				goto err;
 
-			for (k = j0->start;
-			     k < bset_bkey_last(j0);
-			     k = bkey_next(k)) {
-				ret = bch_journal_replay_key(c,
-						BTREE_ID_EXTENTS, k);
-				if (ret)
-					goto err;
-
-				keys++;
-			}
-		} else {
-			for_each_jset_key(k, jkeys, &i->j) {
-				bch_journal_replay_key(c, jkeys->btree_id, k);
-				if (ret)
-					goto err;
-
-				keys++;
-			}
+			keys++;
 		}
 
 		n = i->j.seq + 1;

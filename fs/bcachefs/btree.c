@@ -181,47 +181,13 @@ static void bch_btree_init_next(struct btree *b)
 
 /* Btree IO */
 
-static void convert_v0_keys(struct btree *b, struct bset *i)
-{
-	/*
-	 * New bkey format is larger than the old one - we can't convert in
-	 * place
-	 */
-
-#if 0
-	struct bkey_v0 *k;
-
-	for (k = (struct bkey_v0 *) i->start;
-	     k < (struct bkey_v0 *) bset_bkey_last(i);
-	     k = bkey_v0_next(k)) {
-		struct bkey t;
-
-		bkey_init(&t);
-
-		SET_KEY_U64s(&t,	KEY0_PTRS(k) + BKEY_U64s);
-		SET_KEY_CSUM(&t,	KEY0_CSUM(k));
-		if (!b->level)
-			SET_KEY_CACHED(&t,	!KEY0_DIRTY(k));
-		SET_KEY_SIZE(&t,	KEY0_SIZE(k));
-		SET_KEY_INODE(&t,	KEY0_INODE(k));
-		SET_KEY_OFFSET(&t,	k->low);
-
-		*k = t;
-	}
-#endif
-}
-
 static u64 btree_csum_set(struct btree *b, struct bset *i)
 {
-	if (i->version < BCACHE_BSET_CSUM) {
-		return csum_set(i);
-	} else {
-		u64 crc = b->key.val[0];
-		void *data = (void *) i + 8, *end = bset_bkey_last(i);
+	u64 crc = b->key.val[0];
+	void *data = (void *) i + 8, *end = bset_bkey_last(i);
 
-		crc = bch_crc64_update(crc, data, end - data);
-		return crc ^ 0xffffffffffffffffULL;
-	}
+	crc = bch_crc64_update(crc, data, end - data);
+	return crc ^ 0xffffffffffffffffULL;
 }
 
 void bch_btree_node_read_done(struct btree *b)
@@ -245,7 +211,7 @@ void bch_btree_node_read_done(struct btree *b)
 	     b->written < btree_blocks(b) && i->seq == b->keys.set[0].data->seq;
 	     i = write_block(b)) {
 		err = "unsupported bset version";
-		if (i->version > BCACHE_BSET_VERSION)
+		if (i->version != BCACHE_BSET_VERSION)
 			goto err;
 
 		err = "bad btree header";
@@ -264,18 +230,6 @@ void bch_btree_node_read_done(struct btree *b)
 		err = "empty set";
 		if (i != b->keys.set[0].data && !i->keys)
 			goto err;
-
-		if (i->version < BCACHE_BSET_KEY_v1)
-			convert_v0_keys(b, i);
-
-		if (b->level) {
-			struct bkey *k;
-
-			for (k = i->start;
-			     k != bset_bkey_last(i) && !bkey_cmp(k, &ZERO_KEY);
-			     k = bkey_next(k))
-				SET_KEY_SIZE(k, 0);
-		}
 
 		bch_btree_iter_push(iter, i->start, bset_bkey_last(i));
 
@@ -1230,10 +1184,6 @@ u8 __bch_btree_mark_key(struct cache_set *c, int level, struct bkey *k)
 	struct bucket *g;
 
 	if (KEY_DELETED(k))
-		return stale;
-
-	/* Old style btree freeing keys */
-	if (level && !bkey_cmp(k, &ZERO_KEY))
 		return stale;
 
 	if (KEY_CACHED(k))

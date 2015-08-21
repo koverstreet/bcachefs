@@ -1545,24 +1545,6 @@ static void run_cache_set(struct cache_set *c)
 			if (bch_cache_allocator_start(ca))
 				goto err;
 
-		/*
-		 * First place it's safe to allocate: btree_check() and
-		 * btree_gc_finish() have to run before we have buckets to
-		 * allocate, and bch_bucket_alloc_set() might cause a journal
-		 * entry to be written so bcache_journal_next() has to be called
-		 * first.
-		 *
-		 * If the uuids were in the old format we have to rewrite them
-		 * before the next journal entry is written:
-		 */
-#if 0
-		err = bch_uuid_convert(c, j, &op.cl);
-		if (err)
-			goto err;
-		if (j->version < BCACHE_JSET_VERSION_BLOCKDEV)
-			__uuid_write(c);
-#endif
-
 		bch_journal_replay(c, &journal);
 		set_bit(JOURNAL_REPLAY_DONE, &c->journal.flags);
 	} else {
