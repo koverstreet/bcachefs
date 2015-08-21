@@ -754,6 +754,36 @@ static bool handle_existing_key_newer(struct cache_set *c,
 	return false;
 }
 
+/**
+ * bch_extent_insert_fixup - when about to insert a new extent, deal with all
+ * the existing keys @insert overlaps with.
+ *
+ * this may result in not actually doing the insert - because e.g. for cmpxchg
+ * operations this is where that logic lives.
+ *
+ * BSET INVARIANTS: this function is responsible for maintaining all the
+ * invariants for bsets of extents in memory. things get really hairy with 0
+ * size extents
+ *
+ * within one bset:
+ *
+ * START_KEY(bkey_next(k)) >= k
+ *
+ * i.e. strict ordering, no overlapping extents.
+ *
+ * multiple bsets (i.e. full btree node):
+ *
+ * ∀ k, j
+ *   KEY_SIZE(k) != 0 ∧ KEY_SIZE(j) != 0 →
+ *     ¬ (k > START_KEY(j) ∧ k < j)
+ *
+ * i.e. no two overlapping keys _of nonzero size_
+ *
+ * We can't realistically maintain this invariant for zero size keys because of
+ * the key merging done in bch_btree_insert_key() - for two mergeable keys k, j
+ * there may be another 0 size key between them in another bset, and it will
+ * thus overlap with the merged key.
+ */
 static bool bch_extent_insert_fixup(struct btree_keys *b,
 				    struct bkey *insert,
 				    struct btree_iter *iter,
