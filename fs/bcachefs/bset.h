@@ -539,6 +539,7 @@ static inline void bch_keylist_pop_front(struct keylist *l)
 	.end_keys = bkey_next(k)				\
 })
 
+void bch_keylist_add_in_order(struct keylist *, struct bkey *);
 int bch_keylist_realloc(struct keylist *, unsigned);
 
 /*

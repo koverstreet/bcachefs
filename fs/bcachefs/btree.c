@@ -1721,7 +1721,7 @@ static int btree_gc_coalesce(struct btree *b, struct btree_op *op,
 	closure_sync(&cl);
 
 	/* The keys for the old nodes get deleted */
-	for (i = 0; i < old_nodes; i++) {
+	for (i = old_nodes - 1; i > 0; --i) {
 		*keylist.top = r[i].b->key;
 		bch_set_extent_ptrs(keylist.top, 0);
 		SET_KEY_DELETED(keylist.top, true);
@@ -1729,9 +1729,12 @@ static int btree_gc_coalesce(struct btree *b, struct btree_op *op,
 		__bch_keylist_push(&keylist);
 	}
 
-	/* Keys for the new nodes get inserted */
+	/*
+	 * Keys for the new nodes get inserted: bch_btree_insert_keys() only
+	 * does the lookup once and thus expects the keys to be in sorted order
+	 */
 	for (i = 0; i < nodes; i++)
-		bch_keylist_add(&keylist, &new_nodes[i]->key);
+		bch_keylist_add_in_order(&keylist, &new_nodes[i]->key);
 
 	/* Insert the newly coalesced nodes */
 	bch_btree_insert_node(b, op, &keylist, NULL, NULL);

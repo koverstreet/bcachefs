@@ -194,6 +194,23 @@ int bch_keylist_realloc(struct keylist *l, unsigned u64s)
 	return 0;
 }
 
+void bch_keylist_add_in_order(struct keylist *l, struct bkey *insert)
+{
+	struct bkey *where = l->bot;
+
+	while (where != l->top &&
+	       bkey_cmp(insert, where) >= 0)
+		where = bkey_next(where);
+
+	memmove((u64 *) where + KEY_U64s(insert),
+		where,
+		((void *) l->top) - ((void *) where));
+
+	l->top_p += KEY_U64s(insert);
+	BUG_ON(l->top_p > l->end_keys_p);
+	bkey_copy(where, insert);
+}
+
 /* Auxiliary search trees */
 
 /* 32 bits total: */
