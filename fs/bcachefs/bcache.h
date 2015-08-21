@@ -390,6 +390,7 @@ struct cache_set {
 	/* Counts outstanding writes, for clean transition to read-only */
 	struct percpu_ref	writes;
 	struct completion	write_disable_complete;
+	struct work_struct	read_only_work;
 
 	struct cache __rcu	*cache[MAX_CACHES_PER_SET];
 	struct cache_member_rcu	*members;

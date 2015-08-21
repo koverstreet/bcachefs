@@ -643,6 +643,16 @@ static void bch_cache_set_read_only(struct cache_set *c)
 	trace_bcache_cache_set_read_only_done(c);
 }
 
+static void bch_cache_set_read_only_work(struct work_struct *work)
+{
+	struct cache_set *c =
+		container_of(work, struct cache_set, read_only_work);
+
+	mutex_lock(&bch_register_lock);
+	bch_cache_set_read_only(c);
+	mutex_unlock(&bch_register_lock);
+}
+
 void bch_cache_set_fail(struct cache_set *c)
 {
 	switch (CACHE_ERROR_ACTION(&c->sb)) {
@@ -650,7 +660,7 @@ void bch_cache_set_fail(struct cache_set *c)
 		break;
 	case BCH_ON_ERROR_RO:
 		pr_err("%pU going read only", c->sb.set_uuid.b);
-		bch_cache_set_read_only(c);
+		schedule_work(&c->read_only_work);
 		break;
 	case BCH_ON_ERROR_PANIC:
 		panic("bcache: %pU panic after error\n",
@@ -836,6 +846,7 @@ static struct cache_set *bch_cache_set_alloc(struct cache *ca)
 	mutex_init(&c->bucket_lock);
 	spin_lock_init(&c->btree_root_lock);
 	init_completion(&c->write_disable_complete);
+	INIT_WORK(&c->read_only_work, bch_cache_set_read_only_work);
 
 	init_rwsem(&c->gc_lock);
 	mutex_init(&c->gc_scan_keylist_lock);
