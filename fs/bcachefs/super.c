@@ -1334,7 +1334,6 @@ static void cache_set_free(struct closure *cl)
 	if (!IS_ERR_OR_NULL(c->debug))
 		debugfs_remove(c->debug);
 
-	bch_open_buckets_free(c);
 	bch_btree_cache_free(c);
 	bch_journal_free(c);
 
@@ -1500,6 +1499,7 @@ struct cache_set *bch_cache_set_alloc(struct cache_sb *sb)
 	spin_lock_init(&c->btree_split_time.lock);
 	spin_lock_init(&c->btree_read_time.lock);
 
+	bch_open_buckets_init(c);
 	bch_moving_init_cache_set(c);
 
 	INIT_LIST_HEAD(&c->list);
@@ -1507,7 +1507,6 @@ struct cache_set *bch_cache_set_alloc(struct cache_sb *sb)
 	INIT_LIST_HEAD(&c->btree_cache);
 	INIT_LIST_HEAD(&c->btree_cache_freeable);
 	INIT_LIST_HEAD(&c->btree_cache_freed);
-	INIT_LIST_HEAD(&c->data_buckets);
 
 	INIT_WORK(&c->bio_submit_work, bch_bio_submit_work);
 	spin_lock_init(&c->bio_submit_lock);
@@ -1532,7 +1531,6 @@ struct cache_set *bch_cache_set_alloc(struct cache_sb *sb)
 						   WQ_MEM_RECLAIM, 0)) ||
 	    bch_journal_alloc(c) ||
 	    bch_btree_cache_alloc(c) ||
-	    bch_open_buckets_alloc(c) ||
 	    bch_bset_sort_state_init(&c->sort, ilog2(c->btree_pages)))
 		goto err;
 

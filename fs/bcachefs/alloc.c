@@ -491,14 +491,61 @@ err:
 	return -1;
 }
 
-/* Sector allocator */
+static void __bch_open_bucket_put(struct cache_set *c, struct open_bucket *b)
+{
+	list_move(&b->list, &c->open_buckets_free);
+	wake_up(&c->open_buckets_wait);
+}
 
-struct open_bucket {
-	struct list_head	list;
-	unsigned		last_write_point;
-	unsigned		sectors_free;
-	BKEY_PADDED(key);
-};
+void bch_open_bucket_put(struct cache_set *c, struct open_bucket *b)
+{
+	if (atomic_dec_and_test(&b->pin)) {
+		spin_lock(&c->open_buckets_lock);
+		__bch_open_bucket_put(c, b);
+		spin_unlock(&c->open_buckets_lock);
+	}
+}
+
+static struct open_bucket *bch_open_bucket_get(struct cache_set *c)
+{
+	struct open_bucket *ret = NULL;
+
+	spin_lock(&c->open_buckets_lock);
+
+	if (!list_empty(&c->open_buckets_free)) {
+		ret = list_first_entry(&c->open_buckets_free,
+				       struct open_bucket, list);
+		list_move(&ret->list, &c->open_buckets_open);
+		atomic_set(&ret->pin, 1);
+		bkey_init(&ret->key);
+	}
+
+	spin_unlock(&c->open_buckets_lock);
+
+	return ret;
+}
+
+struct open_bucket *bch_open_bucket_alloc(struct cache_set *c, unsigned reserve,
+					  int n, bool wait)
+{
+	int ret;
+	struct open_bucket *b;
+
+	wait_event(c->open_buckets_wait,
+		   (b = bch_open_bucket_get(c)));
+
+	ret = bch_bucket_alloc_set(c, reserve, &b->key, n, wait);
+	if (ret) {
+		bch_open_bucket_put(c, b);
+		b = NULL;
+	} else {
+		b->sectors_free = c->sb.bucket_size;
+	}
+
+	return b;
+}
+
+/* Sector allocator */
 
 /*
  * We keep multiple buckets open for writes, and try to segregate different
@@ -522,29 +569,74 @@ struct open_bucket {
 static struct open_bucket *pick_data_bucket(struct cache_set *c,
 					    const struct bkey *search,
 					    unsigned write_point,
-					    struct bkey *alloc)
+					    unsigned write_prio,
+					    bool wait)
+	__releases(c->open_buckets_lock)
+	__acquires(c->open_buckets_lock)
 {
-	struct open_bucket *ret, *ret_task = NULL;
-
-	list_for_each_entry_reverse(ret, &c->data_buckets, list)
-		if (!bkey_cmp(&ret->key, &START_KEY(search)))
+	struct open_bucket *b;
+	int i, wp = -1;
+retry:
+	for (i = 0;
+	     i < ARRAY_SIZE(c->data_buckets) &&
+	     (b = c->data_buckets[i]); i++) {
+		if (!bkey_cmp(&b->key, &START_KEY(search)))
 			goto found;
-		else if (ret->last_write_point == write_point)
-			ret_task = ret;
-
-	ret = ret_task ?: list_first_entry(&c->data_buckets,
-					   struct open_bucket, list);
-found:
-	if (!ret->sectors_free && KEY_PTRS(alloc)) {
-		ret->sectors_free = c->sb.bucket_size;
-		bkey_copy(&ret->key, alloc);
-		bkey_init(alloc);
+		else if (b->last_write_point == write_point)
+			wp = i;
 	}
 
-	if (!ret->sectors_free)
-		ret = NULL;
+	i = wp;
+	if (i >= 0)
+		goto found;
 
-	return ret;
+	i = ARRAY_SIZE(c->data_buckets) - 1;
+	if (c->data_buckets[i])
+		goto found;
+
+	spin_unlock(&c->open_buckets_lock);
+	b = bch_open_bucket_alloc(c, write_prio
+				  ? RESERVE_MOVINGGC
+				  : RESERVE_NONE,
+				  1, wait);
+	spin_lock(&c->open_buckets_lock);
+
+	if (!b)
+		return NULL;
+
+	if (c->data_buckets[i]) {
+		/* we raced - and we must unlock to call bch_bucket_free()... */
+		spin_unlock(&c->open_buckets_lock);
+
+		mutex_lock(&c->bucket_lock);
+		bkey_put(c, &b->key);
+		bch_bucket_free(c, &b->key);
+
+		spin_lock(&c->open_buckets_lock);
+		__bch_open_bucket_put(c, b);
+
+		mutex_unlock(&c->bucket_lock);
+		goto retry;
+	} else {
+		c->data_buckets[i] = b;
+	}
+found:
+	b = c->data_buckets[i];
+
+	/*
+	 * Move b to the end of the lru, and keep track of what
+	 * this bucket was last used for:
+	 */
+	memmove(&c->data_buckets[1],
+		&c->data_buckets[0],
+		sizeof(struct open_bucket *) * i);
+
+	c->data_buckets[0] = b;
+
+	b->last_write_point = write_point;
+	bkey_copy_key(&b->key, search);
+
+	return b;
 }
 
 /*
@@ -562,43 +654,22 @@ found:
  * @tier - which tier this write is destined towards
  * @wait - should the write wait for a bucket or fail if there isn't
  */
-bool bch_alloc_sectors(struct cache_set *c, struct bkey *k,
-		       unsigned write_point, unsigned write_prio, bool wait)
+struct open_bucket *bch_alloc_sectors(struct cache_set *c, struct bkey *k,
+				      unsigned write_point, unsigned write_prio,
+				      bool wait)
 {
 	struct open_bucket *b;
-	BKEY_PADDED(key) alloc;
 	unsigned i, sectors;
 
-	/*
-	 * We might have to allocate a new bucket, which we can't do with a
-	 * spinlock held. So if we have to allocate, we drop the lock, allocate
-	 * and then retry. KEY_PTRS() indicates whether alloc points to
-	 * allocated bucket(s).
-	 */
+	spin_lock(&c->open_buckets_lock);
 
-	bkey_init(&alloc.key);
-	spin_lock(&c->data_bucket_lock);
-
-	while (!(b = pick_data_bucket(c, k, write_point, &alloc.key))) {
-		unsigned watermark = write_prio
-			? RESERVE_MOVINGGC
-			: RESERVE_NONE;
-
-		spin_unlock(&c->data_bucket_lock);
-
-		if (bch_bucket_alloc_set(c, watermark, &alloc.key, 1, wait))
-			return false;
-
-		spin_lock(&c->data_bucket_lock);
+	b = pick_data_bucket(c, k, write_point, write_prio, wait);
+	if (!b) {
+		spin_unlock(&c->open_buckets_lock);
+		return NULL;
 	}
 
-	/*
-	 * If we had to allocate, we might race and not need to allocate the
-	 * second time we call find_data_bucket(). If we allocated a bucket but
-	 * didn't use it, drop the refcount bch_bucket_alloc_set() took:
-	 */
-	if (KEY_PTRS(&alloc.key))
-		bkey_put(c, &alloc.key);
+	BUG_ON(b != c->data_buckets[0]);
 
 	for (i = 0; i < KEY_PTRS(&b->key); i++)
 		EBUG_ON(ptr_stale(c, &b->key, i));
@@ -614,67 +685,53 @@ bool bch_alloc_sectors(struct cache_set *c, struct bkey *k,
 	SET_KEY_SIZE(k, sectors);
 	SET_KEY_PTRS(k, KEY_PTRS(&b->key));
 
-	/*
-	 * Move b to the end of the lru, and keep track of what this bucket was
-	 * last used for:
-	 */
-	list_move_tail(&b->list, &c->data_buckets);
-	bkey_copy_key(&b->key, k);
-	b->last_write_point = write_point;
+	/* update open bucket for next time: */
 
 	b->sectors_free	-= sectors;
-
 	for (i = 0; i < KEY_PTRS(&b->key); i++) {
-		SET_PTR_OFFSET(&b->key, i, PTR_OFFSET(&b->key, i) + sectors);
+		if (b->sectors_free)
+			SET_PTR_OFFSET(&b->key, i,
+				       PTR_OFFSET(&b->key, i) + sectors);
 
 		atomic_long_add(sectors,
 				&PTR_CACHE(c, &b->key, i)->sectors_written);
 	}
-
-	if (b->sectors_free < c->sb.block_size)
-		b->sectors_free = 0;
 
 	/*
 	 * k takes refcounts on the buckets it points to until it's inserted
 	 * into the btree, but if we're done with this bucket we just transfer
 	 * get_data_bucket()'s refcount.
 	 */
-	if (b->sectors_free)
-		bkey_get(c, &b->key);
 
-	spin_unlock(&c->data_bucket_lock);
-	return true;
+	if (b->sectors_free) {
+		bkey_get(c, &b->key);
+		atomic_inc(&b->pin);
+	} else {
+		memmove(&c->data_buckets[0],
+			&c->data_buckets[1],
+			sizeof(struct open_bucket *) *
+			(ARRAY_SIZE(c->data_buckets) - 1));
+		c->data_buckets[ARRAY_SIZE(c->data_buckets) - 1] = NULL;
+	}
+
+	spin_unlock(&c->open_buckets_lock);
+
+	return b;
 }
 
 /* Init */
 
-void bch_open_buckets_free(struct cache_set *c)
+void bch_open_buckets_init(struct cache_set *c)
 {
-	struct open_bucket *b;
+	unsigned i;
 
-	while (!list_empty(&c->data_buckets)) {
-		b = list_first_entry(&c->data_buckets,
-				     struct open_bucket, list);
-		list_del(&b->list);
-		kfree(b);
-	}
-}
+	INIT_LIST_HEAD(&c->open_buckets_open);
+	INIT_LIST_HEAD(&c->open_buckets_free);
+	init_waitqueue_head(&c->open_buckets_wait);
+	spin_lock_init(&c->open_buckets_lock);
 
-int bch_open_buckets_alloc(struct cache_set *c)
-{
-	int i;
-
-	spin_lock_init(&c->data_bucket_lock);
-
-	for (i = 0; i < 6; i++) {
-		struct open_bucket *b = kzalloc(sizeof(*b), GFP_KERNEL);
-		if (!b)
-			return -ENOMEM;
-
-		list_add(&b->list, &c->data_buckets);
-	}
-
-	return 0;
+	for (i = 0; i < ARRAY_SIZE(c->open_buckets); i++)
+		list_add(&c->open_buckets[i].list, &c->open_buckets_free);
 }
 
 int bch_cache_allocator_start(struct cache *ca)

@@ -25,6 +25,8 @@ struct data_insert_op {
 	};
 	};
 
+	struct open_bucket	*open_buckets[2];
+
 	struct keylist		insert_keys;
 	BKEY_PADDED(insert_key);
 	BKEY_PADDED(replace_key);

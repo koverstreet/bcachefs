@@ -42,11 +42,14 @@ long bch_bucket_alloc(struct cache *, unsigned, bool);
 int bch_bucket_alloc_set(struct cache_set *, unsigned,
 			 struct bkey *, int, bool);
 
-bool bch_alloc_sectors(struct cache_set *, struct bkey *,
-		       unsigned, unsigned, bool);
+void bch_open_bucket_put(struct cache_set *, struct open_bucket *);
+struct open_bucket *bch_open_bucket_alloc(struct cache_set *,
+					  unsigned, int, bool);
 
-int bch_open_buckets_alloc(struct cache_set *);
-void bch_open_buckets_free(struct cache_set *);
+struct open_bucket *bch_alloc_sectors(struct cache_set *, struct bkey *,
+				      unsigned, unsigned, bool);
+
+void bch_open_buckets_init(struct cache_set *);
 int bch_cache_allocator_start(struct cache *);
 
 #endif /* _BCACHE_ALLOC_H */

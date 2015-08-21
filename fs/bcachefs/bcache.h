@@ -441,6 +441,14 @@ enum alloc_reserve {
 	RESERVE_NR,
 };
 
+struct open_bucket {
+	struct list_head	list;
+	atomic_t		pin;
+	unsigned		last_write_point;
+	unsigned		sectors_free;
+	BKEY_PADDED(key);
+};
+
 struct cache {
 	struct cache_set	*set;
 	struct cache_sb		sb;
@@ -633,8 +641,12 @@ struct cache_set {
 	uint16_t		min_prio;
 
 	/* SECTOR ALLOCATOR */
-	struct list_head	data_buckets;
-	spinlock_t		data_bucket_lock;
+	struct list_head	open_buckets_open;
+	struct list_head	open_buckets_free;
+	wait_queue_head_t	open_buckets_wait;
+	spinlock_t		open_buckets_lock;
+	struct open_bucket	open_buckets[64];
+	struct open_bucket	*data_buckets[6];
 
 	/* GARBAGE COLLECTION */
 	struct task_struct	*gc_thread;

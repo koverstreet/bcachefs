@@ -51,6 +51,7 @@ static void bch_data_insert_keys(struct closure *cl)
 {
 	struct data_insert_op *op = container_of(cl, struct data_insert_op, cl);
 	struct bkey *replace_key = op->replace ? &op->replace_key : NULL;
+	unsigned i;
 	int ret;
 
 	/*
@@ -72,6 +73,12 @@ static void bch_data_insert_keys(struct closure *cl)
 		op->error		= -ENOMEM;
 		op->insert_data_done	= true;
 	}
+
+	for (i = 0; i < ARRAY_SIZE(op->open_buckets); i++)
+		if (op->open_buckets[i]) {
+			bch_open_bucket_put(op->c, op->open_buckets[i]);
+			op->open_buckets[i] = NULL;
+		}
 
 	if (!op->insert_data_done)
 		continue_at(cl, bch_data_insert_start, op->wq);
@@ -163,6 +170,8 @@ static void bch_data_insert_start(struct closure *cl)
 {
 	struct data_insert_op *op = container_of(cl, struct data_insert_op, cl);
 	struct bio *bio = op->bio, *n;
+	unsigned open_bucket_nr = 0;
+	struct open_bucket *b;
 
 	if (op->bypass)
 		return bch_data_invalidate(cl);
@@ -180,6 +189,10 @@ static void bch_data_insert_start(struct closure *cl)
 
 		BUG_ON(bio_sectors(bio) != KEY_SIZE(&op->insert_key));
 
+		if (open_bucket_nr == ARRAY_SIZE(op->open_buckets))
+			continue_at(cl, bch_data_insert_keys,
+				    op->c->btree_insert_wq);
+
 		/* 1 for the device pointer and 1 for the chksum */
 		if (bch_keylist_realloc(&op->insert_keys,
 					bkey_u64s(&op->insert_key) + 1 +
@@ -190,9 +203,12 @@ static void bch_data_insert_start(struct closure *cl)
 		k = op->insert_keys.top;
 		bkey_copy(k, &op->insert_key);
 
-		if (!bch_alloc_sectors(op->c, k, op->write_point,
-				       op->write_prio, op->wait))
+		b = bch_alloc_sectors(op->c, k, op->write_point,
+				      op->write_prio, op->wait);
+		if (!b)
 			goto err;
+
+		op->open_buckets[open_bucket_nr++] = b;
 
 		bch_cut_front(k, &op->insert_key);
 
@@ -276,6 +292,8 @@ void bch_data_insert(struct closure *cl)
 
 	trace_bcache_write(op->c, KEY_INODE(&op->insert_key), op->bio,
 			   KEY_DIRTY(&op->insert_key), op->bypass);
+
+	memset(op->open_buckets, 0, sizeof(op->open_buckets));
 
 	if (!op->replace) {
 		/* XXX: discards may be for more sectors than max key size */
