@@ -329,6 +329,8 @@ static void bch_data_insert_start(struct closure *cl)
 		bch_submit_bbio_replicas(n, op->c, k, ptrs_from, false);
 
 		bch_extent_normalize(op->c, k);
+		bch_check_mark_super(op->c, k, false);
+
 		bch_keylist_push(&op->insert_keys);
 	} while (n != bio);
 

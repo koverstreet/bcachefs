@@ -725,6 +725,7 @@ static void journal_write_locked(struct closure *cl)
 	struct cache *ca;
 	struct journal_write *w = c->journal.cur;
 	struct bkey *k = &c->journal.key;
+	BKEY_PADDED(k) tmp;
 	unsigned i, sectors;
 
 	struct bio *bio;
@@ -801,11 +802,19 @@ static void journal_write_locked(struct closure *cl)
 		ca->journal.seq[ca->journal.cur_idx] = w->data->seq;
 	}
 
+	/*
+	 * Make a copy of the key we're writing to for check_mark_super, since
+	 * journal_reclaim will change it
+	 */
+	bkey_copy(&tmp.k, k);
+
 	atomic_dec_bug(&fifo_back(&c->journal.pin));
 	bch_journal_next(&c->journal);
 	journal_reclaim(c);
 
 	spin_unlock(&c->journal.lock);
+
+	bch_check_mark_super(c, &tmp.k, true);
 
 	while ((bio = bio_list_pop(&list)))
 		closure_bio_submit_punt(bio, cl, c);

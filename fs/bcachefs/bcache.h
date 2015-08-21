@@ -194,6 +194,7 @@
 
 #include "bcachefs_format.h"
 #include "bset.h"
+#include "extents.h"
 #include "util.h"
 
 #include <linux/dynamic_fault.h>
@@ -1119,6 +1120,35 @@ static inline struct bcache_device *bch_dev_find(struct cache_set *c, u64 inode)
 #define kobj_attribute_rw(n, show, store)				\
 	static struct kobj_attribute ksysfs_##n =			\
 		__ATTR(n, S_IWUSR|S_IRUSR, show, store)
+
+/* superblock */
+
+void bch_check_mark_super_slowpath(struct cache_set *, struct bkey *, bool);
+
+static inline bool bch_check_super_marked(struct cache_set *c,
+					  struct bkey *k, bool meta)
+{
+	unsigned ptr;
+	struct cache_member *mi;
+
+	for (ptr = 0; ptr < bch_extent_ptrs(k); ptr++) {
+		mi = c->members + PTR_DEV(k, ptr);
+
+		if (!(meta ? CACHE_HAS_METADATA : CACHE_HAS_DATA)(mi))
+			return false;
+	}
+
+	return true;
+}
+
+static inline void bch_check_mark_super(struct cache_set *c,
+					struct bkey *k, bool meta)
+{
+	if (bch_check_super_marked(c, k, meta))
+		return;
+
+	bch_check_mark_super_slowpath(c, k, meta);
+}
 
 /* Forward declarations */
 

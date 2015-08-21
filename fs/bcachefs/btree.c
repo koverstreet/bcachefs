@@ -1302,6 +1302,8 @@ retry:
 		goto retry;
 	}
 
+	bch_check_mark_super(c, &b->key, true);
+
 	b->accessed = 1;
 	b->parent = parent;
 	bch_bset_init_next(&b->keys, b->keys.set->data);

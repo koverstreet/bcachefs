@@ -527,13 +527,12 @@ static int cache_sb_from_cache_set(struct cache_set *c, struct cache *ca)
 	return 0;
 }
 
-void bcache_write_super(struct cache_set *c)
+static void __bcache_write_super(struct cache_set *c)
 {
 	struct closure *cl = &c->sb_write;
 	struct cache *ca;
 	unsigned i;
 
-	down(&c->sb_write_mutex);
 	closure_init(cl, &c->cl);
 
 	c->sb.seq++;
@@ -557,6 +556,12 @@ void bcache_write_super(struct cache_set *c)
 	}
 
 	closure_return_with_destructor(cl, bcache_write_super_unlock);
+}
+
+void bcache_write_super(struct cache_set *c)
+{
+	down(&c->sb_write_mutex);
+	__bcache_write_super(c);
 }
 
 /*
@@ -727,6 +732,31 @@ static void prio_read(struct cache *ca, uint64_t bucket)
 		ca->buckets[b].last_gc = d->gen;
 		ca->bucket_gens[b] = d->gen;
 	}
+}
+
+void bch_check_mark_super_slowpath(struct cache_set *c,
+				   struct bkey *k, bool meta)
+{
+	unsigned ptr;
+	struct cache_member *mi;
+
+	down(&c->sb_write_mutex);
+
+	/* recheck, might have raced */
+	if (bch_check_super_marked(c, k, meta)) {
+		up(&c->sb_write_mutex);
+		return;
+	}
+
+	for (ptr = 0; ptr < bch_extent_ptrs(k); ptr++) {
+		mi = c->members + PTR_DEV(k, ptr);
+
+		(meta
+		 ? SET_CACHE_HAS_METADATA
+		 : SET_CACHE_HAS_DATA)(mi, true);
+	}
+
+	__bcache_write_super(c);
 }
 
 /* Bcache device */
