@@ -202,19 +202,6 @@ int bch_keylist_realloc(struct keylist *l, unsigned u64s)
 	return 0;
 }
 
-struct bkey *bch_keylist_pop(struct keylist *l)
-{
-	struct bkey *k = (bch_keylist_front(l));
-
-	if (bch_keylist_is_end(l, k))
-		return NULL;
-
-	while (!bch_keylist_is_last(l, k))
-		k = bkey_next(k);
-
-	return l->top = k;
-}
-
 /* Auxiliary search trees */
 
 /* 32 bits total: */
