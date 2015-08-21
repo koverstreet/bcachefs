@@ -512,6 +512,30 @@ static struct bkey *bch_extent_sort_fixup(struct btree_iter *iter,
 	return NULL;
 }
 
+enum bch_extent_overlap {
+	BCH_EXTENT_OVERLAP_FRONT,
+	BCH_EXTENT_OVERLAP_BACK,
+	BCH_EXTENT_OVERLAP_ALL,
+	BCH_EXTENT_OVERLAP_MIDDLE,
+};
+
+/* Returns how k overlaps with m */
+static enum bch_extent_overlap bch_extent_overlap(const struct bkey *k,
+						  const struct bkey *m)
+{
+	if (bkey_cmp(k, m) < 0) {
+		if (bkey_cmp(&START_KEY(k), &START_KEY(m)) > 0)
+			return BCH_EXTENT_OVERLAP_MIDDLE;
+		else
+			return BCH_EXTENT_OVERLAP_FRONT;
+	} else {
+		if (bkey_cmp(&START_KEY(k), &START_KEY(m)) <= 0)
+			return BCH_EXTENT_OVERLAP_ALL;
+		else
+			return BCH_EXTENT_OVERLAP_BACK;
+	}
+}
+
 static void bch_add_sectors(struct bkey *k,
 			    struct cache_set *c,
 			    u64 offset,
@@ -636,21 +660,17 @@ static bool bch_extent_insert_fixup(struct btree_keys *b,
 {
 	struct cache_set *c = container_of(b, struct btree, keys)->c;
 
-	unsigned old_size;
-	u64 old_offset, insert_offset = KEY_START(insert);
+	u64 insert_offset = KEY_START(insert);
 	unsigned insert_size = KEY_SIZE(insert);
 
 	unsigned sectors_found = 0;  /* for cmpxchg */
-	struct bkey *k;
+	struct bkey *k, *top;
 
 	BUG_ON(!insert_size);
 
 	bch_add_sectors(insert, c, insert_offset, insert_size);
 
 	while ((k = bch_btree_iter_next_overlapping(iter, insert))) {
-		old_offset = KEY_START(k);
-		old_size = KEY_SIZE(k);
-
 		/*
 		 * We might overlap with 0 size extents; we can't skip these
 		 * because if they're in the set we're inserting to we have to
@@ -669,21 +689,45 @@ static bool bch_extent_insert_fixup(struct btree_keys *b,
 				continue;
 		}
 
-		if (bkey_cmp(insert, k) < 0 &&
-		    bkey_cmp(&START_KEY(insert), &START_KEY(k)) > 0) {
+		switch (bch_extent_overlap(insert, k)) {
+		case BCH_EXTENT_OVERLAP_FRONT:
+			bch_subtract_sectors(k, c, KEY_START(k),
+					     KEY_OFFSET(insert) - KEY_START(k));
+			bch_cut_front(insert, k);
+			break;
+
+		case BCH_EXTENT_OVERLAP_BACK:
+			bch_subtract_sectors(k, c, KEY_START(insert),
+					     KEY_OFFSET(k) - KEY_START(insert));
+			bch_cut_back(&START_KEY(insert), k);
+			bch_bset_fix_invalidated_key(b, k);
+			break;
+
+		case BCH_EXTENT_OVERLAP_ALL:
+			if (KEY_SIZE(k))
+				bch_subtract_sectors(k, c, KEY_OFFSET(k),
+						     KEY_SIZE(k));
+
+			/*
+			 * Completely overwrote, so we don't have to invalidate
+			 * the binary search tree
+			 */
+			SET_KEY_SIZE(k, 0);
+			if (!bkey_written(b, k))
+				SET_KEY_OFFSET(k, KEY_START(insert));
+
+			break;
+
+		case BCH_EXTENT_OVERLAP_MIDDLE:
+			bch_subtract_sectors(k, c, KEY_START(insert),
+					     KEY_SIZE(insert));
+
 			/*
 			 * We overlapped in the middle of an existing key: that
 			 * means we have to split the old key. But we have to do
 			 * slightly different things depending on whether the
 			 * old key has been written out yet.
 			 */
-
-			struct bkey *top;
-
-			bch_subtract_sectors(k, c, KEY_START(insert),
-					     KEY_SIZE(insert));
-			sectors_found = KEY_SIZE(insert);
-
 			if (bkey_written(b, k)) {
 				/*
 				 * We insert a new key to cover the top of the
@@ -710,29 +754,8 @@ static bool bch_extent_insert_fixup(struct btree_keys *b,
 			bch_cut_front(insert, top);
 			bch_cut_back(&START_KEY(insert), k);
 			bch_bset_fix_invalidated_key(b, k);
-			break;
+			return false;
 		}
-
-		if (bkey_cmp(insert, k) < 0) {
-			bch_cut_front(insert, k);
-		} else {
-			if (bkey_cmp(&START_KEY(insert), &START_KEY(k)) > 0)
-				old_offset = KEY_START(insert);
-
-			if (bkey_written(b, k) &&
-			    bkey_cmp(&START_KEY(insert), &START_KEY(k)) <= 0) {
-				/*
-				 * Completely overwrote, so we don't have to
-				 * invalidate the binary search tree
-				 */
-				bch_cut_front(k, k);
-			} else {
-				__bch_cut_back(&START_KEY(insert), k);
-				bch_bset_fix_invalidated_key(b, k);
-			}
-		}
-
-		bch_subtract_sectors(k, c, old_offset, old_size - KEY_SIZE(k));
 	}
 
 check_failed:
