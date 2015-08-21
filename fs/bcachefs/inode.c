@@ -114,18 +114,7 @@ bool bch_inode_invalid(const struct bkey *k)
 
 static bool __inode_invalid(struct btree_keys *bk, struct bkey *k)
 {
-	if (bch_inode_invalid(k)) {
-		struct btree *b = container_of(bk, struct btree, keys);
-		char buf[80], status[80];
-
-		bch_inode_to_text(buf, sizeof(buf), k);
-		bch_inode_status(status, sizeof(status), k);
-
-		cache_bug(b->c, "spotted bad inode: %s: %s", buf, status);
-		return true;
-	}
-
-	return false;
+	return bch_inode_invalid(k);
 }
 
 static bool bch_inode_bad(struct btree_keys *bk, struct bkey *k)

@@ -232,11 +232,19 @@ static u64 btree_csum_set(struct btree *b, struct bset *i)
 	return crc ^ 0xffffffffffffffffULL;
 }
 
+#define btree_node_error(b, msg, ...)					\
+	bch_cache_set_error((b)->c,					\
+		"btree node error at btree %u level %u/%u bucket %zu block %u keys %u: " msg,\
+		(b)->btree_id, b->level, btree_node_root(b)->level,	\
+		PTR_BUCKET_NR(b->c, &b->key, 0), bset_block_offset(b, i),\
+		i->keys, ##__VA_ARGS__)
+
 void bch_btree_node_read_done(struct btree *b)
 {
 	const char *err = "bad btree header";
 	struct bset *i = btree_bset_first(b);
 	struct btree_iter *iter;
+	struct bkey *k;
 
 	iter = mempool_alloc(b->c->fill_iter, GFP_NOIO);
 	iter->size = b->c->sb.bucket_size / b->c->sb.block_size;
@@ -269,9 +277,44 @@ void bch_btree_node_read_done(struct btree *b)
 		if (i->csum != btree_csum_set(b, i))
 			goto err;
 
-		err = "empty set";
 		if (i != b->keys.set[0].data && !i->keys)
-			goto err;
+			btree_node_error(b, "empty set");
+
+		for (k = i->start;
+		     k != bset_bkey_last(i);) {
+			if (!KEY_U64s(k)) {
+				btree_node_error(b,
+					"KEY_U64s 0: %zu bytes of metadata lost",
+					(void *) bset_bkey_last(i) -
+					(void *) k);
+
+				i->keys = (u64 *) k - i->d;
+				break;
+			}
+
+			if (bkey_next(k) > bset_bkey_last(i)) {
+				btree_node_error(b,
+					"key extends past end of bset");
+
+				i->keys = (u64 *) k - i->d;
+				break;
+			}
+
+			if (bch_ptr_invalid(&b->keys, k)) {
+				char buf[80];
+
+				bch_bkey_to_text(&b->keys, buf, sizeof(buf), k);
+				btree_node_error(b, "invalid bkey %s", buf);
+
+				i->keys -= KEY_U64s(k);
+				memmove(k, bkey_next(k),
+					(void *) bset_bkey_last(i) -
+					(void *) k);
+				continue;
+			}
+
+			k = bkey_next(k);
+		}
 
 		bch_btree_iter_push(iter, i->start, bset_bkey_last(i));
 
@@ -301,11 +344,10 @@ out:
 	return;
 err:
 	set_btree_node_io_error(b);
-	bch_cache_set_error(b->c,
-			    "%s at bucket %zu level %u/%u block %u keys %u",
-			    err, PTR_BUCKET_NR(b->c, &b->key, 0),
-			    b->level, btree_node_root(b)->level,
-			    bset_block_offset(b, i), i->keys);
+	btree_node_error(b, "%s at bucket %zu level %u/%u block %u keys %u",
+			 err, PTR_BUCKET_NR(b->c, &b->key, 0),
+			 b->level, btree_node_root(b)->level,
+			 bset_block_offset(b, i), i->keys);
 	goto out;
 }
 

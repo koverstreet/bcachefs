@@ -283,22 +283,9 @@ static void bch_bkey_dump(struct btree_keys *keys, const struct bkey *k)
 
 bool __bch_btree_ptr_invalid(struct cache_set *c, const struct bkey *k)
 {
-	char buf[80];
-
-	if (KEY_CACHED(k))
-		goto bad;
-
-	if (!KEY_DELETED(k) && !bch_extent_ptrs(k))
-		goto bad;
-
-	if (__ptr_invalid(c, k))
-		goto bad;
-
-	return false;
-bad:
-	bch_extent_to_text(buf, sizeof(buf), k);
-	cache_bug(c, "spotted btree ptr %s: %s", buf, bch_ptr_status(c, k));
-	return true;
+	return (KEY_CACHED(k) ||
+		(!KEY_DELETED(k) && !bch_extent_ptrs(k)) ||
+		__ptr_invalid(c, k));
 }
 
 static bool bch_btree_ptr_invalid(struct btree_keys *bk, struct bkey *k)
@@ -307,19 +294,25 @@ static bool bch_btree_ptr_invalid(struct btree_keys *bk, struct bkey *k)
 	return __bch_btree_ptr_invalid(b->c, k);
 }
 
-static bool btree_ptr_bad_expensive(struct btree *b, const struct bkey *k)
+static bool btree_ptr_bad_expensive(struct btree_keys *bk, struct bkey *k)
 {
-	unsigned i;
+	struct btree *b = container_of(bk, struct btree, keys);
+	unsigned i, seq;
 	char buf[80];
 	struct bucket *g;
 	struct cache *ca;
 	struct cache_set *c = b->c;
-	unsigned seq;
 	bool bad;
+
+	if (bch_btree_ptr_invalid(bk, k)) {
+		bch_extent_to_text(buf, sizeof(buf), k);
+		btree_bug(b, "invalid bkey %s", buf);
+		return true;
+	}
 
 	rcu_read_lock();
 
-	for (i = 0; i < bch_extent_ptrs(k); i++) {
+	for (i = 0; i < bch_extent_ptrs(k); i++)
 		if ((ca = PTR_CACHE(c, k, i))) {
 			g = PTR_BUCKET(c, ca, k, i);
 
@@ -335,7 +328,6 @@ static bool btree_ptr_bad_expensive(struct btree *b, const struct bkey *k)
 			if (bad)
 				goto err;
 		}
-	}
 
 	rcu_read_unlock();
 
@@ -355,12 +347,11 @@ static bool bch_btree_ptr_bad(struct btree_keys *bk, struct bkey *k)
 {
 	struct btree *b = container_of(bk, struct btree, keys);
 
-	if (KEY_DELETED(k) ||
-	    __bch_btree_ptr_invalid(b->c, k))
+	if (KEY_DELETED(k))
 		return true;
 
 	if (expensive_debug_checks(b->c) &&
-	    btree_ptr_bad_expensive(b, k))
+	    btree_ptr_bad_expensive(bk, k))
 		return true;
 
 	return false;
@@ -795,22 +786,10 @@ check_failed:
 
 bool __bch_extent_invalid(struct cache_set *c, const struct bkey *k)
 {
-	char buf[80];
-
-	if (KEY_U64s(k) < BKEY_U64s)
-		goto bad;
-
-	if (KEY_SIZE(k) > KEY_OFFSET(k))
-		goto bad;
-
-	if (__ptr_invalid(c, k))
-		goto bad;
-
-	return false;
-bad:
-	bch_extent_to_text(buf, sizeof(buf), k);
-	cache_bug(c, "spotted extent %s: %s", buf, bch_ptr_status(c, k));
-	return true;
+	return (KEY_U64s(k) < BKEY_U64s ||
+		KEY_SIZE(k) > KEY_OFFSET(k) ||
+		(!KEY_SIZE(k) && !KEY_DELETED(k)) ||
+		__ptr_invalid(c, k));
 }
 
 static bool bch_extent_invalid(struct btree_keys *bk, struct bkey *k)
@@ -819,8 +798,9 @@ static bool bch_extent_invalid(struct btree_keys *bk, struct bkey *k)
 	return __bch_extent_invalid(b->c, k);
 }
 
-static bool bch_extent_bad_expensive(struct btree *b, const struct bkey *k)
+static bool bch_extent_bad_expensive(struct btree_keys *bk, struct bkey *k)
 {
+	struct btree *b = container_of(bk, struct btree, keys);
 	unsigned stale, replicas_needed;
 	struct cache_set *c = b->c;
 	struct cache *ca;
@@ -830,13 +810,18 @@ static bool bch_extent_bad_expensive(struct btree *b, const struct bkey *k)
 	bool bad;
 	int i;
 
+	if (bch_extent_invalid(bk, k)) {
+		bch_extent_to_text(buf, sizeof(buf), k);
+		btree_bug(b, "invalid bkey %s", buf);
+		return true;
+	}
+
 	replicas_needed = KEY_CACHED(k) ? 0 : c->data_replicas;
 
 	rcu_read_lock();
 
 	for (i = bch_extent_ptrs(k) - 1; i >= 0; --i) {
-		ca = PTR_CACHE(c, k, i);
-		if (ca) {
+		if ((ca = PTR_CACHE(c, k, i))) {
 			g = PTR_BUCKET(c, ca, k, i);
 
 			do {
@@ -897,12 +882,11 @@ static bool bch_extent_bad(struct btree_keys *bk, struct bkey *k)
 {
 	struct btree *b = container_of(bk, struct btree, keys);
 
-	if (KEY_DELETED(k) ||
-	    bch_extent_invalid(bk, k))
+	if (KEY_DELETED(k))
 		return true;
 
 	if (expensive_debug_checks(b->c))
-		bch_extent_bad_expensive(b, k);
+		bch_extent_bad_expensive(bk, k);
 
 	return false;
 }
