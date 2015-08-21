@@ -823,6 +823,7 @@ EXPORT_SYMBOL(bch_bset_insert);
 unsigned bch_btree_insert_key(struct btree_keys *b, struct bkey *k,
 			      struct bkey *replace_key)
 {
+	int oldsize = bch_count_data(b);
 	unsigned status = BTREE_INSERT_STATUS_NO_INSERT;
 	struct bset *i = bset_tree_last(b)->data;
 	struct bkey *m, *prev = NULL;
@@ -835,7 +836,7 @@ unsigned bch_btree_insert_key(struct btree_keys *b, struct bkey *k,
 				? &START_KEY(k) : k);
 
 	if (b->ops->insert_fixup(b, k, &iter, replace_key))
-		return status;
+		goto done;
 
 	while (m != bset_bkey_last(i) &&
 	       bkey_cmp(k, b->ops->is_extents ? &START_KEY(m) : m) > 0)
@@ -845,7 +846,7 @@ unsigned bch_btree_insert_key(struct btree_keys *b, struct bkey *k,
 	status = BTREE_INSERT_STATUS_BACK_MERGE;
 	if (prev &&
 	    bch_bkey_try_merge(b, prev, k))
-		goto merged;
+		goto done;
 
 	status = BTREE_INSERT_STATUS_OVERWROTE;
 	if (m != bset_bkey_last(i) &&
@@ -873,7 +874,8 @@ unsigned bch_btree_insert_key(struct btree_keys *b, struct bkey *k,
 	status = BTREE_INSERT_STATUS_INSERT;
 	bch_bset_insert(b, m, k);
 copy:	bkey_copy(m, k);
-merged:
+done:
+	BUG_ON(bch_count_data(b) < oldsize);
 	return status;
 }
 EXPORT_SYMBOL(bch_btree_insert_key);
@@ -1235,7 +1237,6 @@ void bch_btree_sort_partial(struct btree_keys *b, unsigned start,
 {
 	size_t order = b->page_order, keys = 0;
 	struct btree_iter iter;
-	int oldsize = bch_count_data(b);
 
 	__bch_btree_iter_init(b, &iter, NULL, &b->set[start]);
 
@@ -1249,8 +1250,6 @@ void bch_btree_sort_partial(struct btree_keys *b, unsigned start,
 	}
 
 	__btree_sort(b, &iter, start, order, filter, false, state);
-
-	EBUG_ON(oldsize >= 0 && bch_count_data(b) != oldsize);
 }
 EXPORT_SYMBOL(bch_btree_sort_partial);
 
