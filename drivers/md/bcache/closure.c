@@ -59,27 +59,18 @@ EXPORT_SYMBOL(closure_put);
  */
 void __closure_wake_up(struct closure_waitlist *wait_list)
 {
-	struct llist_node *list;
+	struct llist_node *list, *next;
 	struct closure *cl;
-	struct llist_node *reverse = NULL;
 
-	list = llist_del_all(&wait_list->list);
-
-	/* We first reverse the list to preserve FIFO ordering and fairness */
-
-	while (list) {
-		struct llist_node *t = list;
-		list = llist_next(list);
-
-		t->next = reverse;
-		reverse = t;
-	}
-
-	/* Then do the wakeups */
-
-	while (reverse) {
-		cl = container_of(reverse, struct closure, list);
-		reverse = llist_next(reverse);
+	/*
+	 * Grab entire list, reverse order to preserve FIFO ordering, and wake
+	 * everything up
+	 */
+	for (list = llist_reverse_order(llist_del_all(&wait_list->list));
+	     list;
+	     list = next) {
+		next = llist_next(list);
+		cl = container_of(list, struct closure, list);
 
 		closure_set_waiting(cl, 0);
 		closure_sub(cl, CLOSURE_WAITING + 1);
