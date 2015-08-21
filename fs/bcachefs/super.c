@@ -549,7 +549,8 @@ void bch_prio_write(struct cache *ca)
 		for (b = ca->buckets + i * prios_per_bucket(ca);
 		     b < ca->buckets + ca->sb.nbuckets && d < end;
 		     b++, d++) {
-			d->prio = cpu_to_le16(b->read_prio);
+			d->read_prio = cpu_to_le16(b->read_prio);
+			d->write_prio = cpu_to_le16(b->write_prio);
 			d->gen = b->gen;
 		}
 
@@ -621,7 +622,8 @@ static void prio_read(struct cache *ca, uint64_t bucket)
 			d = p->data;
 		}
 
-		b->read_prio = le16_to_cpu(d->prio);
+		b->read_prio = le16_to_cpu(d->read_prio);
+		b->write_prio = le16_to_cpu(d->write_prio);
 		b->gen = b->last_gc = d->gen;
 	}
 }
