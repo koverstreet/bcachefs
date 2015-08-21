@@ -318,10 +318,11 @@ static void bch_data_insert_start(struct closure *cl)
 					(KEY_CSUM(&op->insert_key) ? 1 : 0)))
 			continue_at(cl, bch_data_insert_keys, op->c->wq);
 
-		memset(ptrs_to_write, 0, sizeof(ptrs_to_write));
-
 		k = op->insert_keys.top;
 		bkey_copy(k, &op->insert_key);
+
+		bch_extent_drop_stale(op->c, k);
+		memset(ptrs_to_write, 0, sizeof(ptrs_to_write));
 
 		b = op->moving_gc
 			? bch_gc_alloc_sectors(op->c, k, ptrs_to_write, cl)

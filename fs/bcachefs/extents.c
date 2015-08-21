@@ -102,14 +102,6 @@ static bool should_drop_ptr(struct cache_set *c, const struct bkey *k,
 		ptr_stale(c, ca, k, ptr);
 }
 
-static unsigned PTR_TIER(struct cache_set *c, const struct bkey *k,
-			 unsigned ptr)
-{
-	unsigned dev = PTR_DEV(k, ptr);
-
-	return dev < c->sb.nr_in_set ? CACHE_TIER(&c->members[dev]) : UINT_MAX;
-}
-
 unsigned bch_extent_nr_ptrs_after_normalize(struct cache_set *c,
 					    const struct bkey *k)
 {
@@ -127,16 +119,9 @@ unsigned bch_extent_nr_ptrs_after_normalize(struct cache_set *c,
 	return ret;
 }
 
-bool bch_extent_normalize(struct cache_set *c, struct bkey *k)
+void bch_extent_drop_stale(struct cache_set *c, struct bkey *k)
 {
 	unsigned i = 0;
-	bool swapped;
-
-	if (!KEY_SIZE(k)) {
-		bch_set_extent_ptrs(k, 0);
-		SET_KEY_DELETED(k, true);
-		return true;
-	}
 
 	rcu_read_lock();
 
@@ -149,6 +134,30 @@ bool bch_extent_normalize(struct cache_set *c, struct bkey *k)
 		} else
 			i++;
 
+	rcu_read_unlock();
+}
+
+static unsigned PTR_TIER(struct cache_set *c, const struct bkey *k,
+			 unsigned ptr)
+{
+	unsigned dev = PTR_DEV(k, ptr);
+
+	return dev < c->sb.nr_in_set ? CACHE_TIER(&c->members[dev]) : UINT_MAX;
+}
+
+bool bch_extent_normalize(struct cache_set *c, struct bkey *k)
+{
+	unsigned i;
+	bool swapped;
+
+	if (!KEY_SIZE(k)) {
+		bch_set_extent_ptrs(k, 0);
+		SET_KEY_DELETED(k, true);
+		return true;
+	}
+
+	bch_extent_drop_stale(c, k);
+
 	/* Bubble sort pointers by tier, lowest (fastest) tier first */
 	do {
 		swapped = false;
@@ -159,8 +168,6 @@ bool bch_extent_normalize(struct cache_set *c, struct bkey *k)
 			}
 		}
 	} while (swapped);
-
-	rcu_read_unlock();
 
 	if (!bch_extent_ptrs(k))
 		SET_KEY_DELETED(k, true);

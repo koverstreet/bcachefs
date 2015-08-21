@@ -25,6 +25,7 @@ struct cache *bch_extent_pick_ptr(struct cache_set *, const struct bkey *,
 
 unsigned bch_extent_nr_ptrs_after_normalize(struct cache_set *,
 					    const struct bkey *);
+void bch_extent_drop_stale(struct cache_set *, struct bkey *);
 bool bch_extent_normalize(struct cache_set *, struct bkey *);
 
 static inline unsigned bch_extent_ptrs(const struct bkey *k)
