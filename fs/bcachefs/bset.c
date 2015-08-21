@@ -75,13 +75,18 @@ void __bch_check_keys(struct btree_keys *b, const char *fmt, ...)
 	va_list args;
 	struct bkey *k, *p = NULL;
 	struct btree_iter iter;
+	char buf1[80], buf2[80];
 	const char *err;
 
 	for_each_key(b, k, &iter) {
 		if (b->ops->is_extents) {
 			err = "Keys out of order";
-			if (p && bkey_cmp(&START_KEY(p), &START_KEY(k)) > 0)
+			if (p && bkey_cmp(&START_KEY(p), &START_KEY(k)) > 0) {
+				bch_bkey_to_text(b, buf1, sizeof(buf1), p);
+				bch_bkey_to_text(b, buf2, sizeof(buf2), k);
+				printk("%s > %s", buf1, buf2);
 				goto bug;
+			}
 
 			if (bch_ptr_invalid(b, k))
 				continue;
@@ -122,8 +127,13 @@ static void bch_btree_iter_next_check(struct btree_iter *iter)
 	if (next < iter->data->end &&
 	    bkey_cmp(k, iter->b->ops->is_extents ?
 		     &START_KEY(next) : next) > 0) {
+		char buf1[80], buf2[80];
+
 		bch_dump_bucket(iter->b);
-		panic("Key skipped backwards\n");
+
+		bch_bkey_to_text(iter->b, buf1, sizeof(buf1), k);
+		bch_bkey_to_text(iter->b, buf2, sizeof(buf2), next);
+		panic("Key skipped backwards - %s > %s\n", buf1, buf2);
 	}
 }
 

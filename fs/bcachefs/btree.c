@@ -269,8 +269,10 @@ out:
 	return;
 err:
 	set_btree_node_io_error(b);
-	bch_cache_set_error(b->c, "%s at bucket %zu, block %u, %u keys",
+	bch_cache_set_error(b->c,
+			    "%s at bucket %zu level %u/%u block %u keys %u",
 			    err, PTR_BUCKET_NR(b->c, &b->key, 0),
+			    b->level, b->c->root->level,
 			    bset_block_offset(b, i), i->keys);
 	goto out;
 }
