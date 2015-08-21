@@ -558,6 +558,7 @@ struct cache_set {
 	unsigned		error_decay;
 
 	bool			expensive_debug_checks;
+	unsigned		version_stress_test:1;
 	unsigned		verify:1;
 	unsigned		key_merging_disabled:1;
 	unsigned		gc_always_rewrite:1;

@@ -244,6 +244,15 @@ void bch_bbio_endio(struct bbio *bio, int error, const char *m)
 
 /* Writes */
 
+static inline bool version_stress_test(struct cache_set *c)
+{
+#ifdef CONFIG_BCACHEFS_DEBUG
+	return c->version_stress_test;
+#else
+	return false;
+#endif
+}
+
 static void __bch_write(struct closure *);
 
 static void bio_csum(struct bio *bio, struct bkey *k)
@@ -583,6 +592,10 @@ void bch_write(struct closure *cl)
 		WARN_ONCE(1, "bch_write() called with empty bio");
 		closure_return(cl);
 	}
+
+	if (version_stress_test(c))
+		SET_KEY_VERSION(&op->insert_key,
+				bch_rand_range(UINT_MAX));
 
 	/*
 	 * This ought to be initialized in bch_write_op_init(), but struct

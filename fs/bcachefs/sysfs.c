@@ -143,6 +143,7 @@ rw_attribute(bypass_torture_test);
 rw_attribute(key_merging_disabled);
 rw_attribute(gc_always_rewrite);
 rw_attribute(expensive_debug_checks);
+rw_attribute(version_stress_test);
 rw_attribute(cache_replacement_policy);
 rw_attribute(checksum_type);
 rw_attribute(btree_shrinker_disabled);
@@ -598,6 +599,7 @@ SHOW(__bch_cache_set)
 	sysfs_printf(key_merging_disabled,	"%i", c->key_merging_disabled);
 	sysfs_printf(expensive_debug_checks,
 		     "%i", c->expensive_debug_checks);
+	sysfs_printf(version_stress_test,	"%i", c->version_stress_test);
 	sysfs_printf(gc_always_rewrite,		"%i", c->gc_always_rewrite);
 	sysfs_printf(btree_shrinker_disabled,	"%i", c->shrinker_disabled);
 	sysfs_printf(copy_gc_enabled,		"%i", c->copy_gc_enabled);
@@ -700,6 +702,7 @@ STORE(__bch_cache_set)
 	sysfs_strtoul(verify,			c->verify);
 	sysfs_strtoul(key_merging_disabled,	c->key_merging_disabled);
 	sysfs_strtoul(expensive_debug_checks,	c->expensive_debug_checks);
+	sysfs_strtoul(version_stress_test,	c->version_stress_test);
 	sysfs_strtoul(gc_always_rewrite,	c->gc_always_rewrite);
 	sysfs_strtoul(btree_shrinker_disabled,	c->shrinker_disabled);
 
@@ -903,6 +906,7 @@ static struct attribute *bch_cache_set_internal_files[] = {
 	&sysfs_verify,
 	&sysfs_key_merging_disabled,
 	&sysfs_expensive_debug_checks,
+	&sysfs_version_stress_test,
 #endif
 	&sysfs_gc_always_rewrite,
 	&sysfs_btree_shrinker_disabled,

@@ -86,25 +86,21 @@ void __bch_check_keys(struct btree_keys *b, const char *fmt, ...)
 
 	for_each_key_all(b, k, &iter) {
 		if (b->ops->is_extents) {
-			err = "Keys out of order";
-			if (p && bkey_cmp(&START_KEY(p), &START_KEY(k)) > 0) {
-				bch_bkey_to_text(b, buf1, sizeof(buf1), p);
-				bch_bkey_to_text(b, buf2, sizeof(buf2), k);
-				printk("%s > %s", buf1, buf2);
+			err = "keys out of order";
+			if (p && bkey_cmp(&START_KEY(p), &START_KEY(k)) > 0)
 				goto bug;
-			}
 
-			if (bkey_deleted(b, k))
+			if (!KEY_SIZE(k))
 				continue;
 
-			err =  "Overlapping keys";
+			err =  "overlapping keys";
 			if (p && bkey_cmp(p, &START_KEY(k)) > 0)
 				goto bug;
 		} else {
 			if (bkey_deleted(b, k))
 				continue;
 
-			err = "Duplicate keys";
+			err = "duplicate keys";
 			if (p && !bkey_cmp(p, k))
 				goto bug;
 		}
@@ -123,7 +119,9 @@ bug:
 	vprintk(fmt, args);
 	va_end(args);
 
-	panic("bch_check_keys error:  %s:\n", err);
+	bch_bkey_to_text(b, buf1, sizeof(buf1), p);
+	bch_bkey_to_text(b, buf2, sizeof(buf2), k);
+	panic("bch_check_keys error:  %s %s, %s\n", err, buf1, buf2);
 }
 
 static void bch_btree_iter_next_check(struct btree_iter *iter)
@@ -140,6 +138,25 @@ static void bch_btree_iter_next_check(struct btree_iter *iter)
 		bch_bkey_to_text(iter->b, buf1, sizeof(buf1), k);
 		bch_bkey_to_text(iter->b, buf2, sizeof(buf2), next);
 		panic("Key skipped backwards - %s > %s\n", buf1, buf2);
+	}
+}
+
+void bch_btree_iter_verify(struct btree_keys *b, struct btree_iter *iter)
+{
+	struct btree_iter_set *set;
+	struct bset_tree *t;
+
+	for (set = iter->data;
+	     set < iter->data + iter->used;
+	     set++) {
+		for (t =  b->set;
+		     t <= b->set + b->nsets;
+		     t++)
+			if (set->end == bset_bkey_last(t->data))
+				goto next;
+		BUG();
+next:
+		;
 	}
 }
 
@@ -796,9 +813,9 @@ static void __bch_bset_insert(struct btree_keys *b, struct bkey *where,
 {
 	struct bset_tree *t = bset_tree_last(b);
 
-	BUG_ON(bset_byte_offset(b, t->data) +
-	       __set_bytes(t->data, t->data->keys + KEY_U64s(insert)) >
-	       PAGE_SIZE << b->page_order);
+	BUG_ON(where < t->data->start);
+	BUG_ON(where > bset_bkey_last(t->data));
+	BUG_ON(KEY_U64s(insert) > bch_btree_keys_u64s_remaining(b));
 
 	memmove((u64 *) where + KEY_U64s(insert),
 		where,

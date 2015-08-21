@@ -2203,6 +2203,7 @@ static bool btree_insert_key(struct btree *b, struct keylist *insert_keys,
 	BKEY_PADDED(key) temp;
 	unsigned status;
 
+	bch_btree_iter_verify(&b->keys, iter);
 	BUG_ON(write_block(b) != btree_bset_last(b));
 
 	if (b->keys.ops->is_extents &&
@@ -2293,6 +2294,18 @@ static struct bkey *insert_iter_init(struct btree *b, struct btree_iter *iter,
 				   ? &START_KEY(k) : k);
 }
 
+static void verify_keys_sorted(struct keylist *l)
+{
+#ifdef CONFIG_BCACHEFS_DEBUG
+	struct bkey *k;
+
+	for (k = l->bot;
+	     k < l->top && bkey_next(k) < l->top;
+	     k = bkey_next(k))
+		BUG_ON(bkey_cmp(k, bkey_next(k)) > 0);
+#endif
+}
+
 /**
  * bch_btree_insert_keys - insert keys from @insert_keys into btree node @b,
  * until the node is full.
@@ -2313,6 +2326,8 @@ bch_btree_insert_keys(struct btree *b, struct btree_op *op,
 	struct bkey *where, *k = bch_keylist_front(insert_keys);
 
 	memset(&res, 0, sizeof(res));
+
+	verify_keys_sorted(insert_keys);
 
 	/* index lookup before locks/journal reservation */
 	where = insert_iter_init(b, &iter, k);
