@@ -650,6 +650,9 @@ static bool bkey_cmpxchg_cmp(struct bkey *k, struct bkey *old)
 	s64 offset = (KEY_START(k) - KEY_START(old)) << 8;
 	unsigned i;
 
+	if (!KEY_SIZE(old))
+		return false;
+
 	if (!bch_bkey_equal_header(k, old))
 		return false;
 
@@ -665,11 +668,15 @@ static bool bkey_cmpxchg_cmp(struct bkey *k, struct bkey *old)
  * overlaps with @k)
  */
 static bool bkey_cmpxchg(struct cache_set *c,
+			 struct btree_keys *b,
+			 struct btree_iter *iter,
 			 struct bkey *k,
 			 struct bkey *old,
 			 struct bkey *new,
 			 struct bkey *done)
 {
+	bool ret;
+
 	/* must have something to compare against */
 	BUG_ON(!bch_extent_ptrs(old));
 
@@ -682,41 +689,30 @@ static bool bkey_cmpxchg(struct cache_set *c,
 	 * haven't checked against any existing key
 	 */
 	if (bkey_cmp(&START_KEY(k), done) > 0) {
-		/*
-		 * If we've already found some go with that, otherwise chop off
-		 * the hole and keep going:
-		 */
+		/* insert previous partial match: */
 		if (bkey_cmp(done, &START_KEY(new)) > 0)
-			goto cut_back;
+			bch_bset_insert_with_hint(b, iter, NULL,
+					bch_key_split(done, new));
 
 		bch_cut_subtract_front(c, &START_KEY(k), new);
-		*done = START_KEY(new);
+		*done = START_KEY(k);
 	}
 
-	if (!bkey_cmpxchg_cmp(k, old)) {
-		/*
-		 * Failure - if we found some previous sectors go with that,
-		 * otherwise chop off the part that overlaps with this key
-		 */
+	ret = bkey_cmpxchg_cmp(k, old);
+	if (!ret) {
+		/* failed: */
 		if (bkey_cmp(done, &START_KEY(new)) > 0)
-			goto cut_back;
+			bch_bset_insert_with_hint(b, iter, NULL,
+					bch_key_split(done, new));
 
 		if (bkey_cmp(k, new) > 0)
 			bch_drop_subtract(c, new);
 		else
 			bch_cut_subtract_front(c, k, new);
-		*done = START_KEY(new);
-		return false;
 	}
 
-	/* Success! */
 	*done = bkey_cmp(k, new) < 0 ? *k : *new;
-	return true;
-cut_back:
-	bch_subtract_sectors(c, new, KEY_OFFSET(done),
-			     KEY_OFFSET(done) - KEY_START(new));
-	bch_cut_back(done, new);
-	return false;
+	return ret;
 }
 
 static void handle_existing_key_newer(struct cache_set *c,
@@ -847,7 +843,8 @@ static bool bch_extent_insert_fixup(struct btree_keys *b,
 		if (!replace_key)
 			*done = bkey_cmp(k, insert) < 0 ? *k : *insert;
 		else if (KEY_SIZE(k) &&
-			 !bkey_cmpxchg(c, k, replace_key, insert, done))
+			 !bkey_cmpxchg(c, b, iter, k, replace_key,
+				       insert, done))
 			continue;
 
 		if (KEY_SIZE(k) && !KEY_DELETED(insert) &&
