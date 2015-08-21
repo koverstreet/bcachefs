@@ -34,9 +34,11 @@ static const char bcache_magic[] = {
 	0x82, 0x65, 0xf5, 0x7f, 0x48, 0xba, 0x6d, 0x81
 };
 
-static const char invalid_uuid[] = {
-	0xa0, 0x3e, 0xf8, 0xed, 0x3e, 0xe1, 0xb8, 0x78,
-	0xc8, 0x50, 0xfc, 0x5e, 0xcb, 0x16, 0xcd, 0x99
+static const uuid_le invalid_uuid = {
+	.b = {
+		0xa0, 0x3e, 0xf8, 0xed, 0x3e, 0xe1, 0xb8, 0x78,
+		0xc8, 0x50, 0xfc, 0x5e, 0xcb, 0x16, 0xcd, 0x99
+	}
 };
 
 /* Default is -1; we skip past it for struct cached_dev's cache mode */
@@ -80,8 +82,8 @@ static const char *read_super(struct cache_sb *sb, struct block_device *bdev,
 	sb->version		= le64_to_cpu(s->version);
 
 	memcpy(sb->magic,	s->magic, 16);
-	memcpy(sb->uuid,	s->uuid, 16);
-	memcpy(sb->set_uuid,	s->set_uuid, 16);
+	sb->uuid		= s->uuid;
+	sb->set_uuid		= s->set_uuid;
 	memcpy(sb->label,	s->label, SB_LABEL_SIZE);
 
 	sb->flags		= le64_to_cpu(s->flags);
@@ -112,7 +114,7 @@ static const char *read_super(struct cache_sb *sb, struct block_device *bdev,
 		goto err;
 
 	err = "Bad UUID";
-	if (bch_is_zero(sb->uuid, 16))
+	if (bch_is_zero(sb->uuid.b, sizeof(sb->uuid)))
 		goto err;
 
 	sb->block_size	= le16_to_cpu(s->block_size);
@@ -161,7 +163,7 @@ static const char *read_super(struct cache_sb *sb, struct block_device *bdev,
 			goto err;
 
 		err = "Bad UUID";
-		if (bch_is_zero(sb->set_uuid, 16))
+		if (bch_is_zero(sb->set_uuid.b, sizeof(sb->set_uuid)))
 			goto err;
 
 		err = "Bad cache device number in set";
@@ -220,8 +222,8 @@ static void __write_super(struct cache_sb *sb, struct bio *bio)
 	out->offset		= cpu_to_le64(sb->offset);
 	out->version		= cpu_to_le64(sb->version);
 
-	memcpy(out->uuid,	sb->uuid, 16);
-	memcpy(out->set_uuid,	sb->set_uuid, 16);
+	out->uuid		= sb->uuid;
+	out->set_uuid		= sb->set_uuid;
 	memcpy(out->label,	sb->label, SB_LABEL_SIZE);
 
 	out->flags		= cpu_to_le64(sb->flags);
@@ -365,9 +367,9 @@ static void uuid_io(struct cache_set *c, int op, struct bkey *k,
 	pr_debug("%s UUIDs at %s", op == REQ_OP_WRITE ? "wrote" : "read", buf);
 
 	for (u = c->uuids; u < c->uuids + c->nr_uuids; u++)
-		if (!bch_is_zero(u->uuid, 16))
+		if (!bch_is_zero(u->uuid.b, sizeof(u->uuid)))
 			pr_debug("Slot %zi: %pU: %s: 1st: %u last: %u inv: %u",
-				 u - c->uuids, u->uuid, u->label,
+				 u - c->uuids, &u->uuid, u->label,
 				 u->first_reg, u->last_reg, u->invalidated);
 
 	closure_return_with_destructor(cl, uuid_io_unlock);
@@ -399,7 +401,7 @@ static char *uuid_read(struct cache_set *c, struct jset *j, struct closure *cl)
 		for (i = c->nr_uuids - 1;
 		     i >= 0;
 		     --i) {
-			memcpy(u1[i].uuid,	u0[i].uuid, 16);
+			u1[i].uuid		= u0[i].uuid;
 			memcpy(u1[i].label,	u0[i].label, 32);
 
 			u1[i].first_reg		= u0[i].first_reg;
@@ -446,13 +448,13 @@ int bch_uuid_write(struct cache_set *c)
 	return ret;
 }
 
-static struct uuid_entry *uuid_find(struct cache_set *c, const char *uuid)
+static struct uuid_entry *uuid_find(struct cache_set *c, const uuid_le *uuid)
 {
 	struct uuid_entry *u;
 
 	for (u = c->uuids;
 	     u < c->uuids + c->nr_uuids; u++)
-		if (!memcmp(u->uuid, uuid, 16))
+		if (!memcmp(&u->uuid, uuid, sizeof(*uuid)))
 			return u;
 
 	return NULL;
@@ -460,8 +462,9 @@ static struct uuid_entry *uuid_find(struct cache_set *c, const char *uuid)
 
 static struct uuid_entry *uuid_find_empty(struct cache_set *c)
 {
-	static const char zero_uuid[16] = "\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0";
-	return uuid_find(c, zero_uuid);
+	static const uuid_le zero_uuid = { "\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0" };
+
+	return uuid_find(c, &zero_uuid);
 }
 
 /*
@@ -703,7 +706,7 @@ static void bcache_device_detach(struct bcache_device *d)
 		struct uuid_entry *u = d->c->uuids + d->id;
 
 		SET_UUID_FLASH_ONLY(u, 0);
-		memcpy(u->uuid, invalid_uuid, 16);
+		u->uuid = invalid_uuid;
 		u->invalidated = cpu_to_le32(get_seconds());
 		bch_uuid_write(d->c);
 	}
@@ -847,7 +850,7 @@ void bch_cached_dev_run(struct cached_dev *dc)
 	char buf[SB_LABEL_SIZE + 1];
 	char *env[] = {
 		"DRIVER=bcache",
-		kasprintf(GFP_KERNEL, "CACHED_UUID=%pU", dc->sb.uuid),
+		kasprintf(GFP_KERNEL, "CACHED_UUID=%pU", dc->sb.uuid.b),
 		NULL,
 		NULL,
 	};
@@ -946,7 +949,7 @@ int bch_cached_dev_attach(struct cached_dev *dc, struct cache_set *c)
 
 	bdevname(dc->bdev, buf);
 
-	if (memcmp(dc->sb.set_uuid, c->sb.set_uuid, 16))
+	if (memcmp(&dc->sb.set_uuid, &c->sb.set_uuid, sizeof(c->sb.set_uuid)))
 		return -ENOENT;
 
 	if (dc->disk.c) {
@@ -966,12 +969,12 @@ int bch_cached_dev_attach(struct cached_dev *dc, struct cache_set *c)
 		return -EINVAL;
 	}
 
-	u = uuid_find(c, dc->sb.uuid);
+	u = uuid_find(c, &dc->sb.uuid);
 
 	if (u &&
 	    (BDEV_STATE(&dc->sb) == BDEV_STATE_STALE ||
 	     BDEV_STATE(&dc->sb) == BDEV_STATE_NONE)) {
-		memcpy(u->uuid, invalid_uuid, 16);
+		u->uuid = invalid_uuid;
 		u->invalidated = cpu_to_le32(get_seconds());
 		u = NULL;
 	}
@@ -993,16 +996,16 @@ int bch_cached_dev_attach(struct cached_dev *dc, struct cache_set *c)
 	sysfs_remove_file(&dc->kobj, &sysfs_attach);
 	 */
 
-	if (bch_is_zero(u->uuid, 16)) {
+	if (bch_is_zero(u->uuid.b, sizeof(u->uuid))) {
 		struct closure cl;
 		closure_init_stack(&cl);
 
-		memcpy(u->uuid, dc->sb.uuid, 16);
-		memcpy(u->label, dc->sb.label, SB_LABEL_SIZE);
+		u->uuid = dc->sb.uuid;
+		memcpy(u->label, &dc->sb.label, SB_LABEL_SIZE);
 		u->first_reg = u->last_reg = rtime;
 		bch_uuid_write(c);
 
-		memcpy(dc->sb.set_uuid, c->sb.set_uuid, 16);
+		dc->sb.set_uuid = c->sb.set_uuid;
 		SET_BDEV_STATE(&dc->sb, BDEV_STATE_CLEAN);
 
 		bch_write_bdev_super(dc, &cl);
@@ -1045,7 +1048,7 @@ int bch_cached_dev_attach(struct cached_dev *dc, struct cache_set *c)
 
 	pr_info("Caching %s as %s on set %pU",
 		bdevname(dc->bdev, buf), dc->disk.disk->disk_name,
-		dc->disk.c->sb.set_uuid);
+		dc->disk.c->sb.set_uuid.b);
 	return 0;
 }
 
@@ -1279,7 +1282,7 @@ int bch_flash_dev_create(struct cache_set *c, uint64_t size)
 		return -EINVAL;
 	}
 
-	get_random_bytes(u->uuid, 16);
+	get_random_bytes(u->uuid.b, sizeof(u->uuid));
 	memset(u->label, 0, 32);
 	u->first_reg = u->last_reg = cpu_to_le32(get_seconds());
 
@@ -1306,7 +1309,7 @@ bool bch_cache_set_error(struct cache_set *c, const char *fmt, ...)
 	acquire_console_sem();
 	*/
 
-	printk(KERN_ERR "bcache: error on %pU: ", c->sb.set_uuid);
+	printk(KERN_ERR "bcache: error on %pU: ", c->sb.set_uuid.b);
 
 	va_start(args, fmt);
 	vprintk(fmt, args);
@@ -1367,7 +1370,7 @@ static void cache_set_free(struct closure *cl)
 	list_del(&c->list);
 	mutex_unlock(&bch_register_lock);
 
-	pr_info("Cache set %pU unregistered", c->sb.set_uuid);
+	pr_info("Cache set %pU unregistered", c->sb.set_uuid.b);
 	wake_up(&unregister_wait);
 
 	closure_debug_destroy(&c->cl);
@@ -1484,7 +1487,7 @@ struct cache_set *bch_cache_set_alloc(struct cache_sb *sb)
 
 	bch_cache_accounting_init(&c->accounting, &c->cl);
 
-	memcpy(c->sb.set_uuid, sb->set_uuid, 16);
+	c->sb.set_uuid		= sb->set_uuid;
 	c->sb.block_size	= sb->block_size;
 	c->sb.bucket_size	= sb->bucket_size;
 	c->sb.nr_in_set		= sb->nr_in_set;
@@ -1756,7 +1759,8 @@ static const char *register_cache_set(struct cache *ca)
 	unsigned i, caches_loaded = 0;
 
 	list_for_each_entry(c, &bch_cache_sets, list)
-		if (!memcmp(c->sb.set_uuid, ca->sb.set_uuid, 16)) {
+		if (!memcmp(&c->sb.set_uuid, &ca->sb.set_uuid,
+			    sizeof(ca->sb.set_uuid))) {
 			if (c->cache[ca->sb.nr_this_dev])
 				return "duplicate cache set member";
 
@@ -1774,7 +1778,7 @@ static const char *register_cache_set(struct cache *ca)
 		return err;
 
 	err = "error creating kobject";
-	if (kobject_add(&c->kobj, bcache_kobj, "%pU", c->sb.set_uuid) ||
+	if (kobject_add(&c->kobj, bcache_kobj, "%pU", c->sb.set_uuid.b) ||
 	    kobject_add(&c->internal, &c->kobj, "internal"))
 		goto err;
 
@@ -1792,7 +1796,7 @@ found:
 
 	if (ca->sb.seq > c->sb.seq) {
 		c->sb.version		= ca->sb.version;
-		memcpy(c->sb.set_uuid, ca->sb.set_uuid, 16);
+		c->sb.set_uuid		= ca->sb.set_uuid;
 		c->sb.flags             = ca->sb.flags;
 		c->sb.seq		= ca->sb.seq;
 		pr_debug("set version = %llu", c->sb.version);

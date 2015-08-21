@@ -6,6 +6,7 @@
  */
 
 #include <asm/types.h>
+#include <linux/uuid.h>
 
 #define BITMASK(name, type, field, offset, size)		\
 static inline __u64 name(const type *k)				\
@@ -159,9 +160,9 @@ struct cache_sb {
 
 	__u8			magic[16];
 
-	__u8			uuid[16];
+	uuid_le			uuid;
 	union {
-		__u8		set_uuid[16];
+		uuid_le		set_uuid;
 		__u64		set_magic;
 	};
 	__u8			label[SB_LABEL_SIZE];
@@ -317,7 +318,7 @@ struct prio_set {
 struct uuid_entry {
 	union {
 		struct {
-			__u8	uuid[16];
+			uuid_le	uuid;
 			__u8	label[32];
 			__u32	first_reg;
 			__u32	last_reg;
@@ -365,7 +366,7 @@ struct bset {
 /* UUIDS - per backing device/flash only volume metadata */
 
 struct uuid_entry_v0 {
-	__u8		uuid[16];
+	uuid_le		uuid;
 	__u8		label[32];
 	__u32		first_reg;
 	__u32		last_reg;

@@ -166,7 +166,7 @@ TRACE_EVENT(bcache_write,
 	),
 
 	TP_fast_assign(
-		memcpy(__entry->uuid, c->sb.set_uuid, 16);
+		memcpy(__entry->uuid, c->sb.set_uuid.b, 16);
 		__entry->inode		= inode;
 		__entry->sector		= bio->bi_iter.bi_sector;
 		__entry->nr_sector	= bio->bi_iter.bi_size >> 9;
@@ -203,7 +203,7 @@ DECLARE_EVENT_CLASS(cache_set,
 	),
 
 	TP_fast_assign(
-		memcpy(__entry->uuid, c->sb.set_uuid, 16);
+		memcpy(__entry->uuid, c->sb.set_uuid.b, 16);
 	),
 
 	TP_printk("%pU", __entry->uuid)

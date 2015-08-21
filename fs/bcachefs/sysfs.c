@@ -213,7 +213,7 @@ STORE(__cached_dev)
 		if (!env)
 			return -ENOMEM;
 		add_uevent_var(env, "DRIVER=bcache");
-		add_uevent_var(env, "CACHED_UUID=%pU", dc->sb.uuid),
+		add_uevent_var(env, "CACHED_UUID=%pU", dc->sb.uuid.b),
 		add_uevent_var(env, "CACHED_LABEL=%s", buf);
 		kobject_uevent_env(
 			&disk_to_dev(dc->disk.disk)->kobj, KOBJ_CHANGE, env->envp);
@@ -221,7 +221,7 @@ STORE(__cached_dev)
 	}
 
 	if (attr == &sysfs_attach) {
-		if (bch_parse_uuid(buf, dc->sb.set_uuid) < 16)
+		if (bch_parse_uuid(buf, dc->sb.set_uuid.b) < 16)
 			return -EINVAL;
 
 		list_for_each_entry(c, &bch_cache_sets, list) {
