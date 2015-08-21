@@ -58,16 +58,12 @@ static void update_tiering_rate(struct work_struct *work)
 static bool tiering_pred(struct keybuf *buf, struct bkey *k)
 {
 	struct cache_set *c = container_of(buf, struct cache_set, tiering_keys);
-	struct cache *ca;
-	bool ret;
+	unsigned dev;
 
-	rcu_read_lock();
-	ret = bch_extent_ptrs(k) &&
-		(ca = PTR_CACHE(c, k, bch_extent_ptrs(k) - 1)) &&
-		!CACHE_TIER(&ca->sb);
-	rcu_read_unlock();
-
-	return ret;
+	return bch_extent_ptrs(k) &&
+		((dev = PTR_DEV(k, bch_extent_ptrs(k) - 1)) <
+		 c->sb.nr_in_set) &&
+		!CACHE_TIER(&c->members[dev]);
 }
 
 static void read_tiering(struct cache_set *c)

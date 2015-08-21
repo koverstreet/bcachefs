@@ -222,14 +222,9 @@ ssize_t bch_journal_print_debug(struct journal *, char *);
 
 int bch_set_nr_journal_buckets(struct cache *, unsigned);
 
-static inline unsigned bch_nr_journal_buckets(struct cache_sb *sb)
-{
-	return sb->keys;
-}
-
 static inline u64 *__journal_buckets(struct cache *ca)
 {
-	return ca->disk_sb.sb->d;
+	return ca->disk_sb.sb->d + bch_journal_buckets_offset(&ca->sb);
 }
 
 static inline u64 journal_bucket(struct cache *ca, unsigned nr)

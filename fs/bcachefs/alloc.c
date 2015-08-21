@@ -98,7 +98,7 @@ static void alloc_failed(struct cache *ca)
 
 	/* Check if there are caches in higher tiers; we could potentially
 	 * make room on our cache by tiering */
-	for (i = CACHE_TIER(&ca->sb) + 1;
+	for (i = CACHE_TIER(cache_member_info(ca)) + 1;
 	     i < ARRAY_SIZE(c->cache_by_alloc);
 	     i++)
 		if (c->cache_by_alloc[i].nr_devices) {
@@ -386,7 +386,7 @@ static void invalidate_buckets(struct cache *ca)
 {
 	BUG_ON(!ca->set->gc_mark_valid);
 
-	switch (CACHE_REPLACEMENT(&ca->sb)) {
+	switch (CACHE_REPLACEMENT(cache_member_info(ca))) {
 	case CACHE_REPLACEMENT_LRU:
 		invalidate_buckets_lru(ca);
 		break;

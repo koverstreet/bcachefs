@@ -414,10 +414,11 @@ err:
 
 int bch_set_nr_journal_buckets(struct cache *ca, unsigned nr)
 {
+	unsigned keys = bch_journal_buckets_offset(&ca->sb) + nr;
 	u64 *p;
 	int ret;
 
-	ret = bch_super_realloc(ca, nr);
+	ret = bch_super_realloc(ca, keys);
 	if (ret)
 		return ret;
 
@@ -426,7 +427,7 @@ int bch_set_nr_journal_buckets(struct cache *ca, unsigned nr)
 		return -ENOMEM;
 
 	ca->journal.seq = p;
-	ca->sb.keys = nr;
+	ca->sb.keys = keys;
 
 	return 0;
 }
@@ -618,7 +619,7 @@ static void journal_reclaim(struct cache_set *c)
 		unsigned next = (ja->cur_idx + 1) %
 			bch_nr_journal_buckets(&ca->sb);
 
-		if (CACHE_TIER(&ca->sb))
+		if (CACHE_TIER(cache_member_info(ca)))
 			continue;
 
 		/* No space available on this device */

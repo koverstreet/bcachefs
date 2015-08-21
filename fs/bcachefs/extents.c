@@ -105,9 +105,9 @@ static bool should_drop_ptr(struct cache_set *c, const struct bkey *k,
 static unsigned PTR_TIER(struct cache_set *c, const struct bkey *k,
 			 unsigned ptr)
 {
-	struct cache *ca = PTR_CACHE(c, k, ptr);
+	unsigned dev = PTR_DEV(k, ptr);
 
-	return ca ? CACHE_TIER(&ca->sb) : UINT_MAX;
+	return dev < c->sb.nr_in_set ? CACHE_TIER(&c->members[dev]) : UINT_MAX;
 }
 
 unsigned bch_extent_nr_ptrs_after_normalize(struct cache_set *c,

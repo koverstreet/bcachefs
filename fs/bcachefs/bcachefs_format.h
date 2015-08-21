@@ -67,7 +67,7 @@ static inline void SET_##name(struct bkey *k, unsigned i, __u64 v)	\
 KEY_FIELD(KEY_U64s,	header, 56, 64)
 KEY_FIELD(KEY_DELETED,	header, 55, 56)
 KEY_FIELD(KEY_CACHED,	header, 54, 55)
-KEY_FIELD(KEY_CSUM,	header, 52, 54)
+KEY_FIELD(KEY_CSUM,	header, 50, 54)
 
 /*
  * Sequence number used to determine which extent is the newer one, when dealing
@@ -269,30 +269,65 @@ do {								\
  * Version 2: Seed pointer into btree node checksum
  * Version 3: Cache device with new UUID format
  * Version 4: Backing device with data offset
+ * Version 5: All the incompat changes
+ * Version 6: Cache device UUIDs all in superblock, another incompat bset change
  */
 #define BCACHE_SB_VERSION_CDEV_V0	0
 #define BCACHE_SB_VERSION_BDEV		1
 #define BCACHE_SB_VERSION_CDEV_WITH_UUID 3
 #define BCACHE_SB_VERSION_BDEV_WITH_OFFSET 4
 #define BCACHE_SB_VERSION_CDEV_V2	5
-#define BCACHE_SB_VERSION_CDEV		5
-#define BCACHE_SB_MAX_VERSION		5
+#define BCACHE_SB_VERSION_CDEV_V3	6
+#define BCACHE_SB_VERSION_CDEV		6
+#define BCACHE_SB_MAX_VERSION		6
 
 #define SB_SECTOR			8
-#define SB_SIZE				4096
 #define SB_LABEL_SIZE			32
-#define SB_JOURNAL_BUCKETS		256U
-/* SB_JOURNAL_BUCKETS must be divisible by BITS_PER_LONG */
 #define MAX_CACHES_PER_SET		64
 
 #define BDEV_DATA_START_DEFAULT		16	/* sectors */
+
+struct cache_member {
+	__u64			f1;
+	__u64			f2;
+	uuid_le			uuid;
+};
+
+BITMASK(CACHE_STATE,		struct cache_member, f1, 0,  4)
+#define CACHE_ACTIVE			0U
+#define CACHE_RO			1U
+#define CACHE_FAILED			2U
+#define CACHE_SPARE			3U
+
+BITMASK(CACHE_TIER,		struct cache_member, f1, 4,  8)
+#define CACHE_TIERS			4U
+
+BITMASK(CACHE_REPLICATION_SET,	struct cache_member, f1, 8,  16)
+
+BITMASK(REPLICATION_SET_CUR_META_REPLICAS,
+				struct cache_member, f1, 16, 20)
+BITMASK(REPLICATION_SET_CUR_DATA_REPLICAS,
+				struct cache_member, f1, 20, 24)
+
+BITMASK(CACHE_HAS_METADATA,	struct cache_member, f1, 24, 25)
+BITMASK(CACHE_HAS_DATA,		struct cache_member, f1, 25, 26)
+
+BITMASK(CACHE_REPLACEMENT,	struct cache_member, f1, 26, 30)
+#define CACHE_REPLACEMENT_LRU		0U
+#define CACHE_REPLACEMENT_FIFO		1U
+#define CACHE_REPLACEMENT_RANDOM	2U
+
+BITMASK(CACHE_DISCARD,		struct cache_member, f1, 30, 31);
+
+BITMASK(CACHE_NR_READ_ERRORS,	struct cache_member, f2, 0,  20);
+BITMASK(CACHE_NR_WRITE_ERRORS,	struct cache_member, f2, 20, 40);
 
 struct cache_sb {
 	__u64			csum;
 	__u64			offset;	/* sector where this sb was written */
 	__u64			version; /* of on disk format */
 
-	__u8			magic[16];
+	uuid_le			magic;
 
 	uuid_le			uuid;   /* specific to this disk */
 
@@ -336,13 +371,51 @@ struct cache_sb {
 
 	/* Index of the first bucket used: */
 	__u16			first_bucket;
+	/* Size of variable length portion, in u64s: */
+	__u16			keys;
 	union {
-		__u16		njournal_buckets;
-		/* name simply here for macro convenience */
-		__u16		keys;
+		struct cache_member	members[0];
+		/*
+		 * Journal buckets also in the variable length portion, after
+		 * the member info:
+		 */
+		__u64			d[0];
 	};
-	__u64			d[SB_JOURNAL_BUCKETS];	/* journal buckets */
 };
+
+BITMASK(CACHE_SYNC,			struct cache_sb, flags, 0, 1);
+
+BITMASK(CACHE_SET_META_REPLICAS_WANT,	struct cache_sb, flags, 4, 8);
+BITMASK(CACHE_SET_DATA_REPLICAS_WANT,	struct cache_sb, flags, 8, 12);
+
+BITMASK(CACHE_SB_CSUM_TYPE,		struct cache_sb, flags, 12, 16);
+BITMASK(CACHE_PREFERRED_CSUM_TYPE,	struct cache_sb, flags, 16, 20);
+#define BCH_CSUM_NONE			0U
+#define BCH_CSUM_CRC32C			1U
+#define BCH_CSUM_CRC64			2U
+#define BCH_CSUM_NR			3U
+
+BITMASK(BDEV_CACHE_MODE,		struct cache_sb, flags, 0, 4);
+#define CACHE_MODE_WRITETHROUGH		0U
+#define CACHE_MODE_WRITEBACK		1U
+#define CACHE_MODE_WRITEAROUND		2U
+#define CACHE_MODE_NONE			3U
+
+BITMASK(BDEV_STATE,			struct cache_sb, flags, 61, 63);
+#define BDEV_STATE_NONE			0U
+#define BDEV_STATE_CLEAN		1U
+#define BDEV_STATE_DIRTY		2U
+#define BDEV_STATE_STALE		3U
+
+static inline unsigned bch_journal_buckets_offset(struct cache_sb *sb)
+{
+	return sb->nr_in_set * (sizeof(struct cache_member) / sizeof(__u64));
+}
+
+static inline unsigned bch_nr_journal_buckets(struct cache_sb *sb)
+{
+	return sb->keys - bch_journal_buckets_offset(sb);
+}
 
 static inline _Bool __SB_IS_BDEV(__u64 version)
 {
@@ -355,33 +428,16 @@ static inline _Bool SB_IS_BDEV(const struct cache_sb *sb)
 	return __SB_IS_BDEV(sb->version);
 }
 
-BITMASK(CACHE_SYNC,			struct cache_sb, flags, 0, 1);
-BITMASK(CACHE_DISCARD,			struct cache_sb, flags, 1, 2);
-BITMASK(CACHE_REPLACEMENT,		struct cache_sb, flags, 2, 5);
-#define CACHE_REPLACEMENT_LRU		0U
-#define CACHE_REPLACEMENT_FIFO		1U
-#define CACHE_REPLACEMENT_RANDOM	2U
-
-BITMASK(CACHE_TIER,			struct cache_sb, flags, 5, 7);
-#define CACHE_TIERS			4U
-
-BITMASK(BDEV_CACHE_MODE,		struct cache_sb, flags, 0, 4);
-#define CACHE_MODE_WRITETHROUGH		0U
-#define CACHE_MODE_WRITEBACK		1U
-#define CACHE_MODE_WRITEAROUND		2U
-#define CACHE_MODE_NONE			3U
-BITMASK(BDEV_STATE,			struct cache_sb, flags, 61, 63);
-#define BDEV_STATE_NONE			0U
-#define BDEV_STATE_CLEAN		1U
-#define BDEV_STATE_DIRTY		2U
-#define BDEV_STATE_STALE		3U
-
 /*
  * Magic numbers
  *
  * The various other data structures have their own magic numbers, which are
  * xored with the first part of the cache set's UUID
  */
+
+#define BCACHE_MAGIC							\
+	UUID_LE(0xf67385c6, 0x1a4e, 0xca45,				\
+		0x82, 0x65, 0xf5, 0x7f, 0x48, 0xba, 0x6d, 0x81)
 
 #define JSET_MAGIC			0x245235c1a3625032ULL
 #define PSET_MAGIC			0x6750e15f87337f91ULL
@@ -449,16 +505,16 @@ BITMASK(JKEYS_TYPE,	struct jset_keys, flags, 0, 2);
 struct jset {
 	__u64			csum;
 	__u64			magic;
-	__u64			seq;
 	__u32			version;
-	__u32			keys; /* size of d[] in u64s */
+	__u32			flags;
 
 	/* Sequence number of oldest dirty journal entry */
+	__u64			seq;
 	__u64			last_seq;
 
 	__u16			read_clock;
 	__u16			write_clock;
-	__u32			pad;
+	__u32			keys; /* size of d[] in u64s */
 
 	union {
 		struct jset_keys start[0];
@@ -466,14 +522,15 @@ struct jset {
 	};
 };
 
+BITMASK(JSET_CSUM_TYPE,		struct jset, flags, 0, 4);
+
 /* Bucket prios/gens */
 
 struct prio_set {
 	__u64			csum;
 	__u64			magic;
-	__u64			seq;
 	__u32			version;
-	__u32			pad;
+	__u32			flags;
 
 	__u64			next_bucket;
 
@@ -484,13 +541,16 @@ struct prio_set {
 	} __attribute__((packed)) data[];
 };
 
+BITMASK(PSET_CSUM_TYPE,		struct prio_set, flags, 0, 4);
+
 /* Btree nodes */
 
 /* Version 1: Seed pointer into btree node checksum
  */
 #define BCACHE_BSET_CSUM		1
 #define BCACHE_BSET_KEY_v1		2
-#define BCACHE_BSET_VERSION		2
+#define BCACHE_BSET_JOURNAL_SEQ		3
+#define BCACHE_BSET_VERSION		3
 
 /*
  * Btree nodes
@@ -501,8 +561,13 @@ struct prio_set {
 struct bset {
 	__u64			csum;
 	__u64			magic;
-	__u64			seq;
 	__u32			version;
+	__u32			flags;
+
+	__u64			seq;
+	__u64			journal_seq;
+
+	__u32			pad;
 	__u32			keys; /* count of d[] in u64s */
 
 	union {
@@ -510,6 +575,8 @@ struct bset {
 		__u64		d[0];
 	};
 };
+
+BITMASK(BSET_CSUM_TYPE,		struct bset, flags, 0, 4);
 
 /* OBSOLETE */
 

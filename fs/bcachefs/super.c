@@ -32,11 +32,6 @@
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Kent Overstreet <kent.overstreet@gmail.com>");
 
-static const char bcache_magic[] = {
-	0xc6, 0x85, 0x73, 0xf6, 0x4e, 0x1a, 0x45, 0xca,
-	0x82, 0x65, 0xf5, 0x7f, 0x48, 0xba, 0x6d, 0x81
-};
-
 static const uuid_le invalid_uuid = {
 	.b = {
 		0xa0, 0x3e, 0xf8, 0xed, 0x3e, 0xe1, 0xb8, 0x78,
@@ -95,7 +90,7 @@ static const char *validate_super(struct bcache_superblock *disk_sb,
 	sb->offset		= le64_to_cpu(s->offset);
 	sb->version		= le64_to_cpu(s->version);
 
-	memcpy(sb->magic,	s->magic, 16);
+	sb->magic		= s->magic;
 	sb->uuid		= s->uuid;
 	sb->set_uuid		= s->set_uuid;
 	memcpy(sb->label,	s->label, SB_LABEL_SIZE);
@@ -122,6 +117,7 @@ static const char *validate_super(struct bcache_superblock *disk_sb,
 	case BCACHE_SB_VERSION_CDEV_V0:
 	case BCACHE_SB_VERSION_CDEV_WITH_UUID:
 	case BCACHE_SB_VERSION_CDEV_V2:
+	case BCACHE_SB_VERSION_CDEV_V3:
 		sb->nbuckets	= le64_to_cpu(s->nbuckets);
 		sb->bucket_size	= le16_to_cpu(s->bucket_size);
 
@@ -159,6 +155,10 @@ static const char *validate_super(struct bcache_superblock *disk_sb,
 
 		err = "Invalid superblock: first bucket comes before end of super";
 		if (sb->first_bucket * sb->bucket_size < 16)
+			goto err;
+
+		err = "Invalid superblock: member info area missing";
+		if (sb->keys < bch_journal_buckets_offset(sb))
 			goto err;
 
 		break;
@@ -248,7 +248,7 @@ retry:
 	if (le64_to_cpu(sb->sb->offset) != SB_SECTOR)
 		return "Not a bcache superblock";
 
-	if (memcmp(sb->sb->magic, bcache_magic, 16))
+	if (uuid_le_cmp(sb->sb->magic, BCACHE_MAGIC))
 		return "Not a bcache superblock";
 
 	if (bch_is_zero(sb->sb->uuid.b, sizeof(sb->sb->uuid)))
@@ -363,6 +363,18 @@ static void bcache_write_super_unlock(struct closure *cl)
 
 static int cache_sb_to_cache_set(struct cache_set *c, struct cache *ca)
 {
+	struct cache_member *m;
+
+	m = kcalloc(ca->sb.nr_in_set, sizeof(*m), GFP_KERNEL);
+	if (!m)
+		return -ENOMEM;
+
+	memcpy(m, ca->disk_sb.sb->d,
+	       ca->sb.nr_in_set * sizeof(*m));
+
+	kfree(c->members);
+	c->members = m;
+
 	c->sb.version		= ca->sb.version;
 	c->sb.set_uuid		= ca->sb.set_uuid;
 	c->sb.flags		= ca->sb.flags;
@@ -378,6 +390,13 @@ static int cache_sb_to_cache_set(struct cache_set *c, struct cache *ca)
 
 static void cache_sb_from_cache_set(struct cache_set *c, struct cache *ca)
 {
+	/* changing number of devices in a set not supported yet */
+	BUG_ON(ca->sb.nr_in_set != c->sb.nr_in_set);
+
+	memcpy(ca->disk_sb.sb->d,
+	       c->members,
+	       ca->sb.nr_in_set * sizeof(struct cache_member));
+
 	ca->sb.version		= BCACHE_SB_VERSION_CDEV;
 	ca->sb.seq		= c->sb.seq;
 	ca->sb.nr_in_set	= c->sb.nr_in_set;
@@ -482,8 +501,6 @@ void bch_prio_write(struct cache *ca)
 	lockdep_assert_held(&ca->set->bucket_lock);
 
 	trace_bcache_prio_write_start(ca);
-
-	ca->disk_buckets->seq++;
 
 	atomic_long_add(ca->sb.bucket_size * prio_buckets(ca),
 			&ca->meta_sectors_written);
@@ -1757,11 +1774,24 @@ err:
 	return err;
 }
 
-static bool can_attach_cache(struct cache *ca, struct cache_set *c)
+static const char *can_attach_cache(struct cache *ca, struct cache_set *c)
 {
-	return ca->sb.block_size	== c->sb.block_size &&
-		ca->sb.bucket_size	== c->sb.bucket_size &&
-		ca->sb.nr_in_set	== c->sb.nr_in_set;
+	if (ca->sb.block_size	!= c->sb.block_size ||
+	    ca->sb.bucket_size	!= c->sb.bucket_size ||
+	    ca->sb.nr_in_set	!= c->sb.nr_in_set)
+		return "cache sb does not match set";
+
+	if (ca->sb.seq <= c->sb.seq &&
+	    (ca->sb.nr_this_dev >= c->sb.nr_in_set ||
+	     memcmp(&c->members[ca->sb.nr_this_dev].uuid,
+		    &ca->sb.uuid,
+		    sizeof(uuid_le))))
+		return "cache sb does not match set";
+
+	if (c->cache[ca->sb.nr_this_dev])
+		return "duplicate cache set member";
+
+	return NULL;
 }
 
 static const char *register_cache_set(struct cache *ca)
@@ -1775,14 +1805,9 @@ static const char *register_cache_set(struct cache *ca)
 	list_for_each_entry(c, &bch_cache_sets, list)
 		if (!memcmp(&c->sb.set_uuid, &ca->sb.set_uuid,
 			    sizeof(ca->sb.set_uuid))) {
-			if (c->cache[ca->sb.nr_this_dev])
-				return "duplicate cache set member";
-
-			if (!can_attach_cache(ca, c))
-				return "cache sb does not match set";
-
-			if (!CACHE_SYNC(&ca->sb))
-				SET_CACHE_SYNC(&c->sb, false);
+			err = can_attach_cache(ca, c);
+			if (err)
+				return err;
 
 			goto found;
 		}
@@ -1815,7 +1840,7 @@ found:
 	mutex_lock(&c->bucket_lock);
 	rcu_assign_pointer(c->cache[ca->sb.nr_this_dev], ca);
 
-	tier = &c->cache_by_alloc[CACHE_TIER(&ca->sb)];
+	tier = &c->cache_by_alloc[CACHE_TIER(cache_member_info(ca))];
 	tier->devices[tier->nr_devices++] = ca;
 	mutex_unlock(&c->bucket_lock);
 
@@ -1892,7 +1917,8 @@ static void bch_cache_kill_rcu(struct rcu_head *rcu)
 static void __bch_cache_remove(struct cache *ca)
 {
 	struct cache_set *c = ca->set;
-	struct cache_tier *tier = &c->cache_by_alloc[CACHE_TIER(&ca->sb)];
+	struct cache_tier *tier =
+		&c->cache_by_alloc[CACHE_TIER(cache_member_info(ca))];
 	unsigned i;
 
 	lockdep_assert_held(&bch_register_lock);
@@ -2007,7 +2033,7 @@ static int cache_init(struct cache *ca)
 	bch_moving_init_cache(ca);
 
 	if (blk_queue_discard(bdev_get_queue(ca->bdev)))
-		ca->discard = CACHE_DISCARD(&ca->sb);
+		ca->discard = CACHE_DISCARD(cache_member_info(ca));
 
 	return 0;
 }
@@ -2043,7 +2069,7 @@ static const char *register_cache(struct bcache_superblock *sb,
 
 	err = "Unsupported superblock version";
 	if (CACHE_SYNC(&ca->sb) &&
-	    ca->sb.version != BCACHE_SB_VERSION_CDEV_V2)
+	    ca->sb.version != BCACHE_SB_VERSION_CDEV_V3)
 		goto err;
 
 	ret = cache_init(ca);

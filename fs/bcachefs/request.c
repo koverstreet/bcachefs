@@ -622,15 +622,16 @@ out_submit:
  *
  * @bio must actually be a bbio with valid key.
  */
-static bool cache_promote(struct cache *ca, struct bbio *bio,
-			  struct bkey *k, unsigned ptr)
+static bool cache_promote(struct cache_set *c, struct cache *ca,
+			  struct bbio *bio, struct bkey *k,
+			  unsigned ptr)
 {
-	if (!CACHE_TIER(&ca->sb)) {
+	if (!CACHE_TIER(&c->members[PTR_DEV(k, ptr)])) {
 		generic_make_request(&bio->bio);
 		return 0;
 	}
 
-	__cache_promote(ca->set, bio, k, cache_promote_endio);
+	__cache_promote(c, bio, k, cache_promote_endio);
 	return 1;
 }
 
@@ -882,7 +883,7 @@ static int bch_read_fn(struct btree_op *b_op, struct btree *b, struct bkey *k)
 
 	bch_bbio_prep(bbio, ca);
 
-	cache_promote(ca, bbio, k, ptr);
+	cache_promote(b->c, ca, bbio, k, ptr);
 
 	return ret;
 }
@@ -1066,7 +1067,7 @@ static int cache_lookup_fn(struct btree_op *op, struct btree *b, struct bkey *k)
 
 	closure_get(&s->cl);
 	if (!s->bypass) {
-		if (cache_promote(ca, bbio, k, ptr))
+		if (cache_promote(b->c, ca, bbio, k, ptr))
 			s->cache_miss = 1;
 	} else
 		submit_bio(n);
