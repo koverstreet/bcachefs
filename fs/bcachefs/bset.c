@@ -151,11 +151,6 @@ next:
 	}
 }
 
-#else
-
-static inline void
-bch_btree_node_iter_next_check(struct btree_node_iter *iter) {}
-
 #endif
 
 /* Auxiliary search trees */
@@ -1025,7 +1020,38 @@ static struct bkey *bch_bset_search(struct btree_keys *b, struct bset_tree *t,
 	return m;
 }
 
-/* Btree iterator */
+/* Btree node iterator */
+
+static inline bool btree_node_iter_cmp(struct btree_node_iter *iter,
+				       struct btree_node_iter_set l,
+				       struct btree_node_iter_set r)
+{
+	return iter->is_extents
+		? bkey_cmp(bkey_start_pos(l.k), bkey_start_pos(r.k)) > 0
+		: bkey_cmp(l.k->p, r.k->p) > 0;
+}
+
+void bch_btree_node_iter_push(struct btree_node_iter *iter,
+			      struct bkey *k, struct bkey *end)
+{
+	if (k != end) {
+		struct btree_node_iter_set n =
+			((struct btree_node_iter_set) { k, end });
+		unsigned i;
+
+		for (i = 0;
+		     i < iter->used &&
+		     btree_node_iter_cmp(iter, n, iter->data[i]);
+		     i++)
+			;
+
+		memmove(&iter->data[i + 1],
+			&iter->data[i],
+			(iter->used - i) * sizeof(struct btree_node_iter_set));
+		iter->used++;
+		iter->data[i] = n;
+	}
+}
 
 static void __bch_btree_node_iter_init(struct btree_keys *b,
 				       struct btree_node_iter *iter,
@@ -1069,28 +1095,45 @@ void bch_btree_node_iter_init_from_start(struct btree_keys *b,
 }
 EXPORT_SYMBOL(bch_btree_node_iter_init_from_start);
 
+/**
+ * bch_btree_node_iter_advance - advance @iter by one key
+ *
+ * Doesn't do debugchecks - for cases where (insert_fixup_extent()) a bset might
+ * momentarily have out of order extents.
+ */
+void bch_btree_node_iter_advance(struct btree_node_iter *iter)
+{
+	unsigned i;
+
+	iter->data->k = bkey_next(iter->data->k);
+
+	BUG_ON(iter->data->k > iter->data->end);
+
+	if (iter->data->k == iter->data->end)
+		iter->data[0] = iter->data[--iter->used];
+
+	for (i = 0;
+	     i + 1 < iter->used &&
+	     btree_node_iter_cmp(iter, iter->data[i], iter->data[i + 1]);
+	     i++)
+		swap(iter->data[i], iter->data[i + 1]);
+}
+EXPORT_SYMBOL(bch_btree_node_iter_advance);
+
+#ifdef CONFIG_BCACHEFS_DEBUG
 struct bkey *bch_btree_node_iter_next_all(struct btree_node_iter *iter)
 {
-	struct btree_node_iter_set unused;
-	struct bkey *ret = NULL;
+	struct bkey *ret = bch_btree_node_iter_peek_all(iter);
 
-	if (!bch_btree_node_iter_end(iter)) {
+	if (ret) {
 		bch_btree_node_iter_next_check(iter);
-
-		ret = iter->data->k;
-		iter->data->k = bkey_next(iter->data->k);
-
-		BUG_ON(iter->data->k > iter->data->end);
-
-		if (iter->data->k == iter->data->end)
-			BUG_ON(!heap_pop(iter, unused, iter_cmp(iter)));
-		else
-			btree_node_iter_sift(iter, 0);
+		bch_btree_node_iter_advance(iter);
 	}
 
 	return ret;
 }
 EXPORT_SYMBOL(bch_btree_node_iter_next_all);
+#endif
 
 /* Mergesort */
 

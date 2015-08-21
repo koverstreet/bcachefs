@@ -1045,7 +1045,7 @@ static void overwrite_full_key(struct btree *b, struct bkey *insert,
 	if (!bkey_written(&b->keys, k))
 		k->p.offset = bkey_start_offset(insert);
 
-	bch_btree_node_iter_next_all(iter);
+	bch_btree_node_iter_advance(iter);
 }
 
 /**

@@ -380,41 +380,44 @@ struct btree_node_iter {
 	} data[MAX_BSETS];
 };
 
-static inline struct btree_keys *__iter_keys_ptr(struct btree_node_iter *iter)
-{
-#ifdef CONFIG_BCACHEFS_DEBUG
-	return iter->b;
-#else
-	return NULL;
-#endif
-}
+void bch_btree_node_iter_push(struct btree_node_iter *,
+			      struct bkey *, struct bkey *);
+void bch_btree_node_iter_init(struct btree_keys *, struct btree_node_iter *,
+			      struct bpos);
+void bch_btree_node_iter_init_from_start(struct btree_keys *,
+					 struct btree_node_iter *);
 
-struct bkey *bch_btree_node_iter_next_all(struct btree_node_iter *);
-
-static inline bool btree_node_iter_cmp(struct btree_node_iter_set l,
-				       struct btree_node_iter_set r)
-{
-	return bkey_cmp(l.k->p, r.k->p) > 0;
-}
-
-static inline bool btree_node_iter_extent_cmp(struct btree_node_iter_set l,
-					      struct btree_node_iter_set r)
-{
-	return bkey_cmp(bkey_start_pos(l.k), bkey_start_pos(r.k)) > 0;
-}
-
-#define iter_cmp(iter)							\
-	(iter->is_extents ? btree_node_iter_extent_cmp : btree_node_iter_cmp)
-
-static inline void btree_node_iter_sift(struct btree_node_iter *iter, size_t i)
-{
-	heap_sift(iter, i, iter_cmp(iter));
-}
+void bch_btree_node_iter_advance(struct btree_node_iter *);
 
 static inline bool bch_btree_node_iter_end(struct btree_node_iter *iter)
 {
 	return !iter->used;
 }
+
+static inline struct bkey *
+bch_btree_node_iter_peek_all(struct btree_node_iter *iter)
+{
+	return bch_btree_node_iter_end(iter)
+		? NULL
+		: iter->data->k;
+}
+
+/* In debug mode, bch_btree_node_iter_next_all() does debug checks */
+
+#ifdef CONFIG_BCACHEFS_DEBUG
+struct bkey *bch_btree_node_iter_next_all(struct btree_node_iter *);
+#else
+static inline struct bkey *
+bch_btree_node_iter_next_all(struct btree_node_iter *iter)
+{
+	struct bkey *ret = bch_btree_node_iter_peek_all(iter);
+
+	if (ret)
+		bch_btree_node_iter_advance(iter);
+
+	return ret;
+}
+#endif
 
 static inline struct bkey *
 bch_btree_node_iter_next(struct btree_node_iter *iter)
@@ -429,25 +432,13 @@ bch_btree_node_iter_next(struct btree_node_iter *iter)
 }
 
 static inline struct bkey *
-bch_btree_node_iter_peek_all(struct btree_node_iter *iter)
-{
-	return bch_btree_node_iter_end(iter)
-		? NULL
-		: iter->data->k;
-}
-
-static inline struct bkey *
 bch_btree_node_iter_peek(struct btree_node_iter *iter)
 {
 	struct bkey *ret;
 
-	while (1) {
-		ret = bch_btree_node_iter_peek_all(iter);
-		if (!ret || !bkey_deleted(ret))
-			break;
-
+	while ((ret = bch_btree_node_iter_peek_all(iter)) &&
+	       bkey_deleted(ret))
 		bch_btree_node_iter_next_all(iter);
-	}
 
 	return ret;
 }
@@ -456,29 +447,14 @@ static inline struct bkey *
 bch_btree_node_iter_peek_overlapping(struct btree_node_iter *iter,
 				     struct bkey *end)
 {
-	struct bkey *k;
+	struct bkey *ret;
 
-	while ((k = bch_btree_node_iter_peek_all(iter)) &&
-	       (bkey_cmp(k->p, bkey_start_pos(end)) <= 0))
+	while ((ret = bch_btree_node_iter_peek_all(iter)) &&
+	       (bkey_cmp(ret->p, bkey_start_pos(end)) <= 0))
 		bch_btree_node_iter_next_all(iter);
 
-	return k && bkey_cmp(bkey_start_pos(k), end->p) < 0 ? k : NULL;
+	return ret && bkey_cmp(bkey_start_pos(ret), end->p) < 0 ? ret : NULL;
 }
-
-static inline void bch_btree_node_iter_push(struct btree_node_iter *iter,
-					    struct bkey *k,
-					    struct bkey *end)
-{
-	if (k != end)
-		BUG_ON(!heap_add(iter,
-				 ((struct btree_node_iter_set) { k, end }),
-				 iter_cmp(iter)));
-}
-
-void bch_btree_node_iter_init(struct btree_keys *, struct btree_node_iter *,
-			      struct bpos);
-void bch_btree_node_iter_init_from_start(struct btree_keys *,
-					 struct btree_node_iter *);
 
 /*
  * Iterates over all _live_ keys - skipping deleted (and potentially
