@@ -415,6 +415,9 @@ static void bch_writeback(struct cached_dev *dc)
 			return;
 		}
 
+		if (bkey_cmp(&buf->last_scanned, &end) >= 0)
+			buf->last_scanned = KEY(inode, 0, 0);
+
 		if (dc->partial_stripes_expensive) {
 			refill_full_stripes(dc);
 			if (array_freelist_empty(&buf->freelist))

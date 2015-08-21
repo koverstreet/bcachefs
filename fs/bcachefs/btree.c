@@ -3076,8 +3076,10 @@ int bch_btree_map_keys(struct btree_op *op, struct cache_set *c,
 
 	bkey_init(&from);
 
-	if (_from)
+	if (_from) {
+		BUG_ON(!bkey_cmp(_from, &MAX_KEY));
 		bkey_copy_key(&from, _from);
+	}
 
 	return btree_root(map_keys_recurse, c, op, flags & MAP_ASYNC,
 			  &from, fn, flags);
