@@ -413,7 +413,7 @@ static void bch_coalesce_nodes(struct btree *old_nodes[GC_MERGE_NODES],
 	nr_old_nodes = nr_new_nodes = i;
 
 	if (nr_old_nodes <= 1 ||
-	    __set_blocks(old_nodes[0]->keys.set[0].data,
+	    __set_blocks(old_nodes[0]->data,
 			 DIV_ROUND_UP(u64s, nr_old_nodes - 1),
 			 block_bytes(c)) > blocks)
 		return;
@@ -460,7 +460,7 @@ static void bch_coalesce_nodes(struct btree *old_nodes[GC_MERGE_NODES],
 
 		for (k = s2->start;
 		     k < bset_bkey_last(s2) &&
-		     __set_blocks(s1, s1->u64s + u64s + k->u64s,
+		     __set_blocks(n1->data, s1->u64s + u64s + k->u64s,
 				  block_bytes(c)) <= blocks;
 		     k = bkey_next(k)) {
 			last = k;

@@ -1524,8 +1524,6 @@ struct btree *__btree_node_alloc_replacement(struct btree *b,
 {
 	struct btree *n;
 
-	bch_verify_btree_keys_accounting(&b->keys);
-
 	n = bch_btree_node_alloc(b->c, b->level, b->btree_id);
 
 	n->data->min_key	= b->data->min_key;
@@ -1588,6 +1586,10 @@ struct btree *btree_node_alloc_replacement(struct btree *b)
 {
 	struct bkey_format new_f = bch_btree_calc_format(b);
 
+	/*
+	 * The keys might expand with the new format - if they wouldn't fit in
+	 * the btree node anymore, use the old format for now:
+	 */
 	if (!btree_node_format_fits(b, &new_f))
 		new_f = b->keys.format;
 

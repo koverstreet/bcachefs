@@ -410,12 +410,9 @@ static inline bool btree_node_format_fits(struct btree *b,
 	    (((int) new_f->key_u64s - BKEY_U64s) *
 	     (int) b->keys.nr_unpacked_keys);
 
-	BUG_ON(new_u64s + b->keys.nr_live_u64s < 0);
+	bch_verify_btree_keys_accounting(&b->keys);
 
-	/*
-	 * The keys might expand with the new format - if they wouldn't fit in
-	 * the btree node anymore, use the old format for now:
-	 */
+	BUG_ON(new_u64s + b->keys.nr_live_u64s < 0);
 
 	return __set_bytes(b->keys.set->data, b->keys.nr_live_u64s + new_u64s) <
 		PAGE_SIZE << b->keys.page_order;
