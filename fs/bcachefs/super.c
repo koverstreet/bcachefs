@@ -135,8 +135,9 @@ static const char *read_super(struct cache_sb *sb, struct block_device *bdev,
 			goto err;
 
 		break;
-	case BCACHE_SB_VERSION_CDEV:
+	case BCACHE_SB_VERSION_CDEV_V0:
 	case BCACHE_SB_VERSION_CDEV_WITH_UUID:
+	case BCACHE_SB_VERSION_CDEV_V2:
 		sb->nbuckets	= le64_to_cpu(s->nbuckets);
 		sb->bucket_size	= le16_to_cpu(s->bucket_size);
 
@@ -299,7 +300,7 @@ void bcache_write_super(struct cache_set *c)
 	for_each_cache(ca, c, i) {
 		struct bio *bio = &ca->sb_bio;
 
-		ca->sb.version		= BCACHE_SB_VERSION_CDEV_WITH_UUID;
+		ca->sb.version		= BCACHE_SB_VERSION_CDEV;
 		ca->sb.seq		= c->sb.seq;
 		ca->sb.last_mount	= c->sb.last_mount;
 

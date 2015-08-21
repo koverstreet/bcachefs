@@ -138,11 +138,13 @@ static inline struct bkey *bkey_idx(const struct bkey *k, unsigned nr_keys)
  * Version 3: Cache device with new UUID format
  * Version 4: Backing device with data offset
  */
-#define BCACHE_SB_VERSION_CDEV		0
+#define BCACHE_SB_VERSION_CDEV_V0	0
 #define BCACHE_SB_VERSION_BDEV		1
 #define BCACHE_SB_VERSION_CDEV_WITH_UUID 3
 #define BCACHE_SB_VERSION_BDEV_WITH_OFFSET 4
-#define BCACHE_SB_MAX_VERSION		4
+#define BCACHE_SB_VERSION_CDEV_V2	5
+#define BCACHE_SB_VERSION_CDEV		5
+#define BCACHE_SB_MAX_VERSION		5
 
 #define SB_SECTOR			8
 #define SB_SIZE				4096
