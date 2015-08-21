@@ -699,7 +699,8 @@ static int bch_discard_fn(struct btree_op *b_op, struct btree *b,
 			  struct bkey *k)
 {
 	struct bch_discard_op *op =
-		container_of(b_op, struct bch_discard_op, op);
+	container_of(b_op, struct bch_discard_op, op);
+	unsigned max_sectors = KEY_SIZE_MAX & (~0 << b->c->block_bits);
 	struct bkey erase_key;
 	int ret;
 
@@ -710,8 +711,7 @@ static int bch_discard_fn(struct btree_op *b_op, struct btree *b,
 		return MAP_DONE;
 
 	/* create the biggest key we can, to minimize writes */
-	erase_key = KEY(KEY_INODE(k), KEY_START(k) + KEY_SIZE_MAX,
-			KEY_SIZE_MAX);
+	erase_key = KEY(KEY_INODE(k), KEY_START(k) + max_sectors, max_sectors);
 	bch_cut_front(&START_KEY(op->start_key), &erase_key);
 	bch_cut_back(op->end_key, &erase_key);
 	if ((op->version) == 0ULL) {
