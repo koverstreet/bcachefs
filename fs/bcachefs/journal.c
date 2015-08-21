@@ -485,9 +485,11 @@ int bch_cache_journal_alloc(struct cache *ca)
 	int ret;
 	unsigned i;
 
+	/* clamp journal size to 512MB (in sectors) */
+
 	ret = bch_set_nr_journal_buckets(ca,
-					 max_t(unsigned, 2,
-					       ca->sb.nbuckets >> 8));
+			clamp_t(unsigned, ca->sb.nbuckets >> 8,
+				2, (1 << 20) / ca->sb.bucket_size));
 	if (ret)
 		return ret;
 
