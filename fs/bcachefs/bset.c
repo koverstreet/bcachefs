@@ -1133,7 +1133,7 @@ static void btree_mergesort(struct btree_keys *b, struct bset *out,
 	heap_resort(iter, b->ops->sort_cmp);
 
 	while (!btree_iter_end(iter)) {
-		if (b->ops->sort_fixup && fixup)
+		if (b->ops->sort_fixup && (fixup || !b->ops->is_extents))
 			k = b->ops->sort_fixup(iter, &tmp.k);
 		else
 			k = NULL;
