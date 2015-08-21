@@ -92,6 +92,8 @@ read_attribute(cached_bytes);
 read_attribute(cached_buckets);
 read_attribute(meta_buckets);
 read_attribute(alloc_buckets);
+read_attribute(has_data);
+read_attribute(has_metadata);
 read_attribute(bset_tree_stats);
 
 read_attribute(state);
@@ -956,6 +958,8 @@ SHOW(__bch_cache)
 	sysfs_print(meta_buckets,	stats.buckets_meta);
 	sysfs_print(alloc_buckets,	stats.buckets_alloc);
 	sysfs_print(available_buckets,	buckets_available_cache(ca));
+	sysfs_print(has_data,		CACHE_HAS_DATA(mi));
+	sysfs_print(has_metadata,	CACHE_HAS_METADATA(mi));
 
 	sysfs_pd_controller_show(copy_gc, &ca->moving_gc_pd);
 
@@ -1084,6 +1088,8 @@ static struct attribute *bch_cache_files[] = {
 	&sysfs_cached_buckets,
 	&sysfs_meta_buckets,
 	&sysfs_alloc_buckets,
+	&sysfs_has_data,
+	&sysfs_has_metadata,
 	&sysfs_discard,
 	&sysfs_written,
 	&sysfs_btree_written,

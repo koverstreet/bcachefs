@@ -550,6 +550,8 @@ int bch_bucket_wait(struct cache_set *c, enum alloc_reserve reserve,
 long bch_bucket_alloc(struct cache *ca, enum alloc_reserve reserve,
 		      struct closure *cl)
 {
+	struct cache_member *mi = cache_member_info(ca);
+	bool meta = reserve <= RESERVE_METADATA_LAST;
 	struct bucket *g;
 	long r;
 
@@ -586,8 +588,19 @@ out:
 
 	g = ca->buckets + r;
 
-	if (reserve <= RESERVE_METADATA_LAST)
+	if (meta)
 		bch_mark_metadata_bucket(ca, g);
+
+	if (reserve == RESERVE_PRIO)
+		meta = false;
+
+	if (!(meta ? CACHE_HAS_METADATA : CACHE_HAS_DATA)(mi)) {
+		(meta
+		 ? SET_CACHE_HAS_METADATA
+		 : SET_CACHE_HAS_DATA)(mi, true);
+
+		bcache_write_super(ca->set);
+	}
 
 	g->read_prio = ca->set->prio_clock[READ].hand;
 	g->write_prio = ca->set->prio_clock[WRITE].hand;
