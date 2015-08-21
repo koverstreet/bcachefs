@@ -127,7 +127,7 @@ struct journal_replay {
 #define JOURNAL_PIN	((32 * 1024) - 1)
 
 #define journal_full(j)						\
-	(!(j)->blocks_free || fifo_free(&(j)->pin) <= 1)
+	(!(j)->sectors_free || fifo_free(&(j)->pin) <= 1)
 
 #define for_each_jset_jkeys(jkeys, jset)			\
 	for (jkeys = (jset)->start;				\
