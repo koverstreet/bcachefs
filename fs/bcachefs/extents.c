@@ -610,14 +610,28 @@ static struct bkey *bch_btree_iter_next_overlapping(struct btree_iter *iter,
 	return k;
 }
 
-static bool bkey_cmpxchg(struct bkey *k,
+static bool bkey_cmpxchg_cmp(struct bkey *k, struct bkey *old)
+{
+	/* skip past gen */
+	s64 offset = (KEY_START(k) - KEY_START(old)) << 8;
+	unsigned i;
+
+	if (!bch_bkey_equal_header(k, old))
+		return false;
+
+	for (i = 0; i < bch_extent_ptrs(old); i++)
+		if (k->val[i] != old->val[i] + offset)
+			return false;
+
+	return true;
+}
+
+static bool bkey_cmpxchg(struct cache_set *c,
+			 struct bkey *k,
 			 struct bkey *old,
 			 struct bkey *new,
 			 unsigned *sectors_found)
 {
-	unsigned i;
-	s64 offset = KEY_START(k) - KEY_START(old);
-
 	/* must have something to compare against */
 	BUG_ON(!bch_extent_ptrs(old));
 
@@ -633,27 +647,22 @@ static bool bkey_cmpxchg(struct bkey *k,
 		if (*sectors_found)
 			return false;
 
+		bch_subtract_sectors(new, c, KEY_START(new),
+				     KEY_START(k) - KEY_START(new));
 		bch_cut_front(&START_KEY(k), new);
 	}
 
-	if (!bch_bkey_equal_header(k, old))
-		goto check_failed;
+	if (!bkey_cmpxchg_cmp(k, old)) {
+		if (*sectors_found || bkey_cmp(k, new) >= 0)
+			return false;
 
-	/* skip past gen */
-	offset <<= 8;
+		bch_subtract_sectors(new, c, KEY_START(new),
+				     KEY_OFFSET(k) - KEY_START(new));
+		bch_cut_front(k, new);
+	} else {
+		*sectors_found = KEY_OFFSET(k) - KEY_START(new);
+	}
 
-	for (i = 0; i < bch_extent_ptrs(old); i++)
-		if (k->val[i] != old->val[i] + offset)
-			goto check_failed;
-
-	*sectors_found = KEY_OFFSET(k) - KEY_START(new);
-	return true;
-
-check_failed:
-	if (*sectors_found || bkey_cmp(k, new) >= 0)
-		return false;
-
-	bch_cut_front(k, new);
 	return true;
 }
 
@@ -663,16 +672,12 @@ static bool bch_extent_insert_fixup(struct btree_keys *b,
 				    struct bkey *replace_key)
 {
 	struct cache_set *c = container_of(b, struct btree, keys)->c;
-
-	u64 insert_offset = KEY_START(insert);
-	unsigned insert_size = KEY_SIZE(insert);
-
 	unsigned sectors_found = 0;  /* for cmpxchg */
 	struct bkey *k, *top;
 
-	BUG_ON(!insert_size);
+	BUG_ON(!KEY_SIZE(insert));
 
-	bch_add_sectors(insert, c, insert_offset, insert_size);
+	bch_add_sectors(insert, c, KEY_START(insert), KEY_SIZE(insert));
 
 	while ((k = bch_btree_iter_next_overlapping(iter, insert))) {
 		/*
@@ -685,7 +690,7 @@ static bool bch_extent_insert_fixup(struct btree_keys *b,
 
 		if (replace_key && KEY_SIZE(k)) {
 			/* This might make @insert shorter */
-			if (!bkey_cmpxchg(k, replace_key, insert,
+			if (!bkey_cmpxchg(c, k, replace_key, insert,
 					  &sectors_found))
 				goto check_failed;
 
@@ -763,23 +768,7 @@ static bool bch_extent_insert_fixup(struct btree_keys *b,
 	}
 
 check_failed:
-	if (replace_key) {
-		/*
-		 * The insert key may have changed on us:
-		 * - The bkey_cmpxchg() function may have cut off a prefix
-		 * - And now we want to cut off a suffix from sectors_found
-		 *
-		 * So make sure to update sector counts here.
-		 */
-		BUG_ON(insert_offset + insert_size != KEY_OFFSET(insert));
-		BUG_ON(insert_size < KEY_SIZE(insert));
-		bch_subtract_sectors(insert, c,
-				     insert_offset,
-				     insert_size - KEY_SIZE(insert));
-
-		if (sectors_found >= KEY_SIZE(insert))
-			return false;
-
+	if (replace_key && sectors_found < KEY_SIZE(insert)) {
 		bch_subtract_sectors(insert, c,
 				     KEY_START(insert) + sectors_found,
 				     KEY_SIZE(insert) - sectors_found);
