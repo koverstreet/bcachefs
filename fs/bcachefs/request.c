@@ -607,7 +607,6 @@ static bool cache_promote(struct cache_set *c, struct bio *bio,
 
 	__cache_promote(c, bio, k, cache_promote_endio);
 	return 1;
-
 }
 
 /* Congested? */
@@ -757,7 +756,6 @@ static int bch_read_fn(struct btree_op *b_op, struct btree *b, struct bkey *k)
 			struct bch_read_op, op);
 	struct bio *n, *bio = op->bio;
 	struct bkey *bio_key;
-	BKEY_PADDED(k) tmp;
 	int sectors, ret;
 	int ptr = 0;
 
@@ -798,15 +796,13 @@ static int bch_read_fn(struct btree_op *b_op, struct btree *b, struct bkey *k)
 
 	bio_chain(n, bio);
 
-	bkey_copy(&tmp.k, k);
-	k = &tmp.k;
-
-	/* Trim the key to match what we're actually reading */
-	bch_cut_front(&KEY(op->inode, n->bi_iter.bi_sector, 0), k);
-	bch_cut_back(&KEY(op->inode, bio_end_sector(n), 0), k);
-
 	bio_key = &container_of(n, struct bbio, bio)->key;
 	bch_bkey_copy_single_ptr(bio_key, k, ptr);
+
+	/* Trim the key to match what we're actually reading */
+	bch_cut_front(&KEY(op->inode, n->bi_iter.bi_sector, 0), bio_key);
+	bch_cut_back(&KEY(op->inode, bio_end_sector(n), 0), bio_key);
+
 	n->bi_iter.bi_sector	= PTR_OFFSET(bio_key, 0);
 	n->bi_bdev		= PTR_CACHE(b->c, bio_key, 0)->bdev;
 
@@ -907,7 +903,6 @@ static int cache_lookup_fn(struct btree_op *op, struct btree *b, struct bkey *k)
 	struct search *s = container_of(op, struct search, op);
 	struct bio *n, *bio = &s->bio.bio;
 	struct bkey *bio_key;
-	BKEY_PADDED(k) tmp;
 	unsigned sectors;
 	int ptr;
 
@@ -929,17 +924,15 @@ static int cache_lookup_fn(struct btree_op *op, struct btree *b, struct bkey *k)
 
 	n = bio_next_split(bio, sectors, GFP_NOIO, s->d->bio_split);
 
-	bkey_copy(&tmp.k, k);
-	k = &tmp.k;
-
-	/* Trim the key to match what we're actually reading */
-	bch_cut_front(&KEY(s->inode, n->bi_iter.bi_sector, 0), k);
-	bch_cut_back(&KEY(s->inode, bio_end_sector(n), 0), k);
-
 	bio_key = &container_of(n, struct bbio, bio)->key;
 	bch_bkey_copy_single_ptr(bio_key, k, ptr);
-	n->bi_iter.bi_sector	= PTR_OFFSET(k, ptr);
-	n->bi_bdev		= PTR_CACHE(b->c, k, ptr)->bdev;
+
+	/* Trim the key to match what we're actually reading */
+	bch_cut_front(&KEY(s->inode, n->bi_iter.bi_sector, 0), bio_key);
+	bch_cut_back(&KEY(s->inode, bio_end_sector(n), 0), bio_key);
+
+	n->bi_iter.bi_sector	= PTR_OFFSET(bio_key, 0);
+	n->bi_bdev		= PTR_CACHE(b->c, bio_key, 0)->bdev;
 
 	n->bi_end_io		= bch_cache_read_endio;
 	n->bi_private		= &s->cl;
