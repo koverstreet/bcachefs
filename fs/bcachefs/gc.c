@@ -424,7 +424,7 @@ static void bch_coalesce_nodes(struct btree *old_nodes[GC_MERGE_NODES],
 	    bch_keylist_realloc(&keylist,
 			(BKEY_U64s + BKEY_EXTENT_MAX_U64s) * nr_old_nodes)) {
 		trace_bcache_btree_gc_coalesce_fail(c);
-		return;
+		goto out;
 	}
 
 	trace_bcache_btree_gc_coalesce(parent, nr_old_nodes);
@@ -441,7 +441,7 @@ static void bch_coalesce_nodes(struct btree *old_nodes[GC_MERGE_NODES],
 	for (i = 0; i < nr_old_nodes; i++)
 		if (!btree_node_format_fits(old_nodes[i], &new_format)) {
 			trace_bcache_btree_gc_coalesce_fail(c);
-			return;
+			goto out;
 		}
 
 	/* Repack everything with @new_format and sort down to one bset */
@@ -565,7 +565,7 @@ static void bch_coalesce_nodes(struct btree *old_nodes[GC_MERGE_NODES],
 		six_unlock_intent(&old_nodes[i]->lock);
 		old_nodes[i] = new_nodes[i];
 	}
-
+out:
 	bch_keylist_free(&keylist);
 }
 
