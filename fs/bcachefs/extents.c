@@ -481,6 +481,53 @@ static void bch_subtract_dirty(struct bkey *k,
 					     offset, -sectors);
 }
 
+static bool bkey_cmpxchg(struct bkey *k,
+			 struct bkey *old,
+			 struct bkey *new,
+			 unsigned *sectors_found)
+{
+	unsigned i;
+	s64 offset = KEY_START(k) - KEY_START(old);
+
+	/* must have something to compare against */
+	BUG_ON(!bch_extent_ptrs(old));
+
+	/* new must be a subset of old */
+	BUG_ON(bkey_cmp(new, old) > 0 ||
+	       bkey_cmp(&START_KEY(new), &START_KEY(old)) < 0);
+
+	/*
+	 * first, check if there was a hole - part of the new key that we
+	 * haven't checked against any existing key
+	 */
+	if (KEY_START(new) + *sectors_found < KEY_START(k)) {
+		if (*sectors_found)
+			return false;
+
+		bch_cut_front(&START_KEY(k), new);
+	}
+
+	if (!bch_bkey_equal_header(k, old))
+		goto check_failed;
+
+	/* skip past gen */
+	offset <<= 8;
+
+	for (i = 0; i < bch_extent_ptrs(old); i++)
+		if (k->val[i] != old->val[i] + offset)
+			goto check_failed;
+
+	*sectors_found = KEY_OFFSET(k) - KEY_START(new);
+	return true;
+
+check_failed:
+	if (*sectors_found || bkey_cmp(k, new) >= 0)
+		return false;
+
+	bch_cut_front(k, new);
+	return true;
+}
+
 static bool bch_extent_insert_fixup(struct btree_keys *b,
 				    struct bkey *insert,
 				    struct btree_iter *iter,
@@ -521,36 +568,12 @@ static bool bch_extent_insert_fixup(struct btree_keys *b,
 		 */
 
 		if (replace_key && KEY_SIZE(k)) {
-			/*
-			 * k might have been split since we inserted/found the
-			 * key we're replacing
-			 */
-			unsigned i;
-			uint64_t offset = KEY_START(k) -
-				KEY_START(replace_key);
-
-			/* But it must be a subset of the replace key */
-			if (KEY_START(k) < KEY_START(replace_key) ||
-			    KEY_OFFSET(k) > KEY_OFFSET(replace_key))
+			if (!bkey_cmpxchg(k, replace_key, insert,
+					  &sectors_found))
 				goto check_failed;
 
-			/* We didn't find a key that we were supposed to */
-			if (KEY_START(k) > KEY_START(insert) + sectors_found)
-				goto check_failed;
-
-			if (!bch_bkey_equal_header(k, replace_key))
-				goto check_failed;
-
-			/* skip past gen */
-			offset <<= 8;
-
-			BUG_ON(!bch_extent_ptrs(replace_key));
-
-			for (i = 0; i < bch_extent_ptrs(replace_key); i++)
-				if (k->val[i] != replace_key->val[i] + offset)
-					goto check_failed;
-
-			sectors_found = KEY_OFFSET(k) - KEY_START(insert);
+			if (bkey_cmp(k, &START_KEY(insert)) <= 0)
+				continue;
 		}
 
 		if (bkey_cmp(insert, k) < 0 &&
