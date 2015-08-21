@@ -381,7 +381,7 @@ static unsigned inorder_prev(unsigned j, unsigned size)
  * extra is a function of size:
  *   extra = (size - rounddown_pow_of_two(size - 1)) << 1;
  */
-static unsigned __to_inorder(unsigned j, unsigned size, unsigned extra)
+static inline unsigned __to_inorder(unsigned j, unsigned size, unsigned extra)
 {
 	unsigned b = fls(j);
 	unsigned shift = fls(size - 1) - b;
@@ -397,7 +397,7 @@ static unsigned __to_inorder(unsigned j, unsigned size, unsigned extra)
 	return j;
 }
 
-static unsigned to_inorder(unsigned j, struct bset_tree *t)
+static inline unsigned to_inorder(unsigned j, struct bset_tree *t)
 {
 	return __to_inorder(j, t->size, t->extra);
 }
@@ -1006,9 +1006,6 @@ struct bkey *__bch_bset_search(struct btree_keys *b, struct bset_tree *t,
 
 		m = bset_search_tree(t, PRECEDING_KEY(search));
 	} else {
-		BUG_ON(!b->nsets &&
-		       t->size < bkey_to_cacheline(t, bset_bkey_last(t->data)));
-
 		m = bset_search_write_set(t, search);
 	}
 
