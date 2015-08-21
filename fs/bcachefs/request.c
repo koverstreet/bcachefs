@@ -313,8 +313,7 @@ static void bch_data_insert_start(struct closure *cl)
 
 		/* for the device pointers and 1 for the chksum */
 		if (bch_keylist_realloc(&op->insert_keys,
-					KEY_U64s(&op->insert_key) +
-					BKEY_PAD_PTRS +
+					BKEY_EXTENT_MAX_U64s +
 					(KEY_CSUM(&op->insert_key) ? 1 : 0)))
 			continue_at(cl, bch_data_insert_keys, op->c->wq);
 

@@ -528,7 +528,7 @@ static size_t journal_write_u64s_remaining(struct cache_set *c,
 			set_bytes(w->data)) / sizeof(u64);
 
 	/* Subtract off some for the btree roots */
-	u64s -= BTREE_ID_NR * (JSET_KEYS_U64s + BKEY_U64s + BKEY_PAD_PTRS);
+	u64s -= BTREE_ID_NR * (JSET_KEYS_U64s + BKEY_EXTENT_MAX_U64s);
 
 	/* And for the prio pointers */
 	u64s -= JSET_KEYS_U64s + c->sb.nr_in_set;

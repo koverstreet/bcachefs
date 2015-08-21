@@ -324,6 +324,11 @@ enum {
 
 /* Bkey utility code */
 
+#define BKEY_EXTENT_PTRS_MAX	4
+#define BKEY_EXTENT_MAX_U64s	(BKEY_U64s + BKEY_EXTENT_PTRS_MAX)
+
+#define BKEY_PADDED(key)	__BKEY_PADDED(key, BKEY_EXTENT_PTRS_MAX)
+
 static inline struct bkey *bset_bkey_idx(struct bset *i, unsigned idx)
 {
 	return bkey_idx(i->start, idx);

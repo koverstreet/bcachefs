@@ -2245,7 +2245,7 @@ static size_t insert_u64s_remaining(struct btree *b)
 	 * Might land in the middle of an existing extent and have to split it
 	 */
 	if (b->keys.ops->is_extents)
-		ret -= KEY_MAX_U64S;
+		ret -= BKEY_EXTENT_MAX_U64s;
 
 	return max(ret, 0L);
 }
@@ -2872,7 +2872,7 @@ static int map_hole(struct btree *b, struct btree_op *op,
 		if (b->btree_id == BTREE_ID_EXTENTS) {
 			unsigned size;
 
-			if (KEY_OFFSET(&next) == MAX_KEY_OFFSET) {
+			if (KEY_OFFSET(&next) == KEY_OFFSET_MAX) {
 				if (KEY_INODE(&next) == KEY_INODE(to))
 					return MAP_CONTINUE;
 
@@ -2882,7 +2882,7 @@ static int map_hole(struct btree *b, struct btree_op *op,
 
 			size = min_t(u64, KEY_SIZE_MAX,
 				     (KEY_INODE(to) == KEY_INODE(&next)
-				      ? KEY_START(to) : MAX_KEY_OFFSET) -
+				      ? KEY_START(to) : KEY_OFFSET_MAX) -
 				     KEY_OFFSET(&next));
 
 			BUG_ON(!size);

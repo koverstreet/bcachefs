@@ -403,7 +403,7 @@ static bool refill_dirty(struct cached_dev *dc)
 	struct keybuf *buf = &dc->writeback_keys;
 	unsigned inode = bcache_dev_inum(&dc->disk);
 	struct bkey start = KEY(inode, 0, 0);
-	struct bkey end = KEY(inode, MAX_KEY_OFFSET, 0);
+	struct bkey end = KEY(inode, KEY_OFFSET_MAX, 0);
 	struct bkey start_pos;
 
 	/*

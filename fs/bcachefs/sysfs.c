@@ -670,9 +670,9 @@ STORE(__bch_cache_set)
 	sysfs_pd_controller_store(tiering,	&c->tiering_pd);
 
 	sysfs_strtoul_clamp(meta_replicas,
-			    c->meta_replicas, 1, BKEY_PAD_PTRS);
+			    c->meta_replicas, 1, BKEY_EXTENT_PTRS_MAX);
 	sysfs_strtoul_clamp(data_replicas,
-			    c->data_replicas, 1, BKEY_PAD_PTRS);
+			    c->data_replicas, 1, BKEY_EXTENT_PTRS_MAX);
 
 	if (!test_bit(CACHE_SET_RUNNING, &c->flags))
 		return -EPERM;

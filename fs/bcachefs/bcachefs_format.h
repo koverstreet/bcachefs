@@ -13,14 +13,18 @@ extern "C" {
 #include <asm/byteorder.h>
 #include <linux/uuid.h>
 
-#define BITMASK(name, type, field, offset, size)		\
-static inline __u64 name(const type *k)				\
-{ return (k->field >> offset) & ~(~0ULL << size); }		\
-								\
-static inline void SET_##name(type *k, __u64 v)			\
-{								\
-	k->field &= ~(~(~0ULL << size) << offset);		\
-	k->field |= (v & ~(~0ULL << size)) << offset;		\
+#define BITMASK(name, type, field, offset, end)				\
+static const unsigned	name##_OFFSET = offset;				\
+static const unsigned	name##_BITS = (end - offset);			\
+static const __u64	name##_MAX = (1ULL << (end - offset)) - 1;	\
+									\
+static inline __u64 name(const type *k)					\
+{ return (k->field >> offset) & ~(~0ULL << (end - offset)); }		\
+									\
+static inline void SET_##name(type *k, __u64 v)				\
+{									\
+	k->field &= ~(~(~0ULL << (end - offset)) << offset);		\
+	k->field |= (v & ~(~0ULL << (end - offset))) << offset;		\
 }
 
 /* Btree keys - all units are in sectors */
@@ -44,84 +48,71 @@ struct bkey {
 
 #define BKEY_U64s	(sizeof(struct bkey) / sizeof(__u64))
 
-#define KEY_FIELD(name, field, offset, size)				\
-	BITMASK(name, struct bkey, field, offset, size)
+#define KEY_FIELD(name, field, offset, end)				\
+	BITMASK(name, struct bkey, field, offset, end)
 
-#define PTR_FIELD(name, offset, size)					\
+#define PTR_FIELD(name, offset, end)					\
 static inline __u64 name(const struct bkey *k, unsigned i)		\
-{ return (k->val[i] >> offset) & ~(~0ULL << size); }			\
+{ return (k->val[i] >> offset) & ~(~0ULL << (end - offset)); }		\
 									\
 static inline void SET_##name(struct bkey *k, unsigned i, __u64 v)	\
 {									\
-	k->val[i] &= ~(~(~0ULL << size) << offset);			\
-	k->val[i] |= (v & ~(~0ULL << size)) << offset;			\
+	k->val[i] &= ~(~(~0ULL << (end - offset)) << offset);		\
+	k->val[i] |= (v & ~(~0ULL << (end - offset))) << offset;	\
 }
 
-#define KEY_INODE_BITS		40
-
-#define KEY_OFFSET_H_BITS	8
-#define KEY_OFFSET_L_BITS	44
 #define KEY_OFFSET_BITS		(KEY_OFFSET_H_BITS + KEY_OFFSET_L_BITS)
+#define KEY_OFFSET_MAX		(~(~0ULL << KEY_OFFSET_BITS))
 
-#define KEY_OFFSET_H_MAX	(~(~0ULL << KEY_OFFSET_H_BITS))
-#define KEY_OFFSET_L_MAX	(~(~0ULL << KEY_OFFSET_L_BITS))
-
-#define MAX_KEY_INODE		(~(~0ULL << KEY_INODE_BITS))
-#define MAX_KEY_OFFSET		(~(~0ULL << KEY_OFFSET_BITS))
-
-#define KEY_VERSION_BITS	32
-
-#define KEY_SIZE_BITS		16
-#define KEY_SIZE_MAX		((1U << KEY_SIZE_BITS) - 1)
-
-#define KEY_MAX_U64S		64
-
-KEY_FIELD(KEY_U64s,	header, 56, 8)
-KEY_FIELD(KEY_DELETED,	header, 55, 1)
-KEY_FIELD(KEY_CACHED,	header, 54, 1)
-KEY_FIELD(KEY_CSUM,	header, 52, 2)
-
-KEY_FIELD(UNUSED,	header, 32, 20)
+KEY_FIELD(KEY_U64s,	header, 56, 64)
+KEY_FIELD(KEY_DELETED,	header, 55, 56)
+KEY_FIELD(KEY_CACHED,	header, 54, 55)
+KEY_FIELD(KEY_CSUM,	header, 52, 54)
 
 /*
  * Sequence number used to determine which extent is the newer one, when dealing
  * with overlapping extents from different servers.
  */
-KEY_FIELD(KEY_VERSION,	header, 0,  KEY_VERSION_BITS)
+KEY_FIELD(KEY_VERSION,	header, 0,  32)
 
-/* Extent size, in sectors */
-KEY_FIELD(KEY_SIZE,	k1, 48, KEY_SIZE_BITS)
-
-KEY_FIELD(KEY_INODE,	k1, 8,  KEY_INODE_BITS)
-
-KEY_FIELD(KEY_OFFSET_H,	k1,  0, KEY_OFFSET_H_BITS)
-KEY_FIELD(KEY_OFFSET_L,	k2, 20, KEY_OFFSET_L_BITS)
+/* start of actual key: */
 
 KEY_FIELD(KEY_SNAPSHOT,	k2,  0, 20)
+
+KEY_FIELD(KEY_OFFSET_L,	k2, 20, 64)
+KEY_FIELD(KEY_OFFSET_H,	k1,  0, 8)
+
+KEY_FIELD(KEY_INODE,	k1, 8,  48)
 
 #define KEY_HIGH_BITS	48
 #define KEY_HIGH_MASK	(~(~0ULL << KEY_HIGH_BITS))
 
+/* actual key ends here (don't compare against the rest) */
+
+KEY_FIELD(KEY_SIZE,	k1, 48, 64)	/* Extent size, in sectors */
+
 static inline __u64 KEY_OFFSET(const struct bkey *k)
 {
-	return KEY_OFFSET_L(k)|(KEY_OFFSET_H(k) << 44);
+	return KEY_OFFSET_L(k) | (KEY_OFFSET_H(k) << KEY_OFFSET_L_BITS);
 }
 
 static inline void SET_KEY_OFFSET(struct bkey *k, __u64 v)
 {
 	SET_KEY_OFFSET_L(k, v);
-	SET_KEY_OFFSET_H(k, v >> 44);
+	SET_KEY_OFFSET_H(k, v >> KEY_OFFSET_L_BITS);
 }
 
 #ifndef __cplusplus
 
 #define KEY(inode, offset, size)					\
 ((struct bkey) {							\
-	.header	= BKEY_U64s << 56,					\
-	.k1	= (((((__u64) (size)) & KEY_SIZE_MAX) << 48)|		\
-		   ((((__u64) (inode)) & MAX_KEY_INODE) << 8)|		\
-		   ((((__u64) (offset)) >> 44) & KEY_OFFSET_H_MAX)),	\
-	.k2	= ((((__u64) (offset)) & KEY_OFFSET_L_MAX) << 20),	\
+	.header	= BKEY_U64s << KEY_U64s_OFFSET,				\
+	.k1	= (((((__u64) (size)) & KEY_SIZE_MAX) << KEY_SIZE_OFFSET)|\
+		   ((((__u64) (inode)) & KEY_INODE_MAX) << KEY_INODE_OFFSET)|\
+		   ((((__u64) (offset)) >> KEY_OFFSET_L_BITS) &		\
+		    KEY_OFFSET_H_MAX)),					\
+	.k2	= ((((__u64) (offset)) &				\
+		    KEY_OFFSET_L_MAX) << KEY_OFFSET_L_OFFSET),		\
 })
 
 #else
@@ -130,11 +121,11 @@ static inline struct bkey KEY(__u64 inode, __u64 offset, __u64 size)
 {
 	struct bkey ret;
 
-	ret.header = (__u64)BKEY_U64s << 56,
-	ret.k1 = (((((__u64) (size)) & KEY_SIZE_MAX) << 48)|
-		  ((((__u64) (inode)) & ~(~0ULL << 40)) << 8)|
-		  ((((__u64) (offset)) >> 44) & ~(~0ULL << 8)));
-	ret.k2 = ((((__u64) (offset)) & ~(~0ULL << 44)) << 20);
+	ret.header = (__u64) BKEY_U64s << KEY_U64s_OFFSET;
+	ret.k1 = (((size & KEY_SIZE_MAX) << KEY_SIZE_OFFSET)|
+		  ((inode & KEY_INODE_MAX) << KEY_INODE_OFFSET)|
+		  ((offset >> KEY_OFFSET_L_BITS) & KEY_OFFSET_H_MAX));
+	ret.k2 = (offset & KEY_OFFSET_L_MAX) << KEY_OFFSET_L_OFFSET;
 
 	return ret;
 }
@@ -142,7 +133,6 @@ static inline struct bkey KEY(__u64 inode, __u64 offset, __u64 size)
 #endif
 
 #define ZERO_KEY			KEY(0, 0, 0)
-
 #define MAX_KEY				KEY(~0ULL, ~0ULL, 0)
 
 #define KEY_START(k)			(KEY_OFFSET(k) - KEY_SIZE(k))
@@ -150,9 +140,9 @@ static inline struct bkey KEY(__u64 inode, __u64 offset, __u64 size)
 
 #define PTR_DEV_BITS			12
 
-PTR_FIELD(PTR_DEV,			51, PTR_DEV_BITS)
-PTR_FIELD(PTR_OFFSET,			8,  43)
 PTR_FIELD(PTR_GEN,			0,  8)
+PTR_FIELD(PTR_OFFSET,			8,  51)
+PTR_FIELD(PTR_DEV,			51, 51 + PTR_DEV_BITS)
 
 #define PTR_CHECK_DEV			((1 << PTR_DEV_BITS) - 1)
 
@@ -187,6 +177,9 @@ static inline struct bkey *bkey_idx(const struct bkey *k, unsigned nr_keys)
 }
 
 #define bset_bkey_last(i)	bkey_idx((struct bkey *) (i)->d, (i)->keys)
+
+#define __BKEY_PADDED(key, pad)					\
+	struct { struct bkey key; __u64 key ## _pad[pad]; }
 
 /* Inodes */
 
@@ -268,11 +261,6 @@ do {								\
 		_i->i_inode_format = BCH_INODE_BLOCKDEV;	\
 } while (0)
 #endif
-
-#define BKEY_PAD_PTRS		4
-
-#define BKEY_PADDED(key)					\
-	struct { struct bkey key; __u64 key ## _pad[BKEY_PAD_PTRS]; }
 
 /* Superblock */
 
@@ -363,13 +351,13 @@ static inline _Bool SB_IS_BDEV(const struct cache_sb *sb)
 }
 
 BITMASK(CACHE_SYNC,			struct cache_sb, flags, 0, 1);
-BITMASK(CACHE_DISCARD,			struct cache_sb, flags, 1, 1);
-BITMASK(CACHE_REPLACEMENT,		struct cache_sb, flags, 2, 3);
+BITMASK(CACHE_DISCARD,			struct cache_sb, flags, 1, 2);
+BITMASK(CACHE_REPLACEMENT,		struct cache_sb, flags, 2, 5);
 #define CACHE_REPLACEMENT_LRU		0U
 #define CACHE_REPLACEMENT_FIFO		1U
 #define CACHE_REPLACEMENT_RANDOM	2U
 
-BITMASK(CACHE_TIER,			struct cache_sb, flags, 2, 5);
+BITMASK(CACHE_TIER,			struct cache_sb, flags, 5, 7);
 #define CACHE_TIERS			4U
 
 BITMASK(BDEV_CACHE_MODE,		struct cache_sb, flags, 0, 4);
@@ -377,7 +365,7 @@ BITMASK(BDEV_CACHE_MODE,		struct cache_sb, flags, 0, 4);
 #define CACHE_MODE_WRITEBACK		1U
 #define CACHE_MODE_WRITEAROUND		2U
 #define CACHE_MODE_NONE			3U
-BITMASK(BDEV_STATE,			struct cache_sb, flags, 61, 2);
+BITMASK(BDEV_STATE,			struct cache_sb, flags, 61, 63);
 #define BDEV_STATE_NONE			0U
 #define BDEV_STATE_CLEAN		1U
 #define BDEV_STATE_DIRTY		2U
@@ -529,11 +517,11 @@ struct bkey_v0 {
 #define KEY0_FIELD(name, field, offset, size)				\
 	BITMASK(name, struct bkey_v0, field, offset, size)
 
-KEY0_FIELD(KEY0_PTRS,		high, 60, 3)
-KEY0_FIELD(KEY0_CSUM,		high, 56, 2)
-KEY0_FIELD(KEY0_DIRTY,		high, 36, 1)
+KEY0_FIELD(KEY0_PTRS,		high, 60, 63)
+KEY0_FIELD(KEY0_CSUM,		high, 56, 58)
+KEY0_FIELD(KEY0_DIRTY,		high, 36, 37)
 
-KEY0_FIELD(KEY0_SIZE,		high, 20, 16)
+KEY0_FIELD(KEY0_SIZE,		high, 20, 36)
 KEY0_FIELD(KEY0_INODE,		high, 0,  20)
 
 static inline unsigned long bkey_v0_u64s(const struct bkey_v0 *k)
@@ -557,8 +545,8 @@ struct jset_v0 {
 
 	__u64			last_seq;
 
-	BKEY_PADDED(uuid_bucket);
-	BKEY_PADDED(btree_root);
+	__BKEY_PADDED(uuid_bucket, 4);
+	__BKEY_PADDED(btree_root, 4);
 	__u16			btree_level;
 	__u16			pad[3];
 

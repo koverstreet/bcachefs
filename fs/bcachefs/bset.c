@@ -856,7 +856,7 @@ unsigned bch_btree_insert_key(struct btree_keys *b, struct bkey *k,
 
 	status = BTREE_INSERT_STATUS_FRONT_MERGE;
 	if (m != bset_bkey_last(i) &&
-	    bch_val_u64s(k) <= BKEY_PAD_PTRS) {
+	    bkey_bytes(k) <= sizeof(tmp)) {
 		bkey_copy(&tmp.k, k);
 		k = &tmp.k;
 
