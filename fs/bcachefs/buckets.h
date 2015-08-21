@@ -25,24 +25,26 @@ static inline struct cache *PTR_CACHE(const struct cache_set *c,
 		: NULL;
 }
 
-/* If you already know the cache then just call CACHE_BUCKET_NR */
-#define CACHE_BUCKET_NR(ca, k, ptr)					\
-	sector_to_bucket(ca, PTR_OFFSET(k, ptr))			\
-
-static inline size_t PTR_BUCKET_NR(const struct cache_set *c,
+static inline size_t PTR_BUCKET_NR(const struct cache *ca,
 				   const struct bkey *k,
 				   unsigned ptr)
 {
-	struct cache *ca;
+	return sector_to_bucket(ca, PTR_OFFSET(k, ptr));
+}
+
+/*
+ * Returns 0 if no pointers or device offline - only for tracepoints!
+ */
+static inline size_t PTR_BUCKET_NR_TRACE(const struct cache_set *c,
+					 const struct bkey *k,
+					 unsigned ptr)
+{
+	const struct cache *ca;
 	size_t bucket;
 
 	rcu_read_lock();
-	ca = PTR_CACHE(c, k, ptr);
-
-	/* Every key should belong to a cache */
-	BUG_ON(!ca);
-
-	bucket = CACHE_BUCKET_NR(ca, k, ptr);
+	bucket = (bch_extent_ptrs(k) && (ca = PTR_CACHE(c, k, ptr)))
+		? PTR_BUCKET_NR(ca, k, ptr) : 0;
 	rcu_read_unlock();
 
 	return bucket;
@@ -52,14 +54,14 @@ static inline u8 PTR_BUCKET_GEN(const struct cache *ca,
 				const struct bkey *k,
 				unsigned ptr)
 {
-	return ca->bucket_gens[CACHE_BUCKET_NR(ca, k, ptr)];
+	return ca->bucket_gens[PTR_BUCKET_NR(ca, k, ptr)];
 }
 
 static inline struct bucket *PTR_BUCKET(struct cache *ca,
 					const struct bkey *k,
 					unsigned ptr)
 {
-	return ca->buckets + CACHE_BUCKET_NR(ca, k, ptr);
+	return ca->buckets + PTR_BUCKET_NR(ca, k, ptr);
 }
 
 static inline u8 __gen_after(u8 a, u8 b)

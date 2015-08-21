@@ -233,7 +233,7 @@ static u64 btree_csum_set(struct btree *b, struct bset *i)
 		"btree node error at btree %u level %u/%u bucket %zu block %u keys %u: " fmt,\
 		(b)->btree_id, (b)->level, btree_node_root(b)	\
 			    ? btree_node_root(b)->level : -1,	\
-		CACHE_BUCKET_NR(ca, &(b)->key, ptr),		\
+		PTR_BUCKET_NR(ca, &(b)->key, ptr),		\
 		bset_block_offset(b, i),			\
 		i->keys, ##__VA_ARGS__)
 
@@ -405,7 +405,7 @@ missing:
 
 err:
 	bch_cache_error(ca, "IO error reading bucket %zu",
-			CACHE_BUCKET_NR(ca, &b->key, ptr));
+			PTR_BUCKET_NR(ca, &b->key, ptr));
 }
 
 static void btree_complete_write(struct btree *b, struct btree_write *w)

@@ -539,8 +539,6 @@ SHOW(__bch_cache_set)
 	sysfs_print(synchronous,		CACHE_SYNC(&c->sb));
 	sysfs_print(journal_delay_ms,		c->journal.delay_ms);
 
-	sysfs_hprint(bucket_size, (c->btree_pages * PAGE_SECTORS) << 9);
-	sysfs_print(bucket_size_bytes, (c->btree_pages * PAGE_SECTORS) << 9);
 	sysfs_hprint(block_size,		block_bytes(c));
 	sysfs_print(block_size_bytes,		block_bytes(c));
 
@@ -864,8 +862,6 @@ static struct attribute *bch_cache_set_files[] = {
 	&sysfs_flash_vol_create,
 	&sysfs_add_device,
 
-	&sysfs_bucket_size,
-	&sysfs_bucket_size_bytes,
 	&sysfs_block_size,
 	&sysfs_block_size_bytes,
 	&sysfs_tree_depth,

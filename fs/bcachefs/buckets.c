@@ -192,7 +192,7 @@ u8 bch_mark_data_bucket(struct cache_set *c, struct cache *ca, struct btree *b,
 			int sectors, bool dirty)
 {
 	struct bucket_mark old, new;
-	unsigned long bucket_nr = CACHE_BUCKET_NR(ca, k, i);
+	unsigned long bucket_nr = PTR_BUCKET_NR(ca, k, i);
 	unsigned gen = PTR_GEN(k, i);
 	unsigned saturated;
 	u8 stale;

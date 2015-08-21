@@ -902,7 +902,7 @@ static void bch_bucket_free_never_used(struct cache_set *c, struct bkey *k)
 
 	for (i = 0; i < bch_extent_ptrs(k); i++)
 		if ((ca = PTR_CACHE(c, k, i))) {
-			r = CACHE_BUCKET_NR(ca, k, i);
+			r = PTR_BUCKET_NR(ca, k, i);
 			g = PTR_BUCKET(ca, k, i);
 
 			spin_lock(&ca->freelist_lock);
@@ -1143,7 +1143,6 @@ static struct open_bucket *bch_open_bucket_get(struct cache_set *c,
 				       struct open_bucket, list);
 		list_move(&ret->list, &c->open_buckets_open);
 		atomic_set(&ret->pin, 1);
-		ret->sectors_free = PAGE_SECTORS * c->btree_pages;
 		bkey_init(&ret->key);
 		c->open_buckets_nr_free--;
 		trace_bcache_open_bucket_alloc(c, cl);
@@ -1168,6 +1167,8 @@ static struct open_bucket *bch_open_bucket_alloc(struct cache_set *c,
 {
 	int ret;
 	struct open_bucket *b;
+	struct cache *ca;
+	unsigned i;
 
 	b = bch_open_bucket_get(c, cl);
 	if (IS_ERR_OR_NULL(b))
@@ -1187,6 +1188,18 @@ static struct open_bucket *bch_open_bucket_alloc(struct cache_set *c,
 		bch_open_bucket_put(c, b);
 		return ERR_PTR(ret);
 	}
+
+	b->sectors_free = UINT_MAX;
+
+	rcu_read_lock();
+
+	/* This is still wrong - we waste space with different sized buckets */
+	for (i = 0; i < bch_extent_ptrs(&b->key); i++)
+		if ((ca = PTR_CACHE(c, &b->key, i)))
+			b->sectors_free = min_t(unsigned, b->sectors_free,
+						ca->sb.bucket_size);
+
+	rcu_read_unlock();
 
 	return b;
 }
