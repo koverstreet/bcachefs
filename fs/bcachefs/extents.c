@@ -982,7 +982,7 @@ static void bch_extent_debugcheck(struct btree_keys *bk, const struct bkey *k)
 		return;
 	}
 
-	if (bkey_deleted(k))
+	if (bkey_deleted(k) || KEY_WIPED(k))
 		return;
 
 	memset(ptrs_per_tier, 0, sizeof(ptrs_per_tier));
