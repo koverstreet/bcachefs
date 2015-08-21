@@ -338,7 +338,7 @@ struct bkey *__bch_bset_search(struct btree_keys *, struct bset_tree *,
 			       const struct bkey *);
 
 /*
- * Returns the first key that is strictly greater than search
+ * Returns the first key greater than or equal to @search
  */
 static inline struct bkey *bch_bset_search(struct btree_keys *b,
 					   struct bset_tree *t,
@@ -435,17 +435,16 @@ static inline bool bch_cut_back(const struct bkey *where, struct bkey *k)
 	return __bch_cut_back(where, k);
 }
 
-#define PRECEDING_KEY(_k)					\
+#define NEXT_KEY(_k)						\
 ({								\
-	struct bkey *_ret = NULL;				\
+	struct bkey _ret = *_k;					\
 								\
-	if ((_k)->k2) {						\
-		_ret = &KEY(KEY_INODE(_k), KEY_OFFSET(_k), 0);	\
-		_ret->k2--;					\
-	} else if ((_k)->k1 & KEY_HIGH_MASK) {			\
-		_ret = &KEY(KEY_INODE(_k), KEY_OFFSET(_k), 0);	\
-		_ret->k1--;					\
-		_ret->k2--;					\
+	SET_KEY_OFFSET(&_ret, KEY_OFFSET(&_ret) + 1);		\
+	if (!KEY_OFFSET(&_ret)) {				\
+		SET_KEY_INODE(&_ret, KEY_INODE(&_ret) + 1);	\
+								\
+		if (!KEY_INODE(&_ret))				\
+			BUG();					\
 	}							\
 								\
 	_ret;							\

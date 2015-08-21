@@ -1535,8 +1535,9 @@ static int btree_gc_recurse(struct btree *b, struct btree_op *op,
 	struct btree_iter iter;
 	struct gc_merge_info r[GC_MERGE_NODES];
 	struct gc_merge_info *i, *last = r + ARRAY_SIZE(r) - 1;
+	struct bkey tmp = NEXT_KEY(&b->c->gc_cur_key);
 
-	bch_btree_iter_init(&b->keys, &iter, &b->c->gc_cur_key);
+	bch_btree_iter_init(&b->keys, &iter, &tmp);
 
 	for (i = r; i < r + ARRAY_SIZE(r); i++)
 		i->b = ERR_PTR(-EINTR);
@@ -1582,7 +1583,8 @@ static int btree_gc_recurse(struct btree *b, struct btree_op *op,
 		memmove(r + 1, r, sizeof(r[0]) * (GC_MERGE_NODES - 1));
 		r->b = NULL;
 
-		if (need_resched()) {
+		if (need_resched() &&
+		    bkey_cmp(&b->c->gc_cur_key, &MAX_KEY)) {
 			ret = -EAGAIN;
 			break;
 		}
@@ -2410,9 +2412,9 @@ int bch_btree_insert(struct cache_set *c, enum btree_id id,
 	while (!ret && !bch_keylist_empty(keys)) {
 		op.op.lock = 0;
 		ret = bch_btree_map_leaf_nodes(&op.op, c, id,
-					       id == BTREE_ID_EXTENTS
+			       id == BTREE_ID_EXTENTS
 					       ? &START_KEY(keys->keys)
-					       : PRECEDING_KEY(keys->keys),
+					       : keys->keys,
 					       btree_insert_fn);
 	}
 
@@ -2483,6 +2485,13 @@ int __bch_btree_map_nodes(struct btree_op *op, struct cache_set *c,
 			  enum btree_id id, struct bkey *from,
 			  btree_map_nodes_fn *fn, int flags)
 {
+	struct bkey t;
+
+	if (from && id == BTREE_ID_EXTENTS) {
+		t = NEXT_KEY(from);
+		from = &t;
+	}
+
 	return btree_root(map_nodes_recurse, c, id, op, from, fn, flags);
 }
 
@@ -2516,5 +2525,12 @@ int bch_btree_map_keys(struct btree_op *op, struct cache_set *c,
 		       enum btree_id id, struct bkey *from,
 		       btree_map_keys_fn *fn, int flags)
 {
+	struct bkey t;
+
+	if (from && id == BTREE_ID_EXTENTS) {
+		t = NEXT_KEY(from);
+		from = &t;
+	}
+
 	return btree_root(map_keys_recurse, c, id, op, from, fn, flags);
 }

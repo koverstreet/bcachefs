@@ -799,8 +799,7 @@ unsigned bch_btree_insert_key(struct btree_keys *b, struct bkey *k,
 	BUG_ON(b->ops->is_extents && !KEY_SIZE(k));
 
 	m = bch_btree_iter_init(b, &iter, b->ops->is_extents
-				? PRECEDING_KEY(&START_KEY(k))
-				: PRECEDING_KEY(k));
+				? &START_KEY(k) : k);
 
 	if (b->ops->insert_fixup(b, k, &iter, replace_key))
 		return status;
@@ -848,6 +847,22 @@ merged:
 EXPORT_SYMBOL(bch_btree_insert_key);
 
 /* Lookup */
+
+#define PRECEDING_KEY(_k)					\
+({								\
+	struct bkey *_ret = NULL;				\
+								\
+	if ((_k)->k2) {						\
+		_ret = &KEY(KEY_INODE(_k), KEY_OFFSET(_k), 0);	\
+		_ret->k2--;					\
+	} else if ((_k)->k1 & KEY_HIGH_MASK) {			\
+		_ret = &KEY(KEY_INODE(_k), KEY_OFFSET(_k), 0);	\
+		_ret->k1--;					\
+		_ret->k2--;					\
+	}							\
+								\
+	_ret;							\
+})
 
 struct bset_search_iter {
 	struct bkey *l, *r;
@@ -941,6 +956,10 @@ struct bkey *__bch_bset_search(struct btree_keys *b, struct bset_tree *t,
 			       const struct bkey *search)
 {
 	struct bset_search_iter i;
+
+	search = PRECEDING_KEY(search);
+	if (unlikely(!search))
+		return t->data->start;
 
 	/*
 	 * First, we search for a cacheline, then lastly we do a linear search
