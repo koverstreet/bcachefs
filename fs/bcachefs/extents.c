@@ -553,11 +553,48 @@ static int bch_add_sectors(struct bkey *k,
 
 			trace_bcache_add_sectors(ca, k, i, offset,
 						 sectors, dirty);
-			if (bch_mark_data_bucket(c, ca, k, i, sectors,
-						 dirty, false) &&
-			    dirty && fail_if_stale)
+
+			/*
+			 * Two ways a dirty pointer could be stale here:
+			 *
+			 * - A bkey_cmpxchg() operation could be trying to
+			 *   replace a key that no longer exists. The new key,
+			 *   which can have some of the same pointers as the old
+			 *   key, gets added here before checking if the cmpxchg
+			 *   operation succeeds or not to avoid another race.
+			 *
+			 *   If that's the case, we just bail out of the
+			 *   cmpxchg operation early - a dirty pointer can only
+			 *   be stale if the actual dirty pointer in the btree
+			 *   was overwritten.
+			 *
+			 *   And in that case we _have_ to bail out here instead
+			 *   of letting bkey_cmpxchg() fail and undoing the
+			 *   accounting we did here with subtract_sectors()
+			 *   (like we do otherwise), because buckets going stale
+			 *   out from under us changes which pointers we count
+			 *   as dirty.
+			 *
+			 * - Journal replay
+			 *
+			 *   A dirty pointer could be stale in journal replay
+			 *   if we haven't finished journal replay - if it's
+			 *   going to get overwritten again later in replay.
+			 *
+			 *   In that case, we don't want to fail the insert
+			 *   (just for mental health) - but, since
+			 *   extent_normalize() drops stale pointers, we need to
+			 *   count replicas in a way that's invariant under
+			 *   normalize.
+			 *
+			 *   Fuck me, I hate my life.
+			 */
+
+			if (!bch_mark_data_bucket(c, ca, k, i, sectors,
+						  dirty, false))
+				replicas_found++;
+			else if (dirty && fail_if_stale)
 				goto stale;
-			replicas_found++;
 		}
 	rcu_read_unlock();
 
@@ -903,7 +940,7 @@ static bool bch_extent_debug_invalid(struct btree_keys *bk, struct bkey *k)
 				goto bad_ptr;
 		}
 
-		if (replicas_needed)
+		if (replicas_needed && !stale)
 			replicas_needed--;
 	}
 
