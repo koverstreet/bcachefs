@@ -848,33 +848,31 @@ TRACE_EVENT(bcache_bucket_alloc_set_fail,
 );
 
 DECLARE_EVENT_CLASS(open_bucket_alloc,
-	TP_PROTO(struct cache_set *c, bool moving_gc, struct closure *cl),
-	TP_ARGS(c, moving_gc, cl),
+	TP_PROTO(struct cache_set *c, struct closure *cl),
+	TP_ARGS(c, cl),
 
 	TP_STRUCT__entry(
 		__array(char,			uuid,	16	)
-		__field(unsigned,		moving_gc	)
 		__field(struct closure *,	cl		)
 	),
 
 	TP_fast_assign(
 		memcpy(__entry->uuid, c->sb.set_uuid.b, 16);
-		__entry->moving_gc = moving_gc;
 		__entry->cl = cl;
 	),
 
-	TP_printk("%pU moving_gc %u cl %p",
-		  __entry->uuid, __entry->moving_gc, __entry->cl)
+	TP_printk("%pU cl %p",
+		  __entry->uuid, __entry->cl)
 );
 
 DEFINE_EVENT(open_bucket_alloc, bcache_open_bucket_alloc,
-	TP_PROTO(struct cache_set *c, bool moving_gc, struct closure *cl),
-	TP_ARGS(c, moving_gc, cl)
+	TP_PROTO(struct cache_set *c, struct closure *cl),
+	TP_ARGS(c, cl)
 );
 
 DEFINE_EVENT(open_bucket_alloc, bcache_open_bucket_alloc_fail,
-	TP_PROTO(struct cache_set *c, bool moving_gc, struct closure *cl),
-	TP_ARGS(c, moving_gc, cl)
+	TP_PROTO(struct cache_set *c, struct closure *cl),
+	TP_ARGS(c, cl)
 );
 
 /* Copy GC */

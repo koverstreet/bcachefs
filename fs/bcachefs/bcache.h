@@ -481,9 +481,6 @@ enum alloc_reserve {
 /* Enough for 16 cache devices, 2 tiers and some left over for pipelining */
 #define OPEN_BUCKETS_COUNT 256
 
-/* We don't want open bucket allocations from bch_alloc_gc_sectors() to fail */
-#define OPEN_BUCKETS_MOVING_GC_RESERVE NUM_GC_GENS
-
 struct open_bucket {
 	struct list_head	list;
 	atomic_t		pin;

@@ -818,18 +818,13 @@ void bch_open_bucket_put(struct cache_set *c, struct open_bucket *b)
 }
 
 static struct open_bucket *bch_open_bucket_get(struct cache_set *c,
-					       bool moving_gc,
 					       struct closure *cl)
 {
 	struct open_bucket *ret;
-	unsigned reserve = 0;
-
-	if (!moving_gc)
-		reserve = OPEN_BUCKETS_MOVING_GC_RESERVE * c->sb.nr_in_set;
 
 	spin_lock(&c->open_buckets_lock);
 
-	if (c->open_buckets_nr_free > reserve) {
+	if (c->open_buckets_nr_free) {
 		BUG_ON(list_empty(&c->open_buckets_free));
 		ret = list_first_entry(&c->open_buckets_free,
 				       struct open_bucket, list);
@@ -838,9 +833,9 @@ static struct open_bucket *bch_open_bucket_get(struct cache_set *c,
 		ret->sectors_free = c->sb.bucket_size;
 		bkey_init(&ret->key);
 		c->open_buckets_nr_free--;
-		trace_bcache_open_bucket_alloc(c, moving_gc, cl);
+		trace_bcache_open_bucket_alloc(c, cl);
 	} else {
-		trace_bcache_open_bucket_alloc_fail(c, moving_gc, cl);
+		trace_bcache_open_bucket_alloc_fail(c, cl);
 
 		if (cl) {
 			closure_wait(&c->open_buckets_wait, cl);
@@ -862,7 +857,7 @@ static struct open_bucket *bch_open_bucket_alloc(struct cache_set *c,
 	int ret;
 	struct open_bucket *b;
 
-	b = bch_open_bucket_get(c, false, cl);
+	b = bch_open_bucket_get(c, cl);
 	if (IS_ERR_OR_NULL(b))
 		return b;
 
@@ -1100,7 +1095,7 @@ found:
 	if (!b) {
 		mutex_unlock(&c->bucket_lock);
 
-		b = bch_open_bucket_get(c, true, NULL);
+		b = bch_open_bucket_get(c, NULL);
 		if (WARN_ONCE(IS_ERR(b),
 			      "bcache: movinggc bucket allocation failed with %ld",
 			      PTR_ERR(b))) {
