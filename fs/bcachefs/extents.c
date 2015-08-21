@@ -176,6 +176,7 @@ static bool bch_ptr_normalize(struct btree_keys *bk,
 
 static bool __ptr_invalid(struct cache_set *c, const struct bkey *k)
 {
+	struct cache *ca;
 	unsigned i;
 
 	if (KEY_U64s(k) < BKEY_U64s)
@@ -186,19 +187,18 @@ static bool __ptr_invalid(struct cache_set *c, const struct bkey *k)
 
 	rcu_read_lock();
 
-	for (i = 0; i < bch_extent_ptrs(k); i++) {
-		struct cache *ca = PTR_CACHE(c, k, i);
-
-		if (ca) {
+	for (i = 0; i < bch_extent_ptrs(k); i++)
+		if ((ca = PTR_CACHE(c, k, i))) {
 			size_t bucket = PTR_BUCKET_NR(c, k, i);
 			size_t r = bucket_remainder(c, PTR_OFFSET(k, i));
 
 			if (KEY_SIZE(k) + r > c->sb.bucket_size ||
 			    bucket <  ca->sb.first_bucket ||
-			    bucket >= ca->sb.nbuckets)
+			    bucket >= ca->sb.nbuckets) {
+				rcu_read_unlock();
 				return true;
+			}
 		}
-	}
 
 	rcu_read_unlock();
 
