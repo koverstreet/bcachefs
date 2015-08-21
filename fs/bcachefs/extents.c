@@ -527,30 +527,6 @@ static struct bkey *bch_extent_sort_fixup(struct btree_iter *iter,
 	return NULL;
 }
 
-enum bch_extent_overlap {
-	BCH_EXTENT_OVERLAP_FRONT,
-	BCH_EXTENT_OVERLAP_BACK,
-	BCH_EXTENT_OVERLAP_ALL,
-	BCH_EXTENT_OVERLAP_MIDDLE,
-};
-
-/* Returns how k overlaps with m */
-static enum bch_extent_overlap bch_extent_overlap(const struct bkey *k,
-						  const struct bkey *m)
-{
-	if (bkey_cmp(k, m) < 0) {
-		if (bkey_cmp(&START_KEY(k), &START_KEY(m)) > 0)
-			return BCH_EXTENT_OVERLAP_MIDDLE;
-		else
-			return BCH_EXTENT_OVERLAP_FRONT;
-	} else {
-		if (bkey_cmp(&START_KEY(k), &START_KEY(m)) <= 0)
-			return BCH_EXTENT_OVERLAP_ALL;
-		else
-			return BCH_EXTENT_OVERLAP_BACK;
-	}
-}
-
 static void bch_add_sectors(struct bkey *k,
 			    struct cache_set *c,
 			    u64 offset,
@@ -592,25 +568,6 @@ static void bch_subtract_sectors(struct bkey *k,
 				 int sectors)
 {
 	bch_add_sectors(k, c, offset, -sectors);
-}
-
-static struct bkey *bch_btree_iter_next_overlapping(struct btree_iter *iter,
-						    struct bkey *end)
-{
-	struct bkey *k;
-
-	while ((k = bch_btree_iter_next_all(iter))) {
-		if (bkey_cmp(&START_KEY(k), end) >= 0) {
-			if (!KEY_SIZE(k))
-				continue;
-			return NULL;
-		}
-
-		if (bkey_cmp(k, &START_KEY(end)) > 0)
-			break;
-	}
-
-	return k;
 }
 
 static bool bkey_cmpxchg_cmp(struct bkey *k, struct bkey *old)

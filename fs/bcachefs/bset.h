@@ -474,6 +474,30 @@ struct bkey *bch_keylist_pop(struct keylist *);
 void bch_keylist_pop_front(struct keylist *);
 int bch_keylist_realloc(struct keylist *, unsigned);
 
+enum bch_extent_overlap {
+	BCH_EXTENT_OVERLAP_FRONT,
+	BCH_EXTENT_OVERLAP_BACK,
+	BCH_EXTENT_OVERLAP_ALL,
+	BCH_EXTENT_OVERLAP_MIDDLE,
+};
+
+/* Returns how k overlaps with m */
+static inline enum bch_extent_overlap bch_extent_overlap(const struct bkey *k,
+						  const struct bkey *m)
+{
+	if (bkey_cmp(k, m) < 0) {
+		if (bkey_cmp(&START_KEY(k), &START_KEY(m)) > 0)
+			return BCH_EXTENT_OVERLAP_MIDDLE;
+		else
+			return BCH_EXTENT_OVERLAP_FRONT;
+	} else {
+		if (bkey_cmp(&START_KEY(k), &START_KEY(m)) <= 0)
+			return BCH_EXTENT_OVERLAP_ALL;
+		else
+			return BCH_EXTENT_OVERLAP_BACK;
+	}
+}
+
 /* Btree key iteration */
 
 struct btree_iter {
@@ -508,6 +532,26 @@ static inline struct bkey *bch_btree_iter_next(struct btree_iter *iter)
 	} while (ret && bkey_deleted(__iter_keys_ptr(iter), ret));
 
 	return ret;
+}
+
+static inline struct bkey *
+bch_btree_iter_next_overlapping(struct btree_iter *iter,
+				struct bkey *end)
+{
+	struct bkey *k;
+
+	while ((k = bch_btree_iter_next_all(iter))) {
+		if (bkey_cmp(&START_KEY(k), end) >= 0) {
+			if (!KEY_SIZE(k))
+				continue;
+			return NULL;
+		}
+
+		if (bkey_cmp(k, &START_KEY(end)) > 0)
+			break;
+	}
+
+	return k;
 }
 
 void bch_btree_iter_push(struct btree_iter *, struct bkey *, struct bkey *);
