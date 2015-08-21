@@ -399,7 +399,7 @@ static inline bool bkey_invalid(struct btree_keys *b, struct bkey *k)
 static inline void bkey_debugcheck(struct btree_keys *b, struct bkey *k)
 {
 	if (b->ops->key_debugcheck)
-		b->ops->key_invalid(b, k);
+		b->ops->key_debugcheck(b, k);
 }
 
 static inline bool bkey_deleted(const struct bkey *k)
@@ -419,12 +419,12 @@ static inline void bch_bkey_val_to_text(struct btree_keys *b, char *buf,
 		b->ops->val_to_text(b, out, end - out, k);
 	}
 }
+
 /*
  * This is used to determine whether it is possible for cmpxchg to succeed
  * because the keys differ in the number of extent ptrs.
  * For example, one has one more or fewer replica/cache.
 */
-
 static inline bool bch_bkey_maybe_compatible(const struct bkey *l,
 					     const struct bkey *r)
 {
