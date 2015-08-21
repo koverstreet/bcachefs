@@ -26,15 +26,26 @@ enum alloc_reserve {
 	RESERVE_NR,
 };
 
+/* Number of nodes btree coalesce will try to coalesce at once */
+#define GC_MERGE_NODES		4U
+
 /*
- * The btree node reserve needs to contain enough buckets so that in a tree of
- * depth 2, we can split each level of node, and then allocate a new root.
- * See btree_check_reserve().
+ * Number of nodes we might have to allocate in a worst case btree split
+ * operation - we split all the way up to the root, then allocate a new root.
  */
-#define BTREE_NODE_RESERVE 7
+#define btree_reserve_required_nodes(depth)	(((depth) + 1) * 2 + 1)
+
+/*
+ * Enough for splitting depth 2 btree, or for coalescing nodes (when coalescing
+ * we won't be inserting into a leaf)
+ */
+#define BTREE_NODE_RESERVE						\
+	max_t(unsigned,							\
+	      btree_reserve_required_nodes(1) + GC_MERGE_NODES,		\
+	      btree_reserve_required_nodes(2))
 
 /* Enough for 16 cache devices, 2 tiers and some left over for pipelining */
-#define OPEN_BUCKETS_COUNT 256
+#define OPEN_BUCKETS_COUNT	256
 
 #define WRITE_POINT_COUNT	16
 

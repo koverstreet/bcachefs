@@ -1419,19 +1419,15 @@ static int __btree_check_reserve(struct cache_set *c,
 	return mca_cannibalize_lock(c, cl);
 }
 
-static int btree_check_reserve(struct btree *b, struct btree_op *op)
+static int btree_check_reserve(struct btree *b, struct btree_op *op,
+			       unsigned extra_nodes)
 {
-	enum btree_id id = b->btree_id;
-	/*
-	 * In the worst case, inserting at b->level will split all nodes up
-	 * to the root (2 nodes per level, not including the root) and also
-	 * split the root (2 new nodes plus 1 for the new root)
-	 */
-	unsigned required = (b->c->btree_roots[id]->level - b->level) * 2 + 3;
-	enum alloc_reserve reserve = (op ? op->reserve : id);
+	unsigned depth = btree_node_root(b)->level - b->level;
+	enum alloc_reserve reserve = op ? op->reserve : b->btree_id;
 
-	return __btree_check_reserve(b->c, reserve, required,
-				     op ? &op->cl : NULL);
+	return __btree_check_reserve(b->c, reserve,
+			btree_reserve_required_nodes(depth) + extra_nodes,
+			op ? &op->cl : NULL);
 }
 
 int bch_btree_root_alloc(struct cache_set *c, enum btree_id id,
@@ -1609,8 +1605,6 @@ static bool btree_gc_mark_node(struct btree *b, struct gc_stat *gc)
 	return false;
 }
 
-#define GC_MERGE_NODES	4U
-
 struct gc_merge_info {
 	struct btree	*b;
 	unsigned	keys;
@@ -1619,27 +1613,23 @@ struct gc_merge_info {
 static int btree_gc_coalesce(struct btree *b, struct btree_op *op,
 			     struct gc_stat *gc, struct gc_merge_info *r)
 {
-	unsigned i, nodes = 0, old_nodes, keys = 0, blocks;
+	unsigned i, nodes, old_nodes, keys = 0;
+	unsigned blocks = btree_default_blocks(b->c) * 2 / 3;
 	struct btree *new_nodes[GC_MERGE_NODES];
 	struct keylist keylist;
 	struct closure cl;
 
 	bch_keylist_init(&keylist);
 
-	if (__btree_check_reserve(b->c, b->btree_id, GC_MERGE_NODES, NULL)) {
-		trace_bcache_btree_gc_coalesce_fail(b->c);
-		return 0;
-	}
-
 	memset(new_nodes, 0, sizeof(new_nodes));
 	closure_init_stack(&cl);
 
-	while (nodes < GC_MERGE_NODES && !IS_ERR_OR_NULL(r[nodes].b))
-		keys += r[nodes++].keys;
+	for (nodes = 0;
+	     nodes < GC_MERGE_NODES && !IS_ERR_OR_NULL(r[nodes].b);
+	     nodes++)
+		keys += r[nodes].keys;
 
 	old_nodes = nodes;
-
-	blocks = btree_default_blocks(b->c) * 2 / 3;
 
 	if (nodes <= 1 ||
 	    __set_blocks(b->keys.set[0].data,
@@ -1647,22 +1637,19 @@ static int btree_gc_coalesce(struct btree *b, struct btree_op *op,
 			 block_bytes(b->c)) > blocks)
 		return 0;
 
+	if (btree_check_reserve(b, NULL, nodes) ||
+	    bch_keylist_realloc(&keylist,
+			(BKEY_U64s + BKEY_EXTENT_MAX_U64s) * nodes)) {
+		trace_bcache_btree_gc_coalesce_fail(b->c);
+		return 0;
+	}
+
 	trace_bcache_btree_gc_coalesce(b, nodes);
 
 	for (i = 0; i < nodes; i++) {
 		new_nodes[i] = btree_node_alloc_replacement(r[i].b, NULL);
-		if (!new_nodes[i])
-			goto out_nocoalesce_unlock;
+		BUG_ON(!new_nodes[i]);
 	}
-
-	/*
-	 * We have to check the reserve here, after we've allocated our new
-	 * nodes, to make sure the insert below will succeed - we also check
-	 * before as an optimization to potentially avoid a bunch of expensive
-	 * allocs/sorts
-	 */
-	if (btree_check_reserve(b, NULL))
-		goto out_nocoalesce_unlock;
 
 	/*
 	 * Conceptually we concatenate the nodes together and slice them
@@ -1728,9 +1715,6 @@ static int btree_gc_coalesce(struct btree *b, struct btree_op *op,
 
 	/* The keys for the old nodes get deleted */
 	for (i = 0; i < old_nodes; i++) {
-		if (bch_keylist_realloc(&keylist, BKEY_U64s))
-			goto out_nocoalesce;
-
 		*keylist.top = r[i].b->key;
 		bch_set_extent_ptrs(keylist.top, 0);
 		SET_KEY_DELETED(keylist.top, true);
@@ -1739,13 +1723,8 @@ static int btree_gc_coalesce(struct btree *b, struct btree_op *op,
 	}
 
 	/* Keys for the new nodes get inserted */
-	for (i = 0; i < nodes; i++) {
-		if (bch_keylist_realloc(&keylist,
-					KEY_U64s(&new_nodes[i]->key)))
-			goto out_nocoalesce;
-
-		__bch_keylist_add(&keylist, &new_nodes[i]->key);
-	}
+	for (i = 0; i < nodes; i++)
+		bch_keylist_add(&keylist, &new_nodes[i]->key);
 
 	/* Insert the newly coalesced nodes */
 	bch_btree_insert_node(b, op, &keylist, NULL, NULL);
@@ -1772,25 +1751,6 @@ static int btree_gc_coalesce(struct btree *b, struct btree_op *op,
 
 	/* Invalidated our iterator */
 	return -EINTR;
-
-out_nocoalesce_unlock:
-	for (i = 0; i < nodes; i++)
-		if (!IS_ERR_OR_NULL(new_nodes[i]))
-			six_unlock_write(&new_nodes[i]->lock);
-out_nocoalesce:
-	trace_bcache_btree_gc_coalesce_fail(b->c);
-
-	/* We may have written out some new nodes which are garbage now,
-	 * wait for writes to finish */
-	closure_sync(&cl);
-	bch_keylist_free(&keylist);
-
-	for (i = 0; i < nodes; i++)
-		if (!IS_ERR_OR_NULL(new_nodes[i])) {
-			btree_node_free(new_nodes[i]);
-			six_unlock_intent(&new_nodes[i]->lock);
-		}
-	return 0;
 }
 
 /**
@@ -1801,19 +1761,13 @@ static int btree_gc_rewrite_node(struct btree *b, struct btree_op *op,
 {
 	struct btree *n;
 
-	if (btree_check_reserve(b, NULL))
+	if (btree_check_reserve(b, NULL, 1)) {
+		trace_bcache_btree_gc_rewrite_node_fail(b);
 		return 0;
+	}
 
 	n = btree_node_alloc_replacement(replace, NULL);
 	six_unlock_write(&n->lock);
-
-	/* recheck reserve after allocating replacement node */
-	if (btree_check_reserve(b, NULL)) {
-		trace_bcache_btree_gc_rewrite_node_fail(b);
-		btree_node_free(n);
-		six_unlock_intent(&n->lock);
-		return 0;
-	}
 
 	trace_bcache_btree_gc_rewrite_node(b);
 
@@ -2456,7 +2410,7 @@ static int btree_split(struct btree *b, struct btree_op *op,
 	BUG_ON(!btree_node_locked(op, btree_node_root(b)->level));
 
 	/* After this check we cannot return -EAGAIN anymore */
-	ret = btree_check_reserve(b, op);
+	ret = btree_check_reserve(b, op, 0);
 	if (ret) {
 		/* If splitting an interior node, we've already split a leaf,
 		 * so we should have checked for sufficient reserve. We can't
