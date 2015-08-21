@@ -787,6 +787,16 @@ void bch_bset_insert(struct btree_keys *b, struct bkey *where,
 }
 EXPORT_SYMBOL(bch_bset_insert);
 
+/**
+ * bch_btree_insert_key - insert a single key @k into @b
+ *
+ * This does the real work of looking up where to insert, doing the insert, and
+ * merging extents if possible. It also handles replace (cmpxchg) insertions
+ * when @replace_key != NULL; the insert might fail (and return
+ * BTREE_INSERT_STATUS_NO_INSERT) if @replace_key wasn't present, or if
+ * @replace_key was only partially present @k will be modified to represent what
+ * was actually inserted.
+ */
 unsigned bch_btree_insert_key(struct btree_keys *b, struct bkey *k,
 			      struct bkey *replace_key)
 {

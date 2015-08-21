@@ -1930,6 +1930,15 @@ void bch_initial_gc_finish(struct cache_set *c)
 
 /* Btree insertion */
 
+/**
+ * btree_insert_key - insert one key into a btree node, and then journal the key
+ * that was inserted.
+ *
+ * Wrapper around bch_btree_insert_key() which does the real heavy lifting, this
+ * function journals the key that bch_btree_insert_key() actually inserted
+ * (which may have been different than @k if e.g. @replace_key was only
+ * partially present, or not present).
+ */
 static bool btree_insert_key(struct btree *b, struct bkey *k,
 			     struct bkey *replace_key,
 			     struct journal_write *journal_write)
@@ -1970,6 +1979,9 @@ static bool btree_insert_key(struct btree *b, struct bkey *k,
 	return true;
 }
 
+/**
+ * insert_u64s_remaining - returns the amount of remaining space in a btree node
+ */
 static size_t insert_u64s_remaining(struct btree *b)
 {
 	long ret = bch_btree_keys_u64s_remaining(&b->keys);
@@ -2040,12 +2052,17 @@ enum btree_insert_status {
 	BTREE_INSERT_NEED_SPLIT,
 };
 
-static enum btree_insert_status bch_btree_insert_keys(struct btree *b,
-						struct btree_op *op,
-						struct keylist *insert_keys,
-						struct bkey *replace_key,
-						struct closure *parent,
-						bool flush)
+/**
+ * bch_btree_insert_keys - insert keys from @insert_keys into btree node @b,
+ * until the node is full.
+ *
+ * If keys couldn't be inserted because @b was full, the caller must split @b
+ * and bch_btree_insert_keys() will be called again from btree_split().
+ */
+static enum btree_insert_status
+bch_btree_insert_keys(struct btree *b, struct btree_op *op,
+		      struct keylist *insert_keys, struct bkey *replace_key,
+		      struct closure *parent, bool flush)
 {
 	bool inserted = false, attempted = false, need_split = false;
 	int oldsize = bch_count_data(&b->keys);
@@ -2126,7 +2143,7 @@ static enum btree_insert_status bch_btree_insert_keys(struct btree *b,
 	bch_count_data_verify(&b->keys, oldsize);
 
 	return need_split ? BTREE_INSERT_NEED_SPLIT :
-		inserted ? BTREE_INSERT_INSERTED : BTREE_INSERT_NO_INSERT;
+		 inserted ? BTREE_INSERT_INSERTED : BTREE_INSERT_NO_INSERT;
 }
 
 static int btree_split(struct btree *b, struct btree_op *op,
@@ -2287,13 +2304,28 @@ static int btree_split(struct btree *b, struct btree_op *op,
 }
 
 /**
- * bch_btree_insert_node - insert a key into a btree node
+ * bch_btree_insert_at_node - insert bkeys into a given btree node
  * @b:			parent btree node
  * @op:			pointer to struct btree_op
  * @insert_keys:	list of keys to insert
  * @replace_key:	old key for compare exchange
- * @parent:		closure for waiting
- * @flush:		if true, closure will wait on last key to be inserted
+ * @parent:		closure will wait on last key to be inserted
+ *
+ * This is top level for common btree insertion/index update code. The control
+ * flow goes roughly like:
+ *
+ * bch_btree_insert_at_node
+ *     btree_split
+ *   bch_btree_insert_keys
+ *     btree_insert_key
+ *       bch_btree_insert_key
+ *         op->insert_fixup
+ *         bch_bset_insert
+ *
+ * Inserts the keys from @insert_keys that belong in node @b; if there's extra
+ * keys that go in different nodes, it's up to the caller to insert the rest of
+ * the keys in the correct node (@insert_keys might span multiple btree nodes.
+ * It must be in sorted order, lowest keys first).
  *
  * The @parent closure is used to wait on btree node allocation as well as
  * the journal write (if @flush is set). The journal wait will only happen
