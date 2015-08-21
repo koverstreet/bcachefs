@@ -795,29 +795,6 @@ static void bch_bset_fix_lookup_table(struct btree_keys *b,
 		}
 }
 
-/*
- * Tries to merge l and r: l should be lower than r
- * Returns true if we were able to merge. If we did merge, l will be the merged
- * key, r will be untouched.
- */
-bool bch_bkey_try_merge(struct btree_keys *b, struct bkey *l, struct bkey *r)
-{
-	if (!b->ops->key_merge)
-		return false;
-
-	/*
-	 * Generic header checks
-	 * Assumes left and right are in order
-	 * Left and right must be exactly aligned
-	 */
-	if (!bch_bkey_equal_header(l, r) ||
-	     bkey_cmp(l, &START_KEY(r)))
-		return false;
-
-	return b->ops->key_merge(b, l, r);
-}
-EXPORT_SYMBOL(bch_bkey_try_merge);
-
 static void __bch_bset_insert(struct btree_keys *b, struct bkey *where,
 			      struct bkey *insert)
 {

@@ -1051,6 +1051,15 @@ static bool bch_extent_merge(struct btree_keys *bk, struct bkey *l, struct bkey 
 	if (key_merging_disabled(b->c))
 		return false;
 
+	/*
+	 * Generic header checks
+	 * Assumes left and right are in order
+	 * Left and right must be exactly aligned
+	 */
+	if (!bch_bkey_equal_header(l, r) ||
+	     bkey_cmp(l, &START_KEY(r)))
+		return false;
+
 	for (i = 0; i < bch_extent_ptrs(l); i++)
 		if (l->val[i] + PTR(0, KEY_SIZE(l), 0) != r->val[i] ||
 		    PTR_BUCKET_NR(b->c, l, i) != PTR_BUCKET_NR(b->c, r, i))
