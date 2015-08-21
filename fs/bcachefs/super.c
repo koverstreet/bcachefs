@@ -427,8 +427,8 @@ void bch_prio_write(struct cache *ca)
 		p->magic	= pset_magic(&ca->sb);
 		p->csum		= bch_crc64(&p->magic, bucket_bytes(ca) - 8);
 
-		bucket = bch_bucket_alloc(ca, RESERVE_PRIO, false);
-		BUG_ON(bucket == -1);
+		bucket = bch_bucket_alloc(ca, RESERVE_PRIO, NULL);
+		BUG_ON(bucket < 0);
 
 		/*
 		 * goes here before dropping bucket_lock to guard against it
@@ -1413,7 +1413,6 @@ struct cache_set *bch_cache_set_alloc(struct cache_sb *sb)
 	mutex_init(&c->bucket_lock);
 	spin_lock_init(&c->gc_lock);
 	init_waitqueue_head(&c->btree_cache_wait);
-	init_waitqueue_head(&c->bucket_wait);
 	init_waitqueue_head(&c->gc_wait);
 	spin_lock_init(&c->btree_root_lock);
 

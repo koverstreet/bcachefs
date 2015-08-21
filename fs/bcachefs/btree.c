@@ -1097,15 +1097,23 @@ struct btree *__bch_btree_node_alloc(struct cache_set *c, struct btree_op *op,
 {
 	BKEY_PADDED(key) k;
 	struct btree *b = ERR_PTR(-EAGAIN);
+	struct closure cl;
 	enum alloc_reserve reserve = id;
+
+	closure_init_stack(&cl);
 
 	if (op && op->moving_gc && id == BTREE_ID_EXTENTS)
 		reserve = RESERVE_MOVINGGC_BTREE;
 
 retry:
 	if (bch_bucket_alloc_set(c, reserve, &k.key,
-				 c->meta_replicas, 0, wait))
+				 c->meta_replicas, 0, wait ? &cl : NULL)) {
+		if (wait) {
+			closure_sync(&cl);
+			goto retry;
+		}
 		goto err;
+	}
 
 	SET_KEY_SIZE(&k.key, c->btree_pages * PAGE_SECTORS);
 

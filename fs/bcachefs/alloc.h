@@ -49,17 +49,17 @@ void __bch_invalidate_one_bucket(struct cache *, struct bucket *);
 void __bch_bucket_free(struct cache *, struct bucket *);
 void bch_bucket_free(struct cache_set *, struct bkey *);
 
-long bch_bucket_alloc(struct cache *, unsigned, bool);
+long bch_bucket_alloc(struct cache *, unsigned, struct closure *);
 int bch_bucket_alloc_set(struct cache_set *, unsigned, struct bkey *,
-			 int, unsigned, bool);
+			 int, unsigned, struct closure *);
 
 void bch_open_bucket_put(struct cache_set *, struct open_bucket *);
 
 struct open_bucket *bch_alloc_sectors(struct cache_set *, struct bkey *,
-				      unsigned, unsigned, bool,
-				      unsigned long *);
+				      unsigned, unsigned,
+				      unsigned long *, struct closure *);
 struct open_bucket *bch_gc_alloc_sectors(struct cache_set *, struct bkey *,
-					 unsigned long *);
+					 unsigned long *, struct closure *);
 
 void bch_mark_open_buckets(struct cache_set *);
 

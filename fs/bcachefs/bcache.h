@@ -657,7 +657,7 @@ struct cache_set {
 	/* ALLOCATION */
 	struct cache_tier	cache_by_alloc[CACHE_TIERS];
 	struct mutex		bucket_lock;
-	wait_queue_head_t	bucket_wait;
+	struct closure_waitlist	bucket_wait;
 
 
 	/*
@@ -673,7 +673,7 @@ struct cache_set {
 	struct list_head	open_buckets_open;
 	struct list_head	open_buckets_free;
 	unsigned		open_buckets_nr_free;
-	wait_queue_head_t	open_buckets_wait;
+	struct closure_waitlist	open_buckets_wait;
 	spinlock_t		open_buckets_lock;
 	struct open_bucket	open_buckets[OPEN_BUCKETS_COUNT];
 

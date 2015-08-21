@@ -212,10 +212,18 @@ static void bch_data_insert_start(struct closure *cl)
 		bkey_copy(k, &op->insert_key);
 
 		b = op->moving_gc
-			? bch_gc_alloc_sectors(op->c, k, ptrs_to_write)
+			? bch_gc_alloc_sectors(op->c, k, ptrs_to_write, cl)
 			: bch_alloc_sectors(op->c, k, op->write_point, op->tier,
-					    op->wait, ptrs_to_write);
-		if (!b)
+					    ptrs_to_write,
+					    op->wait ? cl : NULL);
+		BUG_ON(!b);
+		if (PTR_ERR(b) == -EAGAIN) {
+			if (bch_keylist_empty(&op->insert_keys))
+				continue_at(cl, bch_data_insert_start, op->wq);
+			else
+				continue_at(cl, bch_data_insert_keys,
+					    op->c->btree_insert_wq);
+		} else if (IS_ERR(b))
 			goto err;
 
 		op->open_buckets[open_bucket_nr++] = b;
