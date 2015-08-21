@@ -2516,6 +2516,12 @@ static int btree_split(struct btree *b, struct btree_op *op,
 				k = bkey_next(k);
 	}
 
+	/*
+	 * Note that on recursive parent_keys == insert_keys, so we can't start
+	 * adding new keys to parent_keys before emptying it out (by doing the
+	 * insert, which we just did above)
+	 */
+
 	if (set_blocks(set1, block_bytes(n1->c)) > btree_blocks(b) * 3 / 4) {
 		trace_bcache_btree_node_split(b, set1->keys);
 

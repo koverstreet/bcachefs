@@ -489,11 +489,6 @@ static inline bool bch_keylist_empty(struct keylist *l)
 	return l->bot == l->top;
 }
 
-static inline void bch_keylist_reset(struct keylist *l)
-{
-	l->bot = l->top = l->start_keys;
-}
-
 static inline void bch_keylist_free(struct keylist *l)
 {
 	if (l->start_keys_p != l->inline_keys)
@@ -537,6 +532,9 @@ static inline struct bkey *bch_keylist_front(struct keylist *l)
 static inline void bch_keylist_pop_front(struct keylist *l)
 {
 	l->bot_p += (KEY_U64s(l->bot));
+
+	if (l->bot == l->top)
+		l->bot = l->top = l->start_keys;
 }
 
 #define keylist_single(k)					\
