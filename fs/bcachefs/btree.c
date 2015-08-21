@@ -2130,7 +2130,8 @@ void bch_initial_gc_finish(struct cache_set *c)
  */
 static bool btree_insert_key(struct btree *b, struct bkey *k,
 			     struct bkey *replace_key,
-			     struct journal_write *journal_write)
+			     struct journal_res *res,
+			     struct closure *parent)
 {
 	unsigned status;
 
@@ -2145,7 +2146,7 @@ static bool btree_insert_key(struct btree *b, struct bkey *k,
 		schedule_delayed_work(&b->work, 30 * HZ);
 	}
 
-	if (!b->level &&
+	if (res->ref &&
 	    test_bit(JOURNAL_REPLAY_DONE, &b->c->journal.flags)) {
 		struct btree_write *w = btree_current_write(b);
 
@@ -2154,11 +2155,8 @@ static bool btree_insert_key(struct btree *b, struct bkey *k,
 			atomic_inc(w->journal);
 		}
 
-		BUG_ON(KEY_U64s(k) >
-		       journal_write_u64s_remaining(b->c, journal_write));
-
-		bch_journal_add_keys(journal_write->data, b->btree_id, k,
-				     KEY_U64s(k), b->level);
+		bch_journal_add_keys(b->c, res, b->btree_id, k,
+				     KEY_U64s(k), b->level, parent);
 	}
 
 	bch_check_keys(&b->keys, "%u for %s", status,
@@ -2199,14 +2197,14 @@ static void btree_node_lock_for_insert(struct btree *b)
 	       b->keys.last_set_unwritten);
 }
 
-static struct journal_write *btree_journal_write_get(struct btree *b,
-						     unsigned nkeys)
+static void btree_journal_res_get(struct btree *b, unsigned nkeys,
+				  struct journal_res *res)
 {
 	DEFINE_WAIT(wait);
-	struct journal_write *ret = bch_journal_write_get(b->c, nkeys);
+	int ret;
 
-	if (!IS_ERR_OR_NULL(ret))
-		return ret;
+	if (!bch_journal_res_get(b->c, nkeys, res))
+		return;
 
 	/*
 	 * If b is a freshly allocated node (i.e. we're being called from
@@ -2214,25 +2212,24 @@ static struct journal_write *btree_journal_write_get(struct btree *b,
 	 * written underneath btree_split() and would really screw it up
 	 */
 	if (!b->written)
-		return NULL;
+		return;
 
 	while (1) {
 		prepare_to_wait(&b->c->journal.wait, &wait,
 				TASK_UNINTERRUPTIBLE);
 
-		ret = bch_journal_write_get(b->c, nkeys);
-		if (!IS_ERR_OR_NULL(ret))
+		ret = bch_journal_res_get(b->c, nkeys, res);
+		if (!ret)
 			break;
 
 		six_unlock_write(&b->lock);
-		if (!ret)
+		if (ret == -ENOSPC)
 			btree_flush_write(b->c);
 		schedule();
 		btree_node_lock_for_insert(b);
 	}
 
 	finish_wait(&b->c->journal.wait, &wait);
-	return ret;
 }
 
 enum btree_insert_status {
@@ -2255,7 +2252,9 @@ bch_btree_insert_keys(struct btree *b, struct btree_op *op,
 {
 	bool inserted = false, attempted = false, need_split = false;
 	int oldsize = bch_count_data(&b->keys);
-	struct journal_write *journal_write = NULL;
+	struct journal_res res;
+
+	memset(&res, 0, sizeof(res));
 
 	while (!bch_keylist_empty(insert_keys)) {
 		BKEY_PADDED(key) temp;
@@ -2280,22 +2279,18 @@ bch_btree_insert_keys(struct btree *b, struct btree_op *op,
 			break;
 		}
 
-		if (journal_write &&
-		    u64s > journal_write_u64s_remaining(b->c,
-							journal_write)) {
-			bch_journal_write_put(b->c, journal_write, NULL);
-			journal_write = NULL;
-		}
+		if (res.ref && u64s > res.nkeys)
+			bch_journal_res_put(b->c, &res, NULL);
 
-		if (!b->level && !journal_write)
-			journal_write = btree_journal_write_get(b, u64s);
+		if (!b->level && !res.ref)
+			btree_journal_res_get(b, u64s, &res);
 
-		if (!b->level && !journal_write)
+		if (!b->level && !res.ref)
 			break;
 
 		/*
-		 * recheck because btree_journal_write_get() might've dropped
-		 * and retaken write_lock
+		 * recheck because btree_journal_res_get() might've dropped and
+		 * retaken write_lock
 		 */
 		if (u64s > insert_u64s_remaining(b)) {
 			need_split = true;
@@ -2314,16 +2309,18 @@ bch_btree_insert_keys(struct btree *b, struct btree_op *op,
 		}
 
 		attempted = true;
-		inserted |= btree_insert_key(b, k, replace_key, journal_write);
+		inserted |= btree_insert_key(b, k, replace_key, &res,
+				((bch_keylist_is_last(insert_keys, k) &&
+				  flush) ? &op->cl : NULL));
 
 		if (k == insert_keys->keys)
 			bch_keylist_pop_front(insert_keys);
 	}
 
-	if (journal_write)
-		bch_journal_write_put(b->c, journal_write,
-				(bch_keylist_empty(insert_keys) && flush)
-				? &op->cl : NULL);
+	if (res.ref)
+		bch_journal_res_put(b->c, &res,
+				    (bch_keylist_empty(insert_keys) && flush)
+				    ? &op->cl : NULL);
 
 	if (attempted && !inserted)
 		op->insert_collision = true;

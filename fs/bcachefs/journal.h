@@ -112,27 +112,22 @@ struct bkey *bch_journal_find_btree_root(struct cache_set *, struct jset *,
 					 enum btree_id, unsigned *);
 
 void btree_flush_write(struct cache_set *);
-struct journal_write *bch_journal_write_get(struct cache_set *, unsigned)
-	__acquires(c->journal.lock);
-void bch_journal_write_put(struct cache_set *, struct journal_write *,
-			   struct closure *)
-	__releases(c->journal.lock);
 
-static inline size_t journal_write_u64s_remaining(struct cache_set *c,
-						  struct journal_write *w)
+struct journal_res {
+	unsigned		ref:1;
+	unsigned		nkeys:31;
+};
+
+void __bch_journal_res_put(struct cache_set *, struct journal_res *,
+			   struct closure *);
+int bch_journal_res_get(struct cache_set *, unsigned, struct journal_res *);
+
+static inline void bch_journal_res_put(struct cache_set *c,
+				       struct journal_res *res,
+				       struct closure *parent)
 {
-	ssize_t u64s = (min_t(size_t,
-			     c->journal.blocks_free * block_bytes(c),
-			     PAGE_SIZE << JSET_BITS) -
-			set_bytes(w->data)) / sizeof(u64);
-
-	/* Subtract off some for the btree roots */
-	u64s -= BTREE_ID_NR * (JSET_KEYS_U64s + BKEY_U64s + BKEY_PAD_PTRS);
-
-	/* And for the prio pointers */
-	u64s -= JSET_KEYS_U64s + c->sb.nr_in_set;
-
-	return max_t(ssize_t, 0L, u64s);
+	spin_lock(&c->journal.lock);
+	__bch_journal_res_put(c, res, parent);
 }
 
 static inline void __bch_journal_add_keys(struct jset *j, enum btree_id id,
@@ -151,12 +146,26 @@ static inline void __bch_journal_add_keys(struct jset *j, enum btree_id id,
 	j->keys += sizeof(struct jset_keys) / sizeof(u64) + nkeys;
 }
 
-static inline void bch_journal_add_keys(struct jset *j, enum btree_id id,
-					struct bkey *k, unsigned nkeys,
-					unsigned level)
+static inline void bch_journal_add_keys(struct cache_set *c,
+					struct journal_res *res,
+					enum btree_id id, struct bkey *k,
+					unsigned nkeys, unsigned level,
+					struct closure *parent)
 {
-	return __bch_journal_add_keys(j, id, k, nkeys, level,
-				      JKEYS_BTREE_KEYS);
+	unsigned actual = nkeys + sizeof(struct jset_keys) / sizeof(u64);
+
+	BUG_ON(!res->ref);
+	BUG_ON(actual > res->nkeys);
+	res->nkeys -= actual;
+
+	spin_lock(&c->journal.lock);
+	__bch_journal_add_keys(c->journal.cur->data, id, k, nkeys,
+			       level, JKEYS_BTREE_KEYS);
+
+	if (!res->nkeys)
+		__bch_journal_res_put(c, res, parent);
+	else
+		spin_unlock(&c->journal.lock);
 }
 
 void bch_journal_next(struct journal *);

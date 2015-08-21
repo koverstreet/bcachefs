@@ -536,6 +536,11 @@ static inline size_t bch_keylist_nkeys(struct keylist *l)
 	return l->top_p - l->keys_p;
 }
 
+static inline bool bch_keylist_is_last(struct keylist *l, struct bkey *k)
+{
+	return bkey_next(k) == l->top;
+}
+
 static inline size_t bch_keylist_bytes(struct keylist *l)
 {
 	return bch_keylist_nkeys(l) * sizeof(uint64_t);

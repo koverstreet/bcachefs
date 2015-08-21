@@ -254,6 +254,9 @@ struct journal {
 
 	spinlock_t		lock;
 
+	unsigned		u64s_remaining;
+	unsigned		res_count;
+
 	/* Number of blocks free in the bucket(s) we're currently writing to */
 	unsigned		blocks_free;
 
