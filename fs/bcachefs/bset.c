@@ -624,10 +624,6 @@ retry:
 }
 EXPORT_SYMBOL(bch_bset_build_written_tree);
 
-/* Insert */
-
-#ifdef CONFIG_BCACHEFS_DEBUG
-
 static struct bkey *bkey_prev(struct btree_keys *b,
 			      struct bset_tree *t,
 			      struct bkey *k)
@@ -658,31 +654,23 @@ static struct bkey *bkey_prev(struct btree_keys *b,
 	return p;
 }
 
+/* Insert */
+
 static void verify_insert_pos(struct btree_keys *b,
+			      struct bkey *prev,
 			      struct bkey *where,
 			      struct bkey *insert)
 {
+#ifdef CONFIG_BCACHEFS_DEBUG
 	struct bset_tree *t = bset_tree_last(b);
-	struct bkey *prev = bkey_prev(b, t, where);
 
 	BUG_ON(prev &&
 	       keys_out_of_order(prev, insert, b->ops->is_extents));
 
 	BUG_ON(where != bset_bkey_last(t->data) &&
 	       keys_out_of_order(insert, where, b->ops->is_extents));
-}
-
-#else
-
-static struct bkey *bkey_prev(struct btree_keys *b,
-			      struct bset_tree *t,
-			      struct bkey *k) { return NULL; }
-
-static void verify_insert_pos(struct btree_keys *b,
-			      struct bkey *where,
-			      struct bkey *insert) {}
-
 #endif
+}
 
 static struct bkey *bch_btree_node_insert_pos(struct btree_keys *b,
 					      struct btree_node_iter *iter)
@@ -836,7 +824,10 @@ unsigned bch_bset_insert(struct btree_keys *b,
 	       bkey_cmp(insert, &START_KEY(where)) > 0)
 		prev = where, where = bkey_next(where);
 
-	verify_insert_pos(b, where, insert);
+	if (!prev)
+		prev = bkey_prev(b, t, where);
+
+	verify_insert_pos(b, prev, where, insert);
 
 	/* prev is in the tree, if we merge we're done */
 	if (prev &&
