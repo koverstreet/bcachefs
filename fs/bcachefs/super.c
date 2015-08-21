@@ -933,7 +933,7 @@ void bch_cached_dev_detach(struct cached_dev *dc)
 	 */
 	closure_get(&dc->disk.cl);
 
-	dc->writeback_rate.rate = UINT_MAX;
+	dc->writeback_pd.rate.rate = UINT_MAX;
 	bch_writeback_queue(dc);
 	cached_dev_put(dc);
 }
@@ -1061,7 +1061,7 @@ static void cached_dev_free(struct closure *cl)
 {
 	struct cached_dev *dc = container_of(cl, struct cached_dev, disk.cl);
 
-	cancel_delayed_work_sync(&dc->writeback_rate_update);
+	cancel_delayed_work_sync(&dc->writeback_pd.update);
 	if (!IS_ERR_OR_NULL(dc->writeback_thread))
 		kthread_stop(dc->writeback_thread);
 

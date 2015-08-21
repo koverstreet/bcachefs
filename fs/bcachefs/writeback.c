@@ -22,59 +22,21 @@
 static void __update_writeback_rate(struct cached_dev *dc)
 {
 	struct cache_set *c = dc->disk.c;
-	uint64_t cache_sectors = c->nbuckets * c->sb.bucket_size;
-	uint64_t cache_dirty_target =
+	u64 cache_sectors = c->nbuckets * c->sb.bucket_size;
+	u64 cache_dirty_target =
 		div_u64(cache_sectors * dc->writeback_percent, 100);
-
-	int64_t target = div64_u64(cache_dirty_target * bdev_sectors(dc->bdev),
+	s64 target = div64_u64(cache_dirty_target * bdev_sectors(dc->bdev),
 				   c->cached_dev_sectors);
+	s64 dirty = bcache_dev_sectors_dirty(&dc->disk);
 
-	/* PD controller */
-
-	int64_t dirty = bcache_dev_sectors_dirty(&dc->disk);
-	int64_t derivative = dirty - dc->disk.sectors_dirty_last;
-	int64_t proportional = dirty - target;
-	int64_t change;
-
-	dc->disk.sectors_dirty_last = dirty;
-
-	/* Scale to sectors per second */
-
-	proportional *= dc->writeback_rate_update_seconds;
-	proportional = div_s64(proportional, dc->writeback_rate_p_term_inverse);
-
-	derivative = div_s64(derivative, dc->writeback_rate_update_seconds);
-
-	derivative = ewma_add(dc->disk.sectors_dirty_derivative, derivative,
-			      (dc->writeback_rate_d_term /
-			       dc->writeback_rate_update_seconds) ?: 1, 0);
-
-	derivative *= dc->writeback_rate_d_term;
-	derivative = div_s64(derivative, dc->writeback_rate_p_term_inverse);
-
-	change = proportional + derivative;
-
-	/* Don't increase writeback rate if the device isn't keeping up */
-	if (change > 0 &&
-	    time_after64(local_clock(),
-			 dc->writeback_rate.next + NSEC_PER_MSEC))
-		change = 0;
-
-	dc->writeback_rate.rate =
-		clamp_t(int64_t, (int64_t) dc->writeback_rate.rate + change,
-			1, NSEC_PER_MSEC);
-
-	dc->writeback_rate_proportional = proportional;
-	dc->writeback_rate_derivative = derivative;
-	dc->writeback_rate_change = change;
-	dc->writeback_rate_target = target;
+	bch_pd_controller_update(&dc->writeback_pd, target << 9, dirty << 9);
 }
 
 static void update_writeback_rate(struct work_struct *work)
 {
 	struct cached_dev *dc = container_of(to_delayed_work(work),
 					     struct cached_dev,
-					     writeback_rate_update);
+					     writeback_pd.update);
 
 	down_read(&dc->writeback_lock);
 
@@ -83,12 +45,12 @@ static void update_writeback_rate(struct work_struct *work)
 	    !test_bit(BCACHE_DEV_DETACHING, &dc->disk.flags))
 		__update_writeback_rate(dc);
 	else
-		dc->writeback_rate.rate = UINT_MAX;
+		dc->writeback_pd.rate.rate = UINT_MAX;
 
 	up_read(&dc->writeback_lock);
 
-	schedule_delayed_work(&dc->writeback_rate_update,
-			      dc->writeback_rate_update_seconds * HZ);
+	schedule_delayed_work(&dc->writeback_pd.update,
+			      dc->writeback_pd.update_seconds * HZ);
 }
 
 struct dirty_io {
@@ -212,7 +174,7 @@ static void read_dirty(struct cached_dev *dc)
 	 * mempools.
 	 */
 
-	while (!bch_ratelimit_wait_freezable_stoppable(&dc->writeback_rate,
+	while (!bch_ratelimit_wait_freezable_stoppable(&dc->writeback_pd.rate,
 						       &cl)) {
 		w = bch_keybuf_next(&dc->writeback_keys);
 		if (!w)
@@ -241,7 +203,7 @@ static void read_dirty(struct cached_dev *dc)
 
 		trace_bcache_writeback(&w->key);
 
-		bch_ratelimit_increment(&dc->writeback_rate,
+		bch_ratelimit_increment(&dc->writeback_pd.rate,
 					KEY_SIZE(&w->key) << 9);
 
 		closure_call(&io->cl, read_dirty_submit, NULL, &cl);
@@ -424,7 +386,7 @@ static void bch_writeback(struct cached_dev *dc)
 
 	up_write(&dc->writeback_lock);
 
-	bch_ratelimit_reset(&dc->writeback_rate);
+	bch_ratelimit_reset(&dc->writeback_pd.rate);
 	read_dirty(dc);
 }
 
@@ -509,7 +471,7 @@ void bch_sectors_dirty_init(struct cached_dev *dc)
 	bch_btree_map_keys(&op.op, dc->disk.c, &KEY(op.inode, 0, 0),
 			   sectors_dirty_init_fn, 0);
 
-	dc->disk.sectors_dirty_last = bcache_dev_sectors_dirty(&dc->disk);
+	dc->writeback_pd.last_actual = bcache_dev_sectors_dirty(&dc->disk);
 }
 
 void bch_cached_dev_writeback_init(struct cached_dev *dc)
@@ -520,13 +482,8 @@ void bch_cached_dev_writeback_init(struct cached_dev *dc)
 	dc->writeback_metadata		= true;
 	dc->writeback_running		= true;
 	dc->writeback_percent		= 10;
-	dc->writeback_rate.rate		= 1024;
 
-	dc->writeback_rate_update_seconds = 5;
-	dc->writeback_rate_d_term	= 30;
-	dc->writeback_rate_p_term_inverse = 6000;
-
-	INIT_DELAYED_WORK(&dc->writeback_rate_update, update_writeback_rate);
+	INIT_DELAYED_WORK(&dc->writeback_pd.update, update_writeback_rate);
 }
 
 int bch_cached_dev_writeback_start(struct cached_dev *dc)
@@ -536,9 +493,7 @@ int bch_cached_dev_writeback_start(struct cached_dev *dc)
 	if (IS_ERR(dc->writeback_thread))
 		return PTR_ERR(dc->writeback_thread);
 
-	schedule_delayed_work(&dc->writeback_rate_update,
-			      dc->writeback_rate_update_seconds * HZ);
-
+	bch_pd_controller_start(&dc->writeback_pd);
 	bch_writeback_queue(dc);
 
 	return 0;

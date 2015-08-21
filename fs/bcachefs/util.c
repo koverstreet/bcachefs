@@ -261,6 +261,86 @@ int bch_ratelimit_wait_freezable_stoppable(struct bch_ratelimit *d,
 	}
 }
 
+/*
+ * Updates pd_controller and returns the computed change. Attempts to
+ * scale inputed values to units per second.
+ */
+void bch_pd_controller_update(struct bch_pd_controller *pd,
+			      s64 target, s64 actual)
+{
+	s64 proportional, derivative, change;
+
+	proportional = actual - target;
+	proportional *= pd->update_seconds;
+	proportional = div_s64(proportional, pd->p_term_inverse);
+
+	derivative = actual - pd->last_actual;
+	derivative = div_s64(derivative, pd->update_seconds);
+	derivative = ewma_add(pd->smoothed_derivative, derivative,
+			      pd->d_smooth, 0);
+	derivative = derivative * pd->d_term;
+	derivative = div_s64(derivative, pd->p_term_inverse);
+
+	change = proportional + derivative;
+
+	/* Don't increase writeback rate if not keeping up */
+	if (change > 0 &&
+	    time_after64(local_clock(),
+			 pd->rate.next + NSEC_PER_MSEC))
+		change = 0;
+
+	pd->rate.rate = clamp_t(s64, (s64) pd->rate.rate + change,
+				1, NSEC_PER_MSEC);
+
+	pd->last_actual		= actual;
+	pd->last_derivative	= derivative;
+	pd->last_proportional	= proportional;
+	pd->last_change		= change;
+	pd->last_target		= target;
+}
+
+void bch_pd_controller_start(struct bch_pd_controller *pd)
+{
+	pd->rate.rate		= 1024;
+	pd->update_seconds	= 5;
+	pd->p_term_inverse	= 6000;
+	pd->d_term		= 30;
+	pd->d_smooth		= (pd->d_term / pd->update_seconds) ?: 1;
+
+	schedule_delayed_work(&pd->update, pd->update_seconds * HZ);
+}
+
+size_t bch_pd_controller_print_debug(struct bch_pd_controller *pd, char *buf)
+{
+	char rate[20];
+	char actual[20];
+	char target[20];
+	char proportional[20];
+	char derivative[20];
+	char change[20];
+	s64 next_io;
+
+	bch_hprint(rate,	pd->rate.rate);
+	bch_hprint(actual,	pd->last_actual);
+	bch_hprint(target,	pd->last_target);
+	bch_hprint(proportional, pd->last_proportional);
+	bch_hprint(derivative,	pd->last_derivative);
+	bch_hprint(change,	pd->last_change);
+
+	next_io = div64_s64(pd->rate.next - local_clock(), NSEC_PER_MSEC);
+
+	return sprintf(buf,
+		       "rate:\t\t%s/sec\n"
+		       "target:\t\t%s\n"
+		       "actual:\t\t%s\n"
+		       "proportional:\t%s\n"
+		       "derivative:\t%s\n"
+		       "change:\t\t%s/sec\n"
+		       "next io:\t%llims\n",
+		       rate, target, actual, proportional,
+		       derivative, change, next_io);
+}
+
 void bch_bio_map(struct bio *bio, void *base)
 {
 	size_t size = bio->bi_iter.bi_size;

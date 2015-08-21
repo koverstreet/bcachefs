@@ -75,12 +75,7 @@ rw_attribute(cache_mode);
 rw_attribute(writeback_metadata);
 rw_attribute(writeback_running);
 rw_attribute(writeback_percent);
-rw_attribute(writeback_rate);
-
-rw_attribute(writeback_rate_update_seconds);
-rw_attribute(writeback_rate_d_term);
-rw_attribute(writeback_rate_p_term_inverse);
-read_attribute(writeback_rate_debug);
+sysfs_pd_controller_attribute(writeback);
 
 read_attribute(stripe_size);
 read_attribute(partial_stripes_expensive);
@@ -124,42 +119,7 @@ SHOW(__bch_cached_dev)
 	var_printf(writeback_metadata,	"%i");
 	var_printf(writeback_running,	"%i");
 	var_print(writeback_percent);
-	sysfs_hprint(writeback_rate,	dc->writeback_rate.rate << 9);
-
-	var_print(writeback_rate_update_seconds);
-	var_print(writeback_rate_d_term);
-	var_print(writeback_rate_p_term_inverse);
-
-	if (attr == &sysfs_writeback_rate_debug) {
-		char rate[20];
-		char dirty[20];
-		char target[20];
-		char proportional[20];
-		char derivative[20];
-		char change[20];
-		s64 next_io;
-
-		bch_hprint(rate,	dc->writeback_rate.rate << 9);
-		bch_hprint(dirty,	bcache_dev_sectors_dirty(&dc->disk) << 9);
-		bch_hprint(target,	dc->writeback_rate_target << 9);
-		bch_hprint(proportional,dc->writeback_rate_proportional << 9);
-		bch_hprint(derivative,	dc->writeback_rate_derivative << 9);
-		bch_hprint(change,	dc->writeback_rate_change << 9);
-
-		next_io = div64_s64(dc->writeback_rate.next - local_clock(),
-				    NSEC_PER_MSEC);
-
-		return sprintf(buf,
-			       "rate:\t\t%s/sec\n"
-			       "dirty:\t\t%s\n"
-			       "target:\t\t%s\n"
-			       "proportional:\t%s\n"
-			       "derivative:\t%s\n"
-			       "change:\t\t%s/sec\n"
-			       "next io:\t%llims\n",
-			       rate, dirty, target, proportional,
-			       derivative, change, next_io);
-	}
+	sysfs_pd_controller_show(writeback, &dc->writeback_pd);
 
 	sysfs_hprint(dirty_data,
 		     bcache_dev_sectors_dirty(&dc->disk) << 9);
@@ -203,13 +163,7 @@ STORE(__cached_dev)
 	d_strtoul(writeback_metadata);
 	d_strtoul(writeback_running);
 	sysfs_strtoul_clamp(writeback_percent, dc->writeback_percent, 0, 40);
-
-	sysfs_strtoul_clamp(writeback_rate,
-			    dc->writeback_rate.rate, 1, INT_MAX);
-
-	d_strtoul_nonzero(writeback_rate_update_seconds);
-	d_strtoul(writeback_rate_d_term);
-	d_strtoul_nonzero(writeback_rate_p_term_inverse);
+	sysfs_pd_controller_store(writeback, &dc->writeback_pd);
 
 	d_strtoi_h(sequential_cutoff);
 	d_strtoi_h(readahead);
@@ -293,8 +247,8 @@ STORE(bch_cached_dev)
 		bch_writeback_queue(dc);
 
 	if (attr == &sysfs_writeback_percent)
-		schedule_delayed_work(&dc->writeback_rate_update,
-				      dc->writeback_rate_update_seconds * HZ);
+		schedule_delayed_work(&dc->writeback_pd.update,
+				      dc->writeback_pd.update_seconds * HZ);
 
 	mutex_unlock(&bch_register_lock);
 	return size;
@@ -311,11 +265,7 @@ static struct attribute *bch_cached_dev_files[] = {
 	&sysfs_writeback_metadata,
 	&sysfs_writeback_running,
 	&sysfs_writeback_percent,
-	&sysfs_writeback_rate,
-	&sysfs_writeback_rate_update_seconds,
-	&sysfs_writeback_rate_d_term,
-	&sysfs_writeback_rate_p_term_inverse,
-	&sysfs_writeback_rate_debug,
+	sysfs_pd_controller_files(writeback),
 	&sysfs_dirty_data,
 	&sysfs_stripe_size,
 	&sysfs_partial_stripes_expensive,

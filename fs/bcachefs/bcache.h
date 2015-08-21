@@ -339,9 +339,6 @@ struct bcache_device {
 	atomic_t		*stripe_sectors_dirty;
 	unsigned long		*full_dirty_stripes;
 
-	unsigned long		sectors_dirty_last;
-	long			sectors_dirty_derivative;
-
 	struct bio_set		*bio_split;
 
 	unsigned		data_csum:1;
@@ -395,8 +392,8 @@ struct cached_dev {
 	 */
 	atomic_t		has_dirty;
 
-	struct bch_ratelimit	writeback_rate;
-	struct delayed_work	writeback_rate_update;
+	/* for dynamic rate control of writeback */
+	struct bch_pd_controller writeback_pd;
 	struct task_struct	*writeback_thread;
 	struct keybuf		writeback_keys;
 
@@ -421,15 +418,6 @@ struct cached_dev {
 	unsigned		writeback_metadata:1;
 	unsigned		writeback_running:1;
 	unsigned char		writeback_percent;
-
-	uint64_t		writeback_rate_target;
-	int64_t			writeback_rate_proportional;
-	int64_t			writeback_rate_derivative;
-	int64_t			writeback_rate_change;
-
-	unsigned		writeback_rate_update_seconds;
-	unsigned		writeback_rate_d_term;
-	unsigned		writeback_rate_p_term_inverse;
 };
 
 enum alloc_reserve {
