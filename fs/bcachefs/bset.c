@@ -966,6 +966,7 @@ static struct bkey *bset_search_tree(struct bset_tree *t,
 	}
 }
 
+__attribute__((flatten))
 struct bkey *__bch_bset_search(struct btree_keys *b, struct bset_tree *t,
 			       const struct bkey *search)
 {
