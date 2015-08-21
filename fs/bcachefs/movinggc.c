@@ -168,11 +168,6 @@ static bool bch_moving_gc(struct cache *ca)
 	for (i = 0; i < ca->heap.used; i++)
 		sectors_to_move += ca->heap.data[i].val;
 
-	if (buckets_unused > ca->reserve_buckets_count + ca->sb.nbuckets / 10) {
-		mutex_unlock(&ca->heap_lock);
-		return false;
-	}
-
 	if (ca->heap.used < ca->heap.size / 4 &&
 	    sectors_to_move < reserve_sectors) {
 		mutex_unlock(&ca->heap_lock);
