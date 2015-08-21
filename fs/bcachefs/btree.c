@@ -2267,8 +2267,15 @@ static int bch_btree_insert_node(struct btree *b, struct btree_op *op,
 		 */
 		if (b->level)
 			bch_btree_node_write(b, &cl);
-		else if (set_bytes(btree_bset_last(b)) > PAGE_SIZE - 48)
-			bch_btree_node_write(b, NULL);
+		else {
+			unsigned long bytes = set_bytes(btree_bset_last(b));
+
+			if (b->io_mutex.count > 0 &&
+			    ((max(roundup(bytes, block_bytes(b->c)),
+				  PAGE_SIZE) - bytes < 48) ||
+			     bytes > (16 << 10)))
+				bch_btree_node_write(b, NULL);
+		}
 
 		mutex_unlock(&b->write_lock);
 
