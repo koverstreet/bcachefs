@@ -73,10 +73,15 @@ static inline void set_bkey_deleted(struct bkey *k)
 
 struct btree_keys;
 
-void bch_bkey_format_init(struct bkey_format *);
-void bch_bkey_format_add(struct bkey_format *, struct bkey *);
-void bch_bkey_format_done(struct bkey_format *);
-struct bkey_format btree_keys_calc_format(struct btree_keys *);
+struct bkey_format_state {
+	u64 field_min[BKEY_NR_FIELDS];
+	u64 field_max[BKEY_NR_FIELDS];
+};
+
+void bch_bkey_format_init(struct bkey_format_state *);
+void bch_bkey_format_add_key(struct bkey_format_state *, struct bkey *);
+void bch_bkey_format_add_pos(struct bkey_format_state *, struct bpos);
+struct bkey_format bch_bkey_format_done(struct bkey_format_state *);
 
 unsigned bkey_greatest_differing_bit(const struct bkey_format *,
 				     const struct bkey_packed *,

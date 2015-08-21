@@ -1458,10 +1458,51 @@ struct btree *__btree_node_alloc_replacement(struct btree *b,
 	return n;
 }
 
+void __bch_btree_calc_format(struct bkey_format_state *s, struct btree *b)
+{
+	struct btree_node_iter iter;
+	struct bkey_tup tup;
+
+	for_each_btree_node_key_unpack(&b->keys, &tup, &iter)
+		bch_bkey_format_add_key(s, &tup.k);
+
+	if (b->keys.ops->is_extents) {
+		/*
+		 * Extents need special consideration because of
+		 * bch_insert_fixup_extent() - they have to be modified in
+		 * place, and successfully repack, when insert an overlapping
+		 * extent:
+		 */
+		bch_bkey_format_add_pos(s, b->key.k.p);
+
+		s->field_min[1] = max_t(s64, 0, s->field_min[1] - UINT_MAX);
+
+		/*
+		 * If we span multiple inodes, need to be able to store an
+		 * offset of 0:
+		 */
+		if (s->field_min[0] != s->field_max[0])
+			s->field_min[1] = 0;
+
+		/* Make sure we can store a size of 0: */
+		s->field_min[3] = 0;
+	}
+}
+
+static struct bkey_format bch_btree_calc_format(struct btree *b)
+{
+	struct bkey_format_state s;
+
+	bch_bkey_format_init(&s);
+	__bch_btree_calc_format(&s, b);
+
+	return bch_bkey_format_done(&s);
+}
+
 struct btree *btree_node_alloc_replacement(struct btree *b,
 					   enum alloc_reserve reserve)
 {
-	struct bkey_format new_f = btree_keys_calc_format(&b->keys);
+	struct bkey_format new_f = bch_btree_calc_format(b);
 
 	if (!btree_node_format_fits(b, &new_f))
 		new_f = b->keys.set->data->format;

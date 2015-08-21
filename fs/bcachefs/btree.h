@@ -387,6 +387,8 @@ static inline bool btree_node_format_fits(struct btree *b,
 		PAGE_SIZE << b->keys.page_order;
 }
 
+void __bch_btree_calc_format(struct bkey_format_state *, struct btree *);
+
 struct btree *__btree_node_alloc_replacement(struct btree *,
 					     enum alloc_reserve,
 					     struct bkey_format);

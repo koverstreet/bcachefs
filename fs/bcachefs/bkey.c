@@ -533,58 +533,77 @@ enum bkey_pack_pos_ret bkey_pack_pos_lossy(struct bkey_packed *out,
 	return exact ? BKEY_PACK_POS_EXACT : BKEY_PACK_POS_SMALLER;
 }
 
-void bch_bkey_format_init(struct bkey_format *format)
+void bch_bkey_format_init(struct bkey_format_state *s)
 {
-	*format = (struct bkey_format) {
-		.nr_fields = BKEY_NR_FIELDS,
-	};
+	unsigned i;
+
+	for (i = 0; i < ARRAY_SIZE(s->field_min); i++)
+		s->field_min[i] = U64_MAX;
+
+	for (i = 0; i < ARRAY_SIZE(s->field_max); i++)
+		s->field_max[i] = 0;
 }
 
-static void __bkey_format_add(struct bkey_format *format,
-			      unsigned *field, u64 v)
+static void __bkey_format_add(struct bkey_format_state *s,
+			      unsigned field, u64 v)
 {
-	u8 *bits = &format->bits_per_field[(*field)++];
-
-	*bits = max_t(unsigned, *bits, fls64(v));
+	s->field_min[field] = min(s->field_min[field], v);
+	s->field_max[field] = max(s->field_max[field], v);
 }
 
 /*
  * Changes @format so that @k can be successfully packed with @format
  */
-void bch_bkey_format_add(struct bkey_format *format, struct bkey *k)
+void bch_bkey_format_add_key(struct bkey_format_state *s, struct bkey *k)
 {
 	unsigned field = 0;
 
-	__bkey_format_add(format, &field, k->p.inode);
-	__bkey_format_add(format, &field, k->p.offset);
-	__bkey_format_add(format, &field, k->p.snapshot);
-	__bkey_format_add(format, &field, k->size);
-	__bkey_format_add(format, &field, k->version);
+	__bkey_format_add(s, field++, k->p.inode);
+	__bkey_format_add(s, field++, k->p.offset);
+	__bkey_format_add(s, field++, k->p.snapshot);
+	__bkey_format_add(s, field++, k->size);
+	__bkey_format_add(s, field++, k->version);
 	EBUG_ON(field != BKEY_NR_FIELDS);
 }
 
-void bch_bkey_format_done(struct bkey_format *format)
+void bch_bkey_format_add_pos(struct bkey_format_state *s, struct bpos p)
 {
-	unsigned i, bits = KEY_PACKED_BITS_START;
+	unsigned field = 0;
 
-	for (i = 0; i < ARRAY_SIZE(format->bits_per_field); i++)
-		bits += format->bits_per_field[i];
-
-	format->key_u64s = DIV_ROUND_UP(bits, 64);
+	__bkey_format_add(s, field++, p.inode);
+	__bkey_format_add(s, field++, p.offset);
+	__bkey_format_add(s, field++, p.snapshot);
 }
 
-struct bkey_format btree_keys_calc_format(struct btree_keys *b)
+struct bkey_format bch_bkey_format_done(struct bkey_format_state *s)
 {
-	struct bkey_format ret;
-	struct btree_node_iter iter;
-	struct bkey_tup tup;
+	unsigned i, bits = KEY_PACKED_BITS_START;
+	struct bkey_format ret = {
+		.nr_fields = BKEY_NR_FIELDS,
+	};
 
-	bch_bkey_format_init(&ret);
+	/*
+	 * Hack to make sure we can always repack keys in
+	 * bch_insert_fixup_extent(), when trimming makes the offset smaller
+	 */
+	s->field_min[BKEY_FIELD_OFFSET] =
+		max_t(s64, 0, s->field_min[BKEY_FIELD_OFFSET] - UINT_MAX);
 
-	for_each_btree_node_key_unpack(b, &tup, &iter)
-		bch_bkey_format_add(&ret, &tup.k);
+	/*
+	 * Make sure we can always store a size of 0, also because of
+	 * bch_insert_fixup_extent
+	 */
+	s->field_min[BKEY_FIELD_SIZE] = 0;
 
-	bch_bkey_format_done(&ret);
+	for (i = 0; i < ARRAY_SIZE(s->field_min); i++) {
+		ret.field_offset[i]	= min(s->field_min[i], s->field_max[i]);
+		ret.bits_per_field[i]	= fls64(s->field_max[i] -
+						ret.field_offset[i]);
+
+		bits += ret.bits_per_field[i];
+	}
+
+	ret.key_u64s = DIV_ROUND_UP(bits, 64);
 
 	return ret;
 }

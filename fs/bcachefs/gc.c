@@ -380,6 +380,7 @@ static void bch_coalesce_nodes(struct btree *old_nodes[GC_MERGE_NODES],
 	struct keylist keylist;
 	struct closure cl;
 	struct bpos saved_pos;
+	struct bkey_format_state format_state;
 	struct bkey_format new_format;
 	int ret;
 
@@ -410,17 +411,12 @@ static void bch_coalesce_nodes(struct btree *old_nodes[GC_MERGE_NODES],
 
 	trace_bcache_btree_gc_coalesce(parent, nr_old_nodes);
 
-	bch_bkey_format_init(&new_format);
+	bch_bkey_format_init(&format_state);
 
-	for (i = 0; i < nr_old_nodes; i++) {
-		struct btree_node_iter iter;
-		struct bkey_tup tup;
+	for (i = 0; i < nr_old_nodes; i++)
+		__bch_btree_calc_format(&format_state, old_nodes[i]);
 
-		for_each_btree_node_key_unpack(&old_nodes[i]->keys, &tup, &iter)
-			bch_bkey_format_add(&new_format, &tup.k);
-	}
-
-	bch_bkey_format_done(&new_format);
+	new_format = bch_bkey_format_done(&format_state);
 
 	for (i = 0; i < nr_old_nodes; i++)
 		if (!btree_node_format_fits(old_nodes[i], &new_format)) {

@@ -539,8 +539,11 @@ void bch_bset_init_next(struct btree_keys *b, struct bset *i)
 		i->seq = b->set->data->seq;
 		i->format = b->set->data->format;
 	} else {
-		bch_bkey_format_init(&b->set->data->format);
-		bch_bkey_format_done(&b->set->data->format);
+		struct bkey_format_state s;
+
+		bch_bkey_format_init(&s);
+		b->set->data->format = bch_bkey_format_done(&s);
+
 		get_random_bytes(&i->seq, sizeof(uint64_t));
 	}
 
