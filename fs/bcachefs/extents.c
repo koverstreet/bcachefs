@@ -76,10 +76,8 @@ bool bch_generic_insert_fixup(struct btree_keys *b, struct bkey *insert,
 		if (bkey_cmp(k, insert) < 0)
 			goto next;
 
-		if (!KEY_DELETED(k)) {
-			SET_KEY_DELETED(k, 1);
-			b->nr_live_keys -= KEY_U64s(k);
-		}
+		SET_KEY_DELETED(k, 1);
+		b->nr_live_keys -= KEY_U64s(k);
 next:
 		bch_btree_node_iter_next_all(iter);
 	}

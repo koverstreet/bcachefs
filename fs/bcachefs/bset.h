@@ -560,11 +560,27 @@ bch_btree_node_iter_next(struct btree_node_iter *iter)
 }
 
 static inline struct bkey *
-bch_btree_node_iter_peek(struct btree_node_iter *iter)
+bch_btree_node_iter_peek_all(struct btree_node_iter *iter)
 {
 	return bch_btree_node_iter_end(iter)
 		? NULL
 		: iter->data->k;
+}
+
+static inline struct bkey *
+bch_btree_node_iter_peek(struct btree_node_iter *iter)
+{
+	struct bkey *ret;
+
+	while (1) {
+		ret = bch_btree_node_iter_peek_all(iter);
+		if (!ret || !bkey_deleted(ret))
+			break;
+
+		bch_btree_node_iter_next_all(iter);
+	}
+
+	return ret;
 }
 
 static inline struct bkey *
@@ -573,7 +589,7 @@ bch_btree_node_iter_peek_overlapping(struct btree_node_iter *iter,
 {
 	struct bkey *k;
 
-	while ((k = bch_btree_node_iter_peek(iter)) &&
+	while ((k = bch_btree_node_iter_peek_all(iter)) &&
 	       (bkey_cmp(k, &START_KEY(end)) <= 0))
 		bch_btree_node_iter_next_all(iter);
 
