@@ -462,13 +462,29 @@ static void btree_node_write_endio(struct bio *bio)
 	bch_bbio_endio(to_bbio(bio), bio->bi_error, "writing btree");
 }
 
-static void do_btree_node_write(struct btree *b)
+static void do_btree_node_write(struct closure *cl)
 {
-	struct closure *cl = &b->io;
+	struct btree *b = container_of(cl, struct btree, io);
 	struct bset *i = btree_bset_last(b);
 	BKEY_PADDED(key) k;
 	struct bkey_i_extent *e;
 	struct bch_extent_ptr *ptr;
+	struct cache *ca;
+	size_t blocks_to_write = set_blocks(i, block_bytes(b->c));
+
+	trace_bcache_btree_write(b);
+
+	BUG_ON(b->written >= btree_blocks(b->c));
+	BUG_ON(b->written + blocks_to_write > btree_blocks(b->c));
+	BUG_ON(b->written && !i->keys);
+	BUG_ON(btree_bset_first(b)->seq != i->seq);
+	bch_check_keys(&b->keys, "writing");
+
+	cancel_delayed_work(&b->work);
+
+	change_bit(BTREE_NODE_write_idx, &b->flags);
+
+	b->written += blocks_to_write;
 
 	i->version	= BCACHE_BSET_VERSION;
 
@@ -510,6 +526,12 @@ static void do_btree_node_write(struct btree *b)
 		SET_PTR_OFFSET(ptr, PTR_OFFSET(ptr) +
 			       bset_sector_offset(&b->keys, i));
 
+	rcu_read_lock();
+	extent_for_each_online_device(b->c, e, ptr, ca)
+		atomic_long_add(blocks_to_write * b->c->sb.block_size,
+				&ca->btree_sectors_written);
+	rcu_read_unlock();
+
 	if (!bio_alloc_pages(b->bio, __GFP_NOWARN|GFP_NOWAIT)) {
 		int j;
 		struct bio_vec *bv;
@@ -536,41 +558,25 @@ static void do_btree_node_write(struct btree *b)
 
 static void __bch_btree_node_write(struct btree *b, struct closure *parent)
 {
-	struct bset *i = btree_bset_last(b);
-	struct bkey_i_extent *e = bkey_i_to_extent(&b->key);
-	struct bch_extent_ptr *ptr;
-	struct cache *ca;
-	size_t blocks_to_write = set_blocks(i, block_bytes(b->c));
-
+	/*
+	 * can't be flipped back on without a write lock, we have at least a
+	 * read lock:
+	 */
 	if (!test_and_clear_bit(BTREE_NODE_dirty, &b->flags))
 		return;
 
-	trace_bcache_btree_write(b);
-
-	BUG_ON(b->written >= btree_blocks(b->c));
-	BUG_ON(b->written + blocks_to_write > btree_blocks(b->c));
-	BUG_ON(b->written && !i->keys);
-	BUG_ON(btree_bset_first(b)->seq != i->seq);
-	bch_check_keys(&b->keys, "writing");
-
-	cancel_delayed_work(&b->work);
-
-	/* If caller isn't waiting for write, parent refcount is cache set */
+	/*
+	 * io_mutex ensures only a single IO in flight to a btree node at a
+	 * time, and also protects use of the b->io closure.
+	 * do_btree_node_write() will drop it asynchronously.
+	 */
 	down(&b->io_mutex);
-	closure_init(&b->io, parent ?: &b->c->cl);
 
-	change_bit(BTREE_NODE_write_idx, &b->flags);
-
-	b->written += blocks_to_write;
-
-	do_btree_node_write(b); /* will drop b->io_mutex */
-
-	rcu_read_lock();
-
-	extent_for_each_online_device(b->c, e, ptr, ca)
-		atomic_long_add(blocks_to_write * b->c->sb.block_size,
-				&ca->btree_sectors_written);
-	rcu_read_unlock();
+	/*
+	 * do_btree_node_write() must not run asynchronously (NULL is passed for
+	 * workqueue) - it needs the lock we have on the btree node
+	 */
+	closure_call(&b->io, do_btree_node_write, NULL, parent ?: &b->c->cl);
 }
 
 void bch_btree_node_write(struct btree *b, struct closure *parent,
