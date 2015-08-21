@@ -508,18 +508,13 @@ int __bch_add_sectors(struct cache_set *c, struct btree *b,
 		      const struct bkey *k, u64 offset,
 		      int sectors, bool fail_if_stale)
 {
-	unsigned replicas_found = 0, replicas_needed =
-		CACHE_SET_DATA_REPLICAS_WANT(&c->sb);
 	struct cache *ca;
 	int i;
-
-	if (KEY_CACHED(k))
-		replicas_needed = 0;
 
 	rcu_read_lock();
 	for (i = bch_extent_ptrs(k) - 1; i >= 0; --i)
 		if ((ca = PTR_CACHE(c, k, i))) {
-			bool dirty = replicas_found < replicas_needed;
+			bool stale, dirty = bch_extent_ptr_is_dirty(c, k, i);
 
 			trace_bcache_add_sectors(ca, k, i, offset,
 						 sectors, dirty);
@@ -559,11 +554,9 @@ int __bch_add_sectors(struct cache_set *c, struct btree *b,
 			 *
 			 *   Fuck me, I hate my life.
 			 */
-
-			if (!bch_mark_data_bucket(c, ca, b, k, i, sectors,
-						  dirty))
-				replicas_found++;
-			else if (dirty && fail_if_stale)
+			stale = bch_mark_data_bucket(c, ca, b, k, i,
+						     sectors, dirty);
+			if (stale && dirty && fail_if_stale)
 				goto stale;
 		}
 	rcu_read_unlock();
@@ -1181,7 +1174,7 @@ static void bch_extent_debugcheck(struct btree_keys *bk, const struct bkey *k)
 	struct cache_set *c = b->c;
 	struct cache *ca;
 	struct bucket *g;
-	unsigned seq, stale, replicas_needed;
+	unsigned seq, stale;
 	char buf[80];
 	bool bad;
 	int i;
@@ -1197,31 +1190,30 @@ static void bch_extent_debugcheck(struct btree_keys *bk, const struct bkey *k)
 	if (bkey_deleted(k) || KEY_WIPED(k) || KEY_BAD(k))
 		return;
 
-	memset(ptrs_per_tier, 0, sizeof(ptrs_per_tier));
+	if (KEY_SIZE(k) &&
+	    bch_extent_ptrs(k) < bch_extent_replicas_needed(c, k)) {
+		bch_bkey_val_to_text(bk, buf, sizeof(buf), k);
+		cache_set_bug(c, "extent key bad (too few replicas): %s", buf);
+		return;
+	}
 
-	replicas_needed = KEY_CACHED(k) ? 0
-		: CACHE_SET_DATA_REPLICAS_WANT(&c->sb);
+	memset(ptrs_per_tier, 0, sizeof(ptrs_per_tier));
 
 	mi = cache_member_info_get(c);
 
 	for (i = bch_extent_ptrs(k) - 1; i >= 0; --i) {
+		bool dirty = bch_extent_ptr_is_dirty(c, k, i);
+
 		dev = PTR_DEV(k, i);
 
 		/* Could be a special pointer such as PTR_CHECK_DEV */
 		if (dev >= mi->nr_in_set) {
-			/*
-			 * PTR_LOST_DEV counts as a valid replica...
-			 * Since it is a valid state (data loss due to device
-			 * removal with unsuccessful data motion).
-			 */
-			if ((dev == PTR_LOST_DEV) && replicas_needed)
-				replicas_needed--;
+			if (dev != PTR_CHECK_DEV &&
+			    dev != PTR_LOST_DEV)
+				goto bad_device;
+
 			continue;
 		}
-
-		if (replicas_needed &&
-		    bch_is_zero(mi->m[dev].uuid.b, sizeof(uuid_le)))
-			goto bad_device;
 
 		tier = CACHE_TIER(&mi->m[dev]);
 		ptrs_per_tier[tier]++;
@@ -1242,6 +1234,9 @@ static void bch_extent_debugcheck(struct btree_keys *bk, const struct bkey *k)
 
 				stale = ptr_stale(ca, k, i);
 
+				cache_set_bug_on(stale && dirty, c,
+						 "stale dirty pointer");
+
 				cache_set_bug_on(stale > 96, c,
 						 "key too stale: %i",
 						 stale);
@@ -1251,21 +1246,12 @@ static void bch_extent_debugcheck(struct btree_keys *bk, const struct bkey *k)
 				       (mark.is_metadata ||
 					(!mark.dirty_sectors &&
 					 !mark.owned_by_allocator &&
-					 replicas_needed)));
+					 dirty)));
 			} while (read_seqretry(&c->gc_cur_lock, seq));
 
 			if (bad)
 				goto bad_ptr;
 		}
-
-		if (replicas_needed && !stale)
-			replicas_needed--;
-	}
-
-	if (replicas_needed && KEY_SIZE(k)) {
-		bch_bkey_val_to_text(bk, buf, sizeof(buf), k);
-		cache_set_bug(c, "extent key bad (too few replicas): %s", buf);
-		goto done;
 	}
 
 	replicas = CACHE_SET_DATA_REPLICAS_WANT(&c->sb);
@@ -1278,7 +1264,6 @@ static void bch_extent_debugcheck(struct btree_keys *bk, const struct bkey *k)
 			break;
 		}
 
-done:
 	cache_member_info_put();
 	return;
 
