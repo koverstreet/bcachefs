@@ -727,7 +727,7 @@ do {									\
 } while (0)
 
 #define __bcache_io_error(c, fmt, ...)					\
-	printk(KERN_ERR "bcache: IO error on %pU: " fmt "\n",		\
+	printk_ratelimited(KERN_ERR "bcache: IO error on %pU: " fmt "\n",\
 	       (c)->sb.set_uuid.b, ##__VA_ARGS__)
 
 #define bcache_io_error(c, bio, fmt, ...)				\
