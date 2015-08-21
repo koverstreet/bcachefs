@@ -11,7 +11,6 @@
 #include "debug.h"
 #include "extents.h"
 #include "io.h"
-#include "keylist.h"
 #include "super.h"
 
 #include <linux/console.h>
@@ -152,79 +151,96 @@ out_put:
 
 /* XXX: cache set refcounting */
 
-struct dump_iterator {
-	char			buf[PAGE_SIZE];
-	size_t			bytes;
+struct dump_iter {
+	struct btree_op		op;
+	struct bkey		from;
 	struct cache_set	*c;
-	struct scan_keylist	keys;
+
+	char			buf[PAGE_SIZE];
+	size_t			bytes;	/* what's currently in buf */
+
+	char __user		*ubuf;	/* destination user buffer */
+	size_t			size;	/* size of requested read */
+	ssize_t			ret;	/* bytes read so far */
 };
 
-static bool dump_pred(struct scan_keylist *kl, struct bkey *k)
+static int flush_buf(struct dump_iter *i)
 {
-	return true;
+	if (i->bytes) {
+		size_t bytes = min(i->bytes, i->size);
+		int err = copy_to_user(i->ubuf, i->buf, bytes);
+
+		if (err)
+			return err;
+
+		i->ret	 += bytes;
+		i->ubuf	 += bytes;
+		i->size	 -= bytes;
+		i->bytes -= bytes;
+		memmove(i->buf, i->buf + bytes, i->bytes);
+	}
+
+	return 0;
+}
+
+static int bch_dump_read_fn(struct btree_op *b_op, struct btree *b,
+			    struct bkey *k)
+{
+	struct dump_iter *i = container_of(b_op, struct dump_iter, op);
+	int err;
+
+	bch_bkey_val_to_text(&b->keys, i->buf, sizeof(i->buf), k);
+
+	err = flush_buf(i);
+	if (err)
+		return err;
+
+	i->from = *k;
+
+	return i->size ? MAP_CONTINUE : MAP_DONE;
 }
 
 static ssize_t bch_dump_read(struct file *file, char __user *buf,
 			     size_t size, loff_t *ppos)
 {
-	struct dump_iterator *i = file->private_data;
-	ssize_t ret = 0;
-	char kbuf[256];
+	struct dump_iter *i = file->private_data;
+	int err;
 
-	while (size) {
-		struct bkey *k;
-		unsigned bytes = min(i->bytes, size);
+	bch_btree_op_init(&i->op, BTREE_ID_EXTENTS, -1);
 
-		int err = copy_to_user(buf, i->buf, bytes);
-		if (err)
-			return err;
+	i->size	= size;
+	i->ret	= 0;
 
-		ret	 += bytes;
-		buf	 += bytes;
-		size	 -= bytes;
-		i->bytes -= bytes;
-		memmove(i->buf, i->buf + bytes, i->bytes);
+	err = flush_buf(i);
+	if (err)
+		return err;
 
-		if (i->bytes)
-			break;
+	if (!i->size)
+		return i->ret;
 
-		k = bch_scan_keylist_next_rescan(i->c,
-						 &i->keys,
-						 &MAX_KEY,
-						 dump_pred);
-		if (k == NULL)
-			break;
+	err = bch_btree_map_keys(&i->op, i->c, &i->from, bch_dump_read_fn, 0);
 
-		bch_extent_to_text(i->c, kbuf, sizeof(kbuf), k);
-		i->bytes = snprintf(i->buf, PAGE_SIZE, "%s\n", kbuf);
-		bch_scan_keylist_advance(&i->keys);
-	}
-
-	return ret;
+	return err ?: i->ret;
 }
 
 static int bch_dump_open(struct inode *inode, struct file *file)
 {
 	struct cache_set *c = inode->i_private;
-	struct dump_iterator *i;
+	struct dump_iter *i;
 
-	i = kzalloc(sizeof(struct dump_iterator), GFP_KERNEL);
+	i = kzalloc(sizeof(struct dump_iter), GFP_KERNEL);
 	if (!i)
 		return -ENOMEM;
 
 	file->private_data = i;
+	bkey_init(&i->from);
 	i->c = c;
-	bch_scan_keylist_init(&i->keys, DFLT_SCAN_KEYLIST_MAX_SIZE);
-	i->keys.last_scanned = KEY(0, 0, 0);
 
 	return 0;
 }
 
 static int bch_dump_release(struct inode *inode, struct file *file)
 {
-	struct dump_iterator *i = file->private_data;
-
-	bch_scan_keylist_destroy(&i->keys);
 	kfree(file->private_data);
 	return 0;
 }
