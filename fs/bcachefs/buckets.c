@@ -76,9 +76,15 @@ static inline int is_cached_bucket(struct bucket_mark m)
 
 static void bucket_stats_update(struct cache *ca,
 				struct bucket_mark old,
-				struct bucket_mark new)
+				struct bucket_mark new,
+				bool may_make_unavailable)
 {
 	struct bucket_stats *stats;
+
+	BUG_ON(!may_make_unavailable &&
+	       is_available_bucket(old) &&
+	       !is_available_bucket(new) &&
+	       ca->set->gc_cur_btree > BTREE_ID_NR);
 
 	preempt_disable();
 	stats = this_cpu_ptr(ca->bucket_stats_percpu);
@@ -104,15 +110,16 @@ static void bucket_stats_update(struct cache *ca,
 
 static struct bucket_mark bch_bucket_mark_set(struct cache *ca,
 					      struct bucket *g,
-					      struct bucket_mark new)
+					      struct bucket_mark new,
+					      bool may_make_unavailable)
 {
 	struct bucket_mark old = xchg(&g->mark, new);
 
-	bucket_stats_update(ca, old, new);
+	bucket_stats_update(ca, old, new, may_make_unavailable);
 	return old;
 }
 
-#define bucket_cmpxchg(g, old, new, expr)			\
+#define bucket_cmpxchg(g, old, new, may_make_unavailable, expr)	\
 do {								\
 	u32 _v = READ_ONCE((g)->mark.counter);			\
 								\
@@ -122,18 +129,21 @@ do {								\
 	} while ((_v = cmpxchg(&(g)->mark.counter,		\
 			       old.counter,			\
 			       new.counter)) != old.counter);	\
-	bucket_stats_update(ca, old, new);			\
+	bucket_stats_update(ca, old, new, may_make_unavailable);\
 } while (0)
 
 void bch_mark_free_bucket(struct cache *ca, struct bucket *g)
 {
-	bch_bucket_mark_set(ca, g, (struct bucket_mark) { .counter = 0 });
+	bch_bucket_mark_set(ca, g,
+			    (struct bucket_mark) { .counter = 0 },
+			    false);
 }
 
 void bch_mark_alloc_bucket(struct cache *ca, struct bucket *g)
 {
 	struct bucket_mark old = bch_bucket_mark_set(ca, g,
-			(struct bucket_mark) { .owned_by_allocator = 1 });
+			(struct bucket_mark) { .owned_by_allocator = 1 },
+			true);
 
 	BUG_ON(old.dirty_sectors);
 
@@ -142,10 +152,12 @@ void bch_mark_alloc_bucket(struct cache *ca, struct bucket *g)
 					old.cached_sectors);
 }
 
-void bch_mark_metadata_bucket(struct cache *ca, struct bucket *g)
+void bch_mark_metadata_bucket(struct cache *ca, struct bucket *g,
+			      bool may_make_unavailable)
 {
 	struct bucket_mark old = bch_bucket_mark_set(ca, g,
-			(struct bucket_mark) { .is_metadata = 1 });
+			(struct bucket_mark) { .is_metadata = 1 },
+			may_make_unavailable);
 
 	BUG_ON(old.cached_sectors);
 	BUG_ON(old.dirty_sectors);
@@ -173,7 +185,7 @@ u8 bch_mark_data_bucket(struct cache_set *c, struct cache *ca, struct bkey *k,
 	u8 stale;
 	unsigned saturated;
 
-	bucket_cmpxchg(&ca->buckets[bucket_nr], old, new, ({
+	bucket_cmpxchg(&ca->buckets[bucket_nr], old, new, gc, ({
 		saturated = 0;
 		/*
 		 * cmpxchg() only implies a full barrier on success, not
@@ -239,7 +251,7 @@ void bch_unmark_open_bucket(struct cache *ca, struct bucket *g)
 {
 	struct bucket_mark old, new;
 
-	bucket_cmpxchg(g, old, new, ({
+	bucket_cmpxchg(g, old, new, false, ({
 		BUG_ON(old.is_metadata);
 		new.owned_by_allocator = 0;
 	}));

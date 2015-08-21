@@ -529,7 +529,7 @@ int bch_cache_journal_alloc(struct cache *ca)
 	for (i = 0; i < bch_nr_journal_buckets(&ca->sb); i++) {
 		unsigned long r = ca->sb.first_bucket + i;
 
-		bch_mark_metadata_bucket(ca, &ca->buckets[r]);
+		bch_mark_metadata_bucket(ca, &ca->buckets[r], true);
 		set_journal_bucket(ca, i, r);
 	}
 

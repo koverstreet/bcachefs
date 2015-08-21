@@ -1612,7 +1612,7 @@ u8 __bch_btree_mark_key(struct cache_set *c, int level, struct bkey *k)
 		for (i = 0; i < bch_extent_ptrs(k); i++)
 			if ((ca = PTR_CACHE(c, k, i)))
 				bch_mark_metadata_bucket(ca,
-					PTR_BUCKET(c, ca, k, i));
+					PTR_BUCKET(c, ca, k, i), true);
 	} else {
 		__bch_add_sectors(c, k, KEY_START(k), KEY_SIZE(k), false, true);
 	}
@@ -2044,13 +2044,14 @@ static void bch_btree_gc_finish(struct cache_set *c)
 
 		for (j = 0; j < bch_nr_journal_buckets(&ca->sb); j++)
 			bch_mark_metadata_bucket(ca,
-					&ca->buckets[journal_bucket(ca, j)]);
+					&ca->buckets[journal_bucket(ca, j)],
+					true);
 
 		spin_lock(&ca->prio_buckets_lock);
 
 		for (i = ca->prio_buckets;
 		     i < ca->prio_buckets + prio_buckets(ca) * 2; i++)
-			bch_mark_metadata_bucket(ca, &ca->buckets[*i]);
+			bch_mark_metadata_bucket(ca, &ca->buckets[*i], true);
 
 		spin_unlock(&ca->prio_buckets_lock);
 

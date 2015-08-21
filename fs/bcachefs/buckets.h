@@ -238,7 +238,7 @@ static inline bool is_available_bucket(struct bucket_mark mark)
 
 void bch_mark_free_bucket(struct cache *, struct bucket *);
 void bch_mark_alloc_bucket(struct cache *, struct bucket *);
-void bch_mark_metadata_bucket(struct cache *, struct bucket *);
+void bch_mark_metadata_bucket(struct cache *, struct bucket *, bool);
 u8 bch_mark_data_bucket(struct cache_set *, struct cache *, struct bkey *,
 			unsigned, int, bool, bool);
 void bch_unmark_open_bucket(struct cache *, struct bucket *);

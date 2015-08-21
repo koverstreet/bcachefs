@@ -854,7 +854,7 @@ out:
 	g = ca->buckets + r;
 
 	if (meta)
-		bch_mark_metadata_bucket(ca, g);
+		bch_mark_metadata_bucket(ca, g, false);
 
 	g->read_prio = ca->set->prio_clock[READ].hand;
 	g->write_prio = ca->set->prio_clock[WRITE].hand;
