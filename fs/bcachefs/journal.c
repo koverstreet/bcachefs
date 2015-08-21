@@ -85,22 +85,36 @@ static inline void bch_journal_add_prios(struct cache_set *c, struct jset *j)
  */
 
 struct journal_list {
+	struct closure		cl;
 	struct mutex		lock;
+	struct mutex		cache_set_buffer_lock;
 	struct list_head	*head;
+	int			ret;
 };
 
 static int journal_add_entry(struct journal_list *jlist, struct jset *j)
 {
-	struct journal_replay *i;
+	struct journal_replay *i, *pos;
 	struct list_head *where;
 	size_t bytes = set_bytes(j);
 	int ret = 0;
 
 	mutex_lock(&jlist->lock);
 
+	/* This entry too old? */
+	if (!list_empty(jlist->head)) {
+		i = list_last_entry(jlist->head, struct journal_replay, list);
+		if (j->seq < i->j.last_seq) {
+			pr_debug("j->seq %llu i->j.seq %llu",
+				 j->seq, i->j.seq);
+			goto out;
+		}
+	}
+
+	ret = 1;
+
 	/* Drop entries we don't need anymore */
-	while (!list_empty(jlist->head)) {
-		i = list_first_entry(jlist->head, struct journal_replay, list);
+	list_for_each_entry_safe(i, pos, jlist->head, list) {
 		if (i->j.seq >= j->last_seq)
 			break;
 		list_del(&i->list);
@@ -114,12 +128,6 @@ static int journal_add_entry(struct journal_list *jlist, struct jset *j)
 			goto out;
 		}
 
-		if (j->seq < i->j.last_seq) {
-			pr_debug("j->seq %llu i->j.seq %llu",
-				 j->seq, i->j.seq);
-			goto out;
-		}
-
 		if (j->seq > i->j.seq) {
 			where = &i->list;
 			goto add;
@@ -128,8 +136,7 @@ static int journal_add_entry(struct journal_list *jlist, struct jset *j)
 
 	where = jlist->head;
 add:
-	i = kmalloc(offsetof(struct journal_replay, j) +
-		    bytes, GFP_KERNEL);
+	i = kmalloc(offsetof(struct journal_replay, j) + bytes, GFP_KERNEL);
 	if (!i) {
 		ret = -ENOMEM;
 		goto out;
@@ -137,7 +144,6 @@ add:
 
 	memcpy(&i->j, j, bytes);
 	list_add(&i->list, where);
-	ret = 1;
 
 	pr_debug("seq %llu", j->seq);
 out:
@@ -146,16 +152,22 @@ out:
 }
 
 static int journal_read_bucket(struct cache *ca, struct journal_list *jlist,
-			       unsigned bucket_index)
+			       unsigned bucket_index, u64 *seq)
 {
 	struct journal_device *ja = &ca->journal;
 	struct bio *bio = &ja->bio;
-	struct jset *j, *data = ca->set->journal.w[0].data;
+	struct jset *j, *data;
 	unsigned len, left, offset = 0;
 	sector_t bucket = bucket_to_sector(ca->set,
 				journal_bucket(ca, bucket_index));
 	bool entries_found = false;
-	int ret;
+	int ret = 0;
+
+	data = (void *) __get_free_pages(GFP_KERNEL, JSET_BITS);
+	if (!data) {
+		mutex_lock(&jlist->cache_set_buffer_lock);
+		data = ca->set->journal.w[0].data;
+	}
 
 	pr_debug("reading %u", bucket_index);
 
@@ -172,7 +184,7 @@ reread:		left = ca->sb.bucket_size - offset;
 
 		ret = submit_bio_wait(bio);
 		if (ret)
-			return -EIO;
+			goto err;
 
 		/* This function could be simpler now since we no longer write
 		 * journal entries that overlap bucket boundaries; this means
@@ -185,23 +197,23 @@ reread:		left = ca->sb.bucket_size - offset;
 			size_t blocks, bytes = set_bytes(j);
 
 			if (cache_set_init_fault("journal_read"))
-				return ret;
+				goto err;
 
 			if (j->magic != jset_magic(&ca->sb)) {
 				pr_debug("%u: bad magic", bucket_index);
-				return ret;
+				goto err;
 			}
 
 			if (j->version != BCACHE_JSET_VERSION) {
 				pr_info("unsupported journal version");
-				return ret;
+				goto err;
 			}
 
 			if (bytes > left << 9 ||
 			    bytes > PAGE_SIZE << JSET_BITS) {
 				pr_info("%u: too big, %zu bytes, offset %u",
 					bucket_index, bytes, offset);
-				return ret;
+				goto err;
 			}
 
 			if (bytes > len << 9)
@@ -210,16 +222,19 @@ reread:		left = ca->sb.bucket_size - offset;
 			if (j->csum != csum_set(j, JSET_CSUM_TYPE(j))) {
 				pr_info("%u: bad csum, %zu bytes, offset %u",
 					bucket_index, bytes, offset);
-				return ret;
+				goto err;
 			}
 
 			ret = journal_add_entry(jlist, j);
 			if (ret < 0)
-				return ret;
+				goto err;
 			if (ret) {
 				ja->seq[bucket_index] = j->seq;
 				entries_found = true;
 			}
+
+			if (j->seq > *seq)
+				*seq = j->seq;
 
 			blocks = set_blocks(j, block_bytes(ca->set));
 
@@ -230,37 +245,41 @@ reread:		left = ca->sb.bucket_size - offset;
 		}
 	}
 
-	return entries_found;
+	ret = entries_found;
+err:
+	if (data == ca->set->journal.w[0].data)
+		mutex_unlock(&jlist->cache_set_buffer_lock);
+	else
+		free_pages((unsigned long) data, JSET_BITS);
+
+	return ret;
 }
 
-static u64 newest_journal_seq(struct journal_list *jlist)
-{
-	u64 seq;
-
-	mutex_lock(&jlist->lock);
-	seq = list_entry(jlist->head->prev, struct journal_replay,
-			 list)->j.seq;
-	mutex_unlock(&jlist->lock);
-
-	return seq;
-}
-
-static int bch_journal_read_device(struct cache *ca, struct journal_list *jlist)
+static void bch_journal_read_device(struct closure *cl)
 {
 #define read_bucket(b)							\
 	({								\
-		int ret = journal_read_bucket(ca, jlist, b);		\
+		int ret = journal_read_bucket(ca, jlist, b, &seq);	\
 		__set_bit(b, bitmap);					\
-		if (ret < 0)						\
-			return ret;					\
+		if (ret < 0) {						\
+			mutex_lock(&jlist->lock);			\
+			jlist->ret = ret;				\
+			mutex_unlock(&jlist->lock);			\
+			closure_return(cl);				\
+		}							\
 		ret;							\
 	 })
 
-	struct journal_device *ja = &ca->journal;
+	struct journal_device *ja =
+		container_of(cl, struct journal_device, read);
+	struct cache *ca = container_of(ja, struct cache, journal);
+	struct journal_list *jlist =
+		container_of(cl->parent, struct journal_list, cl);
+
 	unsigned nr_buckets = bch_nr_journal_buckets(&ca->sb);
 	DECLARE_BITMAP(bitmap, nr_buckets);
 	unsigned i, l, r, m;
-	u64 seq;
+	u64 seq = 0;
 
 	bitmap_zero(bitmap, nr_buckets);
 	pr_debug("%u journal buckets", nr_buckets);
@@ -296,24 +315,20 @@ linear_scan:
 
 	/* no journal entries on this device? */
 	if (l == nr_buckets)
-		return 0;
+		closure_return(cl);
 bsearch:
-	mutex_lock(&jlist->lock);
-	BUG_ON(list_empty(jlist->head));
-	mutex_unlock(&jlist->lock);
-
 	/* Binary search */
 	m = l;
 	r = find_next_bit(bitmap, nr_buckets, l + 1);
 	pr_debug("starting binary search, l %u r %u", l, r);
 
 	while (l + 1 < r) {
-		seq = newest_journal_seq(jlist);
+		u64 cur_seq = seq;
 
 		m = (l + r) >> 1;
 		read_bucket(m);
 
-		if (seq != newest_journal_seq(jlist))
+		if (cur_seq != seq)
 			l = m;
 		else
 			r = m;
@@ -358,7 +373,7 @@ bsearch:
 				 ja->cur_idx, ja->last_idx);
 		}
 
-	return 0;
+	closure_return(cl);
 #undef read_bucket
 }
 
@@ -367,26 +382,27 @@ int bch_journal_read(struct cache_set *c, struct list_head *list)
 	struct journal_list jlist;
 	struct cache *ca;
 	unsigned iter;
-	int ret;
 
+	closure_init_stack(&jlist.cl);
 	mutex_init(&jlist.lock);
+	mutex_init(&jlist.cache_set_buffer_lock);
 	jlist.head = list;
+	jlist.ret = 0;
 
-	for_each_cache(ca, c, iter) {
-		ret = bch_journal_read_device(ca, &jlist);
-		if (ret) {
-			percpu_ref_put(&ca->ref);
-			break;
-		}
-	}
+	for_each_cache(ca, c, iter)
+		closure_call(&ca->journal.read,
+			     bch_journal_read_device,
+			     system_unbound_wq,
+			     &jlist.cl);
+
+	closure_sync(&jlist.cl);
 
 	if (!list_empty(list))
 		c->journal.seq = list_entry(list->prev,
 					    struct journal_replay,
 					    list)->j.seq;
 
-	return ret;
-#undef read_bucket
+	return jlist.ret;
 }
 
 void bch_journal_mark(struct cache_set *c, struct list_head *list)

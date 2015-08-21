@@ -318,6 +318,9 @@ struct journal_device {
 	/* Bio for journal reads/writes to this device */
 	struct bio		bio;
 	struct bio_vec		bv[1 << JSET_BITS];
+
+	/* for bch_journal_read_device */
+	struct closure		read;
 };
 
 struct keybuf_key {
