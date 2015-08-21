@@ -627,7 +627,7 @@ void bch_bset_build_written_tree(struct btree_keys *b)
 	t->size = min_t(unsigned,
 			bkey_to_cacheline(t, bset_bkey_last(t->data)),
 			b->set->tree + btree_keys_cachelines(b) - t->tree);
-
+retry:
 	if (t->size < 2) {
 		t->size = 0;
 		return;
@@ -641,6 +641,11 @@ void bch_bset_build_written_tree(struct btree_keys *b)
 	     j = inorder_next(j, t->size)) {
 		while (bkey_to_cacheline(t, k) < cacheline)
 			prev = k, k = bkey_next(k);
+
+		if (k >= bset_bkey_last(t->data)) {
+			t->size--;
+			goto retry;
+		}
 
 		t->prev[j] = KEY_U64s(prev);
 		t->tree[j].m = bkey_to_cacheline_offset(t, cacheline++, k);
