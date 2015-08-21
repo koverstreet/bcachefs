@@ -541,6 +541,9 @@ static void journal_reclaim(struct cache_set *c)
 		struct journal_device *ja = &ca->journal;
 		unsigned next = (ja->cur_idx + 1) % ca->sb.njournal_buckets;
 
+		if (CACHE_TIER(&ca->sb))
+			continue;
+
 		/* No space available on this device */
 		if (next == ja->discard_idx)
 			continue;
