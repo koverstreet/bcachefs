@@ -1104,10 +1104,11 @@ int bch_cache_allocator_start(struct cache *ca)
 			    "couldn't find enough available buckets to write prios");
 	return -1;
 done:
-	k = kthread_run(bch_allocator_thread, ca, "bcache_allocator");
+	k = kthread_create(bch_allocator_thread, ca, "bcache_allocator");
 	if (IS_ERR(k))
 		return PTR_ERR(k);
 
 	ca->alloc_thread = k;
+	wake_up_process(k);
 	return 0;
 }
