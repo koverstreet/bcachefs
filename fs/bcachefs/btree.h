@@ -203,6 +203,8 @@ struct btree_op {
 	/* Btree level at which we start taking write locks */
 	short			lock;
 
+	u8			iterator_invalidated;
+
 	unsigned		insert_collision:1;
 	unsigned		moving_gc:1;
 };

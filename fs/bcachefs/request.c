@@ -1002,19 +1002,19 @@ static void cached_dev_read_done_bh(struct closure *cl)
 static int cached_dev_cache_miss(struct btree *b, struct search *s,
 				 struct bio *bio, unsigned sectors)
 {
-	int ret = MAP_CONTINUE;
+	int ret;
 	unsigned reada = 0;
 	struct bio *miss;
 	BKEY_PADDED(key) replace;
 
 	if (s->iop.bypass) {
 		miss = bio_next_split(bio, sectors, GFP_NOIO, s->d->bio_split);
-		ret = miss == bio ? MAP_DONE : MAP_CONTINUE;
 
 		miss->bi_end_io		= request_endio;
 		miss->bi_private	= &s->cl;
 		closure_bio_submit(miss, &s->cl);
-		return ret;
+
+		return miss == bio ? MAP_DONE : MAP_CONTINUE;
 	}
 #if 0
 	struct cached_dev *dc = container_of(s->d, struct cached_dev, disk);
@@ -1037,9 +1037,6 @@ static int cached_dev_cache_miss(struct btree *b, struct search *s,
 
 	miss = bio_next_split(bio, sectors, GFP_NOIO, s->d->bio_split);
 
-	/* btree_search_recurse()'s btree iterator is no good anymore */
-	ret = miss == bio ? MAP_DONE : -EINTR;
-
 	miss->bi_end_io		= request_endio;
 	miss->bi_private	= &s->cl;
 
@@ -1047,7 +1044,8 @@ static int cached_dev_cache_miss(struct btree *b, struct search *s,
 
 	closure_get(&s->cl);
 	__cache_promote(b->c, miss, &replace.key, request_endio);
-	return ret;
+
+	return miss == bio ? MAP_DONE : MAP_CONTINUE;
 }
 
 static void cached_dev_read(struct cached_dev *dc, struct search *s)

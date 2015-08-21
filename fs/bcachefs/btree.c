@@ -145,6 +145,7 @@
 		}							\
 		rw_unlock(_w, _b);					\
 		bch_cannibalize_unlock(c);				\
+		(op)->iterator_invalidated = 0;				\
 		if (_r == -EINTR)					\
 			schedule();					\
 	} while (_r == -EINTR);						\
@@ -2277,12 +2278,14 @@ int bch_btree_insert_node(struct btree *b, struct btree_op *op,
 {
 	struct closure cl;
 
+	lockdep_assert_held(&b->lock);
 	BUG_ON(b->level && replace_key);
 	BUG_ON(!b->written);
 
 	closure_init_stack(&cl);
 
 	btree_node_lock_for_insert(b);
+	op->iterator_invalidated = 1;
 
 	switch (bch_btree_insert_keys(b, op, insert_keys,
 				      replace_key, parent)) {
@@ -2320,15 +2323,8 @@ int bch_btree_insert_node(struct btree *b, struct btree_op *op,
 			op->lock = btree_node_root(b)->level + 1;
 			return -EINTR;
 		} else {
-			/* Invalidated all iterators */
-			int ret = btree_split(b, op, insert_keys,
-					      replace_key, parent);
-
-			if (bch_keylist_empty(insert_keys))
-				return 0;
-			else if (!ret)
-				return -EINTR;
-			return ret;
+			return btree_split(b, op, insert_keys,
+					   replace_key, parent);
 		}
 	default:
 		BUG();
@@ -2366,8 +2362,6 @@ int bch_btree_insert_check_key(struct btree *b, struct btree_op *op,
 	bch_keylist_add(&insert, check_key);
 
 	ret = bch_btree_insert_node(b, op, &insert, NULL, NULL);
-
-	BUG_ON(!ret && !bch_keylist_empty(&insert));
 out:
 	if (upgrade)
 		downgrade_write(&b->lock);
@@ -2388,10 +2382,8 @@ static int btree_insert_fn(struct btree_op *b_op, struct btree *b)
 
 	int ret = bch_btree_insert_node(b, &op->op, op->keys,
 					op->replace_key, op->parent);
-	if (ret && !bch_keylist_empty(op->keys))
-		return ret;
-	else
-		return MAP_DONE;
+
+	return bch_keylist_empty(op->keys) ? MAP_DONE : ret;
 }
 
 int bch_btree_insert(struct cache_set *c, enum btree_id id,
@@ -2475,24 +2467,46 @@ static int bch_btree_map_nodes_recurse(struct btree *b, struct btree_op *op,
 		}
 	}
 
-	if (!b->level || flags == MAP_ALL_NODES)
+	if (!b->level || flags == MAP_ALL_NODES) {
 		ret = fn(op, b);
+
+		if (ret == MAP_CONTINUE && op->iterator_invalidated)
+			ret = -EINTR;
+	}
 
 	return ret;
 }
 
 int __bch_btree_map_nodes(struct btree_op *op, struct cache_set *c,
-			  enum btree_id id, struct bkey *from,
+			  enum btree_id id, struct bkey *_from,
 			  btree_map_nodes_fn *fn, int flags)
 {
-	struct bkey t;
+	struct bkey from = _from ? *_from : KEY(0, 0, 0);
 
-	if (from && id == BTREE_ID_EXTENTS) {
-		t = NEXT_KEY(from);
-		from = &t;
-	}
+	if (id == BTREE_ID_EXTENTS)
+		from = NEXT_KEY(&from);
 
-	return btree_root(map_nodes_recurse, c, id, op, from, fn, flags);
+	return btree_root(map_nodes_recurse, c, id, op, &from, fn, flags);
+}
+
+static int do_map_fn(struct btree *b, struct btree_op *op,
+		     struct bkey *from, btree_map_keys_fn *fn,
+		     struct bkey *k)
+{
+	struct bkey next = k
+		? NEXT_KEY(k)
+		: bkey_cmp(&b->key, &MAX_KEY)
+		? NEXT_KEY(&b->key) : b->key;
+
+	int ret = fn(op, b, k);
+
+	if (ret == MAP_CONTINUE)
+		*from = next;
+
+	if (ret == MAP_CONTINUE && op->iterator_invalidated)
+		ret = -EINTR;
+
+	return ret;
 }
 
 static int bch_btree_map_keys_recurse(struct btree *b, struct btree_op *op,
@@ -2507,30 +2521,33 @@ static int bch_btree_map_keys_recurse(struct btree *b, struct btree_op *op,
 
 	while ((k = bch_btree_iter_next_filter(&iter, &b->keys, bch_ptr_bad))) {
 		ret = !b->level
-			? fn(op, b, k)
+			? do_map_fn(b, op, from, fn, k)
 			: btree(map_keys_recurse, k, b, op, from, fn, flags);
-		from = NULL;
+
+		if (ret == MAP_CONTINUE && op->iterator_invalidated)
+			ret = -EINTR;
 
 		if (ret != MAP_CONTINUE)
 			return ret;
 	}
 
 	if (!b->level && (flags & MAP_END_KEY))
-		ret = fn(op, b, NULL);
+		ret = do_map_fn(b, op, from, fn, k);
+
+	if (ret == MAP_CONTINUE && op->iterator_invalidated)
+		ret = -EINTR;
 
 	return ret;
 }
 
 int bch_btree_map_keys(struct btree_op *op, struct cache_set *c,
-		       enum btree_id id, struct bkey *from,
+		       enum btree_id id, struct bkey *_from,
 		       btree_map_keys_fn *fn, int flags)
 {
-	struct bkey t;
+	struct bkey from = _from ? *_from : KEY(0, 0, 0);
 
-	if (from && id == BTREE_ID_EXTENTS) {
-		t = NEXT_KEY(from);
-		from = &t;
-	}
+	if (id == BTREE_ID_EXTENTS)
+		from = NEXT_KEY(&from);
 
-	return btree_root(map_keys_recurse, c, id, op, from, fn, flags);
+	return btree_root(map_keys_recurse, c, id, op, &from, fn, flags);
 }

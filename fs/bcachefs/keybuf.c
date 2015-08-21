@@ -41,16 +41,10 @@ static int refill_keybuf_fn(struct btree_op *op, struct btree *b,
 	struct keybuf *buf = refill->buf;
 	int ret = MAP_CONTINUE;
 
-	if (!k)
-		k = &KEY(KEY_INODE(&b->key), KEY_OFFSET(&b->key), 0);
-
 	if (bkey_cmp(k, refill->end) >= 0) {
 		ret = MAP_DONE;
 		goto out;
 	}
-
-	if (!KEY_SIZE(k)) /* end key */
-		goto out;
 
 	if (refill->pred(buf, k)) {
 		struct keybuf_key *w;
@@ -97,7 +91,7 @@ void bch_refill_keybuf(struct cache_set *c, struct keybuf *buf,
 
 	bch_btree_map_keys(&refill.op, c, BTREE_ID_EXTENTS,
 			   &buf->last_scanned,
-			   refill_keybuf_fn, MAP_END_KEY);
+			   refill_keybuf_fn, 0);
 
 	trace_bcache_keyscan(refill.nr_found,
 			     KEY_INODE(&start), KEY_OFFSET(&start),

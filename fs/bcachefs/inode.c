@@ -120,9 +120,12 @@ static int inode_rm_fn(struct btree_op *b_op, struct btree *b, struct bkey *k)
 	bch_keylist_init_single(&keys, &erase_key);
 
 	ret = bch_btree_insert_node(b, b_op, &keys, NULL, NULL);
-	BUG_ON(!ret && !bch_keylist_empty(&keys));
 
-	return -EINTR;
+	/*
+	 * this could be more efficient, this way we're always redoing the
+	 * lookup from the start
+	 */
+	return ret ?: MAP_CONTINUE;
 }
 
 int bch_inode_rm(struct cache_set *c, u64 inode_nr)
