@@ -485,13 +485,13 @@ struct open_bucket {
 };
 
 struct bucket_stats {
-	atomic_t		buckets_dirty;
-	atomic_t		buckets_cached;
-	atomic_t		buckets_meta;
-	atomic_t		buckets_alloc;
+	u64			buckets_dirty;
+	u64			buckets_cached;
+	u64			buckets_meta;
+	u64			buckets_alloc;
 
-	atomic64_t		sectors_dirty;
-	atomic64_t		sectors_cached;
+	u64			sectors_dirty;
+	u64			sectors_cached;
 };
 
 struct cache {
@@ -558,7 +558,8 @@ struct cache {
 	 * second contains a saved copy of the stats from the beginning
 	 * of GC.
 	 */
-	struct bucket_stats	bucket_stats[2];
+	struct bucket_stats __percpu *bucket_stats_percpu;
+	struct bucket_stats	bucket_stats_cached;
 
 	struct mutex		heap_lock;
 	DECLARE_HEAP(struct bucket *, heap);

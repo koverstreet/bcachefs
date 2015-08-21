@@ -1960,12 +1960,12 @@ static void btree_gc_start(struct cache_set *c)
 	mutex_lock(&c->bucket_lock);
 
 	write_seqlock(&c->gc_cur_lock);
+	for_each_cache(ca, c, i)
+		ca->bucket_stats_cached = __bucket_stats_read(ca);
+
 	c->gc_mark_valid = 0;
 	c->gc_cur_btree = 0;
 	c->gc_cur_key = ZERO_KEY;
-
-	for_each_cache(ca, c, i)
-		ca->bucket_stats[1] = ca->bucket_stats[0];
 	write_sequnlock(&c->gc_cur_lock);
 
 	for_each_cache(ca, c, i)

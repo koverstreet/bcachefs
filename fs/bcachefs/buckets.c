@@ -77,26 +77,25 @@ static void bucket_stats_update(struct cache *ca,
 				struct bucket_mark old,
 				struct bucket_mark new)
 {
-	struct bucket_stats *stats = &ca->bucket_stats[0];
-	int v;
+	struct bucket_stats *stats;
 
-	if ((v = ((int) new.cached_sectors - (int) old.cached_sectors)))
-		atomic64_add_bug(v, &stats->sectors_cached);
+	preempt_disable();
+	stats = this_cpu_ptr(ca->bucket_stats_percpu);
 
-	if ((v = ((int) new.dirty_sectors - (int) old.dirty_sectors)))
-		atomic64_add_bug(v, &stats->sectors_dirty);
+	stats->sectors_cached +=
+		(int) new.cached_sectors - (int) old.cached_sectors;
 
-	if ((v = ((int) new.owned_by_allocator - (int) old.owned_by_allocator)))
-		atomic_add_bug(v, &stats->buckets_alloc);
+	stats->sectors_dirty +=
+		(int) new.dirty_sectors - (int) old.dirty_sectors;
 
-	if ((v = (is_meta_bucket(new) - is_meta_bucket(old))))
-		atomic_add_bug(v, &stats->buckets_meta);
+	stats->buckets_alloc +=
+		(int) new.owned_by_allocator - (int) old.owned_by_allocator;
 
-	if ((v = (is_cached_bucket(new) - is_cached_bucket(old))))
-		atomic_add_bug(v, &stats->buckets_cached);
+	stats->buckets_meta += is_meta_bucket(new) - is_meta_bucket(old);
+	stats->buckets_cached += is_cached_bucket(new) - is_cached_bucket(old);
+	stats->buckets_dirty += is_dirty_bucket(new) - is_dirty_bucket(old);
 
-	if ((v = (is_dirty_bucket(new) - is_dirty_bucket(old))))
-		atomic_add_bug(v, &stats->buckets_dirty);
+	preempt_enable();
 }
 
 static struct bucket_mark bch_bucket_mark_set(struct cache *ca,
@@ -111,21 +110,15 @@ static struct bucket_mark bch_bucket_mark_set(struct cache *ca,
 
 #define bucket_cmpxchg(g, old, new, expr)			\
 do {								\
-	old = READ_ONCE((g)->mark);				\
-	while (1) {						\
-		u32 _v;						\
+	u32 _v = READ_ONCE((g)->mark.counter);			\
 								\
-		new.counter = old.counter;			\
+	do {							\
+		new.counter = old.counter = _v;			\
 		expr;						\
-		_v = cmpxchg(&(g)->mark.counter,		\
-			     old.counter,			\
-			     new.counter);			\
-		if (old.counter == _v) {			\
-			bucket_stats_update(ca, old, new);	\
-			break;					\
-		}						\
-		old.counter = _v;				\
-	}							\
+	} while ((_v = cmpxchg(&(g)->mark.counter,		\
+			       old.counter,			\
+			       new.counter)) != old.counter);	\
+	bucket_stats_update(ca, old, new);			\
 } while (0)
 
 void bch_mark_free_bucket(struct cache *ca, struct bucket *g)
@@ -178,7 +171,9 @@ void bch_mark_data_bucket(struct cache_set *c, struct cache *ca,
 	bucket_cmpxchg(&ca->buckets[bucket_nr], old, new, ({
 		/*
 		 * cmpxchg() only implies a full barrier on success, not
-		 * failure, so we need a read barrier on all iterations
+		 * failure, so we need a read barrier on all iterations -
+		 * between reading the mark and checking pointer validity/gc
+		 * status
 		 */
 		smp_rmb();
 

@@ -893,24 +893,15 @@ SHOW(__bch_cache)
 	sysfs_print(io_errors,
 		    atomic_read(&ca->io_errors) >> IO_ERROR_SHIFT);
 
-	sysfs_hprint(dirty_data,
-		     atomic64_read(&stats.sectors_dirty) << 9);
-	sysfs_print(dirty_bytes,
-		    atomic64_read(&stats.sectors_dirty) << 9);
-	sysfs_print(dirty_buckets,
-		     atomic_read(&stats.buckets_dirty));
-	sysfs_hprint(cached_data,
-		     atomic64_read(&stats.sectors_cached) << 9);
-	sysfs_print(cached_bytes,
-		    atomic64_read(&stats.sectors_cached) << 9);
-	sysfs_print(cached_buckets,
-		    atomic_read(&stats.buckets_cached));
-	sysfs_print(meta_buckets,
-		    atomic_read(&stats.buckets_meta));
-	sysfs_print(alloc_buckets,
-		    atomic_read(&stats.buckets_alloc));
-	sysfs_print(available_buckets,
-		    buckets_available_cache(ca));
+	sysfs_hprint(dirty_data,	stats.sectors_dirty << 9);
+	sysfs_print(dirty_bytes,	stats.sectors_dirty << 9);
+	sysfs_print(dirty_buckets,	stats.buckets_dirty);
+	sysfs_hprint(cached_data,	stats.sectors_cached << 9);
+	sysfs_print(cached_bytes,	stats.sectors_cached << 9);
+	sysfs_print(cached_buckets,	stats.buckets_cached);
+	sysfs_print(meta_buckets,	stats.buckets_meta);
+	sysfs_print(alloc_buckets,	stats.buckets_alloc);
+	sysfs_print(available_buckets,	buckets_available_cache(ca));
 
 	sysfs_pd_controller_show(copy_gc, &ca->moving_gc_pd);
 

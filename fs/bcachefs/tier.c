@@ -31,7 +31,7 @@ static void __update_tiering_rate(struct cache_set *c)
 			struct bucket_stats stats = bucket_stats_read(ca);
 
 			tier_size[i] += ca->sb.nbuckets - ca->sb.first_bucket;
-			tier_dirty[i] += atomic_read(&stats.buckets_dirty);
+			tier_dirty[i] += stats.buckets_dirty;
 		}
 	}
 

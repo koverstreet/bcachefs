@@ -14,6 +14,30 @@
  * GC must be performed. */
 #define GC_MAX_SECTORS_USED ((1U << 15) - 1)
 
+static inline void __bucket_stats_add(struct bucket_stats *acc,
+				      struct bucket_stats *s)
+{
+	unsigned i;
+
+	for (i = 0; i < sizeof(*s) / sizeof(u64); i++)
+		((u64 *) acc)[i] += ((u64 *) s)[i];
+}
+
+static inline struct bucket_stats __bucket_stats_read(struct cache *ca)
+{
+	struct bucket_stats ret;
+	int cpu;
+
+	memset(&ret, 0, sizeof(ret));
+
+	for_each_possible_cpu(cpu)
+		__bucket_stats_add(&ret,
+				   per_cpu_ptr(ca->bucket_stats_percpu, cpu));
+
+
+	return ret;
+}
+
 static inline struct bucket_stats bucket_stats_read(struct cache *ca)
 {
 	struct cache_set *c = ca->set;
@@ -22,7 +46,9 @@ static inline struct bucket_stats bucket_stats_read(struct cache *ca)
 
 	do {
 		seq = read_seqbegin(&c->gc_cur_lock);
-		ret = ca->bucket_stats[c->gc_mark_valid ? 0 : 1];
+		ret = c->gc_mark_valid
+			? __bucket_stats_read(ca)
+			: ca->bucket_stats_cached;
 	} while (read_seqretry(&c->gc_cur_lock, seq));
 
 	return ret;
@@ -41,14 +67,12 @@ static inline unsigned bucket_sectors_used(struct bucket *b)
 static inline size_t buckets_available_cache(struct cache *ca)
 {
 	struct bucket_stats stats = bucket_stats_read(ca);
-	/* XXX: awkward? */
-	ssize_t buckets = ca->sb.nbuckets -
-		ca->sb.first_bucket -
-		atomic_read(&stats.buckets_dirty) -
-		atomic_read(&stats.buckets_alloc) -
-		atomic_read(&stats.buckets_meta);
 
-	return max_t(ssize_t, buckets, 0);
+	return max_t(s64, 0,
+		     ca->sb.nbuckets - ca->sb.first_bucket -
+		     stats.buckets_dirty -
+		     stats.buckets_alloc -
+		     stats.buckets_meta);
 }
 
 static inline size_t buckets_available(struct cache_set *c)
