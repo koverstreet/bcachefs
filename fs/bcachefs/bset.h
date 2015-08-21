@@ -588,21 +588,31 @@ bch_btree_node_iter_peek_overlapping(struct btree_node_iter *iter,
 	return k && bkey_cmp(&START_KEY(k), end) < 0 ? k : NULL;
 }
 
-void bch_btree_node_iter_push(struct btree_node_iter *, struct bkey *,
-			      struct bkey *);
+static inline void bch_btree_node_iter_push(struct btree_node_iter *iter,
+					    struct bkey *k,
+					    struct bkey *end)
+{
+	if (k != end)
+		BUG_ON(!heap_add(iter,
+				 ((struct btree_node_iter_set) { k, end }),
+				 iter_cmp(iter)));
+}
+
 void bch_btree_node_iter_init(struct btree_keys *, struct btree_node_iter *,
 			      struct bkey *);
+void bch_btree_node_iter_init_from_start(struct btree_keys *,
+					 struct btree_node_iter *);
 
 /*
  * Iterates over all _live_ keys - skipping deleted (and potentially
  * overlapping) keys
  */
 #define for_each_btree_node_key(b, k, iter)				\
-	for (bch_btree_node_iter_init((b), (iter), NULL);		\
+	for (bch_btree_node_iter_init_from_start((b), (iter));		\
 	     ((k) = bch_btree_node_iter_next(iter));)
 
 #define for_each_btree_node_key_all(b, k, iter)				\
-	for (bch_btree_node_iter_init((b), (iter), NULL);		\
+	for (bch_btree_node_iter_init_from_start((b), (iter));		\
 	     ((k) = bch_btree_node_iter_next_all(iter));)
 
 /* Sorting */

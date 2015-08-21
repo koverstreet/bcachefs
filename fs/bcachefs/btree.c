@@ -2192,7 +2192,7 @@ static int bch_btree_check_recurse(struct btree *b, struct btree_op *op)
 	__bch_btree_mark_key(b->c, b->level + 1, &b->key);
 
 	if (b->level > 0 && btree_node_has_ptrs(b, b->level - 1)) {
-		bch_btree_node_iter_init(&b->keys, &iter, NULL);
+		bch_btree_node_iter_init_from_start(&b->keys, &iter);
 
 		do {
 			k = bch_btree_node_iter_next(&iter);
