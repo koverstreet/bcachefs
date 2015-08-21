@@ -1151,11 +1151,11 @@ int bch_bset_sort_state_init(struct bset_sort_state *state, unsigned page_order)
 }
 EXPORT_SYMBOL(bch_bset_sort_state_init);
 
-static void btree_mergesort(struct btree_keys *b, struct bset *out,
+static void btree_mergesort(struct btree_keys *b, struct bset *bset,
 			    struct btree_iter *iter,
 			    bool fixup, bool remove_stale)
 {
-	struct bkey *k, *last = NULL;
+	struct bkey *k, *prev = NULL, *out = bset->start;
 	BKEY_PADDED(k) tmp;
 	bool (*bad)(struct btree_keys *, const struct bkey *) = remove_stale
 		? bch_ptr_bad
@@ -1173,31 +1173,24 @@ static void btree_mergesort(struct btree_keys *b, struct bset *out,
 		if (!k)
 			k = __bch_btree_iter_next(iter, b->ops->sort_cmp);
 
-		if (bad(b, k))
+		bkey_copy(out, k);
+
+		if (remove_stale && b->ops->key_normalize)
+			b->ops->key_normalize(b, out);
+
+		if (bad(b, out))
 			continue;
 
-		if (!last) {
-			last = out->start;
-			bkey_copy(last, k);
-		} else if (bad(b, last)) {
-			bkey_copy(last, k);
-		} else if (!bch_bkey_try_merge(b, last, k)) {
-			last = bkey_next(last);
-			bkey_copy(last, k);
-		}
+		if (prev && bch_bkey_try_merge(b, prev, out))
+			continue;
 
-		if (b->ops->key_normalize)
-			b->ops->key_normalize(b, last);
+		prev = out;
+		out = bkey_next(out);
 	}
 
-	if (!last)
-		last = out->start;
-	else if (!bad(b, last))
-		last = bkey_next(last);
+	bset->keys = (u64 *) out - bset->d;
 
-	out->keys = (u64 *) last - out->d;
-
-	pr_debug("sorted %i keys", out->keys);
+	pr_debug("sorted %i keys", bset->keys);
 }
 
 static void __btree_sort(struct btree_keys *b, struct btree_iter *iter,

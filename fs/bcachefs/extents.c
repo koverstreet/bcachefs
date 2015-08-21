@@ -108,6 +108,12 @@ void bch_extent_normalize(struct cache_set *c, struct bkey *k)
 	unsigned i;
 	bool swapped;
 
+	if (!KEY_SIZE(k)) {
+		bch_set_extent_ptrs(k, 0);
+		SET_KEY_DELETED(k, true);
+		return;
+	}
+
 	for (i = 0; i < bch_extent_ptrs(k); i++)
 		if (!ptr_available(c, k, i) ||
 		    ptr_stale(c, k, i)) {
