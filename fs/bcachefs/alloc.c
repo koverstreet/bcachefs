@@ -104,8 +104,7 @@ void bch_rescale_priorities(struct cache_set *c, int sectors)
 
 	for_each_cache(ca, c, i)
 		for_each_bucket(b, ca) {
-			if (b->read_prio &&
-			    b->read_prio != BTREE_PRIO) {
+			if (b->read_prio) {
 				b->read_prio--;
 				c->min_prio = min(c->min_prio, b->read_prio);
 			}
@@ -459,13 +458,10 @@ out:
 	BUG_ON(ca->set->gc_mark_valid &&
 	       GC_MARK(b) != GC_MARK_DIRTY);
 
-	if (reserve <= RESERVE_PRIO) {
+	if (reserve <= RESERVE_PRIO)
 		SET_GC_MARK(b, GC_MARK_METADATA);
-		b->read_prio = BTREE_PRIO;
-	} else {
-		b->read_prio = INITIAL_PRIO;
-	}
 
+	b->read_prio = INITIAL_PRIO;
 	b->write_prio = INITIAL_PRIO;
 
 	return r;

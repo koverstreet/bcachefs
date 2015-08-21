@@ -760,10 +760,6 @@ SHOW(__bch_cache)
 
 		unused = ca->sb.nbuckets - n;
 
-		while (cached < p + n &&
-		       *cached == BTREE_PRIO)
-			cached++, n--;
-
 		for (i = 0; i < n; i++)
 			sum += INITIAL_PRIO - cached[i];
 

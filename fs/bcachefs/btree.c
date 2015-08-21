@@ -1255,16 +1255,8 @@ void bch_initial_mark_key(struct cache_set *c, int level, struct bkey *k)
 
 	for (i = 0; i < KEY_PTRS(k); i++)
 		if (ptr_available(c, k, i) &&
-		    !ptr_stale(c, k, i)) {
-			struct bucket *b = PTR_BUCKET(c, k, i);
-
-			b->gen = PTR_GEN(k, i);
-
-			if (level && bkey_cmp(k, &ZERO_KEY))
-				b->read_prio = BTREE_PRIO;
-			else if (!level && b->read_prio == BTREE_PRIO)
-				b->read_prio = INITIAL_PRIO;
-		}
+		    !ptr_stale(c, k, i))
+			PTR_BUCKET(c, k, i)->gen = PTR_GEN(k, i);
 
 	__bch_btree_mark_key(c, level, k);
 }
@@ -2384,7 +2376,6 @@ int bch_btree_insert(struct cache_set *c, struct keylist *keys,
 
 void bch_btree_set_root(struct btree *b)
 {
-	unsigned i;
 	struct closure cl;
 
 	closure_init_stack(&cl);
@@ -2392,9 +2383,6 @@ void bch_btree_set_root(struct btree *b)
 	trace_bcache_btree_set_root(b);
 
 	BUG_ON(!b->written);
-
-	for (i = 0; i < KEY_PTRS(&b->key); i++)
-		BUG_ON(PTR_BUCKET(b->c, &b->key, i)->read_prio != BTREE_PRIO);
 
 	mutex_lock(&b->c->btree_cache_lock);
 	list_del_init(&b->list);

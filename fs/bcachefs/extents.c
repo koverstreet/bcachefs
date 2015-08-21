@@ -215,7 +215,6 @@ static bool btree_ptr_bad_expensive(struct btree *b, const struct bkey *k)
 				g = PTR_BUCKET(b->c, k, i);
 
 				if (KEY_DIRTY(k) ||
-				    g->read_prio != BTREE_PRIO ||
 				    (b->c->gc_mark_valid &&
 				     GC_MARK(g) != GC_MARK_METADATA))
 					goto err;
@@ -587,9 +586,6 @@ static bool bch_extent_bad_expensive(struct btree *b, const struct bkey *k)
 		     GC_MARK(g) == GC_MARK_METADATA ||
 		     (GC_MARK(g) != GC_MARK_DIRTY &&
 		      replicas_needed)))
-			goto err;
-
-		if (g->read_prio == BTREE_PRIO)
 			goto err;
 
 		if (replicas_needed)
