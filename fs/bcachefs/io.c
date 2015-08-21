@@ -985,7 +985,9 @@ int bch_read(struct cache_set *c, struct bio *bio, u64 inode)
 	ret = bch_btree_map_keys(&op.op, c,
 				 &KEY(inode, bio->bi_iter.bi_sector, 0),
 				 bch_read_fn, MAP_HOLES);
-	return ret < 0 ? ret : 0;
+	BUG_ON(ret == MAP_CONTINUE);
+
+	return ret;
 }
 EXPORT_SYMBOL(bch_read);
 

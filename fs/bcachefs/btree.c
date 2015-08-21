@@ -135,9 +135,10 @@ static void btree_node_unlock(struct btree_op *op, struct btree *b, int level)
 })
 
 #define btree_node_lock(b, op, level, check_if_raced)			\
-	(btree_want_intent(op, level)					\
-	 ? __btree_node_lock(b, op, level, check_if_raced, intent)	\
-	 : __btree_node_lock(b, op, level, check_if_raced, read))
+	(!race_fault() &&						\
+	 (btree_want_intent(op, level)					\
+	  ? __btree_node_lock(b, op, level, check_if_raced, intent)	\
+	  : __btree_node_lock(b, op, level, check_if_raced, read)))
 
 #define __btree_node_relock(b, op, _level, type)			\
 ({									\
@@ -154,9 +155,10 @@ static bool btree_node_relock(struct btree *b, struct btree_op *op,
 			      unsigned level)
 {
 	return btree_node_locked(op, level) ||
-		(btree_want_intent(op, level)
-		 ? __btree_node_relock(b, op, level, intent)
-		 : __btree_node_relock(b, op, level, read));
+		(!race_fault() &&
+		 (btree_want_intent(op, level)
+		  ? __btree_node_relock(b, op, level, intent)
+		  : __btree_node_relock(b, op, level, read)));
 }
 
 static int btree_lock_upgrade(struct btree *b, struct btree_op *op,

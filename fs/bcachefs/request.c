@@ -485,6 +485,8 @@ static void cache_lookup(struct closure *cl)
 	ret = bch_btree_map_keys(&s->op, s->iop.c,
 				 &KEY(s->inode, bio->bi_iter.bi_sector, 0),
 				 cache_lookup_fn, MAP_HOLES | MAP_ASYNC);
+	BUG_ON(ret == MAP_CONTINUE);
+
 	if (ret == -EAGAIN)
 		continue_at(cl, cache_lookup, s->iop.c->wq);
 	else if (ret)
