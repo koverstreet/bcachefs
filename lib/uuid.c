@@ -126,3 +126,26 @@ int uuid_be_to_bin(const char *uuid, uuid_be *u)
 	return __uuid_to_bin(uuid, u->b, uuid_be_index);
 }
 EXPORT_SYMBOL(uuid_be_to_bin);
+
+int uuid_parse(const char *in, uuid_le *uuid)
+{
+	u8 *out = uuid->b;
+	const char bytes[] = { 4, 2, 2, 2, 6, 0 }, *b = bytes;
+
+	while (1) {
+		if (hex2bin(out, in, *b))
+			return -1;
+
+		in  += *b << 1;
+		out += *b;
+
+		if (!*++b)
+			break;
+
+		if (*in++ != '-')
+			return -1;
+	}
+
+	return 0;
+}
+EXPORT_SYMBOL(uuid_parse);
