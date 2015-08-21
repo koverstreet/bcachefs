@@ -72,7 +72,7 @@ bool bch_generic_insert_fixup(struct btree_keys *b, struct bkey *insert,
 	BUG_ON(replace_key);
 
 	while (1) {
-		struct bkey *k = bch_btree_iter_next(iter);
+		struct bkey *k = bch_btree_iter_next_all(iter);
 
 		if (!k || bkey_cmp(k, insert) > 0)
 			break;
@@ -599,7 +599,7 @@ static struct bkey *bch_btree_iter_next_overlapping(struct btree_iter *iter,
 {
 	struct bkey *k;
 
-	while ((k = bch_btree_iter_next(iter))) {
+	while ((k = bch_btree_iter_next_all(iter))) {
 		if (bkey_cmp(&START_KEY(k), end) >= 0) {
 			if (!KEY_SIZE(k))
 				continue;

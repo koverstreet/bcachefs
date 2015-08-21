@@ -322,86 +322,6 @@ enum {
 	BTREE_INSERT_STATUS_FRONT_MERGE,
 };
 
-/* Btree key iteration */
-
-struct btree_iter {
-	size_t size, used;
-#ifdef CONFIG_BCACHEFS_DEBUG
-	struct btree_keys *b;
-#endif
-	struct btree_iter_set {
-		struct bkey *k, *end;
-	} data[MAX_BSETS];
-};
-
-typedef bool (*ptr_filter_fn)(struct btree_keys *, struct bkey *);
-
-struct bkey *bch_btree_iter_next(struct btree_iter *);
-struct bkey *bch_btree_iter_next_filter(struct btree_iter *,
-					struct btree_keys *, ptr_filter_fn);
-
-void bch_btree_iter_push(struct btree_iter *, struct bkey *, struct bkey *);
-struct bkey *bch_btree_iter_init(struct btree_keys *, struct btree_iter *,
-				 struct bkey *);
-
-struct bkey *__bch_bset_search(struct btree_keys *, struct bset_tree *,
-			       const struct bkey *);
-
-/*
- * Returns the first key greater than or equal to @search
- */
-static inline struct bkey *bch_bset_search(struct btree_keys *b,
-					   struct bset_tree *t,
-					   const struct bkey *search)
-{
-	return search ? __bch_bset_search(b, t, search) : t->data->start;
-}
-
-#define for_each_key_filter(b, k, iter, filter)				\
-	for (bch_btree_iter_init((b), (iter), NULL);			\
-	     ((k) = bch_btree_iter_next_filter((iter), (b), filter));)
-
-#define for_each_key(b, k, iter)					\
-	for (bch_btree_iter_init((b), (iter), NULL);			\
-	     ((k) = bch_btree_iter_next(iter));)
-
-/* Sorting */
-
-struct bset_sort_state {
-	mempool_t		*pool;
-
-	unsigned		page_order;
-	unsigned		crit_factor;
-
-	struct time_stats	time;
-};
-
-void bch_bset_sort_state_free(struct bset_sort_state *);
-int bch_bset_sort_state_init(struct bset_sort_state *, unsigned);
-void bch_btree_sort_lazy(struct btree_keys *, ptr_filter_fn,
-			 struct bset_sort_state *);
-void bch_btree_sort_into(struct btree_keys *, struct btree_keys *,
-			 ptr_filter_fn, struct bset_sort_state *);
-void bch_btree_sort_and_fix_extents(struct btree_keys *, struct btree_iter *,
-				    ptr_filter_fn, struct bset_sort_state *);
-void bch_btree_sort_partial(struct btree_keys *, unsigned,
-			    ptr_filter_fn, struct bset_sort_state *);
-
-static inline void bch_btree_sort(struct btree_keys *b,
-				  ptr_filter_fn filter,
-				  struct bset_sort_state *state)
-{
-	bch_btree_sort_partial(b, 0, filter, state);
-}
-
-struct bset_stats {
-	size_t sets_written, sets_unwritten;
-	size_t bytes_written, bytes_unwritten;
-	size_t floats, failed;
-};
-
-void bch_btree_keys_stats(struct btree_keys *, struct bset_stats *);
-
 /* Bkey utility code */
 
 static inline struct bkey *bset_bkey_idx(struct bset *i, unsigned idx)
@@ -556,6 +476,104 @@ static inline size_t bch_keylist_bytes(struct keylist *l)
 struct bkey *bch_keylist_pop(struct keylist *);
 void bch_keylist_pop_front(struct keylist *);
 int bch_keylist_realloc(struct keylist *, unsigned);
+
+/* Btree key iteration */
+
+struct btree_iter {
+	size_t size, used;
+#ifdef CONFIG_BCACHEFS_DEBUG
+	struct btree_keys *b;
+#endif
+	struct btree_iter_set {
+		struct bkey *k, *end;
+	} data[MAX_BSETS];
+};
+
+static inline struct btree_keys *__iter_keys_ptr(struct btree_iter *iter)
+{
+#ifdef CONFIG_BCACHEFS_DEBUG
+	return iter->b;
+#else
+	return NULL;
+#endif
+}
+
+typedef bool (*ptr_filter_fn)(struct btree_keys *, struct bkey *);
+
+struct bkey *bch_btree_iter_next_all(struct btree_iter *);
+
+static inline struct bkey *bch_btree_iter_next(struct btree_iter *iter)
+{
+	struct bkey *ret;
+
+	do {
+		ret = bch_btree_iter_next_all(iter);
+	} while (ret && bkey_deleted(__iter_keys_ptr(iter), ret));
+
+	return ret;
+}
+
+void bch_btree_iter_push(struct btree_iter *, struct bkey *, struct bkey *);
+struct bkey *bch_btree_iter_init(struct btree_keys *, struct btree_iter *,
+				 struct bkey *);
+
+struct bkey *__bch_bset_search(struct btree_keys *, struct bset_tree *,
+			       const struct bkey *);
+
+/*
+ * Returns the first key greater than or equal to @search
+ */
+static inline struct bkey *bch_bset_search(struct btree_keys *b,
+					   struct bset_tree *t,
+					   const struct bkey *search)
+{
+	return search ? __bch_bset_search(b, t, search) : t->data->start;
+}
+
+#define for_each_key_all(b, k, iter)					\
+	for (bch_btree_iter_init((b), (iter), NULL);			\
+	     ((k) = bch_btree_iter_next_all(iter));)
+
+#define for_each_key(b, k, iter)					\
+	for (bch_btree_iter_init((b), (iter), NULL);			\
+	     ((k) = bch_btree_iter_next(iter));)
+
+/* Sorting */
+
+struct bset_sort_state {
+	mempool_t		*pool;
+
+	unsigned		page_order;
+	unsigned		crit_factor;
+
+	struct time_stats	time;
+};
+
+void bch_bset_sort_state_free(struct bset_sort_state *);
+int bch_bset_sort_state_init(struct bset_sort_state *, unsigned);
+void bch_btree_sort_lazy(struct btree_keys *, ptr_filter_fn,
+			 struct bset_sort_state *);
+void bch_btree_sort_into(struct btree_keys *, struct btree_keys *,
+			 ptr_filter_fn, struct bset_sort_state *);
+void bch_btree_sort_and_fix_extents(struct btree_keys *, struct btree_iter *,
+				    ptr_filter_fn, struct bset_sort_state *);
+void bch_btree_sort_partial(struct btree_keys *, unsigned,
+			    ptr_filter_fn, struct bset_sort_state *);
+
+static inline void bch_btree_sort(struct btree_keys *b,
+				  ptr_filter_fn filter,
+				  struct bset_sort_state *state)
+{
+	bch_btree_sort_partial(b, 0, filter, state);
+}
+
+struct bset_stats {
+	size_t sets_written, sets_unwritten;
+	size_t bytes_written, bytes_unwritten;
+	size_t floats, failed;
+};
+
+void bch_btree_keys_stats(struct btree_keys *, struct bset_stats *);
 
 /* Debug stuff */
 

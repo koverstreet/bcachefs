@@ -1525,7 +1525,7 @@ static bool btree_gc_mark_node(struct btree *b, struct gc_stat *gc)
 	if (b->btree_id != BTREE_ID_EXTENTS && b->level == 0)
 		return 0;
 
-	for_each_key_filter(&b->keys, k, &iter, bkey_deleted) {
+	for_each_key(&b->keys, k, &iter) {
 		stale = max(stale, btree_mark_key(b, k));
 		keys++;
 
@@ -1791,7 +1791,7 @@ static unsigned btree_gc_count_keys(struct btree *b)
 	struct btree_iter iter;
 	unsigned ret = 0;
 
-	for_each_key_filter(&b->keys, k, &iter, bkey_deleted)
+	for_each_key(&b->keys, k, &iter)
 		ret += bch_extent_nr_ptrs_after_normalize(b->c, k);
 
 	return ret;
@@ -1825,7 +1825,7 @@ static int btree_gc_recurse(struct btree *b, struct btree_op *op,
 		i->b = ERR_PTR(-EINTR);
 
 	while (1) {
-		k = bch_btree_iter_next_filter(&iter, &b->keys, bkey_deleted);
+		k = bch_btree_iter_next(&iter);
 		if (k) {
 			r->b = bch_btree_node_get(c, op, k, b->level - 1, b);
 			if (IS_ERR(r->b)) {
@@ -2137,7 +2137,7 @@ static int bch_btree_check_recurse(struct btree *b, struct btree_op *op)
 	struct btree_iter iter;
 
 	if (b->btree_id == BTREE_ID_EXTENTS || b->level)
-		for_each_key_filter(&b->keys, k, &iter, bkey_deleted)
+		for_each_key(&b->keys, k, &iter)
 			btree_mark_key(b, k);
 
 	__bch_btree_mark_key(b->c, b->level + 1, &b->key);
@@ -2146,8 +2146,7 @@ static int bch_btree_check_recurse(struct btree *b, struct btree_op *op)
 		bch_btree_iter_init(&b->keys, &iter, NULL);
 
 		do {
-			k = bch_btree_iter_next_filter(&iter, &b->keys,
-						       bkey_deleted);
+			k = bch_btree_iter_next(&iter);
 			if (k)
 				btree_node_prefetch(b, k);
 
@@ -2774,8 +2773,7 @@ static int bch_btree_map_nodes_recurse(struct btree *b, struct btree_op *op,
 
 		bch_btree_iter_init(&b->keys, &iter, from);
 
-		while ((k = bch_btree_iter_next_filter(&iter, &b->keys,
-						       bkey_deleted))) {
+		while ((k = bch_btree_iter_next(&iter))) {
 			ret = btree(map_nodes_recurse, k, b,
 				    op, from, fn, flags);
 			from = NULL;
@@ -2904,8 +2902,7 @@ static int bch_btree_map_keys_recurse(struct btree *b, struct btree_op *op,
 
 	bch_btree_iter_init(&b->keys, &iter, &search);
 
-	while ((k = bch_btree_iter_next_filter(&iter, &b->keys,
-					       bkey_deleted))) {
+	while ((k = bch_btree_iter_next(&iter))) {
 		BUG_ON(bkey_cmp(k, from) < 0);
 
 		if (!level) {

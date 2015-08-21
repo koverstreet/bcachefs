@@ -62,7 +62,7 @@ int __bch_count_data(struct btree_keys *b)
 	struct bkey *k;
 
 	if (b->ops->is_extents)
-		for_each_key(b, k, &iter)
+		for_each_key_all(b, k, &iter)
 			ret += KEY_SIZE(k);
 	return ret;
 }
@@ -84,7 +84,7 @@ void __bch_check_keys(struct btree_keys *b, const char *fmt, ...)
 	char buf1[80], buf2[80];
 	const char *err;
 
-	for_each_key(b, k, &iter) {
+	for_each_key_all(b, k, &iter) {
 		if (p && bkey_cmp(p, k) > 0) {
 			bch_bkey_to_text(b, buf1, sizeof(buf1), p);
 			bch_bkey_to_text(b, buf2, sizeof(buf2), k);
@@ -1108,24 +1108,12 @@ static inline struct bkey *__bch_btree_iter_next(struct btree_iter *iter,
 	return ret;
 }
 
-struct bkey *bch_btree_iter_next(struct btree_iter *iter)
+struct bkey *bch_btree_iter_next_all(struct btree_iter *iter)
 {
 	return __bch_btree_iter_next(iter, btree_iter_cmp);
 
 }
-EXPORT_SYMBOL(bch_btree_iter_next);
-
-struct bkey *bch_btree_iter_next_filter(struct btree_iter *iter,
-					struct btree_keys *b, ptr_filter_fn fn)
-{
-	struct bkey *ret;
-
-	do {
-		ret = bch_btree_iter_next(iter);
-	} while (ret && fn(b, ret));
-
-	return ret;
-}
+EXPORT_SYMBOL(bch_btree_iter_next_all);
 
 /* Mergesort */
 
