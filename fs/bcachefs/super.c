@@ -1816,6 +1816,7 @@ static int cache_init(struct cache *ca, struct cache_set *c)
 		       BTREE_NODE_RESERVE, GFP_KERNEL) ||
 	    !init_fifo(&ca->free[RESERVE_MOVINGGC],
 		       movinggc_reserve, GFP_KERNEL) ||
+	    !init_fifo(&ca->free[RESERVE_TIERING], 0, GFP_KERNEL) ||
 	    !init_fifo(&ca->free[RESERVE_NONE], reserve_none, GFP_KERNEL) ||
 	    !init_fifo(&ca->free_inc,	free_inc_reserve, GFP_KERNEL) ||
 	    !init_heap(&ca->heap,	heap_size, GFP_KERNEL) ||
@@ -1846,7 +1847,7 @@ static int cache_init(struct cache *ca, struct cache_set *c)
 	}
 
 	ca->tiering_write_point.nr_replicas = 1;
-	ca->tiering_write_point.reserve = RESERVE_NONE;
+	ca->tiering_write_point.reserve = RESERVE_TIERING;
 	ca->tiering_write_point.group = &ca->self;
 
 	mutex_init(&ca->heap_lock);

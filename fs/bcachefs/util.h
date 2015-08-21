@@ -146,28 +146,34 @@ do {									\
 
 #define fifo_for_each(c, fifo, iter)					\
 	for (iter = (fifo)->front;					\
-	     c = (fifo)->data[iter], iter != (fifo)->back;		\
+	     ((iter != (fifo)->back) &&					\
+	      (c = (fifo)->data[iter], 1));				\
 	     iter = (iter + 1) & (fifo)->mask)
 
 #define init_fifo(fifo, _size, gfp)					\
 ({									\
-	size_t _allocated_size, _bytes;					\
-	(fifo)->size = (_size);						\
+	bool _ret = true;						\
 									\
-	BUG_ON(!(fifo)->size);						\
+	(fifo)->size	= (_size);					\
+	(fifo)->front	= (fifo)->back = 0;				\
+	(fifo)->data	= NULL;						\
 									\
-	_allocated_size = roundup_pow_of_two((fifo)->size + 1);		\
-	_bytes = _allocated_size * sizeof(*(fifo)->data);		\
+	if ((fifo)->size) {						\
+		size_t _allocated_size, _bytes;				\
 									\
-	(fifo)->mask = _allocated_size - 1;				\
-	(fifo)->front = (fifo)->back = 0;				\
-	(fifo)->data = NULL;						\
+		_allocated_size = roundup_pow_of_two((fifo)->size + 1);	\
+		_bytes = _allocated_size * sizeof(*(fifo)->data);	\
 									\
-	if (_bytes < KMALLOC_MAX_SIZE)					\
-		(fifo)->data = kmalloc(_bytes, (gfp));			\
-	if ((!(fifo)->data) && ((gfp) & GFP_KERNEL))			\
-		(fifo)->data = vmalloc(_bytes);				\
-	(fifo)->data;							\
+		(fifo)->mask = _allocated_size - 1;			\
+									\
+		if (_bytes < KMALLOC_MAX_SIZE)				\
+			(fifo)->data = kmalloc(_bytes, (gfp));		\
+		if ((!(fifo)->data) && ((gfp) & GFP_KERNEL))		\
+			(fifo)->data = vmalloc(_bytes);			\
+		if ((!(fifo)->data))					\
+			_ret = false;					\
+	}								\
+	_ret;								\
 })
 
 #define free_fifo(fifo)							\

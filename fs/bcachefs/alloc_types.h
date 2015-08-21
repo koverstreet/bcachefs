@@ -22,6 +22,11 @@ enum alloc_reserve {
 	RESERVE_TIERING_BTREE,
 	RESERVE_METADATA_LAST = RESERVE_TIERING_BTREE,
 	RESERVE_MOVINGGC,
+
+	/* Not a real reserve (always empty), */
+	RESERVE_TIERING,
+
+	/* Only RESERVE_NONE is subject to -ENOSPC checks */
 	RESERVE_NONE,
 	RESERVE_NR,
 };
