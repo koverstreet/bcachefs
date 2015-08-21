@@ -26,8 +26,10 @@ static inline void bch_data_verify(struct cached_dev *dc, struct bio *bio) {}
 #endif
 
 #ifdef CONFIG_DEBUG_FS
+void bch_debug_exit_cache_set(struct cache_set *);
 void bch_debug_init_cache_set(struct cache_set *);
 #else
+static inline void bch_debug_exit_cache_set(struct cache_set *c) {}
 static inline void bch_debug_init_cache_set(struct cache_set *c) {}
 #endif
 

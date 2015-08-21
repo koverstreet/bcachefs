@@ -1113,14 +1113,6 @@ retry:
  *   is written.
  */
 
-#define DEF_BTREE_ID(kwd, val, name) name,
-
-static const char *btree_id_names[BTREE_ID_NR] = {
-	DEFINE_BCH_BTREE_IDS()
-};
-
-#undef DEF_BTREE_ID
-
 int bch_move_meta_data_off_device(struct cache *ca)
 {
 	unsigned i;
@@ -1129,7 +1121,7 @@ int bch_move_meta_data_off_device(struct cache *ca)
 	/* 1st, Move the btree nodes off the device */
 
 	for (i = 0; i < BTREE_ID_NR; i++)
-		if (bch_move_btree_off(ca, i, btree_id_names[i]) != 0)
+		if (bch_move_btree_off(ca, i, bch_btree_id_names[i]) != 0)
 			return 1;
 
 	/* There are no prios/gens to move -- they are already in the device. */

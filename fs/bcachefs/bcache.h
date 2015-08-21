@@ -386,6 +386,12 @@ struct cache_member_rcu {
 	struct cache_member	m[];
 };
 
+struct btree_debug {
+	unsigned		id;
+	struct dentry		*btree;
+	struct dentry		*btree_format;
+};
+
 struct cache_set {
 	struct closure		cl;
 
@@ -564,6 +570,7 @@ struct cache_set {
 
 	/* DEBUG JUNK */
 	struct dentry		*debug;
+	struct btree_debug	btree_debug[BTREE_ID_NR];
 #ifdef CONFIG_BCACHEFS_DEBUG
 	struct btree		*verify_data;
 	struct bset		*verify_ondisk;

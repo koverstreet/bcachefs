@@ -724,8 +724,7 @@ static void cache_set_free(struct closure *cl)
 	struct cache *ca;
 	unsigned i;
 
-	if (!IS_ERR_OR_NULL(c->debug))
-		debugfs_remove(c->debug);
+	bch_debug_exit_cache_set(c);
 
 	bch_btree_cache_free(c);
 	bch_journal_free(c);

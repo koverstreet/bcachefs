@@ -19,7 +19,7 @@
 #include <linux/random.h>
 #include <linux/seq_file.h>
 
-static struct dentry *debug;
+static struct dentry *bch_debug;
 
 #ifdef CONFIG_BCACHEFS_DEBUG
 
@@ -174,6 +174,7 @@ out_put:
 struct dump_iter {
 	struct bpos		from;
 	struct cache_set	*c;
+	enum btree_id		id;
 
 	char			buf[PAGE_SIZE];
 	size_t			bytes;	/* what's currently in buf */
@@ -202,8 +203,31 @@ static int flush_buf(struct dump_iter *i)
 	return 0;
 }
 
-static ssize_t bch_dump_read(struct file *file, char __user *buf,
-			     size_t size, loff_t *ppos)
+static int bch_dump_open(struct inode *inode, struct file *file)
+{
+	struct btree_debug *bd = inode->i_private;
+	struct dump_iter *i;
+
+	i = kzalloc(sizeof(struct dump_iter), GFP_KERNEL);
+	if (!i)
+		return -ENOMEM;
+
+	file->private_data = i;
+	i->from = POS_MIN;
+	i->c	= container_of(bd, struct cache_set, btree_debug[bd->id]);
+	i->id	= bd->id;
+
+	return 0;
+}
+
+static int bch_dump_release(struct inode *inode, struct file *file)
+{
+	kfree(file->private_data);
+	return 0;
+}
+
+static ssize_t bch_read_btree(struct file *file, char __user *buf,
+			      size_t size, loff_t *ppos)
 {
 	struct dump_iter *i = file->private_data;
 	struct btree_iter iter;
@@ -221,18 +245,21 @@ static ssize_t bch_dump_read(struct file *file, char __user *buf,
 	if (!i->size)
 		return i->ret;
 
-	for_each_btree_key(&iter, i->c, BTREE_ID_EXTENTS, i->from, k) {
+	bch_btree_iter_init(&iter, i->c, i->id, i->from);
+
+	while ((k = bch_btree_iter_peek(&iter)).k) {
 		bch_bkey_val_to_text(iter.nodes[0], i->buf, sizeof(i->buf), k);
 		i->bytes = strlen(i->buf);
 		BUG_ON(i->bytes >= PAGE_SIZE);
 		i->buf[i->bytes] = '\n';
 		i->bytes++;
 
+		bch_btree_iter_advance_pos(&iter);
+		i->from = iter.pos;
+
 		err = flush_buf(i);
 		if (err)
 			break;
-
-		i->from = k.k->p;
 
 		if (!i->size)
 			break;
@@ -242,43 +269,113 @@ static ssize_t bch_dump_read(struct file *file, char __user *buf,
 	return err < 0 ? err : i->ret;
 }
 
-static int bch_dump_open(struct inode *inode, struct file *file)
-{
-	struct cache_set *c = inode->i_private;
-	struct dump_iter *i;
-
-	i = kzalloc(sizeof(struct dump_iter), GFP_KERNEL);
-	if (!i)
-		return -ENOMEM;
-
-	file->private_data = i;
-	i->from = POS_MIN;
-	i->c = c;
-
-	return 0;
-}
-
-static int bch_dump_release(struct inode *inode, struct file *file)
-{
-	kfree(file->private_data);
-	return 0;
-}
-
-static const struct file_operations cache_set_debug_ops = {
+static const struct file_operations btree_debug_ops = {
 	.owner		= THIS_MODULE,
 	.open		= bch_dump_open,
-	.read		= bch_dump_read,
-	.release	= bch_dump_release
+	.release	= bch_dump_release,
+	.read		= bch_read_btree,
 };
+
+static ssize_t bch_read_btree_formats(struct file *file, char __user *buf,
+				      size_t size, loff_t *ppos)
+{
+	struct dump_iter *i = file->private_data;
+	struct btree_iter iter;
+	struct btree *b;
+	int err;
+
+	i->ubuf = buf;
+	i->size	= size;
+	i->ret	= 0;
+
+	err = flush_buf(i);
+	if (err)
+		return err;
+
+	if (!i->size || !bkey_cmp(POS_MAX, i->from))
+		return i->ret;
+
+	for_each_btree_node(&iter, i->c, i->id, i->from, b) {
+		const struct bkey_format *f = &b->keys.set->data->format;
+		struct bset_stats stats = { 0 };
+
+		bch_btree_keys_stats(&b->keys, &stats);
+
+		i->bytes = scnprintf(i->buf, sizeof(i->buf),
+				     "l %u %llu:%llu:\n"
+				     "\tformat: u64s %u fields %u %u %u %u %u\n"
+				     "\tfloats %zu failed %zu\n",
+				     b->level,
+				     b->key.k.p.inode,
+				     b->key.k.p.offset,
+				     f->key_u64s,
+				     f->bits_per_field[0],
+				     f->bits_per_field[1],
+				     f->bits_per_field[2],
+				     f->bits_per_field[3],
+				     f->bits_per_field[4],
+				     stats.floats,
+				     stats.failed);
+
+		err = flush_buf(i);
+		if (err)
+			break;
+
+		/*
+		 * can't easily correctly restart a btree node traversal across
+		 * all nodes, meh
+		 */
+		i->from = bkey_cmp(POS_MAX, b->key.k.p)
+			? bkey_successor(b->key.k.p)
+			: b->key.k.p;
+
+		if (!i->size)
+			break;
+	}
+	bch_btree_iter_unlock(&iter);
+
+	return err < 0 ? err : i->ret;
+}
+
+static const struct file_operations btree_format_debug_ops = {
+	.owner		= THIS_MODULE,
+	.open		= bch_dump_open,
+	.release	= bch_dump_release,
+	.read		= bch_read_btree_formats,
+};
+
+void bch_debug_exit_cache_set(struct cache_set *c)
+{
+	if (!IS_ERR_OR_NULL(c->debug))
+		debugfs_remove(c->debug);
+}
 
 void bch_debug_init_cache_set(struct cache_set *c)
 {
-	if (!IS_ERR_OR_NULL(debug)) {
-		char name[50];
-		snprintf(name, 50, "bcache-%pU", c->sb.set_uuid.b);
+	struct btree_debug *bd;
+	char name[50];
 
-		c->debug = debugfs_create_file(name, 0400, debug, c,
-					       &cache_set_debug_ops);
+	if (IS_ERR_OR_NULL(bch_debug))
+		return;
+
+	snprintf(name, sizeof(name), "%pU", c->sb.set_uuid.b);
+	c->debug = debugfs_create_dir(name, bch_debug);
+	if (IS_ERR_OR_NULL(c->debug))
+		return;
+
+	for (bd = c->btree_debug;
+	     bd < c->btree_debug + ARRAY_SIZE(c->btree_debug);
+	     bd++) {
+		bd->id = bd - c->btree_debug;
+		bd->btree = debugfs_create_file(bch_btree_id_names[bd->id],
+						0400, c->debug, bd,
+						&btree_debug_ops);
+
+		snprintf(name, sizeof(name), "%s-formats",
+			 bch_btree_id_names[bd->id]);
+
+		bd->btree_format = debugfs_create_file(name, 0400, c->debug, bd,
+						       &btree_format_debug_ops);
 	}
 }
 
@@ -286,14 +383,14 @@ void bch_debug_init_cache_set(struct cache_set *c)
 
 void bch_debug_exit(void)
 {
-	if (!IS_ERR_OR_NULL(debug))
-		debugfs_remove_recursive(debug);
+	if (!IS_ERR_OR_NULL(bch_debug))
+		debugfs_remove_recursive(bch_debug);
 }
 
 int __init bch_debug_init(void)
 {
 	int ret = 0;
 
-	debug = debugfs_create_dir("bcache", NULL);
+	bch_debug = debugfs_create_dir("bcache", NULL);
 	return ret;
 }

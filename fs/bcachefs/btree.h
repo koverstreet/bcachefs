@@ -84,6 +84,8 @@
 #include "six.h"
 #include "journal_types.h"
 
+extern const char *bch_btree_id_names[BTREE_ID_NR];
+
 struct btree_write {
 	atomic_t		*journal;
 };

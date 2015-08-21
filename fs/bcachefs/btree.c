@@ -44,6 +44,14 @@
 #include <linux/rcupdate.h>
 #include <trace/events/bcachefs.h>
 
+#define DEF_BTREE_ID(kwd, val, name) name,
+
+const char *bch_btree_id_names[BTREE_ID_NR] = {
+	DEFINE_BCH_BTREE_IDS()
+};
+
+#undef DEF_BTREE_ID
+
 static int bch_btree_iter_traverse(struct btree_iter *);
 static int __bch_btree_insert_node(struct btree *, struct btree_iter *,
 				   struct keylist *, struct bch_replace_info *,
