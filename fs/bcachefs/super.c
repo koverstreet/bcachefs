@@ -880,6 +880,8 @@ static const char *run_cache_set(struct cache_set *c)
 	unsigned i, id;
 	int ret;
 
+	BUG_ON(test_bit(CACHE_SET_RUNNING, &c->flags));
+
 	closure_init_stack(&cl);
 
 	/* We don't want bch_cache_set_error() to free underneath us */
