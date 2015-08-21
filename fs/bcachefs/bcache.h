@@ -600,6 +600,8 @@ struct cache_set {
 	wait_queue_head_t	btree_cache_wait;
 	struct task_struct	*btree_cache_alloc_lock;
 
+	struct workqueue_struct	*btree_insert_wq;
+
 	/* ALLOCATION */
 	struct cache		*cache_by_alloc[MAX_CACHES_PER_SET];
 	struct mutex		bucket_lock;

@@ -180,7 +180,7 @@ static void write_dirty(struct closure *cl)
 
 	closure_bio_submit(&io->bio, cl);
 
-	continue_at(cl, write_dirty_finish, system_wq);
+	continue_at(cl, write_dirty_finish, io->dc->disk.c->btree_insert_wq);
 }
 
 static void read_dirty_endio(struct bio *bio)
