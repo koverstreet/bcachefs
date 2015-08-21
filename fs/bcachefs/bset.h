@@ -603,7 +603,7 @@ struct bset_sort_state {
 	unsigned		page_order;
 	unsigned		crit_factor;
 
-	struct time_stats	time;
+	struct time_stats	*time;
 };
 
 typedef struct btree_nr_keys (*btree_keys_sort_fn)(struct btree_keys *,
@@ -611,7 +611,8 @@ typedef struct btree_nr_keys (*btree_keys_sort_fn)(struct btree_keys *,
 						   struct btree_node_iter *);
 
 void bch_bset_sort_state_free(struct bset_sort_state *);
-int bch_bset_sort_state_init(struct bset_sort_state *, unsigned);
+int bch_bset_sort_state_init(struct bset_sort_state *, unsigned,
+			     struct time_stats *times);
 
 struct btree_nr_keys bch_sort_bsets(struct bset *, struct btree_keys *,
 				    unsigned, struct btree_node_iter *,

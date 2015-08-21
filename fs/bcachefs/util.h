@@ -302,6 +302,7 @@ struct time_stats {
 };
 
 void bch_time_stats_clear(struct time_stats *stats);
+void __bch_time_stats_update(struct time_stats *stats, u64 time);
 void bch_time_stats_update(struct time_stats *stats, u64 time);
 
 static inline unsigned local_clock_us(void)

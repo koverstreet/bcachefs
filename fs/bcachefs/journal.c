@@ -1371,6 +1371,8 @@ static void journal_write_done(struct closure *cl)
 
 	j->last_seq_ondisk = w->data->last_seq;
 
+	__bch_time_stats_update(j->write_time, j->write_start_time);
+
 	clear_bit(JOURNAL_IO_IN_FLIGHT, &j->flags);
 
 	closure_wake_up(&w->wait);
@@ -1507,7 +1509,7 @@ static void journal_write_locked(struct closure *cl)
 	closure_return_with_destructor(cl, journal_write_done);
 }
 
-static bool __journal_write(struct journal *j)
+static bool __journal_write(struct journal *j, bool need_write_just_set)
 	__releases(j->lock)
 {
 	struct cache_set *c = container_of(j, struct cache_set, journal);
@@ -1528,7 +1530,12 @@ static bool __journal_write(struct journal *j)
 	    !journal_entry_close(j))
 		goto nowrite;
 
+	if (!need_write_just_set &&
+	    test_bit(JOURNAL_NEED_WRITE, &flags))
+		__bch_time_stats_update(j->delay_time, j->need_write_time);
+
 	set_bit(JOURNAL_IO_IN_FLIGHT, &j->flags);
+	j->write_start_time = local_clock();
 
 	__set_current_state(TASK_RUNNING);
 	closure_call(&j->io, journal_write_locked, NULL, &c->cl);
@@ -1540,14 +1547,20 @@ nowrite:
 
 static bool journal_try_write(struct journal *j)
 {
-	set_bit(JOURNAL_NEED_WRITE, &j->flags);
-	return __journal_write(j);
+	bool set_need_write = false;
+
+	if (!test_and_set_bit(JOURNAL_NEED_WRITE, &j->flags)) {
+		j->need_write_time = local_clock();
+		set_need_write = true;
+	}
+
+	return __journal_write(j, set_need_write);
 }
 
 static void journal_unlock(struct journal *j)
 {
 	if (test_bit(JOURNAL_NEED_WRITE, &j->flags))
-		__journal_write(j);
+		__journal_write(j, false);
 	else
 		spin_unlock(&j->lock);
 }
@@ -1750,7 +1763,7 @@ int bch_journal_res_get(struct journal *j, struct journal_res *res,
 					    u64s_max, &start_time)));
 
 	if (start_time)
-		bch_time_stats_update(&j->full_time, start_time);
+		bch_time_stats_update(j->full_time, start_time);
 
 	if (ret < 0)
 		return ret;
@@ -1768,10 +1781,13 @@ void bch_journal_flush_seq_async(struct journal *j, u64 seq, struct closure *par
 
 	if (seq == j->seq) {
 		BUG_ON(!test_bit(JOURNAL_DIRTY, &j->flags));
-		set_bit(JOURNAL_NEED_WRITE, &j->flags);
+
 		if (parent &&
 		    !closure_wait(&journal_cur_write(j)->wait, parent))
 			BUG();
+
+		journal_try_write(j);
+		return;
 	} else if (seq + 1 == j->seq &&
 		   test_bit(JOURNAL_IO_IN_FLIGHT, &j->flags)) {
 		if (parent &&
@@ -1785,10 +1801,13 @@ void bch_journal_flush_seq_async(struct journal *j, u64 seq, struct closure *par
 int bch_journal_flush_seq(struct journal *j, u64 seq)
 {
 	struct closure cl;
+	u64 start_time = local_clock();
 
 	closure_init_stack(&cl);
 	bch_journal_flush_seq_async(j, seq, &cl);
 	closure_sync(&cl);
+
+	bch_time_stats_update(j->flush_seq_time, start_time);
 
 	return bch_journal_error(j);
 }
@@ -1877,7 +1896,6 @@ int bch_journal_alloc(struct journal *j)
 	INIT_WORK(&j->reclaim_work, journal_reclaim_work);
 	mutex_init(&j->blacklist_lock);
 	INIT_LIST_HEAD(&j->seq_blacklist);
-	spin_lock_init(&j->full_time.lock);
 
 	lockdep_init_map(&j->res_map, "journal res", &res_key, 0);
 

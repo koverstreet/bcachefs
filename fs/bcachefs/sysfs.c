@@ -83,15 +83,6 @@ read_attribute(journal_debug);
 write_attribute(journal_flush);
 read_attribute(internal_uuid);
 
-sysfs_time_stats_attribute(mca_alloc, sec, us);
-sysfs_time_stats_attribute(mca_scan, sec, ms);
-sysfs_time_stats_attribute(btree_gc, sec, ms);
-sysfs_time_stats_attribute(btree_coalesce, sec, ms);
-sysfs_time_stats_attribute(btree_split, sec, us);
-sysfs_time_stats_attribute(btree_sort, ms, us);
-sysfs_time_stats_attribute(btree_read, ms, us);
-sysfs_time_stats_attribute(journal_full, sec, ms);
-
 read_attribute(btree_gc_running);
 
 read_attribute(btree_nodes);
@@ -173,6 +164,11 @@ read_attribute(tier);
 #define BCH_DEBUG_PARAM(name, description) rw_attribute(name);
 	BCH_DEBUG_PARAMS()
 #undef BCH_DEBUG_PARAM
+
+#define BCH_TIME_STAT(name, frequency_units, duration_units)		\
+	sysfs_time_stats_attribute(name, frequency_units, duration_units);
+	BCH_TIME_STATS()
+#undef BCH_TIME_STAT
 
 static struct attribute sysfs_state_rw = {
 	.name = "state",
@@ -604,16 +600,6 @@ SHOW(bch_cache_set)
 
 	sysfs_print(btree_gc_running,		c->gc_pos.phase != GC_PHASE_DONE);
 
-	sysfs_print_time_stats(&c->mca_alloc_time, mca_alloc, sec, us);
-	sysfs_print_time_stats(&c->mca_scan_time, mca_scan, sec, ms);
-	sysfs_print_time_stats(&c->btree_gc_time, btree_gc, sec, ms);
-	sysfs_print_time_stats(&c->btree_coalesce_time,
-			       btree_coalesce, sec, ms);
-	sysfs_print_time_stats(&c->btree_split_time, btree_split, sec, us);
-	sysfs_print_time_stats(&c->sort.time, btree_sort, ms, us);
-	sysfs_print_time_stats(&c->btree_read_time, btree_read, ms, us);
-	sysfs_print_time_stats(&c->journal.full_time, journal_full, sec, ms);
-
 #if 0
 	/* XXX: reimplement */
 	sysfs_print(btree_used_percent,	bch_btree_used(c));
@@ -683,6 +669,12 @@ SHOW(bch_cache_set)
 	BCH_DEBUG_PARAMS()
 #undef BCH_DEBUG_PARAM
 
+#define BCH_TIME_STAT(name, frequency_units, duration_units)		\
+	sysfs_print_time_stats(&c->name##_time, name,			\
+			       frequency_units, duration_units);
+	BCH_TIME_STATS()
+#undef BCH_TIME_STAT
+
 	if (!test_bit(CACHE_SET_RUNNING, &c->flags))
 		return -EPERM;
 
@@ -751,14 +743,10 @@ STORE(__bch_cache_set)
 		return size;
 	}
 
-	sysfs_clear_time_stats(&c->mca_alloc_time, mca_alloc);
-	sysfs_clear_time_stats(&c->mca_scan_time, mca_scan);
-	sysfs_clear_time_stats(&c->btree_gc_time, btree_gc);
-	sysfs_clear_time_stats(&c->btree_coalesce_time, btree_coalesce);
-	sysfs_clear_time_stats(&c->btree_split_time, btree_split);
-	sysfs_clear_time_stats(&c->sort.time, btree_sort);
-	sysfs_clear_time_stats(&c->btree_read_time, btree_read);
-	sysfs_clear_time_stats(&c->journal.full_time, journal_full);
+#define BCH_TIME_STAT(name, frequency_units, duration_units)		\
+	sysfs_clear_time_stats(&c->name##_time, name);
+	BCH_TIME_STATS()
+#undef BCH_TIME_STAT
 
 	sysfs_strtoul(journal_delay_ms, c->journal.delay_ms);
 	sysfs_strtoul(foreground_write_ratelimit_enabled,
@@ -956,15 +944,6 @@ static struct attribute *bch_cache_set_internal_files[] = {
 
 	&sysfs_alloc_debug,
 
-	sysfs_time_stats_attribute_list(mca_alloc, sec, us)
-	sysfs_time_stats_attribute_list(mca_scan, sec, ms)
-	sysfs_time_stats_attribute_list(btree_gc, sec, ms)
-	sysfs_time_stats_attribute_list(btree_coalesce, sec, ms)
-	sysfs_time_stats_attribute_list(btree_split, sec, us)
-	sysfs_time_stats_attribute_list(btree_sort, ms, us)
-	sysfs_time_stats_attribute_list(btree_read, ms, us)
-	sysfs_time_stats_attribute_list(journal_full, sec, ms)
-
 	&sysfs_btree_gc_running,
 
 	&sysfs_btree_nodes,
@@ -991,6 +970,32 @@ static struct attribute *bch_cache_set_internal_files[] = {
 	NULL
 };
 KTYPE(bch_cache_set_internal);
+
+SHOW(bch_cache_set_time_stats)
+{
+	struct cache_set *c = container_of(kobj, struct cache_set, time_stats);
+	return bch_cache_set_show(&c->kobj, attr, buf);
+}
+
+STORE(bch_cache_set_time_stats)
+{
+	struct cache_set *c = container_of(kobj, struct cache_set, time_stats);
+	return bch_cache_set_store(&c->kobj, attr, buf, size);
+}
+
+static void bch_cache_set_time_stats_release(struct kobject *k)
+{
+}
+
+static struct attribute *bch_cache_set_time_stats_files[] = {
+#define BCH_TIME_STAT(name, frequency_units, duration_units)		\
+	sysfs_time_stats_attribute_list(name, frequency_units, duration_units)
+	BCH_TIME_STATS()
+#undef BCH_TIME_STAT
+
+	NULL
+};
+KTYPE(bch_cache_set_time_stats);
 
 typedef unsigned (bucket_map_fn)(struct cache *, struct bucket *, void *);
 

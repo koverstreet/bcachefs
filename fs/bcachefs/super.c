@@ -924,6 +924,7 @@ static void cache_set_flush(struct closure *cl)
 
 	bch_cache_accounting_destroy(&c->accounting);
 
+	kobject_put(&c->time_stats);
 	kobject_put(&c->internal);
 
 	closure_return(cl);
@@ -1003,6 +1004,7 @@ static struct cache_set *bch_cache_set_alloc(struct cache_sb *sb,
 	c->kobj.kset = bcache_kset;
 	kobject_init(&c->kobj, &bch_cache_set_ktype);
 	kobject_init(&c->internal, &bch_cache_set_internal_ktype);
+	kobject_init(&c->time_stats, &bch_cache_set_time_stats_ktype);
 
 	bch_cache_accounting_init(&c->accounting, &c->cl);
 
@@ -1028,12 +1030,10 @@ static struct cache_set *bch_cache_set_alloc(struct cache_sb *sb,
 	mutex_init(&c->gc_scan_keylist_lock);
 	INIT_LIST_HEAD(&c->gc_scan_keylists);
 
-	spin_lock_init(&c->mca_alloc_time.lock);
-	spin_lock_init(&c->mca_scan_time.lock);
-	spin_lock_init(&c->btree_gc_time.lock);
-	spin_lock_init(&c->btree_coalesce_time.lock);
-	spin_lock_init(&c->btree_split_time.lock);
-	spin_lock_init(&c->btree_read_time.lock);
+#define BCH_TIME_STAT(name, frequency_units, duration_units)		\
+	spin_lock_init(&c->name##_time.lock);
+	BCH_TIME_STATS()
+#undef BCH_TIME_STAT
 
 	bch_open_buckets_init(c);
 	bch_tiering_init_cache_set(c);
@@ -1074,6 +1074,11 @@ static struct cache_set *bch_cache_set_alloc(struct cache_sb *sb,
 	c->foreground_target_percent = 20;
 	c->sector_reserve_percent = 20;
 
+	c->journal.write_time	= &c->journal_write_time;
+	c->journal.delay_time	= &c->journal_delay_time;
+	c->journal.full_time	= &c->journal_full_time;
+	c->journal.flush_seq_time = &c->journal_flush_seq_time;
+
 	mutex_init(&c->uevent_lock);
 
 	iter_size = (btree_blocks(c) + 1) *
@@ -1103,7 +1108,8 @@ static struct cache_set *bch_cache_set_alloc(struct cache_sb *sb,
 	    bch_io_clock_init(&c->io_clock[WRITE]) ||
 	    bch_journal_alloc(&c->journal) ||
 	    bch_btree_cache_alloc(c) ||
-	    bch_bset_sort_state_init(&c->sort, ilog2(btree_pages(c))))
+	    bch_bset_sort_state_init(&c->sort, ilog2(btree_pages(c)),
+				     &c->btree_sort_time))
 		goto err;
 
 	for_each_possible_cpu(cpu) {
@@ -1144,6 +1150,7 @@ static int bch_cache_set_online(struct cache_set *c)
 
 	if (kobject_add(&c->kobj, NULL, "%pU", c->sb.user_uuid.b) ||
 	    kobject_add(&c->internal, &c->kobj, "internal") ||
+	    kobject_add(&c->time_stats, &c->kobj, "time_stats") ||
 	    bch_cache_accounting_add_kobjs(&c->accounting, &c->kobj))
 		return -1;
 

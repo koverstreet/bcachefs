@@ -160,11 +160,9 @@ void bch_time_stats_clear(struct time_stats *stats)
 	spin_unlock(&stats->lock);
 }
 
-void bch_time_stats_update(struct time_stats *stats, u64 start_time)
+void __bch_time_stats_update(struct time_stats *stats, u64 start_time)
 {
 	u64 now, duration, last;
-
-	spin_lock(&stats->lock);
 
 	stats->count++;
 
@@ -192,7 +190,12 @@ void bch_time_stats_update(struct time_stats *stats, u64 start_time)
 	}
 
 	stats->last = now ?: 1;
+}
 
+void bch_time_stats_update(struct time_stats *stats, u64 start_time)
+{
+	spin_lock(&stats->lock);
+	__bch_time_stats_update(stats, start_time);
 	spin_unlock(&stats->lock);
 }
 

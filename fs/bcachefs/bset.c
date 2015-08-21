@@ -1469,12 +1469,12 @@ void bch_bset_sort_state_free(struct bset_sort_state *state)
 	mempool_exit(&state->pool);
 }
 
-int bch_bset_sort_state_init(struct bset_sort_state *state, unsigned page_order)
+int bch_bset_sort_state_init(struct bset_sort_state *state, unsigned page_order,
+			     struct time_stats *time)
 {
-	spin_lock_init(&state->time.lock);
-
 	state->page_order = page_order;
 	state->crit_factor = int_sqrt(1 << page_order);
+	state->time = time;
 
 	if (mempool_init_page_pool(&state->pool, 1, page_order))
 		return -ENOMEM;
@@ -1648,7 +1648,7 @@ struct btree_nr_keys bch_sort_bsets(struct bset *dst, struct btree_keys *b,
 		nr = btree_mergesort_simple(b, dst, iter);
 
 	if (!from)
-		bch_time_stats_update(&state->time, start_time);
+		bch_time_stats_update(state->time, start_time);
 
 	return nr;
 }
@@ -1679,7 +1679,7 @@ void bch_btree_sort_into(struct btree_keys *dst,
 
 	BUG_ON(set_bytes(dst->set->data) > (PAGE_SIZE << dst->page_order));
 
-	bch_time_stats_update(&state->time, start_time);
+	bch_time_stats_update(state->time, start_time);
 
 	dst->nr = nr;
 	dst->nsets = 0;

@@ -245,6 +245,20 @@
 #define BCH_DEBUG_PARAMS() BCH_DEBUG_PARAMS_ALWAYS()
 #endif
 
+/* name, frequency_units, duration_units */
+#define BCH_TIME_STATS()						\
+	BCH_TIME_STAT(mca_alloc,		sec, us)		\
+	BCH_TIME_STAT(mca_scan,			sec, ms)		\
+	BCH_TIME_STAT(btree_gc,			sec, ms)		\
+	BCH_TIME_STAT(btree_coalesce,		sec, ms)		\
+	BCH_TIME_STAT(btree_split,		sec, us)		\
+	BCH_TIME_STAT(btree_sort,		ms, us)			\
+	BCH_TIME_STAT(btree_read,		ms, us)			\
+	BCH_TIME_STAT(journal_write,		us, us)			\
+	BCH_TIME_STAT(journal_delay,		ms, us)			\
+	BCH_TIME_STAT(journal_full,		sec, ms)		\
+	BCH_TIME_STAT(journal_flush_seq,	us, us)
+
 #include "alloc_types.h"
 #include "blockdev_types.h"
 #include "buckets_types.h"
@@ -447,6 +461,7 @@ struct cache_set {
 	struct list_head	list;
 	struct kobject		kobj;
 	struct kobject		internal;
+	struct kobject		time_stats;
 	struct completion	*stop_completion;
 	unsigned long		flags;
 
@@ -675,13 +690,6 @@ struct cache_set {
 	unsigned		congested_read_threshold_us;
 	unsigned		congested_write_threshold_us;
 
-	struct time_stats	mca_alloc_time;
-	struct time_stats	mca_scan_time;
-	struct time_stats	btree_gc_time;
-	struct time_stats	btree_coalesce_time;
-	struct time_stats	btree_split_time;
-	struct time_stats	btree_read_time;
-
 	struct cache_accounting accounting;
 	atomic_long_t		cache_read_races;
 	atomic_long_t		writeback_keys_done;
@@ -709,6 +717,11 @@ struct cache_set {
 #define BCH_DEBUG_PARAM(name, description) bool name;
 	BCH_DEBUG_PARAMS_ALL()
 #undef BCH_DEBUG_PARAM
+
+#define BCH_TIME_STAT(name, frequency_units, duration_units)		\
+	struct time_stats	name##_time;
+	BCH_TIME_STATS()
+#undef BCH_TIME_STAT
 };
 
 static inline unsigned bucket_pages(const struct cache *ca)

@@ -158,7 +158,15 @@ struct journal {
 	u64			prio_buckets[MAX_CACHES_PER_SET];
 	unsigned		nr_prio_buckets;
 
-	struct time_stats	full_time;
+
+	u64			need_write_time;
+	u64			write_start_time;
+
+	struct time_stats	*write_time;
+	struct time_stats	*delay_time;
+	struct time_stats	*full_time;
+	struct time_stats	*flush_seq_time;
+
 #ifdef CONFIG_DEBUG_LOCK_ALLOC
 	struct lockdep_map	res_map;
 #endif

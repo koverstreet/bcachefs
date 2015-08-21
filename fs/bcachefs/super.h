@@ -184,6 +184,7 @@ extern wait_queue_head_t unregister_wait;
 
 extern struct kobj_type bch_cache_set_ktype;
 extern struct kobj_type bch_cache_set_internal_ktype;
+extern struct kobj_type bch_cache_set_time_stats_ktype;
 extern struct kobj_type bch_cache_ktype;
 
 #endif /* _BCACHE_SUPER_H */
