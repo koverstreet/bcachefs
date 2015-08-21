@@ -1585,8 +1585,10 @@ static int btree_gc_coalesce(struct btree *b, struct btree_op *op,
 
 	bch_keylist_init(&keylist);
 
-	if (__btree_check_reserve(b->c, b->btree_id, GC_MERGE_NODES, NULL))
+	if (__btree_check_reserve(b->c, b->btree_id, GC_MERGE_NODES, NULL)) {
+		trace_bcache_btree_gc_coalesce_fail(b->c);
 		return 0;
+	}
 
 	memset(new_nodes, 0, sizeof(new_nodes));
 	closure_init_stack(&cl);
