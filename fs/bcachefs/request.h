@@ -1,6 +1,15 @@
 #ifndef _BCACHE_REQUEST_H_
 #define _BCACHE_REQUEST_H_
 
+#include "stats.h"
+
+struct cache_set;
+struct bio;
+struct closure;
+struct cachedd_dev;
+struct bcache_device;
+struct kmem_cache;
+
 struct data_insert_op {
 	struct closure		cl;
 	struct cache_set	*c;
@@ -63,6 +72,7 @@ static inline void bch_data_insert_op_init(struct data_insert_op *op,
 }
 
 unsigned bch_get_congested(struct cache_set *);
+int bch_read(struct cache_set *, struct bio *, u64);
 void bch_data_insert(struct closure *cl);
 
 void bch_cached_dev_request_init(struct cached_dev *dc);

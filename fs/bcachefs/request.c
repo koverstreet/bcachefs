@@ -608,6 +608,102 @@ skip:
 
 /* Cache lookup */
 
+/* XXX: consolidate these somehow */
+
+struct bch_read_op {
+	struct btree_op		op;
+	struct cache_set	*c;
+	struct bio		*bio;
+	u64			inode;
+};
+
+static inline void __bio_inc_remaining(struct bio *bio)
+{
+	bio->bi_flags |= (1 << BIO_CHAIN);
+	smp_mb__before_atomic();
+	atomic_inc(&bio->__bi_remaining);
+}
+
+static int bch_read_fn(struct btree_op *b_op, struct btree *b, struct bkey *k)
+{
+	struct bch_read_op *op = container_of(b_op,
+			struct bch_read_op, op);
+	struct bio *n, *bio = op->bio;
+	BKEY_PADDED(k) tmp;
+	int ptr = 0;
+
+	if (bkey_cmp(k, &KEY(op->inode, bio->bi_iter.bi_sector, 0)) <= 0)
+		return MAP_CONTINUE;
+
+	if (KEY_INODE(k) != op->inode ||
+	    KEY_START(k) >= bio_end_sector(bio)) {
+		/* Completely missed */
+		zero_fill_bio(bio);
+		return MAP_DONE;
+	}
+
+	if (KEY_START(k) > bio->bi_iter.bi_sector) {
+		unsigned bytes = (KEY_START(k) - bio->bi_iter.bi_sector) << 9;
+
+		swap(bytes, bio->bi_iter.bi_size);
+		zero_fill_bio(bio);
+		swap(bytes, bio->bi_iter.bi_size);
+
+		bio_advance(bio, bytes);
+	}
+
+	ptr = bch_extent_pick_ptr(b->c, k);
+	if (ptr < 0) /* all stale? */
+		return MAP_CONTINUE;
+
+	n = bio_next_split(bio, min_t(u64, INT_MAX,
+				      KEY_OFFSET(k) - bio->bi_iter.bi_sector),
+			   GFP_NOIO, b->c->bio_split);
+
+	bch_bkey_copy_single_ptr(&tmp.k, k, ptr);
+	k = &tmp.k;
+
+	/* Trim the key to match what we're actually reading */
+	bch_cut_front(&KEY(op->inode, n->bi_iter.bi_sector, 0), k);
+	bch_cut_back(&KEY(op->inode, bio_end_sector(n), 0), k);
+
+	n->bi_iter.bi_sector	= PTR_OFFSET(k, 0);
+	n->bi_bdev		= PTR_CACHE(b->c, k, 0)->bdev;
+
+	if (n != bio)
+		bio_chain(n, bio);
+	else
+		__bio_inc_remaining(bio);
+
+	BUG_ON(!n->bi_end_io);
+
+	cache_promote(b->c, n, k);
+
+	return n == bio ? MAP_DONE : MAP_CONTINUE;
+}
+
+int bch_read(struct cache_set *c, struct bio *bio, u64 inode)
+{
+	struct bch_read_op op;
+	int ret;
+
+	zero_fill_bio(bio);
+
+	bch_btree_op_init(&op.op, -1);
+	op.c = c;
+	op.bio = bio;
+	op.inode = inode;
+
+	ret = bch_btree_map_keys(&op.op, c, BTREE_ID_EXTENTS,
+				 &KEY(inode,
+				      bio->bi_iter.bi_sector, 0),
+				 bch_read_fn, 0);
+	return ret < 0 ? ret : 0;
+}
+EXPORT_SYMBOL(bch_read);
+
+/* struct search based code */
+
 struct search {
 	/* Stack frame for bio_complete */
 	struct closure		cl;
