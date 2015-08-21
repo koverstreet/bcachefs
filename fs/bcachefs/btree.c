@@ -1843,19 +1843,21 @@ static int btree_gc_recurse(struct btree *b, struct btree_op *op,
 
 	int ret = 0;
 	bool should_rewrite;
-	struct bkey *k;
+	struct bkey *k, tmp;
 	struct btree_iter iter;
 
 	/* Sliding window of GC_MERGE_NODES adjacent btree nodes */
 	struct gc_merge_info r[GC_MERGE_NODES];
 	struct gc_merge_info *i, *last = r + ARRAY_SIZE(r) - 1;
-	struct bkey tmp = bkey_successor(&c->gc_cur_key);
-
-	bch_btree_iter_init(&b->keys, &iter, &tmp);
 
 	for (i = r; i < r + ARRAY_SIZE(r); i++)
 		i->b = ERR_PTR(-EINTR);
 
+	if (kthread_should_stop())
+		return -ESHUTDOWN;
+
+	tmp = bkey_successor(&c->gc_cur_key);
+	bch_btree_iter_init(&b->keys, &iter, &tmp);
 	while (1) {
 		k = bch_btree_iter_next(&iter);
 		if (k) {
@@ -2049,7 +2051,7 @@ static void bch_btree_gc_finish(struct cache_set *c)
  * contain too many bsets are merged up and re-written, and adjacent nodes
  * with low occupancy are coalesced together.
  */
-static void bch_btree_gc(struct cache_set *c)
+static int bch_btree_gc(struct cache_set *c)
 {
 	struct gc_stat stats;
 	struct btree_op op;
@@ -2069,15 +2071,20 @@ static void bch_btree_gc(struct cache_set *c)
 		/* Write lock all nodes */
 		bch_btree_op_init(&op, id, S8_MAX);
 
-		if (c->btree_roots[id]) {
+		if (c->btree_roots[id])
 			ret = btree_root(gc_root, c, &op, false, &stats);
-			cond_resched();
-		}
-		if (ret) {
-			if (ret != -ETIMEDOUT)
-				pr_warn("gc failed with %d!", ret);
 
+		if (ret == -ETIMEDOUT) {
+			schedule();
 			continue;
+		}
+
+		if (ret == -ESHUTDOWN)
+			goto gc_failed;
+
+		if (ret) {
+			pr_err("garbage collection failed with %d!", ret);
+			goto gc_failed;
 		}
 
 		write_seqlock(&c->gc_cur_lock);
@@ -2096,6 +2103,12 @@ static void bch_btree_gc(struct cache_set *c)
 	memcpy(&c->gc_stats, &stats, sizeof(struct gc_stat));
 
 	trace_bcache_gc_end(c);
+	return 0;
+
+gc_failed:
+	set_bit(CACHE_SET_GC_FAILURE, &c->flags);
+	up_write(&c->gc_lock);
+	return -1;
 }
 
 static int bch_gc_thread(void *arg)
@@ -2103,7 +2116,8 @@ static int bch_gc_thread(void *arg)
 	struct cache_set *c = arg;
 
 	while (1) {
-		bch_btree_gc(c);
+		if (bch_btree_gc(c))
+			break;
 
 		/* Set task to interruptible first so that if someone wakes us
 		 * up while we're finishing up, we will start another GC pass

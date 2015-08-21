@@ -418,7 +418,8 @@ static int wait_buckets_available(struct cache *ca)
 
 	while (1) {
 		set_current_state(TASK_INTERRUPTIBLE);
-		if (kthread_should_stop()) {
+		if (kthread_should_stop() ||
+		    test_bit(CACHE_SET_GC_FAILURE, &ca->set->flags)) {
 			ret = -1;
 			break;
 		}

@@ -1482,13 +1482,15 @@ int bch_cache_add(struct cache_set *c, const char *path)
 	memset(&sb, 0, sizeof(sb));
 
 	down_read(&c->gc_lock);
+	if (test_bit(CACHE_SET_GC_FAILURE, &c->flags))
+		goto no_slot;
 
 	for (i = 0; i < MAX_CACHES_PER_SET; i++)
 		if (!test_bit(i, c->cache_slots_used) &&
 		    (i >= c->sb.nr_in_set ||
 		     bch_is_zero(c->members->m[i].uuid.b, sizeof(uuid_le))))
 			goto have_slot;
-
+no_slot:
 	up_read(&c->gc_lock);
 
 	err = "no slots available in superblock";

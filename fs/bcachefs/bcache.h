@@ -343,6 +343,7 @@ struct gc_stat {
 #define	CACHE_SET_STOPPING		1
 #define	CACHE_SET_RUNNING		2
 #define	CACHE_SET_RO			3
+#define	CACHE_SET_GC_FAILURE		4
 
 struct cache_group {
 	seqcount_t		lock;
