@@ -11,7 +11,6 @@ struct kmem_cache;
 struct data_insert_op {
 	struct closure		cl;
 	struct cache_set	*c;
-	struct workqueue_struct *wq;
 	struct bio		*bio;
 
 	/* Used internally, do not touch */
@@ -56,7 +55,6 @@ struct data_insert_op {
 
 static inline void bch_data_insert_op_init(struct data_insert_op *op,
 					   struct cache_set *c,
-					   struct workqueue_struct *wq,
 					   struct bio *bio,
 					   unsigned write_point,
 					   bool wait, bool discard, bool flush,
@@ -64,7 +62,6 @@ static inline void bch_data_insert_op_init(struct data_insert_op *op,
 					   struct bkey *replace_key)
 {
 	op->c		= c;
-	op->wq		= wq;
 	op->bio		= bio;
 	op->write_point	= write_point;
 	op->error	= 0;

@@ -32,20 +32,13 @@ static void moving_io_destructor(struct closure *cl)
 {
 	struct moving_io *io = container_of(cl, struct moving_io, cl);
 
-	bch_keybuf_del(io->keybuf, io->w);
-	kfree(io);
-}
-
-static void write_moving_finish(struct closure *cl)
-{
-	struct moving_io *io = container_of(cl, struct moving_io, cl);
-
 	bio_free_pages(&io->bio.bio);
 
 	if (io->op.replace_collision)
 		trace_bcache_gc_copy_collision(&io->w->key);
 
-	closure_return_with_destructor(cl, moving_io_destructor);
+	bch_keybuf_del(io->keybuf, io->w);
+	kfree(io);
 }
 
 static void write_moving(struct closure *cl)
@@ -61,7 +54,7 @@ static void write_moving(struct closure *cl)
 		closure_call(&op->cl, bch_data_insert, NULL, cl);
 	}
 
-	continue_at(cl, write_moving_finish, io->op.wq);
+	closure_return_with_destructor(cl, moving_io_destructor);
 }
 
 static void read_moving_endio(struct bio *bio)
@@ -100,5 +93,5 @@ void bch_data_move(struct closure *cl)
 
 	bch_submit_bbio(bio, io->op.c, &io->w->key, ptr);
 
-	continue_at(cl, write_moving, io->op.wq);
+	continue_at(cl, write_moving, io->op.c->wq);
 }

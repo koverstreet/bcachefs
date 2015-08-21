@@ -94,8 +94,7 @@ static void read_moving(struct cache *ca, struct moving_io_stats *stats)
 		io->keybuf		= &ca->moving_gc_keys;
 		io->stats		= stats;
 
-		bch_data_insert_op_init(&io->op, c, ca->moving_gc_wq,
-					&io->bio.bio, 0,
+		bch_data_insert_op_init(&io->op, c, &io->bio.bio, 0,
 					false, false, false,
 					&io->w->key, &io->w->key);
 		io->op.moving_gc	= true;
