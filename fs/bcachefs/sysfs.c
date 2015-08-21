@@ -458,7 +458,8 @@ static size_t bch_cache_size(struct cache_set *c)
 
 static unsigned bch_cache_available_percent(struct cache_set *c)
 {
-	return div64_u64((u64) buckets_available(c) * 100, c->nbuckets);
+	return div64_u64((u64) buckets_available(c) * 100,
+			 c->nbuckets ?: 1);
 }
 
 static unsigned bch_btree_used(struct cache_set *c)
@@ -482,9 +483,6 @@ SHOW(__bch_cache_set)
 	sysfs_print(journal_delay_ms,		c->journal.delay_ms);
 	sysfs_hprint(bucket_size,		bucket_bytes(c));
 	sysfs_hprint(block_size,		block_bytes(c));
-	sysfs_print(tree_depth,
-		    c->btree_roots[BTREE_ID_EXTENTS]->level);
-	sysfs_print(root_usage_percent,		bch_root_usage(c));
 
 	sysfs_hprint(btree_cache_size,		bch_cache_size(c));
 	sysfs_print(cache_available_percent,	bch_cache_available_percent(c));
@@ -541,8 +539,14 @@ SHOW(__bch_cache_set)
 	sysfs_printf(meta_replicas,		"%u", c->meta_replicas);
 	sysfs_printf(data_replicas,		"%u", c->data_replicas);
 
+	if (!test_bit(CACHE_SET_RUNNING, &c->flags))
+		return -EPERM;
+
 	if (attr == &sysfs_bset_tree_stats)
 		return bch_bset_print_stats(c, buf);
+
+	sysfs_print(tree_depth, c->btree_roots[BTREE_ID_EXTENTS]->level);
+	sysfs_print(root_usage_percent,		bch_root_usage(c));
 
 	return 0;
 }
@@ -552,11 +556,15 @@ STORE(__bch_cache_set)
 {
 	struct cache_set *c = container_of(kobj, struct cache_set, kobj);
 
-	if (attr == &sysfs_unregister)
+	if (attr == &sysfs_unregister) {
 		bch_cache_set_unregister(c);
+		return size;
+	}
 
-	if (attr == &sysfs_stop)
+	if (attr == &sysfs_stop) {
 		bch_cache_set_stop(c);
+		return size;
+	}
 
 	if (attr == &sysfs_synchronous) {
 		bool sync = strtoul_or_return(buf);
@@ -565,16 +573,8 @@ STORE(__bch_cache_set)
 			SET_CACHE_SYNC(&c->sb, sync);
 			bcache_write_super(c);
 		}
-	}
 
-	if (attr == &sysfs_flash_vol_create) {
-		int r;
-		uint64_t v;
-		strtoi_h_or_return(buf, v);
-
-		r = bch_flash_dev_create(c, v);
-		if (r)
-			return r;
+		return size;
 	}
 
 	if (attr == &sysfs_clear_stats) {
@@ -583,16 +583,8 @@ STORE(__bch_cache_set)
 
 		memset(&c->gc_stats, 0, sizeof(struct gc_stat));
 		bch_cache_accounting_clear(&c->accounting);
-	}
 
-	if (attr == &sysfs_trigger_gc)
-		wake_up_gc(c, true);
-
-	if (attr == &sysfs_prune_cache) {
-		struct shrink_control sc;
-		sc.gfp_mask = GFP_KERNEL;
-		sc.nr_to_scan = strtoul_or_return(buf);
-		c->btree_cache_shrink.scan_objects(&c->btree_cache_shrink, &sc);
+		return size;
 	}
 
 	sysfs_strtoul(congested_read_threshold_us,
@@ -607,14 +599,19 @@ STORE(__bch_cache_set)
 			return v;
 
 		c->on_error = v;
+		return size;
 	}
 
-	if (attr == &sysfs_io_error_limit)
+	if (attr == &sysfs_io_error_limit) {
 		c->error_limit = strtoul_or_return(buf) << IO_ERROR_SHIFT;
+		return size;
+	}
 
 	/* See count_io_errors() for why 88 */
-	if (attr == &sysfs_io_error_halflife)
+	if (attr == &sysfs_io_error_halflife) {
 		c->error_decay = strtoul_or_return(buf) / 88;
+		return size;
+	}
 
 	sysfs_strtoul(journal_delay_ms,		c->journal.delay_ms);
 	sysfs_strtoul(verify,			c->verify);
@@ -625,11 +622,24 @@ STORE(__bch_cache_set)
 	sysfs_strtoul(copy_gc_enabled,		c->copy_gc_enabled);
 	sysfs_strtoul(btree_scan_ratelimit,	c->btree_scan_ratelimit);
 
+	if (attr == &sysfs_copy_gc_enabled) {
+		struct cache *ca;
+		unsigned i;
+		ssize_t ret = strtoul_safe(buf, c->copy_gc_enabled)
+			?: (ssize_t) size;
+
+		for_each_cache(ca, c, i)
+			if (ca->moving_gc_thread)
+				wake_up_process(ca->moving_gc_thread);
+		return ret;
+	}
+
 	if (attr == &sysfs_tiering_enabled) {
 		ssize_t ret = strtoul_safe(buf, c->tiering_enabled)
 			?: (ssize_t) size;
 
-		wake_up_process(c->tiering_thread);
+		if (c->tiering_thread)
+			wake_up_process(c->tiering_thread);
 		return ret;
 	}
 
@@ -639,6 +649,33 @@ STORE(__bch_cache_set)
 			    c->meta_replicas, 1, BKEY_PAD_PTRS);
 	sysfs_strtoul_clamp(data_replicas,
 			    c->data_replicas, 1, BKEY_PAD_PTRS);
+
+	if (!test_bit(CACHE_SET_RUNNING, &c->flags))
+		return -EPERM;
+
+	if (test_bit(CACHE_SET_STOPPING, &c->flags))
+		return -EINTR;
+
+	if (attr == &sysfs_flash_vol_create) {
+		int r;
+		u64 v;
+
+		strtoi_h_or_return(buf, v);
+		r = bch_flash_dev_create(c, v);
+		if (r)
+			return r;
+	}
+
+	if (attr == &sysfs_trigger_gc)
+		wake_up_gc(c, true);
+
+	if (attr == &sysfs_prune_cache) {
+		struct shrink_control sc;
+
+		sc.gfp_mask = GFP_KERNEL;
+		sc.nr_to_scan = strtoul_or_return(buf);
+		c->btree_cache_shrink.scan_objects(&c->btree_cache_shrink, &sc);
+	}
 
 	return size;
 }
