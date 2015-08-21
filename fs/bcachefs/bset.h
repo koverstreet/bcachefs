@@ -158,7 +158,7 @@ struct btree_node_iter;
 struct btree_node_iter_set;
 struct bkey_float;
 
-#define MAX_BSETS		4U
+#define MAX_BSETS		3U
 
 struct bset_tree {
 	/*
@@ -485,7 +485,7 @@ static inline enum bch_extent_overlap bch_extent_overlap(const struct bkey *k,
 /* Btree key iteration */
 
 struct btree_node_iter {
-	size_t size, used;
+	unsigned	size, used;
 
 	/* If true, compare START_KEY(k) and not k itself. */
 	bool		is_extents;
