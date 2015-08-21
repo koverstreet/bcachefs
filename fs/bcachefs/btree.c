@@ -182,7 +182,7 @@ static void btree_node_unlock(struct btree_op *op, struct btree *b, int level)
 		}							\
 		bch_cannibalize_unlock(c);				\
 		if (_r == -EINTR)					\
-			continue;					\
+			cond_resched();					\
 		else if (!(async) && _r == -EAGAIN)			\
 			closure_sync(&(op)->cl);			\
 		else							\
@@ -2715,6 +2715,9 @@ static int bch_btree_map_nodes_recurse(struct btree *b, struct btree_op *op,
 			if (!test_bit(level, (void *) &op->locks_intent) &&
 			    !test_bit(level, (void *) &op->locks_read))
 				return -EINTR;
+
+			if (ret == MAP_CONTINUE && need_resched())
+				return -EINTR;
 		}
 	}
 
@@ -2760,6 +2763,9 @@ static int do_map_fn(struct btree *b, struct btree_op *op, struct bkey *from,
 		trace_bcache_btree_iterator_invalidated(b, op);
 		ret = -EINTR;
 	}
+
+	if (ret == MAP_CONTINUE && need_resched())
+		ret = -EINTR;
 
 	return ret;
 }
