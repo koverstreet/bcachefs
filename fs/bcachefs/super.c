@@ -234,6 +234,12 @@ const char *validate_super(struct bcache_superblock *disk_sb,
 		if (!CACHE_BTREE_NODE_SIZE(sb))
 			return "Btree node size not set";
 
+		if (!is_power_of_2(CACHE_BTREE_NODE_SIZE(sb)))
+			return "Btree node size not a power of two";
+
+		if (CACHE_BTREE_NODE_SIZE(sb) > BTREE_NODE_SIZE_MAX)
+			return "Btree node size too large";
+
 		if (sb->u64s < bch_journal_buckets_offset(sb))
 			return "Invalid superblock: member info area missing";
 

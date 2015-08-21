@@ -217,6 +217,9 @@
 #include "stats_types.h"
 #include "super_types.h"
 
+/* 256k, in sectors */
+#define BTREE_NODE_SIZE_MAX		512
+
 struct btree;
 struct cache;
 
