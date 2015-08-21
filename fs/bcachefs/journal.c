@@ -937,7 +937,7 @@ int bch_journal_alloc(struct cache_set *c)
 	init_waitqueue_head(&j->wait);
 	INIT_DELAYED_WORK(&j->work, journal_write_work);
 
-	c->journal.delay_ms = 100;
+	c->journal.delay_ms = 10;
 
 	j->w[0].c = c;
 	j->w[1].c = c;
