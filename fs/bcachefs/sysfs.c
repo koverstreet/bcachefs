@@ -53,6 +53,7 @@ write_attribute(clear_stats);
 write_attribute(trigger_gc);
 write_attribute(prune_cache);
 write_attribute(flash_vol_create);
+write_attribute(add_device);
 
 read_attribute(bucket_size);
 read_attribute(bucket_size_bytes);
@@ -714,6 +715,15 @@ STORE(__bch_cache_set)
 		}
 	}
 
+	if (attr == &sysfs_add_device) {
+		char *path = kstrdup(buf, GFP_KERNEL);
+		int r = bch_cache_add(c, strim(path));
+
+		kfree(path);
+		if (r)
+			return r;
+	}
+
 	if (!test_bit(CACHE_SET_RUNNING, &c->flags))
 		return -EPERM;
 
@@ -779,6 +789,7 @@ static struct attribute *bch_cache_set_files[] = {
 	&sysfs_synchronous,
 	&sysfs_journal_delay_ms,
 	&sysfs_flash_vol_create,
+	&sysfs_add_device,
 
 	&sysfs_bucket_size,
 	&sysfs_bucket_size_bytes,

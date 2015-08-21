@@ -220,7 +220,7 @@ int bch_journal_alloc(struct cache_set *);
 
 ssize_t bch_journal_print_debug(struct journal *, char *);
 
-int bch_set_nr_journal_buckets(struct cache *, unsigned);
+int bch_cache_journal_alloc(struct cache *);
 
 static inline u64 *__journal_buckets(struct cache *ca)
 {

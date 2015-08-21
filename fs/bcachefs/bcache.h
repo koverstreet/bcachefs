@@ -1130,6 +1130,7 @@ void bch_cache_set_unregister(struct cache_set *);
 void bch_cache_set_stop(struct cache_set *);
 
 void bch_cache_remove(struct cache *);
+int bch_cache_add(struct cache_set *, const char *);
 
 void bch_btree_cache_free(struct cache_set *);
 int bch_btree_cache_alloc(struct cache_set *);

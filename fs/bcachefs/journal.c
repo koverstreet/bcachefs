@@ -412,7 +412,7 @@ err:
 	return ret;
 }
 
-int bch_set_nr_journal_buckets(struct cache *ca, unsigned nr)
+static int bch_set_nr_journal_buckets(struct cache *ca, unsigned nr)
 {
 	unsigned keys = bch_journal_buckets_offset(&ca->sb) + nr;
 	u64 *p;
@@ -428,6 +428,23 @@ int bch_set_nr_journal_buckets(struct cache *ca, unsigned nr)
 
 	ca->journal.seq = p;
 	ca->sb.keys = keys;
+
+	return 0;
+}
+
+int bch_cache_journal_alloc(struct cache *ca)
+{
+	int ret;
+	unsigned i;
+
+	ret = bch_set_nr_journal_buckets(ca,
+					 max_t(unsigned, 2,
+					       ca->sb.nbuckets >> 8));
+	if (ret)
+		return ret;
+
+	for (i = 0; i < bch_nr_journal_buckets(&ca->sb); i++)
+		set_journal_bucket(ca, i, ca->sb.first_bucket + i);
 
 	return 0;
 }
