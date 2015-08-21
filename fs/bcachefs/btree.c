@@ -1561,7 +1561,7 @@ u8 bch_btree_mark_last_gc(struct cache_set *c, struct bkey *k)
 		if ((ca = PTR_CACHE(c, k, i))) {
 			struct bucket *g = PTR_BUCKET(c, ca, k, i);
 
-			if (gen_after(g->last_gc, PTR_GEN(k, i)))
+			if (__gen_after(g->last_gc, PTR_GEN(k, i)))
 				g->last_gc = PTR_GEN(k, i);
 
 			max_stale = max(max_stale, ptr_stale(c, ca, k, i));

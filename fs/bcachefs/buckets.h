@@ -48,11 +48,20 @@ static inline struct bucket *PTR_BUCKET(struct cache_set *c,
 	return ca->buckets + PTR_BUCKET_NR(c, k, ptr);
 }
 
-static inline u8 gen_after(u8 a, u8 b)
+static inline u8 __gen_after(u8 a, u8 b)
 {
 	u8 r = a - b;
 
 	return r > 128U ? 0 : r;
+}
+
+static inline u8 gen_after(u8 a, u8 b)
+{
+	u8 r = a - b;
+
+	BUG_ON(r > 128U);
+
+	return r;
 }
 
 static inline u8 ptr_stale(const struct cache_set *c,
