@@ -12,50 +12,6 @@
 #include <linux/kthread.h>
 #include <trace/events/bcachefs.h>
 
-static void __update_tiering_rate(struct cache_set *c)
-{
-	unsigned i, j;
-	u64 tier_dirty[CACHE_TIERS];
-	u64 tier_size[CACHE_TIERS];
-	unsigned bucket_bits;
-
-	bucket_bits = c->bucket_bits + 9;
-
-	for (i = 0; i < CACHE_TIERS; i++) {
-		struct cache_group *tier = c->cache_tiers + i;
-
-		tier_size[i] = 0;
-		tier_dirty[i] = 0;
-
-		for (j = 0; j < tier->nr_devices; j++) {
-			struct cache *ca = tier->devices[j];
-			struct bucket_stats stats = bucket_stats_read(ca);
-
-			tier_size[i] += ca->sb.nbuckets - ca->sb.first_bucket;
-			tier_dirty[i] += stats.buckets_dirty;
-		}
-	}
-
-	if (tier_size[1]) {
-		u64 target = div_u64(tier_size[0] * c->tiering_percent, 100);
-
-		bch_pd_controller_update(&c->tiering_pd,
-					 target << bucket_bits,
-					 tier_dirty[0] << bucket_bits);
-	}
-}
-
-static void update_tiering_rate(struct work_struct *work)
-{
-	struct cache_set *c = container_of(to_delayed_work(work),
-					   struct cache_set,
-					   tiering_pd.update);
-	__update_tiering_rate(c);
-
-	schedule_delayed_work(&c->tiering_pd.update,
-			      c->tiering_pd.update_seconds * HZ);
-}
-
 static bool tiering_pred(struct keybuf *buf, struct bkey *k)
 {
 	struct cache_set *c = container_of(buf, struct cache_set, tiering_keys);
@@ -149,7 +105,7 @@ static int bch_tiering_thread(void *arg)
 void bch_tiering_init_cache_set(struct cache_set *c)
 {
 	bch_keybuf_init(&c->tiering_keys);
-	INIT_DELAYED_WORK(&c->tiering_pd.update, update_tiering_rate);
+	bch_pd_controller_init(&c->tiering_pd);
 }
 
 int bch_tiering_thread_start(struct cache_set *c)
@@ -166,7 +122,6 @@ int bch_tiering_thread_start(struct cache_set *c)
 		return PTR_ERR(t);
 
 	c->tiering_read = t;
-	bch_pd_controller_start(&c->tiering_pd);
 	wake_up_process(c->tiering_read);
 
 	return 0;

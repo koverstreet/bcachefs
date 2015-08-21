@@ -17,35 +17,6 @@
 #include <linux/freezer.h>
 #include <linux/kthread.h>
 
-/* Rate limiting */
-
-#define GC_TARGET_PERCENT 5 /* 5% reclaimable space */
-
-static void __update_gc_rate(struct cache *ca)
-{
-	u64 total, target;
-	unsigned bucket_bits;
-
-	bucket_bits = ca->set->bucket_bits + 9;
-	total = ca->sb.nbuckets - ca->sb.first_bucket;
-	target = total * GC_TARGET_PERCENT / 100;
-
-	bch_pd_controller_update(&ca->moving_gc_pd,
-				 target << bucket_bits,
-				 buckets_available_cache(ca) << bucket_bits);
-}
-
-static void update_gc_rate(struct work_struct *work)
-{
-	struct cache *ca = container_of(to_delayed_work(work),
-					struct cache,
-					moving_gc_pd.update);
-	__update_gc_rate(ca);
-
-	schedule_delayed_work(&ca->moving_gc_pd.update,
-			      ca->moving_gc_pd.update_seconds * HZ);
-}
-
 /* Moving GC - IO loop */
 
 static bool moving_pred(struct keybuf *buf, struct bkey *k)
@@ -274,8 +245,6 @@ static int bch_moving_gc_thread(void *arg)
 
 void bch_moving_gc_stop(struct cache *ca)
 {
-	cancel_delayed_work_sync(&ca->moving_gc_pd.update);
-
 	ca->moving_gc_pd.rate.rate = UINT_MAX;
 	bch_ratelimit_reset(&ca->moving_gc_pd.rate);
 	if (ca->moving_gc_read)
@@ -302,9 +271,6 @@ int bch_moving_gc_thread_start(struct cache *ca)
 
 	ca->moving_gc_read = t;
 	wake_up_process(ca->moving_gc_read);
-	bch_pd_controller_start(&ca->moving_gc_pd);
-
-	ca->moving_gc_pd.d_term = 0;
 
 	return 0;
 }
@@ -312,5 +278,7 @@ int bch_moving_gc_thread_start(struct cache *ca)
 void bch_moving_init_cache(struct cache *ca)
 {
 	bch_keybuf_init(&ca->moving_gc_keys);
-	INIT_DELAYED_WORK(&ca->moving_gc_pd.update, update_gc_rate);
+	bch_pd_controller_init(&ca->moving_gc_pd);
+
+	ca->moving_gc_pd.d_term = 0;
 }

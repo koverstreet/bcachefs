@@ -492,12 +492,11 @@ int bch_ratelimit_wait_freezable_stoppable(struct bch_ratelimit *,
 
 struct bch_pd_controller {
 	struct bch_ratelimit	rate;
-	struct delayed_work	update;
+	unsigned long		last_update;
 
 	s64			last_actual;
 	s64			smoothed_derivative;
 
-	unsigned		update_seconds;
 	unsigned		p_term_inverse;
 	unsigned		d_smooth;
 	unsigned		d_term;
@@ -509,20 +508,18 @@ struct bch_pd_controller {
 	s64			last_target;
 };
 
-void bch_pd_controller_update(struct bch_pd_controller *, s64, s64);
-void bch_pd_controller_start(struct bch_pd_controller *);
+void bch_pd_controller_update(struct bch_pd_controller *, s64, s64, int);
+void bch_pd_controller_init(struct bch_pd_controller *);
 size_t bch_pd_controller_print_debug(struct bch_pd_controller *, char *);
 
 #define sysfs_pd_controller_attribute(name)				\
 	rw_attribute(name##_rate);					\
-	rw_attribute(name##_rate_update_seconds);			\
 	rw_attribute(name##_rate_d_term);				\
 	rw_attribute(name##_rate_p_term_inverse);			\
 	read_attribute(name##_rate_debug)
 
 #define sysfs_pd_controller_files(name)					\
 	&sysfs_##name##_rate,						\
-	&sysfs_##name##_rate_update_seconds,				\
 	&sysfs_##name##_rate_d_term,					\
 	&sysfs_##name##_rate_p_term_inverse,				\
 	&sysfs_##name##_rate_debug
@@ -530,7 +527,6 @@ size_t bch_pd_controller_print_debug(struct bch_pd_controller *, char *);
 #define sysfs_pd_controller_show(name, var)				\
 do {									\
 	sysfs_hprint(name##_rate,		(var)->rate.rate);	\
-	sysfs_print(name##_rate_update_seconds,	(var)->update_seconds);	\
 	sysfs_print(name##_rate_d_term,		(var)->d_term);		\
 	sysfs_print(name##_rate_p_term_inverse,	(var)->p_term_inverse);	\
 									\
@@ -542,8 +538,6 @@ do {									\
 do {									\
 	sysfs_strtoul_clamp(name##_rate,				\
 			    (var)->rate.rate, 1, INT_MAX);		\
-	sysfs_strtoul_clamp(name##_rate_update_seconds,			\
-			    (var)->update_seconds, 1, INT_MAX);		\
 	sysfs_strtoul(name##_rate_d_term,	(var)->d_term);		\
 	sysfs_strtoul_clamp(name##_rate_p_term_inverse,			\
 			    (var)->p_term_inverse, 1, INT_MAX);		\

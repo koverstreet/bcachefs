@@ -239,30 +239,41 @@ int bch_ratelimit_wait_freezable_stoppable(struct bch_ratelimit *d,
 
 /*
  * Updates pd_controller. Attempts to scale inputed values to units per second.
+ * @target: desired value
+ * @actual: current value
+ *
+ * @sign: 1 or -1; 1 if increasing the rate makes actual go up, -1 if increasing
+ * it makes actual go down.
  */
 void bch_pd_controller_update(struct bch_pd_controller *pd,
-			      s64 target, s64 actual)
+			      s64 target, s64 actual, int sign)
 {
 	s64 proportional, derivative, change;
 
+	unsigned long seconds_since_update = (jiffies - pd->last_update) * HZ;
+
+	pd->last_update = jiffies;
+
 	proportional = actual - target;
-	proportional *= pd->update_seconds;
+	proportional *= seconds_since_update;
 	proportional = div_s64(proportional, pd->p_term_inverse);
 
 	derivative = actual - pd->last_actual;
-	derivative = div_s64(derivative, pd->update_seconds);
+	derivative = div_s64(derivative, seconds_since_update);
 	derivative = ewma_add(pd->smoothed_derivative, derivative,
-			      pd->d_smooth);
+			      (pd->d_term / seconds_since_update) ?: 1);
 	derivative = derivative * pd->d_term;
 	derivative = div_s64(derivative, pd->p_term_inverse);
 
 	change = proportional + derivative;
 
-	/* Don't increase writeback rate if not keeping up */
+	/* Don't increase rate if not keeping up */
 	if (change > 0 &&
 	    time_after64(local_clock(),
 			 pd->rate.next + NSEC_PER_MSEC))
 		change = 0;
+
+	change *= (sign * -1);
 
 	pd->rate.rate = clamp_t(s64, (s64) pd->rate.rate + change,
 				1, UINT_MAX);
@@ -274,15 +285,13 @@ void bch_pd_controller_update(struct bch_pd_controller *pd,
 	pd->last_target		= target;
 }
 
-void bch_pd_controller_start(struct bch_pd_controller *pd)
+void bch_pd_controller_init(struct bch_pd_controller *pd)
 {
 	pd->rate.rate		= 1024;
-	pd->update_seconds	= 5;
+	pd->last_update		= jiffies;
 	pd->p_term_inverse	= 6000;
 	pd->d_term		= 30;
-	pd->d_smooth		= (pd->d_term / pd->update_seconds) ?: 1;
-
-	schedule_delayed_work(&pd->update, pd->update_seconds * HZ);
+	pd->d_smooth		= pd->d_term;
 }
 
 size_t bch_pd_controller_print_debug(struct bch_pd_controller *pd, char *buf)

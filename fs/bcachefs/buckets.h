@@ -145,15 +145,19 @@ static inline unsigned bucket_sectors_used(struct bucket *g)
 	return g->mark.dirty_sectors + g->mark.cached_sectors;
 }
 
-static inline size_t buckets_available_cache(struct cache *ca)
+static inline size_t __buckets_available_cache(struct cache *ca,
+					       struct bucket_stats stats)
 {
-	struct bucket_stats stats = bucket_stats_read(ca);
-
 	return max_t(s64, 0,
 		     ca->sb.nbuckets - ca->sb.first_bucket -
 		     stats.buckets_dirty -
 		     stats.buckets_alloc -
 		     stats.buckets_meta);
+}
+
+static inline size_t buckets_available_cache(struct cache *ca)
+{
+	return __buckets_available_cache(ca, bucket_stats_read(ca));
 }
 
 static inline u64 sectors_available(struct cache_set *c)
@@ -170,10 +174,11 @@ static inline u64 sectors_available(struct cache_set *c)
 	return ret << c->bucket_bits;
 }
 
-static inline size_t buckets_free_cache(struct cache *ca,
-					enum alloc_reserve reserve)
+static inline size_t __buckets_free_cache(struct cache *ca,
+					  struct bucket_stats stats,
+					  enum alloc_reserve reserve)
 {
-	size_t free = buckets_available_cache(ca) +
+	size_t free = __buckets_available_cache(ca, stats) +
 		fifo_used(&ca->free[reserve]) +
 		fifo_used(&ca->free_inc);
 
@@ -182,6 +187,12 @@ static inline size_t buckets_free_cache(struct cache *ca,
 			     ca->reserve_buckets_count);
 
 	return free;
+}
+
+static inline size_t buckets_free_cache(struct cache *ca,
+					enum alloc_reserve reserve)
+{
+	return __buckets_free_cache(ca, bucket_stats_read(ca), reserve);
 }
 
 static inline u64 cache_sectors_used(struct cache *ca)

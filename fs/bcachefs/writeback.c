@@ -30,14 +30,15 @@ static void __update_writeback_rate(struct cached_dev *dc)
 				   c->cached_dev_sectors);
 	s64 dirty = bcache_dev_sectors_dirty(&dc->disk);
 
-	bch_pd_controller_update(&dc->writeback_pd, target << 9, dirty << 9);
+	bch_pd_controller_update(&dc->writeback_pd, target << 9,
+				 dirty << 9, -1);
 }
 
 static void update_writeback_rate(struct work_struct *work)
 {
 	struct cached_dev *dc = container_of(to_delayed_work(work),
 					     struct cached_dev,
-					     writeback_pd.update);
+					     writeback_pd_update);
 
 	down_read(&dc->writeback_lock);
 
@@ -50,8 +51,8 @@ static void update_writeback_rate(struct work_struct *work)
 
 	up_read(&dc->writeback_lock);
 
-	schedule_delayed_work(&dc->writeback_pd.update,
-			      dc->writeback_pd.update_seconds * HZ);
+	schedule_delayed_work(&dc->writeback_pd_update,
+			      dc->writeback_pd_update_seconds * HZ);
 }
 
 struct dirty_io {
@@ -606,8 +607,10 @@ int bch_cached_dev_writeback_init(struct cached_dev *dc)
 	dc->writeback_metadata		= true;
 	dc->writeback_running		= true;
 	dc->writeback_percent		= 10;
+	dc->writeback_pd_update_seconds	= 5;
 
-	INIT_DELAYED_WORK(&dc->writeback_pd.update, update_writeback_rate);
+	bch_pd_controller_init(&dc->writeback_pd);
+	INIT_DELAYED_WORK(&dc->writeback_pd_update, update_writeback_rate);
 
 	return 0;
 }
@@ -619,7 +622,6 @@ int bch_cached_dev_writeback_start(struct cached_dev *dc)
 	if (IS_ERR(dc->writeback_thread))
 		return PTR_ERR(dc->writeback_thread);
 
-	bch_pd_controller_start(&dc->writeback_pd);
 	bch_writeback_queue(dc);
 
 	return 0;

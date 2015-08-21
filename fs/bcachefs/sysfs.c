@@ -152,6 +152,7 @@ rw_attribute(copy_gc_enabled);
 rw_attribute(tiering_enabled);
 rw_attribute(tiering_percent);
 sysfs_pd_controller_attribute(tiering);
+sysfs_pd_controller_attribute(foreground_write);
 
 rw_attribute(size);
 rw_attribute(meta_replicas);
@@ -321,8 +322,8 @@ STORE(bch_cached_dev)
 		bch_writeback_queue(dc);
 
 	if (attr == &sysfs_writeback_percent)
-		schedule_delayed_work(&dc->writeback_pd.update,
-				      dc->writeback_pd.update_seconds * HZ);
+		schedule_delayed_work(&dc->writeback_pd_update,
+				      dc->writeback_pd_update_seconds * HZ);
 
 	mutex_unlock(&bch_register_lock);
 	return size;
@@ -596,6 +597,7 @@ SHOW(__bch_cache_set)
 	sysfs_printf(copy_gc_enabled,		"%i", c->copy_gc_enabled);
 	sysfs_printf(tiering_enabled,		"%i", c->tiering_enabled);
 	sysfs_pd_controller_show(tiering,	&c->tiering_pd);
+	sysfs_pd_controller_show(foreground_write, &c->foreground_write_pd);
 
 	sysfs_print(btree_scan_ratelimit,	c->btree_scan_ratelimit);
 	sysfs_print(tiering_percent,		c->tiering_percent);
@@ -887,6 +889,7 @@ static struct attribute *bch_cache_set_internal_files[] = {
 	&sysfs_copy_gc_enabled,
 	&sysfs_tiering_enabled,
 	sysfs_pd_controller_files(tiering),
+	sysfs_pd_controller_files(foreground_write),
 
 	NULL
 };

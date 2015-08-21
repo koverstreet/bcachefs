@@ -634,7 +634,7 @@ static void cache_set_flush(struct closure *cl)
 	struct cache *ca;
 	unsigned i;
 
-	cancel_delayed_work_sync(&c->tiering_pd.update);
+	cancel_delayed_work_sync(&c->pd_controllers_update);
 
 	c->tiering_pd.rate.rate = UINT_MAX;
 	bch_ratelimit_reset(&c->tiering_pd.rate);
@@ -1006,6 +1006,8 @@ static const char *run_cache_set(struct cache_set *c)
 	err = "error starting tiering thread";
 	if (bch_tiering_thread_start(c))
 		goto err;
+
+	schedule_delayed_work(&c->pd_controllers_update, 5 * HZ);
 
 	closure_sync(&cl);
 	c->sb.last_mount = get_seconds();

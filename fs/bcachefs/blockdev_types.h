@@ -4,6 +4,7 @@
 #include "keybuf_types.h"
 #include "stats_types.h"
 #include "super_types.h"
+#include "util.h"
 
 struct bcache_device {
 	struct closure		cl;
@@ -83,6 +84,9 @@ struct cached_dev {
 
 	/* for dynamic rate control of writeback */
 	struct bch_pd_controller writeback_pd;
+	struct delayed_work	writeback_pd_update;
+	unsigned		writeback_pd_update_seconds;
+
 	struct task_struct	*writeback_thread;
 	struct keybuf		writeback_keys;
 	mempool_t		*writeback_io_pool;

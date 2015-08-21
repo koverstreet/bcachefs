@@ -427,6 +427,10 @@ struct cache_set {
 	struct workqueue_struct	*wq;
 
 	/* ALLOCATION */
+	struct delayed_work	pd_controllers_update;
+	unsigned		pd_controllers_update_seconds;
+	struct bch_pd_controller foreground_write_pd;
+
 	struct cache_group	cache_all;
 	struct cache_group	cache_tiers[CACHE_TIERS];
 	u64			capacity; /* sectors */

@@ -95,6 +95,156 @@ void bch_cache_group_add_cache(struct cache_group *grp, struct cache *ca)
 	write_seqcount_end(&grp->lock);
 }
 
+static inline struct cache *cache_group_next(struct cache_group *devs,
+					     unsigned *iter)
+{
+	struct cache *ret = NULL;
+
+	while (*iter < devs->nr_devices &&
+	       !(ret = rcu_dereference(devs->devices[*iter])))
+		(*iter)++;
+
+	return ret;
+}
+
+#define group_for_each_cache_rcu(ca, devs, iter)			\
+	for ((iter) = 0; ((ca) = cache_group_next((devs), &(iter))); (iter)++)
+
+/* Ratelimiting/PD controllers */
+
+/* Target amount of space lost to internal fragmentation */
+#define GC_TARGET_PERCENT 10
+
+/*
+ * (possibly) start throttling foreground writes when the amount free space
+ * (after taking into account reserve) is below this percentage:
+ */
+#define FOREGROUND_TARGET_PERCENT 20
+
+static void pd_controllers_update(struct work_struct *work)
+{
+	struct cache_set *c = container_of(to_delayed_work(work),
+					   struct cache_set,
+					   pd_controllers_update);
+	struct cache *ca;
+	unsigned iter, bucket_bits = c->bucket_bits + 9, highest_tier = 0;
+	int i;
+
+	/*
+	 * free + dirty do not sum to size because of internal fragmentation
+	 * (dirty is live dirty data, not dirty buckets)
+	 */
+	u64 tier_size[CACHE_TIERS];
+	u64 tier_free[CACHE_TIERS];
+	u64 tier_dirty[CACHE_TIERS];
+	u64 tier0_can_free = 0;
+
+	memset(tier_size, 0, sizeof(tier_size));
+	memset(tier_free, 0, sizeof(tier_free));
+	memset(tier_dirty, 0, sizeof(tier_dirty));
+
+	/* All units are in bytes */
+
+	rcu_read_lock();
+	for (i = CACHE_TIERS - 1; i >= 0; --i)
+		group_for_each_cache_rcu(ca, &c->cache_tiers[i], iter) {
+			struct bucket_stats stats = bucket_stats_read(ca);
+
+			/* bytes of internal fragmentation */
+
+			u64 fragmented = ((stats.buckets_dirty +
+					   stats.buckets_cached) <<
+					  bucket_bits) -
+				((stats.sectors_dirty +
+				  stats.sectors_cached) << 9);
+
+			u64 dev_size = (ca->sb.nbuckets -
+					ca->sb.first_bucket) << bucket_bits;
+
+			u64 free = __buckets_free_cache(ca, stats,
+						RESERVE_NONE) << bucket_bits;
+
+			u64 target = div_u64(dev_size *
+					     GC_TARGET_PERCENT, 100);
+
+			u64 available = __buckets_available_cache(ca, stats) <<
+				bucket_bits;
+
+			if (i <= highest_tier)
+				highest_tier = i;
+
+			/*
+			 * If this is the highest tier, we can't only go
+			 * off internal fragmentation - copygc is the
+			 * only method we have of freeing up space, so
+			 * we need to crank the rate up if the number of
+			 * available buckets is too low as well.
+			 *
+			 * XXX: it would probably be ideal if we could take
+			 * fragmentation (i.e.  how much work it's possible to
+			 * do) into account in both cases.
+			 *
+			 * Without that, we're relying on -ENOSPC (i.e. never
+			 * oversubscribing) to keep copygc from spinning when
+			 * we're almost full.
+			 */
+			if (i == highest_tier && available < target) {
+				tier0_can_free += target - available;
+
+				bch_pd_controller_update(&ca->moving_gc_pd,
+							 target,
+							 available,
+							 1);
+			} else {
+				if (i == 0 && fragmented > target)
+					tier0_can_free += fragmented - target;
+
+				bch_pd_controller_update(&ca->moving_gc_pd,
+							 target,
+							 fragmented,
+							 -1);
+			}
+
+			tier_size[i] += dev_size;
+			tier_free[i] += free;
+			tier_dirty[i] += stats.sectors_dirty << 9;
+		}
+	rcu_read_unlock();
+
+	if (tier_size[1]) {
+		u64 target = div_u64(tier_size[0] * c->tiering_percent, 100);
+
+		tier0_can_free = max_t(s64, 0, tier_dirty[0] - target);
+
+		bch_pd_controller_update(&c->tiering_pd,
+					 target,
+					 tier_dirty[0],
+					 -1);
+	}
+
+	/*
+	 * Throttle foreground writes if tier 0 is running out of free buckets,
+	 * and either tiering or copygc can free up space (but don't take both
+	 * into account).
+	 *
+	 * Target will be small if there isn't any work to do - we don't want to
+	 * throttle foreground writes if we currently have all the free space
+	 * we're ever going to have.
+	 *
+	 * Otherwise, if there's work to do, try to keep 20% of tier0 available
+	 * for foreground writes.
+	 */
+	bch_pd_controller_update(&c->foreground_write_pd,
+				 min(tier0_can_free,
+				     div_u64(tier_size[0] *
+					     FOREGROUND_TARGET_PERCENT, 100)),
+				 tier_free[0],
+				 -1);
+
+	schedule_delayed_work(&c->pd_controllers_update,
+			      c->pd_controllers_update_seconds * HZ);
+}
+
 /*
  * Bucket priorities/gens:
  *
@@ -811,10 +961,7 @@ static struct cache *bch_next_cache(struct cache_set *c,
 	 * it is likely to go that tier.
 	 */
 
-	for (i = 0; i < devs->nr_devices; i++) {
-		if (!(ca = rcu_dereference(devs->devices[i])))
-			continue;
-
+	group_for_each_cache_rcu(ca, devs, i) {
 		if (test_bit(ca->sb.nr_this_dev, cache_used))
 			continue;
 
@@ -834,10 +981,7 @@ static struct cache *bch_next_cache(struct cache_set *c,
 
 	rand = bch_rand_range(bucket_count);
 
-	for (i = 0; i < devs->nr_devices; i++) {
-		if (!(ca = rcu_dereference(devs->devices[i])))
-			continue;
-
+	group_for_each_cache_rcu(ca, devs, i) {
 		if (test_bit(ca->sb.nr_this_dev, cache_used))
 			continue;
 
@@ -1237,6 +1381,11 @@ void bch_open_buckets_init(struct cache_set *c)
 		seqcount_init(&c->cache_tiers[i].lock);
 		c->tier_write_points[i].tier = &c->cache_tiers[i];
 	}
+
+	c->pd_controllers_update_seconds = 5;
+	INIT_DELAYED_WORK(&c->pd_controllers_update, pd_controllers_update);
+
+	bch_pd_controller_init(&c->foreground_write_pd);
 }
 
 /*
