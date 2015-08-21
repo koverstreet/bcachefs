@@ -16,7 +16,6 @@
 #include "writeback.h"
 
 #include <linux/blkdev.h>
-#include <linux/buffer_head.h>
 #include <linux/debugfs.h>
 #include <linux/genhd.h>
 #include <linux/idr.h>
@@ -147,21 +146,6 @@ static const char *bch_blkdev_open(const char *path, void *holder,
 
 	*ret = bdev;
 	return NULL;
-}
-
-struct bcache_device *bch_dev_get_by_inode(struct cache_set *c, u64 inode)
-{
-	struct bcache_device *d;
-
-	rcu_read_lock();
-
-	d = bch_dev_find(c, inode);
-	if (d)
-		closure_get(&d->cl);
-
-	rcu_read_unlock();
-
-	return d;
 }
 
 /* Superblock */
