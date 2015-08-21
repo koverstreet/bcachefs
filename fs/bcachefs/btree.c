@@ -241,6 +241,15 @@ void bch_btree_node_read_done(struct btree *b)
 		if (i != b->keys.set[0].data && !i->keys)
 			goto err;
 
+		if (b->level) {
+			struct bkey *k;
+
+			for (k = i->start;
+			     k != bset_bkey_last(i) && !bkey_cmp(k, &ZERO_KEY);
+			     k = bkey_next(k))
+				SET_KEY_SIZE(k, 0);
+		}
+
 		bch_btree_iter_push(iter, i->start, bset_bkey_last(i));
 
 		b->written += set_blocks(i, block_bytes(b->c));
@@ -1156,6 +1165,7 @@ static void make_btree_freeing_key(struct btree *b, struct bkey *k)
 
 	bkey_copy(k, &b->key);
 	bkey_copy_key(k, &ZERO_KEY);
+	SET_KEY_SIZE(k, 0);
 
 	for (i = 0; i < KEY_PTRS(k); i++)
 		SET_PTR_GEN(k, i,
@@ -1241,7 +1251,7 @@ static uint8_t __bch_btree_mark_key(struct cache_set *c, int level,
 					     GC_SECTORS_USED(g) + KEY_SIZE(k),
 					     MAX_GC_SECTORS_USED));
 
-		BUG_ON(!GC_SECTORS_USED(g));
+		BUG_ON(KEY_SIZE(k) && !GC_SECTORS_USED(g));
 	}
 
 	return stale;

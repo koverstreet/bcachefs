@@ -184,7 +184,10 @@ bool __bch_btree_ptr_invalid(struct cache_set *c, const struct bkey *k)
 {
 	char buf[80];
 
-	if (!KEY_PTRS(k) || !KEY_SIZE(k) || KEY_DIRTY(k))
+	if (!KEY_PTRS(k) || KEY_DIRTY(k))
+		goto bad;
+
+	if (bkey_cmp(k, &ZERO_KEY) && !KEY_SIZE(k))
 		goto bad;
 
 	if (__ptr_invalid(c, k))
