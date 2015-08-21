@@ -196,7 +196,7 @@ u8 bch_mark_data_bucket(struct cache_set *c, struct cache *ca, struct bkey *k,
 		 * GC starting between when we check gc_cur_key and when
 		 * the GC zeroes out marks
 		 */
-		if (!gc && gc_will_visit_key(c, k))
+		if (!gc && gc_will_visit_key(c, BTREE_ID_EXTENTS, k))
 			return 0;
 
 		/*

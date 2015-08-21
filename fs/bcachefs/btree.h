@@ -284,10 +284,12 @@ int bch_btree_map_keys(struct btree_op *, struct cache_set *, struct bkey *,
  * seqlock.
  */
 static inline bool __gc_will_visit_key(struct cache_set *c,
+				       enum btree_id id,
 				       const struct bkey *k)
 {
-	return (c->gc_cur_btree == BTREE_ID_EXTENTS &&
-		bkey_cmp(&c->gc_cur_key, k) < 0);
+	return c->gc_cur_btree != id
+		? c->gc_cur_btree < id
+		: bkey_cmp(&c->gc_cur_key, k) < 0;
 }
 
 /**
@@ -297,6 +299,7 @@ static inline bool __gc_will_visit_key(struct cache_set *c,
  * into -- the GC will do it before the current pass ends.
  */
 static inline bool gc_will_visit_key(struct cache_set *c,
+				     enum btree_id id,
 				     const struct bkey *k)
 {
 	unsigned seq;
@@ -304,7 +307,7 @@ static inline bool gc_will_visit_key(struct cache_set *c,
 
 	do {
 		seq = read_seqbegin(&c->gc_cur_lock);
-		ret = __gc_will_visit_key(c, k);
+		ret = __gc_will_visit_key(c, id, k);
 	} while (read_seqretry(&c->gc_cur_lock, seq));
 
 	return ret;

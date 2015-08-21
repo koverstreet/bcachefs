@@ -319,7 +319,8 @@ static bool btree_ptr_debug_invalid(struct btree_keys *bk, struct bkey *k)
 
 			do {
 				seq = read_seqbegin(&c->gc_cur_lock);
-				bad = (!__gc_will_visit_key(c, k) &&
+				bad = (!__gc_will_visit_key(c, b->btree_id,
+							    k) &&
 				       !g->mark.is_metadata);
 			} while (read_seqretry(&c->gc_cur_lock, seq));
 
@@ -889,7 +890,8 @@ static bool bch_extent_debug_invalid(struct btree_keys *bk, struct bkey *k)
 					     stale);
 
 				bad = (!stale &&
-				       !__gc_will_visit_key(c, k) &&
+				       !__gc_will_visit_key(c, b->btree_id,
+							    k) &&
 				       (mark.is_metadata ||
 					(!mark.dirty_sectors &&
 					 !mark.owned_by_allocator &&
