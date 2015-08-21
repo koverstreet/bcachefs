@@ -832,6 +832,7 @@ unsigned bch_btree_insert_key(struct btree_keys *b, struct bkey *k,
 	struct bset *i = bset_tree_last(b)->data;
 	struct bkey *m, *prev = NULL;
 	struct btree_iter iter;
+	BKEY_PADDED(k) tmp;
 
 	BUG_ON(b->ops->is_extents && !KEY_SIZE(k));
 
@@ -853,16 +854,29 @@ unsigned bch_btree_insert_key(struct btree_keys *b, struct bkey *k,
 	if (prev &&
 	    bch_bkey_try_merge(b, prev, k))
 		goto merged;
-#if 0
+
 	status = BTREE_INSERT_STATUS_OVERWROTE;
 	if (m != bset_bkey_last(i) &&
+	    b->ops->is_extents &&
 	    KEY_PTRS(m) == KEY_PTRS(k) && !KEY_SIZE(m))
 		goto copy;
-#endif
+
 	status = BTREE_INSERT_STATUS_FRONT_MERGE;
 	if (m != bset_bkey_last(i) &&
-	    bch_bkey_try_merge(b, k, m))
-		goto copy;
+	    KEY_PTRS(k) <= BKEY_PAD_PTRS) {
+		bkey_copy(&tmp.k, k);
+		k = &tmp.k;
+
+		/*
+		 * bch_bkey_try_merge() modifies the left argument, but we can't
+		 * modify k since the caller needs to be able to journal the key
+		 * that was actually inserted (and it can't just pass us a copy
+		 * of k, since ->insert_fixup() might trim k if this is a
+		 * replace operation)
+		 */
+		if (bch_bkey_try_merge(b, k, m))
+			goto copy;
+	}
 
 	bch_bset_insert(b, m, k);
 copy:	bkey_copy(m, k);

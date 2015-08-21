@@ -655,7 +655,7 @@ void bch_journal_write_put(struct cache_set *c,
 	__releases(c->journal.lock)
 {
 	if (parent) {
-		closure_wait(&w->wait, parent);
+		BUG_ON(!closure_wait(&w->wait, parent));
 		set_bit(JOURNAL_DIRTY, &c->journal.flags);
 		journal_try_write(c);
 	} else if (!test_bit(JOURNAL_DIRTY, &c->journal.flags)) {
@@ -715,35 +715,6 @@ static struct journal_write *__journal_meta_write_get(struct cache_set *c,
 	if (!ret)
 		btree_flush_write(c);
 	return NULL;
-}
-
-/*
- * Entry point to the journalling code - bio_insert() and btree_invalidate()
- * pass bch_journal() a list of keys to be journalled, and then
- * bch_journal() hands those same keys off to btree_insert_async()
- */
-
-atomic_t *bch_journal(struct cache_set *c,
-		      struct keylist *keys,
-		      struct closure *parent)
-{
-	struct journal_write *w;
-	atomic_t *ret;
-
-	if (!CACHE_SYNC(&c->sb))
-		return NULL;
-
-	wait_event(c->journal.wait,
-		   (w = __journal_meta_write_get(c, bch_keylist_nkeys(keys))));
-
-	bch_journal_add_keys(w->data, keys->keys, bch_keylist_nkeys(keys));
-
-	ret = &fifo_back(&c->journal.pin);
-	atomic_inc(ret);
-
-	bch_journal_write_put(c, w, parent);
-
-	return ret;
 }
 
 void bch_journal_meta(struct cache_set *c, struct closure *parent)

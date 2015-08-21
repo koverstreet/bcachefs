@@ -97,7 +97,6 @@ struct cache_set;
 struct btree_op;
 struct keylist;
 
-atomic_t *bch_journal(struct cache_set *, struct keylist *, struct closure *);
 void btree_flush_write(struct cache_set *);
 struct journal_write *bch_journal_write_get(struct cache_set *, unsigned)
 	__acquires(c->journal.lock);

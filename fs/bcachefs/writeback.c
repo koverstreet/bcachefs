@@ -142,7 +142,7 @@ static void write_dirty_finish(struct closure *cl)
 		for (i = 0; i < KEY_PTRS(&w->key); i++)
 			atomic_inc(&PTR_BUCKET(dc->disk.c, &w->key, i)->pin);
 
-		ret = bch_btree_insert(dc->disk.c, &keys, NULL, &w->key);
+		ret = bch_btree_insert(dc->disk.c, &keys, &w->key, NULL);
 
 		if (ret)
 			trace_bcache_writeback_collision(&w->key);

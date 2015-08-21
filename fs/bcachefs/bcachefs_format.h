@@ -124,11 +124,10 @@ static inline struct bkey *bkey_idx(const struct bkey *k, unsigned nr_keys)
 	__u64 *d = (void *) k;
 	return (struct bkey *) (d + nr_keys);
 }
-/* Enough for a key with 6 pointers */
-#define BKEY_PAD		8
+#define BKEY_PAD_PTRS		4
 
 #define BKEY_PADDED(key)					\
-	union { struct bkey key; __u64 key ## _pad[BKEY_PAD]; }
+	struct { struct bkey key; __u64 key ## _pad[BKEY_PAD_PTRS]; }
 
 /* Superblock */
 
