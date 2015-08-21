@@ -137,6 +137,7 @@ void bch_mark_metadata_bucket(struct cache *ca, struct bucket *g)
 
 #define saturated_add(ca, dst, src, max)			\
 do {								\
+	BUG_ON((int) (dst) + (src) < 0);			\
 	if ((dst) == (max))					\
 		;						\
 	else if ((dst) + (src) <= (max))			\

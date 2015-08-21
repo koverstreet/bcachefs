@@ -872,8 +872,8 @@ static bool bch_extent_bad_expensive(struct btree *b, const struct bkey *k)
 	return false;
 err:
 	bch_extent_to_text(buf, sizeof(buf), k);
-	btree_bug(b, "inconsistent extent pointer %s:\nbucket %zu prio %i "
-		  "gen %i last_gc %i mark 0x%08x",
+	btree_bug(b, "extent pointer %i bad: %s:\nbucket %zu prio %i "
+		  "gen %i last_gc %i mark 0x%08x", i,
 		  buf, PTR_BUCKET_NR(b->c, k, i),
 		  g->read_prio, PTR_BUCKET_GEN(b->c, ca, k, i),
 		  g->last_gc, g->mark.counter);
