@@ -1356,23 +1356,15 @@ static struct btree *bch_btree_node_alloc(struct cache_set *c,
 	struct btree *b;
 	enum alloc_reserve reserve = (op ? op->reserve : id);
 
-retry:
 	if (bch_bucket_alloc_set(c, reserve, &k.key,
 				 CACHE_SET_META_REPLICAS_WANT(&c->sb),
 				 &c->cache_all, NULL))
-		goto err;
+		BUG();
 
 	BUG_ON(KEY_SIZE(&k.key));
 
 	b = mca_alloc(c, &k.key, level, id, NULL);
-	if (IS_ERR(b))
-		goto err;
-
-	if (!b) {
-		cache_set_bug(c,
-			"Tried to allocate bucket that was in btree cache");
-		goto retry;
-	}
+	BUG_ON(IS_ERR_OR_NULL(b));
 
 	bch_check_mark_super(c, &b->key, true);
 
@@ -1384,9 +1376,6 @@ retry:
 
 	trace_bcache_btree_node_alloc(b);
 	return b;
-err:
-	trace_bcache_btree_node_alloc_fail(c, id);
-	return NULL;
 }
 
 static struct btree *btree_node_alloc_replacement(struct btree *b,
@@ -1395,14 +1384,12 @@ static struct btree *btree_node_alloc_replacement(struct btree *b,
 	struct btree *n;
 
 	n = bch_btree_node_alloc(b->c, op, b->level, b->btree_id, b->parent);
-	if (n) {
-		bch_btree_sort_into(&n->keys, &b->keys,
-				    b->keys.ops->key_normalize,
-				    &b->c->sort);
+	bch_btree_sort_into(&n->keys, &b->keys,
+			    b->keys.ops->key_normalize,
+			    &b->c->sort);
 
-		bkey_copy_key(&n->key, &b->key);
-		trace_bcache_btree_node_alloc_replacement(b, n);
-	}
+	bkey_copy_key(&n->key, &b->key);
+	trace_bcache_btree_node_alloc_replacement(b, n);
 
 	return n;
 }
@@ -1472,8 +1459,6 @@ int bch_btree_root_alloc(struct cache_set *c, enum btree_id id,
 		closure_sync(&op.cl);
 
 	b = bch_btree_node_alloc(c, NULL, 0, id, NULL);
-	if (!b)
-		return -EINVAL;
 
 	bkey_copy_key(&b->key, &MAX_KEY);
 	six_unlock_write(&b->lock);
@@ -1927,18 +1912,17 @@ static int bch_btree_gc_root(struct btree *b, struct btree_op *op,
 	bool should_rewrite;
 
 	should_rewrite = btree_gc_mark_node(b, gc);
-	if (should_rewrite) {
+	if (should_rewrite &&
+	    btree_check_reserve(b, NULL, 1)) {
 		n = btree_node_alloc_replacement(b, NULL);
 
-		if (!IS_ERR_OR_NULL(n)) {
-			six_unlock_write(&n->lock);
-			bch_btree_node_write_sync(n);
+		six_unlock_write(&n->lock);
+		bch_btree_node_write_sync(n);
 
-			bch_btree_set_root(n);
-			six_unlock_intent(&n->lock);
+		bch_btree_set_root(n);
+		six_unlock_intent(&n->lock);
 
-			return -EINTR;
-		}
+		return -EINTR;
 	}
 
 	__bch_btree_mark_key(b->c, b->level + 1, &b->key);
