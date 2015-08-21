@@ -26,6 +26,7 @@
 #include "buckets.h"
 #include "debug.h"
 #include "extents.h"
+#include "io.h"
 #include "journal.h"
 #include "movinggc.h"
 #include "writeback.h"

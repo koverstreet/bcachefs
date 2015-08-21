@@ -238,7 +238,7 @@ struct bucket {
 	u8			copygc_gen;
 };
 
-#include "stats.h"
+#include "stats_types.h"
 #include "inode.h"
 struct search;
 struct btree;
@@ -1171,21 +1171,6 @@ static inline void bch_check_mark_super(struct cache_set *c,
 }
 
 /* Forward declarations */
-
-void bch_count_io_errors(struct cache *, int, const char *);
-void bch_bbio_count_io_errors(struct bbio *, int, const char *);
-void bch_bbio_endio(struct bbio *, int, const char *);
-void bch_bbio_free(struct bio *, struct cache_set *);
-struct bio *bch_bbio_alloc(struct cache_set *);
-
-void bch_generic_make_request(struct bio *, struct cache_set *);
-void bch_bio_submit_work(struct work_struct *);
-void bch_bbio_prep(struct bbio *, struct cache *);
-void bch_submit_bbio(struct bbio *, struct cache *, struct bkey *,
-		     unsigned, bool);
-void bch_submit_bbio_replicas(struct bio *, struct cache_set *,
-			      struct bkey *, unsigned, bool);
-void bch_bbio_reset(struct bbio *bio);
 
 __printf(2, 3)
 bool bch_cache_set_error(struct cache_set *, const char *, ...);

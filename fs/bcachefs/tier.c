@@ -3,6 +3,7 @@
 #include "btree.h"
 #include "buckets.h"
 #include "extents.h"
+#include "io.h"
 #include "keybuf.h"
 #include "move.h"
 

@@ -10,6 +10,7 @@
 #include "alloc.h"
 #include "btree.h"
 #include "debug.h"
+#include "io.h"
 #include "journal.h"
 #include "movinggc.h"
 #include "request.h"

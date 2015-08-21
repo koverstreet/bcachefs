@@ -8,6 +8,7 @@
 #include "btree.h"
 #include "debug.h"
 #include "extents.h"
+#include "io.h"
 #include "journal.h"
 
 #include <trace/events/bcachefs.h>
