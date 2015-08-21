@@ -134,7 +134,8 @@ static int btree_insert_fn(struct btree_op *b_op, struct btree *b)
 	struct bkey *replace_key = op->replace ? &op->replace_key : NULL;
 
 	int ret = bch_btree_insert_node(b, &op->op, &op->insert_keys,
-					replace_key, op->flush);
+					replace_key,
+					op->flush ? &op->cl : NULL);
 	return bch_keylist_empty(&op->insert_keys) ? MAP_DONE : ret;
 }
 
