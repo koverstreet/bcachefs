@@ -555,12 +555,10 @@ int bch_bucket_wait(struct cache_set *c, enum alloc_reserve reserve,
 	return -ENOSPC;
 }
 
-long bch_bucket_alloc(struct cache *ca, enum alloc_reserve reserve,
-		      struct closure *cl)
+long bch_bucket_alloc(struct cache *ca, enum alloc_reserve reserve)
 {
 	bool meta = reserve <= RESERVE_METADATA_LAST;
 	struct bucket *g;
-	int ret;
 	long r;
 
 	spin_lock(&ca->freelist_lock);
@@ -568,12 +566,11 @@ long bch_bucket_alloc(struct cache *ca, enum alloc_reserve reserve,
 	    fifo_pop(&ca->free[reserve], r))
 		goto out;
 
-	ret = bch_bucket_wait(ca->set, reserve, cl);
 	spin_unlock(&ca->freelist_lock);
-	return ret;
+	return -ENOSPC;
 out:
 	verify_not_on_freelist(ca, r);
-	trace_bcache_bucket_alloc(ca, reserve, cl);
+	trace_bcache_bucket_alloc(ca, reserve);
 	spin_unlock(&ca->freelist_lock);
 
 	wake_up_process(ca->alloc_thread);
@@ -751,7 +748,7 @@ retry:
 
 		__set_bit(ca->sb.nr_this_dev, caches_used);
 
-		r = bch_bucket_alloc(ca, reserve, cl);
+		r = bch_bucket_alloc(ca, reserve);
 		if (r < 0) {
 			ret = r;
 			goto err;
@@ -850,7 +847,7 @@ static struct open_bucket *bch_open_bucket_alloc(struct cache_set *c,
 	if (wp->ca) {
 		long bucket;
 
-		bucket = bch_bucket_alloc(wp->ca, RESERVE_MOVINGGC, cl);
+		bucket = bch_bucket_alloc(wp->ca, RESERVE_MOVINGGC);
 		if (bucket < 0) {
 			ret = bucket;
 			goto err;

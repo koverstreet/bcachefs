@@ -794,36 +794,25 @@ DEFINE_EVENT(cache_set, bcache_rescale_prios,
 );
 
 DECLARE_EVENT_CLASS(bucket_alloc,
-	TP_PROTO(struct cache *ca, enum alloc_reserve reserve,
-		 struct closure *cl),
-	TP_ARGS(ca, reserve, cl),
+	TP_PROTO(struct cache *ca, enum alloc_reserve reserve),
+	TP_ARGS(ca, reserve),
 
 	TP_STRUCT__entry(
 		__array(char,			uuid,	16)
 		__field(enum alloc_reserve,	reserve	  )
-		__field(struct closure *,	cl	  )
 	),
 
 	TP_fast_assign(
 		memcpy(__entry->uuid, ca->sb.uuid.b, 16);
 		__entry->reserve = reserve;
-		__entry->cl = cl;
 	),
 
-	TP_printk("%pU reserve %d cl %p", __entry->uuid, __entry->reserve,
-		  __entry->cl)
-);
-
-DEFINE_EVENT(bucket_alloc, bcache_bucket_alloc_fail,
-	TP_PROTO(struct cache *ca, enum alloc_reserve reserve,
-		 struct closure *cl),
-	TP_ARGS(ca, reserve, cl)
+	TP_printk("%pU reserve %d", __entry->uuid, __entry->reserve)
 );
 
 DEFINE_EVENT(bucket_alloc, bcache_bucket_alloc,
-	TP_PROTO(struct cache *ca, enum alloc_reserve reserve,
-		 struct closure *cl),
-	TP_ARGS(ca, reserve, cl)
+	TP_PROTO(struct cache *ca, enum alloc_reserve reserve),
+	TP_ARGS(ca, reserve)
 );
 
 TRACE_EVENT(bcache_bucket_alloc_set_fail,

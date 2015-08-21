@@ -647,7 +647,7 @@ void bch_prio_write(struct cache *ca)
 					       bucket_bytes(ca) - 8);
 
 		spin_lock(&ca->prio_buckets_lock);
-		r = bch_bucket_alloc(ca, RESERVE_PRIO, NULL);
+		r = bch_bucket_alloc(ca, RESERVE_PRIO);
 		BUG_ON(r < 0);
 
 		/*
