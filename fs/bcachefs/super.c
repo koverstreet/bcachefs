@@ -145,7 +145,7 @@ static const char *read_super(struct cache_sb *sb, struct block_device *bdev,
 			goto err;
 
 		err = "Not enough buckets";
-		if (sb->nbuckets < 1 << 7)
+		if (sb->nbuckets < 1 << 8)
 			goto err;
 
 		err = "Bad block/bucket size";
@@ -1828,10 +1828,10 @@ static int cache_alloc(struct cache *ca)
 	ca->journal.bio.bi_max_vecs = 8;
 	ca->journal.bio.bi_io_vec = ca->journal.bio.bi_inline_vecs;
 
-	free = roundup_pow_of_two(ca->sb.nbuckets) >> 10;
+	free = max_t(size_t, 4, ca->sb.nbuckets >> 10);
 
 	if (!init_fifo(&ca->free[RESERVE_BTREE], 8, GFP_KERNEL) ||
-	    !init_fifo_exact(&ca->free[RESERVE_PRIO], prio_buckets(ca), GFP_KERNEL) ||
+	    !init_fifo(&ca->free[RESERVE_PRIO], prio_buckets(ca), GFP_KERNEL) ||
 	    !init_fifo(&ca->free[RESERVE_MOVINGGC], free, GFP_KERNEL) ||
 	    !init_fifo(&ca->free[RESERVE_NONE], free, GFP_KERNEL) ||
 	    !init_fifo(&ca->free_inc,	free << 2, GFP_KERNEL) ||

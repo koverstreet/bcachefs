@@ -126,9 +126,11 @@ do {									\
 	     c = (fifo)->data[iter], iter != (fifo)->back;		\
 	     iter = (iter + 1) & (fifo)->mask)
 
-#define __init_fifo(fifo, gfp)						\
+#define init_fifo(fifo, _size, gfp)					\
 ({									\
 	size_t _allocated_size, _bytes;					\
+	(fifo)->size = (_size);						\
+									\
 	BUG_ON(!(fifo)->size);						\
 									\
 	_allocated_size = roundup_pow_of_two((fifo)->size + 1);		\
@@ -143,20 +145,6 @@ do {									\
 	if ((!(fifo)->data) && ((gfp) & GFP_KERNEL))			\
 		(fifo)->data = vmalloc(_bytes);				\
 	(fifo)->data;							\
-})
-
-#define init_fifo_exact(fifo, _size, gfp)				\
-({									\
-	(fifo)->size = (_size);						\
-	__init_fifo(fifo, gfp);						\
-})
-
-#define init_fifo(fifo, _size, gfp)					\
-({									\
-	(fifo)->size = (_size);						\
-	if ((fifo)->size > 4)						\
-		(fifo)->size = roundup_pow_of_two((fifo)->size) - 1;	\
-	__init_fifo(fifo, gfp);						\
 })
 
 #define free_fifo(fifo)							\
