@@ -776,42 +776,26 @@ static int cache_lookup_fn(struct btree_op *op, struct btree *b, struct bkey *k)
 	struct search *s = container_of(op, struct search, op);
 	struct bio *n, *bio = &s->bio.bio;
 	struct bkey *bio_key;
+	unsigned sectors;
 	int ptr;
 
-	if (!k)
-		k = &KEY(KEY_INODE(&b->key), KEY_OFFSET(&b->key), 0);
+	BUG_ON(bkey_cmp(&START_KEY(k),
+			&KEY(s->inode, bio->bi_iter.bi_sector, 0)) > 0);
 
-	if (bkey_cmp(k, &KEY(s->inode, bio->bi_iter.bi_sector, 0)) <= 0)
-		return MAP_CONTINUE;
+	BUG_ON(bkey_cmp(k, &KEY(s->inode, bio->bi_iter.bi_sector, 0)) <= 0);
 
-	if (KEY_INODE(k) != s->inode ||
-	    KEY_START(k) > bio->bi_iter.bi_sector) {
-		unsigned bio_sectors = bio_sectors(bio);
-		unsigned sectors = KEY_INODE(k) == s->inode
-			? min_t(uint64_t, INT_MAX,
-				KEY_START(k) - bio->bi_iter.bi_sector)
-			: INT_MAX;
-
-		int ret = s->d->cache_miss(b, s, bio, sectors);
-		if (ret != MAP_CONTINUE)
-			return ret;
-
-		/* if this was a complete miss we shouldn't get here */
-		BUG_ON(bio_sectors <= sectors);
-	}
+	sectors = KEY_OFFSET(k) - bio->bi_iter.bi_sector;
 
 	ptr = bch_extent_pick_ptr(b->c, k);
-	if (ptr < 0) /* all stale? */
-		return MAP_CONTINUE;
+	if (ptr < 0) /* no pointers (hole), or all stale */
+		return s->d->cache_miss(b, s, bio, sectors);
 
 	PTR_BUCKET(b->c, k, ptr)->read_prio = b->c->read_clock.hand;
 
 	if (!KEY_CACHED(k))
 		s->read_dirty_data = true;
 
-	n = bio_next_split(bio, min_t(uint64_t, INT_MAX,
-				      KEY_OFFSET(k) - bio->bi_iter.bi_sector),
-			   GFP_NOIO, s->d->bio_split);
+	n = bio_next_split(bio, sectors, GFP_NOIO, s->d->bio_split);
 
 	bio_key = &container_of(n, struct bbio, bio)->key;
 	bch_bkey_copy_single_ptr(bio_key, k, ptr);
@@ -851,7 +835,7 @@ static void cache_lookup(struct closure *cl)
 
 	ret = bch_btree_map_keys(&s->op, s->iop.c, BTREE_ID_EXTENTS,
 				 &KEY(s->inode, bio->bi_iter.bi_sector, 0),
-				 cache_lookup_fn, MAP_END_KEY);
+				 cache_lookup_fn, MAP_HOLES);
 	if (ret == -EAGAIN)
 		continue_at(cl, cache_lookup, bcache_wq);
 

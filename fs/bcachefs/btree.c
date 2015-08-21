@@ -2489,16 +2489,18 @@ int __bch_btree_map_nodes(struct btree_op *op, struct cache_set *c,
 	return btree_root(map_nodes_recurse, c, id, op, &from, fn, flags);
 }
 
-static int do_map_fn(struct btree *b, struct btree_op *op,
-		     struct bkey *from, btree_map_keys_fn *fn,
-		     struct bkey *k)
+static int do_map_fn(struct btree *b, struct btree_op *op, struct bkey *from,
+		     btree_map_keys_fn *fn, struct bkey *k)
 {
-	struct bkey next = k
-		? NEXT_KEY(k)
-		: bkey_cmp(&b->key, &MAX_KEY)
-		? NEXT_KEY(&b->key) : b->key;
+	int ret;
+	struct bkey next = *k;
 
-	int ret = fn(op, b, k);
+	if (b->btree_id == BTREE_ID_INODES)
+		SET_KEY_INODE(&next, KEY_INODE(&next) + 1);
+	else if (b->btree_id != BTREE_ID_EXTENTS)
+		next = NEXT_KEY(&next);
+
+	ret = fn(op, b, k);
 
 	if (ret == MAP_CONTINUE)
 		*from = next;
@@ -2509,34 +2511,120 @@ static int do_map_fn(struct btree *b, struct btree_op *op,
 	return ret;
 }
 
-static int bch_btree_map_keys_recurse(struct btree *b, struct btree_op *op,
-				      struct bkey *from, btree_map_keys_fn *fn,
-				      int flags)
+/**
+ * map_hole - handle holes for map_keys()
+ *
+ * calls the map fn for every key in the interval [from, to)
+ */
+static int map_hole(struct btree *b, struct btree_op *op,
+		    struct bkey *from, struct bkey *to,
+		    btree_map_keys_fn *fn)
 {
-	int ret = MAP_CONTINUE;
-	struct bkey *k;
-	struct btree_iter iter;
+	BUG_ON(b->btree_id != BTREE_ID_EXTENTS &&
+	       KEY_SIZE(to));
 
-	bch_btree_iter_init(&b->keys, &iter, from);
+	while (bkey_cmp(from, &START_KEY(to)) < 0) {
+		struct bkey next = *from;
+		int ret;
 
-	while ((k = bch_btree_iter_next_filter(&iter, &b->keys, bch_ptr_bad))) {
-		ret = !b->level
-			? do_map_fn(b, op, from, fn, k)
-			: btree(map_keys_recurse, k, b, op, from, fn, flags);
+		bch_set_val_u64s(&next, 0);
 
-		if (ret == MAP_CONTINUE && op->iterator_invalidated)
-			ret = -EINTR;
+		if (b->btree_id == BTREE_ID_EXTENTS) {
+			unsigned size;
+
+			if (KEY_OFFSET(&next) == MAX_KEY_OFFSET) {
+				if (KEY_INODE(&next) == KEY_INODE(to))
+					return MAP_CONTINUE;
+
+				SET_KEY_INODE(&next, KEY_INODE(&next + 1));
+				SET_KEY_OFFSET(&next, 0);
+			}
+
+			size = min_t(u64, KEY_SIZE_MAX,
+				     (KEY_INODE(to) == KEY_INODE(&next)
+				      ? KEY_START(to) : MAX_KEY_OFFSET) -
+				     KEY_OFFSET(&next));
+
+			BUG_ON(!size);
+
+			SET_KEY_SIZE(&next, size);
+			SET_KEY_OFFSET(&next, KEY_OFFSET(&next) + size);
+		}
+
+		ret = do_map_fn(b, op, from, fn, &next);
 
 		if (ret != MAP_CONTINUE)
 			return ret;
 	}
 
-	if (!b->level && (flags & MAP_END_KEY))
-		ret = do_map_fn(b, op, from, fn, k);
+	return MAP_CONTINUE;
+}
 
-	if (ret == MAP_CONTINUE && op->iterator_invalidated)
-		ret = -EINTR;
+static int bch_btree_map_keys_recurse(struct btree *b, struct btree_op *op,
+				      struct bkey *from, btree_map_keys_fn *fn,
+				      int flags)
+{
+	int ret = MAP_CONTINUE;
+	struct bkey *k, search = *from;
+	struct btree_iter iter;
 
+	if (b->btree_id == BTREE_ID_EXTENTS)
+		search = NEXT_KEY(&search);
+
+	bch_btree_iter_init(&b->keys, &iter, &search);
+
+	while ((k = bch_btree_iter_next_filter(&iter, &b->keys, bch_ptr_bad))) {
+		BUG_ON(bkey_cmp(k, from) < 0);
+
+		if (!b->level) {
+			if (flags & MAP_HOLES) {
+				ret = map_hole(b, op, from, k, fn);
+
+				if (ret != MAP_CONTINUE)
+					goto out;
+			}
+
+			ret = do_map_fn(b, op, from, fn, k);
+		} else {
+			ret = btree(map_keys_recurse, k, b,
+				    op, from, fn, flags);
+		}
+
+		if (ret != MAP_CONTINUE)
+			goto out;
+	}
+
+	/* whatever is left up to the end of the btree node is a hole */
+	if (!b->level) {
+		/*
+		 * map_hole() expects a half open interval - [from, next)
+		 *
+		 * the btree node contains keys in the interval (.., * b->key],
+		 *
+		 * for extents (which are half open intervals) this all works
+		 * out magically, but for non extents we need to pass b->key + 1
+		 */
+		struct bkey next = KEY(KEY_INODE(&b->key),
+				       KEY_OFFSET(&b->key), 0);
+
+		if (b->btree_id != BTREE_ID_EXTENTS &&
+		    bkey_cmp(&b->key, &MAX_KEY))
+			next = NEXT_KEY(&next);
+
+		/* If we're not mapping holes, we need to advance @from to
+		 * ensure that we don't re-visit the same leaf node again in
+		 * the case where that leaf node has no keys */
+		if (flags & MAP_HOLES)
+			ret = map_hole(b, op, from, &next, fn);
+		else
+			*from = next;
+	}
+
+out:
+	/* If there's no more work to be done, don't do the lookup again,
+	 * we will crash in the NEXT_KEY() call at the top here */
+	if (ret == -EINTR && bkey_cmp(from, &MAX_KEY) == 0)
+		ret = 0;
 	return ret;
 }
 
@@ -2544,10 +2632,12 @@ int bch_btree_map_keys(struct btree_op *op, struct cache_set *c,
 		       enum btree_id id, struct bkey *_from,
 		       btree_map_keys_fn *fn, int flags)
 {
-	struct bkey from = _from ? *_from : KEY(0, 0, 0);
+	struct bkey from;
 
-	if (id == BTREE_ID_EXTENTS)
-		from = NEXT_KEY(&from);
+	bkey_init(&from);
+
+	if (_from)
+		bkey_copy_key(&from, _from);
 
 	return btree_root(map_keys_recurse, c, id, op, &from, fn, flags);
 }

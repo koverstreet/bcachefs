@@ -265,13 +265,16 @@ static inline void wake_up_gc(struct cache_set *c)
 
 void bch_wait_for_next_gc(struct cache_set *, bool);
 
-#define MAP_DONE	0
-#define MAP_CONTINUE	1
+/* Return values from @fn parameter to map_keys and map_nodes */
+#define MAP_DONE	0  /* We're done */
+#define MAP_CONTINUE	1  /* Continue and advance the iterator */
 
+/* Only map_nodes */
 #define MAP_ALL_NODES	0
 #define MAP_LEAF_NODES	1
 
-#define MAP_END_KEY	1
+/* Only map_keys */
+#define MAP_HOLES	1
 
 typedef int (btree_map_nodes_fn)(struct btree_op *, struct btree *);
 int __bch_btree_map_nodes(struct btree_op *, struct cache_set *, enum btree_id,

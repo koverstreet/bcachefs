@@ -80,6 +80,7 @@ void bch_refill_keybuf(struct cache_set *c, struct keybuf *buf,
 {
 	struct bkey start = buf->last_scanned;
 	struct refill refill;
+	int ret;
 
 	cond_resched();
 
@@ -89,9 +90,17 @@ void bch_refill_keybuf(struct cache_set *c, struct keybuf *buf,
 	refill.end	= end;
 	refill.pred	= pred;
 
-	bch_btree_map_keys(&refill.op, c, BTREE_ID_EXTENTS,
-			   &buf->last_scanned,
-			   refill_keybuf_fn, 0);
+	ret = bch_btree_map_keys(&refill.op, c, BTREE_ID_EXTENTS,
+				 &buf->last_scanned,
+				 refill_keybuf_fn, 0);
+	if (ret == MAP_CONTINUE) {
+		/* If we end up here, it means:
+		 * - the map_fn didn't fill up the keybuf
+		 * - the map_fn didn't see the end key
+		 * - there were no more keys to map over
+		 * Therefore, we are at the end of the key space */
+		buf->last_scanned = MAX_KEY;
+	}
 
 	trace_bcache_keyscan(refill.nr_found,
 			     KEY_INODE(&start), KEY_OFFSET(&start),
