@@ -444,6 +444,8 @@ struct jset_keys {
 	};
 };
 
+#define JSET_KEYS_U64s	(sizeof(struct jset_keys) / sizeof(__u64))
+
 BITMASK(JKEYS_TYPE,	struct jset_keys, flags, 0, 2);
 #define JKEYS_BTREE_KEYS	0
 #define JKEYS_BTREE_ROOT	1

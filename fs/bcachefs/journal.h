@@ -75,12 +75,6 @@
  * nodes that are pinning the oldest journal entries first.
  */
 
-/*
- * Calculated from: (max_btrees * (max_size_root_node+1)) +
- *		    (max_caches_per_set + 1)
- */
-#define JSET_RESERVE		(32 + (MAX_CACHES_PER_SET + 1))
-
 static inline struct jset_keys *jset_keys_next(struct jset_keys *j)
 {
 	return (void *) (&j->d[j->keys]);
@@ -127,12 +121,18 @@ void bch_journal_write_put(struct cache_set *, struct journal_write *,
 static inline size_t journal_write_u64s_remaining(struct cache_set *c,
 						  struct journal_write *w)
 {
-	ssize_t bytes = min_t(size_t,
-			      c->journal.blocks_free * block_bytes(c),
-			      PAGE_SIZE << JSET_BITS) -
-		set_bytes(w->data);
+	ssize_t u64s = (min_t(size_t,
+			     c->journal.blocks_free * block_bytes(c),
+			     PAGE_SIZE << JSET_BITS) -
+			set_bytes(w->data)) / sizeof(u64);
 
-	return max_t(ssize_t, 0L, (bytes / sizeof(u64)) - JSET_RESERVE);
+	/* Subtract off some for the btree roots */
+	u64s -= BTREE_ID_NR * (JSET_KEYS_U64s + BKEY_U64s + BKEY_PAD_PTRS);
+
+	/* And for the prio pointers */
+	u64s -= JSET_KEYS_U64s + c->sb.nr_in_set;
+
+	return max_t(ssize_t, 0L, u64s);
 }
 
 static inline void __bch_journal_add_keys(struct jset *j, enum btree_id id,

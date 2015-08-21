@@ -537,6 +537,15 @@ static void journal_reclaim(struct cache_set *c)
 	for_each_cache(ca, c, iter)
 		do_journal_discard(ca);
 
+	if (!journal_write_u64s_remaining(c, c->journal.cur)) {
+		/*
+		 * Not enough space remaining in the current bucket for an empty
+		 * journal write
+		 */
+
+		c->journal.blocks_free = 0;
+	}
+
 	if (c->journal.blocks_free)
 		goto out;
 
@@ -546,6 +555,7 @@ static void journal_reclaim(struct cache_set *c)
 	 */
 
 	bkey_init(k);
+
 	for_each_cache(ca, c, iter) {
 		struct journal_device *ja = &ca->journal;
 		unsigned next = (ja->cur_idx + 1) % ca->sb.njournal_buckets;
@@ -570,6 +580,7 @@ static void journal_reclaim(struct cache_set *c)
 
 	if (bch_extent_ptrs(k))
 		c->journal.blocks_free = c->sb.bucket_size >> c->block_bits;
+
 out:
 	if (!journal_full(&c->journal))
 		wake_up(&c->journal.wait);
