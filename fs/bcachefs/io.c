@@ -460,8 +460,6 @@ static void __bch_write(struct closure *cl)
 	op->write_done = true;
 	continue_at(cl, bch_write_index, op->c->wq);
 err:
-	op->error = -ENOSPC;
-
 	if (KEY_CACHED(&op->insert_key)) {
 		/*
 		 * If we were writing cached data, not doing the write is fine
@@ -471,6 +469,8 @@ err:
 		 */
 
 		bch_write_discard(cl);
+	} else {
+		op->error = -ENOSPC;
 	}
 
 	op->write_done = true;
