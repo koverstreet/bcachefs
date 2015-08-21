@@ -128,7 +128,7 @@ void bch_recalc_min_prio(struct cache *ca, int rw)
 	struct cache_set *c = ca->set;
 	struct prio_clock *clock = &c->prio_clock[rw];
 	struct bucket *g;
-	u16 max_delta = 0;
+	u16 max_delta = 1;
 	unsigned i;
 
 	/* Determine min prio for this particular cache */
@@ -141,7 +141,7 @@ void bch_recalc_min_prio(struct cache *ca, int rw)
 	 * This may possibly increase the min prio for the whole cache, check
 	 * that as well.
 	 */
-	max_delta = 0;
+	max_delta = 1;
 
 	for_each_cache(ca, c, i)
 		max_delta = max(max_delta,
