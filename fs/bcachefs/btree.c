@@ -861,12 +861,13 @@ static unsigned long bch_mca_scan(struct shrinker *shrink,
 		}
 	}
 
-	for (i = 0; (nr--) && i < c->btree_cache_used; i++) {
-		if (list_empty(&c->btree_cache))
-			goto out;
-
-		b = list_first_entry(&c->btree_cache, struct btree, list);
-		list_rotate_left(&c->btree_cache);
+	list_for_each_entry_safe(b, t, &c->btree_cache, list) {
+		if (freed >= nr) {
+			/* Save position */
+			if (&t->list != &c->btree_cache)
+				list_move_tail(&c->btree_cache, &t->list);
+			break;
+		}
 
 		if (!b->accessed &&
 		    !mca_reap(b, false)) {
@@ -878,9 +879,9 @@ static unsigned long bch_mca_scan(struct shrinker *shrink,
 		} else
 			b->accessed = 0;
 	}
-out:
+
 	mutex_unlock(&c->btree_cache_lock);
-	return freed;
+	return freed * c->btree_pages;
 }
 
 static unsigned long bch_mca_count(struct shrinker *shrink,
