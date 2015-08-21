@@ -1516,45 +1516,36 @@ void bch_mark_keybuf_keys(struct cache_set *c, struct keybuf *buf)
 
 u8 __bch_btree_mark_key(struct cache_set *c, int level, struct bkey *k)
 {
-	u8 stale, max_stale = 0;
-	unsigned replicas_found = 0, replicas_needed = level
-		? CACHE_SET_META_REPLICAS_WANT(&c->sb)
-		: CACHE_SET_DATA_REPLICAS_WANT(&c->sb);
+	u8 max_stale = 0;
 	struct cache *ca;
-	struct bucket *g;
-	int i;
+	unsigned i;
 
 	if (KEY_DELETED(k))
 		return 0;
 
-	if (KEY_CACHED(k))
-		replicas_needed = 0;
-
 	rcu_read_lock();
 
-	for (i = bch_extent_ptrs(k) - 1; i >= 0; --i) {
+	for (i = 0; i < bch_extent_ptrs(k); i++) {
 		if (PTR_DEV(k, i) < MAX_CACHES_PER_SET)
 			__set_bit(PTR_DEV(k, i), c->cache_slots_used);
 
 		if ((ca = PTR_CACHE(c, k, i))) {
-			g = PTR_BUCKET(c, ca, k, i);
+			struct bucket *g = PTR_BUCKET(c, ca, k, i);
 
 			if (gen_after(g->last_gc, PTR_GEN(k, i)))
 				g->last_gc = PTR_GEN(k, i);
 
-			if (level)
-				bch_mark_metadata_bucket(ca, g);
-			else {
-				stale = bch_mark_data_bucket(c, ca, k, i,
-					KEY_SIZE(k),
-					replicas_found < replicas_needed,
-					true);
-				if (stale)
-					max_stale = max(max_stale, stale);
-				else
-					replicas_found++;
-			}
+			max_stale = max(max_stale, ptr_stale(c, ca, k, i));
 		}
+	}
+
+	if (level) {
+		for (i = 0; i < bch_extent_ptrs(k); i++)
+			if ((ca = PTR_CACHE(c, k, i)))
+				bch_mark_metadata_bucket(ca,
+					PTR_BUCKET(c, ca, k, i));
+	} else {
+		__bch_add_sectors(c, k, KEY_START(k), KEY_SIZE(k), false, true);
 	}
 
 	rcu_read_unlock();
