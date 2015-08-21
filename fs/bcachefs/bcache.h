@@ -376,8 +376,6 @@ struct bcache_device {
 
 	unsigned		data_csum:1;
 
-	int (*cache_miss)(struct btree *, struct search *,
-			  struct bio *, unsigned);
 	int (*ioctl) (struct bcache_device *, fmode_t, unsigned, unsigned long);
 };
 
