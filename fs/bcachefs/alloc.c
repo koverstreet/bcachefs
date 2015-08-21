@@ -719,6 +719,43 @@ struct open_bucket *bch_alloc_sectors(struct cache_set *c, struct bkey *k,
 	return b;
 }
 
+static void alloc_mark_bucket(struct cache *ca, size_t b)
+{
+	SET_GC_MARK(&ca->buckets[b], GC_MARK_DIRTY);
+	SET_GC_SECTORS_USED(&ca->buckets[b],
+			    min_t(unsigned, ca->sb.bucket_size,
+				  MAX_GC_SECTORS_USED));
+}
+
+void bch_mark_open_buckets(struct cache_set *c)
+{
+	struct cache *ca;
+	struct open_bucket *b;
+	size_t ci, i, j, iter;
+
+	for_each_cache(ca, c, ci) {
+		for (i = 0; i < prio_buckets(ca) * 2; i++)
+			if (ca->prio_buckets[i])
+				alloc_mark_bucket(ca, ca->prio_buckets[i]);
+
+		for (j = 0; j < RESERVE_NR; j++)
+			fifo_for_each(i, &ca->free[j], iter)
+				alloc_mark_bucket(ca, i);
+
+		fifo_for_each(i, &ca->free_inc, iter)
+			alloc_mark_bucket(ca, i);
+	}
+
+	spin_lock(&c->open_buckets_lock);
+
+	list_for_each_entry(b, &c->open_buckets_open, list)
+		for (i = 0; i < KEY_PTRS(&b->key); i++)
+			alloc_mark_bucket(PTR_CACHE(c, &b->key, i),
+					  PTR_BUCKET_NR(c, &b->key, i));
+
+	spin_unlock(&c->open_buckets_lock);
+}
+
 /* Init */
 
 void bch_open_buckets_init(struct cache_set *c)

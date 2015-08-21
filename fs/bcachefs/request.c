@@ -183,7 +183,6 @@ static void bch_data_insert_start(struct closure *cl)
 	bio->bi_opf &= ~(REQ_PREFLUSH|REQ_FUA);
 
 	do {
-		unsigned i;
 		struct bkey *k;
 		struct bio_set *split = op->c->bio_split;
 
@@ -215,11 +214,6 @@ static void bch_data_insert_start(struct closure *cl)
 		n = bio_next_split(bio, KEY_SIZE(k), GFP_NOIO, split);
 		n->bi_end_io	= bch_data_insert_endio;
 		n->bi_private	= cl;
-
-		if (KEY_DIRTY(k))
-			for (i = 0; i < KEY_PTRS(k); i++)
-				SET_GC_MARK(PTR_BUCKET(op->c, k, i),
-					    GC_MARK_DIRTY);
 
 		if (KEY_CSUM(k))
 			bio_csum(n, k);

@@ -1657,6 +1657,13 @@ static void btree_gc_start(struct cache_set *c)
 			}
 		}
 
+	/*
+	 * must happen before traversing the btree, as pointers move from open
+	 * buckets into the btree - if we race and an open_bucket has been freed
+	 * before we marked it, it's in the btree now
+	 */
+	bch_mark_open_buckets(c);
+
 	mutex_unlock(&c->bucket_lock);
 }
 
