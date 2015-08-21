@@ -161,6 +161,10 @@ static const char *read_super(struct cache_sb *sb, struct block_device *bdev,
 		break;
 	case BCACHE_SB_VERSION_CDEV_V0:
 	case BCACHE_SB_VERSION_CDEV_WITH_UUID:
+		err = "Unsupported superblock version";
+		if (CACHE_SYNC(sb))
+			goto err;
+
 	case BCACHE_SB_VERSION_CDEV_V2:
 		sb->nbuckets	= le64_to_cpu(s->nbuckets);
 		sb->bucket_size	= le16_to_cpu(s->bucket_size);
