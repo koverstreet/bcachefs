@@ -500,8 +500,7 @@ static void bch_cache_read_endio(struct bio *bio)
 
 	if (bio->bi_error)
 		s->iop.error = bio->bi_error;
-	else if (!KEY_DIRTY(&b->key) &&
-		 ptr_stale(s->iop.c, &b->key, 0)) {
+	else if (ptr_stale(s->iop.c, &b->key, 0)) {
 		atomic_long_inc(&s->iop.c->cache_read_races);
 		s->iop.error = -EINTR;
 	}

@@ -67,6 +67,7 @@ static bool __ptr_invalid(struct cache_set *c, const struct bkey *k)
 void bch_extent_normalize(struct cache_set *c, struct bkey *k)
 {
 	unsigned i;
+	bool swapped;
 
 	for (i = 0; i < KEY_PTRS(k); i++)
 		if (!ptr_available(c, k, i) ||
@@ -77,6 +78,17 @@ void bch_extent_normalize(struct cache_set *c, struct bkey *k)
 				(KEY_PTRS(k) - i) * sizeof(u64));
 			continue;
 		}
+
+	/* Bubble sort pointers by tier, lowest (fastest) tier first */
+	do {
+		swapped = false;
+		for (i = 0; i + 1 < KEY_PTRS(k); i++) {
+			if (PTR_TIER(c, k, i) > PTR_TIER(c, k, i + 1)) {
+				swap(k->ptr[i], k->ptr[i + 1]);
+				swapped = true;
+			}
+		}
+	} while (swapped);
 }
 
 static void bch_ptr_normalize(struct btree_keys *bk,
@@ -539,15 +551,21 @@ static bool bch_extent_invalid(struct btree_keys *bk, const struct bkey *k)
 
 static bool bch_extent_bad_expensive(struct btree *b, const struct bkey *k)
 {
-	unsigned i, stale, replicas_needed, locked;
+	unsigned stale, replicas_needed, locked = false;
 	struct bucket *g;
 	char buf[80];
-
-	locked = mutex_trylock(&b->c->bucket_lock);
+	int i;
 
 	replicas_needed = !KEY_DIRTY(k) ? 0 : b->c->data_replicas;
 
-	for (i = 0; i < KEY_PTRS(k); i++) {
+	if (mutex_trylock(&b->c->bucket_lock)) {
+		if (b->c->gc_mark_valid)
+			locked = true;
+		else
+			mutex_unlock(&b->c->bucket_lock);
+	}
+
+	for (i = KEY_PTRS(k) - 1; i >= 0; --i) {
 		if (!ptr_available(b->c, k, i))
 			continue;
 
@@ -565,7 +583,6 @@ static bool bch_extent_bad_expensive(struct btree *b, const struct bkey *k)
 			continue;
 
 		if (locked &&
-		    b->c->gc_mark_valid &&
 		    (!GC_MARK(g) ||
 		     GC_MARK(g) == GC_MARK_METADATA ||
 		     (GC_MARK(g) != GC_MARK_DIRTY &&

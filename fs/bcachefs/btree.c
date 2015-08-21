@@ -1191,7 +1191,10 @@ static uint8_t __bch_btree_mark_key(struct cache_set *c, int level,
 				    struct bkey *k)
 {
 	uint8_t stale = 0;
-	unsigned i;
+	unsigned replicas_found = 0, replicas_needed = level
+		? c->meta_replicas : c->data_replicas;
+	unsigned mark = level ? GC_MARK_METADATA : GC_MARK_DIRTY;
+	int i;
 	struct bucket *g;
 
 	/*
@@ -1202,7 +1205,10 @@ static uint8_t __bch_btree_mark_key(struct cache_set *c, int level,
 	if (!bkey_cmp(k, &ZERO_KEY))
 		return stale;
 
-	for (i = 0; i < KEY_PTRS(k); i++) {
+	if (!level && !KEY_DIRTY(k))
+		replicas_needed = 0;
+
+	for (i = KEY_PTRS(k) - 1; i >= 0; --i) {
 		if (!ptr_available(c, k, i))
 			continue;
 
@@ -1221,12 +1227,12 @@ static uint8_t __bch_btree_mark_key(struct cache_set *c, int level,
 			     c, "inconsistent ptrs: mark = %llu, level = %i",
 			     GC_MARK(g), level);
 
-		if (level)
-			SET_GC_MARK(g, GC_MARK_METADATA);
-		else if (KEY_DIRTY(k))
-			SET_GC_MARK(g, GC_MARK_DIRTY);
+		if (replicas_found < replicas_needed)
+			SET_GC_MARK(g, mark);
 		else if (!GC_MARK(g))
 			SET_GC_MARK(g, GC_MARK_RECLAIMABLE);
+
+		replicas_found++;
 
 		/* guard against overflow */
 		SET_GC_SECTORS_USED(g, min_t(unsigned,
