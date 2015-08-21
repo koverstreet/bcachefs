@@ -1064,6 +1064,8 @@ STORE(__bch_cache)
 	}
 
 	if (attr == &sysfs_state_rw) {
+		char name[BDEVNAME_SIZE];
+		const char *err;
 		ssize_t v = bch_read_string_list(buf, bch_cache_state);
 
 		if (v < 0)
@@ -1074,11 +1076,17 @@ STORE(__bch_cache)
 
 		switch (v) {
 		case CACHE_ACTIVE:
-			return -EINVAL;
+			err = bch_cache_read_write(ca);
+			if (err) {
+				pr_err("can't set %s read-write: %s",
+				       bdevname(ca->bdev, name), err);
+
+				return -EINVAL;
+			}
+
+			break;
 		case CACHE_RO:
 			bch_cache_read_only(ca);
-			SET_CACHE_STATE(mi, v);
-			bcache_write_super(c);
 			break;
 		case CACHE_FAILED:
 			bch_cache_read_only(ca);
@@ -1087,6 +1095,9 @@ STORE(__bch_cache)
 			bch_cache_read_only(ca);
 			break;
 		}
+
+		SET_CACHE_STATE(mi, v);
+		bcache_write_super(c);
 	}
 
 	if (attr == &sysfs_unregister)

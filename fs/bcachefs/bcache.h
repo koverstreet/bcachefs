@@ -1220,6 +1220,7 @@ void bch_cache_set_unregister(struct cache_set *);
 void bch_cache_set_stop(struct cache_set *);
 
 void bch_cache_read_only(struct cache *);
+const char *bch_cache_read_write(struct cache *);
 void bch_cache_remove(struct cache *);
 int bch_cache_add(struct cache_set *, const char *);
 
