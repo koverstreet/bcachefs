@@ -312,6 +312,11 @@ void bch_data_insert(struct closure *cl)
 
 	memset(op->open_buckets, 0, sizeof(op->open_buckets));
 
+	if (!bio_sectors(op->bio)) {
+		WARN_ONCE(1, "bch_data_insert() called with empty bio");
+		closure_return(cl);
+	}
+
 	if (!op->replace) {
 		/* XXX: discards may be for more sectors than max key size */
 
@@ -345,7 +350,7 @@ void bch_data_insert(struct closure *cl)
 
 	bch_keylist_init(&op->insert_keys);
 	bio_get(op->bio);
-	bch_data_insert_start(cl);
+	continue_at_nobarrier(cl, bch_data_insert_start, NULL);
 }
 
 /* Cache promotion */
