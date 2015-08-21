@@ -644,8 +644,6 @@ static void bcache_device_free(struct bcache_device *d)
 
 	if (d->bio_split)
 		bioset_free(d->bio_split);
-	kvfree(d->full_dirty_stripes);
-	kvfree(d->stripe_sectors_dirty);
 
 	closure_debug_destroy(&d->cl);
 }
@@ -955,6 +953,8 @@ static void cached_dev_free(struct closure *cl)
 	cancel_delayed_work_sync(&dc->writeback_pd.update);
 	if (!IS_ERR_OR_NULL(dc->writeback_thread))
 		kthread_stop(dc->writeback_thread);
+
+	bch_cached_dev_writeback_free(dc);
 
 	mutex_lock(&bch_register_lock);
 
