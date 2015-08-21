@@ -721,6 +721,7 @@ STORE(__bch_cache_set)
 	}
 
 	sysfs_pd_controller_store(tiering,	&c->tiering_pd);
+	sysfs_pd_controller_store(foreground_write, &c->foreground_write_pd);
 
 	if (attr == &sysfs_meta_replicas) {
 		unsigned v = strtoul_restrict_or_return(buf, 1,
