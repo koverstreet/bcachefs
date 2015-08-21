@@ -262,6 +262,8 @@ struct journal {
 	struct closure		io;
 	struct delayed_work	work;
 
+	unsigned		delay_ms;
+
 	u64			seq;
 	DECLARE_FIFO(atomic_t, pin);
 
@@ -792,7 +794,6 @@ struct cache_set {
 	unsigned		error_limit;
 	unsigned		error_decay;
 
-	unsigned short		journal_delay_ms;
 	bool			expensive_debug_checks;
 	unsigned		verify:1;
 	unsigned		key_merging_disabled:1;

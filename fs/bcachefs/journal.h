@@ -168,4 +168,6 @@ int bch_journal_replay(struct cache_set *, struct list_head *);
 void bch_journal_free(struct cache_set *);
 int bch_journal_alloc(struct cache_set *);
 
+ssize_t bch_journal_print_debug(struct journal *, char *);
+
 #endif /* _BCACHE_JOURNAL_H */

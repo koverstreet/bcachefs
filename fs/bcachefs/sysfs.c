@@ -8,6 +8,7 @@
 #include "bcache.h"
 #include "sysfs.h"
 #include "btree.h"
+#include "journal.h"
 #include "request.h"
 #include "writeback.h"
 
@@ -48,7 +49,7 @@ read_attribute(cache_available_percent);
 read_attribute(written);
 read_attribute(btree_written);
 read_attribute(metadata_written);
-read_attribute(active_journal_entries);
+read_attribute(journal_debug);
 
 sysfs_time_stats_attribute(btree_gc,	sec, ms);
 sysfs_time_stats_attribute(btree_split, sec, us);
@@ -478,7 +479,7 @@ SHOW(__bch_cache_set)
 	struct cache_set *c = container_of(kobj, struct cache_set, kobj);
 
 	sysfs_print(synchronous,		CACHE_SYNC(&c->sb));
-	sysfs_print(journal_delay_ms,		c->journal_delay_ms);
+	sysfs_print(journal_delay_ms,		c->journal.delay_ms);
 	sysfs_hprint(bucket_size,		bucket_bytes(c));
 	sysfs_hprint(block_size,		block_bytes(c));
 	sysfs_print(tree_depth,
@@ -522,7 +523,9 @@ SHOW(__bch_cache_set)
 	sysfs_print(congested_write_threshold_us,
 		    c->congested_write_threshold_us);
 
-	sysfs_print(active_journal_entries,	fifo_used(&c->journal.pin));
+	if (attr == &sysfs_journal_debug)
+		return bch_journal_print_debug(&c->journal, buf);
+
 	sysfs_printf(verify,			"%i", c->verify);
 	sysfs_printf(key_merging_disabled,	"%i", c->key_merging_disabled);
 	sysfs_printf(expensive_debug_checks,
@@ -613,7 +616,7 @@ STORE(__bch_cache_set)
 	if (attr == &sysfs_io_error_halflife)
 		c->error_decay = strtoul_or_return(buf) / 88;
 
-	sysfs_strtoul(journal_delay_ms,		c->journal_delay_ms);
+	sysfs_strtoul(journal_delay_ms,		c->journal.delay_ms);
 	sysfs_strtoul(verify,			c->verify);
 	sysfs_strtoul(key_merging_disabled,	c->key_merging_disabled);
 	sysfs_strtoul(expensive_debug_checks,	c->expensive_debug_checks);
@@ -688,7 +691,7 @@ static struct attribute *bch_cache_set_files[] = {
 KTYPE(bch_cache_set);
 
 static struct attribute *bch_cache_set_internal_files[] = {
-	&sysfs_active_journal_entries,
+	&sysfs_journal_debug,
 
 	sysfs_time_stats_attribute_list(btree_gc, sec, ms)
 	sysfs_time_stats_attribute_list(btree_split, sec, us)

@@ -716,12 +716,10 @@ static void journal_write_locked(struct closure *cl)
 	closure_return_with_destructor(cl, journal_write_done);
 }
 
-static bool journal_try_write(struct cache_set *c)
+static bool __journal_write(struct cache_set *c)
 	__releases(c->journal.lock)
 {
 	BUG_ON(!test_bit(JOURNAL_DIRTY, &c->journal.flags));
-
-	set_bit(JOURNAL_NEED_WRITE, &c->journal.flags);
 
 	if (!test_and_set_bit(JOURNAL_IO_IN_FLIGHT, &c->journal.flags)) {
 		closure_call(&c->journal.io, journal_write_locked,
@@ -733,6 +731,20 @@ static bool journal_try_write(struct cache_set *c)
 	}
 }
 
+static bool journal_try_write(struct cache_set *c)
+{
+	set_bit(JOURNAL_NEED_WRITE, &c->journal.flags);
+	return __journal_write(c);
+}
+
+static void journal_unlock(struct cache_set *c)
+{
+	if (test_bit(JOURNAL_NEED_WRITE, &c->journal.flags))
+		__journal_write(c);
+	else
+		spin_unlock(&c->journal.lock);
+}
+
 static void journal_write_work(struct work_struct *work)
 {
 	struct cache_set *c = container_of(to_delayed_work(work),
@@ -740,9 +752,8 @@ static void journal_write_work(struct work_struct *work)
 					   journal.work);
 	spin_lock(&c->journal.lock);
 	if (test_bit(JOURNAL_DIRTY, &c->journal.flags))
-		journal_try_write(c);
-	else
-		spin_unlock(&c->journal.lock);
+		set_bit(JOURNAL_NEED_WRITE, &c->journal.flags);
+	journal_unlock(c);
 }
 
 /*
@@ -754,18 +765,16 @@ void bch_journal_write_put(struct cache_set *c,
 			   struct closure *parent)
 	__releases(c->journal.lock)
 {
+	if (!__test_and_set_bit(JOURNAL_DIRTY, &c->journal.flags))
+		schedule_delayed_work(&c->journal.work,
+				      msecs_to_jiffies(c->journal.delay_ms));
+
 	if (parent) {
 		BUG_ON(!closure_wait(&w->wait, parent));
-		set_bit(JOURNAL_DIRTY, &c->journal.flags);
-		journal_try_write(c);
-	} else if (!test_bit(JOURNAL_DIRTY, &c->journal.flags)) {
-		set_bit(JOURNAL_DIRTY, &c->journal.flags);
-		schedule_delayed_work(&c->journal.work,
-				      msecs_to_jiffies(c->journal_delay_ms));
-		spin_unlock(&c->journal.lock);
-	} else {
-		spin_unlock(&c->journal.lock);
+		set_bit(JOURNAL_NEED_WRITE, &c->journal.flags);
 	}
+
+	journal_unlock(c);
 }
 
 /*
@@ -851,7 +860,7 @@ int bch_journal_alloc(struct cache_set *c)
 	init_waitqueue_head(&j->wait);
 	INIT_DELAYED_WORK(&j->work, journal_write_work);
 
-	c->journal_delay_ms = 100;
+	c->journal.delay_ms = 100;
 
 	j->w[0].c = c;
 	j->w[1].c = c;
@@ -862,4 +871,21 @@ int bch_journal_alloc(struct cache_set *c)
 		return -ENOMEM;
 
 	return 0;
+}
+
+ssize_t bch_journal_print_debug(struct journal *j, char *buf)
+{
+	return snprintf(buf, PAGE_SIZE,
+			"active journal entries:\t%zu\n"
+			"seq:\t\t\t%llu\n"
+			"io in flight:\t\t%i\n"
+			"need write:\t\t%i\n"
+			"dirty:\t\t\t%i\n"
+			"replay done:\t\t%i\n",
+			fifo_used(&j->pin),
+			j->seq,
+			test_bit(JOURNAL_IO_IN_FLIGHT,	&j->flags),
+			test_bit(JOURNAL_NEED_WRITE,	&j->flags),
+			test_bit(JOURNAL_DIRTY,		&j->flags),
+			test_bit(JOURNAL_REPLAY_DONE,	&j->flags));
 }
