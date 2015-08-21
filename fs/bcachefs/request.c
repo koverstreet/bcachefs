@@ -480,7 +480,7 @@ static void cache_lookup(struct closure *cl)
 	struct bio *bio = &s->bio.bio;
 	int ret;
 
-	__bch_btree_op_init(&s->op, id, id, -1);
+	__bch_btree_op_init(&s->op, id, -1);
 
 	ret = bch_btree_map_keys(&s->op, s->iop.c,
 				 &KEY(s->inode, bio->bi_iter.bi_sector, 0),

@@ -279,7 +279,8 @@ static int btree_insert_fn(struct btree_op *b_op, struct btree *b)
 
 	int ret = bch_btree_insert_node(b, &op->op, &op->insert_keys,
 					replace_key,
-					op->flush ? &op->cl : NULL);
+					op->flush ? &op->cl : NULL,
+					op->btree_alloc_reserve);
 	return bch_keylist_empty(&op->insert_keys) ? MAP_DONE : ret;
 }
 
@@ -333,7 +334,7 @@ static void bch_write_index(struct closure *cl)
 	struct bch_write_op *op = container_of(cl, struct bch_write_op, cl);
 	enum btree_id id = BTREE_ID_EXTENTS;
 
-	__bch_btree_op_init(&op->op, id, op->btree_alloc_reserve, 0);
+	__bch_btree_op_init(&op->op, id, 0);
 
 	closure_call(&op->op.cl, __bch_write_index, NULL, cl);
 	continue_at(cl, bch_write_done, op->c->wq);

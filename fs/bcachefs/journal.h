@@ -138,7 +138,6 @@ struct journal_replay {
 
 struct closure;
 struct cache_set;
-struct btree_op;
 struct keylist;
 
 struct bkey *bch_journal_find_btree_root(struct cache_set *, struct jset *,

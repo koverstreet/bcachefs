@@ -140,7 +140,7 @@ static int bch_inode_create_fn(struct btree_op *b_op, struct btree *b,
 		 KEY_INODE(&op->inode->i_key), KEY_U64s(&op->inode->i_key));
 
 	return bch_btree_insert_node(b, b_op,
-			&keylist_single(&op->inode->i_key), NULL, NULL);
+			&keylist_single(&op->inode->i_key), NULL, NULL, 0);
 }
 
 int bch_inode_create(struct cache_set *c, struct bch_inode *inode,
@@ -211,7 +211,7 @@ static int inode_rm_fn(struct btree_op *b_op, struct btree *b, struct bkey *k)
 		bch_cut_back(&b->key, &erase_key);
 
 	return bch_btree_insert_node(b, b_op,
-			&keylist_single(&erase_key), NULL, NULL)
+			&keylist_single(&erase_key), NULL, NULL, 0)
 		?: MAP_CONTINUE;
 }
 
