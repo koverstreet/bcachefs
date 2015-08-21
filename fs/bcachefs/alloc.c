@@ -156,17 +156,11 @@ static void bch_rescale_prios(struct cache_set *c, int rw)
 	}
 }
 
-void bch_increment_clock(struct cache_set *c, int sectors, int rw)
+void bch_increment_clock_slowpath(struct cache_set *c, int rw)
 {
 	long next = (c->nbuckets * c->sb.bucket_size) / 1024;
 	struct prio_clock *clock = rw ? &c->write_clock : &c->read_clock;
 	long r;
-
-	/*
-	 * we only increment when 0.1% of the cache_set has been read
-	 * or written too, this determines if it's time
-	 */
-	atomic_long_sub(sectors, &clock->rescale);
 
 	do {
 		r = atomic_long_read(&clock->rescale);

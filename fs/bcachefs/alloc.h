@@ -41,7 +41,19 @@ static inline size_t buckets_free_cache(struct cache *ca,
 }
 
 void bch_recalc_min_prio(struct cache *);
-void bch_increment_clock(struct cache_set *, int, int);
+void bch_increment_clock_slowpath(struct cache_set *, int);
+
+static inline void bch_increment_clock(struct cache_set *c, int sectors, int rw)
+{
+	struct prio_clock *clock = rw ? &c->write_clock : &c->read_clock;
+
+	/*
+	 * we only increment when 0.1% of the cache_set has been read
+	 * or written too, this determines if it's time
+	 */
+	if (atomic_long_sub_return(sectors, &clock->rescale) < 0)
+		bch_increment_clock_slowpath(c, rw);
+}
 
 bool bch_can_invalidate_bucket(struct cache *, struct bucket *);
 void __bch_invalidate_one_bucket(struct cache *, struct bucket *);
