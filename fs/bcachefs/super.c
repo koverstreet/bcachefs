@@ -1806,7 +1806,9 @@ static const char *run_cache_set(struct cache_set *c)
 			goto err;
 
 		for_each_cache(ca, c, i)
-			prio_read(ca, prio_bucket_ptrs[ca->sb.nr_this_dev]);
+			if (prio_bucket_ptrs[ca->sb.nr_this_dev])
+				prio_read(ca,
+					prio_bucket_ptrs[ca->sb.nr_this_dev]);
 
 		c->prio_clock[READ].hand = j->read_clock;
 		c->prio_clock[WRITE].hand = j->write_clock;
