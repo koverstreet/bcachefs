@@ -367,16 +367,11 @@ err:
 
 static void btree_complete_write(struct btree *b, struct btree_write *w)
 {
-	if (w->prio_blocked &&
-	    !atomic_sub_return(w->prio_blocked, &b->c->prio_blocked))
-		wake_up_allocators(b->c);
-
 	if (w->journal) {
 		atomic_dec_bug(w->journal);
 		wake_up(&b->c->journal.wait);
 	}
 
-	w->prio_blocked	= 0;
 	w->journal	= NULL;
 }
 
@@ -1114,9 +1109,7 @@ static void btree_node_free(struct btree *b)
 
 	cancel_delayed_work(&b->work);
 
-	mutex_lock(&b->c->bucket_lock);
 	bch_bucket_free(b->c, &b->key);
-	mutex_unlock(&b->c->bucket_lock);
 
 	mutex_lock(&b->c->btree_cache_lock);
 	mca_bucket_free(b);
@@ -1153,9 +1146,7 @@ retry:
 	trace_bcache_btree_node_alloc(b);
 	return b;
 err_free:
-	mutex_lock(&c->bucket_lock);
 	bch_bucket_free(c, &k.key);
-	mutex_unlock(&c->bucket_lock);
 err:
 	trace_bcache_btree_node_alloc_fail(c);
 	return b;
@@ -1182,26 +1173,6 @@ static struct btree *btree_node_alloc_replacement(struct btree *b,
 	return n;
 }
 
-static void make_btree_freeing_key(struct btree *b, struct bkey *k)
-{
-	unsigned i;
-
-	mutex_lock(&b->c->bucket_lock);
-
-	atomic_inc(&b->c->prio_blocked);
-
-	bkey_copy(k, &b->key);
-	bkey_copy_key(k, &ZERO_KEY);
-	SET_KEY_SIZE(k, 0);
-
-	for (i = 0; i < bch_extent_ptrs(k); i++)
-		SET_PTR_GEN(k, i,
-			    bch_inc_gen(PTR_CACHE(b->c, &b->key, i),
-					PTR_BUCKET(b->c, &b->key, i)));
-
-	mutex_unlock(&b->c->bucket_lock);
-}
-
 static int btree_check_reserve(struct btree *b, struct btree_op *op)
 {
 	struct cache_set *c = b->c;
@@ -1226,8 +1197,7 @@ static int btree_check_reserve(struct btree *b, struct btree_op *op)
 
 /* Garbage collection */
 
-static uint8_t __bch_btree_mark_key(struct cache_set *c, int level,
-				    struct bkey *k)
+u8 __bch_btree_mark_key(struct cache_set *c, int level, struct bkey *k)
 {
 	uint8_t stale = 0;
 	unsigned replicas_found = 0, replicas_needed = level
@@ -1239,12 +1209,8 @@ static uint8_t __bch_btree_mark_key(struct cache_set *c, int level,
 	if (KEY_DELETED(k))
 		return stale;
 
-	/*
-	 * ptr_invalid() can't return true for the keys that mark btree nodes as
-	 * freed, but since ptr_bad() returns true we'll never actually use them
-	 * for anything and thus we don't want mark their pointers here
-	 */
-	if (!bkey_cmp(k, &ZERO_KEY))
+	/* Old style btree freeing keys */
+	if (level && !bkey_cmp(k, &ZERO_KEY))
 		return stale;
 
 	if (KEY_CACHED(k))
@@ -1259,10 +1225,10 @@ static uint8_t __bch_btree_mark_key(struct cache_set *c, int level,
 		if (gen_after(g->last_gc, PTR_GEN(k, i)))
 			g->last_gc = PTR_GEN(k, i);
 
-		if (ptr_stale(c, k, i)) {
-			stale = max(stale, ptr_stale(c, k, i));
+		stale = max(stale, ptr_stale(c, k, i));
+
+		if (!level && ptr_stale(c, k, i))
 			continue;
-		}
 
 		cache_bug_on(GC_MARK(g) &&
 			     (GC_MARK(g) == GC_MARK_METADATA) != (level != 0),
@@ -1288,18 +1254,6 @@ static uint8_t __bch_btree_mark_key(struct cache_set *c, int level,
 }
 
 #define btree_mark_key(b, k)	__bch_btree_mark_key(b->c, b->level, k)
-
-void bch_initial_mark_key(struct cache_set *c, int level, struct bkey *k)
-{
-	unsigned i;
-
-	for (i = 0; i < bch_extent_ptrs(k); i++)
-		if (ptr_available(c, k, i) &&
-		    !ptr_stale(c, k, i))
-			PTR_BUCKET(c, k, i)->gen = PTR_GEN(k, i);
-
-	__bch_btree_mark_key(c, level, k);
-}
 
 static bool btree_gc_mark_node(struct btree *b, struct gc_stat *gc)
 {
@@ -1361,7 +1315,6 @@ static int btree_gc_coalesce(struct btree *b, struct btree_op *op,
 	struct btree *new_nodes[GC_MERGE_NODES];
 	struct keylist keylist;
 	struct closure cl;
-	struct bkey *k;
 
 	bch_keylist_init(&keylist);
 
@@ -1459,12 +1412,7 @@ static int btree_gc_coalesce(struct btree *b, struct btree_op *op,
 	}
 
 	for (i = 0; i < nodes; i++) {
-		if (bch_keylist_realloc(&keylist,
-					KEY_U64s(&new_nodes[i]->key)))
-			goto out_nocoalesce;
-
 		bch_btree_node_write(new_nodes[i], &cl);
-		bch_keylist_add(&keylist, &new_nodes[i]->key);
 		mutex_unlock(&new_nodes[i]->write_lock);
 	}
 
@@ -1473,11 +1421,23 @@ static int btree_gc_coalesce(struct btree *b, struct btree_op *op,
 
 	/* The keys for the old nodes get deleted */
 	for (i = 0; i < old_nodes; i++) {
-		if (bch_keylist_realloc(&keylist, KEY_U64s(&r[i].b->key)))
+		if (bch_keylist_realloc(&keylist, BKEY_U64s))
 			goto out_nocoalesce;
 
-		make_btree_freeing_key(r[i].b, keylist.top);
+		*keylist.top = r[i].b->key;
+		bch_set_extent_ptrs(keylist.top, 0);
+		SET_KEY_DELETED(keylist.top, true);
+
 		bch_keylist_push(&keylist);
+	}
+
+	/* Keys for the new nodes get inserted */
+	for (i = 0; i < nodes; i++) {
+		if (bch_keylist_realloc(&keylist,
+					KEY_U64s(&new_nodes[i]->key)))
+			goto out_nocoalesce;
+
+		bch_keylist_add(&keylist, &new_nodes[i]->key);
 	}
 
 	/* Insert the newly coalesced nodes */
@@ -1509,10 +1469,6 @@ out_nocoalesce:
 	closure_sync(&cl);
 	bch_keylist_free(&keylist);
 
-	while ((k = bch_keylist_pop(&keylist)))
-		if (!bkey_cmp(k, &ZERO_KEY))
-			atomic_dec(&b->c->prio_blocked);
-
 	for (i = 0; i < nodes; i++)
 		if (!IS_ERR_OR_NULL(new_nodes[i])) {
 			btree_node_free(new_nodes[i]);
@@ -1543,9 +1499,6 @@ static int btree_gc_rewrite_node(struct btree *b, struct btree_op *op,
 
 	bch_keylist_init(&keys);
 	bch_keylist_add(&keys, &n->key);
-
-	make_btree_freeing_key(replace, keys.top);
-	bch_keylist_push(&keys);
 
 	bch_btree_insert_node(b, op, &keys, NULL, NULL);
 	BUG_ON(!bch_keylist_empty(&keys));
@@ -1834,9 +1787,9 @@ static int bch_btree_check_recurse(struct btree *b, struct btree_op *op)
 	struct btree_iter iter;
 
 	for_each_key_filter(&b->keys, k, &iter, bch_ptr_invalid)
-		bch_initial_mark_key(b->c, b->level, k);
+		btree_mark_key(b, k);
 
-	bch_initial_mark_key(b->c, b->level + 1, &b->key);
+	__bch_btree_mark_key(b->c, b->level + 1, &b->key);
 
 	if (b->level) {
 		bch_btree_iter_init(&b->keys, &iter, NULL);
@@ -2235,8 +2188,6 @@ static int btree_split(struct btree *b, struct btree_op *op,
 	} else {
 		/* Split a non root node */
 		closure_sync(&cl);
-		make_btree_freeing_key(b, parent_keys.top);
-		bch_keylist_push(&parent_keys);
 
 		bch_btree_insert_node(b->parent, op, &parent_keys, NULL, NULL);
 		BUG_ON(!bch_keylist_empty(&parent_keys));

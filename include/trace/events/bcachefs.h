@@ -455,19 +455,17 @@ TRACE_EVENT(bcache_alloc_fail,
 		__field(dev_t,		dev			)
 		__field(unsigned,	free			)
 		__field(unsigned,	free_inc		)
-		__field(unsigned,	blocked			)
 	),
 
 	TP_fast_assign(
 		__entry->dev		= ca->bdev->bd_dev;
 		__entry->free		= fifo_used(&ca->free[reserve]);
 		__entry->free_inc	= fifo_used(&ca->free_inc);
-		__entry->blocked	= atomic_read(&ca->set->prio_blocked);
 	),
 
-	TP_printk("alloc fail %d,%d free %u free_inc %u blocked %u",
-		  MAJOR(__entry->dev), MINOR(__entry->dev), __entry->free,
-		  __entry->free_inc, __entry->blocked)
+	TP_printk("alloc fail %d,%d free %u free_inc %u",
+		  MAJOR(__entry->dev), MINOR(__entry->dev),
+		  __entry->free, __entry->free_inc)
 );
 
 /* Background writeback */

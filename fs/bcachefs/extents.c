@@ -233,10 +233,13 @@ bool __bch_btree_ptr_invalid(struct cache_set *c, const struct bkey *k)
 {
 	char buf[80];
 
-	if (!bch_extent_ptrs(k) || KEY_CACHED(k))
+	if (KEY_CACHED(k))
 		goto bad;
 
-	if (bkey_cmp(k, &ZERO_KEY) && !KEY_SIZE(k))
+	if (!KEY_DELETED(k) && !bch_extent_ptrs(k))
+		goto bad;
+
+	if (bkey_cmp(k, &ZERO_KEY) && !KEY_SIZE(k)) /* old style freeing keys */
 		goto bad;
 
 	if (__ptr_invalid(c, k))
@@ -289,18 +292,11 @@ err:
 static bool bch_btree_ptr_bad(struct btree_keys *bk, const struct bkey *k)
 {
 	struct btree *b = container_of(bk, struct btree, keys);
-	unsigned i;
 
 	if (KEY_DELETED(k) ||
-	    !bkey_cmp(k, &ZERO_KEY) ||
-	    !bch_extent_ptrs(k) ||
-	    bch_ptr_invalid(bk, k))
+	    !bkey_cmp(k, &ZERO_KEY) || /* old style freeing keys */
+	    __bch_btree_ptr_invalid(b->c, k))
 		return true;
-
-	for (i = 0; i < bch_extent_ptrs(k); i++)
-		if (!ptr_available(b->c, k, i) ||
-		    ptr_stale(b->c, k, i))
-			return true;
 
 	if (expensive_debug_checks(b->c) &&
 	    btree_ptr_bad_expensive(b, k))
@@ -309,20 +305,13 @@ static bool bch_btree_ptr_bad(struct btree_keys *bk, const struct bkey *k)
 	return false;
 }
 
-static bool bch_btree_ptr_insert_fixup(struct btree_keys *bk,
+static bool bch_btree_ptr_insert_fixup(struct btree_keys *b,
 				       struct bkey *insert,
 				       struct btree_iter *iter,
 				       struct bkey *replace_key)
 {
-	struct btree *b = container_of(bk, struct btree, keys);
-
 	BUG_ON(replace_key);
-
-	/* Btree freeing keys - don't check for duplicates */
-	if (!bkey_cmp(insert, &ZERO_KEY)) {
-		btree_current_write(b)->prio_blocked++;
-		return false;
-	}
+	BUG_ON(!bkey_cmp(insert, &ZERO_KEY));
 
 	while (1) {
 		struct bkey *k = bch_btree_iter_next(iter);

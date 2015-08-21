@@ -625,18 +625,6 @@ struct cache_set {
 	wait_queue_head_t	bucket_wait;
 
 	/*
-	 * When we free a btree node, we increment the gen of the bucket the
-	 * node is in - but we can't rewrite the prios and gens until we
-	 * finished whatever it is we were doing, otherwise after a crash the
-	 * btree node would be freed but for say a split, we might not have the
-	 * pointers to the new nodes inserted into the btree yet.
-	 *
-	 * This is a refcount that blocks prio_write() until the new keys are
-	 * written.
-	 */
-	atomic_t		prio_blocked;
-
-	/*
 	 * For any bio we don't skip we subtract the number of sectors from
 	 * rescale; when it hits 0 we rescale all the bucket priorities.
 	 */

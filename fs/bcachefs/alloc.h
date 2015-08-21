@@ -41,7 +41,6 @@ static inline size_t buckets_available(struct cache_set *c)
 	return ret;
 }
 
-u8 bch_inc_gen(struct cache *, struct bucket *);
 void bch_rescale_priorities(struct cache_set *, int);
 
 bool bch_can_invalidate_bucket(struct cache *, struct bucket *);

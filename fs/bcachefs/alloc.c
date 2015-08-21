@@ -72,16 +72,6 @@
 
 /* Bucket heap / gen */
 
-u8 bch_inc_gen(struct cache *ca, struct bucket *b)
-{
-	uint8_t ret = ++b->gen;
-
-	ca->set->need_gc = max(ca->set->need_gc, bucket_gc_gen(b));
-	WARN_ON_ONCE(ca->set->need_gc > BUCKET_GC_GEN_MAX);
-
-	return ret;
-}
-
 void bch_rescale_priorities(struct cache_set *c, int sectors)
 {
 	struct cache *ca;
@@ -147,13 +137,16 @@ void __bch_invalidate_one_bucket(struct cache *ca, struct bucket *b)
 	if (GC_SECTORS_USED(b))
 		trace_bcache_invalidate(ca, b - ca->buckets);
 
-	bch_inc_gen(ca, b);
+	b->gen++;
 	b->read_prio = INITIAL_PRIO;
 	b->write_prio = INITIAL_PRIO;
 	SET_GC_MARK(b, GC_MARK_DIRTY);
 	SET_GC_GEN(b, 0);
 	SET_GC_SECTORS_USED(b, min_t(unsigned, ca->sb.bucket_size,
 				     MAX_GC_SECTORS_USED));
+
+	ca->set->need_gc = max(ca->set->need_gc, bucket_gc_gen(b));
+	WARN_ON_ONCE(ca->set->need_gc > BUCKET_GC_GEN_MAX);
 
 	ca->buckets_free--;
 }
@@ -378,11 +371,6 @@ retry_invalidate:
 			       !ca->invalidate_needs_gc);
 		invalidate_buckets(ca);
 
-		/*
-		 * Now, we write their new gens to disk so we can start writing
-		 * new stuff to them:
-		 */
-		allocator_wait(ca, !atomic_read(&ca->set->prio_blocked));
 		if (CACHE_SYNC(&ca->set->sb)) {
 			/*
 			 * This could deadlock if an allocation with a btree
@@ -483,9 +471,13 @@ void bch_bucket_free(struct cache_set *c, struct bkey *k)
 {
 	unsigned i;
 
+	mutex_lock(&c->bucket_lock);
+
 	for (i = 0; i < bch_extent_ptrs(k); i++)
 		__bch_bucket_free(PTR_CACHE(c, k, i),
 				  PTR_BUCKET(c, k, i));
+
+	mutex_unlock(&c->bucket_lock);
 }
 
 static struct cache *bch_get_next_cache_alloc(struct cache_tier *tier)
@@ -532,8 +524,8 @@ int bch_bucket_alloc_set(struct cache_set *c, unsigned reserve,
 	mutex_unlock(&c->bucket_lock);
 	return 0;
 err:
-	bch_bucket_free(c, k);
 	mutex_unlock(&c->bucket_lock);
+	bch_bucket_free(c, k);
 	return -1;
 }
 
@@ -651,14 +643,10 @@ retry:
 	if (tier->data_buckets[i]) {
 		/* we raced - and we must unlock to call bch_bucket_free()... */
 		spin_unlock(&c->open_buckets_lock);
-
-		mutex_lock(&c->bucket_lock);
 		bch_bucket_free(c, &b->key);
-
 		spin_lock(&c->open_buckets_lock);
-		__bch_open_bucket_put(c, b);
 
-		mutex_unlock(&c->bucket_lock);
+		__bch_open_bucket_put(c, b);
 		goto retry;
 	} else {
 		tier->data_buckets[i] = b;
