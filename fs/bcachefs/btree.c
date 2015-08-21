@@ -1584,10 +1584,16 @@ static int btree_gc_recurse(struct btree *b, struct btree_op *op,
 		memmove(r + 1, r, sizeof(r[0]) * (GC_MERGE_NODES - 1));
 		r->b = NULL;
 
-		if (need_resched() &&
-		    bkey_cmp(&b->c->gc_cur_key, &MAX_KEY)) {
-			ret = -EAGAIN;
-			break;
+		if (bkey_cmp(&b->c->gc_cur_key, &MAX_KEY)) {
+			if (need_resched()) {
+				ret = -EAGAIN;
+				break;
+			}
+
+			if (op->iterator_invalidated) {
+				ret = -EINTR;
+				break;
+			}
 		}
 	}
 
