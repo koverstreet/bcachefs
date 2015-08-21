@@ -1445,17 +1445,26 @@ int bch_flash_dev_create(struct cache_set *c, uint64_t size)
 
 static void bch_recalc_capacity(struct cache_set *c)
 {
-	struct cache_group *tier = &c->cache_all;
-	u64 nbuckets = 0;
+	struct cache_group *tier = c->cache_tiers + ARRAY_SIZE(c->cache_tiers);
+	u64 capacity = 0;
 	unsigned i;
 
-	for (i = 0; i < tier->nr_devices; i++) {
-		struct cache *ca = tier->devices[i];
+	while (--tier >= c->cache_tiers)
+		if (tier->nr_devices) {
+			for (i = 0; i < tier->nr_devices; i++) {
+				struct cache *ca = tier->devices[i];
 
-		nbuckets += ca->sb.nbuckets - ca->sb.first_bucket;
-	}
+				capacity += (ca->sb.nbuckets -
+					     ca->sb.first_bucket) <<
+					c->bucket_bits;
+			}
 
-	c->nbuckets = nbuckets;
+			capacity *= (100 - CACHE_RESERVE_PERCENT);
+			capacity = div64_u64(capacity, 100);
+			break;
+		}
+
+	c->capacity = capacity;
 }
 
 __printf(2, 3)
@@ -2207,6 +2216,10 @@ static int cache_init(struct cache *ca)
 	ca->journal.bio.bi_io_vec = ca->journal.bio.bi_inline_vecs;
 	spin_lock_init(&ca->freelist_lock);
 	spin_lock_init(&ca->prio_buckets_lock);
+
+	ca->reserve_buckets_count =
+		((ca->sb.nbuckets - ca->sb.first_bucket) *
+		 CACHE_RESERVE_PERCENT) / 100;
 
 	/* XXX: tune these */
 	movinggc_reserve = max_t(size_t, NUM_GC_GENS * 2,

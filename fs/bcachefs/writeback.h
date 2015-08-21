@@ -44,12 +44,12 @@ static inline bool bcache_dev_stripe_dirty(struct cached_dev *dc,
 static inline bool should_writeback(struct cached_dev *dc, struct bio *bio,
 				    unsigned cache_mode, bool would_skip)
 {
-	u64 available = buckets_available(dc->disk.c);
-	u64 nbuckets = dc->disk.c->nbuckets;
+	struct cache_set *c = dc->disk.c;
+	u64 available = sectors_available(c);
 
 	if (cache_mode != CACHE_MODE_WRITEBACK ||
 	    test_bit(BCACHE_DEV_DETACHING, &dc->disk.flags) ||
-	    available * 100 < nbuckets * CUTOFF_WRITEBACK_SYNC)
+	    available * 100 < c->capacity * CUTOFF_WRITEBACK_SYNC)
 		return false;
 
 	if (dc->partial_stripes_expensive &&
@@ -61,7 +61,7 @@ static inline bool should_writeback(struct cached_dev *dc, struct bio *bio,
 		return false;
 
 	return bio->bi_opf & REQ_SYNC ||
-		available * 100 < nbuckets * CUTOFF_WRITEBACK;
+		available * 100 < c->capacity * CUTOFF_WRITEBACK;
 }
 
 static inline void bch_writeback_queue(struct cached_dev *dc)

@@ -337,36 +337,31 @@ static void bch_data_insert_start(struct closure *cl)
 	op->insert_data_done = true;
 	continue_at(cl, bch_data_insert_keys, op->c->wq);
 err:
-	BUG_ON(op->wait);
-
-	/*
-	 * But if it's not a writeback write we'd rather just bail out if
-	 * there aren't any buckets ready to write to - it might take awhile and
-	 * we might be starving btree writes for gc or something.
-	 */
-
-	if (!op->replace) {
+	if (KEY_CACHED(&op->insert_key)) {
 		/*
-		 * Writethrough write: We can't complete the write until we've
-		 * updated the index. But we don't want to delay the write while
-		 * we wait for buckets to be freed up, so just invalidate the
-		 * rest of the write.
+		 * If we were writing cached data, not doing the write is fine
+		 * so long as we discard whatever would have been overwritten -
+		 * then it's equivalent to doing the write and immediately
+		 * reclaiming it.
 		 */
+
 		op->discard = true;
 		return bch_data_invalidate(cl);
-	} else {
-		/*
-		 * From a cache miss, we can just insert the keys for the data
-		 * we have written or bail out if we didn't do anything.
-		 */
-		op->insert_data_done = true;
-		bio_put(bio);
-
-		if (!bch_keylist_empty(&op->insert_keys))
-			continue_at(cl, bch_data_insert_keys, op->c->wq);
-		else
-			closure_return(cl);
 	}
+
+	op->error		= -ENOSPC;
+	op->insert_data_done	= true;
+	bio_put(bio);
+
+	/*
+	 * No reason not to insert keys for whatever data was successfully
+	 * written (especially for a cmpxchg operation that's moving data
+	 * around)
+	 */
+	if (!bch_keylist_empty(&op->insert_keys))
+		continue_at(cl, bch_data_insert_keys, op->c->wq);
+	else
+		closure_return(cl);
 }
 
 /**
@@ -690,10 +685,9 @@ static bool check_should_bypass(struct cached_dev *dc, struct bio *bio, int rw)
 	unsigned sectors, congested = bch_get_congested(c);
 	struct task_struct *task = current;
 	struct io *i;
-	u64 available = buckets_available(dc->disk.c);
 
 	if (test_bit(BCACHE_DEV_DETACHING, &dc->disk.flags) ||
-	    available * 100 < (u64) dc->disk.c->nbuckets * CUTOFF_CACHE_ADD ||
+	    sectors_available(c) * 100 < c->capacity * CUTOFF_CACHE_ADD ||
 	    (bio_op(bio) == REQ_OP_DISCARD))
 		goto skip;
 
@@ -1175,8 +1169,8 @@ static int cached_dev_cache_miss(struct btree *b, struct search *s,
 	/* XXX: broken */
 	if (!(bio->bi_opf & REQ_RAHEAD) &&
 	    !(bio->bi_opf & REQ_META) &&
-	    ((u64) buckets_available(dc->disk.c) * 100 <
-	     (u64) b->c->nbuckets * CUTOFF_CACHE_READA))
+	    ((u64) sectors_available(dc->disk.c) * 100 <
+	     (u64) b->c->capacity * CUTOFF_CACHE_READA))
 		reada = min_t(sector_t, dc->readahead >> 9,
 			      bdev_sectors(bio->bi_bdev) - bio_end_sector(bio));
 #endif

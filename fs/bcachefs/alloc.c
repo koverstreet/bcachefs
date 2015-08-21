@@ -241,7 +241,7 @@ static void bch_rescale_prios(struct cache_set *c, int rw)
 void bch_increment_clock_slowpath(struct cache_set *c, int rw)
 {
 	struct prio_clock *clock = &c->prio_clock[rw];
-	long next = (c->nbuckets * c->sb.bucket_size) / 1024;
+	long next = c->capacity >> 10;
 	long old, v = atomic_long_read(&clock->rescale);
 
 	do {
@@ -769,6 +769,10 @@ int bch_bucket_alloc_set(struct cache_set *c, enum alloc_reserve reserve,
 	trace_bcache_bucket_alloc_set_fail(c, reserve, cl);
 
 	if (!tier->nr_devices)
+		return -ENOSPC;
+
+	if (reserve == RESERVE_NONE &&
+	    !cache_set_can_write(c))
 		return -ENOSPC;
 
 	if (cl) {

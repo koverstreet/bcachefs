@@ -510,8 +510,8 @@ static size_t bch_cache_size(struct cache_set *c)
 
 static unsigned bch_cache_available_percent(struct cache_set *c)
 {
-	return div64_u64((u64) buckets_available(c) * 100,
-			 c->nbuckets ?: 1);
+	return div64_u64((u64) sectors_available(c) * 100,
+			 c->capacity ?: 1);
 }
 
 static unsigned bch_btree_used(struct cache_set *c)
