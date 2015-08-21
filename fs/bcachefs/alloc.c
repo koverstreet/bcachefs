@@ -1387,10 +1387,9 @@ static bool bch_stop_write_point(struct cache *ca,
 
 	/* Walk over all the replicas in the key */
 
-	for (ptr = 0; ptr < bch_extent_ptrs(&b->key); ptr++) {
-		if (PTR_CACHE(c, &b->key, ptr) == ca)
+	for (ptr = 0; ptr < bch_extent_ptrs(&b->key); ptr++)
+		if (PTR_DEV(&b->key, ptr) == ca->sb.nr_this_dev)
 			goto found_it;
-	}
 
 	/* Not found */
 	spin_unlock(&b->lock);
@@ -1458,12 +1457,18 @@ static bool bucket_still_writeable(struct open_bucket *b, struct cache_set *c)
 {
 	unsigned repno;
 
+	rcu_read_lock();
+
 	for (repno = 0; repno < bch_extent_ptrs(&b->key); repno++) {
 		struct cache *ca = PTR_CACHE(c, &b->key, repno);
 
-		if (CACHE_STATE(&ca->mi) != CACHE_ACTIVE)
+		if (CACHE_STATE(&ca->mi) != CACHE_ACTIVE) {
+			rcu_read_unlock();
 			return false;
+		}
 	}
+
+	rcu_read_unlock();
 
 	return true;
 }
