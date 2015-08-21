@@ -1335,7 +1335,8 @@ void bch_btree_keys_stats(struct btree_keys *b, struct bset_stats *stats)
 			stats->sets_written++;
 			stats->bytes_written += bytes;
 
-			stats->floats += t->size - 1;
+			if (t->size)
+				stats->floats += t->size - 1;
 
 			for (j = 1; j < t->size; j++)
 				if (t->tree[j].exponent == 127)
