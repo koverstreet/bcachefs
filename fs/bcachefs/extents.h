@@ -3,9 +3,9 @@
 
 #include "bset.h"
 
-struct bkey *bch_generic_sort_fixup(struct btree_iter *, struct bkey *);
+struct bkey *bch_generic_sort_fixup(struct btree_node_iter *, struct bkey *);
 bool bch_generic_insert_fixup(struct btree_keys *, struct bkey *,
-			      struct btree_iter *, struct bkey *,
+			      struct btree_node_iter *, struct bkey *,
 			      struct bkey *);
 
 extern const struct btree_keys_ops bch_btree_interior_node_ops;

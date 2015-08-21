@@ -876,7 +876,7 @@ static struct cache_set *bch_cache_set_alloc(struct cache *ca)
 		goto err;
 
 	iter_size = (c->sb.bucket_size / c->sb.block_size + 1) *
-		sizeof(struct btree_iter_set);
+		sizeof(struct btree_node_iter_set);
 
 	if (!(c->bio_meta = mempool_create_kmalloc_pool(2,
 				sizeof(struct bbio) + sizeof(struct bio_vec) *

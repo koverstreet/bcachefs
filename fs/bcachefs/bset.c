@@ -58,11 +58,11 @@ void bch_dump_bucket(struct btree_keys *b)
 int __bch_count_data(struct btree_keys *b)
 {
 	unsigned ret = 0;
-	struct btree_iter iter;
+	struct btree_node_iter iter;
 	struct bkey *k;
 
 	if (b->ops->is_extents)
-		for_each_key_all(b, k, &iter)
+		for_each_btree_node_key_all(b, k, &iter)
 			ret += KEY_SIZE(k);
 	return ret;
 }
@@ -80,11 +80,11 @@ void __bch_check_keys(struct btree_keys *b, const char *fmt, ...)
 {
 	va_list args;
 	struct bkey *k, *p = NULL;
-	struct btree_iter iter;
+	struct btree_node_iter iter;
 	char buf1[80], buf2[80];
 	const char *err;
 
-	for_each_key_all(b, k, &iter) {
+	for_each_btree_node_key_all(b, k, &iter) {
 		if (b->ops->is_extents) {
 			err = "keys out of order";
 			if (p && bkey_cmp(&START_KEY(p), &START_KEY(k)) > 0)
@@ -124,7 +124,7 @@ bug:
 	panic("bch_check_keys error:  %s %s, %s\n", err, buf1, buf2);
 }
 
-static void bch_btree_iter_next_check(struct btree_iter *iter)
+static void bch_btree_node_iter_next_check(struct btree_node_iter *iter)
 {
 	struct btree_keys *b = iter->b;
 	struct bkey *k = iter->data->k, *next = bkey_next(k);
@@ -147,9 +147,10 @@ static void bch_btree_iter_next_check(struct btree_iter *iter)
 	}
 }
 
-void bch_btree_iter_verify(struct btree_keys *b, struct btree_iter *iter)
+void bch_btree_node_iter_verify(struct btree_keys *b,
+				struct btree_node_iter *iter)
 {
-	struct btree_iter_set *set;
+	struct btree_node_iter_set *set;
 	struct bset_tree *t;
 
 	for (set = iter->data;
@@ -168,7 +169,8 @@ next:
 
 #else
 
-static inline void bch_btree_iter_next_check(struct btree_iter *iter) {}
+static inline void
+bch_btree_node_iter_next_check(struct btree_node_iter *iter) {}
 
 #endif
 
@@ -644,10 +646,11 @@ EXPORT_SYMBOL(bch_bset_build_written_tree);
  *
  * @top must be in the last bset.
  */
-static void bch_btree_iter_fix(struct btree_iter *iter, struct bkey *where,
-			       struct bkey *new)
+static void bch_btree_node_iter_fix(struct btree_node_iter *iter,
+				    struct bkey *where,
+				    struct bkey *new)
 {
-	struct btree_iter_set *set;
+	struct btree_node_iter_set *set;
 	u64 n = KEY_U64s(new);
 
 	for (set = iter->data;
@@ -777,7 +780,8 @@ static void __bch_bset_insert(struct btree_keys *b, struct bkey *where,
 	bch_bset_fix_lookup_table(b, t, where);
 }
 
-static unsigned bch_bset_insert(struct btree_keys *b, struct btree_iter *iter,
+static unsigned bch_bset_insert(struct btree_keys *b,
+				struct btree_node_iter *iter,
 				struct bkey *where, struct bkey *insert)
 {
 	struct bset *i = bset_tree_last(b)->data;
@@ -826,12 +830,12 @@ static unsigned bch_bset_insert(struct btree_keys *b, struct btree_iter *iter,
 	}
 
 	__bch_bset_insert(b, where, insert);
-	bch_btree_iter_fix(iter, where, insert);
+	bch_btree_node_iter_fix(iter, where, insert);
 	return BTREE_INSERT_STATUS_INSERT;
 }
 
 unsigned bch_bset_insert_with_hint(struct btree_keys *b,
-				   struct btree_iter *iter,
+				   struct btree_node_iter *iter,
 				   struct bkey *where,
 				   struct bkey *insert)
 {
@@ -843,8 +847,10 @@ unsigned bch_bset_insert_with_hint(struct btree_keys *b,
 }
 EXPORT_SYMBOL(bch_bset_insert_with_hint);
 
-unsigned __bch_btree_insert_key(struct btree_keys *b, struct bkey *insert,
-				struct bkey *replace, struct btree_iter *iter,
+unsigned __bch_btree_insert_key(struct btree_keys *b,
+				struct btree_node_iter *iter,
+				struct bkey *insert,
+				struct bkey *replace,
 				struct bkey *where, struct bkey *done)
 {
 	int oldsize = bch_count_data(b);
@@ -874,13 +880,13 @@ unsigned bch_btree_insert_key(struct btree_keys *b, struct bkey *insert,
 			      struct bkey *replace)
 {
 	struct bkey *where;
-	struct btree_iter iter;
+	struct btree_node_iter iter;
 	struct bkey done;
 
-	where = bch_btree_iter_init(b, &iter, b->ops->is_extents
+	where = bch_btree_node_iter_init(b, &iter, b->ops->is_extents
 				    ? &START_KEY(insert) : insert);
 
-	return __bch_btree_insert_key(b, insert, replace, &iter, where, &done);
+	return __bch_btree_insert_key(b, &iter, insert, replace, where, &done);
 }
 EXPORT_SYMBOL(bch_btree_insert_key);
 
@@ -1039,19 +1045,19 @@ static struct bkey *bch_bset_search(struct btree_keys *b, struct bset_tree *t,
 
 /* Btree iterator */
 
-void bch_btree_iter_push(struct btree_iter *iter, struct bkey *k,
+void bch_btree_node_iter_push(struct btree_node_iter *iter, struct bkey *k,
 			 struct bkey *end)
 {
 	if (k != end)
 		BUG_ON(!heap_add(iter,
-				 ((struct btree_iter_set) { k, end }),
+				 ((struct btree_node_iter_set) { k, end }),
 				 iter_cmp(iter)));
 }
 
-static struct bkey *__bch_btree_iter_init(struct btree_keys *b,
-					  struct btree_iter *iter,
-					  struct bkey *search,
-					  struct bset_tree *start)
+static struct bkey *__bch_btree_node_iter_init(struct btree_keys *b,
+					       struct btree_node_iter *iter,
+					       struct bkey *search,
+					       struct bset_tree *start)
 {
 	struct bkey *ret = NULL;
 
@@ -1065,27 +1071,28 @@ static struct bkey *__bch_btree_iter_init(struct btree_keys *b,
 
 	for (; start <= bset_tree_last(b); start++) {
 		ret = bch_bset_search(b, start, search);
-		bch_btree_iter_push(iter, ret, bset_bkey_last(start->data));
+		bch_btree_node_iter_push(iter, ret,
+					 bset_bkey_last(start->data));
 	}
 
 	return ret;
 }
 
-struct bkey *bch_btree_iter_init(struct btree_keys *b,
-				 struct btree_iter *iter,
-				 struct bkey *search)
+struct bkey *bch_btree_node_iter_init(struct btree_keys *b,
+				      struct btree_node_iter *iter,
+				      struct bkey *search)
 {
-	return __bch_btree_iter_init(b, iter, search, b->set);
+	return __bch_btree_node_iter_init(b, iter, search, b->set);
 }
-EXPORT_SYMBOL(bch_btree_iter_init);
+EXPORT_SYMBOL(bch_btree_node_iter_init);
 
-struct bkey *bch_btree_iter_next_all(struct btree_iter *iter)
+struct bkey *bch_btree_node_iter_next_all(struct btree_node_iter *iter)
 {
-	struct btree_iter_set unused;
+	struct btree_node_iter_set unused;
 	struct bkey *ret = NULL;
 
-	if (!bch_btree_iter_end(iter)) {
-		bch_btree_iter_next_check(iter);
+	if (!bch_btree_node_iter_end(iter)) {
+		bch_btree_node_iter_next_check(iter);
 
 		ret = iter->data->k;
 		iter->data->k = bkey_next(iter->data->k);
@@ -1095,12 +1102,12 @@ struct bkey *bch_btree_iter_next_all(struct btree_iter *iter)
 		if (iter->data->k == iter->data->end)
 			BUG_ON(!heap_pop(iter, unused, iter_cmp(iter)));
 		else
-			btree_iter_sift(iter, 0);
+			btree_node_iter_sift(iter, 0);
 	}
 
 	return ret;
 }
-EXPORT_SYMBOL(bch_btree_iter_next_all);
+EXPORT_SYMBOL(bch_btree_node_iter_next_all);
 
 /* Mergesort */
 
@@ -1110,10 +1117,10 @@ EXPORT_SYMBOL(bch_btree_iter_next_all);
 size_t bch_btree_count_keys(struct btree_keys *b)
 {
 	struct bkey *k;
-	struct btree_iter iter;
+	struct btree_node_iter iter;
 	size_t ret = 0;
 
-	for_each_key(b, k, &iter)
+	for_each_btree_node_key(b, k, &iter)
 		ret += KEY_U64s(k);
 
 	return ret;
@@ -1140,20 +1147,20 @@ int bch_bset_sort_state_init(struct bset_sort_state *state, unsigned page_order)
 EXPORT_SYMBOL(bch_bset_sort_state_init);
 
 static void btree_mergesort(struct btree_keys *b, struct bset *bset,
-			    struct btree_iter *iter,
+			    struct btree_node_iter *iter,
 			    ptr_filter_fn filter, bool fixup)
 {
 	struct bkey *k, *prev = NULL, *out = bset->start;
 	BKEY_PADDED(k) tmp;
 
-	while (!bch_btree_iter_end(iter)) {
+	while (!bch_btree_node_iter_end(iter)) {
 		if (fixup && b->ops->sort_fixup)
 			k = b->ops->sort_fixup(iter, &tmp.k);
 		else
 			k = NULL;
 
 		if (!k)
-			k = bch_btree_iter_next_all(iter);
+			k = bch_btree_node_iter_next_all(iter);
 
 		bkey_copy(out, k);
 
@@ -1175,7 +1182,7 @@ static void btree_mergesort(struct btree_keys *b, struct bset *bset,
 	pr_debug("sorted %i keys", bset->keys);
 }
 
-static void __btree_sort(struct btree_keys *b, struct btree_iter *iter,
+static void __btree_sort(struct btree_keys *b, struct btree_node_iter *iter,
 			 unsigned start, unsigned order,
 			 ptr_filter_fn filter, bool fixup,
 			 struct bset_sort_state *state)
@@ -1240,9 +1247,9 @@ void bch_btree_sort_partial(struct btree_keys *b, unsigned start,
 			    struct bset_sort_state *state)
 {
 	size_t order = b->page_order, keys = 0;
-	struct btree_iter iter;
+	struct btree_node_iter iter;
 
-	__bch_btree_iter_init(b, &iter, NULL, &b->set[start]);
+	__bch_btree_node_iter_init(b, &iter, NULL, &b->set[start]);
 
 	if (start) {
 		unsigned i;
@@ -1258,7 +1265,7 @@ void bch_btree_sort_partial(struct btree_keys *b, unsigned start,
 EXPORT_SYMBOL(bch_btree_sort_partial);
 
 void bch_btree_sort_and_fix_extents(struct btree_keys *b,
-				    struct btree_iter *iter,
+				    struct btree_node_iter *iter,
 				    ptr_filter_fn filter,
 				    struct bset_sort_state *state)
 {
@@ -1277,9 +1284,9 @@ void bch_btree_sort_into(struct btree_keys *dst,
 			 struct bset_sort_state *state)
 {
 	uint64_t start_time = local_clock();
+	struct btree_node_iter iter;
 
-	struct btree_iter iter;
-	bch_btree_iter_init(src, &iter, NULL);
+	bch_btree_node_iter_init(src, &iter, NULL);
 
 	btree_mergesort(src, dst->set->data, &iter, filter, false);
 

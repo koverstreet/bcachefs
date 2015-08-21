@@ -15,8 +15,8 @@
 
 #include <trace/events/bcachefs.h>
 
-static void sort_key_next(struct btree_iter *iter,
-			  struct btree_iter_set *i)
+static void sort_key_next(struct btree_node_iter *iter,
+			  struct btree_node_iter_set *i)
 {
 	i->k = bkey_next(i->k);
 
@@ -24,11 +24,11 @@ static void sort_key_next(struct btree_iter *iter,
 		*i = iter->data[--iter->used];
 }
 
-struct bkey *bch_generic_sort_fixup(struct btree_iter *iter,
+struct bkey *bch_generic_sort_fixup(struct btree_node_iter *iter,
 				    struct bkey *tmp)
 {
 	while (iter->used > 1) {
-		struct btree_iter_set *top = iter->data, *i = top + 1;
+		struct btree_node_iter_set *top = iter->data, *i = top + 1;
 
 		if (iter->used > 2 &&
 		    iter_cmp(iter)(i[0], i[1]))
@@ -54,20 +54,21 @@ struct bkey *bch_generic_sort_fixup(struct btree_iter *iter,
 		if (i->k == i->end)
 			*i = iter->data[--iter->used];
 
-		btree_iter_sift(iter, i - top);
+		btree_node_iter_sift(iter, i - top);
 	}
 
 	return NULL;
 }
 
 bool bch_generic_insert_fixup(struct btree_keys *b, struct bkey *insert,
-			      struct btree_iter *iter, struct bkey *replace_key,
+			      struct btree_node_iter *iter,
+			      struct bkey *replace_key,
 			      struct bkey *done)
 {
 	BUG_ON(replace_key);
 
 	while (1) {
-		struct bkey *k = bch_btree_iter_peek(iter);
+		struct bkey *k = bch_btree_node_iter_peek(iter);
 
 		if (!k || bkey_cmp(k, insert) > 0)
 			break;
@@ -80,7 +81,7 @@ bool bch_generic_insert_fixup(struct btree_keys *b, struct bkey *insert,
 			b->nr_live_keys -= KEY_U64s(k);
 		}
 next:
-		bch_btree_iter_next_all(iter);
+		bch_btree_node_iter_next_all(iter);
 	}
 
 	return false;
@@ -453,11 +454,11 @@ void bch_key_resize(struct bkey *k, unsigned new_size)
 	SET_KEY_SIZE(k, new_size);
 }
 
-static struct bkey *bch_extent_sort_fixup(struct btree_iter *iter,
+static struct bkey *bch_extent_sort_fixup(struct btree_node_iter *iter,
 					  struct bkey *tmp)
 {
 	while (iter->used > 1) {
-		struct btree_iter_set *top = iter->data, *i = top + 1;
+		struct btree_node_iter_set *top = iter->data, *i = top + 1;
 
 		if (iter->used > 2 &&
 		    iter_cmp(iter)(i[0], i[1]))
@@ -468,7 +469,7 @@ static struct bkey *bch_extent_sort_fixup(struct btree_iter *iter,
 
 		if (!KEY_SIZE(i->k)) {
 			sort_key_next(iter, i);
-			btree_iter_sift(iter, i - top);
+			btree_node_iter_sift(iter, i - top);
 			continue;
 		}
 
@@ -478,7 +479,7 @@ static struct bkey *bch_extent_sort_fixup(struct btree_iter *iter,
 			else
 				bch_cut_front(top->k, i->k);
 
-			btree_iter_sift(iter, i - top);
+			btree_node_iter_sift(iter, i - top);
 		} else {
 			/* can't happen because of comparison func */
 			BUG_ON(!bkey_cmp(&START_KEY(top->k), &START_KEY(i->k)));
@@ -488,7 +489,7 @@ static struct bkey *bch_extent_sort_fixup(struct btree_iter *iter,
 
 				bch_cut_back(&START_KEY(i->k), tmp);
 				bch_cut_front(i->k, top->k);
-				btree_iter_sift(iter, 0);
+				btree_node_iter_sift(iter, 0);
 
 				return tmp;
 			} else {
@@ -674,7 +675,7 @@ found_common:
  */
 static bool bkey_cmpxchg(struct cache_set *c,
 			 struct btree_keys *b,
-			 struct btree_iter *iter,
+			 struct btree_node_iter *iter,
 			 struct bkey *k,
 			 struct bkey *old,
 			 struct bkey *new,
@@ -722,7 +723,7 @@ static bool bkey_cmpxchg(struct cache_set *c,
 
 static void handle_existing_key_newer(struct cache_set *c,
 				      struct btree_keys *b,
-				      struct btree_iter *iter,
+				      struct btree_node_iter *iter,
 				      struct bkey *insert,
 				      struct bkey *k)
 {
@@ -786,7 +787,7 @@ static void handle_existing_key_newer(struct cache_set *c,
  */
 static bool bch_extent_insert_fixup(struct btree_keys *b,
 				    struct bkey *insert,
-				    struct btree_iter *iter,
+				    struct btree_node_iter *iter,
 				    struct bkey *replace_key,
 				    struct bkey *done)
 {
@@ -821,7 +822,7 @@ static bool bch_extent_insert_fixup(struct btree_keys *b,
 	}
 
 	while (KEY_SIZE(insert) &&
-	       (k = bch_btree_iter_peek_overlapping(iter, insert))) {
+	       (k = bch_btree_node_iter_peek_overlapping(iter, insert))) {
 		/*
 		 * Incrementing @done indicates to the caller that we've
 		 * finished with @insert up to that point: before setting @done,
@@ -887,7 +888,7 @@ static bool bch_extent_insert_fixup(struct btree_keys *b,
 			if (!bkey_written(b, k))
 				SET_KEY_OFFSET(k, KEY_START(insert));
 
-			bch_btree_iter_next_all(iter);
+			bch_btree_node_iter_next_all(iter);
 			break;
 
 		case BCH_EXTENT_OVERLAP_MIDDLE:
