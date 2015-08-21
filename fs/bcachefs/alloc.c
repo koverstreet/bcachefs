@@ -527,7 +527,7 @@ static struct open_bucket *pick_data_bucket(struct cache_set *c,
 	struct open_bucket *ret, *ret_task = NULL;
 
 	list_for_each_entry_reverse(ret, &c->data_buckets, list)
-		if (!bkey_cmp(&ret->key, search))
+		if (!bkey_cmp(&ret->key, &START_KEY(search)))
 			goto found;
 		else if (ret->last_write_point == write_point)
 			ret_task = ret;
@@ -557,12 +557,12 @@ found:
  *
  * If s->writeback is true, will not fail.
  */
-bool bch_alloc_sectors(struct cache_set *c, struct bkey *k, unsigned sectors,
+bool bch_alloc_sectors(struct cache_set *c, struct bkey *k,
 		       unsigned write_point, unsigned write_prio, bool wait)
 {
 	struct open_bucket *b;
 	BKEY_PADDED(key) alloc;
-	unsigned i;
+	unsigned i, sectors;
 
 	/*
 	 * We might have to allocate a new bucket, which we can't do with a
@@ -603,9 +603,9 @@ bool bch_alloc_sectors(struct cache_set *c, struct bkey *k, unsigned sectors,
 	for (i = 0; i < KEY_PTRS(&b->key); i++)
 		k->ptr[i] = b->key.ptr[i];
 
-	sectors = min(sectors, b->sectors_free);
+	sectors = min_t(unsigned, KEY_SIZE(k), b->sectors_free);
 
-	SET_KEY_OFFSET(k, KEY_OFFSET(k) + sectors);
+	SET_KEY_OFFSET(k, KEY_START(k) + sectors);
 	SET_KEY_SIZE(k, sectors);
 	SET_KEY_PTRS(k, KEY_PTRS(&b->key));
 

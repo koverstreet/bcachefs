@@ -97,14 +97,6 @@ static void write_moving(struct closure *cl)
 		moving_init(io);
 
 		io->bio.bio.bi_iter.bi_sector = KEY_START(&io->w->key);
-		op->write_prio		= 1;
-		op->bio			= &io->bio.bio;
-
-		op->writeback		= KEY_DIRTY(&io->w->key);
-		op->csum		= KEY_CSUM(&io->w->key);
-
-		bkey_copy(&op->replace_key, &io->w->key);
-		op->replace		= true;
 
 		closure_call(&op->cl, bch_data_insert, NULL, cl);
 	}
@@ -150,11 +142,13 @@ static void read_moving(struct cache_set *c)
 		if (!io)
 			goto err;
 
-		w->private	= io;
-		io->w		= w;
-		io->op.inode	= KEY_INODE(&w->key);
-		io->op.c	= c;
-		io->op.wq	= c->moving_gc_wq;
+		w->private		= io;
+		io->w			= w;
+
+		bch_data_insert_op_init(&io->op, c, c->moving_gc_wq,
+					&io->bio.bio, 0, false, false,
+					&io->w->key, &io->w->key);
+		io->op.write_prio	= 1;
 
 		moving_init(io);
 		bio = &io->bio.bio;

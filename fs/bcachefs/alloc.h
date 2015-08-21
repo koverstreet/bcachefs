@@ -41,7 +41,8 @@ void bch_bucket_free(struct cache_set *, struct bkey *);
 long bch_bucket_alloc(struct cache *, unsigned, bool);
 int bch_bucket_alloc_set(struct cache_set *, unsigned,
 			 struct bkey *, int, bool);
-bool bch_alloc_sectors(struct cache_set *, struct bkey *, unsigned,
+
+bool bch_alloc_sectors(struct cache_set *, struct bkey *,
 		       unsigned, unsigned, bool);
 
 int bch_open_buckets_alloc(struct cache_set *);
