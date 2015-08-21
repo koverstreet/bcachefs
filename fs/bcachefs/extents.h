@@ -4,6 +4,7 @@
 #include "bset.h"
 
 extern const struct btree_keys_ops bch_btree_keys_ops;
+extern const struct btree_keys_ops bch_generic_keys_ops;
 extern const struct btree_keys_ops bch_extent_keys_ops;
 
 struct bkey;

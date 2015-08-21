@@ -371,14 +371,19 @@ static int bch_btree_bset_stats(struct btree_op *b_op, struct btree *b)
 static int bch_bset_print_stats(struct cache_set *c, char *buf)
 {
 	struct bset_stats_op op;
+	unsigned id;
 	int ret;
 
 	memset(&op, 0, sizeof(op));
 	bch_btree_op_init(&op.op, -1);
 
-	ret = bch_btree_map_nodes(&op.op, c, &ZERO_KEY, bch_btree_bset_stats);
-	if (ret < 0)
-		return ret;
+	for (id = 0; id < BTREE_ID_NR; id++)
+		if (c->btree_roots[id]) {
+			ret = bch_btree_map_nodes(&op.op, c, id, NULL,
+						  bch_btree_bset_stats);
+			if (ret < 0)
+				return ret;
+		}
 
 	return snprintf(buf, PAGE_SIZE,
 			"btree nodes:		%zu\n"
@@ -406,9 +411,9 @@ static unsigned bch_root_usage(struct cache_set *c)
 	do {
 		rw_unlock(false, b);
 lock_root:
-		b = c->root;
+		b = c->btree_roots[BTREE_ID_EXTENTS];
 		rw_lock(false, b, b->level);
-	} while (b != c->root);
+	} while (b != c->btree_roots[BTREE_ID_EXTENTS]);
 
 	for_each_key_filter(&b->keys, k, &iter, bch_ptr_bad)
 		bytes += bkey_bytes(k);
@@ -457,7 +462,8 @@ SHOW(__bch_cache_set)
 	sysfs_print(journal_delay_ms,		c->journal_delay_ms);
 	sysfs_hprint(bucket_size,		bucket_bytes(c));
 	sysfs_hprint(block_size,		block_bytes(c));
-	sysfs_print(tree_depth,			c->root->level);
+	sysfs_print(tree_depth,
+		    c->btree_roots[BTREE_ID_EXTENTS]->level);
 	sysfs_print(root_usage_percent,		bch_root_usage(c));
 
 	sysfs_hprint(btree_cache_size,		bch_cache_size(c));

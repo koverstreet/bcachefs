@@ -95,8 +95,8 @@ void bch_refill_keybuf(struct cache_set *c, struct keybuf *buf,
 	refill.end	= end;
 	refill.pred	= pred;
 
-	bch_btree_map_keys(&refill.op, c, &buf->last_scanned,
-			   refill_keybuf_fn, MAP_END_KEY);
+	bch_btree_map_keys(&refill.op, c, BTREE_ID_EXTENTS,
+			   &buf->last_scanned, refill_keybuf_fn, MAP_END_KEY);
 
 	trace_bcache_keyscan(refill.nr_found,
 			     KEY_INODE(&start), KEY_OFFSET(&start),

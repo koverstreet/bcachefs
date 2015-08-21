@@ -368,7 +368,7 @@ static int bch_journal_replay_key(struct cache_set *c, enum btree_id id,
 
 	bch_keylist_init_single(&keys, k);
 
-	ret = bch_btree_insert(c, &keys, NULL, NULL);
+	ret = bch_btree_insert(c, id, &keys, NULL, NULL);
 	BUG_ON(!bch_keylist_empty(&keys));
 
 	cond_resched();
@@ -667,9 +667,17 @@ static void journal_write_locked(struct closure *cl)
 	clear_bit(JOURNAL_DIRTY, &c->journal.flags);
 	cancel_delayed_work(&c->journal.work);
 
-	/* XXX: need locking */
-	bch_journal_add_btree_root(w->data, BTREE_ID_EXTENTS,
-				   &c->root->key, c->root->level);
+	spin_lock(&c->btree_root_lock);
+
+	for (i = 0; i < BTREE_ID_NR; i++) {
+		struct btree *b = c->btree_roots[i];
+
+		if (b)
+			bch_journal_add_btree_root(w->data, i,
+						   &b->key, b->level);
+	}
+
+	spin_unlock(&c->btree_root_lock);
 
 	bch_journal_add_btree_root(w->data, BTREE_ID_UUIDS,
 				   &c->uuid_bucket, 0);

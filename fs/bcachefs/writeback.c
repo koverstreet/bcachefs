@@ -102,7 +102,8 @@ static void write_dirty_finish(struct closure *cl)
 		SET_KEY_CACHED(keys.top, true);
 		bch_keylist_push(&keys);
 
-		ret = bch_btree_insert(dc->disk.c, &keys, &w->key, NULL);
+		ret = bch_btree_insert(dc->disk.c, BTREE_ID_EXTENTS,
+				       &keys, &w->key, NULL);
 		if (ret)
 			trace_bcache_writeback_collision(&w->key);
 
@@ -478,8 +479,8 @@ void bch_sectors_dirty_init(struct cached_dev *dc)
 	bch_btree_op_init(&op.op, -1);
 	op.inode = dc->disk.id;
 
-	bch_btree_map_keys(&op.op, dc->disk.c, &KEY(op.inode, 0, 0),
-			   sectors_dirty_init_fn, 0);
+	bch_btree_map_keys(&op.op, dc->disk.c, BTREE_ID_EXTENTS,
+			   &KEY(op.inode, 0, 0), sectors_dirty_init_fn, 0);
 
 	dc->writeback_pd.last_actual = bcache_dev_sectors_dirty(&dc->disk);
 }

@@ -427,7 +427,8 @@ static int __uuid_write(struct cache_set *c)
 
 	lockdep_assert_held(&bch_register_lock);
 
-	b = bch_open_bucket_alloc(c, RESERVE_BTREE, c->meta_replicas, 0, true);
+	b = bch_open_bucket_alloc(c, BTREE_ID_EXTENTS,
+				  c->meta_replicas, 0, true);
 
 	SET_KEY_SIZE(&b->key, min_t(unsigned, c->sb.bucket_size,
 				    1U << (KEY_SIZE_BITS - 1)));
@@ -1405,8 +1406,9 @@ static void cache_set_flush(struct closure *cl)
 	if (!IS_ERR_OR_NULL(c->gc_thread))
 		kthread_stop(c->gc_thread);
 
-	if (!IS_ERR_OR_NULL(c->root))
-		list_add(&c->root->list, &c->btree_cache);
+	for (i = 0; i < BTREE_ID_NR; i++)
+		if (c->btree_roots[i])
+			list_add(&c->btree_roots[i]->list, &c->btree_cache);
 
 	/* Should skip this if we're unregistering because of an error */
 	list_for_each_entry(b, &c->btree_cache, list) {
@@ -1511,6 +1513,7 @@ struct cache_set *bch_cache_set_alloc(struct cache_sb *sb)
 	mutex_init(&c->bucket_lock);
 	init_waitqueue_head(&c->btree_cache_wait);
 	init_waitqueue_head(&c->bucket_wait);
+	spin_lock_init(&c->btree_root_lock);
 	sema_init(&c->uuid_write_mutex, 1);
 	bkey_init(&c->uuid_bucket);
 
@@ -1576,6 +1579,7 @@ static void run_cache_set(struct cache_set *c)
 	const char *err = "cannot allocate memory";
 	struct cached_dev *dc, *t;
 	struct cache *ca;
+	struct btree *b;
 	struct closure cl;
 	unsigned i;
 
@@ -1591,7 +1595,7 @@ static void run_cache_set(struct cache_set *c)
 		LIST_HEAD(journal);
 		struct bkey *k;
 		struct jset *j;
-		int btree_level;
+		unsigned id;
 
 		err = "cannot allocate memory for journal";
 		if (bch_journal_read(c, &journal))
@@ -1615,21 +1619,29 @@ static void run_cache_set(struct cache_set *c)
 		 * sooner we could avoid journal replay.
 		 */
 
-		k = bch_journal_find_btree_root(c, j, BTREE_ID_EXTENTS,
-						&btree_level);
+		for (id = 0; id < BTREE_ID_NR; id++) {
+			unsigned level;
 
-		err = "bad btree root";
-		if (!k)
-			goto err;
+			k = bch_journal_find_btree_root(c, j, id, &level);
+			if (!k) {
+				err = "bad btree root";
+				if (id == BTREE_ID_EXTENTS)
+					goto err;
+				else
+					continue;
+			}
 
-		err = "error reading btree root";
-		c->root = bch_btree_node_get(c, NULL, k, btree_level,
-					     true, NULL);
-		if (IS_ERR_OR_NULL(c->root))
-			goto err;
+			err = "error reading btree root";
+			b = bch_btree_node_get(c, NULL, k, level, id,
+					       true, NULL);
+			if (IS_ERR_OR_NULL(b))
+				goto err;
 
-		list_del_init(&c->root->list);
-		rw_unlock(true, c->root);
+			list_del_init(&b->list);
+			rw_unlock(true, b);
+
+			c->btree_roots[id] = b;
+		}
 
 		err = uuid_read(c, j, &cl);
 		if (err)
@@ -1700,17 +1712,18 @@ static void run_cache_set(struct cache_set *c)
 			goto err;
 
 		err = "cannot allocate new btree root";
-		c->root = __bch_btree_node_alloc(c, NULL, 0, true, NULL);
-		if (IS_ERR_OR_NULL(c->root))
+		b = __bch_btree_node_alloc(c, NULL, 0, BTREE_ID_EXTENTS,
+					   true, NULL);
+		if (IS_ERR_OR_NULL(b))
 			goto err;
 
-		mutex_lock(&c->root->write_lock);
-		bkey_copy_key(&c->root->key, &MAX_KEY);
-		bch_btree_node_write(c->root, &cl);
-		mutex_unlock(&c->root->write_lock);
+		mutex_lock(&b->write_lock);
+		bkey_copy_key(&b->key, &MAX_KEY);
+		bch_btree_node_write(b, &cl);
+		mutex_unlock(&b->write_lock);
 
-		bch_btree_set_root(c->root);
-		rw_unlock(true, c->root);
+		bch_btree_set_root(b);
+		rw_unlock(true, b);
 
 		/*
 		 * We don't want to write the first journal entry until
@@ -1868,7 +1881,7 @@ void bch_cache_release(struct kobject *kobj)
 static int cache_alloc(struct cache *ca)
 {
 	size_t free;
-	unsigned movinggc_reserve;
+	unsigned i, movinggc_reserve;
 
 	__module_get(THIS_MODULE);
 	kobject_init(&ca->kobj, &bch_cache_ktype);
@@ -1882,8 +1895,11 @@ static int cache_alloc(struct cache *ca)
 
 	free = max_t(size_t, 4, ca->sb.nbuckets >> 10);
 
-	if (!init_fifo(&ca->free[RESERVE_BTREE], 8, GFP_KERNEL) ||
-	    !init_fifo(&ca->free[RESERVE_PRIO], prio_buckets(ca), GFP_KERNEL) ||
+	for (i = 0; i < BTREE_ID_NR; i++)
+		if (!init_fifo(&ca->free[i], 8, GFP_KERNEL))
+			return -ENOMEM;
+
+	if (!init_fifo(&ca->free[RESERVE_PRIO], prio_buckets(ca), GFP_KERNEL) ||
 	    !init_fifo(&ca->free[RESERVE_MOVINGGC],
 		       movinggc_reserve, GFP_KERNEL) ||
 	    !init_fifo(&ca->free[RESERVE_NONE], free, GFP_KERNEL) ||

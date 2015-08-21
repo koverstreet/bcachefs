@@ -424,8 +424,7 @@ struct cached_dev {
 };
 
 enum alloc_reserve {
-	RESERVE_BTREE,
-	RESERVE_PRIO,
+	RESERVE_PRIO	= BTREE_ID_NR,
 	RESERVE_MOVINGGC,
 	RESERVE_NONE,
 	RESERVE_NR,
@@ -582,7 +581,8 @@ struct cache_set {
 	 */
 	unsigned		btree_pages;
 
-	struct btree		*root;
+	spinlock_t		btree_root_lock;
+	struct btree		*btree_roots[BTREE_ID_NR];
 
 	struct rhashtable	btree_cache_table;
 
@@ -606,6 +606,7 @@ struct cache_set {
 
 	/* Number of elements in btree_cache + btree_cache_freeable lists */
 	unsigned		btree_cache_used;
+	unsigned		btree_cache_reserve;
 	struct shrinker		btree_cache_shrink;
 
 	/*
@@ -651,7 +652,8 @@ struct cache_set {
 	atomic_t		sectors_until_gc;
 
 	/* Where in the btree gc currently is */
-	struct bkey		gc_done;
+	enum btree_id		gc_cur_btree;
+	struct bkey		gc_cur_key;
 
 	/*
 	 * The allocation code needs gc_mark in struct bucket to be correct, but

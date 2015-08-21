@@ -198,7 +198,7 @@ void bch_keylist_pop_front(struct keylist *l)
 /* Auxiliary search trees */
 
 /* 32 bits total: */
-#define BKEY_MID_BITS		3
+#define BKEY_MID_BITS		5
 #define BKEY_EXPONENT_BITS	7
 #define BKEY_MANTISSA_BITS	(32 - BKEY_MID_BITS - BKEY_EXPONENT_BITS)
 #define BKEY_MANTISSA_MASK	((1 << BKEY_MANTISSA_BITS) - 1)

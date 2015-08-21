@@ -66,8 +66,8 @@ static void bch_data_insert_keys(struct closure *cl)
 	while (atomic_read(&s->cl.remaining) & CLOSURE_WAITING)
 		closure_sync(&s->cl);
 #endif
-	ret = bch_btree_insert(op->c, &op->insert_keys, replace_key,
-			       op->flush ? cl : NULL);
+	ret = bch_btree_insert(op->c, BTREE_ID_EXTENTS, &op->insert_keys,
+			       replace_key, op->flush ? cl : NULL);
 	if (ret == -ESRCH) {
 		op->replace_collision = true;
 	} else if (ret) {
@@ -733,7 +733,7 @@ static void cache_lookup(struct closure *cl)
 
 	bch_btree_op_init(&s->op, -1);
 
-	ret = bch_btree_map_keys(&s->op, s->iop.c,
+	ret = bch_btree_map_keys(&s->op, s->iop.c, BTREE_ID_EXTENTS,
 				 &KEY(s->inode, bio->bi_iter.bi_sector, 0),
 				 cache_lookup_fn, MAP_END_KEY);
 	if (ret == -EAGAIN)
