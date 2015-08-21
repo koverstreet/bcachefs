@@ -1079,7 +1079,7 @@ void bch_open_buckets_init(struct cache_set *c)
  * This is only safe for buckets that have no live data in them, which
  * there should always be some of when this function is called.
  */
-int bch_cache_allocator_start(struct cache *ca)
+const char *bch_cache_allocator_start(struct cache *ca)
 {
 	struct task_struct *k;
 	struct bucket *g;
@@ -1100,15 +1100,14 @@ int bch_cache_allocator_start(struct cache *ca)
 		spin_unlock(&ca->freelist_lock);
 	}
 
-	bch_cache_set_error(ca->set,
-			    "couldn't find enough available buckets to write prios");
-	return -1;
+	return "couldn't find enough available buckets to write prios";
 done:
 	k = kthread_create(bch_allocator_thread, ca, "bcache_allocator");
 	if (IS_ERR(k))
-		return PTR_ERR(k);
+		return "error starting allocator thread";
 
 	ca->alloc_thread = k;
 	wake_up_process(k);
-	return 0;
+
+	return NULL;
 }
