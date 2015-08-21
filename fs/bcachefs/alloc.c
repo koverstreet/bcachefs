@@ -462,7 +462,8 @@ static int bch_allocator_thread(void *arg)
 			 * dropped bucket lock
 			 */
 
-			if (ca->discard) {
+			if (CACHE_DISCARD(cache_member_info(ca)) &&
+			    blk_queue_discard(bdev_get_queue(ca->bdev))) {
 				mutex_unlock(&c->bucket_lock);
 				blkdev_issue_discard(ca->bdev,
 					bucket_to_sector(c, bucket),

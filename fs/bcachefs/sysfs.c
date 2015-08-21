@@ -937,7 +937,7 @@ SHOW(__bch_cache)
 	sysfs_hprint(block_size,	block_bytes(ca));
 	sysfs_print(block_size_bytes,	block_bytes(ca));
 	sysfs_print(nbuckets,		ca->sb.nbuckets);
-	sysfs_print(discard,		ca->discard);
+	sysfs_print(discard,		CACHE_DISCARD(mi));
 	sysfs_hprint(written, atomic_long_read(&ca->sectors_written) << 9);
 	sysfs_hprint(btree_written,
 		     atomic_long_read(&ca->btree_sectors_written) << 9);
@@ -992,9 +992,6 @@ STORE(__bch_cache)
 
 	if (attr == &sysfs_discard) {
 		bool v = strtoul_or_return(buf);
-
-		if (blk_queue_discard(bdev_get_queue(ca->bdev)))
-			ca->discard = v;
 
 		if (v != CACHE_DISCARD(mi)) {
 			SET_CACHE_DISCARD(mi, v);

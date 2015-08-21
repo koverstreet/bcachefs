@@ -502,7 +502,8 @@ static void do_journal_discard(struct cache *ca)
 	struct journal_device *ja = &ca->journal;
 	struct bio *bio = &ja->discard_bio;
 
-	if (!ca->discard) {
+	if (!CACHE_DISCARD(cache_member_info(ca)) ||
+	    !blk_queue_discard(bdev_get_queue(ca->bdev))) {
 		ja->discard_idx = ja->last_idx;
 		return;
 	}

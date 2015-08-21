@@ -2072,9 +2072,6 @@ static int cache_init(struct cache *ca)
 	init_waitqueue_head(&ca->fifo_wait);
 	bch_moving_init_cache(ca);
 
-	if (blk_queue_discard(bdev_get_queue(ca->bdev)))
-		ca->discard = CACHE_DISCARD(cache_member_info(ca));
-
 	return 0;
 }
 

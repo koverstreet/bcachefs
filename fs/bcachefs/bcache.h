@@ -588,12 +588,6 @@ struct cache {
 #define NUM_GC_GENS 7
 	struct open_bucket	*gc_buckets[NUM_GC_GENS];
 
-	/*
-	 * If set, the allocator thread will issue discard operations to newly
-	 * invalidated buckets.
-	 */
-	bool			discard;
-
 	struct journal_device	journal;
 
 	/* The rest of this all shows up in sysfs */
