@@ -250,7 +250,7 @@ void bch_pd_controller_update(struct bch_pd_controller *pd,
 {
 	s64 proportional, derivative, change;
 
-	unsigned long seconds_since_update = (jiffies - pd->last_update) * HZ;
+	unsigned long seconds_since_update = (jiffies - pd->last_update) / HZ;
 
 	if (seconds_since_update == 0)
 		return;
