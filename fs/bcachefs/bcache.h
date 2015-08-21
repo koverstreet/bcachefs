@@ -564,7 +564,8 @@ struct cache {
 	DECLARE_HEAP(struct bucket *, heap);
 
 	/* Moving GC: */
-	struct task_struct	*moving_gc_thread;
+	struct task_struct	*moving_gc_read;
+	struct workqueue_struct	*moving_gc_write;
 	struct keybuf		moving_gc_keys;
 	struct bch_pd_controller moving_gc_pd;
 
@@ -779,7 +780,9 @@ struct cache_set {
 	spinlock_t		read_race_lock;
 
 	/* TIERING */
-	struct task_struct	*tiering_thread;
+	struct task_struct	*tiering_read;
+	struct workqueue_struct	*tiering_write;
+
 	struct keybuf		tiering_keys;
 	struct bch_pd_controller tiering_pd;
 

@@ -93,5 +93,5 @@ void bch_data_move(struct closure *cl)
 
 	bch_submit_bbio(&io->bio, ca, &io->w->key, ptr, false);
 
-	continue_at(cl, write_moving, io->op.c->wq);
+	continue_at(cl, write_moving, io->op.io_wq);
 }

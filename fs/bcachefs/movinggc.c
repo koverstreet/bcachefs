@@ -99,6 +99,7 @@ static void read_moving(struct cache *ca, struct moving_io_stats *stats)
 		bch_data_insert_op_init(&io->op, c, &io->bio.bio, 0,
 					false, false, false,
 					&io->w->key, &io->w->key);
+		io->op.io_wq		= ca->moving_gc_write;
 		io->op.moving_gc	= true;
 
 		trace_bcache_gc_copy(&w->key);
@@ -262,30 +263,34 @@ static int bch_moving_gc_thread(void *arg)
 
 void bch_moving_gc_stop(struct cache *ca)
 {
+	cancel_delayed_work_sync(&ca->moving_gc_pd.update);
+
 	ca->moving_gc_pd.rate.rate = UINT_MAX;
 	bch_ratelimit_reset(&ca->moving_gc_pd.rate);
-	if (ca->moving_gc_thread)
-		kthread_stop(ca->moving_gc_thread);
-	ca->moving_gc_thread = NULL;
+	if (ca->moving_gc_read)
+		kthread_stop(ca->moving_gc_read);
+	ca->moving_gc_read = NULL;
 
-	cancel_delayed_work_sync(&ca->moving_gc_pd.update);
+	if (ca->moving_gc_write)
+		destroy_workqueue(ca->moving_gc_write);
+	ca->moving_gc_write = NULL;
 }
 
 int bch_moving_gc_thread_start(struct cache *ca)
 {
-	char moving_gc_name[16];
+	struct task_struct *t;
 
-	snprintf(moving_gc_name, sizeof(moving_gc_name),
-		"bcache_mv/%s", ca->bdev->bd_disk->disk_name);
+	ca->moving_gc_write = alloc_workqueue("bch_copygc_write",
+					      WQ_UNBOUND|WQ_MEM_RECLAIM, 1);
+	if (!ca->moving_gc_write)
+		return -ENOMEM;
 
-	BUG_ON(ca->moving_gc_thread);
-	ca->moving_gc_thread = kthread_create(bch_moving_gc_thread, ca,
-						moving_gc_name);
-	if (IS_ERR(ca->moving_gc_thread))
-		return PTR_ERR(ca->moving_gc_thread);
+	t = kthread_create(bch_moving_gc_thread, ca, "bch_copygc_read");
+	if (IS_ERR(t))
+		return PTR_ERR(t);
 
-	wake_up_process(ca->moving_gc_thread);
-
+	ca->moving_gc_read = t;
+	wake_up_process(ca->moving_gc_read);
 	bch_pd_controller_start(&ca->moving_gc_pd);
 
 	ca->moving_gc_pd.d_term = 0;

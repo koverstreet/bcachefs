@@ -1304,12 +1304,15 @@ static void cache_set_flush(struct closure *cl)
 	kobject_put(&c->internal);
 	kobject_del(&c->kobj);
 
+	cancel_delayed_work_sync(&c->tiering_pd.update);
+
 	c->tiering_pd.rate.rate = UINT_MAX;
 	bch_ratelimit_reset(&c->tiering_pd.rate);
-	if (!IS_ERR_OR_NULL(c->tiering_thread))
-		kthread_stop(c->tiering_thread);
+	if (!IS_ERR_OR_NULL(c->tiering_read))
+		kthread_stop(c->tiering_read);
 
-	cancel_delayed_work_sync(&c->tiering_pd.update);
+	if (c->tiering_write)
+		destroy_workqueue(c->tiering_write);
 
 	if (!IS_ERR_OR_NULL(c->gc_thread))
 		kthread_stop(c->gc_thread);

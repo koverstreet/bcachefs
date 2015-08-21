@@ -652,8 +652,8 @@ STORE(__bch_cache_set)
 			?: (ssize_t) size;
 
 		for_each_cache(ca, c, i)
-			if (ca->moving_gc_thread)
-				wake_up_process(ca->moving_gc_thread);
+			if (ca->moving_gc_read)
+				wake_up_process(ca->moving_gc_read);
 		return ret;
 	}
 
@@ -661,8 +661,8 @@ STORE(__bch_cache_set)
 		ssize_t ret = strtoul_safe(buf, c->tiering_enabled)
 			?: (ssize_t) size;
 
-		if (c->tiering_thread)
-			wake_up_process(c->tiering_thread);
+		if (c->tiering_read)
+			wake_up_process(c->tiering_read);
 		return ret;
 	}
 

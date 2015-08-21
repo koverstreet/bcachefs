@@ -111,6 +111,7 @@ static void read_tiering(struct cache_set *c)
 		bch_data_insert_op_init(&io->op, c, &io->bio.bio,
 					write_point, false, false, false,
 					&io->w->key, &io->w->key);
+		io->op.io_wq	= c->tiering_write;
 		io->op.tiering	= 1;
 		io->op.tier	= 1;
 
@@ -166,13 +167,20 @@ void bch_tiering_init_cache_set(struct cache_set *c)
 
 int bch_tiering_thread_start(struct cache_set *c)
 {
-	c->tiering_thread = kthread_create(bch_tiering_thread, c,
-					   "bcache_tier");
-	if (IS_ERR(c->tiering_thread))
-		return PTR_ERR(c->tiering_thread);
+	struct task_struct *t;
 
+	c->tiering_write = alloc_workqueue("bch_tier_write",
+					   WQ_UNBOUND|WQ_MEM_RECLAIM, 1);
+	if (!c->tiering_write)
+		return -ENOMEM;
+
+	t = kthread_create(bch_tiering_thread, c, "bch_tier_read");
+	if (IS_ERR(t))
+		return PTR_ERR(t);
+
+	c->tiering_read = t;
 	bch_pd_controller_start(&c->tiering_pd);
-	wake_up_process(c->tiering_thread);
+	wake_up_process(c->tiering_read);
 
 	return 0;
 }

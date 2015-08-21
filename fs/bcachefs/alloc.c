@@ -97,7 +97,7 @@ static void alloc_failed(struct cache *ca)
 		if (c->cache_by_alloc[i].nr_devices) {
 			c->tiering_pd.rate.rate = UINT_MAX;
 			bch_ratelimit_reset(&c->tiering_pd.rate);
-			wake_up_process(c->tiering_thread);
+			wake_up_process(c->tiering_read);
 			trace_bcache_alloc_wake_tiering(ca);
 			goto wait;
 		}
@@ -105,7 +105,7 @@ static void alloc_failed(struct cache *ca)
 	/* If this is the highest tier cache, just do a btree GC */
 	ca->moving_gc_pd.rate.rate = UINT_MAX;
 	bch_ratelimit_reset(&ca->moving_gc_pd.rate);
-	wake_up_process(ca->moving_gc_thread);
+	wake_up_process(ca->moving_gc_read);
 	trace_bcache_alloc_wake_moving(ca);
 
 wait:

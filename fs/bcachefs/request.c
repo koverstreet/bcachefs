@@ -154,7 +154,7 @@ static void bch_data_insert_keys_done(struct closure *cl)
 		}
 
 	if (!op->insert_data_done)
-		continue_at(cl, bch_data_insert_start, op->c->wq);
+		continue_at(cl, bch_data_insert_start, op->io_wq);
 
 	bch_keylist_free(&op->insert_keys);
 	closure_return(cl);
@@ -335,7 +335,7 @@ static void bch_data_insert_start(struct closure *cl)
 			 * this case if open_bucket_nr > 1. */
 			if (bch_keylist_empty(&op->insert_keys))
 				continue_at(cl, bch_data_insert_start,
-					    op->c->wq);
+					    op->io_wq);
 			else
 				continue_at(cl, bch_data_insert_keys,
 					    op->c->wq);
@@ -425,12 +425,17 @@ void bch_data_insert(struct closure *cl)
 	trace_bcache_write(c, inode, op->bio, !KEY_CACHED(&op->insert_key),
 			   op->discard);
 
-	memset(op->open_buckets, 0, sizeof(op->open_buckets));
-
 	if (!bio_sectors(op->bio)) {
 		WARN_ONCE(1, "bch_data_insert() called with empty bio");
 		closure_return(cl);
 	}
+
+	/*
+	 * This ought to be initialized in bch_data_insert_op_init(), but struct
+	 * cache_set isn't exported
+	 */
+	if (!op->io_wq)
+		op->io_wq = op->c->wq;
 
 	if (!op->discard)
 		bch_increment_clock(c, bio_sectors(op->bio), WRITE);
