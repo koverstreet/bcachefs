@@ -76,6 +76,7 @@ read_attribute(oldest_gen_stats);
 read_attribute(reserve_stats);
 read_attribute(btree_cache_size);
 read_attribute(cache_available_percent);
+read_attribute(compression_stats);
 read_attribute(written);
 read_attribute(btree_written);
 read_attribute(metadata_written);
@@ -582,6 +583,56 @@ static ssize_t show_cache_set_alloc_debug(struct cache_set *c, char *buf)
 			 c->capacity, meta, dirty);
 }
 
+static ssize_t bch_compression_stats(struct cache_set *c, char *buf)
+{
+	struct btree_iter iter;
+	struct bkey_s_c k;
+	u64 nr_uncompressed_extents = 0, uncompressed_sectors = 0,
+	    nr_compressed_extents = 0,
+	    compressed_sectors_compressed = 0,
+	    compressed_sectors_uncompressed = 0;
+
+	for_each_btree_key(&iter, c, BTREE_ID_EXTENTS, POS_MIN, k)
+		if (k.k->type == BCH_EXTENT) {
+			struct bkey_s_c_extent e = bkey_s_c_to_extent(k);
+			const struct bch_extent_ptr *ptr;
+			const union bch_extent_crc *crc;
+
+			extent_for_each_ptr_crc(e, ptr, crc) {
+				struct bch_extent_crc64 crc64 = crc_to_64(crc);
+
+				if (crc64.compression_type == BCH_COMPRESSION_NONE) {
+					nr_uncompressed_extents++;
+					uncompressed_sectors += e.k->size;
+				} else {
+					nr_compressed_extents++;
+					compressed_sectors_compressed +=
+						crc64.compressed_size;
+					compressed_sectors_uncompressed +=
+						crc64.uncompressed_size;
+				}
+
+				/* only looking at the first ptr */
+				break;
+			}
+		}
+	bch_btree_iter_unlock(&iter);
+
+	return snprintf(buf, PAGE_SIZE,
+			"uncompressed data:\n"
+			"	nr extents:			%llu\n"
+			"	size (bytes):			%llu\n"
+			"compressed data:\n"
+			"	nr extents:			%llu\n"
+			"	compressed size (bytes):	%llu\n"
+			"	uncompressed size (bytes):	%llu\n",
+			nr_uncompressed_extents,
+			uncompressed_sectors << 9,
+			nr_compressed_extents,
+			compressed_sectors_compressed << 9,
+			compressed_sectors_uncompressed << 9);
+}
+
 SHOW(bch_cache_set)
 {
 	struct cache_set *c = container_of(kobj, struct cache_set, kobj);
@@ -685,6 +736,9 @@ SHOW(bch_cache_set)
 
 	sysfs_print(tree_depth, c->btree_roots[BTREE_ID_EXTENTS]->level);
 	sysfs_print(root_usage_percent,		bch_root_usage(c));
+
+	if (attr == &sysfs_compression_stats)
+		return bch_compression_stats(c, buf);
 
 	sysfs_printf(internal_uuid, "%pU", c->sb.set_uuid.b);
 
@@ -912,6 +966,7 @@ static struct attribute *bch_cache_set_files[] = {
 	&sysfs_root_usage_percent,
 	&sysfs_btree_cache_size,
 	&sysfs_cache_available_percent,
+	&sysfs_compression_stats,
 
 	&sysfs_average_key_size,
 
