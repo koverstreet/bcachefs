@@ -1554,7 +1554,7 @@ void bch_read_extent(struct cache_set *c, struct bio *orig,
 }
 
 /* XXX: this looks a lot like cache_lookup_fn() */
-int bch_read(struct cache_set *c, struct bio *bio, u64 inode)
+void bch_read(struct cache_set *c, struct bio *bio, u64 inode)
 {
 	struct btree_iter iter;
 	struct bkey_s_c k;
@@ -1583,7 +1583,8 @@ int bch_read(struct cache_set *c, struct bio *bio, u64 inode)
 
 		if (IS_ERR(pick.ca)) {
 			bcache_io_error(c, bio, "no device to read from");
-			return 0;
+			bio_endio(bio);
+			return;
 		}
 
 		sectors = min_t(u64, k.k->p.offset, bio_end_sector(bio)) -
@@ -1609,8 +1610,10 @@ int bch_read(struct cache_set *c, struct bio *bio, u64 inode)
 		swap(bio->bi_iter.bi_size, bytes);
 		bio_advance(bio, bytes);
 
-		if (done)
-			return 0;
+		if (done) {
+			bio_endio(bio);
+			return;
+		}
 	}
 
 	/*
@@ -1619,8 +1622,7 @@ int bch_read(struct cache_set *c, struct bio *bio, u64 inode)
 	 */
 	BUG_ON(!bch_btree_iter_unlock(&iter));
 	bcache_io_error(c, bio, "btree IO error");
-
-	return 0;
+	bio_endio(bio);
 }
 EXPORT_SYMBOL(bch_read);
 

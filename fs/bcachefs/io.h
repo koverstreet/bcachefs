@@ -40,7 +40,7 @@ enum bch_read_flags {
 	BCH_READ_PROMOTE		= 1 << 2,
 };
 
-int bch_read(struct cache_set *, struct bio *, u64);
+void bch_read(struct cache_set *, struct bio *, u64);
 
 void bch_bbio_endio(struct bbio *);
 
