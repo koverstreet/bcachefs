@@ -461,6 +461,7 @@ struct cache_set {
 	struct list_head	list;
 	struct kobject		kobj;
 	struct kobject		internal;
+	struct kobject		opts_dir;
 	struct kobject		time_stats;
 	struct completion	*stop_completion;
 	unsigned long		flags;

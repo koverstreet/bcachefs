@@ -6,7 +6,7 @@
 
 void bch_inconsistent_error(struct cache_set *c)
 {
-	switch (c->opts.on_error_action) {
+	switch (c->opts.errors) {
 	case BCH_ON_ERROR_CONTINUE:
 		break;
 	case BCH_ON_ERROR_RO:

@@ -109,10 +109,6 @@ u64 bch_checksum(unsigned, const void *, size_t);
 	bch_checksum(type, start, end - start);				\
 })
 
-extern const char * const bch_error_actions[];
-extern const char * const bch_csum_types[];
-extern const char * const bch_compression_types[];
-
 void bch_check_mark_super_slowpath(struct cache_set *,
 				   const struct bkey_i *, bool);
 
@@ -185,6 +181,7 @@ extern wait_queue_head_t unregister_wait;
 extern struct kobj_type bch_cache_set_ktype;
 extern struct kobj_type bch_cache_set_internal_ktype;
 extern struct kobj_type bch_cache_set_time_stats_ktype;
+extern struct kobj_type bch_cache_set_opts_dir_ktype;
 extern struct kobj_type bch_cache_ktype;
 
 #endif /* _BCACHE_SUPER_H */

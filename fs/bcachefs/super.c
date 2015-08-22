@@ -47,28 +47,6 @@
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Kent Overstreet <kent.overstreet@gmail.com>");
 
-const char * const bch_error_actions[] = {
-	"continue",
-	"remount-ro",
-	"panic",
-	NULL
-};
-
-const char * const bch_csum_types[] = {
-	"none",
-	"crc32c",
-	"crc64",
-	NULL
-};
-
-const char * const bch_compression_types[] = {
-	"none",
-	"lzo1x",
-	"gzip",
-	"xz",
-	NULL
-};
-
 static const uuid_le invalid_uuid = {
 	.b = {
 		0xa0, 0x3e, 0xf8, 0xed, 0x3e, 0xe1, 0xb8, 0x78,
@@ -618,7 +596,7 @@ static void __bcache_write_super(struct cache_set *c)
 
 		cache_sb_from_cache_set(c, ca);
 
-		SET_CACHE_SB_CSUM_TYPE(&ca->sb, c->opts.meta_csum_type);
+		SET_CACHE_SB_CSUM_TYPE(&ca->sb, c->opts.metadata_checksum);
 
 		bio_reset(bio);
 		bio->bi_bdev	= ca->disk_sb.bdev;
@@ -925,6 +903,7 @@ static void cache_set_flush(struct closure *cl)
 	bch_cache_accounting_destroy(&c->accounting);
 
 	kobject_put(&c->time_stats);
+	kobject_put(&c->opts_dir);
 	kobject_put(&c->internal);
 
 	closure_return(cl);
@@ -1004,6 +983,7 @@ static struct cache_set *bch_cache_set_alloc(struct cache_sb *sb,
 	c->kobj.kset = bcache_kset;
 	kobject_init(&c->kobj, &bch_cache_set_ktype);
 	kobject_init(&c->internal, &bch_cache_set_internal_ktype);
+	kobject_init(&c->opts_dir, &bch_cache_set_opts_dir_ktype);
 	kobject_init(&c->time_stats, &bch_cache_set_time_stats_ktype);
 
 	bch_cache_accounting_init(&c->accounting, &c->cl);
@@ -1150,6 +1130,7 @@ static int bch_cache_set_online(struct cache_set *c)
 
 	if (kobject_add(&c->kobj, NULL, "%pU", c->sb.user_uuid.b) ||
 	    kobject_add(&c->internal, &c->kobj, "internal") ||
+	    kobject_add(&c->opts_dir, &c->kobj, "options") ||
 	    kobject_add(&c->time_stats, &c->kobj, "time_stats") ||
 	    bch_cache_accounting_add_kobjs(&c->accounting, &c->kobj))
 		return -1;

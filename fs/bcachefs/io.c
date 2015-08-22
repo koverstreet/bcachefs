@@ -691,8 +691,8 @@ static void bch_write_extent(struct bch_write_op *op,
 	struct bkey_i_extent *e = bkey_i_to_extent(k);
 	struct bch_extent_ptr *ptr;
 	unsigned ptrs_from = 0;
-	unsigned csum_type = c->opts.data_csum_type;
-	unsigned compression_type = c->opts.compression_type;
+	unsigned csum_type = c->opts.data_checksum;
+	unsigned compression_type = c->opts.compression;
 
 	/* don't refetch csum type/compression type */
 	barrier();

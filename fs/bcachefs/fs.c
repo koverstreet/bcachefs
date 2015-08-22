@@ -18,7 +18,6 @@
 #include <linux/migrate.h>
 #include <linux/module.h>
 #include <linux/mount.h>
-#include <linux/parser.h>
 #include <linux/statfs.h>
 #include <linux/task_io_accounting_ops.h>
 #include <linux/uio.h>
@@ -941,6 +940,9 @@ out:
 
 	if (ret)
 		return ret;
+
+	if (c->opts.journal_flush_disabled)
+		return 0;
 
 	return bch_journal_flush_seq(&c->journal, ei->journal_seq);
 }
@@ -2013,6 +2015,9 @@ static int bch_vfs_write_inode(struct inode *inode,
 	ret = bch_write_inode(c, ei);
 	mutex_unlock(&ei->update_lock);
 
+	if (c->opts.journal_flush_disabled)
+		return ret;
+
 	if (!ret && wbc->sync_mode == WB_SYNC_ALL)
 		ret = bch_journal_flush_seq(&c->journal, ei->journal_seq);
 
@@ -2171,106 +2176,15 @@ err_unlock:
 	goto err;
 }
 
-enum {
-	Opt_err_action,
-	Opt_meta_checksum,
-	Opt_data_checksum,
-	Opt_compression,
-	Opt_acl, Opt_noacl,
-	Opt_verbose_recovery,
-	Opt_err
-};
-
-static const match_table_t tokens = {
-	{Opt_err_action, "errors=%s"},
-	{Opt_meta_checksum, "metadata_checksum=%s"},
-	{Opt_data_checksum, "data_checksum=%s"},
-	{Opt_compression, "compression=%s"},
-	{Opt_verbose_recovery, "verbose_recovery"},
-	{Opt_acl, "acl"},
-	{Opt_noacl, "noacl"},
-	{Opt_err, NULL}
-};
-
-static int parse_options(struct cache_set_opts *opts, int flags, char *options)
-{
-	char *p;
-	substring_t args[MAX_OPT_ARGS];
-	char arg[80];
-	ssize_t v;
-
-	*opts = cache_set_opts_empty();
-
-	opts->read_only = (flags & MS_RDONLY) != 0;
-
-	if (!options)
-		return 1;
-
-	while ((p = strsep(&options, ",")) != NULL) {
-		int token;
-
-		if (!*p)
-			continue;
-
-		token = match_token(p, tokens, args);
-		switch (token) {
-		case Opt_err_action:
-			match_strlcpy(arg, &args[0], sizeof(arg));
-			v = bch_read_string_list(arg, bch_error_actions);
-			if (v < 0)
-				return 0;
-
-			opts->on_error_action = v;
-			break;
-		case Opt_meta_checksum:
-			match_strlcpy(arg, &args[0], sizeof(arg));
-			v = bch_read_string_list(arg, bch_csum_types);
-			if (v < 0)
-				return 0;
-
-			opts->meta_csum_type = v;
-			break;
-		case Opt_data_checksum:
-			match_strlcpy(arg, &args[0], sizeof(arg));
-			v = bch_read_string_list(arg, bch_csum_types);
-			if (v < 0)
-				return 0;
-
-			opts->data_csum_type = v;
-			break;
-		case Opt_compression:
-			match_strlcpy(arg, &args[0], sizeof(arg));
-			v = bch_read_string_list(arg, bch_compression_types);
-			if (v < 0)
-				return 0;
-
-			opts->compression_type = v;
-			break;
-		case Opt_verbose_recovery:
-			opts->verbose_recovery = true;
-			break;
-		case Opt_acl:
-			opts->posix_acl = true;
-			break;
-		case Opt_noacl:
-			opts->posix_acl = false;
-			break;
-		default:
-			return 0;
-		}
-	}
-
-	return 1;
-}
-
 static int bch_remount(struct super_block *sb, int *flags, char *data)
 {
 	struct cache_set *c = sb->s_fs_info;
 	struct cache_set_opts opts;
-	int ret = 0;
+	int ret;
 
-	if (!parse_options(&opts, *flags, data))
-		return EINVAL;
+	ret = bch_parse_options(&opts, *flags, data);
+	if (ret)
+		return ret;
 
 	mutex_lock(&bch_register_lock);
 
@@ -2296,8 +2210,8 @@ static int bch_remount(struct super_block *sb, int *flags, char *data)
 		c->opts.read_only = opts.read_only;
 	}
 
-	if (opts.on_error_action >= 0)
-		c->opts.on_error_action = opts.on_error_action;
+	if (opts.errors >= 0)
+		c->opts.errors = opts.errors;
 
 unlock:
 	mutex_unlock(&bch_register_lock);
@@ -2343,8 +2257,9 @@ static struct dentry *bch_mount(struct file_system_type *fs_type,
 	unsigned i;
 	int ret;
 
-	if (!parse_options(&opts, flags, data))
-		return ERR_PTR(-EINVAL);
+	ret = bch_parse_options(&opts, flags, data);
+	if (ret)
+		return ERR_PTR(ret);
 
 	c = bch_open_as_blockdevs(dev_name, opts);
 	if (!c)

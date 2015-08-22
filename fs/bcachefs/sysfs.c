@@ -17,6 +17,7 @@
 #include "journal.h"
 #include "keylist.h"
 #include "move.h"
+#include "opts.h"
 #include "request.h"
 #include "writeback.h"
 
@@ -109,6 +110,8 @@ read_attribute(cache_read_races);
 read_attribute(writeback_keys_done);
 read_attribute(writeback_keys_failed);
 read_attribute(io_errors);
+rw_attribute(io_error_limit);
+rw_attribute(io_error_halflife);
 read_attribute(congested);
 rw_attribute(congested_read_threshold_us);
 rw_attribute(congested_write_threshold_us);
@@ -128,13 +131,9 @@ rw_attribute(discard);
 rw_attribute(running);
 rw_attribute(label);
 rw_attribute(readahead);
-rw_attribute(errors);
-rw_attribute(io_error_limit);
-rw_attribute(io_error_halflife);
 rw_attribute(verify);
 rw_attribute(bypass_torture_test);
 rw_attribute(cache_replacement_policy);
-rw_attribute(checksum_type);
 
 rw_attribute(foreground_write_ratelimit_enabled);
 rw_attribute(copy_gc_enabled);
@@ -162,9 +161,20 @@ rw_attribute(data_replicas_want);
 read_attribute(data_replicas_have);
 read_attribute(tier);
 
-#define BCH_DEBUG_PARAM(name, description) rw_attribute(name);
+#define BCH_DEBUG_PARAM(name, description)				\
+	rw_attribute(name);
+
 	BCH_DEBUG_PARAMS()
 #undef BCH_DEBUG_PARAM
+
+#define CACHE_SET_OPT(_name, _bits, _options, _sb_opt, _writeable)	\
+	static struct attribute sysfs_opt_##_name = {			\
+		.name = #_name,						\
+		.mode = S_IRUGO|(_writeable ? S_IWUSR : 0)		\
+	};
+
+	CACHE_SET_VISIBLE_OPTS()
+#undef CACHE_SET_OPT
 
 #define BCH_TIME_STAT(name, frequency_units, duration_units)		\
 	sysfs_time_stats_attribute(name, frequency_units, duration_units);
@@ -666,15 +676,6 @@ SHOW(bch_cache_set)
 	sysfs_print(writeback_keys_failed,
 		    atomic_long_read(&c->writeback_keys_failed));
 
-	if (attr == &sysfs_checksum_type)
-		return bch_snprint_string_list(buf, PAGE_SIZE,
-				bch_csum_types,
-				CACHE_META_PREFERRED_CSUM_TYPE(&c->sb));
-
-	if (attr == &sysfs_errors)
-		return bch_snprint_string_list(buf, PAGE_SIZE, bch_error_actions,
-					       CACHE_ERROR_ACTION(&c->sb));
-
 	/* See count_io_errors for why 88 */
 	sysfs_print(io_error_halflife,	c->error_decay * 88);
 	sysfs_print(io_error_limit,	c->error_limit >> IO_ERROR_SHIFT);
@@ -719,12 +720,6 @@ SHOW(bch_cache_set)
 #define BCH_DEBUG_PARAM(name, description) sysfs_print(name, c->name);
 	BCH_DEBUG_PARAMS()
 #undef BCH_DEBUG_PARAM
-
-#define BCH_TIME_STAT(name, frequency_units, duration_units)		\
-	sysfs_print_time_stats(&c->name##_time, name,			\
-			       frequency_units, duration_units);
-	BCH_TIME_STATS()
-#undef BCH_TIME_STAT
 
 	if (!test_bit(CACHE_SET_RUNNING, &c->flags))
 		return -EPERM;
@@ -772,20 +767,6 @@ STORE(__bch_cache_set)
 	sysfs_strtoul(congested_write_threshold_us,
 		      c->congested_write_threshold_us);
 
-	if (attr == &sysfs_errors) {
-		ssize_t v = bch_read_string_list(buf, bch_error_actions);
-
-		if (v < 0)
-			return v;
-
-		if (v != CACHE_ERROR_ACTION(&c->sb)) {
-			SET_CACHE_ERROR_ACTION(&c->sb, v);
-			bcache_write_super(c);
-		}
-
-		return size;
-	}
-
 	if (attr == &sysfs_io_error_limit) {
 		c->error_limit = strtoul_or_return(buf) << IO_ERROR_SHIFT;
 		return size;
@@ -796,11 +777,6 @@ STORE(__bch_cache_set)
 		c->error_decay = strtoul_or_return(buf) / 88;
 		return size;
 	}
-
-#define BCH_TIME_STAT(name, frequency_units, duration_units)		\
-	sysfs_clear_time_stats(&c->name##_time, name);
-	BCH_TIME_STATS()
-#undef BCH_TIME_STAT
 
 	sysfs_strtoul(journal_delay_ms, c->journal.delay_ms);
 	sysfs_strtoul(foreground_write_ratelimit_enabled,
@@ -877,20 +853,6 @@ STORE(__bch_cache_set)
 	if (test_bit(CACHE_SET_STOPPING, &c->flags))
 		return -EINTR;
 
-	if (attr == &sysfs_checksum_type) {
-		ssize_t v = bch_read_string_list(buf, bch_csum_types);
-
-		if (v < 0)
-			return v;
-
-		if (v != CACHE_META_PREFERRED_CSUM_TYPE(&c->sb)) {
-			SET_CACHE_META_PREFERRED_CSUM_TYPE(&c->sb, v);
-			bcache_write_super(c);
-		}
-
-		return size;
-	}
-
 	if (attr == &sysfs_blockdev_volume_create) {
 		u64 v = strtoi_h_or_return(buf);
 		int r = bch_blockdev_volume_create(c, v);
@@ -935,22 +897,6 @@ STORE(bch_cache_set)
 	return size;
 }
 
-SHOW(bch_cache_set_internal)
-{
-	struct cache_set *c = container_of(kobj, struct cache_set, internal);
-	return bch_cache_set_show(&c->kobj, attr, buf);
-}
-
-STORE(bch_cache_set_internal)
-{
-	struct cache_set *c = container_of(kobj, struct cache_set, internal);
-	return bch_cache_set_store(&c->kobj, attr, buf, size);
-}
-
-static void bch_cache_set_internal_release(struct kobject *k)
-{
-}
-
 static struct attribute *bch_cache_set_files[] = {
 	&sysfs_unregister,
 	&sysfs_stop,
@@ -970,7 +916,6 @@ static struct attribute *bch_cache_set_files[] = {
 
 	&sysfs_average_key_size,
 
-	&sysfs_errors,
 	&sysfs_io_error_limit,
 	&sysfs_io_error_halflife,
 	&sysfs_congested,
@@ -978,7 +923,6 @@ static struct attribute *bch_cache_set_files[] = {
 	&sysfs_congested_write_threshold_us,
 	&sysfs_clear_stats,
 
-	&sysfs_checksum_type,
 	&sysfs_meta_replicas_want,
 	&sysfs_meta_replicas_have,
 	&sysfs_data_replicas_want,
@@ -993,6 +937,24 @@ static struct attribute *bch_cache_set_files[] = {
 	NULL
 };
 KTYPE(bch_cache_set);
+
+/* internal dir - just a wrapper */
+
+SHOW(bch_cache_set_internal)
+{
+	struct cache_set *c = container_of(kobj, struct cache_set, internal);
+	return bch_cache_set_show(&c->kobj, attr, buf);
+}
+
+STORE(bch_cache_set_internal)
+{
+	struct cache_set *c = container_of(kobj, struct cache_set, internal);
+	return bch_cache_set_store(&c->kobj, attr, buf, size);
+}
+
+static void bch_cache_set_internal_release(struct kobject *k)
+{
+}
 
 static struct attribute *bch_cache_set_internal_files[] = {
 	&sysfs_journal_debug,
@@ -1026,16 +988,92 @@ static struct attribute *bch_cache_set_internal_files[] = {
 };
 KTYPE(bch_cache_set_internal);
 
+/* options */
+
+SHOW(bch_cache_set_opts_dir)
+{
+	struct cache_set *c = container_of(kobj, struct cache_set, opts_dir);
+
+#define CACHE_SET_OPT(_name, _bits, _options, _sb_opt, _perm)		\
+	if (attr == &sysfs_opt_##_name)					\
+		return _options == bch_bool_opt				\
+			? snprintf(buf, PAGE_SIZE, "%i\n", c->opts._name)\
+			: bch_snprint_string_list(buf, PAGE_SIZE,	\
+						_options, c->opts._name);\
+
+	CACHE_SET_VISIBLE_OPTS()
+#undef CACHE_SET_OPT
+
+	return 0;
+}
+
+STORE(bch_cache_set_opts_dir)
+{
+	struct cache_set *c = container_of(kobj, struct cache_set, opts_dir);
+
+#define CACHE_SET_OPT(_name, _bits, _options, _sb_opt, _perm)		\
+	if (attr == &sysfs_opt_##_name) {				\
+		ssize_t v = bch_read_string_list(buf, _options);	\
+									\
+		if (v < 0)						\
+			return v;					\
+									\
+		c->opts._name = v;					\
+									\
+		if (_sb_opt##_BITS && v != _sb_opt(&c->sb)) {		\
+			SET_##_sb_opt(&c->sb, v);			\
+			bcache_write_super(c);				\
+		}							\
+									\
+		return size;						\
+	}
+
+	CACHE_SET_VISIBLE_OPTS()
+#undef CACHE_SET_OPT
+
+	return size;
+}
+
+static void bch_cache_set_opts_dir_release(struct kobject *k)
+{
+}
+
+static struct attribute *bch_cache_set_opts_dir_files[] = {
+#define CACHE_SET_OPT(_name, _bits, _options, _sb_opt, _perm)		\
+	&sysfs_opt_##_name,
+
+	CACHE_SET_VISIBLE_OPTS()
+#undef CACHE_SET_OPT
+
+	NULL
+};
+KTYPE(bch_cache_set_opts_dir);
+
+/* time stats */
+
 SHOW(bch_cache_set_time_stats)
 {
 	struct cache_set *c = container_of(kobj, struct cache_set, time_stats);
-	return bch_cache_set_show(&c->kobj, attr, buf);
+
+#define BCH_TIME_STAT(name, frequency_units, duration_units)		\
+	sysfs_print_time_stats(&c->name##_time, name,			\
+			       frequency_units, duration_units);
+	BCH_TIME_STATS()
+#undef BCH_TIME_STAT
+
+	return 0;
 }
 
 STORE(bch_cache_set_time_stats)
 {
 	struct cache_set *c = container_of(kobj, struct cache_set, time_stats);
-	return bch_cache_set_store(&c->kobj, attr, buf, size);
+
+#define BCH_TIME_STAT(name, frequency_units, duration_units)		\
+	sysfs_clear_time_stats(&c->name##_time, name);
+	BCH_TIME_STATS()
+#undef BCH_TIME_STAT
+
+	return size;
 }
 
 static void bch_cache_set_time_stats_release(struct kobject *k)

@@ -528,7 +528,7 @@ static void do_btree_node_write(struct closure *cl)
 
 	i->version	= BCACHE_BSET_VERSION;
 
-	SET_BSET_CSUM_TYPE(i, c->opts.meta_csum_type);
+	SET_BSET_CSUM_TYPE(i, c->opts.metadata_checksum);
 
 	if (!b->written) {
 		BUG_ON(b->data->magic != bset_magic(&c->sb));
