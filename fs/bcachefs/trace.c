@@ -1,4 +1,5 @@
 #include "bcache.h"
+#include "alloc_types.h"
 #include "blockdev_types.h"
 #include "buckets.h"
 #include "btree_types.h"
