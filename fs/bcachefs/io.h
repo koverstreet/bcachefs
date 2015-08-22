@@ -38,6 +38,7 @@ enum bch_read_flags {
 	BCH_READ_FORCE_BOUNCE		= 1 << 0,
 	BCH_READ_RETRY_IF_STALE		= 1 << 1,
 	BCH_READ_PROMOTE		= 1 << 2,
+	BCH_READ_IS_LAST		= 1 << 3,
 };
 
 void bch_read(struct cache_set *, struct bio *, u64);

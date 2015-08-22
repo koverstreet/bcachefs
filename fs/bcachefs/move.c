@@ -492,8 +492,7 @@ static void __bch_data_move(struct closure *cl)
 
 	bch_read_extent(io->op.c, &io->bio.bio.bio,
 			bkey_i_to_s_c(&io->key),
-			&pick, 0, 0);
-	bio_endio(&io->bio.bio.bio);
+			&pick, 0, BCH_READ_IS_LAST);
 }
 
 /*

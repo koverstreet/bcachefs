@@ -1513,7 +1513,9 @@ void bch_read_extent(struct cache_set *c, struct bio *orig,
 	rbio->csum_type		= pick->crc.csum_type;
 	rbio->compression_type	= pick->crc.compression_type;
 
-	__bio_inc_remaining(orig);
+	if (!(flags & BCH_READ_IS_LAST))
+		__bio_inc_remaining(orig);
+
 	rbio->parent		= orig;
 	rbio->parent_iter	= orig->bi_iter;
 	rbio->c			= c;
@@ -1565,7 +1567,7 @@ void bch_read(struct cache_set *c, struct bio *bio, u64 inode)
 				      POS(inode, bio->bi_iter.bi_sector), k) {
 		struct extent_pick_ptr pick;
 		unsigned bytes, sectors;
-		bool done;
+		bool is_last;
 
 		EBUG_ON(bkey_cmp(bkey_start_pos(k.k),
 				 POS(inode, bio->bi_iter.bi_sector)) > 0);
@@ -1590,7 +1592,7 @@ void bch_read(struct cache_set *c, struct bio *bio, u64 inode)
 		sectors = min_t(u64, k.k->p.offset, bio_end_sector(bio)) -
 			bio->bi_iter.bi_sector;
 		bytes = sectors << 9;
-		done = bytes == bio->bi_iter.bi_size;
+		is_last = bytes == bio->bi_iter.bi_size;
 		swap(bio->bi_iter.bi_size, bytes);
 
 		if (pick.ca) {
@@ -1602,18 +1604,20 @@ void bch_read(struct cache_set *c, struct bio *bio, u64 inode)
 					bkey_start_offset(k.k),
 					BCH_READ_FORCE_BOUNCE|
 					BCH_READ_RETRY_IF_STALE|
-					BCH_READ_PROMOTE);
+					BCH_READ_PROMOTE|
+					(is_last ? BCH_READ_IS_LAST : 0));
 		} else {
 			zero_fill_bio(bio);
+
+			if (is_last)
+				bio_endio(bio);
 		}
+
+		if (is_last)
+			return;
 
 		swap(bio->bi_iter.bi_size, bytes);
 		bio_advance(bio, bytes);
-
-		if (done) {
-			bio_endio(bio);
-			return;
-		}
 	}
 
 	/*
