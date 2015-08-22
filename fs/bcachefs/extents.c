@@ -1639,24 +1639,25 @@ bool bch_extent_normalize(struct cache_set *c, struct bkey_s k)
  * as the pointers are sorted by tier, hence preferring pointers to tier 0
  * rather than pointers to tier 1.
  */
-struct extent_pick_ptr
-bch_extent_pick_ptr_avoiding(struct cache_set *c, struct bkey_s_c k,
-			     struct cache *avoid)
+void bch_extent_pick_ptr_avoiding(struct cache_set *c, struct bkey_s_c k,
+				  struct cache *avoid,
+				  struct extent_pick_ptr *ret)
 {
 	struct bkey_s_c_extent e;
 	const union bch_extent_crc *crc;
 	const struct bch_extent_ptr *ptr;
 	struct cache *ca;
-	struct extent_pick_ptr ret = { .ca = NULL };
 
 	switch (k.k->type) {
 	case KEY_TYPE_DELETED:
 	case KEY_TYPE_DISCARD:
 	case KEY_TYPE_COOKIE:
-		return (struct extent_pick_ptr) { .ca = NULL };
+		ret->ca = NULL;
+		return;
 
 	case KEY_TYPE_ERROR:
-		return (struct extent_pick_ptr) { .ca = ERR_PTR(-EIO) };
+		ret->ca = ERR_PTR(-EIO);
+		return;
 
 	case BCH_EXTENT:
 	case BCH_EXTENT_CACHED:
@@ -1666,10 +1667,11 @@ bch_extent_pick_ptr_avoiding(struct cache_set *c, struct bkey_s_c k,
 		 */
 		e = bkey_s_c_to_extent(k);
 		rcu_read_lock();
+		ret->ca = NULL;
 
 		extent_for_each_online_device_crc(c, e, crc, ptr, ca)
 			if (!ptr_stale(ca, ptr)) {
-				ret = (struct extent_pick_ptr) {
+				*ret = (struct extent_pick_ptr) {
 					.crc = crc_to_64(crc),
 					.ptr = *ptr,
 					.ca = ca,
@@ -1679,13 +1681,13 @@ bch_extent_pick_ptr_avoiding(struct cache_set *c, struct bkey_s_c k,
 					break;
 			}
 
-		if (ret.ca)
-			percpu_ref_get(&ret.ca->ref);
+		if (ret->ca)
+			percpu_ref_get(&ret->ca->ref);
 		else if (!bkey_extent_is_cached(e.k))
-			ret.ca = ERR_PTR(-EIO);
+			ret->ca = ERR_PTR(-EIO);
 
 		rcu_read_unlock();
-		return ret;
+		return;
 
 	default:
 		BUG();

@@ -418,7 +418,7 @@ retry:
 
 		swap(bio->bi_iter.bi_size, bytes);
 
-		pick = bch_extent_pick_ptr(s->iop.c, k);
+		bch_extent_pick_ptr(s->iop.c, k, &pick);
 		if (IS_ERR(pick.ca)) {
 			bcache_io_error(s->iop.c, bio,
 					"no device to read from");

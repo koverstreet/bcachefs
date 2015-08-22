@@ -212,8 +212,9 @@ static u64 read_dirty(struct cached_dev *dc)
 		while (tmp.k.k.size) {
 			struct extent_pick_ptr pick;
 
-			pick = bch_extent_pick_ptr(dc->disk.c,
-						   bkey_i_to_s_c(&tmp.k));
+			bch_extent_pick_ptr(dc->disk.c,
+					    bkey_i_to_s_c(&tmp.k),
+					    &pick);
 			if (IS_ERR_OR_NULL(pick.ca))
 				break;
 

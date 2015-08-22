@@ -477,8 +477,8 @@ static void __bch_data_move(struct closure *cl)
 	struct extent_pick_ptr pick;
 	u64 size = io->key.k.size;
 
-	pick = bch_extent_pick_ptr_avoiding(io->op.c, bkey_i_to_s_c(&io->key),
-					    io->context->avoid);
+	bch_extent_pick_ptr_avoiding(io->op.c, bkey_i_to_s_c(&io->key),
+				     io->context->avoid, &pick);
 	if (IS_ERR_OR_NULL(pick.ca))
 		closure_return_with_destructor(cl, moving_io_destructor);
 

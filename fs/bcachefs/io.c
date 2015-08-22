@@ -1580,7 +1580,7 @@ int bch_read(struct cache_set *c, struct bio *bio, u64 inode)
 
 		swap(bio->bi_iter.bi_size, bytes);
 
-		pick = bch_extent_pick_ptr(c, k);
+		bch_extent_pick_ptr(c, k, &pick);
 		if (IS_ERR(pick.ca)) {
 			bcache_io_error(c, bio, "no device to read from");
 			bch_btree_iter_unlock(&iter);

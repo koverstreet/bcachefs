@@ -37,14 +37,14 @@ struct extent_pick_ptr {
 struct extent_pick_ptr
 bch_btree_pick_ptr(struct cache_set *, const struct btree *);
 
-struct extent_pick_ptr
-bch_extent_pick_ptr_avoiding(struct cache_set *, struct bkey_s_c,
-			     struct cache *);
+void bch_extent_pick_ptr_avoiding(struct cache_set *, struct bkey_s_c,
+				  struct cache *, struct extent_pick_ptr *);
 
-static inline struct extent_pick_ptr
-bch_extent_pick_ptr(struct cache_set *c, struct bkey_s_c k)
+static inline void
+bch_extent_pick_ptr(struct cache_set *c, struct bkey_s_c k,
+		    struct extent_pick_ptr *ret)
 {
-	return bch_extent_pick_ptr_avoiding(c, k, NULL);
+	bch_extent_pick_ptr_avoiding(c, k, NULL, ret);
 }
 
 bool bch_insert_fixup_extent(struct btree_iter *, struct btree *,
