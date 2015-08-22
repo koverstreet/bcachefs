@@ -1632,6 +1632,7 @@ static int bch_direct_IO_read(struct cache_set *c, struct kiocb *req,
 	unsigned long inum = inode->i_ino;
 	ssize_t ret = 0;
 	size_t pages = iov_iter_npages(iter, BIO_MAX_PAGES);
+	bool sync = is_sync_kiocb(req);
 	loff_t i_size;
 
 	bio = bio_alloc_bioset(GFP_KERNEL, pages, bch_dio_read_bioset);
@@ -1639,6 +1640,22 @@ static int bch_direct_IO_read(struct cache_set *c, struct kiocb *req,
 
 	dio = container_of(bio, struct dio_read, bio);
 	closure_init(&dio->cl, NULL);
+
+	/*
+	 * this is a _really_ horrible hack just to avoid an atomic sub at the
+	 * end:
+	 */
+	if (!sync) {
+		set_closure_fn(&dio->cl, bch_dio_read_complete, NULL);
+		atomic_set(&dio->cl.remaining,
+			   CLOSURE_REMAINING_INITIALIZER -
+			   CLOSURE_RUNNING +
+			   CLOSURE_DESTRUCTOR);
+	} else {
+		atomic_set(&dio->cl.remaining,
+			   CLOSURE_REMAINING_INITIALIZER + 1);
+	}
+
 	dio->req	= req;
 	dio->ret	= iter->count;
 
@@ -1648,11 +1665,13 @@ static int bch_direct_IO_read(struct cache_set *c, struct kiocb *req,
 		iter->count = round_up(dio->ret, PAGE_SIZE);
 	}
 
-	if (!dio->ret)
+	if (!dio->ret) {
+		closure_put(&dio->cl);
 		goto out;
+	}
 
 	goto start;
-	while (iter->count && !ret) {
+	while (iter->count) {
 		pages = iov_iter_npages(iter, BIO_MAX_PAGES);
 		bio = bio_alloc(GFP_KERNEL, pages);
 start:
@@ -1662,27 +1681,28 @@ start:
 
 		ret = bio_get_user_pages(bio, iter, 1);
 		if (ret < 0) {
-			dio->ret = ret;
-			bio_put(bio);
+			/* XXX: fault inject this path */
+			bio->bi_error = ret;
+			bio_endio(bio);
 			break;
 		}
 
 		offset += bio->bi_iter.bi_size;
 		bio_set_pages_dirty(bio);
 
-		closure_get(&dio->cl);
+		if (iter->count)
+			closure_get(&dio->cl);
+
 		bch_read(c, bio, inum);
 	}
 out:
-	if (is_sync_kiocb(req)) {
+	if (sync) {
 		closure_sync(&dio->cl);
 		closure_debug_destroy(&dio->cl);
 		ret = dio->ret;
 		bio_put(&dio->bio);
 		return ret;
 	} else {
-		closure_return_with_destructor_noreturn(&dio->cl,
-						bch_dio_read_complete);
 		return -EIOCBQUEUED;
 	}
 }
