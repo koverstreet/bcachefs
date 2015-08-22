@@ -126,10 +126,10 @@ bool bch_btree_iter_upgrade(struct btree_iter *iter)
 
 int bch_btree_iter_unlock(struct btree_iter *iter)
 {
-	unsigned l;
+	unsigned l = 0;
 
-	for (l = 0; l < ARRAY_SIZE(iter->nodes); l++)
-		btree_node_unlock(iter, l);
+	while (iter->nodes_locked)
+		btree_node_unlock(iter, l++);
 
 	closure_sync(&iter->cl);
 
