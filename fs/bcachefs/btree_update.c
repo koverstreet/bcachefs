@@ -535,6 +535,7 @@ static bool bch_insert_fixup_btree_ptr(struct btree_iter *iter,
 	struct bkey_packed *k;
 	int cmp;
 
+	BUG_ON(res->ref);
 	BUG_ON(replace);
 	EBUG_ON((k = bch_btree_node_iter_prev_all(node_iter, &b->keys)) &&
 		(bkey_deleted(k)
@@ -575,7 +576,8 @@ static bool bch_insert_fixup_btree_ptr(struct btree_iter *iter,
 		bch_btree_node_iter_next_all(node_iter, &b->keys);
 	}
 
-	bch_btree_insert_and_journal(iter, b, node_iter, insert, res);
+	bch_btree_bset_insert(iter, b, node_iter, insert);
+	set_btree_node_dirty(b);
 	return true;
 }
 
@@ -650,12 +652,14 @@ void bch_btree_insert_and_journal(struct btree_iter *iter,
 {
 	struct cache_set *c = iter->c;
 
+	BUG_ON(b->level);
+
 	bch_btree_bset_insert(iter, b, node_iter, insert);
 
 	if (!btree_node_dirty(b)) {
 		set_btree_node_dirty(b);
 
-		if (!b->level && c->btree_flush_delay)
+		if (c->btree_flush_delay)
 			schedule_delayed_work(&b->work,
 					      c->btree_flush_delay * HZ);
 	}
