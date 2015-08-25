@@ -197,7 +197,7 @@ void bch_journal_add_keys(struct journal *, struct journal_res *,
 			  enum btree_id, const struct bkey_i *,
 			  unsigned);
 
-void bch_journal_res_put(struct journal *, struct journal_res *);
+void bch_journal_res_put(struct journal *, struct journal_res *, u64 *);
 int bch_journal_res_get(struct journal *, struct journal_res *,
 			unsigned, unsigned);
 

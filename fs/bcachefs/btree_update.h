@@ -109,7 +109,7 @@ void bch_btree_bset_insert(struct btree_iter *, struct btree *,
 void bch_btree_insert_and_journal(struct btree_iter *, struct btree *,
 				  struct btree_node_iter *,
 				  struct bkey_i *,
-				  struct journal_res *, u64 *);
+				  struct journal_res *);
 
 static inline struct btree_node_entry *write_block(struct cache_set *c,
 						   struct btree *b)

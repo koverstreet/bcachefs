@@ -1595,7 +1595,8 @@ void bch_journal_add_keys(struct journal *j, struct journal_res *res,
  * This function releases the journal write structure so other threads can
  * then proceed to add their keys as well.
  */
-void bch_journal_res_put(struct journal *j, struct journal_res *res)
+void bch_journal_res_put(struct journal *j, struct journal_res *res,
+			 u64 *journal_seq)
 {
 	union journal_res_state s;
 	bool do_write = false;
@@ -1618,7 +1619,13 @@ void bch_journal_res_put(struct journal *j, struct journal_res *res)
 		set_bit(JOURNAL_DIRTY, &j->flags);
 		schedule_delayed_work(&j->write_work,
 				      msecs_to_jiffies(j->delay_ms));
+
+		/* between set_bit() and *journal_seq = j->seq */
+		smp_wmb();
 	}
+
+	if (journal_seq)
+		*journal_seq = j->seq;
 
 	if (test_bit(JOURNAL_NEED_WRITE, &j->flags) &&
 	    !test_bit(JOURNAL_IO_IN_FLIGHT, &j->flags)) {
@@ -1821,8 +1828,7 @@ void bch_journal_meta_async(struct journal *j, struct closure *parent)
 	memset(&res, 0, sizeof(res));
 
 	bch_journal_res_get(j, &res, u64s, u64s);
-	seq = j->seq;
-	bch_journal_res_put(j, &res);
+	bch_journal_res_put(j, &res, &seq);
 
 	bch_journal_flush_seq_async(j, seq, parent);
 }
@@ -1836,8 +1842,7 @@ int bch_journal_meta(struct journal *j)
 	memset(&res, 0, sizeof(res));
 
 	bch_journal_res_get(j, &res, u64s, u64s);
-	seq = j->seq;
-	bch_journal_res_put(j, &res);
+	bch_journal_res_put(j, &res, &seq);
 
 	return bch_journal_flush_seq(j, seq);
 }

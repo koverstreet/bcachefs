@@ -400,7 +400,7 @@ static int bch_btree_set_root(struct btree_iter *iter, struct btree *b,
 	 * journal) before returning and the caller unlocking it:
 	 */
 	seq = c->journal.seq;
-	bch_journal_res_put(&c->journal, res);
+	bch_journal_res_put(&c->journal, res, NULL);
 
 	return bch_journal_flush_seq(&c->journal, seq);
 }
@@ -528,8 +528,7 @@ static bool bch_insert_fixup_btree_ptr(struct btree_iter *iter,
 				       struct btree_node_iter *node_iter,
 				       struct bch_replace_info *replace,
 				       struct bpos *done,
-				       struct journal_res *res,
-				       u64 *journal_seq)
+				       struct journal_res *res)
 {
 	struct cache_set *c = iter->c;
 	const struct bkey_format *f = &b->keys.format;
@@ -576,8 +575,7 @@ static bool bch_insert_fixup_btree_ptr(struct btree_iter *iter,
 		bch_btree_node_iter_next_all(node_iter, &b->keys);
 	}
 
-	bch_btree_insert_and_journal(iter, b, node_iter, insert,
-				     res, journal_seq);
+	bch_btree_insert_and_journal(iter, b, node_iter, insert, res);
 	return true;
 }
 
@@ -648,8 +646,7 @@ void bch_btree_insert_and_journal(struct btree_iter *iter,
 				  struct btree *b,
 				  struct btree_node_iter *node_iter,
 				  struct bkey_i *insert,
-				  struct journal_res *res,
-				  u64 *journal_seq)
+				  struct journal_res *res)
 {
 	struct cache_set *c = iter->c;
 
@@ -680,8 +677,6 @@ void bch_btree_insert_and_journal(struct btree_iter *iter,
 		bch_journal_add_keys(&c->journal, res, b->btree_id,
 				     insert, b->level);
 		btree_bset_last(b)->journal_seq = c->journal.seq;
-		if (journal_seq)
-			*journal_seq = iter->c->journal.seq;
 	}
 }
 
@@ -706,7 +701,7 @@ static bool btree_insert_key(struct btree_iter *iter, struct btree *b,
 			     struct keylist *insert_keys,
 			     struct bch_replace_info *replace,
 			     struct journal_res *res,
-			     u64 *journal_seq, unsigned flags)
+			     unsigned flags)
 {
 	bool dequeue = false;
 	struct bkey_i *insert = bch_keylist_front(insert_keys), *orig = insert;
@@ -720,14 +715,14 @@ static bool btree_insert_key(struct btree_iter *iter, struct btree *b,
 
 	if (b->level) {
 		do_insert = bch_insert_fixup_btree_ptr(iter, b, insert,
-						       node_iter, replace, &done,
-						       res, journal_seq);
+						       node_iter, replace,
+						       &done, res);
 		dequeue = true;
 	} else if (!b->keys.ops->is_extents) {
 
 		do_insert = bch_insert_fixup_key(iter, b, insert, node_iter,
 						 replace, &done,
-						 res, journal_seq);
+						 res);
 		dequeue = true;
 	} else {
 		bkey_copy(&temp.key, insert);
@@ -738,7 +733,7 @@ static bool btree_insert_key(struct btree_iter *iter, struct btree *b,
 
 		do_insert = bch_insert_fixup_extent(iter, b, insert,
 						    node_iter, replace, &done,
-						    res, journal_seq, flags);
+						    res, flags);
 		bch_cut_front(done, orig);
 		dequeue = (orig->k.size == 0);
 
@@ -982,7 +977,7 @@ bch_btree_insert_keys_interior(struct btree *b,
 	}
 
 	/* not using the journal reservation, drop it now before blocking: */
-	bch_journal_res_put(&iter->c->journal, &as->res);
+	bch_journal_res_put(&iter->c->journal, &as->res, NULL);
 
 	as->b = b;
 	atomic_inc(&b->write_blocked);
@@ -1000,7 +995,7 @@ bch_btree_insert_keys_interior(struct btree *b,
 			;
 
 		btree_insert_key(iter, b, node_iter, insert_keys,
-				 NULL, &res, NULL, flags);
+				 NULL, &res, flags);
 	}
 
 	btree_node_unlock_write(b, iter);
@@ -1091,14 +1086,15 @@ bch_btree_insert_keys_leaf(struct btree *b,
 			if (btree_insert_key(iter, b,
 					     &iter->node_iters[b->level],
 					     insert_keys, replace,
-					     &res, journal_seq, flags))
+					     &res, flags))
 				inserted = true;
 		}
 
 		btree_node_unlock_write(b, iter);
 
 		if (res.ref)
-			bch_journal_res_put(&iter->c->journal, &res);
+			bch_journal_res_put(&iter->c->journal, &res,
+					    journal_seq);
 	}
 
 	if (inserted)
@@ -1229,7 +1225,7 @@ static void btree_split_insert_keys(struct btree_iter *iter, struct btree *b,
 		}
 
 		btree_insert_key(iter, b, &node_iter, keys,
-				 NULL, &res, NULL, 0);
+				 NULL, &res, 0);
 	}
 
 	six_unlock_write(&b->lock);
@@ -1643,13 +1639,13 @@ retry:
 		BUG_ON(!btree_insert_key(i->iter, i->iter->nodes[0],
 					 &i->iter->node_iters[0],
 					 &keylist_single(i->k), NULL,
-					 &res, journal_seq, flags));
+					 &res, flags));
 
 	do {
 		multi_unlock_write(m, --i);
 	} while (i != m);
 
-	bch_journal_res_put(&c->journal, &res);
+	bch_journal_res_put(&c->journal, &res, journal_seq);
 
 	for (i = m; i < m + nr; i++) {
 		if (i != m &&
@@ -1675,7 +1671,7 @@ split:
 	 * need the journal, which includes the allocator - and we're going to
 	 * be allocating new nodes in the split
 	 */
-	bch_journal_res_put(&c->journal, &res);
+	bch_journal_res_put(&c->journal, &res, journal_seq);
 
 	{
 		struct btree *b = split->nodes[0];
