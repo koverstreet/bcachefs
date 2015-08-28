@@ -893,12 +893,10 @@ static void cache_set_flush(struct closure *cl)
 	if (!IS_ERR_OR_NULL(c->chardev))
 		device_unregister(c->chardev);
 
-	mutex_lock(&bch_register_lock);
 	bch_cache_set_read_only_sync(c);
 
 	if (c->kobj.state_in_sysfs)
 		kobject_del(&c->kobj);
-	mutex_unlock(&bch_register_lock);
 
 	bch_cache_accounting_destroy(&c->accounting);
 
