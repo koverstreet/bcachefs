@@ -179,20 +179,6 @@ void bch_submit_bbio_replicas(struct bch_write_bio *bio, struct cache_set *c,
 	}
 }
 
-static void bch_bbio_reset(struct bbio *b)
-{
-	BUG();
-#if 0
-	struct bvec_iter *iter = &b->bio.bi_iter;
-
-	bio_reset(&b->bio);
-	iter->bi_sector		= bkey_start_offset(&b->key.k);
-	iter->bi_size		= b->key.k.size << 9;
-	iter->bi_idx		= b->bi_idx;
-	iter->bi_bvec_done	= b->bi_bvec_done;
-#endif
-}
-
 /* IO errors */
 
 void bch_bbio_endio(struct bbio *bio)
@@ -1149,20 +1135,10 @@ int bch_discard(struct cache_set *c, struct bpos start,
 
 struct cache_promote_op {
 	struct closure		cl;
-	struct bio		*orig_bio;
+	struct bch_read_bio	*orig_bio;
 	struct bch_write_op	iop;
 	struct bch_write_bio	bio; /* must be last */
 };
-
-static void cache_promote_done(struct closure *cl)
-{
-	struct cache_promote_op *op =
-		container_of(cl, struct cache_promote_op, cl);
-
-	bch_bio_free_pages_pool(op->iop.c, op->orig_bio);
-	bio_put(op->orig_bio);
-	kfree(op);
-}
 
 /**
  * __cache_promote -- insert result of read bio into cache
@@ -1236,8 +1212,6 @@ out_submit:
 static void bch_read_requeue(struct cache_set *c, struct bio *bio)
 {
 	unsigned long flags;
-
-	BUG();
 
 	spin_lock_irqsave(&c->read_race_lock, flags);
 	bio_list_add(&c->read_race_list, bio);
@@ -1359,10 +1333,29 @@ static int bio_checksum_uncompress(struct bch_read_bio *rbio)
 	return ret;
 }
 
+static void bch_rbio_free(struct bch_read_bio *rbio)
+{
+	struct bio *bio = &rbio->bio.bio;
+
+	if (rbio->promote)
+		kfree(rbio->promote);
+	if (rbio->bounce)
+		bch_bio_free_pages_pool(rbio->c, bio);
+
+	bio_put(bio);
+}
+
+static void cache_promote_done(struct closure *cl)
+{
+	struct cache_promote_op *op =
+		container_of(cl, struct cache_promote_op, cl);
+
+	bch_rbio_free(op->orig_bio);
+}
+
 /* Inner part that may run in process context */
 static void __bch_read_endio(struct bch_read_bio *rbio)
 {
-	struct bio *bio = &rbio->bio.bio;
 	int ret;
 
 	ret = bio_checksum_uncompress(rbio);
@@ -1379,12 +1372,7 @@ static void __bch_read_endio(struct bch_read_bio *rbio)
 		closure_call(&rbio->promote->iop.cl, bch_write, rbio->c->wq, cl);
 		closure_return_with_destructor(cl, cache_promote_done);
 	} else {
-		if (rbio->promote)
-			kfree(rbio->promote);
-		if (rbio->bounce)
-			bch_bio_free_pages_pool(rbio->c, bio);
-
-		bio_put(bio);
+		bch_rbio_free(rbio);
 	}
 }
 
@@ -1410,7 +1398,7 @@ static void bch_read_endio(struct bio *bio)
 {
 	struct bch_read_bio *rbio =
 		container_of(bio, struct bch_read_bio, bio.bio);
-	bool stale = //race_fault() ||
+	bool stale = race_fault() ||
 		ptr_stale(rbio->bio.ca, &rbio->bio.ptr);
 	int error = bio->bi_error;
 
@@ -1461,9 +1449,10 @@ out:
 	bio_put(bio);
 }
 
-void bch_read_extent(struct cache_set *c, struct bio *orig,
-		     struct bkey_s_c k, struct extent_pick_ptr *pick,
-		     unsigned skip, unsigned flags)
+static void bch_read_extent_iter(struct cache_set *c, struct bio *orig,
+				 struct bvec_iter iter, struct bkey_s_c k,
+				 struct extent_pick_ptr *pick,
+				 unsigned skip, unsigned flags)
 {
 	struct bio *bio;
 	struct bch_read_bio *rbio;
@@ -1501,6 +1490,7 @@ void bch_read_extent(struct cache_set *c, struct bio *orig,
 		bch_bio_alloc_pages_pool(c, bio, sectors << 9);
 	} else {
 		bio = bio_clone_fast(orig, GFP_NOIO, &c->bio_read);
+		bio->bi_iter = iter;
 	}
 
 	rbio = container_of(bio, struct bch_read_bio, bio.bio);
@@ -1516,10 +1506,11 @@ void bch_read_extent(struct cache_set *c, struct bio *orig,
 	if (!(flags & BCH_READ_IS_LAST))
 		__bio_inc_remaining(orig);
 
-	rbio->parent		= orig;
-	rbio->parent_iter	= orig->bi_iter;
 	rbio->c			= c;
 	rbio->flags		= flags;
+	rbio->parent		= orig;
+	rbio->parent_iter	= iter;
+	rbio->inode		= k.k->p.inode;
 	rbio->bounce		= bounce;
 	rbio->promote		= promote_op;
 	rbio->bio.ptr		= pick->ptr;
@@ -1532,7 +1523,7 @@ void bch_read_extent(struct cache_set *c, struct bio *orig,
 		bio->bi_iter.bi_sector += skip;
 
 	if (promote_op) {
-		promote_op->orig_bio = bio;
+		promote_op->orig_bio = rbio;
 
 		bch_write_op_init(&promote_op->iop, c,
 				  &promote_op->bio,
@@ -1555,25 +1546,30 @@ void bch_read_extent(struct cache_set *c, struct bio *orig,
 	generic_make_request(bio);
 }
 
-/* XXX: this looks a lot like cache_lookup_fn() */
-void bch_read(struct cache_set *c, struct bio *bio, u64 inode)
+void bch_read_extent(struct cache_set *c, struct bio *orig,
+		     struct bkey_s_c k, struct extent_pick_ptr *pick,
+		     unsigned skip, unsigned flags)
+{
+	bch_read_extent_iter(c, orig, orig->bi_iter, k, pick, skip, flags);
+}
+
+static void bch_read_iter(struct cache_set *c, struct bio *bio,
+			  struct bvec_iter bvec_iter, u64 inode)
 {
 	struct btree_iter iter;
 	struct bkey_s_c k;
 
-	bch_increment_clock(c, bio_sectors(bio), READ);
-
 	for_each_btree_key_with_holes(&iter, c, BTREE_ID_EXTENTS,
-				      POS(inode, bio->bi_iter.bi_sector), k) {
+				      POS(inode, bvec_iter.bi_sector), k) {
 		struct extent_pick_ptr pick;
 		unsigned bytes, sectors;
 		bool is_last;
 
 		EBUG_ON(bkey_cmp(bkey_start_pos(k.k),
-				 POS(inode, bio->bi_iter.bi_sector)) > 0);
+				 POS(inode, bvec_iter.bi_sector)) > 0);
 
 		EBUG_ON(bkey_cmp(k.k->p,
-				 POS(inode, bio->bi_iter.bi_sector)) <= 0);
+				 POS(inode, bvec_iter.bi_sector)) <= 0);
 
 		bch_extent_pick_ptr(c, k, &pick);
 
@@ -1589,25 +1585,26 @@ void bch_read(struct cache_set *c, struct bio *bio, u64 inode)
 			return;
 		}
 
-		sectors = min_t(u64, k.k->p.offset, bio_end_sector(bio)) -
-			bio->bi_iter.bi_sector;
+		sectors = min_t(u64, k.k->p.offset,
+				bvec_iter_end_sector(bvec_iter)) -
+			bvec_iter.bi_sector;
 		bytes = sectors << 9;
-		is_last = bytes == bio->bi_iter.bi_size;
-		swap(bio->bi_iter.bi_size, bytes);
+		is_last = bytes == bvec_iter.bi_size;
+		swap(bvec_iter.bi_size, bytes);
 
 		if (pick.ca) {
 			PTR_BUCKET(pick.ca, &pick.ptr)->read_prio =
 				c->prio_clock[READ].hand;
 
-			bch_read_extent(c, bio, k, &pick,
-					bio->bi_iter.bi_sector -
-					bkey_start_offset(k.k),
-					BCH_READ_FORCE_BOUNCE|
-					BCH_READ_RETRY_IF_STALE|
-					BCH_READ_PROMOTE|
-					(is_last ? BCH_READ_IS_LAST : 0));
+			bch_read_extent_iter(c, bio, bvec_iter, k, &pick,
+					     bvec_iter.bi_sector -
+					     bkey_start_offset(k.k),
+					     BCH_READ_FORCE_BOUNCE|
+					     BCH_READ_RETRY_IF_STALE|
+					     BCH_READ_PROMOTE|
+					     (is_last ? BCH_READ_IS_LAST : 0));
 		} else {
-			zero_fill_bio(bio);
+			zero_fill_bio_iter(bio, bvec_iter);
 
 			if (is_last)
 				bio_endio(bio);
@@ -1616,8 +1613,8 @@ void bch_read(struct cache_set *c, struct bio *bio, u64 inode)
 		if (is_last)
 			return;
 
-		swap(bio->bi_iter.bi_size, bytes);
-		bio_advance(bio, bytes);
+		swap(bvec_iter.bi_size, bytes);
+		bio_advance_iter(bio, &bvec_iter, bytes);
 	}
 
 	/*
@@ -1628,47 +1625,37 @@ void bch_read(struct cache_set *c, struct bio *bio, u64 inode)
 	bcache_io_error(c, bio, "btree IO error");
 	bio_endio(bio);
 }
+
+void bch_read(struct cache_set *c, struct bio *bio, u64 inode)
+{
+	bch_increment_clock(c, bio_sectors(bio), READ);
+
+	bch_read_iter(c, bio, bio->bi_iter, inode);
+}
 EXPORT_SYMBOL(bch_read);
 
 /**
  * bch_read_retry - re-submit a bio originally from bch_read()
  */
-static void bch_read_retry(struct bbio *bbio)
+static void bch_read_retry(struct cache_set *c, struct bch_read_bio *rbio)
 {
-	struct bio *bio = &bbio->bio;
-	struct bio *parent;
-	u64 inode;
+	struct bio *parent = rbio->parent;
+	struct bvec_iter iter = rbio->parent_iter;
+	u64 inode = rbio->inode;
 
-	trace_bcache_read_retry(bio);
+	trace_bcache_read_retry(&rbio->bio.bio);
 
-	/*
-	 * This used to be a leaf bio from bch_read_fn(), but
-	 * since we don't know what happened to the btree in
-	 * the meantime, we have to re-submit it via the
-	 * top-level bch_read() entry point. Before doing that,
-	 * we have to reset the bio, preserving the biovec.
-	 *
-	 * The inode, offset and size come from the bbio's key,
-	 * which was set by bch_read_fn().
-	 */
-	BUG(); /* currently broken */
-	//inode = bbio->key.k.p.inode;
-	parent = bio->bi_private;
-
-	bch_bbio_reset(bbio);
-	bio_chain(bio, parent);
-
-	bch_read(bbio->ca->set, bio, inode);
-	bio_endio(parent);  /* for bio_chain() in bch_read_fn() */
-	bio_endio(bio);
+	bch_rbio_free(rbio);
+	bch_read_iter(c, parent, iter, inode);
 }
 
 void bch_read_race_work(struct work_struct *work)
 {
 	struct cache_set *c = container_of(work, struct cache_set,
 					   read_race_work);
-	unsigned long flags;
+	struct bch_read_bio *rbio;
 	struct bio *bio;
+	unsigned long flags;
 
 	while (1) {
 		spin_lock_irqsave(&c->read_race_lock, flags);
@@ -1678,6 +1665,7 @@ void bch_read_race_work(struct work_struct *work)
 		if (!bio)
 			break;
 
-		bch_read_retry(to_bbio(bio));
+		rbio = container_of(bio, struct bch_read_bio, bio.bio);
+		bch_read_retry(c, rbio);
 	}
 }

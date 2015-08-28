@@ -14,8 +14,25 @@ struct bbio {
 };
 
 struct bch_read_bio {
+	/*
+	 * Reads will often have to be split, and if the extent being read from
+	 * was checksummed or compressed we'll also have to allocate bounce
+	 * buffers and copy the data back into the original bio.
+	 *
+	 * parent denotes the original bio, and parent_iter is where in parent
+	 * we copy the data back to.
+	 */
 	struct bio		*parent;
 	struct bvec_iter	parent_iter;
+
+	/*
+	 * If we have to retry the read (IO error, checksum failure, read stale
+	 * data (raced with allocator), we retry the portion of the parent bio
+	 * that failed (i.e. this bio's portion, parent_iter).
+	 *
+	 * But we need to stash the inode somewhere:
+	 */
+	u64			inode;
 
 	struct cache_set	*c;
 	unsigned		flags;
