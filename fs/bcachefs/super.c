@@ -749,6 +749,10 @@ void bch_cache_set_read_only_sync(struct cache_set *c)
 {
 	bch_cache_set_read_only(c);
 
+	/*
+	 * XXX: can hang indefinitely if we race and someone else does a
+	 * cache_set_read_write
+	 */
 	wait_event(bch_read_only_wait,
 		   test_bit(CACHE_SET_RO_COMPLETE, &c->flags));
 }
@@ -825,34 +829,11 @@ err:
 
 /* Cache set startup/shutdown: */
 
-void bch_cache_set_release(struct kobject *kobj)
+static void cache_set_free(struct cache_set *c)
 {
-	struct cache_set *c = container_of(kobj, struct cache_set, kobj);
-
-	if (c->stop_completion)
-		complete(c->stop_completion);
-	kfree(c);
-	module_put(THIS_MODULE);
-}
-
-static void cache_set_free(struct closure *cl)
-{
-	struct cache_set *c = container_of(cl, struct cache_set, cl);
-	struct cache *ca;
-	unsigned i;
-
+	bch_bset_sort_state_free(&c->sort);
 	bch_btree_cache_free(c);
 	bch_journal_free(&c->journal);
-
-	mutex_lock(&bch_register_lock);
-	for_each_cache(ca, c, i)
-		bch_cache_stop(ca);
-	mutex_unlock(&bch_register_lock);
-
-	bch_bset_sort_state_free(&c->sort);
-
-	kfree(c->members);
-	percpu_ref_exit(&c->writes);
 	bch_io_clock_exit(&c->io_clock[WRITE]);
 	bch_io_clock_exit(&c->io_clock[READ]);
 	bdi_destroy(&c->bdi);
@@ -866,9 +847,51 @@ static void cache_set_free(struct closure *cl)
 	mempool_exit(&c->btree_reserve_pool);
 	mempool_exit(&c->fill_iter);
 	mempool_exit(&c->search);
+	percpu_ref_exit(&c->writes);
 
 	if (c->wq)
 		destroy_workqueue(c->wq);
+
+	kfree(c->members);
+	kfree(c);
+	module_put(THIS_MODULE);
+}
+
+/*
+ * should be __cache_set_stop4 - block devices are closed, now we can finally
+ * free it
+ */
+void bch_cache_set_release(struct kobject *kobj)
+{
+	struct cache_set *c = container_of(kobj, struct cache_set, kobj);
+
+	/*
+	 * This needs to happen after we've closed the block devices - i.e.
+	 * after all the caches have exited, which happens when they all drop
+	 * their refs on c->kobj:
+	 */
+	if (c->stop_completion)
+		complete(c->stop_completion);
+
+	bch_notify_cache_set_stopped(c);
+	pr_info("Cache set %pU unregistered", c->sb.set_uuid.b);
+
+	cache_set_free(c);
+}
+
+/*
+ * All activity on the cache_set should have stopped now - close devices:
+ */
+static void __cache_set_stop3(struct closure *cl)
+{
+	struct cache_set *c = container_of(cl, struct cache_set, cl);
+	struct cache *ca;
+	unsigned i;
+
+	mutex_lock(&bch_register_lock);
+	for_each_cache(ca, c, i)
+		bch_cache_stop(ca);
+	mutex_unlock(&bch_register_lock);
 
 	mutex_lock(&bch_register_lock);
 	list_del(&c->list);
@@ -876,15 +899,15 @@ static void cache_set_free(struct closure *cl)
 		idr_remove(&bch_chardev_minor, c->minor);
 	mutex_unlock(&bch_register_lock);
 
-	bch_notify_cache_set_stopped(c);
-
-	pr_info("Cache set %pU unregistered", c->sb.set_uuid.b);
-
 	closure_debug_destroy(&c->cl);
 	kobject_put(&c->kobj);
 }
 
-static void cache_set_flush(struct closure *cl)
+/*
+ * Openers (i.e. block devices) should have exited, shutdown all userspace
+ * interfaces and wait for &c->cl to hit 0
+ */
+static void __cache_set_stop2(struct closure *cl)
 {
 	struct cache_set *c = container_of(cl, struct cache_set, caching);
 
@@ -907,13 +930,18 @@ static void cache_set_flush(struct closure *cl)
 	closure_return(cl);
 }
 
-static void __cache_set_unregister(struct closure *cl)
+/*
+ * First phase of the shutdown process that's kicked off by cache_set_stop(); we
+ * haven't waited for anything to stop yet, we're just punting to process
+ * context to shut down block devices:
+ */
+static void __cache_set_stop1(struct closure *cl)
 {
 	struct cache_set *c = container_of(cl, struct cache_set, caching);
 
 	bch_blockdevs_stop(c);
 
-	continue_at(cl, cache_set_flush, system_wq);
+	continue_at(cl, __cache_set_stop2, system_wq);
 }
 
 void bch_cache_set_stop(struct cache_set *c)
@@ -968,34 +996,8 @@ static struct cache_set *bch_cache_set_alloc(struct cache_sb *sb,
 		return NULL;
 
 	__module_get(THIS_MODULE);
-	closure_init(&c->cl, NULL);
-	set_closure_fn(&c->cl, cache_set_free, system_wq);
-
-	closure_init(&c->caching, &c->cl);
-	set_closure_fn(&c->caching, __cache_set_unregister, system_wq);
-
-	/* Maybe create continue_at_noreturn() and use it here? */
-	closure_set_stopped(&c->cl);
-	closure_put(&c->cl);
-
-	c->kobj.kset = bcache_kset;
-	kobject_init(&c->kobj, &bch_cache_set_ktype);
-	kobject_init(&c->internal, &bch_cache_set_internal_ktype);
-	kobject_init(&c->opts_dir, &bch_cache_set_opts_dir_ktype);
-	kobject_init(&c->time_stats, &bch_cache_set_time_stats_ktype);
-
-	bch_cache_accounting_init(&c->accounting, &c->cl);
-
-	if (cache_sb_to_cache_set(c, sb))
-		goto err;
-
-	scnprintf(c->uuid, sizeof(c->uuid), "%pU", &c->sb.user_uuid);
-
-	c->opts = cache_superblock_opts(sb);
-	cache_set_opts_apply(&c->opts, opts);
 
 	c->minor		= -1;
-	c->block_bits		= ilog2(c->sb.block_size);
 
 	sema_init(&c->sb_write_mutex, 1);
 	INIT_RADIX_TREE(&c->devices, GFP_KERNEL);
@@ -1059,11 +1061,21 @@ static struct cache_set *bch_cache_set_alloc(struct cache_sb *sb,
 
 	mutex_init(&c->uevent_lock);
 
-	iter_size = (btree_blocks(c) + 1) *
-		sizeof(struct btree_node_iter_set);
+	if (cache_sb_to_cache_set(c, sb))
+		goto err;
+
+	scnprintf(c->uuid, sizeof(c->uuid), "%pU", &c->sb.user_uuid);
+
+	c->opts = cache_superblock_opts(sb);
+	cache_set_opts_apply(&c->opts, opts);
+
+	c->block_bits		= ilog2(c->sb.block_size);
 
 	if (cache_set_init_fault("cache_set_alloc"))
 		goto err;
+
+	iter_size = (btree_blocks(c) + 1) *
+		sizeof(struct btree_node_iter_set);
 
 	if (!(c->wq = alloc_workqueue("bcache", WQ_MEM_RECLAIM, 0)) ||
 	    percpu_ref_init(&c->writes, bch_writes_disabled, 0, GFP_KERNEL) ||
@@ -1103,9 +1115,27 @@ static struct cache_set *bch_cache_set_alloc(struct cache_sb *sb,
 	c->bdi.congested_data	= c;
 	c->bdi.capabilities	|= BDI_CAP_STABLE_WRITES;
 
+	/*
+	 * Now that all allocations have succeeded, init various refcounty
+	 * things that let us shutdown:
+	 */
+	closure_init(&c->cl, NULL);
+
+	c->kobj.kset = bcache_kset;
+	kobject_init(&c->kobj, &bch_cache_set_ktype);
+	kobject_init(&c->internal, &bch_cache_set_internal_ktype);
+	kobject_init(&c->opts_dir, &bch_cache_set_opts_dir_ktype);
+	kobject_init(&c->time_stats, &bch_cache_set_time_stats_ktype);
+
+	bch_cache_accounting_init(&c->accounting, &c->cl);
+
+	closure_init(&c->caching, &c->cl);
+	set_closure_fn(&c->caching, __cache_set_stop1, system_wq);
+
+	continue_at_noreturn(&c->cl, __cache_set_stop3, system_wq);
 	return c;
 err:
-	bch_cache_set_stop(c);
+	cache_set_free(c);
 	return NULL;
 }
 

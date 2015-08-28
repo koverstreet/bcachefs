@@ -378,7 +378,8 @@ void bch_btree_cache_free(struct cache_set *c)
 
 	mutex_unlock(&c->btree_cache_lock);
 
-	rhashtable_destroy(&c->btree_cache_table);
+	if (c->btree_cache_table_init_done)
+		rhashtable_destroy(&c->btree_cache_table);
 }
 
 int bch_btree_cache_alloc(struct cache_set *c)
@@ -389,6 +390,8 @@ int bch_btree_cache_alloc(struct cache_set *c)
 	ret = rhashtable_init(&c->btree_cache_table, &bch_btree_cache_params);
 	if (ret)
 		return ret;
+
+	c->btree_cache_table_init_done = true;
 
 	bch_recalc_btree_reserve(c);
 
