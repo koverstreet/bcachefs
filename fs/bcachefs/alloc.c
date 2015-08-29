@@ -297,7 +297,7 @@ static int bch_prio_write(struct cache *ca)
 	spin_unlock(&c->journal.lock);
 
 	ret = bch_journal_meta(&c->journal);
-	if (cache_set_fatal_err_on(ret, c, "journalling new prios"))
+	if (ret)
 		return ret;
 
 	/*
@@ -827,7 +827,26 @@ static int bch_allocator_thread(void *arg)
 		 */
 		ret = bch_prio_write(ca);
 		if (ret) {
-			/* XXX: need to stop the allocator thread */
+			/*
+			 * Emergency read only - allocator thread has to
+			 * shutdown.
+			 *
+			 * N.B. we better be going into RO mode, else
+			 * allocations would hang indefinitely - whatever
+			 * generated the error will have sent us into RO mode.
+			 *
+			 * Clear out the free_inc freelist so things are
+			 * consistent-ish:
+			 */
+			spin_lock(&ca->freelist_lock);
+			while (!fifo_empty(&ca->free_inc)) {
+				long bucket;
+
+				fifo_pop(&ca->free_inc, bucket);
+				bch_mark_free_bucket(ca, ca->buckets + bucket);
+			}
+			spin_unlock(&ca->freelist_lock);
+			goto out;
 		}
 	}
 out:
@@ -1508,8 +1527,10 @@ void bch_cache_allocator_stop(struct cache *ca)
 	 * XXX: it would be better to have the rcu barrier be asynchronous
 	 * instead of blocking us here
 	 */
-	if (p)
+	if (p) {
 		kthread_stop(p);
+		put_task_struct(p);
+	}
 
 	/* Next, close write points that point to this device... */
 
@@ -1563,6 +1584,7 @@ const char *bch_cache_allocator_start(struct cache *ca)
 	if (IS_ERR(k))
 		return "error starting allocator thread";
 
+	get_task_struct(k);
 	ca->alloc_thread = k;
 	wake_up_process(k);
 
