@@ -2068,6 +2068,7 @@ static int bch_statfs(struct dentry *dentry, struct kstatfs *buf)
 		(PAGE_SHIFT - 9);
 	buf->f_bavail	= buf->f_bfree;
 	buf->f_files	= atomic_long_read(&c->nr_inodes);
+	buf->f_ffree	= U64_MAX;
 	buf->f_namelen	= NAME_MAX;
 
 	return 0;
