@@ -635,9 +635,10 @@ void bch_check_mark_super_slowpath(struct cache_set *c, const struct bkey_i *k,
 	mi = cache_member_info_get(c)->m;
 
 	extent_for_each_ptr(e, ptr)
-		(meta
-		 ? SET_CACHE_HAS_METADATA
-		 : SET_CACHE_HAS_DATA)(mi + ptr->dev, true);
+		if (bch_extent_ptr_is_dirty(c, e, ptr))
+			(meta
+			 ? SET_CACHE_HAS_METADATA
+			 : SET_CACHE_HAS_DATA)(mi + ptr->dev, true);
 
 	cache_member_info_put();
 

@@ -121,7 +121,8 @@ static inline bool bch_check_super_marked(struct cache_set *c,
 	bool ret = true;
 
 	extent_for_each_ptr(e, ptr)
-		if (!(meta
+		if (bch_extent_ptr_is_dirty(c, e, ptr) &&
+		    !(meta
 		      ? CACHE_HAS_METADATA
 		      : CACHE_HAS_DATA)(mi->m + ptr->dev)) {
 			ret = false;
