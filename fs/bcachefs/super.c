@@ -1350,12 +1350,9 @@ static void cache_set_free(struct closure *cl)
 		destroy_workqueue(c->moving_gc_wq);
 	if (c->bio_split)
 		bioset_free(c->bio_split);
-	if (c->fill_iter)
-		mempool_destroy(c->fill_iter);
-	if (c->bio_meta)
-		mempool_destroy(c->bio_meta);
-	if (c->search)
-		mempool_destroy(c->search);
+	mempool_destroy(c->fill_iter);
+	mempool_destroy(c->bio_meta);
+	mempool_destroy(c->search);
 	kfree(c->devices);
 
 	mutex_lock(&bch_register_lock);
