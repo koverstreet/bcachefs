@@ -284,7 +284,7 @@ static int bch_prio_write(struct cache *ca)
 
 		ret = prio_io(ca, r, REQ_OP_WRITE);
 		if (cache_fatal_io_err_on(ret, ca,
-					  "prio write to bucket %lu", r) ||
+					  "prio write to bucket %zu", r) ||
 		    bch_meta_write_fault("prio"))
 			return ret;
 	}
