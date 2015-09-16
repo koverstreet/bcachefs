@@ -106,7 +106,7 @@ u8 bch_btree_key_recalc_oldest_gen(struct cache_set *c, struct bkey_s_c k)
 	return max_stale;
 }
 
-void __bch_btree_mark_key(struct cache_set *c, int level, struct bkey_s_c k)
+u8 __bch_btree_mark_key(struct cache_set *c, int level, struct bkey_s_c k)
 {
 	if (bkey_extent_is_data(k.k)) {
 		struct bkey_s_c_extent e = bkey_s_c_to_extent(k);
@@ -116,12 +116,14 @@ void __bch_btree_mark_key(struct cache_set *c, int level, struct bkey_s_c k)
 				  : e.k->size, false, level != 0,
 				  true, GC_POS_MIN);
 	}
+
+	return bch_btree_key_recalc_oldest_gen(c, k);
 }
 
-static void btree_mark_key(struct cache_set *c, struct btree *b,
+static u8 btree_mark_key(struct cache_set *c, struct btree *b,
 			 struct bkey_s_c k)
 {
-	__bch_btree_mark_key(c, b->level, k);
+	return __bch_btree_mark_key(c, b->level, k);
 }
 
 /* Only the extent btree has leafs whose keys point to data */
@@ -147,10 +149,7 @@ static bool btree_gc_mark_node(struct cache_set *c, struct btree *b)
 
 			bkey_debugcheck(c, b, k);
 
-			btree_mark_key(c, b, k);
-
-			stale = max(stale,
-				    bch_btree_key_recalc_oldest_gen(c, k));
+			stale = max(stale, btree_mark_key(c, b, k));
 		}
 
 		if (btree_gc_rewrite_disabled(c))
