@@ -1138,7 +1138,8 @@ bool bch_insert_fixup_extent(struct btree_iter *iter, struct btree *b,
 	 */
 	if (bch_add_sectors(c, b, bkey_i_to_s_c(insert),
 			    bkey_start_offset(&insert->k),
-			    insert->k.size, !!(flags & FAIL_IF_STALE))) {
+			    insert->k.size,
+			    !(flags & BTREE_INSERT_NOFAIL_IF_STALE))) {
 		/* We raced - a dirty pointer was stale */
 		*done = insert->k.p;
 		insert->k.size = 0;

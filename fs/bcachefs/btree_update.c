@@ -693,7 +693,7 @@ void bch_btree_insert_and_journal(struct btree_iter *iter,
  * @insert_keys:	list of keys to insert
  * @replace:		old key for for exchange (+ stats)
  * @res:		journal reservation
- * @flags:		FAIL_IF_STALE
+ * @flags:		BTREE_INSERT_NOFAIL_IF_STALE
  *
  * Inserts the first key from @insert_keys
  *
@@ -1389,7 +1389,7 @@ err:
  * @insert_keys:	list of keys to insert
  * @replace:		old key for compare exchange (+ stats)
  * @persistent:		if not null, @persistent will wait on journal write
- * @flags:		FAIL_IF_STALE
+ * @flags:		BTREE_INSERT_NOFAIL_IF_STALE
  *
  * Inserts as many keys as it can into a given btree node, splitting it if full.
  * If a split occurred, this function will return early. This can only happen
@@ -1415,9 +1415,6 @@ int bch_btree_insert_node(struct btree *b,
 	BUG_ON(!b->level && (reserve || as));
 	BUG_ON(!b->written);
 	verify_keys_sorted(insert_keys);
-
-	if (replace)
-		flags |= FAIL_IF_STALE;
 
 	switch (bch_btree_insert_keys(b, iter, insert_keys, replace,
 				      journal_seq, as, flags)) {
@@ -1475,9 +1472,7 @@ int bch_btree_insert_node(struct btree *b,
  * @insert_keys:	list of keys to insert
  * @replace:		old key for compare exchange (+ stats)
  * @persistent:		if not null, @persistent will wait on journal write
- * @flags:		BTREE_INSERT_ATOMIC | FAIL_IF_STALE
- *
- * The FAIL_IF_STALE flag is set automatically if @replace is not NULL.
+ * @flags:		BTREE_INSERT_ATOMIC | BTREE_INSERT_NOFAIL_IF_STALE
  *
  * This is top level for common btree insertion/index update code. The control
  * flow goes roughly like:

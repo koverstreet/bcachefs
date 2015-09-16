@@ -183,12 +183,11 @@ int bch_btree_insert_node(struct btree *, struct btree_iter *,
 #define BTREE_INSERT_NOFAIL		(1 << 1)
 
 /*
- * Fail a btree insert if dirty stale pointers are being added
+ * Don't fail a btree insert if dirty stale pointers are being added
  *
- * Needs to be set for compare exchange and device removal, and not
- * set for journal replay. See big comment in bch_insert_fixup_extent()
+ * Only for journal replay:
  */
-#define FAIL_IF_STALE			(1 << 2)
+#define BTREE_INSERT_NOFAIL_IF_STALE	(1 << 2)
 
 int bch_btree_insert_at(struct btree_iter *, struct keylist *,
 			struct bch_replace_info *, u64 *, unsigned);

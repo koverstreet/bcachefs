@@ -934,7 +934,8 @@ static int bch_journal_replay_key(struct cache_set *c, enum btree_id id,
 		bkey_copy(&temp.key, k);
 
 	ret = bch_btree_insert(c, id, &keylist_single(k), NULL, NULL,
-			       BTREE_INSERT_NOFAIL);
+			       BTREE_INSERT_NOFAIL|
+			       BTREE_INSERT_NOFAIL_IF_STALE);
 	if (ret)
 		return ret;
 
