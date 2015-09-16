@@ -21,122 +21,13 @@ static bool migrate_data_pred(struct scan_keylist *kl, struct bkey_s_c k)
 				      ca->sb.nr_this_dev);
 }
 
-#if (0)
-
-/*
- * This code is ifdef'd out because it does not work when replicas_want > 1,
- * and when replicas_want is 1, it merely removes all the extent pointers
- * from the key, which can be dome more simply and works for replicas_want > 1
- * at the expense of copying more data around.
- * At some point this should be 'resurrected' and fixed to cause less copying.
- * But for now, it is disabled.
- */
-
-static atomic64_t bch_dropped_pointer = ATOMIC64_INIT(0);
-
-static void migrate_compact_key(struct cache_set *c,
-				struct bkey *k,
-				struct cache *ca)
+static void bch_extent_drop_dev_ptrs(struct bkey_s_extent e, unsigned dev)
 {
-	struct bkey_i_extent *e = bkey_to_extent(k);
-	bool dropped;
-	unsigned tierno;
-	unsigned i, tier[CACHE_TIERS], tier_count[CACHE_TIERS];
-	unsigned replicas_want = CACHE_SET_DATA_REPLICAS_WANT(&c->sb);
-
-	tierno = CACHE_TIER(&ca->mi);
-
-	bch_extent_drop_stale(c, k);
-
-	/*
-	 * Ensure that we are not inserting too many
-	 * copies in either tier.
-	 * We can do this better by not actually copying
-	 * in these cases, and supporting MIGRATE_REWRITE_KEY,
-	 * but that could make some buckets become unavailable
-	 * (from clean to dirty), which is not supported yet.
-	 */
-	for (i = 0; i < CACHE_TIERS; i++) {
-		tier[i] = ((unsigned) -1);
-		tier_count[i] = 0;
-	}
-
-	rcu_read_lock();
-
-	/*
-	 * This relies on pointers being sorted by tier _and_
-	 * the rest of the code considering dirty any pointers
-	 * closer to the end of the list.
-	 */
-
-	for (i = bch_extent_ptrs(e); i != 0; ) {
-		unsigned tierno;
-		struct cache *ca2;
-
-		i -= 1;
-		ca2 = PTR_CACHE(c, &e->v, i);
-		BUG_ON(ca2 == NULL);
-		tierno = CACHE_TIER(&ca2->mi);
-		tier_count[tierno] += 1;
-		if ((tier[i] == ((unsigned) -1))
-		    || bch_ptr_is_cache_ptr(c, k, i))
-			tier[tierno] = i;
-	}
-	rcu_read_unlock();
-
-	dropped = false;
-	/* This relies on pointers being sorted by tier. */
-	for (i = CACHE_TIERS; i != 0; ) {
-		i -= 1;
-		BUG_ON(tier_count[i] > replicas_want);
-		if (tier_count[i] == replicas_want) {
-			BUG_ON(i == tierno);
-			BUG_ON(tier[i] == ((unsigned) -1));
-			bch_extent_drop_ptr(k, tier[i]);
-			dropped = true;
-		}
-	}
-
-	if (dropped)
-		atomic64_inc(&bch_dropped_pointer);
-}
-
-#endif
-
-/*
- * It's OK to leave keys whose pointers are all stale as they'll be
- * removed by tree gc which won't allow a device slot to be re-used
- * until it has found no pointers to that slot -- presumably such keys
- * have been overwritten by something else and we were just racing.
- */
-
-enum migrate_option {
-	MIGRATE_IGNORE,		/* All pointers stale, don't do anything */
-	MIGRATE_COPY,
-	MIGRATE_REWRITE_KEY,	/* Unused for now */
-};
-
-static enum migrate_option migrate_cleanup_key(struct cache_set *c,
-					       struct bkey_i *k,
-					       struct cache *ca)
-{
-	struct bkey_s_extent e = bkey_i_to_s_extent(k);
 	struct bch_extent_ptr *ptr;
-	bool found;
 
-	found = false;
 	extent_for_each_ptr_backwards(e, ptr)
-		if (ptr->dev == ca->sb.nr_this_dev) {
+		if (ptr->dev == dev)
 			bch_extent_drop_ptr(e, ptr);
-			found = true;
-		}
-
-	if (!found) {
-		/* The pointer to this device was stale. */
-		return MIGRATE_IGNORE;
-	}
-
-	return MIGRATE_COPY;
 }
 
 static int issue_migration_move(struct cache *ca,
@@ -144,49 +35,28 @@ static int issue_migration_move(struct cache *ca,
 				struct bkey_s_c k,
 				u64 *seen_key_count)
 {
-	enum migrate_option option;
 	struct moving_queue *q = &ca->moving_gc_queue;
 	struct cache_set *c = ca->set;
 	struct moving_io *io;
-	struct write_point *wp = &c->migration_write_point;
 
 	io = moving_io_alloc(k);
 	if (io == NULL)
 		return -ENOMEM;
 
-	/*
-	 * This is a gross hack. It relies on migrate_cleanup_key
-	 * removing all extent pointers from the key to be inserted.
-	 */
-	if (CACHE_SET_DATA_REPLICAS_WANT(&c->sb) > 1)
-		wp = NULL;
-
 	/* This also copies k into the write op's replace_key and insert_key */
 
-	bch_write_op_init(&io->op, c, &io->bio, wp, k, k,
-			  NULL, BCH_WRITE_CHECK_ENOSPC);
+	bch_write_op_init(&io->op, c, &io->bio,
+			  &c->migration_write_point,
+			  k, k, NULL,
+			  BCH_WRITE_CHECK_ENOSPC);
 
-	BUG_ON(q->wq == NULL);
 	io->op.io_wq = q->wq;
 
-	option = migrate_cleanup_key(c, &io->op.insert_key, ca);
+	bch_extent_drop_dev_ptrs(bkey_i_to_s_extent(&io->op.insert_key),
+				 ca->sb.nr_this_dev);
 
-	switch (option) {
-	default:
-	case MIGRATE_REWRITE_KEY:
-		/* For now */
-		BUG();
-
-	case MIGRATE_COPY:
-		bch_data_move(q, ctxt, io);
-		(*seen_key_count)++;
-		break;
-
-	case MIGRATE_IGNORE:
-		/* The pointer to this device was stale. */
-		moving_io_free(io);
-		break;
-	}
+	bch_data_move(q, ctxt, io);
+	(*seen_key_count)++;
 
 	/*
 	 * IMPORTANT: We must call bch_data_move before we dequeue so
@@ -203,7 +73,6 @@ static int issue_migration_move(struct cache *ca,
 #define MIGRATION_DEBUG		0
 
 #define MAX_DATA_OFF_ITER	10
-#define MAX_FLAG_DATA_BAD_ITER	(MIGRATION_DEBUG ? 2 : 1)
 #define PASS_LOW_LIMIT		(MIGRATION_DEBUG ? 0 : 2)
 #define MIGRATE_NR		64
 #define MIGRATE_READ_NR		32
@@ -489,15 +358,12 @@ static int bch_flag_key_bad(struct btree_iter *iter,
 {
 	BKEY_PADDED(key) tmp;
 	struct bkey_s_extent e;
-	struct bch_extent_ptr *ptr;
 	struct cache_set *c = ca->set;
 
 	bkey_reassemble(&tmp.key, orig.s_c);
 	e = bkey_i_to_s_extent(&tmp.key);
 
-	extent_for_each_ptr_backwards(e, ptr)
-		if (ptr->dev == ca->sb.nr_this_dev)
-			bch_extent_drop_ptr(e, ptr);
+	bch_extent_drop_dev_ptrs(e, ca->sb.nr_this_dev);
 
 	/*
 	 * If the new extent no longer has any pointers, bch_extent_normalize()
