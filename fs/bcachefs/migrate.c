@@ -491,47 +491,20 @@ static int bch_flag_key_bad(struct btree_iter *iter,
 	struct bkey_s_extent e;
 	struct bch_extent_ptr *ptr;
 	struct cache_set *c = ca->set;
-	bool found = false;
-
-	/* Iterate backwards because we might drop pointers */
 
 	bkey_reassemble(&tmp.key, orig.s_c);
 	e = bkey_i_to_s_extent(&tmp.key);
 
 	extent_for_each_ptr_backwards(e, ptr)
-		if (ptr->dev == ca->sb.nr_this_dev) {
-			found = true;
-
-			/*
-			 * If it was dirty, replace it with a ptr to
-			 * PTR_LOST_DEV, so counting dirty replicas still works
-			 * (and so we know we lost data)
-			 *
-			 * If the pointer was considered cached, just drop it -
-			 * we can't replace it with a ptr to PTR_LOST_DEV
-			 * because bch_extent_normalize() will sort it
-			 * incorrectly but fortunately we don't need to.
-			 */
-			if (bch_extent_ptr_is_dirty(c, e.c, ptr))
-				ptr->dev = PTR_LOST_DEV;
-			else
-				bch_extent_drop_ptr(e, ptr);
-		}
-
-	if (!found)
-		return 0;
+		if (ptr->dev == ca->sb.nr_this_dev)
+			bch_extent_drop_ptr(e, ptr);
 
 	/*
-	 * bch_extent_normalize() needs to know how to turn a key with only
-	 * pointers to PTR_LOST_DEV into a KEY_BAD() key anyways - because we
-	 * might have a cached pointer that will go stale later - so just call
-	 * it here.
-	 *
-	 * If the key was cached, we may have dropped all pointers above --
-	 * in this case, bch_extent_normalize() will change the key type to
-	 * DISCARD.
+	 * If the new extent no longer has any pointers, bch_extent_normalize()
+	 * will do the appropriate thing with it (turning it into a
+	 * KEY_TYPE_ERROR key, or just a discard if it was a cached extent)
 	 */
-	bch_extent_normalize(c, bkey_i_to_s(&tmp.key));
+	bch_extent_normalize(c, e.s);
 
 	return bch_btree_insert_at(iter, &keylist_single(&tmp.key),
 				   NULL, NULL, BTREE_INSERT_ATOMIC);
@@ -552,38 +525,57 @@ int bch_flag_data_bad(struct cache *ca)
 {
 	int ret = 0, ret2;
 	struct bkey_s_c k;
+	struct bkey_s_c_extent e;
 	struct btree_iter iter;
-
-	if (MIGRATION_DEBUG)
-		pr_notice("Flagging bad data.");
 
 	bch_btree_iter_init(&iter, ca->set, BTREE_ID_EXTENTS, POS_MIN);
 
 	while ((k = bch_btree_iter_peek(&iter)).k) {
-		if (bkey_extent_is_data(k.k)) {
-			ret = bch_flag_key_bad(&iter, ca,
-					       bkey_s_c_to_extent(k));
-			if (ret == -EINTR)
-				continue;
+		if (!bkey_extent_is_data(k.k))
+			goto advance;
 
-			if (ret)
-				break;
-		}
+		e = bkey_s_c_to_extent(k);
+		if (!bch_extent_has_device(e, ca->sb.nr_this_dev))
+			goto advance;
 
+		ret = bch_flag_key_bad(&iter, ca, e);
+
+		/*
+		 * don't want to leave ret == -EINTR, since if we raced and
+		 * something else overwrote the key we could spuriously return
+		 * -EINTR below:
+		 */
+		if (ret == -EINTR)
+			ret = 0;
+		if (ret)
+			break;
+
+		/*
+		 * If the replica we're dropping was dirty and there is an
+		 * additional cached replica, the cached replica will now be
+		 * considered dirty - upon inserting the new version of the key,
+		 * the bucket accounting will be updated to reflect the fact
+		 * that the cached data is now dirty and everything works out as
+		 * if by magic without us having to do anything.
+		 *
+		 * The one thing we need to be concerned with here is there's a
+		 * race between when we drop any stale pointers from the key
+		 * we're about to insert, and when the key actually gets
+		 * inserted and the cached data is marked as dirty - we could
+		 * end up trying to insert a key with a pointer that should be
+		 * dirty, but points to stale data.
+		 *
+		 * If that happens the insert code just bails out and doesn't do
+		 * the insert - however, it doesn't return an error. Hence we
+		 * need to always recheck the current key before advancing to
+		 * the next:
+		 */
+		continue;
+advance:
 		bch_btree_iter_advance_pos(&iter);
 	}
 
 	ret2 = bch_btree_iter_unlock(&iter);
-
-#ifdef CONFIG_BCACHEFS_DEBUG
-	if (!ret && !ret2)
-		for_each_btree_key(&iter, ca->set, BTREE_ID_EXTENTS, POS_MIN, k)
-			BUG_ON(bkey_extent_is_data(k.k) &&
-			       bch_extent_has_device(bkey_s_c_to_extent(k),
-						     ca->sb.nr_this_dev));
-
-	bch_btree_iter_unlock(&iter);
-#endif
 
 	return ret ?: ret2;
 }

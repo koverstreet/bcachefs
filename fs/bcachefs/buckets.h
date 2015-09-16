@@ -28,11 +28,9 @@ static inline u8 bucket_gc_gen(struct cache *ca, struct bucket *g)
 static inline struct cache *PTR_CACHE(const struct cache_set *c,
 				      const struct bch_extent_ptr *ptr)
 {
-	/* The range test covers PTR_LOST_DEV and PTR_CHECK_DEV  */
+	EBUG_ON(ptr->dev > rcu_dereference(c->members)->nr_in_set);
 
-	return ptr->dev < MAX_CACHES_PER_SET
-		? rcu_dereference(c->cache[ptr->dev])
-		: NULL;
+	return rcu_dereference(c->cache[ptr->dev]);
 }
 
 static inline size_t PTR_BUCKET_NR(const struct cache *ca,

@@ -150,6 +150,17 @@ bool bch_extent_has_device(struct bkey_s_c_extent e, unsigned dev)
 	return false;
 }
 
+static unsigned bch_extent_nr_ptrs(struct bkey_s_c_extent e)
+{
+	const struct bch_extent_ptr *ptr;
+	unsigned ret = 0;
+
+	extent_for_each_ptr(e, ptr)
+		ret++;
+
+	return ret;
+}
+
 /* returns true if equal */
 static bool crc_cmp(union bch_extent_entry *l, union bch_extent_entry *r)
 {
@@ -262,9 +273,6 @@ static const char *extent_ptr_invalid(const struct cache_member_rcu *mi,
 				      unsigned size_ondisk)
 {
 	const struct cache_member *m = mi->m + ptr->dev;
-
-	if (ptr->dev == PTR_LOST_DEV) /* XXX: kill */
-		return NULL;
 
 	if (ptr->dev > mi->nr_in_set ||
 	    bch_is_zero(m->uuid.b, sizeof(uuid_le)))
@@ -1376,16 +1384,23 @@ static void bch_extent_debugcheck(struct cache_set *c, struct btree *b,
 
 		replicas++;
 
-		/* Could be a special pointer such as PTR_CHECK_DEV */
-		if (ptr->dev >= mi->nr_in_set) {
-			if (ptr->dev != PTR_LOST_DEV)
-				goto bad_device;
+		if (ptr->dev >= mi->nr_in_set)
+			goto bad_device;
 
-			continue;
-		}
+		do {
+			seq = read_seqcount_begin(&c->gc_pos_lock);
+			bad = !test_bit(ptr->dev, c->cache_slots_used) &&
+				c->gc_pos.phase == GC_PHASE_DONE;
+		} while (read_seqcount_retry(&c->gc_pos_lock, seq));
+
+		if (bad)
+			goto bad_device;
 
 		if (!test_bit(JOURNAL_REPLAY_DONE, &c->journal.flags))
 			continue;
+
+		if (bch_is_zero(mi->m[ptr->dev].uuid.b, sizeof(uuid_le)))
+			goto bad_device;
 
 		tier = CACHE_TIER(&mi->m[ptr->dev]);
 		ptrs_per_tier[tier]++;
@@ -1570,6 +1585,10 @@ static void extent_sort_ptrs(struct cache_set *c, struct bkey_s_extent e)
 	struct bch_extent_ptr *ptr, *prev = NULL;
 	union bch_extent_crc *crc;
 
+	/*
+	 * First check if any pointers are out of order before doing the actual
+	 * sort:
+	 */
 	mi = cache_member_info_get(c);
 
 	extent_for_each_ptr_crc(e, ptr, crc)
@@ -1582,11 +1601,15 @@ static void extent_sort_ptrs(struct cache_set *c, struct bkey_s_extent e)
 	cache_member_info_put();
 }
 
+/*
+ * bch_extent_normalize - clean up an extent, dropping stale pointers etc.
+ *
+ * Returns true if @k should be dropped entirely (when compacting/rewriting
+ * btree nodes).
+ */
 bool bch_extent_normalize(struct cache_set *c, struct bkey_s k)
 {
 	struct bkey_s_extent e;
-	struct bch_extent_ptr *ptr;
-	bool have_data = false;
 
 	switch (k.k->type) {
 	case KEY_TYPE_ERROR:
@@ -1606,11 +1629,7 @@ bool bch_extent_normalize(struct cache_set *c, struct bkey_s k)
 		bch_extent_drop_stale(c, e);
 		extent_sort_ptrs(c, e);
 
-		extent_for_each_ptr(e, ptr)
-			if (ptr->dev != PTR_LOST_DEV)
-				have_data = true;
-
-		if (!have_data) {
+		if (!bch_extent_nr_ptrs(e.c)) {
 			set_bkey_val_u64s(e.k, 0);
 			if (bkey_extent_is_cached(e.k)) {
 				k.k->type = KEY_TYPE_DISCARD;
@@ -1657,10 +1676,6 @@ void bch_extent_pick_ptr_avoiding(struct cache_set *c, struct bkey_s_c k,
 
 	case BCH_EXTENT:
 	case BCH_EXTENT_CACHED:
-		/*
-		 * Note: If DEV is PTR_LOST_DEV, PTR_CACHE returns NULL so if
-		 * there are no other pointers, we'll return ERR_PTR(-EIO).
-		 */
 		e = bkey_s_c_to_extent(k);
 		rcu_read_lock();
 		ret->ca = NULL;

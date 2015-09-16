@@ -380,10 +380,6 @@ struct bch_extent_ptr {
 #endif
 } __attribute__((packed)) __attribute__((aligned(8)));
 
-/* Dummy DEV numbers: */
-
-#define PTR_LOST_DEV			255 /* XXX: kill */
-
 union bch_extent_entry {
 	__u8				type;
 	struct bch_extent_crc32		crc32;
