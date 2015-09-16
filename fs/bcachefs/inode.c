@@ -27,7 +27,7 @@ ssize_t bch_inode_status(char *buf, size_t len, const struct bkey *k)
 
 	case BCH_INODE_FS:
 		if (bkey_val_bytes(k) != sizeof(struct bch_inode))
-			return scnprintf(buf, len, "bad size: %lu",
+			return scnprintf(buf, len, "bad size: %zu",
 					 bkey_val_bytes(k));
 
 		if (k->p.inode < BLOCKDEV_INODE_MAX)
@@ -38,7 +38,7 @@ ssize_t bch_inode_status(char *buf, size_t len, const struct bkey *k)
 
 	case BCH_INODE_BLOCKDEV:
 		if (bkey_val_bytes(k) != sizeof(struct bch_inode_blockdev))
-			return scnprintf(buf, len, "bad size: %lu",
+			return scnprintf(buf, len, "bad size: %zu",
 					 bkey_val_bytes(k));
 
 		if (k->p.inode >= BLOCKDEV_INODE_MAX)

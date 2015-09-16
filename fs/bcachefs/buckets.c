@@ -146,7 +146,9 @@ static struct bucket_mark bch_bucket_mark_set(struct cache *ca,
 					      struct bucket_mark new,
 					      bool may_make_unavailable)
 {
-	struct bucket_mark old = xchg(&g->mark, new);
+	struct bucket_mark old;
+
+	old.counter = xchg(&g->mark.counter, new.counter);
 
 	bucket_stats_update(ca, old, new, may_make_unavailable);
 	return old;
