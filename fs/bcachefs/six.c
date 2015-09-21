@@ -58,9 +58,9 @@ bool __six_trylock_type(struct six_lock *lock, enum six_lock_type type)
 
 		if (old.v & l[type].lock_fail)
 			return false;
-	} while ((v = cmpxchg(&lock->state.v,
-			      old.v,
-			      old.v + l[type].lock_val)) != old.v);
+	} while ((v = atomic64_cmpxchg(&lock->state.counter,
+				       old.v,
+				       old.v + l[type].lock_val)) != old.v);
 
 	return true;
 }
@@ -77,9 +77,9 @@ bool __six_relock_type(struct six_lock *lock, enum six_lock_type type,
 
 		if (old.seq != seq || old.v & l[type].lock_fail)
 			return false;
-	} while ((v = cmpxchg(&lock->state.v,
-			      old.v,
-			      old.v + l[type].lock_val)) != old.v);
+	} while ((v = atomic64_cmpxchg(&lock->state.counter,
+				       old.v,
+				       old.v + l[type].lock_val)) != old.v);
 
 	return true;
 }
@@ -192,9 +192,9 @@ bool six_trylock_convert(struct six_lock *lock,
 
 		if (new.v & l[to].lock_fail)
 			return false;
-	} while ((v = cmpxchg(&lock->state.v,
-			      old.v,
-			      new.v + l[to].lock_val)) != old.v);
+	} while ((v = atomic64_cmpxchg(&lock->state.counter,
+				       old.v,
+				       new.v + l[to].lock_val)) != old.v);
 
 	six_lock_wakeup(lock, new, l[from].unlock_wakeup);
 

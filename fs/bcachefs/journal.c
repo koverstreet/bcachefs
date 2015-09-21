@@ -798,7 +798,8 @@ static bool __journal_entry_close(struct journal *j, u32 val)
 			break;
 
 		new.cur_entry_offset = val;
-	} while ((v = cmpxchg(&j->reservations.v, old.v, new.v)) != old.v);
+	} while ((v = atomic64_cmpxchg(&j->reservations.counter,
+				       old.v, new.v)) != old.v);
 
 	if (old.cur_entry_offset < JOURNAL_ENTRY_CLOSED)
 		journal_cur_write(j)->data->u64s = old.cur_entry_offset;
@@ -862,7 +863,8 @@ static void journal_entry_open(struct journal *j)
 
 			/* Handle any already added entries */
 			new.cur_entry_offset = w->data->u64s;
-		} while ((v = cmpxchg(&j->reservations.v, old.v, new.v)) != old.v);
+		} while ((v = atomic64_cmpxchg(&j->reservations.counter,
+					       old.v, new.v)) != old.v);
 
 		wake_up(&j->wait);
 	}
@@ -1677,8 +1679,8 @@ static inline bool journal_res_get_fast(struct journal *j,
 
 		new.cur_entry_offset += res->u64s;
 		new.count++;
-	} while ((v = cmpxchg(&j->reservations.v,
-			      old.v, new.v)) != old.v);
+	} while ((v = atomic64_cmpxchg(&j->reservations.counter,
+				       old.v, new.v)) != old.v);
 
 	res->ref = true;
 	return true;
