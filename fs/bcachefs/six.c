@@ -10,13 +10,13 @@
 
 struct six_lock_vals {
 	/* Value we add to the lock in order to take the lock: */
-	unsigned long		lock_val;
+	u64			lock_val;
 
 	/* If the lock has this value (used as a mask), taking the lock fails: */
-	unsigned long		lock_fail;
+	u64			lock_fail;
 
 	/* Value we add to the lock in order to release the lock: */
-	unsigned long		unlock_val;
+	u64			unlock_val;
 
 	/* Waitlist we wakeup when releasing the lock: */
 	enum six_lock_type	unlock_wakeup;
@@ -47,7 +47,7 @@ bool __six_trylock_type(struct six_lock *lock, enum six_lock_type type)
 {
 	const struct six_lock_vals l[] = LOCK_VALS;
 	union six_lock_state old;
-	unsigned long v = lock->state.v;
+	u64 v = lock->state.v;
 
 	do {
 		old.v = v;
@@ -70,7 +70,7 @@ bool __six_relock_type(struct six_lock *lock, enum six_lock_type type,
 {
 	const struct six_lock_vals l[] = LOCK_VALS;
 	union six_lock_state old;
-	unsigned long v = lock->state.v;
+	u64 v = lock->state.v;
 
 	do {
 		old.v = v;
@@ -184,7 +184,7 @@ bool six_trylock_convert(struct six_lock *lock,
 {
 	const struct six_lock_vals l[] = LOCK_VALS;
 	union six_lock_state old, new;
-	unsigned long v = lock->state.v;
+	u64 v = lock->state.v;
 
 	do {
 		new.v = old.v = v;
