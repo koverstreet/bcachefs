@@ -8,24 +8,34 @@
 #include "keylist.h"
 #include "super.h"
 
-#define INODES_PER_ITER		(1 << 24)
+#include <linux/generic-radix-tree.h>
 
 struct nlink {
 	u32	count;
 	u32	dir_count;
 };
 
-static void inc_link(u64 pos, struct nlink *links, bool *need_loop,
+DECLARE_GENRADIX_TYPE(nlinks, struct nlink);
+
+static void inc_link(struct nlinks *links,
+		     u64 range_start, u64 *range_end,
 		     u64 inum, unsigned count, bool dir)
 {
-	if (inum >= pos + INODES_PER_ITER) {
-		*need_loop = true;
-	} else if (inum >= pos) {
-		if (dir)
-			links[inum - pos].dir_count += count;
-		else
-			links[inum - pos].count += count;
+	struct nlink *link;
+
+	if (inum < range_start || inum >= *range_end)
+		return;
+
+	link = genradix_ptr_alloc(links, inum - range_start, GFP_KERNEL);
+	if (!link) {
+		*range_end = inum;
+		return;
 	}
+
+	if (dir)
+		link->dir_count += count;
+	else
+		link->count += count;
 }
 
 /*
@@ -34,17 +44,14 @@ static void inc_link(u64 pos, struct nlink *links, bool *need_loop,
  */
 
 noinline_for_stack
-static int bch_gc_walk_dirents(struct cache_set *c, u64 pos,
-			       struct nlink *links, bool *need_loop)
+static int bch_gc_walk_dirents(struct cache_set *c, struct nlinks *links,
+			       u64 range_start, u64 *range_end)
 {
 	struct btree_iter iter;
 	struct bkey_s_c k;
 	struct bkey_s_c_dirent d;
 
-	need_loop = false;
-	memset(links, 0, INODES_PER_ITER * sizeof(*links));
-
-	inc_link(pos, links, need_loop, BCACHE_ROOT_INO, 2, false);
+	inc_link(links, range_start, range_end, BCACHE_ROOT_INO, 2, false);
 
 	for_each_btree_key(&iter, c, BTREE_ID_DIRENTS, POS_MIN, k) {
 		switch (k.k->type) {
@@ -52,12 +59,12 @@ static int bch_gc_walk_dirents(struct cache_set *c, u64 pos,
 			d = bkey_s_c_to_dirent(k);
 
 			if (d.v->d_type == DT_DIR) {
-				inc_link(pos, links, need_loop,
+				inc_link(links, range_start, range_end,
 					 d.v->d_inum, 2, false);
-				inc_link(pos, links, need_loop,
+				inc_link(links, range_start, range_end,
 					 d.k->p.inode, 1, true);
 			} else {
-				inc_link(pos, links, need_loop,
+				inc_link(links, range_start, range_end,
 					 d.v->d_inum, 1, false);
 			}
 
@@ -131,31 +138,36 @@ static int bch_gc_do_inode(struct cache_set *c, struct btree_iter *iter,
 }
 
 noinline_for_stack
-static int bch_gc_walk_inodes(struct cache_set *c, u64 pos, struct nlink *links)
+static int bch_gc_walk_inodes(struct cache_set *c, struct nlinks *links,
+			      u64 range_start, u64 range_end)
 {
 	struct btree_iter iter;
 	struct bkey_s_c k;
+	struct nlink *link, zero_links = { 0, 0 };
 	int ret = 0;
 	u64 i = 0;
 
-	bch_btree_iter_init(&iter, c, BTREE_ID_INODES, POS(pos, 0));
+	bch_btree_iter_init(&iter, c, BTREE_ID_INODES, POS(range_start, 0));
 
 	while ((k = bch_btree_iter_peek(&iter)).k) {
-		if (k.k->p.inode - pos >= INODES_PER_ITER)
+		if (k.k->p.inode >= range_end)
 			break;
 
-		while (i < k.k->p.inode - pos) {
-			cache_set_inconsistent_on(links[i].count, c,
+		link = genradix_ptr(links, i) ?: &zero_links;
+
+		while (i < k.k->p.inode - range_start) {
+			cache_set_inconsistent_on(link->count, c,
 					 "missing inode %llu",
-					 pos + i);
+					 range_start + i);
 			i++;
+			link = genradix_ptr(links, i) ?: &zero_links;
 		}
 
 		switch (k.k->type) {
 		case BCH_INODE_FS:
 			ret = bch_gc_do_inode(c, &iter,
 					      bkey_s_c_to_inode(k),
-					      links[i]);
+					      *link);
 			if (ret == -EINTR)
 				continue;
 			if (ret)
@@ -163,13 +175,13 @@ static int bch_gc_walk_inodes(struct cache_set *c, u64 pos, struct nlink *links)
 
 			break;
 		default:
-			cache_set_inconsistent_on(links[i].count, c,
+			cache_set_inconsistent_on(link->count, c,
 					 "missing inode %llu",
-					 pos + i);
+					 range_start + i);
 			break;
 		}
 
-		if (links[i].count)
+		if (link->count)
 			atomic_long_inc(&c->nr_inodes);
 
 		bch_btree_iter_advance_pos(&iter);
@@ -182,27 +194,32 @@ out:
 
 int bch_gc_inode_nlinks(struct cache_set *c)
 {
-	bool need_loop = false;
-	u64 pos = 0;
-	struct nlink *links = vmalloc(INODES_PER_ITER * sizeof(*links));
+	struct nlinks links;
+	u64 this_iter_range_start, next_iter_range_start = 0;
 	int ret = 0;
 
-	if (!links)
-		return -ENOMEM;
+	genradix_init(&links);
 
 	do {
-		ret = bch_gc_walk_dirents(c, pos, links, &need_loop);
+		this_iter_range_start = next_iter_range_start;
+		next_iter_range_start = U64_MAX;
+
+		ret = bch_gc_walk_dirents(c, &links,
+					  this_iter_range_start,
+					  &next_iter_range_start);
 		if (ret)
 			break;
 
-		ret = bch_gc_walk_inodes(c, pos, links);
+		ret = bch_gc_walk_inodes(c, &links,
+					 this_iter_range_start,
+					 next_iter_range_start);
 		if (ret)
 			break;
 
-		pos += INODES_PER_ITER;
-	} while (need_loop);
+		genradix_free(&links);
+	} while (next_iter_range_start != U64_MAX);
 
-	vfree(links);
+	genradix_free(&links);
 
 	return ret;
 }
