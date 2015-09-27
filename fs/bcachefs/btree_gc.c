@@ -27,53 +27,64 @@
 #include <linux/delay.h>
 #include <trace/events/bcachefs.h>
 
-static void btree_node_range_checks_init(struct bpos next_min[BTREE_MAX_DEPTH])
+struct range_checks {
+	struct range_level {
+		struct bpos	min;
+		struct bpos	max;
+	}			l[BTREE_MAX_DEPTH];
+};
+
+static void btree_node_range_checks_init(struct range_checks *r)
 {
 	unsigned i;
 
 	for (i = 0; i < BTREE_MAX_DEPTH; i++)
-		next_min[i] = POS_MIN;
+		r->l[i].min = r->l[i].max = POS_MIN;
 }
 
 static void btree_node_range_checks(struct cache_set *c, struct btree *b,
-				    struct bpos next_min[BTREE_MAX_DEPTH])
+				    struct range_checks *r)
 {
-	/*
-	 * XXX: verify parent/child ranges more strictly - we're just verifying
-	 * that child nodes fall within the range of parent nodes, need to
-	 * verify that they cover the entire range of the parent node
-	 */
+	struct range_level *l = &r->l[b->level];
 
-	cache_set_inconsistent_on(b->level + 1 < BTREE_MAX_DEPTH &&
-				  bkey_cmp(b->data->min_key,
-					   next_min[b->level + 1]) < 0, c,
-		"btree node range outside range of parent node: %llu:%llu < %llu:%llu",
-		b->data->min_key.inode,
-		b->data->min_key.offset,
-		next_min[b->level + 1].inode,
-		next_min[b->level + 1].offset);
-
-	cache_set_inconsistent_on(b->level &&
-				  bkey_cmp(b->data->max_key,
-					   next_min[b->level - 1]) < 0, c,
-		"btree node range smaller than child node range: %llu:%llu < %llu:%llu",
-		b->data->max_key.inode,
-		b->data->max_key.offset,
-		next_min[b->level - 1].inode,
-		next_min[b->level - 1].offset);
+	struct bpos expected_min = bkey_cmp(l->min, l->max)
+		? btree_type_successor(b->btree_id, l->max)
+		: l->max;
 
 	cache_set_inconsistent_on(bkey_cmp(b->data->min_key,
-					   next_min[b->level]), c,
+					   expected_min), c,
 		"btree node has incorrect min key: %llu:%llu != %llu:%llu",
 		b->data->min_key.inode,
 		b->data->min_key.offset,
-		next_min[b->level].inode,
-		next_min[b->level].offset);
+		expected_min.inode,
+		expected_min.offset);
 
-	if (bkey_cmp(b->data->max_key, POS_MAX))
-		next_min[b->level] =
-			btree_type_successor(b->btree_id,
-					     b->data->max_key);
+	l->max = b->data->max_key;
+
+	if (b->level) {
+		l = &r->l[b->level - 1];
+
+		cache_set_inconsistent_on(bkey_cmp(b->data->min_key,
+						   l->min), c,
+			"btree node min doesn't match min of child nodes: %llu:%llu != %llu:%llu",
+			b->data->min_key.inode,
+			b->data->min_key.offset,
+			l->min.inode,
+			l->min.offset);
+
+		cache_set_inconsistent_on(bkey_cmp(b->data->max_key,
+						   l->max), c,
+			"btree node max doesn't match max of child nodes: %llu:%llu != %llu:%llu",
+			b->data->max_key.inode,
+			b->data->max_key.offset,
+			l->max.inode,
+			l->max.offset);
+
+		if (bkey_cmp(b->data->max_key, POS_MAX))
+			l->min = l->max =
+				btree_type_successor(b->btree_id,
+						     b->data->max_key);
+	}
 }
 
 u8 bch_btree_key_recalc_oldest_gen(struct cache_set *c, struct bkey_s_c k)
@@ -183,12 +194,12 @@ static int bch_gc_btree(struct cache_set *c, enum btree_id btree_id)
 	struct btree_iter iter;
 	struct btree *b;
 	bool should_rewrite;
-	struct bpos next_min[BTREE_MAX_DEPTH];
+	struct range_checks r;
 
-	btree_node_range_checks_init(next_min);
+	btree_node_range_checks_init(&r);
 
 	for_each_btree_node(&iter, c, btree_id, POS_MIN, b) {
-		btree_node_range_checks(c, b, next_min);
+		btree_node_range_checks(c, b, &r);
 
 		bch_verify_btree_nr_keys(&b->keys);
 
@@ -770,15 +781,15 @@ static void bch_initial_gc_btree(struct cache_set *c, enum btree_id id)
 {
 	struct btree_iter iter;
 	struct btree *b;
-	struct bpos next_min[BTREE_MAX_DEPTH];
+	struct range_checks r;
 
-	btree_node_range_checks_init(next_min);
+	btree_node_range_checks_init(&r);
 
 	if (!c->btree_roots[id])
 		return;
 
 	for_each_btree_node(&iter, c, id, POS_MIN, b) {
-		btree_node_range_checks(c, b, next_min);
+		btree_node_range_checks(c, b, &r);
 
 		if (btree_node_has_ptrs(b)) {
 			struct btree_node_iter node_iter;
