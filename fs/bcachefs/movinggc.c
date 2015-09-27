@@ -140,7 +140,7 @@ static void read_moving(struct cache *ca, struct moving_context *ctxt)
 		}
 
 		bch_queue_run(&ca->moving_gc_queue, ctxt);
-	} while (again);
+	} while (!kthread_should_stop() && again);
 }
 
 static bool bch_moving_gc(struct cache *ca)
