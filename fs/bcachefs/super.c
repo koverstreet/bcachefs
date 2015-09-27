@@ -1027,6 +1027,7 @@ static struct cache_set *bch_cache_set_alloc(struct cache_sb *sb,
 
 	INIT_LIST_HEAD(&c->btree_node_pending_free);
 	mutex_init(&c->btree_node_pending_free_lock);
+	mutex_init(&c->async_split_lock);
 
 	mutex_init(&c->bio_bounce_pages_lock);
 	INIT_WORK(&c->bio_submit_work, bch_bio_submit_work);

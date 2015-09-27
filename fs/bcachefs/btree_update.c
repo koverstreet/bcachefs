@@ -157,7 +157,7 @@ static void __btree_node_free(struct cache_set *c, struct btree *b,
 
 	BUG_ON(b == btree_node_root(b));
 	BUG_ON(b->ob);
-	BUG_ON(atomic_read(&b->write_blocked));
+	BUG_ON(!list_empty(&b->write_blocked));
 
 	/* Cause future btree_node_relock() calls to fail: */
 	six_lock_write(&b->lock);
@@ -839,6 +839,7 @@ struct async_split *__bch_async_split_alloc(struct btree *nodes[],
 	closure_init(&as->cl, &c->cl);
 	as->c		= c;
 	as->b		= NULL;
+	as->as		= NULL;
 	as->res		= res;
 	as->nr_pending	= 0;
 	init_llist_head(&as->wait.list);
@@ -928,28 +929,57 @@ static void async_split_update_done(struct closure *cl)
 static void async_split_writes_done(struct closure *cl)
 {
 	struct async_split *as = container_of(cl, struct async_split, cl);
-	struct btree *b = as->b;
+	struct cache_set *c = as->c;
 
-	/* Writes are finished, persist pointers to new nodes: */
+	/*
+	 * We did an update to a parent node where the pointers we added pointed
+	 * to child nodes that weren't written yet: now, the child nodes have
+	 * been written so we can write out the update to the interior node.
+	 */
 
 	/* XXX: error handling */
+retry:
+	mutex_lock(&c->async_split_lock);
 
-	if (b) {
-		six_lock_read(&b->lock);
-		if (atomic_dec_and_test(&b->write_blocked)) {
-			if (!b->as) {
-				closure_wait(&btree_current_write(b)->wait, cl);
-				__bch_btree_node_write(b, NULL, -1);
-			} else {
-				closure_wait(&b->as->wait, cl);
-				/* XXX: do stuff with journal pin, btree node
-				 * freeing */
-				closure_put(&b->as->cl);
-				b->as = NULL;
-			}
+	if (as->b) {
+		struct btree *b = as->b;
+
+		/* Normal case */
+		if (!six_trylock_read(&b->lock)) {
+			mutex_unlock(&c->async_split_lock);
+			six_lock_read(&b->lock);
+			six_unlock_read(&b->lock);
+			goto retry;
 		}
+
+		closure_wait(&btree_current_write(b)->wait, cl);
+
+		list_del(&as->list);
+
+		if (list_empty(&b->write_blocked))
+			__bch_btree_node_write(b, NULL, -1);
 		six_unlock_read(&b->lock);
+	} else if (as->as) {
+		/*
+		 * The btree node we originally updated has been freed and is
+		 * being rewritten - so we need to write anything here, we just
+		 * need to signal to that async_split that it's ok to make the
+		 * new replacement node visible:
+		 */
+		closure_put(&as->as->cl);
+
+		/*
+		 * and then we have to wait on that async_split to finish:
+		 */
+		closure_wait(&as->as->wait, cl);
+	} else {
+		/*
+		 * Instead of updating an interior node we set a new btree root
+		 * (synchronously) - nothing to do here:
+		 */
 	}
+
+	mutex_unlock(&c->async_split_lock);
 
 	continue_at(cl, async_split_update_done, system_wq);
 }
@@ -983,8 +1013,10 @@ bch_btree_insert_keys_interior(struct btree *b,
 	/* not using the journal reservation, drop it now before blocking: */
 	bch_journal_res_put(&iter->c->journal, &as->res, NULL);
 
+	mutex_lock(&iter->c->async_split_lock);
 	as->b = b;
-	atomic_inc(&b->write_blocked);
+	list_add(&as->list, &b->write_blocked);
+	mutex_unlock(&iter->c->async_split_lock);
 
 	while (!bch_keylist_empty(insert_keys)) {
 		struct bkey_i *insert = bch_keylist_front(insert_keys);
@@ -1251,15 +1283,23 @@ static int btree_split(struct btree *b, struct btree_iter *iter,
 	BUG_ON(!parent && (b != btree_node_root(b)));
 	BUG_ON(!btree_node_intent_locked(iter, btree_node_root(b)->level));
 
-	if (atomic_read(&b->write_blocked)) {
-		/* recheck with write lock held: */
-		btree_node_lock_write(b, iter);
-		if (atomic_read(&b->write_blocked)) {
-			b->as = as;
-			closure_get(&as->cl);
-		}
-		btree_node_unlock_write(b, iter);
+	mutex_lock(&c->async_split_lock);
+	while (!list_empty(&b->write_blocked)) {
+		struct async_split *p =
+			list_first_entry(&b->write_blocked,
+					 struct async_split, list);
+
+		/*
+		 * If there were async splits blocking this node from being
+		 * written, we can't make the new replacement nodes visible
+		 * until those async splits finish - so point them at us:
+		 */
+		list_del(&p->list);
+		p->b = NULL;
+		p->as = as;
+		closure_get(&as->cl);
 	}
+	mutex_unlock(&c->async_split_lock);
 
 	n1 = btree_node_alloc_replacement(c, b, reserve);
 

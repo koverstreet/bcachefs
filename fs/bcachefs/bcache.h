@@ -537,6 +537,8 @@ struct cache_set {
 	struct list_head	btree_node_pending_free;
 	struct mutex		btree_node_pending_free_lock;
 
+	struct mutex		async_split_lock;
+
 	struct workqueue_struct	*wq;
 
 	/* ALLOCATION */

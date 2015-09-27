@@ -51,7 +51,10 @@ struct async_split {
 	struct closure			cl;
 
 	struct cache_set		*c;
+
 	struct btree			*b;
+	struct async_split		*as;
+	struct list_head		list;
 
 	/* for setting a new btree root: */
 	struct journal_res		res;

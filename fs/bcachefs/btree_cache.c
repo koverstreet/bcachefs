@@ -91,6 +91,7 @@ static struct btree *mca_bucket_alloc(struct cache_set *c, gfp_t gfp)
 	sema_init(&b->io_mutex, 1);
 	INIT_LIST_HEAD(&b->journal_seq_blacklisted);
 	b->writes[1].index = 1;
+	INIT_LIST_HEAD(&b->write_blocked);
 
 	mca_data_alloc(c, b, gfp);
 	return b->data ? b : NULL;
@@ -164,7 +165,7 @@ static int mca_reap_notrace(struct cache_set *c, struct btree *b, bool flush)
 	if (!six_trylock_write(&b->lock))
 		goto out_unlock_intent;
 
-	if (atomic_read(&b->write_blocked))
+	if (!list_empty(&b->write_blocked))
 		goto out_unlock;
 
 	i = btree_bset_last(b);

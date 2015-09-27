@@ -250,6 +250,8 @@ static inline void btree_iter_node_set(struct btree_iter *iter,
 				       struct btree *b,
 				       struct bpos pos)
 {
+	BUG_ON(b->lock.state.seq & 1);
+
 	iter->lock_seq[b->level] = b->lock.state.seq;
 	iter->nodes[b->level] = b;
 	bch_btree_node_iter_init(&iter->node_iters[b->level], &b->keys,

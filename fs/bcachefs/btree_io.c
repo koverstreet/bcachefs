@@ -635,7 +635,7 @@ void __bch_btree_node_write(struct btree *b, struct closure *parent,
 	if (!test_and_clear_bit(BTREE_NODE_dirty, &b->flags))
 		return;
 
-	BUG_ON(atomic_read(&b->write_blocked));
+	BUG_ON(!list_empty(&b->write_blocked));
 
 	/*
 	 * io_mutex ensures only a single IO in flight to a btree node at a

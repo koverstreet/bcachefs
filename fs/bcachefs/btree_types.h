@@ -36,7 +36,16 @@ struct btree {
 	u16			written;	/* would be nice to kill */
 	u8			level;
 	u8			btree_id;
-	atomic_t		write_blocked;
+
+	/*
+	 * For asynchronous splits/interior node updates:
+	 * When we do a split, we allocate new child nodes and update the parent
+	 * node to point to them: we update the parent in memory immediately,
+	 * but then we must wait until the children have been written out before
+	 * the update to the parent can be written - this is a list of the
+	 * async_splits that are blocking this node from being written:
+	 */
+	struct list_head	write_blocked;
 
 	struct btree_keys	keys;
 	struct btree_node	*data;
