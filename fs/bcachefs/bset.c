@@ -811,6 +811,7 @@ static void bch_bset_fix_lookup_table(struct btree_keys *b,
 		if (t->size == bkey_to_cacheline(t, k)) {
 			t->prev[t->size] = bkey_to_cacheline_offset(t, t->size, k);
 			t->size++;
+			return;
 		}
 }
 
