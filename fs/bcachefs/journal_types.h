@@ -71,6 +71,12 @@ union journal_res_state {
 };
 
 /*
+ * We stash some journal state as sentinal values in cur_entry_offset:
+ */
+#define JOURNAL_ENTRY_CLOSED_VAL	((u32) S32_MAX)
+#define JOURNAL_ENTRY_ERROR_VAL		((u32) S32_MAX + 1)
+
+/*
  * JOURNAL_DIRTY - current journal entry has stuff in it to write
  *
  * JOURNAL_NEED_WRITE - current (pending) journal entry should be written ASAP,
@@ -86,7 +92,6 @@ enum {
 	JOURNAL_IO_IN_FLIGHT,
 	JOURNAL_WRITE_IDX,
 	JOURNAL_REPLAY_DONE,
-	JOURNAL_ERROR,
 };
 
 /* Embedded in struct cache_set */

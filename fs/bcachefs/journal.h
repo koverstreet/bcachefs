@@ -211,7 +211,8 @@ int bch_journal_meta(struct journal *);
 
 static inline int bch_journal_error(struct journal *j)
 {
-	return test_bit(JOURNAL_ERROR, &j->flags) ? -EIO : 0;
+	return j->reservations.cur_entry_offset == JOURNAL_ENTRY_ERROR_VAL
+		? -EIO : 0;
 }
 
 /*

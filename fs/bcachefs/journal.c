@@ -774,46 +774,51 @@ static union journal_res_state journal_res_state(unsigned count,
 	};
 }
 
-#define JOURNAL_ENTRY_CLOSED		((u32) S32_MAX)
-
-/*
- * Journal error - we also set this in the res state so that we can avoid
- * journal_entry_open() opening another entry after the journal has errored:
- */
-#define JOURNAL_ENTRY_ERROR		((u32) S32_MAX + 1)
-
 static bool journal_entry_is_open(struct journal *j)
 {
-	return j->reservations.cur_entry_offset < JOURNAL_ENTRY_CLOSED;
+	return j->reservations.cur_entry_offset < JOURNAL_ENTRY_CLOSED_VAL;
 }
 
-static bool __journal_entry_close(struct journal *j, u32 val)
+enum journal_entry_state {
+	JOURNAL_ENTRY_ERROR,
+	JOURNAL_ENTRY_INUSE,
+	JOURNAL_ENTRY_CLOSED,
+};
+
+static enum journal_entry_state
+__journal_entry_close(struct journal *j, u32 val)
 {
 	union journal_res_state old, new;
 	u64 v = atomic64_read(&j->reservations.counter);
 
 	do {
 		old.v = new.v = v;
-		if (old.cur_entry_offset == val)
+		if (old.cur_entry_offset == JOURNAL_ENTRY_ERROR_VAL ||
+		    old.cur_entry_offset == val)
 			break;
 
 		new.cur_entry_offset = val;
 	} while ((v = atomic64_cmpxchg(&j->reservations.counter,
 				       old.v, new.v)) != old.v);
 
-	if (old.cur_entry_offset < JOURNAL_ENTRY_CLOSED)
+	if (old.cur_entry_offset < JOURNAL_ENTRY_CLOSED_VAL)
 		journal_cur_write(j)->data->u64s = old.cur_entry_offset;
 
-	return old.count == 0;
+	if (old.cur_entry_offset == JOURNAL_ENTRY_ERROR_VAL)
+		return JOURNAL_ENTRY_ERROR;
+
+	return old.count
+		? JOURNAL_ENTRY_INUSE
+		: JOURNAL_ENTRY_CLOSED;
 }
 
 /*
  * Closes the current journal entry so that new reservations cannot be take on
  * it - returns true if the count of outstanding reservations is 0.
  */
-static bool journal_entry_close(struct journal *j)
+static enum journal_entry_state journal_entry_close(struct journal *j)
 {
-	return __journal_entry_close(j, JOURNAL_ENTRY_CLOSED);
+	return __journal_entry_close(j, JOURNAL_ENTRY_CLOSED_VAL);
 }
 
 /* Number of u64s we can write to the current journal bucket */
@@ -849,7 +854,7 @@ static void journal_entry_open(struct journal *j)
 		 * Must be set before marking the journal entry as open:
 		 *
 		 * XXX: does this cause any problems if we bail out because of
-		 * JOURNAL_ENTRY_ERROR?
+		 * JOURNAL_ENTRY_ERROR_VAL?
 		 */
 		j->cur_entry_u64s = u64s;
 
@@ -858,7 +863,7 @@ static void journal_entry_open(struct journal *j)
 
 			BUG_ON(old.count);
 
-			if (old.cur_entry_offset == JOURNAL_ENTRY_ERROR)
+			if (old.cur_entry_offset == JOURNAL_ENTRY_ERROR_VAL)
 				break;
 
 			/* Handle any already added entries */
@@ -1360,8 +1365,8 @@ static void journal_write_endio(struct bio *bio)
 
 	if (cache_fatal_io_err_on(bio->bi_error, ca, "journal write") ||
 	    bch_meta_write_fault("journal")) {
-		set_bit(JOURNAL_ERROR, &j->flags);
-		__journal_entry_close(j, JOURNAL_ENTRY_ERROR);
+		__journal_entry_close(j, JOURNAL_ENTRY_ERROR_VAL);
+		wake_up(&j->wait);
 	}
 
 	closure_put(&j->io);
@@ -1517,25 +1522,24 @@ static bool __journal_write(struct journal *j, bool need_write_just_set)
 	__releases(j->lock)
 {
 	struct cache_set *c = container_of(j, struct cache_set, journal);
-	unsigned long flags;
-
-	/*
-	 * so we don't see IO_IN_FLIGHT cleared before JOURNAL_ERROR is set - as
-	 * long as we read the flags all together, they're set in the correct
-	 * order so we should be good
-	 */
-	flags = READ_ONCE(j->flags);
 
 	EBUG_ON(!j->reservations.count &&
-		!test_bit(JOURNAL_DIRTY, &flags));
+		!test_bit(JOURNAL_DIRTY, &j->flags));
 
-	if (test_bit(JOURNAL_IO_IN_FLIGHT, &flags) ||
-	    test_bit(JOURNAL_ERROR, &flags) ||
-	    !journal_entry_close(j))
+	if (test_bit(JOURNAL_IO_IN_FLIGHT, &j->flags))
 		goto nowrite;
 
+	switch (journal_entry_close(j)) {
+	case JOURNAL_ENTRY_ERROR:
+		goto journal_error;
+	case JOURNAL_ENTRY_INUSE:
+		goto nowrite;
+	case JOURNAL_ENTRY_CLOSED:
+		break;
+	}
+
 	if (!need_write_just_set &&
-	    test_bit(JOURNAL_NEED_WRITE, &flags))
+	    test_bit(JOURNAL_NEED_WRITE, &j->flags))
 		__bch_time_stats_update(j->delay_time, j->need_write_time);
 
 	set_bit(JOURNAL_IO_IN_FLIGHT, &j->flags);
@@ -1544,6 +1548,8 @@ static bool __journal_write(struct journal *j, bool need_write_just_set)
 	__set_current_state(TASK_RUNNING);
 	closure_call(&j->io, journal_write_locked, NULL, &c->cl);
 	return true;
+journal_error:
+	closure_wake_up(&journal_cur_write(j)->wait);
 nowrite:
 	spin_unlock(&j->lock);
 	return false;
@@ -1697,6 +1703,19 @@ static int __journal_res_get(struct journal *j, struct journal_res *res,
 		if (journal_res_get_fast(j, res, u64s_min, u64s_max))
 			return 1;
 
+		/*
+		 * If getting a journal reservation failed, either:
+		 *
+		 * - the current journal entry is full (and we should close it
+		 *   and write it, so a new one can be opened)
+		 *
+		 * - or, the current journal entry is closed - because we
+		 *   allocate/reclaim space before we can open the next one
+		 *   (with journal_next_bucket())
+		 *
+		 * - or, the journal's in an error state.
+		 */
+
 		spin_lock(&j->lock);
 
 		/*
@@ -1709,18 +1728,23 @@ static int __journal_res_get(struct journal *j, struct journal_res *res,
 			return 1;
 		}
 
-		if (bch_journal_error(j)) {
-			spin_unlock(&j->lock);
-			return -EIO;
-		}
-
 		/* local_clock() can of course be 0 but we don't care */
 		if (*start_time == 0)
 			*start_time = local_clock();
 
-		if (!journal_entry_close(j)) {
+		switch (journal_entry_close(j)) {
+		case JOURNAL_ENTRY_ERROR:
+			spin_unlock(&j->lock);
+			return -EIO;
+		case JOURNAL_ENTRY_INUSE:
+			/*
+			 * current journal entry still in use, can't do anything
+			 * yet:
+			 */
 			spin_unlock(&j->lock);
 			return 0;
+		case JOURNAL_ENTRY_CLOSED:
+			break;
 		}
 
 		if (test_bit(JOURNAL_DIRTY, &j->flags)) {
@@ -1841,11 +1865,15 @@ int bch_journal_meta(struct journal *j)
 {
 	struct journal_res res;
 	unsigned u64s = jset_u64s(0);
+	int ret;
 	u64 seq;
 
 	memset(&res, 0, sizeof(res));
 
-	bch_journal_res_get(j, &res, u64s, u64s);
+	ret = bch_journal_res_get(j, &res, u64s, u64s);
+	if (ret)
+		return ret;
+
 	bch_journal_res_put(j, &res, &seq);
 
 	return bch_journal_flush_seq(j, seq);
@@ -1913,7 +1941,7 @@ int bch_journal_alloc(struct journal *j)
 	bkey_extent_init(&j->key);
 
 	atomic64_set(&j->reservations.counter,
-		     journal_res_state(0, JOURNAL_ENTRY_CLOSED).v);
+		     journal_res_state(0, JOURNAL_ENTRY_CLOSED_VAL).v);
 
 	j->w[0].j = j;
 	j->w[1].j = j;
