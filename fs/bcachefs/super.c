@@ -1115,7 +1115,6 @@ static struct cache_set *bch_cache_set_alloc(struct cache_sb *sb,
 	c->bdi.ra_pages		= VM_MAX_READAHEAD * 1024 / PAGE_SIZE;
 	c->bdi.congested_fn	= bch_congested_fn;
 	c->bdi.congested_data	= c;
-	c->bdi.capabilities	|= BDI_CAP_STABLE_WRITES;
 
 	/*
 	 * Now that all allocations have succeeded, init various refcounty
