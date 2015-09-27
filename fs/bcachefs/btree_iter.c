@@ -108,15 +108,14 @@ bool bch_btree_iter_upgrade(struct btree_iter *iter)
 		if (iter->nodes[i] && !btree_lock_upgrade(iter, i)) {
 			do {
 				btree_node_unlock(iter, i);
-			} while (--i >= 0);
 
-			/*
-			 * Make sure btree_node_relock() in
-			 * btree_iter_traverse() fails, so that we keep going up
-			 * and get all the intent locks we need
-			 */
-			for (i = iter->locks_want - 1; i >= 0; --i)
+				/*
+				 * Make sure btree_node_relock() in
+				 * btree_iter_traverse() fails, so that we keep
+				 * going up and get all the intent locks we need
+				 */
 				iter->lock_seq[i]--;
+			} while (--i >= 0);
 
 			return false;
 		}
