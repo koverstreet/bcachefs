@@ -1404,6 +1404,7 @@ int bch_btree_insert_node(struct btree *b,
 			  struct async_split *as)
 {
 	struct cache_set *c = iter->c;
+	unsigned level;
 	int ret;
 
 	BUG_ON(iter->nodes[b->level] != b);
@@ -1422,7 +1423,9 @@ int bch_btree_insert_node(struct btree *b,
 		return 0;
 
 	case BTREE_INSERT_NEED_SPLIT:
-		if (!b->level) {
+		level = b->level;
+
+		if (!level) {
 			/*
 			 * XXX: figure out how far we might need to split,
 			 * instead of locking/reserving all the way to the root:
@@ -1449,7 +1452,8 @@ int bch_btree_insert_node(struct btree *b,
 
 		ret = btree_split(b, iter, insert_keys, flags, reserve, as);
 
-		if (!b->level) {
+		/* after split, @b has been freed: */
+		if (!level) {
 			up_read(&c->gc_lock);
 			bch_btree_reserve_put(c, reserve);
 		}
