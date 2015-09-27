@@ -554,6 +554,8 @@ static void bset_alloc_tree(struct btree_keys *b, struct bset_tree *t)
 
 		t->tree = t[-1].tree + j;
 		t->prev = t[-1].prev + j;
+
+		BUG_ON(t->tree > b->set->tree + btree_keys_cachelines(b));
 	}
 
 	t->size = 0;
@@ -565,13 +567,21 @@ static void bset_alloc_tree(struct btree_keys *b, struct bset_tree *t)
 	}
 }
 
+/* Only valid for the last bset: */
+static unsigned bset_tree_capacity(struct btree_keys *b, struct bset_tree *t)
+{
+	EBUG_ON(t != bset_tree_last(b));
+
+	return b->set->tree + btree_keys_cachelines(b) - t->tree;
+}
+
 static void bch_bset_build_unwritten_tree(struct btree_keys *b)
 {
 	struct bset_tree *t = bset_tree_last(b);
 
 	bset_alloc_tree(b, t);
 
-	if (t->tree != b->set->tree + btree_keys_cachelines(b)) {
+	if (bset_tree_capacity(b, t)) {
 		t->prev[0] = bkey_to_cacheline_offset(t, 0, t->data->start);
 		t->size = 1;
 		t->extra = BSET_TREE_UNWRITTEN_VAL;
@@ -608,9 +618,8 @@ void bch_bset_build_written_tree(struct btree_keys *b)
 
 	bset_alloc_tree(b, t);
 
-	t->size = min_t(unsigned,
-			bkey_to_cacheline(t, bset_bkey_last(t->data)),
-			b->set->tree + btree_keys_cachelines(b) - t->tree);
+	t->size = min(bkey_to_cacheline(t, bset_bkey_last(t->data)),
+		      bset_tree_capacity(b, t));
 retry:
 	if (t->size < 2) {
 		t->size = 0;
@@ -800,7 +809,9 @@ static void bch_bset_fix_lookup_table(struct btree_keys *b,
 		t->prev[j] = p;
 	}
 
-	if (t->size == b->set->tree + btree_keys_cachelines(b) - t->tree)
+	BUG_ON(t->size > bset_tree_capacity(b, t));
+
+	if (t->size == bset_tree_capacity(b, t))
 		return;
 
 	/* Possibly add a new entry to the end of the lookup table */
