@@ -441,6 +441,12 @@ void bch_tiering_write_destroy(struct cache *ca)
 void bch_tiering_write_stop(struct cache *ca)
 {
 	bch_queue_stop(&ca->tiering_queue);
+
+	/*
+	 * Make sure that it is empty so that gc marking doesn't keep
+	 * marking stale entries from when last used.
+	 */
+	bch_scan_keylist_reset(&ca->tiering_queue.keys);
 }
 
 void bch_tiering_read_stop(struct cache_set *c)

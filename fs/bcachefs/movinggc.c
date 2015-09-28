@@ -343,12 +343,20 @@ int bch_moving_gc_thread_start(struct cache *ca)
 
 void bch_moving_gc_stop(struct cache *ca)
 {
-	bch_queue_stop(&ca->moving_gc_queue);
 	ca->moving_gc_pd.rate.rate = UINT_MAX;
 	bch_ratelimit_reset(&ca->moving_gc_pd.rate);
+
+	bch_queue_stop(&ca->moving_gc_queue);
+
 	if (ca->moving_gc_read)
 		kthread_stop(ca->moving_gc_read);
 	ca->moving_gc_read = NULL;
+
+	/*
+	 * Make sure that it is empty so that gc marking doesn't keep
+	 * marking stale entries from when last used.
+	 */
+	bch_scan_keylist_reset(&ca->moving_gc_queue.keys);
 }
 
 void bch_moving_gc_destroy(struct cache *ca)

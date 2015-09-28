@@ -389,12 +389,6 @@ void bch_queue_stop(struct moving_queue *q)
 	bch_queue_cancel_writes(q);
 
 	closure_sync(&waitcl);
-
-	/*
-	 * Make sure that it is empty so that gc marking doesn't keep
-	 * marking stale entries from when last used.
-	 */
-	bch_scan_keylist_reset(&q->keys);
 }
 
 static void pending_recalc_oldest_gens(struct cache_set *c, struct list_head *l)
