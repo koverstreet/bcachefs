@@ -226,6 +226,19 @@ static struct btree *__bch_btree_node_alloc(struct cache_set *c,
 	BKEY_PADDED(k) tmp;
 	struct open_bucket *ob;
 	struct btree *b;
+
+	mutex_lock(&c->btree_reserve_cache_lock);
+	if (c->btree_reserve_cache_nr) {
+		struct btree_alloc *a =
+			&c->btree_reserve_cache[--c->btree_reserve_cache_nr];
+
+		ob = a->ob;
+		bkey_copy(&tmp.k, &a->k);
+		mutex_unlock(&c->btree_reserve_cache_lock);
+		goto mem_alloc;
+	}
+	mutex_unlock(&c->btree_reserve_cache_lock);
+
 retry:
 	/* alloc_sectors is weird, I suppose */
 	bkey_extent_init(&tmp.k);
@@ -240,7 +253,7 @@ retry:
 		bch_open_bucket_put(c, ob);
 		goto retry;
 	}
-
+mem_alloc:
 	b = mca_alloc(c, NULL);
 
 	/* we hold cannibalize_lock: */
@@ -423,13 +436,32 @@ static struct btree *__btree_root_alloc(struct cache_set *c, unsigned level,
 
 void bch_btree_reserve_put(struct cache_set *c, struct btree_reserve *reserve)
 {
+	mutex_lock(&c->btree_reserve_cache_lock);
+
 	while (reserve->nr) {
 		struct btree *b = reserve->b[--reserve->nr];
 
 		six_unlock_write(&b->lock);
-		bch_btree_node_free_never_inserted(c, b);
+
+		if (c->btree_reserve_cache_nr <
+		    ARRAY_SIZE(c->btree_reserve_cache)) {
+			struct btree_alloc *a =
+				&c->btree_reserve_cache[c->btree_reserve_cache_nr++];
+
+			a->ob = b->ob;
+			b->ob = NULL;
+			bkey_copy(&a->k, &b->key);
+		} else {
+			bch_open_bucket_put(c, b->ob);
+			b->ob = NULL;
+		}
+
+		__btree_node_free(c, b, NULL);
+
 		six_unlock_intent(&b->lock);
 	}
+
+	mutex_unlock(&c->btree_reserve_cache_lock);
 
 	mempool_free(reserve, &c->btree_reserve_pool);
 }

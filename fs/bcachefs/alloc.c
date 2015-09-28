@@ -1545,6 +1545,15 @@ void bch_cache_allocator_stop(struct cache *ca)
 	bch_stop_write_point(ca, &c->migration_write_point);
 	bch_stop_write_point(ca, &c->btree_write_point);
 
+	mutex_lock(&c->btree_reserve_cache_lock);
+	while (c->btree_reserve_cache_nr) {
+		struct btree_alloc *a =
+			&c->btree_reserve_cache[--c->btree_reserve_cache_nr];
+
+		bch_open_bucket_put(c, a->ob);
+	}
+	mutex_unlock(&c->btree_reserve_cache_lock);
+
 	/* Now wait for any in flight writes: */
 
 	while (1) {

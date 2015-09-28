@@ -274,6 +274,22 @@
 /* 256k, in sectors */
 #define BTREE_NODE_SIZE_MAX		512
 
+/*
+ * Number of nodes we might have to allocate in a worst case btree split
+ * operation - we split all the way up to the root, then allocate a new root.
+ */
+#define btree_reserve_required_nodes(depth)	(((depth) + 1) * 2 + 1)
+
+/* Number of nodes btree coalesce will try to coalesce at once */
+#define GC_MERGE_NODES		4U
+
+/* Maximum number of nodes we might need to allocate atomically: */
+#define BTREE_RESERVE_MAX						\
+	(btree_reserve_required_nodes(BTREE_MAX_DEPTH) + GC_MERGE_NODES)
+
+/* Size of the freelist we allocate btree nodes from: */
+#define BTREE_NODE_RESERVE		(BTREE_RESERVE_MAX * 2)
+
 struct btree;
 struct cache;
 
@@ -532,6 +548,21 @@ struct cache_set {
 	struct task_struct	*btree_cache_alloc_lock;
 
 	mempool_t		btree_reserve_pool;
+
+	/*
+	 * Cache of allocated btree nodes - if we allocate a btree node and
+	 * don't use it, if we free it that space can't be reused until going
+	 * _all_ the way through the allocator (which exposes us to a livelock
+	 * when allocating btree reserves fail halfway through) - instead, we
+	 * can stick them here:
+	 */
+	struct btree_alloc {
+		struct open_bucket	*ob;
+		BKEY_PADDED(k);
+	}			btree_reserve_cache[BTREE_NODE_RESERVE];
+	unsigned		btree_reserve_cache_nr;
+	struct mutex		btree_reserve_cache_lock;
+
 	mempool_t		btree_async_split_pool;
 
 	struct list_head	btree_node_pending_free;
