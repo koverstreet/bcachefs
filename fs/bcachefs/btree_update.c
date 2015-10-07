@@ -1335,6 +1335,50 @@ static int btree_split(struct btree *b, struct btree_iter *iter,
 
 	n1 = btree_node_alloc_replacement(c, b, reserve);
 
+	/*
+	 * For updates to interior nodes, we've got to do the insert
+	 * before we split because the stuff we're inserting has to be
+	 * inserted atomically. Post split, the keys might have to go in
+	 * different nodes and the split would no longer be atomic.
+	 *
+	 * Worse, if the insert is from btree node coalescing, if we do the
+	 * insert after we do the split (and pick the pivot) - the pivot we pick
+	 * might be between nodes that were coalesced, and thus in the middle of
+	 * a child node post coalescing:
+	 */
+	if (b->level) {
+		struct bkey_packed *k;
+		struct bset *i;
+
+		six_unlock_write(&n1->lock);
+		btree_split_insert_keys(iter, n1, insert_keys, true);
+		six_lock_write(&n1->lock);
+
+		/*
+		 * There might be duplicate (deleted) keys after the
+		 * bch_btree_insert_keys() call - we need to remove them before
+		 * we split, as it would be rather bad if we picked a duplicate
+		 * for the pivot.
+		 *
+		 * Additionally, inserting might overwrite a bunch of existing
+		 * keys (i.e. a big discard when there were a bunch of small
+		 * extents previously) - we might not want to split after the
+		 * insert. Splitting a node that's too small to be split would
+		 * be bad (if the node had only one key, we wouldn't be able to
+		 * assign the new node a key different from the original node)
+		 */
+		i = btree_bset_first(n1);
+		k = i->start;
+		while (k != bset_bkey_last(i))
+			if (bkey_deleted(k)) {
+				i->u64s -= k->u64s;
+				memmove(k, bkey_next(k),
+					(void *) bset_bkey_last(i) -
+					(void *) k);
+			} else
+				k = bkey_next(k);
+	}
+
 	if (__set_blocks(n1->data,
 			 n1->data->keys.u64s + u64s_to_insert,
 			 block_bytes(n1->c)) > btree_blocks(c) * 3 / 4) {
@@ -1342,17 +1386,6 @@ static int btree_split(struct btree *b, struct btree_iter *iter,
 
 		n2 = __btree_split_node(iter, n1, reserve);
 		six_unlock_write(&n1->lock);
-
-		/*
-		 * For updates to interior nodes, we've got to do the insert
-		 * before we split because the stuff we're inserting has to be
-		 * inserted atomically. Post split, the keys might have to go in
-		 * different nodes and the split would no longer be atomic.
-		 */
-		if (b->level) {
-			btree_split_insert_keys(iter, n1, insert_keys, false);
-			btree_split_insert_keys(iter, n2, insert_keys, true);
-		}
 
 		bch_btree_node_write(n2, &as->cl, NULL);
 
@@ -1376,9 +1409,6 @@ static int btree_split(struct btree *b, struct btree_iter *iter,
 	} else {
 		trace_bcache_btree_node_compact(b, btree_bset_first(n1)->u64s);
 		six_unlock_write(&n1->lock);
-
-		if (b->level)
-			btree_split_insert_keys(iter, n1, insert_keys, true);
 
 		bch_keylist_add(&as->parent_keys, &n1->key);
 	}

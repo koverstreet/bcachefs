@@ -6,6 +6,7 @@
 #include "bcache.h"
 #include "alloc.h"
 #include "bkey_methods.h"
+#include "btree_locking.h"
 #include "btree_update.h"
 #include "btree_io.h"
 #include "btree_gc.h"
@@ -612,7 +613,20 @@ next:
 	for (i = 0; i < nr_old_nodes; i++) {
 		bch_btree_node_free(iter, old_nodes[i]);
 		six_unlock_intent(&old_nodes[i]->lock);
-		old_nodes[i] = new_nodes[i];
+
+		/*
+		 * the index update might have triggered a split, in which case
+		 * the nodes we coalesced - the new nodes we just created -
+		 * might not be sibling nodes anymore - don't add them to the
+		 * sliding window (except the first):
+		 */
+		if (!i) {
+			old_nodes[i] = new_nodes[i];
+		} else {
+			old_nodes[i] = NULL;
+			if (new_nodes[i])
+				six_unlock_intent(&new_nodes[i]->lock);
+		}
 	}
 out:
 	bch_keylist_free(&keylist);
@@ -636,6 +650,13 @@ static int bch_coalesce_btree(struct cache_set *c, enum btree_id btree_id)
 	struct btree *merge[GC_MERGE_NODES];
 	u32 lock_seq[GC_MERGE_NODES];
 
+	/*
+	 * XXX: We don't have a good way of positively matching on sibling nodes
+	 * that have the same parent - this code works by handling the cases
+	 * where they might not have the same parent, and is thus fragile. Ugh.
+	 *
+	 * Perhaps redo this to use multiple linked iterators?
+	 */
 	memset(merge, 0, sizeof(merge));
 
 	bch_btree_iter_init(&iter, c, btree_id, POS_MIN);
@@ -679,6 +700,16 @@ static int bch_coalesce_btree(struct cache_set *c, enum btree_id btree_id)
 		}
 
 		bch_btree_iter_cond_resched(&iter);
+
+		/*
+		 * If the parent node wasn't relocked, it might have been split
+		 * and the nodes in our sliding window might not have the same
+		 * parent anymore - blow away the sliding window:
+		 */
+		if (iter.nodes[iter.level + 1] &&
+		    !btree_node_intent_locked(&iter, iter.level + 1))
+			memset(merge + 1, 0,
+			       (GC_MERGE_NODES - 1) * sizeof(merge[0]));
 	}
 	return bch_btree_iter_unlock(&iter);
 }
