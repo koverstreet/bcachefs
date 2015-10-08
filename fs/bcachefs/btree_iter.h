@@ -117,6 +117,7 @@ bool bch_btree_iter_upgrade(struct btree_iter *);
 int bch_btree_iter_unlock(struct btree_iter *);
 
 bool bch_btree_iter_node_replace(struct btree_iter *, struct btree *);
+void bch_btree_iter_node_drop_linked(struct btree_iter *, struct btree *);
 void bch_btree_iter_node_drop(struct btree_iter *, struct btree *);
 
 void bch_btree_iter_reinit_node(struct btree_iter *, struct btree *);

@@ -159,7 +159,6 @@ static void __btree_node_free(struct cache_set *c, struct btree *b,
 	BUG_ON(b->ob);
 	BUG_ON(!list_empty(&b->write_blocked));
 
-	/* Cause future btree_node_relock() calls to fail: */
 	six_lock_write(&b->lock);
 
 	if (btree_node_dirty(b))
@@ -179,6 +178,11 @@ static void __btree_node_free(struct cache_set *c, struct btree *b,
 	list_move(&b->list, &c->btree_cache_freeable);
 	mutex_unlock(&c->btree_cache_lock);
 
+	/*
+	 * By using six_unlock_write() directly instead of
+	 * btree_node_unlock_write(), we don't update the iterator's sequence
+	 * numbers and cause future btree_node_relock() calls to fail:
+	 */
 	six_unlock_write(&b->lock);
 }
 
@@ -195,7 +199,11 @@ void bch_btree_node_free_never_inserted(struct cache_set *c, struct btree *b)
 
 void bch_btree_node_free(struct btree_iter *iter, struct btree *b)
 {
+	bch_btree_iter_node_drop_linked(iter, b);
+
 	__btree_node_free(iter->c, b, iter);
+
+	bch_btree_iter_node_drop(iter, b);
 }
 
 static void bch_btree_node_free_ondisk(struct cache_set *c,
@@ -1456,8 +1464,16 @@ static int btree_split(struct btree *b, struct btree_iter *iter,
 	if (n3)
 		btree_open_bucket_put(c, n3);
 
+	/*
+	 * Note - at this point other linked iterators could still have @b read
+	 * locked; we're depending on the bch_btree_iter_node_replace() calls
+	 * below removing all references to @b so we don't return with other
+	 * iterators pointing to a node they have locked that's been freed.
+	 *
+	 * We have to free the node first because the bch_iter_node_replace()
+	 * calls will drop _our_ iterator's reference - and intent lock - to @b.
+	 */
 	bch_btree_node_free(iter, b);
-	bch_btree_iter_node_drop(iter, b);
 
 	/* Successful split, update the iterator to point to the new nodes: */
 
@@ -1990,7 +2006,6 @@ int bch_btree_node_rewrite(struct btree *b, struct btree_iter *iter, bool wait)
 	btree_open_bucket_put(iter->c, n);
 
 	bch_btree_node_free(iter, b);
-	bch_btree_iter_node_drop(iter, b);
 
 	BUG_ON(!bch_btree_iter_node_replace(iter, n));
 

@@ -311,34 +311,27 @@ bool bch_btree_iter_node_replace(struct btree_iter *iter, struct btree *b)
 	return true;
 }
 
-void bch_btree_iter_node_drop(struct btree_iter *iter, struct btree *b)
+void bch_btree_iter_node_drop_linked(struct btree_iter *iter, struct btree *b)
 {
 	struct btree_iter *linked;
 	unsigned level = b->level;
-
-	/*
-	 * We should have already gotten rid of pointers to @b with
-	 * bch_btree_iter_node_replace() - when we fixed up iterators to point
-	 * to the new node(s) - except that linked iterators may have iter->pos
-	 * out of sync with the nodes they actually have locked, because
-	 * bch_btree_iter_set_pos() doesn't call traverse().
-	 *
-	 * So we need to explicitly check for that, as the final step before
-	 * freeing nodes:
-	 */
-
-	BUG_ON(iter->nodes[level] != b);
-	BUG_ON(!btree_node_intent_locked(iter, level));
 
 	for_each_linked_btree_iter(iter, linked)
 		if (linked->nodes[level] == b) {
 			btree_node_unlock(linked, level);
 			linked->nodes[level] = (void *) 1;
 		}
+}
 
-	BUG_ON(b->lock.state.intent_lock != 1);
-	btree_node_unlock(iter, level);
-	iter->nodes[level] = (void *) 1;
+void bch_btree_iter_node_drop(struct btree_iter *iter, struct btree *b)
+{
+	unsigned level = b->level;
+
+	if (iter->nodes[level] == b) {
+		BUG_ON(b->lock.state.intent_lock != 1);
+		btree_node_unlock(iter, level);
+		iter->nodes[level] = (void *) 1;
+	}
 }
 
 /*
