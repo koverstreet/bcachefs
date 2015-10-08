@@ -643,8 +643,7 @@ static int bch_mknod(struct inode *dir, struct dentry *dentry,
 }
 
 static int bch_rename(struct inode *old_dir, struct dentry *old_dentry,
-		      struct inode *new_dir, struct dentry *new_dentry,
-		      unsigned flags)
+		      struct inode *new_dir, struct dentry *new_dentry)
 {
 	struct cache_set *c = old_dir->i_sb->s_fs_info;
 	struct inode *old_inode = old_dentry->d_inode;
@@ -653,16 +652,8 @@ static int bch_rename(struct inode *old_dir, struct dentry *old_dentry,
 	struct timespec now = CURRENT_TIME;
 	int ret;
 
-	if (flags)
-		return -EINVAL;
-
 	lockdep_assert_held(&old_dir->i_rwsem);
 	lockdep_assert_held(&new_dir->i_rwsem);
-
-	/*
-	 * XXX: This isn't atomic w.r.t. unclean shutdowns, and we'd really like
-	 * it to be
-	 */
 
 	if (new_inode && S_ISDIR(old_inode->i_mode)) {
 		lockdep_assert_held(&new_inode->i_rwsem);
@@ -676,7 +667,7 @@ static int bch_rename(struct inode *old_dir, struct dentry *old_dentry,
 		ret = bch_dirent_rename(c,
 					old_dir->i_ino, &old_dentry->d_name,
 					new_dir->i_ino, &new_dentry->d_name,
-					&ei->journal_seq, true);
+					&ei->journal_seq, BCH_RENAME_OVERWRITE);
 		if (unlikely(ret))
 			return ret;
 
@@ -688,7 +679,7 @@ static int bch_rename(struct inode *old_dir, struct dentry *old_dentry,
 		ret = bch_dirent_rename(c,
 					old_dir->i_ino, &old_dentry->d_name,
 					new_dir->i_ino, &new_dentry->d_name,
-					&ei->journal_seq, true);
+					&ei->journal_seq, BCH_RENAME_OVERWRITE);
 		if (unlikely(ret))
 			return ret;
 
@@ -698,7 +689,7 @@ static int bch_rename(struct inode *old_dir, struct dentry *old_dentry,
 		ret = bch_dirent_rename(c,
 					old_dir->i_ino, &old_dentry->d_name,
 					new_dir->i_ino, &new_dentry->d_name,
-					&ei->journal_seq, false);
+					&ei->journal_seq, BCH_RENAME);
 		if (unlikely(ret))
 			return ret;
 
@@ -708,7 +699,7 @@ static int bch_rename(struct inode *old_dir, struct dentry *old_dentry,
 		ret = bch_dirent_rename(c,
 					old_dir->i_ino, &old_dentry->d_name,
 					new_dir->i_ino, &new_dentry->d_name,
-					&ei->journal_seq, false);
+					&ei->journal_seq, BCH_RENAME);
 		if (unlikely(ret))
 			return ret;
 	}
@@ -718,14 +709,65 @@ static int bch_rename(struct inode *old_dir, struct dentry *old_dentry,
 	mark_inode_dirty_sync(old_dir);
 	mark_inode_dirty_sync(new_dir);
 
-	mutex_lock(&ei->update_lock);
 	old_inode->i_ctime = now;
-	if (new_inode)
-		old_inode->i_mtime = now;
-	ret = bch_write_inode(c, ei);
-	mutex_unlock(&ei->update_lock);
+	mark_inode_dirty_sync(old_inode);
 
 	return 0;
+}
+
+static int bch_rename_exchange(struct inode *old_dir, struct dentry *old_dentry,
+			       struct inode *new_dir, struct dentry *new_dentry)
+{
+	struct cache_set *c = old_dir->i_sb->s_fs_info;
+	struct inode *old_inode = old_dentry->d_inode;
+	struct inode *new_inode = new_dentry->d_inode;
+	struct bch_inode_info *ei = to_bch_ei(old_inode);
+	struct timespec now = CURRENT_TIME;
+	int ret;
+
+	ret = bch_dirent_rename(c,
+				old_dir->i_ino, &old_dentry->d_name,
+				new_dir->i_ino, &new_dentry->d_name,
+				&ei->journal_seq, BCH_RENAME_EXCHANGE);
+	if (unlikely(ret))
+		return ret;
+
+	if (S_ISDIR(old_inode->i_mode) !=
+	    S_ISDIR(new_inode->i_mode)) {
+		if (S_ISDIR(old_inode->i_mode)) {
+			inode_inc_link_count(new_dir);
+			inode_dec_link_count(old_dir);
+		} else {
+			inode_dec_link_count(new_dir);
+			inode_inc_link_count(old_dir);
+		}
+	}
+
+	old_dir->i_ctime = old_dir->i_mtime = now;
+	new_dir->i_ctime = new_dir->i_mtime = now;
+	mark_inode_dirty_sync(old_dir);
+	mark_inode_dirty_sync(new_dir);
+
+	old_inode->i_ctime = now;
+	new_inode->i_ctime = now;
+	mark_inode_dirty_sync(old_inode);
+	mark_inode_dirty_sync(new_inode);
+
+	return 0;
+}
+
+static int bch_rename2(struct inode *old_dir, struct dentry *old_dentry,
+		       struct inode *new_dir, struct dentry *new_dentry,
+		       unsigned flags)
+{
+	if (flags & ~(RENAME_NOREPLACE|RENAME_EXCHANGE))
+		return -EINVAL;
+
+	if (flags & RENAME_EXCHANGE)
+		return bch_rename_exchange(old_dir, old_dentry,
+					   new_dir, new_dentry);
+
+	return bch_rename(old_dir, old_dentry, new_dir, new_dentry);
 }
 
 static int bch_truncate_page(struct address_space *mapping, loff_t from)
@@ -1240,7 +1282,7 @@ static const struct inode_operations bch_dir_inode_operations = {
 	.mkdir		= bch_mkdir,
 	.rmdir		= bch_rmdir,
 	.mknod		= bch_mknod,
-	.rename		= bch_rename,
+	.rename		= bch_rename2,
 	.setattr	= bch_setattr,
 	.tmpfile	= bch_tmpfile,
 	.listxattr	= bch_xattr_list,

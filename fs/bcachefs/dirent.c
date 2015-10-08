@@ -132,22 +132,20 @@ const struct bkey_ops bch_bkey_dirent_ops = {
 	.val_to_text	= bch_dirent_to_text,
 };
 
-static struct bkey_i_dirent *dirent_create_key(struct keylist *keys, u8 type,
-					       const struct qstr *name, u64 dst)
+static struct bkey_i_dirent *dirent_create_key(u8 type,
+					       const struct qstr *name,
+					       u64 dst)
 {
 	struct bkey_i_dirent *dirent;
 	unsigned u64s = BKEY_U64s +
 		DIV_ROUND_UP(sizeof(struct bch_dirent) + name->len,
 			     sizeof(u64));
 
-	bch_keylist_init(keys, NULL, 0);
-
-	/* XXX: should try to do this without a kmalloc (in keylist_realloc()) */
-
-	if (bch_keylist_realloc(keys, u64s))
+	dirent = kmalloc(u64s * sizeof(u64), GFP_KERNEL);
+	if (!dirent)
 		return NULL;
 
-	dirent = bkey_dirent_init(keys->top);
+	bkey_dirent_init(&dirent->k_i);
 	dirent->k.u64s = u64s;
 	dirent->v.d_inum = dst;
 	dirent->v.d_type = type;
@@ -160,7 +158,6 @@ static struct bkey_i_dirent *dirent_create_key(struct keylist *keys, u8 type,
 	EBUG_ON(dirent_name_bytes(dirent_i_to_s_c(dirent)) != name->len);
 	EBUG_ON(dirent_cmp(dirent_i_to_s_c(dirent), name));
 
-	bch_keylist_enqueue(keys);
 	return dirent;
 }
 
@@ -226,11 +223,10 @@ int bch_dirent_create(struct cache_set *c, u64 dir_inum, u8 type,
 {
 	struct btree_iter iter;
 	struct bkey_s_c k;
-	struct keylist keys;
 	struct bkey_i_dirent *dirent;
 	int ret;
 
-	dirent = dirent_create_key(&keys, type, name, dst_inum);
+	dirent = dirent_create_key(type, name, dst_inum);
 	if (!dirent)
 		return -ENOMEM;
 
@@ -246,8 +242,8 @@ int bch_dirent_create(struct cache_set *c, u64 dir_inum, u8 type,
 
 		dirent->k.p = k.k->p;
 
-		ret = bch_btree_insert_at(&iter, &keys, NULL,
-					  journal_seq,
+		ret = bch_btree_insert_at(&iter, &keylist_single(&dirent->k_i),
+					  NULL, journal_seq,
 					  BTREE_INSERT_ATOMIC);
 		/*
 		 * XXX: if we ever cleanup whiteouts, we may need to rewind
@@ -256,7 +252,7 @@ int bch_dirent_create(struct cache_set *c, u64 dir_inum, u8 type,
 	} while (ret == -EINTR);
 
 	bch_btree_iter_unlock(&iter);
-	bch_keylist_free(&keys);
+	kfree(dirent);
 
 	return ret;
 }
@@ -264,20 +260,27 @@ int bch_dirent_create(struct cache_set *c, u64 dir_inum, u8 type,
 int bch_dirent_rename(struct cache_set *c,
 		      u64 src_dir, const struct qstr *src_name,
 		      u64 dst_dir, const struct qstr *dst_name,
-		      u64 *journal_seq, bool overwriting)
+		      u64 *journal_seq, enum bch_rename_mode mode)
 {
 	struct btree_iter src_iter;
 	struct btree_iter dst_iter;
-	struct bkey_s_c k;
-	struct bkey_s_c_dirent src;
-	struct bkey_i_dirent *dst;
+	struct bkey_s_c old_src, old_dst;
+	struct bkey_s_c_dirent old_src_d, old_dst_d;
 	struct bkey_i delete;
-	struct keylist keys;
-	int ret;
+	struct bkey_i_dirent *new_src = NULL, *new_dst = NULL;
+	int ret = -ENOMEM;
 
-	dst = dirent_create_key(&keys, 0, dst_name, 0);
-	if (!dst)
-		return -ENOMEM;
+	if (mode == BCH_RENAME_EXCHANGE) {
+		new_src = dirent_create_key(0, src_name, 0);
+		if (!new_src)
+			goto out;
+	} else {
+		new_src = (void *) &delete;
+	}
+
+	new_dst = dirent_create_key(0, dst_name, 0);
+	if (!new_dst)
+		goto out;
 
 	bch_btree_iter_init_intent(&src_iter, c, BTREE_ID_DIRENTS,
 				   POS(src_dir, bch_dirent_hash(src_name)));
@@ -301,65 +304,68 @@ int bch_dirent_rename(struct cache_set *c,
 		 * lock ordering.
 		 */
 		if (bkey_cmp(src_iter.pos, dst_iter.pos) < 0) {
-			k = __dirent_find(&src_iter, src_dir, src_name);
-			if (IS_ERR(k.k)) {
-				ret = PTR_ERR(k.k);
-				goto err;
-			}
+			old_src = __dirent_find(&src_iter, src_dir, src_name);
 
-			src = bkey_s_c_to_dirent(k);
-
-			k = overwriting
-				? __dirent_find(&dst_iter, dst_dir, dst_name)
-				: __dirent_find_hole(&dst_iter, dst_dir, dst_name);
-			if (IS_ERR(k.k)) {
-				ret = PTR_ERR(k.k);
-				goto err;
-			}
-
-			dst->k.p = k.k->p;
+			old_dst = mode == BCH_RENAME
+				? __dirent_find_hole(&dst_iter, dst_dir, dst_name)
+				: __dirent_find(&dst_iter, dst_dir, dst_name);
 		} else {
-			k = overwriting
-				? __dirent_find(&dst_iter, dst_dir, dst_name)
-				: __dirent_find_hole(&dst_iter, dst_dir, dst_name);
-			if (IS_ERR(k.k)) {
-				ret = PTR_ERR(k.k);
-				goto err;
-			}
+			old_dst = mode == BCH_RENAME
+				? __dirent_find_hole(&dst_iter, dst_dir, dst_name)
+				: __dirent_find(&dst_iter, dst_dir, dst_name);
 
-			dst->k.p = k.k->p;
-
-			k = __dirent_find(&src_iter, src_dir, src_name);
-			if (IS_ERR(k.k)) {
-				ret = PTR_ERR(k.k);
-				goto err;
-			}
-
-			src = bkey_s_c_to_dirent(k);
+			old_src = __dirent_find(&src_iter, src_dir, src_name);
 		}
 
-		bkey_init(&delete.k);
-		delete.k.p = src.k->p;
-		delete.k.type = BCH_DIRENT_WHITEOUT;
+		if (IS_ERR(old_src.k)) {
+			ret = PTR_ERR(old_src.k);
+			goto err;
+		}
 
-		dst->v.d_inum = src.v->d_inum;
-		dst->v.d_type = src.v->d_type;
+		if (IS_ERR(old_dst.k)) {
+			ret = PTR_ERR(old_dst.k);
+			goto err;
+		}
+
+		switch (mode) {
+		case BCH_RENAME:
+		case BCH_RENAME_OVERWRITE:
+			bkey_init(&delete.k);
+			delete.k.p = old_src.k->p;
+			delete.k.type = BCH_DIRENT_WHITEOUT;
+			break;
+		case BCH_RENAME_EXCHANGE:
+			old_dst_d = bkey_s_c_to_dirent(old_dst);
+
+			new_src->k.p = old_src.k->p;
+			new_src->v.d_inum = old_dst_d.v->d_inum;
+			new_src->v.d_type = old_dst_d.v->d_type;
+			break;
+		}
+
+		old_src_d = bkey_s_c_to_dirent(old_src);
+
+		new_dst->k.p = old_dst.k->p;
+		new_dst->v.d_inum = old_src_d.v->d_inum;
+		new_dst->v.d_type = old_src_d.v->d_type;
 
 		ret = bch_btree_insert_at_multi((struct btree_insert_multi[]) {
-				{ &src_iter, &delete, },
-				{ &dst_iter, &dst->k_i, }}, 2,
+				{ &src_iter, &new_src->k_i, },
+				{ &dst_iter, &new_dst->k_i, }}, 2,
 				journal_seq, 0);
 		bch_btree_iter_unlock(&src_iter);
 		bch_btree_iter_unlock(&dst_iter);
 	} while (ret == -EINTR);
 
-	bch_keylist_free(&keys);
+out:
+	if (new_src != (void *) &delete)
+		kfree(new_src);
+	kfree(new_dst);
 	return ret;
 err:
 	ret = bch_btree_iter_unlock(&src_iter) ?: ret;
 	ret = bch_btree_iter_unlock(&dst_iter) ?: ret;
-	bch_keylist_free(&keys);
-	return ret;
+	goto out;
 }
 
 int bch_dirent_delete(struct cache_set *c, u64 dir_inum,
