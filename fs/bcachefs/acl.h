@@ -54,4 +54,3 @@ static inline int bch_acl_count(size_t size)
 
 extern struct posix_acl *bch_get_acl(struct inode *, int);
 extern int bch_set_acl(struct inode *, struct posix_acl *, int);
-extern int bch_init_acl(struct inode *, struct inode *);

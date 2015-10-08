@@ -380,6 +380,7 @@ static struct inode *bch_vfs_inode_create(struct cache_set *c,
 					  umode_t mode, dev_t rdev)
 {
 	struct inode *inode;
+	struct posix_acl *default_acl = NULL, *acl = NULL;
 	struct bch_inode_info *ei;
 	struct bch_inode *bi;
 	struct timespec ts = CURRENT_TIME;
@@ -392,6 +393,12 @@ static struct inode *bch_vfs_inode_create(struct cache_set *c,
 		return ERR_PTR(-ENOMEM);
 
 	inode_init_owner(inode, parent, mode);
+
+	ret = posix_acl_create(parent, &inode->i_mode, &default_acl, &acl);
+	if (ret) {
+		make_bad_inode(inode);
+		goto err;
+	}
 
 	ei = to_bch_ei(inode);
 
@@ -420,18 +427,29 @@ static struct inode *bch_vfs_inode_create(struct cache_set *c,
 
 	bch_inode_init(ei, inode_i_to_s_c(&bkey_inode));
 
-	ret = bch_init_acl(inode, parent);
-	if (unlikely(ret))
-		goto err;
+	if (default_acl) {
+		ret = bch_set_acl(inode, default_acl, ACL_TYPE_DEFAULT);
+		if (unlikely(ret))
+			goto err;
+	}
+
+	if (acl) {
+		ret = bch_set_acl(inode, acl, ACL_TYPE_ACCESS);
+		if (unlikely(ret))
+			goto err;
+	}
 
 	insert_inode_hash(inode);
 	atomic_long_inc(&c->nr_inodes);
-
+out:
+	posix_acl_release(default_acl);
+	posix_acl_release(acl);
 	return inode;
 err:
 	clear_nlink(inode);
 	iput(inode);
-	return ERR_PTR(ret);
+	inode = ERR_PTR(ret);
+	goto out;
 }
 
 static int bch_vfs_dirent_create(struct cache_set *c, struct inode *dir,

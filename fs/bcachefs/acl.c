@@ -222,24 +222,3 @@ int bch_set_acl(struct inode *inode, struct posix_acl *acl, int type)
 
 	return ret;
 }
-
-int bch_init_acl(struct inode *inode, struct inode *dir)
-{
-	struct posix_acl *default_acl, *acl;
-	int ret;
-
-	ret = posix_acl_create(dir, &inode->i_mode, &default_acl, &acl);
-	if (ret)
-		return ret;
-
-	if (default_acl) {
-		ret = bch_set_acl(inode, default_acl, ACL_TYPE_DEFAULT);
-		posix_acl_release(default_acl);
-	}
-	if (acl) {
-		if (!ret)
-			ret = bch_set_acl(inode, acl, ACL_TYPE_ACCESS);
-		posix_acl_release(acl);
-	}
-	return ret;
-}
