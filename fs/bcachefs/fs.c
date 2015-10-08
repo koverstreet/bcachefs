@@ -15,6 +15,7 @@
 
 #include <linux/aio.h>
 #include <linux/compat.h>
+#include <linux/falloc.h>
 #include <linux/migrate.h>
 #include <linux/module.h>
 #include <linux/mount.h>
@@ -1045,6 +1046,156 @@ out:
 	return ret < 0 ? ret : 0;
 }
 
+static long bch_fcollapse(struct inode *inode, loff_t offset, loff_t len)
+{
+	struct bch_inode_info *ei = to_bch_ei(inode);
+	struct cache_set *c = inode->i_sb->s_fs_info;
+	struct btree_iter src;
+	struct btree_iter dst;
+	BKEY_PADDED(k) copy;
+	struct bkey_s_c k;
+	struct i_size_update *u;
+	loff_t new_size;
+	unsigned idx;
+	int ret;
+
+	if ((offset | len) & (PAGE_SIZE - 1))
+		return -EINVAL;
+
+	bch_btree_iter_init_intent(&dst, c, BTREE_ID_EXTENTS,
+				   POS(inode->i_ino, offset >> 9));
+	/* position will be set from dst iter's position: */
+	bch_btree_iter_init(&src, c, BTREE_ID_EXTENTS, POS_MIN);
+	bch_btree_iter_link(&src, &dst);
+
+	/*
+	 * We need i_mutex to keep the page cache consistent with the extents
+	 * btree, and the btree consistent with i_size - we don't need outside
+	 * locking for the extents btree itself, because we're using linked
+	 * iterators
+	 *
+	 * XXX: hmm, need to prevent reads adding things to the pagecache until
+	 * we're done?
+	 */
+	inode_lock(inode);
+
+	ret = -EINVAL;
+	if (offset + len >= inode->i_size)
+		goto err;
+
+	if (inode->i_size < len)
+		goto err;
+
+	new_size = inode->i_size - len;
+
+	inode_dio_wait(inode);
+
+	do {
+		ret = filemap_write_and_wait_range(inode->i_mapping,
+						   offset, LLONG_MAX);
+		if (ret)
+			goto err;
+
+		ret = invalidate_inode_pages2_range(inode->i_mapping,
+					offset >> PAGE_SHIFT,
+					ULONG_MAX);
+	} while (ret == -EBUSY);
+
+	if (ret)
+		goto err;
+
+	while (bkey_cmp(dst.pos,
+			POS(inode->i_ino,
+			    round_up(new_size, PAGE_SIZE) >> 9)) < 0) {
+		bch_btree_iter_set_pos(&src,
+			POS(dst.pos.inode, dst.pos.offset + (len >> 9)));
+
+		/* Have to take intent locks before read locks: */
+		ret = bch_btree_iter_traverse(&dst);
+		if (ret)
+			goto err_unwind;
+
+		k = bch_btree_iter_peek_with_holes(&src);
+		if (!k.k) {
+			ret = -EIO;
+			goto err_unwind;
+		}
+
+		bkey_reassemble(&copy.k, k);
+
+		if (bkey_deleted(&copy.k.k))
+			copy.k.k.type = KEY_TYPE_DISCARD;
+
+		bch_cut_front(src.pos, &copy.k);
+		copy.k.k.p.offset -= len >> 9;
+
+		BUG_ON(bkey_cmp(dst.pos, bkey_start_pos(&copy.k.k)));
+
+		ret = bch_btree_insert_at(&dst,
+					  &keylist_single(&copy.k),
+					  NULL, &ei->journal_seq,
+					  BTREE_INSERT_ATOMIC|
+					  BTREE_INSERT_NOFAIL);
+		if (ret < 0 && ret != -EINTR)
+			goto err_unwind;
+
+		bch_btree_iter_unlock(&src);
+	}
+
+	bch_btree_iter_unlock(&src);
+	bch_btree_iter_unlock(&dst);
+
+	ret = bch_inode_truncate(c, inode->i_ino,
+				 round_up(new_size, PAGE_SIZE) >> 9,
+				 &ei->journal_seq);
+	if (ret)
+		goto err_unwind;
+
+	mutex_lock(&ei->update_lock);
+
+	/*
+	 * Cancel i_size updates > new_size:
+	 *
+	 * Note: we're also cancelling i_size updates for appends < new_size, and
+	 * writing the new i_size before they finish - would be better to use an
+	 * i_size_update here like truncate, so we can sequence our i_size
+	 * updates with outstanding appends and not have to cancel them:
+	 */
+	fifo_for_each_entry_ptr(u, &ei->i_size_updates, idx)
+		u->new_i_size = -1;
+
+	ei->i_size = new_size;
+	bch_i_size_write(inode, new_size);
+
+	truncate_pagecache(inode, offset);
+
+	ret = __bch_write_inode(c, ei, inode_set_size);
+
+	mutex_unlock(&ei->update_lock);
+
+	inode_unlock(inode);
+
+	return ret;
+err_unwind:
+	BUG();
+err:
+	bch_btree_iter_unlock(&src);
+	bch_btree_iter_unlock(&dst);
+	inode_unlock(inode);
+	return ret;
+}
+
+static long bch_fallocate(struct file *file, int mode,
+			  loff_t offset, loff_t len)
+{
+	struct inode *inode = file_inode(file);
+
+	if (mode == FALLOC_FL_COLLAPSE_RANGE)
+		return bch_fcollapse(inode, offset, len);
+
+	return -EOPNOTSUPP;
+}
+
 static int bch_page_mkwrite(struct vm_area_struct *vma, struct vm_fault *vmf)
 {
 	struct page *page = vmf->page;
@@ -1055,6 +1206,12 @@ static int bch_page_mkwrite(struct vm_area_struct *vma, struct vm_fault *vmf)
 
 	sb_start_pagefault(inode->i_sb);
 	file_update_time(vma->vm_file);
+
+	/*
+	 * i_mutex is required for synchronizing with fcollapse()...
+	 */
+	inode_lock(inode);
+
 	lock_page(page);
 	if (page->mapping != mapping ||
 	    page_offset(page) > i_size_read(inode)) {
@@ -1076,6 +1233,7 @@ static int bch_page_mkwrite(struct vm_area_struct *vma, struct vm_fault *vmf)
 	set_page_dirty(page);
 	wait_for_stable_page(page);
 out:
+	inode_unlock(inode);
 	sb_end_pagefault(inode->i_sb);
 	return ret;
 }
@@ -1286,6 +1444,7 @@ static const struct file_operations bch_file_operations = {
 	.fsync		= bch_fsync,
 	.splice_read	= generic_file_splice_read,
 	.splice_write	= iter_file_splice_write,
+	.fallocate	= bch_fallocate,
 
 	.unlocked_ioctl = bch_fs_ioctl,
 #ifdef CONFIG_COMPAT
