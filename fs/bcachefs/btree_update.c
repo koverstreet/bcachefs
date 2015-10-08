@@ -1622,6 +1622,9 @@ int bch_btree_insert_at(struct btree_iter *iter,
 		goto traverse;
 
 	while (1) {
+		EBUG_ON(bkey_cmp(bkey_start_pos(&bch_keylist_front(insert_keys)->k),
+				 iter->pos));
+
 		ret = bch_btree_insert_node(iter->nodes[0], iter, insert_keys,
 					    replace, journal_seq, flags,
 					    NULL, NULL);
@@ -1699,6 +1702,9 @@ int bch_btree_insert_at_multi(struct btree_insert_multi *m, unsigned nr,
 	unsigned u64s = 0;
 	bool swapped;
 	int ret;
+
+	for (i = m; i < m + nr; i++)
+		EBUG_ON(bkey_cmp(bkey_start_pos(&i->k->k), i->iter->pos));
 
 	/* Sort transaction entries by iterator position, for lock ordering: */
 	do {
