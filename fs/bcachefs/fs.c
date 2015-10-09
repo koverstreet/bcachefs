@@ -799,17 +799,20 @@ static int bch_rename2(struct inode *old_dir, struct dentry *old_dentry,
 	return bch_rename(old_dir, old_dentry, new_dir, new_dentry);
 }
 
-static int bch_truncate_page(struct address_space *mapping, loff_t from)
+static int __bch_truncate_page(struct address_space *mapping,
+			       pgoff_t index, loff_t start, loff_t end)
 {
-	unsigned offset = from & (PAGE_SIZE - 1);
+	unsigned start_offset = start & (PAGE_SIZE - 1);
+	unsigned end_offset = ((end - 1) & (PAGE_SIZE - 1)) + 1;
 	struct page *page;
 	int ret = 0;
 
 	/* Page boundary? Nothing to do */
-	if (!offset)
+	if (!((index == start >> PAGE_SHIFT && start_offset) ||
+	      (index == end >> PAGE_SHIFT && end_offset != PAGE_SIZE)))
 		return 0;
 
-	page = find_lock_page(mapping, from >> PAGE_SHIFT);
+	page = find_lock_page(mapping, index);
 	if (!page) {
 		struct inode *inode = mapping->host;
 		struct cache_set *c = inode->i_sb->s_fs_info;
@@ -822,18 +825,18 @@ static int bch_truncate_page(struct address_space *mapping, loff_t from)
 		 */
 		bch_btree_iter_init(&iter, c, BTREE_ID_EXTENTS,
 				    POS(inode->i_ino,
-					(from & PAGE_MASK) >> 9));
+					index << (PAGE_SHIFT - 9)));
 		k = bch_btree_iter_peek(&iter);
 		bch_btree_iter_unlock(&iter);
 
 		if (!k.k ||
 		    bkey_cmp(bkey_start_pos(k.k),
 			     POS(inode->i_ino,
-				 round_up(from, PAGE_SIZE) >> 9)) >= 0)
+				 (index + 1) << (PAGE_SHIFT - 9))) >= 0)
 			return 0;
 
 		page = find_or_create_page(mapping,
-					   from >> PAGE_SHIFT,
+					   index,
 					   GFP_KERNEL);
 		if (unlikely(!page)) {
 			ret = -ENOMEM;
@@ -847,13 +850,26 @@ static int bch_truncate_page(struct address_space *mapping, loff_t from)
 			goto unlock;
 		}
 
-	zero_user_segment(page, offset, PAGE_SIZE);
+	if (index == start >> PAGE_SHIFT &&
+	    index == end >> PAGE_SHIFT)
+		zero_user_segment(page, start_offset, end_offset);
+	else if (index == start >> PAGE_SHIFT)
+		zero_user_segment(page, start_offset, PAGE_SIZE);
+	else if (index == end >> PAGE_SHIFT)
+		zero_user_segment(page, 0, end_offset);
+
 	set_page_dirty(page);
 unlock:
 	unlock_page(page);
 	put_page(page);
 out:
 	return ret;
+}
+
+static int bch_truncate_page(struct address_space *mapping, loff_t from)
+{
+	return __bch_truncate_page(mapping, from >> PAGE_SHIFT,
+				   from, from + PAGE_SIZE);
 }
 
 static int bch_setattr(struct dentry *dentry, struct iattr *iattr)
@@ -1046,6 +1062,44 @@ out:
 	return ret < 0 ? ret : 0;
 }
 
+static long bch_fpunch(struct inode *inode, loff_t offset, loff_t len)
+{
+	struct bch_inode_info *ei = to_bch_ei(inode);
+	struct cache_set *c = inode->i_sb->s_fs_info;
+	u64 ino = inode->i_ino;
+	u64 discard_start = round_up(offset, PAGE_SIZE) >> 9;
+	u64 discard_end = round_down(offset + len, PAGE_SIZE) >> 9;
+	int ret = 0;
+
+	inode_lock(inode);
+	ret = __bch_truncate_page(inode->i_mapping,
+				  offset >> PAGE_SHIFT,
+				  offset, offset + len);
+	if (unlikely(ret))
+		goto out;
+
+	if (offset >> PAGE_SHIFT !=
+	    (offset + len) >> PAGE_SHIFT) {
+		ret = __bch_truncate_page(inode->i_mapping,
+					  (offset + len) >> PAGE_SHIFT,
+					  offset, offset + len);
+		if (unlikely(ret))
+			goto out;
+	}
+
+	truncate_pagecache_range(inode, offset, offset + len - 1);
+
+	if (discard_start < discard_end)
+		ret = bch_discard(c,
+				  POS(ino, discard_start),
+				  POS(ino, discard_end),
+				  0, &ei->journal_seq);
+out:
+	inode_unlock(inode);
+
+	return ret;
+}
+
 static long bch_fcollapse(struct inode *inode, loff_t offset, loff_t len)
 {
 	struct bch_inode_info *ei = to_bch_ei(inode);
@@ -1189,6 +1243,9 @@ static long bch_fallocate(struct file *file, int mode,
 			  loff_t offset, loff_t len)
 {
 	struct inode *inode = file_inode(file);
+
+	if (mode == (FALLOC_FL_PUNCH_HOLE|FALLOC_FL_KEEP_SIZE))
+		return bch_fpunch(inode, offset, len);
 
 	if (mode == FALLOC_FL_COLLAPSE_RANGE)
 		return bch_fcollapse(inode, offset, len);
