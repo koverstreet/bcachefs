@@ -1725,6 +1725,7 @@ static int bch_write_begin(struct file *file, struct address_space *mapping,
 	struct inode *inode = mapping->host;
 	struct cache_set *c = inode->i_sb->s_fs_info;
 	pgoff_t index = pos >> PAGE_SHIFT;
+	unsigned offset = pos & (PAGE_SIZE - 1);
 	struct page *page;
 	int ret = 0;
 
@@ -1750,27 +1751,16 @@ static int bch_write_begin(struct file *file, struct address_space *mapping,
 	if (len == PAGE_SIZE)
 		goto out;
 
-	if (pos + len >= inode->i_size) {
-		unsigned offset = pos & (PAGE_SIZE - 1);
-
-		/*
-		 * If the write extents past i_size, the top part of the page
-		 * we're not writing to doesn't need to be read in, just zeroed:
-		 */
-		zero_user(page, offset + len, PAGE_SIZE - offset - len);
+	if (!offset && pos + len >= inode->i_size) {
+		zero_user_segment(page, len, PAGE_SIZE);
 		flush_dcache_page(page);
+		goto out;
+	}
 
-		if (!offset)
-			goto out;
-
-		/*
-		 * If the start of the page is past i_size, zero that part too:
-		 */
-		if ((index << PAGE_SHIFT) >> inode->i_size) {
-			zero_user(page, 0, offset);
-			flush_dcache_page(page);
-			goto out;
-		}
+	if (index > inode->i_size >> PAGE_SHIFT) {
+		zero_user_segments(page, 0, offset, offset + len, PAGE_SIZE);
+		flush_dcache_page(page);
+		goto out;
 	}
 
 	ret = bch_read_single_page(page, mapping);
@@ -1790,29 +1780,26 @@ static int bch_write_end(struct file *filp, struct address_space *mapping,
 			 loff_t pos, unsigned len, unsigned copied,
 			 struct page *page, void *fsdata)
 {
-	loff_t last_pos = pos + copied;
 	struct inode *inode = page->mapping->host;
 	struct bch_inode_info *ei = to_bch_ei(inode);
+	struct cache_set *c = inode->i_sb->s_fs_info;
 
-	/*
-	 * can't set a page dirty without i_rwsem, to avoid racing with truncate
-	 */
 	lockdep_assert_held(&inode->i_rwsem);
 
-	if (unlikely(copied < len)) {
-#if 0
-		if (!PageUptodate(page)) {
-			/* we skipped reading in the page before, read it now..  */
-		}
-#endif
-
+	if (unlikely(copied < len && !PageUptodate(page))) {
 		/*
-		 * zero out the rest of the area
+		 * The page needs to be read in, but that would destroy
+		 * our partial write - simplest thing is to just force
+		 * userspace to redo the write:
+		 *
+		 * userspace doesn't _have_ to redo the write, so clear
+		 * PageAllocated:
 		 */
-		unsigned from = pos & (PAGE_SIZE - 1);
-
-		zero_user(page, from + copied, len - copied);
+		copied = 0;
+		zero_user(page, 0, PAGE_SIZE);
 		flush_dcache_page(page);
+		bch_clear_page_bits(c, ei, page);
+		goto out;
 	}
 
 	if (!PageUptodate(page))
@@ -1820,7 +1807,7 @@ static int bch_write_end(struct file *filp, struct address_space *mapping,
 	if (!PageDirty(page))
 		set_page_dirty(page);
 
-	if (last_pos > inode->i_size) {
+	if (pos + copied > inode->i_size) {
 		struct i_size_update *u;
 
 		/*
@@ -1839,7 +1826,7 @@ static int bch_write_end(struct file *filp, struct address_space *mapping,
 
 		/* XXX: locking */
 		mutex_lock(&ei->update_lock);
-		u = i_size_update_new(ei, last_pos);
+		u = i_size_update_new(ei, pos + copied);
 
 		if (!PageAppend(page)) {
 			struct bch_page_state *s = (void *) &page->private;
@@ -1850,10 +1837,10 @@ static int bch_write_end(struct file *filp, struct address_space *mapping,
 			SetPageAppend(page);
 		}
 
-		bch_i_size_write(inode, last_pos);
+		bch_i_size_write(inode, pos + copied);
 		mutex_unlock(&ei->update_lock);
 	}
-
+out:
 	unlock_page(page);
 	put_page(page);
 
