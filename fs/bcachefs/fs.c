@@ -580,14 +580,20 @@ static int bch_link(struct dentry *old_dentry, struct inode *dir,
 static int bch_unlink(struct inode *dir, struct dentry *dentry)
 {
 	struct cache_set *c = dir->i_sb->s_fs_info;
+	struct bch_inode_info *dir_ei = to_bch_ei(dir);
 	struct inode *inode = dentry->d_inode;
+	struct bch_inode_info *ei = to_bch_ei(inode);
 	int ret;
 
 	lockdep_assert_held(&inode->i_rwsem);
 
-	ret = bch_dirent_delete(c, dir->i_ino, &dentry->d_name);
+	ret = bch_dirent_delete(c, dir->i_ino, &dentry->d_name,
+				&dir_ei->journal_seq);
 	if (ret)
 		return ret;
+
+	if (dir_ei->journal_seq > ei->journal_seq)
+		ei->journal_seq = dir_ei->journal_seq;
 
 	inode->i_ctime = dir->i_ctime;
 	inode_dec_link_count(inode);

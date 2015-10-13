@@ -11,7 +11,7 @@ struct cache_set;
 
 int bch_dirent_create(struct cache_set *, u64, u8, const struct qstr *,
 		      u64, u64 *);
-int bch_dirent_delete(struct cache_set *, u64, const struct qstr *);
+int bch_dirent_delete(struct cache_set *, u64, const struct qstr *, u64 *);
 
 enum bch_rename_mode {
 	BCH_RENAME,

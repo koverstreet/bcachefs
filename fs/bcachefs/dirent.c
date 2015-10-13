@@ -369,7 +369,8 @@ err:
 }
 
 int bch_dirent_delete(struct cache_set *c, u64 dir_inum,
-		      const struct qstr *name)
+		      const struct qstr *name,
+		      u64 *journal_seq)
 {
 	struct btree_iter iter;
 	struct bkey_s_c k;
@@ -390,7 +391,7 @@ int bch_dirent_delete(struct cache_set *c, u64 dir_inum,
 
 		ret = bch_btree_insert_at(&iter,
 					  &keylist_single(&delete),
-					  NULL, NULL,
+					  NULL, journal_seq,
 					  BTREE_INSERT_NOFAIL|
 					  BTREE_INSERT_ATOMIC);
 		/*
