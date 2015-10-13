@@ -1040,35 +1040,46 @@ static int bch_tmpfile(struct inode *dir, struct dentry *dentry, umode_t mode)
 }
 
 static int bch_fill_extent(struct fiemap_extent_info *info,
-			   struct bkey_i *k, unsigned flags)
+			   const struct bkey_i *k, unsigned flags)
 {
-	struct bkey_s_c_extent e = bkey_i_to_s_c_extent(k);
-	const struct bch_extent_ptr *ptr;
-	const union bch_extent_crc *crc;
-	int ret;
+	if (bkey_extent_is_data(&k->k)) {
+		struct bkey_s_c_extent e = bkey_i_to_s_c_extent(k);
+		const struct bch_extent_ptr *ptr;
+		const union bch_extent_crc *crc;
+		int ret;
 
-	extent_for_each_ptr_crc(e, ptr, crc) {
-		int flags2 = 0;
-		u64 offset = ptr->offset;
+		extent_for_each_ptr_crc(e, ptr, crc) {
+			int flags2 = 0;
+			u64 offset = ptr->offset;
 
-		if (crc_to_64(crc).compression_type)
-			flags2 |= FIEMAP_EXTENT_ENCODED;
-		else
-			offset += crc_to_64(crc).offset;
+			if (crc_to_64(crc).compression_type)
+				flags2 |= FIEMAP_EXTENT_ENCODED;
+			else
+				offset += crc_to_64(crc).offset;
 
-		if ((offset & (PAGE_SECTORS - 1)) ||
-		    (e.k->size & (PAGE_SECTORS - 1)))
-			flags2 |= FIEMAP_EXTENT_NOT_ALIGNED;
+			if ((offset & (PAGE_SECTORS - 1)) ||
+			    (e.k->size & (PAGE_SECTORS - 1)))
+				flags2 |= FIEMAP_EXTENT_NOT_ALIGNED;
 
-		ret = fiemap_fill_next_extent(info,
-					      bkey_start_offset(e.k) << 9,
-					      offset << 9,
-					      e.k->size << 9, flags|flags2);
-		if (ret)
-			return ret;
+			ret = fiemap_fill_next_extent(info,
+						      bkey_start_offset(e.k) << 9,
+						      offset << 9,
+						      e.k->size << 9, flags|flags2);
+			if (ret)
+				return ret;
+		}
+
+		return 0;
+	} else if (k->k.type == BCH_RESERVATION) {
+		return fiemap_fill_next_extent(info,
+					       bkey_start_offset(&k->k) << 9,
+					       0, k->k.size << 9,
+					       flags|
+					       FIEMAP_EXTENT_DELALLOC|
+					       FIEMAP_EXTENT_UNWRITTEN);
+	} else {
+		BUG();
 	}
-
-	return 0;
 }
 
 static int bch_fiemap(struct inode *inode, struct fiemap_extent_info *info,
@@ -1086,7 +1097,8 @@ static int bch_fiemap(struct inode *inode, struct fiemap_extent_info *info,
 
 	for_each_btree_key(&iter, c, BTREE_ID_EXTENTS,
 			   POS(inode->i_ino, start >> 9), k)
-		if (bkey_extent_is_data(k.k)) {
+		if (bkey_extent_is_data(k.k) ||
+		    k.k->type == BCH_RESERVATION) {
 			if (bkey_cmp(bkey_start_pos(k.k),
 				     POS(inode->i_ino, (start + len) >> 9)) >= 0)
 				break;
@@ -1283,10 +1295,139 @@ err:
 	return ret;
 }
 
+static long bch_fallocate_fallocate(struct inode *inode, int mode,
+				    loff_t offset, loff_t len)
+{
+	struct bch_inode_info *ei = to_bch_ei(inode);
+	struct cache_set *c = inode->i_sb->s_fs_info;
+	struct btree_iter iter;
+	struct bkey_i reservation;
+	struct bkey_s_c k;
+	struct bpos end;
+	loff_t block_start, block_end;
+	loff_t new_size = offset + len;
+	unsigned sectors;
+	int ret;
+
+	bch_btree_iter_init_intent(&iter, c, BTREE_ID_EXTENTS, POS_MIN);
+
+	inode_lock(inode);
+
+	if (!(mode & FALLOC_FL_KEEP_SIZE) &&
+	    new_size > inode->i_size) {
+		ret = inode_newsize_ok(inode, new_size);
+		if (ret)
+			goto err;
+	}
+
+	if (mode & FALLOC_FL_ZERO_RANGE) {
+		/* just for __bch_truncate_page(): */
+		inode_dio_wait(inode);
+
+		ret = __bch_truncate_page(inode->i_mapping,
+					  offset >> PAGE_SHIFT,
+					  offset, offset + len);
+
+		if (!ret &&
+		    offset >> PAGE_SHIFT !=
+		    (offset + len) >> PAGE_SHIFT)
+			ret = __bch_truncate_page(inode->i_mapping,
+						  (offset + len) >> PAGE_SHIFT,
+						  offset, offset + len);
+
+		if (unlikely(ret))
+			goto err;
+
+		truncate_pagecache_range(inode, offset, offset + len - 1);
+
+		block_start	= round_up(offset, PAGE_SIZE);
+		block_end	= round_down(offset + len, PAGE_SIZE);
+	} else {
+		block_start	= round_down(offset, PAGE_SIZE);
+		block_end	= round_up(offset + len, PAGE_SIZE);
+	}
+
+	bch_btree_iter_set_pos(&iter, POS(inode->i_ino, block_start >> 9));
+	end = POS(inode->i_ino, block_end >> 9);
+
+	while (bkey_cmp(iter.pos, end) < 0) {
+		unsigned flags = 0;
+
+		k = bch_btree_iter_peek_with_holes(&iter);
+		if (!k.k) {
+			ret = bch_btree_iter_unlock(&iter) ?: -EIO;
+			goto err;
+		}
+
+		if (bkey_extent_is_data(k.k)) {
+			if (!(mode & FALLOC_FL_ZERO_RANGE)) {
+				bch_btree_iter_advance_pos(&iter);
+				continue;
+			}
+
+			/* don't check for -ENOSPC if we're deleting data: */
+			flags |= BTREE_INSERT_NOFAIL;
+		}
+
+		bkey_init(&reservation.k);
+		reservation.k.type	= BCH_RESERVATION;
+		reservation.k.p		= k.k->p;
+		reservation.k.size	= k.k->size;
+
+		bch_cut_front(iter.pos, &reservation);
+		bch_cut_back(end, &reservation.k);
+
+		sectors = reservation.k.size;
+
+		ret = reserve_sectors(c, sectors);
+		if (ret)
+			goto err;
+
+		ret = bch_btree_insert_at(&iter,
+					  &keylist_single(&reservation),
+					  NULL, &ei->journal_seq,
+					  BTREE_INSERT_ATOMIC|flags);
+
+		atomic64_sub_bug(sectors, &c->sectors_reserved);
+
+		if (ret < 0 && ret != -EINTR)
+			goto err;
+
+	}
+	bch_btree_iter_unlock(&iter);
+
+	if (!(mode & FALLOC_FL_KEEP_SIZE) &&
+	    new_size > inode->i_size) {
+		struct i_size_update *u;
+		unsigned idx;
+
+		mutex_lock(&ei->update_lock);
+		bch_i_size_write(inode, new_size);
+
+		u = i_size_update_new(ei, new_size);
+		idx = u - ei->i_size_updates.data;
+		atomic_long_inc(&u->count);
+		mutex_unlock(&ei->update_lock);
+
+		i_size_update_put(c, ei, idx, 1);
+	}
+
+	inode_unlock(inode);
+
+	return 0;
+err:
+	bch_btree_iter_unlock(&iter);
+	inode_unlock(inode);
+	return ret;
+}
+
 static long bch_fallocate(struct file *file, int mode,
 			  loff_t offset, loff_t len)
 {
 	struct inode *inode = file_inode(file);
+
+	if (!(mode & ~(FALLOC_FL_KEEP_SIZE|FALLOC_FL_ZERO_RANGE)))
+		return bch_fallocate_fallocate(inode, mode, offset, len);
 
 	if (mode == (FALLOC_FL_PUNCH_HOLE|FALLOC_FL_KEEP_SIZE))
 		return bch_fpunch(inode, offset, len);
