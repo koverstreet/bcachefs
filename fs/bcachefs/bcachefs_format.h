@@ -364,17 +364,22 @@ struct bch_extent_crc64 {
 
 #define CRC64_EXTENT_SIZE_MAX	(1U << 17)
 
+/*
+ * @reservation - pointer hasn't been written to, just reserved
+ */
 struct bch_extent_ptr {
 #if defined(__LITTLE_ENDIAN_BITFIELD)
 	__u64			type:2,
 				erasure_coded:1,
-				offset:45, /* 16 petabytes */
+				reservation:1,
+				offset:44, /* 8 petabytes */
 				dev:8,
 				gen:8;
 #elif defined (__BIG_ENDIAN_BITFIELD)
 	__u64			gen:8,
 				dev:8,
-				offset:45,
+				offset:44,
+				reservation:1,
 				erasure_coded:1,
 				type:2;
 #endif
@@ -396,6 +401,11 @@ enum {
 	 * have the same value type:
 	 */
 	BCH_EXTENT_CACHED	= 129,
+
+	/*
+	 * Persistent reservation:
+	 */
+	BCH_RESERVATION		= 130,
 };
 
 struct bch_extent {

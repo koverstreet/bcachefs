@@ -54,19 +54,21 @@ static int bch_read_single_page(struct page *, struct address_space *);
 
 static int reserve_sectors(struct cache_set *c, unsigned sectors)
 {
-	if (likely(atomic_long_sub_return(sectors,
-					  &c->sectors_reserved_cache) >= 0))
+	u64 sectors_to_get = SECTORS_CACHE + sectors;
+
+	if (likely(atomic64_sub_return(sectors,
+				       &c->sectors_reserved_cache) >= 0))
 		return 0;
 
-	atomic_long_add(SECTORS_CACHE, &c->sectors_reserved);
+	atomic64_add(sectors_to_get, &c->sectors_reserved);
 
 	if (likely(!cache_set_full(c))) {
-		atomic_long_add(SECTORS_CACHE, &c->sectors_reserved_cache);
+		atomic64_add(sectors_to_get, &c->sectors_reserved_cache);
 		return 0;
 	}
 
-	atomic_long_sub_bug(SECTORS_CACHE, &c->sectors_reserved);
-	atomic_long_add(sectors, &c->sectors_reserved_cache);
+	atomic64_sub_bug(sectors_to_get, &c->sectors_reserved);
+	atomic64_add(sectors, &c->sectors_reserved_cache);
 	return -ENOSPC;
 }
 
@@ -92,7 +94,7 @@ static void bch_clear_page_bits(struct cache_set *c, struct bch_inode_info *ei,
 	EBUG_ON(!PageLocked(page));
 
 	if (PageAllocated(page)) {
-		atomic_long_sub_bug(PAGE_SECTORS, &c->sectors_reserved);
+		atomic64_sub_bug(PAGE_SECTORS, &c->sectors_reserved);
 		ClearPageAllocated(page);
 	}
 
@@ -1744,7 +1746,7 @@ static void bch_writepage_io_done(struct closure *cl)
 	struct bio_vec *bvec;
 	unsigned i;
 
-	atomic_long_sub_bug(io->sectors_reserved, &c->sectors_reserved);
+	atomic64_sub_bug(io->sectors_reserved, &c->sectors_reserved);
 
 	for (i = 0; i < ARRAY_SIZE(io->i_size_update_count); i++)
 		i_size_update_put(c, ei, i, io->i_size_update_count[i]);

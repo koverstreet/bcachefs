@@ -192,7 +192,8 @@ void bch_verify_inode_refs(struct cache_set *c)
 
 	for_each_btree_key(&iter, c, BTREE_ID_EXTENTS,
 			   POS(BCACHE_ROOT_INO, 0), k) {
-		if (k.k->type == KEY_TYPE_DISCARD)
+		if (k.k->type == KEY_TYPE_DISCARD ||
+		    k.k->type == BCH_RESERVATION)
 			continue;
 
 		if (k.k->p.inode != cur_inum &&

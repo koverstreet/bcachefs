@@ -756,12 +756,12 @@ void bch_journal_mark(struct cache_set *c, struct list_head *list)
 
 	list_for_each_entry(r, list, list)
 		for_each_jset_key(k, n, j, &r->j) {
-			if ((j->level || j->btree_id == BTREE_ID_EXTENTS) &&
-			    !bkey_invalid(c, j->level
-					  ? BKEY_TYPE_BTREE : j->btree_id,
-					  bkey_i_to_s_c(k)))
-				__bch_btree_mark_key(c, j->level,
-						     bkey_i_to_s_c(k));
+			enum bkey_type type = bkey_type(j->level, j->btree_id);
+
+			if (btree_type_has_ptrs(type) &&
+			    !bkey_invalid(c, type, bkey_i_to_s_c(k)))
+				__bch_btree_mark_key_initial(c, type,
+							     bkey_i_to_s_c(k));
 		}
 }
 

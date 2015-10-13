@@ -6,6 +6,7 @@
 #include <linux/semaphore.h>
 #include <linux/workqueue.h>
 
+#include "bkey_methods.h"
 #include "bset.h"
 #include "journal_types.h"
 #include "six.h"
@@ -119,6 +120,17 @@ static inline struct bset *btree_bset_last(struct btree *b)
 static inline unsigned bset_byte_offset(struct btree *b, void *i)
 {
 	return i - (void *) b->data;
+}
+
+/* Type of keys @b contains: */
+static inline enum bkey_type btree_node_type(struct btree *b)
+{
+	return b->level ? BKEY_TYPE_BTREE : b->btree_id;
+}
+
+static inline bool btree_node_has_ptrs(struct btree *b)
+{
+	return btree_type_has_ptrs(btree_node_type(b));
 }
 
 #endif /* _BCACHE_BTREE_TYPES_H */

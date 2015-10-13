@@ -230,7 +230,7 @@ static inline u64 __cache_set_sectors_used(struct cache_set *c)
 	}
 	rcu_read_unlock();
 
-	return used + atomic_long_read(&c->sectors_reserved);
+	return used + atomic64_read(&c->sectors_reserved);
 }
 
 static inline u64 cache_set_sectors_used(struct cache_set *c)

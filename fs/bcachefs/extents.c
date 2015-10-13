@@ -775,9 +775,12 @@ struct btree_nr_keys bch_extent_sort_fix_overlapping(struct btree_keys *b,
 
 static int bch_add_sectors(struct cache_set *c, struct btree *b,
 			   struct bkey_s_c k, u64 offset,
-			   int sectors, bool fail_if_stale)
+			   s64 sectors, bool fail_if_stale)
 {
-	if (sectors && bkey_extent_is_data(k.k)) {
+	if (!sectors)
+		return 0;
+
+	if (bkey_extent_is_data(k.k)) {
 		struct bkey_s_c_extent e = bkey_s_c_to_extent(k);
 		int ret;
 
@@ -790,13 +793,15 @@ static int bch_add_sectors(struct cache_set *c, struct btree *b,
 		if (!bkey_extent_is_cached(e.k))
 			bcache_dev_sectors_dirty_add(c, e.k->p.inode,
 						     offset, sectors);
+	} else if (k.k->type == BCH_RESERVATION) {
+		atomic64_add_bug(sectors, &c->sectors_reserved);
 	}
 
 	return 0;
 }
 
 static void bch_subtract_sectors(struct cache_set *c, struct btree *b,
-				 struct bkey_s_c k, u64 offset, int sectors)
+				 struct bkey_s_c k, u64 offset, s64 sectors)
 {
 	bch_add_sectors(c, b, k, offset, -sectors, false);
 }
@@ -1362,15 +1367,17 @@ invalid:
 		return reason;
 	}
 
+	case BCH_RESERVATION:
+		return NULL;
+
 	default:
 		return "invalid value type";
 	}
 }
 
-static void bch_extent_debugcheck(struct cache_set *c, struct btree *b,
-				  struct bkey_s_c k)
+static void bch_extent_debugcheck_extent(struct cache_set *c, struct btree *b,
+					 struct bkey_s_c_extent e)
 {
-	struct bkey_s_c_extent e = bkey_s_c_to_extent(k);
 	const struct bch_extent_ptr *ptr;
 	struct cache_member_rcu *mi;
 	struct cache *ca;
@@ -1462,7 +1469,8 @@ static void bch_extent_debugcheck(struct cache_set *c, struct btree *b,
 
 	if (!bkey_extent_is_cached(e.k) &&
 	    replicas < CACHE_SET_DATA_REPLICAS_HAVE(&c->sb)) {
-		bch_bkey_val_to_text(c, btree_node_type(b), buf, sizeof(buf), k);
+		bch_bkey_val_to_text(c, btree_node_type(b), buf,
+				     sizeof(buf), e.s_c);
 		cache_set_bug(c,
 			"extent key bad (too few replicas, %u < %llu): %s",
 			replicas, CACHE_SET_DATA_REPLICAS_HAVE(&c->sb), buf);
@@ -1474,7 +1482,8 @@ static void bch_extent_debugcheck(struct cache_set *c, struct btree *b,
 	 */
 	for (i = 0; i < CACHE_TIERS; i++)
 		if (ptrs_per_tier[i] > CACHE_SET_DATA_REPLICAS_WANT(&c->sb)) {
-			bch_bkey_val_to_text(c, btree_node_type(b), buf, sizeof(buf), k);
+			bch_bkey_val_to_text(c, btree_node_type(b), buf,
+					     sizeof(buf), e.s_c);
 			cache_set_bug(c,
 				      "extent key bad (too many tier %u replicas): %s",
 				      i, buf);
@@ -1484,14 +1493,16 @@ static void bch_extent_debugcheck(struct cache_set *c, struct btree *b,
 	return;
 
 bad_device:
-	bch_bkey_val_to_text(c, btree_node_type(b), buf, sizeof(buf), k);
+	bch_bkey_val_to_text(c, btree_node_type(b), buf,
+			     sizeof(buf), e.s_c);
 	cache_set_bug(c, "extent pointer to dev %u missing device: %s",
 		      ptr->dev, buf);
 	cache_member_info_put();
 	return;
 
 bad_ptr:
-	bch_bkey_val_to_text(c, btree_node_type(b), buf, sizeof(buf), k);
+	bch_bkey_val_to_text(c, btree_node_type(b), buf,
+			     sizeof(buf), e.s_c);
 	cache_set_bug(c, "extent pointer bad gc mark: %s:\nbucket %zu prio %i "
 		      "gen %i last_gc %i mark 0x%08x",
 		      buf, PTR_BUCKET_NR(ca, ptr),
@@ -1499,6 +1510,20 @@ bad_ptr:
 		      g->oldest_gen, g->mark.counter);
 	cache_member_info_put();
 	return;
+}
+
+static void bch_extent_debugcheck(struct cache_set *c, struct btree *b,
+				  struct bkey_s_c k)
+{
+	switch (k.k->type) {
+	case BCH_EXTENT:
+	case BCH_EXTENT_CACHED:
+		bch_extent_debugcheck_extent(c, b, bkey_s_c_to_extent(k));
+	case BCH_RESERVATION:
+		break;
+	default:
+		BUG();
+	}
 }
 
 static void bch_extent_to_text(struct cache_set *c, char *buf,
@@ -1656,6 +1681,8 @@ bool bch_extent_normalize(struct cache_set *c, struct bkey_s k)
 		}
 
 		return false;
+	case BCH_RESERVATION:
+		return false;
 	default:
 		BUG();
 	}
@@ -1715,6 +1742,10 @@ void bch_extent_pick_ptr_avoiding(struct cache_set *c, struct bkey_s_c k,
 		rcu_read_unlock();
 		return;
 
+	case BCH_RESERVATION:
+		ret->ca = NULL;
+		return;
+
 	default:
 		BUG();
 	}
@@ -1747,6 +1778,7 @@ static enum merge_result bch_extent_merge(struct btree_keys *bk,
 	case KEY_TYPE_DELETED:
 	case KEY_TYPE_DISCARD:
 	case KEY_TYPE_ERROR:
+	case BCH_RESERVATION:
 		/* These types are mergeable, and no val to check */
 		break;
 

@@ -589,8 +589,10 @@ static ssize_t show_cache_set_alloc_debug(struct cache_set *c, char *buf)
 	return scnprintf(buf, PAGE_SIZE,
 			 "capacity:\t\t%llu\n"
 			 "meta sectors:\t\t%llu\n"
-			 "dirty sectors:\t\t%llu\n",
-			 c->capacity, meta, dirty);
+			 "dirty sectors:\t\t%llu\n"
+			 "reserved sectors:\t%lu\n",
+			 c->capacity, meta, dirty,
+			 atomic64_read(&c->sectors_reserved));
 }
 
 static ssize_t bch_compression_stats(struct cache_set *c, char *buf)

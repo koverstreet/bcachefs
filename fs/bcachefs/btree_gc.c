@@ -118,30 +118,62 @@ u8 bch_btree_key_recalc_oldest_gen(struct cache_set *c, struct bkey_s_c k)
 	return max_stale;
 }
 
-u8 __bch_btree_mark_key(struct cache_set *c, int level, struct bkey_s_c k)
+/*
+ * For runtime mark and sweep:
+ */
+static u8 __bch_btree_mark_key(struct cache_set *c, enum bkey_type type,
+			       struct bkey_s_c k)
 {
-	if (bkey_extent_is_data(k.k)) {
-		struct bkey_s_c_extent e = bkey_s_c_to_extent(k);
+	switch (type) {
+	case BKEY_TYPE_BTREE:
+	case BKEY_TYPE_EXTENTS:
+		if (bkey_extent_is_data(k.k)) {
+			struct bkey_s_c_extent e = bkey_s_c_to_extent(k);
 
-		bch_mark_pointers(c, e, level
-				  ? CACHE_BTREE_NODE_SIZE(&c->sb)
-				  : e.k->size, false, level != 0,
-				  true, GC_POS_MIN);
+			bch_mark_pointers(c, e,
+					  type == BKEY_TYPE_BTREE
+					  ? CACHE_BTREE_NODE_SIZE(&c->sb)
+					  : e.k->size, false,
+					  type == BKEY_TYPE_BTREE,
+					  true, GC_POS_MIN);
+		}
+
+		return bch_btree_key_recalc_oldest_gen(c, k);
+	default:
+		BUG();
 	}
-
-	return bch_btree_key_recalc_oldest_gen(c, k);
 }
 
 static u8 btree_mark_key(struct cache_set *c, struct btree *b,
 			 struct bkey_s_c k)
 {
-	return __bch_btree_mark_key(c, b->level, k);
+	return __bch_btree_mark_key(c, btree_node_type(b), k);
 }
 
-/* Only the extent btree has leafs whose keys point to data */
-static inline bool btree_node_has_ptrs(struct btree *b)
+/*
+ * For initial cache set bringup:
+ */
+u8 __bch_btree_mark_key_initial(struct cache_set *c, enum bkey_type type,
+				struct bkey_s_c k)
 {
-	return b->btree_id == BTREE_ID_EXTENTS || b->level > 0;
+
+	switch (type) {
+	case BKEY_TYPE_BTREE:
+	case BKEY_TYPE_EXTENTS:
+		if (k.k->type == BCH_RESERVATION)
+			atomic64_add(k.k->size, &c->sectors_reserved);
+
+		return __bch_btree_mark_key(c, type, k);
+	default:
+		BUG();
+	}
+
+}
+
+static u8 btree_mark_key_initial(struct cache_set *c, struct btree *b,
+				 struct bkey_s_c k)
+{
+	return __bch_btree_mark_key_initial(c, btree_node_type(b), k);
 }
 
 static bool btree_gc_mark_node(struct cache_set *c, struct btree *b)
@@ -218,7 +250,7 @@ static int bch_gc_btree(struct cache_set *c, enum btree_id btree_id)
 	spin_lock(&c->btree_root_lock);
 
 	b = c->btree_roots[btree_id];
-	__bch_btree_mark_key(c, b->level + 1, bkey_i_to_s_c(&b->key));
+	__bch_btree_mark_key(c, BKEY_TYPE_BTREE, bkey_i_to_s_c(&b->key));
 	gc_pos_set(c, gc_pos_btree_root(b->btree_id));
 
 	spin_unlock(&c->btree_root_lock);
@@ -828,11 +860,12 @@ static void bch_initial_gc_btree(struct cache_set *c, enum btree_id id)
 
 			for_each_btree_node_key_unpack(&b->keys, &tup,
 						       &node_iter)
-				btree_mark_key(c, b, bkey_tup_to_s_c(&tup));
+				btree_mark_key_initial(c, b,
+						bkey_tup_to_s_c(&tup));
 		}
 
-		__bch_btree_mark_key(c, iter.level + 1,
-				     bkey_i_to_s_c(&b->key));
+		__bch_btree_mark_key_initial(c, BKEY_TYPE_BTREE,
+					     bkey_i_to_s_c(&b->key));
 
 		bch_btree_iter_cond_resched(&iter);
 	}

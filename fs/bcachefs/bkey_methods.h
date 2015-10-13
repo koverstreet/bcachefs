@@ -8,7 +8,22 @@ enum bkey_type {
 	BKEY_TYPE_BTREE,
 };
 
-#define btree_node_type(_b)	((_b)->level ? BKEY_TYPE_BTREE : (_b)->btree_id)
+/* Type of a key in btree @id at level @level: */
+static inline enum bkey_type bkey_type(unsigned level, enum btree_id id)
+{
+	return level ? BKEY_TYPE_BTREE : id;
+}
+
+static inline bool btree_type_has_ptrs(enum bkey_type type)
+{
+	switch (type) {
+	case BKEY_TYPE_BTREE:
+	case BKEY_TYPE_EXTENTS:
+		return true;
+	default:
+		return false;
+	}
+}
 
 struct cache_set;
 struct btree;

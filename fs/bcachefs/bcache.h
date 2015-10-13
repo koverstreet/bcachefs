@@ -590,8 +590,8 @@ struct cache_set {
 	struct cache_group	cache_tiers[CACHE_TIERS];
 
 	u64			capacity; /* sectors */
-	atomic_long_t		sectors_reserved;
-	atomic_long_t		sectors_reserved_cache;
+	atomic64_t		sectors_reserved;
+	atomic64_t		sectors_reserved_cache;
 
 	struct mutex		bucket_lock;
 
