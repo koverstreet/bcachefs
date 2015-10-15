@@ -131,7 +131,8 @@ static int bch_gc_do_inode(struct cache_set *c, struct btree_iter *iter,
 		return bch_btree_insert_at(iter,
 					   &keylist_single(&update.k_i),
 					   NULL, NULL,
-					   BTREE_INSERT_ATOMIC);
+					   BTREE_INSERT_ATOMIC|
+					   BTREE_INSERT_NOFAIL);
 	}
 
 	return 0;
