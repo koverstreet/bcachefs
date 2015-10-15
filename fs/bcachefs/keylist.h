@@ -47,6 +47,11 @@ static inline struct bkey_i *__bch_keylist_next(struct keylist *l,
 	return k;
 }
 
+#define for_each_keylist_key(_keys, _k)					\
+	for (_k = ACCESS_ONCE((_keys)->bot);				\
+	     _k != (_keys)->top;					\
+	     _k = __bch_keylist_next(_keys, _k))
+
 static inline void bch_keylist_enqueue(struct keylist *l)
 {
 	BUG_ON(!bch_keylist_fits(l, l->top->k.u64s));

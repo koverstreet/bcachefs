@@ -413,6 +413,17 @@ static void bch_write_done(struct closure *cl)
 	closure_return(cl);
 }
 
+static u64 keylist_sectors(struct keylist *keys)
+{
+	struct bkey_i *k;
+	u64 ret = 0;
+
+	for_each_keylist_key(keys, k)
+		ret += k->k.size;
+
+	return ret;
+}
+
 /**
  * bch_write_index - after a write, update index to point to new data
  */
@@ -420,11 +431,15 @@ static void bch_write_index(struct closure *cl)
 {
 	struct bch_write_op *op = container_of(cl, struct bch_write_op, cl);
 	unsigned i;
+	u64 sectors_start = keylist_sectors(&op->insert_keys);
 	int ret;
 
 	ret = bch_btree_insert(op->c, BTREE_ID_EXTENTS, &op->insert_keys,
 			       op->replace ? &op->replace_info : NULL,
 			       op_journal_seq(op), BTREE_INSERT_NOFAIL);
+
+	op->written += sectors_start - keylist_sectors(&op->insert_keys);
+
 	if (ret) {
 		__bcache_io_error(op->c, "btree IO error");
 		op->error = ret;
@@ -806,7 +821,8 @@ static void __bch_write(struct closure *cl)
 	do {
 		struct bkey_i *k;
 
-		BUG_ON(bio_sectors(bio) != op->insert_key.k.size);
+		BUG_ON(bio_sectors(bio)		!= op->insert_key.k.size);
+		BUG_ON(bio_end_sector(bio)	!= op->insert_key.k.p.offset);
 
 		if (open_bucket_nr == ARRAY_SIZE(op->open_buckets))
 			continue_at(cl, bch_write_index,
@@ -1036,6 +1052,7 @@ void bch_write_op_init(struct bch_write_op *op, struct cache_set *c,
 	op->c		= c;
 	op->io_wq	= NULL;
 	op->bio		= bio;
+	op->written	= 0;
 	op->error	= 0;
 	op->flags	= 0;
 	op->check_enospc = (flags & BCH_WRITE_CHECK_ENOSPC) != 0;

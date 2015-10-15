@@ -70,6 +70,8 @@ struct bch_write_op {
 	struct workqueue_struct	*io_wq;
 	struct bch_write_bio	*bio;
 
+	unsigned		written; /* sectors */
+
 	short			error;
 
 	union {

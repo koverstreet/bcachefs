@@ -173,11 +173,6 @@ void bch_scan_keylist_resize(struct scan_keylist *kl,
 	mutex_unlock(&kl->lock);
 }
 
-#define keylist_for_each(k, l)						\
-for (k = ACCESS_ONCE((l)->bot);						\
-	k != (l)->top;							\
-	k = __bch_keylist_next(l, k))
-
 /**
  * bch_keylist_recalc_oldest_gens - update oldest_gen pointers from keylist keys
  *
@@ -205,7 +200,7 @@ void bch_keylist_recalc_oldest_gens(struct cache_set *c,
 
 	mutex_lock(&kl->lock);
 
-	keylist_for_each(k, &kl->list)
+	for_each_keylist_key(&kl->list, k)
 		bch_btree_key_recalc_oldest_gen(c, bkey_i_to_s_c(k));
 
 	mutex_unlock(&kl->lock);
