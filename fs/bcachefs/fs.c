@@ -926,7 +926,8 @@ static int bch_setattr(struct dentry *dentry, struct iattr *iattr)
 	if (ret)
 		return ret;
 
-	if (iattr->ia_valid & ATTR_SIZE && iattr->ia_size != inode->i_size) {
+	if (iattr->ia_valid & ATTR_SIZE) {
+		bool shrink = iattr->ia_size <= inode->i_size;
 		struct i_size_update *u;
 		unsigned idx;
 
@@ -983,15 +984,23 @@ static int bch_setattr(struct dentry *dentry, struct iattr *iattr)
 		EBUG_ON(iattr->ia_size < ei->i_size);
 		truncate_setsize(inode, iattr->ia_size);
 
-		ret = bch_truncate_page(inode->i_mapping, iattr->ia_size);
-		if (unlikely(ret))
-			return ret;
+		/*
+		 * There might be persistent reservations (from fallocate())
+		 * above i_size, which bch_inode_truncate() will discard - we're
+		 * only supposed to discard them if we're doing a real truncate
+		 * here (new i_size < current i_size):
+		 */
+		if (shrink) {
+			ret = bch_truncate_page(inode->i_mapping, iattr->ia_size);
+			if (unlikely(ret))
+				return ret;
 
-		ret = bch_inode_truncate(c, inode->i_ino,
-				round_up(iattr->ia_size, PAGE_SIZE) >> 9,
-				&ei->journal_seq);
-		if (unlikely(ret))
-			return ret;
+			ret = bch_inode_truncate(c, inode->i_ino,
+						 round_up(iattr->ia_size, PAGE_SIZE) >> 9,
+						 &ei->journal_seq);
+			if (unlikely(ret))
+				return ret;
+		}
 
 		setattr_copy(inode, iattr);
 
@@ -1003,8 +1012,6 @@ static int bch_setattr(struct dentry *dentry, struct iattr *iattr)
 		ret = bch_write_inode(c, ei);
 		mutex_unlock(&ei->update_lock);
 	}
-
-	BUG_ON(inode->i_size < ei->i_size);
 
 	if (unlikely(ret))
 		return ret;
