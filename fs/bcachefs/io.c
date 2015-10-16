@@ -1567,25 +1567,31 @@ int bch_read(struct cache_set *c, struct bio *bio, u64 inode)
 		unsigned bytes, sectors;
 		bool done;
 
-		BUG_ON(bkey_cmp(bkey_start_pos(k.k),
-				POS(inode, bio->bi_iter.bi_sector)) > 0);
+		EBUG_ON(bkey_cmp(bkey_start_pos(k.k),
+				 POS(inode, bio->bi_iter.bi_sector)) > 0);
 
-		BUG_ON(bkey_cmp(k.k->p,
-				POS(inode, bio->bi_iter.bi_sector)) <= 0);
+		EBUG_ON(bkey_cmp(k.k->p,
+				 POS(inode, bio->bi_iter.bi_sector)) <= 0);
+
+		bch_extent_pick_ptr(c, k, &pick);
+
+		/*
+		 * Unlock the iterator while the btree node's lock is still in
+		 * cache, before doing the IO:
+		 */
+		bch_btree_iter_unlock(&iter);
+
+		if (IS_ERR(pick.ca)) {
+			bcache_io_error(c, bio, "no device to read from");
+			return 0;
+		}
 
 		sectors = min_t(u64, k.k->p.offset, bio_end_sector(bio)) -
 			bio->bi_iter.bi_sector;
 		bytes = sectors << 9;
 		done = bytes == bio->bi_iter.bi_size;
-
 		swap(bio->bi_iter.bi_size, bytes);
 
-		bch_extent_pick_ptr(c, k, &pick);
-		if (IS_ERR(pick.ca)) {
-			bcache_io_error(c, bio, "no device to read from");
-			bch_btree_iter_unlock(&iter);
-			return 0;
-		}
 		if (pick.ca) {
 			PTR_BUCKET(pick.ca, &pick.ptr)->read_prio =
 				c->prio_clock[READ].hand;
@@ -1603,10 +1609,8 @@ int bch_read(struct cache_set *c, struct bio *bio, u64 inode)
 		swap(bio->bi_iter.bi_size, bytes);
 		bio_advance(bio, bytes);
 
-		if (done) {
-			bch_btree_iter_unlock(&iter);
+		if (done)
 			return 0;
-		}
 	}
 
 	/*
