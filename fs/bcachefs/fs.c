@@ -2238,7 +2238,8 @@ out:
 struct dio_write {
 	struct closure		cl;
 	struct kiocb		*req;
-	long			ret;
+	long			written;
+	long			error;
 	bool			append;
 };
 
@@ -2259,7 +2260,7 @@ static void bch_dio_write_complete(struct closure *cl)
 {
 	struct dio_write *dio = container_of(cl, struct dio_write, cl);
 	struct kiocb *req = dio->req;
-	long ret = dio->ret;
+	long ret = dio->written ?: dio->error;
 
 	__bch_dio_write_complete(dio);
 	req->ki_complete(req, ret, 0);
@@ -2272,8 +2273,11 @@ static void bch_direct_IO_write_done(struct closure *cl)
 	struct bio_vec *bv;
 	int i;
 
+	op->dio->written += op->iop.written << 9;
+
 	if (op->iop.error)
-		op->dio->ret = op->iop.error;
+		op->dio->error = op->iop.error;
+
 	closure_put(&op->dio->cl);
 
 	bio_for_each_segment_all(bv, &op->bio.bio.bio, i)
@@ -2289,8 +2293,8 @@ static int bch_direct_IO_write(struct cache_set *c, struct kiocb *req,
 	struct dio_write *dio;
 	struct dio_write_bio *op;
 	struct bio *bio;
-	unsigned long inum = inode->i_ino;
 	unsigned flags = BCH_WRITE_CHECK_ENOSPC;
+	loff_t orig_offset = offset;
 	ssize_t ret;
 
 	lockdep_assert_held(&inode->i_rwsem);
@@ -2303,7 +2307,8 @@ static int bch_direct_IO_write(struct cache_set *c, struct kiocb *req,
 		return -ENOMEM;
 
 	dio->req	= req;
-	dio->ret	= 0;
+	dio->written	= 0;
+	dio->error	= 0;
 	dio->append	= false;
 
 	if (offset + iter->count > inode->i_size) {
@@ -2326,8 +2331,7 @@ static int bch_direct_IO_write(struct cache_set *c, struct kiocb *req,
 
 	closure_init(&dio->cl, NULL);
 
-	/* Decremented by inode_dio_done(): */
-	atomic_inc(&inode->i_dio_count);
+	inode_dio_begin(inode);
 
 	while (iter->count) {
 		size_t pages = iov_iter_npages(iter, BIO_MAX_PAGES);
@@ -2335,7 +2339,7 @@ static int bch_direct_IO_write(struct cache_set *c, struct kiocb *req,
 		op = kmalloc(sizeof(*op) + sizeof(struct bio_vec) * pages,
 			     GFP_NOIO);
 		if (!op) {
-			dio->ret = -ENOMEM;
+			dio->error = -ENOMEM;
 			break;
 		}
 
@@ -2347,21 +2351,19 @@ static int bch_direct_IO_write(struct cache_set *c, struct kiocb *req,
 
 		ret = bio_get_user_pages(bio, iter, 0);
 		if (ret < 0) {
-			if (!dio->ret)
-				dio->ret = ret;
+			dio->error = ret;
 			kfree(op);
 			break;
 		}
 
-		offset		+= bio->bi_iter.bi_size;
-		dio->ret	+= bio->bi_iter.bi_size;
+		offset += bio->bi_iter.bi_size;
 
 		closure_get(&dio->cl);
 		op->dio = dio;
 		closure_init(&op->cl, NULL);
 
 		bch_write_op_init(&op->iop, c, &op->bio, NULL,
-				  bkey_to_s_c(&KEY(inum,
+				  bkey_to_s_c(&KEY(inode->i_ino,
 						   bio_end_sector(bio),
 						   bio_sectors(bio))),
 				  bkey_s_c_null,
@@ -2372,6 +2374,9 @@ static int bch_direct_IO_write(struct cache_set *c, struct kiocb *req,
 		closure_call(&op->iop.cl, bch_write, NULL, &op->cl);
 		closure_return_with_destructor_noreturn(&op->cl,
 						bch_direct_IO_write_done);
+
+		if (iter->count)
+			closure_sync(&dio->cl);
 	}
 
 	if (is_sync_kiocb(req) || dio->append) {
@@ -2381,7 +2386,7 @@ static int bch_direct_IO_write(struct cache_set *c, struct kiocb *req,
 		 */
 		closure_sync(&dio->cl);
 		closure_debug_destroy(&dio->cl);
-		ret = dio->ret;
+		ret = dio->written ?: dio->error;
 
 		/*
 		 * XXX: if the bch_write call errors, we don't handle partial
@@ -2389,23 +2394,27 @@ static int bch_direct_IO_write(struct cache_set *c, struct kiocb *req,
 		 */
 
 		if (dio->append) {
+			loff_t new_i_size = orig_offset + dio->written;
 			int ret2 = 0;
 
-			if (ret > 0 &&
-			    offset > inode->i_size) {
+			if (dio->written &&
+			    new_i_size > inode->i_size) {
 				struct i_size_update *u;
 				unsigned idx;
 
 				mutex_lock(&ei->update_lock);
 
-				bch_i_size_write(inode, offset);
-				i_size_dirty_put(ei);
+				bch_i_size_write(inode, new_i_size);
 
-				fifo_for_each_entry_ptr(u, &ei->i_size_updates, idx)
-					if (u->new_i_size < offset)
+				fifo_for_each_entry_ptr(u, &ei->i_size_updates, idx) {
+					if (u->new_i_size < new_i_size)
 						u->new_i_size = -1;
+					else
+						BUG();
+				}
 
-				ret2 = bch_write_inode_size(c, ei, offset);
+				i_size_dirty_put(ei);
+				ret2 = bch_write_inode_size(c, ei, new_i_size);
 
 				mutex_unlock(&ei->update_lock);
 			} else {
