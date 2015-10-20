@@ -627,8 +627,7 @@ next:
 		bch_keylist_add_in_order(&keylist, &new_nodes[i]->key);
 
 	/* Insert the newly coalesced nodes */
-	ret = bch_btree_insert_node(parent, iter, &keylist, NULL, NULL,
-				    BTREE_INSERT_NOFAIL, res, as);
+	ret = bch_btree_insert_node(parent, iter, &keylist, res, as);
 	if (ret)
 		goto err;
 

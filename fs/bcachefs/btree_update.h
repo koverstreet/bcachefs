@@ -154,8 +154,7 @@ static inline size_t bch_btree_keys_u64s_remaining(struct cache_set *c,
 }
 
 int bch_btree_insert_node(struct btree *, struct btree_iter *,
-			  struct keylist *, struct bch_replace_info *,
-			  u64 *, unsigned, struct btree_reserve *,
+			  struct keylist *, struct btree_reserve *,
 			  struct async_split *as);
 
 /* Normal update interface: */

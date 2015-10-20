@@ -1061,24 +1061,30 @@ err:
 #endif
 }
 
+static void btree_insert_keys_checks(struct btree_iter *iter, struct btree *b)
+{
+	BUG_ON(iter->nodes[b->level] != b);
+	BUG_ON(!btree_node_intent_locked(iter, b->level));
+	BUG_ON(!b->written);
+}
+
 static enum btree_insert_status
 bch_btree_insert_keys_interior(struct btree *b,
 			       struct btree_iter *iter,
 			       struct keylist *insert_keys,
-			       struct bch_replace_info *replace,
-			       u64 *journal_seq,
-			       struct async_split *as,
-			       unsigned flags)
+			       struct async_split *as)
 {
 	struct btree_node_iter *node_iter = &iter->node_iters[b->level];
 	const struct bkey_format *f = &b->keys.format;
 	struct bkey_packed *k;
 	struct journal_res res = { 0, 0 };
 
-	BUG_ON(replace);
-	BUG_ON(journal_seq);
-	BUG_ON(!as);
-	BUG_ON(as->b);
+	BUG_ON(!btree_node_intent_locked(iter, btree_node_root(b)->level));
+	BUG_ON(!b->level);
+	BUG_ON(!as || as->b);
+
+	btree_insert_keys_checks(iter, b);
+	verify_keys_sorted(insert_keys);
 
 	btree_node_lock_for_insert(b, iter);
 
@@ -1108,7 +1114,7 @@ bch_btree_insert_keys_interior(struct btree *b,
 			;
 
 		btree_insert_key(iter, b, node_iter, insert_keys,
-				 NULL, &res, flags);
+				 NULL, &res, 0);
 	}
 
 	btree_node_unlock_write(b, iter);
@@ -1146,14 +1152,16 @@ bch_btree_insert_keys_leaf(struct btree *b,
 			   struct keylist *insert_keys,
 			   struct bch_replace_info *replace,
 			   u64 *journal_seq,
-			   struct async_split *as,
 			   unsigned flags)
 {
 	bool done = false, inserted = false, need_split = false;
 	struct journal_res res = { 0, 0 };
 	struct bkey_i *k = bch_keylist_front(insert_keys);
 
-	BUG_ON(as);
+	BUG_ON(b->level);
+
+	btree_insert_keys_checks(iter, b);
+	verify_keys_sorted(insert_keys);
 
 	while (!done && !bch_keylist_empty(insert_keys)) {
 		/*
@@ -1216,27 +1224,6 @@ bch_btree_insert_keys_leaf(struct btree *b,
 		bch_btree_node_write_lazy(b, iter);
 
 	return need_split ? BTREE_INSERT_NEED_SPLIT : BTREE_INSERT_OK;
-}
-
-static enum btree_insert_status
-bch_btree_insert_keys(struct btree *b,
-		      struct btree_iter *iter,
-		      struct keylist *insert_keys,
-		      struct bch_replace_info *replace,
-		      u64 *journal_seq,
-		      struct async_split *as,
-		      unsigned flags)
-{
-	verify_keys_sorted(insert_keys);
-	BUG_ON(!btree_node_intent_locked(iter, b->level));
-	BUG_ON(iter->nodes[b->level] != b);
-	BUG_ON(!b->written);
-
-	return (!b->level
-		? bch_btree_insert_keys_leaf
-		: bch_btree_insert_keys_interior)(b, iter, insert_keys,
-						  replace, journal_seq,
-						  as, flags);
 }
 
 /*
@@ -1354,7 +1341,7 @@ static void btree_split_insert_keys(struct btree_iter *iter, struct btree *b,
 }
 
 static int btree_split(struct btree *b, struct btree_iter *iter,
-		       struct keylist *insert_keys, unsigned flags,
+		       struct keylist *insert_keys,
 		       struct btree_reserve *reserve,
 		       struct async_split *as)
 {
@@ -1478,7 +1465,6 @@ static int btree_split(struct btree *b, struct btree_iter *iter,
 	if (parent) {
 		/* Split a non root node */
 		ret = bch_btree_insert_node(parent, iter, &as->parent_keys,
-					    NULL, NULL, BTREE_INSERT_NOFAIL,
 					    reserve, as);
 		if (ret)
 			goto err;
@@ -1564,77 +1550,60 @@ err:
 int bch_btree_insert_node(struct btree *b,
 			  struct btree_iter *iter,
 			  struct keylist *insert_keys,
-			  struct bch_replace_info *replace,
-			  u64 *journal_seq, unsigned flags,
 			  struct btree_reserve *reserve,
 			  struct async_split *as)
 {
-	struct cache_set *c = iter->c;
-	unsigned level;
-	int ret;
+	BUG_ON(!b->level);
+	BUG_ON(!reserve || !as);
 
-	BUG_ON(iter->nodes[b->level] != b);
-	BUG_ON(!btree_node_intent_locked(iter, b->level));
-	BUG_ON(b->level &&
-	       !btree_node_intent_locked(iter, btree_node_root(b)->level));
-	BUG_ON(b->level && replace);
-	BUG_ON(b->level && (!reserve || !as));
-	BUG_ON(!b->level && (reserve || as));
-	BUG_ON(!b->written);
-	verify_keys_sorted(insert_keys);
-
-	switch (bch_btree_insert_keys(b, iter, insert_keys, replace,
-				      journal_seq, as, flags)) {
+	switch (bch_btree_insert_keys_interior(b, iter, insert_keys, as)) {
 	case BTREE_INSERT_OK:
 		return 0;
-
 	case BTREE_INSERT_NEED_SPLIT:
-		level = b->level;
-
-		if (!level) {
-			/*
-			 * XXX: figure out how far we might need to split,
-			 * instead of locking/reserving all the way to the root:
-			 */
-
-			iter->locks_want = BTREE_MAX_DEPTH;
-			if (!bch_btree_iter_upgrade(iter))
-				return -EINTR;
-
-			reserve = bch_btree_reserve_get(c, b, iter, 0,
-						!(flags & BTREE_INSERT_NOFAIL));
-			if (IS_ERR(reserve))
-				return PTR_ERR(reserve);
-
-			as = bch_async_split_alloc(b, iter);
-			if (!as) {
-				bch_btree_reserve_put(c, reserve);
-				return -EIO;
-			}
-
-			/* Hack, because gc and splitting nodes doesn't mix yet: */
-			down_read(&c->gc_lock);
-		}
-
-		ret = btree_split(b, iter, insert_keys, flags, reserve, as);
-
-		/* after split, @b has been freed: */
-		if (!level) {
-			up_read(&c->gc_lock);
-			bch_btree_reserve_put(c, reserve);
-		}
-
-		return ret;
-
-	case BTREE_INSERT_ERROR:
-		/* Journal error, so we couldn't get a journal reservation: */
-		return -EIO;
+		return btree_split(b, iter, insert_keys, reserve, as);
 	default:
 		BUG();
 	}
 }
 
 /* Normal update interface: */
+
+static int bch_btree_split_leaf(struct btree_iter *iter, unsigned flags)
+{
+	struct cache_set *c = iter->c;
+	struct btree *b = iter->nodes[0];
+	struct btree_reserve *reserve;
+	struct async_split *as;
+	int ret;
+
+	/*
+	 * XXX: figure out how far we might need to split,
+	 * instead of locking/reserving all the way to the root:
+	 */
+	iter->locks_want = BTREE_MAX_DEPTH;
+	if (!bch_btree_iter_upgrade(iter))
+		return -EINTR;
+
+	reserve = bch_btree_reserve_get(c, b, iter, 0,
+					!(flags & BTREE_INSERT_NOFAIL));
+	if (IS_ERR(reserve))
+		return PTR_ERR(reserve);
+
+	as = bch_async_split_alloc(b, iter);
+	if (!as) {
+		bch_btree_reserve_put(c, reserve);
+		return -EIO;
+	}
+
+	/* Hack, because gc and splitting nodes doesn't mix yet: */
+	down_read(&c->gc_lock);
+	ret = btree_split(b, iter, NULL, reserve, as);
+	up_read(&c->gc_lock);
+
+	bch_btree_reserve_put(c, reserve);
+
+	return ret;
+}
 
 /**
  * bch_btree_insert_at - insert bkeys starting at a given btree node
@@ -1689,9 +1658,22 @@ int bch_btree_insert_at(struct btree_iter *iter,
 		EBUG_ON(bkey_cmp(bkey_start_pos(&bch_keylist_front(insert_keys)->k),
 				 iter->pos));
 
-		ret = bch_btree_insert_node(iter->nodes[0], iter, insert_keys,
-					    replace, journal_seq, flags,
-					    NULL, NULL);
+		switch (bch_btree_insert_keys_leaf(iter->nodes[0], iter,
+						   insert_keys, replace,
+						   journal_seq, flags)) {
+		case BTREE_INSERT_OK:
+			ret = 0;
+			break;
+		case BTREE_INSERT_NEED_SPLIT:
+			ret = bch_btree_split_leaf(iter, flags);
+			break;
+		case BTREE_INSERT_ERROR:
+			/* Journal error, so we couldn't get a journal reservation: */
+			ret = -EIO;
+			break;
+		default:
+			BUG();
+		}
 
 		/*
 		 * We don't test against success because we might have
@@ -1848,45 +1830,10 @@ split:
 	 */
 	bch_journal_res_put(&c->journal, &res, journal_seq);
 
-	{
-		struct btree *b = split->nodes[0];
-		struct btree_reserve *reserve;
-		struct async_split *as;
-
-		/*
-		 * XXX: figure out how far we might need to split,
-		 * instead of locking/reserving all the way to the root:
-		 */
-		split->locks_want = BTREE_MAX_DEPTH;
-		if (!bch_btree_iter_upgrade(split)) {
-			ret = -EINTR;
-			goto err;
-		}
-
-		reserve = bch_btree_reserve_get(c, b, split, 0,
-					    !(flags & BTREE_INSERT_NOFAIL));
-		if (IS_ERR(reserve)) {
-			ret = PTR_ERR(reserve);
-			goto err;
-		}
-
-		as = bch_async_split_alloc(b, split);
-		if (!as) {
-			bch_btree_reserve_put(c, reserve);
-			ret = -EIO;
-			goto err;
-		}
-
-		down_read(&c->gc_lock);
-		ret = btree_split(b, split, NULL, flags, reserve, as);
-		up_read(&c->gc_lock);
-
-		bch_btree_reserve_put(c, reserve);
-
-		if (ret)
-			goto err;
-		goto retry;
-	}
+	ret = bch_btree_split_leaf(split, flags);
+	if (ret)
+		goto err;
+	goto retry;
 err:
 	if (ret == -EAGAIN) {
 		for (i = m; i < m + nr; i++)
@@ -2031,8 +1978,6 @@ int bch_btree_node_rewrite(struct btree *b, struct btree_iter *iter, bool wait)
 	if (parent) {
 		ret = bch_btree_insert_node(parent, iter,
 					    &keylist_single(&n->key),
-					    NULL, NULL,
-					    BTREE_INSERT_NOFAIL,
 					    reserve, as);
 		BUG_ON(ret);
 	} else {
