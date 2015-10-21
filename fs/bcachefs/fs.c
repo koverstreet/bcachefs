@@ -14,6 +14,7 @@
 #include "xattr.h"
 
 #include <linux/aio.h>
+#include <linux/backing-dev.h>
 #include <linux/compat.h>
 #include <linux/falloc.h>
 #include <linux/migrate.h>
@@ -1450,7 +1451,8 @@ static int bch_page_mkwrite(struct vm_area_struct *vma, struct vm_fault *vmf)
 	file_update_time(vma->vm_file);
 
 	/*
-	 * i_mutex is required for synchronizing with fcollapse()...
+	 * i_mutex is required for synchronizing with fcollapse(), O_DIRECT
+	 * writes
 	 */
 	inode_lock(inode);
 
@@ -1485,6 +1487,115 @@ static const struct vm_operations_struct bch_vm_ops = {
 	.map_pages	= filemap_map_pages,
 	.page_mkwrite   = bch_page_mkwrite,
 };
+
+static ssize_t
+bch_direct_write(struct kiocb *iocb, struct iov_iter *from, loff_t pos)
+{
+	struct file	*file = iocb->ki_filp;
+	struct address_space *mapping = file->f_mapping;
+	ssize_t		written;
+	size_t		write_len;
+	pgoff_t		end;
+
+	write_len = iov_iter_count(from);
+	end = (pos + write_len - 1) >> PAGE_SHIFT;
+
+	written = filemap_write_and_wait_range(mapping, pos, pos + write_len - 1);
+	if (written)
+		goto out;
+
+	/*
+	 * After a write we want buffered reads to be sure to go to disk to get
+	 * the new data.  We invalidate clean cached page from the region we're
+	 * about to write.  We do this *before* the write so that we can return
+	 * without clobbering -EIOCBQUEUED from ->direct_IO().
+	 */
+	if (mapping->nrpages) {
+		written = invalidate_inode_pages2_range(mapping,
+					pos >> PAGE_SHIFT, end);
+		/*
+		 * If a page can not be invalidated, return 0 to fall back
+		 * to buffered write.
+		 */
+		if (written) {
+			if (written == -EBUSY)
+				return 0;
+			goto out;
+		}
+	}
+
+	written = mapping->a_ops->direct_IO(iocb, from);
+
+	/*
+	 * Finally, try again to invalidate clean pages which might have been
+	 * cached by non-direct readahead, or faulted in by get_user_pages()
+	 * if the source of the write was an mmap'ed region of the file
+	 * we're writing.  Either one is a pretty crazy thing to do,
+	 * so we don't support it 100%.  If this invalidation
+	 * fails, tough, the write still worked...
+	 *
+	 * Augh: this makes no sense for async writes - the second invalidate
+	 * has to come after the new data is visible. But, we can't just move it
+	 * to the end of the dio write path - for async writes we don't have
+	 * i_mutex held anymore, 
+	 */
+	if (mapping->nrpages) {
+		invalidate_inode_pages2_range(mapping,
+					      pos >> PAGE_SHIFT, end);
+	}
+out:
+	return written;
+}
+
+static ssize_t __bch_write_iter(struct kiocb *iocb, struct iov_iter *from)
+{
+	struct file *file = iocb->ki_filp;
+	struct address_space * mapping = file->f_mapping;
+	struct inode 	*inode = mapping->host;
+	ssize_t	ret;
+
+	/* We can write back this queue in page reclaim */
+	current->backing_dev_info = inode_to_bdi(inode);
+	ret = file_remove_privs(file);
+	if (ret)
+		goto out;
+
+	ret = file_update_time(file);
+	if (ret)
+		goto out;
+
+	ret = iocb->ki_flags & IOCB_DIRECT
+		? bch_direct_write(iocb, from, iocb->ki_pos)
+		: generic_perform_write(file, from, iocb->ki_pos);
+
+	if (likely(ret > 0))
+		iocb->ki_pos += ret;
+out:
+	current->backing_dev_info = NULL;
+	return ret;
+}
+
+static ssize_t bch_write_iter(struct kiocb *iocb, struct iov_iter *from)
+{
+	struct file *file = iocb->ki_filp;
+	struct inode *inode = file->f_mapping->host;
+	ssize_t ret;
+
+	inode_lock(inode);
+	ret = generic_write_checks(iocb, from);
+	if (ret > 0)
+		ret = __bch_write_iter(iocb, from);
+	inode_unlock(inode);
+
+	if (ret > 0) {
+		ssize_t err;
+
+		err = generic_write_sync(iocb, ret);
+		if (err < 0)
+			ret = err;
+	}
+	return ret;
+}
 
 static int bch_mmap(struct file *file, struct vm_area_struct *vma)
 {
@@ -1680,7 +1791,7 @@ static loff_t bch_dir_llseek(struct file *file, loff_t offset, int whence)
 static const struct file_operations bch_file_operations = {
 	.llseek		= generic_file_llseek,
 	.read_iter	= generic_file_read_iter,
-	.write_iter	= generic_file_write_iter,
+	.write_iter	= bch_write_iter,
 	.mmap		= bch_mmap,
 	.open		= generic_file_open,
 	.fsync		= bch_fsync,
