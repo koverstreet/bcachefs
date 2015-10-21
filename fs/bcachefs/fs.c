@@ -17,6 +17,7 @@
 #include <linux/compat.h>
 #include <linux/falloc.h>
 #include <linux/migrate.h>
+#include <linux/mmu_context.h>
 #include <linux/module.h>
 #include <linux/mount.h>
 #include <linux/statfs.h>
@@ -2124,6 +2125,7 @@ static int bch_releasepage(struct page *page, gfp_t gfp_mask)
 /* O_DIRECT */
 
 static struct bio_set *bch_dio_read_bioset;
+static struct bio_set *bch_dio_write_bioset;
 
 struct dio_read {
 	struct closure		cl;
@@ -2240,20 +2242,28 @@ struct dio_write {
 	struct kiocb		*req;
 	long			written;
 	long			error;
+	loff_t			offset;
 	bool			append;
-};
 
-struct dio_write_bio {
-	struct closure		cl;
-	struct dio_write	*dio;
+	struct iovec		*iovec;
+	struct iovec		inline_vecs[UIO_FASTIOV];
+	struct iov_iter		iter;
+
+	struct mm_struct	*mm;
+
 	struct bch_write_op	iop;
+	/* must be last: */
 	struct bch_write_bio	bio;
 };
 
 static void __bch_dio_write_complete(struct dio_write *dio)
 {
 	inode_dio_end(dio->req->ki_filp->f_inode);
-	kfree(dio);
+
+	if (dio->iovec && dio->iovec != dio->inline_vecs)
+		kfree(dio->iovec);
+
+	bio_put(&dio->bio.bio.bio);
 }
 
 static void bch_dio_write_complete(struct closure *cl)
@@ -2266,23 +2276,87 @@ static void bch_dio_write_complete(struct closure *cl)
 	req->ki_complete(req, ret, 0);
 }
 
-static void bch_direct_IO_write_done(struct closure *cl)
+static void bch_dio_write_done(struct dio_write *dio)
 {
-	struct dio_write_bio *op =
-		container_of(cl, struct dio_write_bio, cl);
 	struct bio_vec *bv;
 	int i;
 
-	op->dio->written += op->iop.written << 9;
+	dio->written += dio->iop.written << 9;
 
-	if (op->iop.error)
-		op->dio->error = op->iop.error;
+	if (dio->iop.error)
+		dio->error = dio->iop.error;
 
-	closure_put(&op->dio->cl);
-
-	bio_for_each_segment_all(bv, &op->bio.bio.bio, i)
+	bio_for_each_segment_all(bv, &dio->bio.bio.bio, i)
 		put_page(bv->bv_page);
-	kfree(op);
+
+	if (dio->iter.count)
+		bio_reset(&dio->bio.bio.bio);
+}
+
+static void bch_do_direct_IO_write(struct dio_write *dio, bool sync)
+{
+	struct file *file = dio->req->ki_filp;
+	struct inode *inode = file->f_inode;
+	struct bch_inode_info *ei = to_bch_ei(inode);
+	struct cache_set *c = inode->i_sb->s_fs_info;
+	struct bio *bio = &dio->bio.bio.bio;
+	unsigned flags = BCH_WRITE_CHECK_ENOSPC;
+	int ret;
+
+	if (file->f_flags & O_DSYNC || IS_SYNC(file->f_mapping->host))
+		flags |= BCH_WRITE_FLUSH;
+
+	while (dio->iter.count) {
+		bio->bi_iter.bi_sector = (dio->offset + dio->written) >> 9;
+
+		ret = bio_get_user_pages(bio, &dio->iter, 0);
+		if (ret < 0) {
+			dio->error = ret;
+			break;
+		}
+
+		bch_write_op_init(&dio->iop, c, &dio->bio, NULL,
+				  bkey_to_s_c(&KEY(inode->i_ino,
+						   bio_end_sector(bio),
+						   bio_sectors(bio))),
+				  bkey_s_c_null,
+				  &ei->journal_seq, flags);
+
+		task_io_account_write(bio->bi_iter.bi_size);
+
+		closure_call(&dio->iop.cl, bch_write, NULL, &dio->cl);
+
+		if (!sync)
+			break;
+
+		closure_sync(&dio->cl);
+		bch_dio_write_done(dio);
+	}
+}
+
+static void bch_dio_write_loop_async(struct closure *cl)
+{
+	struct dio_write *dio =
+		container_of(cl, struct dio_write, cl);
+
+	bch_dio_write_done(dio);
+
+	if (dio->iter.count) {
+		use_mm(dio->mm);
+		bch_do_direct_IO_write(dio, false);
+		unuse_mm(dio->mm);
+
+		continue_at(&dio->cl,
+			    bch_dio_write_loop_async,
+			    dio->iter.count ? system_wq : NULL);
+	} else {
+#if 0
+		closure_return_with_destructor(cl, bch_dio_write_complete);
+#else
+		closure_debug_destroy(cl);
+		bch_dio_write_complete(cl);
+#endif
+	}
 }
 
 static int bch_direct_IO_write(struct cache_set *c, struct kiocb *req,
@@ -2291,25 +2365,24 @@ static int bch_direct_IO_write(struct cache_set *c, struct kiocb *req,
 {
 	struct bch_inode_info *ei = to_bch_ei(inode);
 	struct dio_write *dio;
-	struct dio_write_bio *op;
 	struct bio *bio;
-	unsigned flags = BCH_WRITE_CHECK_ENOSPC;
-	loff_t orig_offset = offset;
+	size_t pages = iov_iter_npages(iter, BIO_MAX_PAGES);
 	ssize_t ret;
+	bool sync;
 
 	lockdep_assert_held(&inode->i_rwsem);
 
-	if (file->f_flags & O_DSYNC || IS_SYNC(file->f_mapping->host))
-		flags |= BCH_WRITE_FLUSH;
+	bio = bio_alloc_bioset(GFP_KERNEL, pages, bch_dio_write_bioset);
 
-	dio = kmalloc(sizeof(*dio), GFP_NOIO);
-	if (!dio)
-		return -ENOMEM;
-
+	dio = container_of(bio, struct dio_write, bio.bio.bio);
 	dio->req	= req;
 	dio->written	= 0;
 	dio->error	= 0;
+	dio->offset	= offset;
 	dio->append	= false;
+	dio->iovec	= NULL;
+	dio->iter	= *iter;
+	dio->mm		= current->mm;
 
 	if (offset + iter->count > inode->i_size) {
 		/*
@@ -2325,7 +2398,7 @@ static int bch_direct_IO_write(struct cache_set *c, struct kiocb *req,
 	if (ret) {
 		if (dio->append)
 			i_size_dirty_put(ei);
-		kfree(dio);
+		bio_put(bio);
 		return ret;
 	}
 
@@ -2333,68 +2406,20 @@ static int bch_direct_IO_write(struct cache_set *c, struct kiocb *req,
 
 	inode_dio_begin(inode);
 
-	while (iter->count) {
-		size_t pages = iov_iter_npages(iter, BIO_MAX_PAGES);
+	/*
+	 * appends are sync in order to do the i_size update under
+	 * i_mutex, after we know the write has completed successfully
+	 */
+	sync = is_sync_kiocb(req) || dio->append;
 
-		op = kmalloc(sizeof(*op) + sizeof(struct bio_vec) * pages,
-			     GFP_NOIO);
-		if (!op) {
-			dio->error = -ENOMEM;
-			break;
-		}
+	bch_do_direct_IO_write(dio, sync);
 
-		bio = &op->bio.bio.bio;
-		bio_init(bio);
-		bio->bi_iter.bi_sector	= offset >> 9;
-		bio->bi_max_vecs	= pages;
-		bio->bi_io_vec		= bio->bi_inline_vecs;
-
-		ret = bio_get_user_pages(bio, iter, 0);
-		if (ret < 0) {
-			dio->error = ret;
-			kfree(op);
-			break;
-		}
-
-		offset += bio->bi_iter.bi_size;
-
-		closure_get(&dio->cl);
-		op->dio = dio;
-		closure_init(&op->cl, NULL);
-
-		bch_write_op_init(&op->iop, c, &op->bio, NULL,
-				  bkey_to_s_c(&KEY(inode->i_ino,
-						   bio_end_sector(bio),
-						   bio_sectors(bio))),
-				  bkey_s_c_null,
-				  &ei->journal_seq, flags);
-
-		task_io_account_write(bio->bi_iter.bi_size);
-
-		closure_call(&op->iop.cl, bch_write, NULL, &op->cl);
-		closure_return_with_destructor_noreturn(&op->cl,
-						bch_direct_IO_write_done);
-
-		if (iter->count)
-			closure_sync(&dio->cl);
-	}
-
-	if (is_sync_kiocb(req) || dio->append) {
-		/*
-		 * appends are sync in order to do the i_size update under
-		 * i_rwsem, after we know the write has completed successfully
-		 */
-		closure_sync(&dio->cl);
+	if (sync) {
 		closure_debug_destroy(&dio->cl);
 		ret = dio->written ?: dio->error;
 
-		/*
-		 * XXX: if the bch_write call errors, we don't handle partial
-		 * writes correctly
-		 */
-
 		if (dio->append) {
-			loff_t new_i_size = orig_offset + dio->written;
+			loff_t new_i_size = offset + dio->written;
 			int ret2 = 0;
 
 			if (dio->written &&
@@ -2425,8 +2450,26 @@ static int bch_direct_IO_write(struct cache_set *c, struct kiocb *req,
 		__bch_dio_write_complete(dio);
 		return ret;
 	} else {
-		closure_return_with_destructor_noreturn(&dio->cl,
-						bch_dio_write_complete);
+		if (dio->iter.count) {
+			if (dio->iter.nr_segs > ARRAY_SIZE(dio->inline_vecs)) {
+				dio->iovec = kmalloc(dio->iter.nr_segs *
+						     sizeof(struct iovec),
+						     GFP_KERNEL);
+				if (!dio->iovec)
+					dio->error = -ENOMEM;
+			} else {
+				dio->iovec = dio->inline_vecs;
+			}
+
+			memcpy(dio->iovec,
+			       dio->iter.iov,
+			       dio->iter.nr_segs * sizeof(struct iovec));
+			dio->iter.iov = dio->iovec;
+		}
+
+		continue_at_noreturn(&dio->cl,
+				     bch_dio_write_loop_async,
+				     dio->iter.count ? system_wq : NULL);
 		return -EIOCBQUEUED;
 	}
 }
@@ -2935,6 +2978,8 @@ MODULE_ALIAS_FS("bcache");
 void bch_fs_exit(void)
 {
 	unregister_filesystem(&bcache_fs_type);
+	if (bch_dio_write_bioset)
+		bioset_free(bch_dio_write_bioset);
 	if (bch_dio_read_bioset)
 		bioset_free(bch_dio_read_bioset);
 	if (bch_writepage_bioset)
@@ -2959,6 +3004,10 @@ int __init bch_fs_init(void)
 
 	bch_dio_read_bioset = bioset_create(4, offsetof(struct dio_read, bio));
 	if (!bch_dio_read_bioset)
+		goto err;
+
+	bch_dio_write_bioset = bioset_create(4, offsetof(struct dio_write, bio.bio.bio));
+	if (!bch_dio_write_bioset)
 		goto err;
 
 	ret = register_filesystem(&bcache_fs_type);
