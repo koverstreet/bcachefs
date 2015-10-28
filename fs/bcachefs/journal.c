@@ -1384,6 +1384,21 @@ static void journal_write_done(struct closure *cl)
 
 	clear_bit(JOURNAL_IO_IN_FLIGHT, &j->flags);
 
+	/*
+	 * XXX: this is racy, we could technically end up doing the wake up
+	 * after the journal_write struct has been reused for the next write
+	 * (because we're clearing JOURNAL_IO_IN_FLIGHT) and wake up things that
+	 * are waiting on the _next_ write, not this one.
+	 *
+	 * The wake up can't come before, because journal_flush_seq_async() is
+	 * looking at JOURNAL_IO_IN_FLIGHT when it has to wait on a journal
+	 * write that was already in flight.
+	 *
+	 * The right fix is to use a lock here, but using j.lock here means it
+	 * has to be a spin_lock_irqsave() lock which then requires propagating
+	 * the irq()ness to other locks and it's all kinds of nastiness.
+	 */
+
 	closure_wake_up(&w->wait);
 	wake_up(&j->wait);
 
@@ -1814,23 +1829,28 @@ void bch_journal_flush_seq_async(struct journal *j, u64 seq, struct closure *par
 
 	BUG_ON(seq > j->seq);
 
-	if (seq == j->seq) {
-		BUG_ON(!test_bit(JOURNAL_DIRTY, &j->flags));
+	if (parent) {
+		if (seq == j->seq) {
+			if (!closure_wait(&journal_cur_write(j)->wait, parent))
+				BUG();
+		} else if (seq + 1 == j->seq &&
+			   test_bit(JOURNAL_IO_IN_FLIGHT, &j->flags)) {
+			if (!closure_wait(&journal_prev_write(j)->wait, parent))
+				BUG();
 
-		if (parent &&
-		    !closure_wait(&journal_cur_write(j)->wait, parent))
-			BUG();
+			smp_mb();
 
-		journal_try_write(j);
-		return;
-	} else if (seq + 1 == j->seq &&
-		   test_bit(JOURNAL_IO_IN_FLIGHT, &j->flags)) {
-		if (parent &&
-		    !closure_wait(&journal_prev_write(j)->wait, parent))
-			BUG();
+			if (!test_bit(JOURNAL_IO_IN_FLIGHT, &j->flags))
+				closure_wake_up(&journal_prev_write(j)->wait);
+		}
 	}
 
-	journal_unlock(j);
+	if (seq == j->seq) {
+		BUG_ON(!test_bit(JOURNAL_DIRTY, &j->flags));
+		journal_try_write(j);
+	} else {
+		journal_unlock(j);
+	}
 }
 
 int bch_journal_flush_seq(struct journal *j, u64 seq)
