@@ -1024,6 +1024,43 @@ retry:
 	continue_at(cl, async_split_update_done, system_wq);
 }
 
+static void btree_node_interior_verify(struct btree *b)
+{
+	const struct bkey_format *f = &b->keys.format;
+	struct btree_node_iter iter;
+	struct bkey_packed *k;
+
+	BUG_ON(!b->level);
+
+	bch_btree_node_iter_init(&iter, &b->keys, b->key.k.p, false);
+#if 1
+	BUG_ON(!(k = bch_btree_node_iter_next(&iter, &b->keys)) ||
+	       bkey_cmp_left_packed(f, k, b->key.k.p) ||
+	       bch_btree_node_iter_peek(&iter, &b->keys));
+#else
+	const char *msg;
+
+	msg = "not found";
+	k = bch_btree_node_iter_next(&iter, &b->keys);
+	if (!k)
+		goto err;
+
+	msg = "isn't what it should be";
+	if (bkey_cmp_left_packed(f, k, b->key.k.p))
+		goto err;
+
+	msg = "isn't last key";
+	if (bch_btree_node_iter_peek(&iter, &b->keys))
+		goto err;
+	return;
+err:
+	bch_dump_bucket(&b->keys);
+	printk(KERN_ERR "last key %llu:%llu %s\n", b->key.k.p.inode,
+	       b->key.k.p.offset, msg);
+	BUG();
+#endif
+}
+
 static enum btree_insert_status
 bch_btree_insert_keys_interior(struct btree *b,
 			       struct btree_iter *iter,
@@ -1086,6 +1123,8 @@ bch_btree_insert_keys_interior(struct btree *b,
 		;
 
 	continue_at_noreturn(&as->cl, async_split_writes_done, system_wq);
+
+	btree_node_interior_verify(b);
 
 	return BTREE_INSERT_OK;
 }
@@ -1272,6 +1311,11 @@ static struct btree *__btree_split_node(struct btree_iter *iter, struct btree *n
 	bch_verify_btree_nr_keys(&n1->keys);
 	bch_verify_btree_nr_keys(&n2->keys);
 
+	if (n1->level) {
+		btree_node_interior_verify(n1);
+		btree_node_interior_verify(n2);
+	}
+
 	return n2;
 }
 
@@ -1305,6 +1349,8 @@ static void btree_split_insert_keys(struct btree_iter *iter, struct btree *b,
 	}
 
 	six_unlock_write(&b->lock);
+
+	btree_node_interior_verify(b);
 }
 
 static int btree_split(struct btree *b, struct btree_iter *iter,
@@ -1385,6 +1431,8 @@ static int btree_split(struct btree *b, struct btree_iter *iter,
 					(void *) k);
 			} else
 				k = bkey_next(k);
+
+		btree_node_interior_verify(n1);
 	}
 
 	if (__set_blocks(n1->data,
