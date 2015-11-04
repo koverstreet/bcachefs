@@ -1054,6 +1054,8 @@ static void handle_existing_key_newer(struct btree_iter *iter, struct btree *b,
 	}
 }
 
+#define MAX_LOCK_HOLD_TIME	(5 * NSEC_PER_MSEC)
+
 /**
  * bch_extent_insert_fixup - insert a new extent and deal with overlaps
  *
@@ -1113,6 +1115,8 @@ bool bch_insert_fixup_extent(struct btree_iter *iter, struct btree *b,
 	struct bkey_s k;
 	BKEY_PADDED(k) split;
 	bool inserted = false;
+	unsigned nr_done = 0;
+	u64 start_time = local_clock();
 
 	BUG_ON(bkey_deleted(&insert->k));
 	BUG_ON(!insert->k.size);
@@ -1159,7 +1163,7 @@ bool bch_insert_fixup_extent(struct btree_iter *iter, struct btree *b,
 	while (insert->k.size &&
 	       (_k = bch_btree_node_iter_peek_overlapping(node_iter, &b->keys,
 							  &insert->k))) {
-		bool needs_split, res_full;
+		bool needs_split, res_full, need_unlock;
 
 		bkey_disassemble(&tup, f, _k);
 
@@ -1178,7 +1182,18 @@ bool bch_insert_fixup_extent(struct btree_iter *iter, struct btree *b,
 			       BKEY_EXTENT_MAX_U64s * 3);
 		res_full = journal_res_full(res, &insert->k);
 
-		if (needs_split || res_full) {
+		/*
+		 * A discard operation can end up overwriting a _lot_ of
+		 * extents and doing a lot of work under the btree node write
+		 * lock - bail out if we've been running for too long and
+		 * readers are waiting on the lock:
+		 */
+		need_unlock = nr_done > 10 &&
+			time_after64(local_clock(), start_time +
+				     MAX_LOCK_HOLD_TIME) &&
+			!list_empty_careful(&b->lock.wait_list[SIX_LOCK_read]);
+
+		if (needs_split || res_full || need_unlock) {
 			/*
 			 * XXX: would be better to explicitly signal that we
 			 * need to split
