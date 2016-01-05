@@ -450,14 +450,24 @@ static struct bkey_packed *table_to_bkey(struct bset_tree *t,
 static inline unsigned bfloat_mantissa(const struct bkey_packed *k,
 				       const struct bkey_float *f)
 {
-	u64 *ptr;
+	u64 v;
 
 	EBUG_ON(!bkey_packed(k));
 
-	ptr = (u64 *) (((u32 *) k->_data) + (f->exponent >> 5));
+	v = get_unaligned((u64 *) (((u32 *) k->_data) + (f->exponent >> 5)));
 
-	return (get_unaligned(ptr) >> (f->exponent & 31)) &
-		BKEY_MANTISSA_MASK;
+	/*
+	 * In little endian, we're shifting off low bits (and then the bits we
+	 * want are at the low end), in big endian we're shifting off high bits
+	 * (and then the bits we want are at the high end, so we shift them
+	 * back down):
+	 */
+#ifdef __LITTLE_ENDIAN
+	v >>= f->exponent & 31;
+#else
+	v >>= 64 - BKEY_MANTISSA_BITS - (f->exponent & 31);
+#endif
+	return v & BKEY_MANTISSA_MASK;
 }
 
 static void make_bfloat(struct bkey_format *format,
@@ -474,8 +484,7 @@ static void make_bfloat(struct bkey_format *format,
 	struct bkey_packed *r = is_power_of_2(j + 1)
 		? bset_bkey_idx(t->data, t->data->u64s - t->end.u64s)
 		: tree_to_bkey(t, j >> (ffz(j) + 1));
-	unsigned exponent, shift, extra = 0, key_bits_start =
-		format->key_u64s * 64 - bkey_format_key_bits(format);
+	int shift, exponent;
 
 	EBUG_ON(m < l || m > r);
 	EBUG_ON(bkey_next(p) != m);
@@ -491,33 +500,48 @@ static void make_bfloat(struct bkey_format *format,
 		return;
 	}
 
-	exponent = max_t(int, bkey_greatest_differing_bit(format, l, r) -
-			 BKEY_MANTISSA_BITS + 1, 0);
-
-#ifdef __LITTLE_ENDIAN
-	shift = key_bits_start + exponent;
-#endif
-	EBUG_ON(shift >= BFLOAT_FAILED);
+	/*
+	 * The greatest differing bit of l and r is the first bit we must
+	 * include in the bfloat mantissa we're creating in order to do
+	 * comparisons - that bit always becomes the high bit of
+	 * bfloat->mantissa, and thus the exponent we're calculating here is
+	 * the position of what will become the low bit in bfloat->mantissa:
+	 *
+	 * Note that this may be negative - we may be running off the low end
+	 * of the key: we handle this later:
+	 */
+	exponent = (int) bkey_greatest_differing_bit(format, l, r) -
+		(BKEY_MANTISSA_BITS - 1);
 
 	/*
-	 * There might be fewer key bits than BKEY_MANTISSA_BITS:
-	 * bfloat_mantissa() is in the fast path so it doesn't check for this -
-	 * it's going to return some garbage bits we don't want.
-	 *
-	 * So firstly, ensure that the garbage bits are the least significant
-	 * bits:
+	 * Then we calculate the actual shift value, from the start of the key
+	 * (k->_data), to get the key bits starting at exponent:
 	 */
-	if (shift > format->key_u64s * 64 - BKEY_MANTISSA_BITS) {
-		shift = format->key_u64s * 64 - BKEY_MANTISSA_BITS;
-		extra = key_bits_start - shift;
-	}
+#ifdef __LITTLE_ENDIAN
+	shift = (int) (format->key_u64s * 64 -
+		       bkey_format_key_bits(format)) +
+		exponent;
+
+	EBUG_ON(shift + BKEY_MANTISSA_BITS > format->key_u64s * 64);
+#else
+	shift = high_bit_offset +
+		bkey_format_key_bits(format) -
+		exponent -
+		BKEY_MANTISSA_BITS;
+
+	EBUG_ON(shift < KEY_PACKED_BITS_START);
+#endif
+	EBUG_ON(shift < 0 || shift >= BFLOAT_FAILED);
+
+	f->exponent = shift;
+	f->mantissa = bfloat_mantissa(m, f);
 
 	/*
 	 * If we've got garbage bits, set them to all 1s - it's legal for the
 	 * bfloat to compare larger than the original key, but not smaller:
 	 */
-	f->exponent = shift;
-	f->mantissa = bfloat_mantissa(m, f) | ~(~0U << extra);
+	if (exponent < 0)
+		f->mantissa |= ~(~0U << -exponent);
 
 	/*
 	 * The bfloat must be able to tell its key apart from the previous key -
@@ -525,7 +549,7 @@ static void make_bfloat(struct bkey_format *format,
 	 * flag as failed - unless the keys are actually equal, in which case
 	 * we aren't required to return a specific one:
 	 */
-	if (shift > key_bits_start &&
+	if (exponent > 0 &&
 	    f->mantissa == bfloat_mantissa(p, f) &&
 	    bkey_cmp_packed(format, p, m)) {
 		f->exponent = BFLOAT_FAILED_PREV;
@@ -537,8 +561,7 @@ static void make_bfloat(struct bkey_format *format,
 	 * the comparison in bset_search_tree. If we're dropping set bits,
 	 * increment it:
 	 */
-	if (shift > key_bits_start &&
-	    shift > key_bits_start + bkey_ffs(format, m)) {
+	if (exponent > (int) bkey_ffs(format, m)) {
 		if (f->mantissa == BKEY_MANTISSA_MASK)
 			f->exponent = BFLOAT_FAILED_OVERFLOW;
 

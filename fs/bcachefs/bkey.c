@@ -633,7 +633,10 @@ const char *bch_bkey_format_validate(struct bkey_format *f)
 	return NULL;
 }
 
-/* Most significant differing bit */
+/*
+ * Most significant differing bit
+ * Bits are indexed from 0 - return is [0, nr_key_bits)
+ */
 unsigned bkey_greatest_differing_bit(const struct bkey_format *format,
 				     const struct bkey_packed *l_k,
 				     const struct bkey_packed *r_k)
@@ -644,7 +647,6 @@ unsigned bkey_greatest_differing_bit(const struct bkey_format *format,
 	u64 l_v, r_v;
 
 	/* for big endian, skip past header */
-	nr_key_bits += high_bit_offset;
 	l_v = *l & (~0ULL >> high_bit_offset);
 	r_v = *r & (~0ULL >> high_bit_offset);
 
@@ -658,7 +660,7 @@ unsigned bkey_greatest_differing_bit(const struct bkey_format *format,
 		}
 
 		if (l_v != r_v)
-			return fls64(l_v ^ r_v) + nr_key_bits;
+			return fls64(l_v ^ r_v) - 1 + nr_key_bits;
 
 		if (!nr_key_bits)
 			return 0;
@@ -671,6 +673,10 @@ unsigned bkey_greatest_differing_bit(const struct bkey_format *format,
 	}
 }
 
+/*
+ * First set bit
+ * Bits are indexed from 0 - return is [0, nr_key_bits)
+ */
 unsigned bkey_ffs(const struct bkey_format *format,
 		  const struct bkey_packed *k)
 {
