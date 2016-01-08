@@ -185,8 +185,8 @@ static int bch_congested_fn(void *data, int bdi_bits)
 
 /* Superblock */
 
-const char *validate_cache_member(struct cache_sb *sb,
-				  struct cache_member *mi)
+static const char *validate_cache_member(struct cache_sb *sb,
+					 struct cache_member *mi)
 {
 	if (mi->nbuckets > LONG_MAX)
 		return "Too many buckets";

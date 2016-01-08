@@ -1767,7 +1767,7 @@ setflags_out:
 }
 
 #ifdef CONFIG_COMPAT
-long bch_compat_fs_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
+static long bch_compat_fs_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 {
 	/* These are just misnamed, they actually get/put from/to user an int */
 	switch (cmd) {

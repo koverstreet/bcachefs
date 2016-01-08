@@ -4,6 +4,7 @@
 #include "dirent.h"
 #include "error.h"
 #include "fs.h"
+#include "fs-gc.h"
 #include "inode.h"
 #include "keylist.h"
 #include "super.h"

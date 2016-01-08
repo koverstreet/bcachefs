@@ -565,7 +565,7 @@ bch_btree_node_iter_peek_overlapping(struct btree_node_iter *iter,
 		bch_btree_node_iter_next_all(iter, b);
 
 	if (!ret)
-		return false;
+		return NULL;
 
 	u = bkey_unpack_key(f, ret);
 

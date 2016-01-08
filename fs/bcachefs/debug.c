@@ -354,8 +354,8 @@ static ssize_t bch_read_btree(struct file *file, char __user *buf,
 	bch_btree_iter_init(&iter, i->c, i->id, i->from);
 
 	while ((k = bch_btree_iter_peek(&iter)).k) {
-		bch_bkey_val_to_text(i->c, i->id, i->buf,
-				     sizeof(i->buf), k);
+		bch_bkey_val_to_text(i->c, bkey_type(0, i->id),
+				     i->buf, sizeof(i->buf), k);
 		i->bytes = strlen(i->buf);
 		BUG_ON(i->bytes >= PAGE_SIZE);
 		i->buf[i->bytes] = '\n';

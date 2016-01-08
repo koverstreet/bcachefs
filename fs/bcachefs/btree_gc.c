@@ -408,7 +408,7 @@ void bch_gc(struct cache_set *c)
 	/* Walk btree: */
 	while (c->gc_pos.phase < (int) BTREE_ID_NR) {
 		int ret = c->btree_roots[c->gc_pos.phase]
-			? bch_gc_btree(c, c->gc_pos.phase)
+			? bch_gc_btree(c, (int) c->gc_pos.phase)
 			: 0;
 
 		if (ret) {

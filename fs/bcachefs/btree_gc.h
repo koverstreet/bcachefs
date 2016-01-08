@@ -80,7 +80,7 @@ static inline struct gc_pos gc_pos_btree_node(struct btree *b)
 static inline struct gc_pos gc_pos_btree_root(enum btree_id id)
 {
 	return (struct gc_pos) {
-		.phase	= id,
+		.phase	= (int) id,
 		.pos	= POS_MAX,
 		.level	= U8_MAX,
 	};

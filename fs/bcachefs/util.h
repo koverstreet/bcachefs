@@ -46,6 +46,13 @@ struct closure;
 
 #endif
 
+#ifndef __CHECKER__
+#define __flatten __attribute__((flatten))
+#else
+/* sparse doesn't know about attribute((flatten)) */
+#define __flatten
+#endif
+
 #define DECLARE_HEAP(type, name)					\
 	struct {							\
 		size_t size, used;					\

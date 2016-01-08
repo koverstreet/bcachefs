@@ -947,7 +947,7 @@ EXPORT_SYMBOL(bch_bset_insert);
 
 /* Lookup */
 
-__attribute__((flatten))
+__flatten
 static struct bkey_packed *bset_search_write_set(const struct bkey_format *f,
 				struct bset_tree *t,
 				struct bpos search,
@@ -968,7 +968,7 @@ static struct bkey_packed *bset_search_write_set(const struct bkey_format *f,
 	return table_to_bkey(t, li);
 }
 
-__attribute__((flatten))
+__flatten
 static struct bkey_packed *bset_search_tree(const struct bkey_format *format,
 				struct bset_tree *t,
 				struct bpos search,

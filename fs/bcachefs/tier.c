@@ -7,6 +7,7 @@
 #include "io.h"
 #include "keylist.h"
 #include "move.h"
+#include "tier.h"
 
 #include <linux/delay.h>
 #include <linux/freezer.h>

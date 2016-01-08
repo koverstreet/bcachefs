@@ -502,7 +502,7 @@ const struct bkey_ops bch_bkey_btree_ops = {
 
 /* Extents */
 
-bool __bch_cut_front(struct bpos where, struct bkey_s k)
+static bool __bch_cut_front(struct bpos where, struct bkey_s k)
 {
 	u64 len = 0;
 

@@ -343,7 +343,7 @@ bool bkey_pack_key(struct bkey_packed *out, const struct bkey *in,
 /**
  * bkey_unpack_key -- unpack just the key, not the value
  */
-__attribute__((flatten))
+__flatten
 struct bkey bkey_unpack_key(const struct bkey_format *format,
 			    const struct bkey_packed *src)
 {
@@ -794,7 +794,7 @@ int __bkey_cmp_packed(const struct bkey_format *f,
 	return ret;
 }
 
-__attribute__((flatten))
+__flatten
 int __bkey_cmp_left_packed(const struct bkey_format *format,
 			   const struct bkey_packed *l, struct bpos r)
 {

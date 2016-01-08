@@ -1561,7 +1561,16 @@ static bool __journal_write(struct journal *j, bool need_write_just_set)
 	j->write_start_time = local_clock();
 
 	__set_current_state(TASK_RUNNING);
+
+#if 0
 	closure_call(&j->io, journal_write_locked, NULL, &c->cl);
+#else
+	/* Shut sparse up: */
+	closure_init(&j->io, &c->cl);
+	set_closure_fn(&j->io, journal_write_locked, NULL);
+	journal_write_locked(&j->io);
+#endif
+
 	return true;
 journal_error:
 	closure_wake_up(&journal_cur_write(j)->wait);
@@ -1571,6 +1580,7 @@ nowrite:
 }
 
 static bool journal_try_write(struct journal *j)
+	__releases(j->lock)
 {
 	bool set_need_write = false;
 
@@ -1583,6 +1593,7 @@ static bool journal_try_write(struct journal *j)
 }
 
 static void journal_unlock(struct journal *j)
+	__releases(j->lock)
 {
 	if (test_bit(JOURNAL_NEED_WRITE, &j->flags))
 		__journal_write(j, false);
