@@ -87,9 +87,9 @@ struct moving_io {
 	 * If write_issued, we hold a reference on q->write_count
 	 * Until IO is freed, we hold a reference on q->count
 	 */
-	int			read_issued : 1;
-	int			read_completed : 1;
-	int			write_issued : 1;
+	unsigned		read_issued:1;
+	unsigned		read_completed:1;
+	unsigned		write_issued:1;
 	/* Must be last since it is variable size */
 	struct bch_write_bio	bio;
 };
