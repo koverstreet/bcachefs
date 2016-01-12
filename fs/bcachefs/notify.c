@@ -34,7 +34,7 @@ static void notify_get_cache(struct cache *ca)
 	char buf[BDEVNAME_SIZE];
 
 	notify_get(c);
-	notify_var(c, "UUID=%pU", ca->sb.disk_uuid.b);
+	notify_var(c, "UUID=%pU", ca->disk_sb.sb->disk_uuid.b);
 	notify_var(c, "BLOCKDEV=%s", bdevname(ca->disk_sb.bdev, buf));
 }
 

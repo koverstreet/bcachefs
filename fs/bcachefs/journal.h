@@ -252,7 +252,7 @@ int bch_cache_journal_alloc(struct cache *);
 
 static inline u64 *__journal_buckets(struct cache *ca)
 {
-	return ca->disk_sb.sb->_data + bch_journal_buckets_offset(&ca->sb);
+	return ca->disk_sb.sb->_data + bch_journal_buckets_offset(ca->disk_sb.sb);
 }
 
 static inline u64 journal_bucket(struct cache *ca, unsigned nr)

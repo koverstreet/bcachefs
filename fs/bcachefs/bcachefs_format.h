@@ -814,7 +814,7 @@ static inline unsigned bch_journal_buckets_offset(struct cache_sb *sb)
 
 static inline unsigned bch_nr_journal_buckets(struct cache_sb *sb)
 {
-	return sb->u64s - bch_journal_buckets_offset(sb);
+	return le16_to_cpu(sb->u64s) - bch_journal_buckets_offset(sb);
 }
 
 static inline _Bool __SB_IS_BDEV(__u64 version)

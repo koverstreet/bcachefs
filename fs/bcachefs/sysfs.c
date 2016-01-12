@@ -1159,14 +1159,15 @@ static ssize_t show_cache_alloc_debug(struct cache *ca, char *buf)
 SHOW(bch_cache)
 {
 	struct cache *ca = container_of(kobj, struct cache, kobj);
+	struct cache_set *c = ca->set;
 	struct bucket_stats stats = bch_bucket_stats_read(ca);
 
-	sysfs_printf(uuid,		"%pU\n", ca->sb.disk_uuid.b);
+	sysfs_printf(uuid,		"%pU\n", ca->disk_sb.sb->disk_uuid.b);
 
 	sysfs_hprint(bucket_size,	bucket_bytes(ca));
 	sysfs_print(bucket_size_bytes,	bucket_bytes(ca));
-	sysfs_hprint(block_size,	block_bytes(ca));
-	sysfs_print(block_size_bytes,	block_bytes(ca));
+	sysfs_hprint(block_size,	block_bytes(c));
+	sysfs_print(block_size_bytes,	block_bytes(c));
 	sysfs_print(first_bucket,	ca->mi.first_bucket);
 	sysfs_print(nbuckets,		ca->mi.nbuckets);
 	sysfs_print(discard,		CACHE_DISCARD(&ca->mi));

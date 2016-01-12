@@ -185,114 +185,108 @@ static int bch_congested_fn(void *data, int bdi_bits)
 
 /* Superblock */
 
-static const char *validate_cache_member(struct cache_sb *sb,
-					 struct cache_member *mi)
+static const char *validate_cache_super(struct cache_set *c, struct cache *ca)
 {
-	if (mi->nbuckets > LONG_MAX)
-		return "Too many buckets";
-
-	if (mi->nbuckets < 1 << 8)
-		return "Not enough buckets";
-
-	if (!is_power_of_2(mi->bucket_size) ||
-	    mi->bucket_size < PAGE_SECTORS ||
-	    mi->bucket_size < sb->block_size)
-		return "Bad bucket size";
-
-	return NULL;
-}
-
-static const char *validate_super(struct bcache_superblock *disk_sb,
-				  struct cache_sb *sb)
-{
-	const char *err;
-	struct cache_sb *s = disk_sb->sb;
-
-	sb->offset		= le64_to_cpu(s->offset);
-	sb->version		= le64_to_cpu(s->version);
-	sb->seq			= le64_to_cpu(s->seq);
-
-	sb->magic		= s->magic;
-	sb->disk_uuid		= s->disk_uuid;
-	sb->user_uuid		= s->user_uuid;
-	sb->set_uuid		= s->set_uuid;
-	memcpy(sb->label,	s->label, SB_LABEL_SIZE);
-
-	sb->flags		= le64_to_cpu(s->flags);
-	sb->block_size		= le16_to_cpu(s->block_size);
-	sb->u64s		= le16_to_cpu(s->u64s);
+	struct cache_sb *sb = ca->disk_sb.sb;
+	u16 block_size;
+	unsigned i;
 
 	switch (sb->version) {
 	case BCACHE_SB_VERSION_CDEV_V0:
 	case BCACHE_SB_VERSION_CDEV_WITH_UUID:
 	case BCACHE_SB_VERSION_CDEV_V2:
 	case BCACHE_SB_VERSION_CDEV_V3:
-		sb->nr_in_set	= le16_to_cpu(s->nr_in_set);
-		sb->nr_this_dev	= le16_to_cpu(s->nr_this_dev);
-
-		if (CACHE_SYNC(sb) &&
-		    sb->version != BCACHE_SB_VERSION_CDEV_V3)
-			return "Unsupported superblock version";
-
-		if (!is_power_of_2(sb->block_size) ||
-		    sb->block_size > PAGE_SECTORS)
-			return "Bad block size";
-
-		if (bch_is_zero(sb->disk_uuid.b, sizeof(uuid_le)))
-			return "Bad disk UUID";
-
-		if (bch_is_zero(sb->user_uuid.b, sizeof(uuid_le)))
-			return "Bad user UUID";
-
-		if (bch_is_zero(sb->set_uuid.b, sizeof(uuid_le)))
-			return "Bad set UUID";
-
-		if (!sb->nr_in_set ||
-		    sb->nr_in_set <= sb->nr_this_dev ||
-		    sb->nr_in_set > MAX_CACHES_PER_SET)
-			return "Bad cache device number in set";
-
-		if (!CACHE_SET_META_REPLICAS_WANT(sb) ||
-		    CACHE_SET_META_REPLICAS_WANT(sb) >= BCH_REPLICAS_MAX)
-			return "Invalid number of metadata replicas";
-
-		if (!CACHE_SET_META_REPLICAS_HAVE(sb) ||
-		    CACHE_SET_META_REPLICAS_HAVE(sb) >
-		    CACHE_SET_META_REPLICAS_WANT(sb))
-			return "Invalid number of metadata replicas";
-
-		if (!CACHE_SET_DATA_REPLICAS_WANT(sb) ||
-		    CACHE_SET_DATA_REPLICAS_WANT(sb) >= BCH_REPLICAS_MAX)
-			return "Invalid number of data replicas";
-
-		if (!CACHE_SET_DATA_REPLICAS_HAVE(sb) ||
-		    CACHE_SET_DATA_REPLICAS_HAVE(sb) >
-		    CACHE_SET_DATA_REPLICAS_WANT(sb))
-			return "Invalid number of data replicas";
-
-		if (CACHE_SB_CSUM_TYPE(sb) >= BCH_CSUM_NR)
-			return "Invalid checksum type";
-
-		if (!CACHE_BTREE_NODE_SIZE(sb))
-			return "Btree node size not set";
-
-		if (!is_power_of_2(CACHE_BTREE_NODE_SIZE(sb)))
-			return "Btree node size not a power of two";
-
-		if (CACHE_BTREE_NODE_SIZE(sb) > BTREE_NODE_SIZE_MAX)
-			return "Btree node size too large";
-
-		if (sb->u64s < bch_journal_buckets_offset(sb))
-			return "Invalid superblock: member info area missing";
-
-		if ((err = validate_cache_member(sb, s->members +
-						 sb->nr_this_dev)))
-			return err;
-
 		break;
 	default:
 		return"Unsupported superblock version";
 	}
+
+	if (CACHE_SYNC(sb) &&
+	    sb->version != BCACHE_SB_VERSION_CDEV_V3)
+		return "Unsupported superblock version";
+
+	block_size = le16_to_cpu(sb->block_size);
+
+	if (!is_power_of_2(block_size) ||
+	    block_size > PAGE_SECTORS)
+		return "Bad block size";
+
+	if (bch_is_zero(sb->disk_uuid.b, sizeof(uuid_le)))
+		return "Bad disk UUID";
+
+	if (bch_is_zero(sb->user_uuid.b, sizeof(uuid_le)))
+		return "Bad user UUID";
+
+	if (bch_is_zero(sb->set_uuid.b, sizeof(uuid_le)))
+		return "Bad set UUID";
+
+	if (!sb->nr_in_set ||
+	    sb->nr_in_set <= sb->nr_this_dev ||
+	    sb->nr_in_set > MAX_CACHES_PER_SET)
+		return "Bad cache device number in set";
+
+	if (!CACHE_SET_META_REPLICAS_WANT(sb) ||
+	    CACHE_SET_META_REPLICAS_WANT(sb) >= BCH_REPLICAS_MAX)
+		return "Invalid number of metadata replicas";
+
+	if (!CACHE_SET_META_REPLICAS_HAVE(sb) ||
+	    CACHE_SET_META_REPLICAS_HAVE(sb) >
+	    CACHE_SET_META_REPLICAS_WANT(sb))
+		return "Invalid number of metadata replicas";
+
+	if (!CACHE_SET_DATA_REPLICAS_WANT(sb) ||
+	    CACHE_SET_DATA_REPLICAS_WANT(sb) >= BCH_REPLICAS_MAX)
+		return "Invalid number of data replicas";
+
+	if (!CACHE_SET_DATA_REPLICAS_HAVE(sb) ||
+	    CACHE_SET_DATA_REPLICAS_HAVE(sb) >
+	    CACHE_SET_DATA_REPLICAS_WANT(sb))
+		return "Invalid number of data replicas";
+
+	if (CACHE_SB_CSUM_TYPE(sb) >= BCH_CSUM_NR)
+		return "Invalid checksum type";
+
+	if (!CACHE_BTREE_NODE_SIZE(sb))
+		return "Btree node size not set";
+
+	if (!is_power_of_2(CACHE_BTREE_NODE_SIZE(sb)))
+		return "Btree node size not a power of two";
+
+	if (CACHE_BTREE_NODE_SIZE(sb) > BTREE_NODE_SIZE_MAX)
+		return "Btree node size too large";
+
+	if (le16_to_cpu(sb->u64s) < bch_journal_buckets_offset(sb))
+		return "Invalid superblock: member info area missing";
+
+	ca->mi = sb->members[sb->nr_this_dev];
+
+	if (ca->mi.nbuckets > LONG_MAX)
+		return "Too many buckets";
+
+	if (ca->mi.nbuckets < 1 << 8)
+		return "Not enough buckets";
+
+	if (!is_power_of_2(ca->mi.bucket_size) ||
+	    ca->mi.bucket_size < PAGE_SECTORS ||
+	    ca->mi.bucket_size < sb->block_size)
+		return "Bad bucket size";
+
+	ca->bucket_bits = ilog2(ca->mi.bucket_size);
+
+	if (get_capacity(ca->disk_sb.bdev->bd_disk) <
+	    ca->mi.bucket_size * ca->mi.nbuckets)
+		return "Invalid superblock: device too small";
+
+	if (le64_to_cpu(sb->offset) +
+	    (__set_blocks(sb, le16_to_cpu(sb->u64s),
+			  block_bytes(c)) << c->block_bits) >
+	    ca->mi.first_bucket << ca->bucket_bits)
+		return "Invalid superblock: first bucket comes before end of super";
+
+	for (i = 0; i < bch_nr_journal_buckets(sb); i++)
+		if (journal_bucket(ca, i) <  ca->mi.first_bucket ||
+		    journal_bucket(ca, i) >= ca->mi.nbuckets)
+			return "bad journal bucket";
 
 	return NULL;
 }
@@ -472,10 +466,11 @@ static void bcache_write_super_unlock(struct closure *cl)
 	up(&c->sb_write_mutex);
 }
 
-static int cache_sb_to_cache_set(struct cache_set *c, struct cache_sb *sb)
+static int cache_sb_to_cache_set(struct cache_set *c, struct cache_sb *src)
 {
 	struct cache_member_rcu *new, *old;
-	unsigned nr_in_set = le16_to_cpu(sb->nr_in_set);
+	struct cache_sb *dst = &c->sb;
+	unsigned nr_in_set = le16_to_cpu(src->nr_in_set);
 
 	new = kzalloc(sizeof(struct cache_member_rcu) +
 		      sizeof(struct cache_member) * nr_in_set,
@@ -484,7 +479,7 @@ static int cache_sb_to_cache_set(struct cache_set *c, struct cache_sb *sb)
 		return -ENOMEM;
 
 	new->nr_in_set = nr_in_set;
-	memcpy(&new->m, sb->members,
+	memcpy(&new->m, src->members,
 	       nr_in_set * sizeof(new->m[0]));
 
 	old = rcu_dereference_protected(c->members,
@@ -494,38 +489,43 @@ static int cache_sb_to_cache_set(struct cache_set *c, struct cache_sb *sb)
 	if (old)
 		kfree_rcu(old, rcu);
 
-	c->sb.version		= le64_to_cpu(sb->version);
-	c->sb.seq		= le64_to_cpu(sb->seq);
-	c->sb.user_uuid		= sb->user_uuid;
-	c->sb.set_uuid		= sb->set_uuid;
-	memcpy(c->sb.label, sb->label, SB_LABEL_SIZE);
-	c->sb.nr_in_set		= le16_to_cpu(sb->nr_in_set);
-	c->sb.flags		= le64_to_cpu(sb->flags);
-	c->sb.block_size	= le16_to_cpu(sb->block_size);
+	dst->version		= src->version;
+	dst->seq		= src->seq;
+	dst->user_uuid		= src->user_uuid;
+	dst->set_uuid		= src->set_uuid;
+	memcpy(dst->label, src->label, SB_LABEL_SIZE);
+	dst->nr_in_set		= src->nr_in_set;
+	dst->flags		= src->flags;
+	dst->block_size		= src->block_size;
 
-	pr_debug("set version = %llu", c->sb.version);
+	pr_debug("set version = %llu", le64_to_cpu(c->sb.version));
 	return 0;
 }
 
 static int cache_sb_from_cache_set(struct cache_set *c, struct cache *ca)
 {
+	struct cache_sb *src = &c->sb, *dst = ca->disk_sb.sb;
 	struct cache_member_rcu *mi;
 
-	if (ca->sb.nr_in_set != c->sb.nr_in_set) {
-		unsigned old_offset = bch_journal_buckets_offset(&ca->sb);
-		unsigned u64s = bch_journal_buckets_offset(&c->sb)
-			+ bch_nr_journal_buckets(&ca->sb);
+	if (src->nr_in_set != dst->nr_in_set) {
+		/*
+		 * We have to preserve the list of journal buckets on the
+		 * cache's superblock:
+		 */
+		unsigned old_offset = bch_journal_buckets_offset(dst);
+		unsigned u64s = bch_journal_buckets_offset(src)
+			+ bch_nr_journal_buckets(dst);
 		int ret = bch_super_realloc(&ca->disk_sb, u64s);
 
 		if (ret)
 			return ret;
 
-		ca->sb.nr_in_set = c->sb.nr_in_set;
-		ca->sb.u64s = u64s;
+		dst->nr_in_set	= src->nr_in_set;
+		dst->u64s	= cpu_to_le16(u64s);
 
-		memmove(__journal_buckets(ca),
-			ca->disk_sb.sb->_data + old_offset,
-			bch_nr_journal_buckets(&ca->sb) * sizeof(u64));
+		memmove(dst->_data + bch_journal_buckets_offset(dst),
+			dst->_data + old_offset,
+			bch_nr_journal_buckets(dst) * sizeof(u64));
 	}
 
 	mi = cache_member_info_get(c);
@@ -535,13 +535,13 @@ static int cache_sb_from_cache_set(struct cache_set *c, struct cache *ca)
 	       mi->nr_in_set * sizeof(mi->m[0]));
 	cache_member_info_put();
 
-	ca->sb.version		= BCACHE_SB_VERSION_CDEV;
-	ca->sb.seq		= c->sb.seq;
-	ca->sb.user_uuid	= c->sb.user_uuid;
-	ca->sb.set_uuid		= c->sb.set_uuid;
-	memcpy(ca->sb.label, c->sb.label, SB_LABEL_SIZE);
-	ca->sb.nr_in_set	= c->sb.nr_in_set;
-	ca->sb.flags		= c->sb.flags;
+	dst->version		= BCACHE_SB_VERSION_CDEV;
+	dst->seq		= src->seq;
+	dst->user_uuid		= src->user_uuid;
+	dst->set_uuid		= src->set_uuid;
+	memcpy(dst->label, src->label, SB_LABEL_SIZE);
+	dst->nr_in_set		= src->nr_in_set;
+	dst->flags		= src->flags;
 
 	return 0;
 }
@@ -557,29 +557,13 @@ static void __bcache_write_super(struct cache_set *c)
 	c->sb.seq++;
 
 	for_each_cache(ca, c, i) {
-		struct cache_sb *sb = &ca->sb, *out = ca->disk_sb.sb;
+		struct cache_sb *sb = ca->disk_sb.sb;
 		struct bio *bio = ca->disk_sb.bio;
 
 		cache_sb_from_cache_set(c, ca);
 
-		SET_CACHE_SB_CSUM_TYPE(&ca->sb, c->opts.metadata_checksum);
-
-		out->offset		= cpu_to_le64(sb->offset);
-		out->version		= cpu_to_le64(sb->version);
-		out->seq		= cpu_to_le64(sb->seq);
-
-		out->disk_uuid		= sb->disk_uuid;
-		out->user_uuid		= sb->user_uuid;
-		out->set_uuid		= sb->set_uuid;
-		memcpy(out->label,	sb->label, SB_LABEL_SIZE);
-
-		out->nr_in_set		= cpu_to_le16(sb->nr_in_set);
-		out->nr_this_dev	= cpu_to_le16(sb->nr_this_dev);
-
-		out->flags		= cpu_to_le64(sb->flags);
-		out->u64s		= cpu_to_le16(sb->u64s);
-
-		out->csum		= csum_set(out, CACHE_SB_CSUM_TYPE(sb));
+		SET_CACHE_SB_CSUM_TYPE(sb, c->opts.metadata_checksum);
+		sb->csum = cpu_to_le64(csum_set(sb, CACHE_SB_CSUM_TYPE(sb)));
 
 		bio_reset(bio);
 		bio->bi_bdev	= ca->disk_sb.bdev;
@@ -1816,7 +1800,6 @@ static const char *cache_alloc(struct bcache_superblock *sb,
 			       struct cache_set *c,
 			       struct cache **ret)
 {
-	struct cache_member_rcu *mi;
 	size_t reserve_none, movinggc_reserve, free_inc_reserve, total_reserve;
 	size_t heap_size;
 	unsigned i;
@@ -1841,6 +1824,7 @@ static const char *cache_alloc(struct bcache_superblock *sb,
 	seqcount_init(&ca->self.lock);
 	ca->self.nr_devices = 1;
 	rcu_assign_pointer(ca->self.devices[0], ca);
+	ca->sb.nr_this_dev = sb->sb->nr_this_dev;
 
 	INIT_WORK(&ca->free_work, bch_cache_free_work);
 	INIT_WORK(&ca->remove_work, bch_cache_remove_work);
@@ -1861,32 +1845,9 @@ static const char *cache_alloc(struct bcache_superblock *sb,
 	if (cache_set_init_fault("cache_alloc"))
 		goto err;
 
-	err = validate_super(&ca->disk_sb, &ca->sb);
+	err = validate_cache_super(c, ca);
 	if (err)
 		goto err;
-
-	mi = cache_member_info_get(c);
-	ca->mi = mi->m[ca->sb.nr_this_dev];
-	cache_member_info_put();
-
-	ca->bucket_bits = ilog2(ca->mi.bucket_size);
-
-	err = "Invalid superblock: device too small";
-	if (get_capacity(ca->disk_sb.bdev->bd_disk) <
-	    ca->mi.bucket_size * ca->mi.nbuckets)
-		goto err;
-
-	err = "Invalid superblock: first bucket comes before end of super";
-	if (ca->sb.offset +
-	    (set_blocks(&ca->sb, block_bytes(c)) << c->block_bits) >
-	    ca->mi.first_bucket << ca->bucket_bits)
-		goto err;
-
-	err = "bad journal bucket";
-	for (i = 0; i < bch_nr_journal_buckets(&ca->sb); i++)
-		if (journal_bucket(ca, i) <  ca->mi.first_bucket ||
-		    journal_bucket(ca, i) >= ca->mi.nbuckets)
-			goto err;
 
 	/* XXX: tune these */
 	movinggc_reserve = max_t(size_t, NUM_GC_GENS * 2,
@@ -1910,7 +1871,7 @@ static const char *cache_alloc(struct bcache_superblock *sb,
 					  2, GFP_KERNEL)) ||
 	    !(ca->disk_buckets	= alloc_bucket_pages(GFP_KERNEL, ca)) ||
 	    !(ca->bucket_stats_percpu = alloc_percpu(struct bucket_stats)) ||
-	    !(ca->journal.bucket_seq = kcalloc(bch_nr_journal_buckets(&ca->sb),
+	    !(ca->journal.bucket_seq = kcalloc(bch_nr_journal_buckets(ca->disk_sb.sb),
 					       sizeof(u64), GFP_KERNEL)) ||
 	    !(ca->bio_prio = bio_kmalloc(GFP_NOIO, bucket_pages(ca))) ||
 	    bioset_init(&ca->replica_set, 4,
@@ -1943,7 +1904,7 @@ static const char *cache_alloc(struct bcache_superblock *sb,
 	bch_moving_init_cache(ca);
 	bch_tiering_init_cache(ca);
 
-	if (ca->sb.seq > c->sb.seq)
+	if (le64_to_cpu(ca->disk_sb.sb->seq) > le64_to_cpu(c->sb.seq))
 		cache_sb_to_cache_set(c, ca->disk_sb.sb);
 
 	err = "error creating kobject";

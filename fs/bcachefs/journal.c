@@ -484,9 +484,9 @@ reread:
 			blocks = set_blocks(j, block_bytes(c));
 
 			pr_debug("next");
-			bucket_offset	+= blocks * ca->sb.block_size;
-			sectors_read	-= blocks * ca->sb.block_size;
-			j = ((void *) j) + blocks * block_bytes(ca);
+			bucket_offset	+= blocks * c->sb.block_size;
+			sectors_read	-= blocks * c->sb.block_size;
+			j = ((void *) j) + blocks * block_bytes(c);
 		}
 	}
 out:
@@ -522,7 +522,7 @@ static void bch_journal_read_device(struct closure *cl)
 		container_of(cl->parent, struct journal_list, cl);
 	struct request_queue *q = bdev_get_queue(ca->disk_sb.bdev);
 
-	unsigned nr_buckets = bch_nr_journal_buckets(&ca->sb);
+	unsigned nr_buckets = bch_nr_journal_buckets(ca->disk_sb.sb);
 	DECLARE_BITMAP(bitmap, nr_buckets);
 	unsigned i, l, r;
 	u64 seq = 0;
@@ -1021,7 +1021,7 @@ err:
 
 static int bch_set_nr_journal_buckets(struct cache *ca, unsigned nr)
 {
-	unsigned u64s = bch_journal_buckets_offset(&ca->sb) + nr;
+	unsigned u64s = bch_journal_buckets_offset(ca->disk_sb.sb) + nr;
 	u64 *p;
 	int ret;
 
@@ -1036,7 +1036,7 @@ static int bch_set_nr_journal_buckets(struct cache *ca, unsigned nr)
 		return -ENOMEM;
 
 	ca->journal.bucket_seq = p;
-	ca->sb.u64s = u64s;
+	ca->disk_sb.sb->u64s = cpu_to_le16(u64s);
 
 	return 0;
 }
@@ -1060,7 +1060,7 @@ int bch_cache_journal_alloc(struct cache *ca)
 	if (ret)
 		return ret;
 
-	for (i = 0; i < bch_nr_journal_buckets(&ca->sb); i++) {
+	for (i = 0; i < bch_nr_journal_buckets(ca->disk_sb.sb); i++) {
 		unsigned long r = ca->mi.first_bucket + i;
 
 		bch_mark_metadata_bucket(ca, &ca->buckets[r], true);
@@ -1130,7 +1130,7 @@ static void journal_reclaim_work(struct work_struct *work)
 	 */
 	group_for_each_cache(ca, &c->cache_tiers[0], iter) {
 		struct journal_device *ja = &ca->journal;
-		unsigned nr = bch_nr_journal_buckets(&ca->sb),
+		unsigned nr = bch_nr_journal_buckets(ca->disk_sb.sb),
 			 cur_idx, bucket_to_flush;
 
 		spin_lock(&j->lock);
@@ -1251,7 +1251,7 @@ static void journal_next_bucket(struct cache_set *c)
 	group_for_each_cache_rcu(ca, &c->cache_tiers[0], iter) {
 		struct journal_device *ja = &ca->journal;
 		unsigned next, remaining, nr_buckets =
-			bch_nr_journal_buckets(&ca->sb);
+			bch_nr_journal_buckets(ca->disk_sb.sb);
 
 		if (replicas >= c->opts.metadata_replicas)
 			break;
@@ -2029,7 +2029,7 @@ ssize_t bch_journal_print_debug(struct journal *j, char *buf)
 				 "\tnr\t\t%u\n"
 				 "\tcur_idx\t\t%u (seq %llu)\n"
 				 "\tlast_idx\t%u (seq %llu)\n",
-				 iter, bch_nr_journal_buckets(&ca->sb),
+				 iter, bch_nr_journal_buckets(ca->disk_sb.sb),
 				 ja->cur_idx,	ja->bucket_seq[ja->cur_idx],
 				 ja->last_idx,	ja->bucket_seq[ja->last_idx]);
 	}
@@ -2107,7 +2107,7 @@ int bch_journal_move(struct cache *ca)
 	last_flushed_seq = last_seq(j);
 	spin_unlock(&j->lock);
 
-	nr_buckets = bch_nr_journal_buckets(&ca->sb);
+	nr_buckets = bch_nr_journal_buckets(ca->disk_sb.sb);
 
 	for (i = 0; i < nr_buckets; i += 1)
 		BUG_ON(ca->journal.bucket_seq[i] > last_flushed_seq);

@@ -318,7 +318,6 @@ struct cache {
 	unsigned long		flags;
 
 	struct cache_set	*set;
-	struct cache_sb		sb;
 
 	struct cache_group	self;
 
@@ -326,6 +325,9 @@ struct cache {
 	 * Cached version of this device's member info from superblock
 	 * Committed by write_super()
 	 */
+	struct {
+		u8		nr_this_dev;
+	}			sb;
 	struct cache_member	mi;
 
 	struct bcache_superblock disk_sb;

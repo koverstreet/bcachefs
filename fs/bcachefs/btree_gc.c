@@ -303,7 +303,7 @@ static void bch_mark_metadata(struct cache_set *c)
 		unsigned j;
 		u64 *i;
 
-		for (j = 0; j < bch_nr_journal_buckets(&ca->sb); j++)
+		for (j = 0; j < bch_nr_journal_buckets(ca->disk_sb.sb); j++)
 			bch_mark_metadata_bucket(ca,
 					&ca->buckets[journal_bucket(ca, j)],
 						 true);
