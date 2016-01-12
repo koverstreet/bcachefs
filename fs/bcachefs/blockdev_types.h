@@ -53,7 +53,7 @@ struct cached_dev {
 	struct list_head	list;
 	struct bcache_device	disk;
 
-	struct cache_sb		sb;
+	struct backingdev_sb		sb;
 	struct bcache_superblock disk_sb;
 	struct closure		sb_write;
 	struct semaphore	sb_write_mutex;

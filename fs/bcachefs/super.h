@@ -146,10 +146,7 @@ static inline void bch_check_mark_super(struct cache_set *c,
 void free_super(struct bcache_superblock *);
 int bch_super_realloc(struct bcache_superblock *, unsigned);
 void bcache_write_super(struct cache_set *);
-void __write_super(struct cache_set *, struct bcache_superblock *,
-		   struct cache_sb *);
-
-const char *validate_super(struct bcache_superblock *, struct cache_sb *);
+void __write_super(struct cache_set *, struct bcache_superblock *);
 
 void bch_cache_member_info_update(struct cache *);
 

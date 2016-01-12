@@ -623,32 +623,21 @@ struct cache_sb {
 	 * to change:
 	 */
 	uuid_le			user_uuid;
-	__u64			pad[6];
+	__u64			pad1[6];
 
-	union {
-	struct {
-		/* Cache devices */
+	/* Number of cache_member entries: */
+	__u8			nr_in_set;
 
-		/* Number of cache_member entries: */
-		__u8		nr_in_set;
-
-		/*
-		 * Index of this device - for PTR_DEV(), and also this device's
-		 * slot in the cache_member array:
-		 */
-		__u8		nr_this_dev;
-	};
-	struct {
-		/* Backing devices */
-		__u64		bdev_data_offset;
-	};
-	};
-
-	__u16			block_size;	/* sectors */
+	/*
+	 * Index of this device - for PTR_DEV(), and also this device's
+	 * slot in the cache_member array:
+	 */
+	__u8			nr_this_dev;
 	__u16			pad2[3];
 
-	__u32			bdev_last_mount;	/* time_t */
-	__u16			pad3;
+	__le16			block_size;	/* sectors */
+	__u16			pad3[6];
+
 	__u16			u64s;	/* size of variable length portion */
 
 	union {
@@ -762,13 +751,57 @@ enum {
 
 /* backing device specific stuff: */
 
-BITMASK(BDEV_CACHE_MODE,		struct cache_sb, flags, 0, 4);
+struct backingdev_sb {
+	__u64			csum;
+	__u64			offset;	/* sector where this sb was written */
+	__u64			version; /* of on disk format */
+
+	uuid_le			magic;	/* bcache superblock UUID */
+
+	uuid_le			disk_uuid;
+
+	/*
+	 * Internal cache set UUID - xored with various magic numbers and thus
+	 * must never change:
+	 */
+	union {
+		uuid_le		set_uuid;
+		__u64		set_magic;
+	};
+	__u8			label[SB_LABEL_SIZE];
+
+	__u64			flags;
+
+	/* Incremented each time superblock is written: */
+	__u64			seq;
+
+	/*
+	 * User visible UUID for identifying the cache set the user is allowed
+	 * to change:
+	 *
+	 * XXX hooked up?
+	 */
+	uuid_le			user_uuid;
+	__u64			pad1[6];
+
+	__u64			data_offset;
+	__u16			block_size;	/* sectors */
+	__u16			pad2[3];
+
+	__u32			last_mount;	/* time_t */
+	__u16			pad3;
+	/* size of variable length portion - always 0 for backingdev superblock */
+	__u16			u64s;
+	__u64			_data[0];
+};
+
+BITMASK(BDEV_CACHE_MODE,		struct backingdev_sb, flags, 0, 4);
 #define CACHE_MODE_WRITETHROUGH		0U
 #define CACHE_MODE_WRITEBACK		1U
 #define CACHE_MODE_WRITEAROUND		2U
 #define CACHE_MODE_NONE			3U
 
-BITMASK(BDEV_STATE,			struct cache_sb, flags, 61, 63);
+BITMASK(BDEV_STATE,			struct backingdev_sb, flags, 61, 63);
 #define BDEV_STATE_NONE			0U
 #define BDEV_STATE_CLEAN		1U
 #define BDEV_STATE_DIRTY		2U

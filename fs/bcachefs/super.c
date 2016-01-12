@@ -202,8 +202,8 @@ static const char *validate_cache_member(struct cache_sb *sb,
 	return NULL;
 }
 
-const char *validate_super(struct bcache_superblock *disk_sb,
-			   struct cache_sb *sb)
+static const char *validate_super(struct bcache_superblock *disk_sb,
+				  struct cache_sb *sb)
 {
 	const char *err;
 	struct cache_sb *s = disk_sb->sb;
@@ -223,21 +223,6 @@ const char *validate_super(struct bcache_superblock *disk_sb,
 	sb->u64s		= le16_to_cpu(s->u64s);
 
 	switch (sb->version) {
-	case BCACHE_SB_VERSION_BDEV:
-		sb->bdev_data_offset	= BDEV_DATA_START_DEFAULT;
-		sb->bdev_last_mount	= le32_to_cpu(s->bdev_last_mount);
-		sb->bdev_last_mount	= get_seconds();
-		break;
-	case BCACHE_SB_VERSION_BDEV_WITH_OFFSET:
-		sb->bdev_data_offset	= le64_to_cpu(s->bdev_data_offset);
-		sb->bdev_last_mount	= le32_to_cpu(s->bdev_last_mount);
-		/* hrm. */
-		sb->bdev_last_mount	= get_seconds();
-
-		if (sb->bdev_data_offset < BDEV_DATA_START_DEFAULT)
-			return "Bad data offset";
-
-		break;
 	case BCACHE_SB_VERSION_CDEV_V0:
 	case BCACHE_SB_VERSION_CDEV_WITH_UUID:
 	case BCACHE_SB_VERSION_CDEV_V2:
@@ -445,10 +430,9 @@ err:
 	return err;
 }
 
-void __write_super(struct cache_set *c, struct bcache_superblock *disk_sb,
-		   struct cache_sb *sb)
+void __write_super(struct cache_set *c, struct bcache_superblock *disk_sb)
 {
-	struct cache_sb *out = disk_sb->sb;
+	struct cache_sb *sb = disk_sb->sb;
 	struct bio *bio = disk_sb->bio;
 
 	bio->bi_bdev		= disk_sb->bdev;
@@ -457,34 +441,12 @@ void __write_super(struct cache_set *c, struct bcache_superblock *disk_sb,
 		roundup(set_bytes(sb),
 			bdev_logical_block_size(disk_sb->bdev));
 	bio_set_op_attrs(bio, REQ_OP_WRITE, REQ_SYNC|REQ_META);
-	bch_bio_map(bio, out);
-
-	out->offset		= cpu_to_le64(sb->offset);
-	out->version		= cpu_to_le64(sb->version);
-	out->seq		= cpu_to_le64(sb->seq);
-
-	out->disk_uuid		= sb->disk_uuid;
-	out->user_uuid		= sb->user_uuid;
-	out->set_uuid		= sb->set_uuid;
-	memcpy(out->label,	sb->label, SB_LABEL_SIZE);
-
-	if (__SB_IS_BDEV(sb->version)) {
-		out->bdev_data_offset	= cpu_to_le64(sb->bdev_data_offset);
-		out->bdev_last_mount	= cpu_to_le32(sb->bdev_last_mount);
-	} else {
-		out->nr_in_set		= cpu_to_le16(sb->nr_in_set);
-		out->nr_this_dev	= cpu_to_le16(sb->nr_this_dev);
-	}
-
-	out->flags		= cpu_to_le64(sb->flags);
-	out->u64s		= cpu_to_le16(sb->u64s);
-	out->csum		=
-		csum_set(out, sb->version < BCACHE_SB_VERSION_CDEV_V3
-			 ? BCH_CSUM_CRC64
-			 : CACHE_SB_CSUM_TYPE(sb));
+	bch_bio_map(bio, sb);
 
 	pr_debug("ver %llu, flags %llu, seq %llu",
-		 sb->version, sb->flags, sb->seq);
+		 le64_to_cpu(sb->version),
+		 le64_to_cpu(sb->flags),
+		 le64_to_cpu(sb->seq));
 
 	bch_generic_make_request(bio, c);
 }
@@ -595,11 +557,29 @@ static void __bcache_write_super(struct cache_set *c)
 	c->sb.seq++;
 
 	for_each_cache(ca, c, i) {
+		struct cache_sb *sb = &ca->sb, *out = ca->disk_sb.sb;
 		struct bio *bio = ca->disk_sb.bio;
 
 		cache_sb_from_cache_set(c, ca);
 
 		SET_CACHE_SB_CSUM_TYPE(&ca->sb, c->opts.metadata_checksum);
+
+		out->offset		= cpu_to_le64(sb->offset);
+		out->version		= cpu_to_le64(sb->version);
+		out->seq		= cpu_to_le64(sb->seq);
+
+		out->disk_uuid		= sb->disk_uuid;
+		out->user_uuid		= sb->user_uuid;
+		out->set_uuid		= sb->set_uuid;
+		memcpy(out->label,	sb->label, SB_LABEL_SIZE);
+
+		out->nr_in_set		= cpu_to_le16(sb->nr_in_set);
+		out->nr_this_dev	= cpu_to_le16(sb->nr_this_dev);
+
+		out->flags		= cpu_to_le64(sb->flags);
+		out->u64s		= cpu_to_le16(sb->u64s);
+
+		out->csum		= csum_set(out, CACHE_SB_CSUM_TYPE(sb));
 
 		bio_reset(bio);
 		bio->bi_bdev	= ca->disk_sb.bdev;
@@ -608,7 +588,7 @@ static void __bcache_write_super(struct cache_set *c)
 
 		closure_get(cl);
 		percpu_ref_get(&ca->ref);
-		__write_super(c, &ca->disk_sb, &ca->sb);
+		__write_super(c, &ca->disk_sb);
 	}
 
 	closure_return_with_destructor(cl, bcache_write_super_unlock);

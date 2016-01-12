@@ -34,6 +34,7 @@ static void bch_write_bdev_super_unlock(struct closure *cl)
 
 void bch_write_bdev_super(struct cached_dev *dc, struct closure *parent)
 {
+	struct backingdev_sb *sb = &dc->sb, *out = (void *) dc->disk_sb.sb;
 	struct closure *cl = &dc->sb_write;
 	struct bio *bio = dc->disk_sb.bio;
 
@@ -45,7 +46,23 @@ void bch_write_bdev_super(struct cached_dev *dc, struct closure *parent)
 	bio->bi_private = dc;
 
 	closure_get(cl);
-	__write_super(dc->disk.c, &dc->disk_sb, &dc->sb);
+
+	out->offset		= cpu_to_le64(sb->offset);
+	out->version		= cpu_to_le64(sb->version);
+	out->seq		= cpu_to_le64(sb->seq);
+
+	out->disk_uuid		= sb->disk_uuid;
+	out->user_uuid		= sb->user_uuid;
+	out->set_uuid		= sb->set_uuid;
+	memcpy(out->label,	sb->label, SB_LABEL_SIZE);
+
+	out->data_offset	= cpu_to_le64(sb->data_offset);
+	out->last_mount		= cpu_to_le32(sb->last_mount);
+
+	out->flags		= cpu_to_le64(sb->flags);
+	out->u64s		= cpu_to_le16(sb->u64s);
+	out->csum		= csum_set(out, BCH_CSUM_CRC64);
+	__write_super(dc->disk.c, &dc->disk_sb);
 
 	closure_return_with_destructor(cl, bch_write_bdev_super_unlock);
 }
@@ -549,7 +566,7 @@ static int cached_dev_init(struct cached_dev *dc, unsigned block_size)
 
 	ret = bcache_device_init(&dc->disk, block_size,
 			 dc->disk_sb.bdev->bd_part->nr_sects -
-			 dc->sb.bdev_data_offset);
+			 dc->sb.data_offset);
 	if (ret)
 		return ret;
 
@@ -566,6 +583,45 @@ static int cached_dev_init(struct cached_dev *dc, unsigned block_size)
 }
 
 /* Cached device - bcache superblock */
+
+static const char *bdev_validate_super(struct bcache_superblock *disk_sb,
+				       struct backingdev_sb *sb)
+{
+	struct backingdev_sb *s = (void *) disk_sb->sb;
+
+	sb->offset		= le64_to_cpu(s->offset);
+	sb->version		= le64_to_cpu(s->version);
+	sb->seq			= le64_to_cpu(s->seq);
+
+	sb->magic		= s->magic;
+	sb->disk_uuid		= s->disk_uuid;
+	sb->user_uuid		= s->user_uuid;
+	sb->set_uuid		= s->set_uuid;
+	memcpy(sb->label,	s->label, SB_LABEL_SIZE);
+
+	sb->flags		= le64_to_cpu(s->flags);
+	sb->block_size		= le16_to_cpu(s->block_size);
+	sb->u64s		= le16_to_cpu(s->u64s);
+
+	switch (sb->version) {
+	case BCACHE_SB_VERSION_BDEV:
+		sb->data_offset	= BDEV_DATA_START_DEFAULT;
+		break;
+	case BCACHE_SB_VERSION_BDEV_WITH_OFFSET:
+		sb->data_offset	= le64_to_cpu(s->data_offset);
+
+		if (sb->data_offset < BDEV_DATA_START_DEFAULT)
+			return "Bad data offset";
+
+		break;
+	default:
+		return"Unsupported superblock version";
+	}
+
+	sb->last_mount	= get_seconds();
+
+	return NULL;
+}
 
 const char *bch_backing_dev_register(struct bcache_superblock *sb)
 {
@@ -593,7 +649,7 @@ const char *bch_backing_dev_register(struct bcache_superblock *sb)
 	dc->disk_sb.bdev->bd_holder = dc;
 	memset(sb, 0, sizeof(*sb));
 
-	err = validate_super(&dc->disk_sb, &dc->sb);
+	err = bdev_validate_super(&dc->disk_sb, &dc->sb);
 	if (err)
 		goto err;
 

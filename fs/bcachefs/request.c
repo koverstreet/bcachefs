@@ -576,7 +576,7 @@ static void __cached_dev_make_request(struct request_queue *q, struct bio *bio)
 	generic_start_io_acct(rw, bio_sectors(bio), &d->disk->part0);
 
 	bio->bi_bdev = dc->disk_sb.bdev;
-	bio->bi_iter.bi_sector += dc->sb.bdev_data_offset;
+	bio->bi_iter.bi_sector += dc->sb.data_offset;
 
 	if (cached_dev_get(dc)) {
 		s = search_alloc(bio, d);
