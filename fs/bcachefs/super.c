@@ -512,7 +512,7 @@ static void bcache_write_super_unlock(struct closure *cl)
 
 static int cache_sb_to_cache_set(struct cache_set *c, struct cache_sb *sb)
 {
-	struct cache_member_rcu *new, *old = c->members;
+	struct cache_member_rcu *new, *old;
 	unsigned nr_in_set = le16_to_cpu(sb->nr_in_set);
 
 	new = kzalloc(sizeof(struct cache_member_rcu) +
@@ -524,6 +524,9 @@ static int cache_sb_to_cache_set(struct cache_set *c, struct cache_sb *sb)
 	new->nr_in_set = nr_in_set;
 	memcpy(&new->m, sb->members,
 	       nr_in_set * sizeof(new->m[0]));
+
+	old = rcu_dereference_protected(c->members,
+				lockdep_is_held(&bch_register_lock));
 
 	rcu_assign_pointer(c->members, new);
 	if (old)
@@ -853,7 +856,7 @@ static void cache_set_free(struct cache_set *c)
 	if (c->wq)
 		destroy_workqueue(c->wq);
 
-	kfree(c->members);
+	kfree_rcu(rcu_dereference_protected(c->members, 1), rcu); /* shutting down */
 	kfree(c);
 	module_put(THIS_MODULE);
 }
@@ -1453,6 +1456,7 @@ void bch_cache_member_info_update(struct cache *ca)
 static bool cache_may_remove(struct cache *ca)
 {
 	struct cache_set *c = ca->set;
+	struct cache_group *tier = &c->cache_tiers[CACHE_TIER(&ca->mi)];
 
 	/*
 	 * Right now, we can't remove the last device from a tier,
@@ -1471,8 +1475,8 @@ static bool cache_may_remove(struct cache *ca)
 	 * whole cache set RO.
 	 */
 
-	return c->cache_tiers[CACHE_TIER(&ca->mi)].nr_devices != 1 ||
-		c->cache_tiers[CACHE_TIER(&ca->mi)].devices[0] != ca;
+	return tier->nr_devices != 1 ||
+		rcu_access_pointer(tier->devices[0]) != ca;
 }
 
 static void __bch_cache_read_only(struct cache *ca)
@@ -1850,7 +1854,7 @@ static const char *cache_alloc(struct bcache_superblock *sb,
 
 	seqcount_init(&ca->self.lock);
 	ca->self.nr_devices = 1;
-	ca->self.devices[0] = ca;
+	rcu_assign_pointer(ca->self.devices[0], ca);
 
 	INIT_WORK(&ca->free_work, bch_cache_free_work);
 	INIT_WORK(&ca->remove_work, bch_cache_remove_work);
