@@ -264,7 +264,7 @@ static int bch_prio_write(struct cache *ca)
 		}
 
 		p->next_bucket	= ca->prio_buckets[i + 1];
-		p->magic	= pset_magic(&c->sb);
+		p->magic	= pset_magic(&c->disk_sb);
 
 		SET_PSET_CSUM_TYPE(p, c->opts.metadata_checksum);
 		p->csum		= bch_checksum(PSET_CSUM_TYPE(p),
@@ -363,7 +363,7 @@ int bch_prio_read(struct cache *ca)
 				return -EIO;
 
 			got = p->magic;
-			expect = pset_magic(&c->sb);
+			expect = pset_magic(&c->disk_sb);
 			if (cache_inconsistent_on(got != expect, ca,
 					"bad magic (got %llu expect %llu) while reading prios from bucket %llu",
 					got, expect, bucket))

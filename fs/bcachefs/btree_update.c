@@ -142,7 +142,7 @@ found:
 
 	if (gc_pos_cmp(c->gc_pos, gc_phase(GC_PHASE_PENDING_DELETE)) < 0)
 		bch_mark_pointers(c, bkey_i_to_s_c_extent(&d->key),
-				  -CACHE_BTREE_NODE_SIZE(&c->sb),
+				  -c->sb.btree_node_size,
 				  false, true, false, b
 				  ? gc_pos_btree_node(b)
 				  : gc_pos_btree_root(id));
@@ -215,7 +215,7 @@ static void bch_btree_node_free_ondisk(struct cache_set *c,
 	list_del(&pending->list);
 
 	bch_mark_pointers(c, bkey_i_to_s_c_extent(&pending->key),
-			  -CACHE_BTREE_NODE_SIZE(&c->sb), false, true,
+			  -c->sb.btree_node_size, false, true,
 			  false, gc_phase(GC_PHASE_PENDING_DELETE));
 
 	mutex_unlock(&c->btree_node_pending_free_lock);
@@ -250,14 +250,14 @@ static struct btree *__bch_btree_node_alloc(struct cache_set *c,
 retry:
 	/* alloc_sectors is weird, I suppose */
 	bkey_extent_init(&tmp.k);
-	tmp.k.k.size = CACHE_BTREE_NODE_SIZE(&c->sb),
+	tmp.k.k.size = c->sb.btree_node_size,
 
 	ob = bch_alloc_sectors(c, &c->btree_write_point, &tmp.k,
 			       check_enospc, cl);
 	if (IS_ERR(ob))
 		return ERR_CAST(ob);
 
-	if (tmp.k.k.size < CACHE_BTREE_NODE_SIZE(&c->sb)) {
+	if (tmp.k.k.size < c->sb.btree_node_size) {
 		bch_open_bucket_put(c, ob);
 		goto retry;
 	}
@@ -291,7 +291,7 @@ static struct btree *bch_btree_node_alloc(struct cache_set *c,
 	set_btree_node_dirty(b);
 
 	bch_bset_init_first(&b->keys, &b->data->keys);
-	b->data->magic = bset_magic(&c->sb);
+	b->data->magic = bset_magic(&c->disk_sb);
 	SET_BSET_BTREE_LEVEL(&b->data->keys, level);
 
 	bch_check_mark_super(c, &b->key, true);
@@ -353,7 +353,7 @@ static void __bch_btree_set_root(struct cache_set *c, struct btree *b)
 	btree_node_root(b) = b;
 
 	stale = bch_mark_pointers(c, bkey_i_to_s_c_extent(&b->key),
-				  CACHE_BTREE_NODE_SIZE(&c->sb), true, true,
+				  c->sb.btree_node_size, true, true,
 				  false, gc_pos_btree_root(b->btree_id));
 	BUG_ON(stale);
 	spin_unlock(&c->btree_root_lock);
@@ -586,7 +586,7 @@ static bool bch_insert_fixup_btree_ptr(struct btree_iter *iter,
 		bool stale;
 
 		stale = bch_mark_pointers(c, bkey_i_to_s_c_extent(insert),
-					  CACHE_BTREE_NODE_SIZE(&c->sb),
+					  c->sb.btree_node_size,
 					  true, true, false,
 					  gc_pos_btree_node(b));
 		BUG_ON(stale);

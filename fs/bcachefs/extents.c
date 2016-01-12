@@ -365,7 +365,7 @@ static const char *bch_btree_ptr_invalid(const struct cache_set *c,
 
 		extent_for_each_ptr_crc(e, ptr, crc) {
 			reason = extent_ptr_invalid(mi, ptr,
-						    CACHE_BTREE_NODE_SIZE(&c->sb));
+						c->sb.btree_node_size);
 
 			if (reason) {
 				cache_member_info_put();
@@ -425,12 +425,12 @@ static void btree_ptr_debugcheck(struct cache_set *c, struct btree *b,
 
 	rcu_read_unlock();
 
-	if (replicas < CACHE_SET_META_REPLICAS_HAVE(&c->sb)) {
+	if (replicas < c->sb.meta_replicas_have) {
 		bch_bkey_val_to_text(c, btree_node_type(b),
 				     buf, sizeof(buf), k);
 		cache_set_bug(c,
-			"btree key bad (too few replicas, %u < %llu): %s",
-			replicas, CACHE_SET_META_REPLICAS_HAVE(&c->sb), buf);
+			"btree key bad (too few replicas, %u < %u): %s",
+			replicas, c->sb.meta_replicas_have, buf);
 		return;
 	}
 
@@ -1489,12 +1489,12 @@ static void bch_extent_debugcheck_extent(struct cache_set *c, struct btree *b,
 	}
 
 	if (!bkey_extent_is_cached(e.k) &&
-	    replicas < CACHE_SET_DATA_REPLICAS_HAVE(&c->sb)) {
+	    replicas < c->sb.data_replicas_have) {
 		bch_bkey_val_to_text(c, btree_node_type(b), buf,
 				     sizeof(buf), e.s_c);
 		cache_set_bug(c,
-			"extent key bad (too few replicas, %u < %llu): %s",
-			replicas, CACHE_SET_DATA_REPLICAS_HAVE(&c->sb), buf);
+			"extent key bad (too few replicas, %u < %u): %s",
+			replicas, c->sb.data_replicas_have, buf);
 		return;
 	}
 

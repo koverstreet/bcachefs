@@ -652,9 +652,9 @@ SHOW(bch_cache_set)
 	sysfs_hprint(block_size,		block_bytes(c));
 	sysfs_print(block_size_bytes,		block_bytes(c));
 	sysfs_hprint(btree_node_size,
-		     CACHE_BTREE_NODE_SIZE(&c->sb) << 9);
+		     CACHE_BTREE_NODE_SIZE(&c->disk_sb) << 9);
 	sysfs_print(btree_node_size_bytes,
-		    CACHE_BTREE_NODE_SIZE(&c->sb) << 9);
+		    CACHE_BTREE_NODE_SIZE(&c->disk_sb) << 9);
 
 	sysfs_hprint(btree_cache_size,		bch_cache_size(c));
 	sysfs_print(cache_available_percent,	bch_cache_available_percent(c));
@@ -704,9 +704,9 @@ SHOW(bch_cache_set)
 	sysfs_print(btree_flush_delay,		c->btree_flush_delay);
 
 	sysfs_printf(meta_replicas_have, "%llu",
-		     CACHE_SET_META_REPLICAS_HAVE(&c->sb));
+		     CACHE_SET_META_REPLICAS_HAVE(&c->disk_sb));
 	sysfs_printf(data_replicas_have, "%llu",
-		     CACHE_SET_DATA_REPLICAS_HAVE(&c->sb));
+		     CACHE_SET_DATA_REPLICAS_HAVE(&c->disk_sb));
 
 	/* Debugging: */
 
@@ -731,7 +731,7 @@ SHOW(bch_cache_set)
 	if (attr == &sysfs_compression_stats)
 		return bch_compression_stats(c, buf);
 
-	sysfs_printf(internal_uuid, "%pU", c->sb.set_uuid.b);
+	sysfs_printf(internal_uuid, "%pU", c->disk_sb.set_uuid.b);
 
 	return 0;
 }
@@ -994,8 +994,8 @@ STORE(bch_cache_set_opts_dir)
 									\
 		c->opts._name = v;					\
 									\
-		if (_sb_opt##_BITS && v != _sb_opt(&c->sb)) {		\
-			SET_##_sb_opt(&c->sb, v);			\
+		if (_sb_opt##_BITS && v != _sb_opt(&c->disk_sb)) {	\
+			SET_##_sb_opt(&c->disk_sb, v);			\
 			bcache_write_super(c);				\
 		}							\
 									\

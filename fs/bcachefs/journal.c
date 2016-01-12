@@ -353,7 +353,7 @@ static enum {
 	if (bch_meta_read_fault("journal"))
 		return JOURNAL_ENTRY_BAD;
 
-	if (j->magic != jset_magic(&ca->set->sb)) {
+	if (j->magic != jset_magic(&ca->set->disk_sb)) {
 		pr_debug("bad magic while reading journal from %llu", sector);
 		return JOURNAL_ENTRY_BAD;
 	}
@@ -1452,7 +1452,7 @@ static void journal_write_locked(struct closure *cl)
 
 	w->data->read_clock	= c->prio_clock[READ].hand;
 	w->data->write_clock	= c->prio_clock[WRITE].hand;
-	w->data->magic		= jset_magic(&c->sb);
+	w->data->magic		= jset_magic(&c->disk_sb);
 	w->data->version	= BCACHE_JSET_VERSION;
 	w->data->last_seq	= last_seq(j);
 

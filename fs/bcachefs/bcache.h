@@ -500,7 +500,21 @@ struct cache_set {
 
 	struct cache_set_opts	opts;
 
-	struct cache_sb		sb;
+	/*
+	 * Cached copy in native endianness:
+	 * Set by cache_sb_to_cache_set:
+	 */
+	struct {
+		u16		block_size;
+		u16		btree_node_size;
+
+		u8		nr_in_set;
+
+		u8		meta_replicas_have;
+		u8		data_replicas_have;
+	}			sb;
+
+	struct cache_sb		disk_sb;
 	unsigned short		block_bits;	/* ilog2(block_size) */
 
 	struct closure		sb_write;
@@ -771,7 +785,10 @@ static inline unsigned bucket_bytes(const struct cache *ca)
 	return ca->mi.bucket_size << 9;
 }
 
-#define block_bytes(c)		((c)->sb.block_size << 9)
+static inline unsigned block_bytes(struct cache_set *c)
+{
+	return c->sb.block_size << 9;
+}
 
 #define prios_per_bucket(ca)				\
 	((bucket_bytes(ca) - sizeof(struct prio_set)) /	\

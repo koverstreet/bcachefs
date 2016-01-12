@@ -340,7 +340,7 @@ int bch_move_meta_data_off_device(struct cache *ca)
 
 	if (bch_journal_move(ca) != 0) {
 		pr_err("Unable to move the journal off in %pU.",
-		       ca->set->sb.set_uuid.b);
+		       ca->set->disk_sb.user_uuid.b);
 		ret = 1;	/* Failure */
 	}
 

@@ -132,7 +132,7 @@ static u8 __bch_btree_mark_key(struct cache_set *c, enum bkey_type type,
 
 			bch_mark_pointers(c, e,
 					  type == BKEY_TYPE_BTREE
-					  ? CACHE_BTREE_NODE_SIZE(&c->sb)
+					  ? c->sb.btree_node_size
 					  : e.k->size, false,
 					  type == BKEY_TYPE_BTREE,
 					  true, GC_POS_MIN);
@@ -328,7 +328,7 @@ static void bch_mark_pending_btree_node_frees(struct cache_set *c)
 	list_for_each_entry(d, &c->btree_node_pending_free, list)
 		if (d->index_update_done)
 			bch_mark_pointers(c, bkey_i_to_s_c_extent(&d->key),
-					  CACHE_BTREE_NODE_SIZE(&c->sb),
+					  c->sb.btree_node_size,
 					  false, true,
 					  true, GC_POS_MIN);
 	mutex_unlock(&c->btree_node_pending_free_lock);

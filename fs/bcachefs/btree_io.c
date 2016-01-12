@@ -262,7 +262,7 @@ void bch_btree_node_read_done(struct cache_set *c, struct btree *b,
 		goto err;
 
 	err = "bad magic";
-	if (b->data->magic != bset_magic(&c->sb))
+	if (b->data->magic != bset_magic(&c->disk_sb))
 		goto err;
 
 	err = "bad btree header";
@@ -531,7 +531,7 @@ static void do_btree_node_write(struct closure *cl)
 	SET_BSET_CSUM_TYPE(i, c->opts.metadata_checksum);
 
 	if (!b->written) {
-		BUG_ON(b->data->magic != bset_magic(&c->sb));
+		BUG_ON(b->data->magic != bset_magic(&c->disk_sb));
 
 		b->data->format	= b->keys.format;
 		data		= b->data;

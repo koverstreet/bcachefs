@@ -30,7 +30,7 @@ void bch_fatal_error(struct cache_set *c)
 {
 	if (bch_cache_set_read_only(c))
 		printk(KERN_ERR "bcache: %pU emergency read only\n",
-		       c->sb.set_uuid.b);
+		       c->disk_sb.user_uuid.b);
 }
 
 /* Nonfatal IO errors, IO error/latency accounting: */

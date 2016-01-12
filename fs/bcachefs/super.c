@@ -469,7 +469,7 @@ static void bcache_write_super_unlock(struct closure *cl)
 static int cache_sb_to_cache_set(struct cache_set *c, struct cache_sb *src)
 {
 	struct cache_member_rcu *new, *old;
-	struct cache_sb *dst = &c->sb;
+	struct cache_sb *dst = &c->disk_sb;
 	unsigned nr_in_set = le16_to_cpu(src->nr_in_set);
 
 	new = kzalloc(sizeof(struct cache_member_rcu) +
@@ -498,13 +498,21 @@ static int cache_sb_to_cache_set(struct cache_set *c, struct cache_sb *src)
 	dst->flags		= src->flags;
 	dst->block_size		= src->block_size;
 
-	pr_debug("set version = %llu", le64_to_cpu(c->sb.version));
+	c->sb.block_size	= le16_to_cpu(src->block_size);
+	c->sb.btree_node_size	= CACHE_BTREE_NODE_SIZE(src);
+
+	c->sb.nr_in_set		= src->nr_in_set;
+
+	c->sb.meta_replicas_have= CACHE_SET_META_REPLICAS_HAVE(src);
+	c->sb.data_replicas_have= CACHE_SET_DATA_REPLICAS_HAVE(src);
+
+	pr_debug("set version = %llu", le64_to_cpu(dst->version));
 	return 0;
 }
 
 static int cache_sb_from_cache_set(struct cache_set *c, struct cache *ca)
 {
-	struct cache_sb *src = &c->sb, *dst = ca->disk_sb.sb;
+	struct cache_sb *src = &c->disk_sb, *dst = ca->disk_sb.sb;
 	struct cache_member_rcu *mi;
 
 	if (src->nr_in_set != dst->nr_in_set) {
@@ -554,7 +562,7 @@ static void __bcache_write_super(struct cache_set *c)
 
 	closure_init(cl, &c->cl);
 
-	c->sb.seq++;
+	c->disk_sb.seq = cpu_to_le64(le64_to_cpu(c->disk_sb.seq) + 1);
 
 	for_each_cache(ca, c, i) {
 		struct cache_sb *sb = ca->disk_sb.sb;
@@ -842,7 +850,7 @@ void bch_cache_set_release(struct kobject *kobj)
 		complete(c->stop_completion);
 
 	bch_notify_cache_set_stopped(c);
-	pr_info("Cache set %pU unregistered", c->sb.set_uuid.b);
+	pr_info("Cache set %pU unregistered", c->disk_sb.set_uuid.b);
 
 	cache_set_free(c);
 }
@@ -1034,7 +1042,7 @@ static struct cache_set *bch_cache_set_alloc(struct cache_sb *sb,
 	if (cache_sb_to_cache_set(c, sb))
 		goto err;
 
-	scnprintf(c->uuid, sizeof(c->uuid), "%pU", &c->sb.user_uuid);
+	scnprintf(c->uuid, sizeof(c->uuid), "%pU", &c->disk_sb.user_uuid);
 
 	c->opts = cache_superblock_opts(sb);
 	cache_set_opts_apply(&c->opts, opts);
@@ -1128,7 +1136,7 @@ static int bch_cache_set_online(struct cache_set *c)
 	if (IS_ERR(c->chardev))
 		return PTR_ERR(c->chardev);
 
-	if (kobject_add(&c->kobj, NULL, "%pU", c->sb.user_uuid.b) ||
+	if (kobject_add(&c->kobj, NULL, "%pU", c->disk_sb.user_uuid.b) ||
 	    kobject_add(&c->internal, &c->kobj, "internal") ||
 	    kobject_add(&c->opts_dir, &c->kobj, "options") ||
 	    kobject_add(&c->time_stats, &c->kobj, "time_stats") ||
@@ -1175,7 +1183,7 @@ static const char *run_cache_set(struct cache_set *c)
 	 * It is false if it is the first time it is run.
 	 */
 
-	if (CACHE_SYNC(&c->sb)) {
+	if (CACHE_SYNC(&c->disk_sb)) {
 		LIST_HEAD(journal);
 		struct jset *j;
 
@@ -1311,7 +1319,7 @@ static const char *run_cache_set(struct cache_set *c)
 			goto err;
 
 		/* Mark cache set as initialized: */
-		SET_CACHE_SYNC(&c->sb, true);
+		SET_CACHE_SYNC(&c->disk_sb, true);
 	}
 
 	bch_prio_timer_start(c, READ);
@@ -1367,7 +1375,7 @@ static const char *can_add_cache(struct cache_sb *sb,
 		return "mismatched block size";
 
 	if (sb->members[le16_to_cpu(sb->nr_this_dev)].bucket_size <
-	    CACHE_BTREE_NODE_SIZE(&c->sb))
+	    CACHE_BTREE_NODE_SIZE(&c->disk_sb))
 		return "new cache bucket_size is too small";
 
 	return NULL;
@@ -1389,7 +1397,7 @@ static const char *can_attach_cache(struct cache_sb *sb, struct cache_set *c)
 	 */
 	mi = cache_member_info_get(c);
 
-	match = !(sb->seq <= c->sb.seq &&
+	match = !(le64_to_cpu(sb->seq) <= le64_to_cpu(c->disk_sb.seq) &&
 		  (sb->nr_this_dev >= mi->nr_in_set ||
 		   memcmp(&mi->m[sb->nr_this_dev].uuid,
 			  &sb->disk_uuid,
@@ -1757,7 +1765,7 @@ bool bch_cache_remove(struct cache *ca, bool force)
 
 	if (!cache_may_remove(ca)) {
 		pr_err("Can't remove last device in tier %llu of %pU.",
-		       CACHE_TIER(&ca->mi), ca->set->sb.set_uuid.b);
+		       CACHE_TIER(&ca->mi), ca->set->disk_sb.set_uuid.b);
 		bch_notify_cache_remove_failed(ca);
 		return false;
 	}
@@ -1904,7 +1912,7 @@ static const char *cache_alloc(struct bcache_superblock *sb,
 	bch_moving_init_cache(ca);
 	bch_tiering_init_cache(ca);
 
-	if (le64_to_cpu(ca->disk_sb.sb->seq) > le64_to_cpu(c->sb.seq))
+	if (le64_to_cpu(ca->disk_sb.sb->seq) > le64_to_cpu(c->disk_sb.seq))
 		cache_sb_to_cache_set(c, ca->disk_sb.sb);
 
 	err = "error creating kobject";
@@ -1929,7 +1937,7 @@ static struct cache_set *cache_set_lookup(uuid_le uuid)
 	lockdep_assert_held(&bch_register_lock);
 
 	list_for_each_entry(c, &bch_cache_sets, list)
-		if (!memcmp(&c->sb.set_uuid, &uuid, sizeof(uuid_le)))
+		if (!memcmp(&c->disk_sb.set_uuid, &uuid, sizeof(uuid_le)))
 			return c;
 
 	return NULL;
