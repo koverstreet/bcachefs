@@ -160,7 +160,7 @@ struct journal {
 
 	struct work_struct	reclaim_work;
 
-	u64			prio_buckets[MAX_CACHES_PER_SET];
+	__le64			prio_buckets[MAX_CACHES_PER_SET];
 	unsigned		nr_prio_buckets;
 
 

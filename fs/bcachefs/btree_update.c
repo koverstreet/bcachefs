@@ -291,7 +291,7 @@ static struct btree *bch_btree_node_alloc(struct cache_set *c,
 	set_btree_node_dirty(b);
 
 	bch_bset_init_first(&b->keys, &b->data->keys);
-	b->data->magic = bset_magic(&c->disk_sb);
+	b->data->magic = cpu_to_le64(bset_magic(&c->disk_sb));
 	SET_BSET_BTREE_LEVEL(&b->data->keys, level);
 
 	bch_check_mark_super(c, &b->key, true);
@@ -720,7 +720,7 @@ void bch_btree_insert_and_journal(struct btree_iter *iter,
 	if (res->ref) {
 		bch_journal_add_keys(&c->journal, res, b->btree_id,
 				     insert, b->level);
-		btree_bset_last(b)->journal_seq = c->journal.seq;
+		btree_bset_last(b)->journal_seq = cpu_to_le64(c->journal.seq);
 	}
 }
 
@@ -1256,7 +1256,7 @@ static struct btree *__btree_split_node(struct btree_iter *iter, struct btree *n
 			nr_packed++;
 		else
 			nr_unpacked++;
-		if (k->_data - set1->_data >= (set1->u64s * 3) / 5)
+		if (k->_data - set1->_data >= (le16_to_cpu(set1->u64s) * 3) / 5)
 			break;
 		k = bkey_next(k);
 	}
@@ -1268,16 +1268,16 @@ static struct btree *__btree_split_node(struct btree_iter *iter, struct btree *n
 	n2->data->min_key =
 		btree_type_successor(n1->btree_id, n1->key.k.p);
 
-	set2->u64s = (u64 *) bset_bkey_last(set1) - (u64 *) k;
-	set1->u64s -= set2->u64s;
+	set2->u64s = cpu_to_le16((u64 *) bset_bkey_last(set1) - (u64 *) k);
+	set1->u64s = cpu_to_le16(le16_to_cpu(set1->u64s) - le16_to_cpu(set2->u64s));
 
-	n2->keys.nr.live_u64s = set2->u64s;
+	n2->keys.nr.live_u64s = le16_to_cpu(set2->u64s);
 	n2->keys.nr.packed_keys
 		= n1->keys.nr.packed_keys - nr_packed;
 	n2->keys.nr.unpacked_keys
 		= n1->keys.nr.unpacked_keys - nr_unpacked;
 
-	n1->keys.nr.live_u64s = set1->u64s;
+	n1->keys.nr.live_u64s = le16_to_cpu(set1->u64s);
 	n1->keys.nr.packed_keys = nr_packed;
 	n1->keys.nr.unpacked_keys = nr_unpacked;
 
@@ -1286,7 +1286,7 @@ static struct btree *__btree_split_node(struct btree_iter *iter, struct btree *n
 
 	memcpy(set2->start,
 	       bset_bkey_last(set1),
-	       set2->u64s * sizeof(u64));
+	       le16_to_cpu(set2->u64s) * sizeof(u64));
 
 	n1->keys.set->size = 0;
 	n1->keys.set->extra = BSET_TREE_NONE_VAL;
@@ -1412,7 +1412,7 @@ static int btree_split(struct btree *b, struct btree_iter *iter,
 		k = i->start;
 		while (k != bset_bkey_last(i))
 			if (bkey_deleted(k)) {
-				i->u64s -= k->u64s;
+				i->u64s = cpu_to_le16(le16_to_cpu(i->u64s) - k->u64s);
 				memmove(k, bkey_next(k),
 					(void *) bset_bkey_last(i) -
 					(void *) k);
@@ -1423,9 +1423,9 @@ static int btree_split(struct btree *b, struct btree_iter *iter,
 	}
 
 	if (__set_blocks(n1->data,
-			 n1->data->keys.u64s + u64s_to_insert,
+			 le16_to_cpu(n1->data->keys.u64s) + u64s_to_insert,
 			 block_bytes(n1->c)) > btree_blocks(c) * 3 / 4) {
-		trace_bcache_btree_node_split(b, btree_bset_first(n1)->u64s);
+		trace_bcache_btree_node_split(b, le16_to_cpu(btree_bset_first(n1)->u64s));
 
 		n2 = __btree_split_node(iter, n1, reserve);
 		six_unlock_write(&n1->lock);
@@ -1450,7 +1450,7 @@ static int btree_split(struct btree *b, struct btree_iter *iter,
 			bch_btree_node_write(n3, &as->cl, NULL);
 		}
 	} else {
-		trace_bcache_btree_node_compact(b, btree_bset_first(n1)->u64s);
+		trace_bcache_btree_node_compact(b, le16_to_cpu(btree_bset_first(n1)->u64s));
 		six_unlock_write(&n1->lock);
 
 		bch_keylist_add(&as->parent_keys, &n1->key);

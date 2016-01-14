@@ -112,7 +112,7 @@
 
 static inline struct jset_entry *jset_keys_next(struct jset_entry *j)
 {
-	return (void *) __bset_bkey_last(j);
+	return (void *) __bkey_idx(j, le16_to_cpu(j->u64s));
 }
 
 /*
@@ -250,7 +250,7 @@ ssize_t bch_journal_print_debug(struct journal *, char *);
 
 int bch_cache_journal_alloc(struct cache *);
 
-static inline u64 *__journal_buckets(struct cache *ca)
+static inline __le64 *__journal_buckets(struct cache *ca)
 {
 	return ca->disk_sb.sb->_data + bch_journal_buckets_offset(ca->disk_sb.sb);
 }

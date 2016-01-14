@@ -390,7 +390,7 @@ SHOW(bch_blockdev_volume)
 	struct bcache_device *d = container_of(kobj, struct bcache_device,
 					       kobj);
 
-	sysfs_hprint(size,	d->inode.v.i_inode.i_size);
+	sysfs_hprint(size,	le64_to_cpu(d->inode.v.i_inode.i_size));
 
 	if (attr == &sysfs_label) {
 		memcpy(buf, d->inode.v.i_label, SB_LABEL_SIZE);
@@ -414,7 +414,7 @@ STORE(__bch_blockdev_volume)
 
 		mutex_lock(&d->inode_lock);
 
-		if (v < d->inode.v.i_inode.i_size) {
+		if (v < le64_to_cpu(d->inode.v.i_inode.i_size) ){
 			ret = bch_inode_truncate(d->c, d->inode.k.p.inode,
 						 v >> 9, NULL);
 			if (ret) {
@@ -422,7 +422,7 @@ STORE(__bch_blockdev_volume)
 				return ret;
 			}
 		}
-		d->inode.v.i_inode.i_size = v;
+		d->inode.v.i_inode.i_size = cpu_to_le64(v);
 		ret = bch_inode_update(d->c, &d->inode.k_i, &journal_seq);
 
 		mutex_unlock(&d->inode_lock);
@@ -434,7 +434,7 @@ STORE(__bch_blockdev_volume)
 		if (ret)
 			return ret;
 
-		set_capacity(d->disk, d->inode.v.i_inode.i_size >> 9);
+		set_capacity(d->disk, v >> 9);
 	}
 
 	if (attr == &sysfs_label) {

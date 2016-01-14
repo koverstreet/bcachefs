@@ -263,13 +263,13 @@ static int bch_prio_write(struct cache *ca)
 			d->gen = ca->bucket_gens[r];
 		}
 
-		p->next_bucket	= ca->prio_buckets[i + 1];
-		p->magic	= pset_magic(&c->disk_sb);
+		p->next_bucket	= cpu_to_le64(ca->prio_buckets[i + 1]);
+		p->magic	= cpu_to_le64(pset_magic(&c->disk_sb));
 
 		SET_PSET_CSUM_TYPE(p, c->opts.metadata_checksum);
-		p->csum		= bch_checksum(PSET_CSUM_TYPE(p),
-					       &p->magic,
-					       bucket_bytes(ca) - 8);
+		p->csum		= cpu_to_le64(bch_checksum(PSET_CSUM_TYPE(p),
+							   &p->magic,
+							   bucket_bytes(ca) - 8));
 
 		spin_lock(&ca->prio_buckets_lock);
 		r = bch_bucket_alloc(ca, RESERVE_PRIO);
@@ -291,7 +291,7 @@ static int bch_prio_write(struct cache *ca)
 	}
 
 	spin_lock(&c->journal.lock);
-	c->journal.prio_buckets[ca->sb.nr_this_dev] = ca->prio_buckets[0];
+	c->journal.prio_buckets[ca->sb.nr_this_dev] = cpu_to_le64(ca->prio_buckets[0]);
 	c->journal.nr_prio_buckets = max_t(unsigned,
 					   ca->sb.nr_this_dev + 1,
 					   c->journal.nr_prio_buckets);
@@ -332,7 +332,9 @@ int bch_prio_read(struct cache *ca)
 	size_t b;
 	int ret;
 
-	bucket = c->journal.prio_buckets[ca->sb.nr_this_dev];
+	spin_lock(&c->journal.lock);
+	bucket = le64_to_cpu(c->journal.prio_buckets[ca->sb.nr_this_dev]);
+	spin_unlock(&c->journal.lock);
 
 	/*
 	 * If the device hasn't been used yet, there won't be a prio bucket ptr
@@ -346,10 +348,6 @@ int bch_prio_read(struct cache *ca)
 		return -EIO;
 	}
 
-	spin_lock(&c->journal.lock);
-	c->journal.prio_buckets[ca->sb.nr_this_dev] = bucket;
-	spin_unlock(&c->journal.lock);
-
 	for (b = 0; b < ca->mi.nbuckets; b++, d++) {
 		if (d == end) {
 			ca->prio_last_buckets[bucket_nr] = bucket;
@@ -362,14 +360,14 @@ int bch_prio_read(struct cache *ca)
 			    bch_meta_read_fault("prio"))
 				return -EIO;
 
-			got = p->magic;
+			got = le64_to_cpu(p->magic);
 			expect = pset_magic(&c->disk_sb);
 			if (cache_inconsistent_on(got != expect, ca,
 					"bad magic (got %llu expect %llu) while reading prios from bucket %llu",
 					got, expect, bucket))
 				return -EIO;
 
-			got = p->csum;
+			got = le64_to_cpu(p->csum);
 			expect = bch_checksum(PSET_CSUM_TYPE(p),
 					      &p->magic,
 					      bucket_bytes(ca) - 8);
@@ -378,7 +376,7 @@ int bch_prio_read(struct cache *ca)
 					got, expect, bucket))
 				return -EIO;
 
-			bucket = p->next_bucket;
+			bucket = le64_to_cpu(p->next_bucket);
 			d = p->data;
 		}
 

@@ -112,7 +112,7 @@ static inline size_t bch_btree_keys_u64s_remaining(struct cache_set *c,
 	struct bset *i = btree_bset_last(b);
 
 	BUG_ON((PAGE_SIZE << b->keys.page_order) <
-	       (bset_byte_offset(b, i) + set_bytes(i)));
+	       (bset_byte_offset(b, i) + __set_bytes(i, le16_to_cpu(i->u64s))));
 
 	if (b->written == btree_blocks(c))
 		return 0;
@@ -123,7 +123,7 @@ static inline size_t bch_btree_keys_u64s_remaining(struct cache_set *c,
 		      : &b->data->keys));
 
 	return ((PAGE_SIZE << b->keys.page_order) -
-		(bset_byte_offset(b, i) + set_bytes(i))) /
+		(bset_byte_offset(b, i) + __set_bytes(i, le16_to_cpu(i->u64s)))) /
 		sizeof(u64);
 #else
 	/*

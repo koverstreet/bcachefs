@@ -147,7 +147,7 @@ static struct bkey_i_dirent *dirent_create_key(u8 type,
 
 	bkey_dirent_init(&dirent->k_i);
 	dirent->k.u64s = u64s;
-	dirent->v.d_inum = dst;
+	dirent->v.d_inum = cpu_to_le64(dst);
 	dirent->v.d_type = type;
 
 	memcpy(dirent->v.d_name, name->name, name->len);
@@ -417,7 +417,7 @@ u64 bch_dirent_lookup(struct cache_set *c, u64 dir_inum,
 
 	k = __dirent_find(&iter, dir_inum, name);
 	if (!IS_ERR(k.k))
-		inum = bkey_s_c_to_dirent(k).v->d_inum;
+		inum = le64_to_cpu(bkey_s_c_to_dirent(k).v->d_inum);
 
 	bch_btree_iter_unlock(&iter);
 
@@ -485,7 +485,8 @@ int bch_readdir(struct file *file, struct dir_context *ctx)
 		 * locks
 		 */
 		if (!dir_emit(ctx, dirent.v->d_name, len,
-			      dirent.v->d_inum, dirent.v->d_type))
+			      le64_to_cpu(dirent.v->d_inum),
+			      dirent.v->d_type))
 			break;
 
 		ctx->pos = k.k->p.offset + 1;

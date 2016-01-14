@@ -99,7 +99,7 @@ struct btree_nr_keys bch_key_sort_fix_overlapping(struct btree_keys *b,
 		heap_sift(iter, 0, key_sort_cmp);
 	}
 
-	bset->u64s = (u64 *) out - bset->_data;
+	bset->u64s = cpu_to_le16((u64 *) out - bset->_data);
 	return nr;
 }
 
@@ -775,7 +775,7 @@ struct btree_nr_keys bch_extent_sort_fix_overlapping(struct btree_keys *b,
 		}
 	}
 
-	bset->u64s = (u64 *) out - bset->_data;
+	bset->u64s = cpu_to_le16((u64 *) out - bset->_data);
 	return nr;
 }
 

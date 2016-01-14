@@ -25,7 +25,7 @@ extern const char * const bch_csum_types[];
 extern const char * const bch_compression_types[];
 
 /* dummy option, for options that aren't stored in the superblock */
-BITMASK(NO_SB_OPT,		struct cache_sb, flags, 0, 0);
+LE64_BITMASK(NO_SB_OPT,		struct cache_sb, flags, 0, 0);
 
 #define CACHE_SET_VISIBLE_OPTS()				\
 	CACHE_SET_OPT(verbose_recovery,				\

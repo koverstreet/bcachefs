@@ -538,21 +538,21 @@ static void bch_coalesce_nodes(struct btree *old_nodes[GC_MERGE_NODES],
 
 		for (k = s2->start;
 		     k < bset_bkey_last(s2) &&
-		     __set_blocks(n1->data, s1->u64s + u64s + k->u64s,
+		     __set_blocks(n1->data, le16_to_cpu(s1->u64s) + u64s + k->u64s,
 				  block_bytes(c)) <= blocks;
 		     k = bkey_next(k)) {
 			last = k;
 			u64s += k->u64s;
 		}
 
-		if (u64s == s2->u64s) {
+		if (u64s == le16_to_cpu(s2->u64s)) {
 			/* n2 fits entirely in n1 */
 			n1->key.k.p = n1->data->max_key = n2->data->max_key;
 
 			memcpy(bset_bkey_last(s1),
 			       s2->start,
-			       s2->u64s * sizeof(u64));
-			s1->u64s += s2->u64s;
+			       le16_to_cpu(s2->u64s) * sizeof(u64));
+			le16_add_cpu(&s1->u64s, le16_to_cpu(s2->u64s));
 
 			six_unlock_write(&n2->lock);
 			bch_btree_node_free_never_inserted(c, n2);
@@ -574,12 +574,12 @@ static void bch_coalesce_nodes(struct btree *old_nodes[GC_MERGE_NODES],
 			memcpy(bset_bkey_last(s1),
 			       s2->start,
 			       u64s * sizeof(u64));
-			s1->u64s += u64s;
+			le16_add_cpu(&s1->u64s, u64s);
 
 			memmove(s2->start,
 				bset_bkey_idx(s2, u64s),
-				(s2->u64s - u64s) * sizeof(u64));
-			s2->u64s -= u64s;
+				(le16_to_cpu(s2->u64s) - u64s) * sizeof(u64));
+			s2->u64s = cpu_to_le16(le16_to_cpu(s2->u64s) - u64s);
 		}
 	}
 

@@ -155,7 +155,7 @@ __always_inline
 static u64 get_inc_field(struct unpack_state *state, unsigned field)
 {
 	unsigned bits = state->format->bits_per_field[field];
-	u64 v = 0, offset = state->format->field_offset[field];
+	u64 v = 0, offset = le64_to_cpu(state->format->field_offset[field]);
 
 	if (bits >= state->bits) {
 		v = state->w >> (64 - bits);
@@ -180,7 +180,7 @@ __always_inline
 static bool set_inc_field(struct pack_state *state, unsigned field, u64 v)
 {
 	unsigned bits = state->format->bits_per_field[field];
-	u64 offset = state->format->field_offset[field];
+	u64 offset = le64_to_cpu(state->format->field_offset[field]);
 
 	if (v < offset)
 		return false;
@@ -403,7 +403,7 @@ __always_inline
 static bool set_inc_field_lossy(struct pack_state *state, unsigned field, u64 v)
 {
 	unsigned bits = state->format->bits_per_field[field];
-	u64 offset = state->format->field_offset[field];
+	u64 offset = le64_to_cpu(state->format->field_offset[field]);
 	bool ret = true;
 
 	EBUG_ON(v < offset);
@@ -493,7 +493,7 @@ enum bkey_pack_pos_ret bkey_pack_pos_lossy(struct bkey_packed *out,
 #endif
 	bool exact = true;
 
-	if (unlikely(in.snapshot < format->field_offset[BKEY_FIELD_SNAPSHOT])) {
+	if (unlikely(in.snapshot < le64_to_cpu(format->field_offset[BKEY_FIELD_SNAPSHOT]))) {
 		if (!in.offset-- &&
 		    !in.inode--)
 			return BKEY_PACK_POS_FAIL;
@@ -501,7 +501,7 @@ enum bkey_pack_pos_ret bkey_pack_pos_lossy(struct bkey_packed *out,
 		exact = false;
 	}
 
-	if (unlikely(in.offset < format->field_offset[BKEY_FIELD_OFFSET])) {
+	if (unlikely(in.offset < le64_to_cpu(format->field_offset[BKEY_FIELD_OFFSET]))) {
 		if (!in.inode--)
 			return BKEY_PACK_POS_FAIL;
 		in.offset	= KEY_OFFSET_MAX;
@@ -509,7 +509,7 @@ enum bkey_pack_pos_ret bkey_pack_pos_lossy(struct bkey_packed *out,
 		exact = false;
 	}
 
-	if (unlikely(in.inode < format->field_offset[BKEY_FIELD_INODE]))
+	if (unlikely(in.inode < le64_to_cpu(format->field_offset[BKEY_FIELD_INODE])))
 		return BKEY_PACK_POS_FAIL;
 
 	if (!set_inc_field_lossy(&state, BKEY_FIELD_INODE, in.inode)) {
@@ -596,9 +596,8 @@ struct bkey_format bch_bkey_format_done(struct bkey_format_state *s)
 	};
 
 	for (i = 0; i < ARRAY_SIZE(s->field_min); i++) {
-		ret.field_offset[i]	= min(s->field_min[i], s->field_max[i]);
-		ret.bits_per_field[i]	= fls64(s->field_max[i] -
-						ret.field_offset[i]);
+		u64 field_offset	= min(s->field_min[i], s->field_max[i]);
+		ret.bits_per_field[i]	= fls64(s->field_max[i] - field_offset);
 
 		/*
 		 * We don't want it to be possible for the packed format to
@@ -606,10 +605,11 @@ struct bkey_format bch_bkey_format_done(struct bkey_format_state *s)
 		 * confusion and issues (like with bkey_packed_successor())
 		 */
 
-		ret.field_offset[i] = ret.bits_per_field[i] != 64
-			? min(ret.field_offset[i], U64_MAX -
+		field_offset = ret.bits_per_field[i] != 64
+			? min(field_offset, U64_MAX -
 			      ((1ULL << ret.bits_per_field[i]) - 1))
 			: 0;
+		ret.field_offset[i] = cpu_to_le64(field_offset);
 
 		bits += ret.bits_per_field[i];
 	}
@@ -627,14 +627,14 @@ const char *bch_bkey_format_validate(struct bkey_format *f)
 		return "invalid format: incorrect number of fields";
 
 	for (i = 0; i < f->nr_fields; i++) {
+		u64 field_offset = le64_to_cpu(f->field_offset[i]);
+
 		if (f->bits_per_field[i] > 64)
 			return "invalid format: field too large";
 
-		if ((f->bits_per_field[i] == 64 &&
-		     f->field_offset[i]) ||
-		    (f->field_offset[i] +
-		     ((1ULL << f->bits_per_field[i]) - 1) <
-		     f->field_offset[i]))
+		if ((f->bits_per_field[i] == 64 && field_offset) ||
+		    (field_offset + ((1ULL << f->bits_per_field[i]) - 1) <
+		     field_offset))
 			return "invalid format: offset + bits overflow";
 
 		bits += f->bits_per_field[i];

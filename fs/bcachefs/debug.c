@@ -110,7 +110,7 @@ void __bch_btree_verify(struct cache_set *c, struct btree *b)
 			if (!b->written) {
 				i = &n_ondisk->keys;
 				block += __set_blocks(n_ondisk,
-						      n_ondisk->keys.u64s,
+						      le16_to_cpu(n_ondisk->keys.u64s),
 						      block_bytes(c));
 			} else {
 				struct btree_node_entry *bne =
@@ -119,7 +119,7 @@ void __bch_btree_verify(struct cache_set *c, struct btree *b)
 				i = &bne->keys;
 
 				block += __set_blocks(bne,
-						      bne->keys.u64s,
+						      le16_to_cpu(bne->keys.u64s),
 						      block_bytes(c));
 			}
 
@@ -132,7 +132,7 @@ void __bch_btree_verify(struct cache_set *c, struct btree *b)
 
 		printk(KERN_ERR "*** block %u not written\n", block);
 
-		for (j = 0; j < inmemory->u64s; j++)
+		for (j = 0; j < le16_to_cpu(inmemory->u64s); j++)
 			if (inmemory->_data[j] != sorted->_data[j])
 				break;
 
@@ -188,6 +188,8 @@ void bch_verify_inode_refs(struct cache_set *c)
 	struct bkey_s_c k;
 	struct bkey_i_inode inode;
 	u64 cur_inum = 0;
+	u64 i_size;
+	u16 i_mode;
 	char buf[100];
 
 	for_each_btree_key(&iter, c, BTREE_ID_EXTENTS,
@@ -208,21 +210,23 @@ void bch_verify_inode_refs(struct cache_set *c)
 		}
 
 		cur_inum = k.k->p.inode;
+		i_mode = le16_to_cpu(inode.v.i_mode);
+		i_size = le64_to_cpu(inode.v.i_size);
 
-		if (!S_ISREG(inode.v.i_mode) &&
-		    !S_ISLNK(inode.v.i_mode))
+		if (!S_ISREG(i_mode) &&
+		    !S_ISLNK(i_mode))
 			cache_set_inconsistent(c,
 				"extent for non regular file, inode %llu mode %u",
-				k.k->p.inode, inode.v.i_mode);
+				k.k->p.inode, i_mode);
 
-		BUG_ON(inode.v.i_flags & BCH_INODE_I_SIZE_DIRTY);
+		BUG_ON(le32_to_cpu(inode.v.i_flags) & BCH_INODE_I_SIZE_DIRTY);
 
-		if (k.k->p.offset > round_up(inode.v.i_size, PAGE_SIZE) >> 9) {
+		if (k.k->p.offset > round_up(i_size, PAGE_SIZE) >> 9) {
 			bch_bkey_val_to_text(c, BTREE_ID_EXTENTS, buf,
 					     sizeof(buf), k);
 			cache_set_inconsistent(c,
 				"extent past end of inode %llu: i_size %llu extent\n%s",
-				k.k->p.inode, inode.v.i_size, buf);
+				k.k->p.inode, i_size, buf);
 		}
 	}
 	bch_btree_iter_unlock(&iter);
@@ -242,11 +246,12 @@ void bch_verify_inode_refs(struct cache_set *c)
 		}
 
 		cur_inum = k.k->p.inode;
+		i_mode = le16_to_cpu(inode.v.i_mode);
 
-		if (!S_ISDIR(inode.v.i_mode))
+		if (!S_ISDIR(i_mode))
 			cache_set_inconsistent(c,
 				"dirent for non directory, inode %llu mode %u",
-				k.k->p.inode, inode.v.i_mode);
+				k.k->p.inode, i_mode);
 	}
 	bch_btree_iter_unlock(&iter);
 
@@ -262,11 +267,12 @@ void bch_verify_inode_refs(struct cache_set *c)
 		}
 
 		cur_inum = k.k->p.inode;
+		i_mode = le16_to_cpu(inode.v.i_mode);
 
-		cache_set_inconsistent_on(!S_ISREG(inode.v.i_mode) &&
-					  !S_ISDIR(inode.v.i_mode), c,
+		cache_set_inconsistent_on(!S_ISREG(i_mode) &&
+					  !S_ISDIR(i_mode), c,
 			"xattr for non file/directory, inode %llu mode %u",
-			k.k->p.inode, inode.v.i_mode);
+			k.k->p.inode, i_mode);
 	}
 	bch_btree_iter_unlock(&iter);
 }

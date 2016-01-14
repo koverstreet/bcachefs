@@ -450,7 +450,7 @@ TRACE_EVENT(bcache_btree_write,
 	TP_fast_assign(
 		__entry->bucket	= PTR_BUCKET_NR_TRACE(b->c, &b->key, 0);
 		__entry->block	= b->written;
-		__entry->u64s	= b->keys.set[b->keys.nsets].data->u64s;
+		__entry->u64s	= le16_to_cpu(b->keys.set[b->keys.nsets].data->u64s);
 	),
 
 	TP_printk("bucket %llu block %u u64s %u",

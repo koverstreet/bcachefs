@@ -37,14 +37,14 @@ static inline u64 journal_pin_seq(struct journal *j,
 
 #define for_each_jset_jkeys(jkeys, jset)				\
 	for (jkeys = (jset)->start;					\
-	     jkeys < (struct jset_entry *) bset_bkey_last(jset);	\
+	     jkeys < (struct jset_entry *) bkey_idx(jset, le32_to_cpu((jset)->u64s));\
 	     jkeys = jset_keys_next(jkeys))
 
 #define for_each_jset_key(k, _n, jkeys, jset)				\
 	for_each_jset_jkeys(jkeys, jset)				\
 		if (JKEYS_TYPE(jkeys) == JKEYS_BTREE_KEYS)		\
 			for (k = (jkeys)->start;			\
-			     (k < bset_bkey_last(jkeys) &&		\
+			     (k < bkey_idx(jkeys, le16_to_cpu((jkeys)->u64s)) &&\
 			      (_n = bkey_next(k), 1));			\
 			     k = _n)
 
@@ -57,7 +57,7 @@ static inline void bch_journal_add_entry_at(struct journal *j, const void *data,
 {
 	struct jset_entry *jkeys = bkey_idx(journal_cur_write(j)->data, offset);
 
-	jkeys->u64s = u64s;
+	jkeys->u64s = cpu_to_le16(u64s);
 	jkeys->btree_id = id;
 	jkeys->level = level;
 	jkeys->flags = 0;
@@ -72,8 +72,9 @@ static inline void bch_journal_add_entry(struct journal *j, const void *data,
 {
 	struct jset *jset = journal_cur_write(j)->data;
 
-	bch_journal_add_entry_at(j, data, u64s, type, id, level, jset->u64s);
-	jset->u64s += jset_u64s(u64s);
+	bch_journal_add_entry_at(j, data, u64s, type, id, level,
+				 le32_to_cpu(jset->u64s));
+	le32_add_cpu(&jset->u64s, jset_u64s(u64s));
 }
 
 static struct jset_entry *bch_journal_find_entry(struct jset *j, unsigned type,
@@ -102,7 +103,7 @@ struct bkey_i *bch_journal_find_btree_root(struct cache_set *c, struct jset *j,
 	*level = jkeys->level;
 
 	if (cache_set_inconsistent_on(!jkeys->u64s ||
-			jkeys->u64s != k->k.u64s ||
+			le16_to_cpu(jkeys->u64s) != k->k.u64s ||
 			bkey_invalid(c, BKEY_TYPE_BTREE, bkey_i_to_s_c(k)),
 			c, "invalid btree root in journal"))
 		return NULL;
@@ -285,7 +286,7 @@ static enum {
 {
 	struct journal_replay *i, *pos;
 	struct list_head *where;
-	size_t bytes = set_bytes(j);
+	size_t bytes = __set_bytes(j, le32_to_cpu(j->u64s));
 	int ret = JOURNAL_ENTRY_ADD_OUT_OF_RANGE;
 
 	mutex_lock(&jlist->lock);
@@ -293,9 +294,10 @@ static enum {
 	/* This entry too old? */
 	if (!list_empty(jlist->head)) {
 		i = list_last_entry(jlist->head, struct journal_replay, list);
-		if (j->seq < i->j.last_seq) {
+		if (le64_to_cpu(j->seq) < le64_to_cpu(i->j.last_seq)) {
 			pr_debug("j->seq %llu i->j.seq %llu",
-				 j->seq, i->j.seq);
+				 le64_to_cpu(j->seq),
+				 le64_to_cpu(i->j.seq));
 			goto out;
 		}
 	}
@@ -304,20 +306,20 @@ static enum {
 
 	/* Drop entries we don't need anymore */
 	list_for_each_entry_safe(i, pos, jlist->head, list) {
-		if (i->j.seq >= j->last_seq)
+		if (le64_to_cpu(i->j.seq) >= le64_to_cpu(j->last_seq))
 			break;
 		list_del(&i->list);
 		kfree(i);
 	}
 
 	list_for_each_entry_reverse(i, jlist->head, list) {
-		if (j->seq == i->j.seq) {
+		if (le64_to_cpu(j->seq) == le64_to_cpu(i->j.seq)) {
 			pr_debug("j->seq %llu i->j.seq %llu",
 				 j->seq, i->j.seq);
 			goto out;
 		}
 
-		if (j->seq > i->j.seq) {
+		if (le64_to_cpu(j->seq) > le64_to_cpu(i->j.seq)) {
 			where = &i->list;
 			goto add;
 		}
@@ -334,7 +336,7 @@ add:
 	memcpy(&i->j, j, bytes);
 	list_add(&i->list, where);
 
-	pr_debug("seq %llu", j->seq);
+	pr_debug("seq %llu", le64_to_cpu(j->seq));
 out:
 	mutex_unlock(&jlist->lock);
 	return ret;
@@ -347,18 +349,18 @@ static enum {
 } journal_entry_validate(struct cache *ca, const struct jset *j, u64 sector,
 			 unsigned bucket_sectors_left, unsigned sectors_read)
 {
-	size_t bytes = set_bytes(j);
+	size_t bytes = __set_bytes(j, le32_to_cpu(j->u64s));
 	u64 got, expect;
 
 	if (bch_meta_read_fault("journal"))
 		return JOURNAL_ENTRY_BAD;
 
-	if (j->magic != jset_magic(&ca->set->disk_sb)) {
+	if (le64_to_cpu(j->magic) != jset_magic(&ca->set->disk_sb)) {
 		pr_debug("bad magic while reading journal from %llu", sector);
 		return JOURNAL_ENTRY_BAD;
 	}
 
-	got = j->version;
+	got = le32_to_cpu(j->version);
 	expect = BCACHE_JSET_VERSION;
 
 	if (cache_inconsistent_on(got != expect, ca,
@@ -377,14 +379,15 @@ static enum {
 
 	/* XXX: retry on checksum error */
 
-	got = j->csum;
-	expect = csum_set(j, JSET_CSUM_TYPE(j));
+	got = le64_to_cpu(j->csum);
+	expect = __csum_set(j, le32_to_cpu(j->u64s), JSET_CSUM_TYPE(j));
 	if (cache_inconsistent_on(got != expect, ca,
 			"journal checksum bad (got %llu expect %llu), sector %lluu",
 			got, expect, sector))
 		return JOURNAL_ENTRY_BAD;
 
-	if (cache_inconsistent_on(j->last_seq > j->seq, ca,
+	if (cache_inconsistent_on(le64_to_cpu(j->last_seq) >
+				  le64_to_cpu(j->seq), ca,
 				  "invalid journal entry: last_seq > seq"))
 		return JOURNAL_ENTRY_BAD;
 
@@ -462,10 +465,10 @@ reread:
 			 * journal entries. We don't need the rest of the
 			 * bucket:
 			 */
-			if (j->seq < ja->bucket_seq[bucket])
+			if (le64_to_cpu(j->seq) < ja->bucket_seq[bucket])
 				goto out;
 
-			ja->bucket_seq[bucket] = j->seq;
+			ja->bucket_seq[bucket] = le64_to_cpu(j->seq);
 
 			switch (journal_entry_add(jlist, j)) {
 			case JOURNAL_ENTRY_ADD_ERROR:
@@ -478,10 +481,11 @@ reread:
 				break;
 			}
 
-			if (j->seq > *seq)
-				*seq = j->seq;
+			if (le64_to_cpu(j->seq) > *seq)
+				*seq = le64_to_cpu(j->seq);
 
-			blocks = set_blocks(j, block_bytes(c));
+			blocks = __set_blocks(j, le32_to_cpu(j->u64s),
+					      block_bytes(c));
 
 			pr_debug("next");
 			bucket_offset	+= blocks * c->sb.block_size;
@@ -701,15 +705,17 @@ const char *bch_journal_read(struct cache_set *c, struct list_head *list)
 
 	j = &list_entry(list->prev, struct journal_replay, list)->j;
 
-	if (j->seq - j->last_seq + 1 > c->journal.pin.size)
+	if (le64_to_cpu(j->seq) -
+	    le64_to_cpu(j->last_seq) + 1 > c->journal.pin.size)
 		return "too many journal entries open for refcount fifo";
 
-	c->journal.pin.back = j->seq - j->last_seq + 1;
+	c->journal.pin.back = le64_to_cpu(j->seq) -
+		le64_to_cpu(j->last_seq) + 1;
 
-	c->journal.seq = j->seq;
-	c->journal.last_seq_ondisk = j->last_seq;
+	c->journal.seq = le64_to_cpu(j->seq);
+	c->journal.last_seq_ondisk = le64_to_cpu(j->last_seq);
 
-	BUG_ON(last_seq(&c->journal) != j->last_seq);
+	BUG_ON(last_seq(&c->journal) != le64_to_cpu(j->last_seq));
 
 	i = list_first_entry(list, struct journal_replay, list);
 
@@ -720,7 +726,7 @@ const char *bch_journal_read(struct cache_set *c, struct list_head *list)
 
 		INIT_LIST_HEAD(&p->list);
 
-		if (i && i->j.seq == seq) {
+		if (i && le64_to_cpu(i->j.seq) == seq) {
 			atomic_set(&p->count, 1);
 
 			if (journal_seq_blacklist_read(c, i, p))
@@ -742,8 +748,8 @@ const char *bch_journal_read(struct cache_set *c, struct list_head *list)
 
 	memcpy(c->journal.prio_buckets,
 	       prio_ptrs->_data,
-	       prio_ptrs->u64s * sizeof(u64));
-	c->journal.nr_prio_buckets = prio_ptrs->u64s;
+	       le16_to_cpu(prio_ptrs->u64s) * sizeof(u64));
+	c->journal.nr_prio_buckets = le16_to_cpu(prio_ptrs->u64s);
 
 	return NULL;
 }
@@ -802,7 +808,7 @@ __journal_entry_close(struct journal *j, u32 val)
 				       old.v, new.v)) != old.v);
 
 	if (old.cur_entry_offset < JOURNAL_ENTRY_CLOSED_VAL)
-		journal_cur_write(j)->data->u64s = old.cur_entry_offset;
+		journal_cur_write(j)->data->u64s = cpu_to_le32(old.cur_entry_offset);
 
 	if (old.cur_entry_offset == JOURNAL_ENTRY_ERROR_VAL)
 		return JOURNAL_ENTRY_ERROR;
@@ -846,7 +852,7 @@ static void journal_entry_open(struct journal *j)
 	u64s -= JSET_KEYS_U64s + j->nr_prio_buckets;
 	u64s  = max_t(ssize_t, 0L, u64s);
 
-	if (u64s > w->data->u64s) {
+	if (u64s > le32_to_cpu(w->data->u64s)) {
 		union journal_res_state old, new;
 		u64 v = atomic64_read(&j->reservations.counter);
 
@@ -867,7 +873,7 @@ static void journal_entry_open(struct journal *j)
 				break;
 
 			/* Handle any already added entries */
-			new.cur_entry_offset = w->data->u64s;
+			new.cur_entry_offset = le32_to_cpu(w->data->u64s);
 		} while ((v = atomic64_cmpxchg(&j->reservations.counter,
 					       old.v, new.v)) != old.v);
 
@@ -964,29 +970,33 @@ int bch_journal_replay(struct cache_set *c, struct list_head *list)
 	struct jset_entry *jkeys;
 	struct journal_replay *i, *n;
 	u64 cur_seq = last_seq(j);
-	u64 end_seq = list_last_entry(list, struct journal_replay, list)->j.seq;
+	u64 end_seq = le64_to_cpu(list_last_entry(list, struct journal_replay,
+						  list)->j.seq);
 
 	list_for_each_entry_safe(i, n, list, list) {
 		mutex_lock(&j->blacklist_lock);
 
-		while (cur_seq < i->j.seq &&
+		while (cur_seq < le64_to_cpu(i->j.seq) &&
 		       journal_seq_blacklist_find(j, cur_seq))
 			cur_seq++;
 
-		cache_set_inconsistent_on(journal_seq_blacklist_find(j, i->j.seq), c,
+		cache_set_inconsistent_on(journal_seq_blacklist_find(j,
+							le64_to_cpu(i->j.seq)), c,
 				 "found blacklisted journal entry %llu",
-				 i->j.seq);
+				 le64_to_cpu(i->j.seq));
 
 		mutex_unlock(&j->blacklist_lock);
 
-		cache_set_inconsistent_on(i->j.seq != cur_seq, c,
+		cache_set_inconsistent_on(le64_to_cpu(i->j.seq) != cur_seq, c,
 			"journal entries %llu-%llu missing! (replaying %llu-%llu)",
-			cur_seq, i->j.seq - 1, last_seq(j), end_seq);
+			cur_seq, le64_to_cpu(i->j.seq) - 1,
+			last_seq(j), end_seq);
 
-		cur_seq = i->j.seq + 1;
+		cur_seq = le64_to_cpu(i->j.seq) + 1;
 
 		j->cur_pin_list =
-			&j->pin.data[((j->pin.back - 1 - (j->seq - i->j.seq)) &
+			&j->pin.data[((j->pin.back - 1 -
+				       (j->seq - le64_to_cpu(i->j.seq))) &
 				      j->pin.mask)];
 
 		BUG_ON(atomic_read(&j->cur_pin_list->count) != 1);
@@ -1347,7 +1357,7 @@ static void __bch_journal_next_entry(struct journal *j)
 	}
 
 	jset = journal_cur_write(j)->data;
-	jset->seq	= ++j->seq;
+	jset->seq	= cpu_to_le64(++j->seq);
 	jset->u64s	= 0;
 }
 
@@ -1378,7 +1388,7 @@ static void journal_write_done(struct closure *cl)
 	struct journal *j = container_of(cl, struct journal, io);
 	struct journal_write *w = journal_prev_write(j);
 
-	j->last_seq_ondisk = w->data->last_seq;
+	j->last_seq_ondisk = le64_to_cpu(w->data->last_seq);
 
 	__bch_time_stats_update(j->write_time, j->write_start_time);
 
@@ -1450,16 +1460,19 @@ static void journal_write_locked(struct closure *cl)
 	/* So last_seq is up to date */
 	journal_reclaim_fast(j);
 
-	w->data->read_clock	= c->prio_clock[READ].hand;
-	w->data->write_clock	= c->prio_clock[WRITE].hand;
-	w->data->magic		= jset_magic(&c->disk_sb);
-	w->data->version	= BCACHE_JSET_VERSION;
-	w->data->last_seq	= last_seq(j);
+	w->data->read_clock	= cpu_to_le16(c->prio_clock[READ].hand);
+	w->data->write_clock	= cpu_to_le16(c->prio_clock[WRITE].hand);
+	w->data->magic		= cpu_to_le64(jset_magic(&c->disk_sb));
+	w->data->version	= cpu_to_le32(BCACHE_JSET_VERSION);
+	w->data->last_seq	= cpu_to_le64(last_seq(j));
 
 	SET_JSET_CSUM_TYPE(w->data, c->opts.metadata_checksum);
-	w->data->csum		= csum_set(w->data, JSET_CSUM_TYPE(w->data));
+	w->data->csum		= cpu_to_le64(__csum_set(w->data,
+							 le32_to_cpu(w->data->u64s),
+							 JSET_CSUM_TYPE(w->data)));
 
-	sectors = set_blocks(w->data, block_bytes(c)) * c->sb.block_size;
+	sectors = __set_blocks(w->data, le32_to_cpu(w->data->u64s),
+			       block_bytes(c)) * c->sb.block_size;
 
 	BUG_ON(sectors > j->sectors_free);
 	j->sectors_free -= sectors;
@@ -1510,7 +1523,7 @@ static void journal_write_locked(struct closure *cl)
 
 		ptr->offset += sectors;
 
-		ca->journal.bucket_seq[ca->journal.cur_idx] = w->data->seq;
+		ca->journal.bucket_seq[ca->journal.cur_idx] = le64_to_cpu(w->data->seq);
 	}
 
 	/*

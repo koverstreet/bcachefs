@@ -47,7 +47,7 @@ void bch_write_bdev_super(struct cached_dev *dc, struct closure *parent)
 
 	closure_get(cl);
 
-	sb->csum = csum_set(sb, BCH_CSUM_CRC64);
+	sb->csum = cpu_to_le64(__csum_set(sb, 0, BCH_CSUM_CRC64));
 	__write_super(dc->disk.c, (void *) &dc->disk_sb);
 
 	closure_return_with_destructor(cl, bch_write_bdev_super_unlock);
@@ -362,7 +362,7 @@ void bch_cached_dev_detach(struct cached_dev *dc)
 int bch_cached_dev_attach(struct cached_dev *dc, struct cache_set *c)
 {
 	struct timespec ts = CURRENT_TIME;
-	s64 rtime = timespec_to_ns(&ts);
+	__le64 rtime = cpu_to_le64(timespec_to_ns(&ts));
 	char buf[BDEVNAME_SIZE];
 	bool found;
 	int ret;
@@ -706,7 +706,7 @@ static int blockdev_volume_run(struct cache_set *c,
 	kobject_init(&d->kobj, &bch_blockdev_volume_ktype);
 
 	ret = bcache_device_init(d, block_bytes(c),
-				 inode.v->i_inode.i_size >> 9);
+				 le64_to_cpu(inode.v->i_inode.i_size) >> 9);
 	if (ret)
 		goto err;
 
@@ -759,7 +759,7 @@ int bch_blockdev_volumes_start(struct cache_set *c)
 int bch_blockdev_volume_create(struct cache_set *c, u64 size)
 {
 	struct timespec ts = CURRENT_TIME;
-	s64 rtime = timespec_to_ns(&ts);
+	__le64 rtime = cpu_to_le64(timespec_to_ns(&ts));
 	struct bkey_i_inode_blockdev inode;
 	int ret;
 
@@ -767,7 +767,7 @@ int bch_blockdev_volume_create(struct cache_set *c, u64 size)
 	get_random_bytes(&inode.v.i_uuid, sizeof(inode.v.i_uuid));
 	inode.v.i_inode.i_ctime = rtime;
 	inode.v.i_inode.i_mtime = rtime;
-	inode.v.i_inode.i_size = size;
+	inode.v.i_inode.i_size = cpu_to_le64(size);
 
 	ret = bch_inode_create(c, &inode.k_i, 0, BLOCKDEV_INODE_MAX,
 			       &c->unused_inode_hint);

@@ -208,7 +208,7 @@ static const char *validate_cache_super(struct cache_set *c, struct cache *ca)
 	u16 block_size;
 	unsigned i;
 
-	switch (sb->version) {
+	switch (le64_to_cpu(sb->version)) {
 	case BCACHE_SB_VERSION_CDEV_V0:
 	case BCACHE_SB_VERSION_CDEV_WITH_UUID:
 	case BCACHE_SB_VERSION_CDEV_V2:
@@ -219,7 +219,7 @@ static const char *validate_cache_super(struct cache_set *c, struct cache *ca)
 	}
 
 	if (CACHE_SYNC(sb) &&
-	    sb->version != BCACHE_SB_VERSION_CDEV_V3)
+	    le64_to_cpu(sb->version) != BCACHE_SB_VERSION_CDEV_V3)
 		return "Unsupported superblock version";
 
 	block_size = le16_to_cpu(sb->block_size);
@@ -285,7 +285,7 @@ static const char *validate_cache_super(struct cache_set *c, struct cache *ca)
 
 	if (!is_power_of_2(ca->mi.bucket_size) ||
 	    ca->mi.bucket_size < PAGE_SECTORS ||
-	    ca->mi.bucket_size < sb->block_size)
+	    ca->mi.bucket_size < block_size)
 		return "Bad bucket size";
 
 	ca->bucket_bits = ilog2(ca->mi.bucket_size);
@@ -359,12 +359,14 @@ int bch_super_realloc(struct bcache_superblock *sb, unsigned u64s)
 	struct cache_member *mi = sb->sb->members + sb->sb->nr_this_dev;
 	char buf[BDEVNAME_SIZE];
 	size_t bytes = __set_bytes((struct cache_sb *) NULL, u64s);
-	size_t want = bytes + (SB_SECTOR << 9);
+	u64 want = bytes + (SB_SECTOR << 9);
 
-	if (want > mi->first_bucket * (mi->bucket_size << 9)) {
-		pr_err("%s: superblock too big: want %zu but have %u",
-		       bdevname(sb->bdev, buf), want,
-		       mi->first_bucket * mi->bucket_size << 9);
+	u64 first_bucket_offset = (u64) le16_to_cpu(mi->first_bucket) *
+		((u64) le16_to_cpu(mi->bucket_size) << 9);
+
+	if (want > first_bucket_offset) {
+		pr_err("%s: superblock too big: want %llu but have %llu",
+		       bdevname(sb->bdev, buf), want, first_bucket_offset);
 		return -ENOSPC;
 	}
 
@@ -428,11 +430,12 @@ retry:
 		goto retry;
 
 	err = "Bad checksum";
-	if (sb->sb->csum != csum_set(sb->sb,
-				     le64_to_cpu(sb->sb->version) <
-				     BCACHE_SB_VERSION_CDEV_V3
-				     ? BCH_CSUM_CRC64
-				     : CACHE_SB_CSUM_TYPE(sb->sb)))
+	if (le64_to_cpu(sb->sb->csum) !=
+	    __csum_set(sb->sb, le16_to_cpu(sb->sb->u64s),
+		       le64_to_cpu(sb->sb->version) <
+		       BCACHE_SB_VERSION_CDEV_V3
+		       ? BCH_CSUM_CRC64
+		       : CACHE_SB_CSUM_TYPE(sb->sb)))
 		goto err;
 
 	return NULL;
@@ -449,7 +452,7 @@ void __write_super(struct cache_set *c, struct bcache_superblock *disk_sb)
 	bio->bi_bdev		= disk_sb->bdev;
 	bio->bi_iter.bi_sector	= SB_SECTOR;
 	bio->bi_iter.bi_size	=
-		roundup(set_bytes(sb),
+		roundup(__set_bytes(sb, le16_to_cpu(sb->u64s)),
 			bdev_logical_block_size(disk_sb->bdev));
 	bio_set_op_attrs(bio, REQ_OP_WRITE, REQ_SYNC|REQ_META);
 	bch_bio_map(bio, sb);
@@ -567,7 +570,7 @@ static int cache_sb_from_cache_set(struct cache_set *c, struct cache *ca)
 {
 	struct cache_sb *src = &c->disk_sb, *dst = ca->disk_sb.sb;
 
-	dst->version		= BCACHE_SB_VERSION_CDEV;
+	dst->version		= cpu_to_le64(BCACHE_SB_VERSION_CDEV);
 	dst->seq		= src->seq;
 	dst->user_uuid		= src->user_uuid;
 	dst->set_uuid		= src->set_uuid;
@@ -612,7 +615,7 @@ static void __bcache_write_super(struct cache_set *c)
 
 	closure_init(cl, &c->cl);
 
-	c->disk_sb.seq = cpu_to_le64(le64_to_cpu(c->disk_sb.seq) + 1);
+	le64_add_cpu(&c->disk_sb.seq, 1);
 
 	for_each_cache(ca, c, i) {
 		struct cache_sb *sb = ca->disk_sb.sb;
@@ -621,7 +624,9 @@ static void __bcache_write_super(struct cache_set *c)
 		cache_sb_from_cache_set(c, ca);
 
 		SET_CACHE_SB_CSUM_TYPE(sb, c->opts.metadata_checksum);
-		sb->csum = cpu_to_le64(csum_set(sb, CACHE_SB_CSUM_TYPE(sb)));
+		sb->csum = cpu_to_le64(__csum_set(sb,
+						  le16_to_cpu(sb->u64s),
+						  CACHE_SB_CSUM_TYPE(sb)));
 
 		bio_reset(bio);
 		bio->bi_bdev	= ca->disk_sb.bdev;
@@ -1247,8 +1252,8 @@ static const char *run_cache_set(struct cache_set *c)
 				goto err;
 			}
 
-		c->prio_clock[READ].hand = j->read_clock;
-		c->prio_clock[WRITE].hand = j->write_clock;
+		c->prio_clock[READ].hand = le16_to_cpu(j->read_clock);
+		c->prio_clock[WRITE].hand = le16_to_cpu(j->write_clock);
 
 		for_each_cache(ca, c, i) {
 			bch_recalc_min_prio(ca, READ);
@@ -1350,8 +1355,8 @@ static const char *run_cache_set(struct cache_set *c)
 
 		bkey_inode_init(&inode.k_i);
 		inode.k.p.inode = BCACHE_ROOT_INO;
-		inode.v.i_mode = S_IFDIR|S_IRWXU|S_IRUGO|S_IXUGO;
-		inode.v.i_nlink = 2;
+		inode.v.i_mode = cpu_to_le16(S_IFDIR|S_IRWXU|S_IRUGO|S_IXUGO);
+		inode.v.i_nlink = cpu_to_le32(2);
 
 		err = "error creating root directory";
 		if (bch_btree_insert(c, BTREE_ID_INODES,
@@ -1380,7 +1385,7 @@ static const char *run_cache_set(struct cache_set *c)
 
 	now = get_seconds();
 	for_each_cache_rcu(ca, c, i)
-		c->disk_mi[ca->sb.nr_this_dev].last_mount = now;
+		c->disk_mi[ca->sb.nr_this_dev].last_mount = cpu_to_le32(now);
 
 	bcache_write_super(c);
 
@@ -1414,10 +1419,10 @@ err:
 static const char *can_add_cache(struct cache_sb *sb,
 				 struct cache_set *c)
 {
-	if (sb->block_size != c->sb.block_size)
+	if (le16_to_cpu(sb->block_size) != c->sb.block_size)
 		return "mismatched block size";
 
-	if (sb->members[le16_to_cpu(sb->nr_this_dev)].bucket_size <
+	if (le16_to_cpu(sb->members[sb->nr_this_dev].bucket_size) <
 	    CACHE_BTREE_NODE_SIZE(&c->disk_sb))
 		return "new cache bucket_size is too small";
 
@@ -2043,8 +2048,8 @@ int bch_cache_set_add_cache(struct cache_set *c, const char *path)
 	 * Preserve the old cache member information (esp. tier)
 	 * before we start bashing the disk stuff.
 	 */
-	mi = sb.sb->members[le16_to_cpu(sb.sb->nr_this_dev)];
-	mi.last_mount = get_seconds();
+	mi = sb.sb->members[sb.sb->nr_this_dev];
+	mi.last_mount = cpu_to_le32(get_seconds());
 
 	down_read(&c->gc_lock);
 
@@ -2077,9 +2082,9 @@ have_slot:
 	if (bch_super_realloc(&sb, u64s))
 		goto err_unlock;
 
-	sb.sb->nr_this_dev	= cpu_to_le16(nr_this_dev);
-	sb.sb->nr_in_set	= cpu_to_le16(nr_in_set);
-	sb.sb->u64s		= u64s;
+	sb.sb->nr_this_dev	= nr_this_dev;
+	sb.sb->nr_in_set	= nr_in_set;
+	sb.sb->u64s		= cpu_to_le16(u64s);
 
 	new_mi = dynamic_fault("bcache:add:member_info_realloc")
 		? NULL

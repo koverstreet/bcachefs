@@ -51,6 +51,7 @@ static int bch_gc_walk_dirents(struct cache_set *c, struct nlinks *links,
 	struct btree_iter iter;
 	struct bkey_s_c k;
 	struct bkey_s_c_dirent d;
+	u64 d_inum;
 
 	inc_link(links, range_start, range_end, BCACHE_ROOT_INO, 2, false);
 
@@ -58,15 +59,16 @@ static int bch_gc_walk_dirents(struct cache_set *c, struct nlinks *links,
 		switch (k.k->type) {
 		case BCH_DIRENT:
 			d = bkey_s_c_to_dirent(k);
+			d_inum = le64_to_cpu(d.v->d_inum);
 
 			if (d.v->d_type == DT_DIR) {
 				inc_link(links, range_start, range_end,
-					 d.v->d_inum, 2, false);
+					 d_inum, 2, false);
 				inc_link(links, range_start, range_end,
 					 d.k->p.inode, 1, true);
 			} else {
 				inc_link(links, range_start, range_end,
-					 d.v->d_inum, 1, false);
+					 d_inum, 1, false);
 			}
 
 			break;
@@ -82,17 +84,21 @@ static int bch_gc_do_inode(struct cache_set *c, struct btree_iter *iter,
 {
 	struct bkey_i_inode update;
 	int ret;
+	u16 i_mode  = le16_to_cpu(inode.v->i_mode);
+	u32 i_flags = le32_to_cpu(inode.v->i_flags);
+	u32 i_nlink = le32_to_cpu(inode.v->i_nlink);
+	u64 i_size  = le64_to_cpu(inode.v->i_size);
 
-	cache_set_inconsistent_on(inode.v->i_nlink < link.count, c,
+	cache_set_inconsistent_on(i_nlink < link.count, c,
 			 "i_link too small (%u < %u, type %i)",
-			 inode.v->i_nlink, link.count + link.dir_count,
-			 mode_to_type(inode.v->i_mode));
+			 i_nlink, link.count + link.dir_count,
+			 mode_to_type(i_mode));
 
 	if (!link.count) {
-		cache_set_inconsistent_on(S_ISDIR(inode.v->i_mode) &&
+		cache_set_inconsistent_on(S_ISDIR(i_mode) &&
 			bch_empty_dir(c, inode.k->p.inode), c,
 			"non empty directory with link count 0,inode nlink %u, dir links found %u",
-			inode.v->i_nlink, link.dir_count);
+			i_nlink, link.dir_count);
 
 		if (c->opts.verbose_recovery)
 			pr_info("deleting inum %llu", inode.k->p.inode);
@@ -101,7 +107,7 @@ static int bch_gc_do_inode(struct cache_set *c, struct btree_iter *iter,
 		return bch_inode_rm(c, inode.k->p.inode);
 	}
 
-	if (inode.v->i_flags & BCH_INODE_I_SIZE_DIRTY) {
+	if (i_flags & BCH_INODE_I_SIZE_DIRTY) {
 		if (c->opts.verbose_recovery)
 			pr_info("truncating inode %llu", inode.k->p.inode);
 
@@ -111,23 +117,23 @@ static int bch_gc_do_inode(struct cache_set *c, struct btree_iter *iter,
 		 */
 
 		ret = bch_inode_truncate(c, inode.k->p.inode,
-				round_up(inode.v->i_size, PAGE_SIZE) >> 9,
+				round_up(i_size, PAGE_SIZE) >> 9,
 				NULL);
 		if (ret)
 			return ret;
 	}
 
-	if (inode.v->i_nlink != link.count + link.dir_count ||
-	    inode.v->i_flags & BCH_INODE_I_SIZE_DIRTY) {
+	if (i_nlink != link.count + link.dir_count ||
+	    i_flags & BCH_INODE_I_SIZE_DIRTY) {
 		if (c->opts.verbose_recovery &&
-		    inode.v->i_nlink != link.count + link.dir_count)
+		    i_nlink != link.count + link.dir_count)
 			pr_info("setting inum %llu nlinks from %u to %u",
-				inode.k->p.inode, inode.v->i_nlink,
+				inode.k->p.inode, i_nlink,
 				link.count + link.dir_count);
 
 		bkey_reassemble(&update.k_i, inode.s_c);
-		update.v.i_nlink = link.count + link.dir_count;
-		update.v.i_flags &= ~BCH_INODE_I_SIZE_DIRTY;
+		update.v.i_nlink = cpu_to_le32(link.count + link.dir_count);
+		update.v.i_flags = cpu_to_le32(i_flags & ~BCH_INODE_I_SIZE_DIRTY);
 
 		return bch_btree_insert_at(iter,
 					   &keylist_single(&update.k_i),

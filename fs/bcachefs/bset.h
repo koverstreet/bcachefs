@@ -379,7 +379,7 @@ static inline void btree_keys_account_key(struct btree_nr_keys *n,
 	 __bkey_idx((_set), (_set)->u64s)
 
 #define bset_bkey_last(_set)					\
-	 bkey_idx((_set), (_set)->u64s)
+	 bkey_idx((_set), le16_to_cpu((_set)->u64s))
 
 static inline struct bkey_packed *bset_bkey_idx(struct bset *i, unsigned idx)
 {

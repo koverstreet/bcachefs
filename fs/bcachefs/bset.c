@@ -482,7 +482,8 @@ static void make_bfloat(struct bkey_format *format,
 		: tree_to_prev_bkey(t, j >> ffs(j));
 
 	struct bkey_packed *r = is_power_of_2(j + 1)
-		? bset_bkey_idx(t->data, t->data->u64s - t->end.u64s)
+		? bset_bkey_idx(t->data,
+				le16_to_cpu(t->data->u64s) - t->end.u64s)
 		: tree_to_bkey(t, j >> (ffz(j) + 1));
 	int shift, exponent;
 
@@ -956,7 +957,7 @@ struct bkey_packed *bch_bset_insert(struct btree_keys *b,
 	       bkeyp_key_bytes(f, src));
 	memcpy(bkeyp_val(f, where), &insert->v,
 	       bkeyp_val_bytes(f, src));
-	i->u64s += src->u64s;
+	le16_add_cpu(&i->u64s, src->u64s);
 
 	if (!bkey_deleted(src))
 		btree_keys_account_key_add(&b->nr, src);
@@ -1538,7 +1539,7 @@ static struct btree_nr_keys btree_mergesort_simple(struct btree_keys *b,
 		}
 	}
 
-	bset->u64s = (u64 *) out - bset->_data;
+	bset->u64s = cpu_to_le16((u64 *) out - bset->_data);
 	return b->nr;
 }
 
@@ -1578,7 +1579,7 @@ static struct btree_nr_keys btree_mergesort(struct btree_keys *dst,
 		       (void *) dst_set + (PAGE_SIZE << dst->page_order));
 	}
 
-	dst_set->u64s = (u64 *) out - dst_set->_data;
+	dst_set->u64s = cpu_to_le16((u64 *) out - dst_set->_data);
 	return nr;
 }
 
@@ -1648,7 +1649,7 @@ static struct btree_nr_keys btree_mergesort_extents(struct btree_keys *dst,
 		out = dst_set->start;
 	}
 
-	dst_set->u64s = (u64 *) out - dst_set->_data;
+	dst_set->u64s = cpu_to_le16((u64 *) out - dst_set->_data);
 	return nr;
 }
 
@@ -1715,7 +1716,9 @@ void bch_btree_sort_into(struct btree_keys *dst,
 		nr = btree_mergesort_extents(dst, dst->set->data,
 					     src, &iter, filter);
 
-	BUG_ON(set_bytes(dst->set->data) > (PAGE_SIZE << dst->page_order));
+	BUG_ON(__set_bytes(dst->set->data,
+			   le16_to_cpu(dst->set->data->u64s)) >
+	       (PAGE_SIZE << dst->page_order));
 
 	bch_time_stats_update(state->time, start_time);
 
@@ -1738,7 +1741,7 @@ void bch_btree_keys_stats(struct btree_keys *b, struct bset_stats *stats)
 		size_t j;
 
 		stats->sets[type].nr++;
-		stats->sets[type].bytes += t->data->u64s * sizeof(u64);
+		stats->sets[type].bytes += le16_to_cpu(t->data->u64s) * sizeof(u64);
 
 		if (bset_written(t)) {
 			stats->floats += t->size - 1;

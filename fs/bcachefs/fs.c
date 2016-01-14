@@ -218,14 +218,14 @@ static int __must_check __bch_write_inode(struct cache_set *c,
 				goto out;
 		}
 
-		bi->i_mode	= inode->i_mode;
-		bi->i_uid	= i_uid_read(inode);
-		bi->i_gid	= i_gid_read(inode);
-		bi->i_nlink	= inode->i_nlink;
-		bi->i_dev	= inode->i_rdev;
-		bi->i_atime	= timespec_to_ns(&inode->i_atime);
-		bi->i_mtime	= timespec_to_ns(&inode->i_mtime);
-		bi->i_ctime	= timespec_to_ns(&inode->i_ctime);
+		bi->i_mode	= cpu_to_le16(inode->i_mode);
+		bi->i_uid	= cpu_to_le32(i_uid_read(inode));
+		bi->i_gid	= cpu_to_le32(i_gid_read(inode));
+		bi->i_nlink	= cpu_to_le32(inode->i_nlink);
+		bi->i_dev	= cpu_to_le32(inode->i_rdev);
+		bi->i_atime	= cpu_to_le64(timespec_to_ns(&inode->i_atime));
+		bi->i_mtime	= cpu_to_le64(timespec_to_ns(&inode->i_mtime));
+		bi->i_ctime	= cpu_to_le64(timespec_to_ns(&inode->i_ctime));
 
 		ret = bch_btree_insert_at(&iter,
 					  &keylist_single(&new_inode.k_i),
@@ -236,8 +236,8 @@ static int __must_check __bch_write_inode(struct cache_set *c,
 
 	if (!ret) {
 		write_seqcount_begin(&ei->shadow_i_size_lock);
-		ei->i_size	= bi->i_size;
-		ei->i_flags	= bi->i_flags;
+		ei->i_size	= le64_to_cpu(bi->i_size);
+		ei->i_flags	= le32_to_cpu(bi->i_flags);
 		write_seqcount_end(&ei->shadow_i_size_lock);
 
 		bch_write_inode_checks(c, ei);
@@ -258,15 +258,18 @@ static int inode_set_size(struct bch_inode_info *ei, struct bch_inode *bi,
 			  void *p)
 {
 	loff_t *new_i_size = p;
+	unsigned i_flags = le32_to_cpu(bi->i_flags);
 
 	lockdep_assert_held(&ei->update_lock);
 
-	bi->i_size = *new_i_size;
+	bi->i_size = cpu_to_le64(*new_i_size);
 
 	if (atomic_long_read(&ei->i_size_dirty_count))
-		bi->i_flags |= BCH_INODE_I_SIZE_DIRTY;
+		i_flags |= BCH_INODE_I_SIZE_DIRTY;
 	else
-		bi->i_flags &= ~BCH_INODE_I_SIZE_DIRTY;
+		i_flags &= ~BCH_INODE_I_SIZE_DIRTY;
+
+	bi->i_flags = cpu_to_le32(i_flags);;
 
 	return 0;
 }
@@ -281,7 +284,8 @@ static int __must_check bch_write_inode_size(struct cache_set *c,
 static int inode_set_dirty(struct bch_inode_info *ei,
 			   struct bch_inode *bi, void *p)
 {
-	bi->i_flags |= BCH_INODE_I_SIZE_DIRTY;
+	bi->i_flags = cpu_to_le32(le32_to_cpu(bi->i_flags)|
+				  BCH_INODE_I_SIZE_DIRTY);
 	return 0;
 }
 
@@ -450,8 +454,8 @@ static struct inode *bch_vfs_inode_create(struct cache_set *c,
 	struct posix_acl *default_acl = NULL, *acl = NULL;
 	struct bch_inode_info *ei;
 	struct bch_inode *bi;
-	struct timespec ts = CURRENT_TIME;
 	struct bkey_i_inode bkey_inode;
+	struct timespec ts = CURRENT_TIME;
 	s64 now = timespec_to_ns(&ts);
 	int ret;
 
@@ -470,15 +474,15 @@ static struct inode *bch_vfs_inode_create(struct cache_set *c,
 	ei = to_bch_ei(inode);
 
 	bi = &bkey_inode_init(&bkey_inode.k_i)->v;
-	bi->i_uid	= i_uid_read(inode);
-	bi->i_gid	= i_gid_read(inode);
+	bi->i_uid	= cpu_to_le32(i_uid_read(inode));
+	bi->i_gid	= cpu_to_le32(i_gid_read(inode));
 
-	bi->i_mode	= inode->i_mode;
-	bi->i_dev	= rdev;
-	bi->i_atime	= now;
-	bi->i_mtime	= now;
-	bi->i_ctime	= now;
-	bi->i_nlink	= S_ISDIR(mode) ? 2 : 1;
+	bi->i_mode	= cpu_to_le16(inode->i_mode);
+	bi->i_dev	= cpu_to_le32(rdev);
+	bi->i_atime	= cpu_to_le64(now);
+	bi->i_mtime	= cpu_to_le64(now);
+	bi->i_ctime	= cpu_to_le64(now);
+	bi->i_nlink	= cpu_to_le32(S_ISDIR(mode) ? 2 : 1);
 
 	ret = bch_inode_create(c, &bkey_inode.k_i,
 			       BLOCKDEV_INODE_MAX, 0,
@@ -1685,7 +1689,7 @@ static inline bool bch_flags_allowed(umode_t mode, u32 flags)
 static int bch_inode_set_flags(struct bch_inode_info *ei, struct bch_inode *bi,
 			       void *p)
 {
-	unsigned oldflags = bi->i_flags;
+	unsigned oldflags = le32_to_cpu(bi->i_flags);
 	unsigned newflags = *((unsigned *) p);
 
 	if (((newflags ^ oldflags) & (FS_APPEND_FL|FS_IMMUTABLE_FL)) &&
@@ -1694,9 +1698,9 @@ static int bch_inode_set_flags(struct bch_inode_info *ei, struct bch_inode *bi,
 
 	newflags = newflags & BCH_FL_USER_FLAGS;
 	newflags |= oldflags & ~BCH_FL_USER_FLAGS;
-	bi->i_flags = newflags;
+	bi->i_flags = cpu_to_le32(newflags);
 
-	ei->vfs_inode.i_ctime = CURRENT_TIME_SEC;
+	ei->vfs_inode.i_ctime = CURRENT_TIME;
 
 	return 0;
 }
@@ -2825,20 +2829,20 @@ static void bch_inode_init(struct bch_inode_info *ei,
 	pr_debug("init inode %llu with mode %o",
 		 bkey_inode.k->p.inode, bi->i_mode);
 
-	ei->i_flags	= bi->i_flags;
-	ei->i_size	= bi->i_size;
+	ei->i_flags	= le32_to_cpu(bi->i_flags);
+	ei->i_size	= le64_to_cpu(bi->i_size);
 
-	inode->i_mode	= bi->i_mode;
-	i_uid_write(inode, bi->i_uid);
-	i_gid_write(inode, bi->i_gid);
+	inode->i_mode	= le16_to_cpu(bi->i_mode);
+	i_uid_write(inode, le32_to_cpu(bi->i_uid));
+	i_gid_write(inode, le32_to_cpu(bi->i_gid));
 
 	inode->i_ino	= bkey_inode.k->p.inode;
-	set_nlink(inode, bi->i_nlink);
-	inode->i_rdev	= bi->i_dev;
-	inode->i_size	= bi->i_size;
-	inode->i_atime	= ns_to_timespec(bi->i_atime);
-	inode->i_mtime	= ns_to_timespec(bi->i_mtime);
-	inode->i_ctime	= ns_to_timespec(bi->i_ctime);
+	set_nlink(inode, le32_to_cpu(bi->i_nlink));
+	inode->i_rdev	= le32_to_cpu(bi->i_dev);
+	inode->i_size	= le64_to_cpu(bi->i_size);
+	inode->i_atime	= ns_to_timespec(le64_to_cpu(bi->i_atime));
+	inode->i_mtime	= ns_to_timespec(le64_to_cpu(bi->i_mtime));
+	inode->i_ctime	= ns_to_timespec(le64_to_cpu(bi->i_ctime));
 	bch_set_inode_flags(inode);
 
 	inode->i_mapping->a_ops = &bch_address_space_operations;

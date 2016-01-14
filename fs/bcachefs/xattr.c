@@ -118,7 +118,8 @@ static void bch_xattr_to_text(struct cache_set *c, char *buf,
 		size -= n;
 
 		if (size) {
-			n = min_t(unsigned, size, xattr.v->x_val_len);
+			n = min_t(unsigned, size,
+				  le16_to_cpu(xattr.v->x_val_len));
 			memcpy(buf, xattr_val(xattr.v), n);
 			buf[size - 1] = '\0';
 			buf += n;
@@ -157,13 +158,15 @@ int bch_xattr_get(struct cache_set *c, u64 inum, const char *name,
 
 			/* collision? */
 			if (!xattr_cmp(xattr, type, &qname)) {
-				ret = xattr->x_val_len;
+				unsigned len = le16_to_cpu(xattr->x_val_len);
+
+				ret = len;
 				if (buffer) {
-					if (xattr->x_val_len > size)
+					if (len > size)
 						ret = -ERANGE;
 					else
 						memcpy(buffer, xattr_val(xattr),
-						       xattr->x_val_len);
+						       len);
 				}
 				goto out;
 			}
@@ -252,7 +255,7 @@ int bch_xattr_set(struct inode *inode, const char *name,
 			xattr->k.p		= k.k->p;
 			xattr->v.x_type		= type;
 			xattr->v.x_name_len	= qname.len;
-			xattr->v.x_val_len	= size;
+			xattr->v.x_val_len	= cpu_to_le16(size);
 			memcpy(xattr->v.x_name, qname.name, qname.len);
 			memcpy(xattr_val(&xattr->v), value, size);
 
