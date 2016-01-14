@@ -1218,7 +1218,7 @@ static const char *run_cache_set(struct cache_set *c)
 	const char *err = "cannot allocate memory";
 	struct cache *ca;
 	unsigned i, id;
-	long now;
+	time64_t now;
 
 	lockdep_assert_held(&bch_register_lock);
 	BUG_ON(test_bit(CACHE_SET_RUNNING, &c->flags));
@@ -1389,10 +1389,10 @@ static const char *run_cache_set(struct cache_set *c)
 			goto err;
 	}
 
-	now = get_seconds();
+	now = ktime_get_seconds();
 	rcu_read_lock();
 	for_each_cache_rcu(ca, c, i)
-		c->disk_mi[ca->sb.nr_this_dev].last_mount = cpu_to_le32(now);
+		c->disk_mi[ca->sb.nr_this_dev].last_mount = cpu_to_le64(now);
 	rcu_read_unlock();
 
 	bcache_write_super(c);
@@ -2057,7 +2057,7 @@ int bch_cache_set_add_cache(struct cache_set *c, const char *path)
 	 * before we start bashing the disk stuff.
 	 */
 	mi = sb.sb->members[sb.sb->nr_this_dev];
-	mi.last_mount = cpu_to_le32(get_seconds());
+	mi.last_mount = cpu_to_le64(ktime_get_seconds());
 
 	down_read(&c->gc_lock);
 

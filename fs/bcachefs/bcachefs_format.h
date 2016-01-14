@@ -633,7 +633,8 @@ struct cache_member {
 	__le64			nbuckets;	/* device size */
 	__le16			first_bucket;   /* index of first bucket used */
 	__le16			bucket_size;	/* sectors */
-	__le32			last_mount;	/* time_t */
+	__le32			pad;
+	__le64			last_mount;	/* time_t */
 
 	__le64			f1;
 	__le64			f2;
