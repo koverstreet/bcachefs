@@ -93,7 +93,7 @@ static struct hlist_head *iohash(struct cached_dev *dc, uint64_t k)
 static bool check_should_bypass(struct cached_dev *dc, struct bio *bio, int rw)
 {
 	struct cache_set *c = dc->disk.c;
-	unsigned mode = BDEV_CACHE_MODE(&dc->sb);
+	unsigned mode = BDEV_CACHE_MODE(dc->disk_sb.sb);
 	unsigned sectors, congested = bch_get_congested(c);
 	struct task_struct *task = current;
 	struct io *i;
@@ -509,7 +509,7 @@ static void cached_dev_write(struct cached_dev *dc, struct search *s)
 	if (bio_op(bio) == REQ_OP_DISCARD)
 		bypass = true;
 
-	if (should_writeback(dc, bio, BDEV_CACHE_MODE(&dc->sb),
+	if (should_writeback(dc, bio, BDEV_CACHE_MODE(dc->disk_sb.sb),
 			     bypass)) {
 		bypass = false;
 		writeback = true;
@@ -576,7 +576,7 @@ static void __cached_dev_make_request(struct request_queue *q, struct bio *bio)
 	generic_start_io_acct(rw, bio_sectors(bio), &d->disk->part0);
 
 	bio->bi_bdev = dc->disk_sb.bdev;
-	bio->bi_iter.bi_sector += dc->sb.data_offset;
+	bio->bi_iter.bi_sector += le64_to_cpu(dc->disk_sb.sb->data_offset);
 
 	if (cached_dev_get(dc)) {
 		s = search_alloc(bio, d);

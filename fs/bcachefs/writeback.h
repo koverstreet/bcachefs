@@ -77,8 +77,8 @@ static inline void bch_writeback_add(struct cached_dev *dc)
 	    !atomic_xchg(&dc->has_dirty, 1)) {
 		atomic_inc(&dc->count);
 
-		if (BDEV_STATE(&dc->sb) != BDEV_STATE_DIRTY) {
-			SET_BDEV_STATE(&dc->sb, BDEV_STATE_DIRTY);
+		if (BDEV_STATE(dc->disk_sb.sb) != BDEV_STATE_DIRTY) {
+			SET_BDEV_STATE(dc->disk_sb.sb, BDEV_STATE_DIRTY);
 			/* XXX: should do this synchronously */
 			bch_write_bdev_super(dc, NULL);
 		}

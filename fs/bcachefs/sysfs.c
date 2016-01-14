@@ -195,7 +195,7 @@ SHOW(bch_cached_dev)
 	if (attr == &sysfs_cache_mode)
 		return bch_snprint_string_list(buf, PAGE_SIZE,
 					       bch_cache_modes + 1,
-					       BDEV_CACHE_MODE(&dc->sb));
+					       BDEV_CACHE_MODE(dc->disk_sb.sb));
 
 	var_printf(verify,		"%i");
 	var_printf(bypass_torture_test,	"%i");
@@ -216,10 +216,10 @@ SHOW(bch_cached_dev)
 	var_hprint(readahead);
 
 	sysfs_print(running,		atomic_read(&dc->running));
-	sysfs_print(state,		states[BDEV_STATE(&dc->sb)]);
+	sysfs_print(state,		states[BDEV_STATE(dc->disk_sb.sb)]);
 
 	if (attr == &sysfs_label) {
-		memcpy(buf, dc->sb.label, SB_LABEL_SIZE);
+		memcpy(buf, dc->disk_sb.sb->label, SB_LABEL_SIZE);
 		buf[SB_LABEL_SIZE + 1] = '\0';
 		strcat(buf, "\n");
 		return strlen(buf);
@@ -264,8 +264,8 @@ STORE(__cached_dev)
 		if (v < 0)
 			return v;
 
-		if ((unsigned) v != BDEV_CACHE_MODE(&dc->sb)) {
-			SET_BDEV_CACHE_MODE(&dc->sb, v);
+		if ((unsigned) v != BDEV_CACHE_MODE(dc->disk_sb.sb)) {
+			SET_BDEV_CACHE_MODE(dc->disk_sb.sb, v);
 			bch_write_bdev_super(dc, NULL);
 		}
 	}
@@ -279,14 +279,14 @@ STORE(__cached_dev)
 
 		mutex_lock(&dc->disk.inode_lock);
 
-		memcpy(dc->sb.label, buf, size);
+		memcpy(dc->disk_sb.sb->label, buf, size);
 		if (size < SB_LABEL_SIZE)
-			dc->sb.label[size] = '\0';
-		if (size && dc->sb.label[size - 1] == '\n')
-			dc->sb.label[size - 1] = '\0';
+			dc->disk_sb.sb->label[size] = '\0';
+		if (size && dc->disk_sb.sb->label[size - 1] == '\n')
+			dc->disk_sb.sb->label[size - 1] = '\0';
 
 		memcpy(dc->disk.inode.v.i_label,
-		       dc->sb.label, SB_LABEL_SIZE);
+		       dc->disk_sb.sb->label, SB_LABEL_SIZE);
 
 		bch_write_bdev_super(dc, NULL);
 
@@ -309,7 +309,7 @@ STORE(__cached_dev)
 		if (!env)
 			return -ENOMEM;
 		add_uevent_var(env, "DRIVER=bcache");
-		add_uevent_var(env, "CACHED_UUID=%pU", dc->sb.disk_uuid.b),
+		add_uevent_var(env, "CACHED_UUID=%pU", dc->disk_sb.sb->disk_uuid.b),
 		add_uevent_var(env, "CACHED_LABEL=%s", buf);
 		kobject_uevent_env(
 			&disk_to_dev(dc->disk.disk)->kobj, KOBJ_CHANGE, env->envp);
@@ -317,7 +317,7 @@ STORE(__cached_dev)
 	}
 
 	if (attr == &sysfs_attach) {
-		if (uuid_parse(buf, &dc->sb.set_uuid))
+		if (uuid_parse(buf, &dc->disk_sb.sb->user_uuid))
 			return -EINVAL;
 
 		list_for_each_entry(c, &bch_cache_sets, list) {

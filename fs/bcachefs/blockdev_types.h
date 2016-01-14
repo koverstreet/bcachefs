@@ -53,8 +53,14 @@ struct cached_dev {
 	struct list_head	list;
 	struct bcache_device	disk;
 
-	struct backingdev_sb		sb;
-	struct bcache_superblock disk_sb;
+	//struct backingdev_sb		sb;
+
+	struct {
+		struct backingdev_sb	*sb;
+		struct block_device	*bdev;
+		struct bio		*bio;
+		unsigned		page_order;
+	} disk_sb;
 	struct closure		sb_write;
 	struct semaphore	sb_write_mutex;
 

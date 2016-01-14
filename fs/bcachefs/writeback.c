@@ -454,7 +454,7 @@ static u64 bch_writeback(struct cached_dev *dc)
 		if (RB_EMPTY_ROOT(&dc->writeback_keys.keys)) {
 			atomic_set(&dc->has_dirty, 0);
 			cached_dev_put(dc);
-			SET_BDEV_STATE(&dc->sb, BDEV_STATE_CLEAN);
+			SET_BDEV_STATE(dc->disk_sb.sb, BDEV_STATE_CLEAN);
 			bch_write_bdev_super(dc, NULL);
 		}
 

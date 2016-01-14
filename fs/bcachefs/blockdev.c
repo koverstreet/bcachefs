@@ -34,7 +34,7 @@ static void bch_write_bdev_super_unlock(struct closure *cl)
 
 void bch_write_bdev_super(struct cached_dev *dc, struct closure *parent)
 {
-	struct backingdev_sb *sb = &dc->sb, *out = (void *) dc->disk_sb.sb;
+	struct backingdev_sb *sb = dc->disk_sb.sb;
 	struct closure *cl = &dc->sb_write;
 	struct bio *bio = dc->disk_sb.bio;
 
@@ -47,22 +47,8 @@ void bch_write_bdev_super(struct cached_dev *dc, struct closure *parent)
 
 	closure_get(cl);
 
-	out->offset		= cpu_to_le64(sb->offset);
-	out->version		= cpu_to_le64(sb->version);
-	out->seq		= cpu_to_le64(sb->seq);
-
-	out->disk_uuid		= sb->disk_uuid;
-	out->user_uuid		= sb->user_uuid;
-	out->set_uuid		= sb->set_uuid;
-	memcpy(out->label,	sb->label, SB_LABEL_SIZE);
-
-	out->data_offset	= cpu_to_le64(sb->data_offset);
-	out->last_mount		= cpu_to_le32(sb->last_mount);
-
-	out->flags		= cpu_to_le64(sb->flags);
-	out->u64s		= cpu_to_le16(sb->u64s);
-	out->csum		= csum_set(out, BCH_CSUM_CRC64);
-	__write_super(dc->disk.c, &dc->disk_sb);
+	sb->csum = csum_set(sb, BCH_CSUM_CRC64);
+	__write_super(dc->disk.c, (void *) &dc->disk_sb);
 
 	closure_return_with_destructor(cl, bch_write_bdev_super_unlock);
 }
@@ -279,12 +265,13 @@ void bch_cached_dev_run(struct cached_dev *dc)
 	char buf[SB_LABEL_SIZE + 1];
 	char *env[] = {
 		"DRIVER=bcache",
-		kasprintf(GFP_KERNEL, "CACHED_UUID=%pU", dc->sb.disk_uuid.b),
+		kasprintf(GFP_KERNEL, "CACHED_UUID=%pU",
+			  dc->disk_sb.sb->disk_uuid.b),
 		NULL,
 		NULL,
 	};
 
-	memcpy(buf, dc->sb.label, SB_LABEL_SIZE);
+	memcpy(buf, dc->disk_sb.sb->label, SB_LABEL_SIZE);
 	buf[SB_LABEL_SIZE] = '\0';
 	env[2] = kasprintf(GFP_KERNEL, "CACHED_LABEL=%s", buf);
 
@@ -295,12 +282,12 @@ void bch_cached_dev_run(struct cached_dev *dc)
 	}
 
 	if (!d->c &&
-	    BDEV_STATE(&dc->sb) != BDEV_STATE_NONE) {
+	    BDEV_STATE(dc->disk_sb.sb) != BDEV_STATE_NONE) {
 		struct closure cl;
 
 		closure_init_stack(&cl);
 
-		SET_BDEV_STATE(&dc->sb, BDEV_STATE_STALE);
+		SET_BDEV_STATE(dc->disk_sb.sb, BDEV_STATE_STALE);
 		bch_write_bdev_super(dc, &cl);
 		closure_sync(&cl);
 	}
@@ -331,8 +318,8 @@ static void cached_dev_detach_finish(struct work_struct *w)
 
 	mutex_lock(&bch_register_lock);
 
-	memset(&dc->sb.set_uuid, 0, 16);
-	SET_BDEV_STATE(&dc->sb, BDEV_STATE_NONE);
+	memset(&dc->disk_sb.sb->set_uuid, 0, 16);
+	SET_BDEV_STATE(dc->disk_sb.sb, BDEV_STATE_NONE);
 
 	bch_write_bdev_super(dc, &cl);
 	closure_sync(&cl);
@@ -382,7 +369,7 @@ int bch_cached_dev_attach(struct cached_dev *dc, struct cache_set *c)
 
 	bdevname(dc->disk_sb.bdev, buf);
 
-	if (memcmp(&dc->sb.set_uuid,
+	if (memcmp(&dc->disk_sb.sb->set_uuid,
 		   &c->disk_sb.set_uuid,
 		   sizeof(c->disk_sb.set_uuid)))
 		return -ENOENT;
@@ -400,24 +387,25 @@ int bch_cached_dev_attach(struct cached_dev *dc, struct cache_set *c)
 		return -EINVAL;
 	}
 
-	if (dc->sb.block_size < c->sb.block_size) {
+	if (le16_to_cpu(dc->disk_sb.sb->block_size) < c->sb.block_size) {
 		/* Will die */
 		pr_err("Couldn't attach %s: block size less than set's block size",
 		       buf);
 		return -EINVAL;
 	}
 
-	found = !bch_cached_dev_inode_find_by_uuid(c, &dc->sb.disk_uuid,
-						 &dc->disk.inode);
+	found = !bch_cached_dev_inode_find_by_uuid(c,
+					&dc->disk_sb.sb->disk_uuid,
+					&dc->disk.inode);
 
-	if (!found && BDEV_STATE(&dc->sb) == BDEV_STATE_DIRTY) {
+	if (!found && BDEV_STATE(dc->disk_sb.sb) == BDEV_STATE_DIRTY) {
 		pr_err("Couldn't find uuid for %s in set", buf);
 		return -ENOENT;
 	}
 
 	if (found &&
-	    (BDEV_STATE(&dc->sb) == BDEV_STATE_STALE ||
-	     BDEV_STATE(&dc->sb) == BDEV_STATE_NONE)) {
+	    (BDEV_STATE(dc->disk_sb.sb) == BDEV_STATE_STALE ||
+	     BDEV_STATE(dc->disk_sb.sb) == BDEV_STATE_NONE)) {
 		found = false;
 		bch_inode_rm(c, bcache_dev_inum(&dc->disk));
 	}
@@ -433,8 +421,9 @@ int bch_cached_dev_attach(struct cached_dev *dc, struct cache_set *c)
 
 		bkey_inode_blockdev_init(&dc->disk.inode.k_i);
 		dc->disk.inode.k.type = BCH_INODE_CACHED_DEV;
-		dc->disk.inode.v.i_uuid = dc->sb.disk_uuid;
-		memcpy(dc->disk.inode.v.i_label, dc->sb.label, SB_LABEL_SIZE);
+		dc->disk.inode.v.i_uuid = dc->disk_sb.sb->disk_uuid;
+		memcpy(dc->disk.inode.v.i_label,
+		       dc->disk_sb.sb->label, SB_LABEL_SIZE);
 		dc->disk.inode.v.i_inode.i_ctime = rtime;
 		dc->disk.inode.v.i_inode.i_mtime = rtime;
 
@@ -448,8 +437,8 @@ int bch_cached_dev_attach(struct cached_dev *dc, struct cache_set *c)
 
 		pr_info("attached inode %llu", bcache_dev_inum(&dc->disk));
 
-		dc->sb.set_uuid = c->disk_sb.set_uuid;
-		SET_BDEV_STATE(&dc->sb, BDEV_STATE_CLEAN);
+		dc->disk_sb.sb->set_uuid = c->disk_sb.set_uuid;
+		SET_BDEV_STATE(dc->disk_sb.sb, BDEV_STATE_CLEAN);
 
 		bch_write_bdev_super(dc, &cl);
 		closure_sync(&cl);
@@ -459,7 +448,7 @@ int bch_cached_dev_attach(struct cached_dev *dc, struct cache_set *c)
 	}
 
 	/* Count dirty sectors before attaching */
-	if (BDEV_STATE(&dc->sb) == BDEV_STATE_DIRTY)
+	if (BDEV_STATE(dc->disk_sb.sb) == BDEV_STATE_DIRTY)
 		bch_sectors_dirty_init(dc, c);
 
 	ret = bcache_device_attach(&dc->disk, c);
@@ -479,7 +468,7 @@ int bch_cached_dev_attach(struct cached_dev *dc, struct cache_set *c)
 	if (bch_cached_dev_writeback_start(dc))
 		return -ENOMEM;
 
-	if (BDEV_STATE(&dc->sb) == BDEV_STATE_DIRTY) {
+	if (BDEV_STATE(dc->disk_sb.sb) == BDEV_STATE_DIRTY) {
 		atomic_set(&dc->has_dirty, 1);
 		atomic_inc(&dc->count);
 	}
@@ -527,7 +516,7 @@ static void cached_dev_free(struct closure *cl)
 
 	mutex_unlock(&bch_register_lock);
 
-	free_super(&dc->disk_sb);
+	free_super((void *) &dc->disk_sb);
 
 	kobject_put(&dc->disk.kobj);
 }
@@ -568,7 +557,7 @@ static int cached_dev_init(struct cached_dev *dc, unsigned block_size)
 
 	ret = bcache_device_init(&dc->disk, block_size,
 			 dc->disk_sb.bdev->bd_part->nr_sects -
-			 dc->sb.data_offset);
+			 le64_to_cpu(dc->disk_sb.sb->data_offset));
 	if (ret)
 		return ret;
 
@@ -586,33 +575,14 @@ static int cached_dev_init(struct cached_dev *dc, unsigned block_size)
 
 /* Cached device - bcache superblock */
 
-static const char *bdev_validate_super(struct bcache_superblock *disk_sb,
-				       struct backingdev_sb *sb)
+static const char *bdev_validate_super(struct backingdev_sb *sb)
 {
-	struct backingdev_sb *s = (void *) disk_sb->sb;
-
-	sb->offset		= le64_to_cpu(s->offset);
-	sb->version		= le64_to_cpu(s->version);
-	sb->seq			= le64_to_cpu(s->seq);
-
-	sb->magic		= s->magic;
-	sb->disk_uuid		= s->disk_uuid;
-	sb->user_uuid		= s->user_uuid;
-	sb->set_uuid		= s->set_uuid;
-	memcpy(sb->label,	s->label, SB_LABEL_SIZE);
-
-	sb->flags		= le64_to_cpu(s->flags);
-	sb->block_size		= le16_to_cpu(s->block_size);
-	sb->u64s		= le16_to_cpu(s->u64s);
-
-	switch (sb->version) {
+	switch (le64_to_cpu(sb->version)) {
 	case BCACHE_SB_VERSION_BDEV:
-		sb->data_offset	= BDEV_DATA_START_DEFAULT;
+		sb->data_offset	= cpu_to_le64(BDEV_DATA_START_DEFAULT);
 		break;
 	case BCACHE_SB_VERSION_BDEV_WITH_OFFSET:
-		sb->data_offset	= le64_to_cpu(s->data_offset);
-
-		if (sb->data_offset < BDEV_DATA_START_DEFAULT)
+		if (le64_to_cpu(sb->data_offset) < BDEV_DATA_START_DEFAULT)
 			return "Bad data offset";
 
 		break;
@@ -620,7 +590,7 @@ static const char *bdev_validate_super(struct bcache_superblock *disk_sb,
 		return"Unsupported superblock version";
 	}
 
-	sb->last_mount	= get_seconds();
+	sb->last_mount	= cpu_to_le32(get_seconds());
 
 	return NULL;
 }
@@ -647,15 +617,15 @@ const char *bch_backing_dev_register(struct bcache_superblock *sb)
 	spin_lock_init(&dc->io_lock);
 	bch_cache_accounting_init(&dc->accounting, &dc->disk.cl);
 
-	dc->disk_sb = *sb;
+	memcpy(&dc->disk_sb, sb, sizeof(*sb));
 	dc->disk_sb.bdev->bd_holder = dc;
 	memset(sb, 0, sizeof(*sb));
 
-	err = bdev_validate_super(&dc->disk_sb, &dc->sb);
+	err = bdev_validate_super(dc->disk_sb.sb);
 	if (err)
 		goto err;
 
-	if (cached_dev_init(dc, dc->sb.block_size << 9))
+	if (cached_dev_init(dc, le16_to_cpu(dc->disk_sb.sb->block_size) << 9))
 		goto err;
 
 	err = "error creating kobject";
@@ -677,8 +647,8 @@ const char *bch_backing_dev_register(struct bcache_superblock *sb)
 	list_for_each_entry(c, &bch_cache_sets, list)
 		bch_cached_dev_attach(dc, c);
 
-	if (BDEV_STATE(&dc->sb) == BDEV_STATE_NONE ||
-	    BDEV_STATE(&dc->sb) == BDEV_STATE_STALE)
+	if (BDEV_STATE(dc->disk_sb.sb) == BDEV_STATE_NONE ||
+	    BDEV_STATE(dc->disk_sb.sb) == BDEV_STATE_STALE)
 		bch_cached_dev_run(dc);
 
 	mutex_unlock(&bch_register_lock);
