@@ -358,6 +358,8 @@ static void i_size_update_put(struct cache_set *c,
 
 	if (new_i_size != -1) {
 		int ret = bch_write_inode_size(c, ei, new_i_size);
+
+		ret = ret;
 		/*
 		 * XXX: need to pin the inode in memory if the inode update
 		 * fails
