@@ -118,7 +118,7 @@ void bch_nonfatal_io_error_work(struct work_struct *work)
 		bch_notify_cache_error(ca, true);
 
 		mutex_lock(&bch_register_lock);
-		if (CACHE_STATE(&ca->mi) == CACHE_ACTIVE) {
+		if (ca->mi.state == CACHE_ACTIVE) {
 			printk(KERN_ERR "bcache: too many IO errors on %s, going RO\n",
 			       bdevname(ca->disk_sb.bdev, buf));
 			bch_cache_read_only(ca);

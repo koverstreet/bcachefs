@@ -1046,7 +1046,7 @@ int bch_cache_journal_alloc(struct cache *ca)
 	int ret;
 	unsigned i;
 
-	if (CACHE_TIER(&ca->mi) != 0)
+	if (ca->mi.tier != 0)
 		return 0;
 
 	if (dynamic_fault("bcache:add:journal_alloc"))
@@ -1141,7 +1141,7 @@ static void journal_reclaim_work(struct work_struct *work)
 
 		while (ja->last_idx != cur_idx &&
 		       ja->bucket_seq[ja->last_idx] < last_seq) {
-			if (CACHE_DISCARD(&ca->mi) &&
+			if (ca->mi.discard &&
 			    blk_queue_discard(bdev_get_queue(ca->disk_sb.bdev)))
 				blkdev_issue_discard(ca->disk_sb.bdev,
 					bucket_to_sector(ca,
@@ -1236,7 +1236,7 @@ static void journal_next_bucket(struct cache_set *c)
 	 */
 	extent_for_each_ptr_backwards(e, ptr)
 		if (!(ca = PTR_CACHE(c, ptr)) ||
-		    CACHE_STATE(&ca->mi) != CACHE_ACTIVE ||
+		    ca->mi.state != CACHE_ACTIVE ||
 		    ca->journal.sectors_free <= j->sectors_free)
 			__bch_extent_drop_ptr(e, ptr);
 

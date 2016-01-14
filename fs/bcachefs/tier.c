@@ -37,7 +37,7 @@ static bool tiering_pred(struct scan_keylist *kl, struct bkey_s_c k)
 		mi = cache_member_info_get(c);
 		extent_for_each_ptr(e, ptr)
 			if (ptr->dev < mi->nr_in_set &&
-			    CACHE_TIER(&mi->m[ptr->dev]))
+			    mi->m[ptr->dev].tier)
 				replicas++;
 		cache_member_info_put();
 
@@ -276,9 +276,9 @@ static int tiering_next_cache(struct cache_set *c,
 		}
 
 		ca = rcu_dereference(tier->devices[*cache_iter]);
-		if (ca == NULL
-		    || CACHE_STATE(&ca->mi) != CACHE_ACTIVE
-		    || ca->tiering_queue.stopped) {
+		if (ca == NULL ||
+		    ca->mi.state != CACHE_ACTIVE ||
+		    ca->tiering_queue.stopped) {
 			rcu_read_unlock();
 			(*cache_iter)++;
 			continue;

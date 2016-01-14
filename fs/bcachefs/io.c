@@ -1477,7 +1477,7 @@ static void bch_read_extent_iter(struct cache_set *c, struct bio *orig,
 	bool bounce = false, read_full = false;
 
 	/* only promote if we're not reading from the fastest tier: */
-	if ((flags & BCH_READ_PROMOTE) && CACHE_TIER(&pick->ca->mi)) {
+	if ((flags & BCH_READ_PROMOTE) && pick->ca->mi.tier) {
 		promote_op = kmalloc(sizeof(*promote_op), GFP_NOIO);
 
 		if (promote_op)

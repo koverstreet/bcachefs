@@ -707,7 +707,7 @@ static void invalidate_buckets_random(struct cache *ca)
 
 static void invalidate_buckets(struct cache *ca)
 {
-	switch (CACHE_REPLACEMENT(&ca->mi)) {
+	switch (ca->mi.replacement) {
 	case CACHE_REPLACEMENT_LRU:
 		invalidate_buckets_lru(ca);
 		break;
@@ -777,7 +777,7 @@ static int bch_allocator_thread(void *arg)
 			 * dropped bucket lock
 			 */
 
-			if (CACHE_DISCARD(&ca->mi) &&
+			if (ca->mi.discard &&
 			    blk_queue_discard(bdev_get_queue(ca->disk_sb.bdev)))
 				blkdev_issue_discard(ca->disk_sb.bdev,
 					bucket_to_sector(ca, bucket),
@@ -1495,7 +1495,7 @@ found:
 void bch_cache_allocator_stop(struct cache *ca)
 {
 	struct cache_set *c = ca->set;
-	struct cache_group *tier = &c->cache_tiers[CACHE_TIER(&ca->mi)];
+	struct cache_group *tier = &c->cache_tiers[ca->mi.tier];
 	struct open_bucket *ob;
 	struct bch_extent_ptr *ptr;
 	struct task_struct *p;
@@ -1587,7 +1587,7 @@ void bch_cache_allocator_stop(struct cache *ca)
 const char *bch_cache_allocator_start(struct cache *ca)
 {
 	struct cache_set *c = ca->set;
-	struct cache_group *tier = &c->cache_tiers[CACHE_TIER(&ca->mi)];
+	struct cache_group *tier = &c->cache_tiers[ca->mi.tier];
 	struct task_struct *k;
 
 	k = kthread_create(bch_allocator_thread, ca, "bcache_allocator");

@@ -117,14 +117,14 @@ static inline bool bch_check_super_marked(struct cache_set *c,
 {
 	struct bkey_s_c_extent e = bkey_i_to_s_c_extent(k);
 	const struct bch_extent_ptr *ptr;
-	struct cache_member_rcu *mi = cache_member_info_get(c);
+	struct cache_member_cpu *mi = cache_member_info_get(c)->m;
 	bool ret = true;
 
 	extent_for_each_ptr(e, ptr)
 		if (bch_extent_ptr_is_dirty(c, e, ptr) &&
 		    !(meta
-		      ? CACHE_HAS_METADATA
-		      : CACHE_HAS_DATA)(mi->m + ptr->dev)) {
+		      ? mi[ptr->dev].has_metadata
+		      : mi[ptr->dev].has_data)) {
 			ret = false;
 			break;
 		}
@@ -147,8 +147,6 @@ void free_super(struct bcache_superblock *);
 int bch_super_realloc(struct bcache_superblock *, unsigned);
 void bcache_write_super(struct cache_set *);
 void __write_super(struct cache_set *, struct bcache_superblock *);
-
-void bch_cache_member_info_update(struct cache *);
 
 void bch_cache_set_release(struct kobject *);
 void bch_cache_release(struct kobject *);

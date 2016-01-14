@@ -192,14 +192,14 @@ static long bch_ioctl_disk_fail(struct cache_set *c,
 
 static struct cache_member *bch_uuid_lookup(struct cache_set *c, uuid_le uuid)
 {
-	struct cache_member_rcu *mi =
-		rcu_dereference_protected(c->members,
-				lockdep_is_held(&bch_register_lock));
+	struct cache_member *mi = c->disk_mi;
 	unsigned i;
 
-	for (i = 0; i < mi->nr_in_set; i++)
-		if (!memcmp(&mi->m[i].uuid, &uuid, sizeof(uuid)))
-			return &mi->m[i];
+	lockdep_assert_held(&bch_register_lock);
+
+	for (i = 0; i < c->disk_sb.nr_in_set; i++)
+		if (!memcmp(&mi[i].uuid, &uuid, sizeof(uuid)))
+			return &mi[i];
 
 	return NULL;
 }

@@ -310,6 +310,26 @@ struct cache_group {
 	struct cache __rcu	*devices[MAX_CACHES_PER_SET];
 };
 
+struct cache_member_cpu {
+	u64			nbuckets;	/* device size */
+	u16			first_bucket;   /* index of first bucket used */
+	u16			bucket_size;	/* sectors */
+	u8			state;
+	u8			tier;
+	u8			replication_set;
+	u8			has_metadata;
+	u8			has_data;
+	u8			replacement;
+	u8			discard;
+	u8			valid;
+};
+
+struct cache_member_rcu {
+	struct rcu_head		rcu;
+	unsigned		nr_in_set;
+	struct cache_member_cpu	m[];
+};
+
 struct cache {
 	struct percpu_ref	ref;
 	struct rcu_head		free_rcu;
@@ -328,7 +348,7 @@ struct cache {
 	struct {
 		u8		nr_this_dev;
 	}			sb;
-	struct cache_member	mi;
+	struct cache_member_cpu	mi;
 
 	struct bcache_superblock disk_sb;
 
@@ -461,12 +481,6 @@ enum {
 	CACHE_SET_BTREE_WRITE_ERROR,
 };
 
-struct cache_member_rcu {
-	struct rcu_head		rcu;
-	unsigned		nr_in_set;
-	struct cache_member	m[];
-};
-
 struct btree_debug {
 	unsigned		id;
 	struct dentry		*btree;
@@ -495,8 +509,10 @@ struct cache_set {
 	struct work_struct	read_only_work;
 
 	struct cache __rcu	*cache[MAX_CACHES_PER_SET];
-	struct cache_member_rcu __rcu *members;
 	unsigned long	cache_slots_used[BITS_TO_LONGS(MAX_CACHES_PER_SET)];
+
+	struct cache_member_rcu __rcu *members;
+	struct cache_member	*disk_mi; /* protected by register_lock */
 
 	struct cache_set_opts	opts;
 

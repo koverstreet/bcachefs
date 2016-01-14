@@ -365,7 +365,7 @@ DECLARE_EVENT_CLASS(cache,
 
 	TP_fast_assign(
 		memcpy(__entry->uuid, ca->disk_sb.sb->disk_uuid.b, 16);
-		__entry->tier = CACHE_TIER(&ca->mi);
+		__entry->tier = ca->mi.tier;
 	),
 
 	TP_printk("%pU tier %u", __entry->uuid, __entry->tier)

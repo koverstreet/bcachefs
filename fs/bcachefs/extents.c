@@ -272,10 +272,9 @@ static const char *extent_ptr_invalid(const struct cache_member_rcu *mi,
 				      const struct bch_extent_ptr *ptr,
 				      unsigned size_ondisk)
 {
-	const struct cache_member *m = mi->m + ptr->dev;
+	const struct cache_member_cpu *m = mi->m + ptr->dev;
 
-	if (ptr->dev > mi->nr_in_set ||
-	    bch_is_zero(m->uuid.b, sizeof(uuid_le)))
+	if (ptr->dev > mi->nr_in_set || !m->valid)
 		return "pointer to invalid device";
 
 	if (ptr->offset + size_ondisk > m->bucket_size * m->nbuckets)
@@ -1433,10 +1432,10 @@ static void bch_extent_debugcheck_extent(struct cache_set *c, struct btree *b,
 		if (!test_bit(JOURNAL_REPLAY_DONE, &c->journal.flags))
 			continue;
 
-		if (bch_is_zero(mi->m[ptr->dev].uuid.b, sizeof(uuid_le)))
+		if (!mi->m[ptr->dev].valid)
 			goto bad_device;
 
-		tier = CACHE_TIER(&mi->m[ptr->dev]);
+		tier = mi->m[ptr->dev].tier;
 		ptrs_per_tier[tier]++;
 
 		stale = 0;
@@ -1555,7 +1554,7 @@ static unsigned PTR_TIER(struct cache_member_rcu *mi,
 			 const struct bch_extent_ptr *ptr)
 {
 	return ptr->dev < mi->nr_in_set
-		? CACHE_TIER(&mi->m[ptr->dev])
+		? mi->m[ptr->dev].tier
 		: UINT_MAX;
 }
 
@@ -1797,7 +1796,7 @@ static enum merge_result bch_extent_merge(struct btree_keys *bk,
 
 		extent_for_each_entry(el, en_l) {
 			struct bch_extent_ptr *lp, *rp;
-			struct cache_member *m;
+			struct cache_member_cpu *m;
 
 			en_r = bkey_idx(er.v, (u64 *) en_l - el.v->_data);
 
