@@ -33,6 +33,11 @@ union six_lock_state {
 	};
 
 	struct {
+		/* for waitlist_bitnr() */
+		unsigned long	l;
+	};
+
+	struct {
 		unsigned	read_lock:26;
 		unsigned	intent_lock:3;
 		unsigned	waiters:3;

@@ -90,7 +90,7 @@ struct six_lock_waiter {
 };
 
 /* This is probably up there with the more evil things I've done */
-#define waitlist_bitnr(id) ilog2(__SIX_VAL(waiters, 1 << (id)))
+#define waitlist_bitnr(id) ilog2((((union six_lock_state) { .waiters = 1 << (id) }).l))
 
 void __six_lock_type(struct six_lock *lock, enum six_lock_type type)
 {
