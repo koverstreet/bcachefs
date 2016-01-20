@@ -80,6 +80,12 @@ static inline void bkey_extent_set_cached(struct bkey *k, bool cached)
 }
 
 static inline enum bch_extent_entry_type
+__extent_entry_type(const union bch_extent_entry *e)
+{
+	return e->type ? __ffs(e->type) : BCH_EXTENT_ENTRY_MAX;
+}
+
+static inline enum bch_extent_entry_type
 extent_entry_type(const union bch_extent_entry *e)
 {
 	int ret = __ffs(e->type);

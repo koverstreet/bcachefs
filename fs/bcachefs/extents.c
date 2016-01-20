@@ -351,10 +351,17 @@ static const char *bch_btree_ptr_invalid(const struct cache_set *c,
 	switch (k.k->type) {
 	case BCH_EXTENT: {
 		struct bkey_s_c_extent e = bkey_s_c_to_extent(k);
+		const union bch_extent_entry *entry;
 		const struct bch_extent_ptr *ptr;
 		const union bch_extent_crc *crc;
-		struct cache_member_rcu *mi = cache_member_info_get(c);
+		struct cache_member_rcu *mi;
 		const char *reason;
+
+		extent_for_each_entry(e, entry)
+			if (__extent_entry_type(entry) >= BCH_EXTENT_ENTRY_MAX)
+				return "invalid extent entry type";
+
+		mi = cache_member_info_get(c);
 
 		extent_for_each_ptr_crc(e, ptr, crc) {
 			reason = extent_ptr_invalid(mi, ptr,
@@ -1337,7 +1344,11 @@ static const char *bch_extent_invalid(const struct cache_set *c,
 		unsigned size_ondisk = e.k->size;
 		const char *reason;
 
-		extent_for_each_entry(e, entry)
+		extent_for_each_entry(e, entry) {
+			reason = "invalid extent entry type";
+			if (__extent_entry_type(entry) >= BCH_EXTENT_ENTRY_MAX)
+				goto invalid;
+
 			switch (extent_entry_type(entry)) {
 			case BCH_EXTENT_ENTRY_crc32:
 			case BCH_EXTENT_ENTRY_crc64:
@@ -1359,6 +1370,7 @@ static const char *bch_extent_invalid(const struct cache_set *c,
 					goto invalid;
 				break;
 			}
+		}
 
 		cache_member_info_put();
 		return NULL;
