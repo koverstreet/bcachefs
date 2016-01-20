@@ -11,13 +11,25 @@ const struct bkey_format bch_bkey_format_current = BKEY_FORMAT_CURRENT;
 
 #ifdef CONFIG_BCACHEFS_DEBUG
 
-static void to_binary(char *out, u64 in, unsigned nr_bits)
+static void to_binary(char *out, const void *p, unsigned nr_bytes)
 {
 	unsigned i;
 
-	for (i = 0; i < nr_bits; i++)
-		out[i] = test_bit(nr_bits - 1 - i, (void *) &in) ? '1' : '0';
-	out[nr_bits] = '\0';
+	while (1) {
+		u8 b = *((u8 *) p);
+
+		for (i = 0; i < 8; i++) {
+			*out++ = b & (1U << (7 - i)) ? '1' : '0';
+		}
+
+		if (!--nr_bytes)
+			break;
+
+		*out++ = ' ';
+		p++;
+	}
+
+	*out++ = '\0';
 }
 
 static void bch_bkey_pack_verify(const struct bkey_packed *packed,
@@ -35,12 +47,12 @@ static void bch_bkey_pack_verify(const struct bkey_packed *packed,
 
 	if (memcmp(&tmp, unpacked, sizeof(struct bkey))) {
 		char buf1[160], buf2[160];
-		char buf3[80], buf4[80];
+		char buf3[160], buf4[160];
 
 		bch_bkey_to_text(buf1, sizeof(buf1), unpacked);
 		bch_bkey_to_text(buf2, sizeof(buf2), &tmp);
-		to_binary(buf3, unpacked->p.offset, 64);
-		to_binary(buf4, *high_word(format, packed), 64);
+		to_binary(buf3, unpacked, 10);
+		to_binary(buf4, high_word(format, packed), 10);
 
 		panic("keys differ: format u64s %u fields %u %u %u %u %u\n%s\n%s\n%s\n%s\n",
 		      format->key_u64s,
@@ -114,7 +126,8 @@ static struct pack_state pack_state_init(const struct bkey_format *format,
 __always_inline
 static void pack_state_finish(struct pack_state *state)
 {
-	*state->p = state->w;
+	if (state->bits != 64)
+		*state->p = state->w;
 }
 
 struct unpack_state {
@@ -133,7 +146,7 @@ static struct unpack_state unpack_state_init(const struct bkey_format *format,
 	return (struct unpack_state) {
 		.format	= format,
 		.bits	= 64 - high_bit_offset,
-		.w	= *p >> high_bit_offset,
+		.w	= *p << high_bit_offset,
 		.p	= p,
 	};
 }
@@ -431,7 +444,7 @@ static bool bkey_packed_successor(struct bkey_packed *out,
 
 	*out = k;
 
-	offset = nr_key_bits;
+	offset = high_bit_offset + nr_key_bits;
 	while (offset > 64) {
 		p = next_word(p);
 		offset -= 64;
@@ -644,6 +657,7 @@ unsigned bkey_greatest_differing_bit(const struct bkey_format *format,
 	const u64 *l = high_word(format, l_k);
 	const u64 *r = high_word(format, r_k);
 	unsigned nr_key_bits = bkey_format_key_bits(format);
+	unsigned word_bits = 64 - high_bit_offset;
 	u64 l_v, r_v;
 
 	/* for big endian, skip past header */
@@ -651,12 +665,12 @@ unsigned bkey_greatest_differing_bit(const struct bkey_format *format,
 	r_v = *r & (~0ULL >> high_bit_offset);
 
 	while (1) {
-		if (nr_key_bits < 64) {
-			l_v >>= 64 - nr_key_bits;
-			r_v >>= 64 - nr_key_bits;
+		if (nr_key_bits < word_bits) {
+			l_v >>= word_bits - nr_key_bits;
+			r_v >>= word_bits - nr_key_bits;
 			nr_key_bits = 0;
 		} else {
-			nr_key_bits -= 64;
+			nr_key_bits -= word_bits;
 		}
 
 		if (l_v != r_v)
@@ -670,6 +684,7 @@ unsigned bkey_greatest_differing_bit(const struct bkey_format *format,
 
 		l_v = *l;
 		r_v = *r;
+		word_bits = 64;
 	}
 }
 
@@ -827,10 +842,6 @@ void bkey_pack_test(void)
 	struct pack_state out_s = pack_state_init(&test_format, &p);
 	unsigned i;
 
-	if (in_s.p != &t.p.inode)
-		panic("input state wrong, p %p should be %p\n",
-		      in_s.p, &t.p.inode);
-
 	for (i = 0; i < out_s.format->nr_fields; i++) {
 		u64 a, v = get_inc_field(&in_s, i);
 
@@ -854,7 +865,6 @@ void bkey_pack_test(void)
 			BUG();
 		}
 
-		BUG_ON(a != v);
 		if (a != v)
 			panic("got %llu actual %llu i %u\n", v, a, i);
 
