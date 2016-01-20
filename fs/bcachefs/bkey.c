@@ -313,7 +313,7 @@ bool bkey_pack_key(struct bkey_packed *out, const struct bkey *in,
 }
 
 /*
- * Alternate implementations using bkey_format_transform() - unfortunately, too
+ * Alternate implementations using bch_bkey_transform_key() - unfortunately, too
  * slow
  */
 #if 0
@@ -820,6 +820,31 @@ int __bkey_cmp_left_packed(const struct bkey_format *format,
 			   const struct bkey_packed *l, struct bpos r)
 {
 	return bkey_cmp(__bkey_unpack_pos(format, l), r);
+}
+
+void bch_bpos_swab(struct bpos *p)
+{
+	u8 *l = (u8 *) p;
+	u8 *h = ((u8 *) &p[1]) - 1;
+
+	while (l < h) {
+		swap(*l, *h);
+		l++;
+		--h;
+	}
+}
+
+void bch_bkey_swab_key(const struct bkey_format *_f, struct bkey_packed *k)
+{
+	const struct bkey_format *f = bkey_packed(k) ? _f : &bch_bkey_format_current;
+	u8 *l = k->key_start;
+	u8 *h = (u8 *) (k->_data + f->key_u64s) - 1;
+
+	while (l < h) {
+		swap(*l, *h);
+		l++;
+		--h;
+	}
 }
 
 #ifdef CONFIG_BCACHEFS_DEBUG

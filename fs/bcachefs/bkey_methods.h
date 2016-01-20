@@ -37,6 +37,7 @@ struct bkey_ops {
 					  struct bkey_s_c);
 	void		(*val_to_text)(struct cache_set *, char *,
 				       size_t, struct bkey_s_c);
+	void		(*swab)(const struct bkey_format *, struct bkey_packed *);
 
 	bool		is_extents;
 };
@@ -48,6 +49,9 @@ const char *btree_bkey_invalid(struct cache_set *, struct btree *,
 void bkey_debugcheck(struct cache_set *, struct btree *, struct bkey_s_c);
 void bch_bkey_val_to_text(struct cache_set *, enum bkey_type,
 			  char *, size_t, struct bkey_s_c);
+
+void bch_bkey_swab(enum bkey_type, const struct bkey_format *,
+		   struct bkey_packed *);
 
 #undef DEF_BTREE_ID
 

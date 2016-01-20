@@ -102,29 +102,6 @@ struct bch_val {
 	__u64		__nothing[0];
 };
 
-struct bkey_packed {
-	__u64		_data[0];
-
-	/* Size of combined key and value, in u64s */
-	__u8		u64s;
-
-	/* Format of key (0 for format local to btree node */
-	__u8		format;
-
-	/* Type of the value */
-	__u8		type;
-	__u8		key_start[0];
-
-	/*
-	 * We copy bkeys with struct assignment in various places, and while
-	 * that shouldn't be done with packed bkeys we can't disallow it in C,
-	 * and it's legal to cast a bkey to a bkey_packed  - so padding it out
-	 * to the same size as struct bkey should hopefully be safest.
-	 */
-	__u8		pad[5];
-	__u64		pad2[4];
-} __attribute__((packed)) __attribute__((aligned(8)));
-
 struct bkey {
 	__u64		_data[0];
 
@@ -137,8 +114,9 @@ struct bkey {
 	/* Type of the value */
 	__u8		type;
 
-	__u8		pad[1];
 #if defined(__LITTLE_ENDIAN)
+	__u8		pad[1];
+
 	__u32		version;
 	__u32		size;		/* extent size, in sectors */
 	struct bpos	p;
@@ -146,7 +124,31 @@ struct bkey {
 	struct bpos	p;
 	__u32		size;		/* extent size, in sectors */
 	__u32		version;
+
+	__u8		pad[1];
 #endif
+} __attribute__((packed)) __attribute__((aligned(8)));
+
+struct bkey_packed {
+	__u64		_data[0];
+
+	/* Size of combined key and value, in u64s */
+	__u8		u64s;
+
+	/* Format of key (0 for format local to btree node) */
+	__u8		format;
+
+	/* Type of the value */
+	__u8		type;
+	__u8		key_start[0];
+
+	/*
+	 * We copy bkeys with struct assignment in various places, and while
+	 * that shouldn't be done with packed bkeys we can't disallow it in C,
+	 * and it's legal to cast a bkey to a bkey_packed  - so padding it out
+	 * to the same size as struct bkey should hopefully be safest.
+	 */
+	__u8		pad[sizeof(struct bkey) - 3];
 } __attribute__((packed)) __attribute__((aligned(8)));
 
 #define BKEY_U64s			(sizeof(struct bkey) / sizeof(__u64))
@@ -960,6 +962,7 @@ struct jset {
 };
 
 LE32_BITMASK(JSET_CSUM_TYPE,	struct jset, flags, 0, 4);
+LE32_BITMASK(JSET_BIG_ENDIAN,	struct jset, flags, 4, 5);
 
 /* Bucket prios/gens */
 
@@ -1040,6 +1043,8 @@ LE32_BITMASK(BSET_CSUM_TYPE,	struct bset, flags, 0, 4);
 
 /* Only used in first bset */
 LE32_BITMASK(BSET_BTREE_LEVEL,	struct bset, flags, 4, 8);
+
+LE32_BITMASK(BSET_BIG_ENDIAN,	struct bset, flags, 8, 9);
 
 struct btree_node {
 	__le64			csum;

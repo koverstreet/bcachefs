@@ -126,6 +126,9 @@ static __always_inline int bkey_cmp(struct bpos l, struct bpos r)
 int bkey_cmp(struct bpos l, struct bpos r);
 #endif
 
+void bch_bpos_swab(struct bpos *);
+void bch_bkey_swab_key(const struct bkey_format *, struct bkey_packed *);
+
 #define bkey_packed(_k)							\
 	({ EBUG_ON((_k)->format > KEY_FORMAT_CURRENT);			\
 	 (_k)->format != KEY_FORMAT_CURRENT; })

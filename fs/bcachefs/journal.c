@@ -703,6 +703,29 @@ const char *bch_journal_read(struct cache_set *c, struct list_head *list)
 	if (list_empty(list))
 		return "no journal entries found";
 
+	/* Swabbing: */
+	list_for_each_entry(i, list, list) {
+		struct jset_entry *jkeys;
+		struct bkey_i *k;
+
+		if (JSET_BIG_ENDIAN(&i->j) != CPU_BIG_ENDIAN)
+			for_each_jset_jkeys(jkeys, &i->j)
+				switch (JKEYS_TYPE(jkeys)) {
+				case JKEYS_BTREE_KEYS:
+					for (k = jkeys->start;
+					     k < bkey_idx(jkeys, le16_to_cpu(jkeys->u64s));
+					     k = bkey_next(k))
+						bch_bkey_swab(bkey_type(jkeys->level,
+									jkeys->btree_id),
+							      NULL, bkey_to_packed(k));
+					break;
+				case JKEYS_BTREE_ROOT:
+					bch_bkey_swab(BKEY_TYPE_BTREE,
+						      NULL, bkey_to_packed(jkeys->start));
+					break;
+				}
+	}
+
 	j = &list_entry(list->prev, struct journal_replay, list)->j;
 
 	if (le64_to_cpu(j->seq) -
@@ -1465,6 +1488,8 @@ static void journal_write_locked(struct closure *cl)
 	w->data->magic		= cpu_to_le64(jset_magic(&c->disk_sb));
 	w->data->version	= cpu_to_le32(BCACHE_JSET_VERSION);
 	w->data->last_seq	= cpu_to_le64(last_seq(j));
+
+	SET_JSET_BIG_ENDIAN(w->data, CPU_BIG_ENDIAN);
 
 	SET_JSET_CSUM_TYPE(w->data, c->opts.metadata_checksum);
 	w->data->csum		= cpu_to_le64(__csum_set(w->data,

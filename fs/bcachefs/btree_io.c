@@ -219,6 +219,9 @@ static const char *validate_bset(struct cache_set *c, struct btree *b,
 			break;
 		}
 
+		if (BSET_BIG_ENDIAN(i) != CPU_BIG_ENDIAN)
+			bch_bkey_swab(btree_node_type(b), &b->keys.format, k);
+
 		bkey_disassemble(&tup, f, k);
 		u = bkey_tup_to_s_c(&tup);
 
@@ -239,6 +242,8 @@ static const char *validate_bset(struct cache_set *c, struct btree *b,
 
 		k = bkey_next(k);
 	}
+
+	SET_BSET_BIG_ENDIAN(i, CPU_BIG_ENDIAN);
 
 	b->written += blocks;
 	return NULL;
@@ -261,29 +266,6 @@ void bch_btree_node_read_done(struct cache_set *c, struct btree *b,
 	if (bch_meta_read_fault("btree"))
 		goto err;
 
-	err = "bad magic";
-	if (le64_to_cpu(b->data->magic) != bset_magic(&c->disk_sb))
-		goto err;
-
-	err = "bad btree header";
-	if (!b->data->keys.seq)
-		goto err;
-
-	err = "incorrect max key";
-	if (bkey_cmp(b->data->max_key, b->key.k.p))
-		goto err;
-
-	err = "incorrect level";
-	if (BSET_BTREE_LEVEL(i) != b->level)
-		goto err;
-
-	err = bch_bkey_format_validate(&b->data->format);
-	if (err)
-		goto err;
-
-	b->keys.format = b->data->format;
-	b->keys.set->data = &b->data->keys;
-
 	while (b->written < btree_blocks(c)) {
 		unsigned blocks;
 
@@ -304,6 +286,34 @@ void bch_btree_node_read_done(struct cache_set *c, struct btree *b,
 			blocks = __set_blocks(b->data,
 					      le16_to_cpu(b->data->keys.u64s),
 					      block_bytes(c));
+
+			err = "bad magic";
+			if (le64_to_cpu(b->data->magic) != bset_magic(&c->disk_sb))
+				goto err;
+
+			err = "bad btree header";
+			if (!b->data->keys.seq)
+				goto err;
+
+			if (BSET_BIG_ENDIAN(i) != CPU_BIG_ENDIAN) {
+				bch_bpos_swab(&b->data->min_key);
+				bch_bpos_swab(&b->data->max_key);
+			}
+
+			err = "incorrect max key";
+			if (bkey_cmp(b->data->max_key, b->key.k.p))
+				goto err;
+
+			err = "incorrect level";
+			if (BSET_BTREE_LEVEL(i) != b->level)
+				goto err;
+
+			err = bch_bkey_format_validate(&b->data->format);
+			if (err)
+				goto err;
+
+			b->keys.format = b->data->format;
+			b->keys.set->data = &b->data->keys;
 		} else {
 			bne = write_block(c, b);
 			i = &bne->keys;
@@ -523,6 +533,7 @@ static void do_btree_node_write(struct closure *cl)
 	BUG_ON(b->written >= btree_blocks(c));
 	BUG_ON(b->written && !i->u64s);
 	BUG_ON(btree_bset_first(b)->seq != i->seq);
+	BUG_ON(BSET_BIG_ENDIAN(i) != CPU_BIG_ENDIAN);
 
 	cancel_delayed_work(&b->work);
 

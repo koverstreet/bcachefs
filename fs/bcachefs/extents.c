@@ -268,6 +268,15 @@ static bool bch_ptr_normalize(struct btree_keys *bk, struct bkey_s k)
 	return bch_extent_normalize(b->c, k);
 }
 
+static void bch_ptr_swab(const struct bkey_format *f, struct bkey_packed *k)
+{
+	u64 *d = (u64 *) bkeyp_val(f, k);
+	unsigned i;
+
+	for (i = 0; i < bkeyp_val_u64s(f, k); i++)
+		d[i] = swab64(d[i]);
+}
+
 static const char *extent_ptr_invalid(const struct cache_member_rcu *mi,
 				      const struct bch_extent_ptr *ptr,
 				      unsigned size_ondisk)
@@ -504,6 +513,7 @@ const struct bkey_ops bch_bkey_btree_ops = {
 	.key_invalid	= bch_btree_ptr_invalid,
 	.key_debugcheck	= btree_ptr_debugcheck,
 	.val_to_text	= bch_btree_ptr_to_text,
+	.swab		= bch_ptr_swab,
 };
 
 /* Extents */
@@ -1999,6 +2009,7 @@ const struct bkey_ops bch_bkey_extent_ops = {
 	.key_invalid	= bch_extent_invalid,
 	.key_debugcheck	= bch_extent_debugcheck,
 	.val_to_text	= bch_extent_to_text,
+	.swab		= bch_ptr_swab,
 	.is_extents	= true,
 };
 

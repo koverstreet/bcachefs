@@ -100,3 +100,15 @@ void bch_bkey_val_to_text(struct cache_set *c, enum bkey_type type,
 		ops->val_to_text(c, out, end - out, k);
 	}
 }
+
+void bch_bkey_swab(enum bkey_type type,
+		   const struct bkey_format *f,
+		   struct bkey_packed *k)
+{
+	const struct bkey_ops *ops = bch_bkey_ops[type];
+
+	bch_bkey_swab_key(f, k);
+
+	if (ops->swab)
+		ops->swab(f, k);
+}

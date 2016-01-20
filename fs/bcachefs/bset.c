@@ -619,6 +619,7 @@ void bch_bset_init_first(struct btree_keys *b, struct bset *i)
 	b->set[0].data = i;
 	memset(i, 0, sizeof(*i));
 	get_random_bytes(&i->seq, sizeof(i->seq));
+	SET_BSET_BIG_ENDIAN(i, CPU_BIG_ENDIAN);
 
 	bch_bset_build_unwritten_tree(b);
 }
@@ -629,6 +630,7 @@ void bch_bset_init_next(struct btree_keys *b, struct bset *i)
 	b->set[++b->nsets].data = i;
 	memset(i, 0, sizeof(*i));
 	i->seq = b->set->data->seq;
+	SET_BSET_BIG_ENDIAN(i, CPU_BIG_ENDIAN);
 
 	bch_bset_build_unwritten_tree(b);
 }

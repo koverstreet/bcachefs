@@ -53,6 +53,12 @@ struct closure;
 #define __flatten
 #endif
 
+#ifdef __LITTLE_ENDIAN
+#define CPU_BIG_ENDIAN		0
+#else
+#define CPU_BIG_ENDIAN		1
+#endif
+
 #define DECLARE_HEAP(type, name)					\
 	struct {							\
 		size_t size, used;					\
