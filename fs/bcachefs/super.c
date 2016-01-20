@@ -1151,6 +1151,9 @@ static int bch_cache_set_online(struct cache_set *c)
 
 	lockdep_assert_held(&bch_register_lock);
 
+	if (c->kobj.state_in_sysfs)
+		return 0;
+
 	c->minor = idr_alloc(&bch_chardev_minor, c, 0, 0, GFP_KERNEL);
 	if (c->minor < 0)
 		return c->minor;
@@ -1366,16 +1369,19 @@ static const char *run_cache_set(struct cache_set *c)
 
 	bcache_write_super(c);
 
+	err = "dynamic fault";
+	if (cache_set_init_fault("run_cache_set"))
+		goto err;
+
+	err = "error creating kobject";
+	if (bch_cache_set_online(c))
+		goto err;
+
 	err = "can't bring up blockdev volumes";
 	if (bch_blockdev_volumes_start(c))
 		goto err;
 
 	bch_debug_init_cache_set(c);
-
-	err = "dynamic fault";
-	if (cache_set_init_fault("run_cache_set"))
-		goto err;
-
 	set_bit(CACHE_SET_RUNNING, &c->flags);
 	bch_attach_backing_devs(c);
 
