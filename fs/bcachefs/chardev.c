@@ -252,6 +252,9 @@ long bch_chardev_ioctl(struct file *filp, unsigned cmd, unsigned long v)
 	struct cache_set *c = filp->private_data;
 	void __user *arg = (void __user *) v;
 
+	if (!capable(CAP_SYS_ADMIN))
+		return -EPERM;
+
 	switch (cmd) {
 	case BCH_IOCTL_ASSEMBLE:
 		return bch_ioctl_assemble(arg);
