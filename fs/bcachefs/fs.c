@@ -431,21 +431,6 @@ static struct inode *bch_vfs_inode_get(struct super_block *sb, u64 inum)
 	return inode;
 }
 
-static void bch_set_inode_flags(struct inode *inode)
-{
-	unsigned flags = to_bch_ei(inode)->i_flags;
-
-	inode->i_flags &= ~(S_SYNC|S_APPEND|S_IMMUTABLE|S_NOATIME);
-	if (flags & FS_SYNC_FL)
-		inode->i_flags |= S_SYNC;
-	if (flags & FS_APPEND_FL)
-		inode->i_flags |= S_APPEND;
-	if (flags & FS_IMMUTABLE_FL)
-		inode->i_flags |= S_IMMUTABLE;
-	if (flags & FS_NOATIME_FL)
-		inode->i_flags |= S_NOATIME;
-}
-
 static struct inode *bch_vfs_inode_create(struct cache_set *c,
 					  struct inode *parent,
 					  umode_t mode, dev_t rdev)
@@ -1670,36 +1655,78 @@ out:
 	return bch_journal_flush_seq(&c->journal, ei->journal_seq);
 }
 
-/* Flags that are appropriate for non-directories/regular files. */
-#define BCH_OTHER_FLMASK	(FS_NODUMP_FL | FS_NOATIME_FL)
+/* Inode flags: */
 
-static inline bool bch_flags_allowed(umode_t mode, u32 flags)
+static const unsigned bch_inode_flags_to_vfs_flags_map[] = {
+	[__BCH_INODE_SYNC]	= S_SYNC,
+	[__BCH_INODE_IMMUTABLE]	= S_IMMUTABLE,
+	[__BCH_INODE_APPEND]	= S_APPEND,
+	[__BCH_INODE_NOATIME]	= S_NOATIME,
+};
+
+static const unsigned bch_inode_flags_to_user_flags_map[] = {
+	[__BCH_INODE_SYNC]	= FS_SYNC_FL,
+	[__BCH_INODE_IMMUTABLE]	= FS_IMMUTABLE_FL,
+	[__BCH_INODE_APPEND]	= FS_APPEND_FL,
+	[__BCH_INODE_NODUMP]	= FS_NODUMP_FL,
+	[__BCH_INODE_NOATIME]	= FS_NOATIME_FL,
+};
+
+/* Set VFS inode flags from bcache inode: */
+static void bch_inode_flags_to_vfs(struct inode *inode)
 {
-	if ((flags & BCH_FL_USER_FLAGS) != flags)
-		return false;
+	unsigned i, flags = to_bch_ei(inode)->i_flags;
 
-	if (!S_ISREG(mode) &&
-	    !S_ISDIR(mode) &&
-	    (flags & BCH_OTHER_FLMASK) != flags)
-		return false;
-
-	return true;
+	for (i = 0; i < ARRAY_SIZE(bch_inode_flags_to_vfs_flags_map); i++)
+		if (flags & (1 << i))
+			inode->i_flags |=  bch_inode_flags_to_vfs_flags_map[i];
+		else
+			inode->i_flags &= ~bch_inode_flags_to_vfs_flags_map[i];
 }
 
-static int bch_inode_set_flags(struct bch_inode_info *ei, struct bch_inode *bi,
-			       void *p)
+/* Get FS_IOC_GETFLAGS flags from bcache inode: */
+static unsigned bch_inode_flags_to_user_flags(unsigned flags)
 {
-	unsigned oldflags = le32_to_cpu(bi->i_flags);
+	unsigned i, ret = 0;
+
+	for (i = 0; i < ARRAY_SIZE(bch_inode_flags_to_user_flags_map); i++)
+		if (flags & (1 << i))
+			ret |= bch_inode_flags_to_user_flags_map[i];
+
+	return ret;
+}
+
+static int bch_inode_user_flags_set(struct bch_inode_info *ei,
+				    struct bch_inode *bi,
+				    void *p)
+{
+	/*
+	 * We're relying on btree locking here for exclusion with other ioctl
+	 * calls - use the flags in the btree (@bi), not ei->i_flags:
+	 */
+	unsigned bch_flags = le32_to_cpu(bi->i_flags);
+	unsigned oldflags = bch_inode_flags_to_user_flags(bch_flags);
 	unsigned newflags = *((unsigned *) p);
+	unsigned i;
 
 	if (((newflags ^ oldflags) & (FS_APPEND_FL|FS_IMMUTABLE_FL)) &&
 	    !capable(CAP_LINUX_IMMUTABLE))
 		return -EPERM;
 
-	newflags = newflags & BCH_FL_USER_FLAGS;
-	newflags |= oldflags & ~BCH_FL_USER_FLAGS;
-	bi->i_flags = cpu_to_le32(newflags);
+	for (i = 0; i < ARRAY_SIZE(bch_inode_flags_to_user_flags_map); i++) {
+		if (newflags & bch_inode_flags_to_user_flags_map[i])
+			bch_flags |=  (1 << i);
+		else
+			bch_flags &= ~(1 << i);
 
+		newflags &= ~bch_inode_flags_to_user_flags_map[i];
+		oldflags &= ~bch_inode_flags_to_user_flags_map[i];
+	}
+
+	if (oldflags != newflags)
+		return -EOPNOTSUPP;
+
+	bi->i_flags = cpu_to_le32(bch_flags);
 	ei->vfs_inode.i_ctime = CURRENT_TIME;
 
 	return 0;
@@ -1718,8 +1745,8 @@ static long bch_fs_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 
 	switch (cmd) {
 	case FS_IOC_GETFLAGS:
-		flags = ei->i_flags & BCH_FL_USER_FLAGS;
-		return put_user(flags, (int __user *) arg);
+		return put_user(bch_inode_flags_to_user_flags(ei->i_flags),
+				(int __user *) arg);
 
 	case FS_IOC_SETFLAGS: {
 		ret = mnt_want_write_file(filp);
@@ -1736,7 +1763,9 @@ static long bch_fs_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 			goto setflags_out;
 		}
 
-		if (!bch_flags_allowed(inode->i_mode, flags)) {
+		if (!S_ISREG(inode->i_mode) &&
+		    !S_ISDIR(inode->i_mode) &&
+		    (flags & (FS_NODUMP_FL|FS_NOATIME_FL)) != flags) {
 			ret = -EINVAL;
 			goto setflags_out;
 		}
@@ -1744,17 +1773,23 @@ static long bch_fs_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 		inode_lock(inode);
 
 		mutex_lock(&ei->update_lock);
-		ret = __bch_write_inode(c, ei, bch_inode_set_flags, &flags);
+		ret = __bch_write_inode(c, ei, bch_inode_user_flags_set, &flags);
 		mutex_unlock(&ei->update_lock);
 
 		if (!ret)
-			bch_set_inode_flags(inode);
+			bch_inode_flags_to_vfs(inode);
 
 		inode_unlock(inode);
 setflags_out:
 		mnt_drop_write_file(filp);
 		return ret;
 	}
+
+	case FS_IOC_GETVERSION:
+		return -ENOTTY;
+	case FS_IOC_SETVERSION:
+		return -ENOTTY;
+
 	case FS_IOC_GOINGDOWN:
 		if (!capable(CAP_SYS_ADMIN))
 			return -EPERM;
@@ -2843,7 +2878,7 @@ static void bch_inode_init(struct bch_inode_info *ei,
 	inode->i_atime	= ns_to_timespec(le64_to_cpu(bi->i_atime));
 	inode->i_mtime	= ns_to_timespec(le64_to_cpu(bi->i_mtime));
 	inode->i_ctime	= ns_to_timespec(le64_to_cpu(bi->i_ctime));
-	bch_set_inode_flags(inode);
+	bch_inode_flags_to_vfs(inode);
 
 	inode->i_mapping->a_ops = &bch_address_space_operations;
 

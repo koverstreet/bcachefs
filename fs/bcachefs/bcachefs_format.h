@@ -77,7 +77,7 @@ struct bpos {
 #else
 #error edit for your odd byteorder.
 #endif
-} __attribute__((packed)) __attribute__((aligned(4)));
+} __attribute__((packed, aligned(4)));
 
 #define KEY_INODE_MAX			((__u64)~0ULL)
 #define KEY_OFFSET_MAX			((__u64)~0ULL)
@@ -127,7 +127,7 @@ struct bkey {
 
 	__u8		pad[1];
 #endif
-} __attribute__((packed)) __attribute__((aligned(8)));
+} __attribute__((packed, aligned(8)));
 
 struct bkey_packed {
 	__u64		_data[0];
@@ -149,7 +149,7 @@ struct bkey_packed {
 	 * to the same size as struct bkey should hopefully be safest.
 	 */
 	__u8		pad[sizeof(struct bkey) - 3];
-} __attribute__((packed)) __attribute__((aligned(8)));
+} __attribute__((packed, aligned(8)));
 
 #define BKEY_U64s			(sizeof(struct bkey) / sizeof(__u64))
 #define KEY_PACKED_BITS_START		24
@@ -368,7 +368,7 @@ struct bch_extent_crc32 {
 				offset:7,
 				type:1;
 #endif
-} __attribute__((packed)) __attribute__((aligned(8)));
+} __attribute__((packed, aligned(8)));
 
 #define CRC32_EXTENT_SIZE_MAX	(1U << 7)
 
@@ -389,7 +389,7 @@ struct bch_extent_crc64 {
 				type:3;
 #endif
 	__u64			csum;
-} __attribute__((packed)) __attribute__((aligned(8)));
+} __attribute__((packed, aligned(8)));
 
 #define CRC64_EXTENT_SIZE_MAX	(1U << 17)
 
@@ -412,7 +412,7 @@ struct bch_extent_ptr {
 				erasure_coded:1,
 				type:2;
 #endif
-} __attribute__((packed)) __attribute__((aligned(8)));
+} __attribute__((packed, aligned(8)));
 
 union bch_extent_entry {
 #if defined(__LITTLE_ENDIAN__) ||  BITS_PER_LONG == 64
@@ -449,7 +449,7 @@ struct bch_extent {
 
 	union bch_extent_entry	start[0];
 	__u64			_data[0];
-} __attribute__((packed)) __attribute__((aligned(8)));
+} __attribute__((packed, aligned(8)));
 BKEY_VAL_TYPE(extent,		BCH_EXTENT);
 
 /* Inodes */
@@ -465,13 +465,29 @@ enum bch_inode_types {
 };
 
 enum {
-	BCH_FS_PRIVATE_START		= 16,
-	__BCH_INODE_I_SIZE_DIRTY	= 16,
+	/*
+	 * User flags (get/settable with FS_IOC_*FLAGS, correspond to FS_*_FL
+	 * flags)
+	 */
+	__BCH_INODE_SYNC	= 0,
+	__BCH_INODE_IMMUTABLE	= 1,
+	__BCH_INODE_APPEND	= 2,
+	__BCH_INODE_NODUMP	= 3,
+	__BCH_INODE_NOATIME	= 4,
+
+	__BCH_INODE_I_SIZE_DIRTY= 5,
+
+	/* not implemented yet: */
+	__BCH_INODE_HAS_XATTRS	= 6, /* has xattrs in xattr btree */
 };
 
-#define BCH_FL_USER_FLAGS	((1U << BCH_FS_PRIVATE_START) - 1)
-
+#define BCH_INODE_SYNC		(1 << __BCH_INODE_SYNC)
+#define BCH_INODE_IMMUTABLE	(1 << __BCH_INODE_IMMUTABLE)
+#define BCH_INODE_APPEND	(1 << __BCH_INODE_APPEND)
+#define BCH_INODE_NODUMP	(1 << __BCH_INODE_NODUMP)
+#define BCH_INODE_NOATIME	(1 << __BCH_INODE_NOATIME)
 #define BCH_INODE_I_SIZE_DIRTY	(1 << __BCH_INODE_I_SIZE_DIRTY)
+#define BCH_INODE_HAS_XATTRS	(1 << __BCH_INODE_HAS_XATTRS)
 
 struct bch_inode {
 	struct bch_val		v;
@@ -501,7 +517,7 @@ struct bch_inode_blockdev {
 
 	uuid_le			i_uuid;
 	__u8			i_label[32];
-} __attribute__((packed));
+} __attribute__((packed, aligned(8)));
 BKEY_VAL_TYPE(inode_blockdev,	BCH_INODE_BLOCKDEV);
 
 /* Dirents */
