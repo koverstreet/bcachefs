@@ -514,7 +514,7 @@ void bch_writeback_recalc_oldest_gens(struct cache_set *c)
 
 		d = radix_tree_deref_slot(slot);
 
-		if (d->inode.k.type != BCH_INODE_CACHED_DEV)
+		if (!CACHED_DEV(&d->inode.v))
 			continue;
 		dc = container_of(d, struct cached_dev, disk);
 

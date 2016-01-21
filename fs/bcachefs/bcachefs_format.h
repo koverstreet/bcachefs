@@ -461,7 +461,6 @@ BKEY_VAL_TYPE(extent,		BCH_EXTENT);
 enum bch_inode_types {
 	BCH_INODE_FS		= 128,
 	BCH_INODE_BLOCKDEV	= 129,
-	BCH_INODE_CACHED_DEV	= 130,
 };
 
 enum {
@@ -513,13 +512,21 @@ BKEY_VAL_TYPE(inode,		BCH_INODE_FS);
 
 struct bch_inode_blockdev {
 	struct bch_val		v;
-	struct bch_inode	i_inode;
+
+	__le64			i_size;
+	__le64			i_flags;
+
+	/* Seconds: */
+	__le64			i_ctime;
+	__le64			i_mtime;
 
 	uuid_le			i_uuid;
 	__u8			i_label[32];
 } __attribute__((packed, aligned(8)));
 BKEY_VAL_TYPE(inode_blockdev,	BCH_INODE_BLOCKDEV);
 
+/* Thin provisioned volume, or cache for another block device? */
+LE64_BITMASK(CACHED_DEV,	struct bch_inode_blockdev, i_flags, 0,  1)
 /* Dirents */
 
 /*

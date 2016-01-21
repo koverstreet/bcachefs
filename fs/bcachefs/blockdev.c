@@ -361,8 +361,7 @@ void bch_cached_dev_detach(struct cached_dev *dc)
 
 int bch_cached_dev_attach(struct cached_dev *dc, struct cache_set *c)
 {
-	struct timespec ts = CURRENT_TIME;
-	__le64 rtime = cpu_to_le64(timespec_to_ns(&ts));
+	__le64 rtime = cpu_to_le64(ktime_get_seconds());
 	char buf[BDEVNAME_SIZE];
 	bool found;
 	int ret;
@@ -420,12 +419,13 @@ int bch_cached_dev_attach(struct cached_dev *dc, struct cache_set *c)
 		closure_init_stack(&cl);
 
 		bkey_inode_blockdev_init(&dc->disk.inode.k_i);
-		dc->disk.inode.k.type = BCH_INODE_CACHED_DEV;
+		dc->disk.inode.k.type = BCH_INODE_BLOCKDEV;
+		SET_CACHED_DEV(&dc->disk.inode.v, true);
 		dc->disk.inode.v.i_uuid = dc->disk_sb.sb->disk_uuid;
 		memcpy(dc->disk.inode.v.i_label,
 		       dc->disk_sb.sb->label, SB_LABEL_SIZE);
-		dc->disk.inode.v.i_inode.i_ctime = rtime;
-		dc->disk.inode.v.i_inode.i_mtime = rtime;
+		dc->disk.inode.v.i_ctime = rtime;
+		dc->disk.inode.v.i_mtime = rtime;
 
 		ret = bch_inode_create(c, &dc->disk.inode.k_i,
 				       0, BLOCKDEV_INODE_MAX,
@@ -443,7 +443,7 @@ int bch_cached_dev_attach(struct cached_dev *dc, struct cache_set *c)
 		bch_write_bdev_super(dc, &cl);
 		closure_sync(&cl);
 	} else {
-		dc->disk.inode.v.i_inode.i_mtime = rtime;
+		dc->disk.inode.v.i_mtime = rtime;
 		bch_inode_update(c, &dc->disk.inode.k_i, NULL);
 	}
 
@@ -706,7 +706,7 @@ static int blockdev_volume_run(struct cache_set *c,
 	kobject_init(&d->kobj, &bch_blockdev_volume_ktype);
 
 	ret = bcache_device_init(d, block_bytes(c),
-				 le64_to_cpu(inode.v->i_inode.i_size) >> 9);
+				 le64_to_cpu(inode.v->i_size) >> 9);
 	if (ret)
 		goto err;
 
@@ -758,16 +758,15 @@ int bch_blockdev_volumes_start(struct cache_set *c)
 
 int bch_blockdev_volume_create(struct cache_set *c, u64 size)
 {
-	struct timespec ts = CURRENT_TIME;
-	__le64 rtime = cpu_to_le64(timespec_to_ns(&ts));
+	__le64 rtime = cpu_to_le64(ktime_get_seconds());
 	struct bkey_i_inode_blockdev inode;
 	int ret;
 
 	bkey_inode_blockdev_init(&inode.k_i);
 	get_random_bytes(&inode.v.i_uuid, sizeof(inode.v.i_uuid));
-	inode.v.i_inode.i_ctime = rtime;
-	inode.v.i_inode.i_mtime = rtime;
-	inode.v.i_inode.i_size = cpu_to_le64(size);
+	inode.v.i_ctime = rtime;
+	inode.v.i_mtime = rtime;
+	inode.v.i_size = cpu_to_le64(size);
 
 	ret = bch_inode_create(c, &inode.k_i, 0, BLOCKDEV_INODE_MAX,
 			       &c->unused_inode_hint);
@@ -792,7 +791,7 @@ void bch_blockdevs_stop(struct cache_set *c)
 	radix_tree_for_each_slot(slot, &c->devices, &iter, 0) {
 		d = radix_tree_deref_slot(slot);
 
-		if (d->inode.k.type == BCH_INODE_CACHED_DEV &&
+		if (CACHED_DEV(&d->inode.v) &&
 		    test_bit(CACHE_SET_UNREGISTERING, &c->flags)) {
 			dc = container_of(d, struct cached_dev, disk);
 			bch_cached_dev_detach(dc);
