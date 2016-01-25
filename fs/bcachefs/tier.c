@@ -30,7 +30,7 @@ static bool tiering_pred(struct scan_keylist *kl, struct bkey_s_c k)
 		unsigned replicas = 0;
 
 		/* Make sure we have room to add a new pointer: */
-		if (bkey_val_u64s(e.k) + BKEY_EXTENT_PTR_MAX_U64s >
+		if (bkey_val_u64s(e.k) + BKEY_EXTENT_PTR_U64s_MAX >
 		    BKEY_EXTENT_VAL_U64s_MAX)
 			return false;
 

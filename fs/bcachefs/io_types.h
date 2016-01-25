@@ -122,7 +122,7 @@ struct bch_write_op {
 	struct keylist		insert_keys;
 	BKEY_PADDED(insert_key);
 	struct bch_replace_info replace_info;
-	u64			inline_keys[BKEY_EXTENT_MAX_U64s * 2];
+	u64			inline_keys[BKEY_EXTENT_U64s_MAX * 2];
 };
 
 struct bio_decompress_worker {

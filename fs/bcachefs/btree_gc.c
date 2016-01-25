@@ -488,7 +488,7 @@ static void bch_coalesce_nodes(struct btree *old_nodes[GC_MERGE_NODES],
 		return;
 
 	if (bch_keylist_realloc(&keylist,
-			(BKEY_U64s + BKEY_EXTENT_MAX_U64s) * nr_old_nodes)) {
+			(BKEY_U64s + BKEY_EXTENT_U64s_MAX) * nr_old_nodes)) {
 		trace_bcache_btree_gc_coalesce_fail(c);
 		goto out;
 	}

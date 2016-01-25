@@ -13,12 +13,12 @@
  * If @top == @bot, the keylist is empty.
  *
  * We always ensure there is room for a maximum-sized extent key at @top;
- * that is, @top_p + BKEY_EXTENT_MAX_U64s <= @end_keys_p.
+ * that is, @top_p + BKEY_EXTENT_U64s_MAX <= @end_keys_p.
  *
  * If this invariant does not hold after enqueuing a key, we wrap @top back
  * to @start_keys_p.
  *
- * If at any time, @top_p + BKEY_EXTENT_MAX_U64s >= @bot_p, the keylist is
+ * If at any time, @top_p + BKEY_EXTENT_U64s_MAX >= @bot_p, the keylist is
  * full.
  */
 

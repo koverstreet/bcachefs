@@ -17,7 +17,7 @@ static inline size_t bch_keylist_capacity(struct keylist *l)
 }
 
 /*
- * XXX: why are we using BKEY_EXTENT_MAX_U64s here? keylists aren't used just
+ * XXX: why are we using BKEY_EXTENT_U64s_MAX here? keylists aren't used just
  * for extents, this doesn't make any sense
  */
 
@@ -25,7 +25,7 @@ static inline bool bch_keylist_fits(struct keylist *l, size_t u64s)
 {
 	if (l->bot_p > l->top_p)
 		return (l->bot_p - l->top_p) > u64s;
-	else if (l->top_p + u64s + BKEY_EXTENT_MAX_U64s > l->end_keys_p)
+	else if (l->top_p + u64s + BKEY_EXTENT_U64s_MAX > l->end_keys_p)
 		return l->start_keys_p != l->bot_p;
 	else
 		return true;
@@ -41,7 +41,7 @@ static inline struct bkey_i *__bch_keylist_next(struct keylist *l,
 	if (k == l->top)
 		return k;
 
-	if ((u64 *) k + BKEY_EXTENT_MAX_U64s > l->end_keys_p)
+	if ((u64 *) k + BKEY_EXTENT_U64s_MAX > l->end_keys_p)
 		return l->start_keys;
 
 	return k;

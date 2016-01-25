@@ -452,6 +452,26 @@ struct bch_extent {
 } __attribute__((packed, aligned(8)));
 BKEY_VAL_TYPE(extent,		BCH_EXTENT);
 
+/* Maximum size (in u64s) a single pointer could be: */
+#define BKEY_EXTENT_PTR_U64s_MAX\
+	((sizeof(struct bch_extent_crc64) +			\
+	  sizeof(struct bch_extent_ptr)) / sizeof(u64))
+
+/* Maximum possible size of an entire extent value: */
+#if 0
+/* There's a hack in the keylist code that needs to be fixed.. */
+#define BKEY_EXTENT_VAL_U64s_MAX				\
+	(BKEY_EXTENT_PTR_U64s_MAX * BCH_REPLICAS_MAX)
+#else
+#define BKEY_EXTENT_VAL_U64s_MAX	8
+#endif
+
+/* * Maximum possible size of an entire extent, key + value: */
+#define BKEY_EXTENT_U64s_MAX	(BKEY_U64s + BKEY_EXTENT_VAL_U64s_MAX)
+
+#define BKEY_BTREE_PTR_VAL_U64s_MAX	BCH_REPLICAS_MAX
+#define BKEY_BTREE_PTR_U64s_MAX		(BKEY_U64s + BCH_REPLICAS_MAX)
+
 /* Inodes */
 
 #define BLOCKDEV_INODE_MAX	4096

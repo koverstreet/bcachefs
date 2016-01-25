@@ -13,7 +13,7 @@ int bch_keylist_realloc_max(struct keylist *l,
 			    unsigned maxu64s)
 {
 	size_t oldcap = bch_keylist_capacity(l);
-	size_t newsize = max(oldcap, BKEY_EXTENT_MAX_U64s) + needu64s;
+	size_t newsize = max(oldcap, BKEY_EXTENT_U64s_MAX) + needu64s;
 	u64 *new_keys;
 
 	if (bch_keylist_fits(l, needu64s))

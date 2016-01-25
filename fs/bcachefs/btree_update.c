@@ -808,7 +808,7 @@ static bool __have_enough_space(struct cache_set *c, struct btree *b,
 	 * needs room for at least three keys to make forward
 	 * progress.
 	 */
-	u64s = b->keys.ops->is_extents ? BKEY_EXTENT_MAX_U64s * 3 : u64s;
+	u64s = b->keys.ops->is_extents ? BKEY_EXTENT_U64s_MAX * 3 : u64s;
 
 	return u64s <= bch_btree_keys_u64s_remaining(c, b);
 

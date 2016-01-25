@@ -871,7 +871,7 @@ static void journal_entry_open(struct journal *j)
 	 * Btree roots, prio pointers don't get added until right before we do
 	 * the write:
 	 */
-	u64s -= BTREE_ID_NR * (JSET_KEYS_U64s + BKEY_EXTENT_MAX_U64s);
+	u64s -= BTREE_ID_NR * (JSET_KEYS_U64s + BKEY_EXTENT_U64s_MAX);
 	u64s -= JSET_KEYS_U64s + j->nr_prio_buckets;
 	u64s  = max_t(ssize_t, 0L, u64s);
 

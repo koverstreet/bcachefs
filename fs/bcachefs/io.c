@@ -830,7 +830,7 @@ static void __bch_write(struct closure *cl)
 
 		/* for the device pointers and 1 for the chksum */
 		if (bch_keylist_realloc(&op->insert_keys,
-					BKEY_EXTENT_MAX_U64s))
+					BKEY_EXTENT_U64s_MAX))
 			continue_at(cl, bch_write_index, op->c->wq);
 
 		k = op->insert_keys.top;

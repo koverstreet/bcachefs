@@ -1200,7 +1200,7 @@ bool bch_insert_fixup_extent(struct btree_iter *iter, struct btree *b,
 		 * room for three keys.
 		 */
 		needs_split = (bch_btree_keys_u64s_remaining(c, b) <
-			       BKEY_EXTENT_MAX_U64s * 3);
+			       BKEY_EXTENT_U64s_MAX * 3);
 		res_full = journal_res_full(res, &insert->k);
 
 		/*
