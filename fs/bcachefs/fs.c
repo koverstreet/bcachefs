@@ -1752,10 +1752,12 @@ static int bch_bio_add_page(struct bio *bio, struct page *page)
 {
 	sector_t offset = (sector_t) page->index << (PAGE_SHIFT - 9);
 
-	if (!bio->bi_vcnt) {
+	BUG_ON(!bio->bi_max_vecs);
+
+	if (!bio->bi_vcnt)
 		bio->bi_iter.bi_sector = offset;
-	} else if (bio_end_sector(bio) != offset ||
-		   bio->bi_vcnt == bio->bi_max_vecs)
+	else if (bio_end_sector(bio) != offset ||
+		 bio->bi_vcnt == bio->bi_max_vecs)
 		return -1;
 
 	bio->bi_io_vec[bio->bi_vcnt++] = (struct bio_vec) {
@@ -1789,6 +1791,37 @@ static void bch_readpages_end_io(struct bio *bio)
 	bio_put(bio);
 }
 
+static inline struct page *__readpage_next_page(struct address_space *mapping,
+						struct list_head *pages,
+						unsigned *nr_pages)
+{
+	struct page *page;
+	int ret;
+
+	while (*nr_pages) {
+		page = list_entry(pages->prev, struct page, lru);
+		prefetchw(&page->flags);
+		list_del(&page->lru);
+
+		ret = add_to_page_cache_lru(page, mapping, page->index, GFP_NOFS);
+
+		/* if add_to_page_cache_lru() succeeded, page is locked: */
+		put_page(page);
+
+		if (!ret)
+			return page;
+
+		(*nr_pages)--;
+	}
+
+	return NULL;
+}
+
+#define for_each_readpage_page(_mapping, _pages, _nr_pages, _page)	\
+	for (;								\
+	     ((_page) = __readpage_next_page(_mapping, _pages, &(_nr_pages)));\
+	     (_nr_pages)--)
+
 static int bch_readpages(struct file *file, struct address_space *mapping,
 			 struct list_head *pages, unsigned nr_pages)
 {
@@ -1799,31 +1832,21 @@ static int bch_readpages(struct file *file, struct address_space *mapping,
 
 	pr_debug("reading %u pages", nr_pages);
 
-	while (nr_pages) {
-		page = list_entry(pages->prev, struct page, lru);
-		prefetchw(&page->flags);
-		list_del(&page->lru);
-
-		if (!add_to_page_cache_lru(page, mapping,
-					   page->index, GFP_NOFS)) {
+	for_each_readpage_page(mapping, pages, nr_pages, page) {
 again:
-			if (!bio) {
-				bio = bio_alloc(GFP_NOFS,
-						min_t(unsigned, nr_pages,
-						      BIO_MAX_PAGES));
+		if (!bio) {
+			bio = bio_alloc(GFP_NOFS,
+					min_t(unsigned, nr_pages,
+					      BIO_MAX_PAGES));
 
-				bio->bi_end_io = bch_readpages_end_io;
-			}
-
-			if (bch_bio_add_page(bio, page)) {
-				bch_read(c, bio, inode->i_ino);
-				bio = NULL;
-				goto again;
-			}
+			bio->bi_end_io = bch_readpages_end_io;
 		}
 
-		nr_pages--;
-		put_page(page);
+		if (bch_bio_add_page(bio, page)) {
+			bch_read(c, bio, inode->i_ino);
+			bio = NULL;
+			goto again;
+		}
 	}
 
 	if (bio)
