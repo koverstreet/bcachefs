@@ -680,19 +680,19 @@ static void btree_node_flush(struct journal_entry_pin *pin)
 /**
  * bch_btree_insert_and_journal - insert a non-overlapping key into a btree node
  *
- * This is called from bch_insert_fixup_extent().
+ * This is called from bch_insert_fixup_extent() and bch_insert_fixup_key()
  *
  * The insert is journalled.
  */
 void bch_btree_insert_and_journal(struct btree_iter *iter,
-				  struct btree *b,
-				  struct btree_node_iter *node_iter,
 				  struct bkey_i *insert,
 				  struct journal_res *res)
 {
 	struct cache_set *c = iter->c;
+	struct btree *b = iter->nodes[0];
+	struct btree_node_iter *node_iter = &iter->node_iters[0];
 
-	BUG_ON(b->level);
+	EBUG_ON(iter->level || b->level);
 
 	if (!btree_node_dirty(b)) {
 		set_btree_node_dirty(b);
@@ -763,21 +763,24 @@ static bool btree_insert_key(struct btree_iter *iter, struct btree *b,
 						       &done, res);
 		dequeue = true;
 	} else if (!b->keys.ops->is_extents) {
+		BUG_ON(iter->nodes[0] != b ||
+		       &iter->node_iters[0] != node_iter);
 
-		do_insert = bch_insert_fixup_key(iter, b, insert, node_iter,
-						 replace, &done,
-						 res);
+		do_insert = bch_insert_fixup_key(iter, insert, replace,
+						 &done, res);
 		dequeue = true;
 	} else {
+		BUG_ON(iter->nodes[0] != b ||
+		       &iter->node_iters[0] != node_iter);
+
 		bkey_copy(&temp.key, insert);
 		insert = &temp.key;
 
 		if (bkey_cmp(insert->k.p, b->key.k.p) > 0)
 			bch_cut_back(b->key.k.p, &insert->k);
 
-		do_insert = bch_insert_fixup_extent(iter, b, insert,
-						    node_iter, replace, &done,
-						    res, flags);
+		do_insert = bch_insert_fixup_extent(iter, insert, replace,
+						    &done, res, flags);
 		bch_cut_front(done, orig);
 		dequeue = (orig->k.size == 0);
 
