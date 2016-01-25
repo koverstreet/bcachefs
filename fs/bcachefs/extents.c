@@ -108,7 +108,6 @@ struct btree_nr_keys bch_key_sort_fix_overlapping(struct btree_keys *b,
 bool bch_insert_fixup_key(struct btree_iter *iter,
 			  struct bkey_i *insert,
 			  struct bch_replace_info *replace,
-			  struct bpos *done,
 			  struct journal_res *res)
 {
 	struct btree *b = iter->nodes[0];
@@ -943,7 +942,6 @@ static bool bkey_cmpxchg(struct btree_iter *iter,
 			 struct bkey_s_c k,
 			 struct bch_replace_info *replace,
 			 struct bkey_i *new,
-			 struct bpos *done,
 			 bool *inserted,
 			 struct journal_res *res)
 {
@@ -962,9 +960,9 @@ static bool bkey_cmpxchg(struct btree_iter *iter,
 	 * first, check if there was a hole - part of the new key that we
 	 * haven't checked against any existing key
 	 */
-	if (bkey_cmp(bkey_start_pos(k.k), *done) > 0) {
+	if (bkey_cmp(bkey_start_pos(k.k), iter->pos) > 0) {
 		/* insert previous partial match: */
-		if (bkey_cmp(*done, bkey_start_pos(&new->k)) > 0) {
+		if (bkey_cmp(iter->pos, bkey_start_pos(&new->k)) > 0) {
 			replace->successes += 1;
 
 			/*
@@ -973,20 +971,19 @@ static bool bkey_cmpxchg(struct btree_iter *iter,
 			 *         [**|   new      ]
 			 *            ^
 			 *            |
-			 *            +-- done
+			 *            +-- iter->pos
 			 *
 			 * The [**] are already known to match, so insert them.
 			 */
 			bch_btree_insert_and_journal(iter,
-						     bch_key_split(*done, new),
-						     res);
+					bch_key_split(iter->pos, new), res);
 			*inserted = true;
 		}
 
 		bch_cut_subtract_front(iter, bkey_start_pos(k.k),
 				       bkey_i_to_s(new));
-		/* advance @done from the end of prev key to the start of @k */
-		*done = bkey_start_pos(k.k);
+		/* advance @iter->pos from the end of prev key to the start of @k */
+		bch_btree_iter_set_pos(iter, bkey_start_pos(k.k));
 	}
 
 	ret = bkey_cmpxchg_cmp(k, bkey_i_to_s_c(old));
@@ -994,20 +991,19 @@ static bool bkey_cmpxchg(struct btree_iter *iter,
 		/* failed: */
 		replace->failures += 1;
 
-		if (bkey_cmp(*done, bkey_start_pos(&new->k)) > 0) {
+		if (bkey_cmp(iter->pos, bkey_start_pos(&new->k)) > 0) {
 			/*
 			 * [ prev key ]
 			 *             [ k        ]
 			 *    [*******| new              ]
 			 *            ^
 			 *            |
-			 *            +-- done
+			 *            +-- iter->pos
 			 *
 			 * The [**] are already known to match, so insert them.
 			 */
 			bch_btree_insert_and_journal(iter,
-						     bch_key_split(*done, new),
-						     res);
+					bch_key_split(iter->pos, new), res);
 			*inserted = true;
 		}
 
@@ -1019,8 +1015,9 @@ static bool bkey_cmpxchg(struct btree_iter *iter,
 	} else
 		replace->successes += 1;
 
-	/* advance @done past the part of @k overlapping @new */
-	*done = bkey_cmp(k.k->p, new->k.p) < 0 ? k.k->p : new->k.p;
+	/* advance @iter->pos past the part of @k overlapping @new */
+	bch_btree_iter_set_pos(iter, bkey_cmp(k.k->p, new->k.p) < 0
+			       ? k.k->p : new->k.p);
 	return ret;
 }
 
@@ -1085,7 +1082,7 @@ static void handle_existing_key_newer(struct btree_iter *iter,
  *
  * All subsets of @insert that need to be inserted are inserted using
  * bch_btree_insert_and_journal(). If @b or @res fills up, this function
- * returns false, setting @done for the prefix of @insert that actually got
+ * returns false, setting @iter->pos for the prefix of @insert that actually got
  * inserted.
  *
  * BSET INVARIANTS: this function is responsible for maintaining all the
@@ -1116,14 +1113,13 @@ static void handle_existing_key_newer(struct btree_iter *iter,
  * Note that it can return false due to failure or because there is no
  * room for the insertion -- the caller needs to split the btree node.
  *
- * In addition, the end of done indicates how much has been processed.
- * If the end of done is not the same as the end of insert, then
+ * In addition, the end of iter->pos indicates how much has been processed.
+ * If the end of iter->pos is not the same as the end of insert, then
  * key insertion needs to continue/be retried.
  */
 bool bch_insert_fixup_extent(struct btree_iter *iter,
 			     struct bkey_i *insert,
 			     struct bch_replace_info *replace,
-			     struct bpos *done,
 			     struct journal_res *res,
 			     unsigned flags)
 {
@@ -1131,7 +1127,7 @@ bool bch_insert_fixup_extent(struct btree_iter *iter,
 	struct btree *b = iter->nodes[0];
 	struct btree_node_iter *node_iter = &iter->node_iters[0];
 	const struct bkey_format *f = &b->keys.format;
-	struct bpos orig_insert = insert->k.p;
+	struct bpos insert_end = insert->k.p;
 	struct bkey_packed *_k;
 	struct bkey_tup tup;
 	struct bkey_s k;
@@ -1145,15 +1141,12 @@ bool bch_insert_fixup_extent(struct btree_iter *iter,
 	BUG_ON(!insert->k.size);
 
 	/*
-	 * The end of this key is the range processed so far.
-	 *
-	 * At the start, we add bucket sector counts for the entirely of the
-	 * new insert, then we subtract sector counts for existing keys or
-	 * parts of the new key as necessary.
-	 *
-	 * All sector counts up to @done are finalized.
+	 * As we process overlapping extents, we advance @iter->pos both to
+	 * signal to our caller (btree_insert_key()) how much of @insert has
+	 * been inserted, and also to keep @iter->pos consistent with @insert
+	 * and the node iterator that we're advancing:
 	 */
-	*done = bkey_start_pos(&insert->k);
+	BUG_ON(bkey_cmp(iter->pos, bkey_start_pos(&insert->k)));
 
 	/*
 	 * If this is a cmpxchg operation, @insert doesn't necessarily exist in
@@ -1176,7 +1169,7 @@ bool bch_insert_fixup_extent(struct btree_iter *iter,
 			    insert->k.size,
 			    !(flags & BTREE_INSERT_NOFAIL_IF_STALE))) {
 		/* We raced - a dirty pointer was stale */
-		*done = insert->k.p;
+		bch_btree_iter_set_pos(iter, insert->k.p);
 		insert->k.size = 0;
 		if (replace != NULL)
 			replace->failures += 1;
@@ -1192,8 +1185,8 @@ bool bch_insert_fixup_extent(struct btree_iter *iter,
 
 		k = bkey_tup_to_s(&tup);
 		/*
-		 * Before setting @done, we first check if we have space for
-		 * the insert in the btree node and journal reservation.
+		 * First check if we have sufficient space in both the btree
+		 * node and the journal reservation:
 		 *
 		 * Each insert checks for room in the journal entry, but we
 		 * check for room in the btree node up-front. In the worst
@@ -1221,7 +1214,7 @@ bool bch_insert_fixup_extent(struct btree_iter *iter,
 			 * XXX: would be better to explicitly signal that we
 			 * need to split
 			 */
-			bch_cut_subtract_back(iter, *done, bkey_i_to_s(insert));
+			bch_cut_subtract_back(iter, iter->pos, bkey_i_to_s(insert));
 			goto out;
 		}
 
@@ -1233,11 +1226,12 @@ bool bch_insert_fixup_extent(struct btree_iter *iter,
 		 * operations.
 		 */
 		if (!replace)
-			*done = bkey_cmp(k.k->p, insert->k.p) < 0
-				? k.k->p : insert->k.p;
+			bch_btree_iter_set_pos(iter,
+					       bkey_cmp(k.k->p, insert->k.p) < 0
+					       ? k.k->p : insert->k.p);
 		else if (k.k->size &&
-			 !bkey_cmpxchg(iter, k.s_c, replace, insert,
-				       done, &inserted, res))
+			 !bkey_cmpxchg(iter, k.s_c, replace,
+				       insert, &inserted, res))
 			continue;
 
 		if (k.k->size && insert->k.version &&
@@ -1312,18 +1306,19 @@ bool bch_insert_fixup_extent(struct btree_iter *iter,
 	}
 
 	/* Was there a hole? */
-	if (bkey_cmp(*done, insert->k.p) < 0) {
+	if (bkey_cmp(iter->pos, insert->k.p) < 0) {
 		/*
 		 * Holes not allowed for cmpxchg operations, so chop off
-		 * whatever we're not inserting (but done needs to reflect what
-		 * we've processed, i.e. what insert was)
+		 * whatever we're not inserting:
 		 */
 		if (replace != NULL)
-			bch_cut_subtract_back(iter, *done, bkey_i_to_s(insert));
+			bch_cut_subtract_back(iter, iter->pos, bkey_i_to_s(insert));
 
-		*done = orig_insert;
+		/*
+		 * We did get to the end of @insert, so update iter->pos:
+		 */
+		bch_btree_iter_set_pos(iter, insert_end);
 	}
-
 out:
 	if (insert->k.size) {
 		bch_btree_insert_and_journal(iter, insert, res);

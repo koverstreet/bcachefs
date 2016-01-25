@@ -565,18 +565,13 @@ int bch_btree_root_alloc(struct cache_set *c, enum btree_id id,
 static bool bch_insert_fixup_btree_ptr(struct btree_iter *iter,
 				       struct btree *b,
 				       struct bkey_i *insert,
-				       struct btree_node_iter *node_iter,
-				       struct bch_replace_info *replace,
-				       struct bpos *done,
-				       struct journal_res *res)
+				       struct btree_node_iter *node_iter)
 {
 	struct cache_set *c = iter->c;
 	const struct bkey_format *f = &b->keys.format;
 	struct bkey_packed *k;
 	int cmp;
 
-	BUG_ON(res->ref);
-	BUG_ON(replace);
 	EBUG_ON((k = bch_btree_node_iter_prev_all(node_iter, &b->keys)) &&
 		(bkey_deleted(k)
 		 ? bkey_cmp_packed(f, k, &insert->k) > 0
@@ -750,7 +745,6 @@ static bool btree_insert_key(struct btree_iter *iter, struct btree *b,
 	bool dequeue = false;
 	struct bkey_i *insert = bch_keylist_front(insert_keys), *orig = insert;
 	BKEY_PADDED(key) temp;
-	struct bpos done;
 	s64 oldsize = bch_count_data(&b->keys);
 	bool do_insert;
 
@@ -758,16 +752,17 @@ static bool btree_insert_key(struct btree_iter *iter, struct btree *b,
 	bch_btree_node_iter_verify(node_iter, &b->keys);
 
 	if (b->level) {
+		BUG_ON(res->ref);
+		BUG_ON(replace);
+
 		do_insert = bch_insert_fixup_btree_ptr(iter, b, insert,
-						       node_iter, replace,
-						       &done, res);
+						       node_iter);
 		dequeue = true;
 	} else if (!b->keys.ops->is_extents) {
 		BUG_ON(iter->nodes[0] != b ||
 		       &iter->node_iters[0] != node_iter);
 
-		do_insert = bch_insert_fixup_key(iter, insert, replace,
-						 &done, res);
+		do_insert = bch_insert_fixup_key(iter, insert, replace, res);
 		dequeue = true;
 	} else {
 		BUG_ON(iter->nodes[0] != b ||
@@ -780,11 +775,9 @@ static bool btree_insert_key(struct btree_iter *iter, struct btree *b,
 			bch_cut_back(b->key.k.p, &insert->k);
 
 		do_insert = bch_insert_fixup_extent(iter, insert, replace,
-						    &done, res, flags);
-		bch_cut_front(done, orig);
-		dequeue = (orig->k.size == 0);
-
-		bch_btree_iter_set_pos(iter, done);
+						    res, flags);
+		bch_cut_front(iter->pos, orig);
+		dequeue = orig->k.size == 0;
 	}
 
 	if (dequeue)
