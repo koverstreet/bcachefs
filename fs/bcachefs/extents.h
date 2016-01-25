@@ -14,7 +14,7 @@ struct btree_nr_keys bch_extent_sort_fix_overlapping(struct btree_keys *,
 						     struct bset *,
 						     struct btree_node_iter *);
 
-bool bch_insert_fixup_key(struct btree_iter *, struct bkey_i *,
+void bch_insert_fixup_key(struct btree_iter *, struct bkey_i *,
 			  struct bch_replace_info *, struct journal_res *);
 
 extern const struct bkey_ops bch_bkey_btree_ops;
@@ -45,7 +45,7 @@ bch_extent_pick_ptr(struct cache_set *c, struct bkey_s_c k,
 	bch_extent_pick_ptr_avoiding(c, k, NULL, ret);
 }
 
-bool bch_insert_fixup_extent(struct btree_iter *, struct bkey_i *,
+void bch_insert_fixup_extent(struct btree_iter *, struct bkey_i *,
 			     struct bch_replace_info *,
 			     struct journal_res *, unsigned);
 

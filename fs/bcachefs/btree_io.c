@@ -130,7 +130,15 @@ sort:
 	return true;
 }
 
-/* Returns true if we sorted (i.e. invalidated iterators */
+/*
+ * @bch_btree_init_next - initialize a new (unwritten) bset that can then be
+ * inserted into
+ *
+ * Safe to call if there already is an unwritten bset - will only add a new bset
+ * if @b doesn't already have one.
+ *
+ * Returns true if we sorted (i.e. invalidated iterators
+ */
 void bch_btree_init_next(struct cache_set *c, struct btree *b,
 			 struct btree_iter *iter)
 {

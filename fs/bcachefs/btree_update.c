@@ -735,18 +735,16 @@ void bch_btree_insert_and_journal(struct btree_iter *iter,
  * Returns true if an insert was actually done and @b was modified - false on a
  * failed replace operation
  */
-static bool btree_insert_key(struct btree_iter *iter, struct btree *b,
+static void btree_insert_key(struct btree_iter *iter, struct btree *b,
 			     struct btree_node_iter *node_iter,
 			     struct keylist *insert_keys,
 			     struct bch_replace_info *replace,
 			     struct journal_res *res,
 			     unsigned flags)
 {
-	bool dequeue = false;
 	struct bkey_i *insert = bch_keylist_front(insert_keys), *orig = insert;
 	BKEY_PADDED(key) temp;
 	s64 oldsize = bch_count_data(&b->keys);
-	bool do_insert;
 
 	BUG_ON(bkey_deleted(&insert->k) && bkey_val_u64s(&insert->k));
 	bch_btree_node_iter_verify(node_iter, &b->keys);
@@ -755,15 +753,14 @@ static bool btree_insert_key(struct btree_iter *iter, struct btree *b,
 		BUG_ON(res->ref);
 		BUG_ON(replace);
 
-		do_insert = bch_insert_fixup_btree_ptr(iter, b, insert,
-						       node_iter);
-		dequeue = true;
+		bch_insert_fixup_btree_ptr(iter, b, insert, node_iter);
+		bch_keylist_dequeue(insert_keys);
 	} else if (!b->keys.ops->is_extents) {
 		BUG_ON(iter->nodes[0] != b ||
 		       &iter->node_iters[0] != node_iter);
 
-		do_insert = bch_insert_fixup_key(iter, insert, replace, res);
-		dequeue = true;
+		bch_insert_fixup_key(iter, insert, replace, res);
+		bch_keylist_dequeue(insert_keys);
 	} else {
 		BUG_ON(iter->nodes[0] != b ||
 		       &iter->node_iters[0] != node_iter);
@@ -774,20 +771,16 @@ static bool btree_insert_key(struct btree_iter *iter, struct btree *b,
 		if (bkey_cmp(insert->k.p, b->key.k.p) > 0)
 			bch_cut_back(b->key.k.p, &insert->k);
 
-		do_insert = bch_insert_fixup_extent(iter, insert, replace,
-						    res, flags);
-		bch_cut_front(iter->pos, orig);
-		dequeue = orig->k.size == 0;
-	}
+		bch_insert_fixup_extent(iter, insert, replace, res, flags);
 
-	if (dequeue)
-		bch_keylist_dequeue(insert_keys);
+		bch_cut_front(iter->pos, orig);
+		if (orig->k.size == 0)
+			bch_keylist_dequeue(insert_keys);
+	}
 
 	bch_count_data_verify(&b->keys, oldsize);
 
-	trace_bcache_btree_insert_key(b, insert, replace != NULL, do_insert);
-
-	return do_insert;
+	trace_bcache_btree_insert_key(b, insert, replace != NULL);
 }
 
 enum btree_insert_status {
@@ -1150,7 +1143,7 @@ bch_btree_insert_keys_leaf(struct btree *b,
 			   u64 *journal_seq,
 			   unsigned flags)
 {
-	bool done = false, inserted = false, need_split = false;
+	bool done = false, need_split = false;
 	struct journal_res res = { 0, 0 };
 	struct bkey_i *k = bch_keylist_front(insert_keys);
 
@@ -1202,11 +1195,8 @@ bch_btree_insert_keys_leaf(struct btree *b,
 			if (journal_res_full(&res, &k->k))
 				break;
 
-			if (btree_insert_key(iter, b,
-					     &iter->node_iters[b->level],
-					     insert_keys, replace,
-					     &res, flags))
-				inserted = true;
+			btree_insert_key(iter, b, &iter->node_iters[b->level],
+					 insert_keys, replace, &res, flags);
 		}
 
 		btree_node_unlock_write(b, iter);
@@ -1216,8 +1206,7 @@ bch_btree_insert_keys_leaf(struct btree *b,
 					    journal_seq);
 	}
 
-	if (inserted)
-		bch_btree_node_write_lazy(b, iter);
+	bch_btree_node_write_lazy(b, iter);
 
 	return need_split ? BTREE_INSERT_NEED_SPLIT : BTREE_INSERT_OK;
 }
@@ -1789,10 +1778,10 @@ retry:
 	}
 
 	for (i = m; i < m + nr; i++)
-		BUG_ON(!btree_insert_key(i->iter, i->iter->nodes[0],
-					 &i->iter->node_iters[0],
-					 &keylist_single(i->k), NULL,
-					 &res, flags));
+		btree_insert_key(i->iter, i->iter->nodes[0],
+				 &i->iter->node_iters[0],
+				 &keylist_single(i->k), NULL,
+				 &res, flags);
 
 	do {
 		multi_unlock_write(m, --i);
