@@ -330,15 +330,16 @@ struct bch_extent_crc32 {
 				uncompressed_size:8,
 				csum_type:4,
 				compression_type:4;
+	__u32			csum;
 #elif defined (__BIG_ENDIAN_BITFIELD)
-	__u32			csum_type:4,
-				compression_type:4,
+	__u32			csum;
+	__u32			compression_type:4,
+				csum_type:4,
 				uncompressed_size:8,
 				compressed_size:8,
 				offset:7,
 				type:1;
 #endif
-	__u32			csum;
 } __attribute__((packed)) __attribute__((aligned(8)));
 
 #define CRC32_EXTENT_SIZE_MAX	(1U << 7)
@@ -346,17 +347,17 @@ struct bch_extent_crc32 {
 struct bch_extent_crc64 {
 #if defined(__LITTLE_ENDIAN_BITFIELD)
 	__u64			type:3,
+				offset:17,
 				compressed_size:18,
 				uncompressed_size:18,
-				offset:17,
 				csum_type:4,
 				compression_type:4;
 #elif defined (__BIG_ENDIAN_BITFIELD)
-	__u64			csum_type:4,
-				compression_type:4,
-				offset:17,
+	__u64			compression_type:4,
+				csum_type:4,
 				uncompressed_size:18,
 				compressed_size:18,
+				offset:17,
 				type:3;
 #endif
 	__u64			csum;
@@ -386,7 +387,14 @@ struct bch_extent_ptr {
 } __attribute__((packed)) __attribute__((aligned(8)));
 
 union bch_extent_entry {
-	__u8				type;
+#if defined(__LITTLE_ENDIAN__) ||  BITS_PER_LONG == 64
+	unsigned long			type;
+#elif BITS_PER_LONG == 32
+	struct {
+		unsigned long		pad;
+		unsigned long		type;
+	};
+#endif
 	struct bch_extent_crc32		crc32;
 	struct bch_extent_crc64		crc64;
 	struct bch_extent_ptr		ptr;
