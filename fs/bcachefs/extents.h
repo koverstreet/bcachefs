@@ -307,7 +307,7 @@ static inline bool bch_extent_ptr_is_dirty(const struct cache_set *c,
 	extent_for_each_ptr_from(e, i, ptr)
 		seen++;
 
-	return seen <= CACHE_SET_DATA_REPLICAS_WANT(&c->sb);
+	return seen <= c->opts.data_replicas;
 }
 
 static inline struct bch_extent_crc64 crc_to_64(const union bch_extent_crc *crc)

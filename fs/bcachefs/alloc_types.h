@@ -60,7 +60,7 @@ struct open_bucket {
 	atomic_t		pin;
 	unsigned		sectors_free;
 	unsigned		nr_ptrs;
-	struct bch_extent_ptr	ptrs[BKEY_EXTENT_PTRS_MAX];
+	struct bch_extent_ptr	ptrs[BCH_REPLICAS_MAX];
 };
 
 struct write_point {

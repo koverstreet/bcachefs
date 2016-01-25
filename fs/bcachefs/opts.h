@@ -1,6 +1,8 @@
 #ifndef _BCACHE_OPTS_H
 #define _BCACHE_OPTS_H
 
+#include <linux/bug.h>
+#include <linux/log2.h>
 #include <linux/string.h>
 #include "bcachefs_format.h"
 
@@ -17,6 +19,7 @@
  */
 
 extern const char * const bch_bool_opt[];
+extern const char * const bch_uint_opt[];
 extern const char * const bch_error_actions[];
 extern const char * const bch_csum_types[];
 extern const char * const bch_compression_types[];
@@ -24,62 +27,27 @@ extern const char * const bch_compression_types[];
 /* dummy option, for options that aren't stored in the superblock */
 BITMASK(NO_SB_OPT,		struct cache_sb, flags, 0, 0);
 
-/**
- * CACHE_SET_OPT(name, nr_bits, choices, sb_option, sysfs_writeable)
- *
- * @name - name of mount option, sysfs attribute, and struct cache_set_opts
- *	member
- *
- * @nr_bits - number of bits for cache_set_opts field, remember it's stored as a
- *	signed integer
- *
- * @choices - array of strings that the user can select from - option is by
- *	array index
- *
- *	Booleans are special cased; if @choices is bch_bool_opt the mount
- *	options name and noname will work as expected.
- *
- * @sb_option - name of corresponding superblock option
- *
- * @sysfs_writeable - if true, option will be modifiable at runtime via sysfs
- */
-
 #define CACHE_SET_VISIBLE_OPTS()				\
-	CACHE_SET_OPT(errors, 3,				\
-		      bch_error_actions,			\
-		      CACHE_ERROR_ACTION,			\
-		      true)					\
-	CACHE_SET_OPT(metadata_checksum, 4,			\
-		      bch_csum_types,				\
-		      CACHE_META_PREFERRED_CSUM_TYPE,		\
-		      true)					\
-	CACHE_SET_OPT(data_checksum, 4,				\
-		      bch_csum_types,				\
-		      CACHE_DATA_PREFERRED_CSUM_TYPE,		\
-		      true)					\
-	CACHE_SET_OPT(compression, 4,				\
-		      bch_compression_types,			\
-		      CACHE_COMPRESSION_TYPE,			\
-		      true)					\
-	CACHE_SET_OPT(verbose_recovery, 2,			\
-		      bch_bool_opt,				\
+	CACHE_SET_OPT(verbose_recovery,				\
+		      bch_bool_opt, 2,				\
 		      NO_SB_OPT, false)				\
-	CACHE_SET_OPT(posix_acl, 2,				\
-		      bch_bool_opt,				\
+	CACHE_SET_OPT(posix_acl,				\
+		      bch_bool_opt, 2,				\
 		      NO_SB_OPT, false)				\
-	CACHE_SET_OPT(journal_flush_disabled, 2,		\
-		      bch_bool_opt,				\
-		      NO_SB_OPT, true)
+	CACHE_SET_OPT(journal_flush_disabled,			\
+		      bch_bool_opt, 2,				\
+		      NO_SB_OPT, true)				\
+	CACHE_SET_SB_OPTS()
 
 #define CACHE_SET_OPTS()					\
-	CACHE_SET_OPT(read_only, 2,				\
-		      bch_bool_opt,				\
+	CACHE_SET_OPT(read_only,				\
+		      bch_bool_opt, 2,				\
 		      NO_SB_OPT, 0)				\
 	CACHE_SET_VISIBLE_OPTS()
 
 struct cache_set_opts {
-#define CACHE_SET_OPT(_name, _bits, _options, _sb_opt, _perm)	\
-	int _name:_bits;
+#define CACHE_SET_OPT(_name, _opts, _nr_opts, _sb_opt, _perm)	\
+	s8 _name;
 
 	CACHE_SET_OPTS()
 #undef CACHE_SET_OPT
@@ -100,7 +68,7 @@ static inline struct cache_set_opts cache_set_opts_empty(void)
 static inline struct cache_set_opts cache_superblock_opts(struct cache_sb *sb)
 {
 	return (struct cache_set_opts) {
-#define CACHE_SET_OPT(_name, _bits, _options, _sb_opt, _perm)	\
+#define CACHE_SET_OPT(_name, _options, _nr_opts, _sb_opt, _perm)\
 		._name = _sb_opt##_BITS ? _sb_opt(sb) : 0,
 
 	CACHE_SET_OPTS()
@@ -111,7 +79,8 @@ static inline struct cache_set_opts cache_superblock_opts(struct cache_sb *sb)
 static inline void cache_set_opts_apply(struct cache_set_opts *dst,
 					struct cache_set_opts src)
 {
-#define CACHE_SET_OPT(_name, _bits, _options, _sb_opt, _perm)	\
+#define CACHE_SET_OPT(_name, _options, _nr_opts, _sb_opt, _perm)\
+	BUILD_BUG_ON(_nr_opts > S8_MAX);			\
 	if (src._name >= 0)					\
 		dst->_name = src._name;
 

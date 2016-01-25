@@ -155,9 +155,7 @@ rw_attribute(foreground_target_percent);
 rw_attribute(sector_reserve_percent);
 
 rw_attribute(size);
-rw_attribute(meta_replicas_want);
 read_attribute(meta_replicas_have);
-rw_attribute(data_replicas_want);
 read_attribute(data_replicas_have);
 read_attribute(tier);
 
@@ -167,7 +165,7 @@ read_attribute(tier);
 	BCH_DEBUG_PARAMS()
 #undef BCH_DEBUG_PARAM
 
-#define CACHE_SET_OPT(_name, _bits, _options, _sb_opt, _writeable)	\
+#define CACHE_SET_OPT(_name, _options, _nr_opts, _sb_opt, _writeable)	\
 	static struct attribute sysfs_opt_##_name = {			\
 		.name = #_name,						\
 		.mode = S_IRUGO|(_writeable ? S_IWUSR : 0)		\
@@ -705,12 +703,8 @@ SHOW(bch_cache_set)
 
 	sysfs_print(btree_flush_delay,		c->btree_flush_delay);
 
-	sysfs_printf(meta_replicas_want, "%llu",
-		     CACHE_SET_META_REPLICAS_WANT(&c->sb));
 	sysfs_printf(meta_replicas_have, "%llu",
 		     CACHE_SET_META_REPLICAS_HAVE(&c->sb));
-	sysfs_printf(data_replicas_want, "%llu",
-		     CACHE_SET_DATA_REPLICAS_WANT(&c->sb));
 	sysfs_printf(data_replicas_have, "%llu",
 		     CACHE_SET_DATA_REPLICAS_HAVE(&c->sb));
 
@@ -806,26 +800,6 @@ STORE(__bch_cache_set)
 	}
 
 	sysfs_pd_controller_store(foreground_write, &c->foreground_write_pd);
-
-	if (attr == &sysfs_meta_replicas_want) {
-		unsigned v = strtoul_restrict_or_return(buf, 1,
-						BKEY_EXTENT_PTRS_MAX - 1);
-
-		if (v != CACHE_SET_META_REPLICAS_WANT(&c->sb)) {
-			SET_CACHE_SET_META_REPLICAS_WANT(&c->sb, v);
-			bcache_write_super(c);
-		}
-	}
-
-	if (attr == &sysfs_data_replicas_want) {
-		unsigned v = strtoul_restrict_or_return(buf, 1,
-						BKEY_EXTENT_PTRS_MAX - 1);
-
-		if (v != CACHE_SET_DATA_REPLICAS_WANT(&c->sb)) {
-			SET_CACHE_SET_DATA_REPLICAS_WANT(&c->sb, v);
-			bcache_write_super(c);
-		}
-	}
 
 	sysfs_strtoul(btree_flush_delay, c->btree_flush_delay);
 
@@ -925,9 +899,7 @@ static struct attribute *bch_cache_set_files[] = {
 	&sysfs_congested_write_threshold_us,
 	&sysfs_clear_stats,
 
-	&sysfs_meta_replicas_want,
 	&sysfs_meta_replicas_have,
-	&sysfs_data_replicas_want,
 	&sysfs_data_replicas_have,
 
 	&sysfs_btree_flush_delay,
@@ -996,7 +968,7 @@ SHOW(bch_cache_set_opts_dir)
 {
 	struct cache_set *c = container_of(kobj, struct cache_set, opts_dir);
 
-#define CACHE_SET_OPT(_name, _bits, _options, _sb_opt, _perm)		\
+#define CACHE_SET_OPT(_name, _options, _nr_opts, _sb_opt, _perm)	\
 	if (attr == &sysfs_opt_##_name)					\
 		return _options == bch_bool_opt				\
 			? snprintf(buf, PAGE_SIZE, "%i\n", c->opts._name)\
@@ -1013,7 +985,7 @@ STORE(bch_cache_set_opts_dir)
 {
 	struct cache_set *c = container_of(kobj, struct cache_set, opts_dir);
 
-#define CACHE_SET_OPT(_name, _bits, _options, _sb_opt, _perm)		\
+#define CACHE_SET_OPT(_name, _options, _nr_opts, _sb_opt, _perm)	\
 	if (attr == &sysfs_opt_##_name) {				\
 		ssize_t v = bch_read_string_list(buf, _options);	\
 									\
@@ -1041,7 +1013,7 @@ static void bch_cache_set_opts_dir_release(struct kobject *k)
 }
 
 static struct attribute *bch_cache_set_opts_dir_files[] = {
-#define CACHE_SET_OPT(_name, _bits, _options, _sb_opt, _perm)		\
+#define CACHE_SET_OPT(_name, _options, _nr_opts, _sb_opt, _perm)	\
 	&sysfs_opt_##_name,
 
 	CACHE_SET_VISIBLE_OPTS()

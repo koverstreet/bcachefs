@@ -41,7 +41,7 @@ static bool tiering_pred(struct scan_keylist *kl, struct bkey_s_c k)
 				replicas++;
 		cache_member_info_put();
 
-		return replicas < CACHE_SET_DATA_REPLICAS_WANT(&c->sb);
+		return replicas < c->opts.data_replicas;
 	}
 
 	return false;

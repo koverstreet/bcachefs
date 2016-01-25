@@ -1386,7 +1386,7 @@ static void bch_extent_debugcheck_extent(struct cache_set *c, struct btree *b,
 	char buf[160];
 	bool bad;
 	unsigned ptrs_per_tier[CACHE_TIERS];
-	unsigned i, tier, replicas = 0;
+	unsigned tier, replicas = 0;
 
 	/*
 	 * XXX: we should be doing most/all of these checks at startup time,
@@ -1467,6 +1467,15 @@ static void bch_extent_debugcheck_extent(struct cache_set *c, struct btree *b,
 	}
 	cache_member_info_put();
 
+	if (replicas > BCH_REPLICAS_MAX) {
+		bch_bkey_val_to_text(c, btree_node_type(b), buf,
+				     sizeof(buf), e.s_c);
+		cache_set_bug(c,
+			"extent key bad (too many replicas: %u): %s",
+			replicas, buf);
+		return;
+	}
+
 	if (!bkey_extent_is_cached(e.k) &&
 	    replicas < CACHE_SET_DATA_REPLICAS_HAVE(&c->sb)) {
 		bch_bkey_val_to_text(c, btree_node_type(b), buf,
@@ -1476,19 +1485,6 @@ static void bch_extent_debugcheck_extent(struct cache_set *c, struct btree *b,
 			replicas, CACHE_SET_DATA_REPLICAS_HAVE(&c->sb), buf);
 		return;
 	}
-
-	/*
-	 * XXX: _why_ was this added?
-	 */
-	for (i = 0; i < CACHE_TIERS; i++)
-		if (ptrs_per_tier[i] > CACHE_SET_DATA_REPLICAS_WANT(&c->sb)) {
-			bch_bkey_val_to_text(c, btree_node_type(b), buf,
-					     sizeof(buf), e.s_c);
-			cache_set_bug(c,
-				      "extent key bad (too many tier %u replicas): %s",
-				      i, buf);
-			break;
-		}
 
 	return;
 

@@ -999,7 +999,7 @@ static enum bucket_alloc_ret __bch_bucket_alloc_set(struct cache_set *c,
 	long caches_used[BITS_TO_LONGS(MAX_CACHES_PER_SET)];
 	enum bucket_alloc_ret ret;
 
-	BUG_ON(nr_replicas <= 0 || nr_replicas > BKEY_EXTENT_PTRS_MAX);
+	BUG_ON(nr_replicas <= 0 || nr_replicas > BCH_REPLICAS_MAX);
 
 	if (!devs->nr_devices)
 		return CACHE_SET_FULL;
@@ -1198,8 +1198,8 @@ static struct open_bucket *bch_open_bucket_alloc(struct cache_set *c,
 		: BTREE_NODE_RESERVE;
 	unsigned nr_replicas = wp->nr_replicas ?:
 		allocation_is_metadata(wp->reserve)
-		? CACHE_SET_META_REPLICAS_WANT(&c->sb)
-		: CACHE_SET_DATA_REPLICAS_WANT(&c->sb);
+		? c->opts.metadata_replicas
+		: c->opts.data_replicas;
 
 	BUG_ON(!wp->group);
 	BUG_ON(!wp->reserve);

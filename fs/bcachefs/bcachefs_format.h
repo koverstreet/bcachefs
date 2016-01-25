@@ -659,9 +659,12 @@ BITMASK(CACHE_ERROR_ACTION,		struct cache_sb, flags, 1, 4);
 #define BCH_ON_ERROR_CONTINUE		0U
 #define BCH_ON_ERROR_RO			1U
 #define BCH_ON_ERROR_PANIC		2U
+#define BCH_NR_ERROR_ACTIONS		3U
 
 BITMASK(CACHE_SET_META_REPLICAS_WANT,	struct cache_sb, flags, 4, 8);
 BITMASK(CACHE_SET_DATA_REPLICAS_WANT,	struct cache_sb, flags, 8, 12);
+
+#define BCH_REPLICAS_MAX		4U
 
 BITMASK(CACHE_SB_CSUM_TYPE,		struct cache_sb, flags, 12, 16);
 
@@ -693,6 +696,61 @@ enum {
 	BCH_COMPRESSION_GZIP		= 2,
 	BCH_COMPRESSION_XZ		= 3,
 };
+
+#define BCH_COMPRESSION_NR		4U
+
+/* options: */
+
+/**
+ * CACHE_SET_OPT(name, nr_bits, choices, sb_option, sysfs_writeable)
+ *
+ * @name - name of mount option, sysfs attribute, and struct cache_set_opts
+ *	member
+ *
+ * @choices - array of strings that the user can select from - option is by
+ *	array index
+ *
+ *	Booleans are special cased; if @choices is bch_bool_opt the mount
+ *	options name and noname will work as expected.
+ *
+ * @nr_opts - i.e. 2 for booleans
+ *
+ * @sb_option - name of corresponding superblock option
+ *
+ * @sysfs_writeable - if true, option will be modifiable at runtime via sysfs
+ */
+
+#define CACHE_SET_SB_OPTS()					\
+	CACHE_SET_OPT(errors,					\
+		      bch_error_actions,			\
+		      BCH_NR_ERROR_ACTIONS,			\
+		      CACHE_ERROR_ACTION,			\
+		      true)					\
+	CACHE_SET_OPT(metadata_replicas,			\
+		      bch_uint_opt,				\
+		      BCH_REPLICAS_MAX,				\
+		      CACHE_SET_META_REPLICAS_WANT,		\
+		      false)					\
+	CACHE_SET_OPT(data_replicas,				\
+		      bch_uint_opt,				\
+		      BCH_REPLICAS_MAX,				\
+		      CACHE_SET_DATA_REPLICAS_WANT,		\
+		      false)					\
+	CACHE_SET_OPT(metadata_checksum,			\
+		      bch_csum_types,				\
+		      BCH_CSUM_NR,				\
+		      CACHE_META_PREFERRED_CSUM_TYPE,		\
+		      true)					\
+	CACHE_SET_OPT(data_checksum,				\
+		      bch_csum_types,				\
+		      BCH_CSUM_NR,				\
+		      CACHE_DATA_PREFERRED_CSUM_TYPE,		\
+		      true)					\
+	CACHE_SET_OPT(compression,				\
+		      bch_compression_types,			\
+		      BCH_COMPRESSION_NR,			\
+		      CACHE_COMPRESSION_TYPE,			\
+		      true)
 
 /* backing device specific stuff: */
 

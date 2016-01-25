@@ -268,7 +268,7 @@ const char *validate_super(struct bcache_superblock *disk_sb,
 			return "Bad cache device number in set";
 
 		if (!CACHE_SET_META_REPLICAS_WANT(sb) ||
-		    CACHE_SET_META_REPLICAS_WANT(sb) >= BKEY_EXTENT_PTRS_MAX)
+		    CACHE_SET_META_REPLICAS_WANT(sb) >= BCH_REPLICAS_MAX)
 			return "Invalid number of metadata replicas";
 
 		if (!CACHE_SET_META_REPLICAS_HAVE(sb) ||
@@ -277,7 +277,7 @@ const char *validate_super(struct bcache_superblock *disk_sb,
 			return "Invalid number of metadata replicas";
 
 		if (!CACHE_SET_DATA_REPLICAS_WANT(sb) ||
-		    CACHE_SET_DATA_REPLICAS_WANT(sb) >= BKEY_EXTENT_PTRS_MAX)
+		    CACHE_SET_DATA_REPLICAS_WANT(sb) >= BCH_REPLICAS_MAX)
 			return "Invalid number of data replicas";
 
 		if (!CACHE_SET_DATA_REPLICAS_HAVE(sb) ||

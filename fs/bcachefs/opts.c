@@ -10,6 +10,10 @@ const char * const bch_bool_opt[] = {
 	NULL
 };
 
+const char * const bch_uint_opt[] = {
+	NULL
+};
+
 const char * const bch_error_actions[] = {
 	"continue",
 	"remount-ro",
@@ -45,6 +49,7 @@ enum bch_opts {
 struct bch_option {
 	const char		*name;
 	const char * const	*opts;
+	unsigned long		max;
 };
 
 struct bch_opt_result {
@@ -61,6 +66,23 @@ static int parse_bool_opt(const struct bch_option *opt, const char *s)
 		return false;
 
 	return -1;
+}
+
+static int parse_uint_opt(const struct bch_option *opt, const char *s)
+{
+	unsigned long v;
+
+	if (strncmp(opt->name, s, strlen(opt->name)))
+		return -1;
+
+	s += strlen(opt->name);
+
+	if (*s != '=')
+		return -1;
+
+	s++;
+
+	return kstrtoul(s, 10, &v) ?: v < opt->max ? v : -ERANGE;
 }
 
 static int parse_string_opt(const struct bch_option *opt, const char *s)
@@ -81,9 +103,12 @@ static int parse_string_opt(const struct bch_option *opt, const char *s)
 static struct bch_opt_result parse_one_opt(const char *opt)
 {
 	static const struct bch_option opt_table[] = {
-#define CACHE_SET_OPT(_name, _bits, _options, _sb_opt, _perm)	\
-		[Opt_##_name] = { .name = #_name, .opts = _options },
-
+#define CACHE_SET_OPT(_name, _options, _nr_opts, _sb_opt, _perm)	\
+		[Opt_##_name] = {					\
+			.name = #_name,					\
+			.opts = _options,				\
+			.max = _nr_opts,				\
+		},
 		CACHE_SET_VISIBLE_OPTS()
 #undef CACHE_SET_OPT
 	}, *i;
@@ -91,8 +116,8 @@ static struct bch_opt_result parse_one_opt(const char *opt)
 	for (i = opt_table;
 	     i < opt_table + ARRAY_SIZE(opt_table);
 	     i++) {
-		int res = i->opts == bch_bool_opt
-			? parse_bool_opt(i, opt)
+		int res = i->opts == bch_bool_opt ? parse_bool_opt(i, opt)
+			: i->opts == bch_uint_opt ? parse_uint_opt(i, opt)
 			: parse_string_opt(i, opt);
 
 		if (res >= 0)
@@ -119,7 +144,7 @@ int bch_parse_options(struct cache_set_opts *opts, int flags, char *options)
 		struct bch_opt_result res = parse_one_opt(p);
 
 		switch (res.opt) {
-#define CACHE_SET_OPT(_name, _bits, _options, _sb_opt, _perm)	\
+#define CACHE_SET_OPT(_name, _options, _nr_opts, _sb_opt, _perm)\
 		case Opt_##_name:				\
 			opts->_name = res.val;			\
 			break;

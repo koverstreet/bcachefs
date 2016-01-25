@@ -354,20 +354,18 @@ static inline void btree_keys_account_key(struct btree_nr_keys *n,
 	((sizeof(struct bch_extent_crc64) +			\
 	  sizeof(struct bch_extent_ptr)) / sizeof(u64))
 
-#define BKEY_EXTENT_PTRS_MAX	        4
-
 #if 0
 #define BKEY_EXTENT_VAL_U64s_MAX				\
 	((sizeof(struct bch_extent_crc64) +
-	  sizeof(struct bch_extent_ptr)) * BKEY_EXTENT_PTRS_MAX)
+	  sizeof(struct bch_extent_ptr)) * BCH_REPLICAS_MAX)
 #else
 #define BKEY_EXTENT_VAL_U64s_MAX	8
 #endif
 
 #define BKEY_EXTENT_MAX_U64s	(BKEY_U64s + BKEY_EXTENT_VAL_U64s_MAX)
 
-#define BKEY_BTREE_PTR_VAL_U64s_MAX	BKEY_EXTENT_PTRS_MAX
-#define BKEY_BTREE_PTR_U64s_MAX		(BKEY_U64s + BKEY_EXTENT_PTRS_MAX)
+#define BKEY_BTREE_PTR_VAL_U64s_MAX	BCH_REPLICAS_MAX
+#define BKEY_BTREE_PTR_U64s_MAX		(BKEY_U64s + BCH_REPLICAS_MAX)
 
 #define BKEY_PADDED(key)	__BKEY_PADDED(key, BKEY_EXTENT_VAL_U64s_MAX)
 
