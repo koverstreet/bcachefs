@@ -435,7 +435,7 @@ static void bch_write_index(struct closure *cl)
 	int ret;
 
 	ret = bch_btree_insert(op->c, BTREE_ID_EXTENTS, &op->insert_keys,
-			       op->replace ? &op->replace_info : NULL,
+			       op->replace ? &op->replace_info.hook : NULL,
 			       op_journal_seq(op), BTREE_INSERT_NOFAIL);
 
 	op->written += sectors_start - keylist_sectors(&op->insert_keys);
@@ -1088,6 +1088,7 @@ void bch_write_op_init(struct bch_write_op *op, struct cache_set *c,
 		op->replace = true;
 		/* The caller can overwrite any replace_info fields */
 		memset(&op->replace_info, 0, sizeof(op->replace_info));
+		op->replace_info.hook.fn = bch_extent_cmpxchg;
 		bkey_reassemble(&op->replace_info.key, replace_key);
 	}
 }

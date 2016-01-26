@@ -1,6 +1,7 @@
 #ifndef _BCACHE_IO_TYPES_H
 #define _BCACHE_IO_TYPES_H
 
+#include "btree_types.h"
 #include "keylist_types.h"
 
 #include <linux/llist.h>
@@ -59,8 +60,11 @@ struct bch_write_bio {
 };
 
 struct bch_replace_info {
-	unsigned successes;	/* How many insertions succeeded */
-	unsigned failures;	/* How many insertions failed */
+	struct btree_insert_hook	hook;
+	/* How many insertions succeeded */
+	unsigned			successes;
+	/* How many insertions failed */
+	unsigned			failures;
 	BKEY_PADDED(key);
 };
 

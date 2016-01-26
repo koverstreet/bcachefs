@@ -738,7 +738,7 @@ void bch_btree_insert_and_journal(struct btree_iter *iter,
 static void btree_insert_key(struct btree_iter *iter, struct btree *b,
 			     struct btree_node_iter *node_iter,
 			     struct keylist *insert_keys,
-			     struct bch_replace_info *replace,
+			     struct btree_insert_hook *hook,
 			     struct journal_res *res,
 			     unsigned flags)
 {
@@ -751,7 +751,6 @@ static void btree_insert_key(struct btree_iter *iter, struct btree *b,
 
 	if (b->level) {
 		BUG_ON(res->ref);
-		BUG_ON(replace);
 
 		bch_insert_fixup_btree_ptr(iter, b, insert, node_iter);
 		bch_keylist_dequeue(insert_keys);
@@ -759,7 +758,7 @@ static void btree_insert_key(struct btree_iter *iter, struct btree *b,
 		BUG_ON(iter->nodes[0] != b ||
 		       &iter->node_iters[0] != node_iter);
 
-		bch_insert_fixup_key(iter, insert, replace, res);
+		bch_insert_fixup_key(iter, insert, hook, res);
 		bch_keylist_dequeue(insert_keys);
 	} else {
 		BUG_ON(iter->nodes[0] != b ||
@@ -771,7 +770,7 @@ static void btree_insert_key(struct btree_iter *iter, struct btree *b,
 		if (bkey_cmp(insert->k.p, b->key.k.p) > 0)
 			bch_cut_back(b->key.k.p, &insert->k);
 
-		bch_insert_fixup_extent(iter, insert, replace, res, flags);
+		bch_insert_fixup_extent(iter, insert, hook, res, flags);
 
 		bch_cut_front(iter->pos, orig);
 		if (orig->k.size == 0)
@@ -780,7 +779,7 @@ static void btree_insert_key(struct btree_iter *iter, struct btree *b,
 
 	bch_count_data_verify(&b->keys, oldsize);
 
-	trace_bcache_btree_insert_key(b, insert, replace != NULL);
+	trace_bcache_btree_insert_key(b, insert);
 }
 
 enum btree_insert_status {
@@ -1139,7 +1138,7 @@ static enum btree_insert_status
 bch_btree_insert_keys_leaf(struct btree *b,
 			   struct btree_iter *iter,
 			   struct keylist *insert_keys,
-			   struct bch_replace_info *replace,
+			   struct btree_insert_hook *hook,
 			   u64 *journal_seq,
 			   unsigned flags)
 {
@@ -1196,7 +1195,7 @@ bch_btree_insert_keys_leaf(struct btree *b,
 				break;
 
 			btree_insert_key(iter, b, &iter->node_iters[b->level],
-					 insert_keys, replace, &res, flags);
+					 insert_keys, hook, &res, flags);
 		}
 
 		btree_node_unlock_write(b, iter);
@@ -1524,7 +1523,7 @@ err:
  *
  * @iter:		btree iterator
  * @insert_keys:	list of keys to insert
- * @replace:		old key for compare exchange (+ stats)
+ * @hook:		insert callback
  * @persistent:		if not null, @persistent will wait on journal write
  * @flags:		BTREE_INSERT_NOFAIL_IF_STALE
  *
@@ -1594,7 +1593,7 @@ static int bch_btree_split_leaf(struct btree_iter *iter, unsigned flags)
  * bch_btree_insert_at - insert bkeys starting at a given btree node
  * @iter:		btree iterator
  * @insert_keys:	list of keys to insert
- * @replace:		old key for compare exchange (+ stats)
+ * @hook:		insert callback
  * @persistent:		if not null, @persistent will wait on journal write
  * @flags:		BTREE_INSERT_ATOMIC | BTREE_INSERT_NOFAIL_IF_STALE
  *
@@ -1625,7 +1624,7 @@ static int bch_btree_split_leaf(struct btree_iter *iter, unsigned flags)
  */
 int bch_btree_insert_at(struct btree_iter *iter,
 			struct keylist *insert_keys,
-			struct bch_replace_info *replace,
+			struct btree_insert_hook *hook,
 			u64 *journal_seq, unsigned flags)
 {
 	int ret = -EINTR;
@@ -1644,7 +1643,7 @@ int bch_btree_insert_at(struct btree_iter *iter,
 				 iter->pos));
 
 		switch (bch_btree_insert_keys_leaf(iter->nodes[0], iter,
-						   insert_keys, replace,
+						   insert_keys, hook,
 						   journal_seq, flags)) {
 		case BTREE_INSERT_OK:
 			ret = 0;
@@ -1871,10 +1870,10 @@ int bch_btree_insert_check_key(struct btree_iter *iter,
  * @c:			pointer to struct cache_set
  * @id:			btree to insert into
  * @insert_keys:	list of keys to insert
- * @replace:		old key for compare exchange (+ stats)
+ * @hook:		insert callback
  */
 int bch_btree_insert(struct cache_set *c, enum btree_id id,
-		     struct keylist *keys, struct bch_replace_info *replace,
+		     struct keylist *keys, struct btree_insert_hook *hook,
 		     u64 *journal_seq, int flags)
 {
 	struct btree_iter iter;
@@ -1887,8 +1886,7 @@ int bch_btree_insert(struct cache_set *c, enum btree_id id,
 	if (unlikely(ret))
 		goto out;
 
-	ret = bch_btree_insert_at(&iter, keys, replace,
-				  journal_seq, flags);
+	ret = bch_btree_insert_at(&iter, keys, hook, journal_seq, flags);
 out:	ret2 = bch_btree_iter_unlock(&iter);
 
 	return ret ?: ret2;

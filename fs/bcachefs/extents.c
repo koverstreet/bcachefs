@@ -107,7 +107,7 @@ struct btree_nr_keys bch_key_sort_fix_overlapping(struct btree_keys *b,
 
 void bch_insert_fixup_key(struct btree_iter *iter,
 			  struct bkey_i *insert,
-			  struct bch_replace_info *replace,
+			  struct btree_insert_hook *hook,
 			  struct journal_res *res)
 {
 	struct btree *b = iter->nodes[0];
@@ -117,7 +117,7 @@ void bch_insert_fixup_key(struct btree_iter *iter,
 	int cmp;
 
 	BUG_ON(iter->level);
-	BUG_ON(replace);
+	BUG_ON(hook);
 	EBUG_ON((k = bch_btree_node_iter_prev_all(node_iter, &b->keys)) &&
 		(bkey_deleted(k)
 		 ? bkey_cmp_packed(f, k, &insert->k) > 0
@@ -861,7 +861,7 @@ static void bch_drop_subtract(struct btree_iter *iter, struct bkey_s k)
  * splitting done in bch_extent_insert_fixup, preserving such
  * caching is difficult.
  */
-static bool bkey_cmpxchg_cmp(struct bkey_s_c l, struct bkey_s_c r)
+static bool bch_extent_cmpxchg_cmp(struct bkey_s_c l, struct bkey_s_c r)
 {
 	struct bkey_s_c_extent le, re;
 	const struct bch_extent_ptr *lp, *rp;
@@ -937,14 +937,17 @@ static bool bkey_cmpxchg_cmp(struct bkey_s_c l, struct bkey_s_c r)
  * On return, there is room in @res for at least one more key of the same size
  * as @new.
  */
-static bool bkey_cmpxchg(struct btree_iter *iter,
-			 struct bkey_s_c k,
-			 struct bch_replace_info *replace,
-			 struct bkey_i *new,
-			 struct journal_res *res)
+void bch_extent_cmpxchg(struct btree_insert_hook *hook,
+			struct btree_iter *iter,
+			struct bkey_s_c k,
+			struct bkey_i *new,
+			struct journal_res *res)
 {
+	struct bch_replace_info *replace = container_of(hook,
+					struct bch_replace_info, hook);
 	struct bkey_i *old = &replace->key;
-	bool ret;
+
+	BUG_ON(iter->btree_id != BTREE_ID_EXTENTS);
 
 	/* must have something to compare against */
 	BUG_ON(!bkey_val_u64s(&old->k));
@@ -953,6 +956,11 @@ static bool bkey_cmpxchg(struct btree_iter *iter,
 	BUG_ON(bkey_cmp(new->k.p, old->k.p) > 0 ||
 	       bkey_cmp(bkey_start_pos(&new->k),
 			bkey_start_pos(&old->k)) < 0);
+
+	if (!k.k) {
+		bch_cut_subtract_back(iter, iter->pos, bkey_i_to_s(new));
+		return;
+	}
 
 	/*
 	 * first, check if there was a hole - part of the new key that we
@@ -983,8 +991,7 @@ static bool bkey_cmpxchg(struct btree_iter *iter,
 		bch_btree_iter_set_pos(iter, bkey_start_pos(k.k));
 	}
 
-	ret = bkey_cmpxchg_cmp(k, bkey_i_to_s_c(old));
-	if (!ret) {
+	if (!bch_extent_cmpxchg_cmp(k, bkey_i_to_s_c(old))) {
 		/* failed: */
 		replace->failures += 1;
 
@@ -1010,13 +1017,9 @@ static bool bkey_cmpxchg(struct btree_iter *iter,
 			bch_cut_subtract_front(iter, k.k->p, bkey_i_to_s(new));
 	} else
 		replace->successes += 1;
-
-	/* advance @iter->pos past the part of @k overlapping @new */
-	bch_btree_iter_set_pos(iter, bkey_cmp(k.k->p, new->k.p) < 0
-			       ? k.k->p : new->k.p);
-	return ret;
 }
 
+#if 0
 /* We are trying to insert a key with an older version than the existing one */
 static void handle_existing_key_newer(struct btree_iter *iter,
 				      struct bkey_i *insert,
@@ -1065,6 +1068,7 @@ static void handle_existing_key_newer(struct btree_iter *iter,
 		break;
 	}
 }
+#endif
 
 #define MAX_LOCK_HOLD_TIME	(5 * NSEC_PER_MSEC)
 
@@ -1109,7 +1113,7 @@ static void handle_existing_key_newer(struct btree_iter *iter,
  */
 void bch_insert_fixup_extent(struct btree_iter *iter,
 			     struct bkey_i *insert,
-			     struct bch_replace_info *replace,
+			     struct btree_insert_hook *hook,
 			     struct journal_res *res,
 			     unsigned flags)
 {
@@ -1117,10 +1121,10 @@ void bch_insert_fixup_extent(struct btree_iter *iter,
 	struct btree *b = iter->nodes[0];
 	struct btree_node_iter *node_iter = &iter->node_iters[0];
 	const struct bkey_format *f = &b->keys.format;
-	struct bpos insert_end = insert->k.p;
 	struct bkey_packed *_k;
 	struct bkey_tup tup;
 	struct bkey_s k;
+	struct bpos next_pos;
 	BKEY_PADDED(k) split;
 	unsigned nr_done = 0;
 	u64 start_time = local_clock();
@@ -1160,8 +1164,6 @@ void bch_insert_fixup_extent(struct btree_iter *iter,
 		/* We raced - a dirty pointer was stale */
 		bch_btree_iter_set_pos(iter, insert->k.p);
 		insert->k.size = 0;
-		if (replace != NULL)
-			replace->failures += 1;
 		return;
 	}
 
@@ -1204,9 +1206,28 @@ void bch_insert_fixup_extent(struct btree_iter *iter,
 			 * need to split
 			 */
 			bch_cut_subtract_back(iter, iter->pos, bkey_i_to_s(insert));
-			goto out;
+			if (!insert->k.size)
+				return;
+			break;
 		}
-
+#if 0
+		/*
+		 * Currently broken w.r.t. cmpxchg: -
+		 * handle_existing_key_newer() can't insert @insert itself
+		 * (which it does when @k splits @insert) because bkey_cmpxchg()
+		 * hasn't seen @insert yet, and might not want to insert it:
+		 *
+		 * need to change handle_existing_key_newer() to just drop the
+		 * tail half of the split until later, and have
+		 * btree_insert_key() be responsible for inserting it later -
+		 * but tricky:
+		 */
+		if (k.k->size && insert->k.version &&
+		    insert->k.version < k.k->version) {
+			handle_existing_key_newer(iter, insert, k.k, res);
+			continue;
+		}
+#endif
 		/*
 		 * We might overlap with 0 size extents; we can't skip these
 		 * because if they're in the set we're inserting to we have to
@@ -1214,22 +1235,29 @@ void bch_insert_fixup_extent(struct btree_iter *iter,
 		 * inserting. But we don't want to check them for replace
 		 * operations.
 		 */
-		if (!replace)
-			bch_btree_iter_set_pos(iter,
-					       bkey_cmp(k.k->p, insert->k.p) < 0
-					       ? k.k->p : insert->k.p);
-		else if (k.k->size &&
-			 !bkey_cmpxchg(iter, k.s_c, replace,
-				       insert, res))
-			continue;
+		if (k.k->size) {
+			next_pos = bkey_cmp(k.k->p, insert->k.p) < 0
+				? k.k->p : insert->k.p;
 
-		if (k.k->size && insert->k.version &&
-		    insert->k.version < k.k->version) {
-			handle_existing_key_newer(iter, insert, k.k, res);
-			continue;
+			if (hook)
+				hook->fn(hook, iter, k.s_c, insert, res);
+
+			/*
+			 * Don't update iter->pos until after calling the hook,
+			 * because the hook fn may use it:
+			 */
+			bch_btree_iter_set_pos(iter, next_pos);
+
+			if (!insert->k.size)
+				return;
+
+			/* insert and k might not overlap after calling hook fn: */
+			if (bkey_cmp(insert->k.p, bkey_start_pos(k.k)) <= 0 ||
+			    bkey_cmp(k.k->p, bkey_start_pos(&insert->k)) <= 0)
+				continue;
 		}
 
-		/* k is the key currently in the tree, 'insert' the new key */
+		/* k is the key currently in the tree, 'insert' is the new key */
 
 		switch (bch_extent_overlap(&insert->k, k.k)) {
 		case BCH_EXTENT_OVERLAP_FRONT:
@@ -1293,23 +1321,17 @@ void bch_insert_fixup_extent(struct btree_iter *iter,
 		}
 	}
 
-	/* Was there a hole? */
-	if (bkey_cmp(iter->pos, insert->k.p) < 0) {
-		/*
-		 * Holes not allowed for cmpxchg operations, so chop off
-		 * whatever we're not inserting:
-		 */
-		if (replace != NULL)
-			bch_cut_subtract_back(iter, iter->pos, bkey_i_to_s(insert));
+	next_pos = insert->k.p;
 
-		/*
-		 * We did get to the end of @insert, so update iter->pos:
-		 */
-		bch_btree_iter_set_pos(iter, insert_end);
-	}
-out:
-	if (insert->k.size)
-		bch_btree_insert_and_journal(iter, insert, res);
+	if (hook)
+		hook->fn(hook, iter, bkey_s_c_null, insert, res);
+
+	bch_btree_iter_set_pos(iter, next_pos);
+
+	if (!insert->k.size)
+		return;
+
+	bch_btree_insert_and_journal(iter, insert, res);
 }
 
 static const char *bch_extent_invalid(const struct cache_set *c,

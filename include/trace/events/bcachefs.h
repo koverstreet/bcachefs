@@ -610,8 +610,8 @@ DEFINE_EVENT(btree_node_op, bcache_btree_intent_lock_fail,
 );
 
 TRACE_EVENT(bcache_btree_insert_key,
-	TP_PROTO(struct btree *b, struct bkey_i *k, unsigned op),
-	TP_ARGS(b, k, op),
+	TP_PROTO(struct btree *b, struct bkey_i *k),
+	TP_ARGS(b, k),
 
 	TP_STRUCT__entry(
 		__field(u64,		b_bucket		)
@@ -622,7 +622,6 @@ TRACE_EVENT(bcache_btree_insert_key,
 		__field(u32,		size			)
 		__field(u8,		level			)
 		__field(u8,		id			)
-		__field(u8,		op			)
 	),
 
 	TP_fast_assign(
@@ -634,11 +633,9 @@ TRACE_EVENT(bcache_btree_insert_key,
 		__entry->inode		= k->k.p.inode;
 		__entry->offset		= k->k.p.offset;
 		__entry->size		= k->k.size;
-		__entry->op		= op;
 	),
 
-	TP_printk("%s at bucket %llu(%u) id %u: %u:%llu %u:%llu len %u",
-		  __entry->op ? "replace" : "insert",
+	TP_printk("bucket %llu(%u) id %u: %u:%llu %u:%llu len %u",
 		  __entry->b_bucket, __entry->level, __entry->id,
 		  __entry->b_inode, __entry->b_offset,
 		  __entry->inode, __entry->offset, __entry->size)

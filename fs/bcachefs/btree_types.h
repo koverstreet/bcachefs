@@ -133,4 +133,18 @@ static inline bool btree_node_has_ptrs(struct btree *b)
 	return btree_type_has_ptrs(btree_node_type(b));
 }
 
+/*
+ * Optional hook that will be called just prior to a btree node update, when
+ * we're holding the write lock and we know what key is about to be overwritten:
+ */
+
+struct btree_iter;
+struct btree_insert_hook {
+	void (*fn)(struct btree_insert_hook *,
+		   struct btree_iter *iter,
+		   struct bkey_s_c k,
+		   struct bkey_i *insert,
+		   struct journal_res *res);
+};
+
 #endif /* _BCACHE_BTREE_TYPES_H */

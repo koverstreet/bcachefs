@@ -8,7 +8,6 @@ struct cache_set;
 struct bkey_format_state;
 struct bkey_format;
 struct btree;
-struct bch_replace_info;
 
 struct btree_reserve {
 	unsigned		nr;
@@ -174,7 +173,7 @@ int bch_btree_insert_node(struct btree *, struct btree_iter *,
 #define BTREE_INSERT_NOFAIL_IF_STALE	(1 << 2)
 
 int bch_btree_insert_at(struct btree_iter *, struct keylist *,
-			struct bch_replace_info *, u64 *, unsigned);
+			struct btree_insert_hook *, u64 *, unsigned);
 
 struct btree_insert_multi {
 	struct btree_iter	*iter;
@@ -186,7 +185,7 @@ int bch_btree_insert_at_multi(struct btree_insert_multi[], unsigned,
 
 int bch_btree_insert_check_key(struct btree_iter *, struct bkey_i *);
 int bch_btree_insert(struct cache_set *, enum btree_id, struct keylist *,
-		     struct bch_replace_info *, u64 *, int flags);
+		     struct btree_insert_hook *, u64 *, int flags);
 int bch_btree_update(struct cache_set *, enum btree_id,
 		     struct bkey_i *, u64 *);
 
