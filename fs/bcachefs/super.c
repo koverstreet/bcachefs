@@ -495,11 +495,15 @@ static int cache_set_mi_update(struct cache_set *c,
 	struct cache *ca;
 	unsigned i;
 
+	mutex_lock(&c->mi_lock);
+
 	new = kzalloc(sizeof(struct cache_member_rcu) +
 		      sizeof(struct cache_member_cpu) * nr_in_set,
 		      GFP_KERNEL);
-	if (!new)
+	if (!new) {
+		mutex_unlock(&c->mi_lock);
 		return -ENOMEM;
+	}
 
 	new->nr_in_set = nr_in_set;
 
@@ -512,12 +516,13 @@ static int cache_set_mi_update(struct cache_set *c,
 	rcu_read_unlock();
 
 	old = rcu_dereference_protected(c->members,
-				lockdep_is_held(&bch_register_lock));
+				lockdep_is_held(&c->mi_lock));
 
 	rcu_assign_pointer(c->members, new);
 	if (old)
 		kfree_rcu(old, rcu);
 
+	mutex_unlock(&c->mi_lock);
 	return 0;
 }
 
@@ -1035,6 +1040,7 @@ static struct cache_set *bch_cache_set_alloc(struct cache_sb *sb,
 	mutex_init(&c->bucket_lock);
 	spin_lock_init(&c->btree_root_lock);
 	INIT_WORK(&c->read_only_work, bch_cache_set_read_only_work);
+	mutex_init(&c->mi_lock);
 
 	init_rwsem(&c->gc_lock);
 	mutex_init(&c->gc_scan_keylist_lock);
@@ -1384,8 +1390,10 @@ static const char *run_cache_set(struct cache_set *c)
 	}
 
 	now = get_seconds();
+	rcu_read_lock();
 	for_each_cache_rcu(ca, c, i)
 		c->disk_mi[ca->sb.nr_this_dev].last_mount = cpu_to_le32(now);
+	rcu_read_unlock();
 
 	bcache_write_super(c);
 

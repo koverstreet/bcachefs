@@ -511,6 +511,7 @@ struct cache_set {
 	struct cache __rcu	*cache[MAX_CACHES_PER_SET];
 	unsigned long	cache_slots_used[BITS_TO_LONGS(MAX_CACHES_PER_SET)];
 
+	struct mutex		mi_lock;
 	struct cache_member_rcu __rcu *members;
 	struct cache_member	*disk_mi; /* protected by register_lock */
 
