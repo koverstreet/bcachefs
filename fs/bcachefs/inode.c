@@ -180,6 +180,21 @@ int bch_inode_rm(struct cache_set *c, u64 inode_nr)
 	if (ret < 0)
 		return ret;
 
+	/*
+	 * If this was a directory, there shouldn't be any real dirents left -
+	 * but there could be whiteouts (from hash collisions) that we should
+	 * delete:
+	 *
+	 * XXX: the dirent could ideally would delete whitouts when they're no
+	 * longer needed
+	 */
+	ret = bch_btree_delete_range(c, BTREE_ID_DIRENTS,
+				     POS(inode_nr, 0),
+				     POS(inode_nr + 1, 0),
+				     0, NULL, NULL);
+	if (ret < 0)
+		return ret;
+
 	bkey_init(&delete.k);
 	delete.k.p.inode = inode_nr;
 
