@@ -1114,40 +1114,8 @@ int bch_discard(struct cache_set *c, struct bpos start,
 		struct btree_insert_hook *hook,
 		u64 *journal_seq)
 {
-	struct btree_iter iter;
-	struct bkey_s_c k;
-	int ret = 0;
-
-	bch_btree_iter_init_intent(&iter, c, BTREE_ID_EXTENTS, start);
-
-	while ((k = bch_btree_iter_peek(&iter)).k) {
-		unsigned max_sectors = KEY_SIZE_MAX & (~0 << c->block_bits);
-		/* really shouldn't be using a bare, unpadded bkey_i */
-		struct bkey_i erase;
-
-		if (bkey_cmp(iter.pos, end) >= 0)
-			break;
-
-		/* create the biggest key we can, to minimize writes */
-		bkey_init(&erase.k);
-		erase.k.type	= KEY_TYPE_DISCARD;
-		erase.k.version	= version;
-		erase.k.p	= iter.pos;
-
-		bch_key_resize(&erase.k, max_sectors);
-		bch_cut_back(end, &erase.k);
-
-		ret = bch_btree_insert_at(&iter, &keylist_single(&erase),
-					  hook, journal_seq,
-					  BTREE_INSERT_NOFAIL);
-		if (ret)
-			break;
-
-		bch_btree_iter_cond_resched(&iter);
-	}
-	bch_btree_iter_unlock(&iter);
-
-	return ret;
+	return bch_btree_delete_range(c, BTREE_ID_EXTENTS, start, end,
+				      version, hook, journal_seq);
 }
 
 /* Cache promotion on read */

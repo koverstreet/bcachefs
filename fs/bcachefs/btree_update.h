@@ -189,6 +189,10 @@ int bch_btree_insert(struct cache_set *, enum btree_id, struct keylist *,
 int bch_btree_update(struct cache_set *, enum btree_id,
 		     struct bkey_i *, u64 *);
 
+int bch_btree_delete_range(struct cache_set *, enum btree_id,
+			   struct bpos, struct bpos, u64,
+			   struct btree_insert_hook *, u64 *);
+
 int bch_btree_node_rewrite(struct btree *, struct btree_iter *, bool);
 
 #endif /* _BCACHE_BTREE_INSERT_H */

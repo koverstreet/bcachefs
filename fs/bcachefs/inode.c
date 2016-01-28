@@ -166,8 +166,6 @@ int bch_inode_truncate(struct cache_set *c, u64 inode_nr, u64 new_size,
 
 int bch_inode_rm(struct cache_set *c, u64 inode_nr)
 {
-	struct btree_iter iter;
-	struct bkey_s_c k;
 	struct bkey_i delete;
 	int ret;
 
@@ -175,23 +173,12 @@ int bch_inode_rm(struct cache_set *c, u64 inode_nr)
 	if (ret < 0)
 		return ret;
 
-	for_each_btree_key_intent(&iter, c, BTREE_ID_XATTRS,
-				  POS(inode_nr, 0), k) {
-		if (k.k->p.inode > inode_nr)
-			break;
-
-		bkey_init(&delete.k);
-		delete.k.p = k.k->p;
-
-		ret = bch_btree_insert_at(&iter, &keylist_single(&delete),
-					  NULL, NULL, 0);
-		if (ret) {
-			bch_btree_iter_unlock(&iter);
-			return ret;
-		}
-
-	}
-	bch_btree_iter_unlock(&iter);
+	ret = bch_btree_delete_range(c, BTREE_ID_XATTRS,
+				     POS(inode_nr, 0),
+				     POS(inode_nr + 1, 0),
+				     0, NULL, NULL);
+	if (ret < 0)
+		return ret;
 
 	bkey_init(&delete.k);
 	delete.k.p.inode = inode_nr;

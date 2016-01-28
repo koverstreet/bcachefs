@@ -1919,6 +1919,74 @@ int bch_btree_update(struct cache_set *c, enum btree_id id,
 	return ret ?: ret2;
 }
 
+/*
+ * bch_btree_delete_range - delete everything within a given range
+ *
+ * Range is a half open interval - [start, end)
+ */
+int bch_btree_delete_range(struct cache_set *c, enum btree_id id,
+			   struct bpos start,
+			   struct bpos end,
+			   u64 version,
+			   struct btree_insert_hook *hook,
+			   u64 *journal_seq)
+{
+	struct btree_iter iter;
+	struct bkey_s_c k;
+	int ret = 0;
+
+	bch_btree_iter_init_intent(&iter, c, id, start);
+
+	while ((k = bch_btree_iter_peek(&iter)).k) {
+		unsigned max_sectors = KEY_SIZE_MAX & (~0 << c->block_bits);
+		/* really shouldn't be using a bare, unpadded bkey_i */
+		struct bkey_i delete;
+
+		if (bkey_cmp(iter.pos, end) >= 0)
+			break;
+
+		bkey_init(&delete.k);
+
+		/*
+		 * For extents, iter.pos won't necessarily be the same as
+		 * bkey_start_pos(k.k) (for non extents they always will be the
+		 * same). It's important that we delete starting from iter.pos
+		 * because the range we want to delete could start in the middle
+		 * of k.
+		 *
+		 * (bch_btree_iter_peek() does guarantee that iter.pos >=
+		 * bkey_start_pos(k.k)).
+		 */
+		delete.k.p = iter.pos;
+		delete.k.version = version;
+
+		if (iter.nodes[0]->keys.ops->is_extents) {
+			/*
+			 * The extents btree is special - KEY_TYPE_DISCARD is
+			 * used for deletions, not KEY_TYPE_DELETED. This is an
+			 * internal implementation detail that probably
+			 * shouldn't be exposed (internally, KEY_TYPE_DELETED is
+			 * used as a proxy for k->size == 0):
+			 */
+			delete.k.type = KEY_TYPE_DISCARD;
+
+			/* create the biggest key we can */
+			bch_key_resize(&delete.k, max_sectors);
+			bch_cut_back(end, &delete.k);
+		}
+
+		ret = bch_btree_insert_at(&iter, &keylist_single(&delete),
+					  hook, journal_seq,
+					  BTREE_INSERT_NOFAIL);
+		if (ret)
+			break;
+
+		bch_btree_iter_cond_resched(&iter);
+	}
+
+	return bch_btree_iter_unlock(&iter) ?: ret;
+}
+
 /**
  * bch_btree_node_rewrite - Rewrite/move a btree node
  *
