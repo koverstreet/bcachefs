@@ -485,7 +485,7 @@ static void cached_dev_write(struct cached_dev *dc, struct search *s)
 	bool writeback = false;
 	bool bypass = s->bypass;
 	struct bkey insert_key = KEY(s->inode, 0, 0);
-	unsigned flags = 0;
+	unsigned flags = BCH_WRITE_DISCARD_ON_ERROR;
 
 	down_read_non_owner(&dc->writeback_lock);
 	if (bch_keybuf_check_overlapping(&dc->writeback_keys,
@@ -557,8 +557,8 @@ static void cached_dev_write(struct cached_dev *dc, struct search *s)
 		flags |= BCH_WRITE_DISCARD;
 
 	bch_write_op_init(&s->iop, dc->disk.c, &s->bio, NULL,
-			  bkey_to_s_c(&insert_key), bkey_s_c_null,
-			  NULL, flags);
+			  bkey_to_s_c(&insert_key),
+			  NULL, NULL, flags);
 
 	closure_call(&s->iop.cl, bch_write, NULL, cl);
 	continue_at(cl, cached_dev_write_complete, NULL);
@@ -692,7 +692,7 @@ static void __blockdev_volume_make_request(struct request_queue *q,
 
 		bch_write_op_init(&s->iop, d->c, &s->bio, NULL,
 				  bkey_to_s_c(&KEY(s->inode, 0, 0)),
-				  bkey_s_c_null, NULL, flags);
+				  NULL, NULL, flags);
 
 		closure_call(&s->iop.cl, bch_write, NULL, &s->cl);
 		continue_at(&s->cl, search_free, NULL);

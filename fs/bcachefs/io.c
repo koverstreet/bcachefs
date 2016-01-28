@@ -403,11 +403,6 @@ static void bch_write_done(struct closure *cl)
 	if (!op->error && op->flush)
 		op->error = bch_journal_error(&op->c->journal);
 
-	if (op->replace_collision) {
-		trace_bcache_promote_collision(&op->replace_info.key.k);
-		atomic_inc(&op->c->accounting.collector.cache_miss_collisions);
-	}
-
 	percpu_ref_put(&op->c->writes);
 	bch_keylist_free(&op->insert_keys);
 	closure_return(cl);
@@ -435,7 +430,7 @@ static void bch_write_index(struct closure *cl)
 	int ret;
 
 	ret = bch_btree_insert(op->c, BTREE_ID_EXTENTS, &op->insert_keys,
-			       op->replace ? &op->replace_info.hook : NULL,
+			       op->insert_hook,
 			       op_journal_seq(op), BTREE_INSERT_NOFAIL);
 
 	op->written += sectors_start - keylist_sectors(&op->insert_keys);
@@ -443,8 +438,7 @@ static void bch_write_index(struct closure *cl)
 	if (ret) {
 		__bcache_io_error(op->c, "btree IO error");
 		op->error = ret;
-	} else if (op->replace && op->replace_info.successes == 0)
-		op->replace_collision = true;
+	}
 
 	for (i = 0; i < ARRAY_SIZE(op->open_buckets); i++)
 		if (op->open_buckets[i]) {
@@ -481,10 +475,13 @@ static void bch_write_discard(struct closure *cl)
 				POS(inode, bio->bi_iter.bi_sector),
 				POS(inode, bio_end_sector(bio)),
 				op->insert_key.k.version,
-				NULL);
+				NULL, NULL);
 }
 
-static void bch_write_error(struct closure *cl)
+/*
+ * Convert extents to be inserted to discards after an error:
+ */
+static void __bch_write_discard(struct closure *cl)
 {
 	struct bch_write_op *op = container_of(cl, struct bch_write_op, cl);
 
@@ -527,8 +524,8 @@ static void bch_write_endio(struct bio *bio)
 		/* TODO: We could try to recover from this. */
 		if (!bkey_extent_is_cached(&op->insert_key.k)) {
 			op->error = bio->bi_error;
-		} else if (!op->replace)
-			set_closure_fn(cl, bch_write_error, op->c->wq);
+		} else if (op->discard_on_error)
+			set_closure_fn(cl, __bch_write_discard, op->c->wq);
 		else
 			set_closure_fn(cl, NULL, NULL);
 	}
@@ -1038,7 +1035,7 @@ void bch_write(struct closure *cl)
 void bch_write_op_init(struct bch_write_op *op, struct cache_set *c,
 		       struct bch_write_bio *bio, struct write_point *wp,
 		       struct bkey_s_c insert_key,
-		       struct bkey_s_c replace_key,
+		       struct btree_insert_hook *insert_hook,
 		       u64 *journal_seq, unsigned flags)
 {
 	if (!wp) {
@@ -1060,6 +1057,7 @@ void bch_write_op_init(struct bch_write_op *op, struct cache_set *c,
 	op->discard	= (flags & BCH_WRITE_DISCARD) != 0;
 	op->cached	= (flags & BCH_WRITE_CACHED) != 0;
 	op->flush	= (flags & BCH_WRITE_FLUSH) != 0;
+	op->discard_on_error = (flags & BCH_WRITE_DISCARD_ON_ERROR) != 0;
 	op->wp		= wp;
 	op->journal_seq_ptr = journal_seq != NULL;
 
@@ -1067,6 +1065,8 @@ void bch_write_op_init(struct bch_write_op *op, struct cache_set *c,
 		op->journal_seq_p = journal_seq;
 	else
 		op->journal_seq = 0;
+
+	op->insert_hook = insert_hook;
 
 	bch_keylist_init(&op->insert_keys,
 			 op->inline_keys,
@@ -1083,14 +1083,13 @@ void bch_write_op_init(struct bch_write_op *op, struct cache_set *c,
 			: op->cached ? BCH_EXTENT_CACHED
 			: BCH_EXTENT;
 	}
+}
 
-	if (replace_key.k) {
-		op->replace = true;
-		/* The caller can overwrite any replace_info fields */
-		memset(&op->replace_info, 0, sizeof(op->replace_info));
-		op->replace_info.hook.fn = bch_extent_cmpxchg;
-		bkey_reassemble(&op->replace_info.key, replace_key);
-	}
+void bch_replace_init(struct bch_replace_info *r, struct bkey_s_c old)
+{
+	memset(r, 0, sizeof(*r));
+	r->hook.fn = bch_extent_cmpxchg;
+	bkey_reassemble(&r->key, old);
 }
 
 /* Discard */
@@ -1111,7 +1110,9 @@ void bch_write_op_init(struct bch_write_op *op, struct cache_set *c,
  *	appropriately inode_truncate should call this
  */
 int bch_discard(struct cache_set *c, struct bpos start,
-		struct bpos end, u64 version, u64 *journal_seq)
+		struct bpos end, u64 version,
+		struct btree_insert_hook *hook,
+		u64 *journal_seq)
 {
 	struct btree_iter iter;
 	struct bkey_s_c k;
@@ -1137,7 +1138,7 @@ int bch_discard(struct cache_set *c, struct bpos start,
 		bch_cut_back(end, &erase.k);
 
 		ret = bch_btree_insert_at(&iter, &keylist_single(&erase),
-					  NULL, journal_seq,
+					  hook, journal_seq,
 					  BTREE_INSERT_NOFAIL);
 		if (ret)
 			break;
@@ -1546,7 +1547,7 @@ static void bch_read_extent_iter(struct cache_set *c, struct bio *orig,
 		bch_write_op_init(&promote_op->iop, c,
 				  &promote_op->bio,
 				  &c->promote_write_point,
-				  k, k, NULL,
+				  k, NULL, NULL,
 				  BCH_WRITE_CHECK_ENOSPC|
 				  BCH_WRITE_ALLOC_NOWAIT);
 

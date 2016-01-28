@@ -45,9 +45,11 @@ static int issue_migration_move(struct cache *ca,
 
 	/* This also copies k into the write op's replace_key and insert_key */
 
+	bch_replace_init(&io->replace, k);
+
 	bch_write_op_init(&io->op, c, &io->bio,
 			  &c->migration_write_point,
-			  k, k, NULL,
+			  k, &io->replace.hook, NULL,
 			  BCH_WRITE_CHECK_ENOSPC);
 
 	io->op.io_wq = q->wq;

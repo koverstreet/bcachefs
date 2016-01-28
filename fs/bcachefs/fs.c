@@ -992,7 +992,7 @@ static int bch_setattr(struct dentry *dentry, struct iattr *iattr)
 
 			ret = bch_inode_truncate(c, inode->i_ino,
 						 round_up(iattr->ia_size, PAGE_SIZE) >> 9,
-						 &ei->journal_seq);
+						 NULL, &ei->journal_seq);
 			if (unlikely(ret))
 				return ret;
 		}
@@ -1143,7 +1143,7 @@ static long bch_fpunch(struct inode *inode, loff_t offset, loff_t len)
 		ret = bch_discard(c,
 				  POS(ino, discard_start),
 				  POS(ino, discard_end),
-				  0, &ei->journal_seq);
+				  0, NULL, &ei->journal_seq);
 out:
 	inode_unlock(inode);
 
@@ -1251,7 +1251,7 @@ static long bch_fcollapse(struct inode *inode, loff_t offset, loff_t len)
 
 	ret = bch_inode_truncate(c, inode->i_ino,
 				 round_up(new_size, PAGE_SIZE) >> 9,
-				 &ei->journal_seq);
+				 NULL, &ei->journal_seq);
 	if (ret)
 		goto err_unwind;
 
@@ -2117,7 +2117,7 @@ alloc_io:
 
 		bch_write_op_init(&w->io->op, w->c, &w->io->bio, NULL,
 				  bkey_to_s_c(&KEY(w->inum, 0, 0)),
-				  bkey_s_c_null,
+				  NULL,
 				  &ei->journal_seq, 0);
 	}
 
@@ -2637,7 +2637,7 @@ static void bch_do_direct_IO_write(struct dio_write *dio, bool sync)
 				  bkey_to_s_c(&KEY(inode->i_ino,
 						   bio_end_sector(bio),
 						   bio_sectors(bio))),
-				  bkey_s_c_null,
+				  NULL,
 				  &ei->journal_seq, flags);
 
 		task_io_account_write(bio->bi_iter.bi_size);

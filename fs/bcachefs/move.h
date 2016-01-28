@@ -66,6 +66,7 @@ struct moving_io {
 	struct closure		cl;
 	struct moving_queue	*q;
 	struct bch_write_op	op;
+	struct bch_replace_info	replace;
 	struct moving_context	*context;
 	BKEY_PADDED(key);
 	/* Sort key for moving_queue->tree */

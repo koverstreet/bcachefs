@@ -92,11 +92,7 @@ struct bch_write_op {
 		unsigned	cached:1;
 		/* Wait for journal commit? */
 		unsigned	flush:1;
-		/* Perform a compare-exchange with replace_key? */
-		unsigned	replace:1;
-
-		/* Set on completion, if cmpxchg index update failed */
-		unsigned	replace_collision:1;
+		unsigned	discard_on_error:1;
 		/* Are we using the prt member of journal_seq union? */
 		unsigned	journal_seq_ptr:1;
 		/* Internal */
@@ -123,9 +119,10 @@ struct bch_write_op {
 		u64			journal_seq;
 	};
 
+	struct btree_insert_hook *insert_hook;
+
 	struct keylist		insert_keys;
 	BKEY_PADDED(insert_key);
-	struct bch_replace_info replace_info;
 	u64			inline_keys[BKEY_EXTENT_U64s_MAX * 2];
 };
 

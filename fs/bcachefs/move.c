@@ -130,7 +130,7 @@ static void moving_io_destructor(struct closure *cl)
 	unsigned long flags;
 	bool kick_writes = true;
 
-	if (io->op.replace_collision)
+	if (io->replace.failures)
 		trace_bcache_copy_collision(q, &io->key.k);
 
 	spin_lock_irqsave(&q->lock, flags);
