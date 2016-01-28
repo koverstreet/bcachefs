@@ -1445,6 +1445,51 @@ static void journal_write_done(struct closure *cl)
 	queue_work(system_long_wq, &j->reclaim_work);
 }
 
+static void journal_write_compact(struct jset *jset)
+{
+	struct jset_entry *i, *next, *prev = NULL;
+
+	/*
+	 * Simple compaction, dropping empty jset_entries (from journal
+	 * reservations that weren't fully used) and merging jset_entries that
+	 * can be.
+	 *
+	 * If we wanted to be really fancy here, we could sort all the keys in
+	 * the jset and drop keys that were overwritten - probably not worth it:
+	 */
+	for (i = jset->start;
+	     i < (struct jset_entry *) bkey_idx(jset, le32_to_cpu(jset->u64s)) &&
+	     (next = jset_keys_next(i), true);
+	     i = next) {
+		unsigned u64s = le16_to_cpu(i->u64s);
+
+		/* Empty entry: */
+		if (!u64s)
+			continue;
+
+		/* Can we merge with previous entry? */
+		if (prev &&
+		    i->btree_id == prev->btree_id &&
+		    i->level	== prev->level &&
+		    JKEYS_TYPE(i) == JKEYS_TYPE(prev) &&
+		    JKEYS_TYPE(i) == JKEYS_BTREE_KEYS) {
+			memmove(jset_keys_next(prev),
+				i->_data,
+				u64s * sizeof(u64));
+			le16_add_cpu(&prev->u64s, u64s);
+			continue;
+		}
+
+		/* Couldn't merge, move i into new position (after prev): */
+		prev = prev ? jset_keys_next(prev) : jset->start;
+		if (i != prev)
+			memmove(prev, i, jset_u64s(u64s) * sizeof(u64));
+	}
+
+	prev = prev ? jset_keys_next(prev) : jset->start;
+	jset->u64s = cpu_to_le32((u64 *) prev - jset->_data);
+}
+
 static void journal_write_locked(struct closure *cl)
 	__releases(c->journal.lock)
 {
@@ -1482,6 +1527,8 @@ static void journal_write_locked(struct closure *cl)
 
 	/* So last_seq is up to date */
 	journal_reclaim_fast(j);
+
+	journal_write_compact(w->data);
 
 	w->data->read_clock	= cpu_to_le16(c->prio_clock[READ].hand);
 	w->data->write_clock	= cpu_to_le16(c->prio_clock[WRITE].hand);
