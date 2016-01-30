@@ -2659,7 +2659,7 @@ static void bch_dio_write_loop_async(struct closure *cl)
 
 	bch_dio_write_done(dio);
 
-	if (dio->iter.count) {
+	if (dio->iter.count && !dio->error) {
 		use_mm(dio->mm);
 		bch_do_direct_IO_write(dio, false);
 		unuse_mm(dio->mm);
