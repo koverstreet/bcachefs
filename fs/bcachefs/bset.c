@@ -920,39 +920,48 @@ struct bkey_packed *bch_bset_insert(struct btree_keys *b,
 				      where, false))
 		return NULL;
 
-	/*
-	 * Can we overwrite the current key, instead of doing a memmove()?
-	 *
-	 * This is only legal for extents that are marked as deleted - because
-	 * extents are marked as deleted iff they are 0 size, deleted extents
-	 * don't overlap with any other existing keys. Non extents marked as
-	 * deleted may be needed as whiteouts, until the node is rewritten.
-	 */
-	if (b->ops->is_extents &&
-	    where != bset_bkey_last(i) &&
-	    where->u64s == insert->k.u64s &&
-	    bkey_deleted(where)) {
-		if (!bkey_deleted(&insert->k))
-			btree_keys_account_key_add(&b->nr,
-					bkey_to_packed(insert));
-
-		bkey_copy((void *) where, insert);
-		return NULL;
-	}
-
 	src = bkey_pack_key(&packed, &insert->k, f)
 		? &packed
 		: bkey_to_packed(insert);
 
+	/*
+	 * Can we overwrite the current key, instead of doing a memmove()?
+	 *
+	 * For extents, only legal to overwrite keys that are deleted - because
+	 * extents are marked as deleted iff they are 0 size, deleted extents
+	 * don't overlap with any other existing keys.
+	 *
+	 * For non extents marked as deleted may be needed as whiteouts, until
+	 * the node is rewritten, only legal to overwrite if the new key
+	 * compares equal to the old.
+	 */
+	if (where != bset_bkey_last(i) &&
+	    where->u64s == src->u64s &&
+	    (b->ops->is_extents
+	     ? bkey_deleted(where)
+	     : !bkey_cmp_left_packed(f, where, insert->k.p))) {
+		if (!bkey_deleted(where))
+			btree_keys_account_key_drop(&b->nr, where);
+
+		memcpy(where, src,
+		       bkeyp_key_bytes(f, src));
+		memcpy(bkeyp_val(f, where), &insert->v,
+		       bkeyp_val_bytes(f, src));
+
+		if (!bkey_deleted(src))
+			btree_keys_account_key_add(&b->nr, src);
+		return NULL;
+	}
+
 	memmove((u64 *) where + src->u64s,
 		where,
 		(void *) bset_bkey_last(i) - (void *) where);
+	le16_add_cpu(&i->u64s, src->u64s);
 
 	memcpy(where, src,
 	       bkeyp_key_bytes(f, src));
 	memcpy(bkeyp_val(f, where), &insert->v,
 	       bkeyp_val_bytes(f, src));
-	le16_add_cpu(&i->u64s, src->u64s);
 
 	if (!bkey_deleted(src))
 		btree_keys_account_key_add(&b->nr, src);
