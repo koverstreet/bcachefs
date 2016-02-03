@@ -664,7 +664,7 @@ unsigned bkey_greatest_differing_bit(const struct bkey_format *format,
 	l_v = *l & (~0ULL >> high_bit_offset);
 	r_v = *r & (~0ULL >> high_bit_offset);
 
-	while (1) {
+	while (nr_key_bits) {
 		if (nr_key_bits < word_bits) {
 			l_v >>= word_bits - nr_key_bits;
 			r_v >>= word_bits - nr_key_bits;
@@ -676,9 +676,6 @@ unsigned bkey_greatest_differing_bit(const struct bkey_format *format,
 		if (l_v != r_v)
 			return fls64(l_v ^ r_v) - 1 + nr_key_bits;
 
-		if (!nr_key_bits)
-			return 0;
-
 		l = next_word(l);
 		r = next_word(r);
 
@@ -686,6 +683,8 @@ unsigned bkey_greatest_differing_bit(const struct bkey_format *format,
 		r_v = *r;
 		word_bits = 64;
 	}
+
+	return 0;
 }
 
 /*
