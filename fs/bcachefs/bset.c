@@ -857,6 +857,8 @@ static void bch_bset_fix_lookup_table(struct btree_keys *b,
  *
  * Attempts front and back merges (if @b has a method for key merging).
  *
+ * NOTE: after calling @insert may be modified and is undefined
+ *
  * @iter is used as a hint for where to insert at, but it's not
  * fixed/revalidated for the insertion, that's the caller's responsibility
  * (because there may be other iterators to fix, it's easier to just do all of
@@ -881,7 +883,6 @@ struct bkey_packed *bch_bset_insert(struct btree_keys *b,
 	struct bkey_packed *where = bch_btree_node_iter_bset_pos(iter, b, i) ?:
 		bset_bkey_last(i);
 	struct bkey_packed packed, *src;
-	BKEY_PADDED(k) tmp;
 
 	BUG_ON(bset_written(t));
 	BUG_ON(insert->k.u64s < BKEY_U64s);
@@ -903,6 +904,10 @@ struct bkey_packed *bch_bset_insert(struct btree_keys *b,
 
 	verify_insert_pos(b, prev, where, insert);
 
+	/*
+	 * note: bch_bkey_try_merge_inline() may modify either argument
+	 */
+
 	/* prev is in the tree, if we merge we're done */
 	if (prev &&
 	    bch_bkey_try_merge_inline(b, iter, prev,
@@ -910,22 +915,10 @@ struct bkey_packed *bch_bset_insert(struct btree_keys *b,
 		return NULL;
 
 	if (where != bset_bkey_last(i) &&
-	    bkey_bytes(&insert->k) <= sizeof(tmp)) {
-		bkey_copy(&tmp.k, insert);
-		insert = &tmp.k;
-
-		/*
-		 * bch_bkey_try_merge() modifies the left argument, but we can't
-		 * modify insert since the caller needs to be able to journal
-		 * the key that was actually inserted (and it can't just pass us
-		 * a copy of insert, since ->insert_fixup() might trim insert if
-		 * this is a replace operation)
-		 */
-		if (bch_bkey_try_merge_inline(b, iter,
-					      bkey_to_packed(insert),
-					      where, false))
-			return NULL;
-	}
+	    bch_bkey_try_merge_inline(b, iter,
+				      bkey_to_packed(insert),
+				      where, false))
+		return NULL;
 
 	/*
 	 * Can we overwrite the current key, instead of doing a memmove()?

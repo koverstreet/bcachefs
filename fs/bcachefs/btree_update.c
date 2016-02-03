@@ -694,8 +694,6 @@ void bch_btree_insert_and_journal(struct btree_iter *iter,
 
 	BUG_ON(b->level);
 
-	bch_btree_bset_insert(iter, b, node_iter, insert);
-
 	if (!btree_node_dirty(b)) {
 		set_btree_node_dirty(b);
 
@@ -722,6 +720,8 @@ void bch_btree_insert_and_journal(struct btree_iter *iter,
 				     insert, b->level);
 		btree_bset_last(b)->journal_seq = cpu_to_le64(c->journal.seq);
 	}
+
+	bch_btree_bset_insert(iter, b, node_iter, insert);
 }
 
 /**
