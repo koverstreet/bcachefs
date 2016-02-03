@@ -35,6 +35,9 @@ int bch_migrate_page(struct address_space *, struct page *,
 struct i_sectors_hook {
 	struct btree_insert_hook	hook;
 	s64				sectors;
+#ifdef CONFIG_BCACHEFS_DEBUG
+	struct bch_inode_info		*ei;
+#endif
 };
 
 struct bch_writepage_io {

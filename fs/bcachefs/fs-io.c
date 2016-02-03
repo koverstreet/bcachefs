@@ -204,6 +204,10 @@ static void i_sectors_hook_fn(struct btree_insert_hook *hook,
 	struct i_sectors_hook *h = container_of(hook,
 				struct i_sectors_hook, hook);
 
+	EBUG_ON(h->ei->vfs_inode.i_ino != insert->k.p.inode);
+	EBUG_ON(!(h->ei->i_flags & BCH_INODE_I_SECTORS_DIRTY));
+	EBUG_ON(!atomic_long_read(&h->ei->i_sectors_dirty_count));
+
 	if (k.k) {
 		if (!bkey_extent_is_allocation(k.k))
 			return;
@@ -229,6 +233,22 @@ static void i_sectors_hook_fn(struct btree_insert_hook *hook,
 		if (!bkey_extent_is_allocation(&insert->k))
 			return;
 
+#ifdef CONFIG_BCACHEFS_DEBUG
+		if (!(insert->k.type == BCH_RESERVATION)) {
+			struct bch_inode_info *ei = h->ei;
+			unsigned seq;
+			bool bad_write;
+
+			do {
+				seq = read_seqcount_begin(&ei->shadow_i_size_lock);
+				bad_write = !(ei->i_flags & BCH_INODE_I_SIZE_DIRTY) &&
+					insert->k.p.offset >
+					(round_up(ei->i_size, PAGE_SIZE) >> 9);
+			} while (read_seqcount_retry(&ei->shadow_i_size_lock, seq));
+
+			BUG_ON(bad_write);
+		}
+#endif
 		h->sectors += insert->k.size;
 	}
 }
@@ -298,6 +318,9 @@ static int __must_check i_sectors_dirty_get(struct bch_inode_info *ei,
 
 	h->hook.fn	= i_sectors_hook_fn;
 	h->sectors	= 0;
+#ifdef CONFIG_BCACHEFS_DEBUG
+	h->ei		= ei;
+#endif
 
 	if (atomic_long_inc_not_zero(&ei->i_sectors_dirty_count))
 		return 0;
@@ -483,6 +506,25 @@ static void bch_clear_page_bits(struct page *page)
 int bch_set_page_dirty(struct page *page)
 {
 	struct bch_page_state old, new;
+
+#ifdef CONFIG_BCACHEFS_DEBUG
+	{
+		struct bch_inode_info *ei = to_bch_ei(page->mapping->host);
+		unsigned seq, i_flags;
+		u64 i_size;
+
+		do {
+			seq = read_seqcount_begin(&ei->shadow_i_size_lock);
+			i_size = ei->i_size;
+			i_flags = ei->i_flags;
+		} while (read_seqcount_retry(&ei->shadow_i_size_lock, seq));
+
+		BUG_ON(((page_offset(page) + PAGE_SIZE) >
+			round_up(i_size, PAGE_SIZE)) &&
+		       !(i_flags & BCH_INODE_I_SIZE_DIRTY) &&
+		       !atomic_long_read(&ei->i_size_dirty_count));
+	}
+#endif
 
 	old = page_state_cmpxchg(page_state(page), new,
 		new.dirty_sectors = PAGE_SECTORS - new.sectors;
@@ -1132,11 +1174,6 @@ int bch_write_end(struct file *filp, struct address_space *mapping,
 		goto out;
 	}
 
-	if (!PageUptodate(page))
-		SetPageUptodate(page);
-	if (!PageDirty(page))
-		set_page_dirty(page);
-
 	if (pos + copied > inode->i_size) {
 		struct bch_page_state old, new;
 		struct i_size_update *u;
@@ -1172,6 +1209,11 @@ int bch_write_end(struct file *filp, struct address_space *mapping,
 		bch_i_size_write(inode, pos + copied);
 		mutex_unlock(&ei->update_lock);
 	}
+
+	if (!PageUptodate(page))
+		SetPageUptodate(page);
+	if (!PageDirty(page))
+		set_page_dirty(page);
 out:
 	unlock_page(page);
 	put_page(page);
