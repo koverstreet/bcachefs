@@ -266,6 +266,10 @@
 	__start___verbose = .;						\
 	KEEP(*(__verbose))                                              \
 	__stop___verbose = .;						\
+	. = ALIGN(8);							\
+	__start___faults = .;						\
+	*(__faults)							\
+	__stop___faults = .;						\
 	LIKELY_PROFILE()		       				\
 	BRANCH_PROFILE()						\
 	TRACE_PRINTKS()							\
