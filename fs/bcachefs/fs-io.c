@@ -1357,6 +1357,7 @@ out:
 static int __bch_truncate_page(struct address_space *mapping,
 			       pgoff_t index, loff_t start, loff_t end)
 {
+	struct inode *inode = mapping->host;
 	unsigned start_offset = start & (PAGE_SIZE - 1);
 	unsigned end_offset = ((end - 1) & (PAGE_SIZE - 1)) + 1;
 	struct page *page;
@@ -1365,6 +1366,10 @@ static int __bch_truncate_page(struct address_space *mapping,
 	/* Page boundary? Nothing to do */
 	if (!((index == start >> PAGE_SHIFT && start_offset) ||
 	      (index == end >> PAGE_SHIFT && end_offset != PAGE_SIZE)))
+		return 0;
+
+	/* Above i_size? */
+	if (index << PAGE_SHIFT >= inode->i_size)
 		return 0;
 
 	page = find_lock_page(mapping, index);
