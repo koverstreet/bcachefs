@@ -79,8 +79,6 @@ static int check_make_i_size_dirty(struct bch_inode_info *ei, loff_t offset)
 	unsigned seq;
 	int ret = 0;
 
-	BUG_ON(offset > round_up(ei->i_size, PAGE_SIZE) &&
-	       !atomic_long_read(&ei->i_size_dirty_count));
 	do {
 		seq = read_seqcount_begin(&ei->shadow_i_size_lock);
 		need_set_dirty = offset > round_up(ei->i_size, PAGE_SIZE) &&
@@ -97,6 +95,8 @@ static int check_make_i_size_dirty(struct bch_inode_info *ei, loff_t offset)
 	if (offset > round_up(ei->i_size, PAGE_SIZE) &&
 	    !(ei->i_flags & BCH_INODE_I_SIZE_DIRTY)) {
 		struct cache_set *c = ei->vfs_inode.i_sb->s_fs_info;
+
+		BUG_ON(!atomic_long_read(&ei->i_size_dirty_count));
 
 		ret = __bch_write_inode(c, ei, inode_set_dirty, NULL);
 	}
@@ -930,6 +930,8 @@ static int __bch_writepage(struct page *page, struct writeback_control *wbc,
 	loff_t i_size = i_size_read(inode);
 	pgoff_t end_index = i_size >> PAGE_SHIFT;
 
+	EBUG_ON(!PageUptodate(page));
+
 	/* Is the page fully inside i_size? */
 	if (page->index < end_index)
 		goto do_io;
@@ -1729,6 +1731,7 @@ int bch_releasepage(struct page *page, gfp_t gfp_mask)
 {
 	BUG_ON(!PageLocked(page));
 	BUG_ON(PageWriteback(page));
+	BUG_ON(PageDirty(page));
 
 	bch_clear_page_bits(page);
 
