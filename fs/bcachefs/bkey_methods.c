@@ -61,6 +61,9 @@ const char *btree_bkey_invalid(struct cache_set *c, struct btree *b,
 	if (bkey_cmp(k.k->p, b->data->max_key) > 0)
 		return "key past end of btree node";
 
+	if (k.k->p.snapshot)
+		return "nonzero snapshot";
+
 	return bkey_invalid(c, btree_node_type(b), k);
 }
 
