@@ -237,6 +237,10 @@
 	VMLINUX_SYMBOL(__start___verbose) = .;                          \
 	KEEP(*(__verbose))                                              \
 	VMLINUX_SYMBOL(__stop___verbose) = .;				\
+	. = ALIGN(8);							\
+	VMLINUX_SYMBOL(__start___faults) = .;                           \
+	*(__faults)                                                     \
+	VMLINUX_SYMBOL(__stop___faults) = .;				\
 	LIKELY_PROFILE()		       				\
 	BRANCH_PROFILE()						\
 	TRACE_PRINTKS()							\
