@@ -1730,6 +1730,11 @@ config FAULT_INJECTION_STACKTRACE_FILTER
 	help
 	  Provide stacktrace filter for fault-injection capabilities
 
+config DYNAMIC_FAULT
+	bool "Enable dynamic fault support"
+	default n
+	depends on DEBUG_FS
+
 config ARCH_HAS_KCOV
 	bool
 	help
