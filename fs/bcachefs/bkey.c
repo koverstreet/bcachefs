@@ -632,9 +632,10 @@ const char *bch_bkey_format_validate(struct bkey_format *f)
 		if (f->bits_per_field[i] > 64)
 			return "invalid format: field too large";
 
-		if ((f->bits_per_field[i] == 64 && field_offset) ||
+		if (field_offset &&
+		    (f->bits_per_field[i] == 64 ||
 		    (field_offset + ((1ULL << f->bits_per_field[i]) - 1) <
-		     field_offset))
+		     field_offset)))
 			return "invalid format: offset + bits overflow";
 
 		bits += f->bits_per_field[i];
@@ -699,7 +700,7 @@ unsigned bkey_ffs(const struct bkey_format *format,
 	unsigned ret = 0, offset;
 
 	offset = nr_key_bits;
-	while (offset >= 64) {
+	while (offset > 64) {
 		p = next_word(p);
 		offset -= 64;
 	}
