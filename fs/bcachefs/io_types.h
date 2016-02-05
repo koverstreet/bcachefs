@@ -97,6 +97,8 @@ struct bch_write_op {
 		unsigned	journal_seq_ptr:1;
 		/* Internal */
 		unsigned	write_done:1;
+
+		unsigned	compression_type:4;
 	};
 	};
 

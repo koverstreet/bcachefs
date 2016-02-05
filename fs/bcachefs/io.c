@@ -852,7 +852,7 @@ static void bch_write_extent(struct bch_write_op *op,
 	struct bch_extent_ptr *ptr;
 	unsigned ptrs_from = 0;
 	unsigned csum_type = c->opts.data_checksum;
-	unsigned compression_type = c->opts.compression;
+	unsigned compression_type = op->compression_type;
 
 	/* don't refetch csum type/compression type */
 	barrier();
@@ -1217,6 +1217,7 @@ void bch_write_op_init(struct bch_write_op *op, struct cache_set *c,
 	op->cached	= (flags & BCH_WRITE_CACHED) != 0;
 	op->flush	= (flags & BCH_WRITE_FLUSH) != 0;
 	op->discard_on_error = (flags & BCH_WRITE_DISCARD_ON_ERROR) != 0;
+	op->compression_type = c->opts.compression;
 	op->wp		= wp;
 	op->journal_seq_ptr = journal_seq != NULL;
 
