@@ -1758,6 +1758,11 @@ config PROVIDE_OHCI1394_DMA_INIT
 
 	  See Documentation/debugging-via-ohci1394.txt for more information.
 
+config DYNAMIC_FAULT
+	bool "Enable dynamic fault support"
+	default n
+	depends on DEBUG_FS
+
 config DMA_API_DEBUG
 	bool "Enable debugging of DMA-API usage"
 	depends on HAVE_DMA_API_DEBUG
