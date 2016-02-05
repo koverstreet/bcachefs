@@ -37,8 +37,18 @@ struct cache_promote_op;
 
 struct extent_pick_ptr;
 
-void bch_read_extent(struct cache_set *, struct bio *, struct bkey_s_c,
-		     struct extent_pick_ptr *, unsigned, unsigned);
+void bch_read_extent_iter(struct cache_set *, struct bio *,
+			  struct bvec_iter, struct bkey_s_c k,
+			  struct extent_pick_ptr *,
+			  unsigned, unsigned);
+
+static inline void bch_read_extent(struct cache_set *c, struct bio *orig,
+				   struct bkey_s_c k,
+				   struct extent_pick_ptr *pick,
+				   unsigned skip, unsigned flags)
+{
+	bch_read_extent_iter(c, orig, orig->bi_iter, k, pick, skip, flags);
+}
 
 enum bch_read_flags {
 	BCH_READ_FORCE_BOUNCE		= 1 << 0,

@@ -9,7 +9,8 @@ struct i_size_update {
 	atomic_long_t		count;
 };
 
-#define I_SIZE_UPDATE_ENTRIES	4
+#define I_SIZE_UPDATE_ENTRIES_BITS	2
+#define I_SIZE_UPDATE_ENTRIES		(1 << I_SIZE_UPDATE_ENTRIES_BITS)
 
 struct bch_inode_info {
 	struct inode		vfs_inode;
