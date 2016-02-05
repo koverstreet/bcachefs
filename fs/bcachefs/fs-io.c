@@ -1759,6 +1759,12 @@ static long bch_fallocate(struct inode *inode, int mode,
 			goto err;
 		}
 
+		/* already reserved */
+		if (k.k->type == BCH_RESERVATION) {
+			bch_btree_iter_advance_pos(&iter);
+			continue;
+		}
+
 		if (bkey_extent_is_data(k.k)) {
 			if (!(mode & FALLOC_FL_ZERO_RANGE)) {
 				bch_btree_iter_advance_pos(&iter);
