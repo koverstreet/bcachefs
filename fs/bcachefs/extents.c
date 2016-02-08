@@ -1372,6 +1372,14 @@ static const char *bch_extent_invalid(const struct cache_set *c,
 					goto invalid;
 
 				size_ondisk = crc64.compressed_size;
+
+				reason = "invalid checksum type";
+				if (crc64.csum_type >= BCH_CSUM_NR)
+					goto invalid;
+
+				reason = "invalid compression type";
+				if (crc64.csum_type >= BCH_COMPRESSION_NR)
+					goto invalid;
 				break;
 			case BCH_EXTENT_ENTRY_ptr:
 				reason = extent_ptr_invalid(mi, &entry->ptr, size_ondisk);
