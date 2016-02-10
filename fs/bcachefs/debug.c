@@ -267,12 +267,6 @@ void bch_verify_inode_refs(struct cache_set *c)
 		}
 
 		cur_inum = k.k->p.inode;
-		i_mode = le16_to_cpu(inode.v.i_mode);
-
-		cache_set_inconsistent_on(!S_ISREG(i_mode) &&
-					  !S_ISDIR(i_mode), c,
-			"xattr for non file/directory, inode %llu mode %u",
-			k.k->p.inode, i_mode);
 	}
 	bch_btree_iter_unlock(&iter);
 }
