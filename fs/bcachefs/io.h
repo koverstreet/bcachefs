@@ -3,11 +3,13 @@
 
 #include "io_types.h"
 
+#include <linux/lz4.h>
 #include <linux/zlib.h>
 
 #define COMPRESSION_WORKSPACE_SIZE					\
-	max(zlib_deflate_workspacesize(MAX_WBITS, MAX_MEM_LEVEL),	\
-	    zlib_inflate_workspacesize())
+	max_t(size_t, zlib_deflate_workspacesize(MAX_WBITS, MAX_MEM_LEVEL),\
+	max_t(size_t, zlib_inflate_workspacesize(),			\
+		      LZ4HC_MEM_COMPRESS))
 
 #define to_bbio(_bio)		container_of((_bio), struct bbio, bio)
 

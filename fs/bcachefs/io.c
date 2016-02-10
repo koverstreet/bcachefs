@@ -22,6 +22,7 @@
 #include "super.h"
 
 #include <linux/blkdev.h>
+#include <linux/lz4.h>
 #include <linux/zlib.h>
 
 #include <trace/events/bcachefs.h>
@@ -71,7 +72,8 @@ static void bch_bio_free_pages_pool(struct cache_set *c, struct bio *bio)
 	unsigned i;
 
 	bio_for_each_segment_all(bv, bio, i)
-		mempool_free(bv->bv_page, &c->bio_bounce_pages);
+		if (bv->bv_page != ZERO_PAGE(0))
+			mempool_free(bv->bv_page, &c->bio_bounce_pages);
 }
 
 static void bch_bio_alloc_page_pool(struct cache_set *c, struct bio *bio,
@@ -217,6 +219,166 @@ static u32 checksum_bio(struct bio *bio, unsigned type)
 	return csum ^= U32_MAX;
 }
 
+static void memcpy_to_bio(struct bio *dst, struct bvec_iter dst_iter,
+			  void *src)
+{
+	struct bio_vec bv;
+	struct bvec_iter iter;
+
+	__bio_for_each_segment(bv, dst, iter, dst_iter) {
+		void *dstp = kmap_atomic(bv.bv_page);
+		memcpy(dstp + bv.bv_offset, src, bv.bv_len);
+		kunmap_atomic(dstp);
+
+		src += bv.bv_len;
+	}
+}
+
+static void memcpy_from_bio(void *dst, struct bio *src,
+			    struct bvec_iter src_iter)
+{
+	struct bio_vec bv;
+	struct bvec_iter iter;
+
+	__bio_for_each_segment(bv, src, iter, src_iter) {
+		void *srcp = kmap_atomic(bv.bv_page);
+		memcpy(dst, srcp + bv.bv_offset, bv.bv_len);
+		kunmap_atomic(srcp);
+
+		dst += bv.bv_len;
+	}
+}
+
+static void *__bio_map_or_bounce(struct bio *bio, struct bvec_iter start,
+				 unsigned *bounced, bool may_bounce)
+{
+	struct bio_vec bv;
+	struct bvec_iter iter;
+	unsigned nr_pages = 0;
+	struct page *stack_pages[4];
+	struct page **pages = NULL;
+	bool first = true;
+	unsigned prev_end = PAGE_SIZE;
+	void *data;
+
+	*bounced = 0;
+
+	__bio_for_each_segment(bv, bio, iter, start) {
+		if ((!first && bv.bv_offset) ||
+		    prev_end != PAGE_SIZE)
+			goto bounce;
+
+		prev_end = bv.bv_offset + bv.bv_len;
+		nr_pages++;
+	}
+
+	BUG_ON(DIV_ROUND_UP(start.bi_size, PAGE_SIZE) > nr_pages);
+
+	pages = nr_pages > ARRAY_SIZE(stack_pages)
+		? kmalloc_array(nr_pages, sizeof(struct page *), GFP_NOIO)
+		: stack_pages;
+	if (!pages)
+		return NULL;
+
+	nr_pages = 0;
+	__bio_for_each_segment(bv, bio, iter, start)
+		pages[nr_pages++] = bv.bv_page;
+
+	data = vmap(pages, nr_pages, VM_MAP, PAGE_KERNEL);
+	if (pages != stack_pages)
+		kfree(pages);
+
+	return data + bio_iter_offset(bio, start);
+bounce:
+	if (!may_bounce)
+		return NULL;
+
+	data = kmalloc(start.bi_size, GFP_NOIO);
+	if (!data)
+		return NULL;
+
+	*bounced = 1;
+	memcpy_from_bio(data, bio, start);
+
+	return data;
+}
+
+static void *bio_map_or_bounce(struct bio *bio, unsigned *bounced, bool may_bounce)
+{
+	return __bio_map_or_bounce(bio, bio->bi_iter, bounced, may_bounce);
+}
+
+static void bio_unmap_or_unbounce(void *data, unsigned bounced)
+{
+	if (!data)
+		return;
+	else if (bounced)
+		kfree(data);
+	else
+		vunmap((void *) ((unsigned long) data & PAGE_MASK));
+}
+
+static struct bio *bio_compress_lz4(struct cache_set *c,
+				    struct bio *src,
+				    unsigned output_available,
+				    int *input_consumed)
+{
+	struct bio *dst;
+	void *src_data = NULL, *dst_data = NULL;
+	unsigned src_bounced, dst_bounced;
+	struct page *workmem = NULL;
+	size_t compressed_size;
+	int ret = -1;
+
+	/*
+	 * XXX: due to the way the interface to lzo1x_1_compress works, we can't
+	 * consume more than output_available bytes of input (even though a lot
+	 * more might fit after compressing)
+	 */
+	dst = bio_alloc_bioset(GFP_NOIO,
+		DIV_ROUND_UP(lz4_compressbound(output_available), PAGE_SIZE),
+		&c->bio_write);
+
+	bch_bio_alloc_pages_pool(c, dst, lz4_compressbound(output_available));
+
+	src_data = bio_map_or_bounce(src, &src_bounced, true);
+	if (!src_data)
+		goto err;
+
+	dst_data = bio_map_or_bounce(dst, &dst_bounced, false);
+	if (!src_data)
+		goto err;
+
+	workmem = mempool_alloc(&c->compression_workspace_pool, GFP_NOIO);
+
+	ret = lz4_compress(src_data, output_available,
+			   dst_data, &compressed_size,
+			   page_address(workmem));
+	if (ret)
+		goto err;
+
+	BUG_ON(!compressed_size);
+
+	dst->bi_iter.bi_size = compressed_size;
+	*input_consumed = output_available;
+out:
+	mempool_free(workmem, &c->compression_workspace_pool);
+	bio_unmap_or_unbounce(dst_data, dst_bounced);
+	bio_unmap_or_unbounce(src_data, src_bounced);
+
+	if (!ret)
+		while (dst->bi_vcnt * PAGE_SIZE >
+		       round_up(dst->bi_iter.bi_size, PAGE_SIZE))
+			mempool_free(dst->bi_io_vec[--dst->bi_vcnt].bv_page,
+				     &c->bio_bounce_pages);
+
+	return dst;
+err:
+	ret = -1;
+	*input_consumed = -1;
+	goto out;
+}
+
 static int bio_compress_gzip(struct cache_set *c, struct bio *dst,
 			     struct bio *src, unsigned output_available)
 {
@@ -227,8 +389,6 @@ static int bio_compress_gzip(struct cache_set *c, struct bio *dst,
 	void *k_in = NULL;
 	bool using_mempool = false;
 	int ret;
-
-	BUG_ON(dst->bi_iter.bi_size);
 
 	workspace = mempool_alloc(&c->compression_workspace_pool, GFP_NOIO);
 	strm.workspace = page_address(workspace);
@@ -320,11 +480,12 @@ err:
 	goto out;
 }
 
-static unsigned bio_compress(struct cache_set *c, struct bio *dst,
-			     struct bio *src, unsigned *compression_type,
-			     unsigned output_available)
+static struct bio *bio_compress(struct cache_set *c, struct bio *src,
+				unsigned *compression_type,
+				unsigned output_available)
 {
-	int ret = 0;
+	struct bio *dst = NULL;
+	int input_consumed;
 
 	/* if it's only one block, don't bother trying to compress: */
 	if (bio_sectors(src) <= c->sb.block_size)
@@ -334,30 +495,29 @@ static unsigned bio_compress(struct cache_set *c, struct bio *dst,
 	case BCH_COMPRESSION_NONE:
 		/* Just bounce it, for stable checksums: */
 copy:
+		if (!dst)
+			dst = bio_alloc_bioset(GFP_NOIO,
+				DIV_ROUND_UP(output_available, PAGE_SIZE),
+				&c->bio_write);
 		bch_bio_alloc_pages_pool(c, dst, output_available);
 		bio_copy_data(dst, src);
-		return output_available;
-	case BCH_COMPRESSION_LZO1X:
-		BUG();
-	case BCH_COMPRESSION_GZIP:
-		ret = bio_compress_gzip(c, dst, src, output_available);
+		input_consumed = output_available;
+		goto advance;
+	case BCH_COMPRESSION_LZ4:
+		dst = bio_compress_lz4(c, src, output_available, &input_consumed);
 		break;
-	case BCH_COMPRESSION_XZ:
-		BUG();
+	case BCH_COMPRESSION_GZIP:
+		dst = bio_alloc_bioset(GFP_NOIO,
+			DIV_ROUND_UP(output_available, PAGE_SIZE),
+			&c->bio_write);
+		input_consumed = bio_compress_gzip(c, dst, src, output_available);
+		break;
 	default:
 		BUG();
 	}
 
-	if (ret < 0) {
-		/* Failed to compress (didn't get smaller): */
-		*compression_type = BCH_COMPRESSION_NONE;
-		goto copy;
-	}
-
-	BUG_ON(ret & ((1 << (c->block_bits + 9)) - 1));
-
-	if (DIV_ROUND_UP(dst->bi_iter.bi_size, block_bytes(c)) >=
-	    ret >> (c->block_bits + 9)) {
+	if ((int) round_up(dst->bi_iter.bi_size,
+			   block_bytes(c)) >= input_consumed) {
 		/* Failed to compress (didn't get smaller): */
 		*compression_type = BCH_COMPRESSION_NONE;
 		goto copy;
@@ -383,8 +543,10 @@ copy:
 
 		dst->bi_iter.bi_size += bytes;
 	}
+advance:
+	bio_advance(src, input_consumed);
 
-	return ret;
+	return dst;
 }
 
 static void __bch_write(struct closure *);
@@ -701,7 +863,8 @@ static void bch_write_extent(struct bch_write_op *op,
 	if (csum_type != BCH_CSUM_NONE ||
 	    compression_type != BCH_COMPRESSION_NONE) {
 		/* all units here in bytes */
-		unsigned output_available, input_available, input_consumed;
+		unsigned output_available, extra_input,
+			 orig_input = orig->bi_iter.bi_size;
 		u64 csum;
 
 		BUG_ON(bio_sectors(orig) != k->k.size);
@@ -711,30 +874,30 @@ static void bch_write_extent(struct bch_write_op *op,
 				   min(ob->sectors_free,
 				       CRC32_EXTENT_SIZE_MAX)) << 9;
 
-		input_available = min(orig->bi_iter.bi_size,
-				      CRC32_EXTENT_SIZE_MAX << 9);
-
 		/*
 		 * temporarily set input bio's size to the max we want to
 		 * consume from it, in order to avoid overflow in the crc info
 		 */
-		swap(orig->bi_iter.bi_size, input_available);
+		extra_input = orig->bi_iter.bi_size > CRC32_EXTENT_SIZE_MAX << 9
+			? orig->bi_iter.bi_size - (CRC32_EXTENT_SIZE_MAX << 9)
+			: 0;
+		orig->bi_iter.bi_size -= extra_input;
 
-		bio = bio_alloc_bioset(GFP_NOIO,
-				DIV_ROUND_UP(output_available, PAGE_SIZE),
-				&c->bio_write);
+		bio = bio_compress(c, orig,
+				   &compression_type,
+				   output_available);
+
+		orig->bi_iter.bi_size += extra_input;
+
 		wbio			= to_wbio(bio);
 		wbio->orig		= NULL;
 		wbio->bounce		= true;
 
-		input_consumed = bio_compress(c, bio, orig,
-					      &compression_type,
-					      output_available);
-
-		swap(orig->bi_iter.bi_size, input_available);
-
-		bch_key_resize(&k->k, input_consumed >> 9);
-		bio_advance(orig, input_consumed);
+		/*
+		 * Set the (uncompressed) size of the key we're creating to the
+		 * number of sectors we consumed from orig:
+		 */
+		bch_key_resize(&k->k, (orig_input - orig->bi_iter.bi_size) >> 9);
 
 		/*
 		 * XXX: could move checksumming out from under the open
@@ -853,10 +1016,6 @@ static void __bch_write(struct closure *cl)
 
 		op->open_buckets[open_bucket_nr++] = b;
 
-		/*
-		 * XXX: if we compressed, we didn't use all the space we just
-		 * allocated
-		 */
 		bch_write_extent(op, b, k, bio);
 		bch_cut_front(k->k.p, &op->insert_key);
 
@@ -1206,6 +1365,38 @@ static void bch_read_requeue(struct cache_set *c, struct bio *bio)
 	queue_work(c->wq, &c->read_race_work);
 }
 
+static int bio_uncompress_lz4(struct cache_set *c,
+			      struct bio *dst, struct bvec_iter dst_iter,
+			      struct bio *src, struct bvec_iter src_iter,
+			      unsigned skip, unsigned uncompressed_size)
+{
+	void *src_data = NULL, *dst_data = NULL;
+	unsigned src_bounced;
+	size_t src_len = src_iter.bi_size;
+	size_t dst_len = uncompressed_size;
+	int ret = -ENOMEM;
+
+	src_data = __bio_map_or_bounce(src, src_iter, &src_bounced, true);
+	if (!src_data)
+		goto err;
+
+	dst_data = kmalloc(uncompressed_size, GFP_NOIO);
+	if (!dst_data)
+		goto err;
+
+	ret = lz4_decompress(src_data, &src_len,
+			     dst_data, dst_len);
+
+	if (ret)
+		goto err;
+
+	memcpy_to_bio(dst, dst_iter, dst_data + skip);
+err:
+	kfree(dst_data);
+	bio_unmap_or_unbounce(src_data, src_bounced);
+	return ret;
+}
+
 static int bio_uncompress_gzip(struct cache_set *c,
 			       struct bio *dst, struct bvec_iter dst_iter,
 			       struct bio *src, struct bvec_iter src_iter,
@@ -1299,8 +1490,14 @@ static int bio_checksum_uncompress(struct bch_read_bio *rbio)
 					   bio, bio->bi_iter);
 		}
 		break;
-	case BCH_COMPRESSION_LZO1X:
-		BUG();
+	case BCH_COMPRESSION_LZ4:
+		ret = bio_uncompress_lz4(rbio->c,
+					 rbio->parent,
+					 rbio->parent_iter,
+					 bio, bio->bi_iter,
+					 rbio->offset << 9,
+					 rbio->uncompressed_size << 9);
+		break;
 	case BCH_COMPRESSION_GZIP:
 		ret = bio_uncompress_gzip(rbio->c,
 					  rbio->parent,
@@ -1308,8 +1505,6 @@ static int bio_checksum_uncompress(struct bch_read_bio *rbio)
 					  bio, bio->bi_iter,
 					  rbio->offset << 9);
 		break;
-	case BCH_COMPRESSION_XZ:
-		BUG();
 	default:
 		BUG();
 	}

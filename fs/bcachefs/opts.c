@@ -30,9 +30,8 @@ const char * const bch_csum_types[] = {
 
 const char * const bch_compression_types[] = {
 	"none",
-	"lzo1x",
+	"lz4",
 	"gzip",
-	"xz",
 	NULL
 };
 
