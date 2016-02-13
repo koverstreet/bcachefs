@@ -1558,7 +1558,13 @@ static int bch_btree_split_leaf(struct btree_iter *iter, unsigned flags)
 	struct btree *b = iter->nodes[0];
 	struct btree_reserve *reserve;
 	struct async_split *as;
-	int ret;
+	int ret = -EINTR;
+
+	/* Hack, because gc and splitting nodes doesn't mix yet: */
+	if (!down_read_trylock(&c->gc_lock)) {
+		bch_btree_iter_unlock(iter);
+		down_read(&c->gc_lock);
+	}
 
 	/*
 	 * XXX: figure out how far we might need to split,
@@ -1566,26 +1572,27 @@ static int bch_btree_split_leaf(struct btree_iter *iter, unsigned flags)
 	 */
 	iter->locks_want = BTREE_MAX_DEPTH;
 	if (!bch_btree_iter_upgrade(iter))
-		return -EINTR;
+		goto out_unlock;
 
 	reserve = bch_btree_reserve_get(c, b, iter, 0,
 					!(flags & BTREE_INSERT_NOFAIL));
-	if (IS_ERR(reserve))
-		return PTR_ERR(reserve);
+	if (IS_ERR(reserve)) {
+		ret = PTR_ERR(reserve);
+		goto out_unlock;
+	}
 
 	as = bch_async_split_alloc(b, iter);
 	if (!as) {
-		bch_btree_reserve_put(c, reserve);
-		return -EIO;
+		ret = -EIO;
+		goto out_put_reserve;
 	}
 
-	/* Hack, because gc and splitting nodes doesn't mix yet: */
-	down_read(&c->gc_lock);
 	ret = btree_split(b, iter, NULL, reserve, as);
-	up_read(&c->gc_lock);
 
+out_put_reserve:
 	bch_btree_reserve_put(c, reserve);
-
+out_unlock:
+	up_read(&c->gc_lock);
 	return ret;
 }
 
