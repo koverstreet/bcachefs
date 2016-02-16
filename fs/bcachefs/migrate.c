@@ -51,6 +51,7 @@ static int issue_migration_move(struct cache *ca,
 			  &c->migration_write_point,
 			  k, &io->replace.hook, NULL,
 			  BCH_WRITE_CHECK_ENOSPC);
+	io->op.nr_replicas = 1;
 
 	io->op.io_wq = q->wq;
 

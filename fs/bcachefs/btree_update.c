@@ -255,6 +255,7 @@ retry:
 
 	ob = bch_alloc_sectors(c, &c->btree_write_point,
 			       bkey_i_to_extent(&tmp.k),
+			       c->opts.metadata_replicas,
 			       check_enospc, cl);
 	if (IS_ERR(ob))
 		return ERR_CAST(ob);

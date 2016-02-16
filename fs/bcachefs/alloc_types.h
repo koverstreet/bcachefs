@@ -73,12 +73,6 @@ struct write_point {
 	bool			throttle;
 
 	/*
-	 * If 0, use the desired replica count for the cache set.
-	 * Otherwise, this is the number of replicas desired (generally 1).
-	 */
-	unsigned		nr_replicas;
-
-	/*
 	 * Bucket reserve to allocate from.
 	 */
 	enum alloc_reserve	reserve;

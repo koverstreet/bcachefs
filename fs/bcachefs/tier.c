@@ -227,6 +227,7 @@ static int issue_tiering_move(struct moving_queue *q,
 			  bkey_i_to_s_c(&io->key),
 			  &io->replace.hook, NULL, 0);
 	io->op.io_wq = q->wq;
+	io->op.nr_replicas = 1;
 
 	trace_bcache_tiering_copy(k.k);
 

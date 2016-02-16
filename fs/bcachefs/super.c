@@ -1938,12 +1938,10 @@ static const char *cache_alloc(struct bcache_superblock *sb,
 	pr_debug("%zu buckets reserved", total_reserve);
 
 	for (i = 0; i < ARRAY_SIZE(ca->gc_buckets); i++) {
-		ca->gc_buckets[i].nr_replicas = 1;
 		ca->gc_buckets[i].reserve = RESERVE_MOVINGGC;
 		ca->gc_buckets[i].group = &ca->self;
 	}
 
-	ca->tiering_write_point.nr_replicas = 1;
 	ca->tiering_write_point.reserve = RESERVE_NONE;
 	ca->tiering_write_point.group = &ca->self;
 

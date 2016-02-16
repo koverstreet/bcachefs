@@ -65,6 +65,7 @@ static int issue_moving_gc_move(struct moving_queue *q,
 			  &io->replace.hook, NULL,
 			  bkey_extent_is_cached(&k->k)
 			  ? BCH_WRITE_CACHED : 0);
+	io->op.nr_replicas = 1;
 
 	e = bkey_i_to_s_extent(&io->op.insert_key);
 

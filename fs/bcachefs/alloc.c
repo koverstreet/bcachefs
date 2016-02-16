@@ -1256,6 +1256,7 @@ static struct open_bucket *lock_writepoint(struct cache_set *c,
 
 static struct open_bucket *lock_and_refill_writepoint(struct cache_set *c,
 						      struct write_point *wp,
+						      unsigned nr_replicas,
 						      bool check_enospc,
 						      struct closure *cl)
 {
@@ -1263,10 +1264,6 @@ static struct open_bucket *lock_and_refill_writepoint(struct cache_set *c,
 	unsigned open_buckets_reserved = allocation_is_metadata(wp->reserve)
 		? 0
 		: BTREE_NODE_RESERVE;
-	unsigned nr_replicas = wp->nr_replicas ?:
-		allocation_is_metadata(wp->reserve)
-		? c->opts.metadata_replicas
-		: c->opts.data_replicas;
 
 	BUG_ON(!wp->group);
 	BUG_ON(!wp->reserve);
@@ -1366,12 +1363,13 @@ static void verify_not_stale(struct cache_set *c, const struct open_bucket *ob)
  */
 struct open_bucket *bch_alloc_sectors_start(struct cache_set *c,
 					    struct write_point *wp,
+					    unsigned nr_replicas,
 					    bool check_enospc,
 					    struct closure *cl)
 {
 	struct open_bucket *ob;
 
-	ob = lock_and_refill_writepoint(c, wp, check_enospc, cl);
+	ob = lock_and_refill_writepoint(c, wp, nr_replicas, check_enospc, cl);
 	if (IS_ERR_OR_NULL(ob))
 		return ob;
 
@@ -1387,17 +1385,18 @@ struct open_bucket *bch_alloc_sectors_start(struct cache_set *c,
  */
 void bch_alloc_sectors_done(struct cache_set *c, struct write_point *wp,
 			    struct bkey_i_extent *e, struct open_bucket *ob,
-			    unsigned sectors)
+			    unsigned sectors, unsigned nr_replicas)
 {
 	struct bch_extent_ptr *ptr;
 	struct cache *ca;
 	unsigned i;
 
+	BUG_ON(nr_replicas > ob->nr_ptrs);
 	/*
 	 * We're keeping any existing pointer k has, and appending new pointers:
 	 * __bch_write() will only write to the pointers we add here:
 	 */
-	for (i = 0; i < ob->nr_ptrs; i++) {
+	for (i = 0; i < nr_replicas; i++) {
 		struct bch_extent_ptr p = ob->ptrs[i];
 
 		p.offset += ob->ptr_offset[i];
@@ -1442,19 +1441,20 @@ void bch_alloc_sectors_done(struct cache_set *c, struct write_point *wp,
 struct open_bucket *bch_alloc_sectors(struct cache_set *c,
 				      struct write_point *wp,
 				      struct bkey_i_extent *e,
+				      unsigned nr_replicas,
 				      bool check_enospc,
 				      struct closure *cl)
 {
 	struct open_bucket *ob;
 
-	ob = bch_alloc_sectors_start(c, wp, check_enospc, cl);
+	ob = bch_alloc_sectors_start(c, wp, nr_replicas, check_enospc, cl);
 	if (IS_ERR_OR_NULL(ob))
 		return ob;
 
 	if (e->k.size > ob->sectors_free)
 		bch_key_resize(&e->k, ob->sectors_free);
 
-	bch_alloc_sectors_done(c, wp, e, ob, e->k.size);
+	bch_alloc_sectors_done(c, wp, e, ob, e->k.size, nr_replicas);
 
 	return ob;
 }
@@ -1751,11 +1751,9 @@ void bch_open_buckets_init(struct cache_set *c)
 		seqcount_init(&c->cache_tiers[i].lock);
 
 	c->promote_write_point.group = &c->cache_tiers[0];
-	c->promote_write_point.nr_replicas = 1;
 	c->promote_write_point.reserve = RESERVE_NONE;
 
 	c->migration_write_point.group = &c->cache_all;
-	c->migration_write_point.nr_replicas = 1;
 	c->migration_write_point.reserve = RESERVE_NONE;
 
 	c->btree_write_point.group = &c->cache_tiers[0];

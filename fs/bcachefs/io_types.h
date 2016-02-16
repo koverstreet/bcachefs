@@ -99,6 +99,7 @@ struct bch_write_op {
 		unsigned	write_done:1;
 
 		unsigned	compression_type:4;
+		unsigned	nr_replicas:4;
 	};
 	};
 

@@ -923,7 +923,9 @@ static void bch_write_extent(struct bch_write_op *op,
 				       compression_type,
 				       csum, csum_type);
 
-		bch_alloc_sectors_done(op->c, op->wp, e, ob, bio_sectors(bio));
+		bch_alloc_sectors_done(op->c, op->wp, e, ob,
+				       bio_sectors(bio),
+				       op->nr_replicas);
 	} else {
 		if (k->k.size > ob->sectors_free)
 			bch_key_resize(&k->k, ob->sectors_free);
@@ -935,7 +937,8 @@ static void bch_write_extent(struct bch_write_op *op,
 		extent_checksum_append(e, k->k.size, k->k.size,
 				       compression_type, 0, csum_type);
 
-		bch_alloc_sectors_done(op->c, op->wp, e, ob, k->k.size);
+		bch_alloc_sectors_done(op->c, op->wp, e, ob, k->k.size,
+				       op->nr_replicas);
 
 		bio = bio_next_split(orig, k->k.size, GFP_NOIO,
 				     &op->c->bio_write);
@@ -999,6 +1002,7 @@ static void __bch_write(struct closure *cl)
 		bkey_copy(k, &op->insert_key);
 
 		b = bch_alloc_sectors_start(op->c, op->wp,
+					    op->nr_replicas,
 					    op->check_enospc,
 					    op->nowait ? NULL : cl);
 		BUG_ON(!b);
@@ -1220,6 +1224,7 @@ void bch_write_op_init(struct bch_write_op *op, struct cache_set *c,
 	op->flush	= (flags & BCH_WRITE_FLUSH) != 0;
 	op->discard_on_error = (flags & BCH_WRITE_DISCARD_ON_ERROR) != 0;
 	op->compression_type = c->opts.compression;
+	op->nr_replicas	= c->opts.data_replicas;
 	op->wp		= wp;
 	op->journal_seq_ptr = journal_seq != NULL;
 
@@ -1339,6 +1344,7 @@ void __cache_promote(struct cache_set *c, struct bbio *orig_bio,
 			  new, old,
 			  BCH_WRITE_CHECK_ENOSPC|
 			  BCH_WRITE_ALLOC_NOWAIT|write_flags);
+	op->iop.nr_replicas = 1;
 
 	//bch_cut_front(bkey_start_pos(&orig_bio->key.k), &op->iop.insert_key);
 	//bch_cut_back(orig_bio->key.k.p, &op->iop.insert_key.k);
