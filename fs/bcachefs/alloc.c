@@ -554,12 +554,10 @@ static bool bch_can_invalidate_bucket(struct cache *ca, struct bucket *g)
 	if (!is_available_bucket(READ_ONCE(g->mark)))
 		return false;
 
-	if (!can_inc_bucket_gen(ca, g)) {
+	if (bucket_gc_gen(ca, g) >= BUCKET_GC_GEN_MAX - 1)
 		ca->inc_gen_needs_gc++;
-		return false;
-	}
 
-	return true;
+	return can_inc_bucket_gen(ca, g);
 }
 
 static void __bch_invalidate_one_bucket(struct cache *ca, struct bucket *g)
