@@ -20,10 +20,12 @@ struct open_bucket *bch_alloc_sectors_start(struct cache_set *,
 					    struct write_point *,
 					    bool, struct closure *);
 void bch_alloc_sectors_done(struct cache_set *, struct write_point *,
-			    struct bkey_i *, struct open_bucket *, unsigned);
+			    struct bkey_i_extent *, struct open_bucket *,
+			    unsigned);
 
 struct open_bucket *bch_alloc_sectors(struct cache_set *, struct write_point *,
-				      struct bkey_i *, bool, struct closure *);
+				      struct bkey_i_extent *, bool,
+				      struct closure *);
 
 static inline void bch_wake_allocator(struct cache *ca)
 {

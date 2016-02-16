@@ -1162,8 +1162,12 @@ static struct open_bucket *bch_open_bucket_get(struct cache_set *c,
 		ret = list_first_entry(&c->open_buckets_free,
 				       struct open_bucket, list);
 		list_move(&ret->list, &c->open_buckets_open);
-		atomic_set(&ret->pin, 1);
 		BUG_ON(ret->nr_ptrs);
+
+		atomic_set(&ret->pin, 1); /* XXX */
+		ret->ptr_offset		= 0;
+		ret->sectors_free	= 0;
+
 		c->open_buckets_nr_free--;
 		trace_bcache_open_bucket_alloc(c, cl);
 	} else {
@@ -1181,72 +1185,51 @@ static struct open_bucket *bch_open_bucket_get(struct cache_set *c,
 	return ret;
 }
 
-/*
- * returning NULL means we raced:
- */
-static struct open_bucket *bch_open_bucket_alloc(struct cache_set *c,
-						 struct write_point *wp,
-						 bool check_enospc,
-						 struct closure *cl)
+/* Sector allocator */
+
+static unsigned ob_ptr_sectors_free(struct open_bucket *ob,
+				    struct cache_member_rcu *mi,
+				    struct bch_extent_ptr *ptr)
 {
-	int ret;
-	struct open_bucket *ob;
-	struct bch_extent_ptr *ptr;
-	struct cache *ca;
-	unsigned open_buckets_reserved = allocation_is_metadata(wp->reserve)
-		? 0
-		: BTREE_NODE_RESERVE;
-	unsigned nr_replicas = wp->nr_replicas ?:
-		allocation_is_metadata(wp->reserve)
-		? c->opts.metadata_replicas
-		: c->opts.data_replicas;
+	unsigned bucket_size = mi->m[ptr->dev].bucket_size;
+	unsigned used = (ptr->offset & (bucket_size - 1)) +
+		ob->ptr_offset;
 
-	BUG_ON(!wp->group);
-	BUG_ON(!wp->reserve);
+	BUG_ON(used > bucket_size);
 
-	ob = bch_open_bucket_get(c, open_buckets_reserved, cl);
-	if (IS_ERR(ob))
-		return ob;
-
-	mutex_lock(&ob->lock);
-
-	/*
-	 * We point the write point at the open_bucket before doing the
-	 * allocation to avoid a race with shutdown:
-	 */
-
-	if (race_fault() ||
-	    cmpxchg(&wp->b, NULL, ob) != NULL) {
-		mutex_unlock(&ob->lock);
-		bch_open_bucket_put(c, ob);
-		return NULL;
-	}
-
-	ret = bch_bucket_alloc_set(c, ob, wp->reserve, nr_replicas,
-				   wp->group, check_enospc, cl);
-
-	if (ret) {
-		BUG_ON(xchg(&wp->b, NULL) != ob);
-		mutex_unlock(&ob->lock);
-		bch_open_bucket_put(c, ob);
-		return ERR_PTR(ret);
-	}
-
-	ob->sectors_free = UINT_MAX;
-
-	rcu_read_lock();
-
-	/* This is still wrong - we waste space with different sized buckets */
-	open_bucket_for_each_online_device(c, ob, ptr, ca)
-		ob->sectors_free = min_t(unsigned, ob->sectors_free,
-					ca->mi.bucket_size);
-
-	rcu_read_unlock();
-
-	return ob;
+	return bucket_size - used;
 }
 
-/* Sector allocator */
+static void open_bucket_recalc_sectors_free(struct cache_set *c,
+					    struct open_bucket *ob)
+{
+	struct cache_member_rcu *mi = cache_member_info_get(c);
+	unsigned i, sectors_free = UINT_MAX;
+
+	for (i = 0; i < ob->nr_ptrs; i++)
+		sectors_free = min(sectors_free,
+				   ob_ptr_sectors_free(ob, mi, &ob->ptrs[i]));
+
+	cache_member_info_put();
+
+	if (sectors_free != UINT_MAX)
+		ob->sectors_free = sectors_free;
+}
+
+static bool open_bucket_has_unused_data(struct cache_set *c, struct open_bucket *ob)
+{
+	struct cache_member_rcu *mi = cache_member_info_get(c);
+	unsigned i;
+
+	for (i = 0; i < ob->nr_ptrs; i++)
+		if (ob_ptr_sectors_free(ob, mi, &ob->ptrs[i])) {
+			cache_member_info_put();
+			return true;
+		}
+	cache_member_info_put();
+
+	return false;
+}
 
 static struct open_bucket *lock_writepoint(struct cache_set *c,
 					   struct write_point *wp)
@@ -1270,15 +1253,91 @@ static struct open_bucket *lock_and_refill_writepoint(struct cache_set *c,
 						      struct closure *cl)
 {
 	struct open_bucket *ob;
+	unsigned open_buckets_reserved = allocation_is_metadata(wp->reserve)
+		? 0
+		: BTREE_NODE_RESERVE;
+	unsigned nr_replicas = wp->nr_replicas ?:
+		allocation_is_metadata(wp->reserve)
+		? c->opts.metadata_replicas
+		: c->opts.data_replicas;
+
+	BUG_ON(!wp->group);
+	BUG_ON(!wp->reserve);
+	BUG_ON(!nr_replicas);
 
 	while (1) {
 		ob = lock_writepoint(c, wp);
-		if (ob)
+
+		if (!ob || (!ob->sectors_free && ob->nr_ptrs)) {
+			struct open_bucket *new_ob;
+
+			new_ob = bch_open_bucket_get(c, open_buckets_reserved, cl);
+			if (IS_ERR(new_ob))
+				return new_ob;
+
+			mutex_lock(&new_ob->lock);
+
+			/*
+			 * We point the write point at the open_bucket before doing the
+			 * allocation to avoid a race with shutdown:
+			 */
+			if (race_fault() ||
+			    cmpxchg(&wp->b, ob, new_ob) != ob) {
+				mutex_unlock(&new_ob->lock);
+				bch_open_bucket_put(c, new_ob);
+
+				if (ob)
+					mutex_unlock(&ob->lock);
+				continue;
+			}
+
+			/*
+			 * Since different devices can have different sized buckets, we
+			 * won't necessarily fill up all the buckets an open_bucket
+			 * points to at the same time. We can't drop pointers from an
+			 * open_bucket, because they're needed for mark and sweep GC -
+			 * we have to allocate a new open_bucket and copy the partially
+			 * used pointers from the old one:
+			 */
+			if (ob) {
+				struct cache_member_rcu *mi = cache_member_info_get(c);
+				unsigned i;
+
+				for (i = 0; i < ob->nr_ptrs; i++)
+					if (ob_ptr_sectors_free(ob, mi, &ob->ptrs[i])) {
+						struct bch_extent_ptr tmp = ob->ptrs[i];
+
+						tmp.offset += ob->ptr_offset;
+						new_ob->ptrs[new_ob->nr_ptrs++] = tmp;
+					}
+				cache_member_info_put();
+
+				mutex_unlock(&ob->lock);
+				bch_open_bucket_put(c, ob);
+			}
+
+			ob = new_ob;
+		}
+
+		if (ob->nr_ptrs < nr_replicas) {
+			int ret;
+
+			ret = bch_bucket_alloc_set(c, ob, wp->reserve, nr_replicas,
+						   wp->group, check_enospc, cl);
+
+			if (ret) {
+				mutex_unlock(&ob->lock);
+				return ERR_PTR(ret);
+			}
+
+			open_bucket_recalc_sectors_free(c, ob);
+		}
+
+		/* perhaps we raced with a device shutting down: */
+		if (ob->sectors_free)
 			return ob;
 
-		ob = bch_open_bucket_alloc(c, wp, check_enospc, cl);
-		if (ob)
-			return ob;
+		mutex_unlock(&ob->lock);
 	}
 }
 
@@ -1320,7 +1379,7 @@ struct open_bucket *bch_alloc_sectors_start(struct cache_set *c,
  * as allocated out of @ob
  */
 void bch_alloc_sectors_done(struct cache_set *c, struct write_point *wp,
-			    struct bkey_i *k, struct open_bucket *ob,
+			    struct bkey_i_extent *e, struct open_bucket *ob,
 			    unsigned sectors)
 {
 	struct bch_extent_ptr *ptr;
@@ -1331,18 +1390,20 @@ void bch_alloc_sectors_done(struct cache_set *c, struct write_point *wp,
 	 * We're keeping any existing pointer k has, and appending new pointers:
 	 * __bch_write() will only write to the pointers we add here:
 	 */
-	for (i = 0; i < ob->nr_ptrs; i++)
-		extent_ptr_append(bkey_i_to_extent(k), ob->ptrs[i]);
+	for (i = 0; i < ob->nr_ptrs; i++) {
+		struct bch_extent_ptr p = ob->ptrs[i];
+
+		p.offset += ob->ptr_offset;
+		extent_ptr_append(e, p);
+	}
 
 	ob->sectors_free -= sectors;
-	if (ob->sectors_free)
-		atomic_inc(&ob->pin);
-	else
+	ob->ptr_offset   += sectors;
+	if (!ob->sectors_free &&
+	    !open_bucket_has_unused_data(c, ob))
 		BUG_ON(xchg(&wp->b, NULL) != ob);
-
-	if (ob->sectors_free)
-		for (ptr = ob->ptrs; ptr < ob->ptrs + ob->nr_ptrs; ptr++)
-			ptr->offset += sectors;
+	else
+		atomic_inc(&ob->pin);
 
 	rcu_read_lock();
 	open_bucket_for_each_online_device(c, ob, ptr, ca)
@@ -1371,7 +1432,7 @@ void bch_alloc_sectors_done(struct cache_set *c, struct write_point *wp,
  */
 struct open_bucket *bch_alloc_sectors(struct cache_set *c,
 				      struct write_point *wp,
-				      struct bkey_i *k,
+				      struct bkey_i_extent *e,
 				      bool check_enospc,
 				      struct closure *cl)
 {
@@ -1381,10 +1442,10 @@ struct open_bucket *bch_alloc_sectors(struct cache_set *c,
 	if (IS_ERR_OR_NULL(ob))
 		return ob;
 
-	if (k->k.size > ob->sectors_free)
-		bch_key_resize(&k->k, ob->sectors_free);
+	if (e->k.size > ob->sectors_free)
+		bch_key_resize(&e->k, ob->sectors_free);
 
-	bch_alloc_sectors_done(c, wp, k, ob, k->k.size);
+	bch_alloc_sectors_done(c, wp, e, ob, e->k.size);
 
 	return ob;
 }
