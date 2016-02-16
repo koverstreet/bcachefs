@@ -989,6 +989,9 @@ static struct cache *bch_next_cache(struct cache_set *c,
 	return NULL;
 }
 
+/*
+ * XXX: change the alloc_group to explicitly round robin across devices
+ */
 static enum bucket_alloc_ret __bch_bucket_alloc_set(struct cache_set *c,
 						    struct open_bucket *ob,
 						    enum alloc_reserve reserve,
@@ -998,14 +1001,17 @@ static enum bucket_alloc_ret __bch_bucket_alloc_set(struct cache_set *c,
 {
 	long caches_used[BITS_TO_LONGS(MAX_CACHES_PER_SET)];
 	enum bucket_alloc_ret ret;
+	unsigned i;
 
 	BUG_ON(nr_replicas <= 0 || nr_replicas > BCH_REPLICAS_MAX);
 
 	if (!devs->nr_devices)
 		return CACHE_SET_FULL;
 
-	ob->nr_ptrs = 0;
 	memset(caches_used, 0, sizeof(caches_used));
+
+	for (i = 0; i < ob->nr_ptrs; i++)
+		__set_bit(ob->ptrs[i].dev, caches_used);
 
 	rcu_read_lock();
 
@@ -1165,7 +1171,7 @@ static struct open_bucket *bch_open_bucket_get(struct cache_set *c,
 		BUG_ON(ret->nr_ptrs);
 
 		atomic_set(&ret->pin, 1); /* XXX */
-		ret->ptr_offset		= 0;
+		memset(ret->ptr_offset, 0, sizeof(ret->ptr_offset));
 		ret->sectors_free	= 0;
 
 		c->open_buckets_nr_free--;
@@ -1191,9 +1197,10 @@ static unsigned ob_ptr_sectors_free(struct open_bucket *ob,
 				    struct cache_member_rcu *mi,
 				    struct bch_extent_ptr *ptr)
 {
+	unsigned i = ptr - ob->ptrs;
 	unsigned bucket_size = mi->m[ptr->dev].bucket_size;
 	unsigned used = (ptr->offset & (bucket_size - 1)) +
-		ob->ptr_offset;
+		ob->ptr_offset[i];
 
 	BUG_ON(used > bucket_size);
 
@@ -1307,7 +1314,7 @@ static struct open_bucket *lock_and_refill_writepoint(struct cache_set *c,
 					if (ob_ptr_sectors_free(ob, mi, &ob->ptrs[i])) {
 						struct bch_extent_ptr tmp = ob->ptrs[i];
 
-						tmp.offset += ob->ptr_offset;
+						tmp.offset += ob->ptr_offset[i];
 						new_ob->ptrs[new_ob->nr_ptrs++] = tmp;
 					}
 				cache_member_info_put();
@@ -1393,12 +1400,14 @@ void bch_alloc_sectors_done(struct cache_set *c, struct write_point *wp,
 	for (i = 0; i < ob->nr_ptrs; i++) {
 		struct bch_extent_ptr p = ob->ptrs[i];
 
-		p.offset += ob->ptr_offset;
+		p.offset += ob->ptr_offset[i];
 		extent_ptr_append(e, p);
+
+		ob->ptr_offset[i] += sectors;
 	}
 
 	ob->sectors_free -= sectors;
-	ob->ptr_offset   += sectors;
+
 	if (!ob->sectors_free &&
 	    !open_bucket_has_unused_data(c, ob))
 		BUG_ON(xchg(&wp->b, NULL) != ob);

@@ -59,9 +59,9 @@ struct open_bucket {
 	struct mutex		lock;
 	atomic_t		pin;
 	unsigned		sectors_free;
-	unsigned		ptr_offset;
 	unsigned		nr_ptrs;
 	struct bch_extent_ptr	ptrs[BCH_REPLICAS_MAX];
+	unsigned		ptr_offset[BCH_REPLICAS_MAX];
 };
 
 struct write_point {
