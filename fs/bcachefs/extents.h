@@ -58,6 +58,10 @@ void bch_insert_fixup_extent(struct btree_iter *, struct bkey_i *,
 void bch_extent_drop_stale(struct cache_set *c, struct bkey_s_extent);
 bool bch_extent_normalize(struct cache_set *, struct bkey_s);
 
+unsigned bch_extent_nr_ptrs_from(struct bkey_s_c_extent,
+				 const struct bch_extent_ptr *);
+unsigned bch_extent_nr_ptrs(struct bkey_s_c_extent);
+
 static inline bool bkey_extent_is_data(const struct bkey *k)
 {
 	switch (k->type) {
@@ -318,17 +322,11 @@ static inline bool bch_extent_ptr_is_dirty(const struct cache_set *c,
 					   struct bkey_s_c_extent e,
 					   const struct bch_extent_ptr *ptr)
 {
-	const struct bch_extent_ptr *i;
-	unsigned seen = 0;
-
 	if (bkey_extent_is_cached(e.k))
 		return false;
 
 	/* Dirty pointers come last */
-	extent_for_each_ptr_from(e, i, ptr)
-		seen++;
-
-	return seen <= c->opts.data_replicas;
+	return bch_extent_nr_ptrs_from(e, ptr) <= c->opts.data_replicas;
 }
 
 static inline struct bch_extent_crc64 crc_to_64(const union bch_extent_crc *crc)

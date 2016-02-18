@@ -149,15 +149,21 @@ bool bch_extent_has_device(struct bkey_s_c_extent e, unsigned dev)
 	return false;
 }
 
-static unsigned bch_extent_nr_ptrs(struct bkey_s_c_extent e)
+unsigned bch_extent_nr_ptrs_from(struct bkey_s_c_extent e,
+				 const struct bch_extent_ptr *start)
 {
 	const struct bch_extent_ptr *ptr;
-	unsigned ret = 0;
+	unsigned nr_ptrs = 0;
 
-	extent_for_each_ptr(e, ptr)
-		ret++;
+	extent_for_each_ptr_from(e, ptr, start)
+		nr_ptrs++;
 
-	return ret;
+	return nr_ptrs;
+}
+
+unsigned bch_extent_nr_ptrs(struct bkey_s_c_extent e)
+{
+	return bch_extent_nr_ptrs_from(e, &e.v->start->ptr);
 }
 
 /* returns true if equal */

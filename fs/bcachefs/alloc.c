@@ -904,31 +904,6 @@ static void __bch_bucket_free(struct cache *ca, struct bucket *g)
 	g->write_prio = ca->set->prio_clock[WRITE].hand;
 }
 
-static void bch_bucket_free_never_used(struct cache_set *c,
-				       struct open_bucket *ob)
-{
-	struct bch_extent_ptr *ptr;
-	struct cache *ca;
-
-	rcu_read_lock();
-	open_bucket_for_each_online_device(c, ob, ptr, ca) {
-		size_t r = PTR_BUCKET_NR(ca, ptr);
-		struct bucket *g = PTR_BUCKET(ca, ptr);
-
-		spin_lock(&ca->freelist_lock);
-		verify_not_on_freelist(ca, r);
-
-		if (__bch_allocator_push(ca, r))
-			bch_mark_alloc_bucket(ca, g);
-		else
-			__bch_bucket_free(ca, g);
-		spin_unlock(&ca->freelist_lock);
-	}
-	rcu_read_unlock();
-
-	ob->nr_ptrs = 0;
-}
-
 enum bucket_alloc_ret {
 	ALLOC_SUCCESS,
 	CACHE_SET_FULL,		/* -ENOSPC */
@@ -995,23 +970,17 @@ static struct cache *bch_next_cache(struct cache_set *c,
 static enum bucket_alloc_ret __bch_bucket_alloc_set(struct cache_set *c,
 						    struct open_bucket *ob,
 						    enum alloc_reserve reserve,
-						    int nr_replicas,
+						    unsigned nr_replicas,
 						    struct cache_group *devs,
+						    long *caches_used,
 						    bool check_enospc)
 {
-	long caches_used[BITS_TO_LONGS(MAX_CACHES_PER_SET)];
 	enum bucket_alloc_ret ret;
-	unsigned i;
 
-	BUG_ON(nr_replicas <= 0 || nr_replicas > BCH_REPLICAS_MAX);
+	BUG_ON(nr_replicas > BCH_REPLICAS_MAX);
 
 	if (!devs->nr_devices)
 		return CACHE_SET_FULL;
-
-	memset(caches_used, 0, sizeof(caches_used));
-
-	for (i = 0; i < ob->nr_ptrs; i++)
-		__set_bit(ob->ptrs[i].dev, caches_used);
 
 	rcu_read_lock();
 
@@ -1056,7 +1025,15 @@ static enum bucket_alloc_ret __bch_bucket_alloc_set(struct cache_set *c,
 			goto err;
 		}
 
-		ob->ptrs[ob->nr_ptrs++] = (struct bch_extent_ptr) {
+		/*
+		 * open_bucket_add_buckets expects new pointers at the head of
+		 * the list:
+		 */
+		memmove(&ob->ptrs[1],
+			&ob->ptrs[0],
+			ob->nr_ptrs * sizeof(ob->ptrs[0]));
+		ob->nr_ptrs++;
+		ob->ptrs[0] = (struct bch_extent_ptr) {
 			.gen	= ca->bucket_gens[r],
 			.offset	= bucket_to_sector(ca, r),
 			.dev	= ca->sb.nr_this_dev,
@@ -1075,21 +1052,22 @@ err:
 		ret = CACHE_SET_FULL;
 err_nocheck:
 	rcu_read_unlock();
-	bch_bucket_free_never_used(c, ob);
 	return ret;
 }
 
 static int bch_bucket_alloc_set(struct cache_set *c, struct open_bucket *ob,
-				enum alloc_reserve reserve, int nr_replicas,
-				struct cache_group *devs, bool check_enospc,
-				struct closure *cl)
+				enum alloc_reserve reserve,
+				unsigned nr_replicas,
+				struct cache_group *devs, long *caches_used,
+				bool check_enospc, struct closure *cl)
 {
 	struct closure_waitlist *waitlist = NULL;
 	bool waiting = false;
 
 	while (1) {
 		switch (__bch_bucket_alloc_set(c, ob, reserve, nr_replicas,
-					       devs, check_enospc)) {
+					       devs, caches_used,
+					       check_enospc)) {
 		case ALLOC_SUCCESS:
 			if (waitlist)
 				closure_wake_up(waitlist);
@@ -1126,6 +1104,24 @@ static int bch_bucket_alloc_set(struct cache_set *c, struct open_bucket *ob,
 		waiting = true;
 	}
 }
+
+/* Open buckets: */
+
+/*
+ * Open buckets represent one or more buckets (on multiple devices) that are
+ * currently being allocated from. They serve two purposes:
+ *
+ *  - They track buckets that have been partially allocated, allowing for
+ *    sub-bucket sized allocations - they're used by the sector allocator below
+ *
+ *  - They provide a reference to the buckets they own that mark and sweep GC
+ *    can find, until the new allocation has a pointer to it inserted into the
+ *    btree
+ *
+ * When allocating some space with the sector allocator, the allocation comes
+ * with a reference to an open bucket - the caller is required to put that
+ * reference _after_ doing the index update that makes its allocation reachable.
+ */
 
 static void __bch_open_bucket_put(struct cache_set *c, struct open_bucket *ob)
 {
@@ -1172,7 +1168,7 @@ static struct open_bucket *bch_open_bucket_get(struct cache_set *c,
 
 		atomic_set(&ret->pin, 1); /* XXX */
 		memset(ret->ptr_offset, 0, sizeof(ret->ptr_offset));
-		ret->sectors_free	= 0;
+		ret->has_full_ptrs	= false;
 
 		c->open_buckets_nr_free--;
 		trace_bcache_open_bucket_alloc(c, cl);
@@ -1191,8 +1187,6 @@ static struct open_bucket *bch_open_bucket_get(struct cache_set *c,
 	return ret;
 }
 
-/* Sector allocator */
-
 static unsigned ob_ptr_sectors_free(struct open_bucket *ob,
 				    struct cache_member_rcu *mi,
 				    struct bch_extent_ptr *ptr)
@@ -1207,36 +1201,55 @@ static unsigned ob_ptr_sectors_free(struct open_bucket *ob,
 	return bucket_size - used;
 }
 
-static void open_bucket_recalc_sectors_free(struct cache_set *c,
-					    struct open_bucket *ob)
+static unsigned open_bucket_sectors_free(struct cache_set *c,
+					 struct open_bucket *ob,
+					 unsigned nr_replicas)
 {
 	struct cache_member_rcu *mi = cache_member_info_get(c);
 	unsigned i, sectors_free = UINT_MAX;
 
-	for (i = 0; i < ob->nr_ptrs; i++)
+	BUG_ON(nr_replicas > ob->nr_ptrs);
+
+	for (i = 0; i < nr_replicas; i++)
 		sectors_free = min(sectors_free,
 				   ob_ptr_sectors_free(ob, mi, &ob->ptrs[i]));
 
 	cache_member_info_put();
 
-	if (sectors_free != UINT_MAX)
-		ob->sectors_free = sectors_free;
+	return sectors_free != UINT_MAX ? sectors_free : 0;
 }
 
-static bool open_bucket_has_unused_data(struct cache_set *c, struct open_bucket *ob)
+static void open_bucket_copy_unused_ptrs(struct cache_set *c,
+					 struct open_bucket *new,
+					 struct open_bucket *old)
 {
 	struct cache_member_rcu *mi = cache_member_info_get(c);
 	unsigned i;
 
-	for (i = 0; i < ob->nr_ptrs; i++)
-		if (ob_ptr_sectors_free(ob, mi, &ob->ptrs[i])) {
-			cache_member_info_put();
-			return true;
+	for (i = 0; i < old->nr_ptrs; i++)
+		if (ob_ptr_sectors_free(old, mi, &old->ptrs[i])) {
+			struct bch_extent_ptr tmp = old->ptrs[i];
+
+			tmp.offset += old->ptr_offset[i];
+			new->ptrs[new->nr_ptrs++] = tmp;
 		}
 	cache_member_info_put();
-
-	return false;
 }
+
+static void verify_not_stale(struct cache_set *c, const struct open_bucket *ob)
+{
+#ifdef CONFIG_BCACHEFS_DEBUG
+	const struct bch_extent_ptr *ptr;
+	struct cache *ca;
+
+	rcu_read_lock();
+	open_bucket_for_each_online_device(c, ob, ptr, ca)
+		BUG_ON(ptr_stale(ca, ptr));
+	rcu_read_unlock();
+#endif
+}
+
+/* Sector allocator */
 
 static struct open_bucket *lock_writepoint(struct cache_set *c,
 					   struct write_point *wp)
@@ -1254,108 +1267,59 @@ static struct open_bucket *lock_writepoint(struct cache_set *c,
 	return ob;
 }
 
-static struct open_bucket *lock_and_refill_writepoint(struct cache_set *c,
-						      struct write_point *wp,
-						      unsigned nr_replicas,
-						      bool check_enospc,
-						      struct closure *cl)
+static int open_bucket_add_buckets(struct cache_set *c,
+				   struct write_point *wp,
+				   struct open_bucket *ob,
+				   struct bkey_i_extent *e,
+				   unsigned nr_replicas,
+				   bool check_enospc,
+				   struct closure *cl)
 {
-	struct open_bucket *ob;
-	unsigned open_buckets_reserved = allocation_is_metadata(wp->reserve)
-		? 0
-		: BTREE_NODE_RESERVE;
-
-	BUG_ON(!wp->group);
-	BUG_ON(!wp->reserve);
-	BUG_ON(!nr_replicas);
-
-	while (1) {
-		ob = lock_writepoint(c, wp);
-
-		if (!ob || (!ob->sectors_free && ob->nr_ptrs)) {
-			struct open_bucket *new_ob;
-
-			new_ob = bch_open_bucket_get(c, open_buckets_reserved, cl);
-			if (IS_ERR(new_ob))
-				return new_ob;
-
-			mutex_lock(&new_ob->lock);
-
-			/*
-			 * We point the write point at the open_bucket before doing the
-			 * allocation to avoid a race with shutdown:
-			 */
-			if (race_fault() ||
-			    cmpxchg(&wp->b, ob, new_ob) != ob) {
-				mutex_unlock(&new_ob->lock);
-				bch_open_bucket_put(c, new_ob);
-
-				if (ob)
-					mutex_unlock(&ob->lock);
-				continue;
-			}
-
-			/*
-			 * Since different devices can have different sized buckets, we
-			 * won't necessarily fill up all the buckets an open_bucket
-			 * points to at the same time. We can't drop pointers from an
-			 * open_bucket, because they're needed for mark and sweep GC -
-			 * we have to allocate a new open_bucket and copy the partially
-			 * used pointers from the old one:
-			 */
-			if (ob) {
-				struct cache_member_rcu *mi = cache_member_info_get(c);
-				unsigned i;
-
-				for (i = 0; i < ob->nr_ptrs; i++)
-					if (ob_ptr_sectors_free(ob, mi, &ob->ptrs[i])) {
-						struct bch_extent_ptr tmp = ob->ptrs[i];
-
-						tmp.offset += ob->ptr_offset[i];
-						new_ob->ptrs[new_ob->nr_ptrs++] = tmp;
-					}
-				cache_member_info_put();
-
-				mutex_unlock(&ob->lock);
-				bch_open_bucket_put(c, ob);
-			}
-
-			ob = new_ob;
-		}
-
-		if (ob->nr_ptrs < nr_replicas) {
-			int ret;
-
-			ret = bch_bucket_alloc_set(c, ob, wp->reserve, nr_replicas,
-						   wp->group, check_enospc, cl);
-
-			if (ret) {
-				mutex_unlock(&ob->lock);
-				return ERR_PTR(ret);
-			}
-
-			open_bucket_recalc_sectors_free(c, ob);
-		}
-
-		/* perhaps we raced with a device shutting down: */
-		if (ob->sectors_free)
-			return ob;
-
-		mutex_unlock(&ob->lock);
-	}
-}
-
-static void verify_not_stale(struct cache_set *c, const struct open_bucket *ob)
-{
-#ifdef CONFIG_BCACHEFS_DEBUG
 	const struct bch_extent_ptr *ptr;
-	struct cache *ca;
+	long caches_used[BITS_TO_LONGS(MAX_CACHES_PER_SET)];
+	unsigned i, end;
 
-	rcu_read_lock();
-	open_bucket_for_each_online_device(c, ob, ptr, ca)
-		BUG_ON(ptr_stale(ca, ptr));
-	rcu_read_unlock();
-#endif
+	/*
+	 * We might be allocating pointers to add to an existing extent
+	 * (tiering/copygc/migration) - if so, some of the pointers in our
+	 * existing open bucket might duplicate devices we already have. This is
+	 * moderately annoying.
+	 */
+
+	/* Short circuit all the fun stuff if posssible: */
+	if (!bkey_val_u64s(&e->k) && ob->nr_ptrs >= nr_replicas)
+		return 0;
+
+	memset(caches_used, 0, sizeof(caches_used));
+
+	extent_for_each_ptr(extent_i_to_s_c(e), ptr)
+		__set_bit(ptr->dev, caches_used);
+
+	/*
+	 * Any duplicate pointers get moved to the end - later,
+	 * bch_alloc_sectors_done() will add the first nr_replicas ptrs to @e:
+	 */
+	end = ob->nr_ptrs;
+	i = 0;
+	while (i < end) {
+		if (__test_and_set_bit(ob->ptrs[i].dev, caches_used)) {
+			struct bch_extent_ptr tmp = ob->ptrs[i];
+
+			nr_replicas++;
+
+			memmove(&ob->ptrs[i],
+				&ob->ptrs[i + 1],
+				(ob->nr_ptrs - i - 1) * sizeof(ob->ptrs[0]));
+			ob->ptrs[ob->nr_ptrs - 1] = tmp;
+			end--;
+		} else {
+			i++;
+		}
+	}
+
+	return bch_bucket_alloc_set(c, ob, wp->reserve, nr_replicas,
+				    wp->group, caches_used,
+				    check_enospc, cl);
 }
 
 /*
@@ -1363,15 +1327,70 @@ static void verify_not_stale(struct cache_set *c, const struct open_bucket *ob)
  */
 struct open_bucket *bch_alloc_sectors_start(struct cache_set *c,
 					    struct write_point *wp,
+					    struct bkey_i_extent *e,
 					    unsigned nr_replicas,
 					    bool check_enospc,
 					    struct closure *cl)
 {
 	struct open_bucket *ob;
+	unsigned open_buckets_reserved = allocation_is_metadata(wp->reserve)
+		? 0
+		: BTREE_NODE_RESERVE;
+	int ret;
 
-	ob = lock_and_refill_writepoint(c, wp, nr_replicas, check_enospc, cl);
-	if (IS_ERR_OR_NULL(ob))
-		return ob;
+	BUG_ON(!wp->group);
+	BUG_ON(!wp->reserve);
+	BUG_ON(!nr_replicas);
+retry:
+	ob = lock_writepoint(c, wp);
+
+	/*
+	 * If ob->sectors_free == 0, one or more of the buckets ob points to is
+	 * full. We can't drop pointers from an open bucket - garbage collection
+	 * still needs to find them; instead, we must allocate a new open bucket
+	 * and copy any pointers to non-full buckets into the new open bucket.
+	 */
+	if (!ob || ob->has_full_ptrs) {
+		struct open_bucket *new_ob;
+
+		new_ob = bch_open_bucket_get(c, open_buckets_reserved, cl);
+		if (IS_ERR(new_ob))
+			return new_ob;
+
+		mutex_lock(&new_ob->lock);
+
+		/*
+		 * We point the write point at the open_bucket before doing the
+		 * allocation to avoid a race with shutdown:
+		 */
+		if (race_fault() ||
+		    cmpxchg(&wp->b, ob, new_ob) != ob) {
+			/* We raced: */
+			mutex_unlock(&new_ob->lock);
+			bch_open_bucket_put(c, new_ob);
+
+			if (ob)
+				mutex_unlock(&ob->lock);
+			goto retry;
+		}
+
+		if (ob) {
+			open_bucket_copy_unused_ptrs(c, new_ob, ob);
+			mutex_unlock(&ob->lock);
+			bch_open_bucket_put(c, ob);
+		}
+
+		ob = new_ob;
+	}
+
+	ret = open_bucket_add_buckets(c, wp, ob, e, nr_replicas,
+				      check_enospc, cl);
+	if (ret) {
+		mutex_unlock(&ob->lock);
+		return ERR_PTR(ret);
+	}
+
+	ob->sectors_free = open_bucket_sectors_free(c, ob, nr_replicas);
 
 	BUG_ON(!ob->sectors_free);
 	verify_not_stale(c, ob);
@@ -1384,31 +1403,47 @@ struct open_bucket *bch_alloc_sectors_start(struct cache_set *c,
  * as allocated out of @ob
  */
 void bch_alloc_sectors_done(struct cache_set *c, struct write_point *wp,
-			    struct bkey_i_extent *e, struct open_bucket *ob,
-			    unsigned sectors, unsigned nr_replicas)
+			    struct bkey_i_extent *e, unsigned nr_replicas,
+			    struct open_bucket *ob, unsigned sectors)
 {
-	struct bch_extent_ptr *ptr;
+	struct cache_member_rcu *mi = cache_member_info_get(c);
+	struct bch_extent_ptr tmp, *ptr;
 	struct cache *ca;
+	bool has_data = false;
 	unsigned i;
 
-	BUG_ON(nr_replicas > ob->nr_ptrs);
 	/*
 	 * We're keeping any existing pointer k has, and appending new pointers:
 	 * __bch_write() will only write to the pointers we add here:
 	 */
-	for (i = 0; i < nr_replicas; i++) {
-		struct bch_extent_ptr p = ob->ptrs[i];
 
-		p.offset += ob->ptr_offset[i];
-		extent_ptr_append(e, p);
+	/*
+	 * XXX: don't add pointers to devices @e already has
+	 */
+	BUG_ON(nr_replicas > ob->nr_ptrs);
+
+	/* didn't use all the ptrs: */
+	if (nr_replicas < ob->nr_ptrs)
+		has_data = true;
+
+	for (i = 0; i < nr_replicas; i++) {
+		EBUG_ON(bch_extent_has_device(extent_i_to_s_c(e), ob->ptrs[i].dev));
+
+		tmp = ob->ptrs[i];
+		tmp.offset += ob->ptr_offset[i];
+		extent_ptr_append(e, tmp);
 
 		ob->ptr_offset[i] += sectors;
+
+		if (!ob_ptr_sectors_free(ob, mi, &ob->ptrs[i]))
+			ob->has_full_ptrs = true;
+		else
+			has_data = true;
 	}
 
-	ob->sectors_free -= sectors;
+	cache_member_info_put();
 
-	if (!ob->sectors_free &&
-	    !open_bucket_has_unused_data(c, ob))
+	if (!has_data)
 		BUG_ON(xchg(&wp->b, NULL) != ob);
 	else
 		atomic_inc(&ob->pin);
@@ -1447,14 +1482,14 @@ struct open_bucket *bch_alloc_sectors(struct cache_set *c,
 {
 	struct open_bucket *ob;
 
-	ob = bch_alloc_sectors_start(c, wp, nr_replicas, check_enospc, cl);
+	ob = bch_alloc_sectors_start(c, wp, e, nr_replicas, check_enospc, cl);
 	if (IS_ERR_OR_NULL(ob))
 		return ob;
 
 	if (e->k.size > ob->sectors_free)
 		bch_key_resize(&e->k, ob->sectors_free);
 
-	bch_alloc_sectors_done(c, wp, e, ob, e->k.size, nr_replicas);
+	bch_alloc_sectors_done(c, wp, e, nr_replicas, ob, e->k.size);
 
 	return ob;
 }

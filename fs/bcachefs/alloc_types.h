@@ -58,6 +58,11 @@ struct open_bucket {
 	struct list_head	list;
 	struct mutex		lock;
 	atomic_t		pin;
+	bool			has_full_ptrs;
+	/*
+	 * recalculated every time we allocate from this open_bucket based on
+	 * how many pointers we're actually going to use:
+	 */
 	unsigned		sectors_free;
 	unsigned		nr_ptrs;
 	struct bch_extent_ptr	ptrs[BCH_REPLICAS_MAX];
