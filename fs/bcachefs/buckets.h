@@ -244,4 +244,6 @@ void bch_unmark_open_bucket(struct cache *, struct bucket *);
 int bch_mark_pointers(struct cache_set *, struct bkey_s_c_extent,
 		      int, bool, bool, bool, struct gc_pos);
 
+int bch_reserve_sectors(struct cache_set *, unsigned);
+
 #endif /* _BUCKETS_H */

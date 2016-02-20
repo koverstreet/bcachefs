@@ -115,6 +115,9 @@ void moving_io_free(struct moving_io *io)
 	struct bio_vec *bv;
 	int i;
 
+	if (io->has_reservation)
+		atomic64_sub_bug(io->key.k.size, &io->op.c->sectors_reserved);
+
 	bio_for_each_segment_all(bv, &io->bio.bio.bio, i)
 		if (bv->bv_page)
 			__free_page(bv->bv_page);

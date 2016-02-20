@@ -82,8 +82,6 @@ struct bch_write_op {
 		u16		flags;
 
 	struct {
-		/* Return -ENOSPC if cache set is full? */
-		unsigned	check_enospc:1;
 		/* Return -ENOSPC if no buckets immediately available? */
 		unsigned	nowait:1;
 		/* Discard key range? */

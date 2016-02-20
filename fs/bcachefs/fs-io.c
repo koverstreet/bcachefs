@@ -360,7 +360,7 @@ union { struct {
 	 *
 	 * BCH_PAGE_UNALLOCATED: page is not fully written on disk, or is
 	 * compressed - before writing we have to reserve space with
-	 * reserve_sectors()
+	 * bch_reserve_sectors()
 	 *
 	 * BCH_PAGE_RESERVED: page has space reserved on disk (reservation will
 	 * be consumed when the page is written).
@@ -411,28 +411,6 @@ union { struct {
 	_old;								\
 })
 
-#define SECTORS_CACHE	1024
-
-static int reserve_sectors(struct cache_set *c, unsigned sectors)
-{
-	u64 sectors_to_get = SECTORS_CACHE + sectors;
-
-	if (likely(atomic64_sub_return(sectors,
-				       &c->sectors_reserved_cache) >= 0))
-		return 0;
-
-	atomic64_add(sectors_to_get, &c->sectors_reserved);
-
-	if (likely(!cache_set_full(c))) {
-		atomic64_add(sectors_to_get, &c->sectors_reserved_cache);
-		return 0;
-	}
-
-	atomic64_sub_bug(sectors_to_get, &c->sectors_reserved);
-	atomic64_add(sectors, &c->sectors_reserved_cache);
-	return -ENOSPC;
-}
-
 static inline struct bch_page_state *page_state(struct page *page)
 {
 	struct bch_page_state *s = (void *) &page->private;
@@ -466,7 +444,7 @@ static int bch_get_page_reservation(struct cache_set *c, struct page *page)
 	if (s->alloc_state != BCH_PAGE_UNALLOCATED)
 		return 0;
 
-	ret = reserve_sectors(c, PAGE_SECTORS);
+	ret = bch_reserve_sectors(c, PAGE_SECTORS);
 	if (ret)
 		return ret;
 
@@ -1491,7 +1469,7 @@ static int bch_direct_IO_write(struct cache_set *c, struct kiocb *req,
 	 * Have to then guard against racing with truncate (deleting data that
 	 * we would have been overwriting)
 	 */
-	ret = reserve_sectors(c, dio->nr_sectors);
+	ret = bch_reserve_sectors(c, dio->nr_sectors);
 	if (ret)
 		goto err_put_sectors_dirty;
 
@@ -2325,7 +2303,7 @@ static long bch_fallocate(struct inode *inode, int mode,
 
 		sectors = reservation.k.size;
 
-		ret = reserve_sectors(c, sectors);
+		ret = bch_reserve_sectors(c, sectors);
 		if (ret)
 			goto err_put_sectors_dirty;
 

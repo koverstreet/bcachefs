@@ -17,12 +17,11 @@
 	container_of((_bio), struct bch_write_bio, bio.bio)
 
 enum bch_write_flags {
-	BCH_WRITE_CHECK_ENOSPC		= (1 << 0),
-	BCH_WRITE_ALLOC_NOWAIT		= (1 << 1),
-	BCH_WRITE_DISCARD		= (1 << 2),
-	BCH_WRITE_CACHED		= (1 << 3),
-	BCH_WRITE_FLUSH			= (1 << 4),
-	BCH_WRITE_DISCARD_ON_ERROR	= (1 << 5),
+	BCH_WRITE_ALLOC_NOWAIT		= (1 << 0),
+	BCH_WRITE_DISCARD		= (1 << 1),
+	BCH_WRITE_CACHED		= (1 << 2),
+	BCH_WRITE_FLUSH			= (1 << 3),
+	BCH_WRITE_DISCARD_ON_ERROR	= (1 << 4),
 };
 
 void bch_write_op_init(struct bch_write_op *, struct cache_set *,

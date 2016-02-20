@@ -10,6 +10,7 @@ struct bkey_format;
 struct btree;
 
 struct btree_reserve {
+	unsigned		sectors_reserved;
 	unsigned		nr;
 	struct btree		*b[];
 };

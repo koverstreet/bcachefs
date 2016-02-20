@@ -436,3 +436,25 @@ void bch_unmark_open_bucket(struct cache *ca, struct bucket *g)
 		new.owned_by_allocator = 0;
 	}));
 }
+
+#define SECTORS_CACHE	1024
+
+int bch_reserve_sectors(struct cache_set *c, unsigned sectors)
+{
+	u64 sectors_to_get = SECTORS_CACHE + sectors;
+
+	if (likely(atomic64_sub_return(sectors,
+				       &c->sectors_reserved_cache) >= 0))
+		return 0;
+
+	atomic64_add(sectors_to_get, &c->sectors_reserved);
+
+	if (likely(!cache_set_full(c))) {
+		atomic64_add(sectors_to_get, &c->sectors_reserved_cache);
+		return 0;
+	}
+
+	atomic64_sub_bug(sectors_to_get, &c->sectors_reserved);
+	atomic64_add(sectors, &c->sectors_reserved_cache);
+	return -ENOSPC;
+}

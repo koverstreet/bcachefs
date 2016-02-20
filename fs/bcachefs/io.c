@@ -1005,7 +1005,6 @@ static void __bch_write(struct closure *cl)
 		b = bch_alloc_sectors_start(op->c, op->wp,
 					    bkey_i_to_extent(k),
 					    op->nr_replicas,
-					    op->check_enospc,
 					    op->nowait ? NULL : cl);
 		BUG_ON(!b);
 
@@ -1219,7 +1218,6 @@ void bch_write_op_init(struct bch_write_op *op, struct cache_set *c,
 	op->written	= 0;
 	op->error	= 0;
 	op->flags	= 0;
-	op->check_enospc = (flags & BCH_WRITE_CHECK_ENOSPC) != 0;
 	op->nowait	= (flags & BCH_WRITE_ALLOC_NOWAIT) != 0;
 	op->discard	= (flags & BCH_WRITE_DISCARD) != 0;
 	op->cached	= (flags & BCH_WRITE_CACHED) != 0;
@@ -1344,7 +1342,6 @@ void __cache_promote(struct cache_set *c, struct bbio *orig_bio,
 
 	bch_write_op_init(&op->iop, c, &op->bio, &c->promote_write_point,
 			  new, old,
-			  BCH_WRITE_CHECK_ENOSPC|
 			  BCH_WRITE_ALLOC_NOWAIT|write_flags);
 	op->iop.nr_replicas = 1;
 
@@ -1722,7 +1719,6 @@ void bch_read_extent_iter(struct cache_set *c, struct bio *orig,
 				  &promote_op->bio,
 				  &c->promote_write_point,
 				  k, NULL, NULL,
-				  BCH_WRITE_CHECK_ENOSPC|
 				  BCH_WRITE_ALLOC_NOWAIT);
 
 		if (!read_full) {

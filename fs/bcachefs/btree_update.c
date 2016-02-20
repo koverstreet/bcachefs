@@ -229,7 +229,6 @@ void btree_open_bucket_put(struct cache_set *c, struct btree *b)
 }
 
 static struct btree *__bch_btree_node_alloc(struct cache_set *c,
-					    bool check_enospc,
 					    struct closure *cl)
 {
 	BKEY_PADDED(k) tmp;
@@ -255,8 +254,7 @@ retry:
 
 	ob = bch_alloc_sectors(c, &c->btree_write_point,
 			       bkey_i_to_extent(&tmp.k),
-			       c->opts.metadata_replicas,
-			       check_enospc, cl);
+			       c->opts.metadata_replicas, cl);
 	if (IS_ERR(ob))
 		return ERR_CAST(ob);
 
@@ -447,6 +445,8 @@ static struct btree *__btree_root_alloc(struct cache_set *c, unsigned level,
 
 void bch_btree_reserve_put(struct cache_set *c, struct btree_reserve *reserve)
 {
+	atomic64_sub_bug(reserve->sectors_reserved, &c->sectors_reserved);
+
 	mutex_lock(&c->btree_reserve_cache_lock);
 
 	while (reserve->nr) {
@@ -484,7 +484,15 @@ static struct btree_reserve *__bch_btree_reserve_get(struct cache_set *c,
 {
 	struct btree_reserve *reserve;
 	struct btree *b;
+	unsigned sectors_reserved = 0;
 	int ret;
+
+	if (check_enospc) {
+		sectors_reserved = nr_nodes * c->sb.btree_node_size;
+
+		if (bch_reserve_sectors(c, sectors_reserved))
+			return ERR_PTR(-ENOSPC);
+	}
 
 	BUG_ON(nr_nodes > BTREE_RESERVE_MAX);
 
@@ -498,10 +506,11 @@ static struct btree_reserve *__bch_btree_reserve_get(struct cache_set *c,
 
 	reserve = mempool_alloc(&c->btree_reserve_pool, GFP_NOIO);
 
+	reserve->sectors_reserved = sectors_reserved;
 	reserve->nr = 0;
 
 	while (reserve->nr < nr_nodes) {
-		b = __bch_btree_node_alloc(c, check_enospc, cl);
+		b = __bch_btree_node_alloc(c, cl);
 		if (IS_ERR(b)) {
 			ret = PTR_ERR(b);
 			goto err_free;
