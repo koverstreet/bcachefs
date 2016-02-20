@@ -64,6 +64,7 @@ struct dio_write {
 	long			written;
 	long			error;
 	loff_t			offset;
+	unsigned		nr_sectors;
 	bool			append;
 
 	struct iovec		*iovec;

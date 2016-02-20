@@ -1330,7 +1330,11 @@ out:
 
 static void __bch_dio_write_complete(struct dio_write *dio)
 {
-	struct bch_inode_info *ei = to_bch_ei(dio->req->ki_filp->f_inode);
+	struct inode *inode = dio->req->ki_filp->f_inode;
+	struct bch_inode_info *ei = to_bch_ei(inode);
+	struct cache_set *c = inode->i_sb->s_fs_info;
+
+	atomic64_sub_bug(dio->nr_sectors, &c->sectors_reserved);
 
 	i_sectors_dirty_put(ei, &dio->i_sectors_hook);
 
@@ -1376,7 +1380,7 @@ static void bch_do_direct_IO_write(struct dio_write *dio, bool sync)
 	struct bch_inode_info *ei = to_bch_ei(inode);
 	struct cache_set *c = inode->i_sb->s_fs_info;
 	struct bio *bio = &dio->bio.bio.bio;
-	unsigned flags = BCH_WRITE_CHECK_ENOSPC;
+	unsigned flags = 0;
 	int ret;
 
 	if (file->f_flags & O_DSYNC || IS_SYNC(file->f_mapping->host))
@@ -1455,6 +1459,7 @@ static int bch_direct_IO_write(struct cache_set *c, struct kiocb *req,
 	dio->written	= 0;
 	dio->error	= 0;
 	dio->offset	= offset;
+	dio->nr_sectors	= iter->count >> 9;
 	dio->append	= false;
 	dio->iovec	= NULL;
 	dio->iter	= *iter;
@@ -1477,6 +1482,18 @@ static int bch_direct_IO_write(struct cache_set *c, struct kiocb *req,
 	ret = i_sectors_dirty_get(ei, &dio->i_sectors_hook);
 	if (ret)
 		goto err;
+
+	/*
+	 * XXX: we shouldn't return -ENOSPC if we're overwriting existing data -
+	 * if getting a reservation fails we should check if we are doing an
+	 * overwrite.
+	 *
+	 * Have to then guard against racing with truncate (deleting data that
+	 * we would have been overwriting)
+	 */
+	ret = reserve_sectors(c, dio->nr_sectors);
+	if (ret)
+		goto err_put_sectors_dirty;
 
 	closure_init(&dio->cl, NULL);
 
@@ -1548,6 +1565,8 @@ static int bch_direct_IO_write(struct cache_set *c, struct kiocb *req,
 				     dio->iter.count ? system_wq : NULL);
 		return -EIOCBQUEUED;
 	}
+err_put_sectors_dirty:
+	i_sectors_dirty_put(ei, &dio->i_sectors_hook);
 err:
 	if (dio->append)
 		i_size_dirty_put(ei);
