@@ -78,28 +78,9 @@ struct bch_write_op {
 
 	short			error;
 
-	union {
-		u16		flags;
-
-	struct {
-		/* Return -ENOSPC if no buckets immediately available? */
-		unsigned	nowait:1;
-		/* Discard key range? */
-		unsigned	discard:1;
-		/* Mark data as cached? */
-		unsigned	cached:1;
-		/* Wait for journal commit? */
-		unsigned	flush:1;
-		unsigned	discard_on_error:1;
-		/* Are we using the prt member of journal_seq union? */
-		unsigned	journal_seq_ptr:1;
-		/* Internal */
-		unsigned	write_done:1;
-
-		unsigned	compression_type:4;
-		unsigned	nr_replicas:4;
-	};
-	};
+	u8			flags;
+	unsigned		compression_type:4;
+	unsigned		nr_replicas:4;
 
 	struct write_point	*wp;
 

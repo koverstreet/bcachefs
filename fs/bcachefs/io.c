@@ -553,16 +553,17 @@ static void __bch_write(struct closure *);
 
 static inline u64 *op_journal_seq(struct bch_write_op *op)
 {
-	return op->journal_seq_ptr ? op->journal_seq_p : &op->journal_seq;
+	return (op->flags & BCH_WRITE_JOURNAL_SEQ_PTR)
+		? op->journal_seq_p : &op->journal_seq;
 }
 
 static void bch_write_done(struct closure *cl)
 {
 	struct bch_write_op *op = container_of(cl, struct bch_write_op, cl);
 
-	BUG_ON(!op->write_done);
+	BUG_ON(!(op->flags & BCH_WRITE_DONE));
 
-	if (!op->error && op->flush)
+	if (!op->error && (op->flags & BCH_WRITE_FLUSH))
 		op->error = bch_journal_error(&op->c->journal);
 
 	percpu_ref_put(&op->c->writes);
@@ -608,10 +609,10 @@ static void bch_write_index(struct closure *cl)
 			op->open_buckets[i] = NULL;
 		}
 
-	if (!op->write_done)
+	if (!(op->flags & BCH_WRITE_DONE))
 		continue_at(cl, __bch_write, op->io_wq);
 
-	if (!op->error && op->flush) {
+	if (!op->error && (op->flags & BCH_WRITE_FLUSH)) {
 		bch_journal_flush_seq_async(&op->c->journal,
 					    *op_journal_seq(op),
 					    cl);
@@ -686,7 +687,7 @@ static void bch_write_endio(struct bio *bio)
 		/* TODO: We could try to recover from this. */
 		if (!bkey_extent_is_cached(&op->insert_key.k)) {
 			op->error = bio->bi_error;
-		} else if (op->discard_on_error)
+		} else if (op->flags & BCH_WRITE_DISCARD_ON_ERROR)
 			set_closure_fn(cl, __bch_write_discard, op->c->wq);
 		else
 			set_closure_fn(cl, NULL, NULL);
@@ -967,8 +968,8 @@ static void __bch_write(struct closure *cl)
 
 	memset(op->open_buckets, 0, sizeof(op->open_buckets));
 
-	if (op->discard) {
-		op->write_done = true;
+	if (op->flags & BCH_WRITE_DISCARD) {
+		op->flags |= BCH_WRITE_DONE;
 		bch_write_discard(cl);
 		bio_put(bio);
 		continue_at(cl, bch_write_done, op->c->wq);
@@ -1003,9 +1004,8 @@ static void __bch_write(struct closure *cl)
 		bkey_copy(k, &op->insert_key);
 
 		b = bch_alloc_sectors_start(op->c, op->wp,
-					    bkey_i_to_extent(k),
-					    op->nr_replicas,
-					    op->nowait ? NULL : cl);
+			bkey_i_to_extent(k), op->nr_replicas,
+			(op->flags & BCH_WRITE_ALLOC_NOWAIT) ? NULL : cl);
 		BUG_ON(!b);
 
 		if (PTR_ERR(b) == -EAGAIN) {
@@ -1032,17 +1032,17 @@ static void __bch_write(struct closure *cl)
 		BUG_ON(bch_extent_normalize(op->c, bkey_i_to_s(k)));
 		bch_check_mark_super(op->c, k, false);
 
-		bkey_extent_set_cached(&k->k, op->cached);
+		bkey_extent_set_cached(&k->k, (op->flags & BCH_WRITE_CACHED));
 
 		bch_keylist_enqueue(&op->insert_keys);
 
 		trace_bcache_cache_insert(&k->k);
 	} while (op->insert_key.k.size);
 
-	op->write_done = true;
+	op->flags |= BCH_WRITE_DONE;
 	continue_at(cl, bch_write_index, op->c->wq);
 err:
-	if (op->cached) {
+	if (op->flags & BCH_WRITE_DISCARD_ON_ERROR) {
 		/*
 		 * If we were writing cached data, not doing the write is fine
 		 * so long as we discard whatever would have been overwritten -
@@ -1055,7 +1055,7 @@ err:
 		op->error = -ENOSPC;
 	}
 
-	op->write_done = true;
+	op->flags |= BCH_WRITE_DONE;
 
 	/*
 	 * No reason not to insert keys for whatever data was successfully
@@ -1121,7 +1121,7 @@ void bch_write(struct closure *cl)
 
 	trace_bcache_write(c, inode, bio,
 			   !bkey_extent_is_cached(&op->insert_key.k),
-			   op->discard);
+			   op->flags & BCH_WRITE_DISCARD);
 
 	if (!bio_sectors(bio)) {
 		WARN_ONCE(1, "bch_write() called with empty bio");
@@ -1144,10 +1144,10 @@ void bch_write(struct closure *cl)
 	if (!op->io_wq)
 		op->io_wq = op->c->wq;
 
-	if (!op->discard)
+	if (!(op->flags & BCH_WRITE_DISCARD))
 		bch_increment_clock(c, bio_sectors(bio), WRITE);
 
-	if (!op->discard)
+	if (!(op->flags & BCH_WRITE_DISCARD))
 		bch_mark_foreground_write(c, bio_sectors(bio));
 	else
 		bch_mark_discard(c, bio_sectors(bio));
@@ -1159,7 +1159,7 @@ void bch_write(struct closure *cl)
 
 	if (c->foreground_write_ratelimit_enabled &&
 	    c->foreground_write_pd.rate.rate < (1 << 30) &&
-	    !op->discard && op->wp->throttle) {
+	    !(op->flags & BCH_WRITE_DISCARD) && op->wp->throttle) {
 		unsigned long flags;
 		u64 delay;
 
@@ -1217,21 +1217,17 @@ void bch_write_op_init(struct bch_write_op *op, struct cache_set *c,
 	op->bio		= bio;
 	op->written	= 0;
 	op->error	= 0;
-	op->flags	= 0;
-	op->nowait	= (flags & BCH_WRITE_ALLOC_NOWAIT) != 0;
-	op->discard	= (flags & BCH_WRITE_DISCARD) != 0;
-	op->cached	= (flags & BCH_WRITE_CACHED) != 0;
-	op->flush	= (flags & BCH_WRITE_FLUSH) != 0;
-	op->discard_on_error = (flags & BCH_WRITE_DISCARD_ON_ERROR) != 0;
+	op->flags	= flags;
 	op->compression_type = c->opts.compression;
 	op->nr_replicas	= c->opts.data_replicas;
 	op->wp		= wp;
-	op->journal_seq_ptr = journal_seq != NULL;
 
-	if (op->journal_seq_ptr)
+	if (journal_seq) {
 		op->journal_seq_p = journal_seq;
-	else
+		op->flags |= BCH_WRITE_JOURNAL_SEQ_PTR;
+	} else {
 		op->journal_seq = 0;
+	}
 
 	op->insert_hook = insert_hook;
 
@@ -1246,9 +1242,10 @@ void bch_write_op_init(struct bch_write_op *op, struct cache_set *c,
 		 * discard or we're writing new data and we're going to
 		 * allocate pointers
 		 */
-		op->insert_key.k.type = op->discard ? KEY_TYPE_DISCARD
-			: op->cached ? BCH_EXTENT_CACHED
-			: BCH_EXTENT;
+		op->insert_key.k.type =
+			(op->flags & BCH_WRITE_DISCARD) ? KEY_TYPE_DISCARD :
+			(op->flags & BCH_WRITE_CACHED) ? BCH_EXTENT_CACHED :
+			BCH_EXTENT;
 	}
 }
 
