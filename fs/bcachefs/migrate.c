@@ -6,6 +6,7 @@
 #include "btree_update.h"
 #include "buckets.h"
 #include "extents.h"
+#include "io.h"
 #include "journal.h"
 #include "keylist.h"
 #include "migrate.h"
@@ -38,15 +39,18 @@ static int issue_migration_move(struct cache *ca,
 	struct moving_queue *q = &ca->moving_gc_queue;
 	struct cache_set *c = ca->set;
 	struct moving_io *io;
+	struct disk_reservation res;
 
-	if (bch_reserve_sectors(c, k.k->size))
+	if (bch_disk_reservation_get(c, &res, k.k->size))
 		return -ENOSPC;
 
 	io = moving_io_alloc(k);
-	if (io == NULL)
+	if (!io) {
+		bch_disk_reservation_put(c, &res);
 		return -ENOMEM;
+	}
 
-	io->has_reservation = true;
+	io->disk_res = res;
 
 	/* This also copies k into the write op's replace_key and insert_key */
 

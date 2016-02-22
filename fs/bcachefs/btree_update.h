@@ -3,6 +3,7 @@
 
 #include "btree_cache.h"
 #include "btree_iter.h"
+#include "buckets.h"
 
 struct cache_set;
 struct bkey_format_state;
@@ -10,7 +11,7 @@ struct bkey_format;
 struct btree;
 
 struct btree_reserve {
-	unsigned		sectors_reserved;
+	struct disk_reservation	disk_res;
 	unsigned		nr;
 	struct btree		*b[];
 };

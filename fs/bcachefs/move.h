@@ -1,7 +1,8 @@
 #ifndef _BCACHE_MOVE_H
 #define _BCACHE_MOVE_H
 
-#include "io.h"
+#include "buckets.h"
+#include "io_types.h"
 
 enum moving_purpose {
 	MOVING_PURPOSE_UNKNOWN,	/* Un-init */
@@ -91,7 +92,8 @@ struct moving_io {
 	unsigned		read_issued:1;
 	unsigned		read_completed:1;
 	unsigned		write_issued:1;
-	unsigned		has_reservation:1;
+	struct disk_reservation	disk_res;
+
 	/* Must be last since it is variable size */
 	struct bch_write_bio	bio;
 };

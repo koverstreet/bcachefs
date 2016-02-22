@@ -445,7 +445,7 @@ static struct btree *__btree_root_alloc(struct cache_set *c, unsigned level,
 
 void bch_btree_reserve_put(struct cache_set *c, struct btree_reserve *reserve)
 {
-	atomic64_sub_bug(reserve->sectors_reserved, &c->sectors_reserved);
+	bch_disk_reservation_put(c, &reserve->disk_res);
 
 	mutex_lock(&c->btree_reserve_cache_lock);
 
@@ -484,15 +484,13 @@ static struct btree_reserve *__bch_btree_reserve_get(struct cache_set *c,
 {
 	struct btree_reserve *reserve;
 	struct btree *b;
-	unsigned sectors_reserved = 0;
+	struct disk_reservation disk_res = { 0, 0 };
+		unsigned sectors = nr_nodes * c->sb.btree_node_size;
 	int ret;
 
-	if (check_enospc) {
-		sectors_reserved = nr_nodes * c->sb.btree_node_size;
-
-		if (bch_reserve_sectors(c, sectors_reserved))
-			return ERR_PTR(-ENOSPC);
-	}
+	if (__bch_disk_reservation_get(c, &disk_res, sectors,
+				       check_enospc, true))
+		return ERR_PTR(-ENOSPC);
 
 	BUG_ON(nr_nodes > BTREE_RESERVE_MAX);
 
@@ -506,7 +504,7 @@ static struct btree_reserve *__bch_btree_reserve_get(struct cache_set *c,
 
 	reserve = mempool_alloc(&c->btree_reserve_pool, GFP_NOIO);
 
-	reserve->sectors_reserved = sectors_reserved;
+	reserve->disk_res = disk_res;
 	reserve->nr = 0;
 
 	while (reserve->nr < nr_nodes) {
@@ -552,7 +550,8 @@ int bch_btree_root_alloc(struct cache_set *c, enum btree_id id,
 	closure_init_stack(&cl);
 
 	while (1) {
-		reserve = __bch_btree_reserve_get(c, true, 1, &cl);
+		/* XXX haven't calculated capacity yet :/ */
+		reserve = __bch_btree_reserve_get(c, false, 1, &cl);
 		if (!IS_ERR(reserve))
 			break;
 

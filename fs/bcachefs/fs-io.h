@@ -1,6 +1,7 @@
 #ifndef _BCACHE_FS_IO_H
 #define _BCACHE_FS_IO_H
 
+#include "buckets.h"
 #include <linux/uio.h>
 
 int bch_set_page_dirty(struct page *);
@@ -64,8 +65,9 @@ struct dio_write {
 	long			written;
 	long			error;
 	loff_t			offset;
-	unsigned		nr_sectors;
 	bool			append;
+
+	struct disk_reservation	res;
 
 	struct iovec		*iovec;
 	struct iovec		inline_vecs[UIO_FASTIOV];

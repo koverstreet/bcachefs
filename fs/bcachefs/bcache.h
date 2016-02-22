@@ -181,6 +181,7 @@
 #include <linux/bio.h>
 #include <linux/closure.h>
 #include <linux/kobject.h>
+#include <linux/lglock.h>
 #include <linux/list.h>
 #include <linux/mutex.h>
 #include <linux/percpu-refcount.h>
@@ -625,11 +626,19 @@ struct cache_set {
 	struct cache_group	cache_tiers[CACHE_TIERS];
 
 	u64			capacity; /* sectors */
-	atomic64_t		sectors_reserved;
-	atomic64_t		sectors_reserved_cache;
+
+	/*
+	 * When capacity _decreases_ (due to a disk being removed), we
+	 * increment capacity_gen - this invalidates outstanding reservations
+	 * and forces them to be revalidated
+	 */
+	u32			capacity_gen;
+
+	atomic64_t		sectors_available;
 
 	struct bucket_stats_cache_set __percpu *bucket_stats_percpu;
 	struct bucket_stats_cache_set	bucket_stats_cached;
+	struct lglock		bucket_stats_lock;
 
 	struct mutex		bucket_lock;
 

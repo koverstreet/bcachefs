@@ -161,7 +161,7 @@ u8 __bch_btree_mark_key_initial(struct cache_set *c, enum bkey_type type,
 	case BKEY_TYPE_BTREE:
 	case BKEY_TYPE_EXTENTS:
 		if (k.k->type == BCH_RESERVATION)
-			atomic64_add(k.k->size, &c->sectors_reserved);
+			bch_mark_reservation(c, k.k->size);
 
 		return __bch_btree_mark_key(c, type, k);
 	default:
@@ -380,6 +380,13 @@ void bch_gc(struct cache_set *c)
 		return;
 
 	trace_bcache_gc_start(c);
+
+	/*
+	 * Do this before taking gc_lock - bch_disk_reservation_get() blocks on
+	 * gc_lock if sectors_available goes to 0:
+	 */
+	bch_recalc_sectors_available(c);
+
 	down_write(&c->gc_lock);
 
 	/* Save a copy of the existing bucket stats while we recompute them: */

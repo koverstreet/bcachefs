@@ -582,7 +582,7 @@ static ssize_t show_cache_set_alloc_debug(struct cache_set *c, char *buf)
 			 c->capacity,
 			 stats.sectors_meta,
 			 stats.sectors_dirty,
-			 (u64) atomic64_read(&c->sectors_reserved));
+			 stats.sectors_reserved);
 }
 
 static ssize_t bch_compression_stats(struct cache_set *c, char *buf)

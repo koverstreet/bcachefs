@@ -195,23 +195,14 @@ static inline size_t buckets_free_cache(struct cache *ca,
 struct bucket_stats_cache_set __bch_bucket_stats_read_cache_set(struct cache_set *);
 struct bucket_stats_cache_set bch_bucket_stats_read_cache_set(struct cache_set *);
 
-static inline u64 __cache_set_sectors_used(struct cache_set *c)
+static inline u64 cache_set_sectors_used(struct cache_set *c)
 {
 	struct bucket_stats_cache_set stats = bch_bucket_stats_read_cache_set(c);
 
-	return stats.sectors_meta +
-		stats.sectors_dirty +
-		atomic64_read(&c->sectors_reserved);
-}
-
-static inline u64 cache_set_sectors_used(struct cache_set *c)
-{
-	return min(c->capacity, __cache_set_sectors_used(c));
-}
-
-static inline bool cache_set_full(struct cache_set *c)
-{
-	return __cache_set_sectors_used(c) >= c->capacity;
+	return min(c->capacity,
+		   stats.sectors_meta +
+		   stats.sectors_dirty +
+		   stats.sectors_reserved);
 }
 
 /* XXX: kill? */
@@ -243,7 +234,25 @@ void bch_unmark_open_bucket(struct cache *, struct bucket *);
 
 int bch_mark_pointers(struct cache_set *, struct bkey_s_c_extent,
 		      int, bool, bool, bool, struct gc_pos);
+void bch_mark_reservation(struct cache_set *, int);
 
-int bch_reserve_sectors(struct cache_set *, unsigned);
+void bch_recalc_sectors_available(struct cache_set *);
+
+/*
+ * A reservation for space on disk:
+ */
+struct disk_reservation {
+	u32		sectors;
+	u32		gen;
+};
+
+void bch_disk_reservation_put(struct cache_set *,
+			      struct disk_reservation *);
+int __bch_disk_reservation_get(struct cache_set *,
+			       struct disk_reservation *,
+			       unsigned, bool, bool);
+int bch_disk_reservation_get(struct cache_set *,
+			     struct disk_reservation *,
+			     unsigned);
 
 #endif /* _BUCKETS_H */

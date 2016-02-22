@@ -822,7 +822,7 @@ static int bch_add_sectors(struct btree_iter *iter, struct bkey_s_c k,
 			bcache_dev_sectors_dirty_add(c, e.k->p.inode,
 						     offset, sectors);
 	} else if (k.k->type == BCH_RESERVATION) {
-		atomic64_add_bug(sectors, &c->sectors_reserved);
+		bch_mark_reservation(c, sectors);
 	}
 
 	return 0;

@@ -873,6 +873,7 @@ static void cache_set_free(struct cache_set *c)
 	bch_io_clock_exit(&c->io_clock[WRITE]);
 	bch_io_clock_exit(&c->io_clock[READ]);
 	bdi_destroy(&c->bdi);
+	free_percpu(c->bucket_stats_lock.lock);
 	free_percpu(c->bucket_stats_percpu);
 	free_percpu(c->bio_decompress_worker);
 	mempool_exit(&c->compression_workspace_pool);
@@ -1040,6 +1041,7 @@ static struct cache_set *bch_cache_set_alloc(struct cache_sb *sb,
 	sema_init(&c->sb_write_mutex, 1);
 	INIT_RADIX_TREE(&c->devices, GFP_KERNEL);
 	mutex_init(&c->btree_cache_lock);
+	lg_lock_init(&c->bucket_stats_lock);
 	mutex_init(&c->bucket_lock);
 	spin_lock_init(&c->btree_root_lock);
 	INIT_WORK(&c->read_only_work, bch_cache_set_read_only_work);
@@ -1135,6 +1137,7 @@ static struct cache_set *bch_cache_set_alloc(struct cache_sb *sb,
 				   get_order(COMPRESSION_WORKSPACE_SIZE)) ||
 	    !(c->bio_decompress_worker = alloc_percpu(*c->bio_decompress_worker)) ||
 	    !(c->bucket_stats_percpu = alloc_percpu(struct bucket_stats_cache_set)) ||
+	    !(c->bucket_stats_lock.lock = alloc_percpu(*c->bucket_stats_lock.lock)) ||
 	    bdi_setup_and_register(&c->bdi, "bcache") ||
 	    bch_io_clock_init(&c->io_clock[READ]) ||
 	    bch_io_clock_init(&c->io_clock[WRITE]) ||

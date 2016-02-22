@@ -432,19 +432,24 @@ static void bch_put_page_reservation(struct cache_set *c, struct page *page)
 			s.alloc_state = BCH_PAGE_UNALLOCATED;
 	});
 
-	if (s.alloc_state == BCH_PAGE_RESERVED)
-		atomic64_sub_bug(PAGE_SECTORS, &c->sectors_reserved);
+	if (s.alloc_state == BCH_PAGE_RESERVED) {
+		struct disk_reservation res = { .sectors = PAGE_SECTORS };
+
+		/* hack */
+		bch_disk_reservation_put(c, &res);
+	}
 }
 
 static int bch_get_page_reservation(struct cache_set *c, struct page *page)
 {
 	struct bch_page_state *s = page_state(page), old, new;
+	struct disk_reservation res;
 	int ret = 0;
 
 	if (s->alloc_state != BCH_PAGE_UNALLOCATED)
 		return 0;
 
-	ret = bch_reserve_sectors(c, PAGE_SECTORS);
+	ret = bch_disk_reservation_get(c, &res, PAGE_SECTORS);
 	if (ret)
 		return ret;
 
@@ -474,8 +479,12 @@ static void bch_clear_page_bits(struct page *page)
 		spin_unlock(&inode->i_lock);
 	}
 
-	if (s.alloc_state == BCH_PAGE_RESERVED)
-		atomic64_sub_bug(PAGE_SECTORS, &c->sectors_reserved);
+	if (s.alloc_state == BCH_PAGE_RESERVED) {
+		struct disk_reservation res = { .sectors = PAGE_SECTORS };
+
+		/* hack */
+		bch_disk_reservation_put(c, &res);
+	}
 
 	if (s.append)
 		i_size_update_put(c, ei, s.append_idx, 1);
@@ -792,7 +801,11 @@ static void bch_writepage_io_done(struct closure *cl)
 	struct bio_vec *bvec;
 	unsigned i;
 
-	atomic64_sub_bug(io->sectors_reserved, &c->sectors_reserved);
+	if (io->sectors_reserved) {
+		struct disk_reservation res = { .sectors = io->sectors_reserved };
+
+		bch_disk_reservation_put(c, &res);
+	}
 
 	for (i = 0; i < ARRAY_SIZE(io->i_size_update_count); i++)
 		i_size_update_put(c, ei, i, io->i_size_update_count[i]);
@@ -1312,7 +1325,7 @@ static void __bch_dio_write_complete(struct dio_write *dio)
 	struct bch_inode_info *ei = to_bch_ei(inode);
 	struct cache_set *c = inode->i_sb->s_fs_info;
 
-	atomic64_sub_bug(dio->nr_sectors, &c->sectors_reserved);
+	bch_disk_reservation_put(c, &dio->res);
 
 	i_sectors_dirty_put(ei, &dio->i_sectors_hook);
 
@@ -1437,7 +1450,6 @@ static int bch_direct_IO_write(struct cache_set *c, struct kiocb *req,
 	dio->written	= 0;
 	dio->error	= 0;
 	dio->offset	= offset;
-	dio->nr_sectors	= iter->count >> 9;
 	dio->append	= false;
 	dio->iovec	= NULL;
 	dio->iter	= *iter;
@@ -1469,7 +1481,7 @@ static int bch_direct_IO_write(struct cache_set *c, struct kiocb *req,
 	 * Have to then guard against racing with truncate (deleting data that
 	 * we would have been overwriting)
 	 */
-	ret = bch_reserve_sectors(c, dio->nr_sectors);
+	ret = bch_disk_reservation_get(c, &dio->res, iter->count >> 9);
 	if (ret)
 		goto err_put_sectors_dirty;
 
@@ -2269,6 +2281,7 @@ static long bch_fallocate(struct inode *inode, int mode,
 		goto err;
 
 	while (bkey_cmp(iter.pos, end) < 0) {
+		struct disk_reservation disk_res;
 		unsigned flags = 0;
 
 		k = bch_btree_iter_peek_with_holes(&iter);
@@ -2303,7 +2316,7 @@ static long bch_fallocate(struct inode *inode, int mode,
 
 		sectors = reservation.k.size;
 
-		ret = bch_reserve_sectors(c, sectors);
+		ret = bch_disk_reservation_get(c, &disk_res, sectors);
 		if (ret)
 			goto err_put_sectors_dirty;
 
@@ -2313,7 +2326,7 @@ static long bch_fallocate(struct inode *inode, int mode,
 					  &ei->journal_seq,
 					  BTREE_INSERT_ATOMIC|flags);
 
-		atomic64_sub_bug(sectors, &c->sectors_reserved);
+		bch_disk_reservation_put(c, &disk_res);
 
 		if (ret < 0 && ret != -EINTR)
 			goto err_put_sectors_dirty;

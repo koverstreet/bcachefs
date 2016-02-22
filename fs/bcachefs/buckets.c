@@ -157,7 +157,7 @@ static void bucket_stats_update(struct cache *ca,
 	       !is_available_bucket(new) &&
 	       c->gc_pos.phase == GC_PHASE_DONE);
 
-	preempt_disable();
+	lg_local_lock(&c->bucket_stats_lock);
 	cache_stats = this_cpu_ptr(ca->bucket_stats_percpu);
 	cache_set_stats = this_cpu_ptr(c->bucket_stats_percpu);
 
@@ -188,7 +188,7 @@ static void bucket_stats_update(struct cache *ca,
 	cache_stats->buckets_meta += is_meta_bucket(new) - is_meta_bucket(old);
 	cache_stats->buckets_cached += is_cached_bucket(new) - is_cached_bucket(old);
 	cache_stats->buckets_dirty += is_dirty_bucket(new) - is_dirty_bucket(old);
-	preempt_enable();
+	lg_local_unlock(&c->bucket_stats_lock);
 
 	if (!is_available_bucket(old) && is_available_bucket(new))
 		bch_wake_allocator(ca);
@@ -428,6 +428,16 @@ stale:
 	return -1;
 }
 
+void bch_mark_reservation(struct cache_set *c, int sectors)
+{
+	struct bucket_stats_cache_set *stats;
+
+	lg_local_lock(&c->bucket_stats_lock);
+	stats = this_cpu_ptr(c->bucket_stats_percpu);
+	stats->sectors_reserved += sectors;
+	lg_local_unlock(&c->bucket_stats_lock);
+}
+
 void bch_unmark_open_bucket(struct cache *ca, struct bucket *g)
 {
 	struct bucket_mark old, new;
@@ -437,24 +447,124 @@ void bch_unmark_open_bucket(struct cache *ca, struct bucket *g)
 	}));
 }
 
+static u64 __recalc_sectors_available(struct cache_set *c)
+{
+	return c->capacity - cache_set_sectors_used(c);
+}
+
+/* Used by gc when it's starting: */
+void bch_recalc_sectors_available(struct cache_set *c)
+{
+	int cpu;
+
+	lg_global_lock(&c->bucket_stats_lock);
+
+	for_each_possible_cpu(cpu)
+		this_cpu_ptr(c->bucket_stats_percpu)->sectors_available_cache = 0;
+
+	atomic64_set(&c->sectors_available,
+		     __recalc_sectors_available(c));
+
+	lg_global_unlock(&c->bucket_stats_lock);
+}
+
+void bch_disk_reservation_put(struct cache_set *c,
+			      struct disk_reservation *res)
+{
+	if (res->sectors) {
+		struct bucket_stats_cache_set *stats;
+
+		lg_local_lock(&c->bucket_stats_lock);
+		stats = this_cpu_ptr(c->bucket_stats_percpu);
+		stats->sectors_reserved -= res->sectors;
+		lg_local_unlock(&c->bucket_stats_lock);
+
+		res->sectors = 0;
+	}
+}
+
 #define SECTORS_CACHE	1024
 
-int bch_reserve_sectors(struct cache_set *c, unsigned sectors)
+/*
+ * XXX
+ *
+ * For the trick we're using here to work, we have to ensure that everything
+ * that decreases the amount of space available goes through here and decreases
+ * sectors_available:
+ *
+ * Need to figure out a way of asserting that that's happening (e.g. btree node
+ * allocations?)
+ */
+int __bch_disk_reservation_get(struct cache_set *c,
+			       struct disk_reservation *res,
+			       unsigned sectors,
+			       bool check_enospc, bool gc_lock_held)
 {
-	u64 sectors_to_get = SECTORS_CACHE + sectors;
+	struct bucket_stats_cache_set *stats;
+	u64 old, new, v;
+	s64 sectors_available;
+	int ret;
 
-	if (likely(atomic64_sub_return(sectors,
-				       &c->sectors_reserved_cache) >= 0))
-		return 0;
+	res->sectors = sectors;
+	res->gen = c->capacity_gen;
 
-	atomic64_add(sectors_to_get, &c->sectors_reserved);
+	lg_local_lock(&c->bucket_stats_lock);
+	stats = this_cpu_ptr(c->bucket_stats_percpu);
 
-	if (likely(!cache_set_full(c))) {
-		atomic64_add(sectors_to_get, &c->sectors_reserved_cache);
-		return 0;
+	if (sectors >= stats->sectors_available_cache)
+		goto out;
+
+	v = atomic64_read(&c->sectors_available);
+	do {
+		old = v;
+		if (old < sectors) {
+			lg_local_unlock(&c->bucket_stats_lock);
+			goto recalculate;
+		}
+
+		new = max_t(s64, 0, old - sectors - SECTORS_CACHE);
+	} while ((v = atomic64_cmpxchg(&c->sectors_available,
+				       old, new)) != old);
+
+	stats->sectors_available_cache	+= old - new;
+out:
+	stats->sectors_available_cache	-= sectors;
+	stats->sectors_reserved		+= sectors;
+	lg_local_unlock(&c->bucket_stats_lock);
+	return 0;
+
+recalculate:
+	/*
+	 * GC recalculates sectors_available when it starts, so that hopefully
+	 * we don't normally end up blocking here:
+	 */
+	if (!gc_lock_held)
+		down_read(&c->gc_lock);
+	lg_global_lock(&c->bucket_stats_lock);
+
+	sectors_available = __recalc_sectors_available(c);
+
+	if (!check_enospc || sectors <= sectors_available) {
+		atomic64_set(&c->sectors_available,
+			     max_t(s64, 0, sectors_available - sectors));
+		stats->sectors_reserved += sectors;
+		ret = 0;
+	} else {
+		atomic64_set(&c->sectors_available, sectors_available);
+		res->sectors = 0;
+		ret = -ENOSPC;
 	}
 
-	atomic64_sub_bug(sectors_to_get, &c->sectors_reserved);
-	atomic64_add(sectors, &c->sectors_reserved_cache);
-	return -ENOSPC;
+	lg_global_unlock(&c->bucket_stats_lock);
+	if (!gc_lock_held)
+		up_read(&c->gc_lock);
+
+	return ret;
+}
+
+int bch_disk_reservation_get(struct cache_set *c,
+			     struct disk_reservation *res,
+			     unsigned sectors)
+{
+	return __bch_disk_reservation_get(c, res, sectors, true, false);
 }
