@@ -407,8 +407,8 @@ struct cache {
 	 * second contains a saved copy of the stats from the beginning
 	 * of GC.
 	 */
-	struct bucket_stats __percpu *bucket_stats_percpu;
-	struct bucket_stats	bucket_stats_cached;
+	struct bucket_stats_cache __percpu *bucket_stats_percpu;
+	struct bucket_stats_cache	bucket_stats_cached;
 
 	atomic_long_t		saturated_count;
 	size_t			inc_gen_needs_gc;
@@ -627,6 +627,9 @@ struct cache_set {
 	u64			capacity; /* sectors */
 	atomic64_t		sectors_reserved;
 	atomic64_t		sectors_reserved_cache;
+
+	struct bucket_stats_cache_set __percpu *bucket_stats_percpu;
+	struct bucket_stats_cache_set	bucket_stats_cached;
 
 	struct mutex		bucket_lock;
 

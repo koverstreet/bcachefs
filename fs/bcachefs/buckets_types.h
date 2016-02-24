@@ -32,12 +32,18 @@ struct bucket {
 	u8			copygc_gen;
 };
 
-struct bucket_stats {
+struct bucket_stats_cache {
 	u64			buckets_dirty;
 	u64			buckets_cached;
 	u64			buckets_meta;
 	u64			buckets_alloc;
 
+	u64			sectors_dirty;
+	u64			sectors_cached;
+	u64			sectors_meta;
+};
+
+struct bucket_stats_cache_set {
 	u64			sectors_dirty;
 	u64			sectors_cached;
 	u64			sectors_meta;

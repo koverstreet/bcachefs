@@ -572,25 +572,16 @@ static unsigned bch_average_key_size(struct cache_set *c)
 
 static ssize_t show_cache_set_alloc_debug(struct cache_set *c, char *buf)
 {
-	struct cache *ca;
-	unsigned i;
-	u64 meta = 0, dirty = 0;
-
-	rcu_read_lock();
-	for_each_cache_rcu(ca, c, i) {
-		struct bucket_stats stats = bch_bucket_stats_read(ca);
-
-		meta += stats.buckets_meta << ca->bucket_bits;
-		dirty += stats.sectors_dirty;
-	}
-	rcu_read_unlock();
+	struct bucket_stats_cache_set stats = bch_bucket_stats_read_cache_set(c);
 
 	return scnprintf(buf, PAGE_SIZE,
 			 "capacity:\t\t%llu\n"
 			 "meta sectors:\t\t%llu\n"
 			 "dirty sectors:\t\t%llu\n"
 			 "reserved sectors:\t%llu\n",
-			 c->capacity, meta, dirty,
+			 c->capacity,
+			 stats.sectors_meta,
+			 stats.sectors_dirty,
 			 (u64) atomic64_read(&c->sectors_reserved));
 }
 
@@ -1163,7 +1154,7 @@ SHOW(bch_cache)
 {
 	struct cache *ca = container_of(kobj, struct cache, kobj);
 	struct cache_set *c = ca->set;
-	struct bucket_stats stats = bch_bucket_stats_read(ca);
+	struct bucket_stats_cache stats = bch_bucket_stats_read_cache(ca);
 
 	sysfs_printf(uuid,		"%pU\n", ca->disk_sb.sb->disk_uuid.b);
 

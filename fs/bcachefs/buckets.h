@@ -137,32 +137,6 @@ static inline void bucket_heap_push(struct cache *ca, struct bucket *g,
  * GC must be performed. */
 #define GC_MAX_SECTORS_USED ((1U << 15) - 1)
 
-static inline void __bucket_stats_add(struct bucket_stats *acc,
-				      struct bucket_stats *s)
-{
-	unsigned i;
-
-	for (i = 0; i < sizeof(*s) / sizeof(u64); i++)
-		((u64 *) acc)[i] += ((u64 *) s)[i];
-}
-
-static inline struct bucket_stats __bucket_stats_read(struct cache *ca)
-{
-	struct bucket_stats ret;
-	int cpu;
-
-	memset(&ret, 0, sizeof(ret));
-
-	for_each_possible_cpu(cpu)
-		__bucket_stats_add(&ret,
-				   per_cpu_ptr(ca->bucket_stats_percpu, cpu));
-
-
-	return ret;
-}
-
-struct bucket_stats bch_bucket_stats_read(struct cache *);
-
 static inline bool bucket_unused(struct bucket *g)
 {
 	return !g->mark.counter;
@@ -173,8 +147,13 @@ static inline unsigned bucket_sectors_used(struct bucket *g)
 	return g->mark.dirty_sectors + g->mark.cached_sectors;
 }
 
+/* Per device stats: */
+
+struct bucket_stats_cache __bch_bucket_stats_read_cache(struct cache *);
+struct bucket_stats_cache bch_bucket_stats_read_cache(struct cache *);
+
 static inline size_t __buckets_available_cache(struct cache *ca,
-					       struct bucket_stats stats)
+					       struct bucket_stats_cache stats)
 {
 	return max_t(s64, 0,
 		     ca->mi.nbuckets - ca->mi.first_bucket -
@@ -188,11 +167,11 @@ static inline size_t __buckets_available_cache(struct cache *ca,
  */
 static inline size_t buckets_available_cache(struct cache *ca)
 {
-	return __buckets_available_cache(ca, bch_bucket_stats_read(ca));
+	return __buckets_available_cache(ca, bch_bucket_stats_read_cache(ca));
 }
 
 static inline size_t __buckets_free_cache(struct cache *ca,
-					  struct bucket_stats stats,
+					  struct bucket_stats_cache stats,
 					  enum alloc_reserve reserve)
 {
 	size_t free =  __buckets_available_cache(ca, stats) +
@@ -208,29 +187,21 @@ static inline size_t __buckets_free_cache(struct cache *ca,
 static inline size_t buckets_free_cache(struct cache *ca,
 					enum alloc_reserve reserve)
 {
-	return __buckets_free_cache(ca, bch_bucket_stats_read(ca), reserve);
+	return __buckets_free_cache(ca, bch_bucket_stats_read_cache(ca), reserve);
 }
+
+/* Cache set stats: */
+
+struct bucket_stats_cache_set __bch_bucket_stats_read_cache_set(struct cache_set *);
+struct bucket_stats_cache_set bch_bucket_stats_read_cache_set(struct cache_set *);
 
 static inline u64 __cache_set_sectors_used(struct cache_set *c)
 {
-	struct cache *ca;
-	unsigned i;
-	u64 used = 0;
+	struct bucket_stats_cache_set stats = bch_bucket_stats_read_cache_set(c);
 
-	rcu_read_lock();
-	for_each_cache_rcu(ca, c, i) {
-		struct bucket_stats stats = bch_bucket_stats_read(ca);
-
-		used += (((stats.buckets_alloc -
-			   fifo_used(&ca->free[RESERVE_NONE]) -
-			   fifo_used(&ca->free_inc)) +
-			  stats.buckets_meta) <<
-			 ca->bucket_bits) +
-			stats.sectors_dirty;
-	}
-	rcu_read_unlock();
-
-	return used + atomic64_read(&c->sectors_reserved);
+	return stats.sectors_meta +
+		stats.sectors_dirty +
+		atomic64_read(&c->sectors_reserved);
 }
 
 static inline u64 cache_set_sectors_used(struct cache_set *c)

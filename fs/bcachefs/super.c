@@ -873,6 +873,7 @@ static void cache_set_free(struct cache_set *c)
 	bch_io_clock_exit(&c->io_clock[WRITE]);
 	bch_io_clock_exit(&c->io_clock[READ]);
 	bdi_destroy(&c->bdi);
+	free_percpu(c->bucket_stats_percpu);
 	free_percpu(c->bio_decompress_worker);
 	mempool_exit(&c->compression_workspace_pool);
 	mempool_exit(&c->bio_bounce_pages);
@@ -1133,6 +1134,7 @@ static struct cache_set *bch_cache_set_alloc(struct cache_sb *sb,
 	    mempool_init_page_pool(&c->compression_workspace_pool, 1,
 				   get_order(COMPRESSION_WORKSPACE_SIZE)) ||
 	    !(c->bio_decompress_worker = alloc_percpu(*c->bio_decompress_worker)) ||
+	    !(c->bucket_stats_percpu = alloc_percpu(struct bucket_stats_cache_set)) ||
 	    bdi_setup_and_register(&c->bdi, "bcache") ||
 	    bch_io_clock_init(&c->io_clock[READ]) ||
 	    bch_io_clock_init(&c->io_clock[WRITE]) ||
@@ -1922,7 +1924,7 @@ static const char *cache_alloc(struct bcache_superblock *sb,
 	    !(ca->prio_buckets	= kzalloc(sizeof(uint64_t) * prio_buckets(ca) *
 					  2, GFP_KERNEL)) ||
 	    !(ca->disk_buckets	= alloc_bucket_pages(GFP_KERNEL, ca)) ||
-	    !(ca->bucket_stats_percpu = alloc_percpu(struct bucket_stats)) ||
+	    !(ca->bucket_stats_percpu = alloc_percpu(struct bucket_stats_cache)) ||
 	    !(ca->journal.bucket_seq = kcalloc(bch_nr_journal_buckets(ca->disk_sb.sb),
 					       sizeof(u64), GFP_KERNEL)) ||
 	    !(ca->bio_prio = bio_kmalloc(GFP_NOIO, bucket_pages(ca))) ||

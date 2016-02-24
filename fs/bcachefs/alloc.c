@@ -126,7 +126,7 @@ static void pd_controllers_update(struct work_struct *work)
 	rcu_read_lock();
 	for (i = CACHE_TIERS - 1; i >= 0; --i)
 		group_for_each_cache_rcu(ca, &c->cache_tiers[i], iter) {
-			struct bucket_stats stats = bch_bucket_stats_read(ca);
+			struct bucket_stats_cache stats = bch_bucket_stats_read_cache(ca);
 			unsigned bucket_bits = ca->bucket_bits + 9;
 
 			/*

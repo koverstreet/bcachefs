@@ -384,7 +384,9 @@ void bch_gc(struct cache_set *c)
 
 	/* Save a copy of the existing bucket stats while we recompute them: */
 	for_each_cache(ca, c, i)
-		ca->bucket_stats_cached = __bucket_stats_read(ca);
+		ca->bucket_stats_cached = __bch_bucket_stats_read_cache(ca);
+
+	c->bucket_stats_cached = __bch_bucket_stats_read_cache_set(c);
 
 	/* Indicates to buckets code that gc is now in progress: */
 	__gc_pos_set(c, GC_POS_MIN);

@@ -69,20 +69,63 @@
 
 #include <trace/events/bcachefs.h>
 
-struct bucket_stats bch_bucket_stats_read(struct cache *ca)
+#define bucket_stats_read_raw(_stats)					\
+({									\
+	typeof(*this_cpu_ptr(_stats)) _acc, *_s;			\
+	unsigned i;							\
+	int cpu;							\
+									\
+	memset(&_acc, 0, sizeof(_acc));					\
+									\
+	for_each_possible_cpu(cpu) {					\
+		_s = per_cpu_ptr((_stats), cpu);			\
+									\
+		for (i = 0; i < sizeof(_acc) / sizeof(u64); i++)	\
+			((u64 *) &_acc)[i] += ((u64 *) _s)[i];		\
+	}								\
+									\
+	_acc;								\
+})
+
+#define bucket_stats_read_cached(_c, _cached, _uncached)		\
+({									\
+	typeof(_cached) _ret;						\
+	unsigned _seq;							\
+									\
+	do {								\
+		_seq = read_seqcount_begin(&(_c)->gc_pos_lock);		\
+		_ret = (_c)->gc_pos.phase == GC_PHASE_DONE		\
+			? bucket_stats_read_raw(_uncached)		\
+			: (_cached);					\
+	} while (read_seqcount_retry(&(_c)->gc_pos_lock, _seq));	\
+									\
+	_ret;								\
+})
+
+struct bucket_stats_cache __bch_bucket_stats_read_cache(struct cache *ca)
 {
-	struct cache_set *c = ca->set;
-	struct bucket_stats ret;
-	unsigned seq;
+	return bucket_stats_read_raw(ca->bucket_stats_percpu);
+}
 
-	do {
-		seq = read_seqcount_begin(&c->gc_pos_lock);
-		ret = c->gc_pos.phase == GC_PHASE_DONE
-			? __bucket_stats_read(ca)
-			: ca->bucket_stats_cached;
-	} while (read_seqcount_retry(&c->gc_pos_lock, seq));
+struct bucket_stats_cache bch_bucket_stats_read_cache(struct cache *ca)
+{
+	return bucket_stats_read_cached(ca->set,
+				ca->bucket_stats_cached,
+				ca->bucket_stats_percpu);
+}
 
-	return ret;
+struct bucket_stats_cache_set
+__bch_bucket_stats_read_cache_set(struct cache_set *c)
+{
+	return bucket_stats_read_raw(c->bucket_stats_percpu);
+}
+
+struct bucket_stats_cache_set
+bch_bucket_stats_read_cache_set(struct cache_set *c)
+{
+	return bucket_stats_read_cached(c,
+				c->bucket_stats_cached,
+				c->bucket_stats_percpu);
 }
 
 static inline int is_meta_bucket(struct bucket_mark m)
@@ -105,36 +148,46 @@ static void bucket_stats_update(struct cache *ca,
 				struct bucket_mark new,
 				bool may_make_unavailable)
 {
-	struct bucket_stats *stats;
+	struct cache_set *c = ca->set;
+	struct bucket_stats_cache *cache_stats;
+	struct bucket_stats_cache_set *cache_set_stats;
 
 	BUG_ON(!may_make_unavailable &&
 	       is_available_bucket(old) &&
 	       !is_available_bucket(new) &&
-	       ca->set->gc_pos.phase == GC_PHASE_DONE);
+	       c->gc_pos.phase == GC_PHASE_DONE);
 
 	preempt_disable();
-	stats = this_cpu_ptr(ca->bucket_stats_percpu);
+	cache_stats = this_cpu_ptr(ca->bucket_stats_percpu);
+	cache_set_stats = this_cpu_ptr(c->bucket_stats_percpu);
 
-	stats->sectors_cached +=
+	cache_stats->sectors_cached +=
+		(int) new.cached_sectors - (int) old.cached_sectors;
+	cache_set_stats->sectors_cached +=
 		(int) new.cached_sectors - (int) old.cached_sectors;
 
-	if (old.is_metadata)
-		stats->sectors_meta -= old.dirty_sectors;
-	else
-		stats->sectors_dirty -= old.dirty_sectors;
+	if (old.is_metadata) {
+		cache_stats->sectors_meta -= old.dirty_sectors;
+		cache_set_stats->sectors_meta -= old.dirty_sectors;
+	} else {
+		cache_stats->sectors_dirty -= old.dirty_sectors;
+		cache_set_stats->sectors_dirty -= old.dirty_sectors;
+	}
 
-	if (new.is_metadata)
-		stats->sectors_meta += new.dirty_sectors;
-	else
-		stats->sectors_dirty += new.dirty_sectors;
+	if (new.is_metadata) {
+		cache_stats->sectors_meta += new.dirty_sectors;
+		cache_set_stats->sectors_meta += new.dirty_sectors;
+	} else {
+		cache_stats->sectors_dirty += new.dirty_sectors;
+		cache_set_stats->sectors_dirty += new.dirty_sectors;
+	}
 
-	stats->buckets_alloc +=
+	cache_stats->buckets_alloc +=
 		(int) new.owned_by_allocator - (int) old.owned_by_allocator;
 
-	stats->buckets_meta += is_meta_bucket(new) - is_meta_bucket(old);
-	stats->buckets_cached += is_cached_bucket(new) - is_cached_bucket(old);
-	stats->buckets_dirty += is_dirty_bucket(new) - is_dirty_bucket(old);
-
+	cache_stats->buckets_meta += is_meta_bucket(new) - is_meta_bucket(old);
+	cache_stats->buckets_cached += is_cached_bucket(new) - is_cached_bucket(old);
+	cache_stats->buckets_dirty += is_dirty_bucket(new) - is_dirty_bucket(old);
 	preempt_enable();
 
 	if (!is_available_bucket(old) && is_available_bucket(new))
