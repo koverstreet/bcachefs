@@ -206,8 +206,8 @@ static const char *validate_bset(struct cache_set *c, struct btree *b,
 
 	for (k = i->start;
 	     k != bset_bkey_last(i);) {
-		struct bkey_tup tup;
 		struct bkey_s_c u;
+		struct bkey tmp;
 		const char *invalid;
 
 		if (!k->u64s) {
@@ -230,8 +230,7 @@ static const char *validate_bset(struct cache_set *c, struct btree *b,
 		if (BSET_BIG_ENDIAN(i) != CPU_BIG_ENDIAN)
 			bch_bkey_swab(btree_node_type(b), &b->keys.format, k);
 
-		bkey_disassemble(&tup, f, k);
-		u = bkey_tup_to_s_c(&tup);
+		u = bkey_disassemble(f, k, &tmp);
 
 		invalid = btree_bkey_invalid(c, b, u);
 		if (invalid) {

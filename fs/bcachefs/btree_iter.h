@@ -54,7 +54,7 @@ struct btree_iter {
 	 * Current unpacked key - so that bch_btree_iter_next()/
 	 * bch_btree_iter_next_with_holes() can correctly advance pos.
 	 */
-	struct bkey_tup		tup;
+	struct bkey		k;
 
 	/*
 	 * Circular linked list of linked iterators: linked iterators share

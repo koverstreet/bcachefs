@@ -22,10 +22,11 @@
 void __bch_btree_calc_format(struct bkey_format_state *s, struct btree *b)
 {
 	struct btree_node_iter iter;
-	struct bkey_tup tup;
+	struct bkey unpacked;
+	struct bkey_s_c k;
 
-	for_each_btree_node_key_unpack(&b->keys, &tup, &iter)
-		bch_bkey_format_add_key(s, &tup.k);
+	for_each_btree_node_key_unpack(&b->keys, k, &iter, &unpacked)
+		bch_bkey_format_add_key(s, k.k);
 
 	if (b->keys.ops->is_extents) {
 		/*
@@ -588,11 +589,8 @@ static bool bch_insert_fixup_btree_ptr(struct btree_iter *iter,
 	}
 
 	while ((k = bch_btree_node_iter_peek_all(node_iter, &b->keys))) {
-		struct bkey_tup tup;
-		struct bkey_s_c u;
-
-		bkey_disassemble(&tup, f, k);
-		u = bkey_tup_to_s_c(&tup);
+		struct bkey tmp;
+		struct bkey_s_c u = bkey_disassemble(f, k, &tmp);
 
 		cmp = bkey_cmp(u.k->p, insert->k.p);
 		if (cmp > 0)

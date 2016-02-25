@@ -703,7 +703,8 @@ struct btree_nr_keys bch_extent_sort_fix_overlapping(struct btree_keys *b,
 	struct bkey_format *f = &b->format;
 	struct btree_node_iter_set *_l = iter->data, *_r;
 	struct bkey_packed *prev = NULL, *out = bset->start, *lk, *rk;
-	struct bkey_tup l, r;
+	struct bkey l_unpacked, r_unpacked;
+	struct bkey_s l, r;
 	struct btree_nr_keys nr;
 
 	memset(&nr, 0, sizeof(nr));
@@ -726,18 +727,18 @@ struct btree_nr_keys bch_extent_sort_fix_overlapping(struct btree_keys *b,
 
 		rk = __btree_node_offset_to_key(b, _r->k);
 
-		bkey_disassemble(&l, f, lk);
-		bkey_disassemble(&r, f, rk);
+		l = __bkey_disassemble(f, lk, &l_unpacked);
+		r = __bkey_disassemble(f, rk, &r_unpacked);
 
 		/* If current key and next key don't overlap, just append */
-		if (bkey_cmp(l.k.p, bkey_start_pos(&r.k)) <= 0) {
+		if (bkey_cmp(l.k->p, bkey_start_pos(r.k)) <= 0) {
 			out = extent_sort_append(b, &nr, out, &prev, lk);
 			extent_sort_next(iter, b, _l);
 			continue;
 		}
 
 		/* Skip 0 size keys */
-		if (!r.k.size) {
+		if (!r.k->size) {
 			extent_sort_next(iter, b, _r);
 			continue;
 		}
@@ -750,37 +751,37 @@ struct btree_nr_keys bch_extent_sort_fix_overlapping(struct btree_keys *b,
 
 		/* can't happen because of comparison func */
 		BUG_ON(_l->k < _r->k &&
-		       !bkey_cmp(bkey_start_pos(&l.k), bkey_start_pos(&r.k)));
+		       !bkey_cmp(bkey_start_pos(l.k), bkey_start_pos(r.k)));
 
 		if (_l->k > _r->k) {
 			/* l wins, trim r */
-			if (bkey_cmp(l.k.p, r.k.p) >= 0) {
+			if (bkey_cmp(l.k->p, r.k->p) >= 0) {
 				sort_key_next(iter, b, _r);
 			} else {
-				__bch_cut_front(l.k.p, bkey_tup_to_s(&r));
-				extent_save(rk, &r.k, f);
+				__bch_cut_front(l.k->p, r);
+				extent_save(rk, r.k, f);
 			}
 
 			extent_sort_sift(iter, b, _r - iter->data);
-		} else if (bkey_cmp(l.k.p, r.k.p) > 0) {
+		} else if (bkey_cmp(l.k->p, r.k->p) > 0) {
 			BKEY_PADDED(k) tmp;
 
 			/*
 			 * r wins, but it overlaps in the middle of l - split l:
 			 */
-			bkey_reassemble(&tmp.k, bkey_tup_to_s_c(&l));
-			bch_cut_back(bkey_start_pos(&r.k), &tmp.k.k);
+			bkey_reassemble(&tmp.k, l.s_c);
+			bch_cut_back(bkey_start_pos(r.k), &tmp.k.k);
 
-			__bch_cut_front(r.k.p, bkey_tup_to_s(&l));
-			extent_save(lk, &l.k, f);
+			__bch_cut_front(r.k->p, l);
+			extent_save(lk, l.k, f);
 
 			extent_sort_sift(iter, b, 0);
 
 			out = extent_sort_append(b, &nr, out, &prev,
 						 bkey_to_packed(&tmp.k));
 		} else {
-			bch_cut_back(bkey_start_pos(&r.k), &l.k);
-			extent_save(lk, &l.k, f);
+			bch_cut_back(bkey_start_pos(r.k), l.k);
+			extent_save(lk, l.k, f);
 		}
 	}
 
@@ -1122,7 +1123,7 @@ void bch_insert_fixup_extent(struct btree_iter *iter,
 	struct btree_node_iter *node_iter = &iter->node_iters[0];
 	const struct bkey_format *f = &b->keys.format;
 	struct bkey_packed *_k;
-	struct bkey_tup tup;
+	struct bkey unpacked;
 	struct bkey_s k;
 	struct bpos next_pos;
 	BKEY_PADDED(k) split;
@@ -1172,9 +1173,7 @@ void bch_insert_fixup_extent(struct btree_iter *iter,
 							  &insert->k))) {
 		bool needs_split, res_full, need_unlock;
 
-		bkey_disassemble(&tup, f, _k);
-
-		k = bkey_tup_to_s(&tup);
+		k = __bkey_disassemble(f, _k, &unpacked);
 		/*
 		 * First check if we have sufficient space in both the btree
 		 * node and the journal reservation:

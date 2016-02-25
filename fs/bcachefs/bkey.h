@@ -84,7 +84,7 @@ struct bkey_format_state {
 };
 
 void bch_bkey_format_init(struct bkey_format_state *);
-void bch_bkey_format_add_key(struct bkey_format_state *, struct bkey *);
+void bch_bkey_format_add_key(struct bkey_format_state *, const struct bkey *);
 void bch_bkey_format_add_pos(struct bkey_format_state *, struct bpos);
 struct bkey_format bch_bkey_format_done(struct bkey_format_state *);
 const char *bch_bkey_format_validate(struct bkey_format *);
@@ -297,17 +297,23 @@ bool bkey_pack(struct bkey_packed *, const struct bkey_i *,
 
 /* Disassembled bkeys */
 
-struct bkey_tup {
-	struct bkey	k;
-	struct bch_val	*v;
-};
-
-static inline void bkey_disassemble(struct bkey_tup *tup,
-				    const struct bkey_format *f,
-				    const struct bkey_packed *k)
+static inline struct bkey_s_c bkey_disassemble(const struct bkey_format *f,
+					       const struct bkey_packed *k,
+					       struct bkey *u)
 {
-	tup->k = bkey_unpack_key(f, k);
-	tup->v = bkeyp_val(f, k);
+	*u = bkey_unpack_key(f, k);
+
+	return (struct bkey_s_c) { u, bkeyp_val(f, k), };
+}
+
+/* non const version: */
+static inline struct bkey_s __bkey_disassemble(const struct bkey_format *f,
+					       struct bkey_packed *k,
+					       struct bkey *u)
+{
+	*u = bkey_unpack_key(f, k);
+
+	return (struct bkey_s) { .k = u, .v = bkeyp_val(f, k), };
 }
 
 static inline void bkey_reassemble(struct bkey_i *dst,
@@ -329,16 +335,6 @@ static inline struct bkey_s bkey_to_s(struct bkey *k)
 static inline struct bkey_s_c bkey_to_s_c(const struct bkey *k)
 {
 	return (struct bkey_s_c) { .k = k, .v = NULL };
-}
-
-static inline struct bkey_s bkey_tup_to_s(struct bkey_tup *tup)
-{
-	return (struct bkey_s) { .k = &tup->k, .v = tup->v };
-}
-
-static inline struct bkey_s_c bkey_tup_to_s_c(const struct bkey_tup *tup)
-{
-	return (struct bkey_s_c) { .k = &tup->k, .v = tup->v };
 }
 
 static inline struct bkey_s bkey_i_to_s(struct bkey_i *k)

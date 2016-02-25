@@ -178,19 +178,13 @@ static u8 btree_mark_key_initial(struct cache_set *c, struct btree *b,
 
 static bool btree_gc_mark_node(struct cache_set *c, struct btree *b)
 {
-	struct bkey_format *f = &b->keys.format;
-
 	if (btree_node_has_ptrs(b)) {
 		struct btree_node_iter iter;
-		struct bkey_packed *k_p;
-		struct bkey_tup tup;
+		struct bkey unpacked;
 		struct bkey_s_c k;
 		u8 stale = 0;
 
-		for_each_btree_node_key(&b->keys, k_p, &iter) {
-			bkey_disassemble(&tup, f, k_p);
-			k = bkey_tup_to_s_c(&tup);
-
+		for_each_btree_node_key_unpack(&b->keys, k, &iter, &unpacked) {
 			bkey_debugcheck(c, b, k);
 
 			stale = max(stale, btree_mark_key(c, b, k));
@@ -865,12 +859,12 @@ static void bch_initial_gc_btree(struct cache_set *c, enum btree_id id)
 
 		if (btree_node_has_ptrs(b)) {
 			struct btree_node_iter node_iter;
-			struct bkey_tup tup;
+			struct bkey unpacked;
+			struct bkey_s_c k;
 
-			for_each_btree_node_key_unpack(&b->keys, &tup,
-						       &node_iter)
-				btree_mark_key_initial(c, b,
-						bkey_tup_to_s_c(&tup));
+			for_each_btree_node_key_unpack(&b->keys, k,
+						       &node_iter, &unpacked)
+				btree_mark_key_initial(c, b, k);
 		}
 
 		__bch_btree_mark_key_initial(c, BKEY_TYPE_BTREE,

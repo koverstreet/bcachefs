@@ -564,13 +564,13 @@ struct bkey_packed *bch_btree_node_iter_prev_all(struct btree_node_iter *,
 	for (bch_btree_node_iter_init_from_start((iter), (b));		\
 	     ((k) = bch_btree_node_iter_next_all(iter, b));)
 
-bool bch_btree_node_iter_next_unpack(struct btree_node_iter *,
-				     struct btree_keys *,
-				     struct bkey_tup *);
+struct bkey_s_c bch_btree_node_iter_next_unpack(struct btree_node_iter *,
+						struct btree_keys *,
+						struct bkey *);
 
-#define for_each_btree_node_key_unpack(b, tup, iter)			\
+#define for_each_btree_node_key_unpack(b, k, iter, unpacked)		\
 	for (bch_btree_node_iter_init_from_start((iter), (b));		\
-	     bch_btree_node_iter_next_unpack((iter), (b), (tup));)
+	     (k = bch_btree_node_iter_next_unpack((iter), (b), (unpacked))).k;)
 
 /* Sorting */
 

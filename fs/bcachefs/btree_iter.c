@@ -211,8 +211,7 @@ static inline struct bkey_s_c __btree_iter_peek_all(struct btree_iter *iter)
 	if (!k)
 		return bkey_s_c_null;
 
-	bkey_disassemble(&iter->tup, f, k);
-	ret = bkey_tup_to_s_c(&iter->tup);
+	ret = bkey_disassemble(f, k, &iter->k);
 
 	if (debug_check_bkeys(iter->c))
 		bkey_debugcheck(iter->c, iter->nodes[iter->level], ret);
@@ -231,8 +230,7 @@ static inline struct bkey_s_c __btree_iter_peek(struct btree_iter *iter)
 	if (!k)
 		return bkey_s_c_null;
 
-	bkey_disassemble(&iter->tup, f, k);
-	ret = bkey_tup_to_s_c(&iter->tup);
+	ret = bkey_disassemble(f, k, &iter->k);
 
 	if (debug_check_bkeys(iter->c))
 		bkey_debugcheck(iter->c, iter->nodes[iter->level], ret);
@@ -568,7 +566,7 @@ void bch_btree_iter_set_pos(struct btree_iter *iter, struct bpos new_pos)
 void bch_btree_iter_advance_pos(struct btree_iter *iter)
 {
 	bch_btree_iter_set_pos(iter,
-		btree_type_successor(iter->btree_id, iter->tup.k.p));
+		btree_type_successor(iter->btree_id, iter->k.p));
 }
 
 /* XXX: expensive */
@@ -650,8 +648,8 @@ recheck:
 				EBUG_ON(!n.size);
 			}
 
-			iter->tup.k = n;
-			return bkey_tup_to_s_c(&iter->tup);
+			iter->k = n;
+			return (struct bkey_s_c) { &iter->k, NULL };
 		} else if (!bkey_deleted(k.k)) {
 			return k;
 		} else {

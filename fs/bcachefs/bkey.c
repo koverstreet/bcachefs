@@ -567,7 +567,7 @@ static void __bkey_format_add(struct bkey_format_state *s,
 /*
  * Changes @format so that @k can be successfully packed with @format
  */
-void bch_bkey_format_add_key(struct bkey_format_state *s, struct bkey *k)
+void bch_bkey_format_add_key(struct bkey_format_state *s, const struct bkey *k)
 {
 	unsigned field = 0;
 

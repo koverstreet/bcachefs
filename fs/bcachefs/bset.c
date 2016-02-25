@@ -100,12 +100,13 @@ void bch_dump_bucket(struct btree_keys *b)
 s64 __bch_count_data(struct btree_keys *b)
 {
 	struct btree_node_iter iter;
-	struct bkey_tup k;
+	struct bkey unpacked;
+	struct bkey_s_c k;
 	u64 ret = 0;
 
 	if (b->ops->is_extents)
-		for_each_btree_node_key_unpack(b, &k, &iter)
-			ret += k.k.size;
+		for_each_btree_node_key_unpack(b, k, &iter, &unpacked)
+			ret += k.k->size;
 
 	return ret;
 }
@@ -1490,18 +1491,13 @@ found:
 	return bch_btree_node_iter_peek_all(iter, b);
 }
 
-bool bch_btree_node_iter_next_unpack(struct btree_node_iter *iter,
-				     struct btree_keys *b,
-				     struct bkey_tup *tup)
+struct bkey_s_c bch_btree_node_iter_next_unpack(struct btree_node_iter *iter,
+						struct btree_keys *b,
+						struct bkey *u)
 {
-	struct bkey_format *f = &b->format;
 	struct bkey_packed *k = bch_btree_node_iter_next(iter, b);
 
-	if (!k)
-		return false;
-
-	bkey_disassemble(tup, f, k);
-	return true;
+	return k ? bkey_disassemble(&b->format, k, u) : bkey_s_c_null;
 }
 EXPORT_SYMBOL(bch_btree_node_iter_next_unpack);
 
@@ -1596,9 +1592,8 @@ static struct btree_nr_keys btree_mergesort_extents(struct btree_keys *dst,
 {
 	struct bkey_format *in_f = &src->format;
 	struct bkey_format *out_f = &dst->format;
-	struct bkey_packed *k, *prev = NULL, *out = dst_set->start;
+	struct bkey_packed *k, *prev = NULL, *out;
 	struct btree_nr_keys nr;
-	struct bkey_tup tup;
 	BKEY_PADDED(k) tmp;
 
 	EBUG_ON(!dst->ops->is_extents);
@@ -1620,28 +1615,29 @@ static struct btree_nr_keys btree_mergesort_extents(struct btree_keys *dst,
 		if (filter && filter(src, bkey_i_to_s(&tmp.k)))
 			continue;
 
+		/* prev is always unpacked, for key merging: */
+
 		if (prev &&
 		    src->ops->key_merge &&
 		    bch_bkey_try_merge(src, (void *) prev, &tmp.k))
 			continue;
 
-		bkey_disassemble(&tup, in_f, bkey_to_packed(&tmp.k));
-
+		/*
+		 * the current key becomes the new prev: advance prev, then
+		 * copy the current key - but first pack prev (in place):
+		 */
 		if (prev) {
 			bkey_pack(prev, (void *) prev, out_f);
 
 			btree_keys_account_key_add(&nr, prev);
-			out = bkey_next(prev);
+			prev = bkey_next(prev);
 		} else {
-			out = dst_set->start;
+			prev = dst_set->start;
 		}
 
-		bkey_reassemble((void *) out, bkey_tup_to_s_c(&tup));
+		bkey_copy((void *) prev, &tmp.k);
 
-		prev = out;
-		out = bkey_next(out);
-
-		BUG_ON((void *) out >
+		BUG_ON((void *) bkey_next(prev) >
 		       (void *) dst_set + (PAGE_SIZE << dst->page_order));
 	}
 
