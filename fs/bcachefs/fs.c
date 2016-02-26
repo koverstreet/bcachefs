@@ -916,7 +916,7 @@ static loff_t bch_dir_llseek(struct file *file, loff_t offset, int whence)
 }
 
 static const struct file_operations bch_file_operations = {
-	.llseek		= generic_file_llseek,
+	.llseek		= bch_llseek,
 	.read_iter	= generic_file_read_iter,
 	.write_iter	= bch_write_iter,
 	.mmap		= bch_mmap,

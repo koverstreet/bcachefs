@@ -26,6 +26,8 @@ int bch_fsync(struct file *, loff_t, loff_t, int);
 int bch_truncate(struct inode *, struct iattr *);
 long bch_fallocate_dispatch(struct file *, int, loff_t, loff_t);
 
+loff_t bch_llseek(struct file *, loff_t, int);
+
 int bch_page_mkwrite(struct vm_area_struct *, struct vm_fault *);
 void bch_invalidatepage(struct page *, unsigned int, unsigned int);
 int bch_releasepage(struct page *, gfp_t);

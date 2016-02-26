@@ -2369,3 +2369,165 @@ long bch_fallocate_dispatch(struct file *file, int mode,
 
 	return -EOPNOTSUPP;
 }
+
+static bool page_is_data(struct page *page)
+{
+	return PagePrivate(page) &&
+		page_state(page)->alloc_state != BCH_PAGE_UNALLOCATED;
+}
+
+static loff_t bch_next_pagecache_data(struct inode *inode,
+				      loff_t start_offset,
+				      loff_t end_offset)
+{
+	struct address_space *mapping = inode->i_mapping;
+	struct page *page;
+	pgoff_t index;
+
+	for (index = start_offset >> PAGE_SHIFT;
+	     index < end_offset >> PAGE_SHIFT;
+	     index++) {
+		if (find_get_pages(mapping, index, 1, &page)) {
+			lock_page(page);
+			index = page->index;
+
+			if (page_is_data(page))
+				end_offset =
+					min(end_offset,
+					max(start_offset,
+					    ((loff_t) index) << PAGE_SHIFT));
+			unlock_page(page);
+			put_page(page);
+		} else {
+			break;
+		}
+	}
+
+	return end_offset;
+}
+
+static loff_t bch_seek_data(struct file *file, u64 offset)
+{
+	struct inode *inode = file->f_mapping->host;
+	struct cache_set *c = inode->i_sb->s_fs_info;
+	struct btree_iter iter;
+	struct bkey_s_c k;
+	u64 isize, next_data = MAX_LFS_FILESIZE;
+	int ret;
+
+	isize = i_size_read(inode);
+	if (offset >= isize)
+		return -ENXIO;
+
+	for_each_btree_key(&iter, c, BTREE_ID_EXTENTS,
+			   POS(inode->i_ino, offset >> 9), k) {
+		if (k.k->p.inode != inode->i_ino) {
+			break;
+		} else if (bkey_extent_is_data(k.k)) {
+			next_data = max(offset, bkey_start_offset(k.k) << 9);
+			break;
+		} else if (k.k->p.offset >> 9 > isize)
+			break;
+	}
+
+	ret = bch_btree_iter_unlock(&iter);
+	if (ret)
+		return ret;
+
+	if (next_data > offset)
+		next_data = bch_next_pagecache_data(inode, offset, next_data);
+
+	if (next_data > isize)
+		return -ENXIO;
+
+	return vfs_setpos(file, next_data, MAX_LFS_FILESIZE);
+}
+
+static bool page_slot_is_data(struct address_space *mapping, pgoff_t index)
+{
+	struct page *page;
+	bool ret;
+
+	page = find_lock_entry(mapping, index);
+	if (!page)
+		return false;
+
+	ret = page_is_data(page);
+	unlock_page(page);
+
+	return ret;
+}
+
+static loff_t bch_next_pagecache_hole(struct inode *inode,
+				      loff_t start_offset,
+				      loff_t end_offset)
+{
+	struct address_space *mapping = inode->i_mapping;
+	pgoff_t index;
+
+	for (index = start_offset >> PAGE_SHIFT;
+	     index < end_offset >> PAGE_SHIFT;
+	     index++)
+		if (!page_slot_is_data(mapping, index))
+			end_offset = max(start_offset,
+					 ((loff_t) index) << PAGE_SHIFT);
+
+	return end_offset;
+}
+
+static loff_t bch_seek_hole(struct file *file, u64 offset)
+{
+	struct inode *inode = file->f_mapping->host;
+	struct cache_set *c = inode->i_sb->s_fs_info;
+	struct btree_iter iter;
+	struct bkey_s_c k;
+	u64 isize, next_hole = MAX_LFS_FILESIZE;
+	int ret;
+
+	isize = i_size_read(inode);
+	if (offset >= isize)
+		return -ENXIO;
+
+	for_each_btree_key_with_holes(&iter, c, BTREE_ID_EXTENTS,
+				      POS(inode->i_ino, offset >> 9), k) {
+		if (k.k->p.inode != inode->i_ino) {
+			next_hole = bch_next_pagecache_hole(inode,
+					offset, MAX_LFS_FILESIZE);
+			break;
+		} else if (!bkey_extent_is_data(k.k)) {
+			next_hole = bch_next_pagecache_hole(inode,
+					max(offset, bkey_start_offset(k.k) << 9),
+					k.k->p.offset << 9);
+
+			if (next_hole < k.k->p.offset << 9)
+				break;
+		} else {
+			offset = max(offset, bkey_start_offset(k.k) << 9);
+		}
+	}
+
+	ret = bch_btree_iter_unlock(&iter);
+	if (ret)
+		return ret;
+
+	if (next_hole > isize)
+		next_hole = isize;
+
+	return vfs_setpos(file, next_hole, MAX_LFS_FILESIZE);
+}
+
+loff_t bch_llseek(struct file *file, loff_t offset, int whence)
+{
+	switch (whence) {
+	case SEEK_SET:
+	case SEEK_CUR:
+	case SEEK_END:
+		return generic_file_llseek(file, offset, whence);
+	case SEEK_DATA:
+		return bch_seek_data(file, offset);
+	case SEEK_HOLE:
+		return bch_seek_hole(file, offset);
+	}
+
+	return -EINVAL;
+}
