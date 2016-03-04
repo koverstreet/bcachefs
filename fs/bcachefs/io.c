@@ -886,6 +886,8 @@ static void bch_write_extent(struct bch_write_op *op,
 		bio = bio_compress(c, orig,
 				   &compression_type,
 				   output_available);
+		/* copy WRITE_SYNC flag */
+		bio->bi_opf		= orig->bi_opf;
 
 		orig->bi_iter.bi_size += extra_input;
 

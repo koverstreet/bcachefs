@@ -517,6 +517,9 @@ do_io:
 
 	bch_writepage_io_alloc(w, ei, page);
 
+	if (wbc->sync_mode == WB_SYNC_ALL)
+		w->io->bio.bio.bio.bi_opf |= WRITE_SYNC;
+
 	/*
 	 * Before unlocking the page, transfer refcounts to w->io:
 	 */
@@ -575,7 +578,7 @@ int bch_writepage(struct page *page, struct writeback_control *wbc)
 		.io = NULL,
 	};
 
-	ret = __bch_writepage(page, NULL, &w);
+	ret = __bch_writepage(page, wbc, &w);
 	if (ret)
 		return ret;
 
