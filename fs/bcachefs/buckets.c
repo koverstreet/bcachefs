@@ -145,13 +145,24 @@ static inline int is_cached_bucket(struct bucket_mark m)
 	return !m.owned_by_allocator && !m.dirty_sectors && !!m.cached_sectors;
 }
 
+void __bch_cache_set_stats_apply(struct cache_set *c,
+				 struct bucket_stats_cache_set *stats)
+{
+	lg_local_lock(&c->bucket_stats_lock);
+	bucket_stats_add(this_cpu_ptr(c->bucket_stats_percpu), stats);
+	lg_local_unlock(&c->bucket_stats_lock);
+
+	memset(stats, 0, sizeof(*stats));
+}
+
 void bch_cache_set_stats_apply(struct cache_set *c,
 			       struct bucket_stats_cache_set *stats,
 			       struct disk_reservation *disk_res)
 {
 	s64 added = stats->sectors_dirty +
 		stats->sectors_meta +
-		stats->sectors_reserved;
+		stats->sectors_persistent_reserved +
+		stats->sectors_online_reserved;
 
 	/*
 	 * Not allowed to reduce sectors_available except by getting a
@@ -160,13 +171,11 @@ void bch_cache_set_stats_apply(struct cache_set *c,
 	BUG_ON(added > (disk_res ? disk_res->sectors : 0));
 
 	if (disk_res && added > 0) {
-		disk_res->sectors	-= added;
-		stats->sectors_reserved -= added;
+		disk_res->sectors		-= added;
+		stats->sectors_online_reserved	-= added;
 	}
 
-	lg_local_lock(&c->bucket_stats_lock);
-	bucket_stats_add(this_cpu_ptr(c->bucket_stats_percpu), stats);
-	lg_local_unlock(&c->bucket_stats_lock);
+	__bch_cache_set_stats_apply(c, stats);
 }
 
 static void bucket_stats_update(struct cache *ca,
@@ -294,17 +303,15 @@ do {								\
 } while (0)
 
 /*
- * If is_gc is false, marks iff gc's position is _after_ gc_pos
- *
  * Checking against gc's position has to be done here, inside the cmpxchg()
  * loop, to avoid racing with the start of gc clearing all the marks - GC does
  * that with the gc pos seqlock held.
  */
-static u8 bch_mark_bucket(struct cache_set *c, struct cache *ca,
-			  const struct bch_extent_ptr *ptr, int sectors,
-			  bool dirty, bool metadata, bool is_gc,
-			  struct gc_pos gc_pos,
-			  struct bucket_stats_cache_set *stats)
+static u8 bch_mark_pointer(struct cache_set *c, struct cache *ca,
+			   const struct bch_extent_ptr *ptr, int sectors,
+			   bool dirty, bool metadata,
+			   bool may_make_unavailable,
+			   struct bucket_stats_cache_set *stats)
 {
 	struct bucket_mark old, new;
 	unsigned long bucket_nr = PTR_BUCKET_NR(ca, ptr);
@@ -312,7 +319,7 @@ static u8 bch_mark_bucket(struct cache_set *c, struct cache *ca,
 	u8 stale;
 
 	bucket_cmpxchg(&ca->buckets[bucket_nr], old, new,
-		       is_gc, stats, ({
+		       may_make_unavailable, stats, ({
 		saturated = 0;
 		/*
 		 * cmpxchg() only implies a full barrier on success, not
@@ -331,23 +338,15 @@ static u8 bch_mark_bucket(struct cache_set *c, struct cache *ca,
 		if (stale)
 			return stale;
 
-		if (!is_gc) {
-			/*
-			 * Check this after reading bucket mark to guard against
-			 * GC starting between when we check gc_cur_key and when
-			 * the GC zeroes out marks
-			 */
-			if (gc_will_visit(c, gc_pos))
-				return 0;
-
-			/*
-			 * Disallowed state transition - this means a bkey_cmpxchg()
-			 * operation is racing; just treat it like the pointer was
-			 * already stale
-			 */
-			if (dirty && is_available_bucket(old))
-				return 1;
-		}
+		/*
+		 * Disallowed state transition - this means a bkey_cmpxchg()
+		 * operation is racing; just treat it like the pointer was
+		 * already stale
+		 */
+		if (!may_make_unavailable &&
+		    dirty &&
+		    is_available_bucket(old))
+			return 1;
 
 		BUG_ON((old.dirty_sectors ||
 			old.cached_sectors) &&
@@ -389,10 +388,10 @@ static u8 bch_mark_bucket(struct cache_set *c, struct cache *ca,
 /*
  * Returns 0 on success, -1 on failure (pointer was stale)
  */
-int bch_mark_pointers(struct cache_set *c, struct bkey_s_c_extent e,
-		      int sectors, bool fail_if_stale, bool metadata,
-		      bool is_gc, struct gc_pos pos,
-		      struct bucket_stats_cache_set *stats)
+static int bch_mark_extent(struct cache_set *c, struct bkey_s_c_extent e,
+			   int sectors, bool fail_if_stale, bool metadata,
+			   bool may_make_unavailable,
+			   struct bucket_stats_cache_set *stats)
 {
 	const struct bch_extent_ptr *ptr, *ptr2;
 	struct cache *ca;
@@ -438,8 +437,8 @@ int bch_mark_pointers(struct cache_set *c, struct bkey_s_c_extent e,
 		 *
 		 *   Fuck me, I hate my life.
 		 */
-		stale = bch_mark_bucket(c, ca, ptr, sectors, dirty,
-					metadata, is_gc, pos, stats);
+		stale = bch_mark_pointer(c, ca, ptr, sectors, dirty, metadata,
+					 may_make_unavailable, stats);
 		if (stale && dirty && fail_if_stale)
 			goto stale;
 	}
@@ -451,23 +450,65 @@ stale:
 		if (ptr2 == ptr)
 			break;
 
-		bch_mark_bucket(c, ca, ptr, -sectors,
-				bch_extent_ptr_is_dirty(c, e, ptr),
-				metadata, is_gc, pos, stats);
+		bch_mark_pointer(c, ca, ptr, -sectors,
+				 bch_extent_ptr_is_dirty(c, e, ptr),
+				 metadata, may_make_unavailable, stats);
 	}
 	rcu_read_unlock();
 
 	return -1;
 }
 
-void bch_mark_reservation(struct cache_set *c, int sectors)
+static int __bch_mark_key(struct cache_set *c, struct bkey_s_c k,
+			  int sectors, bool fail_if_stale, bool metadata,
+			  bool may_make_unavailable,
+			  struct bucket_stats_cache_set *stats)
 {
-	struct bucket_stats_cache_set *stats;
+	int ret = 0;
 
+	switch (k.k->type) {
+	case BCH_EXTENT:
+	case BCH_EXTENT_CACHED:
+		ret = bch_mark_extent(c, bkey_s_c_to_extent(k), sectors,
+				      fail_if_stale, metadata,
+				      may_make_unavailable, stats);
+		BUG_ON(ret && metadata);
+		break;
+	case BCH_RESERVATION:
+		stats->sectors_persistent_reserved += sectors;
+		break;
+	}
+
+	return ret;
+}
+
+void bch_gc_mark_key(struct cache_set *c, struct bkey_s_c k,
+		     int sectors, bool metadata)
+{
+	struct bucket_stats_cache_set stats = { 0 };
+
+	__bch_mark_key(c, k, sectors, false, metadata, true, &stats);
+	__bch_cache_set_stats_apply(c, &stats);
+}
+
+int bch_mark_key(struct cache_set *c, struct bkey_s_c k,
+		 int sectors, bool fail_if_stale, bool metadata,
+		 struct gc_pos gc_pos, struct bucket_stats_cache_set *stats)
+{
+	int ret;
+
+	/*
+	 * Check gc_pos under bucket_stats_lock to avoid racing with the start
+	 * of gc - mark iff gc's position is _after_ gc_pos:
+	 */
 	lg_local_lock(&c->bucket_stats_lock);
-	stats = this_cpu_ptr(c->bucket_stats_percpu);
-	stats->sectors_reserved += sectors;
+	ret = !gc_will_visit(c, gc_pos)
+		?  __bch_mark_key(c, k, sectors, fail_if_stale,
+				  metadata, false, stats)
+		: 0;
 	lg_local_unlock(&c->bucket_stats_lock);
+
+	return ret;
 }
 
 void bch_unmark_open_bucket(struct cache *ca, struct bucket *g)
@@ -511,7 +552,7 @@ void bch_disk_reservation_put(struct cache_set *c,
 
 		lg_local_lock(&c->bucket_stats_lock);
 		stats = this_cpu_ptr(c->bucket_stats_percpu);
-		stats->sectors_reserved -= res->sectors;
+		stats->sectors_online_reserved -= res->sectors;
 		lg_local_unlock(&c->bucket_stats_lock);
 
 		res->sectors = 0;
@@ -554,7 +595,7 @@ int __bch_disk_reservation_get(struct cache_set *c,
 	stats->sectors_available_cache	+= old - new;
 out:
 	stats->sectors_available_cache	-= sectors;
-	stats->sectors_reserved		+= sectors;
+	stats->sectors_online_reserved	+= sectors;
 	lg_local_unlock(&c->bucket_stats_lock);
 	return 0;
 
@@ -572,7 +613,7 @@ recalculate:
 	if (!check_enospc || sectors <= sectors_available) {
 		atomic64_set(&c->sectors_available,
 			     max_t(s64, 0, sectors_available - sectors));
-		stats->sectors_reserved += sectors;
+		stats->sectors_online_reserved += sectors;
 		ret = 0;
 	} else {
 		atomic64_set(&c->sectors_available, sectors_available);
@@ -592,24 +633,4 @@ int bch_disk_reservation_get(struct cache_set *c,
 			     unsigned sectors)
 {
 	return __bch_disk_reservation_get(c, res, sectors, true, false);
-}
-
-void bch_cache_set_stats_set(struct cache_set *c,
-			     struct bucket_stats_cache_set *stats)
-{
-	struct bucket_stats_cache_set *s;
-	int cpu;
-
-	lg_global_lock(&c->bucket_stats_lock);
-	for_each_possible_cpu(cpu) {
-		s = per_cpu_ptr(c->bucket_stats_percpu, cpu);
-		memset(s, 0, sizeof(*s));
-	}
-
-	s = this_cpu_ptr(c->bucket_stats_percpu);
-	*s = *stats;
-
-	atomic64_set(&c->sectors_available, 0);
-
-	lg_global_unlock(&c->bucket_stats_lock);
 }

@@ -10,9 +10,8 @@ void bch_gc_thread_stop(struct cache_set *);
 int bch_gc_thread_start(struct cache_set *);
 int bch_initial_gc(struct cache_set *, struct list_head *);
 u8 bch_btree_key_recalc_oldest_gen(struct cache_set *, struct bkey_s_c);
-u8 __bch_btree_mark_key_initial(struct cache_set *, enum bkey_type,
-				struct bkey_s_c,
-				struct bucket_stats_cache_set *);
+u8 __bch_btree_mark_key(struct cache_set *, enum bkey_type,
+				struct bkey_s_c);
 
 /*
  * For concurrent mark and sweep (with other index updates), we define a total

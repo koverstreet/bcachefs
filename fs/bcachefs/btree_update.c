@@ -106,9 +106,8 @@ void bch_pending_btree_node_free_init(struct cache_set *c,
 }
 
 static void bch_pending_btree_node_free_insert_done(struct cache_set *c,
-						    struct btree *b,
-						    enum btree_id id,
-						    struct bkey_s_c k)
+			struct btree *b, enum btree_id id, struct bkey_s_c k,
+			struct bucket_stats_cache_set *stats)
 {
 	struct pending_btree_node_free *d;
 
@@ -142,23 +141,15 @@ found:
 	 */
 
 	/*
-	 * bch_mark_pointers() compares the current gc pos to the pos we're
+	 * bch_mark_key() compares the current gc pos to the pos we're
 	 * moving this reference from, hence one comparison here:
 	 */
-	if (gc_pos_cmp(c->gc_pos, gc_phase(GC_PHASE_PENDING_DELETE)) < 0) {
-		/*
-		 * Already accounted for in cache_set_stats - we won't apply
-		 * @stats:
-		 */
-		struct bucket_stats_cache_set stats = { 0 };
-
-		bch_mark_pointers(c, bkey_i_to_s_c_extent(&d->key),
-				  -c->sb.btree_node_size,
-				  false, true, false, b
-				  ? gc_pos_btree_node(b)
-				  : gc_pos_btree_root(id),
-				  &stats);
-	}
+	if (gc_pos_cmp(c->gc_pos, gc_phase(GC_PHASE_PENDING_DELETE)) < 0)
+		bch_mark_key(c, bkey_i_to_s_c(&d->key),
+			     -c->sb.btree_node_size, true, true, b
+			     ? gc_pos_btree_node(b)
+			     : gc_pos_btree_root(id),
+			     stats);
 
 	mutex_unlock(&c->btree_node_pending_free_lock);
 }
@@ -229,10 +220,10 @@ static void bch_btree_node_free_ondisk(struct cache_set *c,
 	mutex_lock(&c->btree_node_pending_free_lock);
 	list_del(&pending->list);
 
-	bch_mark_pointers(c, bkey_i_to_s_c_extent(&pending->key),
-			  -c->sb.btree_node_size, false, true,
-			  false, gc_phase(GC_PHASE_PENDING_DELETE),
-			  &stats);
+	bch_mark_key(c, bkey_i_to_s_c(&pending->key),
+		     -c->sb.btree_node_size, true, true,
+		     gc_phase(GC_PHASE_PENDING_DELETE),
+		     &stats);
 
 	/* Already accounted for in cache_set_stats - don't apply @stats: */
 
@@ -361,8 +352,6 @@ struct btree *btree_node_alloc_replacement(struct cache_set *c,
 static void __bch_btree_set_root(struct cache_set *c, struct btree *b,
 				 struct bucket_stats_cache_set *stats)
 {
-	bool stale;
-
 	/* Root nodes cannot be reaped */
 	mutex_lock(&c->btree_cache_lock);
 	list_del_init(&b->list);
@@ -371,11 +360,10 @@ static void __bch_btree_set_root(struct cache_set *c, struct btree *b,
 	spin_lock(&c->btree_root_lock);
 	btree_node_root(b) = b;
 
-	stale = bch_mark_pointers(c, bkey_i_to_s_c_extent(&b->key),
-				  c->sb.btree_node_size, true, true,
-				  false, gc_pos_btree_root(b->btree_id),
-				  stats);
-	BUG_ON(stale);
+	bch_mark_key(c, bkey_i_to_s_c(&b->key),
+		     c->sb.btree_node_size, true, true,
+		     gc_pos_btree_root(b->btree_id),
+		     stats);
 	spin_unlock(&c->btree_root_lock);
 
 	bch_recalc_btree_reserve(c);
@@ -442,7 +430,8 @@ static int bch_btree_set_root(struct btree_iter *iter, struct btree *b,
 	btree_node_unlock_write(old, iter);
 
 	bch_pending_btree_node_free_insert_done(c, NULL, old->btree_id,
-						bkey_i_to_s_c(&old->key));
+						bkey_i_to_s_c(&old->key),
+						&stats);
 
 	stats.sectors_meta -= c->sb.btree_node_size;
 	bch_cache_set_stats_apply(c, &stats, &btree_reserve->disk_res);
@@ -624,15 +613,10 @@ static bool bch_insert_fixup_btree_ptr(struct btree_iter *iter,
 		 ? bkey_cmp_packed(f, k, &insert->k) > 0
 		 : bkey_cmp_packed(f, k, &insert->k) >= 0));
 
-	if (bkey_extent_is_data(&insert->k)) {
-		bool stale;
-
-		stale = bch_mark_pointers(c, bkey_i_to_s_c_extent(insert),
-					  c->sb.btree_node_size,
-					  true, true, false,
-					  gc_pos_btree_node(b), &stats);
-		BUG_ON(stale);
-	}
+	if (bkey_extent_is_data(&insert->k))
+		bch_mark_key(c, bkey_i_to_s_c(insert),
+			     c->sb.btree_node_size, true, true,
+			     gc_pos_btree_node(b), &stats);
 
 	while ((k = bch_btree_node_iter_peek_all(node_iter, &b->keys))) {
 		struct bkey tmp;
@@ -643,7 +627,9 @@ static bool bch_insert_fixup_btree_ptr(struct btree_iter *iter,
 			break;
 
 		if (!cmp && !bkey_deleted(k)) {
-			bch_pending_btree_node_free_insert_done(c, b, b->btree_id, u);
+			bch_pending_btree_node_free_insert_done(c, b,
+							iter->btree_id,
+							u, &stats);
 			/*
 			 * Look up pending delete, mark so that gc marks it on
 			 * the pending delete list

@@ -194,6 +194,8 @@ static inline size_t buckets_free_cache(struct cache *ca,
 
 struct bucket_stats_cache_set __bch_bucket_stats_read_cache_set(struct cache_set *);
 struct bucket_stats_cache_set bch_bucket_stats_read_cache_set(struct cache_set *);
+void __bch_cache_set_stats_apply(struct cache_set *,
+				 struct bucket_stats_cache_set *);
 void bch_cache_set_stats_apply(struct cache_set *,
 			       struct bucket_stats_cache_set *,
 			       struct disk_reservation *);
@@ -205,8 +207,10 @@ static inline u64 cache_set_sectors_used(struct cache_set *c)
 	return min(c->capacity,
 		   stats.sectors_meta +
 		   stats.sectors_dirty +
-		   stats.sectors_reserved +
-		   (stats.sectors_reserved >> 7));
+		   stats.sectors_persistent_reserved +
+		   stats.sectors_online_reserved +
+		   ((stats.sectors_persistent_reserved +
+		     stats.sectors_online_reserved) >> 7));
 }
 
 /* XXX: kill? */
@@ -236,10 +240,9 @@ void bch_mark_alloc_bucket(struct cache *, struct bucket *);
 void bch_mark_metadata_bucket(struct cache *, struct bucket *, bool);
 void bch_unmark_open_bucket(struct cache *, struct bucket *);
 
-int bch_mark_pointers(struct cache_set *, struct bkey_s_c_extent,
-		      int, bool, bool, bool, struct gc_pos,
-		      struct bucket_stats_cache_set *);
-void bch_mark_reservation(struct cache_set *, int);
+void bch_gc_mark_key(struct cache_set *, struct bkey_s_c, int, bool);
+int bch_mark_key(struct cache_set *, struct bkey_s_c, int, bool, bool,
+		 struct gc_pos, struct bucket_stats_cache_set *);
 
 void bch_recalc_sectors_available(struct cache_set *);
 
@@ -251,8 +254,5 @@ int __bch_disk_reservation_get(struct cache_set *,
 int bch_disk_reservation_get(struct cache_set *,
 			     struct disk_reservation *,
 			     unsigned);
-
-void bch_cache_set_stats_set(struct cache_set *,
-			     struct bucket_stats_cache_set *);
 
 #endif /* _BUCKETS_H */

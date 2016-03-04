@@ -578,11 +578,13 @@ static ssize_t show_cache_set_alloc_debug(struct cache_set *c, char *buf)
 			 "capacity:\t\t%llu\n"
 			 "meta sectors:\t\t%llu\n"
 			 "dirty sectors:\t\t%llu\n"
-			 "reserved sectors:\t%llu\n",
+			 "persistent reserved sectors:\t%llu\n"
+			 "online reserved sectors:\t%llu\n",
 			 c->capacity,
 			 stats.sectors_meta,
 			 stats.sectors_dirty,
-			 stats.sectors_reserved);
+			 stats.sectors_persistent_reserved,
+			 stats.sectors_online_reserved);
 }
 
 static ssize_t bch_compression_stats(struct cache_set *c, char *buf)

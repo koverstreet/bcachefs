@@ -801,6 +801,7 @@ static int bch_add_sectors(struct btree_iter *iter, struct bkey_s_c k,
 {
 	struct cache_set *c = iter->c;
 	struct btree *b = iter->nodes[0];
+	int ret;
 
 	EBUG_ON(iter->level);
 	EBUG_ON(bkey_cmp(bkey_start_pos(k.k), b->data->min_key) < 0);
@@ -809,22 +810,14 @@ static int bch_add_sectors(struct btree_iter *iter, struct bkey_s_c k,
 	if (!sectors)
 		return 0;
 
-	if (bkey_extent_is_data(k.k)) {
-		struct bkey_s_c_extent e = bkey_s_c_to_extent(k);
-		int ret;
+	ret = bch_mark_key(c, k, sectors, fail_if_stale, false,
+			   gc_pos_btree_node(b), stats);
+	if (ret)
+		return ret;
 
-		ret = bch_mark_pointers(c, e, sectors, fail_if_stale,
-					false, false,
-					gc_pos_btree_node(b), stats);
-		if (ret)
-			return ret;
-
-		if (!bkey_extent_is_cached(e.k))
-			bcache_dev_sectors_dirty_add(c, e.k->p.inode,
-						     offset, sectors);
-	} else if (k.k->type == BCH_RESERVATION) {
-		stats->sectors_reserved += sectors;
-	}
+	if (bkey_extent_is_data(k.k) &&
+	    !bkey_extent_is_cached(k.k))
+		bcache_dev_sectors_dirty_add(c, k.k->p.inode, offset, sectors);
 
 	return 0;
 }

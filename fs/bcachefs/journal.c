@@ -777,8 +777,7 @@ const char *bch_journal_read(struct cache_set *c, struct list_head *list)
 	return NULL;
 }
 
-void bch_journal_mark(struct cache_set *c, struct list_head *list,
-		      struct bucket_stats_cache_set *stats)
+void bch_journal_mark(struct cache_set *c, struct list_head *list)
 {
 	struct bkey_i *k, *n;
 	struct jset_entry *j;
@@ -787,12 +786,11 @@ void bch_journal_mark(struct cache_set *c, struct list_head *list,
 	list_for_each_entry(r, list, list)
 		for_each_jset_key(k, n, j, &r->j) {
 			enum bkey_type type = bkey_type(j->level, j->btree_id);
+			struct bkey_s_c k_s_c = bkey_i_to_s_c(k);
 
 			if (btree_type_has_ptrs(type) &&
-			    !bkey_invalid(c, type, bkey_i_to_s_c(k)))
-				__bch_btree_mark_key_initial(c, type,
-							     bkey_i_to_s_c(k),
-							     stats);
+			    !bkey_invalid(c, type, k_s_c))
+				__bch_btree_mark_key(c, type, k_s_c);
 		}
 }
 

@@ -169,7 +169,7 @@ int bch_btree_insert_node(struct btree *, struct btree_iter *,
 #define BTREE_INSERT_NOFAIL		(1 << 1)
 
 /*
- * Don't account key being insert (bch_mark_pointers) - only for journal replay,
+ * Don't account key being insert (bch_mark_key) - only for journal replay,
  * where we've already marked the new keys:
  */
 #define BTREE_INSERT_NO_MARK_KEY	(1 << 2)
