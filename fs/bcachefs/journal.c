@@ -1213,13 +1213,15 @@ restart_flush:
 /**
  * journal_next_bucket - move on to the next journal bucket if possible
  */
-static void journal_next_bucket(struct cache_set *c)
+static int journal_next_bucket(struct cache_set *c)
 {
 	struct journal *j = &c->journal;
 	struct bkey_s_extent e = bkey_i_to_s_extent(&j->key);
 	struct bch_extent_ptr *ptr;
 	struct cache *ca;
-	unsigned iter, replicas;
+	unsigned iter, replicas, nr_devs = 0,
+		 replicas_want = READ_ONCE(c->opts.metadata_replicas);
+	int ret = 0;
 
 	lockdep_assert_held(&j->lock);
 
@@ -1262,7 +1264,9 @@ static void journal_next_bucket(struct cache_set *c)
 		unsigned next, remaining, nr_buckets =
 			bch_nr_journal_buckets(ca->disk_sb.sb);
 
-		if (replicas >= c->opts.metadata_replicas)
+		nr_devs++;
+
+		if (replicas >= replicas_want)
 			break;
 
 		/*
@@ -1318,7 +1322,7 @@ static void journal_next_bucket(struct cache_set *c)
 	/* set j->sectors_free to the min of any device */
 	j->sectors_free = UINT_MAX;
 
-	if (replicas >= c->opts.metadata_replicas)
+	if (replicas >= replicas_want)
 		extent_for_each_online_device(c, e, ptr, ca)
 			j->sectors_free = min(j->sectors_free,
 					      ca->journal.sectors_free);
@@ -1326,11 +1330,16 @@ static void journal_next_bucket(struct cache_set *c)
 	if (j->sectors_free == UINT_MAX)
 		j->sectors_free = 0;
 
+	if (!j->sectors_free && nr_devs < replicas_want)
+		ret = -EROFS;
+
 	journal_entry_open(j);
 
 	rcu_read_unlock();
 
 	queue_work(system_long_wq, &j->reclaim_work);
+
+	return ret;
 }
 
 static void __bch_journal_next_entry(struct journal *j)
@@ -1846,8 +1855,14 @@ static int __journal_res_get(struct journal *j, struct journal_res *res,
 				return 0;
 			}
 		} else {
+			int ret;
+
 			/* Try to get a new journal bucket */
-			journal_next_bucket(c);
+			ret = journal_next_bucket(c);
+			if (ret) {
+				spin_unlock(&j->lock);
+				return ret;
+			}
 
 			if (!journal_bucket_has_room(j)) {
 				/* Still no room, we have to wait */

@@ -1686,12 +1686,18 @@ const char *bch_cache_allocator_start(struct cache *ca)
 
 	get_task_struct(k);
 	ca->alloc_thread = k;
-	wake_up_process(k);
 
 	bch_cache_group_add_cache(tier, ca);
 	bch_cache_group_add_cache(&c->cache_all, ca);
 
 	bch_recalc_capacity(c);
+
+	/*
+	 * Don't wake up allocator thread until after adding device to
+	 * allocator groups - otherwise, alloc thread could get a spurious
+	 * -EROFS due to prio_write() -> journal_meta() not finding any devices:
+	 */
+	wake_up_process(k);
 
 	return NULL;
 }
