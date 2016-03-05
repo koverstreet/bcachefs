@@ -962,79 +962,47 @@ void bch_extent_cmpxchg(struct btree_insert_hook *hook,
 	struct bch_replace_info *replace = container_of(hook,
 					struct bch_replace_info, hook);
 	struct bkey_i *old = &replace->key;
+	bool previous_match, hole, current_match;
 
-	BUG_ON(iter->btree_id != BTREE_ID_EXTENTS);
+	EBUG_ON(iter->btree_id != BTREE_ID_EXTENTS);
+
+	/* iter->pos tracks what we've checked so far: */
+	EBUG_ON(bkey_cmp(iter->pos, bkey_start_pos(&new->k)) < 0);
 
 	/* must have something to compare against */
-	BUG_ON(!bkey_val_u64s(&old->k));
+	EBUG_ON(!bkey_val_u64s(&old->k));
 
 	/* new must be a subset of old */
-	BUG_ON(bkey_cmp(new->k.p, old->k.p) > 0 ||
-	       bkey_cmp(bkey_start_pos(&new->k),
-			bkey_start_pos(&old->k)) < 0);
-
-	if (!k.k) {
-		bch_cut_subtract_back(iter, iter->pos,
-				      bkey_i_to_s(new), stats);
-		return;
-	}
+	EBUG_ON(bkey_cmp(new->k.p, old->k.p) > 0 ||
+		bkey_cmp(bkey_start_pos(&new->k), bkey_start_pos(&old->k)) < 0);
 
 	/*
-	 * first, check if there was a hole - part of the new key that we
-	 * haven't checked against any existing key
+	 * If all are true, we have:
+	 * [ previous_match ] [ hole ] [ current_match ]
 	 */
-	if (bkey_cmp(bkey_start_pos(k.k), iter->pos) > 0) {
-		/* insert previous partial match: */
-		if (bkey_cmp(iter->pos, bkey_start_pos(&new->k)) > 0) {
-			replace->successes += 1;
+	previous_match	= bkey_cmp(bkey_start_pos(&new->k), iter->pos) < 0;
+	hole		= k.k && bkey_cmp(iter->pos, bkey_start_pos(k.k)) < 0;
+	current_match	= k.k && bch_extent_cmpxchg_cmp(k, bkey_i_to_s_c(old));
 
-			/*
-			 * [ prev key ]
-			 *                 [ k        ]
-			 *         [**|   new      ]
-			 *            ^
-			 *            |
-			 *            +-- iter->pos
-			 *
-			 * The [**] are already known to match, so insert them.
-			 */
-			bch_btree_insert_and_journal(iter,
-					bch_key_split(iter->pos, new), res);
-		}
+	/* Previous match, and next part didn't match?  */
+	if (previous_match && (hole || !current_match))
+		bch_btree_insert_and_journal(iter,
+				bch_key_split(iter->pos, new), res);
 
+	/* Hole followed by match - trim hole: */
+	if (hole && current_match)
 		bch_cut_subtract_front(iter, bkey_start_pos(k.k),
 				       bkey_i_to_s(new), stats);
-		/* advance @iter->pos from the end of prev key to the start of @k */
-		bch_btree_iter_set_pos(iter, bkey_start_pos(k.k));
-	}
 
-	if (!bch_extent_cmpxchg_cmp(k, bkey_i_to_s_c(old))) {
-		/* failed: */
-		replace->failures += 1;
+	/* Didn't match - trim to end of k: */
+	if (!current_match)
+		bch_cut_subtract_front(iter,
+			k.k && bkey_cmp(k.k->p, new->k.p) < 0
+			? k.k->p : new->k.p,
+			bkey_i_to_s(new), stats);
 
-		if (bkey_cmp(iter->pos, bkey_start_pos(&new->k)) > 0) {
-			/*
-			 * [ prev key ]
-			 *             [ k        ]
-			 *    [*******| new              ]
-			 *            ^
-			 *            |
-			 *            +-- iter->pos
-			 *
-			 * The [**] are already known to match, so insert them.
-			 */
-			bch_btree_insert_and_journal(iter,
-					bch_key_split(iter->pos, new), res);
-		}
-
-		/* update @new to be the part we haven't checked yet */
-		if (bkey_cmp(k.k->p, new->k.p) > 0)
-			bch_drop_subtract(iter, bkey_i_to_s(new), stats);
-		else
-			bch_cut_subtract_front(iter, k.k->p,
-					       bkey_i_to_s(new), stats);
-	} else
-		replace->successes += 1;
+	replace->successes	+= current_match;
+	replace->failures	+= hole || !current_match;
 }
 
 #if 0
