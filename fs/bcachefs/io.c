@@ -1687,6 +1687,8 @@ void bch_read_extent_iter(struct cache_set *c, struct bio *orig,
 		bio->bi_iter = iter;
 	}
 
+	bio->bi_opf = orig->bi_opf;
+
 	rbio = container_of(bio, struct bch_read_bio, bio.bio);
 	memset(rbio, 0, offsetof(struct bch_read_bio, bio));
 

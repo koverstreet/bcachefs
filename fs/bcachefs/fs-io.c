@@ -1284,6 +1284,7 @@ static int bch_direct_IO_read(struct cache_set *c, struct kiocb *req,
 		pages = iov_iter_npages(iter, BIO_MAX_PAGES);
 		bio = bio_alloc(GFP_KERNEL, pages);
 start:
+		bio_set_op_attrs(bio, REQ_OP_READ, REQ_SYNC);
 		bio->bi_iter.bi_sector	= offset >> 9;
 		bio->bi_end_io		= bch_direct_IO_read_endio;
 		bio->bi_private		= dio;
