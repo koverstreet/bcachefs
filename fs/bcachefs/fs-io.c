@@ -1371,7 +1371,7 @@ static void bch_do_direct_IO_write(struct dio_write *dio, bool sync)
 	unsigned flags = 0;
 	int ret;
 
-	if (file->f_flags & O_DSYNC || IS_SYNC(file->f_mapping->host))
+	if ((file->f_flags & O_DSYNC) || IS_SYNC(file->f_mapping->host))
 		flags |= BCH_WRITE_FLUSH;
 
 	while (dio->iter.count) {
