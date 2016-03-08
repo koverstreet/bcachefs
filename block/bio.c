@@ -1832,6 +1832,28 @@ again:
 }
 EXPORT_SYMBOL(bio_endio);
 
+void bio_endio_nodec(struct bio *bio)
+{
+	goto nodec;
+
+	while (bio) {
+		if (unlikely(!bio_remaining_done(bio)))
+			break;
+nodec:
+		if (bio->bi_end_io == bio_chain_endio) {
+			struct bio *parent = bio->bi_private;
+			parent->bi_error = bio->bi_error;
+			bio_put(bio);
+			bio = parent;
+		} else {
+			if (bio->bi_end_io)
+				bio->bi_end_io(bio);
+			bio = NULL;
+		}
+	}
+}
+EXPORT_SYMBOL(bio_endio_nodec);
+
 /**
  * bio_split - split a bio
  * @bio:	bio to split

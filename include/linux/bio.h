@@ -405,6 +405,7 @@ static inline struct bio *bio_clone_kmalloc(struct bio *bio, gfp_t gfp_mask)
 }
 
 extern void bio_endio(struct bio *);
+extern void bio_endio_nodec(struct bio *);
 
 static inline void bio_io_error(struct bio *bio)
 {
