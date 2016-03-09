@@ -1483,7 +1483,12 @@ static int bio_checksum_uncompress(struct bch_read_bio *rbio)
 	struct bio *bio = &rbio->bio.bio;
 	int ret = 0;
 
-	/* reset iterator for checksum */
+	/*
+	 * reset iterator for checksumming and copying bounced data: here we've
+	 * set rbio->compressed_size to the amount of data we actually read,
+	 * which was not necessarily the full extent if we were only bouncing
+	 * in order to promote
+	 */
 	bio->bi_iter.bi_size		= rbio->compressed_size << 9;
 	bio->bi_iter.bi_idx		= 0;
 	bio->bi_iter.bi_bvec_done	= 0;
@@ -1693,7 +1698,7 @@ void bch_read_extent_iter(struct cache_set *c, struct bio *orig,
 	memset(rbio, 0, offsetof(struct bch_read_bio, bio));
 
 	rbio->csum		= pick->crc.csum;
-	rbio->compressed_size	= pick->crc.compressed_size;
+	rbio->compressed_size	= bio_sectors(bio);
 	rbio->uncompressed_size	= pick->crc.uncompressed_size;
 	rbio->offset		= pick->crc.offset;
 	rbio->csum_type		= pick->crc.csum_type;
