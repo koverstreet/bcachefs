@@ -1561,199 +1561,63 @@ no_page:
 EXPORT_SYMBOL(pagecache_get_page);
 
 /**
- * find_get_entries - gang pagecache lookup
+ * __find_get_pages - gang pagecache lookup, internal mechanism
  * @mapping:	The address_space to search
  * @start:	The starting page cache index
+ * @end:	Page cache index to stop at (inclusive)
  * @nr_entries:	The maximum number of entries
  * @entries:	Where the resulting entries are placed
- * @indices:	The cache indices corresponding to the entries in @entries
+ * @indices:	If non NULL, indices of corresponding entries placed here
+ * @flags:	radix tree iter flags and tag (if supplied)
  *
- * find_get_entries() will search for and return a group of up to
- * @nr_entries entries in the mapping.  The entries are placed at
- * @entries.  find_get_entries() takes a reference against any actual
- * pages it returns.
+ * Don't use directly - see wrappers in pagemap.h
  *
- * The search returns a group of mapping-contiguous page cache entries
- * with ascending indexes.  There may be holes in the indices due to
- * not-present pages.
+ * Possible values for flags (may be used in combination):
  *
- * Any shadow entries of evicted pages, or swap entries from
- * shmem/tmpfs, are included in the returned array.
- *
- * find_get_entries() returns the number of pages and shadow entries
- * which were found.
+ * 0:				find_get_pages()
+ * RADIX_TREE_ITER_TAGGED|tag:	find_get_pages_tag()
+ * RADIX_TREE_ITER_CONTIG:	find_get_pages_contig()
+ * RADIX_TREE_ITER_EXCEPTIONAL:	find_get_entries()
  */
-unsigned find_get_entries(struct address_space *mapping,
-			  pgoff_t start, unsigned int nr_entries,
-			  struct page **entries, pgoff_t *indices)
-{
-	void **slot;
-	unsigned int ret = 0;
-	struct radix_tree_iter iter;
-
-	if (!nr_entries)
-		return 0;
-
-	rcu_read_lock();
-	radix_tree_for_each_slot(slot, &mapping->page_tree, &iter, start) {
-		struct page *head, *page;
-repeat:
-		page = radix_tree_deref_slot(slot);
-		if (unlikely(!page))
-			continue;
-		if (radix_tree_exception(page)) {
-			if (radix_tree_deref_retry(page)) {
-				slot = radix_tree_iter_retry(&iter);
-				continue;
-			}
-			/*
-			 * A shadow entry of a recently evicted page, a swap
-			 * entry from shmem/tmpfs or a DAX entry.  Return it
-			 * without attempting to raise page count.
-			 */
-			goto export;
-		}
-
-		head = compound_head(page);
-		if (!page_cache_get_speculative(head))
-			goto repeat;
-
-		/* The page was split under us? */
-		if (compound_head(page) != head) {
-			put_page(head);
-			goto repeat;
-		}
-
-		/* Has the page moved? */
-		if (unlikely(page != *slot)) {
-			put_page(head);
-			goto repeat;
-		}
-export:
-		indices[ret] = iter.index;
-		entries[ret] = page;
-		if (++ret == nr_entries)
-			break;
-	}
-	rcu_read_unlock();
-	return ret;
-}
-
-/**
- * find_get_pages - gang pagecache lookup
- * @mapping:	The address_space to search
- * @start:	The starting page index
- * @nr_pages:	The maximum number of pages
- * @pages:	Where the resulting pages are placed
- *
- * find_get_pages() will search for and return a group of up to
- * @nr_pages pages in the mapping.  The pages are placed at @pages.
- * find_get_pages() takes a reference against the returned pages.
- *
- * The search returns a group of mapping-contiguous pages with ascending
- * indexes.  There may be holes in the indices due to not-present pages.
- *
- * find_get_pages() returns the number of pages which were found.
- */
-unsigned find_get_pages(struct address_space *mapping, pgoff_t start,
-			    unsigned int nr_pages, struct page **pages)
+unsigned __find_get_pages(struct address_space *mapping,
+			  pgoff_t start, pgoff_t end,
+			  unsigned nr_entries, struct page **entries,
+			  pgoff_t *indices, unsigned flags)
 {
 	struct radix_tree_iter iter;
 	void **slot;
 	unsigned ret = 0;
 
-	if (unlikely(!nr_pages))
+	if (unlikely(!nr_entries || start > end))
 		return 0;
 
 	rcu_read_lock();
-	radix_tree_for_each_slot(slot, &mapping->page_tree, &iter, start) {
+	__radix_tree_for_each_slot(slot, &mapping->page_tree,
+				   &iter, start, flags) {
 		struct page *head, *page;
+
+		if (iter.index > end)
+			break;
 repeat:
 		page = radix_tree_deref_slot(slot);
 		if (unlikely(!page))
-			continue;
+			goto no_entry;
 
 		if (radix_tree_exception(page)) {
 			if (radix_tree_deref_retry(page)) {
 				slot = radix_tree_iter_retry(&iter);
 				continue;
 			}
+
 			/*
 			 * A shadow entry of a recently evicted page,
 			 * or a swap entry from shmem/tmpfs.  Skip
 			 * over it.
 			 */
-			continue;
-		}
+			if (flags & RADIX_TREE_ITER_EXCEPTIONAL)
+				goto export;
 
-		head = compound_head(page);
-		if (!page_cache_get_speculative(head))
-			goto repeat;
-
-		/* The page was split under us? */
-		if (compound_head(page) != head) {
-			put_page(head);
-			goto repeat;
-		}
-
-		/* Has the page moved? */
-		if (unlikely(page != *slot)) {
-			put_page(head);
-			goto repeat;
-		}
-
-		pages[ret] = page;
-		if (++ret == nr_pages)
-			break;
-	}
-
-	rcu_read_unlock();
-	return ret;
-}
-EXPORT_SYMBOL(find_get_pages);
-
-/**
- * find_get_pages_contig - gang contiguous pagecache lookup
- * @mapping:	The address_space to search
- * @index:	The starting page index
- * @nr_pages:	The maximum number of pages
- * @pages:	Where the resulting pages are placed
- *
- * find_get_pages_contig() works exactly like find_get_pages(), except
- * that the returned number of pages are guaranteed to be contiguous.
- *
- * find_get_pages_contig() returns the number of pages which were found.
- */
-unsigned find_get_pages_contig(struct address_space *mapping, pgoff_t index,
-			       unsigned int nr_pages, struct page **pages)
-{
-	struct radix_tree_iter iter;
-	void **slot;
-	unsigned int ret = 0;
-
-	if (unlikely(!nr_pages))
-		return 0;
-
-	rcu_read_lock();
-	radix_tree_for_each_contig(slot, &mapping->page_tree, &iter, index) {
-		struct page *head, *page;
-repeat:
-		page = radix_tree_deref_slot(slot);
-		/* The hole, there no reason to continue */
-		if (unlikely(!page))
-			break;
-
-		if (radix_tree_exception(page)) {
-			if (radix_tree_deref_retry(page)) {
-				slot = radix_tree_iter_retry(&iter);
-				continue;
-			}
-			/*
-			 * A shadow entry of a recently evicted page,
-			 * or a swap entry from shmem/tmpfs.  Stop
-			 * looking for contiguous pages.
-			 */
-			break;
+			goto no_entry;
 		}
 
 		head = compound_head(page);
@@ -1777,169 +1641,26 @@ repeat:
 		 * otherwise we can get both false positives and false
 		 * negatives, which is just confusing to the caller.
 		 */
-		if (page->mapping == NULL || page_to_pgoff(page) != iter.index) {
+		if ((flags & RADIX_TREE_ITER_CONTIG) &&
+		    (page->mapping == NULL || page_to_pgoff(page) != iter.index)) {
 			put_page(page);
 			break;
 		}
-
-		pages[ret] = page;
-		if (++ret == nr_pages)
-			break;
-	}
-	rcu_read_unlock();
-	return ret;
-}
-EXPORT_SYMBOL(find_get_pages_contig);
-
-/**
- * find_get_pages_tag - find and return pages that match @tag
- * @mapping:	the address_space to search
- * @index:	the starting page index
- * @tag:	the tag index
- * @nr_pages:	the maximum number of pages
- * @pages:	where the resulting pages are placed
- *
- * Like find_get_pages, except we only return pages which are tagged with
- * @tag.   We update @index to index the next page for the traversal.
- */
-unsigned find_get_pages_tag(struct address_space *mapping, pgoff_t *index,
-			int tag, unsigned int nr_pages, struct page **pages)
-{
-	struct radix_tree_iter iter;
-	void **slot;
-	unsigned ret = 0;
-
-	if (unlikely(!nr_pages))
-		return 0;
-
-	rcu_read_lock();
-	radix_tree_for_each_tagged(slot, &mapping->page_tree,
-				   &iter, *index, tag) {
-		struct page *head, *page;
-repeat:
-		page = radix_tree_deref_slot(slot);
-		if (unlikely(!page))
-			continue;
-
-		if (radix_tree_exception(page)) {
-			if (radix_tree_deref_retry(page)) {
-				slot = radix_tree_iter_retry(&iter);
-				continue;
-			}
-			/*
-			 * A shadow entry of a recently evicted page.
-			 *
-			 * Those entries should never be tagged, but
-			 * this tree walk is lockless and the tags are
-			 * looked up in bulk, one radix tree node at a
-			 * time, so there is a sizable window for page
-			 * reclaim to evict a page we saw tagged.
-			 *
-			 * Skip over it.
-			 */
-			continue;
-		}
-
-		head = compound_head(page);
-		if (!page_cache_get_speculative(head))
-			goto repeat;
-
-		/* The page was split under us? */
-		if (compound_head(page) != head) {
-			put_page(head);
-			goto repeat;
-		}
-
-		/* Has the page moved? */
-		if (unlikely(page != *slot)) {
-			put_page(head);
-			goto repeat;
-		}
-
-		pages[ret] = page;
-		if (++ret == nr_pages)
-			break;
-	}
-
-	rcu_read_unlock();
-
-	if (ret)
-		*index = pages[ret - 1]->index + 1;
-
-	return ret;
-}
-EXPORT_SYMBOL(find_get_pages_tag);
-
-/**
- * find_get_entries_tag - find and return entries that match @tag
- * @mapping:	the address_space to search
- * @start:	the starting page cache index
- * @tag:	the tag index
- * @nr_entries:	the maximum number of entries
- * @entries:	where the resulting entries are placed
- * @indices:	the cache indices corresponding to the entries in @entries
- *
- * Like find_get_entries, except we only return entries which are tagged with
- * @tag.
- */
-unsigned find_get_entries_tag(struct address_space *mapping, pgoff_t start,
-			int tag, unsigned int nr_entries,
-			struct page **entries, pgoff_t *indices)
-{
-	void **slot;
-	unsigned int ret = 0;
-	struct radix_tree_iter iter;
-
-	if (!nr_entries)
-		return 0;
-
-	rcu_read_lock();
-	radix_tree_for_each_tagged(slot, &mapping->page_tree,
-				   &iter, start, tag) {
-		struct page *head, *page;
-repeat:
-		page = radix_tree_deref_slot(slot);
-		if (unlikely(!page))
-			continue;
-		if (radix_tree_exception(page)) {
-			if (radix_tree_deref_retry(page)) {
-				slot = radix_tree_iter_retry(&iter);
-				continue;
-			}
-
-			/*
-			 * A shadow entry of a recently evicted page, a swap
-			 * entry from shmem/tmpfs or a DAX entry.  Return it
-			 * without attempting to raise page count.
-			 */
-			goto export;
-		}
-
-		head = compound_head(page);
-		if (!page_cache_get_speculative(head))
-			goto repeat;
-
-		/* The page was split under us? */
-		if (compound_head(page) != head) {
-			put_page(head);
-			goto repeat;
-		}
-
-		/* Has the page moved? */
-		if (unlikely(page != *slot)) {
-			put_page(head);
-			goto repeat;
-		}
 export:
-		indices[ret] = iter.index;
+		if (indices)
+			indices[ret] = iter.index;
 		entries[ret] = page;
 		if (++ret == nr_entries)
 			break;
+		continue;
+no_entry:
+		if (flags & RADIX_TREE_ITER_CONTIG)
+			break;
 	}
 	rcu_read_unlock();
 	return ret;
 }
-EXPORT_SYMBOL(find_get_entries_tag);
+EXPORT_SYMBOL(__find_get_pages);
 
 /*
  * CD/DVDs are error prone. When a medium error occurs, the driver may fail

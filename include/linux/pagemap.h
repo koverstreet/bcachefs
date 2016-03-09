@@ -350,18 +350,136 @@ static inline struct page *grab_cache_page_nowait(struct address_space *mapping,
 
 struct page *find_get_entry(struct address_space *mapping, pgoff_t offset);
 struct page *find_lock_entry(struct address_space *mapping, pgoff_t offset);
-unsigned find_get_entries(struct address_space *mapping, pgoff_t start,
-			  unsigned int nr_entries, struct page **entries,
-			  pgoff_t *indices);
-unsigned find_get_pages(struct address_space *mapping, pgoff_t start,
-			unsigned int nr_pages, struct page **pages);
-unsigned find_get_pages_contig(struct address_space *mapping, pgoff_t start,
-			       unsigned int nr_pages, struct page **pages);
-unsigned find_get_pages_tag(struct address_space *mapping, pgoff_t *index,
-			int tag, unsigned int nr_pages, struct page **pages);
-unsigned find_get_entries_tag(struct address_space *mapping, pgoff_t start,
-			int tag, unsigned int nr_entries,
-			struct page **entries, pgoff_t *indices);
+
+unsigned __find_get_pages(struct address_space *mapping,
+			  pgoff_t start, pgoff_t end,
+			  unsigned nr_entries, struct page **entries,
+			  pgoff_t *indices, unsigned flags);
+
+/**
+ * find_get_entries - gang pagecache lookup
+ * @mapping:	The address_space to search
+ * @start:	The starting page cache index
+ * @nr_entries:	The maximum number of entries
+ * @entries:	Where the resulting entries are placed
+ * @indices:	The cache indices corresponding to the entries in @entries
+ *
+ * find_get_entries() will search for and return a group of up to
+ * @nr_entries entries in the mapping.  The entries are placed at
+ * @entries.  find_get_entries() takes a reference against any actual
+ * pages it returns.
+ *
+ * The search returns a group of mapping-contiguous page cache entries
+ * with ascending indexes.  There may be holes in the indices due to
+ * not-present pages.
+ *
+ * Any shadow entries of evicted pages, or swap entries from
+ * shmem/tmpfs, are included in the returned array.
+ *
+ * find_get_entries() returns the number of pages and shadow entries
+ * which were found.
+ */
+static inline unsigned find_get_entries(struct address_space *mapping,
+			pgoff_t start, unsigned nr_entries,
+			struct page **entries, pgoff_t *indices)
+{
+	return __find_get_pages(mapping, start, ULONG_MAX,
+				nr_entries, entries, indices,
+				RADIX_TREE_ITER_EXCEPTIONAL);
+}
+
+/**
+ * find_get_pages - gang pagecache lookup
+ * @mapping:	The address_space to search
+ * @start:	The starting page index
+ * @nr_pages:	The maximum number of pages
+ * @pages:	Where the resulting pages are placed
+ *
+ * find_get_pages() will search for and return a group of up to
+ * @nr_pages pages in the mapping.  The pages are placed at @pages.
+ * find_get_pages() takes a reference against the returned pages.
+ *
+ * The search returns a group of mapping-contiguous pages with ascending
+ * indexes.  There may be holes in the indices due to not-present pages.
+ *
+ * find_get_pages() returns the number of pages which were found.
+ */
+static inline unsigned find_get_pages(struct address_space *mapping,
+			pgoff_t start, unsigned nr_pages,
+			struct page **pages)
+{
+	return __find_get_pages(mapping, start, ULONG_MAX,
+				nr_pages, pages, NULL, 0);
+}
+
+/**
+ * find_get_pages_contig - gang contiguous pagecache lookup
+ * @mapping:	The address_space to search
+ * @start:	The starting page index
+ * @nr_pages:	The maximum number of pages
+ * @pages:	Where the resulting pages are placed
+ *
+ * find_get_pages_contig() works exactly like find_get_pages(), except
+ * that the returned number of pages are guaranteed to be contiguous.
+ *
+ * find_get_pages_contig() returns the number of pages which were found.
+ */
+static inline unsigned find_get_pages_contig(struct address_space *mapping,
+			pgoff_t start, unsigned nr_pages,
+			struct page **pages)
+{
+	return __find_get_pages(mapping, start, ULONG_MAX,
+				nr_pages, pages, NULL,
+				RADIX_TREE_ITER_CONTIG);
+}
+
+/**
+ * find_get_pages_tag - find and return pages that match @tag
+ * @mapping:	the address_space to search
+ * @index:	the starting page index
+ * @tag:	the tag index
+ * @nr_pages:	the maximum number of pages
+ * @pages:	where the resulting pages are placed
+ *
+ * Like find_get_pages, except we only return pages which are tagged with
+ * @tag.   We update @index to index the next page for the traversal.
+ */
+static inline unsigned find_get_pages_tag(struct address_space *mapping,
+			pgoff_t *index, int tag,
+			unsigned nr_pages, struct page **pages)
+{
+	unsigned ret;
+
+	ret = __find_get_pages(mapping, *index, ULONG_MAX,
+			       nr_pages, pages, NULL,
+			       RADIX_TREE_ITER_TAGGED|tag);
+	if (ret)
+		*index = pages[ret - 1]->index + 1;
+
+	return ret;
+}
+
+/**
+ * find_get_entries_tag - find and return entries that match @tag
+ * @mapping:	the address_space to search
+ * @start:	the starting page cache index
+ * @tag:	the tag index
+ * @nr_entries:	the maximum number of entries
+ * @entries:	where the resulting entries are placed
+ * @indices:	the cache indices corresponding to the entries in @entries
+ *
+ * Like find_get_entries, except we only return entries which are tagged with
+ * @tag.
+ */
+static inline unsigned find_get_entries_tag(struct address_space *mapping,
+			pgoff_t start, int tag, unsigned nr_entries,
+			struct page **entries, pgoff_t *indices)
+{
+	return __find_get_pages(mapping, start, ULONG_MAX,
+				nr_entries, entries, indices,
+				RADIX_TREE_ITER_EXCEPTIONAL|
+				RADIX_TREE_ITER_TAGGED|tag);
+}
 
 struct page *grab_cache_page_write_begin(struct address_space *mapping,
 			pgoff_t index, unsigned flags);
