@@ -355,6 +355,8 @@ static inline unsigned int iter_shift(struct radix_tree_iter *iter)
 #define RADIX_TREE_ITER_TAG_MASK	0x00FF	/* tag index in lower byte */
 #define RADIX_TREE_ITER_TAGGED		0x0100	/* lookup tagged slots */
 #define RADIX_TREE_ITER_CONTIG		0x0200	/* stop at first hole */
+#define RADIX_TREE_ITER_EXCEPTIONAL	0x0400	/* include exceptional entries */
+						/* used by __find_get_pages() */
 
 /**
  * radix_tree_iter_init - initialize radix tree iterator
@@ -529,6 +531,11 @@ radix_tree_next_slot(void **slot, struct radix_tree_iter *iter, unsigned flags)
 	return NULL;
 }
 
+#define __radix_tree_for_each_slot(slot, root, iter, start, flags)	\
+	for (slot = radix_tree_iter_init(iter, start) ;			\
+	     slot || (slot = radix_tree_next_chunk(root, iter, flags));	\
+	     slot = radix_tree_next_slot(slot, iter, flags))
+
 /**
  * radix_tree_for_each_slot - iterate over non-empty slots
  *
@@ -540,9 +547,7 @@ radix_tree_next_slot(void **slot, struct radix_tree_iter *iter, unsigned flags)
  * @slot points to radix tree slot, @iter->index contains its index.
  */
 #define radix_tree_for_each_slot(slot, root, iter, start)		\
-	for (slot = radix_tree_iter_init(iter, start) ;			\
-	     slot || (slot = radix_tree_next_chunk(root, iter, 0)) ;	\
-	     slot = radix_tree_next_slot(slot, iter, 0))
+	__radix_tree_for_each_slot(slot, root, iter, start, 0)
 
 /**
  * radix_tree_for_each_contig - iterate over contiguous slots
@@ -555,11 +560,8 @@ radix_tree_next_slot(void **slot, struct radix_tree_iter *iter, unsigned flags)
  * @slot points to radix tree slot, @iter->index contains its index.
  */
 #define radix_tree_for_each_contig(slot, root, iter, start)		\
-	for (slot = radix_tree_iter_init(iter, start) ;			\
-	     slot || (slot = radix_tree_next_chunk(root, iter,		\
-				RADIX_TREE_ITER_CONTIG)) ;		\
-	     slot = radix_tree_next_slot(slot, iter,			\
-				RADIX_TREE_ITER_CONTIG))
+	__radix_tree_for_each_slot(slot, root, iter, start,		\
+			      RADIX_TREE_ITER_CONTIG)
 
 /**
  * radix_tree_for_each_tagged - iterate over tagged slots
@@ -573,10 +575,7 @@ radix_tree_next_slot(void **slot, struct radix_tree_iter *iter, unsigned flags)
  * @slot points to radix tree slot, @iter->index contains its index.
  */
 #define radix_tree_for_each_tagged(slot, root, iter, start, tag)	\
-	for (slot = radix_tree_iter_init(iter, start) ;			\
-	     slot || (slot = radix_tree_next_chunk(root, iter,		\
-			      RADIX_TREE_ITER_TAGGED | tag)) ;		\
-	     slot = radix_tree_next_slot(slot, iter,			\
-				RADIX_TREE_ITER_TAGGED))
+	__radix_tree_for_each_slot(slot, root, iter, start,		\
+			      RADIX_TREE_ITER_TAGGED|tag)
 
 #endif /* _LINUX_RADIX_TREE_H */
