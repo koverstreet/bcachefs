@@ -721,9 +721,9 @@ struct cache_set {
 	struct work_struct	bio_submit_work;
 	spinlock_t		bio_submit_lock;
 
-	struct bio_list		read_race_list;
-	struct work_struct	read_race_work;
-	spinlock_t		read_race_lock;
+	struct bio_list		read_retry_list;
+	struct work_struct	read_retry_work;
+	spinlock_t		read_retry_lock;
 
 	/* FILESYSTEM */
 	atomic_long_t		nr_inodes;

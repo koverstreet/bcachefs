@@ -40,10 +40,11 @@ struct bch_read_bio {
 	unsigned		flags;
 
 	/* fields align with bch_extent_crc64 */
-	u64			bounce:3,
+	u64			bounce:1,
+				pad:2,
+				offset:17,
 				compressed_size:18,
 				uncompressed_size:18,
-				offset:17,
 				csum_type:4,
 				compression_type:4;
 	u64			csum;

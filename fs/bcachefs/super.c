@@ -1073,9 +1073,9 @@ static struct cache_set *bch_cache_set_alloc(struct cache_sb *sb,
 	mutex_init(&c->bio_bounce_pages_lock);
 	INIT_WORK(&c->bio_submit_work, bch_bio_submit_work);
 	spin_lock_init(&c->bio_submit_lock);
-	bio_list_init(&c->read_race_list);
-	spin_lock_init(&c->read_race_lock);
-	INIT_WORK(&c->read_race_work, bch_read_race_work);
+	bio_list_init(&c->read_retry_list);
+	spin_lock_init(&c->read_retry_lock);
+	INIT_WORK(&c->read_retry_work, bch_read_retry_work);
 
 	seqcount_init(&c->gc_pos_lock);
 

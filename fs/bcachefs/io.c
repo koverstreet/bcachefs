@@ -1367,16 +1367,6 @@ out_submit:
 
 /* Read */
 
-static void bch_read_requeue(struct cache_set *c, struct bio *bio)
-{
-	unsigned long flags;
-
-	spin_lock_irqsave(&c->read_race_lock, flags);
-	bio_list_add(&c->read_race_list, bio);
-	spin_unlock_irqrestore(&c->read_race_lock, flags);
-	queue_work(c->wq, &c->read_race_work);
-}
-
 static int bio_uncompress_lz4(struct cache_set *c,
 			      struct bio *dst, struct bvec_iter dst_iter,
 			      struct bio *src, struct bvec_iter src_iter,
@@ -1544,6 +1534,41 @@ static void bch_rbio_free(struct bch_read_bio *rbio)
 	bio_put(bio);
 }
 
+static void bch_read_bio_done(struct bch_read_bio *rbio)
+{
+	bio_endio(rbio->parent);
+	bch_rbio_free(rbio);
+}
+
+/*
+ * Decide if we want to retry the read - returns true if read is being retried,
+ * false if caller should pass error on up
+ */
+static void bch_read_error_maybe_retry(struct bch_read_bio *rbio, int error)
+{
+	struct cache_set *c = rbio->c;
+	unsigned long flags;
+
+	if ((error == -EINTR) &&
+	    (rbio->flags & BCH_READ_RETRY_IF_STALE)) {
+		atomic_long_inc(&rbio->c->cache_read_races);
+		goto retry;
+	}
+
+	if (error == -EIO) {
+		/* io error - do we have another replica? */
+	}
+
+	rbio->parent->bi_error = error;
+	bch_read_bio_done(rbio);
+	return;
+retry:
+	spin_lock_irqsave(&c->read_retry_lock, flags);
+	bio_list_add(&c->read_retry_list, &rbio->bio.bio);
+	spin_unlock_irqrestore(&c->read_retry_lock, flags);
+	queue_work(c->wq, &c->read_retry_work);
+}
+
 static void cache_promote_done(struct closure *cl)
 {
 	struct cache_promote_op *op =
@@ -1558,20 +1583,24 @@ static void __bch_read_endio(struct bch_read_bio *rbio)
 	int ret;
 
 	ret = bio_checksum_uncompress(rbio);
-	if (ret)
-		rbio->parent->bi_error = ret;
-	bio_endio(rbio->parent);
+	if (ret) {
+		bch_read_error_maybe_retry(rbio, ret);
+		return;
+	}
 
-	if (!ret && rbio->promote &&
+	if (rbio->promote &&
 	    !test_bit(CACHE_SET_RO, &rbio->c->flags) &&
 	    !test_bit(CACHE_SET_STOPPING, &rbio->c->flags)) {
 		struct closure *cl = &rbio->promote->cl;
+
+		bio_endio(rbio->parent);
+		rbio->parent = NULL;
 
 		closure_init(cl, &rbio->c->cl);
 		closure_call(&rbio->promote->iop.cl, bch_write, rbio->c->wq, cl);
 		closure_return_with_destructor(cl, cache_promote_done);
 	} else {
-		bch_rbio_free(rbio);
+		bch_read_bio_done(rbio);
 	}
 }
 
@@ -1597,21 +1626,20 @@ static void bch_read_endio(struct bio *bio)
 {
 	struct bch_read_bio *rbio =
 		container_of(bio, struct bch_read_bio, bio.bio);
-	bool stale = race_fault() ||
-		ptr_stale(rbio->bio.ca, &rbio->bio.ptr);
-	int error = bio->bi_error;
+	int stale = race_fault() ||
+		ptr_stale(rbio->bio.ca, &rbio->bio.ptr) ? -EINTR : 0;
+	int error = bio->bi_error ?: stale;
 
 	bch_account_bbio_completion(&rbio->bio);
 
-	cache_nonfatal_io_err_on(error, rbio->bio.ca, "data read");
+	cache_nonfatal_io_err_on(bio->bi_error, rbio->bio.ca, "data read");
 
 	percpu_ref_put(&rbio->bio.ca->ref);
 
-	if (error)
-		goto out;
-
-	if (stale)
-		goto stale;
+	if (error) {
+		bch_read_error_maybe_retry(rbio, error);
+		return;
+	}
 
 	if (rbio->compression_type != BCH_COMPRESSION_NONE) {
 		struct bio_decompress_worker *d;
@@ -1624,28 +1652,6 @@ static void bch_read_endio(struct bio *bio)
 	} else {
 		__bch_read_endio(rbio);
 	}
-
-	return;
-stale:
-	if (rbio->promote)
-		kfree(rbio->promote);
-	rbio->promote = NULL;
-
-	/* Raced with the bucket being reused and invalidated: */
-	if (rbio->flags & BCH_READ_RETRY_IF_STALE) {
-		atomic_long_inc(&rbio->c->cache_read_races);
-		bch_read_requeue(rbio->c, bio);
-		return;
-	}
-
-	error = -EINTR;
-out:
-	if (rbio->promote)
-		kfree(rbio->promote);
-	if (error)
-		rbio->parent->bi_error = error;
-	bio_endio(rbio->parent);
-	bio_put(bio);
 }
 
 void bch_read_extent_iter(struct cache_set *c, struct bio *orig,
@@ -1843,18 +1849,18 @@ static void bch_read_retry(struct cache_set *c, struct bch_read_bio *rbio)
 	bch_read_iter(c, parent, iter, inode);
 }
 
-void bch_read_race_work(struct work_struct *work)
+void bch_read_retry_work(struct work_struct *work)
 {
 	struct cache_set *c = container_of(work, struct cache_set,
-					   read_race_work);
+					   read_retry_work);
 	struct bch_read_bio *rbio;
 	struct bio *bio;
 	unsigned long flags;
 
 	while (1) {
-		spin_lock_irqsave(&c->read_race_lock, flags);
-		bio = bio_list_pop(&c->read_race_list);
-		spin_unlock_irqrestore(&c->read_race_lock, flags);
+		spin_lock_irqsave(&c->read_retry_lock, flags);
+		bio = bio_list_pop(&c->read_retry_list);
+		spin_unlock_irqrestore(&c->read_retry_lock, flags);
 
 		if (!bio)
 			break;
