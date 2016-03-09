@@ -966,7 +966,7 @@ SHOW(bch_cache_set_opts_dir)
 
 #define CACHE_SET_OPT(_name, _options, _nr_opts, _sb_opt, _perm)	\
 	if (attr == &sysfs_opt_##_name)					\
-		return _options == bch_bool_opt				\
+		return _options == bch_bool_opt || _options == bch_uint_opt\
 			? snprintf(buf, PAGE_SIZE, "%i\n", c->opts._name)\
 			: bch_snprint_string_list(buf, PAGE_SIZE,	\
 						_options, c->opts._name);\
@@ -983,7 +983,10 @@ STORE(bch_cache_set_opts_dir)
 
 #define CACHE_SET_OPT(_name, _options, _nr_opts, _sb_opt, _perm)	\
 	if (attr == &sysfs_opt_##_name) {				\
-		ssize_t v = bch_read_string_list(buf, _options);	\
+		ssize_t v = (_options == bch_bool_opt ||		\
+			     _options == bch_uint_opt)			\
+			? strtoul_restrict_or_return(buf, 0, _nr_opts - 1)\
+			: bch_read_string_list(buf, _options);		\
 									\
 		if (v < 0)						\
 			return v;					\
