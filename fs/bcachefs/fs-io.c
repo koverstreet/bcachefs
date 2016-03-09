@@ -1225,7 +1225,7 @@ static void bch_dio_read_complete(struct closure *cl)
 	struct dio_read *dio = container_of(cl, struct dio_read, cl);
 
 	dio->req->ki_complete(dio->req, dio->ret, 0);
-	bio_put(&dio->rbio.bio);
+	bio_check_pages_dirty(&dio->rbio.bio);	/* transfers ownership */
 }
 
 static void bch_direct_IO_read_endio(struct bio *bio)
@@ -1236,6 +1236,11 @@ static void bch_direct_IO_read_endio(struct bio *bio)
 		dio->ret = bio->bi_error;
 
 	closure_put(&dio->cl);
+}
+
+static void bch_direct_IO_read_split_endio(struct bio *bio)
+{
+	bch_direct_IO_read_endio(bio);
 	bio_check_pages_dirty(bio);	/* transfers ownership */
 }
 
@@ -1252,7 +1257,8 @@ static int bch_direct_IO_read(struct cache_set *c, struct kiocb *req,
 	loff_t i_size;
 
 	bio = bio_alloc_bioset(GFP_KERNEL, pages, bch_dio_read_bioset);
-	bio_get(bio);
+
+	bio->bi_end_io = bch_direct_IO_read_endio;
 
 	dio = container_of(bio, struct dio_read, rbio.bio);
 	closure_init(&dio->cl, NULL);
@@ -1290,10 +1296,10 @@ static int bch_direct_IO_read(struct cache_set *c, struct kiocb *req,
 	while (iter->count) {
 		pages = iov_iter_npages(iter, BIO_MAX_PAGES);
 		bio = bio_alloc_bioset(GFP_KERNEL, pages, &c->bio_read);
+		bio->bi_end_io		= bch_direct_IO_read_split_endio;
 start:
 		bio_set_op_attrs(bio, REQ_OP_READ, REQ_SYNC);
 		bio->bi_iter.bi_sector	= offset >> 9;
-		bio->bi_end_io		= bch_direct_IO_read_endio;
 		bio->bi_private		= dio;
 
 		ret = bio_get_user_pages(bio, iter, 1);
