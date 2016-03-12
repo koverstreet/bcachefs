@@ -8,6 +8,7 @@
 #include <linux/llist.h>
 #include <linux/workqueue.h>
 
+/* XXX kill kill kill */
 struct bbio {
 	struct cache		*ca;
 	struct bch_extent_ptr	ptr;
@@ -36,23 +37,20 @@ struct bch_read_bio {
 	 */
 	u64			inode;
 
-	struct cache_set	*c;
-	unsigned		flags;
+	unsigned		submit_time_us;
+	u16			flags;
+	u8			bounce:1;
 
-	/* fields align with bch_extent_crc64 */
-	u64			bounce:1,
-				pad:2,
-				offset:17,
-				compressed_size:18,
-				uncompressed_size:18,
-				csum_type:4,
-				compression_type:4;
-	u64			csum;
+	struct bch_extent_crc64	crc;
+	struct bch_extent_ptr	ptr;
+	struct cache		*ca;
 
 	struct cache_promote_op *promote;
 
+	/* bio_decompress_worker list */
 	struct llist_node	list;
-	struct bbio		bio;
+
+	struct bio		bio;
 };
 
 struct bch_write_bio {
@@ -113,6 +111,7 @@ struct bch_write_op {
 };
 
 struct bio_decompress_worker {
+	struct cache_set		*c;
 	struct work_struct		work;
 	struct llist_head		bio_list;
 };

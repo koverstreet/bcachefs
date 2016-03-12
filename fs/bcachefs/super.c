@@ -1129,7 +1129,7 @@ static struct cache_set *bch_cache_set_alloc(struct cache_sb *sb,
 				      sizeof(struct async_split)) ||
 	    mempool_init_kmalloc_pool(&c->fill_iter, 1, iter_size) ||
 	    bioset_init(&c->btree_read_bio, 1, offsetof(struct bbio, bio)) ||
-	    bioset_init(&c->bio_read, 4, offsetof(struct bch_read_bio, bio.bio)) ||
+	    bioset_init(&c->bio_read, 4, offsetof(struct bch_read_bio, bio)) ||
 	    bioset_init(&c->bio_write, 4, offsetof(struct bch_write_bio, bio.bio)) ||
 	    mempool_init_page_pool(&c->bio_bounce_pages,
 				   CRC32_EXTENT_SIZE_MAX / PAGE_SECTORS, 0) ||
@@ -1151,6 +1151,7 @@ static struct cache_set *bch_cache_set_alloc(struct cache_sb *sb,
 		struct bio_decompress_worker *d =
 			per_cpu_ptr(c->bio_decompress_worker, cpu);
 
+		d->c = c;
 		INIT_WORK(&d->work, bch_bio_decompress_work);
 		init_llist_head(&d->bio_list);
 	}

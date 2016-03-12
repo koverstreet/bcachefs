@@ -74,23 +74,24 @@ void bch_account_io_completion(struct cache *ca)
 }
 
 /* IO error accounting and latency accounting: */
-void bch_account_bbio_completion(struct bbio *bio)
+void bch_account_io_completion_time(struct cache *ca,
+				    unsigned submit_time_us, int op)
 {
 	struct cache_set *c;
 	unsigned threshold;
 
-	if (!bio->ca)
+	if (!ca)
 		return;
 
-	c = bio->ca->set;
-	threshold = op_is_write(bio_op(&bio->bio))
+	c = ca->set;
+	threshold = op_is_write(op)
 		? c->congested_write_threshold_us
 		: c->congested_read_threshold_us;
 
-	if (threshold && bio->submit_time_us) {
+	if (threshold && submit_time_us) {
 		unsigned t = local_clock_us();
 
-		int us = t - bio->submit_time_us;
+		int us = t - submit_time_us;
 		int congested = atomic_read(&c->congested);
 
 		if (us > (int) threshold) {
@@ -103,7 +104,7 @@ void bch_account_bbio_completion(struct bbio *bio)
 			atomic_inc(&c->congested);
 	}
 
-	bch_account_io_completion(bio->ca);
+	bch_account_io_completion(ca);
 }
 
 void bch_nonfatal_io_error_work(struct work_struct *work)

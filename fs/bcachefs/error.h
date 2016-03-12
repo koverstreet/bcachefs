@@ -153,7 +153,7 @@ do {									\
  */
 
 void bch_account_io_completion(struct cache *);
-void bch_account_bbio_completion(struct bbio *);
+void bch_account_io_completion_time(struct cache *, unsigned, int);
 
 void bch_nonfatal_io_error_work(struct work_struct *);
 
