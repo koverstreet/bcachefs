@@ -981,7 +981,7 @@ static const struct address_space_operations bch_address_space_operations = {
 	.readpage	= bch_readpage,
 	.writepages	= bch_writepages,
 	.readpages	= bch_readpages,
-	.set_page_dirty	= __set_page_dirty_nobuffers,
+	.set_page_dirty	= bch_set_page_dirty,
 	.write_begin	= bch_write_begin,
 	.write_end	= bch_write_end,
 	.invalidatepage	= bch_invalidatepage,
@@ -1109,25 +1109,16 @@ static void bch_evict_inode(struct inode *inode)
 	struct cache_set *c = inode->i_sb->s_fs_info;
 	struct bch_inode_info *ei = to_bch_ei(inode);
 
-	if (is_bad_inode(inode)) {
-		/* bch_inode_create() failed: */
+	truncate_inode_pages_final(&inode->i_data);
 
-		BUG_ON(!fifo_empty(&ei->i_size_updates));
-		BUG_ON(atomic_long_read(&ei->i_sectors_dirty_count));
-		clear_inode(inode);
-	} else if (inode->i_nlink) {
-		truncate_inode_pages_final(&inode->i_data);
+	BUG_ON(!fifo_empty(&ei->i_size_updates));
+	BUG_ON(atomic_long_read(&ei->i_sectors_dirty_count));
+	BUG_ON(!is_bad_inode(inode) &&
+	       atomic64_read(&ei->i_sectors) != inode->i_blocks);
 
-		BUG_ON(!fifo_empty(&ei->i_size_updates));
-		BUG_ON(atomic_long_read(&ei->i_sectors_dirty_count));
-		clear_inode(inode);
-	} else {
-		truncate_inode_pages_final(&inode->i_data);
+	clear_inode(inode);
 
-		BUG_ON(!fifo_empty(&ei->i_size_updates));
-		BUG_ON(atomic_long_read(&ei->i_sectors_dirty_count));
-		clear_inode(inode);
-
+	if (!inode->i_nlink && !is_bad_inode(inode)) {
 		bch_inode_rm(c, inode->i_ino);
 		atomic_long_dec(&c->nr_inodes);
 	}

@@ -3,6 +3,8 @@
 
 #include <linux/uio.h>
 
+int bch_set_page_dirty(struct page *);
+
 int bch_writepage(struct page *, struct writeback_control *);
 int bch_readpage(struct file *, struct page *);
 
