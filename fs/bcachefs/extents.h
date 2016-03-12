@@ -69,6 +69,18 @@ static inline bool bkey_extent_is_data(const struct bkey *k)
 	}
 }
 
+static inline bool bkey_extent_is_allocation(const struct bkey *k)
+{
+	switch (k->type) {
+	case BCH_EXTENT:
+	case BCH_EXTENT_CACHED:
+	case BCH_RESERVATION:
+		return true;
+	default:
+		return false;
+	}
+}
+
 static inline bool bkey_extent_is_cached(const struct bkey *k)
 {
 	return k->type == BCH_EXTENT_CACHED;

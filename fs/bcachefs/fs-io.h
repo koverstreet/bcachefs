@@ -30,6 +30,11 @@ int bch_releasepage(struct page *, gfp_t);
 int bch_migrate_page(struct address_space *, struct page *,
 		     struct page *, enum migrate_mode);
 
+struct i_sectors_hook {
+	struct btree_insert_hook	hook;
+	s64				sectors;
+};
+
 struct bch_writepage_io {
 	struct closure		cl;
 
@@ -38,6 +43,8 @@ struct bch_writepage_io {
 	unsigned long		sectors_reserved;
 
 	struct bch_write_op	op;
+	struct i_sectors_hook	i_sectors_hook;
+
 	/* must come last: */
 	struct bch_write_bio	bio;
 };
@@ -59,6 +66,8 @@ struct dio_write {
 	struct mm_struct	*mm;
 
 	struct bch_write_op	iop;
+	struct i_sectors_hook	i_sectors_hook;
+
 	/* must be last: */
 	struct bch_write_bio	bio;
 };

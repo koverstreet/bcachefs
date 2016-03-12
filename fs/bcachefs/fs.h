@@ -37,6 +37,9 @@ struct bch_inode_info {
 	u64			i_size;
 	u32			i_flags;
 	seqcount_t		shadow_i_size_lock;
+
+	atomic_long_t		i_sectors_dirty_count;
+	atomic64_t		i_sectors;
 };
 
 enum {
@@ -57,5 +60,7 @@ typedef int (*inode_set_fn)(struct bch_inode_info *,
 
 int __must_check __bch_write_inode(struct cache_set *, struct bch_inode_info *,
 				   inode_set_fn, void *);
+int __must_check bch_write_inode(struct cache_set *,
+				 struct bch_inode_info *);
 
 #endif /* _BCACHE_FS_H */

@@ -5,6 +5,7 @@
 #include "clock.h"
 #include "error.h"
 #include "fs.h"
+#include "fs-gc.h"
 #include "fs-io.h"
 #include "inode.h"
 #include "journal.h"
@@ -52,7 +53,7 @@ static int inode_set_size(struct bch_inode_info *ei, struct bch_inode *bi,
 	else
 		i_flags &= ~BCH_INODE_I_SIZE_DIRTY;
 
-	bi->i_flags = cpu_to_le32(i_flags);;
+	bi->i_flags = cpu_to_le32(i_flags);
 
 	return 0;
 }
@@ -78,9 +79,11 @@ static int check_make_i_size_dirty(struct bch_inode_info *ei, loff_t offset)
 	unsigned seq;
 	int ret = 0;
 
+	BUG_ON(offset > round_up(ei->i_size, PAGE_SIZE) &&
+	       !atomic_long_read(&ei->i_size_dirty_count));
 	do {
 		seq = read_seqcount_begin(&ei->shadow_i_size_lock);
-		need_set_dirty = offset > ei->i_size &&
+		need_set_dirty = offset > round_up(ei->i_size, PAGE_SIZE) &&
 			!(ei->i_flags & BCH_INODE_I_SIZE_DIRTY);
 	} while (read_seqcount_retry(&ei->shadow_i_size_lock, seq));
 
@@ -91,7 +94,7 @@ static int check_make_i_size_dirty(struct bch_inode_info *ei, loff_t offset)
 
 	/* recheck under lock.. */
 
-	if (offset > ei->i_size &&
+	if (offset > round_up(ei->i_size, PAGE_SIZE) &&
 	    !(ei->i_flags & BCH_INODE_I_SIZE_DIRTY)) {
 		struct cache_set *c = ei->vfs_inode.i_sb->s_fs_info;
 
@@ -188,6 +191,123 @@ static struct i_size_update *i_size_update_new(struct bch_inode_info *ei,
 	u->new_i_size = new_size;
 
 	return u;
+}
+
+/* i_sectors accounting: */
+
+static void i_sectors_hook_fn(struct btree_insert_hook *hook,
+			      struct btree_iter *iter,
+			      struct bkey_s_c k,
+			      struct bkey_i *insert,
+			      struct journal_res *res)
+{
+	struct i_sectors_hook *h = container_of(hook,
+				struct i_sectors_hook, hook);
+
+	if (k.k) {
+		if (!bkey_extent_is_allocation(k.k))
+			return;
+
+		switch (bch_extent_overlap(&insert->k, k.k)) {
+		case BCH_EXTENT_OVERLAP_FRONT:
+			h->sectors -= insert->k.p.offset - bkey_start_offset(k.k);
+			break;
+
+		case BCH_EXTENT_OVERLAP_BACK:
+			h->sectors -= k.k->p.offset - bkey_start_offset(&insert->k);
+			break;
+
+		case BCH_EXTENT_OVERLAP_ALL:
+			h->sectors -= k.k->size;
+			break;
+
+		case BCH_EXTENT_OVERLAP_MIDDLE:
+			h->sectors -= insert->k.size;
+			break;
+		}
+	} else {
+		if (!bkey_extent_is_allocation(&insert->k))
+			return;
+
+		h->sectors += insert->k.size;
+	}
+}
+
+static int inode_set_i_sectors_dirty(struct bch_inode_info *ei,
+				    struct bch_inode *bi, void *p)
+{
+	BUG_ON(le32_to_cpu(bi->i_flags) & BCH_INODE_I_SECTORS_DIRTY);
+
+	bi->i_flags = cpu_to_le32(le32_to_cpu(bi->i_flags)|
+				  BCH_INODE_I_SECTORS_DIRTY);
+	return 0;
+}
+
+static int inode_clear_i_sectors_dirty(struct bch_inode_info *ei,
+				       struct bch_inode *bi, void *p)
+{
+	BUG_ON(!(le32_to_cpu(bi->i_flags) & BCH_INODE_I_SECTORS_DIRTY));
+
+	bi->i_sectors	= cpu_to_le64(atomic64_read(&ei->i_sectors));
+	bi->i_flags	= cpu_to_le32(le32_to_cpu(bi->i_flags) &
+				      ~BCH_INODE_I_SECTORS_DIRTY);
+	return 0;
+}
+
+static void i_sectors_dirty_put(struct bch_inode_info *ei,
+				struct i_sectors_hook *h)
+{
+	struct inode *inode = &ei->vfs_inode;
+
+	if (h->sectors) {
+		atomic64_add(h->sectors, &ei->i_sectors);
+
+		EBUG_ON(atomic64_read(&ei->i_sectors) < 0);
+
+		spin_lock(&inode->i_lock);
+		inode->i_blocks = atomic64_read(&ei->i_sectors);
+		spin_unlock(&inode->i_lock);
+	}
+
+	EBUG_ON(atomic_long_read(&ei->i_sectors_dirty_count) <= 0);
+
+	mutex_lock(&ei->update_lock);
+
+	if (atomic_long_dec_and_test(&ei->i_sectors_dirty_count)) {
+		struct cache_set *c = ei->vfs_inode.i_sb->s_fs_info;
+		int ret = __bch_write_inode(c, ei, inode_clear_i_sectors_dirty, NULL);
+
+		ret = ret;
+	}
+
+	mutex_unlock(&ei->update_lock);
+}
+
+static int __must_check i_sectors_dirty_get(struct bch_inode_info *ei,
+					    struct i_sectors_hook *h)
+{
+	int ret = 0;
+
+	h->hook.fn	= i_sectors_hook_fn;
+	h->sectors	= 0;
+
+	if (atomic_long_inc_not_zero(&ei->i_sectors_dirty_count))
+		return 0;
+
+	mutex_lock(&ei->update_lock);
+
+	if (!(ei->i_flags & BCH_INODE_I_SECTORS_DIRTY)) {
+		struct cache_set *c = ei->vfs_inode.i_sb->s_fs_info;
+
+		ret = __bch_write_inode(c, ei, inode_set_i_sectors_dirty, NULL);
+	}
+
+	if (!ret)
+		atomic_long_inc(&ei->i_sectors_dirty_count);
+
+	mutex_unlock(&ei->update_lock);
+
+	return ret;
 }
 
 /* page state: */
@@ -530,6 +650,8 @@ static void bch_writepage_io_done(struct closure *cl)
 	for (i = 0; i < ARRAY_SIZE(io->i_size_update_count); i++)
 		i_size_update_put(c, ei, i, io->i_size_update_count[i]);
 
+	i_sectors_dirty_put(ei, &io->i_sectors_hook);
+
 	bio_for_each_segment_all(bvec, bio, i) {
 		struct page *page = bvec->bv_page;
 
@@ -570,6 +692,8 @@ alloc_io:
 	if (!w->io) {
 		struct bio *bio = bio_alloc_bioset(GFP_NOFS, BIO_MAX_PAGES,
 						   bch_writepage_bioset);
+		int ret;
+
 		w->io = container_of(bio, struct bch_writepage_io, bio.bio.bio);
 
 		closure_init(&w->io->cl, NULL);
@@ -578,9 +702,18 @@ alloc_io:
 		       sizeof(w->io->i_size_update_count));
 		w->io->sectors_reserved	= 0;
 
+		ret = i_sectors_dirty_get(ei, &w->io->i_sectors_hook);
+		/*
+		 * i_sectors_dirty_get() will only return an error if it failed
+		 * to set the I_SECTORS_DIRTY flag - however, we're already
+		 * holding a ref (in bch_writepage() or bch_writepages()) so
+		 * the flag must already be set:
+		 */
+		BUG_ON(ret);
+
 		bch_write_op_init(&w->io->op, w->c, &w->io->bio, NULL,
 				  bkey_to_s_c(&KEY(w->inum, 0, 0)),
-				  NULL,
+				  &w->io->i_sectors_hook.hook,
 				  &ei->journal_seq, 0);
 	}
 
@@ -676,17 +809,25 @@ do_io:
 
 int bch_writepages(struct address_space *mapping, struct writeback_control *wbc)
 {
-	int ret;
+	struct bch_inode_info *ei = to_bch_ei(mapping->host);
+	struct i_sectors_hook i_sectors_hook;
 	struct bch_writepage w = {
 		.c	= mapping->host->i_sb->s_fs_info,
 		.inum	= mapping->host->i_ino,
 		.io	= NULL,
 	};
+	int ret;
+
+	ret = i_sectors_dirty_get(ei, &i_sectors_hook);
+	if (ret)
+		return ret;
 
 	ret = write_cache_pages(mapping, wbc, __bch_writepage, &w);
 
 	if (w.io)
 		bch_writepage_do_io(w.io);
+
+	i_sectors_dirty_put(ei, &i_sectors_hook);
 
 	return ret;
 }
@@ -694,21 +835,27 @@ int bch_writepages(struct address_space *mapping, struct writeback_control *wbc)
 int bch_writepage(struct page *page, struct writeback_control *wbc)
 {
 	struct inode *inode = page->mapping->host;
-	int ret;
+	struct bch_inode_info *ei = to_bch_ei(inode);
+	struct i_sectors_hook i_sectors_hook;
 	struct bch_writepage w = {
 		.c = inode->i_sb->s_fs_info,
 		.inum = inode->i_ino,
 		.io = NULL,
 	};
+	int ret;
 
-	ret = __bch_writepage(page, wbc, &w);
+	ret = i_sectors_dirty_get(ei, &i_sectors_hook);
 	if (ret)
 		return ret;
+
+	ret = __bch_writepage(page, wbc, &w);
 
 	if (w.io)
 		bch_writepage_do_io(w.io);
 
-	return 0;
+	i_sectors_dirty_put(ei, &i_sectors_hook);
+
+	return ret;
 }
 
 static void bch_read_single_page_end_io(struct bio *bio)
@@ -990,6 +1137,10 @@ out:
 
 static void __bch_dio_write_complete(struct dio_write *dio)
 {
+	struct bch_inode_info *ei = to_bch_ei(dio->req->ki_filp->f_inode);
+
+	i_sectors_dirty_put(ei, &dio->i_sectors_hook);
+
 	inode_dio_end(dio->req->ki_filp->f_inode);
 
 	if (dio->iovec && dio->iovec != dio->inline_vecs)
@@ -1051,7 +1202,7 @@ static void bch_do_direct_IO_write(struct dio_write *dio, bool sync)
 				  bkey_to_s_c(&KEY(inode->i_ino,
 						   bio_end_sector(bio),
 						   bio_sectors(bio))),
-				  NULL,
+				  &dio->i_sectors_hook.hook,
 				  &ei->journal_seq, flags);
 
 		task_io_account_write(bio->bi_iter.bi_size);
@@ -1127,12 +1278,12 @@ static int bch_direct_IO_write(struct cache_set *c, struct kiocb *req,
 	}
 
 	ret = check_make_i_size_dirty(ei, offset + iter->count);
-	if (ret) {
-		if (dio->append)
-			i_size_dirty_put(ei);
-		bio_put(bio);
-		return ret;
-	}
+	if (ret)
+		goto err;
+
+	ret = i_sectors_dirty_get(ei, &dio->i_sectors_hook);
+	if (ret)
+		goto err;
 
 	closure_init(&dio->cl, NULL);
 
@@ -1204,6 +1355,11 @@ static int bch_direct_IO_write(struct cache_set *c, struct kiocb *req,
 				     dio->iter.count ? system_wq : NULL);
 		return -EIOCBQUEUED;
 	}
+err:
+	if (dio->append)
+		i_size_dirty_put(ei);
+	bio_put(bio);
+	return ret;
 }
 
 ssize_t bch_direct_IO(struct kiocb *req, struct iov_iter *iter)
@@ -1655,14 +1811,26 @@ int bch_truncate(struct inode *inode, struct iattr *iattr)
 	 * here (new i_size < current i_size):
 	 */
 	if (shrink) {
-		ret = bch_truncate_page(inode->i_mapping, iattr->ia_size);
+		struct i_sectors_hook i_sectors_hook;
+		int ret;
+
+		ret = i_sectors_dirty_get(ei, &i_sectors_hook);
 		if (unlikely(ret))
 			return ret;
 
+		ret = bch_truncate_page(inode->i_mapping, iattr->ia_size);
+		if (unlikely(ret)) {
+			i_sectors_dirty_put(ei, &i_sectors_hook);
+			return ret;
+		}
+
 		ret = bch_inode_truncate(c, inode->i_ino,
 					 round_up(iattr->ia_size, PAGE_SIZE) >> 9,
-					 NULL,
+					 &i_sectors_hook.hook,
 					 &ei->journal_seq);
+
+		i_sectors_dirty_put(ei, &i_sectors_hook);
+
 		if (unlikely(ret))
 			return ret;
 	}
@@ -1701,11 +1869,23 @@ static long bch_fpunch(struct inode *inode, loff_t offset, loff_t len)
 
 	truncate_pagecache_range(inode, offset, offset + len - 1);
 
-	if (discard_start < discard_end)
+	if (discard_start < discard_end) {
+		struct i_sectors_hook i_sectors_hook;
+		int ret;
+
+		ret = i_sectors_dirty_get(ei, &i_sectors_hook);
+		if (unlikely(ret))
+			goto out;
+
 		ret = bch_discard(c,
 				  POS(ino, discard_start),
 				  POS(ino, discard_end),
-				  0, NULL, &ei->journal_seq);
+				  0,
+				  &i_sectors_hook.hook,
+				  &ei->journal_seq);
+
+		i_sectors_dirty_put(ei, &i_sectors_hook);
+	}
 out:
 	inode_unlock(inode);
 
@@ -1721,6 +1901,7 @@ static long bch_fcollapse(struct inode *inode, loff_t offset, loff_t len)
 	BKEY_PADDED(k) copy;
 	struct bkey_s_c k;
 	struct i_size_update *u;
+	struct i_sectors_hook i_sectors_hook;
 	loff_t new_size;
 	unsigned idx;
 	int ret;
@@ -1770,6 +1951,10 @@ static long bch_fcollapse(struct inode *inode, loff_t offset, loff_t len)
 	if (ret)
 		goto err;
 
+	ret = i_sectors_dirty_get(ei, &i_sectors_hook);
+	if (ret)
+		goto err;
+
 	while (bkey_cmp(dst.pos,
 			POS(inode->i_ino,
 			    round_up(new_size, PAGE_SIZE) >> 9)) < 0) {
@@ -1799,7 +1984,8 @@ static long bch_fcollapse(struct inode *inode, loff_t offset, loff_t len)
 
 		ret = bch_btree_insert_at(&dst,
 					  &keylist_single(&copy.k),
-					  NULL, &ei->journal_seq,
+					  &i_sectors_hook.hook,
+					  &ei->journal_seq,
 					  BTREE_INSERT_ATOMIC|
 					  BTREE_INSERT_NOFAIL);
 		if (ret < 0 && ret != -EINTR)
@@ -1813,9 +1999,12 @@ static long bch_fcollapse(struct inode *inode, loff_t offset, loff_t len)
 
 	ret = bch_inode_truncate(c, inode->i_ino,
 				 round_up(new_size, PAGE_SIZE) >> 9,
-				 NULL, &ei->journal_seq);
+				 &i_sectors_hook.hook,
+				 &ei->journal_seq);
 	if (ret)
 		goto err_unwind;
+
+	i_sectors_dirty_put(ei, &i_sectors_hook);
 
 	mutex_lock(&ei->update_lock);
 
@@ -1841,6 +2030,7 @@ static long bch_fcollapse(struct inode *inode, loff_t offset, loff_t len)
 
 	return ret;
 err_unwind:
+	i_sectors_dirty_put(ei, &i_sectors_hook);
 	BUG();
 err:
 	bch_btree_iter_unlock(&src);
@@ -1854,6 +2044,7 @@ static long bch_fallocate(struct inode *inode, int mode,
 {
 	struct bch_inode_info *ei = to_bch_ei(inode);
 	struct cache_set *c = inode->i_sb->s_fs_info;
+	struct i_sectors_hook i_sectors_hook;
 	struct btree_iter iter;
 	struct bkey_i reservation;
 	struct bkey_s_c k;
@@ -1904,13 +2095,17 @@ static long bch_fallocate(struct inode *inode, int mode,
 	bch_btree_iter_set_pos(&iter, POS(inode->i_ino, block_start >> 9));
 	end = POS(inode->i_ino, block_end >> 9);
 
+	ret = i_sectors_dirty_get(ei, &i_sectors_hook);
+	if (unlikely(ret))
+		goto err;
+
 	while (bkey_cmp(iter.pos, end) < 0) {
 		unsigned flags = 0;
 
 		k = bch_btree_iter_peek_with_holes(&iter);
 		if (!k.k) {
 			ret = bch_btree_iter_unlock(&iter) ?: -EIO;
-			goto err;
+			goto err_put_sectors_dirty;
 		}
 
 		/* already reserved */
@@ -1941,20 +2136,23 @@ static long bch_fallocate(struct inode *inode, int mode,
 
 		ret = reserve_sectors(c, sectors);
 		if (ret)
-			goto err;
+			goto err_put_sectors_dirty;
 
 		ret = bch_btree_insert_at(&iter,
 					  &keylist_single(&reservation),
-					  NULL, &ei->journal_seq,
+					  &i_sectors_hook.hook,
+					  &ei->journal_seq,
 					  BTREE_INSERT_ATOMIC|flags);
 
 		atomic64_sub_bug(sectors, &c->sectors_reserved);
 
 		if (ret < 0 && ret != -EINTR)
-			goto err;
+			goto err_put_sectors_dirty;
 
 	}
 	bch_btree_iter_unlock(&iter);
+
+	i_sectors_dirty_put(ei, &i_sectors_hook);
 
 	if (!(mode & FALLOC_FL_KEEP_SIZE) &&
 	    new_size > inode->i_size) {
@@ -1975,6 +2173,8 @@ static long bch_fallocate(struct inode *inode, int mode,
 	inode_unlock(inode);
 
 	return 0;
+err_put_sectors_dirty:
+	i_sectors_dirty_put(ei, &i_sectors_hook);
 err:
 	bch_btree_iter_unlock(&iter);
 	inode_unlock(inode);

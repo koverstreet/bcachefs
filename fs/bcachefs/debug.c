@@ -14,6 +14,7 @@
 #include "debug.h"
 #include "error.h"
 #include "extents.h"
+#include "fs-gc.h"
 #include "inode.h"
 #include "io.h"
 #include "super.h"
@@ -188,7 +189,7 @@ void bch_verify_inode_refs(struct cache_set *c)
 	struct bkey_s_c k;
 	struct bkey_i_inode inode;
 	u64 cur_inum = 0;
-	u64 i_size;
+	u64 i_size, i_sectors;
 	u16 i_mode;
 	char buf[100];
 
@@ -209,6 +210,17 @@ void bch_verify_inode_refs(struct cache_set *c)
 			return;
 		}
 
+		if (k.k->p.inode != cur_inum) {
+			BUG_ON(le32_to_cpu(inode.v.i_flags) & BCH_INODE_I_SIZE_DIRTY);
+			BUG_ON(le32_to_cpu(inode.v.i_flags) & BCH_INODE_I_SECTORS_DIRTY);
+
+			i_sectors = bch_count_inode_sectors(c, inode.k.p.inode);
+			cache_set_inconsistent_on(i_sectors !=
+				le64_to_cpu(inode.v.i_sectors), c,
+				"i_sectors wrong: got %llu, should be %llu",
+				le64_to_cpu(inode.v.i_sectors), i_sectors);
+		}
+
 		cur_inum = k.k->p.inode;
 		i_mode = le16_to_cpu(inode.v.i_mode);
 		i_size = le64_to_cpu(inode.v.i_size);
@@ -218,8 +230,6 @@ void bch_verify_inode_refs(struct cache_set *c)
 			cache_set_inconsistent(c,
 				"extent for non regular file, inode %llu mode %u",
 				k.k->p.inode, i_mode);
-
-		BUG_ON(le32_to_cpu(inode.v.i_flags) & BCH_INODE_I_SIZE_DIRTY);
 
 		if (k.k->p.offset > round_up(i_size, PAGE_SIZE) >> 9) {
 			bch_bkey_val_to_text(c, BTREE_ID_EXTENTS, buf,

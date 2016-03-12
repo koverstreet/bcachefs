@@ -6,6 +6,7 @@
 #include "dirent.h"
 #include "extents.h"
 #include "fs.h"
+#include "fs-gc.h"
 #include "fs-io.h"
 #include "inode.h"
 #include "journal.h"
@@ -151,8 +152,8 @@ out:
 	return ret < 0 ? ret : 0;
 }
 
-static int __must_check bch_write_inode(struct cache_set *c,
-					struct bch_inode_info *ei)
+int __must_check bch_write_inode(struct cache_set *c,
+				 struct bch_inode_info *ei)
 {
 	return __bch_write_inode(c, ei, NULL, NULL);
 }
@@ -1010,6 +1011,9 @@ static void bch_inode_init(struct bch_inode_info *ei,
 	i_uid_write(inode, le32_to_cpu(bi->i_uid));
 	i_gid_write(inode, le32_to_cpu(bi->i_gid));
 
+	atomic64_set(&ei->i_sectors, le64_to_cpu(bi->i_sectors));
+	inode->i_blocks = atomic64_read(&ei->i_sectors);
+
 	inode->i_ino	= bkey_inode.k->p.inode;
 	set_nlink(inode, le32_to_cpu(bi->i_nlink));
 	inode->i_rdev	= le32_to_cpu(bi->i_dev);
@@ -1063,6 +1067,7 @@ static struct inode *bch_alloc_inode(struct super_block *sb)
 	ei->flags			= 0;
 
 	seqcount_init(&ei->shadow_i_size_lock);
+	atomic_long_set(&ei->i_sectors_dirty_count, 0);
 
 	return &ei->vfs_inode;
 }
@@ -1108,16 +1113,19 @@ static void bch_evict_inode(struct inode *inode)
 		/* bch_inode_create() failed: */
 
 		BUG_ON(!fifo_empty(&ei->i_size_updates));
+		BUG_ON(atomic_long_read(&ei->i_sectors_dirty_count));
 		clear_inode(inode);
 	} else if (inode->i_nlink) {
 		truncate_inode_pages_final(&inode->i_data);
 
 		BUG_ON(!fifo_empty(&ei->i_size_updates));
+		BUG_ON(atomic_long_read(&ei->i_sectors_dirty_count));
 		clear_inode(inode);
 	} else {
 		truncate_inode_pages_final(&inode->i_data);
 
 		BUG_ON(!fifo_empty(&ei->i_size_updates));
+		BUG_ON(atomic_long_read(&ei->i_sectors_dirty_count));
 		clear_inode(inode);
 
 		bch_inode_rm(c, inode->i_ino);

@@ -495,9 +495,10 @@ enum {
 	__BCH_INODE_NOATIME	= 4,
 
 	__BCH_INODE_I_SIZE_DIRTY= 5,
+	__BCH_INODE_I_SECTORS_DIRTY= 6,
 
 	/* not implemented yet: */
-	__BCH_INODE_HAS_XATTRS	= 6, /* has xattrs in xattr btree */
+	__BCH_INODE_HAS_XATTRS	= 7, /* has xattrs in xattr btree */
 };
 
 #define BCH_INODE_SYNC		(1 << __BCH_INODE_SYNC)
@@ -506,6 +507,7 @@ enum {
 #define BCH_INODE_NODUMP	(1 << __BCH_INODE_NODUMP)
 #define BCH_INODE_NOATIME	(1 << __BCH_INODE_NOATIME)
 #define BCH_INODE_I_SIZE_DIRTY	(1 << __BCH_INODE_I_SIZE_DIRTY)
+#define BCH_INODE_I_SECTORS_DIRTY (1 << __BCH_INODE_I_SECTORS_DIRTY)
 #define BCH_INODE_HAS_XATTRS	(1 << __BCH_INODE_HAS_XATTRS)
 
 struct bch_inode {
@@ -521,6 +523,7 @@ struct bch_inode {
 	__le64			i_mtime;
 
 	__le64			i_size;
+	__le64			i_sectors;
 
 	__le32			i_uid;
 	__le32			i_gid;
