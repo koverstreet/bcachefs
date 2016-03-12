@@ -60,6 +60,7 @@ write_attribute(blockdev_volume_create);
 write_attribute(add_device);
 
 read_attribute(uuid);
+read_attribute(minor);
 read_attribute(bucket_size);
 read_attribute(bucket_size_bytes);
 read_attribute(block_size);
@@ -646,6 +647,8 @@ static ssize_t bch_compression_stats(struct cache_set *c, char *buf)
 SHOW(bch_cache_set)
 {
 	struct cache_set *c = container_of(kobj, struct cache_set, kobj);
+
+	sysfs_print(minor,			c->minor);
 
 	sysfs_print(journal_delay_ms,		c->journal.delay_ms);
 

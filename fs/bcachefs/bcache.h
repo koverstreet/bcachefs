@@ -816,6 +816,7 @@ static inline unsigned block_bytes(struct cache_set *c)
 
 /* Forward declarations */
 
+long bch_cache_set_ioctl(struct cache_set *, unsigned, void __user *);
 long bch_chardev_ioctl(struct file *, unsigned, unsigned long);
 
 void bch_debug_exit(void);

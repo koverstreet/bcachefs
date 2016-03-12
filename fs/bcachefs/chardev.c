@@ -94,6 +94,18 @@ static long bch_ioctl_incremental(struct bch_ioctl_incremental __user *user_arg)
 	return 0;
 }
 
+static long bch_global_ioctl(unsigned cmd, void __user *arg)
+{
+	switch (cmd) {
+	case BCH_IOCTL_ASSEMBLE:
+		return bch_ioctl_assemble(arg);
+	case BCH_IOCTL_INCREMENTAL:
+		return bch_ioctl_incremental(arg);
+	default:
+		return -ENOTTY;
+	}
+}
+
 static long bch_ioctl_stop(struct cache_set *c)
 {
 	bch_cache_set_stop(c);
@@ -247,20 +259,27 @@ static long bch_ioctl_disk_fail_by_uuid(struct cache_set *c,
 	return ret;
 }
 
-long bch_chardev_ioctl(struct file *filp, unsigned cmd, unsigned long v)
+static long bch_ioctl_query_uuid(struct cache_set *c,
+			struct bch_ioctl_query_uuid __user *user_arg)
 {
-	struct cache_set *c = filp->private_data;
-	void __user *arg = (void __user *) v;
+	return copy_to_user(&user_arg->uuid,
+			    &c->disk_sb.user_uuid,
+			    sizeof(c->disk_sb.user_uuid));
+}
+
+long bch_cache_set_ioctl(struct cache_set *c, unsigned cmd, void __user *arg)
+{
+	/* ioctls that don't require admin cap: */
+	switch (cmd) {
+	case BCH_IOCTL_QUERY_UUID:
+		return bch_ioctl_query_uuid(c, arg);
+	}
 
 	if (!capable(CAP_SYS_ADMIN))
 		return -EPERM;
 
+	/* ioctls that do require admin cap: */
 	switch (cmd) {
-	case BCH_IOCTL_ASSEMBLE:
-		return bch_ioctl_assemble(arg);
-	case BCH_IOCTL_INCREMENTAL:
-		return bch_ioctl_incremental(arg);
-
 	case BCH_IOCTL_RUN:
 		return -ENOTTY;
 	case BCH_IOCTL_STOP:
@@ -281,4 +300,14 @@ long bch_chardev_ioctl(struct file *filp, unsigned cmd, unsigned long v)
 	default:
 		return -ENOTTY;
 	}
+}
+
+long bch_chardev_ioctl(struct file *filp, unsigned cmd, unsigned long v)
+{
+	struct cache_set *c = filp->private_data;
+	void __user *arg = (void __user *) v;
+
+	return c
+		? bch_cache_set_ioctl(c, cmd, arg)
+		: bch_global_ioctl(cmd, arg);
 }

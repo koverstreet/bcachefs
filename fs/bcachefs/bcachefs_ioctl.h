@@ -30,6 +30,8 @@ extern "C" {
 #define BCH_IOCTL_DISK_FAIL_BY_UUID					\
 	_IOW('r', 6, struct bch_ioctl_disk_fail_by_uuid)
 
+#define BCH_IOCTL_QUERY_UUID	_IOR('r', 6, struct bch_ioctl_query_uuid)
+
 struct bch_ioctl_assemble {
 	__u32			flags;
 	__u32			nr_devs;
@@ -71,6 +73,10 @@ struct bch_ioctl_disk_fail_by_uuid {
 	__u32			flags;
 	__u32			pad;
 	uuid_le			dev;
+};
+
+struct bch_ioctl_query_uuid {
+	uuid_le			uuid;
 };
 
 #ifdef __cplusplus
