@@ -641,8 +641,6 @@ const char *bch_backing_dev_register(struct bcache_superblock *sb)
 	pr_info("registered backing device %s",
 		bdevname(dc->disk_sb.bdev, name));
 
-	mutex_lock(&bch_register_lock);
-
 	list_add(&dc->list, &uncached_devices);
 	list_for_each_entry(c, &bch_cache_sets, list)
 		bch_cached_dev_attach(dc, c);
@@ -651,7 +649,6 @@ const char *bch_backing_dev_register(struct bcache_superblock *sb)
 	    BDEV_STATE(dc->disk_sb.sb) == BDEV_STATE_STALE)
 		bch_cached_dev_run(dc);
 
-	mutex_unlock(&bch_register_lock);
 	return NULL;
 err:
 	bch_blockdev_stop(&dc->disk);
