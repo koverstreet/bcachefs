@@ -32,9 +32,7 @@ struct bio_set *bch_dio_write_bioset;
  */
 static void bch_i_size_write(struct inode *inode, loff_t new_i_size)
 {
-	struct bch_inode_info *ei = to_bch_ei(inode);
-
-	EBUG_ON(new_i_size < ei->i_size);
+	EBUG_ON(new_i_size < to_bch_ei(inode)->i_size);
 	i_size_write(inode, new_i_size);
 }
 
