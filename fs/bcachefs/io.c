@@ -648,34 +648,46 @@ static void bch_write_discard(struct closure *cl)
 /*
  * Convert extents to be inserted to discards after an error:
  */
-static void __bch_write_discard(struct closure *cl)
+static void bch_write_io_error(struct closure *cl)
 {
 	struct bch_write_op *op = container_of(cl, struct bch_write_op, cl);
 
-	/*
-	 * Our data write just errored, which means we've got a bunch of keys to
-	 * insert that point to data that wasn't successfully written.
-	 *
-	 * We don't have to insert those keys but we still have to invalidate
-	 * that region of the cache - so, if we just strip off all the pointers
-	 * from the keys we'll accomplish just that.
-	 */
+	if (op->flags & BCH_WRITE_DISCARD_ON_ERROR) {
+		struct bkey_i *src = bch_keylist_front(&op->insert_keys);
+		struct bkey_i *dst = bch_keylist_front(&op->insert_keys);
 
-	struct bkey_i *src = bch_keylist_front(&op->insert_keys);
-	struct bkey_i *dst = bch_keylist_front(&op->insert_keys);
+		/*
+		 * Our data write just errored, which means we've got a bunch
+		 * of keys to insert that point to data that wasn't
+		 * successfully written.
+		 *
+		 * We don't have to insert those keys but we still have to
+		 * invalidate that region of the cache - so, if we just strip
+		 * off all the pointers from the keys we'll accomplish just
+		 * that.
+		 */
 
-	while (src != op->insert_keys.top) {
-		struct bkey_i *n = bkey_next(src);
+		while (src != op->insert_keys.top) {
+			struct bkey_i *n = bkey_next(src);
 
-		set_bkey_val_u64s(&src->k, 0);
-		src->k.type = KEY_TYPE_DISCARD;
-		memmove(dst, src, bkey_bytes(&src->k));
+			set_bkey_val_u64s(&src->k, 0);
+			src->k.type = KEY_TYPE_DISCARD;
+			memmove(dst, src, bkey_bytes(&src->k));
 
-		dst = bkey_next(dst);
-		src = n;
+			dst = bkey_next(dst);
+			src = n;
+		}
+
+		op->insert_keys.top = dst;
+		op->flags |= BCH_WRITE_DISCARD;
+	} else {
+		/* TODO: We could try to recover from this. */
+		while (!bch_keylist_empty(&op->insert_keys))
+			bch_keylist_dequeue(&op->insert_keys);
+
+		op->error = -EIO;
+		op->flags |= BCH_WRITE_DONE;
 	}
-
-	op->insert_keys.top = dst;
 
 	bch_write_index(cl);
 }
@@ -687,15 +699,8 @@ static void bch_write_endio(struct bio *bio)
 	struct bch_write_bio *wbio = to_wbio(bio);
 
 	if (cache_nonfatal_io_err_on(bio->bi_error, wbio->bio.ca,
-				     "data write")) {
-		/* TODO: We could try to recover from this. */
-		if (!bkey_extent_is_cached(&op->insert_key.k)) {
-			op->error = bio->bi_error;
-		} else if (op->flags & BCH_WRITE_DISCARD_ON_ERROR)
-			set_closure_fn(cl, __bch_write_discard, op->c->wq);
-		else
-			set_closure_fn(cl, NULL, NULL);
-	}
+				     "data write"))
+		set_closure_fn(cl, bch_write_io_error, op->c->wq);
 
 	if (wbio->orig)
 		bio_endio(wbio->orig);
@@ -1056,7 +1061,15 @@ err:
 
 		bch_write_discard(cl);
 	} else {
-		op->error = -ENOSPC;
+		/*
+		 * Right now we can only error here if we went RO - the
+		 * allocation failed, but we already checked for -ENOSPC when we
+		 * got our reservation.
+		 *
+		 * XXX capacity might have changed, but we don't check for that
+		 * yet:
+		 */
+		op->error = -EROFS;
 	}
 
 	op->flags |= BCH_WRITE_DONE;
