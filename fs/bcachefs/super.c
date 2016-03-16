@@ -729,7 +729,8 @@ static void bch_writes_disabled(struct percpu_ref *writes)
 {
 	struct cache_set *c = container_of(writes, struct cache_set, writes);
 
-	complete(&c->write_disable_complete);
+	set_bit(CACHE_SET_WRITE_DISABLE_COMPLETE, &c->flags);
+	wake_up(&bch_read_only_wait);
 }
 
 static void bch_cache_set_read_only_work(struct work_struct *work)
@@ -737,7 +738,6 @@ static void bch_cache_set_read_only_work(struct work_struct *work)
 	struct cache_set *c =
 		container_of(work, struct cache_set, read_only_work);
 
-	init_completion(&c->write_disable_complete);
 	percpu_ref_put(&c->writes);
 
 	del_timer_sync(&c->foreground_write_wakeup);
@@ -746,10 +746,22 @@ static void bch_cache_set_read_only_work(struct work_struct *work)
 	c->foreground_write_pd.rate.rate = UINT_MAX;
 	bch_wake_delayed_writes((unsigned long) c);
 
-	/* Wait for outstanding writes to complete: */
-	wait_for_completion(&c->write_disable_complete);
+	/*
+	 * If we're not doing an emergency shutdown, we want to wait on
+	 * outstanding writes to complete so they don't see spurious errors due
+	 * to shutting down the allocator.
+	 *
+	 * If we are doing an emergency shutdown, outstanding writes may hang
+	 * until we shutdown the allocator, so we don't want to wait here:
+	 */
+	wait_event(bch_read_only_wait,
+		   test_bit(CACHE_SET_EMERGENCY_RO, &c->flags) ||
+		   test_bit(CACHE_SET_WRITE_DISABLE_COMPLETE, &c->flags));
 
 	__bch_cache_set_read_only(c);
+
+	wait_event(bch_read_only_wait,
+		   test_bit(CACHE_SET_WRITE_DISABLE_COMPLETE, &c->flags));
 
 	bch_notify_cache_set_read_only(c);
 	trace_bcache_cache_set_read_only_done(c);
@@ -781,16 +793,26 @@ bool bch_cache_set_read_only(struct cache_set *c)
 	return true;
 }
 
-void bch_cache_set_read_only_sync(struct cache_set *c)
+bool bch_cache_set_emergency_read_only(struct cache_set *c)
 {
+	bool ret = !test_and_set_bit(CACHE_SET_EMERGENCY_RO, &c->flags);
+
 	bch_cache_set_read_only(c);
 
-	/*
-	 * XXX: can hang indefinitely if we race and someone else does a
-	 * cache_set_read_write
-	 */
+	wake_up(&bch_read_only_wait);
+	return ret;
+}
+
+void bch_cache_set_read_only_sync(struct cache_set *c)
+{
+	/* so we don't race with bch_cache_set_read_write() */
+	lockdep_assert_held(&bch_register_lock);
+
+	bch_cache_set_read_only(c);
+
 	wait_event(bch_read_only_wait,
-		   test_bit(CACHE_SET_RO_COMPLETE, &c->flags));
+		   test_bit(CACHE_SET_RO_COMPLETE, &c->flags) &&
+		   test_bit(CACHE_SET_WRITE_DISABLE_COMPLETE, &c->flags));
 }
 
 static const char *__bch_cache_set_read_write(struct cache_set *c)
@@ -798,6 +820,16 @@ static const char *__bch_cache_set_read_write(struct cache_set *c)
 	struct cache *ca;
 	const char *err;
 	unsigned i;
+
+	lockdep_assert_held(&bch_register_lock);
+
+	err = "error starting allocator thread";
+	for_each_cache(ca, c, i)
+		if (ca->mi.state == CACHE_ACTIVE &&
+		    bch_cache_allocator_start(ca)) {
+			percpu_ref_put(&ca->ref);
+			goto err;
+		}
 
 	err = "error starting btree GC thread";
 	if (bch_gc_thread_start(c))
@@ -832,21 +864,12 @@ err:
 
 const char *bch_cache_set_read_write(struct cache_set *c)
 {
-	struct cache *ca;
 	const char *err;
-	unsigned i;
 
 	lockdep_assert_held(&bch_register_lock);
 
 	if (!test_bit(CACHE_SET_RO_COMPLETE, &c->flags))
 		return NULL;
-
-	for_each_cache(ca, c, i)
-		if (ca->mi.state == CACHE_ACTIVE &&
-		    (err = bch_cache_allocator_start(ca))) {
-			percpu_ref_put(&ca->ref);
-			goto err;
-		}
 
 	err = __bch_cache_set_read_write(c);
 	if (err)
@@ -854,13 +877,11 @@ const char *bch_cache_set_read_write(struct cache_set *c)
 
 	percpu_ref_reinit(&c->writes);
 
+	clear_bit(CACHE_SET_WRITE_DISABLE_COMPLETE, &c->flags);
+	clear_bit(CACHE_SET_EMERGENCY_RO, &c->flags);
 	clear_bit(CACHE_SET_RO_COMPLETE, &c->flags);
 	clear_bit(CACHE_SET_RO, &c->flags);
-
 	return NULL;
-err:
-	__bch_cache_set_read_only(c);
-	return err;
 }
 
 /* Cache set startup/shutdown: */
@@ -956,8 +977,6 @@ static void __cache_set_stop2(struct closure *cl)
 	if (!IS_ERR_OR_NULL(c->chardev))
 		device_unregister(c->chardev);
 
-	bch_cache_set_read_only_sync(c);
-
 	if (c->kobj.state_in_sysfs)
 		kobject_del(&c->kobj);
 
@@ -966,6 +985,10 @@ static void __cache_set_stop2(struct closure *cl)
 	kobject_put(&c->time_stats);
 	kobject_put(&c->opts_dir);
 	kobject_put(&c->internal);
+
+	mutex_lock(&bch_register_lock);
+	bch_cache_set_read_only_sync(c);
+	mutex_unlock(&bch_register_lock);
 
 	closure_return(cl);
 }
@@ -1475,32 +1498,6 @@ static const char *can_attach_cache(struct cache_sb *sb, struct cache_set *c)
 
 /* Cache device */
 
-static bool cache_may_remove(struct cache *ca)
-{
-	struct cache_set *c = ca->set;
-	struct cache_group *tier = &c->cache_tiers[ca->mi.tier];
-
-	/*
-	 * Right now, we can't remove the last device from a tier,
-	 * - For tier 0, because all metadata lives in tier 0 and because
-	 *   there is no way to have foreground writes go directly to tier 1.
-	 * - For tier 1, because the code doesn't completely support an
-	 *   empty tier 1.
-	 */
-
-	/*
-	 * Turning a device read-only removes it from the cache group,
-	 * so there may only be one read-write device in a tier, and yet
-	 * the device we are removing is in the same tier, so we have
-	 * to check for identity.
-	 * Removing the last RW device from a tier requires turning the
-	 * whole cache set RO.
-	 */
-
-	return tier->nr_devices != 1 ||
-		rcu_access_pointer(tier->devices[0]) != ca;
-}
-
 static void __bch_cache_read_only(struct cache *ca)
 {
 	trace_bcache_cache_read_only(ca);
@@ -1523,7 +1520,7 @@ static void __bch_cache_read_only(struct cache *ca)
 	trace_bcache_cache_read_only_done(ca);
 }
 
-void bch_cache_read_only(struct cache *ca)
+bool bch_cache_read_only(struct cache *ca)
 {
 	struct cache_set *c = ca->set;
 	char buf[BDEVNAME_SIZE];
@@ -1533,9 +1530,9 @@ void bch_cache_read_only(struct cache *ca)
 	lockdep_assert_held(&bch_register_lock);
 
 	if (ca->mi.state != CACHE_ACTIVE)
-		return;
+		return false;
 
-	if (!cache_may_remove(ca)) {
+	if (!bch_cache_may_remove(ca)) {
 		printk(__bch_err_fmt(c, "required member %s going RO, forcing fs RO",
 				     buf));
 		bch_cache_set_read_only_sync(c);
@@ -1551,6 +1548,7 @@ void bch_cache_read_only(struct cache *ca)
 
 	SET_CACHE_STATE(&c->disk_mi[ca->sb.nr_this_dev], CACHE_RO);
 	bcache_write_super(c);
+	return true;
 }
 
 static const char *__bch_cache_read_write(struct cache *ca)
@@ -1562,16 +1560,15 @@ static const char *__bch_cache_read_write(struct cache *ca)
 
 	trace_bcache_cache_read_write(ca);
 
-	err = bch_cache_allocator_start(ca);
-	if (err)
-		return err;
+	if (bch_cache_allocator_start(ca))
+		return "error starting allocator thread";
 
-	err = "error starting tiering write workqueue";
 	if (bch_tiering_write_start(ca))
-		return err;
+		return "error starting tiering write workqueue";
 
 	trace_bcache_cache_read_write_done(ca);
 
+	/* XXX wtf? */
 	return NULL;
 
 	err = "error starting moving GC thread";
@@ -1812,7 +1809,7 @@ bool bch_cache_remove(struct cache *ca, bool force)
 	if (test_bit(CACHE_DEV_REMOVING, &ca->flags))
 		return false;
 
-	if (!cache_may_remove(ca)) {
+	if (!bch_cache_may_remove(ca)) {
 		pr_err("Can't remove last device in tier %u of %pU.",
 		       ca->mi.tier, ca->set->disk_sb.set_uuid.b);
 		bch_notify_cache_remove_failed(ca);

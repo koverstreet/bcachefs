@@ -882,7 +882,7 @@ setflags_out:
 
 		down_write(&sb->s_umount);
 		sb->s_flags |= MS_RDONLY;
-		bch_cache_set_read_only(c);
+		bch_cache_set_emergency_read_only(c);
 		up_write(&sb->s_umount);
 		return 0;
 

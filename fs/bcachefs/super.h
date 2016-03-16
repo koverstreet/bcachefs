@@ -145,6 +145,32 @@ static inline void bch_check_mark_super(struct cache_set *c,
 	bch_check_mark_super_slowpath(c, k, meta);
 }
 
+static inline bool bch_cache_may_remove(struct cache *ca)
+{
+	struct cache_set *c = ca->set;
+	struct cache_group *tier = &c->cache_tiers[ca->mi.tier];
+
+	/*
+	 * Right now, we can't remove the last device from a tier,
+	 * - For tier 0, because all metadata lives in tier 0 and because
+	 *   there is no way to have foreground writes go directly to tier 1.
+	 * - For tier 1, because the code doesn't completely support an
+	 *   empty tier 1.
+	 */
+
+	/*
+	 * Turning a device read-only removes it from the cache group,
+	 * so there may only be one read-write device in a tier, and yet
+	 * the device we are removing is in the same tier, so we have
+	 * to check for identity.
+	 * Removing the last RW device from a tier requires turning the
+	 * whole cache set RO.
+	 */
+
+	return tier->nr_devices != 1 ||
+		rcu_access_pointer(tier->devices[0]) != ca;
+}
+
 void free_super(struct bcache_superblock *);
 int bch_super_realloc(struct bcache_superblock *, unsigned);
 void bcache_write_super(struct cache_set *);
@@ -162,10 +188,11 @@ const char *bch_register_cache_set(char * const *, unsigned,
 				   struct cache_set **);
 
 bool bch_cache_set_read_only(struct cache_set *);
+bool bch_cache_set_emergency_read_only(struct cache_set *);
 void bch_cache_set_read_only_sync(struct cache_set *);
 const char *bch_cache_set_read_write(struct cache_set *);
 
-void bch_cache_read_only(struct cache *);
+bool bch_cache_read_only(struct cache *);
 const char *bch_cache_read_write(struct cache *);
 bool bch_cache_remove(struct cache *, bool force);
 int bch_cache_set_add_cache(struct cache_set *, const char *);

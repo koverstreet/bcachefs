@@ -120,7 +120,4 @@ struct cached_dev {
 	unsigned char		writeback_percent;
 };
 
-#define CACHE_DEV_REMOVING	0
-#define CACHE_DEV_FORCE_REMOVE	1
-
 #endif /* _BCACHE_BLOCKDEV_TYPES_H */

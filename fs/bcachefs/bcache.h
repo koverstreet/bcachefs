@@ -331,6 +331,12 @@ struct cache_member_rcu {
 	struct cache_member_cpu	m[];
 };
 
+/* cache->flags: */
+enum {
+	CACHE_DEV_REMOVING,
+	CACHE_DEV_FORCE_REMOVE,
+};
+
 struct cache {
 	struct percpu_ref	ref;
 	struct rcu_head		free_rcu;
@@ -476,6 +482,8 @@ enum {
 	CACHE_SET_RUNNING,
 	CACHE_SET_RO,
 	CACHE_SET_RO_COMPLETE,
+	CACHE_SET_EMERGENCY_RO,
+	CACHE_SET_WRITE_DISABLE_COMPLETE,
 	CACHE_SET_GC_STOPPING,
 	CACHE_SET_GC_FAILURE,
 	CACHE_SET_BDEV_MOUNTED,
@@ -506,7 +514,6 @@ struct cache_set {
 
 	/* Counts outstanding writes, for clean transition to read-only */
 	struct percpu_ref	writes;
-	struct completion	write_disable_complete;
 	struct work_struct	read_only_work;
 
 	struct cache __rcu	*cache[MAX_CACHES_PER_SET];

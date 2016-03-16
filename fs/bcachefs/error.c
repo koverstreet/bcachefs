@@ -16,7 +16,7 @@ void bch_inconsistent_error(struct cache_set *c)
 			return;
 		}
 
-		if (bch_cache_set_read_only(c))
+		if (bch_cache_set_emergency_read_only(c))
 			__bch_cache_set_error(c, "emergency read only");
 		break;
 	case BCH_ON_ERROR_PANIC:
@@ -28,9 +28,8 @@ void bch_inconsistent_error(struct cache_set *c)
 
 void bch_fatal_error(struct cache_set *c)
 {
-	if (bch_cache_set_read_only(c))
-		printk(KERN_ERR "bcache: %pU emergency read only\n",
-		       c->disk_sb.user_uuid.b);
+	if (bch_cache_set_emergency_read_only(c))
+		__bch_cache_set_error(c, "emergency read only");
 }
 
 /* Nonfatal IO errors, IO error/latency accounting: */
@@ -110,20 +109,25 @@ void bch_account_io_completion_time(struct cache *ca,
 void bch_nonfatal_io_error_work(struct work_struct *work)
 {
 	struct cache *ca = container_of(work, struct cache, io_error_work);
+	struct cache_set *c = ca->set;
 	unsigned errors = atomic_read(&ca->io_errors);
 	char buf[BDEVNAME_SIZE];
+	bool dev;
 
-	if (errors < ca->set->error_limit) {
+	if (errors < c->error_limit) {
 		bch_notify_cache_error(ca, false);
 	} else {
 		bch_notify_cache_error(ca, true);
 
 		mutex_lock(&bch_register_lock);
-		if (ca->mi.state == CACHE_ACTIVE) {
-			printk(KERN_ERR "bcache: too many IO errors on %s, going RO\n",
-			       bdevname(ca->disk_sb.bdev, buf));
-			bch_cache_read_only(ca);
-		}
+		dev = bch_cache_may_remove(ca);
+		if (dev
+		    ? bch_cache_read_only(ca)
+		    : bch_cache_set_emergency_read_only(c))
+			__bch_cache_set_error(c,
+				"too many IO errors on %s, setting %s RO",
+				bdevname(ca->disk_sb.bdev, buf),
+				dev ? "device" : "filesystem");
 		mutex_unlock(&bch_register_lock);
 	}
 }

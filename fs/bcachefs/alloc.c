@@ -1666,6 +1666,12 @@ void bch_cache_allocator_stop(struct cache *ca)
 	}
 	mutex_unlock(&c->btree_reserve_cache_lock);
 
+	/* Avoid deadlocks.. */
+
+	closure_wake_up(&c->buckets_available_wait);
+	closure_wake_up(&c->freelist_wait);
+	wake_up(&c->journal.wait);
+
 	/* Now wait for any in flight writes: */
 
 	while (1) {
@@ -1695,15 +1701,23 @@ void bch_cache_allocator_stop(struct cache *ca)
 /*
  * Startup the allocator thread for transition to RW mode:
  */
-const char *bch_cache_allocator_start(struct cache *ca)
+int bch_cache_allocator_start(struct cache *ca)
 {
 	struct cache_set *c = ca->set;
 	struct cache_group *tier = &c->cache_tiers[ca->mi.tier];
 	struct task_struct *k;
 
+	/*
+	 * allocator thread already started?
+	 * (run_cache_set() starts allocator separately from normal rw path, via
+	 * bch_cache_allocator_start_once())
+	 */
+	if (ca->alloc_thread)
+		return 0;
+
 	k = kthread_create(bch_allocator_thread, ca, "bcache_allocator");
 	if (IS_ERR(k))
-		return "error starting allocator thread";
+		return 0;
 
 	get_task_struct(k);
 	ca->alloc_thread = k;
@@ -1719,8 +1733,7 @@ const char *bch_cache_allocator_start(struct cache *ca)
 	 * -EROFS due to prio_write() -> journal_meta() not finding any devices:
 	 */
 	wake_up_process(k);
-
-	return NULL;
+	return 0;
 }
 
 /*
@@ -1769,7 +1782,10 @@ const char *bch_cache_allocator_start_once(struct cache *ca)
 	if (!fifo_full(&ca->free[RESERVE_PRIO]))
 		return "couldn't find enough available buckets to write prios";
 
-	return bch_cache_allocator_start(ca);
+	if (bch_cache_allocator_start(ca))
+		return "error starting allocator thread";
+
+	return NULL;
 }
 
 void bch_open_buckets_init(struct cache_set *c)
