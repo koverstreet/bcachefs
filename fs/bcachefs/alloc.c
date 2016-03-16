@@ -506,6 +506,7 @@ static void bch_inc_clock_hand(struct io_timer *timer)
 					struct prio_clock, rescale);
 	struct cache_set *c = container_of(clock,
 				struct cache_set, prio_clock[clock->rw]);
+	u64 capacity;
 
 	mutex_lock(&c->bucket_lock);
 
@@ -517,16 +518,25 @@ static void bch_inc_clock_hand(struct io_timer *timer)
 
 	mutex_unlock(&c->bucket_lock);
 
+	capacity = READ_ONCE(c->capacity);
+
+	if (!capacity)
+		return;
+
 	/*
 	 * we only increment when 0.1% of the cache_set has been read
 	 * or written too, this determines if it's time
+	 *
+	 * XXX: we shouldn't really be going off of the capacity of devices in
+	 * RW mode (that will be 0 when we're RO, yet we can still service
+	 * reads)
 	 */
-	timer->expire += c->capacity >> 10;
+	timer->expire += capacity >> 10;
 
 	bch_io_timer_add(&c->io_clock[clock->rw], timer);
 }
 
-void bch_prio_timer_start(struct cache_set *c, int rw)
+static void bch_prio_timer_init(struct cache_set *c, int rw)
 {
 	struct prio_clock *clock = &c->prio_clock[rw];
 	struct io_timer *timer = &clock->rescale;
@@ -534,7 +544,6 @@ void bch_prio_timer_start(struct cache_set *c, int rw)
 	clock->rw	= rw;
 	timer->fn	= bch_inc_clock_hand;
 	timer->expire	= c->capacity >> 10;
-	bch_io_timer_add(&c->io_clock[rw], timer);
 }
 
 /*
@@ -1551,6 +1560,18 @@ static void bch_recalc_capacity(struct cache_set *c)
 
 	c->capacity = capacity;
 
+	if (c->capacity) {
+		bch_io_timer_add(&c->io_clock[READ],
+				 &c->prio_clock[READ].rescale);
+		bch_io_timer_add(&c->io_clock[WRITE],
+				 &c->prio_clock[WRITE].rescale);
+	} else {
+		bch_io_timer_del(&c->io_clock[READ],
+				 &c->prio_clock[READ].rescale);
+		bch_io_timer_del(&c->io_clock[WRITE],
+				 &c->prio_clock[WRITE].rescale);
+	}
+
 	/* Wake up case someone was waiting for buckets */
 	closure_wake_up(&c->freelist_wait);
 	closure_wake_up(&c->buckets_available_wait);
@@ -1758,6 +1779,8 @@ void bch_open_buckets_init(struct cache_set *c)
 	INIT_LIST_HEAD(&c->open_buckets_open);
 	INIT_LIST_HEAD(&c->open_buckets_free);
 	spin_lock_init(&c->open_buckets_lock);
+	bch_prio_timer_init(c, READ);
+	bch_prio_timer_init(c, WRITE);
 
 	for (i = 0; i < ARRAY_SIZE(c->open_buckets); i++) {
 		mutex_init(&c->open_buckets[i].lock);

@@ -12,7 +12,6 @@ struct cache_group;
 int bch_prio_read(struct cache *);
 
 void bch_recalc_min_prio(struct cache *, int);
-void bch_prio_timer_start(struct cache_set *, int);
 
 void bch_open_bucket_put(struct cache_set *, struct open_bucket *);
 

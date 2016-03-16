@@ -1390,9 +1390,6 @@ static const char *run_cache_set(struct cache_set *c)
 		SET_CACHE_SYNC(&c->disk_sb, true);
 	}
 
-	bch_prio_timer_start(c, READ);
-	bch_prio_timer_start(c, WRITE);
-
 	if (c->opts.read_only) {
 		bch_cache_set_read_only_sync(c);
 	} else {
