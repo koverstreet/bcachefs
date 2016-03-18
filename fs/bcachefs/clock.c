@@ -11,8 +11,15 @@ static inline bool io_timer_cmp(struct io_timer *l, struct io_timer *r)
 
 void bch_io_timer_add(struct io_clock *clock, struct io_timer *timer)
 {
+	size_t i;
+
 	spin_lock(&clock->timer_lock);
+	for (i = 0; i < clock->timers.used; i++)
+		if (clock->timers.data[i] == timer)
+			goto out;
+
 	BUG_ON(!heap_add(&clock->timers, timer, io_timer_cmp));
+out:
 	spin_unlock(&clock->timer_lock);
 }
 
