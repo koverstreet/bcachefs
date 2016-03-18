@@ -357,12 +357,12 @@ static void btree_iter_lock_root(struct btree_iter *iter, struct bpos pos)
 	memset(iter->nodes, 0, sizeof(iter->nodes));
 
 	while (1) {
-		struct btree *b = iter->c->btree_roots[iter->btree_id];
+		struct btree *b = iter->c->btree_roots[iter->btree_id].b;
 
 		iter->level = b->level;
 
 		if (btree_node_lock(b, iter, iter->level,
-				(b != iter->c->btree_roots[iter->btree_id]))) {
+				(b != iter->c->btree_roots[iter->btree_id].b))) {
 			btree_iter_node_set(iter, b, pos);
 			break;
 		}

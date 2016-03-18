@@ -524,9 +524,9 @@ static unsigned bch_root_usage(struct cache_set *c)
 	do {
 		six_unlock_read(&b->lock);
 lock_root:
-		b = c->btree_roots[BTREE_ID_EXTENTS];
+		b = c->btree_roots[BTREE_ID_EXTENTS].b;
 		six_lock_read(&b->lock);
-	} while (b != c->btree_roots[BTREE_ID_EXTENTS]);
+	} while (b != c->btree_roots[BTREE_ID_EXTENTS].b);
 
 	for_each_btree_node_key(&b->keys, k, &iter)
 		bytes += bkey_bytes(k);
@@ -721,7 +721,7 @@ SHOW(bch_cache_set)
 	if (attr == &sysfs_alloc_debug)
 		return show_cache_set_alloc_debug(c, buf);
 
-	sysfs_print(tree_depth, c->btree_roots[BTREE_ID_EXTENTS]->level);
+	sysfs_print(tree_depth, c->btree_roots[BTREE_ID_EXTENTS].b->level);
 	sysfs_print(root_usage_percent,		bch_root_usage(c));
 
 	if (attr == &sysfs_compression_stats)

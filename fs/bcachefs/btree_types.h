@@ -13,12 +13,24 @@
 
 struct cache_set;
 struct open_bucket;
+struct async_split;
 
 struct btree_write {
 	unsigned			index;
 	bool				have_pin;
 	struct journal_entry_pin	journal;
 	struct closure_waitlist		wait;
+};
+
+struct btree_root {
+	struct btree		*b;
+
+	struct async_split	*as;
+
+	/* On disk root - see async splits: */
+	__BKEY_PADDED(key, BKEY_BTREE_PTR_VAL_U64s_MAX);
+	u8			level;
+	u8			alive;
 };
 
 struct btree {

@@ -21,13 +21,13 @@ void bch_recalc_btree_reserve(struct cache_set *c)
 {
 	unsigned i, reserve = 16;
 
-	if (!c->btree_roots[0])
+	if (!c->btree_roots[0].b)
 		reserve += 8;
 
 	for (i = 0; i < BTREE_ID_NR; i++)
-		if (c->btree_roots[i])
+		if (c->btree_roots[i].b)
 			reserve += min_t(unsigned, 1,
-					 c->btree_roots[i]->level) * 8;
+					 c->btree_roots[i].b->level) * 8;
 
 	c->btree_cache_reserve = reserve;
 }
@@ -164,6 +164,9 @@ static int mca_reap_notrace(struct cache_set *c, struct btree *b, bool flush)
 
 	if (!six_trylock_write(&b->lock))
 		goto out_unlock_intent;
+
+	if (btree_node_write_error(b))
+		goto out_unlock;
 
 	if (!list_empty(&b->write_blocked))
 		goto out_unlock;
@@ -353,8 +356,8 @@ void bch_btree_cache_free(struct cache_set *c)
 #endif
 
 	for (i = 0; i < BTREE_ID_NR; i++)
-		if (c->btree_roots[i])
-			list_add(&c->btree_roots[i]->list, &c->btree_cache);
+		if (c->btree_roots[i].b)
+			list_add(&c->btree_roots[i].b->list, &c->btree_cache);
 
 	list_splice(&c->btree_cache_freeable,
 		    &c->btree_cache);

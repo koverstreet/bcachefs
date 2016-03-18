@@ -25,6 +25,11 @@ bool bch_btree_node_format_fits(struct btree *, struct bkey_format *);
 
 /* Btree node freeing/allocation: */
 
+/*
+ * Tracks a btree node that has been (or is about to be) freed in memory, but
+ * has _not_ yet been freed on disk (because the write that makes the new
+ * node(s) visible and frees the old hasn't completed yet)
+ */
 struct pending_btree_node_free {
 	struct list_head	list;
 	bool			index_update_done;
@@ -32,21 +37,57 @@ struct pending_btree_node_free {
 	__BKEY_PADDED(key, BKEY_BTREE_PTR_VAL_U64s_MAX);
 };
 
+/*
+ * Tracks an in progress split/rewrite of a btree node and the update to the
+ * parent node:
+ *
+ * When we split/rewrite a node, we do all the updates in memory without
+ * waiting for any writes to complete - we allocate the new node(s) and update
+ * the parent node, possibly recursively up to the root.
+ *
+ * The end result is that we have one or more new nodes being written -
+ * possibly several, if there were multiple splits - and then a write (updating
+ * an interior node) which will make all these new nodes visible.
+ *
+ * Additionally, as we split/rewrite nodes we free the old nodes - but the old
+ * nodes can't be freed (their space on disk can't be reclaimed) until the
+ * update to the interior node that makes the new node visible completes -
+ * until then, the old nodes are still reachable on disk.
+ *
+ */
 struct async_split {
 	struct closure			cl;
 
 	struct cache_set		*c;
 
+	enum {
+		ASYNC_SPLIT_NO_UPDATE,
+		ASYNC_SPLIT_UPDATING_BTREE,
+		ASYNC_SPLIT_UPDATING_ROOT,
+		ASYNC_SPLIT_UPDATING_AS,
+	} mode;
+
+	/*
+	 * ASYNC_SPLIT_UPDATING_BTREE:
+	 * @b - node we're blocking from being written
+	 * @list - corresponds to @b->write_blocked
+	 */
 	struct btree			*b;
-	struct async_split		*as;
 	struct list_head		list;
 
-	/* for setting a new btree root: */
-	struct journal_res		res;
+	/*
+	 * ASYNC_SPLIT_UPDATING_AS: btree node we updated was freed, so now
+	 * we're now blocking another async_split
+	 * @parent_as - async_split that's waiting on our nodes to finish
+	 * writing, before it can make new nodes visible on disk
+	 * @wait - list of child async_splits that are waiting on this
+	 * async_split to make all the new nodes visible before they can free
+	 * their old btree nodes
+	 */
+	struct async_split		*parent_as;
+	struct closure_waitlist		wait;
 
 	struct journal_entry_pin	journal;
-
-	struct closure_waitlist		wait;
 
 	struct pending_btree_node_free	pending[BTREE_MAX_DEPTH + GC_MERGE_NODES];
 	unsigned			nr_pending;
@@ -61,11 +102,11 @@ struct async_split {
 	u64				inline_keys[BKEY_BTREE_PTR_U64s_MAX * 3];
 };
 
-void bch_pending_btree_node_free_init(struct cache_set *, struct async_split *,
-				      struct btree *);
+void bch_btree_node_free_start(struct cache_set *, struct async_split *,
+			       struct btree *);
 
+void bch_btree_node_free_inmem(struct btree_iter *, struct btree *);
 void bch_btree_node_free_never_inserted(struct cache_set *, struct btree *);
-void bch_btree_node_free(struct btree_iter *, struct btree *);
 
 void btree_open_bucket_put(struct cache_set *c, struct btree *);
 
@@ -153,9 +194,9 @@ static inline size_t bch_btree_keys_u64s_remaining(struct cache_set *c,
 #endif
 }
 
-int bch_btree_insert_node(struct btree *, struct btree_iter *,
-			  struct keylist *, struct btree_reserve *,
-			  struct async_split *as);
+void bch_btree_insert_node(struct btree *, struct btree_iter *,
+			   struct keylist *, struct btree_reserve *,
+			   struct async_split *as);
 
 /* Normal update interface: */
 

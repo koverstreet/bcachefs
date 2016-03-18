@@ -499,9 +499,7 @@ static void btree_node_write_done(struct closure *cl)
 	if (btree_node_write_error(b))
 		bch_journal_halt(&c->journal);
 
-	/* XXX: pin btree node in memory somehow */
-	if (!btree_node_write_error(b))
-		bch_btree_complete_write(c, b, w);
+	bch_btree_complete_write(c, b, w);
 
 	if (btree_node_dirty(b) && c->btree_flush_delay)
 		schedule_delayed_work(&b->work, c->btree_flush_delay * HZ);
@@ -516,10 +514,8 @@ static void btree_node_write_endio(struct bio *bio)
 	struct bch_write_bio *wbio = to_wbio(bio);
 
 	if (cache_fatal_io_err_on(bio->bi_error, wbio->bio.ca, "btree write") ||
-	    bch_meta_write_fault("btree")) {
+	    bch_meta_write_fault("btree"))
 		set_btree_node_write_error(b);
-		set_bit(CACHE_SET_BTREE_WRITE_ERROR, &b->c->flags);
-	}
 
 	if (wbio->orig)
 		bio_endio(wbio->orig);
@@ -579,6 +575,29 @@ static void do_btree_node_write(struct closure *cl)
 	}
 
 	BUG_ON(b->written + blocks_to_write > btree_blocks(c));
+
+	/*
+	 * We handle btree write errors by immediately halting the journal -
+	 * after we've done that, we can't issue any subsequent btree writes
+	 * because they might have pointers to new nodes that failed to write.
+	 *
+	 * Furthermore, there's no point in doing any more btree writes because
+	 * with the journal stopped, we're never going to update the journal to
+	 * reflect that those writes were done and the data flushed from the
+	 * journal:
+	 *
+	 * Make sure to update b->written so bch_btree_init_next() doesn't
+	 * break:
+	 */
+	if (bch_journal_error(&b->c->journal)) {
+		struct btree_write *w = btree_prev_write(b);
+
+		set_btree_node_write_error(b);
+		b->written += blocks_to_write;
+		bch_btree_complete_write(c, b, w);
+
+		closure_return_with_destructor(cl, btree_node_write_unlock);
+	}
 
 	bio = bio_alloc_bioset(GFP_NOIO, btree_pages(c), &c->bio_write);
 
@@ -663,15 +682,22 @@ void __bch_btree_node_write(struct btree *b, struct closure *parent,
 	if (!test_and_clear_bit(BTREE_NODE_dirty, &b->flags))
 		return;
 
-	BUG_ON(!list_empty(&b->write_blocked));
-
 	/*
 	 * io_mutex ensures only a single IO in flight to a btree node at a
 	 * time, and also protects use of the b->io closure.
 	 * do_btree_node_write() will drop it asynchronously.
 	 */
 	down(&b->io_mutex);
+
+	BUG_ON(!list_empty(&b->write_blocked));
 #if 0
+	/*
+	 * This is an optimization for when journal flushing races with the
+	 * btree node being written for some other reason, and the write the
+	 * journal wanted to flush has already happened - in that case we'd
+	 * prefer not to write a mostly empty bset. It seemed to be buggy,
+	 * though:
+	 */
 	if (idx_to_write != -1 &&
 	    idx_to_write != btree_node_write_idx(b)) {
 		up(&b->io_mutex);
@@ -699,6 +725,8 @@ void bch_btree_node_write(struct btree *b, struct closure *parent,
 static void bch_btree_node_write_dirty(struct btree *b, struct closure *parent)
 {
 	six_lock_read(&b->lock);
+	BUG_ON(b->level);
+
 	__bch_btree_node_write(b, parent, -1);
 	six_unlock_read(&b->lock);
 }
@@ -752,7 +780,11 @@ restart:
 
 		for (; i < tbl->size; i++)
 			rht_for_each_entry_rcu(b, pos, tbl, i, hash)
-				if (btree_node_dirty(b)) {
+				/*
+				 * XXX - locking for b->level, when called from
+				 * bch_journal_move()
+				 */
+				if (!b->level && btree_node_dirty(b)) {
 					rcu_read_unlock();
 					bch_btree_node_write_dirty(b, &cl);
 					dropped_lock = true;

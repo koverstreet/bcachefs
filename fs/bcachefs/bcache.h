@@ -497,7 +497,6 @@ enum {
 	CACHE_SET_GC_STOPPING,
 	CACHE_SET_GC_FAILURE,
 	CACHE_SET_BDEV_MOUNTED,
-	CACHE_SET_BTREE_WRITE_ERROR,
 };
 
 struct btree_debug {
@@ -562,7 +561,7 @@ struct cache_set {
 	/* BTREE CACHE */
 	struct bio_set		btree_read_bio;
 
-	struct btree		*btree_roots[BTREE_ID_NR];
+	struct btree_root	btree_roots[BTREE_ID_NR];
 	spinlock_t		btree_root_lock;
 
 	bool			btree_cache_table_init_done;

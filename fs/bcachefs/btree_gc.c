@@ -208,7 +208,7 @@ static int bch_gc_btree(struct cache_set *c, enum btree_id btree_id)
 
 	spin_lock(&c->btree_root_lock);
 
-	b = c->btree_roots[btree_id];
+	b = c->btree_roots[btree_id].b;
 	__bch_btree_mark_key(c, BKEY_TYPE_BTREE, bkey_i_to_s_c(&b->key));
 	gc_pos_set(c, gc_pos_btree_root(b->btree_id));
 
@@ -398,7 +398,7 @@ void bch_gc(struct cache_set *c)
 
 	/* Walk btree: */
 	while (c->gc_pos.phase < (int) BTREE_ID_NR) {
-		int ret = c->btree_roots[c->gc_pos.phase]
+		int ret = c->btree_roots[c->gc_pos.phase].b
 			? bch_gc_btree(c, (int) c->gc_pos.phase)
 			: 0;
 
@@ -454,7 +454,6 @@ static void bch_coalesce_nodes(struct btree *old_nodes[GC_MERGE_NODES],
 	struct keylist keylist;
 	struct bkey_format_state format_state;
 	struct bkey_format new_format;
-	int ret;
 
 	memset(new_nodes, 0, sizeof(new_nodes));
 	bch_keylist_init(&keylist, NULL, 0);
@@ -592,7 +591,7 @@ static void bch_coalesce_nodes(struct btree *old_nodes[GC_MERGE_NODES],
 		struct bkey_i delete;
 		unsigned j;
 
-		bch_pending_btree_node_free_init(c, as, old_nodes[i]);
+		bch_btree_node_free_start(c, as, old_nodes[i]);
 
 		for (j = 0; j < nr_new_nodes; j++)
 			if (!bkey_cmp(old_nodes[i]->key.k.p,
@@ -616,9 +615,7 @@ next:
 		bch_keylist_add_in_order(&keylist, &new_nodes[i]->key);
 
 	/* Insert the newly coalesced nodes */
-	ret = bch_btree_insert_node(parent, iter, &keylist, res, as);
-	if (ret)
-		goto err;
+	bch_btree_insert_node(parent, iter, &keylist, res, as);
 
 	BUG_ON(!bch_keylist_empty(&keylist));
 
@@ -631,7 +628,7 @@ next:
 
 	/* Free the old nodes and update our sliding window */
 	for (i = 0; i < nr_old_nodes; i++) {
-		bch_btree_node_free(iter, old_nodes[i]);
+		bch_btree_node_free_inmem(iter, old_nodes[i]);
 		six_unlock_intent(&old_nodes[i]->lock);
 
 		/*
@@ -651,13 +648,6 @@ next:
 out:
 	bch_keylist_free(&keylist);
 	bch_btree_reserve_put(c, res);
-	return;
-err:
-	for (i = 0; i < nr_new_nodes; i++) {
-		bch_btree_node_free_never_inserted(c, new_nodes[i]);
-		six_unlock_intent(&new_nodes[i]->lock);
-	}
-	goto out;
 }
 
 static int bch_coalesce_btree(struct cache_set *c, enum btree_id btree_id)
@@ -751,7 +741,7 @@ static void bch_coalesce(struct cache_set *c)
 	trace_bcache_gc_coalesce_start(c);
 
 	for (id = 0; id < BTREE_ID_NR; id++) {
-		int ret = c->btree_roots[id]
+		int ret = c->btree_roots[id].b
 			? bch_coalesce_btree(c, id)
 			: 0;
 
@@ -848,7 +838,7 @@ static void bch_initial_gc_btree(struct cache_set *c, enum btree_id id)
 
 	btree_node_range_checks_init(&r);
 
-	if (!c->btree_roots[id])
+	if (!c->btree_roots[id].b)
 		return;
 
 	for_each_btree_node(&iter, c, id, POS_MIN, b) {
@@ -870,7 +860,7 @@ static void bch_initial_gc_btree(struct cache_set *c, enum btree_id id)
 	bch_btree_iter_unlock(&iter);
 
 	__bch_btree_mark_key(c, BKEY_TYPE_BTREE,
-			     bkey_i_to_s_c(&c->btree_roots[id]->key));
+			     bkey_i_to_s_c(&c->btree_roots[id].b->key));
 }
 
 int bch_initial_gc(struct cache_set *c, struct list_head *journal)

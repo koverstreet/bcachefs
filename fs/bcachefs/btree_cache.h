@@ -46,6 +46,6 @@ static inline unsigned btree_blocks(struct cache_set *c)
 	return CACHE_BTREE_NODE_SIZE(&c->disk_sb) >> c->block_bits;
 }
 
-#define btree_node_root(_b)	((_b)->c->btree_roots[(_b)->btree_id])
+#define btree_node_root(_b)	((_b)->c->btree_roots[(_b)->btree_id].b)
 
 #endif /* _BCACHE_BTREE_CACHE_H */

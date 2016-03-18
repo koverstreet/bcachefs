@@ -1485,7 +1485,6 @@ static void journal_write_locked(struct closure *cl)
 	struct journal *j =  container_of(cl, struct journal, io);
 	struct cache_set *c = container_of(j, struct cache_set, journal);
 	struct cache *ca;
-	struct btree *b;
 	struct journal_write *w = journal_cur_write(j);
 	struct bkey_s_extent e = bkey_i_to_s_extent(&j->key);
 	struct bch_extent_ptr *ptr;
@@ -1504,14 +1503,6 @@ static void journal_write_locked(struct closure *cl)
 	clear_bit(JOURNAL_DIRTY, &j->flags);
 	cancel_delayed_work(&j->write_work);
 
-	spin_lock(&c->btree_root_lock);
-
-	for (i = 0; i < BTREE_ID_NR; i++)
-		if ((b = c->btree_roots[i]))
-			bch_journal_add_btree_root(j, i, &b->key, b->level);
-
-	spin_unlock(&c->btree_root_lock);
-
 	bch_journal_add_prios(j);
 
 	/* So last_seq is up to date */
@@ -1524,6 +1515,18 @@ static void journal_write_locked(struct closure *cl)
 	w->data->magic		= cpu_to_le64(jset_magic(&c->disk_sb));
 	w->data->version	= cpu_to_le32(BCACHE_JSET_VERSION);
 	w->data->last_seq	= cpu_to_le64(last_seq(j));
+
+	/* _after_ last_seq(): */
+	spin_lock(&c->btree_root_lock);
+
+	for (i = 0; i < BTREE_ID_NR; i++) {
+		struct btree_root *r = &c->btree_roots[i];
+
+		if (r->alive)
+			bch_journal_add_btree_root(j, i, &r->key, r->level);
+	}
+
+	spin_unlock(&c->btree_root_lock);
 
 	SET_JSET_BIG_ENDIAN(w->data, CPU_BIG_ENDIAN);
 
@@ -2169,6 +2172,10 @@ int bch_journal_move(struct cache *ca)
 	 * Flush all btree updates to backing store so that any
 	 * journal entries written to ca become stale and are no
 	 * longer needed.
+	 */
+
+	/*
+	 * XXX: switch to normal journal reclaim machinery
 	 */
 	bch_btree_flush(c);
 
