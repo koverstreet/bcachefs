@@ -86,19 +86,18 @@ void bch_kthread_io_clock_wait(struct io_clock *clock,
 
 	while (1) {
 		set_current_state(TASK_INTERRUPTIBLE);
-		if (kthread_should_stop()) {
-			__set_current_state(TASK_RUNNING);
+		if (kthread_should_stop())
 			break;
-		}
 
-		if (wait.expired) {
-			__set_current_state(TASK_RUNNING);
+		if (wait.expired)
 			break;
-		}
 
 		schedule();
 		try_to_freeze();
 	}
+
+	__set_current_state(TASK_RUNNING);
+	bch_io_timer_del(clock, &wait.timer);
 }
 
 static struct io_timer *get_expired_timer(struct io_clock *clock,
