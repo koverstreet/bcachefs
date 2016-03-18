@@ -688,16 +688,6 @@ void bch_btree_node_write(struct btree *b, struct closure *parent,
 	bch_btree_init_next(b->c, b, iter);
 }
 
-void bch_btree_node_write_sync(struct btree *b, struct btree_iter *iter)
-{
-	struct closure cl;
-
-	closure_init_stack(&cl);
-
-	bch_btree_node_write(b, &cl, iter);
-	closure_sync(&cl);
-}
-
 static void bch_btree_node_write_dirty(struct btree *b, struct closure *parent)
 {
 	six_lock_read(&b->lock);
