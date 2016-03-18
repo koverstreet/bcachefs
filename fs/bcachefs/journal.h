@@ -209,6 +209,8 @@ int bch_journal_flush_seq(struct journal *, u64);
 int bch_journal_flush(struct journal *);
 int bch_journal_meta(struct journal *);
 
+void bch_journal_halt(struct journal *);
+
 static inline int bch_journal_error(struct journal *j)
 {
 	return j->reservations.cur_entry_offset == JOURNAL_ENTRY_ERROR_VAL

@@ -850,6 +850,12 @@ static enum journal_entry_state journal_entry_close(struct journal *j)
 	return __journal_entry_close(j, JOURNAL_ENTRY_CLOSED_VAL);
 }
 
+void bch_journal_halt(struct journal *j)
+{
+	__journal_entry_close(j, JOURNAL_ENTRY_ERROR_VAL);
+	wake_up(&j->wait);
+}
+
 /* Number of u64s we can write to the current journal bucket */
 static void journal_entry_open(struct journal *j)
 {
@@ -1381,7 +1387,7 @@ static void journal_write_endio(struct bio *bio)
 
 	if (cache_fatal_io_err_on(bio->bi_error, ca, "journal write") ||
 	    bch_meta_write_fault("journal")) {
-		__journal_entry_close(j, JOURNAL_ENTRY_ERROR_VAL);
+		bch_journal_halt(j);
 		wake_up(&j->wait);
 	}
 

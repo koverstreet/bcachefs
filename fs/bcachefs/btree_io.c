@@ -491,6 +491,14 @@ static void btree_node_write_done(struct closure *cl)
 	struct btree_write *w = btree_prev_write(b);
 	struct cache_set *c = b->c;
 
+	/*
+	 * Before calling bch_btree_complete_write() - if the write errored, we
+	 * have to halt new journal writes before they see this btree node
+	 * write as completed:
+	 */
+	if (btree_node_write_error(b))
+		bch_journal_halt(&c->journal);
+
 	/* XXX: pin btree node in memory somehow */
 	if (!btree_node_write_error(b))
 		bch_btree_complete_write(c, b, w);

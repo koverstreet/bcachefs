@@ -803,6 +803,7 @@ bool bch_cache_set_emergency_read_only(struct cache_set *c)
 	bool ret = !test_and_set_bit(CACHE_SET_EMERGENCY_RO, &c->flags);
 
 	bch_cache_set_read_only(c);
+	bch_journal_halt(&c->journal);
 
 	wake_up(&bch_read_only_wait);
 	return ret;
