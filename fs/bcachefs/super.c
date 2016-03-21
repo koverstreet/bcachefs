@@ -888,6 +888,10 @@ const char *bch_cache_set_read_write(struct cache_set *c)
 
 static void cache_set_free(struct cache_set *c)
 {
+	cancel_work_sync(&c->read_only_work);
+	cancel_work_sync(&c->bio_submit_work);
+	cancel_work_sync(&c->read_retry_work);
+
 	bch_bset_sort_state_free(&c->sort);
 	bch_btree_cache_free(c);
 	bch_journal_free(&c->journal);
@@ -1632,6 +1636,8 @@ static void bch_cache_free_work(struct work_struct *work)
 	 */
 	bch_moving_gc_destroy(ca);
 	bch_tiering_write_destroy(ca);
+
+	cancel_work_sync(&ca->io_error_work);
 
 	if (c && c->kobj.state_in_sysfs) {
 		char buf[12];
