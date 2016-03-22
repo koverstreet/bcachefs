@@ -717,10 +717,15 @@ static void __bch_cache_set_read_only(struct cache_set *c)
 
 	bch_btree_flush(c);
 
+	/*
+	 * Write a journal entry after flushing the btree, so we don't end up
+	 * replaying everything we just flushed:
+	 */
+	if (test_bit(CACHE_SET_INITIAL_GC_DONE, &c->flags))
+		bch_journal_meta(&c->journal);
+
 	for_each_cache(ca, c, i)
 		bch_cache_allocator_stop(ca);
-
-	bch_journal_flush(&c->journal);
 
 	cancel_delayed_work_sync(&c->journal.write_work);
 }
