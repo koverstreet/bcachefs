@@ -14,21 +14,11 @@ struct bbio;
 
 /* Error messages: */
 
-/* should clean this up */
-
-#define __bch_err_fmt(_c, fmt, ...)					\
-	KERN_ERR "bcache (%s): " fmt "\n",				\
-	((_c)->vfs_sb ? (_c)->vfs_sb->s_id : (_c)->uuid), ##__VA_ARGS__
-
-#define __bch_cache_set_error(c, fmt, ...)				\
-	printk(__bch_err_fmt(c, fmt, ##__VA_ARGS__))
-
 #define __bch_cache_error(ca, fmt, ...)					\
 do {									\
 	char _buf[BDEVNAME_SIZE];					\
-	__bch_cache_set_error((ca)->set, "%s: " fmt,			\
-			      bdevname((ca)->disk_sb.bdev, _buf),	\
-			      ##__VA_ARGS__);				\
+	bch_err((ca)->set, "%s: " fmt,					\
+		bdevname((ca)->disk_sb.bdev, _buf), ##__VA_ARGS__);	\
 } while (0)
 
 /*
@@ -41,7 +31,7 @@ do {									\
 
 #define cache_set_bug(c, ...)						\
 do {									\
-	__bch_cache_set_error(c, __VA_ARGS__);				\
+	bch_err(c, __VA_ARGS__);					\
 	BUG();								\
 } while (0)
 
@@ -66,7 +56,7 @@ void bch_inconsistent_error(struct cache_set *);
 
 #define cache_set_inconsistent(c, ...)					\
 do {									\
-	__bch_cache_set_error(c, __VA_ARGS__);				\
+	bch_err(c, __VA_ARGS__);					\
 	bch_inconsistent_error(c);					\
 } while (0)
 
@@ -108,7 +98,7 @@ void bch_fatal_error(struct cache_set *);
 
 #define cache_set_fatal_error(c, ...)					\
 do {									\
-	__bch_cache_set_error(c, __VA_ARGS__);				\
+	bch_err(c, __VA_ARGS__);					\
 	bch_fatal_error(c);						\
 } while (0)
 
@@ -131,9 +121,9 @@ do {									\
 do {									\
 	char _buf[BDEVNAME_SIZE];					\
 									\
-	printk_ratelimited(__bch_err_fmt((ca)->set, "fatal IO error on %s for " fmt,\
-					 bdevname((ca)->disk_sb.bdev, _buf),\
-					 ##__VA_ARGS__));		\
+	printk_ratelimited(KERN_ERR bch_fmt((ca)->set,			\
+		"fatal IO error on %s for " fmt),			\
+		bdevname((ca)->disk_sb.bdev, _buf), ##__VA_ARGS__);	\
 	bch_fatal_error((ca)->set);					\
 } while (0)
 
@@ -163,7 +153,7 @@ void bch_nonfatal_io_error(struct cache *);
 #if 0
 #define cache_set_nonfatal_io_error(c, ...)				\
 do {									\
-	__bch_cache_set_error(c, __VA_ARGS__);				\
+	bch_err(c, __VA_ARGS__);					\
 	bch_nonfatal_io_error(c);					\
 } while (0)
 #endif
@@ -173,9 +163,9 @@ do {									\
 do {									\
 	char _buf[BDEVNAME_SIZE];					\
 									\
-	printk_ratelimited(__bch_err_fmt((ca)->set, "IO error on %s for " fmt,\
-					 bdevname((ca)->disk_sb.bdev, _buf),\
-					 ##__VA_ARGS__));		\
+	printk_ratelimited(KERN_ERR bch_fmt((ca)->set,			\
+		"IO error on %s for " fmt),				\
+		bdevname((ca)->disk_sb.bdev, _buf), ##__VA_ARGS__);	\
 	bch_nonfatal_io_error(ca);					\
 } while (0)
 
@@ -191,7 +181,8 @@ do {									\
 /* kill? */
 
 #define __bcache_io_error(c, fmt, ...)					\
-	printk_ratelimited(__bch_err_fmt(c, "IO error: " fmt, ##__VA_ARGS__))
+	printk_ratelimited(KERN_ERR bch_fmt(c,				\
+			"IO error: " fmt, ##__VA_ARGS__))
 
 #define bcache_io_error(c, bio, fmt, ...)				\
 do {									\

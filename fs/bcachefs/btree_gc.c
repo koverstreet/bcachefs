@@ -403,7 +403,7 @@ void bch_gc(struct cache_set *c)
 			: 0;
 
 		if (ret) {
-			pr_err("btree gc failed with %d!", ret);
+			bch_err(c, "btree gc failed: %d", ret);
 			set_bit(CACHE_SET_GC_FAILURE, &c->flags);
 			up_write(&c->gc_lock);
 			return;
@@ -757,7 +757,7 @@ static void bch_coalesce(struct cache_set *c)
 
 		if (ret) {
 			if (ret != -ESHUTDOWN)
-				pr_err("btree coalescing failed with %d!", ret);
+				bch_err(c, "btree coalescing failed: %d", ret);
 			set_bit(CACHE_SET_GC_FAILURE, &c->flags);
 			return;
 		}

@@ -119,14 +119,14 @@ static int bch_gc_do_inode(struct cache_set *c, struct btree_iter *iter,
 			i_nlink, link.dir_count);
 
 		if (c->opts.verbose_recovery)
-			pr_info("deleting inum %llu", inode.k->p.inode);
+			bch_info(c, "deleting inum %llu", inode.k->p.inode);
 
 		return bch_inode_rm(c, inode.k->p.inode);
 	}
 
 	if (i_flags & BCH_INODE_I_SIZE_DIRTY) {
 		if (c->opts.verbose_recovery)
-			pr_info("truncating inode %llu", inode.k->p.inode);
+			bch_info(c, "truncating inode %llu", inode.k->p.inode);
 
 		/*
 		 * XXX: need to truncate partial blocks too here - or ideally
@@ -148,7 +148,7 @@ static int bch_gc_do_inode(struct cache_set *c, struct btree_iter *iter,
 
 	if (i_flags & BCH_INODE_I_SECTORS_DIRTY) {
 		if (c->opts.verbose_recovery)
-			pr_info("recounting sectors for inode %llu", inode.k->p.inode);
+			bch_info(c, "recounting sectors for inode %llu", inode.k->p.inode);
 
 		i_sectors = bch_count_inode_sectors(c, inode.k->p.inode);
 		if (i_sectors < 0)
@@ -160,9 +160,9 @@ static int bch_gc_do_inode(struct cache_set *c, struct btree_iter *iter,
 	    i_flags & BCH_INODE_I_SIZE_DIRTY) {
 		if (c->opts.verbose_recovery &&
 		    i_nlink != link.count + link.dir_count)
-			pr_info("setting inum %llu nlinks from %u to %u",
-				inode.k->p.inode, i_nlink,
-				link.count + link.dir_count);
+			bch_info(c, "setting inum %llu nlinks from %u to %u",
+				 inode.k->p.inode, i_nlink,
+				 link.count + link.dir_count);
 
 		bkey_reassemble(&update.k_i, inode.s_c);
 		update.v.i_nlink = cpu_to_le32(link.count + link.dir_count);

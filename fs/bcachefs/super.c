@@ -944,7 +944,7 @@ void bch_cache_set_release(struct kobject *kobj)
 		complete(c->stop_completion);
 
 	bch_notify_cache_set_stopped(c);
-	pr_info("Cache set %pU unregistered", c->disk_sb.set_uuid.b);
+	bch_info(c, "stopped");
 
 	cache_set_free(c);
 }
@@ -1140,7 +1140,7 @@ static struct cache_set *bch_cache_set_alloc(struct cache_sb *sb,
 	if (cache_sb_to_cache_set(c, sb))
 		goto err;
 
-	scnprintf(c->uuid, sizeof(c->uuid), "%pU", &c->disk_sb.user_uuid);
+	scnprintf(c->name, sizeof(c->name), "%pU", &c->disk_sb.user_uuid);
 
 	c->opts = cache_superblock_opts(sb);
 	cache_set_opts_apply(&c->opts, opts);
@@ -1366,7 +1366,7 @@ static const char *run_cache_set(struct cache_set *c)
 
 		closure_init_stack(&cl);
 
-		pr_notice("invalidating existing data");
+		bch_notice(c, "initializing new filesystem");
 
 		err = "unable to allocate journal buckets";
 		for_each_cache(ca, c, i)
@@ -1542,8 +1542,7 @@ bool bch_cache_read_only(struct cache *ca)
 		return false;
 
 	if (!bch_cache_may_remove(ca)) {
-		printk(__bch_err_fmt(c, "required member %s going RO, forcing fs RO",
-				     buf));
+		bch_err(c, "required member %s going RO, forcing fs RO", buf);
 		bch_cache_set_read_only_sync(c);
 	}
 
@@ -1552,7 +1551,7 @@ bool bch_cache_read_only(struct cache *ca)
 	 */
 	__bch_cache_read_only(ca);
 
-	pr_notice("%s read only", bdevname(ca->disk_sb.bdev, buf));
+	bch_notice(c, "%s read only", bdevname(ca->disk_sb.bdev, buf));
 	bch_notify_cache_read_only(ca);
 
 	SET_CACHE_STATE(&c->disk_mi[ca->sb.nr_this_dev], CACHE_RO);
@@ -1756,7 +1755,8 @@ static void bch_cache_remove_work(struct work_struct *work)
 
 		bcache_write_super(c);
 	} else {
-		pr_err("Remove of %s failed, unable to migrate data off", name);
+		bch_err(c, "Remove of %s failed, unable to migrate data off",
+			name);
 		clear_bit(CACHE_DEV_REMOVING, &ca->flags);
 		return;
 	}
@@ -1771,8 +1771,8 @@ static void bch_cache_remove_work(struct work_struct *work)
 
 		bcache_write_super(c);
 	} else {
-		pr_err("Remove of %s failed, unable to migrate metadata off",
-		       name);
+		bch_err(c, "Remove of %s failed, unable to migrate metadata off",
+			name);
 		clear_bit(CACHE_DEV_REMOVING, &ca->flags);
 		return;
 	}
@@ -1821,8 +1821,8 @@ bool bch_cache_remove(struct cache *ca, bool force)
 		return false;
 
 	if (!bch_cache_may_remove(ca)) {
-		pr_err("Can't remove last device in tier %u of %pU.",
-		       ca->mi.tier, ca->set->disk_sb.set_uuid.b);
+		bch_err(ca->set, "Can't remove last device in tier %u",
+			ca->mi.tier);
 		bch_notify_cache_remove_failed(ca);
 		return false;
 	}
@@ -1870,6 +1870,9 @@ static const char *cache_alloc(struct bcache_superblock *sb,
 	unsigned i;
 	const char *err = "cannot allocate memory";
 	struct cache *ca;
+
+	if (c->sb.nr_in_set == 1)
+		bdevname(sb->bdev, c->name);
 
 	if (cache_set_init_fault("cache_alloc"))
 		return err;
@@ -2040,7 +2043,7 @@ static const char *register_cache(struct bcache_superblock *sb,
 		goto err_stop;
 out:
 
-	pr_info("registered cache device %s", name);
+	bch_info(c, "started");
 	return NULL;
 err_stop:
 	bch_cache_set_stop(c);
@@ -2160,7 +2163,7 @@ err_unlock:
 	mutex_unlock(&bch_register_lock);
 	free_super(&sb);
 
-	pr_err("Unable to add device: %s", err);
+	bch_err(c, "Unable to add device: %s", err);
 	return ret ?: -EINVAL;
 }
 

@@ -17,11 +17,10 @@ void bch_inconsistent_error(struct cache_set *c)
 		}
 
 		if (bch_cache_set_emergency_read_only(c))
-			__bch_cache_set_error(c, "emergency read only");
+			bch_err(c, "emergency read only");
 		break;
 	case BCH_ON_ERROR_PANIC:
-		panic("bcache: (%s) panic after error\n",
-		      c->vfs_sb ? c->vfs_sb->s_id : c->uuid);
+		panic(bch_fmt(c, "panic after error"));
 		break;
 	}
 }
@@ -29,7 +28,7 @@ void bch_inconsistent_error(struct cache_set *c)
 void bch_fatal_error(struct cache_set *c)
 {
 	if (bch_cache_set_emergency_read_only(c))
-		__bch_cache_set_error(c, "emergency read only");
+		bch_err(c, "emergency read only");
 }
 
 /* Nonfatal IO errors, IO error/latency accounting: */
@@ -124,7 +123,7 @@ void bch_nonfatal_io_error_work(struct work_struct *work)
 		if (dev
 		    ? bch_cache_read_only(ca)
 		    : bch_cache_set_emergency_read_only(c))
-			__bch_cache_set_error(c,
+			bch_err(c,
 				"too many IO errors on %s, setting %s RO",
 				bdevname(ca->disk_sb.bdev, buf),
 				dev ? "device" : "filesystem");

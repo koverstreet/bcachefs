@@ -1013,13 +1013,13 @@ int bch_journal_replay(struct cache_set *c, struct list_head *list)
 		entries++;
 	}
 
-	pr_info("journal replay done, %i keys in %i entries, seq %llu",
-		keys, entries, j->seq);
+	bch_info(c, "journal replay done, %i keys in %i entries, seq %llu",
+		 keys, entries, j->seq);
 
 	bch_journal_set_replay_done(&c->journal);
 err:
 	if (ret)
-		pr_err("journal replay error: %d", ret);
+		bch_err(c, "journal replay error: %d", ret);
 
 	journal_entries_free(j, list);
 
@@ -1541,7 +1541,7 @@ static void journal_write_locked(struct closure *cl)
 
 		if (!ca) {
 			/* XXX: fix this */
-			pr_err("missing journal write\n");
+			bch_err(c, "missing device for journal write\n");
 			continue;
 		}
 

@@ -1278,7 +1278,7 @@ static int bch_remount(struct super_block *sb, int *flags, char *data)
 		} else {
 			err = bch_cache_set_read_write(c);
 			if (err) {
-				pr_info("error going rw");
+				bch_err(c, "error going rw: %s", err);
 				ret = -EINVAL;
 				goto unlock;
 			}

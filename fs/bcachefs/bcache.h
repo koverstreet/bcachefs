@@ -208,6 +208,16 @@
 #define bch_meta_write_fault(name)					\
 	 dynamic_fault("bcache:meta:write:" name)
 
+#define bch_fmt(_c, fmt)					\
+	"bcache (%s): " fmt "\n", ((_c)->name)
+
+#define bch_info(c, fmt, ...) \
+	printk(KERN_INFO bch_fmt(c, fmt), ##__VA_ARGS__)
+#define bch_notice(c, fmt, ...) \
+	printk(KERN_NOTICE bch_fmt(c, fmt), ##__VA_ARGS__)
+#define bch_err(c, fmt, ...) \
+	printk(KERN_ERR bch_fmt(c, fmt), ##__VA_ARGS__)
+
 /* Parameters that are useful for debugging, but should always be compiled in: */
 #define BCH_DEBUG_PARAMS_ALWAYS()					\
 	BCH_DEBUG_PARAM(key_merging_disabled,				\
@@ -510,7 +520,7 @@ struct cache_set {
 	int			minor;
 	struct device		*chardev;
 	struct super_block	*vfs_sb;
-	char			uuid[40];
+	char			name[40];
 
 	/* Counts outstanding writes, for clean transition to read-only */
 	struct percpu_ref	writes;
