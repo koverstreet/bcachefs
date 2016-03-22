@@ -1602,13 +1602,33 @@ found:
 	bch_open_bucket_put(c, ob);
 }
 
+static bool bch_dev_has_open_write_point(struct cache *ca)
+{
+	struct cache_set *c = ca->set;
+	struct bch_extent_ptr *ptr;
+	struct open_bucket *ob;
+
+	for (ob = c->open_buckets;
+	     ob < c->open_buckets + ARRAY_SIZE(c->open_buckets);
+	     ob++)
+		if (atomic_read(&ob->pin)) {
+			mutex_lock(&ob->lock);
+			for (ptr = ob->ptrs; ptr < ob->ptrs + ob->nr_ptrs; ptr++)
+				if (ptr->dev == ca->sb.nr_this_dev) {
+					mutex_unlock(&ob->lock);
+					return true;
+				}
+			mutex_unlock(&ob->lock);
+		}
+
+	return false;
+}
+
 /* device goes ro: */
 void bch_cache_allocator_stop(struct cache *ca)
 {
 	struct cache_set *c = ca->set;
 	struct cache_group *tier = &c->cache_tiers[ca->mi.tier];
-	struct open_bucket *ob;
-	struct bch_extent_ptr *ptr;
 	struct task_struct *p;
 	struct closure cl;
 	unsigned i;
@@ -1675,24 +1695,12 @@ void bch_cache_allocator_stop(struct cache *ca)
 	/* Now wait for any in flight writes: */
 
 	while (1) {
-		bool found = false;
+		closure_wait(&c->open_buckets_wait, &cl);
 
-		for (ob = c->open_buckets;
-		     ob < c->open_buckets + ARRAY_SIZE(c->open_buckets);
-		     ob++) {
-			mutex_lock(&ob->lock);
-			for (ptr = ob->ptrs; ptr < ob->ptrs + ob->nr_ptrs; ptr++)
-				if (ptr->dev == ca->sb.nr_this_dev) {
-					BUG_ON(!atomic_read(&ob->pin));
-					closure_wait(&c->open_buckets_wait, &cl);
-					found = true;
-					break;
-				}
-			mutex_unlock(&ob->lock);
-		}
-
-		if (!found)
+		if (!bch_dev_has_open_write_point(ca)) {
+			closure_wake_up(&c->open_buckets_wait);
 			break;
+		}
 
 		closure_sync(&cl);
 	}
