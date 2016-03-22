@@ -992,8 +992,6 @@ int bch_journal_replay(struct cache_set *c, struct list_head *list)
 				       (j->seq - le64_to_cpu(i->j.seq))) &
 				      j->pin.mask)];
 
-		BUG_ON(atomic_read(&j->cur_pin_list->count) != 1);
-
 		for_each_jset_key(k, _n, jkeys, &i->j) {
 			trace_bcache_journal_replay_key(&k->k);
 
