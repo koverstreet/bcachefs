@@ -2229,8 +2229,11 @@ static long bch_fcollapse(struct inode *inode, loff_t offset, loff_t len)
 
 	return ret;
 err_unwind:
+	/*
+	 * XXX: we've left data with multiple pointers... which isn't a _super_
+	 * serious problem...
+	 */
 	i_sectors_dirty_put(ei, &i_sectors_hook);
-	BUG();
 err:
 	bch_btree_iter_unlock(&src);
 	bch_btree_iter_unlock(&dst);

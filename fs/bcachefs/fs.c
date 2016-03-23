@@ -1117,15 +1117,17 @@ static int bch_vfs_write_inode(struct inode *inode,
 static void bch_evict_inode(struct inode *inode)
 {
 	struct cache_set *c = inode->i_sb->s_fs_info;
-	struct bch_inode_info *ei = to_bch_ei(inode);
 
 	truncate_inode_pages_final(&inode->i_data);
+#if 0
+	struct bch_inode_info *ei = to_bch_ei(inode);
 
+	/* XXX - we want to check this stuff iff there weren't IO errors: */
 	BUG_ON(!fifo_empty(&ei->i_size_updates));
 	BUG_ON(atomic_long_read(&ei->i_sectors_dirty_count));
 	BUG_ON(!is_bad_inode(inode) &&
 	       atomic64_read(&ei->i_sectors) != inode->i_blocks);
-
+#endif
 	clear_inode(inode);
 
 	if (!inode->i_nlink && !is_bad_inode(inode)) {
