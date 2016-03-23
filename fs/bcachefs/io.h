@@ -26,6 +26,7 @@ enum bch_write_flags {
 	/* Internal: */
 	BCH_WRITE_JOURNAL_SEQ_PTR	= (1 << 5),
 	BCH_WRITE_DONE			= (1 << 6),
+	BCH_WRITE_LOOPED		= (1 << 7),
 };
 
 void bch_write_op_init(struct bch_write_op *, struct cache_set *,

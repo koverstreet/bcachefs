@@ -593,6 +593,8 @@ static void bch_write_index(struct closure *cl)
 	u64 sectors_start = keylist_sectors(&op->insert_keys);
 	int ret;
 
+	op->flags |= BCH_WRITE_LOOPED;
+
 	ret = bch_btree_insert(op->c, BTREE_ID_EXTENTS,
 			       &op->insert_keys,
 			       &op->res,
@@ -1018,15 +1020,29 @@ static void __bch_write(struct closure *cl)
 		BUG_ON(!b);
 
 		if (PTR_ERR(b) == -EAGAIN) {
-			/* If we already have some keys, must insert them first
+			/*
+			 * If we already have some keys, must insert them first
 			 * before allocating another open bucket. We only hit
-			 * this case if open_bucket_nr > 1. */
-			if (bch_keylist_empty(&op->insert_keys))
-				continue_at(cl, __bch_write,
-					    op->io_wq);
-			else
-				continue_at(cl, bch_write_index,
-					    op->c->wq);
+			 * this case if open_bucket_nr > 1.
+			 */
+			if (!bch_keylist_empty(&op->insert_keys))
+				continue_at(cl, bch_write_index, op->c->wq);
+
+			/*
+			 * If we've looped, we're running out of a workqueue -
+			 * not the bch_write() caller's context - and we don't
+			 * want to block the workqueue:
+			 */
+			if (op->flags & BCH_WRITE_LOOPED)
+				continue_at(cl, __bch_write, op->io_wq);
+
+			/*
+			 * Otherwise, we do want to block the caller on alloc
+			 * failure instead of letting it queue up more and more
+			 * writes:
+			 */
+			closure_sync(cl);
+			continue;
 		} else if (IS_ERR(b))
 			goto err;
 
