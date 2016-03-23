@@ -666,6 +666,7 @@ struct cache_set {
 
 	/* GARBAGE COLLECTION */
 	struct task_struct	*gc_thread;
+	atomic_t		kick_gc;
 
 	/* This is a list of scan_keylists for btree GC to scan */
 	struct list_head	gc_scan_keylists;

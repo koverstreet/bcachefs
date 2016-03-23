@@ -399,6 +399,7 @@ int bch_prio_read(struct cache *ca)
  */
 static int wait_buckets_available(struct cache *ca)
 {
+	struct cache_set *c = ca->set;
 	int ret = 0;
 
 	while (1) {
@@ -408,9 +409,10 @@ static int wait_buckets_available(struct cache *ca)
 			break;
 		}
 
-		if (ca->inc_gen_needs_gc > ca->free_inc.size) {
-			if (ca->set->gc_thread) {
+		if (ca->inc_gen_needs_gc >= fifo_free(&ca->free_inc)) {
+			if (c->gc_thread) {
 				trace_bcache_gc_cannot_inc_gens(ca->set);
+				atomic_inc(&c->kick_gc);
 				wake_up_process(ca->set->gc_thread);
 			}
 
@@ -705,6 +707,8 @@ static void invalidate_buckets_random(struct cache *ca)
 
 static void invalidate_buckets(struct cache *ca)
 {
+	ca->inc_gen_needs_gc = 0;
+
 	switch (ca->mi.replacement) {
 	case CACHE_REPLACEMENT_LRU:
 		invalidate_buckets_lru(ca);

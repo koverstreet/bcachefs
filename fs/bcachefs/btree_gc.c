@@ -426,10 +426,8 @@ void bch_gc(struct cache_set *c)
 	bch_writeback_recalc_oldest_gens(c);
 	bch_mark_scan_keylists(c);
 
-	for_each_cache(ca, c, i) {
+	for_each_cache(ca, c, i)
 		atomic_long_set(&ca->saturated_count, 0);
-		ca->inc_gen_needs_gc = 0;
-	}
 
 	/* Indicates that gc is no longer in progress: */
 	gc_pos_set(c, gc_phase(GC_PHASE_DONE));
@@ -786,25 +784,33 @@ static int bch_gc_thread(void *arg)
 	struct cache_set *c = arg;
 	struct io_clock *clock = &c->io_clock[WRITE];
 	unsigned long last = atomic_long_read(&clock->now);
+	unsigned last_kick = atomic_read(&c->kick_gc);
 	struct cache *ca;
 	unsigned i;
 
 	while (1) {
-		bch_kthread_io_clock_wait(clock, last + c->capacity / 16);
+		unsigned long next = last + c->capacity / 16;
 
-		if (kthread_should_stop()) {
-			__set_current_state(TASK_RUNNING);
-			break;
+		while (atomic_long_read(&clock->now) < next) {
+			set_current_state(TASK_INTERRUPTIBLE);
+
+			if (kthread_should_stop()) {
+				__set_current_state(TASK_RUNNING);
+				return 0;
+			}
+
+			if (atomic_read(&c->kick_gc) != last_kick) {
+				__set_current_state(TASK_RUNNING);
+				break;
+			}
+
+			bch_io_clock_schedule_timeout(clock, next);
+			try_to_freeze();
 		}
 
 		last = atomic_long_read(&clock->now);
-
+		last_kick = atomic_read(&c->kick_gc);
 		bch_gc(c);
-		bch_coalesce(c);
-
-		debug_check_no_locks_held();
-
-		set_current_state(TASK_INTERRUPTIBLE);
 
 		/*
 		 * Wake up allocator in case it was waiting for buckets
@@ -812,6 +818,10 @@ static int bch_gc_thread(void *arg)
 		 */
 		for_each_cache(ca, c, i)
 			bch_wake_allocator(ca);
+
+		bch_coalesce(c);
+
+		debug_check_no_locks_held();
 	}
 
 	return 0;

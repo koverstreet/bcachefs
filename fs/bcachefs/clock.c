@@ -16,6 +16,21 @@ void bch_io_timer_add(struct io_clock *clock, struct io_timer *timer)
 	spin_unlock(&clock->timer_lock);
 }
 
+void bch_io_timer_del(struct io_clock *clock, struct io_timer *timer)
+{
+	size_t i;
+
+	spin_lock(&clock->timer_lock);
+
+	for (i = 0; i < clock->timers.used; i++)
+		if (clock->timers.data[i] == timer) {
+			heap_del(&clock->timers, i, io_timer_cmp);
+			break;
+		}
+
+	spin_unlock(&clock->timer_lock);
+}
+
 struct io_clock_wait {
 	struct io_timer		timer;
 	struct task_struct	*task;
@@ -29,6 +44,22 @@ static void io_clock_wait_fn(struct io_timer *timer)
 
 	wait->expired = 1;
 	wake_up_process(wait->task);
+}
+
+void bch_io_clock_schedule_timeout(struct io_clock *clock, unsigned long until)
+{
+	struct io_clock_wait wait;
+
+	/* XXX: calculate sleep time rigorously */
+	wait.timer.expire	= until;
+	wait.timer.fn		= io_clock_wait_fn;
+	wait.task		= current;
+	wait.expired		= 0;
+	bch_io_timer_add(clock, &wait.timer);
+
+	schedule();
+
+	bch_io_timer_del(clock, &wait.timer);
 }
 
 /*

@@ -128,14 +128,23 @@ do {									\
 	_r;								\
 })
 
+#define heap_del(h, i, cmp)						\
+do {									\
+	size_t _i = (i);						\
+									\
+	BUG_ON(_i >= (h)->used);					\
+	(h)->used--;							\
+	heap_swap(h, _i, (h)->used);					\
+	heap_sift_down(h, _i, cmp);					\
+	heap_sift(h, _i, cmp);						\
+} while (0)
+
 #define heap_pop(h, d, cmp)						\
 ({									\
 	bool _r = (h)->used;						\
 	if (_r) {							\
 		(d) = (h)->data[0];					\
-		(h)->used--;						\
-		heap_swap(h, 0, (h)->used);				\
-		heap_sift(h, 0, cmp);					\
+		heap_del(h, 0, cmp);					\
 	}								\
 	_r;								\
 })
