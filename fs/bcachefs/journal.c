@@ -958,7 +958,7 @@ void bch_journal_start(struct cache_set *c)
 	journal_entry_open(j);
 	spin_unlock(&j->lock);
 
-	queue_work(system_long_wq, &j->reclaim_work);
+	queue_work(system_freezable_wq, &j->reclaim_work);
 }
 
 int bch_journal_replay(struct cache_set *c, struct list_head *list)
@@ -1155,12 +1155,22 @@ static void journal_reclaim_work(struct work_struct *work)
 		while (ja->last_idx != cur_idx &&
 		       ja->bucket_seq[ja->last_idx] < last_seq) {
 			if (ca->mi.discard &&
-			    blk_queue_discard(bdev_get_queue(ca->disk_sb.bdev)))
+			    blk_queue_discard(bdev_get_queue(ca->disk_sb.bdev))) {
+				/*
+				 * ugh:
+				 * might be called from __journal_res_get()
+				 * under wait_event() - have to go back to
+				 * TASK_RUNNING before doing something that
+				 * would block, but only if we're doing work:
+				 */
+				__set_current_state(TASK_RUNNING);
+
 				blkdev_issue_discard(ca->disk_sb.bdev,
 					bucket_to_sector(ca,
 						journal_bucket(ca,
 							       ja->last_idx)),
 					ca->mi.bucket_size, GFP_NOIO, 0);
+			}
 
 			spin_lock(&j->lock);
 			ja->last_idx = (ja->last_idx + 1) % nr;
@@ -1204,6 +1214,7 @@ restart_flush:
 			list_del_init(&pin->list);
 			spin_unlock_irq(&j->pin_lock);
 
+			__set_current_state(TASK_RUNNING);
 			pin->flush(pin);
 
 			spin_lock_irq(&j->pin_lock);
@@ -1341,7 +1352,7 @@ static int journal_next_bucket(struct cache_set *c)
 
 	rcu_read_unlock();
 
-	queue_work(system_long_wq, &j->reclaim_work);
+	queue_work(system_freezable_wq, &j->reclaim_work);
 
 	return ret;
 }
@@ -1425,13 +1436,13 @@ static void journal_write_done(struct closure *cl)
 	wake_up(&j->wait);
 
 	if (test_bit(JOURNAL_NEED_WRITE, &j->flags))
-		mod_delayed_work(system_wq, &j->write_work, 0);
+		mod_delayed_work(system_freezable_wq, &j->write_work, 0);
 
 	/*
 	 * Updating last_seq_ondisk may let journal_reclaim_work() discard more
 	 * buckets:
 	 */
-	queue_work(system_long_wq, &j->reclaim_work);
+	queue_work(system_freezable_wq, &j->reclaim_work);
 }
 
 static void journal_write_compact(struct jset *jset)
@@ -1730,8 +1741,9 @@ void bch_journal_res_put(struct journal *j, struct journal_res *res,
 
 	if (!test_bit(JOURNAL_DIRTY, &j->flags)) {
 		set_bit(JOURNAL_DIRTY, &j->flags);
-		schedule_delayed_work(&j->write_work,
-				      msecs_to_jiffies(j->delay_ms));
+		queue_delayed_work(system_freezable_wq,
+				   &j->write_work,
+				   msecs_to_jiffies(j->delay_ms));
 
 		/* between set_bit() and *journal_seq = j->seq */
 		smp_wmb();
@@ -1820,7 +1832,7 @@ static int __journal_res_get(struct journal *j, struct journal_res *res,
 		 */
 
 		spin_lock(&j->lock);
-
+get:
 		/*
 		 * Recheck after taking the lock, so we don't race with another
 		 * thread that just did journal_entry_open() and call
@@ -1871,14 +1883,20 @@ static int __journal_res_get(struct journal *j, struct journal_res *res,
 				return ret;
 			}
 
-			if (!journal_bucket_has_room(j)) {
-				/* Still no room, we have to wait */
-				spin_unlock(&j->lock);
-				trace_bcache_journal_full(c);
-				return 0;
-			}
+			if (journal_bucket_has_room(j))
+				goto get;
+
+			/* Still no room, we have to wait */
 
 			spin_unlock(&j->lock);
+			trace_bcache_journal_full(c);
+
+			/*
+			 * Direct reclaim - can't rely on reclaim from work item
+			 * due to freezing..
+			 */
+			journal_reclaim_work(&j->reclaim_work);
+			return 0;
 		}
 	}
 }

@@ -769,6 +769,8 @@ static int bch_gc_thread(void *arg)
 	struct cache *ca;
 	unsigned i;
 
+	set_freezable();
+
 	while (1) {
 		unsigned long next = last + c->capacity / 16;
 

@@ -280,6 +280,8 @@ static int bch_moving_gc_thread(void *arg)
 	unsigned long last;
 	bool moved;
 
+	set_freezable();
+
 	while (!kthread_should_stop()) {
 		if (kthread_wait_freezable(c->copy_gc_enabled))
 			break;

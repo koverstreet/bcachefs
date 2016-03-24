@@ -186,7 +186,7 @@ static void read_dirty_submit(struct closure *cl)
 
 	closure_bio_submit(&io->bio, cl);
 
-	continue_at(cl, write_dirty, system_wq);
+	continue_at(cl, write_dirty, system_freezable_wq);
 }
 
 static u64 read_dirty(struct cached_dev *dc)
@@ -476,6 +476,8 @@ static int bch_writeback_thread(void *arg)
 	struct io_clock *clock = &c->io_clock[WRITE];
 	unsigned long last;
 	u64 sectors_written;
+
+	set_freezable();
 
 	while (!kthread_should_stop()) {
 		if (kthread_wait_freezable(dc->writeback_running ||

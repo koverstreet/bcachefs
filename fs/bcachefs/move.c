@@ -297,7 +297,8 @@ int bch_queue_start(struct moving_queue *q,
 
 	/* Re-use workqueue if already started */
 	if (!q->wq)
-		q->wq = alloc_workqueue(name, WQ_UNBOUND|WQ_MEM_RECLAIM, 1);
+		q->wq = alloc_workqueue(name,
+				WQ_UNBOUND|WQ_FREEZABLE|WQ_MEM_RECLAIM, 1);
 
 	if (!q->wq)
 		return -ENOMEM;

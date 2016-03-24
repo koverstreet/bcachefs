@@ -253,11 +253,7 @@ int bch_ratelimit_wait_freezable_stoppable(struct bch_ratelimit *d,
 			return 0;
 
 		schedule_timeout(delay);
-
-		if (freezing(current)) {
-			closure_sync(cl);
-			try_to_freeze();
-		}
+		try_to_freeze();
 	}
 }
 

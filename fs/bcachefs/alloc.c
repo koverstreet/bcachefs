@@ -428,6 +428,7 @@ static int wait_buckets_available(struct cache *ca)
 
 		up_read(&ca->set->gc_lock);
 		schedule();
+		try_to_freeze();
 		down_read(&ca->set->gc_lock);
 	}
 
@@ -770,6 +771,8 @@ static int bch_allocator_thread(void *arg)
 	struct cache_set *c = ca->set;
 	int ret;
 
+	set_freezable();
+
 	while (1) {
 		/*
 		 * First, we pull buckets off of the free_inc list, possibly
@@ -802,6 +805,7 @@ static int bch_allocator_thread(void *arg)
 					goto out;
 				}
 				schedule();
+				try_to_freeze();
 			}
 
 			__set_current_state(TASK_RUNNING);

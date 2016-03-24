@@ -746,8 +746,8 @@ void bch_btree_insert_and_journal(struct btree_iter *iter,
 		set_btree_node_dirty(b);
 
 		if (c->btree_flush_delay)
-			schedule_delayed_work(&b->work,
-					      c->btree_flush_delay * HZ);
+			queue_delayed_work(system_freezable_wq, &b->work,
+					   c->btree_flush_delay * HZ);
 	}
 
 	if (res->ref ||
@@ -1090,7 +1090,7 @@ static void async_split_updated_btree(struct async_split *as,
 
 	mutex_unlock(&as->c->async_split_lock);
 
-	continue_at(&as->cl, async_split_nodes_written, system_wq);
+	continue_at(&as->cl, async_split_nodes_written, system_freezable_wq);
 }
 
 static void async_split_updated_root(struct async_split *as,
@@ -1121,7 +1121,7 @@ static void async_split_updated_root(struct async_split *as,
 
 	mutex_unlock(&as->c->async_split_lock);
 
-	continue_at(&as->cl, async_split_nodes_written, system_wq);
+	continue_at(&as->cl, async_split_nodes_written, system_freezable_wq);
 }
 
 /*

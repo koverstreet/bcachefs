@@ -502,7 +502,8 @@ static void btree_node_write_done(struct closure *cl)
 	bch_btree_complete_write(c, b, w);
 
 	if (btree_node_dirty(b) && c->btree_flush_delay)
-		schedule_delayed_work(&b->work, c->btree_flush_delay * HZ);
+		queue_delayed_work(system_freezable_wq, &b->work,
+				   c->btree_flush_delay * HZ);
 
 	closure_return_with_destructor(cl, btree_node_write_unlock);
 }

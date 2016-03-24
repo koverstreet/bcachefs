@@ -1436,7 +1436,7 @@ static void bch_dio_write_loop_async(struct closure *cl)
 
 		continue_at(&dio->cl,
 			    bch_dio_write_loop_async,
-			    dio->iter.count ? system_wq : NULL);
+			    dio->iter.count ? system_freezable_wq : NULL);
 	} else {
 #if 0
 		closure_return_with_destructor(cl, bch_dio_write_complete);
@@ -1566,8 +1566,8 @@ static int bch_direct_IO_write(struct cache_set *c, struct kiocb *req,
 		}
 
 		continue_at_noreturn(&dio->cl,
-				     bch_dio_write_loop_async,
-				     dio->iter.count ? system_wq : NULL);
+				bch_dio_write_loop_async,
+				dio->iter.count ? system_freezable_wq : NULL);
 		return -EIOCBQUEUED;
 	}
 err_put_sectors_dirty:

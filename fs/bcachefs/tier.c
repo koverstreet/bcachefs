@@ -371,6 +371,8 @@ static int bch_tiering_thread(void *arg)
 	unsigned long last;
 	unsigned i;
 
+	set_freezable();
+
 	while (!kthread_should_stop()) {
 		if (kthread_wait_freezable(c->tiering_enabled &&
 					   c->cache_tiers[1].nr_devices))

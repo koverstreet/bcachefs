@@ -435,7 +435,6 @@ struct cache {
 
 	/* Moving GC: */
 	struct task_struct	*moving_gc_read;
-	struct workqueue_struct	*moving_gc_write;
 
 	struct moving_queue	moving_gc_queue;
 	struct bch_pd_controller moving_gc_pd;
