@@ -1359,7 +1359,7 @@ out:
 		closure_sync(&dio->cl);
 		closure_debug_destroy(&dio->cl);
 		ret = dio->ret;
-		bio_put(&dio->rbio.bio);
+		bio_check_pages_dirty(&dio->rbio.bio); /* transfers ownership */
 		return ret;
 	} else {
 		return -EIOCBQUEUED;
