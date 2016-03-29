@@ -40,6 +40,7 @@ struct io_context;
 struct mempolicy;
 struct nameidata;
 struct nsproxy;
+struct pagecache_lock;
 struct perf_event_context;
 struct pid_namespace;
 struct pipe_inode_info;
@@ -852,6 +853,9 @@ struct task_struct {
 #ifdef CONFIG_UBSAN
 	unsigned int			in_ubsan;
 #endif
+
+	/* currently held lock, for avoiding recursing in fault path: */
+	struct pagecache_lock *pagecache_lock;
 
 	/* Journalling filesystem info: */
 	void				*journal_info;

@@ -271,6 +271,7 @@ extern struct cred init_cred;
 		.signal = {{0}}},					\
 	.blocked	= {{0}},					\
 	.alloc_lock	= __SPIN_LOCK_UNLOCKED(tsk.alloc_lock),		\
+	.pagecache_lock = NULL,						\
 	.journal_info	= NULL,						\
 	INIT_CPU_TIMERS(tsk)						\
 	.pi_lock	= __RAW_SPIN_LOCK_UNLOCKED(tsk.pi_lock),	\

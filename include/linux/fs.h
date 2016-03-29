@@ -388,9 +388,32 @@ int pagecache_write_end(struct file *, struct address_space *mapping,
 				loff_t pos, unsigned len, unsigned copied,
 				struct page *page, void *fsdata);
 
+/*
+ * Two-state lock - can be taken for add or block - both states are shared,
+ * like read side of rwsem, but conflict with other state:
+ */
+struct pagecache_lock {
+	atomic_long_t		v;
+	wait_queue_head_t	wait;
+};
+
+static inline void pagecache_lock_init(struct pagecache_lock *lock)
+{
+	atomic_long_set(&lock->v, 0);
+	init_waitqueue_head(&lock->wait);
+}
+
+void pagecache_add_put(struct pagecache_lock *);
+void pagecache_add_get(struct pagecache_lock *);
+void __pagecache_block_put(struct pagecache_lock *);
+void __pagecache_block_get(struct pagecache_lock *);
+void pagecache_block_put(struct pagecache_lock *);
+void pagecache_block_get(struct pagecache_lock *);
+
 struct address_space {
 	struct inode		*host;		/* owner: inode, block_device */
 	struct radix_tree_root	page_tree;	/* radix tree of all pages */
+	struct pagecache_lock	add_lock;	/* protects adding new pages */
 	spinlock_t		tree_lock;	/* and lock protecting it */
 	atomic_t		i_mmap_writable;/* count VM_SHARED mappings */
 	struct rb_root_cached	i_mmap;		/* tree of private and shared mappings */
