@@ -115,6 +115,73 @@
  *   ->tasklist_lock            (memory_failure, collect_procs_ao)
  */
 
+static void __pagecache_lock_put(struct pagecache_lock *lock, long i)
+{
+	BUG_ON(atomic_long_read(&lock->v) == 0);
+
+	if (atomic_long_sub_return_release(i, &lock->v) == 0)
+		wake_up_all(&lock->wait);
+}
+
+static bool __pagecache_lock_tryget(struct pagecache_lock *lock, long i)
+{
+	long v = atomic_long_read(&lock->v), old;
+
+	do {
+		old = v;
+
+		if (i > 0 ? v < 0 : v > 0)
+			return false;
+	} while ((v = atomic_long_cmpxchg_acquire(&lock->v,
+					old, old + i)) != old);
+	return true;
+}
+
+static void __pagecache_lock_get(struct pagecache_lock *lock, long i)
+{
+	wait_event(lock->wait, __pagecache_lock_tryget(lock, i));
+}
+
+void pagecache_add_put(struct pagecache_lock *lock)
+{
+	__pagecache_lock_put(lock, 1);
+}
+EXPORT_SYMBOL(pagecache_add_put);
+
+void pagecache_add_get(struct pagecache_lock *lock)
+{
+	__pagecache_lock_get(lock, 1);
+}
+EXPORT_SYMBOL(pagecache_add_get);
+
+void __pagecache_block_put(struct pagecache_lock *lock)
+{
+	__pagecache_lock_put(lock, -1);
+}
+EXPORT_SYMBOL(__pagecache_block_put);
+
+void __pagecache_block_get(struct pagecache_lock *lock)
+{
+	__pagecache_lock_get(lock, -1);
+}
+EXPORT_SYMBOL(__pagecache_block_get);
+
+void pagecache_block_put(struct pagecache_lock *lock)
+{
+	BUG_ON(current->pagecache_lock != lock);
+	current->pagecache_lock = NULL;
+	__pagecache_lock_put(lock, -1);
+}
+EXPORT_SYMBOL(pagecache_block_put);
+
+void pagecache_block_get(struct pagecache_lock *lock)
+{
+	__pagecache_lock_get(lock, -1);
+	BUG_ON(current->pagecache_lock);
+	current->pagecache_lock = lock;
+}
+EXPORT_SYMBOL(pagecache_block_get);
+
 static void page_cache_delete(struct address_space *mapping,
 				   struct page *page, void *shadow)
 {
@@ -853,11 +920,14 @@ static int __add_to_page_cache_locked(struct page *page,
 	VM_BUG_ON_PAGE(PageSwapBacked(page), page);
 	mapping_set_update(&xas, mapping);
 
+	if (current->pagecache_lock != &mapping->add_lock)
+		pagecache_add_get(&mapping->add_lock);
+
 	if (!huge) {
 		error = mem_cgroup_try_charge(page, current->mm,
 					      gfp_mask, &memcg, false);
 		if (error)
-			return error;
+			goto out;
 	}
 
 	get_page(page);
@@ -893,14 +963,19 @@ unlock:
 	if (!huge)
 		mem_cgroup_commit_charge(page, memcg, false, false);
 	trace_mm_filemap_add_to_page_cache(page);
-	return 0;
+	error = 0;
+out:
+	if (current->pagecache_lock != &mapping->add_lock)
+		pagecache_add_put(&mapping->add_lock);
+	return error;
 error:
 	page->mapping = NULL;
 	/* Leave page->index set: truncation relies upon it */
 	if (!huge)
 		mem_cgroup_cancel_charge(page, memcg, false);
 	put_page(page);
-	return xas_error(&xas);
+	error = xas_error(&xas);
+	goto out;
 }
 ALLOW_ERROR_INJECTION(__add_to_page_cache_locked, ERRNO);
 
