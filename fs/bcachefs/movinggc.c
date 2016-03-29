@@ -278,6 +278,7 @@ static int bch_moving_gc_thread(void *arg)
 	struct cache_set *c = ca->set;
 	struct io_clock *clock = &c->io_clock[WRITE];
 	unsigned long last;
+	s64 next;
 	bool moved;
 
 	set_freezable();
@@ -287,16 +288,19 @@ static int bch_moving_gc_thread(void *arg)
 			break;
 
 		last = atomic_long_read(&clock->now);
-
-		moved = bch_moving_gc(ca);
-
 		/*
-		 * This really should be a library code, but it has to be
-		 * kthread specific... ugh
+		 * don't start copygc until less than 1/8th of buckets are
+		 * available:
+		 * XXX pick this threshold better
 		 */
-		if (!moved)
-			bch_kthread_io_clock_wait(clock,
-					last + ca->free_inc.size / 2);
+		next = (buckets_available_cache(ca) -
+			((ca->mi.nbuckets - ca->mi.first_bucket) / 8)) *
+			ca->mi.bucket_size;
+
+		if (next <= 0)
+			moved = bch_moving_gc(ca);
+		else
+			bch_kthread_io_clock_wait(clock, last + next);
 	}
 
 	return 0;
