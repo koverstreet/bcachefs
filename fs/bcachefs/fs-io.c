@@ -729,7 +729,6 @@ static void bchfs_read(struct cache_set *c, struct bch_read_bio *rbio, u64 inode
 			bch_read_extent(c, rbio, k, &pick,
 					bio->bi_iter.bi_sector -
 					bkey_start_offset(k.k),
-					BCH_READ_FORCE_BOUNCE|
 					BCH_READ_RETRY_IF_STALE|
 					BCH_READ_PROMOTE|
 					(is_last ? BCH_READ_IS_LAST : 0));
@@ -1080,7 +1079,7 @@ static int bch_read_single_page(struct page *page,
 	struct inode *inode = mapping->host;
 	struct cache_set *c = inode->i_sb->s_fs_info;
 	struct bch_read_bio *rbio;
-	int ret = 0;
+	int ret;
 	DECLARE_COMPLETION_ONSTACK(done);
 
 	rbio = container_of(bio_alloc_bioset(GFP_NOFS, 1,
@@ -1094,15 +1093,13 @@ static int bch_read_single_page(struct page *page,
 	bchfs_read(c, rbio, inode->i_ino);
 	wait_for_completion(&done);
 
-	if (!ret)
-		ret = rbio->bio.bi_error;
+	ret = rbio->bio.bi_error;
 	bio_put(&rbio->bio);
 
 	if (ret < 0)
 		return ret;
 
 	SetPageUptodate(page);
-
 	return 0;
 }
 
