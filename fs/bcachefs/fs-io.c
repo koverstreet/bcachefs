@@ -699,6 +699,10 @@ static void bchfs_read(struct cache_set *c, struct bch_read_bio *rbio, u64 inode
 		unsigned bytes, sectors;
 		bool is_last;
 
+		if (!bkey_extent_is_allocation(k.k) ||
+		    bkey_extent_is_compressed(c, k))
+			bch_mark_pages_unalloc(bio);
+
 		bch_extent_pick_ptr(c, k, &pick);
 		bch_btree_iter_unlock(&iter);
 
@@ -714,11 +718,6 @@ static void bchfs_read(struct cache_set *c, struct bch_read_bio *rbio, u64 inode
 		bytes = sectors << 9;
 		is_last = bytes == bio->bi_iter.bi_size;
 		swap(bio->bi_iter.bi_size, bytes);
-
-		if (!(k.k->type == BCH_RESERVATION ||
-		      (pick.ca &&
-		       pick.crc.compression_type == BCH_COMPRESSION_NONE)))
-			bch_mark_pages_unalloc(bio);
 
 		if (bkey_extent_is_allocation(k.k))
 			bch_add_page_sectors(bio, k.k);
@@ -2350,7 +2349,8 @@ static long bch_fallocate(struct inode *inode, int mode,
 
 		sectors = reservation.k.size;
 
-		if (!bkey_extent_is_allocation(k.k)) {
+		if (!bkey_extent_is_allocation(k.k) ||
+		    bkey_extent_is_compressed(c, k)) {
 			ret = bch_disk_reservation_get(c, &disk_res, sectors);
 			if (ret)
 				goto err_put_sectors_dirty;
