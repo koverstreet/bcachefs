@@ -1438,6 +1438,7 @@ static struct file_system_type bcache_fs_type = {
 	.name		= "bcache",
 	.mount		= bch_mount,
 	.kill_sb	= bch_kill_sb,
+	.fs_flags	= FS_REQUIRES_DEV,
 };
 
 MODULE_ALIAS_FS("bcache");
