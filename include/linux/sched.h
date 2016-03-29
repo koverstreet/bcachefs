@@ -134,6 +134,7 @@ struct perf_event_context;
 struct blk_plug;
 struct filename;
 struct nameidata;
+struct pagecache_lock;
 
 #define VMACACHE_BITS 2
 #define VMACACHE_SIZE (1U << VMACACHE_BITS)
@@ -1753,6 +1754,9 @@ struct task_struct {
 #ifdef CONFIG_UBSAN
 	unsigned int in_ubsan;
 #endif
+
+	/* currently held lock, for avoiding recursing in fault path: */
+	struct pagecache_lock *pagecache_lock;
 
 /* journalling filesystem info */
 	void *journal_info;
