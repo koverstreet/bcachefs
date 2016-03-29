@@ -35,12 +35,12 @@ void bch_moving_context_init(struct moving_context *ctxt,
 void bch_moving_wait(struct moving_context *ctxt)
 {
 	while (1) {
-		set_current_state(TASK_UNINTERRUPTIBLE);
+		set_current_state(TASK_INTERRUPTIBLE);
 		if (atomic_xchg(&ctxt->pending, 0))
 			break;
 		schedule();
 	}
-	set_current_state(TASK_RUNNING);
+	__set_current_state(TASK_RUNNING);
 }
 
 static void bch_moving_notify(struct moving_context *ctxt)
