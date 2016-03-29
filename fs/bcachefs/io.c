@@ -1414,9 +1414,12 @@ static int bio_uncompress_lz4(struct cache_set *c,
 	if (!src_data)
 		goto err;
 
-	dst_data = kmalloc(uncompressed_size, GFP_NOIO);
-	if (!dst_data)
-		goto err;
+	dst_data = kmalloc(uncompressed_size, GFP_NOIO|__GFP_NOWARN);
+	if (!dst_data) {
+		dst_data = vmalloc(uncompressed_size);
+		if (!dst_data)
+			goto err;
+	}
 
 	ret = lz4_decompress(src_data, &src_len,
 			     dst_data, dst_len);
@@ -1426,7 +1429,7 @@ static int bio_uncompress_lz4(struct cache_set *c,
 
 	memcpy_to_bio(dst, dst_iter, dst_data + skip);
 err:
-	kfree(dst_data);
+	kvfree(dst_data);
 	bio_unmap_or_unbounce(src_data, src_bounced);
 	return ret;
 }
