@@ -403,6 +403,28 @@ int pagecache_write_end(struct file *, struct address_space *mapping,
 				loff_t pos, unsigned len, unsigned copied,
 				struct page *page, void *fsdata);
 
+/*
+ * Two-state lock - can be taken for add or block - both states are shared,
+ * like read side of rwsem, but conflict with other state:
+ */
+struct pagecache_lock {
+	atomic_long_t		v;
+	wait_queue_head_t	wait;
+};
+
+static inline void pagecache_lock_init(struct pagecache_lock *lock)
+{
+	atomic_long_set(&lock->v, 0);
+	init_waitqueue_head(&lock->wait);
+}
+
+void pagecache_add_put(struct pagecache_lock *);
+void pagecache_add_get(struct pagecache_lock *);
+void __pagecache_block_put(struct pagecache_lock *);
+void __pagecache_block_get(struct pagecache_lock *);
+void pagecache_block_put(struct pagecache_lock *);
+void pagecache_block_get(struct pagecache_lock *);
+
 /**
  * struct address_space - Contents of a cacheable, mappable object.
  * @host: Owner, either the inode or the block_device.
@@ -437,6 +459,8 @@ struct address_space {
 	spinlock_t		private_lock;
 	struct list_head	private_list;
 	void			*private_data;
+	struct pagecache_lock	add_lock
+		____cacheline_aligned_in_smp;	/* protects adding new pages */
 } __attribute__((aligned(sizeof(long)))) __randomize_layout;
 	/*
 	 * On most architectures that alignment is already the case; but
