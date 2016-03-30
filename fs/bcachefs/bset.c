@@ -883,7 +883,7 @@ struct bkey_packed *bch_bset_insert(struct btree_keys *b,
 	struct bkey_packed *prev = NULL;
 	struct bkey_packed *where = bch_btree_node_iter_bset_pos(iter, b, i) ?:
 		bset_bkey_last(i);
-	struct bkey_packed packed, *src;
+	struct bkey_packed packed, *src = bkey_to_packed(insert);
 
 	BUG_ON(bset_written(t));
 	BUG_ON(insert->k.u64s < BKEY_U64s);
@@ -921,10 +921,6 @@ struct bkey_packed *bch_bset_insert(struct btree_keys *b,
 				      where, false))
 		return NULL;
 
-	src = bkey_pack_key(&packed, &insert->k, f)
-		? &packed
-		: bkey_to_packed(insert);
-
 	/*
 	 * Can we overwrite the current key, instead of doing a memmove()?
 	 *
@@ -936,22 +932,27 @@ struct bkey_packed *bch_bset_insert(struct btree_keys *b,
 	 * the node is rewritten, only legal to overwrite if the new key
 	 * compares equal to the old.
 	 */
-	if (where != bset_bkey_last(i) &&
+	if (b->ops->is_extents &&
+	    where != bset_bkey_last(i) &&
 	    where->u64s == src->u64s &&
-	    (b->ops->is_extents
-	     ? bkey_deleted(where)
-	     : !bkey_cmp_left_packed(f, where, insert->k.p))) {
-		if (!bkey_deleted(where))
-			btree_keys_account_key_drop(&b->nr, where);
+	    bkey_deleted(where))
+		goto overwrite;
 
-		memcpy(where, src,
-		       bkeyp_key_bytes(f, src));
-		memcpy(bkeyp_val(f, where), &insert->v,
-		       bkeyp_val_bytes(f, src));
+	if (bkey_pack_key(&packed, &insert->k, f))
+		src = &packed;
 
-		if (!bkey_deleted(src))
-			btree_keys_account_key_add(&b->nr, src);
-		return NULL;
+	/* packing changes u64s - recheck after packing: */
+	if (b->ops->is_extents &&
+	    where != bset_bkey_last(i) &&
+	    where->u64s == src->u64s &&
+	    bkey_deleted(where))
+		goto overwrite;
+
+	if (!b->ops->is_extents &&
+	    prev && prev->u64s == src->u64s &&
+	    !bkey_cmp_left_packed(f, prev, insert->k.p)) {
+		where = prev;
+		goto overwrite;
 	}
 
 	memmove((u64 *) where + src->u64s,
@@ -971,6 +972,18 @@ struct bkey_packed *bch_bset_insert(struct btree_keys *b,
 	bch_verify_btree_nr_keys(b);
 
 	return where;
+overwrite:
+	if (!bkey_deleted(where))
+		btree_keys_account_key_drop(&b->nr, where);
+
+	memcpy(where, src,
+	       bkeyp_key_bytes(f, src));
+	memcpy(bkeyp_val(f, where), &insert->v,
+	       bkeyp_val_bytes(f, src));
+
+	if (!bkey_deleted(src))
+		btree_keys_account_key_add(&b->nr, src);
+	return NULL;
 }
 EXPORT_SYMBOL(bch_bset_insert);
 
