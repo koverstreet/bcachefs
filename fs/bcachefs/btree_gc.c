@@ -499,10 +499,6 @@ static void bch_coalesce_nodes(struct btree *old_nodes[GC_MERGE_NODES],
 		}
 
 	as = __bch_async_split_alloc(old_nodes, nr_old_nodes, iter);
-	if (!as) {
-		trace_bcache_btree_gc_coalesce_fail(c);
-		goto out;
-	}
 
 	/* Repack everything with @new_format and sort down to one bset */
 	for (i = 0; i < nr_old_nodes; i++)
