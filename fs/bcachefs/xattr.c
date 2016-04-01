@@ -260,11 +260,12 @@ static size_t bch_xattr_emit(struct dentry *dentry,
 		bch_xattr_type_to_handler(xattr->x_type);
 
 	if (handler && (!handler->list || handler->list(dentry))) {
-		const size_t prefix_len = strlen(handler->prefix);
+		const char *prefix = handler->prefix ?: handler->name;
+		const size_t prefix_len = strlen(prefix);
 		const size_t total_len = prefix_len + xattr->x_name_len + 1;
 
 		if (buffer && total_len <= buffer_size) {
-			memcpy(buffer, handler->prefix, prefix_len);
+			memcpy(buffer, prefix, prefix_len);
 			memcpy(buffer + prefix_len,
 			       xattr->x_name, xattr->x_name_len);
 			buffer[prefix_len + xattr->x_name_len] = '\0';
