@@ -118,8 +118,7 @@ static void write_dirty_finish(struct closure *cl)
 		io->replace.hook.fn = bch_extent_cmpxchg;
 		bkey_extent_set_cached(&tmp.k.k, true);
 
-		ret = bch_btree_insert(dc->disk.c, BTREE_ID_EXTENTS,
-				       &keylist_single(&tmp.k),
+		ret = bch_btree_insert(dc->disk.c, BTREE_ID_EXTENTS, &tmp.k,
 				       NULL, &io->replace.hook, NULL, 0);
 		if (io->replace.successes == 0)
 			trace_bcache_writeback_collision(&io->replace.key.k);

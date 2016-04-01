@@ -235,24 +235,27 @@ void bch_btree_insert_node(struct btree *, struct btree_iter *,
  */
 #define BTREE_INSERT_NO_MARK_KEY	(1 << 2)
 
-int bch_btree_insert_at(struct btree_iter *, struct keylist *,
+int bch_btree_insert_at(struct btree_iter *, struct bkey_i *,
 			struct disk_reservation *,
 			struct btree_insert_hook *, u64 *, unsigned);
+int bch_btree_insert_list_at(struct btree_iter *, struct keylist *,
+			     struct disk_reservation *,
+			     struct btree_insert_hook *, u64 *, unsigned);
 
-struct btree_insert_multi {
+struct btree_insert_trans {
 	struct btree_iter	*iter;
 	struct bkey_i		*k;
 	/* true if entire key was inserted - can only be false for extents */
 	bool			done;
 };
 
-int bch_btree_insert_at_multi(struct btree_insert_multi[], unsigned,
-			      struct disk_reservation *,
-			      struct btree_insert_hook *,
-			      u64 *, unsigned);
+int bch_btree_insert_trans(struct btree_insert_trans[], unsigned,
+			   struct disk_reservation *,
+			   struct btree_insert_hook *,
+			   u64 *, unsigned);
 
 int bch_btree_insert_check_key(struct btree_iter *, struct bkey_i *);
-int bch_btree_insert(struct cache_set *, enum btree_id, struct keylist *,
+int bch_btree_insert(struct cache_set *, enum btree_id, struct bkey_i *,
 		     struct disk_reservation *,
 		     struct btree_insert_hook *, u64 *, int flags);
 int bch_btree_update(struct cache_set *, enum btree_id,

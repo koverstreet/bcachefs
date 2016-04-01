@@ -172,10 +172,8 @@ static int bch_gc_do_inode(struct cache_set *c, struct btree_iter *iter,
 		if (i_flags & BCH_INODE_I_SECTORS_DIRTY)
 			update.v.i_sectors = cpu_to_le64(i_sectors);
 
-		return bch_btree_insert_at(iter,
-					   &keylist_single(&update.k_i),
-					   NULL, NULL, NULL,
-					   BTREE_INSERT_NOFAIL);
+		return bch_btree_insert_at(iter, &update.k_i, NULL, NULL,
+					   NULL, BTREE_INSERT_NOFAIL);
 	}
 
 	return 0;

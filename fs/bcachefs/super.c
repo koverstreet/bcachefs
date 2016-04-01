@@ -1410,8 +1410,7 @@ static const char *run_cache_set(struct cache_set *c)
 		SET_INODE_STR_HASH_TYPE(&inode.v, c->sb.str_hash_type);
 
 		err = "error creating root directory";
-		if (bch_btree_insert(c, BTREE_ID_INODES,
-				     &keylist_single(&inode.k_i),
+		if (bch_btree_insert(c, BTREE_ID_INODES, &inode.k_i,
 				     NULL, NULL, NULL, 0))
 			goto err;
 

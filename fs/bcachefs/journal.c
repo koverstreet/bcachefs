@@ -1001,8 +1001,7 @@ int bch_journal_replay(struct cache_set *c, struct list_head *list)
 		for_each_jset_key(k, _n, jkeys, &i->j) {
 			trace_bcache_journal_replay_key(&k->k);
 
-			ret = bch_btree_insert(c, jkeys->btree_id,
-					       &keylist_single(k),
+			ret = bch_btree_insert(c, jkeys->btree_id, k,
 					       NULL, NULL, NULL,
 					       BTREE_INSERT_NOFAIL|
 					       BTREE_INSERT_NO_MARK_KEY);

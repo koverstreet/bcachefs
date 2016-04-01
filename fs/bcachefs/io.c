@@ -589,20 +589,24 @@ static u64 keylist_sectors(struct keylist *keys)
 static void bch_write_index(struct closure *cl)
 {
 	struct bch_write_op *op = container_of(cl, struct bch_write_op, cl);
+	struct keylist *keys = &op->insert_keys;
+	struct btree_iter iter;
+	u64 sectors_start = keylist_sectors(keys);
 	unsigned i;
-	u64 sectors_start = keylist_sectors(&op->insert_keys);
 	int ret;
 
 	op->flags |= BCH_WRITE_LOOPED;
 
-	ret = bch_btree_insert(op->c, BTREE_ID_EXTENTS,
-			       &op->insert_keys,
-			       &op->res,
-			       op->insert_hook,
-			       op_journal_seq(op),
-			       BTREE_INSERT_NOFAIL);
+	bch_btree_iter_init_intent(&iter, op->c, BTREE_ID_EXTENTS,
+		bkey_start_pos(&bch_keylist_front(keys)->k));
 
-	op->written += sectors_start - keylist_sectors(&op->insert_keys);
+	ret = bch_btree_insert_list_at(&iter, keys, &op->res,
+				       op->insert_hook,
+				       op_journal_seq(op),
+				       BTREE_INSERT_NOFAIL);
+	bch_btree_iter_unlock(&iter);
+
+	op->written += sectors_start - keylist_sectors(keys);
 
 	if (ret) {
 		__bcache_io_error(op->c, "btree IO error");

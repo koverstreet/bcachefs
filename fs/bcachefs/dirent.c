@@ -209,7 +209,7 @@ int bch_dirent_create(struct inode *dir, u8 type,
 
 		dirent->k.p = k.k->p;
 
-		ret = bch_btree_insert_at(&iter, &keylist_single(&dirent->k_i),
+		ret = bch_btree_insert_at(&iter, &dirent->k_i,
 					  NULL, NULL, &ei->journal_seq,
 					  BTREE_INSERT_ATOMIC);
 		/*
@@ -324,7 +324,7 @@ int bch_dirent_rename(struct cache_set *c,
 		new_dst->v.d_inum = old_src_d.v->d_inum;
 		new_dst->v.d_type = old_src_d.v->d_type;
 
-		ret = bch_btree_insert_at_multi((struct btree_insert_multi[]) {
+		ret = bch_btree_insert_trans((struct btree_insert_trans[]) {
 				{ &src_iter, &new_src->k_i, },
 				{ &dst_iter, &new_dst->k_i, }}, 2,
 				NULL, NULL, journal_seq,
@@ -365,8 +365,7 @@ int bch_dirent_delete(struct inode *dir, const struct qstr *name)
 		delete.k.p = k.k->p;
 		delete.k.type = BCH_DIRENT_WHITEOUT;
 
-		ret = bch_btree_insert_at(&iter,
-					  &keylist_single(&delete),
+		ret = bch_btree_insert_at(&iter, &delete,
 					  NULL, NULL, &ei->journal_seq,
 					  BTREE_INSERT_NOFAIL|
 					  BTREE_INSERT_ATOMIC);

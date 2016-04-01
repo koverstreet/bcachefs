@@ -382,9 +382,8 @@ static int bch_flag_key_bad(struct btree_iter *iter,
 	 */
 	bch_extent_normalize(c, e.s);
 
-	return bch_btree_insert_at(iter, &keylist_single(&tmp.key),
-				   NULL, NULL, NULL,
-				   BTREE_INSERT_ATOMIC);
+	return bch_btree_insert_at(iter, &tmp.key, NULL, NULL,
+				   NULL, BTREE_INSERT_ATOMIC);
 }
 
 /*

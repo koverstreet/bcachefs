@@ -1527,8 +1527,8 @@ btree_insert_key(struct btree_iter *iter, struct btree *b,
 	return ret;
 }
 
-static bool same_leaf_as_prev(struct btree_insert_multi *m,
-			      struct btree_insert_multi *i)
+static bool same_leaf_as_prev(struct btree_insert_trans *m,
+			      struct btree_insert_trans *i)
 {
 	/*
 	 * Because we sorted the transaction entries, if multiple iterators
@@ -1537,18 +1537,18 @@ static bool same_leaf_as_prev(struct btree_insert_multi *m,
 	return i != m && i[0].iter->nodes[0] == i[-1].iter->nodes[0];
 }
 
-static void multi_lock_write(struct btree_insert_multi *m, unsigned nr)
+static void multi_lock_write(struct btree_insert_trans *m, unsigned nr)
 {
-	struct btree_insert_multi *i;
+	struct btree_insert_trans *i;
 
 	for (i = m; i < m + nr; i++)
 		if (!same_leaf_as_prev(m, i))
 			btree_node_lock_for_insert(i->iter->nodes[0], i->iter);
 }
 
-static void multi_unlock_write(struct btree_insert_multi *m, unsigned nr)
+static void multi_unlock_write(struct btree_insert_trans *m, unsigned nr)
 {
-	struct btree_insert_multi *i;
+	struct btree_insert_trans *i;
 
 	for (i = m; i < m + nr; i++)
 		if (!same_leaf_as_prev(m, i))
@@ -1557,14 +1557,14 @@ static void multi_unlock_write(struct btree_insert_multi *m, unsigned nr)
 
 /* Normal update interface: */
 
-int bch_btree_insert_at_multi(struct btree_insert_multi *m, unsigned nr,
-			      struct disk_reservation *disk_res,
-			      struct btree_insert_hook *hook,
-			      u64 *journal_seq, unsigned flags)
+int bch_btree_insert_trans(struct btree_insert_trans *m, unsigned nr,
+			   struct disk_reservation *disk_res,
+			   struct btree_insert_hook *hook,
+			   u64 *journal_seq, unsigned flags)
 {
 	struct cache_set *c = m[0].iter->c;
 	struct journal_res res = { 0, 0 };
-	struct btree_insert_multi *i;
+	struct btree_insert_trans *i;
 	struct btree_iter *split;
 	unsigned u64s;
 	bool swapped;
@@ -1748,38 +1748,48 @@ err:
  * -EIO: journal or btree node IO error
  */
 int bch_btree_insert_at(struct btree_iter *iter,
-			struct keylist *insert_keys,
+			struct bkey_i *insert_key,
 			struct disk_reservation *disk_res,
 			struct btree_insert_hook *hook,
 			u64 *journal_seq, unsigned flags)
 {
-	verify_keys_sorted(insert_keys);
+	struct btree_insert_trans m = {
+		.iter = iter,
+		.k = insert_key,
+		.done = false,
+	};
+
+	int ret = bch_btree_insert_trans(&m, 1, disk_res,
+				hook, journal_seq, flags);
+	BUG_ON(!ret != m.done);
+
+	return ret;
+}
+
+int bch_btree_insert_list_at(struct btree_iter *iter,
+			     struct keylist *keys,
+			     struct disk_reservation *disk_res,
+			     struct btree_insert_hook *hook,
+			     u64 *journal_seq, unsigned flags)
+{
+	BUG_ON(flags & BTREE_INSERT_ATOMIC);
+	BUG_ON(bch_keylist_empty(keys));
+	verify_keys_sorted(keys);
 
 	while (1) {
-		struct btree_insert_multi m = {
-			.iter = iter,
-			.k = bch_keylist_front(insert_keys),
-			.done = false,
-		};
-
-		int ret = bch_btree_insert_at_multi(&m, 1, disk_res, hook,
-						    journal_seq, flags);
-		BUG_ON(!ret != m.done);
-
+		/* need to traverse between each insert */
+		int ret = bch_btree_iter_traverse(iter);
 		if (ret)
 			return ret;
 
-		bch_keylist_dequeue(insert_keys);
-		if (bch_keylist_empty(insert_keys))
+		ret = bch_btree_insert_at(iter, bch_keylist_front(keys),
+				disk_res, hook, journal_seq, flags);
+		if (ret)
+			return ret;
+
+		bch_keylist_dequeue(keys);
+		if (bch_keylist_empty(keys))
 			return 0;
-
-		/*
-		 * need to traverse between each insert - might be inserting an
-		 * extent that spanned leaf nodes:
-		 */
-		ret = bch_btree_iter_traverse(iter);
-		if (ret)
-			return ret;
 	}
 }
 
@@ -1813,8 +1823,8 @@ int bch_btree_insert_check_key(struct btree_iter *iter,
 
 	bch_btree_iter_rewind(iter, bkey_start_pos(&check_key->k));
 
-	ret = bch_btree_insert_at(iter, &keylist_single(&tmp.key),
-				  NULL, NULL, NULL, BTREE_INSERT_ATOMIC);
+	ret = bch_btree_insert_at(iter, &tmp.key, NULL, NULL,
+				  NULL, BTREE_INSERT_ATOMIC);
 
 	bch_btree_iter_set_pos(iter, saved_pos);
 
@@ -1829,7 +1839,7 @@ int bch_btree_insert_check_key(struct btree_iter *iter,
  * @hook:		insert callback
  */
 int bch_btree_insert(struct cache_set *c, enum btree_id id,
-		     struct keylist *keys,
+		     struct bkey_i *k,
 		     struct disk_reservation *disk_res,
 		     struct btree_insert_hook *hook,
 		     u64 *journal_seq, int flags)
@@ -1837,14 +1847,13 @@ int bch_btree_insert(struct cache_set *c, enum btree_id id,
 	struct btree_iter iter;
 	int ret, ret2;
 
-	bch_btree_iter_init_intent(&iter, c, id,
-				   bkey_start_pos(&bch_keylist_front(keys)->k));
+	bch_btree_iter_init_intent(&iter, c, id, bkey_start_pos(&k->k));
 
 	ret = bch_btree_iter_traverse(&iter);
 	if (unlikely(ret))
 		goto out;
 
-	ret = bch_btree_insert_at(&iter, keys, disk_res,
+	ret = bch_btree_insert_at(&iter, k, disk_res,
 				  hook, journal_seq, flags);
 out:	ret2 = bch_btree_iter_unlock(&iter);
 
@@ -1871,8 +1880,7 @@ int bch_btree_update(struct cache_set *c, enum btree_id id,
 	if (!u.k || bkey_deleted(u.k))
 		return -ENOENT;
 
-	ret = bch_btree_insert_at(&iter, &keylist_single(k), NULL,
-				  NULL, journal_seq, 0);
+	ret = bch_btree_insert_at(&iter, k, NULL, NULL, journal_seq, 0);
 	ret2 = bch_btree_iter_unlock(&iter);
 
 	return ret ?: ret2;
@@ -1934,9 +1942,8 @@ int bch_btree_delete_range(struct cache_set *c, enum btree_id id,
 			bch_cut_back(end, &delete.k);
 		}
 
-		ret = bch_btree_insert_at(&iter, &keylist_single(&delete),
-					  NULL, hook, journal_seq,
-					  BTREE_INSERT_NOFAIL);
+		ret = bch_btree_insert_at(&iter, &delete, NULL, hook,
+					  journal_seq, BTREE_INSERT_NOFAIL);
 		if (ret)
 			break;
 
@@ -1982,8 +1989,8 @@ int bch_btree_node_rewrite(struct btree *b, struct btree_iter *iter, bool wait)
 
 	if (parent) {
 		bch_btree_insert_node(parent, iter,
-					    &keylist_single(&n->key),
-					    reserve, as);
+				      &keylist_single(&n->key),
+				      reserve, as);
 	} else {
 		bch_btree_set_root(iter, n, as, reserve);
 	}

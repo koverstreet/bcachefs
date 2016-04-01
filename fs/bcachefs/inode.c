@@ -134,9 +134,8 @@ again:
 			pr_debug("inserting inode %llu (size %u)",
 				 inode->k.p.inode, inode->k.u64s);
 
-			ret = bch_btree_insert_at(&iter, &keylist_single(inode),
-						  NULL, NULL, NULL,
-						  BTREE_INSERT_ATOMIC);
+			ret = bch_btree_insert_at(&iter, inode, NULL, NULL,
+						  NULL, BTREE_INSERT_ATOMIC);
 
 			if (ret == -EINTR)
 				continue;
@@ -204,10 +203,8 @@ int bch_inode_rm(struct cache_set *c, u64 inode_nr)
 	bkey_init(&delete.k);
 	delete.k.p.inode = inode_nr;
 
-	return bch_btree_insert(c, BTREE_ID_INODES,
-				&keylist_single(&delete),
-				NULL, NULL, NULL,
-				BTREE_INSERT_NOFAIL);
+	return bch_btree_insert(c, BTREE_ID_INODES, &delete, NULL,
+				NULL, NULL, BTREE_INSERT_NOFAIL);
 }
 
 int bch_inode_update(struct cache_set *c, struct bkey_i *inode,

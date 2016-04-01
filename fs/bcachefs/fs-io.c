@@ -2185,9 +2185,7 @@ static long bch_fcollapse(struct inode *inode, loff_t offset, loff_t len)
 						 false, false);
 		BUG_ON(ret);
 
-		ret = bch_btree_insert_at(&dst,
-					  &keylist_single(&copy.k),
-					  &disk_res,
+		ret = bch_btree_insert_at(&dst, &copy.k, &disk_res,
 					  &i_sectors_hook.hook,
 					  &ei->journal_seq,
 					  BTREE_INSERT_ATOMIC|
@@ -2349,9 +2347,7 @@ static long bch_fallocate(struct inode *inode, int mode,
 				goto err_put_sectors_dirty;
 		}
 
-		ret = bch_btree_insert_at(&iter,
-					  &keylist_single(&reservation),
-					  &disk_res,
+		ret = bch_btree_insert_at(&iter, &reservation, &disk_res,
 					  &i_sectors_hook.hook,
 					  &ei->journal_seq,
 					  BTREE_INSERT_ATOMIC|
