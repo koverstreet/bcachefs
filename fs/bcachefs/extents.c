@@ -1051,6 +1051,65 @@ static void handle_existing_key_newer(struct btree_iter *iter,
 
 #define MAX_LOCK_HOLD_TIME	(5 * NSEC_PER_MSEC)
 
+static bool extent_insert_should_stop(struct btree_iter *iter,
+				      struct bkey_i *insert,
+				      struct journal_res *res,
+				      u64 start_time,
+				      unsigned nr_done)
+{
+	struct cache_set *c = iter->c;
+	struct btree *b = iter->nodes[0];
+
+	/*
+	 * Check if we have sufficient space in both the btree node and the
+	 * journal reservation:
+	 *
+	 * Each insert checks for room in the journal entry, but we check for
+	 * room in the btree node up-front. In the worst case, bkey_cmpxchg()
+	 * will insert two keys, and one iteration of this room will insert one
+	 * key, so we need room for three keys.
+	 *
+	 * A discard operation can end up overwriting a _lot_ of extents and
+	 * doing a lot of work under the btree node write lock - bail out if
+	 * we've been running for too long and readers are waiting on the lock:
+	 */
+	if (!bch_btree_node_insert_fits(c, b, insert->k.u64s))
+		return true;
+	else if (!journal_res_insert_fits(c, res, insert, true))
+		return true;
+	else if (nr_done > 10 &&
+		 time_after64(local_clock(), start_time +
+			      MAX_LOCK_HOLD_TIME) &&
+		 !list_empty_careful(&b->lock.wait_list[SIX_LOCK_read]))
+		return true;
+	else
+		return false;
+}
+
+/*
+ * Update iter->pos, marking how much of @insert we've processed, and call hook
+ * fn:
+ */
+static void extent_insert_do_pos_hook(struct btree_insert_hook *hook,
+			      struct btree_iter *iter,
+			      struct bkey_i *insert,
+			      struct bkey_s k,
+			      struct journal_res *res,
+			      struct bucket_stats_cache_set *stats)
+{
+	struct bpos next_pos = k.k && bkey_cmp(k.k->p, insert->k.p) < 0
+		? k.k->p : insert->k.p;
+
+	if (hook)
+		hook->fn(hook, iter, k.s_c, insert, res, stats);
+
+	/*
+	 * Don't update iter->pos until after calling the hook,
+	 * because the hook fn may use it:
+	 */
+	bch_btree_iter_set_pos(iter, next_pos);
+}
+
 /**
  * bch_extent_insert_fixup - insert a new extent and deal with overlaps
  *
@@ -1103,8 +1162,6 @@ void bch_insert_fixup_extent(struct btree_iter *iter,
 	const struct bkey_format *f = &b->keys.format;
 	struct bkey_packed *_k;
 	struct bkey unpacked;
-	struct bkey_s k;
-	struct bpos next_pos;
 	BKEY_PADDED(k) split;
 	struct bucket_stats_cache_set stats = { 0 };
 	unsigned nr_done = 0;
@@ -1153,37 +1210,15 @@ void bch_insert_fixup_extent(struct btree_iter *iter,
 	while (insert->k.size &&
 	       (_k = bch_btree_node_iter_peek_overlapping(node_iter, &b->keys,
 							  &insert->k))) {
-		bool needs_split, res_full, need_unlock;
+		struct bkey_s k = __bkey_disassemble(f, _k, &unpacked);
 
-		k = __bkey_disassemble(f, _k, &unpacked);
-		/*
-		 * First check if we have sufficient space in both the btree
-		 * node and the journal reservation:
-		 *
-		 * Each insert checks for room in the journal entry, but we
-		 * check for room in the btree node up-front. In the worst
-		 * case, bkey_cmpxchg() will insert two keys, and one
-		 * iteration of this room will insert one key, so we need
-		 * room for three keys.
-		 */
-		needs_split = !bch_btree_node_insert_fits(c, b, insert->k.u64s);
-		res_full = !journal_res_insert_fits(c, res, insert, true);
-
-		/*
-		 * A discard operation can end up overwriting a _lot_ of
-		 * extents and doing a lot of work under the btree node write
-		 * lock - bail out if we've been running for too long and
-		 * readers are waiting on the lock:
-		 */
-		need_unlock = nr_done > 10 &&
-			time_after64(local_clock(), start_time +
-				     MAX_LOCK_HOLD_TIME) &&
-			!list_empty_careful(&b->lock.wait_list[SIX_LOCK_read]);
-
-		if (needs_split || res_full || need_unlock) {
+		if (extent_insert_should_stop(iter, insert, res,
+					      start_time, nr_done)) {
 			/*
-			 * XXX: would be better to explicitly signal that we
-			 * need to split
+			 * Bailing out early - trim the portion of @insert we
+			 * haven't checked against existing extents (the portion
+			 * after iter->pos), and then insert the part we have
+			 * done, if any:
 			 */
 			bch_cut_subtract_back(iter, iter->pos,
 					      bkey_i_to_s(insert), &stats);
@@ -1217,19 +1252,8 @@ void bch_insert_fixup_extent(struct btree_iter *iter,
 		 * operations.
 		 */
 		if (k.k->size) {
-			next_pos = bkey_cmp(k.k->p, insert->k.p) < 0
-				? k.k->p : insert->k.p;
-
-			if (hook)
-				hook->fn(hook, iter, k.s_c, insert,
-					 res, &stats);
-
-			/*
-			 * Don't update iter->pos until after calling the hook,
-			 * because the hook fn may use it:
-			 */
-			bch_btree_iter_set_pos(iter, next_pos);
-
+			extent_insert_do_pos_hook(hook, iter, insert,
+						  k, res, &stats);
 			if (!insert->k.size)
 				goto apply_stats;
 
@@ -1240,7 +1264,6 @@ void bch_insert_fixup_extent(struct btree_iter *iter,
 		}
 
 		/* k is the key currently in the tree, 'insert' is the new key */
-
 		switch (bch_extent_overlap(&insert->k, k.k)) {
 		case BCH_EXTENT_OVERLAP_FRONT:
 			/* insert and k share the start, invalidate in k */
@@ -1304,13 +1327,7 @@ void bch_insert_fixup_extent(struct btree_iter *iter,
 		}
 	}
 
-	next_pos = insert->k.p;
-
-	if (hook)
-		hook->fn(hook, iter, bkey_s_c_null, insert, res, &stats);
-
-	bch_btree_iter_set_pos(iter, next_pos);
-
+	extent_insert_do_pos_hook(hook, iter, insert, bkey_s_null, res, &stats);
 	if (!insert->k.size)
 		goto apply_stats;
 
