@@ -1166,9 +1166,8 @@ void bch_insert_fixup_extent(struct btree_iter *iter,
 		 * iteration of this room will insert one key, so we need
 		 * room for three keys.
 		 */
-		needs_split = (bch_btree_keys_u64s_remaining(c, b) <
-			       BKEY_EXTENT_U64s_MAX * 3);
-		res_full = journal_res_full(res, &insert->k);
+		needs_split = !bch_btree_node_insert_fits(c, b, insert->k.u64s);
+		res_full = !journal_res_insert_fits(c, res, insert, true);
 
 		/*
 		 * A discard operation can end up overwriting a _lot_ of

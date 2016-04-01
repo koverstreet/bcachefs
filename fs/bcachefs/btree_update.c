@@ -833,28 +833,6 @@ enum btree_insert_status {
 	BTREE_INSERT_ERROR,
 };
 
-static bool __have_enough_space(struct cache_set *c, struct btree *b,
-				unsigned u64s)
-{
-	/*
-	 * For updates to extents, bch_insert_fixup_extent()
-	 * needs room for at least three keys to make forward
-	 * progress.
-	 */
-	u64s = b->keys.ops->is_extents ? BKEY_EXTENT_U64s_MAX * 3 : u64s;
-
-	return u64s <= bch_btree_keys_u64s_remaining(c, b);
-
-}
-
-static bool have_enough_space(struct cache_set *c, struct btree *b,
-			      struct keylist *insert_keys)
-{
-	return __have_enough_space(c, b, b->level
-			? bch_keylist_nkeys(insert_keys)
-			: bch_keylist_front(insert_keys)->k.u64s);
-}
-
 static void verify_keys_sorted(struct keylist *l)
 {
 #ifdef CONFIG_BCACHEFS_DEBUG
@@ -1216,7 +1194,8 @@ bch_btree_insert_keys_interior(struct btree *b,
 
 	btree_node_lock_for_insert(b, iter);
 
-	if (!have_enough_space(iter->c, b, insert_keys)) {
+	if (bch_keylist_nkeys(insert_keys) >
+	    bch_btree_keys_u64s_remaining(iter->c, b)) {
 		btree_node_unlock_write(b, iter);
 		return BTREE_INSERT_NEED_SPLIT;
 	}
@@ -1321,13 +1300,14 @@ bch_btree_insert_keys_leaf(struct btree *b,
 				break;
 			}
 
-			if (!have_enough_space(iter->c, b, insert_keys)) {
+			if (!bch_btree_node_insert_fits(iter->c, b, k->k.u64s)) {
 				done = true;
 				need_split = true;
 				break;
 			}
 
-			if (journal_res_full(&res, &k->k))
+			if (!journal_res_insert_fits(iter->c, &res, k,
+						     iter->is_extents))
 				break;
 
 			btree_insert_key(iter, b, &iter->node_iters[b->level],
@@ -1445,7 +1425,8 @@ static void btree_split_insert_keys(struct btree_iter *iter, struct btree *b,
 	while (!bch_keylist_empty(keys)) {
 		k = bch_keylist_front(keys);
 
-		BUG_ON(!have_enough_space(iter->c, b, keys));
+		BUG_ON(bch_keylist_nkeys(keys) >
+		       bch_btree_keys_u64s_remaining(iter->c, b));
 		BUG_ON(bkey_cmp(k->k.p, b->data->min_key) < 0);
 
 		if (bkey_cmp(k->k.p, b->key.k.p) > 0) {
@@ -1867,7 +1848,8 @@ retry:
 		 * Check against total, not just the key for this iterator,
 		 * because multiple inserts might be going to the same node:
 		 */
-		if (!__have_enough_space(c, i->iter->nodes[0], u64s))
+		if (!bch_btree_node_insert_fits(c,
+				i->iter->nodes[0], u64s))
 			goto split;
 	}
 

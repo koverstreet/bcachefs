@@ -194,6 +194,26 @@ static inline size_t bch_btree_keys_u64s_remaining(struct cache_set *c,
 #endif
 }
 
+/*
+ * write lock must be held on @b (else the dirty bset that we were going to
+ * insert into could be written out from under us)
+ */
+static inline bool bch_btree_node_insert_fits(struct cache_set *c,
+				struct btree *b, unsigned u64s)
+{
+	if (b->keys.ops->is_extents) {
+		/* The insert key might have to be split by cmpxchg: */
+		u64s *= 2;
+
+		/* And the insert key might split an existing key
+		 * (bch_insert_fixup_extent() -> BCH_EXTENT_OVERLAP_MIDDLE case:
+		 */
+		u64s += BKEY_EXTENT_U64s_MAX;
+	}
+
+	return u64s <= bch_btree_keys_u64s_remaining(c, b);
+}
+
 void bch_btree_insert_node(struct btree *, struct btree_iter *,
 			   struct keylist *, struct btree_reserve *,
 			   struct async_split *as);
