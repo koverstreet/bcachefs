@@ -209,7 +209,7 @@ static bool set_inc_field(struct pack_state *state, unsigned field, u64 v)
 }
 
 /*
- * Note: does NOT set out->format
+ * Note: does NOT set out->format (we don't know what it should be here!)
  */
 static bool bch_bkey_transform_key(const struct bkey_format *out_f,
 				   struct bkey_packed *out,
@@ -223,6 +223,13 @@ static bool bch_bkey_transform_key(const struct bkey_format *out_f,
 	for (i = 0; i < BKEY_NR_FIELDS; i++)
 		if (!set_inc_field(&out_s, i, get_inc_field(&in_s, i)))
 			return false;
+
+#ifdef CONFIG_BCACHEFS_DEBUG
+	{
+		struct bkey u = bkey_unpack_key(in_f, in);
+		BUG_ON(bkey_start_offset(&u) < out_f->field_offset[BKEY_FIELD_OFFSET]);
+	}
+#endif
 
 	pack_state_finish(&out_s);
 	out->u64s	= out_f->key_u64s + in->u64s - in_f->key_u64s;
@@ -301,6 +308,13 @@ bool bkey_pack_key(struct bkey_packed *out, const struct bkey *in,
 	    !set_inc_field(&state, BKEY_FIELD_SNAPSHOT,	in->p.snapshot) ||
 	    !set_inc_field(&state, BKEY_FIELD_SIZE,	in->size) ||
 	    !set_inc_field(&state, BKEY_FIELD_VERSION,	in->version))
+		return false;
+
+	/*
+	 * Extents - we have to guarantee that if an extent is packed, a trimmed
+	 * version will also pack:
+	 */
+	if (bkey_start_offset(in) < format->field_offset[BKEY_FIELD_OFFSET])
 		return false;
 
 	pack_state_finish(&state);
