@@ -121,6 +121,8 @@ struct async_split *__bch_async_split_alloc(struct btree *[], unsigned,
 					    struct btree_iter *);
 struct async_split *bch_async_split_alloc(struct btree *, struct btree_iter *);
 
+void bch_async_split_will_free_node(struct async_split *, struct btree *);
+
 void bch_btree_set_root_initial(struct cache_set *, struct btree *,
 				struct btree_reserve *);
 

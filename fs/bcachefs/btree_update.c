@@ -1024,8 +1024,7 @@ static void async_split_updated_root(struct async_split *as,
  * nodes and thus outstanding async_splits - redirect @b's async_splits to point
  * to this async_split:
  */
-static void async_split_will_free_node(struct async_split *as,
-				       struct btree *b)
+void bch_async_split_will_free_node(struct async_split *as, struct btree *b)
 {
 	mutex_lock(&as->c->async_split_lock);
 
@@ -1275,7 +1274,7 @@ static void btree_split(struct btree *b, struct btree_iter *iter,
 	BUG_ON(!parent && (b != btree_node_root(b)));
 	BUG_ON(!btree_node_intent_locked(iter, btree_node_root(b)->level));
 
-	async_split_will_free_node(as, b);
+	bch_async_split_will_free_node(as, b);
 
 	n1 = btree_node_alloc_replacement(c, b, reserve);
 
@@ -1977,6 +1976,8 @@ int bch_btree_node_rewrite(struct btree *b, struct btree_iter *iter, bool wait)
 	}
 
 	as = bch_async_split_alloc(b, iter);
+
+	bch_async_split_will_free_node(as, b);
 
 	n = btree_node_alloc_replacement(c, b, reserve);
 	six_unlock_write(&n->lock);
