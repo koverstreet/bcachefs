@@ -1283,13 +1283,19 @@ static int bch_direct_IO_read(struct cache_set *c, struct kiocb *req,
 {
 	struct dio_read *dio;
 	struct bio *bio;
-	unsigned long inum = inode->i_ino;
-	ssize_t ret = 0;
-	size_t pages = iov_iter_npages(iter, BIO_MAX_PAGES);
 	bool sync = is_sync_kiocb(req);
-	loff_t i_size;
+	ssize_t ret;
 
-	bio = bio_alloc_bioset(GFP_KERNEL, pages, bch_dio_read_bioset);
+	ret = min_t(loff_t, iter->count,
+		    max_t(loff_t, 0, i_size_read(inode) - offset));
+	iov_iter_truncate(iter, round_up(ret, block_bytes(c)));
+
+	if (!ret)
+		return ret;
+
+	bio = bio_alloc_bioset(GFP_KERNEL,
+			       iov_iter_npages(iter, BIO_MAX_PAGES),
+			       bch_dio_read_bioset);
 
 	bio->bi_end_io = bch_direct_IO_read_endio;
 
@@ -1312,23 +1318,13 @@ static int bch_direct_IO_read(struct cache_set *c, struct kiocb *req,
 	}
 
 	dio->req	= req;
-	dio->ret	= iter->count;
-
-	i_size = i_size_read(inode);
-	if (offset + dio->ret > i_size) {
-		dio->ret = max_t(loff_t, 0, i_size - offset);
-		iter->count = round_up(dio->ret, PAGE_SIZE);
-	}
-
-	if (!dio->ret) {
-		closure_put(&dio->cl);
-		goto out;
-	}
+	dio->ret	= ret;
 
 	goto start;
 	while (iter->count) {
-		pages = iov_iter_npages(iter, BIO_MAX_PAGES);
-		bio = bio_alloc_bioset(GFP_KERNEL, pages, &c->bio_read);
+		bio = bio_alloc_bioset(GFP_KERNEL,
+				       iov_iter_npages(iter, BIO_MAX_PAGES),
+				       &c->bio_read);
 		bio->bi_end_io		= bch_direct_IO_read_split_endio;
 start:
 		bio_set_op_attrs(bio, REQ_OP_READ, REQ_SYNC);
@@ -1351,9 +1347,9 @@ start:
 
 		bch_read(c, container_of(bio,
 				struct bch_read_bio, bio),
-			 inum);
+			 inode->i_ino);
 	}
-out:
+
 	if (sync) {
 		closure_sync(&dio->cl);
 		closure_debug_destroy(&dio->cl);
