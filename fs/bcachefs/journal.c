@@ -120,6 +120,13 @@ static void bch_journal_add_btree_root(struct journal *j, enum btree_id id,
 
 static inline void bch_journal_add_prios(struct journal *j)
 {
+	/*
+	 * no prio bucket ptrs yet... XXX should change the allocator so this
+	 * can't happen:
+	 */
+	if (!j->nr_prio_buckets)
+		return;
+
 	bch_journal_add_entry(j, j->prio_buckets, j->nr_prio_buckets,
 			      JKEYS_PRIO_PTRS, 0, 0);
 }
@@ -766,8 +773,13 @@ const char *bch_journal_read(struct cache_set *c, struct list_head *list)
 	mutex_unlock(&c->journal.blacklist_lock);
 
 	prio_ptrs = bch_journal_find_entry(j, JKEYS_PRIO_PTRS, 0);
-	if (!prio_ptrs)
-		return "prio bucket ptrs not found";
+	if (!prio_ptrs) {
+		/*
+		 * there weren't any prio bucket ptrs yet... XXX should change
+		 * the allocator so this can't happen:
+		 */
+		return NULL;
+	}
 
 	memcpy(c->journal.prio_buckets,
 	       prio_ptrs->_data,
