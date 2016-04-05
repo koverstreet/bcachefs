@@ -1737,7 +1737,6 @@ void bch_journal_res_put(struct journal *j, struct journal_res *res,
 			 u64 *journal_seq)
 {
 	union journal_res_state s;
-	bool do_write = false;
 
 	if (!res->ref)
 		return;
@@ -1762,18 +1761,13 @@ void bch_journal_res_put(struct journal *j, struct journal_res *res,
 	if (journal_seq)
 		*journal_seq = j->seq;
 
-	if (test_bit(JOURNAL_NEED_WRITE, &j->flags) &&
-	    !test_bit(JOURNAL_IO_IN_FLIGHT, &j->flags)) {
-		journal_entry_close(j);
-		do_write = true;
-	}
-
 	s.v = atomic64_sub_return(journal_res_state(1, 0).v,
 				  &j->reservations.counter);
 	BUG_ON((int) s.count < 0);
 
 	if (!s.count) {
-		if (do_write) {
+		if (test_bit(JOURNAL_NEED_WRITE, &j->flags) &&
+		    !test_bit(JOURNAL_IO_IN_FLIGHT, &j->flags)) {
 			spin_lock(&j->lock);
 			journal_unlock(j);
 		}
