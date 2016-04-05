@@ -1064,11 +1064,14 @@ int bch_cache_journal_alloc(struct cache *ca)
 	if (dynamic_fault("bcache:add:journal_alloc"))
 		return -ENOMEM;
 
-	/* clamp journal size to 512MB (in sectors) */
-
+	/*
+	 * clamp journal size to 1024 buckets or 512MB (in sectors), whichever
+	 * is smaller:
+	 */
 	ret = bch_set_nr_journal_buckets(ca,
-			clamp_t(unsigned, ca->mi.nbuckets >> 8,
-				8, (1 << 20) / ca->mi.bucket_size));
+			clamp_t(unsigned, ca->mi.nbuckets >> 8, 8,
+				min(1 << 10,
+				    (1 << 20) / ca->mi.bucket_size)));
 	if (ret)
 		return ret;
 
