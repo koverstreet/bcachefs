@@ -60,7 +60,7 @@ static int issue_moving_gc_move(struct moving_queue *q,
 
 	bch_replace_init(&io->replace, bkey_i_to_s_c(k));
 
-	bch_write_op_init(&io->op, c, &io->bio,
+	bch_write_op_init(&io->op, c, &io->wbio,
 			  (struct disk_reservation) { 0 },
 			  NULL, bkey_i_to_s_c(k),
 			  &io->replace.hook, NULL,

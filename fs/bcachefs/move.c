@@ -72,10 +72,8 @@ static void bch_queue_write(struct moving_queue *q)
 	queue_work(q->wq, &q->work);
 }
 
-static void moving_init(struct moving_io *io)
+static void moving_init(struct moving_io *io, struct bio *bio)
 {
-	struct bio *bio = &io->bio.bio.bio;
-
 	bio_init(bio);
 	bio_get(bio);
 	bio_set_prio(bio, IOPRIO_PRIO_VALUE(IOPRIO_CLASS_IDLE, 0));
@@ -84,7 +82,7 @@ static void moving_init(struct moving_io *io)
 	bio->bi_max_vecs	= DIV_ROUND_UP(io->key.k.size,
 					       PAGE_SECTORS);
 	bio->bi_private		= &io->cl;
-	bio->bi_io_vec		= bio->bi_inline_vecs;
+	bio->bi_io_vec		= io->bi_inline_vecs;
 	bch_bio_map(bio, NULL);
 }
 
@@ -100,9 +98,9 @@ struct moving_io *moving_io_alloc(struct bkey_s_c k)
 
 	bkey_reassemble(&io->key, k);
 
-	moving_init(io);
+	moving_init(io, &io->rbio.bio);
 
-	if (bio_alloc_pages(&io->bio.bio.bio, GFP_KERNEL)) {
+	if (bio_alloc_pages(&io->rbio.bio, GFP_KERNEL)) {
 		kfree(io);
 		return NULL;
 	}
@@ -115,7 +113,7 @@ void moving_io_free(struct moving_io *io)
 	struct bio_vec *bv;
 	int i;
 
-	bio_for_each_segment_all(bv, &io->bio.bio.bio, i)
+	bio_for_each_segment_all(bv, &io->wbio.bio.bio, i)
 		if (bv->bv_page)
 			__free_page(bv->bv_page);
 
@@ -203,7 +201,7 @@ static void write_moving(struct moving_io *io)
 	if (op->error || stopped)
 		closure_return_with_destructor(&io->cl, moving_io_destructor);
 	else {
-		moving_init(io);
+		moving_init(io, &io->wbio.bio.bio);
 
 		op->bio->bio.bio.bi_iter.bi_sector = bkey_start_offset(&io->key.k);
 
@@ -481,10 +479,10 @@ static void __bch_data_move(struct closure *cl)
 	if (io->context->rate)
 		bch_ratelimit_increment(io->context->rate, size);
 
-	bio_set_op_attrs(&io->bio.bio.bio, REQ_OP_READ, 0);
-	io->bio.bio.bio.bi_end_io	= read_moving_endio;
+	bio_set_op_attrs(&io->rbio.bio, REQ_OP_READ, 0);
+	io->rbio.bio.bi_end_io	= read_moving_endio;
 
-	bch_read_extent(io->op.c, &io->bio.bio.bio,
+	bch_read_extent(io->op.c, &io->rbio,
 			bkey_i_to_s_c(&io->key),
 			&pick, 0, BCH_READ_IS_LAST);
 }

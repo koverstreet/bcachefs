@@ -87,7 +87,7 @@ struct dio_read {
 	struct closure		cl;
 	struct kiocb		*req;
 	long			ret;
-	struct bio		bio;
+	struct bch_read_bio	rbio;
 };
 
 extern struct bio_set *bch_dio_read_bioset;

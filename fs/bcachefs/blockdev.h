@@ -57,7 +57,10 @@ struct search {
 	/* Stack frame for bio_complete */
 	struct closure		cl;
 
-	struct bch_write_bio	bio;
+	union {
+	struct bch_read_bio	rbio;
+	struct bch_write_bio	wbio;
+	};
 	/* Not modified */
 	struct bio		*orig_bio;
 	struct bcache_device	*d;

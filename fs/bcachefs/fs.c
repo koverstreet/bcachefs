@@ -1466,8 +1466,7 @@ int __init bch_fs_init(void)
 	if (!bch_writepage_bioset)
 		goto err;
 
-
-	bch_dio_read_bioset = bioset_create(4, offsetof(struct dio_read, bio));
+	bch_dio_read_bioset = bioset_create(4, offsetof(struct dio_read, rbio.bio));
 	if (!bch_dio_read_bioset)
 		goto err;
 

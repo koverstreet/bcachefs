@@ -635,8 +635,9 @@ static void bch_add_page_sectors(struct bio *bio, const struct bkey *k)
 	}
 }
 
-static void bchfs_read(struct cache_set *c, struct bio *bio, u64 inode)
+static void bchfs_read(struct cache_set *c, struct bch_read_bio *rbio, u64 inode)
 {
+	struct bio *bio = &rbio->bio;
 	struct btree_iter iter;
 	struct bkey_s_c k;
 	struct bio_vec *bv;
@@ -698,7 +699,7 @@ static void bchfs_read(struct cache_set *c, struct bio *bio, u64 inode)
 			PTR_BUCKET(pick.ca, &pick.ptr)->read_prio =
 				c->prio_clock[READ].hand;
 
-			bch_read_extent(c, bio, k, &pick,
+			bch_read_extent(c, rbio, k, &pick,
 					bio->bi_iter.bi_sector -
 					bkey_start_offset(k.k),
 					BCH_READ_FORCE_BOUNCE|
@@ -733,30 +734,32 @@ int bch_readpages(struct file *file, struct address_space *mapping,
 {
 	struct inode *inode = mapping->host;
 	struct cache_set *c = inode->i_sb->s_fs_info;
-	struct bio *bio = NULL;
+	struct bch_read_bio *rbio = NULL;
 	struct page *page;
 
 	pr_debug("reading %u pages", nr_pages);
 
 	for_each_readpage_page(mapping, pages, nr_pages, page) {
 again:
-		if (!bio) {
-			bio = bio_alloc(GFP_NOFS,
-					min_t(unsigned, nr_pages,
-					      BIO_MAX_PAGES));
+		if (!rbio) {
+			rbio = container_of(bio_alloc_bioset(GFP_NOFS,
+						min_t(unsigned, nr_pages,
+						      BIO_MAX_PAGES),
+						&c->bio_read),
+					   struct bch_read_bio, bio);
 
-			bio->bi_end_io = bch_readpages_end_io;
+			rbio->bio.bi_end_io = bch_readpages_end_io;
 		}
 
-		if (bch_bio_add_page(bio, page)) {
-			bchfs_read(c, bio, inode->i_ino);
-			bio = NULL;
+		if (bch_bio_add_page(&rbio->bio, page)) {
+			bchfs_read(c, rbio, inode->i_ino);
+			rbio = NULL;
 			goto again;
 		}
 	}
 
-	if (bio)
-		bchfs_read(c, bio, inode->i_ino);
+	if (rbio)
+		bchfs_read(c, rbio, inode->i_ino);
 
 	pr_debug("success");
 	return 0;
@@ -767,14 +770,16 @@ int bch_readpage(struct file *file, struct page *page)
 	struct address_space *mapping = page->mapping;
 	struct inode *inode = mapping->host;
 	struct cache_set *c = inode->i_sb->s_fs_info;
-	struct bio *bio;
+	struct bch_read_bio *rbio;
 
-	bio = bio_alloc(GFP_NOFS, 1);
-	bio_set_op_attrs(bio, REQ_OP_READ, REQ_SYNC);
-	bio->bi_end_io = bch_readpages_end_io;
+	rbio = container_of(bio_alloc_bioset(GFP_NOFS, 1,
+					    &c->bio_read),
+			   struct bch_read_bio, bio);
+	bio_set_op_attrs(&rbio->bio, REQ_OP_READ, REQ_SYNC);
+	rbio->bio.bi_end_io = bch_readpages_end_io;
 
-	bch_bio_add_page(bio, page);
-	bchfs_read(c, bio, inode->i_ino);
+	bch_bio_add_page(&rbio->bio, page);
+	bchfs_read(c, rbio, inode->i_ino);
 
 	return 0;
 }
@@ -1047,22 +1052,24 @@ static int bch_read_single_page(struct page *page,
 {
 	struct inode *inode = mapping->host;
 	struct cache_set *c = inode->i_sb->s_fs_info;
-	struct bio *bio;
+	struct bch_read_bio *rbio;
 	int ret = 0;
 	DECLARE_COMPLETION_ONSTACK(done);
 
-	bio = bio_alloc(GFP_NOFS, 1);
-	bio_set_op_attrs(bio, REQ_OP_READ, REQ_SYNC);
-	bio->bi_private = &done;
-	bio->bi_end_io = bch_read_single_page_end_io;
-	bch_bio_add_page(bio, page);
+	rbio = container_of(bio_alloc_bioset(GFP_NOFS, 1,
+					     &c->bio_read),
+			    struct bch_read_bio, bio);
+	bio_set_op_attrs(&rbio->bio, REQ_OP_READ, REQ_SYNC);
+	rbio->bio.bi_private = &done;
+	rbio->bio.bi_end_io = bch_read_single_page_end_io;
+	bch_bio_add_page(&rbio->bio, page);
 
-	bchfs_read(c, bio, inode->i_ino);
+	bchfs_read(c, rbio, inode->i_ino);
 	wait_for_completion(&done);
 
 	if (!ret)
-		ret = bio->bi_error;
-	bio_put(bio);
+		ret = rbio->bio.bi_error;
+	bio_put(&rbio->bio);
 
 	if (ret < 0)
 		return ret;
@@ -1218,7 +1225,7 @@ static void bch_dio_read_complete(struct closure *cl)
 	struct dio_read *dio = container_of(cl, struct dio_read, cl);
 
 	dio->req->ki_complete(dio->req, dio->ret, 0);
-	bio_put(&dio->bio);
+	bio_put(&dio->rbio.bio);
 }
 
 static void bch_direct_IO_read_endio(struct bio *bio)
@@ -1247,7 +1254,7 @@ static int bch_direct_IO_read(struct cache_set *c, struct kiocb *req,
 	bio = bio_alloc_bioset(GFP_KERNEL, pages, bch_dio_read_bioset);
 	bio_get(bio);
 
-	dio = container_of(bio, struct dio_read, bio);
+	dio = container_of(bio, struct dio_read, rbio.bio);
 	closure_init(&dio->cl, NULL);
 
 	/*
@@ -1282,7 +1289,7 @@ static int bch_direct_IO_read(struct cache_set *c, struct kiocb *req,
 	goto start;
 	while (iter->count) {
 		pages = iov_iter_npages(iter, BIO_MAX_PAGES);
-		bio = bio_alloc(GFP_KERNEL, pages);
+		bio = bio_alloc_bioset(GFP_KERNEL, pages, &c->bio_read);
 start:
 		bio_set_op_attrs(bio, REQ_OP_READ, REQ_SYNC);
 		bio->bi_iter.bi_sector	= offset >> 9;
@@ -1303,14 +1310,16 @@ start:
 		if (iter->count)
 			closure_get(&dio->cl);
 
-		bch_read(c, bio, inum);
+		bch_read(c, container_of(bio,
+				struct bch_read_bio, bio),
+			 inum);
 	}
 out:
 	if (sync) {
 		closure_sync(&dio->cl);
 		closure_debug_destroy(&dio->cl);
 		ret = dio->ret;
-		bio_put(&dio->bio);
+		bio_put(&dio->rbio.bio);
 		return ret;
 	} else {
 		return -EIOCBQUEUED;

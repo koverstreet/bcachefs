@@ -93,8 +93,10 @@ struct moving_io {
 	unsigned		read_completed:1;
 	unsigned		write_issued:1;
 
+	struct bch_read_bio	rbio;
+	struct bch_write_bio	wbio;
 	/* Must be last since it is variable size */
-	struct bch_write_bio	bio;
+	struct bio_vec		bi_inline_vecs[0];
 };
 
 struct moving_io *moving_io_alloc(struct bkey_s_c);

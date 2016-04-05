@@ -211,7 +211,8 @@ static void bio_complete(struct search *s)
 
 static void do_bio_hook(struct search *s, struct bio *orig_bio)
 {
-	struct bio *bio = &s->bio.bio.bio;
+	int rw = bio_data_dir(orig_bio);
+	struct bio *bio = rw ? &s->wbio.bio.bio : &s->rbio.bio;
 
 	bio_init(bio);
 	__bio_clone_fast(bio, orig_bio);
@@ -277,7 +278,7 @@ static void cached_dev_bio_complete(struct closure *cl)
 static void cached_dev_read_error(struct closure *cl)
 {
 	struct search *s = container_of(cl, struct search, cl);
-	struct bio *bio = &s->bio.bio.bio;
+	struct bio *bio = &s->rbio.bio;
 
 	if (s->recoverable) {
 		/* Read bucket invalidate races are handled here, also plain
@@ -393,7 +394,7 @@ nopromote:
 static void cached_dev_read(struct cached_dev *dc, struct search *s)
 {
 	struct closure *cl = &s->cl;
-	struct bio *bio = &s->bio.bio.bio;
+	struct bio *bio = &s->rbio.bio;
 	struct btree_iter iter;
 	struct bkey_s_c k;
 
@@ -439,7 +440,7 @@ retry:
 			if (!bkey_extent_is_cached(k.k))
 				s->read_dirty_data = true;
 
-			bch_read_extent(s->iop.c, bio, k, &pick,
+			bch_read_extent(s->iop.c, &s->rbio, k, &pick,
 					bio->bi_iter.bi_sector -
 					bkey_start_offset(k.k),
 					BCH_READ_FORCE_BOUNCE|
@@ -480,7 +481,7 @@ static void cached_dev_write_complete(struct closure *cl)
 static void cached_dev_write(struct cached_dev *dc, struct search *s)
 {
 	struct closure *cl = &s->cl;
-	struct bio *bio = &s->bio.bio.bio;
+	struct bio *bio = &s->wbio.bio.bio;
 	unsigned inode = bcache_dev_inum(&dc->disk);
 	bool writeback = false;
 	bool bypass = s->bypass;
@@ -556,7 +557,7 @@ static void cached_dev_write(struct cached_dev *dc, struct search *s)
 	if (bypass)
 		flags |= BCH_WRITE_DISCARD;
 
-	bch_write_op_init(&s->iop, dc->disk.c, &s->bio,
+	bch_write_op_init(&s->iop, dc->disk.c, &s->wbio,
 			  (struct disk_reservation) { 0 }, NULL,
 			  bkey_to_s_c(&insert_key),
 			  NULL, NULL, flags);
@@ -580,8 +581,12 @@ static void __cached_dev_make_request(struct request_queue *q, struct bio *bio)
 	bio->bi_iter.bi_sector += le64_to_cpu(dc->disk_sb.sb->data_offset);
 
 	if (cached_dev_get(dc)) {
+		struct bio *clone;
+
 		s = search_alloc(bio, d);
 		trace_bcache_request_start(s->d, bio);
+
+		clone = rw ? &s->wbio.bio.bio : &s->rbio.bio;
 
 		if (!bio->bi_iter.bi_size) {
 			if (s->orig_bio->bi_opf & (REQ_PREFLUSH|REQ_FUA))
@@ -592,7 +597,7 @@ static void __cached_dev_make_request(struct request_queue *q, struct bio *bio)
 			 * If it's a flush, we send the flush to the backing
 			 * device too
 			 */
-			closure_bio_submit(&s->bio.bio.bio, &s->cl);
+			closure_bio_submit(clone, &s->cl);
 
 			continue_at(&s->cl, cached_dev_bio_complete, NULL);
 		} else {
@@ -673,9 +678,9 @@ static void __blockdev_volume_make_request(struct request_queue *q,
 
 	trace_bcache_request_start(d, bio);
 
-	if (!bio->bi_iter.bi_size) {
-		s = search_alloc(bio, d);
+	s = search_alloc(bio, d);
 
+	if (!bio->bi_iter.bi_size) {
 		if (s->orig_bio->bi_opf & (REQ_PREFLUSH|REQ_FUA))
 			bch_journal_flush_async(&s->iop.c->journal,
 						&s->cl);
@@ -697,17 +702,16 @@ static void __blockdev_volume_make_request(struct request_queue *q,
 		if (bio_op(bio) == REQ_OP_DISCARD)
 			flags |= BCH_WRITE_DISCARD;
 
-		s = search_alloc(bio, d);
-
-		bch_write_op_init(&s->iop, d->c, &s->bio, res, NULL,
+		bch_write_op_init(&s->iop, d->c, &s->wbio, res, NULL,
 				  bkey_to_s_c(&KEY(s->inode, 0, 0)),
 				  NULL, NULL, flags);
 
 		closure_call(&s->iop.cl, bch_write, NULL, &s->cl);
-		continue_at(&s->cl, search_free, NULL);
 	} else {
-		bch_read(d->c, bio, bcache_dev_inum(d));
+		closure_get(&s->cl);
+		bch_read(d->c, &s->rbio, bcache_dev_inum(d));
 	}
+	continue_at(&s->cl, search_free, NULL);
 }
 
 static blk_qc_t blockdev_volume_make_request(struct request_queue *q,

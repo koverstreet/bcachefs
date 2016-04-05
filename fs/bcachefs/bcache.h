@@ -709,6 +709,7 @@ struct cache_set {
 
 	/* IO PATH */
 	struct bio_set		bio_read;
+	struct bio_set		bio_read_split;
 	struct bio_set		bio_write;
 	struct mutex		bio_bounce_pages_lock;
 	mempool_t		bio_bounce_pages;

@@ -22,10 +22,19 @@ struct bch_read_bio {
 	 * was checksummed or compressed we'll also have to allocate bounce
 	 * buffers and copy the data back into the original bio.
 	 *
-	 * parent denotes the original bio, and parent_iter is where in parent
-	 * we copy the data back to.
+	 * If we didn't have to split, we have to save and restore the original
+	 * bi_end_io - @split below indicates which:
 	 */
-	struct bio		*parent;
+	union {
+	struct bch_read_bio	*parent;
+	bio_end_io_t		*orig_bi_end_io;
+	};
+
+	/*
+	 * Saved copy of parent->bi_iter, from submission time - allows us to
+	 * resubmit on IO error, and also to copy data back to the original bio
+	 * when we're bouncing:
+	 */
 	struct bvec_iter	parent_iter;
 
 	/*
@@ -39,7 +48,8 @@ struct bch_read_bio {
 
 	unsigned		submit_time_us;
 	u16			flags;
-	u8			bounce:1;
+	u8			bounce:1,
+				split:1;
 
 	struct bch_extent_crc64	crc;
 	struct bch_extent_ptr	ptr;
@@ -52,6 +62,12 @@ struct bch_read_bio {
 
 	struct bio		bio;
 };
+
+static inline struct bch_read_bio *
+bch_rbio_parent(struct bch_read_bio *rbio)
+{
+	return rbio->split ? rbio->parent : rbio;
+}
 
 struct bch_write_bio {
 	struct bio		*orig;

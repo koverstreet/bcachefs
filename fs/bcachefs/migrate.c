@@ -54,7 +54,7 @@ static int issue_migration_move(struct cache *ca,
 
 	bch_replace_init(&io->replace, k);
 
-	bch_write_op_init(&io->op, c, &io->bio, res,
+	bch_write_op_init(&io->op, c, &io->wbio, res,
 			  &c->migration_write_point,
 			  k, &io->replace.hook, NULL,
 			  0);

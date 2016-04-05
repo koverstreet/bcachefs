@@ -222,7 +222,7 @@ static int issue_tiering_move(struct moving_queue *q,
 
 	bch_replace_init(&io->replace, bkey_i_to_s_c(&io->key));
 
-	bch_write_op_init(&io->op, c, &io->bio,
+	bch_write_op_init(&io->op, c, &io->wbio,
 			  (struct disk_reservation) { 0 },
 			  &ca->tiering_write_point,
 			  bkey_i_to_s_c(&io->key),
