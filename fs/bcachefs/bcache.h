@@ -267,7 +267,7 @@
 	BCH_TIME_STAT(btree_read,		ms, us)			\
 	BCH_TIME_STAT(journal_write,		us, us)			\
 	BCH_TIME_STAT(journal_delay,		ms, us)			\
-	BCH_TIME_STAT(journal_full,		sec, ms)		\
+	BCH_TIME_STAT(journal_blocked,		sec, ms)		\
 	BCH_TIME_STAT(journal_flush_seq,	us, us)
 
 #include "alloc_types.h"

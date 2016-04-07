@@ -164,12 +164,13 @@ struct journal {
 	unsigned		nr_prio_buckets;
 
 
+	u64			res_get_blocked_start;
 	u64			need_write_time;
 	u64			write_start_time;
 
 	struct time_stats	*write_time;
 	struct time_stats	*delay_time;
-	struct time_stats	*full_time;
+	struct time_stats	*blocked_time;
 	struct time_stats	*flush_seq_time;
 
 #ifdef CONFIG_DEBUG_LOCK_ALLOC

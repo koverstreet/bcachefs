@@ -919,6 +919,12 @@ static void journal_entry_open(struct journal *j)
 					       old.v, new.v)) != old.v);
 
 		wake_up(&j->wait);
+
+		if (j->res_get_blocked_start) {
+			__bch_time_stats_update(j->blocked_time,
+						j->res_get_blocked_start);
+			j->res_get_blocked_start = 0;
+		}
 	}
 }
 
@@ -1815,96 +1821,94 @@ static inline bool journal_res_get_fast(struct journal *j,
 }
 
 static int __journal_res_get(struct journal *j, struct journal_res *res,
-			      unsigned u64s_min, unsigned u64s_max,
-			      u64 *start_time)
+			      unsigned u64s_min, unsigned u64s_max)
 {
 	struct cache_set *c = container_of(j, struct cache_set, journal);
 
-	while (1) {
-		if (journal_res_get_fast(j, res, u64s_min, u64s_max))
-			return 1;
+retry:
+	if (journal_res_get_fast(j, res, u64s_min, u64s_max))
+		return 1;
 
-		/*
-		 * If getting a journal reservation failed, either:
-		 *
-		 * - the current journal entry is full (and we should close it
-		 *   and write it, so a new one can be opened)
-		 *
-		 * - or, the current journal entry is closed - because we
-		 *   allocate/reclaim space before we can open the next one
-		 *   (with journal_next_bucket())
-		 *
-		 * - or, the journal's in an error state.
-		 */
+	/*
+	 * If getting a journal reservation failed, either:
+	 *
+	 * - the current journal entry is full (and we should close it
+	 *   and write it, so a new one can be opened)
+	 *
+	 * - or, the current journal entry is closed - because we
+	 *   allocate/reclaim space before we can open the next one
+	 *   (with journal_next_bucket())
+	 *
+	 * - or, the journal's in an error state.
+	 */
 
-		spin_lock(&j->lock);
+	spin_lock(&j->lock);
 get:
-		/*
-		 * Recheck after taking the lock, so we don't race with another
-		 * thread that just did journal_entry_open() and call
-		 * journal_entry_close() unnecessarily
-		 */
-		if (journal_res_get_fast(j, res, u64s_min, u64s_max)) {
-			spin_unlock(&j->lock);
-			return 1;
-		}
-
-		/* local_clock() can of course be 0 but we don't care */
-		if (*start_time == 0)
-			*start_time = local_clock();
-
-		switch (journal_entry_close(j)) {
-		case JOURNAL_ENTRY_ERROR:
-			spin_unlock(&j->lock);
-			return -EIO;
-		case JOURNAL_ENTRY_INUSE:
-			/*
-			 * current journal entry still in use, can't do anything
-			 * yet:
-			 */
-			spin_unlock(&j->lock);
-			return 0;
-		case JOURNAL_ENTRY_CLOSED:
-			break;
-		}
-
-		if (test_bit(JOURNAL_DIRTY, &j->flags)) {
-			/*
-			 * If the current journal entry isn't empty, try to
-			 * write it - if previous journal write is still in
-			 * flight, we'll have to wait:
-			 */
-
-			if (!journal_try_write(j)) {
-				trace_bcache_journal_entry_full(c);
-				return 0;
-			}
-		} else {
-			int ret;
-
-			/* Try to get a new journal bucket */
-			ret = journal_next_bucket(c);
-			if (ret) {
-				spin_unlock(&j->lock);
-				return ret;
-			}
-
-			if (journal_bucket_has_room(j))
-				goto get;
-
-			/* Still no room, we have to wait */
-
-			spin_unlock(&j->lock);
-			trace_bcache_journal_full(c);
-
-			/*
-			 * Direct reclaim - can't rely on reclaim from work item
-			 * due to freezing..
-			 */
-			journal_reclaim_work(&j->reclaim_work);
-			return 0;
-		}
+	/*
+	 * Recheck after taking the lock, so we don't race with another
+	 * thread that just did journal_entry_open() and call
+	 * journal_entry_close() unnecessarily
+	 */
+	if (journal_res_get_fast(j, res, u64s_min, u64s_max)) {
+		spin_unlock(&j->lock);
+		return 1;
 	}
+
+	switch (journal_entry_close(j)) {
+	case JOURNAL_ENTRY_ERROR:
+		spin_unlock(&j->lock);
+		return -EIO;
+	case JOURNAL_ENTRY_INUSE:
+		/*
+		 * current journal entry still in use, can't do anything
+		 * yet:
+		 */
+		spin_unlock(&j->lock);
+		goto blocked;
+	case JOURNAL_ENTRY_CLOSED:
+		break;
+	}
+
+	if (test_bit(JOURNAL_DIRTY, &j->flags)) {
+		/*
+		 * If the current journal entry isn't empty, try to
+		 * write it - if previous journal write is still in
+		 * flight, we'll have to wait:
+		 */
+
+		if (journal_try_write(j))
+			goto retry;
+
+		trace_bcache_journal_entry_full(c);
+	} else {
+		int ret;
+
+		/* Try to get a new journal bucket */
+		ret = journal_next_bucket(c);
+		if (ret) {
+			spin_unlock(&j->lock);
+			return ret;
+		}
+
+		if (journal_bucket_has_room(j))
+			goto get;
+
+		/* Still no room, we have to wait */
+
+		spin_unlock(&j->lock);
+
+		/*
+		 * Direct reclaim - can't rely on reclaim from work item
+		 * due to freezing..
+		 */
+		journal_reclaim_work(&j->reclaim_work);
+
+		trace_bcache_journal_full(c);
+	}
+blocked:
+	if (!j->res_get_blocked_start)
+		j->res_get_blocked_start = local_clock() ?: 1;
+	return 0;
 }
 
 /*
@@ -1920,7 +1924,6 @@ get:
 int bch_journal_res_get(struct journal *j, struct journal_res *res,
 			unsigned u64s_min, unsigned u64s_max)
 {
-	u64 start_time = 0;
 	int ret;
 
 	BUG_ON(res->ref);
@@ -1928,11 +1931,7 @@ int bch_journal_res_get(struct journal *j, struct journal_res *res,
 
 	wait_event(j->wait,
 		   (ret = __journal_res_get(j, res, u64s_min,
-					    u64s_max, &start_time)));
-
-	if (start_time)
-		bch_time_stats_update(j->full_time, start_time);
-
+					    u64s_max)));
 	if (ret < 0)
 		return ret;
 

@@ -1133,7 +1133,7 @@ static struct cache_set *bch_cache_set_alloc(struct cache_sb *sb,
 
 	c->journal.write_time	= &c->journal_write_time;
 	c->journal.delay_time	= &c->journal_delay_time;
-	c->journal.full_time	= &c->journal_full_time;
+	c->journal.blocked_time	= &c->journal_blocked_time;
 	c->journal.flush_seq_time = &c->journal_flush_seq_time;
 
 	mutex_init(&c->uevent_lock);
