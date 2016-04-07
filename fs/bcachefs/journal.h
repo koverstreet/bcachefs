@@ -226,26 +226,15 @@ static inline unsigned jset_u64s(unsigned u64s)
 	return u64s + sizeof(struct jset_entry) / sizeof(u64);
 }
 
-static unsigned journal_res_u64s_required(struct bkey_i *k, bool is_extents)
-{
-	unsigned u64s = jset_u64s(k->k.u64s);
-
-	/* For extents, cmpxchg might have to split @k in two: */
-	if (is_extents)
-		u64s *= 2;
-	return u64s;
-}
-
 static inline bool journal_res_insert_fits(struct cache_set *c,
 					   struct journal_res *res,
-					   struct bkey_i *k,
-					   bool is_extents)
+					   struct bkey_i *k)
 {
 	/* If we're in journal replay we're not getting journal reservations: */
 	if (!test_bit(JOURNAL_REPLAY_DONE, &c->journal.flags))
 		return true;
 
-	return journal_res_u64s_required(k, is_extents) <= res->u64s;
+	return jset_u64s(k->k.u64s) <= res->u64s;
 }
 
 void bch_journal_start(struct cache_set *);

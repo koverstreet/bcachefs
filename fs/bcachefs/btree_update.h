@@ -204,10 +204,7 @@ static inline bool bch_btree_node_insert_fits(struct cache_set *c,
 				struct btree *b, unsigned u64s)
 {
 	if (b->keys.ops->is_extents) {
-		/* The insert key might have to be split by cmpxchg: */
-		u64s *= 2;
-
-		/* And the insert key might split an existing key
+		/* The insert key might split an existing key
 		 * (bch_insert_fixup_extent() -> BCH_EXTENT_OVERLAP_MIDDLE case:
 		 */
 		u64s += BKEY_EXTENT_U64s_MAX;

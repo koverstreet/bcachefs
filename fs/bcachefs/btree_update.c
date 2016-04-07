@@ -1581,8 +1581,7 @@ retry:
 	u64s = 0;
 	for (i = m; i < m + nr; i++)
 		if (!i->done)
-			u64s += journal_res_u64s_required(i->k,
-						i->iter->is_extents);
+			u64s += jset_u64s(i->k->k.u64s);
 
 	ret = test_bit(JOURNAL_REPLAY_DONE, &c->journal.flags)
 		? bch_journal_res_get(&c->journal, &res, u64s, u64s)

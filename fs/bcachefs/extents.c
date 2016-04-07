@@ -1011,8 +1011,8 @@ static enum btree_insert_ret extent_insert_should_stop(struct btree_iter *iter,
 	 */
 	if (!bch_btree_node_insert_fits(c, b, insert->k.u64s))
 		return BTREE_INSERT_BTREE_NODE_FULL;
-	else if (!journal_res_insert_fits(c, res, insert, true))
-		return BTREE_INSERT_JOURNAL_RES_FULL;
+	else if (!journal_res_insert_fits(c, res, insert))
+		return BTREE_INSERT_JOURNAL_RES_FULL; /* XXX worth tracing */
 	else if (nr_done > 10 &&
 		 time_after64(local_clock(), start_time +
 			      MAX_LOCK_HOLD_TIME) &&
@@ -1095,10 +1095,25 @@ extent_insert_advance_pos(struct btree_insert_hook *hook,
 		: bpos_min(insert->k.p, b->key.k.p);
 
 	/* hole? */
-	if (k.k && bkey_cmp(iter->pos, bkey_start_pos(k.k)) < 0)
-		__extent_insert_advance_pos(hook, iter, bkey_start_pos(k.k),
-					    insert, bkey_s_c_null,
-					    res, stats);
+	if (k.k && bkey_cmp(iter->pos, bkey_start_pos(k.k)) < 0) {
+		bool might_split = bkey_cmp(iter->pos,
+				bkey_start_pos(&insert->k)) > 0;
+
+		/*
+		 * If a hole causes us to split and insert a previously
+		 * comitted portion, return BTREE_HOOK_NO_INSERT to recheck
+		 * if we have room in journal res/btree node:
+		 */
+		if (__extent_insert_advance_pos(hook, iter, bkey_start_pos(k.k),
+						insert, bkey_s_c_null, res,
+						stats) == BTREE_HOOK_NO_INSERT &&
+		    might_split)
+			return BTREE_HOOK_NO_INSERT;
+	}
+
+	/* avoid redundant calls to hook fn: */
+	if (!bkey_cmp(iter->pos, next_pos))
+		return BTREE_HOOK_DO_INSERT;
 
 	return __extent_insert_advance_pos(hook, iter, next_pos,
 					   insert, k, res, stats);
