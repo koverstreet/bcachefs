@@ -1483,43 +1483,22 @@ out_unlock:
  * btree_insert_key - insert a key one key into a leaf node
  */
 static enum btree_insert_ret
-btree_insert_key(struct btree_iter *iter, struct btree *b,
-		 struct btree_node_iter *node_iter,
-		 struct bkey_i *insert,
+btree_insert_key(struct btree_iter *iter, struct bkey_i *insert,
 		 struct disk_reservation *disk_res,
 		 struct btree_insert_hook *hook,
 		 struct journal_res *res,
 		 unsigned flags)
 {
+	struct btree *b = iter->nodes[0];
 	s64 oldsize = bch_count_data(&b->keys);
 	enum btree_insert_ret ret;
 
-	bch_btree_node_iter_verify(node_iter, &b->keys);
-	BUG_ON(b->level);
-	BUG_ON(iter->nodes[0] != b || &iter->node_iters[0] != node_iter);
+	bch_btree_node_iter_verify(&iter->node_iters[0], &b->keys);
 
-	if (!b->keys.ops->is_extents) {
-		ret = bch_insert_fixup_key(iter, insert, hook, res);
-	} else {
-		BKEY_PADDED(key) temp;
-
-		if (!bkey_cmp(iter->pos, b->key.k.p))
-			return BTREE_INSERT_NEED_TRAVERSE;
-
-		bkey_copy(&temp.key, insert);
-		if (bkey_cmp(insert->k.p, b->key.k.p) > 0)
-			bch_cut_back(b->key.k.p, &temp.key.k);
-
-		ret = bch_insert_fixup_extent(iter, &temp.key, disk_res,
-					      hook, res, flags);
-
-		bch_cut_front(iter->pos, insert);
-		if (insert->k.size && !bkey_cmp(iter->pos, b->key.k.p))
-			ret = BTREE_INSERT_NEED_TRAVERSE;
-
-		EBUG_ON(bkey_cmp(iter->pos, b->key.k.p) > 0);
-		EBUG_ON((ret == BTREE_INSERT_OK) != (insert->k.size == 0));
-	}
+	ret = !b->keys.ops->is_extents
+		? bch_insert_fixup_key(iter, insert, hook, res)
+		: bch_insert_fixup_extent(iter, insert, disk_res,
+					  hook, res, flags);
 
 	bch_count_data_verify(&b->keys, oldsize);
 
@@ -1629,11 +1608,8 @@ retry:
 
 	for (i = m; i < m + nr; i++)
 		if (!i->done)
-			switch (btree_insert_key(i->iter,
-					i->iter->nodes[0],
-					&i->iter->node_iters[0],
-					i->k, disk_res, hook,
-					&res, flags)) {
+			switch (btree_insert_key(i->iter, i->k, disk_res,
+						 hook, &res, flags)) {
 			case BTREE_INSERT_OK:
 				i->done = true;
 				break;

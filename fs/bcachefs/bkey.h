@@ -126,6 +126,11 @@ static __always_inline int bkey_cmp(struct bpos l, struct bpos r)
 int bkey_cmp(struct bpos l, struct bpos r);
 #endif
 
+static inline struct bpos bpos_min(struct bpos l, struct bpos r)
+{
+	return bkey_cmp(l, r) < 0 ? l : r;
+}
+
 void bch_bpos_swab(struct bpos *);
 void bch_bkey_swab_key(const struct bkey_format *, struct bkey_packed *);
 
