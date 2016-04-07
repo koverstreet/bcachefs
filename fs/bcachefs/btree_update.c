@@ -15,6 +15,7 @@
 #include "super.h"
 
 #include <linux/random.h>
+#include <linux/sort.h>
 #include <trace/events/bcachefs.h>
 
 static void async_split_updated_root(struct async_split *,
@@ -1554,6 +1555,16 @@ static void multi_unlock_write(struct btree_insert_trans *m, unsigned nr)
 			btree_node_unlock_write(i->iter->nodes[0], i->iter);
 }
 
+static int btree_trans_iter_cmp(const void *_l, const void *_r)
+{
+	const struct btree_insert_trans *l = _l;
+	const struct btree_insert_trans *r = _r;
+
+	if (l->iter->btree_id != r->iter->btree_id)
+		return l->iter->btree_id < r->iter->btree_id ? -1 : 1;
+	return bkey_cmp(l->iter->pos, r->iter->pos);
+}
+
 /* Normal update interface: */
 
 int bch_btree_insert_trans(struct btree_insert_trans *m, unsigned nr,
@@ -1566,7 +1577,6 @@ int bch_btree_insert_trans(struct btree_insert_trans *m, unsigned nr,
 	struct btree_insert_trans *i;
 	struct btree_iter *split;
 	unsigned u64s;
-	bool swapped;
 	int ret;
 
 	for (i = m; i < m + nr; i++) {
@@ -1575,15 +1585,7 @@ int bch_btree_insert_trans(struct btree_insert_trans *m, unsigned nr,
 	}
 
 	/* Sort transaction entries by iterator position, for lock ordering: */
-	do {
-		swapped = false;
-
-		for (i = m; i + 1 < m + nr; i++)
-			if (bkey_cmp(i[0].iter->pos, i[1].iter->pos) > 0) {
-				swap(i[0], i[1]);
-				swapped = true;
-			}
-	} while (swapped);
+	sort(m, nr, sizeof(m[0]), btree_trans_iter_cmp, NULL);
 
 	if (unlikely(!percpu_ref_tryget(&c->writes)))
 		return -EROFS;
