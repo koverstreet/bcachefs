@@ -259,7 +259,8 @@ static inline void btree_iter_node_set(struct btree_iter *iter,
 static bool btree_iter_pos_in_node(struct btree_iter *iter,
 					  struct btree *b)
 {
-	return bkey_cmp(iter->pos, b->data->min_key) >= 0 &&
+	return iter->btree_id == b->btree_id &&
+		bkey_cmp(iter->pos, b->data->min_key) >= 0 &&
 		btree_iter_cmp(iter, iter->pos, b->key.k.p);
 }
 
