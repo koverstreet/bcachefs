@@ -30,28 +30,6 @@ void __bch_btree_calc_format(struct bkey_format_state *s, struct btree *b)
 
 	for_each_btree_node_key_unpack(&b->keys, k, &iter, &unpacked)
 		bch_bkey_format_add_key(s, k.k);
-
-	if (b->keys.ops->is_extents) {
-		/*
-		 * Extents need special consideration because of
-		 * bch_insert_fixup_extent() - they have to be modified in
-		 * place, and successfully repack, when insert an overlapping
-		 * extent:
-		 */
-		bch_bkey_format_add_pos(s, b->data->min_key);
-		bch_bkey_format_add_pos(s, b->data->max_key);
-
-		/*
-		 * If we span multiple inodes, need to be able to store an
-		 * offset of 0:
-		 */
-		if (s->field_min[BKEY_FIELD_INODE] !=
-		    s->field_max[BKEY_FIELD_INODE])
-			s->field_min[BKEY_FIELD_OFFSET] = 0;
-
-		/* Make sure we can store a size of 0: */
-		s->field_min[BKEY_FIELD_SIZE] = 0;
-	}
 }
 
 static struct bkey_format bch_btree_calc_format(struct btree *b)

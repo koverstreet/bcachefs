@@ -555,6 +555,9 @@ void bch_bkey_format_init(struct bkey_format_state *s)
 
 	for (i = 0; i < ARRAY_SIZE(s->field_max); i++)
 		s->field_max[i] = 0;
+
+	/* Make sure we can store a size of 0: */
+	s->field_min[BKEY_FIELD_SIZE] = 0;
 }
 
 static void __bkey_format_add(struct bkey_format_state *s,
@@ -569,14 +572,12 @@ static void __bkey_format_add(struct bkey_format_state *s,
  */
 void bch_bkey_format_add_key(struct bkey_format_state *s, const struct bkey *k)
 {
-	unsigned field = 0;
-
-	__bkey_format_add(s, field++, k->p.inode);
-	__bkey_format_add(s, field++, k->p.offset);
-	__bkey_format_add(s, field++, k->p.snapshot);
-	__bkey_format_add(s, field++, k->size);
-	__bkey_format_add(s, field++, k->version);
-	EBUG_ON(field != BKEY_NR_FIELDS);
+	__bkey_format_add(s, BKEY_FIELD_INODE, k->p.inode);
+	__bkey_format_add(s, BKEY_FIELD_OFFSET, k->p.offset);
+	__bkey_format_add(s, BKEY_FIELD_OFFSET, bkey_start_offset(k));
+	__bkey_format_add(s, BKEY_FIELD_SNAPSHOT, k->p.snapshot);
+	__bkey_format_add(s, BKEY_FIELD_SIZE, k->size);
+	__bkey_format_add(s, BKEY_FIELD_VERSION, k->version);
 }
 
 void bch_bkey_format_add_pos(struct bkey_format_state *s, struct bpos p)

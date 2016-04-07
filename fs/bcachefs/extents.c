@@ -630,15 +630,23 @@ void bch_key_resize(struct bkey *k,
  * that we have to unpack the key, modify the unpacked key - then this
  * copies/repacks the unpacked to the original as necessary.
  */
-static void extent_save(struct bkey_packed *dst, struct bkey *src,
-			const struct bkey_format *f)
+static bool __extent_save(struct bkey_packed *dst, struct bkey *src,
+			  const struct bkey_format *f)
 {
 	struct bkey_i *dst_unpacked;
 
-	if ((dst_unpacked = packed_to_bkey(dst)))
+	if ((dst_unpacked = packed_to_bkey(dst))) {
 		dst_unpacked->k = *src;
-	else
-		BUG_ON(!bkey_pack_key(dst, src, f));
+		return true;
+	} else {
+		return bkey_pack_key(dst, src, f);
+	}
+}
+
+static void extent_save(struct bkey_packed *dst, struct bkey *src,
+			const struct bkey_format *f)
+{
+	BUG_ON(!__extent_save(dst, src, f));
 }
 
 /*
@@ -1287,19 +1295,47 @@ void bch_insert_fixup_extent(struct btree_iter *iter,
 			bch_btree_node_iter_advance(node_iter, &b->keys);
 			break;
 
-		case BCH_EXTENT_OVERLAP_ALL:
+		case BCH_EXTENT_OVERLAP_ALL: {
+			struct bpos orig_pos = k.k->p;
+
 			/* The insert key completely covers k, invalidate k */
 			if (!bkey_deleted(_k))
 				btree_keys_account_key_drop(&b->keys.nr, _k);
 
 			bch_drop_subtract(iter, k, &stats);
 			k.k->p = bkey_start_pos(&insert->k);
-			extent_save(_k, k.k, f);
+			if (!__extent_save(_k, k.k, f)) {
+				/*
+				 * Couldn't repack: we aren't necessarily able
+				 * to repack if the new key is outside the range
+				 * of the old extent, so we have to split
+				 * @insert:
+				 */
+				struct bkey_i *split =
+					bch_key_split(orig_pos, insert);
+
+				k.k->p = orig_pos;
+				extent_save(_k, k.k, f);
+
+				extent_insert_do_pos_hook(hook, iter, split,
+						bkey_s_null, res, &stats);
+				if (split->k.size)
+					bch_btree_insert_and_journal(iter,
+								split, res);
+
+				/*
+				 * We split and inserted upto at k.k->p - that
+				 * has to coincide with iter->pos, so that we
+				 * don't have anything more we have to insert
+				 * until we recheck our journal reservation:
+				 */
+				BUG_ON(bkey_cmp(iter->pos, k.k->p));
+			}
 
 			bch_bset_fix_invalidated_key(&b->keys, _k);
 			bch_btree_node_iter_advance(node_iter, &b->keys);
 			break;
-
+		}
 		case BCH_EXTENT_OVERLAP_MIDDLE:
 			/*
 			 * The insert key falls 'in the middle' of k
@@ -1867,93 +1903,57 @@ static enum merge_result bch_extent_merge(struct btree_keys *bk,
 static bool extent_i_save(struct bkey_packed *dst, struct bkey_i *src,
 			  const struct bkey_format *f)
 {
-	struct bkey_i *dst_unpacked;
-	bool ret;
-
 	BUG_ON(bkeyp_val_u64s(f, dst) != bkey_val_u64s(&src->k));
 
-	if ((dst_unpacked = packed_to_bkey(dst))) {
-		bkey_copy(dst_unpacked, src);
-		ret = true;
-	} else {
-		ret = bkey_pack(dst, src, f);
-	}
+	if (!__extent_save(dst, &src->k, f))
+		return false;
 
-	return ret;
+	memcpy(bkeyp_val(f, dst), &src->v, bkey_val_bytes(&src->k));
+	return true;
 }
 
-/*
- * When merging an extent that we're inserting into a btree node, the new merged
- * extent could overlap with an existing 0 size extent - if we don't fix that,
- * it'll break the btree node iterator so this code finds those 0 size extents
- * and shifts them out of the way.
- *
- * Also unpacks and repacks.
- */
-static bool bch_extent_merge_inline(struct btree_keys *b,
-				    struct btree_node_iter *iter,
-				    struct bkey_packed *l,
-				    struct bkey_packed *r,
-				    bool back_merge)
+static bool extent_merge_one_overlapping(struct btree_keys *b,
+				struct bkey *m, struct bpos new_pos,
+				struct bkey_packed *k, struct bkey uk,
+				bool check, bool could_pack)
+{
+	BUG_ON(!bkey_deleted(k));
+
+	if (check) {
+		if (bkey_packed(k) && !could_pack)
+			return false;
+	} else {
+		uk.p = new_pos;
+		extent_save(k, &uk, &b->format);
+		bch_bset_fix_invalidated_key(b, k);
+	}
+
+	return true;
+}
+
+static bool extent_merge_do_overlapping(struct btree_keys *b,
+					struct btree_node_iter *iter,
+					struct bkey *m,
+					bool back_merge, bool check)
 {
 	const struct bkey_format *f = &b->format;
 	struct bset_tree *t;
-	struct bkey_packed *k, *m;
+	struct bkey_packed *k;
 	struct bkey uk;
-	BKEY_PADDED(k) li;
-	BKEY_PADDED(k) ri;
-	struct bkey_i *mi;
-	bool ret;
+	struct bpos new_pos = back_merge ? bkey_start_pos(m) : m->p;
+	bool could_pack = bkey_pack_pos((void *) &uk, new_pos, f);
 
 	/*
-	 * We need to save copies of both l and r, because we might get a
-	 * partial merge (which modifies both) and then fails to repack
-	 */
-	bkey_unpack(&li.k, f, l);
-	bkey_unpack(&ri.k, f, r);
-
-	m = back_merge ? l : r;
-	mi = back_merge ? &li.k : &ri.k;
-
-	BUG_ON(m < b->set->data->start ||
-	       m >= bset_bkey_last(bset_tree_last(b)->data));
-
-	switch (bch_extent_merge(b, &li.k, &ri.k)) {
-	case BCH_MERGE_NOMERGE:
-		return false;
-	case BCH_MERGE_PARTIAL:
-		if (!extent_i_save(m, mi, f))
-			return false;
-
-		if (!back_merge)
-			bkey_copy(packed_to_bkey(l), &li.k);
-		else
-			bkey_copy(packed_to_bkey(r), &ri.k);
-
-		ret = false;
-		break;
-	case BCH_MERGE_MERGE:
-		if (!extent_i_save(m, &li.k, f))
-			return false;
-
-		ret = true;
-		break;
-	default:
-		BUG();
-	}
-
-	/*
-	 * l is the output of bch_extent_merge(), m is the extent that was in
-	 * the btree.
+	 * @m is the new merged extent:
 	 *
-	 * Iterate over every bset that doesn't contain m, find the iterator's
-	 * position and search from there for 0 size extents that overlap with
-	 * m.
+	 * The merge took place in the last bset; we know there can't be any 0
+	 * size extents overlapping with m there because if so they would have
+	 * been between the two extents we merged.
+	 *
+	 * But in the other bsets, we have to check for and fix such extents:
 	 */
-	for (t = b->set; t <= b->set + b->nsets; t++) {
-		if (!t->data->u64s ||
-		    (m >= t->data->start &&
-		     m < bset_bkey_last(t->data)))
+	for (t = b->set; t < b->set + b->nsets; t++) {
+		if (!t->data->u64s)
 			continue;
 
 		/*
@@ -1972,39 +1972,104 @@ static bool bch_extent_merge_inline(struct btree_keys *b,
 			for (;
 			     k &&
 			     (uk = bkey_unpack_key(f, k),
-			      bkey_cmp(uk.p, bkey_start_pos(&li.k.k)) > 0);
+			      bkey_cmp(uk.p, bkey_start_pos(m)) > 0);
 			     k = bkey_prev(t, k)) {
-				if (bkey_cmp(uk.p, li.k.k.p) >= 0)
+				if (bkey_cmp(uk.p, m->p) >= 0)
 					continue;
 
-				BUG_ON(!bkey_deleted(k));
-
-				uk.p = bkey_start_pos(&li.k.k);
-				extent_save(k, &uk, f);
-
-				bch_bset_fix_invalidated_key(b, k);
+				if (!extent_merge_one_overlapping(b, m, new_pos,
+						k, uk, check, could_pack))
+					return false;
 			}
 		} else {
 			/* Front merge - walk forwards */
 			for (;
 			     k != bset_bkey_last(t->data) &&
 			     (uk = bkey_unpack_key(f, k),
-			      bkey_cmp(uk.p, li.k.k.p) < 0);
+			      bkey_cmp(uk.p, m->p) < 0);
 			     k = bkey_next(k)) {
 				if (bkey_cmp(uk.p,
-					     bkey_start_pos(&li.k.k)) <= 0)
+					     bkey_start_pos(m)) <= 0)
 					continue;
 
-				BUG_ON(!bkey_deleted(k));
-
-				uk.p = li.k.k.p;
-				extent_save(k, &uk, f);
-
-				bch_bset_fix_invalidated_key(b, k);
+				if (!extent_merge_one_overlapping(b, m, new_pos,
+						k, uk, check, could_pack))
+					return false;
 			}
 		}
 	}
 
+	return true;
+}
+
+/*
+ * When merging an extent that we're inserting into a btree node, the new merged
+ * extent could overlap with an existing 0 size extent - if we don't fix that,
+ * it'll break the btree node iterator so this code finds those 0 size extents
+ * and shifts them out of the way.
+ *
+ * Also unpacks and repacks.
+ */
+static bool bch_extent_merge_inline(struct btree_keys *b,
+				    struct btree_node_iter *iter,
+				    struct bkey_packed *l,
+				    struct bkey_packed *r,
+				    bool back_merge)
+{
+	const struct bkey_format *f = &b->format;
+	struct bkey_packed *m;
+	BKEY_PADDED(k) li;
+	BKEY_PADDED(k) ri;
+	struct bkey_i *mi;
+	bool ret;
+
+	/*
+	 * We need to save copies of both l and r, because we might get a
+	 * partial merge (which modifies both) and then fails to repack
+	 */
+	bkey_unpack(&li.k, f, l);
+	bkey_unpack(&ri.k, f, r);
+
+	m = back_merge ? l : r;
+	mi = back_merge ? &li.k : &ri.k;
+
+	/* l & r should be in last bset: */
+	BUG_ON(m < bset_tree_last(b)->data->start ||
+	       m >= bset_bkey_last(bset_tree_last(b)->data));
+
+	switch (bch_extent_merge(b, &li.k, &ri.k)) {
+	case BCH_MERGE_NOMERGE:
+		return false;
+	case BCH_MERGE_PARTIAL:
+		if (!extent_merge_do_overlapping(b, iter, &li.k.k,
+						 back_merge, true))
+			return false;
+
+		if (!extent_i_save(m, mi, f))
+			return false;
+
+		if (!back_merge)
+			bkey_copy(packed_to_bkey(l), &li.k);
+		else
+			bkey_copy(packed_to_bkey(r), &ri.k);
+
+		ret = false;
+		break;
+	case BCH_MERGE_MERGE:
+		if (!extent_merge_do_overlapping(b, iter, &li.k.k,
+						 back_merge, true))
+			return false;
+
+		if (!extent_i_save(m, &li.k, f))
+			return false;
+
+		ret = true;
+		break;
+	default:
+		BUG();
+	}
+
+	extent_merge_do_overlapping(b, iter, &li.k.k, back_merge, false);
 	return ret;
 }
 
