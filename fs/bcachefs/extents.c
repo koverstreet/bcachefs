@@ -985,57 +985,6 @@ enum btree_insert_hook_ret bch_extent_cmpxchg(struct btree_insert_hook *hook,
 	}
 }
 
-#if 0
-/* We are trying to insert a key with an older version than the existing one */
-static void handle_existing_key_newer(struct btree_iter *iter,
-				      struct bkey_i *insert,
-				      const struct bkey *k,
-				      struct journal_res *res)
-{
-	struct bkey_i *split;
-
-	/* k is the key currently in the tree, 'insert' the new key */
-
-	switch (bch_extent_overlap(k, &insert->k)) {
-	case BCH_EXTENT_OVERLAP_FRONT:
-		/* k and insert share the start, remove it from insert */
-		bch_cut_subtract_front(iter, k->p, bkey_i_to_s(insert));
-		break;
-
-	case BCH_EXTENT_OVERLAP_BACK:
-		/* k and insert share the end, remove it from insert */
-		bch_cut_subtract_back(iter, bkey_start_pos(k),
-				      bkey_i_to_s(insert));
-		break;
-
-	case BCH_EXTENT_OVERLAP_MIDDLE:
-		/*
-		 * We have an overlap where @k (newer version) splits
-		 * @insert (older version) in three:
-		 * - start only in insert
-		 * - middle common section -- keep k
-		 * - end only in insert
-		 *
-		 * Insert the start of @insert ourselves, then update
-		 * @insert to to represent the end.
-		 *
-		 * Since we're splitting the insert key, we have to use
-		 * bch_btree_insert_and_journal(), which adds a journal
-		 * entry to @res.
-		 */
-		split = bch_key_split(bkey_start_pos(k), insert),
-		bch_cut_subtract_front(iter, k->p, bkey_i_to_s(insert));
-		bch_btree_insert_and_journal(iter, split, res);
-		break;
-
-	case BCH_EXTENT_OVERLAP_ALL:
-		/* k completely covers insert -- drop insert */
-		bch_drop_subtract(iter, bkey_i_to_s(insert));
-		break;
-	}
-}
-#endif
-
 #define MAX_LOCK_HOLD_TIME	(5 * NSEC_PER_MSEC)
 
 static enum btree_insert_ret extent_insert_should_stop(struct btree_iter *iter,
@@ -1097,9 +1046,16 @@ __extent_insert_advance_pos(struct btree_insert_hook *hook,
 			    struct journal_res *res,
 			    struct bucket_stats_cache_set *stats)
 {
-	enum btree_insert_hook_ret ret = hook
-		? hook->fn(hook, iter, next_pos, k, insert)
-		: BTREE_HOOK_DO_INSERT;
+	enum btree_insert_hook_ret ret;
+
+	if (k.k && k.k->size &&
+	    insert->k.version &&
+	    k.k->version > insert->k.version)
+		ret = BTREE_HOOK_NO_INSERT;
+	else if (hook)
+		ret = hook->fn(hook, iter, next_pos, k, insert);
+	else
+		ret = BTREE_HOOK_DO_INSERT;
 
 	EBUG_ON(bkey_deleted(&insert->k) || !insert->k.size);
 
@@ -1254,24 +1210,7 @@ bch_insert_fixup_extent(struct btree_iter *iter,
 						start_time, nr_done);
 		if (ret != BTREE_INSERT_OK)
 			goto stop;
-#if 0
-		/*
-		 * Currently broken w.r.t. cmpxchg: -
-		 * handle_existing_key_newer() can't insert @insert itself
-		 * (which it does when @k splits @insert) because bkey_cmpxchg()
-		 * hasn't seen @insert yet, and might not want to insert it:
-		 *
-		 * need to change handle_existing_key_newer() to just drop the
-		 * tail half of the split until later, and have
-		 * btree_insert_key() be responsible for inserting it later -
-		 * but tricky:
-		 */
-		if (k.k->size && insert->k.version &&
-		    insert->k.version < k.k->version) {
-			handle_existing_key_newer(iter, insert, k.k, res);
-			continue;
-		}
-#endif
+
 		/*
 		 * Only call advance pos & call hook for nonzero size extents:
 		 * If hook returned BTREE_HOOK_NO_INSERT, @insert no longer
