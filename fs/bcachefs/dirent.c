@@ -327,7 +327,8 @@ int bch_dirent_rename(struct cache_set *c,
 		ret = bch_btree_insert_at_multi((struct btree_insert_multi[]) {
 				{ &src_iter, &new_src->k_i, },
 				{ &dst_iter, &new_dst->k_i, }}, 2,
-				journal_seq, 0);
+				NULL, NULL, journal_seq,
+				BTREE_INSERT_ATOMIC);
 		bch_btree_iter_unlock(&src_iter);
 		bch_btree_iter_unlock(&dst_iter);
 	} while (ret == -EINTR);

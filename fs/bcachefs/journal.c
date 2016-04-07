@@ -1725,10 +1725,10 @@ void bch_journal_res_put(struct journal *j, struct journal_res *res,
 	union journal_res_state s;
 	bool do_write = false;
 
-	BUG_ON(!res->ref);
-	lock_release(&j->res_map, 0, _RET_IP_);
+	if (!res->ref)
+		return;
 
-	res->ref = false;
+	lock_release(&j->res_map, 0, _RET_IP_);
 
 	while (res->u64s) {
 		unsigned actual = jset_u64s(0);
@@ -1739,15 +1739,11 @@ void bch_journal_res_put(struct journal *j, struct journal_res *res,
 		res->u64s	-= actual;
 	}
 
-	if (!test_bit(JOURNAL_DIRTY, &j->flags)) {
-		set_bit(JOURNAL_DIRTY, &j->flags);
+	if (!test_bit(JOURNAL_DIRTY, &j->flags) &&
+	    !test_and_set_bit(JOURNAL_DIRTY, &j->flags))
 		queue_delayed_work(system_freezable_wq,
 				   &j->write_work,
 				   msecs_to_jiffies(j->delay_ms));
-
-		/* between set_bit() and *journal_seq = j->seq */
-		smp_wmb();
-	}
 
 	if (journal_seq)
 		*journal_seq = j->seq;
@@ -1770,6 +1766,8 @@ void bch_journal_res_put(struct journal *j, struct journal_res *res,
 
 		wake_up(&j->wait);
 	}
+
+	memset(res, 0, sizeof(*res));
 }
 
 static inline bool journal_bucket_has_room(struct journal *j)

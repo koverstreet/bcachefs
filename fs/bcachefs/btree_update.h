@@ -242,9 +242,13 @@ int bch_btree_insert_at(struct btree_iter *, struct keylist *,
 struct btree_insert_multi {
 	struct btree_iter	*iter;
 	struct bkey_i		*k;
+	/* true if entire key was inserted - can only be false for extents */
+	bool			done;
 };
 
 int bch_btree_insert_at_multi(struct btree_insert_multi[], unsigned,
+			      struct disk_reservation *,
+			      struct btree_insert_hook *,
 			      u64 *, unsigned);
 
 int bch_btree_insert_check_key(struct btree_iter *, struct bkey_i *);

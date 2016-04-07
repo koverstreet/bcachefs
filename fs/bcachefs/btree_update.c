@@ -750,67 +750,6 @@ void bch_btree_insert_and_journal(struct btree_iter *iter,
 	bch_btree_bset_insert(iter, b, node_iter, insert);
 }
 
-/**
- * btree_insert_key - insert a key into a btree node, handling overlapping extents.
- *
- * The insert is journalled.
- *
- * @iter:		btree iterator
- * @insert_keys:	list of keys to insert
- * @replace:		old key for for exchange (+ stats)
- * @res:		journal reservation
- * @flags:		BTREE_INSERT_NO_MARK_KEY
- *
- * Inserts the first key from @insert_keys
- *
- * Returns true if an insert was actually done and @b was modified - false on a
- * failed replace operation
- */
-static void btree_insert_key(struct btree_iter *iter, struct btree *b,
-			     struct btree_node_iter *node_iter,
-			     struct keylist *insert_keys,
-			     struct disk_reservation *disk_res,
-			     struct btree_insert_hook *hook,
-			     struct journal_res *res,
-			     unsigned flags)
-{
-	struct bkey_i *insert = bch_keylist_front(insert_keys), *orig = insert;
-	BKEY_PADDED(key) temp;
-	s64 oldsize = bch_count_data(&b->keys);
-
-	bch_btree_node_iter_verify(node_iter, &b->keys);
-	BUG_ON(b->level);
-	BUG_ON(iter->nodes[0] != b || &iter->node_iters[0] != node_iter);
-
-	if (!b->keys.ops->is_extents) {
-		bch_insert_fixup_key(iter, insert, hook, res);
-		bch_keylist_dequeue(insert_keys);
-	} else {
-		bkey_copy(&temp.key, insert);
-		insert = &temp.key;
-
-		if (bkey_cmp(insert->k.p, b->key.k.p) > 0)
-			bch_cut_back(b->key.k.p, &insert->k);
-
-		bch_insert_fixup_extent(iter, insert, disk_res,
-					hook, res, flags);
-
-		bch_cut_front(iter->pos, orig);
-		if (orig->k.size == 0)
-			bch_keylist_dequeue(insert_keys);
-	}
-
-	bch_count_data_verify(&b->keys, oldsize);
-
-	trace_bcache_btree_insert_key(b, insert);
-}
-
-enum btree_insert_status {
-	BTREE_INSERT_OK,
-	BTREE_INSERT_NEED_SPLIT,
-	BTREE_INSERT_ERROR,
-};
-
 static void verify_keys_sorted(struct keylist *l)
 {
 #ifdef CONFIG_BCACHEFS_DEBUG
@@ -1144,14 +1083,7 @@ err:
 #endif
 }
 
-static void btree_insert_keys_checks(struct btree_iter *iter, struct btree *b)
-{
-	BUG_ON(iter->nodes[b->level] != b);
-	BUG_ON(!btree_node_intent_locked(iter, b->level));
-	BUG_ON(!b->written);
-}
-
-static enum btree_insert_status
+static enum btree_insert_ret
 bch_btree_insert_keys_interior(struct btree *b,
 			       struct btree_iter *iter,
 			       struct keylist *insert_keys,
@@ -1166,8 +1098,6 @@ bch_btree_insert_keys_interior(struct btree *b,
 	BUG_ON(!btree_node_intent_locked(iter, btree_node_root(b)->level));
 	BUG_ON(!b->level);
 	BUG_ON(!as || as->b);
-
-	btree_insert_keys_checks(iter, b);
 	verify_keys_sorted(insert_keys);
 
 	btree_node_lock_for_insert(b, iter);
@@ -1175,7 +1105,7 @@ bch_btree_insert_keys_interior(struct btree *b,
 	if (bch_keylist_nkeys(insert_keys) >
 	    bch_btree_keys_u64s_remaining(iter->c, b)) {
 		btree_node_unlock_write(b, iter);
-		return BTREE_INSERT_NEED_SPLIT;
+		return BTREE_INSERT_BTREE_NODE_FULL;
 	}
 
 	while (!bch_keylist_empty(insert_keys)) {
@@ -1211,98 +1141,7 @@ bch_btree_insert_keys_interior(struct btree *b,
 		;
 
 	btree_node_interior_verify(b);
-
 	return BTREE_INSERT_OK;
-}
-
-/**
- * bch_btree_insert_keys - insert keys from @insert_keys into btree node @b,
- * until the node is full.
- *
- * If keys couldn't be inserted because @b was full, the caller must split @b
- * and bch_btree_insert_keys() will be called again from btree_split().
- *
- * Caller must either be holding an intent lock on this node only, or intent
- * locks on all nodes all the way up to the root. Caller must not be holding
- * read locks on any nodes.
- */
-static enum btree_insert_status
-bch_btree_insert_keys_leaf(struct btree *b,
-			   struct btree_iter *iter,
-			   struct keylist *insert_keys,
-			   struct disk_reservation *disk_res,
-			   struct btree_insert_hook *hook,
-			   u64 *journal_seq,
-			   unsigned flags)
-{
-	bool done = false, need_split = false;
-	struct journal_res res = { 0, 0 };
-	struct bkey_i *k = bch_keylist_front(insert_keys);
-
-	BUG_ON(b->level);
-
-	btree_insert_keys_checks(iter, b);
-	verify_keys_sorted(insert_keys);
-
-	while (!done && !bch_keylist_empty(insert_keys)) {
-		/*
-		 * We need room to insert at least two keys in the journal
-		 * reservation -- the insert key itself, as well as a subset
-		 * of it, in the bkey_cmpxchg() or handle_existing_key_newer()
-		 * cases
-		 */
-		unsigned n_min = bch_keylist_front(insert_keys)->k.u64s;
-		unsigned n_max = bch_keylist_nkeys(insert_keys);
-
-		unsigned actual_min = jset_u64s(n_min) * 2;
-		unsigned actual_max = max_t(unsigned, actual_min,
-					    jset_u64s(n_max));
-
-		if (test_bit(JOURNAL_REPLAY_DONE, &iter->c->journal.flags) &&
-		    bch_journal_res_get(&iter->c->journal, &res,
-					actual_min, actual_max))
-			return BTREE_INSERT_ERROR;
-
-		btree_node_lock_for_insert(b, iter);
-
-		while (!bch_keylist_empty(insert_keys)) {
-			k = bch_keylist_front(insert_keys);
-
-			EBUG_ON(bkey_cmp(bkey_start_pos(&k->k), iter->pos));
-
-			/* finished for this node */
-			if (b->keys.ops->is_extents
-			    ? bkey_cmp(bkey_start_pos(&k->k), b->key.k.p) >= 0
-			    : bkey_cmp(k->k.p, b->key.k.p) > 0) {
-				done = true;
-				break;
-			}
-
-			if (!bch_btree_node_insert_fits(iter->c, b, k->k.u64s)) {
-				done = true;
-				need_split = true;
-				break;
-			}
-
-			if (!journal_res_insert_fits(iter->c, &res, k,
-						     iter->is_extents))
-				break;
-
-			btree_insert_key(iter, b, &iter->node_iters[b->level],
-					 insert_keys, disk_res,
-					 hook, &res, flags);
-		}
-
-		btree_node_unlock_write(b, iter);
-
-		if (res.ref)
-			bch_journal_res_put(&iter->c->journal, &res,
-					    journal_seq);
-	}
-
-	bch_btree_node_write_lazy(b, iter);
-
-	return need_split ? BTREE_INSERT_NEED_SPLIT : BTREE_INSERT_OK;
 }
 
 /*
@@ -1592,15 +1431,13 @@ void bch_btree_insert_node(struct btree *b,
 					       as, reserve)) {
 	case BTREE_INSERT_OK:
 		break;
-	case BTREE_INSERT_NEED_SPLIT:
+	case BTREE_INSERT_BTREE_NODE_FULL:
 		btree_split(b, iter, insert_keys, reserve, as);
 		break;
 	default:
 		BUG();
 	}
 }
-
-/* Normal update interface: */
 
 static int bch_btree_split_leaf(struct btree_iter *iter, unsigned flags)
 {
@@ -1643,6 +1480,241 @@ out_unlock:
 }
 
 /**
+ * btree_insert_key - insert a key one key into a leaf node
+ */
+static enum btree_insert_ret
+btree_insert_key(struct btree_iter *iter, struct btree *b,
+		 struct btree_node_iter *node_iter,
+		 struct bkey_i *insert,
+		 struct disk_reservation *disk_res,
+		 struct btree_insert_hook *hook,
+		 struct journal_res *res,
+		 unsigned flags)
+{
+	s64 oldsize = bch_count_data(&b->keys);
+	enum btree_insert_ret ret;
+
+	bch_btree_node_iter_verify(node_iter, &b->keys);
+	BUG_ON(b->level);
+	BUG_ON(iter->nodes[0] != b || &iter->node_iters[0] != node_iter);
+
+	if (!b->keys.ops->is_extents) {
+		ret = bch_insert_fixup_key(iter, insert, hook, res);
+	} else {
+		BKEY_PADDED(key) temp;
+
+		if (!bkey_cmp(iter->pos, b->key.k.p))
+			return BTREE_INSERT_NEED_TRAVERSE;
+
+		bkey_copy(&temp.key, insert);
+		if (bkey_cmp(insert->k.p, b->key.k.p) > 0)
+			bch_cut_back(b->key.k.p, &temp.key.k);
+
+		ret = bch_insert_fixup_extent(iter, &temp.key, disk_res,
+					      hook, res, flags);
+
+		bch_cut_front(iter->pos, insert);
+		if (insert->k.size && !bkey_cmp(iter->pos, b->key.k.p))
+			ret = BTREE_INSERT_NEED_TRAVERSE;
+
+		EBUG_ON(bkey_cmp(iter->pos, b->key.k.p) > 0);
+		EBUG_ON((ret == BTREE_INSERT_OK) != (insert->k.size == 0));
+	}
+
+	bch_count_data_verify(&b->keys, oldsize);
+
+	trace_bcache_btree_insert_key(b, insert);
+	return ret;
+}
+
+static bool same_leaf_as_prev(struct btree_insert_multi *m,
+			      struct btree_insert_multi *i)
+{
+	/*
+	 * Because we sorted the transaction entries, if multiple iterators
+	 * point to the same leaf node they'll always be adjacent now:
+	 */
+	return i != m && i[0].iter->nodes[0] == i[-1].iter->nodes[0];
+}
+
+static void multi_lock_write(struct btree_insert_multi *m, unsigned nr)
+{
+	struct btree_insert_multi *i;
+
+	for (i = m; i < m + nr; i++)
+		if (!same_leaf_as_prev(m, i))
+			btree_node_lock_for_insert(i->iter->nodes[0], i->iter);
+}
+
+static void multi_unlock_write(struct btree_insert_multi *m, unsigned nr)
+{
+	struct btree_insert_multi *i;
+
+	for (i = m; i < m + nr; i++)
+		if (!same_leaf_as_prev(m, i))
+			btree_node_unlock_write(i->iter->nodes[0], i->iter);
+}
+
+/* Normal update interface: */
+
+int bch_btree_insert_at_multi(struct btree_insert_multi *m, unsigned nr,
+			      struct disk_reservation *disk_res,
+			      struct btree_insert_hook *hook,
+			      u64 *journal_seq, unsigned flags)
+{
+	struct cache_set *c = m[0].iter->c;
+	struct journal_res res = { 0, 0 };
+	struct btree_insert_multi *i;
+	struct btree_iter *split;
+	unsigned u64s;
+	bool swapped;
+	int ret;
+
+	for (i = m; i < m + nr; i++) {
+		EBUG_ON(i->iter->level);
+		EBUG_ON(bkey_cmp(bkey_start_pos(&i->k->k), i->iter->pos));
+	}
+
+	/* Sort transaction entries by iterator position, for lock ordering: */
+	do {
+		swapped = false;
+
+		for (i = m; i + 1 < m + nr; i++)
+			if (bkey_cmp(i[0].iter->pos, i[1].iter->pos) > 0) {
+				swap(i[0], i[1]);
+				swapped = true;
+			}
+	} while (swapped);
+
+	if (unlikely(!percpu_ref_tryget(&c->writes)))
+		return -EROFS;
+
+	for (i = m; i < m + nr; i++) {
+		i->iter->locks_want = 0;
+		if (unlikely(!bch_btree_iter_upgrade(i->iter))) {
+			ret = -EINTR;
+			goto err;
+		}
+	}
+retry:
+	split = NULL;
+	u64s = 0;
+	for (i = m; i < m + nr; i++)
+		if (!i->done)
+			u64s += journal_res_u64s_required(i->k,
+						i->iter->is_extents);
+
+	ret = test_bit(JOURNAL_REPLAY_DONE, &c->journal.flags)
+		? bch_journal_res_get(&c->journal, &res, u64s, u64s)
+		: 0;
+	if (ret)
+		goto err;
+
+	multi_lock_write(m, nr);
+
+	u64s = 0;
+	for (i = m; i < m + nr; i++) {
+		/* Multiple inserts might go to same leaf: */
+		if (!same_leaf_as_prev(m, i))
+			u64s = 0;
+
+		if (!i->done) {
+			u64s += i->k->k.u64s;
+			if (!bch_btree_node_insert_fits(c,
+					i->iter->nodes[0], u64s))
+				goto split;
+		}
+	}
+
+	for (i = m; i < m + nr; i++)
+		if (!i->done)
+			switch (btree_insert_key(i->iter,
+					i->iter->nodes[0],
+					&i->iter->node_iters[0],
+					i->k, disk_res, hook,
+					&res, flags)) {
+			case BTREE_INSERT_OK:
+				i->done = true;
+				break;
+			case BTREE_INSERT_NEED_TRAVERSE:
+				ret = -EINTR;
+				goto err_unlock;
+			case BTREE_INSERT_NEED_RESCHED:
+				ret = -EAGAIN;
+				goto err_unlock;
+			case BTREE_INSERT_BTREE_NODE_FULL:
+				goto split;
+			case BTREE_INSERT_JOURNAL_RES_FULL:
+				goto err_unlock;
+			}
+
+	multi_unlock_write(m, nr);
+
+	bch_journal_res_put(&c->journal, &res, journal_seq);
+
+	for (i = m; i < m + nr; i++)
+		if (!same_leaf_as_prev(m, i))
+			bch_btree_node_write_lazy(i->iter->nodes[0], i->iter);
+
+out:
+	percpu_ref_put(&c->writes);
+	return ret;
+split:
+	split = i->iter;
+	multi_unlock_write(m, nr);
+	/*
+	 * have to drop journal res before splitting, because splitting means
+	 * allocating new btree nodes, and holding a journal reservation
+	 * potentially blocks the allocator:
+	 */
+	bch_journal_res_put(&c->journal, &res, journal_seq);
+
+	ret = bch_btree_split_leaf(split, flags);
+	if (ret)
+		goto err;
+
+	/*
+	 * if the split didn't have to drop locks the insert will still be
+	 * atomic (in the BTREE_INSERT_ATOMIC sense, what the caller peeked()
+	 * and is overwriting won't have changed)
+	 */
+	goto retry;
+err_unlock:
+	multi_unlock_write(m, nr);
+	bch_journal_res_put(&c->journal, &res, journal_seq);
+err:
+	if (ret == -EAGAIN) {
+		for (i = m; i < m + nr; i++)
+			bch_btree_iter_unlock(i->iter);
+		ret = -EINTR;
+	}
+
+	/*
+	 * Main rule is, BTREE_INSERT_ATOMIC means we can't call
+	 * bch_btree_iter_traverse(), because if we have to we either dropped
+	 * locks or we need a different btree node (different than the one the
+	 * caller was looking at).
+	 *
+	 * BTREE_INSERT_ATOMIC doesn't mean anything w.r.t. journal
+	 * reservations:
+	 */
+	if (ret == -EINTR && !(flags & BTREE_INSERT_ATOMIC)) {
+		for (i = m; i < m + nr; i++) {
+			ret = bch_btree_iter_traverse(i->iter);
+			if (ret)
+				goto out;
+		}
+
+		ret = 0;
+	}
+
+	if (!ret)
+		goto retry;
+
+	goto out;
+}
+
+/**
  * bch_btree_insert_at - insert bkeys starting at a given btree node
  * @iter:		btree iterator
  * @insert_keys:	list of keys to insert
@@ -1681,206 +1753,34 @@ int bch_btree_insert_at(struct btree_iter *iter,
 			struct btree_insert_hook *hook,
 			u64 *journal_seq, unsigned flags)
 {
-	int ret = -EINTR;
-
-	BUG_ON(iter->level);
-
-	if (unlikely(!percpu_ref_tryget(&iter->c->writes)))
-		return -EROFS;
-
-	iter->locks_want = 0;
-	if (unlikely(!bch_btree_iter_upgrade(iter)))
-		goto traverse;
+	verify_keys_sorted(insert_keys);
 
 	while (1) {
-		EBUG_ON(bkey_cmp(bkey_start_pos(&bch_keylist_front(insert_keys)->k),
-				 iter->pos));
+		struct btree_insert_multi m = {
+			.iter = iter,
+			.k = bch_keylist_front(insert_keys),
+			.done = false,
+		};
 
-		switch (bch_btree_insert_keys_leaf(iter->nodes[0], iter,
-					insert_keys, disk_res,
-					hook, journal_seq, flags)) {
-		case BTREE_INSERT_OK:
-			ret = 0;
-			break;
-		case BTREE_INSERT_NEED_SPLIT:
-			ret = bch_btree_split_leaf(iter, flags);
-			break;
-		case BTREE_INSERT_ERROR:
-			/* Journal error, so we couldn't get a journal reservation: */
-			ret = -EIO;
-			break;
-		default:
-			BUG();
-		}
+		int ret = bch_btree_insert_at_multi(&m, 1, disk_res, hook,
+						    journal_seq, flags);
+		BUG_ON(!ret != m.done);
+
+		if (ret)
+			return ret;
+
+		bch_keylist_dequeue(insert_keys);
+		if (bch_keylist_empty(insert_keys))
+			return 0;
 
 		/*
-		 * We don't test against success because we might have
-		 * successfully inserted the keys on the keylist, but have more
-		 * to insert in the next leaf node:
+		 * need to traverse between each insert - might be inserting an
+		 * extent that spanned leaf nodes:
 		 */
-		if (likely(bch_keylist_empty(insert_keys))) {
-			BUG_ON(ret);
-			break;
-		}
-
-		/*
-		 * -EAGAIN means we have to drop locks and wait on
-		 *  mca_cannibalize_lock - btree_iter_unlock() does this
-		 */
-		if (ret == -EAGAIN) {
-			bch_btree_iter_unlock(iter);
-			ret = -EINTR;
-		}
-
-		if (ret && ret != -EINTR)
-			break;
-traverse:
-		/*
-		 * Can't retry, make sure we return an error:
-		 */
-		if (flags & BTREE_INSERT_ATOMIC) {
-			ret = ret ?: -EINTR;
-			break;
-		}
-
 		ret = bch_btree_iter_traverse(iter);
 		if (ret)
-			break;
+			return ret;
 	}
-	percpu_ref_put(&iter->c->writes);
-
-	return ret;
-}
-
-static void multi_lock_write(struct btree_insert_multi *first,
-			     struct btree_insert_multi *m)
-{
-	/*
-	 * Because we sorted the transaction entries, if multiple iterators
-	 * point to the same leaf node they'll always be adjacent now:
-	 */
-	if (m != first &&
-	    (m[0].iter->nodes[0] == m[-1].iter->nodes[0]))
-		return; /* already locked */
-
-	btree_node_lock_for_insert(m->iter->nodes[0], m->iter);
-}
-
-static void multi_unlock_write(struct btree_insert_multi *first,
-			       struct btree_insert_multi *m)
-{
-	if (m != first &&
-	    (m[0].iter->nodes[0] == m[-1].iter->nodes[0]))
-		return; /* already locked */
-
-	btree_node_unlock_write(m->iter->nodes[0], m->iter);
-}
-
-int bch_btree_insert_at_multi(struct btree_insert_multi *m, unsigned nr,
-			      u64 *journal_seq, unsigned flags)
-{
-	struct cache_set *c = m[0].iter->c;
-	struct journal_res res = { 0, 0 };
-	struct btree_insert_multi *i;
-	struct btree_iter *split;
-	unsigned u64s = 0;
-	bool swapped;
-	int ret;
-
-	for (i = m; i < m + nr; i++)
-		EBUG_ON(bkey_cmp(bkey_start_pos(&i->k->k), i->iter->pos));
-
-	/* Sort transaction entries by iterator position, for lock ordering: */
-	do {
-		swapped = false;
-
-		for (i = m; i + 1 < m + nr; i++)
-			if (bkey_cmp(i[0].iter->pos, i[1].iter->pos) > 0) {
-				swap(i[0], i[1]);
-				swapped = true;
-			}
-	} while (swapped);
-
-	if (unlikely(!percpu_ref_tryget(&c->writes)))
-		return -EROFS;
-
-	for (i = m; i < m + nr; i++)
-		u64s += jset_u64s(i->k->k.u64s);
-
-	for (i = m; i < m + nr; i++) {
-		i->iter->locks_want = 0;
-		if (unlikely(!bch_btree_iter_upgrade(i->iter))) {
-			ret = -EINTR;
-			goto err;
-		}
-	}
-retry:
-	ret = bch_journal_res_get(&c->journal, &res, u64s, u64s);
-	if (ret)
-		goto err;
-
-	for (i = m; i < m + nr; i++) {
-		multi_lock_write(m, i);
-
-		/*
-		 * Check against total, not just the key for this iterator,
-		 * because multiple inserts might be going to the same node:
-		 */
-		if (!bch_btree_node_insert_fits(c,
-				i->iter->nodes[0], u64s))
-			goto split;
-	}
-
-	for (i = m; i < m + nr; i++)
-		btree_insert_key(i->iter, i->iter->nodes[0],
-				 &i->iter->node_iters[0],
-				 &keylist_single(i->k),
-				 NULL, NULL,
-				 &res, flags);
-
-	do {
-		multi_unlock_write(m, --i);
-	} while (i != m);
-
-	bch_journal_res_put(&c->journal, &res, journal_seq);
-
-	for (i = m; i < m + nr; i++) {
-		if (i != m &&
-		    (i[0].iter->nodes[0] == i[-1].iter->nodes[0]))
-			continue;
-
-		bch_btree_node_write_lazy(i->iter->nodes[0], i->iter);
-	}
-
-out:
-	percpu_ref_put(&c->writes);
-	return ret;
-split:
-	split = i->iter;
-	do {
-		multi_unlock_write(m, i);
-	} while (i-- != m);
-
-	/*
-	 * XXX: Do we need to drop our journal res for the split?
-	 *
-	 * yes, because otherwise we're potentially blocking other things that
-	 * need the journal, which includes the allocator - and we're going to
-	 * be allocating new nodes in the split
-	 */
-	bch_journal_res_put(&c->journal, &res, journal_seq);
-
-	ret = bch_btree_split_leaf(split, flags);
-	if (ret)
-		goto err;
-	goto retry;
-err:
-	if (ret == -EAGAIN) {
-		for (i = m; i < m + nr; i++)
-			bch_btree_iter_unlock(i->iter);
-		ret = -EINTR;
-	}
-	goto out;
 }
 
 /**

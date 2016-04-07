@@ -162,4 +162,15 @@ struct btree_insert_hook {
 		   struct bucket_stats_cache_set *);
 };
 
+enum btree_insert_ret {
+	BTREE_INSERT_OK,
+	/* extent spanned multiple leaf nodes: have to traverse to next node: */
+	BTREE_INSERT_NEED_TRAVERSE,
+	/* write lock held for too long */
+	BTREE_INSERT_NEED_RESCHED,
+	/* leaf node needs to be split */
+	BTREE_INSERT_BTREE_NODE_FULL,
+	BTREE_INSERT_JOURNAL_RES_FULL,
+};
+
 #endif /* _BCACHE_BTREE_TYPES_H */

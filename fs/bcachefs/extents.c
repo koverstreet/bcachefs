@@ -105,10 +105,11 @@ struct btree_nr_keys bch_key_sort_fix_overlapping(struct btree_keys *b,
 
 /* This returns true if insert should be inserted, false otherwise */
 
-void bch_insert_fixup_key(struct btree_iter *iter,
-			  struct bkey_i *insert,
-			  struct btree_insert_hook *hook,
-			  struct journal_res *res)
+enum btree_insert_ret
+bch_insert_fixup_key(struct btree_iter *iter,
+		     struct bkey_i *insert,
+		     struct btree_insert_hook *hook,
+		     struct journal_res *res)
 {
 	struct btree *b = iter->nodes[0];
 	struct btree_node_iter *node_iter = &iter->node_iters[0];
@@ -134,6 +135,7 @@ void bch_insert_fixup_key(struct btree_iter *iter,
 	}
 
 	bch_btree_insert_and_journal(iter, insert, res);
+	return BTREE_INSERT_OK;
 }
 
 /* Common among btree and extent ptrs */
@@ -1059,11 +1061,11 @@ static void handle_existing_key_newer(struct btree_iter *iter,
 
 #define MAX_LOCK_HOLD_TIME	(5 * NSEC_PER_MSEC)
 
-static bool extent_insert_should_stop(struct btree_iter *iter,
-				      struct bkey_i *insert,
-				      struct journal_res *res,
-				      u64 start_time,
-				      unsigned nr_done)
+static enum btree_insert_ret extent_insert_should_stop(struct btree_iter *iter,
+						       struct bkey_i *insert,
+						       struct journal_res *res,
+						       u64 start_time,
+						       unsigned nr_done)
 {
 	struct cache_set *c = iter->c;
 	struct btree *b = iter->nodes[0];
@@ -1082,16 +1084,16 @@ static bool extent_insert_should_stop(struct btree_iter *iter,
 	 * we've been running for too long and readers are waiting on the lock:
 	 */
 	if (!bch_btree_node_insert_fits(c, b, insert->k.u64s))
-		return true;
+		return BTREE_INSERT_BTREE_NODE_FULL;
 	else if (!journal_res_insert_fits(c, res, insert, true))
-		return true;
+		return BTREE_INSERT_JOURNAL_RES_FULL;
 	else if (nr_done > 10 &&
 		 time_after64(local_clock(), start_time +
 			      MAX_LOCK_HOLD_TIME) &&
 		 !list_empty_careful(&b->lock.wait_list[SIX_LOCK_read]))
-		return true;
+		return BTREE_INSERT_NEED_RESCHED;
 	else
-		return false;
+		return BTREE_INSERT_OK;
 }
 
 /*
@@ -1157,12 +1159,13 @@ static void extent_insert_do_pos_hook(struct btree_insert_hook *hook,
  * If the end of iter->pos is not the same as the end of insert, then
  * key insertion needs to continue/be retried.
  */
-void bch_insert_fixup_extent(struct btree_iter *iter,
-			     struct bkey_i *insert,
-			     struct disk_reservation *disk_res,
-			     struct btree_insert_hook *hook,
-			     struct journal_res *res,
-			     unsigned flags)
+enum btree_insert_ret
+bch_insert_fixup_extent(struct btree_iter *iter,
+			struct bkey_i *insert,
+			struct disk_reservation *disk_res,
+			struct btree_insert_hook *hook,
+			struct journal_res *res,
+			unsigned flags)
 {
 	struct cache_set *c = iter->c;
 	struct btree *b = iter->nodes[0];
@@ -1174,6 +1177,7 @@ void bch_insert_fixup_extent(struct btree_iter *iter,
 	struct bucket_stats_cache_set stats = { 0 };
 	unsigned nr_done = 0;
 	u64 start_time = local_clock();
+	enum btree_insert_ret ret = BTREE_INSERT_OK;
 
 	BUG_ON(iter->level);
 	BUG_ON(bkey_deleted(&insert->k));
@@ -1220,8 +1224,9 @@ void bch_insert_fixup_extent(struct btree_iter *iter,
 							  &insert->k))) {
 		struct bkey_s k = __bkey_disassemble(f, _k, &unpacked);
 
-		if (extent_insert_should_stop(iter, insert, res,
-					      start_time, nr_done)) {
+		ret = extent_insert_should_stop(iter, insert, res,
+						start_time, nr_done);
+		if (ret != BTREE_INSERT_OK) {
 			/*
 			 * Bailing out early - trim the portion of @insert we
 			 * haven't checked against existing extents (the portion
@@ -1370,6 +1375,7 @@ void bch_insert_fixup_extent(struct btree_iter *iter,
 	bch_btree_insert_and_journal(iter, insert, res);
 apply_stats:
 	bch_cache_set_stats_apply(c, &stats, disk_res);
+	return ret;
 }
 
 static const char *bch_extent_invalid(const struct cache_set *c,
