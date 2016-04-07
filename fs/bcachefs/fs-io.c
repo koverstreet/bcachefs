@@ -223,63 +223,43 @@ static struct i_size_update *i_size_update_new(struct bch_inode_info *ei,
 
 /* i_sectors accounting: */
 
-static void i_sectors_hook_fn(struct btree_insert_hook *hook,
-			      struct btree_iter *iter,
-			      struct bkey_s_c k,
-			      struct bkey_i *insert,
-			      struct journal_res *res,
-			      struct bucket_stats_cache_set *stats)
+static enum btree_insert_hook_ret
+i_sectors_hook_fn(struct btree_insert_hook *hook,
+		  struct btree_iter *iter,
+		  struct bpos next_pos,
+		  struct bkey_s_c k,
+		  const struct bkey_i *insert)
 {
 	struct i_sectors_hook *h = container_of(hook,
 				struct i_sectors_hook, hook);
+	s64 sectors = next_pos.offset - iter->pos.offset;
+	int sign = bkey_extent_is_allocation(&insert->k) -
+		(k.k && bkey_extent_is_allocation(k.k));
 
 	EBUG_ON(h->ei->vfs_inode.i_ino != insert->k.p.inode);
 	EBUG_ON(!(h->ei->i_flags & BCH_INODE_I_SECTORS_DIRTY));
 	EBUG_ON(!atomic_long_read(&h->ei->i_sectors_dirty_count));
 
-	if (k.k) {
-		if (!bkey_extent_is_allocation(k.k))
-			return;
+	if (IS_ENABLED(CONFIG_BCACHEFS_DEBUG) &&
+	    bkey_extent_is_allocation(&insert->k) &&
+	    insert->k.type != BCH_RESERVATION) {
+		struct bch_inode_info *ei = h->ei;
+		unsigned seq;
+		bool bad_write;
 
-		switch (bch_extent_overlap(&insert->k, k.k)) {
-		case BCH_EXTENT_OVERLAP_FRONT:
-			h->sectors -= insert->k.p.offset - bkey_start_offset(k.k);
-			break;
+		do {
+			seq = read_seqcount_begin(&ei->shadow_i_size_lock);
+			bad_write = !(ei->i_flags & BCH_INODE_I_SIZE_DIRTY) &&
+				insert->k.p.offset >
+				(round_up(ei->i_size, PAGE_SIZE) >> 9);
+		} while (read_seqcount_retry(&ei->shadow_i_size_lock, seq));
 
-		case BCH_EXTENT_OVERLAP_BACK:
-			h->sectors -= k.k->p.offset - bkey_start_offset(&insert->k);
-			break;
-
-		case BCH_EXTENT_OVERLAP_ALL:
-			h->sectors -= k.k->size;
-			break;
-
-		case BCH_EXTENT_OVERLAP_MIDDLE:
-			h->sectors -= insert->k.size;
-			break;
-		}
-	} else {
-		if (!bkey_extent_is_allocation(&insert->k))
-			return;
-
-#ifdef CONFIG_BCACHEFS_DEBUG
-		if (!(insert->k.type == BCH_RESERVATION)) {
-			struct bch_inode_info *ei = h->ei;
-			unsigned seq;
-			bool bad_write;
-
-			do {
-				seq = read_seqcount_begin(&ei->shadow_i_size_lock);
-				bad_write = !(ei->i_flags & BCH_INODE_I_SIZE_DIRTY) &&
-					insert->k.p.offset >
-					(round_up(ei->i_size, PAGE_SIZE) >> 9);
-			} while (read_seqcount_retry(&ei->shadow_i_size_lock, seq));
-
-			BUG_ON(bad_write);
-		}
-#endif
-		h->sectors += insert->k.size;
+		BUG_ON(bad_write);
 	}
+
+	h->sectors += sectors * sign;
+
+	return BTREE_HOOK_DO_INSERT;
 }
 
 static int inode_set_i_sectors_dirty(struct bch_inode_info *ei,

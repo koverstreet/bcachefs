@@ -46,12 +46,11 @@ bch_extent_pick_ptr(struct cache_set *c, struct bkey_s_c k,
 	bch_extent_pick_ptr_avoiding(c, k, NULL, ret);
 }
 
-void bch_extent_cmpxchg(struct btree_insert_hook *,
-			struct btree_iter *,
-			struct bkey_s_c,
-			struct bkey_i *,
-			struct journal_res *,
-			struct bucket_stats_cache_set *);
+enum btree_insert_hook_ret bch_extent_cmpxchg(struct btree_insert_hook *,
+					      struct btree_iter *,
+					      struct bpos,
+					      struct bkey_s_c,
+					      const struct bkey_i *);
 
 enum btree_insert_ret
 bch_insert_fixup_extent(struct btree_iter *, struct bkey_i *,

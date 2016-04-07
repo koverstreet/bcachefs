@@ -153,13 +153,15 @@ static inline bool btree_node_has_ptrs(struct btree *b)
 struct btree_iter;
 struct bucket_stats_cache_set;
 
+enum btree_insert_hook_ret {
+	BTREE_HOOK_DO_INSERT,
+	BTREE_HOOK_NO_INSERT,
+};
+
 struct btree_insert_hook {
-	void (*fn)(struct btree_insert_hook *,
-		   struct btree_iter *iter,
-		   struct bkey_s_c k,
-		   struct bkey_i *insert,
-		   struct journal_res *res,
-		   struct bucket_stats_cache_set *);
+	enum btree_insert_hook_ret (*fn)(struct btree_insert_hook *,
+					 struct btree_iter *, struct bpos,
+					 struct bkey_s_c, const struct bkey_i *);
 };
 
 enum btree_insert_ret {
