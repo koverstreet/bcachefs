@@ -161,6 +161,8 @@ struct journal {
 	BKEY_PADDED(key);
 
 	struct work_struct	reclaim_work;
+	/* protects advancing ja->last_idx: */
+	struct mutex		reclaim_lock;
 
 	__le64			prio_buckets[MAX_CACHES_PER_SET];
 	unsigned		nr_prio_buckets;
@@ -197,6 +199,11 @@ struct journal_device {
 	unsigned		cur_idx;
 
 	/* Last journal bucket that still contains an open journal entry */
+
+	/*
+	 * j->lock and j->reclaim_lock must both be held to modify, j->lock
+	 * sufficient to read:
+	 */
 	unsigned		last_idx;
 
 	/* Bio for journal reads/writes to this device */

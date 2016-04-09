@@ -1126,6 +1126,50 @@ static void journal_reclaim_fast(struct journal *j)
 	}
 }
 
+static struct journal_entry_pin *
+journal_get_next_pin(struct journal *j, u64 seq_to_flush)
+{
+	struct journal_entry_pin_list *pin_list;
+	struct journal_entry_pin *ret = NULL;
+	unsigned iter;
+
+	/* so we don't iterate over empty fifo entries below: */
+	if (!atomic_read(&fifo_front(&j->pin).count)) {
+		spin_lock(&j->lock);
+		journal_reclaim_fast(j);
+		spin_unlock(&j->lock);
+	}
+
+	spin_lock_irq(&j->pin_lock);
+	fifo_for_each_entry_ptr(pin_list, &j->pin, iter) {
+		if (journal_pin_seq(j, pin_list) > seq_to_flush)
+			break;
+
+		ret = list_first_entry_or_null(&pin_list->list,
+				struct journal_entry_pin, list);
+		if (ret) {
+			/* must be list_del_init(), see journal_pin_drop() */
+			list_del_init(&ret->list);
+			break;
+		}
+	}
+	spin_unlock_irq(&j->pin_lock);
+
+	return ret;
+}
+
+static bool should_discard_bucket(struct journal *j, struct journal_device *ja)
+{
+	bool ret;
+
+	spin_lock(&j->lock);
+	ret = (ja->last_idx != ja->cur_idx &&
+	       ja->bucket_seq[ja->last_idx] < j->last_seq_ondisk);
+	spin_unlock(&j->lock);
+
+	return ret;
+}
+
 /**
  * journal_reclaim_work - free up journal buckets
  *
@@ -1150,10 +1194,10 @@ static void journal_reclaim_work(struct work_struct *work)
 					   journal.reclaim_work);
 	struct journal *j = &c->journal;
 	struct cache *ca;
-	struct journal_entry_pin_list *pin_list;
 	struct journal_entry_pin *pin;
-	u64 seq_to_flush = 0, last_seq = j->last_seq_ondisk;
-	unsigned iter;
+	u64 seq_to_flush = 0;
+	unsigned iter, nr, bucket_to_flush;
+	bool reclaim_lock_held = false;
 
 	/*
 	 * Advance last_idx to point to the oldest journal entry containing
@@ -1161,19 +1205,9 @@ static void journal_reclaim_work(struct work_struct *work)
 	 */
 	group_for_each_cache(ca, &c->cache_tiers[0], iter) {
 		struct journal_device *ja = &ca->journal;
-		unsigned nr = bch_nr_journal_buckets(ca->disk_sb.sb),
-			 cur_idx, bucket_to_flush;
 
-		spin_lock(&j->lock);
-		cur_idx = ja->cur_idx;
-		spin_unlock(&j->lock);
-
-		/* We're the only thread that modifies last_idx: */
-
-		while (ja->last_idx != cur_idx &&
-		       ja->bucket_seq[ja->last_idx] < last_seq) {
-			if (ca->mi.discard &&
-			    blk_queue_discard(bdev_get_queue(ca->disk_sb.bdev))) {
+		while (should_discard_bucket(j, ja)) {
+			if (!reclaim_lock_held) {
 				/*
 				 * ugh:
 				 * might be called from __journal_res_get()
@@ -1183,15 +1217,23 @@ static void journal_reclaim_work(struct work_struct *work)
 				 */
 				__set_current_state(TASK_RUNNING);
 
+				mutex_lock(&j->reclaim_lock);
+				reclaim_lock_held = true;
+				/* recheck under reclaim_lock: */
+				continue;
+			}
+
+			if (ca->mi.discard &&
+			    blk_queue_discard(bdev_get_queue(ca->disk_sb.bdev)))
 				blkdev_issue_discard(ca->disk_sb.bdev,
 					bucket_to_sector(ca,
 						journal_bucket(ca,
 							       ja->last_idx)),
 					ca->mi.bucket_size, GFP_NOIO, 0);
-			}
 
 			spin_lock(&j->lock);
-			ja->last_idx = (ja->last_idx + 1) % nr;
+			ja->last_idx = (ja->last_idx + 1) %
+				bch_nr_journal_buckets(ca->disk_sb.sb);
 			spin_unlock(&j->lock);
 
 			wake_up(&j->wait);
@@ -1202,45 +1244,24 @@ static void journal_reclaim_work(struct work_struct *work)
 		 * buckets
 		 */
 		spin_lock(&j->lock);
-		bucket_to_flush = (cur_idx + (nr >> 1)) % nr;
+		nr = bch_nr_journal_buckets(ca->disk_sb.sb),
+		bucket_to_flush = (ja->cur_idx + (nr >> 1)) % nr;
 		seq_to_flush = max_t(u64, seq_to_flush,
 				     ja->bucket_seq[bucket_to_flush]);
 		spin_unlock(&j->lock);
 	}
 
-	spin_lock(&j->lock);
+	if (reclaim_lock_held)
+		mutex_unlock(&j->reclaim_lock);
 
 	/* Also flush if the pin fifo is more than half full */
 	seq_to_flush = max_t(s64, seq_to_flush,
 			     (s64) j->seq - (j->pin.size >> 1));
 
-	journal_reclaim_fast(j);
-	spin_unlock(&j->lock);
-
-	spin_lock_irq(&j->pin_lock);
-
-restart_flush:
-	/* Now do the actual flushing */
-	fifo_for_each_entry_ptr(pin_list, &j->pin, iter) {
-		if (journal_pin_seq(j, pin_list) > seq_to_flush)
-			break;
-
-		if (!list_empty(&pin_list->list)) {
-			pin = list_first_entry(&pin_list->list,
-					       struct journal_entry_pin,
-					       list);
-			list_del_init(&pin->list);
-			spin_unlock_irq(&j->pin_lock);
-
-			__set_current_state(TASK_RUNNING);
-			pin->flush(pin);
-
-			spin_lock_irq(&j->pin_lock);
-			goto restart_flush;
-		}
+	while ((pin = journal_get_next_pin(j, seq_to_flush))) {
+		__set_current_state(TASK_RUNNING);
+		pin->flush(pin);
 	}
-
-	spin_unlock_irq(&j->pin_lock);
 }
 
 /**
@@ -2067,6 +2088,7 @@ int bch_journal_alloc(struct journal *j)
 	INIT_WORK(&j->reclaim_work, journal_reclaim_work);
 	mutex_init(&j->blacklist_lock);
 	INIT_LIST_HEAD(&j->seq_blacklist);
+	mutex_init(&j->reclaim_lock);
 
 	lockdep_init_map(&j->res_map, "journal res", &res_key, 0);
 
