@@ -166,15 +166,18 @@ static bool btree_iter_cmp(struct btree_iter *iter,
 void bch_btree_node_iter_fix(struct btree_iter *iter,
 			     struct btree_keys *b,
 			     struct btree_node_iter *node_iter,
-			     struct bkey_packed *where)
+			     struct bkey_packed *where,
+			     bool overwrote)
 {
 	struct bkey_format *f = &b->format;
 	struct bset *i = bset_tree_last(b)->data;
 	const struct bkey_packed *end = bset_bkey_last(i);
 	struct btree_node_iter_set *set;
-	unsigned shift = where->u64s;
+	unsigned shift = overwrote ? 0 : where->u64s;
 	unsigned offset = __btree_node_key_to_offset(b, where);
 	unsigned old_end = __btree_node_key_to_offset(b, end) - shift;
+	bool iter_pos_before_new = btree_iter_cmp(iter, iter->pos,
+				bkey_unpack_key(f, where).p);
 
 	BUG_ON(node_iter->used > MAX_BSETS);
 
@@ -184,18 +187,18 @@ void bch_btree_node_iter_fix(struct btree_iter *iter,
 		if (set->end == old_end) {
 			set->end += shift;
 
-			if (set->k > offset ||
-			    (set->k == offset &&
-			     !btree_iter_cmp(iter, iter->pos,
-					     bkey_unpack_key(f, where).p)))
-				set->k += shift;
-			bch_btree_node_iter_sort(node_iter, b);
+			if (set->k >= offset) {
+				if (iter_pos_before_new)
+					set->k = offset;
+				else
+					set->k += shift;
+				bch_btree_node_iter_sort(node_iter, b);
+			}
 			return;
 		}
 
 	/* didn't find the bset in the iterator - might have to readd it: */
-
-	if (btree_iter_cmp(iter, iter->pos, bkey_unpack_key(f, where).p))
+	if (iter_pos_before_new)
 		bch_btree_node_iter_push(node_iter, b, where, end);
 }
 

@@ -326,7 +326,7 @@ void bch_bset_fix_invalidated_key(struct btree_keys *, struct bkey_packed *);
 
 struct bkey_packed *bch_bset_insert(struct btree_keys *,
 				    struct btree_node_iter *,
-				    struct bkey_i *);
+				    struct bkey_i *, bool *);
 
 static inline void btree_keys_account_key(struct btree_nr_keys *n,
 					  struct bkey_packed *k,

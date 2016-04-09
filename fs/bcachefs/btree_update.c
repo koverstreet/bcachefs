@@ -657,6 +657,7 @@ void bch_btree_bset_insert(struct btree_iter *iter,
 {
 	struct btree_iter *linked;
 	struct bkey_packed *where;
+	bool overwrote;
 
 	EBUG_ON(bkey_deleted(&insert->k) && bkey_val_u64s(&insert->k));
 	EBUG_ON(insert->k.u64s > bch_btree_keys_u64s_remaining(iter->c, b));
@@ -670,22 +671,14 @@ void bch_btree_bset_insert(struct btree_iter *iter,
 	 * though.
 	 */
 
-	where = bch_bset_insert(&b->keys, node_iter, insert);
+	where = bch_bset_insert(&b->keys, node_iter, insert, &overwrote);
 
-	if (where) {
-		bch_btree_node_iter_fix(iter, &b->keys, node_iter, where);
+	bch_btree_node_iter_fix(iter, &b->keys, node_iter, where, overwrote);
 
-		for_each_linked_btree_node(iter, b, linked)
-			bch_btree_node_iter_fix(linked, &b->keys,
+	for_each_linked_btree_node(iter, b, linked)
+		bch_btree_node_iter_fix(linked, &b->keys,
 					&linked->node_iters[b->level],
-					where);
-	} else {
-		bch_btree_node_iter_sort(node_iter, &b->keys);
-
-		for_each_linked_btree_node(iter, b, linked)
-			bch_btree_node_iter_sort(&linked->node_iters[b->level],
-						 &b->keys);
-	}
+					where, overwrote);
 
 	bch_btree_node_iter_verify(node_iter, &b->keys);
 

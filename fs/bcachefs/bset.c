@@ -875,7 +875,8 @@ static void bch_bset_fix_lookup_table(struct btree_keys *b,
  */
 struct bkey_packed *bch_bset_insert(struct btree_keys *b,
 				    struct btree_node_iter *iter,
-				    struct bkey_i *insert)
+				    struct bkey_i *insert,
+				    bool *overwrote)
 {
 	struct bkey_format *f = &b->format;
 	struct bset_tree *t = bset_tree_last(b);
@@ -912,14 +913,18 @@ struct bkey_packed *bch_bset_insert(struct btree_keys *b,
 	/* prev is in the tree, if we merge we're done */
 	if (prev &&
 	    bch_bkey_try_merge_inline(b, iter, prev,
-				      bkey_to_packed(insert), true))
-		return NULL;
+				      bkey_to_packed(insert), true)) {
+		*overwrote = true;
+		return prev;
+	}
 
 	if (where != bset_bkey_last(i) &&
 	    bch_bkey_try_merge_inline(b, iter,
 				      bkey_to_packed(insert),
-				      where, false))
-		return NULL;
+				      where, false)) {
+		*overwrote = true;
+		return where;
+	}
 
 	/*
 	 * Can we overwrite the current key, instead of doing a memmove()?
@@ -969,8 +974,9 @@ struct bkey_packed *bch_bset_insert(struct btree_keys *b,
 		btree_keys_account_key_add(&b->nr, src);
 
 	bch_bset_fix_lookup_table(b, t, where);
-	bch_verify_btree_nr_keys(b);
 
+	bch_verify_btree_nr_keys(b);
+	*overwrote = false;
 	return where;
 overwrite:
 	if (!bkey_deleted(where))
@@ -983,9 +989,11 @@ overwrite:
 
 	if (!bkey_deleted(src))
 		btree_keys_account_key_add(&b->nr, src);
-	return NULL;
+
+	bch_verify_btree_nr_keys(b);
+	*overwrote = true;
+	return where;
 }
-EXPORT_SYMBOL(bch_bset_insert);
 
 /* Lookup */
 
