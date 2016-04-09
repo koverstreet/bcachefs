@@ -48,14 +48,12 @@ static inline u64 journal_pin_seq(struct journal *j,
 			      (_n = bkey_next(k), 1));			\
 			     k = _n)
 
-#define JSET_SECTORS (PAGE_SECTORS << JSET_BITS)
-
 static inline void bch_journal_add_entry_at(struct journal *j, const void *data,
 					    size_t u64s, unsigned type,
 					    enum btree_id id, unsigned level,
 					    unsigned offset)
 {
-	struct jset_entry *jkeys = bkey_idx(journal_cur_write(j)->data, offset);
+	struct jset_entry *jkeys = bkey_idx(journal_cur_buf(j)->data, offset);
 
 	jkeys->u64s = cpu_to_le16(u64s);
 	jkeys->btree_id = id;
@@ -70,7 +68,7 @@ static inline void bch_journal_add_entry(struct journal *j, const void *data,
 					 size_t u64s, unsigned type,
 					 enum btree_id id, unsigned level)
 {
-	struct jset *jset = journal_cur_write(j)->data;
+	struct jset *jset = journal_cur_buf(j)->data;
 
 	bch_journal_add_entry_at(j, data, u64s, type, id, level,
 				 le32_to_cpu(jset->u64s));
@@ -376,7 +374,7 @@ static enum {
 		return JOURNAL_ENTRY_BAD;
 
 	if (cache_inconsistent_on(bytes > bucket_sectors_left << 9 ||
-				  bytes > PAGE_SIZE << JSET_BITS, ca,
+				  bytes > JOURNAL_BUF_BYTES, ca,
 			"journal entry too big (%zu bytes), sector %lluu",
 			bytes, sector))
 		return JOURNAL_ENTRY_BAD;
@@ -413,7 +411,7 @@ static int journal_read_bucket(struct cache *ca, struct journal_list *jlist,
 	bool entries_found = false;
 	int ret = 0;
 
-	data = (void *) __get_free_pages(GFP_KERNEL, JSET_BITS);
+	data = (void *) __get_free_pages(GFP_KERNEL, JOURNAL_BUF_ORDER);
 	if (!data) {
 		mutex_lock(&jlist->cache_set_buffer_lock);
 		data = c->journal.w[0].data;
@@ -425,7 +423,7 @@ static int journal_read_bucket(struct cache *ca, struct journal_list *jlist,
 reread:
 		sectors_read = min_t(unsigned,
 				     ca->mi.bucket_size - bucket_offset,
-				     PAGE_SECTORS << JSET_BITS);
+				     JOURNAL_BUF_SECTORS);
 
 		bio_reset(bio);
 		bio->bi_bdev		= ca->disk_sb.bdev;
@@ -506,7 +504,7 @@ err:
 	if (data == c->journal.w[0].data)
 		mutex_unlock(&jlist->cache_set_buffer_lock);
 	else
-		free_pages((unsigned long) data, JSET_BITS);
+		free_pages((unsigned long) data, JOURNAL_BUF_ORDER);
 
 	return ret;
 }
@@ -843,7 +841,7 @@ __journal_entry_close(struct journal *j, u32 val)
 				       old.v, new.v)) != old.v);
 
 	if (old.cur_entry_offset < JOURNAL_ENTRY_CLOSED_VAL)
-		journal_cur_write(j)->data->u64s = cpu_to_le32(old.cur_entry_offset);
+		journal_cur_buf(j)->data->u64s = cpu_to_le32(old.cur_entry_offset);
 
 	if (old.cur_entry_offset == JOURNAL_ENTRY_ERROR_VAL)
 		return JOURNAL_ENTRY_ERROR;
@@ -871,16 +869,16 @@ void bch_journal_halt(struct journal *j)
 /* Number of u64s we can write to the current journal bucket */
 static void journal_entry_open(struct journal *j)
 {
-	struct journal_write *w = journal_cur_write(j);
+	struct journal_buf *w = journal_cur_buf(j);
 	ssize_t u64s;
 
 	lockdep_assert_held(&j->lock);
 	BUG_ON(journal_entry_is_open(j) ||
 	       test_bit(JOURNAL_DIRTY, &j->flags));
 
-	u64s = (min_t(size_t,
-		      j->sectors_free,
-		      JSET_SECTORS) << 9) / sizeof(u64);
+	u64s = min_t(size_t,
+		     j->sectors_free << 9,
+		     JOURNAL_BUF_BYTES) / sizeof(u64);
 
 	/* Subtract the journal header */
 	u64s -= sizeof(struct jset) / sizeof(u64);
@@ -1382,7 +1380,7 @@ static void __bch_journal_next_entry(struct journal *j)
 	struct journal_entry_pin_list pin_list, *p;
 	struct jset *jset;
 
-	change_bit(JOURNAL_WRITE_IDX, &j->flags);
+	change_bit(JOURNAL_BUF_IDX, &j->flags);
 
 	/*
 	 * The fifo_push() needs to happen at the same time as j->seq is
@@ -1399,7 +1397,7 @@ static void __bch_journal_next_entry(struct journal *j)
 		j->cur_pin_list = p;
 	}
 
-	jset = journal_cur_write(j)->data;
+	jset = journal_cur_buf(j)->data;
 	jset->seq	= cpu_to_le64(++j->seq);
 	jset->u64s	= 0;
 }
@@ -1413,8 +1411,7 @@ static void bch_journal_next_entry(struct journal *j)
 static void journal_write_endio(struct bio *bio)
 {
 	struct cache *ca = container_of(bio, struct cache, journal.bio);
-	struct journal_write *w = bio->bi_private;
-	struct journal *j = w->j;
+	struct journal *j = &ca->set->journal;
 
 	if (cache_fatal_io_err_on(bio->bi_error, ca, "journal write") ||
 	    bch_meta_write_fault("journal")) {
@@ -1429,7 +1426,7 @@ static void journal_write_endio(struct bio *bio)
 static void journal_write_done(struct closure *cl)
 {
 	struct journal *j = container_of(cl, struct journal, io);
-	struct journal_write *w = journal_prev_write(j);
+	struct journal_buf *w = journal_prev_buf(j);
 
 	j->last_seq_ondisk = le64_to_cpu(w->data->last_seq);
 
@@ -1439,7 +1436,7 @@ static void journal_write_done(struct closure *cl)
 
 	/*
 	 * XXX: this is racy, we could technically end up doing the wake up
-	 * after the journal_write struct has been reused for the next write
+	 * after the journal_buf struct has been reused for the next write
 	 * (because we're clearing JOURNAL_IO_IN_FLIGHT) and wake up things that
 	 * are waiting on the _next_ write, not this one.
 	 *
@@ -1516,7 +1513,7 @@ static void journal_write_locked(struct closure *cl)
 	struct journal *j =  container_of(cl, struct journal, io);
 	struct cache_set *c = container_of(j, struct cache_set, journal);
 	struct cache *ca;
-	struct journal_write *w = journal_cur_write(j);
+	struct journal_buf *w = journal_cur_buf(j);
 	struct bkey_s_extent e = bkey_i_to_s_extent(&j->key);
 	struct bch_extent_ptr *ptr;
 	BKEY_PADDED(k) tmp;
@@ -1594,7 +1591,7 @@ static void journal_write_locked(struct closure *cl)
 		 * the write, so that if our bucket size is really small
 		 * we don't get stuck forever.
 		 */
-		if (ca->journal.sectors_free < JSET_SECTORS) {
+		if (ca->journal.sectors_free < JOURNAL_BUF_SECTORS) {
 			j->sectors_free = 0;
 			ca->journal.sectors_free = 0;
 		}
@@ -1681,7 +1678,7 @@ static bool __journal_write(struct journal *j, bool need_write_just_set)
 
 	return true;
 journal_error:
-	closure_wake_up(&journal_cur_write(j)->wait);
+	closure_wake_up(&journal_cur_buf(j)->wait);
 nowrite:
 	spin_unlock(&j->lock);
 	return false;
@@ -1948,17 +1945,17 @@ void bch_journal_flush_seq_async(struct journal *j, u64 seq, struct closure *par
 
 	if (parent) {
 		if (seq == j->seq) {
-			if (!closure_wait(&journal_cur_write(j)->wait, parent))
+			if (!closure_wait(&journal_cur_buf(j)->wait, parent))
 				BUG();
 		} else if (seq + 1 == j->seq &&
 			   test_bit(JOURNAL_IO_IN_FLIGHT, &j->flags)) {
-			if (!closure_wait(&journal_prev_write(j)->wait, parent))
+			if (!closure_wait(&journal_prev_buf(j)->wait, parent))
 				BUG();
 
 			smp_mb();
 
 			if (!test_bit(JOURNAL_IO_IN_FLIGHT, &j->flags))
-				closure_wake_up(&journal_prev_write(j)->wait);
+				closure_wake_up(&journal_prev_buf(j)->wait);
 		}
 	}
 
@@ -2054,8 +2051,8 @@ int bch_journal_flush(struct journal *j)
 
 void bch_journal_free(struct journal *j)
 {
-	free_pages((unsigned long) j->w[1].data, JSET_BITS);
-	free_pages((unsigned long) j->w[0].data, JSET_BITS);
+	free_pages((unsigned long) j->w[1].data, JOURNAL_BUF_ORDER);
+	free_pages((unsigned long) j->w[0].data, JOURNAL_BUF_ORDER);
 	free_fifo(&j->pin);
 }
 
@@ -2080,12 +2077,11 @@ int bch_journal_alloc(struct journal *j)
 	atomic64_set(&j->reservations.counter,
 		     journal_res_state(0, JOURNAL_ENTRY_CLOSED_VAL).v);
 
-	j->w[0].j = j;
-	j->w[1].j = j;
-
 	if (!(init_fifo(&j->pin, JOURNAL_PIN, GFP_KERNEL)) ||
-	    !(j->w[0].data = (void *) __get_free_pages(GFP_KERNEL, JSET_BITS)) ||
-	    !(j->w[1].data = (void *) __get_free_pages(GFP_KERNEL, JSET_BITS)))
+	    !(j->w[0].data = (void *) __get_free_pages(GFP_KERNEL,
+						JOURNAL_BUF_ORDER)) ||
+	    !(j->w[1].data = (void *) __get_free_pages(GFP_KERNEL,
+						JOURNAL_BUF_ORDER)))
 		return -ENOMEM;
 
 	return 0;

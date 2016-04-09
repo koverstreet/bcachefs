@@ -181,16 +181,16 @@ struct bkey_i *bch_journal_find_btree_root(struct cache_set *, struct jset *,
 
 int bch_journal_seq_blacklisted(struct cache_set *, u64, struct btree *);
 
-static inline struct journal_write *journal_cur_write(struct journal *j)
+static inline struct journal_buf *journal_cur_buf(struct journal *j)
 {
 
-	return j->w + test_bit(JOURNAL_WRITE_IDX, &j->flags);
+	return j->w + test_bit(JOURNAL_BUF_IDX, &j->flags);
 }
 
-static inline struct journal_write *journal_prev_write(struct journal *j)
+static inline struct journal_buf *journal_prev_buf(struct journal *j)
 {
 
-	return j->w + !test_bit(JOURNAL_WRITE_IDX, &j->flags);
+	return j->w + !test_bit(JOURNAL_BUF_IDX, &j->flags);
 }
 
 void bch_journal_add_keys(struct journal *, struct journal_res *,

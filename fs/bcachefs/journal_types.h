@@ -7,15 +7,17 @@
 
 struct journal_res;
 
+/* size of allocated buffer, max journal entry size: */
+#define JOURNAL_BUF_BYTES	(128 << 10)
+#define JOURNAL_BUF_SECTORS	(JOURNAL_BUF_BYTES >> 9)
+#define JOURNAL_BUF_ORDER	ilog2(JOURNAL_BUF_BYTES >> PAGE_SHIFT)
+
 /*
  * We put two of these in struct journal; we used them for writes to the
  * journal that are being staged or in flight.
  */
-struct journal_write {
+struct journal_buf {
 	struct jset		*data;
-#define JSET_BITS		5
-
-	struct journal		*j;
 	struct closure_waitlist	wait;
 };
 
@@ -90,7 +92,7 @@ enum {
 	JOURNAL_DIRTY,
 	JOURNAL_NEED_WRITE,
 	JOURNAL_IO_IN_FLIGHT,
-	JOURNAL_WRITE_IDX,
+	JOURNAL_BUF_IDX,
 	JOURNAL_REPLAY_DONE,
 };
 
@@ -107,7 +109,7 @@ struct journal {
 	 * Two journal entries -- one is currently open for new entries, the
 	 * other is possibly being written out.
 	 */
-	struct journal_write	w[2];
+	struct journal_buf	w[2];
 
 	spinlock_t		lock;
 
@@ -199,7 +201,7 @@ struct journal_device {
 
 	/* Bio for journal reads/writes to this device */
 	struct bio		bio;
-	struct bio_vec		bv[1 << JSET_BITS];
+	struct bio_vec		bv[JOURNAL_BUF_BYTES / PAGE_SIZE];
 
 	/* for bch_journal_read_device */
 	struct closure		read;
