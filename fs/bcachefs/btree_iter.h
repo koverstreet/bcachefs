@@ -168,6 +168,14 @@ static inline struct bpos btree_type_successor(enum btree_id id,
 	return pos;
 }
 
+static inline int btree_iter_cmp(const struct btree_iter *l,
+				 const struct btree_iter *r)
+{
+	if (l->btree_id != r->btree_id)
+		return l->btree_id < r->btree_id ? -1 : 1;
+	return bkey_cmp(l->pos, r->pos);
+}
+
 #define for_each_btree_node(_iter, _c, _btree_id, _start, _b)		\
 	for (bch_btree_iter_init((_iter), (_c), (_btree_id), _start),	\
 	     (_iter)->is_extents = false,				\

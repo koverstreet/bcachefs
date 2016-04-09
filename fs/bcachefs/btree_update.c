@@ -1532,9 +1532,7 @@ static int btree_trans_iter_cmp(const void *_l, const void *_r)
 	const struct btree_insert_trans *l = _l;
 	const struct btree_insert_trans *r = _r;
 
-	if (l->iter->btree_id != r->iter->btree_id)
-		return l->iter->btree_id < r->iter->btree_id ? -1 : 1;
-	return bkey_cmp(l->iter->pos, r->iter->pos);
+	return btree_iter_cmp(l->iter, r->iter);
 }
 
 /* Normal update interface: */

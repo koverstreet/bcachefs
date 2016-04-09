@@ -155,8 +155,8 @@ bool btree_node_relock(struct btree_iter *iter, unsigned level)
 
 /* Btree iterator: */
 
-static bool btree_iter_cmp(struct btree_iter *iter,
-			   struct bpos pos, struct bpos k)
+static bool btree_iter_pos_cmp(struct btree_iter *iter,
+			       struct bpos pos, struct bpos k)
 {
 	return iter->is_extents
 		? bkey_cmp(pos, k) < 0
@@ -176,7 +176,7 @@ void bch_btree_node_iter_fix(struct btree_iter *iter,
 	unsigned shift = overwrote ? 0 : where->u64s;
 	unsigned offset = __btree_node_key_to_offset(b, where);
 	unsigned old_end = __btree_node_key_to_offset(b, end) - shift;
-	bool iter_pos_before_new = btree_iter_cmp(iter, iter->pos,
+	bool iter_pos_before_new = btree_iter_pos_cmp(iter, iter->pos,
 				bkey_unpack_key(f, where).p);
 
 	BUG_ON(node_iter->used > MAX_BSETS);
@@ -264,7 +264,7 @@ static bool btree_iter_pos_in_node(struct btree_iter *iter,
 {
 	return iter->btree_id == b->btree_id &&
 		bkey_cmp(iter->pos, b->data->min_key) >= 0 &&
-		btree_iter_cmp(iter, iter->pos, b->key.k.p);
+		btree_iter_pos_cmp(iter, iter->pos, b->key.k.p);
 }
 
 /*
@@ -410,7 +410,6 @@ static void btree_iter_verify_locking(struct btree_iter *iter)
 	 * retaking fails then return -EINTR... but, let's keep things simple
 	 * for now:
 	 */
-
 	for_each_linked_btree_iter(iter, linked)
 		for (level = 0; level < BTREE_MAX_DEPTH; level++)
 			BUG_ON(btree_node_read_locked(linked, level));
@@ -423,6 +422,12 @@ static void btree_iter_verify_locking(struct btree_iter *iter)
 	for_each_linked_btree_iter(iter, linked)
 		for (level = 0; level < iter->level; level++)
 			BUG_ON(btree_node_intent_locked(linked, level));
+
+	/* And, lock ordering: */
+	for_each_linked_btree_iter(iter, linked)
+		BUG_ON(btree_node_intent_locked(linked, 0) &&
+		       btree_iter_cmp(iter, linked) < 0);
+
 #endif
 }
 
@@ -451,7 +456,8 @@ retry:
 	while (iter->nodes[iter->level] &&
 	       !(is_btree_node(iter, iter->level) &&
 		 btree_node_relock(iter, iter->level) &&
-		 btree_iter_cmp(iter, pos, iter->nodes[iter->level]->key.k.p)))
+		 btree_iter_pos_cmp(iter, pos,
+				    iter->nodes[iter->level]->key.k.p)))
 		btree_iter_up(iter);
 
 	/*
@@ -462,7 +468,7 @@ retry:
 		struct bkey_s_c k;
 
 		while ((k = __btree_iter_peek_all(iter)).k &&
-		       !btree_iter_cmp(iter, pos, k.k->p))
+		       !btree_iter_pos_cmp(iter, pos, k.k->p))
 			__btree_iter_next_all(iter);
 	}
 
