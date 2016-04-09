@@ -108,7 +108,6 @@ struct btree_nr_keys bch_key_sort_fix_overlapping(struct btree_keys *b,
 enum btree_insert_ret
 bch_insert_fixup_key(struct btree_iter *iter,
 		     struct bkey_i *insert,
-		     struct btree_insert_hook *hook,
 		     struct journal_res *res)
 {
 	struct btree *b = iter->nodes[0];
@@ -118,7 +117,6 @@ bch_insert_fixup_key(struct btree_iter *iter,
 	int cmp;
 
 	BUG_ON(iter->level);
-	BUG_ON(hook);
 	EBUG_ON((k = bch_btree_node_iter_prev_all(node_iter, &b->keys)) &&
 		(bkey_deleted(k)
 		 ? bkey_cmp_packed(f, k, &insert->k) > 0
@@ -954,11 +952,11 @@ static bool bch_extent_cmpxchg_cmp(struct bkey_s_c l, struct bkey_s_c r)
  * On return, there is room in @res for at least one more key of the same size
  * as @new.
  */
-enum btree_insert_hook_ret bch_extent_cmpxchg(struct btree_insert_hook *hook,
-					      struct btree_iter *iter,
-					      struct bpos next_pos,
-					      struct bkey_s_c k,
-					      const struct bkey_i *new)
+enum extent_insert_hook_ret bch_extent_cmpxchg(struct extent_insert_hook *hook,
+					       struct btree_iter *iter,
+					       struct bpos next_pos,
+					       struct bkey_s_c k,
+					       const struct bkey_i *new)
 {
 	struct bch_replace_info *replace = container_of(hook,
 					struct bch_replace_info, hook);
@@ -1037,8 +1035,8 @@ static void extent_insert_committed(struct btree_iter *iter,
 	}
 }
 
-static enum btree_insert_hook_ret
-__extent_insert_advance_pos(struct btree_insert_hook *hook,
+static enum extent_insert_hook_ret
+__extent_insert_advance_pos(struct extent_insert_hook *hook,
 			    struct btree_iter *iter,
 			    struct bpos next_pos,
 			    struct bkey_i *insert,
@@ -1046,7 +1044,7 @@ __extent_insert_advance_pos(struct btree_insert_hook *hook,
 			    struct journal_res *res,
 			    struct bucket_stats_cache_set *stats)
 {
-	enum btree_insert_hook_ret ret;
+	enum extent_insert_hook_ret ret;
 
 	if (k.k && k.k->size &&
 	    insert->k.version &&
@@ -1081,8 +1079,8 @@ __extent_insert_advance_pos(struct btree_insert_hook *hook,
  * Update iter->pos, marking how much of @insert we've processed, and call hook
  * fn:
  */
-static enum btree_insert_hook_ret
-extent_insert_advance_pos(struct btree_insert_hook *hook,
+static enum extent_insert_hook_ret
+extent_insert_advance_pos(struct extent_insert_hook *hook,
 			  struct btree_iter *iter,
 			  struct bkey_i *insert,
 			  struct bkey_s_c k,
@@ -1162,7 +1160,7 @@ enum btree_insert_ret
 bch_insert_fixup_extent(struct btree_iter *iter,
 			struct bkey_i *insert,
 			struct disk_reservation *disk_res,
-			struct btree_insert_hook *hook,
+			struct extent_insert_hook *hook,
 			struct journal_res *res,
 			unsigned flags)
 {

@@ -236,10 +236,10 @@ void bch_btree_insert_node(struct btree *, struct btree_iter *,
 
 int bch_btree_insert_at(struct btree_iter *, struct bkey_i *,
 			struct disk_reservation *,
-			struct btree_insert_hook *, u64 *, unsigned);
+			struct extent_insert_hook *, u64 *, unsigned);
 int bch_btree_insert_list_at(struct btree_iter *, struct keylist *,
 			     struct disk_reservation *,
-			     struct btree_insert_hook *, u64 *, unsigned);
+			     struct extent_insert_hook *, u64 *, unsigned);
 
 struct btree_insert_trans {
 	struct btree_iter	*iter;
@@ -250,19 +250,19 @@ struct btree_insert_trans {
 
 int bch_btree_insert_trans(struct btree_insert_trans[], unsigned,
 			   struct disk_reservation *,
-			   struct btree_insert_hook *,
+			   struct extent_insert_hook *,
 			   u64 *, unsigned);
 
 int bch_btree_insert_check_key(struct btree_iter *, struct bkey_i *);
 int bch_btree_insert(struct cache_set *, enum btree_id, struct bkey_i *,
 		     struct disk_reservation *,
-		     struct btree_insert_hook *, u64 *, int flags);
+		     struct extent_insert_hook *, u64 *, int flags);
 int bch_btree_update(struct cache_set *, enum btree_id,
 		     struct bkey_i *, u64 *);
 
 int bch_btree_delete_range(struct cache_set *, enum btree_id,
 			   struct bpos, struct bpos, u64,
-			   struct btree_insert_hook *, u64 *);
+			   struct extent_insert_hook *, u64 *);
 
 int bch_btree_node_rewrite(struct btree *, struct btree_iter *, bool);
 

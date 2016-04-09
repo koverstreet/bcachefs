@@ -1246,7 +1246,7 @@ void bch_write(struct closure *cl)
 void bch_write_op_init(struct bch_write_op *op, struct cache_set *c,
 		       struct bch_write_bio *bio, struct disk_reservation res,
 		       struct write_point *wp, struct bkey_s_c insert_key,
-		       struct btree_insert_hook *insert_hook,
+		       struct extent_insert_hook *insert_hook,
 		       u64 *journal_seq, unsigned flags)
 {
 	if (!wp) {
@@ -1321,7 +1321,7 @@ void bch_replace_init(struct bch_replace_info *r, struct bkey_s_c old)
  */
 int bch_discard(struct cache_set *c, struct bpos start,
 		struct bpos end, u64 version,
-		struct btree_insert_hook *hook,
+		struct extent_insert_hook *hook,
 		u64 *journal_seq)
 {
 	return bch_btree_delete_range(c, BTREE_ID_EXTENTS, start, end,

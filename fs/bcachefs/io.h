@@ -33,7 +33,7 @@ void bch_write_op_init(struct bch_write_op *, struct cache_set *,
 		       struct bch_write_bio *,
 		       struct disk_reservation, struct write_point *,
 		       struct bkey_s_c,
-		       struct btree_insert_hook *, u64 *, unsigned);
+		       struct extent_insert_hook *, u64 *, unsigned);
 void bch_write(struct closure *);
 
 void bch_replace_init(struct bch_replace_info *, struct bkey_s_c);
@@ -77,7 +77,7 @@ void bch_submit_bbio_replicas(struct bch_write_bio *, struct cache_set *,
 			      const struct bkey_i *, unsigned, bool);
 
 int bch_discard(struct cache_set *, struct bpos, struct bpos,
-		u64, struct btree_insert_hook *, u64 *);
+		u64, struct extent_insert_hook *, u64 *);
 
 void __cache_promote(struct cache_set *, struct bbio *,
 		     struct bkey_s_c, struct bkey_s_c, unsigned);

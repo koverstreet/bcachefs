@@ -76,7 +76,7 @@ struct bch_write_bio {
 };
 
 struct bch_replace_info {
-	struct btree_insert_hook	hook;
+	struct extent_insert_hook	hook;
 	/* How many insertions succeeded */
 	unsigned			successes;
 	/* How many insertions failed */
@@ -119,7 +119,7 @@ struct bch_write_op {
 		u64			journal_seq;
 	};
 
-	struct btree_insert_hook *insert_hook;
+	struct extent_insert_hook *insert_hook;
 
 	struct keylist		insert_keys;
 	BKEY_PADDED(insert_key);

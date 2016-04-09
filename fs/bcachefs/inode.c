@@ -163,7 +163,7 @@ again:
 }
 
 int bch_inode_truncate(struct cache_set *c, u64 inode_nr, u64 new_size,
-		       struct btree_insert_hook *hook, u64 *journal_seq)
+		       struct extent_insert_hook *hook, u64 *journal_seq)
 {
 	return bch_discard(c, POS(inode_nr, new_size), POS(inode_nr + 1, 0),
 			   0, hook, journal_seq);

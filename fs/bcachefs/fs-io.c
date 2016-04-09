@@ -223,8 +223,8 @@ static struct i_size_update *i_size_update_new(struct bch_inode_info *ei,
 
 /* i_sectors accounting: */
 
-static enum btree_insert_hook_ret
-i_sectors_hook_fn(struct btree_insert_hook *hook,
+static enum extent_insert_hook_ret
+i_sectors_hook_fn(struct extent_insert_hook *hook,
 		  struct btree_iter *iter,
 		  struct bpos next_pos,
 		  struct bkey_s_c k,

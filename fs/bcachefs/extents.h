@@ -16,7 +16,7 @@ struct btree_nr_keys bch_extent_sort_fix_overlapping(struct btree_keys *,
 
 enum btree_insert_ret
 bch_insert_fixup_key(struct btree_iter *, struct bkey_i *,
-		     struct btree_insert_hook *, struct journal_res *);
+		     struct journal_res *);
 
 extern const struct bkey_ops bch_bkey_btree_ops;
 extern const struct bkey_ops bch_bkey_extent_ops;
@@ -46,16 +46,14 @@ bch_extent_pick_ptr(struct cache_set *c, struct bkey_s_c k,
 	bch_extent_pick_ptr_avoiding(c, k, NULL, ret);
 }
 
-enum btree_insert_hook_ret bch_extent_cmpxchg(struct btree_insert_hook *,
-					      struct btree_iter *,
-					      struct bpos,
-					      struct bkey_s_c,
-					      const struct bkey_i *);
+enum extent_insert_hook_ret
+bch_extent_cmpxchg(struct extent_insert_hook *, struct btree_iter *,
+		   struct bpos, struct bkey_s_c, const struct bkey_i *);
 
 enum btree_insert_ret
 bch_insert_fixup_extent(struct btree_iter *, struct bkey_i *,
 			struct disk_reservation *,
-			struct btree_insert_hook *,
+			struct extent_insert_hook *,
 			struct journal_res *, unsigned);
 
 void bch_extent_drop_stale(struct cache_set *c, struct bkey_s_extent);

@@ -1478,7 +1478,7 @@ out_unlock:
 static enum btree_insert_ret
 btree_insert_key(struct btree_iter *iter, struct bkey_i *insert,
 		 struct disk_reservation *disk_res,
-		 struct btree_insert_hook *hook,
+		 struct extent_insert_hook *hook,
 		 struct journal_res *res,
 		 unsigned flags)
 {
@@ -1489,7 +1489,7 @@ btree_insert_key(struct btree_iter *iter, struct bkey_i *insert,
 	bch_btree_node_iter_verify(&iter->node_iters[0], &b->keys);
 
 	ret = !b->keys.ops->is_extents
-		? bch_insert_fixup_key(iter, insert, hook, res)
+		? bch_insert_fixup_key(iter, insert, res)
 		: bch_insert_fixup_extent(iter, insert, disk_res,
 					  hook, res, flags);
 
@@ -1541,7 +1541,7 @@ static int btree_trans_iter_cmp(const void *_l, const void *_r)
 
 int bch_btree_insert_trans(struct btree_insert_trans *m, unsigned nr,
 			   struct disk_reservation *disk_res,
-			   struct btree_insert_hook *hook,
+			   struct extent_insert_hook *hook,
 			   u64 *journal_seq, unsigned flags)
 {
 	struct cache_set *c = m[0].iter->c;
@@ -1719,7 +1719,7 @@ err:
 int bch_btree_insert_at(struct btree_iter *iter,
 			struct bkey_i *insert_key,
 			struct disk_reservation *disk_res,
-			struct btree_insert_hook *hook,
+			struct extent_insert_hook *hook,
 			u64 *journal_seq, unsigned flags)
 {
 	struct btree_insert_trans m = {
@@ -1738,7 +1738,7 @@ int bch_btree_insert_at(struct btree_iter *iter,
 int bch_btree_insert_list_at(struct btree_iter *iter,
 			     struct keylist *keys,
 			     struct disk_reservation *disk_res,
-			     struct btree_insert_hook *hook,
+			     struct extent_insert_hook *hook,
 			     u64 *journal_seq, unsigned flags)
 {
 	BUG_ON(flags & BTREE_INSERT_ATOMIC);
@@ -1810,7 +1810,7 @@ int bch_btree_insert_check_key(struct btree_iter *iter,
 int bch_btree_insert(struct cache_set *c, enum btree_id id,
 		     struct bkey_i *k,
 		     struct disk_reservation *disk_res,
-		     struct btree_insert_hook *hook,
+		     struct extent_insert_hook *hook,
 		     u64 *journal_seq, int flags)
 {
 	struct btree_iter iter;
@@ -1864,7 +1864,7 @@ int bch_btree_delete_range(struct cache_set *c, enum btree_id id,
 			   struct bpos start,
 			   struct bpos end,
 			   u64 version,
-			   struct btree_insert_hook *hook,
+			   struct extent_insert_hook *hook,
 			   u64 *journal_seq)
 {
 	struct btree_iter iter;
