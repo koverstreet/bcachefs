@@ -745,6 +745,9 @@ int bch_readpages(struct file *file, struct address_space *mapping,
 
 	pr_debug("reading %u pages", nr_pages);
 
+	if (current->pagecache_lock != &mapping->add_lock)
+		pagecache_add_get(&mapping->add_lock);
+
 	for_each_readpage_page(mapping, pages, nr_pages, page) {
 again:
 		if (!rbio) {
@@ -766,6 +769,9 @@ again:
 
 	if (rbio)
 		bchfs_read(c, rbio, inode->i_ino);
+
+	if (current->pagecache_lock != &mapping->add_lock)
+		pagecache_add_put(&mapping->add_lock);
 
 	pr_debug("success");
 	return 0;
