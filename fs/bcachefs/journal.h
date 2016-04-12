@@ -169,9 +169,6 @@ static inline void journal_pin_drop(struct journal *j,
 	pin->pin_list = NULL;
 }
 
-#define journal_full(j)						\
-	(!(j)->sectors_free || fifo_free(&(j)->pin) <= 1)
-
 struct closure;
 struct cache_set;
 struct keylist;
@@ -180,18 +177,6 @@ struct bkey_i *bch_journal_find_btree_root(struct cache_set *, struct jset *,
 					   enum btree_id, unsigned *);
 
 int bch_journal_seq_blacklisted(struct cache_set *, u64, struct btree *);
-
-static inline struct journal_buf *journal_cur_buf(struct journal *j)
-{
-
-	return j->w + test_bit(JOURNAL_BUF_IDX, &j->flags);
-}
-
-static inline struct journal_buf *journal_prev_buf(struct journal *j)
-{
-
-	return j->w + !test_bit(JOURNAL_BUF_IDX, &j->flags);
-}
 
 void bch_journal_add_keys(struct journal *, struct journal_res *,
 			  enum btree_id, const struct bkey_i *,

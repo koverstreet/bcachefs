@@ -53,6 +53,7 @@ struct journal_seq_blacklist {
 
 struct journal_res {
 	bool			ref;
+	u8			idx;
 	u16			offset;
 	u16			u64s;
 };
@@ -67,32 +68,28 @@ union journal_res_state {
 	};
 
 	struct {
-		unsigned	count;
-		unsigned	cur_entry_offset;
+		u64		cur_entry_offset:16,
+				idx:1,
+				prev_buf_unwritten:1,
+				buf0_count:23,
+				buf1_count:23;
 	};
 };
 
 /*
  * We stash some journal state as sentinal values in cur_entry_offset:
  */
-#define JOURNAL_ENTRY_CLOSED_VAL	((u32) S32_MAX)
-#define JOURNAL_ENTRY_ERROR_VAL		((u32) S32_MAX + 1)
+#define JOURNAL_ENTRY_CLOSED_VAL	(U16_MAX - 1)
+#define JOURNAL_ENTRY_ERROR_VAL		(U16_MAX)
 
 /*
- * JOURNAL_DIRTY - current journal entry has stuff in it to write
- *
  * JOURNAL_NEED_WRITE - current (pending) journal entry should be written ASAP,
  * either because something's waiting on the write to complete or because it's
  * been dirty too long and the timer's expired.
- *
- * If JOURNAL_NEED_WRITE is set, JOURNAL_DIRTY must be set.
  */
 
 enum {
-	JOURNAL_DIRTY,
 	JOURNAL_NEED_WRITE,
-	JOURNAL_IO_IN_FLIGHT,
-	JOURNAL_BUF_IDX,
 	JOURNAL_REPLAY_DONE,
 };
 
@@ -109,12 +106,9 @@ struct journal {
 	 * Two journal entries -- one is currently open for new entries, the
 	 * other is possibly being written out.
 	 */
-	struct journal_buf	w[2];
+	struct journal_buf	buf[2];
 
 	spinlock_t		lock;
-
-	/* minimum sectors free in the bucket(s) we're currently writing to */
-	unsigned		sectors_free;
 
 	/* Used when waiting because the journal was full */
 	wait_queue_head_t	wait;
