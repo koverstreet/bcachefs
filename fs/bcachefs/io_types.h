@@ -120,6 +120,7 @@ struct bch_write_op {
 	};
 
 	struct extent_insert_hook *insert_hook;
+	int			(*index_update_fn)(struct bch_write_op *);
 
 	struct keylist		insert_keys;
 	BKEY_PADDED(insert_key);

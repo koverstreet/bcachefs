@@ -38,19 +38,21 @@ int bch_migrate_page(struct address_space *, struct page *,
 struct i_sectors_hook {
 	struct extent_insert_hook	hook;
 	s64				sectors;
-#ifdef CONFIG_BCACHEFS_DEBUG
 	struct bch_inode_info		*ei;
-#endif
+};
+
+struct bchfs_write_op {
+	struct bch_inode_info	*ei;
+	s64			sectors;
+	bool			is_dio;
+	u64			new_i_size;
+	struct bch_write_op	op;
 };
 
 struct bch_writepage_io {
 	struct closure		cl;
 
-	struct bch_inode_info	*ei;
-	unsigned long		i_size_update_count[I_SIZE_UPDATE_ENTRIES];
-
-	struct bch_write_op	op;
-	struct i_sectors_hook	i_sectors_hook;
+	struct bchfs_write_op	op;
 
 	/* must come last: */
 	struct bch_write_bio	bio;
@@ -64,7 +66,6 @@ struct dio_write {
 	long			written;
 	long			error;
 	loff_t			offset;
-	bool			append;
 
 	struct disk_reservation	res;
 
@@ -74,8 +75,7 @@ struct dio_write {
 
 	struct mm_struct	*mm;
 
-	struct bch_write_op	iop;
-	struct i_sectors_hook	i_sectors_hook;
+	struct bchfs_write_op	iop;
 
 	/* must be last: */
 	struct bch_write_bio	bio;

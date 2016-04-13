@@ -29,6 +29,12 @@ enum bch_write_flags {
 	BCH_WRITE_LOOPED		= (1 << 7),
 };
 
+static inline u64 *op_journal_seq(struct bch_write_op *op)
+{
+	return (op->flags & BCH_WRITE_JOURNAL_SEQ_PTR)
+		? op->journal_seq_p : &op->journal_seq;
+}
+
 void bch_write_op_init(struct bch_write_op *, struct cache_set *,
 		       struct bch_write_bio *,
 		       struct disk_reservation, struct write_point *,

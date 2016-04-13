@@ -551,12 +551,6 @@ advance:
 
 static void __bch_write(struct closure *);
 
-static inline u64 *op_journal_seq(struct bch_write_op *op)
-{
-	return (op->flags & BCH_WRITE_JOURNAL_SEQ_PTR)
-		? op->journal_seq_p : &op->journal_seq;
-}
-
 static void bch_write_done(struct closure *cl)
 {
 	struct bch_write_op *op = container_of(cl, struct bch_write_op, cl);
@@ -583,6 +577,24 @@ static u64 keylist_sectors(struct keylist *keys)
 	return ret;
 }
 
+static int bch_write_index_default(struct bch_write_op *op)
+{
+	struct keylist *keys = &op->insert_keys;
+	struct btree_iter iter;
+	int ret;
+
+	bch_btree_iter_init_intent(&iter, op->c, BTREE_ID_EXTENTS,
+		bkey_start_pos(&bch_keylist_front(keys)->k));
+
+	ret = bch_btree_insert_list_at(&iter, keys, &op->res,
+				       op->insert_hook,
+				       op_journal_seq(op),
+				       BTREE_INSERT_NOFAIL);
+	bch_btree_iter_unlock(&iter);
+
+	return ret;
+}
+
 /**
  * bch_write_index - after a write, update index to point to new data
  */
@@ -595,18 +607,10 @@ static void bch_write_index(struct closure *cl)
 	op->flags |= BCH_WRITE_LOOPED;
 
 	if (!bch_keylist_empty(keys)) {
-		struct btree_iter iter;
 		u64 sectors_start = keylist_sectors(keys);
-		int ret;
+		int ret = op->index_update_fn(op);
 
-		bch_btree_iter_init_intent(&iter, op->c, BTREE_ID_EXTENTS,
-				bkey_start_pos(&bch_keylist_front(keys)->k));
-
-		ret = bch_btree_insert_list_at(&iter, keys, &op->res,
-					       op->insert_hook,
-					       op_journal_seq(op),
-					       BTREE_INSERT_NOFAIL);
-		bch_btree_iter_unlock(&iter);
+		BUG_ON(keylist_sectors(keys) && !ret);
 
 		op->written += sectors_start - keylist_sectors(keys);
 
@@ -1276,6 +1280,7 @@ void bch_write_op_init(struct bch_write_op *op, struct cache_set *c,
 	}
 
 	op->insert_hook = insert_hook;
+	op->index_update_fn = bch_write_index_default;
 
 	bch_keylist_init(&op->insert_keys,
 			 op->inline_keys,

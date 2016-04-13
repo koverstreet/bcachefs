@@ -55,40 +55,6 @@ static void bch_inode_init(struct bch_inode_info *, struct bkey_s_c_inode);
  * be set explicitly.
  */
 
-static void bch_write_inode_checks(struct cache_set *c,
-				   struct bch_inode_info *ei)
-{
-	struct inode *inode = &ei->vfs_inode;
-
-	/*
-	 * ei->i_size is where we stash the i_size we're writing to disk (which
-	 * is often different than the in memory i_size) - it never makes sense
-	 * to be writing an i_size larger than the in memory i_size:
-	 */
-	BUG_ON(ei->i_size > inode->i_size);
-
-	/*
-	 * if i_size is not dirty, then there shouldn't be any extents past the
-	 * i_size we're writing:
-	 */
-	if (IS_ENABLED(CONFIG_BCACHEFS_DEBUG) &&
-	    !(ei->i_flags & BCH_INODE_I_SIZE_DIRTY)) {
-		struct btree_iter iter;
-		struct bkey_s_c k;
-
-		for_each_btree_key(&iter, c, BTREE_ID_EXTENTS,
-				   POS(inode->i_ino,
-				       round_up(ei->i_size, PAGE_SIZE) >> 9), k) {
-			if (k.k->p.inode != inode->i_ino)
-				break;
-
-			BUG_ON(bkey_extent_is_data(k.k));
-		}
-
-		bch_btree_iter_unlock(&iter);
-	}
-}
-
 int __must_check __bch_write_inode(struct cache_set *c,
 				   struct bch_inode_info *ei,
 				   inode_set_fn set,
@@ -139,12 +105,8 @@ int __must_check __bch_write_inode(struct cache_set *c,
 	} while (ret == -EINTR);
 
 	if (!ret) {
-		write_seqcount_begin(&ei->shadow_i_size_lock);
 		ei->i_size	= le64_to_cpu(bi->i_size);
 		ei->i_flags	= le32_to_cpu(bi->i_flags);
-		write_seqcount_end(&ei->shadow_i_size_lock);
-
-		bch_write_inode_checks(c, ei);
 	}
 out:
 	bch_btree_iter_unlock(&iter);
@@ -1005,8 +967,6 @@ static void bch_inode_init(struct bch_inode_info *ei,
 	struct inode *inode = &ei->vfs_inode;
 	const struct bch_inode *bi = bkey_inode.v;
 
-	BUG_ON(!fifo_empty(&ei->i_size_updates));
-
 	pr_debug("init inode %llu with mode %o",
 		 bkey_inode.k->p.inode, bi->i_mode);
 
@@ -1068,14 +1028,6 @@ static struct inode *bch_alloc_inode(struct super_block *sb)
 	mutex_init(&ei->update_lock);
 	ei->journal_seq = 0;
 	atomic_long_set(&ei->i_size_dirty_count, 0);
-
-	ei->i_size_updates.front	= 0;
-	ei->i_size_updates.back		= 0;
-	ei->i_size_updates.size		= ARRAY_SIZE(ei->i_size_updates.data) - 1;
-	ei->i_size_updates.mask		= ARRAY_SIZE(ei->i_size_updates.data) - 1;
-	ei->flags			= 0;
-
-	seqcount_init(&ei->shadow_i_size_lock);
 	atomic_long_set(&ei->i_sectors_dirty_count, 0);
 
 	return &ei->vfs_inode;
@@ -1118,15 +1070,15 @@ static void bch_evict_inode(struct inode *inode)
 	struct cache_set *c = inode->i_sb->s_fs_info;
 
 	truncate_inode_pages_final(&inode->i_data);
-#if 0
-	struct bch_inode_info *ei = to_bch_ei(inode);
 
-	/* XXX - we want to check this stuff iff there weren't IO errors: */
-	BUG_ON(!fifo_empty(&ei->i_size_updates));
-	BUG_ON(atomic_long_read(&ei->i_sectors_dirty_count));
-	BUG_ON(!is_bad_inode(inode) &&
-	       atomic64_read(&ei->i_sectors) != inode->i_blocks);
-#endif
+	if (!bch_journal_error(&c->journal) && !is_bad_inode(inode)) {
+		struct bch_inode_info *ei = to_bch_ei(inode);
+
+		/* XXX - we want to check this stuff iff there weren't IO errors: */
+		BUG_ON(atomic_long_read(&ei->i_sectors_dirty_count));
+		BUG_ON(atomic64_read(&ei->i_sectors) != inode->i_blocks);
+	}
+
 	clear_inode(inode);
 
 	if (!inode->i_nlink && !is_bad_inode(inode)) {
