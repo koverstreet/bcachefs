@@ -88,11 +88,11 @@ do {									\
 
 #define strtoul_restrict_or_return(cp, min, max)			\
 ({									\
-	unsigned long _v = 0;						\
-	int _r = strtoul_safe_restrict(cp, _v, min, max);		\
+	unsigned long __v = 0;						\
+	int _r = strtoul_safe_restrict(cp, __v, min, max);		\
 	if (_r)								\
 		return _r;						\
-	_v;								\
+	__v;								\
 })
 
 #define strtoi_h_or_return(cp)						\
