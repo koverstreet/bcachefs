@@ -240,8 +240,8 @@ i_sectors_hook_fn(struct extent_insert_hook *hook,
 	EBUG_ON(!(h->ei->i_flags & BCH_INODE_I_SECTORS_DIRTY));
 	EBUG_ON(!atomic_long_read(&h->ei->i_sectors_dirty_count));
 
-	if (IS_ENABLED(CONFIG_BCACHEFS_DEBUG) &&
-	    bkey_extent_is_allocation(&insert->k) &&
+#ifdef CONFIG_BCACHEFS_DEBUG
+	if (bkey_extent_is_allocation(&insert->k) &&
 	    insert->k.type != BCH_RESERVATION) {
 		struct bch_inode_info *ei = h->ei;
 		unsigned seq;
@@ -256,6 +256,7 @@ i_sectors_hook_fn(struct extent_insert_hook *hook,
 
 		BUG_ON(bad_write);
 	}
+#endif
 
 	h->sectors += sectors * sign;
 
