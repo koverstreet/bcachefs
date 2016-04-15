@@ -156,6 +156,7 @@ struct bucket_stats_cache_set;
 enum extent_insert_hook_ret {
 	BTREE_HOOK_DO_INSERT,
 	BTREE_HOOK_NO_INSERT,
+	BTREE_HOOK_RESTART_TRANS,
 };
 
 struct extent_insert_hook {

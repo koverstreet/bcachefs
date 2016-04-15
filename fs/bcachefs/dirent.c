@@ -324,9 +324,12 @@ int bch_dirent_rename(struct cache_set *c,
 		new_dst->v.d_inum = old_src_d.v->d_inum;
 		new_dst->v.d_type = old_src_d.v->d_type;
 
-		ret = bch_btree_insert_trans((struct btree_insert_trans[]) {
-				{ &src_iter, &new_src->k_i, },
-				{ &dst_iter, &new_dst->k_i, }}, 2,
+		ret = bch_btree_insert_trans(&(struct btree_insert_trans) {
+				.nr = 2,
+				.entries = (struct btree_trans_entry[]) {
+					{ &src_iter, &new_src->k_i, },
+					{ &dst_iter, &new_dst->k_i, }
+				}},
 				NULL, NULL, journal_seq,
 				BTREE_INSERT_ATOMIC);
 		bch_btree_iter_unlock(&src_iter);

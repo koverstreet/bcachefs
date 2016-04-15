@@ -4,6 +4,7 @@
 #include "btree_cache.h"
 #include "btree_iter.h"
 #include "buckets.h"
+#include "journal.h"
 
 struct cache_set;
 struct bkey_format_state;
@@ -242,13 +243,38 @@ int bch_btree_insert_list_at(struct btree_iter *, struct keylist *,
 			     struct extent_insert_hook *, u64 *, unsigned);
 
 struct btree_insert_trans {
-	struct btree_iter	*iter;
-	struct bkey_i		*k;
-	/* true if entire key was inserted - can only be false for extents */
-	bool			done;
+	unsigned		nr;
+	bool			did_work;
+	struct btree_trans_entry {
+		struct btree_iter *iter;
+		struct bkey_i	*k;
+		/*
+		 * true if entire key was inserted - can only be false for
+		 * extents
+		 */
+		bool		done;
+	}			*entries;
 };
 
-int bch_btree_insert_trans(struct btree_insert_trans[], unsigned,
+static inline bool journal_res_insert_fits(struct btree_insert_trans *trans,
+					   struct btree_trans_entry *insert,
+					   struct journal_res *res)
+{
+	struct cache_set *c = insert->iter->c;
+	unsigned u64s = 0;
+	struct btree_trans_entry *i;
+
+	/* If we're in journal replay we're not getting journal reservations: */
+	if (!test_bit(JOURNAL_REPLAY_DONE, &c->journal.flags))
+		return true;
+
+	for (i = insert; i < trans->entries + trans->nr; i++)
+		u64s += jset_u64s(i->k->k.u64s);
+
+	return u64s <= res->u64s;
+}
+
+int bch_btree_insert_trans(struct btree_insert_trans *,
 			   struct disk_reservation *,
 			   struct extent_insert_hook *,
 			   u64 *, unsigned);

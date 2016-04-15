@@ -211,17 +211,6 @@ static inline unsigned jset_u64s(unsigned u64s)
 	return u64s + sizeof(struct jset_entry) / sizeof(u64);
 }
 
-static inline bool journal_res_insert_fits(struct cache_set *c,
-					   struct journal_res *res,
-					   struct bkey_i *k)
-{
-	/* If we're in journal replay we're not getting journal reservations: */
-	if (!test_bit(JOURNAL_REPLAY_DONE, &c->journal.flags))
-		return true;
-
-	return jset_u64s(k->k.u64s) <= res->u64s;
-}
-
 void bch_journal_start(struct cache_set *);
 void bch_journal_mark(struct cache_set *, struct list_head *);
 const char *bch_journal_read(struct cache_set *, struct list_head *);
