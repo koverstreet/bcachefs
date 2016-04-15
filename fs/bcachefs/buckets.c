@@ -482,12 +482,19 @@ static int __bch_mark_key(struct cache_set *c, struct bkey_s_c k,
 	return ret;
 }
 
+void __bch_gc_mark_key(struct cache_set *c, struct bkey_s_c k,
+		       int sectors, bool metadata,
+		       struct bucket_stats_cache_set *stats)
+{
+	__bch_mark_key(c, k, sectors, false, metadata, true, stats);
+}
+
 void bch_gc_mark_key(struct cache_set *c, struct bkey_s_c k,
 		     int sectors, bool metadata)
 {
 	struct bucket_stats_cache_set stats = { 0 };
 
-	__bch_mark_key(c, k, sectors, false, metadata, true, &stats);
+	__bch_gc_mark_key(c, k, sectors, metadata, &stats);
 	__bch_cache_set_stats_apply(c, &stats);
 }
 

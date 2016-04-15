@@ -561,7 +561,7 @@ struct cache_set {
 	struct bio_set		btree_read_bio;
 
 	struct btree_root	btree_roots[BTREE_ID_NR];
-	spinlock_t		btree_root_lock;
+	struct mutex		btree_root_lock;
 
 	bool			btree_cache_table_init_done;
 	struct rhashtable	btree_cache_table;

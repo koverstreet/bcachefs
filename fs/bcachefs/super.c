@@ -1077,7 +1077,7 @@ static struct cache_set *bch_cache_set_alloc(struct cache_sb *sb,
 	mutex_init(&c->btree_cache_lock);
 	lg_lock_init(&c->bucket_stats_lock);
 	mutex_init(&c->bucket_lock);
-	spin_lock_init(&c->btree_root_lock);
+	mutex_init(&c->btree_root_lock);
 	INIT_WORK(&c->read_only_work, bch_cache_set_read_only_work);
 	mutex_init(&c->mi_lock);
 

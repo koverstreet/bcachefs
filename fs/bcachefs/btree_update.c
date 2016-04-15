@@ -116,32 +116,45 @@ found:
 	d->index_update_done = true;
 
 	/*
-	 * We're dropping @k from the btree, but it's still live until the index
-	 * update is persistent so we need to keep a reference around for mark
-	 * and sweep to find - that's primarily what the btree_node_pending_free
-	 * list is for.
+	 * Btree nodes are accounted as freed in cache_set_stats when they're
+	 * freed from the index:
+	 */
+	stats->sectors_meta -= c->sb.btree_node_size;
+
+	/*
+	 * We're dropping @k from the btree, but it's still live until the
+	 * index update is persistent so we need to keep a reference around for
+	 * mark and sweep to find - that's primarily what the
+	 * btree_node_pending_free list is for.
 	 *
 	 * So here (when we set index_update_done = true), we're moving an
 	 * existing reference to a different part of the larger "gc keyspace" -
-	 * and the new position comes after the old position, since GC marks the
-	 * pending free list after it walks the btree.
+	 * and the new position comes after the old position, since GC marks
+	 * the pending free list after it walks the btree.
 	 *
 	 * If we move the reference while mark and sweep is _between_ the old
-	 * and the new position, mark and sweep will see the reference twice and
-	 * it'll get double accounted - so check for that here and subtract to
-	 * cancel out one of mark and sweep's markings if necessary:
+	 * and the new position, mark and sweep will see the reference twice
+	 * and it'll get double accounted - so check for that here and subtract
+	 * to cancel out one of mark and sweep's markings if necessary:
 	 */
 
 	/*
 	 * bch_mark_key() compares the current gc pos to the pos we're
 	 * moving this reference from, hence one comparison here:
 	 */
-	if (gc_pos_cmp(c->gc_pos, gc_phase(GC_PHASE_PENDING_DELETE)) < 0)
+	if (gc_pos_cmp(c->gc_pos, gc_phase(GC_PHASE_PENDING_DELETE)) < 0) {
+		struct bucket_stats_cache_set tmp = { 0 };
+
 		bch_mark_key(c, bkey_i_to_s_c(&d->key),
 			     -c->sb.btree_node_size, true, true, b
 			     ? gc_pos_btree_node(b)
 			     : gc_pos_btree_root(id),
-			     stats);
+			     &tmp);
+		/*
+		 * Don't apply tmp - pending deletes aren't tracked in
+		 * cache_set_stats:
+		 */
+	}
 
 	mutex_unlock(&c->btree_node_pending_free_lock);
 }
@@ -216,8 +229,10 @@ static void bch_btree_node_free_ondisk(struct cache_set *c,
 		     -c->sb.btree_node_size, true, true,
 		     gc_phase(GC_PHASE_PENDING_DELETE),
 		     &stats);
-
-	/* Already accounted for in cache_set_stats - don't apply @stats: */
+	/*
+	 * Don't apply stats - pending deletes aren't tracked in
+	 * cache_set_stats:
+	 */
 
 	mutex_unlock(&c->btree_node_pending_free_lock);
 }
@@ -342,21 +357,38 @@ struct btree *btree_node_alloc_replacement(struct cache_set *c,
 }
 
 static void bch_btree_set_root_inmem(struct cache_set *c, struct btree *b,
-				 struct bucket_stats_cache_set *stats)
+				     struct btree_reserve *btree_reserve)
 {
+	struct btree *old = btree_node_root(b);
+
 	/* Root nodes cannot be reaped */
 	mutex_lock(&c->btree_cache_lock);
 	list_del_init(&b->list);
 	mutex_unlock(&c->btree_cache_lock);
 
-	spin_lock(&c->btree_root_lock);
+	mutex_lock(&c->btree_root_lock);
 	btree_node_root(b) = b;
 
-	bch_mark_key(c, bkey_i_to_s_c(&b->key),
-		     c->sb.btree_node_size, true, true,
-		     gc_pos_btree_root(b->btree_id),
-		     stats);
-	spin_unlock(&c->btree_root_lock);
+	if (btree_reserve) {
+		/*
+		 * New allocation (we're not being called because we're in
+		 * bch_btree_root_read()) - do marking while holding
+		 * btree_root_lock:
+		 */
+		struct bucket_stats_cache_set stats = { 0 };
+
+		bch_mark_key(c, bkey_i_to_s_c(&b->key),
+			     c->sb.btree_node_size, true, true,
+			     gc_pos_btree_root(b->btree_id),
+			     &stats);
+
+		if (old)
+			bch_btree_node_free_index(c, NULL, old->btree_id,
+						  bkey_i_to_s_c(&old->key),
+						  &stats);
+		bch_cache_set_stats_apply(c, &stats, &btree_reserve->disk_res);
+	}
+	mutex_unlock(&c->btree_root_lock);
 
 	bch_recalc_btree_reserve(c);
 }
@@ -365,14 +397,14 @@ static void bch_btree_set_root_ondisk(struct cache_set *c, struct btree *b)
 {
 	struct btree_root *r = &c->btree_roots[b->btree_id];
 
-	spin_lock(&c->btree_root_lock);
+	mutex_lock(&c->btree_root_lock);
 
 	BUG_ON(b != r->b);
 	bkey_copy(&r->key, &b->key);
 	r->level = b->level;
 	r->alive = true;
 
-	spin_unlock(&c->btree_root_lock);
+	mutex_unlock(&c->btree_root_lock);
 }
 
 /*
@@ -382,15 +414,10 @@ static void bch_btree_set_root_ondisk(struct cache_set *c, struct btree *b)
 void bch_btree_set_root_initial(struct cache_set *c, struct btree *b,
 				struct btree_reserve *btree_reserve)
 {
-	struct bucket_stats_cache_set stats = { 0 };
-
 	BUG_ON(btree_node_root(b));
 
-	bch_btree_set_root_inmem(c, b, &stats);
+	bch_btree_set_root_inmem(c, b, btree_reserve);
 	bch_btree_set_root_ondisk(c, b);
-
-	if (btree_reserve)
-		bch_cache_set_stats_apply(c, &stats, &btree_reserve->disk_res);
 }
 
 /**
@@ -409,7 +436,6 @@ static void bch_btree_set_root(struct btree_iter *iter, struct btree *b,
 			       struct async_split *as,
 			       struct btree_reserve *btree_reserve)
 {
-	struct bucket_stats_cache_set stats = { 0 };
 	struct cache_set *c = iter->c;
 	struct btree *old;
 
@@ -424,11 +450,7 @@ static void bch_btree_set_root(struct btree_iter *iter, struct btree *b,
 	 */
 	btree_node_lock_write(old, iter);
 
-	bch_btree_set_root_inmem(c, b, &stats);
-
-	bch_btree_node_free_index(c, NULL, old->btree_id,
-				  bkey_i_to_s_c(&old->key),
-				  &stats);
+	bch_btree_set_root_inmem(c, b, btree_reserve);
 
 	async_split_updated_root(as, b);
 
@@ -440,9 +462,6 @@ static void bch_btree_set_root(struct btree_iter *iter, struct btree *b,
 	 * depend on the new root would have to update the new root.
 	 */
 	btree_node_unlock_write(old, iter);
-
-	stats.sectors_meta -= c->sb.btree_node_size;
-	bch_cache_set_stats_apply(c, &stats, &btree_reserve->disk_res);
 }
 
 static struct btree *__btree_root_alloc(struct cache_set *c, unsigned level,
@@ -634,7 +653,6 @@ static bool bch_insert_fixup_btree_ptr(struct btree_iter *iter,
 			 */
 			k->type = KEY_TYPE_DELETED;
 			btree_keys_account_key_drop(&b->keys.nr, k);
-			stats.sectors_meta -= c->sb.btree_node_size;
 		}
 
 		bch_btree_node_iter_next_all(node_iter, &b->keys);

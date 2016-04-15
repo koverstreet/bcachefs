@@ -1630,14 +1630,14 @@ static void journal_write(struct closure *cl)
 
 	bch_journal_add_prios(j, w);
 
-	spin_lock(&c->btree_root_lock);
+	mutex_lock(&c->btree_root_lock);
 	for (i = 0; i < BTREE_ID_NR; i++) {
 		struct btree_root *r = &c->btree_roots[i];
 
 		if (r->alive)
 			bch_journal_add_btree_root(w, i, &r->key, r->level);
 	}
-	spin_unlock(&c->btree_root_lock);
+	mutex_unlock(&c->btree_root_lock);
 
 	journal_write_compact(w->data);
 

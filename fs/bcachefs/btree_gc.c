@@ -209,13 +209,13 @@ static int bch_gc_btree(struct cache_set *c, enum btree_id btree_id)
 	if (ret)
 		return ret;
 
-	spin_lock(&c->btree_root_lock);
+	mutex_lock(&c->btree_root_lock);
 
 	b = c->btree_roots[btree_id].b;
 	__bch_btree_mark_key(c, BKEY_TYPE_BTREE, bkey_i_to_s_c(&b->key));
 	gc_pos_set(c, gc_pos_btree_root(b->btree_id));
 
-	spin_unlock(&c->btree_root_lock);
+	mutex_unlock(&c->btree_root_lock);
 	return 0;
 }
 
@@ -283,6 +283,7 @@ static void bch_mark_metadata(struct cache_set *c)
 /* Also see bch_pending_btree_node_free_insert_done() */
 static void bch_mark_pending_btree_node_frees(struct cache_set *c)
 {
+	struct bucket_stats_cache_set stats = { 0 };
 	struct pending_btree_node_free *d;
 
 	mutex_lock(&c->btree_node_pending_free_lock);
@@ -290,8 +291,13 @@ static void bch_mark_pending_btree_node_frees(struct cache_set *c)
 
 	list_for_each_entry(d, &c->btree_node_pending_free, list)
 		if (d->index_update_done)
-			bch_gc_mark_key(c, bkey_i_to_s_c(&d->key),
-					c->sb.btree_node_size, true);
+			__bch_gc_mark_key(c, bkey_i_to_s_c(&d->key),
+					  c->sb.btree_node_size, true,
+					  &stats);
+	/*
+	 * Don't apply stats - pending deletes aren't tracked in
+	 * cache_set_stats:
+	 */
 
 	mutex_unlock(&c->btree_node_pending_free_lock);
 }
