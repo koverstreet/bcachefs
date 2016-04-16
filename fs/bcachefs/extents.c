@@ -1214,15 +1214,12 @@ bch_insert_fixup_extent(struct btree_iter *iter,
 		goto apply_stats;
 	}
 
-	while (insert->k.size &&
-	       (_k = bch_btree_node_iter_peek_overlapping(node_iter, &b->keys,
-							  &insert->k))) {
+	while (bkey_cmp(iter->pos, insert->k.p) < 0 &&
+	       (ret = extent_insert_should_stop(iter, insert, res,
+				start_time, nr_done)) == BTREE_INSERT_OK &&
+	       (_k = bch_btree_node_iter_peek_overlapping(node_iter,
+				&b->keys, &insert->k))) {
 		struct bkey_s k = __bkey_disassemble(f, _k, &unpacked);
-
-		ret = extent_insert_should_stop(iter, insert, res,
-						start_time, nr_done);
-		if (ret != BTREE_INSERT_OK)
-			goto stop;
 
 		/*
 		 * Only call advance pos & call hook for nonzero size extents:
@@ -1322,10 +1319,11 @@ bch_insert_fixup_extent(struct btree_iter *iter,
 		}
 	}
 
-	if (insert->k.size)
+	if (bkey_cmp(iter->pos, insert->k.p) < 0 &&
+	    ret == BTREE_INSERT_OK)
 		extent_insert_advance_pos(hook, iter, insert, bkey_s_c_null,
 					  res, &stats);
-stop:
+
 	extent_insert_committed(iter, insert, res);
 
 	/*
