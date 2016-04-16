@@ -187,6 +187,7 @@ static int bch_gc_btree(struct cache_set *c, enum btree_id btree_id)
 	struct btree *b;
 	bool should_rewrite;
 	struct range_checks r;
+	int ret;
 
 	btree_node_range_checks_init(&r);
 
@@ -204,7 +205,9 @@ static int bch_gc_btree(struct cache_set *c, enum btree_id btree_id)
 
 		bch_btree_iter_cond_resched(&iter);
 	}
-	bch_btree_iter_unlock(&iter);
+	ret = bch_btree_iter_unlock(&iter);
+	if (ret)
+		return ret;
 
 	spin_lock(&c->btree_root_lock);
 
@@ -754,8 +757,6 @@ static void bch_coalesce(struct cache_set *c)
 
 	bch_time_stats_update(&c->btree_coalesce_time, start_time);
 
-	debug_check_no_locks_held();
-
 	trace_bcache_gc_coalesce_end(c);
 }
 
@@ -792,6 +793,12 @@ static int bch_gc_thread(void *arg)
 
 		last = atomic_long_read(&clock->now);
 		last_kick = atomic_read(&c->kick_gc);
+
+		/*
+		 * avoid racing with sysfs trigger_gc - gc gets confused if it
+		 * runs concurrently with coalescing
+		 */
+		mutex_lock(&c->trigger_gc_lock);
 		bch_gc(c);
 
 		/*
@@ -802,6 +809,7 @@ static int bch_gc_thread(void *arg)
 			bch_wake_allocator(ca);
 
 		bch_coalesce(c);
+		mutex_unlock(&c->trigger_gc_lock);
 
 		debug_check_no_locks_held();
 	}

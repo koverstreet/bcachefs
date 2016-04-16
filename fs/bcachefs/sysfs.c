@@ -835,8 +835,11 @@ STORE(__bch_cache_set)
 
 	/* Debugging: */
 
-	if (attr == &sysfs_trigger_gc)
+	if (attr == &sysfs_trigger_gc) {
+		mutex_lock(&c->trigger_gc_lock);
 		bch_gc(c);
+		mutex_unlock(&c->trigger_gc_lock);
+	}
 
 	if (attr == &sysfs_prune_cache) {
 		struct shrink_control sc;

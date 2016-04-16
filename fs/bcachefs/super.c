@@ -1082,6 +1082,7 @@ static struct cache_set *bch_cache_set_alloc(struct cache_sb *sb,
 	mutex_init(&c->mi_lock);
 
 	init_rwsem(&c->gc_lock);
+	mutex_init(&c->trigger_gc_lock);
 	mutex_init(&c->gc_scan_keylist_lock);
 	INIT_LIST_HEAD(&c->gc_scan_keylists);
 
