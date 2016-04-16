@@ -803,37 +803,31 @@ struct btree_nr_keys bch_extent_sort_fix_overlapping(struct btree_keys *b,
 	return nr;
 }
 
-static int bch_add_sectors(struct btree_iter *iter, struct bkey_s_c k,
-			   u64 offset, s64 sectors, bool fail_if_stale,
-			   struct bucket_stats_cache_set *stats)
+static void bch_add_sectors(struct btree_iter *iter, struct bkey_s_c k,
+			    u64 offset, s64 sectors,
+			    struct bucket_stats_cache_set *stats)
 {
 	struct cache_set *c = iter->c;
 	struct btree *b = iter->nodes[0];
-	int ret;
 
 	EBUG_ON(iter->level);
 	EBUG_ON(bkey_cmp(bkey_start_pos(k.k), b->data->min_key) < 0);
 
 	if (!sectors)
-		return 0;
+		return;
 
-	ret = bch_mark_key(c, k, sectors, fail_if_stale, false,
-			   gc_pos_btree_node(b), stats);
-	if (ret)
-		return ret;
+	bch_mark_key(c, k, sectors, false, gc_pos_btree_node(b), stats);
 
 	if (bkey_extent_is_data(k.k) &&
 	    !bkey_extent_is_cached(k.k))
 		bcache_dev_sectors_dirty_add(c, k.k->p.inode, offset, sectors);
-
-	return 0;
 }
 
 static void bch_subtract_sectors(struct btree_iter *iter, struct bkey_s_c k,
 				 u64 offset, s64 sectors,
 				 struct bucket_stats_cache_set *stats)
 {
-	bch_add_sectors(iter, k, offset, -sectors, false, stats);
+	bch_add_sectors(iter, k, offset, -sectors, stats);
 }
 
 /* These wrappers subtract exactly the sectors that we're removing from @k */
@@ -1202,17 +1196,10 @@ bch_insert_fixup_extent(struct btree_iter *iter,
 	 * can also insert keys with stale pointers, but for those we still need
 	 * to proceed with the insertion.
 	 */
-	if (!(flags & BTREE_INSERT_NO_MARK_KEY) &&
-	    bch_add_sectors(iter, bkey_i_to_s_c(insert),
-			    bkey_start_offset(&insert->k),
-			    insert->k.size,
-			    true,
-			    &stats)) {
-		/* We raced - a dirty pointer was stale */
-		bch_btree_iter_set_pos(iter, bpos_min(insert->k.p, b->key.k.p));
-		bch_cut_back(iter->pos, &insert->k);
-		goto apply_stats;
-	}
+	if (!(flags & BTREE_INSERT_NO_MARK_KEY))
+		bch_add_sectors(iter, bkey_i_to_s_c(insert),
+				bkey_start_offset(&insert->k),
+				insert->k.size, &stats);
 
 	while (bkey_cmp(iter->pos, insert->k.p) < 0 &&
 	       (ret = extent_insert_should_stop(iter, insert, res,
@@ -1335,7 +1322,7 @@ bch_insert_fixup_extent(struct btree_iter *iter,
 				     iter->pos.offset,
 				     insert->k.p.offset - iter->pos.offset,
 				     &stats);
-apply_stats:
+
 	bch_cache_set_stats_apply(c, &stats, disk_res);
 
 	if (insert->k.size && !bkey_cmp(iter->pos, b->key.k.p))

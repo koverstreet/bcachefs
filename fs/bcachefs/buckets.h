@@ -243,8 +243,8 @@ void bch_unmark_open_bucket(struct cache *, struct bucket *);
 void __bch_gc_mark_key(struct cache_set *, struct bkey_s_c, int, bool,
 		       struct bucket_stats_cache_set *);
 void bch_gc_mark_key(struct cache_set *, struct bkey_s_c, int, bool);
-int bch_mark_key(struct cache_set *, struct bkey_s_c, int, bool, bool,
-		 struct gc_pos, struct bucket_stats_cache_set *);
+void bch_mark_key(struct cache_set *, struct bkey_s_c, int, bool,
+		  struct gc_pos, struct bucket_stats_cache_set *);
 
 void bch_recalc_sectors_available(struct cache_set *);
 

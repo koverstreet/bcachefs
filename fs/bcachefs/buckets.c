@@ -307,16 +307,15 @@ do {								\
  * loop, to avoid racing with the start of gc clearing all the marks - GC does
  * that with the gc pos seqlock held.
  */
-static u8 bch_mark_pointer(struct cache_set *c, struct cache *ca,
-			   const struct bch_extent_ptr *ptr, int sectors,
-			   bool dirty, bool metadata,
-			   bool may_make_unavailable,
-			   struct bucket_stats_cache_set *stats)
+static void bch_mark_pointer(struct cache_set *c, struct cache *ca,
+			     const struct bch_extent_ptr *ptr, int sectors,
+			     bool dirty, bool metadata,
+			     bool may_make_unavailable,
+			     struct bucket_stats_cache_set *stats)
 {
 	struct bucket_mark old, new;
 	unsigned long bucket_nr = PTR_BUCKET_NR(ca, ptr);
 	unsigned saturated;
-	u8 stale;
 
 	bucket_cmpxchg(&ca->buckets[bucket_nr], old, new,
 		       may_make_unavailable, stats, ({
@@ -334,9 +333,10 @@ static u8 bch_mark_pointer(struct cache_set *c, struct cache *ca,
 		 * the allocator invalidating a bucket after we've already
 		 * checked the gen
 		 */
-		stale = gen_after(ca->bucket_gens[bucket_nr], ptr->gen);
-		if (stale)
-			return stale;
+		if (ptr_stale(ca, ptr)) {
+			BUG_ON(metadata);
+			return;
+		}
 
 		/*
 		 * Disallowed state transition - this means a bkey_cmpxchg()
@@ -344,9 +344,11 @@ static u8 bch_mark_pointer(struct cache_set *c, struct cache *ca,
 		 * already stale
 		 */
 		if (!may_make_unavailable &&
-		    dirty &&
-		    is_available_bucket(old))
-			return 1;
+		    (metadata || dirty) &&
+		    is_available_bucket(old)) {
+			BUG_ON(metadata);
+			return;
+		}
 
 		BUG_ON((old.dirty_sectors ||
 			old.cached_sectors) &&
@@ -381,19 +383,14 @@ static u8 bch_mark_pointer(struct cache_set *c, struct cache *ca,
 			wake_up_process(c->gc_thread);
 		}
 	}
-
-	return 0;
 }
 
-/*
- * Returns 0 on success, -1 on failure (pointer was stale)
- */
-static int bch_mark_extent(struct cache_set *c, struct bkey_s_c_extent e,
-			   int sectors, bool fail_if_stale, bool metadata,
-			   bool may_make_unavailable,
-			   struct bucket_stats_cache_set *stats)
+static void bch_mark_extent(struct cache_set *c, struct bkey_s_c_extent e,
+			    int sectors, bool metadata,
+			    bool may_make_unavailable,
+			    struct bucket_stats_cache_set *stats)
 {
-	const struct bch_extent_ptr *ptr, *ptr2;
+	const struct bch_extent_ptr *ptr;
 	struct cache *ca;
 
 	BUG_ON(metadata && bkey_extent_is_cached(e.k));
@@ -401,92 +398,38 @@ static int bch_mark_extent(struct cache_set *c, struct bkey_s_c_extent e,
 
 	rcu_read_lock();
 	extent_for_each_online_device(c, e, ptr, ca) {
-		bool stale, dirty = bch_extent_ptr_is_dirty(c, e, ptr);
+		bool dirty = bch_extent_ptr_is_dirty(c, e, ptr);
 
 		trace_bcache_mark_bucket(ca, e.k, ptr, sectors, dirty);
 
-		/*
-		 * Two ways a dirty pointer could be stale here:
-		 *
-		 * - A bkey_cmpxchg() operation could be trying to replace a key
-		 *   that no longer exists. The new key, which can have some of
-		 *   the same pointers as the old key, gets added here before
-		 *   checking if the cmpxchg operation succeeds or not to avoid
-		 *   another race.
-		 *
-		 *   If that's the case, we just bail out of the cmpxchg
-		 *   operation early - a dirty pointer can only be stale if the
-		 *   actual dirty pointer in the btree was overwritten.
-		 *
-		 *   And in that case we _have_ to bail out here instead of
-		 *   letting bkey_cmpxchg() fail and undoing the accounting we
-		 *   did here with subtract_sectors() (like we do otherwise),
-		 *   because buckets going stale out from under us changes which
-		 *   pointers we count as dirty.
-		 *
-		 * - Journal replay
-		 *
-		 *   A dirty pointer could be stale in journal replay if we
-		 *   haven't finished journal replay - if it's going to get
-		 *   overwritten again later in replay.
-		 *
-		 *   In that case, we don't want to fail the insert (just for
-		 *   mental health) - but, since extent_normalize() drops stale
-		 *   pointers, we need to count replicas in a way that's
-		 *   invariant under normalize.
-		 *
-		 *   Fuck me, I hate my life.
-		 */
-		stale = bch_mark_pointer(c, ca, ptr, sectors, dirty, metadata,
-					 may_make_unavailable, stats);
-		if (stale && dirty && fail_if_stale)
-			goto stale;
+		bch_mark_pointer(c, ca, ptr, sectors, dirty, metadata,
+				 may_make_unavailable, stats);
 	}
 	rcu_read_unlock();
-
-	return 0;
-stale:
-	extent_for_each_online_device(c, e, ptr2, ca) {
-		if (ptr2 == ptr)
-			break;
-
-		bch_mark_pointer(c, ca, ptr, -sectors,
-				 bch_extent_ptr_is_dirty(c, e, ptr),
-				 metadata, may_make_unavailable, stats);
-	}
-	rcu_read_unlock();
-
-	return -1;
 }
 
-static int __bch_mark_key(struct cache_set *c, struct bkey_s_c k,
-			  int sectors, bool fail_if_stale, bool metadata,
-			  bool may_make_unavailable,
-			  struct bucket_stats_cache_set *stats)
+static void __bch_mark_key(struct cache_set *c, struct bkey_s_c k,
+			   int sectors, bool metadata,
+			   bool may_make_unavailable,
+			   struct bucket_stats_cache_set *stats)
 {
-	int ret = 0;
-
 	switch (k.k->type) {
 	case BCH_EXTENT:
 	case BCH_EXTENT_CACHED:
-		ret = bch_mark_extent(c, bkey_s_c_to_extent(k), sectors,
-				      fail_if_stale, metadata,
-				      may_make_unavailable, stats);
-		BUG_ON(ret && metadata);
+		bch_mark_extent(c, bkey_s_c_to_extent(k), sectors,
+				metadata, may_make_unavailable, stats);
 		break;
 	case BCH_RESERVATION:
 		stats->sectors_persistent_reserved += sectors;
 		break;
 	}
-
-	return ret;
 }
 
 void __bch_gc_mark_key(struct cache_set *c, struct bkey_s_c k,
 		       int sectors, bool metadata,
 		       struct bucket_stats_cache_set *stats)
 {
-	__bch_mark_key(c, k, sectors, false, metadata, true, stats);
+	__bch_mark_key(c, k, sectors, metadata, true, stats);
 }
 
 void bch_gc_mark_key(struct cache_set *c, struct bkey_s_c k,
@@ -498,24 +441,18 @@ void bch_gc_mark_key(struct cache_set *c, struct bkey_s_c k,
 	__bch_cache_set_stats_apply(c, &stats);
 }
 
-int bch_mark_key(struct cache_set *c, struct bkey_s_c k,
-		 int sectors, bool fail_if_stale, bool metadata,
-		 struct gc_pos gc_pos, struct bucket_stats_cache_set *stats)
+void bch_mark_key(struct cache_set *c, struct bkey_s_c k,
+		  int sectors, bool metadata, struct gc_pos gc_pos,
+		  struct bucket_stats_cache_set *stats)
 {
-	int ret;
-
 	/*
 	 * Check gc_pos under bucket_stats_lock to avoid racing with the start
 	 * of gc - mark iff gc's position is _after_ gc_pos:
 	 */
 	lg_local_lock(&c->bucket_stats_lock);
-	ret = !gc_will_visit(c, gc_pos)
-		?  __bch_mark_key(c, k, sectors, fail_if_stale,
-				  metadata, false, stats)
-		: 0;
+	if (!gc_will_visit(c, gc_pos))
+		__bch_mark_key(c, k, sectors, metadata, false, stats);
 	lg_local_unlock(&c->bucket_stats_lock);
-
-	return ret;
 }
 
 void bch_unmark_open_bucket(struct cache *ca, struct bucket *g)

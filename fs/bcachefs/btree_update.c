@@ -146,7 +146,7 @@ found:
 		struct bucket_stats_cache_set tmp = { 0 };
 
 		bch_mark_key(c, bkey_i_to_s_c(&d->key),
-			     -c->sb.btree_node_size, true, true, b
+			     -c->sb.btree_node_size, true, b
 			     ? gc_pos_btree_node(b)
 			     : gc_pos_btree_root(id),
 			     &tmp);
@@ -226,7 +226,7 @@ static void bch_btree_node_free_ondisk(struct cache_set *c,
 	list_del(&pending->list);
 
 	bch_mark_key(c, bkey_i_to_s_c(&pending->key),
-		     -c->sb.btree_node_size, true, true,
+		     -c->sb.btree_node_size, true,
 		     gc_phase(GC_PHASE_PENDING_DELETE),
 		     &stats);
 	/*
@@ -378,7 +378,7 @@ static void bch_btree_set_root_inmem(struct cache_set *c, struct btree *b,
 		struct bucket_stats_cache_set stats = { 0 };
 
 		bch_mark_key(c, bkey_i_to_s_c(&b->key),
-			     c->sb.btree_node_size, true, true,
+			     c->sb.btree_node_size, true,
 			     gc_pos_btree_root(b->btree_id),
 			     &stats);
 
@@ -633,7 +633,7 @@ static bool bch_insert_fixup_btree_ptr(struct btree_iter *iter,
 
 	if (bkey_extent_is_data(&insert->k))
 		bch_mark_key(c, bkey_i_to_s_c(insert),
-			     c->sb.btree_node_size, true, true,
+			     c->sb.btree_node_size, true,
 			     gc_pos_btree_node(b), &stats);
 
 	while ((k = bch_btree_node_iter_peek_all(node_iter, &b->keys))) {
