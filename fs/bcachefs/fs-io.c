@@ -1160,6 +1160,9 @@ static int bch_direct_IO_read(struct cache_set *c, struct kiocb *req,
 	bool sync = is_sync_kiocb(req);
 	ssize_t ret;
 
+	if ((offset|iter->count) & (block_bytes(c) - 1))
+		return -EINVAL;
+
 	ret = min_t(loff_t, iter->count,
 		    max_t(loff_t, 0, i_size_read(inode) - offset));
 	iov_iter_truncate(iter, round_up(ret, block_bytes(c)));
@@ -1240,10 +1243,9 @@ static long __bch_dio_write_complete(struct dio_write *dio)
 	struct file *file = dio->req->ki_filp;
 	struct address_space *mapping = file->f_mapping;
 	struct inode *inode = file->f_inode;
-	struct cache_set *c = inode->i_sb->s_fs_info;
 	long ret = dio->error ?: dio->written;
 
-	bch_disk_reservation_put(c, &dio->res);
+	bch_disk_reservation_put(dio->c, &dio->res);
 
 	__pagecache_block_put(&mapping->add_lock);
 	inode_dio_end(inode);
@@ -1280,56 +1282,47 @@ static void bch_dio_write_done(struct dio_write *dio)
 		bio_reset(&dio->bio.bio.bio);
 }
 
-static void bch_do_direct_IO_write(struct dio_write *dio, bool sync)
+static void bch_do_direct_IO_write(struct dio_write *dio)
 {
 	struct file *file = dio->req->ki_filp;
 	struct inode *inode = file->f_inode;
 	struct bch_inode_info *ei = to_bch_ei(inode);
-	struct cache_set *c = inode->i_sb->s_fs_info;
 	struct bio *bio = &dio->bio.bio.bio;
 	unsigned flags = 0;
 	int ret;
 
 	if (((file->f_flags & O_DSYNC) || IS_SYNC(file->f_mapping->host)) &&
-	    !c->opts.journal_flush_disabled)
+	    !dio->c->opts.journal_flush_disabled)
 		flags |= BCH_WRITE_FLUSH;
 
-	while (dio->iter.count && !dio->error) {
-		bio->bi_iter.bi_sector = (dio->offset + dio->written) >> 9;
+	bio->bi_iter.bi_sector = (dio->offset + dio->written) >> 9;
 
-		ret = bio_get_user_pages(bio, &dio->iter, 0);
-		if (ret < 0) {
-			dio->error = ret;
-			break;
-		}
-
-		dio->iop.ei		= ei;
-		dio->iop.sectors_added	= 0;
-		dio->iop.is_dio		= true;
-		dio->iop.new_i_size	= U64_MAX;
-		bch_write_op_init(&dio->iop.op, c, &dio->bio,
-				  (struct disk_reservation) {
-					.sectors = bio_sectors(bio),
-					.gen = dio->res.gen
-				  }, NULL,
-				  bkey_to_s_c(&KEY(inode->i_ino,
-						   bio_end_sector(bio),
-						   bio_sectors(bio))),
-				  NULL, &ei->journal_seq, flags);
-		dio->iop.op.index_update_fn = bchfs_write_index_update;
-
-		dio->res.sectors -= bio_sectors(bio);
-
-		task_io_account_write(bio->bi_iter.bi_size);
-
-		closure_call(&dio->iop.op.cl, bch_write, NULL, &dio->cl);
-
-		if (!sync)
-			break;
-
-		closure_sync(&dio->cl);
-		bch_dio_write_done(dio);
+	ret = bio_get_user_pages(bio, &dio->iter, 0);
+	if (ret < 0) {
+		dio->error = ret;
+		return;
 	}
+
+	dio->iop.ei		= ei;
+	dio->iop.sectors_added	= 0;
+	dio->iop.is_dio		= true;
+	dio->iop.new_i_size	= U64_MAX;
+	bch_write_op_init(&dio->iop.op, dio->c, &dio->bio,
+			  (struct disk_reservation) {
+			  .sectors = bio_sectors(bio),
+			  .gen = dio->res.gen
+			  }, NULL,
+			  bkey_to_s_c(&KEY(inode->i_ino,
+					   bio_end_sector(bio),
+					   bio_sectors(bio))),
+			  NULL, &ei->journal_seq, flags);
+	dio->iop.op.index_update_fn = bchfs_write_index_update;
+
+	dio->res.sectors -= bio_sectors(bio);
+
+	task_io_account_write(bio->bi_iter.bi_size);
+
+	closure_call(&dio->iop.op.cl, bch_write, NULL, &dio->cl);
 }
 
 static void bch_dio_write_loop_async(struct closure *cl)
@@ -1344,14 +1337,12 @@ static void bch_dio_write_loop_async(struct closure *cl)
 		use_mm(dio->mm);
 		pagecache_block_get(&mapping->add_lock);
 
-		bch_do_direct_IO_write(dio, false);
+		bch_do_direct_IO_write(dio);
 
 		pagecache_block_put(&mapping->add_lock);
 		unuse_mm(dio->mm);
 
-		continue_at(&dio->cl,
-			    bch_dio_write_loop_async,
-			    dio->iter.count ? system_freezable_wq : NULL);
+		continue_at(&dio->cl, bch_dio_write_loop_async, NULL);
 	} else {
 #if 0
 		closure_return_with_destructor(cl, bch_dio_write_complete);
@@ -1369,22 +1360,30 @@ static int bch_direct_IO_write(struct cache_set *c, struct kiocb *req,
 	struct address_space *mapping = file->f_mapping;
 	struct dio_write *dio;
 	struct bio *bio;
-	size_t pages = iov_iter_npages(iter, BIO_MAX_PAGES);
 	ssize_t ret;
 	bool sync = is_sync_kiocb(req);
 
 	lockdep_assert_held(&inode->i_rwsem);
 
-	bio = bio_alloc_bioset(GFP_KERNEL, pages, bch_dio_write_bioset);
+	if (unlikely(!iter->count))
+		return 0;
 
+	if (unlikely((offset|iter->count) & (block_bytes(c) - 1)))
+		return -EINVAL;
+
+	bio = bio_alloc_bioset(GFP_KERNEL,
+			       iov_iter_npages(iter, BIO_MAX_PAGES),
+			       bch_dio_write_bioset);
 	dio = container_of(bio, struct dio_write, bio.bio.bio);
 	dio->req	= req;
+	dio->c		= c;
 	dio->written	= 0;
 	dio->error	= 0;
 	dio->offset	= offset;
 	dio->iovec	= NULL;
 	dio->iter	= *iter;
 	dio->mm		= current->mm;
+	closure_init(&dio->cl, NULL);
 
 	if (offset + iter->count > inode->i_size)
 		sync = true;
@@ -1398,22 +1397,29 @@ static int bch_direct_IO_write(struct cache_set *c, struct kiocb *req,
 	 * we would have been overwriting)
 	 */
 	ret = bch_disk_reservation_get(c, &dio->res, iter->count >> 9);
-	if (ret)
-		goto err;
-
-	closure_init(&dio->cl, NULL);
+	if (unlikely(ret)) {
+		closure_debug_destroy(&dio->cl);
+		bio_put(bio);
+		return ret;
+	}
 
 	inode_dio_begin(inode);
 	__pagecache_block_get(&mapping->add_lock);
 
-	bch_do_direct_IO_write(dio, sync);
-
 	if (sync) {
-		closure_debug_destroy(&dio->cl);
+		do {
+			bch_do_direct_IO_write(dio);
 
+			closure_sync(&dio->cl);
+			bch_dio_write_done(dio);
+		} while (dio->iter.count && !dio->error);
+
+		closure_debug_destroy(&dio->cl);
 		return __bch_dio_write_complete(dio);
 	} else {
-		if (dio->iter.count) {
+		bch_do_direct_IO_write(dio);
+
+		if (dio->iter.count && !dio->error) {
 			if (dio->iter.nr_segs > ARRAY_SIZE(dio->inline_vecs)) {
 				dio->iovec = kmalloc(dio->iter.nr_segs *
 						     sizeof(struct iovec),
@@ -1430,14 +1436,9 @@ static int bch_direct_IO_write(struct cache_set *c, struct kiocb *req,
 			dio->iter.iov = dio->iovec;
 		}
 
-		continue_at_noreturn(&dio->cl,
-				bch_dio_write_loop_async,
-				dio->iter.count ? system_freezable_wq : NULL);
+		continue_at_noreturn(&dio->cl, bch_dio_write_loop_async, NULL);
 		return -EIOCBQUEUED;
 	}
-err:
-	bio_put(bio);
-	return ret;
 }
 
 ssize_t bch_direct_IO(struct kiocb *req, struct iov_iter *iter)
@@ -1446,18 +1447,17 @@ ssize_t bch_direct_IO(struct kiocb *req, struct iov_iter *iter)
 	struct inode *inode = file->f_inode;
 	struct cache_set *c = inode->i_sb->s_fs_info;
 
-	if ((req->ki_pos|iter->count) & (block_bytes(c) - 1))
-		return -EINVAL;
-
 	return ((iov_iter_rw(iter) == WRITE)
 		? bch_direct_IO_write
 		: bch_direct_IO_read)(c, req, file, inode, iter, req->ki_pos);
 }
 
 static ssize_t
-bch_direct_write(struct kiocb *iocb, struct iov_iter *from)
+bch_direct_write(struct kiocb *iocb, struct iov_iter *iter)
 {
 	struct file *file = iocb->ki_filp;
+	struct inode *inode = file->f_inode;
+	struct cache_set *c = inode->i_sb->s_fs_info;
 	struct address_space *mapping = file->f_mapping;
 	loff_t pos = iocb->ki_pos;
 	ssize_t	ret;
@@ -1466,11 +1466,11 @@ bch_direct_write(struct kiocb *iocb, struct iov_iter *from)
 
 	/* Write and invalidate pagecache range that we're writing to: */
 	ret = write_invalidate_inode_pages_range(file->f_mapping, pos,
-					pos + iov_iter_count(from) - 1);
-	if (ret)
+					pos + iov_iter_count(iter) - 1);
+	if (unlikely(ret))
 		goto err;
 
-	ret = bch_direct_IO(iocb, from);
+	ret = bch_direct_IO_write(c, iocb, file, inode, iter, pos);
 err:
 	pagecache_block_put(&mapping->add_lock);
 

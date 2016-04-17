@@ -63,6 +63,7 @@ extern struct bio_set *bch_writepage_bioset;
 struct dio_write {
 	struct closure		cl;
 	struct kiocb		*req;
+	struct cache_set	*c;
 	long			written;
 	long			error;
 	loff_t			offset;
