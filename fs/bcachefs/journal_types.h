@@ -8,7 +8,7 @@
 struct journal_res;
 
 /* size of allocated buffer, max journal entry size: */
-#define JOURNAL_BUF_BYTES	(128 << 10)
+#define JOURNAL_BUF_BYTES	(256 << 10)
 #define JOURNAL_BUF_SECTORS	(JOURNAL_BUF_BYTES >> 9)
 #define JOURNAL_BUF_ORDER	ilog2(JOURNAL_BUF_BYTES >> PAGE_SHIFT)
 

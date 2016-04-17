@@ -1440,17 +1440,14 @@ void bch_alloc_sectors_done(struct cache_set *c, struct write_point *wp,
 			has_data = true;
 	}
 
-	cache_member_info_put();
-
-	if (!has_data)
-		BUG_ON(xchg(&wp->b, NULL) != ob);
-	else
+	if (likely(has_data))
 		atomic_inc(&ob->pin);
+	else
+		BUG_ON(xchg(&wp->b, NULL) != ob);
 
-	rcu_read_lock();
 	open_bucket_for_each_online_device(c, ob, ptr, ca)
 		atomic_long_add(sectors, &ca->sectors_written);
-	rcu_read_unlock();
+	cache_member_info_put();
 
 	mutex_unlock(&ob->lock);
 }

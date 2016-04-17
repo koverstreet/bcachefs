@@ -845,7 +845,7 @@ static void bch_writepage_do_io(struct bch_writepage_io *io)
 		 (u64) io->bio.bio.bio.bi_iter.bi_sector);
 
 	closure_call(&io->op.op.cl, bch_write, NULL, &io->cl);
-	continue_at(&io->cl, bch_writepage_io_done, io->op.op.c->wq);
+	continue_at(&io->cl, bch_writepage_io_done, NULL);
 }
 
 /*
