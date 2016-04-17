@@ -107,19 +107,33 @@ bool closure_wait(struct closure_waitlist *waitlist, struct closure *cl)
 }
 EXPORT_SYMBOL(closure_wait);
 
+struct closure_syncer {
+	struct task_struct	*task;
+	int			done;
+};
+
 static void closure_sync_fn(struct closure *cl)
 {
-	complete(cl->complete);
+	cl->s->done = 1;
+	wake_up_process(cl->s->task);
 }
 
 void __closure_sync(struct closure *cl)
 {
-	DECLARE_COMPLETION_ONSTACK(wait);
+	struct closure_syncer s = { .task = current };
 
-	cl->complete = &wait;
+	cl->s = &s;
 	continue_at_noreturn(cl, closure_sync_fn, NULL);
 
-	wait_for_completion(&wait);
+	while (1) {
+		__set_current_state(TASK_UNINTERRUPTIBLE);
+		smp_mb();
+		if (s.done)
+			break;
+		schedule();
+	}
+
+	__set_current_state(TASK_RUNNING);
 }
 EXPORT_SYMBOL(__closure_sync);
 
