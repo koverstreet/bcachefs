@@ -581,7 +581,7 @@ struct cache_set {
 	struct btree_debug	btree_debug[BTREE_ID_NR];
 #ifdef CONFIG_BCACHEFS_DEBUG
 	struct btree		*verify_data;
-	struct bset		*verify_ondisk;
+	struct btree_node	*verify_ondisk;
 	struct mutex		verify_lock;
 #endif
 

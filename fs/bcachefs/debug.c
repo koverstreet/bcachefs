@@ -23,13 +23,6 @@ static struct dentry *bch_debug;
 
 #ifdef CONFIG_BCACHEFS_DEBUG
 
-#define for_each_written_bset(b, start, i)				\
-	for (i = (start);						\
-	     (void *) i < (void *) (start) + btree_bytes(b->c) &&\
-	     i->seq == (start)->seq;					\
-	     i = (void *) i + set_blocks(i, block_bytes(b->c)) *	\
-		 block_bytes(b->c))
-
 static void btree_verify_endio(struct bio *bio)
 {
 	struct closure *cl = bio->bi_private;
@@ -39,59 +32,69 @@ static void btree_verify_endio(struct bio *bio)
 
 void bch_btree_verify(struct btree *b)
 {
-	const struct bkey_i_extent *e = bkey_i_to_extent_c(&b->key);
-	struct btree *v = b->c->verify_data;
-	struct bset *ondisk, *sorted, *inmemory;
+	struct cache_set *c = b->c;
+	struct btree *v = c->verify_data;
+	struct btree_node *n_ondisk, *n_sorted, *n_inmemory;
+	struct bset *sorted, *inmemory;
 	struct cache *ca;
 	struct bio *bio;
 	struct closure cl;
+	const struct bch_extent_ptr *ptr;
 
-	if (!b->c->verify || !b->c->verify_ondisk)
+	if (!c->verify || !c->verify_ondisk)
 		return;
 
 	closure_init_stack(&cl);
 
 	down(&b->io_mutex);
-	mutex_lock(&b->c->verify_lock);
+	mutex_lock(&c->verify_lock);
 
-	ondisk = b->c->verify_ondisk;
-	sorted = b->c->verify_data->keys.set->data;
-	inmemory = b->keys.set->data;
+	n_ondisk = c->verify_ondisk;
+	n_sorted = c->verify_data->data;
+	n_inmemory = b->data;
 
 	bkey_copy(&v->key, &b->key);
-	v->written = 0;
-	v->level = b->level;
-	v->keys.ops = b->keys.ops;
+	v->written	= 0;
+	v->level	= b->level;
+	v->btree_id	= b->btree_id;
+	v->keys.ops	= b->keys.ops;
+	bch_btree_keys_init(&v->keys, v->level
+			    ? &bch_btree_interior_node_ops
+			    : bch_btree_ops[v->btree_id],
+			    &v->c->expensive_debug_checks);
 
-	rcu_read_lock();
-	ca = PTR_CACHE(b->c, &e->v.ptr[0]);
-	percpu_ref_get(&ca->ref);
-	rcu_read_unlock();
-	bio = bch_bbio_alloc(b->c);
+	ca = bch_btree_pick_ptr(c, b, &ptr);
+
+	bio = bch_bbio_alloc(c);
 	bio->bi_bdev		= ca->disk_sb.bdev;
-	bio->bi_iter.bi_sector	= PTR_OFFSET(&e->v.ptr[0]);
-	bio->bi_iter.bi_size	= btree_bytes(b->c);
+	bio->bi_iter.bi_size	= btree_bytes(c);
 	bio_set_op_attrs(bio, REQ_OP_READ, REQ_META|READ_SYNC);
 	bio->bi_private		= &cl;
 	bio->bi_end_io		= btree_verify_endio;
-	bch_bio_map(bio, sorted);
+	bch_bio_map(bio, n_sorted);
 
-	closure_bio_submit_punt(bio, &cl, b->c);
+	bio_get(bio);
+	bch_submit_bbio(to_bbio(bio), ca, &b->key, ptr, true);
+
 	closure_sync(&cl);
 
-	bch_bbio_free(bio, b->c);
+	bch_bbio_free(bio, c);
 
-	memcpy(ondisk, sorted, btree_bytes(b->c));
+	memcpy(n_ondisk, n_sorted, btree_bytes(c));
 
-	bch_btree_node_read_done(v, ca, 0);
-	sorted = v->keys.set->data;
+	bch_btree_node_read_done(v, ca, ptr);
+	n_sorted = c->verify_data->data;
 
 	percpu_ref_put(&ca->ref);
+
+	sorted = &n_sorted->keys;
+	inmemory = &n_inmemory->keys;
 
 	if (inmemory->u64s != sorted->u64s ||
 	    memcmp(inmemory->start,
 		   sorted->start,
 		   (void *) bset_bkey_last(inmemory) - (void *) inmemory->start)) {
+		unsigned block = 0;
 		struct bset *i;
 		unsigned j;
 
@@ -103,16 +106,31 @@ void bch_btree_verify(struct btree *b)
 		printk(KERN_ERR "*** read back in:\n");
 		bch_dump_bset(&v->keys, sorted, 0);
 
-		for_each_written_bset(b, ondisk, i) {
-			unsigned block = ((void *) i - (void *) ondisk) /
-				block_bytes(b->c);
+		while (block < btree_blocks(c)) {
+			if (!b->written) {
+				i = &n_ondisk->keys;
+				block += __set_blocks(n_ondisk,
+						      n_ondisk->keys.u64s,
+						      block_bytes(c));
+			} else {
+				struct btree_node_entry *bne =
+					(void *) n_ondisk +
+					(block << (c->block_bits + 9));
+				i = &bne->keys;
+
+				block += __set_blocks(bne,
+						      bne->keys.u64s,
+						      block_bytes(c));
+			}
+
+			if (i->seq != n_ondisk->keys.seq)
+				break;
 
 			printk(KERN_ERR "*** on disk block %u:\n", block);
 			bch_dump_bset(&b->keys, i, block);
 		}
 
-		printk(KERN_ERR "*** block %zu not written\n",
-		       ((void *) i - (void *) ondisk) / block_bytes(b->c));
+		printk(KERN_ERR "*** block %u not written\n", block);
 
 		for (j = 0; j < inmemory->u64s; j++)
 			if (inmemory->_data[j] != sorted->_data[j])
@@ -124,7 +142,7 @@ void bch_btree_verify(struct btree *b)
 		panic("verify failed at %u\n", j);
 	}
 
-	mutex_unlock(&b->c->verify_lock);
+	mutex_unlock(&c->verify_lock);
 	up(&b->io_mutex);
 }
 

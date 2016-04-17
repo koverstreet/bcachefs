@@ -1122,12 +1122,8 @@ int bch_btree_cache_alloc(struct cache_set *c)
 		__get_free_pages(GFP_KERNEL, ilog2(c->btree_pages));
 
 	c->verify_data = mca_bucket_alloc(c, GFP_KERNEL);
-
-	if (c->verify_data &&
-	    c->verify_data->keys.set->data)
+	if (c->verify_data)
 		list_del_init(&c->verify_data->list);
-	else
-		c->verify_data = NULL;
 #endif
 
 	c->btree_cache_shrink.count_objects = bch_mca_count;
