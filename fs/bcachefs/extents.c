@@ -199,26 +199,25 @@ static void extent_cleanup_crcs(struct bkey_s_extent e)
 		if (!extent_entry_is_crc(crc))
 			goto next;
 
-		if (next != extent_entry_last(e) &&
-		    extent_entry_is_crc(next)) {
-			/*
-			 * Two crc entries right after the other, the first one
-			 * doesn't have any pointers and we can just drop it:
-			 */
+		if (next == extent_entry_last(e)) {
+			/* crc entry with no pointers after it: */
+			goto drop;
+		}
+
+		if (extent_entry_is_crc(next)) {
+			/* no pointers before next crc entry: */
 			goto drop;
 		}
 
 		if (prev && crc_cmp(crc, prev)) {
-			/*
-			 * This crc entry is identical to the previous one, drop
-			 * it:
-			 */
+			/* identical to previous crc entry: */
 			goto drop;
 		}
 
 		if (!prev &&
 		    !crc_to_64((void *) crc).csum_type &&
 		    !crc_to_64((void *) crc).compression_type){
+			/* null crc entry: */
 			extent_adjust_pointers(e, crc);
 			goto drop;
 		}
@@ -232,6 +231,8 @@ drop:
 			(void *) extent_entry_last(e) - (void *) next);
 		e.k->u64s -= crc_u64s;
 	}
+
+	EBUG_ON(bkey_val_u64s(e.k) && !bch_extent_nr_ptrs(e.c));
 }
 
 void bch_extent_drop_ptr(struct bkey_s_extent e, struct bch_extent_ptr *ptr)
@@ -1716,8 +1717,7 @@ bool bch_extent_normalize(struct cache_set *c, struct bkey_s k)
 		bch_extent_drop_stale(c, e);
 		extent_sort_ptrs(c, e);
 
-		if (!bch_extent_nr_ptrs(e.c)) {
-			set_bkey_val_u64s(e.k, 0);
+		if (!bkey_val_u64s(e.k)) {
 			if (bkey_extent_is_cached(e.k)) {
 				k.k->type = KEY_TYPE_DISCARD;
 				if (!k.k->version)
