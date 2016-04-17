@@ -1070,9 +1070,11 @@ static void __bch_write(struct closure *cl)
 			op->insert_key.k.size != bio_sectors(bio));
 
 		bch_extent_normalize(op->c, bkey_i_to_s(k));
-		bch_check_mark_super(op->c, k, false);
 
 		bkey_extent_set_cached(&k->k, (op->flags & BCH_WRITE_CACHED));
+
+		if (!(op->flags & BCH_WRITE_CACHED))
+			bch_check_mark_super(op->c, k, false);
 
 		bch_keylist_enqueue(&op->insert_keys);
 
