@@ -237,7 +237,7 @@ static inline void closure_queue(struct closure *cl)
 	struct workqueue_struct *wq = cl->wq;
 	if (wq) {
 		INIT_WORK(&cl->work, cl->work.func);
-		BUG_ON(!queue_work(wq, &cl->work));
+		queue_work(wq, &cl->work);
 	} else
 		cl->fn(cl);
 }
@@ -338,8 +338,13 @@ do {									\
  */
 #define continue_at_nobarrier(_cl, _fn, _wq)				\
 do {									\
-	set_closure_fn(_cl, _fn, _wq);					\
-	closure_queue(_cl);						\
+	closure_set_ip(_cl);						\
+	if (_wq) {							\
+		INIT_WORK(&(_cl)->work, (void *) _fn);			\
+		queue_work((_wq), &(_cl)->work);			\
+	} else {							\
+		(_fn)(_cl);						\
+	}								\
 	return;								\
 } while (0)
 
