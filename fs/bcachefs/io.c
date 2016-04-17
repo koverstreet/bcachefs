@@ -710,8 +710,9 @@ static void bch_write_endio(struct bio *bio)
 	struct closure *cl = bio->bi_private;
 	struct bch_write_op *op = container_of(cl, struct bch_write_op, cl);
 	struct bch_write_bio *wbio = to_wbio(bio);
+	struct cache *ca = wbio->bio.ca;
 
-	if (cache_nonfatal_io_err_on(bio->bi_error, wbio->bio.ca,
+	if (cache_nonfatal_io_err_on(bio->bi_error, ca,
 				     "data write"))
 		set_closure_fn(cl, bch_write_io_error, op->c->wq);
 
@@ -720,7 +721,14 @@ static void bch_write_endio(struct bio *bio)
 	else if (wbio->bounce)
 		bch_bio_free_pages_pool(op->c, bio);
 
-	bch_bbio_endio(&wbio->bio);
+	bch_account_io_completion_time(ca,
+				       wbio->bio.submit_time_us,
+				       REQ_OP_WRITE);
+	if (wbio->split)
+		bio_put(&wbio->bio.bio);
+	if (ca)
+		percpu_ref_put(&ca->ref);
+	closure_put(cl);
 }
 
 static const unsigned bch_crc_size[] = {
@@ -914,9 +922,11 @@ static void bch_write_extent(struct bch_write_op *op,
 
 		orig->bi_iter.bi_size += extra_input;
 
+		bio->bi_end_io		= bch_write_endio;
 		wbio			= to_wbio(bio);
 		wbio->orig		= NULL;
 		wbio->bounce		= true;
+		wbio->split		= true;
 
 		/*
 		 * Set the (uncompressed) size of the key we're creating to the
@@ -966,12 +976,11 @@ static void bch_write_extent(struct bch_write_op *op,
 
 		bio = bio_next_split(orig, k->k.size, GFP_NOIO,
 				     &op->c->bio_write);
-		if (bio == orig)
-			bio_get(bio);
 
 		wbio			= to_wbio(bio);
 		wbio->orig		= NULL;
 		wbio->bounce		= false;
+		wbio->split		= bio != orig;
 	}
 
 	bio->bi_end_io	= bch_write_endio;
