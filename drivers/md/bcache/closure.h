@@ -103,7 +103,7 @@
  */
 
 struct closure;
-struct completion;
+struct closure_syncer;
 typedef void (closure_fn) (struct closure *);
 
 struct closure_waitlist {
@@ -143,7 +143,7 @@ struct closure {
 	union {
 		struct {
 			struct workqueue_struct *wq;
-			struct completion	*complete;
+			struct closure_syncer	*s;
 			struct llist_node	list;
 			closure_fn		*fn;
 		};
