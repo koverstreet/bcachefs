@@ -43,7 +43,7 @@ struct i_sectors_hook {
 
 struct bchfs_write_op {
 	struct bch_inode_info	*ei;
-	s64			sectors;
+	s64			sectors_added;
 	bool			is_dio;
 	u64			new_i_size;
 	struct bch_write_op	op;

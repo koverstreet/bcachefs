@@ -248,7 +248,7 @@ bchfs_extent_update_hook(struct extent_insert_hook *hook,
 		le64_add_cpu(&h->new_inode.v.i_sectors, sectors);
 		atomic64_add(sectors, &ei->i_sectors);
 
-		h->op->sectors += sectors;
+		h->op->sectors_added += sectors;
 
 		if (h->op->is_dio) {
 			spin_lock(&inode->i_lock);
@@ -375,8 +375,10 @@ union { struct {
 	enum {
 		BCH_PAGE_UNALLOCATED	= 0,
 		BCH_PAGE_ALLOCATED,
-		BCH_PAGE_RESERVED,
 	}			alloc_state:2;
+
+	/* Owns PAGE_SECTORS sized reservation: */
+	unsigned		reserved:1;
 
 	/*
 	 * Number of sectors on disk - for i_blocks
@@ -420,29 +422,30 @@ static inline struct bch_page_state *page_state(struct page *page)
 
 static void bch_put_page_reservation(struct cache_set *c, struct page *page)
 {
+	struct disk_reservation res = { .sectors = PAGE_SECTORS };
 	struct bch_page_state s;
 
 	s = page_state_cmpxchg(page_state(page), s, {
-		if (s.alloc_state == BCH_PAGE_RESERVED)
-			s.alloc_state = BCH_PAGE_UNALLOCATED;
+		if (!s.reserved)
+			return;
+		s.reserved = 0;
 	});
 
-	if (s.alloc_state == BCH_PAGE_RESERVED) {
-		struct disk_reservation res = { .sectors = PAGE_SECTORS };
-
-		/* hack */
-		bch_disk_reservation_put(c, &res);
-	}
+	bch_disk_reservation_put(c, &res);
 }
 
 static int bch_get_page_reservation(struct cache_set *c, struct page *page,
 				    bool check_enospc)
 {
-	struct bch_page_state *s = page_state(page), old, new;
+	struct bch_page_state *s = page_state(page), new;
 	struct disk_reservation res;
 	int ret = 0;
 
-	if (s->alloc_state != BCH_PAGE_UNALLOCATED)
+	BUG_ON(s->alloc_state == BCH_PAGE_ALLOCATED &&
+	       s->sectors != PAGE_SECTORS);
+
+	if (s->reserved ||
+	    s->alloc_state == BCH_PAGE_ALLOCATED)
 		return 0;
 
 	ret = __bch_disk_reservation_get(c, &res, PAGE_SECTORS,
@@ -450,17 +453,22 @@ static int bch_get_page_reservation(struct cache_set *c, struct page *page,
 	if (ret)
 		return ret;
 
-	old = page_state_cmpxchg(s, new, new.alloc_state = BCH_PAGE_RESERVED);
+	page_state_cmpxchg(s, new, {
+		if (new.reserved) {
+			bch_disk_reservation_put(c, &res);
+			return 0;
+		}
+		new.reserved = 1;
+	});
 
-	BUG_ON(old.alloc_state != BCH_PAGE_UNALLOCATED);
-
-	return ret;
+	return 0;
 }
 
 static void bch_clear_page_bits(struct page *page)
 {
 	struct inode *inode = page->mapping->host;
 	struct cache_set *c = inode->i_sb->s_fs_info;
+	struct disk_reservation res = { .sectors = PAGE_SECTORS };
 	struct bch_page_state s;
 
 	if (!PagePrivate(page))
@@ -475,12 +483,8 @@ static void bch_clear_page_bits(struct page *page)
 		spin_unlock(&inode->i_lock);
 	}
 
-	if (s.alloc_state == BCH_PAGE_RESERVED) {
-		struct disk_reservation res = { .sectors = PAGE_SECTORS };
-
-		/* hack */
+	if (s.reserved)
 		bch_disk_reservation_put(c, &res);
-	}
 }
 
 int bch_set_page_dirty(struct page *page)
@@ -630,7 +634,7 @@ static void bchfs_read(struct cache_set *c, struct bch_read_bio *rbio, u64 inode
 	bio_for_each_segment_all(bv, bio, i) {
 		struct bch_page_state *s = page_state(bv->bv_page);
 
-		EBUG_ON(s->alloc_state == BCH_PAGE_RESERVED);
+		EBUG_ON(s->reserved);
 
 		s->alloc_state = BCH_PAGE_ALLOCATED;
 		s->sectors = 0;
@@ -789,27 +793,41 @@ static void bch_writepage_io_done(struct closure *cl)
 			SetPageError(page);
 			if (page->mapping)
 				set_bit(AS_EIO, &page->mapping->flags);
-		} else {
+		}
+
+		if (io->op.op.written >= PAGE_SECTORS) {
 			struct bch_page_state old, new;
 
 			old = page_state_cmpxchg(page_state(page), new, {
-				new.sectors += new.dirty_sectors;
+				new.alloc_state =
+					(io->op.op.compression_type ==
+					 BCH_COMPRESSION_NONE)
+					? BCH_PAGE_ALLOCATED
+					: BCH_PAGE_UNALLOCATED;
+				new.sectors = PAGE_SECTORS;
 				new.dirty_sectors = 0;
 			});
 
-			io->op.sectors -= old.dirty_sectors;
+			io->op.sectors_added -= old.dirty_sectors;
+			io->op.op.written -= PAGE_SECTORS;
 		}
 	}
+
+	/*
+	 * racing with fallocate can cause us to add fewer sectors than
+	 * expected - but we shouldn't add more sectors than expected:
+	 */
+	BUG_ON(io->op.sectors_added > 0);
 
 	/*
 	 * PageWriteback is effectively our ref on the inode - fixup i_blocks
 	 * before calling end_page_writeback:
 	 */
-	if (!io->op.op.error && io->op.sectors) {
+	if (io->op.sectors_added) {
 		struct inode *inode = &io->op.ei->vfs_inode;
 
 		spin_lock(&inode->i_lock);
-		inode->i_blocks += io->op.sectors;
+		inode->i_blocks += io->op.sectors_added;
 		spin_unlock(&inode->i_lock);
 	}
 
@@ -847,7 +865,7 @@ alloc_io:
 
 		closure_init(&w->io->cl, NULL);
 		w->io->op.ei		= ei;
-		w->io->op.sectors	= 0;
+		w->io->op.sectors_added	= 0;
 		w->io->op.is_dio	= false;
 		bch_write_op_init(&w->io->op.op, w->c, &w->io->bio,
 				  (struct disk_reservation) { 0 }, NULL,
@@ -875,7 +893,7 @@ static int __bch_writepage(struct page *page, struct writeback_control *wbc,
 	struct inode *inode = page->mapping->host;
 	struct bch_inode_info *ei = to_bch_ei(inode);
 	struct bch_writepage *w = data;
-	struct bch_page_state old, new;
+	struct bch_page_state new;
 	unsigned offset;
 	loff_t i_size = i_size_read(inode);
 	pgoff_t end_index = i_size >> PAGE_SHIFT;
@@ -910,20 +928,19 @@ do_io:
 	if (wbc->sync_mode == WB_SYNC_ALL)
 		w->io->bio.bio.bio.bi_opf |= WRITE_SYNC;
 
-	/*
-	 * Before unlocking the page, transfer refcounts to w->io:
-	 */
-	old = page_state_cmpxchg(page_state(page), new, {
-		new.alloc_state = w->io->op.op.compression_type == BCH_COMPRESSION_NONE
-			? BCH_PAGE_ALLOCATED
-			: BCH_PAGE_UNALLOCATED;
+	/* Before unlocking the page, transfer reservation to w->io: */
+	page_state_cmpxchg(page_state(page), new, {
+		BUG_ON(!new.reserved &&
+		       (new.sectors != PAGE_SECTORS ||
+			new.alloc_state != BCH_PAGE_ALLOCATED));
+
+		if (!new.reserved)
+			goto out;
+		new.reserved = 0;
 	});
 
-	BUG_ON(old.alloc_state == BCH_PAGE_UNALLOCATED);
-
-	if (old.alloc_state == BCH_PAGE_RESERVED)
-		w->io->op.op.res.sectors += PAGE_SECTORS;
-
+	w->io->op.op.res.sectors += PAGE_SECTORS;
+out:
 	BUG_ON(PageWriteback(page));
 	set_page_writeback(page);
 	unlock_page(page);
@@ -1047,10 +1064,10 @@ out:
 	if (ret) {
 		if (!PageUptodate(page)) {
 			/*
-			 * If the page hasn't been read in, we won't know if we actually
-			 * need a reservation - we don't actually need to read here, we
-			 * just need to check if the page is fully backed by
-			 * uncompressed data:
+			 * If the page hasn't been read in, we won't know if we
+			 * actually need a reservation - we don't actually need
+			 * to read here, we just need to check if the page is
+			 * fully backed by uncompressed data:
 			 */
 			goto readpage;
 		}
@@ -1075,35 +1092,32 @@ int bch_write_end(struct file *filp, struct address_space *mapping,
 {
 	struct inode *inode = page->mapping->host;
 	struct cache_set *c = inode->i_sb->s_fs_info;
-	struct bch_page_state *s = page_state(page);
 
 	lockdep_assert_held(&inode->i_rwsem);
-	BUG_ON(s->alloc_state == BCH_PAGE_UNALLOCATED);
 
 	if (unlikely(copied < len && !PageUptodate(page))) {
 		/*
 		 * The page needs to be read in, but that would destroy
 		 * our partial write - simplest thing is to just force
 		 * userspace to redo the write:
-		 *
-		 * userspace doesn't _have_ to redo the write, so clear
-		 * PageAllocated:
 		 */
-		copied = 0;
 		zero_user(page, 0, PAGE_SIZE);
 		flush_dcache_page(page);
-		bch_put_page_reservation(c, page);
-		goto out;
+		copied = 0;
 	}
 
 	if (pos + copied > inode->i_size)
 		i_size_write(inode, pos + copied);
 
-	if (!PageUptodate(page))
-		SetPageUptodate(page);
-	if (!PageDirty(page))
-		set_page_dirty(page);
-out:
+	if (copied) {
+		if (!PageUptodate(page))
+			SetPageUptodate(page);
+		if (!PageDirty(page))
+			set_page_dirty(page);
+	} else {
+		bch_put_page_reservation(c, page);
+	}
+
 	unlock_page(page);
 	put_page(page);
 	pagecache_add_put(&mapping->add_lock);
@@ -1290,7 +1304,7 @@ static void bch_do_direct_IO_write(struct dio_write *dio, bool sync)
 		}
 
 		dio->iop.ei		= ei;
-		dio->iop.sectors	= 0;
+		dio->iop.sectors_added	= 0;
 		dio->iop.is_dio		= true;
 		dio->iop.new_i_size	= U64_MAX;
 		bch_write_op_init(&dio->iop.op, c, &dio->bio,
@@ -2139,8 +2153,10 @@ long bch_fallocate_dispatch(struct file *file, int mode,
 
 static bool page_is_data(struct page *page)
 {
+	/* XXX: should only have to check PageDirty */
 	return PagePrivate(page) &&
-		page_state(page)->alloc_state != BCH_PAGE_UNALLOCATED;
+		(page_state(page)->sectors ||
+		 page_state(page)->dirty_sectors);
 }
 
 static loff_t bch_next_pagecache_data(struct inode *inode,
