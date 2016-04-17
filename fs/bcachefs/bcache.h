@@ -461,9 +461,9 @@ struct cache {
 	atomic_t		io_errors;
 	atomic_t		io_count;
 
-	atomic_long_t		meta_sectors_written;
-	atomic_long_t		btree_sectors_written;
-	atomic_long_t		sectors_written;
+	atomic64_t		meta_sectors_written;
+	atomic64_t		btree_sectors_written;
+	u64 __percpu		*sectors_written;
 };
 
 /*

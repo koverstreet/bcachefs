@@ -244,8 +244,8 @@ static int bch_prio_write(struct cache *ca)
 
 	trace_bcache_prio_write_start(ca);
 
-	atomic_long_add(ca->mi.bucket_size * prio_buckets(ca),
-			&ca->meta_sectors_written);
+	atomic64_add(ca->mi.bucket_size * prio_buckets(ca),
+		     &ca->meta_sectors_written);
 
 	for (i = prio_buckets(ca) - 1; i >= 0; --i) {
 		struct bucket *g;
@@ -1446,7 +1446,7 @@ void bch_alloc_sectors_done(struct cache_set *c, struct write_point *wp,
 		BUG_ON(xchg(&wp->b, NULL) != ob);
 
 	open_bucket_for_each_online_device(c, ob, ptr, ca)
-		atomic_long_add(sectors, &ca->sectors_written);
+		this_cpu_add(*ca->sectors_written, sectors);
 	cache_member_info_put();
 
 	mutex_unlock(&ob->lock);

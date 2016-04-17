@@ -635,8 +635,8 @@ static void do_btree_node_write(struct closure *cl)
 
 	rcu_read_lock();
 	extent_for_each_online_device(c, e, ptr, ca)
-		atomic_long_add(blocks_to_write << c->block_bits,
-				&ca->btree_sectors_written);
+		atomic64_add(blocks_to_write << c->block_bits,
+			     &ca->btree_sectors_written);
 	rcu_read_unlock();
 
 	b->written += blocks_to_write;

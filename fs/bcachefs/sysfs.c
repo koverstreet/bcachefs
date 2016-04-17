@@ -1158,6 +1158,17 @@ static ssize_t show_cache_alloc_debug(struct cache *ca, char *buf)
 			 ca->reserve_buckets_count);
 }
 
+static u64 sectors_written(struct cache *ca)
+{
+	u64 ret = 0;
+	int cpu;
+
+	for_each_possible_cpu(cpu)
+		ret += *per_cpu_ptr(ca->sectors_written, cpu);
+
+	return ret;
+}
+
 SHOW(bch_cache)
 {
 	struct cache *ca = container_of(kobj, struct cache, kobj);
@@ -1173,12 +1184,12 @@ SHOW(bch_cache)
 	sysfs_print(first_bucket,	ca->mi.first_bucket);
 	sysfs_print(nbuckets,		ca->mi.nbuckets);
 	sysfs_print(discard,		ca->mi.discard);
-	sysfs_hprint(written, atomic_long_read(&ca->sectors_written) << 9);
+	sysfs_hprint(written, sectors_written(ca) << 9);
 	sysfs_hprint(btree_written,
-		     atomic_long_read(&ca->btree_sectors_written) << 9);
+		     atomic64_read(&ca->btree_sectors_written) << 9);
 	sysfs_hprint(metadata_written,
-		     (atomic_long_read(&ca->meta_sectors_written) +
-		      atomic_long_read(&ca->btree_sectors_written)) << 9);
+		     (atomic64_read(&ca->meta_sectors_written) +
+		      atomic64_read(&ca->btree_sectors_written)) << 9);
 
 	sysfs_print(io_errors,
 		    atomic_read(&ca->io_errors) >> IO_ERROR_SHIFT);
@@ -1310,9 +1321,13 @@ STORE(__bch_cache)
 	}
 
 	if (attr == &sysfs_clear_stats) {
-		atomic_long_set(&ca->sectors_written, 0);
-		atomic_long_set(&ca->btree_sectors_written, 0);
-		atomic_long_set(&ca->meta_sectors_written, 0);
+		int cpu;
+
+		for_each_possible_cpu(cpu)
+			*per_cpu_ptr(ca->sectors_written, cpu) = 0;
+
+		atomic64_set(&ca->btree_sectors_written, 0);
+		atomic64_set(&ca->meta_sectors_written, 0);
 		atomic_set(&ca->io_count, 0);
 		atomic_set(&ca->io_errors, 0);
 	}

@@ -1679,7 +1679,7 @@ static void journal_write(struct closure *cl)
 
 		bio = &ca->journal.bio;
 
-		atomic_long_add(sectors, &ca->meta_sectors_written);
+		atomic64_add(sectors, &ca->meta_sectors_written);
 
 		bio_reset(bio);
 		bio->bi_iter.bi_sector	= ptr->offset;

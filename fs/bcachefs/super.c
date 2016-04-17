@@ -1667,6 +1667,7 @@ static void bch_cache_free_work(struct work_struct *work)
 	 * However, they were zeroed when the object was allocated.
 	 */
 
+	free_percpu(ca->sectors_written);
 	bioset_exit(&ca->replica_set);
 	free_percpu(ca->bucket_stats_percpu);
 	kfree(ca->journal.bucket_seq);
@@ -1945,7 +1946,8 @@ static const char *cache_alloc(struct bcache_superblock *sb,
 					       sizeof(u64), GFP_KERNEL)) ||
 	    !(ca->bio_prio = bio_kmalloc(GFP_NOIO, bucket_pages(ca))) ||
 	    bioset_init(&ca->replica_set, 4,
-			offsetof(struct bch_write_bio, bio.bio)))
+			offsetof(struct bch_write_bio, bio.bio)) ||
+	    !(ca->sectors_written = alloc_percpu(*ca->sectors_written)))
 		goto err;
 
 	ca->prio_last_buckets = ca->prio_buckets + prio_buckets(ca);
