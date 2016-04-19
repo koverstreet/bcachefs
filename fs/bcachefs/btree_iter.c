@@ -55,23 +55,24 @@ void btree_node_lock_write(struct btree *b, struct btree_iter *iter)
 
 	for_each_linked_btree_iter(iter, linked)
 		if (linked->nodes[b->level] == b &&
-		    btree_node_read_locked(linked, b->level)) {
-			/*
-			 * We have the node intent locked, so it's safe to drop
-			 * the read lock here: also, we have to drop read locks
-			 * before calling six_lock_write() - six_unlock() won't
-			 * even do wakeups until the reader count goes to 0
-			 */
-			__six_unlock_type(&b->lock, SIX_LOCK_read);
+		    btree_node_read_locked(linked, b->level))
 			readers++;
-		}
 
-	six_lock_write(&b->lock);
-
-	/* retake the read locks we dropped: */
-	if (readers)
+	if (likely(!readers)) {
+		six_lock_write(&b->lock);
+	} else {
+		/*
+		 * Must drop our read locks before calling six_lock_write() -
+		 * six_unlock() won't do wakeups until the reader count
+		 * goes to 0, and it's safe because we have the node intent
+		 * locked:
+		 */
+		atomic64_sub(__SIX_VAL(read_lock, readers),
+			     &b->lock.state.counter);
+		six_lock_write(&b->lock);
 		atomic64_add(__SIX_VAL(read_lock, readers),
 			     &b->lock.state.counter);
+	}
 }
 
 static bool btree_lock_upgrade(struct btree_iter *iter, unsigned level)
