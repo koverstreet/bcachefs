@@ -58,9 +58,9 @@ bool __six_trylock_type(struct six_lock *lock, enum six_lock_type type)
 
 		if (old.v & l[type].lock_fail)
 			return false;
-	} while ((v = atomic64_cmpxchg(&lock->state.counter,
-				       old.v,
-				       old.v + l[type].lock_val)) != old.v);
+	} while ((v = atomic64_cmpxchg_acquire(&lock->state.counter,
+				old.v,
+				old.v + l[type].lock_val)) != old.v);
 
 	return true;
 }
@@ -77,9 +77,9 @@ bool __six_relock_type(struct six_lock *lock, enum six_lock_type type,
 
 		if (old.seq != seq || old.v & l[type].lock_fail)
 			return false;
-	} while ((v = atomic64_cmpxchg(&lock->state.counter,
-				       old.v,
-				       old.v + l[type].lock_val)) != old.v);
+	} while ((v = atomic64_cmpxchg_acquire(&lock->state.counter,
+				old.v,
+				old.v + l[type].lock_val)) != old.v);
 
 	return true;
 }
@@ -94,8 +94,11 @@ struct six_lock_waiter {
 
 void __six_lock_type(struct six_lock *lock, enum six_lock_type type)
 {
+	const struct six_lock_vals l[] = LOCK_VALS;
+	union six_lock_state old, new;
 	struct six_lock_waiter wait;
 	unsigned i;
+	u64 v;
 
 	for (i = 0; i < SIX_LOCK_SPIN_COUNT; i++) {
 		if (__six_trylock_type(lock, type))
@@ -108,16 +111,26 @@ void __six_lock_type(struct six_lock *lock, enum six_lock_type type)
 
 	while (1) {
 		set_current_state(TASK_UNINTERRUPTIBLE);
-		if (list_empty(&wait.list)) {
+		if (list_empty_careful(&wait.list)) {
 			spin_lock(&lock->wait_lock);
 			list_add_tail(&wait.list, &lock->wait_list[type]);
 			spin_unlock(&lock->wait_lock);
 		}
 
-		set_bit(waitlist_bitnr(type),
-			(unsigned long *) &lock->state.v);
+		v = lock->state.v;
+		do {
+			new.v = old.v = v;
 
-		if (__six_trylock_type(lock, type))
+			if (!(old.v & l[type].lock_fail))
+				new.v += l[type].lock_val;
+			else if (!(new.waiters & (1 << type)))
+				new.waiters |= 1 << type;
+			else
+				break; /* waiting bit already set */
+		} while ((v = atomic64_cmpxchg_acquire(&lock->state.counter,
+					old.v, new.v)) != old.v);
+
+		if (!(old.v & l[type].lock_fail))
 			break;
 
 		schedule();
@@ -127,7 +140,7 @@ void __six_lock_type(struct six_lock *lock, enum six_lock_type type)
 
 	if (!list_empty_careful(&wait.list)) {
 		spin_lock(&lock->wait_lock);
-		list_del(&wait.list);
+		list_del_init(&wait.list);
 		spin_unlock(&lock->wait_lock);
 	}
 }
@@ -170,10 +183,8 @@ void __six_unlock_type(struct six_lock *lock, enum six_lock_type type)
 	const struct six_lock_vals l[] = LOCK_VALS;
 	union six_lock_state state;
 
-	/* unlock barrier */
-	smp_wmb();
-	state.v = atomic64_add_return(l[type].unlock_val,
-				      &lock->state.counter);
+	state.v = atomic64_add_return_release(l[type].unlock_val,
+					      &lock->state.counter);
 
 	six_lock_wakeup(lock, state, l[type].unlock_wakeup);
 }
@@ -192,9 +203,9 @@ bool six_trylock_convert(struct six_lock *lock,
 
 		if (new.v & l[to].lock_fail)
 			return false;
-	} while ((v = atomic64_cmpxchg(&lock->state.counter,
-				       old.v,
-				       new.v + l[to].lock_val)) != old.v);
+	} while ((v = atomic64_cmpxchg_acquire(&lock->state.counter,
+				old.v,
+				new.v + l[to].lock_val)) != old.v);
 
 	six_lock_wakeup(lock, new, l[from].unlock_wakeup);
 
@@ -209,12 +220,9 @@ void __six_lock_increment(struct six_lock *lock, enum six_lock_type type)
 {
 	const struct six_lock_vals l[] = LOCK_VALS;
 
-	BUG_ON(type == SIX_LOCK_write);
+	EBUG_ON(type == SIX_LOCK_write);
 
 	/* XXX: assert already locked, and that we don't overflow: */
 
 	atomic64_add(l[type].lock_val, &lock->state.counter);
-
-	/* lock barrier: */
-	smp_mb__after_atomic();
 }
