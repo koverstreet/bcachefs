@@ -1778,12 +1778,14 @@ int bch_truncate(struct inode *inode, struct iattr *iattr)
 			goto err;
 	}
 
+	mutex_lock(&ei->update_lock);
 	setattr_copy(inode, iattr);
 	inode->i_mtime = inode->i_ctime = CURRENT_TIME;
 
 	/* clear I_SIZE_DIRTY: */
 	i_size_dirty_put(ei);
 	ret = bch_write_inode_size(c, ei, inode->i_size);
+	mutex_unlock(&ei->update_lock);
 
 	pagecache_block_put(&mapping->add_lock);
 
