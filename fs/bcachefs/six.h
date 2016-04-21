@@ -62,6 +62,7 @@ enum six_lock_type {
 
 struct six_lock {
 	union six_lock_state	state;
+	struct task_struct	*owner;
 
 	raw_spinlock_t		wait_lock;
 	struct list_head	wait_list[3];
