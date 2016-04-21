@@ -1,5 +1,10 @@
 
+#include "linux/lockdep.h"
+
 #include "six.h"
+
+#define six_acquire(l, t)	lock_acquire(l, 0, t, 0, 0, NULL, _RET_IP_)
+#define six_release(l)		lock_release(l, 0, _RET_IP_)
 
 /* Number of times to trylock() before sleeping in six_lock(): */
 #define SIX_LOCK_SPIN_COUNT		1
@@ -43,7 +48,8 @@ struct six_lock_vals {
 	},								\
 }
 
-bool __six_trylock_type(struct six_lock *lock, enum six_lock_type type)
+static inline bool __six_trylock_type(struct six_lock *lock,
+				      enum six_lock_type type)
 {
 	const struct six_lock_vals l[] = LOCK_VALS;
 	union six_lock_state old;
@@ -61,12 +67,21 @@ bool __six_trylock_type(struct six_lock *lock, enum six_lock_type type)
 	} while ((v = atomic64_cmpxchg_acquire(&lock->state.counter,
 				old.v,
 				old.v + l[type].lock_val)) != old.v);
-
 	return true;
 }
 
-bool __six_relock_type(struct six_lock *lock, enum six_lock_type type,
-		       unsigned seq)
+bool six_trylock_type(struct six_lock *lock, enum six_lock_type type)
+{
+	bool ret = __six_trylock_type(lock, type);
+
+	if (ret)
+		six_acquire(&lock->dep_map, 1);
+
+	return ret;
+}
+
+bool six_relock_type(struct six_lock *lock, enum six_lock_type type,
+		     unsigned seq)
 {
 	const struct six_lock_vals l[] = LOCK_VALS;
 	union six_lock_state old;
@@ -81,6 +96,7 @@ bool __six_relock_type(struct six_lock *lock, enum six_lock_type type,
 				old.v,
 				old.v + l[type].lock_val)) != old.v);
 
+	six_acquire(&lock->dep_map, 1);
 	return true;
 }
 
@@ -92,7 +108,7 @@ struct six_lock_waiter {
 /* This is probably up there with the more evil things I've done */
 #define waitlist_bitnr(id) ilog2((((union six_lock_state) { .waiters = 1 << (id) }).l))
 
-void __six_lock_type(struct six_lock *lock, enum six_lock_type type)
+void six_lock_type(struct six_lock *lock, enum six_lock_type type)
 {
 	const struct six_lock_vals l[] = LOCK_VALS;
 	union six_lock_state old, new;
@@ -100,11 +116,15 @@ void __six_lock_type(struct six_lock *lock, enum six_lock_type type)
 	unsigned i;
 	u64 v;
 
+	six_acquire(&lock->dep_map, 0);
+
 	for (i = 0; i < SIX_LOCK_SPIN_COUNT; i++) {
 		if (__six_trylock_type(lock, type))
 			return;
 		cpu_relax();
 	}
+
+	lock_contended(&lock->dep_map, _RET_IP_);
 
 	INIT_LIST_HEAD(&wait.list);
 	wait.task = current;
@@ -112,9 +132,9 @@ void __six_lock_type(struct six_lock *lock, enum six_lock_type type)
 	while (1) {
 		set_current_state(TASK_UNINTERRUPTIBLE);
 		if (list_empty_careful(&wait.list)) {
-			spin_lock(&lock->wait_lock);
+			raw_spin_lock(&lock->wait_lock);
 			list_add_tail(&wait.list, &lock->wait_list[type]);
-			spin_unlock(&lock->wait_lock);
+			raw_spin_unlock(&lock->wait_lock);
 		}
 
 		v = lock->state.v;
@@ -139,10 +159,12 @@ void __six_lock_type(struct six_lock *lock, enum six_lock_type type)
 	__set_current_state(TASK_RUNNING);
 
 	if (!list_empty_careful(&wait.list)) {
-		spin_lock(&lock->wait_lock);
+		raw_spin_lock(&lock->wait_lock);
 		list_del_init(&wait.list);
-		spin_unlock(&lock->wait_lock);
+		raw_spin_unlock(&lock->wait_lock);
 	}
+
+	lock_acquired(&lock->dep_map, _RET_IP_);
 }
 
 static inline void six_lock_wakeup(struct six_lock *lock,
@@ -161,7 +183,7 @@ static inline void six_lock_wakeup(struct six_lock *lock,
 	clear_bit(waitlist_bitnr(waitlist_id),
 		  (unsigned long *) &lock->state.v);
 
-	spin_lock(&lock->wait_lock);
+	raw_spin_lock(&lock->wait_lock);
 
 	list_for_each_entry_safe(w, next, wait_list, list) {
 		list_del_init(&w->list);
@@ -175,17 +197,17 @@ static inline void six_lock_wakeup(struct six_lock *lock,
 		}
 	}
 
-	spin_unlock(&lock->wait_lock);
+	raw_spin_unlock(&lock->wait_lock);
 }
 
-void __six_unlock_type(struct six_lock *lock, enum six_lock_type type)
+void six_unlock_type(struct six_lock *lock, enum six_lock_type type)
 {
 	const struct six_lock_vals l[] = LOCK_VALS;
 	union six_lock_state state;
 
 	state.v = atomic64_add_return_release(l[type].unlock_val,
 					      &lock->state.counter);
-
+	six_release(&lock->dep_map);
 	six_lock_wakeup(lock, state, l[type].unlock_wakeup);
 }
 
@@ -216,11 +238,12 @@ bool six_trylock_convert(struct six_lock *lock,
  * Increment read/intent lock count, assuming we already have it read or intent
  * locked:
  */
-void __six_lock_increment(struct six_lock *lock, enum six_lock_type type)
+void six_lock_increment(struct six_lock *lock, enum six_lock_type type)
 {
 	const struct six_lock_vals l[] = LOCK_VALS;
 
 	EBUG_ON(type == SIX_LOCK_write);
+	six_acquire(&lock->dep_map, 0);
 
 	/* XXX: assert already locked, and that we don't overflow: */
 
