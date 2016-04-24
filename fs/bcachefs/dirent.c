@@ -98,6 +98,50 @@ const struct bkey_ops bch_bkey_dirent_ops = {
 	.val_to_text	= bch_dirent_to_text,
 };
 
+static bool dirent_needs_whiteout(struct bch_inode_info *ei,
+				  struct btree_iter *iter)
+{
+	struct btree *b = iter->nodes[0];
+	/*
+	 * hack: we don't want to advance @iter, because caller is about to
+	 * insert at @iter's current position and we can't just rewind it - so,
+	 * just copy the node iter
+	 */
+	struct btree_node_iter node_iter = iter->node_iters[0];
+	struct bkey_s_c k;
+	struct bkey u;
+	struct bpos cur_pos = iter->pos;
+
+	bch_btree_node_iter_advance(&node_iter, &b->keys);
+	cur_pos = bkey_successor(cur_pos);
+
+	while ((k = bch_btree_node_iter_next_unpack(&node_iter, &b->keys, &u)).k &&
+	       k.k->p.inode == iter->pos.inode &&
+	       !bkey_cmp(k.k->p, cur_pos)) {
+		if (k.k->type == BCH_DIRENT) {
+			struct bkey_s_c_dirent d = bkey_s_c_to_dirent(k);
+			struct qstr name = {
+				.name = d.v->d_name,
+				.len = dirent_name_bytes(d),
+			};
+
+			if (bkey_cmp(bch_dirent_pos(ei, &name), iter->pos) <= 0)
+				return true;
+		}
+
+		cur_pos = bkey_successor(cur_pos);
+	}
+
+	/*
+	 * end of node, can't (yet) check the next one (would have to keep it
+	 * locked while we do the deletion)
+	 */
+	if (bkey_cmp(cur_pos, b->key.k.p) > 0)
+		return true;
+
+	return false;
+}
+
 static struct bkey_i_dirent *dirent_create_key(u8 type,
 					       const struct qstr *name,
 					       u64 dst)
@@ -224,6 +268,13 @@ int bch_dirent_create(struct inode *dir, u8 type,
 	return ret;
 }
 
+static void dirent_copy_target(struct bkey_i_dirent *dst,
+			       struct bkey_s_c_dirent src)
+{
+	dst->v.d_inum = src.v->d_inum;
+	dst->v.d_type = src.v->d_type;
+}
+
 int bch_dirent_rename(struct cache_set *c,
 		      struct inode *src_dir, const struct qstr *src_name,
 		      struct inode *dst_dir, const struct qstr *dst_name,
@@ -234,9 +285,10 @@ int bch_dirent_rename(struct cache_set *c,
 	struct btree_iter src_iter;
 	struct btree_iter dst_iter;
 	struct bkey_s_c old_src, old_dst;
-	struct bkey_s_c_dirent old_src_d, old_dst_d;
-	struct bkey_i delete;
+	struct bkey delete;
 	struct bkey_i_dirent *new_src = NULL, *new_dst = NULL;
+	struct bpos src_pos = bch_dirent_pos(src_ei, src_name);
+	struct bpos dst_pos = bch_dirent_pos(dst_ei, dst_name);
 	int ret = -ENOMEM;
 
 	if (mode == BCH_RENAME_EXCHANGE) {
@@ -251,10 +303,8 @@ int bch_dirent_rename(struct cache_set *c,
 	if (!new_dst)
 		goto out;
 
-	bch_btree_iter_init_intent(&src_iter, c, BTREE_ID_DIRENTS,
-			bch_dirent_pos(src_ei, src_name));
-	bch_btree_iter_init_intent(&dst_iter, c, BTREE_ID_DIRENTS,
-			bch_dirent_pos(dst_ei, dst_name));
+	bch_btree_iter_init_intent(&src_iter, c, BTREE_ID_DIRENTS, src_pos);
+	bch_btree_iter_init_intent(&dst_iter, c, BTREE_ID_DIRENTS, dst_pos);
 	bch_btree_iter_link(&src_iter, &dst_iter);
 
 	do {
@@ -304,26 +354,60 @@ int bch_dirent_rename(struct cache_set *c,
 
 		switch (mode) {
 		case BCH_RENAME:
+			bkey_init(&new_src->k);
+			dirent_copy_target(new_dst, bkey_s_c_to_dirent(old_src));
+
+			if (bkey_cmp(dst_pos, src_iter.pos) <= 0 &&
+			    bkey_cmp(src_iter.pos, dst_iter.pos) < 0) {
+				/*
+				 * If we couldn't insert new_dst at its hashed
+				 * position (dst_pos) due to a hash collision,
+				 * and we're going to be deleting in
+				 * between the hashed position and first empty
+				 * slot we found - just overwrite the pos we
+				 * were going to delete:
+				 *
+				 * Note: this is a correctness issue, in this
+				 * situation dirent_needs_whiteout() could return
+				 * false when the whiteout would have been
+				 * needed if we inserted at the pos
+				 * __dirent_find_hole() found
+				 */
+				new_dst->k.p = src_iter.pos;
+				ret = bch_btree_insert_at(&src_iter,
+						&new_dst->k_i, NULL, NULL,
+						journal_seq,
+						BTREE_INSERT_ATOMIC);
+				goto insert_done;
+			}
+
+			if (dirent_needs_whiteout(src_ei, &src_iter))
+				new_src->k.type = BCH_DIRENT_WHITEOUT;
+			break;
 		case BCH_RENAME_OVERWRITE:
-			bkey_init(&delete.k);
-			delete.k.p = old_src.k->p;
-			delete.k.type = BCH_DIRENT_WHITEOUT;
+			bkey_init(&new_src->k);
+			dirent_copy_target(new_dst, bkey_s_c_to_dirent(old_src));
+
+			if (bkey_cmp(dst_pos, src_iter.pos) <= 0 &&
+			    bkey_cmp(src_iter.pos, dst_iter.pos) < 0) {
+				/*
+				 * Same case described above -
+				 * dirent_needs_whiteout could spuriously return
+				 * false, but we have to insert at dst_iter.pos
+				 * because we're overwriting another dirent:
+				 */
+				new_src->k.type = BCH_DIRENT_WHITEOUT;
+			} else if (dirent_needs_whiteout(src_ei, &src_iter))
+				new_src->k.type = BCH_DIRENT_WHITEOUT;
 			break;
 		case BCH_RENAME_EXCHANGE:
-			old_dst_d = bkey_s_c_to_dirent(old_dst);
-
-			new_src->k.p = old_src.k->p;
-			new_src->v.d_inum = old_dst_d.v->d_inum;
-			new_src->v.d_type = old_dst_d.v->d_type;
+			dirent_copy_target(new_src, bkey_s_c_to_dirent(old_dst));
+			dirent_copy_target(new_dst, bkey_s_c_to_dirent(old_src));
 			break;
 		}
 
-		old_src_d = bkey_s_c_to_dirent(old_src);
-
-		new_dst->k.p = old_dst.k->p;
-		new_dst->v.d_inum = old_src_d.v->d_inum;
-		new_dst->v.d_type = old_src_d.v->d_type;
-
+		new_src->k.p = src_iter.pos;
+		new_dst->k.p = dst_iter.pos;
 		ret = bch_btree_insert_trans(&(struct btree_insert_trans) {
 				.nr = 2,
 				.entries = (struct btree_trans_entry[]) {
@@ -332,8 +416,17 @@ int bch_dirent_rename(struct cache_set *c,
 				}},
 				NULL, NULL, journal_seq,
 				BTREE_INSERT_ATOMIC);
+insert_done:
 		bch_btree_iter_unlock(&src_iter);
 		bch_btree_iter_unlock(&dst_iter);
+
+		if (bkey_cmp(src_iter.pos, src_pos) ||
+		    bkey_cmp(dst_iter.pos, dst_pos)) {
+			/* ugh */
+			bch_btree_iter_init_intent(&src_iter, c, BTREE_ID_DIRENTS, src_pos);
+			bch_btree_iter_init_intent(&dst_iter, c, BTREE_ID_DIRENTS, dst_pos);
+			bch_btree_iter_link(&src_iter, &dst_iter);
+		}
 	} while (ret == -EINTR);
 
 out:
@@ -366,7 +459,9 @@ int bch_dirent_delete(struct inode *dir, const struct qstr *name)
 
 		bkey_init(&delete.k);
 		delete.k.p = k.k->p;
-		delete.k.type = BCH_DIRENT_WHITEOUT;
+		delete.k.type = dirent_needs_whiteout(ei, &iter)
+			? BCH_DIRENT_WHITEOUT
+			: KEY_TYPE_DELETED;
 
 		ret = bch_btree_insert_at(&iter, &delete,
 					  NULL, NULL, &ei->journal_seq,
