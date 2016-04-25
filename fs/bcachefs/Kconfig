@@ -6,6 +6,7 @@ config BCACHE_FS
 	select EXPORTFS
 	select CLOSURES
 	select LIBCRC32C
+	select CRYPTO_SHA1
 	select FS_POSIX_ACL
 	select LZ4_COMPRESS
 	select LZ4_DECOMPRESS

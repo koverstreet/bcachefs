@@ -133,7 +133,6 @@ fail:
 
 struct posix_acl *bch_get_acl(struct inode *inode, int type)
 {
-	struct cache_set *c = inode->i_sb->s_fs_info;
 	int name_index;
 	char *value = NULL;
 	struct posix_acl *acl;
@@ -149,12 +148,12 @@ struct posix_acl *bch_get_acl(struct inode *inode, int type)
 	default:
 		BUG();
 	}
-	ret = bch_xattr_get(c, inode->i_ino, "", NULL, 0, name_index);
+	ret = bch_xattr_get(inode, "", NULL, 0, name_index);
 	if (ret > 0) {
 		value = kmalloc(ret, GFP_KERNEL);
 		if (!value)
 			return ERR_PTR(-ENOMEM);
-		ret = bch_xattr_get(c, inode->i_ino, "", value,
+		ret = bch_xattr_get(inode, "", value,
 				    ret, name_index);
 	}
 	if (ret > 0)

@@ -483,33 +483,6 @@ enum bch_inode_types {
 	BCH_INODE_BLOCKDEV	= 129,
 };
 
-enum {
-	/*
-	 * User flags (get/settable with FS_IOC_*FLAGS, correspond to FS_*_FL
-	 * flags)
-	 */
-	__BCH_INODE_SYNC	= 0,
-	__BCH_INODE_IMMUTABLE	= 1,
-	__BCH_INODE_APPEND	= 2,
-	__BCH_INODE_NODUMP	= 3,
-	__BCH_INODE_NOATIME	= 4,
-
-	__BCH_INODE_I_SIZE_DIRTY= 5,
-	__BCH_INODE_I_SECTORS_DIRTY= 6,
-
-	/* not implemented yet: */
-	__BCH_INODE_HAS_XATTRS	= 7, /* has xattrs in xattr btree */
-};
-
-#define BCH_INODE_SYNC		(1 << __BCH_INODE_SYNC)
-#define BCH_INODE_IMMUTABLE	(1 << __BCH_INODE_IMMUTABLE)
-#define BCH_INODE_APPEND	(1 << __BCH_INODE_APPEND)
-#define BCH_INODE_NODUMP	(1 << __BCH_INODE_NODUMP)
-#define BCH_INODE_NOATIME	(1 << __BCH_INODE_NOATIME)
-#define BCH_INODE_I_SIZE_DIRTY	(1 << __BCH_INODE_I_SIZE_DIRTY)
-#define BCH_INODE_I_SECTORS_DIRTY (1 << __BCH_INODE_I_SECTORS_DIRTY)
-#define BCH_INODE_HAS_XATTRS	(1 << __BCH_INODE_HAS_XATTRS)
-
 struct bch_inode {
 	struct bch_val		v;
 
@@ -530,8 +503,39 @@ struct bch_inode {
 	__le32			i_nlink;
 
 	__le32			i_dev;
+
+	__le64			i_hash_seed;
 } __attribute__((packed));
 BKEY_VAL_TYPE(inode,		BCH_INODE_FS);
+
+enum {
+	/*
+	 * User flags (get/settable with FS_IOC_*FLAGS, correspond to FS_*_FL
+	 * flags)
+	 */
+	__BCH_INODE_SYNC	= 0,
+	__BCH_INODE_IMMUTABLE	= 1,
+	__BCH_INODE_APPEND	= 2,
+	__BCH_INODE_NODUMP	= 3,
+	__BCH_INODE_NOATIME	= 4,
+
+	__BCH_INODE_I_SIZE_DIRTY= 5,
+	__BCH_INODE_I_SECTORS_DIRTY= 6,
+
+	/* not implemented yet: */
+	__BCH_INODE_HAS_XATTRS	= 7, /* has xattrs in xattr btree */
+};
+
+LE32_BITMASK(INODE_STR_HASH_TYPE, struct bch_inode, i_flags, 28, 32);
+
+#define BCH_INODE_SYNC		(1 << __BCH_INODE_SYNC)
+#define BCH_INODE_IMMUTABLE	(1 << __BCH_INODE_IMMUTABLE)
+#define BCH_INODE_APPEND	(1 << __BCH_INODE_APPEND)
+#define BCH_INODE_NODUMP	(1 << __BCH_INODE_NODUMP)
+#define BCH_INODE_NOATIME	(1 << __BCH_INODE_NOATIME)
+#define BCH_INODE_I_SIZE_DIRTY	(1 << __BCH_INODE_I_SIZE_DIRTY)
+#define BCH_INODE_I_SECTORS_DIRTY (1 << __BCH_INODE_I_SECTORS_DIRTY)
+#define BCH_INODE_HAS_XATTRS	(1 << __BCH_INODE_HAS_XATTRS)
 
 struct bch_inode_blockdev {
 	struct bch_val		v;
@@ -751,13 +755,15 @@ LE64_BITMASK(CACHE_BTREE_NODE_SIZE,	struct cache_sb, flags, 20, 36);
 LE64_BITMASK(CACHE_SET_META_REPLICAS_HAVE,struct cache_sb, flags, 36, 40);
 LE64_BITMASK(CACHE_SET_DATA_REPLICAS_HAVE,struct cache_sb, flags, 40, 44);
 
-LE64_BITMASK(CACHE_SET_DIRENT_CSUM_TYPE,struct cache_sb, flags, 44, 48);
-enum {
-	BCH_DIRENT_CSUM_CRC32C		= 0,
-	BCH_DIRENT_CSUM_CRC64		= 1,
-	BCH_DIRENT_CSUM_SIPHASH		= 2,
-	BCH_DIRENT_CSUM_SHA1		= 3,
+LE64_BITMASK(CACHE_SET_STR_HASH_TYPE,struct cache_sb, flags, 44, 48);
+enum bch_str_hash_type {
+	BCH_STR_HASH_CRC32C		= 0,
+	BCH_STR_HASH_CRC64		= 1,
+	BCH_STR_HASH_SIPHASH		= 2,
+	BCH_STR_HASH_SHA1		= 3,
 };
+
+#define BCH_STR_HASH_NR			4
 
 LE64_BITMASK(CACHE_DATA_PREFERRED_CSUM_TYPE, struct cache_sb, flags, 48, 52);
 

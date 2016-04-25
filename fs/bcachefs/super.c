@@ -39,6 +39,7 @@
 #include <linux/kthread.h>
 #include <linux/module.h>
 #include <linux/percpu.h>
+#include <linux/random.h>
 #include <linux/reboot.h>
 #include <linux/sysfs.h>
 
@@ -566,6 +567,7 @@ static int cache_sb_to_cache_set(struct cache_set *c, struct cache_sb *src)
 
 	c->sb.meta_replicas_have= CACHE_SET_META_REPLICAS_HAVE(src);
 	c->sb.data_replicas_have= CACHE_SET_DATA_REPLICAS_HAVE(src);
+	c->sb.str_hash_type	= CACHE_SET_STR_HASH_TYPE(src);
 
 	pr_debug("set version = %llu", le64_to_cpu(dst->version));
 	return 0;
@@ -1363,6 +1365,8 @@ static const char *run_cache_set(struct cache_set *c)
 		inode.k.p.inode = BCACHE_ROOT_INO;
 		inode.v.i_mode = cpu_to_le16(S_IFDIR|S_IRWXU|S_IRUGO|S_IXUGO);
 		inode.v.i_nlink = cpu_to_le32(2);
+		get_random_bytes(&inode.v.i_hash_seed, sizeof(inode.v.i_hash_seed));
+		SET_INODE_STR_HASH_TYPE(&inode.v, c->sb.str_hash_type);
 
 		err = "error creating root directory";
 		if (bch_btree_insert(c, BTREE_ID_INODES,

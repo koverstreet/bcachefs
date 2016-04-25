@@ -5,65 +5,26 @@
 #include "extents.h"
 #include "fs.h"
 #include "keylist.h"
-#include "siphash.h"
+#include "str_hash.h"
 #include "xattr.h"
 
-#include "linux/crc32c.h"
-#include "linux/cryptohash.h"
-#include "linux/posix_acl_xattr.h"
-#include "linux/xattr.h"
+#include <linux/posix_acl_xattr.h>
+#include <linux/xattr.h>
 
-#if 0
-/*
- * XXX: should really include x_type here
- */
-static u64 bch_xattr_hash(const struct qstr *name)
+static struct bpos bch_xattr_pos(struct bch_inode_info *ei,
+				 const struct qstr *name, u8 type)
 {
-	union {
-		u32 b[SHA_DIGEST_WORDS];
-		u64 ret;
-	} digest;
+	struct bch_str_hash_ctx ctx;
 
-	unsigned done = 0;
+	bch_str_hash_init(&ctx, ei->str_hash_type);
 
-	sha_init(digest.b);
+	bch_str_hash_update(&ctx, ei->str_hash_type,
+			    &ei->str_hash_seed, sizeof(ei->str_hash_seed));
+	bch_str_hash_update(&ctx, ei->str_hash_type, &type, sizeof(type));
+	bch_str_hash_update(&ctx, ei->str_hash_type, name->name, name->len);
 
-	while (done < name->len) {
-		u32 workspace[SHA_WORKSPACE_WORDS];
-		u8 message[SHA_MESSAGE_BYTES];
-		unsigned bytes = min_t(unsigned, name->len - done,
-				       SHA_MESSAGE_BYTES);
-
-		memcpy(message, name->name + done, bytes);
-		memset(message + bytes, 0, SHA_MESSAGE_BYTES - bytes);
-		sha_transform(digest.b, message, workspace);
-		done += bytes;
-	}
-
-	return digest.ret;
-}
-
-static const SIPHASH_KEY bch_siphash_key;
-
-static u64 bch_xattr_hash(const struct qstr *name, u8 type)
-{
-#if 0
-	SIPHASH_CTX ctx;
-
-	SipHash24_Init(&ctx, &bch_siphash_key);
-	SipHash24_Update(&ctx, &type, sizeof(type));
-	SipHash24_Update(&ctx, name->name, name->len);
-
-	return SipHash24_End(&ctx) >> 1;
-#else
-	return SipHash24(&bch_siphash_key, name->name, name->len) >> 1;
-#endif
-}
-#endif
-
-static u64 bch_xattr_hash(const struct qstr *name, u8 type)
-{
-	return crc32c(0, name->name, name->len);
+	return POS(ei->vfs_inode.i_ino,
+		   bch_str_hash_end(&ctx, ei->str_hash_type));
 }
 
 #define xattr_val(_xattr)	((_xattr)->x_name + (_xattr)->x_name_len)
@@ -141,9 +102,11 @@ const struct bkey_ops bch_bkey_xattr_ops = {
 	.val_to_text	= bch_xattr_to_text,
 };
 
-int bch_xattr_get(struct cache_set *c, u64 inum, const char *name,
+int bch_xattr_get(struct inode *inode, const char *name,
 		  void *buffer, size_t size, int type)
 {
+	struct cache_set *c = inode->i_sb->s_fs_info;
+	struct bch_inode_info *ei = to_bch_ei(inode);
 	struct qstr qname = (struct qstr) QSTR_INIT(name, strlen(name));
 	struct btree_iter iter;
 	struct bkey_s_c k;
@@ -151,7 +114,7 @@ int bch_xattr_get(struct cache_set *c, u64 inum, const char *name,
 	int ret = -ENODATA;
 
 	for_each_btree_key_with_holes(&iter, c, BTREE_ID_XATTRS,
-				      POS(inum, bch_xattr_hash(&qname, type)), k) {
+			bch_xattr_pos(ei, &qname, type), k) {
 		switch (k.k->type) {
 		case BCH_XATTR:
 			xattr = bkey_s_c_to_xattr(k).v;
@@ -200,8 +163,7 @@ int bch_xattr_set(struct inode *inode, const char *name,
 		insert_flags |= BTREE_INSERT_NOFAIL;
 
 	bch_btree_iter_init_intent(&iter, c, BTREE_ID_XATTRS,
-				   POS(inode->i_ino,
-				       bch_xattr_hash(&qname, type)));
+				   bch_xattr_pos(ei, &qname, type));
 
 	while ((k = bch_btree_iter_peek_with_holes(&iter)).k) {
 		switch (k.k->type) {
@@ -358,8 +320,7 @@ static int bch_xattr_get_handler(const struct xattr_handler *handler,
 				 struct dentry *dentry, struct inode *inode,
 				 const char *name, void *buffer, size_t size)
 {
-	return bch_xattr_get(inode->i_sb->s_fs_info, inode->i_ino,
-			     name, buffer, size, handler->flags);
+	return bch_xattr_get(inode, name, buffer, size, handler->flags);
 }
 
 static int bch_xattr_set_handler(const struct xattr_handler *handler,

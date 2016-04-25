@@ -40,6 +40,9 @@ struct bch_inode_info {
 
 	atomic_long_t		i_sectors_dirty_count;
 	atomic64_t		i_sectors;
+
+	u64			str_hash_seed;
+	u8			str_hash_type;
 };
 
 enum {

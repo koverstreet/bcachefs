@@ -529,6 +529,8 @@ struct cache_set {
 
 		u8		meta_replicas_have;
 		u8		data_replicas_have;
+
+		u8		str_hash_type;
 	}			sb;
 
 	struct cache_sb		disk_sb;

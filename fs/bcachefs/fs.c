@@ -19,6 +19,7 @@
 #include <linux/compat.h>
 #include <linux/module.h>
 #include <linux/mount.h>
+#include <linux/random.h>
 #include <linux/statfs.h>
 #include <linux/xattr.h>
 
@@ -228,6 +229,9 @@ static struct inode *bch_vfs_inode_create(struct cache_set *c,
 	bi->i_ctime	= cpu_to_le64(now);
 	bi->i_nlink	= cpu_to_le32(S_ISDIR(mode) ? 2 : 1);
 
+	get_random_bytes(&bi->i_hash_seed, sizeof(bi->i_hash_seed));
+	SET_INODE_STR_HASH_TYPE(bi, c->sb.str_hash_type);
+
 	ret = bch_inode_create(c, &bkey_inode.k_i,
 			       BLOCKDEV_INODE_MAX, 0,
 			       &c->unused_inode_hint);
@@ -271,11 +275,10 @@ static int bch_vfs_dirent_create(struct cache_set *c, struct inode *dir,
 				 u8 type, const struct qstr *name,
 				 struct inode *dst)
 {
-	struct bch_inode_info *ei = to_bch_ei(dst);
 	int ret;
 
-	ret = bch_dirent_create(c, dir->i_ino, type, name,
-				dst->i_ino, &ei->journal_seq);
+	ret = bch_dirent_create(dir, type, name,
+				dst->i_ino);
 	if (unlikely(ret))
 		return ret;
 
@@ -287,13 +290,17 @@ static int bch_vfs_dirent_create(struct cache_set *c, struct inode *dir,
 static int __bch_create(struct inode *dir, struct dentry *dentry,
 			umode_t mode, dev_t rdev)
 {
+	struct bch_inode_info *dir_ei = to_bch_ei(dir);
 	struct cache_set *c = dir->i_sb->s_fs_info;
 	struct inode *inode;
+	struct bch_inode_info *ei;
 	int ret;
 
 	inode = bch_vfs_inode_create(c, dir, mode, rdev);
 	if (unlikely(IS_ERR(inode)))
 		return PTR_ERR(inode);
+
+	ei = to_bch_ei(inode);
 
 	ret = bch_vfs_dirent_create(c, dir, mode_to_type(mode),
 				    &dentry->d_name, inode);
@@ -302,6 +309,9 @@ static int __bch_create(struct inode *dir, struct dentry *dentry,
 		iput(inode);
 		return ret;
 	}
+
+	if (dir_ei->journal_seq > ei->journal_seq)
+		ei->journal_seq = dir_ei->journal_seq;
 
 	d_instantiate(dentry, inode);
 	return 0;
@@ -312,11 +322,10 @@ static int __bch_create(struct inode *dir, struct dentry *dentry,
 static struct dentry *bch_lookup(struct inode *dir, struct dentry *dentry,
 				 unsigned int flags)
 {
-	struct cache_set *c = dir->i_sb->s_fs_info;
 	struct inode *inode = NULL;
 	u64 inum;
 
-	inum = bch_dirent_lookup(c, dir->i_ino, &dentry->d_name);
+	inum = bch_dirent_lookup(dir, &dentry->d_name);
 
 	if (inum)
 		inode = bch_vfs_inode_get(dir->i_sb, inum);
@@ -365,7 +374,6 @@ static int bch_link(struct dentry *old_dentry, struct inode *dir,
 
 static int bch_unlink(struct inode *dir, struct dentry *dentry)
 {
-	struct cache_set *c = dir->i_sb->s_fs_info;
 	struct bch_inode_info *dir_ei = to_bch_ei(dir);
 	struct inode *inode = dentry->d_inode;
 	struct bch_inode_info *ei = to_bch_ei(inode);
@@ -373,8 +381,7 @@ static int bch_unlink(struct inode *dir, struct dentry *dentry)
 
 	lockdep_assert_held(&inode->i_rwsem);
 
-	ret = bch_dirent_delete(c, dir->i_ino, &dentry->d_name,
-				&dir_ei->journal_seq);
+	ret = bch_dirent_delete(dir, &dentry->d_name);
 	if (ret)
 		return ret;
 
@@ -486,8 +493,8 @@ static int bch_rename(struct inode *old_dir, struct dentry *old_dentry,
 			return -ENOTEMPTY;
 
 		ret = bch_dirent_rename(c,
-					old_dir->i_ino, &old_dentry->d_name,
-					new_dir->i_ino, &new_dentry->d_name,
+					old_dir, &old_dentry->d_name,
+					new_dir, &new_dentry->d_name,
 					&ei->journal_seq, BCH_RENAME_OVERWRITE);
 		if (unlikely(ret))
 			return ret;
@@ -498,8 +505,8 @@ static int bch_rename(struct inode *old_dir, struct dentry *old_dentry,
 		lockdep_assert_held(&new_inode->i_rwsem);
 
 		ret = bch_dirent_rename(c,
-					old_dir->i_ino, &old_dentry->d_name,
-					new_dir->i_ino, &new_dentry->d_name,
+					old_dir, &old_dentry->d_name,
+					new_dir, &new_dentry->d_name,
 					&ei->journal_seq, BCH_RENAME_OVERWRITE);
 		if (unlikely(ret))
 			return ret;
@@ -508,8 +515,8 @@ static int bch_rename(struct inode *old_dir, struct dentry *old_dentry,
 		inode_dec_link_count(new_inode);
 	} else if (S_ISDIR(old_inode->i_mode)) {
 		ret = bch_dirent_rename(c,
-					old_dir->i_ino, &old_dentry->d_name,
-					new_dir->i_ino, &new_dentry->d_name,
+					old_dir, &old_dentry->d_name,
+					new_dir, &new_dentry->d_name,
 					&ei->journal_seq, BCH_RENAME);
 		if (unlikely(ret))
 			return ret;
@@ -518,8 +525,8 @@ static int bch_rename(struct inode *old_dir, struct dentry *old_dentry,
 		inode_dec_link_count(old_dir);
 	} else {
 		ret = bch_dirent_rename(c,
-					old_dir->i_ino, &old_dentry->d_name,
-					new_dir->i_ino, &new_dentry->d_name,
+					old_dir, &old_dentry->d_name,
+					new_dir, &new_dentry->d_name,
 					&ei->journal_seq, BCH_RENAME);
 		if (unlikely(ret))
 			return ret;
@@ -547,8 +554,8 @@ static int bch_rename_exchange(struct inode *old_dir, struct dentry *old_dentry,
 	int ret;
 
 	ret = bch_dirent_rename(c,
-				old_dir->i_ino, &old_dentry->d_name,
-				new_dir->i_ino, &new_dentry->d_name,
+				old_dir, &old_dentry->d_name,
+				new_dir, &new_dentry->d_name,
 				&ei->journal_seq, BCH_RENAME_EXCHANGE);
 	if (unlikely(ret))
 		return ret;
@@ -1022,6 +1029,9 @@ static void bch_inode_init(struct bch_inode_info *ei,
 	inode->i_mtime	= ns_to_timespec(le64_to_cpu(bi->i_mtime));
 	inode->i_ctime	= ns_to_timespec(le64_to_cpu(bi->i_ctime));
 	bch_inode_flags_to_vfs(inode);
+
+	ei->str_hash_seed = le64_to_cpu(bi->i_hash_seed);
+	ei->str_hash_type = INODE_STR_HASH_TYPE(bi);
 
 	inode->i_mapping->a_ops = &bch_address_space_operations;
 

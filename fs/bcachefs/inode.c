@@ -59,14 +59,20 @@ static const char *bch_inode_invalid(const struct cache_set *c,
 		return "nonzero offset";
 
 	switch (k.k->type) {
-	case BCH_INODE_FS:
+	case BCH_INODE_FS: {
+		struct bkey_s_c_inode inode = bkey_s_c_to_inode(k);
+
 		if (bkey_val_bytes(k.k) != sizeof(struct bch_inode))
 			return "incorrect value size";
 
 		if (k.k->p.inode < BLOCKDEV_INODE_MAX)
 			return "fs inode in blockdev range";
 
+		if (INODE_STR_HASH_TYPE(inode.v) >= BCH_STR_HASH_NR)
+			return "invalid str hash type";
+
 		return NULL;
+	}
 	case BCH_INODE_BLOCKDEV:
 		if (bkey_val_bytes(k.k) != sizeof(struct bch_inode_blockdev))
 			return "incorrect value size";
