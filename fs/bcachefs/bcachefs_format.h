@@ -827,7 +827,12 @@ enum {
 		      bch_compression_types,			\
 		      BCH_COMPRESSION_NR,			\
 		      CACHE_COMPRESSION_TYPE,			\
-		      true)
+		      true)					\
+	CACHE_SET_OPT(str_hash,					\
+		      bch_str_hash_types,			\
+		      BCH_STR_HASH_NR,				\
+		      CACHE_SET_STR_HASH_TYPE,			\
+		      true)					\
 
 /* backing device specific stuff: */
 

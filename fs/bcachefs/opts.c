@@ -35,6 +35,14 @@ const char * const bch_compression_types[] = {
 	NULL
 };
 
+const char * const bch_str_hash_types[] = {
+	"crc32c",
+	"crc64",
+	"siphash",
+	"sha1",
+	NULL
+};
+
 enum bch_opts {
 #define CACHE_SET_OPT(_name, _bits, _options, _sb_opt, _perm)	\
 	Opt_##_name,
