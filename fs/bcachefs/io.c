@@ -1874,18 +1874,20 @@ static void bch_read_iter(struct cache_set *c, struct bch_read_bio *rbio,
 
 	for_each_btree_key_with_holes(&iter, c, BTREE_ID_EXTENTS,
 				      POS(inode, bvec_iter.bi_sector), k) {
+		BKEY_PADDED(k) tmp;
 		struct extent_pick_ptr pick;
 		unsigned bytes, sectors;
 		bool is_last;
-
-		bch_extent_pick_ptr(c, k, &pick);
 
 		/*
 		 * Unlock the iterator while the btree node's lock is still in
 		 * cache, before doing the IO:
 		 */
+		bkey_reassemble(&tmp.k, k);
+		k = bkey_i_to_s_c(&tmp.k);
 		bch_btree_iter_unlock(&iter);
 
+		bch_extent_pick_ptr(c, k, &pick);
 		if (IS_ERR(pick.ca)) {
 			bcache_io_error(c, bio, "no device to read from");
 			bio_endio(bio);

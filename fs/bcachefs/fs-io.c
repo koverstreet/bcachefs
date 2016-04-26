@@ -642,17 +642,20 @@ static void bchfs_read(struct cache_set *c, struct bch_read_bio *rbio, u64 inode
 
 	for_each_btree_key_with_holes(&iter, c, BTREE_ID_EXTENTS,
 				      POS(inode, bio->bi_iter.bi_sector), k) {
+		BKEY_PADDED(k) tmp;
 		struct extent_pick_ptr pick;
 		unsigned bytes, sectors;
 		bool is_last;
+
+		bkey_reassemble(&tmp.k, k);
+		bch_btree_iter_unlock(&iter);
+		k = bkey_i_to_s_c(&tmp.k);
 
 		if (!bkey_extent_is_allocation(k.k) ||
 		    bkey_extent_is_compressed(c, k))
 			bch_mark_pages_unalloc(bio);
 
 		bch_extent_pick_ptr(c, k, &pick);
-		bch_btree_iter_unlock(&iter);
-
 		if (IS_ERR(pick.ca)) {
 			bcache_io_error(c, bio, "no device to read from");
 			bio_endio(bio);

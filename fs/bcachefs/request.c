@@ -402,17 +402,19 @@ static void cached_dev_read(struct cached_dev *dc, struct search *s)
 
 	for_each_btree_key_with_holes(&iter, s->iop.c, BTREE_ID_EXTENTS,
 				POS(s->inode, bio->bi_iter.bi_sector), k) {
+		BKEY_PADDED(k) tmp;
 		struct extent_pick_ptr pick;
 		unsigned sectors, bytes;
 		bool is_last;
 retry:
-
+		bkey_reassemble(&tmp.k, k);
+		bch_btree_iter_unlock(&iter);
+		k = bkey_i_to_s_c(&tmp.k);
 
 		bch_extent_pick_ptr(s->iop.c, k, &pick);
 		if (IS_ERR(pick.ca)) {
 			bcache_io_error(s->iop.c, bio,
 					"no device to read from");
-			bch_btree_iter_unlock(&iter);
 			goto out;
 		}
 
