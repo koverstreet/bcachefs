@@ -167,6 +167,11 @@ void bch_cache_set_stats_apply(struct cache_set *c,
 	}
 
 	lg_local_lock(&c->bucket_stats_lock);
+	/* sectors_online_reserved not subject to gc: */
+	this_cpu_ptr(c->bucket_stats_percpu)->sectors_online_reserved +=
+		stats->sectors_online_reserved;
+	stats->sectors_online_reserved = 0;
+
 	if (!gc_will_visit(c, gc_pos))
 		bucket_stats_add(this_cpu_ptr(c->bucket_stats_percpu), stats);
 	lg_local_unlock(&c->bucket_stats_lock);
@@ -513,7 +518,7 @@ void bch_recalc_sectors_available(struct cache_set *c)
 	lg_global_lock(&c->bucket_stats_lock);
 
 	for_each_possible_cpu(cpu)
-		this_cpu_ptr(c->bucket_stats_percpu)->sectors_available_cache = 0;
+		per_cpu_ptr(c->bucket_stats_percpu, cpu)->sectors_available_cache = 0;
 
 	atomic64_set(&c->sectors_available,
 		     __recalc_sectors_available(c));
@@ -524,9 +529,14 @@ void bch_recalc_sectors_available(struct cache_set *c)
 void bch_disk_reservation_put(struct cache_set *c,
 			      struct disk_reservation *res)
 {
-	this_cpu_sub(c->bucket_stats_percpu->sectors_online_reserved,
-		     res->sectors);
-	res->sectors = 0;
+	if (res->sectors) {
+		lg_local_lock(&c->bucket_stats_lock);
+		this_cpu_sub(c->bucket_stats_percpu->sectors_online_reserved,
+			     res->sectors);
+		lg_local_unlock(&c->bucket_stats_lock);
+
+		res->sectors = 0;
+	}
 }
 
 #define SECTORS_CACHE	1024
