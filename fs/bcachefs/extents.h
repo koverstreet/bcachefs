@@ -49,9 +49,11 @@ void bch_extent_cmpxchg(struct btree_insert_hook *,
 			struct btree_iter *,
 			struct bkey_s_c,
 			struct bkey_i *,
-			struct journal_res *);
+			struct journal_res *,
+			struct bucket_stats_cache_set *);
 
 void bch_insert_fixup_extent(struct btree_iter *, struct bkey_i *,
+			     struct disk_reservation *,
 			     struct btree_insert_hook *,
 			     struct journal_res *, unsigned);
 

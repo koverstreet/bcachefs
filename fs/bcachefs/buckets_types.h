@@ -56,4 +56,12 @@ struct bucket_heap_entry {
 	unsigned long val;
 };
 
+/*
+ * A reservation for space on disk:
+ */
+struct disk_reservation {
+	u32		sectors;
+	u32		gen;
+};
+
 #endif /* _BUCKETS_TYPES_H */

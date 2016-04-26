@@ -29,7 +29,8 @@ enum bch_write_flags {
 };
 
 void bch_write_op_init(struct bch_write_op *, struct cache_set *,
-		       struct bch_write_bio *, struct write_point *,
+		       struct bch_write_bio *,
+		       struct disk_reservation, struct write_point *,
 		       struct bkey_s_c,
 		       struct btree_insert_hook *, u64 *, unsigned);
 void bch_write(struct closure *);

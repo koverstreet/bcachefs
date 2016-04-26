@@ -210,7 +210,7 @@ int bch_dirent_create(struct inode *dir, u8 type,
 		dirent->k.p = k.k->p;
 
 		ret = bch_btree_insert_at(&iter, &keylist_single(&dirent->k_i),
-					  NULL, &ei->journal_seq,
+					  NULL, NULL, &ei->journal_seq,
 					  BTREE_INSERT_ATOMIC);
 		/*
 		 * XXX: if we ever cleanup whiteouts, we may need to rewind
@@ -366,7 +366,7 @@ int bch_dirent_delete(struct inode *dir, const struct qstr *name)
 
 		ret = bch_btree_insert_at(&iter,
 					  &keylist_single(&delete),
-					  NULL, &ei->journal_seq,
+					  NULL, NULL, &ei->journal_seq,
 					  BTREE_INSERT_NOFAIL|
 					  BTREE_INSERT_ATOMIC);
 		/*

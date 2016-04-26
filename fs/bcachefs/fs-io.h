@@ -48,7 +48,6 @@ struct bch_writepage_io {
 
 	struct bch_inode_info	*ei;
 	unsigned long		i_size_update_count[I_SIZE_UPDATE_ENTRIES];
-	unsigned long		sectors_reserved;
 
 	struct bch_write_op	op;
 	struct i_sectors_hook	i_sectors_hook;

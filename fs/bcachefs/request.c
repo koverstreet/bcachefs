@@ -556,7 +556,8 @@ static void cached_dev_write(struct cached_dev *dc, struct search *s)
 	if (bypass)
 		flags |= BCH_WRITE_DISCARD;
 
-	bch_write_op_init(&s->iop, dc->disk.c, &s->bio, NULL,
+	bch_write_op_init(&s->iop, dc->disk.c, &s->bio,
+			  (struct disk_reservation) { 0 }, NULL,
 			  bkey_to_s_c(&insert_key),
 			  NULL, NULL, flags);
 
@@ -681,7 +682,15 @@ static void __blockdev_volume_make_request(struct request_queue *q,
 
 		continue_at(&s->cl, search_free, NULL);
 	} else if (rw) {
+		struct disk_reservation res = { 0 };
 		unsigned flags = 0;
+
+		if (bio_op(bio) != REQ_OP_DISCARD &&
+		    bch_disk_reservation_get(d->c, &res, bio_sectors(bio))) {
+			s->iop.error = -ENOSPC;
+			continue_at(&s->cl, search_free, NULL);
+			return;
+		}
 
 		if (bio->bi_opf & (REQ_PREFLUSH|REQ_FUA))
 			flags |= BCH_WRITE_FLUSH;
@@ -690,7 +699,7 @@ static void __blockdev_volume_make_request(struct request_queue *q,
 
 		s = search_alloc(bio, d);
 
-		bch_write_op_init(&s->iop, d->c, &s->bio, NULL,
+		bch_write_op_init(&s->iop, d->c, &s->bio, res, NULL,
 				  bkey_to_s_c(&KEY(s->inode, 0, 0)),
 				  NULL, NULL, flags);
 

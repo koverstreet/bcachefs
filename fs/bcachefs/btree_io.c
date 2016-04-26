@@ -463,7 +463,7 @@ int bch_btree_root_read(struct cache_set *c, enum btree_id id,
 		return -EIO;
 	}
 
-	bch_btree_set_root_initial(c, b);
+	bch_btree_set_root_initial(c, b, NULL);
 	six_unlock_intent(&b->lock);
 
 	return 0;

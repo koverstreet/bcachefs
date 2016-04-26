@@ -231,7 +231,8 @@ static inline bool journal_res_full(struct journal_res *res,
 }
 
 void bch_journal_start(struct cache_set *);
-void bch_journal_mark(struct cache_set *, struct list_head *);
+void bch_journal_mark(struct cache_set *, struct list_head *,
+		      struct bucket_stats_cache_set *);
 const char *bch_journal_read(struct cache_set *, struct list_head *);
 int bch_journal_replay(struct cache_set *, struct list_head *);
 

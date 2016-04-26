@@ -199,7 +199,8 @@ static void i_sectors_hook_fn(struct btree_insert_hook *hook,
 			      struct btree_iter *iter,
 			      struct bkey_s_c k,
 			      struct bkey_i *insert,
-			      struct journal_res *res)
+			      struct journal_res *res,
+			      struct bucket_stats_cache_set *stats)
 {
 	struct i_sectors_hook *h = container_of(hook,
 				struct i_sectors_hook, hook);
@@ -440,7 +441,8 @@ static void bch_put_page_reservation(struct cache_set *c, struct page *page)
 	}
 }
 
-static int bch_get_page_reservation(struct cache_set *c, struct page *page)
+static int bch_get_page_reservation(struct cache_set *c, struct page *page,
+				    bool check_enospc)
 {
 	struct bch_page_state *s = page_state(page), old, new;
 	struct disk_reservation res;
@@ -449,7 +451,8 @@ static int bch_get_page_reservation(struct cache_set *c, struct page *page)
 	if (s->alloc_state != BCH_PAGE_UNALLOCATED)
 		return 0;
 
-	ret = bch_disk_reservation_get(c, &res, PAGE_SECTORS);
+	ret = __bch_disk_reservation_get(c, &res, PAGE_SECTORS,
+					 check_enospc, false);
 	if (ret)
 		return ret;
 
@@ -801,12 +804,6 @@ static void bch_writepage_io_done(struct closure *cl)
 	struct bio_vec *bvec;
 	unsigned i;
 
-	if (io->sectors_reserved) {
-		struct disk_reservation res = { .sectors = io->sectors_reserved };
-
-		bch_disk_reservation_put(c, &res);
-	}
-
 	for (i = 0; i < ARRAY_SIZE(io->i_size_update_count); i++)
 		i_size_update_put(c, ei, i, io->i_size_update_count[i]);
 
@@ -880,7 +877,6 @@ alloc_io:
 		w->io->ei		= ei;
 		memset(w->io->i_size_update_count, 0,
 		       sizeof(w->io->i_size_update_count));
-		w->io->sectors_reserved	= 0;
 
 		ret = i_sectors_dirty_get(ei, &w->io->i_sectors_hook);
 		/*
@@ -891,7 +887,8 @@ alloc_io:
 		 */
 		BUG_ON(ret);
 
-		bch_write_op_init(&w->io->op, w->c, &w->io->bio, NULL,
+		bch_write_op_init(&w->io->op, w->c, &w->io->bio,
+				  (struct disk_reservation) { 0 }, NULL,
 				  bkey_to_s_c(&KEY(w->inum, 0, 0)),
 				  &w->io->i_sectors_hook.hook,
 				  &ei->journal_seq, 0);
@@ -980,7 +977,7 @@ do_io:
 	BUG_ON(old.alloc_state == BCH_PAGE_UNALLOCATED);
 
 	if (old.alloc_state == BCH_PAGE_RESERVED)
-		w->io->sectors_reserved += PAGE_SECTORS;
+		w->io->op.res.sectors += PAGE_SECTORS;
 
 	BUG_ON(PageWriteback(page));
 	set_page_writeback(page);
@@ -1115,7 +1112,7 @@ readpage:
 	if (ret)
 		goto err;
 out:
-	ret = bch_get_page_reservation(c, page);
+	ret = bch_get_page_reservation(c, page, true);
 	if (ret) {
 		if (!PageUptodate(page)) {
 			/*
@@ -1386,12 +1383,18 @@ static void bch_do_direct_IO_write(struct dio_write *dio, bool sync)
 			break;
 		}
 
-		bch_write_op_init(&dio->iop, c, &dio->bio, NULL,
+		bch_write_op_init(&dio->iop, c, &dio->bio,
+				  (struct disk_reservation) {
+					.sectors = bio_sectors(bio),
+					.gen = dio->res.gen
+				  }, NULL,
 				  bkey_to_s_c(&KEY(inode->i_ino,
 						   bio_end_sector(bio),
 						   bio_sectors(bio))),
 				  &dio->i_sectors_hook.hook,
 				  &ei->journal_seq, flags);
+
+		dio->res.sectors -= bio_sectors(bio);
 
 		task_io_account_write(bio->bi_iter.bi_size);
 
@@ -1709,7 +1712,7 @@ int bch_page_mkwrite(struct vm_area_struct *vma, struct vm_fault *vmf)
 		goto out;
 	}
 
-	if (bch_get_page_reservation(c, page)) {
+	if (bch_get_page_reservation(c, page, true)) {
 		unlock_page(page);
 		ret = VM_FAULT_SIGBUS;
 		goto out;
@@ -1833,7 +1836,6 @@ static int __bch_truncate_page(struct address_space *mapping,
 	struct cache_set *c = inode->i_sb->s_fs_info;
 	unsigned start_offset = start & (PAGE_SIZE - 1);
 	unsigned end_offset = ((end - 1) & (PAGE_SIZE - 1)) + 1;
-	struct bch_page_state new;
 	struct page *page;
 	int ret = 0;
 
@@ -1885,20 +1887,14 @@ create:
 			goto unlock;
 	}
 
-#if 0
 	/*
-	 * XXX: this is a hack, because we don't want truncate to fail due to
-	 * -ENOSPC
+	 * Bit of a hack - we don't want truncate to fail due to -ENOSPC.
 	 *
-	 *  Note that because we aren't currently tracking whether the page has
-	 *  actual data in it (vs. just 0s, or only partially written) this is
-	 *  also wrong. ick.
+	 * XXX: because we aren't currently tracking whether the page has actual
+	 * data in it (vs. just 0s, or only partially written) this wrong. ick.
 	 */
-#endif
-	page_state_cmpxchg(page_state(page), new, {
-		if (new.alloc_state == BCH_PAGE_UNALLOCATED)
-			new.alloc_state = BCH_PAGE_ALLOCATED;
-	});
+	ret = bch_get_page_reservation(c, page, false);
+	BUG_ON(ret);
 
 	if (index == start >> PAGE_SHIFT &&
 	    index == end >> PAGE_SHIFT)
@@ -2139,6 +2135,8 @@ static long bch_fcollapse(struct inode *inode, loff_t offset, loff_t len)
 	while (bkey_cmp(dst.pos,
 			POS(inode->i_ino,
 			    round_up(new_size, PAGE_SIZE) >> 9)) < 0) {
+		struct disk_reservation disk_res;
+
 		bch_btree_iter_set_pos(&src,
 			POS(dst.pos.inode, dst.pos.offset + (len >> 9)));
 
@@ -2163,12 +2161,20 @@ static long bch_fcollapse(struct inode *inode, loff_t offset, loff_t len)
 
 		BUG_ON(bkey_cmp(dst.pos, bkey_start_pos(&copy.k.k)));
 
+		ret = __bch_disk_reservation_get(c, &disk_res,
+						 copy.k.k.size,
+						 false, false);
+		BUG_ON(ret);
+
 		ret = bch_btree_insert_at(&dst,
 					  &keylist_single(&copy.k),
+					  &disk_res,
 					  &i_sectors_hook.hook,
 					  &ei->journal_seq,
 					  BTREE_INSERT_ATOMIC|
 					  BTREE_INSERT_NOFAIL);
+		bch_disk_reservation_put(c, &disk_res);
+
 		if (ret < 0 && ret != -EINTR)
 			goto err_unwind;
 
@@ -2281,8 +2287,7 @@ static long bch_fallocate(struct inode *inode, int mode,
 		goto err;
 
 	while (bkey_cmp(iter.pos, end) < 0) {
-		struct disk_reservation disk_res;
-		unsigned flags = 0;
+		struct disk_reservation disk_res = { 0 };
 
 		k = bch_btree_iter_peek_with_holes(&iter);
 		if (!k.k) {
@@ -2301,9 +2306,6 @@ static long bch_fallocate(struct inode *inode, int mode,
 				bch_btree_iter_advance_pos(&iter);
 				continue;
 			}
-
-			/* don't check for -ENOSPC if we're deleting data: */
-			flags |= BTREE_INSERT_NOFAIL;
 		}
 
 		bkey_init(&reservation.k);
@@ -2316,16 +2318,19 @@ static long bch_fallocate(struct inode *inode, int mode,
 
 		sectors = reservation.k.size;
 
-		ret = bch_disk_reservation_get(c, &disk_res, sectors);
-		if (ret)
-			goto err_put_sectors_dirty;
+		if (!bkey_extent_is_allocation(k.k)) {
+			ret = bch_disk_reservation_get(c, &disk_res, sectors);
+			if (ret)
+				goto err_put_sectors_dirty;
+		}
 
 		ret = bch_btree_insert_at(&iter,
 					  &keylist_single(&reservation),
+					  &disk_res,
 					  &i_sectors_hook.hook,
 					  &ei->journal_seq,
-					  BTREE_INSERT_ATOMIC|flags);
-
+					  BTREE_INSERT_ATOMIC|
+					  BTREE_INSERT_NOFAIL);
 		bch_disk_reservation_put(c, &disk_res);
 
 		if (ret < 0 && ret != -EINTR)

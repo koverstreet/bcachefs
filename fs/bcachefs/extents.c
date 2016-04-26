@@ -796,7 +796,8 @@ struct btree_nr_keys bch_extent_sort_fix_overlapping(struct btree_keys *b,
 }
 
 static int bch_add_sectors(struct btree_iter *iter, struct bkey_s_c k,
-			   u64 offset, s64 sectors, bool fail_if_stale)
+			   u64 offset, s64 sectors, bool fail_if_stale,
+			   struct bucket_stats_cache_set *stats)
 {
 	struct cache_set *c = iter->c;
 	struct btree *b = iter->nodes[0];
@@ -814,7 +815,7 @@ static int bch_add_sectors(struct btree_iter *iter, struct bkey_s_c k,
 
 		ret = bch_mark_pointers(c, e, sectors, fail_if_stale,
 					false, false,
-					gc_pos_btree_node(b));
+					gc_pos_btree_node(b), stats);
 		if (ret)
 			return ret;
 
@@ -822,40 +823,47 @@ static int bch_add_sectors(struct btree_iter *iter, struct bkey_s_c k,
 			bcache_dev_sectors_dirty_add(c, e.k->p.inode,
 						     offset, sectors);
 	} else if (k.k->type == BCH_RESERVATION) {
-		bch_mark_reservation(c, sectors);
+		stats->sectors_reserved += sectors;
 	}
 
 	return 0;
 }
 
 static void bch_subtract_sectors(struct btree_iter *iter, struct bkey_s_c k,
-				 u64 offset, s64 sectors)
+				 u64 offset, s64 sectors,
+				 struct bucket_stats_cache_set *stats)
 {
-	bch_add_sectors(iter, k, offset, -sectors, false);
+	bch_add_sectors(iter, k, offset, -sectors, false, stats);
 }
 
 /* These wrappers subtract exactly the sectors that we're removing from @k */
 static void bch_cut_subtract_back(struct btree_iter *iter,
-				  struct bpos where, struct bkey_s k)
+				  struct bpos where, struct bkey_s k,
+				  struct bucket_stats_cache_set *stats)
 {
 	bch_subtract_sectors(iter, k.s_c, where.offset,
-			     k.k->p.offset - where.offset);
+			     k.k->p.offset - where.offset,
+			     stats);
 	bch_cut_back(where, k.k);
 }
 
 static void bch_cut_subtract_front(struct btree_iter *iter,
-				   struct bpos where, struct bkey_s k)
+				   struct bpos where, struct bkey_s k,
+				   struct bucket_stats_cache_set *stats)
 {
 	bch_subtract_sectors(iter, k.s_c, bkey_start_offset(k.k),
-			     where.offset - bkey_start_offset(k.k));
+			     where.offset - bkey_start_offset(k.k),
+			     stats);
 	__bch_cut_front(where, k);
 }
 
-static void bch_drop_subtract(struct btree_iter *iter, struct bkey_s k)
+static void bch_drop_subtract(struct btree_iter *iter, struct bkey_s k,
+			      struct bucket_stats_cache_set *stats)
 {
 	if (k.k->size)
 		bch_subtract_sectors(iter, k.s_c,
-				     bkey_start_offset(k.k), k.k->size);
+				     bkey_start_offset(k.k), k.k->size,
+				     stats);
 	k.k->size = 0;
 	__set_bkey_deleted(k.k);
 }
@@ -948,7 +956,8 @@ void bch_extent_cmpxchg(struct btree_insert_hook *hook,
 			struct btree_iter *iter,
 			struct bkey_s_c k,
 			struct bkey_i *new,
-			struct journal_res *res)
+			struct journal_res *res,
+			struct bucket_stats_cache_set *stats)
 {
 	struct bch_replace_info *replace = container_of(hook,
 					struct bch_replace_info, hook);
@@ -965,7 +974,8 @@ void bch_extent_cmpxchg(struct btree_insert_hook *hook,
 			bkey_start_pos(&old->k)) < 0);
 
 	if (!k.k) {
-		bch_cut_subtract_back(iter, iter->pos, bkey_i_to_s(new));
+		bch_cut_subtract_back(iter, iter->pos,
+				      bkey_i_to_s(new), stats);
 		return;
 	}
 
@@ -993,7 +1003,7 @@ void bch_extent_cmpxchg(struct btree_insert_hook *hook,
 		}
 
 		bch_cut_subtract_front(iter, bkey_start_pos(k.k),
-				       bkey_i_to_s(new));
+				       bkey_i_to_s(new), stats);
 		/* advance @iter->pos from the end of prev key to the start of @k */
 		bch_btree_iter_set_pos(iter, bkey_start_pos(k.k));
 	}
@@ -1019,9 +1029,10 @@ void bch_extent_cmpxchg(struct btree_insert_hook *hook,
 
 		/* update @new to be the part we haven't checked yet */
 		if (bkey_cmp(k.k->p, new->k.p) > 0)
-			bch_drop_subtract(iter, bkey_i_to_s(new));
+			bch_drop_subtract(iter, bkey_i_to_s(new), stats);
 		else
-			bch_cut_subtract_front(iter, k.k->p, bkey_i_to_s(new));
+			bch_cut_subtract_front(iter, k.k->p,
+					       bkey_i_to_s(new), stats);
 	} else
 		replace->successes += 1;
 }
@@ -1120,6 +1131,7 @@ static void handle_existing_key_newer(struct btree_iter *iter,
  */
 void bch_insert_fixup_extent(struct btree_iter *iter,
 			     struct bkey_i *insert,
+			     struct disk_reservation *disk_res,
 			     struct btree_insert_hook *hook,
 			     struct journal_res *res,
 			     unsigned flags)
@@ -1133,6 +1145,7 @@ void bch_insert_fixup_extent(struct btree_iter *iter,
 	struct bkey_s k;
 	struct bpos next_pos;
 	BKEY_PADDED(k) split;
+	struct bucket_stats_cache_set stats = { 0 };
 	unsigned nr_done = 0;
 	u64 start_time = local_clock();
 
@@ -1164,14 +1177,16 @@ void bch_insert_fixup_extent(struct btree_iter *iter,
 	 * can also insert keys with stale pointers, but for those we still need
 	 * to proceed with the insertion.
 	 */
-	if (bch_add_sectors(iter, bkey_i_to_s_c(insert),
+	if (!(flags & BTREE_INSERT_NO_MARK_KEY) &&
+	    bch_add_sectors(iter, bkey_i_to_s_c(insert),
 			    bkey_start_offset(&insert->k),
 			    insert->k.size,
-			    !(flags & BTREE_INSERT_NOFAIL_IF_STALE))) {
+			    true,
+			    &stats)) {
 		/* We raced - a dirty pointer was stale */
 		bch_btree_iter_set_pos(iter, insert->k.p);
 		insert->k.size = 0;
-		return;
+		goto apply_stats;
 	}
 
 	while (insert->k.size &&
@@ -1210,9 +1225,10 @@ void bch_insert_fixup_extent(struct btree_iter *iter,
 			 * XXX: would be better to explicitly signal that we
 			 * need to split
 			 */
-			bch_cut_subtract_back(iter, iter->pos, bkey_i_to_s(insert));
+			bch_cut_subtract_back(iter, iter->pos,
+					      bkey_i_to_s(insert), &stats);
 			if (!insert->k.size)
-				return;
+				goto apply_stats;
 			break;
 		}
 #if 0
@@ -1245,7 +1261,8 @@ void bch_insert_fixup_extent(struct btree_iter *iter,
 				? k.k->p : insert->k.p;
 
 			if (hook)
-				hook->fn(hook, iter, k.s_c, insert, res);
+				hook->fn(hook, iter, k.s_c, insert,
+					 res, &stats);
 
 			/*
 			 * Don't update iter->pos until after calling the hook,
@@ -1254,7 +1271,7 @@ void bch_insert_fixup_extent(struct btree_iter *iter,
 			bch_btree_iter_set_pos(iter, next_pos);
 
 			if (!insert->k.size)
-				return;
+				goto apply_stats;
 
 			/* insert and k might not overlap after calling hook fn: */
 			if (bkey_cmp(insert->k.p, bkey_start_pos(k.k)) <= 0 ||
@@ -1267,14 +1284,15 @@ void bch_insert_fixup_extent(struct btree_iter *iter,
 		switch (bch_extent_overlap(&insert->k, k.k)) {
 		case BCH_EXTENT_OVERLAP_FRONT:
 			/* insert and k share the start, invalidate in k */
-			bch_cut_subtract_front(iter, insert->k.p, k);
+			bch_cut_subtract_front(iter, insert->k.p, k, &stats);
 			extent_save(_k, k.k, f);
 			break;
 
 		case BCH_EXTENT_OVERLAP_BACK:
 			/* insert and k share the end, invalidate in k */
 			bch_cut_subtract_back(iter,
-					      bkey_start_pos(&insert->k), k);
+					      bkey_start_pos(&insert->k),
+					      k, &stats);
 			extent_save(_k, k.k, f);
 
 			/*
@@ -1291,7 +1309,7 @@ void bch_insert_fixup_extent(struct btree_iter *iter,
 			if (!bkey_deleted(_k))
 				btree_keys_account_key_drop(&b->keys.nr, _k);
 
-			bch_drop_subtract(iter, k);
+			bch_drop_subtract(iter, k, &stats);
 			k.k->p = bkey_start_pos(&insert->k);
 			extent_save(_k, k.k, f);
 
@@ -1318,7 +1336,7 @@ void bch_insert_fixup_extent(struct btree_iter *iter,
 			bch_cut_back(bkey_start_pos(&insert->k), &split.k.k);
 
 			__bch_cut_front(bkey_start_pos(&insert->k), k);
-			bch_cut_subtract_front(iter, insert->k.p, k);
+			bch_cut_subtract_front(iter, insert->k.p, k, &stats);
 			extent_save(_k, k.k, f);
 
 			bch_btree_bset_insert(iter, b, node_iter, &split.k);
@@ -1329,14 +1347,16 @@ void bch_insert_fixup_extent(struct btree_iter *iter,
 	next_pos = insert->k.p;
 
 	if (hook)
-		hook->fn(hook, iter, bkey_s_c_null, insert, res);
+		hook->fn(hook, iter, bkey_s_c_null, insert, res, &stats);
 
 	bch_btree_iter_set_pos(iter, next_pos);
 
 	if (!insert->k.size)
-		return;
+		goto apply_stats;
 
 	bch_btree_insert_and_journal(iter, insert, res);
+apply_stats:
+	bch_cache_set_stats_apply(c, &stats, disk_res);
 }
 
 static const char *bch_extent_invalid(const struct cache_set *c,

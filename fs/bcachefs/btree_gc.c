@@ -122,7 +122,8 @@ u8 bch_btree_key_recalc_oldest_gen(struct cache_set *c, struct bkey_s_c k)
  * For runtime mark and sweep:
  */
 static u8 __bch_btree_mark_key(struct cache_set *c, enum bkey_type type,
-			       struct bkey_s_c k)
+			       struct bkey_s_c k,
+			       struct bucket_stats_cache_set *stats)
 {
 	switch (type) {
 	case BKEY_TYPE_BTREE:
@@ -135,7 +136,7 @@ static u8 __bch_btree_mark_key(struct cache_set *c, enum bkey_type type,
 					  ? c->sb.btree_node_size
 					  : e.k->size, false,
 					  type == BKEY_TYPE_BTREE,
-					  true, GC_POS_MIN);
+					  true, GC_POS_MIN, stats);
 		}
 
 		return bch_btree_key_recalc_oldest_gen(c, k);
@@ -145,25 +146,27 @@ static u8 __bch_btree_mark_key(struct cache_set *c, enum bkey_type type,
 }
 
 static u8 btree_mark_key(struct cache_set *c, struct btree *b,
-			 struct bkey_s_c k)
+			 struct bkey_s_c k,
+			 struct bucket_stats_cache_set *stats)
 {
-	return __bch_btree_mark_key(c, btree_node_type(b), k);
+	return __bch_btree_mark_key(c, btree_node_type(b), k, stats);
 }
 
 /*
  * For initial cache set bringup:
  */
 u8 __bch_btree_mark_key_initial(struct cache_set *c, enum bkey_type type,
-				struct bkey_s_c k)
+				struct bkey_s_c k,
+				struct bucket_stats_cache_set *stats)
 {
 
 	switch (type) {
 	case BKEY_TYPE_BTREE:
 	case BKEY_TYPE_EXTENTS:
 		if (k.k->type == BCH_RESERVATION)
-			bch_mark_reservation(c, k.k->size);
+			stats->sectors_reserved += k.k->size;
 
-		return __bch_btree_mark_key(c, type, k);
+		return __bch_btree_mark_key(c, type, k, stats);
 	default:
 		BUG();
 	}
@@ -171,12 +174,14 @@ u8 __bch_btree_mark_key_initial(struct cache_set *c, enum bkey_type type,
 }
 
 static u8 btree_mark_key_initial(struct cache_set *c, struct btree *b,
-				 struct bkey_s_c k)
+				 struct bkey_s_c k,
+				 struct bucket_stats_cache_set *stats)
 {
-	return __bch_btree_mark_key_initial(c, btree_node_type(b), k);
+	return __bch_btree_mark_key_initial(c, btree_node_type(b), k, stats);
 }
 
-static bool btree_gc_mark_node(struct cache_set *c, struct btree *b)
+static bool btree_gc_mark_node(struct cache_set *c, struct btree *b,
+			       struct bucket_stats_cache_set *stats)
 {
 	if (btree_node_has_ptrs(b)) {
 		struct btree_node_iter iter;
@@ -187,7 +192,7 @@ static bool btree_gc_mark_node(struct cache_set *c, struct btree *b)
 		for_each_btree_node_key_unpack(&b->keys, k, &iter, &unpacked) {
 			bkey_debugcheck(c, b, k);
 
-			stale = max(stale, btree_mark_key(c, b, k));
+			stale = max(stale, btree_mark_key(c, b, k, stats));
 		}
 
 		if (btree_gc_rewrite_disabled(c))
@@ -216,7 +221,8 @@ static inline void gc_pos_set(struct cache_set *c, struct gc_pos new_pos)
 	__gc_pos_set(c, new_pos);
 }
 
-static int bch_gc_btree(struct cache_set *c, enum btree_id btree_id)
+static int bch_gc_btree(struct cache_set *c, enum btree_id btree_id,
+			struct bucket_stats_cache_set *stats)
 {
 	struct btree_iter iter;
 	struct btree *b;
@@ -230,7 +236,7 @@ static int bch_gc_btree(struct cache_set *c, enum btree_id btree_id)
 
 		bch_verify_btree_nr_keys(&b->keys);
 
-		should_rewrite = btree_gc_mark_node(c, b);
+		should_rewrite = btree_gc_mark_node(c, b, stats);
 
 		gc_pos_set(c, gc_pos_btree_node(b));
 
@@ -244,7 +250,7 @@ static int bch_gc_btree(struct cache_set *c, enum btree_id btree_id)
 	spin_lock(&c->btree_root_lock);
 
 	b = c->btree_roots[btree_id];
-	__bch_btree_mark_key(c, BKEY_TYPE_BTREE, bkey_i_to_s_c(&b->key));
+	__bch_btree_mark_key(c, BKEY_TYPE_BTREE, bkey_i_to_s_c(&b->key), stats);
 	gc_pos_set(c, gc_pos_btree_root(b->btree_id));
 
 	spin_unlock(&c->btree_root_lock);
@@ -300,7 +306,7 @@ static void bch_mark_metadata(struct cache_set *c)
 		for (j = 0; j < bch_nr_journal_buckets(ca->disk_sb.sb); j++)
 			bch_mark_metadata_bucket(ca,
 					&ca->buckets[journal_bucket(ca, j)],
-						 true);
+					true);
 
 		spin_lock(&ca->prio_buckets_lock);
 
@@ -312,6 +318,7 @@ static void bch_mark_metadata(struct cache_set *c)
 	}
 }
 
+/* Also see bch_pending_btree_node_free_insert_done() */
 static void bch_mark_pending_btree_node_frees(struct cache_set *c)
 {
 	struct pending_btree_node_free *d;
@@ -319,12 +326,20 @@ static void bch_mark_pending_btree_node_frees(struct cache_set *c)
 	mutex_lock(&c->btree_node_pending_free_lock);
 	gc_pos_set(c, gc_phase(GC_PHASE_PENDING_DELETE));
 
-	list_for_each_entry(d, &c->btree_node_pending_free, list)
+	list_for_each_entry(d, &c->btree_node_pending_free, list) {
+		/*
+		 * Already accounted for in cache_set_stats - we won't apply
+		 * @stats (see bch_pending_btree_node_free_insert_done()):
+		 */
+		struct bucket_stats_cache_set stats = { 0 };
+
 		if (d->index_update_done)
 			bch_mark_pointers(c, bkey_i_to_s_c_extent(&d->key),
 					  c->sb.btree_node_size,
 					  false, true,
-					  true, GC_POS_MIN);
+					  true, GC_POS_MIN, &stats);
+	}
+
 	mutex_unlock(&c->btree_node_pending_free_lock);
 }
 
@@ -350,6 +365,7 @@ static void bch_mark_scan_keylists(struct cache_set *c)
  */
 void bch_gc(struct cache_set *c)
 {
+	struct bucket_stats_cache_set stats = { 0 };
 	struct cache *ca;
 	struct bucket *g;
 	u64 start_time = local_clock();
@@ -411,7 +427,7 @@ void bch_gc(struct cache_set *c)
 	/* Walk btree: */
 	while (c->gc_pos.phase < (int) BTREE_ID_NR) {
 		int ret = c->btree_roots[c->gc_pos.phase]
-			? bch_gc_btree(c, (int) c->gc_pos.phase)
+			? bch_gc_btree(c, (int) c->gc_pos.phase, &stats)
 			: 0;
 
 		if (ret) {
@@ -431,6 +447,8 @@ void bch_gc(struct cache_set *c)
 
 	for_each_cache(ca, c, i)
 		atomic_long_set(&ca->saturated_count, 0);
+
+	bch_cache_set_stats_set(c, &stats);
 
 	/* Indicates that gc is no longer in progress: */
 	gc_pos_set(c, gc_phase(GC_PHASE_DONE));
@@ -852,7 +870,8 @@ int bch_gc_thread_start(struct cache_set *c)
 
 /* Initial GC computes bucket marks during startup */
 
-static void bch_initial_gc_btree(struct cache_set *c, enum btree_id id)
+static void bch_initial_gc_btree(struct cache_set *c, enum btree_id id,
+				 struct bucket_stats_cache_set *stats)
 {
 	struct btree_iter iter;
 	struct btree *b;
@@ -873,30 +892,35 @@ static void bch_initial_gc_btree(struct cache_set *c, enum btree_id id)
 
 			for_each_btree_node_key_unpack(&b->keys, k,
 						       &node_iter, &unpacked)
-				btree_mark_key_initial(c, b, k);
+				btree_mark_key_initial(c, b, k, stats);
 		}
-
-		__bch_btree_mark_key_initial(c, BKEY_TYPE_BTREE,
-					     bkey_i_to_s_c(&b->key));
 
 		bch_btree_iter_cond_resched(&iter);
 	}
 
 	bch_btree_iter_unlock(&iter);
+
+	b = c->btree_roots[id];
+	__bch_btree_mark_key_initial(c, BKEY_TYPE_BTREE,
+				     bkey_i_to_s_c(&b->key),
+				     stats);
 }
 
 int bch_initial_gc(struct cache_set *c, struct list_head *journal)
 {
+	struct bucket_stats_cache_set stats = { 0 };
 	enum btree_id id;
 
 	if (journal) {
 		for (id = 0; id < BTREE_ID_NR; id++)
-			bch_initial_gc_btree(c, id);
+			bch_initial_gc_btree(c, id, &stats);
 
-		bch_journal_mark(c, journal);
+		bch_journal_mark(c, journal, &stats);
 	}
 
 	bch_mark_metadata(c);
+
+	bch_cache_set_stats_set(c, &stats);
 	gc_pos_set(c, gc_phase(GC_PHASE_DONE));
 	set_bit(CACHE_SET_INITIAL_GC_DONE, &c->flags);
 

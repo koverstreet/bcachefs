@@ -50,13 +50,11 @@ static int issue_migration_move(struct cache *ca,
 		return -ENOMEM;
 	}
 
-	io->disk_res = res;
-
 	/* This also copies k into the write op's replace_key and insert_key */
 
 	bch_replace_init(&io->replace, k);
 
-	bch_write_op_init(&io->op, c, &io->bio,
+	bch_write_op_init(&io->op, c, &io->bio, res,
 			  &c->migration_write_point,
 			  k, &io->replace.hook, NULL,
 			  0);
@@ -385,7 +383,8 @@ static int bch_flag_key_bad(struct btree_iter *iter,
 	bch_extent_normalize(c, e.s);
 
 	return bch_btree_insert_at(iter, &keylist_single(&tmp.key),
-				   NULL, NULL, BTREE_INSERT_ATOMIC);
+				   NULL, NULL, NULL,
+				   BTREE_INSERT_ATOMIC);
 }
 
 /*

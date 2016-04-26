@@ -92,7 +92,6 @@ struct moving_io {
 	unsigned		read_issued:1;
 	unsigned		read_completed:1;
 	unsigned		write_issued:1;
-	struct disk_reservation	disk_res;
 
 	/* Must be last since it is variable size */
 	struct bch_write_bio	bio;

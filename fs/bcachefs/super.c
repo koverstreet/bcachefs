@@ -1376,7 +1376,7 @@ static const char *run_cache_set(struct cache_set *c)
 		err = "error creating root directory";
 		if (bch_btree_insert(c, BTREE_ID_INODES,
 				     &keylist_single(&inode.k_i),
-				     NULL, NULL, 0))
+				     NULL, NULL, NULL, 0))
 			goto err;
 
 		err = "error writing first journal entry";

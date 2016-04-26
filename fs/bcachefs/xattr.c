@@ -225,7 +225,7 @@ int bch_xattr_set(struct inode *inode, const char *name,
 
 			bch_keylist_enqueue(&keys);
 
-			ret = bch_btree_insert_at(&iter, &keys, NULL,
+			ret = bch_btree_insert_at(&iter, &keys, NULL, NULL,
 						  &ei->journal_seq,
 						  insert_flags);
 			bch_keylist_free(&keys);
@@ -238,7 +238,7 @@ int bch_xattr_set(struct inode *inode, const char *name,
 
 			ret = bch_btree_insert_at(&iter,
 						  &keylist_single(&whiteout),
-						  NULL, &ei->journal_seq,
+						  NULL, NULL, &ei->journal_seq,
 						  insert_flags);
 		}
 

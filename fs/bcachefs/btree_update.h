@@ -80,7 +80,8 @@ struct async_split *__bch_async_split_alloc(struct btree *[], unsigned,
 					    struct btree_iter *);
 struct async_split *bch_async_split_alloc(struct btree *, struct btree_iter *);
 
-void bch_btree_set_root_initial(struct cache_set *, struct btree *);
+void bch_btree_set_root_initial(struct cache_set *, struct btree *,
+				struct btree_reserve *);
 
 void bch_btree_reserve_put(struct cache_set *, struct btree_reserve *);
 struct btree_reserve *bch_btree_reserve_get(struct cache_set *c,
@@ -168,13 +169,13 @@ int bch_btree_insert_node(struct btree *, struct btree_iter *,
 #define BTREE_INSERT_NOFAIL		(1 << 1)
 
 /*
- * Don't fail a btree insert if dirty stale pointers are being added
- *
- * Only for journal replay:
+ * Don't account key being insert (bch_mark_pointers) - only for journal replay,
+ * where we've already marked the new keys:
  */
-#define BTREE_INSERT_NOFAIL_IF_STALE	(1 << 2)
+#define BTREE_INSERT_NO_MARK_KEY	(1 << 2)
 
 int bch_btree_insert_at(struct btree_iter *, struct keylist *,
+			struct disk_reservation *,
 			struct btree_insert_hook *, u64 *, unsigned);
 
 struct btree_insert_multi {
@@ -187,6 +188,7 @@ int bch_btree_insert_at_multi(struct btree_insert_multi[], unsigned,
 
 int bch_btree_insert_check_key(struct btree_iter *, struct bkey_i *);
 int bch_btree_insert(struct cache_set *, enum btree_id, struct keylist *,
+		     struct disk_reservation *,
 		     struct btree_insert_hook *, u64 *, int flags);
 int bch_btree_update(struct cache_set *, enum btree_id,
 		     struct bkey_i *, u64 *);

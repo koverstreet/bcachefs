@@ -777,7 +777,8 @@ const char *bch_journal_read(struct cache_set *c, struct list_head *list)
 	return NULL;
 }
 
-void bch_journal_mark(struct cache_set *c, struct list_head *list)
+void bch_journal_mark(struct cache_set *c, struct list_head *list,
+		      struct bucket_stats_cache_set *stats)
 {
 	struct bkey_i *k, *n;
 	struct jset_entry *j;
@@ -790,7 +791,8 @@ void bch_journal_mark(struct cache_set *c, struct list_head *list)
 			if (btree_type_has_ptrs(type) &&
 			    !bkey_invalid(c, type, bkey_i_to_s_c(k)))
 				__bch_btree_mark_key_initial(c, type,
-							     bkey_i_to_s_c(k));
+							     bkey_i_to_s_c(k),
+							     stats);
 		}
 }
 
@@ -955,36 +957,6 @@ void bch_journal_start(struct cache_set *c)
 	queue_work(system_long_wq, &j->reclaim_work);
 }
 
-static int bch_journal_replay_key(struct cache_set *c, enum btree_id id,
-				  struct bkey_i *k)
-{
-	int ret;
-	BKEY_PADDED(key) temp;
-	bool do_subtract = id == BTREE_ID_EXTENTS && bkey_extent_is_data(&k->k);
-
-	trace_bcache_journal_replay_key(&k->k);
-
-	if (do_subtract)
-		bkey_copy(&temp.key, k);
-
-	ret = bch_btree_insert(c, id, &keylist_single(k), NULL, NULL,
-			       BTREE_INSERT_NOFAIL|
-			       BTREE_INSERT_NOFAIL_IF_STALE);
-	if (ret)
-		return ret;
-
-	/*
-	 * Subtract sectors after replay since bch_btree_insert() added
-	 * them again
-	 */
-	if (do_subtract)
-		bch_mark_pointers(c, bkey_i_to_s_c_extent(&temp.key),
-				  -temp.key.k.size, false, false,
-				  true, GC_POS_MIN);
-
-	return 0;
-}
-
 int bch_journal_replay(struct cache_set *c, struct list_head *list)
 {
 	int ret = 0, keys = 0, entries = 0;
@@ -1025,11 +997,17 @@ int bch_journal_replay(struct cache_set *c, struct list_head *list)
 		BUG_ON(atomic_read(&j->cur_pin_list->count) != 1);
 
 		for_each_jset_key(k, _n, jkeys, &i->j) {
-			cond_resched();
-			ret = bch_journal_replay_key(c, jkeys->btree_id, k);
+			trace_bcache_journal_replay_key(&k->k);
+
+			ret = bch_btree_insert(c, jkeys->btree_id,
+					       &keylist_single(k),
+					       NULL, NULL, NULL,
+					       BTREE_INSERT_NOFAIL|
+					       BTREE_INSERT_NO_MARK_KEY);
 			if (ret)
 				goto err;
 
+			cond_resched();
 			keys++;
 		}
 

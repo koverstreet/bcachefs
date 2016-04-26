@@ -2,6 +2,7 @@
 #define _BCACHE_IO_TYPES_H
 
 #include "btree_types.h"
+#include "buckets_types.h"
 #include "keylist_types.h"
 
 #include <linux/llist.h>
@@ -81,6 +82,8 @@ struct bch_write_op {
 	u8			flags;
 	unsigned		compression_type:4;
 	unsigned		nr_replicas:4;
+
+	struct disk_reservation	res;
 
 	struct write_point	*wp;
 

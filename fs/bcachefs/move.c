@@ -115,8 +115,6 @@ void moving_io_free(struct moving_io *io)
 	struct bio_vec *bv;
 	int i;
 
-	bch_disk_reservation_put(io->op.c, &io->disk_res);
-
 	bio_for_each_segment_all(bv, &io->bio.bio.bio, i)
 		if (bv->bv_page)
 			__free_page(bv->bv_page);

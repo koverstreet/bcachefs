@@ -566,6 +566,7 @@ static void bch_write_done(struct closure *cl)
 	if (!op->error && (op->flags & BCH_WRITE_FLUSH))
 		op->error = bch_journal_error(&op->c->journal);
 
+	bch_disk_reservation_put(op->c, &op->res);
 	percpu_ref_put(&op->c->writes);
 	bch_keylist_free(&op->insert_keys);
 	closure_return(cl);
@@ -592,9 +593,12 @@ static void bch_write_index(struct closure *cl)
 	u64 sectors_start = keylist_sectors(&op->insert_keys);
 	int ret;
 
-	ret = bch_btree_insert(op->c, BTREE_ID_EXTENTS, &op->insert_keys,
+	ret = bch_btree_insert(op->c, BTREE_ID_EXTENTS,
+			       &op->insert_keys,
+			       &op->res,
 			       op->insert_hook,
-			       op_journal_seq(op), BTREE_INSERT_NOFAIL);
+			       op_journal_seq(op),
+			       BTREE_INSERT_NOFAIL);
 
 	op->written += sectors_start - keylist_sectors(&op->insert_keys);
 
@@ -1125,12 +1129,14 @@ void bch_write(struct closure *cl)
 
 	if (!bio_sectors(bio)) {
 		WARN_ONCE(1, "bch_write() called with empty bio");
+		bch_disk_reservation_put(op->c, &op->res);
 		closure_return(cl);
 	}
 
 	if (!percpu_ref_tryget(&c->writes)) {
 		__bcache_io_error(c, "read only");
 		op->error = -EROFS;
+		bch_disk_reservation_put(op->c, &op->res);
 		closure_return(cl);
 	}
 
@@ -1199,8 +1205,8 @@ void bch_write(struct closure *cl)
 }
 
 void bch_write_op_init(struct bch_write_op *op, struct cache_set *c,
-		       struct bch_write_bio *bio, struct write_point *wp,
-		       struct bkey_s_c insert_key,
+		       struct bch_write_bio *bio, struct disk_reservation res,
+		       struct write_point *wp, struct bkey_s_c insert_key,
 		       struct btree_insert_hook *insert_hook,
 		       u64 *journal_seq, unsigned flags)
 {
@@ -1220,6 +1226,7 @@ void bch_write_op_init(struct bch_write_op *op, struct cache_set *c,
 	op->flags	= flags;
 	op->compression_type = c->opts.compression;
 	op->nr_replicas	= c->opts.data_replicas;
+	op->res		= res;
 	op->wp		= wp;
 
 	if (journal_seq) {
@@ -1714,6 +1721,7 @@ void bch_read_extent_iter(struct cache_set *c, struct bio *orig,
 
 		bch_write_op_init(&promote_op->iop, c,
 				  &promote_op->bio,
+				  (struct disk_reservation) { 0 },
 				  &c->promote_write_point,
 				  k, NULL, NULL,
 				  BCH_WRITE_ALLOC_NOWAIT);

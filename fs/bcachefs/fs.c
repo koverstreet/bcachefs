@@ -134,7 +134,7 @@ int __must_check __bch_write_inode(struct cache_set *c,
 
 		ret = bch_btree_insert_at(&iter,
 					  &keylist_single(&new_inode.k_i),
-					  NULL, &ei->journal_seq,
+					  NULL, NULL, &ei->journal_seq,
 					  BTREE_INSERT_ATOMIC|
 					  BTREE_INSERT_NOFAIL);
 	} while (ret == -EINTR);
