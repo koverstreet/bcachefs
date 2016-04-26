@@ -1178,15 +1178,13 @@ void bch_write(struct closure *cl)
 	struct cache_set *c = op->c;
 	u64 inode = op->insert_key.k.p.inode;
 
+	BUG_ON(op->insert_key.k.p.offset	!= bio_end_sector(bio));
+	BUG_ON(op->insert_key.k.size		!= bio_sectors(bio));
+	BUG_ON(!bio_sectors(bio));
+
 	trace_bcache_write(c, inode, bio,
 			   !bkey_extent_is_cached(&op->insert_key.k),
 			   op->flags & BCH_WRITE_DISCARD);
-
-	if (!bio_sectors(bio)) {
-		WARN_ONCE(1, "bch_write() called with empty bio");
-		bch_disk_reservation_put(op->c, &op->res);
-		closure_return(cl);
-	}
 
 	if (!percpu_ref_tryget(&c->writes)) {
 		__bcache_io_error(c, "read only");
@@ -1212,9 +1210,6 @@ void bch_write(struct closure *cl)
 		bch_mark_foreground_write(c, bio_sectors(bio));
 	else
 		bch_mark_discard(c, bio_sectors(bio));
-
-	op->insert_key.k.p.offset	= bio_end_sector(bio);
-	op->insert_key.k.size		= bio_sectors(bio);
 
 	/* Don't call bch_next_delay() if rate is >= 1 GB/sec */
 

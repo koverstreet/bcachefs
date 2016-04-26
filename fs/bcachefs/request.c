@@ -482,16 +482,17 @@ static void cached_dev_write(struct cached_dev *dc, struct search *s)
 {
 	struct closure *cl = &s->cl;
 	struct bio *bio = &s->wbio.bio.bio;
-	unsigned inode = bcache_dev_inum(&dc->disk);
 	bool writeback = false;
 	bool bypass = s->bypass;
-	struct bkey insert_key = KEY(s->inode, 0, 0);
+	struct bkey insert_key = KEY(s->inode,
+				     bio_end_sector(bio),
+				     bio_sectors(bio));
 	unsigned flags = BCH_WRITE_DISCARD_ON_ERROR;
 
 	down_read_non_owner(&dc->writeback_lock);
 	if (bch_keybuf_check_overlapping(&dc->writeback_keys,
-					 POS(inode, bio->bi_iter.bi_sector),
-					 POS(inode, bio_end_sector(bio)))) {
+					 bkey_start_pos(&insert_key),
+					 insert_key.p)) {
 		/*
 		 * We overlap with some dirty data undergoing background
 		 * writeback, force this write to writeback
@@ -703,7 +704,9 @@ static void __blockdev_volume_make_request(struct request_queue *q,
 			flags |= BCH_WRITE_DISCARD;
 
 		bch_write_op_init(&s->iop, d->c, &s->wbio, res, NULL,
-				  bkey_to_s_c(&KEY(s->inode, 0, 0)),
+				  bkey_to_s_c(&KEY(s->inode,
+						   bio_end_sector(&s->wbio.bio.bio),
+						   bio_sectors(&s->wbio.bio.bio))),
 				  NULL, NULL, flags);
 
 		closure_call(&s->iop.cl, bch_write, NULL, &s->cl);

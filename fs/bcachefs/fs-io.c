@@ -839,10 +839,8 @@ static void bch_writepage_io_done(struct closure *cl)
 
 static void bch_writepage_do_io(struct bch_writepage_io *io)
 {
-	pr_debug("writing %u sectors to %llu:%llu",
-		 bio_sectors(&io->bio.bio.bio),
-		 io->op.op.insert_key.k.p.inode,
-		 (u64) io->bio.bio.bio.bi_iter.bi_sector);
+	io->op.op.insert_key.k.p.offset = bio_end_sector(&io->bio.bio.bio);
+	io->op.op.insert_key.k.size	= bio_sectors(&io->bio.bio.bio);
 
 	closure_call(&io->op.op.cl, bch_write, NULL, &io->cl);
 	continue_at(&io->cl, bch_writepage_io_done, NULL);
