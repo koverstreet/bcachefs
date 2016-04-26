@@ -1743,7 +1743,6 @@ void bch_read_extent_iter(struct cache_set *c, struct bch_read_bio *orig,
 {
 	struct bch_read_bio *rbio;
 	struct cache_promote_op *promote_op = NULL;
-	unsigned orig_sectors = bio_sectors(&orig->bio);
 	unsigned skip = iter.bi_sector - bkey_start_offset(k.k);
 	bool bounce = false, split, read_full = false;
 
@@ -1764,7 +1763,7 @@ void bch_read_extent_iter(struct cache_set *c, struct bch_read_bio *orig,
 	 */
 	if (pick->crc.compression_type != BCH_COMPRESSION_NONE ||
 	    (pick->crc.csum_type != BCH_CSUM_NONE &&
-	     (orig_sectors != pick->crc.uncompressed_size ||
+	     (bvec_iter_sectors(iter) != pick->crc.uncompressed_size ||
 	      (flags & BCH_READ_FORCE_BOUNCE)))) {
 		read_full = true;
 		bounce = true;
@@ -1773,7 +1772,7 @@ void bch_read_extent_iter(struct cache_set *c, struct bch_read_bio *orig,
 	if (bounce) {
 		unsigned sectors = read_full
 			? (pick->crc.compressed_size ?: k.k->size)
-			: orig_sectors;
+			: bvec_iter_sectors(iter);
 
 		rbio = container_of(bio_alloc_bioset(GFP_NOIO,
 					DIV_ROUND_UP(sectors, PAGE_SECTORS),
@@ -1854,7 +1853,7 @@ void bch_read_extent_iter(struct cache_set *c, struct bch_read_bio *orig,
 					  bkey_start_offset(k.k) + skip),
 				      &promote_op->iop.insert_key);
 			bch_key_resize(&promote_op->iop.insert_key.k,
-				       orig_sectors);
+				       bvec_iter_sectors(iter));
 		}
 
 		__bio_clone_fast(&promote_op->bio.bio.bio, &rbio->bio);
