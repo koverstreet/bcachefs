@@ -659,8 +659,7 @@ static void bchfs_read(struct cache_set *c, struct bch_read_bio *rbio, u64 inode
 			return;
 		}
 
-		sectors = min_t(u64, k.k->p.offset,
-				bio_end_sector(bio)) -
+		sectors = min_t(u64, k.k->p.offset, bio_end_sector(bio)) -
 			bio->bi_iter.bi_sector;
 		bytes = sectors << 9;
 		is_last = bytes == bio->bi_iter.bi_size;
@@ -674,8 +673,6 @@ static void bchfs_read(struct cache_set *c, struct bch_read_bio *rbio, u64 inode
 				c->prio_clock[READ].hand;
 
 			bch_read_extent(c, rbio, k, &pick,
-					bio->bi_iter.bi_sector -
-					bkey_start_offset(k.k),
 					BCH_READ_RETRY_IF_STALE|
 					BCH_READ_PROMOTE|
 					(is_last ? BCH_READ_IS_LAST : 0));

@@ -50,17 +50,16 @@ struct extent_pick_ptr;
 
 void bch_read_extent_iter(struct cache_set *, struct bch_read_bio *,
 			  struct bvec_iter, struct bkey_s_c k,
-			  struct extent_pick_ptr *,
-			  unsigned, unsigned);
+			  struct extent_pick_ptr *, unsigned);
 
 static inline void bch_read_extent(struct cache_set *c,
 				   struct bch_read_bio *orig,
 				   struct bkey_s_c k,
 				   struct extent_pick_ptr *pick,
-				   unsigned skip, unsigned flags)
+				   unsigned flags)
 {
 	bch_read_extent_iter(c, orig, orig->bio.bi_iter,
-			     k, pick, skip, flags);
+			     k, pick, flags);
 }
 
 enum bch_read_flags {

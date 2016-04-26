@@ -1739,13 +1739,16 @@ static void bch_read_endio(struct bio *bio)
 
 void bch_read_extent_iter(struct cache_set *c, struct bch_read_bio *orig,
 			  struct bvec_iter iter, struct bkey_s_c k,
-			  struct extent_pick_ptr *pick,
-			  unsigned skip, unsigned flags)
+			  struct extent_pick_ptr *pick, unsigned flags)
 {
 	struct bch_read_bio *rbio;
 	struct cache_promote_op *promote_op = NULL;
 	unsigned orig_sectors = bio_sectors(&orig->bio);
+	unsigned skip = iter.bi_sector - bkey_start_offset(k.k);
 	bool bounce = false, split, read_full = false;
+
+	EBUG_ON(bkey_start_offset(k.k) > iter.bi_sector ||
+		k.k->p.offset < bvec_iter_end_sector(iter));
 
 	/* only promote if we're not reading from the fastest tier: */
 	if ((flags & BCH_READ_PROMOTE) && pick->ca->mi.tier) {
@@ -1876,12 +1879,6 @@ static void bch_read_iter(struct cache_set *c, struct bch_read_bio *rbio,
 		unsigned bytes, sectors;
 		bool is_last;
 
-		EBUG_ON(bkey_cmp(bkey_start_pos(k.k),
-				 POS(inode, bvec_iter.bi_sector)) > 0);
-
-		EBUG_ON(bkey_cmp(k.k->p,
-				 POS(inode, bvec_iter.bi_sector)) <= 0);
-
 		bch_extent_pick_ptr(c, k, &pick);
 
 		/*
@@ -1910,9 +1907,8 @@ static void bch_read_iter(struct cache_set *c, struct bch_read_bio *rbio,
 			PTR_BUCKET(pick.ca, &pick.ptr)->read_prio =
 				c->prio_clock[READ].hand;
 
-			bch_read_extent_iter(c, rbio, bvec_iter, k, &pick,
-					     bvec_iter.bi_sector -
-					     bkey_start_offset(k.k), flags);
+			bch_read_extent_iter(c, rbio, bvec_iter,
+					     k, &pick, flags);
 
 			flags &= ~BCH_READ_MAY_REUSE_BIO;
 		} else {

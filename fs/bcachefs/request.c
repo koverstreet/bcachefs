@@ -404,20 +404,9 @@ static void cached_dev_read(struct cached_dev *dc, struct search *s)
 				POS(s->inode, bio->bi_iter.bi_sector), k) {
 		struct extent_pick_ptr pick;
 		unsigned sectors, bytes;
-		bool done;
+		bool is_last;
 retry:
-		BUG_ON(bkey_cmp(bkey_start_pos(k.k),
-				POS(s->inode, bio->bi_iter.bi_sector)) > 0);
 
-		BUG_ON(bkey_cmp(k.k->p,
-				POS(s->inode, bio->bi_iter.bi_sector)) <= 0);
-
-		sectors = min_t(u64, k.k->p.offset, bio_end_sector(bio)) -
-			bio->bi_iter.bi_sector;
-		bytes = sectors << 9;
-		done = bytes == bio->bi_iter.bi_size;
-
-		swap(bio->bi_iter.bi_size, bytes);
 
 		bch_extent_pick_ptr(s->iop.c, k, &pick);
 		if (IS_ERR(pick.ca)) {
@@ -427,13 +416,13 @@ retry:
 			goto out;
 		}
 
-		if (!pick.ca) {
-			/* not present (hole), or stale cached data */
-			if (cached_dev_cache_miss(&iter, s, bio, sectors)) {
-				k = bch_btree_iter_peek_with_holes(&iter);
-				goto retry;
-			}
-		} else {
+		sectors = min_t(u64, k.k->p.offset, bio_end_sector(bio)) -
+			bio->bi_iter.bi_sector;
+		bytes = sectors << 9;
+		is_last = bytes == bio->bi_iter.bi_size;
+		swap(bio->bi_iter.bi_size, bytes);
+
+		if (pick.ca) {
 			PTR_BUCKET(pick.ca, &pick.ptr)->read_prio =
 				s->iop.c->prio_clock[READ].hand;
 
@@ -441,17 +430,22 @@ retry:
 				s->read_dirty_data = true;
 
 			bch_read_extent(s->iop.c, &s->rbio, k, &pick,
-					bio->bi_iter.bi_sector -
-					bkey_start_offset(k.k),
 					BCH_READ_FORCE_BOUNCE|
 					BCH_READ_RETRY_IF_STALE|
-					(!s->bypass ? BCH_READ_PROMOTE : 0));
+					(!s->bypass ? BCH_READ_PROMOTE : 0)|
+					(is_last ? BCH_READ_IS_LAST : 0));
+		} else {
+			/* not present (hole), or stale cached data */
+			if (cached_dev_cache_miss(&iter, s, bio, sectors)) {
+				k = bch_btree_iter_peek_with_holes(&iter);
+				goto retry;
+			}
 		}
 
 		swap(bio->bi_iter.bi_size, bytes);
 		bio_advance(bio, bytes);
 
-		if (done) {
+		if (is_last) {
 			bch_btree_iter_unlock(&iter);
 			goto out;
 		}
