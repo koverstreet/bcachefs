@@ -2,9 +2,10 @@
 #ifndef _BCACHE_SIX_H
 #define _BCACHE_SIX_H
 
+#include <linux/lockdep.h>
+#include <linux/osq_lock.h>
 #include <linux/sched.h>
 #include <linux/types.h>
-#include <linux/wait.h>
 
 #include "util.h"
 
@@ -63,6 +64,7 @@ enum six_lock_type {
 struct six_lock {
 	union six_lock_state	state;
 	struct task_struct	*owner;
+	struct optimistic_spin_queue osq;
 
 	raw_spinlock_t		wait_lock;
 	struct list_head	wait_list[3];

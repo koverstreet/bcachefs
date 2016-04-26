@@ -181,6 +181,7 @@ unqueue:
 
 	return false;
 }
+EXPORT_SYMBOL_GPL(osq_lock);
 
 void osq_unlock(struct optimistic_spin_queue *lock)
 {
@@ -208,3 +209,4 @@ void osq_unlock(struct optimistic_spin_queue *lock)
 	if (next)
 		WRITE_ONCE(next->locked, 1);
 }
+EXPORT_SYMBOL_GPL(osq_unlock);
