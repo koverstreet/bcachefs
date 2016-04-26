@@ -1345,6 +1345,7 @@ int bch_discard(struct cache_set *c, struct bpos start,
 struct cache_promote_op {
 	struct closure		cl;
 	struct bch_read_bio	*orig_bio;
+	struct bch_replace_info	replace;
 	struct bch_write_op	iop;
 	struct bch_write_bio	bio; /* must be last */
 };
@@ -1755,6 +1756,7 @@ void bch_read_extent_iter(struct cache_set *c, struct bch_read_bio *orig,
 
 		if (promote_op)
 			bounce = true;
+		/* could also set read_full */
 	}
 
 	/*
@@ -1839,24 +1841,40 @@ void bch_read_extent_iter(struct cache_set *c, struct bch_read_bio *orig,
 		rbio->bio.bi_iter.bi_sector += skip;
 
 	if (promote_op) {
-		promote_op->orig_bio = rbio;
+		struct bio *promote_bio = &promote_op->bio.bio.bio;
 
+		promote_op->orig_bio = rbio;
+		bio_init(promote_bio);
+		__bio_clone_fast(promote_bio, &rbio->bio);
+
+		bch_replace_init(&promote_op->replace, k);
 		bch_write_op_init(&promote_op->iop, c,
 				  &promote_op->bio,
 				  (struct disk_reservation) { 0 },
-				  &c->promote_write_point,
-				  k, NULL, NULL,
+				  &c->promote_write_point, k,
+				  &promote_op->replace.hook, NULL,
 				  BCH_WRITE_ALLOC_NOWAIT);
 
-		if (!read_full) {
-			bch_cut_front(POS(k.k->p.inode,
-					  bkey_start_offset(k.k) + skip),
+		if (read_full) {
+			/*
+			 * Adjust bio to correspond to _live_ portion of @k -
+			 * which might be less than what we're actually reading:
+			 */
+			bio_advance(promote_bio, rbio->crc.offset << 9);
+			promote_bio->bi_iter.bi_size = k.k->size << 9;
+		} else {
+			/*
+			 * Adjust insert_key to correspond to what we're
+			 * actually reading:
+			 */
+			bch_cut_front(POS(k.k->p.inode, iter.bi_sector),
 				      &promote_op->iop.insert_key);
 			bch_key_resize(&promote_op->iop.insert_key.k,
 				       bvec_iter_sectors(iter));
 		}
 
-		__bio_clone_fast(&promote_op->bio.bio.bio, &rbio->bio);
+		promote_bio->bi_iter.bi_sector =
+			bkey_start_offset(&promote_op->iop.insert_key.k);
 	}
 
 	rbio->submit_time_us = local_clock_us();
