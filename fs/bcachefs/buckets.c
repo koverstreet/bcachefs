@@ -240,6 +240,18 @@ static struct bucket_mark bch_bucket_mark_set(struct cache *ca,
 	old.counter = xchg(&g->mark.counter, new.counter);
 
 	bucket_stats_update(ca, old, new, may_make_unavailable, &stats);
+
+	/*
+	 * Ick:
+	 *
+	 * Only stats.sectors_cached should be nonzero: this is important
+	 * because in this path we modify cache_set_stats based on how the
+	 * bucket_mark was modified, and the sector counts in bucket_mark are
+	 * subject to (saturating) overflow - and if they did overflow, the
+	 * cache set stats will now be off. We can tolerate this for
+	 * sectors_cached, but not anything else:
+	 * */
+	stats.sectors_cached = 0;
 	BUG_ON(!bch_is_zero((void *) &stats, sizeof(stats)));
 
 	return old;
