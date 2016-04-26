@@ -194,11 +194,10 @@ static inline size_t buckets_free_cache(struct cache *ca,
 
 struct bucket_stats_cache_set __bch_bucket_stats_read_cache_set(struct cache_set *);
 struct bucket_stats_cache_set bch_bucket_stats_read_cache_set(struct cache_set *);
-void __bch_cache_set_stats_apply(struct cache_set *,
-				 struct bucket_stats_cache_set *);
 void bch_cache_set_stats_apply(struct cache_set *,
 			       struct bucket_stats_cache_set *,
-			       struct disk_reservation *);
+			       struct disk_reservation *,
+			       struct gc_pos);
 
 static inline u64 cache_set_sectors_used(struct cache_set *c)
 {

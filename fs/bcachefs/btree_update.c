@@ -386,7 +386,8 @@ static void bch_btree_set_root_inmem(struct cache_set *c, struct btree *b,
 			bch_btree_node_free_index(c, NULL, old->btree_id,
 						  bkey_i_to_s_c(&old->key),
 						  &stats);
-		bch_cache_set_stats_apply(c, &stats, &btree_reserve->disk_res);
+		bch_cache_set_stats_apply(c, &stats, &btree_reserve->disk_res,
+					  gc_pos_btree_root(b->btree_id));
 	}
 	mutex_unlock(&c->btree_root_lock);
 
@@ -661,7 +662,7 @@ static bool bch_insert_fixup_btree_ptr(struct btree_iter *iter,
 	bch_btree_bset_insert(iter, b, node_iter, insert);
 	set_btree_node_dirty(b);
 
-	bch_cache_set_stats_apply(c, &stats, disk_res);
+	bch_cache_set_stats_apply(c, &stats, disk_res, gc_pos_btree_node(b));
 	return true;
 }
 

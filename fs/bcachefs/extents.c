@@ -1323,7 +1323,7 @@ bch_insert_fixup_extent(struct btree_iter *iter,
 				     insert->k.p.offset - iter->pos.offset,
 				     &stats);
 
-	bch_cache_set_stats_apply(c, &stats, disk_res);
+	bch_cache_set_stats_apply(c, &stats, disk_res, gc_pos_btree_node(b));
 
 	if (insert->k.size && !bkey_cmp(iter->pos, b->key.k.p))
 		ret = BTREE_INSERT_NEED_TRAVERSE;

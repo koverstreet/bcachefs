@@ -145,19 +145,10 @@ static inline int is_cached_bucket(struct bucket_mark m)
 	return !m.owned_by_allocator && !m.dirty_sectors && !!m.cached_sectors;
 }
 
-void __bch_cache_set_stats_apply(struct cache_set *c,
-				 struct bucket_stats_cache_set *stats)
-{
-	lg_local_lock(&c->bucket_stats_lock);
-	bucket_stats_add(this_cpu_ptr(c->bucket_stats_percpu), stats);
-	lg_local_unlock(&c->bucket_stats_lock);
-
-	memset(stats, 0, sizeof(*stats));
-}
-
 void bch_cache_set_stats_apply(struct cache_set *c,
 			       struct bucket_stats_cache_set *stats,
-			       struct disk_reservation *disk_res)
+			       struct disk_reservation *disk_res,
+			       struct gc_pos gc_pos)
 {
 	s64 added = stats->sectors_dirty +
 		stats->sectors_meta +
@@ -170,12 +161,17 @@ void bch_cache_set_stats_apply(struct cache_set *c,
 	 */
 	BUG_ON(added > (disk_res ? disk_res->sectors : 0));
 
-	if (disk_res && added > 0) {
+	if (added > 0) {
 		disk_res->sectors		-= added;
 		stats->sectors_online_reserved	-= added;
 	}
 
-	__bch_cache_set_stats_apply(c, stats);
+	lg_local_lock(&c->bucket_stats_lock);
+	if (!gc_will_visit(c, gc_pos))
+		bucket_stats_add(this_cpu_ptr(c->bucket_stats_percpu), stats);
+	lg_local_unlock(&c->bucket_stats_lock);
+
+	memset(stats, 0, sizeof(*stats));
 }
 
 static void bucket_stats_update(struct cache *ca,
@@ -191,29 +187,36 @@ static void bucket_stats_update(struct cache *ca,
 	       !is_available_bucket(new) &&
 	       c->gc_pos.phase == GC_PHASE_DONE);
 
+	if (cache_set_stats) {
+		cache_set_stats->sectors_cached +=
+			(int) new.cached_sectors - (int) old.cached_sectors;
+
+		if (old.is_metadata)
+			cache_set_stats->sectors_meta -= old.dirty_sectors;
+		else
+			cache_set_stats->sectors_dirty -= old.dirty_sectors;
+
+		if (new.is_metadata)
+			cache_set_stats->sectors_meta += new.dirty_sectors;
+		else
+			cache_set_stats->sectors_dirty += new.dirty_sectors;
+	}
+
 	preempt_disable();
 	cache_stats = this_cpu_ptr(ca->bucket_stats_percpu);
 
 	cache_stats->sectors_cached +=
 		(int) new.cached_sectors - (int) old.cached_sectors;
-	cache_set_stats->sectors_cached +=
-		(int) new.cached_sectors - (int) old.cached_sectors;
 
-	if (old.is_metadata) {
+	if (old.is_metadata)
 		cache_stats->sectors_meta -= old.dirty_sectors;
-		cache_set_stats->sectors_meta -= old.dirty_sectors;
-	} else {
+	else
 		cache_stats->sectors_dirty -= old.dirty_sectors;
-		cache_set_stats->sectors_dirty -= old.dirty_sectors;
-	}
 
-	if (new.is_metadata) {
+	if (new.is_metadata)
 		cache_stats->sectors_meta += new.dirty_sectors;
-		cache_set_stats->sectors_meta += new.dirty_sectors;
-	} else {
+	else
 		cache_stats->sectors_dirty += new.dirty_sectors;
-		cache_set_stats->sectors_dirty += new.dirty_sectors;
-	}
 
 	cache_stats->buckets_alloc +=
 		(int) new.owned_by_allocator - (int) old.owned_by_allocator;
@@ -237,7 +240,8 @@ static struct bucket_mark bch_bucket_mark_set(struct cache *ca,
 	old.counter = xchg(&g->mark.counter, new.counter);
 
 	bucket_stats_update(ca, old, new, may_make_unavailable, &stats);
-	bch_cache_set_stats_apply(ca->set, &stats, NULL);
+	BUG_ON(!bch_is_zero((void *) &stats, sizeof(stats)));
+
 	return old;
 }
 
@@ -311,14 +315,15 @@ static void bch_mark_pointer(struct cache_set *c, struct cache *ca,
 			     const struct bch_extent_ptr *ptr, int sectors,
 			     bool dirty, bool metadata,
 			     bool may_make_unavailable,
-			     struct bucket_stats_cache_set *stats)
+			     struct bucket_stats_cache_set *stats,
+			     bool is_gc, struct gc_pos gc_pos)
 {
 	struct bucket_mark old, new;
 	unsigned long bucket_nr = PTR_BUCKET_NR(ca, ptr);
 	unsigned saturated;
 
 	bucket_cmpxchg(&ca->buckets[bucket_nr], old, new,
-		       may_make_unavailable, stats, ({
+		       may_make_unavailable, NULL, ({
 		saturated = 0;
 		/*
 		 * cmpxchg() only implies a full barrier on success, not
@@ -337,6 +342,14 @@ static void bch_mark_pointer(struct cache_set *c, struct cache *ca,
 			BUG_ON(metadata);
 			return;
 		}
+
+		/*
+		 * Check this after reading bucket mark to guard against
+		 * GC starting between when we check gc_cur_key and when
+		 * the GC zeroes out marks
+		 */
+		if (!is_gc && gc_will_visit(c, gc_pos))
+			goto out;
 
 		/*
 		 * Disallowed state transition - this means a bkey_cmpxchg()
@@ -383,12 +396,20 @@ static void bch_mark_pointer(struct cache_set *c, struct cache *ca,
 			wake_up_process(c->gc_thread);
 		}
 	}
+out:
+	if (metadata)
+		stats->sectors_meta += sectors;
+	else if (dirty)
+		stats->sectors_dirty += sectors;
+	else
+		stats->sectors_cached += sectors;
 }
 
 static void bch_mark_extent(struct cache_set *c, struct bkey_s_c_extent e,
 			    int sectors, bool metadata,
 			    bool may_make_unavailable,
-			    struct bucket_stats_cache_set *stats)
+			    struct bucket_stats_cache_set *stats,
+			    bool is_gc, struct gc_pos gc_pos)
 {
 	const struct bch_extent_ptr *ptr;
 	struct cache *ca;
@@ -403,7 +424,7 @@ static void bch_mark_extent(struct cache_set *c, struct bkey_s_c_extent e,
 		trace_bcache_mark_bucket(ca, e.k, ptr, sectors, dirty);
 
 		bch_mark_pointer(c, ca, ptr, sectors, dirty, metadata,
-				 may_make_unavailable, stats);
+				 may_make_unavailable, stats, is_gc, gc_pos);
 	}
 	rcu_read_unlock();
 }
@@ -411,13 +432,14 @@ static void bch_mark_extent(struct cache_set *c, struct bkey_s_c_extent e,
 static void __bch_mark_key(struct cache_set *c, struct bkey_s_c k,
 			   int sectors, bool metadata,
 			   bool may_make_unavailable,
-			   struct bucket_stats_cache_set *stats)
+			   struct bucket_stats_cache_set *stats,
+			   bool is_gc, struct gc_pos gc_pos)
 {
 	switch (k.k->type) {
 	case BCH_EXTENT:
 	case BCH_EXTENT_CACHED:
-		bch_mark_extent(c, bkey_s_c_to_extent(k), sectors,
-				metadata, may_make_unavailable, stats);
+		bch_mark_extent(c, bkey_s_c_to_extent(k), sectors, metadata,
+				may_make_unavailable, stats, is_gc, gc_pos);
 		break;
 	case BCH_RESERVATION:
 		stats->sectors_persistent_reserved += sectors;
@@ -429,7 +451,7 @@ void __bch_gc_mark_key(struct cache_set *c, struct bkey_s_c k,
 		       int sectors, bool metadata,
 		       struct bucket_stats_cache_set *stats)
 {
-	__bch_mark_key(c, k, sectors, metadata, true, stats);
+	__bch_mark_key(c, k, sectors, metadata, true, stats, true, GC_POS_MIN);
 }
 
 void bch_gc_mark_key(struct cache_set *c, struct bkey_s_c k,
@@ -438,20 +460,18 @@ void bch_gc_mark_key(struct cache_set *c, struct bkey_s_c k,
 	struct bucket_stats_cache_set stats = { 0 };
 
 	__bch_gc_mark_key(c, k, sectors, metadata, &stats);
-	__bch_cache_set_stats_apply(c, &stats);
+
+	preempt_disable();
+	bucket_stats_add(this_cpu_ptr(c->bucket_stats_percpu), &stats);
+	preempt_enable();
 }
 
 void bch_mark_key(struct cache_set *c, struct bkey_s_c k,
 		  int sectors, bool metadata, struct gc_pos gc_pos,
 		  struct bucket_stats_cache_set *stats)
 {
-	/*
-	 * Check gc_pos under bucket_stats_lock to avoid racing with the start
-	 * of gc - mark iff gc's position is _after_ gc_pos:
-	 */
 	lg_local_lock(&c->bucket_stats_lock);
-	if (!gc_will_visit(c, gc_pos))
-		__bch_mark_key(c, k, sectors, metadata, false, stats);
+	__bch_mark_key(c, k, sectors, metadata, false, stats, false, gc_pos);
 	lg_local_unlock(&c->bucket_stats_lock);
 }
 
@@ -460,11 +480,12 @@ void bch_unmark_open_bucket(struct cache *ca, struct bucket *g)
 	struct bucket_stats_cache_set stats = { 0 };
 	struct bucket_mark old, new;
 
-	bucket_cmpxchg(g, old, new, false, &stats, ({
+	bucket_cmpxchg(g, old, new, false, NULL, ({
 		new.owned_by_allocator = 0;
 	}));
 
-	bch_cache_set_stats_apply(ca->set, &stats, NULL);
+	/* owned_by_allocator buckets aren't tracked in cache_set_stats: */
+	BUG_ON(!bch_is_zero((void *) &stats, sizeof(stats)));
 }
 
 static u64 __recalc_sectors_available(struct cache_set *c)
@@ -491,16 +512,9 @@ void bch_recalc_sectors_available(struct cache_set *c)
 void bch_disk_reservation_put(struct cache_set *c,
 			      struct disk_reservation *res)
 {
-	if (res->sectors) {
-		struct bucket_stats_cache_set *stats;
-
-		lg_local_lock(&c->bucket_stats_lock);
-		stats = this_cpu_ptr(c->bucket_stats_percpu);
-		stats->sectors_online_reserved -= res->sectors;
-		lg_local_unlock(&c->bucket_stats_lock);
-
-		res->sectors = 0;
-	}
+	this_cpu_sub(c->bucket_stats_percpu->sectors_online_reserved,
+		     res->sectors);
+	res->sectors = 0;
 }
 
 #define SECTORS_CACHE	1024
