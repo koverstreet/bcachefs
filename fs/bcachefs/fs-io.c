@@ -816,8 +816,11 @@ static void bch_writepage_io_done(struct closure *cl)
 	/*
 	 * racing with fallocate can cause us to add fewer sectors than
 	 * expected - but we shouldn't add more sectors than expected:
+	 *
+	 * (error (due to going RO) halfway through a page can screw that up
+	 * slightly)
 	 */
-	BUG_ON(io->op.sectors_added > 0);
+	BUG_ON(io->op.sectors_added >= (s64) PAGE_SECTORS);
 
 	/*
 	 * PageWriteback is effectively our ref on the inode - fixup i_blocks
