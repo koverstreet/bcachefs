@@ -550,6 +550,9 @@ static void bch_journal_read_device(struct closure *cl)
 	unsigned i, l, r;
 	u64 seq = 0;
 
+	if (!nr_buckets)
+		closure_return(cl);
+
 	bitmap_zero(bitmap, nr_buckets);
 	pr_debug("%u journal buckets", nr_buckets);
 
