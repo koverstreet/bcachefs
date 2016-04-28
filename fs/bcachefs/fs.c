@@ -1190,6 +1190,12 @@ static struct cache_set *bch_open_as_blockdevs(const char *_dev_name,
 		if (!c)
 			goto err_unlock;
 
+		if (!test_bit(CACHE_SET_RUNNING, &c->flags)) {
+			err = "incomplete cache set";
+			c = NULL;
+			goto err_unlock;
+		}
+
 		closure_get(&c->cl);
 		mutex_unlock(&bch_register_lock);
 	}
