@@ -22,11 +22,12 @@ enum bch_write_flags {
 	BCH_WRITE_CACHED		= (1 << 2),
 	BCH_WRITE_FLUSH			= (1 << 3),
 	BCH_WRITE_DISCARD_ON_ERROR	= (1 << 4),
+	BCH_WRITE_DATA_COMPRESSED	= (1 << 5),
 
 	/* Internal: */
-	BCH_WRITE_JOURNAL_SEQ_PTR	= (1 << 5),
-	BCH_WRITE_DONE			= (1 << 6),
-	BCH_WRITE_LOOPED		= (1 << 7),
+	BCH_WRITE_JOURNAL_SEQ_PTR	= (1 << 6),
+	BCH_WRITE_DONE			= (1 << 7),
+	BCH_WRITE_LOOPED		= (1 << 8),
 };
 
 static inline u64 *op_journal_seq(struct bch_write_op *op)

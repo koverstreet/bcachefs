@@ -1466,9 +1466,7 @@ static int journal_write_alloc(struct journal *j, unsigned sectors)
 		    ca->journal.sectors_free <= sectors)
 			__bch_extent_drop_ptr(e, ptr);
 
-	replicas = 0;
-	extent_for_each_ptr(e, ptr)
-		replicas++;
+	replicas = bch_extent_nr_ptrs(e.c);
 
 	/*
 	 * Determine location of the next journal write:

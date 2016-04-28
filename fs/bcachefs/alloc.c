@@ -1420,6 +1420,7 @@ void bch_alloc_sectors_done(struct cache_set *c, struct write_point *wp,
 	 * XXX: don't add pointers to devices @e already has
 	 */
 	BUG_ON(nr_replicas > ob->nr_ptrs);
+	BUG_ON(sectors > ob->sectors_free);
 
 	/* didn't use all the ptrs: */
 	if (nr_replicas < ob->nr_ptrs)

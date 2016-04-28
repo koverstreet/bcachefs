@@ -95,9 +95,11 @@ struct bch_write_op {
 
 	short			error;
 
-	u8			flags;
+	u16			flags;
 	unsigned		compression_type:4;
 	unsigned		nr_replicas:4;
+
+	struct bch_extent_crc64	crc;
 
 	struct disk_reservation	res;
 
