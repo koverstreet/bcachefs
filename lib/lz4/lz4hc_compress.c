@@ -67,7 +67,7 @@ static inline void lz4hc_insert(struct lz4hc_data *hc4, const u8 *ip)
 	u16 *chaintable = hc4->chaintable;
 	HTYPE *hashtable  = hc4->hashtable;
 #if LZ4_ARCH64
-	const BYTE * const base = hc4->base;
+	const u8 * const base = hc4->base;
 #else
 	const int base = 0;
 #endif
@@ -83,41 +83,6 @@ static inline void lz4hc_insert(struct lz4hc_data *hc4, const u8 *ip)
 	}
 }
 
-static inline size_t lz4hc_commonlength(const u8 *p1, const u8 *p2,
-		const u8 *const matchlimit)
-{
-	const u8 *p1t = p1;
-
-	while (p1t < matchlimit - (STEPSIZE - 1)) {
-#if LZ4_ARCH64
-		u64 diff = A64(p2) ^ A64(p1t);
-#else
-		u32 diff = A32(p2) ^ A32(p1t);
-#endif
-		if (!diff) {
-			p1t += STEPSIZE;
-			p2 += STEPSIZE;
-			continue;
-		}
-		p1t += LZ4_NBCOMMONBYTES(diff);
-		return p1t - p1;
-	}
-#if LZ4_ARCH64
-	if ((p1t < (matchlimit-3)) && (A32(p2) == A32(p1t))) {
-		p1t += 4;
-		p2 += 4;
-	}
-#endif
-
-	if ((p1t < (matchlimit - 1)) && (A16(p2) == A16(p1t))) {
-		p1t += 2;
-		p2 += 2;
-	}
-	if ((p1t < matchlimit) && (*p2 == *p1t))
-		p1t++;
-	return p1t - p1;
-}
-
 static inline int lz4hc_insertandfindbestmatch(struct lz4hc_data *hc4,
 		const u8 *ip, const u8 *const matchlimit, const u8 **matchpos)
 {
@@ -125,7 +90,7 @@ static inline int lz4hc_insertandfindbestmatch(struct lz4hc_data *hc4,
 	HTYPE *const hashtable = hc4->hashtable;
 	const u8 *ref;
 #if LZ4_ARCH64
-	const BYTE * const base = hc4->base;
+	const u8 * const base = hc4->base;
 #else
 	const int base = 0;
 #endif
@@ -142,7 +107,7 @@ static inline int lz4hc_insertandfindbestmatch(struct lz4hc_data *hc4,
 		/* confirmed */
 		if (A32(ref) == A32(ip)) {
 			delta = (u16)(ip-ref);
-			repl = ml  = lz4hc_commonlength(ip + MINMATCH,
+			repl = ml  = common_length(ip + MINMATCH,
 					ref + MINMATCH, matchlimit) + MINMATCH;
 			*matchpos = ref;
 		}
@@ -154,7 +119,7 @@ static inline int lz4hc_insertandfindbestmatch(struct lz4hc_data *hc4,
 		if (*(ref + ml) == *(ip + ml)) {
 			if (A32(ref) == A32(ip)) {
 				size_t mlt =
-					lz4hc_commonlength(ip + MINMATCH,
+					common_length(ip + MINMATCH,
 					ref + MINMATCH, matchlimit) + MINMATCH;
 				if (mlt > ml) {
 					ml = mlt;
@@ -167,8 +132,8 @@ static inline int lz4hc_insertandfindbestmatch(struct lz4hc_data *hc4,
 
 	/* Complete table */
 	if (repl) {
-		const BYTE *ptr = ip;
-		const BYTE *end;
+		const u8 *ptr = ip;
+		const u8 *end;
 		end = ip + repl - (MINMATCH-1);
 		/* Pre-Load */
 		while (ptr < end - delta) {
@@ -194,7 +159,7 @@ static inline int lz4hc_insertandgetwidermatch(struct lz4hc_data *hc4,
 	u16 *const chaintable = hc4->chaintable;
 	HTYPE *const hashtable = hc4->hashtable;
 #if LZ4_ARCH64
-	const BYTE * const base = hc4->base;
+	const u8 * const base = hc4->base;
 #else
 	const int base = 0;
 #endif
@@ -211,51 +176,23 @@ static inline int lz4hc_insertandgetwidermatch(struct lz4hc_data *hc4,
 		nbattempts--;
 		if (*(startlimit + longest) == *(ref - delta + longest)) {
 			if (A32(ref) == A32(ip)) {
-				const u8 *reft = ref + MINMATCH;
-				const u8 *ipt = ip + MINMATCH;
+				const u8 *reft = ref;
 				const u8 *startt = ip;
-
-				while (ipt < matchlimit-(STEPSIZE - 1)) {
-					#if LZ4_ARCH64
-					u64 diff = A64(reft) ^ A64(ipt);
-					#else
-					u32 diff = A32(reft) ^ A32(ipt);
-					#endif
-
-					if (!diff) {
-						ipt += STEPSIZE;
-						reft += STEPSIZE;
-						continue;
-					}
-					ipt += LZ4_NBCOMMONBYTES(diff);
-					goto _endcount;
-				}
-				#if LZ4_ARCH64
-				if ((ipt < (matchlimit - 3))
-					&& (A32(reft) == A32(ipt))) {
-					ipt += 4;
-					reft += 4;
-				}
-				ipt += 2;
-				#endif
-				if ((ipt < (matchlimit - 1))
-					&& (A16(reft) == A16(ipt))) {
-					reft += 2;
-				}
-				if ((ipt < matchlimit) && (*reft == *ipt))
-					ipt++;
-_endcount:
-				reft = ref;
+				unsigned length =
+					common_length(ip + MINMATCH,
+						      ref + MINMATCH,
+						      matchlimit);
 
 				while ((startt > startlimit)
 					&& (reft > hc4->base)
 					&& (startt[-1] == reft[-1])) {
 					startt--;
 					reft--;
+					length++;
 				}
 
-				if ((ipt - startt) > longest) {
-					longest = (int)(ipt - startt);
+				if (length > longest) {
+					longest = length;
 					*matchpos = reft;
 					*startpos = startt;
 				}
@@ -269,43 +206,21 @@ _endcount:
 static inline int lz4_encodesequence(const u8 **ip, u8 **op, const u8 **anchor,
 		int ml, const u8 *ref)
 {
-	int length, len;
+	unsigned length;
 	u8 *token;
 
 	/* Encode Literal length */
-	length = (int)(*ip - *anchor);
+	length = *ip - *anchor;
 	token = (*op)++;
-	if (length >= (int)RUN_MASK) {
-		*token = (RUN_MASK << ML_BITS);
-		len = length - RUN_MASK;
-		for (; len > 254 ; len -= 255)
-			*(*op)++ = 255;
-		*(*op)++ = (u8)len;
-	} else
-		*token = (length << ML_BITS);
+	*token = encode_length(op, length) << ML_BITS;
 
 	/* Copy Literals */
-	LZ4_BLINDCOPY(*anchor, *op, length);
+	MEMCPY_ADVANCE_CHUNKED(*op, *anchor, length);
 
 	/* Encode Offset */
-	LZ4_WRITE_LITTLEENDIAN_16(*op, (u16)(*ip - ref));
+	PUT_LE16_ADVANCE(*op, (u16)(*ip - ref));
 
-	/* Encode MatchLength */
-	len = (int)(ml - MINMATCH);
-	if (len >= (int)ML_MASK) {
-		*token += ML_MASK;
-		len -= ML_MASK;
-		for (; len > 509 ; len -= 510) {
-			*(*op)++ = 255;
-			*(*op)++ = 255;
-		}
-		if (len > 254) {
-			len -= 255;
-			*(*op)++ = 255;
-		}
-		*(*op)++ = (u8)len;
-	} else
-		*token += len;
+	*token += encode_length(op, ml - MINMATCH);
 
 	/* Prepare next loop */
 	*ip += ml;

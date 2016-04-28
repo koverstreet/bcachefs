@@ -43,111 +43,99 @@
 #endif
 #include <linux/lz4.h>
 
-#include <asm/unaligned.h>
-
 #include "lz4defs.h"
 
-static const int dec32table[] = {0, 3, 2, 3, 0, 0, 0, 0};
+static const int dec32table[8] = {0, 3, 2, 3, 0, 0, 0, 0};
 #if LZ4_ARCH64
-static const int dec64table[] = {0, 0, 0, -1, 0, 1, 2, 3};
+static const int dec64table[8] = {0, 0, 0, -1, 0, 1, 2, 3};
+#else
+static const int dec64table[8] = {0, 0, 0, 0, 0, 0, 0, 0};
 #endif
 
-static int lz4_uncompress(const char *source, char *dest, int osize)
+static inline size_t get_length(const u8 **ip, size_t length)
 {
-	const BYTE *ip = (const BYTE *) source;
-	const BYTE *ref;
-	BYTE *op = (BYTE *) dest;
-	BYTE * const oend = op + osize;
-	BYTE *cpy;
-	unsigned token;
-	size_t length;
+	if (length == LENGTH_LONG) {
+		size_t len;
+
+		do {
+			length += (len = *(*ip)++);
+		} while (len == 255);
+	}
+
+	return length;
+}
+
+static int lz4_uncompress(const u8 *source, u8 *dest, int osize)
+{
+	const u8 *ip = source;
+	const u8 *ref;
+	u8 *op = dest;
+	u8 * const oend = op + osize;
+	u8 *cpy;
+	unsigned token, offset;
+	ssize_t length;
 
 	while (1) {
-
 		/* get runlength */
 		token = *ip++;
-		length = (token >> ML_BITS);
-		if (length == RUN_MASK) {
-			size_t len;
-
-			len = *ip++;
-			for (; len == 255; length += 255)
-				len = *ip++;
-			if (unlikely(length > (size_t)(length + len)))
-				goto _output_error;
-			length += len;
-		}
+		length = get_length(&ip, token >> ML_BITS);
 
 		/* copy literals */
-		cpy = op + length;
-		if (unlikely(cpy > oend - COPYLENGTH)) {
+		if (unlikely(op + length > oend - COPYLENGTH)) {
 			/*
 			 * Error: not enough place for another match
 			 * (min 4) + 5 literals
 			 */
-			if (cpy != oend)
+			if (op + length != oend)
 				goto _output_error;
 
-			memcpy(op, ip, length);
-			ip += length;
+			MEMCPY_ADVANCE(op, ip, length);
 			break; /* EOF */
 		}
-		LZ4_WILDCOPY(ip, op, cpy);
-		ip -= (op - cpy);
-		op = cpy;
+		MEMCPY_ADVANCE_CHUNKED(op, ip, length);
 
-		/* get offset */
-		LZ4_READ_LITTLEENDIAN_16(ref, cpy, ip);
-		ip += 2;
+		/* get match offset */
+		offset = GET_LE16_ADVANCE(ip);
+		ref = op - offset;
 
 		/* Error: offset create reference outside destination buffer */
-		if (unlikely(ref < (BYTE *const) dest))
+		if (unlikely(ref < (u8 *const) dest))
 			goto _output_error;
 
-		/* get matchlength */
-		length = token & ML_MASK;
-		if (length == ML_MASK) {
-			for (; *ip == 255; length += 255)
-				ip++;
-			if (unlikely(length > (size_t)(length + *ip)))
-				goto _output_error;
-			length += *ip++;
-		}
+		/* get match length */
+		length = get_length(&ip, token & ML_MASK);
+		length += MINMATCH;
 
-		/* copy repeated sequence */
-		if (unlikely((op - ref) < STEPSIZE)) {
-#if LZ4_ARCH64
-			int dec64 = dec64table[op - ref];
-#else
-			const int dec64 = 0;
-#endif
-			op[0] = ref[0];
-			op[1] = ref[1];
-			op[2] = ref[2];
-			op[3] = ref[3];
-			op += 4;
-			ref += 4;
-			ref -= dec32table[op-ref];
-			PUT4(ref, op);
+		/* copy first STEPSIZE bytes of match: */
+		if (unlikely(offset < STEPSIZE)) {
+			MEMCPY_ADVANCE_BYTES(op, ref, 4);
+			ref -= dec32table[offset];
+
+			memcpy(op, ref, 4);
 			op += STEPSIZE - 4;
-			ref -= dec64;
+			ref -= dec64table[offset];
 		} else {
-			LZ4_COPYSTEP(ref, op);
+			MEMCPY_ADVANCE(op, ref, STEPSIZE);
 		}
-		cpy = op + length - (STEPSIZE - 4);
-		if (cpy > (oend - COPYLENGTH)) {
+		length -= STEPSIZE;
+		/*
+		 * Note - length could have been < STEPSIZE; that's ok, length
+		 * will now be negative and we'll just end up rewinding op:
+		 */
 
+		/* copy rest of match: */
+		cpy = op + length;
+		if (cpy > oend - COPYLENGTH) {
 			/* Error: request to write beyond destination buffer */
-			if (cpy > oend)
+			if (cpy              > oend ||
+			    ref + COPYLENGTH > oend)
 				goto _output_error;
-#if LZ4_ARCH64
-			if ((ref + COPYLENGTH) > oend)
-#else
-			if ((ref + COPYLENGTH) > oend ||
-					(op + COPYLENGTH) > oend)
+#if !LZ4_ARCH64
+			if (op  + COPYLENGTH > oend)
+				goto _output_error;
 #endif
-				goto _output_error;
-			LZ4_SECURECOPY(ref, op, (oend - COPYLENGTH));
+			MEMCPY_ADVANCE_CHUNKED_NOFIXUP(op, ref, oend - COPYLENGTH);
+			/* op could be > cpy here */
 			while (op < cpy)
 				*op++ = *ref++;
 			op = cpy;
@@ -157,55 +145,60 @@ static int lz4_uncompress(const char *source, char *dest, int osize)
 			 */
 			if (op == oend)
 				goto _output_error;
-			continue;
+		} else {
+			MEMCPY_ADVANCE_CHUNKED(op, ref, length);
 		}
-		LZ4_SECURECOPY(ref, op, cpy);
-		op = cpy; /* correction */
 	}
 	/* end of decoding */
-	return (int) (((char *)ip) - source);
+	return ip - source;
 
 	/* write overflow error detected */
 _output_error:
 	return -1;
 }
 
-static int lz4_uncompress_unknownoutputsize(const char *source, char *dest,
+static inline ssize_t get_length_safe(const u8 **ip, ssize_t length)
+{
+	if (length == 15) {
+		size_t len;
+
+		do {
+			length += (len = *(*ip)++);
+			if (unlikely((ssize_t) length < 0))
+				return -1;
+
+			length += len;
+		} while (len == 255);
+	}
+
+	return length;
+}
+
+static int lz4_uncompress_unknownoutputsize(const u8 *source, u8 *dest,
 				int isize, size_t maxoutputsize)
 {
-	const BYTE *ip = (const BYTE *) source;
-	const BYTE *const iend = ip + isize;
-	const BYTE *ref;
-
-
-	BYTE *op = (BYTE *) dest;
-	BYTE * const oend = op + maxoutputsize;
-	BYTE *cpy;
+	const u8 *ip = source;
+	const u8 *const iend = ip + isize;
+	const u8 *ref;
+	u8 *op = dest;
+	u8 * const oend = op + maxoutputsize;
+	u8 *cpy;
+	unsigned token, offset;
+	size_t length;
 
 	/* Main Loop */
 	while (ip < iend) {
-
-		unsigned token;
-		size_t length;
-
 		/* get runlength */
 		token = *ip++;
-		length = (token >> ML_BITS);
-		if (length == RUN_MASK) {
-			int s = 255;
-			while ((ip < iend) && (s == 255)) {
-				s = *ip++;
-				if (unlikely(length > (size_t)(length + s)))
-					goto _output_error;
-				length += s;
-			}
-		}
-		/* copy literals */
-		cpy = op + length;
-		if ((cpy > oend - COPYLENGTH) ||
-			(ip + length > iend - COPYLENGTH)) {
+		length = get_length_safe(&ip, token >> ML_BITS);
+		if (unlikely((ssize_t) length < 0))
+			goto _output_error;
 
-			if (cpy > oend)
+		/* copy literals */
+		if ((op + length > oend - COPYLENGTH) ||
+		    (ip + length > iend - COPYLENGTH)) {
+
+			if (op + length > oend)
 				goto _output_error;/* writes beyond buffer */
 
 			if (ip + length != iend)
@@ -214,70 +207,51 @@ static int lz4_uncompress_unknownoutputsize(const char *source, char *dest,
 						    * to consume all input
 						    * at this stage
 						    */
-			memcpy(op, ip, length);
-			op += length;
+			MEMCPY_ADVANCE(op, ip, length);
 			break;/* Necessarily EOF, due to parsing restrictions */
 		}
-		LZ4_WILDCOPY(ip, op, cpy);
-		ip -= (op - cpy);
-		op = cpy;
+		MEMCPY_ADVANCE_CHUNKED(op, ip, length);
 
-		/* get offset */
-		LZ4_READ_LITTLEENDIAN_16(ref, cpy, ip);
-		ip += 2;
-		if (ref < (BYTE * const) dest)
+		/* get match offset */
+		offset = GET_LE16_ADVANCE(ip);
+		ref = op - offset;
+
+		/* Error: offset create reference outside destination buffer */
+		if (ref < (u8 * const) dest)
 			goto _output_error;
-			/*
-			 * Error : offset creates reference
-			 * outside of destination buffer
-			 */
 
-		/* get matchlength */
-		length = (token & ML_MASK);
-		if (length == ML_MASK) {
-			while (ip < iend) {
-				int s = *ip++;
-				if (unlikely(length > (size_t)(length + s)))
-					goto _output_error;
-				length += s;
-				if (s == 255)
-					continue;
-				break;
-			}
-		}
+		/* get match length */
+		length = get_length_safe(&ip, token & ML_MASK);
+		if (unlikely((ssize_t) length < 0))
+			goto _output_error;
 
-		/* copy repeated sequence */
-		if (unlikely((op - ref) < STEPSIZE)) {
-#if LZ4_ARCH64
-			int dec64 = dec64table[op - ref];
-#else
-			const int dec64 = 0;
-#endif
-				op[0] = ref[0];
-				op[1] = ref[1];
-				op[2] = ref[2];
-				op[3] = ref[3];
-				op += 4;
-				ref += 4;
-				ref -= dec32table[op - ref];
-				PUT4(ref, op);
-				op += STEPSIZE - 4;
-				ref -= dec64;
+		length += MINMATCH;
+
+		/* copy first STEPSIZE bytes of match: */
+		if (unlikely(offset < STEPSIZE)) {
+			MEMCPY_ADVANCE_BYTES(op, ref, 4);
+			ref -= dec32table[offset];
+
+			memcpy(op, ref, 4);
+			op += STEPSIZE - 4;
+			ref -= dec64table[offset];
 		} else {
-			LZ4_COPYSTEP(ref, op);
+			MEMCPY_ADVANCE(op, ref, STEPSIZE);
 		}
-		cpy = op + length - (STEPSIZE-4);
+		length -= STEPSIZE;
+
+		/* copy rest of match: */
+		cpy = op + length;
 		if (cpy > oend - COPYLENGTH) {
-			if (cpy > oend)
-				goto _output_error; /* write outside of buf */
-#if LZ4_ARCH64
-			if ((ref + COPYLENGTH) > oend)
-#else
-			if ((ref + COPYLENGTH) > oend ||
-					(op + COPYLENGTH) > oend)
-#endif
+			/* Error: request to write beyond destination buffer */
+			if (cpy              > oend ||
+			    ref + COPYLENGTH > oend)
 				goto _output_error;
-			LZ4_SECURECOPY(ref, op, (oend - COPYLENGTH));
+#if !LZ4_ARCH64
+			if (op  + COPYLENGTH > oend)
+				goto _output_error;
+#endif
+			MEMCPY_ADVANCE_CHUNKED_NOFIXUP(op, ref, oend - COPYLENGTH);
 			while (op < cpy)
 				*op++ = *ref++;
 			op = cpy;
@@ -287,13 +261,12 @@ static int lz4_uncompress_unknownoutputsize(const char *source, char *dest,
 			 */
 			if (op == oend)
 				goto _output_error;
-			continue;
+		} else {
+			MEMCPY_ADVANCE_CHUNKED(op, ref, length);
 		}
-		LZ4_SECURECOPY(ref, op, cpy);
-		op = cpy; /* correction */
 	}
 	/* end of decoding */
-	return (int) (((char *) op) - dest);
+	return op - dest;
 
 	/* write overflow error detected */
 _output_error:

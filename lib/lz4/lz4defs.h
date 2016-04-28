@@ -17,141 +17,164 @@
 #define LZ4_ARCH64 0
 #endif
 
+#include <asm/unaligned.h>
+
+#define A32(_p) get_unaligned((u32 *) (_p))
+#define A16(_p) get_unaligned((u16 *) (_p))
+
+#define GET_LE16_ADVANCE(_src)				\
+({							\
+	u16 _r = get_unaligned_le16(_src);		\
+	(_src) += 2;					\
+	_r;						\
+})
+
+#define PUT_LE16_ADVANCE(_dst, _v)			\
+do {							\
+	put_unaligned_le16((_v), (_dst));		\
+	(_dst) += 2;					\
+} while (0)
+
+#define LENGTH_LONG		15
+#define COPYLENGTH		8
+#define ML_BITS			4
+#define ML_MASK			((1U << ML_BITS) - 1)
+#define RUN_BITS		(8 - ML_BITS)
+#define RUN_MASK		((1U << RUN_BITS) - 1)
+#define MEMORY_USAGE		14
+#define MINMATCH		4
+#define SKIPSTRENGTH		6
+#define LASTLITERALS		5
+#define MFLIMIT			(COPYLENGTH + MINMATCH)
+#define MINLENGTH		(MFLIMIT + 1)
+#define MAXD_LOG		16
+#define MAXD			(1 << MAXD_LOG)
+#define MAXD_MASK		(u32)(MAXD - 1)
+#define MAX_DISTANCE		(MAXD - 1)
+#define HASH_LOG		(MAXD_LOG - 1)
+#define HASHTABLESIZE		(1 << HASH_LOG)
+#define MAX_NB_ATTEMPTS		256
+#define OPTIMAL_ML		(int)((ML_MASK-1)+MINMATCH)
+#define LZ4_64KLIMIT		((1<<16) + (MFLIMIT - 1))
+
+#define __HASH_VALUE(p, bits)				\
+	(((A32(p)) * 2654435761U) >> (32 - (bits)))
+
+#define HASH_VALUE(p)		__HASH_VALUE(p, HASH_LOG)
+
+#define MEMCPY_ADVANCE(_dst, _src, length)		\
+do {							\
+	typeof(length) _length = (length);		\
+	memcpy(_dst, _src, _length);			\
+	_src += _length;				\
+	_dst += _length;				\
+} while (0)
+
+#define MEMCPY_ADVANCE_BYTES(_dst, _src, _length)	\
+do {							\
+	const u8 *_end = (_src) + (_length);		\
+	while ((_src) < _end)				\
+		*_dst++ = *_src++;			\
+} while (0)
+
+#define STEPSIZE		__SIZEOF_LONG__
+
+#define LZ4_COPYPACKET(_src, _dst)			\
+do {							\
+	MEMCPY_ADVANCE(_dst, _src, STEPSIZE);		\
+	MEMCPY_ADVANCE(_dst, _src, COPYLENGTH - STEPSIZE);\
+} while (0)
+
 /*
- * Architecture-specific macros
+ * Equivalent to MEMCPY_ADVANCE - except may overrun @_dst and @_src by
+ * COPYLENGTH:
+ *
+ * Note: src and dst may overlap (with src < dst) - we must do the copy in
+ * STEPSIZE chunks for correctness
+ *
+ * Note also: length may be negative - we must not call memcpy if length is
+ * negative, but still adjust dst and src by length
  */
-#define BYTE	u8
-typedef struct _U16_S { u16 v; } U16_S;
-typedef struct _U32_S { u32 v; } U32_S;
-typedef struct _U64_S { u64 v; } U64_S;
-#if defined(CONFIG_HAVE_EFFICIENT_UNALIGNED_ACCESS)
+#define MEMCPY_ADVANCE_CHUNKED(_dst, _src, _length)	\
+do {							\
+	u8 *_end = (_dst) + (_length);			\
+	while ((_dst) < _end)				\
+		LZ4_COPYPACKET(_src, _dst);		\
+	_src -= (_dst) - _end;				\
+	_dst = _end;					\
+} while (0)
 
-#define A16(x) (((U16_S *)(x))->v)
-#define A32(x) (((U32_S *)(x))->v)
-#define A64(x) (((U64_S *)(x))->v)
+#define MEMCPY_ADVANCE_CHUNKED_NOFIXUP(_dst, _src, _end)\
+do {							\
+	while ((_dst) < (_end))				\
+		LZ4_COPYPACKET((_src), (_dst));		\
+} while (0)
 
-#define PUT4(s, d) (A32(d) = A32(s))
-#define PUT8(s, d) (A64(d) = A64(s))
-
-#define LZ4_READ_LITTLEENDIAN_16(d, s, p)	\
-	(d = s - A16(p))
-
-#define LZ4_WRITE_LITTLEENDIAN_16(p, v)	\
-	do {	\
-		A16(p) = v; \
-		p += 2; \
-	} while (0)
-#else /* CONFIG_HAVE_EFFICIENT_UNALIGNED_ACCESS */
-
-#define A64(x) get_unaligned((u64 *)&(((U16_S *)(x))->v))
-#define A32(x) get_unaligned((u32 *)&(((U16_S *)(x))->v))
-#define A16(x) get_unaligned((u16 *)&(((U16_S *)(x))->v))
-
-#define PUT4(s, d) \
-	put_unaligned(get_unaligned((const u32 *) s), (u32 *) d)
-#define PUT8(s, d) \
-	put_unaligned(get_unaligned((const u64 *) s), (u64 *) d)
-
-#define LZ4_READ_LITTLEENDIAN_16(d, s, p)	\
-	(d = s - get_unaligned_le16(p))
-
-#define LZ4_WRITE_LITTLEENDIAN_16(p, v)			\
-	do {						\
-		put_unaligned_le16(v, (u16 *)(p));	\
-		p += 2;					\
-	} while (0)
+struct lz4_hashtable {
+#if LZ4_ARCH64
+	const u8 * const	base;
+	u32			*table;
+#else
+	const int		base;
+	const u8		*table;
 #endif
+};
 
-#define COPYLENGTH 8
-#define ML_BITS  4
-#define ML_MASK  ((1U << ML_BITS) - 1)
-#define RUN_BITS (8 - ML_BITS)
-#define RUN_MASK ((1U << RUN_BITS) - 1)
-#define MEMORY_USAGE	14
-#define MINMATCH	4
-#define SKIPSTRENGTH	6
-#define LASTLITERALS	5
-#define MFLIMIT		(COPYLENGTH + MINMATCH)
-#define MINLENGTH	(MFLIMIT + 1)
-#define MAXD_LOG	16
-#define MAXD		(1 << MAXD_LOG)
-#define MAXD_MASK	(u32)(MAXD - 1)
-#define MAX_DISTANCE	(MAXD - 1)
-#define HASH_LOG	(MAXD_LOG - 1)
-#define HASHTABLESIZE	(1 << HASH_LOG)
-#define MAX_NB_ATTEMPTS	256
-#define OPTIMAL_ML	(int)((ML_MASK-1)+MINMATCH)
-#define LZ4_64KLIMIT	((1<<16) + (MFLIMIT - 1))
-#define HASHLOG64K	((MEMORY_USAGE - 2) + 1)
-#define HASH64KTABLESIZE	(1U << HASHLOG64K)
-#define LZ4_HASH_VALUE(p)	(((A32(p)) * 2654435761U) >> \
-				((MINMATCH * 8) - (MEMORY_USAGE-2)))
-#define LZ4_HASH64K_VALUE(p)	(((A32(p)) * 2654435761U) >> \
-				((MINMATCH * 8) - HASHLOG64K))
-#define HASH_VALUE(p)		(((A32(p)) * 2654435761U) >> \
-				((MINMATCH * 8) - HASH_LOG))
-
-#if LZ4_ARCH64/* 64-bit */
-#define STEPSIZE 8
-
-#define LZ4_COPYSTEP(s, d)	\
-	do {			\
-		PUT8(s, d);	\
-		d += 8;		\
-		s += 8;		\
-	} while (0)
-
-#define LZ4_COPYPACKET(s, d)	LZ4_COPYSTEP(s, d)
-
-#define LZ4_SECURECOPY(s, d, e)			\
-	do {					\
-		if (d < e) {			\
-			LZ4_WILDCOPY(s, d, e);	\
-		}				\
-	} while (0)
+#if LZ4_ARCH64
 #define HTYPE u32
-
-#ifdef __BIG_ENDIAN
-#define LZ4_NBCOMMONBYTES(val) (__builtin_clzll(val) >> 3)
-#else
-#define LZ4_NBCOMMONBYTES(val) (__builtin_ctzll(val) >> 3)
-#endif
-
 #else	/* 32-bit */
-#define STEPSIZE 4
-
-#define LZ4_COPYSTEP(s, d)	\
-	do {			\
-		PUT4(s, d);	\
-		d += 4;		\
-		s += 4;		\
-	} while (0)
-
-#define LZ4_COPYPACKET(s, d)		\
-	do {				\
-		LZ4_COPYSTEP(s, d);	\
-		LZ4_COPYSTEP(s, d);	\
-	} while (0)
-
-#define LZ4_SECURECOPY	LZ4_WILDCOPY
 #define HTYPE const u8*
+#endif
 
 #ifdef __BIG_ENDIAN
-#define LZ4_NBCOMMONBYTES(val) (__builtin_clz(val) >> 3)
+#define LZ4_NBCOMMONBYTES(val) (__builtin_clzl(val) >> 3)
 #else
-#define LZ4_NBCOMMONBYTES(val) (__builtin_ctz(val) >> 3)
+#define LZ4_NBCOMMONBYTES(val) (__builtin_ctzl(val) >> 3)
 #endif
 
+static inline unsigned common_length(const u8 *l, const u8 *r,
+				     const u8 *const l_end)
+{
+	const u8 *l_start = l;
+
+	while (likely(l <= l_end - sizeof(long))) {
+		unsigned long diff =
+			get_unaligned((unsigned long *) l) ^
+			get_unaligned((unsigned long *) r);
+
+		if (diff)
+			return l + LZ4_NBCOMMONBYTES(diff) - l_start;
+
+		l += sizeof(long);
+		r += sizeof(long);
+	}
+#if LZ4_ARCH64
+	if (l <= l_end - 4 && A32(r) == A32(l)) {
+		l += 4;
+		r += 4;
+	}
 #endif
+	if (l <= l_end - 2 && A16(r) == A16(l)) {
+		l += 2;
+		r += 2;
+	}
+	if (l <= l_end - 1 && *r == *l) {
+		l++;
+		r++;
+	}
 
-#define LZ4_WILDCOPY(s, d, e)		\
-	do {				\
-		LZ4_COPYPACKET(s, d);	\
-	} while (d < e)
+	return l - l_start;
+}
 
-#define LZ4_BLINDCOPY(s, d, l)	\
-	do {	\
-		u8 *e = (d) + l;	\
-		LZ4_WILDCOPY(s, d, e);	\
-		d = e;	\
-	} while (0)
+static inline unsigned encode_length(u8 **op, unsigned length)
+{
+	if (length >= LENGTH_LONG) {
+		length -= LENGTH_LONG;
+
+		for (; length > 254 ; length -= 255)
+			*(*op)++ = 255;
+		*(*op)++ = length;
+		return LENGTH_LONG;
+	} else
+		return length;
+}
