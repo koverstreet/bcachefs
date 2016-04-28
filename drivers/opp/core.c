@@ -1328,11 +1328,13 @@ struct opp_table *dev_pm_opp_set_regulators(struct device *dev,
 	if (!opp_table)
 		return ERR_PTR(-ENOMEM);
 
+#if 0
 	/* This should be called before OPPs are initialized */
 	if (WARN_ON(!list_empty(&opp_table->opp_list))) {
 		ret = -EBUSY;
 		goto err;
 	}
+#endif
 
 	/* Already have regulators set */
 	if (opp_table->regulators) {
