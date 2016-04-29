@@ -168,7 +168,7 @@ static inline int lz4_compressctx(const struct lz4_hash_table hash,
 		/* check output limit */
 		if (unlikely(op + length + (2 + 1 + LASTLITERALS) +
 			     (length >> 8) > oend))
-			return 0;
+			return -1;
 
 		*token = encode_length(&op, length) << ML_BITS;
 
@@ -190,7 +190,7 @@ static inline int lz4_compressctx(const struct lz4_hash_table hash,
 			/* Check output limit */
 			if (unlikely(op + (1 + LASTLITERALS) +
 				     (length >> 8) > oend))
-				return 0;
+				return -1;
 
 			*token += encode_length(&op, length);
 
@@ -218,7 +218,7 @@ _last_literals:
 	length = iend - anchor;
 	if ((op - dest) + length + 1 +
 	    ((length + 255 - RUN_MASK) / 255) > (u32)maxoutputsize)
-		return 0;
+		return -1;
 
 	token = op++;
 	*token = encode_length(&op, length) << ML_BITS;
@@ -241,8 +241,7 @@ int lz4_compress(const unsigned char *src, size_t src_len,
 			.base	= src,
 		};
 
-		out_len = lz4_compressctx(hash, src, dst, src_len,
-					  lz4_compressbound(src_len));
+		out_len = lz4_compressctx(hash, src, dst, src_len, *dst_len);
 	} else {
 		const struct lz4_hash_table hash = {
 			.add	= hash_table_add32,
@@ -250,8 +249,7 @@ int lz4_compress(const unsigned char *src, size_t src_len,
 			.base	= src,
 		};
 
-		out_len = lz4_compressctx(hash, src, dst, src_len,
-					  lz4_compressbound(src_len));
+		out_len = lz4_compressctx(hash, src, dst, src_len, *dst_len);
 	}
 
 	if (out_len < 0)
