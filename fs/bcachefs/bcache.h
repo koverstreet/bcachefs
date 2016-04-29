@@ -730,6 +730,7 @@ struct cache_set {
 	struct mutex		bio_bounce_pages_lock;
 	mempool_t		bio_bounce_pages;
 	mempool_t		compression_workspace_pool;
+	mempool_t		compression_bounce[2];
 	struct bio_decompress_worker __percpu
 				*bio_decompress_worker;
 

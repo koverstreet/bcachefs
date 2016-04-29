@@ -904,6 +904,8 @@ static void cache_set_free(struct cache_set *c)
 	free_percpu(c->bucket_stats_lock.lock);
 	free_percpu(c->bucket_stats_percpu);
 	free_percpu(c->bio_decompress_worker);
+	mempool_exit(&c->compression_bounce[WRITE]);
+	mempool_exit(&c->compression_bounce[READ]);
 	mempool_exit(&c->compression_workspace_pool);
 	mempool_exit(&c->bio_bounce_pages);
 	bioset_exit(&c->bio_write);
@@ -1169,6 +1171,10 @@ static struct cache_set *bch_cache_set_alloc(struct cache_sb *sb,
 				   CRC32_EXTENT_SIZE_MAX / PAGE_SECTORS, 0) ||
 	    mempool_init_page_pool(&c->compression_workspace_pool, 1,
 				   get_order(COMPRESSION_WORKSPACE_SIZE)) ||
+	    mempool_init_page_pool(&c->compression_bounce[READ], 1,
+				   get_order(BCH_COMPRESSED_EXTENT_MAX << 9)) ||
+	    mempool_init_page_pool(&c->compression_bounce[WRITE], 1,
+				   get_order(BCH_COMPRESSED_EXTENT_MAX << 9)) ||
 	    !(c->bio_decompress_worker = alloc_percpu(*c->bio_decompress_worker)) ||
 	    !(c->bucket_stats_percpu = alloc_percpu(struct bucket_stats_cache_set)) ||
 	    !(c->bucket_stats_lock.lock = alloc_percpu(*c->bucket_stats_lock.lock)) ||
