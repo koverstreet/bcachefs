@@ -203,9 +203,10 @@ static struct cache_member_cpu cache_mi_to_cpu_mi(struct cache_member *mi)
 	};
 }
 
-static const char *validate_cache_super(struct cache_set *c, struct cache *ca)
+static const char *validate_cache_super(struct bcache_superblock *disk_sb)
 {
-	struct cache_sb *sb = ca->disk_sb.sb;
+	struct cache_sb *sb = disk_sb->sb;
+	struct cache_member_cpu	mi;
 	u16 block_size;
 	unsigned i;
 
@@ -276,34 +277,32 @@ static const char *validate_cache_super(struct cache_set *c, struct cache *ca)
 	if (le16_to_cpu(sb->u64s) < bch_journal_buckets_offset(sb))
 		return "Invalid superblock: member info area missing";
 
-	ca->mi = cache_mi_to_cpu_mi(sb->members + sb->nr_this_dev);
+	mi = cache_mi_to_cpu_mi(sb->members + sb->nr_this_dev);
 
-	if (ca->mi.nbuckets > LONG_MAX)
+	if (mi.nbuckets > LONG_MAX)
 		return "Too many buckets";
 
-	if (ca->mi.nbuckets < 1 << 8)
+	if (mi.nbuckets < 1 << 8)
 		return "Not enough buckets";
 
-	if (!is_power_of_2(ca->mi.bucket_size) ||
-	    ca->mi.bucket_size < PAGE_SECTORS ||
-	    ca->mi.bucket_size < block_size)
+	if (!is_power_of_2(mi.bucket_size) ||
+	    mi.bucket_size < PAGE_SECTORS ||
+	    mi.bucket_size < block_size)
 		return "Bad bucket size";
 
-	ca->bucket_bits = ilog2(ca->mi.bucket_size);
-
-	if (get_capacity(ca->disk_sb.bdev->bd_disk) <
-	    ca->mi.bucket_size * ca->mi.nbuckets)
+	if (get_capacity(disk_sb->bdev->bd_disk) <
+	    mi.bucket_size * mi.nbuckets)
 		return "Invalid superblock: device too small";
 
 	if (le64_to_cpu(sb->offset) +
 	    (__set_blocks(sb, le16_to_cpu(sb->u64s),
-			  block_bytes(c)) << c->block_bits) >
-	    ca->mi.first_bucket << ca->bucket_bits)
+			  block_size << 9) * block_size) >
+	    mi.first_bucket * mi.bucket_size)
 		return "Invalid superblock: first bucket comes before end of super";
 
 	for (i = 0; i < bch_nr_journal_buckets(sb); i++)
-		if (journal_bucket(ca, i) <  ca->mi.first_bucket ||
-		    journal_bucket(ca, i) >= ca->mi.nbuckets)
+		if (journal_bucket(sb, i) <  mi.first_bucket ||
+		    journal_bucket(sb, i) >= mi.nbuckets)
 			return "bad journal bucket";
 
 	return NULL;
@@ -1877,6 +1876,10 @@ static const char *cache_alloc(struct bcache_superblock *sb,
 	if (c->sb.nr_in_set == 1)
 		bdevname(sb->bdev, c->name);
 
+	err = validate_cache_super(sb);
+	if (err)
+		return err;
+
 	if (cache_set_init_fault("cache_alloc"))
 		return err;
 
@@ -1916,9 +1919,9 @@ static const char *cache_alloc(struct bcache_superblock *sb,
 	if (cache_set_init_fault("cache_alloc"))
 		goto err;
 
-	err = validate_cache_super(c, ca);
-	if (err)
-		goto err;
+	ca->mi = cache_mi_to_cpu_mi(ca->disk_sb.sb->members +
+				    ca->disk_sb.sb->nr_this_dev);
+	ca->bucket_bits = ilog2(ca->mi.bucket_size);
 
 	/* XXX: tune these */
 	movinggc_reserve = max_t(size_t, NUM_GC_GENS * 2,
@@ -2059,7 +2062,7 @@ int bch_cache_set_add_cache(struct cache_set *c, const char *path)
 	struct bcache_superblock sb;
 	const char *err;
 	struct cache *ca;
-	struct cache_member *new_mi;
+	struct cache_member *new_mi = NULL;
 	struct cache_member mi;
 	unsigned nr_this_dev, nr_in_set, u64s;
 	int ret = -EINVAL;
@@ -2067,6 +2070,10 @@ int bch_cache_set_add_cache(struct cache_set *c, const char *path)
 	mutex_lock(&bch_register_lock);
 
 	err = read_super(&sb, path);
+	if (err)
+		goto err_unlock;
+
+	err = validate_cache_super(&sb);
 	if (err)
 		goto err_unlock;
 
@@ -2112,10 +2119,6 @@ have_slot:
 	if (bch_super_realloc(&sb, u64s))
 		goto err_unlock;
 
-	sb.sb->nr_this_dev	= nr_this_dev;
-	sb.sb->nr_in_set	= nr_in_set;
-	sb.sb->u64s		= cpu_to_le16(u64s);
-
 	new_mi = dynamic_fault("bcache:add:member_info_realloc")
 		? NULL
 		: kmalloc(sizeof(struct cache_member) * nr_in_set,
@@ -2127,8 +2130,14 @@ have_slot:
 	}
 
 	memcpy(new_mi, c->disk_mi,
-	       sizeof(struct cache_member) * c->sb.nr_in_set);
+	       sizeof(struct cache_member) * nr_in_set);
 	new_mi[nr_this_dev] = mi;
+
+	sb.sb->nr_this_dev	= nr_this_dev;
+	sb.sb->nr_in_set	= nr_in_set;
+	sb.sb->u64s		= cpu_to_le16(u64s);
+	memcpy(sb.sb->members, new_mi,
+	       sizeof(struct cache_member) * nr_in_set);
 
 	if (cache_set_mi_update(c, new_mi, nr_in_set)) {
 		err = "cannot allocate memory";
@@ -2137,8 +2146,9 @@ have_slot:
 	}
 
 	/* commit new member info */
-	kfree(c->disk_mi);
-	c->disk_mi = new_mi;
+	swap(c->disk_mi, new_mi);
+	kfree(new_mi);
+	new_mi = NULL;
 	c->disk_sb.nr_in_set = nr_in_set;
 	c->sb.nr_in_set = nr_in_set;
 
@@ -2164,8 +2174,9 @@ have_slot:
 err_put:
 	bch_cache_stop(ca);
 err_unlock:
-	mutex_unlock(&bch_register_lock);
+	kfree(new_mi);
 	free_super(&sb);
+	mutex_unlock(&bch_register_lock);
 
 	bch_err(c, "Unable to add device: %s", err);
 	return ret ?: -EINVAL;

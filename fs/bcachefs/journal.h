@@ -231,19 +231,19 @@ ssize_t bch_journal_print_debug(struct journal *, char *);
 
 int bch_cache_journal_alloc(struct cache *);
 
-static inline __le64 *__journal_buckets(struct cache *ca)
+static inline __le64 *__journal_buckets(struct cache_sb *sb)
 {
-	return ca->disk_sb.sb->_data + bch_journal_buckets_offset(ca->disk_sb.sb);
+	return sb->_data + bch_journal_buckets_offset(sb);
 }
 
-static inline u64 journal_bucket(struct cache *ca, unsigned nr)
+static inline u64 journal_bucket(struct cache_sb *sb, unsigned nr)
 {
-	return le64_to_cpu(__journal_buckets(ca)[nr]);
+	return le64_to_cpu(__journal_buckets(sb)[nr]);
 }
 
-static inline void set_journal_bucket(struct cache *ca, unsigned nr, u64 bucket)
+static inline void set_journal_bucket(struct cache_sb *sb, unsigned nr, u64 bucket)
 {
-	__journal_buckets(ca)[nr] = cpu_to_le64(bucket);
+	__journal_buckets(sb)[nr] = cpu_to_le64(bucket);
 }
 
 int bch_journal_move(struct cache *);

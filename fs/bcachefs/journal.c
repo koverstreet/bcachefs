@@ -421,7 +421,8 @@ static int journal_read_bucket(struct cache *ca, struct journal_list *jlist,
 	struct bio *bio = &ja->bio;
 	struct jset *j, *data;
 	unsigned blocks, sectors_read, bucket_offset = 0;
-	u64 sector = bucket_to_sector(ca, journal_bucket(ca, bucket));
+	u64 sector = bucket_to_sector(ca,
+				journal_bucket(ca->disk_sb.sb, bucket));
 	bool entries_found = false;
 	int ret = 0;
 
@@ -1270,7 +1271,7 @@ int bch_cache_journal_alloc(struct cache *ca)
 		unsigned long r = ca->mi.first_bucket + i;
 
 		bch_mark_metadata_bucket(ca, &ca->buckets[r], true);
-		set_journal_bucket(ca, i, r);
+		set_journal_bucket(ca->disk_sb.sb, i, r);
 	}
 
 	return 0;
@@ -1402,7 +1403,7 @@ static void journal_reclaim_work(struct work_struct *work)
 			    blk_queue_discard(bdev_get_queue(ca->disk_sb.bdev)))
 				blkdev_issue_discard(ca->disk_sb.bdev,
 					bucket_to_sector(ca,
-						journal_bucket(ca,
+						journal_bucket(ca->disk_sb.sb,
 							       ja->last_idx)),
 					ca->mi.bucket_size, GFP_NOIO, 0);
 
@@ -1497,7 +1498,8 @@ static int journal_write_alloc(struct journal *j, unsigned sectors)
 		extent_ptr_append(bkey_i_to_extent(&j->key),
 			(struct bch_extent_ptr) {
 				  .offset = bucket_to_sector(ca,
-					journal_bucket(ca, ja->cur_idx)),
+					journal_bucket(ca->disk_sb.sb,
+						       ja->cur_idx)),
 				  .dev = ca->sb.nr_this_dev,
 		});
 		replicas++;
