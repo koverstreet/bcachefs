@@ -1362,7 +1362,7 @@ static const char *run_cache_set(struct cache_set *c)
 		if (bch_gc_inode_nlinks(c))
 			goto err;
 
-		bch_verify_inode_refs(c);
+		bch_fsck(c);
 	} else {
 		struct bkey_i_inode inode;
 		struct closure cl;

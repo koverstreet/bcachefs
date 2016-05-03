@@ -271,3 +271,106 @@ int bch_gc_inode_nlinks(struct cache_set *c)
 
 	return ret;
 }
+
+static inline bool next_inode(struct cache_set *c, struct bkey_s_c k,
+			      u64 *cur_inum,
+			      struct bkey_i_inode *inode,
+			      struct bch_inode **bi,
+			      u64 *i_size, u16 *i_mode)
+{
+	if (k.k->p.inode == *cur_inum)
+		return false;
+
+	if (!bch_inode_find_by_inum(c, k.k->p.inode, inode)) {
+		*i_mode = le16_to_cpu(inode->v.i_mode);
+		*i_size = le64_to_cpu(inode->v.i_size);
+		*bi = &inode->v;
+	} else {
+		*bi = NULL;
+	}
+
+	*cur_inum = k.k->p.inode;
+	return true;
+}
+
+#define fsck_err(c, fmt, ...)					\
+do {								\
+	bch_err(c, fmt,  ##__VA_ARGS__);			\
+} while (0)
+
+/*
+ * Checks for inconsistencies that shouldn't happen, unless we have a bug.
+ * Doesn't fix them yet, mainly because they haven't yet been observed:
+ */
+void bch_fsck(struct cache_set *c)
+{
+	struct btree_iter iter;
+	struct bkey_s_c k;
+	struct bkey_i_inode inode;
+	struct bch_inode *bi = NULL;
+	u64 i_size = 0;
+	u16 i_mode = 0;
+	u64 cur_inum;
+	char buf[100];
+
+	cur_inum = -1;
+	for_each_btree_key(&iter, c, BTREE_ID_EXTENTS,
+			   POS(BCACHE_ROOT_INO, 0), k) {
+		if (k.k->type == KEY_TYPE_DISCARD)
+			continue;
+
+		if (next_inode(c, k, &cur_inum, &inode, &bi,
+			       &i_size, &i_mode) &&
+		    bi &&
+		    !(le32_to_cpu(bi->i_flags) & BCH_INODE_I_SECTORS_DIRTY)) {
+			u64 i_sectors = bch_count_inode_sectors(c, cur_inum);
+
+			if (i_sectors != le64_to_cpu(bi->i_sectors))
+				fsck_err(c,
+					 "i_sectors wrong: got %llu, should be %llu",
+					 le64_to_cpu(bi->i_sectors), i_sectors);
+		}
+
+		if (!S_ISREG(i_mode) &&
+		    !S_ISLNK(i_mode))
+			fsck_err(c,
+				 "extent type %u for non regular file, inode %llu mode %o",
+				 k.k->type, k.k->p.inode, i_mode);
+
+		if (k.k->type != BCH_RESERVATION &&
+		    k.k->p.offset > round_up(i_size, PAGE_SIZE) >> 9) {
+			bch_bkey_val_to_text(c, BTREE_ID_EXTENTS, buf,
+					     sizeof(buf), k);
+			fsck_err(c,
+				"extent past end of inode %llu: i_size %llu extent\n%s",
+				k.k->p.inode, i_size, buf);
+		}
+	}
+	bch_btree_iter_unlock(&iter);
+
+	cur_inum = -1;
+	for_each_btree_key(&iter, c, BTREE_ID_DIRENTS,
+			   POS(BCACHE_ROOT_INO, 0), k) {
+		next_inode(c, k, &cur_inum, &inode, &bi, &i_size, &i_mode);
+
+		if (!bi)
+			fsck_err(c, "dirent for missing inode %llu", k.k->p.inode);
+
+		if (!S_ISDIR(i_mode))
+			fsck_err(c,
+				 "dirent for non directory, inode %llu mode %o",
+				 k.k->p.inode, i_mode);
+	}
+	bch_btree_iter_unlock(&iter);
+
+	cur_inum = -1;
+	for_each_btree_key(&iter, c, BTREE_ID_XATTRS,
+			   POS(BCACHE_ROOT_INO, 0), k) {
+		next_inode(c, k, &cur_inum, &inode, &bi, &i_size, &i_mode);
+
+		if (!bi)
+			fsck_err(c, "xattr for missing inode %llu",
+				 k.k->p.inode);
+	}
+	bch_btree_iter_unlock(&iter);
+}

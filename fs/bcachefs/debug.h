@@ -28,7 +28,6 @@ BCH_DEBUG_PARAMS_DEBUG()
 
 void __bch_btree_verify(struct cache_set *, struct btree *);
 void bch_data_verify(struct cached_dev *, struct bio *);
-void bch_verify_inode_refs(struct cache_set *);
 
 #define bypass_torture_test(d)		((d)->bypass_torture_test)
 
@@ -41,7 +40,6 @@ BCH_DEBUG_PARAMS_DEBUG()
 
 static inline void __bch_btree_verify(struct cache_set *c, struct btree *b) {}
 static inline void bch_data_verify(struct cached_dev *dc, struct bio *bio) {}
-static inline void bch_verify_inode_refs(struct cache_set *c) {}
 
 #define bypass_torture_test(d)		0
 
