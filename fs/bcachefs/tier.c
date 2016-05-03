@@ -408,22 +408,23 @@ void bch_tiering_init_cache_set(struct cache_set *c)
 	bch_pd_controller_init(&c->tiering_pd);
 }
 
-void bch_tiering_init_cache(struct cache *ca)
+int bch_tiering_init_cache(struct cache *ca)
 {
-	bch_queue_init(&ca->tiering_queue,
-		       ca->set,
-		       TIERING_KEYS_MAX_SIZE,
-		       TIERING_NR,
-		       TIERING_READ_NR,
-		       TIERING_WRITE_NR,
-		       false);
-
 	ca->tiering_stripe_size = ca->mi.bucket_size * 2;
+
+	return bch_queue_init(&ca->tiering_queue,
+			      ca->set,
+			      TIERING_KEYS_MAX_SIZE,
+			      TIERING_NR,
+			      TIERING_READ_NR,
+			      TIERING_WRITE_NR,
+			      false,
+			      "bch_tier_write");
 }
 
-int bch_tiering_write_start(struct cache *ca)
+void bch_tiering_write_start(struct cache *ca)
 {
-	return bch_queue_start(&ca->tiering_queue, "bch_tier_write");
+	bch_queue_start(&ca->tiering_queue);
 }
 
 int bch_tiering_read_start(struct cache_set *c)

@@ -258,19 +258,16 @@ static void bch_queue_write_work(struct work_struct *work)
  * allocates it.
  */
 
-void bch_queue_init(struct moving_queue *q,
-		    struct cache_set *c,
-		    unsigned max_size,
-		    unsigned max_count,
-		    unsigned max_read_count,
-		    unsigned max_write_count,
-		    bool rotational)
+int bch_queue_init(struct moving_queue *q,
+		   struct cache_set *c,
+		   unsigned max_size,
+		   unsigned max_count,
+		   unsigned max_read_count,
+		   unsigned max_write_count,
+		   bool rotational,
+		   const char *name)
 {
-	if (test_and_set_bit(MOVING_QUEUE_INITIALIZED, &q->flags))
-		return;
-
 	INIT_WORK(&q->work, bch_queue_write_work);
-	bch_scan_keylist_init(&q->keys, c, max_size);
 
 	q->keys.owner = q;
 	q->max_count = max_count;
@@ -282,10 +279,16 @@ void bch_queue_init(struct moving_queue *q,
 	INIT_LIST_HEAD(&q->pending);
 	INIT_LIST_HEAD(&q->write_pending);
 	q->tree = RB_ROOT;
+
+	q->wq = alloc_workqueue(name,
+				WQ_UNBOUND|WQ_FREEZABLE|WQ_MEM_RECLAIM, 1);
+	if (!q->wq)
+		return -ENOMEM;
+
+	return 0;
 }
 
-int bch_queue_start(struct moving_queue *q,
-		    const char *name)
+void bch_queue_start(struct moving_queue *q)
 {
 	unsigned long flags;
 
@@ -294,16 +297,6 @@ int bch_queue_start(struct moving_queue *q,
 	spin_unlock_irqrestore(&q->lock, flags);
 
 	bch_scan_keylist_reset(&q->keys);
-
-	/* Re-use workqueue if already started */
-	if (!q->wq)
-		q->wq = alloc_workqueue(name,
-				WQ_UNBOUND|WQ_FREEZABLE|WQ_MEM_RECLAIM, 1);
-
-	if (!q->wq)
-		return -ENOMEM;
-
-	return 0;
 }
 
 void queue_io_resize(struct moving_queue *q,
@@ -322,13 +315,9 @@ void queue_io_resize(struct moving_queue *q,
 
 void bch_queue_destroy(struct moving_queue *q)
 {
-	if (!test_and_clear_bit(MOVING_QUEUE_INITIALIZED, &q->flags))
-		return;
-
-	if (q->wq) {
+	if (q->wq)
 		destroy_workqueue(q->wq);
-		q->wq = NULL;
-	}
+	q->wq = NULL;
 
 	bch_scan_keylist_destroy(&q->keys);
 }

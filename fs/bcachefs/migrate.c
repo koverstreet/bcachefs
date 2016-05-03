@@ -128,9 +128,7 @@ int bch_move_data_off_device(struct cache *ca)
 	 * devices).
 	 */
 
-	ret = bch_queue_start(queue, "bch_move_data_off_device");
-	if (ret)
-		return ret;
+	bch_queue_start(queue);
 
 	queue_io_resize(queue, MIGRATE_NR, MIGRATE_READ_NR, MIGRATE_WRITE_NR);
 

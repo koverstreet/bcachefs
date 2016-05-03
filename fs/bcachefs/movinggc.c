@@ -311,33 +311,31 @@ static int bch_moving_gc_thread(void *arg)
 #define MOVING_GC_READ_NR 32
 #define MOVING_GC_WRITE_NR 32
 
-void bch_moving_init_cache(struct cache *ca)
+int bch_moving_init_cache(struct cache *ca)
 {
 	bool rotational = !blk_queue_nonrot(bdev_get_queue(ca->disk_sb.bdev));
 
 	bch_pd_controller_init(&ca->moving_gc_pd);
-	bch_queue_init(&ca->moving_gc_queue,
-		       ca->set,
-		       MOVING_GC_KEYS_MAX_SIZE,
-		       MOVING_GC_NR,
-		       MOVING_GC_READ_NR,
-		       MOVING_GC_WRITE_NR,
-		       rotational);
 	ca->moving_gc_pd.d_term = 0;
+
+	return bch_queue_init(&ca->moving_gc_queue,
+			      ca->set,
+			      MOVING_GC_KEYS_MAX_SIZE,
+			      MOVING_GC_NR,
+			      MOVING_GC_READ_NR,
+			      MOVING_GC_WRITE_NR,
+			      rotational,
+			      "bch_copygc_write");
 }
 
 int bch_moving_gc_thread_start(struct cache *ca)
 {
 	struct task_struct *t;
-	int ret;
 
 	/* The moving gc read thread must be stopped */
 	BUG_ON(ca->moving_gc_read != NULL);
 
-	ret = bch_queue_start(&ca->moving_gc_queue,
-			      "bch_copygc_write");
-	if (ret)
-		return ret;
+	bch_queue_start(&ca->moving_gc_queue);
 
 	if (cache_set_init_fault("moving_gc_start"))
 		return -ENOMEM;

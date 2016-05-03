@@ -145,9 +145,11 @@ void bch_scan_keylist_init(struct scan_keylist *kl,
 
 void bch_scan_keylist_destroy(struct scan_keylist *kl)
 {
-	mutex_lock(&kl->c->gc_scan_keylist_lock);
-	list_del(&kl->mark_list);
-	mutex_unlock(&kl->c->gc_scan_keylist_lock);
+	if (kl->c) {
+		mutex_lock(&kl->c->gc_scan_keylist_lock);
+		list_del(&kl->mark_list);
+		mutex_unlock(&kl->c->gc_scan_keylist_lock);
+	}
 
 	mutex_lock(&kl->lock);
 	bch_keylist_free(&kl->list);

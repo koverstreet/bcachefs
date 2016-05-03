@@ -105,15 +105,15 @@ void moving_io_free(struct moving_io *);
 typedef struct moving_io *(moving_queue_fn)(struct moving_queue *,
 					    struct moving_context *);
 
-void bch_queue_init(struct moving_queue *,
-		    struct cache_set *,
-		    unsigned max_keys,
-		    unsigned max_ios,
-		    unsigned max_reads,
-		    unsigned max_writes,
-		    bool rotational);
-int bch_queue_start(struct moving_queue *,
-		    const char *);
+int bch_queue_init(struct moving_queue *,
+		   struct cache_set *,
+		   unsigned max_keys,
+		   unsigned max_ios,
+		   unsigned max_reads,
+		   unsigned max_writes,
+		   bool rotational,
+		   const char *);
+void bch_queue_start(struct moving_queue *);
 bool bch_queue_full(struct moving_queue *);
 void bch_data_move(struct moving_queue *,
 		   struct moving_context *,

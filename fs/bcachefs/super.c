@@ -850,9 +850,7 @@ static const char *__bch_cache_set_read_write(struct cache_set *c)
 			goto err;
 		}
 
-		err = "error starting tiering write workqueue";
-		if (bch_tiering_write_start(ca))
-			return err;
+		bch_tiering_write_start(ca);
 	}
 
 	err = "error starting tiering thread";
@@ -1569,11 +1567,7 @@ static const char *__bch_cache_read_write(struct cache *ca)
 
 	trace_bcache_cache_read_write(ca);
 
-	if (bch_cache_allocator_start(ca))
-		return "error starting allocator thread";
-
-	if (bch_tiering_write_start(ca))
-		return "error starting tiering write workqueue";
+	bch_tiering_write_start(ca);
 
 	trace_bcache_cache_read_write_done(ca);
 
@@ -1603,6 +1597,9 @@ const char *bch_cache_read_write(struct cache *ca)
 
 	if (test_bit(CACHE_DEV_REMOVING, &ca->flags))
 		return "removing";
+
+	if (bch_cache_allocator_start(ca))
+		return "error starting allocator thread";
 
 	err = __bch_cache_read_write(ca);
 	if (err)
@@ -1950,7 +1947,9 @@ static const char *cache_alloc(struct bcache_superblock *sb,
 	    !(ca->bio_prio = bio_kmalloc(GFP_NOIO, bucket_pages(ca))) ||
 	    bioset_init(&ca->replica_set, 4,
 			offsetof(struct bch_write_bio, bio.bio)) ||
-	    !(ca->sectors_written = alloc_percpu(*ca->sectors_written)))
+	    !(ca->sectors_written = alloc_percpu(*ca->sectors_written)) ||
+	    bch_moving_init_cache(ca) ||
+	    bch_tiering_init_cache(ca))
 		goto err;
 
 	ca->prio_last_buckets = ca->prio_buckets + prio_buckets(ca);
@@ -1968,14 +1967,17 @@ static const char *cache_alloc(struct bcache_superblock *sb,
 	ca->tiering_write_point.reserve = RESERVE_NONE;
 	ca->tiering_write_point.group = &ca->self;
 
+	/* XXX: scan keylists will die */
+	bch_scan_keylist_init(&ca->moving_gc_queue.keys, c,
+			      DFLT_SCAN_KEYLIST_MAX_SIZE);
+	bch_scan_keylist_init(&ca->tiering_queue.keys, c,
+			      DFLT_SCAN_KEYLIST_MAX_SIZE);
+
 	kobject_get(&c->kobj);
 	ca->set = c;
 
 	kobject_get(&ca->kobj);
 	rcu_assign_pointer(c->cache[ca->sb.nr_this_dev], ca);
-
-	bch_moving_init_cache(ca);
-	bch_tiering_init_cache(ca);
 
 	if (le64_to_cpu(ca->disk_sb.sb->seq) > le64_to_cpu(c->disk_sb.seq))
 		cache_sb_to_cache_set(c, ca->disk_sb.sb);
@@ -2164,9 +2166,15 @@ have_slot:
 
 	bch_notify_cache_added(ca);
 
-	err = __bch_cache_read_write(ca);
-	if (err)
-		goto err_put;
+	if (ca->mi.state == CACHE_ACTIVE) {
+		err = bch_cache_allocator_start_once(ca);
+		if (err)
+			goto err_put;
+
+		err = __bch_cache_read_write(ca);
+		if (err)
+			goto err_put;
+	}
 
 	kobject_put(&ca->kobj);
 	mutex_unlock(&bch_register_lock);
