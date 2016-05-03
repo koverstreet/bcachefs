@@ -799,11 +799,6 @@ static void bch_writepage_io_done(struct closure *cl)
 			struct bch_page_state old, new;
 
 			old = page_state_cmpxchg(page_state(page), new, {
-				new.alloc_state =
-					(io->op.op.compression_type ==
-					 BCH_COMPRESSION_NONE)
-					? BCH_PAGE_ALLOCATED
-					: BCH_PAGE_UNALLOCATED;
 				new.sectors = PAGE_SECTORS;
 				new.dirty_sectors = 0;
 			});
@@ -935,7 +930,10 @@ do_io:
 		       (new.sectors != PAGE_SECTORS ||
 			new.alloc_state != BCH_PAGE_ALLOCATED));
 
-		if (!new.reserved)
+		if (new.alloc_state == BCH_PAGE_ALLOCATED &&
+		    w->io->op.op.compression_type != BCH_COMPRESSION_NONE)
+			new.alloc_state = BCH_PAGE_UNALLOCATED;
+		else if (!new.reserved)
 			goto out;
 		new.reserved = 0;
 	});
