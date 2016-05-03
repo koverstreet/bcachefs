@@ -21,6 +21,8 @@
 
 #include <trace/events/bcachefs.h>
 
+static bool __bch_extent_normalize(struct cache_set *, struct bkey_s, bool);
+
 static void sort_key_next(struct btree_node_iter *iter,
 			  struct btree_keys *b,
 			  struct btree_node_iter_set *i)
@@ -255,8 +257,13 @@ void bch_extent_drop_stale(struct cache_set *c, struct bkey_s_extent e)
 	struct bch_extent_ptr *ptr = &e.v->start->ptr;
 	bool dropped = false;
 
+	/*
+	 * We don't want to change which pointers are considered cached/dirty,
+	 * so don't remove pointers that are considered dirty:
+	 */
 	rcu_read_lock();
-	while ((ptr = extent_ptr_next(e, ptr)))
+	while ((ptr = extent_ptr_next(e, ptr)) &&
+	       !bch_extent_ptr_is_dirty(c, e.c, ptr))
 		if (should_drop_ptr(c, e.c, ptr)) {
 			__bch_extent_drop_ptr(e, ptr);
 			dropped = true;
@@ -272,7 +279,7 @@ static bool bch_ptr_normalize(struct btree_keys *bk, struct bkey_s k)
 {
 	struct btree *b = container_of(bk, struct btree, keys);
 
-	return bch_extent_normalize(b->c, k);
+	return __bch_extent_normalize(b->c, k, false);
 }
 
 static void bch_ptr_swab(const struct bkey_format *f, struct bkey_packed *k)
@@ -1695,7 +1702,8 @@ static void extent_sort_ptrs(struct cache_set *c, struct bkey_s_extent e)
  * Returns true if @k should be dropped entirely (when compacting/rewriting
  * btree nodes).
  */
-bool bch_extent_normalize(struct cache_set *c, struct bkey_s k)
+static bool __bch_extent_normalize(struct cache_set *c, struct bkey_s k,
+				   bool sort)
 {
 	struct bkey_s_extent e;
 
@@ -1715,7 +1723,9 @@ bool bch_extent_normalize(struct cache_set *c, struct bkey_s k)
 		e = bkey_s_to_extent(k);
 
 		bch_extent_drop_stale(c, e);
-		extent_sort_ptrs(c, e);
+
+		if (sort)
+			extent_sort_ptrs(c, e);
 
 		if (!bkey_val_u64s(e.k)) {
 			if (bkey_extent_is_cached(e.k)) {
@@ -1733,6 +1743,11 @@ bool bch_extent_normalize(struct cache_set *c, struct bkey_s k)
 	default:
 		BUG();
 	}
+}
+
+bool bch_extent_normalize(struct cache_set *c, struct bkey_s k)
+{
+	return __bch_extent_normalize(c, k, true);
 }
 
 /*
