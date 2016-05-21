@@ -4,8 +4,6 @@
 #include "btree_types.h"
 
 struct btree_iter {
-	struct closure		cl;
-
 	/* Current btree depth */
 	u8			level;
 

@@ -566,17 +566,17 @@ err_free:
 	return ERR_PTR(ret);
 }
 
-struct btree_reserve *bch_btree_reserve_get(struct cache_set *c,
+struct btree_reserve *bch_btree_reserve_get(struct btree_iter *iter,
 					    struct btree *b,
-					    struct btree_iter *iter,
 					    unsigned extra_nodes,
-					    bool check_enospc)
+					    bool check_enospc,
+					    struct closure *cl)
 {
 	unsigned depth = btree_node_root(b)->level - b->level;
 	unsigned nr_nodes = btree_reserve_required_nodes(depth) + extra_nodes;
 
-	return __bch_btree_reserve_get(c, check_enospc, nr_nodes,
-				       iter ? &iter->cl : NULL);
+	return __bch_btree_reserve_get(iter->c, check_enospc,
+				       nr_nodes, cl);
 
 }
 
@@ -1451,7 +1451,8 @@ void bch_btree_insert_node(struct btree *b,
 	}
 }
 
-static int bch_btree_split_leaf(struct btree_iter *iter, unsigned flags)
+static int bch_btree_split_leaf(struct btree_iter *iter, unsigned flags,
+				struct closure *cl)
 {
 	struct cache_set *c = iter->c;
 	struct btree *b = iter->nodes[0];
@@ -1475,8 +1476,9 @@ static int bch_btree_split_leaf(struct btree_iter *iter, unsigned flags)
 		goto out_unlock;
 	}
 
-	reserve = bch_btree_reserve_get(c, b, iter, 0,
-					!(flags & BTREE_INSERT_NOFAIL));
+	reserve = bch_btree_reserve_get(iter, b, 0,
+					!(flags & BTREE_INSERT_NOFAIL),
+					cl);
 	if (IS_ERR(reserve)) {
 		ret = PTR_ERR(reserve);
 		goto out_unlock;
@@ -1570,8 +1572,11 @@ int bch_btree_insert_trans(struct btree_insert_trans *trans,
 	struct journal_res res = { 0, 0 };
 	struct btree_trans_entry *i;
 	struct btree_iter *split;
+	struct closure cl;
 	unsigned u64s;
 	int ret;
+
+	closure_init_stack(&cl);
 
 	trans_for_each_entry(trans, i) {
 		EBUG_ON(i->iter->level);
@@ -1674,7 +1679,7 @@ unlock_split:
 	 */
 	bch_journal_res_put(&c->journal, &res, journal_seq);
 split:
-	ret = bch_btree_split_leaf(split, flags);
+	ret = bch_btree_split_leaf(split, flags, &cl);
 	if (ret)
 		goto err;
 
@@ -1688,6 +1693,7 @@ err:
 	if (ret == -EAGAIN) {
 		trans_for_each_entry(trans, i)
 			bch_btree_iter_unlock(i->iter);
+		closure_sync(&cl);
 		ret = -EINTR;
 	}
 
@@ -1964,7 +1970,8 @@ int bch_btree_delete_range(struct cache_set *c, enum btree_id id,
  * Returns 0 on success, -EINTR or -EAGAIN on failure (i.e.
  * btree_check_reserve() has to wait)
  */
-int bch_btree_node_rewrite(struct btree *b, struct btree_iter *iter, bool wait)
+int bch_btree_node_rewrite(struct btree_iter *iter, struct btree *b,
+			   struct closure *cl)
 {
 	struct cache_set *c = iter->c;
 	struct btree *n, *parent = iter->nodes[b->level + 1];
@@ -1975,7 +1982,7 @@ int bch_btree_node_rewrite(struct btree *b, struct btree_iter *iter, bool wait)
 	if (!bch_btree_iter_upgrade(iter))
 		return -EINTR;
 
-	reserve = bch_btree_reserve_get(c, b, wait ? iter : NULL, 1, true);
+	reserve = bch_btree_reserve_get(iter, b, 1, true, cl);
 	if (IS_ERR(reserve)) {
 		trace_bcache_btree_gc_rewrite_node_fail(b);
 		return PTR_ERR(reserve);

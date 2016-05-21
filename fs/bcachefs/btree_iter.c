@@ -131,8 +131,6 @@ int bch_btree_iter_unlock(struct btree_iter *iter)
 	while (iter->nodes_locked)
 		btree_node_unlock(iter, l++);
 
-	closure_sync(&iter->cl);
-
 	return iter->error;
 }
 
@@ -374,7 +372,8 @@ static void btree_iter_lock_root(struct btree_iter *iter, struct bpos pos)
 	}
 }
 
-static int btree_iter_down(struct btree_iter *iter, struct bpos pos)
+static int btree_iter_down(struct btree_iter *iter, struct bpos pos,
+			   struct closure *cl)
 {
 	struct btree *b;
 	struct bkey_s_c k = __btree_iter_peek(iter);
@@ -382,7 +381,7 @@ static int btree_iter_down(struct btree_iter *iter, struct bpos pos)
 
 	bkey_reassemble(&tmp.k, k);
 
-	b = bch_btree_node_get(iter, &tmp.k, iter->level - 1);
+	b = bch_btree_node_get(iter, &tmp.k, iter->level - 1, cl);
 	if (unlikely(IS_ERR(b)))
 		return PTR_ERR(b);
 
@@ -481,10 +480,15 @@ retry:
 	 */
 	while (iter->level > l)
 		if (iter->nodes[iter->level]) {
-			int ret = btree_iter_down(iter, pos);
+			struct closure cl;
+			int ret;
 
+			closure_init_stack(&cl);
+
+			ret = btree_iter_down(iter, pos, &cl);
 			if (unlikely(ret)) {
 				bch_btree_iter_unlock(iter);
+				closure_sync(&cl);
 
 				/*
 				 * We just dropped all our locks - so if we need
@@ -680,8 +684,6 @@ void __bch_btree_iter_init(struct btree_iter *iter, struct cache_set *c,
 			   enum btree_id btree_id, struct bpos pos,
 			   int locks_want)
 {
-	closure_init_stack(&iter->cl);
-
 	iter->level			= 0;
 	iter->is_extents		= btree_id == BTREE_ID_EXTENTS;
 	iter->nodes_locked		= 0;

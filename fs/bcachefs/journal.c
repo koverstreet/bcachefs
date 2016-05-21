@@ -150,6 +150,9 @@ static void journal_seq_blacklist_flush(struct journal_entry_pin *pin)
 	struct cache_set *c = bl->c;
 	struct btree *b;
 	struct btree_iter iter;
+	struct closure cl;
+
+	closure_init_stack(&cl);
 
 	while (1) {
 		mutex_lock(&c->journal.blacklist_lock);
@@ -172,9 +175,10 @@ static void journal_seq_blacklist_flush(struct journal_entry_pin *pin)
 		b = bch_btree_iter_peek_node(&iter);
 
 		if (!list_empty_careful(&b->journal_seq_blacklisted))
-			bch_btree_node_rewrite(b, &iter, true);
+			bch_btree_node_rewrite(&iter, b, &cl);
 
 		bch_btree_iter_unlock(&iter);
+		closure_sync(&cl);
 	}
 
 	journal_pin_drop(&c->journal, &bl->pin);

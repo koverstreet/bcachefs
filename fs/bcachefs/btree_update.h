@@ -128,10 +128,9 @@ void bch_btree_set_root_initial(struct cache_set *, struct btree *,
 				struct btree_reserve *);
 
 void bch_btree_reserve_put(struct cache_set *, struct btree_reserve *);
-struct btree_reserve *bch_btree_reserve_get(struct cache_set *c,
-					    struct btree *,
-					    struct btree_iter *,
-					    unsigned, bool);
+struct btree_reserve *bch_btree_reserve_get(struct btree_iter *,
+					    struct btree *, unsigned,
+					    bool, struct closure *);
 
 int bch_btree_root_alloc(struct cache_set *, enum btree_id, struct closure *);
 
@@ -290,7 +289,7 @@ int bch_btree_delete_range(struct cache_set *, enum btree_id,
 			   struct bpos, struct bpos, u64,
 			   struct extent_insert_hook *, u64 *);
 
-int bch_btree_node_rewrite(struct btree *, struct btree_iter *, bool);
+int bch_btree_node_rewrite(struct btree_iter *, struct btree *, struct closure *);
 
 #endif /* _BCACHE_BTREE_INSERT_H */
 

@@ -20,7 +20,8 @@ int mca_cannibalize_lock(struct cache_set *, struct closure *);
 struct btree *mca_alloc(struct cache_set *, struct closure *);
 
 struct btree *bch_btree_node_get(struct btree_iter *,
-				 const struct bkey_i *, int);
+				 const struct bkey_i *, int,
+				 struct closure *);
 
 void bch_btree_cache_free(struct cache_set *);
 int bch_btree_cache_alloc(struct cache_set *);

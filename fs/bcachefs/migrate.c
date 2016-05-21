@@ -239,7 +239,10 @@ static int bch_move_btree_off(struct cache *ca,
 			      enum btree_id id,
 			      const char *name)
 {
+	struct closure cl;
 	unsigned pass;
+
+	closure_init_stack(&cl);
 
 	pr_debug("Moving %s btree off device %u",
 		 name, ca->sb.nr_this_dev);
@@ -258,13 +261,14 @@ retry:
 			if (!bch_extent_has_device(e, ca->sb.nr_this_dev))
 				continue;
 
-			if (bch_btree_node_rewrite(b, &iter, true)) {
+			if (bch_btree_node_rewrite(&iter, b, &cl)) {
 				/*
 				 * Drop locks to upgrade locks or wait on
 				 * reserve: after retaking, recheck in case we
 				 * raced.
 				 */
 				bch_btree_iter_unlock(&iter);
+				closure_sync(&cl);
 				b = bch_btree_iter_peek_node(&iter);
 				goto retry;
 			}

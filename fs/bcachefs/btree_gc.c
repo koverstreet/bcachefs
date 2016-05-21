@@ -201,7 +201,7 @@ static int bch_gc_btree(struct cache_set *c, enum btree_id btree_id)
 		gc_pos_set(c, gc_pos_btree_node(b));
 
 		if (should_rewrite)
-			bch_btree_node_rewrite(b, &iter, false);
+			bch_btree_node_rewrite(&iter, b, NULL);
 
 		bch_btree_iter_cond_resched(&iter);
 	}
@@ -480,7 +480,7 @@ static void bch_coalesce_nodes(struct btree *old_nodes[GC_MERGE_NODES],
 			 block_bytes(c)) > blocks)
 		return;
 
-	res = bch_btree_reserve_get(c, parent, NULL, nr_old_nodes, false);
+	res = bch_btree_reserve_get(iter, parent, nr_old_nodes, false, NULL);
 	if (IS_ERR(res))
 		return;
 

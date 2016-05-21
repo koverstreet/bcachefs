@@ -571,12 +571,13 @@ err:
 /* Slowpath, don't want it inlined into btree_iter_traverse() */
 static noinline struct btree *bch_btree_node_fill(struct btree_iter *iter,
 						  const struct bkey_i *k,
-						  int level)
+						  int level,
+						  struct closure *cl)
 {
 	struct cache_set *c = iter->c;
 	struct btree *b;
 
-	b = mca_alloc(c, &iter->cl);
+	b = mca_alloc(c, cl);
 	if (IS_ERR(b))
 		return b;
 
@@ -633,7 +634,8 @@ static noinline struct btree *bch_btree_node_fill(struct btree_iter *iter,
  * the @write parameter.
  */
 struct btree *bch_btree_node_get(struct btree_iter *iter,
-				 const struct bkey_i *k, int level)
+				 const struct bkey_i *k, int level,
+				 struct closure *cl)
 {
 	int i = 0;
 	struct btree *b;
@@ -645,7 +647,7 @@ retry:
 	rcu_read_unlock();
 
 	if (unlikely(!b)) {
-		b = bch_btree_node_fill(iter, k, level);
+		b = bch_btree_node_fill(iter, k, level, cl);
 
 		/* We raced and found the btree node in the cache */
 		if (!b)
