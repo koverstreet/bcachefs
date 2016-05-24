@@ -989,8 +989,8 @@ static void bch_inode_init(struct bch_inode_info *ei,
 	inode->i_ctime	= ns_to_timespec(le64_to_cpu(bi->i_ctime));
 	bch_inode_flags_to_vfs(inode);
 
-	ei->str_hash_seed = le64_to_cpu(bi->i_hash_seed);
-	ei->str_hash_type = INODE_STR_HASH_TYPE(bi);
+	ei->str_hash.seed = le64_to_cpu(bi->i_hash_seed);
+	ei->str_hash.type = INODE_STR_HASH_TYPE(bi);
 
 	inode->i_mapping->a_ops = &bch_address_space_operations;
 

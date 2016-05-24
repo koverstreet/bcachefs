@@ -1,5 +1,9 @@
+#ifndef _BCACHE_STR_HASH_H
+#define _BCACHE_STR_HASH_H
 
+#include "btree_iter.h"
 #include "siphash.h"
+
 #include <crypto/sha1_base.h>
 #include <linux/crc32c.h>
 
@@ -82,3 +86,271 @@ static inline u64 bch_str_hash_end(struct bch_str_hash_ctx *ctx,
 		BUG();
 	}
 }
+
+struct bch_hash_info {
+	u64		seed;
+	u8		type;
+};
+
+struct bch_hash_desc {
+	enum btree_id	btree_id;
+	u8		key_type;
+	u8		whiteout_type;
+
+	u64		(*hash_key)(const struct bch_hash_info *, const void *);
+	u64		(*hash_bkey)(const struct bch_hash_info *, struct bkey_s_c);
+	bool		(*cmp_key)(struct bkey_s_c, const void *);
+	bool		(*cmp_bkey)(struct bkey_s_c, struct bkey_s_c);
+};
+
+static inline struct bkey_s_c
+bch_hash_lookup_at(const struct bch_hash_desc desc,
+		   const struct bch_hash_info *info,
+		   struct btree_iter *iter, const void *search)
+{
+	struct bkey_s_c k;
+	u64 inode = iter->pos.inode;
+
+	while ((k = bch_btree_iter_peek_with_holes(iter)).k) {
+		if (k.k->p.inode != inode)
+			break;
+
+		if (k.k->type == desc.key_type) {
+			if (!desc.cmp_key(k, search))
+				return k;
+		} else if (k.k->type == desc.whiteout_type) {
+			;
+		} else {
+			/* hole, not found */
+			break;
+		}
+
+		bch_btree_iter_advance_pos(iter);
+	}
+
+	return bkey_s_c_err(-ENOENT);
+}
+
+static inline struct bkey_s_c
+bch_hash_lookup_bkey_at(const struct bch_hash_desc desc,
+			const struct bch_hash_info *info,
+			struct btree_iter *iter, struct bkey_s_c search)
+{
+	struct bkey_s_c k;
+	u64 inode = iter->pos.inode;
+
+	while ((k = bch_btree_iter_peek_with_holes(iter)).k) {
+		if (k.k->p.inode != inode)
+			break;
+
+		if (k.k->type == desc.key_type) {
+			if (!desc.cmp_bkey(k, search))
+				return k;
+		} else if (k.k->type == desc.whiteout_type) {
+			;
+		} else {
+			/* hole, not found */
+			break;
+		}
+
+		bch_btree_iter_advance_pos(iter);
+	}
+
+	return bkey_s_c_err(-ENOENT);
+}
+
+static inline struct bkey_s_c
+bch_hash_lookup(const struct bch_hash_desc desc,
+		const struct bch_hash_info *info,
+		struct cache_set *c, u64 inode,
+		struct btree_iter *iter, const void *key)
+{
+	bch_btree_iter_init(iter, c, desc.btree_id,
+			    POS(inode, desc.hash_key(info, key)));
+
+	return bch_hash_lookup_at(desc, info, iter, key);
+}
+
+static inline struct bkey_s_c
+bch_hash_lookup_intent(const struct bch_hash_desc desc,
+		       const struct bch_hash_info *info,
+		       struct cache_set *c, u64 inode,
+		       struct btree_iter *iter, const void *key)
+{
+	bch_btree_iter_init_intent(iter, c, desc.btree_id,
+			    POS(inode, desc.hash_key(info, key)));
+
+	return bch_hash_lookup_at(desc, info, iter, key);
+}
+
+static inline struct bkey_s_c
+bch_hash_hole_at(const struct bch_hash_desc desc, struct btree_iter *iter)
+{
+	struct bkey_s_c k;
+	u64 inode = iter->pos.inode;
+
+	while ((k = bch_btree_iter_peek_with_holes(iter)).k) {
+		if (k.k->p.inode != inode)
+			break;
+
+		if (k.k->type != desc.key_type)
+			return k;
+
+		/* hash collision, keep going */
+		bch_btree_iter_advance_pos(iter);
+	}
+
+	return bkey_s_c_err(-ENOSPC);
+}
+
+static inline struct bkey_s_c bch_hash_hole(const struct bch_hash_desc desc,
+					    const struct bch_hash_info *info,
+					    struct cache_set *c, u64 inode,
+					    struct btree_iter *iter,
+					    const void *key)
+{
+	bch_btree_iter_init_intent(iter, c, desc.btree_id,
+			    POS(inode, desc.hash_key(info, key)));
+
+	return bch_hash_hole_at(desc, iter);
+}
+
+static inline bool bch_hash_needs_whiteout(const struct bch_hash_desc desc,
+					   const struct bch_hash_info *info,
+					   struct btree_iter *iter,
+					   struct btree_iter *start)
+{
+	struct bkey_s_c k;
+
+	bch_btree_iter_init_copy(iter, start);
+
+	while (1) {
+		bch_btree_iter_advance_pos(iter);
+		k = bch_btree_iter_peek_with_holes(iter);
+
+		if (!k.k)
+			return iter->error ? true : false;
+
+		if (k.k->type != desc.key_type &&
+		    k.k->type != desc.whiteout_type)
+			return false;
+
+		if (k.k->type == desc.key_type &&
+		    desc.hash_bkey(info, k) <= start->pos.offset)
+			return true;
+	}
+}
+
+#define BCH_HASH_SET_MUST_CREATE	1
+#define BCH_HASH_SET_MUST_REPLACE	2
+
+static inline int bch_hash_set(const struct bch_hash_desc desc,
+			       const struct bch_hash_info *info,
+			       struct cache_set *c, u64 inode,
+			       u64 *journal_seq,
+			       struct bkey_i *insert, int flags)
+{
+	struct btree_iter iter, hashed_slot;
+	struct bkey_s_c k;
+	int ret;
+
+	bch_btree_iter_init_intent(&hashed_slot, c, desc.btree_id,
+		POS(inode, desc.hash_bkey(info, bkey_i_to_s_c(insert))));
+
+	do {
+		ret = bch_btree_iter_traverse(&hashed_slot);
+		if (ret)
+			break;
+
+		/*
+		 * If there's a hash collision and we have to insert at a
+		 * different slot, on -EINTR (insert had to drop locks) we have
+		 * to recheck the slot we hashed to - it could have been deleted
+		 * while we dropped locks:
+		 */
+		bch_btree_iter_init_copy(&iter, &hashed_slot);
+		k = bch_hash_lookup_bkey_at(desc, info, &iter,
+					    bkey_i_to_s_c(insert));
+		if (IS_ERR(k.k)) {
+			if (flags & BCH_HASH_SET_MUST_REPLACE) {
+				ret = -ENOENT;
+				goto err_unlink;
+			}
+
+			/*
+			 * Not found, so we're now looking for any open
+			 * slot - we might have skipped over a whiteout
+			 * that we could have used, so restart from the
+			 * slot we hashed to:
+			 */
+			bch_btree_iter_unlink(&iter);
+			bch_btree_iter_init_copy(&iter, &hashed_slot);
+
+			k = bch_hash_hole_at(desc, &iter);
+			if (IS_ERR(k.k)) {
+				ret = PTR_ERR(k.k);
+				goto err_unlink;
+			}
+		} else {
+			if (flags & BCH_HASH_SET_MUST_CREATE) {
+				ret = -EEXIST;
+				goto err_unlink;
+			}
+		}
+
+		insert->k.p = iter.pos;
+		ret = bch_btree_insert_at(&iter, insert, NULL, NULL,
+					  journal_seq, BTREE_INSERT_ATOMIC);
+err_unlink:
+		ret = bch_btree_iter_unlink(&iter) ?: ret;
+	} while (ret == -EINTR);
+
+	bch_btree_iter_unlock(&hashed_slot);
+	return ret;
+}
+
+static inline int bch_hash_delete(const struct bch_hash_desc desc,
+				  const struct bch_hash_info *info,
+				  struct cache_set *c, u64 inode,
+				  u64 *journal_seq, const void *key)
+{
+	struct btree_iter iter, whiteout_iter;
+	struct bkey_s_c k;
+	struct bkey_i delete;
+	int ret = -ENOENT;
+
+	bch_btree_iter_init_intent(&iter, c, desc.btree_id,
+			    POS(inode, desc.hash_key(info, key)));
+
+	do {
+		k = bch_hash_lookup_at(desc, info, &iter, key);
+		if (IS_ERR(k.k))
+			return bch_btree_iter_unlock(&iter) ?: -ENOENT;
+
+		bkey_init(&delete.k);
+		delete.k.p = k.k->p;
+		delete.k.type = bch_hash_needs_whiteout(desc, info,
+					&whiteout_iter, &iter)
+			? desc.whiteout_type
+			: KEY_TYPE_DELETED;
+
+		ret = bch_btree_insert_at(&iter, &delete,
+					  NULL, NULL, journal_seq,
+					  BTREE_INSERT_NOFAIL|
+					  BTREE_INSERT_ATOMIC);
+		/*
+		 * Need to hold whiteout iter locked while we do the delete, if
+		 * we're not leaving a whiteout:
+		 */
+		bch_btree_iter_unlink(&whiteout_iter);
+		/*
+		 * XXX: if we ever cleanup whiteouts, we may need to rewind
+		 * iterator on -EINTR
+		 */
+	} while (ret == -EINTR);
+
+	bch_btree_iter_unlock(&iter);
+	return ret;
+}
+
+#endif /* _BCACHE_STR_HASH_H */

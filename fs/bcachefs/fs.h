@@ -1,6 +1,8 @@
 #ifndef _BCACHE_FS_H
 #define _BCACHE_FS_H
 
+#include "str_hash.h"
+
 #include <linux/seqlock.h>
 
 struct bch_inode_info {
@@ -21,8 +23,7 @@ struct bch_inode_info {
 	atomic_long_t		i_sectors_dirty_count;
 	atomic64_t		i_sectors;
 
-	u64			str_hash_seed;
-	u8			str_hash_type;
+	struct bch_hash_info	str_hash;
 };
 
 #define to_bch_ei(_inode)					\

@@ -4,38 +4,78 @@
 #include "btree_update.h"
 #include "extents.h"
 #include "fs.h"
-#include "keylist.h"
 #include "str_hash.h"
 #include "xattr.h"
 
 #include <linux/posix_acl_xattr.h>
 #include <linux/xattr.h>
 
-static struct bpos bch_xattr_pos(struct bch_inode_info *ei,
-				 const struct qstr *name, u8 type)
+struct xattr_search_key {
+	u8		type;
+	struct qstr	name;
+};
+
+#define X_SEARCH(_type, _name, _len) ((struct xattr_search_key)	\
+	{ .type = _type, .name = QSTR_INIT(_name, _len) })
+
+static u64 bch_xattr_hash(const struct bch_hash_info *info,
+			  const struct xattr_search_key *key)
 {
 	struct bch_str_hash_ctx ctx;
 
-	bch_str_hash_init(&ctx, ei->str_hash_type);
+	bch_str_hash_init(&ctx, info->type);
+	bch_str_hash_update(&ctx, info->type, &info->seed, sizeof(info->seed));
 
-	bch_str_hash_update(&ctx, ei->str_hash_type,
-			    &ei->str_hash_seed, sizeof(ei->str_hash_seed));
-	bch_str_hash_update(&ctx, ei->str_hash_type, &type, sizeof(type));
-	bch_str_hash_update(&ctx, ei->str_hash_type, name->name, name->len);
+	bch_str_hash_update(&ctx, info->type, &key->type, sizeof(key->type));
+	bch_str_hash_update(&ctx, info->type, key->name.name, key->name.len);
 
-	return POS(ei->vfs_inode.i_ino,
-		   bch_str_hash_end(&ctx, ei->str_hash_type));
+	return bch_str_hash_end(&ctx, info->type);
 }
 
 #define xattr_val(_xattr)	((_xattr)->x_name + (_xattr)->x_name_len)
 
-static int xattr_cmp(const struct bch_xattr *xattr,
-		     u8 type, const struct qstr *q)
+static u64 xattr_hash_key(const struct bch_hash_info *info, const void *key)
 {
-	return xattr->x_type != type ||
-		xattr->x_name_len != q->len ||
-		memcmp(xattr->x_name, q->name, q->len);
+	return bch_xattr_hash(info, key);
 }
+
+static u64 xattr_hash_bkey(const struct bch_hash_info *info, struct bkey_s_c k)
+{
+	struct bkey_s_c_xattr x = bkey_s_c_to_xattr(k);
+
+	return bch_xattr_hash(info,
+		 &X_SEARCH(x.v->x_type, x.v->x_name, x.v->x_name_len));
+}
+
+static bool xattr_cmp_key(struct bkey_s_c _l, const void *_r)
+{
+	struct bkey_s_c_xattr l = bkey_s_c_to_xattr(_l);
+	const struct xattr_search_key *r = _r;
+
+	return l.v->x_type != r->type ||
+		l.v->x_name_len != r->name.len ||
+		memcmp(l.v->x_name, r->name.name, r->name.len);
+}
+
+static bool xattr_cmp_bkey(struct bkey_s_c _l, struct bkey_s_c _r)
+{
+	struct bkey_s_c_xattr l = bkey_s_c_to_xattr(_l);
+	struct bkey_s_c_xattr r = bkey_s_c_to_xattr(_r);
+
+	return l.v->x_type != r.v->x_type ||
+		l.v->x_name_len != r.v->x_name_len ||
+		memcmp(l.v->x_name, r.v->x_name, r.v->x_name_len);
+}
+
+static const struct bch_hash_desc xattr_hash_desc = {
+	.btree_id	= BTREE_ID_XATTRS,
+	.key_type	= BCH_XATTR,
+	.whiteout_type	= BCH_XATTR_WHITEOUT,
+	.hash_key	= xattr_hash_key,
+	.hash_bkey	= xattr_hash_bkey,
+	.cmp_key	= xattr_cmp_key,
+	.cmp_bkey	= xattr_cmp_bkey,
+};
 
 static const char *bch_xattr_invalid(const struct cache_set *c,
 				     struct bkey_s_c k)
@@ -107,41 +147,26 @@ int bch_xattr_get(struct inode *inode, const char *name,
 {
 	struct cache_set *c = inode->i_sb->s_fs_info;
 	struct bch_inode_info *ei = to_bch_ei(inode);
-	struct qstr qname = (struct qstr) QSTR_INIT(name, strlen(name));
 	struct btree_iter iter;
 	struct bkey_s_c k;
-	const struct bch_xattr *xattr;
-	int ret = -ENODATA;
+	struct bkey_s_c_xattr xattr;
+	int ret;
 
-	for_each_btree_key_with_holes(&iter, c, BTREE_ID_XATTRS,
-			bch_xattr_pos(ei, &qname, type), k) {
-		switch (k.k->type) {
-		case BCH_XATTR:
-			xattr = bkey_s_c_to_xattr(k).v;
+	k = bch_hash_lookup(xattr_hash_desc, &ei->str_hash, c,
+			    ei->vfs_inode.i_ino, &iter,
+			    &X_SEARCH(type, name, strlen(name)));
+	if (IS_ERR(k.k))
+		return bch_btree_iter_unlock(&iter) ?: -ENODATA;
 
-			/* collision? */
-			if (!xattr_cmp(xattr, type, &qname)) {
-				unsigned len = le16_to_cpu(xattr->x_val_len);
-
-				ret = len;
-				if (buffer) {
-					if (len > size)
-						ret = -ERANGE;
-					else
-						memcpy(buffer, xattr_val(xattr),
-						       len);
-				}
-				goto out;
-			}
-			break;
-		case BCH_XATTR_WHITEOUT:
-			break;
-		default:
-			/* hole, not found */
-			goto out;
-		}
+	xattr = bkey_s_c_to_xattr(k);
+	ret = le16_to_cpu(xattr.v->x_val_len);
+	if (buffer) {
+		if (ret > size)
+			ret = -ERANGE;
+		else
+			memcpy(buffer, xattr_val(xattr.v), ret);
 	}
-out:
+
 	bch_btree_iter_unlock(&iter);
 	return ret;
 }
@@ -152,100 +177,46 @@ int bch_xattr_set(struct inode *inode, const char *name,
 {
 	struct bch_inode_info *ei = to_bch_ei(inode);
 	struct cache_set *c = inode->i_sb->s_fs_info;
-	struct btree_iter iter;
-	struct bkey_s_c k;
-	struct qstr qname = (struct qstr) QSTR_INIT((char *) name,
-						    strlen(name));
-	int ret = -EINVAL;
-	unsigned insert_flags = BTREE_INSERT_ATOMIC;
+	struct xattr_search_key search = X_SEARCH(type, name, strlen(name));
+	int ret;
 
-	if (!value)
-		insert_flags |= BTREE_INSERT_NOFAIL;
+	if (!value) {
+		ret = bch_hash_delete(xattr_hash_desc, &ei->str_hash,
+				      c, ei->vfs_inode.i_ino,
+				      &ei->journal_seq, &search);
+	} else {
+		struct bkey_i_xattr *xattr;
+		unsigned u64s = BKEY_U64s +
+			DIV_ROUND_UP(sizeof(struct bch_xattr) +
+				     search.name.len + size,
+				     sizeof(u64));
 
-	bch_btree_iter_init_intent(&iter, c, BTREE_ID_XATTRS,
-				   bch_xattr_pos(ei, &qname, type));
+		if (u64s > U8_MAX)
+			return -ERANGE;
 
-	while ((k = bch_btree_iter_peek_with_holes(&iter)).k) {
-		switch (k.k->type) {
-		case BCH_XATTR:
-			/* collision? */
-			if (xattr_cmp(bkey_s_c_to_xattr(k).v, type, &qname)) {
-				bch_btree_iter_advance_pos(&iter);
-				continue;
-			}
+		xattr = kmalloc(u64s * sizeof(u64), GFP_NOFS);
+		if (!xattr)
+			return -ENOMEM;
 
-			if (flags & XATTR_CREATE) {
-				ret = -EEXIST;
-				goto out;
-			}
+		bkey_xattr_init(&xattr->k_i);
+		xattr->k.u64s		= u64s;
+		xattr->v.x_type		= type;
+		xattr->v.x_name_len	= search.name.len;
+		xattr->v.x_val_len	= cpu_to_le16(size);
+		memcpy(xattr->v.x_name, search.name.name, search.name.len);
+		memcpy(xattr_val(&xattr->v), value, size);
 
-			break;
-		case BCH_XATTR_WHITEOUT:
-			bch_btree_iter_advance_pos(&iter);
-			continue;
-		default:
-			/* hole, not found */
-			if (flags & XATTR_REPLACE) {
-				ret = -ENODATA;
-				goto out;
-			}
-			break;
-		}
-
-		if (value) {
-			struct keylist keys;
-			struct bkey_i_xattr *xattr;
-			unsigned u64s = BKEY_U64s +
-				DIV_ROUND_UP(sizeof(struct bch_xattr) +
-					     qname.len + size,
-					     sizeof(u64));
-
-			if (u64s > U8_MAX) {
-				ret = -ERANGE;
-				break;
-			}
-
-			bch_keylist_init(&keys, NULL, 0);
-
-			if (bch_keylist_realloc(&keys, u64s)) {
-				ret = -ENOMEM;
-				break;
-			}
-
-			xattr = bkey_xattr_init(keys.top);
-			xattr->k.u64s		= u64s;
-			xattr->k.p		= k.k->p;
-			xattr->v.x_type		= type;
-			xattr->v.x_name_len	= qname.len;
-			xattr->v.x_val_len	= cpu_to_le16(size);
-			memcpy(xattr->v.x_name, qname.name, qname.len);
-			memcpy(xattr_val(&xattr->v), value, size);
-
-			BUG_ON(xattr_cmp(&xattr->v, type, &qname));
-
-			bch_keylist_enqueue(&keys);
-
-			ret = bch_btree_insert_at(&iter, &xattr->k_i, NULL, NULL,
-						  &ei->journal_seq,
-						  insert_flags);
-			bch_keylist_free(&keys);
-		} else {
-			struct bkey_i whiteout;
-			/* removing */
-			bkey_init(&whiteout.k);
-			whiteout.k.type = BCH_XATTR_WHITEOUT;
-			whiteout.k.p = k.k->p;
-
-			ret = bch_btree_insert_at(&iter, &whiteout,
-						  NULL, NULL, &ei->journal_seq,
-						  insert_flags);
-		}
-
-		if (ret != -EINTR)
-			break;
+		ret = bch_hash_set(xattr_hash_desc, &ei->str_hash, c,
+				ei->vfs_inode.i_ino, &ei->journal_seq,
+				&xattr->k_i,
+				(flags & XATTR_CREATE ? BCH_HASH_SET_MUST_CREATE : 0)|
+				(flags & XATTR_REPLACE ? BCH_HASH_SET_MUST_REPLACE : 0));
+		kfree(xattr);
 	}
-out:
-	bch_btree_iter_unlock(&iter);
+
+	if (ret == -ENOENT)
+		ret = flags & XATTR_REPLACE ? -ENODATA : 0;
+
 	return ret;
 }
 

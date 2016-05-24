@@ -329,8 +329,11 @@ static inline void bkey_reassemble(struct bkey_i *dst,
 	memcpy(&dst->v, src.v, bkey_val_bytes(src.k));
 }
 
-#define bkey_s_null		((struct bkey_s)   { .k = NULL, .v = NULL })
-#define bkey_s_c_null		((struct bkey_s_c) { .k = NULL, .v = NULL })
+#define bkey_s_null		((struct bkey_s)   { .k = NULL })
+#define bkey_s_c_null		((struct bkey_s_c) { .k = NULL })
+
+#define bkey_s_err(err)		((struct bkey_s)   { .k = ERR_PTR(err) })
+#define bkey_s_c_err(err)	((struct bkey_s_c) { .k = ERR_PTR(err) })
 
 static inline struct bkey_s bkey_to_s(struct bkey *k)
 {
