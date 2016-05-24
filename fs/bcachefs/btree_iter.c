@@ -698,10 +698,34 @@ void __bch_btree_iter_init(struct btree_iter *iter, struct cache_set *c,
 	iter->next			= iter;
 }
 
+int bch_btree_iter_unlink(struct btree_iter *iter)
+{
+	struct btree_iter *linked;
+	int ret = bch_btree_iter_unlock(iter);
+
+	for_each_linked_btree_iter(iter, linked)
+		if (linked->next == iter) {
+			linked->next = iter->next;
+			iter->next = iter;
+			return ret;
+		}
+
+	BUG();
+}
+
 void bch_btree_iter_link(struct btree_iter *iter, struct btree_iter *linked)
 {
 	BUG_ON(linked->next != linked);
 
 	linked->next = iter->next;
 	iter->next = linked;
+}
+
+void bch_btree_iter_init_copy(struct btree_iter *dst, struct btree_iter *src)
+{
+	*dst = *src;
+	dst->next = dst;
+	dst->nodes_locked = 0;
+	dst->nodes_intent_locked = 0;
+	bch_btree_iter_link(src, dst);
 }
