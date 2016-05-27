@@ -566,7 +566,7 @@ err_free:
 	return ERR_PTR(ret);
 }
 
-struct btree_reserve *bch_btree_reserve_get(struct btree_iter *iter,
+struct btree_reserve *bch_btree_reserve_get(struct cache_set *c,
 					    struct btree *b,
 					    unsigned extra_nodes,
 					    bool check_enospc,
@@ -575,7 +575,7 @@ struct btree_reserve *bch_btree_reserve_get(struct btree_iter *iter,
 	unsigned depth = btree_node_root(b)->level - b->level;
 	unsigned nr_nodes = btree_reserve_required_nodes(depth) + extra_nodes;
 
-	return __bch_btree_reserve_get(iter->c, check_enospc,
+	return __bch_btree_reserve_get(c, check_enospc,
 				       nr_nodes, cl);
 
 }
@@ -777,20 +777,21 @@ static void verify_keys_sorted(struct keylist *l)
 
 static void btree_node_lock_for_insert(struct btree *b, struct btree_iter *iter)
 {
+	struct cache_set *c = iter->c;
 relock:
 	btree_node_lock_write(b, iter);
 
-	BUG_ON(&write_block(iter->c, b)->keys < btree_bset_last(b));
+	BUG_ON(&write_block(c, b)->keys < btree_bset_last(b));
 
 	/*
 	 * If the last bset has been written, initialize a new one - check after
 	 * taking the write lock because it can be written with only a read
 	 * lock:
 	 */
-	if (b->written != btree_blocks(iter->c) &&
-	    &write_block(iter->c, b)->keys > btree_bset_last(b)) {
+	if (b->written != btree_blocks(c) &&
+	    &write_block(c, b)->keys > btree_bset_last(b)) {
 		btree_node_unlock_write(b, iter);
-		bch_btree_init_next(iter->c, b, iter);
+		bch_btree_init_next(c, b, iter);
 		goto relock;
 	}
 }
@@ -1482,7 +1483,7 @@ static int bch_btree_split_leaf(struct btree_iter *iter, unsigned flags,
 		goto out_get_locks;
 	}
 
-	reserve = bch_btree_reserve_get(iter, b, 0,
+	reserve = bch_btree_reserve_get(c, b, 0,
 					!(flags & BTREE_INSERT_NOFAIL),
 					cl);
 	if (IS_ERR(reserve)) {
@@ -2002,7 +2003,7 @@ int bch_btree_node_rewrite(struct btree_iter *iter, struct btree *b,
 	if (!bch_btree_iter_upgrade(iter))
 		return -EINTR;
 
-	reserve = bch_btree_reserve_get(iter, b, 1, true, cl);
+	reserve = bch_btree_reserve_get(c, b, 1, true, cl);
 	if (IS_ERR(reserve)) {
 		trace_bcache_btree_gc_rewrite_node_fail(b);
 		return PTR_ERR(reserve);
@@ -2029,7 +2030,7 @@ int bch_btree_node_rewrite(struct btree_iter *iter, struct btree *b,
 		bch_btree_set_root(iter, n, as, reserve);
 	}
 
-	btree_open_bucket_put(iter->c, n);
+	btree_open_bucket_put(c, n);
 
 	bch_btree_node_free_inmem(iter, b);
 

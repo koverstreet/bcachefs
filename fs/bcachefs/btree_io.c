@@ -590,7 +590,7 @@ static void do_btree_node_write(struct closure *cl)
 	 * Make sure to update b->written so bch_btree_init_next() doesn't
 	 * break:
 	 */
-	if (bch_journal_error(&b->c->journal)) {
+	if (bch_journal_error(&c->journal)) {
 		struct btree_write *w = btree_prev_write(b);
 
 		set_btree_node_write_error(b);

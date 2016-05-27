@@ -128,7 +128,7 @@ void bch_btree_set_root_initial(struct cache_set *, struct btree *,
 				struct btree_reserve *);
 
 void bch_btree_reserve_put(struct cache_set *, struct btree_reserve *);
-struct btree_reserve *bch_btree_reserve_get(struct btree_iter *,
+struct btree_reserve *bch_btree_reserve_get(struct cache_set *,
 					    struct btree *, unsigned,
 					    bool, struct closure *);
 

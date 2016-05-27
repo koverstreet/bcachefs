@@ -480,7 +480,7 @@ static void bch_coalesce_nodes(struct btree *old_nodes[GC_MERGE_NODES],
 			 block_bytes(c)) > blocks)
 		return;
 
-	res = bch_btree_reserve_get(iter, parent, nr_old_nodes, false, NULL);
+	res = bch_btree_reserve_get(c, parent, nr_old_nodes, false, NULL);
 	if (IS_ERR(res))
 		return;
 

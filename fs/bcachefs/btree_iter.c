@@ -353,27 +353,29 @@ void bch_btree_iter_reinit_node(struct btree_iter *iter, struct btree *b)
 				 iter->pos, iter->is_extents);
 }
 
-static void btree_iter_lock_root(struct btree_iter *iter, struct bpos pos)
+static inline void btree_iter_lock_root(struct btree_iter *iter, struct bpos pos)
 {
+	struct cache_set *c = iter->c;
+
 	iter->nodes_locked		= 0;
 	iter->nodes_intent_locked	= 0;
 	memset(iter->nodes, 0, sizeof(iter->nodes));
 
 	while (1) {
-		struct btree *b = iter->c->btree_roots[iter->btree_id].b;
+		struct btree *b = c->btree_roots[iter->btree_id].b;
 
 		iter->level = b->level;
 
 		if (btree_node_lock(b, iter, iter->level,
-				(b != iter->c->btree_roots[iter->btree_id].b))) {
+				(b != c->btree_roots[iter->btree_id].b))) {
 			btree_iter_node_set(iter, b, pos);
 			break;
 		}
 	}
 }
 
-static int btree_iter_down(struct btree_iter *iter, struct bpos pos,
-			   struct closure *cl)
+static inline int btree_iter_down(struct btree_iter *iter, struct bpos pos,
+				  struct closure *cl)
 {
 	struct btree *b;
 	struct bkey_s_c k = __btree_iter_peek(iter);
