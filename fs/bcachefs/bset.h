@@ -486,12 +486,18 @@ bch_btree_node_iter_peek_all(struct btree_node_iter *iter,
 		: __bch_btree_node_iter_peek_all(iter, b);
 }
 
-/* In debug mode, bch_btree_node_iter_next_all() does debug checks */
+static inline struct bkey_packed *
+bch_btree_node_iter_peek(struct btree_node_iter *iter, struct btree_keys *b)
+{
+	struct bkey_packed *ret;
 
-#ifdef CONFIG_BCACHEFS_DEBUG
-struct bkey_packed *bch_btree_node_iter_next_all(struct btree_node_iter *,
-						 struct btree_keys *);
-#else
+	while ((ret = bch_btree_node_iter_peek_all(iter, b)) &&
+	       bkey_deleted(ret))
+		bch_btree_node_iter_advance(iter, b);
+
+	return ret;
+}
+
 static inline struct bkey_packed *
 bch_btree_node_iter_next_all(struct btree_node_iter *iter, struct btree_keys *b)
 {
@@ -502,7 +508,6 @@ bch_btree_node_iter_next_all(struct btree_node_iter *iter, struct btree_keys *b)
 
 	return ret;
 }
-#endif
 
 static inline struct bkey_packed *
 bch_btree_node_iter_next(struct btree_node_iter *iter, struct btree_keys *b)
@@ -512,18 +517,6 @@ bch_btree_node_iter_next(struct btree_node_iter *iter, struct btree_keys *b)
 	do {
 		ret = bch_btree_node_iter_next_all(iter, b);
 	} while (ret && bkey_deleted(ret));
-
-	return ret;
-}
-
-static inline struct bkey_packed *
-bch_btree_node_iter_peek(struct btree_node_iter *iter, struct btree_keys *b)
-{
-	struct bkey_packed *ret;
-
-	while ((ret = bch_btree_node_iter_peek_all(iter, b)) &&
-	       bkey_deleted(ret))
-		bch_btree_node_iter_next_all(iter, b);
 
 	return ret;
 }
@@ -539,7 +532,7 @@ bch_btree_node_iter_peek_overlapping(struct btree_node_iter *iter,
 
 	while ((ret = bch_btree_node_iter_peek_all(iter, b)) &&
 	       (bkey_cmp_left_packed(f, ret, bkey_start_pos(end)) <= 0))
-		bch_btree_node_iter_next_all(iter, b);
+		bch_btree_node_iter_advance(iter, b);
 
 	if (!ret)
 		return NULL;
@@ -559,10 +552,6 @@ struct bkey_packed *bch_btree_node_iter_prev_all(struct btree_node_iter *,
 #define for_each_btree_node_key(b, k, iter)				\
 	for (bch_btree_node_iter_init_from_start((iter), (b));		\
 	     ((k) = bch_btree_node_iter_next(iter, b));)
-
-#define for_each_btree_node_key_all(b, k, iter)				\
-	for (bch_btree_node_iter_init_from_start((iter), (b));		\
-	     ((k) = bch_btree_node_iter_next_all(iter, b));)
 
 struct bkey_s_c bch_btree_node_iter_next_unpack(struct btree_node_iter *,
 						struct btree_keys *,

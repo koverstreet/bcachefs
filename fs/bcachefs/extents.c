@@ -131,7 +131,7 @@ bch_insert_fixup_key(struct btree_insert_trans *trans,
 			btree_keys_account_key_drop(&b->keys.nr, k);
 		}
 
-		bch_btree_node_iter_next_all(node_iter, &b->keys);
+		bch_btree_node_iter_advance(node_iter, &b->keys);
 	}
 
 	bch_btree_insert_and_journal(insert->iter, insert->k, res);

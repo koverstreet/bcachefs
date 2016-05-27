@@ -240,10 +240,10 @@ static inline struct bkey_s_c __btree_iter_peek(struct btree_iter *iter)
 	return ret;
 }
 
-static inline void __btree_iter_next_all(struct btree_iter *iter)
+static inline void __btree_iter_advance(struct btree_iter *iter)
 {
-	bch_btree_node_iter_next_all(&iter->node_iters[iter->level],
-				     &iter->nodes[iter->level]->keys);
+	bch_btree_node_iter_advance(&iter->node_iters[iter->level],
+				    &iter->nodes[iter->level]->keys);
 }
 
 static inline void btree_iter_node_set(struct btree_iter *iter,
@@ -466,7 +466,7 @@ retry:
 
 		while ((k = __btree_iter_peek_all(iter)).k &&
 		       !btree_iter_pos_cmp(iter, pos, k.k->p))
-			__btree_iter_next_all(iter);
+			__btree_iter_advance(iter);
 	}
 
 	if (iter->locks_want >= 0)
@@ -668,7 +668,7 @@ recheck:
 		} else if (!bkey_deleted(k.k)) {
 			return k;
 		} else {
-			__btree_iter_next_all(iter);
+			__btree_iter_advance(iter);
 		}
 	}
 

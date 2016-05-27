@@ -656,7 +656,7 @@ static bool bch_insert_fixup_btree_ptr(struct btree_iter *iter,
 			btree_keys_account_key_drop(&b->keys.nr, k);
 		}
 
-		bch_btree_node_iter_next_all(node_iter, &b->keys);
+		bch_btree_node_iter_advance(node_iter, &b->keys);
 	}
 
 	bch_btree_bset_insert(iter, b, node_iter, insert);
