@@ -22,17 +22,15 @@ static inline bool is_btree_node(struct btree_iter *iter, unsigned l)
  */
 void btree_node_unlock_write(struct btree *b, struct btree_iter *iter)
 {
-	EBUG_ON(iter && iter->nodes[b->level] != b);
-	EBUG_ON(iter && iter->lock_seq[b->level] + 1 != b->lock.state.seq);
+	struct btree_iter *linked;
 
-	if (iter) {
-		struct btree_iter *linked;
+	EBUG_ON(iter->nodes[b->level] != b);
+	EBUG_ON(iter->lock_seq[b->level] + 1 != b->lock.state.seq);
 
-		for_each_linked_btree_node(iter, b, linked)
-			linked->lock_seq[b->level] += 2;
+	for_each_linked_btree_node(iter, b, linked)
+		linked->lock_seq[b->level] += 2;
 
-		iter->lock_seq[b->level] += 2;
-	}
+	iter->lock_seq[b->level] += 2;
 
 	six_unlock_write(&b->lock);
 }
@@ -42,16 +40,11 @@ void btree_node_lock_write(struct btree *b, struct btree_iter *iter)
 	struct btree_iter *linked;
 	unsigned readers = 0;
 
-	EBUG_ON(iter && iter->nodes[b->level] != b);
-	EBUG_ON(iter && iter->lock_seq[b->level] != b->lock.state.seq);
+	EBUG_ON(iter->nodes[b->level] != b);
+	EBUG_ON(iter->lock_seq[b->level] != b->lock.state.seq);
 
 	if (six_trylock_write(&b->lock))
 		return;
-
-	if (!iter) {
-		six_lock_write(&b->lock);
-		return;
-	}
 
 	for_each_linked_btree_iter(iter, linked)
 		if (linked->nodes[b->level] == b &&
@@ -73,6 +66,23 @@ void btree_node_lock_write(struct btree *b, struct btree_iter *iter)
 		atomic64_add(__SIX_VAL(read_lock, readers),
 			     &b->lock.state.counter);
 	}
+}
+
+/* versions that allow iter to be null: */
+void __btree_node_unlock_write(struct btree *b, struct btree_iter *iter)
+{
+	if (likely(iter))
+		btree_node_unlock_write(b, iter);
+	else
+		six_unlock_write(&b->lock);
+}
+
+void __btree_node_lock_write(struct btree *b, struct btree_iter *iter)
+{
+	if (likely(iter))
+		btree_node_lock_write(b, iter);
+	else
+		six_lock_write(&b->lock);
 }
 
 static bool btree_lock_upgrade(struct btree_iter *iter, unsigned level)

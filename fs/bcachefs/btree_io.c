@@ -49,7 +49,7 @@ static void btree_node_sort(struct cache_set *c, struct btree *b,
 			    node_iter, sort, &c->sort);
 
 	if (!is_write_locked)
-		btree_node_lock_write(b, iter);
+		__btree_node_lock_write(b, iter);
 
 	if (!from) {
 		unsigned u64s = le16_to_cpu(out->keys.u64s);
@@ -77,7 +77,7 @@ static void btree_node_sort(struct cache_set *c, struct btree *b,
 	bch_bset_build_written_tree(&b->keys);
 
 	if (!is_write_locked)
-		btree_node_unlock_write(b, iter);
+		__btree_node_unlock_write(b, iter);
 
 	if (used_mempool)
 		mempool_free(virt_to_page(out), &c->sort.pool);
@@ -121,9 +121,9 @@ static bool btree_node_compact(struct cache_set *c, struct btree *b,
 	}
 
 nosort:
-	btree_node_lock_write(b, iter);
+	__btree_node_lock_write(b, iter);
 	bch_bset_build_written_tree(&b->keys);
-	btree_node_unlock_write(b, iter);
+	__btree_node_unlock_write(b, iter);
 	return false;
 sort:
 	btree_node_sort(c, b, iter, i, NULL, NULL, false);
@@ -153,9 +153,9 @@ void bch_btree_init_next(struct cache_set *c, struct btree *b,
 		bch_btree_verify(c, b);
 
 	if (b->written < btree_blocks(c)) {
-		btree_node_lock_write(b, iter);
+		__btree_node_lock_write(b, iter);
 		bch_bset_init_next(&b->keys, &write_block(c, b)->keys);
-		btree_node_unlock_write(b, iter);
+		__btree_node_unlock_write(b, iter);
 	}
 
 	if (iter && did_sort)

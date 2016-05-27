@@ -148,4 +148,7 @@ bool btree_node_relock(struct btree_iter *, unsigned);
 void btree_node_unlock_write(struct btree *, struct btree_iter *);
 void btree_node_lock_write(struct btree *, struct btree_iter *);
 
+void __btree_node_unlock_write(struct btree *, struct btree_iter *);
+void __btree_node_lock_write(struct btree *, struct btree_iter *);
+
 #endif /* _BCACHE_BTREE_LOCKING_H */
