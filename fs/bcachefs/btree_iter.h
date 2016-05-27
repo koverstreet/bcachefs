@@ -177,12 +177,16 @@ static inline int btree_iter_cmp(const struct btree_iter *l,
 	return bkey_cmp(l->pos, r->pos);
 }
 
-#define for_each_btree_node(_iter, _c, _btree_id, _start, _b)		\
-	for (bch_btree_iter_init((_iter), (_c), (_btree_id), _start),	\
+#define __for_each_btree_node(_iter, _c, _btree_id, _start, _b, _locks_want)\
+	for (__bch_btree_iter_init((_iter), (_c), (_btree_id),		\
+				   _start, _locks_want),		\
 	     (_iter)->is_extents = false,				\
 	     _b = bch_btree_iter_peek_node(_iter);			\
 	     (_b);							\
 	     (_b) = bch_btree_iter_next_node(_iter))
+
+#define for_each_btree_node(_iter, _c, _btree_id, _start, _b)		\
+	__for_each_btree_node(_iter, _c, _btree_id, _start, _b, -1)
 
 #define __for_each_btree_key(_iter, _c, _btree_id,  _start,		\
 			     _k, _locks_want)				\
