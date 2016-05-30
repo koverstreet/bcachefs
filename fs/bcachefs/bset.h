@@ -510,18 +510,6 @@ bch_btree_node_iter_next_all(struct btree_node_iter *iter, struct btree_keys *b)
 }
 
 static inline struct bkey_packed *
-bch_btree_node_iter_next(struct btree_node_iter *iter, struct btree_keys *b)
-{
-	struct bkey_packed *ret;
-
-	do {
-		ret = bch_btree_node_iter_next_all(iter, b);
-	} while (ret && bkey_deleted(ret));
-
-	return ret;
-}
-
-static inline struct bkey_packed *
 bch_btree_node_iter_peek_overlapping(struct btree_node_iter *iter,
 				     struct btree_keys *b,
 				     struct bkey *end)
@@ -551,15 +539,17 @@ struct bkey_packed *bch_btree_node_iter_prev_all(struct btree_node_iter *,
  */
 #define for_each_btree_node_key(b, k, iter)				\
 	for (bch_btree_node_iter_init_from_start((iter), (b));		\
-	     ((k) = bch_btree_node_iter_next(iter, b));)
+	     ((k) = bch_btree_node_iter_peek(iter, b));			\
+	     bch_btree_node_iter_advance(iter, b))
 
-struct bkey_s_c bch_btree_node_iter_next_unpack(struct btree_node_iter *,
+struct bkey_s_c bch_btree_node_iter_peek_unpack(struct btree_node_iter *,
 						struct btree_keys *,
 						struct bkey *);
 
 #define for_each_btree_node_key_unpack(b, k, iter, unpacked)		\
 	for (bch_btree_node_iter_init_from_start((iter), (b));		\
-	     (k = bch_btree_node_iter_next_unpack((iter), (b), (unpacked))).k;)
+	     (k = bch_btree_node_iter_peek_unpack((iter), (b), (unpacked))).k;\
+	     bch_btree_node_iter_advance(iter, b))
 
 /* Sorting */
 

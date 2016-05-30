@@ -1507,15 +1507,15 @@ found:
 	return bch_btree_node_iter_peek_all(iter, b);
 }
 
-struct bkey_s_c bch_btree_node_iter_next_unpack(struct btree_node_iter *iter,
+struct bkey_s_c bch_btree_node_iter_peek_unpack(struct btree_node_iter *iter,
 						struct btree_keys *b,
 						struct bkey *u)
 {
-	struct bkey_packed *k = bch_btree_node_iter_next(iter, b);
+	struct bkey_packed *k = bch_btree_node_iter_peek(iter, b);
 
 	return k ? bkey_disassemble(&b->format, k, u) : bkey_s_c_null;
 }
-EXPORT_SYMBOL(bch_btree_node_iter_next_unpack);
+EXPORT_SYMBOL(bch_btree_node_iter_peek_unpack);
 
 /* Mergesort */
 

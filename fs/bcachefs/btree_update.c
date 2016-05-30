@@ -1068,14 +1068,16 @@ static void btree_node_interior_verify(struct btree *b)
 
 	bch_btree_node_iter_init(&iter, &b->keys, b->key.k.p, false);
 #if 1
-	BUG_ON(!(k = bch_btree_node_iter_next(&iter, &b->keys)) ||
-	       bkey_cmp_left_packed(f, k, b->key.k.p) ||
-	       bch_btree_node_iter_peek(&iter, &b->keys));
+	BUG_ON(!(k = bch_btree_node_iter_peek(&iter, &b->keys)) ||
+	       bkey_cmp_left_packed(f, k, b->key.k.p));
+
+	BUG_ON((bch_btree_node_iter_advance(&iter, &b->keys),
+		!bch_btree_node_iter_end(&iter)));
 #else
 	const char *msg;
 
 	msg = "not found";
-	k = bch_btree_node_iter_next(&iter, &b->keys);
+	k = bch_btree_node_iter_peek(&iter, &b->keys);
 	if (!k)
 		goto err;
 
@@ -1083,8 +1085,10 @@ static void btree_node_interior_verify(struct btree *b)
 	if (bkey_cmp_left_packed(f, k, b->key.k.p))
 		goto err;
 
+	bch_btree_node_iter_advance(&iter, &b->keys);
+
 	msg = "isn't last key";
-	if (bch_btree_node_iter_peek(&iter, &b->keys))
+	if (!bch_btree_node_iter_end(&iter))
 		goto err;
 	return;
 err:
