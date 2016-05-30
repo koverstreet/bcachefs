@@ -721,6 +721,26 @@ void bch_btree_iter_link(struct btree_iter *iter, struct btree_iter *linked)
 	iter->next = linked;
 }
 
+void bch_btree_iter_copy(struct btree_iter *dst, struct btree_iter *src)
+{
+	bch_btree_iter_unlock(dst);
+
+	dst->level	= src->level;
+	dst->is_extents	= src->is_extents;
+	dst->btree_id	= src->btree_id;
+	dst->pos	= src->pos;
+
+	memcpy(dst->lock_seq,
+	       src->lock_seq,
+	       sizeof(src->lock_seq));
+	memcpy(dst->nodes,
+	       src->nodes,
+	       sizeof(src->nodes));
+	memcpy(dst->node_iters,
+	       src->node_iters,
+	       sizeof(src->node_iters));
+}
+
 void bch_btree_iter_init_copy(struct btree_iter *dst, struct btree_iter *src)
 {
 	*dst = *src;

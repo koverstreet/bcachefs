@@ -153,6 +153,7 @@ static inline void bch_btree_iter_init_intent(struct btree_iter *iter,
 
 int bch_btree_iter_unlink(struct btree_iter *);
 void bch_btree_iter_link(struct btree_iter *, struct btree_iter *);
+void bch_btree_iter_copy(struct btree_iter *, struct btree_iter *);
 void bch_btree_iter_init_copy(struct btree_iter *, struct btree_iter *);
 
 static inline struct bpos btree_type_successor(enum btree_id id,
