@@ -50,10 +50,8 @@ struct btree_iter {
 	 * always fail (but since freeing a btree node takes a write lock on the
 	 * node, which increments the node's lock seq, that's not actually
 	 * necessary in that example).
-	 *
-	 * One extra slot for a sentinel NULL:
 	 */
-	struct btree		*nodes[BTREE_MAX_DEPTH + 1];
+	struct btree		*nodes[BTREE_MAX_DEPTH];
 	struct btree_node_iter	node_iters[BTREE_MAX_DEPTH];
 
 	/*
