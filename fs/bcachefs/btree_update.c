@@ -1601,7 +1601,7 @@ int bch_btree_insert_trans(struct btree_insert_trans *trans,
 		return -EROFS;
 
 	trans_for_each_entry(trans, i) {
-		i->iter->locks_want = 0;
+		i->iter->locks_want = max_t(int, i->iter->locks_want, 0);
 		if (unlikely(!bch_btree_iter_upgrade(i->iter))) {
 			ret = -EINTR;
 			goto err;
@@ -1674,6 +1674,9 @@ retry:
 	trans_for_each_entry(trans, i)
 		if (!same_leaf_as_prev(trans, i))
 			bch_btree_node_write_lazy(i->iter->nodes[0], i->iter);
+
+	trans_for_each_entry(trans, i)
+		i->iter->locks_want = 0;
 
 out:
 	percpu_ref_put(&c->writes);
