@@ -414,20 +414,20 @@ static void btree_iter_verify_locking(struct btree_iter *iter)
 		for (level = 0; level < BTREE_MAX_DEPTH; level++)
 			BUG_ON(btree_node_read_locked(linked, level));
 
+	/* Lock ordering: */
+	for_each_linked_btree_iter(iter, linked)
+		BUG_ON(btree_iter_cmp(iter, linked) < 0 &&
+		       btree_node_intent_locked(linked, 0));
+
 	/*
 	 * Also, we have to take intent locks on interior nodes before leaf
 	 * nodes - verify that linked iterators don't have intent locks held at
 	 * depths lower than where we're at:
 	 */
 	for_each_linked_btree_iter(iter, linked)
-		for (level = 0; level < iter->level; level++)
-			BUG_ON(btree_node_intent_locked(linked, level));
-
-	/* And, lock ordering: */
-	for_each_linked_btree_iter(iter, linked)
-		BUG_ON(btree_node_intent_locked(linked, 0) &&
-		       btree_iter_cmp(iter, linked) < 0);
-
+		BUG_ON(btree_iter_cmp(linked, iter) <= 0 &&
+		       linked->locks_want >= 0 &&
+		       linked->locks_want < iter->locks_want);
 #endif
 }
 
@@ -445,9 +445,6 @@ static int __must_check __bch_btree_iter_traverse(struct btree_iter *iter,
 {
 	if (!iter->nodes[iter->level])
 		return 0;
-
-	if (iter->locks_want >= 0)
-		btree_iter_verify_locking(iter);
 retry:
 	/*
 	 * If the current node isn't locked, go up until we have a locked node
@@ -471,6 +468,9 @@ retry:
 		       !btree_iter_pos_cmp(iter, pos, k.k->p))
 			__btree_iter_next_all(iter);
 	}
+
+	if (iter->locks_want >= 0)
+		btree_iter_verify_locking(iter);
 
 	/*
 	 * Note: iter->nodes[iter->level] may be temporarily NULL here - that

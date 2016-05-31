@@ -1454,6 +1454,7 @@ void bch_btree_insert_node(struct btree *b,
 static int bch_btree_split_leaf(struct btree_iter *iter, unsigned flags,
 				struct closure *cl)
 {
+	struct btree_iter *linked;
 	struct cache_set *c = iter->c;
 	struct btree *b = iter->nodes[0];
 	struct btree_reserve *reserve;
@@ -1471,9 +1472,10 @@ static int bch_btree_split_leaf(struct btree_iter *iter, unsigned flags,
 	 * instead of locking/reserving all the way to the root:
 	 */
 	iter->locks_want = BTREE_MAX_DEPTH;
+
 	if (!bch_btree_iter_upgrade(iter)) {
 		ret = -EINTR;
-		goto out_unlock;
+		goto out_get_locks;
 	}
 
 	reserve = bch_btree_reserve_get(iter, b, 0,
@@ -1481,16 +1483,23 @@ static int bch_btree_split_leaf(struct btree_iter *iter, unsigned flags,
 					cl);
 	if (IS_ERR(reserve)) {
 		ret = PTR_ERR(reserve);
-		goto out_unlock;
+		goto out_get_locks;
 	}
 
 	as = bch_async_split_alloc(b, iter);
 
 	btree_split(b, iter, NULL, reserve, as);
 	bch_btree_reserve_put(c, reserve);
-out_unlock:
+	iter->locks_want = 0;
+out:
 	up_read(&c->gc_lock);
 	return ret;
+out_get_locks:
+	/* Lock ordering... */
+	for_each_linked_btree_iter(iter, linked)
+		if (btree_iter_cmp(linked, iter) <= 0)
+			linked->locks_want = BTREE_MAX_DEPTH;
+	goto out;
 }
 
 /**
@@ -1691,8 +1700,12 @@ split:
 	goto retry;
 err:
 	if (ret == -EAGAIN) {
-		trans_for_each_entry(trans, i)
-			bch_btree_iter_unlock(i->iter);
+		struct btree_iter *linked;
+
+		for_each_linked_btree_iter(split, linked)
+			bch_btree_iter_unlock(linked);
+		bch_btree_iter_unlock(split);
+
 		closure_sync(&cl);
 		ret = -EINTR;
 	}
