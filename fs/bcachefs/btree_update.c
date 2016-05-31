@@ -1853,6 +1853,9 @@ int bch_btree_insert_check_key(struct btree_iter *iter,
 
 	bkey_copy(&tmp.key, check_key);
 
+	/* XXX rewind shouldn't be necessary... */
+	BUG_ON(bkey_cmp(iter->pos, bkey_start_pos(&check_key->k)));
+
 	bch_btree_iter_rewind(iter, bkey_start_pos(&check_key->k));
 
 	ret = bch_btree_insert_at(iter, &tmp.key, NULL, NULL,

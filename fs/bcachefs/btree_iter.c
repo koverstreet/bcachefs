@@ -9,9 +9,11 @@
 
 #include <trace/events/bcachefs.h>
 
+#define BTREE_ITER_NOT_END	((struct btree *) 1)
+
 static inline bool is_btree_node(struct btree_iter *iter, unsigned l)
 {
-	return ((unsigned long) iter->nodes[l]) > 1;
+	return iter->nodes[l] && iter->nodes[l] != BTREE_ITER_NOT_END;
 }
 
 /* Btree node locking: */
@@ -330,7 +332,7 @@ void bch_btree_iter_node_drop_linked(struct btree_iter *iter, struct btree *b)
 	for_each_linked_btree_iter(iter, linked)
 		if (linked->nodes[level] == b) {
 			btree_node_unlock(linked, level);
-			linked->nodes[level] = (void *) 1;
+			linked->nodes[level] = BTREE_ITER_NOT_END;
 		}
 }
 
@@ -341,7 +343,7 @@ void bch_btree_iter_node_drop(struct btree_iter *iter, struct btree *b)
 	if (iter->nodes[level] == b) {
 		BUG_ON(b->lock.state.intent_lock != 1);
 		btree_node_unlock(iter, level);
-		iter->nodes[level] = (void *) 1;
+		iter->nodes[level] = BTREE_ITER_NOT_END;
 	}
 }
 
@@ -617,14 +619,17 @@ struct bkey_s_c bch_btree_iter_peek(struct btree_iter *iter)
 
 	while (1) {
 		ret = __bch_btree_iter_traverse(iter, 0, pos);
-		if (ret)
+		if (unlikely(ret))
 			return bkey_s_c_null;
 
-		if (likely((k = __btree_iter_peek(iter)).k)) {
-			EBUG_ON(bkey_cmp(k.k->p, pos) < 0);
-
-			/* extents... */
-			if (bkey_cmp(bkey_start_pos(k.k), iter->pos) > 0)
+		k = __btree_iter_peek(iter);
+		if (likely(k.k)) {
+			/*
+			 * iter->pos should always be equal to the key we just
+			 * returned - except extents can straddle iter->pos:
+			 */
+			if (!iter->is_extents ||
+			    bkey_cmp(bkey_start_pos(k.k), iter->pos) > 0)
 				bch_btree_iter_set_pos(iter, bkey_start_pos(k.k));
 			return k;
 		}
@@ -646,7 +651,7 @@ struct bkey_s_c bch_btree_iter_peek_with_holes(struct btree_iter *iter)
 
 	while (1) {
 		ret = __bch_btree_iter_traverse(iter, 0, iter->pos);
-		if (ret)
+		if (unlikely(ret))
 			return bkey_s_c_null;
 
 		k = __btree_iter_peek_all(iter);
@@ -656,14 +661,14 @@ recheck:
 			bkey_init(&n);
 			n.p = iter->pos;
 
-			if (!k.k)
-				k.k = &iter->nodes[0]->key.k;
-
-			if (iter->btree_id == BTREE_ID_EXTENTS) {
+			if (iter->is_extents) {
 				if (n.p.offset == KEY_OFFSET_MAX) {
 					iter->pos = bkey_successor(iter->pos);
 					goto recheck;
 				}
+
+				if (!k.k)
+					k.k = &iter->nodes[0]->key.k;
 
 				bch_key_resize(&n,
 				       min_t(u64, KEY_SIZE_MAX,
@@ -705,7 +710,7 @@ void __bch_btree_iter_init(struct btree_iter *iter, struct cache_set *c,
 	iter->error			= 0;
 	iter->c				= c;
 	iter->pos			= pos;
-	iter->nodes[iter->level]	= (void *) 1;
+	iter->nodes[iter->level]	= BTREE_ITER_NOT_END;
 	iter->nodes[iter->level + 1]	= NULL;
 	iter->next			= iter;
 }
