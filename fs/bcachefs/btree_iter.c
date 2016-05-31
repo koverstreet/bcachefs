@@ -860,7 +860,8 @@ int __must_check __bch2_btree_iter_traverse(struct btree_iter *iter)
 		     i < iter->locks_want && iter->nodes[i];
 		     i++)
 			if (!bch2_btree_node_relock(iter, i)) {
-				while (iter->nodes[iter->level] &&
+				while (iter->level < BTREE_MAX_DEPTH &&
+				       iter->nodes[iter->level] &&
 				       iter->level + 1 < iter->locks_want)
 					btree_iter_up(iter);
 				break;
@@ -871,7 +872,8 @@ int __must_check __bch2_btree_iter_traverse(struct btree_iter *iter)
 	 * If the current node isn't locked, go up until we have a locked node
 	 * or run out of nodes:
 	 */
-	while (iter->nodes[iter->level] &&
+	while (iter->level < BTREE_MAX_DEPTH &&
+	       iter->nodes[iter->level] &&
 	       !(is_btree_node(iter, iter->level) &&
 		 bch2_btree_node_relock(iter, iter->level) &&
 		 btree_iter_pos_cmp(iter->pos,
@@ -883,7 +885,8 @@ int __must_check __bch2_btree_iter_traverse(struct btree_iter *iter)
 	 * If we've got a btree node locked (i.e. we aren't about to relock the
 	 * root) - advance its node iterator if necessary:
 	 */
-	if (iter->nodes[iter->level]) {
+	if (iter->level < BTREE_MAX_DEPTH &&
+	    iter->nodes[iter->level]) {
 		struct bkey_s_c k;
 
 		while ((k = __btree_iter_peek_all(iter)).k &&
@@ -955,7 +958,8 @@ struct btree *bch2_btree_iter_next_node(struct btree_iter *iter, unsigned depth)
 
 	btree_iter_up(iter);
 
-	if (!iter->nodes[iter->level])
+	if (iter->level == BTREE_MAX_DEPTH ||
+	    !iter->nodes[iter->level])
 		return NULL;
 
 	/* parent node usually won't be locked: redo traversal if necessary */
