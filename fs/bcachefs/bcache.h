@@ -809,11 +809,6 @@ struct cache_set {
 	 * buckets is below this percentage
 	 */
 	unsigned		foreground_target_percent;
-	/*
-	 * foreground writes will fail when the number of free sectors is
-	 * below this percentage
-	 */
-	unsigned		sector_reserve_percent;
 
 #define BCH_DEBUG_PARAM(name, description) bool name;
 	BCH_DEBUG_PARAMS_ALL()

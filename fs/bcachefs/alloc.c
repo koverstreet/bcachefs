@@ -1555,7 +1555,7 @@ static void bch_recalc_capacity(struct cache_set *c)
 
 	total_capacity = capacity;
 
-	capacity *= (100 - c->sector_reserve_percent);
+	capacity *= (100 - c->opts.gc_reserve_percent);
 	capacity = div64_u64(capacity, 100);
 
 	BUG_ON(capacity + reserved_sectors > total_capacity);

@@ -220,7 +220,7 @@ static const char *validate_cache_super(struct bcache_superblock *disk_sb)
 		return"Unsupported superblock version";
 	}
 
-	if (CACHE_SYNC(sb) &&
+	if (CACHE_SET_SYNC(sb) &&
 	    le64_to_cpu(sb->version) != BCACHE_SB_VERSION_CDEV_V3)
 		return "Unsupported superblock version";
 
@@ -265,14 +265,21 @@ static const char *validate_cache_super(struct bcache_superblock *disk_sb)
 	if (CACHE_SB_CSUM_TYPE(sb) >= BCH_CSUM_NR)
 		return "Invalid checksum type";
 
-	if (!CACHE_BTREE_NODE_SIZE(sb))
+	if (!CACHE_SET_BTREE_NODE_SIZE(sb))
 		return "Btree node size not set";
 
-	if (!is_power_of_2(CACHE_BTREE_NODE_SIZE(sb)))
+	if (!is_power_of_2(CACHE_SET_BTREE_NODE_SIZE(sb)))
 		return "Btree node size not a power of two";
 
-	if (CACHE_BTREE_NODE_SIZE(sb) > BTREE_NODE_SIZE_MAX)
+	if (CACHE_SET_BTREE_NODE_SIZE(sb) > BTREE_NODE_SIZE_MAX)
 		return "Btree node size too large";
+
+	/* Default value, for old filesystems: */
+	if (!CACHE_SET_GC_RESERVE(sb))
+		SET_CACHE_SET_GC_RESERVE(sb, 10);
+
+	if (CACHE_SET_GC_RESERVE(sb) < 5)
+		return "gc reserve percentage too small";
 
 	if (le16_to_cpu(sb->u64s) < bch_journal_buckets_offset(sb))
 		return "Invalid superblock: member info area missing";
@@ -560,7 +567,7 @@ static int cache_sb_to_cache_set(struct cache_set *c, struct cache_sb *src)
 	dst->block_size		= src->block_size;
 
 	c->sb.block_size	= le16_to_cpu(src->block_size);
-	c->sb.btree_node_size	= CACHE_BTREE_NODE_SIZE(src);
+	c->sb.btree_node_size	= CACHE_SET_BTREE_NODE_SIZE(src);
 
 	c->sb.nr_in_set		= src->nr_in_set;
 
@@ -1129,7 +1136,6 @@ static struct cache_set *bch_cache_set_alloc(struct cache_sb *sb,
 	c->tiering_percent = 10;
 
 	c->foreground_target_percent = 20;
-	c->sector_reserve_percent = 20;
 
 	c->journal.write_time	= &c->journal_write_time;
 	c->journal.delay_time	= &c->journal_delay_time;
@@ -1282,12 +1288,12 @@ static const char *run_cache_set(struct cache_set *c)
 		cache_sb_from_cache_set(c, ca);
 
 	/*
-	 * CACHE_SYNC is true if the cache set has already been run
+	 * CACHE_SET_SYNC is true if the cache set has already been run
 	 * and potentially has data.
 	 * It is false if it is the first time it is run.
 	 */
 
-	if (CACHE_SYNC(&c->disk_sb)) {
+	if (CACHE_SET_SYNC(&c->disk_sb)) {
 		LIST_HEAD(journal);
 		struct jset *j;
 
@@ -1424,7 +1430,7 @@ static const char *run_cache_set(struct cache_set *c)
 			goto err;
 
 		/* Mark cache set as initialized: */
-		SET_CACHE_SYNC(&c->disk_sb, true);
+		SET_CACHE_SET_SYNC(&c->disk_sb, true);
 	}
 
 	if (c->opts.read_only) {
@@ -1477,7 +1483,7 @@ static const char *can_add_cache(struct cache_sb *sb,
 		return "mismatched block size";
 
 	if (le16_to_cpu(sb->members[sb->nr_this_dev].bucket_size) <
-	    CACHE_BTREE_NODE_SIZE(&c->disk_sb))
+	    CACHE_SET_BTREE_NODE_SIZE(&c->disk_sb))
 		return "new cache bucket_size is too small";
 
 	return NULL;
@@ -1879,10 +1885,6 @@ static const char *cache_alloc(struct bcache_superblock *sb,
 	if (c->sb.nr_in_set == 1)
 		bdevname(sb->bdev, c->name);
 
-	err = validate_cache_super(sb);
-	if (err)
-		return err;
-
 	if (cache_set_init_fault("cache_alloc"))
 		return err;
 
@@ -2022,6 +2024,10 @@ static const char *register_cache(struct bcache_superblock *sb,
 	char name[BDEVNAME_SIZE];
 	const char *err = "cannot allocate memory";
 	struct cache_set *c;
+
+	err = validate_cache_super(sb);
+	if (err)
+		return err;
 
 	bdevname(sb->bdev, name);
 
@@ -2234,6 +2240,10 @@ const char *bch_register_cache_set(char * const *devices, unsigned nr_devices,
 		err = "attempting to register backing device";
 		if (__SB_IS_BDEV(le64_to_cpu(sb[i].sb->version)))
 			goto err_unlock;
+
+		err = validate_cache_super(sb);
+		if (err)
+			return err;
 	}
 
 	err = "cache set already registered";

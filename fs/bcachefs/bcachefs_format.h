@@ -705,7 +705,9 @@ struct cache_sb {
 	 * to change:
 	 */
 	uuid_le			user_uuid;
-	__le64			pad1[6];
+
+	__le64			flags2;
+	__le64			pad1[5];
 
 	/* Number of cache_member entries: */
 	__u8			nr_in_set;
@@ -732,9 +734,11 @@ struct cache_sb {
 	};
 };
 
-LE64_BITMASK(CACHE_SYNC,		struct cache_sb, flags, 0, 1);
+/* XXX: rename CACHE_SET -> BCH_FS or something? */
 
-LE64_BITMASK(CACHE_ERROR_ACTION,	struct cache_sb, flags, 1, 4);
+LE64_BITMASK(CACHE_SET_SYNC,		struct cache_sb, flags, 0, 1);
+
+LE64_BITMASK(CACHE_SET_ERROR_ACTION,	struct cache_sb, flags, 1, 4);
 #define BCH_ON_ERROR_CONTINUE		0U
 #define BCH_ON_ERROR_RO			1U
 #define BCH_ON_ERROR_PANIC		2U
@@ -747,13 +751,13 @@ LE64_BITMASK(CACHE_SET_DATA_REPLICAS_WANT,struct cache_sb, flags, 8, 12);
 
 LE64_BITMASK(CACHE_SB_CSUM_TYPE,	struct cache_sb, flags, 12, 16);
 
-LE64_BITMASK(CACHE_META_PREFERRED_CSUM_TYPE,struct cache_sb, flags, 16, 20);
+LE64_BITMASK(CACHE_SET_META_PREFERRED_CSUM_TYPE,struct cache_sb, flags, 16, 20);
 #define BCH_CSUM_NONE			0U
 #define BCH_CSUM_CRC32C			1U
 #define BCH_CSUM_CRC64			2U
 #define BCH_CSUM_NR			3U
 
-LE64_BITMASK(CACHE_BTREE_NODE_SIZE,	struct cache_sb, flags, 20, 36);
+LE64_BITMASK(CACHE_SET_BTREE_NODE_SIZE,	struct cache_sb, flags, 20, 36);
 
 LE64_BITMASK(CACHE_SET_META_REPLICAS_HAVE,struct cache_sb, flags, 36, 40);
 LE64_BITMASK(CACHE_SET_DATA_REPLICAS_HAVE,struct cache_sb, flags, 40, 44);
@@ -768,9 +772,9 @@ enum bch_str_hash_type {
 
 #define BCH_STR_HASH_NR			4
 
-LE64_BITMASK(CACHE_DATA_PREFERRED_CSUM_TYPE, struct cache_sb, flags, 48, 52);
+LE64_BITMASK(CACHE_SET_DATA_PREFERRED_CSUM_TYPE, struct cache_sb, flags, 48, 52);
 
-LE64_BITMASK(CACHE_COMPRESSION_TYPE,	struct cache_sb, flags, 52, 56);
+LE64_BITMASK(CACHE_SET_COMPRESSION_TYPE, struct cache_sb, flags, 52, 56);
 enum {
 	BCH_COMPRESSION_NONE		= 0,
 	BCH_COMPRESSION_LZ4		= 1,
@@ -781,6 +785,10 @@ enum {
 
 /* Limit inode numbers to 32 bits: */
 LE64_BITMASK(CACHE_INODE_32BIT,		struct cache_sb, flags, 56, 57);
+
+LE64_BITMASK(CACHE_SET_GC_RESERVE,	struct cache_sb, flags, 57, 63);
+
+LE64_BITMASK(CACHE_SET_ROOT_RESERVE,	struct cache_sb, flags2, 0,  6);
 
 /* options: */
 
@@ -807,7 +815,7 @@ LE64_BITMASK(CACHE_INODE_32BIT,		struct cache_sb, flags, 56, 57);
 	CACHE_SET_OPT(errors,					\
 		      bch_error_actions,			\
 		      0, BCH_NR_ERROR_ACTIONS,			\
-		      CACHE_ERROR_ACTION,			\
+		      CACHE_SET_ERROR_ACTION,			\
 		      true)					\
 	CACHE_SET_OPT(metadata_replicas,			\
 		      bch_uint_opt,				\
@@ -822,17 +830,17 @@ LE64_BITMASK(CACHE_INODE_32BIT,		struct cache_sb, flags, 56, 57);
 	CACHE_SET_OPT(metadata_checksum,			\
 		      bch_csum_types,				\
 		      0, BCH_CSUM_NR,				\
-		      CACHE_META_PREFERRED_CSUM_TYPE,		\
+		      CACHE_SET_META_PREFERRED_CSUM_TYPE,	\
 		      true)					\
 	CACHE_SET_OPT(data_checksum,				\
 		      bch_csum_types,				\
 		      0, BCH_CSUM_NR,				\
-		      CACHE_DATA_PREFERRED_CSUM_TYPE,		\
+		      CACHE_SET_DATA_PREFERRED_CSUM_TYPE,	\
 		      true)					\
 	CACHE_SET_OPT(compression,				\
 		      bch_compression_types,			\
 		      0, BCH_COMPRESSION_NR,			\
-		      CACHE_COMPRESSION_TYPE,			\
+		      CACHE_SET_COMPRESSION_TYPE,		\
 		      true)					\
 	CACHE_SET_OPT(str_hash,					\
 		      bch_str_hash_types,			\
@@ -843,6 +851,16 @@ LE64_BITMASK(CACHE_INODE_32BIT,		struct cache_sb, flags, 56, 57);
 		      bch_bool_opt, 0, 2,			\
 		      CACHE_INODE_32BIT,			\
 		      true)					\
+	CACHE_SET_OPT(gc_reserve_percent,			\
+		      bch_uint_opt,				\
+		      5, 21,					\
+		      CACHE_SET_GC_RESERVE,			\
+		      false)					\
+	CACHE_SET_OPT(root_reserve_percent,			\
+		      bch_uint_opt,				\
+		      0, 21,					\
+		      CACHE_SET_ROOT_RESERVE,			\
+		      false)
 
 /* backing device specific stuff: */
 

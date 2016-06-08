@@ -153,7 +153,6 @@ rw_attribute(btree_flush_delay);
 rw_attribute(pd_controllers_update_seconds);
 
 rw_attribute(foreground_target_percent);
-rw_attribute(sector_reserve_percent);
 
 rw_attribute(size);
 read_attribute(meta_replicas_have);
@@ -647,10 +646,8 @@ SHOW(bch_cache_set)
 
 	sysfs_hprint(block_size,		block_bytes(c));
 	sysfs_print(block_size_bytes,		block_bytes(c));
-	sysfs_hprint(btree_node_size,
-		     CACHE_BTREE_NODE_SIZE(&c->disk_sb) << 9);
-	sysfs_print(btree_node_size_bytes,
-		    CACHE_BTREE_NODE_SIZE(&c->disk_sb) << 9);
+	sysfs_hprint(btree_node_size,		c->sb.btree_node_size << 9);
+	sysfs_print(btree_node_size_bytes,	c->sb.btree_node_size << 9);
 
 	sysfs_hprint(btree_cache_size,		bch_cache_size(c));
 	sysfs_print(cache_available_percent,	bch_cache_available_percent(c));
@@ -691,7 +688,6 @@ SHOW(bch_cache_set)
 	sysfs_print(pd_controllers_update_seconds,
 		    c->pd_controllers_update_seconds);
 	sysfs_print(foreground_target_percent, c->foreground_target_percent);
-	sysfs_print(sector_reserve_percent, c->sector_reserve_percent);
 
 	sysfs_printf(tiering_enabled,		"%i", c->tiering_enabled);
 	sysfs_print(tiering_percent,		c->tiering_percent);
@@ -808,7 +804,6 @@ STORE(__bch_cache_set)
 	sysfs_strtoul(pd_controllers_update_seconds,
 		      c->pd_controllers_update_seconds);
 	sysfs_strtoul(foreground_target_percent, c->foreground_target_percent);
-	sysfs_strtoul(sector_reserve_percent, c->sector_reserve_percent);
 
 	sysfs_strtoul(tiering_percent,		c->tiering_percent);
 	sysfs_pd_controller_store(tiering,	&c->tiering_pd);
@@ -903,7 +898,6 @@ static struct attribute *bch_cache_set_files[] = {
 
 	&sysfs_btree_flush_delay,
 	&sysfs_foreground_target_percent,
-	&sysfs_sector_reserve_percent,
 	&sysfs_tiering_percent,
 
 	&sysfs_journal_flush,
