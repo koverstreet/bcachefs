@@ -206,14 +206,14 @@ int bch_dirent_rename(struct cache_set *c,
 	if (mode == BCH_RENAME_EXCHANGE) {
 		new_src = dirent_create_key(0, src_name, 0);
 		if (!new_src)
-			goto out;
+			goto err;
 	} else {
 		new_src = (void *) &delete;
 	}
 
 	new_dst = dirent_create_key(0, dst_name, 0);
 	if (!new_dst)
-		goto out;
+		goto err;
 
 	bch_btree_iter_init_intent(&src_iter, c, BTREE_ID_DIRENTS, src_pos);
 	bch_btree_iter_init_intent(&dst_iter, c, BTREE_ID_DIRENTS, dst_pos);
@@ -271,12 +271,12 @@ int bch_dirent_rename(struct cache_set *c,
 
 		if (IS_ERR(old_src.k)) {
 			ret = PTR_ERR(old_src.k);
-			goto err;
+			goto err_unlock;
 		}
 
 		if (IS_ERR(old_dst.k)) {
 			ret = PTR_ERR(old_dst.k);
-			goto err;
+			goto err_unlock;
 		}
 
 		switch (mode) {
@@ -357,16 +357,16 @@ insert_done:
 			bch_btree_iter_link(&src_iter, &dst_iter);
 		}
 	} while (ret == -EINTR);
-
-out:
+err:
 	if (new_src != (void *) &delete)
 		kfree(new_src);
 	kfree(new_dst);
 	return ret;
-err:
+err_unlock:
+	bch_btree_iter_unlink(&whiteout_iter);
 	ret = bch_btree_iter_unlock(&src_iter) ?: ret;
 	ret = bch_btree_iter_unlock(&dst_iter) ?: ret;
-	goto out;
+	goto err;
 }
 
 int bch_dirent_delete(struct inode *dir, const struct qstr *name)
