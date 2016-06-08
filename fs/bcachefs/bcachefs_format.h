@@ -779,6 +779,9 @@ enum {
 
 #define BCH_COMPRESSION_NR		3U
 
+/* Limit inode numbers to 32 bits: */
+LE64_BITMASK(CACHE_INODE_32BIT,		struct cache_sb, flags, 56, 57);
+
 /* options: */
 
 /**
@@ -835,6 +838,10 @@ enum {
 		      bch_str_hash_types,			\
 		      BCH_STR_HASH_NR,				\
 		      CACHE_SET_STR_HASH_TYPE,			\
+		      true)					\
+	CACHE_SET_OPT(inodes_32bit,				\
+		      bch_bool_opt, 2,				\
+		      CACHE_INODE_32BIT,			\
 		      true)					\
 
 /* backing device specific stuff: */

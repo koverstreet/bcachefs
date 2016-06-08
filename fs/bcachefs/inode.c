@@ -116,7 +116,13 @@ int bch_inode_create(struct cache_set *c, struct bkey_i *inode,
 	bool searched_from_start = false;
 	int ret;
 
-	if ((max && *hint >= max) || *hint < min)
+	if (!max)
+		max = ULLONG_MAX;
+
+	if (c->opts.inodes_32bit)
+		max = min_t(u64, max, U32_MAX);
+
+	if (*hint >= max || *hint < min)
 		*hint = min;
 
 	if (*hint == min)
@@ -125,7 +131,7 @@ again:
 	bch_btree_iter_init_intent(&iter, c, BTREE_ID_INODES, POS(*hint, 0));
 
 	while ((k = bch_btree_iter_peek_with_holes(&iter)).k) {
-		if (max && k.k->p.inode >= max)
+		if (k.k->p.inode >= max)
 			break;
 
 		if (k.k->type < BCH_INODE_FS) {
