@@ -1091,6 +1091,7 @@ static int bch_statfs(struct dentry *dentry, struct kstatfs *buf)
 {
 	struct super_block *sb = dentry->d_sb;
 	struct cache_set *c = sb->s_fs_info;
+	u64 fsid;
 
 	buf->f_type	= BCACHE_STATFS_MAGIC;
 	buf->f_bsize	= sb->s_blocksize;
@@ -1099,6 +1100,11 @@ static int bch_statfs(struct dentry *dentry, struct kstatfs *buf)
 	buf->f_bavail	= buf->f_bfree;
 	buf->f_files	= atomic_long_read(&c->nr_inodes);
 	buf->f_ffree	= U64_MAX;
+
+	fsid = le64_to_cpup((void *) c->disk_sb.user_uuid.b) ^
+	       le64_to_cpup((void *) c->disk_sb.user_uuid.b + sizeof(u64));
+	buf->f_fsid.val[0] = fsid & 0xFFFFFFFFUL;
+	buf->f_fsid.val[1] = (fsid >> 32) & 0xFFFFFFFFUL;
 	buf->f_namelen	= NAME_MAX;
 
 	return 0;
