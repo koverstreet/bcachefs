@@ -982,11 +982,11 @@ struct jset_entry {
 
 #define JSET_KEYS_U64s	(sizeof(struct jset_entry) / sizeof(__u64))
 
-LE32_BITMASK(JKEYS_TYPE,	struct jset_entry, flags, 0, 8);
+LE32_BITMASK(JOURNAL_ENTRY_TYPE,	struct jset_entry, flags, 0, 8);
 enum {
-	JKEYS_BTREE_KEYS		= 0,
-	JKEYS_BTREE_ROOT		= 1,
-	JKEYS_PRIO_PTRS			= 2,
+	JOURNAL_ENTRY_BTREE_KEYS	= 0,
+	JOURNAL_ENTRY_BTREE_ROOT	= 1,
+	JOURNAL_ENTRY_PRIO_PTRS		= 2,
 
 	/*
 	 * Journal sequence numbers can be blacklisted: bsets record the max
@@ -998,7 +998,7 @@ enum {
 	 * and then record that we skipped it so that the next time we crash and
 	 * recover we don't think there was a missing journal entry.
 	 */
-	JKEYS_JOURNAL_SEQ_BLACKLISTED	= 3,
+	JOURNAL_ENTRY_JOURNAL_SEQ_BLACKLISTED = 3,
 };
 
 struct jset {

@@ -46,33 +46,50 @@ static inline u64 journal_pin_seq(struct journal *j,
 	return last_seq(j) + fifo_entry_idx(&j->pin, pin_list);
 }
 
-#define for_each_jset_jkeys(jkeys, jset)				\
-	for (jkeys = (jset)->start;					\
-	     jkeys < (struct jset_entry *) bkey_idx(jset, le32_to_cpu((jset)->u64s));\
-	     jkeys = jset_keys_next(jkeys))
+#define for_each_jset_entry(entry, jset)				\
+	for (entry = (jset)->start;					\
+	     entry < bkey_idx(jset, le32_to_cpu((jset)->u64s));\
+	     entry = jset_keys_next(entry))
 
-#define for_each_jset_key(k, _n, jkeys, jset)				\
-	for_each_jset_jkeys(jkeys, jset)				\
-		if (JKEYS_TYPE(jkeys) == JKEYS_BTREE_KEYS)		\
-			for (k = (jkeys)->start;			\
-			     (k < bkey_idx(jkeys, le16_to_cpu((jkeys)->u64s)) &&\
-			      (_n = bkey_next(k), 1));			\
-			     k = _n)
+static inline struct jset_entry *__jset_entry_type_next(struct jset *jset,
+					struct jset_entry *entry, unsigned type)
+{
+	while (entry < bkey_idx(jset, le32_to_cpu(jset->u64s))) {
+		if (JOURNAL_ENTRY_TYPE(entry) == type)
+			return entry;
+
+		entry = jset_keys_next(entry);
+	}
+
+	return NULL;
+}
+
+#define for_each_jset_entry_type(entry, jset, type)			\
+	for (entry = (jset)->start;					\
+	     (entry = __jset_entry_type_next(jset, entry, type));	\
+	     entry = jset_keys_next(entry))
+
+#define for_each_jset_key(k, _n, entry, jset)				\
+	for_each_jset_entry_type(entry, jset, JOURNAL_ENTRY_BTREE_KEYS)	\
+		for (k = (entry)->start;			\
+		     (k < bkey_idx(entry, le16_to_cpu((entry)->u64s)) &&\
+		      (_n = bkey_next(k), 1));			\
+		     k = _n)
 
 static inline void bch_journal_add_entry_at(struct journal_buf *buf,
 					    const void *data, size_t u64s,
 					    unsigned type, enum btree_id id,
 					    unsigned level, unsigned offset)
 {
-	struct jset_entry *jkeys = bkey_idx(buf->data, offset);
+	struct jset_entry *entry = bkey_idx(buf->data, offset);
 
-	jkeys->u64s = cpu_to_le16(u64s);
-	jkeys->btree_id = id;
-	jkeys->level = level;
-	jkeys->flags = 0;
-	SET_JKEYS_TYPE(jkeys, type);
+	entry->u64s = cpu_to_le16(u64s);
+	entry->btree_id = id;
+	entry->level = level;
+	entry->flags = 0;
+	SET_JOURNAL_ENTRY_TYPE(entry, type);
 
-	memcpy(jkeys->_data, data, u64s * sizeof(u64));
+	memcpy(entry->_data, data, u64s * sizeof(u64));
 }
 
 static inline void bch_journal_add_entry(struct journal_buf *buf,
@@ -88,13 +105,13 @@ static inline void bch_journal_add_entry(struct journal_buf *buf,
 }
 
 static struct jset_entry *bch_journal_find_entry(struct jset *j, unsigned type,
-						enum btree_id id)
+						 enum btree_id id)
 {
-	struct jset_entry *jkeys;
+	struct jset_entry *entry;
 
-	for_each_jset_jkeys(jkeys, j)
-		if (JKEYS_TYPE(jkeys) == type && jkeys->btree_id == id)
-			return jkeys;
+	for_each_jset_entry_type(entry, j, type)
+		if (entry->btree_id == id)
+			return entry;
 
 	return NULL;
 }
@@ -103,22 +120,22 @@ struct bkey_i *bch_journal_find_btree_root(struct cache_set *c, struct jset *j,
 					   enum btree_id id, unsigned *level)
 {
 	struct bkey_i *k;
-	struct jset_entry *jkeys =
-		bch_journal_find_entry(j, JKEYS_BTREE_ROOT, id);
+	struct jset_entry *entry =
+		bch_journal_find_entry(j, JOURNAL_ENTRY_BTREE_ROOT, id);
 
-	if (!jkeys)
+	if (!entry)
 		return NULL;
 
-	k = jkeys->start;
-	*level = jkeys->level;
+	k = entry->start;
+	*level = entry->level;
 
-	if (cache_set_inconsistent_on(!jkeys->u64s ||
-			le16_to_cpu(jkeys->u64s) != k->k.u64s ||
+	if (cache_set_inconsistent_on(!entry->u64s ||
+			le16_to_cpu(entry->u64s) != k->k.u64s ||
 			bkey_invalid(c, BKEY_TYPE_BTREE, bkey_i_to_s_c(k)),
 			c, "invalid btree root in journal"))
 		return NULL;
 
-	*level = jkeys->level;
+	*level = entry->level;
 	return k;
 }
 
@@ -126,7 +143,8 @@ static void bch_journal_add_btree_root(struct journal_buf *buf,
 				       enum btree_id id, struct bkey_i *k,
 				       unsigned level)
 {
-	bch_journal_add_entry(buf, k, k->k.u64s, JKEYS_BTREE_ROOT, id, level);
+	bch_journal_add_entry(buf, k, k->k.u64s,
+			      JOURNAL_ENTRY_BTREE_ROOT, id, level);
 }
 
 static inline void bch_journal_add_prios(struct journal *j,
@@ -140,7 +158,7 @@ static inline void bch_journal_add_prios(struct journal *j,
 		return;
 
 	bch_journal_add_entry(buf, j->prio_buckets, j->nr_prio_buckets,
-			      JKEYS_PRIO_PTRS, 0, 0);
+			      JOURNAL_ENTRY_PRIO_PTRS, 0, 0);
 }
 
 static void journal_seq_blacklist_flush(struct journal_entry_pin *pin)
@@ -676,21 +694,20 @@ static int journal_seq_blacklist_read(struct cache_set *c,
 	struct journal_seq_blacklist *bl;
 	u64 seq;
 
-	for_each_jset_jkeys(entry, &i->j)
-		switch (JKEYS_TYPE(entry)) {
-		case JKEYS_JOURNAL_SEQ_BLACKLISTED:
-			seq = entry->_data[0];
-			bl = bch_journal_seq_blacklisted_new(c, seq);
-			if (!bl) {
-				mutex_unlock(&c->journal.blacklist_lock);
-				return -ENOMEM;
-			}
+	for_each_jset_entry_type(entry, &i->j,
+			JOURNAL_ENTRY_JOURNAL_SEQ_BLACKLISTED) {
+		seq = entry->_data[0];
 
-			journal_pin_add(&c->journal, p, &bl->pin,
-					journal_seq_blacklist_flush);
-			bl->written = true;
-			break;
+		bl = bch_journal_seq_blacklisted_new(c, seq);
+		if (!bl) {
+			mutex_unlock(&c->journal.blacklist_lock);
+			return -ENOMEM;
 		}
+
+		journal_pin_add(&c->journal, p, &bl->pin,
+				journal_seq_blacklist_flush);
+		bl->written = true;
+	}
 
 	return 0;
 }
@@ -732,25 +749,27 @@ const char *bch_journal_read(struct cache_set *c, struct list_head *list)
 
 	/* Swabbing: */
 	list_for_each_entry(i, list, list) {
-		struct jset_entry *jkeys;
+		struct jset_entry *entry;
 		struct bkey_i *k;
 
-		if (JSET_BIG_ENDIAN(&i->j) != CPU_BIG_ENDIAN)
-			for_each_jset_jkeys(jkeys, &i->j)
-				switch (JKEYS_TYPE(jkeys)) {
-				case JKEYS_BTREE_KEYS:
-					for (k = jkeys->start;
-					     k < bkey_idx(jkeys, le16_to_cpu(jkeys->u64s));
-					     k = bkey_next(k))
-						bch_bkey_swab(bkey_type(jkeys->level,
-									jkeys->btree_id),
-							      NULL, bkey_to_packed(k));
-					break;
-				case JKEYS_BTREE_ROOT:
-					bch_bkey_swab(BKEY_TYPE_BTREE,
-						      NULL, bkey_to_packed(jkeys->start));
-					break;
-				}
+		if (JSET_BIG_ENDIAN(&i->j) == CPU_BIG_ENDIAN)
+			continue;
+
+		for_each_jset_entry(entry, &i->j)
+			switch (JOURNAL_ENTRY_TYPE(entry)) {
+			case JOURNAL_ENTRY_BTREE_KEYS:
+				for (k = entry->start;
+				     k < bkey_idx(entry, le16_to_cpu(entry->u64s));
+				     k = bkey_next(k))
+					bch_bkey_swab(bkey_type(entry->level,
+								entry->btree_id),
+						      NULL, bkey_to_packed(k));
+				break;
+			case JOURNAL_ENTRY_BTREE_ROOT:
+				bch_bkey_swab(BKEY_TYPE_BTREE,
+					      NULL, bkey_to_packed(entry->start));
+				break;
+			}
 	}
 
 	j = &list_entry(list->prev, struct journal_replay, list)->j;
@@ -792,7 +811,7 @@ const char *bch_journal_read(struct cache_set *c, struct list_head *list)
 
 	mutex_unlock(&c->journal.blacklist_lock);
 
-	prio_ptrs = bch_journal_find_entry(j, JKEYS_PRIO_PTRS, 0);
+	prio_ptrs = bch_journal_find_entry(j, JOURNAL_ENTRY_PRIO_PTRS, 0);
 	if (!prio_ptrs) {
 		/*
 		 * there weren't any prio bucket ptrs yet... XXX should change
@@ -1144,8 +1163,8 @@ void bch_journal_start(struct cache_set *c)
 	list_for_each_entry(bl, &j->seq_blacklist, list)
 		if (!bl->written) {
 			bch_journal_add_entry(journal_cur_buf(j), &bl->seq, 1,
-					      JKEYS_JOURNAL_SEQ_BLACKLISTED,
-					      0, 0);
+					JOURNAL_ENTRY_JOURNAL_SEQ_BLACKLISTED,
+					0, 0);
 
 			journal_pin_add(j, &fifo_back(&j->pin), &bl->pin,
 					journal_seq_blacklist_flush);
@@ -1162,7 +1181,7 @@ int bch_journal_replay(struct cache_set *c, struct list_head *list)
 	int ret = 0, keys = 0, entries = 0;
 	struct journal *j = &c->journal;
 	struct bkey_i *k, *_n;
-	struct jset_entry *jkeys;
+	struct jset_entry *entry;
 	struct journal_replay *i, *n;
 	u64 cur_seq = last_seq(j);
 	u64 end_seq = le64_to_cpu(list_last_entry(list, struct journal_replay,
@@ -1194,10 +1213,10 @@ int bch_journal_replay(struct cache_set *c, struct list_head *list)
 				       (j->seq - le64_to_cpu(i->j.seq))) &
 				      j->pin.mask)];
 
-		for_each_jset_key(k, _n, jkeys, &i->j) {
+		for_each_jset_key(k, _n, entry, &i->j) {
 			trace_bcache_journal_replay_key(&k->k);
 
-			ret = bch_btree_insert(c, jkeys->btree_id, k,
+			ret = bch_btree_insert(c, entry->btree_id, k,
 					       NULL, NULL, NULL,
 					       BTREE_INSERT_NOFAIL|
 					       BTREE_INSERT_NO_MARK_KEY);
@@ -1546,8 +1565,8 @@ static void journal_write_compact(struct jset *jset)
 		if (prev &&
 		    i->btree_id == prev->btree_id &&
 		    i->level	== prev->level &&
-		    JKEYS_TYPE(i) == JKEYS_TYPE(prev) &&
-		    JKEYS_TYPE(i) == JKEYS_BTREE_KEYS) {
+		    JOURNAL_ENTRY_TYPE(i) == JOURNAL_ENTRY_TYPE(prev) &&
+		    JOURNAL_ENTRY_TYPE(i) == JOURNAL_ENTRY_BTREE_KEYS) {
 			memmove(jset_keys_next(prev),
 				i->_data,
 				u64s * sizeof(u64));
@@ -1743,7 +1762,8 @@ void bch_journal_add_keys(struct journal *j, struct journal_res *res,
 	BUG_ON(actual > res->u64s);
 
 	bch_journal_add_entry_at(&j->buf[res->idx], k, k->k.u64s,
-				 JKEYS_BTREE_KEYS, id, level, res->offset);
+				 JOURNAL_ENTRY_BTREE_KEYS, id,
+				 level, res->offset);
 
 	res->offset	+= actual;
 	res->u64s	-= actual;
@@ -1765,7 +1785,7 @@ void bch_journal_res_put(struct journal *j, struct journal_res *res,
 		unsigned actual = jset_u64s(0);
 
 		bch_journal_add_entry_at(&j->buf[res->idx], NULL, 0,
-					 JKEYS_BTREE_KEYS,
+					 JOURNAL_ENTRY_BTREE_KEYS,
 					 0, 0, res->offset);
 		res->offset	+= actual;
 		res->u64s	-= actual;
