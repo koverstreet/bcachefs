@@ -166,10 +166,10 @@ read_attribute(tier);
 	BCH_DEBUG_PARAMS()
 #undef BCH_DEBUG_PARAM
 
-#define CACHE_SET_OPT(_name, _options, _nr_opts, _sb_opt, _writeable)	\
+#define CACHE_SET_OPT(_name, _choices, _min, _max, _sb_opt, _perm)	\
 	static struct attribute sysfs_opt_##_name = {			\
 		.name = #_name,						\
-		.mode = S_IRUGO|(_writeable ? S_IWUSR : 0)		\
+		.mode = S_IRUGO|(_perm ? S_IWUSR : 0)			\
 	};
 
 	CACHE_SET_VISIBLE_OPTS()
@@ -967,12 +967,12 @@ SHOW(bch_cache_set_opts_dir)
 {
 	struct cache_set *c = container_of(kobj, struct cache_set, opts_dir);
 
-#define CACHE_SET_OPT(_name, _options, _nr_opts, _sb_opt, _perm)	\
+#define CACHE_SET_OPT(_name, _choices, _min, _max, _sb_opt, _perm)	\
 	if (attr == &sysfs_opt_##_name)					\
-		return _options == bch_bool_opt || _options == bch_uint_opt\
+		return _choices == bch_bool_opt || _choices == bch_uint_opt\
 			? snprintf(buf, PAGE_SIZE, "%i\n", c->opts._name)\
 			: bch_snprint_string_list(buf, PAGE_SIZE,	\
-						_options, c->opts._name);\
+						_choices, c->opts._name);\
 
 	CACHE_SET_VISIBLE_OPTS()
 #undef CACHE_SET_OPT
@@ -984,12 +984,12 @@ STORE(bch_cache_set_opts_dir)
 {
 	struct cache_set *c = container_of(kobj, struct cache_set, opts_dir);
 
-#define CACHE_SET_OPT(_name, _options, _nr_opts, _sb_opt, _perm)	\
+#define CACHE_SET_OPT(_name, _choices, _min, _max, _sb_opt, _perm)	\
 	if (attr == &sysfs_opt_##_name) {				\
-		ssize_t v = (_options == bch_bool_opt ||		\
-			     _options == bch_uint_opt)			\
-			? strtoul_restrict_or_return(buf, 0, _nr_opts - 1)\
-			: bch_read_string_list(buf, _options);		\
+		ssize_t v = (_choices == bch_bool_opt ||		\
+			     _choices == bch_uint_opt)			\
+			? strtoul_restrict_or_return(buf, _min, _max - 1)\
+			: bch_read_string_list(buf, _choices);		\
 									\
 		if (v < 0)						\
 			return v;					\
@@ -1015,7 +1015,7 @@ static void bch_cache_set_opts_dir_release(struct kobject *k)
 }
 
 static struct attribute *bch_cache_set_opts_dir_files[] = {
-#define CACHE_SET_OPT(_name, _options, _nr_opts, _sb_opt, _perm)	\
+#define CACHE_SET_OPT(_name, _choices, _min, _max, _sb_opt, _perm)	\
 	&sysfs_opt_##_name,
 
 	CACHE_SET_VISIBLE_OPTS()

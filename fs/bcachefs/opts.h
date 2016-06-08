@@ -30,24 +30,24 @@ LE64_BITMASK(NO_SB_OPT,		struct cache_sb, flags, 0, 0);
 
 #define CACHE_SET_VISIBLE_OPTS()				\
 	CACHE_SET_OPT(verbose_recovery,				\
-		      bch_bool_opt, 2,				\
+		      bch_bool_opt, 0, 2,			\
 		      NO_SB_OPT, false)				\
 	CACHE_SET_OPT(posix_acl,				\
-		      bch_bool_opt, 2,				\
+		      bch_bool_opt, 0, 2,			\
 		      NO_SB_OPT, false)				\
 	CACHE_SET_OPT(journal_flush_disabled,			\
-		      bch_bool_opt, 2,				\
+		      bch_bool_opt, 0, 2,			\
 		      NO_SB_OPT, true)				\
 	CACHE_SET_SB_OPTS()
 
 #define CACHE_SET_OPTS()					\
 	CACHE_SET_OPT(read_only,				\
-		      bch_bool_opt, 2,				\
+		      bch_bool_opt, 0, 2,			\
 		      NO_SB_OPT, 0)				\
 	CACHE_SET_VISIBLE_OPTS()
 
 struct cache_set_opts {
-#define CACHE_SET_OPT(_name, _opts, _nr_opts, _sb_opt, _perm)	\
+#define CACHE_SET_OPT(_name, _choices, _min, _max, _sb_opt, _perm)\
 	s8 _name;
 
 	CACHE_SET_OPTS()
@@ -69,7 +69,7 @@ static inline struct cache_set_opts cache_set_opts_empty(void)
 static inline struct cache_set_opts cache_superblock_opts(struct cache_sb *sb)
 {
 	return (struct cache_set_opts) {
-#define CACHE_SET_OPT(_name, _options, _nr_opts, _sb_opt, _perm)\
+#define CACHE_SET_OPT(_name, _choices, _min, _max, _sb_opt, _perm)\
 		._name = _sb_opt##_BITS ? _sb_opt(sb) : 0,
 
 	CACHE_SET_OPTS()
@@ -80,8 +80,8 @@ static inline struct cache_set_opts cache_superblock_opts(struct cache_sb *sb)
 static inline void cache_set_opts_apply(struct cache_set_opts *dst,
 					struct cache_set_opts src)
 {
-#define CACHE_SET_OPT(_name, _options, _nr_opts, _sb_opt, _perm)\
-	BUILD_BUG_ON(_nr_opts > S8_MAX);			\
+#define CACHE_SET_OPT(_name, _choices, _min, _max, _sb_opt, _perm)\
+	BUILD_BUG_ON(_max > S8_MAX);				\
 	if (src._name >= 0)					\
 		dst->_name = src._name;
 

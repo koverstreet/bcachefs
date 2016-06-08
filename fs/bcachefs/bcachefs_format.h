@@ -785,7 +785,7 @@ LE64_BITMASK(CACHE_INODE_32BIT,		struct cache_sb, flags, 56, 57);
 /* options: */
 
 /**
- * CACHE_SET_OPT(name, nr_bits, choices, sb_option, sysfs_writeable)
+ * CACHE_SET_OPT(name, choices, min, max, sb_option, sysfs_writeable)
  *
  * @name - name of mount option, sysfs attribute, and struct cache_set_opts
  *	member
@@ -796,7 +796,7 @@ LE64_BITMASK(CACHE_INODE_32BIT,		struct cache_sb, flags, 56, 57);
  *	Booleans are special cased; if @choices is bch_bool_opt the mount
  *	options name and noname will work as expected.
  *
- * @nr_opts - i.e. 2 for booleans
+ * @min, @max
  *
  * @sb_option - name of corresponding superblock option
  *
@@ -806,41 +806,41 @@ LE64_BITMASK(CACHE_INODE_32BIT,		struct cache_sb, flags, 56, 57);
 #define CACHE_SET_SB_OPTS()					\
 	CACHE_SET_OPT(errors,					\
 		      bch_error_actions,			\
-		      BCH_NR_ERROR_ACTIONS,			\
+		      0, BCH_NR_ERROR_ACTIONS,			\
 		      CACHE_ERROR_ACTION,			\
 		      true)					\
 	CACHE_SET_OPT(metadata_replicas,			\
 		      bch_uint_opt,				\
-		      BCH_REPLICAS_MAX,				\
+		      0, BCH_REPLICAS_MAX,			\
 		      CACHE_SET_META_REPLICAS_WANT,		\
 		      false)					\
 	CACHE_SET_OPT(data_replicas,				\
 		      bch_uint_opt,				\
-		      BCH_REPLICAS_MAX,				\
+		      0, BCH_REPLICAS_MAX,			\
 		      CACHE_SET_DATA_REPLICAS_WANT,		\
 		      false)					\
 	CACHE_SET_OPT(metadata_checksum,			\
 		      bch_csum_types,				\
-		      BCH_CSUM_NR,				\
+		      0, BCH_CSUM_NR,				\
 		      CACHE_META_PREFERRED_CSUM_TYPE,		\
 		      true)					\
 	CACHE_SET_OPT(data_checksum,				\
 		      bch_csum_types,				\
-		      BCH_CSUM_NR,				\
+		      0, BCH_CSUM_NR,				\
 		      CACHE_DATA_PREFERRED_CSUM_TYPE,		\
 		      true)					\
 	CACHE_SET_OPT(compression,				\
 		      bch_compression_types,			\
-		      BCH_COMPRESSION_NR,			\
+		      0, BCH_COMPRESSION_NR,			\
 		      CACHE_COMPRESSION_TYPE,			\
 		      true)					\
 	CACHE_SET_OPT(str_hash,					\
 		      bch_str_hash_types,			\
-		      BCH_STR_HASH_NR,				\
+		      0, BCH_STR_HASH_NR,			\
 		      CACHE_SET_STR_HASH_TYPE,			\
 		      true)					\
 	CACHE_SET_OPT(inodes_32bit,				\
-		      bch_bool_opt, 2,				\
+		      bch_bool_opt, 0, 2,			\
 		      CACHE_INODE_32BIT,			\
 		      true)					\
 
