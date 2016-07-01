@@ -77,9 +77,9 @@ static inline void mark_btree_node_intent_locked(struct btree_iter *iter,
 static inline enum six_lock_type
 btree_lock_want(struct btree_iter *iter, int level)
 {
-	return level > iter->locks_want
-		? SIX_LOCK_read
-		: SIX_LOCK_intent;
+	return level < iter->locks_want
+		? SIX_LOCK_intent
+		: SIX_LOCK_read;
 }
 
 static inline bool btree_want_intent(struct btree_iter *iter, int level)

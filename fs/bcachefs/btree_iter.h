@@ -18,7 +18,7 @@ struct btree_iter {
 	u8			nodes_intent_locked;
 
 	/* Btree level below which we start taking intent locks */
-	s8			locks_want;
+	u8			locks_want;
 
 	enum btree_id		btree_id:8;
 
@@ -140,7 +140,7 @@ static inline void bch_btree_iter_init(struct btree_iter *iter,
 				       enum btree_id btree_id,
 				       struct bpos pos)
 {
-	__bch_btree_iter_init(iter, c, btree_id, pos, -1);
+	__bch_btree_iter_init(iter, c, btree_id, pos, 0);
 }
 
 static inline void bch_btree_iter_init_intent(struct btree_iter *iter,
@@ -148,7 +148,7 @@ static inline void bch_btree_iter_init_intent(struct btree_iter *iter,
 					      enum btree_id btree_id,
 					      struct bpos pos)
 {
-	__bch_btree_iter_init(iter, c, btree_id, pos, 0);
+	__bch_btree_iter_init(iter, c, btree_id, pos, 1);
 }
 
 int bch_btree_iter_unlink(struct btree_iter *);
@@ -186,7 +186,7 @@ static inline int btree_iter_cmp(const struct btree_iter *l,
 	     (_b) = bch_btree_iter_next_node(_iter))
 
 #define for_each_btree_node(_iter, _c, _btree_id, _start, _b)		\
-	__for_each_btree_node(_iter, _c, _btree_id, _start, _b, -1)
+	__for_each_btree_node(_iter, _c, _btree_id, _start, _b, 0)
 
 #define __for_each_btree_key(_iter, _c, _btree_id,  _start,		\
 			     _k, _locks_want)				\
@@ -196,10 +196,10 @@ static inline int btree_iter_cmp(const struct btree_iter *l,
 	     bch_btree_iter_advance_pos(_iter))
 
 #define for_each_btree_key(_iter, _c, _btree_id,  _start, _k)		\
-	__for_each_btree_key(_iter, _c, _btree_id, _start, _k, -1)
+	__for_each_btree_key(_iter, _c, _btree_id, _start, _k, 0)
 
 #define for_each_btree_key_intent(_iter, _c, _btree_id,  _start, _k)	\
-	__for_each_btree_key(_iter, _c, _btree_id, _start, _k, 0)
+	__for_each_btree_key(_iter, _c, _btree_id, _start, _k, 1)
 
 #define __for_each_btree_key_with_holes(_iter, _c, _btree_id,		\
 					_start, _k, _locks_want)	\
@@ -209,11 +209,11 @@ static inline int btree_iter_cmp(const struct btree_iter *l,
 	     bch_btree_iter_advance_pos(_iter))
 
 #define for_each_btree_key_with_holes(_iter, _c, _btree_id, _start, _k)	\
-	__for_each_btree_key_with_holes(_iter, _c, _btree_id, _start, _k, -1)
+	__for_each_btree_key_with_holes(_iter, _c, _btree_id, _start, _k, 0)
 
 #define for_each_btree_key_with_holes_intent(_iter, _c, _btree_id,	\
 					     _start, _k)		\
-	__for_each_btree_key_with_holes(_iter, _c, _btree_id, _start, _k, 0)
+	__for_each_btree_key_with_holes(_iter, _c, _btree_id, _start, _k, 1)
 
 /*
  * Unlocks before scheduling

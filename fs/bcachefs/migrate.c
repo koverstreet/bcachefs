@@ -274,7 +274,7 @@ retry:
 			}
 
 			moved++;
-			iter.locks_want = -1;
+			iter.locks_want = 0;
 		}
 		ret = bch_btree_iter_unlock(&iter);
 		if (ret)

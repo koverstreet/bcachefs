@@ -115,9 +115,9 @@ bool bch_btree_iter_upgrade(struct btree_iter *iter)
 {
 	int i;
 
-	EBUG_ON(iter->locks_want > BTREE_MAX_DEPTH);
-
-	for (i = iter->locks_want; i >= iter->level; --i)
+	for (i = iter->level;
+	     i < min_t(int, iter->locks_want, BTREE_MAX_DEPTH);
+	     i++)
 		if (iter->nodes[i] && !btree_lock_upgrade(iter, i)) {
 			do {
 				btree_node_unlock(iter, i);
@@ -440,7 +440,7 @@ static void btree_iter_verify_locking(struct btree_iter *iter)
 	 */
 	for_each_linked_btree_iter(iter, linked)
 		BUG_ON(btree_iter_cmp(linked, iter) <= 0 &&
-		       linked->locks_want >= 0 &&
+		       linked->locks_want > 0 &&
 		       linked->locks_want < iter->locks_want);
 #endif
 }
@@ -483,7 +483,7 @@ retry:
 			__btree_iter_advance(iter);
 	}
 
-	if (iter->locks_want >= 0)
+	if (iter->locks_want > 0)
 		btree_iter_verify_locking(iter);
 
 	/*

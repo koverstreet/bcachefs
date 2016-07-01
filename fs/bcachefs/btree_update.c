@@ -1476,7 +1476,7 @@ static int bch_btree_split_leaf(struct btree_iter *iter, unsigned flags,
 	 * XXX: figure out how far we might need to split,
 	 * instead of locking/reserving all the way to the root:
 	 */
-	iter->locks_want = BTREE_MAX_DEPTH;
+	iter->locks_want = U8_MAX;
 
 	if (!bch_btree_iter_upgrade(iter)) {
 		ret = -EINTR;
@@ -1495,7 +1495,7 @@ static int bch_btree_split_leaf(struct btree_iter *iter, unsigned flags,
 
 	btree_split(b, iter, NULL, reserve, as);
 	bch_btree_reserve_put(c, reserve);
-	iter->locks_want = 0;
+	iter->locks_want = 1;
 out:
 	up_read(&c->gc_lock);
 	return ret;
@@ -1503,7 +1503,7 @@ out_get_locks:
 	/* Lock ordering... */
 	for_each_linked_btree_iter(iter, linked)
 		if (btree_iter_cmp(linked, iter) <= 0)
-			linked->locks_want = BTREE_MAX_DEPTH;
+			linked->locks_want = U8_MAX;
 	goto out;
 }
 
@@ -1606,7 +1606,7 @@ int bch_btree_insert_trans(struct btree_insert_trans *trans,
 		return -EROFS;
 
 	trans_for_each_entry(trans, i) {
-		i->iter->locks_want = max_t(int, i->iter->locks_want, 0);
+		i->iter->locks_want = max_t(int, i->iter->locks_want, 1);
 		if (unlikely(!bch_btree_iter_upgrade(i->iter))) {
 			ret = -EINTR;
 			goto err;
@@ -1681,7 +1681,7 @@ retry:
 			bch_btree_node_write_lazy(i->iter->nodes[0], i->iter);
 
 	trans_for_each_entry(trans, i)
-		i->iter->locks_want = 0;
+		i->iter->locks_want = 1;
 
 out:
 	percpu_ref_put(&c->writes);
@@ -2002,7 +2002,7 @@ int bch_btree_node_rewrite(struct btree_iter *iter, struct btree *b,
 	struct btree_reserve *reserve;
 	struct async_split *as;
 
-	iter->locks_want = BTREE_MAX_DEPTH;
+	iter->locks_want = U8_MAX;
 	if (!bch_btree_iter_upgrade(iter))
 		return -EINTR;
 
