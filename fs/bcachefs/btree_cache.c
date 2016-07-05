@@ -638,6 +638,11 @@ retry:
 	rcu_read_unlock();
 
 	if (unlikely(!b)) {
+		/*
+		 * We must have the parent locked to call bch_btree_node_fill(),
+		 * else we could read in a btree node from disk that's been
+		 * freed:
+		 */
 		b = bch_btree_node_fill(iter, k, level, cl);
 
 		/* We raced and found the btree node in the cache */
@@ -648,6 +653,13 @@ retry:
 			BUG_ON(PTR_ERR(b) != -EAGAIN);
 			return b;
 		}
+
+		/*
+		 * But we still have to drop read locks before we return, for
+		 * deadlock avoidance:
+		 */
+		if (btree_node_read_locked(iter, level + 1))
+			btree_node_unlock(iter, level + 1);
 	} else {
 		/*
 		 * There's a potential deadlock with splits and insertions into
@@ -665,14 +677,17 @@ retry:
 		 * we're starting to take intent locks - and handle the race.
 		 *
 		 * The race is that they might be about to free the node we
-		 * want, and dropping our read lock lets them add the
-		 * replacement node's pointer to the parent and then free the
-		 * old node (the node we're trying to lock).
+		 * want, and dropping our read lock on the parent node lets them
+		 * update the parent marking the node we want as freed, and then
+		 * free it:
 		 *
-		 * After we take the intent lock on the node we want (which
-		 * protects against it being freed), we check if we might have
-		 * raced (and the node was freed before we locked it) with a
-		 * global sequence number for freed btree nodes.
+		 * To guard against this, btree nodes are evicted from the cache
+		 * when they're freed - and PTR_HASH() is zeroed out, which will
+		 * cause our btree_node_lock() call below to fail.
+		 *
+		 * Then, btree_node_relock() on the parent will fail - because
+		 * the parent was modified, when the pointer to the node we want
+		 * was removed - and we'll bail out:
 		 */
 		if (btree_node_read_locked(iter, level + 1))
 			btree_node_unlock(iter, level + 1);

@@ -89,6 +89,7 @@ void __btree_node_lock_write(struct btree *b, struct btree_iter *iter)
 
 static bool btree_lock_upgrade(struct btree_iter *iter, unsigned level)
 {
+	struct btree_iter *linked;
 	struct btree *b = iter->nodes[level];
 
 	if (btree_node_intent_locked(iter, level))
@@ -99,14 +100,25 @@ static bool btree_lock_upgrade(struct btree_iter *iter, unsigned level)
 
 	if (btree_node_locked(iter, level)
 	    ? six_trylock_convert(&b->lock, SIX_LOCK_read, SIX_LOCK_intent)
-	    : six_relock_intent(&b->lock, iter->lock_seq[level])) {
-		mark_btree_node_intent_locked(iter, level);
-		trace_bcache_btree_upgrade_lock(b, iter);
-		return true;
-	}
+	    : six_relock_intent(&b->lock, iter->lock_seq[level]))
+		goto success;
+
+	for_each_linked_btree_iter(iter, linked)
+		if (linked->nodes[level] == b &&
+		    btree_node_intent_locked(linked, level) &&
+		    iter->lock_seq[level] == b->lock.state.seq) {
+			btree_node_unlock(iter, level);
+			six_lock_increment(&b->lock, SIX_LOCK_intent);
+			goto success;
+		}
+
 
 	trace_bcache_btree_upgrade_lock_fail(b, iter);
 	return false;
+success:
+	mark_btree_node_intent_locked(iter, level);
+	trace_bcache_btree_upgrade_lock(b, iter);
+	return true;
 }
 
 /* Btree iterator locking: */
@@ -148,18 +160,30 @@ int bch_btree_iter_unlock(struct btree_iter *iter)
 
 bool btree_node_relock(struct btree_iter *iter, unsigned level)
 {
+	struct btree_iter *linked;
 	struct btree *b = iter->nodes[level];
 	enum six_lock_type type = btree_lock_want(iter, level);
 
 	if (btree_node_locked(iter, level))
 		return true;
 
-	if (!race_fault() &&
-	    is_btree_node(iter, level) &&
+	if (race_fault())
+		return false;
+
+	if (is_btree_node(iter, level) &&
 	    six_relock_type(&b->lock, iter->lock_seq[level], type)) {
 		mark_btree_node_locked(iter, level, type);
 		return true;
 	}
+
+	for_each_linked_btree_iter(iter, linked)
+		if (linked->nodes[level] == b &&
+		    btree_node_locked_type(linked, level) == type &&
+		    iter->lock_seq[level] == b->lock.state.seq) {
+			six_lock_increment(&b->lock, type);
+			mark_btree_node_locked(iter, level, type);
+			return true;
+		}
 
 	return false;
 }
@@ -365,6 +389,40 @@ void bch_btree_iter_reinit_node(struct btree_iter *iter, struct btree *b)
 				 iter->pos, iter->is_extents);
 }
 
+static void btree_iter_verify_locking(struct btree_iter *iter, unsigned level)
+{
+#ifdef CONFIG_BCACHEFS_DEBUG
+	struct btree_iter *linked;
+
+	if (!btree_want_intent(iter, level))
+		return;
+
+	/*
+	 * Can't hold _any_ read locks (including in linked iterators) when
+	 * taking intent locks, that leads to a fun deadlock involving write
+	 * locks and journal reservations
+	 *
+	 * We could conceivably drop read locks, then retake them and if
+	 * retaking fails then return -EINTR... but, let's keep things simple
+	 * for now:
+	 */
+	BUG_ON(iter->nodes_locked != iter->nodes_intent_locked);
+
+	for_each_linked_btree_iter(iter, linked)
+		BUG_ON(linked->nodes_locked != linked->nodes_intent_locked);
+
+	/* Lock ordering: */
+	for_each_linked_btree_iter(iter, linked) {
+		BUG_ON(linked->nodes_locked &&
+		       btree_iter_cmp(linked, iter) > 0);
+
+		BUG_ON(linked->nodes_locked &&
+		       linked->btree_id == iter->btree_id &&
+		       level > __fls(linked->nodes_locked));
+	}
+#endif
+}
+
 static inline void btree_iter_lock_root(struct btree_iter *iter, struct bpos pos)
 {
 	struct cache_set *c = iter->c;
@@ -377,6 +435,8 @@ static inline void btree_iter_lock_root(struct btree_iter *iter, struct bpos pos
 		struct btree *b = c->btree_roots[iter->btree_id].b;
 
 		iter->level = b->level;
+
+		btree_iter_verify_locking(iter, iter->level);
 
 		if (btree_node_lock(b, iter, iter->level,
 				(b != c->btree_roots[iter->btree_id].b))) {
@@ -399,6 +459,8 @@ static inline int btree_iter_down(struct btree_iter *iter, struct bpos pos,
 	if (unlikely(IS_ERR(b)))
 		return PTR_ERR(b);
 
+	btree_iter_verify_locking(iter, iter->level - 1);
+
 	--iter->level;
 	btree_iter_node_set(iter, b, pos);
 	return 0;
@@ -407,42 +469,6 @@ static inline int btree_iter_down(struct btree_iter *iter, struct bpos pos,
 static void btree_iter_up(struct btree_iter *iter)
 {
 	btree_node_unlock(iter, iter->level++);
-}
-
-static void btree_iter_verify_locking(struct btree_iter *iter)
-{
-#ifdef CONFIG_BCACHEFS_DEBUG
-	struct btree_iter *linked;
-	unsigned level;
-
-	/*
-	 * Can't hold _any_ read locks (including in linked iterators) when
-	 * taking intent locks, that leads to a fun deadlock involving write
-	 * locks and journal reservations
-	 *
-	 * We could conceivably drop read locks, then retake them and if
-	 * retaking fails then return -EINTR... but, let's keep things simple
-	 * for now:
-	 */
-	for_each_linked_btree_iter(iter, linked)
-		for (level = 0; level < BTREE_MAX_DEPTH; level++)
-			BUG_ON(btree_node_read_locked(linked, level));
-
-	/* Lock ordering: */
-	for_each_linked_btree_iter(iter, linked)
-		BUG_ON(btree_iter_cmp(iter, linked) < 0 &&
-		       btree_node_intent_locked(linked, 0));
-
-	/*
-	 * Also, we have to take intent locks on interior nodes before leaf
-	 * nodes - verify that linked iterators don't have intent locks held at
-	 * depths lower than where we're at:
-	 */
-	for_each_linked_btree_iter(iter, linked)
-		BUG_ON(btree_iter_cmp(linked, iter) <= 0 &&
-		       linked->locks_want > 0 &&
-		       linked->locks_want < iter->locks_want);
-#endif
 }
 
 /*
@@ -482,9 +508,6 @@ retry:
 		       !btree_iter_pos_cmp(iter, pos, k.k->p))
 			__btree_iter_advance(iter);
 	}
-
-	if (iter->locks_want > 0)
-		btree_iter_verify_locking(iter);
 
 	/*
 	 * Note: iter->nodes[iter->level] may be temporarily NULL here - that
@@ -756,6 +779,8 @@ void bch_btree_iter_copy(struct btree_iter *dst, struct btree_iter *src)
 	memcpy(dst->node_iters,
 	       src->node_iters,
 	       sizeof(src->node_iters));
+
+	bch_btree_iter_upgrade(dst);
 }
 
 void bch_btree_iter_init_copy(struct btree_iter *dst, struct btree_iter *src)
@@ -765,4 +790,6 @@ void bch_btree_iter_init_copy(struct btree_iter *dst, struct btree_iter *src)
 	dst->nodes_locked = 0;
 	dst->nodes_intent_locked = 0;
 	bch_btree_iter_link(src, dst);
+
+	bch_btree_iter_upgrade(dst);
 }

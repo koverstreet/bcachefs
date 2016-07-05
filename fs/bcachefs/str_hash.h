@@ -256,7 +256,7 @@ static inline int bch_hash_set(const struct bch_hash_desc desc,
 
 	bch_btree_iter_init_intent(&hashed_slot, c, desc.btree_id,
 		POS(inode, desc.hash_bkey(info, bkey_i_to_s_c(insert))));
-	bch_btree_iter_init_intent(&iter, c, 0, POS_MIN);
+	bch_btree_iter_init_intent(&iter, c, desc.btree_id, hashed_slot.pos);
 	bch_btree_iter_link(&hashed_slot, &iter);
 
 	do {
@@ -301,12 +301,16 @@ static inline int bch_hash_set(const struct bch_hash_desc desc,
 		insert->k.p = iter.pos;
 		ret = bch_btree_insert_at(&iter, insert, NULL, NULL,
 					  journal_seq, BTREE_INSERT_ATOMIC);
-		/* On successful insert, we don't want to clobber ret with error
-		 * from iter:
-		 */
+
+		/* unlock before traversing hashed_slot: */
 		bch_btree_iter_unlock(&iter);
 	} while (ret == -EINTR);
 
+	/*
+	 * On successful insert, we don't want to clobber ret with error from
+	 * iter:
+	 */
+	bch_btree_iter_unlock(&iter);
 	bch_btree_iter_unlock(&hashed_slot);
 	return ret;
 err:

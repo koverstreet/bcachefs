@@ -1484,8 +1484,7 @@ static int bch_btree_split_leaf(struct btree_iter *iter, unsigned flags,
 	}
 
 	reserve = bch_btree_reserve_get(c, b, 0,
-					!(flags & BTREE_INSERT_NOFAIL),
-					cl);
+			!(flags & BTREE_INSERT_NOFAIL), cl);
 	if (IS_ERR(reserve)) {
 		ret = PTR_ERR(reserve);
 		goto out_get_locks;
@@ -1495,15 +1494,29 @@ static int bch_btree_split_leaf(struct btree_iter *iter, unsigned flags,
 
 	btree_split(b, iter, NULL, reserve, as);
 	bch_btree_reserve_put(c, reserve);
+
 	iter->locks_want = 1;
+
+	for_each_linked_btree_iter(iter, linked)
+		if (linked->btree_id == iter->btree_id &&
+		    btree_iter_cmp(linked, iter) <= 0)
+			linked->locks_want = 1;
 out:
 	up_read(&c->gc_lock);
 	return ret;
 out_get_locks:
 	/* Lock ordering... */
 	for_each_linked_btree_iter(iter, linked)
-		if (btree_iter_cmp(linked, iter) <= 0)
+		if (linked->btree_id == iter->btree_id &&
+		    btree_iter_cmp(linked, iter) <= 0) {
+			unsigned i;
+
+			for (i = 0; i < BTREE_MAX_DEPTH; i++) {
+				btree_node_unlock(linked, i);
+				linked->lock_seq[i]--;
+			}
 			linked->locks_want = U8_MAX;
+		}
 	goto out;
 }
 
@@ -1679,10 +1692,6 @@ retry:
 	trans_for_each_entry(trans, i)
 		if (!same_leaf_as_prev(trans, i))
 			bch_btree_node_write_lazy(i->iter->nodes[0], i->iter);
-
-	trans_for_each_entry(trans, i)
-		i->iter->locks_want = 1;
-
 out:
 	percpu_ref_put(&c->writes);
 	return ret;
