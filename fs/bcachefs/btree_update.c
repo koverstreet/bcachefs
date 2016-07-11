@@ -626,7 +626,6 @@ static bool bch_insert_fixup_btree_ptr(struct btree_iter *iter,
 	struct bkey_packed *k;
 	int cmp;
 
-	bch_btree_node_iter_verify(node_iter, &b->keys);
 	EBUG_ON((k = bch_btree_node_iter_prev_all(node_iter, &b->keys)) &&
 		(bkey_deleted(k)
 		 ? bkey_cmp_packed(f, k, &insert->k) > 0
@@ -693,6 +692,12 @@ void bch_btree_bset_insert(struct btree_iter *iter,
 	where = bch_bset_insert(&b->keys, node_iter, insert, &overwrote);
 
 	bch_btree_node_iter_fix(iter, &b->keys, node_iter, where, overwrote);
+
+	if (iter->nodes[b->level] == b &&
+	    node_iter != &iter->node_iters[b->level])
+		bch_btree_node_iter_fix(iter, &b->keys,
+					&iter->node_iters[b->level],
+					where, overwrote);
 
 	for_each_linked_btree_node(iter, b, linked)
 		bch_btree_node_iter_fix(linked, &b->keys,
@@ -1107,8 +1112,9 @@ bch_btree_insert_keys_interior(struct btree *b,
 			       struct async_split *as,
 			       struct btree_reserve *res)
 {
-	struct btree_node_iter *node_iter = &iter->node_iters[b->level];
+	struct btree_node_iter node_iter;
 	const struct bkey_format *f = &b->keys.format;
+	struct bkey_i *insert = bch_keylist_front(insert_keys);
 	struct bkey_packed *k;
 	bool inserted = false;
 
@@ -1125,20 +1131,22 @@ bch_btree_insert_keys_interior(struct btree *b,
 		return BTREE_INSERT_BTREE_NODE_FULL;
 	}
 
-	while (!bch_keylist_empty(insert_keys)) {
-		struct bkey_i *insert = bch_keylist_front(insert_keys);
+	node_iter = iter->node_iters[b->level];
 
-		/*
-		 * btree_split(), btree_gc_coalesce() will insert keys before
-		 * the iterator's current position - they know the keys go in
-		 * the node the iterator points to:
-		 */
-		while ((k = bch_btree_node_iter_prev_all(node_iter, &b->keys)) &&
-		       (bkey_cmp_packed(f, k, &insert->k) >= 0))
-			;
+	/*
+	 * btree_split(), btree_gc_coalesce() will insert keys before
+	 * the iterator's current position - they know the keys go in
+	 * the node the iterator points to:
+	 */
+	while ((k = bch_btree_node_iter_prev_all(&node_iter, &b->keys)) &&
+	       (bkey_cmp_packed(f, k, &insert->k) >= 0))
+		;
+
+	while (!bch_keylist_empty(insert_keys)) {
+		insert = bch_keylist_front(insert_keys);
 
 		bch_insert_fixup_btree_ptr(iter, b, insert,
-					   node_iter, &res->disk_res);
+					   &node_iter, &res->disk_res);
 		inserted = true;
 		bch_keylist_dequeue(insert_keys);
 	}
@@ -1147,15 +1155,6 @@ bch_btree_insert_keys_interior(struct btree *b,
 	async_split_updated_btree(as, b);
 
 	btree_node_unlock_write(b, iter);
-
-	/*
-	 * insert_fixup_btree_ptr() will advance the node iterator to _after_
-	 * the last key it inserted, which is not what we want
-	 */
-
-	while ((k = bch_btree_node_iter_prev_all(node_iter, &b->keys)) &&
-	       (bkey_cmp_left_packed(f, k, iter->pos) >= 0))
-		;
 
 	btree_node_interior_verify(b);
 	return BTREE_INSERT_OK;

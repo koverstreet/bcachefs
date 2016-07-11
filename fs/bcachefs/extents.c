@@ -1298,10 +1298,11 @@ bch_insert_fixup_extent(struct btree_insert_trans *trans,
 				 * until we recheck our journal reservation:
 				 */
 				EBUG_ON(bkey_cmp(iter->pos, k.k->p));
+			} else {
+				bch_bset_fix_invalidated_key(&b->keys, _k);
+				bch_btree_node_iter_advance(node_iter, &b->keys);
 			}
 
-			bch_bset_fix_invalidated_key(&b->keys, _k);
-			bch_btree_node_iter_advance(node_iter, &b->keys);
 			break;
 		}
 		case BCH_EXTENT_OVERLAP_MIDDLE: {
