@@ -1113,7 +1113,7 @@ extent_insert_advance_pos(struct btree_insert_trans *trans,
 
 	/* hole? */
 	if (k.k && bkey_cmp(insert->iter->pos, bkey_start_pos(k.k)) < 0) {
-		bool might_split = bkey_cmp(insert->iter->pos,
+		bool have_uncommitted = bkey_cmp(insert->iter->pos,
 				bkey_start_pos(&insert->k->k)) > 0;
 
 		switch (__extent_insert_advance_pos(trans, insert, hook,
@@ -1124,11 +1124,12 @@ extent_insert_advance_pos(struct btree_insert_trans *trans,
 			break;
 		case BTREE_HOOK_NO_INSERT:
 			/*
-			 * @insert was split, need to recheck if we have room in
-			 * journal res/btree node:
+			 * we had to split @insert and insert the committed
+			 * part - need to bail out and recheck journal
+			 * reservation/btree node before we advance pos past @k:
 			 */
-			if (might_split)
-				return BTREE_HOOK_DO_INSERT;
+			if (have_uncommitted)
+				return BTREE_HOOK_NO_INSERT;
 			break;
 		case BTREE_HOOK_RESTART_TRANS:
 			return BTREE_HOOK_RESTART_TRANS;
