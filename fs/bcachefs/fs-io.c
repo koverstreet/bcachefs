@@ -1298,6 +1298,12 @@ static void bch_do_direct_IO_write(struct dio_write *dio)
 
 	ret = bio_get_user_pages(bio, &dio->iter, 0);
 	if (ret < 0) {
+		/*
+		 * these didn't get initialized, but bch_dio_write_done() will
+		 * look at them:
+		 */
+		dio->iop.op.error = 0;
+		dio->iop.op.written = 0;
 		dio->error = ret;
 		return;
 	}
