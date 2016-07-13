@@ -2020,8 +2020,7 @@ static bool bch_extent_merge_inline(struct btree_keys *b,
 	mi = back_merge ? &li.k : &ri.k;
 
 	/* l & r should be in last bset: */
-	BUG_ON(m < bset_tree_last(b)->data->start ||
-	       m >= bset_bkey_last(bset_tree_last(b)->data));
+	EBUG_ON(bch_bkey_to_bset(b, m) != bset_tree_last(b));
 
 	switch (bch_extent_merge(b, &li.k, &ri.k)) {
 	case BCH_MERGE_NOMERGE:

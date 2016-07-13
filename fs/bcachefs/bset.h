@@ -365,6 +365,7 @@ static inline struct bkey_packed *bset_bkey_idx(struct bset *i, unsigned idx)
 	return bkey_idx(i, idx);
 }
 
+struct bset_tree *bch_bkey_to_bset(struct btree_keys *, struct bkey_packed *);
 struct bkey_packed *bkey_prev(struct bset_tree *, struct bkey_packed *);
 
 /*

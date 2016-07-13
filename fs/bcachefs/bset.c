@@ -21,6 +21,18 @@
 #include "alloc_types.h"
 #include <trace/events/bcachefs.h>
 
+struct bset_tree *bch_bkey_to_bset(struct btree_keys *b, struct bkey_packed *k)
+{
+	struct bset_tree *t;
+
+	for (t = b->set; t <= b->set + b->nsets; t++)
+		if (k >= t->data->start &&
+		    k < bset_bkey_last(t->data))
+			return t;
+
+	BUG();
+}
+
 /*
  * There are never duplicate live keys in the btree - but including keys that
  * have been flagged as deleted (and will be cleaned up later) we _will_ see
@@ -149,6 +161,34 @@ static void bch_btree_node_iter_next_check(struct btree_node_iter *iter,
 		bch_bkey_to_text(buf1, sizeof(buf1), &ku);
 		bch_bkey_to_text(buf2, sizeof(buf2), &nu);
 		panic("out of order/overlapping:\n%s\n%s\n", buf1, buf2);
+	}
+}
+
+static inline bool btree_node_iter_cmp(struct btree_node_iter *,
+				       struct btree_keys *,
+				       struct btree_node_iter_set,
+				       struct btree_node_iter_set);
+
+void bch_btree_node_iter_verify(struct btree_node_iter *iter,
+				struct btree_keys *b)
+{
+	struct btree_node_iter_set *set;
+	struct bset_tree *t;
+	struct bkey_packed *k;
+
+	BUG_ON(iter->used > MAX_BSETS);
+
+	for (set = iter->data;
+	     set < iter->data + iter->used;
+	     set++) {
+		BUG_ON(set + 1 < iter->data + iter->used &&
+		       btree_node_iter_cmp(iter, b, set[0], set[1]));
+
+		k = __btree_node_offset_to_key(b, set->k);
+		t = bch_bkey_to_bset(b, k);
+
+		BUG_ON(__btree_node_offset_to_key(b, set->end) !=
+		       bset_bkey_last(t->data));
 	}
 }
 
@@ -722,6 +762,8 @@ struct bkey_packed *bkey_prev(struct bset_tree *t, struct bkey_packed *k)
 	struct bkey_packed *p;
 	int j;
 
+	EBUG_ON(k < t->data->start || k > bset_bkey_last(t->data));
+
 	if (k == t->data->start)
 		return NULL;
 
@@ -773,15 +815,9 @@ static void verify_insert_pos(struct btree_keys *b,
  */
 void bch_bset_fix_invalidated_key(struct btree_keys *b, struct bkey_packed *k)
 {
-	struct bset_tree *t;
+	struct bset_tree *t = bch_bkey_to_bset(b, k);
 	unsigned inorder, j = 1;
 
-	for (t = b->set; t <= bset_tree_last(b); t++)
-		if (k < bset_bkey_last(t->data))
-			goto found_set;
-
-	BUG();
-found_set:
 	if (!bset_written(t))
 		return;
 
@@ -1431,34 +1467,6 @@ void bch_btree_node_iter_advance(struct btree_node_iter *iter,
 
 	bch_btree_node_iter_next_check(iter, b, k);
 }
-
-#ifdef CONFIG_BCACHEFS_DEBUG
-void bch_btree_node_iter_verify(struct btree_node_iter *iter,
-				struct btree_keys *b)
-{
-	struct btree_node_iter_set *set;
-	struct bset_tree *t;
-
-	BUG_ON(iter->used > MAX_BSETS);
-
-	for (set = iter->data;
-	     set < iter->data + iter->used;
-	     set++) {
-		BUG_ON(set + 1 < iter->data + iter->used &&
-		       btree_node_iter_cmp(iter, b, set[0], set[1]));
-
-		for (t =  b->set;
-		     t <= b->set + b->nsets;
-		     t++)
-			if (__btree_node_offset_to_key(b, set->end) ==
-			    bset_bkey_last(t->data))
-				goto next;
-		BUG();
-next:
-		;
-	}
-}
-#endif
 
 /*
  * Expensive:
