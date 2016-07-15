@@ -781,15 +781,15 @@ static void btree_node_lock_for_insert(struct btree *b, struct btree_iter *iter)
 relock:
 	btree_node_lock_write(b, iter);
 
-	BUG_ON(&write_block(c, b)->keys < btree_bset_last(b));
+	BUG_ON(&write_block(b)->keys < btree_bset_last(b));
 
 	/*
 	 * If the last bset has been written, initialize a new one - check after
 	 * taking the write lock because it can be written with only a read
 	 * lock:
 	 */
-	if (b->written != btree_blocks(c) &&
-	    &write_block(c, b)->keys > btree_bset_last(b)) {
+	if (b->written != c->sb.btree_node_size &&
+	    &write_block(b)->keys > btree_bset_last(b)) {
 		btree_node_unlock_write(b, iter);
 		bch_btree_init_next(c, b, iter);
 		goto relock;

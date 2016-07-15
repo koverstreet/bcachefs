@@ -154,7 +154,6 @@ static inline struct btree *mca_find(struct cache_set *c,
 static int mca_reap_notrace(struct cache_set *c, struct btree *b, bool flush)
 {
 	struct closure cl;
-	struct bset *i;
 
 	closure_init_stack(&cl);
 	lockdep_assert_held(&c->btree_cache_lock);
@@ -170,14 +169,6 @@ static int mca_reap_notrace(struct cache_set *c, struct btree *b, bool flush)
 
 	if (!list_empty(&b->write_blocked))
 		goto out_unlock;
-
-	i = btree_bset_last(b);
-	BUG_ON(!i && btree_node_dirty(b));
-	BUG_ON(i && i->u64s &&
-	       b->io_mutex.count == 1 &&
-	       !btree_node_dirty(b) &&
-	       (((void *) i - (void *) b->data) >>
-		(c->block_bits + 9) >= b->written));
 
 	/* XXX: we need a better solution for this, this will cause deadlocks */
 	if (!list_empty_careful(&b->journal_seq_blacklisted))

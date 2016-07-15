@@ -34,17 +34,17 @@ int bch_btree_cache_alloc(struct cache_set *);
 
 static inline size_t btree_bytes(struct cache_set *c)
 {
-	return CACHE_BTREE_NODE_SIZE(&c->disk_sb) << 9;
+	return c->sb.btree_node_size << 9;
 }
 
 static inline size_t btree_pages(struct cache_set *c)
 {
-	return CACHE_BTREE_NODE_SIZE(&c->disk_sb) >> (PAGE_SHIFT - 9);
+	return c->sb.btree_node_size >> (PAGE_SHIFT - 9);
 }
 
 static inline unsigned btree_blocks(struct cache_set *c)
 {
-	return CACHE_BTREE_NODE_SIZE(&c->disk_sb) >> c->block_bits;
+	return c->sb.btree_node_size >> c->block_bits;
 }
 
 #define btree_node_root(_b)	((_b)->c->btree_roots[(_b)->btree_id].b)
