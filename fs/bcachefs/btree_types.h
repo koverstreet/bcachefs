@@ -161,8 +161,8 @@ enum extent_insert_hook_ret {
 
 struct extent_insert_hook {
 	enum extent_insert_hook_ret
-	(*fn)(struct extent_insert_hook *, struct btree_iter *,
-	      struct bpos, struct bkey_s_c, const struct bkey_i *);
+	(*fn)(struct extent_insert_hook *, struct bpos, struct bpos,
+	      struct bkey_s_c, const struct bkey_i *);
 };
 
 enum btree_insert_ret {

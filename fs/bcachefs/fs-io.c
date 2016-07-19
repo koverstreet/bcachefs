@@ -100,14 +100,14 @@ static inline void i_size_dirty_get(struct bch_inode_info *ei)
 
 static enum extent_insert_hook_ret
 i_sectors_hook_fn(struct extent_insert_hook *hook,
-		  struct btree_iter *iter,
+		  struct bpos committed_pos,
 		  struct bpos next_pos,
 		  struct bkey_s_c k,
 		  const struct bkey_i *insert)
 {
 	struct i_sectors_hook *h = container_of(hook,
 				struct i_sectors_hook, hook);
-	s64 sectors = next_pos.offset - iter->pos.offset;
+	s64 sectors = next_pos.offset - committed_pos.offset;
 	int sign = bkey_extent_is_allocation(&insert->k) -
 		(k.k && bkey_extent_is_allocation(k.k));
 
@@ -207,7 +207,7 @@ struct bchfs_extent_trans_hook {
 
 static enum extent_insert_hook_ret
 bchfs_extent_update_hook(struct extent_insert_hook *hook,
-			 struct btree_iter *iter,
+			 struct bpos committed_pos,
 			 struct bpos next_pos,
 			 struct bkey_s_c k,
 			 const struct bkey_i *insert)
@@ -218,7 +218,7 @@ bchfs_extent_update_hook(struct extent_insert_hook *hook,
 	struct inode *inode = &ei->vfs_inode;
 	int sign = bkey_extent_is_allocation(&insert->k) -
 		(k.k && bkey_extent_is_allocation(k.k));
-	s64 sectors = (s64) (next_pos.offset - iter->pos.offset) * sign;
+	s64 sectors = (s64) (next_pos.offset - committed_pos.offset) * sign;
 	u64 offset = min(next_pos.offset << 9, h->op->new_i_size);
 
 	BUG_ON((next_pos.offset << 9) > round_up(offset, PAGE_SIZE));

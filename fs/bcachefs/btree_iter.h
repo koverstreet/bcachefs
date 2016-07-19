@@ -108,9 +108,16 @@ __next_linked_btree_node(struct btree_iter *iter, struct btree *b,
 	for ((_linked) = (_iter);					\
 	     ((_linked) = __next_linked_btree_node(_iter, _b, _linked));)
 
-void bch_btree_node_iter_fix(struct btree_iter *, struct btree_keys *,
+#ifdef CONFIG_BCACHEFS_DEBUG
+void bch_btree_iter_verify(struct btree_iter *, struct btree *);
+#else
+static inline void bch_btree_iter_verify(struct btree_iter *iter,
+					 struct btree *b) {}
+#endif
+
+void bch_btree_node_iter_fix(struct btree_iter *, struct btree *,
 			     struct btree_node_iter *, struct bkey_packed *,
-			     bool overwrote);
+			     bool);
 
 bool bch_btree_iter_upgrade(struct btree_iter *);
 int bch_btree_iter_unlock(struct btree_iter *);

@@ -190,31 +190,72 @@ bool btree_node_relock(struct btree_iter *iter, unsigned level)
 
 /* Btree iterator: */
 
-static bool btree_iter_pos_cmp(struct btree_iter *iter,
-			       struct bpos pos, struct bpos k)
+#ifdef CONFIG_BCACHEFS_DEBUG
+
+static void __bch_btree_iter_verify(struct btree_node_iter *iter,
+				    struct btree *b,
+				    struct bpos pos,
+				    bool strictly_greater)
 {
-	return iter->is_extents
-		? bkey_cmp(pos, k) < 0
-		: bkey_cmp(pos, k) <= 0;
+	const struct bkey_format *f = &b->keys.format;
+	struct bset_tree *t;
+	struct bkey_packed *k;
+
+	bch_btree_node_iter_verify(iter, &b->keys);
+
+	for (t = b->keys.set; t <= b->keys.set + b->keys.nsets; t++) {
+		k = bkey_prev(t,
+			bch_btree_node_iter_bset_pos(iter, &b->keys, t->data) ?:
+			bset_bkey_last(t->data));
+
+		/*
+		 * For interior nodes, the iterator will have skipped past
+		 * deleted keys:
+		 */
+		if (b->level)
+			while (k && bkey_deleted(k))
+				k = bkey_prev(t, k);
+
+		BUG_ON(k && btree_iter_pos_cmp_packed(f, pos, k,
+						      strictly_greater));
+	}
+
+	k = bch_btree_node_iter_peek_all(iter, &b->keys);
+	BUG_ON(k && !btree_iter_pos_cmp_packed(f, pos, k, strictly_greater));
 }
 
-void bch_btree_node_iter_fix(struct btree_iter *iter,
-			     struct btree_keys *b,
-			     struct btree_node_iter *node_iter,
-			     struct bkey_packed *where,
-			     bool overwrote)
+void bch_btree_iter_verify(struct btree_iter *iter, struct btree *b)
+{
+	struct btree_iter *linked;
+
+	if (iter->nodes[b->level] == b)
+		__bch_btree_iter_verify(&iter->node_iters[b->level],
+					b, iter->pos,
+					iter->is_extents);
+
+	for_each_linked_btree_node(iter, b, linked)
+		__bch_btree_iter_verify(&linked->node_iters[b->level],
+					b, linked->pos,
+					linked->is_extents);
+}
+
+#endif
+
+static void __bch_btree_node_iter_fix(struct btree_iter *iter,
+				      struct btree_keys *b,
+				      struct btree_node_iter *node_iter,
+				      struct bkey_packed *where,
+				      bool overwrote)
 {
 	struct bkey_format *f = &b->format;
-	struct bset *i = bset_tree_last(b)->data;
+	struct bset *i = bch_bkey_to_bset(b, where)->data;
 	const struct bkey_packed *end = bset_bkey_last(i);
 	struct btree_node_iter_set *set;
 	unsigned shift = overwrote ? 0 : where->u64s;
 	unsigned offset = __btree_node_key_to_offset(b, where);
 	unsigned old_end = __btree_node_key_to_offset(b, end) - shift;
-	bool iter_pos_before_new = btree_iter_pos_cmp(iter, iter->pos,
-				bkey_unpack_key(f, where).p);
-
-	BUG_ON(node_iter->used > MAX_BSETS);
+	bool iter_pos_before_new = btree_iter_pos_cmp_packed(f,
+				iter->pos, where, iter->is_extents);
 
 	for (set = node_iter->data;
 	     set < node_iter->data + node_iter->used;
@@ -222,19 +263,68 @@ void bch_btree_node_iter_fix(struct btree_iter *iter,
 		if (set->end == old_end) {
 			set->end += shift;
 
+			/*
+			 * When we inserted at @where, the key we inserted - the
+			 * new key at @where - compared strictly less than the
+			 * key previously at @where (which is now the next key
+			 * after the key we inserted).
+			 *
+			 * However, it is not necessarily true that if the
+			 * iterator's position is less than the key we inserted
+			 * it was <= the key previously at where - transitivity
+			 * doesn't hold here - because the key previously at
+			 * @where might have been a deleted key that the
+			 * iterator had skipped past.
+			 */
 			if (set->k >= offset) {
 				if (iter_pos_before_new)
 					set->k = offset;
 				else
 					set->k += shift;
-				bch_btree_node_iter_sort(node_iter, b);
 			}
-			return;
+
+			/*
+			 * Resort iterator if we changed a key it points to:
+			 *
+			 * Do this before checking if we're removing a key from
+			 * the iterator:
+			 */
+			if (set->k == offset)
+				bch_btree_node_iter_sort(node_iter, b);
+			goto check_remove;
 		}
 
 	/* didn't find the bset in the iterator - might have to readd it: */
 	if (iter_pos_before_new)
 		bch_btree_node_iter_push(node_iter, b, where, end);
+check_remove:
+	if (!iter_pos_before_new &&
+	    bch_btree_node_iter_peek_all(node_iter, b) == where)
+		bch_btree_node_iter_advance(node_iter, b);
+}
+
+void bch_btree_node_iter_fix(struct btree_iter *iter,
+			     struct btree *b,
+			     struct btree_node_iter *node_iter,
+			     struct bkey_packed *k,
+			     bool overwrote)
+{
+	struct btree_iter *linked;
+
+	if (node_iter != &iter->node_iters[b->level])
+		__bch_btree_node_iter_fix(iter, &b->keys, node_iter,
+					  k, overwrote);
+
+	if (iter->nodes[b->level] == b)
+		__bch_btree_node_iter_fix(iter, &b->keys,
+					  &iter->node_iters[b->level],
+					  k, overwrote);
+
+	for_each_linked_btree_node(iter, b, linked)
+		__bch_btree_node_iter_fix(linked, &b->keys,
+					  &linked->node_iters[b->level],
+					  k, overwrote);
+	bch_btree_iter_verify(iter, b);
 }
 
 /* peek_all() doesn't skip deleted keys */
@@ -294,12 +384,11 @@ static inline void btree_iter_node_set(struct btree_iter *iter,
 				 pos, iter->is_extents);
 }
 
-static bool btree_iter_pos_in_node(struct btree_iter *iter,
-					  struct btree *b)
+static bool btree_iter_pos_in_node(struct btree_iter *iter, struct btree *b)
 {
 	return iter->btree_id == b->btree_id &&
 		bkey_cmp(iter->pos, b->data->min_key) >= 0 &&
-		btree_iter_pos_cmp(iter, iter->pos, b->key.k.p);
+		btree_iter_pos_cmp(iter->pos, &b->key.k, iter->is_extents);
 }
 
 /*
@@ -493,8 +582,9 @@ retry:
 	while (iter->nodes[iter->level] &&
 	       !(is_btree_node(iter, iter->level) &&
 		 btree_node_relock(iter, iter->level) &&
-		 btree_iter_pos_cmp(iter, pos,
-				    iter->nodes[iter->level]->key.k.p)))
+		 btree_iter_pos_cmp(pos,
+				    &iter->nodes[iter->level]->key.k,
+				    iter->is_extents)))
 		btree_iter_up(iter);
 
 	/*
@@ -505,7 +595,7 @@ retry:
 		struct bkey_s_c k;
 
 		while ((k = __btree_iter_peek_all(iter)).k &&
-		       !btree_iter_pos_cmp(iter, pos, k.k->p))
+		       !btree_iter_pos_cmp(pos, k.k, iter->is_extents))
 			__btree_iter_advance(iter);
 	}
 

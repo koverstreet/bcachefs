@@ -38,16 +38,15 @@ struct bset_tree *bch_bkey_to_bset(struct btree_keys *b, struct bkey_packed *k)
  * have been flagged as deleted (and will be cleaned up later) we _will_ see
  * duplicates.
  *
- * Sort order is important here:
- *  - For extents, the deleted keys have to come last. This is because we're
- *    using bkey_deleted() as a proxy for k->size == 0, and we still have to
- *    maintain the invariant that
- *    bkey_cmp(k->p, bkey_start_pos(bkey_next(k)) <= 0)
+ * Thus the sort order is: usual key comparison first, but for keys that compare
+ * equal the deleted key(s) come first, and the (at most one) live version comes
+ * last.
  *
- *    i.e. a key can't end after the start of the next key.
- *
- * - For non extents, deleted keys must come first.
- *   XXX: why is this?
+ * The main reason for this is insertion: to handle overwrites, we first iterate
+ * over keys that compare equal to our insert key, and then insert immediately
+ * prior to the first key greater than the key we're inserting - our insert
+ * position will be after all keys that compare equal to our insert key, which
+ * by the time we actually do the insert will all be deleted.
  */
 
 static bool keys_out_of_order(const struct bkey_format *f,
@@ -189,6 +188,57 @@ void bch_btree_node_iter_verify(struct btree_node_iter *iter,
 
 		BUG_ON(__btree_node_offset_to_key(b, set->end) !=
 		       bset_bkey_last(t->data));
+	}
+}
+
+void bch_verify_key_order(struct btree_keys *b,
+			  struct btree_node_iter *iter,
+			  struct bkey_packed *where)
+{
+	const struct bkey_format *f = &b->format;
+	struct bset_tree *t = bch_bkey_to_bset(b, where);
+	struct bkey_packed *k, *prev;
+	struct bkey uk, uw = bkey_unpack_key(f, where);
+
+	k = bkey_prev(t, where);
+	BUG_ON(k &&
+	       keys_out_of_order(f, k, where, b->ops->is_extents));
+
+	k = bkey_next(where);
+	BUG_ON(k != bset_bkey_last(t->data) &&
+	       keys_out_of_order(f, where, k, b->ops->is_extents));
+
+	for (t = b->set; t <= b->set + b->nsets; t++) {
+		if (!t->data->u64s)
+			continue;
+
+		if (where >= t->data->start &&
+		    where < bset_bkey_last(t->data))
+			continue;
+
+		k = bch_btree_node_iter_bset_pos(iter, b, t->data) ?:
+			bkey_prev(t, bset_bkey_last(t->data));
+
+		while (bkey_cmp_left_packed(f, k, bkey_start_pos(&uw)) > 0 &&
+		       (prev = bkey_prev(t, k)))
+			k = prev;
+
+		for (;
+		     k != bset_bkey_last(t->data);
+		     k = bkey_next(k)) {
+			uk = bkey_unpack_key(f, k);
+
+			if (b->ops->is_extents) {
+				BUG_ON(!(bkey_cmp(uw.p, bkey_start_pos(&uk)) <= 0 ||
+					 bkey_cmp(uk.p, bkey_start_pos(&uw)) <= 0));
+			} else {
+				BUG_ON(!bkey_cmp(uw.p, uk.p) &&
+				       !bkey_deleted(&uk));
+			}
+
+			if (bkey_cmp(uw.p, bkey_start_pos(&uk)) <= 0)
+				break;
+		}
 	}
 }
 
@@ -789,25 +839,6 @@ struct bkey_packed *bkey_prev(struct bset_tree *t, struct bkey_packed *k)
 
 /* Insert */
 
-static void verify_insert_pos(struct btree_keys *b,
-			      const struct bkey_packed *prev,
-			      const struct bkey_packed *where,
-			      const struct bkey_i *insert)
-{
-#ifdef CONFIG_BCACHEFS_DEBUG
-	const struct bkey_format *f = &b->format;
-	struct bset_tree *t = bset_tree_last(b);
-
-	BUG_ON(prev &&
-	       keys_out_of_order(f, prev, bkey_to_packed_c(insert),
-				 b->ops->is_extents));
-
-	BUG_ON(where != bset_bkey_last(t->data) &&
-	       keys_out_of_order(f, bkey_to_packed_c(insert), where,
-				 b->ops->is_extents));
-#endif
-}
-
 /**
  * bch_bset_fix_invalidated_key() - given an existing  key @k that has been
  * modified, fix any auxiliary search tree by remaking all the nodes in the
@@ -939,13 +970,11 @@ static void bch_bset_fix_lookup_table(struct btree_keys *b,
  */
 struct bkey_packed *bch_bset_insert(struct btree_keys *b,
 				    struct btree_node_iter *iter,
-				    struct bkey_i *insert,
-				    bool *overwrote)
+				    struct bkey_i *insert)
 {
 	struct bkey_format *f = &b->format;
 	struct bset_tree *t = bset_tree_last(b);
 	struct bset *i = t->data;
-	struct bkey_packed *prev = NULL;
 	struct bkey_packed *where = bch_btree_node_iter_bset_pos(iter, b, i) ?:
 		bset_bkey_last(i);
 	struct bkey_packed packed, *src = bkey_to_packed(insert);
@@ -958,71 +987,9 @@ struct bkey_packed *bch_bset_insert(struct btree_keys *b,
 
 	BUG_ON(where < i->start);
 	BUG_ON(where > bset_bkey_last(i));
-	bch_verify_btree_nr_keys(b);
-
-	while (where != bset_bkey_last(i) &&
-	       keys_out_of_order(f, bkey_to_packed(insert),
-				 where, b->ops->is_extents))
-		prev = where, where = bkey_next(where);
-
-	if (!prev)
-		prev = bkey_prev(t, where);
-
-	verify_insert_pos(b, prev, where, insert);
-
-	/*
-	 * note: bch_bkey_try_merge_inline() may modify either argument
-	 */
-
-	/* prev is in the tree, if we merge we're done */
-	if (prev &&
-	    bch_bkey_try_merge_inline(b, iter, prev,
-				      bkey_to_packed(insert), true)) {
-		*overwrote = true;
-		return prev;
-	}
-
-	if (where != bset_bkey_last(i) &&
-	    bch_bkey_try_merge_inline(b, iter,
-				      bkey_to_packed(insert),
-				      where, false)) {
-		*overwrote = true;
-		return where;
-	}
-
-	/*
-	 * Can we overwrite the current key, instead of doing a memmove()?
-	 *
-	 * For extents, only legal to overwrite keys that are deleted - because
-	 * extents are marked as deleted iff they are 0 size, deleted extents
-	 * don't overlap with any other existing keys.
-	 *
-	 * For non extents marked as deleted may be needed as whiteouts, until
-	 * the node is rewritten, only legal to overwrite if the new key
-	 * compares equal to the old.
-	 */
-	if (b->ops->is_extents &&
-	    where != bset_bkey_last(i) &&
-	    where->u64s == src->u64s &&
-	    bkey_deleted(where))
-		goto overwrite;
 
 	if (bkey_pack_key(&packed, &insert->k, f))
 		src = &packed;
-
-	/* packing changes u64s - recheck after packing: */
-	if (b->ops->is_extents &&
-	    where != bset_bkey_last(i) &&
-	    where->u64s == src->u64s &&
-	    bkey_deleted(where))
-		goto overwrite;
-
-	if (!b->ops->is_extents &&
-	    prev && prev->u64s == src->u64s &&
-	    !bkey_cmp_left_packed(f, prev, insert->k.p)) {
-		where = prev;
-		goto overwrite;
-	}
 
 	memmove((u64 *) where + src->u64s,
 		where,
@@ -1034,29 +1001,58 @@ struct bkey_packed *bch_bset_insert(struct btree_keys *b,
 	memcpy(bkeyp_val(f, where), &insert->v,
 	       bkeyp_val_bytes(f, src));
 
+	bch_bset_fix_lookup_table(b, t, where);
+
 	if (!bkey_deleted(src))
 		btree_keys_account_key_add(&b->nr, src);
 
-	bch_bset_fix_lookup_table(b, t, where);
-
+	bch_verify_key_order(b, iter, where);
 	bch_verify_btree_nr_keys(b);
-	*overwrote = false;
 	return where;
+}
+
+/* @where must compare equal to @insert */
+bool bch_bset_try_overwrite(struct btree_keys *b,
+			    struct btree_node_iter *iter,
+			    struct bkey_packed *where,
+			    struct bkey_i *insert)
+{
+	struct bkey_format *f = &b->format;
+	struct bkey_packed packed, *src = bkey_to_packed(insert);
+
+	EBUG_ON(bkey_cmp_left_packed(f, where, insert->k.p));
+	EBUG_ON(bkey_deleted(where));
+
+	if (bkey_deleted(&insert->k))
+		return false;
+
+	if (bch_bkey_to_bset(b, where) != bset_tree_last(b))
+		return false;
+
+	if (where->u64s == src->u64s)
+		goto overwrite;
+
+	if (!bkey_pack_key(&packed, &insert->k, f))
+		return false;
+
+	src = &packed;
+	if (where->u64s == src->u64s)
+		goto overwrite;
+
+	return false;
 overwrite:
 	if (!bkey_deleted(where))
 		btree_keys_account_key_drop(&b->nr, where);
-
+	if (!bkey_deleted(src))
+		btree_keys_account_key_add(&b->nr, src);
 	memcpy(where, src,
 	       bkeyp_key_bytes(f, src));
 	memcpy(bkeyp_val(f, where), &insert->v,
 	       bkeyp_val_bytes(f, src));
 
-	if (!bkey_deleted(src))
-		btree_keys_account_key_add(&b->nr, src);
-
+	bch_verify_key_order(b, iter, where);
 	bch_verify_btree_nr_keys(b);
-	*overwrote = true;
-	return where;
+	return true;
 }
 
 /* Lookup */
@@ -1167,7 +1163,8 @@ static struct bkey_packed *bch_bset_search(struct btree_keys *b,
 				struct bset_tree *t,
 				struct bpos search,
 				struct bkey_packed *packed_search,
-				const struct bkey_packed *lossy_packed_search)
+				const struct bkey_packed *lossy_packed_search,
+				bool strictly_greater)
 {
 	const struct bkey_format *f = &b->format;
 	struct bkey_packed *m;
@@ -1208,21 +1205,21 @@ static struct bkey_packed *bch_bset_search(struct btree_keys *b,
 
 		if (unlikely(bkey_cmp_p_or_unp(f, t->data->start,
 					       packed_search, search) >= 0))
-			return t->data->start;
-
-		m = bset_search_tree(f, t, search, lossy_packed_search);
+			m = t->data->start;
+		else
+			m = bset_search_tree(f, t, search, lossy_packed_search);
 		break;
 	}
 
 	if (lossy_packed_search)
 		while (m != bset_bkey_last(t->data) &&
-		       bkey_cmp_p_or_unp(f, m,
-					 lossy_packed_search, search) < 0)
+		       !btree_iter_pos_cmp_p_or_unp(f, search, lossy_packed_search,
+						    m, strictly_greater))
 			m = bkey_next(m);
 
 	if (!packed_search)
 		while (m != bset_bkey_last(t->data) &&
-		       bkey_cmp_left_packed(f, m, search) < 0)
+		       !btree_iter_pos_cmp_packed(f, search, m, strictly_greater))
 			m = bkey_next(m);
 
 	if (btree_keys_expensive_checks(b)) {
@@ -1370,17 +1367,9 @@ void bch_btree_node_iter_init(struct btree_node_iter *iter,
 		bch_btree_node_iter_push(iter, b,
 					 bch_bset_search(b, t, search,
 							 packed_search,
-							 lossy_packed_search),
+							 lossy_packed_search,
+							 strictly_greater),
 					 bset_bkey_last(t->data));
-
-	if (strictly_greater) {
-		struct bkey_packed *m;
-
-		while ((m = bch_btree_node_iter_peek_all(iter, b)) &&
-		       (bkey_cmp_p_or_unp(&b->format, m,
-					  packed_search, search) == 0))
-			bch_btree_node_iter_advance(iter, b);
-	}
 }
 EXPORT_SYMBOL(bch_btree_node_iter_init);
 

@@ -168,10 +168,6 @@ struct btree_keys_ops {
 	ptr_filter_fn	key_normalize;
 	enum merge_result (*key_merge)(struct btree_keys *,
 				       struct bkey_i *, struct bkey_i *);
-	bool		(*key_merge_inline)(struct btree_keys *,
-					    struct btree_node_iter *,
-					    struct bkey_packed *,
-					    struct bkey_packed *, bool);
 
 	/*
 	 * Only used for deciding whether to use bkey_start_pos(k) or just the
@@ -326,7 +322,9 @@ void bch_bset_fix_invalidated_key(struct btree_keys *, struct bkey_packed *);
 
 struct bkey_packed *bch_bset_insert(struct btree_keys *,
 				    struct btree_node_iter *,
-				    struct bkey_i *, bool *);
+				    struct bkey_i *);
+bool bch_bset_try_overwrite(struct btree_keys *, struct btree_node_iter *iter,
+			    struct bkey_packed *, struct bkey_i *);
 
 static inline void btree_keys_account_key(struct btree_nr_keys *n,
 					  struct bkey_packed *k,
@@ -345,6 +343,39 @@ static inline void btree_keys_account_key(struct btree_nr_keys *n,
 	btree_keys_account_key(_b, _k, -1)
 
 /* Bkey utility code */
+
+/* Returns true if @k is after iterator position @pos */
+static inline bool btree_iter_pos_cmp(struct bpos pos, const struct bkey *k,
+				      bool strictly_greater)
+{
+	int cmp = bkey_cmp(k->p, pos);
+
+	return cmp > 0 ||
+		(cmp == 0 && !strictly_greater && !bkey_deleted(k));
+}
+
+static inline bool btree_iter_pos_cmp_packed(const struct bkey_format *f,
+					     struct bpos pos,
+					     const struct bkey_packed *k,
+					     bool strictly_greater)
+{
+	int cmp = bkey_cmp_left_packed(f, k, pos);
+
+	return cmp > 0 ||
+		(cmp == 0 && !strictly_greater && !bkey_deleted(k));
+}
+
+static inline bool btree_iter_pos_cmp_p_or_unp(const struct bkey_format *f,
+					struct bpos pos,
+					const struct bkey_packed *pos_packed,
+					const struct bkey_packed *k,
+					bool strictly_greater)
+{
+	int cmp = bkey_cmp_p_or_unp(f, k, pos_packed, pos);
+
+	return cmp > 0 ||
+		(cmp == 0 && !strictly_greater && !bkey_deleted(k));
+}
 
 #define BKEY_PADDED(key)	__BKEY_PADDED(key, BKEY_EXTENT_VAL_U64s_MAX)
 
@@ -379,17 +410,6 @@ static inline bool bch_bkey_try_merge(struct btree_keys *b,
 {
 	return b->ops->key_merge
 		? b->ops->key_merge(b, l, r) == BCH_MERGE_MERGE
-		: false;
-}
-
-static inline bool bch_bkey_try_merge_inline(struct btree_keys *b,
-					     struct btree_node_iter *iter,
-					     struct bkey_packed *l,
-					     struct bkey_packed *r,
-					     bool back_merge)
-{
-	return b->ops->key_merge_inline
-		? b->ops->key_merge_inline(b, iter, l, r, back_merge)
 		: false;
 }
 
@@ -597,24 +617,27 @@ void bch_btree_keys_stats(struct btree_keys *, struct bset_stats *);
 
 #ifdef CONFIG_BCACHEFS_DEBUG
 
-s64 __bch_count_data(struct btree_keys *);
-void __bch_count_data_verify(struct btree_keys *, int);
+void bch_dump_bset(struct btree_keys *, struct bset *, unsigned);
 void bch_dump_bucket(struct btree_keys *);
-void bch_btree_node_iter_verify(struct btree_node_iter *, struct btree_keys *);
+s64 __bch_count_data(struct btree_keys *);
 void __bch_verify_btree_nr_keys(struct btree_keys *);
+void bch_btree_node_iter_verify(struct btree_node_iter *, struct btree_keys *);
+void bch_verify_key_order(struct btree_keys *, struct btree_node_iter *,
+			  struct bkey_packed *);
 
 #else
 
-static inline s64 __bch_count_data(struct btree_keys *b) { return -1; }
-static inline void __bch_count_data_verify(struct btree_keys *b, int oldsize ) {}
+static inline void bch_dump_bset(struct btree_keys *b, struct bset *i, unsigned set) {}
 static inline void bch_dump_bucket(struct btree_keys *b) {}
+static inline s64 __bch_count_data(struct btree_keys *b) { return -1; }
+static inline void __bch_verify_btree_nr_keys(struct btree_keys *b) {}
 static inline void bch_btree_node_iter_verify(struct btree_node_iter *iter,
 					      struct btree_keys *b) {}
-static inline void __bch_verify_btree_nr_keys(struct btree_keys *b) {}
-
+static inline void bch_verify_key_order(struct btree_keys *b,
+					struct btree_node_iter *iter,
+					struct bkey_packed *where) {}
 #endif
 
-void bch_dump_bset(struct btree_keys *, struct bset *, unsigned);
 
 static inline s64 bch_count_data(struct btree_keys *b)
 {

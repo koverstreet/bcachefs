@@ -614,7 +614,7 @@ int bch_btree_root_alloc(struct cache_set *c, enum btree_id id,
 	return 0;
 }
 
-static bool bch_insert_fixup_btree_ptr(struct btree_iter *iter,
+static void bch_insert_fixup_btree_ptr(struct btree_iter *iter,
 				       struct btree *b,
 				       struct bkey_i *insert,
 				       struct btree_node_iter *node_iter,
@@ -624,45 +624,30 @@ static bool bch_insert_fixup_btree_ptr(struct btree_iter *iter,
 	const struct bkey_format *f = &b->keys.format;
 	struct bucket_stats_cache_set stats = { 0 };
 	struct bkey_packed *k;
-	int cmp;
-
-	EBUG_ON((k = bch_btree_node_iter_prev_all(node_iter, &b->keys)) &&
-		(bkey_deleted(k)
-		 ? bkey_cmp_packed(f, k, &insert->k) > 0
-		 : bkey_cmp_packed(f, k, &insert->k) >= 0));
+	struct bkey tmp;
 
 	if (bkey_extent_is_data(&insert->k))
 		bch_mark_key(c, bkey_i_to_s_c(insert),
 			     c->sb.btree_node_size, true,
 			     gc_pos_btree_node(b), &stats);
 
-	while ((k = bch_btree_node_iter_peek_all(node_iter, &b->keys))) {
-		struct bkey tmp;
-		struct bkey_s_c u = bkey_disassemble(f, k, &tmp);
-
-		cmp = bkey_cmp(u.k->p, insert->k.p);
-		if (cmp > 0)
-			break;
-
-		if (!cmp && !bkey_deleted(k)) {
-			bch_btree_node_free_index(c, b, iter->btree_id,
-						  u, &stats);
-			/*
-			 * Look up pending delete, mark so that gc marks it on
-			 * the pending delete list
-			 */
-			k->type = KEY_TYPE_DELETED;
-			btree_keys_account_key_drop(&b->keys.nr, k);
-		}
-
+	while ((k = bch_btree_node_iter_peek_all(node_iter, &b->keys)) &&
+	       !btree_iter_pos_cmp_packed(f, insert->k.p, k, false))
 		bch_btree_node_iter_advance(node_iter, &b->keys);
-	}
 
-	bch_btree_bset_insert(iter, b, node_iter, insert);
-	set_btree_node_dirty(b);
+	/*
+	 * If we're overwriting, look up pending delete and mark so that gc
+	 * marks it on the pending delete list:
+	 */
+	if (k && !bkey_cmp_packed(f, k, &insert->k))
+		bch_btree_node_free_index(c, b, iter->btree_id,
+					  bkey_disassemble(f, k, &tmp),
+					  &stats);
 
 	bch_cache_set_stats_apply(c, &stats, disk_res, gc_pos_btree_node(b));
-	return true;
+
+	bch_btree_bset_insert_key(iter, b, node_iter, insert);
+	set_btree_node_dirty(b);
 }
 
 /* Inserting into a given leaf node (last stage of insert): */
@@ -673,9 +658,7 @@ void bch_btree_bset_insert(struct btree_iter *iter,
 			   struct btree_node_iter *node_iter,
 			   struct bkey_i *insert)
 {
-	struct btree_iter *linked;
 	struct bkey_packed *where;
-	bool overwrote;
 
 	EBUG_ON(bkey_deleted(&insert->k) && bkey_val_u64s(&insert->k));
 	EBUG_ON(insert->k.u64s > bch_btree_keys_u64s_remaining(iter->c, b));
@@ -689,26 +672,37 @@ void bch_btree_bset_insert(struct btree_iter *iter,
 	 * though.
 	 */
 
-	where = bch_bset_insert(&b->keys, node_iter, insert, &overwrote);
+	where = bch_bset_insert(&b->keys, node_iter, insert);
 
-	bch_btree_node_iter_fix(iter, &b->keys, node_iter, where, overwrote);
+	bch_btree_node_iter_fix(iter, b, node_iter, where, false);
+}
 
-	if (iter->nodes[b->level] == b &&
-	    node_iter != &iter->node_iters[b->level])
-		bch_btree_node_iter_fix(iter, &b->keys,
-					&iter->node_iters[b->level],
-					where, overwrote);
+/* Handle overwrites and do insert, for non extents: */
+void bch_btree_bset_insert_key(struct btree_iter *iter,
+			       struct btree *b,
+			       struct btree_node_iter *node_iter,
+			       struct bkey_i *insert)
+{
+	const struct bkey_format *f = &b->keys.format;
+	struct bkey_packed *k;
 
-	for_each_linked_btree_node(iter, b, linked)
-		bch_btree_node_iter_fix(linked, &b->keys,
-					&linked->node_iters[b->level],
-					where, overwrote);
+	k = bch_btree_node_iter_peek_all(node_iter, &b->keys);
+	if (k && !bkey_cmp_packed(f, k, &insert->k)) {
+		if (bch_bset_try_overwrite(&b->keys, node_iter, k, insert)) {
+			bch_btree_iter_verify(iter, b);
+			return;
+		}
 
-	bch_btree_node_iter_verify(node_iter, &b->keys);
+		k->type = KEY_TYPE_DELETED;
+		btree_keys_account_key_drop(&b->keys.nr, k);
+		bch_btree_node_iter_fix(iter, b, node_iter, k, true);
 
-	for_each_linked_btree_node(iter, b, linked)
-		bch_btree_node_iter_verify(&linked->node_iters[b->level],
-					   &b->keys);
+		if (bkey_deleted(&insert->k) &&
+		    bch_bkey_to_bset(&b->keys, k) == bset_tree_last(&b->keys))
+			return;
+	}
+
+	bch_btree_bset_insert(iter, b, node_iter, insert);
 }
 
 static void btree_node_flush(struct journal_entry_pin *pin)
@@ -721,20 +715,12 @@ static void btree_node_flush(struct journal_entry_pin *pin)
 	six_unlock_read(&b->lock);
 }
 
-/**
- * bch_btree_insert_and_journal - insert a non-overlapping key into a btree node
- *
- * This is called from bch_insert_fixup_extent() and bch_insert_fixup_key()
- *
- * The insert is journalled.
- */
-void bch_btree_insert_and_journal(struct btree_iter *iter,
-				  struct bkey_i *insert,
-				  struct journal_res *res)
+void bch_btree_journal_key(struct btree_iter *iter,
+			   struct bkey_i *insert,
+			   struct journal_res *res)
 {
 	struct cache_set *c = iter->c;
 	struct btree *b = iter->nodes[0];
-	struct btree_node_iter *node_iter = &iter->node_iters[0];
 
 	EBUG_ON(iter->level || b->level);
 
@@ -764,8 +750,6 @@ void bch_btree_insert_and_journal(struct btree_iter *iter,
 				     insert, b->level);
 		btree_bset_last(b)->journal_seq = cpu_to_le64(c->journal.seq);
 	}
-
-	bch_btree_bset_insert(iter, b, node_iter, insert);
 }
 
 static void verify_keys_sorted(struct keylist *l)
@@ -1116,7 +1100,6 @@ bch_btree_insert_keys_interior(struct btree *b,
 	const struct bkey_format *f = &b->keys.format;
 	struct bkey_i *insert = bch_keylist_front(insert_keys);
 	struct bkey_packed *k;
-	bool inserted = false;
 
 	BUG_ON(!btree_node_intent_locked(iter, btree_node_root(b)->level));
 	BUG_ON(!b->level);
@@ -1131,6 +1114,7 @@ bch_btree_insert_keys_interior(struct btree *b,
 		return BTREE_INSERT_BTREE_NODE_FULL;
 	}
 
+	/* Don't screw up @iter's position: */
 	node_iter = iter->node_iters[b->level];
 
 	/*
@@ -1147,11 +1131,9 @@ bch_btree_insert_keys_interior(struct btree *b,
 
 		bch_insert_fixup_btree_ptr(iter, b, insert,
 					   &node_iter, &res->disk_res);
-		inserted = true;
 		bch_keylist_dequeue(insert_keys);
 	}
 
-	BUG_ON(!inserted);
 	async_split_updated_btree(as, b);
 
 	btree_node_unlock_write(b, iter);
@@ -1530,11 +1512,10 @@ btree_insert_key(struct btree_insert_trans *trans,
 		 struct journal_res *res,
 		 unsigned flags)
 {
-	struct btree *b = insert->iter->nodes[0];
+	struct btree_iter *iter = insert->iter;
+	struct btree *b = iter->nodes[0];
 	s64 oldsize = bch_count_data(&b->keys);
 	enum btree_insert_ret ret;
-
-	bch_btree_node_iter_verify(&insert->iter->node_iters[0], &b->keys);
 
 	ret = !b->keys.ops->is_extents
 		? bch_insert_fixup_key(trans, insert, res)
