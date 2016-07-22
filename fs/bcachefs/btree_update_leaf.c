@@ -96,7 +96,9 @@ overwrite:
 	bch2_bset_insert(b, node_iter, k, insert, clobber_u64s);
 	if (k->u64s != clobber_u64s || bkey_whiteout(&insert->k))
 		bch2_btree_node_iter_fix(iter, b, node_iter, t, k,
-					clobber_u64s, k->u64s);
+					 clobber_u64s, k->u64s);
+	else
+		bch2_verify_key_order(b, node_iter, k);
 	return true;
 }
 

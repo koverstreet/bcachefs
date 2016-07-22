@@ -428,8 +428,7 @@ iter_current_key_not_modified:
 			k = bch2_bkey_prev_all(b, t,
 				bch2_btree_node_iter_bset_pos(node_iter, b, t));
 			if (k &&
-			    __btree_node_iter_cmp(node_iter, b,
-						  k, where) > 0) {
+			    __btree_node_iter_cmp(b, k, where) > 0) {
 				struct btree_node_iter_set *set;
 				unsigned offset =
 					__btree_node_key_to_offset(b, bkey_next(k));
@@ -473,6 +472,8 @@ void bch2_btree_node_iter_fix(struct btree_iter *iter,
 		__bch2_btree_node_iter_fix(linked, b,
 					  &linked->l[b->level].iter, t,
 					  where, clobber_u64s, new_u64s);
+
+	bch2_verify_key_order(b, node_iter, where);
 
 	/* interior node iterators are... special... */
 	if (!b->level)
@@ -594,8 +595,7 @@ static inline void __btree_iter_init(struct btree_iter *iter,
 	struct btree_iter_level *l = &iter->l[b->level];
 
 	bch2_btree_node_iter_init(&l->iter, b, iter->pos,
-				  iter->flags & BTREE_ITER_IS_EXTENTS,
-				  btree_node_is_extents(b));
+				  iter->flags & BTREE_ITER_IS_EXTENTS);
 
 	/* Skip to first non whiteout: */
 	if (b->level)

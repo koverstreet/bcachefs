@@ -421,27 +421,18 @@ static inline enum bch_extent_overlap bch2_extent_overlap(const struct bkey *k,
 /* Btree key iteration */
 
 struct btree_node_iter {
-	u8		is_extents;
-
 	struct btree_node_iter_set {
 		u16	k, end;
 	} data[MAX_BSETS];
 };
 
-static inline void __bch2_btree_node_iter_init(struct btree_node_iter *iter,
-					      bool is_extents)
-{
-	iter->is_extents = is_extents;
-	memset(iter->data, 0, sizeof(iter->data));
-}
-
 void bch2_btree_node_iter_push(struct btree_node_iter *, struct btree *,
 			      const struct bkey_packed *,
 			      const struct bkey_packed *);
 void bch2_btree_node_iter_init(struct btree_node_iter *, struct btree *,
-			      struct bpos, bool, bool);
+			       struct bpos, bool);
 void bch2_btree_node_iter_init_from_start(struct btree_node_iter *,
-					 struct btree *, bool);
+					  struct btree *);
 struct bkey_packed *bch2_btree_node_iter_bset_pos(struct btree_node_iter *,
 						 struct btree *,
 						 struct bset_tree *);
@@ -468,30 +459,20 @@ static inline bool bch2_btree_node_iter_end(struct btree_node_iter *iter)
 	return __btree_node_iter_set_end(iter, 0);
 }
 
-static inline int __btree_node_iter_cmp(bool is_extents,
-					struct btree *b,
-					struct bkey_packed *l,
-					struct bkey_packed *r)
+static inline int __btree_node_iter_cmp(struct btree *b,
+					const struct bkey_packed *l,
+					const struct bkey_packed *r)
 {
-	/*
-	 * For non extents, when keys compare equal the deleted keys have to
-	 * come first - so that bch2_btree_node_iter_next_check() can detect
-	 * duplicate nondeleted keys (and possibly other reasons?)
-	 *
-	 * For extents, bkey_deleted() is used as a proxy for k->size == 0, so
-	 * deleted keys have to sort last.
-	 */
-	return bkey_cmp_packed(b, l, r) ?: is_extents
-		? (int) bkey_deleted(l) - (int) bkey_deleted(r)
-		: (int) bkey_deleted(r) - (int) bkey_deleted(l);
+	/* When keys compare equal deleted keys come first */
+	return bkey_cmp_packed(b, l, r) ?:
+		(int) bkey_deleted(r) - (int) bkey_deleted(l);
 }
 
-static inline int btree_node_iter_cmp(struct btree_node_iter *iter,
-				      struct btree *b,
+static inline int btree_node_iter_cmp(struct btree *b,
 				      struct btree_node_iter_set l,
 				      struct btree_node_iter_set r)
 {
-	return __btree_node_iter_cmp(iter->is_extents, b,
+	return __btree_node_iter_cmp(b,
 			__btree_node_offset_to_key(b, l.k),
 			__btree_node_offset_to_key(b, r.k));
 }
@@ -559,21 +540,12 @@ struct bkey_packed *bch2_btree_node_iter_prev_all(struct btree_node_iter *,
 struct bkey_packed *bch2_btree_node_iter_prev(struct btree_node_iter *,
 					     struct btree *);
 
-/*
- * Iterates over all _live_ keys - skipping deleted (and potentially
- * overlapping) keys
- */
-#define for_each_btree_node_key(b, k, iter, _is_extents)		\
-	for (bch2_btree_node_iter_init_from_start((iter), (b), (_is_extents));\
-	     ((k) = bch2_btree_node_iter_peek(iter, b));			\
-	     bch2_btree_node_iter_advance(iter, b))
-
 struct bkey_s_c bch2_btree_node_iter_peek_unpack(struct btree_node_iter *,
 						struct btree *,
 						struct bkey *);
 
-#define for_each_btree_node_key_unpack(b, k, iter, _is_extents, unpacked)\
-	for (bch2_btree_node_iter_init_from_start((iter), (b), (_is_extents));\
+#define for_each_btree_node_key_unpack(b, k, iter, unpacked)		\
+	for (bch2_btree_node_iter_init_from_start((iter), (b));		\
 	     (k = bch2_btree_node_iter_peek_unpack((iter), (b), (unpacked))).k;\
 	     bch2_btree_node_iter_advance(iter, b))
 
