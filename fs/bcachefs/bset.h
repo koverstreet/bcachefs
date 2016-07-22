@@ -535,27 +535,6 @@ bch_btree_node_iter_next_all(struct btree_node_iter *iter, struct btree_keys *b)
 	return ret;
 }
 
-static inline struct bkey_packed *
-bch_btree_node_iter_peek_overlapping(struct btree_node_iter *iter,
-				     struct btree_keys *b,
-				     struct bkey *end)
-{
-	const struct bkey_format *f = &b->format;
-	struct bkey_packed *ret;
-	struct bkey u;
-
-	while ((ret = bch_btree_node_iter_peek_all(iter, b)) &&
-	       (bkey_cmp_left_packed(f, ret, bkey_start_pos(end)) <= 0))
-		bch_btree_node_iter_advance(iter, b);
-
-	if (!ret)
-		return NULL;
-
-	u = bkey_unpack_key(f, ret);
-
-	return bkey_cmp(bkey_start_pos(&u), end->p) < 0 ? ret : NULL;
-}
-
 struct bkey_packed *bch_btree_node_iter_prev_all(struct btree_node_iter *,
 						 struct btree_keys *);
 

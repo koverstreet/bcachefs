@@ -1260,14 +1260,19 @@ bch_insert_fixup_extent(struct btree_insert_trans *trans,
 	 * been inserted, and also to keep @iter->pos consistent with
 	 * @insert->k and the node iterator that we're advancing:
 	 */
-	EBUG_ON(bkey_cmp(committed_pos, bkey_start_pos(&insert->k->k)));
+	EBUG_ON(bkey_cmp(iter->pos, bkey_start_pos(&insert->k->k)));
 
 	while (bkey_cmp(committed_pos, insert->k->k.p) < 0 &&
 	       (ret = extent_insert_should_stop(trans, insert, res,
 				start_time, nr_done)) == BTREE_INSERT_OK &&
-	       (_k = bch_btree_node_iter_peek_overlapping(node_iter,
-				&b->keys, &insert->k->k))) {
+	       (_k = bch_btree_node_iter_peek_all(node_iter, &b->keys))) {
 		struct bkey_s k = __bkey_disassemble(f, _k, &unpacked);
+
+		EBUG_ON(bkey_cmp(iter->pos, bkey_start_pos(&insert->k->k)));
+		EBUG_ON(bkey_cmp(iter->pos, k.k->p) >= 0);
+
+		if (bkey_cmp(bkey_start_pos(k.k), insert->k->k.p) >= 0)
+			break;
 
 		/*
 		 * Only call advance pos & call hook for nonzero size extents:
@@ -1291,14 +1296,14 @@ bch_insert_fixup_extent(struct btree_insert_trans *trans,
 		/* k is the key currently in the tree, 'insert' is the new key */
 		switch (bch_extent_overlap(&insert->k->k, k.k)) {
 		case BCH_EXTENT_OVERLAP_FRONT:
-			/* insert and k share the start, invalidate in k */
+			/* insert overlaps with start of k: */
 			bch_cut_subtract_front(iter, insert->k->k.p, k, &stats);
 			BUG_ON(bkey_deleted(k.k));
 			extent_save(&b->keys, node_iter, _k, k.k);
 			break;
 
 		case BCH_EXTENT_OVERLAP_BACK:
-			/* insert and k share the end, invalidate in k */
+			/* insert overlaps with end of k: */
 			bch_cut_subtract_back(iter,
 					      bkey_start_pos(&insert->k->k),
 					      k, &stats);
