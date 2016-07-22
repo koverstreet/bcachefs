@@ -1067,10 +1067,6 @@ static void extent_insert_committed(struct btree_insert_trans *trans,
 	EBUG_ON(bkey_cmp(committed_pos, insert->iter->pos) < 0);
 
 	if (bkey_cmp(committed_pos, insert->iter->pos) > 0) {
-		struct btree_iter *iter = insert->iter;
-		struct btree_keys *b = &iter->nodes[0]->keys;
-		struct btree_node_iter *node_iter = &iter->node_iters[0];
-		struct bkey_packed *k;
 		struct bkey_i *split;
 
 		EBUG_ON(bkey_deleted(&insert->k->k) || !insert->k->k.size);
@@ -1078,11 +1074,7 @@ static void extent_insert_committed(struct btree_insert_trans *trans,
 		split = bch_key_split(committed_pos, insert->k);
 		extent_do_insert(insert->iter, split, res, flags, stats);
 
-		bch_btree_iter_set_pos(iter, committed_pos);
-
-		while ((k = bch_btree_node_iter_peek_all(node_iter, b)) &&
-		       !btree_iter_pos_cmp_packed(&b->format, iter->pos, k, true))
-			bch_btree_node_iter_advance(node_iter, b);
+		bch_btree_iter_set_pos_same_leaf(insert->iter, committed_pos);
 
 		trans->did_work = true;
 	}
@@ -1114,23 +1106,13 @@ __extent_insert_advance_pos(struct btree_insert_trans *trans,
 	switch (ret) {
 	case BTREE_HOOK_DO_INSERT:
 		break;
-	case BTREE_HOOK_NO_INSERT: {
-		struct btree_iter *iter = insert->iter;
-		struct btree_keys *b = &iter->nodes[0]->keys;
-		struct btree_node_iter *node_iter = &iter->node_iters[0];
-		struct bkey_packed *k;
-
+	case BTREE_HOOK_NO_INSERT:
 		extent_insert_committed(trans, insert, *committed_pos,
 					res, flags, stats);
 		__bch_cut_front(next_pos, bkey_i_to_s(insert->k));
 
-		bch_btree_iter_set_pos(iter, next_pos);
-
-		while ((k = bch_btree_node_iter_peek_all(node_iter, b)) &&
-		       !btree_iter_pos_cmp_packed(&b->format, iter->pos, k, true))
-			bch_btree_node_iter_advance(node_iter, b);
+		bch_btree_iter_set_pos_same_leaf(insert->iter, next_pos);
 		break;
-	}
 	case BTREE_HOOK_RESTART_TRANS:
 		return ret;
 	}
@@ -1404,8 +1386,14 @@ stop:
 
 	bch_cache_set_stats_apply(c, &stats, disk_res, gc_pos_btree_node(b));
 
-	if (insert->k->k.size && !bkey_cmp(committed_pos, b->key.k.p))
+	EBUG_ON(bkey_cmp(iter->pos, bkey_start_pos(&insert->k->k)));
+	EBUG_ON(bkey_cmp(iter->pos, committed_pos));
+	EBUG_ON((bkey_cmp(iter->pos, b->key.k.p) == 0) != iter->at_end_of_leaf);
+
+	if (insert->k->k.size && iter->at_end_of_leaf)
 		ret = BTREE_INSERT_NEED_TRAVERSE;
+
+	EBUG_ON(insert->k->k.size && ret == BTREE_INSERT_OK);
 
 	return ret;
 }
@@ -2108,14 +2096,8 @@ static bool bch_extent_merge_inline(struct btree_iter *iter,
 		 * the iter_fix() call is going to put us _before_ the key we
 		 * just partially merged with:
 		 */
-		if (back_merge) {
-			struct bkey_packed *k;
-
-			bch_btree_iter_set_pos(iter, li.k.k.p);
-			while ((k = bch_btree_node_iter_peek_all(node_iter, b)) &&
-			       !btree_iter_pos_cmp_packed(&b->format, iter->pos, k, true))
-				bch_btree_node_iter_advance(node_iter, b);
-		}
+		if (back_merge)
+			bch_btree_iter_set_pos_same_leaf(iter, li.k.k.p);
 
 		bch_btree_node_iter_fix(iter, iter->nodes[0], node_iter,
 					m, true);

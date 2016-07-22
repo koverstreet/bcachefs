@@ -572,6 +572,8 @@ static int __must_check __bch_btree_iter_traverse(struct btree_iter *iter,
 {
 	if (!iter->nodes[iter->level])
 		return 0;
+
+	iter->at_end_of_leaf = false;
 retry:
 	/*
 	 * If the current node isn't locked, go up until we have a locked node
@@ -697,6 +699,29 @@ struct btree *bch_btree_iter_next_node(struct btree_iter *iter)
 
 /* Iterate across keys (in leaf nodes only) */
 
+void bch_btree_iter_set_pos_same_leaf(struct btree_iter *iter, struct bpos new_pos)
+{
+	struct btree_keys *b = &iter->nodes[0]->keys;
+	struct btree_node_iter *node_iter = &iter->node_iters[0];
+	struct bkey_packed *k;
+
+	EBUG_ON(bkey_cmp(new_pos, iter->pos) < 0);
+	EBUG_ON(!btree_node_locked(iter, 0));
+	EBUG_ON(bkey_cmp(new_pos, iter->nodes[0]->key.k.p) > 0);
+
+	while ((k = bch_btree_node_iter_peek_all(node_iter, b)) &&
+	       !btree_iter_pos_cmp_packed(&b->format, new_pos, k,
+					  iter->is_extents))
+		bch_btree_node_iter_advance(node_iter, b);
+
+	if (!k &&
+	    !btree_iter_pos_cmp(new_pos, &iter->nodes[0]->key.k,
+				iter->is_extents))
+		iter->at_end_of_leaf = true;
+
+	iter->pos = new_pos;
+}
+
 void bch_btree_iter_set_pos(struct btree_iter *iter, struct bpos new_pos)
 {
 	EBUG_ON(bkey_cmp(new_pos, iter->pos) < 0);
@@ -818,6 +843,7 @@ void __bch_btree_iter_init(struct btree_iter *iter, struct cache_set *c,
 	iter->nodes_intent_locked	= 0;
 	iter->locks_want		= locks_want;
 	iter->btree_id			= btree_id;
+	iter->at_end_of_leaf		= 0;
 	iter->error			= 0;
 	iter->c				= c;
 	iter->pos			= pos;

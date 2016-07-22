@@ -22,6 +22,12 @@ struct btree_iter {
 
 	enum btree_id		btree_id:8;
 
+	/*
+	 * indicates we need to call bch_btree_iter_traverse() to revalidate
+	 * iterator:
+	 */
+	u8			at_end_of_leaf;
+
 	s8			error;
 
 	struct cache_set	*c;
@@ -135,6 +141,7 @@ struct btree *bch_btree_iter_next_node(struct btree_iter *);
 
 struct bkey_s_c bch_btree_iter_peek(struct btree_iter *);
 struct bkey_s_c bch_btree_iter_peek_with_holes(struct btree_iter *);
+void bch_btree_iter_set_pos_same_leaf(struct btree_iter *, struct bpos);
 void bch_btree_iter_set_pos(struct btree_iter *, struct bpos);
 void bch_btree_iter_advance_pos(struct btree_iter *);
 void bch_btree_iter_rewind(struct btree_iter *, struct bpos);
