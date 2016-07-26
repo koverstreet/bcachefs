@@ -1,6 +1,7 @@
 #ifndef _BCACHE_WRITEBACK_H
 #define _BCACHE_WRITEBACK_H
 
+#include "blockdev.h"
 #include "buckets.h"
 
 #define CUTOFF_WRITEBACK	60

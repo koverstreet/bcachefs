@@ -59,33 +59,6 @@ static inline struct cache *bch_get_next_cache(struct cache_set *c,
 	     (ca = bch_get_next_cache(c, &(iter)));			\
 	     percpu_ref_put(&ca->ref), (iter)++)
 
-static inline void cached_dev_put(struct cached_dev *dc)
-{
-	if (atomic_dec_and_test(&dc->count))
-		schedule_work(&dc->detach);
-}
-
-static inline bool cached_dev_get(struct cached_dev *dc)
-{
-	if (!atomic_inc_not_zero(&dc->count))
-		return false;
-
-	/* Paired with the mb in cached_dev_attach */
-	smp_mb__after_atomic();
-	return true;
-}
-
-static inline u64 bcache_dev_inum(struct bcache_device *d)
-{
-	return KEY_INODE(&d->inode.i_inode.i_key);
-}
-
-static inline struct bcache_device *bch_dev_find(struct cache_set *c,
-						 u64 inode)
-{
-	return radix_tree_lookup(&c->devices, inode);
-}
-
 __printf(2, 3)
 bool bch_cache_set_error(struct cache_set *, const char *, ...);
 
@@ -135,11 +108,12 @@ static inline void bch_check_mark_super(struct cache_set *c,
 
 int bch_super_realloc(struct cache *, unsigned);
 void bcache_write_super(struct cache_set *);
+void __write_super(struct cache_set *, struct bcache_superblock *,
+		   struct block_device *, struct cache_sb *);
 
-void bch_write_bdev_super(struct cached_dev *, struct closure *);
+const char *validate_super(struct bcache_superblock *, struct block_device *,
+			   struct cache_sb *);
 
-void bch_cached_dev_release(struct kobject *);
-void bch_flash_dev_release(struct kobject *);
 void bch_cache_set_release(struct kobject *);
 void bch_cache_release(struct kobject *);
 
@@ -148,13 +122,6 @@ void bch_cache_set_stop(struct cache_set *);
 
 const char *register_bcache_devices(char **, int, struct cache_set **);
 const char *bch_run_cache_set(struct cache_set *);
-
-int bch_flash_dev_create(struct cache_set *, u64);
-
-int bch_cached_dev_attach(struct cached_dev *, struct cache_set *);
-void bch_cached_dev_detach(struct cached_dev *);
-void bch_cached_dev_run(struct cached_dev *);
-void bcache_device_stop(struct bcache_device *);
 
 void bch_cache_read_only(struct cache *);
 const char *bch_cache_read_write(struct cache *);
@@ -165,8 +132,8 @@ extern struct mutex bch_register_lock;
 extern struct list_head bch_cache_sets;
 extern struct idr bch_cache_set_minor;
 
-extern struct kobj_type bch_cached_dev_ktype;
-extern struct kobj_type bch_flash_dev_ktype;
+extern wait_queue_head_t unregister_wait;
+
 extern struct kobj_type bch_cache_set_ktype;
 extern struct kobj_type bch_cache_set_internal_ktype;
 extern struct kobj_type bch_cache_ktype;

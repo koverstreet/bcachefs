@@ -24,6 +24,7 @@
  */
 
 #include "bcache.h"
+#include "blockdev.h"
 #include "alloc.h"
 #include "btree.h"
 #include "debug.h"
@@ -44,8 +45,6 @@
 
 #define CUTOFF_CACHE_ADD	10
 #define CUTOFF_CACHE_READA	15
-
-struct kmem_cache *bch_search_cache;
 
 /* Congested? */
 
@@ -174,46 +173,6 @@ skip:
 	bch_mark_sectors_bypassed(c, dc, bio_sectors(bio));
 	return true;
 }
-
-/* struct search based code */
-
-struct search {
-	/* Stack frame for bio_complete */
-	struct closure		cl;
-
-	struct bbio		bio;
-	/* Not modified */
-	struct bio		*orig_bio;
-	struct bcache_device	*d;
-
-	unsigned		inode;
-	unsigned		write:1;
-
-	/* Flags only used for reads */
-	unsigned		recoverable:1;
-	unsigned		read_dirty_data:1;
-	unsigned		cache_miss:1;
-
-	/*
-	 * For reads:  bypass read from cache and insertion into cache
-	 * For writes: discard key range from cache, sending the write to
-	 *             the backing device (if there is a backing device)
-	 */
-	unsigned		bypass:1;
-
-	unsigned long		start_time;
-
-	/* Only used for reads */
-	struct btree_op		op;
-
-	/*
-	 * Mostly only used for writes. For reads, we still make use of
-	 * some trivial fields:
-	 * - c
-	 * - error
-	 */
-	struct bch_write_op	iop;
-};
 
 /* Common code for the make_request functions */
 
@@ -818,18 +777,4 @@ void bch_flash_dev_request_init(struct bcache_device *d)
 	g->queue->make_request_fn		= flash_dev_make_request;
 	g->queue->backing_dev_info.congested_fn = flash_dev_congested;
 	d->ioctl				= flash_dev_ioctl;
-}
-
-void bch_request_exit(void)
-{
-	kmem_cache_destroy(bch_search_cache);
-}
-
-int __init bch_request_init(void)
-{
-	bch_search_cache = KMEM_CACHE(search, 0);
-	if (!bch_search_cache)
-		return -ENOMEM;
-
-	return 0;
 }
