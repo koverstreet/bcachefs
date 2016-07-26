@@ -471,6 +471,11 @@ struct bkey_packed *bch_btree_node_iter_bset_pos(struct btree_node_iter *,
 void bch_btree_node_iter_sort(struct btree_node_iter *, struct btree_keys *);
 void bch_btree_node_iter_advance(struct btree_node_iter *, struct btree_keys *);
 
+#define btree_node_iter_for_each(_iter, _set)			\
+	for (_set = (_iter)->data;				\
+	     _set < (_iter)->data + (_iter)->used;		\
+	     _set++)
+
 static inline bool bch_btree_node_iter_end(struct btree_node_iter *iter)
 {
 	return !iter->used;

@@ -257,9 +257,7 @@ static void __bch_btree_node_iter_fix(struct btree_iter *iter,
 	bool iter_pos_before_new = btree_iter_pos_cmp_packed(f,
 				iter->pos, where, iter->is_extents);
 
-	for (set = node_iter->data;
-	     set < node_iter->data + node_iter->used;
-	     set++)
+	btree_node_iter_for_each(node_iter, set)
 		if (set->end == old_end) {
 			set->end += shift;
 

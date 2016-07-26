@@ -177,9 +177,7 @@ void bch_btree_node_iter_verify(struct btree_node_iter *iter,
 
 	BUG_ON(iter->used > MAX_BSETS);
 
-	for (set = iter->data;
-	     set < iter->data + iter->used;
-	     set++) {
+	btree_node_iter_for_each(iter, set) {
 		BUG_ON(set + 1 < iter->data + iter->used &&
 		       btree_node_iter_cmp(iter, b, set[0], set[1]));
 
@@ -1274,24 +1272,20 @@ void bch_btree_node_iter_push(struct btree_node_iter *iter,
 			      const struct bkey_packed *end)
 {
 	if (k != end) {
-		struct btree_node_iter_set n =
+		struct btree_node_iter_set *pos, n =
 			((struct btree_node_iter_set) {
 				 __btree_node_key_to_offset(b, k),
 				 __btree_node_key_to_offset(b, end)
 			 });
-		unsigned i;
 
-		for (i = 0;
-		     i < iter->used &&
-		     btree_node_iter_cmp(iter, b, n, iter->data[i]);
-		     i++)
-			;
+		btree_node_iter_for_each(iter, pos)
+		     if (!btree_node_iter_cmp(iter, b, n, *pos))
+			     break;
 
-		memmove(&iter->data[i + 1],
-			&iter->data[i],
-			(iter->used - i) * sizeof(struct btree_node_iter_set));
+		memmove(pos + 1, pos,
+			(void *) (iter->data + iter->used) - (void *) pos);
 		iter->used++;
-		iter->data[i] = n;
+		*pos = n;
 	}
 }
 
@@ -1396,10 +1390,8 @@ struct bkey_packed *bch_btree_node_iter_bset_pos(struct btree_node_iter *iter,
 
 	BUG_ON(iter->used > MAX_BSETS);
 
-	for (set = iter->data;
-	     set < iter->data + iter->used;
-	     set++)
-		if (end == set->end)
+	btree_node_iter_for_each(iter, set)
+		if (set->end == end)
 			return __btree_node_offset_to_key(b, set->k);
 
 	return NULL;
@@ -1469,7 +1461,7 @@ struct bkey_packed *bch_btree_node_iter_prev_all(struct btree_node_iter *iter,
 	struct bkey_packed *k;
 
 	for (t = b->set; t <= b->set + b->nsets; t++) {
-		for (i = iter->data; i < iter->data + iter->used; i++) {
+		btree_node_iter_for_each(iter, i) {
 			k = __btree_node_offset_to_key(b, i->k);
 
 			if (k >= t->data->start && k < bset_bkey_last(t->data))
