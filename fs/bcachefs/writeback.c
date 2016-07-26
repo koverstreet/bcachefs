@@ -407,9 +407,7 @@ static void bch_writeback(struct cached_dev *dc)
 
 	down_write(&dc->writeback_lock);
 
-	if (!atomic_read(&dc->has_dirty) ||
-	    (!test_bit(BCACHE_DEV_DETACHING, &dc->disk.flags) &&
-	     !dc->writeback_running)) {
+	if (!atomic_read(&dc->has_dirty)) {
 		up_write(&dc->writeback_lock);
 		set_current_state(TASK_INTERRUPTIBLE);
 
@@ -444,6 +442,11 @@ static int bch_writeback_thread(void *arg)
 	unsigned long last = jiffies;
 
 	do {
+		if (kthread_wait_freezable(dc->writeback_running ||
+				test_bit(BCACHE_DEV_DETACHING,
+					 &dc->disk.flags)))
+			break;
+
 		bch_writeback(dc);
 	} while (!bch_kthread_loop_ratelimit(&last,
 				test_bit(BCACHE_DEV_DETACHING, &dc->disk.flags)
