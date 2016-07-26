@@ -2,12 +2,16 @@
 #include "bcache.h"
 #include "bkey_methods.h"
 #include "btree.h"
+#include "dirent.h"
 #include "extents.h"
 #include "inode.h"
+#include "xattr.h"
 
 static const struct bkey_ops *bch_bkey_ops[] = {
 	[BKEY_TYPE_EXTENTS]	= &bch_bkey_extent_ops,
 	[BKEY_TYPE_INODES]	= &bch_bkey_inode_ops,
+	[BKEY_TYPE_DIRENTS]	= &bch_bkey_dirent_ops,
+	[BKEY_TYPE_XATTRS]	= &bch_bkey_xattr_ops,
 	[BKEY_TYPE_BTREE]	= &bch_bkey_btree_ops,
 };
 

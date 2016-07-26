@@ -12,6 +12,7 @@
 #include "btree.h"
 #include "clock.h"
 #include "debug.h"
+#include "fs-gc.h"
 #include "gc.h"
 #include "inode.h"
 #include "io.h"
@@ -26,6 +27,7 @@
 #include "tier.h"
 #include "writeback.h"
 
+#include <linux/backing-dev.h>
 #include <linux/blkdev.h>
 #include <linux/crc32c.h>
 #include <linux/debugfs.h>
@@ -137,6 +139,41 @@ static const char *bch_blkdev_open(const char *path, void *holder,
 
 	*ret = bdev;
 	return NULL;
+}
+
+static int bch_congested_fn(void *data, int bdi_bits)
+{
+	struct backing_dev_info *bdi;
+	struct cache_set *c = data;
+	struct cache *ca;
+	unsigned i;
+	int ret = 0;
+
+	rcu_read_lock();
+	if (bdi_bits & (1 << WB_sync_congested)) {
+		/* Reads - check all devices: */
+		for_each_cache_rcu(ca, c, i) {
+			bdi = blk_get_backing_dev_info(ca->disk_sb.bdev);
+
+			if (bdi_congested(bdi, bdi_bits)) {
+				ret = 1;
+				break;
+			}
+		}
+	} else {
+		/* Writes only go to tier 0: */
+		group_for_each_cache_rcu(ca, &c->cache_tiers[0], i) {
+			bdi = blk_get_backing_dev_info(ca->disk_sb.bdev);
+
+			if (bdi_congested(bdi, bdi_bits)) {
+				ret = 1;
+				break;
+			}
+		}
+	}
+	rcu_read_unlock();
+
+	return ret;
 }
 
 /* Superblock */
@@ -601,7 +638,18 @@ static void bch_recalc_capacity(struct cache_set *c)
 	struct cache_group *tier = c->cache_tiers + ARRAY_SIZE(c->cache_tiers);
 	struct cache *ca;
 	u64 capacity = 0;
+	unsigned long ra_pages = 0;
 	unsigned i, j;
+
+	rcu_read_lock();
+	for_each_cache_rcu(ca, c, i) {
+		struct backing_dev_info *bdi =
+			blk_get_backing_dev_info(ca->disk_sb.bdev);
+
+		ra_pages += bdi->ra_pages;
+	}
+
+	c->bdi.ra_pages = ra_pages;
 
 	/*
 	 * Capacity of the cache set is the capacity of all the devices in the
@@ -752,6 +800,9 @@ void bch_cache_set_fail(struct cache_set *c)
 void bch_cache_set_release(struct kobject *kobj)
 {
 	struct cache_set *c = container_of(kobj, struct cache_set, kobj);
+
+	if (c->stop_completion)
+		complete(c->stop_completion);
 	kfree(c);
 	module_put(THIS_MODULE);
 }
@@ -777,6 +828,7 @@ static void cache_set_free(struct closure *cl)
 	percpu_ref_exit(&c->writes);
 	bch_io_clock_exit(&c->io_clock[WRITE]);
 	bch_io_clock_exit(&c->io_clock[READ]);
+	bdi_destroy(&c->bdi);
 	bioset_exit(&c->btree_bio);
 	bioset_exit(&c->bio_split);
 	mempool_exit(&c->btree_reserve_pool);
@@ -998,12 +1050,17 @@ static struct cache_set *bch_cache_set_alloc(struct cache_sb *sb)
 	    mempool_init_kmalloc_pool(&c->fill_iter, 1, iter_size) ||
 	    bioset_init(&c->bio_split, 4, offsetof(struct bbio, bio)) ||
 	    bioset_init(&c->btree_bio, 1, offsetof(struct bbio, bio)) ||
+	    bdi_setup_and_register(&c->bdi, "bcache") ||
 	    bch_io_clock_init(&c->io_clock[READ]) ||
 	    bch_io_clock_init(&c->io_clock[WRITE]) ||
 	    bch_journal_alloc(&c->journal) ||
 	    bch_btree_cache_alloc(c) ||
 	    bch_bset_sort_state_init(&c->sort, ilog2(btree_pages(c))))
 		goto err;
+
+	c->bdi.ra_pages		= VM_MAX_READAHEAD * 1024 / PAGE_SIZE;
+	c->bdi.congested_fn	= bch_congested_fn;
+	c->bdi.congested_data	= c;
 
 	return c;
 err:
@@ -1144,7 +1201,15 @@ static const char *run_cache_set(struct cache_set *c)
 			}
 
 		bch_journal_replay(c, &journal);
+
+		err = "error gcing inode nlinks";
+		if (bch_gc_inode_nlinks(c))
+			goto err;
+
+		bch_verify_inode_refs(c);
 	} else {
+		struct bkey_i_inode inode;
+
 		pr_notice("invalidating existing data");
 
 		err = "unable to allocate journal buckets";
@@ -1185,6 +1250,17 @@ static const char *run_cache_set(struct cache_set *c)
 		/* XXX: necessary? */
 		bch_journal_meta(&c->journal, &cl);
 		closure_sync(&cl);
+
+		bkey_inode_init(&inode.k_i);
+		inode.k.p.inode = BCACHE_ROOT_INO;
+		inode.v.i_mode = S_IFDIR|S_IRWXU|S_IRUGO|S_IXUGO;
+		inode.v.i_nlink = 2;
+
+		err = "error creating root directory";
+		if (bch_btree_insert(c, BTREE_ID_INODES,
+				     &keylist_single(&inode.k_i),
+				     NULL, &cl, NULL, 0))
+			goto err;
 	}
 
 	bch_prio_timer_start(c, READ);
@@ -2342,6 +2418,7 @@ kobj_attribute_write(reboot,		reboot_test);
 static void bcache_exit(void)
 {
 	bch_debug_exit();
+	bch_fs_exit();
 	bch_blockdev_exit();
 	if (bcache_kset)
 		kset_unregister(bcache_kset);
@@ -2367,6 +2444,7 @@ static int __init bcache_init(void)
 	    !(bcache_kset = kset_create_and_add("bcache", NULL, fs_kobj)) ||
 	    sysfs_create_files(&bcache_kset->kobj, files) ||
 	    bch_blockdev_init() ||
+	    bch_fs_init() ||
 	    bch_debug_init())
 		goto err;
 

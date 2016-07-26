@@ -229,26 +229,27 @@ static inline size_t buckets_free_cache(struct cache *ca,
 	return __buckets_free_cache(ca, bch_bucket_stats_read(ca), reserve);
 }
 
-static inline u64 cache_sectors_used(struct cache *ca)
-{
-	struct bucket_stats stats = bch_bucket_stats_read(ca);
-
-	return (stats.buckets_meta << ca->bucket_bits) +
-		stats.sectors_dirty;
-}
-
-static inline bool cache_set_full(struct cache_set *c)
+static inline u64 cache_set_sectors_used(struct cache_set *c)
 {
 	struct cache *ca;
 	unsigned i;
 	u64 used = 0;
 
 	rcu_read_lock();
-	for_each_cache_rcu(ca, c, i)
-		used += cache_sectors_used(ca);
+	for_each_cache_rcu(ca, c, i) {
+		struct bucket_stats stats = bch_bucket_stats_read(ca);
+
+		used += (stats.buckets_meta << ca->bucket_bits) +
+			stats.sectors_dirty;
+	}
 	rcu_read_unlock();
 
-	return used >= c->capacity;
+	return min(c->capacity, used + atomic_long_read(&c->sectors_reserved));
+}
+
+static inline bool cache_set_full(struct cache_set *c)
+{
+	return cache_set_sectors_used(c) >= c->capacity;
 }
 
 static inline bool is_available_bucket(struct bucket_mark mark)

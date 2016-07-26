@@ -8,12 +8,14 @@
 #include "bcache.h"
 #include "btree.h"
 #include "debug.h"
+#include "dirent.h"
 #include "extents.h"
 #include "gc.h"
 #include "inode.h"
 #include "journal.h"
 #include "super.h"
 #include "writeback.h"
+#include "xattr.h"
 
 #include <trace/events/bcachefs.h>
 
@@ -1822,4 +1824,6 @@ const struct bkey_ops bch_bkey_extent_ops = {
 const struct btree_keys_ops *bch_btree_ops[] = {
 	[BTREE_ID_EXTENTS]	= &bch_extent_ops,
 	[BTREE_ID_INODES]	= &bch_inode_ops,
+	[BTREE_ID_DIRENTS]	= &bch_dirent_ops,
+	[BTREE_ID_XATTRS]	= &bch_xattr_ops,
 };

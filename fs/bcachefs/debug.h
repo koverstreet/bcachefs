@@ -10,6 +10,7 @@ struct cache_set;
 
 void bch_btree_verify(struct cache_set *, struct btree *);
 void bch_data_verify(struct cached_dev *, struct bio *);
+void bch_verify_inode_refs(struct cache_set *);
 
 #define expensive_debug_checks(c)	((c)->expensive_debug_checks)
 #define key_merging_disabled(c)		((c)->key_merging_disabled)
@@ -19,6 +20,7 @@ void bch_data_verify(struct cached_dev *, struct bio *);
 
 static inline void bch_btree_verify(struct cache_set *c, struct btree *b) {}
 static inline void bch_data_verify(struct cached_dev *dc, struct bio *bio) {}
+static inline void bch_verify_inode_refs(struct cache_set *c) {}
 
 #define expensive_debug_checks(c)	0
 #define key_merging_disabled(c)		0

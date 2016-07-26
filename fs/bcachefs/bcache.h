@@ -351,11 +351,12 @@ struct cache {
 };
 
 struct gc_stat {
-	size_t			nodes;
-	size_t			key_bytes;
+	u64			nodes;
+	u64			key_bytes;
+	u64			nkeys;
 
-	size_t			nkeys;
-	uint64_t		data;	/* sectors */
+	u64			data;	/* sectors */
+	u64			inodes;
 };
 
 /*
@@ -384,6 +385,7 @@ enum {
 	CACHE_SET_RO,
 	CACHE_SET_GC_STOPPING,
 	CACHE_SET_GC_FAILURE,
+	CACHE_SET_BDEV_MOUNTED,
 };
 
 struct cache_member_rcu {
@@ -404,6 +406,7 @@ struct cache_set {
 	struct list_head	list;
 	struct kobject		kobj;
 	struct kobject		internal;
+	struct completion	*stop_completion;
 	unsigned long		flags;
 
 	/* Counts outstanding writes, for clean transition to read-only */
@@ -423,9 +426,12 @@ struct cache_set {
 
 	struct bio_set		bio_split;
 
+	/* For punting bio submissions to workqueue, io.c */
 	struct bio_list		bio_submit_list;
 	struct work_struct	bio_submit_work;
 	spinlock_t		bio_submit_lock;
+
+	struct backing_dev_info bdi;
 
 	/* BTREE CACHE */
 	struct bio_set		btree_bio;
@@ -481,9 +487,16 @@ struct cache_set {
 
 	struct timer_list	foreground_write_wakeup;
 
+	/*
+	 * These contain all r/w devices - i.e. devices we can currently
+	 * allocate from:
+	 */
 	struct cache_group	cache_all;
 	struct cache_group	cache_tiers[CACHE_TIERS];
+
 	u64			capacity; /* sectors */
+	atomic_long_t		sectors_reserved;
+	atomic_long_t		sectors_reserved_cache;
 
 	struct mutex		bucket_lock;
 
@@ -566,6 +579,9 @@ struct cache_set {
 	struct bio_list		read_race_list;
 	struct work_struct	read_race_work;
 	spinlock_t		read_race_lock;
+
+	/* FILESYSTEM */
+	atomic_long_t		nr_inodes;
 
 	/* TIERING */
 	struct task_struct	*tiering_read;
@@ -757,5 +773,7 @@ do {									\
 
 void bch_debug_exit(void);
 int bch_debug_init(void);
+void bch_fs_exit(void);
+int bch_fs_init(void);
 
 #endif /* _BCACHE_H */

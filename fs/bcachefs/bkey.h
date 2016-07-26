@@ -493,6 +493,10 @@ BKEY_VAL_ACCESSORS(extent,		BCH_EXTENT);
 BKEY_VAL_ACCESSORS(inode,		BCH_INODE_FS);
 BKEY_VAL_ACCESSORS(inode_blockdev,	BCH_INODE_BLOCKDEV);
 
+BKEY_VAL_ACCESSORS(dirent,		BCH_DIRENT);
+
+BKEY_VAL_ACCESSORS(xattr,		BCH_XATTR);
+
 /* byte order helpers */
 
 #if !defined(__LITTLE_ENDIAN) && !defined(__BIG_ENDIAN)

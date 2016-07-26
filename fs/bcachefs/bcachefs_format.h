@@ -288,6 +288,8 @@ BITMASK(EXTENT_CACHED, struct bch_extent, data[0], 63, 64)
 
 #define BLOCKDEV_INODE_MAX	4096
 
+#define BCACHE_ROOT_INO		4096
+
 enum bch_inode_types {
 	BCH_INODE_FS		= 128,
 	BCH_INODE_BLOCKDEV	= 129,
@@ -335,6 +337,62 @@ BKEY_VAL_TYPE(inode_blockdev,	BCH_INODE_BLOCKDEV);
 
 BITMASK(INODE_FLASH_ONLY,	struct bch_inode_blockdev,
 				i_inode.i_flags, 0, 1);
+
+/* Dirents */
+
+/*
+ * Dirents (and xattrs) have to implement string lookups; since our b-tree
+ * doesn't support arbitrary length strings for the key, we instead index by a
+ * 64 bit hash (currently truncated sha1) of the string, stored in the offset
+ * field of the key - using linear probing to resolve hash collisions. This also
+ * provides us with the readdir cookie posix requires.
+ *
+ * Linear probing requires us to use whiteouts for deletions, in the event of a
+ * collision:
+ */
+
+enum {
+	BCH_DIRENT		= 128,
+	BCH_DIRENT_WHITEOUT	= 129,
+};
+
+struct bch_dirent {
+	struct bch_val		v;
+
+	/* Target inode number: */
+	__u64			d_inum;
+
+	/*
+	 * Copy of mode bits 12-15 from the target inode - so userspace can get
+	 * the filetype without having to do a stat()
+	 */
+	__u8			d_type;
+
+	__u8			d_name[];
+} __attribute__((packed));
+BKEY_VAL_TYPE(dirent,		BCH_DIRENT);
+
+/* Xattrs */
+
+enum {
+	BCH_XATTR		= 128,
+	BCH_XATTR_WHITEOUT	= 129,
+};
+
+#define BCH_XATTR_INDEX_USER			0
+#define BCH_XATTR_INDEX_POSIX_ACL_ACCESS	1
+#define BCH_XATTR_INDEX_POSIX_ACL_DEFAULT	2
+#define BCH_XATTR_INDEX_TRUSTED			3
+#define BCH_XATTR_INDEX_SECURITY	        4
+
+struct bch_xattr {
+	struct bch_val		v;
+	__u8			x_type;
+	__u8			x_name_len;
+	__u16			x_val_len;
+	__u8			x_name[];
+} __attribute__((packed));
+BKEY_VAL_TYPE(xattr,		BCH_XATTR);
 
 /* Superblock */
 
@@ -488,6 +546,14 @@ BITMASK(CACHE_BTREE_NODE_SIZE,		struct cache_sb, flags, 20, 36);
 BITMASK(CACHE_SET_META_REPLICAS_HAVE,	struct cache_sb, flags, 36, 40);
 BITMASK(CACHE_SET_DATA_REPLICAS_HAVE,	struct cache_sb, flags, 40, 44);
 
+BITMASK(CACHE_SET_DIRENT_CSUM_TYPE,	struct cache_sb, flags, 44, 48);
+enum {
+	BCH_DIRENT_CSUM_CRC32C		= 0,
+	BCH_DIRENT_CSUM_CRC64		= 1,
+	BCH_DIRENT_CSUM_SIPHASH		= 2,
+	BCH_DIRENT_CSUM_SHA1		= 3,
+};
+
 BITMASK(BDEV_CACHE_MODE,		struct cache_sb, flags, 0, 4);
 #define CACHE_MODE_WRITETHROUGH		0U
 #define CACHE_MODE_WRITEBACK		1U
@@ -532,6 +598,10 @@ static inline _Bool SB_IS_BDEV(const struct cache_sb *sb)
 	UUID_LE(0xf67385c6, 0x1a4e, 0xca45,				\
 		0x82, 0x65, 0xf5, 0x7f, 0x48, 0xba, 0x6d, 0x81)
 
+#define BCACHE_STATFS_MAGIC		0xca451a4e
+
+#define BCACHE_SB_MAGIC			0xca451a4ef67385c6ULL
+#define BCACHE_SB_MAGIC2		0x816dba487ff56582ULL
 #define JSET_MAGIC			0x245235c1a3625032ULL
 #define PSET_MAGIC			0x6750e15f87337f91ULL
 #define BSET_MAGIC			0x90135c78b99e07f5ULL
@@ -571,7 +641,9 @@ static inline __u64 bset_magic(struct cache_sb *sb)
 
 #define DEFINE_BCH_BTREE_IDS()					\
 	DEF_BTREE_ID(EXTENTS, 0, "extents")			\
-	DEF_BTREE_ID(INODES,  1, "inodes")
+	DEF_BTREE_ID(INODES,  1, "inodes")			\
+	DEF_BTREE_ID(DIRENTS, 2, "dirents")			\
+	DEF_BTREE_ID(XATTRS,  3, "xattrs")
 
 #define DEF_BTREE_ID(kwd, val, name) BTREE_ID_##kwd = val,
 
@@ -803,3 +875,5 @@ BITMASK(UUID_FLASH_ONLY,	struct uuid_entry, flags, 0, 1);
 }
 #endif
 #endif /* _LINUX_BCACHE_H */
+
+/* vim: set foldnestmax=2: */

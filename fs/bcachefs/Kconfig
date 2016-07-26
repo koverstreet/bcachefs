@@ -6,6 +6,7 @@ config BCACHE_FS
 	select EXPORTFS
 	select CLOSURES
 	select LIBCRC32C
+	select FS_POSIX_ACL
 	---help---
 	The bcachefs filesystem - a modern, copy on write filesystem, with
 	support for multiple devices, compression, checksumming, etc.
