@@ -449,7 +449,8 @@ struct bch_ratelimit {
 
 	/*
 	 * Rate at which we want to do work, in units per nanosecond
-	 * The units here correspond to the units passed to bch_next_delay()
+	 * The units here correspond to the units passed to
+	 * bch_ratelimit_increment()
 	 */
 	unsigned		rate;
 };
@@ -459,7 +460,10 @@ static inline void bch_ratelimit_reset(struct bch_ratelimit *d)
 	d->next = local_clock();
 }
 
-uint64_t bch_next_delay(struct bch_ratelimit *d, uint64_t done);
+u64 bch_ratelimit_delay(struct bch_ratelimit *);
+void bch_ratelimit_increment(struct bch_ratelimit *, u64);
+int bch_ratelimit_wait_freezable_stoppable(struct bch_ratelimit *,
+					   struct closure *);
 
 #define __DIV_SAFE(n, d, zero)						\
 ({									\

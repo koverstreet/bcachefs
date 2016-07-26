@@ -79,22 +79,16 @@ static void update_writeback_rate(struct work_struct *work)
 	down_read(&dc->writeback_lock);
 
 	if (atomic_read(&dc->has_dirty) &&
-	    dc->writeback_percent)
+	    dc->writeback_percent &&
+	    !test_bit(BCACHE_DEV_DETACHING, &dc->disk.flags))
 		__update_writeback_rate(dc);
+	else
+		dc->writeback_rate.rate = UINT_MAX;
 
 	up_read(&dc->writeback_lock);
 
 	schedule_delayed_work(&dc->writeback_rate_update,
 			      dc->writeback_rate_update_seconds * HZ);
-}
-
-static unsigned writeback_delay(struct cached_dev *dc, unsigned sectors)
-{
-	if (test_bit(BCACHE_DEV_DETACHING, &dc->disk.flags) ||
-	    !dc->writeback_percent)
-		return 0;
-
-	return bch_next_delay(&dc->writeback_rate, sectors);
 }
 
 struct dirty_io {
@@ -213,7 +207,6 @@ static void read_dirty_submit(struct closure *cl)
 
 static void read_dirty(struct cached_dev *dc)
 {
-	unsigned delay = 0;
 	struct keybuf_key *w;
 	struct dirty_io *io;
 	struct closure cl;
@@ -225,20 +218,13 @@ static void read_dirty(struct cached_dev *dc)
 	 * mempools.
 	 */
 
-	while (!kthread_should_stop()) {
-
+	while (!bch_ratelimit_wait_freezable_stoppable(&dc->writeback_rate,
+						       &cl)) {
 		w = bch_keybuf_next(&dc->writeback_keys);
 		if (!w)
 			break;
 
 		BUG_ON(ptr_stale(dc->disk.c, &w->key, 0));
-
-		if (KEY_START(&w->key) != dc->last_read ||
-		    jiffies_to_msecs(delay) > 50)
-			while (!kthread_should_stop() && delay)
-				delay = schedule_timeout_interruptible(delay);
-
-		dc->last_read	= KEY_OFFSET(&w->key);
 
 		io = kzalloc(sizeof(struct dirty_io) + sizeof(struct bio_vec)
 			     * DIV_ROUND_UP(KEY_SIZE(&w->key), PAGE_SECTORS),
@@ -261,10 +247,11 @@ static void read_dirty(struct cached_dev *dc)
 
 		trace_bcache_writeback(&w->key);
 
+		bch_ratelimit_increment(&dc->writeback_rate,
+					KEY_SIZE(&w->key) << 9);
+
 		down(&dc->in_flight);
 		closure_call(&io->cl, read_dirty_submit, NULL, &cl);
-
-		delay = writeback_delay(dc, KEY_SIZE(&w->key));
 	}
 
 	if (0) {
@@ -458,7 +445,7 @@ static int bch_writeback_thread(void *arg)
 
 	do {
 		bch_writeback(dc);
-	} while (bch_kthread_loop_ratelimit(&last,
+	} while (!bch_kthread_loop_ratelimit(&last,
 				test_bit(BCACHE_DEV_DETACHING, &dc->disk.flags)
 				? 0 : c->btree_scan_ratelimit * HZ));
 

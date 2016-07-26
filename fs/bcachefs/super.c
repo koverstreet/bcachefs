@@ -928,6 +928,7 @@ void bch_cached_dev_detach(struct cached_dev *dc)
 	 */
 	closure_get(&dc->disk.cl);
 
+	dc->writeback_rate.rate = UINT_MAX;
 	bch_writeback_queue(dc);
 	cached_dev_put(dc);
 }

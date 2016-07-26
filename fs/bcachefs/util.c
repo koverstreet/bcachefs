@@ -200,17 +200,31 @@ void bch_time_stats_update(struct time_stats *stats, uint64_t start_time)
 }
 
 /**
- * bch_next_delay() - increment @d by the amount of work done, and return how
- * long to delay until the next time to do some work.
+ * bch_ratelimit_delay() - return how long to delay until the next time to do
+ * some work
  *
  * @d - the struct bch_ratelimit to update
- * @done - the amount of work done, in arbitrary units
  *
  * Returns the amount of time to delay by, in jiffies
  */
-uint64_t bch_next_delay(struct bch_ratelimit *d, uint64_t done)
+u64 bch_ratelimit_delay(struct bch_ratelimit *d)
 {
-	uint64_t now = local_clock();
+	u64 now = local_clock();
+
+	return time_after64(d->next, now)
+		? div_u64(d->next - now, NSEC_PER_SEC / HZ)
+		: 0;
+}
+
+/**
+ * bch_ratelimit_increment() - increment @d by the amount of work done
+ *
+ * @d - the struct bch_ratelimit to update
+ * @done - the amount of work done, in arbitrary units
+ */
+void bch_ratelimit_increment(struct bch_ratelimit *d, u64 done)
+{
+	u64 now = local_clock();
 
 	d->next += div_u64(done * NSEC_PER_SEC, d->rate);
 
@@ -219,10 +233,32 @@ uint64_t bch_next_delay(struct bch_ratelimit *d, uint64_t done)
 
 	if (time_after64(now - NSEC_PER_SEC * 2, d->next))
 		d->next = now - NSEC_PER_SEC * 2;
+}
 
-	return time_after64(d->next, now)
-		? div_u64(d->next - now, NSEC_PER_SEC / HZ)
-		: 0;
+int bch_ratelimit_wait_freezable_stoppable(struct bch_ratelimit *d,
+					   struct closure *cl)
+{
+	while (1) {
+		u64 delay = bch_ratelimit_delay(d);
+
+		if (delay)
+			set_current_state(TASK_INTERRUPTIBLE);
+
+		if (kthread_should_stop()) {
+			closure_sync(cl);
+			return 1;
+		}
+
+		if (freezing(current)) {
+			closure_sync(cl);
+			try_to_freeze();
+		}
+
+		if (!delay)
+			return 0;
+
+		schedule_timeout(delay);
+	}
 }
 
 void bch_bio_map(struct bio *bio, void *base)
