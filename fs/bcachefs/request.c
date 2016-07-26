@@ -688,7 +688,7 @@ static void __blockdev_volume_make_request(struct request_queue *q,
 		unsigned flags = 0;
 
 		if (bio_op(bio) != REQ_OP_DISCARD &&
-		    bch_disk_reservation_get(d->c, &res, bio_sectors(bio))) {
+		    bch_disk_reservation_get(d->c, &res, bio_sectors(bio), 0)) {
 			s->iop.error = -ENOSPC;
 			continue_at(&s->cl, search_free, NULL);
 			return;

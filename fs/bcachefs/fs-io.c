@@ -448,8 +448,8 @@ static int bch_get_page_reservation(struct cache_set *c, struct page *page,
 	    s->alloc_state == BCH_PAGE_ALLOCATED)
 		return 0;
 
-	ret = __bch_disk_reservation_get(c, &res, PAGE_SECTORS,
-					 check_enospc, false);
+	ret = bch_disk_reservation_get(c, &res, PAGE_SECTORS, !check_enospc
+				       ? BCH_DISK_RESERVATION_NOFAIL : 0);
 	if (ret)
 		return ret;
 
@@ -1401,7 +1401,7 @@ static int bch_direct_IO_write(struct cache_set *c, struct kiocb *req,
 	 * Have to then guard against racing with truncate (deleting data that
 	 * we would have been overwriting)
 	 */
-	ret = bch_disk_reservation_get(c, &dio->res, iter->count >> 9);
+	ret = bch_disk_reservation_get(c, &dio->res, iter->count >> 9, 0);
 	if (unlikely(ret)) {
 		closure_debug_destroy(&dio->cl);
 		bio_put(bio);
@@ -1936,9 +1936,8 @@ static long bch_fcollapse(struct inode *inode, loff_t offset, loff_t len)
 
 		BUG_ON(bkey_cmp(dst.pos, bkey_start_pos(&copy.k.k)));
 
-		ret = __bch_disk_reservation_get(c, &disk_res,
-						 copy.k.k.size,
-						 false, false);
+		ret = bch_disk_reservation_get(c, &disk_res, copy.k.k.size,
+					       BCH_DISK_RESERVATION_NOFAIL);
 		BUG_ON(ret);
 
 		ret = bch_btree_insert_at(&dst, &copy.k, &disk_res,
@@ -2083,7 +2082,8 @@ static long bch_fallocate(struct inode *inode, int mode,
 
 		if (!bkey_extent_is_allocation(k.k) ||
 		    bkey_extent_is_compressed(c, k)) {
-			ret = bch_disk_reservation_get(c, &disk_res, sectors);
+			ret = bch_disk_reservation_get(c, &disk_res,
+						       sectors, 0);
 			if (ret)
 				goto err_put_sectors_dirty;
 		}

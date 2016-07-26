@@ -523,11 +523,13 @@ static struct btree_reserve *__bch_btree_reserve_get(struct cache_set *c,
 	struct btree_reserve *reserve;
 	struct btree *b;
 	struct disk_reservation disk_res = { 0, 0 };
-		unsigned sectors = nr_nodes * c->sb.btree_node_size;
-	int ret;
+	unsigned sectors = nr_nodes * c->sb.btree_node_size;
+	int ret, flags = BCH_DISK_RESERVATION_GC_LOCK_HELD;
 
-	if (__bch_disk_reservation_get(c, &disk_res, sectors,
-				       check_enospc, true))
+	if (!check_enospc)
+		flags |= BCH_DISK_RESERVATION_NOFAIL;
+
+	if (bch_disk_reservation_get(c, &disk_res, sectors, flags))
 		return ERR_PTR(-ENOSPC);
 
 	BUG_ON(nr_nodes > BTREE_RESERVE_MAX);

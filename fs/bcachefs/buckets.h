@@ -249,11 +249,12 @@ void bch_recalc_sectors_available(struct cache_set *);
 
 void bch_disk_reservation_put(struct cache_set *,
 			      struct disk_reservation *);
-int __bch_disk_reservation_get(struct cache_set *,
-			       struct disk_reservation *,
-			       unsigned, bool, bool);
+
+#define BCH_DISK_RESERVATION_NOFAIL		(1 << 0)
+#define BCH_DISK_RESERVATION_GC_LOCK_HELD	(1 << 1)
+
 int bch_disk_reservation_get(struct cache_set *,
 			     struct disk_reservation *,
-			     unsigned);
+			     unsigned, int);
 
 #endif /* _BUCKETS_H */

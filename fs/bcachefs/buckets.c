@@ -541,10 +541,9 @@ void bch_disk_reservation_put(struct cache_set *c,
 
 #define SECTORS_CACHE	1024
 
-int __bch_disk_reservation_get(struct cache_set *c,
-			       struct disk_reservation *res,
-			       unsigned sectors,
-			       bool check_enospc, bool gc_lock_held)
+int bch_disk_reservation_get(struct cache_set *c,
+			     struct disk_reservation *res,
+			     unsigned sectors, int flags)
 {
 	struct bucket_stats_cache_set *stats;
 	u64 old, new, v;
@@ -584,13 +583,14 @@ recalculate:
 	 * GC recalculates sectors_available when it starts, so that hopefully
 	 * we don't normally end up blocking here:
 	 */
-	if (!gc_lock_held)
+	if (!(flags & BCH_DISK_RESERVATION_GC_LOCK_HELD))
 		down_read(&c->gc_lock);
 	lg_global_lock(&c->bucket_stats_lock);
 
 	sectors_available = __recalc_sectors_available(c);
 
-	if (!check_enospc || sectors <= sectors_available) {
+	if (sectors <= sectors_available ||
+	    (flags & BCH_DISK_RESERVATION_NOFAIL)) {
 		atomic64_set(&c->sectors_available,
 			     max_t(s64, 0, sectors_available - sectors));
 		stats->sectors_online_reserved += sectors;
@@ -602,15 +602,8 @@ recalculate:
 	}
 
 	lg_global_unlock(&c->bucket_stats_lock);
-	if (!gc_lock_held)
+	if (!(flags & BCH_DISK_RESERVATION_GC_LOCK_HELD))
 		up_read(&c->gc_lock);
 
 	return ret;
-}
-
-int bch_disk_reservation_get(struct cache_set *c,
-			     struct disk_reservation *res,
-			     unsigned sectors)
-{
-	return __bch_disk_reservation_get(c, res, sectors, true, false);
 }

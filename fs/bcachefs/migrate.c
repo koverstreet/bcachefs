@@ -41,7 +41,7 @@ static int issue_migration_move(struct cache *ca,
 	struct moving_io *io;
 	struct disk_reservation res;
 
-	if (bch_disk_reservation_get(c, &res, k.k->size))
+	if (bch_disk_reservation_get(c, &res, k.k->size, 0))
 		return -ENOSPC;
 
 	io = moving_io_alloc(k);
