@@ -889,7 +889,7 @@ static int __bch_writepage(struct page *page, struct writeback_control *wbc,
 	struct inode *inode = page->mapping->host;
 	struct bch_inode_info *ei = to_bch_ei(inode);
 	struct bch_writepage *w = data;
-	struct bch_page_state new;
+	struct bch_page_state new, old;
 	unsigned offset;
 	loff_t i_size = i_size_read(inode);
 	pgoff_t end_index = i_size >> PAGE_SHIFT;
@@ -925,7 +925,7 @@ do_io:
 		w->io->bio.bio.bio.bi_opf |= WRITE_SYNC;
 
 	/* Before unlocking the page, transfer reservation to w->io: */
-	page_state_cmpxchg(page_state(page), new, {
+	old = page_state_cmpxchg(page_state(page), new, {
 		BUG_ON(!new.reserved &&
 		       (new.sectors != PAGE_SECTORS ||
 			new.alloc_state != BCH_PAGE_ALLOCATED));
@@ -938,7 +938,7 @@ do_io:
 		new.reserved = 0;
 	});
 
-	w->io->op.op.res.sectors += PAGE_SECTORS;
+	w->io->op.op.res.sectors += PAGE_SECTORS * (old.reserved - new.reserved);
 out:
 	BUG_ON(PageWriteback(page));
 	set_page_writeback(page);
