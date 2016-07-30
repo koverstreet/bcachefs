@@ -357,10 +357,18 @@ do {								\
 	}							\
 } while (0)
 
-static int compressed_sectors(union bch_extent_crc *crc, int sectors)
+static unsigned __disk_sectors(struct bch_extent_crc64 crc, unsigned sectors)
 {
-	return min_t(unsigned, crc_to_64(crc).compressed_size,
-		     abs(sectors)) * (sectors < 0 ? -1 : 1);
+	return crc.compression_type
+		? sectors * crc.compressed_size / crc.uncompressed_size
+		: sectors;
+}
+
+static unsigned __compressed_sectors(struct bch_extent_crc64 crc, unsigned sectors)
+{
+	return crc.compression_type
+		? min_t(unsigned, crc.compressed_size, sectors)
+		: sectors;
 }
 
 /*
@@ -383,9 +391,21 @@ static void bch_mark_pointer(struct cache_set *c,
 	struct bucket *g = ca->buckets + PTR_BUCKET_NR(ca, ptr);
 	u32 v = READ_ONCE(g->mark.counter);
 	struct bch_extent_crc64 crc64 = crc_to_64(crc);
-	int disk_sectors = crc64.compression_type
-		? sectors * crc64.compressed_size / crc64.uncompressed_size
-		: sectors;
+	unsigned old_sectors, new_sectors;
+	int disk_sectors, compressed_sectors;
+
+	if (sectors > 0) {
+		old_sectors = 0;
+		new_sectors = sectors;
+	} else {
+		old_sectors = e.k->size;
+		new_sectors = e.k->size + sectors;
+	}
+
+	disk_sectors = -__disk_sectors(crc64, old_sectors)
+		+ __disk_sectors(crc64, new_sectors);
+	compressed_sectors = -__compressed_sectors(crc64, old_sectors)
+		+ __compressed_sectors(crc64, new_sectors);
 
 	do {
 		new.counter = old.counter = v;
@@ -465,18 +485,8 @@ static void bch_mark_pointer(struct cache_set *c,
 		}
 	}
 out:
-	if (crc_to_64(crc).compression_type == BCH_COMPRESSION_NONE) {
-		stats->s[S_COMPRESSED][type] += sectors;
-	} else if (abs(sectors) == e.k->size) {
-		stats->s[S_COMPRESSED][type] += compressed_sectors(crc, sectors);
-	} else {
-		BUG_ON(sectors > 0);
-
-		stats->s[S_COMPRESSED][type] -= compressed_sectors(crc, e.k->size);
-		stats->s[S_COMPRESSED][type] += compressed_sectors(crc, e.k->size + sectors);
-	}
-
-	stats->s[S_UNCOMPRESSED][type] += sectors;
+	stats->s[S_COMPRESSED][type]	+= compressed_sectors;
+	stats->s[S_UNCOMPRESSED][type]	+= sectors;
 }
 
 static void bch_mark_extent(struct cache_set *c, struct bkey_s_c_extent e,
