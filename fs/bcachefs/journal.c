@@ -1037,27 +1037,61 @@ static int journal_entry_sectors(struct journal *j)
 {
 	struct cache_set *c = container_of(j, struct cache_set, journal);
 	struct cache *ca;
-	unsigned i, nr_buckets = UINT_MAX, sectors = JOURNAL_BUF_SECTORS,
-		 nr_devs = 0;
+	struct bkey_s_extent e = bkey_i_to_s_extent(&j->key);
+	struct journal_buf *w = journal_prev_buf(j);
+	union journal_res_state s = j->reservations;
+	bool prev_unwritten = journal_state_count(s, !s.idx);
+	unsigned prev_sectors = prev_unwritten
+		?  __set_blocks(w->data,
+				le32_to_cpu(w->data->u64s),
+				block_bytes(c)) * c->sb.block_size
+		: 0;
+	unsigned sectors_available = JOURNAL_BUF_SECTORS;
+	unsigned i, nr_online = 0, nr_devs = 0;
 
 	lockdep_assert_held(&j->lock);
 
 	rcu_read_lock();
 	group_for_each_cache_rcu(ca, &c->cache_tiers[0], i) {
-		nr_devs++;
-		nr_buckets = min(nr_buckets,
-				 journal_dev_buckets_available(j, ca));
-		sectors = min_t(unsigned, sectors, ca->mi.bucket_size);
+		unsigned buckets_required = 0;
+
+		sectors_available = min_t(unsigned, sectors_available,
+					  ca->mi.bucket_size);
+
+		/*
+		 * Note that we don't allocate the space for a journal entry
+		 * until we write it out - thus, if we haven't started the write
+		 * for the previous entry we have to make sure we have space for
+		 * it too:
+		 */
+		if (bch_extent_has_device(e.c, ca->sb.nr_this_dev)) {
+			if (prev_sectors > ca->journal.sectors_free)
+				buckets_required++;
+
+			if (prev_sectors + sectors_available >
+			    ca->journal.sectors_free)
+				buckets_required++;
+		} else {
+			if (prev_sectors + sectors_available >
+			    ca->mi.bucket_size)
+				buckets_required++;
+
+			buckets_required++;
+		}
+
+		if (journal_dev_buckets_available(j, ca) >= buckets_required)
+			nr_devs++;
+		nr_online++;
 	}
 	rcu_read_unlock();
 
-	if (nr_devs < c->opts.metadata_replicas)
+	if (nr_online < c->opts.metadata_replicas)
 		return -EROFS;
 
-	if (nr_buckets == UINT_MAX)
-		nr_buckets = 0;
+	if (nr_devs < c->opts.metadata_replicas)
+		return 0;
 
-	return nr_buckets ? sectors : 0;
+	return sectors_available;
 }
 
 /*
@@ -1289,7 +1323,8 @@ int bch_cache_journal_alloc(struct cache *ca)
 	 * is smaller:
 	 */
 	ret = bch_set_nr_journal_buckets(ca,
-			clamp_t(unsigned, ca->mi.nbuckets >> 8, 8,
+			clamp_t(unsigned, ca->mi.nbuckets >> 8,
+				BCH_JOURNAL_BUCKETS_MIN,
 				min(1 << 10,
 				    (1 << 20) / ca->mi.bucket_size)));
 	if (ret)
@@ -1685,7 +1720,10 @@ static void journal_write(struct closure *cl)
 			       block_bytes(c)) * c->sb.block_size;
 
 	if (journal_write_alloc(j, sectors)) {
-		BUG();
+		bch_journal_halt(j);
+		bch_err(c, "Unable to allocate journal write");
+		bch_fatal_error(c);
+		closure_return_with_destructor(cl, journal_write_done);
 	}
 
 	bch_check_mark_super(c, &j->key, true);

@@ -975,18 +975,8 @@ static inline __u64 bset_magic(struct cache_sb *sb)
 	return __le64_to_cpu(sb->set_magic) ^ BSET_MAGIC;
 }
 
-/*
- * Journal
- *
- * On disk format for a journal entry:
- * seq is monotonically increasing; every journal entry has its own unique
- * sequence number.
- *
- * last_seq is the oldest journal entry that still has keys the btree hasn't
- * flushed to disk yet.
- *
- * version is for on disk format changes.
- */
+/* Journal */
+
 
 #define BCACHE_JSET_VERSION_UUIDv1	1
 #define BCACHE_JSET_VERSION_UUID	1	/* Always latest UUID format */
@@ -1026,6 +1016,16 @@ enum {
 	JOURNAL_ENTRY_JOURNAL_SEQ_BLACKLISTED = 3,
 };
 
+/*
+ * On disk format for a journal entry:
+ * seq is monotonically increasing; every journal entry has its own unique
+ * sequence number.
+ *
+ * last_seq is the oldest journal entry that still has keys the btree hasn't
+ * flushed to disk yet.
+ *
+ * version is for on disk format changes.
+ */
 struct jset {
 	__le64			csum;
 	__le64			magic;
@@ -1048,6 +1048,8 @@ struct jset {
 
 LE32_BITMASK(JSET_CSUM_TYPE,	struct jset, flags, 0, 4);
 LE32_BITMASK(JSET_BIG_ENDIAN,	struct jset, flags, 4, 5);
+
+#define BCH_JOURNAL_BUCKETS_MIN		20
 
 /* Bucket prios/gens */
 
