@@ -199,17 +199,21 @@ void bch_cache_set_stats_apply(struct cache_set *,
 			       struct disk_reservation *,
 			       struct gc_pos);
 
-static inline u64 cache_set_sectors_used(struct cache_set *c)
+static inline u64 __cache_set_sectors_used(struct cache_set *c)
 {
 	struct bucket_stats_cache_set stats = __bch_bucket_stats_read_cache_set(c);
 
-	return min(c->capacity,
-		   stats.sectors_meta +
-		   stats.sectors_dirty +
-		   stats.sectors_persistent_reserved +
-		   stats.sectors_online_reserved +
-		   ((stats.sectors_persistent_reserved +
-		     stats.sectors_online_reserved) >> 7));
+	return stats.sectors_meta +
+		stats.sectors_dirty +
+		stats.sectors_persistent_reserved +
+		stats.sectors_online_reserved +
+		((stats.sectors_persistent_reserved +
+		  stats.sectors_online_reserved) >> 7);
+}
+
+static inline u64 cache_set_sectors_used(struct cache_set *c)
+{
+	return min(c->capacity, __cache_set_sectors_used(c));
 }
 
 /* XXX: kill? */

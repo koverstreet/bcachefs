@@ -69,6 +69,38 @@
 
 #include <trace/events/bcachefs.h>
 
+#ifdef DEBUG_BUCKETS
+
+#define lg_local_lock	lg_global_lock
+#define lg_local_unlock	lg_global_unlock
+
+static void bch_cache_set_stats_verify(struct cache_set *c)
+{
+	struct bucket_stats_cache_set stats =
+		__bch_bucket_stats_read_cache_set(c);
+
+	if ((s64) stats.sectors_dirty < 0)
+		panic("sectors_dirty underflow: %lli\n", stats.sectors_dirty);
+
+	if ((s64) stats.sectors_cached < 0)
+		panic("sectors_cached underflow: %lli\n", stats.sectors_cached);
+
+	if ((s64) stats.sectors_meta < 0)
+		panic("sectors_meta underflow: %lli\n", stats.sectors_meta);
+
+	if ((s64) stats.sectors_persistent_reserved < 0)
+		panic("sectors_persistent_reserved underflow: %lli\n", stats.sectors_persistent_reserved);
+
+	if ((s64) stats.sectors_online_reserved < 0)
+		panic("sectors_online_reserved underflow: %lli\n", stats.sectors_online_reserved);
+}
+
+#else
+
+static void bch_cache_set_stats_verify(struct cache_set *c) {}
+
+#endif
+
 #define bucket_stats_add(_acc, _stats)					\
 do {									\
 	typeof(_acc) _a = (_acc), _s = (_stats);			\
@@ -174,6 +206,8 @@ void bch_cache_set_stats_apply(struct cache_set *c,
 
 	if (!gc_will_visit(c, gc_pos))
 		bucket_stats_add(this_cpu_ptr(c->bucket_stats_percpu), stats);
+
+	bch_cache_set_stats_verify(c);
 	lg_local_unlock(&c->bucket_stats_lock);
 
 	memset(stats, 0, sizeof(*stats));
@@ -489,6 +523,8 @@ void bch_mark_key(struct cache_set *c, struct bkey_s_c k,
 {
 	lg_local_lock(&c->bucket_stats_lock);
 	__bch_mark_key(c, k, sectors, metadata, false, stats, false, gc_pos);
+
+	bch_cache_set_stats_verify(c);
 	lg_local_unlock(&c->bucket_stats_lock);
 }
 
@@ -533,6 +569,8 @@ void bch_disk_reservation_put(struct cache_set *c,
 		lg_local_lock(&c->bucket_stats_lock);
 		this_cpu_sub(c->bucket_stats_percpu->sectors_online_reserved,
 			     res->sectors);
+
+		bch_cache_set_stats_verify(c);
 		lg_local_unlock(&c->bucket_stats_lock);
 
 		res->sectors = 0;
@@ -575,6 +613,8 @@ int bch_disk_reservation_get(struct cache_set *c,
 out:
 	stats->sectors_available_cache	-= sectors;
 	stats->sectors_online_reserved	+= sectors;
+
+	bch_cache_set_stats_verify(c);
 	lg_local_unlock(&c->bucket_stats_lock);
 	return 0;
 
@@ -601,6 +641,7 @@ recalculate:
 		ret = -ENOSPC;
 	}
 
+	bch_cache_set_stats_verify(c);
 	lg_global_unlock(&c->bucket_stats_lock);
 	if (!(flags & BCH_DISK_RESERVATION_GC_LOCK_HELD))
 		up_read(&c->gc_lock);
