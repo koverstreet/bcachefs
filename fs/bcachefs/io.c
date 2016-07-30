@@ -521,7 +521,7 @@ static struct bio *__bio_compress(struct cache_set *c,
 		unsigned order = get_order(LZ4_MEM_COMPRESS);
 		size_t dst_size = dst->bi_iter.bi_size;
 
-		workmem = alloc_pages(GFP_NOWAIT, order);
+		workmem = alloc_pages(GFP_NOWAIT|__GFP_NOWARN, order);
 		if (!workmem) {
 			workmem = mempool_alloc(&c->compression_workspace_pool,
 						GFP_NOIO);
@@ -780,7 +780,7 @@ static void bch_write_discard(struct closure *cl)
 				POS(inode, bio->bi_iter.bi_sector),
 				POS(inode, bio_end_sector(bio)),
 				op->insert_key.k.version,
-				NULL, NULL);
+				&op->res, NULL, NULL);
 }
 
 /*
@@ -1492,11 +1492,12 @@ void bch_replace_init(struct bch_replace_info *r, struct bkey_s_c old)
  */
 int bch_discard(struct cache_set *c, struct bpos start,
 		struct bpos end, u64 version,
+		struct disk_reservation *disk_res,
 		struct extent_insert_hook *hook,
 		u64 *journal_seq)
 {
-	return bch_btree_delete_range(c, BTREE_ID_EXTENTS, start, end,
-				      version, hook, journal_seq);
+	return bch_btree_delete_range(c, BTREE_ID_EXTENTS, start, end, version,
+				      disk_res, hook, journal_seq);
 }
 
 /* Cache promotion on read */

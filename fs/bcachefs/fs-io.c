@@ -1834,8 +1834,11 @@ static long bch_fpunch(struct inode *inode, loff_t offset, loff_t len)
 	truncate_pagecache_range(inode, offset, offset + len - 1);
 
 	if (discard_start < discard_end) {
+		struct disk_reservation disk_res;
 		struct i_sectors_hook i_sectors_hook;
 		int ret;
+
+		BUG_ON(bch_disk_reservation_get(c, &disk_res, 0, 0));
 
 		ret = i_sectors_dirty_get(ei, &i_sectors_hook);
 		if (unlikely(ret))
@@ -1845,10 +1848,12 @@ static long bch_fpunch(struct inode *inode, loff_t offset, loff_t len)
 				  POS(ino, discard_start),
 				  POS(ino, discard_end),
 				  0,
+				  &disk_res,
 				  &i_sectors_hook.hook,
 				  &ei->journal_seq);
 
 		i_sectors_dirty_put(ei, &i_sectors_hook);
+		bch_disk_reservation_put(c, &disk_res);
 	}
 out:
 	pagecache_block_put(&mapping->add_lock);

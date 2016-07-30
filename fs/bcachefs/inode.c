@@ -172,7 +172,7 @@ int bch_inode_truncate(struct cache_set *c, u64 inode_nr, u64 new_size,
 		       struct extent_insert_hook *hook, u64 *journal_seq)
 {
 	return bch_discard(c, POS(inode_nr, new_size), POS(inode_nr + 1, 0),
-			   0, hook, journal_seq);
+			   0, NULL, hook, journal_seq);
 }
 
 int bch_inode_rm(struct cache_set *c, u64 inode_nr)
@@ -187,7 +187,7 @@ int bch_inode_rm(struct cache_set *c, u64 inode_nr)
 	ret = bch_btree_delete_range(c, BTREE_ID_XATTRS,
 				     POS(inode_nr, 0),
 				     POS(inode_nr + 1, 0),
-				     0, NULL, NULL);
+				     0, NULL, NULL, NULL);
 	if (ret < 0)
 		return ret;
 
@@ -202,7 +202,7 @@ int bch_inode_rm(struct cache_set *c, u64 inode_nr)
 	ret = bch_btree_delete_range(c, BTREE_ID_DIRENTS,
 				     POS(inode_nr, 0),
 				     POS(inode_nr + 1, 0),
-				     0, NULL, NULL);
+				     0, NULL, NULL, NULL);
 	if (ret < 0)
 		return ret;
 

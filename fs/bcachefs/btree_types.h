@@ -174,6 +174,7 @@ enum btree_insert_ret {
 	/* leaf node needs to be split */
 	BTREE_INSERT_BTREE_NODE_FULL,
 	BTREE_INSERT_JOURNAL_RES_FULL,
+	BTREE_INSERT_ENOSPC,
 };
 
 #endif /* _BCACHE_BTREE_TYPES_H */

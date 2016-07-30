@@ -202,13 +202,13 @@ void bch_cache_set_stats_apply(struct cache_set *,
 static inline u64 __cache_set_sectors_used(struct cache_set *c)
 {
 	struct bucket_stats_cache_set stats = __bch_bucket_stats_read_cache_set(c);
+	u64 reserved = stats.persistent_reserved +
+		stats.online_reserved;
 
-	return stats.sectors_meta +
-		stats.sectors_dirty +
-		stats.sectors_persistent_reserved +
-		stats.sectors_online_reserved +
-		((stats.sectors_persistent_reserved +
-		  stats.sectors_online_reserved) >> 7);
+	return stats.s[S_COMPRESSED][S_META] +
+		stats.s[S_COMPRESSED][S_DIRTY] +
+		reserved +
+		(reserved >> 7);
 }
 
 static inline u64 cache_set_sectors_used(struct cache_set *c)
@@ -257,6 +257,9 @@ void bch_disk_reservation_put(struct cache_set *,
 #define BCH_DISK_RESERVATION_NOFAIL		(1 << 0)
 #define BCH_DISK_RESERVATION_GC_LOCK_HELD	(1 << 1)
 
+int bch_disk_reservation_add(struct cache_set *,
+			     struct disk_reservation *,
+			     unsigned, int);
 int bch_disk_reservation_get(struct cache_set *,
 			     struct disk_reservation *,
 			     unsigned, int);

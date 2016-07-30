@@ -43,13 +43,25 @@ struct bucket_stats_cache {
 	u64			sectors_meta;
 };
 
+enum s_alloc {
+	S_META,
+	S_DIRTY,
+	S_CACHED,
+	S_ALLOC_NR,
+};
+
+enum s_compressed {
+	S_COMPRESSED,
+	S_UNCOMPRESSED,
+	S_COMPRESSED_NR,
+};
+
 struct bucket_stats_cache_set {
-	u64			sectors_dirty;
-	u64			sectors_cached;
-	u64			sectors_meta;
-	u64			sectors_persistent_reserved;
-	u64			sectors_online_reserved;
-	u64			sectors_available_cache;
+	/* all fields are in units of 512 byte sectors: */
+	u64			s[S_COMPRESSED_NR][S_ALLOC_NR];
+	u64			persistent_reserved;
+	u64			online_reserved;
+	u64			available_cache;
 };
 
 struct bucket_heap_entry {

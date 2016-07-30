@@ -1249,12 +1249,30 @@ bch_insert_fixup_extent(struct btree_insert_trans *trans,
 				start_time, nr_done)) == BTREE_INSERT_OK &&
 	       (_k = bch_btree_node_iter_peek_all(node_iter, &b->keys))) {
 		struct bkey_s k = __bkey_disassemble(f, _k, &unpacked);
+		enum bch_extent_overlap overlap;
 
 		EBUG_ON(bkey_cmp(iter->pos, bkey_start_pos(&insert->k->k)));
 		EBUG_ON(bkey_cmp(iter->pos, k.k->p) >= 0);
 
 		if (bkey_cmp(bkey_start_pos(k.k), insert->k->k.p) >= 0)
 			break;
+
+		overlap = bch_extent_overlap(&insert->k->k, k.k);
+		if (k.k->size &&
+		    overlap == BCH_EXTENT_OVERLAP_MIDDLE) {
+			unsigned sectors = bkey_extent_is_compressed(c, k.s_c);
+			int res_flags = 0;
+
+			if (flags & BTREE_INSERT_NOFAIL)
+				res_flags |= BCH_DISK_RESERVATION_NOFAIL;
+
+			if (sectors &&
+			    bch_disk_reservation_add(c, disk_res, sectors,
+						     res_flags)) {
+				ret = BTREE_INSERT_ENOSPC;
+				goto stop;
+			}
+		}
 
 		/*
 		 * Only call advance pos & call hook for nonzero size extents:

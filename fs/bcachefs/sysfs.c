@@ -575,15 +575,25 @@ static ssize_t show_cache_set_alloc_debug(struct cache_set *c, char *buf)
 
 	return scnprintf(buf, PAGE_SIZE,
 			 "capacity:\t\t%llu\n"
-			 "meta sectors:\t\t%llu\n"
-			 "dirty sectors:\t\t%llu\n"
+			 "compressed:\n"
+			 "\tmeta:\t\t%llu\n"
+			 "\tdirty:\t\t%llu\n"
+			 "\tcached:\t\t%llu\n"
+			 "uncompressed:\n"
+			 "\tmeta:\t\t%llu\n"
+			 "\tdirty:\t\t%llu\n"
+			 "\tcached:\t\t%llu\n"
 			 "persistent reserved sectors:\t%llu\n"
 			 "online reserved sectors:\t%llu\n",
 			 c->capacity,
-			 stats.sectors_meta,
-			 stats.sectors_dirty,
-			 stats.sectors_persistent_reserved,
-			 stats.sectors_online_reserved);
+			 stats.s[S_COMPRESSED][S_META],
+			 stats.s[S_COMPRESSED][S_DIRTY],
+			 stats.s[S_COMPRESSED][S_CACHED],
+			 stats.s[S_UNCOMPRESSED][S_META],
+			 stats.s[S_UNCOMPRESSED][S_DIRTY],
+			 stats.s[S_UNCOMPRESSED][S_CACHED],
+			 stats.persistent_reserved,
+			 stats.online_reserved);
 }
 
 static ssize_t bch_compression_stats(struct cache_set *c, char *buf)

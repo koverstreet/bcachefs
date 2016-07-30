@@ -355,12 +355,13 @@ static inline struct bch_extent_crc64 crc_to_64(const union bch_extent_crc *crc)
 	}
 }
 
-static inline bool bkey_extent_is_compressed(struct cache_set *c,
-					     struct bkey_s_c k)
+static inline unsigned bkey_extent_is_compressed(struct cache_set *c,
+						 struct bkey_s_c k)
 {
 	struct bkey_s_c_extent e;
 	const struct bch_extent_ptr *ptr;
 	const union bch_extent_crc *crc;
+	unsigned ret = 0;
 
 	switch (k.k->type) {
 	case BCH_EXTENT:
@@ -371,11 +372,11 @@ static inline bool bkey_extent_is_compressed(struct cache_set *c,
 			if (bch_extent_ptr_is_dirty(c, e, ptr) &&
 			    crc_to_64(crc).compression_type != BCH_COMPRESSION_NONE &&
 			    crc_to_64(crc).compressed_size < k.k->size)
-				return true;
-		return true;
-	default:
-		return false;
+				ret = max_t(unsigned, ret,
+					    crc_to_64(crc).compressed_size);
 	}
+
+	return ret;
 }
 
 void extent_adjust_pointers(struct bkey_s_extent, union bch_extent_entry *);

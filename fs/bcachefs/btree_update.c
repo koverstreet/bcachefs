@@ -119,7 +119,8 @@ found:
 	 * Btree nodes are accounted as freed in cache_set_stats when they're
 	 * freed from the index:
 	 */
-	stats->sectors_meta -= c->sb.btree_node_size;
+	stats->s[S_COMPRESSED][S_META]	 -= c->sb.btree_node_size;
+	stats->s[S_UNCOMPRESSED][S_META] -= c->sb.btree_node_size;
 
 	/*
 	 * We're dropping @k from the btree, but it's still live until the
@@ -1657,6 +1658,9 @@ retry:
 		case BTREE_INSERT_BTREE_NODE_FULL:
 			split = i->iter;
 			break;
+		case BTREE_INSERT_ENOSPC:
+			ret = -ENOSPC;
+			break;
 		}
 
 		if (!trans->did_work && (ret || split))
@@ -1918,6 +1922,7 @@ int bch_btree_delete_range(struct cache_set *c, enum btree_id id,
 			   struct bpos start,
 			   struct bpos end,
 			   u64 version,
+			   struct disk_reservation *disk_res,
 			   struct extent_insert_hook *hook,
 			   u64 *journal_seq)
 {
@@ -1965,7 +1970,7 @@ int bch_btree_delete_range(struct cache_set *c, enum btree_id id,
 			bch_cut_back(end, &delete.k);
 		}
 
-		ret = bch_btree_insert_at(&iter, &delete, NULL, hook,
+		ret = bch_btree_insert_at(&iter, &delete, disk_res, hook,
 					  journal_seq, BTREE_INSERT_NOFAIL);
 		if (ret)
 			break;

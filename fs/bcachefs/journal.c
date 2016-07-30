@@ -1253,12 +1253,22 @@ int bch_journal_replay(struct cache_set *c, struct list_head *list)
 				      j->pin.mask)];
 
 		for_each_jset_key(k, _n, entry, &i->j) {
+			struct disk_reservation disk_res;
+
+			/*
+			 * We might cause compressed extents to be split, so we
+			 * need to pass in a disk_reservation:
+			 */
+			BUG_ON(bch_disk_reservation_get(c, &disk_res, 0, 0));
+
 			trace_bcache_journal_replay_key(&k->k);
 
 			ret = bch_btree_insert(c, entry->btree_id, k,
-					       NULL, NULL, NULL,
+					       &disk_res, NULL, NULL,
 					       BTREE_INSERT_NOFAIL|
 					       BTREE_INSERT_NO_MARK_KEY);
+			bch_disk_reservation_put(c, &disk_res);
+
 			if (ret)
 				goto err;
 

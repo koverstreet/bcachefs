@@ -387,10 +387,8 @@ void bch_gc(struct cache_set *c)
 		struct bucket_stats_cache_set *p =
 			per_cpu_ptr(c->bucket_stats_percpu, cpu);
 
-		p->sectors_dirty		= 0;
-		p->sectors_cached		= 0;
-		p->sectors_meta			= 0;
-		p->sectors_persistent_reserved	= 0;
+		memset(p->s, 0, sizeof(p->s));
+		p->persistent_reserved = 0;
 	}
 
 	lg_global_unlock(&c->bucket_stats_lock);

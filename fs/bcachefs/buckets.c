@@ -182,10 +182,11 @@ void bch_cache_set_stats_apply(struct cache_set *c,
 			       struct disk_reservation *disk_res,
 			       struct gc_pos gc_pos)
 {
-	s64 added = stats->sectors_dirty +
-		stats->sectors_meta +
-		stats->sectors_persistent_reserved +
-		stats->sectors_online_reserved;
+	s64 added =
+		stats->s[S_COMPRESSED][S_META] +
+		stats->s[S_COMPRESSED][S_DIRTY] +
+		stats->persistent_reserved +
+		stats->online_reserved;
 
 	/*
 	 * Not allowed to reduce sectors_available except by getting a
@@ -194,15 +195,15 @@ void bch_cache_set_stats_apply(struct cache_set *c,
 	BUG_ON(added > (disk_res ? disk_res->sectors : 0));
 
 	if (added > 0) {
-		disk_res->sectors		-= added;
-		stats->sectors_online_reserved	-= added;
+		disk_res->sectors	-= added;
+		stats->online_reserved	-= added;
 	}
 
 	lg_local_lock(&c->bucket_stats_lock);
-	/* sectors_online_reserved not subject to gc: */
-	this_cpu_ptr(c->bucket_stats_percpu)->sectors_online_reserved +=
-		stats->sectors_online_reserved;
-	stats->sectors_online_reserved = 0;
+	/* online_reserved not subject to gc: */
+	this_cpu_ptr(c->bucket_stats_percpu)->online_reserved +=
+		stats->online_reserved;
+	stats->online_reserved = 0;
 
 	if (!gc_will_visit(c, gc_pos))
 		bucket_stats_add(this_cpu_ptr(c->bucket_stats_percpu), stats);
@@ -227,18 +228,16 @@ static void bucket_stats_update(struct cache *ca,
 	       c->gc_pos.phase == GC_PHASE_DONE);
 
 	if (cache_set_stats) {
-		cache_set_stats->sectors_cached +=
+		cache_set_stats->s[S_COMPRESSED][S_CACHED] +=
 			(int) new.cached_sectors - (int) old.cached_sectors;
 
-		if (old.is_metadata)
-			cache_set_stats->sectors_meta -= old.dirty_sectors;
-		else
-			cache_set_stats->sectors_dirty -= old.dirty_sectors;
+		cache_set_stats->s[S_COMPRESSED]
+			[old.is_metadata ? S_META : S_DIRTY] -=
+			old.dirty_sectors;
 
-		if (new.is_metadata)
-			cache_set_stats->sectors_meta += new.dirty_sectors;
-		else
-			cache_set_stats->sectors_dirty += new.dirty_sectors;
+		cache_set_stats->s[S_COMPRESSED]
+			[new.is_metadata ? S_META : S_DIRTY] +=
+			new.dirty_sectors;
 	}
 
 	preempt_disable();
@@ -289,8 +288,9 @@ static struct bucket_mark bch_bucket_mark_set(struct cache *ca,
 	 * subject to (saturating) overflow - and if they did overflow, the
 	 * cache set stats will now be off. We can tolerate this for
 	 * sectors_cached, but not anything else:
-	 * */
-	stats.sectors_cached = 0;
+	 */
+	stats.s[S_COMPRESSED][S_CACHED] = 0;
+	stats.s[S_UNCOMPRESSED][S_CACHED] = 0;
 	BUG_ON(!bch_is_zero((void *) &stats, sizeof(stats)));
 
 	return old;
@@ -357,24 +357,38 @@ do {								\
 	}							\
 } while (0)
 
+static int compressed_sectors(union bch_extent_crc *crc, int sectors)
+{
+	return min_t(unsigned, crc_to_64(crc).compressed_size,
+		     abs(sectors)) * (sectors < 0 ? -1 : 1);
+}
+
 /*
  * Checking against gc's position has to be done here, inside the cmpxchg()
  * loop, to avoid racing with the start of gc clearing all the marks - GC does
  * that with the gc pos seqlock held.
  */
-static void bch_mark_pointer(struct cache_set *c, struct cache *ca,
-			     const struct bch_extent_ptr *ptr, int sectors,
-			     bool dirty, bool metadata,
+static void bch_mark_pointer(struct cache_set *c,
+			     struct bkey_s_c_extent e,
+			     struct cache *ca,
+			     union bch_extent_crc *crc,
+			     const struct bch_extent_ptr *ptr,
+			     int sectors, enum s_alloc type,
 			     bool may_make_unavailable,
 			     struct bucket_stats_cache_set *stats,
 			     bool is_gc, struct gc_pos gc_pos)
 {
 	struct bucket_mark old, new;
-	unsigned long bucket_nr = PTR_BUCKET_NR(ca, ptr);
 	unsigned saturated;
+	struct bucket *g = ca->buckets + PTR_BUCKET_NR(ca, ptr);
+	u32 v = READ_ONCE(g->mark.counter);
+	struct bch_extent_crc64 crc64 = crc_to_64(crc);
+	int disk_sectors = crc64.compression_type
+		? sectors * crc64.compressed_size / crc64.uncompressed_size
+		: sectors;
 
-	bucket_cmpxchg(&ca->buckets[bucket_nr], old, new,
-		       may_make_unavailable, NULL, ({
+	do {
+		new.counter = old.counter = v;
 		saturated = 0;
 		/*
 		 * cmpxchg() only implies a full barrier on success, not
@@ -390,7 +404,7 @@ static void bch_mark_pointer(struct cache_set *c, struct cache *ca,
 		 * checked the gen
 		 */
 		if (ptr_stale(ca, ptr)) {
-			BUG_ON(metadata);
+			BUG_ON(type == S_META);
 			return;
 		}
 
@@ -408,35 +422,38 @@ static void bch_mark_pointer(struct cache_set *c, struct cache *ca,
 		 * already stale
 		 */
 		if (!may_make_unavailable &&
-		    (metadata || dirty) &&
+		    type != S_CACHED &&
 		    is_available_bucket(old)) {
-			BUG_ON(metadata);
+			BUG_ON(type == S_META);
 			return;
 		}
 
 		BUG_ON((old.dirty_sectors ||
 			old.cached_sectors) &&
-		       old.is_metadata != metadata);
+		       old.is_metadata != (type == S_META));
 
-		if (dirty &&
+		if (type != S_CACHED &&
 		    new.dirty_sectors == GC_MAX_SECTORS_USED &&
-		    sectors < 0)
-			saturated = -sectors;
+		    disk_sectors < 0)
+			saturated = -disk_sectors;
 
-		if (dirty)
-			saturated_add(ca, new.dirty_sectors, sectors,
+		if (type == S_CACHED)
+			saturated_add(ca, new.cached_sectors, disk_sectors,
 				      GC_MAX_SECTORS_USED);
 		else
-			saturated_add(ca, new.cached_sectors, sectors,
+			saturated_add(ca, new.dirty_sectors, disk_sectors,
 				      GC_MAX_SECTORS_USED);
 
 		if (!new.dirty_sectors &&
 		    !new.cached_sectors)
 			new.is_metadata = false;
 		else
-			new.is_metadata = metadata;
+			new.is_metadata = (type == S_META);
+	} while ((v = cmpxchg(&g->mark.counter,
+			      old.counter,
+			      new.counter)) != old.counter);
 
-	}));
+	bucket_stats_update(ca, old, new, may_make_unavailable, NULL);
 
 	if (saturated &&
 	    atomic_long_add_return(saturated,
@@ -448,12 +465,18 @@ static void bch_mark_pointer(struct cache_set *c, struct cache *ca,
 		}
 	}
 out:
-	if (metadata)
-		stats->sectors_meta += sectors;
-	else if (dirty)
-		stats->sectors_dirty += sectors;
-	else
-		stats->sectors_cached += sectors;
+	if (crc_to_64(crc).compression_type == BCH_COMPRESSION_NONE) {
+		stats->s[S_COMPRESSED][type] += sectors;
+	} else if (abs(sectors) == e.k->size) {
+		stats->s[S_COMPRESSED][type] += compressed_sectors(crc, sectors);
+	} else {
+		BUG_ON(sectors > 0);
+
+		stats->s[S_COMPRESSED][type] -= compressed_sectors(crc, e.k->size);
+		stats->s[S_COMPRESSED][type] += compressed_sectors(crc, e.k->size + sectors);
+	}
+
+	stats->s[S_UNCOMPRESSED][type] += sectors;
 }
 
 static void bch_mark_extent(struct cache_set *c, struct bkey_s_c_extent e,
@@ -463,19 +486,23 @@ static void bch_mark_extent(struct cache_set *c, struct bkey_s_c_extent e,
 			    bool is_gc, struct gc_pos gc_pos)
 {
 	const struct bch_extent_ptr *ptr;
+	union bch_extent_crc *crc;
 	struct cache *ca;
+	enum s_alloc type = metadata ? S_META : S_DIRTY;
 
 	BUG_ON(metadata && bkey_extent_is_cached(e.k));
 	BUG_ON(!sectors);
 
 	rcu_read_lock();
-	extent_for_each_online_device(c, e, ptr, ca) {
+	extent_for_each_online_device_crc(c, e, crc, ptr, ca) {
 		bool dirty = bch_extent_ptr_is_dirty(c, e, ptr);
 
 		trace_bcache_mark_bucket(ca, e.k, ptr, sectors, dirty);
 
-		bch_mark_pointer(c, ca, ptr, sectors, dirty, metadata,
-				 may_make_unavailable, stats, is_gc, gc_pos);
+		bch_mark_pointer(c, e, ca, crc, ptr, sectors,
+				 dirty ? type : S_CACHED,
+				 may_make_unavailable,
+				 stats, is_gc, gc_pos);
 	}
 	rcu_read_unlock();
 }
@@ -493,7 +520,7 @@ static void __bch_mark_key(struct cache_set *c, struct bkey_s_c k,
 				may_make_unavailable, stats, is_gc, gc_pos);
 		break;
 	case BCH_RESERVATION:
-		stats->sectors_persistent_reserved += sectors;
+		stats->persistent_reserved += sectors;
 		break;
 	}
 }
@@ -554,7 +581,7 @@ void bch_recalc_sectors_available(struct cache_set *c)
 	lg_global_lock(&c->bucket_stats_lock);
 
 	for_each_possible_cpu(cpu)
-		per_cpu_ptr(c->bucket_stats_percpu, cpu)->sectors_available_cache = 0;
+		per_cpu_ptr(c->bucket_stats_percpu, cpu)->available_cache = 0;
 
 	atomic64_set(&c->sectors_available,
 		     __recalc_sectors_available(c));
@@ -567,7 +594,7 @@ void bch_disk_reservation_put(struct cache_set *c,
 {
 	if (res->sectors) {
 		lg_local_lock(&c->bucket_stats_lock);
-		this_cpu_sub(c->bucket_stats_percpu->sectors_online_reserved,
+		this_cpu_sub(c->bucket_stats_percpu->online_reserved,
 			     res->sectors);
 
 		bch_cache_set_stats_verify(c);
@@ -579,7 +606,7 @@ void bch_disk_reservation_put(struct cache_set *c,
 
 #define SECTORS_CACHE	1024
 
-int bch_disk_reservation_get(struct cache_set *c,
+int bch_disk_reservation_add(struct cache_set *c,
 			     struct disk_reservation *res,
 			     unsigned sectors, int flags)
 {
@@ -588,13 +615,10 @@ int bch_disk_reservation_get(struct cache_set *c,
 	s64 sectors_available;
 	int ret;
 
-	res->sectors = sectors;
-	res->gen = c->capacity_gen;
-
 	lg_local_lock(&c->bucket_stats_lock);
 	stats = this_cpu_ptr(c->bucket_stats_percpu);
 
-	if (sectors >= stats->sectors_available_cache)
+	if (sectors >= stats->available_cache)
 		goto out;
 
 	v = atomic64_read(&c->sectors_available);
@@ -609,10 +633,11 @@ int bch_disk_reservation_get(struct cache_set *c,
 	} while ((v = atomic64_cmpxchg(&c->sectors_available,
 				       old, new)) != old);
 
-	stats->sectors_available_cache	+= old - new;
+	stats->available_cache	+= old - new;
 out:
-	stats->sectors_available_cache	-= sectors;
-	stats->sectors_online_reserved	+= sectors;
+	stats->available_cache	-= sectors;
+	stats->online_reserved	+= sectors;
+	res->sectors		+= sectors;
 
 	bch_cache_set_stats_verify(c);
 	lg_local_unlock(&c->bucket_stats_lock);
@@ -633,11 +658,11 @@ recalculate:
 	    (flags & BCH_DISK_RESERVATION_NOFAIL)) {
 		atomic64_set(&c->sectors_available,
 			     max_t(s64, 0, sectors_available - sectors));
-		stats->sectors_online_reserved += sectors;
+		stats->online_reserved	+= sectors;
+		res->sectors		+= sectors;
 		ret = 0;
 	} else {
 		atomic64_set(&c->sectors_available, sectors_available);
-		res->sectors = 0;
 		ret = -ENOSPC;
 	}
 
@@ -647,4 +672,14 @@ recalculate:
 		up_read(&c->gc_lock);
 
 	return ret;
+}
+
+int bch_disk_reservation_get(struct cache_set *c,
+			     struct disk_reservation *res,
+			     unsigned sectors, int flags)
+{
+	res->sectors = 0;
+	res->gen = c->capacity_gen;
+
+	return bch_disk_reservation_add(c, res, sectors, flags);
 }
