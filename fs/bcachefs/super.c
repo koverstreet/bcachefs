@@ -1273,6 +1273,8 @@ static const char *run_cache_set(struct cache_set *c)
 	struct cache *ca;
 	unsigned i, id;
 	time64_t now;
+	LIST_HEAD(journal);
+	struct jset *j;
 
 	lockdep_assert_held(&bch_register_lock);
 	BUG_ON(test_bit(CACHE_SET_RUNNING, &c->flags));
@@ -1294,9 +1296,6 @@ static const char *run_cache_set(struct cache_set *c)
 	 */
 
 	if (CACHE_SET_SYNC(&c->disk_sb)) {
-		LIST_HEAD(journal);
-		struct jset *j;
-
 		err = bch_journal_read(c, &journal);
 		if (err)
 			goto err;
@@ -1469,8 +1468,17 @@ static const char *run_cache_set(struct cache_set *c)
 
 	bch_notify_cache_set_read_write(c);
 
+	BUG_ON(!list_empty(&journal));
 	return NULL;
 err:
+	while (!list_empty(&journal)) {
+		struct journal_replay *r =
+			list_first_entry(&journal, struct journal_replay, list);
+
+		list_del(&r->list);
+		kfree(r);
+	}
+
 	bch_cache_set_unregister(c);
 	closure_put(&c->caching);
 	return err;
