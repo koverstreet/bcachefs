@@ -17,7 +17,6 @@ struct async_split;
 
 struct btree_write {
 	unsigned			index;
-	bool				have_pin;
 	struct journal_entry_pin	journal;
 	struct closure_waitlist		wait;
 };

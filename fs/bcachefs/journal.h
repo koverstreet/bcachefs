@@ -126,11 +126,18 @@ struct journal_replay {
 
 #define JOURNAL_PIN	((32 * 1024) - 1)
 
-static inline void journal_pin_add(struct journal *j,
-				   struct journal_entry_pin_list *pin_list,
-				   struct journal_entry_pin *pin,
-				   journal_pin_flush_fn flush_fn)
+static inline bool journal_pin_active(struct journal_entry_pin *pin)
 {
+	return pin->pin_list != NULL;
+}
+
+static inline void __journal_pin_add(struct journal *j,
+				     struct journal_entry_pin_list *pin_list,
+				     struct journal_entry_pin *pin,
+				     journal_pin_flush_fn flush_fn)
+{
+	BUG_ON(journal_pin_active(pin));
+
 	spin_lock_irq(&j->pin_lock);
 
 	atomic_inc(&pin_list->count);
@@ -145,10 +152,20 @@ static inline void journal_pin_add(struct journal *j,
 	spin_unlock_irq(&j->pin_lock);
 }
 
+static inline void journal_pin_add(struct journal *j,
+				   struct journal_entry_pin *pin,
+				   journal_pin_flush_fn flush_fn)
+{
+	__journal_pin_add(j, j->cur_pin_list, pin, flush_fn);
+}
+
 static inline void journal_pin_drop(struct journal *j,
 				    struct journal_entry_pin *pin)
 {
 	unsigned long flags;
+
+	if (!journal_pin_active(pin))
+		return;
 
 	/* journal_reclaim_work() might have already taken us off the list */
 	if (!list_empty_careful(&pin->list)) {
@@ -179,8 +196,7 @@ struct bkey_i *bch_journal_find_btree_root(struct cache_set *, struct jset *,
 int bch_journal_seq_blacklisted(struct cache_set *, u64, struct btree *);
 
 void bch_journal_add_keys(struct journal *, struct journal_res *,
-			  enum btree_id, const struct bkey_i *,
-			  unsigned);
+			  enum btree_id, const struct bkey_i *);
 
 void bch_journal_res_put(struct journal *, struct journal_res *, u64 *);
 int bch_journal_res_get(struct journal *, struct journal_res *,

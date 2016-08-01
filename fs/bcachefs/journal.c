@@ -161,11 +161,13 @@ static inline void bch_journal_add_prios(struct journal *j,
 			      JOURNAL_ENTRY_PRIO_PTRS, 0, 0);
 }
 
-static void journal_seq_blacklist_flush(struct journal_entry_pin *pin)
+static void journal_seq_blacklist_flush(struct journal *j,
+					struct journal_entry_pin *pin)
 {
+	struct cache_set *c =
+		container_of(j, struct cache_set, journal);
 	struct journal_seq_blacklist *bl =
 		container_of(pin, struct journal_seq_blacklist, pin);
-	struct cache_set *c = bl->c;
 	struct btree *b;
 	struct btree_iter iter;
 	struct closure cl;
@@ -232,7 +234,6 @@ bch_journal_seq_blacklisted_new(struct cache_set *c, u64 seq)
 	if (!bl)
 		return NULL;
 
-	bl->c	= c;
 	bl->seq	= seq;
 	INIT_LIST_HEAD(&bl->nodes);
 
@@ -704,8 +705,8 @@ static int journal_seq_blacklist_read(struct cache_set *c,
 			return -ENOMEM;
 		}
 
-		journal_pin_add(&c->journal, p, &bl->pin,
-				journal_seq_blacklist_flush);
+		__journal_pin_add(&c->journal, p, &bl->pin,
+				  journal_seq_blacklist_flush);
 		bl->written = true;
 	}
 
@@ -1205,8 +1206,8 @@ void bch_journal_start(struct cache_set *c)
 					JOURNAL_ENTRY_JOURNAL_SEQ_BLACKLISTED,
 					0, 0);
 
-			journal_pin_add(j, &fifo_back(&j->pin), &bl->pin,
-					journal_seq_blacklist_flush);
+			__journal_pin_add(j, &fifo_back(&j->pin), &bl->pin,
+					  journal_seq_blacklist_flush);
 			bl->written = true;
 		}
 
@@ -1509,7 +1510,7 @@ static void journal_reclaim_work(struct work_struct *work)
 
 	while ((pin = journal_get_next_pin(j, seq_to_flush))) {
 		__set_current_state(TASK_RUNNING);
-		pin->flush(pin);
+		pin->flush(j, pin);
 	}
 }
 
@@ -1791,8 +1792,7 @@ static void journal_write_work(struct work_struct *work)
 }
 
 void bch_journal_add_keys(struct journal *j, struct journal_res *res,
-			  enum btree_id id, const struct bkey_i *k,
-			  unsigned level)
+			  enum btree_id id, const struct bkey_i *k)
 {
 	unsigned actual = jset_u64s(k->k.u64s);
 
@@ -1801,7 +1801,7 @@ void bch_journal_add_keys(struct journal *j, struct journal_res *res,
 
 	bch_journal_add_entry_at(&j->buf[res->idx], k, k->k.u64s,
 				 JOURNAL_ENTRY_BTREE_KEYS, id,
-				 level, res->offset);
+				 0, res->offset);
 
 	res->offset	+= actual;
 	res->u64s	-= actual;

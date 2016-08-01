@@ -708,7 +708,7 @@ void bch_btree_bset_insert_key(struct btree_iter *iter,
 	bch_btree_bset_insert(iter, b, node_iter, insert);
 }
 
-static void btree_node_flush(struct journal_entry_pin *pin)
+static void btree_node_flush(struct journal *j, struct journal_entry_pin *pin)
 {
 	struct btree_write *w = container_of(pin, struct btree_write, journal);
 	struct btree *b = container_of(w, struct btree, writes[w->index]);
@@ -739,18 +739,13 @@ void bch_btree_journal_key(struct btree_iter *iter,
 	    !test_bit(JOURNAL_REPLAY_DONE, &c->journal.flags)) {
 		struct btree_write *w = btree_current_write(b);
 
-		if (!w->have_pin) {
-			journal_pin_add(&c->journal,
-					c->journal.cur_pin_list,
-					&w->journal,
+		if (!journal_pin_active(&w->journal))
+			journal_pin_add(&c->journal, &w->journal,
 					btree_node_flush);
-			w->have_pin = true;
-		}
 	}
 
 	if (res->ref) {
-		bch_journal_add_keys(&c->journal, res, b->btree_id,
-				     insert, b->level);
+		bch_journal_add_keys(&c->journal, res, b->btree_id, insert);
 		btree_bset_last(b)->journal_seq = cpu_to_le64(c->journal.seq);
 	}
 }
@@ -800,13 +795,10 @@ struct async_split *__bch_async_split_alloc(struct btree *nodes[],
 	unsigned i, pin_idx = UINT_MAX;
 
 	as = mempool_alloc(&c->btree_async_split_pool, GFP_NOIO);
+	memset(as, 0, sizeof(*as));
 	closure_init(&as->cl, &c->cl);
 	as->c		= c;
 	as->mode	= ASYNC_SPLIT_NO_UPDATE;
-	as->b		= NULL;
-	as->parent_as	= NULL;
-	as->nr_pending	= 0;
-	init_llist_head(&as->wait.list);
 
 	bch_keylist_init(&as->parent_keys, as->inline_keys,
 			 ARRAY_SIZE(as->inline_keys));
@@ -829,7 +821,7 @@ struct async_split *__bch_async_split_alloc(struct btree *nodes[],
 	for (i = 0; i < nr_nodes; i++) {
 		struct btree_write *w = btree_current_write(nodes[i]);
 
-		if (w->have_pin) {
+		if (journal_pin_active(&w->journal)) {
 			unsigned idx = fifo_entry_idx(&c->journal.pin,
 						      w->journal.pin_list);
 
@@ -850,7 +842,7 @@ struct async_split *__bch_async_split_alloc(struct btree *nodes[],
 		smp_rmb();
 	}
 
-	journal_pin_add(&c->journal, pin_list, &as->journal, NULL);
+	__journal_pin_add(&c->journal, pin_list, &as->journal, NULL);
 
 	for (i = 0; i < nr_nodes; i++) {
 		if (iter->nodes[nodes[i]->level] == nodes[i])

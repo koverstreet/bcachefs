@@ -31,8 +31,9 @@ struct journal_entry_pin_list {
 	atomic_t			count;
 };
 
+struct journal;
 struct journal_entry_pin;
-typedef void (*journal_pin_flush_fn)(struct journal_entry_pin *);
+typedef void (*journal_pin_flush_fn)(struct journal *j, struct journal_entry_pin *);
 
 struct journal_entry_pin {
 	struct list_head		list;
@@ -41,7 +42,6 @@ struct journal_entry_pin {
 };
 
 struct journal_seq_blacklist {
-	struct cache_set	*c;
 	struct list_head	list;
 	u64			seq;
 	bool			written;
