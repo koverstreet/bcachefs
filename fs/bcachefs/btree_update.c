@@ -1517,15 +1517,12 @@ btree_insert_key(struct btree_insert_trans *trans,
 {
 	struct btree_iter *iter = insert->iter;
 	struct btree *b = iter->nodes[0];
-	s64 oldsize = bch_count_data(&b->keys);
 	enum btree_insert_ret ret;
 
 	ret = !b->keys.ops->is_extents
 		? bch_insert_fixup_key(trans, insert, res)
 		: bch_insert_fixup_extent(trans, insert, disk_res,
 					  hook, res, flags);
-
-	bch_count_data_verify(&b->keys, oldsize);
 
 	trace_bcache_btree_insert_key(b, insert->k);
 	return ret;

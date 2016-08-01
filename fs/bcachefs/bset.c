@@ -108,20 +108,6 @@ void bch_dump_bucket(struct btree_keys *b)
 	console_unlock();
 }
 
-s64 __bch_count_data(struct btree_keys *b)
-{
-	struct btree_node_iter iter;
-	struct bkey unpacked;
-	struct bkey_s_c k;
-	u64 ret = 0;
-
-	if (b->ops->is_extents)
-		for_each_btree_node_key_unpack(b, k, &iter, &unpacked)
-			ret += k.k->size;
-
-	return ret;
-}
-
 void __bch_verify_btree_nr_keys(struct btree_keys *b)
 {
 	struct btree_node_iter iter;
