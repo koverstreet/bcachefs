@@ -108,8 +108,8 @@ struct btree_nr_keys bch_key_sort_fix_overlapping(struct btree_keys *b,
 /* This returns true if insert should be inserted, false otherwise */
 
 enum btree_insert_ret
-bch_insert_fixup_key(struct btree_insert_trans *trans,
-		     struct btree_trans_entry *insert,
+bch_insert_fixup_key(struct btree_insert *trans,
+		     struct btree_insert_entry *insert,
 		     struct journal_res *res)
 {
 	struct btree_iter *iter = insert->iter;
@@ -992,8 +992,8 @@ static bool bch_extent_merge_inline(struct btree_iter *iter,
 
 #define MAX_LOCK_HOLD_TIME	(5 * NSEC_PER_MSEC)
 
-static enum btree_insert_ret extent_insert_should_stop(struct btree_insert_trans *trans,
-						       struct btree_trans_entry *insert,
+static enum btree_insert_ret extent_insert_should_stop(struct btree_insert *trans,
+						       struct btree_insert_entry *insert,
 						       struct journal_res *res,
 						       u64 start_time,
 						       unsigned nr_done)
@@ -1055,8 +1055,8 @@ static void extent_do_insert(struct btree_iter *iter, struct bkey_i *insert,
 	bch_btree_bset_insert(iter, iter->nodes[0], node_iter, insert);
 }
 
-static void extent_insert_committed(struct btree_insert_trans *trans,
-				    struct btree_trans_entry *insert,
+static void extent_insert_committed(struct btree_insert *trans,
+				    struct btree_insert_entry *insert,
 				    struct bpos committed_pos,
 				    struct journal_res *res, unsigned flags,
 				    struct bucket_stats_cache_set *stats)
@@ -1081,8 +1081,8 @@ static void extent_insert_committed(struct btree_insert_trans *trans,
 }
 
 static enum extent_insert_hook_ret
-__extent_insert_advance_pos(struct btree_insert_trans *trans,
-			    struct btree_trans_entry *insert,
+__extent_insert_advance_pos(struct btree_insert *trans,
+			    struct btree_insert_entry *insert,
 			    struct extent_insert_hook *hook,
 			    struct bpos *committed_pos,
 			    struct bpos next_pos,
@@ -1126,8 +1126,8 @@ __extent_insert_advance_pos(struct btree_insert_trans *trans,
  * fn:
  */
 static enum extent_insert_hook_ret
-extent_insert_advance_pos(struct btree_insert_trans *trans,
-			  struct btree_trans_entry *insert,
+extent_insert_advance_pos(struct btree_insert *trans,
+			  struct btree_insert_entry *insert,
 			  struct extent_insert_hook *hook,
 			  struct bpos *committed_pos,
 			  struct bkey_s_c k,
@@ -1213,8 +1213,8 @@ extent_insert_advance_pos(struct btree_insert_trans *trans,
  * key insertion needs to continue/be retried.
  */
 enum btree_insert_ret
-bch_insert_fixup_extent(struct btree_insert_trans *trans,
-			struct btree_trans_entry *insert,
+bch_insert_fixup_extent(struct btree_insert *trans,
+			struct btree_insert_entry *insert,
 			struct disk_reservation *disk_res,
 			struct extent_insert_hook *hook,
 			struct journal_res *res,

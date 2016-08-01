@@ -1508,8 +1508,8 @@ out_get_locks:
  * btree_insert_key - insert a key one key into a leaf node
  */
 static enum btree_insert_ret
-btree_insert_key(struct btree_insert_trans *trans,
-		 struct btree_trans_entry *insert,
+btree_insert_key(struct btree_insert *trans,
+		 struct btree_insert_entry *insert,
 		 struct disk_reservation *disk_res,
 		 struct extent_insert_hook *hook,
 		 struct journal_res *res,
@@ -1528,8 +1528,8 @@ btree_insert_key(struct btree_insert_trans *trans,
 	return ret;
 }
 
-static bool same_leaf_as_prev(struct btree_insert_trans *trans,
-			      struct btree_trans_entry *i)
+static bool same_leaf_as_prev(struct btree_insert *trans,
+			      struct btree_insert_entry *i)
 {
 	/*
 	 * Because we sorted the transaction entries, if multiple iterators
@@ -1542,18 +1542,18 @@ static bool same_leaf_as_prev(struct btree_insert_trans *trans,
 #define trans_for_each_entry(trans, i)					\
 	for ((i) = (trans)->entries; (i) < (trans)->entries + (trans)->nr; (i)++)
 
-static void multi_lock_write(struct btree_insert_trans *trans)
+static void multi_lock_write(struct btree_insert *trans)
 {
-	struct btree_trans_entry *i;
+	struct btree_insert_entry *i;
 
 	trans_for_each_entry(trans, i)
 		if (!same_leaf_as_prev(trans, i))
 			btree_node_lock_for_insert(i->iter->nodes[0], i->iter);
 }
 
-static void multi_unlock_write(struct btree_insert_trans *trans)
+static void multi_unlock_write(struct btree_insert *trans)
 {
-	struct btree_trans_entry *i;
+	struct btree_insert_entry *i;
 
 	trans_for_each_entry(trans, i)
 		if (!same_leaf_as_prev(trans, i))
@@ -1562,8 +1562,8 @@ static void multi_unlock_write(struct btree_insert_trans *trans)
 
 static int btree_trans_entry_cmp(const void *_l, const void *_r)
 {
-	const struct btree_trans_entry *l = _l;
-	const struct btree_trans_entry *r = _r;
+	const struct btree_insert_entry *l = _l;
+	const struct btree_insert_entry *r = _r;
 
 	return btree_iter_cmp(l->iter, r->iter);
 }
@@ -1581,14 +1581,14 @@ static int btree_trans_entry_cmp(const void *_l, const void *_r)
  * -EROFS: cache set read only
  * -EIO: journal or btree node IO error
  */
-int bch_btree_insert_trans(struct btree_insert_trans *trans,
+int bch_btree_insert_trans(struct btree_insert *trans,
 			   struct disk_reservation *disk_res,
 			   struct extent_insert_hook *hook,
 			   u64 *journal_seq, unsigned flags)
 {
 	struct cache_set *c = trans->c;
 	struct journal_res res = { 0, 0 };
-	struct btree_trans_entry *i;
+	struct btree_insert_entry *i;
 	struct btree_iter *split;
 	struct closure cl;
 	unsigned u64s;

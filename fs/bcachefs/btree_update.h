@@ -189,11 +189,11 @@ void bch_btree_insert_node(struct btree *, struct btree_iter *,
 
 /* Normal update interface: */
 
-struct btree_insert_trans {
+struct btree_insert {
 	struct cache_set	*c;
 	unsigned		nr;
 	bool			did_work;
-	struct btree_trans_entry {
+	struct btree_insert_entry {
 		struct btree_iter *iter;
 		struct bkey_i	*k;
 		/*
@@ -204,7 +204,7 @@ struct btree_insert_trans {
 	}			*entries;
 };
 
-int bch_btree_insert_trans(struct btree_insert_trans *,
+int bch_btree_insert_trans(struct btree_insert *,
 			   struct disk_reservation *,
 			   struct extent_insert_hook *,
 			   u64 *, unsigned);
@@ -243,10 +243,10 @@ static inline int bch_btree_insert_at(struct btree_iter *iter,
 				      struct extent_insert_hook *hook,
 				      u64 *journal_seq, unsigned flags)
 {
-	struct btree_insert_trans m = {
+	struct btree_insert m = {
 		.c = iter->c,
 		.nr = 1,
-		.entries = &(struct btree_trans_entry) {
+		.entries = &(struct btree_insert_entry) {
 			.iter = iter,
 			.k = insert_key,
 			.done = false,
@@ -264,13 +264,13 @@ int bch_btree_insert_list_at(struct btree_iter *, struct keylist *,
 			     struct disk_reservation *,
 			     struct extent_insert_hook *, u64 *, unsigned);
 
-static inline bool journal_res_insert_fits(struct btree_insert_trans *trans,
-					   struct btree_trans_entry *insert,
+static inline bool journal_res_insert_fits(struct btree_insert *trans,
+					   struct btree_insert_entry *insert,
 					   struct journal_res *res)
 {
 	struct cache_set *c = insert->iter->c;
 	unsigned u64s = 0;
-	struct btree_trans_entry *i;
+	struct btree_insert_entry *i;
 
 	/* If we're in journal replay we're not getting journal reservations: */
 	if (!test_bit(JOURNAL_REPLAY_DONE, &c->journal.flags))
