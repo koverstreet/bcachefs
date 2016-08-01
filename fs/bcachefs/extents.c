@@ -1012,7 +1012,7 @@ static enum btree_insert_ret extent_insert_should_stop(struct btree_insert_trans
 	 * doing a lot of work under the btree node write lock - bail out if
 	 * we've been running for too long and readers are waiting on the lock:
 	 */
-	if (!bch_btree_node_insert_fits(insert->iter->c, b, insert->k->k.u64s))
+	if (!bch_btree_node_insert_fits(trans->c, b, insert->k->k.u64s))
 		return BTREE_INSERT_BTREE_NODE_FULL;
 	else if (!journal_res_insert_fits(trans, insert, res))
 		return BTREE_INSERT_JOURNAL_RES_FULL; /* XXX worth tracing */
@@ -1220,8 +1220,8 @@ bch_insert_fixup_extent(struct btree_insert_trans *trans,
 			struct journal_res *res,
 			unsigned flags)
 {
+	struct cache_set *c = trans->c;
 	struct btree_iter *iter = insert->iter;
-	struct cache_set *c = iter->c;
 	struct btree *b = iter->nodes[0];
 	struct btree_node_iter *node_iter = &iter->node_iters[0];
 	const struct bkey_format *f = &b->keys.format;

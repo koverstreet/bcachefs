@@ -1570,12 +1570,23 @@ static int btree_trans_entry_cmp(const void *_l, const void *_r)
 
 /* Normal update interface: */
 
+/**
+ * bch_btree_trans - insert keys at given iterator positions
+ *
+ * This is main entry point for btree updates.
+ *
+ * Return values:
+ * -EINTR: locking changed, this function should be called again. Only returned
+ *  if passed BTREE_INSERT_ATOMIC.
+ * -EROFS: cache set read only
+ * -EIO: journal or btree node IO error
+ */
 int bch_btree_insert_trans(struct btree_insert_trans *trans,
 			   struct disk_reservation *disk_res,
 			   struct extent_insert_hook *hook,
 			   u64 *journal_seq, unsigned flags)
 {
-	struct cache_set *c = trans->entries[0].iter->c;
+	struct cache_set *c = trans->c;
 	struct journal_res res = { 0, 0 };
 	struct btree_trans_entry *i;
 	struct btree_iter *split;
@@ -1733,61 +1744,6 @@ err:
 		goto retry;
 
 	goto out;
-}
-
-/**
- * bch_btree_insert_at - insert bkeys starting at a given btree node
- * @iter:		btree iterator
- * @insert_keys:	list of keys to insert
- * @hook:		insert callback
- * @persistent:		if not null, @persistent will wait on journal write
- * @flags:		BTREE_INSERT_ATOMIC | BTREE_INSERT_NO_MARK_KEY
- *
- * This is top level for common btree insertion/index update code. The control
- * flow goes roughly like:
- *
- * bch_btree_insert_at -- split keys that span interior nodes
- *   bch_btree_insert_node -- split btree nodes when full
- *     btree_split
- *     bch_btree_insert_keys -- get and put journal reservations
- *       btree_insert_key -- call fixup and remove key from keylist
- *         bch_insert_fixup_extent -- handle overlapping extents
- *           bch_btree_insert_and_journal -- add the key to the journal
- *             bch_bset_insert -- actually insert into the bset
- *
- * This function will split keys that span multiple nodes, calling
- * bch_btree_insert_node() for each one. It will not return until all keys
- * have been inserted, or an insert has failed.
- *
- * @persistent will only wait on the journal write if the full keylist was
- * inserted.
- *
- * Return values:
- * -EINTR: locking changed, this function should be called again. Only returned
- *  if passed BTREE_INSERT_ATOMIC.
- * -EROFS: cache set read only
- * -EIO: journal or btree node IO error
- */
-int bch_btree_insert_at(struct btree_iter *iter,
-			struct bkey_i *insert_key,
-			struct disk_reservation *disk_res,
-			struct extent_insert_hook *hook,
-			u64 *journal_seq, unsigned flags)
-{
-	struct btree_insert_trans m = {
-		.nr = 1,
-		.entries = &(struct btree_trans_entry) {
-			.iter = iter,
-			.k = insert_key,
-			.done = false,
-		},
-	};
-
-	int ret = bch_btree_insert_trans(&m, disk_res,
-				hook, journal_seq, flags);
-	BUG_ON(!ret != m.entries[0].done);
-
-	return ret;
 }
 
 int bch_btree_insert_list_at(struct btree_iter *iter,

@@ -327,6 +327,7 @@ int bch_dirent_rename(struct cache_set *c,
 		new_src->k.p = src_iter.pos;
 		new_dst->k.p = dst_iter.pos;
 		ret = bch_btree_insert_trans(&(struct btree_insert_trans) {
+				.c = c,
 				.nr = 2,
 				.entries = (struct btree_trans_entry[]) {
 					{ &src_iter, &new_src->k_i, },

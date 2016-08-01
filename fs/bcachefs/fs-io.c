@@ -297,6 +297,7 @@ static int bchfs_write_index_update(struct bch_write_op *wop)
 
 		if (hook.need_inode_update) {
 			struct btree_insert_trans trans = {
+				.c = wop->c,
 				.nr = 2,
 				.entries = (struct btree_trans_entry[]) {
 					{ .iter = &extent_iter, .k = k },
