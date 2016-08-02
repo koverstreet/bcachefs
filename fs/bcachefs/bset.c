@@ -49,6 +49,8 @@ struct bset_tree *bch_bkey_to_bset(struct btree_keys *b, struct bkey_packed *k)
  * by the time we actually do the insert will all be deleted.
  */
 
+#ifdef CONFIG_BCACHEFS_DEBUG
+
 static bool keys_out_of_order(const struct bkey_format *f,
 			      const struct bkey_packed *prev,
 			      const struct bkey_packed *next,
@@ -62,8 +64,6 @@ static bool keys_out_of_order(const struct bkey_format *f,
 		  : !bkey_deleted(prev)) &&
 		 !bkey_cmp_packed(f, prev, next));
 }
-
-#ifdef CONFIG_BCACHEFS_DEBUG
 
 void bch_dump_bset(struct btree_keys *b, struct bset *i, unsigned set)
 {
