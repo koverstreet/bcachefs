@@ -289,12 +289,12 @@ static int bch_moving_gc_thread(void *arg)
 
 		last = atomic_long_read(&clock->now);
 		/*
-		 * don't start copygc until less than 1/8th of buckets are
+		 * don't start copygc until less than half the gc reserve is
 		 * available:
-		 * XXX pick this threshold better
 		 */
 		next = (buckets_available_cache(ca) -
-			((ca->mi.nbuckets - ca->mi.first_bucket) / 8)) *
+			div64_u64((ca->mi.nbuckets - ca->mi.first_bucket) *
+				  c->opts.gc_reserve_percent, 200)) *
 			ca->mi.bucket_size;
 
 		if (next <= 0)
