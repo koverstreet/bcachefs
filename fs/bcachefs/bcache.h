@@ -525,7 +525,6 @@ struct cache_set {
 	struct work_struct	read_only_work;
 
 	struct cache __rcu	*cache[MAX_CACHES_PER_SET];
-	unsigned long	cache_slots_used[BITS_TO_LONGS(MAX_CACHES_PER_SET)];
 
 	struct mutex		mi_lock;
 	struct cache_member_rcu __rcu *members;

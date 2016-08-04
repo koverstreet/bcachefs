@@ -1824,6 +1824,11 @@ static void bch_cache_remove_work(struct work_struct *work)
 	synchronize_rcu();
 
 	lockdep_assert_held(&bch_register_lock);
+
+	/*
+	 * Free this device's slot in the cache_member array - all pointers to
+	 * this device must be gone:
+	 */
 	memset(&c->disk_mi[dev].uuid, 0, sizeof(c->disk_mi[dev].uuid));
 
 	bcache_write_super(c);
@@ -2119,10 +2124,9 @@ int bch_cache_set_add_cache(struct cache_set *c, const char *path)
 		goto no_slot;
 
 	for (nr_this_dev = 0; nr_this_dev < MAX_CACHES_PER_SET; nr_this_dev++)
-		if (!test_bit(nr_this_dev, c->cache_slots_used) &&
-		    (nr_this_dev >= c->sb.nr_in_set ||
-		     bch_is_zero(c->disk_mi[nr_this_dev].uuid.b,
-				 sizeof(uuid_le))))
+		if (nr_this_dev >= c->sb.nr_in_set ||
+		    bch_is_zero(c->disk_mi[nr_this_dev].uuid.b,
+				 sizeof(uuid_le)))
 			goto have_slot;
 no_slot:
 	up_read(&c->gc_lock);
@@ -2133,7 +2137,6 @@ no_slot:
 
 have_slot:
 	nr_in_set = max_t(unsigned, nr_this_dev + 1, c->sb.nr_in_set);
-	set_bit(nr_this_dev, c->cache_slots_used);
 	up_read(&c->gc_lock);
 
 	u64s = nr_in_set * (sizeof(struct cache_member) / sizeof(u64));

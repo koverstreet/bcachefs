@@ -1521,15 +1521,10 @@ static void bch_extent_debugcheck_extent(struct cache_set *c, struct btree *b,
 		if (ptr->dev >= mi->nr_in_set)
 			goto bad_device;
 
-		do {
-			seq = read_seqcount_begin(&c->gc_pos_lock);
-			bad = !test_bit(ptr->dev, c->cache_slots_used) &&
-				c->gc_pos.phase == GC_PHASE_DONE;
-		} while (read_seqcount_retry(&c->gc_pos_lock, seq));
-
-		if (bad)
-			goto bad_device;
-
+		/*
+		 * If journal replay hasn't finished, we might be seeing keys
+		 * that will be overwritten by the time journal replay is done:
+		 */
 		if (!test_bit(JOURNAL_REPLAY_DONE, &c->journal.flags))
 			continue;
 

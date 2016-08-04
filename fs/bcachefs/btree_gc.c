@@ -99,10 +99,6 @@ u8 bch_btree_key_recalc_oldest_gen(struct cache_set *c, struct bkey_s_c k)
 
 		rcu_read_lock();
 
-		extent_for_each_ptr(e, ptr)
-			if (ptr->dev < MAX_CACHES_PER_SET)
-				__set_bit(ptr->dev, c->cache_slots_used);
-
 		extent_for_each_online_device(c, e, ptr, ca) {
 			struct bucket *g = PTR_BUCKET(ca, ptr);
 
@@ -348,8 +344,6 @@ void bch_gc(struct cache_set *c)
 	 *    move around - if references move backwards in the ordering GC
 	 *    uses, GC could skip past them
 	 */
-
-	memset(c->cache_slots_used, 0, sizeof(c->cache_slots_used));
 
 	if (test_bit(CACHE_SET_GC_FAILURE, &c->flags))
 		return;
