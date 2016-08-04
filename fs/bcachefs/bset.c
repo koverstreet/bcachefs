@@ -1206,11 +1206,12 @@ static struct bkey_packed *bch_bset_search(struct btree_keys *b,
 		       !btree_iter_pos_cmp_packed(f, search, m, strictly_greater))
 			m = bkey_next(m);
 
-	if (btree_keys_expensive_checks(b)) {
-		struct bkey_packed *p = bkey_prev(t, m);
+	if (IS_ENABLED(CONFIG_BCACHEFS_DEBUG)) {
+		struct bkey_packed *prev = bkey_prev(t, m);
 
-		BUG_ON(p &&
-		       bkey_cmp_p_or_unp(f, p, packed_search, search) >= 0);
+		BUG_ON(prev &&
+		       btree_iter_pos_cmp_p_or_unp(f, search, packed_search,
+						   prev, strictly_greater));
 	}
 
 	return m;
