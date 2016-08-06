@@ -56,9 +56,7 @@ bch_extent_cmpxchg(struct extent_insert_hook *, struct bpos, struct bpos,
 enum btree_insert_ret
 bch_insert_fixup_extent(struct btree_insert *,
 			struct btree_insert_entry *,
-			struct disk_reservation *,
-			struct extent_insert_hook *,
-			struct journal_res *, unsigned);
+			struct journal_res *);
 
 void bch_extent_drop_stale(struct cache_set *c, struct bkey_s_extent);
 bool bch_extent_normalize(struct cache_set *, struct bkey_s);

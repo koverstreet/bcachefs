@@ -1499,10 +1499,7 @@ out_get_locks:
 static enum btree_insert_ret
 btree_insert_key(struct btree_insert *trans,
 		 struct btree_insert_entry *insert,
-		 struct disk_reservation *disk_res,
-		 struct extent_insert_hook *hook,
-		 struct journal_res *res,
-		 unsigned flags)
+		 struct journal_res *res)
 {
 	struct btree_iter *iter = insert->iter;
 	struct btree *b = iter->nodes[0];
@@ -1510,8 +1507,7 @@ btree_insert_key(struct btree_insert *trans,
 
 	ret = !b->keys.ops->is_extents
 		? bch_insert_fixup_key(trans, insert, res)
-		: bch_insert_fixup_extent(trans, insert, disk_res,
-					  hook, res, flags);
+		: bch_insert_fixup_extent(trans, insert, res);
 
 	trace_bcache_btree_insert_key(b, insert->k);
 	return ret;
@@ -1570,10 +1566,7 @@ static int btree_trans_entry_cmp(const void *_l, const void *_r)
  * -EROFS: cache set read only
  * -EIO: journal or btree node IO error
  */
-int __bch_btree_insert_at(struct btree_insert *trans,
-			  struct disk_reservation *disk_res,
-			  struct extent_insert_hook *hook,
-			  u64 *journal_seq, unsigned flags)
+int __bch_btree_insert_at(struct btree_insert *trans, u64 *journal_seq)
 {
 	struct cache_set *c = trans->c;
 	struct journal_res res = { 0, 0 };
@@ -1588,9 +1581,7 @@ int __bch_btree_insert_at(struct btree_insert *trans,
 	trans_for_each_entry(trans, i) {
 		EBUG_ON(i->iter->level);
 		EBUG_ON(bkey_cmp(bkey_start_pos(&i->k->k), i->iter->pos));
-		i->done = false;
 	}
-	trans->did_work = false;
 
 	sort(trans->entries, trans->nr, sizeof(trans->entries[0]),
 	     btree_trans_entry_cmp, NULL);
@@ -1606,6 +1597,7 @@ int __bch_btree_insert_at(struct btree_insert *trans,
 		}
 	}
 retry:
+	trans->did_work = false;
 	u64s = 0;
 	trans_for_each_entry(trans, i)
 		if (!i->done)
@@ -1628,8 +1620,10 @@ retry:
 		if (!i->done) {
 			u64s += i->k->k.u64s;
 			if (!bch_btree_node_insert_fits(c,
-					i->iter->nodes[0], u64s))
-				goto unlock_split;
+					i->iter->nodes[0], u64s)) {
+				split = i->iter;
+				goto unlock;
+			}
 		}
 	}
 
@@ -1640,8 +1634,7 @@ retry:
 		if (i->done)
 			continue;
 
-		switch (btree_insert_key(trans, i, disk_res,
-					 hook, &res, flags)) {
+		switch (btree_insert_key(trans, i, &res)) {
 		case BTREE_INSERT_OK:
 			i->done = true;
 			break;
@@ -1663,7 +1656,7 @@ retry:
 		if (!trans->did_work && (ret || split))
 			break;
 	}
-
+unlock:
 	multi_unlock_write(trans);
 	bch_journal_res_put(&c->journal, &res, journal_seq);
 
@@ -1678,17 +1671,13 @@ retry:
 out:
 	percpu_ref_put(&c->writes);
 	return ret;
-unlock_split:
-	split = i->iter;
-	multi_unlock_write(trans);
+split:
 	/*
 	 * have to drop journal res before splitting, because splitting means
 	 * allocating new btree nodes, and holding a journal reservation
 	 * potentially blocks the allocator:
 	 */
-	bch_journal_res_put(&c->journal, &res, journal_seq);
-split:
-	ret = bch_btree_split_leaf(split, flags, &cl);
+	ret = bch_btree_split_leaf(split, trans->flags, &cl);
 	if (ret)
 		goto err;
 
@@ -1719,7 +1708,7 @@ err:
 	 * BTREE_INSERT_ATOMIC doesn't mean anything w.r.t. journal
 	 * reservations:
 	 */
-	if (ret == -EINTR && !(flags & BTREE_INSERT_ATOMIC)) {
+	if (ret == -EINTR && !(trans->flags & BTREE_INSERT_ATOMIC)) {
 		trans_for_each_entry(trans, i) {
 			ret = bch_btree_iter_traverse(i->iter);
 			if (ret)

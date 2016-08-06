@@ -1058,7 +1058,7 @@ static void extent_do_insert(struct btree_iter *iter, struct bkey_i *insert,
 static void extent_insert_committed(struct btree_insert *trans,
 				    struct btree_insert_entry *insert,
 				    struct bpos committed_pos,
-				    struct journal_res *res, unsigned flags,
+				    struct journal_res *res,
 				    struct bucket_stats_cache_set *stats)
 {
 
@@ -1072,7 +1072,7 @@ static void extent_insert_committed(struct btree_insert *trans,
 		EBUG_ON(bkey_deleted(&insert->k->k) || !insert->k->k.size);
 
 		split = bch_key_split(committed_pos, insert->k);
-		extent_do_insert(insert->iter, split, res, flags, stats);
+		extent_do_insert(insert->iter, split, res, trans->flags, stats);
 
 		bch_btree_iter_set_pos_same_leaf(insert->iter, committed_pos);
 
@@ -1083,13 +1083,13 @@ static void extent_insert_committed(struct btree_insert *trans,
 static enum extent_insert_hook_ret
 __extent_insert_advance_pos(struct btree_insert *trans,
 			    struct btree_insert_entry *insert,
-			    struct extent_insert_hook *hook,
 			    struct bpos *committed_pos,
 			    struct bpos next_pos,
 			    struct bkey_s_c k,
-			    struct journal_res *res, unsigned flags,
+			    struct journal_res *res,
 			    struct bucket_stats_cache_set *stats)
 {
+	struct extent_insert_hook *hook = trans->hook;
 	enum extent_insert_hook_ret ret;
 
 	if (k.k && k.k->size &&
@@ -1108,7 +1108,7 @@ __extent_insert_advance_pos(struct btree_insert *trans,
 		break;
 	case BTREE_HOOK_NO_INSERT:
 		extent_insert_committed(trans, insert, *committed_pos,
-					res, flags, stats);
+					res, stats);
 		__bch_cut_front(next_pos, bkey_i_to_s(insert->k));
 
 		bch_btree_iter_set_pos_same_leaf(insert->iter, next_pos);
@@ -1128,10 +1128,9 @@ __extent_insert_advance_pos(struct btree_insert *trans,
 static enum extent_insert_hook_ret
 extent_insert_advance_pos(struct btree_insert *trans,
 			  struct btree_insert_entry *insert,
-			  struct extent_insert_hook *hook,
 			  struct bpos *committed_pos,
 			  struct bkey_s_c k,
-			  struct journal_res *res, unsigned flags,
+			  struct journal_res *res,
 			  struct bucket_stats_cache_set *stats)
 {
 	struct btree *b = insert->iter->nodes[0];
@@ -1143,11 +1142,11 @@ extent_insert_advance_pos(struct btree_insert *trans,
 		bool have_uncommitted = bkey_cmp(*committed_pos,
 				bkey_start_pos(&insert->k->k)) > 0;
 
-		switch (__extent_insert_advance_pos(trans, insert, hook,
+		switch (__extent_insert_advance_pos(trans, insert,
 						    committed_pos,
 						    bkey_start_pos(k.k),
 						    bkey_s_c_null,
-						    res, flags, stats)) {
+						    res, stats)) {
 		case BTREE_HOOK_DO_INSERT:
 			break;
 		case BTREE_HOOK_NO_INSERT:
@@ -1168,9 +1167,8 @@ extent_insert_advance_pos(struct btree_insert *trans,
 	if (!bkey_cmp(*committed_pos, next_pos))
 		return BTREE_HOOK_DO_INSERT;
 
-	return __extent_insert_advance_pos(trans, insert, hook,
-					   committed_pos, next_pos,
-					   k, res, flags, stats);
+	return __extent_insert_advance_pos(trans, insert, committed_pos,
+					   next_pos, k, res, stats);
 }
 
 /**
@@ -1215,10 +1213,7 @@ extent_insert_advance_pos(struct btree_insert *trans,
 enum btree_insert_ret
 bch_insert_fixup_extent(struct btree_insert *trans,
 			struct btree_insert_entry *insert,
-			struct disk_reservation *disk_res,
-			struct extent_insert_hook *hook,
-			struct journal_res *res,
-			unsigned flags)
+			struct journal_res *res)
 {
 	struct cache_set *c = trans->c;
 	struct btree_iter *iter = insert->iter;
@@ -1261,14 +1256,14 @@ bch_insert_fixup_extent(struct btree_insert *trans,
 		if (k.k->size &&
 		    overlap == BCH_EXTENT_OVERLAP_MIDDLE) {
 			unsigned sectors = bkey_extent_is_compressed(c, k.s_c);
-			int res_flags = 0;
+			int flags = 0;
 
-			if (flags & BTREE_INSERT_NOFAIL)
-				res_flags |= BCH_DISK_RESERVATION_NOFAIL;
+			if (trans->flags & BTREE_INSERT_NOFAIL)
+				flags |= BCH_DISK_RESERVATION_NOFAIL;
 
 			if (sectors &&
-			    bch_disk_reservation_add(c, disk_res, sectors,
-						     res_flags)) {
+			    bch_disk_reservation_add(c, trans->disk_res,
+						     sectors, flags)) {
 				ret = BTREE_INSERT_ENOSPC;
 				goto stop;
 			}
@@ -1280,10 +1275,9 @@ bch_insert_fixup_extent(struct btree_insert *trans,
 		 * overlaps with @k:
 		 */
 		if (k.k->size)
-			switch (extent_insert_advance_pos(trans, insert, hook,
+			switch (extent_insert_advance_pos(trans, insert,
 							  &committed_pos,
-							  k.s_c, res, flags,
-							  &stats)) {
+							  k.s_c, res, &stats)) {
 			case BTREE_HOOK_DO_INSERT:
 				break;
 			case BTREE_HOOK_NO_INSERT:
@@ -1339,15 +1333,14 @@ bch_insert_fixup_extent(struct btree_insert *trans,
 				extent_save(&b->keys, node_iter, _k, k.k);
 
 				if (extent_insert_advance_pos(trans, insert,
-							hook, &committed_pos,
-							k.s_c, res, flags,
-							&stats) ==
+							&committed_pos,
+							k.s_c, res, &stats) ==
 				    BTREE_HOOK_RESTART_TRANS) {
 					ret = BTREE_INSERT_NEED_TRAVERSE;
 					goto stop;
 				}
 				extent_insert_committed(trans, insert, committed_pos,
-							res, flags, &stats);
+							res, &stats);
 				/*
 				 * We split and inserted upto at k.k->p - that
 				 * has to coincide with iter->pos, so that we
@@ -1395,14 +1388,15 @@ bch_insert_fixup_extent(struct btree_insert *trans,
 
 	if (bkey_cmp(committed_pos, insert->k->k.p) < 0 &&
 	    ret == BTREE_INSERT_OK &&
-	    extent_insert_advance_pos(trans, insert, hook, &committed_pos,
-				      bkey_s_c_null, res, flags,
+	    extent_insert_advance_pos(trans, insert, &committed_pos,
+				      bkey_s_c_null, res,
 				      &stats) == BTREE_HOOK_RESTART_TRANS)
 		ret = BTREE_INSERT_NEED_TRAVERSE;
 stop:
-	extent_insert_committed(trans, insert, committed_pos, res, flags, &stats);
+	extent_insert_committed(trans, insert, committed_pos, res, &stats);
 
-	bch_cache_set_stats_apply(c, &stats, disk_res, gc_pos_btree_node(b));
+	bch_cache_set_stats_apply(c, &stats, trans->disk_res,
+				  gc_pos_btree_node(b));
 
 	EBUG_ON(bkey_cmp(iter->pos, bkey_start_pos(&insert->k->k)));
 	EBUG_ON(bkey_cmp(iter->pos, committed_pos));

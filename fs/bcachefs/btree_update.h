@@ -191,9 +191,12 @@ void bch_btree_insert_node(struct btree *, struct btree_iter *,
 
 struct btree_insert {
 	struct cache_set	*c;
-
+	struct disk_reservation *disk_res;
+	struct extent_insert_hook *hook;
+	unsigned		flags;
 	bool			did_work;
-	unsigned		nr;
+
+	unsigned short		nr;
 	struct btree_insert_entry {
 		struct btree_iter *iter;
 		struct bkey_i	*k;
@@ -205,10 +208,7 @@ struct btree_insert {
 	}			*entries;
 };
 
-int __bch_btree_insert_at(struct btree_insert *,
-			  struct disk_reservation *,
-			  struct extent_insert_hook *,
-			  u64 *, unsigned);
+int __bch_btree_insert_at(struct btree_insert *, u64 *);
 
 
 #define _TENTH_ARG(_1, _2, _3, _4, _5, _6, _7, _8, _9, N, ...)   N
@@ -237,13 +237,15 @@ int __bch_btree_insert_at(struct btree_insert *,
 #define bch_btree_insert_at(_c, _disk_res, _hook,			\
 			    _journal_seq, _flags, ...)			\
 	__bch_btree_insert_at(&(struct btree_insert) {			\
-		.c		= _c,					\
-		.did_work	= false,				\
+		.c		= (_c),					\
+		.disk_res	= (_disk_res),				\
+		.hook		= (_hook),				\
+		.flags		= (_flags),				\
 		.nr		= COUNT_ARGS(__VA_ARGS__),		\
 		.entries	= (struct btree_insert_entry[]) {	\
 			__VA_ARGS__					\
 		}},							\
-		_disk_res, _hook, _journal_seq, _flags)
+		_journal_seq)
 
 /*
  * Don't drop/retake locks: instead return -EINTR if need to upgrade to intent
