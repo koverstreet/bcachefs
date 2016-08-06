@@ -723,9 +723,20 @@ void bch_btree_journal_key(struct btree_iter *iter,
 			   struct journal_res *res)
 {
 	struct cache_set *c = iter->c;
+	struct journal *j = &c->journal;
 	struct btree *b = iter->nodes[0];
+	struct btree_write *w = btree_current_write(b);
 
 	EBUG_ON(iter->level || b->level);
+	BUG_ON(!res->ref && test_bit(JOURNAL_REPLAY_DONE, &j->flags));
+
+	if (!journal_pin_active(&w->journal))
+		journal_pin_add(j, &w->journal, btree_node_flush);
+
+	if (test_bit(JOURNAL_REPLAY_DONE, &j->flags)) {
+		bch_journal_add_keys(j, res, b->btree_id, insert);
+		btree_bset_last(b)->journal_seq = cpu_to_le64(j->seq);
+	}
 
 	if (!btree_node_dirty(b)) {
 		set_btree_node_dirty(b);
@@ -733,20 +744,6 @@ void bch_btree_journal_key(struct btree_iter *iter,
 		if (c->btree_flush_delay)
 			queue_delayed_work(system_freezable_wq, &b->work,
 					   c->btree_flush_delay * HZ);
-	}
-
-	if (res->ref ||
-	    !test_bit(JOURNAL_REPLAY_DONE, &c->journal.flags)) {
-		struct btree_write *w = btree_current_write(b);
-
-		if (!journal_pin_active(&w->journal))
-			journal_pin_add(&c->journal, &w->journal,
-					btree_node_flush);
-	}
-
-	if (res->ref) {
-		bch_journal_add_keys(&c->journal, res, b->btree_id, insert);
-		btree_bset_last(b)->journal_seq = cpu_to_le64(c->journal.seq);
 	}
 }
 
