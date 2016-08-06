@@ -360,11 +360,14 @@ static int bch_symlink(struct inode *dir, struct dentry *dentry,
 {
 	struct cache_set *c = dir->i_sb->s_fs_info;
 	struct inode *inode;
+	struct bch_inode_info *ei, *dir_ei = to_bch_ei(dir);
 	int ret;
 
 	inode = bch_vfs_inode_create(c, dir, S_IFLNK|S_IRWXUGO, 0);
 	if (unlikely(IS_ERR(inode)))
 		return PTR_ERR(inode);
+
+	ei = to_bch_ei(inode);
 
 	inode_lock(inode);
 	ret = page_symlink(inode, symname, strlen(symname) + 1);
@@ -372,6 +375,14 @@ static int bch_symlink(struct inode *dir, struct dentry *dentry,
 
 	if (unlikely(ret))
 		goto err;
+
+	ret = filemap_write_and_wait_range(inode->i_mapping, 0, LLONG_MAX);
+	if (unlikely(ret))
+		goto err;
+
+	/* XXX: racy */
+	if (dir_ei->journal_seq < ei->journal_seq)
+		dir_ei->journal_seq = ei->journal_seq;
 
 	ret = bch_vfs_dirent_create(c, dir, DT_LNK, &dentry->d_name, inode);
 	if (unlikely(ret))
