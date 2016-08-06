@@ -140,8 +140,9 @@ again:
 			pr_debug("inserting inode %llu (size %u)",
 				 inode->k.p.inode, inode->k.u64s);
 
-			ret = bch_btree_insert_at(&iter, inode, NULL, NULL,
-						  NULL, BTREE_INSERT_ATOMIC);
+			ret = bch_btree_insert_at(c, NULL, NULL, NULL,
+					BTREE_INSERT_ATOMIC,
+					BTREE_INSERT_ENTRY(&iter, inode));
 
 			if (ret == -EINTR)
 				continue;

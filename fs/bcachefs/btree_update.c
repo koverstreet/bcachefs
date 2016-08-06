@@ -1560,7 +1560,7 @@ static int btree_trans_entry_cmp(const void *_l, const void *_r)
 /* Normal update interface: */
 
 /**
- * bch_btree_trans - insert keys at given iterator positions
+ * __bch_btree_insert_at - insert keys at given iterator positions
  *
  * This is main entry point for btree updates.
  *
@@ -1570,10 +1570,10 @@ static int btree_trans_entry_cmp(const void *_l, const void *_r)
  * -EROFS: cache set read only
  * -EIO: journal or btree node IO error
  */
-int bch_btree_insert_trans(struct btree_insert *trans,
-			   struct disk_reservation *disk_res,
-			   struct extent_insert_hook *hook,
-			   u64 *journal_seq, unsigned flags)
+int __bch_btree_insert_at(struct btree_insert *trans,
+			  struct disk_reservation *disk_res,
+			  struct extent_insert_hook *hook,
+			  u64 *journal_seq, unsigned flags)
 {
 	struct cache_set *c = trans->c;
 	struct journal_res res = { 0, 0 };
@@ -1751,8 +1751,9 @@ int bch_btree_insert_list_at(struct btree_iter *iter,
 		if (ret)
 			return ret;
 
-		ret = bch_btree_insert_at(iter, bch_keylist_front(keys),
-				disk_res, hook, journal_seq, flags);
+		ret = bch_btree_insert_at(iter->c, disk_res, hook,
+				journal_seq, flags,
+				BTREE_INSERT_ENTRY(iter, bch_keylist_front(keys)));
 		if (ret)
 			return ret;
 
@@ -1792,8 +1793,9 @@ int bch_btree_insert_check_key(struct btree_iter *iter,
 
 	bkey_copy(&tmp.key, check_key);
 
-	ret = bch_btree_insert_at(iter, &tmp.key, NULL, NULL,
-				  NULL, BTREE_INSERT_ATOMIC);
+	ret = bch_btree_insert_at(iter->c, NULL, NULL, NULL,
+				  BTREE_INSERT_ATOMIC,
+				  BTREE_INSERT_ENTRY(iter, &tmp.key));
 
 	bch_btree_iter_rewind(iter, saved_pos);
 
@@ -1822,8 +1824,8 @@ int bch_btree_insert(struct cache_set *c, enum btree_id id,
 	if (unlikely(ret))
 		goto out;
 
-	ret = bch_btree_insert_at(&iter, k, disk_res,
-				  hook, journal_seq, flags);
+	ret = bch_btree_insert_at(c, disk_res, hook, journal_seq, flags,
+				  BTREE_INSERT_ENTRY(&iter, k));
 out:	ret2 = bch_btree_iter_unlock(&iter);
 
 	return ret ?: ret2;
@@ -1849,7 +1851,8 @@ int bch_btree_update(struct cache_set *c, enum btree_id id,
 	if (!u.k || bkey_deleted(u.k))
 		return -ENOENT;
 
-	ret = bch_btree_insert_at(&iter, k, NULL, NULL, journal_seq, 0);
+	ret = bch_btree_insert_at(c, NULL, NULL, journal_seq, 0,
+				  BTREE_INSERT_ENTRY(&iter, k));
 	ret2 = bch_btree_iter_unlock(&iter);
 
 	return ret ?: ret2;
@@ -1912,8 +1915,9 @@ int bch_btree_delete_range(struct cache_set *c, enum btree_id id,
 			bch_cut_back(end, &delete.k);
 		}
 
-		ret = bch_btree_insert_at(&iter, &delete, disk_res, hook,
-					  journal_seq, BTREE_INSERT_NOFAIL);
+		ret = bch_btree_insert_at(c, disk_res, hook, journal_seq,
+					  BTREE_INSERT_NOFAIL,
+					  BTREE_INSERT_ENTRY(&iter, &delete));
 		if (ret)
 			break;
 

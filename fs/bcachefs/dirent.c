@@ -291,10 +291,11 @@ int bch_dirent_rename(struct cache_set *c,
 				 * __dirent_find_hole() found
 				 */
 				new_dst->k.p = src_iter.pos;
-				ret = bch_btree_insert_at(&src_iter,
-						&new_dst->k_i, NULL, NULL,
+				ret = bch_btree_insert_at(c, NULL, NULL,
 						journal_seq,
-						BTREE_INSERT_ATOMIC);
+						BTREE_INSERT_ATOMIC,
+						BTREE_INSERT_ENTRY(&src_iter,
+								   &new_dst->k_i));
 				goto insert_done;
 			}
 
@@ -326,15 +327,10 @@ int bch_dirent_rename(struct cache_set *c,
 
 		new_src->k.p = src_iter.pos;
 		new_dst->k.p = dst_iter.pos;
-		ret = bch_btree_insert_trans(&(struct btree_insert) {
-				.c = c,
-				.nr = 2,
-				.entries = (struct btree_insert_entry[]) {
-					{ &src_iter, &new_src->k_i, },
-					{ &dst_iter, &new_dst->k_i, }
-				}},
-				NULL, NULL, journal_seq,
-				BTREE_INSERT_ATOMIC);
+		ret = bch_btree_insert_at(c, NULL, NULL, journal_seq,
+				BTREE_INSERT_ATOMIC,
+				BTREE_INSERT_ENTRY(&src_iter, &new_src->k_i),
+				BTREE_INSERT_ENTRY(&dst_iter, &new_dst->k_i));
 insert_done:
 		bch_btree_iter_unlink(&whiteout_iter);
 		bch_btree_iter_unlock(&src_iter);

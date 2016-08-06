@@ -299,8 +299,9 @@ static inline int bch_hash_set(const struct bch_hash_desc desc,
 		}
 
 		insert->k.p = iter.pos;
-		ret = bch_btree_insert_at(&iter, insert, NULL, NULL,
-					  journal_seq, BTREE_INSERT_ATOMIC);
+		ret = bch_btree_insert_at(c, NULL, NULL, journal_seq,
+					  BTREE_INSERT_ATOMIC,
+					  BTREE_INSERT_ENTRY(&iter, insert));
 
 		/* unlock before traversing hashed_slot: */
 		bch_btree_iter_unlock(&iter);
@@ -344,10 +345,10 @@ static inline int bch_hash_delete(const struct bch_hash_desc desc,
 			? desc.whiteout_type
 			: KEY_TYPE_DELETED;
 
-		ret = bch_btree_insert_at(&iter, &delete,
-					  NULL, NULL, journal_seq,
+		ret = bch_btree_insert_at(c, NULL, NULL, journal_seq,
 					  BTREE_INSERT_NOFAIL|
-					  BTREE_INSERT_ATOMIC);
+					  BTREE_INSERT_ATOMIC,
+					  BTREE_INSERT_ENTRY(&iter, &delete));
 		/*
 		 * Need to hold whiteout iter locked while we do the delete, if
 		 * we're not leaving a whiteout:

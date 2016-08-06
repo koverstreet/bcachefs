@@ -98,10 +98,10 @@ int __must_check __bch_write_inode(struct cache_set *c,
 		bi->i_mtime	= cpu_to_le64(timespec_to_ns(&inode->i_mtime));
 		bi->i_ctime	= cpu_to_le64(timespec_to_ns(&inode->i_ctime));
 
-		ret = bch_btree_insert_at(&iter, &new_inode.k_i,
-					  NULL, NULL, &ei->journal_seq,
-					  BTREE_INSERT_ATOMIC|
-					  BTREE_INSERT_NOFAIL);
+		ret = bch_btree_insert_at(c, NULL, NULL, &ei->journal_seq,
+				BTREE_INSERT_ATOMIC|
+				BTREE_INSERT_NOFAIL,
+				BTREE_INSERT_ENTRY(&iter, &new_inode.k_i));
 	} while (ret == -EINTR);
 
 	if (!ret) {

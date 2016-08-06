@@ -296,14 +296,6 @@ static int bchfs_write_index_update(struct bch_write_op *wop)
 			hook.need_inode_update = true;
 
 		if (hook.need_inode_update) {
-			struct btree_insert trans = {
-				.c = wop->c,
-				.nr = 2,
-				.entries = (struct btree_insert_entry[]) {
-					{ .iter = &extent_iter, .k = k },
-					{ .iter = &inode_iter,  .k = &hook.new_inode.k_i },
-				},
-			};
 			struct bkey_s_c inode;
 
 			ret = bch_btree_iter_traverse(&inode_iter);
@@ -322,17 +314,16 @@ static int bchfs_write_index_update(struct bch_write_op *wop)
 
 			bkey_reassemble(&hook.new_inode.k_i, inode);
 
-			ret = bch_btree_insert_trans(&trans, &wop->res,
-						     &hook.hook,
-						     op_journal_seq(wop),
-						     BTREE_INSERT_NOFAIL|
-						     BTREE_INSERT_ATOMIC);
+			ret = bch_btree_insert_at(wop->c, &wop->res,
+					&hook.hook, op_journal_seq(wop),
+					BTREE_INSERT_NOFAIL|BTREE_INSERT_ATOMIC,
+					BTREE_INSERT_ENTRY(&extent_iter, k),
+					BTREE_INSERT_ENTRY(&inode_iter, &hook.new_inode.k_i));
 		} else {
-			ret = bch_btree_insert_at(&extent_iter, k,
-						  &wop->res, &hook.hook,
-						  op_journal_seq(wop),
-						  BTREE_INSERT_NOFAIL|
-						  BTREE_INSERT_ATOMIC);
+			ret = bch_btree_insert_at(wop->c, &wop->res,
+					&hook.hook, op_journal_seq(wop),
+					BTREE_INSERT_NOFAIL|BTREE_INSERT_ATOMIC,
+					BTREE_INSERT_ENTRY(&extent_iter, k));
 		}
 
 		if (ret == -EINTR)
@@ -1946,11 +1937,11 @@ static long bch_fcollapse(struct inode *inode, loff_t offset, loff_t len)
 					       BCH_DISK_RESERVATION_NOFAIL);
 		BUG_ON(ret);
 
-		ret = bch_btree_insert_at(&dst, &copy.k, &disk_res,
-					  &i_sectors_hook.hook,
+		ret = bch_btree_insert_at(c, &disk_res, &i_sectors_hook.hook,
 					  &ei->journal_seq,
 					  BTREE_INSERT_ATOMIC|
-					  BTREE_INSERT_NOFAIL);
+					  BTREE_INSERT_NOFAIL,
+					  BTREE_INSERT_ENTRY(&dst, &copy.k));
 		bch_disk_reservation_put(c, &disk_res);
 
 		if (ret < 0 && ret != -EINTR)
@@ -2094,11 +2085,11 @@ static long bch_fallocate(struct inode *inode, int mode,
 				goto err_put_sectors_dirty;
 		}
 
-		ret = bch_btree_insert_at(&iter, &reservation, &disk_res,
-					  &i_sectors_hook.hook,
+		ret = bch_btree_insert_at(c, &disk_res, &i_sectors_hook.hook,
 					  &ei->journal_seq,
 					  BTREE_INSERT_ATOMIC|
-					  BTREE_INSERT_NOFAIL);
+					  BTREE_INSERT_NOFAIL,
+					  BTREE_INSERT_ENTRY(&iter, &reservation));
 		bch_disk_reservation_put(c, &disk_res);
 
 		if (ret < 0 && ret != -EINTR)

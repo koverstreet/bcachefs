@@ -191,8 +191,9 @@ void bch_btree_insert_node(struct btree *, struct btree_iter *,
 
 struct btree_insert {
 	struct cache_set	*c;
-	unsigned		nr;
+
 	bool			did_work;
+	unsigned		nr;
 	struct btree_insert_entry {
 		struct btree_iter *iter;
 		struct bkey_i	*k;
@@ -204,10 +205,45 @@ struct btree_insert {
 	}			*entries;
 };
 
-int bch_btree_insert_trans(struct btree_insert *,
-			   struct disk_reservation *,
-			   struct extent_insert_hook *,
-			   u64 *, unsigned);
+int __bch_btree_insert_at(struct btree_insert *,
+			  struct disk_reservation *,
+			  struct extent_insert_hook *,
+			  u64 *, unsigned);
+
+
+#define _TENTH_ARG(_1, _2, _3, _4, _5, _6, _7, _8, _9, N, ...)   N
+#define COUNT_ARGS(...)  _TENTH_ARG(__VA_ARGS__, 9, 8, 7, 6, 5, 4, 3, 2, 1)
+
+#define BTREE_INSERT_ENTRY(_iter, _k)					\
+	((struct btree_insert_entry) {					\
+		.iter		= (_iter),				\
+		.k		= (_k),					\
+		.done		= false,				\
+	})
+
+/**
+ * bch_btree_insert_at - insert one or more keys at iterator positions
+ * @iter:		btree iterator
+ * @insert_key:		key to insert
+ * @disk_res:		disk reservation
+ * @hook:		extent insert callback
+ *
+ * Return values:
+ * -EINTR: locking changed, this function should be called again. Only returned
+ *  if passed BTREE_INSERT_ATOMIC.
+ * -EROFS: cache set read only
+ * -EIO: journal or btree node IO error
+ */
+#define bch_btree_insert_at(_c, _disk_res, _hook,			\
+			    _journal_seq, _flags, ...)			\
+	__bch_btree_insert_at(&(struct btree_insert) {			\
+		.c		= _c,					\
+		.did_work	= false,				\
+		.nr		= COUNT_ARGS(__VA_ARGS__),		\
+		.entries	= (struct btree_insert_entry[]) {	\
+			__VA_ARGS__					\
+		}},							\
+		_disk_res, _hook, _journal_seq, _flags)
 
 /*
  * Don't drop/retake locks: instead return -EINTR if need to upgrade to intent
@@ -223,42 +259,6 @@ int bch_btree_insert_trans(struct btree_insert *,
  * where we've already marked the new keys:
  */
 #define BTREE_INSERT_NO_MARK_KEY	(1 << 2)
-
-/**
- * bch_btree_insert_at - insert a key at iterator's current position
- * @iter:		btree iterator
- * @insert_key:		key to insert
- * @disk_res:		disk reservation
- * @hook:		extent insert callback
- *
- * Return values:
- * -EINTR: locking changed, this function should be called again. Only returned
- *  if passed BTREE_INSERT_ATOMIC.
- * -EROFS: cache set read only
- * -EIO: journal or btree node IO error
- */
-static inline int bch_btree_insert_at(struct btree_iter *iter,
-				      struct bkey_i *insert_key,
-				      struct disk_reservation *disk_res,
-				      struct extent_insert_hook *hook,
-				      u64 *journal_seq, unsigned flags)
-{
-	struct btree_insert m = {
-		.c = iter->c,
-		.nr = 1,
-		.entries = &(struct btree_insert_entry) {
-			.iter = iter,
-			.k = insert_key,
-			.done = false,
-		},
-	};
-
-	int ret = bch_btree_insert_trans(&m, disk_res,
-				hook, journal_seq, flags);
-	BUG_ON(!ret != m.entries[0].done);
-
-	return ret;
-}
 
 int bch_btree_insert_list_at(struct btree_iter *, struct keylist *,
 			     struct disk_reservation *,
