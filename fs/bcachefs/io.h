@@ -95,6 +95,4 @@ void bch_wake_delayed_writes(unsigned long data);
 
 void bch_bio_decompress_work(struct work_struct *);
 
-extern struct workqueue_struct *bcache_io_wq;
-
 #endif /* _BCACHE_IO_H */
