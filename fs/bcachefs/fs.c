@@ -455,6 +455,10 @@ static int bch_rename(struct inode *old_dir, struct dentry *old_dentry,
 	lockdep_assert_held(&old_dir->i_rwsem);
 	lockdep_assert_held(&new_dir->i_rwsem);
 
+	if (new_inode)
+		filemap_write_and_wait_range(old_inode->i_mapping,
+					     0, LLONG_MAX);
+
 	if (new_inode && S_ISDIR(old_inode->i_mode)) {
 		lockdep_assert_held(&new_inode->i_rwsem);
 
