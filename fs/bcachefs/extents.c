@@ -1454,7 +1454,7 @@ static const char *bch_extent_invalid(const struct cache_set *c,
 					goto invalid;
 
 				reason = "invalid compression type";
-				if (crc64.csum_type >= BCH_COMPRESSION_NR)
+				if (crc64.compression_type >= BCH_COMPRESSION_NR)
 					goto invalid;
 				break;
 			case BCH_EXTENT_ENTRY_ptr:
