@@ -198,6 +198,22 @@ bch_extent_crc_type(const union bch_extent_crc *crc)
 #define extent_for_each_entry(_e, _entry)				\
 	extent_for_each_entry_from(_e, _entry, (_e).v->start)
 
+#define extent_crc_next(_e, _p)						\
+({									\
+	union bch_extent_entry *_entry = _p;				\
+									\
+	while ((_entry) < extent_entry_last(_e) &&			\
+	       !extent_entry_is_crc(_entry))				\
+		(_entry) = extent_entry_next(_entry);			\
+									\
+	_entry < extent_entry_last(_e) ? (void *) _entry : NULL;	\
+})
+
+#define extent_for_each_crc(_e, _crc)					\
+	for ((_crc) = extent_crc_next(_e, (_e).v->start);		\
+	     (_crc);							\
+	     (_crc) = extent_crc_next(_e, extent_entry_next((void *) (_crc))))
+
 /* Iterates through entries until it hits a pointer: */
 #define extent_ptr_crc_next_filter(_e, _crc, _ptr, _filter)		\
 ({									\

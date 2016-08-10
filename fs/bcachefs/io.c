@@ -886,35 +886,35 @@ static const unsigned bch_crc_size[] = {
 static void extent_cleanup_checksums(struct bkey_s_extent e,
 				     u64 csum, unsigned csum_type)
 {
-	union bch_extent_entry *entry;
+	union bch_extent_crc *crc;
 
-	extent_for_each_entry(e, entry)
-		switch (extent_entry_type(entry)) {
-		case BCH_EXTENT_ENTRY_ptr:
-			continue;
-		case BCH_EXTENT_ENTRY_crc32:
-			if (entry->crc32.compression_type != BCH_COMPRESSION_NONE ||
-			    bch_crc_size[csum_type] > sizeof(entry->crc32.csum))
+	extent_for_each_crc(e, crc)
+		switch (bch_extent_crc_type(crc)) {
+		case BCH_EXTENT_CRC_NONE:
+			BUG();
+		case BCH_EXTENT_CRC32:
+			if (crc->crc32.compression_type != BCH_COMPRESSION_NONE ||
+			    bch_crc_size[csum_type] > sizeof(crc->crc32.csum))
 				continue;
 
-			extent_adjust_pointers(e, entry);
-			entry->crc32.compressed_size	= e.k->size;
-			entry->crc32.uncompressed_size	= e.k->size;
-			entry->crc32.offset		= 0;
-			entry->crc32.csum_type		= csum_type;
-			entry->crc32.csum		= csum;
+			extent_adjust_pointers(e, (void *) crc);
+			crc->crc32.compressed_size	= e.k->size;
+			crc->crc32.uncompressed_size	= e.k->size;
+			crc->crc32.offset		= 0;
+			crc->crc32.csum_type		= csum_type;
+			crc->crc32.csum		= csum;
 			break;
-		case BCH_EXTENT_ENTRY_crc64:
-			if (entry->crc64.compression_type != BCH_COMPRESSION_NONE ||
-			    bch_crc_size[csum_type] > sizeof(entry->crc64.csum))
+		case BCH_EXTENT_CRC64:
+			if (crc->crc64.compression_type != BCH_COMPRESSION_NONE ||
+			    bch_crc_size[csum_type] > sizeof(crc->crc64.csum))
 				continue;
 
-			extent_adjust_pointers(e, entry);
-			entry->crc64.compressed_size	= e.k->size;
-			entry->crc64.uncompressed_size	= e.k->size;
-			entry->crc64.offset		= 0;
-			entry->crc64.csum_type		= csum_type;
-			entry->crc64.csum		= csum;
+			extent_adjust_pointers(e, (void *) crc);
+			crc->crc64.compressed_size	= e.k->size;
+			crc->crc64.uncompressed_size	= e.k->size;
+			crc->crc64.offset		= 0;
+			crc->crc64.csum_type		= csum_type;
+			crc->crc64.csum		= csum;
 			break;
 		}
 }
@@ -925,51 +925,38 @@ static void extent_checksum_append(struct bkey_i_extent *e,
 				   unsigned compression_type,
 				   u64 csum, unsigned csum_type)
 {
-	struct bch_extent_ptr *ptr;
 	union bch_extent_crc *crc;
 
 	BUG_ON(compressed_size > uncompressed_size);
 	BUG_ON(uncompressed_size != e->k.size);
+	BUG_ON(!compressed_size || !uncompressed_size);
 
 	/*
 	 * Look up the last crc entry, so we can check if we need to add
 	 * another:
 	 */
-	extent_for_each_ptr_crc(extent_i_to_s(e), ptr, crc)
+	extent_for_each_crc(extent_i_to_s(e), crc)
 		;
 
 	switch (bch_extent_crc_type(crc)) {
 	case BCH_EXTENT_CRC_NONE:
-		if (csum_type == BCH_CSUM_NONE &&
-		    compression_type == BCH_COMPRESSION_NONE)
+		if (!csum_type && !compression_type)
 			return;
 		break;
 	case BCH_EXTENT_CRC32:
-		if (crc->crc32.compressed_size	== compressed_size &&
-		    crc->crc32.uncompressed_size == uncompressed_size &&
-		    crc->crc32.offset		== 0 &&
-		    crc->crc32.compression_type	== compression_type &&
-		    crc->crc32.csum_type	== csum_type &&
-		    crc->crc32.csum		== csum)
-			return;
-		break;
 	case BCH_EXTENT_CRC64:
-		if (crc->crc64.compressed_size	== compressed_size &&
-		    crc->crc64.uncompressed_size == uncompressed_size &&
-		    crc->crc64.offset		== 0 &&
-		    crc->crc32.compression_type	== compression_type &&
-		    crc->crc64.csum_type	== csum_type &&
-		    crc->crc64.csum		== csum)
+		if (crc_to_64(crc).compressed_size	== compressed_size &&
+		    crc_to_64(crc).uncompressed_size	== uncompressed_size &&
+		    crc_to_64(crc).offset		== 0 &&
+		    crc_to_64(crc).compression_type	== compression_type &&
+		    crc_to_64(crc).csum_type		== csum_type &&
+		    crc_to_64(crc).csum			== csum)
 			return;
 		break;
 	}
 
-	switch (csum_type) {
-	case BCH_CSUM_NONE:
-	case BCH_CSUM_CRC32C:
-		BUG_ON(compressed_size > CRC32_EXTENT_SIZE_MAX ||
-		       uncompressed_size > CRC32_EXTENT_SIZE_MAX);
-
+	if (bch_crc_size[csum_type] <= 4 &&
+	    uncompressed_size <= CRC32_EXTENT_SIZE_MAX) {
 		extent_crc32_append(e, (struct bch_extent_crc32) {
 			.compressed_size	= compressed_size,
 			.uncompressed_size	= uncompressed_size,
@@ -978,10 +965,8 @@ static void extent_checksum_append(struct bkey_i_extent *e,
 			.csum_type		= csum_type,
 			.csum			= csum,
 		});
-		break;
-	case BCH_CSUM_CRC64:
-		BUG_ON(compressed_size > CRC64_EXTENT_SIZE_MAX ||
-		       uncompressed_size > CRC64_EXTENT_SIZE_MAX);
+	} else {
+		BUG_ON(uncompressed_size > CRC64_EXTENT_SIZE_MAX);
 
 		extent_crc64_append(e, (struct bch_extent_crc64) {
 			.compressed_size	= compressed_size,
@@ -991,9 +976,6 @@ static void extent_checksum_append(struct bkey_i_extent *e,
 			.csum_type		= csum_type,
 			.csum			= csum,
 		});
-		break;
-	default:
-		BUG();
 	}
 }
 
