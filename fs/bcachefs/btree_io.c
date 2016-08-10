@@ -640,15 +640,8 @@ static void do_btree_node_write(struct closure *cl)
 	b->written += sectors_to_write;
 
 	if (!bio_alloc_pages(bio, __GFP_NOWARN|GFP_NOWAIT)) {
-		int j;
-		struct bio_vec *bv;
-		void *base = (void *) ((unsigned long) data & ~(PAGE_SIZE - 1));
-
-		bio_for_each_segment_all(bv, bio, j)
-			memcpy(page_address(bv->bv_page),
-			       base + (j << PAGE_SHIFT), PAGE_SIZE);
-
 		wbio->bounce = true;
+		memcpy_to_bio(bio, bio->bi_iter, data);
 
 		bch_submit_bbio_replicas(wbio, c, &k.key, 0, true);
 		continue_at(cl, btree_node_write_done, NULL);

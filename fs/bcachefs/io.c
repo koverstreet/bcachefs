@@ -200,36 +200,6 @@ void bch_bbio_endio(struct bbio *bio)
 
 /* Writes */
 
-static void memcpy_to_bio(struct bio *dst, struct bvec_iter dst_iter,
-			  void *src)
-{
-	struct bio_vec bv;
-	struct bvec_iter iter;
-
-	__bio_for_each_segment(bv, dst, iter, dst_iter) {
-		void *dstp = kmap_atomic(bv.bv_page);
-		memcpy(dstp + bv.bv_offset, src, bv.bv_len);
-		kunmap_atomic(dstp);
-
-		src += bv.bv_len;
-	}
-}
-
-static void memcpy_from_bio(void *dst, struct bio *src,
-			    struct bvec_iter src_iter)
-{
-	struct bio_vec bv;
-	struct bvec_iter iter;
-
-	__bio_for_each_segment(bv, src, iter, src_iter) {
-		void *srcp = kmap_atomic(bv.bv_page);
-		memcpy(dst, srcp + bv.bv_offset, bv.bv_len);
-		kunmap_atomic(srcp);
-
-		dst += bv.bv_len;
-	}
-}
-
 enum bounced {
 	BOUNCED_MAPPED,
 	BOUNCED_KMALLOCED,

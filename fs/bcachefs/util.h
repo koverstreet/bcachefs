@@ -627,6 +627,7 @@ do {									\
 
 size_t bch_rand_range(size_t);
 
-void bch_semaphore_resize(struct semaphore *sem, int delta);
+void memcpy_to_bio(struct bio *, struct bvec_iter, void *);
+void memcpy_from_bio(void *, struct bio *, struct bvec_iter);
 
 #endif /* _BCACHE_UTIL_H */

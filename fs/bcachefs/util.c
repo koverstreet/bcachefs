@@ -390,17 +390,30 @@ size_t bch_rand_range(size_t max)
 	return rand;
 }
 
-void bch_semaphore_resize(struct semaphore *sem, int delta)
+void memcpy_to_bio(struct bio *dst, struct bvec_iter dst_iter, void *src)
 {
-	while (delta > 0) {
-		/* This should not block */
-		up(sem);
-		delta -= 1;
-	}
+	struct bio_vec bv;
+	struct bvec_iter iter;
 
-	while (delta < 0) {
-		/* This can block */
-		down(sem);
-		delta += 1;
+	__bio_for_each_segment(bv, dst, iter, dst_iter) {
+		void *dstp = kmap_atomic(bv.bv_page);
+		memcpy(dstp + bv.bv_offset, src, bv.bv_len);
+		kunmap_atomic(dstp);
+
+		src += bv.bv_len;
+	}
+}
+
+void memcpy_from_bio(void *dst, struct bio *src, struct bvec_iter src_iter)
+{
+	struct bio_vec bv;
+	struct bvec_iter iter;
+
+	__bio_for_each_segment(bv, src, iter, src_iter) {
+		void *srcp = kmap_atomic(bv.bv_page);
+		memcpy(dst, srcp + bv.bv_offset, bv.bv_len);
+		kunmap_atomic(srcp);
+
+		dst += bv.bv_len;
 	}
 }
