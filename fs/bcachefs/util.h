@@ -605,9 +605,6 @@ do {									\
 	bch_generic_make_request(bio, c);				\
 } while (0)
 
-uint64_t bch_crc64_update(uint64_t, const void *, size_t);
-uint64_t bch_crc64(const void *, size_t);
-
 #define kthread_wait_freezable(cond)					\
 ({									\
 	int _ret = 0;							\

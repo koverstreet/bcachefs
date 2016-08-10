@@ -7,6 +7,7 @@
 #include "btree_iter.h"
 #include "btree_locking.h"
 #include "buckets.h"
+#include "checksum.h"
 #include "debug.h"
 #include "error.h"
 #include "extents.h"

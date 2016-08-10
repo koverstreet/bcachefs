@@ -13,6 +13,7 @@
 #include "btree_gc.h"
 #include "btree_update.h"
 #include "btree_io.h"
+#include "checksum.h"
 #include "clock.h"
 #include "debug.h"
 #include "error.h"
@@ -32,7 +33,6 @@
 
 #include <linux/backing-dev.h>
 #include <linux/blkdev.h>
-#include <linux/crc32c.h>
 #include <linux/debugfs.h>
 #include <linux/genhd.h>
 #include <linux/idr.h>
@@ -69,29 +69,6 @@ struct workqueue_struct *bcache_io_wq;
 
 static void bch_cache_stop(struct cache *);
 static int bch_cache_online(struct cache *);
-
-u64 bch_checksum_update(unsigned type, u64 crc, const void *data, size_t len)
-{
-	switch (type) {
-	case BCH_CSUM_NONE:
-		return 0;
-	case BCH_CSUM_CRC32C:
-		return crc32c(crc, data, len);
-	case BCH_CSUM_CRC64:
-		return bch_crc64_update(crc, data, len);
-	default:
-		BUG();
-	}
-}
-
-u64 bch_checksum(unsigned type, const void *data, size_t len)
-{
-	u64 crc = 0xffffffffffffffffULL;
-
-	crc = bch_checksum_update(type, crc, data, len);
-
-	return crc ^ 0xffffffffffffffffULL;
-}
 
 static bool bch_is_open_cache(struct block_device *bdev)
 {

@@ -10,6 +10,7 @@
 #include "btree_gc.h"
 #include "btree_update.h"
 #include "btree_io.h"
+#include "checksum.h"
 #include "debug.h"
 #include "error.h"
 #include "extents.h"

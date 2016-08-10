@@ -10,6 +10,7 @@
 #include "bset.h"
 #include "btree_update.h"
 #include "buckets.h"
+#include "checksum.h"
 #include "clock.h"
 #include "debug.h"
 #include "error.h"
@@ -198,27 +199,6 @@ void bch_bbio_endio(struct bbio *bio)
 }
 
 /* Writes */
-
-static u32 checksum_bio(struct bio *bio, unsigned type)
-{
-	struct bio_vec bv;
-	struct bvec_iter iter;
-	u32 csum = U32_MAX;
-
-	if (type == BCH_CSUM_NONE)
-		return 0;
-
-	bio_for_each_segment(bv, bio, iter) {
-		void *p = kmap_atomic(bv.bv_page);
-
-		csum = bch_checksum_update(type, csum,
-					   p + bv.bv_offset,
-					   bv.bv_len);
-		kunmap_atomic(p);
-	}
-
-	return csum ^= U32_MAX;
-}
 
 static void memcpy_to_bio(struct bio *dst, struct bvec_iter dst_iter,
 			  void *src)
@@ -1069,7 +1049,7 @@ static int bch_write_extent(struct bch_write_op *op,
 		 * bucket lock - but compression is also being done
 		 * under it
 		 */
-		csum = checksum_bio(bio, csum_type);
+		csum = bch_checksum_bio(bio, csum_type);
 
 		/*
 		 * If possible, adjust existing pointers to only point to
@@ -1583,7 +1563,7 @@ static int bio_checksum_uncompress(struct cache_set *c,
 	}
 
 	if (rbio->crc.csum_type != BCH_CSUM_NONE &&
-	    rbio->crc.csum != checksum_bio(src, rbio->crc.csum_type)) {
+	    rbio->crc.csum != bch_checksum_bio(src, rbio->crc.csum_type)) {
 		cache_nonfatal_io_error(rbio->ca, "checksum error");
 		return -EIO;
 	}

@@ -2,6 +2,7 @@
 #define _BCACHE_STR_HASH_H
 
 #include "btree_iter.h"
+#include "checksum.h"
 #include "siphash.h"
 
 #include <crypto/sha1_base.h>
