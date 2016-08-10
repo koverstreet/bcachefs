@@ -43,19 +43,46 @@
  * https://131002.net/siphash/
  */
 
-//#include <sys/param.h>
-//#include <sys/systm.h>
-
 #include <asm/byteorder.h>
+#include <asm/unaligned.h>
+#include <linux/bitops.h>
 #include <linux/string.h>
 
 #include "siphash.h"
 
-static void	SipHash_CRounds(SIPHASH_CTX *, int);
-static void	SipHash_Rounds(SIPHASH_CTX *, int);
+static void SipHash_Rounds(SIPHASH_CTX *ctx, int rounds)
+{
+	while (rounds--) {
+		ctx->v[0] += ctx->v[1];
+		ctx->v[2] += ctx->v[3];
+		ctx->v[1] = rol64(ctx->v[1], 13);
+		ctx->v[3] = rol64(ctx->v[3], 16);
 
-void
-SipHash_Init(SIPHASH_CTX *ctx, const SIPHASH_KEY *key)
+		ctx->v[1] ^= ctx->v[0];
+		ctx->v[3] ^= ctx->v[2];
+		ctx->v[0] = rol64(ctx->v[0], 32);
+
+		ctx->v[2] += ctx->v[1];
+		ctx->v[0] += ctx->v[3];
+		ctx->v[1] = rol64(ctx->v[1], 17);
+		ctx->v[3] = rol64(ctx->v[3], 21);
+
+		ctx->v[1] ^= ctx->v[2];
+		ctx->v[3] ^= ctx->v[0];
+		ctx->v[2] = rol64(ctx->v[2], 32);
+	}
+}
+
+static void SipHash_CRounds(SIPHASH_CTX *ctx, const void *ptr, int rounds)
+{
+	u64 m = get_unaligned_le64(ptr);
+
+	ctx->v[3] ^= m;
+	SipHash_Rounds(ctx, rounds);
+	ctx->v[0] ^= m;
+}
+
+void SipHash_Init(SIPHASH_CTX *ctx, const SIPHASH_KEY *key)
 {
 	u64 k0, k1;
 
@@ -71,8 +98,8 @@ SipHash_Init(SIPHASH_CTX *ctx, const SIPHASH_KEY *key)
 	ctx->bytes = 0;
 }
 
-void
-SipHash_Update(SIPHASH_CTX *ctx, int rc, int rf, const void *src, size_t len)
+void SipHash_Update(SIPHASH_CTX *ctx, int rc, int rf,
+		    const void *src, size_t len)
 {
 	const u8 *ptr = src;
 	size_t left, used;
@@ -88,7 +115,7 @@ SipHash_Update(SIPHASH_CTX *ctx, int rc, int rf, const void *src, size_t len)
 
 		if (len >= left) {
 			memcpy(&ctx->buf[used], ptr, left);
-			SipHash_CRounds(ctx, rc);
+			SipHash_CRounds(ctx, ctx->buf, rc);
 			len -= left;
 			ptr += left;
 		} else {
@@ -98,8 +125,7 @@ SipHash_Update(SIPHASH_CTX *ctx, int rc, int rf, const void *src, size_t len)
 	}
 
 	while (len >= sizeof(ctx->buf)) {
-		memcpy(ctx->buf, ptr, sizeof(ctx->buf));
-		SipHash_CRounds(ctx, rc);
+		SipHash_CRounds(ctx, ptr, rc);
 		len -= sizeof(ctx->buf);
 		ptr += sizeof(ctx->buf);
 	}
@@ -108,8 +134,7 @@ SipHash_Update(SIPHASH_CTX *ctx, int rc, int rf, const void *src, size_t len)
 		memcpy(&ctx->buf[used], ptr, len);
 }
 
-void
-SipHash_Final(void *dst, SIPHASH_CTX *ctx, int rc, int rf)
+void SipHash_Final(void *dst, SIPHASH_CTX *ctx, int rc, int rf)
 {
 	u64 r;
 
@@ -118,8 +143,7 @@ SipHash_Final(void *dst, SIPHASH_CTX *ctx, int rc, int rf)
 	*((__le64 *) dst) = cpu_to_le64(r);
 }
 
-u64
-SipHash_End(SIPHASH_CTX *ctx, int rc, int rf)
+u64 SipHash_End(SIPHASH_CTX *ctx, int rc, int rf)
 {
 	u64 r;
 	size_t left, used;
@@ -129,7 +153,7 @@ SipHash_End(SIPHASH_CTX *ctx, int rc, int rf)
 	memset(&ctx->buf[used], 0, left - 1);
 	ctx->buf[7] = ctx->bytes;
 
-	SipHash_CRounds(ctx, rc);
+	SipHash_CRounds(ctx, ctx->buf, rc);
 	ctx->v[2] ^= 0xff;
 	SipHash_Rounds(ctx, rf);
 
@@ -138,48 +162,11 @@ SipHash_End(SIPHASH_CTX *ctx, int rc, int rf)
 	return (r);
 }
 
-u64
-SipHash(const SIPHASH_KEY *key, int rc, int rf, const void *src, size_t len)
+u64 SipHash(const SIPHASH_KEY *key, int rc, int rf, const void *src, size_t len)
 {
 	SIPHASH_CTX ctx;
 
 	SipHash_Init(&ctx, key);
 	SipHash_Update(&ctx, rc, rf, src, len);
-	return (SipHash_End(&ctx, rc, rf));
-}
-
-#define SIP_ROTL(x, b) ((x) << (b)) | ( (x) >> (64 - (b)))
-
-static void
-SipHash_Rounds(SIPHASH_CTX *ctx, int rounds)
-{
-	while (rounds--) {
-		ctx->v[0] += ctx->v[1];
-		ctx->v[2] += ctx->v[3];
-		ctx->v[1] = SIP_ROTL(ctx->v[1], 13);
-		ctx->v[3] = SIP_ROTL(ctx->v[3], 16);
-
-		ctx->v[1] ^= ctx->v[0];
-		ctx->v[3] ^= ctx->v[2];
-		ctx->v[0] = SIP_ROTL(ctx->v[0], 32);
-
-		ctx->v[2] += ctx->v[1];
-		ctx->v[0] += ctx->v[3];
-		ctx->v[1] = SIP_ROTL(ctx->v[1], 17);
-		ctx->v[3] = SIP_ROTL(ctx->v[3], 21);
-
-		ctx->v[1] ^= ctx->v[2];
-		ctx->v[3] ^= ctx->v[0];
-		ctx->v[2] = SIP_ROTL(ctx->v[2], 32);
-	}
-}
-
-static void
-SipHash_CRounds(SIPHASH_CTX *ctx, int rounds)
-{
-	u64 m = le64_to_cpu(*((__le64 *)ctx->buf));
-
-	ctx->v[3] ^= m;
-	SipHash_Rounds(ctx, rounds);
-	ctx->v[0] ^= m;
+	return SipHash_End(&ctx, rc, rf);
 }
