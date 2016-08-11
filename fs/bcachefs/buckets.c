@@ -357,6 +357,9 @@ do {								\
 	}							\
 } while (0)
 
+#if 0
+/* Reverting this until the copygc + compression issue is fixed: */
+
 static unsigned __disk_sectors(struct bch_extent_crc64 crc, unsigned sectors)
 {
 	return crc.compression_type
@@ -370,6 +373,17 @@ static unsigned __compressed_sectors(struct bch_extent_crc64 crc, unsigned secto
 		? min_t(unsigned, crc.compressed_size, sectors)
 		: sectors;
 }
+#else
+static unsigned __disk_sectors(struct bch_extent_crc64 crc, unsigned sectors)
+{
+	return sectors;
+}
+
+static unsigned __compressed_sectors(struct bch_extent_crc64 crc, unsigned sectors)
+{
+	return sectors;
+}
+#endif
 
 /*
  * Checking against gc's position has to be done here, inside the cmpxchg()
