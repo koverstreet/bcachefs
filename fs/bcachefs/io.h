@@ -16,6 +16,9 @@
 #define to_wbio(_bio)			\
 	container_of((_bio), struct bch_write_bio, bio.bio)
 
+void bch_bio_free_pages_pool(struct cache_set *, struct bio *);
+void bch_bio_alloc_pages_pool(struct cache_set *, struct bio *, size_t);
+
 enum bch_write_flags {
 	BCH_WRITE_ALLOC_NOWAIT		= (1 << 0),
 	BCH_WRITE_DISCARD		= (1 << 1),

@@ -520,7 +520,7 @@ static void btree_node_write_endio(struct bio *bio)
 	if (wbio->orig)
 		bio_endio(wbio->orig);
 	else if (wbio->bounce)
-		bio_free_pages(bio);
+		bch_bio_free_pages_pool(b->c, bio);
 
 	bch_bbio_endio(to_bbio(bio));
 }
@@ -603,13 +603,14 @@ static void do_btree_node_write(struct closure *cl)
 
 	wbio		= to_wbio(bio);
 	wbio->orig	= NULL;
-	wbio->bounce	= false;
+	wbio->bounce	= true;
 
 	bio->bi_end_io		= btree_node_write_endio;
 	bio->bi_private		= cl;
-	bio->bi_iter.bi_size	= sectors_to_write << 9;
 	bio_set_op_attrs(bio, REQ_OP_WRITE, REQ_META|WRITE_SYNC|REQ_FUA);
-	bch_bio_map(bio, data);
+
+	bch_bio_alloc_pages_pool(c, bio, sectors_to_write << 9);
+	memcpy_to_bio(bio, bio->bi_iter, data);
 
 	/*
 	 * If we're appending to a leaf node, we don't technically need FUA -
@@ -639,23 +640,8 @@ static void do_btree_node_write(struct closure *cl)
 
 	b->written += sectors_to_write;
 
-	if (!bio_alloc_pages(bio, __GFP_NOWARN|GFP_NOWAIT)) {
-		wbio->bounce = true;
-		memcpy_to_bio(bio, bio->bi_iter, data);
-
-		bch_submit_bbio_replicas(wbio, c, &k.key, 0, true);
-		continue_at(cl, btree_node_write_done, NULL);
-	} else {
-		trace_bcache_btree_bounce_write_fail(b);
-
-		bio->bi_vcnt = 0;
-		bch_bio_map(bio, data);
-
-		bch_submit_bbio_replicas(wbio, c, &k.key, 0, true);
-
-		closure_sync(cl);
-		continue_at_nobarrier(cl, btree_node_write_done, NULL);
-	}
+	bch_submit_bbio_replicas(wbio, c, &k.key, 0, true);
+	continue_at(cl, btree_node_write_done, NULL);
 }
 
 /*

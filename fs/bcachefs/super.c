@@ -1151,7 +1151,10 @@ static struct cache_set *bch_cache_set_alloc(struct cache_sb *sb,
 	    bioset_init(&c->bio_read_split, 1, offsetof(struct bch_read_bio, bio)) ||
 	    bioset_init(&c->bio_write, 1, offsetof(struct bch_write_bio, bio.bio)) ||
 	    mempool_init_page_pool(&c->bio_bounce_pages,
-				   CRC32_EXTENT_SIZE_MAX / PAGE_SECTORS, 0) ||
+				   max_t(unsigned,
+					 c->sb.btree_node_size,
+					 CRC32_EXTENT_SIZE_MAX) /
+				   PAGE_SECTORS, 0) ||
 	    mempool_init_page_pool(&c->compression_workspace_pool, 1,
 				   get_order(COMPRESSION_WORKSPACE_SIZE)) ||
 	    mempool_init_page_pool(&c->compression_bounce[READ], 1,

@@ -67,7 +67,7 @@ void bch_bio_submit_work(struct work_struct *work)
 
 /* Allocate, free from mempool: */
 
-static void bch_bio_free_pages_pool(struct cache_set *c, struct bio *bio)
+void bch_bio_free_pages_pool(struct cache_set *c, struct bio *bio)
 {
 	struct bio_vec *bv;
 	unsigned i;
@@ -100,8 +100,8 @@ pool_alloc:
 	bv->bv_offset = 0;
 }
 
-static void bch_bio_alloc_pages_pool(struct cache_set *c, struct bio *bio,
-				     size_t bytes)
+void bch_bio_alloc_pages_pool(struct cache_set *c, struct bio *bio,
+			      size_t bytes)
 {
 	bool using_mempool = false;
 
