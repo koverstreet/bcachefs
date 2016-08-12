@@ -228,6 +228,16 @@ static const char *validate_bset(struct cache_set *c, struct btree *b,
 			break;
 		}
 
+		if (k->format > KEY_FORMAT_CURRENT) {
+			btree_node_error(b, c, ptr,
+					 "invalid bkey format %u", k->format);
+
+			i->u64s = cpu_to_le16(le16_to_cpu(i->u64s) - k->u64s);
+			memmove(k, bkey_next(k),
+				(void *) bset_bkey_last(i) - (void *) k);
+			continue;
+		}
+
 		if (BSET_BIG_ENDIAN(i) != CPU_BIG_ENDIAN)
 			bch_bkey_swab(btree_node_type(b), &b->keys.format, k);
 
