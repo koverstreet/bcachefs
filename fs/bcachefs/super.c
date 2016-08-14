@@ -510,23 +510,35 @@ static int cache_set_mi_update(struct cache_set *c,
 	return 0;
 }
 
+/* doesn't copy member info */
+static void __copy_super(struct cache_sb *dst, struct cache_sb *src)
+{
+	dst->version		= src->version;
+	dst->seq		= src->seq;
+	dst->user_uuid		= src->user_uuid;
+	dst->set_uuid		= src->set_uuid;
+	memcpy(dst->label, src->label, SB_LABEL_SIZE);
+	dst->flags		= src->flags;
+	dst->flags2		= src->flags2;
+	dst->nr_in_set		= src->nr_in_set;
+	dst->block_size		= src->block_size;
+}
+
 static int cache_sb_to_cache_set(struct cache_set *c, struct cache_sb *src)
 {
 	struct cache_member *new;
-	struct cache_sb *dst = &c->disk_sb;
-	unsigned nr_in_set = src->nr_in_set;
 
 	lockdep_assert_held(&bch_register_lock);
 
-	new = kzalloc(sizeof(struct cache_member) * nr_in_set,
+	new = kzalloc(sizeof(struct cache_member) * src->nr_in_set,
 		      GFP_KERNEL);
 	if (!new)
 		return -ENOMEM;
 
 	memcpy(new, src->members,
-	       nr_in_set * sizeof(struct cache_member));
+	       src->nr_in_set * sizeof(struct cache_member));
 
-	if (cache_set_mi_update(c, new, nr_in_set)) {
+	if (cache_set_mi_update(c, new, src->nr_in_set)) {
 		kfree(new);
 		return -ENOMEM;
 	}
@@ -534,38 +546,21 @@ static int cache_sb_to_cache_set(struct cache_set *c, struct cache_sb *src)
 	kfree(c->disk_mi);
 	c->disk_mi = new;
 
-	dst->version		= src->version;
-	dst->seq		= src->seq;
-	dst->user_uuid		= src->user_uuid;
-	dst->set_uuid		= src->set_uuid;
-	memcpy(dst->label, src->label, SB_LABEL_SIZE);
-	dst->nr_in_set		= src->nr_in_set;
-	dst->flags		= src->flags;
-	dst->block_size		= src->block_size;
+	__copy_super(&c->disk_sb, src);
 
 	c->sb.block_size	= le16_to_cpu(src->block_size);
 	c->sb.btree_node_size	= CACHE_SET_BTREE_NODE_SIZE(src);
-
 	c->sb.nr_in_set		= src->nr_in_set;
-
 	c->sb.meta_replicas_have= CACHE_SET_META_REPLICAS_HAVE(src);
 	c->sb.data_replicas_have= CACHE_SET_DATA_REPLICAS_HAVE(src);
 	c->sb.str_hash_type	= CACHE_SET_STR_HASH_TYPE(src);
 
-	pr_debug("set version = %llu", le64_to_cpu(dst->version));
 	return 0;
 }
 
 static int cache_sb_from_cache_set(struct cache_set *c, struct cache *ca)
 {
 	struct cache_sb *src = &c->disk_sb, *dst = ca->disk_sb.sb;
-
-	dst->version		= cpu_to_le64(BCACHE_SB_VERSION_CDEV);
-	dst->seq		= src->seq;
-	dst->user_uuid		= src->user_uuid;
-	dst->set_uuid		= src->set_uuid;
-	memcpy(dst->label, src->label, SB_LABEL_SIZE);
-	dst->flags		= src->flags;
 
 	if (src->nr_in_set != dst->nr_in_set) {
 		/*
@@ -591,6 +586,8 @@ static int cache_sb_from_cache_set(struct cache_set *c, struct cache *ca)
 	memcpy(dst->_data,
 	       c->disk_mi,
 	       src->nr_in_set * sizeof(struct cache_member));
+
+	__copy_super(dst, src);
 
 	return 0;
 }
