@@ -264,7 +264,7 @@ static int __bch_journal_seq_blacklisted(struct cache_set *c, u64 seq,
 	if (seq <= j->seq)
 		return 0;
 
-	cache_set_inconsistent_on(seq > j->seq + 1, c,
+	cache_set_inconsistent_on(seq > j->seq + 2, c,
 			 "bset journal seq too far in the future: %llu > %llu",
 			 seq, j->seq);
 
