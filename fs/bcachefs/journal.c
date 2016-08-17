@@ -912,7 +912,7 @@ static void __bch_journal_next_entry(struct journal *j)
 	 * incremented for last_seq() to be calculated correctly
 	 */
 	BUG_ON(!fifo_push(&j->pin, pin_list));
-	p = &fifo_back(&j->pin);
+	p = &fifo_peek_back(&j->pin);
 
 	INIT_LIST_HEAD(&p->list);
 	atomic_set(&p->count, 1);
@@ -971,7 +971,7 @@ static enum {
 	buf->data->u64s		= cpu_to_le32(old.cur_entry_offset);
 	buf->data->last_seq	= cpu_to_le64(last_seq(j));
 
-	atomic_dec_bug(&fifo_back(&j->pin).count);
+	atomic_dec_bug(&fifo_peek_back(&j->pin).count);
 	__bch_journal_next_entry(j);
 
 	spin_unlock(&j->lock);
@@ -1182,7 +1182,7 @@ void bch_journal_start(struct cache_set *c)
 		struct journal_entry_pin_list pin_list, *p;
 
 		BUG_ON(!fifo_push(&j->pin, pin_list));
-		p = &fifo_back(&j->pin);
+		p = &fifo_peek_back(&j->pin);
 
 		INIT_LIST_HEAD(&p->list);
 		atomic_set(&p->count, 0);
@@ -1207,7 +1207,7 @@ void bch_journal_start(struct cache_set *c)
 					JOURNAL_ENTRY_JOURNAL_SEQ_BLACKLISTED,
 					0, 0);
 
-			__journal_pin_add(j, &fifo_back(&j->pin), &bl->pin,
+			__journal_pin_add(j, &fifo_peek_back(&j->pin), &bl->pin,
 					  journal_seq_blacklist_flush);
 			bl->written = true;
 		}
@@ -1371,8 +1371,8 @@ static void journal_reclaim_fast(struct journal *j)
 	 * Unpin journal entries whose reference counts reached zero, meaning
 	 * all btree nodes got written out
 	 */
-	while (!atomic_read(&fifo_front(&j->pin).count)) {
-		BUG_ON(!list_empty(&fifo_front(&j->pin).list));
+	while (!atomic_read(&fifo_peek_front(&j->pin).count)) {
+		BUG_ON(!list_empty(&fifo_peek_front(&j->pin).list));
 		BUG_ON(!fifo_pop(&j->pin, temp));
 	}
 }
@@ -1385,7 +1385,7 @@ journal_get_next_pin(struct journal *j, u64 seq_to_flush)
 	unsigned iter;
 
 	/* so we don't iterate over empty fifo entries below: */
-	if (!atomic_read(&fifo_front(&j->pin).count)) {
+	if (!atomic_read(&fifo_peek_front(&j->pin).count)) {
 		spin_lock(&j->lock);
 		journal_reclaim_fast(j);
 		spin_unlock(&j->lock);

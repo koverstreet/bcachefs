@@ -236,7 +236,7 @@ static inline void bch_journal_set_replay_done(struct journal *j)
 {
 	spin_lock(&j->lock);
 	set_bit(JOURNAL_REPLAY_DONE, &j->flags);
-	j->cur_pin_list = &fifo_back(&j->pin);
+	j->cur_pin_list = &fifo_peek_back(&j->pin);
 	spin_unlock(&j->lock);
 }
 
