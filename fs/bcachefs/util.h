@@ -60,6 +60,10 @@ struct closure;
 #define CPU_BIG_ENDIAN		1
 #endif
 
+#define type_is(_val, _type)						\
+	(__builtin_types_compatible_p(typeof(_val), _type) ||		\
+	 __builtin_types_compatible_p(typeof(_val), const _type))
+
 #define DECLARE_HEAP(type, name)					\
 	struct {							\
 		size_t size, used;					\
@@ -242,18 +246,13 @@ static inline int bch_strtoul_h(const char *cp, long *res)
 }
 
 #define strtoi_h(cp, res)						\
-	(__builtin_types_compatible_p(typeof(*res), int)		\
-	? bch_strtoint_h(cp, (void *) res)				\
-	: __builtin_types_compatible_p(typeof(*res), long)		\
-	? bch_strtol_h(cp, (void *) res)				\
-	: __builtin_types_compatible_p(typeof(*res), long long)		\
-	? bch_strtoll_h(cp, (void *) res)				\
-	: __builtin_types_compatible_p(typeof(*res), unsigned int)	\
-	? bch_strtouint_h(cp, (void *) res)				\
-	: __builtin_types_compatible_p(typeof(*res), unsigned long)	\
-	? bch_strtoul_h(cp, (void *) res)				\
-	: __builtin_types_compatible_p(typeof(*res), unsigned long long)\
-	? bch_strtoull_h(cp, (void *) res) : -EINVAL)
+	( type_is(*res, int)		? bch_strtoint_h(cp, (void *) res)\
+	: type_is(*res, long)		? bch_strtol_h(cp, (void *) res)\
+	: type_is(*res, long long)	? bch_strtoll_h(cp, (void *) res)\
+	: type_is(*res, unsigned)	? bch_strtouint_h(cp, (void *) res)\
+	: type_is(*res, unsigned long)	? bch_strtoul_h(cp, (void *) res)\
+	: type_is(*res, unsigned long long) ? bch_strtoull_h(cp, (void *) res)\
+	: -EINVAL)
 
 #define strtoul_safe(cp, var)						\
 ({									\
@@ -286,20 +285,14 @@ static inline int bch_strtoul_h(const char *cp, long *res)
 
 #define snprint(buf, size, var)						\
 	snprintf(buf, size,						\
-		__builtin_types_compatible_p(typeof(var), int)		\
-		     ? "%i\n" :						\
-		__builtin_types_compatible_p(typeof(var), unsigned)	\
-		     ? "%u\n" :						\
-		__builtin_types_compatible_p(typeof(var), long)		\
-		     ? "%li\n" :					\
-		__builtin_types_compatible_p(typeof(var), unsigned long)\
-		     ? "%lu\n" :					\
-		__builtin_types_compatible_p(typeof(var), int64_t)	\
-		     ? "%lli\n" :					\
-		__builtin_types_compatible_p(typeof(var), uint64_t)	\
-		     ? "%llu\n" :					\
-		__builtin_types_compatible_p(typeof(var), const char *)	\
-		     ? "%s\n" : "%i\n", var)
+		   type_is(var, int)		? "%i\n"		\
+		 : type_is(var, unsigned)	? "%u\n"		\
+		 : type_is(var, long)		? "%li\n"		\
+		 : type_is(var, unsigned long)	? "%lu\n"		\
+		 : type_is(var, s64)		? "%lli\n"		\
+		 : type_is(var, u64)		? "%llu\n"		\
+		 : type_is(var, char *)		? "%s\n"		\
+		 : "%i\n", var)
 
 ssize_t bch_hprint(char *buf, int64_t v);
 

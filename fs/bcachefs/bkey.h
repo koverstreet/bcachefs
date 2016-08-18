@@ -25,10 +25,6 @@ struct bkey_s {
 	};
 };
 
-#define type_is(_val, _type)						\
-	(__builtin_types_compatible_p(typeof(_val), _type) ||		\
-	 __builtin_types_compatible_p(typeof(_val), const _type))
-
 #define bkey_next(_k)							\
 ({									\
 	BUILD_BUG_ON(!type_is(_k, struct bkey *) &&			\
