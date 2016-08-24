@@ -2231,7 +2231,7 @@ const char *bch_register_cache_set(char * const *devices, unsigned nr_devices,
 
 		err = validate_cache_super(sb);
 		if (err)
-			return err;
+			goto err_unlock;
 	}
 
 	err = "cache set already registered";
