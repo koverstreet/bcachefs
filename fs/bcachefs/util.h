@@ -60,6 +60,11 @@ struct closure;
 #define CPU_BIG_ENDIAN		1
 #endif
 
+/* type hackery */
+
+#define type_is_exact(_val, _type)					\
+	__builtin_types_compatible_p(typeof(_val), _type)
+
 #define type_is(_val, _type)						\
 	(__builtin_types_compatible_p(typeof(_val), _type) ||		\
 	 __builtin_types_compatible_p(typeof(_val), const _type))

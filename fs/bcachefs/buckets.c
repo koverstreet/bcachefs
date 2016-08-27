@@ -393,7 +393,7 @@ static unsigned __compressed_sectors(struct bch_extent_crc64 crc, unsigned secto
 static void bch_mark_pointer(struct cache_set *c,
 			     struct bkey_s_c_extent e,
 			     struct cache *ca,
-			     union bch_extent_crc *crc,
+			     const union bch_extent_crc *crc,
 			     const struct bch_extent_ptr *ptr,
 			     int sectors, enum s_alloc type,
 			     bool may_make_unavailable,
@@ -510,7 +510,7 @@ static void bch_mark_extent(struct cache_set *c, struct bkey_s_c_extent e,
 			    bool is_gc, struct gc_pos gc_pos)
 {
 	const struct bch_extent_ptr *ptr;
-	union bch_extent_crc *crc;
+	const union bch_extent_crc *crc;
 	struct cache *ca;
 	enum s_alloc type = metadata ? S_META : S_DIRTY;
 

@@ -806,12 +806,6 @@ static void bch_write_endio(struct bio *bio)
 	closure_put(cl);
 }
 
-static const unsigned bch_crc_size[] = {
-	[BCH_CSUM_NONE]		= 0,
-	[BCH_CSUM_CRC32C]	= 4,
-	[BCH_CSUM_CRC64]	= 8,
-};
-
 /*
  * We're writing another replica for this extent, so while we've got the data in
  * memory we'll be computing a new checksum for the currently live data.
@@ -839,7 +833,7 @@ static void extent_cleanup_checksums(struct bkey_s_extent e,
 	union bch_extent_crc *crc;
 
 	extent_for_each_crc(e, crc)
-		switch (bch_extent_crc_type(crc)) {
+		switch (extent_crc_type(crc)) {
 		case BCH_EXTENT_CRC_NONE:
 			BUG();
 		case BCH_EXTENT_CRC32:
@@ -847,7 +841,7 @@ static void extent_cleanup_checksums(struct bkey_s_extent e,
 			    bch_crc_size[csum_type] > sizeof(crc->crc32.csum))
 				continue;
 
-			extent_adjust_pointers(e, (void *) crc);
+			extent_adjust_pointers(e, crc);
 			crc->crc32.compressed_size	= e.k->size;
 			crc->crc32.uncompressed_size	= e.k->size;
 			crc->crc32.offset		= 0;
@@ -859,7 +853,7 @@ static void extent_cleanup_checksums(struct bkey_s_extent e,
 			    bch_crc_size[csum_type] > sizeof(crc->crc64.csum))
 				continue;
 
-			extent_adjust_pointers(e, (void *) crc);
+			extent_adjust_pointers(e, crc);
 			crc->crc64.compressed_size	= e.k->size;
 			crc->crc64.uncompressed_size	= e.k->size;
 			crc->crc64.offset		= 0;
@@ -867,66 +861,6 @@ static void extent_cleanup_checksums(struct bkey_s_extent e,
 			crc->crc64.csum		= csum;
 			break;
 		}
-}
-
-static void extent_checksum_append(struct bkey_i_extent *e,
-				   unsigned compressed_size,
-				   unsigned uncompressed_size,
-				   unsigned compression_type,
-				   u64 csum, unsigned csum_type)
-{
-	union bch_extent_crc *crc;
-
-	BUG_ON(compressed_size > uncompressed_size);
-	BUG_ON(uncompressed_size != e->k.size);
-	BUG_ON(!compressed_size || !uncompressed_size);
-
-	/*
-	 * Look up the last crc entry, so we can check if we need to add
-	 * another:
-	 */
-	extent_for_each_crc(extent_i_to_s(e), crc)
-		;
-
-	switch (bch_extent_crc_type(crc)) {
-	case BCH_EXTENT_CRC_NONE:
-		if (!csum_type && !compression_type)
-			return;
-		break;
-	case BCH_EXTENT_CRC32:
-	case BCH_EXTENT_CRC64:
-		if (crc_to_64(crc).compressed_size	== compressed_size &&
-		    crc_to_64(crc).uncompressed_size	== uncompressed_size &&
-		    crc_to_64(crc).offset		== 0 &&
-		    crc_to_64(crc).compression_type	== compression_type &&
-		    crc_to_64(crc).csum_type		== csum_type &&
-		    crc_to_64(crc).csum			== csum)
-			return;
-		break;
-	}
-
-	if (bch_crc_size[csum_type] <= 4 &&
-	    uncompressed_size <= CRC32_EXTENT_SIZE_MAX) {
-		extent_crc32_append(e, (struct bch_extent_crc32) {
-			.compressed_size	= compressed_size,
-			.uncompressed_size	= uncompressed_size,
-			.offset			= 0,
-			.compression_type	= compression_type,
-			.csum_type		= csum_type,
-			.csum			= csum,
-		});
-	} else {
-		BUG_ON(uncompressed_size > CRC64_EXTENT_SIZE_MAX);
-
-		extent_crc64_append(e, (struct bch_extent_crc64) {
-			.compressed_size	= compressed_size,
-			.uncompressed_size	= uncompressed_size,
-			.offset			= 0,
-			.compression_type	= compression_type,
-			.csum_type		= csum_type,
-			.csum			= csum,
-		});
-	}
 }
 
 static int bch_write_extent(struct bch_write_op *op,
@@ -958,12 +892,12 @@ static int bch_write_extent(struct bch_write_op *op,
 	}
 
 	if (op->flags & BCH_WRITE_DATA_COMPRESSED) {
-		extent_checksum_append(e,
-				       op->crc.compressed_size,
-				       op->crc.uncompressed_size,
-				       op->crc.compression_type,
-				       op->crc.csum,
-				       op->crc.csum_type);
+		bch_extent_crc_append(e,
+				      op->crc.compressed_size,
+				      op->crc.uncompressed_size,
+				      op->crc.compression_type,
+				      op->crc.csum,
+				      op->crc.csum_type);
 		bch_alloc_sectors_done(op->c, op->wp,
 				       e, op->nr_replicas,
 				       ob, bio_sectors(orig));
@@ -1036,9 +970,9 @@ static int bch_write_extent(struct bch_write_op *op,
 		 * Add a bch_extent_crc header for the pointers that
 		 * bch_alloc_sectors_done() is going to append:
 		 */
-		extent_checksum_append(e, bio_sectors(bio), e->k.size,
-				       compression_type,
-				       csum, csum_type);
+		bch_extent_crc_append(e, bio_sectors(bio), e->k.size,
+				      compression_type,
+				      csum, csum_type);
 		bch_alloc_sectors_done(op->c, op->wp,
 				       e, op->nr_replicas,
 				       ob, bio_sectors(bio));
@@ -1051,8 +985,8 @@ static int bch_write_extent(struct bch_write_op *op,
 		 * We might need a checksum entry, if there's a previous
 		 * checksum entry we need to override:
 		 */
-		extent_checksum_append(e, e->k.size, e->k.size,
-				       compression_type, 0, csum_type);
+		bch_extent_crc_append(e, e->k.size, e->k.size,
+				      compression_type, 0, csum_type);
 		bch_alloc_sectors_done(op->c, op->wp,
 				       e, op->nr_replicas,
 				       ob, e->k.size);

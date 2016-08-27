@@ -117,9 +117,9 @@ extent_entry_type(const union bch_extent_entry *e)
 	return ret;
 }
 
-static inline size_t __extent_entry_bytes(enum bch_extent_entry_type type)
+static inline size_t extent_entry_bytes(const union bch_extent_entry *entry)
 {
-	switch (type) {
+	switch (extent_entry_type(entry)) {
 	case BCH_EXTENT_ENTRY_crc32:
 		return sizeof(struct bch_extent_crc32);
 	case BCH_EXTENT_ENTRY_crc64:
@@ -131,19 +131,9 @@ static inline size_t __extent_entry_bytes(enum bch_extent_entry_type type)
 	}
 }
 
-static inline size_t __extent_entry_u64s(enum bch_extent_entry_type type)
+static inline size_t extent_entry_u64s(const union bch_extent_entry *entry)
 {
-	return __extent_entry_bytes(type) / sizeof(u64);
-}
-
-static inline size_t extent_entry_bytes(const union bch_extent_entry *e)
-{
-	return __extent_entry_bytes(extent_entry_type(e));
-}
-
-static inline size_t extent_entry_u64s(const union bch_extent_entry *e)
-{
-	return extent_entry_bytes(e) / sizeof(u64);
+	return extent_entry_bytes(entry) / sizeof(u64);
 }
 
 static inline bool extent_entry_is_ptr(const union bch_extent_entry *e)
@@ -162,6 +152,42 @@ union bch_extent_crc {
 	struct bch_extent_crc64		crc64;
 };
 
+/* downcast, preserves const */
+#define to_entry(_entry)						\
+({									\
+	BUILD_BUG_ON(!type_is(_entry, union bch_extent_crc *) &&	\
+		     !type_is(_entry, struct bch_extent_ptr *));	\
+									\
+	__builtin_choose_expr(						\
+		(type_is_exact(_entry, const union bch_extent_crc *) ||	\
+		 type_is_exact(_entry, const struct bch_extent_ptr *)),	\
+		(const union bch_extent_entry *) (_entry),		\
+		(union bch_extent_entry *) (_entry));			\
+})
+
+#define __entry_to_crc(_entry)						\
+	__builtin_choose_expr(						\
+		type_is_exact(_entry, const union bch_extent_entry *),	\
+		(const union bch_extent_crc *) (_entry),		\
+		(union bch_extent_crc *) (_entry))
+
+#define entry_to_crc(_entry)						\
+({									\
+	EBUG_ON((_entry) && !extent_entry_is_crc(_entry));		\
+									\
+	__entry_to_crc(_entry);						\
+})
+
+#define entry_to_ptr(_entry)						\
+({									\
+	EBUG_ON((_entry) && !extent_entry_is_ptr(_entry));		\
+									\
+	__builtin_choose_expr(						\
+		type_is_exact(_entry, const union bch_extent_entry *),	\
+		(const struct bch_extent_ptr *) (_entry),		\
+		(struct bch_extent_ptr *) (_entry));			\
+})
+
 enum bch_extent_crc_type {
 	BCH_EXTENT_CRC_NONE,
 	BCH_EXTENT_CRC32,
@@ -169,12 +195,12 @@ enum bch_extent_crc_type {
 };
 
 static inline enum bch_extent_crc_type
-bch_extent_crc_type(const union bch_extent_crc *crc)
+extent_crc_type(const union bch_extent_crc *crc)
 {
 	if (!crc)
 		return BCH_EXTENT_CRC_NONE;
 
-	switch (extent_entry_type((void *) crc)) {
+	switch (extent_entry_type(to_entry(crc))) {
 	case BCH_EXTENT_ENTRY_crc32:
 		return BCH_EXTENT_CRC32;
 	case BCH_EXTENT_ENTRY_crc64:
@@ -190,6 +216,8 @@ bch_extent_crc_type(const union bch_extent_crc *crc)
 #define extent_entry_last(_e)						\
 	bkey_idx((_e).v, bkey_val_u64s((_e).k))
 
+/* Iterate over all entries: */
+
 #define extent_for_each_entry_from(_e, _entry, _start)			\
 	for ((_entry) = _start;						\
 	     (_entry) < extent_entry_last(_e);				\
@@ -198,33 +226,36 @@ bch_extent_crc_type(const union bch_extent_crc *crc)
 #define extent_for_each_entry(_e, _entry)				\
 	extent_for_each_entry_from(_e, _entry, (_e).v->start)
 
+/* Iterate over crcs only: */
+
 #define extent_crc_next(_e, _p)						\
 ({									\
-	union bch_extent_entry *_entry = _p;				\
+	typeof(&(_e).v->start[0]) _entry = _p;				\
 									\
 	while ((_entry) < extent_entry_last(_e) &&			\
 	       !extent_entry_is_crc(_entry))				\
 		(_entry) = extent_entry_next(_entry);			\
 									\
-	_entry < extent_entry_last(_e) ? (void *) _entry : NULL;	\
+	entry_to_crc(_entry < extent_entry_last(_e) ? _entry : NULL);	\
 })
 
 #define extent_for_each_crc(_e, _crc)					\
 	for ((_crc) = extent_crc_next(_e, (_e).v->start);		\
 	     (_crc);							\
-	     (_crc) = extent_crc_next(_e, extent_entry_next((void *) (_crc))))
+	     (_crc) = extent_crc_next(_e, extent_entry_next(to_entry(_crc))))
 
-/* Iterates through entries until it hits a pointer: */
+/* Iterate over pointers, with crcs: */
+
 #define extent_ptr_crc_next_filter(_e, _crc, _ptr, _filter)		\
 ({									\
 	__label__ out;							\
-	const union bch_extent_entry *_entry;				\
+	typeof(&(_e).v->start[0]) _entry;				\
 									\
-	extent_for_each_entry_from(_e, _entry, (void *) _ptr)		\
+	extent_for_each_entry_from(_e, _entry, to_entry(_ptr))		\
 		if (extent_entry_is_crc(_entry)) {			\
-			(_crc) = (void *) _entry;			\
+			(_crc) = entry_to_crc(_entry);			\
 		} else {						\
-			_ptr = (typeof(_ptr)) &_entry->ptr;		\
+			_ptr = entry_to_ptr(_entry);			\
 			if (_filter)					\
 				goto out;				\
 		}							\
@@ -234,49 +265,45 @@ out:									\
 	_ptr;								\
 })
 
-#define extent_ptr_next_filter(_e, _ptr, _filter)			\
-({									\
-	union bch_extent_crc *_crc;					\
-									\
-	extent_ptr_crc_next_filter(_e, _crc, _ptr, _filter);		\
-})
-
-#define extent_ptr_crc_next(_e, _crc, _ptr)				\
-	extent_ptr_crc_next_filter(_e, _crc, _ptr, true)
-
-#define extent_ptr_next(_e, _ptr)					\
-	extent_ptr_next_filter(_e, _ptr, true)
-
 #define extent_for_each_ptr_crc_filter(_e, _ptr, _crc, _filter)		\
 	for ((_crc) = NULL,						\
 	     (_ptr) = &(_e).v->start->ptr;				\
 	     ((_ptr) = extent_ptr_crc_next_filter(_e, _crc, _ptr, _filter));\
 	     (_ptr)++)
 
-#define extent_for_each_ptr_from_filter(_e, _ptr, _start, _filter)	\
-	for ((_ptr) = (_start);				\
-	     ((_ptr) = extent_ptr_next_filter(_e, _ptr, _filter));	\
-	     (_ptr)++)
-
-#define extent_for_each_ptr_filter(_e, _ptr, _filter)			\
-	extent_for_each_ptr_from_filter(_e, _ptr, &(_e).v->start->ptr, _filter)
-
 #define extent_for_each_ptr_crc(_e, _ptr, _crc)				\
 	extent_for_each_ptr_crc_filter(_e, _ptr, _crc, true)
-
-#define extent_for_each_ptr_from(_e, _ptr, _start)			\
-	extent_for_each_ptr_from_filter(_e, _ptr, _start, true)
-
-#define extent_for_each_ptr(_e, _ptr)					\
-	extent_for_each_ptr_filter(_e, _ptr, true)
 
 #define extent_for_each_online_device_crc(_c, _e, _crc, _ptr, _ca)	\
 	extent_for_each_ptr_crc_filter(_e, _ptr, _crc,			\
 				       ((_ca) = PTR_CACHE(_c, _ptr)))
 
+/* Iterate over pointers only, and from a given position: */
+
+#define extent_ptr_next_filter(_e, _ptr, _filter)			\
+({									\
+	typeof(__entry_to_crc(&(_e).v->start[0])) _crc;			\
+									\
+	extent_ptr_crc_next_filter(_e, _crc, _ptr, _filter);		\
+})
+
+#define extent_ptr_next(_e, _ptr)					\
+	extent_ptr_next_filter(_e, _ptr, true)
+
+#define extent_for_each_ptr_from_filter(_e, _ptr, _start, _filter)	\
+	for ((_ptr) = (_start);				\
+	     ((_ptr) = extent_ptr_next_filter(_e, _ptr, _filter));	\
+	     (_ptr)++)
+
+#define extent_for_each_ptr_from(_e, _ptr, _start)			\
+	extent_for_each_ptr_from_filter(_e, _ptr, _start, true)
+
+#define extent_for_each_ptr(_e, _ptr)					\
+	extent_for_each_ptr_from_filter(_e, _ptr, &(_e).v->start->ptr, true)
+
 #define extent_for_each_online_device(_c, _e, _ptr, _ca)		\
-	extent_for_each_ptr_filter(_e, _ptr,				\
-				   ((_ca) = PTR_CACHE(_c, _ptr)))
+	extent_for_each_ptr_from_filter(_e, _ptr, &(_e).v->start->ptr,	\
+					((_ca) = PTR_CACHE(_c, _ptr)))
 
 #define extent_ptr_prev(_e, _ptr)					\
 ({									\
@@ -301,39 +328,15 @@ out:									\
 	     (_ptr);							\
 	     (_ptr) = extent_ptr_prev(_e, _ptr))
 
-/*
- * make sure the type field gets set correctly:
- */
-#define __extent_entry_append(_e, _type, _val)				\
-do {									\
-	union bch_extent_entry *_new =					\
-		extent_entry_last(extent_i_to_s((_e)));			\
-									\
-	(_e)->k.u64s += __extent_entry_u64s(BCH_EXTENT_ENTRY_##_type);	\
-	BUG_ON(bkey_val_u64s(&(_e)->k) > BKEY_EXTENT_VAL_U64s_MAX);	\
-									\
-	_new->_type = _val;						\
-	_new->_type.type = 1 << BCH_EXTENT_ENTRY_##_type;		\
-									\
-	BUG_ON(extent_entry_type(_new) != BCH_EXTENT_ENTRY_##_type);	\
-} while (0)
-
-static inline void extent_crc32_append(struct bkey_i_extent *e,
-				       struct bch_extent_crc32 crc)
-{
-	__extent_entry_append(e, crc32, crc);
-}
-
-static inline void extent_crc64_append(struct bkey_i_extent *e,
-				       struct bch_extent_crc64 crc)
-{
-	__extent_entry_append(e, crc64, crc);
-}
+void bch_extent_entry_append(struct bkey_i_extent *, union bch_extent_entry *);
+void bch_extent_crc_append(struct bkey_i_extent *, unsigned, unsigned,
+			   unsigned, u64, unsigned);
 
 static inline void extent_ptr_append(struct bkey_i_extent *e,
 				     struct bch_extent_ptr ptr)
 {
-	__extent_entry_append(e, ptr, ptr);
+	ptr.type = 1 << BCH_EXTENT_ENTRY_ptr;
+	bch_extent_entry_append(e, to_entry(&ptr));
 }
 
 /* XXX: inefficient */
@@ -348,9 +351,11 @@ static inline bool bch_extent_ptr_is_dirty(const struct cache_set *c,
 	return bch_extent_nr_ptrs_from(e, ptr) <= c->opts.data_replicas;
 }
 
+extern const unsigned bch_crc_size[];
+
 static inline struct bch_extent_crc64 crc_to_64(const union bch_extent_crc *crc)
 {
-	switch (bch_extent_crc_type(crc)) {
+	switch (extent_crc_type(crc)) {
 	case BCH_EXTENT_CRC_NONE:
 		return (struct bch_extent_crc64) { 0 };
 	case BCH_EXTENT_CRC32:
@@ -393,7 +398,7 @@ static inline unsigned bkey_extent_is_compressed(struct cache_set *c,
 	return ret;
 }
 
-void extent_adjust_pointers(struct bkey_s_extent, union bch_extent_entry *);
+void extent_adjust_pointers(struct bkey_s_extent, union bch_extent_crc *);
 
 /* Doesn't cleanup redundant crcs */
 static inline void __bch_extent_drop_ptr(struct bkey_s_extent e,

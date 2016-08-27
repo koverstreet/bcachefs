@@ -157,36 +157,38 @@ unsigned bch_extent_nr_ptrs(struct bkey_s_c_extent e)
 }
 
 /* returns true if equal */
-static bool crc_cmp(union bch_extent_entry *l, union bch_extent_entry *r)
+static bool crc_cmp(union bch_extent_crc *l, union bch_extent_crc *r)
 {
-	return extent_entry_type(l) == extent_entry_type(r) &&
-		!memcmp(l, r, extent_entry_bytes(l));
+	return extent_crc_type(l) == extent_crc_type(r) &&
+		!memcmp(l, r, extent_entry_bytes(to_entry(l)));
 }
 
 /* Increment pointers after @crc by crc's offset until the next crc entry: */
-void extent_adjust_pointers(struct bkey_s_extent e, union bch_extent_entry *crc)
+void extent_adjust_pointers(struct bkey_s_extent e, union bch_extent_crc *crc)
 {
 	union bch_extent_entry *entry;
-	unsigned offset = crc_to_64((void *) crc).offset;
 
-	extent_for_each_entry_from(e, entry, extent_entry_next(crc)) {
+	extent_for_each_entry_from(e, entry, extent_entry_next(to_entry(crc))) {
 		if (!extent_entry_is_ptr(entry))
 			return;
 
-		entry->ptr.offset += offset;
+		entry->ptr.offset += crc_to_64(crc).offset;
 	}
 }
 
 static void extent_cleanup_crcs(struct bkey_s_extent e)
 {
-	union bch_extent_entry *crc = e.v->start, *prev = NULL;
+	union bch_extent_entry *entry = e.v->start;
+	union bch_extent_crc *crc, *prev = NULL;
 
-	while (crc != extent_entry_last(e)) {
-		union bch_extent_entry *next = extent_entry_next(crc);
-		size_t crc_u64s = extent_entry_u64s(crc);
+	while (entry != extent_entry_last(e)) {
+		union bch_extent_entry *next = extent_entry_next(entry);
+		size_t crc_u64s = extent_entry_u64s(entry);
 
-		if (!extent_entry_is_crc(crc))
+		if (!extent_entry_is_crc(entry))
 			goto next;
+
+		crc = entry_to_crc(entry);
 
 		if (next == extent_entry_last(e)) {
 			/* crc entry with no pointers after it: */
@@ -204,8 +206,8 @@ static void extent_cleanup_crcs(struct bkey_s_extent e)
 		}
 
 		if (!prev &&
-		    !crc_to_64((void *) crc).csum_type &&
-		    !crc_to_64((void *) crc).compression_type){
+		    !crc_to_64(crc).csum_type &&
+		    !crc_to_64(crc).compression_type){
 			/* null crc entry: */
 			extent_adjust_pointers(e, crc);
 			goto drop;
@@ -213,7 +215,7 @@ static void extent_cleanup_crcs(struct bkey_s_extent e)
 
 		prev = crc;
 next:
-		crc = next;
+		entry = next;
 		continue;
 drop:
 		memmove(crc, next,
@@ -325,7 +327,7 @@ static size_t extent_print_ptrs(struct cache_set *c, char *buf,
 		switch (extent_entry_type(entry)) {
 		case BCH_EXTENT_ENTRY_crc32:
 		case BCH_EXTENT_ENTRY_crc64:
-			crc = crc_to_64((void *) entry);
+			crc = crc_to_64(entry_to_crc(entry));
 			p("crc: c_size %u size %u offset %u csum %u compress %u",
 			  crc.compressed_size, crc.uncompressed_size,
 			  crc.offset, crc.csum_type, crc.compression_type);
@@ -481,7 +483,7 @@ struct extent_pick_ptr
 bch_btree_pick_ptr(struct cache_set *c, const struct btree *b)
 {
 	struct bkey_s_c_extent e = bkey_i_to_s_c_extent(&b->key);
-	union bch_extent_crc *crc;
+	const union bch_extent_crc *crc;
 	const struct bch_extent_ptr *ptr;
 	struct cache *ca;
 
@@ -550,7 +552,7 @@ static bool __bch_cut_front(struct bpos where, struct bkey_s k)
 		union bch_extent_crc *crc, *prev_crc = NULL;
 
 		extent_for_each_ptr_crc(e, ptr, crc) {
-			switch (bch_extent_crc_type(crc)) {
+			switch (extent_crc_type(crc)) {
 			case BCH_EXTENT_CRC_NONE:
 				ptr->offset += e.k->size - len;
 				break;
@@ -1437,7 +1439,7 @@ static const char *bch_extent_invalid(const struct cache_set *c,
 			switch (extent_entry_type(entry)) {
 			case BCH_EXTENT_ENTRY_crc32:
 			case BCH_EXTENT_ENTRY_crc64:
-				crc64 = crc_to_64((void *) entry);
+				crc64 = crc_to_64(entry_to_crc(entry));
 
 				reason = "checksum uncompressed size < key size";
 				if (crc64.uncompressed_size < e.k->size)
@@ -1648,11 +1650,107 @@ static unsigned PTR_TIER(struct cache_member_rcu *mi,
 		: UINT_MAX;
 }
 
+void bch_extent_entry_append(struct bkey_i_extent *e,
+			     union bch_extent_entry *entry)
+{
+	BUG_ON(bkey_val_u64s(&e->k) + extent_entry_u64s(entry) >
+	       BKEY_EXTENT_VAL_U64s_MAX);
+
+	memcpy(extent_entry_last(extent_i_to_s(e)),
+	       entry,
+	       extent_entry_bytes(entry));
+	e->k.u64s += extent_entry_u64s(entry);
+}
+
+const unsigned bch_crc_size[] = {
+	[BCH_CSUM_NONE]			= 0,
+	[BCH_CSUM_CRC32C]		= 4,
+	[BCH_CSUM_CRC64]		= 8,
+};
+
+static void bch_extent_crc_init(union bch_extent_crc *crc,
+				unsigned compressed_size,
+				unsigned uncompressed_size,
+				unsigned compression_type,
+				u64 csum, unsigned csum_type)
+{
+	if (bch_crc_size[csum_type] <= 4 &&
+	    uncompressed_size <= CRC32_EXTENT_SIZE_MAX) {
+		crc->crc32 = (struct bch_extent_crc32) {
+			.type = 1 << BCH_EXTENT_ENTRY_crc32,
+			.compressed_size	= compressed_size,
+			.uncompressed_size	= uncompressed_size,
+			.offset			= 0,
+			.compression_type	= compression_type,
+			.csum_type		= csum_type,
+			.csum			= csum,
+		};
+	} else {
+		BUG_ON(uncompressed_size > CRC64_EXTENT_SIZE_MAX);
+
+		crc->crc64 = (struct bch_extent_crc64) {
+			.type = 1 << BCH_EXTENT_ENTRY_crc64,
+			.compressed_size	= compressed_size,
+			.uncompressed_size	= uncompressed_size,
+			.offset			= 0,
+			.compression_type	= compression_type,
+			.csum_type		= csum_type,
+			.csum			= csum,
+		};
+	}
+}
+
+void bch_extent_crc_append(struct bkey_i_extent *e,
+			   unsigned compressed_size,
+			   unsigned uncompressed_size,
+			   unsigned compression_type,
+			   u64 csum, unsigned csum_type)
+{
+	union bch_extent_crc *crc;
+	union bch_extent_crc new;
+
+	BUG_ON(compressed_size > uncompressed_size);
+	BUG_ON(uncompressed_size != e->k.size);
+	BUG_ON(!compressed_size || !uncompressed_size);
+
+	/*
+	 * Look up the last crc entry, so we can check if we need to add
+	 * another:
+	 */
+	extent_for_each_crc(extent_i_to_s(e), crc)
+		;
+
+	switch (extent_crc_type(crc)) {
+	case BCH_EXTENT_CRC_NONE:
+		if (!csum_type && !compression_type)
+			return;
+		break;
+	case BCH_EXTENT_CRC32:
+	case BCH_EXTENT_CRC64:
+		if (crc_to_64(crc).compressed_size	== compressed_size &&
+		    crc_to_64(crc).uncompressed_size	== uncompressed_size &&
+		    crc_to_64(crc).offset		== 0 &&
+		    crc_to_64(crc).compression_type	== compression_type &&
+		    crc_to_64(crc).csum_type		== csum_type &&
+		    crc_to_64(crc).csum			== csum)
+			return;
+		break;
+	}
+
+	bch_extent_crc_init(&new,
+			    compressed_size,
+			    uncompressed_size,
+			    compression_type,
+			    csum, csum_type);
+	bch_extent_entry_append(e, to_entry(&new));
+}
+
 static void __extent_sort_ptrs(struct cache_member_rcu *mi,
 			       struct bkey_s_extent src)
 {
 	struct bch_extent_ptr *src_ptr, *dst_ptr;
-	union bch_extent_entry *src_crc, *dst_crc;
+	union bch_extent_crc *src_crc, *dst_crc;
+	union bch_extent_crc _src;
 	BKEY_PADDED(k) tmp;
 	struct bkey_s_extent dst;
 	size_t u64s, crc_u64s;
@@ -1681,24 +1779,21 @@ static void __extent_sort_ptrs(struct cache_member_rcu *mi,
 		 * dst_ptr points to a pointer it better have a crc:
 		 */
 		BUG_ON(dst_ptr != &extent_entry_last(dst)->ptr && !dst_crc);
-		BUG_ON(dst_crc && extent_entry_next(dst_crc) != (void *) dst_ptr);
+		BUG_ON(dst_crc &&
+		       (extent_entry_next(to_entry(dst_crc)) !=
+			to_entry(dst_ptr)));
+
+		if (!src_crc) {
+			bch_extent_crc_init(&_src, src.k->size,
+					    src.k->size, 0, 0, 0);
+			src_crc = &_src;
+		}
 
 		p = dst_ptr != &extent_entry_last(dst)->ptr
 			? (void *) dst_crc
 			: (void *) dst_ptr;
 
-		if (!src_crc)
-			src_crc = (void *) &((struct bch_extent_crc32) {
-				.type			= 1 << BCH_EXTENT_ENTRY_crc32,
-				.compressed_size	= src.k->size,
-				.uncompressed_size	= src.k->size,
-				.offset			= 0,
-				.compression_type	= BCH_COMPRESSION_NONE,
-				.csum_type		= BCH_CSUM_NONE,
-				.csum			= 0,
-			});
-
-		crc_u64s = extent_entry_u64s((void *) src_crc);
+		crc_u64s = extent_entry_u64s(to_entry(src_crc));
 		u64s = crc_u64s + sizeof(*dst_ptr) / sizeof(u64);
 
 		memmove(p + u64s, p,
