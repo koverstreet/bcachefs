@@ -280,12 +280,13 @@ static void bch_mark_metadata(struct cache_set *c)
 static void bch_mark_pending_btree_node_frees(struct cache_set *c)
 {
 	struct bucket_stats_cache_set stats = { 0 };
+	struct btree_interior_update *as;
 	struct pending_btree_node_free *d;
 
-	mutex_lock(&c->btree_node_pending_free_lock);
+	mutex_lock(&c->btree_interior_update_lock);
 	gc_pos_set(c, gc_phase(GC_PHASE_PENDING_DELETE));
 
-	list_for_each_entry(d, &c->btree_node_pending_free, list)
+	for_each_pending_btree_node_free(c, as, d)
 		if (d->index_update_done)
 			__bch_gc_mark_key(c, bkey_i_to_s_c(&d->key),
 					  c->sb.btree_node_size, true,
@@ -295,7 +296,7 @@ static void bch_mark_pending_btree_node_frees(struct cache_set *c)
 	 * cache_set_stats:
 	 */
 
-	mutex_unlock(&c->btree_node_pending_free_lock);
+	mutex_unlock(&c->btree_interior_update_lock);
 }
 
 static void bch_mark_scan_keylists(struct cache_set *c)
@@ -450,7 +451,7 @@ static void bch_coalesce_nodes(struct btree *old_nodes[GC_MERGE_NODES],
 	unsigned i, nr_old_nodes, nr_new_nodes, u64s = 0;
 	unsigned blocks = btree_blocks(c) * 2 / 3;
 	struct btree *new_nodes[GC_MERGE_NODES];
-	struct async_split *as;
+	struct btree_interior_update *as;
 	struct btree_reserve *res;
 	struct keylist keylist;
 	struct bkey_format_state format_state;
@@ -499,10 +500,10 @@ static void bch_coalesce_nodes(struct btree *old_nodes[GC_MERGE_NODES],
 			goto out;
 		}
 
-	as = __bch_async_split_alloc(old_nodes, nr_old_nodes, iter);
+	as = __bch_btree_interior_update_alloc(old_nodes, nr_old_nodes, iter);
 
 	for (i = 0; i < nr_old_nodes; i++)
-		bch_async_split_will_free_node(as, old_nodes[i]);
+		bch_btree_interior_update_will_free_node(as, old_nodes[i]);
 
 	/* Repack everything with @new_format and sort down to one bset */
 	for (i = 0; i < nr_old_nodes; i++)

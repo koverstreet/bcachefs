@@ -13,7 +13,7 @@
 
 struct cache_set;
 struct open_bucket;
-struct async_split;
+struct btree_interior_update;
 
 struct btree_write {
 	unsigned			index;
@@ -24,7 +24,7 @@ struct btree_write {
 struct btree_root {
 	struct btree		*b;
 
-	struct async_split	*as;
+	struct btree_interior_update *as;
 
 	/* On disk root - see async splits: */
 	__BKEY_PADDED(key, BKEY_BTREE_PTR_VAL_U64s_MAX);
@@ -55,7 +55,8 @@ struct btree {
 	 * node to point to them: we update the parent in memory immediately,
 	 * but then we must wait until the children have been written out before
 	 * the update to the parent can be written - this is a list of the
-	 * async_splits that are blocking this node from being written:
+	 * btree_interior_updates that are blocking this node from being
+	 * written:
 	 */
 	struct list_head	write_blocked;
 
@@ -65,13 +66,6 @@ struct btree {
 	struct cache_set	*c;
 
 	struct open_bucket	*ob;
-
-	/*
-	 * When a node is going to be freed while write_blocked nonzero, we have
-	 * to preserve the write ordering - this then points to the async_split
-	 * that's waiting on writes before making the new node visible:
-	 */
-	struct async_split	*as;
 
 	/* lru list */
 	struct list_head	list;

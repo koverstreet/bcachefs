@@ -14,12 +14,8 @@ struct btree;
 struct btree_reserve {
 	struct disk_reservation	disk_res;
 	unsigned		nr;
-	struct btree		*b[];
+	struct btree		*b[BTREE_RESERVE_MAX];
 };
-
-#define BTREE_RESERVE_SIZE						\
-	(sizeof(struct btree_reserve) +					\
-	 sizeof(struct btree *) * BTREE_RESERVE_MAX)
 
 void __bch_btree_calc_format(struct bkey_format_state *, struct btree *);
 bool bch_btree_node_format_fits(struct btree *, struct bkey_format *);
@@ -32,9 +28,11 @@ bool bch_btree_node_format_fits(struct btree *, struct bkey_format *);
  * node(s) visible and frees the old hasn't completed yet)
  */
 struct pending_btree_node_free {
-	struct list_head	list;
 	bool			index_update_done;
 
+	__le64			seq;
+	enum btree_id		btree_id;
+	unsigned		level;
 	__BKEY_PADDED(key, BKEY_BTREE_PTR_VAL_U64s_MAX);
 };
 
@@ -56,40 +54,49 @@ struct pending_btree_node_free {
  * until then, the old nodes are still reachable on disk.
  *
  */
-struct async_split {
+struct btree_interior_update {
 	struct closure			cl;
-
 	struct cache_set		*c;
 
+	struct list_head		list;
+
+	/* What kind of update are we doing? */
 	enum {
-		ASYNC_SPLIT_NO_UPDATE,
-		ASYNC_SPLIT_UPDATING_BTREE,
-		ASYNC_SPLIT_UPDATING_ROOT,
-		ASYNC_SPLIT_UPDATING_AS,
+		BTREE_INTERIOR_NO_UPDATE,
+		BTREE_INTERIOR_UPDATING_NODE,
+		BTREE_INTERIOR_UPDATING_ROOT,
+		BTREE_INTERIOR_UPDATING_AS,
 	} mode;
 
 	/*
-	 * ASYNC_SPLIT_UPDATING_BTREE:
-	 * @b - node we're blocking from being written
-	 * @list - corresponds to @b->write_blocked
+	 * BTREE_INTERIOR_UPDATING_NODE:
+	 * The update that made the new nodes visible was a regular update to an
+	 * existing interior node - @b. We can't write out the update to @b
+	 * until the new nodes we created are finished writing, so we block @b
+	 * from writing by putting this btree_interior update on the
+	 * @b->write_blocked list with @write_blocked_list:
 	 */
 	struct btree			*b;
-	struct list_head		list;
+	struct list_head		write_blocked_list;
 
 	/*
-	 * ASYNC_SPLIT_UPDATING_AS: btree node we updated was freed, so now
-	 * we're now blocking another async_split
-	 * @parent_as - async_split that's waiting on our nodes to finish
+	 * BTREE_INTERIOR_UPDATING_AS: btree node we updated was freed, so now
+	 * we're now blocking another btree_interior_update
+	 * @parent_as - btree_interior_update that's waiting on our nodes to finish
 	 * writing, before it can make new nodes visible on disk
-	 * @wait - list of child async_splits that are waiting on this
-	 * async_split to make all the new nodes visible before they can free
+	 * @wait - list of child btree_interior_updates that are waiting on this
+	 * btree_interior_update to make all the new nodes visible before they can free
 	 * their old btree nodes
 	 */
-	struct async_split		*parent_as;
+	struct btree_interior_update	*parent_as;
 	struct closure_waitlist		wait;
 
 	struct journal_entry_pin	journal;
 
+	/*
+	 * Nodes being freed:
+	 * Protected by c->btree_node_pending_free_lock
+	 */
 	struct pending_btree_node_free	pending[BTREE_MAX_DEPTH + GC_MERGE_NODES];
 	unsigned			nr_pending;
 
@@ -103,7 +110,11 @@ struct async_split {
 	u64				inline_keys[BKEY_BTREE_PTR_U64s_MAX * 3];
 };
 
-void bch_btree_node_free_start(struct cache_set *, struct async_split *,
+#define for_each_pending_btree_node_free(c, as, p)			\
+	list_for_each_entry(as, &c->btree_interior_update_list, list)	\
+		for (p = as->pending; p < as->pending + as->nr_pending; p++)
+
+void bch_btree_node_free_start(struct cache_set *, struct btree_interior_update *,
 			       struct btree *);
 
 void bch_btree_node_free_inmem(struct btree_iter *, struct btree *);
@@ -118,11 +129,11 @@ struct btree *__btree_node_alloc_replacement(struct cache_set *,
 struct btree *btree_node_alloc_replacement(struct cache_set *, struct btree *,
 					   struct btree_reserve *);
 
-struct async_split *__bch_async_split_alloc(struct btree *[], unsigned,
+struct btree_interior_update *__bch_btree_interior_update_alloc(struct btree *[], unsigned,
 					    struct btree_iter *);
-struct async_split *bch_async_split_alloc(struct btree *, struct btree_iter *);
+struct btree_interior_update *bch_btree_interior_update_alloc(struct btree *, struct btree_iter *);
 
-void bch_async_split_will_free_node(struct async_split *, struct btree *);
+void bch_btree_interior_update_will_free_node(struct btree_interior_update *, struct btree *);
 
 void bch_btree_set_root_initial(struct cache_set *, struct btree *,
 				struct btree_reserve *);
@@ -185,7 +196,7 @@ static inline bool bch_btree_node_insert_fits(struct cache_set *c,
 
 void bch_btree_insert_node(struct btree *, struct btree_iter *,
 			   struct keylist *, struct btree_reserve *,
-			   struct async_split *as);
+			   struct btree_interior_update *as);
 
 /* Normal update interface: */
 

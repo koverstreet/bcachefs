@@ -893,7 +893,7 @@ static void cache_set_free(struct cache_set *c)
 	bioset_exit(&c->bio_read_split);
 	bioset_exit(&c->bio_read);
 	bioset_exit(&c->btree_read_bio);
-	mempool_exit(&c->btree_async_split_pool);
+	mempool_exit(&c->btree_interior_update_pool);
 	mempool_exit(&c->btree_reserve_pool);
 	mempool_exit(&c->fill_iter);
 	mempool_exit(&c->search);
@@ -1080,10 +1080,9 @@ static struct cache_set *bch_cache_set_alloc(struct cache_sb *sb,
 	INIT_LIST_HEAD(&c->btree_cache_freeable);
 	INIT_LIST_HEAD(&c->btree_cache_freed);
 
-	INIT_LIST_HEAD(&c->btree_node_pending_free);
-	mutex_init(&c->btree_node_pending_free_lock);
+	INIT_LIST_HEAD(&c->btree_interior_update_list);
 	mutex_init(&c->btree_reserve_cache_lock);
-	mutex_init(&c->async_split_lock);
+	mutex_init(&c->btree_interior_update_lock);
 
 	mutex_init(&c->bio_bounce_pages_lock);
 	INIT_WORK(&c->bio_submit_work, bch_bio_submit_work);
@@ -1139,9 +1138,9 @@ static struct cache_set *bch_cache_set_alloc(struct cache_sb *sb,
 	    percpu_ref_init(&c->writes, bch_writes_disabled, 0, GFP_KERNEL) ||
 	    mempool_init_slab_pool(&c->search, 1, bch_search_cache) ||
 	    mempool_init_kmalloc_pool(&c->btree_reserve_pool, 1,
-				      BTREE_RESERVE_SIZE) ||
-	    mempool_init_kmalloc_pool(&c->btree_async_split_pool, 1,
-				      sizeof(struct async_split)) ||
+				      sizeof(struct btree_reserve)) ||
+	    mempool_init_kmalloc_pool(&c->btree_interior_update_pool, 1,
+				      sizeof(struct btree_interior_update)) ||
 	    mempool_init_kmalloc_pool(&c->fill_iter, 1, iter_size) ||
 	    bioset_init(&c->btree_read_bio, 1, offsetof(struct bbio, bio)) ||
 	    bioset_init(&c->bio_read, 1, offsetof(struct bch_read_bio, bio)) ||

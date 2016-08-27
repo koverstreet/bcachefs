@@ -613,12 +613,9 @@ struct cache_set {
 	unsigned		btree_reserve_cache_nr;
 	struct mutex		btree_reserve_cache_lock;
 
-	mempool_t		btree_async_split_pool;
-
-	struct list_head	btree_node_pending_free;
-	struct mutex		btree_node_pending_free_lock;
-
-	struct mutex		async_split_lock;
+	mempool_t		btree_interior_update_pool;
+	struct list_head	btree_interior_update_list;
+	struct mutex		btree_interior_update_lock;
 
 	struct workqueue_struct	*wq;
 
