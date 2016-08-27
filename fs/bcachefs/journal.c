@@ -169,41 +169,88 @@ static void journal_seq_blacklist_flush(struct journal *j,
 		container_of(j, struct cache_set, journal);
 	struct journal_seq_blacklist *bl =
 		container_of(pin, struct journal_seq_blacklist, pin);
-	struct btree *b;
-	struct btree_iter iter;
+	struct blacklisted_node n;
 	struct closure cl;
+	unsigned i;
+	int ret;
 
 	closure_init_stack(&cl);
 
-	while (1) {
-		mutex_lock(&j->blacklist_lock);
-		if (list_empty(&bl->nodes))
-			break;
+	for (i = 0;; i++) {
+		struct btree_iter iter;
+		struct btree *b;
 
-		b = list_first_entry(&bl->nodes, struct btree,
-				     journal_seq_blacklisted);
+		mutex_lock(&j->blacklist_lock);
+		if (i >= bl->nr_entries) {
+			mutex_unlock(&j->blacklist_lock);
+			break;
+		}
+		n = bl->entries[i];
+		mutex_unlock(&j->blacklist_lock);
+
+		bch_btree_iter_init(&iter, c, n.btree_id, n.pos);
+		iter.is_extents = false;
+redo_peek:
+		b = bch_btree_iter_peek_node(&iter);
+
+		/* The node might have already been rewritten: */
+
+		if (b->data->keys.seq == n.seq &&
+		    !bkey_cmp(b->key.k.p, n.pos)) {
+			ret = bch_btree_node_rewrite(&iter, b, &cl);
+			if (ret == -EAGAIN) {
+				bch_btree_iter_unlock(&iter);
+				closure_sync(&cl);
+				ret = -EINTR;
+			}
+			if (ret == -EINTR)
+				goto redo_peek;
+			if (ret)
+				BUG();
+		}
+
+		bch_btree_iter_unlock(&iter);
+	}
+
+	closure_sync(&cl);
+
+	mutex_lock(&c->btree_interior_update_lock);
+
+	for (i = 0;; i++) {
+		struct btree_interior_update *as;
+		struct pending_btree_node_free *d;
+
+		mutex_lock(&j->blacklist_lock);
+		if (i >= bl->nr_entries) {
+			mutex_unlock(&j->blacklist_lock);
+			break;
+		}
+		n = bl->entries[i];
 		mutex_unlock(&j->blacklist_lock);
 
 		/*
-		 * b might be changing underneath us, but it won't be _freed_
-		 * underneath us - and if the fields we're reading out of it to
-		 * traverse to it are garbage because we raced, that's ok
+		 * Is the node on the list of pending interior node updates -
+		 * being freed? If so, wait for that to finish:
 		 */
-
-		bch_btree_iter_init(&iter, c, b->btree_id, b->key.k.p);
-		iter.is_extents = false;
-
-		b = bch_btree_iter_peek_node(&iter);
-
-		if (!list_empty_careful(&b->journal_seq_blacklisted))
-			bch_btree_node_rewrite(&iter, b, &cl);
-
-		bch_btree_iter_unlock(&iter);
-		closure_sync(&cl);
+		for_each_pending_btree_node_free(c, as, d)
+			if (n.seq	== d->seq &&
+			    n.btree_id	== d->btree_id &&
+			    !d->level &&
+			    !bkey_cmp(n.pos, d->key.k.p)) {
+				closure_wait(&as->wait, &cl);
+				mutex_unlock(&c->btree_interior_update_lock);
+				closure_sync(&cl);
+				break;
+			}
 	}
+
+	mutex_unlock(&c->btree_interior_update_lock);
+
+	mutex_lock(&j->blacklist_lock);
 
 	journal_pin_drop(j, &bl->pin);
 	list_del(&bl->list);
+	kfree(bl->entries);
 	kfree(bl);
 
 	mutex_unlock(&j->blacklist_lock);
@@ -235,8 +282,7 @@ bch_journal_seq_blacklisted_new(struct cache_set *c, u64 seq)
 	if (!bl)
 		return NULL;
 
-	bl->seq	= seq;
-	INIT_LIST_HEAD(&bl->nodes);
+	bl->seq = seq;
 	list_add_tail(&bl->list, &j->seq_blacklist);
 	return bl;
 }
@@ -251,29 +297,32 @@ int bch_journal_seq_should_ignore(struct cache_set *c, u64 seq, struct btree *b)
 {
 	struct journal *j = &c->journal;
 	struct journal_seq_blacklist *bl;
+	struct blacklisted_node *n;
 	int ret = 0;
+
+	/* Interier updates aren't journalled: */
+	if (b->level)
+		return 0;
 
 	/*
 	 * After initial GC has finished, we've scanned the entire btree and
 	 * found all the blacklisted sequence numbers - we won't be creating any
 	 * new ones after startup:
 	 */
-	if (test_bit(CACHE_SET_INITIAL_GC_DONE, &c->flags) &&
-	    list_empty_careful(&j->seq_blacklist))
-		return 0;
+	if (test_bit(CACHE_SET_INITIAL_GC_DONE, &c->flags)) {
+		if (list_empty_careful(&j->seq_blacklist))
+			return 0;
+
+		mutex_lock(&j->blacklist_lock);
+		ret = journal_seq_blacklist_find(j, seq) != NULL;
+		mutex_unlock(&j->blacklist_lock);
+		return ret;
+	}
 
 	mutex_lock(&j->blacklist_lock);
-
 	bl = journal_seq_blacklist_find(j, seq);
 	if (bl)
 		goto found;
-
-	/*
-	 * Don't look at j->seq after journal has started, since we aren't
-	 * holding appropriate lock:
-	 */
-	if (test_bit(CACHE_SET_INITIAL_GC_DONE, &c->flags))
-		goto out;
 
 	if (seq <= j->seq)
 		goto out;
@@ -291,8 +340,30 @@ int bch_journal_seq_should_ignore(struct cache_set *c, u64 seq, struct btree *b)
 		goto out;
 	}
 found:
-	if (list_empty(&b->journal_seq_blacklisted))
-		list_add(&b->journal_seq_blacklisted, &bl->nodes);
+	for (n = bl->entries; n < bl->entries + bl->nr_entries; n++)
+		if (b->data->keys.seq	== n->seq &&
+		    b->btree_id		== n->btree_id &&
+		    !bkey_cmp(b->key.k.p, n->pos))
+			goto found_entry;
+
+	if (!bl->nr_entries ||
+	    is_power_of_2(bl->nr_entries)) {
+		n = krealloc(bl->entries,
+			     max(bl->nr_entries * 2, 8UL) * sizeof(*n),
+			     GFP_KERNEL);
+		if (!n) {
+			ret = -ENOMEM;
+			goto out;
+		}
+		bl->entries = n;
+	}
+
+	bl->entries[bl->nr_entries++] = (struct blacklisted_node) {
+		.seq		= b->data->keys.seq,
+		.btree_id	= b->btree_id,
+		.pos		= b->key.k.p,
+	};
+found_entry:
 	ret = 1;
 out:
 	mutex_unlock(&j->blacklist_lock);

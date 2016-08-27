@@ -76,8 +76,6 @@ struct btree {
 	struct delayed_work	work;
 
 	struct btree_write	writes[2];
-
-	struct list_head	journal_seq_blacklisted;
 };
 
 #define BTREE_FLAG(flag)						\

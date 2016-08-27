@@ -180,12 +180,6 @@ static void __btree_node_free(struct cache_set *c, struct btree *b,
 	clear_btree_node_dirty(b);
 	cancel_delayed_work(&b->work);
 
-	if (!list_empty_careful(&b->journal_seq_blacklisted)) {
-		mutex_lock(&c->journal.blacklist_lock);
-		list_del_init(&b->journal_seq_blacklisted);
-		mutex_unlock(&c->journal.blacklist_lock);
-	}
-
 	mca_hash_remove(c, b);
 
 	mutex_lock(&c->btree_cache_lock);
@@ -874,8 +868,6 @@ static void btree_interior_update_pointers_written(struct closure *cl)
 	struct cache_set *c = as->c;
 	unsigned i;
 
-	closure_wake_up(&as->wait);
-
 	journal_pin_drop(&c->journal, &as->journal);
 
 	mutex_lock(&c->btree_interior_update_lock);
@@ -889,6 +881,8 @@ static void btree_interior_update_pointers_written(struct closure *cl)
 	mutex_lock(&c->btree_interior_update_lock);
 	list_del(&as->list);
 	mutex_unlock(&c->btree_interior_update_lock);
+
+	closure_wake_up(&as->wait);
 
 	closure_return_with_destructor(cl, btree_interior_update_free);
 }
@@ -1950,7 +1944,7 @@ int bch_btree_node_rewrite(struct btree_iter *iter, struct btree *b,
 	if (!bch_btree_iter_upgrade(iter))
 		return -EINTR;
 
-	reserve = bch_btree_reserve_get(c, b, 1, true, cl);
+	reserve = bch_btree_reserve_get(c, b, 1, false, cl);
 	if (IS_ERR(reserve)) {
 		trace_bcache_btree_gc_rewrite_node_fail(b);
 		return PTR_ERR(reserve);

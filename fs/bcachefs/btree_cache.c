@@ -89,7 +89,6 @@ static struct btree *mca_bucket_alloc(struct cache_set *c, gfp_t gfp)
 	INIT_DELAYED_WORK(&b->work, btree_node_write_work);
 	b->c = c;
 	sema_init(&b->io_mutex, 1);
-	INIT_LIST_HEAD(&b->journal_seq_blacklisted);
 	b->writes[1].index = 1;
 	INIT_LIST_HEAD(&b->write_blocked);
 
@@ -104,7 +103,6 @@ static struct btree *mca_bucket_alloc(struct cache_set *c, gfp_t gfp)
 void mca_hash_remove(struct cache_set *c, struct btree *b)
 {
 	BUG_ON(btree_node_dirty(b));
-	BUG_ON(!list_empty_careful(&b->journal_seq_blacklisted));
 
 	b->keys.nsets = 0;
 	b->keys.set[0].data = NULL;
@@ -168,10 +166,6 @@ static int mca_reap_notrace(struct cache_set *c, struct btree *b, bool flush)
 		goto out_unlock;
 
 	if (!list_empty(&b->write_blocked))
-		goto out_unlock;
-
-	/* XXX: we need a better solution for this, this will cause deadlocks */
-	if (!list_empty_careful(&b->journal_seq_blacklisted))
 		goto out_unlock;
 
 	if (!flush) {

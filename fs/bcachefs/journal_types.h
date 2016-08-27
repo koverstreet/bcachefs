@@ -41,14 +41,21 @@ struct journal_entry_pin {
 	struct journal_entry_pin_list	*pin_list;
 };
 
+/* corresponds to a btree node with a blacklisted bset: */
+struct blacklisted_node {
+	__le64			seq;
+	enum btree_id		btree_id;
+	struct bpos		pos;
+};
+
 struct journal_seq_blacklist {
 	struct list_head	list;
 	u64			seq;
 	bool			written;
 	struct journal_entry_pin pin;
 
-	/* Btree nodes to be flushed: */
-	struct list_head	nodes;
+	struct blacklisted_node	*entries;
+	size_t			nr_entries;
 };
 
 struct journal_res {
