@@ -358,7 +358,7 @@ void bch_btree_node_read_done(struct cache_set *c, struct btree *b,
 			goto err;
 
 		err = "insufficient memory";
-		ret = bch_journal_seq_blacklisted(c, le64_to_cpu(i->journal_seq), b);
+		ret = bch_journal_seq_should_ignore(c, le64_to_cpu(i->journal_seq), b);
 		if (ret < 0)
 			goto err;
 

@@ -176,13 +176,13 @@ static void journal_seq_blacklist_flush(struct journal *j,
 	closure_init_stack(&cl);
 
 	while (1) {
-		mutex_lock(&c->journal.blacklist_lock);
+		mutex_lock(&j->blacklist_lock);
 		if (list_empty(&bl->nodes))
 			break;
 
 		b = list_first_entry(&bl->nodes, struct btree,
 				     journal_seq_blacklisted);
-		mutex_unlock(&c->journal.blacklist_lock);
+		mutex_unlock(&j->blacklist_lock);
 
 		/*
 		 * b might be changing underneath us, but it won't be _freed_
@@ -202,11 +202,11 @@ static void journal_seq_blacklist_flush(struct journal *j,
 		closure_sync(&cl);
 	}
 
-	journal_pin_drop(&c->journal, &bl->pin);
+	journal_pin_drop(j, &bl->pin);
 	list_del(&bl->list);
 	kfree(bl);
 
-	mutex_unlock(&c->journal.blacklist_lock);
+	mutex_unlock(&j->blacklist_lock);
 }
 
 static struct journal_seq_blacklist *
@@ -237,61 +237,65 @@ bch_journal_seq_blacklisted_new(struct cache_set *c, u64 seq)
 
 	bl->seq	= seq;
 	INIT_LIST_HEAD(&bl->nodes);
-
-	BUG_ON(!list_empty(&j->seq_blacklist) &&
-	       list_last_entry(&j->seq_blacklist,
-			       struct journal_seq_blacklist,
-			       list)->seq >= bl->seq);
-
 	list_add_tail(&bl->list, &j->seq_blacklist);
 	return bl;
 }
 
-static int __bch_journal_seq_blacklisted(struct cache_set *c, u64 seq,
-					 struct btree *b)
+/*
+ * Returns true if @seq is newer than the most recent journal entry that got
+ * written, and data corresponding to @seq should be ignored - also marks @seq
+ * as blacklisted so that on future restarts the corresponding data will still
+ * be ignored:
+ */
+int bch_journal_seq_should_ignore(struct cache_set *c, u64 seq, struct btree *b)
 {
 	struct journal *j = &c->journal;
-	struct journal_seq_blacklist *bl = journal_seq_blacklist_find(j, seq);
+	struct journal_seq_blacklist *bl;
+	int ret = 0;
 
+	/*
+	 * After initial GC has finished, we've scanned the entire btree and
+	 * found all the blacklisted sequence numbers - we won't be creating any
+	 * new ones after startup:
+	 */
+	if (test_bit(CACHE_SET_INITIAL_GC_DONE, &c->flags) &&
+	    list_empty_careful(&j->seq_blacklist))
+		return 0;
+
+	mutex_lock(&j->blacklist_lock);
+
+	bl = journal_seq_blacklist_find(j, seq);
 	if (bl)
 		goto found;
 
 	/*
-	 * After startup, all the blacklisted sequence numbers will already be
-	 * in the list, we don't create new ones
+	 * Don't look at j->seq after journal has started, since we aren't
+	 * holding appropriate lock:
 	 */
+	if (test_bit(CACHE_SET_INITIAL_GC_DONE, &c->flags))
+		goto out;
 
 	if (seq <= j->seq)
-		return 0;
+		goto out;
 
 	cache_set_inconsistent_on(seq > j->seq + 2, c,
 			 "bset journal seq too far in the future: %llu > %llu",
 			 seq, j->seq);
 
+	/*
+	 * When we start the journal, bch_journal_start() will skip over @seq:
+	 */
 	bl = bch_journal_seq_blacklisted_new(c, seq);
-	if (!bl)
-		return -ENOMEM;
+	if (!bl) {
+		ret = -ENOMEM;
+		goto out;
+	}
 found:
-	pr_debug("found %s blacklisted seq %llu",
-		 seq <= j->seq ? "old" : "new", seq);
-
 	if (list_empty(&b->journal_seq_blacklisted))
 		list_add(&b->journal_seq_blacklisted, &bl->nodes);
-
-	return 1;
-}
-
-int bch_journal_seq_blacklisted(struct cache_set *c, u64 seq, struct btree *b)
-{
-	int ret;
-
-	if (test_bit(CACHE_SET_INITIAL_GC_DONE, &c->flags))
-		return 0;
-
-	mutex_lock(&c->journal.blacklist_lock);
-	ret = __bch_journal_seq_blacklisted(c, seq, b);
-	mutex_unlock(&c->journal.blacklist_lock);
-
+	ret = 1;
+out:
+	mutex_unlock(&j->blacklist_lock);
 	return ret;
 }
 

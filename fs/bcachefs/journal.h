@@ -193,7 +193,7 @@ struct keylist;
 struct bkey_i *bch_journal_find_btree_root(struct cache_set *, struct jset *,
 					   enum btree_id, unsigned *);
 
-int bch_journal_seq_blacklisted(struct cache_set *, u64, struct btree *);
+int bch_journal_seq_should_ignore(struct cache_set *, u64, struct btree *);
 
 void bch_journal_add_keys(struct journal *, struct journal_res *,
 			  enum btree_id, const struct bkey_i *);
