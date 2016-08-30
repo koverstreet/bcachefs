@@ -549,6 +549,15 @@ struct bch_extent {
 } __attribute__((packed, aligned(8)));
 BKEY_VAL_TYPE(extent,		BCH_EXTENT);
 
+struct bch_reservation {
+	struct bch_val		v;
+
+	__le32			generation;
+	__u8			nr_replicas;
+	__u8			pad[3];
+} __attribute__((packed, aligned(8)));
+BKEY_VAL_TYPE(reservation,	BCH_RESERVATION);
+
 /* Maximum size (in u64s) a single pointer could be: */
 #define BKEY_EXTENT_PTR_U64s_MAX\
 	((sizeof(struct bch_extent_crc128) +			\

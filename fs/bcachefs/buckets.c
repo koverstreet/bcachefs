@@ -557,9 +557,12 @@ static void __bch_mark_key(struct cache_set *c, struct bkey_s_c k,
 				may_make_unavailable, stats,
 				gc_will_visit, journal_seq);
 		break;
-	case BCH_RESERVATION:
-		stats->persistent_reserved += sectors;
+	case BCH_RESERVATION: {
+		struct bkey_s_c_reservation r = bkey_s_c_to_reservation(k);
+
+		stats->persistent_reserved += r.v->nr_replicas * sectors;
 		break;
+	}
 	}
 }
 

@@ -55,7 +55,7 @@ void bch_extent_mark_replicas_cached(struct cache_set *,
 				     struct bkey_s_extent, unsigned);
 
 unsigned bch_extent_nr_ptrs(struct bkey_s_c_extent);
-unsigned bch_extent_nr_dirty_ptrs(struct bkey_s_c_extent);
+unsigned bch_extent_nr_dirty_ptrs(struct bkey_s_c);
 
 static inline bool bkey_extent_is_data(const struct bkey *k)
 {
@@ -526,8 +526,7 @@ static inline struct bch_csum crc_csum(const union bch_extent_crc *crc)
 	}
 }
 
-static inline unsigned bkey_extent_is_compressed(struct cache_set *c,
-						 struct bkey_s_c k)
+static inline unsigned bkey_extent_is_compressed(struct bkey_s_c k)
 {
 	struct bkey_s_c_extent e;
 	const struct bch_extent_ptr *ptr;

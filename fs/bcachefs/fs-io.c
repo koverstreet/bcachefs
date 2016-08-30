@@ -650,7 +650,7 @@ static void bchfs_read(struct cache_set *c, struct bch_read_bio *rbio, u64 inode
 		k = bkey_i_to_s_c(&tmp.k);
 
 		if (!bkey_extent_is_allocation(k.k) ||
-		    bkey_extent_is_compressed(c, k))
+		    bkey_extent_is_compressed(k))
 			bch_mark_pages_unalloc(bio);
 
 		bch_extent_pick_ptr(c, k, &pick);
@@ -2132,12 +2132,11 @@ static long bch_fallocate(struct inode *inode, int mode,
 	struct cache_set *c = inode->i_sb->s_fs_info;
 	struct i_sectors_hook i_sectors_hook;
 	struct btree_iter iter;
-	struct bkey_i reservation;
-	struct bkey_s_c k;
 	struct bpos end;
 	loff_t block_start, block_end;
 	loff_t new_size = offset + len;
 	unsigned sectors;
+	unsigned replicas = READ_ONCE(c->opts.data_replicas);
 	int ret;
 
 	bch_btree_iter_init_intent(&iter, c, BTREE_ID_EXTENTS, POS_MIN);
@@ -2186,13 +2185,16 @@ static long bch_fallocate(struct inode *inode, int mode,
 
 	while (bkey_cmp(iter.pos, end) < 0) {
 		struct disk_reservation disk_res = { 0 };
+		struct bkey_i_reservation reservation;
+		struct bkey_s_c k;
 
 		k = bch_btree_iter_peek_with_holes(&iter);
 		if ((ret = btree_iter_err(k)))
 			goto btree_iter_err;
 
 		/* already reserved */
-		if (k.k->type == BCH_RESERVATION) {
+		if (k.k->type == BCH_RESERVATION &&
+		    bkey_s_c_to_reservation(k).v->nr_replicas >= replicas) {
 			bch_btree_iter_advance_pos(&iter);
 			continue;
 		}
@@ -2204,29 +2206,32 @@ static long bch_fallocate(struct inode *inode, int mode,
 			}
 		}
 
-		bkey_init(&reservation.k);
+		bkey_reservation_init(&reservation.k_i);
 		reservation.k.type	= BCH_RESERVATION;
 		reservation.k.p		= k.k->p;
 		reservation.k.size	= k.k->size;
 
-		bch_cut_front(iter.pos, &reservation);
+		bch_cut_front(iter.pos, &reservation.k_i);
 		bch_cut_back(end, &reservation.k);
 
 		sectors = reservation.k.size;
+		reservation.v.nr_replicas = bch_extent_nr_dirty_ptrs(k);
 
-		if (!bkey_extent_is_allocation(k.k) ||
-		    bkey_extent_is_compressed(c, k)) {
+		if (reservation.v.nr_replicas < replicas ||
+		    bkey_extent_is_compressed(k)) {
 			ret = bch_disk_reservation_get(c, &disk_res,
 						       sectors, 0);
 			if (ret)
 				goto err_put_sectors_dirty;
+
+			reservation.v.nr_replicas = disk_res.nr_replicas;
 		}
 
 		ret = bch_btree_insert_at(c, &disk_res, &i_sectors_hook.hook,
 					  &ei->journal_seq,
 					  BTREE_INSERT_ATOMIC|
 					  BTREE_INSERT_NOFAIL,
-					  BTREE_INSERT_ENTRY(&iter, &reservation));
+					  BTREE_INSERT_ENTRY(&iter, &reservation.k_i));
 		bch_disk_reservation_put(c, &disk_res);
 btree_iter_err:
 		if (ret < 0 && ret != -EINTR)

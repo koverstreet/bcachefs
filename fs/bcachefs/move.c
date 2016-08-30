@@ -91,7 +91,7 @@ static int bch_migrate_index_update(struct bch_write_op *op)
 
 		ptr = bch_migrate_matching_ptr(m, e);
 		if (ptr) {
-			int nr_new_dirty = bch_extent_nr_dirty_ptrs(insert.c);
+			int nr_new_dirty = bch_extent_nr_dirty_ptrs(insert.s_c);
 			unsigned insert_flags =
 				BTREE_INSERT_ATOMIC|
 				BTREE_INSERT_NOFAIL;

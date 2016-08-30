@@ -131,13 +131,25 @@ unsigned bch_extent_nr_ptrs(struct bkey_s_c_extent e)
 	return nr_ptrs;
 }
 
-unsigned bch_extent_nr_dirty_ptrs(struct bkey_s_c_extent e)
+unsigned bch_extent_nr_dirty_ptrs(struct bkey_s_c k)
 {
+	struct bkey_s_c_extent e;
 	const struct bch_extent_ptr *ptr;
 	unsigned nr_ptrs = 0;
 
-	extent_for_each_ptr(e, ptr)
-		nr_ptrs += !ptr->cached;
+	switch (k.k->type) {
+	case BCH_EXTENT:
+	case BCH_EXTENT_CACHED:
+		e = bkey_s_c_to_extent(k);
+
+		extent_for_each_ptr(e, ptr)
+			nr_ptrs += !ptr->cached;
+		break;
+
+	case BCH_RESERVATION:
+		nr_ptrs = bkey_s_c_to_reservation(k).v->nr_replicas;
+		break;
+	}
 
 	return nr_ptrs;
 }
@@ -1191,7 +1203,7 @@ static void extent_insert_committed(struct extent_insert_state *s)
 
 	if (!(s->trans->flags & BTREE_INSERT_JOURNAL_REPLAY) &&
 	    bkey_cmp(s->committed, insert->k.p) &&
-	    bkey_extent_is_compressed(c, bkey_i_to_s_c(insert))) {
+	    bkey_extent_is_compressed(bkey_i_to_s_c(insert))) {
 		/* XXX: possibly need to increase our reservation? */
 		bch_cut_subtract_back(s, s->committed,
 				      bkey_i_to_s(&split.k));
@@ -1313,7 +1325,7 @@ extent_insert_check_split_compressed(struct extent_insert_state *s,
 	unsigned sectors;
 
 	if (overlap == BCH_EXTENT_OVERLAP_MIDDLE &&
-	    (sectors = bkey_extent_is_compressed(c, k))) {
+	    (sectors = bkey_extent_is_compressed(k))) {
 		int flags = BCH_DISK_RESERVATION_BTREE_LOCKS_HELD;
 
 		if (s->trans->flags & BTREE_INSERT_NOFAIL)
@@ -1780,8 +1792,17 @@ invalid:
 		return reason;
 	}
 
-	case BCH_RESERVATION:
+	case BCH_RESERVATION: {
+		struct bkey_s_c_reservation r = bkey_s_c_to_reservation(k);
+
+		if (bkey_val_bytes(k.k) != sizeof(struct bch_reservation))
+			return "incorrect value size";
+
+		if (!r.v->nr_replicas || r.v->nr_replicas > BCH_REPLICAS_MAX)
+			return "invalid nr_replicas";
+
 		return NULL;
+	}
 
 	default:
 		return "invalid value type";
@@ -1922,6 +1943,7 @@ static void bch_extent_debugcheck(struct cache_set *c, struct btree *b,
 	case BCH_EXTENT:
 	case BCH_EXTENT_CACHED:
 		bch_extent_debugcheck_extent(c, b, bkey_s_c_to_extent(k));
+		break;
 	case BCH_RESERVATION:
 		break;
 	default:
@@ -2226,7 +2248,6 @@ static enum merge_result bch_extent_merge(struct cache_set *c,
 	case KEY_TYPE_DELETED:
 	case KEY_TYPE_DISCARD:
 	case KEY_TYPE_ERROR:
-	case BCH_RESERVATION:
 		/* These types are mergeable, and no val to check */
 		break;
 
@@ -2267,6 +2288,15 @@ static enum merge_result bch_extent_merge(struct cache_set *c,
 		}
 
 		break;
+	case BCH_RESERVATION: {
+		struct bkey_i_reservation *li = bkey_i_to_reservation(l);
+		struct bkey_i_reservation *ri = bkey_i_to_reservation(r);
+
+		if (li->v.generation != ri->v.generation ||
+		    li->v.nr_replicas != ri->v.nr_replicas)
+			return BCH_MERGE_NOMERGE;
+		break;
+	}
 	default:
 		return BCH_MERGE_NOMERGE;
 	}
