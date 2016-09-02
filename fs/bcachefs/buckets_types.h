@@ -73,8 +73,9 @@ struct bucket_heap_entry {
  * A reservation for space on disk:
  */
 struct disk_reservation {
-	u32		sectors;
+	u64		sectors;
 	u32		gen;
+	unsigned	nr_replicas;
 };
 
 #endif /* _BUCKETS_TYPES_H */

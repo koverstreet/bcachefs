@@ -192,7 +192,7 @@ void bch_cache_set_stats_apply(struct cache_set *c,
 	 * Not allowed to reduce sectors_available except by getting a
 	 * reservation:
 	 */
-	BUG_ON(added > (disk_res ? disk_res->sectors : 0));
+	BUG_ON(added > (s64) (disk_res ? disk_res->sectors : 0));
 
 	if (added > 0) {
 		disk_res->sectors	-= added;
@@ -639,6 +639,8 @@ int bch_disk_reservation_add(struct cache_set *c,
 	s64 sectors_available;
 	int ret;
 
+	sectors *= res->nr_replicas;
+
 	lg_local_lock(&c->bucket_stats_lock);
 	stats = this_cpu_ptr(c->bucket_stats_percpu);
 
@@ -704,6 +706,9 @@ int bch_disk_reservation_get(struct cache_set *c,
 {
 	res->sectors = 0;
 	res->gen = c->capacity_gen;
+	res->nr_replicas = (flags & BCH_DISK_RESERVATION_METADATA)
+		? c->opts.metadata_replicas
+		: c->opts.data_replicas;
 
 	return bch_disk_reservation_add(c, res, sectors, flags);
 }

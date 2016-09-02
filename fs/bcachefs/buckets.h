@@ -256,6 +256,7 @@ void bch_disk_reservation_put(struct cache_set *,
 
 #define BCH_DISK_RESERVATION_NOFAIL		(1 << 0)
 #define BCH_DISK_RESERVATION_GC_LOCK_HELD	(1 << 1)
+#define BCH_DISK_RESERVATION_METADATA		(1 << 2)
 
 int bch_disk_reservation_add(struct cache_set *,
 			     struct disk_reservation *,

@@ -325,6 +325,73 @@ static void cached_dev_read_done_bh(struct closure *cl)
 }
 
 /**
+ * __cache_promote -- insert result of read bio into cache
+ *
+ * Used for backing devices and flash-only volumes.
+ *
+ * @orig_bio must actually be a bbio with a valid key.
+ */
+void __cache_promote(struct cache_set *c, struct bbio *orig_bio,
+		     struct bkey_s_c old,
+		     struct bkey_s_c new,
+		     unsigned write_flags)
+{
+#if 0
+	struct cache_promote_op *op;
+	struct bio *bio;
+	unsigned pages = DIV_ROUND_UP(orig_bio->bio.bi_iter.bi_size, PAGE_SIZE);
+
+	/* XXX: readahead? */
+
+	op = kmalloc(sizeof(*op) + sizeof(struct bio_vec) * pages, GFP_NOIO);
+	if (!op)
+		goto out_submit;
+
+	/* clone the bbio */
+	memcpy(&op->bio, orig_bio, offsetof(struct bbio, bio));
+
+	bio = &op->bio.bio.bio;
+	bio_init(bio);
+	bio_get(bio);
+	bio->bi_bdev		= orig_bio->bio.bi_bdev;
+	bio->bi_iter.bi_sector	= orig_bio->bio.bi_iter.bi_sector;
+	bio->bi_iter.bi_size	= orig_bio->bio.bi_iter.bi_size;
+	bio->bi_end_io		= cache_promote_endio;
+	bio->bi_private		= &op->cl;
+	bio->bi_io_vec		= bio->bi_inline_vecs;
+	bch_bio_map(bio, NULL);
+
+	if (bio_alloc_pages(bio, __GFP_NOWARN|GFP_NOIO))
+		goto out_free;
+
+	orig_bio->ca = NULL;
+
+	closure_init(&op->cl, &c->cl);
+	op->orig_bio		= &orig_bio->bio;
+	op->stale		= 0;
+
+	bch_write_op_init(&op->iop, c, &op->bio, &c->promote_write_point,
+			  new, old,
+			  BCH_WRITE_ALLOC_NOWAIT|write_flags);
+	op->iop.nr_replicas = 1;
+
+	//bch_cut_front(bkey_start_pos(&orig_bio->key.k), &op->iop.insert_key);
+	//bch_cut_back(orig_bio->key.k.p, &op->iop.insert_key.k);
+
+	trace_bcache_promote(&orig_bio->bio);
+
+	op->bio.bio.submit_time_us = local_clock_us();
+	closure_bio_submit(bio, &op->cl);
+
+	continue_at(&op->cl, cache_promote_write, c->wq);
+out_free:
+	kfree(op);
+out_submit:
+	generic_make_request(&orig_bio->bio);
+#endif
+}
+
+/**
  * cached_dev_cache_miss - populate cache with data from backing device
  *
  * We don't write to the cache if s->bypass is set.

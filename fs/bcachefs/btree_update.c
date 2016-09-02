@@ -238,6 +238,7 @@ void btree_open_bucket_put(struct cache_set *c, struct btree *b)
 }
 
 static struct btree *__bch_btree_node_alloc(struct cache_set *c,
+					    struct disk_reservation *res,
 					    struct closure *cl)
 {
 	BKEY_PADDED(k) tmp;
@@ -263,7 +264,7 @@ retry:
 
 	ob = bch_alloc_sectors(c, &c->btree_write_point,
 			       bkey_i_to_extent(&tmp.k),
-			       c->opts.metadata_replicas, cl);
+			       res->nr_replicas, cl);
 	if (IS_ERR(ob))
 		return ERR_CAST(ob);
 
@@ -518,7 +519,8 @@ static struct btree_reserve *__bch_btree_reserve_get(struct cache_set *c,
 	struct btree *b;
 	struct disk_reservation disk_res = { 0, 0 };
 	unsigned sectors = nr_nodes * c->sb.btree_node_size;
-	int ret, flags = BCH_DISK_RESERVATION_GC_LOCK_HELD;
+	int ret, flags = BCH_DISK_RESERVATION_GC_LOCK_HELD|
+		BCH_DISK_RESERVATION_METADATA;
 
 	if (!check_enospc)
 		flags |= BCH_DISK_RESERVATION_NOFAIL;
@@ -544,7 +546,7 @@ static struct btree_reserve *__bch_btree_reserve_get(struct cache_set *c,
 	reserve->nr = 0;
 
 	while (reserve->nr < nr_nodes) {
-		b = __bch_btree_node_alloc(c, cl);
+		b = __bch_btree_node_alloc(c, &disk_res, cl);
 		if (IS_ERR(b)) {
 			ret = PTR_ERR(b);
 			goto err_free;

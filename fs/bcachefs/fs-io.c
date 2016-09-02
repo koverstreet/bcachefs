@@ -856,7 +856,10 @@ alloc_io:
 		w->io->op.sectors_added	= 0;
 		w->io->op.is_dio	= false;
 		bch_write_op_init(&w->io->op.op, w->c, &w->io->bio,
-				  (struct disk_reservation) { 0 }, NULL,
+				  (struct disk_reservation) {
+					.nr_replicas = w->c->opts.data_replicas,
+				  },
+				  NULL,
 				  bkey_to_s_c(&KEY(w->inum, 0, 0)),
 				  NULL, &ei->journal_seq, 0);
 		w->io->op.op.index_update_fn = bchfs_write_index_update;
@@ -1305,10 +1308,8 @@ static void bch_do_direct_IO_write(struct dio_write *dio)
 	dio->iop.is_dio		= true;
 	dio->iop.new_i_size	= U64_MAX;
 	bch_write_op_init(&dio->iop.op, dio->c, &dio->bio,
-			  (struct disk_reservation) {
-			  .sectors = bio_sectors(bio),
-			  .gen = dio->res.gen
-			  }, NULL,
+			  dio->res,
+			  NULL,
 			  bkey_to_s_c(&KEY(inode->i_ino,
 					   bio_end_sector(bio),
 					   bio_sectors(bio))),
@@ -1316,6 +1317,7 @@ static void bch_do_direct_IO_write(struct dio_write *dio)
 	dio->iop.op.index_update_fn = bchfs_write_index_update;
 
 	dio->res.sectors -= bio_sectors(bio);
+	dio->iop.op.res.sectors = bio_sectors(bio);
 
 	task_io_account_write(bio->bi_iter.bi_size);
 

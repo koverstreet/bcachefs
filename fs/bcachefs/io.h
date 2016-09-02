@@ -89,10 +89,6 @@ int bch_discard(struct cache_set *, struct bpos, struct bpos,
 		u64, struct disk_reservation *,
 		struct extent_insert_hook *, u64 *);
 
-void __cache_promote(struct cache_set *, struct bbio *,
-		     struct bkey_s_c, struct bkey_s_c, unsigned);
-bool cache_promote(struct cache_set *, struct bbio *, struct bkey_s_c);
-
 void bch_read_retry_work(struct work_struct *);
 void bch_wake_delayed_writes(unsigned long data);
 
