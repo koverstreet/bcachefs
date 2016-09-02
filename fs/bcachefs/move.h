@@ -66,9 +66,10 @@ struct moving_io {
 	struct rb_node		node;
 	struct closure		cl;
 	struct moving_queue	*q;
-	struct bch_write_op	op;
-	struct bch_replace_info	replace;
 	struct moving_context	*context;
+	struct bch_write_op	op;
+	struct bch_extent_ptr	move_ptr;
+	bool			move;
 	BKEY_PADDED(key);
 	/* Sort key for moving_queue->tree */
 	u64			sort_key;
@@ -99,8 +100,12 @@ struct moving_io {
 	struct bio_vec		bi_inline_vecs[0];
 };
 
-struct moving_io *moving_io_alloc(struct bkey_s_c);
 void moving_io_free(struct moving_io *);
+struct moving_io *moving_io_alloc(struct cache_set *,
+				  struct moving_queue *,
+				  struct write_point *,
+				  struct bkey_s_c,
+				  const struct bch_extent_ptr *);
 
 typedef struct moving_io *(moving_queue_fn)(struct moving_queue *,
 					    struct moving_context *);

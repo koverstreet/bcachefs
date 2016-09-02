@@ -51,18 +51,16 @@ void bch_bio_submit_work(struct work_struct *work)
 {
 	struct cache_set *c = container_of(work, struct cache_set,
 					   bio_submit_work);
+	struct bio_list bl;
 	struct bio *bio;
 
-	while (1) {
-		spin_lock(&c->bio_submit_lock);
-		bio = bio_list_pop(&c->bio_submit_list);
-		spin_unlock(&c->bio_submit_lock);
+	spin_lock(&c->bio_submit_lock);
+	bl = c->bio_submit_list;
+	bio_list_init(&c->bio_submit_list);
+	spin_unlock(&c->bio_submit_lock);
 
-		if (!bio)
-			break;
-
-		bch_generic_make_request(bio, c);
-	}
+	while ((bio = bio_list_pop(&bl)))
+		generic_make_request(bio);
 }
 
 /* Allocate, free from mempool: */

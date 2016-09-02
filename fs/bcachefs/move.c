@@ -1,6 +1,7 @@
 
 #include "bcache.h"
 #include "btree_gc.h"
+#include "btree_update.h"
 #include "buckets.h"
 #include "io.h"
 #include "move.h"
@@ -8,6 +9,113 @@
 #include "keylist.h"
 
 #include <trace/events/bcachefs.h>
+
+static struct bch_extent_ptr *bkey_find_ptr(struct cache_set *c,
+					    struct bkey_s_extent e,
+					    struct bch_extent_ptr ptr)
+{
+	struct bch_extent_ptr *ptr2;
+	struct cache_member_rcu *mi;
+	unsigned bucket_bits;
+
+	mi = cache_member_info_get(c);
+	bucket_bits = ilog2(mi->m[ptr.dev].bucket_size);
+	cache_member_info_put();
+
+	extent_for_each_ptr(e, ptr2)
+		if (ptr2->dev == ptr.dev &&
+		    ptr2->gen == ptr.gen &&
+		    (ptr2->offset >> bucket_bits) ==
+		    (ptr.offset >> bucket_bits))
+			return ptr2;
+
+	return NULL;
+}
+
+static struct bch_extent_ptr *bch_migrate_matching_ptr(struct moving_io *io,
+						       struct bkey_s_extent e)
+{
+	const struct bch_extent_ptr *ptr;
+	struct bch_extent_ptr *ret;
+
+	if (io->move)
+		ret = bkey_find_ptr(io->op.c, e, io->move_ptr);
+	else
+		extent_for_each_ptr(bkey_i_to_s_c_extent(&io->key), ptr)
+			if ((ret = bkey_find_ptr(io->op.c, e, *ptr)))
+				break;
+
+	return ret;
+}
+
+static int bch_migrate_index_update(struct bch_write_op *op)
+{
+	struct cache_set *c = op->c;
+	struct moving_io *io = container_of(op, struct moving_io, op);
+	struct keylist *keys = &op->insert_keys;
+	struct btree_iter iter;
+	int ret = 0;
+
+	bch_btree_iter_init_intent(&iter, c, BTREE_ID_EXTENTS,
+		bkey_start_pos(&bch_keylist_front(keys)->k));
+
+	while (1) {
+		struct bkey_i *insert = bch_keylist_front(keys);
+		struct bkey_s_c k = bch_btree_iter_peek_with_holes(&iter);
+		struct bch_extent_ptr *ptr;
+		struct bkey_s_extent e;
+		BKEY_PADDED(k) new;
+
+		if (!k.k) {
+			ret = bch_btree_iter_unlock(&iter);
+			break;
+		}
+
+		if (!bkey_extent_is_data(k.k))
+			goto nomatch;
+
+		bkey_reassemble(&new.k, k);
+		bch_cut_front(iter.pos, &new.k);
+		bch_cut_back(insert->k.p, &new.k.k);
+		e = bkey_i_to_s_extent(&new.k);
+
+		ptr = bch_migrate_matching_ptr(io, e);
+		if (ptr) {
+			if (io->move)
+				__bch_extent_drop_ptr(e, ptr);
+
+			memcpy(extent_entry_last(e),
+			       &insert->v,
+			       bkey_val_bytes(&insert->k));
+			e.k->u64s += bkey_val_u64s(&insert->k);
+
+			bch_extent_narrow_crcs(e);
+			bch_extent_drop_redundant_crcs(e);
+			bch_extent_normalize(c, e.s);
+
+			ret = bch_btree_insert_at(c, &op->res,
+					NULL, op_journal_seq(op),
+					BTREE_INSERT_NOFAIL|BTREE_INSERT_ATOMIC,
+					BTREE_INSERT_ENTRY(&iter, &new.k));
+			if (ret && ret != -EINTR)
+				break;
+		} else {
+nomatch:
+			bch_btree_iter_set_pos(&iter, k.k->p);
+		}
+
+		while (bkey_cmp(iter.pos, bch_keylist_front(keys)->k.p) >= 0) {
+			bch_keylist_dequeue(keys);
+			if (bch_keylist_empty(keys))
+				goto out;
+		}
+
+		bch_cut_front(iter.pos, bch_keylist_front(keys));
+	}
+out:
+	bch_btree_iter_unlock(&iter);
+	return ret;
+}
 
 static void moving_error(struct moving_context *ctxt, unsigned flag)
 {
@@ -86,7 +194,11 @@ static void moving_init(struct moving_io *io, struct bio *bio)
 	bch_bio_map(bio, NULL);
 }
 
-struct moving_io *moving_io_alloc(struct bkey_s_c k)
+struct moving_io *moving_io_alloc(struct cache_set *c,
+				  struct moving_queue *q,
+				  struct write_point *wp,
+				  struct bkey_s_c k,
+				  const struct bch_extent_ptr *move_ptr)
 {
 	struct moving_io *io;
 
@@ -103,6 +215,26 @@ struct moving_io *moving_io_alloc(struct bkey_s_c k)
 	if (bio_alloc_pages(&io->rbio.bio, GFP_KERNEL)) {
 		kfree(io);
 		return NULL;
+	}
+
+	bch_write_op_init(&io->op, c, &io->wbio,
+			  (struct disk_reservation) { 0 },
+			  wp,
+			  bkey_to_s_c(&KEY(k.k->p.inode,
+					   k.k->p.offset,
+					   k.k->size)),
+			  NULL, NULL,
+			  bkey_extent_is_cached(k.k)
+			  ? BCH_WRITE_CACHED : 0);
+
+	io->op.io_wq		= q->wq;
+	io->op.nr_replicas	= 1;
+	io->op.index_update_fn	= bch_migrate_index_update;
+
+	if (move_ptr) {
+		io->move_ptr	= *move_ptr;
+		io->move	= true;
+		io->sort_key	= move_ptr->offset;
 	}
 
 	return io;
@@ -128,8 +260,8 @@ static void moving_io_destructor(struct closure *cl)
 	unsigned long flags;
 	bool kick_writes = true;
 
-	if (io->replace.failures)
-		trace_bcache_copy_collision(q, &io->key.k);
+	//if (io->replace.failures)
+	//	trace_bcache_copy_collision(q, &io->key.k);
 
 	spin_lock_irqsave(&q->lock, flags);
 

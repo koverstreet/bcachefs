@@ -22,15 +22,6 @@ static bool migrate_data_pred(struct scan_keylist *kl, struct bkey_s_c k)
 				      ca->sb.nr_this_dev);
 }
 
-static void bch_extent_drop_dev_ptrs(struct bkey_s_extent e, unsigned dev)
-{
-	struct bch_extent_ptr *ptr;
-
-	extent_for_each_ptr_backwards(e, ptr)
-		if (ptr->dev == dev)
-			bch_extent_drop_ptr(e, ptr);
-}
-
 static int issue_migration_move(struct cache *ca,
 				struct moving_context *ctxt,
 				struct bkey_s_c k,
@@ -40,30 +31,22 @@ static int issue_migration_move(struct cache *ca,
 	struct cache_set *c = ca->set;
 	struct moving_io *io;
 	struct disk_reservation res;
+	const struct bch_extent_ptr *ptr;
 
 	if (bch_disk_reservation_get(c, &res, k.k->size, 0))
 		return -ENOSPC;
 
-	io = moving_io_alloc(k);
+	extent_for_each_ptr(bkey_s_c_to_extent(k), ptr)
+		if (ptr->dev == ca->sb.nr_this_dev)
+			goto found;
+
+	BUG();
+found:
+	io = moving_io_alloc(c, q, &c->migration_write_point, k, ptr);
 	if (!io) {
 		bch_disk_reservation_put(c, &res);
 		return -ENOMEM;
 	}
-
-	/* This also copies k into the write op's replace_key and insert_key */
-
-	bch_replace_init(&io->replace, k);
-
-	bch_write_op_init(&io->op, c, &io->wbio, res,
-			  &c->migration_write_point,
-			  k, &io->replace.hook, NULL,
-			  0);
-	io->op.nr_replicas = 1;
-
-	io->op.io_wq = q->wq;
-
-	bch_extent_drop_dev_ptrs(bkey_i_to_s_extent(&io->op.insert_key),
-				 ca->sb.nr_this_dev);
 
 	bch_data_move(q, ctxt, io);
 	(*seen_key_count)++;
@@ -370,12 +353,15 @@ static int bch_flag_key_bad(struct btree_iter *iter,
 {
 	BKEY_PADDED(key) tmp;
 	struct bkey_s_extent e;
+	struct bch_extent_ptr *ptr;
 	struct cache_set *c = ca->set;
 
 	bkey_reassemble(&tmp.key, orig.s_c);
 	e = bkey_i_to_s_extent(&tmp.key);
 
-	bch_extent_drop_dev_ptrs(e, ca->sb.nr_this_dev);
+	extent_for_each_ptr_backwards(e, ptr)
+		if (ptr->dev == ca->sb.nr_this_dev)
+			bch_extent_drop_ptr(e, ptr);
 
 	/*
 	 * If the new extent no longer has any pointers, bch_extent_normalize()

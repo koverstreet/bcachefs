@@ -214,21 +214,11 @@ static int issue_tiering_move(struct moving_queue *q,
 	struct cache_set *c = ca->set;
 	struct moving_io *io;
 
-	io = moving_io_alloc(k);
+	io = moving_io_alloc(c, q, &ca->tiering_write_point, k, NULL);
 	if (!io) {
 		trace_bcache_tiering_alloc_fail(c, k.k->size);
 		return -ENOMEM;
 	}
-
-	bch_replace_init(&io->replace, bkey_i_to_s_c(&io->key));
-
-	bch_write_op_init(&io->op, c, &io->wbio,
-			  (struct disk_reservation) { 0 },
-			  &ca->tiering_write_point,
-			  bkey_i_to_s_c(&io->key),
-			  &io->replace.hook, NULL, 0);
-	io->op.io_wq = q->wq;
-	io->op.nr_replicas = 1;
 
 	trace_bcache_tiering_copy(k.k);
 

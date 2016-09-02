@@ -43,49 +43,32 @@ static bool moving_pred(struct scan_keylist *kl, struct bkey_s_c k)
 
 static int issue_moving_gc_move(struct moving_queue *q,
 				struct moving_context *ctxt,
-				struct bkey_i *k)
+				struct bkey_s_c k)
 {
 	struct cache *ca = container_of(q, struct cache, moving_gc_queue);
 	struct cache_set *c = ca->set;
-	struct bkey_s_extent e;
-	struct bch_extent_ptr *ptr;
+	const struct bch_extent_ptr *ptr;
 	struct moving_io *io;
 	unsigned gen;
 
-	io = moving_io_alloc(bkey_i_to_s_c(k));
+	extent_for_each_ptr(bkey_s_c_to_extent(k), ptr)
+		if ((ca->sb.nr_this_dev == ptr->dev) &&
+		    (gen = PTR_BUCKET(ca, ptr)->copygc_gen))
+			goto found;
+
+	/* We raced - bucket's been reused */
+	goto out;
+found:
+	gen--;
+	BUG_ON(gen > ARRAY_SIZE(ca->gc_buckets));
+
+	io = moving_io_alloc(c, q, &ca->gc_buckets[gen], k, ptr);
 	if (!io) {
-		trace_bcache_moving_gc_alloc_fail(c, k->k.size);
+		trace_bcache_moving_gc_alloc_fail(c, k.k->size);
 		return -ENOMEM;
 	}
 
-	bch_replace_init(&io->replace, bkey_i_to_s_c(k));
-
-	bch_write_op_init(&io->op, c, &io->wbio,
-			  (struct disk_reservation) { 0 },
-			  NULL, bkey_i_to_s_c(k),
-			  &io->replace.hook, NULL,
-			  bkey_extent_is_cached(&k->k)
-			  ? BCH_WRITE_CACHED : 0);
-	io->op.nr_replicas = 1;
-
-	e = bkey_i_to_s_extent(&io->op.insert_key);
-
-	extent_for_each_ptr(e, ptr)
-		if ((ca->sb.nr_this_dev == ptr->dev) &&
-		    (gen = PTR_BUCKET(ca, ptr)->copygc_gen)) {
-			gen--;
-			BUG_ON(gen > ARRAY_SIZE(ca->gc_buckets));
-			io->op.wp = &ca->gc_buckets[gen];
-			io->sort_key = ptr->offset;
-			bch_extent_drop_ptr(e, ptr);
-			goto found;
-		}
-
-	/* We raced - bucket's been reused */
-	moving_io_free(io);
-	goto out;
-found:
-	trace_bcache_gc_copy(&k->k);
+	trace_bcache_gc_copy(k.k);
 
 	/*
 	 * IMPORTANT: We must call bch_data_move before we dequeue so
@@ -133,7 +116,7 @@ static void read_moving(struct cache *ca, struct moving_context *ctxt)
 				break;
 
 			if (issue_moving_gc_move(&ca->moving_gc_queue,
-						 ctxt, k)) {
+						 ctxt, bkey_i_to_s_c(k))) {
 				/*
 				 * Memory allocation failed; we will wait for
 				 * all queued moves to finish and continue
