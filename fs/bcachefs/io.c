@@ -806,63 +806,6 @@ static void bch_write_endio(struct bio *bio)
 	closure_put(cl);
 }
 
-/*
- * We're writing another replica for this extent, so while we've got the data in
- * memory we'll be computing a new checksum for the currently live data.
- *
- * If there are other replicas we aren't moving, and they are checksummed but
- * not compressed, we can modify them to point to only the data that is
- * currently live (so that readers won't have to bounce) while we've got the
- * checksum we need:
- *
- * XXX: to guard against data being corrupted while in memory, instead of
- * recomputing the checksum here, it would be better in the read path to instead
- * of computing the checksum of the entire extent:
- *
- * | extent                              |
- *
- * compute the checksums of the live and dead data separately
- * | dead data || live data || dead data |
- *
- * and then verify that crc_dead1 + crc_live + crc_dead2 == orig_crc, and then
- * use crc_live here (that we verified was correct earlier)
- */
-static void extent_cleanup_checksums(struct bkey_s_extent e,
-				     u64 csum, unsigned csum_type)
-{
-	union bch_extent_crc *crc;
-
-	extent_for_each_crc(e, crc)
-		switch (extent_crc_type(crc)) {
-		case BCH_EXTENT_CRC_NONE:
-			BUG();
-		case BCH_EXTENT_CRC32:
-			if (crc->crc32.compression_type != BCH_COMPRESSION_NONE ||
-			    bch_crc_size[csum_type] > sizeof(crc->crc32.csum))
-				continue;
-
-			extent_adjust_pointers(e, crc);
-			crc->crc32.compressed_size	= e.k->size;
-			crc->crc32.uncompressed_size	= e.k->size;
-			crc->crc32.offset		= 0;
-			crc->crc32.csum_type		= csum_type;
-			crc->crc32.csum		= csum;
-			break;
-		case BCH_EXTENT_CRC64:
-			if (crc->crc64.compression_type != BCH_COMPRESSION_NONE ||
-			    bch_crc_size[csum_type] > sizeof(crc->crc64.csum))
-				continue;
-
-			extent_adjust_pointers(e, crc);
-			crc->crc64.compressed_size	= e.k->size;
-			crc->crc64.uncompressed_size	= e.k->size;
-			crc->crc64.offset		= 0;
-			crc->crc64.csum_type		= csum_type;
-			crc->crc64.csum		= csum;
-			break;
-		}
-}
-
 static int bch_write_extent(struct bch_write_op *op,
 			    struct open_bucket *ob,
 			    struct bkey_i_extent *e,
@@ -954,13 +897,6 @@ static int bch_write_extent(struct bch_write_op *op,
 		 * under it
 		 */
 		csum = bch_checksum_bio(bio, csum_type);
-
-		/*
-		 * If possible, adjust existing pointers to only point to
-		 * currently live data, while we have the checksum for that
-		 * data:
-		 */
-		extent_cleanup_checksums(extent_i_to_s(e), csum, csum_type);
 #if 0
 		if (compression_type != BCH_COMPRESSION_NONE)
 			pr_info("successfully compressed %u -> %u",
@@ -976,6 +912,8 @@ static int bch_write_extent(struct bch_write_op *op,
 		bch_alloc_sectors_done(op->c, op->wp,
 				       e, op->nr_replicas,
 				       ob, bio_sectors(bio));
+
+		bch_extent_narrow_crcs(extent_i_to_s(e));
 	} else {
 		if (e->k.size > ob->sectors_free)
 			bch_key_resize(&e->k, ob->sectors_free);

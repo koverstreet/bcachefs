@@ -164,7 +164,7 @@ static bool crc_cmp(union bch_extent_crc *l, union bch_extent_crc *r)
 }
 
 /* Increment pointers after @crc by crc's offset until the next crc entry: */
-void extent_adjust_pointers(struct bkey_s_extent e, union bch_extent_crc *crc)
+void bch_extent_crc_narrow_pointers(struct bkey_s_extent e, union bch_extent_crc *crc)
 {
 	union bch_extent_entry *entry;
 
@@ -176,7 +176,86 @@ void extent_adjust_pointers(struct bkey_s_extent e, union bch_extent_crc *crc)
 	}
 }
 
-static void extent_cleanup_crcs(struct bkey_s_extent e)
+/*
+ * We're writing another replica for this extent, so while we've got the data in
+ * memory we'll be computing a new checksum for the currently live data.
+ *
+ * If there are other replicas we aren't moving, and they are checksummed but
+ * not compressed, we can modify them to point to only the data that is
+ * currently live (so that readers won't have to bounce) while we've got the
+ * checksum we need:
+ *
+ * XXX: to guard against data being corrupted while in memory, instead of
+ * recomputing the checksum here, it would be better in the read path to instead
+ * of computing the checksum of the entire extent:
+ *
+ * | extent                              |
+ *
+ * compute the checksums of the live and dead data separately
+ * | dead data || live data || dead data |
+ *
+ * and then verify that crc_dead1 + crc_live + crc_dead2 == orig_crc, and then
+ * use crc_live here (that we verified was correct earlier)
+ */
+void bch_extent_narrow_crcs(struct bkey_s_extent e)
+{
+	union bch_extent_crc *crc;
+	bool have_wide = false, have_narrow = false;
+	u64 csum = 0;
+	unsigned csum_type = 0;
+
+	extent_for_each_crc(e, crc) {
+		if (crc_to_64(crc).compression_type)
+			continue;
+
+		if (crc_to_64(crc).uncompressed_size != e.k->size) {
+			have_wide = true;
+		} else {
+			have_narrow = true;
+			csum = crc_to_64(crc).csum;
+			csum_type = crc_to_64(crc).csum_type;
+		}
+	}
+
+	if (!have_wide || !have_narrow)
+		return;
+
+	extent_for_each_crc(e, crc) {
+		if (crc_to_64(crc).compression_type)
+			continue;
+
+		if (crc_to_64(crc).uncompressed_size != e.k->size) {
+			switch (extent_crc_type(crc)) {
+			case BCH_EXTENT_CRC_NONE:
+				BUG();
+			case BCH_EXTENT_CRC32:
+				if (bch_crc_size[csum_type] > sizeof(crc->crc32.csum))
+					continue;
+
+				bch_extent_crc_narrow_pointers(e, crc);
+				crc->crc32.compressed_size	= e.k->size;
+				crc->crc32.uncompressed_size	= e.k->size;
+				crc->crc32.offset		= 0;
+				crc->crc32.csum_type		= csum_type;
+				crc->crc32.csum			= csum;
+				break;
+			case BCH_EXTENT_CRC64:
+				if (bch_crc_size[csum_type] > sizeof(crc->crc64.csum))
+					continue;
+
+				bch_extent_crc_narrow_pointers(e, crc);
+				crc->crc64.compressed_size	= e.k->size;
+				crc->crc64.uncompressed_size	= e.k->size;
+				crc->crc64.offset		= 0;
+				crc->crc64.csum_type		= csum_type;
+				crc->crc64.csum			= csum;
+				break;
+			}
+		}
+	}
+}
+
+void bch_extent_drop_redundant_crcs(struct bkey_s_extent e)
 {
 	union bch_extent_entry *entry = e.v->start;
 	union bch_extent_crc *crc, *prev = NULL;
@@ -209,7 +288,7 @@ static void extent_cleanup_crcs(struct bkey_s_extent e)
 		    !crc_to_64(crc).csum_type &&
 		    !crc_to_64(crc).compression_type){
 			/* null crc entry: */
-			extent_adjust_pointers(e, crc);
+			bch_extent_crc_narrow_pointers(e, crc);
 			goto drop;
 		}
 
@@ -224,12 +303,6 @@ drop:
 	}
 
 	EBUG_ON(bkey_val_u64s(e.k) && !bch_extent_nr_ptrs(e.c));
-}
-
-void bch_extent_drop_ptr(struct bkey_s_extent e, struct bch_extent_ptr *ptr)
-{
-	__bch_extent_drop_ptr(e, ptr);
-	extent_cleanup_crcs(e);
 }
 
 static bool should_drop_ptr(const struct cache_set *c,
@@ -261,7 +334,7 @@ void bch_extent_drop_stale(struct cache_set *c, struct bkey_s_extent e)
 	rcu_read_unlock();
 
 	if (dropped)
-		extent_cleanup_crcs(e);
+		bch_extent_drop_redundant_crcs(e);
 }
 
 static bool bch_ptr_normalize(struct btree_keys *bk, struct bkey_s k)
@@ -1805,7 +1878,7 @@ static void __extent_sort_ptrs(struct cache_member_rcu *mi,
 	}
 
 	/* Sort done - now drop redundant crc entries: */
-	extent_cleanup_crcs(dst);
+	bch_extent_drop_redundant_crcs(dst);
 
 	memcpy(src.v, dst.v, bkey_val_bytes(dst.k));
 	set_bkey_val_u64s(src.k, bkey_val_u64s(dst.k));

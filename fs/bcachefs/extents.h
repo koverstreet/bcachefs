@@ -398,17 +398,27 @@ static inline unsigned bkey_extent_is_compressed(struct cache_set *c,
 	return ret;
 }
 
-void extent_adjust_pointers(struct bkey_s_extent, union bch_extent_crc *);
+void bch_extent_narrow_crcs(struct bkey_s_extent);
+void bch_extent_drop_redundant_crcs(struct bkey_s_extent);
 
 /* Doesn't cleanup redundant crcs */
 static inline void __bch_extent_drop_ptr(struct bkey_s_extent e,
 					 struct bch_extent_ptr *ptr)
 {
+	EBUG_ON(ptr < &e.v->start->ptr ||
+		ptr >= &extent_entry_last(e)->ptr);
+	EBUG_ON(ptr->type != 1 << BCH_EXTENT_ENTRY_ptr);
 	memmove(ptr, ptr + 1, (void *) extent_entry_last(e) - (void *) (ptr + 1));
 	e.k->u64s -= sizeof(*ptr) / sizeof(u64);
 }
 
-void bch_extent_drop_ptr(struct bkey_s_extent, struct bch_extent_ptr *);
+static inline void bch_extent_drop_ptr(struct bkey_s_extent e,
+				       struct bch_extent_ptr *ptr)
+{
+	__bch_extent_drop_ptr(e, ptr);
+	bch_extent_drop_redundant_crcs(e);
+}
+
 bool bch_extent_has_device(struct bkey_s_c_extent, unsigned);
 
 bool bch_cut_front(struct bpos, struct bkey_i *);
