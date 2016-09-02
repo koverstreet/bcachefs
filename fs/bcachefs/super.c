@@ -199,13 +199,14 @@ static const char *validate_cache_super(struct bcache_superblock *disk_sb)
 	case BCACHE_SB_VERSION_CDEV_WITH_UUID:
 	case BCACHE_SB_VERSION_CDEV_V2:
 	case BCACHE_SB_VERSION_CDEV_V3:
+	case BCACHE_SB_VERSION_CDEV_V4:
 		break;
 	default:
 		return"Unsupported superblock version";
 	}
 
 	if (CACHE_SET_SYNC(sb) &&
-	    le64_to_cpu(sb->version) != BCACHE_SB_VERSION_CDEV_V3)
+	    le64_to_cpu(sb->version) != BCACHE_SB_VERSION_CDEV_V4)
 		return "Unsupported superblock version";
 
 	block_size = le16_to_cpu(sb->block_size);
@@ -1471,6 +1472,7 @@ recovery_done:
 	/* Mark cache set as initialized: */
 	SET_CACHE_SET_SYNC(&c->disk_sb, true);
 	SET_CACHE_SET_CLEAN(&c->disk_sb, false);
+	c->disk_sb.version = BCACHE_SB_VERSION_CDEV;
 	bcache_write_super(c);
 
 	err = "dynamic fault";

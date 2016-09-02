@@ -639,6 +639,7 @@ BKEY_VAL_TYPE(xattr,		BCH_XATTR);
  * Version 4: Backing device with data offset
  * Version 5: All the incompat changes
  * Version 6: Cache device UUIDs all in superblock, another incompat bset change
+ * Version 7: Encryption (expanded checksum fields), other random things
  */
 #define BCACHE_SB_VERSION_CDEV_V0	0
 #define BCACHE_SB_VERSION_BDEV		1
@@ -646,8 +647,9 @@ BKEY_VAL_TYPE(xattr,		BCH_XATTR);
 #define BCACHE_SB_VERSION_BDEV_WITH_OFFSET 4
 #define BCACHE_SB_VERSION_CDEV_V2	5
 #define BCACHE_SB_VERSION_CDEV_V3	6
-#define BCACHE_SB_VERSION_CDEV		6
-#define BCACHE_SB_MAX_VERSION		6
+#define BCACHE_SB_VERSION_CDEV_V4	7
+#define BCACHE_SB_VERSION_CDEV		7
+#define BCACHE_SB_MAX_VERSION		7
 
 #define SB_SECTOR			8
 #define SB_LABEL_SIZE			32
