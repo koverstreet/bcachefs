@@ -438,7 +438,8 @@ static void bch_mark_pointer(struct cache_set *c,
 		 * checked the gen
 		 */
 		if (ptr_stale(ca, ptr)) {
-			BUG_ON(type == S_META);
+			BUG_ON(type != S_CACHED &&
+			       test_bit(JOURNAL_REPLAY_DONE, &c->journal.flags));
 			return;
 		}
 
@@ -450,17 +451,10 @@ static void bch_mark_pointer(struct cache_set *c,
 		if (!is_gc && gc_will_visit(c, gc_pos))
 			goto out;
 
-		/*
-		 * Disallowed state transition - this means a bkey_cmpxchg()
-		 * operation is racing; just treat it like the pointer was
-		 * already stale
-		 */
-		if (!may_make_unavailable &&
-		    type != S_CACHED &&
-		    is_available_bucket(old)) {
-			BUG_ON(type == S_META);
-			return;
-		}
+		BUG_ON(type != S_CACHED &&
+		       !may_make_unavailable &&
+		       is_available_bucket(old) &&
+		       test_bit(JOURNAL_REPLAY_DONE, &c->journal.flags));
 
 		BUG_ON((old.dirty_sectors ||
 			old.cached_sectors) &&
