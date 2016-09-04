@@ -612,17 +612,15 @@ static ssize_t bch_compression_stats(struct cache_set *c, char *buf)
 			const union bch_extent_crc *crc;
 
 			extent_for_each_ptr_crc(e, ptr, crc) {
-				struct bch_extent_crc64 crc64 = crc_to_64(crc);
-
-				if (crc64.compression_type == BCH_COMPRESSION_NONE) {
+				if (crc_compression_type(crc) == BCH_COMPRESSION_NONE) {
 					nr_uncompressed_extents++;
 					uncompressed_sectors += e.k->size;
 				} else {
 					nr_compressed_extents++;
 					compressed_sectors_compressed +=
-						crc64.compressed_size;
+						crc_compressed_size(crc);
 					compressed_sectors_uncompressed +=
-						crc64.uncompressed_size;
+						crc_uncompressed_size(crc);
 				}
 
 				/* only looking at the first ptr */

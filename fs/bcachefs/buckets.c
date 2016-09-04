@@ -360,26 +360,26 @@ do {								\
 #if 0
 /* Reverting this until the copygc + compression issue is fixed: */
 
-static unsigned __disk_sectors(struct bch_extent_crc64 crc, unsigned sectors)
+static unsigned __disk_sectors(const union bch_extent_crc *crc, unsigned sectors)
 {
-	return crc.compression_type
-		? sectors * crc.compressed_size / crc.uncompressed_size
+	return crc_compression_type(crc)
+		? sectors * crc_compressed_size(crc) / crc_uncompressed_size(crc)
 		: sectors;
 }
 
-static unsigned __compressed_sectors(struct bch_extent_crc64 crc, unsigned sectors)
+static unsigned __compressed_sectors(const union bch_extent_crc *crc, unsigned sectors)
 {
-	return crc.compression_type
-		? min_t(unsigned, crc.compressed_size, sectors)
+	return crc_compression_type(crc)
+		? min_t(unsigned, crc_compressed_size(crc), sectors)
 		: sectors;
 }
 #else
-static unsigned __disk_sectors(struct bch_extent_crc64 crc, unsigned sectors)
+static unsigned __disk_sectors(const union bch_extent_crc *crc, unsigned sectors)
 {
 	return sectors;
 }
 
-static unsigned __compressed_sectors(struct bch_extent_crc64 crc, unsigned sectors)
+static unsigned __compressed_sectors(const union bch_extent_crc *crc, unsigned sectors)
 {
 	return sectors;
 }
@@ -404,7 +404,6 @@ static void bch_mark_pointer(struct cache_set *c,
 	unsigned saturated;
 	struct bucket *g = ca->buckets + PTR_BUCKET_NR(ca, ptr);
 	u32 v = READ_ONCE(g->mark.counter);
-	struct bch_extent_crc64 crc64 = crc_to_64(crc);
 	unsigned old_sectors, new_sectors;
 	int disk_sectors, compressed_sectors;
 
@@ -416,10 +415,10 @@ static void bch_mark_pointer(struct cache_set *c,
 		new_sectors = e.k->size + sectors;
 	}
 
-	disk_sectors = -__disk_sectors(crc64, old_sectors)
-		+ __disk_sectors(crc64, new_sectors);
-	compressed_sectors = -__compressed_sectors(crc64, old_sectors)
-		+ __compressed_sectors(crc64, new_sectors);
+	disk_sectors = -__disk_sectors(crc, old_sectors)
+		+ __disk_sectors(crc, new_sectors);
+	compressed_sectors = -__compressed_sectors(crc, old_sectors)
+		+ __compressed_sectors(crc, new_sectors);
 
 	do {
 		new.counter = old.counter = v;

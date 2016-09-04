@@ -634,10 +634,10 @@ static int bch_fill_extent(struct fiemap_extent_info *info,
 			int flags2 = 0;
 			u64 offset = ptr->offset;
 
-			if (crc_to_64(crc).compression_type)
+			if (crc_compression_type(crc))
 				flags2 |= FIEMAP_EXTENT_ENCODED;
 			else
-				offset += crc_to_64(crc).offset;
+				offset += crc_offset(crc);
 
 			if ((offset & (PAGE_SECTORS - 1)) ||
 			    (e.k->size & (PAGE_SECTORS - 1)))
