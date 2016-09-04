@@ -18,6 +18,7 @@
 #include "io.h"
 #include "journal.h"
 #include "keylist.h"
+#include "move.h"
 #include "notify.h"
 #include "stats.h"
 #include "super.h"
@@ -1261,13 +1262,6 @@ void bch_write_op_init(struct bch_write_op *op, struct cache_set *c,
 		op->insert_key.k.version = bch_rand_range(UINT_MAX);
 }
 
-void bch_replace_init(struct bch_replace_info *r, struct bkey_s_c old)
-{
-	memset(r, 0, sizeof(*r));
-	r->hook.fn = bch_extent_cmpxchg;
-	bkey_reassemble(&r->key, old);
-}
-
 /* Discard */
 
 /* bch_discard - discard a range of keys from start_key to end_key.
@@ -1299,9 +1293,8 @@ int bch_discard(struct cache_set *c, struct bpos start,
 
 struct cache_promote_op {
 	struct closure		cl;
-	struct bch_replace_info	replace;
-	struct bch_write_op	iop;
-	struct bch_write_bio	bio; /* must be last */
+	struct migrate_write	write;
+	struct bio_vec		bi_inline_vecs[0]; /* must be last */
 };
 
 /* Read */
@@ -1420,7 +1413,7 @@ static void cache_promote_done(struct closure *cl)
 	struct cache_promote_op *op =
 		container_of(cl, struct cache_promote_op, cl);
 
-	bch_bio_free_pages_pool(op->iop.c, &op->bio.bio.bio);
+	bch_bio_free_pages_pool(op->write.op.c, &op->write.wbio.bio.bio);
 	kfree(op);
 }
 
@@ -1444,13 +1437,13 @@ static void __bch_read_endio(struct cache_set *c, struct bch_read_bio *rbio)
 		BUG_ON(!rbio->split || !rbio->bounce);
 
 		/* we now own pages: */
-		swap(promote->bio.bio.bio.bi_vcnt, rbio->bio.bi_vcnt);
+		swap(promote->write.wbio.bio.bio.bi_vcnt, rbio->bio.bi_vcnt);
 		rbio->promote = NULL;
 
 		bch_rbio_done(c, rbio);
 
 		closure_init(cl, &c->cl);
-		closure_call(&promote->iop.cl, bch_write, c->wq, cl);
+		closure_call(&promote->write.op.cl, bch_write, c->wq, cl);
 		closure_return_with_destructor(cl, cache_promote_done);
 	} else {
 		bch_rbio_done(c, rbio);
@@ -1532,7 +1525,7 @@ void bch_read_extent_iter(struct cache_set *c, struct bch_read_bio *orig,
 		promote_op = kmalloc(sizeof(*promote_op) +
 				sizeof(struct bio_vec) * pages, GFP_NOIO);
 		if (promote_op) {
-			struct bio *promote_bio = &promote_op->bio.bio.bio;
+			struct bio *promote_bio = &promote_op->write.wbio.bio.bio;
 
 			bio_init(promote_bio);
 			promote_bio->bi_max_vecs = pages;
@@ -1619,24 +1612,20 @@ void bch_read_extent_iter(struct cache_set *c, struct bch_read_bio *orig,
 	rbio->bio.bi_end_io	= bch_read_endio;
 
 	if (promote_op) {
-		struct bio *promote_bio = &promote_op->bio.bio.bio;
+		struct bio *promote_bio = &promote_op->write.wbio.bio.bio;
 
 		promote_bio->bi_iter = rbio->bio.bi_iter;
 		memcpy(promote_bio->bi_io_vec, rbio->bio.bi_io_vec,
 		       sizeof(struct bio_vec) * rbio->bio.bi_vcnt);
 
-		bch_replace_init(&promote_op->replace, k);
-		bch_write_op_init(&promote_op->iop, c,
-				  &promote_op->bio,
-				  (struct disk_reservation) { 0 },
-				  &c->promote_write_point, k,
-				  &promote_op->replace.hook, NULL,
-				  BCH_WRITE_ALLOC_NOWAIT);
-		promote_op->iop.nr_replicas = 1;
+		bch_migrate_write_init(c, &promote_op->write,
+				       &c->promote_write_point,
+				       k, NULL,
+				       BCH_WRITE_ALLOC_NOWAIT);
 
 		if (rbio->crc.compression_type) {
-			promote_op->iop.flags |= BCH_WRITE_DATA_COMPRESSED;
-			promote_op->iop.crc = rbio->crc;
+			promote_op->write.op.flags |= BCH_WRITE_DATA_COMPRESSED;
+			promote_op->write.op.crc = rbio->crc;
 		} else if (read_full) {
 			/*
 			 * Adjust bio to correspond to _live_ portion of @k -
@@ -1651,13 +1640,13 @@ void bch_read_extent_iter(struct cache_set *c, struct bch_read_bio *orig,
 			 * actually reading:
 			 */
 			bch_cut_front(POS(k.k->p.inode, iter.bi_sector),
-				      &promote_op->iop.insert_key);
-			bch_key_resize(&promote_op->iop.insert_key.k,
+				      &promote_op->write.op.insert_key);
+			bch_key_resize(&promote_op->write.op.insert_key.k,
 				       bvec_iter_sectors(iter));
 		}
 
 		promote_bio->bi_iter.bi_sector =
-			bkey_start_offset(&promote_op->iop.insert_key.k);
+			bkey_start_offset(&promote_op->write.op.insert_key.k);
 	}
 
 	/* _after_ promete stuff has looked at rbio->crc.offset */

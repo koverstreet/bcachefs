@@ -46,8 +46,6 @@ void bch_write_op_init(struct bch_write_op *, struct cache_set *,
 		       struct extent_insert_hook *, u64 *, unsigned);
 void bch_write(struct closure *);
 
-void bch_replace_init(struct bch_replace_info *, struct bkey_s_c);
-
 struct cache_promote_op;
 
 struct extent_pick_ptr;
