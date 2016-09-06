@@ -1843,8 +1843,11 @@ static void __extent_sort_ptrs(struct cache_member_rcu *mi,
 	extent_for_each_ptr_crc(src, src_ptr, src_crc) {
 		extent_for_each_ptr_crc(dst, dst_ptr, dst_crc)
 			if (PTR_TIER(mi, src_ptr) < PTR_TIER(mi, dst_ptr))
-				break;
+				goto found;
 
+		dst_ptr = &extent_entry_last(dst)->ptr;
+		dst_crc = NULL;
+found:
 		/* found insert position: */
 
 		/*
@@ -1896,12 +1899,14 @@ static void extent_sort_ptrs(struct cache_set *c, struct bkey_s_extent e)
 	 */
 	mi = cache_member_info_get(c);
 
-	extent_for_each_ptr_crc(e, ptr, crc)
+	extent_for_each_ptr_crc(e, ptr, crc) {
 		if (prev &&
 		    PTR_TIER(mi, ptr) < PTR_TIER(mi, prev)) {
 			__extent_sort_ptrs(mi, e);
 			break;
 		}
+		prev = ptr;
+	}
 
 	cache_member_info_put();
 }
