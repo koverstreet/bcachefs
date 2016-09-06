@@ -349,6 +349,8 @@ static u64 read_tiering(struct cache_set *c)
 
 	trace_bcache_tiering_end(c, ctxt.sectors_moved, ctxt.keys_moved);
 
+	//pr_info("pred y %llu pred n %llu", c->tiering_pred_y, c->tiering_pred_n);
+
 	return ctxt.sectors_moved;
 }
 
@@ -357,7 +359,7 @@ static int bch_tiering_thread(void *arg)
 	struct cache_set *c = arg;
 	struct io_clock *clock = &c->io_clock[WRITE];
 	struct cache *ca;
-	u64 sectors, tier_capacity;
+	u64 tier_capacity, available_sectors;
 	unsigned long last;
 	unsigned i;
 
@@ -368,21 +370,32 @@ static int bch_tiering_thread(void *arg)
 					   c->cache_tiers[1].nr_devices))
 			break;
 
-		last = atomic_long_read(&clock->now);
+		while (1) {
+			last = atomic_long_read(&clock->now);
 
-		sectors = read_tiering(c);
+			tier_capacity = available_sectors = 0;
+			rcu_read_lock();
+			group_for_each_cache_rcu(ca, &c->cache_tiers[0], i) {
+				tier_capacity +=
+					(ca->mi.nbuckets -
+					 ca->mi.first_bucket) << ca->bucket_bits;
+				available_sectors +=
+					buckets_available_cache(ca) << ca->bucket_bits;
+			}
+			rcu_read_unlock();
 
-		tier_capacity = 0;
-		rcu_read_lock();
-		group_for_each_cache_rcu(ca, &c->cache_tiers[0], i)
-			tier_capacity +=
-				(ca->mi.nbuckets -
-				 ca->mi.first_bucket) << ca->bucket_bits;
-		rcu_read_unlock();
+			if (available_sectors < (tier_capacity >> 1))
+				break;
 
-		if (sectors < tier_capacity >> 4)
 			bch_kthread_io_clock_wait(clock,
-					  last + (tier_capacity >> 5));
+						  last +
+						  available_sectors -
+						  (tier_capacity >> 1));
+			if (kthread_should_stop())
+				return 0;
+		}
+
+		read_tiering(c);
 	}
 
 	return 0;
