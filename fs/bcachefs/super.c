@@ -2228,7 +2228,7 @@ const char *bch_register_cache_set(char * const *devices, unsigned nr_devices,
 		if (__SB_IS_BDEV(le64_to_cpu(sb[i].sb->version)))
 			goto err_unlock;
 
-		err = validate_cache_super(sb);
+		err = validate_cache_super(&sb[i]);
 		if (err)
 			goto err_unlock;
 	}
