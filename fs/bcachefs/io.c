@@ -1512,6 +1512,11 @@ void bch_read_extent_iter(struct cache_set *c, struct bch_read_bio *orig,
 		k.k->p.offset < bvec_iter_end_sector(iter));
 
 	/* only promote if we're not reading from the fastest tier: */
+
+	/*
+	 * XXX: multiple promotes can race with each other, wastefully. Keep a
+	 * list of outstanding promotes?
+	 */
 	if ((flags & BCH_READ_PROMOTE) && pick->ca->mi.tier) {
 		/*
 		 * biovec needs to be big enough to hold decompressed data, if
@@ -1622,6 +1627,7 @@ void bch_read_extent_iter(struct cache_set *c, struct bch_read_bio *orig,
 				       &c->promote_write_point,
 				       k, NULL,
 				       BCH_WRITE_ALLOC_NOWAIT);
+		promote_op->write.promote = true;
 
 		if (rbio->crc.compression_type) {
 			promote_op->write.op.flags |= BCH_WRITE_DATA_COMPRESSED;

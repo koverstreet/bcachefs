@@ -80,6 +80,12 @@ static int bch_migrate_index_update(struct bch_write_op *op)
 		bch_cut_back(insert->k.p, &new.k.k);
 		e = bkey_i_to_s_extent(&new.k);
 
+		/* hack - promotes can race: */
+		if (m->promote)
+			extent_for_each_ptr(bkey_i_to_s_extent(insert), ptr)
+				if (bch_extent_has_device(e.c, ptr->dev))
+					goto nomatch;
+
 		ptr = bch_migrate_matching_ptr(m, e);
 		if (ptr) {
 			if (m->move)
@@ -127,6 +133,7 @@ void bch_migrate_write_init(struct cache_set *c,
 {
 	bkey_reassemble(&m->key, k);
 
+	m->promote = false;
 	m->move = move_ptr != NULL;
 	if (move_ptr)
 		m->move_ptr = *move_ptr;

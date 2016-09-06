@@ -63,6 +63,7 @@ void bch_moving_wait(struct moving_context *);
 
 struct migrate_write {
 	BKEY_PADDED(key);
+	bool			promote;
 	bool			move;
 	struct bch_extent_ptr	move_ptr;
 	struct bch_write_op	op;
