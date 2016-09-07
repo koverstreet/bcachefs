@@ -36,7 +36,12 @@ static inline void bch_wake_allocator(struct cache *ca)
 		wake_up_process(p);
 	rcu_read_unlock();
 
-	closure_wake_up(&ca->set->buckets_available_wait);
+	/*
+	 * XXX: this is only needed because of ca->reserve_buckets_count, but is
+	 * reserve_buckets_count needed anymore? It predates modern
+	 * reservations.
+	 */
+	closure_wake_up(&ca->set->freelist_wait);
 }
 
 #define __open_bucket_next_online_device(_c, _ob, _ptr, _ca)            \

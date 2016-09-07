@@ -1066,46 +1066,40 @@ static int bch_bucket_alloc_set(struct cache_set *c, struct open_bucket *ob,
 				struct cache_group *devs, long *caches_used,
 				struct closure *cl)
 {
-	struct closure_waitlist *waitlist = NULL;
 	bool waiting = false;
 
 	while (1) {
 		switch (__bch_bucket_alloc_set(c, ob, reserve, nr_replicas,
 					       devs, caches_used)) {
 		case ALLOC_SUCCESS:
-			if (waitlist)
-				closure_wake_up(waitlist);
+			if (waiting)
+				closure_wake_up(&c->freelist_wait);
 
 			return 0;
 
 		case CACHE_SET_FULL:
 			trace_bcache_cache_set_full(c, reserve, cl);
 
-			if (waitlist)
-				closure_wake_up(waitlist);
+			if (waiting)
+				closure_wake_up(&c->freelist_wait);
 			return -ENOSPC;
 
 		case BUCKETS_NOT_AVAILABLE:
 			trace_bcache_buckets_unavailable_fail(c, reserve, cl);
-			waitlist = &c->buckets_available_wait;
-			break;
-
 		case FREELIST_EMPTY:
-			waitlist = &c->freelist_wait;
+			if (!cl)
+				return -ENOSPC;
+
+			if (waiting)
+				return -EAGAIN;
+
+			/* Retry allocation after adding ourself to waitlist: */
+			closure_wait(&c->freelist_wait, cl);
+			waiting = true;
 			break;
 		default:
 			BUG();
 		}
-
-		if (!cl)
-			return -ENOSPC;
-
-		if (waiting)
-			return -EAGAIN;
-
-		/* Must retry allocation after adding ourself to waitlist */
-		closure_wait(waitlist, cl);
-		waiting = true;
 	}
 }
 
@@ -1577,7 +1571,6 @@ static void bch_recalc_capacity(struct cache_set *c)
 
 	/* Wake up case someone was waiting for buckets */
 	closure_wake_up(&c->freelist_wait);
-	closure_wake_up(&c->buckets_available_wait);
 }
 
 static void bch_stop_write_point(struct cache *ca,
@@ -1691,7 +1684,6 @@ void bch_cache_allocator_stop(struct cache *ca)
 
 	/* Avoid deadlocks.. */
 
-	closure_wake_up(&c->buckets_available_wait);
 	closure_wake_up(&c->freelist_wait);
 	wake_up(&c->journal.wait);
 
