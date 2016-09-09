@@ -1357,9 +1357,11 @@ static const char *run_cache_set(struct cache_set *c)
 
 		bch_verbose(c, "fs gc done");
 
-		bch_verbose(c, "starting fsck:");
-		bch_fsck(c);
-		bch_verbose(c, "fsck done");
+		if (!c->opts.nofsck) {
+			bch_verbose(c, "starting fsck:");
+			bch_fsck(c);
+			bch_verbose(c, "fsck done");
+		}
 	} else {
 		struct bkey_i_inode inode;
 		struct closure cl;
