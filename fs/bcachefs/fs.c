@@ -238,8 +238,7 @@ static int bch_vfs_dirent_create(struct cache_set *c, struct inode *dir,
 {
 	int ret;
 
-	ret = bch_dirent_create(dir, type, name,
-				dst->i_ino);
+	ret = bch_dirent_create(dir, type, name, dst->i_ino);
 	if (unlikely(ret))
 		return ret;
 

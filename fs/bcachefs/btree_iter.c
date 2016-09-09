@@ -510,7 +510,8 @@ static void btree_iter_verify_locking(struct btree_iter *iter, unsigned level)
 #endif
 }
 
-static inline void btree_iter_lock_root(struct btree_iter *iter, struct bpos pos)
+static inline void btree_iter_lock_root(struct btree_iter *iter, struct bpos pos,
+					unsigned l)
 {
 	struct cache_set *c = iter->c;
 
@@ -519,9 +520,14 @@ static inline void btree_iter_lock_root(struct btree_iter *iter, struct bpos pos
 	memset(iter->nodes, 0, sizeof(iter->nodes));
 
 	while (1) {
-		struct btree *b = c->btree_roots[iter->btree_id].b;
+		struct btree *b = READ_ONCE(c->btree_roots[iter->btree_id].b);
 
-		iter->level = b->level;
+		iter->level = READ_ONCE(b->level);
+
+		if (iter->level < l) {
+			iter->level = l;
+			break;
+		}
 
 		btree_iter_verify_locking(iter, iter->level);
 
@@ -631,7 +637,7 @@ retry:
 				return ret;
 			}
 		} else {
-			btree_iter_lock_root(iter, pos);
+			btree_iter_lock_root(iter, pos, l);
 		}
 
 	return 0;
@@ -657,13 +663,15 @@ struct btree *bch_btree_iter_peek_node(struct btree_iter *iter)
 
 	b = iter->nodes[iter->level];
 
-	EBUG_ON(bkey_cmp(b->key.k.p, iter->pos) < 0);
-	iter->pos = b->key.k.p;
+	if (b) {
+		EBUG_ON(bkey_cmp(b->key.k.p, iter->pos) < 0);
+		iter->pos = b->key.k.p;
+	}
 
 	return b;
 }
 
-struct btree *bch_btree_iter_next_node(struct btree_iter *iter)
+struct btree *bch_btree_iter_next_node(struct btree_iter *iter, unsigned depth)
 {
 	struct btree *b;
 	int ret;
@@ -685,7 +693,7 @@ struct btree *bch_btree_iter_next_node(struct btree_iter *iter)
 	if (bkey_cmp(iter->pos, b->key.k.p) < 0) {
 		struct bpos pos = bkey_successor(iter->pos);
 
-		ret = __bch_btree_iter_traverse(iter, 0, pos);
+		ret = __bch_btree_iter_traverse(iter, depth, pos);
 		if (ret)
 			return NULL;
 
@@ -835,9 +843,9 @@ recheck:
 
 void __bch_btree_iter_init(struct btree_iter *iter, struct cache_set *c,
 			   enum btree_id btree_id, struct bpos pos,
-			   int locks_want)
+			   int locks_want, unsigned depth)
 {
-	iter->level			= 0;
+	iter->level			= depth;
 	iter->is_extents		= btree_id == BTREE_ID_EXTENTS;
 	iter->nodes_locked		= 0;
 	iter->nodes_intent_locked	= 0;

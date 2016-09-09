@@ -314,7 +314,7 @@ static ssize_t bch_read_btree_formats(struct file *file, char __user *buf,
 	if (!i->size || !bkey_cmp(POS_MAX, i->from))
 		return i->ret;
 
-	for_each_btree_node(&iter, i->c, i->id, i->from, b) {
+	for_each_btree_node(&iter, i->c, i->id, i->from, 0, b) {
 		const struct bkey_format *f = &b->keys.format;
 		struct bset_stats stats;
 

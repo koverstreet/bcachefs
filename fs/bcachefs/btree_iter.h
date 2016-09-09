@@ -137,7 +137,7 @@ void bch_btree_iter_reinit_node(struct btree_iter *, struct btree *);
 int __must_check bch_btree_iter_traverse(struct btree_iter *);
 
 struct btree *bch_btree_iter_peek_node(struct btree_iter *);
-struct btree *bch_btree_iter_next_node(struct btree_iter *);
+struct btree *bch_btree_iter_next_node(struct btree_iter *, unsigned);
 
 struct bkey_s_c bch_btree_iter_peek(struct btree_iter *);
 struct bkey_s_c bch_btree_iter_peek_with_holes(struct btree_iter *);
@@ -147,14 +147,14 @@ void bch_btree_iter_advance_pos(struct btree_iter *);
 void bch_btree_iter_rewind(struct btree_iter *, struct bpos);
 
 void __bch_btree_iter_init(struct btree_iter *, struct cache_set *,
-			   enum btree_id, struct bpos, int);
+			   enum btree_id, struct bpos, int, unsigned);
 
 static inline void bch_btree_iter_init(struct btree_iter *iter,
 				       struct cache_set *c,
 				       enum btree_id btree_id,
 				       struct bpos pos)
 {
-	__bch_btree_iter_init(iter, c, btree_id, pos, 0);
+	__bch_btree_iter_init(iter, c, btree_id, pos, 0, 0);
 }
 
 static inline void bch_btree_iter_init_intent(struct btree_iter *iter,
@@ -162,7 +162,7 @@ static inline void bch_btree_iter_init_intent(struct btree_iter *iter,
 					      enum btree_id btree_id,
 					      struct bpos pos)
 {
-	__bch_btree_iter_init(iter, c, btree_id, pos, 1);
+	__bch_btree_iter_init(iter, c, btree_id, pos, 1, 0);
 }
 
 int bch_btree_iter_unlink(struct btree_iter *);
@@ -191,21 +191,22 @@ static inline int btree_iter_cmp(const struct btree_iter *l,
 	return bkey_cmp(l->pos, r->pos);
 }
 
-#define __for_each_btree_node(_iter, _c, _btree_id, _start, _b, _locks_want)\
+#define __for_each_btree_node(_iter, _c, _btree_id, _start, _depth,	\
+			      _b, _locks_want)				\
 	for (__bch_btree_iter_init((_iter), (_c), (_btree_id),		\
-				   _start, _locks_want),		\
+				   _start, _locks_want, _depth),	\
 	     (_iter)->is_extents = false,				\
 	     _b = bch_btree_iter_peek_node(_iter);			\
 	     (_b);							\
-	     (_b) = bch_btree_iter_next_node(_iter))
+	     (_b) = bch_btree_iter_next_node(_iter, _depth))
 
-#define for_each_btree_node(_iter, _c, _btree_id, _start, _b)		\
-	__for_each_btree_node(_iter, _c, _btree_id, _start, _b, 0)
+#define for_each_btree_node(_iter, _c, _btree_id, _start, _depth, _b)	\
+	__for_each_btree_node(_iter, _c, _btree_id, _start, _depth, _b, 0)
 
 #define __for_each_btree_key(_iter, _c, _btree_id,  _start,		\
 			     _k, _locks_want)				\
 	for (__bch_btree_iter_init((_iter), (_c), (_btree_id),		\
-				   _start, _locks_want);		\
+				   _start, _locks_want, 0);		\
 	     ((_k) = bch_btree_iter_peek(_iter)).k;			\
 	     bch_btree_iter_advance_pos(_iter))
 
@@ -218,7 +219,7 @@ static inline int btree_iter_cmp(const struct btree_iter *l,
 #define __for_each_btree_key_with_holes(_iter, _c, _btree_id,		\
 					_start, _k, _locks_want)	\
 	for (__bch_btree_iter_init((_iter), (_c), (_btree_id),		\
-				   _start, _locks_want);		\
+				   _start, _locks_want, 0);		\
 	     ((_k) = bch_btree_iter_peek_with_holes(_iter)).k;		\
 	     bch_btree_iter_advance_pos(_iter))
 

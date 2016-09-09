@@ -33,14 +33,16 @@ struct range_checks {
 		struct bpos	min;
 		struct bpos	max;
 	}			l[BTREE_MAX_DEPTH];
+	unsigned		depth;
 };
 
-static void btree_node_range_checks_init(struct range_checks *r)
+static void btree_node_range_checks_init(struct range_checks *r, unsigned depth)
 {
 	unsigned i;
 
 	for (i = 0; i < BTREE_MAX_DEPTH; i++)
 		r->l[i].min = r->l[i].max = POS_MIN;
+	r->depth = depth;
 }
 
 static void btree_node_range_checks(struct cache_set *c, struct btree *b,
@@ -62,7 +64,7 @@ static void btree_node_range_checks(struct cache_set *c, struct btree *b,
 
 	l->max = b->data->max_key;
 
-	if (b->level) {
+	if (b->level > r->depth) {
 		l = &r->l[b->level - 1];
 
 		cache_set_inconsistent_on(bkey_cmp(b->data->min_key,
@@ -183,11 +185,18 @@ static int bch_gc_btree(struct cache_set *c, enum btree_id btree_id)
 	struct btree *b;
 	bool should_rewrite;
 	struct range_checks r;
+	unsigned depth = btree_id == BTREE_ID_EXTENTS ? 0 : 1;
 	int ret;
 
-	btree_node_range_checks_init(&r);
+	/*
+	 * if expensive_debug_checks is on, run range_checks on all leaf nodes:
+	 */
+	if (expensive_debug_checks(c))
+		depth = 0;
 
-	for_each_btree_node(&iter, c, btree_id, POS_MIN, b) {
+	btree_node_range_checks_init(&r, depth);
+
+	for_each_btree_node(&iter, c, btree_id, POS_MIN, depth, b) {
 		btree_node_range_checks(c, b, &r);
 
 		bch_verify_btree_nr_keys(&b->keys);
@@ -670,7 +679,7 @@ static int bch_coalesce_btree(struct cache_set *c, enum btree_id btree_id)
 	 */
 	memset(merge, 0, sizeof(merge));
 
-	__for_each_btree_node(&iter, c, btree_id, POS_MIN, b, U8_MAX) {
+	__for_each_btree_node(&iter, c, btree_id, POS_MIN, 0, b, U8_MAX) {
 		memmove(merge + 1, merge,
 			sizeof(merge) - sizeof(merge[0]));
 		memmove(lock_seq + 1, lock_seq,
@@ -837,13 +846,17 @@ static void bch_initial_gc_btree(struct cache_set *c, enum btree_id id)
 	struct btree_iter iter;
 	struct btree *b;
 	struct range_checks r;
+	unsigned depth = id == BTREE_ID_EXTENTS ? 0 : 1;
 
-	btree_node_range_checks_init(&r);
+	if (expensive_debug_checks(c))
+		depth = 0;
+
+	btree_node_range_checks_init(&r, depth);
 
 	if (!c->btree_roots[id].b)
 		return;
 
-	for_each_btree_node(&iter, c, id, POS_MIN, b) {
+	for_each_btree_node(&iter, c, id, POS_MIN, depth, b) {
 		btree_node_range_checks(c, b, &r);
 
 		if (btree_node_has_ptrs(b)) {

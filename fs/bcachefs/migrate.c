@@ -253,7 +253,7 @@ static int bch_move_btree_off(struct cache *ca,
 		unsigned moved = 0, seen = 0;
 		int ret;
 
-		for_each_btree_node(&iter, ca->set, id, POS_MIN, b) {
+		for_each_btree_node(&iter, ca->set, id, POS_MIN, 0, b) {
 			struct bkey_s_c_extent e =
 				bkey_i_to_s_c_extent(&b->key);
 			seen++;
