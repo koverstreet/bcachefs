@@ -2,6 +2,7 @@
 #include "bcache.h"
 #include "btree_gc.h"
 #include "btree_iter.h"
+#include "extents.h"
 #include "keylist.h"
 
 #include <trace/events/bcachefs.h>
@@ -247,7 +248,12 @@ static void bch_refill_scan_keylist(struct cache_set *c,
 		}
 
 		if (pred(kl, k)) {
-			if (bch_scan_keylist_add(kl, k))
+			BKEY_PADDED(k) tmp;
+
+			bkey_reassemble(&tmp.k, k);
+			bch_cut_front(*last_scanned, &tmp.k);
+
+			if (bch_scan_keylist_add(kl, bkey_i_to_s_c(&tmp.k)))
 				goto done;
 
 			nr_found++;

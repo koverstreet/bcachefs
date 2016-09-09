@@ -160,6 +160,8 @@ static void tiering_refill(struct cache_set *c, struct tiering_refill *refill)
 	trace_bcache_tiering_refill_start(c);
 
 	for_each_btree_key(&iter, c, BTREE_ID_EXTENTS, refill->start, k) {
+		BKEY_PADDED(k) tmp;
+
 		keys = &refill->ca->tiering_queue.keys;
 
 		if (!tiering_pred(keys, k)) {
@@ -167,13 +169,16 @@ static void tiering_refill(struct cache_set *c, struct tiering_refill *refill)
 			goto next;
 		}
 
+		bkey_reassemble(&tmp.k, k);
+		bch_cut_front(refill->start, &tmp.k);
+
 		/* Growing the keylist might fail */
-		if (bch_scan_keylist_add(keys, k))
+		if (bch_scan_keylist_add(keys, bkey_i_to_s_c(&tmp.k)))
 			goto done;
 
 		/* TODO: split key if refill->sectors is now > stripe_size */
-		refill->sectors += k.k->size;
-		refill->start = k.k->p;
+		refill->sectors += tmp.k.k.size;
+		refill->start = tmp.k.k.p;
 
 		/* Check if we've added enough keys to this keylist */
 		if (tiering_keylist_full(refill)) {
