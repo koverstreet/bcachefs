@@ -218,6 +218,12 @@
 #define bch_err(c, fmt, ...) \
 	printk(KERN_ERR bch_fmt(c, fmt), ##__VA_ARGS__)
 
+#define bch_verbose(c, fmt, ...)					\
+do {									\
+	if ((c)->opts.verbose_recovery)					\
+		bch_info(c, fmt, ##__VA_ARGS__);			\
+} while (0)
+
 /* Parameters that are useful for debugging, but should always be compiled in: */
 #define BCH_DEBUG_PARAMS_ALWAYS()					\
 	BCH_DEBUG_PARAM(key_merging_disabled,				\

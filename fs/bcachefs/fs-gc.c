@@ -18,7 +18,7 @@ struct nlink {
 
 DECLARE_GENRADIX_TYPE(nlinks, struct nlink);
 
-static void inc_link(struct nlinks *links,
+static void inc_link(struct cache_set *c, struct nlinks *links,
 		     u64 range_start, u64 *range_end,
 		     u64 inum, unsigned count, bool dir)
 {
@@ -29,6 +29,7 @@ static void inc_link(struct nlinks *links,
 
 	link = genradix_ptr_alloc(links, inum - range_start, GFP_KERNEL);
 	if (!link) {
+		bch_verbose(c, "allocation failed during fs gc - will need another pass");
 		*range_end = inum;
 		return;
 	}
@@ -53,7 +54,7 @@ static int bch_gc_walk_dirents(struct cache_set *c, struct nlinks *links,
 	struct bkey_s_c_dirent d;
 	u64 d_inum;
 
-	inc_link(links, range_start, range_end, BCACHE_ROOT_INO, 2, false);
+	inc_link(c, links, range_start, range_end, BCACHE_ROOT_INO, 2, false);
 
 	for_each_btree_key(&iter, c, BTREE_ID_DIRENTS, POS_MIN, k) {
 		switch (k.k->type) {
@@ -62,12 +63,12 @@ static int bch_gc_walk_dirents(struct cache_set *c, struct nlinks *links,
 			d_inum = le64_to_cpu(d.v->d_inum);
 
 			if (d.v->d_type == DT_DIR) {
-				inc_link(links, range_start, range_end,
+				inc_link(c, links, range_start, range_end,
 					 d_inum, 2, false);
-				inc_link(links, range_start, range_end,
+				inc_link(c, links, range_start, range_end,
 					 d.k->p.inode, 1, true);
 			} else {
-				inc_link(links, range_start, range_end,
+				inc_link(c, links, range_start, range_end,
 					 d_inum, 1, false);
 			}
 
@@ -118,15 +119,13 @@ static int bch_gc_do_inode(struct cache_set *c, struct btree_iter *iter,
 			"non empty directory with link count 0,inode nlink %u, dir links found %u",
 			i_nlink, link.dir_count);
 
-		if (c->opts.verbose_recovery)
-			bch_info(c, "deleting inum %llu", inode.k->p.inode);
+		bch_verbose(c, "deleting inum %llu", inode.k->p.inode);
 
 		return bch_inode_rm(c, inode.k->p.inode);
 	}
 
 	if (i_flags & BCH_INODE_I_SIZE_DIRTY) {
-		if (c->opts.verbose_recovery)
-			bch_info(c, "truncating inode %llu", inode.k->p.inode);
+		bch_verbose(c, "truncating inode %llu", inode.k->p.inode);
 
 		/*
 		 * XXX: need to truncate partial blocks too here - or ideally
@@ -147,8 +146,7 @@ static int bch_gc_do_inode(struct cache_set *c, struct btree_iter *iter,
 	}
 
 	if (i_flags & BCH_INODE_I_SECTORS_DIRTY) {
-		if (c->opts.verbose_recovery)
-			bch_info(c, "recounting sectors for inode %llu", inode.k->p.inode);
+		bch_verbose(c, "recounting sectors for inode %llu", inode.k->p.inode);
 
 		i_sectors = bch_count_inode_sectors(c, inode.k->p.inode);
 		if (i_sectors < 0)
@@ -158,9 +156,8 @@ static int bch_gc_do_inode(struct cache_set *c, struct btree_iter *iter,
 	if (i_nlink != link.count + link.dir_count ||
 	    i_flags & BCH_INODE_I_SECTORS_DIRTY ||
 	    i_flags & BCH_INODE_I_SIZE_DIRTY) {
-		if (c->opts.verbose_recovery &&
-		    i_nlink != link.count + link.dir_count)
-			bch_info(c, "setting inum %llu nlinks from %u to %u",
+		if (i_nlink != link.count + link.dir_count)
+			bch_verbose(c, "setting inum %llu nlinks from %u to %u",
 				 inode.k->p.inode, i_nlink,
 				 link.count + link.dir_count);
 
