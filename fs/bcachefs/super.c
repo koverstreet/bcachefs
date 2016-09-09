@@ -413,7 +413,7 @@ retry:
 	if (order > sb->page_order)
 		goto retry;
 
-	err = "Bad checksum";
+	err = "bad checksum reading superblock";
 	if (le64_to_cpu(sb->sb->csum) !=
 	    __csum_set(sb->sb, le16_to_cpu(sb->sb->u64s),
 		       le64_to_cpu(sb->sb->version) <
