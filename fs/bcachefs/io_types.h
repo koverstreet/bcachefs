@@ -99,6 +99,9 @@ struct bch_write_op {
 	unsigned		compression_type:4;
 	unsigned		nr_replicas:4;
 
+	struct bpos		pos;
+	unsigned		version;
+
 	struct bch_extent_crc64	crc;
 
 	struct disk_reservation	res;
@@ -122,11 +125,9 @@ struct bch_write_op {
 		u64			journal_seq;
 	};
 
-	struct extent_insert_hook *insert_hook;
 	int			(*index_update_fn)(struct bch_write_op *);
 
 	struct keylist		insert_keys;
-	BKEY_PADDED(insert_key);
 	u64			inline_keys[BKEY_EXTENT_U64s_MAX * 2];
 };
 

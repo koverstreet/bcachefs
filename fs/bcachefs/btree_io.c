@@ -650,7 +650,7 @@ static void do_btree_node_write(struct closure *cl)
 
 	b->written += sectors_to_write;
 
-	bch_submit_bbio_replicas(wbio, c, &k.key, 0, true);
+	bch_submit_bbio_replicas(wbio, c, &k.key, true);
 	continue_at(cl, btree_node_write_done, NULL);
 }
 

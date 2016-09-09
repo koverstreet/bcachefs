@@ -58,7 +58,6 @@ bch_insert_fixup_extent(struct btree_insert *,
 			struct btree_insert_entry *,
 			struct journal_res *);
 
-void bch_extent_drop_stale(struct cache_set *c, struct bkey_s_extent);
 bool bch_extent_normalize(struct cache_set *, struct bkey_s);
 
 unsigned bch_extent_nr_ptrs_from(struct bkey_s_c_extent,

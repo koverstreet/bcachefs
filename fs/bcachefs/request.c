@@ -622,9 +622,11 @@ static void cached_dev_write(struct cached_dev *dc, struct search *s)
 		flags |= BCH_WRITE_DISCARD;
 
 	bch_write_op_init(&s->iop, dc->disk.c, &s->wbio,
-			  (struct disk_reservation) { 0 }, NULL,
-			  bkey_to_s_c(&insert_key),
-			  NULL, NULL, flags);
+			  (struct disk_reservation) { 0 },
+			  foreground_write_point(dc->disk.c,
+					(unsigned long) current),
+			  bkey_start_pos(&insert_key),
+			  NULL, flags);
 
 	closure_call(&s->iop.cl, bch_write, NULL, cl);
 	continue_at(cl, cached_dev_write_complete, NULL);
@@ -766,11 +768,11 @@ static void __blockdev_volume_make_request(struct request_queue *q,
 		if (bio_op(bio) == REQ_OP_DISCARD)
 			flags |= BCH_WRITE_DISCARD;
 
-		bch_write_op_init(&s->iop, d->c, &s->wbio, res, NULL,
-				  bkey_to_s_c(&KEY(s->inode,
-						   bio_end_sector(&s->wbio.bio.bio),
-						   bio_sectors(&s->wbio.bio.bio))),
-				  NULL, NULL, flags);
+		bch_write_op_init(&s->iop, d->c, &s->wbio, res,
+				  foreground_write_point(d->c,
+						(unsigned long) current),
+				  POS(s->inode, bio->bi_iter.bi_sector),
+				  NULL, flags);
 
 		closure_call(&s->iop.cl, bch_write, NULL, &s->cl);
 	} else {

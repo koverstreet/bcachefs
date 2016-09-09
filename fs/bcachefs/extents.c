@@ -314,7 +314,7 @@ static bool should_drop_ptr(const struct cache_set *c,
 	return (ca = PTR_CACHE(c, ptr)) && ptr_stale(ca, ptr);
 }
 
-void bch_extent_drop_stale(struct cache_set *c, struct bkey_s_extent e)
+static void bch_extent_drop_stale(struct cache_set *c, struct bkey_s_extent e)
 {
 	struct bch_extent_ptr *ptr = &e.v->start->ptr;
 	bool dropped = false;

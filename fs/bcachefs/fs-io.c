@@ -829,8 +829,7 @@ static void bch_writepage_io_done(struct closure *cl)
 
 static void bch_writepage_do_io(struct bch_writepage_io *io)
 {
-	io->op.op.insert_key.k.p.offset = bio_end_sector(&io->bio.bio.bio);
-	io->op.op.insert_key.k.size	= bio_sectors(&io->bio.bio.bio);
+	io->op.op.pos.offset = io->bio.bio.bio.bi_iter.bi_sector;
 
 	closure_call(&io->op.op.cl, bch_write, NULL, &io->cl);
 	continue_at(&io->cl, bch_writepage_io_done, NULL);
@@ -859,9 +858,9 @@ alloc_io:
 				  (struct disk_reservation) {
 					.nr_replicas = w->c->opts.data_replicas,
 				  },
-				  NULL,
-				  bkey_to_s_c(&KEY(w->inum, 0, 0)),
-				  NULL, &ei->journal_seq, 0);
+				  foreground_write_point(w->c, ei->vfs_inode.i_ino),
+				  POS(w->inum, 0),
+				  &ei->journal_seq, 0);
 		w->io->op.op.index_update_fn = bchfs_write_index_update;
 	}
 
@@ -1309,11 +1308,9 @@ static void bch_do_direct_IO_write(struct dio_write *dio)
 	dio->iop.new_i_size	= U64_MAX;
 	bch_write_op_init(&dio->iop.op, dio->c, &dio->bio,
 			  dio->res,
-			  NULL,
-			  bkey_to_s_c(&KEY(inode->i_ino,
-					   bio_end_sector(bio),
-					   bio_sectors(bio))),
-			  NULL, &ei->journal_seq, flags);
+			  foreground_write_point(dio->c, inode->i_ino),
+			  POS(inode->i_ino, bio->bi_iter.bi_sector),
+			  &ei->journal_seq, flags);
 	dio->iop.op.index_update_fn = bchfs_write_index_update;
 
 	dio->res.sectors -= bio_sectors(bio);

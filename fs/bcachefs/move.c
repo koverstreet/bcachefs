@@ -144,10 +144,8 @@ void bch_migrate_write_init(struct cache_set *c,
 	bch_write_op_init(&m->op, c, &m->wbio,
 			  (struct disk_reservation) { 0 },
 			  wp,
-			  bkey_to_s_c(&KEY(k.k->p.inode,
-					   k.k->p.offset,
-					   k.k->size)),
-			  NULL, NULL, flags);
+			  bkey_start_pos(k.k),
+			  NULL, flags);
 
 	m->op.nr_replicas	= 1;
 	m->op.index_update_fn	= bch_migrate_index_update;
