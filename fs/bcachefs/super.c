@@ -620,7 +620,7 @@ static void __bcache_write_super(struct cache_set *c)
 	closure_init(cl, &c->cl);
 
 	if (c->opts.nochanges)
-		goto no_io;
+		return;
 
 	le64_add_cpu(&c->disk_sb.seq, 1);
 
@@ -644,14 +644,22 @@ static void __bcache_write_super(struct cache_set *c)
 		percpu_ref_get(&ca->ref);
 		__write_super(c, &ca->disk_sb);
 	}
-no_io:
-	closure_return_with_destructor(cl, bcache_write_super_unlock);
 }
 
 void bcache_write_super(struct cache_set *c)
 {
 	down(&c->sb_write_mutex);
 	__bcache_write_super(c);
+	closure_return_with_destructor(&c->sb_write, bcache_write_super_unlock);
+}
+
+void bcache_write_super_sync(struct cache_set *c)
+{
+
+	down(&c->sb_write_mutex);
+	__bcache_write_super(c);
+	closure_sync(&c->sb_write);
+	up(&c->sb_write_mutex);
 }
 
 void bch_check_mark_super_slowpath(struct cache_set *c, const struct bkey_i *k,
@@ -681,6 +689,7 @@ void bch_check_mark_super_slowpath(struct cache_set *c, const struct bkey_i *k,
 			 : SET_CACHE_HAS_DATA)(mi + ptr->dev, true);
 
 	__bcache_write_super(c);
+	closure_return_with_destructor(&c->sb_write, bcache_write_super_unlock);
 }
 
 /* Cache set RO/RW: */
@@ -1197,7 +1206,8 @@ static struct cache_set *bch_cache_set_alloc(struct cache_sb *sb,
 	    bch_io_clock_init(&c->io_clock[WRITE]) ||
 	    bch_journal_alloc(&c->journal, journal_entry_bytes) ||
 	    bch_btree_cache_alloc(c) ||
-	    bch_compress_init(c))
+	    bch_compress_init(c) ||
+	    bch_check_set_has_compressed_data(c, c->opts.compression))
 		goto err;
 
 	c->bdi.ra_pages		= VM_MAX_READAHEAD * 1024 / PAGE_SIZE;

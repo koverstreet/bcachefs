@@ -1,6 +1,7 @@
 #include "bcache.h"
 #include "compress.h"
 #include "io.h"
+#include "super.h"
 
 #include <linux/lz4.h>
 #include <linux/zlib.h>
@@ -404,6 +405,29 @@ out:
 	src->bi_iter.bi_size = orig_src;
 }
 
+int bch_check_set_has_compressed_data(struct cache_set *c,
+				      unsigned compression_type)
+{
+	switch (compression_type) {
+	case BCH_COMPRESSION_NONE:
+		return 0;
+	case BCH_COMPRESSION_LZ4:
+		if (CACHE_SET_HAS_LZ4_DATA(&c->disk_sb))
+			return 0;
+
+		SET_CACHE_SET_HAS_LZ4_DATA(&c->disk_sb, 1);
+		break;
+	case BCH_COMPRESSION_GZIP:
+		if (CACHE_SET_HAS_GZIP_DATA(&c->disk_sb))
+			return 0;
+
+		SET_CACHE_SET_HAS_GZIP_DATA(&c->disk_sb, 1);
+		break;
+	}
+
+	return bch_compress_init(c);
+}
+
 void bch_compress_free(struct cache_set *c)
 {
 	vfree(c->zlib_workspace);
@@ -419,39 +443,56 @@ void bch_compress_free(struct cache_set *c)
 
 int bch_compress_init(struct cache_set *c)
 {
+	unsigned order = get_order(BCH_COMPRESSED_EXTENT_MAX << 9);
 	int ret, cpu;
 
-	c->bio_decompress_worker = alloc_percpu(*c->bio_decompress_worker);
-	if (!c->bio_decompress_worker)
-		return -ENOMEM;
+	if (!CACHE_SET_HAS_LZ4_DATA(&c->disk_sb) &&
+	    !CACHE_SET_HAS_GZIP_DATA(&c->disk_sb))
+		return 0;
 
-	for_each_possible_cpu(cpu) {
-		struct bio_decompress_worker *d =
-			per_cpu_ptr(c->bio_decompress_worker, cpu);
+	if (!c->bio_decompress_worker) {
+		c->bio_decompress_worker = alloc_percpu(*c->bio_decompress_worker);
+		if (!c->bio_decompress_worker)
+			return -ENOMEM;
 
-		d->c = c;
-		INIT_WORK(&d->work, bch_bio_decompress_work);
-		init_llist_head(&d->bio_list);
+		for_each_possible_cpu(cpu) {
+			struct bio_decompress_worker *d =
+				per_cpu_ptr(c->bio_decompress_worker, cpu);
+
+			d->c = c;
+			INIT_WORK(&d->work, bch_bio_decompress_work);
+			init_llist_head(&d->bio_list);
+		}
 	}
 
-	ret = mempool_init_page_pool(&c->compression_bounce[READ], 1,
-				     get_order(BCH_COMPRESSED_EXTENT_MAX << 9));
-	if (ret)
-		return ret;
+	if (!mempool_initialized(&c->compression_bounce[READ])) {
+		ret = mempool_init_page_pool(&c->compression_bounce[READ],
+					     1, order);
+		if (ret)
+			return ret;
+	}
 
-	ret = mempool_init_page_pool(&c->compression_bounce[WRITE], 1,
-				     get_order(BCH_COMPRESSED_EXTENT_MAX << 9));
-	if (ret)
-		return ret;
+	if (!mempool_initialized(&c->compression_bounce[WRITE])) {
+		ret = mempool_init_page_pool(&c->compression_bounce[WRITE],
+					     1, order);
+		if (ret)
+			return ret;
+	}
 
-	ret = mempool_init_kmalloc_pool(&c->lz4_workspace_pool, 1,
-					LZ4_MEM_COMPRESS);
-	if (ret)
-		return ret;
+	if (!mempool_initialized(&c->lz4_workspace_pool) &&
+	    CACHE_SET_HAS_LZ4_DATA(&c->disk_sb)) {
+		ret = mempool_init_kmalloc_pool(&c->lz4_workspace_pool,
+						1, LZ4_MEM_COMPRESS);
+		if (ret)
+			return ret;
+	}
 
-	c->zlib_workspace = vmalloc(COMPRESSION_WORKSPACE_SIZE);
-	if (!c->zlib_workspace)
-		return -ENOMEM;
+	if (!c->zlib_workspace &&
+	    CACHE_SET_HAS_GZIP_DATA(&c->disk_sb)) {
+		c->zlib_workspace = vmalloc(COMPRESSION_WORKSPACE_SIZE);
+		if (!c->zlib_workspace)
+			return -ENOMEM;
+	}
 
 	return 0;
 }

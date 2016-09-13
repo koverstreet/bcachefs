@@ -122,6 +122,7 @@ static inline bool bch_cache_may_remove(struct cache *ca)
 void free_super(struct bcache_superblock *);
 int bch_super_realloc(struct bcache_superblock *, unsigned);
 void bcache_write_super(struct cache_set *);
+void bcache_write_super_sync(struct cache_set *);
 void __write_super(struct cache_set *, struct bcache_superblock *);
 
 void bch_cache_set_release(struct kobject *);

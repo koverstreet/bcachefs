@@ -815,7 +815,11 @@ LE64_BITMASK(CACHE_SET_ROOT_RESERVE,	struct cache_sb, flags2, 0,  6);
  * Did we shut down cleanly? Just a hint, doesn't affect behaviour of
  * mount/recovery path:
  */
-LE64_BITMASK(CACHE_SET_CLEAN,		struct cache_sb, flags2, 6, 7);
+LE64_BITMASK(CACHE_SET_CLEAN,		struct cache_sb, flags2, 6,  7);
+
+/* XXX: move to separate incompat feature flags */
+LE64_BITMASK(CACHE_SET_HAS_LZ4_DATA,	struct cache_sb, flags2, 7,  8);
+LE64_BITMASK(CACHE_SET_HAS_GZIP_DATA,	struct cache_sb, flags2, 8,  9);
 
 LE64_BITMASK(CACHE_SET_JOURNAL_ENTRY_SIZE, struct cache_sb, flags2, 7, 15);
 

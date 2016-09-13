@@ -8,6 +8,7 @@
 #include "bcache.h"
 #include "alloc.h"
 #include "blockdev.h"
+#include "compress.h"
 #include "sysfs.h"
 #include "btree_cache.h"
 #include "btree_iter.h"
@@ -972,12 +973,18 @@ STORE(bch_cache_set_opts_dir)
 		if (v < 0)						\
 			return v;					\
 									\
-		c->opts._name = v;					\
+		if (attr == &sysfs_opt_compression) {			\
+			int ret = bch_check_set_has_compressed_data(c, v);\
+			if (ret)					\
+				return ret;				\
+		}							\
 									\
 		if (_sb_opt##_BITS && v != _sb_opt(&c->disk_sb)) {	\
 			SET_##_sb_opt(&c->disk_sb, v);			\
-			bcache_write_super(c);				\
+			bcache_write_super_sync(c);			\
 		}							\
+									\
+		c->opts._name = v;					\
 									\
 		return size;						\
 	}
