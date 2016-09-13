@@ -208,7 +208,7 @@ static void *__bounce_alloc(struct cache_set *c, unsigned size,
 	void *data;
 
 	*bounced = BOUNCED_KMALLOCED;
-	data = kmalloc(size, GFP_NOIO);
+	data = kmalloc(size, GFP_NOIO|__GFP_NOWARN);
 	if (data)
 		return data;
 
