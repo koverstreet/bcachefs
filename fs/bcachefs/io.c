@@ -11,6 +11,7 @@
 #include "btree_update.h"
 #include "buckets.h"
 #include "checksum.h"
+#include "compress.h"
 #include "clock.h"
 #include "debug.h"
 #include "error.h"
@@ -24,9 +25,7 @@
 #include "super.h"
 
 #include <linux/blkdev.h>
-#include <linux/lz4.h>
 #include <linux/random.h>
-#include <linux/zlib.h>
 
 #include <trace/events/bcachefs.h>
 
@@ -194,430 +193,6 @@ void bch_bbio_endio(struct bbio *bio)
 }
 
 /* Writes */
-
-enum bounced {
-	BOUNCED_MAPPED,
-	BOUNCED_KMALLOCED,
-	BOUNCED_VMALLOCED,
-	BOUNCED_MEMPOOLED,
-};
-
-static void *__bounce_alloc(struct cache_set *c, unsigned size,
-			    unsigned *bounced, int direction)
-{
-	void *data;
-
-	*bounced = BOUNCED_KMALLOCED;
-	data = kmalloc(size, GFP_NOIO|__GFP_NOWARN);
-	if (data)
-		return data;
-
-	*bounced = BOUNCED_MEMPOOLED;
-	data = mempool_alloc(&c->compression_bounce[direction], GFP_NOWAIT);
-	if (data)
-		return page_address(data);
-
-	*bounced = BOUNCED_VMALLOCED;
-	data = vmalloc(size);
-	if (data)
-		return data;
-
-	*bounced = BOUNCED_MEMPOOLED;
-	data = mempool_alloc(&c->compression_bounce[direction], GFP_NOIO);
-	return page_address(data);
-}
-
-static void *__bio_map_or_bounce(struct cache_set *c,
-				 struct bio *bio, struct bvec_iter start,
-				 unsigned *bounced, int direction)
-{
-	struct bio_vec bv;
-	struct bvec_iter iter;
-	unsigned nr_pages = 0;
-	struct page *stack_pages[4];
-	struct page **pages = NULL;
-	bool first = true;
-	unsigned prev_end = PAGE_SIZE;
-	void *data;
-
-	BUG_ON(start.bi_size > (BCH_COMPRESSED_EXTENT_MAX << 9));
-
-	*bounced = BOUNCED_MAPPED;
-
-	__bio_for_each_segment(bv, bio, iter, start) {
-		if ((!first && bv.bv_offset) ||
-		    prev_end != PAGE_SIZE)
-			goto bounce;
-
-		prev_end = bv.bv_offset + bv.bv_len;
-		nr_pages++;
-	}
-
-	BUG_ON(DIV_ROUND_UP(start.bi_size, PAGE_SIZE) > nr_pages);
-
-	pages = nr_pages > ARRAY_SIZE(stack_pages)
-		? kmalloc_array(nr_pages, sizeof(struct page *), GFP_NOIO)
-		: stack_pages;
-	if (!pages)
-		goto bounce;
-
-	nr_pages = 0;
-	__bio_for_each_segment(bv, bio, iter, start)
-		pages[nr_pages++] = bv.bv_page;
-
-	data = vmap(pages, nr_pages, VM_MAP, PAGE_KERNEL);
-	if (pages != stack_pages)
-		kfree(pages);
-
-	return data + bio_iter_offset(bio, start);
-bounce:
-	data = __bounce_alloc(c, start.bi_size, bounced, direction);
-
-	if (direction == READ)
-		memcpy_from_bio(data, bio, start);
-
-	return data;
-}
-
-static void *bio_map_or_bounce(struct cache_set *c, struct bio *bio,
-			       unsigned *bounced, int direction)
-{
-	return __bio_map_or_bounce(c, bio, bio->bi_iter, bounced, direction);
-}
-
-static void bio_unmap_or_unbounce(struct cache_set *c, void *data,
-				  unsigned bounced, int direction)
-{
-	if (!data)
-		return;
-
-	switch (bounced) {
-	case BOUNCED_MAPPED:
-		vunmap((void *) ((unsigned long) data & PAGE_MASK));
-		return;
-	case BOUNCED_KMALLOCED:
-		kfree(data);
-		return;
-	case BOUNCED_VMALLOCED:
-		vfree(data);
-		return;
-	case BOUNCED_MEMPOOLED:
-		mempool_free(virt_to_page(data), &c->compression_bounce[direction]);
-		return;
-	}
-}
-
-static int __bio_uncompress(struct cache_set *c, struct bio *src,
-			    void *dst_data, struct bch_extent_crc64 crc)
-{
-	void *src_data = NULL;
-	unsigned src_bounced;
-	size_t src_len = src->bi_iter.bi_size;
-	size_t dst_len = crc.uncompressed_size << 9;
-	int ret;
-
-	src_data = bio_map_or_bounce(c, src, &src_bounced, READ);
-
-	switch (crc.compression_type) {
-	case BCH_COMPRESSION_LZ4:
-		ret = lz4_decompress(src_data, &src_len,
-				     dst_data, dst_len);
-		if (ret) {
-			ret = -EIO;
-			goto err;
-		}
-		break;
-	case BCH_COMPRESSION_GZIP: {
-		struct page *workspace;
-		z_stream strm;
-
-		workspace = mempool_alloc(&c->compression_workspace_pool,
-					  GFP_NOIO);
-		strm.workspace	= page_address(workspace);
-		strm.next_in	= src_data;
-		strm.avail_in	= src_len;
-		strm.next_out	= dst_data;
-		strm.avail_out	= dst_len;
-		zlib_inflateInit2(&strm, -MAX_WBITS);
-
-		ret = zlib_inflate(&strm, Z_FINISH);
-
-		mempool_free(workspace, &c->compression_workspace_pool);
-
-		if (ret != Z_STREAM_END) {
-			ret = -EIO;
-			goto err;
-		}
-		break;
-	}
-	default:
-		BUG();
-	}
-	ret = 0;
-err:
-	bio_unmap_or_unbounce(c, src_data, src_bounced, READ);
-	return ret;
-}
-
-static int bio_uncompress_inplace(struct cache_set *c, struct bio *bio,
-				  struct bkey *k, struct bch_extent_crc64 crc)
-{
-	void *dst_data = NULL;
-	size_t dst_len = crc.uncompressed_size << 9;
-	int ret = -ENOMEM;
-
-	BUG_ON(DIV_ROUND_UP(k->size, PAGE_SECTORS) > bio->bi_max_vecs);
-
-	/* XXX mempoolify */
-	dst_data = kmalloc(dst_len, GFP_NOIO|__GFP_NOWARN);
-	if (!dst_data) {
-		dst_data = vmalloc(dst_len);
-		if (!dst_data)
-			goto err;
-	}
-
-	ret = __bio_uncompress(c, bio, dst_data, crc);
-	if (ret)
-		goto err;
-
-	while (bio->bi_vcnt < DIV_ROUND_UP(k->size, PAGE_SECTORS)) {
-		struct bio_vec *bv = &bio->bi_io_vec[bio->bi_vcnt];
-
-		bv->bv_page = alloc_page(GFP_NOIO);
-		if (!bv->bv_page)
-			goto use_mempool;
-
-		bv->bv_len = PAGE_SIZE;
-		bv->bv_offset = 0;
-		bio->bi_vcnt++;
-	}
-
-	bio->bi_iter.bi_size = k->size << 9;
-copy_data:
-	memcpy_to_bio(bio, bio->bi_iter, dst_data + (crc.offset << 9));
-err:
-	kvfree(dst_data);
-	return ret;
-use_mempool:
-	/*
-	 * We already allocated from mempool, we can't allocate from it again
-	 * without freeing the pages we already allocated or else we could
-	 * deadlock:
-	 */
-
-	bch_bio_free_pages_pool(c, bio);
-	bch_bio_alloc_pages_pool(c, bio, k->size << 9);
-	goto copy_data;
-}
-
-static int bio_uncompress(struct cache_set *c, struct bio *src,
-			  struct bio *dst, struct bvec_iter dst_iter,
-			  struct bch_extent_crc64 crc)
-{
-	void *dst_data = NULL;
-	unsigned dst_bounced;
-	size_t dst_len = crc.uncompressed_size << 9;
-	int ret = -ENOMEM;
-
-	dst_data = dst_len == dst_iter.bi_size
-		? __bio_map_or_bounce(c, dst, dst_iter, &dst_bounced, WRITE)
-		: __bounce_alloc(c, dst_len, &dst_bounced, WRITE);
-
-	ret = __bio_uncompress(c, src, dst_data, crc);
-	if (ret)
-		goto err;
-
-	if (dst_bounced)
-		memcpy_to_bio(dst, dst_iter, dst_data + (crc.offset << 9));
-err:
-	bio_unmap_or_unbounce(c, dst_data, dst_bounced, WRITE);
-	return ret;
-}
-
-static struct bio *__bio_compress(struct cache_set *c,
-				  unsigned compression_type,
-				  struct bio *src,
-				  unsigned output_available,
-				  int *input_consumed)
-{
-	struct bio *dst;
-	void *src_data = NULL, *dst_data = NULL;
-	unsigned src_bounced, dst_bounced;
-	int ret = -1;
-
-	BUG_ON(output_available > src->bi_iter.bi_size);
-
-	output_available = min_t(unsigned, output_available,
-				 BCH_COMPRESSED_EXTENT_MAX << 9);
-
-	dst = bio_alloc_bioset(GFP_NOIO,
-		DIV_ROUND_UP(output_available, PAGE_SIZE),
-		&c->bio_write);
-
-	bch_bio_alloc_pages_pool(c, dst, output_available);
-
-	dst_data = bio_map_or_bounce(c, dst, &dst_bounced, WRITE);
-	src_data = bio_map_or_bounce(c, src, &src_bounced, READ);
-
-	switch (compression_type) {
-	case BCH_COMPRESSION_LZ4: {
-		struct page *workmem;
-		bool used_mempool = false;
-		unsigned order = get_order(LZ4_MEM_COMPRESS);
-		size_t dst_size = dst->bi_iter.bi_size;
-
-		workmem = alloc_pages(GFP_NOWAIT|__GFP_NOWARN, order);
-		if (!workmem) {
-			workmem = mempool_alloc(&c->compression_workspace_pool,
-						GFP_NOIO);
-			used_mempool = true;
-		}
-		/*
-		 * XXX: due to the way the interface to lz4_compress works, we
-		 * can't consume more than output_available bytes of input (even
-		 * though a lot more might fit after compressing)
-		 */
-		ret = lz4_compress(src_data, min(output_available,
-						 src->bi_iter.bi_size),
-				   dst_data, &dst_size,
-				   page_address(workmem));
-
-		if (used_mempool)
-			mempool_free(workmem, &c->compression_workspace_pool);
-		else
-			__free_pages(workmem, order);
-
-		if (ret)
-			goto err;
-
-		dst->bi_iter.bi_size = dst_size;
-		*input_consumed = output_available;
-		break;
-	}
-	case BCH_COMPRESSION_GZIP: {
-		struct page *workmem;
-		z_stream strm;
-
-		workmem = mempool_alloc(&c->compression_workspace_pool, GFP_NOIO);
-		strm.workspace	= page_address(workmem);
-		strm.next_in	= src_data;
-		strm.avail_in	= output_available;
-		strm.next_out	= dst_data;
-		strm.avail_out	= output_available;
-		zlib_deflateInit2(&strm, Z_DEFAULT_COMPRESSION,
-				  Z_DEFLATED, -MAX_WBITS, DEF_MEM_LEVEL,
-				  Z_DEFAULT_STRATEGY);
-
-		ret = zlib_deflate(&strm, Z_FINISH);
-
-		mempool_free(workmem, &c->compression_workspace_pool);
-
-		if (ret != Z_STREAM_END) {
-			ret = -EIO;
-			goto err;
-		}
-
-		ret = zlib_deflateEnd(&strm);
-		if (ret != Z_OK) {
-			ret = -EIO;
-			goto err;
-		}
-
-		BUG_ON(strm.total_in != output_available);
-
-		dst->bi_iter.bi_size = strm.total_out;
-		*input_consumed = strm.total_in;
-		break;
-	}
-	default:
-		BUG();
-	}
-
-	BUG_ON(!dst->bi_iter.bi_size);
-
-	if (dst_bounced)
-		memcpy_to_bio(dst, dst->bi_iter, dst_data);
-out:
-	bio_unmap_or_unbounce(c, src_data, src_bounced, READ);
-	bio_unmap_or_unbounce(c, dst_data, dst_bounced, WRITE);
-
-	if (!ret)
-		while (dst->bi_vcnt * PAGE_SIZE >
-		       round_up(dst->bi_iter.bi_size, PAGE_SIZE))
-			mempool_free(dst->bi_io_vec[--dst->bi_vcnt].bv_page,
-				     &c->bio_bounce_pages);
-
-	return dst;
-err:
-	ret = -1;
-	*input_consumed = -1;
-	goto out;
-}
-
-static struct bio *bio_compress(struct cache_set *c, struct bio *src,
-				unsigned *compression_type,
-				unsigned output_available)
-{
-	struct bio *dst = NULL;
-	int input_consumed;
-
-	/* if it's only one block, don't bother trying to compress: */
-	if (bio_sectors(src) <= c->sb.block_size)
-		*compression_type = BCH_COMPRESSION_NONE;
-
-	switch (*compression_type) {
-	case BCH_COMPRESSION_NONE:
-		/* Just bounce it, for stable checksums: */
-copy:
-		if (!dst)
-			dst = bio_alloc_bioset(GFP_NOIO,
-				DIV_ROUND_UP(output_available, PAGE_SIZE),
-				&c->bio_write);
-		bch_bio_alloc_pages_pool(c, dst, output_available);
-		bio_copy_data(dst, src);
-		input_consumed = output_available;
-		goto advance;
-	case BCH_COMPRESSION_LZ4:
-	case BCH_COMPRESSION_GZIP:
-		dst = __bio_compress(c, *compression_type, src,
-				     output_available, &input_consumed);
-		break;
-	default:
-		BUG();
-	}
-
-	if ((int) round_up(dst->bi_iter.bi_size,
-			   block_bytes(c)) >= input_consumed) {
-		/* Failed to compress (didn't get smaller): */
-		*compression_type = BCH_COMPRESSION_NONE;
-		goto copy;
-	}
-
-	/* Pad to blocksize, and zero out padding: */
-	while (dst->bi_iter.bi_size & (block_bytes(c) - 1)) {
-		unsigned idx = dst->bi_iter.bi_size >> PAGE_SHIFT;
-		unsigned offset = dst->bi_iter.bi_size & (PAGE_SIZE - 1);
-		unsigned bytes = (PAGE_SIZE - offset) & (block_bytes(c) - 1);
-
-		if (idx < dst->bi_vcnt) {
-			struct bio_vec *bv = &dst->bi_io_vec[idx];
-
-			memset(page_address(bv->bv_page) + offset, 0, bytes);
-		} else {
-			dst->bi_io_vec[dst->bi_vcnt++] = (struct bio_vec) {
-				.bv_page	= ZERO_PAGE(0),
-				.bv_len		= PAGE_SIZE,
-				.bv_offset	= 0,
-			};
-		}
-
-		dst->bi_iter.bi_size += bytes;
-	}
-advance:
-	bio_advance(src, input_consumed);
-
-	return dst;
-}
 
 static void __bch_write(struct closure *);
 
@@ -820,7 +395,7 @@ static int bch_write_extent(struct bch_write_op *op,
 	     op->crc.compressed_size > ob->sectors_free)) {
 		int ret;
 
-		ret = bio_uncompress_inplace(c, orig, &e->k, op->crc);
+		ret = bch_bio_uncompress_inplace(c, orig, &e->k, op->crc);
 		if (ret)
 			return ret;
 
@@ -865,9 +440,9 @@ static int bch_write_extent(struct bch_write_op *op,
 			: 0;
 		orig->bi_iter.bi_size -= extra_input;
 
-		bio = bio_compress(c, orig,
-				   &compression_type,
-				   output_available);
+		bio = bch_bio_compress(c, orig,
+				       &compression_type,
+				       output_available);
 		/* copy WRITE_SYNC flag */
 		bio->bi_opf		= orig->bi_opf;
 
@@ -1292,7 +867,7 @@ static int bio_checksum_uncompress(struct cache_set *c,
 	}
 
 	if (rbio->crc.compression_type != BCH_COMPRESSION_NONE) {
-		ret = bio_uncompress(c, src, dst, dst_iter, rbio->crc);
+		ret = bch_bio_uncompress(c, src, dst, dst_iter, rbio->crc);
 	} else if (rbio->bounce) {
 		bio_advance(src, rbio->crc.offset << 9);
 		bio_copy_data_iter(dst, dst_iter,

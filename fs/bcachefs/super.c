@@ -15,6 +15,7 @@
 #include "btree_io.h"
 #include "checksum.h"
 #include "clock.h"
+#include "compress.h"
 #include "debug.h"
 #include "error.h"
 #include "fs-gc.h"
@@ -881,13 +882,10 @@ static void cache_set_free(struct cache_set *c)
 	bch_journal_free(&c->journal);
 	bch_io_clock_exit(&c->io_clock[WRITE]);
 	bch_io_clock_exit(&c->io_clock[READ]);
+	bch_compress_free(c);
 	bdi_destroy(&c->bdi);
 	free_percpu(c->bucket_stats_lock.lock);
 	free_percpu(c->bucket_stats_percpu);
-	free_percpu(c->bio_decompress_worker);
-	mempool_exit(&c->compression_bounce[WRITE]);
-	mempool_exit(&c->compression_bounce[READ]);
-	mempool_exit(&c->compression_workspace_pool);
 	mempool_exit(&c->bio_bounce_pages);
 	bioset_exit(&c->bio_write);
 	bioset_exit(&c->bio_read_split);
@@ -1042,7 +1040,6 @@ static struct cache_set *bch_cache_set_alloc(struct cache_sb *sb,
 {
 	struct cache_set *c;
 	unsigned iter_size;
-	int cpu;
 
 	c = kzalloc(sizeof(struct cache_set), GFP_KERNEL);
 	if (!c)
@@ -1090,6 +1087,7 @@ static struct cache_set *bch_cache_set_alloc(struct cache_sb *sb,
 	bio_list_init(&c->read_retry_list);
 	spin_lock_init(&c->read_retry_lock);
 	INIT_WORK(&c->read_retry_work, bch_read_retry_work);
+	mutex_init(&c->zlib_workspace_lock);
 
 	seqcount_init(&c->gc_pos_lock);
 
@@ -1151,13 +1149,6 @@ static struct cache_set *bch_cache_set_alloc(struct cache_sb *sb,
 					 c->sb.btree_node_size,
 					 CRC32_EXTENT_SIZE_MAX) /
 				   PAGE_SECTORS, 0) ||
-	    mempool_init_page_pool(&c->compression_workspace_pool, 1,
-				   get_order(COMPRESSION_WORKSPACE_SIZE)) ||
-	    mempool_init_page_pool(&c->compression_bounce[READ], 1,
-				   get_order(BCH_COMPRESSED_EXTENT_MAX << 9)) ||
-	    mempool_init_page_pool(&c->compression_bounce[WRITE], 1,
-				   get_order(BCH_COMPRESSED_EXTENT_MAX << 9)) ||
-	    !(c->bio_decompress_worker = alloc_percpu(*c->bio_decompress_worker)) ||
 	    !(c->bucket_stats_percpu = alloc_percpu(struct bucket_stats_cache_set)) ||
 	    !(c->bucket_stats_lock.lock = alloc_percpu(*c->bucket_stats_lock.lock)) ||
 	    bdi_setup_and_register(&c->bdi, "bcache") ||
@@ -1166,17 +1157,9 @@ static struct cache_set *bch_cache_set_alloc(struct cache_sb *sb,
 	    bch_journal_alloc(&c->journal) ||
 	    bch_btree_cache_alloc(c) ||
 	    bch_bset_sort_state_init(&c->sort, ilog2(btree_pages(c)),
-				     &c->btree_sort_time))
+				     &c->btree_sort_time) ||
+	    bch_compress_init(c))
 		goto err;
-
-	for_each_possible_cpu(cpu) {
-		struct bio_decompress_worker *d =
-			per_cpu_ptr(c->bio_decompress_worker, cpu);
-
-		d->c = c;
-		INIT_WORK(&d->work, bch_bio_decompress_work);
-		init_llist_head(&d->bio_list);
-	}
 
 	c->bdi.ra_pages		= VM_MAX_READAHEAD * 1024 / PAGE_SIZE;
 	c->bdi.congested_fn	= bch_congested_fn;
