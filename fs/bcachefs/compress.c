@@ -321,22 +321,26 @@ static struct bio *__bio_compress(struct cache_set *c,
 				  Z_DEFAULT_STRATEGY);
 
 		ret = zlib_deflate(&strm, Z_FINISH);
-
-		if (workspace == c->zlib_workspace)
-			mutex_unlock(&c->zlib_workspace_lock);
-		else
-			kfree(workspace);
-
 		if (ret != Z_STREAM_END) {
 			ret = -EIO;
-			goto err;
+			goto zlib_err;
 		}
 
 		ret = zlib_deflateEnd(&strm);
 		if (ret != Z_OK) {
 			ret = -EIO;
-			goto err;
+			goto zlib_err;
 		}
+
+		ret = 0;
+zlib_err:
+		if (workspace == c->zlib_workspace)
+			mutex_unlock(&c->zlib_workspace_lock);
+		else
+			kfree(workspace);
+
+		if (ret)
+			goto err;
 
 		BUG_ON(strm.total_in != output_available);
 
