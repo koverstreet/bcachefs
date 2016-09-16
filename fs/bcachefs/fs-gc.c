@@ -53,6 +53,7 @@ static int bch_gc_walk_dirents(struct cache_set *c, struct nlinks *links,
 	struct bkey_s_c k;
 	struct bkey_s_c_dirent d;
 	u64 d_inum;
+	int ret;
 
 	inc_link(c, links, range_start, range_end, BCACHE_ROOT_INO, 2, false);
 
@@ -77,7 +78,11 @@ static int bch_gc_walk_dirents(struct cache_set *c, struct nlinks *links,
 
 		bch_btree_iter_cond_resched(&iter);
 	}
-	return bch_btree_iter_unlock(&iter);
+	ret = bch_btree_iter_unlock(&iter);
+	if (ret)
+		bch_err(c, "error in fs gc: btree error %i while walking dirents", ret);
+
+	return ret;
 }
 
 s64 bch_count_inode_sectors(struct cache_set *c, u64 inum)
@@ -101,12 +106,12 @@ static int bch_gc_do_inode(struct cache_set *c, struct btree_iter *iter,
 			   struct bkey_s_c_inode inode, struct nlink link)
 {
 	struct bkey_i_inode update;
-	int ret;
 	u16 i_mode  = le16_to_cpu(inode.v->i_mode);
 	u32 i_flags = le32_to_cpu(inode.v->i_flags);
 	u32 i_nlink = le32_to_cpu(inode.v->i_nlink);
 	u64 i_size  = le64_to_cpu(inode.v->i_size);
 	s64 i_sectors = 0;
+	int ret = 0;
 
 	cache_set_inconsistent_on(i_nlink < link.count, c,
 			 "i_link too small (%u < %u, type %i)",
@@ -121,7 +126,10 @@ static int bch_gc_do_inode(struct cache_set *c, struct btree_iter *iter,
 
 		bch_verbose(c, "deleting inum %llu", inode.k->p.inode);
 
-		return bch_inode_rm(c, inode.k->p.inode);
+		ret = bch_inode_rm(c, inode.k->p.inode);
+		if (ret)
+			bch_err(c, "error in fs gc: error %i while deleting inode", ret);
+		return ret;
 	}
 
 	if (i_flags & BCH_INODE_I_SIZE_DIRTY) {
@@ -135,8 +143,10 @@ static int bch_gc_do_inode(struct cache_set *c, struct btree_iter *iter,
 		ret = bch_inode_truncate(c, inode.k->p.inode,
 				round_up(i_size, PAGE_SIZE) >> 9,
 				NULL, NULL);
-		if (ret)
+		if (ret) {
+			bch_err(c, "error in fs gc: error %i while truncating inode", ret);
 			return ret;
+		}
 
 		/*
 		 * We truncated without our normal sector accounting hook, just
@@ -149,8 +159,11 @@ static int bch_gc_do_inode(struct cache_set *c, struct btree_iter *iter,
 		bch_verbose(c, "recounting sectors for inode %llu", inode.k->p.inode);
 
 		i_sectors = bch_count_inode_sectors(c, inode.k->p.inode);
-		if (i_sectors < 0)
+		if (i_sectors < 0) {
+			bch_err(c, "error in fs gc: error %i recounting inode sectors",
+				(int) i_sectors);
 			return i_sectors;
+		}
 	}
 
 	if (i_nlink != link.count + link.dir_count ||
@@ -169,12 +182,14 @@ static int bch_gc_do_inode(struct cache_set *c, struct btree_iter *iter,
 		if (i_flags & BCH_INODE_I_SECTORS_DIRTY)
 			update.v.i_sectors = cpu_to_le64(i_sectors);
 
-		return bch_btree_insert_at(c, NULL, NULL, NULL,
-					BTREE_INSERT_NOFAIL,
-					BTREE_INSERT_ENTRY(iter, &update.k_i));
+		ret = bch_btree_insert_at(c, NULL, NULL, NULL,
+					  BTREE_INSERT_NOFAIL,
+					  BTREE_INSERT_ENTRY(iter, &update.k_i));
+		if (ret && ret != -EINTR)
+			bch_err(c, "error in fs gc: error %i while updating inode", ret);
 	}
 
-	return 0;
+	return ret;
 }
 
 noinline_for_stack
@@ -184,7 +199,7 @@ static int bch_gc_walk_inodes(struct cache_set *c, struct nlinks *links,
 	struct btree_iter iter;
 	struct bkey_s_c k;
 	struct nlink *link, zero_links = { 0, 0 };
-	int ret = 0;
+	int ret = 0, ret2 = 0;
 	u64 i = 0;
 
 	bch_btree_iter_init(&iter, c, BTREE_ID_INODES, POS(range_start, 0));
@@ -235,7 +250,11 @@ static int bch_gc_walk_inodes(struct cache_set *c, struct nlinks *links,
 		bch_btree_iter_cond_resched(&iter);
 	}
 out:
-	return bch_btree_iter_unlock(&iter) ?: ret;
+	ret2 = bch_btree_iter_unlock(&iter);
+	if (ret2)
+		bch_err(c, "error in fs gc: btree error %i while walking inodes", ret2);
+
+	return ret ?: ret2;
 }
 
 int bch_gc_inode_nlinks(struct cache_set *c)
