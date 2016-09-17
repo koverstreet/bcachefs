@@ -21,15 +21,34 @@ static unsigned dirent_name_bytes(struct bkey_s_c_dirent d)
 static u64 bch_dirent_hash(const struct bch_hash_info *info,
 			   const struct qstr *name)
 {
-	struct bch_str_hash_ctx ctx;
+	switch (info->type) {
+	case BCH_STR_HASH_SHA1: {
+		SHASH_DESC_ON_STACK(desc, bch_sha1);
+		u8 digest[SHA1_DIGEST_SIZE];
+		u64 ret;
+		desc->tfm = bch_sha1;
+		desc->flags = 0;
+		crypto_shash_init(desc);
 
-	bch_str_hash_init(&ctx, info->type);
-	bch_str_hash_update(&ctx, info->type, &info->seed, sizeof(info->seed));
+		crypto_shash_update(desc, (void *) &info->seed, sizeof(info->seed));
 
-	bch_str_hash_update(&ctx, info->type, name->name, name->len);
+		crypto_shash_update(desc, (void *) name->name, name->len);
+		crypto_shash_final(desc, digest);
+		memcpy(&ret, &digest, sizeof(ret));
+		return max_t(u64, ret >> 1, 2);
+	}
+	default: {
+		struct bch_str_hash_ctx ctx;
 
-	/* [0,2) reserved for dots */
-	return max_t(u64, bch_str_hash_end(&ctx, info->type), 2);
+		bch_str_hash_init(&ctx, info->type);
+		bch_str_hash_update(&ctx, info->type, &info->seed, sizeof(info->seed));
+
+		bch_str_hash_update(&ctx, info->type, name->name, name->len);
+
+		/* [0,2) reserved for dots */
+		return max_t(u64, bch_str_hash_end(&ctx, info->type), 2);
+	}
+	}
 }
 
 static u64 dirent_hash_key(const struct bch_hash_info *info, const void *key)
