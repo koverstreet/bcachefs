@@ -166,12 +166,10 @@ static u64 get_inc_field(struct unpack_state *state, unsigned field)
 		state->bits = 64;
 	}
 
-	if (likely(bits)) {
-		/* avoid shift by 64 if bits is 0 */
-		v |= state->w >> (64 - bits);
-		state->bits -= bits;
-		state->w <<= bits;
-	}
+	/* avoid shift by 64 if bits is 0 - bits is never 64 here: */
+	v |= (state->w >> 1) >> (63 - bits);
+	state->w <<= bits;
+	state->bits -= bits;
 
 	return v + offset;
 }
