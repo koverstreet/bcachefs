@@ -308,7 +308,8 @@ static int check_lostfound(struct cache_set *c,
 			   struct bkey_i_inode *lostfound_inode)
 {
 	struct qstr lostfound = QSTR("lost+found");
-	struct bch_hash_info root_hash_info = bch_hash_info_init(&root_inode->v);
+	struct bch_hash_info root_hash_info =
+		bch_hash_info_init(&root_inode->v);
 	u64 inum;
 	int ret;
 

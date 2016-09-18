@@ -68,8 +68,9 @@ static struct class *bch_chardev_class;
 static struct device *bch_chardev;
 static DEFINE_IDR(bch_chardev_minor);
 static DECLARE_WAIT_QUEUE_HEAD(bch_read_only_wait);
+
 struct workqueue_struct *bcache_io_wq;
-struct crypto_shash *bch_sha1;
+struct crypto_shash *bch_sha256;
 
 static void bch_cache_stop(struct cache *);
 static int bch_cache_online(struct cache *);
@@ -2452,8 +2453,8 @@ static void bcache_exit(void)
 		class_destroy(bch_chardev_class);
 	if (bch_chardev_major > 0)
 		unregister_chrdev(bch_chardev_major, "bcache");
-	if (!IS_ERR_OR_NULL(bch_sha1))
-		crypto_free_shash(bch_sha1);
+	if (!IS_ERR_OR_NULL(bch_sha256))
+		crypto_free_shash(bch_sha256);
 	unregister_reboot_notifier(&reboot);
 }
 
@@ -2470,8 +2471,8 @@ static int __init bcache_init(void)
 	register_reboot_notifier(&reboot);
 	bkey_pack_test();
 
-	bch_sha1 = crypto_alloc_shash("sha1", 0, 0);
-	if (IS_ERR(bch_sha1))
+	bch_sha256 = crypto_alloc_shash("sha256", 0, 0);
+	if (IS_ERR(bch_sha256))
 		goto err;
 
 	bch_chardev_major = register_chrdev(0, "bcache-ctl", &bch_chardev_fops);

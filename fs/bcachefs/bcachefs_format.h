@@ -789,10 +789,9 @@ enum bch_str_hash_type {
 	BCH_STR_HASH_CRC32C		= 0,
 	BCH_STR_HASH_CRC64		= 1,
 	BCH_STR_HASH_SIPHASH		= 2,
-	BCH_STR_HASH_SHA1		= 3,
 };
 
-#define BCH_STR_HASH_NR			4
+#define BCH_STR_HASH_NR			3
 
 LE64_BITMASK(CACHE_SET_DATA_PREFERRED_CSUM_TYPE, struct cache_sb, flags, 48, 52);
 

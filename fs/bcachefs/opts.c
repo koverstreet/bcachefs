@@ -29,7 +29,6 @@ const char * const bch_str_hash_types[] = {
 	"crc32c",
 	"crc64",
 	"siphash",
-	"sha1",
 	NULL
 };
 

@@ -9,7 +9,6 @@
 
 #include <linux/posix_acl_xattr.h>
 #include <linux/xattr.h>
-#include <crypto/hash.h>
 
 struct xattr_search_key {
 	u8		type;
@@ -22,37 +21,13 @@ struct xattr_search_key {
 static u64 bch_xattr_hash(const struct bch_hash_info *info,
 			  const struct xattr_search_key *key)
 {
-	switch (info->type) {
-	case BCH_STR_HASH_SHA1: {
-		SHASH_DESC_ON_STACK(desc, bch_sha1);
-		u8 digest[SHA1_DIGEST_SIZE];
-		u64 ret;
+	struct bch_str_hash_ctx ctx;
 
-		desc->tfm = bch_sha1;
-		desc->flags = 0;
-		crypto_shash_init(desc);
+	bch_str_hash_init(&ctx, info);
+	bch_str_hash_update(&ctx, info, &key->type, sizeof(key->type));
+	bch_str_hash_update(&ctx, info, key->name.name, key->name.len);
 
-		crypto_shash_update(desc, (void *) &info->seed, sizeof(info->seed));
-
-		crypto_shash_update(desc, (void *) &key->type, sizeof(key->type));
-		crypto_shash_update(desc, (void *) key->name.name, key->name.len);
-
-		crypto_shash_final(desc, digest);
-		memcpy(&ret, &digest, sizeof(ret));
-		return ret >> 1;
-	}
-	default: {
-		struct bch_str_hash_ctx ctx;
-
-		bch_str_hash_init(&ctx, info->type);
-		bch_str_hash_update(&ctx, info->type, &info->seed, sizeof(info->seed));
-
-		bch_str_hash_update(&ctx, info->type, &key->type, sizeof(key->type));
-		bch_str_hash_update(&ctx, info->type, key->name.name, key->name.len);
-
-		return bch_str_hash_end(&ctx, info->type);
-	}
-	}
+	return bch_str_hash_end(&ctx, info);
 }
 
 #define xattr_val(_xattr)	((_xattr)->x_name + (_xattr)->x_name_len)

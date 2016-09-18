@@ -12,6 +12,7 @@ config BCACHE_FS
 	select LZ4_DECOMPRESS
 	select ZLIB_DEFLATE
 	select ZLIB_INFLATE
+	select CRYPTO_SHA256
 	select COMPACTION
 	---help---
 	The bcachefs filesystem - a modern, copy on write filesystem, with

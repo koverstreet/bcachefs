@@ -150,7 +150,7 @@ extern struct mutex bch_register_lock;
 extern struct list_head bch_cache_sets;
 extern struct idr bch_cache_set_minor;
 extern struct workqueue_struct *bcache_io_wq;
-extern struct crypto_shash *bch_sha1;
+extern struct crypto_shash *bch_sha256;
 
 extern struct kobj_type bch_cache_set_ktype;
 extern struct kobj_type bch_cache_set_internal_ktype;

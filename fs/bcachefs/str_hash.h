@@ -6,34 +6,66 @@
 #include "siphash.h"
 #include "super.h"
 
-#include <crypto/sha1_base.h>
 #include <linux/crc32c.h>
+#include <crypto/hash.h>
 
-static const SIPHASH_KEY bch_siphash_key = {
-	.k0 = cpu_to_le64(0x5a9585fd80087730ULL),
-	.k1 = cpu_to_le64(0xc8de666d50b45664ULL ),
+struct bch_hash_info {
+	u8			type;
+	union {
+		__le64		crc_key;
+		SIPHASH_KEY	siphash_key;
+	};
 };
+
+static inline struct bch_hash_info
+bch_hash_info_init(const struct bch_inode *bi)
+{
+	struct bch_hash_info info = { .type = INODE_STR_HASH_TYPE(bi) };
+
+	switch (info.type) {
+	case BCH_STR_HASH_CRC32C:
+	case BCH_STR_HASH_CRC64:
+		info.crc_key = bi->i_hash_seed;
+		break;
+	case BCH_STR_HASH_SIPHASH: {
+		SHASH_DESC_ON_STACK(desc, bch_sha256);
+		u8 digest[crypto_shash_digestsize(bch_sha256)];
+
+		desc->tfm = bch_sha256;
+		desc->flags = 0;
+
+		crypto_shash_digest(desc, (void *) &bi->i_hash_seed,
+				    sizeof(bi->i_hash_seed), digest);
+		memcpy(&info.siphash_key, digest, sizeof(info.siphash_key));
+		break;
+	}
+	default:
+		BUG();
+	}
+
+	return info;
+}
 
 struct bch_str_hash_ctx {
 	union {
-		u32			crc32c;
-		u64			crc64;
-		SIPHASH_CTX		siphash;
+		u32		crc32c;
+		u64		crc64;
+		SIPHASH_CTX	siphash;
 	};
 };
 
 static inline void bch_str_hash_init(struct bch_str_hash_ctx *ctx,
-				     enum bch_str_hash_type type)
+				     const struct bch_hash_info *info)
 {
-	switch (type) {
+	switch (info->type) {
 	case BCH_STR_HASH_CRC32C:
-		ctx->crc32c = ~0;
+		ctx->crc32c = crc32c(~0, &info->crc_key, sizeof(info->crc_key));
 		break;
 	case BCH_STR_HASH_CRC64:
-		ctx->crc64 = ~0;
+		ctx->crc64 = bch_crc64_update(~0, &info->crc_key, sizeof(info->crc_key));
 		break;
 	case BCH_STR_HASH_SIPHASH:
-		SipHash24_Init(&ctx->siphash, &bch_siphash_key);
+		SipHash24_Init(&ctx->siphash, &info->siphash_key);
 		break;
 	default:
 		BUG();
@@ -41,10 +73,10 @@ static inline void bch_str_hash_init(struct bch_str_hash_ctx *ctx,
 }
 
 static inline void bch_str_hash_update(struct bch_str_hash_ctx *ctx,
-				enum bch_str_hash_type type,
-				const void *data, size_t len)
+				       const struct bch_hash_info *info,
+				       const void *data, size_t len)
 {
-	switch (type) {
+	switch (info->type) {
 	case BCH_STR_HASH_CRC32C:
 		ctx->crc32c = crc32c(ctx->crc32c, data, len);
 		break;
@@ -60,9 +92,9 @@ static inline void bch_str_hash_update(struct bch_str_hash_ctx *ctx,
 }
 
 static inline u64 bch_str_hash_end(struct bch_str_hash_ctx *ctx,
-				   enum bch_str_hash_type type)
+				   const struct bch_hash_info *info)
 {
-	switch (type) {
+	switch (info->type) {
 	case BCH_STR_HASH_CRC32C:
 		return ctx->crc32c;
 	case BCH_STR_HASH_CRC64:
@@ -72,19 +104,6 @@ static inline u64 bch_str_hash_end(struct bch_str_hash_ctx *ctx,
 	default:
 		BUG();
 	}
-}
-
-struct bch_hash_info {
-	u64		seed;
-	u8		type;
-};
-
-static inline struct bch_hash_info bch_hash_info_init(const struct bch_inode *bi)
-{
-	return (struct bch_hash_info) {
-		.seed = le64_to_cpu(bi->i_hash_seed),
-		.type = INODE_STR_HASH_TYPE(bi),
-	};
 }
 
 struct bch_hash_desc {
