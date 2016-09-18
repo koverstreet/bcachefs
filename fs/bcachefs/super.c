@@ -1100,6 +1100,9 @@ static struct cache_set *bch_cache_set_alloc(struct cache_sb *sb,
 	c->congested_read_threshold_us	= 2000;
 	c->congested_write_threshold_us	= 20000;
 	c->error_limit	= 16 << IO_ERROR_SHIFT;
+	init_waitqueue_head(&c->writeback_wait);
+
+	c->writeback_pages_max = (256 << 10) / PAGE_SIZE;
 
 	c->btree_flush_delay = 30;
 

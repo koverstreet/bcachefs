@@ -748,6 +748,9 @@ struct cache_set {
 	spinlock_t		read_retry_lock;
 
 	/* FILESYSTEM */
+	wait_queue_head_t	writeback_wait;
+	atomic_t		writeback_pages;
+	unsigned		writeback_pages_max;
 	atomic_long_t		nr_inodes;
 
 	/* TIERING */

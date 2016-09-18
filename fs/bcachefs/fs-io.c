@@ -774,9 +774,13 @@ static void bch_writepage_io_done(struct closure *cl)
 {
 	struct bch_writepage_io *io = container_of(cl,
 					struct bch_writepage_io, cl);
+	struct cache_set *c = io->op.op.c;
 	struct bio *bio = &io->bio.bio.bio;
 	struct bio_vec *bvec;
 	unsigned i;
+
+	atomic_sub(bio->bi_vcnt, &c->writeback_pages);
+	wake_up(&c->writeback_wait);
 
 	bio_for_each_segment_all(bvec, bio, i) {
 		struct page *page = bvec->bv_page;
@@ -829,6 +833,8 @@ static void bch_writepage_io_done(struct closure *cl)
 
 static void bch_writepage_do_io(struct bch_writepage_io *io)
 {
+	atomic_add(io->bio.bio.bio.bi_vcnt, &io->op.op.c->writeback_pages);
+
 	io->op.op.pos.offset = io->bio.bio.bio.bi_iter.bi_sector;
 
 	closure_call(&io->op.op.cl, bch_write, NULL, &io->cl);
@@ -843,22 +849,27 @@ static void bch_writepage_io_alloc(struct bch_writepage *w,
 				   struct bch_inode_info *ei,
 				   struct page *page)
 {
-alloc_io:
-	if (!w->io) {
-		struct bio *bio = bio_alloc_bioset(GFP_NOFS, BIO_MAX_PAGES,
-						   bch_writepage_bioset);
+	struct cache_set *c = w->c;
 
-		w->io = container_of(bio, struct bch_writepage_io, bio.bio.bio);
+	if (!w->io) {
+alloc_io:
+		wait_event(c->writeback_wait,
+			   atomic_read(&c->writeback_pages) < c->writeback_pages_max);
+
+		w->io = container_of(bio_alloc_bioset(GFP_NOFS,
+						      BIO_MAX_PAGES,
+						      bch_writepage_bioset),
+				     struct bch_writepage_io, bio.bio.bio);
 
 		closure_init(&w->io->cl, NULL);
 		w->io->op.ei		= ei;
 		w->io->op.sectors_added	= 0;
 		w->io->op.is_dio	= false;
-		bch_write_op_init(&w->io->op.op, w->c, &w->io->bio,
+		bch_write_op_init(&w->io->op.op, c, &w->io->bio,
 				  (struct disk_reservation) {
-					.nr_replicas = w->c->opts.data_replicas,
+					.nr_replicas = c->opts.data_replicas,
 				  },
-				  foreground_write_point(w->c, ei->vfs_inode.i_ino),
+				  foreground_write_point(c, ei->vfs_inode.i_ino),
 				  POS(w->inum, 0),
 				  &ei->journal_seq, 0);
 		w->io->op.op.index_update_fn = bchfs_write_index_update;
