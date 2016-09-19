@@ -5,7 +5,7 @@ u64 bch_crc64_update(u64, const void *, size_t);
 
 u64 bch_checksum_update(unsigned, u64, const void *, size_t);
 u64 bch_checksum(unsigned, const void *, size_t);
-u64 bch_checksum_bio(struct bio *, unsigned);
+u32 bch_checksum_bio(struct bio *, unsigned);
 
 /*
  * This is used for various on disk data structures - cache_sb, prio_set, bset,

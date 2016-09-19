@@ -129,34 +129,6 @@ u64 bch_crc64_update(u64 crc, const void *_data, size_t len)
 	return crc;
 }
 
-static u64 bch_checksum_init(unsigned type)
-{
-	switch (type) {
-	case BCH_CSUM_NONE:
-		return 0;
-	case BCH_CSUM_CRC32C:
-		return U32_MAX;
-	case BCH_CSUM_CRC64:
-		return U64_MAX;
-	default:
-		BUG();
-	}
-}
-
-static u64 bch_checksum_final(unsigned type, u64 crc)
-{
-	switch (type) {
-	case BCH_CSUM_NONE:
-		return 0;
-	case BCH_CSUM_CRC32C:
-		return crc ^ U32_MAX;
-	case BCH_CSUM_CRC64:
-		return crc ^ U64_MAX;
-	default:
-		BUG();
-	}
-}
-
 u64 bch_checksum_update(unsigned type, u64 crc, const void *data, size_t len)
 {
 	switch (type) {
@@ -173,18 +145,18 @@ u64 bch_checksum_update(unsigned type, u64 crc, const void *data, size_t len)
 
 u64 bch_checksum(unsigned type, const void *data, size_t len)
 {
-	u64 crc = bch_checksum_init(type);
+	u64 crc = 0xffffffffffffffffULL;
 
 	crc = bch_checksum_update(type, crc, data, len);
 
-	return bch_checksum_final(type, crc);
+	return crc ^ 0xffffffffffffffffULL;
 }
 
-u64 bch_checksum_bio(struct bio *bio, unsigned type)
+u32 bch_checksum_bio(struct bio *bio, unsigned type)
 {
 	struct bio_vec bv;
 	struct bvec_iter iter;
-	u64 crc = bch_checksum_init(type);
+	u32 csum = U32_MAX;
 
 	if (type == BCH_CSUM_NONE)
 		return 0;
@@ -192,11 +164,11 @@ u64 bch_checksum_bio(struct bio *bio, unsigned type)
 	bio_for_each_segment(bv, bio, iter) {
 		void *p = kmap_atomic(bv.bv_page);
 
-		crc = bch_checksum_update(type, crc,
-					  p + bv.bv_offset,
-					  bv.bv_len);
+		csum = bch_checksum_update(type, csum,
+					   p + bv.bv_offset,
+					   bv.bv_len);
 		kunmap_atomic(p);
 	}
 
-	return bch_checksum_final(type, crc);
+	return csum ^= U32_MAX;
 }
