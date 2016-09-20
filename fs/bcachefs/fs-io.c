@@ -17,9 +17,11 @@
 #include <linux/falloc.h>
 #include <linux/migrate.h>
 #include <linux/mmu_context.h>
+#include <linux/pagevec.h>
 #include <linux/task_io_accounting_ops.h>
 #include <linux/uio.h>
 #include <linux/writeback.h>
+#include <trace/events/writeback.h>
 
 struct bio_set *bch_writepage_bioset;
 struct bio_set *bch_dio_read_bioset;
@@ -500,7 +502,15 @@ int bch_set_page_dirty(struct page *page)
 
 /* readpages/writepages: */
 
-static int bch_bio_add_page(struct bio *bio, struct page *page)
+static bool bio_can_add_page_contig(struct bio *bio, struct page *page)
+{
+	sector_t offset = (sector_t) page->index << (PAGE_SHIFT - 9);
+
+	return bio->bi_vcnt < bio->bi_max_vecs &&
+		bio_end_sector(bio) == offset;
+}
+
+static int bio_add_page_contig(struct bio *bio, struct page *page)
 {
 	sector_t offset = (sector_t) page->index << (PAGE_SHIFT - 9);
 
@@ -508,8 +518,7 @@ static int bch_bio_add_page(struct bio *bio, struct page *page)
 
 	if (!bio->bi_vcnt)
 		bio->bi_iter.bi_sector = offset;
-	else if (bio_end_sector(bio) != offset ||
-		 bio->bi_vcnt == bio->bi_max_vecs)
+	else if (!bio_can_add_page_contig(bio, page))
 		return -1;
 
 	bio->bi_io_vec[bio->bi_vcnt++] = (struct bio_vec) {
@@ -719,7 +728,7 @@ again:
 			rbio->bio.bi_end_io = bch_readpages_end_io;
 		}
 
-		if (bch_bio_add_page(&rbio->bio, page)) {
+		if (bio_add_page_contig(&rbio->bio, page)) {
 			bchfs_read(c, rbio, inode->i_ino);
 			rbio = NULL;
 			goto again;
@@ -749,15 +758,13 @@ int bch_readpage(struct file *file, struct page *page)
 	bio_set_op_attrs(&rbio->bio, REQ_OP_READ, REQ_SYNC);
 	rbio->bio.bi_end_io = bch_readpages_end_io;
 
-	bch_bio_add_page(&rbio->bio, page);
+	bio_add_page_contig(&rbio->bio, page);
 	bchfs_read(c, rbio, inode->i_ino);
 
 	return 0;
 }
 
-struct bch_writepage {
-	struct cache_set	*c;
-	u64			inum;
+struct bch_writepage_state {
 	struct bch_writepage_io	*io;
 };
 
@@ -831,8 +838,11 @@ static void bch_writepage_io_done(struct closure *cl)
 	closure_return_with_destructor(&io->cl, bch_writepage_io_free);
 }
 
-static void bch_writepage_do_io(struct bch_writepage_io *io)
+static void bch_writepage_do_io(struct bch_writepage_state *w)
 {
+	struct bch_writepage_io *io = w->io;
+
+	w->io = NULL;
 	atomic_add(io->bio.bio.bio.bi_vcnt, &io->op.op.c->writeback_pages);
 
 	io->op.op.pos.offset = io->bio.bio.bio.bi_iter.bi_sector;
@@ -845,17 +855,15 @@ static void bch_writepage_do_io(struct bch_writepage_io *io)
  * Get a bch_writepage_io and add @page to it - appending to an existing one if
  * possible, else allocating a new one:
  */
-static void bch_writepage_io_alloc(struct bch_writepage *w,
+static void bch_writepage_io_alloc(struct cache_set *c,
+				   struct bch_writepage_state *w,
 				   struct bch_inode_info *ei,
 				   struct page *page)
 {
-	struct cache_set *c = w->c;
+	u64 inum = ei->vfs_inode.i_ino;
 
 	if (!w->io) {
 alloc_io:
-		wait_event(c->writeback_wait,
-			   atomic_read(&c->writeback_pages) < c->writeback_pages_max);
-
 		w->io = container_of(bio_alloc_bioset(GFP_NOFS,
 						      BIO_MAX_PAGES,
 						      bch_writepage_bioset),
@@ -869,15 +877,14 @@ alloc_io:
 				  (struct disk_reservation) {
 					.nr_replicas = c->opts.data_replicas,
 				  },
-				  foreground_write_point(c, ei->vfs_inode.i_ino),
-				  POS(w->inum, 0),
+				  foreground_write_point(c, inum),
+				  POS(inum, 0),
 				  &ei->journal_seq, 0);
 		w->io->op.op.index_update_fn = bchfs_write_index_update;
 	}
 
-	if (bch_bio_add_page(&w->io->bio.bio.bio, page)) {
-		bch_writepage_do_io(w->io);
-		w->io = NULL;
+	if (bio_add_page_contig(&w->io->bio.bio.bio, page)) {
+		bch_writepage_do_io(w);
 		goto alloc_io;
 	}
 
@@ -888,12 +895,12 @@ alloc_io:
 	BUG_ON(ei != w->io->op.ei);
 }
 
-static int __bch_writepage(struct page *page, struct writeback_control *wbc,
-			   void *data)
+static int __bch_writepage(struct cache_set *c, struct page *page,
+			   struct writeback_control *wbc,
+			   struct bch_writepage_state *w)
 {
 	struct inode *inode = page->mapping->host;
 	struct bch_inode_info *ei = to_bch_ei(inode);
-	struct bch_writepage *w = data;
 	struct bch_page_state new, old;
 	unsigned offset;
 	loff_t i_size = i_size_read(inode);
@@ -921,7 +928,7 @@ static int __bch_writepage(struct page *page, struct writeback_control *wbc,
 	 */
 	zero_user_segment(page, offset, PAGE_SIZE);
 do_io:
-	bch_writepage_io_alloc(w, ei, page);
+	bch_writepage_io_alloc(c, w, ei, page);
 
 	/* while page is locked: */
 	w->io->op.new_i_size = i_size;
@@ -954,34 +961,161 @@ out:
 
 int bch_writepages(struct address_space *mapping, struct writeback_control *wbc)
 {
-	struct bch_writepage w = {
-		.c	= mapping->host->i_sb->s_fs_info,
-		.inum	= mapping->host->i_ino,
-		.io	= NULL,
-	};
-	int ret;
+	struct cache_set *c = mapping->host->i_sb->s_fs_info;
+	struct bch_writepage_state w = { NULL };
+	struct pagecache_iter iter;
+	struct page *page;
+	int ret = 0;
+	int done = 0;
+	pgoff_t uninitialized_var(writeback_index);
+	pgoff_t index;
+	pgoff_t end;		/* Inclusive */
+	pgoff_t done_index;
+	int cycled;
+	int range_whole = 0;
+	int tag;
 
-	ret = write_cache_pages(mapping, wbc, __bch_writepage, &w);
+	if (wbc->range_cyclic) {
+		writeback_index = mapping->writeback_index; /* prev offset */
+		index = writeback_index;
+		if (index == 0)
+			cycled = 1;
+		else
+			cycled = 0;
+		end = -1;
+	} else {
+		index = wbc->range_start >> PAGE_SHIFT;
+		end = wbc->range_end >> PAGE_SHIFT;
+		if (wbc->range_start == 0 && wbc->range_end == LLONG_MAX)
+			range_whole = 1;
+		cycled = 1; /* ignore range_cyclic tests */
+	}
+	if (wbc->sync_mode == WB_SYNC_ALL || wbc->tagged_writepages)
+		tag = PAGECACHE_TAG_TOWRITE;
+	else
+		tag = PAGECACHE_TAG_DIRTY;
+retry:
+	if (wbc->sync_mode == WB_SYNC_ALL || wbc->tagged_writepages)
+		tag_pages_for_writeback(mapping, index, end);
+
+	done_index = index;
+get_pages:
+	for_each_pagecache_tag(&iter, mapping, tag, index, end, page) {
+		done_index = page->index;
+
+		if (w.io &&
+		    !bio_can_add_page_contig(&w.io->bio.bio.bio, page))
+			bch_writepage_do_io(&w);
+
+		if (!w.io &&
+		    atomic_read(&c->writeback_pages) >=
+		    c->writeback_pages_max) {
+			/* don't sleep with pages pinned: */
+			pagecache_iter_release(&iter);
+
+			__wait_event(c->writeback_wait,
+				     atomic_read(&c->writeback_pages) <
+				     c->writeback_pages_max);
+			goto get_pages;
+		}
+
+		lock_page(page);
+
+		/*
+		 * Page truncated or invalidated. We can freely skip it
+		 * then, even for data integrity operations: the page
+		 * has disappeared concurrently, so there could be no
+		 * real expectation of this data interity operation
+		 * even if there is now a new, dirty page at the same
+		 * pagecache address.
+		 */
+		if (unlikely(page->mapping != mapping)) {
+continue_unlock:
+			unlock_page(page);
+			continue;
+		}
+
+		if (!PageDirty(page)) {
+			/* someone wrote it for us */
+			goto continue_unlock;
+		}
+
+		if (PageWriteback(page)) {
+			if (wbc->sync_mode != WB_SYNC_NONE)
+				wait_on_page_writeback(page);
+			else
+				goto continue_unlock;
+		}
+
+		BUG_ON(PageWriteback(page));
+		if (!clear_page_dirty_for_io(page))
+			goto continue_unlock;
+
+		trace_wbc_writepage(wbc, inode_to_bdi(mapping->host));
+		ret = __bch_writepage(c, page, wbc, &w);
+		if (unlikely(ret)) {
+			if (ret == AOP_WRITEPAGE_ACTIVATE) {
+				unlock_page(page);
+				ret = 0;
+			} else {
+				/*
+				 * done_index is set past this page,
+				 * so media errors will not choke
+				 * background writeout for the entire
+				 * file. This has consequences for
+				 * range_cyclic semantics (ie. it may
+				 * not be suitable for data integrity
+				 * writeout).
+				 */
+				done_index = page->index + 1;
+				done = 1;
+				break;
+			}
+		}
+
+		/*
+		 * We stop writing back only if we are not doing
+		 * integrity sync. In case of integrity sync we have to
+		 * keep going until we have written all the pages
+		 * we tagged for writeback prior to entering this loop.
+		 */
+		if (--wbc->nr_to_write <= 0 &&
+		    wbc->sync_mode == WB_SYNC_NONE) {
+			done = 1;
+			break;
+		}
+	}
+	pagecache_iter_release(&iter);
+
 	if (w.io)
-		bch_writepage_do_io(w.io);
+		bch_writepage_do_io(&w);
+
+	if (!cycled && !done) {
+		/*
+		 * range_cyclic:
+		 * We hit the last page and there is more work to be done: wrap
+		 * back to the start of the file
+		 */
+		cycled = 1;
+		index = 0;
+		end = writeback_index - 1;
+		goto retry;
+	}
+	if (wbc->range_cyclic || (range_whole && wbc->nr_to_write > 0))
+		mapping->writeback_index = done_index;
 
 	return ret;
 }
 
 int bch_writepage(struct page *page, struct writeback_control *wbc)
 {
-	struct inode *inode = page->mapping->host;
-	struct bch_writepage w = {
-		.c = inode->i_sb->s_fs_info,
-		.inum = inode->i_ino,
-		.io = NULL,
-	};
+	struct cache_set *c = page->mapping->host->i_sb->s_fs_info;
+	struct bch_writepage_state w = { NULL };
 	int ret;
 
-	ret = __bch_writepage(page, wbc, &w);
-
+	ret = __bch_writepage(c, page, wbc, &w);
 	if (w.io)
-		bch_writepage_do_io(w.io);
+		bch_writepage_do_io(&w);
 
 	return ret;
 }
@@ -1006,7 +1140,7 @@ static int bch_read_single_page(struct page *page,
 	bio_set_op_attrs(&rbio->bio, REQ_OP_READ, REQ_SYNC);
 	rbio->bio.bi_private = &done;
 	rbio->bio.bi_end_io = bch_read_single_page_end_io;
-	bch_bio_add_page(&rbio->bio, page);
+	bio_add_page_contig(&rbio->bio, page);
 
 	bchfs_read(c, rbio, inode->i_ino);
 	wait_for_completion(&done);
