@@ -2155,10 +2155,10 @@ int write_cache_pages(struct address_space *mapping,
 		      struct writeback_control *wbc, writepage_t writepage,
 		      void *data)
 {
+	struct pagecache_iter iter;
+	struct page *page;
 	int ret = 0;
 	int done = 0;
-	struct pagevec pvec;
-	int nr_pages;
 	pgoff_t uninitialized_var(writeback_index);
 	pgoff_t index;
 	pgoff_t end;		/* Inclusive */
@@ -2167,7 +2167,6 @@ int write_cache_pages(struct address_space *mapping,
 	int range_whole = 0;
 	int tag;
 
-	pagevec_init(&pvec, 0);
 	if (wbc->range_cyclic) {
 		writeback_index = mapping->writeback_index; /* prev offset */
 		index = writeback_index;
@@ -2190,105 +2189,80 @@ int write_cache_pages(struct address_space *mapping,
 retry:
 	if (wbc->sync_mode == WB_SYNC_ALL || wbc->tagged_writepages)
 		tag_pages_for_writeback(mapping, index, end);
+
 	done_index = index;
-	while (!done && (index <= end)) {
-		int i;
 
-		nr_pages = pagevec_lookup_tag(&pvec, mapping, &index, tag,
-			      min(end - index, (pgoff_t)PAGEVEC_SIZE-1) + 1);
-		if (nr_pages == 0)
-			break;
+	for_each_pagecache_tag(&iter, mapping, tag, index, end, page) {
+		done_index = page->index;
 
-		for (i = 0; i < nr_pages; i++) {
-			struct page *page = pvec.pages[i];
+		lock_page(page);
 
-			/*
-			 * At this point, the page may be truncated or
-			 * invalidated (changing page->mapping to NULL), or
-			 * even swizzled back from swapper_space to tmpfs file
-			 * mapping. However, page->index will not change
-			 * because we have a reference on the page.
-			 */
-			if (page->index > end) {
-				/*
-				 * can't be range_cyclic (1st pass) because
-				 * end == -1 in that case.
-				 */
-				done = 1;
-				break;
-			}
-
-			done_index = page->index;
-
-			lock_page(page);
-
-			/*
-			 * Page truncated or invalidated. We can freely skip it
-			 * then, even for data integrity operations: the page
-			 * has disappeared concurrently, so there could be no
-			 * real expectation of this data interity operation
-			 * even if there is now a new, dirty page at the same
-			 * pagecache address.
-			 */
-			if (unlikely(page->mapping != mapping)) {
+		/*
+		 * Page truncated or invalidated. We can freely skip it
+		 * then, even for data integrity operations: the page
+		 * has disappeared concurrently, so there could be no
+		 * real expectation of this data interity operation
+		 * even if there is now a new, dirty page at the same
+		 * pagecache address.
+		 */
+		if (unlikely(page->mapping != mapping)) {
 continue_unlock:
+			unlock_page(page);
+			continue;
+		}
+
+		if (!PageDirty(page)) {
+			/* someone wrote it for us */
+			goto continue_unlock;
+		}
+
+		if (PageWriteback(page)) {
+			if (wbc->sync_mode != WB_SYNC_NONE)
+				wait_on_page_writeback(page);
+			else
+				goto continue_unlock;
+		}
+
+		BUG_ON(PageWriteback(page));
+		if (!clear_page_dirty_for_io(page))
+			goto continue_unlock;
+
+		trace_wbc_writepage(wbc, inode_to_bdi(mapping->host));
+		ret = (*writepage)(page, wbc, data);
+		if (unlikely(ret)) {
+			if (ret == AOP_WRITEPAGE_ACTIVATE) {
 				unlock_page(page);
-				continue;
-			}
-
-			if (!PageDirty(page)) {
-				/* someone wrote it for us */
-				goto continue_unlock;
-			}
-
-			if (PageWriteback(page)) {
-				if (wbc->sync_mode != WB_SYNC_NONE)
-					wait_on_page_writeback(page);
-				else
-					goto continue_unlock;
-			}
-
-			BUG_ON(PageWriteback(page));
-			if (!clear_page_dirty_for_io(page))
-				goto continue_unlock;
-
-			trace_wbc_writepage(wbc, inode_to_bdi(mapping->host));
-			ret = (*writepage)(page, wbc, data);
-			if (unlikely(ret)) {
-				if (ret == AOP_WRITEPAGE_ACTIVATE) {
-					unlock_page(page);
-					ret = 0;
-				} else {
-					/*
-					 * done_index is set past this page,
-					 * so media errors will not choke
-					 * background writeout for the entire
-					 * file. This has consequences for
-					 * range_cyclic semantics (ie. it may
-					 * not be suitable for data integrity
-					 * writeout).
-					 */
-					done_index = page->index + 1;
-					done = 1;
-					break;
-				}
-			}
-
-			/*
-			 * We stop writing back only if we are not doing
-			 * integrity sync. In case of integrity sync we have to
-			 * keep going until we have written all the pages
-			 * we tagged for writeback prior to entering this loop.
-			 */
-			if (--wbc->nr_to_write <= 0 &&
-			    wbc->sync_mode == WB_SYNC_NONE) {
+				ret = 0;
+			} else {
+				/*
+				 * done_index is set past this page,
+				 * so media errors will not choke
+				 * background writeout for the entire
+				 * file. This has consequences for
+				 * range_cyclic semantics (ie. it may
+				 * not be suitable for data integrity
+				 * writeout).
+				 */
+				done_index = page->index + 1;
 				done = 1;
 				break;
 			}
 		}
-		pagevec_release(&pvec);
-		cond_resched();
+
+		/*
+		 * We stop writing back only if we are not doing
+		 * integrity sync. In case of integrity sync we have to
+		 * keep going until we have written all the pages
+		 * we tagged for writeback prior to entering this loop.
+		 */
+		if (--wbc->nr_to_write <= 0 &&
+		    wbc->sync_mode == WB_SYNC_NONE) {
+			done = 1;
+			break;
+		}
 	}
+	pagecache_iter_release(&iter);
+
 	if (!cycled && !done) {
 		/*
 		 * range_cyclic:

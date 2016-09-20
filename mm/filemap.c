@@ -490,33 +490,18 @@ EXPORT_SYMBOL(filemap_range_has_page);
 static void __filemap_fdatawait_range(struct address_space *mapping,
 				     loff_t start_byte, loff_t end_byte)
 {
-	pgoff_t index = start_byte >> PAGE_SHIFT;
+	pgoff_t start = start_byte >> PAGE_SHIFT;
 	pgoff_t end = end_byte >> PAGE_SHIFT;
-	struct pagevec pvec;
-	int nr_pages;
+	struct pagecache_iter iter;
+	struct page *page;
 
 	if (end_byte < start_byte)
 		return;
 
-	pagevec_init(&pvec, 0);
-	while ((index <= end) &&
-			(nr_pages = pagevec_lookup_tag(&pvec, mapping, &index,
-			PAGECACHE_TAG_WRITEBACK,
-			min(end - index, (pgoff_t)PAGEVEC_SIZE-1) + 1)) != 0) {
-		unsigned i;
-
-		for (i = 0; i < nr_pages; i++) {
-			struct page *page = pvec.pages[i];
-
-			/* until radix tree lookup accepts end_index */
-			if (page->index > end)
-				continue;
-
-			wait_on_page_writeback(page);
-			ClearPageError(page);
-		}
-		pagevec_release(&pvec);
-		cond_resched();
+	for_each_pagecache_tag(&iter, mapping, PAGECACHE_TAG_WRITEBACK,
+			       start, end, page) {
+		wait_on_page_writeback(page);
+		ClearPageError(page);
 	}
 }
 
@@ -1621,6 +1606,51 @@ no_entry:
 	return ret;
 }
 EXPORT_SYMBOL(__find_get_pages);
+
+void __pagecache_iter_release(struct pagecache_iter *iter)
+{
+	lru_add_drain();
+	release_pages(iter->pages, iter->nr, 0);
+	iter->nr	= 0;
+	iter->idx	= 0;
+}
+EXPORT_SYMBOL(__pagecache_iter_release);
+
+/**
+ * pagecache_iter_next - get next page from pagecache iterator and advance
+ * iterator
+ * @iter:	The iterator to advance
+ * @mapping:	The address_space to search
+ * @end:	Page cache index to stop at (inclusive)
+ * @index:	if non NULL, index of page or entry will be returned here
+ * @flags:	radix tree iter flags and tag for __find_get_pages()
+ */
+struct page *pagecache_iter_next(struct pagecache_iter *iter,
+				 struct address_space *mapping,
+				 pgoff_t end, pgoff_t *index,
+				 unsigned flags)
+{
+	struct page *page;
+
+	if (iter->idx >= iter->nr) {
+		pagecache_iter_release(iter);
+		cond_resched();
+
+		iter->nr = __find_get_pages(mapping, iter->index, end,
+					    PAGEVEC_SIZE, iter->pages,
+					    iter->indices, flags);
+		if (!iter->nr)
+			return NULL;
+	}
+
+	iter->index	= iter->indices[iter->idx] + 1;
+	if (index)
+		*index	= iter->indices[iter->idx];
+	page		= iter->pages[iter->idx];
+	iter->idx++;
+	return page;
+}
+EXPORT_SYMBOL(pagecache_iter_next);
 
 /*
  * CD/DVDs are error prone. When a medium error occurs, the driver may fail
