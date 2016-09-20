@@ -86,4 +86,67 @@ static inline void pagevec_release(struct pagevec *pvec)
 		__pagevec_release(pvec);
 }
 
+struct pagecache_iter {
+	unsigned	nr;
+	unsigned	idx;
+	pgoff_t		index;
+	struct page	*pages[PAGEVEC_SIZE];
+	pgoff_t		indices[PAGEVEC_SIZE];
+};
+
+static inline void pagecache_iter_init(struct pagecache_iter *iter,
+				       pgoff_t start)
+{
+	iter->nr	= 0;
+	iter->idx	= 0;
+	iter->index	= start;
+}
+
+void __pagecache_iter_release(struct pagecache_iter *iter);
+
+/**
+ * pagecache_iter_release - release cached pages from pagacache_iter
+ *
+ * Must be called if breaking out of for_each_pagecache_page() etc. early - not
+ * needed if pagecache_iter_next() returned NULL and loop terminated normally
+ */
+static inline void pagecache_iter_release(struct pagecache_iter *iter)
+{
+	if (iter->nr)
+		__pagecache_iter_release(iter);
+}
+
+struct page *pagecache_iter_next(struct pagecache_iter *iter,
+				 struct address_space *mapping,
+				 pgoff_t end, pgoff_t *index,
+				 unsigned flags);
+
+#define __pagecache_iter_for_each(_iter, _mapping, _start, _end,	\
+				  _page, _index, _flags)		\
+	for (pagecache_iter_init((_iter), (_start));			\
+	     ((_page) = pagecache_iter_next((_iter), (_mapping),	\
+			(_end), (_index), (_flags)));)
+
+#define for_each_pagecache_page(_iter, _mapping, _start, _end, _page)	\
+	__pagecache_iter_for_each((_iter), (_mapping), (_start), (_end),\
+			(_page), NULL, 0)
+
+#define for_each_pagecache_page_contig(_iter, _mapping, _start, _end, _page)\
+	__pagecache_iter_for_each((_iter), (_mapping), (_start), (_end),\
+			(_page), NULL, RADIX_TREE_ITER_CONTIG)
+
+#define for_each_pagecache_tag(_iter, _mapping, _tag, _start, _end, _page)\
+	__pagecache_iter_for_each((_iter), (_mapping), (_start), (_end),\
+			(_page), NULL, RADIX_TREE_ITER_TAGGED|(_tag))
+
+#define for_each_pagecache_entry(_iter, _mapping, _start, _end, _page, _index)\
+	__pagecache_iter_for_each((_iter), (_mapping), (_start), (_end),\
+			(_page), &(_index), RADIX_TREE_ITER_EXCEPTIONAL)
+
+#define for_each_pagecache_entry_tag(_iter, _mapping, _tag,		\
+				     _start, _end, _page, _index)	\
+	__pagecache_iter_for_each((_iter), (_mapping), (_start), (_end),\
+			(_page), &(_index), RADIX_TREE_ITER_EXCEPTIONAL|\
+			RADIX_TREE_ITER_TAGGED|(_tag))
+
 #endif /* _LINUX_PAGEVEC_H */

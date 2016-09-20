@@ -379,6 +379,8 @@ enum {
 	RADIX_TREE_ITER_TAG_MASK = 0x0f,	/* tag index in lower nybble */
 	RADIX_TREE_ITER_TAGGED   = 0x10,	/* lookup tagged slots */
 	RADIX_TREE_ITER_CONTIG   = 0x20,	/* stop at first hole */
+	RADIX_TREE_ITER_EXCEPTIONAL = 0x40	/* include exceptional entries */
+						/* used by __find_get_pages() */
 };
 
 /**
@@ -579,6 +581,11 @@ static __always_inline void __rcu **radix_tree_next_slot(void __rcu **slot,
 	return slot;
 }
 
+#define __radix_tree_for_each_slot(slot, root, iter, start, flags)	\
+	for (slot = radix_tree_iter_init(iter, start) ;			\
+	     slot || (slot = radix_tree_next_chunk(root, iter, flags));	\
+	     slot = radix_tree_next_slot(slot, iter, flags))
+
 /**
  * radix_tree_for_each_slot - iterate over non-empty slots
  *
@@ -590,9 +597,7 @@ static __always_inline void __rcu **radix_tree_next_slot(void __rcu **slot,
  * @slot points to radix tree slot, @iter->index contains its index.
  */
 #define radix_tree_for_each_slot(slot, root, iter, start)		\
-	for (slot = radix_tree_iter_init(iter, start) ;			\
-	     slot || (slot = radix_tree_next_chunk(root, iter, 0)) ;	\
-	     slot = radix_tree_next_slot(slot, iter, 0))
+	__radix_tree_for_each_slot(slot, root, iter, start, 0)
 
 /**
  * radix_tree_for_each_contig - iterate over contiguous slots
@@ -605,11 +610,8 @@ static __always_inline void __rcu **radix_tree_next_slot(void __rcu **slot,
  * @slot points to radix tree slot, @iter->index contains its index.
  */
 #define radix_tree_for_each_contig(slot, root, iter, start)		\
-	for (slot = radix_tree_iter_init(iter, start) ;			\
-	     slot || (slot = radix_tree_next_chunk(root, iter,		\
-				RADIX_TREE_ITER_CONTIG)) ;		\
-	     slot = radix_tree_next_slot(slot, iter,			\
-				RADIX_TREE_ITER_CONTIG))
+	__radix_tree_for_each_slot(slot, root, iter, start,		\
+			      RADIX_TREE_ITER_CONTIG)
 
 /**
  * radix_tree_for_each_tagged - iterate over tagged slots
@@ -623,10 +625,7 @@ static __always_inline void __rcu **radix_tree_next_slot(void __rcu **slot,
  * @slot points to radix tree slot, @iter->index contains its index.
  */
 #define radix_tree_for_each_tagged(slot, root, iter, start, tag)	\
-	for (slot = radix_tree_iter_init(iter, start) ;			\
-	     slot || (slot = radix_tree_next_chunk(root, iter,		\
-			      RADIX_TREE_ITER_TAGGED | tag)) ;		\
-	     slot = radix_tree_next_slot(slot, iter,			\
-				RADIX_TREE_ITER_TAGGED | tag))
+	__radix_tree_for_each_slot(slot, root, iter, start,		\
+			      RADIX_TREE_ITER_TAGGED|tag)
 
 #endif /* _LINUX_RADIX_TREE_H */

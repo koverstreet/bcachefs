@@ -1674,6 +1674,108 @@ no_page:
 EXPORT_SYMBOL(pagecache_get_page);
 
 /**
+ * __find_get_pages - gang pagecache lookup, internal mechanism
+ * @mapping:	The address_space to search
+ * @start:	The starting page cache index
+ * @end:	Page cache index to stop at (inclusive)
+ * @nr_entries:	The maximum number of entries
+ * @entries:	Where the resulting entries are placed
+ * @indices:	If non NULL, indices of corresponding entries placed here
+ * @flags:	radix tree iter flags and tag (if supplied)
+ *
+ * Don't use directly - see wrappers in pagemap.h
+ *
+ * Possible values for flags (may be used in combination):
+ *
+ * 0:				find_get_pages()
+ * RADIX_TREE_ITER_TAGGED|tag:	find_get_pages_tag()
+ * RADIX_TREE_ITER_CONTIG:	find_get_pages_contig()
+ * RADIX_TREE_ITER_EXCEPTIONAL:	find_get_entries()
+ */
+unsigned __find_get_pages(struct address_space *mapping,
+			  pgoff_t start, pgoff_t end,
+			  unsigned nr_entries, struct page **entries,
+			  pgoff_t *indices, unsigned flags)
+{
+	struct radix_tree_iter iter;
+	void **slot;
+	unsigned ret = 0;
+
+	if (unlikely(!nr_entries || start > end))
+		return 0;
+
+	rcu_read_lock();
+	__radix_tree_for_each_slot(slot, &mapping->page_tree,
+				   &iter, start, flags) {
+		struct page *head, *page;
+
+		if (iter.index > end)
+			break;
+repeat:
+		page = radix_tree_deref_slot(slot);
+		if (unlikely(!page))
+			goto no_entry;
+
+		if (radix_tree_exception(page)) {
+			if (radix_tree_deref_retry(page)) {
+				slot = radix_tree_iter_retry(&iter);
+				continue;
+			}
+
+			/*
+			 * A shadow entry of a recently evicted page,
+			 * or a swap entry from shmem/tmpfs.  Skip
+			 * over it.
+			 */
+			if (flags & RADIX_TREE_ITER_EXCEPTIONAL)
+				goto export;
+
+			goto no_entry;
+		}
+
+		head = compound_head(page);
+		if (!page_cache_get_speculative(head))
+			goto repeat;
+
+		/* The page was split under us? */
+		if (compound_head(page) != head) {
+			put_page(head);
+			goto repeat;
+		}
+
+		/* Has the page moved? */
+		if (unlikely(page != *slot)) {
+			put_page(head);
+			goto repeat;
+		}
+
+		/*
+		 * must check mapping and index after taking the ref.
+		 * otherwise we can get both false positives and false
+		 * negatives, which is just confusing to the caller.
+		 */
+		if ((flags & RADIX_TREE_ITER_CONTIG) &&
+		    (page->mapping == NULL || page_to_pgoff(page) != iter.index)) {
+			put_page(page);
+			break;
+		}
+export:
+		if (indices)
+			indices[ret] = iter.index;
+		entries[ret] = page;
+		if (++ret == nr_entries)
+			break;
+		continue;
+no_entry:
+		if (flags & RADIX_TREE_ITER_CONTIG)
+			break;
+	}
+	rcu_read_unlock();
+	return ret;
+}
+EXPORT_SYMBOL(__find_get_pages);
+
+/**
  * find_get_entries - gang pagecache lookup
  * @mapping:	The address_space to search
  * @start:	The starting page cache index
@@ -2091,6 +2193,51 @@ export:
 	return ret;
 }
 EXPORT_SYMBOL(find_get_entries_tag);
+
+void __pagecache_iter_release(struct pagecache_iter *iter)
+{
+	lru_add_drain();
+	release_pages(iter->pages, iter->nr);
+	iter->nr	= 0;
+	iter->idx	= 0;
+}
+EXPORT_SYMBOL(__pagecache_iter_release);
+
+/**
+ * pagecache_iter_next - get next page from pagecache iterator and advance
+ * iterator
+ * @iter:	The iterator to advance
+ * @mapping:	The address_space to search
+ * @end:	Page cache index to stop at (inclusive)
+ * @index:	if non NULL, index of page or entry will be returned here
+ * @flags:	radix tree iter flags and tag for __find_get_pages()
+ */
+struct page *pagecache_iter_next(struct pagecache_iter *iter,
+				 struct address_space *mapping,
+				 pgoff_t end, pgoff_t *index,
+				 unsigned flags)
+{
+	struct page *page;
+
+	if (iter->idx >= iter->nr) {
+		pagecache_iter_release(iter);
+		cond_resched();
+
+		iter->nr = __find_get_pages(mapping, iter->index, end,
+					    PAGEVEC_SIZE, iter->pages,
+					    iter->indices, flags);
+		if (!iter->nr)
+			return NULL;
+	}
+
+	iter->index	= iter->indices[iter->idx] + 1;
+	if (index)
+		*index	= iter->indices[iter->idx];
+	page		= iter->pages[iter->idx];
+	iter->idx++;
+	return page;
+}
+EXPORT_SYMBOL(pagecache_iter_next);
 
 /*
  * CD/DVDs are error prone. When a medium error occurs, the driver may fail
