@@ -23,6 +23,10 @@
 
 static void journal_write(struct closure *);
 static void journal_reclaim_fast(struct journal *);
+static void journal_pin_add_entry(struct journal *,
+				  struct journal_entry_pin_list *,
+				  struct journal_entry_pin *,
+				  journal_pin_flush_fn);
 
 static inline struct journal_buf *journal_cur_buf(struct journal *j)
 {
@@ -248,7 +252,7 @@ redo_peek:
 
 	mutex_lock(&j->blacklist_lock);
 
-	journal_pin_drop(j, &bl->pin);
+	bch_journal_pin_drop(j, &bl->pin);
 	list_del(&bl->list);
 	kfree(bl->entries);
 	kfree(bl);
@@ -271,9 +275,8 @@ journal_seq_blacklist_find(struct journal *j, u64 seq)
 }
 
 static struct journal_seq_blacklist *
-bch_journal_seq_blacklisted_new(struct cache_set *c, u64 seq)
+bch_journal_seq_blacklisted_new(struct journal *j, u64 seq)
 {
-	struct journal *j = &c->journal;
 	struct journal_seq_blacklist *bl;
 
 	lockdep_assert_held(&j->blacklist_lock);
@@ -334,7 +337,7 @@ int bch_journal_seq_should_ignore(struct cache_set *c, u64 seq, struct btree *b)
 	/*
 	 * When we start the journal, bch_journal_start() will skip over @seq:
 	 */
-	bl = bch_journal_seq_blacklisted_new(c, seq);
+	bl = bch_journal_seq_blacklisted_new(&c->journal, seq);
 	if (!bl) {
 		ret = -ENOMEM;
 		goto out;
@@ -763,7 +766,7 @@ static void journal_entries_free(struct journal *j,
 	}
 }
 
-static int journal_seq_blacklist_read(struct cache_set *c,
+static int journal_seq_blacklist_read(struct journal *j,
 				      struct journal_replay *i,
 				      struct journal_entry_pin_list *p)
 {
@@ -775,13 +778,13 @@ static int journal_seq_blacklist_read(struct cache_set *c,
 			JOURNAL_ENTRY_JOURNAL_SEQ_BLACKLISTED) {
 		seq = entry->_data[0];
 
-		bl = bch_journal_seq_blacklisted_new(c, seq);
+		bl = bch_journal_seq_blacklisted_new(j, seq);
 		if (!bl) {
-			mutex_unlock(&c->journal.blacklist_lock);
+			mutex_unlock(&j->blacklist_lock);
 			return -ENOMEM;
 		}
 
-		__journal_pin_add(&c->journal, p, &bl->pin,
+		journal_pin_add_entry(j, p, &bl->pin,
 				  journal_seq_blacklist_flush);
 		bl->written = true;
 	}
@@ -875,7 +878,7 @@ const char *bch_journal_read(struct cache_set *c, struct list_head *list)
 		if (i && le64_to_cpu(i->j.seq) == seq) {
 			atomic_set(&p->count, 1);
 
-			if (journal_seq_blacklist_read(c, i, p))
+			if (journal_seq_blacklist_read(&c->journal, i, p))
 				return "insufficient memory";
 
 			i = list_is_last(&i->list, list)
@@ -1000,6 +1003,8 @@ static void __bch_journal_next_entry(struct journal *j)
 	jset = journal_cur_buf(j)->data;
 	jset->seq	= cpu_to_le64(++j->seq);
 	jset->u64s	= 0;
+
+	BUG_ON(journal_pin_seq(j, p) != j->seq);
 }
 
 static enum {
@@ -1282,8 +1287,10 @@ void bch_journal_start(struct cache_set *c)
 					JOURNAL_ENTRY_JOURNAL_SEQ_BLACKLISTED,
 					0, 0);
 
-			__journal_pin_add(j, &fifo_peek_back(&j->pin), &bl->pin,
-					  journal_seq_blacklist_flush);
+			journal_pin_add_entry(j,
+					      &fifo_peek_back(&j->pin),
+					      &bl->pin,
+					      journal_seq_blacklist_flush);
 			bl->written = true;
 		}
 
@@ -1452,6 +1459,105 @@ static void journal_reclaim_fast(struct journal *j)
 	}
 }
 
+/*
+ * Journal entry pinning - machinery for holding a reference on a given journal
+ * entry, marking it as dirty:
+ */
+
+static inline void __journal_pin_add(struct journal *j,
+				     struct journal_entry_pin_list *pin_list,
+				     struct journal_entry_pin *pin,
+				     journal_pin_flush_fn flush_fn)
+{
+	BUG_ON(journal_pin_active(pin));
+
+	atomic_inc(&pin_list->count);
+	pin->pin_list	= pin_list;
+	pin->flush	= flush_fn;
+
+	if (flush_fn)
+		list_add(&pin->list, &pin_list->list);
+	else
+		INIT_LIST_HEAD(&pin->list);
+}
+
+static void journal_pin_add_entry(struct journal *j,
+				  struct journal_entry_pin_list *pin_list,
+				  struct journal_entry_pin *pin,
+				  journal_pin_flush_fn flush_fn)
+{
+	spin_lock_irq(&j->pin_lock);
+	__journal_pin_add(j, pin_list, pin, flush_fn);
+	spin_unlock_irq(&j->pin_lock);
+}
+
+void bch_journal_pin_add(struct journal *j,
+			 struct journal_entry_pin *pin,
+			 journal_pin_flush_fn flush_fn)
+{
+	spin_lock_irq(&j->pin_lock);
+	__journal_pin_add(j, j->cur_pin_list, pin, flush_fn);
+	spin_unlock_irq(&j->pin_lock);
+}
+
+static inline bool __journal_pin_drop(struct journal *j,
+				      struct journal_entry_pin *pin)
+{
+	struct journal_entry_pin_list *pin_list = pin->pin_list;
+
+	pin->pin_list = NULL;
+
+	/* journal_reclaim_work() might have already taken us off the list */
+	if (!list_empty_careful(&pin->list))
+		list_del_init(&pin->list);
+
+	return atomic_dec_and_test(&pin_list->count);
+}
+
+void bch_journal_pin_drop(struct journal *j,
+			  struct journal_entry_pin *pin)
+{
+	unsigned long flags;
+	bool wakeup;
+
+	if (!journal_pin_active(pin))
+		return;
+
+	spin_lock_irqsave(&j->pin_lock, flags);
+	wakeup = __journal_pin_drop(j, pin);
+	spin_unlock_irqrestore(&j->pin_lock, flags);
+
+	/*
+	 * Unpinning a journal entry make make journal_next_bucket() succeed, if
+	 * writing a new last_seq will now make another bucket available:
+	 *
+	 * Nested irqsave is expensive, don't do the wakeup with lock held:
+	 */
+	if (wakeup)
+		wake_up(&j->wait);
+}
+
+void bch_journal_pin_add_if_older(struct journal *j,
+				  struct journal_entry_pin *src_pin,
+				  struct journal_entry_pin *pin,
+				  journal_pin_flush_fn flush_fn)
+{
+	spin_lock_irq(&j->pin_lock);
+
+	if (journal_pin_active(src_pin) &&
+	    (!journal_pin_active(pin) ||
+	     fifo_entry_idx(&j->pin, src_pin->pin_list) <
+	     fifo_entry_idx(&j->pin, pin->pin_list))) {
+		if (journal_pin_active(pin))
+			__journal_pin_drop(j, pin);
+		__journal_pin_add(j, src_pin->pin_list,
+				  pin, NULL);
+	}
+
+	spin_unlock_irq(&j->pin_lock);
+}
+
+
 static struct journal_entry_pin *
 journal_get_next_pin(struct journal *j, u64 seq_to_flush)
 {
@@ -1474,7 +1580,7 @@ journal_get_next_pin(struct journal *j, u64 seq_to_flush)
 		ret = list_first_entry_or_null(&pin_list->list,
 				struct journal_entry_pin, list);
 		if (ret) {
-			/* must be list_del_init(), see journal_pin_drop() */
+			/* must be list_del_init(), see bch_journal_pin_drop() */
 			list_del_init(&ret->list);
 			break;
 		}

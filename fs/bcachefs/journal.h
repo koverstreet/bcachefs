@@ -131,60 +131,13 @@ static inline bool journal_pin_active(struct journal_entry_pin *pin)
 	return pin->pin_list != NULL;
 }
 
-static inline void __journal_pin_add(struct journal *j,
-				     struct journal_entry_pin_list *pin_list,
-				     struct journal_entry_pin *pin,
-				     journal_pin_flush_fn flush_fn)
-{
-	BUG_ON(journal_pin_active(pin));
-
-	spin_lock_irq(&j->pin_lock);
-
-	atomic_inc(&pin_list->count);
-	pin->pin_list	= pin_list;
-	pin->flush	= flush_fn;
-
-	if (flush_fn)
-		list_add(&pin->list, &pin_list->list);
-	else
-		INIT_LIST_HEAD(&pin->list);
-
-	spin_unlock_irq(&j->pin_lock);
-}
-
-static inline void journal_pin_add(struct journal *j,
-				   struct journal_entry_pin *pin,
-				   journal_pin_flush_fn flush_fn)
-{
-	__journal_pin_add(j, j->cur_pin_list, pin, flush_fn);
-}
-
-static inline void journal_pin_drop(struct journal *j,
-				    struct journal_entry_pin *pin)
-{
-	unsigned long flags;
-
-	if (!journal_pin_active(pin))
-		return;
-
-	/* journal_reclaim_work() might have already taken us off the list */
-	if (!list_empty_careful(&pin->list)) {
-		spin_lock_irqsave(&j->pin_lock, flags);
-		list_del_init(&pin->list);
-		spin_unlock_irqrestore(&j->pin_lock, flags);
-	}
-
-	if (atomic_dec_and_test(&pin->pin_list->count)) {
-		/*
-		 * Unpinning a journal entry make make journal_next_bucket()
-		 * succeed, if writing a new last_seq will now make another
-		 * bucket available:
-		 */
-		wake_up(&j->wait);
-	}
-
-	pin->pin_list = NULL;
-}
+void bch_journal_pin_add(struct journal *, struct journal_entry_pin *,
+			 journal_pin_flush_fn);
+void bch_journal_pin_drop(struct journal *, struct journal_entry_pin *);
+void bch_journal_pin_add_if_older(struct journal *,
+				  struct journal_entry_pin *,
+				  struct journal_entry_pin *,
+				  journal_pin_flush_fn);
 
 struct closure;
 struct cache_set;

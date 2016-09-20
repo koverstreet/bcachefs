@@ -483,7 +483,7 @@ int bch_btree_root_read(struct cache_set *c, enum btree_id id,
 void bch_btree_complete_write(struct cache_set *c, struct btree *b,
 			      struct btree_write *w)
 {
-	journal_pin_drop(&c->journal, &w->journal);
+	bch_journal_pin_drop(&c->journal, &w->journal);
 	closure_wake_up(&w->wait);
 }
 

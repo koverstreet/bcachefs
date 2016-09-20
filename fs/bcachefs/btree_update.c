@@ -726,7 +726,7 @@ void bch_btree_journal_key(struct btree_iter *iter,
 	BUG_ON(!res->ref && test_bit(JOURNAL_REPLAY_DONE, &j->flags));
 
 	if (!journal_pin_active(&w->journal))
-		journal_pin_add(j, &w->journal, btree_node_flush);
+		bch_journal_pin_add(j, &w->journal, btree_node_flush);
 
 	if (test_bit(JOURNAL_REPLAY_DONE, &j->flags)) {
 		bch_journal_add_keys(j, res, b->btree_id, insert);
@@ -783,8 +783,7 @@ __bch_btree_interior_update_alloc(struct btree *nodes[], unsigned nr_nodes,
 {
 	struct cache_set *c = iter->c;
 	struct btree_interior_update *as;
-	struct journal_entry_pin_list *pin_list = NULL;
-	unsigned i, pin_idx = UINT_MAX;
+	unsigned i;
 
 	as = mempool_alloc(&c->btree_interior_update_pool, GFP_NOIO);
 	memset(as, 0, sizeof(*as));
@@ -795,52 +794,13 @@ __bch_btree_interior_update_alloc(struct btree *nodes[], unsigned nr_nodes,
 	bch_keylist_init(&as->parent_keys, as->inline_keys,
 			 ARRAY_SIZE(as->inline_keys));
 
-	/* block btree node from being written and write_idx changing: */
 	for (i = 0; i < nr_nodes; i++) {
-		/*
-		 * It's not legal to call btree_node_lock_write() when @iter
-		 * does not point to nodes[i] - which happens in
-		 * bch_coalesce_nodes(), unfortunately.
-		 *
-		 * So far this is the only place where we have this issue:
-		 */
-		if (iter->nodes[nodes[i]->level] == nodes[i])
-			btree_node_lock_write(nodes[i], iter);
-		else
-			six_lock_write(&nodes[i]->lock);
-	}
-
-	for (i = 0; i < nr_nodes; i++) {
-		struct btree_write *w = btree_current_write(nodes[i]);
-
-		if (journal_pin_active(&w->journal)) {
-			unsigned idx = fifo_entry_idx(&c->journal.pin,
-						      w->journal.pin_list);
-
-			if (idx < pin_idx) {
-				pin_list = w->journal.pin_list;
-				pin_idx = idx;
-			}
-		}
-	}
-
-	if (!pin_list) {
-		/*
-		 * We don't have a journal reservation to block cur_pin_list
-		 * from changing, need to use a barrier to make sure it points
-		 * to an initialised pin_list:
-		 */
-		pin_list = c->journal.cur_pin_list;
-		smp_rmb();
-	}
-
-	__journal_pin_add(&c->journal, pin_list, &as->journal, NULL);
-
-	for (i = 0; i < nr_nodes; i++) {
-		if (iter->nodes[nodes[i]->level] == nodes[i])
-			btree_node_unlock_write(nodes[i], iter);
-		else
-			six_unlock_write(&nodes[i]->lock);
+		bch_journal_pin_add_if_older(&c->journal,
+					     &nodes[i]->writes[0].journal,
+					     &as->journal, NULL);
+		bch_journal_pin_add_if_older(&c->journal,
+					     &nodes[i]->writes[1].journal,
+					     &as->journal, NULL);
 	}
 
 	mutex_lock(&c->btree_interior_update_lock);
@@ -870,7 +830,7 @@ static void btree_interior_update_pointers_written(struct closure *cl)
 	struct cache_set *c = as->c;
 	unsigned i;
 
-	journal_pin_drop(&c->journal, &as->journal);
+	bch_journal_pin_drop(&c->journal, &as->journal);
 
 	mutex_lock(&c->btree_interior_update_lock);
 
