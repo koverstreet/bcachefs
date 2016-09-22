@@ -91,7 +91,15 @@ struct btree_interior_update {
 	struct btree_interior_update	*parent_as;
 	struct closure_waitlist		wait;
 
+	/*
+	 * We may be freeing nodes that were dirty, and thus had journal entries
+	 * pinned: we need to transfer the oldest of those pins to the
+	 * btree_interior_update operation, and release it when the new node(s)
+	 * are all persistent and reachable:
+	 */
 	struct journal_entry_pin	journal;
+
+	u64				journal_seq;
 
 	/*
 	 * Nodes being freed:
@@ -114,9 +122,6 @@ struct btree_interior_update {
 	list_for_each_entry(as, &c->btree_interior_update_list, list)	\
 		for (p = as->pending; p < as->pending + as->nr_pending; p++)
 
-void bch_btree_node_free_start(struct cache_set *, struct btree_interior_update *,
-			       struct btree *);
-
 void bch_btree_node_free_inmem(struct btree_iter *, struct btree *);
 void bch_btree_node_free_never_inserted(struct cache_set *, struct btree *);
 
@@ -129,11 +134,12 @@ struct btree *__btree_node_alloc_replacement(struct cache_set *,
 struct btree *btree_node_alloc_replacement(struct cache_set *, struct btree *,
 					   struct btree_reserve *);
 
-struct btree_interior_update *__bch_btree_interior_update_alloc(struct btree *[], unsigned,
-					    struct btree_iter *);
-struct btree_interior_update *bch_btree_interior_update_alloc(struct btree *, struct btree_iter *);
+struct btree_interior_update *
+bch_btree_interior_update_alloc(struct cache_set *);
 
-void bch_btree_interior_update_will_free_node(struct btree_interior_update *, struct btree *);
+void bch_btree_interior_update_will_free_node(struct cache_set *,
+					      struct btree_interior_update *,
+					      struct btree *);
 
 void bch_btree_set_root_initial(struct cache_set *, struct btree *,
 				struct btree_reserve *);

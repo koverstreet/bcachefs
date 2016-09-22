@@ -509,10 +509,10 @@ static void bch_coalesce_nodes(struct btree *old_nodes[GC_MERGE_NODES],
 			goto out;
 		}
 
-	as = __bch_btree_interior_update_alloc(old_nodes, nr_old_nodes, iter);
+	as = bch_btree_interior_update_alloc(c);
 
 	for (i = 0; i < nr_old_nodes; i++)
-		bch_btree_interior_update_will_free_node(as, old_nodes[i]);
+		bch_btree_interior_update_will_free_node(c, as, old_nodes[i]);
 
 	/* Repack everything with @new_format and sort down to one bset */
 	for (i = 0; i < nr_old_nodes; i++)
@@ -600,8 +600,6 @@ static void bch_coalesce_nodes(struct btree *old_nodes[GC_MERGE_NODES],
 	for (i = 0; i < nr_old_nodes; i++) {
 		struct bkey_i delete;
 		unsigned j;
-
-		bch_btree_node_free_start(c, as, old_nodes[i]);
 
 		for (j = 0; j < nr_new_nodes; j++)
 			if (!bkey_cmp(old_nodes[i]->key.k.p,
