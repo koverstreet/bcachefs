@@ -120,6 +120,30 @@ int __must_check bch_write_inode(struct cache_set *c,
 	return __bch_write_inode(c, ei, NULL, NULL);
 }
 
+int bch_inc_nlink(struct cache_set *c, struct bch_inode_info *ei)
+{
+	int ret;
+
+	mutex_lock(&ei->update_lock);
+	inc_nlink(&ei->vfs_inode);
+	ret = bch_write_inode(c, ei);
+	mutex_unlock(&ei->update_lock);
+
+	return ret;
+}
+
+int bch_dec_nlink(struct cache_set *c, struct bch_inode_info *ei)
+{
+	int ret;
+
+	mutex_lock(&ei->update_lock);
+	drop_nlink(&ei->vfs_inode);
+	ret = bch_write_inode(c, ei);
+	mutex_unlock(&ei->update_lock);
+
+	return ret;
+}
+
 static struct inode *bch_vfs_inode_get(struct super_block *sb, u64 inum)
 {
 	struct cache_set *c = sb->s_fs_info;
@@ -309,12 +333,9 @@ static int bch_link(struct dentry *old_dentry, struct inode *dir,
 
 	lockdep_assert_held(&inode->i_rwsem);
 
-	mutex_lock(&ei->update_lock);
 	inode->i_ctime = CURRENT_TIME;
-	inc_nlink(inode);
-	ret = bch_write_inode(c, ei);
-	mutex_unlock(&ei->update_lock);
 
+	ret = bch_inc_nlink(c, ei);
 	if (ret)
 		return ret;
 
@@ -323,7 +344,7 @@ static int bch_link(struct dentry *old_dentry, struct inode *dir,
 	ret = bch_vfs_dirent_create(c, dir, mode_to_type(inode->i_mode),
 				    &dentry->d_name, inode);
 	if (unlikely(ret)) {
-		inode_dec_link_count(inode);
+		bch_dec_nlink(c, ei);
 		iput(inode);
 		return ret;
 	}
@@ -334,6 +355,7 @@ static int bch_link(struct dentry *old_dentry, struct inode *dir,
 
 static int bch_unlink(struct inode *dir, struct dentry *dentry)
 {
+	struct cache_set *c = dir->i_sb->s_fs_info;
 	struct bch_inode_info *dir_ei = to_bch_ei(dir);
 	struct inode *inode = dentry->d_inode;
 	struct bch_inode_info *ei = to_bch_ei(inode);
@@ -349,7 +371,18 @@ static int bch_unlink(struct inode *dir, struct dentry *dentry)
 		ei->journal_seq = dir_ei->journal_seq;
 
 	inode->i_ctime = dir->i_ctime;
-	inode_dec_link_count(inode);
+
+	if (S_ISDIR(inode->i_mode)) {
+		bch_dec_nlink(c, dir_ei);
+		drop_nlink(inode);
+	}
+
+	drop_nlink(inode);
+	if (inode->i_nlink) {
+		mutex_lock(&ei->update_lock);
+		ret = bch_write_inode(c, ei);
+		mutex_unlock(&ei->update_lock);
+	}
 
 	return 0;
 }
@@ -397,18 +430,16 @@ err:
 
 static int bch_mkdir(struct inode *dir, struct dentry *dentry, umode_t mode)
 {
+	struct cache_set *c = dir->i_sb->s_fs_info;
 	int ret;
 
 	lockdep_assert_held(&dir->i_rwsem);
 
-	inode_inc_link_count(dir);
-	mark_inode_dirty_sync(dir);
-
 	ret = __bch_create(dir, dentry, mode|S_IFDIR, 0);
-	if (unlikely(ret)) {
-		inode_dec_link_count(dir);
+	if (unlikely(ret))
 		return ret;
-	}
+
+	bch_inc_nlink(c, to_bch_ei(dir));
 
 	return 0;
 }
@@ -417,22 +448,11 @@ static int bch_rmdir(struct inode *dir, struct dentry *dentry)
 {
 	struct cache_set *c = dir->i_sb->s_fs_info;
 	struct inode *inode = dentry->d_inode;
-	int ret;
-
-	lockdep_assert_held(&inode->i_rwsem);
-	lockdep_assert_held(&dir->i_rwsem);
 
 	if (bch_empty_dir(c, inode->i_ino))
 		return -ENOTEMPTY;
 
-	ret = bch_unlink(dir, dentry);
-	if (unlikely(ret))
-		return ret;
-
-	inode_dec_link_count(inode);
-	inode_dec_link_count(dir);
-
-	return 0;
+	return bch_unlink(dir, dentry);
 }
 
 static int bch_mknod(struct inode *dir, struct dentry *dentry,
@@ -475,7 +495,7 @@ static int bch_rename(struct inode *old_dir, struct dentry *old_dentry,
 			return ret;
 
 		clear_nlink(new_inode);
-		inode_dec_link_count(old_dir);
+		bch_dec_nlink(c, to_bch_ei(old_dir));
 	} else if (new_inode) {
 		lockdep_assert_held(&new_inode->i_rwsem);
 
@@ -487,7 +507,7 @@ static int bch_rename(struct inode *old_dir, struct dentry *old_dentry,
 			return ret;
 
 		new_inode->i_ctime = now;
-		inode_dec_link_count(new_inode);
+		bch_dec_nlink(c, to_bch_ei(new_inode));
 	} else if (S_ISDIR(old_inode->i_mode)) {
 		ret = bch_dirent_rename(c,
 					old_dir, &old_dentry->d_name,
@@ -496,8 +516,8 @@ static int bch_rename(struct inode *old_dir, struct dentry *old_dentry,
 		if (unlikely(ret))
 			return ret;
 
-		inode_inc_link_count(new_dir);
-		inode_dec_link_count(old_dir);
+		bch_inc_nlink(c, to_bch_ei(new_dir));
+		bch_dec_nlink(c, to_bch_ei(old_dir));
 	} else {
 		ret = bch_dirent_rename(c,
 					old_dir, &old_dentry->d_name,
@@ -538,11 +558,11 @@ static int bch_rename_exchange(struct inode *old_dir, struct dentry *old_dentry,
 	if (S_ISDIR(old_inode->i_mode) !=
 	    S_ISDIR(new_inode->i_mode)) {
 		if (S_ISDIR(old_inode->i_mode)) {
-			inode_inc_link_count(new_dir);
-			inode_dec_link_count(old_dir);
+			bch_inc_nlink(c, to_bch_ei(new_dir));
+			bch_dec_nlink(c, to_bch_ei(old_dir));
 		} else {
-			inode_dec_link_count(new_dir);
-			inode_inc_link_count(old_dir);
+			bch_dec_nlink(c, to_bch_ei(new_dir));
+			bch_inc_nlink(c, to_bch_ei(old_dir));
 		}
 	}
 
