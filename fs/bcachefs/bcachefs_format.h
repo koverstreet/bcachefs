@@ -514,6 +514,7 @@ struct bch_inode {
 	__le64			i_atime;
 	__le64			i_ctime;
 	__le64			i_mtime;
+	__le64			i_otime;
 
 	__le64			i_size;
 	__le64			i_sectors;
