@@ -334,6 +334,8 @@ int bch_journal_seq_should_ignore(struct cache_set *c, u64 seq, struct btree *b)
 			 "bset journal seq too far in the future: %llu > %llu",
 			 seq, j->seq);
 
+	bch_verbose(c, "blacklisting journal sequence number %llu", seq);
+
 	/*
 	 * When we start the journal, bch_journal_start() will skip over @seq:
 	 */
