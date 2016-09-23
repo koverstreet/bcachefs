@@ -38,6 +38,9 @@ void *__genradix_ptr(struct __genradix *radix, size_t offset)
 	size_t level = radix->depth;
 	struct genradix_node *n = radix->root;
 
+	if (offset >= genradix_depth_size(radix->depth))
+		return NULL;
+
 	while (1) {
 		if (!n)
 			return NULL;
