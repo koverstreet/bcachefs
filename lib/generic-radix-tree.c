@@ -104,6 +104,46 @@ void *__genradix_ptr_alloc(struct __genradix *radix, size_t offset,
 }
 EXPORT_SYMBOL(__genradix_ptr_alloc);
 
+void *__genradix_iter_peek(struct genradix_iter *iter,
+			   struct __genradix *radix,
+			   size_t objs_per_page)
+{
+	struct genradix_node *n;
+	size_t level, i;
+
+	if (!radix->root)
+		return NULL;
+restart:
+	if (iter->offset >= genradix_depth_size(radix->depth))
+		return NULL;
+
+	n	= radix->root;
+	level	= radix->depth;
+
+	while (level) {
+		level--;
+
+		i = (iter->offset >> genradix_depth_shift(level)) &
+			(GENRADIX_ARY - 1);
+
+		while (!n->children[i]) {
+			i++;
+			iter->offset = round_down(iter->offset +
+					   genradix_depth_size(level),
+					   genradix_depth_size(level));
+			iter->pos = (iter->offset >> PAGE_SHIFT) *
+				objs_per_page;
+			if (i == GENRADIX_ARY)
+				goto restart;
+		}
+
+		n = n->children[i];
+	}
+
+	return &n->data[iter->offset & (PAGE_SIZE - 1)];
+}
+EXPORT_SYMBOL(__genradix_iter_peek);
+
 static void genradix_free_recurse(struct genradix_node *n, unsigned level)
 {
 	if (level) {

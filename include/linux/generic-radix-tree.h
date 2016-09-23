@@ -1,3 +1,6 @@
+#ifndef _LINUX_GENERIC_RADIX_TREE_H
+#define _LINUX_GENERIC_RADIX_TREE_H
+
 /*
  * Generic radix trees/sparse arrays:
  *
@@ -62,35 +65,73 @@ void __genradix_free(struct __genradix *);
 
 #define genradix_free(_radix)	__genradix_free(&(_radix)->tree)
 
-void *__genradix_ptr(struct __genradix *, size_t);
-
-static inline size_t __idx_to_offset(size_t idx, size_t size)
+static inline size_t __idx_to_offset(size_t idx, size_t obj_size)
 {
-	BUILD_BUG_ON(size > PAGE_SIZE);
+	BUILD_BUG_ON(obj_size > PAGE_SIZE);
 
-	if (!is_power_of_2(size)) {
-		size_t objs_per_page = PAGE_SIZE / size;
+	if (!is_power_of_2(obj_size)) {
+		size_t objs_per_page = PAGE_SIZE / obj_size;
 
 		return (idx / objs_per_page) * PAGE_SIZE +
-			(idx % objs_per_page) * size;
+			(idx % objs_per_page) * obj_size;
 	} else {
-		return idx * size;
+		return idx * obj_size;
 	}
 }
 
+#define __genradix_cast(_radix)		(typeof((_radix)->type[0]) *)
+#define __genradix_obj_size(_radix)	sizeof((_radix)->type[0])
+#define __genradix_idx_to_offset(_radix, _idx)			\
+	__idx_to_offset(_idx, __genradix_obj_size(_radix))
+
+void *__genradix_ptr(struct __genradix *, size_t);
+
 /* Returns a pointer to element at @_idx */
 #define genradix_ptr(_radix, _idx)				\
-	((typeof((_radix)->type[0]) *)				\
+	(__genradix_cast(_radix)				\
 	 __genradix_ptr(&(_radix)->tree,			\
-			__idx_to_offset((_idx),			\
-					sizeof((_radix)->type[0]))))
+			__genradix_idx_to_offset(_radix, _idx)))
 
 void *__genradix_ptr_alloc(struct __genradix *, size_t, gfp_t);
 
 /* Returns a pointer to element at @_idx, allocating it if necessary */
 #define genradix_ptr_alloc(_radix, _idx, _gfp)			\
-	((typeof((_radix)->type[0]) *)				\
+	(__genradix_cast(_radix)				\
 	 __genradix_ptr_alloc(&(_radix)->tree,			\
-			__idx_to_offset((_idx),			\
-					sizeof((_radix)->type[0])),\
+			__genradix_idx_to_offset(_radix, _idx),	\
 			_gfp))
+
+struct genradix_iter {
+	size_t			offset;
+	size_t			pos;
+};
+
+static inline void genradix_iter_init(struct genradix_iter *iter)
+{
+	iter->offset	= 0;
+	iter->pos	= 0;
+}
+
+void *__genradix_iter_peek(struct genradix_iter *, struct __genradix *, size_t);
+
+#define genradix_iter_peek(_iter, _radix)			\
+	(__genradix_cast(_radix)				\
+	 __genradix_iter_peek(_iter, &(_radix)->tree,		\
+			      PAGE_SIZE / __genradix_obj_size(_radix)))
+
+static inline void __genradix_iter_advance(struct genradix_iter *iter,
+					   size_t obj_size)
+{
+	iter->offset += obj_size;
+
+	if (!is_power_of_2(obj_size) &&
+	    (iter->offset & (PAGE_SIZE - 1)) + obj_size > PAGE_SIZE)
+		iter->offset = round_up(iter->offset, PAGE_SIZE);
+
+	iter->pos++;
+}
+
+#define genradix_iter_advance(_iter, _radix)			\
+	__genradix_iter_advance(_iter, __genradix_obj_size(_radix))
+
+#endif /* _LINUX_GENERIC_RADIX_TREE_H */
