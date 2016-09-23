@@ -844,17 +844,17 @@ static void bch_initial_gc_btree(struct cache_set *c, enum btree_id id)
 	struct btree_iter iter;
 	struct btree *b;
 	struct range_checks r;
-	unsigned depth = id == BTREE_ID_EXTENTS ? 0 : 1;
 
-	if (expensive_debug_checks(c))
-		depth = 0;
-
-	btree_node_range_checks_init(&r, depth);
+	btree_node_range_checks_init(&r, 0);
 
 	if (!c->btree_roots[id].b)
 		return;
 
-	for_each_btree_node(&iter, c, id, POS_MIN, depth, b) {
+	/*
+	 * We have to hit every btree node before starting journal replay, in
+	 * order for the journal seq blacklist machinery to work:
+	 */
+	for_each_btree_node(&iter, c, id, POS_MIN, 0, b) {
 		btree_node_range_checks(c, b, &r);
 
 		if (btree_node_has_ptrs(b)) {
