@@ -738,6 +738,11 @@ void bch_btree_iter_set_pos(struct btree_iter *iter, struct bpos new_pos)
 
 void bch_btree_iter_advance_pos(struct btree_iter *iter)
 {
+	/*
+	 * We use iter->k instead of iter->pos for extents: iter->pos will be
+	 * equal to the start of the extent we returned, but we need to advance
+	 * to the end of the extent we returned.
+	 */
 	bch_btree_iter_set_pos(iter,
 		btree_type_successor(iter->btree_id, iter->k.p));
 }
@@ -764,7 +769,7 @@ struct bkey_s_c bch_btree_iter_peek(struct btree_iter *iter)
 	while (1) {
 		ret = __bch_btree_iter_traverse(iter, 0, pos);
 		if (unlikely(ret))
-			return bkey_s_c_null;
+			break;
 
 		k = __btree_iter_peek(iter);
 		if (likely(k.k)) {
@@ -781,10 +786,13 @@ struct bkey_s_c bch_btree_iter_peek(struct btree_iter *iter)
 		pos = iter->nodes[0]->key.k.p;
 
 		if (!bkey_cmp(pos, POS_MAX))
-			return (struct bkey_s_c) { NULL, NULL };
+			break;
 
 		pos = btree_type_successor(iter->btree_id, pos);
 	}
+
+	iter->k = KEY(iter->pos.inode, iter->pos.offset, 0);
+	return bkey_s_c_null;
 }
 
 struct bkey_s_c bch_btree_iter_peek_with_holes(struct btree_iter *iter)
@@ -795,8 +803,10 @@ struct bkey_s_c bch_btree_iter_peek_with_holes(struct btree_iter *iter)
 
 	while (1) {
 		ret = __bch_btree_iter_traverse(iter, 0, iter->pos);
-		if (unlikely(ret))
+		if (unlikely(ret)) {
+			iter->k = KEY(iter->pos.inode, iter->pos.offset, 0);
 			return bkey_s_c_null;
+		}
 
 		k = __btree_iter_peek_all(iter);
 recheck:
@@ -832,13 +842,6 @@ recheck:
 			__btree_iter_advance(iter);
 		}
 	}
-
-	EBUG_ON(!iter->error &&
-		(iter->btree_id != BTREE_ID_INODES
-		 ? bkey_cmp(iter->pos, POS_MAX)
-		 : iter->pos.inode != KEY_INODE_MAX));
-
-	return bkey_s_c_null;
 }
 
 void __bch_btree_iter_init(struct btree_iter *iter, struct cache_set *c,
