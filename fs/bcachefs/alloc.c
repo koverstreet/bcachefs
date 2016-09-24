@@ -1505,6 +1505,7 @@ void bch_alloc_sectors_append_ptrs(struct cache_set *c, struct bkey_i_extent *e,
 		EBUG_ON(bch_extent_has_device(extent_i_to_s_c(e), ob->ptrs[i].dev));
 
 		tmp = ob->ptrs[i];
+		tmp.cached = bkey_extent_is_cached(&e->k);
 		tmp.offset += ob->ptr_offset[i];
 		extent_ptr_append(e, tmp);
 

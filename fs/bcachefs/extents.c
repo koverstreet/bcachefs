@@ -22,7 +22,6 @@
 
 #include <trace/events/bcachefs.h>
 
-static bool __bch_extent_normalize(struct cache_set *, struct bkey_s, bool);
 static enum merge_result bch_extent_merge(struct cache_set *, struct btree *,
 					  struct bkey_i *, struct bkey_i *);
 
@@ -121,21 +120,26 @@ bch_extent_has_device(struct bkey_s_c_extent e, unsigned dev)
 	return NULL;
 }
 
-unsigned bch_extent_nr_ptrs_from(struct bkey_s_c_extent e,
-				 const struct bch_extent_ptr *start)
+unsigned bch_extent_nr_ptrs(struct bkey_s_c_extent e)
 {
 	const struct bch_extent_ptr *ptr;
 	unsigned nr_ptrs = 0;
 
-	extent_for_each_ptr_from(e, ptr, start)
+	extent_for_each_ptr(e, ptr)
 		nr_ptrs++;
 
 	return nr_ptrs;
 }
 
-unsigned bch_extent_nr_ptrs(struct bkey_s_c_extent e)
+unsigned bch_extent_nr_dirty_ptrs(struct bkey_s_c_extent e)
 {
-	return bch_extent_nr_ptrs_from(e, &e.v->start->ptr);
+	const struct bch_extent_ptr *ptr;
+	unsigned nr_ptrs = 0;
+
+	extent_for_each_ptr(e, ptr)
+		nr_ptrs += !ptr->cached;
+
+	return nr_ptrs;
 }
 
 /* returns true if equal */
@@ -316,13 +320,8 @@ static void bch_extent_drop_stale(struct cache_set *c, struct bkey_s_extent e)
 	struct bch_extent_ptr *ptr = &e.v->start->ptr;
 	bool dropped = false;
 
-	/*
-	 * We don't want to change which pointers are considered cached/dirty,
-	 * so don't remove pointers that are considered dirty:
-	 */
 	rcu_read_lock();
-	while ((ptr = extent_ptr_next(e, ptr)) &&
-	       !bch_extent_ptr_is_dirty(c, e.c, ptr))
+	while ((ptr = extent_ptr_next(e, ptr)))
 		if (should_drop_ptr(c, e.c, ptr)) {
 			__bch_extent_drop_ptr(e, ptr);
 			dropped = true;
@@ -337,7 +336,7 @@ static void bch_extent_drop_stale(struct cache_set *c, struct bkey_s_extent e)
 static bool bch_ptr_normalize(struct cache_set *c, struct btree *bk,
 			      struct bkey_s k)
 {
-	return __bch_extent_normalize(c, k, false);
+	return bch_extent_normalize(c, k);
 }
 
 static void bch_ptr_swab(const struct bkey_format *f, struct bkey_packed *k)
@@ -1816,8 +1815,6 @@ static void bch_extent_debugcheck_extent(struct cache_set *c, struct btree *b,
 	mi = cache_member_info_get(c);
 
 	extent_for_each_ptr(e, ptr) {
-		bool dirty = bch_extent_ptr_is_dirty(c, e, ptr);
-
 		replicas++;
 
 		if (ptr->dev >= mi->nr_in_set)
@@ -1852,7 +1849,7 @@ static void bch_extent_debugcheck_extent(struct cache_set *c, struct btree *b,
 
 				stale = ptr_stale(ca, ptr);
 
-				cache_set_bug_on(stale && dirty, c,
+				cache_set_bug_on(stale && !ptr->cached, c,
 						 "stale dirty pointer");
 
 				cache_set_bug_on(stale > 96, c,
@@ -1865,9 +1862,9 @@ static void bch_extent_debugcheck_extent(struct cache_set *c, struct btree *b,
 				bad = (mark.is_metadata ||
 				       (gc_pos_cmp(c->gc_pos, gc_pos_btree_node(b)) > 0 &&
 					!mark.owned_by_allocator &&
-					!(dirty
-					  ? mark.dirty_sectors
-					  : mark.cached_sectors)));
+					!(ptr->cached
+					  ? mark.cached_sectors
+					  : mark.dirty_sectors)));
 			} while (read_seqcount_retry(&c->gc_pos_lock, seq));
 
 			if (bad)
@@ -2057,101 +2054,6 @@ void bch_extent_crc_append(struct bkey_i_extent *e,
 	__extent_entry_push(e);
 }
 
-static void __extent_sort_ptrs(struct cache_member_rcu *mi,
-			       struct bkey_s_extent src)
-{
-	struct bch_extent_ptr *src_ptr, *dst_ptr;
-	union bch_extent_crc *src_crc, *dst_crc;
-	union bch_extent_crc _src;
-	BKEY_PADDED(k) tmp;
-	struct bkey_s_extent dst;
-	size_t u64s, crc_u64s;
-	u64 *p;
-
-	/*
-	 * Insertion sort:
-	 *
-	 * Note: this sort needs to be stable, because pointer order determines
-	 * pointer dirtyness.
-	 */
-
-	tmp.k.k = *src.k;
-	dst = bkey_i_to_s_extent(&tmp.k);
-	set_bkey_val_u64s(dst.k, 0);
-
-	extent_for_each_ptr_crc(src, src_ptr, src_crc) {
-		extent_for_each_ptr_crc(dst, dst_ptr, dst_crc)
-			if (PTR_TIER(mi, src_ptr) < PTR_TIER(mi, dst_ptr))
-				goto found;
-
-		dst_ptr = &extent_entry_last(dst)->ptr;
-		dst_crc = NULL;
-found:
-		/* found insert position: */
-
-		/*
-		 * we're making sure everything has a crc at this point, if
-		 * dst_ptr points to a pointer it better have a crc:
-		 */
-		BUG_ON(dst_ptr != &extent_entry_last(dst)->ptr && !dst_crc);
-		BUG_ON(dst_crc &&
-		       (extent_entry_next(to_entry(dst_crc)) !=
-			to_entry(dst_ptr)));
-
-		if (!src_crc) {
-			bch_extent_crc_init(&_src, src.k->size,
-					    src.k->size, 0, 0,
-					    (struct bch_csum) { 0 }, 0);
-			src_crc = &_src;
-		}
-
-		p = dst_ptr != &extent_entry_last(dst)->ptr
-			? (void *) dst_crc
-			: (void *) dst_ptr;
-
-		crc_u64s = extent_entry_u64s(to_entry(src_crc));
-		u64s = crc_u64s + sizeof(*dst_ptr) / sizeof(u64);
-
-		memmove_u64s_up(p + u64s, p,
-				(u64 *) extent_entry_last(dst) - (u64 *) p);
-		set_bkey_val_u64s(dst.k, bkey_val_u64s(dst.k) + u64s);
-
-		memcpy_u64s(p, src_crc, crc_u64s);
-		memcpy_u64s(p + crc_u64s, src_ptr,
-			    sizeof(*src_ptr) / sizeof(u64));
-	}
-
-	/* Sort done - now drop redundant crc entries: */
-	bch_extent_drop_redundant_crcs(dst);
-
-	memcpy_u64s(src.v, dst.v, bkey_val_u64s(dst.k));
-	set_bkey_val_u64s(src.k, bkey_val_u64s(dst.k));
-}
-
-static void extent_sort_ptrs(struct cache_set *c, struct bkey_s_extent e)
-{
-	struct cache_member_rcu *mi;
-	struct bch_extent_ptr *ptr, *prev = NULL;
-	union bch_extent_crc *crc;
-
-	/*
-	 * First check if any pointers are out of order before doing the actual
-	 * sort:
-	 */
-	mi = cache_member_info_get(c);
-
-	extent_for_each_ptr_crc(e, ptr, crc) {
-		if (prev &&
-		    PTR_TIER(mi, ptr) < PTR_TIER(mi, prev)) {
-			__extent_sort_ptrs(mi, e);
-			break;
-		}
-		prev = ptr;
-	}
-
-	cache_member_info_put();
-}
-
 /*
  * bch_extent_normalize - clean up an extent, dropping stale pointers etc.
  *
@@ -2160,8 +2062,7 @@ static void extent_sort_ptrs(struct cache_set *c, struct bkey_s_extent e)
  * For existing keys, only called when btree nodes are being rewritten, not when
  * they're merely being compacted/resorted in memory.
  */
-static bool __bch_extent_normalize(struct cache_set *c, struct bkey_s k,
-				   bool sort)
+bool bch_extent_normalize(struct cache_set *c, struct bkey_s k)
 {
 	struct bkey_s_extent e;
 
@@ -2182,9 +2083,6 @@ static bool __bch_extent_normalize(struct cache_set *c, struct bkey_s k,
 
 		bch_extent_drop_stale(c, e);
 
-		if (sort)
-			extent_sort_ptrs(c, e);
-
 		if (!bkey_val_u64s(e.k)) {
 			if (bkey_extent_is_cached(e.k)) {
 				k.k->type = KEY_TYPE_DISCARD;
@@ -2203,9 +2101,40 @@ static bool __bch_extent_normalize(struct cache_set *c, struct bkey_s k,
 	}
 }
 
-bool bch_extent_normalize(struct cache_set *c, struct bkey_s k)
+void bch_extent_mark_replicas_cached(struct cache_set *c,
+				     struct bkey_s_extent e,
+				     unsigned nr_cached)
 {
-	return __bch_extent_normalize(c, k, true);
+	struct bch_extent_ptr *ptr;
+	struct cache_member_rcu *mi;
+	bool have_higher_tier;
+	unsigned tier = 0;
+
+	if (!nr_cached)
+		return;
+
+	mi = cache_member_info_get(c);
+
+	do {
+		have_higher_tier = false;
+
+		extent_for_each_ptr(e, ptr) {
+			if (!ptr->cached &&
+			    PTR_TIER(mi, ptr) == tier) {
+				ptr->cached = true;
+				nr_cached--;
+				if (!nr_cached)
+					goto out;
+			}
+
+			if (PTR_TIER(mi, ptr) > tier)
+				have_higher_tier = true;
+		}
+
+		tier++;
+	} while (have_higher_tier);
+out:
+	cache_member_info_put();
 }
 
 /*

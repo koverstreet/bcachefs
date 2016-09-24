@@ -63,7 +63,8 @@ static int bch_migrate_index_update(struct bch_write_op *op)
 		bkey_start_pos(&bch_keylist_front(keys)->k));
 
 	while (1) {
-		struct bkey_i *insert = bch_keylist_front(keys);
+		struct bkey_s_extent insert =
+			bkey_i_to_s_extent(bch_keylist_front(keys));
 		struct bkey_s_c k = bch_btree_iter_peek_with_holes(&iter);
 		struct bch_extent_ptr *ptr;
 		struct bkey_s_extent e;
@@ -79,17 +80,18 @@ static int bch_migrate_index_update(struct bch_write_op *op)
 
 		bkey_reassemble(&new.k, k);
 		bch_cut_front(iter.pos, &new.k);
-		bch_cut_back(insert->k.p, &new.k.k);
+		bch_cut_back(insert.k->p, &new.k.k);
 		e = bkey_i_to_s_extent(&new.k);
 
 		/* hack - promotes can race: */
 		if (m->promote)
-			extent_for_each_ptr(bkey_i_to_s_extent(insert), ptr)
+			extent_for_each_ptr(insert, ptr)
 				if (bch_extent_has_device(e.c, ptr->dev))
 					goto nomatch;
 
 		ptr = bch_migrate_matching_ptr(m, e);
 		if (ptr) {
+			int nr_new_dirty = bch_extent_nr_dirty_ptrs(insert.c);
 			unsigned insert_flags =
 				BTREE_INSERT_ATOMIC|
 				BTREE_INSERT_NOFAIL;
@@ -98,17 +100,22 @@ static int bch_migrate_index_update(struct bch_write_op *op)
 			if (m->move)
 				insert_flags |= BTREE_INSERT_USE_RESERVE;
 
-			if (m->move)
+			if (m->move) {
+				nr_new_dirty -= !ptr->cached;
 				__bch_extent_drop_ptr(e, ptr);
+			}
+
+			BUG_ON(nr_new_dirty < 0);
 
 			memcpy_u64s(extent_entry_last(e),
-				    &insert->v,
-				    bkey_val_u64s(&insert->k));
-			e.k->u64s += bkey_val_u64s(&insert->k);
+				    insert.v,
+				    bkey_val_u64s(insert.k));
+			e.k->u64s += bkey_val_u64s(insert.k);
 
 			bch_extent_narrow_crcs(e);
 			bch_extent_drop_redundant_crcs(e);
 			bch_extent_normalize(c, e.s);
+			bch_extent_mark_replicas_cached(c, e, nr_new_dirty);
 
 			ret = bch_btree_insert_at(c, &op->res,
 					NULL, op_journal_seq(op),
@@ -148,7 +155,8 @@ void bch_migrate_write_init(struct cache_set *c,
 	if (move_ptr)
 		m->move_ptr = *move_ptr;
 
-	if (bkey_extent_is_cached(k.k))
+	if (bkey_extent_is_cached(k.k) ||
+	    (move_ptr && move_ptr->cached))
 		flags |= BCH_WRITE_CACHED;
 
 	bch_write_op_init(&m->op, c, &m->wbio,

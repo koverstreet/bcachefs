@@ -51,10 +51,11 @@ bch_insert_fixup_extent(struct btree_insert *,
 			struct btree_insert_entry *);
 
 bool bch_extent_normalize(struct cache_set *, struct bkey_s);
+void bch_extent_mark_replicas_cached(struct cache_set *,
+				     struct bkey_s_extent, unsigned);
 
-unsigned bch_extent_nr_ptrs_from(struct bkey_s_c_extent,
-				 const struct bch_extent_ptr *);
 unsigned bch_extent_nr_ptrs(struct bkey_s_c_extent);
+unsigned bch_extent_nr_dirty_ptrs(struct bkey_s_c_extent);
 
 static inline bool bkey_extent_is_data(const struct bkey *k)
 {
@@ -300,20 +301,16 @@ out:									\
 #define extent_ptr_next(_e, _ptr)					\
 	extent_ptr_next_filter(_e, _ptr, true)
 
-#define extent_for_each_ptr_from_filter(_e, _ptr, _start, _filter)	\
-	for ((_ptr) = (_start);				\
+#define extent_for_each_ptr_filter(_e, _ptr, _filter)			\
+	for ((_ptr) = &(_e).v->start->ptr;				\
 	     ((_ptr) = extent_ptr_next_filter(_e, _ptr, _filter));	\
 	     (_ptr)++)
 
-#define extent_for_each_ptr_from(_e, _ptr, _start)			\
-	extent_for_each_ptr_from_filter(_e, _ptr, _start, true)
-
 #define extent_for_each_ptr(_e, _ptr)					\
-	extent_for_each_ptr_from_filter(_e, _ptr, &(_e).v->start->ptr, true)
+	extent_for_each_ptr_filter(_e, _ptr, true)
 
 #define extent_for_each_online_device(_c, _e, _ptr, _ca)		\
-	extent_for_each_ptr_from_filter(_e, _ptr, &(_e).v->start->ptr,	\
-					((_ca) = PTR_CACHE(_c, _ptr)))
+	extent_for_each_ptr_filter(_e, _ptr, ((_ca) = PTR_CACHE(_c, _ptr)))
 
 #define extent_ptr_prev(_e, _ptr)					\
 ({									\
@@ -357,18 +354,6 @@ static inline void extent_ptr_append(struct bkey_i_extent *e,
 	ptr.type = 1 << BCH_EXTENT_ENTRY_ptr;
 	extent_entry_last(extent_i_to_s(e))->ptr = ptr;
 	__extent_entry_push(e);
-}
-
-/* XXX: inefficient */
-static inline bool bch_extent_ptr_is_dirty(const struct cache_set *c,
-					   struct bkey_s_c_extent e,
-					   const struct bch_extent_ptr *ptr)
-{
-	if (bkey_extent_is_cached(e.k))
-		return false;
-
-	/* Dirty pointers come last */
-	return bch_extent_nr_ptrs_from(e, ptr) <= c->opts.data_replicas;
 }
 
 static inline struct bch_extent_crc128 crc_to_128(const struct bkey *k,
@@ -555,7 +540,7 @@ static inline unsigned bkey_extent_is_compressed(struct cache_set *c,
 		e = bkey_s_c_to_extent(k);
 
 		extent_for_each_ptr_crc(e, ptr, crc)
-			if (bch_extent_ptr_is_dirty(c, e, ptr) &&
+			if (!ptr->cached &&
 			    crc_compression_type(crc) != BCH_COMPRESSION_NONE &&
 			    crc_compressed_size(e.k, crc) < k.k->size)
 				ret = max_t(unsigned, ret,

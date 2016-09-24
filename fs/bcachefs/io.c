@@ -411,6 +411,7 @@ static void init_append_extent(struct bch_write_op *op,
 	e->k.p = op->pos;
 	e->k.size = uncompressed_size;
 	e->k.version = op->version;
+	bkey_extent_set_cached(&e->k, op->flags & BCH_WRITE_CACHED);
 
 	bch_extent_crc_append(e, compressed_size,
 			      uncompressed_size,
@@ -575,8 +576,7 @@ static int bch_write_extent(struct bch_write_op *op,
 
 	key_to_write = (void *) (op->insert_keys.keys_p + key_to_write_offset);
 
-	if (!(op->flags & BCH_WRITE_CACHED))
-		bch_check_mark_super(c, key_to_write, false);
+	bch_check_mark_super(c, key_to_write, false);
 
 	bch_submit_wbio_replicas(to_wbio(bio), c, key_to_write, false);
 	return ret;
@@ -1260,7 +1260,8 @@ void bch_read_extent_iter(struct cache_set *c, struct bch_read_bio *orig,
 		bch_migrate_write_init(c, &promote_op->write,
 				       &c->promote_write_point,
 				       k, NULL,
-				       BCH_WRITE_ALLOC_NOWAIT);
+				       BCH_WRITE_ALLOC_NOWAIT|
+				       BCH_WRITE_CACHED);
 		promote_op->write.promote = true;
 
 		if (rbio->crc.compression_type) {
