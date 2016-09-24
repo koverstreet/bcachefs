@@ -281,7 +281,7 @@ static const char *validate_cache_super(struct bcache_superblock *disk_sb)
 	if (mi.nbuckets > LONG_MAX)
 		return "Too many buckets";
 
-	if (mi.nbuckets < 1 << 8)
+	if (mi.nbuckets - mi.first_bucket < 1 << 10)
 		return "Not enough buckets";
 
 	if (!is_power_of_2(mi.bucket_size) ||
