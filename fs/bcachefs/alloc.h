@@ -35,14 +35,42 @@ static inline void bch_wake_allocator(struct cache *ca)
 	if ((p = ACCESS_ONCE(ca->alloc_thread)))
 		wake_up_process(p);
 	rcu_read_unlock();
-
-	/*
-	 * XXX: this is only needed because of ca->reserve_buckets_count, but is
-	 * reserve_buckets_count needed anymore? It predates modern
-	 * reservations.
-	 */
-	closure_wake_up(&ca->set->freelist_wait);
 }
+
+static inline struct cache *cache_group_next_rcu(struct cache_group *devs,
+						 unsigned *iter)
+{
+	struct cache *ret = NULL;
+
+	while (*iter < devs->nr_devices &&
+	       !(ret = rcu_dereference(devs->d[*iter].dev)))
+		(*iter)++;
+
+	return ret;
+}
+
+#define group_for_each_cache_rcu(ca, devs, iter)			\
+	for ((iter) = 0;						\
+	     ((ca) = cache_group_next_rcu((devs), &(iter)));		\
+	     (iter)++)
+
+static inline struct cache *cache_group_next(struct cache_group *devs,
+					     unsigned *iter)
+{
+	struct cache *ret;
+
+	rcu_read_lock();
+	if ((ret = cache_group_next_rcu(devs, iter)))
+		percpu_ref_get(&ret->ref);
+	rcu_read_unlock();
+
+	return ret;
+}
+
+#define group_for_each_cache(ca, devs, iter)				\
+	for ((iter) = 0;						\
+	     (ca = cache_group_next(devs, &(iter)));			\
+	     percpu_ref_put(&ca->ref), (iter)++)
 
 #define __open_bucket_next_online_device(_c, _ob, _ptr, _ca)            \
 ({									\

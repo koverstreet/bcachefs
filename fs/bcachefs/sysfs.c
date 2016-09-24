@@ -1205,7 +1205,7 @@ SHOW(bch_cache)
 	sysfs_print(meta_buckets,	stats.buckets_meta);
 	sysfs_print(alloc_buckets,	stats.buckets_alloc);
 	sysfs_print(available_buckets,	buckets_available_cache(ca));
-	sysfs_print(free_buckets,	buckets_free_cache(ca, RESERVE_NONE));
+	sysfs_print(free_buckets,	buckets_free_cache(ca));
 	sysfs_print(has_data,		ca->mi.has_data);
 	sysfs_print(has_metadata,	ca->mi.has_metadata);
 

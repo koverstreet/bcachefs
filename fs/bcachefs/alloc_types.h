@@ -49,6 +49,16 @@ static inline bool allocation_is_metadata(enum alloc_reserve id)
 	return id <= RESERVE_METADATA_LAST;
 }
 
+struct cache_group {
+	spinlock_t		lock;
+	unsigned		nr_devices;
+	unsigned		cur_device;
+	struct {
+		u64		weight;
+		struct cache __rcu *dev;
+	}			d[MAX_CACHES_PER_SET];
+};
+
 /* Enough for 16 cache devices, 2 tiers and some left over for pipelining */
 #define OPEN_BUCKETS_COUNT	256
 

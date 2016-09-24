@@ -1,5 +1,6 @@
 
 #include "bcache.h"
+#include "alloc.h"
 #include "btree_iter.h"
 #include "buckets.h"
 #include "clock.h"
@@ -79,7 +80,7 @@ static void refill_next(struct cache_set *c, struct tiering_refill *refill)
 	while (1) {
 		while (refill->cache_iter < tier->nr_devices) {
 			refill->ca = rcu_dereference(
-					tier->devices[refill->cache_iter]);
+					tier->d[refill->cache_iter].dev);
 			if (refill->ca != NULL) {
 				percpu_ref_get(&refill->ca->ref);
 				goto out;
@@ -274,7 +275,7 @@ static int tiering_next_cache(struct cache_set *c,
 			continue;
 		}
 
-		ca = rcu_dereference(tier->devices[*cache_iter]);
+		ca = rcu_dereference(tier->d[*cache_iter].dev);
 		if (ca == NULL ||
 		    ca->mi.state != CACHE_ACTIVE ||
 		    ca->tiering_queue.stopped) {

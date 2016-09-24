@@ -171,23 +171,16 @@ static inline size_t buckets_available_cache(struct cache *ca)
 }
 
 static inline size_t __buckets_free_cache(struct cache *ca,
-					  struct bucket_stats_cache stats,
-					  enum alloc_reserve reserve)
+					  struct bucket_stats_cache stats)
 {
-	size_t free =  __buckets_available_cache(ca, stats) +
-		fifo_used(&ca->free[reserve]) +
+	return __buckets_available_cache(ca, stats) +
+		fifo_used(&ca->free[RESERVE_NONE]) +
 		fifo_used(&ca->free_inc);
-
-	if (reserve == RESERVE_NONE)
-		free = max_t(ssize_t, 0, free - ca->reserve_buckets_count);
-
-	return free;
 }
 
-static inline size_t buckets_free_cache(struct cache *ca,
-					enum alloc_reserve reserve)
+static inline size_t buckets_free_cache(struct cache *ca)
 {
-	return __buckets_free_cache(ca, bch_bucket_stats_read_cache(ca), reserve);
+	return __buckets_free_cache(ca, bch_bucket_stats_read_cache(ca));
 }
 
 /* Cache set stats: */

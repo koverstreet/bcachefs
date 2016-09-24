@@ -321,12 +321,6 @@ struct gc_pos {
 	unsigned		level;
 };
 
-struct cache_group {
-	seqcount_t		lock;
-	unsigned		nr_devices;
-	struct cache __rcu	*devices[MAX_CACHES_PER_SET];
-};
-
 struct cache_member_cpu {
 	u64			nbuckets;	/* device size */
 	u16			first_bucket;   /* index of first bucket used */

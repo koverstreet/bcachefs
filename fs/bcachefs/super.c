@@ -1904,9 +1904,9 @@ static const char *cache_alloc(struct bcache_superblock *sb,
 
 	kobject_init(&ca->kobj, &bch_cache_ktype);
 
-	seqcount_init(&ca->self.lock);
+	spin_lock_init(&ca->self.lock);
 	ca->self.nr_devices = 1;
-	rcu_assign_pointer(ca->self.devices[0], ca);
+	rcu_assign_pointer(ca->self.d[0].dev, ca);
 	ca->sb.nr_this_dev = sb->sb->nr_this_dev;
 
 	INIT_WORK(&ca->free_work, bch_cache_free_work);

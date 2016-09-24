@@ -68,6 +68,7 @@
 
 #include <linux/blkdev.h>
 #include <linux/kthread.h>
+#include <linux/random.h>
 #include <linux/rcupdate.h>
 #include <trace/events/bcachefs.h>
 
@@ -80,27 +81,27 @@ static void bch_cache_group_remove_cache(struct cache_group *grp, struct cache *
 {
 	unsigned i;
 
-	write_seqcount_begin(&grp->lock);
+	spin_lock(&grp->lock);
 
 	for (i = 0; i < grp->nr_devices; i++)
-		if (rcu_access_pointer(grp->devices[i]) == ca) {
+		if (rcu_access_pointer(grp->d[i].dev) == ca) {
 			grp->nr_devices--;
-			memmove(&grp->devices[i],
-				&grp->devices[i + 1],
-				(grp->nr_devices - i) * sizeof(ca));
+			memmove(&grp->d[i],
+				&grp->d[i + 1],
+				(grp->nr_devices - i) * sizeof(grp->d[0]));
 			break;
 		}
 
-	write_seqcount_end(&grp->lock);
+	spin_unlock(&grp->lock);
 }
 
 static void bch_cache_group_add_cache(struct cache_group *grp, struct cache *ca)
 {
-	write_seqcount_begin(&grp->lock);
+	spin_lock(&grp->lock);
 	BUG_ON(grp->nr_devices >= MAX_CACHES_PER_SET);
 
-	rcu_assign_pointer(grp->devices[grp->nr_devices++], ca);
-	write_seqcount_end(&grp->lock);
+	rcu_assign_pointer(grp->d[grp->nr_devices++].dev, ca);
+	spin_unlock(&grp->lock);
 }
 
 /* Ratelimiting/PD controllers */
@@ -143,8 +144,7 @@ static void pd_controllers_update(struct work_struct *work)
 			u64 dev_size = (ca->mi.nbuckets -
 					ca->mi.first_bucket) << bucket_bits;
 
-			u64 free = __buckets_free_cache(ca, stats,
-						RESERVE_NONE) << bucket_bits;
+			u64 free = __buckets_free_cache(ca, stats) << bucket_bits;
 
 			if (fragmented < 0)
 				fragmented = 0;
@@ -921,7 +921,6 @@ static void __bch_bucket_free(struct cache *ca, struct bucket *g)
 enum bucket_alloc_ret {
 	ALLOC_SUCCESS,
 	CACHE_SET_FULL,		/* -ENOSPC */
-	BUCKETS_NOT_AVAILABLE,	/* Device full */
 	FREELIST_EMPTY,		/* Allocator thread not keeping up */
 };
 
@@ -931,50 +930,63 @@ static struct cache *bch_next_cache(struct cache_set *c,
 				    long *cache_used)
 {
 	struct cache *ca;
-	size_t bucket_count = 0, rand;
-	unsigned i;
+	unsigned i, weight;
+	u64 available_buckets = 0;
 
-	/*
-	 * first ptr allocation will always go to the specified tier,
-	 * 2nd and greater can go to any. If one tier is significantly larger
-	 * it is likely to go that tier.
-	 */
+	spin_lock(&devs->lock);
 
-	group_for_each_cache_rcu(ca, devs, i) {
+	if (devs->nr_devices == 0)
+		goto err;
+
+	if (devs->nr_devices == 1) {
+		ca = devs->d[0].dev;
 		if (test_bit(ca->sb.nr_this_dev, cache_used))
-			continue;
-
-		bucket_count += buckets_free_cache(ca, reserve);
+			goto err;
+		goto out;
 	}
 
-	if (!bucket_count)
-		return ERR_PTR(-BUCKETS_NOT_AVAILABLE);
+	/* recalculate weightings: XXX don't do this on every call */
+	for (i = 0; i < devs->nr_devices; i++) {
+		ca = devs->d[i].dev;
 
-	/*
-	 * We create a weighted selection by using the number of free buckets
-	 * in each cache. You can think of this like lining up the caches
-	 * linearly so each as a given range, corresponding to the number of
-	 * free buckets in that cache, and then randomly picking a number
-	 * within that range.
-	 */
-
-	rand = bch_rand_range(bucket_count);
-
-	group_for_each_cache_rcu(ca, devs, i) {
-		if (test_bit(ca->sb.nr_this_dev, cache_used))
-			continue;
-
-		bucket_count -= buckets_free_cache(ca, reserve);
-
-		if (rand >= bucket_count)
-			return ca;
+		devs->d[i].weight = buckets_free_cache(ca);
+		available_buckets += devs->d[i].weight;
 	}
 
-	/*
-	 * If we fall off the end, it means we raced because of bucket counters
-	 * changing - return NULL so __bch_bucket_alloc_set() knows to retry
-	 */
+	for (i = 0; i < devs->nr_devices; i++) {
+		const unsigned min_weight = U32_MAX >> 4;
+		const unsigned max_weight = U32_MAX;
 
+		devs->d[i].weight =
+			min_weight +
+			div64_u64(devs->d[i].weight *
+				  devs->nr_devices *
+				  (max_weight - min_weight),
+				  available_buckets);
+		devs->d[i].weight = min_t(u64, devs->d[i].weight, max_weight);
+	}
+
+	for (i = 0; i < devs->nr_devices; i++)
+		if (!test_bit(devs->d[i].dev->sb.nr_this_dev, cache_used))
+			goto available;
+
+	/* no unused devices: */
+	goto err;
+available:
+	i = devs->cur_device;
+	do {
+		weight	= devs->d[i].weight;
+		ca	= devs->d[i].dev;
+		i++;
+		i %= devs->nr_devices;
+	} while (test_bit(ca->sb.nr_this_dev, cache_used) ||
+		 get_random_int() > weight);
+	devs->cur_device = i;
+out:
+	spin_unlock(&devs->lock);
+	return ca;
+err:
+	spin_unlock(&devs->lock);
 	return NULL;
 }
 
@@ -1000,37 +1012,22 @@ static enum bucket_alloc_ret __bch_bucket_alloc_set(struct cache_set *c,
 	/* sort by free space/prio of oldest data in caches */
 
 	while (ob->nr_ptrs < nr_replicas) {
+		struct cache_group *d;
 		struct cache *ca;
-		unsigned seq;
 		size_t r;
 
 		/* first ptr goes to the specified tier, the rest to any */
-		do {
-			struct cache_group *d;
 
-			seq = read_seqcount_begin(&devs->lock);
+		d = (!ob->nr_ptrs && devs == &c->cache_all &&
+		     c->cache_tiers[0].nr_devices)
+			? &c->cache_tiers[0]
+			: devs;
 
-			d = (!ob->nr_ptrs && devs == &c->cache_all &&
-			     c->cache_tiers[0].nr_devices)
-				? &c->cache_tiers[0]
-				: devs;
-
-			ca = devs->nr_devices
-				? bch_next_cache(c, reserve, d, caches_used)
-				: ERR_PTR(-CACHE_SET_FULL);
-
-			/*
-			 * If ca == NULL, we raced because of bucket counters
-			 * changing
-			 */
-		} while (read_seqcount_retry(&devs->lock, seq) || !ca);
-
-		if (IS_ERR(ca)) {
-			ret = -PTR_ERR(ca);
+		ca = bch_next_cache(c, reserve, d, caches_used);
+		if (!ca) {
+			ret = CACHE_SET_FULL;
 			goto err;
 		}
-
-		__set_bit(ca->sb.nr_this_dev, caches_used);
 
 		r = bch_bucket_alloc(ca, reserve);
 		if (!r) {
@@ -1051,6 +1048,8 @@ static enum bucket_alloc_ret __bch_bucket_alloc_set(struct cache_set *c,
 			.offset	= bucket_to_sector(ca, r),
 			.dev	= ca->sb.nr_this_dev,
 		};
+
+		__set_bit(ca->sb.nr_this_dev, caches_used);
 	}
 
 	rcu_read_unlock();
@@ -1084,8 +1083,6 @@ static int bch_bucket_alloc_set(struct cache_set *c, struct open_bucket *ob,
 				closure_wake_up(&c->freelist_wait);
 			return -ENOSPC;
 
-		case BUCKETS_NOT_AVAILABLE:
-			trace_bcache_buckets_unavailable_fail(c, reserve, cl);
 		case FREELIST_EMPTY:
 			if (!cl)
 				return -ENOSPC;
@@ -1807,7 +1804,7 @@ void bch_open_buckets_init(struct cache_set *c)
 		list_add(&c->open_buckets[i].list, &c->open_buckets_free);
 	}
 
-	seqcount_init(&c->cache_all.lock);
+	spin_lock_init(&c->cache_all.lock);
 
 	for (i = 0; i < ARRAY_SIZE(c->write_points); i++) {
 		c->write_points[i].throttle = true;
@@ -1816,7 +1813,7 @@ void bch_open_buckets_init(struct cache_set *c)
 	}
 
 	for (i = 0; i < ARRAY_SIZE(c->cache_tiers); i++)
-		seqcount_init(&c->cache_tiers[i].lock);
+		spin_lock_init(&c->cache_tiers[i].lock);
 
 	c->promote_write_point.group = &c->cache_tiers[0];
 	c->promote_write_point.reserve = RESERVE_NONE;

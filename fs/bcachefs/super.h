@@ -59,41 +59,6 @@ static inline struct cache *bch_get_next_cache(struct cache_set *c,
 	     (ca = bch_get_next_cache(c, &(iter)));			\
 	     percpu_ref_put(&ca->ref), (iter)++)
 
-static inline struct cache *cache_group_next_rcu(struct cache_group *devs,
-						 unsigned *iter)
-{
-	struct cache *ret = NULL;
-
-	while (*iter < devs->nr_devices &&
-	       !(ret = rcu_dereference(devs->devices[*iter])))
-		(*iter)++;
-
-	return ret;
-}
-
-#define group_for_each_cache_rcu(ca, devs, iter)			\
-	for ((iter) = 0;						\
-	     ((ca) = cache_group_next_rcu((devs), &(iter)));		\
-	     (iter)++)
-
-static inline struct cache *cache_group_next(struct cache_group *devs,
-					     unsigned *iter)
-{
-	struct cache *ret;
-
-	rcu_read_lock();
-	if ((ret = cache_group_next_rcu(devs, iter)))
-		percpu_ref_get(&ret->ref);
-	rcu_read_unlock();
-
-	return ret;
-}
-
-#define group_for_each_cache(ca, devs, iter)				\
-	for ((iter) = 0;						\
-	     (ca = cache_group_next(devs, &(iter)));			\
-	     percpu_ref_put(&ca->ref), (iter)++)
-
 void bch_check_mark_super_slowpath(struct cache_set *,
 				   const struct bkey_i *, bool);
 
@@ -151,7 +116,7 @@ static inline bool bch_cache_may_remove(struct cache *ca)
 	 */
 
 	return tier->nr_devices != 1 ||
-		rcu_access_pointer(tier->devices[0]) != ca;
+		rcu_access_pointer(tier->d[0].dev) != ca;
 }
 
 void free_super(struct bcache_superblock *);

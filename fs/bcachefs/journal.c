@@ -5,6 +5,7 @@
  */
 
 #include "bcache.h"
+#include "alloc.h"
 #include "bkey_methods.h"
 #include "buckets.h"
 #include "btree_gc.h"
