@@ -370,20 +370,47 @@ BKEY_VAL_TYPE(cookie,		KEY_TYPE_COOKIE);
  * is neither checksummed nor compressed.
  */
 
+/* 128 bits, sufficient for cryptographic MACs: */
+struct bch_csum {
+	__le64			lo;
+	__le64			hi;
+} __attribute__((packed, aligned(8)));
+
+#define BCH_CSUM_NONE			0U
+#define BCH_CSUM_CRC32C			1U
+#define BCH_CSUM_CRC64			2U
+#define BCH_CSUM_CHACHA20_POLY1305_80	3U
+#define BCH_CSUM_CHACHA20_POLY1305_128	4U
+#define BCH_CSUM_NR			5U
+
+static inline _Bool bch_csum_type_is_encryption(unsigned type)
+{
+	switch (type) {
+	case BCH_CSUM_CHACHA20_POLY1305_80:
+	case BCH_CSUM_CHACHA20_POLY1305_128:
+		return true;
+	default:
+		return false;
+	}
+}
+
 enum bch_extent_entry_type {
-	BCH_EXTENT_ENTRY_crc32		= 0,
-	BCH_EXTENT_ENTRY_ptr		= 1,
+	BCH_EXTENT_ENTRY_ptr		= 0,
+	BCH_EXTENT_ENTRY_crc32		= 1,
 	BCH_EXTENT_ENTRY_crc64		= 2,
+	BCH_EXTENT_ENTRY_crc128		= 3,
 };
 
-#define BCH_EXTENT_ENTRY_MAX		3
+#define BCH_EXTENT_ENTRY_MAX		4
 
+/* Compressed/uncompressed size are stored biased by 1: */
 struct bch_extent_crc32 {
 #if defined(__LITTLE_ENDIAN_BITFIELD)
-	__u32			type:1,
+	__u32			type:2,
+				_compressed_size:7,
+				_uncompressed_size:7,
 				offset:7,
-				compressed_size:8,
-				uncompressed_size:8,
+				_unused:1,
 				csum_type:4,
 				compression_type:4;
 	__u32			csum;
@@ -391,25 +418,50 @@ struct bch_extent_crc32 {
 	__u32			csum;
 	__u32			compression_type:4,
 				csum_type:4,
-				uncompressed_size:8,
-				compressed_size:8,
+				_unused:1,
 				offset:7,
-				type:1;
+				_uncompressed_size:7,
+				_compressed_size:7,
+				type:2;
 #endif
 } __attribute__((packed, aligned(8)));
 
-#define CRC32_EXTENT_SIZE_MAX	(1U << 7)
-
-/* 64k */
-#define BCH_COMPRESSED_EXTENT_MAX 128U
+#define CRC32_SIZE_MAX		(1U << 7)
+#define CRC32_NONCE_MAX		0
 
 struct bch_extent_crc64 {
 #if defined(__LITTLE_ENDIAN_BITFIELD)
 	__u64			type:3,
-				compressed_size:13,
-				uncompressed_size:13,
+				_compressed_size:9,
+				_uncompressed_size:9,
+				offset:9,
+				nonce:10,
+				csum_type:4,
+				compression_type:4,
+				csum_hi:16;
+#elif defined (__BIG_ENDIAN_BITFIELD)
+	__u64			csum_hi:16,
+				compression_type:4,
+				csum_type:4,
+				nonce:10,
+				offset:9,
+				_uncompressed_size:9,
+				_compressed_size:9,
+				type:3;
+#endif
+	__u64			csum_lo;
+} __attribute__((packed, aligned(8)));
+
+#define CRC64_SIZE_MAX		(1U << 9)
+#define CRC64_NONCE_MAX		((1U << 10) - 1)
+
+struct bch_extent_crc128 {
+#if defined(__LITTLE_ENDIAN_BITFIELD)
+	__u64			type:4,
+				_compressed_size:13,
+				_uncompressed_size:13,
 				offset:13,
-				nonce:14,
+				nonce:13,
 				csum_type:4,
 				compression_type:4;
 #elif defined (__BIG_ENDIAN_BITFIELD)
@@ -417,22 +469,29 @@ struct bch_extent_crc64 {
 				csum_type:4,
 				nonce:14,
 				offset:13,
-				uncompressed_size:13,
-				compressed_size:13,
+				_uncompressed_size:13,
+				_compressed_size:13,
 				type:3;
 #endif
-	__u64			csum;
+	struct bch_csum		csum;
 } __attribute__((packed, aligned(8)));
 
-#define CRC64_EXTENT_SIZE_MAX	(1U << 13) /* inclusive */
-#define CRC64_NONCE_MAX		(1U << 14) /* exclusive */
+#define CRC128_SIZE_MAX		(1U << 13)
+#define CRC128_NONCE_MAX	((1U << 13) - 1)
+
+/*
+ * Max size of an extent that may require bouncing to read or write
+ * (checksummed, compressed): 64k
+ */
+#define BCH_ENCODED_EXTENT_MAX	128U
 
 /*
  * @reservation - pointer hasn't been written to, just reserved
  */
 struct bch_extent_ptr {
 #if defined(__LITTLE_ENDIAN_BITFIELD)
-	__u64			type:2,
+	__u64			type:1,
+				dirty:1,
 				erasure_coded:1,
 				reservation:1,
 				offset:44, /* 8 petabytes */
@@ -444,7 +503,8 @@ struct bch_extent_ptr {
 				offset:44,
 				reservation:1,
 				erasure_coded:1,
-				type:2;
+				dirty:1,
+				type:1;
 #endif
 } __attribute__((packed, aligned(8)));
 
@@ -461,6 +521,7 @@ union bch_extent_entry {
 #endif
 	struct bch_extent_crc32		crc32;
 	struct bch_extent_crc64		crc64;
+	struct bch_extent_crc128	crc128;
 	struct bch_extent_ptr		ptr;
 };
 
@@ -490,7 +551,7 @@ BKEY_VAL_TYPE(extent,		BCH_EXTENT);
 
 /* Maximum size (in u64s) a single pointer could be: */
 #define BKEY_EXTENT_PTR_U64s_MAX\
-	((sizeof(struct bch_extent_crc64) +			\
+	((sizeof(struct bch_extent_crc128) +			\
 	  sizeof(struct bch_extent_ptr)) / sizeof(u64))
 
 /* Maximum possible size of an entire extent value: */
@@ -789,21 +850,10 @@ LE64_BITMASK(CACHE_SET_DATA_REPLICAS_WANT,struct cache_sb, flags, 8, 12);
 LE64_BITMASK(CACHE_SB_CSUM_TYPE,	struct cache_sb, flags, 12, 16);
 
 LE64_BITMASK(CACHE_SET_META_CSUM_TYPE,struct cache_sb, flags, 16, 20);
-#define BCH_CSUM_NONE			0U
-#define BCH_CSUM_CRC32C			1U
-#define BCH_CSUM_CRC64			2U
-#define BCH_CSUM_CHACHA20_POLY1305	3U
-#define BCH_CSUM_NR			4U
-
-static inline _Bool bch_csum_type_is_encryption(unsigned type)
-{
-	switch (type) {
-	case BCH_CSUM_CHACHA20_POLY1305:
-		return true;
-	default:
-		return false;
-	}
-}
+#define BCH_CSUM_OPT_NONE		0U
+#define BCH_CSUM_OPT_CRC32C		1U
+#define BCH_CSUM_OPT_CRC64		2U
+#define BCH_CSUM_OPT_NR			3U
 
 LE64_BITMASK(CACHE_SET_BTREE_NODE_SIZE,	struct cache_sb, flags, 20, 36);
 
@@ -865,6 +915,7 @@ LE64_BITMASK(CACHE_SET_ENCRYPTION_KEY,	struct cache_sb, flags2, 15, 16);
  */
 LE64_BITMASK(CACHE_SET_ENCRYPTION_TYPE,	struct cache_sb, flags2, 16, 20);
 
+LE64_BITMASK(CACHE_SET_128_BIT_MACS,	struct cache_sb, flags2, 14, 15);
 /* options: */
 
 /**
@@ -935,7 +986,11 @@ LE64_BITMASK(CACHE_SET_ENCRYPTION_TYPE,	struct cache_sb, flags2, 16, 20);
 		      bch_uint_opt,				\
 		      0, 21,					\
 		      CACHE_SET_ROOT_RESERVE,			\
-		      false)
+		      false)					\
+	CACHE_SET_OPT(wide_macs,				\
+		      bch_bool_opt, 0, 2,			\
+		      CACHE_SET_128_BIT_MACS,			\
+		      true)
 
 /* backing device specific stuff: */
 
@@ -1049,12 +1104,6 @@ static inline __u64 bset_magic(struct cache_sb *sb)
 {
 	return __le64_to_cpu(sb->set_magic) ^ BSET_MAGIC;
 }
-
-/* 128 bits, sufficient for cryptographic MACs: */
-struct bch_csum {
-	__le64			lo;
-	__le64			hi;
-};
 
 /* Journal */
 

@@ -44,7 +44,7 @@ struct bch_read_bio {
 				split:1;
 
 	struct bversion		version;
-	struct bch_extent_crc64	crc;
+	struct bch_extent_crc128 crc;
 	struct bch_extent_ptr	ptr;
 	struct cache		*ca;
 
@@ -112,7 +112,7 @@ struct bch_write_op {
 	struct bversion		version;
 
 	/* For BCH_WRITE_DATA_COMPRESSED: */
-	struct bch_extent_crc64	crc;
+	struct bch_extent_crc128 crc;
 	unsigned		size;
 
 	struct disk_reservation	res;

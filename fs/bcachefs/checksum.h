@@ -44,16 +44,36 @@ int bch_cache_set_encryption_init(struct cache_set *);
 
 static inline unsigned bch_data_checksum_type(struct cache_set *c)
 {
-	return c->sb.encryption_type
-		? BCH_CSUM_CHACHA20_POLY1305
-		: c->opts.data_checksum;
+	if (c->sb.encryption_type)
+		return c->opts.wide_macs
+			? BCH_CSUM_CHACHA20_POLY1305_128
+			: BCH_CSUM_CHACHA20_POLY1305_80;
+
+	return c->opts.data_checksum;
 }
 
 static inline unsigned bch_meta_checksum_type(struct cache_set *c)
 {
 	return c->sb.encryption_type
-		? BCH_CSUM_CHACHA20_POLY1305
+		? BCH_CSUM_CHACHA20_POLY1305_128
 		: c->opts.metadata_checksum;
+}
+
+static const unsigned bch_crc_bytes[] = {
+	[BCH_CSUM_NONE]				= 0,
+	[BCH_CSUM_CRC32C]			= 4,
+	[BCH_CSUM_CRC64]			= 8,
+	[BCH_CSUM_CHACHA20_POLY1305_80]		= 10,
+	[BCH_CSUM_CHACHA20_POLY1305_128]	= 16,
+};
+
+static inline bool bch_crc_cmp(struct bch_csum l, struct bch_csum r)
+{
+	/*
+	 * XXX: need some way of preventing the compiler from optimizing this
+	 * into a form that isn't constant time..
+	 */
+	return ((l.lo ^ r.lo) | (l.hi ^ r.hi)) != 0;
 }
 
 /* for skipping ahead and encrypting/decrypting at an offset: */

@@ -227,16 +227,19 @@ struct bch_csum bch_checksum(struct cache_set *c, unsigned type,
 		return (struct bch_csum) { .lo = crc };
 	}
 
-	case BCH_CSUM_CHACHA20_POLY1305: {
+	case BCH_CSUM_CHACHA20_POLY1305_80:
+	case BCH_CSUM_CHACHA20_POLY1305_128: {
 		SHASH_DESC_ON_STACK(desc, c->poly1305);
-		u64 digest[POLY1305_DIGEST_SIZE / sizeof(u64)];
+		u8 digest[POLY1305_DIGEST_SIZE];
+		struct bch_csum ret = { 0 };
 
 		gen_poly_key(c, desc, nonce);
 
 		crypto_shash_update(desc, data, len);
-		crypto_shash_final(desc, (void *) digest);
+		crypto_shash_final(desc, digest);
 
-		return (struct bch_csum) { digest[0], digest[1] };
+		memcpy(&ret, digest, bch_crc_bytes[type]);
+		return ret;
 	}
 	default:
 		BUG();
@@ -246,12 +249,10 @@ struct bch_csum bch_checksum(struct cache_set *c, unsigned type,
 void bch_encrypt(struct cache_set *c, unsigned type,
 		 struct nonce nonce, void *data, size_t len)
 {
-	switch (type) {
-	case BCH_CSUM_CHACHA20_POLY1305:
-		chacha_encrypt(c, nonce, data, len);
-		break;
-	}
+	if (!bch_csum_type_is_encryption(type))
+		return;
 
+	chacha_encrypt(c, nonce, data, len);
 }
 
 struct bch_csum bch_checksum_bio(struct cache_set *c, unsigned type,
@@ -278,9 +279,12 @@ struct bch_csum bch_checksum_bio(struct cache_set *c, unsigned type,
 		crc = bch_checksum_final(type, crc);
 		return (struct bch_csum) { .lo = crc };
 	}
-	case BCH_CSUM_CHACHA20_POLY1305: {
+
+	case BCH_CSUM_CHACHA20_POLY1305_80:
+	case BCH_CSUM_CHACHA20_POLY1305_128: {
 		SHASH_DESC_ON_STACK(desc, c->poly1305);
-		u64 digest[POLY1305_DIGEST_SIZE / sizeof(u64)];
+		u8 digest[POLY1305_DIGEST_SIZE];
+		struct bch_csum ret = { 0 };
 
 		gen_poly_key(c, desc, nonce);
 
@@ -291,8 +295,10 @@ struct bch_csum bch_checksum_bio(struct cache_set *c, unsigned type,
 			kunmap_atomic(p);
 		}
 
-		crypto_shash_final(desc, (void *) digest);
-		return (struct bch_csum) { digest[0], digest[1] };
+		crypto_shash_final(desc, digest);
+
+		memcpy(&ret, digest, bch_crc_bytes[type]);
+		return ret;
 	}
 	default:
 		BUG();
@@ -307,7 +313,7 @@ void bch_encrypt_bio(struct cache_set *c, unsigned type,
 	struct scatterlist sgl[16], *sg = sgl;
 	size_t bytes = 0;
 
-	if (type != BCH_CSUM_CHACHA20_POLY1305)
+	if (!bch_csum_type_is_encryption(type))
 		return;
 
 	sg_init_table(sgl, ARRAY_SIZE(sgl));

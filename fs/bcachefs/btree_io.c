@@ -1047,7 +1047,7 @@ void bch_btree_node_read_done(struct cache_set *c, struct btree *b,
 			csum = btree_csum(c, b->data, nonce);
 
 			err = "bad checksum";
-			if (memcmp(&csum, &b->data->csum, sizeof(csum)))
+			if (bch_crc_cmp(csum, b->data->csum))
 				goto err;
 
 			bch_encrypt(c, BSET_CSUM_TYPE(i), nonce,

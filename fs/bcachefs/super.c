@@ -1203,7 +1203,7 @@ static struct cache_set *bch_cache_set_alloc(struct cache_sb *sb,
 	    mempool_init_page_pool(&c->bio_bounce_pages,
 				   max_t(unsigned,
 					 c->sb.btree_node_size,
-					 CRC32_EXTENT_SIZE_MAX) /
+					 BCH_ENCODED_EXTENT_MAX) /
 				   PAGE_SECTORS, 0) ||
 	    !(c->bucket_stats_percpu = alloc_percpu(struct bucket_stats_cache_set)) ||
 	    lg_lock_init(&c->bucket_stats_lock) ||

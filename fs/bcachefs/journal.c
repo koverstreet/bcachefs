@@ -573,7 +573,7 @@ static int journal_entry_validate(struct cache_set *c, struct jset *j, u64 secto
 
 	csum = csum_set(c, JSET_CSUM_TYPE(j), journal_nonce(j),
 			j, le32_to_cpu(j->u64s));
-	if (mustfix_fsck_err_on(memcmp(&csum, &j->csum, sizeof(csum)), c,
+	if (mustfix_fsck_err_on(bch_crc_cmp(csum, j->csum), c,
 			"journal checksum bad, sector %llu", sector)) {
 		/* XXX: retry IO, when we start retrying checksum errors */
 		/* XXX: note we might have missing journal entries */

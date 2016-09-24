@@ -1,5 +1,6 @@
 #include "bcache.h"
 #include "compress.h"
+#include "extents.h"
 #include "io.h"
 #include "super.h"
 
@@ -51,7 +52,7 @@ static void *__bio_map_or_bounce(struct cache_set *c,
 	unsigned prev_end = PAGE_SIZE;
 	void *data;
 
-	BUG_ON(bvec_iter_sectors(start) > BCH_COMPRESSED_EXTENT_MAX);
+	BUG_ON(bvec_iter_sectors(start) > BCH_ENCODED_EXTENT_MAX);
 
 	*bounced = BOUNCED_MAPPED;
 
@@ -119,12 +120,12 @@ static void bio_unmap_or_unbounce(struct cache_set *c, void *data,
 }
 
 static int __bio_uncompress(struct cache_set *c, struct bio *src,
-			    void *dst_data, struct bch_extent_crc64 crc)
+			    void *dst_data, struct bch_extent_crc128 crc)
 {
 	void *src_data = NULL;
 	unsigned src_bounced;
 	size_t src_len = src->bi_iter.bi_size;
-	size_t dst_len = crc.uncompressed_size << 9;
+	size_t dst_len = crc_uncompressed_size(NULL, &crc) << 9;
 	int ret;
 
 	src_data = bio_map_or_bounce(c, src, &src_bounced, READ);
@@ -180,10 +181,10 @@ err:
 
 int bch_bio_uncompress_inplace(struct cache_set *c, struct bio *bio,
 			       unsigned live_data_sectors,
-			       struct bch_extent_crc64 crc)
+			       struct bch_extent_crc128 crc)
 {
 	void *dst_data = NULL;
-	size_t dst_len = crc.uncompressed_size << 9;
+	size_t dst_len = crc_uncompressed_size(NULL, &crc) << 9;
 	int ret = -ENOMEM;
 
 	BUG_ON(DIV_ROUND_UP(live_data_sectors, PAGE_SECTORS) > bio->bi_max_vecs);
@@ -232,11 +233,11 @@ use_mempool:
 
 int bch_bio_uncompress(struct cache_set *c, struct bio *src,
 		       struct bio *dst, struct bvec_iter dst_iter,
-		       struct bch_extent_crc64 crc)
+		       struct bch_extent_crc128 crc)
 {
 	void *dst_data = NULL;
 	unsigned dst_bounced;
-	size_t dst_len = crc.uncompressed_size << 9;
+	size_t dst_len = crc_uncompressed_size(NULL, &crc) << 9;
 	int ret = -ENOMEM;
 
 	dst_data = dst_len == dst_iter.bi_size
@@ -382,9 +383,9 @@ void bch_bio_compress(struct cache_set *c,
 	unsigned orig_dst = dst->bi_iter.bi_size;
 	unsigned orig_src = src->bi_iter.bi_size;
 
-	/* Don't consume more than BCH_COMPRESSED_EXTENT_MAX from @src: */
+	/* Don't consume more than BCH_ENCODED_EXTENT_MAX from @src: */
 	src->bi_iter.bi_size =
-		min(src->bi_iter.bi_size, BCH_COMPRESSED_EXTENT_MAX << 9);
+		min(src->bi_iter.bi_size, BCH_ENCODED_EXTENT_MAX << 9);
 
 	/* Don't generate a bigger output than input: */
 	dst->bi_iter.bi_size =
@@ -443,7 +444,7 @@ void bch_compress_free(struct cache_set *c)
 
 int bch_compress_init(struct cache_set *c)
 {
-	unsigned order = get_order(BCH_COMPRESSED_EXTENT_MAX << 9);
+	unsigned order = get_order(BCH_ENCODED_EXTENT_MAX << 9);
 	int ret, cpu;
 
 	if (!CACHE_SET_HAS_LZ4_DATA(&c->disk_sb) &&

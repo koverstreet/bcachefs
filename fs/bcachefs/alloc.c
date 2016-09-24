@@ -420,7 +420,7 @@ int bch_prio_read(struct cache *ca)
 					    prio_nonce(p),
 					    (void *) p + sizeof(p->csum),
 					    bucket_bytes(ca) - sizeof(p->csum));
-			unfixable_fsck_err_on(memcmp(&csum, &p->csum, sizeof(csum)), c,
+			unfixable_fsck_err_on(bch_crc_cmp(csum, p->csum), c,
 				"bad checksum reading prios from bucket %llu",
 				bucket);
 
