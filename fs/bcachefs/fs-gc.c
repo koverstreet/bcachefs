@@ -105,7 +105,6 @@ s64 bch_count_inode_sectors(struct cache_set *c, u64 inum)
 static int bch_gc_do_inode(struct cache_set *c, struct btree_iter *iter,
 			   struct bkey_s_c_inode inode, struct nlink link)
 {
-	struct bkey_i_inode update;
 	u16 i_mode  = le16_to_cpu(inode.v->i_mode);
 	u32 i_flags = le32_to_cpu(inode.v->i_flags);
 	u32 i_nlink = le32_to_cpu(inode.v->i_nlink);
@@ -119,9 +118,15 @@ static int bch_gc_do_inode(struct cache_set *c, struct btree_iter *iter,
 			 mode_to_type(i_mode));
 
 	if (!link.count) {
+		cache_set_inconsistent_on(CACHE_SET_CLEAN(&c->disk_sb), c,
+				"filesystem marked clean, "
+				"but found orphaned inode %llu",
+				inode.k->p.inode);
+
 		cache_set_inconsistent_on(S_ISDIR(i_mode) &&
 			bch_empty_dir(c, inode.k->p.inode), c,
-			"non empty directory with link count 0,inode nlink %u, dir links found %u",
+			"non empty directory with link count 0, "
+			"inode nlink %u, dir links found %u",
 			i_nlink, link.dir_count);
 
 		bch_verbose(c, "deleting inum %llu", inode.k->p.inode);
@@ -133,6 +138,11 @@ static int bch_gc_do_inode(struct cache_set *c, struct btree_iter *iter,
 	}
 
 	if (i_flags & BCH_INODE_I_SIZE_DIRTY) {
+		cache_set_inconsistent_on(CACHE_SET_CLEAN(&c->disk_sb), c,
+				"filesystem marked clean, "
+				"but inode %llu has i_size dirty",
+				inode.k->p.inode);
+
 		bch_verbose(c, "truncating inode %llu", inode.k->p.inode);
 
 		/*
@@ -144,7 +154,8 @@ static int bch_gc_do_inode(struct cache_set *c, struct btree_iter *iter,
 				round_up(i_size, PAGE_SIZE) >> 9,
 				NULL, NULL);
 		if (ret) {
-			bch_err(c, "error in fs gc: error %i while truncating inode", ret);
+			bch_err(c, "error in fs gc: error %i "
+				"truncating inode", ret);
 			return ret;
 		}
 
@@ -156,23 +167,40 @@ static int bch_gc_do_inode(struct cache_set *c, struct btree_iter *iter,
 	}
 
 	if (i_flags & BCH_INODE_I_SECTORS_DIRTY) {
+		cache_set_inconsistent_on(CACHE_SET_CLEAN(&c->disk_sb), c,
+				"filesystem marked clean, "
+				"but inode %llu has i_sectors dirty",
+				inode.k->p.inode);
+
 		bch_verbose(c, "recounting sectors for inode %llu", inode.k->p.inode);
 
 		i_sectors = bch_count_inode_sectors(c, inode.k->p.inode);
 		if (i_sectors < 0) {
-			bch_err(c, "error in fs gc: error %i recounting inode sectors",
+			bch_err(c, "error in fs gc: error %i "
+				"recounting inode sectors",
 				(int) i_sectors);
 			return i_sectors;
 		}
 	}
 
+	if (i_nlink != link.count + link.dir_count) {
+		cache_set_inconsistent_on(CACHE_SET_CLEAN(&c->disk_sb), c,
+				"filesystem marked clean, "
+				"but inode %llu has wrong i_nlink "
+				"(type %u i_nlink %u, should be %u)",
+				inode.k->p.inode,
+				mode_to_type(i_mode), i_nlink,
+				link.count + link.dir_count);
+
+		bch_verbose(c, "setting inum %llu nlinks from %u to %u",
+			    inode.k->p.inode, i_nlink,
+			    link.count + link.dir_count);
+	}
+
 	if (i_nlink != link.count + link.dir_count ||
 	    i_flags & BCH_INODE_I_SECTORS_DIRTY ||
 	    i_flags & BCH_INODE_I_SIZE_DIRTY) {
-		if (i_nlink != link.count + link.dir_count)
-			bch_verbose(c, "setting inum %llu nlinks from %u to %u",
-				 inode.k->p.inode, i_nlink,
-				 link.count + link.dir_count);
+		struct bkey_i_inode update;
 
 		bkey_reassemble(&update.k_i, inode.s_c);
 		update.v.i_nlink = cpu_to_le32(link.count + link.dir_count);
@@ -186,7 +214,8 @@ static int bch_gc_do_inode(struct cache_set *c, struct btree_iter *iter,
 					  BTREE_INSERT_NOFAIL,
 					  BTREE_INSERT_ENTRY(iter, &update.k_i));
 		if (ret && ret != -EINTR)
-			bch_err(c, "error in fs gc: error %i while updating inode", ret);
+			bch_err(c, "error in fs gc: error %i "
+				"updating inode", ret);
 	}
 
 	return ret;

@@ -699,15 +699,15 @@ static void __bch_cache_set_read_only(struct cache_set *c)
 
 	bch_btree_flush(c);
 
+	for_each_cache(ca, c, i)
+		bch_cache_allocator_stop(ca);
+
 	/*
 	 * Write a journal entry after flushing the btree, so we don't end up
 	 * replaying everything we just flushed:
 	 */
 	if (test_bit(CACHE_SET_INITIAL_GC_DONE, &c->flags))
 		bch_journal_meta(&c->journal);
-
-	for_each_cache(ca, c, i)
-		bch_cache_allocator_stop(ca);
 
 	cancel_delayed_work_sync(&c->journal.write_work);
 }
@@ -733,22 +733,34 @@ static void bch_cache_set_read_only_work(struct work_struct *work)
 	c->foreground_write_pd.rate.rate = UINT_MAX;
 	bch_wake_delayed_writes((unsigned long) c);
 
-	/*
-	 * If we're not doing an emergency shutdown, we want to wait on
-	 * outstanding writes to complete so they don't see spurious errors due
-	 * to shutting down the allocator.
-	 *
-	 * If we are doing an emergency shutdown, outstanding writes may hang
-	 * until we shutdown the allocator, so we don't want to wait here:
-	 */
-	wait_event(bch_read_only_wait,
-		   test_bit(CACHE_SET_EMERGENCY_RO, &c->flags) ||
-		   test_bit(CACHE_SET_WRITE_DISABLE_COMPLETE, &c->flags));
+	if (!test_bit(CACHE_SET_EMERGENCY_RO, &c->flags)) {
+		/*
+		 * If we're not doing an emergency shutdown, we want to wait on
+		 * outstanding writes to complete so they don't see spurious
+		 * errors due to shutting down the allocator:
+		 */
+		wait_event(bch_read_only_wait,
+			   test_bit(CACHE_SET_WRITE_DISABLE_COMPLETE, &c->flags));
 
-	__bch_cache_set_read_only(c);
+		__bch_cache_set_read_only(c);
 
-	wait_event(bch_read_only_wait,
-		   test_bit(CACHE_SET_WRITE_DISABLE_COMPLETE, &c->flags));
+		if (!bch_journal_error(&c->journal)) {
+			SET_CACHE_SET_CLEAN(&c->disk_sb, true);
+			bcache_write_super(c);
+		}
+	} else {
+		/*
+		 * If we are doing an emergency shutdown outstanding writes may
+		 * hang until we shutdown the allocator so we don't want to wait
+		 * on outstanding writes before shutting everything down - but
+		 * we do need to wait on them before returning and signalling
+		 * that going RO is complete:
+		 */
+		__bch_cache_set_read_only(c);
+
+		wait_event(bch_read_only_wait,
+			   test_bit(CACHE_SET_WRITE_DISABLE_COMPLETE, &c->flags));
+	}
 
 	bch_notify_cache_set_read_only(c);
 	trace_bcache_cache_set_read_only_done(c);
@@ -1424,6 +1436,7 @@ static const char *run_cache_set(struct cache_set *c)
 		c->disk_mi[ca->sb.nr_this_dev].last_mount = cpu_to_le64(now);
 	rcu_read_unlock();
 
+	SET_CACHE_SET_CLEAN(&c->disk_sb, false);
 	bcache_write_super(c);
 
 	err = "dynamic fault";
