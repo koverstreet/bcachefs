@@ -350,25 +350,15 @@ err:
 struct bch_page_state {
 union { struct {
 	/*
-	 * BCH_PAGE_ALLOCATED: page is _fully_ written on disk, and not
-	 * compressed - which means to write this page we don't have to reserve
-	 * space (the new write will never take up more space on disk than what
-	 * it's overwriting)
-	 *
-	 * BCH_PAGE_UNALLOCATED: page is not fully written on disk, or is
-	 * compressed - before writing we have to reserve space with
-	 * bch_reserve_sectors()
-	 *
-	 * BCH_PAGE_RESERVED: page has space reserved on disk (reservation will
-	 * be consumed when the page is written).
+	 * page is _fully_ written on disk, and not compressed - which means to
+	 * write this page we don't have to reserve space (the new write will
+	 * never take up more space on disk than what it's overwriting)
 	 */
-	enum {
-		BCH_PAGE_UNALLOCATED	= 0,
-		BCH_PAGE_ALLOCATED,
-	}			alloc_state:2;
+	unsigned allocated:1;
 
 	/* Owns PAGE_SECTORS sized reservation: */
 	unsigned		reserved:1;
+	unsigned		nr_replicas:4;
 
 	/*
 	 * Number of sectors on disk - for i_blocks
@@ -431,11 +421,9 @@ static int bch_get_page_reservation(struct cache_set *c, struct page *page,
 	struct disk_reservation res;
 	int ret = 0;
 
-	BUG_ON(s->alloc_state == BCH_PAGE_ALLOCATED &&
-	       s->sectors != PAGE_SECTORS);
+	BUG_ON(s->allocated && s->sectors != PAGE_SECTORS);
 
-	if (s->reserved ||
-	    s->alloc_state == BCH_PAGE_ALLOCATED)
+	if (s->allocated || s->reserved)
 		return 0;
 
 	ret = bch_disk_reservation_get(c, &res, PAGE_SECTORS, !check_enospc
@@ -448,7 +436,8 @@ static int bch_get_page_reservation(struct cache_set *c, struct page *page,
 			bch_disk_reservation_put(c, &res);
 			return 0;
 		}
-		new.reserved = 1;
+		new.reserved	= 1;
+		new.nr_replicas	= res.nr_replicas;
 	});
 
 	return 0;
@@ -585,10 +574,10 @@ static void bch_mark_pages_unalloc(struct bio *bio)
 	struct bio_vec bv;
 
 	bio_for_each_segment(bv, bio, iter)
-		page_state(bv.bv_page)->alloc_state = BCH_PAGE_UNALLOCATED;
+		page_state(bv.bv_page)->allocated = 0;
 }
 
-static void bch_add_page_sectors(struct bio *bio, const struct bkey *k)
+static void bch_add_page_sectors(struct bio *bio, struct bkey_s_c k)
 {
 	struct bvec_iter iter;
 	struct bio_vec bv;
@@ -597,12 +586,17 @@ static void bch_add_page_sectors(struct bio *bio, const struct bkey *k)
 		struct bch_page_state *s = page_state(bv.bv_page);
 
 		/* sectors in @k from the start of this page: */
-		unsigned k_sectors = k->size - (iter.bi_sector - k->p.offset);
+		unsigned k_sectors = k.k->size - (iter.bi_sector - k.k->p.offset);
 
 		unsigned page_sectors = min(bv.bv_len >> 9, k_sectors);
 
-		BUG_ON(s->sectors + page_sectors > PAGE_SECTORS);
+		if (!s->sectors)
+			s->nr_replicas = bch_extent_nr_dirty_ptrs(k);
+		else
+			s->nr_replicas = min_t(unsigned, s->nr_replicas,
+					       bch_extent_nr_dirty_ptrs(k));
 
+		BUG_ON(s->sectors + page_sectors > PAGE_SECTORS);
 		s->sectors += page_sectors;
 	}
 }
@@ -634,7 +628,7 @@ static void bchfs_read(struct cache_set *c, struct bch_read_bio *rbio, u64 inode
 
 		EBUG_ON(s->reserved);
 
-		s->alloc_state = BCH_PAGE_ALLOCATED;
+		s->allocated = 1;
 		s->sectors = 0;
 	}
 
@@ -667,7 +661,7 @@ static void bchfs_read(struct cache_set *c, struct bch_read_bio *rbio, u64 inode
 		swap(bio->bi_iter.bi_size, bytes);
 
 		if (bkey_extent_is_allocation(k.k))
-			bch_add_page_sectors(bio, k.k);
+			bch_add_page_sectors(bio, k);
 
 		if (pick.ca) {
 			PTR_BUCKET(pick.ca, &pick.ptr)->read_prio =
@@ -859,6 +853,10 @@ static void bch_writepage_io_alloc(struct cache_set *c,
 				   struct page *page)
 {
 	u64 inum = ei->vfs_inode.i_ino;
+	unsigned nr_replicas = page_state(page)->nr_replicas;
+
+	EBUG_ON(!nr_replicas);
+	/* XXX: disk_reservation->gen isn't plumbed through */
 
 	if (!w->io) {
 alloc_io:
@@ -881,7 +879,8 @@ alloc_io:
 		w->io->op.op.index_update_fn = bchfs_write_index_update;
 	}
 
-	if (bio_add_page_contig(&w->io->bio.bio, page)) {
+	if (w->io->op.op.res.nr_replicas != nr_replicas ||
+	    bio_add_page_contig(&w->io->bio.bio, page)) {
 		bch_writepage_do_io(w);
 		goto alloc_io;
 	}
@@ -936,13 +935,13 @@ do_io:
 
 	/* Before unlocking the page, transfer reservation to w->io: */
 	old = page_state_cmpxchg(page_state(page), new, {
-		BUG_ON(!new.reserved &&
-		       (new.sectors != PAGE_SECTORS ||
-			new.alloc_state != BCH_PAGE_ALLOCATED));
+		EBUG_ON(!new.reserved &&
+			(new.sectors != PAGE_SECTORS ||
+			!new.allocated));
 
-		if (new.alloc_state == BCH_PAGE_ALLOCATED &&
+		if (new.allocated &&
 		    w->io->op.op.compression_type != BCH_COMPRESSION_NONE)
-			new.alloc_state = BCH_PAGE_UNALLOCATED;
+			new.allocated = 0;
 		else if (!new.reserved)
 			goto out;
 		new.reserved = 0;

@@ -833,6 +833,8 @@ void bch_write_op_init(struct bch_write_op *op, struct cache_set *c,
 		       struct write_point *wp, struct bpos pos,
 		       u64 *journal_seq, unsigned flags)
 {
+	EBUG_ON(res.sectors && !res.nr_replicas);
+
 	op->c		= c;
 	op->io_wq	= index_update_wq(op);
 	op->bio		= bio;
