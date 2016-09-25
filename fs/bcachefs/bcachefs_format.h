@@ -591,28 +591,25 @@ enum bch_inode_types {
 struct bch_inode {
 	struct bch_val		v;
 
-	__le16			i_mode;
-	__le16			pad;
-	__le32			i_flags;
-
-	/* Nanoseconds */
-	__le64			i_atime;
-	__le64			i_ctime;
-	__le64			i_mtime;
-	__le64			i_otime;
-
-	__le64			i_size;
-	__le64			i_sectors;
-
-	__le32			i_uid;
-	__le32			i_gid;
-	__le32			i_nlink;
-
-	__le32			i_dev;
-
 	__le64			i_hash_seed;
+	__le32			i_flags;
+	__le16			i_mode;
+	__u8			fields[0];
 } __attribute__((packed));
 BKEY_VAL_TYPE(inode,		BCH_INODE_FS);
+
+#define BCH_INODE_FIELDS()				\
+	BCH_INODE_FIELD(i_atime,	64)		\
+	BCH_INODE_FIELD(i_ctime,	64)		\
+	BCH_INODE_FIELD(i_mtime,	64)		\
+	BCH_INODE_FIELD(i_otime,	64)		\
+	BCH_INODE_FIELD(i_size,		64)		\
+	BCH_INODE_FIELD(i_sectors,	64)		\
+	BCH_INODE_FIELD(i_uid,		32)		\
+	BCH_INODE_FIELD(i_gid,		32)		\
+	BCH_INODE_FIELD(i_nlink,	32)		\
+	BCH_INODE_FIELD(i_generation,	32)		\
+	BCH_INODE_FIELD(i_dev,		32)
 
 enum {
 	/*
@@ -630,9 +627,9 @@ enum {
 
 	/* not implemented yet: */
 	__BCH_INODE_HAS_XATTRS	= 7, /* has xattrs in xattr btree */
-};
 
-LE32_BITMASK(INODE_STR_HASH_TYPE, struct bch_inode, i_flags, 28, 32);
+	/* bits 20+ reserved for packed fields below: */
+};
 
 #define BCH_INODE_SYNC		(1 << __BCH_INODE_SYNC)
 #define BCH_INODE_IMMUTABLE	(1 << __BCH_INODE_IMMUTABLE)
@@ -642,6 +639,9 @@ LE32_BITMASK(INODE_STR_HASH_TYPE, struct bch_inode, i_flags, 28, 32);
 #define BCH_INODE_I_SIZE_DIRTY	(1 << __BCH_INODE_I_SIZE_DIRTY)
 #define BCH_INODE_I_SECTORS_DIRTY (1 << __BCH_INODE_I_SECTORS_DIRTY)
 #define BCH_INODE_HAS_XATTRS	(1 << __BCH_INODE_HAS_XATTRS)
+
+LE32_BITMASK(INODE_STR_HASH,	struct bch_inode, i_flags, 20, 24);
+LE32_BITMASK(INODE_NR_FIELDS,	struct bch_inode, i_flags, 24, 32);
 
 struct bch_inode_blockdev {
 	struct bch_val		v;
@@ -660,6 +660,7 @@ BKEY_VAL_TYPE(inode_blockdev,	BCH_INODE_BLOCKDEV);
 
 /* Thin provisioned volume, or cache for another block device? */
 LE64_BITMASK(CACHED_DEV,	struct bch_inode_blockdev, i_flags, 0,  1)
+
 /* Dirents */
 
 /*
@@ -824,10 +825,16 @@ struct cache_sb {
 	 * slot in the cache_member array:
 	 */
 	__u8			nr_this_dev;
-	__le16			pad2[3];
+	__le16			pad2[1];
+
+	__le32			time_base_hi;
 
 	__le16			block_size;	/* sectors */
-	__le16			pad3[6];
+
+	//__le16			pad3[6];
+
+	__le64			time_base_lo;
+	__le32			time_precision;
 
 	__le16			u64s;	/* size of variable length portion */
 
@@ -839,7 +846,7 @@ struct cache_sb {
 		 */
 		__le64			_data[0];
 	};
-};
+} __attribute__((packed, aligned(8)));
 
 /* XXX: rename CACHE_SET -> BCH_FS or something? */
 

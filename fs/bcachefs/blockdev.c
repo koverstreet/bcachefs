@@ -2,6 +2,7 @@
 #include "bcache.h"
 #include "blockdev.h"
 #include "btree_iter.h"
+#include "btree_update.h"
 #include "checksum.h"
 #include "error.h"
 #include "inode.h"
@@ -445,7 +446,8 @@ int bch_cached_dev_attach(struct cached_dev *dc, struct cache_set *c)
 		closure_sync(&cl);
 	} else {
 		dc->disk.inode.v.i_mtime = rtime;
-		bch_inode_update(c, &dc->disk.inode.k_i, NULL);
+		bch_btree_update(c, BTREE_ID_INODES,
+				 &dc->disk.inode.k_i, NULL);
 	}
 
 	/* Count dirty sectors before attaching */

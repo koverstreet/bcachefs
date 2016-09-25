@@ -12,6 +12,7 @@
 #include "sysfs.h"
 #include "btree_cache.h"
 #include "btree_iter.h"
+#include "btree_update.h"
 #include "btree_gc.h"
 #include "buckets.h"
 #include "inode.h"
@@ -266,7 +267,8 @@ STORE(__cached_dev)
 		bch_write_bdev_super(dc, NULL);
 
 		if (dc->disk.c)
-			ret = bch_inode_update(dc->disk.c, &dc->disk.inode.k_i,
+			ret = bch_btree_update(dc->disk.c, BTREE_ID_INODES,
+					       &dc->disk.inode.k_i,
 					       &journal_seq);
 
 		mutex_unlock(&dc->disk.inode_lock);
@@ -398,7 +400,8 @@ STORE(__bch_blockdev_volume)
 			}
 		}
 		d->inode.v.i_size = cpu_to_le64(v);
-		ret = bch_inode_update(d->c, &d->inode.k_i, &journal_seq);
+		ret = bch_btree_update(d->c, BTREE_ID_INODES,
+				       &d->inode.k_i, &journal_seq);
 
 		mutex_unlock(&d->inode_lock);
 
@@ -419,7 +422,8 @@ STORE(__bch_blockdev_volume)
 		mutex_lock(&d->inode_lock);
 
 		memcpy(d->inode.v.i_label, buf, SB_LABEL_SIZE);
-		ret = bch_inode_update(d->c, &d->inode.k_i, &journal_seq);
+		ret = bch_btree_update(d->c, BTREE_ID_INODES,
+				       &d->inode.k_i, &journal_seq);
 
 		mutex_unlock(&d->inode_lock);
 

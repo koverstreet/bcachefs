@@ -3,18 +3,58 @@
 
 extern const struct bkey_ops bch_bkey_inode_ops;
 
-ssize_t bch_inode_status(char *, size_t, const struct bkey *);
+struct bch_inode_unpacked {
+	u64			inum;
+	__le64			i_hash_seed;
+	u32			i_flags;
+	u16			i_mode;
 
-void bch_inode_init(struct cache_set *, struct bkey_i_inode *,
+#define BCH_INODE_FIELD(_name, _bits)	u##_bits _name;
+	BCH_INODE_FIELDS()
+#undef  BCH_INODE_FIELD
+};
+
+struct bkey_inode_buf {
+	struct bkey_i_inode	inode;
+
+#define BCH_INODE_FIELD(_name, _bits)		+ 8 + _bits / 8
+	u8		_pad[0 + BCH_INODE_FIELDS()];
+#undef  BCH_INODE_FIELD
+} __packed;
+
+void bch_inode_pack(struct bkey_inode_buf *, const struct bch_inode_unpacked *);
+int bch_inode_unpack(struct bkey_s_c_inode, struct bch_inode_unpacked *);
+
+void bch_inode_init(struct cache_set *, struct bch_inode_unpacked *,
 		    uid_t, gid_t, umode_t, dev_t);
 int bch_inode_create(struct cache_set *, struct bkey_i *, u64, u64, u64 *);
 int bch_inode_truncate(struct cache_set *, u64, u64,
 		       struct extent_insert_hook *, u64 *);
 int bch_inode_rm(struct cache_set *, u64);
-int bch_inode_update(struct cache_set *, struct bkey_i *, u64 *);
 
-int bch_inode_find_by_inum(struct cache_set *, u64, struct bkey_i_inode *);
+int bch_inode_find_by_inum(struct cache_set *, u64,
+			   struct bch_inode_unpacked *);
 int bch_cached_dev_inode_find_by_uuid(struct cache_set *, uuid_le *,
 				      struct bkey_i_inode_blockdev *);
+
+static inline struct timespec bch_time_to_timespec(struct cache_set *c, u64 time)
+{
+	u64 time_base = le64_to_cpu(c->disk_sb.time_base_lo);
+	u32 precision = le32_to_cpu(c->disk_sb.time_precision);
+
+	return ns_to_timespec(time * precision + time_base);
+}
+
+static inline u64 timespec_to_bch_time(struct cache_set *c, struct timespec ts)
+{
+	u64 time_base = le64_to_cpu(c->disk_sb.time_base_lo);
+	u32 precision = le32_to_cpu(c->disk_sb.time_precision);
+	s64 ns = timespec_to_ns(&ts) - time_base;
+
+	if (precision == 1)
+		return ns;
+
+	return div_s64(ns, precision);
+}
 
 #endif

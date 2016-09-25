@@ -543,6 +543,10 @@ static void __copy_super(struct cache_sb *dst, struct cache_sb *src)
 	dst->flags2		= src->flags2;
 	dst->nr_in_set		= src->nr_in_set;
 	dst->block_size		= src->block_size;
+
+	dst->time_base_lo	= src->time_base_lo;
+	dst->time_base_hi	= src->time_base_hi;
+	dst->time_precision	= src->time_precision;
 }
 
 static int cache_sb_to_cache_set(struct cache_set *c, struct cache_sb *src)
@@ -1419,12 +1423,19 @@ static const char *run_cache_set(struct cache_set *c)
 			goto err;
 		bch_verbose(c, "fsck done");
 	} else {
-		struct bkey_i_inode inode;
+		struct bch_inode_unpacked inode;
+		struct bkey_inode_buf packed_inode;
 		struct closure cl;
+		unsigned precision = 1;
+		struct timespec now = timespec_trunc(CURRENT_TIME, precision);
 
 		closure_init_stack(&cl);
 
 		bch_notice(c, "initializing new filesystem");
+
+		c->disk_sb.time_base_lo = cpu_to_le64(timespec_to_ns(&now));
+		c->disk_sb.time_base_hi = 0;
+		c->disk_sb.time_precision = cpu_to_le32(precision);
 
 		err = "unable to allocate journal buckets";
 		for_each_cache(ca, c, i)
@@ -1462,10 +1473,13 @@ static const char *run_cache_set(struct cache_set *c)
 
 		bch_inode_init(c, &inode, 0, 0,
 			       S_IFDIR|S_IRWXU|S_IRUGO|S_IXUGO, 0);
-		inode.k.p.inode = BCACHE_ROOT_INO;
+		inode.inum = BCACHE_ROOT_INO;
+
+		bch_inode_pack(&packed_inode, &inode);
 
 		err = "error creating root directory";
-		if (bch_btree_insert(c, BTREE_ID_INODES, &inode.k_i,
+		if (bch_btree_insert(c, BTREE_ID_INODES,
+				     &packed_inode.inode.k_i,
 				     NULL, NULL, NULL, 0))
 			goto err;
 

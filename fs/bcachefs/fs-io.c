@@ -59,22 +59,20 @@ static int write_invalidate_inode_pages_range(struct address_space *mapping,
 
 /* i_size updates: */
 
-static int inode_set_size(struct bch_inode_info *ei, struct bch_inode *bi,
+static int inode_set_size(struct bch_inode_info *ei,
+			  struct bch_inode_unpacked *bi,
 			  void *p)
 {
 	loff_t *new_i_size = p;
-	unsigned i_flags = le32_to_cpu(bi->i_flags);
 
 	lockdep_assert_held(&ei->update_lock);
 
-	bi->i_size = cpu_to_le64(*new_i_size);
+	bi->i_size = *new_i_size;
 
 	if (atomic_long_read(&ei->i_size_dirty_count))
-		i_flags |= BCH_INODE_I_SIZE_DIRTY;
+		bi->i_flags |= BCH_INODE_I_SIZE_DIRTY;
 	else
-		i_flags &= ~BCH_INODE_I_SIZE_DIRTY;
-
-	bi->i_flags = cpu_to_le32(i_flags);
+		bi->i_flags &= ~BCH_INODE_I_SIZE_DIRTY;
 
 	return 0;
 }
@@ -122,23 +120,22 @@ i_sectors_hook_fn(struct extent_insert_hook *hook,
 }
 
 static int inode_set_i_sectors_dirty(struct bch_inode_info *ei,
-				    struct bch_inode *bi, void *p)
+				    struct bch_inode_unpacked *bi, void *p)
 {
-	BUG_ON(le32_to_cpu(bi->i_flags) & BCH_INODE_I_SECTORS_DIRTY);
+	BUG_ON(bi->i_flags & BCH_INODE_I_SECTORS_DIRTY);
 
-	bi->i_flags = cpu_to_le32(le32_to_cpu(bi->i_flags)|
-				  BCH_INODE_I_SECTORS_DIRTY);
+	bi->i_flags |= BCH_INODE_I_SECTORS_DIRTY;
 	return 0;
 }
 
 static int inode_clear_i_sectors_dirty(struct bch_inode_info *ei,
-				       struct bch_inode *bi, void *p)
+				       struct bch_inode_unpacked *bi,
+				       void *p)
 {
-	BUG_ON(!(le32_to_cpu(bi->i_flags) & BCH_INODE_I_SECTORS_DIRTY));
+	BUG_ON(!(bi->i_flags & BCH_INODE_I_SECTORS_DIRTY));
 
-	bi->i_sectors	= cpu_to_le64(atomic64_read(&ei->i_sectors));
-	bi->i_flags	= cpu_to_le32(le32_to_cpu(bi->i_flags) &
-				      ~BCH_INODE_I_SECTORS_DIRTY);
+	bi->i_sectors	= atomic64_read(&ei->i_sectors);
+	bi->i_flags	&= ~BCH_INODE_I_SECTORS_DIRTY;
 	return 0;
 }
 
@@ -203,7 +200,10 @@ static int __must_check i_sectors_dirty_get(struct bch_inode_info *ei,
 struct bchfs_extent_trans_hook {
 	struct bchfs_write_op		*op;
 	struct extent_insert_hook	hook;
-	struct bkey_i_inode		new_inode;
+
+	struct bch_inode_unpacked	inode_u;
+	struct bkey_inode_buf		inode_p;
+
 	bool				need_inode_update;
 };
 
@@ -222,6 +222,7 @@ bchfs_extent_update_hook(struct extent_insert_hook *hook,
 		(k.k && bkey_extent_is_allocation(k.k));
 	s64 sectors = (s64) (next_pos.offset - committed_pos.offset) * sign;
 	u64 offset = min(next_pos.offset << 9, h->op->new_i_size);
+	bool do_pack = false;
 
 	BUG_ON((next_pos.offset << 9) > round_up(offset, PAGE_SIZE));
 
@@ -234,7 +235,9 @@ bchfs_extent_update_hook(struct extent_insert_hook *hook,
 			return BTREE_HOOK_RESTART_TRANS;
 		}
 
-		h->new_inode.v.i_size = cpu_to_le64(offset);
+		h->inode_u.i_size = offset;
+		do_pack = true;
+
 		ei->i_size = offset;
 
 		if (h->op->is_dio)
@@ -247,7 +250,9 @@ bchfs_extent_update_hook(struct extent_insert_hook *hook,
 			return BTREE_HOOK_RESTART_TRANS;
 		}
 
-		le64_add_cpu(&h->new_inode.v.i_sectors, sectors);
+		h->inode_u.i_sectors += sectors;
+		do_pack = true;
+
 		atomic64_add(sectors, &ei->i_sectors);
 
 		h->op->sectors_added += sectors;
@@ -258,6 +263,9 @@ bchfs_extent_update_hook(struct extent_insert_hook *hook,
 			spin_unlock(&inode->i_lock);
 		}
 	}
+
+	if (do_pack)
+		bch_inode_pack(&h->inode_p, &h->inode_u);
 
 	return BTREE_HOOK_DO_INSERT;
 }
@@ -310,13 +318,32 @@ static int bchfs_write_index_update(struct bch_write_op *wop)
 				break;
 			}
 
-			bkey_reassemble(&hook.new_inode.k_i, inode);
+			if (WARN_ONCE(bkey_bytes(inode.k) >
+				      sizeof(hook.inode_p),
+				      "inode %llu too big (%zu bytes, buf %zu)",
+				      extent_iter.pos.inode,
+				      bkey_bytes(inode.k),
+				      sizeof(hook.inode_p))) {
+				ret = -ENOENT;
+				break;
+			}
+
+			bkey_reassemble(&hook.inode_p.inode.k_i, inode);
+			ret = bch_inode_unpack(bkey_s_c_to_inode(inode),
+					       &hook.inode_u);
+			if (WARN_ONCE(ret,
+				      "error %i unpacking inode %llu",
+				      ret, extent_iter.pos.inode)) {
+				ret = -ENOENT;
+				break;
+			}
 
 			ret = bch_btree_insert_at(wop->c, &wop->res,
 					&hook.hook, op_journal_seq(wop),
 					BTREE_INSERT_NOFAIL|BTREE_INSERT_ATOMIC,
 					BTREE_INSERT_ENTRY(&extent_iter, k),
-					BTREE_INSERT_ENTRY(&inode_iter, &hook.new_inode.k_i));
+					BTREE_INSERT_ENTRY_EXTRA_RES(&inode_iter,
+							&hook.inode_p.inode.k_i, 2));
 		} else {
 			ret = bch_btree_insert_at(wop->c, &wop->res,
 					&hook.hook, op_journal_seq(wop),
@@ -1918,7 +1945,7 @@ int bch_truncate(struct inode *inode, struct iattr *iattr)
 
 	mutex_lock(&ei->update_lock);
 	setattr_copy(inode, iattr);
-	inode->i_mtime = inode->i_ctime = CURRENT_TIME;
+	inode->i_mtime = inode->i_ctime = current_fs_time(inode->i_sb);
 
 	/* clear I_SIZE_DIRTY: */
 	i_size_dirty_put(ei);

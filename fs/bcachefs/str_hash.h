@@ -3,6 +3,7 @@
 
 #include "btree_iter.h"
 #include "checksum.h"
+#include "inode.h"
 #include "siphash.h"
 #include "super.h"
 
@@ -18,9 +19,13 @@ struct bch_hash_info {
 };
 
 static inline struct bch_hash_info
-bch_hash_info_init(const struct bch_inode *bi)
+bch_hash_info_init(const struct bch_inode_unpacked *bi)
 {
-	struct bch_hash_info info = { .type = INODE_STR_HASH_TYPE(bi) };
+	/* XXX ick */
+	struct bch_hash_info info = {
+		.type = (bi->i_flags >> INODE_STR_HASH_OFFSET) &
+			~(~0 << INODE_STR_HASH_BITS)
+	};
 
 	switch (info.type) {
 	case BCH_STR_HASH_CRC32C:
