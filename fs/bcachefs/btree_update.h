@@ -308,6 +308,7 @@ struct btree_insert {
 	struct btree_insert_entry {
 		struct btree_iter *iter;
 		struct bkey_i	*k;
+		unsigned	extra_res;
 		/*
 		 * true if entire key was inserted - can only be false for
 		 * extents
@@ -326,6 +327,14 @@ int __bch_btree_insert_at(struct btree_insert *);
 	((struct btree_insert_entry) {					\
 		.iter		= (_iter),				\
 		.k		= (_k),					\
+		.done		= false,				\
+	})
+
+#define BTREE_INSERT_ENTRY_EXTRA_RES(_iter, _k, _extra)			\
+	((struct btree_insert_entry) {					\
+		.iter		= (_iter),				\
+		.k		= (_k),					\
+		.extra_res = (_extra),					\
 		.done		= false,				\
 	})
 
@@ -391,7 +400,7 @@ static inline bool journal_res_insert_fits(struct btree_insert *trans,
 		return true;
 
 	for (i = insert; i < trans->entries + trans->nr; i++)
-		u64s += jset_u64s(i->k->k.u64s);
+		u64s += jset_u64s(i->k->k.u64s + i->extra_res);
 
 	return u64s <= trans->journal_res.u64s;
 }

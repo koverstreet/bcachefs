@@ -1942,7 +1942,7 @@ retry:
 	u64s = 0;
 	trans_for_each_entry(trans, i)
 		if (!i->done)
-			u64s += jset_u64s(i->k->k.u64s);
+			u64s += jset_u64s(i->k->k.u64s + i->extra_res);
 
 	memset(&trans->journal_res, 0, sizeof(trans->journal_res));
 
@@ -1969,7 +1969,7 @@ retry:
 		 * written one
 		 */
 		if (!i->done) {
-			u64s += i->k->k.u64s;
+			u64s += i->k->k.u64s + i->extra_res;
 			if (!bch_btree_node_insert_fits(c,
 					i->iter->nodes[0], u64s)) {
 				split = i->iter;
