@@ -291,7 +291,7 @@ static struct bucket_mark bch_bucket_mark_set(struct cache *ca,
 	 */
 	stats.s[S_COMPRESSED][S_CACHED] = 0;
 	stats.s[S_UNCOMPRESSED][S_CACHED] = 0;
-	BUG_ON(!bch_is_zero((void *) &stats, sizeof(stats)));
+	BUG_ON(!bch_is_zero(&stats, sizeof(stats)));
 
 	return old;
 }
@@ -582,7 +582,7 @@ void bch_unmark_open_bucket(struct cache *ca, struct bucket *g)
 	}));
 
 	/* owned_by_allocator buckets aren't tracked in cache_set_stats: */
-	BUG_ON(!bch_is_zero((void *) &stats, sizeof(stats)));
+	BUG_ON(!bch_is_zero(&stats, sizeof(stats)));
 }
 
 static u64 __recalc_sectors_available(struct cache_set *c)

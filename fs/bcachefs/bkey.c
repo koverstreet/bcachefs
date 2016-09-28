@@ -124,10 +124,13 @@ static struct pack_state pack_state_init(const struct bkey_format *format,
 }
 
 __always_inline
-static void pack_state_finish(struct pack_state *state)
+static void pack_state_finish(struct pack_state *state,
+			      struct bkey_packed *k)
 {
-	if (state->bits != 64)
-		*state->p = state->w;
+	EBUG_ON(state->p <  k->_data);
+	EBUG_ON(state->p >= k->_data + state->format->key_u64s);
+
+	*state->p = state->w;
 }
 
 struct unpack_state {
@@ -188,9 +191,10 @@ static bool set_inc_field(struct pack_state *state, unsigned field, u64 v)
 	if (fls64(v) > bits)
 		return false;
 
-	if (bits >= state->bits) {
+	if (bits > state->bits) {
 		bits -= state->bits;
-		state->w |= v >> bits;
+		/* avoid shift by 64 if bits is 0 - bits is never 64 here: */
+		state->w |= (v >> 1) >> (bits - 1);
 
 		*state->p = state->w;
 		state->p = next_word(state->p);
@@ -198,16 +202,17 @@ static bool set_inc_field(struct pack_state *state, unsigned field, u64 v)
 		state->bits = 64;
 	}
 
-	if (likely(bits)) {
-		state->bits -= bits;
-		state->w |= v << state->bits;
-	}
+	state->bits -= bits;
+	state->w |= v << state->bits;
 
 	return true;
 }
 
 /*
  * Note: does NOT set out->format (we don't know what it should be here!)
+ *
+ * Also: doesn't work on extents - it doesn't preserve the invariant that
+ * if k is packed bkey_start_pos(k) will successfully pack
  */
 static bool bch_bkey_transform_key(const struct bkey_format *out_f,
 				   struct bkey_packed *out,
@@ -218,18 +223,15 @@ static bool bch_bkey_transform_key(const struct bkey_format *out_f,
 	struct unpack_state in_s = unpack_state_init(in_f, in);
 	unsigned i;
 
+	EBUG_ON(bkey_unpack_key(in_f, in).size);
+
+	out->_data[0] = 0;
+
 	for (i = 0; i < BKEY_NR_FIELDS; i++)
 		if (!set_inc_field(&out_s, i, get_inc_field(&in_s, i)))
 			return false;
 
-#ifdef CONFIG_BCACHEFS_DEBUG
-	{
-		struct bkey u = bkey_unpack_key(in_f, in);
-		BUG_ON(bkey_start_offset(&u) < out_f->field_offset[BKEY_FIELD_OFFSET]);
-	}
-#endif
-
-	pack_state_finish(&out_s);
+	pack_state_finish(&out_s, out);
 	out->u64s	= out_f->key_u64s + in->u64s - in_f->key_u64s;
 	out->type	= in->type;
 
@@ -301,6 +303,8 @@ bool bkey_pack_key(struct bkey_packed *out, const struct bkey *in,
 	EBUG_ON(format->nr_fields != 5);
 	EBUG_ON(in->format != KEY_FORMAT_CURRENT);
 
+	out->_data[0] = 0;
+
 	if (!set_inc_field(&state, BKEY_FIELD_INODE,	in->p.inode) ||
 	    !set_inc_field(&state, BKEY_FIELD_OFFSET,	in->p.offset) ||
 	    !set_inc_field(&state, BKEY_FIELD_SNAPSHOT,	in->p.snapshot) ||
@@ -315,7 +319,7 @@ bool bkey_pack_key(struct bkey_packed *out, const struct bkey *in,
 	if (bkey_start_offset(in) < format->field_offset[BKEY_FIELD_OFFSET])
 		return false;
 
-	pack_state_finish(&state);
+	pack_state_finish(&state, out);
 	out->u64s	= format->key_u64s + in->u64s - BKEY_U64s;
 	out->format	= KEY_FORMAT_LOCAL_BTREE;
 	out->type	= in->type;
@@ -426,21 +430,18 @@ static bool set_inc_field_lossy(struct pack_state *state, unsigned field, u64 v)
 		ret = false;
 	}
 
-	if (bits >= state->bits) {
+	if (bits > state->bits) {
 		bits -= state->bits;
-		state->w |= v >> bits;
+		state->w |= (v >> 1) >> (bits - 1);
 
 		*state->p = state->w;
 		state->p = next_word(state->p);
-		state->bits = 64;
 		state->w = 0;
+		state->bits = 64;
 	}
 
-	if (likely(bits)) {
-		/* avoid shift by 64 */
-		state->bits -= bits;
-		state->w |= v << state->bits;
-	}
+	state->bits -= bits;
+	state->w |= v << state->bits;
 
 	return ret;
 }
@@ -450,25 +451,21 @@ static bool bkey_packed_successor(struct bkey_packed *out,
 				  const struct bkey_format *format,
 				  struct bkey_packed k)
 {
-	u64 *p = high_word(format, out);
 	unsigned nr_key_bits = bkey_format_key_bits(format);
-	unsigned offset;
+	unsigned first_bit, offset;
+	u64 *p;
+
+	if (!nr_key_bits)
+		return false;
 
 	*out = k;
 
-	offset = high_bit_offset + nr_key_bits;
-	while (offset > 64) {
-		p = next_word(p);
-		offset -= 64;
-	}
-
-	offset = 64 - offset;
+	first_bit = high_bit_offset + nr_key_bits - 1;
+	p = nth_word(high_word(format, out), first_bit >> 6);
+	offset = 63 - (first_bit & 63);
 
 	while (nr_key_bits) {
-		unsigned bits = nr_key_bits + offset < 64
-			? nr_key_bits
-			: 64 - offset;
-
+		unsigned bits = min(64 - offset, nr_key_bits);
 		u64 mask = (~0ULL >> (64 - bits)) << offset;
 
 		if ((*p & mask) != mask) {
@@ -505,7 +502,10 @@ enum bkey_pack_pos_ret bkey_pack_pos_lossy(struct bkey_packed *out,
 #endif
 	bool exact = true;
 
-	if (unlikely(in.snapshot < le64_to_cpu(format->field_offset[BKEY_FIELD_SNAPSHOT]))) {
+	out->_data[0] = 0;
+
+	if (unlikely(in.snapshot <
+		     le64_to_cpu(format->field_offset[BKEY_FIELD_SNAPSHOT]))) {
 		if (!in.offset-- &&
 		    !in.inode--)
 			return BKEY_PACK_POS_FAIL;
@@ -513,7 +513,8 @@ enum bkey_pack_pos_ret bkey_pack_pos_lossy(struct bkey_packed *out,
 		exact = false;
 	}
 
-	if (unlikely(in.offset < le64_to_cpu(format->field_offset[BKEY_FIELD_OFFSET]))) {
+	if (unlikely(in.offset <
+		     le64_to_cpu(format->field_offset[BKEY_FIELD_OFFSET]))) {
 		if (!in.inode--)
 			return BKEY_PACK_POS_FAIL;
 		in.offset	= KEY_OFFSET_MAX;
@@ -521,7 +522,8 @@ enum bkey_pack_pos_ret bkey_pack_pos_lossy(struct bkey_packed *out,
 		exact = false;
 	}
 
-	if (unlikely(in.inode < le64_to_cpu(format->field_offset[BKEY_FIELD_INODE])))
+	if (unlikely(in.inode <
+		     le64_to_cpu(format->field_offset[BKEY_FIELD_INODE])))
 		return BKEY_PACK_POS_FAIL;
 
 	if (!set_inc_field_lossy(&state, BKEY_FIELD_INODE, in.inode)) {
@@ -538,7 +540,7 @@ enum bkey_pack_pos_ret bkey_pack_pos_lossy(struct bkey_packed *out,
 	if (!set_inc_field_lossy(&state, BKEY_FIELD_SNAPSHOT, in.snapshot))
 		exact = false;
 
-	pack_state_finish(&state);
+	pack_state_finish(&state, out);
 	out->u64s	= format->key_u64s;
 	out->format	= KEY_FORMAT_LOCAL_BTREE;
 	out->type	= KEY_TYPE_DELETED;

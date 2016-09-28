@@ -136,8 +136,9 @@ ssize_t bch_read_string_list(const char *buf, const char * const list[])
 	return i;
 }
 
-bool bch_is_zero(const char *p, size_t n)
+bool bch_is_zero(const void *_p, size_t n)
 {
+	const char *p = _p;
 	size_t i;
 
 	for (i = 0; i < n; i++)

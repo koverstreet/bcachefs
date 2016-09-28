@@ -700,8 +700,6 @@ static bool __extent_save(struct btree_keys *b, struct btree_node_iter *iter,
 	struct bkey_i *dst_unpacked;
 	bool ret;
 
-	BUG_ON(bkeyp_val_u64s(f, dst) != bkey_val_u64s(src));
-
 	if ((dst_unpacked = packed_to_bkey(dst))) {
 		dst_unpacked->k = *src;
 		ret = true;
@@ -709,7 +707,7 @@ static bool __extent_save(struct btree_keys *b, struct btree_node_iter *iter,
 		ret = bkey_pack_key(dst, src, f);
 	}
 
-	if (iter)
+	if (ret && iter)
 		bch_verify_key_order(b, iter, dst);
 
 	return ret;
