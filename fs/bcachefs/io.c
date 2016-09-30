@@ -844,6 +844,7 @@ static int bio_checksum_uncompress(struct cache_set *c,
 	struct bio *src = &rbio->bio;
 	struct bio *dst = &bch_rbio_parent(rbio)->bio;
 	struct bvec_iter dst_iter = rbio->parent_iter;
+	u64 csum;
 	int ret = 0;
 
 	/*
@@ -860,22 +861,29 @@ static int bio_checksum_uncompress(struct cache_set *c,
 		src->bi_iter = rbio->parent_iter;
 	}
 
-	if (rbio->crc.csum_type != BCH_CSUM_NONE &&
-	    rbio->crc.csum != bch_checksum_bio(src, rbio->crc.csum_type)) {
-		cache_nonfatal_io_error(rbio->ca, "checksum error");
-		return -EIO;
-	}
+	csum = bch_checksum_bio(src, rbio->crc.csum_type);
+	if (cache_nonfatal_io_err_on(rbio->crc.csum != csum, rbio->ca,
+			"data checksum error, inode %llu offset %llu: expected %0llx got %0llx (type %u)",
+			rbio->inode, (u64) rbio->parent_iter.bi_sector << 9,
+			rbio->crc.csum, csum, rbio->crc.csum_type))
+		ret = -EIO;
 
+	/*
+	 * If there was a checksum error, still copy the data back - unless it
+	 * was compressed, we don't want to decompress bad data:
+	 */
 	if (rbio->crc.compression_type != BCH_COMPRESSION_NONE) {
-		ret = bch_bio_uncompress(c, src, dst, dst_iter, rbio->crc);
+		if (!ret) {
+			ret = bch_bio_uncompress(c, src, dst,
+						 dst_iter, rbio->crc);
+			if (ret)
+				__bcache_io_error(c, "decompression error");
+		}
 	} else if (rbio->bounce) {
 		bio_advance(src, rbio->crc.offset << 9);
 		bio_copy_data_iter(dst, dst_iter,
 				   src, src->bi_iter);
 	}
-
-	if (ret)
-		__bcache_io_error(c, "decompression error");
 
 	return ret;
 }

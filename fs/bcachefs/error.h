@@ -171,7 +171,7 @@ do {									\
 
 #define cache_nonfatal_io_err_on(cond, ca, ...)				\
 ({									\
-	int _ret = !!(cond);						\
+	bool _ret = (cond);						\
 									\
 	if (_ret)							\
 		cache_nonfatal_io_error(ca, __VA_ARGS__);		\
