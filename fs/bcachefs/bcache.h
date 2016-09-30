@@ -402,13 +402,6 @@ struct cache {
 	DECLARE_FIFO(long, free_inc);
 	spinlock_t		freelist_lock;
 
-	/*
-	 * Number of buckets that can be stranded on freelists or as open
-	 * buckets - basically, number of buckets we must reserve to make
-	 * forward progress:
-	 */
-	size_t			reserve_buckets_count;
-
 	size_t			fifo_last_bucket;
 
 	/* Allocation stuff: */

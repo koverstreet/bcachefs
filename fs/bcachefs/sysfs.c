@@ -1153,11 +1153,34 @@ static ssize_t show_reserve_stats(struct cache *ca, char *buf)
 
 static ssize_t show_cache_alloc_debug(struct cache *ca, char *buf)
 {
+	struct cache_set *c = ca->set;
+	struct bucket_stats_cache stats = bch_bucket_stats_read_cache(ca);
+
 	return scnprintf(buf, PAGE_SIZE,
-			 "free_inc size:\t\t%zu\n"
-			 "reserve_buckets_count:\t%zu\n",
-			 ca->free_inc.size,
-			 ca->reserve_buckets_count);
+		"free_inc:               %zu/%zu\n"
+		"free[RESERVE_PRIO]:     %zu/%zu\n"
+		"free[RESERVE_BTREE]:    %zu/%zu\n"
+		"free[RESERVE_MOVINGGC]: %zu/%zu\n"
+		"free[RESERVE_NONE]:     %zu/%zu\n"
+		"alloc:                  %llu/%llu\n"
+		"meta:                   %llu/%llu\n"
+		"dirty:                  %llu/%llu\n"
+		"available:              %llu/%llu\n"
+		"freelist_wait:          %s\n"
+		"open buckets:           %u/%u (reserved %u)\n"
+		"open_buckets_wait:      %s\n",
+		fifo_used(&ca->free_inc),		ca->free_inc.size,
+		fifo_used(&ca->free[RESERVE_PRIO]),	ca->free[RESERVE_PRIO].size,
+		fifo_used(&ca->free[RESERVE_BTREE]),	ca->free[RESERVE_BTREE].size,
+		fifo_used(&ca->free[RESERVE_MOVINGGC]),	ca->free[RESERVE_MOVINGGC].size,
+		fifo_used(&ca->free[RESERVE_NONE]),	ca->free[RESERVE_NONE].size,
+		stats.buckets_alloc,			ca->mi.nbuckets - ca->mi.first_bucket,
+		stats.buckets_meta,			ca->mi.nbuckets - ca->mi.first_bucket,
+		stats.buckets_dirty,			ca->mi.nbuckets - ca->mi.first_bucket,
+		__buckets_available_cache(ca, stats),	ca->mi.nbuckets - ca->mi.first_bucket,
+		c->freelist_wait.list.first		? "waiting" : "empty",
+		c->open_buckets_nr_free, OPEN_BUCKETS_COUNT, BTREE_NODE_RESERVE,
+		c->open_buckets_wait.list.first		? "waiting" : "empty");
 }
 
 static u64 sectors_written(struct cache *ca)

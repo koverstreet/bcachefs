@@ -1535,8 +1535,6 @@ static void bch_recalc_capacity(struct cache_set *c)
 
 		reserve += ca->free_inc.size;
 
-		ca->reserve_buckets_count = reserve;
-
 		reserved_sectors += reserve << ca->bucket_bits;
 
 		capacity += (ca->mi.nbuckets -

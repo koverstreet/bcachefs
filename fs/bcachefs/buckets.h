@@ -152,8 +152,8 @@ static inline unsigned bucket_sectors_used(struct bucket *g)
 struct bucket_stats_cache __bch_bucket_stats_read_cache(struct cache *);
 struct bucket_stats_cache bch_bucket_stats_read_cache(struct cache *);
 
-static inline size_t __buckets_available_cache(struct cache *ca,
-					       struct bucket_stats_cache stats)
+static inline u64 __buckets_available_cache(struct cache *ca,
+					    struct bucket_stats_cache stats)
 {
 	return max_t(s64, 0,
 		     ca->mi.nbuckets - ca->mi.first_bucket -
@@ -165,20 +165,20 @@ static inline size_t __buckets_available_cache(struct cache *ca,
 /*
  * Number of reclaimable buckets - only for use by the allocator thread:
  */
-static inline size_t buckets_available_cache(struct cache *ca)
+static inline u64 buckets_available_cache(struct cache *ca)
 {
 	return __buckets_available_cache(ca, bch_bucket_stats_read_cache(ca));
 }
 
-static inline size_t __buckets_free_cache(struct cache *ca,
-					  struct bucket_stats_cache stats)
+static inline u64 __buckets_free_cache(struct cache *ca,
+				       struct bucket_stats_cache stats)
 {
 	return __buckets_available_cache(ca, stats) +
 		fifo_used(&ca->free[RESERVE_NONE]) +
 		fifo_used(&ca->free_inc);
 }
 
-static inline size_t buckets_free_cache(struct cache *ca)
+static inline u64 buckets_free_cache(struct cache *ca)
 {
 	return __buckets_free_cache(ca, bch_bucket_stats_read_cache(ca));
 }
