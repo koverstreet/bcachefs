@@ -1018,7 +1018,7 @@ void bch_btree_node_read_done(struct cache_set *c, struct btree *b,
 			i = &b->data->keys;
 
 			err = "bad magic";
-			if (le64_to_cpu(b->data->magic) != bset_magic(&c->disk_sb))
+			if (le64_to_cpu(b->data->magic) != bset_magic(c->disk_sb))
 				goto err;
 
 			err = "bad btree header";
@@ -1369,7 +1369,7 @@ void __bch_btree_node_write(struct cache_set *c, struct btree *b,
 
 	BUG_ON(b->written >= c->sb.btree_node_size);
 	BUG_ON(bset_written(b, btree_bset_last(b)));
-	BUG_ON(le64_to_cpu(b->data->magic) != bset_magic(&c->disk_sb));
+	BUG_ON(le64_to_cpu(b->data->magic) != bset_magic(c->disk_sb));
 	BUG_ON(memcmp(&b->data->format, &b->format, sizeof(b->format)));
 
 	if (lock_type_held == SIX_LOCK_intent) {

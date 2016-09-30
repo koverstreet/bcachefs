@@ -39,16 +39,16 @@ int bch_cached_dev_inode_find_by_uuid(struct cache_set *, uuid_le *,
 
 static inline struct timespec bch_time_to_timespec(struct cache_set *c, u64 time)
 {
-	u64 time_base = le64_to_cpu(c->disk_sb.time_base_lo);
-	u32 precision = le32_to_cpu(c->disk_sb.time_precision);
+	u64 time_base = le64_to_cpu(c->disk_sb->time_base_lo);
+	u32 precision = le32_to_cpu(c->disk_sb->time_precision);
 
 	return ns_to_timespec(time * precision + time_base);
 }
 
 static inline u64 timespec_to_bch_time(struct cache_set *c, struct timespec ts)
 {
-	u64 time_base = le64_to_cpu(c->disk_sb.time_base_lo);
-	u32 precision = le32_to_cpu(c->disk_sb.time_precision);
+	u64 time_base = le64_to_cpu(c->disk_sb->time_base_lo);
+	u32 precision = le32_to_cpu(c->disk_sb->time_precision);
 	s64 ns = timespec_to_ns(&ts) - time_base;
 
 	if (precision == 1)

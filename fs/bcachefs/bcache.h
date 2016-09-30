@@ -334,7 +334,6 @@ struct cache_member_cpu {
 	u16			bucket_size;	/* sectors */
 	u8			state;
 	u8			tier;
-	u8			replication_set;
 	u8			has_metadata;
 	u8			has_data;
 	u8			replacement;
@@ -344,7 +343,7 @@ struct cache_member_cpu {
 
 struct cache_member_rcu {
 	struct rcu_head		rcu;
-	unsigned		nr_in_set;
+	unsigned		nr_devices;
 	struct cache_member_cpu	m[];
 };
 
@@ -365,14 +364,13 @@ struct cache {
 
 	struct cache_group	self;
 
+	u8			dev_idx;
 	/*
 	 * Cached version of this device's member info from superblock
-	 * Committed by write_super()
+	 * Committed by bch_write_super() -> bch_cache_set_mi_update()
 	 */
-	struct {
-		u8		nr_this_dev;
-	}			sb;
 	struct cache_member_cpu	mi;
+	uuid_le			uuid;
 
 	struct bcache_superblock disk_sb;
 
@@ -520,23 +518,22 @@ struct cache_set {
 	struct percpu_ref	writes;
 	struct work_struct	read_only_work;
 
-	struct cache __rcu	*cache[MAX_CACHES_PER_SET];
+	struct cache __rcu	*cache[BCH_SB_MEMBERS_MAX];
 
 	struct mutex		mi_lock;
 	struct cache_member_rcu __rcu *members;
-	struct cache_member	*disk_mi; /* protected by register_lock */
 
 	struct cache_set_opts	opts;
 
 	/*
 	 * Cached copy in native endianness:
-	 * Set by cache_sb_to_cache_set:
+	 * Set by bch_sb_to_cache_set:
 	 */
 	struct {
 		u16		block_size;
 		u16		btree_node_size;
 
-		u8		nr_in_set;
+		u8		nr_devices;
 		u8		clean;
 
 		u8		meta_replicas_have;
@@ -546,11 +543,13 @@ struct cache_set {
 		u8		encryption_type;
 	}			sb;
 
-	struct cache_sb		disk_sb;
+	struct bch_sb		*disk_sb;
+	unsigned		disk_sb_order;
+
 	unsigned short		block_bits;	/* ilog2(block_size) */
 
 	struct closure		sb_write;
-	struct semaphore	sb_write_mutex;
+	struct mutex		sb_write_lock;
 
 	struct backing_dev_info bdi;
 
@@ -634,7 +633,7 @@ struct cache_set {
 	 * allocate from:
 	 */
 	struct cache_group	cache_all;
-	struct cache_group	cache_tiers[CACHE_TIERS];
+	struct cache_group	cache_tiers[BCH_TIER_MAX];
 
 	u64			capacity; /* sectors */
 

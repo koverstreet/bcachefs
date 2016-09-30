@@ -1161,8 +1161,8 @@ static int bch_statfs(struct dentry *dentry, struct kstatfs *buf)
 	buf->f_files	= atomic_long_read(&c->nr_inodes);
 	buf->f_ffree	= U64_MAX;
 
-	fsid = le64_to_cpup((void *) c->disk_sb.user_uuid.b) ^
-	       le64_to_cpup((void *) c->disk_sb.user_uuid.b + sizeof(u64));
+	fsid = le64_to_cpup((void *) c->disk_sb->user_uuid.b) ^
+	       le64_to_cpup((void *) c->disk_sb->user_uuid.b + sizeof(u64));
 	buf->f_fsid.val[0] = fsid & 0xFFFFFFFFUL;
 	buf->f_fsid.val[1] = (fsid >> 32) & 0xFFFFFFFFUL;
 	buf->f_namelen	= NAME_MAX;
@@ -1392,7 +1392,7 @@ static struct dentry *bch_mount(struct file_system_type *fs_type,
 	sb->s_op		= &bch_super_operations;
 	sb->s_xattr		= bch_xattr_handlers;
 	sb->s_magic		= BCACHE_STATFS_MAGIC;
-	sb->s_time_gran		= le32_to_cpu(c->disk_sb.time_precision);
+	sb->s_time_gran		= le32_to_cpu(c->disk_sb->time_precision);
 	c->vfs_sb		= sb;
 	sb->s_bdi		= &c->bdi;
 

@@ -16,7 +16,7 @@
 #include "extents.h"
 #include "inode.h"
 #include "journal.h"
-#include "super.h"
+#include "super-io.h"
 #include "writeback.h"
 #include "xattr.h"
 
@@ -395,7 +395,7 @@ static const char *extent_ptr_invalid(struct bkey_s_c_extent e,
 	const struct bch_extent_ptr *ptr2;
 	const struct cache_member_cpu *m = mi->m + ptr->dev;
 
-	if (ptr->dev > mi->nr_in_set || !m->valid)
+	if (ptr->dev > mi->nr_devices || !m->valid)
 		return "pointer to invalid device";
 
 	extent_for_each_ptr(e, ptr2)
@@ -1819,7 +1819,7 @@ static void bch_extent_debugcheck_extent(struct cache_set *c, struct btree *b,
 	unsigned seq, stale;
 	char buf[160];
 	bool bad;
-	unsigned ptrs_per_tier[CACHE_TIERS];
+	unsigned ptrs_per_tier[BCH_TIER_MAX];
 	unsigned tier, replicas = 0;
 
 	/*
@@ -1838,7 +1838,7 @@ static void bch_extent_debugcheck_extent(struct cache_set *c, struct btree *b,
 	extent_for_each_ptr(e, ptr) {
 		replicas++;
 
-		if (ptr->dev >= mi->nr_in_set)
+		if (ptr->dev >= mi->nr_devices)
 			goto bad_device;
 
 		/*
@@ -1971,7 +1971,7 @@ static void bch_extent_to_text(struct cache_set *c, char *buf,
 static unsigned PTR_TIER(struct cache_member_rcu *mi,
 			 const struct bch_extent_ptr *ptr)
 {
-	return ptr->dev < mi->nr_in_set
+	return ptr->dev < mi->nr_devices
 		? mi->m[ptr->dev].tier
 		: UINT_MAX;
 }

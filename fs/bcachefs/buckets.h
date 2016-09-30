@@ -42,7 +42,7 @@ static inline u8 bucket_gc_gen(struct cache *ca, struct bucket *g)
 static inline struct cache *PTR_CACHE(const struct cache_set *c,
 				      const struct bch_extent_ptr *ptr)
 {
-	EBUG_ON(ptr->dev > rcu_dereference(c->members)->nr_in_set);
+	EBUG_ON(ptr->dev > rcu_dereference(c->members)->nr_devices);
 
 	return rcu_dereference(c->cache[ptr->dev]);
 }

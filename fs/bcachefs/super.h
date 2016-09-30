@@ -18,17 +18,12 @@ static inline sector_t bucket_remainder(const struct cache *ca, sector_t s)
 	return s & (ca->mi.bucket_size - 1);
 }
 
-#define cache_member_info_get(_c)					\
-	(rcu_read_lock(), rcu_dereference((_c)->members))
-
-#define cache_member_info_put()	rcu_read_unlock()
-
 static inline struct cache *bch_next_cache_rcu(struct cache_set *c,
 					       unsigned *iter)
 {
 	struct cache *ret = NULL;
 
-	while (*iter < c->sb.nr_in_set &&
+	while (*iter < c->sb.nr_devices &&
 	       !(ret = rcu_dereference(c->cache[*iter])))
 		(*iter)++;
 
@@ -59,40 +54,6 @@ static inline struct cache *bch_get_next_cache(struct cache_set *c,
 	     (ca = bch_get_next_cache(c, &(iter)));			\
 	     percpu_ref_put(&ca->ref), (iter)++)
 
-void bch_check_mark_super_slowpath(struct cache_set *,
-				   const struct bkey_i *, bool);
-
-static inline bool bch_check_super_marked(struct cache_set *c,
-					  const struct bkey_i *k, bool meta)
-{
-	struct bkey_s_c_extent e = bkey_i_to_s_c_extent(k);
-	const struct bch_extent_ptr *ptr;
-	struct cache_member_cpu *mi = cache_member_info_get(c)->m;
-	bool ret = true;
-
-	extent_for_each_ptr(e, ptr)
-		if (!ptr->cached &&
-		    !(meta
-		      ? mi[ptr->dev].has_metadata
-		      : mi[ptr->dev].has_data)) {
-			ret = false;
-			break;
-		}
-
-	cache_member_info_put();
-
-	return ret;
-}
-
-static inline void bch_check_mark_super(struct cache_set *c,
-					const struct bkey_i *k, bool meta)
-{
-	if (bch_check_super_marked(c, k, meta))
-		return;
-
-	bch_check_mark_super_slowpath(c, k, meta);
-}
-
 static inline bool bch_cache_may_remove(struct cache *ca)
 {
 	struct cache_set *c = ca->set;
@@ -118,12 +79,6 @@ static inline bool bch_cache_may_remove(struct cache *ca)
 	return tier->nr_devices != 1 ||
 		rcu_access_pointer(tier->d[0].dev) != ca;
 }
-
-void free_super(struct bcache_superblock *);
-int bch_super_realloc(struct bcache_superblock *, unsigned);
-void bcache_write_super(struct cache_set *);
-void bcache_write_super_sync(struct cache_set *);
-void __write_super(struct cache_set *, struct bcache_superblock *);
 
 void bch_cache_set_release(struct kobject *);
 void bch_cache_release(struct kobject *);

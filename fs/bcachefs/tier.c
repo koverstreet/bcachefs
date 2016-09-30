@@ -8,6 +8,7 @@
 #include "io.h"
 #include "keylist.h"
 #include "move.h"
+#include "super-io.h"
 #include "tier.h"
 
 #include <linux/freezer.h>
@@ -40,7 +41,7 @@ static bool tiering_pred(struct cache_set *c,
 
 		mi = cache_member_info_get(c);
 		extent_for_each_ptr(e, ptr)
-			if (ptr->dev < mi->nr_in_set &&
+			if (ptr->dev < mi->nr_devices &&
 			    mi->m[ptr->dev].tier >= s->tier_idx)
 				replicas++;
 		cache_member_info_put();

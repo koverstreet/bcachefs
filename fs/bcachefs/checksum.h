@@ -17,7 +17,7 @@ struct bch_csum bch_checksum(struct cache_set *, unsigned, struct nonce,
 			     const void *, size_t);
 
 /*
- * This is used for various on disk data structures - cache_sb, prio_set, bset,
+ * This is used for various on disk data structures - bch_sb, prio_set, bset,
  * jset: The checksum is _always_ the first field of these structs
  */
 #define csum_vstruct(_c, _type, _nonce, _i)				\

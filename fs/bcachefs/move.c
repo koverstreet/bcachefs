@@ -5,7 +5,7 @@
 #include "buckets.h"
 #include "io.h"
 #include "move.h"
-#include "super.h"
+#include "super-io.h"
 #include "keylist.h"
 
 #include <linux/ioprio.h>

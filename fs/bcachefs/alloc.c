@@ -64,7 +64,7 @@
 #include "extents.h"
 #include "io.h"
 #include "journal.h"
-#include "super.h"
+#include "super-io.h"
 
 #include <linux/blkdev.h>
 #include <linux/kthread.h>
@@ -105,7 +105,7 @@ void bch_cache_group_add_cache(struct cache_group *grp, struct cache *ca)
 		if (rcu_access_pointer(grp->d[i].dev) == ca)
 			goto out;
 
-	BUG_ON(grp->nr_devices >= MAX_CACHES_PER_SET);
+	BUG_ON(grp->nr_devices >= BCH_SB_MEMBERS_MAX);
 
 	rcu_assign_pointer(grp->d[grp->nr_devices++].dev, ca);
 out:
@@ -124,9 +124,9 @@ static void pd_controllers_update(struct work_struct *work)
 	int i;
 
 	/* All units are in bytes */
-	u64 tier_size[CACHE_TIERS];
-	u64 tier_free[CACHE_TIERS];
-	u64 tier_dirty[CACHE_TIERS];
+	u64 tier_size[BCH_TIER_MAX];
+	u64 tier_free[BCH_TIER_MAX];
+	u64 tier_dirty[BCH_TIER_MAX];
 	u64 tier0_can_free = 0;
 
 	memset(tier_size, 0, sizeof(tier_size));
@@ -134,7 +134,7 @@ static void pd_controllers_update(struct work_struct *work)
 	memset(tier_dirty, 0, sizeof(tier_dirty));
 
 	rcu_read_lock();
-	for (i = CACHE_TIERS - 1; i >= 0; --i)
+	for (i = BCH_TIER_MAX - 1; i >= 0; --i)
 		group_for_each_cache_rcu(ca, &c->cache_tiers[i], iter) {
 			struct bucket_stats_cache stats = bch_bucket_stats_read_cache(ca);
 			unsigned bucket_bits = ca->bucket_bits + 9;
@@ -289,7 +289,7 @@ static int bch_prio_write(struct cache *ca)
 		}
 
 		p->next_bucket	= cpu_to_le64(ca->prio_buckets[i + 1]);
-		p->magic	= cpu_to_le64(pset_magic(&c->disk_sb));
+		p->magic	= cpu_to_le64(pset_magic(c->disk_sb));
 		get_random_bytes(&p->nonce, sizeof(p->nonce));
 
 		spin_lock(&ca->prio_buckets_lock);
@@ -325,9 +325,9 @@ static int bch_prio_write(struct cache *ca)
 	}
 
 	spin_lock(&j->lock);
-	j->prio_buckets[ca->sb.nr_this_dev] = cpu_to_le64(ca->prio_buckets[0]);
+	j->prio_buckets[ca->dev_idx] = cpu_to_le64(ca->prio_buckets[0]);
 	j->nr_prio_buckets = max_t(unsigned,
-				   ca->sb.nr_this_dev + 1,
+				   ca->dev_idx + 1,
 				   j->nr_prio_buckets);
 	spin_unlock(&j->lock);
 
@@ -339,7 +339,7 @@ static int bch_prio_write(struct cache *ca)
 			return ret;
 
 		need_new_journal_entry = j->buf[res.idx].nr_prio_buckets <
-			ca->sb.nr_this_dev + 1;
+			ca->dev_idx + 1;
 		bch_journal_res_put(j, &res);
 
 		ret = bch_journal_flush_seq(j, res.seq);
@@ -381,7 +381,7 @@ int bch_prio_read(struct cache *ca)
 	int ret = 0;
 
 	spin_lock(&c->journal.lock);
-	bucket = le64_to_cpu(c->journal.prio_buckets[ca->sb.nr_this_dev]);
+	bucket = le64_to_cpu(c->journal.prio_buckets[ca->dev_idx]);
 	spin_unlock(&c->journal.lock);
 
 	/*
@@ -407,7 +407,7 @@ int bch_prio_read(struct cache *ca)
 				return -EIO;
 
 			got = le64_to_cpu(p->magic);
-			expect = pset_magic(&c->disk_sb);
+			expect = pset_magic(c->disk_sb);
 			unfixable_fsck_err_on(got != expect, c,
 				"bad magic (got %llu expect %llu) while reading prios from bucket %llu",
 				got, expect, bucket);
@@ -1059,7 +1059,7 @@ static enum bucket_alloc_ret bch_bucket_alloc_group(struct cache_set *c,
 	spin_lock(&devs->lock);
 
 	for (i = 0; i < devs->nr_devices; i++)
-		available += !test_bit(devs->d[i].dev->sb.nr_this_dev,
+		available += !test_bit(devs->d[i].dev->dev_idx,
 				       caches_used);
 
 	recalc_alloc_group_weights(c, devs);
@@ -1084,7 +1084,7 @@ static enum bucket_alloc_ret bch_bucket_alloc_group(struct cache_set *c,
 
 		ca = devs->d[i].dev;
 
-		if (test_bit(ca->sb.nr_this_dev, caches_used))
+		if (test_bit(ca->dev_idx, caches_used))
 			continue;
 
 		if (fail_idx == -1 &&
@@ -1112,11 +1112,11 @@ static enum bucket_alloc_ret bch_bucket_alloc_group(struct cache_set *c,
 		ob->ptrs[0] = (struct bch_extent_ptr) {
 			.gen	= ca->buckets[bucket].mark.gen,
 			.offset	= bucket_to_sector(ca, bucket),
-			.dev	= ca->sb.nr_this_dev,
+			.dev	= ca->dev_idx,
 		};
 		ob->ptr_offset[0] = 0;
 
-		__set_bit(ca->sb.nr_this_dev, caches_used);
+		__set_bit(ca->dev_idx, caches_used);
 		available--;
 		devs->cur_device = i;
 	}
@@ -1364,7 +1364,7 @@ static int open_bucket_add_buckets(struct cache_set *c,
 				   enum alloc_reserve reserve,
 				   struct closure *cl)
 {
-	long caches_used[BITS_TO_LONGS(MAX_CACHES_PER_SET)];
+	long caches_used[BITS_TO_LONGS(BCH_SB_MEMBERS_MAX)];
 	int i, dst;
 
 	/*
@@ -1688,7 +1688,7 @@ static void bch_stop_write_point(struct cache *ca,
 		return;
 
 	for (ptr = ob->ptrs; ptr < ob->ptrs + ob->nr_ptrs; ptr++)
-		if (ptr->dev == ca->sb.nr_this_dev)
+		if (ptr->dev == ca->dev_idx)
 			goto found;
 
 	mutex_unlock(&ob->lock);
@@ -1713,7 +1713,7 @@ static bool bch_dev_has_open_write_point(struct cache *ca)
 		if (atomic_read(&ob->pin)) {
 			mutex_lock(&ob->lock);
 			for (ptr = ob->ptrs; ptr < ob->ptrs + ob->nr_ptrs; ptr++)
-				if (ptr->dev == ca->sb.nr_this_dev) {
+				if (ptr->dev == ca->dev_idx) {
 					mutex_unlock(&ob->lock);
 					return true;
 				}

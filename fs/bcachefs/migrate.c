@@ -25,7 +25,7 @@ static int issue_migration_move(struct cache *ca,
 		return -ENOSPC;
 
 	extent_for_each_ptr(bkey_s_c_to_extent(k), ptr)
-		if (ptr->dev == ca->sb.nr_this_dev)
+		if (ptr->dev == ca->dev_idx)
 			goto found;
 
 	BUG();
@@ -62,7 +62,7 @@ int bch_move_data_off_device(struct cache *ca)
 	u64 seen_key_count;
 	int ret = 0;
 
-	BUG_ON(ca->mi.state == CACHE_ACTIVE);
+	BUG_ON(ca->mi.state == BCH_MEMBER_STATE_ACTIVE);
 
 	bch_move_ctxt_init(&ctxt, NULL, SECTORS_IN_FLIGHT_PER_DEVICE);
 	ctxt.avoid = ca;
@@ -99,7 +99,7 @@ int bch_move_data_off_device(struct cache *ca)
 		       !(ret = btree_iter_err(k))) {
 			if (!bkey_extent_is_data(k.k) ||
 			    !bch_extent_has_device(bkey_s_c_to_extent(k),
-						   ca->sb.nr_this_dev))
+						   ca->dev_idx))
 				goto next;
 
 			ret = issue_migration_move(ca, &ctxt, k);
@@ -151,14 +151,14 @@ static int bch_move_btree_off(struct cache *ca, enum btree_id id)
 	struct btree *b;
 	int ret;
 
-	BUG_ON(ca->mi.state == CACHE_ACTIVE);
+	BUG_ON(ca->mi.state == BCH_MEMBER_STATE_ACTIVE);
 
 	closure_init_stack(&cl);
 
 	for_each_btree_node(&iter, c, id, POS_MIN, 0, b) {
 		struct bkey_s_c_extent e = bkey_i_to_s_c_extent(&b->key);
 retry:
-		if (!bch_extent_has_device(e, ca->sb.nr_this_dev))
+		if (!bch_extent_has_device(e, ca->dev_idx))
 			continue;
 
 		ret = bch_btree_node_rewrite(&iter, b, &cl);
@@ -188,7 +188,7 @@ retry:
 		for_each_btree_node(&iter, c, id, POS_MIN, 0, b) {
 			struct bkey_s_c_extent e = bkey_i_to_s_c_extent(&b->key);
 
-			BUG_ON(bch_extent_has_device(e, ca->sb.nr_this_dev));
+			BUG_ON(bch_extent_has_device(e, ca->dev_idx));
 		}
 		bch_btree_iter_unlock(&iter);
 	}
@@ -282,7 +282,7 @@ static int bch_flag_key_bad(struct btree_iter *iter,
 	e = bkey_i_to_s_extent(&tmp.key);
 
 	extent_for_each_ptr_backwards(e, ptr)
-		if (ptr->dev == ca->sb.nr_this_dev)
+		if (ptr->dev == ca->dev_idx)
 			bch_extent_drop_ptr(e, ptr);
 
 	/*
@@ -323,7 +323,7 @@ int bch_flag_data_bad(struct cache *ca)
 			goto advance;
 
 		e = bkey_s_c_to_extent(k);
-		if (!bch_extent_has_device(e, ca->sb.nr_this_dev))
+		if (!bch_extent_has_device(e, ca->dev_idx))
 			goto advance;
 
 		ret = bch_flag_key_bad(&iter, ca, e);

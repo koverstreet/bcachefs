@@ -18,6 +18,7 @@
 #include "journal.h"
 #include "keylist.h"
 #include "move.h"
+#include "super-io.h"
 #include "writeback.h"
 
 #include <linux/slab.h>
@@ -270,22 +271,27 @@ static void bch_mark_allocator_buckets(struct cache_set *c)
 static void bch_mark_metadata(struct cache_set *c)
 {
 	struct cache *ca;
-	unsigned i;
+	unsigned i, j;
+	u64 b;
 
 	for_each_cache(ca, c, i) {
-		unsigned j;
-		u64 *i;
+		struct bch_sb_field_journal *journal;
 
-		for (j = 0; j < bch_nr_journal_buckets(ca->disk_sb.sb); j++)
-			bch_mark_metadata_bucket(ca,
-				&ca->buckets[journal_bucket(ca->disk_sb.sb, j)],
-				true);
+		/* XXX we need locking around superblock optional fields */
+		journal = bch_sb_get_journal(ca->disk_sb.sb);
+		if (journal)
+			for (j = 0; j < bch_nr_journal_buckets(journal); j++) {
+				b = le64_to_cpu(journal->buckets[j]);
+				bch_mark_metadata_bucket(ca,
+						ca->buckets + b, true);
+			}
 
 		spin_lock(&ca->prio_buckets_lock);
 
-		for (i = ca->prio_buckets;
-		     i < ca->prio_buckets + prio_buckets(ca) * 2; i++)
-			bch_mark_metadata_bucket(ca, &ca->buckets[*i], true);
+		for (j = 0; j < prio_buckets(ca) * 2; j++) {
+			b = ca->prio_buckets[j];
+			bch_mark_metadata_bucket(ca, ca->buckets + b, true);
+		}
 
 		spin_unlock(&ca->prio_buckets_lock);
 	}
@@ -897,7 +903,7 @@ int bch_initial_gc(struct cache_set *c, struct list_head *journal)
 	 * Skip past versions that might have possibly been used (as nonces),
 	 * but hadn't had their pointers written:
 	 */
-	if (CACHE_SET_ENCRYPTION_TYPE(&c->disk_sb))
+	if (BCH_SB_ENCRYPTION_TYPE(c->disk_sb))
 		atomic64_add(1 << 16, &c->key_version);
 
 	bch_mark_metadata(c);

@@ -2,7 +2,7 @@
 #include "compress.h"
 #include "extents.h"
 #include "io.h"
-#include "super.h"
+#include "super-io.h"
 
 #include <linux/lz4.h>
 #include <linux/zlib.h>
@@ -406,6 +406,7 @@ out:
 	src->bi_iter.bi_size = orig_src;
 }
 
+/* doesn't write superblock: */
 int bch_check_set_has_compressed_data(struct cache_set *c,
 				      unsigned compression_type)
 {
@@ -413,16 +414,16 @@ int bch_check_set_has_compressed_data(struct cache_set *c,
 	case BCH_COMPRESSION_NONE:
 		return 0;
 	case BCH_COMPRESSION_LZ4:
-		if (CACHE_SET_HAS_LZ4_DATA(&c->disk_sb))
+		if (bch_sb_test_feature(c->disk_sb, BCH_FEATURE_LZ4))
 			return 0;
 
-		SET_CACHE_SET_HAS_LZ4_DATA(&c->disk_sb, 1);
+		bch_sb_set_feature(c->disk_sb, BCH_FEATURE_LZ4);
 		break;
 	case BCH_COMPRESSION_GZIP:
-		if (CACHE_SET_HAS_GZIP_DATA(&c->disk_sb))
+		if (bch_sb_test_feature(c->disk_sb, BCH_FEATURE_GZIP))
 			return 0;
 
-		SET_CACHE_SET_HAS_GZIP_DATA(&c->disk_sb, 1);
+		bch_sb_set_feature(c->disk_sb, BCH_FEATURE_GZIP);
 		break;
 	}
 
@@ -447,8 +448,8 @@ int bch_compress_init(struct cache_set *c)
 	unsigned order = get_order(BCH_ENCODED_EXTENT_MAX << 9);
 	int ret, cpu;
 
-	if (!CACHE_SET_HAS_LZ4_DATA(&c->disk_sb) &&
-	    !CACHE_SET_HAS_GZIP_DATA(&c->disk_sb))
+	if (!bch_sb_test_feature(c->disk_sb, BCH_FEATURE_LZ4) &&
+	    !bch_sb_test_feature(c->disk_sb, BCH_FEATURE_GZIP))
 		return 0;
 
 	if (!c->bio_decompress_worker) {
@@ -481,7 +482,7 @@ int bch_compress_init(struct cache_set *c)
 	}
 
 	if (!mempool_initialized(&c->lz4_workspace_pool) &&
-	    CACHE_SET_HAS_LZ4_DATA(&c->disk_sb)) {
+	    bch_sb_test_feature(c->disk_sb, BCH_FEATURE_LZ4)) {
 		ret = mempool_init_kmalloc_pool(&c->lz4_workspace_pool,
 						1, LZ4_MEM_COMPRESS);
 		if (ret)
@@ -489,7 +490,7 @@ int bch_compress_init(struct cache_set *c)
 	}
 
 	if (!c->zlib_workspace &&
-	    CACHE_SET_HAS_GZIP_DATA(&c->disk_sb)) {
+	    bch_sb_test_feature(c->disk_sb, BCH_FEATURE_GZIP)) {
 		c->zlib_workspace = vmalloc(COMPRESSION_WORKSPACE_SIZE);
 		if (!c->zlib_workspace)
 			return -ENOMEM;

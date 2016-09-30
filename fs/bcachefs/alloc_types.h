@@ -56,7 +56,7 @@ struct cache_group {
 	struct {
 		u64		weight;
 		struct cache	*dev;
-	}			d[MAX_CACHES_PER_SET];
+	}			d[BCH_SB_MEMBERS_MAX];
 };
 
 /* Enough for 16 cache devices, 2 tiers and some left over for pipelining */

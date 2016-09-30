@@ -69,11 +69,11 @@ const char * const bch_uint_opt[] = {
 };
 
 enum bch_opts {
-#define CACHE_SET_OPT(_name, _choices, _min, _max, _sb_opt, _perm)	\
+#define BCH_OPT(_name, _choices, _min, _max, _sb_opt, _perm)		\
 	Opt_##_name,
 
-	CACHE_SET_VISIBLE_OPTS()
-#undef CACHE_SET_OPT
+	BCH_VISIBLE_OPTS()
+#undef BCH_OPT
 
 	Opt_bad_opt,
 };
@@ -143,15 +143,15 @@ static int parse_string_opt(const struct bch_option *opt, const char *s)
 static struct bch_opt_result parse_one_opt(const char *opt)
 {
 	static const struct bch_option opt_table[] = {
-#define CACHE_SET_OPT(_name, _choices, _min, _max, _sb_opt, _perm)	\
+#define BCH_OPT(_name, _choices, _min, _max, _sb_opt, _perm)		\
 		[Opt_##_name] = {					\
 			.name = #_name,					\
 			.opts = _choices,				\
 			.min = _min,					\
 			.max = _max,					\
 		},
-		CACHE_SET_VISIBLE_OPTS()
-#undef CACHE_SET_OPT
+		BCH_VISIBLE_OPTS()
+#undef BCH_OPT
 	}, *i;
 
 	for (i = opt_table;
@@ -185,13 +185,13 @@ int bch_parse_options(struct cache_set_opts *opts, int flags, char *options)
 		struct bch_opt_result res = parse_one_opt(p);
 
 		switch (res.opt) {
-#define CACHE_SET_OPT(_name, _choices, _min, _max, _sb_opt, _perm)	\
+#define BCH_OPT(_name, _choices, _min, _max, _sb_opt, _perm)		\
 		case Opt_##_name:					\
 			opts->_name = res.val;				\
 			break;
 
-		CACHE_SET_VISIBLE_OPTS()
-#undef CACHE_SET_OPT
+		BCH_VISIBLE_OPTS()
+#undef BCH_OPT
 
 		case Opt_bad_opt:
 			return -EINVAL;

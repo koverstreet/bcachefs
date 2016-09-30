@@ -25,7 +25,7 @@ static void notify_get(struct cache_set *c)
 	env->envp_idx = 0;
 	env->buflen = 0;
 
-	notify_var(c, "SET_UUID=%pU", c->disk_sb.user_uuid.b);
+	notify_var(c, "SET_UUID=%pU", c->disk_sb->user_uuid.b);
 }
 
 static void notify_get_cache(struct cache *ca)
@@ -34,7 +34,7 @@ static void notify_get_cache(struct cache *ca)
 	char buf[BDEVNAME_SIZE];
 
 	notify_get(c);
-	notify_var(c, "UUID=%pU", ca->disk_sb.sb->disk_uuid.b);
+	notify_var(c, "UUID=%pU", ca->uuid.b);
 	notify_var(c, "BLOCKDEV=%s", bdevname(ca->disk_sb.bdev, buf));
 }
 

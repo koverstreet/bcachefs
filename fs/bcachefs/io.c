@@ -22,7 +22,7 @@
 #include "move.h"
 #include "notify.h"
 #include "stats.h"
-#include "super.h"
+#include "super-io.h"
 
 #include <linux/blkdev.h>
 #include <linux/random.h>

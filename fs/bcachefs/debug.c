@@ -423,7 +423,7 @@ void bch_debug_init_cache_set(struct cache_set *c)
 	if (IS_ERR_OR_NULL(bch_debug))
 		return;
 
-	snprintf(name, sizeof(name), "%pU", c->disk_sb.user_uuid.b);
+	snprintf(name, sizeof(name), "%pU", c->disk_sb->user_uuid.b);
 	c->debug = debugfs_create_dir(name, bch_debug);
 	if (IS_ERR_OR_NULL(c->debug))
 		return;

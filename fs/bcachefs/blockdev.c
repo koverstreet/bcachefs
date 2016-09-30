@@ -7,7 +7,7 @@
 #include "error.h"
 #include "inode.h"
 #include "request.h"
-#include "super.h"
+#include "super-io.h"
 #include "writeback.h"
 
 #include <linux/kthread.h>
@@ -43,15 +43,21 @@ void bch_write_bdev_super(struct cached_dev *dc, struct closure *parent)
 	down(&dc->sb_write_mutex);
 	closure_init(cl, parent);
 
-	bio_reset(bio);
-	bio->bi_end_io	= write_bdev_super_endio;
-	bio->bi_private = dc;
-
-	closure_get(cl);
-
 	sb->csum = csum_vstruct(NULL, BCH_CSUM_CRC64,
 				(struct nonce) { 0 }, sb).lo;
-	__write_super(dc->disk.c, (void *) &dc->disk_sb);
+
+	bio_reset(bio);
+	bio->bi_bdev		= dc->disk_sb.bdev;
+	bio->bi_iter.bi_sector	= le64_to_cpu(sb->offset);
+	bio->bi_iter.bi_size	=
+		roundup(vstruct_bytes(sb),
+			bdev_logical_block_size(dc->disk_sb.bdev));
+	bio->bi_end_io		= write_bdev_super_endio;
+	bio->bi_private		= dc;
+	bio_set_op_attrs(bio, REQ_OP_WRITE, WRITE_FUA|REQ_META);
+	bch_bio_map(bio, sb);
+
+	closure_get(cl);
 
 	closure_return_with_destructor(cl, bch_write_bdev_super_unlock);
 }
@@ -265,7 +271,7 @@ static void calc_cached_dev_sectors(struct cache_set *c)
 void bch_cached_dev_run(struct cached_dev *dc)
 {
 	struct bcache_device *d = &dc->disk;
-	char buf[SB_LABEL_SIZE + 1];
+	char buf[BCH_SB_LABEL_SIZE + 1];
 	char *env[] = {
 		"DRIVER=bcache",
 		kasprintf(GFP_KERNEL, "CACHED_UUID=%pU",
@@ -274,8 +280,8 @@ void bch_cached_dev_run(struct cached_dev *dc)
 		NULL,
 	};
 
-	memcpy(buf, dc->disk_sb.sb->label, SB_LABEL_SIZE);
-	buf[SB_LABEL_SIZE] = '\0';
+	memcpy(buf, dc->disk_sb.sb->label, BCH_SB_LABEL_SIZE);
+	buf[BCH_SB_LABEL_SIZE] = '\0';
 	env[2] = kasprintf(GFP_KERNEL, "CACHED_LABEL=%s", buf);
 
 	if (atomic_xchg(&dc->running, 1)) {
@@ -372,8 +378,8 @@ int bch_cached_dev_attach(struct cached_dev *dc, struct cache_set *c)
 	bdevname(dc->disk_sb.bdev, buf);
 
 	if (memcmp(&dc->disk_sb.sb->set_uuid,
-		   &c->disk_sb.set_uuid,
-		   sizeof(c->disk_sb.set_uuid)))
+		   &c->disk_sb->uuid,
+		   sizeof(c->disk_sb->uuid)))
 		return -ENOENT;
 
 	if (dc->disk.c) {
@@ -426,7 +432,7 @@ int bch_cached_dev_attach(struct cached_dev *dc, struct cache_set *c)
 		SET_CACHED_DEV(&dc->disk.inode.v, true);
 		dc->disk.inode.v.i_uuid = dc->disk_sb.sb->disk_uuid;
 		memcpy(dc->disk.inode.v.i_label,
-		       dc->disk_sb.sb->label, SB_LABEL_SIZE);
+		       dc->disk_sb.sb->label, BCH_SB_LABEL_SIZE);
 		dc->disk.inode.v.i_ctime = rtime;
 		dc->disk.inode.v.i_mtime = rtime;
 
@@ -440,7 +446,7 @@ int bch_cached_dev_attach(struct cached_dev *dc, struct cache_set *c)
 
 		pr_info("attached inode %llu", bcache_dev_inum(&dc->disk));
 
-		dc->disk_sb.sb->set_uuid = c->disk_sb.set_uuid;
+		dc->disk_sb.sb->set_uuid = c->disk_sb->uuid;
 		SET_BDEV_STATE(dc->disk_sb.sb, BDEV_STATE_CLEAN);
 
 		bch_write_bdev_super(dc, &cl);
@@ -482,7 +488,7 @@ int bch_cached_dev_attach(struct cached_dev *dc, struct cache_set *c)
 
 	pr_info("Caching %s as %s on set %pU",
 		bdevname(dc->disk_sb.bdev, buf), dc->disk.disk->disk_name,
-		dc->disk.c->disk_sb.set_uuid.b);
+		dc->disk.c->disk_sb->uuid.b);
 	return 0;
 }
 
@@ -520,7 +526,7 @@ static void cached_dev_free(struct closure *cl)
 
 	mutex_unlock(&bch_register_lock);
 
-	free_super((void *) &dc->disk_sb);
+	bch_free_super((void *) &dc->disk_sb);
 
 	kobject_put(&dc->disk.kobj);
 }

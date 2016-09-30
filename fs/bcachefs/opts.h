@@ -30,47 +30,47 @@ extern const char * const bch_bool_opt[];
 extern const char * const bch_uint_opt[];
 
 /* dummy option, for options that aren't stored in the superblock */
-LE64_BITMASK(NO_SB_OPT,		struct cache_sb, flags, 0, 0);
+LE64_BITMASK(NO_SB_OPT,		struct bch_sb, flags[0], 0, 0);
 
-#define CACHE_SET_VISIBLE_OPTS()				\
-	CACHE_SET_OPT(verbose_recovery,				\
-		      bch_bool_opt, 0, 2,			\
-		      NO_SB_OPT, false)				\
-	CACHE_SET_OPT(posix_acl,				\
-		      bch_bool_opt, 0, 2,			\
-		      NO_SB_OPT, false)				\
-	CACHE_SET_OPT(journal_flush_disabled,			\
-		      bch_bool_opt, 0, 2,			\
-		      NO_SB_OPT, true)				\
-	CACHE_SET_OPT(nofsck,					\
-		      bch_bool_opt, 0, 2,			\
-		      NO_SB_OPT, true)				\
-	CACHE_SET_OPT(fix_errors,				\
-		      bch_bool_opt, 0, 2,			\
-		      NO_SB_OPT, true)				\
-	CACHE_SET_OPT(nochanges,				\
-		      bch_bool_opt, 0, 2,			\
-		      NO_SB_OPT, 0)				\
-	CACHE_SET_OPT(noreplay,					\
-		      bch_bool_opt, 0, 2,			\
-		      NO_SB_OPT, 0)				\
-	CACHE_SET_OPT(norecovery,				\
-		      bch_bool_opt, 0, 2,			\
-		      NO_SB_OPT, 0)				\
-	CACHE_SET_SB_OPTS()
+#define BCH_VISIBLE_OPTS()					\
+	BCH_OPT(verbose_recovery,				\
+		bch_bool_opt, 0, 2,				\
+		NO_SB_OPT, false)				\
+	BCH_OPT(posix_acl,					\
+		bch_bool_opt, 0, 2,				\
+		NO_SB_OPT, false)				\
+	BCH_OPT(journal_flush_disabled,				\
+		bch_bool_opt, 0, 2,				\
+		NO_SB_OPT, true)				\
+	BCH_OPT(nofsck,						\
+		bch_bool_opt, 0, 2,				\
+		NO_SB_OPT, true)				\
+	BCH_OPT(fix_errors,					\
+		bch_bool_opt, 0, 2,				\
+		NO_SB_OPT, true)				\
+	BCH_OPT(nochanges,					\
+		bch_bool_opt, 0, 2,				\
+		NO_SB_OPT, 0)					\
+	BCH_OPT(noreplay,					\
+		bch_bool_opt, 0, 2,				\
+		NO_SB_OPT, 0)					\
+	BCH_OPT(norecovery,					\
+		bch_bool_opt, 0, 2,				\
+		NO_SB_OPT, 0)					\
+	BCH_SB_OPTS()
 
-#define CACHE_SET_OPTS()					\
-	CACHE_SET_OPT(read_only,				\
-		      bch_bool_opt, 0, 2,			\
-		      NO_SB_OPT, 0)				\
-	CACHE_SET_VISIBLE_OPTS()
+#define BCH_OPTS()						\
+	BCH_OPT(read_only,					\
+		bch_bool_opt, 0, 2,				\
+		NO_SB_OPT, 0)					\
+	BCH_VISIBLE_OPTS()
 
 struct cache_set_opts {
-#define CACHE_SET_OPT(_name, _choices, _min, _max, _sb_opt, _perm)\
+#define BCH_OPT(_name, _choices, _min, _max, _sb_opt, _perm)\
 	s8 _name;
 
-	CACHE_SET_OPTS()
-#undef CACHE_SET_OPT
+	BCH_OPTS()
+#undef BCH_OPT
 };
 
 static inline struct cache_set_opts cache_set_opts_empty(void)
@@ -85,27 +85,27 @@ static inline struct cache_set_opts cache_set_opts_empty(void)
  * Initial options from superblock - here we don't want any options undefined,
  * any options the superblock doesn't specify are set to 0:
  */
-static inline struct cache_set_opts cache_superblock_opts(struct cache_sb *sb)
+static inline struct cache_set_opts cache_superblock_opts(struct bch_sb *sb)
 {
 	return (struct cache_set_opts) {
-#define CACHE_SET_OPT(_name, _choices, _min, _max, _sb_opt, _perm)\
+#define BCH_OPT(_name, _choices, _min, _max, _sb_opt, _perm)\
 		._name = _sb_opt##_BITS ? _sb_opt(sb) : 0,
 
-	CACHE_SET_OPTS()
-#undef CACHE_SET_OPT
+	BCH_SB_OPTS()
+#undef BCH_OPT
 	};
 }
 
 static inline void cache_set_opts_apply(struct cache_set_opts *dst,
 					struct cache_set_opts src)
 {
-#define CACHE_SET_OPT(_name, _choices, _min, _max, _sb_opt, _perm)\
+#define BCH_OPT(_name, _choices, _min, _max, _sb_opt, _perm)\
 	BUILD_BUG_ON(_max > S8_MAX);				\
 	if (src._name >= 0)					\
 		dst->_name = src._name;
 
-	CACHE_SET_OPTS()
-#undef CACHE_SET_OPT
+	BCH_SB_OPTS()
+#undef BCH_OPT
 }
 
 int bch_parse_options(struct cache_set_opts *, int, char *);
