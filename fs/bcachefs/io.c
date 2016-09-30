@@ -144,6 +144,7 @@ void bch_submit_bbio_replicas(struct bch_write_bio *bio, struct cache_set *c,
 {
 	struct bkey_s_c_extent e = bkey_i_to_s_c_extent(k);
 	const struct bch_extent_ptr *ptr;
+	struct bch_write_bio *n;
 	struct cache *ca;
 
 	BUG_ON(bio->orig);
@@ -161,19 +162,21 @@ void bch_submit_bbio_replicas(struct bch_write_bio *bio, struct cache_set *c,
 		}
 
 		if (ptr + 1 < &extent_entry_last(e)->ptr) {
-			struct bch_write_bio *n =
-				to_wbio(bio_clone_fast(&bio->bio.bio, GFP_NOIO,
-						       &ca->replica_set));
+			n = to_wbio(bio_clone_fast(&bio->bio.bio, GFP_NOIO,
+						   &ca->replica_set));
 
 			n->bio.bio.bi_end_io	= bio->bio.bio.bi_end_io;
 			n->bio.bio.bi_private	= bio->bio.bio.bi_private;
 			n->orig			= &bio->bio.bio;
 			__bio_inc_remaining(n->orig);
-
-			bch_submit_bbio(&n->bio, ca, ptr, punt);
 		} else {
-			bch_submit_bbio(&bio->bio, ca, ptr, punt);
+			n = bio;
 		}
+
+		if (!journal_flushes_device(ca))
+			n->bio.bio.bi_opf |= REQ_FUA;
+
+		bch_submit_bbio(&n->bio, ca, ptr, punt);
 	}
 }
 

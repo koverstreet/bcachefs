@@ -1878,7 +1878,7 @@ static void journal_write_done(struct closure *cl)
 
 static void journal_write(struct closure *cl)
 {
-	struct journal *j =  container_of(cl, struct journal, io);
+	struct journal *j = container_of(cl, struct journal, io);
 	struct cache_set *c = container_of(j, struct cache_set, journal);
 	struct cache *ca;
 	struct journal_buf *w = journal_prev_buf(j);
@@ -1961,6 +1961,21 @@ static void journal_write(struct closure *cl)
 
 		ca->journal.bucket_seq[ca->journal.cur_idx] = le64_to_cpu(w->data->seq);
 	}
+
+	for_each_cache(ca, c, i)
+		if (ca->mi.state == CACHE_ACTIVE &&
+		    journal_flushes_device(ca) &&
+		    !bch_extent_has_device(bkey_i_to_s_c_extent(&j->key), i)) {
+			percpu_ref_get(&ca->ref);
+
+			bio = &ca->journal.bio;
+			bio_reset(bio);
+			bio->bi_bdev		= ca->disk_sb.bdev;
+			bio->bi_end_io		= journal_write_endio;
+			bio->bi_private		= w;
+			bio_set_op_attrs(bio, REQ_OP_WRITE, WRITE_FLUSH);
+			closure_bio_submit_punt(bio, cl, c);
+		}
 
 	closure_return_with_destructor(cl, journal_write_done);
 }

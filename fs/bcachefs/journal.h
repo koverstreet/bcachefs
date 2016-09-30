@@ -180,6 +180,11 @@ static inline unsigned jset_u64s(unsigned u64s)
 	return u64s + sizeof(struct jset_entry) / sizeof(u64);
 }
 
+static inline bool journal_flushes_device(struct cache *ca)
+{
+	return ca->mi.tier == 0;
+}
+
 void bch_journal_start(struct cache_set *);
 void bch_journal_mark(struct cache_set *, struct list_head *);
 const char *bch_journal_read(struct cache_set *, struct list_head *);
