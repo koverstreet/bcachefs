@@ -19,6 +19,9 @@ struct journal_res;
 struct journal_buf {
 	struct jset		*data;
 	struct closure_waitlist	wait;
+
+	/* bloom filter: */
+	unsigned long		has_inode[1024 / sizeof(unsigned long)];
 };
 
 /*

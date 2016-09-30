@@ -148,6 +148,7 @@ static struct inode *bch_vfs_inode_get(struct super_block *sb, u64 inum)
 {
 	struct cache_set *c = sb->s_fs_info;
 	struct inode *inode;
+	struct bch_inode_info *ei;
 	struct btree_iter iter;
 	struct bkey_s_c k;
 	int ret;
@@ -168,7 +169,11 @@ static struct inode *bch_vfs_inode_get(struct super_block *sb, u64 inum)
 		return ERR_PTR(ret ?: -ENOENT);
 	}
 
-	bch_inode_init(to_bch_ei(inode), bkey_s_c_to_inode(k));
+	ei = to_bch_ei(inode);
+	bch_inode_init(ei, bkey_s_c_to_inode(k));
+
+	ei->journal_seq = bch_inode_journal_seq(&c->journal, inum);
+
 	unlock_new_inode(inode);
 
 	bch_btree_iter_unlock(&iter);
