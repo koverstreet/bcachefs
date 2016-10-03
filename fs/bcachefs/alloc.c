@@ -961,6 +961,7 @@ static enum bucket_alloc_ret bch_bucket_alloc_group(struct cache_set *c,
 {
 	enum bucket_alloc_ret ret;
 	unsigned fail_idx = -1, i;
+	unsigned available = 0;
 
 	if (ob->nr_ptrs >= nr_replicas)
 		return ALLOC_SUCCESS;
@@ -969,14 +970,9 @@ static enum bucket_alloc_ret bch_bucket_alloc_group(struct cache_set *c,
 	spin_lock(&devs->lock);
 
 	for (i = 0; i < devs->nr_devices; i++)
-		if (!test_bit(devs->d[i].dev->sb.nr_this_dev, caches_used))
-			goto available;
+		available += !test_bit(devs->d[i].dev->sb.nr_this_dev,
+				       caches_used);
 
-	/* no unused devices: */
-	ret = NO_DEVICES;
-	goto err;
-
-available:
 	recalc_alloc_group_weights(c, devs);
 
 	i = devs->cur_device;
@@ -984,6 +980,11 @@ available:
 	while (ob->nr_ptrs < nr_replicas) {
 		struct cache *ca;
 		u64 bucket;
+
+		if (!available) {
+			ret = NO_DEVICES;
+			goto err;
+		}
 
 		i++;
 		i %= devs->nr_devices;
@@ -1023,6 +1024,7 @@ available:
 		};
 
 		__set_bit(ca->sb.nr_this_dev, caches_used);
+		available--;
 		devs->cur_device = i;
 	}
 
