@@ -953,13 +953,7 @@ DECLARE_EVENT_CLASS(cache_set_bucket_alloc,
 		  __entry->cl)
 );
 
-DEFINE_EVENT(cache_set_bucket_alloc, bcache_buckets_unavailable_fail,
-	TP_PROTO(struct cache_set *c, enum alloc_reserve reserve,
-		 struct closure *cl),
-	TP_ARGS(c, reserve, cl)
-);
-
-DEFINE_EVENT(cache_set_bucket_alloc, bcache_cache_set_full,
+DEFINE_EVENT(cache_set_bucket_alloc, bcache_freelist_empty_fail,
 	TP_PROTO(struct cache_set *c, enum alloc_reserve reserve,
 		 struct closure *cl),
 	TP_ARGS(c, reserve, cl)

@@ -569,7 +569,7 @@ static void __bch_write(struct closure *cl)
 
 		if (unlikely(IS_ERR(b))) {
 			if (unlikely(PTR_ERR(b) != -EAGAIN)) {
-				ret = -EROFS;
+				ret = PTR_ERR(b);
 				goto err;
 			}
 

@@ -920,32 +920,17 @@ static void __bch_bucket_free(struct cache *ca, struct bucket *g)
 
 enum bucket_alloc_ret {
 	ALLOC_SUCCESS,
-	CACHE_SET_FULL,		/* -ENOSPC */
+	NO_DEVICES,		/* -EROFS */
 	FREELIST_EMPTY,		/* Allocator thread not keeping up */
 };
 
-static struct cache *bch_next_cache(struct cache_set *c,
-				    enum alloc_reserve reserve,
-				    struct cache_group *devs,
-				    long *cache_used)
+static void recalc_alloc_group_weights(struct cache_set *c,
+				       struct cache_group *devs)
 {
 	struct cache *ca;
-	unsigned i, weight;
 	u64 available_buckets = 0;
+	unsigned i;
 
-	spin_lock(&devs->lock);
-
-	if (devs->nr_devices == 0)
-		goto err;
-
-	if (devs->nr_devices == 1) {
-		ca = devs->d[0].dev;
-		if (test_bit(ca->sb.nr_this_dev, cache_used))
-			goto err;
-		goto out;
-	}
-
-	/* recalculate weightings: XXX don't do this on every call */
 	for (i = 0; i < devs->nr_devices; i++) {
 		ca = devs->d[i].dev;
 
@@ -965,35 +950,9 @@ static struct cache *bch_next_cache(struct cache_set *c,
 				  available_buckets);
 		devs->d[i].weight = min_t(u64, devs->d[i].weight, max_weight);
 	}
-
-	for (i = 0; i < devs->nr_devices; i++)
-		if (!test_bit(devs->d[i].dev->sb.nr_this_dev, cache_used))
-			goto available;
-
-	/* no unused devices: */
-	goto err;
-available:
-	i = devs->cur_device;
-	do {
-		weight	= devs->d[i].weight;
-		ca	= devs->d[i].dev;
-		i++;
-		i %= devs->nr_devices;
-	} while (test_bit(ca->sb.nr_this_dev, cache_used) ||
-		 get_random_int() > weight);
-	devs->cur_device = i;
-out:
-	spin_unlock(&devs->lock);
-	return ca;
-err:
-	spin_unlock(&devs->lock);
-	return NULL;
 }
 
-/*
- * XXX: change the alloc_group to explicitly round robin across devices
- */
-static enum bucket_alloc_ret __bch_bucket_alloc_set(struct cache_set *c,
+static enum bucket_alloc_ret bch_bucket_alloc_group(struct cache_set *c,
 						    struct open_bucket *ob,
 						    enum alloc_reserve reserve,
 						    unsigned nr_replicas,
@@ -1001,38 +960,52 @@ static enum bucket_alloc_ret __bch_bucket_alloc_set(struct cache_set *c,
 						    long *caches_used)
 {
 	enum bucket_alloc_ret ret;
+	unsigned fail_idx = -1, i;
 
-	BUG_ON(nr_replicas > BCH_REPLICAS_MAX);
-
-	if (!devs->nr_devices)
-		return CACHE_SET_FULL;
+	if (ob->nr_ptrs >= nr_replicas)
+		return ALLOC_SUCCESS;
 
 	rcu_read_lock();
+	spin_lock(&devs->lock);
 
-	/* sort by free space/prio of oldest data in caches */
+	for (i = 0; i < devs->nr_devices; i++)
+		if (!test_bit(devs->d[i].dev->sb.nr_this_dev, caches_used))
+			goto available;
+
+	/* no unused devices: */
+	ret = NO_DEVICES;
+	goto err;
+
+available:
+	recalc_alloc_group_weights(c, devs);
+
+	i = devs->cur_device;
 
 	while (ob->nr_ptrs < nr_replicas) {
-		struct cache_group *d;
 		struct cache *ca;
-		size_t r;
+		u64 bucket;
 
-		/* first ptr goes to the specified tier, the rest to any */
+		i++;
+		i %= devs->nr_devices;
 
-		d = (!ob->nr_ptrs && devs == &c->cache_all &&
-		     c->cache_tiers[0].nr_devices)
-			? &c->cache_tiers[0]
-			: devs;
-
-		ca = bch_next_cache(c, reserve, d, caches_used);
-		if (!ca) {
-			ret = CACHE_SET_FULL;
+		ret = FREELIST_EMPTY;
+		if (i == fail_idx)
 			goto err;
-		}
 
-		r = bch_bucket_alloc(ca, reserve);
-		if (!r) {
-			ret = FREELIST_EMPTY;
-			goto err;
+		ca = devs->d[i].dev;
+
+		if (test_bit(ca->sb.nr_this_dev, caches_used))
+			continue;
+
+		if (fail_idx == -1 &&
+		    get_random_int() > devs->d[i].weight)
+			continue;
+
+		bucket = bch_bucket_alloc(ca, reserve);
+		if (!bucket) {
+			if (fail_idx == -1)
+				fail_idx = i;
+			continue;
 		}
 
 		/*
@@ -1044,46 +1017,69 @@ static enum bucket_alloc_ret __bch_bucket_alloc_set(struct cache_set *c,
 			ob->nr_ptrs * sizeof(ob->ptrs[0]));
 		ob->nr_ptrs++;
 		ob->ptrs[0] = (struct bch_extent_ptr) {
-			.gen	= ca->bucket_gens[r],
-			.offset	= bucket_to_sector(ca, r),
+			.gen	= ca->bucket_gens[bucket],
+			.offset	= bucket_to_sector(ca, bucket),
 			.dev	= ca->sb.nr_this_dev,
 		};
 
 		__set_bit(ca->sb.nr_this_dev, caches_used);
+		devs->cur_device = i;
 	}
 
-	rcu_read_unlock();
-	return ALLOC_SUCCESS;
+	ret = ALLOC_SUCCESS;
 err:
+	spin_unlock(&devs->lock);
 	rcu_read_unlock();
 	return ret;
 }
 
-static int bch_bucket_alloc_set(struct cache_set *c, struct open_bucket *ob,
-				enum alloc_reserve reserve,
-				unsigned nr_replicas,
-				struct cache_group *devs, long *caches_used,
-				struct closure *cl)
+static enum bucket_alloc_ret __bch_bucket_alloc_set(struct cache_set *c,
+						    struct write_point *wp,
+						    struct open_bucket *ob,
+						    unsigned nr_replicas,
+						    long *caches_used)
+{
+	/*
+	 * this should implement policy - for a given type of allocation, decide
+	 * which devices to allocate from:
+	 *
+	 * XXX: switch off wp->type and do something more intelligent here
+	 */
+
+	/* foreground writes: prefer tier 0: */
+	if (wp->group == &c->cache_all)
+		bch_bucket_alloc_group(c, ob, wp->reserve, nr_replicas,
+				       &c->cache_tiers[0], caches_used);
+
+	return bch_bucket_alloc_group(c, ob, wp->reserve, nr_replicas,
+				      wp->group, caches_used);
+}
+
+static int bch_bucket_alloc_set(struct cache_set *c, struct write_point *wp,
+				struct open_bucket *ob, unsigned nr_replicas,
+				long *caches_used, struct closure *cl)
 {
 	bool waiting = false;
 
 	while (1) {
-		switch (__bch_bucket_alloc_set(c, ob, reserve, nr_replicas,
-					       devs, caches_used)) {
+		switch (__bch_bucket_alloc_set(c, wp, ob, nr_replicas,
+					       caches_used)) {
 		case ALLOC_SUCCESS:
 			if (waiting)
 				closure_wake_up(&c->freelist_wait);
 
 			return 0;
 
-		case CACHE_SET_FULL:
-			trace_bcache_cache_set_full(c, reserve, cl);
-
+		case NO_DEVICES:
 			if (waiting)
 				closure_wake_up(&c->freelist_wait);
-			return -ENOSPC;
+			return -EROFS;
 
 		case FREELIST_EMPTY:
+			if (!cl || waiting)
+				trace_bcache_freelist_empty_fail(c,
+							wp->reserve, cl);
+
 			if (!cl)
 				return -ENOSPC;
 
@@ -1311,8 +1307,8 @@ static int open_bucket_add_buckets(struct cache_set *c,
 		}
 	}
 
-	return bch_bucket_alloc_set(c, ob, wp->reserve, nr_replicas,
-				    wp->group, caches_used, cl);
+	return bch_bucket_alloc_set(c, wp, ob, nr_replicas,
+				    caches_used, cl);
 }
 
 /*
@@ -1819,7 +1815,7 @@ void bch_open_buckets_init(struct cache_set *c)
 	c->migration_write_point.group = &c->cache_all;
 	c->migration_write_point.reserve = RESERVE_NONE;
 
-	c->btree_write_point.group = &c->cache_tiers[0];
+	c->btree_write_point.group = &c->cache_all;
 	c->btree_write_point.reserve = RESERVE_BTREE;
 
 	c->pd_controllers_update_seconds = 5;
