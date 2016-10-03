@@ -744,7 +744,8 @@ static void bch_cache_set_read_only_work(struct work_struct *work)
 
 		__bch_cache_set_read_only(c);
 
-		if (!bch_journal_error(&c->journal)) {
+		if (!bch_journal_error(&c->journal) &&
+		    !test_bit(CACHE_SET_ERROR, &c->flags)) {
 			SET_CACHE_SET_CLEAN(&c->disk_sb, true);
 			bcache_write_super(c);
 		}
@@ -1470,6 +1471,7 @@ err:
 		kfree(r);
 	}
 
+	set_bit(CACHE_SET_ERROR, &c->flags);
 	bch_cache_set_unregister(c);
 	closure_put(&c->caching);
 	return err;

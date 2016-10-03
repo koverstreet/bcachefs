@@ -6,6 +6,8 @@
 
 void bch_inconsistent_error(struct cache_set *c)
 {
+	set_bit(CACHE_SET_ERROR, &c->flags);
+
 	switch (c->opts.errors) {
 	case BCH_ON_ERROR_CONTINUE:
 		break;
