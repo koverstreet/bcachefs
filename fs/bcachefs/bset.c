@@ -60,7 +60,7 @@ void bch_dump_bset(struct btree *b, struct bset *i, unsigned set)
 		return;
 
 	for (_k = i->start, k = bkey_unpack_key(b, _k);
-	     _k < bset_bkey_last(i);
+	     _k < vstruct_last(i);
 	     _k = _n, k = n) {
 		_n = bkey_next(_k);
 
@@ -68,7 +68,7 @@ void bch_dump_bset(struct btree *b, struct bset *i, unsigned set)
 		printk(KERN_ERR "block %u key %zi/%u: %s\n", set,
 		       _k->_data - i->_data, i->u64s, buf);
 
-		if (_n == bset_bkey_last(i))
+		if (_n == vstruct_last(i))
 			continue;
 
 		n = bkey_unpack_key(b, _n);

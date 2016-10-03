@@ -294,9 +294,7 @@ static const char *validate_cache_super(struct bcache_superblock *disk_sb)
 	    mi.bucket_size * mi.nbuckets)
 		return "Invalid superblock: device too small";
 
-	if (le64_to_cpu(sb->offset) +
-	    (__set_blocks(sb, le16_to_cpu(sb->u64s),
-			  block_size << 9) * block_size) >
+	if (le64_to_cpu(sb->offset) + vstruct_sectors(sb, ilog2(block_size)) >
 	    mi.first_bucket * mi.bucket_size)
 		return "Invalid superblock: first bucket comes before end of super";
 
@@ -358,7 +356,7 @@ int bch_super_realloc(struct bcache_superblock *sb, unsigned u64s)
 {
 	struct cache_member *mi = sb->sb->members + sb->sb->nr_this_dev;
 	char buf[BDEVNAME_SIZE];
-	size_t bytes = __set_bytes((struct cache_sb *) NULL, u64s);
+	size_t bytes = __vstruct_bytes(struct cache_sb, u64s);
 	u64 want = bytes + (SB_SECTOR << 9);
 
 	u64 first_bucket_offset = (u64) le16_to_cpu(mi->first_bucket) *
@@ -426,19 +424,19 @@ retry:
 	    bdev_logical_block_size(sb->bdev))
 		goto err;
 
-	order = get_order(__set_bytes(sb->sb, le16_to_cpu(sb->sb->u64s)));
+	order = get_order(vstruct_bytes(sb->sb));
 	if (order > sb->page_order)
 		goto retry;
 
 	err = "bad checksum reading superblock";
 	if (sb->sb->csum !=
-	    csum_set(NULL,
-		     le64_to_cpu(sb->sb->version) <
-		     BCACHE_SB_VERSION_CDEV_V3
-		     ? BCH_CSUM_CRC64
-		     : CACHE_SB_CSUM_TYPE(sb->sb),
-		     (struct nonce) { 0 },
-		     sb->sb, le16_to_cpu(sb->sb->u64s)).lo)
+	    csum_vstruct(NULL,
+			 le64_to_cpu(sb->sb->version) <
+			 BCACHE_SB_VERSION_CDEV_V3
+			 ? BCH_CSUM_CRC64
+			 : CACHE_SB_CSUM_TYPE(sb->sb),
+			 (struct nonce) { 0 },
+			 sb->sb).lo)
 		goto err;
 
 	return NULL;
@@ -455,7 +453,7 @@ void __write_super(struct cache_set *c, struct bcache_superblock *disk_sb)
 	bio->bi_bdev		= disk_sb->bdev;
 	bio->bi_iter.bi_sector	= SB_SECTOR;
 	bio->bi_iter.bi_size	=
-		roundup(__set_bytes(sb, le16_to_cpu(sb->u64s)),
+		roundup(vstruct_bytes(sb),
 			bdev_logical_block_size(disk_sb->bdev));
 	bio_set_op_attrs(bio, REQ_OP_WRITE, REQ_SYNC|REQ_META);
 	bch_bio_map(bio, sb);
@@ -641,10 +639,10 @@ static void __bcache_write_super(struct cache_set *c)
 		cache_sb_from_cache_set(c, ca);
 
 		SET_CACHE_SB_CSUM_TYPE(sb, c->opts.metadata_checksum);
-		sb->csum = csum_set(NULL,
-				    CACHE_SB_CSUM_TYPE(sb),
-				    (struct nonce) { 0 },
-				    sb, le16_to_cpu(sb->u64s)).lo;
+		sb->csum = csum_vstruct(NULL,
+					CACHE_SB_CSUM_TYPE(sb),
+					(struct nonce) { 0 },
+					sb).lo;
 
 		bio_reset(bio);
 		bio->bi_bdev	= ca->disk_sb.bdev;

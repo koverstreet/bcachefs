@@ -39,7 +39,7 @@ static void clear_needs_whiteout(struct bset *i)
 {
 	struct bkey_packed *k;
 
-	for (k = i->start; k != bset_bkey_last(i); k = bkey_next(k))
+	for (k = i->start; k != vstruct_last(i); k = bkey_next(k))
 		k->needs_whiteout = false;
 }
 
@@ -47,7 +47,7 @@ static void set_needs_whiteout(struct bset *i)
 {
 	struct bkey_packed *k;
 
-	for (k = i->start; k != bset_bkey_last(i); k = bkey_next(k))
+	for (k = i->start; k != vstruct_last(i); k = bkey_next(k))
 		k->needs_whiteout = true;
 }
 
@@ -341,7 +341,7 @@ bool __bch_compact_whiteouts(struct cache_set *c, struct btree *b,
 		compacting = true;
 		u_start = u_pos;
 		start = i->start;
-		end = bset_bkey_last(i);
+		end = vstruct_last(i);
 
 		if (src != dst) {
 			memmove(dst, src, sizeof(*src));
@@ -574,7 +574,7 @@ static void btree_node_sort(struct cache_set *c, struct btree *b,
 
 	order = sorting_entire_node
 		? btree_page_order(c)
-		: get_order(__set_bytes(b->data, u64s));
+		: get_order(__vstruct_bytes(struct btree_node, u64s));
 
 	out = btree_bounce_alloc(c, order, &used_mempool);
 
@@ -589,8 +589,7 @@ static void btree_node_sort(struct cache_set *c, struct btree *b,
 
 	out->keys.u64s = cpu_to_le16(u64s);
 
-	BUG_ON((void *) bset_bkey_last(&out->keys) >
-	       (void *) out + (PAGE_SIZE << order));
+	BUG_ON(vstruct_end(&out->keys) > (void *) out + (PAGE_SIZE << order));
 
 	if (sorting_entire_node)
 		bch_time_stats_update(&c->btree_sort_time, start_time);
@@ -654,7 +653,7 @@ static struct btree_nr_keys sort_repack(struct bset *dst,
 					bool filter_whiteouts)
 {
 	struct bkey_format *in_f = &src->format;
-	struct bkey_packed *in, *out = bset_bkey_last(dst);
+	struct bkey_packed *in, *out = vstruct_last(dst);
 	struct btree_nr_keys nr;
 
 	memset(&nr, 0, sizeof(nr));
@@ -723,7 +722,7 @@ static struct btree_nr_keys sort_repack_merge(struct cache_set *c,
 			btree_keys_account_key_add(&nr, 0, prev);
 			prev = bkey_next(prev);
 		} else {
-			prev = bset_bkey_last(dst);
+			prev = vstruct_last(dst);
 		}
 
 		bkey_copy(prev, &tmp.k);
@@ -734,7 +733,7 @@ static struct btree_nr_keys sort_repack_merge(struct cache_set *c,
 		btree_keys_account_key_add(&nr, 0, prev);
 		out = bkey_next(prev);
 	} else {
-		out = bset_bkey_last(dst);
+		out = vstruct_last(dst);
 	}
 
 	dst->u64s = cpu_to_le16((u64 *) out - dst->_data);
@@ -866,21 +865,10 @@ static struct nonce btree_nonce(struct btree *b,
 	}};
 }
 
-#define btree_csum(_c, _i, _nonce)					\
-({									\
-	void *_data = (void *) (_i) + sizeof(struct bch_csum);		\
-	void *_end = bset_bkey_last(&(_i)->keys);			\
-									\
-	bch_checksum(_c, BSET_CSUM_TYPE(&(_i)->keys),			\
-		     _nonce, _data, _end - _data);			\
-})
-
 static void bset_encrypt(struct cache_set *c, struct bset *i, struct nonce nonce)
 {
-	void *data = i->_data;
-	void *end = bset_bkey_last(i);
-
-	bch_encrypt(c, BSET_CSUM_TYPE(i), nonce, data, end - data);
+	bch_encrypt(c, BSET_CSUM_TYPE(i), nonce, i->_data,
+		    vstruct_end(i) - (void *) i->_data);
 }
 
 #define btree_node_error(b, c, ptr, fmt, ...)				\
@@ -915,7 +903,7 @@ static const char *validate_bset(struct cache_set *c, struct btree *b,
 	}
 
 	for (k = i->start;
-	     k != bset_bkey_last(i);) {
+	     k != vstruct_last(i);) {
 		struct bkey_s_c u;
 		struct bkey tmp;
 		const char *invalid;
@@ -923,13 +911,13 @@ static const char *validate_bset(struct cache_set *c, struct btree *b,
 		if (!k->u64s) {
 			btree_node_error(b, c, ptr,
 				"KEY_U64s 0: %zu bytes of metadata lost",
-				(void *) bset_bkey_last(i) - (void *) k);
+				vstruct_end(i) - (void *) k);
 
 			i->u64s = cpu_to_le16((u64 *) k - i->_data);
 			break;
 		}
 
-		if (bkey_next(k) > bset_bkey_last(i)) {
+		if (bkey_next(k) > vstruct_last(i)) {
 			btree_node_error(b, c, ptr,
 					 "key extends past end of bset");
 
@@ -943,7 +931,7 @@ static const char *validate_bset(struct cache_set *c, struct btree *b,
 
 			i->u64s = cpu_to_le16(le16_to_cpu(i->u64s) - k->u64s);
 			memmove_u64s_down(k, bkey_next(k),
-					  (u64 *) bset_bkey_last(i) - (u64 *) k);
+					  (u64 *) vstruct_end(i) - (u64 *) k);
 			continue;
 		}
 
@@ -963,7 +951,7 @@ static const char *validate_bset(struct cache_set *c, struct btree *b,
 
 			i->u64s = cpu_to_le16(le16_to_cpu(i->u64s) - k->u64s);
 			memmove_u64s_down(k, bkey_next(k),
-					  (u64 *) bset_bkey_last(i) - (u64 *) k);
+					  (u64 *) vstruct_end(i) - (u64 *) k);
 			continue;
 		}
 
@@ -1044,7 +1032,7 @@ void bch_btree_node_read_done(struct cache_set *c, struct btree *b,
 			/* XXX: retry checksum errors */
 
 			nonce = btree_nonce(b, i, b->written << 9);
-			csum = btree_csum(c, b->data, nonce);
+			csum = csum_vstruct(c, BSET_CSUM_TYPE(i), nonce, b->data);
 
 			err = "bad checksum";
 			if (bch_crc_cmp(csum, b->data->csum))
@@ -1060,9 +1048,7 @@ void bch_btree_node_read_done(struct cache_set *c, struct btree *b,
 						   CHACHA20_BLOCK_SIZE));
 			bset_encrypt(c, i, nonce);
 
-			sectors = __set_blocks(b->data,
-					       le16_to_cpu(b->data->keys.u64s),
-					       block_bytes(c)) << c->block_bits;
+			sectors = vstruct_sectors(b->data, c->block_bits);
 
 			if (BSET_BIG_ENDIAN(i) != CPU_BIG_ENDIAN) {
 				u64 *p = (u64 *) &b->data->ptr;
@@ -1108,7 +1094,7 @@ void bch_btree_node_read_done(struct cache_set *c, struct btree *b,
 				goto err;
 
 			nonce = btree_nonce(b, i, b->written << 9);
-			csum = btree_csum(c, bne, nonce);
+			csum = csum_vstruct(c, BSET_CSUM_TYPE(i), nonce, bne);
 
 			err = "bad checksum";
 			if (memcmp(&csum, &bne->csum, sizeof(csum)))
@@ -1116,9 +1102,7 @@ void bch_btree_node_read_done(struct cache_set *c, struct btree *b,
 
 			bset_encrypt(c, i, nonce);
 
-			sectors = __set_blocks(bne,
-					       le16_to_cpu(bne->keys.u64s),
-					       block_bytes(c)) << c->block_bits;
+			sectors = vstruct_sectors(bne, c->block_bits);
 		}
 
 		err = validate_bset(c, b, ca, ptr, i, sectors, &whiteout_u64s);
@@ -1137,11 +1121,11 @@ void bch_btree_node_read_done(struct cache_set *c, struct btree *b,
 
 		__bch_btree_node_iter_push(iter, b,
 					   i->start,
-					   bkey_idx(i, whiteout_u64s));
+					   vstruct_idx(i, whiteout_u64s));
 
 		__bch_btree_node_iter_push(iter, b,
-					   bkey_idx(i, whiteout_u64s),
-					   bset_bkey_last(i));
+					   vstruct_idx(i, whiteout_u64s),
+					   vstruct_last(i));
 	}
 
 	err = "corrupted btree";
@@ -1451,7 +1435,7 @@ void __bch_btree_node_write(struct cache_set *c, struct btree *b,
 	b->whiteout_u64s = 0;
 
 	u64s = btree_node_is_extents(b)
-		? sort_extents(bset_bkey_last(i), &sort_iter, false)
+		? sort_extents(vstruct_last(i), &sort_iter, false)
 		: sort_keys(i->start, &sort_iter, false);
 	le16_add_cpu(&i->u64s, u64s);
 
@@ -1484,14 +1468,14 @@ void __bch_btree_node_write(struct cache_set *c, struct btree *b,
 		bset_encrypt(c, i, nonce);
 
 		nonce = btree_nonce(b, i, b->written << 9);
-		bn->csum = btree_csum(c, bn, nonce);
+		bn->csum = csum_vstruct(c, BSET_CSUM_TYPE(i), nonce, bn);
 	} else {
 		bset_encrypt(c, i, nonce);
 
-		bne->csum = btree_csum(c, bne, nonce);
+		bne->csum = csum_vstruct(c, BSET_CSUM_TYPE(i), nonce, bne);
 	}
 
-	bytes_to_write = (void *) bset_bkey_last(i) - data;
+	bytes_to_write = vstruct_end(i) - data;
 	sectors_to_write = round_up(bytes_to_write, block_bytes(c)) >> 9;
 
 	memset(data + bytes_to_write, 0,
@@ -1619,7 +1603,7 @@ bool bch_btree_post_write_cleanup(struct cache_set *c, struct btree *b)
 	 * If later we don't unconditionally sort down to a single bset, we have
 	 * to ensure this is still true:
 	 */
-	BUG_ON((void *) bset_bkey_last(btree_bset_last(b)) > write_block(b));
+	BUG_ON((void *) btree_bkey_last(b, bset_tree_last(b)) > write_block(b));
 
 	bne = want_new_bset(c, b);
 	if (bne)

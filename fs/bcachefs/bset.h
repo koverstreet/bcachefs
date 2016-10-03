@@ -9,6 +9,7 @@
 #include "bkey_methods.h"
 #include "btree_types.h"
 #include "util.h" /* for time_stats */
+#include "vstructs.h"
 
 /*
  * BKEYS:
@@ -302,15 +303,6 @@ static inline void btree_node_set_format(struct btree *b,
 	bch_bset_set_no_aux_tree(b, b->set);
 }
 
-#define __set_bytes(_i, _u64s)	(sizeof(*(_i)) + (_u64s) * sizeof(u64))
-#define set_bytes(_i)		__set_bytes(_i, (_i)->u64s)
-
-#define __set_blocks(_i, _u64s, _block_bytes)				\
-	DIV_ROUND_UP((size_t) __set_bytes((_i), (_u64s)), (_block_bytes))
-
-#define set_blocks(_i, _block_bytes)					\
-	__set_blocks((_i), (_i)->u64s, (_block_bytes))
-
 static inline struct bset *bset_next_set(struct btree *b,
 					 unsigned block_bytes)
 {
@@ -318,7 +310,7 @@ static inline struct bset *bset_next_set(struct btree *b,
 
 	EBUG_ON(!is_power_of_2(block_bytes));
 
-	return ((void *) i) + round_up(set_bytes(i), block_bytes);
+	return ((void *) i) + round_up(vstruct_bytes(i), block_bytes);
 }
 
 void bch_btree_keys_free(struct btree *);
@@ -385,11 +377,6 @@ static inline bool btree_iter_pos_cmp_p_or_unp(const struct btree *b,
 
 	return cmp > 0 ||
 		(cmp == 0 && !strictly_greater && !bkey_deleted(k));
-}
-
-static inline struct bkey_packed *bset_bkey_idx(struct bset *i, unsigned idx)
-{
-	return bkey_idx(i, idx);
 }
 
 struct bset_tree *bch_bkey_to_bset(struct btree *, struct bkey_packed *);

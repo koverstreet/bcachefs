@@ -96,7 +96,7 @@ void __bch_btree_verify(struct cache_set *c, struct btree *b)
 	if (inmemory->u64s != sorted->u64s ||
 	    memcmp(inmemory->start,
 		   sorted->start,
-		   (void *) bset_bkey_last(inmemory) - (void *) inmemory->start)) {
+		   vstruct_end(inmemory) - (void *) inmemory->start)) {
 		unsigned offset = 0, sectors;
 		struct bset *i;
 		unsigned j;
@@ -112,18 +112,14 @@ void __bch_btree_verify(struct cache_set *c, struct btree *b)
 		while (offset < b->written) {
 			if (!offset ) {
 				i = &n_ondisk->keys;
-				sectors = __set_blocks(n_ondisk,
-						       le16_to_cpu(n_ondisk->keys.u64s),
-						       block_bytes(c)) <<
+				sectors = vstruct_blocks(n_ondisk, c->block_bits) <<
 					c->block_bits;
 			} else {
 				struct btree_node_entry *bne =
 					(void *) n_ondisk + (offset << 9);
 				i = &bne->keys;
 
-				sectors = __set_blocks(bne,
-						       le16_to_cpu(bne->keys.u64s),
-						       block_bytes(c)) <<
+				sectors = vstruct_blocks(bne, c->block_bits) <<
 					c->block_bits;
 			}
 

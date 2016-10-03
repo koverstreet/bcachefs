@@ -5,6 +5,7 @@
 #include "bcachefs_format.h"
 
 #include "util.h"
+#include "vstructs.h"
 
 void bch_to_binary(char *, const u64 *, unsigned);
 int bch_bkey_to_text(char *, size_t, const struct bkey *);
@@ -28,15 +29,7 @@ struct bkey_s {
 	};
 };
 
-#define bkey_next(_k)							\
-({									\
-	BUILD_BUG_ON(!type_is(_k, struct bkey *) &&			\
-		     !type_is(_k, struct bkey_i *) &&			\
-		     !type_is(_k, struct bkey_packed *));		\
-									\
-	((typeof(_k)) __bkey_idx(((struct bkey *) (_k)),		\
-				 ((struct bkey *) (_k))->u64s));	\
-})
+#define bkey_next(_k)		vstruct_next(_k)
 
 static inline unsigned bkey_val_u64s(const struct bkey *k)
 {

@@ -225,7 +225,7 @@ __extent_crc_type(const union bch_extent_crc *crc)
 	((typeof(_entry)) ((void *) (_entry) + extent_entry_bytes(_entry)))
 
 #define extent_entry_last(_e)						\
-	bkey_idx((_e).v, bkey_val_u64s((_e).k))
+	vstruct_idx((_e).v, bkey_val_u64s((_e).k))
 
 /* Iterate over all entries: */
 

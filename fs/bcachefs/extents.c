@@ -1046,7 +1046,7 @@ static bool bch_extent_cmpxchg_cmp(struct bkey_s_c l, struct bkey_s_c r)
 
 		extent_for_each_ptr(le, lp) {
 			const union bch_extent_entry *entry =
-				bkey_idx(re.v, (u64 *) lp - le.v->_data);
+				vstruct_idx(re.v, (u64 *) lp - le.v->_data);
 
 			if (!extent_entry_is_ptr(entry))
 				return false;
@@ -2260,7 +2260,7 @@ static enum merge_result bch_extent_merge(struct cache_set *c,
 			struct bch_extent_ptr *lp, *rp;
 			struct cache_member_cpu *m;
 
-			en_r = bkey_idx(er.v, (u64 *) en_l - el.v->_data);
+			en_r = vstruct_idx(er.v, (u64 *) en_l - el.v->_data);
 
 			if ((extent_entry_type(en_l) !=
 			     extent_entry_type(en_r)) ||

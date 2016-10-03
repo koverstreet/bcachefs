@@ -49,7 +49,8 @@ void bch_write_bdev_super(struct cached_dev *dc, struct closure *parent)
 
 	closure_get(cl);
 
-	sb->csum = csum_set(NULL, BCH_CSUM_CRC64, (struct nonce) { 0 }, sb, 0).lo;
+	sb->csum = csum_vstruct(NULL, BCH_CSUM_CRC64,
+				(struct nonce) { 0 }, sb).lo;
 	__write_super(dc->disk.c, (void *) &dc->disk_sb);
 
 	closure_return_with_destructor(cl, bch_write_bdev_super_unlock);

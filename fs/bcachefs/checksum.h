@@ -1,9 +1,9 @@
 #ifndef _BCACHE_CHECKSUM_H
 #define _BCACHE_CHECKSUM_H
 
-#include <crypto/chacha20.h>
+#include "bcache.h"
 
-#include "btree_types.h"
+#include <crypto/chacha20.h>
 
 u64 bch_crc64_update(u64, const void *, size_t);
 
@@ -20,10 +20,10 @@ struct bch_csum bch_checksum(struct cache_set *, unsigned, struct nonce,
  * This is used for various on disk data structures - cache_sb, prio_set, bset,
  * jset: The checksum is _always_ the first field of these structs
  */
-#define csum_set(_c, _type, _nonce, i, u64s)				\
+#define csum_vstruct(_c, _type, _nonce, _i)				\
 ({									\
-	const void *start = ((const void *) (i)) + sizeof(i->csum);	\
-	const void *end = __bkey_idx(i, u64s);				\
+	const void *start = ((const void *) (_i)) + sizeof((_i)->csum);	\
+	const void *end = vstruct_end(_i);				\
 									\
 	bch_checksum(_c, _type, _nonce, start, end - start);		\
 })

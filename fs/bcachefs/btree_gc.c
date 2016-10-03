@@ -481,9 +481,8 @@ static void bch_coalesce_nodes(struct btree *old_nodes[GC_MERGE_NODES],
 
 	/* Check if all keys in @old_nodes could fit in one fewer node */
 	if (nr_old_nodes <= 1 ||
-	    __set_blocks(old_nodes[0]->data,
-			 DIV_ROUND_UP(u64s, nr_old_nodes - 1),
-			 block_bytes(c)) > blocks)
+	    __vstruct_blocks(struct btree_node, c->block_bits,
+			     DIV_ROUND_UP(u64s, nr_old_nodes - 1)) > blocks)
 		return;
 
 	res = bch_btree_reserve_get(c, parent, nr_old_nodes,
@@ -547,9 +546,9 @@ static void bch_coalesce_nodes(struct btree *old_nodes[GC_MERGE_NODES],
 		u64s = 0;
 
 		for (k = s2->start;
-		     k < bset_bkey_last(s2) &&
-		     __set_blocks(n1->data, le16_to_cpu(s1->u64s) + u64s + k->u64s,
-				  block_bytes(c)) <= blocks;
+		     k < vstruct_last(s2) &&
+		     vstruct_blocks_plus(n1->data, c->block_bits,
+					 u64s + k->u64s) <= blocks;
 		     k = bkey_next(k)) {
 			last = k;
 			u64s += k->u64s;
@@ -559,7 +558,7 @@ static void bch_coalesce_nodes(struct btree *old_nodes[GC_MERGE_NODES],
 			/* n2 fits entirely in n1 */
 			n1->key.k.p = n1->data->max_key = n2->data->max_key;
 
-			memcpy_u64s(bset_bkey_last(s1),
+			memcpy_u64s(vstruct_last(s1),
 				    s2->start,
 				    le16_to_cpu(s2->u64s));
 			le16_add_cpu(&s1->u64s, le16_to_cpu(s2->u64s));
@@ -583,12 +582,12 @@ static void bch_coalesce_nodes(struct btree *old_nodes[GC_MERGE_NODES],
 				btree_type_successor(iter->btree_id,
 						     n1->data->max_key);
 
-			memcpy_u64s(bset_bkey_last(s1),
+			memcpy_u64s(vstruct_last(s1),
 				    s2->start, u64s);
 			le16_add_cpu(&s1->u64s, u64s);
 
 			memmove(s2->start,
-				bset_bkey_idx(s2, u64s),
+				vstruct_idx(s2, u64s),
 				(le16_to_cpu(s2->u64s) - u64s) * sizeof(u64));
 			s2->u64s = cpu_to_le16(le16_to_cpu(s2->u64s) - u64s);
 

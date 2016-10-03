@@ -112,11 +112,6 @@
 
 #include "journal_types.h"
 
-static inline struct jset_entry *jset_keys_next(struct jset_entry *j)
-{
-	return (void *) __bkey_idx(j, le16_to_cpu(j->u64s));
-}
-
 /*
  * Only used for holding the journal entries we read in btree_journal_read()
  * during cache_registration
@@ -182,7 +177,7 @@ static inline void bch_journal_add_entry_at(struct journal_buf *buf,
 					    unsigned type, enum btree_id id,
 					    unsigned level, unsigned offset)
 {
-	struct jset_entry *entry = bkey_idx(buf->data, offset);
+	struct jset_entry *entry = vstruct_idx(buf->data, offset);
 
 	entry->u64s = cpu_to_le16(u64s);
 	entry->btree_id = id;

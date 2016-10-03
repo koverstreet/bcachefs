@@ -5,6 +5,7 @@
 #include "btree_iter.h"
 #include "buckets.h"
 #include "journal.h"
+#include "vstructs.h"
 
 struct cache_set;
 struct bkey_format_state;
@@ -200,7 +201,7 @@ static inline bool bset_unwritten(struct btree *b, struct bset *i)
 static inline unsigned bset_end_sector(struct cache_set *c, struct btree *b,
 				       struct bset *i)
 {
-	return round_up(bset_byte_offset(b, bset_bkey_last(i)),
+	return round_up(bset_byte_offset(b, vstruct_end(i)),
 			block_bytes(c)) >> 9;
 }
 
@@ -208,7 +209,7 @@ static inline size_t bch_btree_keys_u64s_remaining(struct cache_set *c,
 						   struct btree *b)
 {
 	struct bset *i = btree_bset_last(b);
-	unsigned used = bset_byte_offset(b, bset_bkey_last(i)) / sizeof(u64) +
+	unsigned used = bset_byte_offset(b, vstruct_end(i)) / sizeof(u64) +
 		b->whiteout_u64s +
 		b->uncompacted_whiteout_u64s;
 	unsigned total = c->sb.btree_node_size << 6;
@@ -235,7 +236,7 @@ static inline struct btree_node_entry *want_new_bset(struct cache_set *c,
 {
 	struct bset *i = btree_bset_last(b);
 	unsigned offset = max_t(unsigned, b->written << 9,
-				bset_byte_offset(b, bset_bkey_last(i)));
+				bset_byte_offset(b, vstruct_end(i)));
 	ssize_t n = (ssize_t) btree_bytes(c) - (ssize_t)
 		(offset + sizeof(struct btree_node_entry) +
 		 b->whiteout_u64s * sizeof(u64) +
@@ -244,8 +245,8 @@ static inline struct btree_node_entry *want_new_bset(struct cache_set *c,
 	EBUG_ON(offset > btree_bytes(c));
 
 	if ((unlikely(bset_written(b, i)) && n > 0) ||
-	    (unlikely(__set_bytes(i, le16_to_cpu(i->u64s)) >
-		      btree_write_set_buffer(b)) && n > btree_write_set_buffer(b)))
+	    (unlikely(vstruct_bytes(i) > btree_write_set_buffer(b)) &&
+	     n > btree_write_set_buffer(b)))
 		return (void *) b->data + offset;
 
 	return NULL;
