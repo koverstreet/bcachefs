@@ -553,6 +553,7 @@ static int cache_sb_to_cache_set(struct cache_set *c, struct cache_sb *src)
 	c->sb.block_size	= le16_to_cpu(src->block_size);
 	c->sb.btree_node_size	= CACHE_SET_BTREE_NODE_SIZE(src);
 	c->sb.nr_in_set		= src->nr_in_set;
+	c->sb.clean		= CACHE_SET_CLEAN(src);
 	c->sb.meta_replicas_have= CACHE_SET_META_REPLICAS_HAVE(src);
 	c->sb.data_replicas_have= CACHE_SET_DATA_REPLICAS_HAVE(src);
 	c->sb.str_hash_type	= CACHE_SET_STR_HASH_TYPE(src);
@@ -1249,6 +1250,7 @@ static const char *run_cache_set(struct cache_set *c)
 	time64_t now;
 	LIST_HEAD(journal);
 	struct jset *j;
+	int ret;
 
 	lockdep_assert_held(&bch_register_lock);
 	BUG_ON(test_bit(CACHE_SET_RUNNING, &c->flags));
@@ -1348,16 +1350,18 @@ static const char *run_cache_set(struct cache_set *c)
 		bch_verbose(c, "journal replay done");
 
 		bch_verbose(c, "starting fs gc:");
-
-		err = "error gcing inode nlinks";
-		if (bch_gc_inode_nlinks(c))
-			goto err;
-
+		err = "error in fs gc";
+		ret = bch_gc_inode_nlinks(c);
+		if (ret)
+			goto fsck_err;
 		bch_verbose(c, "fs gc done");
 
 		if (!c->opts.nofsck) {
 			bch_verbose(c, "starting fsck:");
-			bch_fsck(c);
+			err = "error in fsck";
+			ret = bch_fsck(c);
+			if (ret)
+				goto fsck_err;
 			bch_verbose(c, "fsck done");
 		}
 	} else {
@@ -1473,6 +1477,22 @@ err:
 	bch_cache_set_unregister(c);
 	closure_put(&c->caching);
 	return err;
+fsck_err:
+	switch (ret) {
+	case BCH_FSCK_OK:
+		break;
+	case BCH_FSCK_ERRORS_NOT_FIXED:
+		bch_err(c, "filesystem contains errors: please report this to the developers");
+		pr_cont("mount with -o fix_errors to repair");
+		goto err;
+	case BCH_FSCK_REPAIR_UNIMPLEMENTED:
+		bch_err(c, "filesystem contains errors: please report this to the developers");
+		pr_cont("repair unimplemented: inform the developers so that it can be added");
+		goto err;
+	default:
+		goto err;
+	}
+	goto err;
 }
 
 static const char *can_add_cache(struct cache_sb *sb,

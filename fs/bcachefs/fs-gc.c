@@ -12,14 +12,27 @@
 #include <linux/generic-radix-tree.h>
 
 #define unfixable_fsck_err(c, msg, ...)					\
-	cache_set_inconsistent(c, msg " (fixing unimplemented", ##__VA_ARGS__)
+do {									\
+	bch_err(c, msg " (repair unimplemented)", ##__VA_ARGS__);	\
+	ret = BCH_FSCK_REPAIR_UNIMPLEMENTED;				\
+	goto fsck_err;							\
+} while (0)
+
+#define unfixable_fsck_err_on(cond, c, ...)				\
+do {									\
+	if (cond)							\
+		unfixable_fsck_err(c, __VA_ARGS__);			\
+} while (0)
 
 #define fsck_err(c, msg, ...)						\
 do {									\
-	if ((c)->opts.fix_errors)					\
-		bch_err(c, msg ", fixing", ##__VA_ARGS__);		\
-	else								\
-		cache_set_inconsistent(c, msg, ##__VA_ARGS__);		\
+	if (!(c)->opts.fix_errors) {					\
+		bch_err(c, msg, ##__VA_ARGS__);				\
+		ret = BCH_FSCK_ERRORS_NOT_FIXED;			\
+		goto fsck_err;						\
+	}								\
+	set_bit(CACHE_SET_FSCK_FIXED_ERRORS, &(c)->flags);		\
+	bch_err(c, msg ", fixing", ##__VA_ARGS__);			\
 } while (0)
 
 #define fsck_err_on(cond, c, ...)					\
@@ -136,13 +149,13 @@ static int bch_gc_do_inode(struct cache_set *c, struct btree_iter *iter,
 		    link.count, mode_to_type(i_mode));
 
 	if (S_ISDIR(i_mode)) {
-		cache_set_inconsistent_on(link.count > 1, c,
+		unfixable_fsck_err_on(link.count > 1, c,
 			"directory %llu with multiple hardlinks: %u",
 			inode.k->p.inode, link.count);
 
 		real_i_nlink = link.count * 2 + link.dir_count;
 	} else {
-		cache_set_inconsistent_on(link.dir_count, c,
+		unfixable_fsck_err_on(link.dir_count, c,
 			"found dirents for non directory %llu",
 			inode.k->p.inode);
 
@@ -150,12 +163,12 @@ static int bch_gc_do_inode(struct cache_set *c, struct btree_iter *iter,
 	}
 
 	if (!link.count) {
-		fsck_err_on(CACHE_SET_CLEAN(&c->disk_sb), c,
+		fsck_err_on(c->sb.clean, c,
 			    "filesystem marked clean, "
 			    "but found orphaned inode %llu",
 			    inode.k->p.inode);
 
-		cache_set_inconsistent_on(S_ISDIR(i_mode) &&
+		unfixable_fsck_err_on(S_ISDIR(i_mode) &&
 			bch_empty_dir(c, inode.k->p.inode), c,
 			"non empty directory with link count 0, "
 			"inode nlink %u, dir links found %u",
@@ -171,7 +184,7 @@ static int bch_gc_do_inode(struct cache_set *c, struct btree_iter *iter,
 	}
 
 	if (i_flags & BCH_INODE_I_SIZE_DIRTY) {
-		fsck_err_on(CACHE_SET_CLEAN(&c->disk_sb), c,
+		fsck_err_on(c->sb.clean, c,
 			    "filesystem marked clean, "
 			    "but inode %llu has i_size dirty",
 			    inode.k->p.inode);
@@ -200,7 +213,7 @@ static int bch_gc_do_inode(struct cache_set *c, struct btree_iter *iter,
 	}
 
 	if (i_flags & BCH_INODE_I_SECTORS_DIRTY) {
-		fsck_err_on(CACHE_SET_CLEAN(&c->disk_sb), c,
+		fsck_err_on(c->sb.clean, c,
 			    "filesystem marked clean, "
 			    "but inode %llu has i_sectors dirty",
 			    inode.k->p.inode);
@@ -218,12 +231,12 @@ static int bch_gc_do_inode(struct cache_set *c, struct btree_iter *iter,
 	}
 
 	if (i_nlink != real_i_nlink) {
-		fsck_err_on(CACHE_SET_CLEAN(&c->disk_sb), c,
-				"filesystem marked clean, "
-				"but inode %llu has wrong i_nlink "
-				"(type %u i_nlink %u, should be %u)",
-				inode.k->p.inode, mode_to_type(i_mode),
-				i_nlink, real_i_nlink);
+		fsck_err_on(c->sb.clean, c,
+			    "filesystem marked clean, "
+			    "but inode %llu has wrong i_nlink "
+			    "(type %u i_nlink %u, should be %u)",
+			    inode.k->p.inode, mode_to_type(i_mode),
+			    i_nlink, real_i_nlink);
 
 		bch_verbose(c, "setting inode %llu nlinks from %u to %u",
 			    inode.k->p.inode, i_nlink, real_i_nlink);
@@ -250,7 +263,7 @@ static int bch_gc_do_inode(struct cache_set *c, struct btree_iter *iter,
 			bch_err(c, "error in fs gc: error %i "
 				"updating inode", ret);
 	}
-
+fsck_err:
 	return ret;
 }
 
@@ -277,9 +290,9 @@ peek_nlinks:	link = genradix_iter_peek(&nlinks_iter, links);
 
 		nlinks_pos = range_start + nlinks_iter.pos;
 		if (iter.pos.inode > nlinks_pos) {
-			cache_set_inconsistent_on(link && link->count, c,
-					 "missing inode %llu (nlink %u)",
-					 nlinks_pos, link->count);
+			unfixable_fsck_err_on(link && link->count, c,
+				"missing inode %llu (nlink %u)",
+				nlinks_pos, link->count);
 			genradix_iter_advance(&nlinks_iter, links);
 			goto peek_nlinks;
 		}
@@ -305,9 +318,9 @@ peek_nlinks:	link = genradix_iter_peek(&nlinks_iter, links);
 			if (link->count)
 				atomic_long_inc(&c->nr_inodes);
 		} else {
-			cache_set_inconsistent_on(link->count, c,
-					 "missing inode %llu (nlink %u)",
-					 nlinks_pos, link->count);
+			unfixable_fsck_err_on(link->count, c,
+				"missing inode %llu (nlink %u)",
+				nlinks_pos, link->count);
 		}
 
 		if (nlinks_pos == iter.pos.inode)
@@ -316,7 +329,7 @@ peek_nlinks:	link = genradix_iter_peek(&nlinks_iter, links);
 		bch_btree_iter_advance_pos(&iter);
 		bch_btree_iter_cond_resched(&iter);
 	}
-
+fsck_err:
 	ret2 = bch_btree_iter_unlock(&iter);
 	if (ret2)
 		bch_err(c, "error in fs gc: btree error %i while walking inodes", ret2);
@@ -356,128 +369,140 @@ int bch_gc_inode_nlinks(struct cache_set *c)
 	return ret;
 }
 
-static inline bool next_inode(struct cache_set *c, u64 inum,
-			      u64 *cur_inum,
-			      struct bkey_i_inode *inode,
-			      struct bch_inode **bi,
-			      u64 *i_size, u16 *i_mode)
+static void next_inode(struct cache_set *c, u64 inum, u64 *cur_inum,
+		       struct bkey_i_inode *inode,
+		       bool *first_this_inode, bool *have_inode,
+		       u64 *i_size, u16 *i_mode)
 {
-	if (inum == *cur_inum)
-		return false;
-
-	if (!bch_inode_find_by_inum(c, inum, inode)) {
-		*i_mode = le16_to_cpu(inode->v.i_mode);
-		*i_size = le64_to_cpu(inode->v.i_size);
-		*bi = &inode->v;
-	} else {
-		*bi = NULL;
-	}
-
+	*first_this_inode = inum != *cur_inum;
 	*cur_inum = inum;
-	return true;
+
+	if (*first_this_inode) {
+		*have_inode = !bch_inode_find_by_inum(c, inum, inode);
+
+		if (*have_inode) {
+			*i_mode = le16_to_cpu(inode->v.i_mode);
+			*i_size = le64_to_cpu(inode->v.i_size);
+		}
+	}
 }
 
 /*
  * Checks for inconsistencies that shouldn't happen, unless we have a bug.
  * Doesn't fix them yet, mainly because they haven't yet been observed:
  */
-void bch_fsck(struct cache_set *c)
+int bch_fsck(struct cache_set *c)
 {
 	struct btree_iter iter;
 	struct bkey_s_c k;
 	struct bkey_i_inode inode;
-	struct bch_inode *bi = NULL;
-	struct bkey_s_c_dirent d;
+	bool first_this_inode, have_inode;
+	u64 cur_inum, i_sectors;
 	u64 i_size = 0;
 	u16 i_mode = 0;
-	u64 cur_inum;
-	u64 d_inum;
-	char buf[100];
+	int ret = 0;
 
 	cur_inum = -1;
+	have_inode = false;
 	for_each_btree_key(&iter, c, BTREE_ID_EXTENTS,
 			   POS(BCACHE_ROOT_INO, 0), k) {
 		if (k.k->type == KEY_TYPE_DISCARD)
 			continue;
 
-		if (next_inode(c, k.k->p.inode, &cur_inum, &inode,
-			       &bi, &i_size, &i_mode) &&
-		    bi &&
-		    !(le32_to_cpu(bi->i_flags) & BCH_INODE_I_SECTORS_DIRTY)) {
-			u64 i_sectors = bch_count_inode_sectors(c, cur_inum);
-
-			if (i_sectors != le64_to_cpu(bi->i_sectors))
-				unfixable_fsck_err(c,
-					 "i_sectors wrong: got %llu, should be %llu",
-					 le64_to_cpu(bi->i_sectors), i_sectors);
-		}
-
-		if (!S_ISREG(i_mode) &&
-		    !S_ISLNK(i_mode))
-			unfixable_fsck_err(c,
-				 "extent type %u for non regular file, inode %llu mode %o",
-				 k.k->type, k.k->p.inode, i_mode);
-
-		if (k.k->type != BCH_RESERVATION &&
-		    k.k->p.offset > round_up(i_size, PAGE_SIZE) >> 9) {
-			bch_bkey_val_to_text(c, BTREE_ID_EXTENTS, buf,
-					     sizeof(buf), k);
-			unfixable_fsck_err(c,
-				"extent past end of inode %llu: i_size %llu extent\n%s",
-				k.k->p.inode, i_size, buf);
-		}
-	}
-	bch_btree_iter_unlock(&iter);
-
-	cur_inum = -1;
-	for_each_btree_key(&iter, c, BTREE_ID_DIRENTS,
-			   POS(BCACHE_ROOT_INO, 0), k) {
-		switch (k.k->type) {
-		case BCH_DIRENT:
-			d = bkey_s_c_to_dirent(k);
-			d_inum = le64_to_cpu(d.v->d_inum);
-
-			if (d_inum == d.k->p.inode)
-				unfixable_fsck_err(c, "dirent points to own directory");
-
-			next_inode(c, d_inum, &cur_inum, &inode,
-				   &bi, &i_size, &i_mode);
-
-			if (d.v->d_type != mode_to_type(i_mode))
-				unfixable_fsck_err(c, "incorrect d_type: got %u should be %u, filename %s",
-					 d.v->d_type, mode_to_type(i_mode),
-					 d.v->d_name);
-			break;
-		}
-	}
-	bch_btree_iter_unlock(&iter);
-
-	cur_inum = -1;
-	for_each_btree_key(&iter, c, BTREE_ID_DIRENTS,
-			   POS(BCACHE_ROOT_INO, 0), k) {
 		next_inode(c, k.k->p.inode, &cur_inum, &inode,
-			   &bi, &i_size, &i_mode);
+			   &first_this_inode, &have_inode,
+			   &i_size, &i_mode);
 
-		if (!bi)
-			unfixable_fsck_err(c, "dirent in nonexisting directory %llu", k.k->p.inode);
+		unfixable_fsck_err_on(!have_inode, c,
+			"extent type %u for missing inode %llu",
+			k.k->type, k.k->p.inode);
 
-		if (!S_ISDIR(i_mode))
-			unfixable_fsck_err(c,
-				 "dirent in non directory inode %llu mode %o",
-				 k.k->p.inode, i_mode);
+		unfixable_fsck_err_on(first_this_inode && have_inode &&
+			le64_to_cpu(inode.v.i_sectors) !=
+			(i_sectors = bch_count_inode_sectors(c, cur_inum)),
+			c, "i_sectors wrong: got %llu, should be %llu",
+			le64_to_cpu(inode.v.i_sectors), i_sectors);
 
+		unfixable_fsck_err_on(have_inode &&
+			!S_ISREG(i_mode) && !S_ISLNK(i_mode), c,
+			"extent type %u for non regular file, inode %llu mode %o",
+			k.k->type, k.k->p.inode, i_mode);
+
+		unfixable_fsck_err_on(k.k->type != BCH_RESERVATION &&
+			k.k->p.offset > round_up(i_size, PAGE_SIZE) >> 9, c,
+			"extent type %u offset %llu past end of inode %llu, i_size %llu",
+			k.k->type, k.k->p.offset, k.k->p.inode, i_size);
 	}
-	bch_btree_iter_unlock(&iter);
+	ret = bch_btree_iter_unlock(&iter);
+	if (ret)
+		return ret;
 
 	cur_inum = -1;
+	have_inode = false;
+	for_each_btree_key(&iter, c, BTREE_ID_DIRENTS,
+			   POS(BCACHE_ROOT_INO, 0), k) {
+		struct bkey_s_c_dirent d;
+		struct bkey_i_inode target;
+		bool have_target;
+		u64 d_inum;
+
+		next_inode(c, k.k->p.inode, &cur_inum, &inode,
+			   &first_this_inode, &have_inode,
+			   &i_size, &i_mode);
+
+		unfixable_fsck_err_on(!have_inode, c,
+			"dirent in nonexisting directory %llu",
+			k.k->p.inode);
+
+		unfixable_fsck_err_on(!S_ISDIR(i_mode), c,
+			"dirent in non directory inode %llu, type %u",
+			k.k->p.inode, mode_to_type(i_mode));
+
+		if (k.k->type != BCH_DIRENT)
+			continue;
+
+		d = bkey_s_c_to_dirent(k);
+		d_inum = le64_to_cpu(d.v->d_inum);
+
+		unfixable_fsck_err_on(d_inum == d.k->p.inode, c,
+			"dirent points to own directory");
+
+		have_target = !bch_inode_find_by_inum(c, d_inum, &target);
+
+		unfixable_fsck_err_on(!have_target, c,
+			"dirent points to missing inode %llu, type %u filename %s",
+			d_inum, d.v->d_type, d.v->d_name);
+
+		unfixable_fsck_err_on(have_target &&
+			d.v->d_type !=
+			mode_to_type(le16_to_cpu(target.v.i_mode)), c,
+			"incorrect d_type: got %u should be %u, filename %s",
+			d.v->d_type,
+			mode_to_type(le16_to_cpu(target.v.i_mode)),
+			d.v->d_name);
+	}
+	ret = bch_btree_iter_unlock(&iter);
+	if (ret)
+		return ret;
+
+	cur_inum = -1;
+	have_inode = false;
 	for_each_btree_key(&iter, c, BTREE_ID_XATTRS,
 			   POS(BCACHE_ROOT_INO, 0), k) {
 		next_inode(c, k.k->p.inode, &cur_inum, &inode,
-			   &bi, &i_size, &i_mode);
+			   &first_this_inode, &have_inode,
+			   &i_size, &i_mode);
 
-		if (!bi)
-			unfixable_fsck_err(c, "xattr for missing inode %llu",
-				 k.k->p.inode);
+		unfixable_fsck_err_on(!have_inode, c,
+			"xattr for missing inode %llu",
+			k.k->p.inode);
 	}
+	ret = bch_btree_iter_unlock(&iter);
+	if (ret)
+		return ret;
+
+	return 0;
+fsck_err:
 	bch_btree_iter_unlock(&iter);
+	return ret;
 }
