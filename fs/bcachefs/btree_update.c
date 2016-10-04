@@ -1561,8 +1561,9 @@ int __bch_btree_insert_at(struct btree_insert *trans, u64 *journal_seq)
 	struct cache_set *c = trans->c;
 	struct journal_res res = { 0, 0 };
 	struct btree_insert_entry *i;
-	struct btree_iter *split;
+	struct btree_iter *split = NULL;
 	struct closure cl;
+	bool cycle_gc_lock = false;
 	unsigned u64s;
 	int ret;
 
@@ -1619,6 +1620,7 @@ retry:
 
 	ret = 0;
 	split = NULL;
+	cycle_gc_lock = false;
 
 	trans_for_each_entry(trans, i) {
 		if (i->done)
@@ -1641,6 +1643,12 @@ retry:
 		case BTREE_INSERT_ENOSPC:
 			ret = -ENOSPC;
 			break;
+		case BTREE_INSERT_NEED_GC_LOCK:
+			cycle_gc_lock = true;
+			ret = -EINTR;
+			break;
+		default:
+			BUG();
 		}
 
 		if (!trans->did_work && (ret || split))
@@ -1687,6 +1695,11 @@ err:
 
 		closure_sync(&cl);
 		ret = -EINTR;
+	}
+
+	if (cycle_gc_lock) {
+		down_read(&c->gc_lock);
+		up_read(&c->gc_lock);
 	}
 
 	/*

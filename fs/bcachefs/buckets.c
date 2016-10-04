@@ -667,8 +667,18 @@ recalculate:
 	 * GC recalculates sectors_available when it starts, so that hopefully
 	 * we don't normally end up blocking here:
 	 */
-	if (!(flags & BCH_DISK_RESERVATION_GC_LOCK_HELD))
-		down_read(&c->gc_lock);
+
+	/*
+	 * Piss fuck, we can be called from extent_insert_fixup() with btree
+	 * locks held:
+	 */
+
+	if (!(flags & BCH_DISK_RESERVATION_GC_LOCK_HELD)) {
+		if (!(flags & BCH_DISK_RESERVATION_BTREE_LOCKS_HELD))
+			down_read(&c->gc_lock);
+		else if (!down_read_trylock(&c->gc_lock))
+			return -EINTR;
+	}
 	lg_global_lock(&c->bucket_stats_lock);
 
 	sectors_available = __recalc_sectors_available(c);
