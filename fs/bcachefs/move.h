@@ -3,6 +3,7 @@
 
 #include "buckets.h"
 #include "io_types.h"
+#include "move_types.h"
 
 enum moving_purpose {
 	MOVING_PURPOSE_UNKNOWN,	/* Un-init */
@@ -27,16 +28,10 @@ struct moving_context {
 	atomic_t		error_count;
 	atomic_t		error_flags;
 
-	/* If != 0, @task is waiting for a read or write to complete */
-	atomic_t		pending;
-	struct task_struct	*task;
 
 	/* Key and sector moves issued, updated from submission context */
 	u64			keys_moved;
 	u64			sectors_moved;
-
-	/* Last key scanned */
-	struct bpos		last_scanned;
 
 	/* Rate-limiter counting submitted reads */
 	struct bch_ratelimit	*rate;
@@ -58,8 +53,6 @@ static inline int bch_moving_context_wait(struct moving_context *ctxt)
 
 	return bch_ratelimit_wait_freezable_stoppable(ctxt->rate, &ctxt->cl);
 }
-
-void bch_moving_wait(struct moving_context *);
 
 struct migrate_write {
 	BKEY_PADDED(key);
@@ -124,14 +117,28 @@ typedef struct moving_io *(moving_queue_fn)(struct moving_queue *,
 
 int bch_queue_init(struct moving_queue *,
 		   struct cache_set *,
-		   unsigned max_keys,
 		   unsigned max_ios,
 		   unsigned max_reads,
 		   unsigned max_writes,
 		   bool rotational,
 		   const char *);
 void bch_queue_start(struct moving_queue *);
-bool bch_queue_full(struct moving_queue *);
+
+/*
+ * bch_queue_full() - return if more reads can be queued with bch_data_move().
+ *
+ * In rotational mode, always returns false if no reads are in flight (see
+ * how max_count is initialized in bch_queue_init()).
+ */
+static inline bool bch_queue_full(struct moving_queue *q)
+{
+	EBUG_ON(atomic_read(&q->count) > q->max_count);
+	EBUG_ON(atomic_read(&q->read_count) > q->max_read_count);
+
+	return atomic_read(&q->count) == q->max_count ||
+		atomic_read(&q->read_count) == q->max_read_count;
+}
+
 void bch_data_move(struct moving_queue *,
 		   struct moving_context *,
 		   struct moving_io *);
@@ -149,21 +156,18 @@ void bch_queue_run(struct moving_queue *, struct moving_context *);
 #define sysfs_queue_attribute(name)					\
 	rw_attribute(name##_max_count);					\
 	rw_attribute(name##_max_read_count);				\
-	rw_attribute(name##_max_write_count);				\
-	rw_attribute(name##_max_keys)
+	rw_attribute(name##_max_write_count);
 
 #define sysfs_queue_files(name)						\
 	&sysfs_##name##_max_count,					\
 	&sysfs_##name##_max_read_count,					\
-	&sysfs_##name##_max_write_count,				\
-	&sysfs_##name##_max_keys
+	&sysfs_##name##_max_write_count
 
 #define sysfs_queue_show(name, var)					\
 do {									\
 	sysfs_hprint(name##_max_count,		(var)->max_count);	\
 	sysfs_print(name##_max_read_count,	(var)->max_read_count);	\
 	sysfs_print(name##_max_write_count,	(var)->max_write_count);\
-	sysfs_print(name##_max_keys, bch_scan_keylist_size(&(var)->keys));\
 } while (0)
 
 #define sysfs_queue_store(name, var)					\
@@ -171,12 +175,6 @@ do {									\
 	sysfs_strtoul(name##_max_count, (var)->max_count);		\
 	sysfs_strtoul(name##_max_read_count, (var)->max_read_count);	\
 	sysfs_strtoul(name##_max_write_count, (var)->max_write_count);	\
-	if (attr == &sysfs_##name##_max_keys) {				\
-		int v = strtoi_h_or_return(buf);			\
-									\
-		v = clamp(v, 2, KEYLIST_MAX);				\
-		bch_scan_keylist_resize(&(var)->keys, v);		\
-	}								\
 } while (0)
 
 #endif /* _BCACHE_MOVE_H */

@@ -1074,8 +1074,6 @@ static struct cache_set *bch_cache_set_alloc(struct cache_sb *sb,
 
 	init_rwsem(&c->gc_lock);
 	mutex_init(&c->trigger_gc_lock);
-	mutex_init(&c->gc_scan_keylist_lock);
-	INIT_LIST_HEAD(&c->gc_scan_keylists);
 
 #define BCH_TIME_STAT(name, frequency_units, duration_units)		\
 	spin_lock_init(&c->name##_time.lock);
@@ -1980,12 +1978,6 @@ static const char *cache_alloc(struct bcache_superblock *sb,
 
 	ca->tiering_write_point.reserve = RESERVE_NONE;
 	ca->tiering_write_point.group = &ca->self;
-
-	/* XXX: scan keylists will die */
-	bch_scan_keylist_init(&ca->moving_gc_queue.keys, c,
-			      DFLT_SCAN_KEYLIST_MAX_SIZE);
-	bch_scan_keylist_init(&ca->tiering_queue.keys, c,
-			      DFLT_SCAN_KEYLIST_MAX_SIZE);
 
 	kobject_get(&c->kobj);
 	ca->set = c;

@@ -55,7 +55,7 @@ struct cache_group {
 	unsigned		cur_device;
 	struct {
 		u64		weight;
-		struct cache __rcu *dev;
+		struct cache	*dev;
 	}			d[MAX_CACHES_PER_SET];
 };
 

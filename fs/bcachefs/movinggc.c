@@ -5,6 +5,7 @@
  */
 
 #include "bcache.h"
+#include "btree_iter.h"
 #include "buckets.h"
 #include "clock.h"
 #include "extents.h"
@@ -16,13 +17,12 @@
 #include <trace/events/bcachefs.h>
 #include <linux/freezer.h>
 #include <linux/kthread.h>
+#include <linux/wait.h>
 
 /* Moving GC - IO loop */
 
-static bool moving_pred(struct scan_keylist *kl, struct bkey_s_c k)
+static bool moving_pred(struct cache *ca, struct bkey_s_c k)
 {
-	struct cache *ca = container_of(kl, struct cache,
-					moving_gc_queue.keys);
 	struct cache_set *c = ca->set;
 	const struct bch_extent_ptr *ptr;
 	bool ret = false;
@@ -41,11 +41,11 @@ static bool moving_pred(struct scan_keylist *kl, struct bkey_s_c k)
 	return ret;
 }
 
-static int issue_moving_gc_move(struct moving_queue *q,
+static int issue_moving_gc_move(struct cache *ca,
 				struct moving_context *ctxt,
 				struct bkey_s_c k)
 {
-	struct cache *ca = container_of(q, struct cache, moving_gc_queue);
+	struct moving_queue *q = &ca->moving_gc_queue;
 	struct cache_set *c = ca->set;
 	const struct bch_extent_ptr *ptr;
 	struct moving_io *io;
@@ -57,7 +57,7 @@ static int issue_moving_gc_move(struct moving_queue *q,
 			goto found;
 
 	/* We raced - bucket's been reused */
-	goto out;
+	return 0;
 found:
 	gen--;
 	BUG_ON(gen > ARRAY_SIZE(ca->gc_buckets));
@@ -70,65 +70,53 @@ found:
 
 	trace_bcache_gc_copy(k.k);
 
-	/*
-	 * IMPORTANT: We must call bch_data_move before we dequeue so
-	 * that the key can always be found in either the pending list
-	 * in the moving queue or in the scan keylist list in the
-	 * moving queue.
-	 * If we reorder, there is a window where a key is not found
-	 * by btree gc marking.
-	 */
 	bch_data_move(q, ctxt, io);
-out:
-	bch_scan_keylist_dequeue(&q->keys);
 	return 0;
 }
 
 static void read_moving(struct cache *ca, struct moving_context *ctxt)
 {
-	struct bkey_i *k;
-	bool again;
+	struct cache_set *c = ca->set;
+	struct btree_iter iter;
+	struct bkey_s_c k;
 
 	bch_ratelimit_reset(&ca->moving_gc_pd.rate);
+	bch_btree_iter_init(&iter, c, BTREE_ID_EXTENTS, POS_MIN);
 
-	do {
-		again = false;
+	while (!bch_moving_context_wait(ctxt) &&
+	       (k = bch_btree_iter_peek(&iter)).k) {
+		if (!moving_pred(ca, k))
+			goto next;
 
-		while (!bch_moving_context_wait(ctxt)) {
-			if (bch_queue_full(&ca->moving_gc_queue)) {
-				if (ca->moving_gc_queue.rotational) {
-					again = true;
-					break;
-				} else {
-					bch_moving_wait(ctxt);
-					continue;
-				}
-			}
+		if (bch_queue_full(&ca->moving_gc_queue)) {
+			bch_btree_iter_unlock(&iter);
 
-			k = bch_scan_keylist_next_rescan(
-				ca->set,
-				&ca->moving_gc_queue.keys,
-				&ctxt->last_scanned,
-				POS_MAX,
-				moving_pred);
-
-			if (k == NULL)
-				break;
-
-			if (issue_moving_gc_move(&ca->moving_gc_queue,
-						 ctxt, bkey_i_to_s_c(k))) {
-				/*
-				 * Memory allocation failed; we will wait for
-				 * all queued moves to finish and continue
-				 * scanning starting from the same key
-				 */
-				again = true;
-				break;
-			}
+			if (ca->moving_gc_queue.rotational)
+				bch_queue_run(&ca->moving_gc_queue, ctxt);
+			else
+				wait_event(ca->moving_gc_queue.wait,
+					!bch_queue_full(&ca->moving_gc_queue));
+			continue;
 		}
 
-		bch_queue_run(&ca->moving_gc_queue, ctxt);
-	} while (!kthread_should_stop() && again);
+		if (issue_moving_gc_move(ca, ctxt, k)) {
+			bch_btree_iter_unlock(&iter);
+
+			/* memory allocation failure, wait for IOs to finish */
+			bch_queue_run(&ca->moving_gc_queue, ctxt);
+			continue;
+		}
+next:
+		bch_btree_iter_advance_pos(&iter);
+		//bch_btree_iter_cond_resched(&iter);
+
+		/* unlock before calling moving_context_wait() */
+		bch_btree_iter_unlock(&iter);
+		cond_resched();
+	}
+
+	bch_btree_iter_unlock(&iter);
+	bch_queue_run(&ca->moving_gc_queue, ctxt);
 }
 
 static bool bch_moving_gc(struct cache *ca)
@@ -289,7 +277,6 @@ static int bch_moving_gc_thread(void *arg)
 	return 0;
 }
 
-#define MOVING_GC_KEYS_MAX_SIZE	DFLT_SCAN_KEYLIST_MAX_SIZE
 #define MOVING_GC_NR 64
 #define MOVING_GC_READ_NR 32
 #define MOVING_GC_WRITE_NR 32
@@ -303,7 +290,6 @@ int bch_moving_init_cache(struct cache *ca)
 
 	return bch_queue_init(&ca->moving_gc_queue,
 			      ca->set,
-			      MOVING_GC_KEYS_MAX_SIZE,
 			      MOVING_GC_NR,
 			      MOVING_GC_READ_NR,
 			      MOVING_GC_WRITE_NR,
@@ -343,12 +329,6 @@ void bch_moving_gc_stop(struct cache *ca)
 	if (ca->moving_gc_read)
 		kthread_stop(ca->moving_gc_read);
 	ca->moving_gc_read = NULL;
-
-	/*
-	 * Make sure that it is empty so that gc marking doesn't keep
-	 * marking stale entries from when last used.
-	 */
-	bch_scan_keylist_reset(&ca->moving_gc_queue.keys);
 }
 
 void bch_moving_gc_destroy(struct cache *ca)

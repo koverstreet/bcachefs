@@ -1071,9 +1071,9 @@ DECLARE_EVENT_CLASS(moving_io,
 		__entry->inode		= k->p.inode;
 		__entry->offset		= k->p.offset;
 		__entry->sectors	= k->size;
-		__entry->count		= q->count;
-		__entry->read_count	= q->read_count;
-		__entry->write_count	= q->write_count;
+		__entry->count		= atomic_read(&q->count);
+		__entry->read_count	= atomic_read(&q->read_count);
+		__entry->write_count	= atomic_read(&q->write_count);
 	),
 
 	TP_printk("%p %u:%llu sectors %u queue %u reads %u writes %u",

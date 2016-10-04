@@ -8,7 +8,6 @@
 
 struct moving_queue {
 	struct work_struct work;
-	struct scan_keylist keys;
 	struct workqueue_struct *wq;
 
 	/* Configuration */
@@ -57,9 +56,11 @@ struct moving_queue {
 	 */
 	struct list_head	write_pending;
 
-	unsigned		count;
-	unsigned		read_count;
-	unsigned		write_count;
+	atomic_t		count;
+	atomic_t		read_count;
+	atomic_t		write_count;
+
+	wait_queue_head_t	wait;
 };
 
 #endif /* _BCACHE_MOVE_TYPES_H */

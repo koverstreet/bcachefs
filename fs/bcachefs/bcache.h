@@ -686,10 +686,6 @@ struct cache_set {
 	struct task_struct	*gc_thread;
 	atomic_t		kick_gc;
 
-	/* This is a list of scan_keylists for btree GC to scan */
-	struct list_head	gc_scan_keylists;
-	struct mutex		gc_scan_keylist_lock;
-
 	/*
 	 * Tracks GC's progress - everything in the range [ZERO_KEY..gc_cur_pos]
 	 * has been marked by GC.

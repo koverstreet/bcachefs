@@ -12,20 +12,9 @@
 #include "migrate.h"
 #include "move.h"
 
-static bool migrate_data_pred(struct scan_keylist *kl, struct bkey_s_c k)
-{
-	struct cache *ca = container_of(kl, struct cache,
-					moving_gc_queue.keys);
-
-	return bkey_extent_is_data(k.k) &&
-		bch_extent_has_device(bkey_s_c_to_extent(k),
-				      ca->sb.nr_this_dev);
-}
-
 static int issue_migration_move(struct cache *ca,
 				struct moving_context *ctxt,
-				struct bkey_s_c k,
-				u64 *seen_key_count)
+				struct bkey_s_c k)
 {
 	struct moving_queue *q = &ca->moving_gc_queue;
 	struct cache_set *c = ca->set;
@@ -49,24 +38,10 @@ found:
 	}
 
 	bch_data_move(q, ctxt, io);
-	(*seen_key_count)++;
-
-	/*
-	 * IMPORTANT: We must call bch_data_move before we dequeue so
-	 * that the key can always be found in either the pending list
-	 * in the moving queue or in the scan keylist list in the
-	 * moving queue.
-	 * If we reorder, there is a window where a key is not found
-	 * by btree gc marking.
-	 */
-	bch_scan_keylist_dequeue(&q->keys);
 	return 0;
 }
 
-#define MIGRATION_DEBUG		0
-
 #define MAX_DATA_OFF_ITER	10
-#define PASS_LOW_LIMIT		(MIGRATION_DEBUG ? 0 : 2)
 #define MIGRATE_NR		64
 #define MIGRATE_READ_NR		32
 #define MIGRATE_WRITE_NR	32
@@ -87,15 +62,14 @@ found:
 
 int bch_move_data_off_device(struct cache *ca)
 {
-	int ret;
-	struct bkey_i *k;
-	unsigned pass;
-	u64 seen_key_count;
-	unsigned last_error_count;
-	unsigned last_error_flags;
-	struct moving_context context;
+	struct moving_context ctxt;
 	struct cache_set *c = ca->set;
 	struct moving_queue *queue = &ca->moving_gc_queue;
+	unsigned pass = 0;
+	u64 seen_key_count;
+	int ret = 0;
+
+	BUG_ON(ca->mi.state == CACHE_ACTIVE);
 
 	/*
 	 * This reuses the moving gc queue as it is no longer in use
@@ -116,8 +90,8 @@ int bch_move_data_off_device(struct cache *ca)
 	queue_io_resize(queue, MIGRATE_NR, MIGRATE_READ_NR, MIGRATE_WRITE_NR);
 
 	BUG_ON(queue->wq == NULL);
-	bch_moving_context_init(&context, NULL, MOVING_PURPOSE_MIGRATION);
-	context.avoid = ca;
+	bch_moving_context_init(&ctxt, NULL, MOVING_PURPOSE_MIGRATION);
+	ctxt.avoid = ca;
 
 	/*
 	 * In theory, only one pass should be necessary as we've
@@ -136,142 +110,128 @@ int bch_move_data_off_device(struct cache *ca)
 	 * but that can be viewed as a verification pass.
 	 */
 
-	seen_key_count = 1;
-	last_error_count = 0;
-	last_error_flags = 0;
-
-	for (pass = 0;
-	     (seen_key_count != 0 && (pass < MAX_DATA_OFF_ITER));
-	     pass++) {
-		bool again;
+	do {
+		struct btree_iter iter;
+		struct bkey_s_c k;
 
 		seen_key_count = 0;
-		atomic_set(&context.error_count, 0);
-		atomic_set(&context.error_flags, 0);
-		context.last_scanned = POS_MIN;
+		atomic_set(&ctxt.error_count, 0);
+		atomic_set(&ctxt.error_flags, 0);
 
-again:
-		again = false;
+		bch_btree_iter_init(&iter, c, BTREE_ID_EXTENTS, POS_MIN);
 
-		while (1) {
+		while ((k = bch_btree_iter_peek(&iter)).k) {
+			if (!bkey_extent_is_data(k.k) ||
+			    !bch_extent_has_device(bkey_s_c_to_extent(k),
+						   ca->sb.nr_this_dev))
+				goto next;
+
 			if (bch_queue_full(queue)) {
-				if (queue->rotational) {
-					again = true;
-					break;
-				} else {
-					bch_moving_wait(&context);
-					continue;
-				}
+				bch_btree_iter_unlock(&iter);
+
+				if (queue->rotational)
+					bch_queue_run(queue, &ctxt);
+				else
+					wait_event(queue->wait,
+						   !bch_queue_full(queue));
+				continue;
 			}
 
-			k = bch_scan_keylist_next_rescan(c,
-							 &queue->keys,
-							 &context.last_scanned,
-							 POS_MAX,
-							 migrate_data_pred);
-			if (k == NULL)
-				break;
+			ret = issue_migration_move(ca, &ctxt, k);
+			if (ret == -ENOMEM) {
+				bch_btree_iter_unlock(&iter);
 
-			if (issue_migration_move(ca, &context, bkey_i_to_s_c(k),
-						 &seen_key_count)) {
 				/*
-				 * Memory allocation failed; we will wait for
-				 * all queued moves to finish and continue
-				 * scanning starting from the same key
+				 * memory allocation failure, wait for IOs to
+				 * finish
 				 */
-				again = true;
-				break;
+				bch_queue_run(queue, &ctxt);
+				continue;
 			}
+			if (ret == -ENOSPC) {
+				bch_btree_iter_unlock(&iter);
+				bch_queue_run(queue, &ctxt);
+				return -ENOSPC;
+			}
+			BUG_ON(ret);
+
+			seen_key_count++;
+next:
+			bch_btree_iter_advance_pos(&iter);
+			bch_btree_iter_cond_resched(&iter);
+
 		}
+		ret = bch_btree_iter_unlock(&iter);
+		bch_queue_run(queue, &ctxt);
 
-		bch_queue_run(queue, &context);
-		if (again)
-			goto again;
+		if (ret)
+			return ret;
+	} while (seen_key_count && pass++ < MAX_DATA_OFF_ITER);
 
-		if ((pass >= PASS_LOW_LIMIT)
-		    && (seen_key_count != (MIGRATION_DEBUG ? ~0ULL : 0))) {
-			pr_notice("found %llu keys on pass %u.",
-				  seen_key_count, pass);
-		}
-
-		last_error_count = atomic_read(&context.error_count);
-		last_error_flags = atomic_read(&context.error_flags);
-
-		if (last_error_count != 0) {
-			pr_notice("pass %u: error count = %u, error flags = 0x%x",
-				  pass, last_error_count, last_error_flags);
-		}
-	}
-
-	if (seen_key_count != 0 || last_error_count != 0) {
+	if (seen_key_count) {
 		pr_err("Unable to migrate all data in %d iterations.",
 		       MAX_DATA_OFF_ITER);
-		ret = -EDEADLK;
-	} else if (MIGRATION_DEBUG)
-		pr_notice("Migrated all data in %d iterations", pass);
+		return -1;
+	}
 
-	bch_queue_run(queue, &context);
-	return ret;
+	return 0;
 }
 
 /*
  * This walks the btree, and for any node on the relevant device it moves the
  * node elsewhere.
  */
-static int bch_move_btree_off(struct cache *ca,
-			      enum btree_id id,
-			      const char *name)
+static int bch_move_btree_off(struct cache *ca, enum btree_id id)
 {
+	struct cache_set *c = ca->set;
+	struct btree_iter iter;
 	struct closure cl;
-	unsigned pass;
+	struct btree *b;
+	int ret;
+
+	BUG_ON(ca->mi.state == CACHE_ACTIVE);
 
 	closure_init_stack(&cl);
 
-	pr_debug("Moving %s btree off device %u",
-		 name, ca->sb.nr_this_dev);
-
-	for (pass = 0; (pass < MAX_DATA_OFF_ITER); pass++) {
-		struct btree_iter iter;
-		struct btree *b;
-		unsigned moved = 0, seen = 0;
-		int ret;
-
-		for_each_btree_node(&iter, ca->set, id, POS_MIN, 0, b) {
-			struct bkey_s_c_extent e =
-				bkey_i_to_s_c_extent(&b->key);
-			seen++;
+	for_each_btree_node(&iter, c, id, POS_MIN, 0, b) {
+		struct bkey_s_c_extent e = bkey_i_to_s_c_extent(&b->key);
 retry:
-			if (!bch_extent_has_device(e, ca->sb.nr_this_dev))
-				continue;
+		if (!bch_extent_has_device(e, ca->sb.nr_this_dev))
+			continue;
 
-			if (bch_btree_node_rewrite(&iter, b, &cl)) {
-				/*
-				 * Drop locks to upgrade locks or wait on
-				 * reserve: after retaking, recheck in case we
-				 * raced.
-				 */
-				bch_btree_iter_unlock(&iter);
-				closure_sync(&cl);
-				b = bch_btree_iter_peek_node(&iter);
-				goto retry;
-			}
-
-			moved++;
-			iter.locks_want = 0;
+		ret = bch_btree_node_rewrite(&iter, b, &cl);
+		if (ret == -EINTR || ret == -ENOSPC) {
+			/*
+			 * Drop locks to upgrade locks or wait on
+			 * reserve: after retaking, recheck in case we
+			 * raced.
+			 */
+			bch_btree_iter_unlock(&iter);
+			closure_sync(&cl);
+			b = bch_btree_iter_peek_node(&iter);
+			goto retry;
 		}
-		ret = bch_btree_iter_unlock(&iter);
-		if (ret)
-			return ret; /* btree IO error */
+		if (ret) {
+			bch_btree_iter_unlock(&iter);
+			return ret;
+		}
 
-		if (!moved)
-			return 0;
+		iter.locks_want = 0;
+	}
+	ret = bch_btree_iter_unlock(&iter);
+	if (ret)
+		return ret; /* btree IO error */
 
-		pr_debug("%s pass %u: seen %u, moved %u.",
-			 name, pass, seen, moved);
+	if (IS_ENABLED(CONFIG_BCACHEFS_DEBUG)) {
+		for_each_btree_node(&iter, c, id, POS_MIN, 0, b) {
+			struct bkey_s_c_extent e = bkey_i_to_s_c_extent(&b->key);
+
+			BUG_ON(bch_extent_has_device(e, ca->sb.nr_this_dev));
+		}
+		bch_btree_iter_unlock(&iter);
 	}
 
-	/* Failed: */
-	return -1;
+	return 0;
 }
 
 /*
@@ -321,25 +281,25 @@ retry:
 int bch_move_meta_data_off_device(struct cache *ca)
 {
 	unsigned i;
-	int ret = 0;		/* Success */
+	int ret;
 
 	/* 1st, Move the btree nodes off the device */
 
-	for (i = 0; i < BTREE_ID_NR; i++)
-		if (bch_move_btree_off(ca, i, bch_btree_id_names[i]) != 0)
-			return 1;
+	for (i = 0; i < BTREE_ID_NR; i++) {
+		ret = bch_move_btree_off(ca, i);
+		if (ret)
+			return ret;
+	}
 
 	/* There are no prios/gens to move -- they are already in the device. */
 
 	/* 2nd. Move the journal off the device */
 
-	if (bch_journal_move(ca) != 0) {
-		pr_err("Unable to move the journal off in %pU.",
-		       ca->set->disk_sb.user_uuid.b);
-		ret = 1;	/* Failure */
-	}
+	ret = bch_journal_move(ca);
+	if (ret)
+		return ret;
 
-	return ret;
+	return 0;
 }
 
 /*
