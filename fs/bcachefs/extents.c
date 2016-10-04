@@ -1531,12 +1531,8 @@ static const char *bch_extent_invalid(const struct cache_set *c,
 			case BCH_EXTENT_ENTRY_crc64:
 				crc = entry_to_crc(entry);
 
-				reason = "checksum uncompressed size < key size";
-				if (crc_uncompressed_size(crc) < e.k->size)
-					goto invalid;
-
-				reason = "checksum offset > uncompressed size";
-				if (crc_offset(crc) >= crc_uncompressed_size(crc))
+				reason = "checksum offset + key size > uncompressed size";
+				if (crc_offset(crc) + e.k->size > crc_uncompressed_size(crc))
 					goto invalid;
 
 				size_ondisk = crc_compressed_size(crc);
