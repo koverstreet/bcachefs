@@ -102,7 +102,9 @@ struct bch_write_op {
 	struct bpos		pos;
 	unsigned		version;
 
+	/* For BCH_WRITE_DATA_COMPRESSED: */
 	struct bch_extent_crc64	crc;
+	unsigned		size;
 
 	struct disk_reservation	res;
 

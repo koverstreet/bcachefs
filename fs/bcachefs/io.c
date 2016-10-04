@@ -560,7 +560,10 @@ static void __bch_write(struct closure *cl)
 		k = op->insert_keys.top;
 		bkey_extent_init(k);
 		k->k.p = op->pos;
-		bch_key_resize(&k->k, bio_sectors(bio));
+		bch_key_resize(&k->k,
+			       (op->flags & BCH_WRITE_DATA_COMPRESSED)
+			       ? op->size
+			       : bio_sectors(bio));
 
 		b = bch_alloc_sectors_start(op->c, op->wp,
 			bkey_i_to_extent(k), op->nr_replicas,
@@ -1182,6 +1185,7 @@ void bch_read_extent_iter(struct cache_set *c, struct bch_read_bio *orig,
 		if (rbio->crc.compression_type) {
 			promote_op->write.op.flags |= BCH_WRITE_DATA_COMPRESSED;
 			promote_op->write.op.crc = rbio->crc;
+			promote_op->write.op.size = k.k->size;
 		} else if (read_full) {
 			/*
 			 * Adjust bio to correspond to _live_ portion of @k -
