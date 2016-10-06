@@ -928,7 +928,7 @@ static void recalc_alloc_group_weights(struct cache_set *c,
 				       struct cache_group *devs)
 {
 	struct cache *ca;
-	u64 available_buckets = 0;
+	u64 available_buckets = 1; /* avoid a divide by zero... */
 	unsigned i;
 
 	for (i = 0; i < devs->nr_devices; i++) {
@@ -937,10 +937,6 @@ static void recalc_alloc_group_weights(struct cache_set *c,
 		devs->d[i].weight = buckets_free_cache(ca);
 		available_buckets += devs->d[i].weight;
 	}
-
-	/* avoid divide by zero... */
-	if (!available_buckets)
-		return;
 
 	for (i = 0; i < devs->nr_devices; i++) {
 		const unsigned min_weight = U32_MAX >> 4;
