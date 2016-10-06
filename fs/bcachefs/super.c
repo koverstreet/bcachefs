@@ -1933,11 +1933,16 @@ static const char *cache_alloc(struct bcache_superblock *sb,
 	ca->bucket_bits = ilog2(ca->mi.bucket_size);
 
 	/* XXX: tune these */
-	movinggc_reserve = max_t(size_t, NUM_GC_GENS * 2,
+	movinggc_reserve = max_t(size_t, NUM_GC_GENS * 4,
 				 ca->mi.nbuckets >> 7);
 	reserve_none = max_t(size_t, 4, ca->mi.nbuckets >> 9);
-	free_inc_reserve = reserve_none << 1;
-	heap_size = max_t(size_t, free_inc_reserve, movinggc_reserve);
+	/*
+	 * free_inc must be smaller than the copygc reserve: if it was bigger,
+	 * one copygc iteration might not make enough buckets available to fill
+	 * up free_inc and allow the allocator to make forward progress
+	 */
+	free_inc_reserve = movinggc_reserve / 2;
+	heap_size = movinggc_reserve * 8;
 
 	if (!init_fifo(&ca->free[RESERVE_PRIO], prio_buckets(ca), GFP_KERNEL) ||
 	    !init_fifo(&ca->free[RESERVE_BTREE], BTREE_NODE_RESERVE, GFP_KERNEL) ||

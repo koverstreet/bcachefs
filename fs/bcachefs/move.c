@@ -108,7 +108,7 @@ static int bch_migrate_index_update(struct bch_write_op *op)
 				break;
 		} else {
 nomatch:
-			bch_btree_iter_set_pos(&iter, k.k->p);
+			bch_btree_iter_advance_pos(&iter);
 		}
 
 		while (bkey_cmp(iter.pos, bch_keylist_front(keys)->k.p) >= 0) {

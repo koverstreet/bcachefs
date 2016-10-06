@@ -733,11 +733,17 @@ static void invalidate_buckets(struct cache *ca)
 
 static bool __bch_allocator_push(struct cache *ca, long bucket)
 {
-	unsigned i;
+	if (fifo_push(&ca->free[RESERVE_PRIO], bucket))
+		goto success;
 
-	for (i = 0; i < RESERVE_NR; i++)
-		if (fifo_push(&ca->free[i], bucket))
-			goto success;
+	if (fifo_push(&ca->free[RESERVE_MOVINGGC], bucket))
+		goto success;
+
+	if (fifo_push(&ca->free[RESERVE_BTREE], bucket))
+		goto success;
+
+	if (fifo_push(&ca->free[RESERVE_NONE], bucket))
+		goto success;
 
 	return false;
 success:
@@ -1030,6 +1036,7 @@ static enum bucket_alloc_ret bch_bucket_alloc_group(struct cache_set *c,
 
 	ret = ALLOC_SUCCESS;
 err:
+	EBUG_ON(ret != ALLOC_SUCCESS && reserve == RESERVE_MOVINGGC);
 	spin_unlock(&devs->lock);
 	rcu_read_unlock();
 	return ret;
@@ -1528,10 +1535,16 @@ static void bch_recalc_capacity(struct cache_set *c)
 		 * allocations for foreground writes must wait -
 		 * not -ENOSPC calculations.
 		 */
-		for (j = 0; j < RESERVE_NR; j++)
+		for (j = 0; j < RESERVE_NONE; j++)
 			reserve += ca->free[j].size;
 
 		reserve += ca->free_inc.size;
+
+		reserve += ARRAY_SIZE(c->write_points);
+
+		if (ca->mi.tier)
+			reserve += 1;	/* tiering write point */
+		reserve += 1;		/* btree write point */
 
 		reserved_sectors += reserve << ca->bucket_bits;
 

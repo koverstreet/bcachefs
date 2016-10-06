@@ -119,12 +119,22 @@ next:
 	bch_queue_run(&ca->moving_gc_queue, ctxt);
 }
 
-static bool bch_moving_gc(struct cache *ca)
+static bool have_copygc_reserve(struct cache *ca)
+{
+	bool ret;
+
+	spin_lock(&ca->freelist_lock);
+	ret = fifo_used(&ca->free[RESERVE_MOVINGGC]) >=
+		COPYGC_BUCKETS_PER_ITER(ca);
+	spin_unlock(&ca->freelist_lock);
+
+	return ret;
+}
+
+static void bch_moving_gc(struct cache *ca)
 {
 	struct cache_set *c = ca->set;
 	struct bucket *g;
-	bool moved = false;
-
 	u64 sectors_to_move, sectors_gen, gen_current, sectors_total;
 	size_t buckets_to_move, buckets_unused = 0;
 	struct bucket_heap_entry e;
@@ -136,21 +146,20 @@ static bool bch_moving_gc(struct cache *ca)
 	bch_moving_context_init(&ctxt, &ca->moving_gc_pd.rate,
 				MOVING_PURPOSE_COPY_GC);
 
-	/*
-	 * We won't fill up the moving GC reserve completely if the data
-	 * being copied is from different generations. In the worst case,
-	 * there will be NUM_GC_GENS buckets of internal fragmentation
-	 */
+	if (!have_copygc_reserve(ca)) {
+		struct closure cl;
 
-	spin_lock(&ca->freelist_lock);
-	reserve_sectors = ca->mi.bucket_size *
-		(fifo_used(&ca->free[RESERVE_MOVINGGC]) - NUM_GC_GENS);
-	spin_unlock(&ca->freelist_lock);
-
-	if (reserve_sectors < (int) c->sb.block_size) {
-		trace_bcache_moving_gc_reserve_empty(ca);
-		return false;
+		closure_init_stack(&cl);
+		while (1) {
+			closure_wait(&c->freelist_wait, &cl);
+			if (have_copygc_reserve(ca))
+				break;
+			closure_sync(&cl);
+		}
+		closure_wake_up(&c->freelist_wait);
 	}
+
+	reserve_sectors = COPYGC_SECTORS_PER_ITER(ca);
 
 	trace_bcache_moving_gc_start(ca);
 
@@ -161,7 +170,15 @@ static bool bch_moving_gc(struct cache *ca)
 	 * buckets have been visited.
 	 */
 
+	/*
+	 * We need bucket marks to be up to date, so gc can't be recalculating
+	 * them, and we don't want the allocator invalidating a bucket after
+	 * we've decided to evacuate it but before we set copygc_gen:
+	 */
+	down_read(&c->gc_lock);
 	mutex_lock(&ca->heap_lock);
+	mutex_lock(&ca->set->bucket_lock);
+
 	ca->heap.used = 0;
 	for_each_bucket(g, ca) {
 		g->copygc_gen = 0;
@@ -187,31 +204,18 @@ static bool bch_moving_gc(struct cache *ca)
 	for (i = 0; i < ca->heap.used; i++)
 		sectors_to_move += ca->heap.data[i].val;
 
-	/* XXX: calculate this threshold rigorously */
-
-	if (ca->heap.used < ca->free_inc.size / 2 &&
-	    sectors_to_move < reserve_sectors) {
-		mutex_unlock(&ca->heap_lock);
-		trace_bcache_moving_gc_no_work(ca);
-		return false;
-	}
-
-	while (sectors_to_move > reserve_sectors) {
+	while (sectors_to_move > COPYGC_SECTORS_PER_ITER(ca)) {
 		BUG_ON(!heap_pop(&ca->heap, e, bucket_min_cmp));
 		sectors_to_move -= e.val;
 	}
 
 	buckets_to_move = ca->heap.used;
 
-	if (sectors_to_move)
-		moved = true;
-
 	/*
 	 * resort by write_prio to group into generations, attempts to
 	 * keep hot and cold data in the same locality.
 	 */
 
-	mutex_lock(&ca->set->bucket_lock);
 	for (i = 0; i < ca->heap.used; i++) {
 		struct bucket_heap_entry *e = &ca->heap.data[i];
 
@@ -231,16 +235,20 @@ static bool bch_moving_gc(struct cache *ca)
 		    sectors_total >= sectors_gen * gen_current)
 			gen_current++;
 	}
-	mutex_unlock(&ca->set->bucket_lock);
 
+	mutex_unlock(&ca->set->bucket_lock);
 	mutex_unlock(&ca->heap_lock);
+	up_read(&c->gc_lock);
 
 	read_moving(ca, &ctxt);
 
+	if (IS_ENABLED(CONFIG_BCACHEFS_DEBUG)) {
+		for_each_bucket(g, ca)
+			BUG_ON(g->copygc_gen && bucket_sectors_used(g));
+	}
+
 	trace_bcache_moving_gc_end(ca, ctxt.sectors_moved, ctxt.keys_moved,
 				buckets_to_move);
-
-	return moved;
 }
 
 static int bch_moving_gc_thread(void *arg)
@@ -249,8 +257,7 @@ static int bch_moving_gc_thread(void *arg)
 	struct cache_set *c = ca->set;
 	struct io_clock *clock = &c->io_clock[WRITE];
 	unsigned long last;
-	s64 next;
-	bool moved;
+	u64 available, want, next;
 
 	set_freezable();
 
@@ -263,15 +270,17 @@ static int bch_moving_gc_thread(void *arg)
 		 * don't start copygc until less than half the gc reserve is
 		 * available:
 		 */
-		next = (buckets_available_cache(ca) -
-			div64_u64((ca->mi.nbuckets - ca->mi.first_bucket) *
-				  c->opts.gc_reserve_percent, 200)) *
-			ca->mi.bucket_size;
+		available = buckets_available_cache(ca);
+		want = div64_u64((ca->mi.nbuckets - ca->mi.first_bucket) *
+				 c->opts.gc_reserve_percent, 200);
+		if (available > want) {
+			next = last + (available - want) *
+				ca->mi.bucket_size;
+			bch_kthread_io_clock_wait(clock, next);
+			continue;
+		}
 
-		if (next <= 0)
-			moved = bch_moving_gc(ca);
-		else
-			bch_kthread_io_clock_wait(clock, last + next);
+		bch_moving_gc(ca);
 	}
 
 	return 0;
