@@ -618,6 +618,7 @@ static void bchfs_read(struct cache_set *c, struct bch_read_bio *rbio, u64 inode
 	struct bkey_s_c k;
 	struct bio_vec *bv;
 	unsigned i;
+	int ret;
 
 	bch_increment_clock(c, bio_sectors(bio), READ);
 
@@ -698,8 +699,9 @@ static void bchfs_read(struct cache_set *c, struct bch_read_bio *rbio, u64 inode
 	 * If we get here, it better have been because there was an error
 	 * reading a btree node
 	 */
-	BUG_ON(!bch_btree_iter_unlock(&iter));
-	bcache_io_error(c, bio, "btree IO error");
+	ret = bch_btree_iter_unlock(&iter);
+	BUG_ON(!ret);
+	bcache_io_error(c, bio, "btree IO error %i", ret);
 	bio_endio(bio);
 }
 

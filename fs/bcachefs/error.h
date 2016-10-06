@@ -182,7 +182,7 @@ do {									\
 
 #define __bcache_io_error(c, fmt, ...)					\
 	printk_ratelimited(KERN_ERR bch_fmt(c,				\
-			"IO error: " fmt, ##__VA_ARGS__))
+			"IO error: " fmt), ##__VA_ARGS__)
 
 #define bcache_io_error(c, bio, fmt, ...)				\
 do {									\

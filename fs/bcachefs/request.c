@@ -460,14 +460,16 @@ nopromote:
 
 static void cached_dev_read(struct cached_dev *dc, struct search *s)
 {
+	struct cache_set *c = s->iop.c;
 	struct closure *cl = &s->cl;
 	struct bio *bio = &s->rbio.bio;
 	struct btree_iter iter;
 	struct bkey_s_c k;
+	int ret;
 
-	bch_increment_clock(s->iop.c, bio_sectors(bio), READ);
+	bch_increment_clock(c, bio_sectors(bio), READ);
 
-	for_each_btree_key_with_holes(&iter, s->iop.c, BTREE_ID_EXTENTS,
+	for_each_btree_key_with_holes(&iter, c, BTREE_ID_EXTENTS,
 				POS(s->inode, bio->bi_iter.bi_sector), k) {
 		BKEY_PADDED(k) tmp;
 		struct extent_pick_ptr pick;
@@ -478,10 +480,9 @@ retry:
 		bch_btree_iter_unlock(&iter);
 		k = bkey_i_to_s_c(&tmp.k);
 
-		bch_extent_pick_ptr(s->iop.c, k, &pick);
+		bch_extent_pick_ptr(c, k, &pick);
 		if (IS_ERR(pick.ca)) {
-			bcache_io_error(s->iop.c, bio,
-					"no device to read from");
+			bcache_io_error(c, bio, "no device to read from");
 			goto out;
 		}
 
@@ -493,12 +494,12 @@ retry:
 
 		if (pick.ca) {
 			PTR_BUCKET(pick.ca, &pick.ptr)->read_prio =
-				s->iop.c->prio_clock[READ].hand;
+				c->prio_clock[READ].hand;
 
 			if (!bkey_extent_is_cached(k.k))
 				s->read_dirty_data = true;
 
-			bch_read_extent(s->iop.c, &s->rbio, k, &pick,
+			bch_read_extent(c, &s->rbio, k, &pick,
 					BCH_READ_FORCE_BOUNCE|
 					BCH_READ_RETRY_IF_STALE|
 					(!s->bypass ? BCH_READ_PROMOTE : 0)|
@@ -524,8 +525,9 @@ retry:
 	 * If we get here, it better have been because there was an error
 	 * reading a btree node
 	 */
-	BUG_ON(!bch_btree_iter_unlock(&iter));
-	bcache_io_error(s->iop.c, bio, "btree IO error");
+	ret = bch_btree_iter_unlock(&iter);
+	BUG_ON(!ret);
+	bcache_io_error(c, bio, "btree IO error %i", ret);
 out:
 	continue_at(cl, cached_dev_read_done_bh, NULL);
 }
