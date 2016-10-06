@@ -503,6 +503,14 @@ static struct btree_reserve *__bch_btree_reserve_get(struct cache_set *c,
 	if (!check_enospc)
 		flags |= BCH_DISK_RESERVATION_NOFAIL;
 
+	/*
+	 * This check isn't necessary for correctness - it's just to potentially
+	 * prevent us from doing a lot of work that'll end up being wasted:
+	 */
+	ret = bch_journal_error(&c->journal);
+	if (ret)
+		return ERR_PTR(ret);
+
 	if (bch_disk_reservation_get(c, &disk_res, sectors, flags))
 		return ERR_PTR(-ENOSPC);
 
