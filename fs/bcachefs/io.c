@@ -1028,7 +1028,7 @@ static void bch_read_endio(struct bio *bio)
 	struct bch_read_bio *rbio =
 		container_of(bio, struct bch_read_bio, bio);
 	struct cache_set *c = rbio->ca->set;
-	int stale = race_fault() ||
+	int stale = ((rbio->flags & BCH_READ_RETRY_IF_STALE) && race_fault()) ||
 		ptr_stale(rbio->ca, &rbio->ptr) ? -EINTR : 0;
 	int error = bio->bi_error ?: stale;
 
