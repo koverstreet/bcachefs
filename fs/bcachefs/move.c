@@ -112,7 +112,7 @@ nomatch:
 		}
 
 		while (bkey_cmp(iter.pos, bch_keylist_front(keys)->k.p) >= 0) {
-			bch_keylist_dequeue(keys);
+			bch_keylist_pop_front(keys);
 			if (bch_keylist_empty(keys))
 				goto out;
 		}

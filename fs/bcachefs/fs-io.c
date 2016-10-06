@@ -333,7 +333,7 @@ static int bchfs_write_index_update(struct bch_write_op *wop)
 		if (ret)
 			break;
 
-		bch_keylist_dequeue(keys);
+		bch_keylist_pop_front(keys);
 	} while (!bch_keylist_empty(keys));
 
 	bch_btree_iter_unlock(&extent_iter);

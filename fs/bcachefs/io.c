@@ -210,7 +210,7 @@ static void bch_write_done(struct closure *cl)
 
 	bch_disk_reservation_put(op->c, &op->res);
 	percpu_ref_put(&op->c->writes);
-	bch_keylist_free(&op->insert_keys);
+	bch_keylist_free(&op->insert_keys, op->inline_keys);
 	closure_return(cl);
 }
 
@@ -342,7 +342,7 @@ static void bch_write_io_error(struct closure *cl)
 	} else {
 		/* TODO: We could try to recover from this. */
 		while (!bch_keylist_empty(&op->insert_keys))
-			bch_keylist_dequeue(&op->insert_keys);
+			bch_keylist_pop_front(&op->insert_keys);
 
 		op->error = -EIO;
 		op->flags |= BCH_WRITE_DONE;
@@ -554,6 +554,8 @@ static void __bch_write(struct closure *cl)
 
 		/* for the device pointers and 1 for the chksum */
 		if (bch_keylist_realloc(&op->insert_keys,
+					op->inline_keys,
+					ARRAY_SIZE(op->inline_keys),
 					BKEY_EXTENT_U64s_MAX))
 			continue_at(cl, bch_write_index, op->c->wq);
 
@@ -617,7 +619,7 @@ static void __bch_write(struct closure *cl)
 		if (!(op->flags & BCH_WRITE_CACHED))
 			bch_check_mark_super(op->c, k, false);
 
-		bch_keylist_enqueue(&op->insert_keys);
+		bch_keylist_push(&op->insert_keys);
 
 		trace_bcache_cache_insert(&k->k);
 	} while (ret);

@@ -733,10 +733,9 @@ static void verify_keys_sorted(struct keylist *l)
 #ifdef CONFIG_BCACHEFS_DEBUG
 	struct bkey_i *k;
 
-	for (k = l->bot;
-	     k < l->top && bkey_next(k) < l->top;
-	     k = bkey_next(k))
-		BUG_ON(bkey_cmp(k->k.p, bkey_next(k)->k.p) >= 0);
+	for_each_keylist_key(l, k)
+		BUG_ON(bkey_next(k) != l->top &&
+		       bkey_cmp(k->k.p, bkey_next(k)->k.p) >= 0);
 #endif
 }
 
@@ -1100,7 +1099,7 @@ bch_btree_insert_keys_interior(struct btree *b,
 
 	btree_node_lock_for_insert(b, iter);
 
-	if (bch_keylist_nkeys(insert_keys) >
+	if (bch_keylist_u64s(insert_keys) >
 	    bch_btree_keys_u64s_remaining(iter->c, b)) {
 		btree_node_unlock_write(b, iter);
 		return BTREE_INSERT_BTREE_NODE_FULL;
@@ -1123,7 +1122,7 @@ bch_btree_insert_keys_interior(struct btree *b,
 
 		bch_insert_fixup_btree_ptr(iter, b, insert,
 					   &node_iter, &res->disk_res);
-		bch_keylist_dequeue(insert_keys);
+		bch_keylist_pop_front(insert_keys);
 	}
 
 	btree_interior_update_updated_btree(iter->c, as, b);
@@ -1232,7 +1231,7 @@ static void btree_split_insert_keys(struct btree_iter *iter, struct btree *b,
 	while (!bch_keylist_empty(keys)) {
 		k = bch_keylist_front(keys);
 
-		BUG_ON(bch_keylist_nkeys(keys) >
+		BUG_ON(bch_keylist_u64s(keys) >
 		       bch_btree_keys_u64s_remaining(iter->c, b));
 		BUG_ON(bkey_cmp(k->k.p, b->data->min_key) < 0);
 
@@ -1242,7 +1241,7 @@ static void btree_split_insert_keys(struct btree_iter *iter, struct btree *b,
 		}
 
 		bch_insert_fixup_btree_ptr(iter, b, k, &node_iter, &res->disk_res);
-		bch_keylist_dequeue(keys);
+		bch_keylist_pop_front(keys);
 	}
 
 	six_unlock_write(&b->lock);
@@ -1260,7 +1259,7 @@ static void btree_split(struct btree *b, struct btree_iter *iter,
 	struct btree *n1, *n2 = NULL, *n3 = NULL;
 	uint64_t start_time = local_clock();
 	unsigned u64s_to_insert = b->level
-		? bch_keylist_nkeys(insert_keys) : 0;
+		? bch_keylist_u64s(insert_keys) : 0;
 
 	BUG_ON(!parent && (b != btree_node_root(b)));
 	BUG_ON(!btree_node_intent_locked(iter, btree_node_root(b)->level));
@@ -1745,7 +1744,7 @@ int bch_btree_insert_list_at(struct btree_iter *iter,
 	BUG_ON(bch_keylist_empty(keys));
 	verify_keys_sorted(keys);
 
-	while (1) {
+	while (!bch_keylist_empty(keys)) {
 		/* need to traverse between each insert */
 		int ret = bch_btree_iter_traverse(iter);
 		if (ret)
@@ -1757,10 +1756,10 @@ int bch_btree_insert_list_at(struct btree_iter *iter,
 		if (ret)
 			return ret;
 
-		bch_keylist_dequeue(keys);
-		if (bch_keylist_empty(keys))
-			return 0;
+		bch_keylist_pop_front(keys);
 	}
+
+	return 0;
 }
 
 /**
