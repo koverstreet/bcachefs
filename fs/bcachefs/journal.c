@@ -1014,6 +1014,12 @@ static void __bch_journal_next_entry(struct journal *j)
 	BUG_ON(journal_pin_seq(j, p) != j->seq);
 }
 
+static inline size_t journal_entry_u64s_reserve(struct journal *j)
+{
+	return BTREE_ID_NR * (JSET_KEYS_U64s + BKEY_EXTENT_U64s_MAX) +
+		JSET_KEYS_U64s + j->nr_prio_buckets;
+}
+
 static enum {
 	JOURNAL_ENTRY_ERROR,
 	JOURNAL_ENTRY_INUSE,
@@ -1021,6 +1027,7 @@ static enum {
 	JOURNAL_UNLOCKED,
 } journal_buf_switch(struct journal *j, bool need_write_just_set)
 {
+	struct cache_set *c = container_of(j, struct cache_set, journal);
 	struct journal_buf *buf;
 	union journal_res_state old, new;
 	u64 v = atomic64_read(&j->reservations.counter);
@@ -1058,9 +1065,14 @@ static enum {
 	buf->data->u64s		= cpu_to_le32(old.cur_entry_offset);
 	buf->data->last_seq	= cpu_to_le64(last_seq(j));
 
+	j->prev_buf_sectors =
+		__set_blocks(buf->data,
+			     le32_to_cpu(buf->data->u64s) +
+			     journal_entry_u64s_reserve(j),
+			     block_bytes(c)) * c->sb.block_size;
+
 	atomic_dec_bug(&fifo_peek_back(&j->pin).count);
 	__bch_journal_next_entry(j);
-
 	spin_unlock(&j->lock);
 
 	/* ugh - might be called from __journal_res_get() under wait_event() */
@@ -1127,14 +1139,6 @@ static int journal_entry_sectors(struct journal *j)
 	struct cache_set *c = container_of(j, struct cache_set, journal);
 	struct cache *ca;
 	struct bkey_s_extent e = bkey_i_to_s_extent(&j->key);
-	struct journal_buf *w = journal_prev_buf(j);
-	union journal_res_state s = j->reservations;
-	bool prev_unwritten = journal_state_count(s, !s.idx);
-	unsigned prev_sectors = prev_unwritten
-		?  __set_blocks(w->data,
-				le32_to_cpu(w->data->u64s),
-				block_bytes(c)) * c->sb.block_size
-		: 0;
 	unsigned sectors_available = JOURNAL_BUF_SECTORS;
 	unsigned i, nr_online = 0, nr_devs = 0;
 
@@ -1154,14 +1158,14 @@ static int journal_entry_sectors(struct journal *j)
 		 * it too:
 		 */
 		if (bch_extent_has_device(e.c, ca->sb.nr_this_dev)) {
-			if (prev_sectors > ca->journal.sectors_free)
+			if (j->prev_buf_sectors > ca->journal.sectors_free)
 				buckets_required++;
 
-			if (prev_sectors + sectors_available >
+			if (j->prev_buf_sectors + sectors_available >
 			    ca->journal.sectors_free)
 				buckets_required++;
 		} else {
-			if (prev_sectors + sectors_available >
+			if (j->prev_buf_sectors + sectors_available >
 			    ca->mi.bucket_size)
 				buckets_required++;
 
@@ -1212,8 +1216,7 @@ static int journal_entry_open(struct journal *j)
 	 * Btree roots, prio pointers don't get added until right before we do
 	 * the write:
 	 */
-	u64s -= BTREE_ID_NR * (JSET_KEYS_U64s + BKEY_EXTENT_U64s_MAX);
-	u64s -= JSET_KEYS_U64s + j->nr_prio_buckets;
+	u64s -= journal_entry_u64s_reserve(j);
 	u64s  = max_t(ssize_t, 0L, u64s);
 
 	if (u64s > le32_to_cpu(buf->data->u64s)) {
@@ -1732,6 +1735,8 @@ static int journal_write_alloc(struct journal *j, unsigned sectors)
 		    ca->mi.state != CACHE_ACTIVE ||
 		    ca->journal.sectors_free <= sectors)
 			__bch_extent_drop_ptr(e, ptr);
+		else
+			ca->journal.sectors_free -= sectors;
 
 	replicas = bch_extent_nr_ptrs(e.c);
 
@@ -1751,10 +1756,11 @@ static int journal_write_alloc(struct journal *j, unsigned sectors)
 		 * it:
 		 */
 		if (bch_extent_has_device(e.c, ca->sb.nr_this_dev) ||
-		    !journal_dev_buckets_available(j, ca))
+		    !journal_dev_buckets_available(j, ca) ||
+		    sectors > ca->mi.bucket_size)
 			continue;
 
-		ja->sectors_free = ca->mi.bucket_size;
+		ja->sectors_free = ca->mi.bucket_size - sectors;
 		ja->cur_idx = (ja->cur_idx + 1) % nr_buckets;
 		ja->bucket_seq[ja->cur_idx] = j->seq;
 
@@ -1771,6 +1777,8 @@ static int journal_write_alloc(struct journal *j, unsigned sectors)
 	}
 
 	rcu_read_unlock();
+
+	j->prev_buf_sectors = 0;
 	spin_unlock(&j->lock);
 
 	if (replicas < replicas_want)
@@ -1918,6 +1926,7 @@ static void journal_write(struct closure *cl)
 
 	sectors = __set_blocks(w->data, le32_to_cpu(w->data->u64s),
 			       block_bytes(c)) * c->sb.block_size;
+	BUG_ON(sectors > j->prev_buf_sectors);
 
 	if (journal_write_alloc(j, sectors)) {
 		bch_journal_halt(j);
@@ -1940,9 +1949,6 @@ static void journal_write(struct closure *cl)
 			bch_err(c, "missing device for journal write\n");
 			continue;
 		}
-
-		BUG_ON(sectors > ca->journal.sectors_free);
-		ca->journal.sectors_free -= sectors;
 
 		bio = &ca->journal.bio;
 

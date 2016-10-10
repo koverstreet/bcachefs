@@ -111,6 +111,7 @@ struct journal {
 
 	union journal_res_state reservations;
 	unsigned		cur_entry_u64s;
+	unsigned		prev_buf_sectors;
 
 	/*
 	 * Two journal entries -- one is currently open for new entries, the
