@@ -1953,8 +1953,7 @@ static const char *cache_alloc(struct bcache_superblock *sb,
 	ca->bucket_bits = ilog2(ca->mi.bucket_size);
 
 	/* XXX: tune these */
-	movinggc_reserve = max_t(size_t, NUM_GC_GENS * 4,
-				 ca->mi.nbuckets >> 7);
+	movinggc_reserve = max_t(size_t, 16, ca->mi.nbuckets >> 7);
 	reserve_none = max_t(size_t, 4, ca->mi.nbuckets >> 9);
 	/*
 	 * free_inc must be smaller than the copygc reserve: if it was bigger,
@@ -1996,10 +1995,8 @@ static const char *cache_alloc(struct bcache_superblock *sb,
 		total_reserve += ca->free[i].size;
 	pr_debug("%zu buckets reserved", total_reserve);
 
-	for (i = 0; i < ARRAY_SIZE(ca->gc_buckets); i++) {
-		ca->gc_buckets[i].reserve = RESERVE_MOVINGGC;
-		ca->gc_buckets[i].group = &ca->self;
-	}
+	ca->copygc_write_point.reserve = RESERVE_MOVINGGC;
+	ca->copygc_write_point.group = &ca->self;
 
 	ca->tiering_write_point.reserve = RESERVE_NONE;
 	ca->tiering_write_point.group = &ca->self;

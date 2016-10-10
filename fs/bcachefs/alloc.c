@@ -1671,9 +1671,7 @@ void bch_cache_allocator_stop(struct cache *ca)
 	for (i = 0; i < ARRAY_SIZE(c->write_points); i++)
 		bch_stop_write_point(ca, &c->write_points[i]);
 
-	for (i = 0; i < ARRAY_SIZE(ca->gc_buckets); i++)
-		bch_stop_write_point(ca, &ca->gc_buckets[i]);
-
+	bch_stop_write_point(ca, &ca->copygc_write_point);
 	bch_stop_write_point(ca, &c->promote_write_point);
 	bch_stop_write_point(ca, &ca->tiering_write_point);
 	bch_stop_write_point(ca, &c->migration_write_point);

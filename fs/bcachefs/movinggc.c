@@ -49,20 +49,16 @@ static int issue_moving_gc_move(struct cache *ca,
 	struct cache_set *c = ca->set;
 	const struct bch_extent_ptr *ptr;
 	struct moving_io *io;
-	unsigned gen;
 
 	extent_for_each_ptr(bkey_s_c_to_extent(k), ptr)
 		if ((ca->sb.nr_this_dev == ptr->dev) &&
-		    (gen = PTR_BUCKET(ca, ptr)->copygc_gen))
+		    PTR_BUCKET(ca, ptr)->copygc_gen)
 			goto found;
 
 	/* We raced - bucket's been reused */
 	return 0;
 found:
-	gen--;
-	BUG_ON(gen > ARRAY_SIZE(ca->gc_buckets));
-
-	io = moving_io_alloc(c, q, &ca->gc_buckets[gen], k, ptr);
+	io = moving_io_alloc(c, q, &ca->copygc_write_point, k, ptr);
 	if (!io) {
 		trace_bcache_moving_gc_alloc_fail(c, k.k->size);
 		return -ENOMEM;
@@ -135,7 +131,7 @@ static void bch_moving_gc(struct cache *ca)
 {
 	struct cache_set *c = ca->set;
 	struct bucket *g;
-	u64 sectors_to_move, sectors_gen, gen_current, sectors_total;
+	u64 sectors_to_move;
 	size_t buckets_to_move, buckets_unused = 0;
 	struct bucket_heap_entry e;
 	unsigned sectors_used, i;
@@ -209,32 +205,10 @@ static void bch_moving_gc(struct cache *ca)
 		sectors_to_move -= e.val;
 	}
 
+	for (i = 0; i < ca->heap.used; i++)
+		ca->heap.data[i].g->copygc_gen = 1;
+
 	buckets_to_move = ca->heap.used;
-
-	/*
-	 * resort by write_prio to group into generations, attempts to
-	 * keep hot and cold data in the same locality.
-	 */
-
-	for (i = 0; i < ca->heap.used; i++) {
-		struct bucket_heap_entry *e = &ca->heap.data[i];
-
-		e->val = (c->prio_clock[WRITE].hand - e->g->write_prio);
-	}
-
-	heap_resort(&ca->heap, bucket_max_cmp);
-
-	sectors_gen = sectors_to_move / NUM_GC_GENS;
-	gen_current = 1;
-	sectors_total = 0;
-
-	while (heap_pop(&ca->heap, e, bucket_max_cmp)) {
-		sectors_total += bucket_sectors_used(e.g);
-		e.g->copygc_gen = gen_current;
-		if (gen_current < NUM_GC_GENS &&
-		    sectors_total >= sectors_gen * gen_current)
-			gen_current++;
-	}
 
 	mutex_unlock(&ca->set->bucket_lock);
 	mutex_unlock(&ca->heap_lock);

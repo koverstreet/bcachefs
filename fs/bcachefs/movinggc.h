@@ -21,8 +21,7 @@
  * fragmentation from the multiple write points for each generation:
  */
 #define COPYGC_SECTORS_PER_ITER(ca)					\
-	((ca)->mi.bucket_size *						\
-	 (COPYGC_BUCKETS_PER_ITER(ca) - (NUM_GC_GENS - 1)))
+	((ca)->mi.bucket_size *	COPYGC_BUCKETS_PER_ITER(ca))
 
 int bch_moving_init_cache(struct cache *);
 void bch_moving_gc_stop(struct cache *);
