@@ -78,15 +78,6 @@ int bch_move_data_off_device(struct cache *ca)
 
 	BUG_ON(ca->moving_gc_read != NULL);
 
-	/*
-	 * This may actually need to start the work queue because the
-	 * device may have always been read-only and never have had it
-	 * started (moving gc usually starts it but not for RO
-	 * devices).
-	 */
-
-	bch_queue_start(queue);
-
 	queue_io_resize(queue, MIGRATE_NR, MIGRATE_READ_NR, MIGRATE_WRITE_NR);
 
 	BUG_ON(queue->wq == NULL);

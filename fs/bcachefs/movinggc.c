@@ -287,8 +287,6 @@ int bch_moving_gc_thread_start(struct cache *ca)
 	/* The moving gc read thread must be stopped */
 	BUG_ON(ca->moving_gc_read != NULL);
 
-	bch_queue_start(&ca->moving_gc_queue);
-
 	if (cache_set_init_fault("moving_gc_start"))
 		return -ENOMEM;
 
@@ -306,8 +304,6 @@ void bch_moving_gc_stop(struct cache *ca)
 {
 	ca->moving_gc_pd.rate.rate = UINT_MAX;
 	bch_ratelimit_reset(&ca->moving_gc_pd.rate);
-
-	bch_queue_stop(&ca->moving_gc_queue);
 
 	if (ca->moving_gc_read)
 		kthread_stop(ca->moving_gc_read);

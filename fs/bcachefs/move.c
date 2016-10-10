@@ -265,11 +265,6 @@ static void moving_io_destructor(struct closure *cl)
 
 	list_del_init(&io->list);
 
-	if (!atomic_read(&q->count) && q->stop_waitcl) {
-		closure_put(q->stop_waitcl);
-		q->stop_waitcl = NULL;
-	}
-
 	if (q->rotational && bch_queue_reads_pending(q))
 		kick_writes = false;
 
@@ -297,21 +292,9 @@ static void moving_io_after_write(struct closure *cl)
 
 static void write_moving(struct moving_io *io)
 {
-	bool stopped;
 	struct bch_write_op *op = &io->write.op;
 
-	spin_lock_irq(&io->q->lock);
-	BUG_ON(!atomic_read(&io->q->count));
-	stopped = io->q->stopped;
-	spin_unlock_irq(&io->q->lock);
-
-	/*
-	 * If the queue has been stopped, prevent the write from occurring.
-	 * This stops all writes on a device going read-only as quickly
-	 * as possible.
-	 */
-
-	if (op->error || stopped)
+	if (op->error)
 		closure_return_with_destructor(&io->cl, moving_io_destructor);
 	else {
 		closure_call(&op->cl, bch_write, NULL, &io->cl);
@@ -332,8 +315,7 @@ static void bch_queue_write_work(struct work_struct *work)
 		return;
 	}
 
-	while (!q->stopped &&
-	       atomic_read(&q->write_count) < q->max_write_count) {
+	while (atomic_read(&q->write_count) < q->max_write_count) {
 		io = list_first_entry_or_null(&q->pending,
 					struct moving_io, list);
 		/*
@@ -396,15 +378,6 @@ int bch_queue_init(struct moving_queue *q,
 	return 0;
 }
 
-void bch_queue_start(struct moving_queue *q)
-{
-	unsigned long flags;
-
-	spin_lock_irqsave(&q->lock, flags);
-	q->stopped = false;
-	spin_unlock_irqrestore(&q->lock, flags);
-}
-
 void queue_io_resize(struct moving_queue *q,
 		     unsigned max_io,
 		     unsigned max_read,
@@ -424,65 +397,6 @@ void bch_queue_destroy(struct moving_queue *q)
 	if (q->wq)
 		destroy_workqueue(q->wq);
 	q->wq = NULL;
-}
-
-static void bch_queue_cancel_writes(struct moving_queue *q)
-{
-	struct moving_io *io;
-	unsigned long flags;
-	bool read_issued, read_completed;
-
-	spin_lock_irqsave(&q->lock, flags);
-
-	while (1) {
-		io = list_first_entry_or_null(&q->pending,
-					      struct moving_io,
-					      list);
-		if (!io)
-			break;
-
-		BUG_ON(io->write_issued);
-		list_del_init(&io->list);
-		read_issued = io->read_issued;
-		read_completed = io->read_completed;
-		if (!read_issued && !read_completed && q->rotational) {
-			rb_erase(&io->node, &q->tree);
-			wake_up(&q->wait);
-		}
-
-		spin_unlock_irqrestore(&q->lock, flags);
-		if (read_completed)
-			closure_return_with_destructor_noreturn(&io->cl,
-					moving_io_destructor);
-		else if (!read_issued)
-			moving_io_destructor(&io->cl);
-		spin_lock_irqsave(&q->lock, flags);
-	}
-
-	spin_unlock_irqrestore(&q->lock, flags);
-}
-
-void bch_queue_stop(struct moving_queue *q)
-{
-	struct closure waitcl;
-
-	closure_init_stack(&waitcl);
-
-	spin_lock_irq(&q->lock);
-	if (q->stopped)
-		BUG_ON(q->stop_waitcl != NULL);
-	else {
-		q->stopped = true;
-		if (atomic_read(&q->count)) {
-			q->stop_waitcl = &waitcl;
-			closure_get(&waitcl);
-		}
-	}
-	spin_unlock_irq(&q->lock);
-
-	bch_queue_cancel_writes(q);
-
-	closure_sync(&waitcl);
 }
 
 static void pending_recalc_oldest_gens(struct cache_set *c, struct list_head *l)
@@ -521,9 +435,10 @@ static void read_moving_endio(struct bio *bio)
 	struct closure *cl = bio->bi_private;
 	struct moving_io *io = container_of(cl, struct moving_io, cl);
 	struct moving_queue *q = io->q;
-	bool stopped;
 
 	unsigned long flags;
+
+	trace_bcache_move_read_done(q, &io->write.key.k);
 
 	if (bio->bi_error) {
 		io->write.op.error = bio->bi_error;
@@ -532,28 +447,20 @@ static void read_moving_endio(struct bio *bio)
 
 	bio_put(bio);
 
-	spin_lock_irqsave(&q->lock, flags);
-
-	trace_bcache_move_read_done(q, &io->write.key.k);
-
 	BUG_ON(!io->read_issued);
 	BUG_ON(io->read_completed);
+
+	spin_lock_irqsave(&q->lock, flags);
 	io->read_issued = 0;
 	io->read_completed = 1;
 
 	BUG_ON(!atomic_read(&q->read_count));
 	atomic_dec(&q->read_count);
-	wake_up(&q->wait);
-
-	stopped = q->stopped;
-	if (stopped)
-		list_del_init(&io->list);
 	spin_unlock_irqrestore(&q->lock, flags);
 
-	if (stopped)
-		closure_return_with_destructor(&io->cl,
-			moving_io_destructor);
-	else if (!q->rotational)
+	wake_up(&q->wait);
+
+	if (!q->rotational)
 		bch_queue_write(q);
 }
 
@@ -600,7 +507,6 @@ void bch_data_move(struct moving_queue *q,
 		   struct moving_io *io)
 {
 	unsigned size = io->write.key.k.size;
-	bool stopped = false;
 
 	ctxt->keys_moved++;
 	ctxt->sectors_moved += size;
@@ -612,11 +518,6 @@ void bch_data_move(struct moving_queue *q,
 	io->context = ctxt;
 
 	spin_lock_irq(&q->lock);
-	if (q->stopped) {
-		stopped = true;
-		goto out;
-	}
-
 	atomic_inc(&q->count);
 	list_add_tail(&io->list, &q->pending);
 	trace_bcache_move_read(q, &io->write.key.k);
@@ -629,12 +530,9 @@ void bch_data_move(struct moving_queue *q,
 		atomic_inc(&q->read_count);
 	}
 
-out:
 	spin_unlock_irq(&q->lock);
 
-	if (stopped)
-		moving_io_free(io);
-	else if (!q->rotational)
+	if (!q->rotational)
 		closure_call(&io->cl, __bch_data_move, NULL, &ctxt->cl);
 }
 
@@ -645,7 +543,6 @@ static bool bch_queue_read(struct moving_queue *q,
 {
 	struct rb_node *node;
 	struct moving_io *io;
-	bool stopped;
 
 	BUG_ON(!q->rotational);
 
@@ -662,16 +559,10 @@ static bool bch_queue_read(struct moving_queue *q,
 
 	io->read_issued = 1;
 	atomic_inc(&q->read_count);
-	stopped = q->stopped;
 	spin_unlock_irq(&q->lock);
 
-	if (stopped) {
-		moving_io_destructor(&io->cl);
-		return false;
-	} else {
-		closure_call(&io->cl, __bch_data_move, NULL, &ctxt->cl);
-		return true;
-	}
+	closure_call(&io->cl, __bch_data_move, NULL, &ctxt->cl);
+	return true;
 }
 
 void bch_queue_run(struct moving_queue *q, struct moving_context *ctxt)

@@ -253,11 +253,6 @@ int bch_tiering_init_cache(struct cache *ca)
 			      "bch_tier_write");
 }
 
-void bch_tiering_write_start(struct cache *ca)
-{
-	bch_queue_start(&ca->tiering_queue);
-}
-
 int bch_tiering_read_start(struct cache_set *c)
 {
 	struct task_struct *t;
@@ -275,11 +270,6 @@ int bch_tiering_read_start(struct cache_set *c)
 void bch_tiering_write_destroy(struct cache *ca)
 {
 	bch_queue_destroy(&ca->tiering_queue);
-}
-
-void bch_tiering_write_stop(struct cache *ca)
-{
-	bch_queue_stop(&ca->tiering_queue);
 }
 
 void bch_tiering_read_stop(struct cache_set *c)

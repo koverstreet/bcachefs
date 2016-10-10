@@ -122,7 +122,6 @@ int bch_queue_init(struct moving_queue *,
 		   unsigned max_writes,
 		   bool rotational,
 		   const char *);
-void bch_queue_start(struct moving_queue *);
 
 /*
  * bch_queue_full() - return if more reads can be queued with bch_data_move().
@@ -147,7 +146,6 @@ void queue_io_resize(struct moving_queue *,
 		     unsigned,
 		     unsigned);
 void bch_queue_destroy(struct moving_queue *);
-void bch_queue_stop(struct moving_queue *);
 
 void bch_queue_recalc_oldest_gens(struct cache_set *, struct moving_queue *);
 

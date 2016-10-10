@@ -691,10 +691,8 @@ static void __bch_cache_set_read_only(struct cache_set *c)
 	bch_ratelimit_reset(&c->tiering_pd.rate);
 	bch_tiering_read_stop(c);
 
-	for_each_cache(ca, c, i) {
-		bch_tiering_write_stop(ca);
+	for_each_cache(ca, c, i)
 		bch_moving_gc_stop(ca);
-	}
 
 	bch_gc_thread_stop(c);
 
@@ -846,8 +844,6 @@ static const char *__bch_cache_set_read_write(struct cache_set *c)
 			percpu_ref_put(&ca->ref);
 			goto err;
 		}
-
-		bch_tiering_write_start(ca);
 	}
 
 	err = "error starting tiering thread";
@@ -1541,7 +1537,6 @@ static void __bch_cache_read_only(struct cache *ca)
 {
 	trace_bcache_cache_read_only(ca);
 
-	bch_tiering_write_stop(ca);
 	bch_moving_gc_stop(ca);
 
 	/*
@@ -1597,8 +1592,6 @@ static const char *__bch_cache_read_write(struct cache *ca)
 	lockdep_assert_held(&bch_register_lock);
 
 	trace_bcache_cache_read_write(ca);
-
-	bch_tiering_write_start(ca);
 
 	trace_bcache_cache_read_write_done(ca);
 

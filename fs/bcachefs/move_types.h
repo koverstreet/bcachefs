@@ -22,13 +22,8 @@ struct moving_queue {
 	 */
 	bool			rotational;
 
-	/* This can be examined without locking */
-	bool			stopped;
-
 	/* Protects everything below */
 	spinlock_t		lock;
-
-	struct closure		*stop_waitcl;
 
 	/*
 	 * Tree of struct moving_io, sorted by moving_io->sort_key.
