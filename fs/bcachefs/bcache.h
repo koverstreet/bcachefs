@@ -429,13 +429,10 @@ struct cache {
 	/* Moving GC: */
 	struct task_struct	*moving_gc_read;
 
-	struct moving_queue	moving_gc_queue;
 	struct bch_pd_controller moving_gc_pd;
 
 	/* Tiering: */
-	struct moving_queue	tiering_queue;
 	struct write_point	tiering_write_point;
-	unsigned		tiering_stripe_size;
 
 	struct write_point	copygc_write_point;
 

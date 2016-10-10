@@ -45,10 +45,9 @@ static int issue_moving_gc_move(struct cache *ca,
 				struct moving_context *ctxt,
 				struct bkey_s_c k)
 {
-	struct moving_queue *q = &ca->moving_gc_queue;
 	struct cache_set *c = ca->set;
 	const struct bch_extent_ptr *ptr;
-	struct moving_io *io;
+	int ret;
 
 	extent_for_each_ptr(bkey_s_c_to_extent(k), ptr)
 		if ((ca->sb.nr_this_dev == ptr->dev) &&
@@ -58,48 +57,36 @@ static int issue_moving_gc_move(struct cache *ca,
 	/* We raced - bucket's been reused */
 	return 0;
 found:
-	io = moving_io_alloc(c, q, &ca->copygc_write_point, k, ptr);
-	if (!io) {
+	ret = bch_data_move(c, ctxt, &ca->copygc_write_point, k, ptr);
+	if (!ret)
+		trace_bcache_gc_copy(k.k);
+	else
 		trace_bcache_moving_gc_alloc_fail(c, k.k->size);
-		return -ENOMEM;
-	}
-
-	trace_bcache_gc_copy(k.k);
-
-	bch_data_move(q, ctxt, io);
-	return 0;
+	return ret;
 }
 
-static void read_moving(struct cache *ca, struct moving_context *ctxt)
+static void read_moving(struct cache *ca, size_t buckets_to_move)
 {
 	struct cache_set *c = ca->set;
+	struct moving_context ctxt;
 	struct btree_iter iter;
 	struct bkey_s_c k;
 
 	bch_ratelimit_reset(&ca->moving_gc_pd.rate);
+	bch_move_ctxt_init(&ctxt, &ca->moving_gc_pd.rate,
+				SECTORS_IN_FLIGHT_PER_DEVICE);
 	bch_btree_iter_init(&iter, c, BTREE_ID_EXTENTS, POS_MIN);
 
-	while (!bch_moving_context_wait(ctxt) &&
+	while (!bch_move_ctxt_wait(&ctxt) &&
 	       (k = bch_btree_iter_peek(&iter)).k) {
 		if (!moving_pred(ca, k))
 			goto next;
 
-		if (bch_queue_full(&ca->moving_gc_queue)) {
+		if (issue_moving_gc_move(ca, &ctxt, k)) {
 			bch_btree_iter_unlock(&iter);
 
-			if (ca->moving_gc_queue.rotational)
-				bch_queue_run(&ca->moving_gc_queue, ctxt);
-			else
-				wait_event(ca->moving_gc_queue.wait,
-					!bch_queue_full(&ca->moving_gc_queue));
-			continue;
-		}
-
-		if (issue_moving_gc_move(ca, ctxt, k)) {
-			bch_btree_iter_unlock(&iter);
-
-			/* memory allocation failure, wait for IOs to finish */
-			bch_queue_run(&ca->moving_gc_queue, ctxt);
+			/* memory allocation failure, wait for some IO to finish */
+			bch_move_ctxt_wait_for_io(&ctxt);
 			continue;
 		}
 next:
@@ -112,7 +99,9 @@ next:
 	}
 
 	bch_btree_iter_unlock(&iter);
-	bch_queue_run(&ca->moving_gc_queue, ctxt);
+	bch_move_ctxt_exit(&ctxt);
+	trace_bcache_moving_gc_end(ca, ctxt.sectors_moved, ctxt.keys_moved,
+				   buckets_to_move);
 }
 
 static bool have_copygc_reserve(struct cache *ca)
@@ -136,11 +125,6 @@ static void bch_moving_gc(struct cache *ca)
 	struct bucket_heap_entry e;
 	unsigned sectors_used, i;
 	int reserve_sectors;
-
-	struct moving_context ctxt;
-
-	bch_moving_context_init(&ctxt, &ca->moving_gc_pd.rate,
-				MOVING_PURPOSE_COPY_GC);
 
 	if (!have_copygc_reserve(ca)) {
 		struct closure cl;
@@ -214,15 +198,12 @@ static void bch_moving_gc(struct cache *ca)
 	mutex_unlock(&ca->heap_lock);
 	up_read(&c->gc_lock);
 
-	read_moving(ca, &ctxt);
+	read_moving(ca, buckets_to_move);
 
 	if (IS_ENABLED(CONFIG_BCACHEFS_DEBUG)) {
 		for_each_bucket(g, ca)
 			BUG_ON(g->copygc_gen && bucket_sectors_used(g));
 	}
-
-	trace_bcache_moving_gc_end(ca, ctxt.sectors_moved, ctxt.keys_moved,
-				buckets_to_move);
 }
 
 static int bch_moving_gc_thread(void *arg)
@@ -260,24 +241,10 @@ static int bch_moving_gc_thread(void *arg)
 	return 0;
 }
 
-#define MOVING_GC_NR 64
-#define MOVING_GC_READ_NR 32
-#define MOVING_GC_WRITE_NR 32
-
-int bch_moving_init_cache(struct cache *ca)
+void bch_moving_init_cache(struct cache *ca)
 {
-	bool rotational = !blk_queue_nonrot(bdev_get_queue(ca->disk_sb.bdev));
-
 	bch_pd_controller_init(&ca->moving_gc_pd);
 	ca->moving_gc_pd.d_term = 0;
-
-	return bch_queue_init(&ca->moving_gc_queue,
-			      ca->set,
-			      MOVING_GC_NR,
-			      MOVING_GC_READ_NR,
-			      MOVING_GC_WRITE_NR,
-			      rotational,
-			      "bch_copygc_write");
 }
 
 int bch_moving_gc_thread_start(struct cache *ca)
@@ -308,9 +275,4 @@ void bch_moving_gc_stop(struct cache *ca)
 	if (ca->moving_gc_read)
 		kthread_stop(ca->moving_gc_read);
 	ca->moving_gc_read = NULL;
-}
-
-void bch_moving_gc_destroy(struct cache *ca)
-{
-	bch_queue_destroy(&ca->moving_gc_queue);
 }

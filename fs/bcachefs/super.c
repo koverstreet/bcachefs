@@ -1654,15 +1654,6 @@ static void bch_cache_free_work(struct work_struct *work)
 	struct cache_set *c = ca->set;
 	unsigned i;
 
-	/*
-	 * These test internally and skip if never initialized,
-	 * hence we don't need to test here. However, we do need
-	 * to unregister them before we drop our reference to
-	 * @c.
-	 */
-	bch_moving_gc_destroy(ca);
-	bch_tiering_write_destroy(ca);
-
 	cancel_work_sync(&ca->io_error_work);
 
 	if (c && c->kobj.state_in_sysfs) {
@@ -1930,6 +1921,7 @@ static const char *cache_alloc(struct bcache_superblock *sb,
 	spin_lock_init(&ca->freelist_lock);
 	spin_lock_init(&ca->prio_buckets_lock);
 	mutex_init(&ca->heap_lock);
+	bch_moving_init_cache(ca);
 
 	ca->disk_sb = *sb;
 	ca->disk_sb.bdev->bd_holder = ca;
@@ -1976,9 +1968,7 @@ static const char *cache_alloc(struct bcache_superblock *sb,
 	    !(ca->bio_prio = bio_kmalloc(GFP_NOIO, bucket_pages(ca))) ||
 	    bioset_init(&ca->replica_set, 4,
 			offsetof(struct bch_write_bio, bio.bio)) ||
-	    !(ca->sectors_written = alloc_percpu(*ca->sectors_written)) ||
-	    bch_moving_init_cache(ca) ||
-	    bch_tiering_init_cache(ca))
+	    !(ca->sectors_written = alloc_percpu(*ca->sectors_written)))
 		goto err;
 
 	ca->prio_last_buckets = ca->prio_buckets + prio_buckets(ca);

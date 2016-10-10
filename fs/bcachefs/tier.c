@@ -86,21 +86,17 @@ static int issue_tiering_move(struct cache_set *c,
 			      struct moving_context *ctxt,
 			      struct bkey_s_c k)
 {
-	struct moving_io *io;
+	int ret;
 
-	io = moving_io_alloc(c,
-			     &s->ca->tiering_queue,
-			     &s->ca->tiering_write_point,
-			     k, NULL);
-	if (!io) {
+	ret = bch_data_move(c, ctxt, &s->ca->tiering_write_point, k, NULL);
+	if (!ret) {
+		trace_bcache_tiering_copy(k.k);
+		s->sectors += k.k->size;
+	} else {
 		trace_bcache_tiering_alloc_fail(c, k.k->size);
-		return -ENOMEM;
 	}
 
-	trace_bcache_tiering_copy(k.k);
-	bch_data_move(&s->ca->tiering_queue, ctxt, io);
-	s->sectors += k.k->size;
-	return 0;
+	return ret;
 }
 
 /**
@@ -113,7 +109,11 @@ static s64 read_tiering(struct cache_set *c, struct cache_group *tier)
 	struct tiering_state s;
 	struct btree_iter iter;
 	struct bkey_s_c k;
+	unsigned nr_devices = READ_ONCE(tier->nr_devices);
 	int ret;
+
+	if (!nr_devices)
+		return 0;
 
 	trace_bcache_tiering_start(c);
 
@@ -122,11 +122,11 @@ static s64 read_tiering(struct cache_set *c, struct cache_group *tier)
 	s.tier_idx	= tier - c->cache_tiers;
 	s.stripe_size	= 2048; /* 1 mb for now */
 
-	bch_moving_context_init(&ctxt, &c->tiering_pd.rate,
-				MOVING_PURPOSE_TIERING);
+	bch_move_ctxt_init(&ctxt, &c->tiering_pd.rate,
+			   nr_devices * SECTORS_IN_FLIGHT_PER_DEVICE);
 	bch_btree_iter_init(&iter, c, BTREE_ID_EXTENTS, POS_MIN);
 
-	while (!bch_moving_context_wait(&ctxt) &&
+	while (!bch_move_ctxt_wait(&ctxt) &&
 	       (k = bch_btree_iter_peek(&iter)).k) {
 		if (!tiering_pred(c, &s, k))
 			goto next;
@@ -135,29 +135,12 @@ static s64 read_tiering(struct cache_set *c, struct cache_group *tier)
 		if (!s.ca)
 			break;
 
-		if (bch_queue_full(&s.ca->tiering_queue)) {
-			bch_btree_iter_unlock(&iter);
-
-			if (s.ca->tiering_queue.rotational)
-				bch_queue_run(&s.ca->tiering_queue, &ctxt);
-			else
-				wait_event(s.ca->tiering_queue.wait,
-					!bch_queue_full(&s.ca->tiering_queue));
-			continue;
-		}
-
 		ret = issue_tiering_move(c, &s, &ctxt, k);
 		if (ret) {
 			bch_btree_iter_unlock(&iter);
 
-			/* memory allocation failure, wait for IOs to finish */
-
-			/*
-			 * XXX: this only waits for IOs issued to this
-			 * particular device, but there may not be any outstanding
-			 * to this device
-			 */
-			bch_queue_run(&s.ca->tiering_queue, &ctxt);
+			/* memory allocation failure, wait for some IO to finish */
+			bch_move_ctxt_wait_for_io(&ctxt);
 			continue;
 		}
 next:
@@ -171,7 +154,7 @@ next:
 
 	bch_btree_iter_unlock(&iter);
 	tier_put_device(&s);
-	closure_sync(&ctxt.cl);
+	bch_move_ctxt_exit(&ctxt);
 	trace_bcache_tiering_end(c, ctxt.sectors_moved, ctxt.keys_moved);
 
 	return ctxt.sectors_moved;
@@ -231,26 +214,9 @@ static int bch_tiering_thread(void *arg)
 	return 0;
 }
 
-#define TIERING_NR 64
-#define TIERING_READ_NR 8
-#define TIERING_WRITE_NR 32
-
 void bch_tiering_init_cache_set(struct cache_set *c)
 {
 	bch_pd_controller_init(&c->tiering_pd);
-}
-
-int bch_tiering_init_cache(struct cache *ca)
-{
-	ca->tiering_stripe_size = ca->mi.bucket_size * 2;
-
-	return bch_queue_init(&ca->tiering_queue,
-			      ca->set,
-			      TIERING_NR,
-			      TIERING_READ_NR,
-			      TIERING_WRITE_NR,
-			      false,
-			      "bch_tier_write");
 }
 
 int bch_tiering_read_start(struct cache_set *c)
@@ -265,11 +231,6 @@ int bch_tiering_read_start(struct cache_set *c)
 	wake_up_process(c->tiering_read);
 
 	return 0;
-}
-
-void bch_tiering_write_destroy(struct cache *ca)
-{
-	bch_queue_destroy(&ca->tiering_queue);
 }
 
 void bch_tiering_read_stop(struct cache_set *c)

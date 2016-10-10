@@ -16,11 +16,10 @@ static int issue_migration_move(struct cache *ca,
 				struct moving_context *ctxt,
 				struct bkey_s_c k)
 {
-	struct moving_queue *q = &ca->moving_gc_queue;
 	struct cache_set *c = ca->set;
-	struct moving_io *io;
 	struct disk_reservation res;
 	const struct bch_extent_ptr *ptr;
+	int ret;
 
 	if (bch_disk_reservation_get(c, &res, k.k->size, 0))
 		return -ENOSPC;
@@ -31,20 +30,15 @@ static int issue_migration_move(struct cache *ca,
 
 	BUG();
 found:
-	io = moving_io_alloc(c, q, &c->migration_write_point, k, ptr);
-	if (!io) {
-		bch_disk_reservation_put(c, &res);
-		return -ENOMEM;
-	}
+	/* XXX: we need to be doing something with the disk reservation */
 
-	bch_data_move(q, ctxt, io);
-	return 0;
+	ret = bch_data_move(c, ctxt, &c->migration_write_point, k, ptr);
+	if (ret)
+		bch_disk_reservation_put(c, &res);
+	return ret;
 }
 
 #define MAX_DATA_OFF_ITER	10
-#define MIGRATE_NR		64
-#define MIGRATE_READ_NR		32
-#define MIGRATE_WRITE_NR	32
 
 /*
  * This moves only the data off, leaving the meta-data (if any) in place.
@@ -64,24 +58,13 @@ int bch_move_data_off_device(struct cache *ca)
 {
 	struct moving_context ctxt;
 	struct cache_set *c = ca->set;
-	struct moving_queue *queue = &ca->moving_gc_queue;
 	unsigned pass = 0;
 	u64 seen_key_count;
 	int ret = 0;
 
 	BUG_ON(ca->mi.state == CACHE_ACTIVE);
 
-	/*
-	 * This reuses the moving gc queue as it is no longer in use
-	 * by moving gc, which must have been stopped to call this.
-	 */
-
-	BUG_ON(ca->moving_gc_read != NULL);
-
-	queue_io_resize(queue, MIGRATE_NR, MIGRATE_READ_NR, MIGRATE_WRITE_NR);
-
-	BUG_ON(queue->wq == NULL);
-	bch_moving_context_init(&ctxt, NULL, MOVING_PURPOSE_MIGRATION);
+	bch_move_ctxt_init(&ctxt, NULL, SECTORS_IN_FLIGHT_PER_DEVICE);
 	ctxt.avoid = ca;
 
 	/*
@@ -111,37 +94,27 @@ int bch_move_data_off_device(struct cache *ca)
 
 		bch_btree_iter_init(&iter, c, BTREE_ID_EXTENTS, POS_MIN);
 
-		while ((k = bch_btree_iter_peek(&iter)).k) {
+		while (!bch_move_ctxt_wait(&ctxt) &&
+		       (k = bch_btree_iter_peek(&iter)).k) {
 			if (!bkey_extent_is_data(k.k) ||
 			    !bch_extent_has_device(bkey_s_c_to_extent(k),
 						   ca->sb.nr_this_dev))
 				goto next;
-
-			if (bch_queue_full(queue)) {
-				bch_btree_iter_unlock(&iter);
-
-				if (queue->rotational)
-					bch_queue_run(queue, &ctxt);
-				else
-					wait_event(queue->wait,
-						   !bch_queue_full(queue));
-				continue;
-			}
 
 			ret = issue_migration_move(ca, &ctxt, k);
 			if (ret == -ENOMEM) {
 				bch_btree_iter_unlock(&iter);
 
 				/*
-				 * memory allocation failure, wait for IOs to
-				 * finish
+				 * memory allocation failure, wait for some IO
+				 * to finish
 				 */
-				bch_queue_run(queue, &ctxt);
+				bch_move_ctxt_wait_for_io(&ctxt);
 				continue;
 			}
 			if (ret == -ENOSPC) {
 				bch_btree_iter_unlock(&iter);
-				bch_queue_run(queue, &ctxt);
+				bch_move_ctxt_exit(&ctxt);
 				return -ENOSPC;
 			}
 			BUG_ON(ret);
@@ -153,7 +126,7 @@ next:
 
 		}
 		ret = bch_btree_iter_unlock(&iter);
-		bch_queue_run(queue, &ctxt);
+		bch_move_ctxt_exit(&ctxt);
 
 		if (ret)
 			return ret;

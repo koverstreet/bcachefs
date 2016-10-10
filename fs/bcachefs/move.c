@@ -151,38 +151,10 @@ void bch_migrate_write_init(struct cache_set *c,
 	m->op.index_update_fn	= bch_migrate_index_update;
 }
 
-static void moving_error(struct moving_context *ctxt, unsigned flag)
-{
-	atomic_inc(&ctxt->error_count);
-	atomic_or(flag, &ctxt->error_flags);
-}
-
-void bch_moving_context_init(struct moving_context *ctxt,
-			     struct bch_ratelimit *rate,
-			     enum moving_purpose purpose)
-{
-	memset(ctxt, 0, sizeof(*ctxt));
-	ctxt->rate = rate;
-	ctxt->purpose = purpose;
-	closure_init_stack(&ctxt->cl);
-}
-
-static bool bch_queue_reads_pending(struct moving_queue *q)
-{
-	return atomic_read(&q->read_count) || !RB_EMPTY_ROOT(&q->tree);
-}
-
-static void bch_queue_write(struct moving_queue *q)
-{
-	BUG_ON(q->wq == NULL);
-	queue_work(q->wq, &q->work);
-}
-
 static void migrate_bio_init(struct moving_io *io, struct bio *bio,
 			     unsigned sectors)
 {
 	bio_init(bio);
-	bio_get(bio);
 	bio_set_prio(bio, IOPRIO_PRIO_VALUE(IOPRIO_CLASS_IDLE, 0));
 
 	bio->bi_iter.bi_size	= sectors << 9;
@@ -192,42 +164,18 @@ static void migrate_bio_init(struct moving_io *io, struct bio *bio,
 	bch_bio_map(bio, NULL);
 }
 
-struct moving_io *moving_io_alloc(struct cache_set *c,
-				  struct moving_queue *q,
-				  struct write_point *wp,
-				  struct bkey_s_c k,
-				  const struct bch_extent_ptr *move_ptr)
+static void moving_io_destructor(struct closure *cl)
 {
-	struct moving_io *io;
-
-	io = kzalloc(sizeof(struct moving_io) + sizeof(struct bio_vec)
-		     * DIV_ROUND_UP(k.k->size, PAGE_SECTORS),
-		     GFP_KERNEL);
-	if (!io)
-		return NULL;
-
-	migrate_bio_init(io, &io->rbio.bio, k.k->size);
-
-	if (bio_alloc_pages(&io->rbio.bio, GFP_KERNEL)) {
-		kfree(io);
-		return NULL;
-	}
-
-	migrate_bio_init(io, &io->write.wbio.bio.bio, k.k->size);
-	io->write.wbio.bio.bio.bi_iter.bi_sector = bkey_start_offset(k.k);
-
-	bch_migrate_write_init(c, &io->write, wp, k, move_ptr, 0);
-
-	if (move_ptr)
-		io->sort_key = move_ptr->offset;
-
-	return io;
-}
-
-void moving_io_free(struct moving_io *io)
-{
+	struct moving_io *io = container_of(cl, struct moving_io, cl);
+	struct moving_context *ctxt = io->ctxt;
 	struct bio_vec *bv;
 	int i;
+
+	//if (io->replace.failures)
+	//	trace_bcache_copy_collision(q, &io->key.k);
+
+	atomic_sub(io->write.key.k.size, &ctxt->sectors_in_flight);
+	wake_up(&ctxt->wait);
 
 	bio_for_each_segment_all(bv, &io->write.wbio.bio.bio, i)
 		if (bv->bv_page)
@@ -236,53 +184,16 @@ void moving_io_free(struct moving_io *io)
 	kfree(io);
 }
 
-static void moving_io_destructor(struct closure *cl)
+static void moving_error(struct moving_context *ctxt, unsigned flag)
 {
-	struct moving_io *io = container_of(cl, struct moving_io, cl);
-	struct moving_queue *q = io->q;
-	unsigned long flags;
-	bool kick_writes = true;
-
-	//if (io->replace.failures)
-	//	trace_bcache_copy_collision(q, &io->key.k);
-
-	spin_lock_irqsave(&q->lock, flags);
-
-	if (io->read_issued) {
-		BUG_ON(!atomic_read(&q->read_count));
-		atomic_dec(&q->read_count);
-	}
-
-	if (io->write_issued) {
-		BUG_ON(!atomic_read(&q->write_count));
-		atomic_dec(&q->write_count);
-		trace_bcache_move_write_done(q, &io->write.key.k);
-	}
-
-	BUG_ON(!atomic_read(&q->count));
-	atomic_dec(&q->count);
-	wake_up(&q->wait);
-
-	list_del_init(&io->list);
-
-	if (q->rotational && bch_queue_reads_pending(q))
-		kick_writes = false;
-
-	if (list_empty(&q->pending))
-		kick_writes = false;
-
-	spin_unlock_irqrestore(&q->lock, flags);
-
-	moving_io_free(io);
-
-	if (kick_writes)
-		bch_queue_write(q);
+	atomic_inc(&ctxt->error_count);
+	atomic_or(flag, &ctxt->error_flags);
 }
 
 static void moving_io_after_write(struct closure *cl)
 {
 	struct moving_io *io = container_of(cl, struct moving_io, cl);
-	struct moving_context *ctxt = io->context;
+	struct moving_context *ctxt = io->ctxt;
 
 	if (io->write.op.error)
 		moving_error(ctxt, MOVING_FLAG_WRITE);
@@ -294,174 +205,40 @@ static void write_moving(struct moving_io *io)
 {
 	struct bch_write_op *op = &io->write.op;
 
-	if (op->error)
+	if (op->error) {
 		closure_return_with_destructor(&io->cl, moving_io_destructor);
-	else {
+	} else {
 		closure_call(&op->cl, bch_write, NULL, &io->cl);
 		closure_return_with_destructor(&io->cl, moving_io_after_write);
 	}
 }
 
-static void bch_queue_write_work(struct work_struct *work)
+static inline struct moving_io *next_pending_write(struct moving_context *ctxt)
 {
-	struct moving_queue *q = container_of(work, struct moving_queue, work);
-	struct moving_io *io;
+	struct moving_io *io =
+		list_first_entry_or_null(&ctxt->reads, struct moving_io, list);
 
-	spin_lock_irq(&q->lock);
-
-	if (q->rotational && bch_queue_reads_pending(q)) {
-		/* All reads should have finished before writes start */
-		spin_unlock_irq(&q->lock);
-		return;
-	}
-
-	while (atomic_read(&q->write_count) < q->max_write_count) {
-		io = list_first_entry_or_null(&q->pending,
-					struct moving_io, list);
-		/*
-		 * We only issue the writes in insertion order to preserve
-		 * any linearity in the original key list/tree, so if we
-		 * find an io whose read hasn't completed, we don't
-		 * scan beyond it.  Eventually that read will complete,
-		 * at which point we may issue multiple writes (for it
-		 * and any following entries whose reads had already
-		 * completed and we had not examined here).
-		 */
-		if (!io || !io->read_completed)
-			break;
-
-		BUG_ON(io->write_issued);
-		atomic_inc(&q->write_count);
-		io->write_issued = 1;
-		list_del(&io->list);
-		list_add_tail(&io->list, &q->write_pending);
-		trace_bcache_move_write(q, &io->write.key.k);
-		spin_unlock_irq(&q->lock);
-		write_moving(io);
-		spin_lock_irq(&q->lock);
-	}
-
-	spin_unlock_irq(&q->lock);
-}
-
-/*
- * IMPORTANT: The caller of queue_init must have zero-filled it when it
- * allocates it.
- */
-
-int bch_queue_init(struct moving_queue *q,
-		   struct cache_set *c,
-		   unsigned max_count,
-		   unsigned max_read_count,
-		   unsigned max_write_count,
-		   bool rotational,
-		   const char *name)
-{
-	INIT_WORK(&q->work, bch_queue_write_work);
-
-	q->max_count = max_count;
-	q->max_read_count = max_read_count;
-	q->max_write_count = max_write_count;
-	q->rotational = rotational;
-
-	spin_lock_init(&q->lock);
-	INIT_LIST_HEAD(&q->pending);
-	INIT_LIST_HEAD(&q->write_pending);
-	q->tree = RB_ROOT;
-	init_waitqueue_head(&q->wait);
-
-	q->wq = alloc_workqueue(name,
-				WQ_UNBOUND|WQ_FREEZABLE|WQ_MEM_RECLAIM, 1);
-	if (!q->wq)
-		return -ENOMEM;
-
-	return 0;
-}
-
-void queue_io_resize(struct moving_queue *q,
-		     unsigned max_io,
-		     unsigned max_read,
-		     unsigned max_write)
-{
-	unsigned long flags;
-
-	spin_lock_irqsave(&q->lock, flags);
-	q->max_count = max_io;
-	q->max_read_count = max_read;
-	q->max_write_count = max_write;
-	spin_unlock_irqrestore(&q->lock, flags);
-}
-
-void bch_queue_destroy(struct moving_queue *q)
-{
-	if (q->wq)
-		destroy_workqueue(q->wq);
-	q->wq = NULL;
-}
-
-static void pending_recalc_oldest_gens(struct cache_set *c, struct list_head *l)
-{
-	struct moving_io *io;
-
-	list_for_each_entry(io, l, list) {
-		/*
-		 * This only marks the (replacement) key and not the
-		 * insertion key in the bch_write_op, as the insertion
-		 * key should be a subset of the replacement key except
-		 * for any new pointers added by the write, and those
-		 * don't need to be marked because they are pointing
-		 * to open buckets until the write completes
-		 */
-		bch_btree_key_recalc_oldest_gen(c,
-					bkey_i_to_s_c(&io->write.key));
-	}
-}
-
-void bch_queue_recalc_oldest_gens(struct cache_set *c, struct moving_queue *q)
-{
-	unsigned long flags;
-
-	/* 2nd, mark the keys in the I/Os */
-	spin_lock_irqsave(&q->lock, flags);
-
-	pending_recalc_oldest_gens(c, &q->pending);
-	pending_recalc_oldest_gens(c, &q->write_pending);
-
-	spin_unlock_irqrestore(&q->lock, flags);
+	return io && io->read_completed ? io : NULL;
 }
 
 static void read_moving_endio(struct bio *bio)
 {
 	struct closure *cl = bio->bi_private;
 	struct moving_io *io = container_of(cl, struct moving_io, cl);
-	struct moving_queue *q = io->q;
+	struct moving_context *ctxt = io->ctxt;
 
-	unsigned long flags;
-
-	trace_bcache_move_read_done(q, &io->write.key.k);
+	trace_bcache_move_read_done(&io->write.key.k);
 
 	if (bio->bi_error) {
 		io->write.op.error = bio->bi_error;
-		moving_error(io->context, MOVING_FLAG_READ);
+		moving_error(io->ctxt, MOVING_FLAG_READ);
 	}
 
-	bio_put(bio);
+	io->read_completed = true;
+	if (next_pending_write(ctxt))
+		wake_up(&ctxt->wait);
 
-	BUG_ON(!io->read_issued);
-	BUG_ON(io->read_completed);
-
-	spin_lock_irqsave(&q->lock, flags);
-	io->read_issued = 0;
-	io->read_completed = 1;
-
-	BUG_ON(!atomic_read(&q->read_count));
-	atomic_dec(&q->read_count);
-	spin_unlock_irqrestore(&q->lock, flags);
-
-	wake_up(&q->wait);
-
-	if (!q->rotational)
-		bch_queue_write(q);
+	closure_put(&ctxt->cl);
 }
 
 static void __bch_data_move(struct closure *cl)
@@ -471,7 +248,7 @@ static void __bch_data_move(struct closure *cl)
 	struct extent_pick_ptr pick;
 
 	bch_extent_pick_ptr_avoiding(c, bkey_i_to_s_c(&io->write.key),
-				     io->context->avoid, &pick);
+				     io->ctxt->avoid, &pick);
 	if (IS_ERR_OR_NULL(pick.ca))
 		closure_return_with_destructor(cl, moving_io_destructor);
 
@@ -479,107 +256,120 @@ static void __bch_data_move(struct closure *cl)
 	io->rbio.bio.bi_iter.bi_sector = bkey_start_offset(&io->write.key.k);
 	io->rbio.bio.bi_end_io	= read_moving_endio;
 
+	/*
+	 * dropped by read_moving_endio() - guards against use after free of
+	 * ctxt when doing wakeup
+	 */
+	closure_get(&io->ctxt->cl);
+
 	bch_read_extent(c, &io->rbio,
 			bkey_i_to_s_c(&io->write.key),
 			&pick, BCH_READ_IS_LAST);
 }
 
-static int moving_io_cmp(struct moving_io *io1, struct moving_io *io2)
+int bch_data_move(struct cache_set *c,
+		  struct moving_context *ctxt,
+		  struct write_point *wp,
+		  struct bkey_s_c k,
+		  const struct bch_extent_ptr *move_ptr)
 {
-	if (io1->sort_key < io2->sort_key)
-		return -1;
-	else if (io1->sort_key > io2->sort_key)
-		return 1;
-	else {
-		/* We don't want duplicate keys. Eventually, we will have
-		 * support for GC with duplicate pointers -- for now,
-		 * just sort them randomly instead */
-		if (io1 < io2)
-			return -1;
-		else if (io1 > io2)
-			return 1;
-		BUG();
-	}
-}
-
-void bch_data_move(struct moving_queue *q,
-		   struct moving_context *ctxt,
-		   struct moving_io *io)
-{
-	unsigned size = io->write.key.k.size;
-
-	ctxt->keys_moved++;
-	ctxt->sectors_moved += size;
-	if (ctxt->rate)
-		bch_ratelimit_increment(ctxt->rate, size);
-
-	BUG_ON(q->wq == NULL);
-	io->q = q;
-	io->context = ctxt;
-
-	spin_lock_irq(&q->lock);
-	atomic_inc(&q->count);
-	list_add_tail(&io->list, &q->pending);
-	trace_bcache_move_read(q, &io->write.key.k);
-
-	if (q->rotational)
-		BUG_ON(RB_INSERT(&q->tree, io, node, moving_io_cmp));
-	else {
-		BUG_ON(io->read_issued);
-		io->read_issued = 1;
-		atomic_inc(&q->read_count);
-	}
-
-	spin_unlock_irq(&q->lock);
-
-	if (!q->rotational)
-		closure_call(&io->cl, __bch_data_move, NULL, &ctxt->cl);
-}
-
-/* Rotational device queues */
-
-static bool bch_queue_read(struct moving_queue *q,
-			   struct moving_context *ctxt)
-{
-	struct rb_node *node;
 	struct moving_io *io;
 
-	BUG_ON(!q->rotational);
+	io = kzalloc(sizeof(struct moving_io) + sizeof(struct bio_vec) *
+		     DIV_ROUND_UP(k.k->size, PAGE_SECTORS),
+		     GFP_KERNEL);
+	if (!io)
+		return -ENOMEM;
 
-	spin_lock_irq(&q->lock);
-	node = rb_first(&q->tree);
-	if (!node) {
-		spin_unlock_irq(&q->lock);
-		return false;
+	io->ctxt = ctxt;
+
+	migrate_bio_init(io, &io->rbio.bio, k.k->size);
+
+	if (bio_alloc_pages(&io->rbio.bio, GFP_KERNEL)) {
+		kfree(io);
+		return -ENOMEM;
 	}
 
-	io = rb_entry(node, struct moving_io, node);
-	rb_erase(node, &q->tree);
-	wake_up(&q->wait);
+	migrate_bio_init(io, &io->write.wbio.bio.bio, k.k->size);
+	bio_get(&io->write.wbio.bio.bio);
+	io->write.wbio.bio.bio.bi_iter.bi_sector = bkey_start_offset(k.k);
 
-	io->read_issued = 1;
-	atomic_inc(&q->read_count);
-	spin_unlock_irq(&q->lock);
+	bch_migrate_write_init(c, &io->write, wp, k, move_ptr, 0);
+
+	trace_bcache_move_read(&io->write.key.k);
+
+	ctxt->keys_moved++;
+	ctxt->sectors_moved += k.k->size;
+	if (ctxt->rate)
+		bch_ratelimit_increment(ctxt->rate, k.k->size);
+
+	atomic_add(k.k->size, &ctxt->sectors_in_flight);
+	list_add_tail(&io->list, &ctxt->reads);
 
 	closure_call(&io->cl, __bch_data_move, NULL, &ctxt->cl);
-	return true;
+	return 0;
 }
 
-void bch_queue_run(struct moving_queue *q, struct moving_context *ctxt)
+static void do_pending_writes(struct moving_context *ctxt)
 {
-	if (!q->rotational)
-		goto sync;
+	struct moving_io *io;
 
-	while (!bch_moving_context_wait(ctxt)) {
-		wait_event(q->wait,
-			   atomic_read(&q->read_count) < q->max_read_count);
-
-		if (!bch_queue_read(q, ctxt))
-			break;
+	while ((io = next_pending_write(ctxt))) {
+		list_del(&io->list);
+		trace_bcache_move_write(&io->write.key.k);
+		write_moving(io);
 	}
+}
 
-	wait_event(q->wait, !bch_queue_reads_pending(q));
-	bch_queue_write(q);
-sync:
+#define move_ctxt_wait_event(_ctxt, _cond)			\
+do {								\
+	do_pending_writes(_ctxt);				\
+								\
+	if (_cond)						\
+		break;						\
+	__wait_event((_ctxt)->wait,				\
+		     next_pending_write(_ctxt) || (_cond));	\
+} while (1)
+
+int bch_move_ctxt_wait(struct moving_context *ctxt)
+{
+	move_ctxt_wait_event(ctxt,
+			     atomic_read(&ctxt->sectors_in_flight) <
+			     ctxt->max_sectors_in_flight);
+
+	return ctxt->rate
+		? bch_ratelimit_wait_freezable_stoppable(ctxt->rate, &ctxt->cl)
+		: 0;
+}
+
+void bch_move_ctxt_wait_for_io(struct moving_context *ctxt)
+{
+	unsigned sectors_pending = atomic_read(&ctxt->sectors_in_flight);
+
+	move_ctxt_wait_event(ctxt,
+		!atomic_read(&ctxt->sectors_in_flight) ||
+		atomic_read(&ctxt->sectors_in_flight) != sectors_pending);
+}
+
+void bch_move_ctxt_exit(struct moving_context *ctxt)
+{
+	move_ctxt_wait_event(ctxt, !atomic_read(&ctxt->sectors_in_flight));
 	closure_sync(&ctxt->cl);
+
+	EBUG_ON(!list_empty(&ctxt->reads));
+	EBUG_ON(atomic_read(&ctxt->sectors_in_flight));
+}
+
+void bch_move_ctxt_init(struct moving_context *ctxt,
+			struct bch_ratelimit *rate,
+			unsigned max_sectors_in_flight)
+{
+	memset(ctxt, 0, sizeof(*ctxt));
+	closure_init_stack(&ctxt->cl);
+
+	ctxt->rate = rate;
+	ctxt->max_sectors_in_flight = max_sectors_in_flight;
+
+	INIT_LIST_HEAD(&ctxt->reads);
+	init_waitqueue_head(&ctxt->wait);
 }
