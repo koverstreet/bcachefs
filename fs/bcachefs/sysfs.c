@@ -618,9 +618,9 @@ static ssize_t bch_compression_stats(struct cache_set *c, char *buf)
 				} else {
 					nr_compressed_extents++;
 					compressed_sectors_compressed +=
-						crc_compressed_size(crc);
+						crc_compressed_size(e.k, crc);
 					compressed_sectors_uncompressed +=
-						crc_uncompressed_size(crc);
+						crc_uncompressed_size(e.k, crc);
 				}
 
 				/* only looking at the first ptr */

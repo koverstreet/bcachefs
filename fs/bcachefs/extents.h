@@ -352,11 +352,15 @@ static inline bool bch_extent_ptr_is_dirty(const struct cache_set *c,
 
 extern const unsigned bch_crc_size[];
 
-static inline struct bch_extent_crc64 crc_to_64(const union bch_extent_crc *crc)
+static inline struct bch_extent_crc64 crc_to_64(const struct bkey *k,
+						const union bch_extent_crc *crc)
 {
 	switch (extent_crc_type(crc)) {
 	case BCH_EXTENT_CRC_NONE:
-		return (struct bch_extent_crc64) { 0 };
+		return (struct bch_extent_crc64) {
+			.compressed_size	= k->size,
+			.uncompressed_size	= k->size,
+		};
 	case BCH_EXTENT_CRC32:
 		return (struct bch_extent_crc64) {
 			.compressed_size	= crc->crc32.compressed_size,
@@ -373,34 +377,72 @@ static inline struct bch_extent_crc64 crc_to_64(const union bch_extent_crc *crc)
 	}
 }
 
-static inline unsigned crc_compressed_size(const union bch_extent_crc *crc)
+static inline unsigned crc_compressed_size(const struct bkey *k,
+					   const union bch_extent_crc *crc)
 {
-	return crc_to_64(crc).compressed_size;
+	return crc_to_64(k, crc).compressed_size;
 }
 
-static inline unsigned crc_uncompressed_size(const union bch_extent_crc *crc)
+static inline unsigned crc_uncompressed_size(const struct bkey *k,
+					     const union bch_extent_crc *crc)
 {
-	return crc_to_64(crc).uncompressed_size;
+	return crc_to_64(k, crc).uncompressed_size;
 }
 
 static inline unsigned crc_offset(const union bch_extent_crc *crc)
 {
-	return crc_to_64(crc).offset;
+	switch (extent_crc_type(crc)) {
+	case BCH_EXTENT_CRC_NONE:
+		return 0;
+	case BCH_EXTENT_CRC32:
+		return crc->crc32.offset;
+	case BCH_EXTENT_CRC64:
+		return crc->crc64.offset;
+	default:
+		BUG();
+	}
 }
 
 static inline unsigned crc_csum_type(const union bch_extent_crc *crc)
 {
-	return crc_to_64(crc).csum_type;
+	switch (extent_crc_type(crc)) {
+	case BCH_EXTENT_CRC_NONE:
+		return 0;
+	case BCH_EXTENT_CRC32:
+		return crc->crc32.csum_type;
+	case BCH_EXTENT_CRC64:
+		return crc->crc64.csum_type;
+	default:
+		BUG();
+	}
 }
 
 static inline unsigned crc_compression_type(const union bch_extent_crc *crc)
 {
-	return crc_to_64(crc).compression_type;
+	switch (extent_crc_type(crc)) {
+	case BCH_EXTENT_CRC_NONE:
+		return 0;
+	case BCH_EXTENT_CRC32:
+		return crc->crc32.compression_type;
+	case BCH_EXTENT_CRC64:
+		return crc->crc64.compression_type;
+	default:
+		BUG();
+	}
 }
 
 static inline u64 crc_csum(const union bch_extent_crc *crc)
 {
-	return crc_to_64(crc).csum;
+	switch (extent_crc_type(crc)) {
+	case BCH_EXTENT_CRC_NONE:
+		return 0;
+	case BCH_EXTENT_CRC32:
+		return crc->crc32.csum;
+	case BCH_EXTENT_CRC64:
+		return crc->crc64.csum;
+	default:
+		BUG();
+	}
 }
 
 static inline unsigned bkey_extent_is_compressed(struct cache_set *c,
@@ -419,9 +461,9 @@ static inline unsigned bkey_extent_is_compressed(struct cache_set *c,
 		extent_for_each_ptr_crc(e, ptr, crc)
 			if (bch_extent_ptr_is_dirty(c, e, ptr) &&
 			    crc_compression_type(crc) != BCH_COMPRESSION_NONE &&
-			    crc_compressed_size(crc) < k.k->size)
+			    crc_compressed_size(e.k, crc) < k.k->size)
 				ret = max_t(unsigned, ret,
-					    crc_compressed_size(crc));
+					    crc_compressed_size(e.k, crc));
 	}
 
 	return ret;
