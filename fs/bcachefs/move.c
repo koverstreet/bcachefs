@@ -562,17 +562,11 @@ static void __bch_data_move(struct closure *cl)
 	struct moving_io *io = container_of(cl, struct moving_io, cl);
 	struct cache_set *c = io->write.op.c;
 	struct extent_pick_ptr pick;
-	u64 size = io->write.key.k.size;
 
 	bch_extent_pick_ptr_avoiding(c, bkey_i_to_s_c(&io->write.key),
 				     io->context->avoid, &pick);
 	if (IS_ERR_OR_NULL(pick.ca))
 		closure_return_with_destructor(cl, moving_io_destructor);
-
-	io->context->keys_moved++;
-	io->context->sectors_moved += size;
-	if (io->context->rate)
-		bch_ratelimit_increment(io->context->rate, size);
 
 	bio_set_op_attrs(&io->rbio.bio, REQ_OP_READ, 0);
 	io->rbio.bio.bi_iter.bi_sector = bkey_start_offset(&io->write.key.k);
@@ -605,7 +599,13 @@ void bch_data_move(struct moving_queue *q,
 		   struct moving_context *ctxt,
 		   struct moving_io *io)
 {
+	unsigned size = io->write.key.k.size;
 	bool stopped = false;
+
+	ctxt->keys_moved++;
+	ctxt->sectors_moved += size;
+	if (ctxt->rate)
+		bch_ratelimit_increment(ctxt->rate, size);
 
 	BUG_ON(q->wq == NULL);
 	io->q = q;
