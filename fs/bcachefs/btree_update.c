@@ -695,7 +695,21 @@ static void btree_node_flush(struct journal *j, struct journal_entry_pin *pin)
 	struct btree *b = container_of(w, struct btree, writes[w->index]);
 
 	six_lock_read(&b->lock);
-	__bch_btree_node_write(b, NULL, w->index);
+	/*
+	 * Reusing a btree node can race with the journal reclaim code calling
+	 * the journal pin flush fn, and there's no good fix for this: we don't
+	 * really want journal_pin_drop() to block until the flush fn is no
+	 * longer running, because journal_pin_drop() is called from the btree
+	 * node write endio function, and we can't wait on the flush fn to
+	 * finish running in mca_reap() - where we make reused btree nodes ready
+	 * to use again - because there, we're holding the lock this function
+	 * needs - deadlock.
+	 *
+	 * So, the b->level check is a hack so we don't try to write nodes we
+	 * shouldn't:
+	 */
+	if (!b->level)
+		__bch_btree_node_write(b, NULL, w->index);
 	six_unlock_read(&b->lock);
 }
 
