@@ -338,7 +338,7 @@ int bch_move_ctxt_wait(struct moving_context *ctxt)
 			     ctxt->max_sectors_in_flight);
 
 	return ctxt->rate
-		? bch_ratelimit_wait_freezable_stoppable(ctxt->rate, &ctxt->cl)
+		? bch_ratelimit_wait_freezable_stoppable(ctxt->rate)
 		: 0;
 }
 

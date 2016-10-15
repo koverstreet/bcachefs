@@ -236,8 +236,7 @@ void bch_ratelimit_increment(struct bch_ratelimit *d, u64 done)
 		d->next = now - NSEC_PER_SEC * 2;
 }
 
-int bch_ratelimit_wait_freezable_stoppable(struct bch_ratelimit *d,
-					   struct closure *cl)
+int bch_ratelimit_wait_freezable_stoppable(struct bch_ratelimit *d)
 {
 	while (1) {
 		u64 delay = bch_ratelimit_delay(d);
@@ -245,10 +244,8 @@ int bch_ratelimit_wait_freezable_stoppable(struct bch_ratelimit *d,
 		if (delay)
 			set_current_state(TASK_INTERRUPTIBLE);
 
-		if (kthread_should_stop()) {
-			closure_sync(cl);
+		if (kthread_should_stop())
 			return 1;
-		}
 
 		if (!delay)
 			return 0;

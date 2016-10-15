@@ -417,8 +417,7 @@ static inline void bch_ratelimit_reset(struct bch_ratelimit *d)
 
 u64 bch_ratelimit_delay(struct bch_ratelimit *);
 void bch_ratelimit_increment(struct bch_ratelimit *, u64);
-int bch_ratelimit_wait_freezable_stoppable(struct bch_ratelimit *,
-					   struct closure *);
+int bch_ratelimit_wait_freezable_stoppable(struct bch_ratelimit *);
 
 struct bch_pd_controller {
 	struct bch_ratelimit	rate;

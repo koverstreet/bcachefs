@@ -200,8 +200,7 @@ static u64 read_dirty(struct cached_dev *dc)
 
 	closure_init_stack(&cl);
 
-	while (!bch_ratelimit_wait_freezable_stoppable(&dc->writeback_pd.rate,
-						       &cl)) {
+	while (!bch_ratelimit_wait_freezable_stoppable(&dc->writeback_pd.rate)) {
 		w = bch_keybuf_next(&dc->writeback_keys);
 		if (!w)
 			break;
