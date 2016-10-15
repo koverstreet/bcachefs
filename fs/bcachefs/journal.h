@@ -184,7 +184,7 @@ static inline unsigned jset_u64s(unsigned u64s)
 
 static inline bool journal_flushes_device(struct cache *ca)
 {
-	return ca->mi.tier == 0;
+	return true;
 }
 
 void bch_journal_start(struct cache_set *);
