@@ -683,10 +683,8 @@ SHOW(bch_cache_set)
 	sysfs_print(tiering_percent,		c->tiering_percent);
 	sysfs_pd_controller_show(tiering,	&c->tiering_pd);
 
-	sysfs_printf(meta_replicas_have, "%llu",
-		     BCH_SB_META_REPLICAS_HAVE(c->disk_sb));
-	sysfs_printf(data_replicas_have, "%llu",
-		     BCH_SB_DATA_REPLICAS_HAVE(c->disk_sb));
+	sysfs_printf(meta_replicas_have, "%u",	c->sb.meta_replicas_have);
+	sysfs_printf(data_replicas_have, "%u",	c->sb.data_replicas_have);
 
 	/* Debugging: */
 
@@ -711,7 +709,7 @@ SHOW(bch_cache_set)
 	if (attr == &sysfs_compression_stats)
 		return bch_compression_stats(c, buf);
 
-	sysfs_printf(internal_uuid, "%pU", c->disk_sb->uuid.b);
+	sysfs_printf(internal_uuid, "%pU", c->sb.uuid.b);
 
 	return 0;
 }
@@ -978,18 +976,22 @@ STORE(bch_cache_set_opts_dir)
 		if (v < 0)						\
 			return v;					\
 									\
+		mutex_lock(&c->sb_lock);				\
 		if (attr == &sysfs_opt_compression) {			\
 			int ret = bch_check_set_has_compressed_data(c, v);\
-			if (ret)					\
+			if (ret) {					\
+				mutex_unlock(&c->sb_lock);		\
 				return ret;				\
+			}						\
 		}							\
 									\
 		if (_sb_opt##_BITS && v != _sb_opt(c->disk_sb)) {	\
 			SET_##_sb_opt(c->disk_sb, v);			\
-			bch_write_super(c);				\
+			bch_write_super(c);			\
 		}							\
 									\
 		c->opts._name = v;					\
+		mutex_unlock(&c->sb_lock);				\
 									\
 		return size;						\
 	}
@@ -1254,18 +1256,21 @@ STORE(__bch_cache)
 {
 	struct cache *ca = container_of(kobj, struct cache, kobj);
 	struct cache_set *c = ca->set;
-	struct bch_member *mi =
-		&bch_sb_get_members(c->disk_sb)->members[ca->dev_idx];
+	struct bch_member *mi;
 
 	sysfs_pd_controller_store(copy_gc, &ca->moving_gc_pd);
 
 	if (attr == &sysfs_discard) {
 		bool v = strtoul_or_return(buf);
 
+		mutex_lock(&c->sb_lock);
+		mi = &bch_sb_get_members(c->disk_sb)->members[ca->dev_idx];
+
 		if (v != BCH_MEMBER_DISCARD(mi)) {
 			SET_BCH_MEMBER_DISCARD(mi, v);
 			bch_write_super(c);
 		}
+		mutex_unlock(&c->sb_lock);
 	}
 
 	if (attr == &sysfs_cache_replacement_policy) {
@@ -1274,10 +1279,14 @@ STORE(__bch_cache)
 		if (v < 0)
 			return v;
 
+		mutex_lock(&c->sb_lock);
+		mi = &bch_sb_get_members(c->disk_sb)->members[ca->dev_idx];
+
 		if ((unsigned) v != BCH_MEMBER_REPLACEMENT(mi)) {
 			SET_BCH_MEMBER_REPLACEMENT(mi, v);
 			bch_write_super(c);
 		}
+		mutex_unlock(&c->sb_lock);
 	}
 
 	if (attr == &sysfs_state_rw) {

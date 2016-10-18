@@ -208,7 +208,7 @@ static struct bch_member *bch_uuid_lookup(struct cache_set *c, uuid_le uuid)
 	struct bch_sb_field_members *mi = bch_sb_get_members(c->disk_sb);
 	unsigned i;
 
-	lockdep_assert_held(&bch_register_lock);
+	lockdep_assert_held(&c->sb_lock);
 
 	for (i = 0; i < c->disk_sb->nr_devices; i++)
 		if (!memcmp(&mi->members[i].uuid, &uuid, sizeof(uuid)))
@@ -227,14 +227,14 @@ static long bch_ioctl_disk_remove_by_uuid(struct cache_set *c,
 	if (copy_from_user(&arg, user_arg, sizeof(arg)))
 		return -EFAULT;
 
-	mutex_lock(&bch_register_lock);
+	mutex_lock(&c->sb_lock);
 	if ((m = bch_uuid_lookup(c, arg.dev))) {
 		/* XXX: */
 		SET_BCH_MEMBER_STATE(m, BCH_MEMBER_STATE_FAILED);
 		bch_write_super(c);
 		ret = 0;
 	}
-	mutex_unlock(&bch_register_lock);
+	mutex_unlock(&c->sb_lock);
 
 	return ret;
 }
@@ -249,13 +249,13 @@ static long bch_ioctl_disk_fail_by_uuid(struct cache_set *c,
 	if (copy_from_user(&arg, user_arg, sizeof(arg)))
 		return -EFAULT;
 
-	mutex_lock(&bch_register_lock);
+	mutex_lock(&c->sb_lock);
 	if ((m = bch_uuid_lookup(c, arg.dev))) {
 		SET_BCH_MEMBER_STATE(m, BCH_MEMBER_STATE_FAILED);
 		bch_write_super(c);
 		ret = 0;
 	}
-	mutex_unlock(&bch_register_lock);
+	mutex_unlock(&c->sb_lock);
 
 	return ret;
 }
@@ -264,8 +264,8 @@ static long bch_ioctl_query_uuid(struct cache_set *c,
 			struct bch_ioctl_query_uuid __user *user_arg)
 {
 	return copy_to_user(&user_arg->uuid,
-			    &c->disk_sb->user_uuid,
-			    sizeof(c->disk_sb->user_uuid));
+			    &c->sb.user_uuid,
+			    sizeof(c->sb.user_uuid));
 }
 
 long bch_cache_set_ioctl(struct cache_set *c, unsigned cmd, void __user *arg)

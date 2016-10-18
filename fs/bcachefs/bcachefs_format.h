@@ -1162,26 +1162,26 @@ static inline _Bool SB_IS_BDEV(const struct bch_sb *sb)
 #define PSET_MAGIC		__cpu_to_le64(0x6750e15f87337f91ULL)
 #define BSET_MAGIC		__cpu_to_le64(0x90135c78b99e07f5ULL)
 
-static inline __le64 bch_sb_magic(struct bch_sb *sb)
+static inline __le64 __bch_sb_magic(struct bch_sb *sb)
 {
 	__le64 ret;
 	memcpy(&ret, &sb->uuid, sizeof(ret));
 	return ret;
 }
 
-static inline __u64 jset_magic(struct bch_sb *sb)
+static inline __u64 __jset_magic(struct bch_sb *sb)
 {
-	return __le64_to_cpu(bch_sb_magic(sb) ^ JSET_MAGIC);
+	return __le64_to_cpu(__bch_sb_magic(sb) ^ JSET_MAGIC);
 }
 
-static inline __u64 pset_magic(struct bch_sb *sb)
+static inline __u64 __pset_magic(struct bch_sb *sb)
 {
-	return __le64_to_cpu(bch_sb_magic(sb) ^ PSET_MAGIC);
+	return __le64_to_cpu(__bch_sb_magic(sb) ^ PSET_MAGIC);
 }
 
-static inline __u64 bset_magic(struct bch_sb *sb)
+static inline __u64 __bset_magic(struct bch_sb *sb)
 {
-	return __le64_to_cpu(bch_sb_magic(sb) ^ BSET_MAGIC);
+	return __le64_to_cpu(__bch_sb_magic(sb) ^ BSET_MAGIC);
 }
 
 /* Journal */

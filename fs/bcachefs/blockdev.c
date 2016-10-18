@@ -378,8 +378,8 @@ int bch_cached_dev_attach(struct cached_dev *dc, struct cache_set *c)
 	bdevname(dc->disk_sb.bdev, buf);
 
 	if (memcmp(&dc->disk_sb.sb->set_uuid,
-		   &c->disk_sb->uuid,
-		   sizeof(c->disk_sb->uuid)))
+		   &c->sb.uuid,
+		   sizeof(c->sb.uuid)))
 		return -ENOENT;
 
 	if (dc->disk.c) {
@@ -446,7 +446,7 @@ int bch_cached_dev_attach(struct cached_dev *dc, struct cache_set *c)
 
 		pr_info("attached inode %llu", bcache_dev_inum(&dc->disk));
 
-		dc->disk_sb.sb->set_uuid = c->disk_sb->uuid;
+		dc->disk_sb.sb->set_uuid = c->sb.uuid;
 		SET_BDEV_STATE(dc->disk_sb.sb, BDEV_STATE_CLEAN);
 
 		bch_write_bdev_super(dc, &cl);
@@ -488,7 +488,7 @@ int bch_cached_dev_attach(struct cached_dev *dc, struct cache_set *c)
 
 	pr_info("Caching %s as %s on set %pU",
 		bdevname(dc->disk_sb.bdev, buf), dc->disk.disk->disk_name,
-		dc->disk.c->disk_sb->uuid.b);
+		dc->disk.c->sb.uuid.b);
 	return 0;
 }
 

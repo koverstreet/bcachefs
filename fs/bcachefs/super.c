@@ -196,8 +196,10 @@ static void bch_cache_set_read_only_work(struct work_struct *work)
 
 		if (!bch_journal_error(&c->journal) &&
 		    !test_bit(CACHE_SET_ERROR, &c->flags)) {
+			mutex_lock(&c->sb_lock);
 			SET_BCH_SB_CLEAN(c->disk_sb, true);
 			bch_write_super(c);
+			mutex_unlock(&c->sb_lock);
 		}
 	} else {
 		/*
@@ -472,14 +474,17 @@ void bch_cache_set_unregister(struct cache_set *c)
 
 static unsigned cache_set_nr_devices(struct cache_set *c)
 {
-	struct bch_sb_field_members *mi = bch_sb_get_members(c->disk_sb);
+	struct bch_sb_field_members *mi;
 	unsigned i, nr = 0;
 
-	lockdep_assert_held(&bch_register_lock);
+	mutex_lock(&c->sb_lock);
+	mi = bch_sb_get_members(c->disk_sb);
 
 	for (i = 0; i < c->disk_sb->nr_devices; i++)
 		if (!bch_is_zero(mi->members[i].uuid.b, sizeof(uuid_le)))
 			nr++;
+
+	mutex_unlock(&c->sb_lock);
 
 	return nr;
 }
@@ -512,13 +517,12 @@ static struct cache_set *bch_cache_set_alloc(struct bch_sb *sb,
 
 	c->minor		= -1;
 
-	mutex_init(&c->sb_write_lock);
+	mutex_init(&c->sb_lock);
 	INIT_RADIX_TREE(&c->devices, GFP_KERNEL);
 	mutex_init(&c->btree_cache_lock);
 	mutex_init(&c->bucket_lock);
 	mutex_init(&c->btree_root_lock);
 	INIT_WORK(&c->read_only_work, bch_cache_set_read_only_work);
-	mutex_init(&c->mi_lock);
 
 	init_rwsem(&c->gc_lock);
 
@@ -575,10 +579,16 @@ static struct cache_set *bch_cache_set_alloc(struct bch_sb *sb,
 
 	mutex_init(&c->uevent_lock);
 
-	if (bch_sb_to_cache_set(c, sb))
-		goto err;
+	mutex_lock(&c->sb_lock);
 
-	scnprintf(c->name, sizeof(c->name), "%pU", &c->disk_sb->user_uuid);
+	if (bch_sb_to_cache_set(c, sb)) {
+		mutex_unlock(&c->sb_lock);
+		goto err;
+	}
+
+	mutex_unlock(&c->sb_lock);
+
+	scnprintf(c->name, sizeof(c->name), "%pU", &c->sb.user_uuid);
 
 	c->opts = cache_superblock_opts(sb);
 	cache_set_opts_apply(&c->opts, opts);
@@ -678,7 +688,7 @@ static int bch_cache_set_online(struct cache_set *c)
 	if (IS_ERR(c->chardev))
 		return PTR_ERR(c->chardev);
 
-	if (kobject_add(&c->kobj, NULL, "%pU", c->disk_sb->user_uuid.b) ||
+	if (kobject_add(&c->kobj, NULL, "%pU", c->sb.user_uuid.b) ||
 	    kobject_add(&c->internal, &c->kobj, "internal") ||
 	    kobject_add(&c->opts_dir, &c->kobj, "options") ||
 	    kobject_add(&c->time_stats, &c->kobj, "time_stats") ||
@@ -828,17 +838,10 @@ static const char *run_cache_set(struct cache_set *c)
 		struct bch_inode_unpacked inode;
 		struct bkey_inode_buf packed_inode;
 		struct closure cl;
-		unsigned precision = 1;
-		struct timespec now = timespec_trunc(CURRENT_TIME, precision);
 
 		closure_init_stack(&cl);
 
 		bch_notice(c, "initializing new filesystem");
-
-		/* XXX move to userspace */
-		c->disk_sb->time_base_lo = cpu_to_le64(timespec_to_ns(&now));
-		c->disk_sb->time_base_hi = 0;
-		c->disk_sb->time_precision = cpu_to_le32(precision);
 
 		err = "unable to allocate journal buckets";
 		for_each_cache(ca, c, i)
@@ -899,6 +902,7 @@ recovery_done:
 			goto err;
 	}
 
+	mutex_lock(&c->sb_lock);
 	mi = bch_sb_get_members(c->disk_sb);
 	now = ktime_get_seconds();
 
@@ -910,7 +914,9 @@ recovery_done:
 	SET_BCH_SB_INITIALIZED(c->disk_sb, true);
 	SET_BCH_SB_CLEAN(c->disk_sb, false);
 	c->disk_sb->version = BCACHE_SB_VERSION_CDEV;
+
 	bch_write_super(c);
+	mutex_unlock(&c->sb_lock);
 
 	err = "dynamic fault";
 	if (cache_set_init_fault("run_cache_set"))
@@ -1054,10 +1060,12 @@ bool bch_cache_read_only(struct cache *ca)
 	bch_notice(c, "%s read only", bdevname(ca->disk_sb.bdev, buf));
 	bch_notify_cache_read_only(ca);
 
+	mutex_lock(&c->sb_lock);
 	mi = bch_sb_get_members(c->disk_sb);
 	SET_BCH_MEMBER_STATE(&mi->members[ca->dev_idx],
 			     BCH_MEMBER_STATE_RO);
 	bch_write_super(c);
+	mutex_unlock(&c->sb_lock);
 	return true;
 }
 
@@ -1099,10 +1107,12 @@ const char *bch_cache_read_write(struct cache *ca)
 	if (err)
 		return err;
 
+	mutex_lock(&c->sb_lock);
 	mi = bch_sb_get_members(c->disk_sb);
 	SET_BCH_MEMBER_STATE(&mi->members[ca->dev_idx],
 			     BCH_MEMBER_STATE_ACTIVE);
 	bch_write_super(c);
+	mutex_unlock(&c->sb_lock);
 
 	return NULL;
 }
@@ -1231,21 +1241,21 @@ static void bch_cache_remove_work(struct work_struct *work)
 	if (!ca->mi.has_data) {
 		/* Nothing to do: */
 	} else if (!bch_move_data_off_device(ca)) {
-		lockdep_assert_held(&bch_register_lock);
-
+		mutex_lock(&c->sb_lock);
 		mi = bch_sb_get_members(c->disk_sb);
 		SET_BCH_MEMBER_HAS_DATA(&mi->members[ca->dev_idx], false);
 
 		bch_write_super(c);
+		mutex_unlock(&c->sb_lock);
 	} else if (force) {
 		bch_flag_data_bad(ca);
 
-		lockdep_assert_held(&bch_register_lock);
-
+		mutex_lock(&c->sb_lock);
 		mi = bch_sb_get_members(c->disk_sb);
 		SET_BCH_MEMBER_HAS_DATA(&mi->members[ca->dev_idx], false);
 
 		bch_write_super(c);
+		mutex_unlock(&c->sb_lock);
 	} else {
 		bch_err(c, "Remove of %s failed, unable to migrate data off",
 			name);
@@ -1258,12 +1268,12 @@ static void bch_cache_remove_work(struct work_struct *work)
 	if (!ca->mi.has_metadata) {
 		/* Nothing to do: */
 	} else if (!bch_move_meta_data_off_device(ca)) {
-		lockdep_assert_held(&bch_register_lock);
-
+		mutex_lock(&c->sb_lock);
 		mi = bch_sb_get_members(c->disk_sb);
 		SET_BCH_MEMBER_HAS_METADATA(&mi->members[ca->dev_idx], false);
 
 		bch_write_super(c);
+		mutex_unlock(&c->sb_lock);
 	} else {
 		bch_err(c, "Remove of %s failed, unable to migrate metadata off",
 			name);
@@ -1304,10 +1314,13 @@ static void bch_cache_remove_work(struct work_struct *work)
 	 * Free this device's slot in the bch_member array - all pointers to
 	 * this device must be gone:
 	 */
+	mutex_lock(&c->sb_lock);
 	mi = bch_sb_get_members(c->disk_sb);
 	memset(&mi->members[dev_idx].uuid, 0, sizeof(mi->members[dev_idx].uuid));
 
 	bch_write_super(c);
+	mutex_unlock(&c->sb_lock);
+
 	mutex_unlock(&bch_register_lock);
 
 	closure_put(&c->cl);
@@ -1462,15 +1475,6 @@ static const char *cache_alloc(struct bcache_superblock *sb,
 	ca->copygc_write_point.group = &ca->self;
 	ca->tiering_write_point.group = &ca->self;
 
-	kobject_get(&c->kobj);
-	ca->set = c;
-
-	kobject_get(&ca->kobj);
-	rcu_assign_pointer(c->cache[ca->dev_idx], ca);
-
-	if (le64_to_cpu(ca->disk_sb.sb->seq) > le64_to_cpu(c->disk_sb->seq))
-		bch_sb_to_cache_set(c, ca->disk_sb.sb);
-
 	/*
 	 * Increase journal write timeout if flushes to this device are
 	 * expensive:
@@ -1479,6 +1483,19 @@ static const char *cache_alloc(struct bcache_superblock *sb,
 	    journal_flushes_device(ca))
 		c->journal.write_delay_ms =
 			max(c->journal.write_delay_ms, 1000U);
+
+	kobject_get(&c->kobj);
+	ca->set = c;
+
+	kobject_get(&ca->kobj);
+	rcu_assign_pointer(c->cache[ca->dev_idx], ca);
+
+	mutex_lock(&c->sb_lock);
+
+	if (le64_to_cpu(ca->disk_sb.sb->seq) > le64_to_cpu(c->disk_sb->seq))
+		bch_sb_to_cache_set(c, ca->disk_sb.sb);
+
+	mutex_unlock(&c->sb_lock);
 
 	err = "error creating kobject";
 	if (c->kobj.state_in_sysfs &&
@@ -1572,11 +1589,13 @@ int bch_cache_set_add_cache(struct cache_set *c, const char *path)
 
 	err = bch_read_super(&sb, c->opts, path);
 	if (err)
-		goto err_unlock;
+		goto err_unlock_register;
 
 	err = bch_validate_cache_super(&sb);
 	if (err)
-		goto err_unlock;
+		goto err_unlock_register;
+
+	mutex_lock(&c->sb_lock);
 
 	err = can_add_cache(sb.sb, c);
 	if (err)
@@ -1666,13 +1685,16 @@ have_slot:
 	}
 
 	kobject_put(&ca->kobj);
+	mutex_unlock(&c->sb_lock);
 	mutex_unlock(&bch_register_lock);
 	return 0;
 err_put:
 	bch_cache_stop(ca);
 err_unlock:
-	bch_free_super(&sb);
+	mutex_unlock(&c->sb_lock);
+err_unlock_register:
 	mutex_unlock(&bch_register_lock);
+	bch_free_super(&sb);
 
 	bch_err(c, "Unable to add device: %s", err);
 	return ret ?: -EINVAL;

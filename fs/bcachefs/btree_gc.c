@@ -275,16 +275,10 @@ static void bch_mark_metadata(struct cache_set *c)
 	u64 b;
 
 	for_each_cache(ca, c, i) {
-		struct bch_sb_field_journal *journal;
-
-		/* XXX we need locking around superblock optional fields */
-		journal = bch_sb_get_journal(ca->disk_sb.sb);
-		if (journal)
-			for (j = 0; j < bch_nr_journal_buckets(journal); j++) {
-				b = le64_to_cpu(journal->buckets[j]);
-				bch_mark_metadata_bucket(ca,
-						ca->buckets + b, true);
-			}
+		for (j = 0; j < ca->journal.nr; j++) {
+			b = ca->journal.buckets[j];
+			bch_mark_metadata_bucket(ca, ca->buckets + b, true);
+		}
 
 		spin_lock(&ca->prio_buckets_lock);
 
@@ -903,7 +897,7 @@ int bch_initial_gc(struct cache_set *c, struct list_head *journal)
 	 * Skip past versions that might have possibly been used (as nonces),
 	 * but hadn't had their pointers written:
 	 */
-	if (BCH_SB_ENCRYPTION_TYPE(c->disk_sb))
+	if (c->sb.encryption_type)
 		atomic64_add(1 << 16, &c->key_version);
 
 	bch_mark_metadata(c);

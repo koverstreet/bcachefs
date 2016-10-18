@@ -229,6 +229,8 @@ struct journal_device {
 	 * sufficient to read:
 	 */
 	unsigned		last_idx;
+	unsigned		nr;
+	u64			*buckets;
 
 	/* Bio for journal reads/writes to this device */
 	struct bio		*bio;

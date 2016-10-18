@@ -365,7 +365,6 @@ int bch_cache_journal_alloc(struct cache *);
 
 static inline unsigned bch_nr_journal_buckets(struct bch_sb_field_journal *j)
 {
-	/* XXX: need locking around superblock to access optional fields */
 	return j
 		? (__le64 *) vstruct_end(&j->field) - j->buckets
 		: 0;

@@ -289,7 +289,7 @@ static int bch_prio_write(struct cache *ca)
 		}
 
 		p->next_bucket	= cpu_to_le64(ca->prio_buckets[i + 1]);
-		p->magic	= cpu_to_le64(pset_magic(c->disk_sb));
+		p->magic	= cpu_to_le64(pset_magic(c));
 		get_random_bytes(&p->nonce, sizeof(p->nonce));
 
 		spin_lock(&ca->prio_buckets_lock);
@@ -407,7 +407,7 @@ int bch_prio_read(struct cache *ca)
 				return -EIO;
 
 			got = le64_to_cpu(p->magic);
-			expect = pset_magic(c->disk_sb);
+			expect = pset_magic(c);
 			unfixable_fsck_err_on(got != expect, c,
 				"bad magic (got %llu expect %llu) while reading prios from bucket %llu",
 				got, expect, bucket);

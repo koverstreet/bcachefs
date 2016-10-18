@@ -42,6 +42,28 @@ static inline void bch_sb_set_feature(struct bch_sb *sb,
 	}
 }
 
+static inline __le64 bch_sb_magic(struct cache_set *c)
+{
+	__le64 ret;
+	memcpy(&ret, &c->sb.uuid, sizeof(ret));
+	return ret;
+}
+
+static inline __u64 jset_magic(struct cache_set *c)
+{
+	return __le64_to_cpu(bch_sb_magic(c) ^ JSET_MAGIC);
+}
+
+static inline __u64 pset_magic(struct cache_set *c)
+{
+	return __le64_to_cpu(bch_sb_magic(c) ^ PSET_MAGIC);
+}
+
+static inline __u64 bset_magic(struct cache_set *c)
+{
+	return __le64_to_cpu(bch_sb_magic(c) ^ BSET_MAGIC);
+}
+
 static inline struct cache_member_cpu cache_mi_to_cpu_mi(struct bch_member *mi)
 {
 	return (struct cache_member_cpu) {

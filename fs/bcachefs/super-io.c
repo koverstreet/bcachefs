@@ -152,6 +152,8 @@ struct bch_sb_field *bch_fs_sb_field_resize(struct cache_set *c,
 	struct cache *ca;
 	unsigned i;
 
+	lockdep_assert_held(&c->sb_lock);
+
 	if (bch_fs_sb_realloc(c, le32_to_cpu(c->disk_sb->u64s) + d))
 		return NULL;
 
@@ -227,10 +229,6 @@ const char *bch_validate_cache_super(struct bcache_superblock *disk_sb)
 	unsigned i;
 
 	switch (le64_to_cpu(sb->version)) {
-	case BCACHE_SB_VERSION_CDEV_V0:
-	case BCACHE_SB_VERSION_CDEV_WITH_UUID:
-	case BCACHE_SB_VERSION_CDEV_V2:
-	case BCACHE_SB_VERSION_CDEV_V3:
 	case BCACHE_SB_VERSION_CDEV_V4:
 		break;
 	default:
@@ -291,6 +289,10 @@ const char *bch_validate_cache_super(struct bcache_superblock *disk_sb)
 	/* 4 mb max: */
 	if (512U << BCH_SB_JOURNAL_ENTRY_SIZE(sb) > JOURNAL_ENTRY_SIZE_MAX)
 		return "max journal entry size too big";
+
+	if (!sb->time_precision ||
+	    le32_to_cpu(sb->time_precision) > NSEC_PER_SEC)
+		return "invalid time precision";
 
 	/* validate layout */
 	err = validate_sb_layout(&sb->layout);
@@ -426,15 +428,13 @@ int bch_cache_set_mi_update(struct cache_set *c,
 	struct cache *ca;
 	unsigned i;
 
-	mutex_lock(&c->mi_lock);
+	lockdep_assert_held(&c->sb_lock);
 
 	new = kzalloc(sizeof(struct cache_member_rcu) +
 		      sizeof(struct cache_member_cpu) * nr_devices,
 		      GFP_KERNEL);
-	if (!new) {
-		mutex_unlock(&c->mi_lock);
+	if (!new)
 		return -ENOMEM;
-	}
 
 	new->nr_devices = nr_devices;
 
@@ -447,14 +447,34 @@ int bch_cache_set_mi_update(struct cache_set *c,
 	rcu_read_unlock();
 
 	old = rcu_dereference_protected(c->members,
-				lockdep_is_held(&c->mi_lock));
+				lockdep_is_held(&c->sb_lock));
 
 	rcu_assign_pointer(c->members, new);
 	if (old)
 		kfree_rcu(old, rcu);
 
-	mutex_unlock(&c->mi_lock);
 	return 0;
+}
+
+static void bch_sb_update(struct cache_set *c)
+{
+	struct bch_sb *src = c->disk_sb;
+
+	lockdep_assert_held(&c->sb_lock);
+
+	c->sb.uuid		= src->uuid;
+	c->sb.user_uuid		= src->user_uuid;
+	c->sb.block_size	= le16_to_cpu(src->block_size);
+	c->sb.btree_node_size	= BCH_SB_BTREE_NODE_SIZE(src);
+	c->sb.nr_devices	= src->nr_devices;
+	c->sb.clean		= BCH_SB_CLEAN(src);
+	c->sb.meta_replicas_have= BCH_SB_META_REPLICAS_HAVE(src);
+	c->sb.data_replicas_have= BCH_SB_DATA_REPLICAS_HAVE(src);
+	c->sb.str_hash_type	= BCH_SB_STR_HASH_TYPE(src);
+	c->sb.encryption_type	= BCH_SB_ENCRYPTION_TYPE(src);
+	c->sb.time_base_lo	= le64_to_cpu(src->time_base_lo);
+	c->sb.time_base_hi	= le32_to_cpu(src->time_base_hi);
+	c->sb.time_precision	= le32_to_cpu(src->time_precision);
 }
 
 /* doesn't copy member info */
@@ -501,7 +521,7 @@ int bch_sb_to_cache_set(struct cache_set *c, struct bch_sb *src)
 		? le32_to_cpu(journal_buckets->field.u64s)
 		: 0;
 
-	lockdep_assert_held(&bch_register_lock);
+	lockdep_assert_held(&c->sb_lock);
 
 	if (bch_fs_sb_realloc(c, le32_to_cpu(src->u64s) - journal_u64s))
 		return -ENOMEM;
@@ -510,15 +530,7 @@ int bch_sb_to_cache_set(struct cache_set *c, struct bch_sb *src)
 		return -ENOMEM;
 
 	__copy_super(c->disk_sb, src);
-
-	c->sb.block_size	= le16_to_cpu(src->block_size);
-	c->sb.btree_node_size	= BCH_SB_BTREE_NODE_SIZE(src);
-	c->sb.nr_devices	= src->nr_devices;
-	c->sb.clean		= BCH_SB_CLEAN(src);
-	c->sb.meta_replicas_have= BCH_SB_META_REPLICAS_HAVE(src);
-	c->sb.data_replicas_have= BCH_SB_DATA_REPLICAS_HAVE(src);
-	c->sb.str_hash_type	= BCH_SB_STR_HASH_TYPE(src);
-	c->sb.encryption_type	= BCH_SB_ENCRYPTION_TYPE(src);
+	bch_sb_update(c);
 
 	return 0;
 }
@@ -563,6 +575,9 @@ reread:
 
 	if (uuid_le_cmp(sb->sb->magic, BCACHE_MAGIC))
 		return "Not a bcache superblock";
+
+	if (le64_to_cpu(sb->sb->version) != BCACHE_SB_VERSION_CDEV_V4)
+		return "Unsupported superblock version";
 
 	bytes = vstruct_bytes(sb->sb);
 
@@ -719,7 +734,7 @@ static bool write_one_super(struct cache_set *c, struct cache *ca, unsigned idx)
 	return true;
 }
 
-static void __bcache_write_super(struct cache_set *c)
+void bch_write_super(struct cache_set *c)
 {
 	struct bch_sb_field_members *members =
 		bch_sb_get_members(c->disk_sb);
@@ -728,9 +743,9 @@ static void __bcache_write_super(struct cache_set *c)
 	unsigned i, super_idx = 0;
 	bool wrote;
 
-	bch_cache_set_mi_update(c, members->members, c->sb.nr_devices);
+	lockdep_assert_held(&c->sb_lock);
 
-	closure_init(cl, &c->cl);
+	closure_init_stack(cl);
 
 	le64_add_cpu(&c->disk_sb->seq, 1);
 
@@ -746,13 +761,10 @@ static void __bcache_write_super(struct cache_set *c)
 		closure_sync(cl);
 		super_idx++;
 	} while (wrote);
-}
 
-void bch_write_super(struct cache_set *c)
-{
-	mutex_lock(&c->sb_write_lock);
-	__bcache_write_super(c);
-	mutex_unlock(&c->sb_write_lock);
+	/* Make new options visible after they're persistent: */
+	bch_cache_set_mi_update(c, members->members, c->sb.nr_devices);
+	bch_sb_update(c);
 }
 
 void bch_check_mark_super_slowpath(struct cache_set *c, const struct bkey_i *k,
@@ -762,11 +774,11 @@ void bch_check_mark_super_slowpath(struct cache_set *c, const struct bkey_i *k,
 	struct bkey_s_c_extent e = bkey_i_to_s_c_extent(k);
 	const struct bch_extent_ptr *ptr;
 
-	mutex_lock(&c->sb_write_lock);
+	mutex_lock(&c->sb_lock);
 
 	/* recheck, might have raced */
 	if (bch_check_super_marked(c, k, meta)) {
-		mutex_unlock(&c->sb_write_lock);
+		mutex_unlock(&c->sb_lock);
 		return;
 	}
 
@@ -778,6 +790,6 @@ void bch_check_mark_super_slowpath(struct cache_set *c, const struct bkey_i *k,
 			 ? SET_BCH_MEMBER_HAS_METADATA
 			 : SET_BCH_MEMBER_HAS_DATA)(mi + ptr->dev, true);
 
-	__bcache_write_super(c);
-	mutex_unlock(&c->sb_write_lock);
+	bch_write_super(c);
+	mutex_unlock(&c->sb_lock);
 }

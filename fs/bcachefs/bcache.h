@@ -520,16 +520,19 @@ struct cache_set {
 
 	struct cache __rcu	*cache[BCH_SB_MEMBERS_MAX];
 
-	struct mutex		mi_lock;
-	struct cache_member_rcu __rcu *members;
-
 	struct cache_set_opts	opts;
 
 	/*
 	 * Cached copy in native endianness:
-	 * Set by bch_sb_to_cache_set:
+	 * Set by bch_cache_set_mi_update():
 	 */
+	struct cache_member_rcu __rcu *members;
+
+	/* Updated by bch_sb_update():*/
 	struct {
+		uuid_le		uuid;
+		uuid_le		user_uuid;
+
 		u16		block_size;
 		u16		btree_node_size;
 
@@ -541,6 +544,10 @@ struct cache_set {
 
 		u8		str_hash_type;
 		u8		encryption_type;
+
+		u64		time_base_lo;
+		u32		time_base_hi;
+		u32		time_precision;
 	}			sb;
 
 	struct bch_sb		*disk_sb;
@@ -549,7 +556,7 @@ struct cache_set {
 	unsigned short		block_bits;	/* ilog2(block_size) */
 
 	struct closure		sb_write;
-	struct mutex		sb_write_lock;
+	struct mutex		sb_lock;
 
 	struct backing_dev_info bdi;
 

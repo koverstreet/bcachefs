@@ -344,7 +344,7 @@ static const char bch_key_header[8] = BCACHE_MASTER_KEY_HEADER;
 
 static struct nonce bch_master_key_nonce(struct cache_set *c)
 {
-	__le64 magic = bch_sb_magic(c->disk_sb);
+	__le64 magic = bch_sb_magic(c);
 
 	return (struct nonce) {{
 		[0] = 0,
@@ -363,7 +363,7 @@ static int bch_request_key(struct cache_set *c,
 	int ret;
 
 	snprintf(key_description, sizeof(key_description),
-		 "bcache:%pUb", &c->disk_sb->user_uuid);
+		 "bcache:%pUb", &c->sb.user_uuid);
 
 	keyring_key = request_key(&key_type_logon, key_description, NULL);
 	if (IS_ERR(keyring_key)) {
@@ -447,20 +447,23 @@ int bch_disable_encryption(struct cache_set *c)
 {
 	struct bch_sb_field_crypt *crypt;
 	u8 master_key[40];
-	int ret;
+	int ret = -EINVAL;
+
+	mutex_lock(&c->sb_lock);
 
 	crypt = bch_sb_get_crypt(c->disk_sb);
 	if (!crypt)
-		return -EINVAL;
+		goto out;
 
 	/* is key encrypted? */
+	ret = 0;
 	if (!memcmp(crypt->encryption_key,
 		    bch_key_header, sizeof(bch_key_header)))
-		return 0;
+		goto out;
 
 	ret = bch_decrypt_master_key(c, crypt, master_key);
 	if (ret)
-		return ret;
+		goto out;
 
 	memcpy(crypt->encryption_key,
 	       master_key,
@@ -468,23 +471,27 @@ int bch_disable_encryption(struct cache_set *c)
 
 	SET_BCH_SB_ENCRYPTION_TYPE(c->disk_sb, 0);
 	bch_write_super(c);
-	c->sb.encryption_type = BCH_SB_ENCRYPTION_TYPE(c->disk_sb);
-	return 0;
+out:
+	mutex_unlock(&c->sb_lock);
+
+	return ret;
 }
 
 int bch_enable_encryption(struct cache_set *c, bool keyed)
 {
 	struct bch_sb_field_crypt *crypt;
 	u8 master_key[40];
-	int ret;
+	int ret = -EINVAL;
+
+	mutex_lock(&c->sb_lock);
 
 	crypt = bch_sb_get_crypt(c->disk_sb);
 	if (crypt)
-		return -EINVAL;
+		goto err;
 
 	ret = bch_alloc_ciphers(c);
 	if (ret)
-		return ret;
+		goto err;
 
 	memcpy(master_key, bch_key_header, sizeof(bch_key_header));
 	get_random_bytes(master_key + sizeof(bch_key_header),
@@ -493,7 +500,7 @@ int bch_enable_encryption(struct cache_set *c, bool keyed)
 	if (keyed) {
 		ret = bch_request_key(c, c->chacha20);
 		if (ret)
-			return ret;
+			goto err;
 
 		chacha_encrypt(c, bch_master_key_nonce(c),
 			       master_key, sizeof(master_key));
@@ -508,8 +515,10 @@ int bch_enable_encryption(struct cache_set *c, bool keyed)
 	crypt = container_of_or_null(bch_fs_sb_field_resize(c, NULL,
 						sizeof(*crypt) / sizeof(u64)),
 				     struct bch_sb_field_crypt, field);
-	if (!crypt)
-		return -ENOMEM; /* XXX this technically could be -ENOSPC */
+	if (!crypt) {
+		ret = -ENOMEM; /* XXX this technically could be -ENOSPC */
+		goto err;
+	}
 
 	crypt->field.type = BCH_SB_FIELD_crypt;
 	memcpy(crypt->encryption_key, master_key,
@@ -518,8 +527,8 @@ int bch_enable_encryption(struct cache_set *c, bool keyed)
 	/* write superblock */
 	SET_BCH_SB_ENCRYPTION_TYPE(c->disk_sb, 1);
 	bch_write_super(c);
-	c->sb.encryption_type = BCH_SB_ENCRYPTION_TYPE(c->disk_sb);
 err:
+	mutex_unlock(&c->sb_lock);
 	memzero_explicit(master_key, sizeof(master_key));
 	return ret;
 }
