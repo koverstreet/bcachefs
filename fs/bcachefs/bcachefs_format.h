@@ -477,13 +477,15 @@ struct bch_extent_ptr {
 				cached:1,
 				erasure_coded:1,
 				reservation:1,
-				offset:44, /* 8 petabytes */
+				has_seen_read_error:1,
+				offset:43, /* 4 petabytes */
 				dev:8,
 				gen:8;
 #elif defined (__BIG_ENDIAN_BITFIELD)
 	__u64			gen:8,
 				dev:8,
-				offset:44,
+				offset:43,
+				has_seen_read_error:1,
 				reservation:1,
 				erasure_coded:1,
 				cached:1,
@@ -856,11 +858,16 @@ LE64_BITMASK(BCH_MEMBER_DISCARD,	struct bch_member, flags[0], 14, 15)
 LE64_BITMASK(BCH_MEMBER_DATA_ALLOWED,	struct bch_member, flags[0], 15, 20)
 LE64_BITMASK(BCH_MEMBER_GROUP,		struct bch_member, flags[0], 20, 28)
 
-#define BCH_TIER_MAX			4U
-
+/* error threshold bits? */
 #if 0
+LE64_BITMASK(BCH_MEMBER_ERROR_ACTION,	struct bch_member, flags[0], 17, 22);
+LE64_BITMASK(BCH_MEMBER_ERROR_THRESHOLD, struct bch_member, flags[0], 20, 20);
+
 LE64_BITMASK(BCH_MEMBER_NR_READ_ERRORS,	struct bch_member, flags[1], 0,  20);
 LE64_BITMASK(BCH_MEMBER_NR_WRITE_ERRORS,struct bch_member, flags[1], 20, 40);
+
+LE64_BITMASK(BCH_MEMBER_SECTORS_READ,	struct bch_member, flags[1], 20, 40);
+LE64_BITMASK(BCH_MEMBER_SECTORS_WRITTEN,struct bch_member, flags[1], 20, 40);
 #endif
 
 enum bch_member_state {
@@ -1118,6 +1125,9 @@ LE64_BITMASK(BCH_SB_BACKGROUND_COMPRESSION_TYPE,
 LE64_BITMASK(BCH_SB_PROMOTE_TARGET,	struct bch_sb, flags[1], 28, 40);
 LE64_BITMASK(BCH_SB_FOREGROUND_TARGET,	struct bch_sb, flags[1], 40, 52);
 LE64_BITMASK(BCH_SB_BACKGROUND_TARGET,	struct bch_sb, flags[1], 52, 64);
+
+LE64_BITMASK(BCH_SB_NONFATAL_ERROR_ACTION, struct bch_sb, flags[2],  0, 4);
+LE64_BITMASK(BCH_SB_NONFATAL_ERROR_THRESHOLD, struct bch_sb, flags[1],  4, 8);
 
 /* Features: */
 enum bch_sb_features {
