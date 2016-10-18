@@ -490,7 +490,7 @@ static int __disk_sectors(struct bch_extent_crc_unpacked crc, unsigned sectors)
  * that with the gc pos seqlock held.
  */
 static void bch2_mark_pointer(struct bch_fs *c,
-			      struct bkey_s_c_extent e,
+			      const struct bkey *k,
 			      const struct bch_extent_ptr *ptr,
 			      struct bch_extent_crc_unpacked crc,
 			      s64 sectors, enum s_alloc type,
@@ -512,8 +512,8 @@ static void bch2_mark_pointer(struct bch_fs *c,
 			old_sectors = 0;
 			new_sectors = sectors;
 		} else {
-			old_sectors = e.k->size;
-			new_sectors = e.k->size + sectors;
+			old_sectors = k->size;
+			new_sectors = k->size + sectors;
 		}
 
 		sectors = -__disk_sectors(crc, old_sectors)
@@ -601,6 +601,9 @@ void bch2_mark_key(struct bch_fs *c, struct bkey_s_c k,
 		   struct bch_fs_usage *stats,
 		   u64 journal_seq, unsigned flags)
 {
+	enum s_alloc type = metadata ? S_META : S_DIRTY;
+	unsigned replicas = 0;
+
 	/*
 	 * synchronization w.r.t. GC:
 	 *
@@ -640,33 +643,41 @@ void bch2_mark_key(struct bch_fs *c, struct bkey_s_c k,
 		struct bkey_s_c_extent e = bkey_s_c_to_extent(k);
 		const struct bch_extent_ptr *ptr;
 		struct bch_extent_crc_unpacked crc;
-		enum s_alloc type = metadata ? S_META : S_DIRTY;
-		unsigned replicas = 0;
 
 		BUG_ON(metadata && bkey_extent_is_cached(e.k));
 		BUG_ON(!sectors);
 
 		extent_for_each_ptr_crc(e, ptr, crc) {
-			bch2_mark_pointer(c, e, ptr, crc, sectors, type,
+			bch2_mark_pointer(c, e.k, ptr, crc, sectors, type,
 					  stats, journal_seq, flags);
 			replicas += !ptr->cached;
-		}
-
-		if (replicas) {
-			BUG_ON(replicas - 1 > ARRAY_SIZE(stats->s));
-			stats->s[replicas - 1].data[type] += sectors;
 		}
 		break;
 	}
 	case BCH_RESERVATION: {
 		struct bkey_s_c_reservation r = bkey_s_c_to_reservation(k);
 
-		if (r.v->nr_replicas) {
-			BUG_ON(r.v->nr_replicas - 1 > ARRAY_SIZE(stats->s));
-			stats->s[r.v->nr_replicas - 1].persistent_reserved += sectors;
+		replicas = r.v->nr_replicas;
+		break;
+	}
+	case BCH_BTREE_PTR: {
+		struct bkey_s_c_btree_ptr bp = bkey_s_c_to_btree_ptr(k);
+		const struct bch_extent_ptr *ptr;
+		struct bch_extent_crc_unpacked crc =
+			bch2_extent_crc_unpack(bp.k, NULL);
+
+		btree_ptr_for_each_ptr(bp, ptr) {
+			bch2_mark_pointer(c, bp.k, ptr, crc, sectors, type,
+					  stats, journal_seq, flags);
+			replicas += !ptr->cached;
 		}
 		break;
 	}
+	}
+
+	if (replicas) {
+		BUG_ON(replicas - 1 > ARRAY_SIZE(stats->s));
+		stats->s[replicas - 1].data[type] += sectors;
 	}
 	lg_local_unlock(&c->usage_lock);
 }

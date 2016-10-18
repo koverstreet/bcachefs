@@ -92,7 +92,9 @@ u8 bch2_btree_key_recalc_oldest_gen(struct bch_fs *c, struct bkey_s_c k)
 	const struct bch_extent_ptr *ptr;
 	u8 max_stale = 0;
 
-	if (bkey_extent_is_data(k.k)) {
+	switch (k.k->type) {
+	case BCH_EXTENT:
+	case BCH_EXTENT_CACHED: {
 		struct bkey_s_c_extent e = bkey_s_c_to_extent(k);
 
 		extent_for_each_ptr(e, ptr) {
@@ -104,6 +106,22 @@ u8 bch2_btree_key_recalc_oldest_gen(struct bch_fs *c, struct bkey_s_c k)
 
 			max_stale = max(max_stale, ptr_stale(ca, ptr));
 		}
+		break;
+	}
+	case BCH_BTREE_PTR: {
+		struct bkey_s_c_btree_ptr bp = bkey_s_c_to_btree_ptr(k);
+
+		btree_ptr_for_each_ptr(bp, ptr) {
+			struct bch_dev *ca = bch_dev_bkey_exists(c, ptr->dev);
+			size_t b = PTR_BUCKET_NR(ca, ptr);
+
+			if (gen_after(ca->oldest_gens[b], ptr->gen))
+				ca->oldest_gens[b] = ptr->gen;
+
+			max_stale = max(max_stale, ptr_stale(ca, ptr));
+		}
+		break;
+	}
 	}
 
 	return max_stale;
@@ -143,6 +161,38 @@ static u8 bch2_gc_mark_key(struct bch_fs *c, enum bkey_type type,
 	return ret;
 }
 
+static int bch2_btree_mark_ptr_initial(struct bch_fs *c,
+				       enum bch_data_type data_type,
+				       const struct bch_extent_ptr *ptr)
+{
+	struct bch_dev *ca = bch_dev_bkey_exists(c, ptr->dev);
+	size_t b = PTR_BUCKET_NR(ca, ptr);
+	struct bucket *g = PTR_BUCKET(ca, ptr);
+	int ret = 0;
+
+	if (mustfix_fsck_err_on(!g->mark.gen_valid, c,
+				"found ptr with missing gen in alloc btree,\n"
+				"type %s gen %u",
+				bch2_data_types[data_type],
+				ptr->gen)) {
+		g->_mark.gen = ptr->gen;
+		g->_mark.gen_valid = 1;
+		set_bit(b, ca->buckets_dirty);
+	}
+
+	if (mustfix_fsck_err_on(gen_cmp(ptr->gen, g->mark.gen) > 0, c,
+				"%s ptr gen in the future: %u > %u",
+				bch2_data_types[data_type],
+				ptr->gen, g->mark.gen)) {
+		g->_mark.gen = ptr->gen;
+		g->_mark.gen_valid = 1;
+		set_bit(b, ca->buckets_dirty);
+		set_bit(BCH_FS_FIXED_GENS, &c->flags);
+	}
+fsck_err:
+	return ret;
+}
+
 int bch2_btree_mark_key_initial(struct bch_fs *c, enum bkey_type type,
 				struct bkey_s_c k)
 {
@@ -166,32 +216,21 @@ int bch2_btree_mark_key_initial(struct bch_fs *c, enum bkey_type type,
 		const struct bch_extent_ptr *ptr;
 
 		extent_for_each_ptr(e, ptr) {
-			struct bch_dev *ca = bch_dev_bkey_exists(c, ptr->dev);
-			size_t b = PTR_BUCKET_NR(ca, ptr);
-			struct bucket *g = PTR_BUCKET(ca, ptr);
-
-			if (mustfix_fsck_err_on(!g->mark.gen_valid, c,
-					"found ptr with missing gen in alloc btree,\n"
-					"type %s gen %u",
-					bch2_data_types[data_type],
-					ptr->gen)) {
-				g->_mark.gen = ptr->gen;
-				g->_mark.gen_valid = 1;
-				set_bit(b, ca->buckets_dirty);
-			}
-
-			if (mustfix_fsck_err_on(gen_cmp(ptr->gen, g->mark.gen) > 0, c,
-					"%s ptr gen in the future: %u > %u",
-					bch2_data_types[data_type],
-					ptr->gen, g->mark.gen)) {
-				g->_mark.gen = ptr->gen;
-				g->_mark.gen_valid = 1;
-				set_bit(b, ca->buckets_dirty);
-				set_bit(BCH_FS_FIXED_GENS, &c->flags);
-			}
-
+			ret = bch2_btree_mark_ptr_initial(c, data_type, ptr);
+			if (ret)
+				return ret;
 		}
 		break;
+	}
+	case BCH_BTREE_PTR: {
+		struct bkey_s_c_btree_ptr bp = bkey_s_c_to_btree_ptr(k);
+		const struct bch_extent_ptr *ptr;
+
+		btree_ptr_for_each_ptr(bp, ptr) {
+			ret = bch2_btree_mark_ptr_initial(c, data_type, ptr);
+			if (ret)
+				return ret;
+		}
 	}
 	}
 

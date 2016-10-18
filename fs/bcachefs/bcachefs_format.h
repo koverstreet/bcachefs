@@ -536,6 +536,8 @@ enum {
 	 * Persistent reservation:
 	 */
 	BCH_RESERVATION		= 130,
+
+	BCH_BTREE_PTR		= 131,
 };
 
 struct bch_extent {
@@ -568,9 +570,23 @@ BKEY_VAL_TYPE(reservation,	BCH_RESERVATION);
 /* * Maximum possible size of an entire extent, key + value: */
 #define BKEY_EXTENT_U64s_MAX		(BKEY_U64s + BKEY_EXTENT_VAL_U64s_MAX)
 
+struct bch_btree_ptr {
+	struct bch_val		v;
+	__le64			journal_seq;
+	__le64			seq;
+	struct bpos		min_key;
+	__u32			pad;
+
+	struct bch_extent_ptr	start[0];
+	__u64			_data[0];
+};
+BKEY_VAL_TYPE(btree_ptr,	BCH_BTREE_PTR);
+
 /* Btree pointers don't carry around checksums: */
 #define BKEY_BTREE_PTR_VAL_U64s_MAX				\
-	((sizeof(struct bch_extent_ptr)) / sizeof(u64) * BCH_REPLICAS_MAX)
+	((sizeof(struct bch_btree_ptr) +			\
+	  sizeof(struct bch_extent_ptr) * BCH_REPLICAS_MAX) / sizeof(u64))
+
 #define BKEY_BTREE_PTR_U64s_MAX					\
 	(BKEY_U64s + BKEY_BTREE_PTR_VAL_U64s_MAX)
 

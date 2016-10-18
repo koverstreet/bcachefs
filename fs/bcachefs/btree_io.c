@@ -1490,9 +1490,6 @@ static void bch2_btree_node_write_error(struct bch_fs *c,
 {
 	struct btree *b		= wbio->wbio.bio.bi_private;
 	__BKEY_PADDED(k, BKEY_BTREE_PTR_VAL_U64s_MAX) tmp;
-	struct bkey_i_extent *new_key;
-	struct bkey_s_extent e;
-	struct bch_extent_ptr *ptr;
 	struct btree_iter iter;
 	int ret;
 
@@ -1515,16 +1512,12 @@ retry:
 
 	bkey_copy(&tmp.k, &b->key);
 
-	new_key = bkey_i_to_extent(&tmp.k);
-	e = extent_i_to_s(new_key);
-	extent_for_each_ptr_backwards(e, ptr)
-		if (bch2_dev_list_has_dev(wbio->wbio.failed, ptr->dev))
-			bch2_extent_drop_ptr(e, ptr);
+	bch2_bkey_drop_ptrs(bkey_i_to_s(&tmp.k), wbio->wbio.failed);
 
-	if (!bch2_extent_nr_ptrs(e.c))
+	if (!bch2_bkey_nr_ptrs(bkey_i_to_s_c(&tmp.k)))
 		goto err;
 
-	ret = bch2_btree_node_update_key(c, &iter, b, new_key);
+	ret = bch2_btree_node_update_key(c, &iter, b, &tmp.k);
 	if (ret == -EINTR)
 		goto retry;
 	if (ret)
@@ -1623,12 +1616,8 @@ static void btree_node_write_endio(struct bio *bio)
 static int validate_bset_for_write(struct bch_fs *c, struct btree *b,
 				   struct bset *i, unsigned sectors)
 {
-	const struct bch_extent_ptr *ptr;
 	unsigned whiteout_u64s = 0;
 	int ret;
-
-	extent_for_each_ptr(bkey_i_to_s_c_extent(&b->key), ptr)
-		break;
 
 	ret = validate_bset(c, b, i, sectors, &whiteout_u64s, WRITE, false);
 	if (ret)
@@ -1646,7 +1635,6 @@ void __bch2_btree_node_write(struct bch_fs *c, struct btree *b,
 	struct btree_node *bn = NULL;
 	struct btree_node_entry *bne = NULL;
 	BKEY_PADDED(key) k;
-	struct bkey_s_extent e;
 	struct bch_extent_ptr *ptr;
 	struct sort_iter sort_iter;
 	struct nonce nonce;
@@ -1856,10 +1844,18 @@ void __bch2_btree_node_write(struct bch_fs *c, struct btree *b,
 	 */
 
 	bkey_copy(&k.key, &b->key);
-	e = bkey_i_to_s_extent(&k.key);
-
-	extent_for_each_ptr(e, ptr)
-		ptr->offset += b->written;
+	switch (k.key.k.type) {
+	case BCH_EXTENT:
+		extent_for_each_ptr(bkey_i_to_s_extent(&k.key), ptr)
+			ptr->offset += b->written;
+		break;
+	case BCH_BTREE_PTR:
+		btree_ptr_for_each_ptr(bkey_i_to_s_btree_ptr(&k.key), ptr)
+			ptr->offset += b->written;
+		break;
+	default:
+		BUG();
+	}
 
 	b->written += sectors_to_write;
 

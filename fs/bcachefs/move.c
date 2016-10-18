@@ -470,7 +470,6 @@ int bch2_move_data(struct bch_fs *c,
 	struct bch_io_opts io_opts = bch2_opts_to_inode_opts(c->opts);
 	BKEY_PADDED(k) tmp;
 	struct bkey_s_c k;
-	struct bkey_s_c_extent e;
 	struct data_opts data_opts;
 	enum data_cmd data_cmd;
 	u64 cur_inum = U64_MAX;
@@ -506,8 +505,6 @@ peek:
 		if (!bkey_extent_is_data(k.k))
 			goto next_nondata;
 
-		e = bkey_s_c_to_extent(k);
-
 		if (cur_inum != k.k->p.inode) {
 			struct bch_inode_unpacked inode;
 
@@ -521,7 +518,7 @@ peek:
 			goto peek;
 		}
 
-		switch ((data_cmd = pred(c, arg, BKEY_TYPE_EXTENTS, e,
+		switch ((data_cmd = pred(c, arg, BKEY_TYPE_EXTENTS, k,
 					 &io_opts, &data_opts))) {
 		case DATA_SKIP:
 			goto next;
@@ -645,7 +642,7 @@ static int bch2_move_btree(struct bch_fs *c,
 	for (id = 0; id < BTREE_ID_NR; id++) {
 		for_each_btree_node(&stats->iter, c, id, POS_MIN, BTREE_ITER_PREFETCH, b) {
 			switch ((cmd = pred(c, arg, BKEY_TYPE_BTREE,
-					    bkey_i_to_s_c_extent(&b->key),
+					    bkey_i_to_s_c(&b->key),
 					    &io_opts,
 					    &data_opts))) {
 			case DATA_SKIP:
@@ -684,11 +681,11 @@ static enum data_cmd scrub_pred(struct bch_fs *c, void *arg,
 
 static enum data_cmd rereplicate_pred(struct bch_fs *c, void *arg,
 				      enum bkey_type type,
-				      struct bkey_s_c_extent e,
+				      struct bkey_s_c k,
 				      struct bch_io_opts *io_opts,
 				      struct data_opts *data_opts)
 {
-	unsigned nr_good = bch2_extent_nr_good_ptrs(c, e);
+	unsigned nr_good = bch2_bkey_nr_good_ptrs(c, k);
 	unsigned replicas = type == BKEY_TYPE_BTREE
 		? c->opts.metadata_replicas
 		: io_opts->data_replicas;
@@ -703,13 +700,16 @@ static enum data_cmd rereplicate_pred(struct bch_fs *c, void *arg,
 
 static enum data_cmd migrate_pred(struct bch_fs *c, void *arg,
 				  enum bkey_type type,
-				  struct bkey_s_c_extent e,
+				  struct bkey_s_c k,
 				  struct bch_io_opts *io_opts,
 				  struct data_opts *data_opts)
 {
 	struct bch_ioctl_data *op = arg;
 
-	if (!bch2_extent_has_device(e, op->migrate.dev))
+	if (!bkey_extent_is_data(k.k))
+		return DATA_SKIP;
+
+	if (!bch2_extent_has_device(bkey_s_c_to_extent(k), op->migrate.dev))
 		return DATA_SKIP;
 
 	data_opts->target		= 0;

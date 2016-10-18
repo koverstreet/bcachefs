@@ -129,6 +129,6 @@ int bch2_btree_delete_range(struct bch_fs *, enum btree_id,
 int bch2_btree_node_rewrite(struct bch_fs *c, struct btree_iter *,
 			    __le64, unsigned);
 int bch2_btree_node_update_key(struct bch_fs *, struct btree_iter *,
-			       struct btree *, struct bkey_i_extent *);
+			       struct btree *, struct bkey_i *);
 
 #endif /* _BCACHEFS_BTREE_UPDATE_H */

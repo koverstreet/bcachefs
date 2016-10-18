@@ -70,17 +70,21 @@ void bch2_rebalance_add_work(struct bch_fs *c, u64 sectors)
 
 static enum data_cmd rebalance_pred(struct bch_fs *c, void *arg,
 				    enum bkey_type type,
-				    struct bkey_s_c_extent e,
+				    struct bkey_s_c k,
 				    struct bch_io_opts *io_opts,
 				    struct data_opts *data_opts)
 {
+	struct bkey_s_c_extent e;
 	const struct bch_extent_ptr *ptr;
 	struct bch_extent_crc_unpacked crc;
 
 	/* Make sure we have room to add a new pointer: */
-	if (bkey_val_u64s(e.k) + BKEY_EXTENT_PTR_U64s_MAX >
+	if (!bkey_extent_is_data(k.k) ||
+	    bkey_val_u64s(e.k) + BKEY_EXTENT_PTR_U64s_MAX >
 	    BKEY_EXTENT_VAL_U64s_MAX)
 		return DATA_SKIP;
+
+	e = bkey_s_c_to_extent(k);
 
 	extent_for_each_ptr_crc(e, ptr, crc)
 		if (rebalance_ptr_pred(c, ptr, crc, io_opts))

@@ -86,13 +86,14 @@ static bool __copygc_pred(struct bch_dev *ca,
 
 static enum data_cmd copygc_pred(struct bch_fs *c, void *arg,
 				 enum bkey_type type,
-				 struct bkey_s_c_extent e,
+				 struct bkey_s_c k,
 				 struct bch_io_opts *io_opts,
 				 struct data_opts *data_opts)
 {
 	struct bch_dev *ca = arg;
 
-	if (!__copygc_pred(ca, e))
+	if (!bkey_extent_is_data(k.k) ||
+	    !__copygc_pred(ca, bkey_s_c_to_extent(k)))
 		return DATA_SKIP;
 
 	data_opts->target		= dev_to_target(ca->dev_idx);

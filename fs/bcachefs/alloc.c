@@ -1596,6 +1596,27 @@ void bch2_alloc_sectors_append_ptrs(struct bch_fs *c, struct write_point *wp,
 	}
 }
 
+void bch2_alloc_sectors_append_btree_ptrs(struct bch_fs *c, struct write_point *wp,
+					  struct bkey_i_btree_ptr *bp, unsigned sectors)
+{
+	unsigned i;
+
+	BUG_ON(sectors > wp->sectors_free);
+	wp->sectors_free -= sectors;
+
+	for (i = 0; i < wp->nr_ptrs_can_use; i++) {
+		struct open_bucket *ob = wp->ptrs[i];
+		struct bch_dev *ca = bch_dev_bkey_exists(c, ob->ptr.dev);
+		struct bch_extent_ptr tmp = ob->ptr;
+
+		tmp.offset += ca->mi.bucket_size - ob->sectors_free;
+		btree_ptr_append(bp, tmp);
+
+		BUG_ON(sectors > ob->sectors_free);
+		ob->sectors_free -= sectors;
+	}
+}
+
 /*
  * Append pointers to the space we just allocated to @k, and mark @sectors space
  * as allocated out of @ob

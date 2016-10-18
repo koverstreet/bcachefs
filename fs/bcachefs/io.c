@@ -133,60 +133,85 @@ void bch2_bio_alloc_more_pages_pool(struct bch_fs *c, struct bio *bio,
 
 /* Writes */
 
+static void bch2_wbio_submit_one(struct bch_write_bio *wbio, struct bch_fs *c,
+				 enum bch_data_type type,
+				 const struct bch_extent_ptr *ptr,
+				 const struct bch_extent_ptr *last)
+{
+	struct bch_write_bio *n;
+	struct bch_dev *ca;
+
+	BUG_ON(ptr->dev >= BCH_SB_MEMBERS_MAX ||
+	       !c->devs[ptr->dev]);
+
+	ca = bch_dev_bkey_exists(c, ptr->dev);
+
+	if (ptr + 1 < last) {
+		n = to_wbio(bio_clone_fast(&wbio->bio, GFP_NOIO,
+					   &ca->replica_set));
+
+		n->bio.bi_end_io	= wbio->bio.bi_end_io;
+		n->bio.bi_private	= wbio->bio.bi_private;
+		n->parent		= wbio;
+		n->split		= true;
+		n->bounce		= false;
+		n->put_bio		= true;
+		n->bio.bi_opf		= wbio->bio.bi_opf;
+		bio_inc_remaining(&wbio->bio);
+	} else {
+		n = wbio;
+		n->split		= false;
+	}
+
+	n->c			= c;
+	n->ca			= ca;
+	n->submit_time_us	= local_clock_us();
+	n->bio.bi_iter.bi_sector = ptr->offset;
+
+	if (!journal_flushes_device(ca))
+		n->bio.bi_opf |= REQ_FUA;
+
+	if (likely(percpu_ref_tryget(&ca->io_ref))) {
+		this_cpu_add(ca->io_done->sectors[WRITE][type],
+			     bio_sectors(&n->bio));
+
+		n->have_io_ref		= true;
+		bio_set_dev(&n->bio, ca->disk_sb.bdev);
+		submit_bio(&n->bio);
+	} else {
+		n->have_io_ref		= false;
+		n->bio.bi_status	= BLK_STS_REMOVED;
+		bio_endio(&n->bio);
+	}
+
+}
+
 void bch2_submit_wbio_replicas(struct bch_write_bio *wbio, struct bch_fs *c,
 			       enum bch_data_type type,
 			       const struct bkey_i *k)
 {
-	struct bkey_s_c_extent e = bkey_i_to_s_c_extent(k);
 	const struct bch_extent_ptr *ptr;
-	struct bch_write_bio *n;
-	struct bch_dev *ca;
 
 	BUG_ON(c->opts.nochanges);
 
-	extent_for_each_ptr(e, ptr) {
-		BUG_ON(ptr->dev >= BCH_SB_MEMBERS_MAX ||
-		       !c->devs[ptr->dev]);
+	switch (k->k.type) {
+	case BCH_EXTENT:
+	case BCH_EXTENT_CACHED: {
+		struct bkey_s_c_extent e = bkey_i_to_s_c_extent(k);
 
-		ca = bch_dev_bkey_exists(c, ptr->dev);
+		extent_for_each_ptr(e, ptr)
+			bch2_wbio_submit_one(wbio, c, type, ptr,
+					&extent_entry_last(e)->ptr);
+		break;
+	}
+	case BCH_BTREE_PTR: {
+		struct bkey_s_c_btree_ptr bp = bkey_i_to_s_c_btree_ptr(k);
 
-		if (ptr + 1 < &extent_entry_last(e)->ptr) {
-			n = to_wbio(bio_clone_fast(&wbio->bio, GFP_NOIO,
-						   &ca->replica_set));
-
-			n->bio.bi_end_io	= wbio->bio.bi_end_io;
-			n->bio.bi_private	= wbio->bio.bi_private;
-			n->parent		= wbio;
-			n->split		= true;
-			n->bounce		= false;
-			n->put_bio		= true;
-			n->bio.bi_opf		= wbio->bio.bi_opf;
-			bio_inc_remaining(&wbio->bio);
-		} else {
-			n = wbio;
-			n->split		= false;
-		}
-
-		n->c			= c;
-		n->ca			= ca;
-		n->submit_time_us	= local_clock_us();
-		n->bio.bi_iter.bi_sector = ptr->offset;
-
-		if (!journal_flushes_device(ca))
-			n->bio.bi_opf |= REQ_FUA;
-
-		if (likely(percpu_ref_tryget(&ca->io_ref))) {
-			this_cpu_add(ca->io_done->sectors[WRITE][type],
-				     bio_sectors(&n->bio));
-
-			n->have_io_ref		= true;
-			bio_set_dev(&n->bio, ca->disk_sb.bdev);
-			submit_bio(&n->bio);
-		} else {
-			n->have_io_ref		= false;
-			n->bio.bi_status	= BLK_STS_REMOVED;
-			bio_endio(&n->bio);
-		}
+		btree_ptr_for_each_ptr(bp, ptr)
+			bch2_wbio_submit_one(wbio, c, type, ptr,
+					     btree_ptr_last(bp));
+		break;
+	}
 	}
 }
 

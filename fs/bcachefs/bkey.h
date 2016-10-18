@@ -576,6 +576,8 @@ static inline void __bch2_extent_assert(u8 type, u8 nr)
 __BKEY_VAL_ACCESSORS(extent,		BCH_EXTENT, __bch2_extent_assert);
 BKEY_VAL_ACCESSORS(reservation,		BCH_RESERVATION);
 
+BKEY_VAL_ACCESSORS(btree_ptr,		BCH_BTREE_PTR);
+
 BKEY_VAL_ACCESSORS(inode,		BCH_INODE_FS);
 BKEY_VAL_ACCESSORS(inode_blockdev,	BCH_INODE_BLOCKDEV);
 BKEY_VAL_ACCESSORS(inode_generation,	BCH_INODE_GENERATION);

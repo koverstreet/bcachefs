@@ -68,6 +68,7 @@ struct btree_alloc {
 struct btree {
 	/* Hottest entries first */
 	struct rhash_head	hash;
+	u64			hash_val;
 
 	/* Key/pointer for this btree node */
 	__BKEY_PADDED(key, BKEY_BTREE_PTR_VAL_U64s_MAX);

@@ -76,6 +76,9 @@ struct write_point *bch2_alloc_sectors_start(struct bch_fs *,
 
 void bch2_alloc_sectors_append_ptrs(struct bch_fs *, struct write_point *,
 				    struct bkey_i_extent *, unsigned);
+void bch2_alloc_sectors_append_btree_ptrs(struct bch_fs *, struct write_point *,
+					  struct bkey_i_btree_ptr *, unsigned);
+
 void bch2_alloc_sectors_done(struct bch_fs *, struct write_point *);
 
 static inline void bch2_wake_allocator(struct bch_dev *ca)

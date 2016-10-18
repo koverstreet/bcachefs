@@ -128,20 +128,51 @@ bool bch2_btree_node_format_fits(struct bch_fs *c, struct btree *b,
 
 /* Btree node freeing/allocation: */
 
-static bool btree_key_matches(struct bch_fs *c,
-			      struct bkey_s_c_extent l,
-			      struct bkey_s_c_extent r)
+static bool btree_key_matches_ptr(struct bkey_s_c k,
+				  const struct bch_extent_ptr *ptr1)
 {
-	const struct bch_extent_ptr *ptr1, *ptr2;
+	const struct bch_extent_ptr *ptr2;
 
-	extent_for_each_ptr(l, ptr1)
-		extent_for_each_ptr(r, ptr2)
+	switch (k.k->type) {
+	case BCH_EXTENT:
+		extent_for_each_ptr(bkey_s_c_to_extent(k), ptr2)
 			if (ptr1->dev == ptr2->dev &&
 			    ptr1->gen == ptr2->gen &&
 			    ptr1->offset == ptr2->offset)
 				return true;
+		return false;
+	case BCH_BTREE_PTR:
+		btree_ptr_for_each_ptr(bkey_s_c_to_btree_ptr(k), ptr2)
+			if (ptr1->dev == ptr2->dev &&
+			    ptr1->gen == ptr2->gen &&
+			    ptr1->offset == ptr2->offset)
+				return true;
+		return false;
+	default:
+		BUG();
+	}
+}
 
-	return false;
+static bool btree_key_matches(struct bch_fs *c,
+			      struct bkey_s_c l,
+			      struct bkey_s_c r)
+{
+	const struct bch_extent_ptr *ptr1;
+
+	switch (l.k->type) {
+	case BCH_EXTENT:
+		extent_for_each_ptr(bkey_s_c_to_extent(l), ptr1)
+			if (btree_key_matches_ptr(r, ptr1))
+				return true;
+		return false;
+	case BCH_BTREE_PTR:
+		btree_ptr_for_each_ptr(bkey_s_c_to_btree_ptr(l), ptr1)
+			if (btree_key_matches_ptr(r, ptr1))
+				return true;
+		return false;
+	default:
+		BUG();
+	}
 }
 
 /*
@@ -167,8 +198,7 @@ static void bch2_btree_node_free_index(struct btree_update *as, struct btree *b,
 
 	for (d = as->pending; d < as->pending + as->nr_pending; d++)
 		if (!bkey_cmp(k.k->p, d->key.k.p) &&
-		    btree_key_matches(c, bkey_s_c_to_extent(k),
-				      bkey_i_to_s_c_extent(&d->key)))
+		    btree_key_matches(c, k, bkey_i_to_s_c(&d->key)))
 			goto found;
 	BUG();
 found:
@@ -318,7 +348,7 @@ static struct btree *__bch2_btree_node_alloc(struct bch_fs *c,
 	struct write_point *wp;
 	struct btree *b;
 	BKEY_PADDED(k) tmp;
-	struct bkey_i_extent *e;
+	struct bkey_i_btree_ptr *bp;
 	struct btree_ob_ref ob;
 	struct bch_devs_list devs_have = (struct bch_devs_list) { 0 };
 	unsigned nr_reserve;
@@ -369,8 +399,9 @@ retry:
 		goto retry;
 	}
 
-	e = bkey_extent_init(&tmp.k);
-	bch2_alloc_sectors_append_ptrs(c, wp, e, c->opts.btree_node_size);
+	bp = bkey_btree_ptr_init(&tmp.k);
+
+	bch2_alloc_sectors_append_btree_ptrs(c, wp, bp, c->opts.btree_node_size);
 
 	ob.nr = 0;
 	bch2_open_bucket_get(c, wp, &ob.nr, ob.refs);
@@ -409,7 +440,7 @@ static struct btree *bch2_btree_node_alloc(struct btree_update *as, unsigned lev
 	b->data->flags = 0;
 	SET_BTREE_NODE_ID(b->data, as->btree_id);
 	SET_BTREE_NODE_LEVEL(b->data, level);
-	b->data->ptr = bkey_i_to_extent(&b->key)->v.start->ptr;
+	b->data->ptr = *bkey_i_to_btree_ptr(&b->key)->v.start;
 
 	bch2_btree_build_aux_trees(b);
 
@@ -1183,10 +1214,9 @@ static void bch2_insert_fixup_btree_ptr(struct btree_update *as, struct btree *b
 
 	BUG_ON(insert->k.u64s > bch_btree_keys_u64s_remaining(c, b));
 
-	if (bkey_extent_is_data(&insert->k))
-		bch2_mark_key(c, bkey_i_to_s_c(insert),
-			     c->opts.btree_node_size, true,
-			     gc_pos_btree_node(b), &stats, 0, 0);
+	bch2_mark_key(c, bkey_i_to_s_c(insert),
+		     c->opts.btree_node_size, true,
+		     gc_pos_btree_node(b), &stats, 0, 0);
 
 	while ((k = bch2_btree_node_iter_peek_all(node_iter, b)) &&
 	       !btree_iter_pos_cmp_packed(b, &insert->k.p, k, false))
@@ -1867,7 +1897,7 @@ static void __bch2_btree_node_update_key(struct bch_fs *c,
 					 struct btree_update *as,
 					 struct btree_iter *iter,
 					 struct btree *b, struct btree *new_hash,
-					 struct bkey_i_extent *new_key)
+					 struct bkey_i *new_key)
 {
 	struct btree *parent;
 	int ret;
@@ -1901,13 +1931,13 @@ static void __bch2_btree_node_update_key(struct bch_fs *c,
 	parent = btree_node_parent(iter, b);
 	if (parent) {
 		if (new_hash) {
-			bkey_copy(&new_hash->key, &new_key->k_i);
+			bkey_copy(&new_hash->key, new_key);
 			ret = bch2_btree_node_hash_insert(&c->btree_cache,
 					new_hash, b->level, b->btree_id);
 			BUG_ON(ret);
 		}
 
-		bch2_keylist_add(&as->parent_keys, &new_key->k_i);
+		bch2_keylist_add(&as->parent_keys, new_key);
 		bch2_btree_insert_node(as, parent, iter, &as->parent_keys);
 
 		if (new_hash) {
@@ -1916,12 +1946,12 @@ static void __bch2_btree_node_update_key(struct bch_fs *c,
 
 			bch2_btree_node_hash_remove(&c->btree_cache, b);
 
-			bkey_copy(&b->key, &new_key->k_i);
+			bkey_copy(&b->key, new_key);
 			ret = __bch2_btree_node_hash_insert(&c->btree_cache, b);
 			BUG_ON(ret);
 			mutex_unlock(&c->btree_cache.lock);
 		} else {
-			bkey_copy(&b->key, &new_key->k_i);
+			bkey_copy(&b->key, new_key);
 		}
 	} else {
 		struct bch_fs_usage stats = { 0 };
@@ -1930,7 +1960,7 @@ static void __bch2_btree_node_update_key(struct bch_fs *c,
 
 		bch2_btree_node_lock_write(b, iter);
 
-		bch2_mark_key(c, bkey_i_to_s_c(&new_key->k_i),
+		bch2_mark_key(c, bkey_i_to_s_c(new_key),
 			      c->opts.btree_node_size, true,
 			      gc_pos_btree_root(b->btree_id),
 			      &stats, 0, 0);
@@ -1940,16 +1970,16 @@ static void __bch2_btree_node_update_key(struct bch_fs *c,
 		bch2_fs_usage_apply(c, &stats, &as->reserve->disk_res,
 				    gc_pos_btree_root(b->btree_id));
 
-		if (PTR_HASH(&new_key->k_i) != PTR_HASH(&b->key)) {
+		if (*btree_ptr_hash(new_key) != b->hash_val) {
 			mutex_lock(&c->btree_cache.lock);
 			bch2_btree_node_hash_remove(&c->btree_cache, b);
 
-			bkey_copy(&b->key, &new_key->k_i);
+			bkey_copy(&b->key, new_key);
 			ret = __bch2_btree_node_hash_insert(&c->btree_cache, b);
 			BUG_ON(ret);
 			mutex_unlock(&c->btree_cache.lock);
 		} else {
-			bkey_copy(&b->key, &new_key->k_i);
+			bkey_copy(&b->key, new_key);
 		}
 
 		btree_update_updated_root(as);
@@ -1960,7 +1990,7 @@ static void __bch2_btree_node_update_key(struct bch_fs *c,
 }
 
 int bch2_btree_node_update_key(struct bch_fs *c, struct btree_iter *iter,
-			       struct btree *b, struct bkey_i_extent *new_key)
+			       struct btree *b, struct bkey_i *new_key)
 {
 	struct btree_update *as = NULL;
 	struct btree *new_hash = NULL;
@@ -1979,8 +2009,8 @@ int bch2_btree_node_update_key(struct bch_fs *c, struct btree_iter *iter,
 		}
 	}
 
-	/* check PTR_HASH() after @b is locked by btree_iter_traverse(): */
-	if (PTR_HASH(&new_key->k_i) != PTR_HASH(&b->key)) {
+	/* check btree_ptr_hash() after @b is locked by btree_iter_traverse(): */
+	if (*btree_ptr_hash(new_key) != b->hash_val) {
 		/* bch2_btree_reserve_get will unlock */
 		ret = bch2_btree_cache_cannibalize_lock(c, &cl);
 		if (ret) {
@@ -2022,7 +2052,7 @@ int bch2_btree_node_update_key(struct bch_fs *c, struct btree_iter *iter,
 	}
 
 	ret = bch2_mark_bkey_replicas(c, BCH_DATA_BTREE,
-				      extent_i_to_s_c(new_key).s_c);
+				      bkey_i_to_s_c(new_key));
 	if (ret)
 		goto err_free_update;
 

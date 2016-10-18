@@ -13,7 +13,7 @@
 #include "move.h"
 #include "super-io.h"
 
-static int drop_dev_ptrs(struct bch_fs *c, struct bkey_s_extent e,
+static int drop_dev_ptrs(struct bch_fs *c, struct bkey_s k,
 			 unsigned dev_idx, int flags, bool metadata)
 {
 	unsigned replicas = metadata ? c->opts.metadata_replicas : c->opts.data_replicas;
@@ -21,9 +21,9 @@ static int drop_dev_ptrs(struct bch_fs *c, struct bkey_s_extent e,
 	unsigned degraded = metadata ? BCH_FORCE_IF_METADATA_DEGRADED : BCH_FORCE_IF_DATA_DEGRADED;
 	unsigned nr_good;
 
-	bch2_extent_drop_device(e, dev_idx);
+	bch2_bkey_drop_ptrs(k, bch2_dev_list_single(dev_idx));
 
-	nr_good = bch2_extent_nr_good_ptrs(c, e.c);
+	nr_good = bch2_bkey_nr_good_ptrs(c, k.s_c);
 	if ((!nr_good && !(flags & lost)) ||
 	    (nr_good < replicas && !(flags & degraded)))
 		return -EINVAL;
@@ -59,7 +59,7 @@ static int bch2_dev_usrdata_drop(struct bch_fs *c, unsigned dev_idx, int flags)
 		bkey_reassemble(&tmp.key, k);
 		e = bkey_i_to_s_extent(&tmp.key);
 
-		ret = drop_dev_ptrs(c, e, dev_idx, flags, false);
+		ret = drop_dev_ptrs(c, e.s, dev_idx, flags, false);
 		if (ret)
 			break;
 
@@ -121,10 +121,9 @@ static int bch2_dev_metadata_drop(struct bch_fs *c, unsigned dev_idx, int flags)
 	for (id = 0; id < BTREE_ID_NR; id++) {
 		for_each_btree_node(&iter, c, id, POS_MIN, BTREE_ITER_PREFETCH, b) {
 			__BKEY_PADDED(k, BKEY_BTREE_PTR_VAL_U64s_MAX) tmp;
-			struct bkey_i_extent *new_key;
 retry:
-			if (!bch2_extent_has_device(bkey_i_to_s_c_extent(&b->key),
-						    dev_idx)) {
+			if (!bch2_bkey_has_device(bkey_i_to_s_c(&b->key),
+						  dev_idx)) {
 				bch2_btree_iter_set_locks_want(&iter, 0);
 
 				ret = bch2_mark_bkey_replicas(c, BCH_DATA_BTREE,
@@ -133,9 +132,8 @@ retry:
 					goto err;
 			} else {
 				bkey_copy(&tmp.k, &b->key);
-				new_key = bkey_i_to_extent(&tmp.k);
 
-				ret = drop_dev_ptrs(c, extent_i_to_s(new_key),
+				ret = drop_dev_ptrs(c, bkey_i_to_s(&tmp.k),
 						    dev_idx, flags, true);
 				if (ret)
 					goto err;
@@ -145,7 +143,7 @@ retry:
 					goto retry;
 				}
 
-				ret = bch2_btree_node_update_key(c, &iter, b, new_key);
+				ret = bch2_btree_node_update_key(c, &iter, b, &tmp.k);
 				if (ret == -EINTR) {
 					b = bch2_btree_iter_peek_node(&iter);
 					goto retry;
