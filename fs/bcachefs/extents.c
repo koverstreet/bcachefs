@@ -1769,7 +1769,7 @@ static const char *bch_extent_invalid(const struct cache_set *c,
 				size_ondisk = crc_compressed_size(e.k, crc);
 
 				reason = "invalid checksum type";
-				if (crc_csum_type(crc) >= BCH_CSUM_NR)
+				if (!bch_checksum_type_valid(c, crc_csum_type(crc)))
 					goto invalid;
 
 				reason = "invalid compression type";

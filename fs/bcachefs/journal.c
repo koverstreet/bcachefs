@@ -556,7 +556,7 @@ static int journal_entry_validate(struct cache_set *c, struct jset *j, u64 secto
 	if (bytes > sectors_read << 9)
 		return JOURNAL_ENTRY_REREAD;
 
-	if (fsck_err_on(JSET_CSUM_TYPE(j) >= BCH_CSUM_NR, c,
+	if (fsck_err_on(!bch_checksum_type_valid(c, JSET_CSUM_TYPE(j)), c,
 			"journal entry with unknown csum type %llu sector %lluu",
 			JSET_CSUM_TYPE(j), sector))
 		return JOURNAL_ENTRY_BAD;

@@ -887,6 +887,7 @@ static const char *validate_bset(struct cache_set *c, struct btree *b,
 				 unsigned *whiteout_u64s)
 {
 	struct bkey_packed *k, *prev = NULL;
+	struct bpos prev_pos = POS_MIN;
 	bool seen_non_whiteout = false;
 
 	if (le16_to_cpu(i->version) != BCACHE_BSET_VERSION)
@@ -964,12 +965,20 @@ static const char *validate_bset(struct cache_set *c, struct btree *b,
 
 		if (!seen_non_whiteout &&
 		    (!bkey_whiteout(k) ||
-		     (prev && bkey_cmp_left_packed_byval(b, prev,
-					bkey_start_pos(u.k)) > 0))) {
+		     (bkey_cmp(prev_pos, bkey_start_pos(u.k)) > 0))) {
 			*whiteout_u64s = k->_data - i->_data;
 			seen_non_whiteout = true;
+		} else if (bkey_cmp(prev_pos, bkey_start_pos(u.k)) > 0) {
+			btree_node_error(b, c, ptr,
+					 "keys out of order: %llu:%llu > %llu:%llu",
+					 prev_pos.inode,
+					 prev_pos.offset,
+					 u.k->p.inode,
+					 bkey_start_offset(u.k));
+			/* XXX: repair this */
 		}
 
+		prev_pos = u.k->p;
 		prev = k;
 		k = bkey_next(k);
 	}
@@ -1027,7 +1036,7 @@ void bch_btree_node_read_done(struct cache_set *c, struct btree *b,
 				goto err;
 
 			err = "unknown checksum type";
-			if (BSET_CSUM_TYPE(i) >= BCH_CSUM_NR)
+			if (!bch_checksum_type_valid(c, BSET_CSUM_TYPE(i)))
 				goto err;
 
 			/* XXX: retry checksum errors */
@@ -1091,7 +1100,7 @@ void bch_btree_node_read_done(struct cache_set *c, struct btree *b,
 				break;
 
 			err = "unknown checksum type";
-			if (BSET_CSUM_TYPE(i) >= BCH_CSUM_NR)
+			if (!bch_checksum_type_valid(c, BSET_CSUM_TYPE(i)))
 				goto err;
 
 			nonce = btree_nonce(b, i, b->written << 9);

@@ -59,6 +59,18 @@ static inline unsigned bch_meta_checksum_type(struct cache_set *c)
 		: c->opts.metadata_checksum;
 }
 
+static inline bool bch_checksum_type_valid(const struct cache_set *c,
+					   unsigned type)
+{
+	if (type >= BCH_CSUM_NR)
+		return false;
+
+	if (bch_csum_type_is_encryption(type) && !c->chacha20)
+		return false;
+
+	return true;
+}
+
 static const unsigned bch_crc_bytes[] = {
 	[BCH_CSUM_NONE]				= 0,
 	[BCH_CSUM_CRC32C]			= 4,
