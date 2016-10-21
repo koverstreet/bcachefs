@@ -1070,7 +1070,6 @@ static struct cache_set *bch_cache_set_alloc(struct cache_sb *sb,
 	mutex_init(&c->mi_lock);
 
 	init_rwsem(&c->gc_lock);
-	mutex_init(&c->trigger_gc_lock);
 
 #define BCH_TIME_STAT(name, frequency_units, duration_units)		\
 	spin_lock_init(&c->name##_time.lock);

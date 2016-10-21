@@ -699,7 +699,6 @@ struct cache_set {
 	 * it's not while a gc is in progress.
 	 */
 	struct rw_semaphore	gc_lock;
-	struct mutex		trigger_gc_lock;
 
 	/* IO PATH */
 	struct bio_set		bio_read;

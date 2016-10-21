@@ -419,6 +419,13 @@ void bch_gc(struct cache_set *c)
 	up_write(&c->gc_lock);
 	trace_bcache_gc_end(c);
 	bch_time_stats_update(&c->btree_gc_time, start_time);
+
+	/*
+	 * Wake up allocator in case it was waiting for buckets
+	 * because of not being able to inc gens
+	 */
+	for_each_cache(ca, c, i)
+		bch_wake_allocator(ca);
 }
 
 /* Btree coalescing */
@@ -716,9 +723,9 @@ static int bch_coalesce_btree(struct cache_set *c, enum btree_id btree_id)
 /**
  * bch_coalesce - coalesce adjacent nodes with low occupancy
  */
-static void bch_coalesce(struct cache_set *c)
+void bch_coalesce(struct cache_set *c)
 {
-	u64 start_time = local_clock();
+	u64 start_time;
 	enum btree_id id;
 
 	if (btree_gc_coalesce_disabled(c))
@@ -727,7 +734,9 @@ static void bch_coalesce(struct cache_set *c)
 	if (test_bit(CACHE_SET_GC_FAILURE, &c->flags))
 		return;
 
+	down_read(&c->gc_lock);
 	trace_bcache_gc_coalesce_start(c);
+	start_time = local_clock();
 
 	for (id = 0; id < BTREE_ID_NR; id++) {
 		int ret = c->btree_roots[id].b
@@ -743,8 +752,8 @@ static void bch_coalesce(struct cache_set *c)
 	}
 
 	bch_time_stats_update(&c->btree_coalesce_time, start_time);
-
 	trace_bcache_gc_coalesce_end(c);
+	up_read(&c->gc_lock);
 }
 
 static int bch_gc_thread(void *arg)
@@ -753,8 +762,6 @@ static int bch_gc_thread(void *arg)
 	struct io_clock *clock = &c->io_clock[WRITE];
 	unsigned long last = atomic_long_read(&clock->now);
 	unsigned last_kick = atomic_read(&c->kick_gc);
-	struct cache *ca;
-	unsigned i;
 
 	set_freezable();
 
@@ -781,22 +788,8 @@ static int bch_gc_thread(void *arg)
 		last = atomic_long_read(&clock->now);
 		last_kick = atomic_read(&c->kick_gc);
 
-		/*
-		 * avoid racing with sysfs trigger_gc - gc gets confused if it
-		 * runs concurrently with coalescing
-		 */
-		mutex_lock(&c->trigger_gc_lock);
 		bch_gc(c);
-
-		/*
-		 * Wake up allocator in case it was waiting for buckets
-		 * because of not being able to inc gens
-		 */
-		for_each_cache(ca, c, i)
-			bch_wake_allocator(ca);
-
 		bch_coalesce(c);
-		mutex_unlock(&c->trigger_gc_lock);
 
 		debug_check_no_locks_held();
 	}

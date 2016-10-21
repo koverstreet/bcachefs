@@ -54,6 +54,7 @@ write_attribute(detach);
 write_attribute(unregister);
 write_attribute(stop);
 write_attribute(clear_stats);
+write_attribute(trigger_btree_coalesce);
 write_attribute(trigger_gc);
 write_attribute(prune_cache);
 write_attribute(blockdev_volume_create);
@@ -832,13 +833,13 @@ STORE(__bch_cache_set)
 			return r;
 	}
 
+	if (attr == &sysfs_trigger_btree_coalesce)
+		bch_coalesce(c);
+
 	/* Debugging: */
 
-	if (attr == &sysfs_trigger_gc) {
-		mutex_lock(&c->trigger_gc_lock);
+	if (attr == &sysfs_trigger_gc)
 		bch_gc(c);
-		mutex_unlock(&c->trigger_gc_lock);
-	}
 
 	if (attr == &sysfs_prune_cache) {
 		struct shrink_control sc;
@@ -942,6 +943,7 @@ static struct attribute *bch_cache_set_internal_files[] = {
 	&sysfs_writeback_keys_done,
 	&sysfs_writeback_keys_failed,
 
+	&sysfs_trigger_btree_coalesce,
 	&sysfs_trigger_gc,
 	&sysfs_prune_cache,
 	&sysfs_foreground_write_ratelimit_enabled,

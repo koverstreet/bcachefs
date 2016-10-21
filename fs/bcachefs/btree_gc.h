@@ -5,6 +5,7 @@
 
 enum bkey_type;
 
+void bch_coalesce(struct cache_set *);
 void bch_gc(struct cache_set *);
 void bch_gc_thread_stop(struct cache_set *);
 int bch_gc_thread_start(struct cache_set *);
