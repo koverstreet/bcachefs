@@ -712,9 +712,21 @@ TRACE_EVENT(bcache_btree_gc_coalesce,
 		  __entry->inode, __entry->offset, __entry->nodes)
 );
 
-DEFINE_EVENT(cache_set, bcache_btree_gc_coalesce_fail,
-	TP_PROTO(struct cache_set *c),
-	TP_ARGS(c)
+TRACE_EVENT(bcache_btree_gc_coalesce_fail,
+	TP_PROTO(struct cache_set *c, int reason),
+	TP_ARGS(c, reason),
+
+	TP_STRUCT__entry(
+		__field(u8,		reason			)
+		__array(char,		uuid,	16		)
+	),
+
+	TP_fast_assign(
+		__entry->reason		= reason;
+		memcpy(__entry->uuid, c->disk_sb.user_uuid.b, 16);
+	),
+
+	TP_printk("%pU: %u", __entry->uuid, __entry->reason)
 );
 
 TRACE_EVENT(bcache_btree_node_alloc_replacement,

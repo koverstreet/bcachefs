@@ -465,16 +465,18 @@ static void bch_coalesce_nodes(struct btree *old_nodes[GC_MERGE_NODES],
 		return;
 
 	res = bch_btree_reserve_get(c, parent, nr_old_nodes, false, NULL);
-	if (IS_ERR(res))
+	if (IS_ERR(res)) {
+		trace_bcache_btree_gc_coalesce_fail(c,
+				BTREE_GC_COALESCE_FAIL_RESERVE_GET);
 		return;
+	}
 
 	if (bch_keylist_realloc(&keylist, NULL, 0,
 			(BKEY_U64s + BKEY_EXTENT_U64s_MAX) * nr_old_nodes)) {
-		trace_bcache_btree_gc_coalesce_fail(c);
+		trace_bcache_btree_gc_coalesce_fail(c,
+				BTREE_GC_COALESCE_FAIL_KEYLIST_REALLOC);
 		goto out;
 	}
-
-	trace_bcache_btree_gc_coalesce(parent, nr_old_nodes);
 
 	/* Find a format that all keys in @old_nodes can pack into */
 	bch_bkey_format_init(&format_state);
@@ -487,9 +489,12 @@ static void bch_coalesce_nodes(struct btree *old_nodes[GC_MERGE_NODES],
 	/* Check if repacking would make any nodes too big to fit */
 	for (i = 0; i < nr_old_nodes; i++)
 		if (!bch_btree_node_format_fits(old_nodes[i], &new_format)) {
-			trace_bcache_btree_gc_coalesce_fail(c);
+			trace_bcache_btree_gc_coalesce_fail(c,
+					BTREE_GC_COALESCE_FAIL_FORMAT_FITS);
 			goto out;
 		}
+
+	trace_bcache_btree_gc_coalesce(parent, nr_old_nodes);
 
 	as = bch_btree_interior_update_alloc(c);
 

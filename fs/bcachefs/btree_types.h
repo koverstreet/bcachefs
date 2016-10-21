@@ -169,4 +169,10 @@ enum btree_insert_ret {
 	BTREE_INSERT_NEED_GC_LOCK,
 };
 
+enum btree_gc_coalesce_fail_reason {
+	BTREE_GC_COALESCE_FAIL_RESERVE_GET,
+	BTREE_GC_COALESCE_FAIL_KEYLIST_REALLOC,
+	BTREE_GC_COALESCE_FAIL_FORMAT_FITS,
+};
+
 #endif /* _BCACHE_BTREE_TYPES_H */
