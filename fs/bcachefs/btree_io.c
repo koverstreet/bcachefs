@@ -491,7 +491,7 @@ static void btree_node_write_unlock(struct closure *cl)
 {
 	struct btree *b = container_of(cl, struct btree, io);
 
-	up(&b->io_mutex);
+	btree_node_io_unlock(b);
 }
 
 static void btree_node_write_done(struct closure *cl)
@@ -670,12 +670,7 @@ void __bch_btree_node_write(struct btree *b, struct closure *parent,
 	if (!test_and_clear_bit(BTREE_NODE_dirty, &b->flags))
 		return;
 
-	/*
-	 * io_mutex ensures only a single IO in flight to a btree node at a
-	 * time, and also protects use of the b->io closure.
-	 * do_btree_node_write() will drop it asynchronously.
-	 */
-	down(&b->io_mutex);
+	btree_node_io_lock(b);
 
 	BUG_ON(!list_empty(&b->write_blocked));
 #if 0
@@ -688,7 +683,7 @@ void __bch_btree_node_write(struct btree *b, struct closure *parent,
 	 */
 	if (idx_to_write != -1 &&
 	    idx_to_write != btree_node_write_idx(b)) {
-		up(&b->io_mutex);
+		btree_node_io_unlock(b);
 		return;
 	}
 #endif
@@ -735,7 +730,7 @@ void bch_btree_node_write_lazy(struct btree *b, struct btree_iter *iter)
 	if ((max(round_up(bytes, block_bytes(iter->c)),
 		 PAGE_SIZE) - bytes < 48 ||
 	     bytes > BTREE_WRITE_SET_BUFFER) &&
-	    b->io_mutex.count > 0)
+	    !btree_node_write_in_flight(b))
 		bch_btree_node_write(b, NULL, iter);
 }
 

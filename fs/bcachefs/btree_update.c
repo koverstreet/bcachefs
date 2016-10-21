@@ -276,7 +276,7 @@ static struct btree *bch_btree_node_alloc(struct cache_set *c,
 
 	BUG_ON(mca_hash_insert(c, b, level, id));
 
-	b->accessed = 1;
+	set_btree_node_accessed(b);
 	set_btree_node_dirty(b);
 
 	bch_bset_init_first(&b->keys, &b->data->keys);

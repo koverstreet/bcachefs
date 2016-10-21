@@ -6,6 +6,19 @@ struct btree_write;
 struct btree;
 struct btree_iter;
 
+static inline void btree_node_io_unlock(struct btree *b)
+{
+	EBUG_ON(!btree_node_write_in_flight(b));
+	clear_btree_node_write_in_flight(b);
+	wake_up_bit(&b->flags, BTREE_NODE_write_in_flight);
+}
+
+static inline void btree_node_io_lock(struct btree *b)
+{
+	wait_on_bit_lock_io(&b->flags, BTREE_NODE_write_in_flight,
+			    TASK_UNINTERRUPTIBLE);
+}
+
 void bch_btree_init_next(struct cache_set *, struct btree *,
 			 struct btree_iter *);
 

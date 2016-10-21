@@ -39,13 +39,10 @@ struct btree {
 	/* Key/pointer for this btree node */
 	__BKEY_PADDED(key, BKEY_BTREE_PTR_VAL_U64s_MAX);
 
-	/* Single bit - set when accessed, cleared by shrinker */
-	unsigned long		accessed;
-
 	struct six_lock		lock;
 
 	unsigned long		flags;
-	u16			written;	/* would be nice to kill */
+	u16			written;
 	u8			level;
 	u8			btree_id;
 
@@ -70,9 +67,7 @@ struct btree {
 	/* lru list */
 	struct list_head	list;
 
-	/* For outstanding btree writes, used as a lock - protects write_idx */
 	struct closure		io;
-	struct semaphore	io_mutex;
 	struct delayed_work	work;
 
 	struct btree_write	writes[2];
@@ -93,12 +88,16 @@ enum btree_flags {
 	BTREE_NODE_write_error,
 	BTREE_NODE_dirty,
 	BTREE_NODE_write_idx,
+	BTREE_NODE_accessed,
+	BTREE_NODE_write_in_flight,
 };
 
 BTREE_FLAG(read_error);
 BTREE_FLAG(write_error);
 BTREE_FLAG(dirty);
 BTREE_FLAG(write_idx);
+BTREE_FLAG(accessed);
+BTREE_FLAG(write_in_flight);
 
 static inline struct btree_write *btree_current_write(struct btree *b)
 {

@@ -37,7 +37,7 @@ void bch_recalc_btree_reserve(struct cache_set *c)
 
 static void __mca_data_free(struct btree *b)
 {
-	BUG_ON(b->io_mutex.count != 1);
+	EBUG_ON(btree_node_write_in_flight(b));
 
 	free_pages((unsigned long) b->data, b->keys.page_order);
 	b->data = NULL;
@@ -88,7 +88,6 @@ static struct btree *mca_bucket_alloc(struct cache_set *c, gfp_t gfp)
 	INIT_LIST_HEAD(&b->list);
 	INIT_DELAYED_WORK(&b->work, btree_node_write_work);
 	b->c = c;
-	sema_init(&b->io_mutex, 1);
 	b->writes[1].index = 1;
 	INIT_LIST_HEAD(&b->write_blocked);
 
@@ -168,14 +167,10 @@ static int mca_reap_notrace(struct cache_set *c, struct btree *b, bool flush)
 	if (!list_empty(&b->write_blocked))
 		goto out_unlock;
 
-	if (!flush) {
-		if (btree_node_dirty(b))
-			goto out_unlock;
-
-		if (down_trylock(&b->io_mutex))
-			goto out_unlock;
-		up(&b->io_mutex);
-	}
+	if (!flush &&
+	    (btree_node_dirty(b) ||
+	     btree_node_write_in_flight(b)))
+		goto out_unlock;
 
 	/*
 	 * Using the underscore version because we don't want to compact bsets
@@ -187,8 +182,8 @@ static int mca_reap_notrace(struct cache_set *c, struct btree *b, bool flush)
 	closure_sync(&cl);
 
 	/* wait for any in flight btree write */
-	down(&b->io_mutex);
-	up(&b->io_mutex);
+	wait_on_bit_io(&b->flags, BTREE_NODE_write_in_flight,
+		       TASK_UNINTERRUPTIBLE);
 
 	return 0;
 out_unlock:
@@ -269,7 +264,7 @@ restart:
 			break;
 		}
 
-		if (!b->accessed &&
+		if (!btree_node_accessed(b) &&
 		    !mca_reap(c, b, false)) {
 			/* can't call mca_hash_remove under btree_cache_lock  */
 			freed++;
@@ -292,7 +287,7 @@ restart:
 				goto out;
 			goto restart;
 		} else
-			b->accessed = 0;
+			clear_btree_node_accessed(b);
 	}
 
 	mutex_unlock(&c->btree_cache_lock);
@@ -522,7 +517,7 @@ struct btree *mca_alloc(struct cache_set *c, struct closure *cl)
 	BUG_ON(!six_trylock_write(&b->lock));
 out_unlock:
 	BUG_ON(bkey_extent_is_data(&b->key.k) && PTR_HASH(&b->key));
-	BUG_ON(b->io_mutex.count != 1);
+	BUG_ON(btree_node_write_in_flight(b));
 
 	list_del_init(&b->list);
 	mutex_unlock(&c->btree_cache_lock);
@@ -699,7 +694,9 @@ retry:
 		BUG_ON(b->level != level);
 	}
 
-	b->accessed = 1;
+	/* avoid atomic set bit if it's not needed: */
+	if (btree_node_accessed(b))
+		set_btree_node_accessed(b);
 
 	for (; i <= b->keys.nsets; i++) {
 		prefetch(b->keys.set[i].tree);

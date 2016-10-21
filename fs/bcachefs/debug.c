@@ -47,7 +47,7 @@ void __bch_btree_verify(struct cache_set *c, struct btree *b)
 
 	closure_init_stack(&cl);
 
-	down(&b->io_mutex);
+	btree_node_io_lock(b);
 	mutex_lock(&c->verify_lock);
 
 	n_ondisk = c->verify_ondisk;
@@ -144,7 +144,7 @@ void __bch_btree_verify(struct cache_set *c, struct btree *b)
 	}
 
 	mutex_unlock(&c->verify_lock);
-	up(&b->io_mutex);
+	btree_node_io_unlock(b);
 }
 
 void bch_data_verify(struct cached_dev *dc, struct bio *bio)
