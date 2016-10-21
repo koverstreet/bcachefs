@@ -642,13 +642,6 @@ retry:
 			BUG_ON(PTR_ERR(b) != -EAGAIN);
 			return b;
 		}
-
-		/*
-		 * But we still have to drop read locks before we return, for
-		 * deadlock avoidance:
-		 */
-		if (btree_node_read_locked(iter, level + 1))
-			btree_node_unlock(iter, level + 1);
 	} else {
 		/*
 		 * There's a potential deadlock with splits and insertions into
