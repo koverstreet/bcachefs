@@ -1253,6 +1253,17 @@ static inline bool btree_node_iter_cmp(struct btree_node_iter *iter,
 			__btree_node_offset_to_key(b, r.k));
 }
 
+static void __bch_btree_node_iter_push(struct btree_node_iter *iter,
+			      struct btree_keys *b,
+			      const struct bkey_packed *k,
+			      const struct bkey_packed *end)
+{
+	if (k != end)
+		iter->data[iter->used++] = (struct btree_node_iter_set) {
+			__btree_node_key_to_offset(b, k),
+			__btree_node_key_to_offset(b, end)
+		};
+}
 void bch_btree_node_iter_push(struct btree_node_iter *iter,
 			      struct btree_keys *b,
 			      const struct bkey_packed *k,
@@ -1345,12 +1356,13 @@ void bch_btree_node_iter_init(struct btree_node_iter *iter,
 	__bch_btree_node_iter_init(iter, b);
 
 	for (t = b->set; t <= b->set + b->nsets; t++)
-		bch_btree_node_iter_push(iter, b,
-					 bch_bset_search(b, t, search,
-							 packed_search,
-							 lossy_packed_search,
-							 strictly_greater),
-					 bset_bkey_last(t->data));
+		__bch_btree_node_iter_push(iter, b,
+					   bch_bset_search(b, t, search,
+							   packed_search,
+							   lossy_packed_search,
+							   strictly_greater),
+					   bset_bkey_last(t->data));
+	bch_btree_node_iter_sort(iter, b);
 }
 EXPORT_SYMBOL(bch_btree_node_iter_init);
 
@@ -1362,9 +1374,10 @@ void bch_btree_node_iter_init_from_start(struct btree_node_iter *iter,
 	__bch_btree_node_iter_init(iter, b);
 
 	for (t = b->set; t <= b->set + b->nsets; t++)
-		bch_btree_node_iter_push(iter, b,
-					 t->data->start,
-					 bset_bkey_last(t->data));
+		__bch_btree_node_iter_push(iter, b,
+					   t->data->start,
+					   bset_bkey_last(t->data));
+	bch_btree_node_iter_sort(iter, b);
 }
 EXPORT_SYMBOL(bch_btree_node_iter_init_from_start);
 
@@ -1390,7 +1403,7 @@ static inline void btree_node_iter_sift(struct btree_node_iter *iter,
 {
 	unsigned i;
 
-	BUG_ON(iter->used > MAX_BSETS);
+	EBUG_ON(iter->used > MAX_BSETS);
 
 	for (i = start;
 	     i + 1 < iter->used &&
@@ -1399,15 +1412,28 @@ static inline void btree_node_iter_sift(struct btree_node_iter *iter,
 		swap(iter->data[i], iter->data[i + 1]);
 }
 
+static inline void btree_node_iter_sort_two(struct btree_node_iter *iter,
+					    struct btree_keys *b,
+					    unsigned first)
+{
+	if (btree_node_iter_cmp(iter, b, iter->data[first], iter->data[first + 1]))
+		swap(iter->data[first], iter->data[first + 1]);
+}
+
 void bch_btree_node_iter_sort(struct btree_node_iter *iter,
 			      struct btree_keys *b)
 {
-	int i;
+	EBUG_ON(iter->used > 3);
 
-	BUG_ON(iter->used > MAX_BSETS);
+	/* unrolled bubble sort: */
 
-	for (i = iter->used - 1; i >= 0; --i)
-		btree_node_iter_sift(iter, b, i);
+	if (iter->used > 2) {
+		btree_node_iter_sort_two(iter, b, 0);
+		btree_node_iter_sort_two(iter, b, 1);
+	}
+
+	if (iter->used > 1)
+		btree_node_iter_sort_two(iter, b, 0);
 }
 EXPORT_SYMBOL(bch_btree_node_iter_sort);
 
@@ -1655,9 +1681,10 @@ struct btree_nr_keys bch_sort_bsets(struct bset *dst, struct btree_keys *b,
 		__bch_btree_node_iter_init(iter, b);
 
 		for (t = b->set + from; t <= b->set + b->nsets; t++)
-			bch_btree_node_iter_push(iter, b,
-						 t->data->start,
-						 bset_bkey_last(t->data));
+			__bch_btree_node_iter_push(iter, b,
+						   t->data->start,
+						   bset_bkey_last(t->data));
+		bch_btree_node_iter_sort(iter, b);
 	}
 
 	/*
