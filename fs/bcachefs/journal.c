@@ -1360,7 +1360,7 @@ int bch_journal_replay(struct cache_set *c, struct list_head *list)
 			ret = bch_btree_insert(c, entry->btree_id, k,
 					       &disk_res, NULL, NULL,
 					       BTREE_INSERT_NOFAIL|
-					       BTREE_INSERT_NO_MARK_KEY);
+					       BTREE_INSERT_JOURNAL_REPLAY);
 			bch_disk_reservation_put(c, &disk_res);
 
 			if (ret)

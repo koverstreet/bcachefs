@@ -1129,7 +1129,7 @@ static void extent_insert_committed(struct btree_insert *trans,
 
 		bkey_copy(&split.k, insert->k);
 
-		if (!(trans->flags & BTREE_INSERT_NO_MARK_KEY) &&
+		if (!(trans->flags & BTREE_INSERT_JOURNAL_REPLAY) &&
 		    bkey_cmp(committed_pos, insert->k->k.p) &&
 		    bkey_extent_is_compressed(trans->c,
 					      bkey_i_to_s_c(insert->k))) {
@@ -1317,7 +1317,7 @@ bch_insert_fixup_extent(struct btree_insert *trans,
 	 */
 	EBUG_ON(bkey_cmp(iter->pos, bkey_start_pos(&insert->k->k)));
 
-	if (!(trans->flags & BTREE_INSERT_NO_MARK_KEY))
+	if (!(trans->flags & BTREE_INSERT_JOURNAL_REPLAY))
 		bch_add_sectors(iter, bkey_i_to_s_c(insert->k),
 				bkey_start_offset(&insert->k->k),
 				insert->k->k.size, &stats);
@@ -1493,7 +1493,7 @@ stop:
 	 * and didn't fully insert @insert:
 	 */
 	if (insert->k->k.size &&
-	    !(trans->flags & BTREE_INSERT_NO_MARK_KEY))
+	    !(trans->flags & BTREE_INSERT_JOURNAL_REPLAY))
 		bch_subtract_sectors(iter, bkey_i_to_s_c(insert->k),
 				     bkey_start_offset(&insert->k->k),
 				     insert->k->k.size, &stats);

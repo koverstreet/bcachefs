@@ -723,12 +723,12 @@ void bch_btree_journal_key(struct btree_iter *iter,
 	struct btree_write *w = btree_current_write(b);
 
 	EBUG_ON(iter->level || b->level);
-	BUG_ON(!res->ref && test_bit(JOURNAL_REPLAY_DONE, &j->flags));
+	EBUG_ON(!res->ref && test_bit(JOURNAL_REPLAY_DONE, &j->flags));
 
 	if (!journal_pin_active(&w->journal))
 		bch_journal_pin_add(j, &w->journal, btree_node_flush);
 
-	if (test_bit(JOURNAL_REPLAY_DONE, &j->flags)) {
+	if (res->ref) {
 		bch_journal_add_keys(j, res, b->btree_id, insert);
 		btree_bset_last(b)->journal_seq =
 			cpu_to_le64(bch_journal_res_seq(j, res));
@@ -1414,7 +1414,6 @@ static void btree_split(struct btree *b, struct btree_iter *iter,
  * @insert_keys:	list of keys to insert
  * @hook:		insert callback
  * @persistent:		if not null, @persistent will wait on journal write
- * @flags:		BTREE_INSERT_NO_MARK_KEY
  *
  * Inserts as many keys as it can into a given btree node, splitting it if full.
  * If a split occurred, this function will return early. This can only happen
@@ -1616,7 +1615,7 @@ retry:
 		if (!i->done)
 			u64s += jset_u64s(i->k->k.u64s);
 
-	ret = test_bit(JOURNAL_REPLAY_DONE, &c->journal.flags)
+	ret = !(trans->flags & BTREE_INSERT_JOURNAL_REPLAY)
 		? bch_journal_res_get(&c->journal, &res, u64s, u64s)
 		: 0;
 	if (ret)
