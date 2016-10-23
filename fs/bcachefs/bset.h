@@ -596,6 +596,8 @@ struct bset_stats {
 };
 
 void bch_btree_keys_stats(struct btree_keys *, struct bset_stats *);
+int bch_bkey_print_bfloat(struct btree_keys *, struct bkey_packed *,
+			  char *, size_t);
 
 /* Debug stuff */
 

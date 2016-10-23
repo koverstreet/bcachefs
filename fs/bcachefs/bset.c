@@ -1774,3 +1774,71 @@ void bch_btree_keys_stats(struct btree_keys *b, struct bset_stats *stats)
 		}
 	}
 }
+
+int bch_bkey_print_bfloat(struct btree_keys *b, struct bkey_packed *k,
+			  char *buf, size_t size)
+{
+	struct bset_tree *t = bch_bkey_to_bset(b, k);
+	struct bkey_packed *l, *r, *p;
+	struct bkey uk, up;
+	char buf1[200], buf2[200];
+	unsigned j;
+
+	if (!size)
+		return 0;
+
+	if (!bset_has_aux_tree(t))
+		goto out;
+
+	j = inorder_to_tree(bkey_to_cacheline(t, k), t);
+	if (j &&
+	    j < t->size &&
+	    k == tree_to_bkey(t, j))
+		switch (t->tree[j].exponent) {
+		case BFLOAT_FAILED_UNPACKED:
+			uk = bkey_unpack_key(&b->format, k);
+			return scnprintf(buf, size,
+					 "    failed unpacked at depth %u\n"
+					 "\t%llu:%llu\n",
+					 ilog2(j),
+					 uk.p.inode, uk.p.offset);
+		case BFLOAT_FAILED_PREV:
+			p = tree_to_prev_bkey(t, j);
+			l = is_power_of_2(j)
+				? t->data->start
+				: tree_to_prev_bkey(t, j >> ffs(j));
+			r = is_power_of_2(j + 1)
+				? bset_bkey_idx(t->data,
+						le16_to_cpu(t->data->u64s) - t->end.u64s)
+				: tree_to_bkey(t, j >> (ffz(j) + 1));
+
+			up = bkey_unpack_key(&b->format, p);
+			uk = bkey_unpack_key(&b->format, k);
+			bch_to_binary(buf1, high_word(&b->format, p), bkey_format_key_bits(&b->format));
+			bch_to_binary(buf2, high_word(&b->format, k), bkey_format_key_bits(&b->format));
+
+			return scnprintf(buf, size,
+					 "    failed prev at depth %u\n"
+					 "\tkey starts at bit %u but first differing bit at %u\n"
+					 "\t%llu:%llu\n"
+					 "\t%llu:%llu\n"
+					 "\t%s\n"
+					 "\t%s\n",
+					 ilog2(j),
+					 bkey_greatest_differing_bit(&b->format, l, r),
+					 bkey_greatest_differing_bit(&b->format, p, k),
+					 uk.p.inode, uk.p.offset,
+					 up.p.inode, up.p.offset,
+					 buf1, buf2);
+		case BFLOAT_FAILED_OVERFLOW:
+			uk = bkey_unpack_key(&b->format, k);
+			return scnprintf(buf, size,
+					 "    failed overflow at depth %u\n"
+					 "\t%llu:%llu\n",
+					 ilog2(j),
+					 uk.p.inode, uk.p.offset);
+		}
+out:
+	*buf = '\0';
+	return 0;
+}

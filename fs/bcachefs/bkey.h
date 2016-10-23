@@ -6,6 +6,7 @@
 
 #include "util.h"
 
+void bch_to_binary(char *, const u64 *, unsigned);
 int bch_bkey_to_text(char *, size_t, const struct bkey *);
 
 /* bkey with split value, const */

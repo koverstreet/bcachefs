@@ -488,6 +488,7 @@ struct btree_debug {
 	unsigned		id;
 	struct dentry		*btree;
 	struct dentry		*btree_format;
+	struct dentry		*failed;
 };
 
 struct cache_set {
