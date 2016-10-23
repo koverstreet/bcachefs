@@ -54,8 +54,9 @@ static inline bool should_drop_next_key(struct btree_node_iter *iter,
 {
 	const struct bkey_format *f = &b->format;
 	struct btree_node_iter_set *l = iter->data, *r = iter->data + 1;
+	struct bkey_packed *k = __btree_node_offset_to_key(b, l->k);
 
-	if (bkey_deleted(__btree_node_offset_to_key(b, l->k)))
+	if (bkey_packed_is_whiteout(b, k))
 		return true;
 
 	if (iter->used < 2)
@@ -763,7 +764,7 @@ static void extent_sort_append(struct btree_keys *b,
 	struct bkey_format *f = &b->format;
 	BKEY_PADDED(k) tmp;
 
-	if (bkey_deleted(k))
+	if (bkey_packed_is_whiteout(b, k))
 		return;
 
 	bkey_unpack(&tmp.k, f, k);
@@ -1420,7 +1421,7 @@ bch_insert_fixup_extent(struct btree_insert *trans,
 			struct bpos orig_pos = k.k->p;
 
 			/* The insert key completely covers k, invalidate k */
-			if (!bkey_deleted(_k))
+			if (!bkey_is_whiteout(k.k))
 				btree_keys_account_key_drop(&b->keys.nr,
 							t - b->keys.set, _k);
 
@@ -1952,8 +1953,10 @@ static void extent_sort_ptrs(struct cache_set *c, struct bkey_s_extent e)
 /*
  * bch_extent_normalize - clean up an extent, dropping stale pointers etc.
  *
- * Returns true if @k should be dropped entirely (when compacting/rewriting
- * btree nodes).
+ * Returns true if @k should be dropped entirely
+ *
+ * For existing keys, only called when btree nodes are being rewritten, not when
+ * they're merely being compacted/resorted in memory.
  */
 static bool __bch_extent_normalize(struct cache_set *c, struct bkey_s k,
 				   bool sort)

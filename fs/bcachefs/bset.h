@@ -329,25 +329,6 @@ bool bch_bset_try_overwrite(struct btree_keys *, struct btree_node_iter *,
 			    struct bset_tree *, struct bkey_packed *,
 			    struct bkey_i *);
 
-static inline void btree_keys_account_key(struct btree_nr_keys *n,
-					  unsigned bset,
-					  struct bkey_packed *k,
-					  int sign)
-{
-	n->live_u64s		+= k->u64s * sign;
-	n->bset_u64s[bset]	+= k->u64s * sign;
-
-	if (bkey_packed(k))
-		n->packed_keys	+= sign;
-	else
-		n->unpacked_keys += sign;
-}
-
-#define btree_keys_account_key_add(_nr, _bset_idx, _k)		\
-	btree_keys_account_key(_nr, _bset_idx, _k, 1)
-#define btree_keys_account_key_drop(_nr, _bset_idx, _k)	\
-	btree_keys_account_key(_nr, _bset_idx, _k, -1)
-
 /* Bkey utility code */
 
 /* Returns true if @k is after iterator position @pos */
@@ -561,6 +542,41 @@ struct bkey_s_c bch_btree_node_iter_peek_unpack(struct btree_node_iter *,
 	for (bch_btree_node_iter_init_from_start((iter), (b));		\
 	     (k = bch_btree_node_iter_peek_unpack((iter), (b), (unpacked))).k;\
 	     bch_btree_node_iter_advance(iter, b))
+
+/* Accounting: */
+
+static inline bool bkey_is_whiteout(const struct bkey *k)
+{
+	return bkey_deleted(k) ||
+		(k->type == KEY_TYPE_DISCARD && !k->version);
+}
+
+static inline bool bkey_packed_is_whiteout(const struct btree_keys *b,
+					   const struct bkey_packed *k)
+{
+	return bkey_deleted(k) ||
+		(k->type == KEY_TYPE_DISCARD &&
+		 !bkey_unpack_key(&b->format, k).version);
+}
+
+static inline void btree_keys_account_key(struct btree_nr_keys *n,
+					  unsigned bset,
+					  struct bkey_packed *k,
+					  int sign)
+{
+	n->live_u64s		+= k->u64s * sign;
+	n->bset_u64s[bset]	+= k->u64s * sign;
+
+	if (bkey_packed(k))
+		n->packed_keys	+= sign;
+	else
+		n->unpacked_keys += sign;
+}
+
+#define btree_keys_account_key_add(_nr, _bset_idx, _k)		\
+	btree_keys_account_key(_nr, _bset_idx, _k, 1)
+#define btree_keys_account_key_drop(_nr, _bset_idx, _k)	\
+	btree_keys_account_key(_nr, _bset_idx, _k, -1)
 
 /* Sorting */
 

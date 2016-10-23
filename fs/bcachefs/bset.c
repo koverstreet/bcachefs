@@ -118,7 +118,7 @@ void __bch_verify_btree_nr_keys(struct btree_keys *b)
 		for (k = b->set[i].data->start;
 		     k != bset_bkey_last(b->set[i].data);
 		     k = bkey_next(k))
-			if (!bkey_deleted(k))
+			if (!bkey_packed_is_whiteout(b, k))
 				btree_keys_account_key_add(&nr, i, k);
 
 	BUG_ON(memcmp(&nr, &b->nr, sizeof(nr)));
@@ -982,7 +982,7 @@ struct bkey_packed *bch_bset_insert(struct btree_keys *b,
 
 	bch_bset_fix_lookup_table(b, t, where);
 
-	if (!bkey_deleted(src))
+	if (!bkey_is_whiteout(&insert->k))
 		btree_keys_account_key_add(&b->nr, b->nsets, src);
 
 	bch_verify_key_order(b, iter, where);
@@ -1026,10 +1026,10 @@ bool bch_bset_try_overwrite(struct btree_keys *b,
 
 	return false;
 overwrite:
-	if (!bkey_deleted(where))
-		btree_keys_account_key_drop(&b->nr, t - b->set, where);
-	if (!bkey_deleted(src))
-		btree_keys_account_key_add(&b->nr, t - b->set, src);
+	if (!bkey_packed_is_whiteout(b, where))
+		btree_keys_account_key_drop(&b->nr, b->nsets, where);
+	if (!bkey_is_whiteout(&insert->k))
+		btree_keys_account_key_add(&b->nr, b->nsets, src);
 	memcpy(where, src,
 	       bkeyp_key_bytes(f, src));
 	memcpy(bkeyp_val(f, where), &insert->v,
@@ -1552,7 +1552,7 @@ static struct btree_nr_keys btree_mergesort_simple(struct btree_keys *b,
 	unsigned i;
 
 	while ((in = bch_btree_node_iter_next_all(iter, b))) {
-		if (!bkey_deleted(in)) {
+		if (!bkey_packed_is_whiteout(b, in)) {
 			/* XXX: need better bkey_copy */
 			memcpy(out, in, bkey_bytes(in));
 			out = bkey_next(out);
@@ -1587,7 +1587,7 @@ static struct btree_nr_keys btree_mergesort(struct btree_keys *dst,
 	memset(&nr, 0, sizeof(nr));
 
 	while ((in = bch_btree_node_iter_next_all(iter, src))) {
-		if (bkey_deleted(in))
+		if (bkey_packed_is_whiteout(src, in))
 			continue;
 
 		if (bch_bkey_transform(out_f, out, bkey_packed(in)
@@ -1625,7 +1625,7 @@ static struct btree_nr_keys btree_mergesort_extents(struct btree_keys *dst,
 	memset(&nr, 0, sizeof(nr));
 
 	while ((k = bch_btree_node_iter_next_all(iter, src))) {
-		if (bkey_deleted(k))
+		if (bkey_packed_is_whiteout(src, k))
 			continue;
 
 		/*
@@ -1779,7 +1779,7 @@ bool bch_maybe_compact_deleted_keys(struct btree_keys *b)
 		for (k = i->start; k != bset_bkey_last(i); k = n) {
 			n = bkey_next(k);
 
-			if (!bkey_deleted(k)) {
+			if (!bkey_packed_is_whiteout(b, k)) {
 				memmove(out, k, bkey_bytes(k));
 				out = bkey_next(out);
 			}

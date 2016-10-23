@@ -682,9 +682,11 @@ void bch_btree_bset_insert_key(struct btree_iter *iter,
 			return;
 		}
 
+		if (!bkey_packed_is_whiteout(&b->keys, k))
+			btree_keys_account_key_drop(&b->keys.nr,
+						t - b->keys.set, k);
+
 		k->type = KEY_TYPE_DELETED;
-		btree_keys_account_key_drop(&b->keys.nr,
-					    t - b->keys.set, k);
 		bch_btree_node_iter_fix(iter, b, node_iter, t, k, true);
 
 		if (t == bset_tree_last(&b->keys) && bkey_deleted(&insert->k))
