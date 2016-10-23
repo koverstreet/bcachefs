@@ -51,11 +51,27 @@ static void mca_data_free(struct cache_set *c, struct btree *b)
 	list_move(&b->list, &c->btree_cache_freed);
 }
 
+#define PTR_HASH(_k)	(bkey_i_to_extent_c(_k)->v._data[0])
+
+/*
+ * gcc isn't smart enough to optimize away a memcmp for a constant number of
+ * bytes :(
+ */
+static inline int btree_rhash_cmp(struct rhashtable_compare_arg *arg,
+			   const void *obj)
+{
+	const u64 *v = arg->key;
+	const struct btree *b = obj;
+
+	return PTR_HASH(&b->key) == *v ? 0 : 1;
+}
+
 static const struct rhashtable_params bch_btree_cache_params = {
 	.head_offset	= offsetof(struct btree, hash),
 	.key_offset	= offsetof(struct btree, key.v),
 	.key_len	= sizeof(struct bch_extent_ptr),
 	.hashfn		= jhash,
+	.obj_cmpfn	= btree_rhash_cmp,
 };
 
 static void mca_data_alloc(struct cache_set *c, struct btree *b, gfp_t gfp)
@@ -96,8 +112,6 @@ static struct btree *mca_bucket_alloc(struct cache_set *c, gfp_t gfp)
 }
 
 /* Btree in memory cache - hash table */
-
-#define PTR_HASH(_k)	(bkey_i_to_extent_c(_k)->v._data[0])
 
 void mca_hash_remove(struct cache_set *c, struct btree *b)
 {
