@@ -1211,9 +1211,9 @@ static struct btree *__btree_split_node(struct btree_iter *iter, struct btree *n
 	       le16_to_cpu(set2->u64s) * sizeof(u64));
 
 	n1->keys.set->size = 0;
-	n1->keys.set->extra = BSET_TREE_NONE_VAL;
+	n1->keys.set->extra = BSET_AUX_TREE_NONE_VAL;
 	n2->keys.set->size = 0;
-	n2->keys.set->extra = BSET_TREE_NONE_VAL;
+	n2->keys.set->extra = BSET_AUX_TREE_NONE_VAL;
 
 	six_unlock_write(&n2->lock);
 

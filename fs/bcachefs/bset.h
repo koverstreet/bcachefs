@@ -210,28 +210,28 @@ struct bset_tree {
 	struct bset		*data;
 };
 
-enum bset_tree_type {
-	BSET_TREE_NONE,
-	BSET_TREE_UNWRITTEN,
-	BSET_TREE_WRITTEN,
+enum bset_aux_tree_type {
+	BSET_AUX_TREE_NONE,
+	BSET_HAS_AUX_TREE,
+	BSET_HAS_UNWRITTEN_TABLE,
 };
 
 #define BSET_TREE_NR_TYPES	3
 
-#define BSET_TREE_NONE_VAL	(UINT_MAX)
-#define BSET_TREE_UNWRITTEN_VAL	(UINT_MAX - 1)
+#define BSET_AUX_TREE_NONE_VAL	(UINT_MAX)
+#define BSET_UNWRITTEN_TABLE_VAL	(UINT_MAX - 1)
 
-static inline enum bset_tree_type bset_tree_type(struct bset_tree *t)
+static inline enum bset_aux_tree_type bset_aux_tree_type(struct bset_tree *t)
 {
 	switch (t->extra) {
-	case BSET_TREE_NONE_VAL:
-		return BSET_TREE_NONE;
-	case BSET_TREE_UNWRITTEN_VAL:
+	case BSET_AUX_TREE_NONE_VAL:
+		return BSET_AUX_TREE_NONE;
+	case BSET_UNWRITTEN_TABLE_VAL:
 		EBUG_ON(!t->size);
-		return BSET_TREE_UNWRITTEN;
+		return BSET_HAS_UNWRITTEN_TABLE;
 	default:
 		EBUG_ON(!t->size);
-		return BSET_TREE_WRITTEN;
+		return BSET_HAS_AUX_TREE;
 	}
 }
 
@@ -286,9 +286,9 @@ static inline struct bset_tree *bset_tree_last(struct btree_keys *b)
 	return b->set + b->nsets;
 }
 
-static inline bool bset_written(struct bset_tree *t)
+static inline bool bset_has_aux_tree(struct bset_tree *t)
 {
-	return bset_tree_type(t) == BSET_TREE_WRITTEN;
+	return bset_aux_tree_type(t) == BSET_HAS_AUX_TREE;
 }
 
 #define __set_bytes(_i, _u64s)	(sizeof(*(_i)) + (_u64s) * sizeof(u64))
