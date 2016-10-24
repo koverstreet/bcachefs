@@ -730,7 +730,8 @@ void bch_btree_journal_key(struct btree_iter *iter,
 
 	if (test_bit(JOURNAL_REPLAY_DONE, &j->flags)) {
 		bch_journal_add_keys(j, res, b->btree_id, insert);
-		btree_bset_last(b)->journal_seq = cpu_to_le64(j->seq);
+		btree_bset_last(b)->journal_seq =
+			cpu_to_le64(bch_journal_res_seq(j, res));
 	}
 
 	if (!btree_node_dirty(b)) {
@@ -994,8 +995,6 @@ void bch_btree_interior_update_will_free_node(struct cache_set *c,
 	struct pending_btree_node_free *d;
 	struct bset_tree *t;
 
-	mutex_lock(&c->btree_interior_update_lock);
-
 	/*
 	 * Does this node have data that hasn't been written in the journal?
 	 *
@@ -1021,6 +1020,8 @@ void bch_btree_interior_update_will_free_node(struct cache_set *c,
 	bch_journal_pin_add_if_older(&c->journal,
 				     &b->writes[1].journal,
 				     &as->journal, NULL);
+
+	mutex_lock(&c->btree_interior_update_lock);
 
 	/*
 	 * Does this node have any btree_interior_update operations preventing

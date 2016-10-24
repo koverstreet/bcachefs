@@ -152,6 +152,13 @@ u64 bch_inode_journal_seq(struct journal *, u64);
 
 void bch_journal_add_keys(struct journal *, struct journal_res *,
 			  enum btree_id, const struct bkey_i *);
+static inline u64 bch_journal_res_seq(struct journal *j,
+				      struct journal_res *res)
+{
+	struct journal_buf *buf = &j->buf[res->idx];
+
+	return le64_to_cpu(buf->data->seq);
+}
 
 void bch_journal_res_put(struct journal *, struct journal_res *, u64 *);
 int bch_journal_res_get(struct journal *, struct journal_res *,
