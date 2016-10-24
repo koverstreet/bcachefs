@@ -246,20 +246,19 @@ static void __bch_btree_node_iter_fix(struct btree_iter *iter,
 				      struct btree_node_iter *node_iter,
 				      struct bset_tree *t,
 				      struct bkey_packed *where,
-				      bool overwrote)
+				      int shift)
 {
 	struct bkey_format *f = &b->format;
 	const struct bkey_packed *end = bset_bkey_last(t->data);
 	struct btree_node_iter_set *set;
-	unsigned shift = overwrote ? 0 : where->u64s;
 	unsigned offset = __btree_node_key_to_offset(b, where);
-	unsigned old_end = __btree_node_key_to_offset(b, end) - shift;
+	unsigned old_end = (int) __btree_node_key_to_offset(b, end) - shift;
 	bool iter_pos_before_new = btree_iter_pos_cmp_packed(f,
 				iter->pos, where, iter->is_extents);
 
 	btree_node_iter_for_each(node_iter, set)
 		if (set->end == old_end) {
-			set->end += shift;
+			set->end = (int) set->end + shift;
 
 			/*
 			 * When we inserted at @where, the key we inserted - the
@@ -277,8 +276,8 @@ static void __bch_btree_node_iter_fix(struct btree_iter *iter,
 			if (set->k >= offset) {
 				if (iter_pos_before_new)
 					set->k = offset;
-				else
-					set->k += shift;
+				else if (shift > 0 || set->k > offset)
+					set->k = (int) set->k + shift;
 			}
 
 			/*
@@ -306,23 +305,23 @@ void bch_btree_node_iter_fix(struct btree_iter *iter,
 			     struct btree_node_iter *node_iter,
 			     struct bset_tree *t,
 			     struct bkey_packed *where,
-			     bool overwrote)
+			     int shift)
 {
 	struct btree_iter *linked;
 
 	if (node_iter != &iter->node_iters[b->level])
 		__bch_btree_node_iter_fix(iter, &b->keys, node_iter,
-					  t, where, overwrote);
+					  t, where, shift);
 
 	if (iter->nodes[b->level] == b)
 		__bch_btree_node_iter_fix(iter, &b->keys,
 					  &iter->node_iters[b->level],
-					  t, where, overwrote);
+					  t, where, shift);
 
 	for_each_linked_btree_node(iter, b, linked)
 		__bch_btree_node_iter_fix(linked, &b->keys,
 					  &linked->node_iters[b->level],
-					  t, where, overwrote);
+					  t, where, shift);
 	bch_btree_iter_verify(iter, b);
 }
 

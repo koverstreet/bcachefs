@@ -325,9 +325,8 @@ void bch_bset_fix_invalidated_key(struct btree_keys *, struct bset_tree *,
 struct bkey_packed *bch_bset_insert(struct btree_keys *,
 				    struct btree_node_iter *,
 				    struct bkey_i *);
-bool bch_bset_try_overwrite(struct btree_keys *, struct btree_node_iter *,
-			    struct bset_tree *, struct bkey_packed *,
-			    struct bkey_i *);
+int bch_bset_overwrite(struct btree_keys *, struct btree_node_iter *,
+		       struct bkey_packed *, struct bkey_i *);
 
 /* Bkey utility code */
 

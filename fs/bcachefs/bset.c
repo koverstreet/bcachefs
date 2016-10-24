@@ -507,7 +507,7 @@ void inorder_test(void)
 
 static struct bkey_packed *cacheline_to_bkey(struct bset_tree *t,
 					     unsigned cacheline,
-					     unsigned offset)
+					     int offset)
 {
 	return ((void *) t->data) + cacheline * BSET_CACHELINE + offset * 8;
 }
@@ -873,41 +873,49 @@ EXPORT_SYMBOL(bch_bset_fix_invalidated_key);
 
 static void bch_bset_fix_lookup_table(struct btree_keys *b,
 				      struct bset_tree *t,
-				      struct bkey_packed *k)
+				      struct bkey_packed *where,
+				      int shift)
 {
-	unsigned shift = k->u64s;
-	unsigned j = bkey_to_cacheline(t, k);
+	struct bkey_packed *k;
+	unsigned j;
 
 	BUG_ON(bset_has_aux_tree(t));
 
-	if (bset_aux_tree_type(t) == BSET_AUX_TREE_NONE)
+	if (bset_aux_tree_type(t) != BSET_HAS_UNWRITTEN_TABLE)
 		return;
 
-	/* k is the key we just inserted; we need to find the entry in the
-	 * lookup table for the first key that is strictly greater than k:
-	 * it's either k's cacheline or the next one
-	 */
-	while (j < t->size &&
-	       table_to_bkey(t, j) <= k)
+	/* Find first entry in the lookup table strictly greater than where: */
+	j = bkey_to_cacheline(t, where);
+	while (j < t->size && table_to_bkey(t, j) <= where)
 		j++;
+
+	BUG_ON(!j);
 
 	/* Adjust all the lookup table entries, and find a new key for any that
 	 * have gotten too big
 	 */
 	for (; j < t->size; j++) {
 		/* Avoid overflow - might temporarily be larger than a u8 */
-		unsigned p = (unsigned) t->prev[j] + shift;
+		int new_offset = (int) t->prev[j] + shift;
 
-		if (p > 7) {
-			k = table_to_bkey(t, j - 1);
+		if (new_offset < 0 ||
+		    new_offset > 7) {
+			k = new_offset < 0
+				? cacheline_to_bkey(t, j, new_offset)
+				: table_to_bkey(t, j - 1);
 
-			while (k < cacheline_to_bkey(t, j, 0))
+			while (k < cacheline_to_bkey(t, j, 0)) {
 				k = bkey_next(k);
+				if (k == bset_bkey_last(t->data)) {
+					t->size = j;
+					return;
+				}
+			}
 
-			p = bkey_to_cacheline_offset(t, j, k);
+			new_offset = bkey_to_cacheline_offset(t, j, k);
 		}
 
-		t->prev[j] = p;
+		t->prev[j] = new_offset;
 	}
 
 	BUG_ON(t->size > bset_tree_capacity(b, t));
@@ -980,7 +988,7 @@ struct bkey_packed *bch_bset_insert(struct btree_keys *b,
 	memcpy(bkeyp_val(f, where), &insert->v,
 	       bkeyp_val_bytes(f, src));
 
-	bch_bset_fix_lookup_table(b, t, where);
+	bch_bset_fix_lookup_table(b, t, where, where->u64s);
 
 	if (!bkey_is_whiteout(&insert->k))
 		btree_keys_account_key_add(&b->nr, b->nsets, src);
@@ -991,53 +999,50 @@ struct bkey_packed *bch_bset_insert(struct btree_keys *b,
 }
 
 /* @where must compare equal to @insert */
-bool bch_bset_try_overwrite(struct btree_keys *b,
-			    struct btree_node_iter *iter,
-			    struct bset_tree *t,
-			    struct bkey_packed *where,
-			    struct bkey_i *insert)
+int bch_bset_overwrite(struct btree_keys *b,
+		       struct btree_node_iter *iter,
+		       struct bkey_packed *where,
+		       struct bkey_i *insert)
 {
 	struct bkey_format *f = &b->format;
+	struct bset_tree *t = bset_tree_last(b);
+	struct bset *i = t->data;
 	struct bkey_packed packed, *src = bkey_to_packed(insert);
+	int shift;
 
+	/*
+	 * we know where isn't a deleted key, because if it was the iterator
+	 * would have skipped past it:
+	 */
 	EBUG_ON(bkey_cmp_left_packed(f, where, insert->k.p));
 	EBUG_ON(bkey_deleted(where));
 
-	/*
-	 * If insert is a deletion overwriting is handled by
-	 * bch_btree_bset_insert_key(), since in that case we're replacing a non
-	 * deleted key with a deleted key and we have to fix iterators:
-	 */
-	if (bkey_deleted(&insert->k))
-		return false;
+	if (bkey_pack_key(&packed, &insert->k, f))
+		src = &packed;
 
-	if (t != bset_tree_last(b))
-		return false;
-
-	if (where->u64s == src->u64s)
-		goto overwrite;
-
-	if (!bkey_pack_key(&packed, &insert->k, f))
-		return false;
-
-	src = &packed;
-	if (where->u64s == src->u64s)
-		goto overwrite;
-
-	return false;
-overwrite:
 	if (!bkey_packed_is_whiteout(b, where))
 		btree_keys_account_key_drop(&b->nr, b->nsets, where);
 	if (!bkey_is_whiteout(&insert->k))
 		btree_keys_account_key_add(&b->nr, b->nsets, src);
+
+	shift = src->u64s - where->u64s;
+	if (shift) {
+		memmove(where->_data + src->u64s,
+			bkey_next(where),
+			(void *) bset_bkey_last(i) - (void *) bkey_next(where));
+		le16_add_cpu(&i->u64s, shift);
+	}
+
 	memcpy(where, src,
 	       bkeyp_key_bytes(f, src));
 	memcpy(bkeyp_val(f, where), &insert->v,
 	       bkeyp_val_bytes(f, src));
 
+	bch_bset_fix_lookup_table(b, t, where, shift);
+
 	bch_verify_key_order(b, iter, where);
 	bch_verify_btree_nr_keys(b);
-	return true;
+	return shift;
 }
 
 /* Lookup */

@@ -1414,7 +1414,7 @@ bch_insert_fixup_extent(struct btree_insert *trans,
 			 * auxiliary tree.
 			 */
 			bch_bset_fix_invalidated_key(&b->keys, t, _k);
-			bch_btree_node_iter_fix(iter, b, node_iter, t, _k, true);
+			bch_btree_node_iter_fix(iter, b, node_iter, t, _k, 0);
 			break;
 
 		case BCH_EXTENT_OVERLAP_ALL: {
@@ -1456,7 +1456,7 @@ bch_insert_fixup_extent(struct btree_insert *trans,
 			} else {
 				bch_bset_fix_invalidated_key(&b->keys, t, _k);
 				bch_btree_node_iter_fix(iter, b, node_iter, t,
-							_k, true);
+							_k, 0);
 			}
 
 			break;
@@ -2183,7 +2183,7 @@ static bool extent_merge_one_overlapping(struct btree_iter *iter,
 		uk.p = new_pos;
 		extent_save(&b->keys, node_iter, k, &uk);
 		bch_bset_fix_invalidated_key(&b->keys, t, k);
-		bch_btree_node_iter_fix(iter, b, node_iter, t, k, true);
+		bch_btree_node_iter_fix(iter, b, node_iter, t, k, 0);
 		return true;
 	}
 }
@@ -2323,7 +2323,7 @@ static bool bch_extent_merge_inline(struct btree_iter *iter,
 			bch_btree_iter_set_pos_same_leaf(iter, li.k.k.p);
 
 		bch_btree_node_iter_fix(iter, iter->nodes[0], node_iter,
-					t, m, true);
+					t, m, 0);
 
 		if (!back_merge)
 			bkey_copy(packed_to_bkey(l), &li.k);
@@ -2339,7 +2339,7 @@ static bool bch_extent_merge_inline(struct btree_iter *iter,
 
 		extent_i_save(b, node_iter, m, &li.k);
 		bch_btree_node_iter_fix(iter, iter->nodes[0], node_iter,
-					t, m, true);
+					t, m, 0);
 		return true;
 	default:
 		BUG();
