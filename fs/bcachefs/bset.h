@@ -318,13 +318,15 @@ void bch_btree_keys_init(struct btree_keys *, const struct btree_keys_ops *,
 void bch_bset_init_first(struct btree_keys *, struct bset *);
 void bch_bset_init_next(struct btree_keys *, struct bset *);
 void bch_bset_build_written_tree(struct btree_keys *);
-void bch_bset_fix_invalidated_key(struct btree_keys *, struct bkey_packed *);
+void bch_bset_fix_invalidated_key(struct btree_keys *, struct bset_tree *,
+				  struct bkey_packed *);
 
 struct bkey_packed *bch_bset_insert(struct btree_keys *,
 				    struct btree_node_iter *,
 				    struct bkey_i *);
-bool bch_bset_try_overwrite(struct btree_keys *, struct btree_node_iter *iter,
-			    struct bkey_packed *, struct bkey_i *);
+bool bch_bset_try_overwrite(struct btree_keys *, struct btree_node_iter *,
+			    struct bset_tree *, struct bkey_packed *,
+			    struct bkey_i *);
 
 static inline void btree_keys_account_key(struct btree_nr_keys *n,
 					  struct bkey_packed *k,

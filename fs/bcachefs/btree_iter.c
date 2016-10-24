@@ -244,12 +244,12 @@ void bch_btree_iter_verify(struct btree_iter *iter, struct btree *b)
 static void __bch_btree_node_iter_fix(struct btree_iter *iter,
 				      struct btree_keys *b,
 				      struct btree_node_iter *node_iter,
+				      struct bset_tree *t,
 				      struct bkey_packed *where,
 				      bool overwrote)
 {
 	struct bkey_format *f = &b->format;
-	struct bset *i = bch_bkey_to_bset(b, where)->data;
-	const struct bkey_packed *end = bset_bkey_last(i);
+	const struct bkey_packed *end = bset_bkey_last(t->data);
 	struct btree_node_iter_set *set;
 	unsigned shift = overwrote ? 0 : where->u64s;
 	unsigned offset = __btree_node_key_to_offset(b, where);
@@ -304,24 +304,25 @@ check_remove:
 void bch_btree_node_iter_fix(struct btree_iter *iter,
 			     struct btree *b,
 			     struct btree_node_iter *node_iter,
-			     struct bkey_packed *k,
+			     struct bset_tree *t,
+			     struct bkey_packed *where,
 			     bool overwrote)
 {
 	struct btree_iter *linked;
 
 	if (node_iter != &iter->node_iters[b->level])
 		__bch_btree_node_iter_fix(iter, &b->keys, node_iter,
-					  k, overwrote);
+					  t, where, overwrote);
 
 	if (iter->nodes[b->level] == b)
 		__bch_btree_node_iter_fix(iter, &b->keys,
 					  &iter->node_iters[b->level],
-					  k, overwrote);
+					  t, where, overwrote);
 
 	for_each_linked_btree_node(iter, b, linked)
 		__bch_btree_node_iter_fix(linked, &b->keys,
 					  &linked->node_iters[b->level],
-					  k, overwrote);
+					  t, where, overwrote);
 	bch_btree_iter_verify(iter, b);
 }
 

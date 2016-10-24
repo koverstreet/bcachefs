@@ -828,9 +828,9 @@ struct bkey_packed *bkey_prev(struct bset_tree *t, struct bkey_packed *k)
  * modified, fix any auxiliary search tree by remaking all the nodes in the
  * auxiliary search tree that @k corresponds to
  */
-void bch_bset_fix_invalidated_key(struct btree_keys *b, struct bkey_packed *k)
+void bch_bset_fix_invalidated_key(struct btree_keys *b, struct bset_tree *t,
+				  struct bkey_packed *k)
 {
-	struct bset_tree *t = bch_bkey_to_bset(b, k);
 	unsigned inorder, j = 1;
 
 	if (!bset_has_aux_tree(t))
@@ -998,6 +998,7 @@ struct bkey_packed *bch_bset_insert(struct btree_keys *b,
 /* @where must compare equal to @insert */
 bool bch_bset_try_overwrite(struct btree_keys *b,
 			    struct btree_node_iter *iter,
+			    struct bset_tree *t,
 			    struct bkey_packed *where,
 			    struct bkey_i *insert)
 {
@@ -1010,7 +1011,7 @@ bool bch_bset_try_overwrite(struct btree_keys *b,
 	if (bkey_deleted(&insert->k))
 		return false;
 
-	if (bch_bkey_to_bset(b, where) != bset_tree_last(b))
+	if (t != bset_tree_last(b))
 		return false;
 
 	if (where->u64s == src->u64s)

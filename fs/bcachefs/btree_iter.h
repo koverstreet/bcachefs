@@ -122,8 +122,8 @@ static inline void bch_btree_iter_verify(struct btree_iter *iter,
 #endif
 
 void bch_btree_node_iter_fix(struct btree_iter *, struct btree *,
-			     struct btree_node_iter *, struct bkey_packed *,
-			     bool);
+			     struct btree_node_iter *, struct bset_tree *,
+			     struct bkey_packed *, bool);
 
 bool bch_btree_iter_upgrade(struct btree_iter *);
 int bch_btree_iter_unlock(struct btree_iter *);

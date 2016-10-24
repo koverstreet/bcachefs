@@ -658,7 +658,9 @@ void bch_btree_bset_insert(struct btree_iter *iter,
 
 	where = bch_bset_insert(&b->keys, node_iter, insert);
 
-	bch_btree_node_iter_fix(iter, b, node_iter, where, false);
+	bch_btree_node_iter_fix(iter, b, node_iter,
+				bset_tree_last(&b->keys),
+				where, false);
 }
 
 /* Handle overwrites and do insert, for non extents: */
@@ -669,20 +671,22 @@ void bch_btree_bset_insert_key(struct btree_iter *iter,
 {
 	const struct bkey_format *f = &b->keys.format;
 	struct bkey_packed *k;
+	struct bset_tree *t;
 
 	k = bch_btree_node_iter_peek_all(node_iter, &b->keys);
 	if (k && !bkey_cmp_packed(f, k, &insert->k)) {
-		if (bch_bset_try_overwrite(&b->keys, node_iter, k, insert)) {
+		t = bch_bkey_to_bset(&b->keys, k);
+
+		if (bch_bset_try_overwrite(&b->keys, node_iter, t, k, insert)) {
 			bch_btree_iter_verify(iter, b);
 			return;
 		}
 
 		k->type = KEY_TYPE_DELETED;
 		btree_keys_account_key_drop(&b->keys.nr, k);
-		bch_btree_node_iter_fix(iter, b, node_iter, k, true);
+		bch_btree_node_iter_fix(iter, b, node_iter, t, k, true);
 
-		if (bkey_deleted(&insert->k) &&
-		    bch_bkey_to_bset(&b->keys, k) == bset_tree_last(&b->keys))
+		if (t == bset_tree_last(&b->keys) && bkey_deleted(&insert->k))
 			return;
 	}
 
