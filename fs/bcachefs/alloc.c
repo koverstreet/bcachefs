@@ -969,6 +969,8 @@ static enum bucket_alloc_ret bch_bucket_alloc_group(struct cache_set *c,
 	unsigned fail_idx = -1, i;
 	unsigned available = 0;
 
+	BUG_ON(nr_replicas > ARRAY_SIZE(ob->ptrs));
+
 	if (ob->nr_ptrs >= nr_replicas)
 		return ALLOC_SUCCESS;
 
@@ -1022,12 +1024,16 @@ static enum bucket_alloc_ret bch_bucket_alloc_group(struct cache_set *c,
 		memmove(&ob->ptrs[1],
 			&ob->ptrs[0],
 			ob->nr_ptrs * sizeof(ob->ptrs[0]));
+		memmove(&ob->ptr_offset[1],
+			&ob->ptr_offset[0],
+			ob->nr_ptrs * sizeof(ob->ptr_offset[0]));
 		ob->nr_ptrs++;
 		ob->ptrs[0] = (struct bch_extent_ptr) {
 			.gen	= ca->bucket_gens[bucket],
 			.offset	= bucket_to_sector(ca, bucket),
 			.dev	= ca->sb.nr_this_dev,
 		};
+		ob->ptr_offset[0] = 0;
 
 		__set_bit(ca->sb.nr_this_dev, caches_used);
 		available--;
@@ -1167,7 +1173,6 @@ static struct open_bucket *bch_open_bucket_get(struct cache_set *c,
 		BUG_ON(ret->nr_ptrs);
 
 		atomic_set(&ret->pin, 1); /* XXX */
-		memset(ret->ptr_offset, 0, sizeof(ret->ptr_offset));
 		ret->has_full_ptrs	= false;
 
 		c->open_buckets_nr_free--;
@@ -1231,7 +1236,9 @@ static void open_bucket_copy_unused_ptrs(struct cache_set *c,
 			struct bch_extent_ptr tmp = old->ptrs[i];
 
 			tmp.offset += old->ptr_offset[i];
-			new->ptrs[new->nr_ptrs++] = tmp;
+			new->ptrs[new->nr_ptrs] = tmp;
+			new->ptr_offset[new->nr_ptrs] = 0;
+			new->nr_ptrs++;
 		}
 	cache_member_info_put();
 }
@@ -1276,7 +1283,7 @@ static int open_bucket_add_buckets(struct cache_set *c,
 {
 	const struct bch_extent_ptr *ptr;
 	long caches_used[BITS_TO_LONGS(MAX_CACHES_PER_SET)];
-	unsigned i, end;
+	int i, dst;
 
 	/*
 	 * We might be allocating pointers to add to an existing extent
@@ -1295,29 +1302,21 @@ static int open_bucket_add_buckets(struct cache_set *c,
 		__set_bit(ptr->dev, caches_used);
 
 	/*
-	 * Any duplicate pointers get moved to the end - later,
+	 * Shuffle pointers to devices we already have to the end:
+	 * bch_bucket_alloc_set() will add new pointers to the statr of @b, and
 	 * bch_alloc_sectors_done() will add the first nr_replicas ptrs to @e:
 	 */
-	end = ob->nr_ptrs;
-	i = 0;
-	while (i < end) {
+	for (i = dst = ob->nr_ptrs - 1; i >= 0; --i)
 		if (__test_and_set_bit(ob->ptrs[i].dev, caches_used)) {
-			struct bch_extent_ptr tmp = ob->ptrs[i];
-
+			if (i != dst) {
+				swap(ob->ptrs[i], ob->ptrs[dst]);
+				swap(ob->ptr_offset[i], ob->ptr_offset[dst]);
+			}
+			--dst;
 			nr_replicas++;
-
-			memmove(&ob->ptrs[i],
-				&ob->ptrs[i + 1],
-				(ob->nr_ptrs - i - 1) * sizeof(ob->ptrs[0]));
-			ob->ptrs[ob->nr_ptrs - 1] = tmp;
-			end--;
-		} else {
-			i++;
 		}
-	}
 
-	return bch_bucket_alloc_set(c, wp, ob, nr_replicas,
-				    caches_used, cl);
+	return bch_bucket_alloc_set(c, wp, ob, nr_replicas, caches_used, cl);
 }
 
 /*
