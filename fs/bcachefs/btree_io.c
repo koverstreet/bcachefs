@@ -75,7 +75,7 @@ static void btree_node_sort(struct cache_set *c, struct btree *b,
 
 	b->keys.nsets = from;
 	b->keys.nr = nr;
-	bch_bset_build_written_tree(&b->keys);
+	bch_bset_build_written_tree(&b->keys, &b->keys.set[from]);
 
 	if (!is_write_locked)
 		__btree_node_unlock_write(b, iter);
@@ -123,7 +123,7 @@ static bool btree_node_compact(struct cache_set *c, struct btree *b,
 
 nosort:
 	__btree_node_lock_write(b, iter);
-	bch_bset_build_written_tree(&b->keys);
+	bch_bset_build_written_tree(&b->keys, bset_tree_last(&b->keys));
 	__btree_node_unlock_write(b, iter);
 	return false;
 sort:

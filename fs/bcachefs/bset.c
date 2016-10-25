@@ -110,21 +110,18 @@ void bch_dump_bucket(struct btree_keys *b)
 
 void __bch_verify_btree_nr_keys(struct btree_keys *b)
 {
-	struct btree_node_iter iter;
+	unsigned i;
 	struct bkey_packed *k;
-	unsigned u64s = 0, packed = 0, unpacked = 0;
+	struct btree_nr_keys nr = { 0 };
 
-	for_each_btree_node_key(b, k, &iter) {
-		u64s += k->u64s;
-		if (bkey_packed(k))
-			packed++;
-		else
-			unpacked++;
-	}
+	for (i = 0; i <= b->nsets; i++)
+		for (k = b->set[i].data->start;
+		     k != bset_bkey_last(b->set[i].data);
+		     k = bkey_next(k))
+			if (!bkey_deleted(k))
+				btree_keys_account_key_add(&nr, i, k);
 
-	BUG_ON(b->nr.live_u64s		!= u64s);
-	BUG_ON(b->nr.packed_keys	!= packed);
-	BUG_ON(b->nr.unpacked_keys	!= unpacked);
+	BUG_ON(memcmp(&nr, &b->nr, sizeof(nr)));
 }
 
 static void bch_btree_node_iter_next_check(struct btree_node_iter *iter,
@@ -698,8 +695,6 @@ static void bset_alloc_tree(struct btree_keys *b, struct bset_tree *t)
 /* Only valid for the last bset: */
 static unsigned bset_tree_capacity(struct btree_keys *b, struct bset_tree *t)
 {
-	EBUG_ON(t != bset_tree_last(b));
-
 	return b->set->tree + btree_keys_cachelines(b) - t->tree;
 }
 
@@ -740,9 +735,9 @@ void bch_bset_init_next(struct btree_keys *b, struct bset *i)
 }
 EXPORT_SYMBOL(bch_bset_init_next);
 
-void bch_bset_build_written_tree(struct btree_keys *b)
+void bch_bset_build_written_tree(struct btree_keys *b,
+				 struct bset_tree *t)
 {
-	struct bset_tree *t = bset_tree_last(b);
 	struct bkey_packed *prev = NULL, *k = t->data->start;
 	unsigned j, cacheline = 1;
 
@@ -988,7 +983,7 @@ struct bkey_packed *bch_bset_insert(struct btree_keys *b,
 	bch_bset_fix_lookup_table(b, t, where);
 
 	if (!bkey_deleted(src))
-		btree_keys_account_key_add(&b->nr, src);
+		btree_keys_account_key_add(&b->nr, b->nsets, src);
 
 	bch_verify_key_order(b, iter, where);
 	bch_verify_btree_nr_keys(b);
@@ -1008,6 +1003,11 @@ bool bch_bset_try_overwrite(struct btree_keys *b,
 	EBUG_ON(bkey_cmp_left_packed(f, where, insert->k.p));
 	EBUG_ON(bkey_deleted(where));
 
+	/*
+	 * If insert is a deletion overwriting is handled by
+	 * bch_btree_bset_insert_key(), since in that case we're replacing a non
+	 * deleted key with a deleted key and we have to fix iterators:
+	 */
 	if (bkey_deleted(&insert->k))
 		return false;
 
@@ -1027,9 +1027,9 @@ bool bch_bset_try_overwrite(struct btree_keys *b,
 	return false;
 overwrite:
 	if (!bkey_deleted(where))
-		btree_keys_account_key_drop(&b->nr, where);
+		btree_keys_account_key_drop(&b->nr, t - b->set, where);
 	if (!bkey_deleted(src))
-		btree_keys_account_key_add(&b->nr, src);
+		btree_keys_account_key_add(&b->nr, t - b->set, src);
 	memcpy(where, src,
 	       bkeyp_key_bytes(f, src));
 	memcpy(bkeyp_val(f, where), &insert->v,
@@ -1543,10 +1543,13 @@ EXPORT_SYMBOL(bch_bset_sort_state_init);
 
 /* No repacking: */
 static struct btree_nr_keys btree_mergesort_simple(struct btree_keys *b,
+						   unsigned from,
 						   struct bset *bset,
 						   struct btree_node_iter *iter)
 {
 	struct bkey_packed *in, *out = bset->start;
+	struct btree_nr_keys ret = b->nr;
+	unsigned i;
 
 	while ((in = bch_btree_node_iter_next_all(iter, b))) {
 		if (!bkey_deleted(in)) {
@@ -1557,7 +1560,13 @@ static struct btree_nr_keys btree_mergesort_simple(struct btree_keys *b,
 	}
 
 	bset->u64s = cpu_to_le16((u64 *) out - bset->_data);
-	return b->nr;
+
+	for (i = from + 1; i < MAX_BSETS; i++) {
+		ret.bset_u64s[from] += ret.bset_u64s[i];
+		ret.bset_u64s[i] = 0;
+	}
+
+	return ret;
 }
 
 /* Sort + repack in a new format: */
@@ -1587,7 +1596,7 @@ static struct btree_nr_keys btree_mergesort(struct btree_keys *dst,
 		else
 			bkey_unpack((void *) out, in_f, in);
 
-		btree_keys_account_key_add(&nr, out);
+		btree_keys_account_key_add(&nr, 0, out);
 		out = bkey_next(out);
 
 		BUG_ON((void *) out >
@@ -1642,7 +1651,7 @@ static struct btree_nr_keys btree_mergesort_extents(struct btree_keys *dst,
 		if (prev) {
 			bkey_pack(prev, (void *) prev, out_f);
 
-			btree_keys_account_key_add(&nr, prev);
+			btree_keys_account_key_add(&nr, 0, prev);
 			prev = bkey_next(prev);
 		} else {
 			prev = dst_set->start;
@@ -1656,7 +1665,7 @@ static struct btree_nr_keys btree_mergesort_extents(struct btree_keys *dst,
 
 	if (prev) {
 		bkey_pack(prev, (void *) prev, out_f);
-		btree_keys_account_key_add(&nr, prev);
+		btree_keys_account_key_add(&nr, 0, prev);
 		out = bkey_next(prev);
 	} else {
 		out = dst_set->start;
@@ -1698,7 +1707,7 @@ struct btree_nr_keys bch_sort_bsets(struct bset *dst, struct btree_keys *b,
 	else if (b->ops->is_extents && !from)
 		nr = btree_mergesort_extents(b, dst, b, iter, NULL);
 	else
-		nr = btree_mergesort_simple(b, dst, iter);
+		nr = btree_mergesort_simple(b, from, dst, iter);
 
 	if (!from)
 		bch_time_stats_update(state->time, start_time);
@@ -1743,6 +1752,56 @@ void bch_btree_sort_into(struct btree_keys *dst,
 	dst->set->extra = BSET_AUX_TREE_NONE_VAL;
 
 	bch_verify_btree_nr_keys(dst);
+}
+
+bool bch_maybe_compact_deleted_keys(struct btree_keys *b)
+{
+	struct bset_tree *t, *rebuild_from = NULL;
+	bool last_set_has_aux_tree = bset_has_aux_tree(bset_tree_last(b));
+	unsigned idx;
+
+	for (idx = 0; idx <= b->nsets; idx++) {
+		struct bset *i = b->set[idx].data;
+		struct bkey_packed *k, *n, *out = i->start;
+
+		if (b->nr.bset_u64s[idx] * 4 > le16_to_cpu(i->u64s) * 3)
+			continue;
+
+		/*
+		 * We cannot drop deleted keys from the last bset, if it hasn't
+		 * been written yet - we may need that whiteout on disk:
+		 *
+		 * XXX unless they're extents, if we fix assertions elsewhere
+		 */
+		if (idx == b->nsets && !last_set_has_aux_tree)
+			break;
+
+		for (k = i->start; k != bset_bkey_last(i); k = n) {
+			n = bkey_next(k);
+
+			if (!bkey_deleted(k)) {
+				memmove(out, k, bkey_bytes(k));
+				out = bkey_next(out);
+			}
+		}
+
+		i->u64s = cpu_to_le16((u64 *) out - i->_data);
+
+		if (!rebuild_from)
+			rebuild_from = &b->set[idx];
+	}
+
+	if (!rebuild_from)
+		return false;
+
+	for (t = rebuild_from; t <= b->set + b->nsets; t++) {
+		if (t == bset_tree_last(b) && !last_set_has_aux_tree)
+			bch_bset_build_unwritten_tree(b);
+		else
+			bch_bset_build_written_tree(b, t);
+	}
+
+	return true;
 }
 
 void bch_btree_keys_stats(struct btree_keys *b, struct bset_stats *stats)

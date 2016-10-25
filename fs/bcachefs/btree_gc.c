@@ -432,13 +432,16 @@ void bch_gc(struct cache_set *c)
 
 static void recalc_packed_keys(struct btree *b)
 {
-	struct btree_node_iter iter;
 	struct bkey_packed *k;
 
 	memset(&b->keys.nr, 0, sizeof(b->keys.nr));
 
-	for_each_btree_node_key(&b->keys, k, &iter)
-		btree_keys_account_key_add(&b->keys.nr, k);
+	BUG_ON(b->keys.nsets);
+
+	for (k = b->keys.set[0].data->start;
+	     k != bset_bkey_last(b->keys.set[0].data);
+	     k = bkey_next(k))
+		btree_keys_account_key_add(&b->keys.nr, 0, k);
 }
 
 static void bch_coalesce_nodes(struct btree *old_nodes[GC_MERGE_NODES],

@@ -242,6 +242,7 @@ struct btree_nr_keys {
 	 * units of u64s
 	 */
 	u16			live_u64s;
+	u16			bset_u64s[MAX_BSETS];
 
 	/* live keys only: */
 	u16			packed_keys;
@@ -317,7 +318,7 @@ void bch_btree_keys_init(struct btree_keys *, const struct btree_keys_ops *,
 
 void bch_bset_init_first(struct btree_keys *, struct bset *);
 void bch_bset_init_next(struct btree_keys *, struct bset *);
-void bch_bset_build_written_tree(struct btree_keys *);
+void bch_bset_build_written_tree(struct btree_keys *, struct bset_tree *);
 void bch_bset_fix_invalidated_key(struct btree_keys *, struct bset_tree *,
 				  struct bkey_packed *);
 
@@ -329,20 +330,23 @@ bool bch_bset_try_overwrite(struct btree_keys *, struct btree_node_iter *,
 			    struct bkey_i *);
 
 static inline void btree_keys_account_key(struct btree_nr_keys *n,
+					  unsigned bset,
 					  struct bkey_packed *k,
 					  int sign)
 {
-	n->live_u64s += k->u64s * sign;
+	n->live_u64s		+= k->u64s * sign;
+	n->bset_u64s[bset]	+= k->u64s * sign;
+
 	if (bkey_packed(k))
-		n->packed_keys += sign;
+		n->packed_keys	+= sign;
 	else
 		n->unpacked_keys += sign;
 }
 
-#define btree_keys_account_key_add(_b, _k)			\
-	btree_keys_account_key(_b, _k, 1)
-#define btree_keys_account_key_drop(_b, _k)			\
-	btree_keys_account_key(_b, _k, -1)
+#define btree_keys_account_key_add(_nr, _bset_idx, _k)		\
+	btree_keys_account_key(_nr, _bset_idx, _k, 1)
+#define btree_keys_account_key_drop(_nr, _bset_idx, _k)	\
+	btree_keys_account_key(_nr, _bset_idx, _k, -1)
 
 /* Bkey utility code */
 
@@ -585,6 +589,8 @@ struct btree_nr_keys bch_sort_bsets(struct bset *, struct btree_keys *,
 void bch_btree_sort_lazy(struct btree_keys *, struct bset_sort_state *);
 void bch_btree_sort_into(struct btree_keys *, struct btree_keys *,
 			 ptr_filter_fn, struct bset_sort_state *);
+
+bool bch_maybe_compact_deleted_keys(struct btree_keys *);
 
 struct bset_stats {
 	struct {

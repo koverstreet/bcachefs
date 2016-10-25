@@ -683,7 +683,8 @@ void bch_btree_bset_insert_key(struct btree_iter *iter,
 		}
 
 		k->type = KEY_TYPE_DELETED;
-		btree_keys_account_key_drop(&b->keys.nr, k);
+		btree_keys_account_key_drop(&b->keys.nr,
+					    t - b->keys.set, k);
 		bch_btree_node_iter_fix(iter, b, node_iter, t, k, true);
 
 		if (t == bset_tree_last(&b->keys) && bkey_deleted(&insert->k))
@@ -1146,6 +1147,9 @@ bch_btree_insert_keys_interior(struct btree *b,
 
 	btree_interior_update_updated_btree(iter->c, as, b);
 
+	if (bch_maybe_compact_deleted_keys(&b->keys))
+		bch_btree_iter_reinit_node(iter, b);
+
 	btree_node_unlock_write(b, iter);
 
 	btree_node_interior_verify(b);
@@ -1197,15 +1201,17 @@ static struct btree *__btree_split_node(struct btree_iter *iter, struct btree *n
 	set2->u64s = cpu_to_le16((u64 *) bset_bkey_last(set1) - (u64 *) k);
 	set1->u64s = cpu_to_le16(le16_to_cpu(set1->u64s) - le16_to_cpu(set2->u64s));
 
-	n2->keys.nr.live_u64s = le16_to_cpu(set2->u64s);
+	n2->keys.nr.live_u64s		= le16_to_cpu(set2->u64s);
+	n2->keys.nr.bset_u64s[0]	= le16_to_cpu(set2->u64s);
 	n2->keys.nr.packed_keys
 		= n1->keys.nr.packed_keys - nr_packed;
 	n2->keys.nr.unpacked_keys
 		= n1->keys.nr.unpacked_keys - nr_unpacked;
 
-	n1->keys.nr.live_u64s = le16_to_cpu(set1->u64s);
-	n1->keys.nr.packed_keys = nr_packed;
-	n1->keys.nr.unpacked_keys = nr_unpacked;
+	n1->keys.nr.live_u64s		= le16_to_cpu(set1->u64s);
+	n1->keys.nr.bset_u64s[0]	= le16_to_cpu(set1->u64s);
+	n1->keys.nr.packed_keys		= nr_packed;
+	n1->keys.nr.unpacked_keys	= nr_unpacked;
 
 	BUG_ON(!set1->u64s);
 	BUG_ON(!set2->u64s);
@@ -1519,10 +1525,20 @@ btree_insert_key(struct btree_insert *trans,
 	struct btree_iter *iter = insert->iter;
 	struct btree *b = iter->nodes[0];
 	enum btree_insert_ret ret;
+	int old_u64s = le16_to_cpu(btree_bset_last(b)->u64s);
+	int old_live_u64s = b->keys.nr.live_u64s;
+	int live_u64s_added, u64s_added;
 
 	ret = !b->keys.ops->is_extents
 		? bch_insert_fixup_key(trans, insert, res)
 		: bch_insert_fixup_extent(trans, insert, res);
+
+	live_u64s_added = (int) b->keys.nr.live_u64s - old_live_u64s;
+	u64s_added = (int) le16_to_cpu(btree_bset_last(b)->u64s) - old_u64s;
+
+	if (u64s_added > live_u64s_added &&
+	    bch_maybe_compact_deleted_keys(&b->keys))
+		bch_btree_iter_reinit_node(iter, b);
 
 	trace_bcache_btree_insert_key(b, insert->k);
 	return ret;
