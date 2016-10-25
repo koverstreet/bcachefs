@@ -1431,7 +1431,7 @@ static void bch_do_direct_IO_write(struct dio_write *dio)
 	unsigned flags = 0;
 	int ret;
 
-	if (((file->f_flags & O_DSYNC) || IS_SYNC(file->f_mapping->host)) &&
+	if ((dio->req->ki_flags & IOCB_DSYNC) &&
 	    !dio->c->opts.journal_flush_disabled)
 		flags |= BCH_WRITE_FLUSH;
 
