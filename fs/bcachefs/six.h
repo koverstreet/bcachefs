@@ -55,6 +55,8 @@ union six_lock_state {
 	};
 };
 
+#define SIX_LOCK_MAX_RECURSE	((1 << 3) - 1)
+
 enum six_lock_type {
 	SIX_LOCK_read,
 	SIX_LOCK_intent,

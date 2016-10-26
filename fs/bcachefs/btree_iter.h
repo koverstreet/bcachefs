@@ -239,10 +239,8 @@ static inline void bch_btree_iter_cond_resched(struct btree_iter *iter)
 	if (need_resched()) {
 		bch_btree_iter_unlock(iter);
 		schedule();
-		bch_btree_iter_upgrade(iter);
 	} else if (race_fault()) {
 		bch_btree_iter_unlock(iter);
-		bch_btree_iter_upgrade(iter);
 	}
 }
 
