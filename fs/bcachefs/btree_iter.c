@@ -204,17 +204,15 @@ static void __bch_btree_iter_verify(struct btree_node_iter *iter,
 	bch_btree_node_iter_verify(iter, &b->keys);
 
 	for (t = b->keys.set; t <= b->keys.set + b->keys.nsets; t++) {
-		k = bkey_prev(t,
-			bch_btree_node_iter_bset_pos(iter, &b->keys, t->data) ?:
-			bset_bkey_last(t->data));
+		k = bch_btree_node_iter_bset_pos(iter, &b->keys, t->data);
 
 		/*
 		 * For interior nodes, the iterator will have skipped past
 		 * deleted keys:
 		 */
-		if (b->level)
-			while (k && bkey_deleted(k))
-				k = bkey_prev(t, k);
+		k = b->level
+			? bkey_prev(t, k)
+			: bkey_prev_all(t, k);
 
 		BUG_ON(k && btree_iter_pos_cmp_packed(f, pos, k,
 						      strictly_greater));

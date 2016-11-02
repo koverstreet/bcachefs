@@ -1105,12 +1105,11 @@ static void extent_do_insert(struct btree_iter *iter, struct bkey_i *insert,
 	struct bset_tree *t = bset_tree_last(b);
 	struct bset *i = t->data;
 	struct bkey_packed *prev, *where =
-		bch_btree_node_iter_bset_pos(node_iter, b, i) ?:
-		bset_bkey_last(i);
+		bch_btree_node_iter_bset_pos(node_iter, b, i);
 
 	bch_btree_journal_key(iter, insert, res);
 
-	if ((prev = bkey_prev(t, where)) &&
+	if ((prev = bkey_prev_all(t, where)) &&
 	    bch_extent_merge_inline(iter, prev, bkey_to_packed(insert), true))
 		return;
 
@@ -2219,8 +2218,10 @@ do_fixup:
 		 * if we don't find this bset in the iterator we already got to
 		 * the end of that bset, so start searching from the end.
 		 */
-		k = bch_btree_node_iter_bset_pos(node_iter, b, t->data) ?:
-			bkey_prev(t, bset_bkey_last(t->data));
+		k = bch_btree_node_iter_bset_pos(node_iter, b, t->data);
+
+		if (k == bset_bkey_last(t->data))
+			k = bkey_prev_all(t, k);
 
 		if (back_merge) {
 			/*
@@ -2232,7 +2233,7 @@ do_fixup:
 			     k &&
 			     (uk = bkey_unpack_key(f, k),
 			      bkey_cmp(uk.p, bkey_start_pos(m)) > 0);
-			     k = bkey_prev(t, k)) {
+			     k = bkey_prev_all(t, k)) {
 				if (bkey_cmp(uk.p, m->p) >= 0)
 					continue;
 
