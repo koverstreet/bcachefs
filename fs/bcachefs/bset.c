@@ -519,11 +519,18 @@ static unsigned bkey_to_cacheline(struct bset_tree *t, struct bkey_packed *k)
 	return ((void *) k - (void *) t->data) / BSET_CACHELINE;
 }
 
+static ssize_t __bkey_to_cacheline_offset(struct bset_tree *t,
+					  unsigned cacheline,
+					  struct bkey_packed *k)
+{
+	return (u64 *) k - (u64 *) cacheline_to_bkey(t, cacheline, 0);
+}
+
 static unsigned bkey_to_cacheline_offset(struct bset_tree *t,
 					 unsigned cacheline,
 					 struct bkey_packed *k)
 {
-	size_t m = (u64 *) k - (u64 *) cacheline_to_bkey(t, cacheline, 0);
+	size_t m = __bkey_to_cacheline_offset(t, cacheline, k);
 
 	BUG_ON(m > (1U << BKEY_MID_BITS) - 1);
 	return m;
@@ -907,9 +914,11 @@ EXPORT_SYMBOL(bch_bset_fix_invalidated_key);
 static void bch_bset_fix_lookup_table(struct btree_keys *b,
 				      struct bset_tree *t,
 				      struct bkey_packed *where,
-				      int shift)
+				      unsigned clobber_u64s,
+				      unsigned new_u64s)
 {
 	struct bkey_packed *k;
+	int shift = new_u64s - clobber_u64s;
 	unsigned j;
 
 	BUG_ON(bset_has_aux_tree(t));
@@ -929,23 +938,27 @@ static void bch_bset_fix_lookup_table(struct btree_keys *b,
 	 */
 	for (; j < t->size; j++) {
 		/* Avoid overflow - might temporarily be larger than a u8 */
-		int new_offset = (int) t->prev[j] + shift;
+		ssize_t new_offset;
 
-		if (new_offset < 0 ||
-		    new_offset > 7) {
-			k = new_offset < 0
-				? cacheline_to_bkey(t, j, new_offset)
-				: table_to_bkey(t, j - 1);
+		if (table_to_bkey(t, j) <
+		    (struct bkey_packed *) ((u64 *) where + clobber_u64s))
+			new_offset = __bkey_to_cacheline_offset(t, j, where);
+		else
+			new_offset = (int) t->prev[j] + shift;
 
-			while (k < cacheline_to_bkey(t, j, 0)) {
-				k = bkey_next(k);
-				if (k == bset_bkey_last(t->data)) {
-					t->size = j;
-					return;
-				}
+		if (new_offset > 7) {
+			k = table_to_bkey(t, j - 1);
+			new_offset = __bkey_to_cacheline_offset(t, j, k);
+		}
+
+		while (new_offset < 0) {
+			k = bkey_next(cacheline_to_bkey(t, j, new_offset));
+			if (k == bset_bkey_last(t->data)) {
+				t->size = j;
+				return;
 			}
 
-			new_offset = bkey_to_cacheline_offset(t, j, k);
+			new_offset = __bkey_to_cacheline_offset(t, j, k);
 		}
 
 		t->prev[j] = new_offset;
@@ -968,101 +981,29 @@ static void bch_bset_fix_lookup_table(struct btree_keys *b,
 		}
 }
 
-/**
- * bch_bset_insert - insert the key @insert into @b
- *
- * Attempts front and back merges (if @b has a method for key merging).
- *
- * NOTE: after calling @insert may be modified and is undefined
- *
- * @iter is used as a hint for where to insert at, but it's not
- * fixed/revalidated for the insertion, that's the caller's responsibility
- * (because there may be other iterators to fix, it's easier to just do all of
- * them the same way).
- *
- * If an insert was done (and not a merge), returns the position of the insert:
- * it is the caller's responsibility to update all iterators that point to @b
- * with bch_btree_node_iter_fix().
- *
- * If NULL is returned, the caller must sort all iterators that point to @b
- * with bch_btree_node_iter_sort(), because we may have done a merge that
- * modified one of the keys the iterator currently points to.
- */
-struct bkey_packed *bch_bset_insert(struct btree_keys *b,
-				    struct btree_node_iter *iter,
-				    struct bkey_i *insert)
-{
-	struct bkey_format *f = &b->format;
-	struct bset_tree *t = bset_tree_last(b);
-	struct bset *i = t->data;
-	struct bkey_packed *where = bch_btree_node_iter_bset_pos(iter, b, i);
-	struct bkey_packed packed, *src = bkey_to_packed(insert);
-
-	BUG_ON(bset_has_aux_tree(t));
-	BUG_ON(insert->k.u64s < BKEY_U64s);
-	BUG_ON(insert->k.format != KEY_FORMAT_CURRENT);
-	BUG_ON(b->ops->is_extents &&
-	       (!insert->k.size || bkey_deleted(&insert->k)));
-
-	BUG_ON(where < i->start);
-	BUG_ON(where > bset_bkey_last(i));
-
-	if (bkey_pack_key(&packed, &insert->k, f))
-		src = &packed;
-
-	memmove((u64 *) where + src->u64s,
-		where,
-		(void *) bset_bkey_last(i) - (void *) where);
-	le16_add_cpu(&i->u64s, src->u64s);
-
-	memcpy(where, src,
-	       bkeyp_key_bytes(f, src));
-	memcpy(bkeyp_val(f, where), &insert->v,
-	       bkeyp_val_bytes(f, src));
-
-	bch_bset_fix_lookup_table(b, t, where, where->u64s);
-
-	if (!bkey_is_whiteout(&insert->k))
-		btree_keys_account_key_add(&b->nr, b->nsets, src);
-
-	bch_verify_key_order(b, iter, where);
-	bch_verify_btree_nr_keys(b);
-	return where;
-}
-
-/* @where must compare equal to @insert */
-int bch_bset_overwrite(struct btree_keys *b,
-		       struct btree_node_iter *iter,
-		       struct bkey_packed *where,
-		       struct bkey_i *insert)
+void bch_bset_insert(struct btree_keys *b,
+		    struct btree_node_iter *iter,
+		    struct bkey_packed *where,
+		    struct bkey_i *insert,
+		    unsigned clobber_u64s)
 {
 	struct bkey_format *f = &b->format;
 	struct bset_tree *t = bset_tree_last(b);
 	struct bset *i = t->data;
 	struct bkey_packed packed, *src = bkey_to_packed(insert);
-	int shift;
-
-	/*
-	 * we know where isn't a deleted key, because if it was the iterator
-	 * would have skipped past it:
-	 */
-	EBUG_ON(bkey_cmp_left_packed(f, where, insert->k.p));
-	EBUG_ON(bkey_deleted(where));
 
 	if (bkey_pack_key(&packed, &insert->k, f))
 		src = &packed;
 
-	if (!bkey_packed_is_whiteout(b, where))
-		btree_keys_account_key_drop(&b->nr, b->nsets, where);
 	if (!bkey_is_whiteout(&insert->k))
 		btree_keys_account_key_add(&b->nr, b->nsets, src);
 
-	shift = src->u64s - where->u64s;
-	if (shift) {
-		memmove(where->_data + src->u64s,
-			bkey_next(where),
-			(void *) bset_bkey_last(i) - (void *) bkey_next(where));
-		le16_add_cpu(&i->u64s, shift);
+	if (src->u64s != clobber_u64s) {
+		void *src_p = where->_data + clobber_u64s;
+		void *dst_p = where->_data + src->u64s;
+
+		memmove(dst_p, src_p, (void *) bset_bkey_last(i) - src_p);
+		le16_add_cpu(&i->u64s, src->u64s - clobber_u64s);
 	}
 
 	memcpy(where, src,
@@ -1070,11 +1011,10 @@ int bch_bset_overwrite(struct btree_keys *b,
 	memcpy(bkeyp_val(f, where), &insert->v,
 	       bkeyp_val_bytes(f, src));
 
-	bch_bset_fix_lookup_table(b, t, where, shift);
+	bch_bset_fix_lookup_table(b, t, where, clobber_u64s, src->u64s);
 
 	bch_verify_key_order(b, iter, where);
 	bch_verify_btree_nr_keys(b);
-	return shift;
 }
 
 /* Lookup */

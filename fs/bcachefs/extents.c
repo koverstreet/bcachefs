@@ -1097,27 +1097,49 @@ static enum btree_insert_ret extent_insert_should_stop(struct btree_insert *tran
 		return BTREE_INSERT_OK;
 }
 
-static void extent_do_insert(struct btree_iter *iter, struct bkey_i *insert,
-			     struct journal_res *res)
+static void extent_bset_insert(struct btree_iter *iter, struct bkey_i *insert)
 {
-	struct btree_keys *b = &iter->nodes[0]->keys;
+	struct btree *b = iter->nodes[0];
 	struct btree_node_iter *node_iter = &iter->node_iters[0];
-	struct bset_tree *t = bset_tree_last(b);
-	struct bset *i = t->data;
-	struct bkey_packed *prev, *where =
-		bch_btree_node_iter_bset_pos(node_iter, b, i);
+	struct bset_tree *t = bset_tree_last(&b->keys);
+	struct bkey_packed *where =
+		bch_btree_node_iter_bset_pos(node_iter, &b->keys, t->data);
+	struct bkey_packed *prev = bkey_prev(t, where);
+	struct bkey_packed *next_live_key = where;
+	unsigned clobber_u64s;
 
-	bch_btree_journal_key(iter, insert, res);
-
-	if ((prev = bkey_prev_all(t, where)) &&
+	if (prev &&
+	    bkey_next(prev) == where &&
 	    bch_extent_merge_inline(iter, prev, bkey_to_packed(insert), true))
 		return;
 
-	if (where != bset_bkey_last(i) &&
+	if (where != bset_bkey_last(t->data) &&
 	    bch_extent_merge_inline(iter, bkey_to_packed(insert), where, false))
 		return;
 
-	bch_btree_bset_insert(iter, iter->nodes[0], node_iter, insert);
+	if (prev)
+		where = bkey_next(prev);
+
+	while (next_live_key != bset_bkey_last(t->data) &&
+	       bkey_deleted(next_live_key))
+		next_live_key = bkey_next(next_live_key);
+
+	/*
+	 * Everything between where and next_live_key is now deleted keys, and
+	 * is overwritten:
+	 */
+	clobber_u64s = (u64 *) next_live_key - (u64 *) where;
+	bch_bset_insert(&b->keys, node_iter, where, insert, clobber_u64s);
+	bch_btree_node_iter_fix(iter, b, node_iter, t, where,
+				clobber_u64s, where->u64s);
+}
+
+static void extent_insert_and_journal(struct btree_iter *iter, struct bkey_i *insert,
+				      struct journal_res *res)
+{
+	bch_btree_journal_key(iter, insert, res);
+
+	extent_bset_insert(iter, insert);
 }
 
 static void extent_insert_committed(struct btree_insert *trans,
@@ -1159,7 +1181,7 @@ static void extent_insert_committed(struct btree_insert *trans,
 			bkey_debugcheck(iter->c, iter->nodes[iter->level],
 					bkey_i_to_s_c(&split.k));
 
-		extent_do_insert(iter, &split.k, res);
+		extent_insert_and_journal(iter, &split.k, res);
 
 		bch_btree_iter_set_pos_same_leaf(iter, committed_pos);
 
@@ -1413,7 +1435,8 @@ bch_insert_fixup_extent(struct btree_insert *trans,
 			 * auxiliary tree.
 			 */
 			bch_bset_fix_invalidated_key(&b->keys, t, _k);
-			bch_btree_node_iter_fix(iter, b, node_iter, t, _k, 0);
+			bch_btree_node_iter_fix(iter, b, node_iter, t,
+						_k, _k->u64s, _k->u64s);
 			break;
 
 		case BCH_EXTENT_OVERLAP_ALL: {
@@ -1455,7 +1478,7 @@ bch_insert_fixup_extent(struct btree_insert *trans,
 			} else {
 				bch_bset_fix_invalidated_key(&b->keys, t, _k);
 				bch_btree_node_iter_fix(iter, b, node_iter, t,
-							_k, 0);
+							_k, _k->u64s, _k->u64s);
 			}
 
 			break;
@@ -1487,7 +1510,7 @@ bch_insert_fixup_extent(struct btree_insert *trans,
 			bch_add_sectors(iter, bkey_i_to_s_c(&split.k),
 					bkey_start_offset(&split.k.k),
 					split.k.k.size, &stats);
-			bch_btree_bset_insert(iter, b, node_iter, &split.k);
+			extent_bset_insert(iter, &split.k);
 			break;
 		}
 		}
@@ -2182,7 +2205,8 @@ static bool extent_merge_one_overlapping(struct btree_iter *iter,
 		uk.p = new_pos;
 		extent_save(&b->keys, node_iter, k, &uk);
 		bch_bset_fix_invalidated_key(&b->keys, t, k);
-		bch_btree_node_iter_fix(iter, b, node_iter, t, k, 0);
+		bch_btree_node_iter_fix(iter, b, node_iter, t,
+					k, k->u64s, k->u64s);
 		return true;
 	}
 }
@@ -2324,7 +2348,7 @@ static bool bch_extent_merge_inline(struct btree_iter *iter,
 			bch_btree_iter_set_pos_same_leaf(iter, li.k.k.p);
 
 		bch_btree_node_iter_fix(iter, iter->nodes[0], node_iter,
-					t, m, 0);
+					t, m, m->u64s, m->u64s);
 
 		if (!back_merge)
 			bkey_copy(packed_to_bkey(l), &li.k);
@@ -2340,7 +2364,7 @@ static bool bch_extent_merge_inline(struct btree_iter *iter,
 
 		extent_i_save(b, node_iter, m, &li.k);
 		bch_btree_node_iter_fix(iter, iter->nodes[0], node_iter,
-					t, m, 0);
+					t, m, m->u64s, m->u64s);
 		return true;
 	default:
 		BUG();

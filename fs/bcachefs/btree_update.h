@@ -153,8 +153,6 @@ int bch_btree_root_alloc(struct cache_set *, enum btree_id, struct closure *);
 
 /* Inserting into a given leaf node (last stage of insert): */
 
-void bch_btree_bset_insert(struct btree_iter *, struct btree *,
-			   struct btree_node_iter *, struct bkey_i *);
 void bch_btree_bset_insert_key(struct btree_iter *, struct btree *,
 			       struct btree_node_iter *, struct bkey_i *);
 void bch_btree_journal_key(struct btree_iter *, struct bkey_i *,

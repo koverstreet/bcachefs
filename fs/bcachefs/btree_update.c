@@ -636,33 +636,6 @@ static void bch_insert_fixup_btree_ptr(struct btree_iter *iter,
 
 /* Inserting into a given leaf node (last stage of insert): */
 
-/* Wrapper around bch_bset_insert() that fixes linked iterators: */
-void bch_btree_bset_insert(struct btree_iter *iter,
-			   struct btree *b,
-			   struct btree_node_iter *node_iter,
-			   struct bkey_i *insert)
-{
-	struct bkey_packed *where;
-
-	EBUG_ON(bkey_deleted(&insert->k) && bkey_val_u64s(&insert->k));
-	EBUG_ON(insert->k.u64s > bch_btree_keys_u64s_remaining(iter->c, b));
-	EBUG_ON(bkey_cmp(bkey_start_pos(&insert->k), b->data->min_key) < 0 ||
-		bkey_cmp(insert->k.p, b->data->max_key) > 0);
-
-	/*
-	 * Note: when we're called from btree_split(), @b is not in @iter - and
-	 * thus we can't use the node iter in @iter either, that's why it's
-	 * passed in separately. This isn't an issue for the linked iterators,
-	 * though.
-	 */
-
-	where = bch_bset_insert(&b->keys, node_iter, insert);
-
-	bch_btree_node_iter_fix(iter, b, node_iter,
-				bset_tree_last(&b->keys),
-				where, where->u64s);
-}
-
 /* Handle overwrites and do insert, for non extents: */
 void bch_btree_bset_insert_key(struct btree_iter *iter,
 			       struct btree *b,
@@ -672,29 +645,39 @@ void bch_btree_bset_insert_key(struct btree_iter *iter,
 	const struct bkey_format *f = &b->keys.format;
 	struct bkey_packed *k;
 	struct bset_tree *t;
+	unsigned clobber_u64s;
+
+	EBUG_ON(bkey_deleted(&insert->k) && bkey_val_u64s(&insert->k));
+	EBUG_ON(insert->k.u64s > bch_btree_keys_u64s_remaining(iter->c, b));
+	EBUG_ON(bkey_cmp(bkey_start_pos(&insert->k), b->data->min_key) < 0 ||
+		bkey_cmp(insert->k.p, b->data->max_key) > 0);
 
 	k = bch_btree_node_iter_peek_all(node_iter, &b->keys);
 	if (k && !bkey_cmp_packed(f, k, &insert->k)) {
 		t = bch_bkey_to_bset(&b->keys, k);
 
-		if (t == bset_tree_last(&b->keys)) {
-			int shift = bch_bset_overwrite(&b->keys,
-						node_iter, k, insert);
-			if (shift || bkey_deleted(&insert->k))
-				bch_btree_node_iter_fix(iter, b, node_iter,
-							t, k, shift);
-			return;
-		}
-
 		if (!bkey_packed_is_whiteout(&b->keys, k))
 			btree_keys_account_key_drop(&b->keys.nr,
 						t - b->keys.set, k);
 
+		if (t == bset_tree_last(&b->keys)) {
+			clobber_u64s = k->u64s;
+			goto overwrite;
+		}
+
 		k->type = KEY_TYPE_DELETED;
-		bch_btree_node_iter_fix(iter, b, node_iter, t, k, 0);
+		bch_btree_node_iter_fix(iter, b, node_iter, t, k,
+					k->u64s, k->u64s);
 	}
 
-	bch_btree_bset_insert(iter, b, node_iter, insert);
+	t = bset_tree_last(&b->keys);
+	k = bch_btree_node_iter_bset_pos(node_iter, &b->keys, t->data);
+	clobber_u64s = 0;
+overwrite:
+	bch_bset_insert(&b->keys, node_iter, k, insert, clobber_u64s);
+	if (k->u64s != clobber_u64s || bkey_deleted(&insert->k))
+		bch_btree_node_iter_fix(iter, b, node_iter, t, k,
+					clobber_u64s, k->u64s);
 }
 
 static void btree_node_flush(struct journal *j, struct journal_entry_pin *pin)
