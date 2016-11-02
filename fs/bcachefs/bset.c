@@ -926,6 +926,14 @@ static void bch_bset_fix_lookup_table(struct btree_keys *b,
 	if (bset_aux_tree_type(t) != BSET_HAS_UNWRITTEN_TABLE)
 		return;
 
+	/* Did we just truncate? */
+	if (where == bset_bkey_last(t->data)) {
+		while (t->size > 1 &&
+		       table_to_bkey(t, t->size - 1) >= bset_bkey_last(t->data))
+			t->size--;
+		return;
+	}
+
 	/* Find first entry in the lookup table strictly greater than where: */
 	j = bkey_to_cacheline(t, where);
 	while (j < t->size && table_to_bkey(t, j) <= where)
@@ -961,6 +969,7 @@ static void bch_bset_fix_lookup_table(struct btree_keys *b,
 			new_offset = __bkey_to_cacheline_offset(t, j, k);
 		}
 
+		BUG_ON(new_offset > U8_MAX);
 		t->prev[j] = new_offset;
 	}
 
@@ -979,6 +988,33 @@ static void bch_bset_fix_lookup_table(struct btree_keys *b,
 			t->size++;
 			return;
 		}
+}
+
+static void bch_bset_verify_lookup_table(struct btree_keys *b,
+					 struct bset_tree *t)
+{
+	struct bkey_packed *k;
+	unsigned j;
+
+	if (!btree_keys_expensive_checks(b))
+		return;
+
+	BUG_ON(bset_has_aux_tree(t));
+
+	if (bset_aux_tree_type(t) != BSET_HAS_UNWRITTEN_TABLE)
+		return;
+
+	BUG_ON(t->size < 1);
+	BUG_ON(table_to_bkey(t, 0) != t->data->start);
+
+	for (k = t->data->start;
+	     k != bset_bkey_last(t->data);
+	     k = bkey_next(k))
+		while (k == table_to_bkey(t, j))
+			if (++j == t->size)
+				return;
+
+	BUG();
 }
 
 void bch_bset_insert(struct btree_keys *b,
@@ -1012,9 +1048,26 @@ void bch_bset_insert(struct btree_keys *b,
 	       bkeyp_val_bytes(f, src));
 
 	bch_bset_fix_lookup_table(b, t, where, clobber_u64s, src->u64s);
+	bch_bset_verify_lookup_table(b, t);
 
 	bch_verify_key_order(b, iter, where);
 	bch_verify_btree_nr_keys(b);
+}
+
+void bch_bset_delete(struct btree_keys *b,
+		     struct bkey_packed *where,
+		     unsigned clobber_u64s)
+{
+	struct bset_tree *t = bset_tree_last(b);
+	struct bset *i = t->data;
+	void *src_p = where->_data + clobber_u64s;
+	void *dst_p = where->_data;
+
+	memmove(dst_p, src_p, (void *) bset_bkey_last(i) - src_p);
+	le16_add_cpu(&i->u64s, -clobber_u64s);
+
+	bch_bset_fix_lookup_table(b, t, where, clobber_u64s, 0);
+	bch_bset_verify_lookup_table(b, t);
 }
 
 /* Lookup */

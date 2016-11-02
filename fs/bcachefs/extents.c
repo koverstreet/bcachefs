@@ -1108,15 +1108,6 @@ static void extent_bset_insert(struct btree_iter *iter, struct bkey_i *insert)
 	struct bkey_packed *next_live_key = where;
 	unsigned clobber_u64s;
 
-	if (prev &&
-	    bkey_next(prev) == where &&
-	    bch_extent_merge_inline(iter, prev, bkey_to_packed(insert), true))
-		return;
-
-	if (where != bset_bkey_last(t->data) &&
-	    bch_extent_merge_inline(iter, bkey_to_packed(insert), where, false))
-		return;
-
 	if (prev)
 		where = bkey_next(prev);
 
@@ -1129,9 +1120,23 @@ static void extent_bset_insert(struct btree_iter *iter, struct bkey_i *insert)
 	 * is overwritten:
 	 */
 	clobber_u64s = (u64 *) next_live_key - (u64 *) where;
+
+	if (prev &&
+	    bch_extent_merge_inline(iter, prev, bkey_to_packed(insert), true))
+		goto drop_deleted_keys;
+
+	if (next_live_key != bset_bkey_last(t->data) &&
+	    bch_extent_merge_inline(iter, bkey_to_packed(insert),
+				    next_live_key, false))
+		goto drop_deleted_keys;
+
 	bch_bset_insert(&b->keys, node_iter, where, insert, clobber_u64s);
 	bch_btree_node_iter_fix(iter, b, node_iter, t, where,
 				clobber_u64s, where->u64s);
+	return;
+drop_deleted_keys:
+	bch_bset_delete(&b->keys, where, clobber_u64s);
+	bch_btree_node_iter_fix(iter, b, node_iter, t, where, clobber_u64s, 0);
 }
 
 static void extent_insert_and_journal(struct btree_iter *iter, struct bkey_i *insert,
@@ -2181,11 +2186,20 @@ static void extent_i_save(struct btree_keys *b, struct btree_node_iter *iter,
 			  struct bkey_packed *dst, struct bkey_i *src)
 {
 	struct bkey_format *f = &b->format;
+	struct bkey_i *dst_unpacked;
 
 	BUG_ON(bkeyp_val_u64s(f, dst) != bkey_val_u64s(&src->k));
 
-	extent_save(b, iter, dst, &src->k);
-	memcpy(bkeyp_val(f, dst), &src->v, bkey_val_bytes(&src->k));
+	/*
+	 * We don't want the bch_verify_key_order() call in extent_save(),
+	 * because we may be out of order with deleted keys that are about to be
+	 * removed by extent_bset_insert()
+	 */
+
+	if ((dst_unpacked = packed_to_bkey(dst)))
+		bkey_copy(dst_unpacked, src);
+	else
+		BUG_ON(!bkey_pack(dst, src, f));
 }
 
 static bool extent_merge_one_overlapping(struct btree_iter *iter,
