@@ -754,32 +754,34 @@ static inline void extent_sort_next(struct btree_node_iter *iter,
 	heap_sift(iter, i - iter->data, extent_sort_cmp);
 }
 
-static struct bkey_packed *extent_sort_append(struct btree_keys *b,
-					      struct btree_nr_keys *nr,
-					      struct bkey_packed *out,
-					      struct bkey_packed **prev,
-					      struct bkey_packed *k)
+static void extent_sort_append(struct btree_keys *b,
+			       struct btree_nr_keys *nr,
+			       struct bkey_packed *start,
+			       struct bkey_packed **prev,
+			       struct bkey_packed *k)
 {
+	struct bkey_format *f = &b->format;
+	BKEY_PADDED(k) tmp;
+
 	if (bkey_deleted(k))
-		return out;
+		return;
 
-	btree_keys_account_key_add(nr, k);
+	bkey_unpack(&tmp.k, f, k);
 
-	/* XXX: need better bkey_copy */
-	memcpy(out, k, bkey_bytes(k));
+	if (*prev &&
+	    bch_bkey_try_merge(b, (void *) *prev, &tmp.k))
+		return;
 
-	/*
-	 * prev/out are packed, try_merge() works on unpacked keys... may make
-	 * this work again later, but the main btree_mergesort() handles
-	 * unpacking/merging/repacking
-	 */
-#if 0
-	if (*prev && bch_bkey_try_merge(b, *prev, out))
-		return out;
-#endif
+	if (*prev) {
+		bkey_pack(*prev, (void *) *prev, f);
 
-	*prev = out;
-	return bkey_next(out);
+		btree_keys_account_key_add(nr, *prev);
+		*prev = bkey_next(*prev);
+	} else {
+		*prev = start;
+	}
+
+	bkey_copy((void *) *prev, &tmp.k);
 }
 
 struct btree_nr_keys bch_extent_sort_fix_overlapping(struct btree_keys *b,
@@ -788,7 +790,7 @@ struct btree_nr_keys bch_extent_sort_fix_overlapping(struct btree_keys *b,
 {
 	struct bkey_format *f = &b->format;
 	struct btree_node_iter_set *_l = iter->data, *_r;
-	struct bkey_packed *prev = NULL, *out = bset->start, *lk, *rk;
+	struct bkey_packed *prev = NULL, *out, *lk, *rk;
 	struct bkey l_unpacked, r_unpacked;
 	struct bkey_s l, r;
 	struct btree_nr_keys nr;
@@ -801,7 +803,7 @@ struct btree_nr_keys bch_extent_sort_fix_overlapping(struct btree_keys *b,
 		lk = __btree_node_offset_to_key(b, _l->k);
 
 		if (iter->used == 1) {
-			out = extent_sort_append(b, &nr, out, &prev, lk);
+			extent_sort_append(b, &nr, bset->start, &prev, lk);
 			extent_sort_next(iter, b, _l);
 			continue;
 		}
@@ -818,7 +820,7 @@ struct btree_nr_keys bch_extent_sort_fix_overlapping(struct btree_keys *b,
 
 		/* If current key and next key don't overlap, just append */
 		if (bkey_cmp(l.k->p, bkey_start_pos(r.k)) <= 0) {
-			out = extent_sort_append(b, &nr, out, &prev, lk);
+			extent_sort_append(b, &nr, bset->start, &prev, lk);
 			extent_sort_next(iter, b, _l);
 			continue;
 		}
@@ -863,12 +865,20 @@ struct btree_nr_keys bch_extent_sort_fix_overlapping(struct btree_keys *b,
 
 			extent_sort_sift(iter, b, 0);
 
-			out = extent_sort_append(b, &nr, out, &prev,
+			extent_sort_append(b, &nr, bset->start, &prev,
 						 bkey_to_packed(&tmp.k));
 		} else {
 			bch_cut_back(bkey_start_pos(r.k), l.k);
 			extent_save(b, NULL, lk, l.k);
 		}
+	}
+
+	if (prev) {
+		bkey_pack(prev, (void *) prev, f);
+		btree_keys_account_key_add(&nr, prev);
+		out = bkey_next(prev);
+	} else {
+		out = bset->start;
 	}
 
 	bset->u64s = cpu_to_le16((u64 *) out - bset->_data);
