@@ -281,8 +281,8 @@ static int bch_gc_walk_inodes(struct cache_set *c, struct nlinks *links,
 	bch_btree_iter_init(&iter, c, BTREE_ID_INODES, POS(range_start, 0));
 	genradix_iter_init(&nlinks_iter);
 
-	while (1) {
-		k = bch_btree_iter_peek(&iter);
+	while ((k = bch_btree_iter_peek(&iter)).k &&
+	       !btree_iter_err(k)) {
 peek_nlinks:	link = genradix_iter_peek(&nlinks_iter, links);
 
 		if (!link && (!k.k || iter.pos.inode >= range_end))

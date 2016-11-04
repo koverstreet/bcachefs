@@ -87,61 +87,26 @@ static inline bool btree_want_intent(struct btree_iter *iter, int level)
 	return btree_lock_want(iter, level) == SIX_LOCK_intent;
 }
 
-static inline void __btree_node_unlock(struct btree_iter *iter, unsigned level,
-				       struct btree *b)
+static inline void btree_node_unlock(struct btree_iter *iter, unsigned level)
 {
-	switch (btree_node_locked_type(iter, level)) {
-	case BTREE_NODE_READ_LOCKED:
-		six_unlock_read(&b->lock);
-		break;
-	case BTREE_NODE_INTENT_LOCKED:
-		six_unlock_intent(&b->lock);
-		break;
-	}
+	int lock_type = btree_node_locked_type(iter, level);
 
+	if (lock_type != BTREE_NODE_UNLOCKED)
+		six_unlock_type(&iter->nodes[level]->lock, lock_type);
 	mark_btree_node_unlocked(iter, level);
 }
 
-static inline void btree_node_unlock(struct btree_iter *iter, unsigned level)
+bool __bch_btree_node_lock(struct btree *, struct bpos, unsigned,
+			   struct btree_iter *, enum six_lock_type);
+
+static inline bool btree_node_lock(struct btree *b, struct bpos pos,
+				   unsigned level,
+				   struct btree_iter *iter,
+				   enum six_lock_type type)
 {
-	__btree_node_unlock(iter, level, iter->nodes[level]);
+	return six_trylock_type(&b->lock, type) ||
+		__bch_btree_node_lock(b, pos, level, iter, type);
 }
-
-static inline void btree_node_lock_type(struct btree *b, struct btree_iter *iter,
-					enum six_lock_type type)
-{
-	struct btree_iter *linked;
-
-	if (six_trylock_type(&b->lock, type))
-		return;
-
-	for_each_linked_btree_iter(iter, linked)
-		if (linked->nodes[b->level] == b &&
-		    btree_node_locked_type(linked, b->level) == type) {
-			six_lock_increment(&b->lock, type);
-			return;
-		}
-
-	six_lock_type(&b->lock, type);
-}
-
-#define __btree_node_lock(b, _iter, _level, check_if_raced)		\
-({									\
-	enum six_lock_type _type = btree_lock_want(_iter, _level);	\
-	bool _raced;							\
-									\
-	btree_node_lock_type(b, _iter, _type);				\
-	if ((_raced = ((check_if_raced) || ((b)->level != _level))))	\
-		six_unlock_type(&(b)->lock, _type);			\
-	else								\
-		mark_btree_node_locked(_iter, _level, _type);		\
-									\
-	!_raced;							\
-})
-
-#define btree_node_lock(b, iter, level, check_if_raced)			\
-	(!race_fault() &&						\
-	  __btree_node_lock(b, iter, level, check_if_raced))
 
 bool btree_node_relock(struct btree_iter *, unsigned);
 

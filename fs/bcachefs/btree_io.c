@@ -455,13 +455,19 @@ int bch_btree_root_read(struct cache_set *c, enum btree_id id,
 {
 	struct closure cl;
 	struct btree *b;
+	int ret;
 
 	closure_init_stack(&cl);
 
-	while (IS_ERR(b = mca_alloc(c, &cl))) {
-		BUG_ON(PTR_ERR(b) != -EAGAIN);
+	do {
+		ret = mca_cannibalize_lock(c, &cl);
 		closure_sync(&cl);
-	}
+	} while (ret);
+
+	b = mca_alloc(c);
+	mca_cannibalize_unlock(c);
+
+	BUG_ON(IS_ERR(b));
 
 	bkey_copy(&b->key, k);
 	BUG_ON(mca_hash_insert(c, b, level, id));

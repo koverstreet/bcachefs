@@ -533,80 +533,38 @@ TRACE_EVENT(bcache_mca_scan,
 );
 
 DECLARE_EVENT_CLASS(mca_cannibalize_lock,
-	TP_PROTO(struct cache_set *c, struct closure *cl),
-	TP_ARGS(c, cl),
+	TP_PROTO(struct cache_set *c),
+	TP_ARGS(c),
 
 	TP_STRUCT__entry(
 		__array(char,			uuid,	16	)
-		__field(struct closure *,	cl		)
 	),
 
 	TP_fast_assign(
 		memcpy(__entry->uuid, c->disk_sb.user_uuid.b, 16);
-		__entry->cl = cl;
 	),
 
-	TP_printk("%pU cl %p", __entry->uuid, __entry->cl)
+	TP_printk("%pU", __entry->uuid)
 );
 
 DEFINE_EVENT(mca_cannibalize_lock, bcache_mca_cannibalize_lock_fail,
-	TP_PROTO(struct cache_set *c, struct closure *cl),
-	TP_ARGS(c, cl)
+	TP_PROTO(struct cache_set *c),
+	TP_ARGS(c)
 );
 
 DEFINE_EVENT(mca_cannibalize_lock, bcache_mca_cannibalize_lock,
-	TP_PROTO(struct cache_set *c, struct closure *cl),
-	TP_ARGS(c, cl)
+	TP_PROTO(struct cache_set *c),
+	TP_ARGS(c)
 );
 
 DEFINE_EVENT(mca_cannibalize_lock, bcache_mca_cannibalize,
-	TP_PROTO(struct cache_set *c, struct closure *cl),
-	TP_ARGS(c, cl)
+	TP_PROTO(struct cache_set *c),
+	TP_ARGS(c)
 );
 
 DEFINE_EVENT(cache_set, bcache_mca_cannibalize_unlock,
 	TP_PROTO(struct cache_set *c),
 	TP_ARGS(c)
-);
-
-DECLARE_EVENT_CLASS(btree_node_op,
-	TP_PROTO(struct btree *b, void *op),
-	TP_ARGS(b, op),
-
-	TP_STRUCT__entry(
-		__array(char,		uuid,	16		)
-		__field(u64,		bucket			)
-		__field(u8,		level			)
-		__field(u8,		id			)
-		__field(void *,		op			)
-	),
-
-	TP_fast_assign(
-		memcpy(__entry->uuid, b->c->disk_sb.user_uuid.b, 16);
-		__entry->bucket	= PTR_BUCKET_NR_TRACE(b->c, &b->key, 0);
-		__entry->level	= b->level;
-		__entry->id	= b->btree_id;
-		__entry->op	= op;
-	),
-
-	TP_printk("%pU bucket %llu(%u) id %u op %p",
-		  __entry->uuid, __entry->bucket, __entry->level, __entry->id,
-		  __entry->op)
-);
-
-DEFINE_EVENT(btree_node_op, bcache_btree_upgrade_lock,
-	TP_PROTO(struct btree *b, void *op),
-	TP_ARGS(b, op)
-);
-
-DEFINE_EVENT(btree_node_op, bcache_btree_upgrade_lock_fail,
-	TP_PROTO(struct btree *b, void *op),
-	TP_ARGS(b, op)
-);
-
-DEFINE_EVENT(btree_node_op, bcache_btree_intent_lock_fail,
-	TP_PROTO(struct btree *b, void *op),
-	TP_ARGS(b, op)
 );
 
 TRACE_EVENT(bcache_btree_insert_key,

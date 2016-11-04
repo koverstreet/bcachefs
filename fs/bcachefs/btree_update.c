@@ -251,7 +251,7 @@ retry:
 		goto retry;
 	}
 mem_alloc:
-	b = mca_alloc(c, NULL);
+	b = mca_alloc(c);
 
 	/* we hold cannibalize_lock: */
 	BUG_ON(IS_ERR(b));
@@ -1439,7 +1439,6 @@ void bch_btree_insert_node(struct btree *b,
 static int bch_btree_split_leaf(struct btree_iter *iter, unsigned flags,
 				struct closure *cl)
 {
-	struct btree_iter *linked;
 	struct cache_set *c = iter->c;
 	struct btree *b = iter->nodes[0];
 	struct btree_reserve *reserve;
@@ -1456,18 +1455,16 @@ static int bch_btree_split_leaf(struct btree_iter *iter, unsigned flags,
 	 * XXX: figure out how far we might need to split,
 	 * instead of locking/reserving all the way to the root:
 	 */
-	iter->locks_want = U8_MAX;
-
-	if (!bch_btree_iter_upgrade(iter)) {
+	if (!bch_btree_iter_set_locks_want(iter, U8_MAX)) {
 		ret = -EINTR;
-		goto out_get_locks;
+		goto out;
 	}
 
 	reserve = bch_btree_reserve_get(c, b, 0,
 			!(flags & BTREE_INSERT_NOFAIL), cl);
 	if (IS_ERR(reserve)) {
 		ret = PTR_ERR(reserve);
-		goto out_get_locks;
+		goto out;
 	}
 
 	as = bch_btree_interior_update_alloc(c);
@@ -1475,29 +1472,10 @@ static int bch_btree_split_leaf(struct btree_iter *iter, unsigned flags,
 	btree_split(b, iter, NULL, reserve, as);
 	bch_btree_reserve_put(c, reserve);
 
-	iter->locks_want = 1;
-
-	for_each_linked_btree_iter(iter, linked)
-		if (linked->btree_id == iter->btree_id &&
-		    btree_iter_cmp(linked, iter) <= 0)
-			linked->locks_want = 1;
+	bch_btree_iter_set_locks_want(iter, 1);
 out:
 	up_read(&c->gc_lock);
 	return ret;
-out_get_locks:
-	/* Lock ordering... */
-	for_each_linked_btree_iter(iter, linked)
-		if (linked->btree_id == iter->btree_id &&
-		    btree_iter_cmp(linked, iter) <= 0) {
-			unsigned i;
-
-			for (i = 0; i < BTREE_MAX_DEPTH; i++) {
-				btree_node_unlock(linked, i);
-				linked->lock_seq[i]--;
-			}
-			linked->locks_want = U8_MAX;
-		}
-	goto out;
 }
 
 /**
@@ -1606,14 +1584,11 @@ int __bch_btree_insert_at(struct btree_insert *trans, u64 *journal_seq)
 
 	if (unlikely(!percpu_ref_tryget(&c->writes)))
 		return -EROFS;
-
-	trans_for_each_entry(trans, i) {
-		i->iter->locks_want = max_t(int, i->iter->locks_want, 1);
-		if (unlikely(!bch_btree_iter_upgrade(i->iter))) {
-			ret = -EINTR;
+retry_locks:
+	ret = -EINTR;
+	trans_for_each_entry(trans, i)
+		if (!bch_btree_iter_set_locks_want(i->iter, 1))
 			goto err;
-		}
-	}
 retry:
 	trans->did_work = false;
 	u64s = 0;
@@ -1694,6 +1669,11 @@ unlock:
 		if (!same_leaf_as_prev(trans, i))
 			bch_btree_node_write_lazy(i->iter->nodes[0], i->iter);
 out:
+	/* make sure we didn't lose an error: */
+	if (!ret && IS_ENABLED(CONFIG_BCACHEFS_DEBUG))
+		trans_for_each_entry(trans, i)
+			BUG_ON(!i->done);
+
 	percpu_ref_put(&c->writes);
 	return ret;
 split:
@@ -1705,21 +1685,15 @@ split:
 	ret = bch_btree_split_leaf(split, trans->flags, &cl);
 	if (ret)
 		goto err;
-
 	/*
 	 * if the split didn't have to drop locks the insert will still be
 	 * atomic (in the BTREE_INSERT_ATOMIC sense, what the caller peeked()
 	 * and is overwriting won't have changed)
 	 */
-	goto retry;
+	goto retry_locks;
 err:
 	if (ret == -EAGAIN) {
-		struct btree_iter *linked;
-
-		for_each_linked_btree_iter(split, linked)
-			bch_btree_iter_unlock(linked);
 		bch_btree_iter_unlock(split);
-
 		closure_sync(&cl);
 		ret = -EINTR;
 	}
@@ -1729,27 +1703,22 @@ err:
 		up_read(&c->gc_lock);
 	}
 
-	/*
-	 * Main rule is, BTREE_INSERT_ATOMIC means we can't call
-	 * bch_btree_iter_traverse(), because if we have to we either dropped
-	 * locks or we need a different btree node (different than the one the
-	 * caller was looking at).
-	 *
-	 * BTREE_INSERT_ATOMIC doesn't mean anything w.r.t. journal
-	 * reservations:
-	 */
-	if (ret == -EINTR && !(trans->flags & BTREE_INSERT_ATOMIC)) {
+	if (ret == -EINTR) {
 		trans_for_each_entry(trans, i) {
-			ret = bch_btree_iter_traverse(i->iter);
-			if (ret)
+			int ret2 = bch_btree_iter_traverse(i->iter);
+			if (ret2) {
+				ret = ret2;
 				goto out;
+			}
 		}
 
-		ret = 0;
+		/*
+		 * BTREE_ITER_ATOMIC means we have to return -EINTR if we
+		 * dropped locks:
+		 */
+		if (!(trans->flags & BTREE_INSERT_ATOMIC))
+			goto retry;
 	}
-
-	if (!ret)
-		goto retry;
 
 	goto out;
 }
@@ -1859,22 +1828,26 @@ int bch_btree_update(struct cache_set *c, enum btree_id id,
 {
 	struct btree_iter iter;
 	struct bkey_s_c u;
-	int ret, ret2;
+	int ret;
 
 	EBUG_ON(id == BTREE_ID_EXTENTS);
 
 	bch_btree_iter_init_intent(&iter, c, id, k->k.p);
 
 	u = bch_btree_iter_peek_with_holes(&iter);
+	ret = btree_iter_err(u);
+	if (ret)
+		return ret;
 
-	if (!u.k || bkey_deleted(u.k))
+	if (bkey_deleted(u.k)) {
+		bch_btree_iter_unlock(&iter);
 		return -ENOENT;
+	}
 
 	ret = bch_btree_insert_at(c, NULL, NULL, journal_seq, 0,
 				  BTREE_INSERT_ENTRY(&iter, k));
-	ret2 = bch_btree_iter_unlock(&iter);
-
-	return ret ?: ret2;
+	bch_btree_iter_unlock(&iter);
+	return ret;
 }
 
 /*
@@ -1896,7 +1869,8 @@ int bch_btree_delete_range(struct cache_set *c, enum btree_id id,
 
 	bch_btree_iter_init_intent(&iter, c, id, start);
 
-	while ((k = bch_btree_iter_peek(&iter)).k) {
+	while ((k = bch_btree_iter_peek(&iter)).k &&
+	       !(ret = btree_iter_err(k))) {
 		unsigned max_sectors = KEY_SIZE_MAX & (~0 << c->block_bits);
 		/* really shouldn't be using a bare, unpadded bkey_i */
 		struct bkey_i delete;
@@ -1943,7 +1917,8 @@ int bch_btree_delete_range(struct cache_set *c, enum btree_id id,
 		bch_btree_iter_cond_resched(&iter);
 	}
 
-	return bch_btree_iter_unlock(&iter) ?: ret;
+	bch_btree_iter_unlock(&iter);
+	return ret;
 }
 
 /**
@@ -1960,11 +1935,10 @@ int bch_btree_node_rewrite(struct btree_iter *iter, struct btree *b,
 	struct btree_reserve *reserve;
 	struct btree_interior_update *as;
 
-	iter->locks_want = U8_MAX;
-	if (!bch_btree_iter_upgrade(iter))
+	if (!bch_btree_iter_set_locks_want(iter, U8_MAX))
 		return -EINTR;
 
-	reserve = bch_btree_reserve_get(c, b, 1, false, cl);
+	reserve = bch_btree_reserve_get(c, b, 0, false, cl);
 	if (IS_ERR(reserve)) {
 		trace_bcache_btree_gc_rewrite_node_fail(b);
 		return PTR_ERR(reserve);

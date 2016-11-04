@@ -112,7 +112,6 @@ int bch_inode_create(struct cache_set *c, struct bkey_i *inode,
 		     u64 min, u64 max, u64 *hint)
 {
 	struct btree_iter iter;
-	struct bkey_s_c k;
 	bool searched_from_start = false;
 	int ret;
 
@@ -130,9 +129,14 @@ int bch_inode_create(struct cache_set *c, struct bkey_i *inode,
 again:
 	bch_btree_iter_init_intent(&iter, c, BTREE_ID_INODES, POS(*hint, 0));
 
-	while ((k = bch_btree_iter_peek_with_holes(&iter)).k) {
-		if (k.k->p.inode >= max)
-			break;
+	while (1) {
+		struct bkey_s_c k = bch_btree_iter_peek_with_holes(&iter);
+
+		ret = btree_iter_err(k);
+		if (ret) {
+			bch_btree_iter_unlock(&iter);
+			return ret;
+		}
 
 		if (k.k->type < BCH_INODE_FS) {
 			inode->k.p = k.k->p;
@@ -153,6 +157,8 @@ again:
 
 			return ret;
 		} else {
+			if (iter.pos.inode == max)
+				break;
 			/* slot used */
 			bch_btree_iter_advance_pos(&iter);
 		}

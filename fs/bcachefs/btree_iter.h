@@ -66,8 +66,15 @@ struct btree_iter {
 	 * locked, or read and write locked, at the same time), and insertions
 	 * through one iterator won't invalidate the other linked iterators.
 	 */
+
+	/* Must come last: */
 	struct btree_iter	*next;
 };
+
+static inline bool btree_iter_linked(const struct btree_iter *iter)
+{
+	return iter->next != iter;
+}
 
 /**
  * for_each_linked_btree_iter - iterate over all iterators linked with @_iter
@@ -125,8 +132,20 @@ void bch_btree_node_iter_fix(struct btree_iter *, struct btree *,
 			     struct btree_node_iter *, struct bset_tree *,
 			     struct bkey_packed *, unsigned, unsigned);
 
-bool bch_btree_iter_upgrade(struct btree_iter *);
 int bch_btree_iter_unlock(struct btree_iter *);
+bool __bch_btree_iter_set_locks_want(struct btree_iter *, unsigned);
+
+static inline bool bch_btree_iter_set_locks_want(struct btree_iter *iter,
+						 unsigned new_locks_want)
+{
+	new_locks_want = min(new_locks_want, BTREE_MAX_DEPTH);
+
+	if (iter->locks_want == new_locks_want &&
+	    iter->nodes_intent_locked == (1 << new_locks_want) - 1)
+		return true;
+
+	return __bch_btree_iter_set_locks_want(iter, new_locks_want);
+}
 
 bool bch_btree_iter_node_replace(struct btree_iter *, struct btree *);
 void bch_btree_iter_node_drop_linked(struct btree_iter *, struct btree *);
@@ -147,7 +166,7 @@ void bch_btree_iter_advance_pos(struct btree_iter *);
 void bch_btree_iter_rewind(struct btree_iter *, struct bpos);
 
 void __bch_btree_iter_init(struct btree_iter *, struct cache_set *,
-			   enum btree_id, struct bpos, int, unsigned);
+			   enum btree_id, struct bpos, unsigned , unsigned);
 
 static inline void bch_btree_iter_init(struct btree_iter *iter,
 				       struct cache_set *c,
@@ -165,10 +184,8 @@ static inline void bch_btree_iter_init_intent(struct btree_iter *iter,
 	__bch_btree_iter_init(iter, c, btree_id, pos, 1, 0);
 }
 
-int bch_btree_iter_unlink(struct btree_iter *);
 void bch_btree_iter_link(struct btree_iter *, struct btree_iter *);
 void bch_btree_iter_copy(struct btree_iter *, struct btree_iter *);
-void bch_btree_iter_init_copy(struct btree_iter *, struct btree_iter *);
 
 static inline struct bpos btree_type_successor(enum btree_id id,
 					       struct bpos pos)
@@ -183,12 +200,19 @@ static inline struct bpos btree_type_successor(enum btree_id id,
 	return pos;
 }
 
+static inline int __btree_iter_cmp(enum btree_id id,
+				   struct bpos pos,
+				   const struct btree_iter *r)
+{
+	if (id != r->btree_id)
+		return id < r->btree_id ? -1 : 1;
+	return bkey_cmp(pos, r->pos);
+}
+
 static inline int btree_iter_cmp(const struct btree_iter *l,
 				 const struct btree_iter *r)
 {
-	if (l->btree_id != r->btree_id)
-		return l->btree_id < r->btree_id ? -1 : 1;
-	return bkey_cmp(l->pos, r->pos);
+	return __btree_iter_cmp(l->btree_id, l->pos, r);
 }
 
 #define __for_each_btree_node(_iter, _c, _btree_id, _start, _depth,	\
@@ -207,7 +231,7 @@ static inline int btree_iter_cmp(const struct btree_iter *l,
 			     _k, _locks_want)				\
 	for (__bch_btree_iter_init((_iter), (_c), (_btree_id),		\
 				   _start, _locks_want, 0);		\
-	     ((_k) = bch_btree_iter_peek(_iter)).k;			\
+	     !IS_ERR_OR_NULL(((_k) = bch_btree_iter_peek(_iter)).k);	\
 	     bch_btree_iter_advance_pos(_iter))
 
 #define for_each_btree_key(_iter, _c, _btree_id,  _start, _k)		\
@@ -220,7 +244,7 @@ static inline int btree_iter_cmp(const struct btree_iter *l,
 					_start, _k, _locks_want)	\
 	for (__bch_btree_iter_init((_iter), (_c), (_btree_id),		\
 				   _start, _locks_want, 0);		\
-	     ((_k) = bch_btree_iter_peek_with_holes(_iter)).k;		\
+	     !IS_ERR_OR_NULL(((_k) = bch_btree_iter_peek_with_holes(_iter)).k);\
 	     bch_btree_iter_advance_pos(_iter))
 
 #define for_each_btree_key_with_holes(_iter, _c, _btree_id, _start, _k)	\
@@ -230,16 +254,27 @@ static inline int btree_iter_cmp(const struct btree_iter *l,
 					     _start, _k)		\
 	__for_each_btree_key_with_holes(_iter, _c, _btree_id, _start, _k, 1)
 
+static inline int btree_iter_err(struct bkey_s_c k)
+{
+	return IS_ERR(k.k) ? PTR_ERR(k.k) : 0;
+}
+
 /*
  * Unlocks before scheduling
  * Note: does not revalidate iterator
  */
 static inline void bch_btree_iter_cond_resched(struct btree_iter *iter)
 {
+	struct btree_iter *linked;
+
 	if (need_resched()) {
+		for_each_linked_btree_iter(iter, linked)
+			bch_btree_iter_unlock(linked);
 		bch_btree_iter_unlock(iter);
 		schedule();
 	} else if (race_fault()) {
+		for_each_linked_btree_iter(iter, linked)
+			bch_btree_iter_unlock(linked);
 		bch_btree_iter_unlock(iter);
 	}
 }

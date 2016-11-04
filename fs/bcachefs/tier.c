@@ -127,7 +127,8 @@ static s64 read_tiering(struct cache_set *c, struct cache_group *tier)
 	bch_btree_iter_init(&iter, c, BTREE_ID_EXTENTS, POS_MIN);
 
 	while (!bch_move_ctxt_wait(&ctxt) &&
-	       (k = bch_btree_iter_peek(&iter)).k) {
+	       (k = bch_btree_iter_peek(&iter)).k &&
+	       !btree_iter_err(k)) {
 		if (!tiering_pred(c, &s, k))
 			goto next;
 

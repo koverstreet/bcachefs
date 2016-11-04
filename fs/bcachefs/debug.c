@@ -265,7 +265,8 @@ static ssize_t bch_read_btree(struct file *file, char __user *buf,
 
 	bch_btree_iter_init(&iter, i->c, i->id, i->from);
 
-	while ((k = bch_btree_iter_peek(&iter)).k) {
+	while ((k = bch_btree_iter_peek(&iter)).k &&
+	       !(err = btree_iter_err(k))) {
 		bch_bkey_val_to_text(i->c, bkey_type(0, i->id),
 				     i->buf, sizeof(i->buf), k);
 		i->bytes = strlen(i->buf);
@@ -408,7 +409,8 @@ static ssize_t bch_read_bfloat_failed(struct file *file, char __user *buf,
 
 	bch_btree_iter_init(&iter, i->c, i->id, i->from);
 
-	while ((k = bch_btree_iter_peek(&iter)).k) {
+	while ((k = bch_btree_iter_peek(&iter)).k &&
+	       !(err = btree_iter_err(k))) {
 		struct btree_keys *b = &iter.nodes[0]->keys;
 		struct btree_node_iter *node_iter = &iter.node_iters[0];
 		struct bkey_packed *_k = bch_btree_node_iter_peek(node_iter, b);

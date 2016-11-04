@@ -222,6 +222,13 @@ int bch_dirent_rename(struct cache_set *c,
 	bool need_whiteout;
 	int ret = -ENOMEM;
 
+	bch_btree_iter_init_intent(&src_iter, c, BTREE_ID_DIRENTS, src_pos);
+	bch_btree_iter_init_intent(&dst_iter, c, BTREE_ID_DIRENTS, dst_pos);
+	bch_btree_iter_link(&src_iter, &dst_iter);
+
+	bch_btree_iter_init(&whiteout_iter, c, BTREE_ID_DIRENTS, src_pos);
+	bch_btree_iter_link(&src_iter, &whiteout_iter);
+
 	if (mode == BCH_RENAME_EXCHANGE) {
 		new_src = dirent_create_key(0, src_name, 0);
 		if (!new_src)
@@ -233,146 +240,112 @@ int bch_dirent_rename(struct cache_set *c,
 	new_dst = dirent_create_key(0, dst_name, 0);
 	if (!new_dst)
 		goto err;
+retry:
+	/*
+	 * Note that on -EINTR/dropped locks we're not restarting the lookup
+	 * from the original hashed position (like we do when creating dirents,
+	 * in bch_hash_set) -  we never move existing dirents to different slot:
+	 */
+	old_src = bch_hash_lookup_at(dirent_hash_desc,
+				     &src_ei->str_hash,
+				     &src_iter, src_name);
+	if ((ret = btree_iter_err(old_src)))
+		goto err;
 
-	bch_btree_iter_init_intent(&src_iter, c, BTREE_ID_DIRENTS, src_pos);
-	bch_btree_iter_init_intent(&dst_iter, c, BTREE_ID_DIRENTS, dst_pos);
-	bch_btree_iter_link(&src_iter, &dst_iter);
+	ret = bch_hash_needs_whiteout(dirent_hash_desc,
+				&src_ei->str_hash,
+				&whiteout_iter, &src_iter);
+	if (ret < 0)
+		goto err;
+	need_whiteout = ret;
 
-	do {
-		/*
-		 * Have to traverse lower btree nodes before higher - due to
-		 * lock ordering.
-		 */
-		if (bkey_cmp(src_iter.pos, dst_iter.pos) < 0) {
-			old_src = bch_hash_lookup_at(dirent_hash_desc,
-						     &src_ei->str_hash,
-						     &src_iter, src_name);
+	/*
+	 * Note that in BCH_RENAME mode, we're _not_ checking if
+	 * the target already exists - we're relying on the VFS
+	 * to do that check for us for correctness:
+	 */
+	old_dst = mode == BCH_RENAME
+		? bch_hash_hole_at(dirent_hash_desc, &dst_iter)
+		: bch_hash_lookup_at(dirent_hash_desc,
+				     &dst_ei->str_hash,
+				     &dst_iter, dst_name);
+	if ((ret = btree_iter_err(old_dst)))
+		goto err;
 
-			need_whiteout = bch_hash_needs_whiteout(dirent_hash_desc,
-						&src_ei->str_hash,
-						&whiteout_iter, &src_iter);
+	switch (mode) {
+	case BCH_RENAME:
+		bkey_init(&new_src->k);
+		dirent_copy_target(new_dst, bkey_s_c_to_dirent(old_src));
 
+		if (bkey_cmp(dst_pos, src_iter.pos) <= 0 &&
+		    bkey_cmp(src_iter.pos, dst_iter.pos) < 0) {
 			/*
-			 * Note that in BCH_RENAME mode, we're _not_ checking if
-			 * the target already exists - we're relying on the VFS
-			 * to do that check for us for correctness:
+			 * If we couldn't insert new_dst at its hashed
+			 * position (dst_pos) due to a hash collision,
+			 * and we're going to be deleting in
+			 * between the hashed position and first empty
+			 * slot we found - just overwrite the pos we
+			 * were going to delete:
+			 *
+			 * Note: this is a correctness issue, in this
+			 * situation bch_hash_needs_whiteout() could
+			 * return false when the whiteout would have
+			 * been needed if we inserted at the pos
+			 * __dirent_find_hole() found
 			 */
-			old_dst = mode == BCH_RENAME
-				? bch_hash_hole_at(dirent_hash_desc, &dst_iter)
-				: bch_hash_lookup_at(dirent_hash_desc,
-						     &dst_ei->str_hash,
-						     &dst_iter, dst_name);
-		} else {
-			old_dst = mode == BCH_RENAME
-				? bch_hash_hole_at(dirent_hash_desc, &dst_iter)
-				: bch_hash_lookup_at(dirent_hash_desc,
-						     &dst_ei->str_hash,
-						     &dst_iter, dst_name);
-
-			old_src = bch_hash_lookup_at(dirent_hash_desc,
-						     &src_ei->str_hash,
-						     &src_iter, src_name);
-
-			need_whiteout = bch_hash_needs_whiteout(dirent_hash_desc,
-						&src_ei->str_hash,
-						&whiteout_iter, &src_iter);
+			new_dst->k.p = src_iter.pos;
+			ret = bch_btree_insert_at(c, NULL, NULL,
+					journal_seq,
+					BTREE_INSERT_ATOMIC,
+					BTREE_INSERT_ENTRY(&src_iter,
+							   &new_dst->k_i));
+			goto err;
 		}
 
-		if (IS_ERR(old_src.k)) {
-			ret = PTR_ERR(old_src.k);
-			goto err_unlock;
-		}
+		if (need_whiteout)
+			new_src->k.type = BCH_DIRENT_WHITEOUT;
+		break;
+	case BCH_RENAME_OVERWRITE:
+		bkey_init(&new_src->k);
+		dirent_copy_target(new_dst, bkey_s_c_to_dirent(old_src));
 
-		if (IS_ERR(old_dst.k)) {
-			ret = PTR_ERR(old_dst.k);
-			goto err_unlock;
-		}
+		if (bkey_cmp(dst_pos, src_iter.pos) <= 0 &&
+		    bkey_cmp(src_iter.pos, dst_iter.pos) < 0) {
+			/*
+			 * Same case described above -
+			 * bch_hash_needs_whiteout could spuriously
+			 * return false, but we have to insert at
+			 * dst_iter.pos because we're overwriting
+			 * another dirent:
+			 */
+			new_src->k.type = BCH_DIRENT_WHITEOUT;
+		} else if (need_whiteout)
+			new_src->k.type = BCH_DIRENT_WHITEOUT;
+		break;
+	case BCH_RENAME_EXCHANGE:
+		dirent_copy_target(new_src, bkey_s_c_to_dirent(old_dst));
+		dirent_copy_target(new_dst, bkey_s_c_to_dirent(old_src));
+		break;
+	}
 
-		switch (mode) {
-		case BCH_RENAME:
-			bkey_init(&new_src->k);
-			dirent_copy_target(new_dst, bkey_s_c_to_dirent(old_src));
-
-			if (bkey_cmp(dst_pos, src_iter.pos) <= 0 &&
-			    bkey_cmp(src_iter.pos, dst_iter.pos) < 0) {
-				/*
-				 * If we couldn't insert new_dst at its hashed
-				 * position (dst_pos) due to a hash collision,
-				 * and we're going to be deleting in
-				 * between the hashed position and first empty
-				 * slot we found - just overwrite the pos we
-				 * were going to delete:
-				 *
-				 * Note: this is a correctness issue, in this
-				 * situation bch_hash_needs_whiteout() could
-				 * return false when the whiteout would have
-				 * been needed if we inserted at the pos
-				 * __dirent_find_hole() found
-				 */
-				new_dst->k.p = src_iter.pos;
-				ret = bch_btree_insert_at(c, NULL, NULL,
-						journal_seq,
-						BTREE_INSERT_ATOMIC,
-						BTREE_INSERT_ENTRY(&src_iter,
-								   &new_dst->k_i));
-				goto insert_done;
-			}
-
-			if (need_whiteout)
-				new_src->k.type = BCH_DIRENT_WHITEOUT;
-			break;
-		case BCH_RENAME_OVERWRITE:
-			bkey_init(&new_src->k);
-			dirent_copy_target(new_dst, bkey_s_c_to_dirent(old_src));
-
-			if (bkey_cmp(dst_pos, src_iter.pos) <= 0 &&
-			    bkey_cmp(src_iter.pos, dst_iter.pos) < 0) {
-				/*
-				 * Same case described above -
-				 * bch_hash_needs_whiteout could spuriously
-				 * return false, but we have to insert at
-				 * dst_iter.pos because we're overwriting
-				 * another dirent:
-				 */
-				new_src->k.type = BCH_DIRENT_WHITEOUT;
-			} else if (need_whiteout)
-				new_src->k.type = BCH_DIRENT_WHITEOUT;
-			break;
-		case BCH_RENAME_EXCHANGE:
-			dirent_copy_target(new_src, bkey_s_c_to_dirent(old_dst));
-			dirent_copy_target(new_dst, bkey_s_c_to_dirent(old_src));
-			break;
-		}
-
-		new_src->k.p = src_iter.pos;
-		new_dst->k.p = dst_iter.pos;
-		ret = bch_btree_insert_at(c, NULL, NULL, journal_seq,
-				BTREE_INSERT_ATOMIC,
-				BTREE_INSERT_ENTRY(&src_iter, &new_src->k_i),
-				BTREE_INSERT_ENTRY(&dst_iter, &new_dst->k_i));
-insert_done:
-		bch_btree_iter_unlink(&whiteout_iter);
-		bch_btree_iter_unlock(&src_iter);
-		bch_btree_iter_unlock(&dst_iter);
-
-		if (bkey_cmp(src_iter.pos, src_pos) ||
-		    bkey_cmp(dst_iter.pos, dst_pos)) {
-			/* ugh */
-			bch_btree_iter_init_intent(&src_iter, c, BTREE_ID_DIRENTS, src_pos);
-			bch_btree_iter_init_intent(&dst_iter, c, BTREE_ID_DIRENTS, dst_pos);
-			bch_btree_iter_link(&src_iter, &dst_iter);
-		}
-	} while (ret == -EINTR);
+	new_src->k.p = src_iter.pos;
+	new_dst->k.p = dst_iter.pos;
+	ret = bch_btree_insert_at(c, NULL, NULL, journal_seq,
+			BTREE_INSERT_ATOMIC,
+			BTREE_INSERT_ENTRY(&src_iter, &new_src->k_i),
+			BTREE_INSERT_ENTRY(&dst_iter, &new_dst->k_i));
 err:
+	if (ret == -EINTR)
+		goto retry;
+
+	bch_btree_iter_unlock(&whiteout_iter);
+	bch_btree_iter_unlock(&dst_iter);
+	bch_btree_iter_unlock(&src_iter);
+
 	if (new_src != (void *) &delete)
 		kfree(new_src);
 	kfree(new_dst);
 	return ret;
-err_unlock:
-	bch_btree_iter_unlink(&whiteout_iter);
-	ret = bch_btree_iter_unlock(&src_iter) ?: ret;
-	ret = bch_btree_iter_unlock(&dst_iter) ?: ret;
-	goto err;
 }
 
 int bch_dirent_delete(struct inode *dir, const struct qstr *name)

@@ -74,7 +74,10 @@ int __must_check __bch_write_inode(struct cache_set *c,
 	do {
 		struct bkey_s_c k = bch_btree_iter_peek_with_holes(&iter);
 
-		if (WARN_ONCE(!k.k || k.k->type != BCH_INODE_FS,
+		if ((ret = btree_iter_err(k)))
+			goto out;
+
+		if (WARN_ONCE(k.k->type != BCH_INODE_FS,
 			      "inode %llu not found when updating", inum)) {
 			bch_btree_iter_unlock(&iter);
 			return -ENOENT;
@@ -163,7 +166,8 @@ static struct inode *bch_vfs_inode_get(struct super_block *sb, u64 inum)
 
 	bch_btree_iter_init(&iter, c, BTREE_ID_INODES, POS(inum, 0));
 	k = bch_btree_iter_peek_with_holes(&iter);
-	if (!k.k || k.k->type != BCH_INODE_FS) {
+
+	if ((ret = btree_iter_err(k)) || k.k->type != BCH_INODE_FS) {
 		ret = bch_btree_iter_unlock(&iter);
 		iget_failed(inode);
 		return ERR_PTR(ret ?: -ENOENT);

@@ -95,12 +95,13 @@ bch_hash_lookup_at(const struct bch_hash_desc desc,
 		   const struct bch_hash_info *info,
 		   struct btree_iter *iter, const void *search)
 {
-	struct bkey_s_c k;
 	u64 inode = iter->pos.inode;
 
-	while ((k = bch_btree_iter_peek_with_holes(iter)).k) {
-		if (k.k->p.inode != inode)
-			break;
+	do {
+		struct bkey_s_c k = bch_btree_iter_peek_with_holes(iter);
+
+		if (btree_iter_err(k))
+			return k;
 
 		if (k.k->type == desc.key_type) {
 			if (!desc.cmp_key(k, search))
@@ -113,7 +114,7 @@ bch_hash_lookup_at(const struct bch_hash_desc desc,
 		}
 
 		bch_btree_iter_advance_pos(iter);
-	}
+	} while (iter->pos.inode == inode);
 
 	return bkey_s_c_err(-ENOENT);
 }
@@ -123,12 +124,13 @@ bch_hash_lookup_bkey_at(const struct bch_hash_desc desc,
 			const struct bch_hash_info *info,
 			struct btree_iter *iter, struct bkey_s_c search)
 {
-	struct bkey_s_c k;
 	u64 inode = iter->pos.inode;
 
-	while ((k = bch_btree_iter_peek_with_holes(iter)).k) {
-		if (k.k->p.inode != inode)
-			break;
+	do {
+		struct bkey_s_c k = bch_btree_iter_peek_with_holes(iter);
+
+		if (btree_iter_err(k))
+			return k;
 
 		if (k.k->type == desc.key_type) {
 			if (!desc.cmp_bkey(k, search))
@@ -141,7 +143,7 @@ bch_hash_lookup_bkey_at(const struct bch_hash_desc desc,
 		}
 
 		bch_btree_iter_advance_pos(iter);
-	}
+	} while (iter->pos.inode == inode);
 
 	return bkey_s_c_err(-ENOENT);
 }
@@ -173,21 +175,20 @@ bch_hash_lookup_intent(const struct bch_hash_desc desc,
 static inline struct bkey_s_c
 bch_hash_hole_at(const struct bch_hash_desc desc, struct btree_iter *iter)
 {
-	struct bkey_s_c k;
-	u64 inode = iter->pos.inode;
+	while (1) {
+		struct bkey_s_c k = bch_btree_iter_peek_with_holes(iter);
 
-	while ((k = bch_btree_iter_peek_with_holes(iter)).k) {
-		if (k.k->p.inode != inode)
-			break;
+		if (btree_iter_err(k))
+			return k;
 
 		if (k.k->type != desc.key_type)
 			return k;
 
 		/* hash collision, keep going */
 		bch_btree_iter_advance_pos(iter);
+		if (iter->pos.inode != k.k->p.inode)
+			return bkey_s_c_err(-ENOENT);
 	}
-
-	return bkey_s_c_err(-ENOSPC);
 }
 
 static inline struct bkey_s_c bch_hash_hole(const struct bch_hash_desc desc,
@@ -202,21 +203,20 @@ static inline struct bkey_s_c bch_hash_hole(const struct bch_hash_desc desc,
 	return bch_hash_hole_at(desc, iter);
 }
 
-static inline bool bch_hash_needs_whiteout(const struct bch_hash_desc desc,
+static inline int bch_hash_needs_whiteout(const struct bch_hash_desc desc,
 					   const struct bch_hash_info *info,
 					   struct btree_iter *iter,
 					   struct btree_iter *start)
 {
-	struct bkey_s_c k;
-
-	bch_btree_iter_init_copy(iter, start);
+	bch_btree_iter_set_pos(iter,
+			btree_type_successor(start->btree_id, start->pos));
 
 	while (1) {
-		bch_btree_iter_advance_pos(iter);
-		k = bch_btree_iter_peek_with_holes(iter);
+		struct bkey_s_c k = bch_btree_iter_peek_with_holes(iter);
+		int ret = btree_iter_err(k);
 
-		if (!k.k)
-			return iter->error ? true : false;
+		if (ret)
+			return ret;
 
 		if (k.k->type != desc.key_type &&
 		    k.k->type != desc.whiteout_type)
@@ -225,6 +225,8 @@ static inline bool bch_hash_needs_whiteout(const struct bch_hash_desc desc,
 		if (k.k->type == desc.key_type &&
 		    desc.hash_bkey(info, k) <= start->pos.offset)
 			return true;
+
+		bch_btree_iter_advance_pos(iter);
 	}
 }
 
@@ -245,54 +247,57 @@ static inline int bch_hash_set(const struct bch_hash_desc desc,
 		POS(inode, desc.hash_bkey(info, bkey_i_to_s_c(insert))));
 	bch_btree_iter_init_intent(&iter, c, desc.btree_id, hashed_slot.pos);
 	bch_btree_iter_link(&hashed_slot, &iter);
+retry:
+	/*
+	 * On hash collision, we have to keep the slot we hashed to locked while
+	 * we do the insert - to avoid racing with another thread deleting
+	 * whatever's in the slot we hashed to:
+	 */
+	ret = bch_btree_iter_traverse(&hashed_slot);
+	if (ret)
+		goto err;
 
-	do {
-		ret = bch_btree_iter_traverse(&hashed_slot);
-		if (ret)
-			break;
+	/*
+	 * On -EINTR/retry, we dropped locks - always restart from the slot we
+	 * hashed to:
+	 */
+	bch_btree_iter_copy(&iter, &hashed_slot);
 
-		/*
-		 * If there's a hash collision and we have to insert at a
-		 * different slot, on -EINTR (insert had to drop locks) we have
-		 * to recheck the slot we hashed to - it could have been deleted
-		 * while we dropped locks:
-		 */
-		bch_btree_iter_copy(&iter, &hashed_slot);
-		k = bch_hash_lookup_bkey_at(desc, info, &iter,
-					    bkey_i_to_s_c(insert));
-		if (IS_ERR(k.k)) {
-			if (flags & BCH_HASH_SET_MUST_REPLACE) {
-				ret = -ENOENT;
-				goto err;
-			}
+	k = bch_hash_lookup_bkey_at(desc, info, &iter, bkey_i_to_s_c(insert));
 
-			/*
-			 * Not found, so we're now looking for any open
-			 * slot - we might have skipped over a whiteout
-			 * that we could have used, so restart from the
-			 * slot we hashed to:
-			 */
-			bch_btree_iter_copy(&iter, &hashed_slot);
-			k = bch_hash_hole_at(desc, &iter);
-			if (IS_ERR(k.k)) {
-				ret = PTR_ERR(k.k);
-				goto err;
-			}
-		} else {
-			if (flags & BCH_HASH_SET_MUST_CREATE) {
-				ret = -EEXIST;
-				goto err;
-			}
+	ret = btree_iter_err(k);
+	if (ret == -ENOENT) {
+		if (flags & BCH_HASH_SET_MUST_REPLACE) {
+			ret = -ENOENT;
+			goto err;
 		}
 
-		insert->k.p = iter.pos;
-		ret = bch_btree_insert_at(c, NULL, NULL, journal_seq,
-					  BTREE_INSERT_ATOMIC,
-					  BTREE_INSERT_ENTRY(&iter, insert));
+		/*
+		 * Not found, so we're now looking for any open
+		 * slot - we might have skipped over a whiteout
+		 * that we could have used, so restart from the
+		 * slot we hashed to:
+		 */
+		bch_btree_iter_copy(&iter, &hashed_slot);
+		k = bch_hash_hole_at(desc, &iter);
+		if ((ret = btree_iter_err(k)))
+			goto err;
+	} else if (!ret) {
+		if (flags & BCH_HASH_SET_MUST_CREATE) {
+			ret = -EEXIST;
+			goto err;
+		}
+	} else {
+		goto err;
+	}
 
-		/* unlock before traversing hashed_slot: */
-		bch_btree_iter_unlock(&iter);
-	} while (ret == -EINTR);
+	insert->k.p = iter.pos;
+	ret = bch_btree_insert_at(c, NULL, NULL, journal_seq,
+				  BTREE_INSERT_ATOMIC,
+				  BTREE_INSERT_ENTRY(&iter, insert));
+err:
+	if (ret == -EINTR)
+		goto retry;
 
 	/*
 	 * On successful insert, we don't want to clobber ret with error from
@@ -300,10 +305,6 @@ static inline int bch_hash_set(const struct bch_hash_desc desc,
 	 */
 	bch_btree_iter_unlock(&iter);
 	bch_btree_iter_unlock(&hashed_slot);
-	return ret;
-err:
-	ret = bch_btree_iter_unlock(&iter) ?: ret;
-	ret = bch_btree_iter_unlock(&hashed_slot) ?: ret;
 	return ret;
 }
 
@@ -319,34 +320,31 @@ static inline int bch_hash_delete(const struct bch_hash_desc desc,
 
 	bch_btree_iter_init_intent(&iter, c, desc.btree_id,
 			    POS(inode, desc.hash_key(info, key)));
+	bch_btree_iter_init(&whiteout_iter, c, desc.btree_id,
+			    POS(inode, desc.hash_key(info, key)));
+	bch_btree_iter_link(&iter, &whiteout_iter);
+retry:
+	k = bch_hash_lookup_at(desc, info, &iter, key);
+	if ((ret = btree_iter_err(k)))
+		goto err;
 
-	do {
-		k = bch_hash_lookup_at(desc, info, &iter, key);
-		if (IS_ERR(k.k))
-			return bch_btree_iter_unlock(&iter) ?: -ENOENT;
+	ret = bch_hash_needs_whiteout(desc, info, &whiteout_iter, &iter);
+	if (ret < 0)
+		goto err;
 
-		bkey_init(&delete.k);
-		delete.k.p = k.k->p;
-		delete.k.type = bch_hash_needs_whiteout(desc, info,
-					&whiteout_iter, &iter)
-			? desc.whiteout_type
-			: KEY_TYPE_DELETED;
+	bkey_init(&delete.k);
+	delete.k.p = k.k->p;
+	delete.k.type = ret ? desc.whiteout_type : KEY_TYPE_DELETED;
 
-		ret = bch_btree_insert_at(c, NULL, NULL, journal_seq,
-					  BTREE_INSERT_NOFAIL|
-					  BTREE_INSERT_ATOMIC,
-					  BTREE_INSERT_ENTRY(&iter, &delete));
-		/*
-		 * Need to hold whiteout iter locked while we do the delete, if
-		 * we're not leaving a whiteout:
-		 */
-		bch_btree_iter_unlink(&whiteout_iter);
-		/*
-		 * XXX: if we ever cleanup whiteouts, we may need to rewind
-		 * iterator on -EINTR
-		 */
-	} while (ret == -EINTR);
+	ret = bch_btree_insert_at(c, NULL, NULL, journal_seq,
+				  BTREE_INSERT_NOFAIL|
+				  BTREE_INSERT_ATOMIC,
+				  BTREE_INSERT_ENTRY(&iter, &delete));
+err:
+	if (ret == -EINTR)
+		goto retry;
 
+	bch_btree_iter_unlock(&whiteout_iter);
 	bch_btree_iter_unlock(&iter);
 	return ret;
 }

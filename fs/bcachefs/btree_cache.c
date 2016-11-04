@@ -448,8 +448,8 @@ int mca_cannibalize_lock(struct cache_set *c, struct closure *cl)
 		goto success;
 
 	if (!cl) {
-		trace_bcache_mca_cannibalize_lock_fail(c, cl);
-		return -EINTR;
+		trace_bcache_mca_cannibalize_lock_fail(c);
+		return -ENOMEM;
 	}
 
 	closure_wait(&c->mca_wait, cl);
@@ -462,11 +462,11 @@ int mca_cannibalize_lock(struct cache_set *c, struct closure *cl)
 		goto success;
 	}
 
-	trace_bcache_mca_cannibalize_lock_fail(c, cl);
+	trace_bcache_mca_cannibalize_lock_fail(c);
 	return -EAGAIN;
 
 success:
-	trace_bcache_mca_cannibalize_lock(c, cl);
+	trace_bcache_mca_cannibalize_lock(c);
 	return 0;
 }
 
@@ -492,10 +492,9 @@ static struct btree *mca_cannibalize(struct cache_set *c)
 	}
 }
 
-struct btree *mca_alloc(struct cache_set *c, struct closure *cl)
+struct btree *mca_alloc(struct cache_set *c)
 {
 	struct btree *b;
-	int ret;
 	u64 start_time = local_clock();
 
 	mutex_lock(&c->btree_cache_lock);
@@ -546,36 +545,33 @@ out:
 	return b;
 err:
 	/* Try to cannibalize another cached btree node: */
-	ret = mca_cannibalize_lock(c, cl);
-	if (ret) {
+	if (c->btree_cache_alloc_lock == current) {
+		b = mca_cannibalize(c);
+		list_del_init(&b->list);
 		mutex_unlock(&c->btree_cache_lock);
-		return ERR_PTR(ret);
+
+		mca_hash_remove(c, b);
+
+		trace_bcache_mca_cannibalize(c);
+		goto out;
 	}
 
-	b = mca_cannibalize(c);
-	list_del_init(&b->list);
 	mutex_unlock(&c->btree_cache_lock);
-
-	mca_hash_remove(c, b);
-
-	trace_bcache_mca_cannibalize(c, cl);
-	goto out;
+	return ERR_PTR(-ENOMEM);
 }
 
 /* Slowpath, don't want it inlined into btree_iter_traverse() */
 static noinline struct btree *bch_btree_node_fill(struct btree_iter *iter,
 						  const struct bkey_i *k,
 						  unsigned level,
-						  struct closure *cl)
+						  enum six_lock_type lock_type)
 {
 	struct cache_set *c = iter->c;
 	struct btree *b;
 
-	b = mca_alloc(c, cl);
+	b = mca_alloc(c);
 	if (IS_ERR(b))
 		return b;
-
-	mca_cannibalize_unlock(c);
 
 	bkey_copy(&b->key, k);
 	if (mca_hash_insert(c, b, level, iter->btree_id)) {
@@ -608,9 +604,7 @@ static noinline struct btree *bch_btree_node_fill(struct btree_iter *iter,
 	bch_btree_node_read(c, b);
 	six_unlock_write(&b->lock);
 
-	mark_btree_node_locked(iter, level, btree_lock_want(iter, level));
-
-	if (btree_lock_want(iter, level) == SIX_LOCK_read)
+	if (lock_type == SIX_LOCK_read)
 		BUG_ON(!six_trylock_convert(&b->lock,
 					    SIX_LOCK_intent,
 					    SIX_LOCK_read));
@@ -629,7 +623,7 @@ static noinline struct btree *bch_btree_node_fill(struct btree_iter *iter,
  */
 struct btree *bch_btree_node_get(struct btree_iter *iter,
 				 const struct bkey_i *k, unsigned level,
-				 struct closure *cl)
+				 enum six_lock_type lock_type)
 {
 	int i = 0;
 	struct btree *b;
@@ -646,16 +640,14 @@ retry:
 		 * else we could read in a btree node from disk that's been
 		 * freed:
 		 */
-		b = bch_btree_node_fill(iter, k, level, cl);
+		b = bch_btree_node_fill(iter, k, level, lock_type);
 
 		/* We raced and found the btree node in the cache */
 		if (!b)
 			goto retry;
 
-		if (IS_ERR(b)) {
-			BUG_ON(PTR_ERR(b) != -EAGAIN);
+		if (IS_ERR(b))
 			return b;
-		}
 	} else {
 		/*
 		 * There's a potential deadlock with splits and insertions into
@@ -678,8 +670,8 @@ retry:
 		 * free it:
 		 *
 		 * To guard against this, btree nodes are evicted from the cache
-		 * when they're freed - and PTR_HASH() is zeroed out, which will
-		 * cause our btree_node_lock() call below to fail.
+		 * when they're freed - and PTR_HASH() is zeroed out, which we
+		 * check for after we lock the node.
 		 *
 		 * Then, btree_node_relock() on the parent will fail - because
 		 * the parent was modified, when the pointer to the node we want
@@ -688,34 +680,35 @@ retry:
 		if (btree_node_read_locked(iter, level + 1))
 			btree_node_unlock(iter, level + 1);
 
-		if (!btree_node_lock(b, iter, level,
-				     PTR_HASH(&b->key) != PTR_HASH(k))) {
-			if (!btree_node_relock(iter, level + 1)) {
-				trace_bcache_btree_intent_lock_fail(b, iter);
-				return ERR_PTR(-EINTR);
-			}
+		if (!btree_node_lock(b, k->k.p, level, iter, lock_type))
+			return ERR_PTR(-EINTR);
 
-			goto retry;
+		if (unlikely(PTR_HASH(&b->key) != PTR_HASH(k) ||
+			     b->level != level ||
+			     race_fault())) {
+			six_unlock_type(&b->lock, lock_type);
+			if (btree_node_relock(iter, level + 1))
+				goto retry;
+
+			return ERR_PTR(-EINTR);
 		}
-
-		BUG_ON(b->level != level);
 	}
-
-	/* avoid atomic set bit if it's not needed: */
-	if (btree_node_accessed(b))
-		set_btree_node_accessed(b);
 
 	for (; i <= b->keys.nsets; i++) {
 		prefetch(b->keys.set[i].tree);
 		prefetch(b->keys.set[i].data);
 	}
 
-	if (btree_node_read_error(b)) {
-		__btree_node_unlock(iter, level, b);
+	/* avoid atomic set bit if it's not needed: */
+	if (btree_node_accessed(b))
+		set_btree_node_accessed(b);
+
+	if (unlikely(btree_node_read_error(b))) {
+		six_unlock_type(&b->lock, lock_type);
 		return ERR_PTR(-EIO);
 	}
 
-	BUG_ON(!b->written);
+	EBUG_ON(!b->written);
 
 	return b;
 }

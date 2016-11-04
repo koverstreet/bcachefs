@@ -269,45 +269,41 @@ static int bchfs_write_index_update(struct bch_write_op *wop)
 	struct keylist *keys = &op->op.insert_keys;
 	struct btree_iter extent_iter, inode_iter;
 	struct bchfs_extent_trans_hook hook;
+	struct bkey_i *k = bch_keylist_front(keys);
 	int ret;
 
-	BUG_ON(bch_keylist_front(keys)->k.p.inode != op->ei->vfs_inode.i_ino);
+	BUG_ON(k->k.p.inode != op->ei->vfs_inode.i_ino);
 
 	bch_btree_iter_init_intent(&extent_iter, wop->c, BTREE_ID_EXTENTS,
 				   bkey_start_pos(&bch_keylist_front(keys)->k));
 	bch_btree_iter_init_intent(&inode_iter, wop->c,	BTREE_ID_INODES,
 				   POS(extent_iter.pos.inode, 0));
-	bch_btree_iter_link(&extent_iter, &inode_iter);
 
 	hook.op			= op;
 	hook.hook.fn		= bchfs_extent_update_hook;
 	hook.need_inode_update	= false;
 
 	do {
-		struct bkey_i *k = bch_keylist_front(keys);
-
-		/* lock ordering... */
-		bch_btree_iter_unlock(&inode_iter);
-
 		ret = bch_btree_iter_traverse(&extent_iter);
 		if (ret)
-			break;
+			goto err;
 
 		/* XXX: ei->i_size locking */
+		k = bch_keylist_front(keys);
 		if (min(k->k.p.offset << 9, op->new_i_size) > op->ei->i_size)
 			hook.need_inode_update = true;
 
 		if (hook.need_inode_update) {
 			struct bkey_s_c inode;
 
-			ret = bch_btree_iter_traverse(&inode_iter);
-			if (ret)
-				break;
+			if (!btree_iter_linked(&inode_iter))
+				bch_btree_iter_link(&extent_iter, &inode_iter);
 
 			inode = bch_btree_iter_peek_with_holes(&inode_iter);
+			if ((ret = btree_iter_err(inode)))
+				goto err;
 
-			if (WARN_ONCE(!inode.k ||
-				      inode.k->type != BCH_INODE_FS,
+			if (WARN_ONCE(inode.k->type != BCH_INODE_FS,
 				      "inode %llu not found when updating",
 				      extent_iter.pos.inode)) {
 				ret = -ENOENT;
@@ -327,7 +323,7 @@ static int bchfs_write_index_update(struct bch_write_op *wop)
 					BTREE_INSERT_NOFAIL|BTREE_INSERT_ATOMIC,
 					BTREE_INSERT_ENTRY(&extent_iter, k));
 		}
-
+err:
 		if (ret == -EINTR)
 			continue;
 		if (ret)
@@ -2058,16 +2054,13 @@ static long bch_fcollapse(struct inode *inode, loff_t offset, loff_t len)
 		bch_btree_iter_set_pos(&src,
 			POS(dst.pos.inode, dst.pos.offset + (len >> 9)));
 
-		/* Have to take intent locks before read locks: */
 		ret = bch_btree_iter_traverse(&dst);
 		if (ret)
-			goto err_unwind;
+			goto btree_iter_err;
 
 		k = bch_btree_iter_peek_with_holes(&src);
-		if (!k.k) {
-			ret = -EIO;
-			goto err_unwind;
-		}
+		if ((ret = btree_iter_err(k)))
+			goto btree_iter_err;
 
 		bkey_reassemble(&copy.k, k);
 
@@ -2089,11 +2082,11 @@ static long bch_fcollapse(struct inode *inode, loff_t offset, loff_t len)
 					  BTREE_INSERT_NOFAIL,
 					  BTREE_INSERT_ENTRY(&dst, &copy.k));
 		bch_disk_reservation_put(c, &disk_res);
-
+btree_iter_err:
 		if (ret < 0 && ret != -EINTR)
 			goto err_unwind;
 
-		bch_btree_iter_unlock(&src);
+		bch_btree_iter_cond_resched(&src);
 	}
 
 	bch_btree_iter_unlock(&src);
@@ -2195,10 +2188,8 @@ static long bch_fallocate(struct inode *inode, int mode,
 		struct disk_reservation disk_res = { 0 };
 
 		k = bch_btree_iter_peek_with_holes(&iter);
-		if (!k.k) {
-			ret = bch_btree_iter_unlock(&iter) ?: -EIO;
-			goto err_put_sectors_dirty;
-		}
+		if ((ret = btree_iter_err(k)))
+			goto btree_iter_err;
 
 		/* already reserved */
 		if (k.k->type == BCH_RESERVATION) {
@@ -2237,7 +2228,7 @@ static long bch_fallocate(struct inode *inode, int mode,
 					  BTREE_INSERT_NOFAIL,
 					  BTREE_INSERT_ENTRY(&iter, &reservation));
 		bch_disk_reservation_put(c, &disk_res);
-
+btree_iter_err:
 		if (ret < 0 && ret != -EINTR)
 			goto err_put_sectors_dirty;
 

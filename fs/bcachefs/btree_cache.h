@@ -17,11 +17,10 @@ int mca_hash_insert(struct cache_set *, struct btree *,
 void mca_cannibalize_unlock(struct cache_set *);
 int mca_cannibalize_lock(struct cache_set *, struct closure *);
 
-struct btree *mca_alloc(struct cache_set *, struct closure *);
+struct btree *mca_alloc(struct cache_set *);
 
-struct btree *bch_btree_node_get(struct btree_iter *,
-				 const struct bkey_i *, unsigned,
-				 struct closure *);
+struct btree *bch_btree_node_get(struct btree_iter *, const struct bkey_i *,
+				 unsigned, enum six_lock_type);
 
 void bch_btree_cache_free(struct cache_set *);
 int bch_btree_cache_alloc(struct cache_set *);

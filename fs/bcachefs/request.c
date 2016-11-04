@@ -508,6 +508,8 @@ retry:
 			/* not present (hole), or stale cached data */
 			if (cached_dev_cache_miss(&iter, s, bio, sectors)) {
 				k = bch_btree_iter_peek_with_holes(&iter);
+				if (btree_iter_err(k))
+					break;
 				goto retry;
 			}
 		}

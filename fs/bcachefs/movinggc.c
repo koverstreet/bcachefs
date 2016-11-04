@@ -78,7 +78,8 @@ static void read_moving(struct cache *ca, size_t buckets_to_move)
 	bch_btree_iter_init(&iter, c, BTREE_ID_EXTENTS, POS_MIN);
 
 	while (!bch_move_ctxt_wait(&ctxt) &&
-	       (k = bch_btree_iter_peek(&iter)).k) {
+	       (k = bch_btree_iter_peek(&iter)).k &&
+	       !btree_iter_err(k)) {
 		if (!moving_pred(ca, k))
 			goto next;
 

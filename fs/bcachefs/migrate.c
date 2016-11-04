@@ -95,7 +95,8 @@ int bch_move_data_off_device(struct cache *ca)
 		bch_btree_iter_init(&iter, c, BTREE_ID_EXTENTS, POS_MIN);
 
 		while (!bch_move_ctxt_wait(&ctxt) &&
-		       (k = bch_btree_iter_peek(&iter)).k) {
+		       (k = bch_btree_iter_peek(&iter)).k &&
+		       !(ret = btree_iter_err(k))) {
 			if (!bkey_extent_is_data(k.k) ||
 			    !bch_extent_has_device(bkey_s_c_to_extent(k),
 						   ca->sb.nr_this_dev))
@@ -112,11 +113,8 @@ int bch_move_data_off_device(struct cache *ca)
 				bch_move_ctxt_wait_for_io(&ctxt);
 				continue;
 			}
-			if (ret == -ENOSPC) {
-				bch_btree_iter_unlock(&iter);
-				bch_move_ctxt_exit(&ctxt);
-				return -ENOSPC;
-			}
+			if (ret == -ENOSPC)
+				break;
 			BUG_ON(ret);
 
 			seen_key_count++;
@@ -125,7 +123,7 @@ next:
 			bch_btree_iter_cond_resched(&iter);
 
 		}
-		ret = bch_btree_iter_unlock(&iter);
+		bch_btree_iter_unlock(&iter);
 		bch_move_ctxt_exit(&ctxt);
 
 		if (ret)
@@ -180,7 +178,7 @@ retry:
 			return ret;
 		}
 
-		iter.locks_want = 0;
+		bch_btree_iter_set_locks_want(&iter, 0);
 	}
 	ret = bch_btree_iter_unlock(&iter);
 	if (ret)
@@ -312,14 +310,15 @@ static int bch_flag_key_bad(struct btree_iter *iter,
 
 int bch_flag_data_bad(struct cache *ca)
 {
-	int ret = 0, ret2;
+	int ret = 0;
 	struct bkey_s_c k;
 	struct bkey_s_c_extent e;
 	struct btree_iter iter;
 
 	bch_btree_iter_init(&iter, ca->set, BTREE_ID_EXTENTS, POS_MIN);
 
-	while ((k = bch_btree_iter_peek(&iter)).k) {
+	while ((k = bch_btree_iter_peek(&iter)).k &&
+	       !(ret = btree_iter_err(k))) {
 		if (!bkey_extent_is_data(k.k))
 			goto advance;
 
@@ -364,7 +363,7 @@ advance:
 		bch_btree_iter_advance_pos(&iter);
 	}
 
-	ret2 = bch_btree_iter_unlock(&iter);
+	bch_btree_iter_unlock(&iter);
 
-	return ret ?: ret2;
+	return ret;
 }
