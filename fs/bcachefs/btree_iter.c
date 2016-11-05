@@ -325,19 +325,19 @@ void bch_btree_iter_verify(struct btree_iter *iter, struct btree *b)
 #endif
 
 static void __bch_btree_node_iter_fix(struct btree_iter *iter,
-				      struct btree_keys *b,
+				      struct btree *b,
 				      struct btree_node_iter *node_iter,
 				      struct bset_tree *t,
 				      struct bkey_packed *where,
 				      unsigned clobber_u64s,
 				      unsigned new_u64s)
 {
-	struct bkey_format *f = &b->format;
+	struct bkey_format *f = &b->keys.format;
 	const struct bkey_packed *end = bset_bkey_last(t->data);
 	struct btree_node_iter_set *set;
-	unsigned offset = __btree_node_key_to_offset(b, where);
+	unsigned offset = __btree_node_key_to_offset(&b->keys, where);
 	int shift = new_u64s - clobber_u64s;
-	unsigned old_end = (int) __btree_node_key_to_offset(b, end) - shift;
+	unsigned old_end = (int) __btree_node_key_to_offset(&b->keys, end) - shift;
 
 	btree_node_iter_for_each(node_iter, set)
 		if (set->end == old_end)
@@ -347,7 +347,7 @@ static void __bch_btree_node_iter_fix(struct btree_iter *iter,
 	if (new_u64s &&
 	    btree_iter_pos_cmp_packed(f, iter->pos, where,
 				      iter->is_extents))
-		bch_btree_node_iter_push(node_iter, b, where, end);
+		bch_btree_node_iter_push(node_iter, &b->keys, where, end);
 	return;
 found:
 	set->end = (int) set->end + shift;
@@ -360,14 +360,71 @@ found:
 	    btree_iter_pos_cmp_packed(f, iter->pos, where,
 				      iter->is_extents)) {
 		set->k = offset;
-		bch_btree_node_iter_sort(node_iter, b);
+		bch_btree_node_iter_sort(node_iter, &b->keys);
 	} else if (set->k < offset + clobber_u64s) {
 		set->k = offset + new_u64s;
 		if (set->k == set->end)
 			*set = node_iter->data[--node_iter->used];
-		bch_btree_node_iter_sort(node_iter, b);
+		bch_btree_node_iter_sort(node_iter, &b->keys);
 	} else {
 		set->k = (int) set->k + shift;
+	}
+
+	/*
+	 * Interior nodes are special because iterators for interior nodes don't
+	 * obey the usual invariants regarding the iterator position:
+	 *
+	 * We may have whiteouts that compare greater than the iterator
+	 * position, and logically should be in the iterator, but that we
+	 * skipped past to find the first live key greater than the iterator
+	 * position. This becomes an issue when we insert a new key that is
+	 * greater than the current iterator position, but smaller than the
+	 * whiteouts we've already skipped past - this happens in the course of
+	 * a btree split.
+	 *
+	 * We have to rewind the iterator past to before those whiteouts here,
+	 * else bkey_node_iter_prev() is not going to work and who knows what
+	 * else would happen. And we have to do it manually, because here we've
+	 * already done the insert and the iterator is currently inconsistent:
+	 *
+	 * We've got multiple competing invariants, here - we have to be careful
+	 * about rewinding iterators for interior nodes, because they should
+	 * always point to the key for the child node the btree iterator points
+	 * to.
+	 */
+	if (b->level && new_u64s && !bkey_deleted(where) &&
+	    btree_iter_pos_cmp_packed(f, iter->pos, where,
+				      iter->is_extents)) {
+		struct bset_tree *t;
+		struct bkey_packed *k;
+
+		for (t = b->keys.set; t <= b->keys.set + b->keys.nsets; t++) {
+			if (bch_bkey_to_bset(&b->keys, where) == t)
+				continue;
+
+			k = bkey_prev_all(t,
+				bch_btree_node_iter_bset_pos(node_iter,
+							     &b->keys, t->data));
+			if (k &&
+			    __btree_node_iter_cmp(node_iter, &b->keys,
+						  k, where) > 0) {
+				struct btree_node_iter_set *set;
+				unsigned offset =
+					__btree_node_key_to_offset(&b->keys, bkey_next(k));
+
+				btree_node_iter_for_each(node_iter, set)
+					if (set->k == offset) {
+						set->k = __btree_node_key_to_offset(&b->keys, k);
+						bch_btree_node_iter_sort(node_iter, &b->keys);
+						goto next_bset;
+					}
+
+				bch_btree_node_iter_push(node_iter, &b->keys, k,
+						bset_bkey_last(t->data));
+			}
+next_bset:
+			t = t;
+		}
 	}
 }
 
@@ -382,16 +439,16 @@ void bch_btree_node_iter_fix(struct btree_iter *iter,
 	struct btree_iter *linked;
 
 	if (node_iter != &iter->node_iters[b->level])
-		__bch_btree_node_iter_fix(iter, &b->keys, node_iter, t,
+		__bch_btree_node_iter_fix(iter, b, node_iter, t,
 					  where, clobber_u64s, new_u64s);
 
 	if (iter->nodes[b->level] == b)
-		__bch_btree_node_iter_fix(iter, &b->keys,
+		__bch_btree_node_iter_fix(iter, b,
 					  &iter->node_iters[b->level], t,
 					  where, clobber_u64s, new_u64s);
 
 	for_each_linked_btree_node(iter, b, linked)
-		__bch_btree_node_iter_fix(linked, &b->keys,
+		__bch_btree_node_iter_fix(linked, b,
 					  &linked->node_iters[b->level], t,
 					  where, clobber_u64s, new_u64s);
 	bch_btree_iter_verify(iter, b);
