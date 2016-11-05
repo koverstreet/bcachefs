@@ -458,9 +458,38 @@ static inline void __btree_iter_advance(struct btree_iter *iter)
 				    &iter->nodes[iter->level]->keys);
 }
 
+/*
+ * Verify that iterator for parent node points to child node:
+ */
+static void btree_iter_verify_new_node(struct btree_iter *iter, struct btree *b)
+{
+	bool parent_locked;
+	struct bkey_packed *k;
+
+	if (!IS_ENABLED(CONFIG_BCACHEFS_DEBUG) ||
+	    !iter->nodes[b->level + 1])
+		return;
+
+	parent_locked = btree_node_locked(iter, b->level + 1);
+
+	if (!btree_node_relock(iter, b->level + 1))
+		return;
+
+	k = bch_btree_node_iter_peek_all(&iter->node_iters[b->level + 1],
+					 &iter->nodes[b->level + 1]->keys);
+	BUG_ON(!k ||
+	       bkey_cmp_left_packed(&iter->nodes[b->level + 1]->keys.format,
+				    k, b->key.k.p));
+
+	if (!parent_locked)
+		btree_node_unlock(iter, b->level + 1);
+}
+
 static inline void btree_iter_node_set(struct btree_iter *iter,
 				       struct btree *b)
 {
+	btree_iter_verify_new_node(iter, b);
+
 	BUG_ON(b->lock.state.seq & 1);
 
 	iter->lock_seq[b->level] = b->lock.state.seq;
