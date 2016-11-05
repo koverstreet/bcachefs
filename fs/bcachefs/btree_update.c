@@ -1152,7 +1152,7 @@ static struct btree *__btree_split_node(struct btree_iter *iter, struct btree *n
 	size_t nr_packed = 0, nr_unpacked = 0;
 	struct btree *n2;
 	struct bset *set1, *set2;
-	struct bkey_packed *k;
+	struct bkey_packed *k, *prev = NULL;
 
 	n2 = bch_btree_node_alloc(iter->c, n1->level, iter->btree_id, reserve);
 	n2->data->max_key	= n1->data->max_key;
@@ -1168,18 +1168,23 @@ static struct btree *__btree_split_node(struct btree_iter *iter, struct btree *n
 	 */
 	k = set1->start;
 	while (1) {
+		if (bkey_next(k) == bset_bkey_last(set1))
+			break;
+		if (k->_data - set1->_data >= (le16_to_cpu(set1->u64s) * 3) / 5)
+			break;
+
 		if (bkey_packed(k))
 			nr_packed++;
 		else
 			nr_unpacked++;
-		if (k->_data - set1->_data >= (le16_to_cpu(set1->u64s) * 3) / 5)
-			break;
+
+		prev = k;
 		k = bkey_next(k);
 	}
 
-	n1->key.k.p = bkey_unpack_key(&n1->keys.format, k).p;
-	k = bkey_next(k);
+	BUG_ON(!prev);
 
+	n1->key.k.p = bkey_unpack_key(&n1->keys.format, prev).p;
 	n1->data->max_key = n1->key.k.p;
 	n2->data->min_key =
 		btree_type_successor(n1->btree_id, n1->key.k.p);
