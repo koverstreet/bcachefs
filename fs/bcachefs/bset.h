@@ -481,6 +481,46 @@ __btree_node_offset_to_key(struct btree_keys *b, u16 k)
 	return (void *) ((u64 *) b->set->data + k);
 }
 
+static inline int __btree_node_iter_cmp(struct btree_node_iter *iter,
+					struct btree_keys *b,
+					struct bkey_packed *l,
+					struct bkey_packed *r)
+{
+	/*
+	 * For non extents, when keys compare equal the deleted keys have to
+	 * come first - so that bch_btree_node_iter_next_check() can detect
+	 * duplicate nondeleted keys (and possibly other reasons?)
+	 *
+	 * For extents, bkey_deleted() is used as a proxy for k->size == 0, so
+	 * deleted keys have to sort last.
+	 */
+	return bkey_cmp_packed(&b->format, l, r) ?: iter->is_extents
+		? (int) bkey_deleted(l) - (int) bkey_deleted(r)
+		: (int) bkey_deleted(r) - (int) bkey_deleted(l);
+}
+
+static inline int btree_node_iter_cmp(struct btree_node_iter *iter,
+				      struct btree_keys *b,
+				      struct btree_node_iter_set l,
+				      struct btree_node_iter_set r)
+{
+	return __btree_node_iter_cmp(iter, b,
+			__btree_node_offset_to_key(b, l.k),
+			__btree_node_offset_to_key(b, r.k));
+}
+
+static inline void __bch_btree_node_iter_push(struct btree_node_iter *iter,
+			      struct btree_keys *b,
+			      const struct bkey_packed *k,
+			      const struct bkey_packed *end)
+{
+	if (k != end)
+		iter->data[iter->used++] = (struct btree_node_iter_set) {
+			__btree_node_key_to_offset(b, k),
+			__btree_node_key_to_offset(b, end)
+		};
+}
+
 static inline struct bkey_packed *
 __bch_btree_node_iter_peek_all(struct btree_node_iter *iter,
 			       struct btree_keys *b)
@@ -625,10 +665,12 @@ int bch_bkey_print_bfloat(struct btree_keys *, struct bkey_packed *,
 
 /* Debug stuff */
 
-#ifdef CONFIG_BCACHEFS_DEBUG
-
 void bch_dump_bset(struct btree_keys *, struct bset *, unsigned);
 void bch_dump_bucket(struct btree_keys *);
+void bch_dump_btree_node_iter(struct btree_keys *, struct btree_node_iter *);
+
+#ifdef CONFIG_BCACHEFS_DEBUG
+
 void __bch_verify_btree_nr_keys(struct btree_keys *);
 void bch_btree_node_iter_verify(struct btree_node_iter *, struct btree_keys *);
 void bch_verify_key_order(struct btree_keys *, struct btree_node_iter *,
@@ -636,8 +678,6 @@ void bch_verify_key_order(struct btree_keys *, struct btree_node_iter *,
 
 #else
 
-static inline void bch_dump_bset(struct btree_keys *b, struct bset *i, unsigned set) {}
-static inline void bch_dump_bucket(struct btree_keys *b) {}
 static inline void __bch_verify_btree_nr_keys(struct btree_keys *b) {}
 static inline void bch_btree_node_iter_verify(struct btree_node_iter *iter,
 					      struct btree_keys *b) {}

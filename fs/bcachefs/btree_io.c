@@ -365,8 +365,8 @@ void bch_btree_node_read_done(struct cache_set *c, struct btree *b,
 		if (ret)
 			continue;
 
-		bch_btree_node_iter_push(iter, &b->keys,
-					 i->start, bset_bkey_last(i));
+		__bch_btree_node_iter_push(iter, &b->keys,
+					   i->start, bset_bkey_last(i));
 	}
 
 	err = "corrupted btree";
