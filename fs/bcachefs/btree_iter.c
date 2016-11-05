@@ -338,37 +338,34 @@ static void __bch_btree_node_iter_fix(struct btree_iter *iter,
 	unsigned offset = __btree_node_key_to_offset(b, where);
 	int shift = new_u64s - clobber_u64s;
 	unsigned old_end = (int) __btree_node_key_to_offset(b, end) - shift;
-	bool iter_pos_before_new = where != bset_bkey_last(t->data) &&
-		btree_iter_pos_cmp_packed(f, iter->pos, where,
-					  iter->is_extents);
 
 	btree_node_iter_for_each(node_iter, set)
 		if (set->end == old_end)
 			goto found;
 
 	/* didn't find the bset in the iterator - might have to readd it: */
-	if (iter_pos_before_new)
+	if (new_u64s &&
+	    btree_iter_pos_cmp_packed(f, iter->pos, where,
+				      iter->is_extents))
 		bch_btree_node_iter_push(node_iter, b, where, end);
 	return;
 found:
 	set->end = (int) set->end + shift;
 
+	/* Iterator hasn't gotten to the key that changed yet: */
 	if (set->k < offset)
 		return;
 
-	if (set->end == offset) {
-		*set = node_iter->data[--node_iter->used];
-		bch_btree_node_iter_sort(node_iter, b);
-	} else if (iter_pos_before_new ||
-		   set->k < offset + clobber_u64s) {
+	if (new_u64s &&
+	    btree_iter_pos_cmp_packed(f, iter->pos, where,
+				      iter->is_extents)) {
 		set->k = offset;
-
-		/* The key the iterator currently points to changed: */
 		bch_btree_node_iter_sort(node_iter, b);
-
-		if (!iter_pos_before_new &&
-		    bch_btree_node_iter_peek_all(node_iter, b) == where)
-			bch_btree_node_iter_advance(node_iter, b);
+	} else if (set->k < offset + clobber_u64s) {
+		set->k = offset + new_u64s;
+		if (set->k == set->end)
+			*set = node_iter->data[--node_iter->used];
+		bch_btree_node_iter_sort(node_iter, b);
 	} else {
 		set->k = (int) set->k + shift;
 	}
