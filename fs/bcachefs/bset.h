@@ -522,6 +522,8 @@ bch_btree_node_iter_next_all(struct btree_node_iter *iter, struct btree_keys *b)
 
 struct bkey_packed *bch_btree_node_iter_prev_all(struct btree_node_iter *,
 						 struct btree_keys *);
+struct bkey_packed *bch_btree_node_iter_prev(struct btree_node_iter *,
+					     struct btree_keys *);
 
 /*
  * Iterates over all _live_ keys - skipping deleted (and potentially

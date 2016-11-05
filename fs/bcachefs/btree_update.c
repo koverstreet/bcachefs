@@ -678,6 +678,8 @@ overwrite:
 	if (k->u64s != clobber_u64s || bkey_deleted(&insert->k))
 		bch_btree_node_iter_fix(iter, b, node_iter, t, k,
 					clobber_u64s, k->u64s);
+	else
+		bch_btree_iter_verify(iter, b);
 }
 
 static void btree_node_flush(struct journal *j, struct journal_entry_pin *pin)

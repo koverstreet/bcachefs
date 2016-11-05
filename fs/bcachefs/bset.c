@@ -1556,6 +1556,18 @@ found:
 	return bch_btree_node_iter_peek_all(iter, b);
 }
 
+struct bkey_packed *bch_btree_node_iter_prev(struct btree_node_iter *iter,
+					     struct btree_keys *b)
+{
+	struct bkey_packed *k;
+
+	do {
+		k = bch_btree_node_iter_prev_all(iter, b);
+	} while (k && bkey_deleted(k));
+
+	return k;
+}
+
 struct bkey_s_c bch_btree_node_iter_peek_unpack(struct btree_node_iter *iter,
 						struct btree_keys *b,
 						struct bkey *u)

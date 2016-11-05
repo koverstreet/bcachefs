@@ -286,34 +286,29 @@ int bch_btree_iter_unlock(struct btree_iter *iter)
 
 #ifdef CONFIG_BCACHEFS_DEBUG
 
-static void __bch_btree_iter_verify(struct btree_node_iter *iter,
-				    struct btree *b,
-				    struct bpos pos,
-				    bool strictly_greater)
+static void __bch_btree_iter_verify(struct btree_iter *iter,
+				    struct btree *b)
 {
 	const struct bkey_format *f = &b->keys.format;
-	struct bset_tree *t;
+	struct btree_node_iter *node_iter = &iter->node_iters[b->level];
+	struct btree_node_iter tmp = *node_iter;
 	struct bkey_packed *k;
 
-	bch_btree_node_iter_verify(iter, &b->keys);
+	bch_btree_node_iter_verify(node_iter, &b->keys);
 
-	for (t = b->keys.set; t <= b->keys.set + b->keys.nsets; t++) {
-		k = bch_btree_node_iter_bset_pos(iter, &b->keys, t->data);
+	/*
+	 * For interior nodes, the iterator will have skipped past
+	 * deleted keys:
+	 */
+	k = b->level
+		? bch_btree_node_iter_prev(&tmp, &b->keys)
+		: bch_btree_node_iter_prev_all(&tmp, &b->keys);
+	BUG_ON(k && btree_iter_pos_cmp_packed(f, iter->pos, k,
+					      iter->is_extents));
 
-		/*
-		 * For interior nodes, the iterator will have skipped past
-		 * deleted keys:
-		 */
-		k = b->level
-			? bkey_prev(t, k)
-			: bkey_prev_all(t, k);
-
-		BUG_ON(k && btree_iter_pos_cmp_packed(f, pos, k,
-						      strictly_greater));
-	}
-
-	k = bch_btree_node_iter_peek_all(iter, &b->keys);
-	BUG_ON(k && !btree_iter_pos_cmp_packed(f, pos, k, strictly_greater));
+	k = bch_btree_node_iter_peek_all(node_iter, &b->keys);
+	BUG_ON(k && !btree_iter_pos_cmp_packed(f, iter->pos, k,
+					       iter->is_extents));
 }
 
 void bch_btree_iter_verify(struct btree_iter *iter, struct btree *b)
@@ -321,14 +316,10 @@ void bch_btree_iter_verify(struct btree_iter *iter, struct btree *b)
 	struct btree_iter *linked;
 
 	if (iter->nodes[b->level] == b)
-		__bch_btree_iter_verify(&iter->node_iters[b->level],
-					b, iter->pos,
-					iter->is_extents);
+		__bch_btree_iter_verify(iter, b);
 
 	for_each_linked_btree_node(iter, b, linked)
-		__bch_btree_iter_verify(&linked->node_iters[b->level],
-					b, linked->pos,
-					linked->is_extents);
+		__bch_btree_iter_verify(iter, b);
 }
 
 #endif
