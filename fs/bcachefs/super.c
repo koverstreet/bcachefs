@@ -888,7 +888,6 @@ static void cache_set_free(struct cache_set *c)
 	cancel_work_sync(&c->bio_submit_work);
 	cancel_work_sync(&c->read_retry_work);
 
-	bch_bset_sort_state_free(&c->sort);
 	bch_btree_cache_free(c);
 	bch_journal_free(&c->journal);
 	bch_io_clock_exit(&c->io_clock[WRITE]);
@@ -897,6 +896,7 @@ static void cache_set_free(struct cache_set *c)
 	bdi_destroy(&c->bdi);
 	free_percpu(c->bucket_stats_lock.lock);
 	free_percpu(c->bucket_stats_percpu);
+	mempool_exit(&c->btree_sort_pool);
 	mempool_exit(&c->bio_bounce_pages);
 	bioset_exit(&c->bio_write);
 	bioset_exit(&c->bio_read_split);
@@ -1162,13 +1162,13 @@ static struct cache_set *bch_cache_set_alloc(struct cache_sb *sb,
 				   PAGE_SECTORS, 0) ||
 	    !(c->bucket_stats_percpu = alloc_percpu(struct bucket_stats_cache_set)) ||
 	    !(c->bucket_stats_lock.lock = alloc_percpu(*c->bucket_stats_lock.lock)) ||
+	    mempool_init_page_pool(&c->btree_sort_pool, 1,
+				   ilog2(btree_pages(c))) ||
 	    bdi_setup_and_register(&c->bdi, "bcache") ||
 	    bch_io_clock_init(&c->io_clock[READ]) ||
 	    bch_io_clock_init(&c->io_clock[WRITE]) ||
 	    bch_journal_alloc(&c->journal) ||
 	    bch_btree_cache_alloc(c) ||
-	    bch_bset_sort_state_init(&c->sort, ilog2(btree_pages(c)),
-				     &c->btree_sort_time) ||
 	    bch_compress_init(c))
 		goto err;
 

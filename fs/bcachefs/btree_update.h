@@ -199,9 +199,9 @@ static inline size_t bch_btree_keys_u64s_remaining(struct cache_set *c,
  * insert into could be written out from under us)
  */
 static inline bool bch_btree_node_insert_fits(struct cache_set *c,
-				struct btree *b, unsigned u64s)
+					      struct btree *b, unsigned u64s)
 {
-	if (b->keys.ops->is_extents) {
+	if (btree_node_is_extents(b)) {
 		/* The insert key might split an existing key
 		 * (bch_insert_fixup_extent() -> BCH_EXTENT_OVERLAP_MIDDLE case:
 		 */

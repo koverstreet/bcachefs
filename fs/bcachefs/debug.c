@@ -59,11 +59,7 @@ void __bch_btree_verify(struct cache_set *c, struct btree *b)
 	v->written	= 0;
 	v->level	= b->level;
 	v->btree_id	= b->btree_id;
-	v->keys.ops	= b->keys.ops;
-	bch_btree_keys_init(&v->keys, v->level
-			    ? &bch_btree_interior_node_ops
-			    : bch_btree_ops[v->btree_id],
-			    &v->c->expensive_debug_checks);
+	bch_btree_keys_init(&v->keys, &v->c->expensive_debug_checks);
 
 	pick = bch_btree_pick_ptr(c, b);
 	if (IS_ERR_OR_NULL(pick.ca))

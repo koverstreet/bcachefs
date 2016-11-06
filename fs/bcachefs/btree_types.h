@@ -137,9 +137,19 @@ static inline enum bkey_type btree_node_type(struct btree *b)
 	return b->level ? BKEY_TYPE_BTREE : b->btree_id;
 }
 
+static inline const struct bkey_ops *btree_node_ops(struct btree *b)
+{
+	return bch_bkey_ops[btree_node_type(b)];
+}
+
 static inline bool btree_node_has_ptrs(struct btree *b)
 {
 	return btree_type_has_ptrs(btree_node_type(b));
+}
+
+static inline bool btree_node_is_extents(struct btree *b)
+{
+	return btree_node_type(b) == BKEY_TYPE_EXTENTS;
 }
 
 /*
@@ -180,5 +190,9 @@ enum btree_gc_coalesce_fail_reason {
 	BTREE_GC_COALESCE_FAIL_KEYLIST_REALLOC,
 	BTREE_GC_COALESCE_FAIL_FORMAT_FITS,
 };
+
+typedef struct btree_nr_keys (*sort_fix_overlapping_fn)(struct bset *,
+							struct btree_keys *,
+							struct btree_node_iter *);
 
 #endif /* _BCACHE_BTREE_TYPES_H */

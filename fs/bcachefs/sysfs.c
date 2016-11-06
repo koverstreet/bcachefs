@@ -496,12 +496,12 @@ static int bch_bset_print_stats(struct cache_set *c, char *buf)
 			"failed prev:		%zu\n"
 			"failed overflow:	%zu\n",
 			nodes,
-			stats.sets[BSET_HAS_AUX_TREE].nr,
-			stats.sets[BSET_HAS_AUX_TREE].bytes,
-			stats.sets[BSET_HAS_UNWRITTEN_TABLE].nr,
-			stats.sets[BSET_HAS_UNWRITTEN_TABLE].bytes,
-			stats.sets[BSET_AUX_TREE_NONE].nr,
-			stats.sets[BSET_AUX_TREE_NONE].bytes,
+			stats.sets[BSET_RO_AUX_TREE].nr,
+			stats.sets[BSET_RO_AUX_TREE].bytes,
+			stats.sets[BSET_RW_AUX_TREE].nr,
+			stats.sets[BSET_RW_AUX_TREE].bytes,
+			stats.sets[BSET_NO_AUX_TREE].nr,
+			stats.sets[BSET_NO_AUX_TREE].bytes,
 			stats.floats,
 			stats.failed_unpacked,
 			stats.failed_prev,
@@ -524,7 +524,7 @@ lock_root:
 		six_lock_read(&b->lock);
 	} while (b != c->btree_roots[BTREE_ID_EXTENTS].b);
 
-	for_each_btree_node_key(&b->keys, k, &iter)
+	for_each_btree_node_key(&b->keys, k, &iter, btree_node_is_extents(b))
 		bytes += bkey_bytes(k);
 
 	six_unlock_read(&b->lock);

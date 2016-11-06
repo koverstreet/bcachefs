@@ -8,7 +8,7 @@
 #include "inode.h"
 #include "xattr.h"
 
-static const struct bkey_ops *bch_bkey_ops[] = {
+const struct bkey_ops *bch_bkey_ops[] = {
 	[BKEY_TYPE_EXTENTS]	= &bch_bkey_extent_ops,
 	[BKEY_TYPE_INODES]	= &bch_bkey_inode_ops,
 	[BKEY_TYPE_DIRENTS]	= &bch_bkey_dirent_ops,

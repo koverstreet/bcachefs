@@ -557,7 +557,8 @@ static inline void __btree_iter_init(struct btree_iter *iter,
 				     struct btree *b)
 {
 	bch_btree_node_iter_init(&iter->node_iters[b->level], &b->keys,
-				 iter->pos, iter->is_extents);
+				 iter->pos, iter->is_extents,
+				 btree_node_is_extents(b));
 
 	/* Skip to first non whiteout: */
 	if (b->level)
@@ -1106,7 +1107,7 @@ void __bch_btree_iter_init(struct btree_iter *iter, struct cache_set *c,
 			   unsigned locks_want, unsigned depth)
 {
 	iter->level			= depth;
-	iter->is_extents		= btree_id == BTREE_ID_EXTENTS;
+	iter->is_extents		= bch_bkey_ops[btree_id]->is_extents;
 	iter->nodes_locked		= 0;
 	iter->nodes_intent_locked	= 0;
 	iter->locks_want		= min(locks_want, BTREE_MAX_DEPTH);

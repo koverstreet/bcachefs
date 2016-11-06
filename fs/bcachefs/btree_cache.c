@@ -119,11 +119,6 @@ int mca_hash_insert(struct cache_set *c, struct btree *b,
 	b->level	= level;
 	b->btree_id	= id;
 
-	bch_btree_keys_init(&b->keys, b->level
-			    ? &bch_btree_interior_node_ops
-			    : bch_btree_ops[id],
-			    &c->expensive_debug_checks);
-
 	ret = rhashtable_lookup_insert_fast(&c->btree_cache_table, &b->hash,
 					    bch_btree_cache_params);
 	if (ret)
@@ -527,6 +522,7 @@ out:
 	b->keys.set[0].data = NULL;
 	b->sib_u64s[0]	= 0;
 	b->sib_u64s[1]	= 0;
+	bch_btree_keys_init(&b->keys, &c->expensive_debug_checks);
 
 	bch_time_stats_update(&c->mca_alloc_time, start_time);
 

@@ -157,9 +157,6 @@ static void bch_xattr_to_text(struct cache_set *c, char *buf,
 	}
 }
 
-const struct btree_keys_ops bch_xattr_ops = {
-};
-
 const struct bkey_ops bch_bkey_xattr_ops = {
 	.key_invalid	= bch_xattr_invalid,
 	.val_to_text	= bch_xattr_to_text,

@@ -18,21 +18,39 @@
 
 static void btree_node_sort(struct cache_set *c, struct btree *b,
 			    struct btree_iter *iter, unsigned from,
-			    struct btree_node_iter *node_iter,
-			    btree_keys_sort_fn sort, bool is_write_locked)
+			    struct btree_node_iter *sort_iter,
+			    sort_fix_overlapping_fn sort_fn,
+			    bool is_write_locked)
 {
 	struct btree_node *out;
-	bool used_mempool = false;
-	unsigned order = b->keys.page_order;
 	struct btree_nr_keys nr;
+	struct btree_node_iter _sort_iter;
+	bool used_mempool = false;
+	u64 start_time;
+	unsigned order;
 
-	if (from) {
+	if (!sort_iter) {
 		struct bset_tree *t;
-		unsigned u64s = 0;
+
+		sort_iter = &_sort_iter;
+		__bch_btree_node_iter_init(sort_iter, btree_node_is_extents(b));
 
 		for (t = b->keys.set + from;
-		     t <= b->keys.set + b->keys.nsets; t++)
-			u64s += le16_to_cpu(t->data->u64s);
+		     t <= b->keys.set + b->keys.nsets;
+		     t++)
+			bch_btree_node_iter_push(sort_iter, &b->keys,
+						 t->data->start,
+						 bset_bkey_last(t->data));
+	}
+
+	if (!from) {
+		order = b->keys.page_order;
+	} else {
+		struct btree_node_iter_set *set;
+		unsigned u64s = 0;
+
+		btree_node_iter_for_each(sort_iter, set)
+			u64s += set->end - set->k;
 
 		order = get_order(__set_bytes(b->data, u64s));
 	}
@@ -41,13 +59,42 @@ static void btree_node_sort(struct cache_set *c, struct btree *b,
 	if (!out) {
 		struct page *outp;
 
-		outp = mempool_alloc(&c->sort.pool, GFP_NOIO);
+		outp = mempool_alloc(&c->btree_sort_pool, GFP_NOIO);
 		out = page_address(outp);
 		used_mempool = true;
 	}
 
-	nr = bch_sort_bsets(&out->keys, &b->keys, from,
-			    node_iter, sort, &c->sort);
+	start_time = local_clock();
+
+	out->keys.u64s = 0;
+
+	/*
+	 * The nr_keys accounting for number of packed/unpacked keys isn't
+	 * broken out by bset, which means we can't merge extents unless we're
+	 * sorting the entire node (we'd have to recalculate nr_keys for the
+	 * entire node). Also, extent merging is problematic if we're not
+	 * sorting the entire node, since we'd end up with extents overlapping
+	 * with 0 length whiteouts in other bsets we didn't sort.
+	 */
+	if (sort_fn)
+		nr = sort_fn(&out->keys, &b->keys, sort_iter);
+	else if (!from)
+		nr = bch_sort_bsets(&out->keys, &b->keys, sort_iter,
+				    &b->keys.format,
+				    &b->keys.format,
+				    NULL,
+				    btree_node_ops(b)->key_merge);
+	else
+		nr = bch_sort_bsets(&out->keys, &b->keys, sort_iter,
+				    &b->keys.format,
+				    &b->keys.format,
+				    NULL, NULL);
+
+	BUG_ON((void *) bset_bkey_last(&out->keys) >
+	       (void *) out + (PAGE_SIZE << order));
+
+	if (!from)
+		bch_time_stats_update(&c->btree_sort_time, start_time);
 
 	if (!is_write_locked)
 		__btree_node_lock_write(b, iter);
@@ -66,22 +113,30 @@ static void btree_node_sort(struct cache_set *c, struct btree *b,
 		out->keys.u64s = cpu_to_le16(u64s);
 		swap(out, b->data);
 		b->keys.set->data = &b->data->keys;
+		b->keys.nr = nr;
 	} else {
+		unsigned i;
+
 		b->keys.set[from].data->u64s = out->keys.u64s;
 		memcpy(b->keys.set[from].data->start, out->keys.start,
 		       (void *) bset_bkey_last(&out->keys) -
 		       (void *) out->keys.start);
+
+		for (i = from + 1; i < MAX_BSETS; i++) {
+			b->keys.nr.bset_u64s[from] +=
+				b->keys.nr.bset_u64s[i];
+			b->keys.nr.bset_u64s[i] = 0;
+		}
 	}
 
 	b->keys.nsets = from;
-	b->keys.nr = nr;
-	bch_bset_build_written_tree(&b->keys, &b->keys.set[from]);
+	bch_bset_build_ro_aux_tree(&b->keys, &b->keys.set[from]);
 
 	if (!is_write_locked)
 		__btree_node_unlock_write(b, iter);
 
 	if (used_mempool)
-		mempool_free(virt_to_page(out), &c->sort.pool);
+		mempool_free(virt_to_page(out), &c->btree_sort_pool);
 	else
 		free_pages((unsigned long) out, order);
 
@@ -98,6 +153,7 @@ static bool btree_node_compact(struct cache_set *c, struct btree *b,
 			       struct btree_iter *iter)
 {
 	unsigned crit = SORT_CRIT;
+	unsigned crit_factor = int_sqrt(btree_pages(c));
 	int i = 0;
 
 	/* Don't sort if nothing to do */
@@ -109,7 +165,7 @@ static bool btree_node_compact(struct cache_set *c, struct btree *b,
 		goto sort;
 
 	for (i = b->keys.nsets - 1; i >= 0; --i) {
-		crit *= c->sort.crit_factor;
+		crit *= crit_factor;
 
 		if (le16_to_cpu(b->keys.set[i].data->u64s) < crit)
 			goto sort;
@@ -123,7 +179,7 @@ static bool btree_node_compact(struct cache_set *c, struct btree *b,
 
 nosort:
 	__btree_node_lock_write(b, iter);
-	bch_bset_build_written_tree(&b->keys, bset_tree_last(&b->keys));
+	bch_bset_build_ro_aux_tree(&b->keys, bset_tree_last(&b->keys));
 	__btree_node_unlock_write(b, iter);
 	return false;
 sort:
@@ -278,7 +334,7 @@ void bch_btree_node_read_done(struct cache_set *c, struct btree *b,
 	int ret;
 
 	iter = mempool_alloc(&c->fill_iter, GFP_NOIO);
-	__bch_btree_node_iter_init(iter, &b->keys);
+	__bch_btree_node_iter_init(iter, btree_node_is_extents(b));
 
 	err = "dynamic fault";
 	if (bch_meta_read_fault("btree"))
@@ -377,7 +433,7 @@ void bch_btree_node_read_done(struct cache_set *c, struct btree *b,
 			goto err;
 
 	btree_node_sort(c, b, NULL, 0, iter,
-			b->keys.ops->is_extents
+			btree_node_is_extents(b)
 			? bch_extent_sort_fix_overlapping
 			: bch_key_sort_fix_overlapping,
 			true);

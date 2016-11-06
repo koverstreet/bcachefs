@@ -1,7 +1,6 @@
 #ifndef _BCACHE_INODE_H
 #define _BCACHE_INODE_H
 
-extern const struct btree_keys_ops bch_inode_ops;
 extern const struct bkey_ops bch_bkey_inode_ops;
 
 ssize_t bch_inode_status(char *, size_t, const struct bkey *);

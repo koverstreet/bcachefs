@@ -26,8 +26,24 @@ static inline bool btree_type_has_ptrs(enum bkey_type type)
 }
 
 struct cache_set;
+struct btree_keys;
 struct btree;
 struct bkey;
+
+enum merge_result {
+	BCH_MERGE_NOMERGE,
+
+	/*
+	 * The keys were mergeable, but would have overflowed size - so instead
+	 * l was changed to the maximum size, and both keys were modified:
+	 */
+	BCH_MERGE_PARTIAL,
+	BCH_MERGE_MERGE,
+};
+
+typedef bool (*key_filter_fn)(struct btree_keys *, struct bkey_s);
+typedef enum merge_result (*key_merge_fn)(struct btree_keys *,
+					  struct bkey_i *, struct bkey_i *);
 
 struct bkey_ops {
 	/* Returns reason for being invalid if invalid, else NULL: */
@@ -38,7 +54,8 @@ struct bkey_ops {
 	void		(*val_to_text)(struct cache_set *, char *,
 				       size_t, struct bkey_s_c);
 	void		(*swab)(const struct bkey_format *, struct bkey_packed *);
-
+	key_filter_fn	key_normalize;
+	key_merge_fn	key_merge;
 	bool		is_extents;
 };
 
@@ -52,6 +69,8 @@ void bch_bkey_val_to_text(struct cache_set *, enum bkey_type,
 
 void bch_bkey_swab(enum bkey_type, const struct bkey_format *,
 		   struct bkey_packed *);
+
+extern const struct bkey_ops *bch_bkey_ops[];
 
 #undef DEF_BTREE_ID
 

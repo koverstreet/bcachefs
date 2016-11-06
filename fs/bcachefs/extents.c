@@ -22,6 +22,8 @@
 #include <trace/events/bcachefs.h>
 
 static bool __bch_extent_normalize(struct cache_set *, struct bkey_s, bool);
+static enum merge_result bch_extent_merge(struct btree_keys *,
+					  struct bkey_i *, struct bkey_i *);
 
 static void sort_key_next(struct btree_node_iter *iter,
 			  struct btree_keys *b,
@@ -76,11 +78,11 @@ static inline bool should_drop_next_key(struct btree_node_iter *iter,
 				__btree_node_offset_to_key(b, r->k));
 }
 
-struct btree_nr_keys bch_key_sort_fix_overlapping(struct btree_keys *b,
-						  struct bset *bset,
+struct btree_nr_keys bch_key_sort_fix_overlapping(struct bset *dst,
+						  struct btree_keys *b,
 						  struct btree_node_iter *iter)
 {
-	struct bkey_packed *out = bset->start;
+	struct bkey_packed *out = dst->start;
 	struct btree_nr_keys nr;
 
 	memset(&nr, 0, sizeof(nr));
@@ -101,7 +103,7 @@ struct btree_nr_keys bch_key_sort_fix_overlapping(struct btree_keys *b,
 		heap_sift(iter, 0, key_sort_cmp);
 	}
 
-	bset->u64s = cpu_to_le16((u64 *) out - bset->_data);
+	dst->u64s = cpu_to_le16((u64 *) out - dst->_data);
 	return nr;
 }
 
@@ -590,9 +592,6 @@ bch_btree_pick_ptr(struct cache_set *c, const struct btree *b)
 	return (struct extent_pick_ptr) { .ca = NULL, };
 }
 
-const struct btree_keys_ops bch_btree_interior_node_ops = {
-};
-
 const struct bkey_ops bch_bkey_btree_ops = {
 	.key_invalid	= bch_btree_ptr_invalid,
 	.key_debugcheck	= btree_ptr_debugcheck,
@@ -769,7 +768,7 @@ static void extent_sort_append(struct btree_keys *b,
 	bkey_unpack(&tmp.k, f, k);
 
 	if (*prev &&
-	    bch_bkey_try_merge(b, (void *) *prev, &tmp.k))
+	    bch_extent_merge(b, (void *) *prev, &tmp.k))
 		return;
 
 	if (*prev) {
@@ -784,8 +783,8 @@ static void extent_sort_append(struct btree_keys *b,
 	bkey_copy(*prev, &tmp.k);
 }
 
-struct btree_nr_keys bch_extent_sort_fix_overlapping(struct btree_keys *b,
-					struct bset *bset,
+struct btree_nr_keys bch_extent_sort_fix_overlapping(struct bset *dst,
+					struct btree_keys *b,
 					struct btree_node_iter *iter)
 {
 	struct bkey_format *f = &b->format;
@@ -803,7 +802,7 @@ struct btree_nr_keys bch_extent_sort_fix_overlapping(struct btree_keys *b,
 		lk = __btree_node_offset_to_key(b, _l->k);
 
 		if (iter->used == 1) {
-			extent_sort_append(b, &nr, bset->start, &prev, lk);
+			extent_sort_append(b, &nr, dst->start, &prev, lk);
 			extent_sort_next(iter, b, _l);
 			continue;
 		}
@@ -820,7 +819,7 @@ struct btree_nr_keys bch_extent_sort_fix_overlapping(struct btree_keys *b,
 
 		/* If current key and next key don't overlap, just append */
 		if (bkey_cmp(l.k->p, bkey_start_pos(r.k)) <= 0) {
-			extent_sort_append(b, &nr, bset->start, &prev, lk);
+			extent_sort_append(b, &nr, dst->start, &prev, lk);
 			extent_sort_next(iter, b, _l);
 			continue;
 		}
@@ -865,7 +864,7 @@ struct btree_nr_keys bch_extent_sort_fix_overlapping(struct btree_keys *b,
 
 			extent_sort_sift(iter, b, 0);
 
-			extent_sort_append(b, &nr, bset->start, &prev,
+			extent_sort_append(b, &nr, dst->start, &prev,
 						 bkey_to_packed(&tmp.k));
 		} else {
 			bch_cut_back(bkey_start_pos(r.k), l.k);
@@ -878,10 +877,10 @@ struct btree_nr_keys bch_extent_sort_fix_overlapping(struct btree_keys *b,
 		btree_keys_account_key_add(&nr, 0, prev);
 		out = bkey_next(prev);
 	} else {
-		out = bset->start;
+		out = dst->start;
 	}
 
-	bset->u64s = cpu_to_le16((u64 *) out - bset->_data);
+	dst->u64s = cpu_to_le16((u64 *) out - dst->_data);
 	return nr;
 }
 
@@ -2385,23 +2384,12 @@ static bool bch_extent_merge_inline(struct btree_iter *iter,
 	}
 }
 
-static const struct btree_keys_ops bch_extent_ops = {
-	.key_normalize	= bch_ptr_normalize,
-	.key_merge	= bch_extent_merge,
-	.is_extents	= true,
-};
-
 const struct bkey_ops bch_bkey_extent_ops = {
 	.key_invalid	= bch_extent_invalid,
 	.key_debugcheck	= bch_extent_debugcheck,
 	.val_to_text	= bch_extent_to_text,
 	.swab		= bch_ptr_swab,
+	.key_normalize	= bch_ptr_normalize,
+	.key_merge	= bch_extent_merge,
 	.is_extents	= true,
-};
-
-const struct btree_keys_ops *bch_btree_ops[] = {
-	[BTREE_ID_EXTENTS]	= &bch_extent_ops,
-	[BTREE_ID_INODES]	= &bch_inode_ops,
-	[BTREE_ID_DIRENTS]	= &bch_dirent_ops,
-	[BTREE_ID_XATTRS]	= &bch_xattr_ops,
 };

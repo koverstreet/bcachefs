@@ -148,7 +148,9 @@ static bool btree_gc_mark_node(struct cache_set *c, struct btree *b)
 		struct bkey_s_c k;
 		u8 stale = 0;
 
-		for_each_btree_node_key_unpack(&b->keys, k, &iter, &unpacked) {
+		for_each_btree_node_key_unpack(&b->keys, k, &iter,
+					       btree_node_is_extents(b),
+					       &unpacked) {
 			bkey_debugcheck(c, b, k);
 			stale = max(stale, btree_mark_key(c, b, k));
 		}
@@ -849,8 +851,9 @@ static void bch_initial_gc_btree(struct cache_set *c, enum btree_id id)
 			struct bkey unpacked;
 			struct bkey_s_c k;
 
-			for_each_btree_node_key_unpack(&b->keys, k,
-						       &node_iter, &unpacked)
+			for_each_btree_node_key_unpack(&b->keys, k, &node_iter,
+						       btree_node_is_extents(b),
+						       &unpacked)
 				btree_mark_key(c, b, k);
 		}
 

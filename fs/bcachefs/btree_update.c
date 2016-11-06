@@ -306,6 +306,37 @@ static struct btree *bch_btree_node_alloc(struct cache_set *c,
 	return b;
 }
 
+static void bch_btree_sort_into(struct cache_set *c,
+				struct btree *dst,
+				struct btree *src)
+{
+	struct btree_nr_keys nr;
+	struct btree_node_iter iter;
+	u64 start_time = local_clock();
+
+	BUG_ON(dst->keys.nsets);
+
+	dst->keys.set[0].extra = BSET_NO_AUX_TREE_VAL;
+
+	bch_btree_node_iter_init_from_start(&iter, &src->keys,
+					    btree_node_is_extents(src));
+
+	nr = bch_sort_bsets(dst->keys.set->data,
+			    &src->keys, &iter,
+			    &src->keys.format,
+			    &dst->keys.format,
+			    btree_node_ops(src)->key_normalize,
+			    btree_node_ops(src)->key_merge);
+	bch_time_stats_update(&c->btree_sort_time, start_time);
+
+	dst->keys.nr.live_u64s		+= nr.live_u64s;
+	dst->keys.nr.bset_u64s[0]	+= nr.bset_u64s[0];
+	dst->keys.nr.packed_keys	+= nr.packed_keys;
+	dst->keys.nr.unpacked_keys	+= nr.unpacked_keys;
+
+	bch_verify_btree_nr_keys(&dst->keys);
+}
+
 struct btree *__btree_node_alloc_replacement(struct cache_set *c,
 					     struct btree *b,
 					     struct bkey_format format,
@@ -320,9 +351,8 @@ struct btree *__btree_node_alloc_replacement(struct cache_set *c,
 	n->data->format		= format;
 	n->keys.format		= format;
 
-	bch_btree_sort_into(&n->keys, &b->keys,
-			    b->keys.ops->key_normalize,
-			    &c->sort);
+	bch_btree_sort_into(c, n, b);
+
 	btree_node_reset_sib_u64s(n);
 
 	n->key.k.p = b->key.k.p;
@@ -1071,7 +1101,7 @@ static void btree_node_interior_verify(struct btree *b)
 
 	BUG_ON(!b->level);
 
-	bch_btree_node_iter_init(&iter, &b->keys, b->key.k.p, false);
+	bch_btree_node_iter_init(&iter, &b->keys, b->key.k.p, false, false);
 #if 1
 	BUG_ON(!(k = bch_btree_node_iter_peek(&iter, &b->keys)) ||
 	       bkey_cmp_left_packed(f, k, b->key.k.p));
@@ -1097,7 +1127,7 @@ static void btree_node_interior_verify(struct btree *b)
 		goto err;
 	return;
 err:
-	bch_dump_bucket(&b->keys);
+	bch_dump_btree_node(&b->keys);
 	printk(KERN_ERR "last key %llu:%llu %s\n", b->key.k.p.inode,
 	       b->key.k.p.offset, msg);
 	BUG();
@@ -1238,9 +1268,9 @@ static struct btree *__btree_split_node(struct btree_iter *iter, struct btree *n
 		    le16_to_cpu(set2->u64s));
 
 	n1->keys.set->size = 0;
-	n1->keys.set->extra = BSET_AUX_TREE_NONE_VAL;
+	n1->keys.set->extra = BSET_NO_AUX_TREE_VAL;
 	n2->keys.set->size = 0;
-	n2->keys.set->extra = BSET_AUX_TREE_NONE_VAL;
+	n2->keys.set->extra = BSET_NO_AUX_TREE_VAL;
 
 	btree_node_reset_sib_u64s(n1);
 	btree_node_reset_sib_u64s(n2);
@@ -1276,10 +1306,9 @@ static void btree_split_insert_keys(struct btree_iter *iter, struct btree *b,
 	struct bkey_packed *p;
 	struct bset *i;
 
-	BUG_ON(!b->level);
-	BUG_ON(b->keys.ops->is_extents);
+	BUG_ON(btree_node_type(b) != BKEY_TYPE_BTREE);
 
-	bch_btree_node_iter_init(&node_iter, &b->keys, k->k.p, false);
+	bch_btree_node_iter_init(&node_iter, &b->keys, k->k.p, false, false);
 
 	while (!bch_keylist_empty(keys)) {
 		k = bch_keylist_front(keys);
@@ -1660,12 +1689,8 @@ retry:
 	n->keys.format		= new_f;
 	n->key.k.p		= next->key.k.p;
 
-	bch_btree_sort_into(&n->keys, &prev->keys,
-			    b->keys.ops->key_normalize,
-			    &c->sort);
-	bch_btree_sort_into(&n->keys, &next->keys,
-			    b->keys.ops->key_normalize,
-			    &c->sort);
+	bch_btree_sort_into(c, n, prev);
+	bch_btree_sort_into(c, n, next);
 	six_unlock_write(&n->lock);
 
 	bkey_init(&delete.k);
@@ -1722,7 +1747,7 @@ btree_insert_key(struct btree_insert *trans,
 	int old_live_u64s = b->keys.nr.live_u64s;
 	int live_u64s_added, u64s_added;
 
-	ret = !b->keys.ops->is_extents
+	ret = !btree_node_is_extents(b)
 		? bch_insert_fixup_key(trans, insert, res)
 		: bch_insert_fixup_extent(trans, insert, res);
 
@@ -2132,7 +2157,7 @@ int bch_btree_delete_range(struct cache_set *c, enum btree_id id,
 		delete.k.p = iter.pos;
 		delete.k.version = version;
 
-		if (iter.nodes[0]->keys.ops->is_extents) {
+		if (iter.is_extents) {
 			/*
 			 * The extents btree is special - KEY_TYPE_DISCARD is
 			 * used for deletions, not KEY_TYPE_DELETED. This is an

@@ -100,9 +100,6 @@ static void bch_inode_to_text(struct cache_set *c, char *buf,
 	}
 }
 
-const struct btree_keys_ops bch_inode_ops = {
-};
-
 const struct bkey_ops bch_bkey_inode_ops = {
 	.key_invalid	= bch_inode_invalid,
 	.val_to_text	= bch_inode_to_text,

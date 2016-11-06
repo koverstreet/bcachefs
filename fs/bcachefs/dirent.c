@@ -138,9 +138,6 @@ static void bch_dirent_to_text(struct cache_set *c, char *buf,
 	}
 }
 
-const struct btree_keys_ops bch_dirent_ops = {
-};
-
 const struct bkey_ops bch_bkey_dirent_ops = {
 	.key_invalid	= bch_dirent_invalid,
 	.val_to_text	= bch_dirent_to_text,
