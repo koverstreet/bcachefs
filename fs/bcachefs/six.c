@@ -21,6 +21,9 @@ struct six_lock_vals {
 	/* Value we add to the lock in order to release the lock: */
 	u64			unlock_val;
 
+	/* Mask that indicates lock is held for this type: */
+	u64			held_mask;
+
 	/* Waitlist we wakeup when releasing the lock: */
 	enum six_lock_type	unlock_wakeup;
 };
@@ -30,18 +33,21 @@ struct six_lock_vals {
 		.lock_val	= __SIX_VAL(read_lock, 1),		\
 		.lock_fail	= __SIX_LOCK_HELD_write,		\
 		.unlock_val	= -__SIX_VAL(read_lock, 1),		\
+		.held_mask	= __SIX_LOCK_HELD_read,			\
 		.unlock_wakeup	= SIX_LOCK_write,			\
 	},								\
 	[SIX_LOCK_intent] = {						\
 		.lock_val	= __SIX_VAL(intent_lock, 1),		\
 		.lock_fail	= __SIX_LOCK_HELD_intent,		\
 		.unlock_val	= -__SIX_VAL(intent_lock, 1),		\
+		.held_mask	= __SIX_LOCK_HELD_intent,		\
 		.unlock_wakeup	= SIX_LOCK_intent,			\
 	},								\
 	[SIX_LOCK_write] = {						\
 		.lock_val	= __SIX_VAL(seq, 1),			\
 		.lock_fail	= __SIX_LOCK_HELD_read,			\
 		.unlock_val	= __SIX_VAL(seq, 1),			\
+		.held_mask	= __SIX_LOCK_HELD_write,		\
 		.unlock_wakeup	= SIX_LOCK_read,			\
 	},								\
 }
@@ -329,6 +335,10 @@ void six_unlock_type(struct six_lock *lock, enum six_lock_type type)
 	union six_lock_state state;
 
 	six_clear_owner(lock, type);
+
+	EBUG_ON(!(lock->state.v & l[type].held_mask));
+	EBUG_ON(type == SIX_LOCK_write &&
+		!(lock->state.v & __SIX_LOCK_HELD_intent));
 
 	state.v = atomic64_add_return_release(l[type].unlock_val,
 					      &lock->state.counter);
