@@ -1218,8 +1218,6 @@ static struct btree *__btree_split_node(struct btree_iter *iter, struct btree *n
 	n2->keys.set->size = 0;
 	n2->keys.set->extra = BSET_AUX_TREE_NONE_VAL;
 
-	six_unlock_write(&n2->lock);
-
 	bch_verify_btree_nr_keys(&n1->keys);
 	bch_verify_btree_nr_keys(&n2->keys);
 
@@ -1231,20 +1229,30 @@ static struct btree *__btree_split_node(struct btree_iter *iter, struct btree *n
 	return n2;
 }
 
+/*
+ * For updates to interior nodes, we've got to do the insert before we split
+ * because the stuff we're inserting has to be inserted atomically. Post split,
+ * the keys might have to go in different nodes and the split would no longer be
+ * atomic.
+ *
+ * Worse, if the insert is from btree node coalescing, if we do the insert after
+ * we do the split (and pick the pivot) - the pivot we pick might be between
+ * nodes that were coalesced, and thus in the middle of a child node post
+ * coalescing:
+ */
 static void btree_split_insert_keys(struct btree_iter *iter, struct btree *b,
 				    struct keylist *keys,
-				    struct btree_reserve *res,
-				    bool is_last)
+				    struct btree_reserve *res)
 {
 	struct btree_node_iter node_iter;
 	struct bkey_i *k = bch_keylist_front(keys);
+	struct bkey_packed *p;
+	struct bset *i;
 
 	BUG_ON(!b->level);
 	BUG_ON(b->keys.ops->is_extents);
 
 	bch_btree_node_iter_init(&node_iter, &b->keys, k->k.p, false);
-
-	six_lock_write(&b->lock);
 
 	while (!bch_keylist_empty(keys)) {
 		k = bch_keylist_front(keys);
@@ -1252,17 +1260,30 @@ static void btree_split_insert_keys(struct btree_iter *iter, struct btree *b,
 		BUG_ON(bch_keylist_u64s(keys) >
 		       bch_btree_keys_u64s_remaining(iter->c, b));
 		BUG_ON(bkey_cmp(k->k.p, b->data->min_key) < 0);
-
-		if (bkey_cmp(k->k.p, b->key.k.p) > 0) {
-			BUG_ON(is_last);
-			break;
-		}
+		BUG_ON(bkey_cmp(k->k.p, b->data->max_key) > 0);
 
 		bch_insert_fixup_btree_ptr(iter, b, k, &node_iter, &res->disk_res);
 		bch_keylist_pop_front(keys);
 	}
 
-	six_unlock_write(&b->lock);
+	/*
+	 * We can't tolerate whiteouts here - with whiteouts there can be
+	 * duplicate keys, and it would be rather bad if we picked a duplicate
+	 * for the pivot:
+	 */
+	i = btree_bset_first(b);
+	p = i->start;
+	while (p != bset_bkey_last(i))
+		if (bkey_deleted(p)) {
+			i->u64s = cpu_to_le16(le16_to_cpu(i->u64s) - p->u64s);
+			memmove_u64s_down(p, bkey_next(p),
+					  (u64 *) bset_bkey_last(i) -
+					  (u64 *) p);
+		} else
+			p = bkey_next(p);
+
+	BUG_ON(b->keys.nsets ||
+	       b->keys.nr.live_u64s != le16_to_cpu(b->keys.set->data->u64s));
 
 	btree_node_interior_verify(b);
 }
@@ -1275,9 +1296,7 @@ static void btree_split(struct btree *b, struct btree_iter *iter,
 	struct cache_set *c = iter->c;
 	struct btree *parent = iter->nodes[b->level + 1];
 	struct btree *n1, *n2 = NULL, *n3 = NULL;
-	uint64_t start_time = local_clock();
-	unsigned u64s_to_insert = b->level
-		? bch_keylist_u64s(insert_keys) : 0;
+	u64 start_time = local_clock();
 
 	BUG_ON(!parent && (b != btree_node_root(b)));
 	BUG_ON(!btree_node_intent_locked(iter, btree_node_root(b)->level));
@@ -1285,59 +1304,16 @@ static void btree_split(struct btree *b, struct btree_iter *iter,
 	bch_btree_interior_update_will_free_node(c, as, b);
 
 	n1 = btree_node_alloc_replacement(c, b, reserve);
-
-	/*
-	 * For updates to interior nodes, we've got to do the insert
-	 * before we split because the stuff we're inserting has to be
-	 * inserted atomically. Post split, the keys might have to go in
-	 * different nodes and the split would no longer be atomic.
-	 *
-	 * Worse, if the insert is from btree node coalescing, if we do the
-	 * insert after we do the split (and pick the pivot) - the pivot we pick
-	 * might be between nodes that were coalesced, and thus in the middle of
-	 * a child node post coalescing:
-	 */
-	if (b->level) {
-		struct bkey_packed *k;
-		struct bset *i;
-
-		six_unlock_write(&n1->lock);
-		btree_split_insert_keys(iter, n1, insert_keys, reserve, true);
-		six_lock_write(&n1->lock);
-
-		/*
-		 * There might be duplicate (deleted) keys after the
-		 * bch_btree_insert_keys() call - we need to remove them before
-		 * we split, as it would be rather bad if we picked a duplicate
-		 * for the pivot.
-		 *
-		 * Additionally, inserting might overwrite a bunch of existing
-		 * keys (i.e. a big discard when there were a bunch of small
-		 * extents previously) - we might not want to split after the
-		 * insert. Splitting a node that's too small to be split would
-		 * be bad (if the node had only one key, we wouldn't be able to
-		 * assign the new node a key different from the original node)
-		 */
-		i = btree_bset_first(n1);
-		k = i->start;
-		while (k != bset_bkey_last(i))
-			if (bkey_deleted(k)) {
-				i->u64s = cpu_to_le16(le16_to_cpu(i->u64s) - k->u64s);
-				memmove_u64s_down(k, bkey_next(k),
-						  (u64 *) bset_bkey_last(i) -
-						  (u64 *) k);
-			} else
-				k = bkey_next(k);
-
-		btree_node_interior_verify(n1);
-	}
+	if (b->level)
+		btree_split_insert_keys(iter, n1, insert_keys, reserve);
 
 	if (__set_blocks(n1->data,
-			 le16_to_cpu(n1->data->keys.u64s) + u64s_to_insert,
-			 block_bytes(n1->c)) > btree_blocks(c) * 3 / 4) {
-		trace_bcache_btree_node_split(b, le16_to_cpu(btree_bset_first(n1)->u64s));
+			 le16_to_cpu(n1->data->keys.u64s),
+			 block_bytes(c)) > BTREE_SPLIT_THRESHOLD(c)) {
+		trace_bcache_btree_node_split(b, b->keys.nr.live_u64s);
 
 		n2 = __btree_split_node(iter, n1, reserve);
+		six_unlock_write(&n2->lock);
 		six_unlock_write(&n1->lock);
 
 		bch_btree_node_write(n2, &as->cl, NULL);
@@ -1357,11 +1333,11 @@ static void btree_split(struct btree *b, struct btree_iter *iter,
 						reserve);
 
 			btree_split_insert_keys(iter, n3, &as->parent_keys,
-						reserve, true);
+						reserve);
 			bch_btree_node_write(n3, &as->cl, NULL);
 		}
 	} else {
-		trace_bcache_btree_node_compact(b, le16_to_cpu(btree_bset_first(n1)->u64s));
+		trace_bcache_btree_node_compact(b, b->keys.nr.live_u64s);
 		six_unlock_write(&n1->lock);
 
 		bch_keylist_add(&as->parent_keys, &n1->key);
@@ -1443,14 +1419,16 @@ void bch_btree_insert_node(struct btree *b,
 	}
 }
 
-static int bch_btree_split_leaf(struct btree_iter *iter, unsigned flags,
-				struct closure *cl)
+static int bch_btree_split_leaf(struct btree_iter *iter, unsigned flags)
 {
 	struct cache_set *c = iter->c;
 	struct btree *b = iter->nodes[0];
 	struct btree_reserve *reserve;
 	struct btree_interior_update *as;
+	struct closure cl;
 	int ret = 0;
+
+	closure_init_stack(&cl);
 
 	/* Hack, because gc and splitting nodes doesn't mix yet: */
 	if (!down_read_trylock(&c->gc_lock)) {
@@ -1468,9 +1446,14 @@ static int bch_btree_split_leaf(struct btree_iter *iter, unsigned flags,
 	}
 
 	reserve = bch_btree_reserve_get(c, b, 0,
-			!(flags & BTREE_INSERT_NOFAIL), cl);
+			!(flags & BTREE_INSERT_NOFAIL), &cl);
 	if (IS_ERR(reserve)) {
 		ret = PTR_ERR(reserve);
+		if (ret == -EAGAIN) {
+			bch_btree_iter_unlock(iter);
+			closure_sync(&cl);
+			ret = -EINTR;
+		}
 		goto out;
 	}
 
@@ -1574,12 +1557,9 @@ int __bch_btree_insert_at(struct btree_insert *trans, u64 *journal_seq)
 	struct journal_res res = { 0, 0 };
 	struct btree_insert_entry *i;
 	struct btree_iter *split = NULL;
-	struct closure cl;
 	bool cycle_gc_lock = false;
 	unsigned u64s;
 	int ret;
-
-	closure_init_stack(&cl);
 
 	trans_for_each_entry(trans, i) {
 		EBUG_ON(i->iter->level);
@@ -1689,7 +1669,7 @@ split:
 	 * allocating new btree nodes, and holding a journal reservation
 	 * potentially blocks the allocator:
 	 */
-	ret = bch_btree_split_leaf(split, trans->flags, &cl);
+	ret = bch_btree_split_leaf(split, trans->flags);
 	if (ret)
 		goto err;
 	/*
@@ -1699,12 +1679,6 @@ split:
 	 */
 	goto retry_locks;
 err:
-	if (ret == -EAGAIN) {
-		bch_btree_iter_unlock(split);
-		closure_sync(&cl);
-		ret = -EINTR;
-	}
-
 	if (cycle_gc_lock) {
 		down_read(&c->gc_lock);
 		up_read(&c->gc_lock);

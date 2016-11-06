@@ -11,6 +11,8 @@ struct bkey_format_state;
 struct bkey_format;
 struct btree;
 
+#define BTREE_SPLIT_THRESHOLD(c)		(btree_blocks(c) * 3 / 4)
+
 struct btree_reserve {
 	struct disk_reservation	disk_res;
 	unsigned		nr;
