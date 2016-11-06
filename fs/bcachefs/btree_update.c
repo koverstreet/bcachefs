@@ -34,7 +34,7 @@ void __bch_btree_calc_format(struct bkey_format_state *s, struct btree *b)
 		for (k = t->data->start;
 		     k != bset_bkey_last(t->data);
 		     k = bkey_next(k))
-			if (!bkey_packed_is_whiteout(&b->keys, k)) {
+			if (!bkey_whiteout(k)) {
 				uk = bkey_unpack_key(&b->keys.format, k);
 				bch_bkey_format_add_key(s, &uk);
 			}
@@ -605,7 +605,7 @@ int bch_btree_root_alloc(struct cache_set *c, enum btree_id id,
 
 	b = __btree_root_alloc(c, 0, id, reserve);
 
-	bch_btree_node_write(c, b, writes, SIX_LOCK_intent, NULL, -1);
+	bch_btree_node_write(c, b, writes, SIX_LOCK_intent, -1);
 
 	bch_btree_set_root_initial(c, b, reserve);
 	btree_open_bucket_put(c, b);
@@ -674,7 +674,7 @@ void bch_btree_bset_insert_key(struct btree_iter *iter,
 	if (k && !bkey_cmp_packed(f, k, &insert->k)) {
 		t = bch_bkey_to_bset(&b->keys, k);
 
-		if (!bkey_packed_is_whiteout(&b->keys, k))
+		if (!bkey_whiteout(k))
 			btree_keys_account_key_drop(&b->keys.nr,
 						t - b->keys.set, k);
 
@@ -800,16 +800,18 @@ static void verify_keys_sorted(struct keylist *l)
 static void btree_node_lock_for_insert(struct btree *b, struct btree_iter *iter)
 {
 	struct cache_set *c = iter->c;
+	struct bset *i;
 relock:
 	btree_node_lock_write(b, iter);
+	i = btree_bset_last(b);
 
 	/*
-	 * If the last bset has been written, initialize a new one - check after
-	 * taking the write lock because it can be written with only a read
-	 * lock:
+	 * If the last bset has been written, or if it's gotten too big - start
+	 * a new bset to insert into:
 	 */
-	if (b->written != c->sb.btree_node_size &&
-	    bset_written(b, btree_bset_last(b))) {
+	if (next_bset_offset(c, b) < c->sb.btree_node_size &&
+	    (bset_written(b, i) ||
+	     le16_to_cpu(i->u64s) * sizeof(u64) > BTREE_WRITE_SET_BUFFER)) {
 		btree_node_unlock_write(b, iter);
 		bch_btree_init_next(c, b, iter);
 		goto relock;
@@ -914,8 +916,7 @@ retry:
 		list_del(&as->write_blocked_list);
 
 		if (list_empty(&b->write_blocked))
-			bch_btree_node_write(c, b, NULL, SIX_LOCK_read,
-					     NULL, -1);
+			bch_btree_node_write(c, b, NULL, SIX_LOCK_read, -1);
 		six_unlock_read(&b->lock);
 		break;
 
@@ -1159,7 +1160,7 @@ bch_btree_insert_keys_interior(struct btree *b,
 	btree_node_lock_for_insert(b, iter);
 
 	if (bch_keylist_u64s(insert_keys) >
-	    bch_btree_keys_u64s_remaining(iter->c, b)) {
+	    bch_btree_keys_u64s_remaining(c, b)) {
 		btree_node_unlock_write(b, iter);
 		return BTREE_INSERT_BTREE_NODE_FULL;
 	}
@@ -1184,7 +1185,7 @@ bch_btree_insert_keys_interior(struct btree *b,
 		bch_keylist_pop_front(insert_keys);
 	}
 
-	btree_interior_update_updated_btree(iter->c, as, b);
+	btree_interior_update_updated_btree(c, as, b);
 
 	for_each_linked_btree_node(iter, b, linked)
 		bch_btree_node_iter_peek(&linked->node_iters[b->level],
@@ -1193,7 +1194,7 @@ bch_btree_insert_keys_interior(struct btree *b,
 
 	bch_btree_iter_verify(iter, b);
 
-	if (bch_maybe_compact_deleted_keys(&b->keys))
+	if (bch_maybe_compact_whiteouts(c, b))
 		bch_btree_iter_reinit_node(iter, b);
 
 	btree_node_unlock_write(b, iter);
@@ -1375,7 +1376,7 @@ static void btree_split(struct btree *b, struct btree_iter *iter,
 		six_unlock_write(&n2->lock);
 		six_unlock_write(&n1->lock);
 
-		bch_btree_node_write(c, n2, &as->cl, SIX_LOCK_intent, NULL, -1);
+		bch_btree_node_write(c, n2, &as->cl, SIX_LOCK_intent, -1);
 
 		/*
 		 * Note that on recursive parent_keys == insert_keys, so we
@@ -1395,8 +1396,7 @@ static void btree_split(struct btree *b, struct btree_iter *iter,
 
 			btree_split_insert_keys(iter, n3, &as->parent_keys,
 						reserve);
-			bch_btree_node_write(c, n3, &as->cl, SIX_LOCK_intent,
-					     NULL, -1);
+			bch_btree_node_write(c, n3, &as->cl, SIX_LOCK_intent, -1);
 		}
 	} else {
 		trace_bcache_btree_node_compact(c, b, b->keys.nr.live_u64s);
@@ -1407,7 +1407,7 @@ static void btree_split(struct btree *b, struct btree_iter *iter,
 		bch_keylist_add(&as->parent_keys, &n1->key);
 	}
 
-	bch_btree_node_write(c, n1, &as->cl, SIX_LOCK_intent, NULL, -1);
+	bch_btree_node_write(c, n1, &as->cl, SIX_LOCK_intent, -1);
 
 	/* New nodes all written, now make them visible: */
 
@@ -1706,7 +1706,7 @@ retry:
 	bch_keylist_add(&as->parent_keys, &delete);
 	bch_keylist_add(&as->parent_keys, &n->key);
 
-	bch_btree_node_write(c, n, &as->cl, SIX_LOCK_intent, NULL, -1);
+	bch_btree_node_write(c, n, &as->cl, SIX_LOCK_intent, -1);
 
 	bch_btree_insert_node(parent, iter, &as->parent_keys, reserve, as);
 
@@ -1768,7 +1768,7 @@ btree_insert_key(struct btree_insert *trans,
 		b->sib_u64s[1] = max(0, (int) b->sib_u64s[1] + live_u64s_added);
 
 	if (u64s_added > live_u64s_added &&
-	    bch_maybe_compact_deleted_keys(&b->keys))
+	    bch_maybe_compact_whiteouts(iter->c, b))
 		bch_btree_iter_reinit_node(iter, b);
 
 	trace_bcache_btree_insert_key(c, b, insert->k);
@@ -1944,10 +1944,6 @@ unlock:
 		if (!same_leaf_as_prev(trans, i)) {
 			foreground_maybe_merge(i->iter, btree_prev_sib);
 			foreground_maybe_merge(i->iter, btree_next_sib);
-
-			if (btree_node_relock(i->iter, 0))
-				bch_btree_node_write_lazy(c, i->iter->nodes[0],
-							  i->iter);
 		}
 out:
 	/* make sure we didn't lose an error: */
@@ -2238,7 +2234,7 @@ int bch_btree_node_rewrite(struct btree_iter *iter, struct btree *b,
 
 	trace_bcache_btree_gc_rewrite_node(c, b);
 
-	bch_btree_node_write(c, n, &as->cl, SIX_LOCK_intent, NULL, -1);
+	bch_btree_node_write(c, n, &as->cl, SIX_LOCK_intent, -1);
 
 	if (parent) {
 		bch_btree_insert_node(parent, iter,

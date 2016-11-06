@@ -58,7 +58,7 @@ static inline bool should_drop_next_key(struct btree_node_iter *iter,
 	struct btree_node_iter_set *l = iter->data, *r = iter->data + 1;
 	struct bkey_packed *k = __btree_node_offset_to_key(b, l->k);
 
-	if (bkey_packed_is_whiteout(b, k))
+	if (bkey_whiteout(k))
 		return true;
 
 	if (iter->used < 2)
@@ -741,7 +741,7 @@ static void extent_sort_append(struct cache_set *c,
 	struct bkey_format *f = &b->format;
 	BKEY_PADDED(k) tmp;
 
-	if (bkey_packed_is_whiteout(b, k))
+	if (bkey_whiteout(k))
 		return;
 
 	bkey_unpack(&tmp.k, f, k);
@@ -1416,7 +1416,7 @@ bch_insert_fixup_extent(struct btree_insert *trans,
 			struct bpos orig_pos = k.k->p;
 
 			/* The insert key completely covers k, invalidate k */
-			if (!bkey_is_whiteout(k.k))
+			if (!bkey_whiteout(k.k))
 				btree_keys_account_key_drop(&b->keys.nr,
 							t - b->keys.set, _k);
 

@@ -73,6 +73,9 @@ static inline void set_bkey_deleted(struct bkey *k)
 
 #define bkey_deleted(_k)	((_k)->type == KEY_TYPE_DELETED)
 
+#define bkey_whiteout(_k)				\
+	((_k)->type == KEY_TYPE_DELETED || (_k)->type == KEY_TYPE_DISCARD)
+
 static inline void __memcpy_u64s(void *dst, const void *src,
 				 unsigned u64s)
 {
@@ -352,6 +355,12 @@ static inline size_t bkeyp_val_bytes(const struct bkey_format *format,
 				     const struct bkey_packed *k)
 {
 	return bkeyp_val_u64s(format, k) * sizeof(u64);
+}
+
+static inline void set_bkeyp_val_u64s(const struct bkey_format *format,
+				      struct bkey_packed *k, unsigned val_u64s)
+{
+	k->u64s = bkeyp_key_u64s(format, k) + val_u64s;
 }
 
 #define bkeyp_val(_format, _k)						\

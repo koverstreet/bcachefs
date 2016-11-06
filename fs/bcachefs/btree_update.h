@@ -186,6 +186,23 @@ static inline bool bset_unwritten(struct btree *b, struct bset *i)
 	return (void *) i > write_block(b);
 }
 
+static inline unsigned bset_end_sector(struct cache_set *c, struct btree *b,
+				       struct bset *i)
+{
+	return round_up(bset_byte_offset(b, bset_bkey_last(i)),
+			block_bytes(c)) >> 9;
+}
+
+static inline unsigned next_bset_offset(struct cache_set *c, struct btree *b)
+{
+
+	unsigned offset = max_t(unsigned, b->written,
+			bset_end_sector(c, b, btree_bset_last(b)));
+
+	EBUG_ON(offset > c->sb.btree_node_size);
+	return offset;
+}
+
 static inline size_t bch_btree_keys_u64s_remaining(struct cache_set *c,
 						   struct btree *b)
 {
