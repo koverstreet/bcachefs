@@ -36,6 +36,11 @@ static inline size_t btree_bytes(struct cache_set *c)
 	return c->sb.btree_node_size << 9;
 }
 
+static inline size_t btree_max_u64s(struct cache_set *c)
+{
+	return (btree_bytes(c) - sizeof(struct btree_node)) / sizeof(u64);
+}
+
 static inline size_t btree_pages(struct cache_set *c)
 {
 	return c->sb.btree_node_size >> (PAGE_SHIFT - 9);

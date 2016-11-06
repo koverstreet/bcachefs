@@ -45,6 +45,7 @@ struct btree {
 	u16			written;
 	u8			level;
 	u8			btree_id;
+	u16			sib_u64s[2];
 	/*
 	 * XXX: add a delete sequence number, so when btree_node_relock() fails
 	 * because the lock sequence number has changed - i.e. the contents were

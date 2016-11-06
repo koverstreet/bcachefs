@@ -539,6 +539,8 @@ out:
 	b->written	= 0;
 	b->keys.nsets	= 0;
 	b->keys.set[0].data = NULL;
+	b->sib_u64s[0]	= 0;
+	b->sib_u64s[1]	= 0;
 
 	bch_time_stats_update(&c->mca_alloc_time, start_time);
 

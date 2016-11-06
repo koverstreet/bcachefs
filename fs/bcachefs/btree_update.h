@@ -13,6 +13,17 @@ struct btree;
 
 #define BTREE_SPLIT_THRESHOLD(c)		(btree_blocks(c) * 3 / 4)
 
+#define BTREE_FOREGROUND_MERGE_THRESHOLD(c)	(btree_max_u64s(c) * 1 / 3)
+#define BTREE_FOREGROUND_MERGE_HYSTERESIS(c)			\
+	(BTREE_FOREGROUND_MERGE_THRESHOLD(c) +			\
+	 (BTREE_FOREGROUND_MERGE_THRESHOLD(c) << 2))
+
+static inline void btree_node_reset_sib_u64s(struct btree *b)
+{
+	b->sib_u64s[0] = b->keys.nr.live_u64s;
+	b->sib_u64s[1] = b->keys.nr.live_u64s;
+}
+
 struct btree_reserve {
 	struct disk_reservation	disk_res;
 	unsigned		nr;

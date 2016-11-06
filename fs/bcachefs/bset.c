@@ -1636,7 +1636,7 @@ static struct btree_nr_keys btree_mergesort(struct btree_keys *dst,
 {
 	struct bkey_format *in_f = &src->format;
 	struct bkey_format *out_f = &dst->format;
-	struct bkey_packed *in, *out = dst_set->start;
+	struct bkey_packed *in, *out = bset_bkey_last(dst_set);
 	struct btree_nr_keys nr;
 
 	BUG_ON(filter);
@@ -1712,7 +1712,7 @@ static struct btree_nr_keys btree_mergesort_extents(struct btree_keys *dst,
 			btree_keys_account_key_add(&nr, 0, prev);
 			prev = bkey_next(prev);
 		} else {
-			prev = dst_set->start;
+			prev = bset_bkey_last(dst_set);
 		}
 
 		bkey_copy(prev, &tmp.k);
@@ -1726,7 +1726,7 @@ static struct btree_nr_keys btree_mergesort_extents(struct btree_keys *dst,
 		btree_keys_account_key_add(&nr, 0, prev);
 		out = bkey_next(prev);
 	} else {
-		out = dst_set->start;
+		out = bset_bkey_last(dst_set);
 	}
 
 	dst_set->u64s = cpu_to_le16((u64 *) out - dst_set->_data);
@@ -1754,6 +1754,8 @@ struct btree_nr_keys bch_sort_bsets(struct bset *dst, struct btree_keys *b,
 						   bset_bkey_last(t->data));
 		bch_btree_node_iter_sort(iter, b);
 	}
+
+	dst->u64s = 0;
 
 	/*
 	 * If we're only doing a partial sort (start != 0), then we can't merge
@@ -1803,7 +1805,11 @@ void bch_btree_sort_into(struct btree_keys *dst,
 
 	bch_time_stats_update(state->time, start_time);
 
-	dst->nr = nr;
+	dst->nr.live_u64s	+= nr.live_u64s;
+	dst->nr.bset_u64s[0]	+= nr.bset_u64s[0];
+	dst->nr.packed_keys	+= nr.packed_keys;
+	dst->nr.unpacked_keys	+= nr.unpacked_keys;
+
 	dst->nsets = 0;
 	/* No auxiliary search tree yet */
 	dst->set->size	= 0;

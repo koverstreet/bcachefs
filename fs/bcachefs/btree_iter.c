@@ -747,8 +747,6 @@ static int btree_iter_traverse_error(struct btree_iter *iter, int ret)
 	struct cache_set *c = iter->c;
 	struct btree_iter *linked, *sorted_iters, **i;
 retry_all:
-	for_each_linked_btree_iter(iter, linked)
-		bch_btree_iter_unlock(linked);
 	bch_btree_iter_unlock(iter);
 
 	if (ret != -ENOMEM && ret != -EINTR)

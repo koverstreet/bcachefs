@@ -10,6 +10,7 @@
 #include "btree_cache.h"
 #include "btree_io.h"
 #include "btree_iter.h"
+#include "btree_update.h"
 #include "buckets.h"
 #include "debug.h"
 #include "error.h"
@@ -309,6 +310,7 @@ static int print_btree_node(struct dump_iter *i, struct btree *b)
 			     "l %u %llu:%llu - %llu:%llu:\n"
 			     "    format: u64s %u fields %u %u %u %u %u\n"
 			     "    bytes used %zu/%zu (%zu%% full)\n"
+			     "    sib u64s: %u, %u (merge threshold %zu)\n"
 			     "    nr packed keys %u\n"
 			     "    nr unpacked keys %u\n"
 			     "    floats %zu\n"
@@ -328,8 +330,10 @@ static int print_btree_node(struct dump_iter *i, struct btree *b)
 			     f->bits_per_field[4],
 			     b->keys.nr.live_u64s * sizeof(u64),
 			     btree_bytes(i->c) - sizeof(struct btree_node),
-			     (b->keys.nr.live_u64s * sizeof(u64) * 100) /
-			     (btree_bytes(i->c) - sizeof(struct btree_node)),
+			     b->keys.nr.live_u64s * 100 / btree_max_u64s(i->c),
+			     b->sib_u64s[0],
+			     b->sib_u64s[1],
+			     BTREE_FOREGROUND_MERGE_THRESHOLD(i->c),
 			     b->keys.nr.packed_keys,
 			     b->keys.nr.unpacked_keys,
 			     stats.floats,

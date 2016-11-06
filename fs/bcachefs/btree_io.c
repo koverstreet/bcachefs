@@ -382,6 +382,8 @@ void bch_btree_node_read_done(struct cache_set *c, struct btree *b,
 			: bch_key_sort_fix_overlapping,
 			true);
 
+	btree_node_reset_sib_u64s(b);
+
 	err = "short btree key";
 	if (b->keys.set[0].size &&
 	    bkey_cmp_packed(&b->keys.format, &b->key.k,
