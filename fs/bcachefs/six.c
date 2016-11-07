@@ -387,3 +387,10 @@ void six_lock_increment(struct six_lock *lock, enum six_lock_type type)
 
 	atomic64_add(l[type].lock_val, &lock->state.counter);
 }
+
+/* Convert from intent to read: */
+void six_lock_downgrade(struct six_lock *lock)
+{
+	six_lock_increment(lock, SIX_LOCK_read);
+	six_unlock_intent(lock);
+}

@@ -104,6 +104,7 @@ void six_unlock_type(struct six_lock *, enum six_lock_type);
 bool six_trylock_convert(struct six_lock *, enum six_lock_type,
 			 enum six_lock_type);
 void six_lock_increment(struct six_lock *, enum six_lock_type);
+void six_lock_downgrade(struct six_lock *);
 
 #define __SIX_VAL(field, _v)	(((union six_lock_state) { .field = _v }).v)
 

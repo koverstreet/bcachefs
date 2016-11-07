@@ -607,9 +607,7 @@ static noinline struct btree *bch_btree_node_fill(struct btree_iter *iter,
 	six_unlock_write(&b->lock);
 
 	if (lock_type == SIX_LOCK_read)
-		BUG_ON(!six_trylock_convert(&b->lock,
-					    SIX_LOCK_intent,
-					    SIX_LOCK_read));
+		six_lock_downgrade(&b->lock);
 
 	return b;
 }

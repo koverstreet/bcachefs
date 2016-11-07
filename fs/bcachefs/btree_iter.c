@@ -218,9 +218,7 @@ static void btree_iter_drop_extra_locks(struct btree_iter *iter)
 		if (l > iter->level) {
 			btree_node_unlock(iter, l);
 		} else if (btree_node_intent_locked(iter, l)) {
-			BUG_ON(!six_trylock_convert(&iter->nodes[l]->lock,
-						    SIX_LOCK_intent,
-						    SIX_LOCK_read));
+			six_lock_downgrade(&iter->nodes[l]->lock);
 			iter->nodes_intent_locked ^= 1 << l;
 		}
 	}
