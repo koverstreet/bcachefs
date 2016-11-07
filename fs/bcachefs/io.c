@@ -362,10 +362,13 @@ static void bch_write_endio(struct bio *bio)
 				     "data write"))
 		set_closure_fn(cl, bch_write_io_error, op->c->wq);
 
-	if (wbio->orig)
+	if (wbio->orig) {
+		if (bio->bi_error)
+			wbio->orig->bi_error = bio->bi_error;
 		bio_endio(wbio->orig);
-	else if (wbio->bounce)
+	} else if (wbio->bounce) {
 		bch_bio_free_pages_pool(op->c, bio);
+	}
 
 	bch_account_io_completion_time(ca,
 				       wbio->bio.submit_time_us,
@@ -921,6 +924,9 @@ static void bch_rbio_done(struct cache_set *c, struct bch_read_bio *rbio)
 	rbio->ca = NULL;
 
 	if (rbio->split) {
+		if (rbio->bio.bi_error)
+			orig->bi_error = rbio->bio.bi_error;
+
 		bio_endio(orig);
 		bch_rbio_free(c, rbio);
 	} else {
