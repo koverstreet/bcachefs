@@ -31,6 +31,13 @@ struct closure;
 #define atomic64_sub_bug(i, v)	BUG_ON(atomic64_sub_return(i, v) < 0)
 #define atomic64_add_bug(i, v)	BUG_ON(atomic64_add_return(i, v) < 0)
 
+#define memcpy(_dst, _src, _len)					\
+do {									\
+	BUG_ON(!((void *) (_dst) >= (void *) (_src) + (_len) ||		\
+		 (void *) (_dst) + (_len) <= (void *) (_src)));		\
+	memcpy(_dst, _src, _len);					\
+} while (0)
+
 #else /* DEBUG */
 
 #define EBUG_ON(cond)
