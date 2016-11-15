@@ -7,9 +7,13 @@
 		type *data;						\
 	} name
 
-#define init_fifo(fifo, _size, gfp)					\
+#define init_fifo(fifo, _size, _gfp)					\
 ({									\
 	bool _ret = true;						\
+	gfp_t gfp_flags = (_gfp);					\
+									\
+	if (gfp_flags & GFP_KERNEL)					\
+		gfp_flags |= __GFP_NOWARN;				\
 									\
 	(fifo)->size	= (_size);					\
 	(fifo)->front	= (fifo)->back = 0;				\
@@ -24,8 +28,8 @@
 		(fifo)->mask = _allocated_size - 1;			\
 									\
 		if (_bytes < KMALLOC_MAX_SIZE)				\
-			(fifo)->data = kmalloc(_bytes, (gfp));		\
-		if ((!(fifo)->data) && ((gfp) & GFP_KERNEL))		\
+			(fifo)->data = kmalloc(_bytes, gfp_flags);	\
+		if ((!(fifo)->data) && (gfp_flags & GFP_KERNEL))	\
 			(fifo)->data = vmalloc(_bytes);			\
 		if ((!(fifo)->data))					\
 			_ret = false;					\
