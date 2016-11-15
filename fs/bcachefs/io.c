@@ -331,7 +331,7 @@ static void bch_write_io_error(struct closure *cl)
 
 			set_bkey_val_u64s(&src->k, 0);
 			src->k.type = KEY_TYPE_DISCARD;
-			memmove(dst, src, bkey_bytes(&src->k));
+			bkey_copy(dst, src);
 
 			dst = bkey_next(dst);
 			src = n;

@@ -91,9 +91,9 @@ static int bch_migrate_index_update(struct bch_write_op *op)
 			if (m->move)
 				__bch_extent_drop_ptr(e, ptr);
 
-			memcpy(extent_entry_last(e),
-			       &insert->v,
-			       bkey_val_bytes(&insert->k));
+			memcpy_u64s(extent_entry_last(e),
+				    &insert->v,
+				    bkey_val_u64s(&insert->k));
 			e.k->u64s += bkey_val_u64s(&insert->k);
 
 			bch_extent_narrow_crcs(e);

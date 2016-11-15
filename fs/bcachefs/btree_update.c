@@ -1209,9 +1209,9 @@ static struct btree *__btree_split_node(struct btree_iter *iter, struct btree *n
 	BUG_ON(!set1->u64s);
 	BUG_ON(!set2->u64s);
 
-	memcpy(set2->start,
-	       bset_bkey_last(set1),
-	       le16_to_cpu(set2->u64s) * sizeof(u64));
+	memcpy_u64s(set2->start,
+		    bset_bkey_last(set1),
+		    le16_to_cpu(set2->u64s));
 
 	n1->keys.set->size = 0;
 	n1->keys.set->extra = BSET_AUX_TREE_NONE_VAL;
@@ -1323,9 +1323,9 @@ static void btree_split(struct btree *b, struct btree_iter *iter,
 		while (k != bset_bkey_last(i))
 			if (bkey_deleted(k)) {
 				i->u64s = cpu_to_le16(le16_to_cpu(i->u64s) - k->u64s);
-				memmove(k, bkey_next(k),
-					(void *) bset_bkey_last(i) -
-					(void *) k);
+				memmove_u64s_down(k, bkey_next(k),
+						  (u64 *) bset_bkey_last(i) -
+						  (u64 *) k);
 			} else
 				k = bkey_next(k);
 

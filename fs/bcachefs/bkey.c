@@ -247,9 +247,9 @@ bool bch_bkey_transform(const struct bkey_format *out_f,
 	if (!bch_bkey_transform_key(out_f, out, in_f, in))
 		return false;
 
-	memcpy((u64 *) out + out_f->key_u64s,
-	       (u64 *) in + in_f->key_u64s,
-	       (in->u64s - in_f->key_u64s) * sizeof(u64));
+	memcpy_u64s((u64 *) out + out_f->key_u64s,
+		    (u64 *) in + in_f->key_u64s,
+		    (in->u64s - in_f->key_u64s));
 	return true;
 }
 
@@ -391,9 +391,9 @@ void bkey_unpack(struct bkey_i *dst,
 {
 	dst->k = bkey_unpack_key(format, src);
 
-	memcpy(&dst->v,
-	       bkeyp_val(format, src),
-	       bkeyp_val_bytes(format, src));
+	memcpy_u64s(&dst->v,
+		    bkeyp_val(format, src),
+		    bkeyp_val_u64s(format, src));
 }
 
 /**
@@ -407,11 +407,10 @@ bool bkey_pack(struct bkey_packed *out, const struct bkey_i *in,
 	if (!bkey_pack_key(&tmp, &in->k, format))
 		return false;
 
-	memmove((u64 *) out + format->key_u64s,
-		&in->v,
-		bkey_val_bytes(&in->k));
-	memcpy(out, &tmp,
-	       format->key_u64s * sizeof(u64));
+	memmove_u64s((u64 *) out + format->key_u64s,
+		     &in->v,
+		     bkey_val_u64s(&in->k));
+	memcpy_u64s(out, &tmp, format->key_u64s);
 
 	return true;
 }

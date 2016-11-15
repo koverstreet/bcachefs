@@ -233,8 +233,8 @@ static const char *validate_bset(struct cache_set *c, struct btree *b,
 					 "invalid bkey format %u", k->format);
 
 			i->u64s = cpu_to_le16(le16_to_cpu(i->u64s) - k->u64s);
-			memmove(k, bkey_next(k),
-				(void *) bset_bkey_last(i) - (void *) k);
+			memmove_u64s_down(k, bkey_next(k),
+					  (u64 *) bset_bkey_last(i) - (u64 *) k);
 			continue;
 		}
 
@@ -253,8 +253,8 @@ static const char *validate_bset(struct cache_set *c, struct btree *b,
 					 "invalid bkey %s", buf);
 
 			i->u64s = cpu_to_le16(le16_to_cpu(i->u64s) - k->u64s);
-			memmove(k, bkey_next(k),
-				(void *) bset_bkey_last(i) - (void *) k);
+			memmove_u64s_down(k, bkey_next(k),
+					  (u64 *) bset_bkey_last(i) - (u64 *) k);
 			continue;
 		}
 

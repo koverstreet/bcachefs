@@ -21,7 +21,7 @@ int bch_keylist_realloc(struct keylist *l, u64 *inline_u64s,
 		return -ENOMEM;
 
 	if (!old_buf)
-		memcpy(new_keys, inline_u64s, sizeof(u64) * oldsize);
+		memcpy_u64s(new_keys, inline_u64s, oldsize);
 
 	l->keys_p = new_keys;
 	l->top_p = new_keys + oldsize;
@@ -37,9 +37,9 @@ void bch_keylist_add_in_order(struct keylist *l, struct bkey_i *insert)
 		if (bkey_cmp(insert->k.p, where->k.p) < 0)
 			break;
 
-	memmove((u64 *) where + insert->k.u64s,
-		where,
-		((void *) l->top) - ((void *) where));
+	memmove_u64s_up((u64 *) where + insert->k.u64s,
+			where,
+			((u64 *) l->top) - ((u64 *) where));
 
 	l->top_p += insert->k.u64s;
 	bkey_copy(where, insert);
@@ -49,7 +49,7 @@ void bch_keylist_pop_front(struct keylist *l)
 {
 	l->top_p -= bch_keylist_front(l)->k.u64s;
 
-	memmove(l->keys,
-		bkey_next(l->keys),
-		bch_keylist_bytes(l));
+	memmove_u64s_down(l->keys,
+			  bkey_next(l->keys),
+			  bch_keylist_u64s(l));
 }

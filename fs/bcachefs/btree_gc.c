@@ -544,9 +544,9 @@ static void bch_coalesce_nodes(struct btree *old_nodes[GC_MERGE_NODES],
 			/* n2 fits entirely in n1 */
 			n1->key.k.p = n1->data->max_key = n2->data->max_key;
 
-			memcpy(bset_bkey_last(s1),
-			       s2->start,
-			       le16_to_cpu(s2->u64s) * sizeof(u64));
+			memcpy_u64s(bset_bkey_last(s1),
+				    s2->start,
+				    le16_to_cpu(s2->u64s));
 			le16_add_cpu(&s1->u64s, le16_to_cpu(s2->u64s));
 
 			six_unlock_write(&n2->lock);
@@ -566,9 +566,8 @@ static void bch_coalesce_nodes(struct btree *old_nodes[GC_MERGE_NODES],
 				btree_type_successor(iter->btree_id,
 						     n1->data->max_key);
 
-			memcpy(bset_bkey_last(s1),
-			       s2->start,
-			       u64s * sizeof(u64));
+			memcpy_u64s(bset_bkey_last(s1),
+				    s2->start, u64s);
 			le16_add_cpu(&s1->u64s, u64s);
 
 			memmove(s2->start,

@@ -1078,17 +1078,17 @@ void bch_bset_insert(struct btree_keys *b,
 		btree_keys_account_key_add(&b->nr, b->nsets, src);
 
 	if (src->u64s != clobber_u64s) {
-		void *src_p = where->_data + clobber_u64s;
-		void *dst_p = where->_data + src->u64s;
+		u64 *src_p = where->_data + clobber_u64s;
+		u64 *dst_p = where->_data + src->u64s;
 
-		memmove(dst_p, src_p, (void *) bset_bkey_last(i) - src_p);
+		memmove_u64s(dst_p, src_p, bset_bkey_last(i)->_data - src_p);
 		le16_add_cpu(&i->u64s, src->u64s - clobber_u64s);
 	}
 
-	memcpy(where, src,
-	       bkeyp_key_bytes(f, src));
-	memcpy(bkeyp_val(f, where), &insert->v,
-	       bkeyp_val_bytes(f, src));
+	memcpy_u64s(where, src,
+		    bkeyp_key_u64s(f, src));
+	memcpy_u64s(bkeyp_val(f, where), &insert->v,
+		    bkeyp_val_u64s(f, src));
 
 	bch_bset_fix_lookup_table(b, t, where, clobber_u64s, src->u64s);
 	bch_bset_verify_lookup_table(b, t);
@@ -1103,10 +1103,10 @@ void bch_bset_delete(struct btree_keys *b,
 {
 	struct bset_tree *t = bset_tree_last(b);
 	struct bset *i = t->data;
-	void *src_p = where->_data + clobber_u64s;
-	void *dst_p = where->_data;
+	u64 *src_p = where->_data + clobber_u64s;
+	u64 *dst_p = where->_data;
 
-	memmove(dst_p, src_p, (void *) bset_bkey_last(i) - src_p);
+	memmove_u64s_down(dst_p, src_p, bset_bkey_last(i)->_data - src_p);
 	le16_add_cpu(&i->u64s, -clobber_u64s);
 
 	bch_bset_fix_lookup_table(b, t, where, clobber_u64s, 0);
@@ -1603,8 +1603,7 @@ static struct btree_nr_keys btree_mergesort_simple(struct btree_keys *b,
 
 	while ((in = bch_btree_node_iter_next_all(iter, b))) {
 		if (!bkey_packed_is_whiteout(b, in)) {
-			/* XXX: need better bkey_copy */
-			memcpy(out, in, bkey_bytes(in));
+			bkey_copy(out, in);
 			out = bkey_next(out);
 		}
 	}
@@ -1707,7 +1706,7 @@ static struct btree_nr_keys btree_mergesort_extents(struct btree_keys *dst,
 			prev = dst_set->start;
 		}
 
-		bkey_copy((void *) prev, &tmp.k);
+		bkey_copy(prev, &tmp.k);
 
 		BUG_ON((void *) bkey_next(prev) >
 		       (void *) dst_set + (PAGE_SIZE << dst->page_order));
@@ -1830,7 +1829,7 @@ bool bch_maybe_compact_deleted_keys(struct btree_keys *b)
 			n = bkey_next(k);
 
 			if (!bkey_packed_is_whiteout(b, k)) {
-				memmove(out, k, bkey_bytes(k));
+				bkey_copy(out, k);
 				out = bkey_next(out);
 			}
 		}

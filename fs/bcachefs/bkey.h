@@ -73,6 +73,82 @@ static inline void set_bkey_deleted(struct bkey *k)
 
 #define bkey_deleted(_k)	((_k)->type == KEY_TYPE_DELETED)
 
+static inline void __memcpy_u64s(void *dst, const void *src,
+				 unsigned u64s)
+{
+#ifdef CONFIG_X86_64
+	long d0, d1, d2;
+	asm volatile("rep ; movsq"
+		     : "=&c" (d0), "=&D" (d1), "=&S" (d2)
+		     : "0" (u64s), "1" (dst), "2" (src)
+		     : "memory");
+#else
+	u64 *d = dst;
+	const u64 *s = src;
+
+	while (u64s--)
+		*d++ = *s++;
+#endif
+}
+
+static inline void memcpy_u64s(void *dst, const void *src,
+			       unsigned u64s)
+{
+	EBUG_ON(!(dst >= src + u64s * sizeof(u64) ||
+		 dst + u64s * sizeof(u64) <= src));
+
+	__memcpy_u64s(dst, src, u64s);
+}
+
+static inline void __memmove_u64s_down(void *dst, const void *src,
+				       unsigned u64s)
+{
+	__memcpy_u64s(dst, src, u64s);
+}
+
+static inline void memmove_u64s_down(void *dst, const void *src,
+				     unsigned u64s)
+{
+	EBUG_ON(dst > src);
+
+	__memmove_u64s_down(dst, src, u64s);
+}
+
+static inline void memmove_u64s_up(void *dst, const void *src,
+				   unsigned u64s)
+{
+	u64 *d = dst;
+	const u64 *s = src;
+
+	EBUG_ON(dst < src);
+
+	while (u64s--)
+		d[u64s] = s[u64s];
+}
+
+static inline void memmove_u64s(void *dst, const void *src,
+				unsigned u64s)
+{
+	if (dst < src)
+		memmove_u64s_down(dst, src, u64s);
+	else
+		memmove_u64s_up(dst, src, u64s);
+}
+
+#define bkey_copy(_dst, _src)					\
+do {								\
+	BUILD_BUG_ON(!type_is(_dst, struct bkey_i *) &&		\
+		     !type_is(_dst, struct bkey_packed *));	\
+	BUILD_BUG_ON(!type_is(_src, struct bkey_i *) &&		\
+		     !type_is(_src, struct bkey_packed *));	\
+	EBUG_ON((u64 *) (_dst) > (u64 *) (_src) &&		\
+		(u64 *) (_dst) < (u64 *) (_src) +		\
+		((struct bkey *) (_src))->u64s);		\
+								\
+	__memmove_u64s_down((_dst), (_src),			\
+			    ((struct bkey *) (_src))->u64s);	\
+} while (0)
+
 struct btree_keys;
 
 struct bkey_format_state {
@@ -323,7 +399,7 @@ static inline void bkey_reassemble(struct bkey_i *dst,
 {
 	BUG_ON(bkey_packed(src.k));
 	dst->k = *src.k;
-	memcpy(&dst->v, src.v, bkey_val_bytes(src.k));
+	memcpy_u64s(&dst->v, src.v, bkey_val_u64s(src.k));
 }
 
 #define bkey_s_null		((struct bkey_s)   { .k = NULL })

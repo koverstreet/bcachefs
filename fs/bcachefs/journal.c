@@ -95,7 +95,7 @@ static inline void bch_journal_add_entry_at(struct journal_buf *buf,
 	entry->flags = 0;
 	SET_JOURNAL_ENTRY_TYPE(entry, type);
 
-	memcpy(entry->_data, data, u64s * sizeof(u64));
+	memcpy_u64s(entry->_data, data, u64s);
 }
 
 static inline void bch_journal_add_entry(struct journal_buf *buf,
@@ -903,9 +903,9 @@ const char *bch_journal_read(struct cache_set *c, struct list_head *list)
 		return NULL;
 	}
 
-	memcpy(c->journal.prio_buckets,
-	       prio_ptrs->_data,
-	       le16_to_cpu(prio_ptrs->u64s) * sizeof(u64));
+	memcpy_u64s(c->journal.prio_buckets,
+		    prio_ptrs->_data,
+		    le16_to_cpu(prio_ptrs->u64s));
 	c->journal.nr_prio_buckets = le16_to_cpu(prio_ptrs->u64s);
 
 	return NULL;
@@ -1815,9 +1815,9 @@ static void journal_write_compact(struct jset *jset)
 		    i->level	== prev->level &&
 		    JOURNAL_ENTRY_TYPE(i) == JOURNAL_ENTRY_TYPE(prev) &&
 		    JOURNAL_ENTRY_TYPE(i) == JOURNAL_ENTRY_BTREE_KEYS) {
-			memmove(jset_keys_next(prev),
-				i->_data,
-				u64s * sizeof(u64));
+			memmove_u64s_down(jset_keys_next(prev),
+					  i->_data,
+					  u64s);
 			le16_add_cpu(&prev->u64s, u64s);
 			continue;
 		}
@@ -1825,7 +1825,7 @@ static void journal_write_compact(struct jset *jset)
 		/* Couldn't merge, move i into new position (after prev): */
 		prev = prev ? jset_keys_next(prev) : jset->start;
 		if (i != prev)
-			memmove(prev, i, jset_u64s(u64s) * sizeof(u64));
+			memmove_u64s_down(prev, i, jset_u64s(u64s));
 	}
 
 	prev = prev ? jset_keys_next(prev) : jset->start;

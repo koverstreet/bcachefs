@@ -92,8 +92,7 @@ struct btree_nr_keys bch_key_sort_fix_overlapping(struct btree_keys *b,
 			struct bkey_packed *k =
 				__btree_node_offset_to_key(b, iter->data->k);
 
-			/* XXX: need better bkey_copy */
-			memcpy(out, k, bkey_bytes(k));
+			bkey_copy(out, k);
 			btree_keys_account_key_add(&nr, 0, out);
 			out = bkey_next(out);
 		}
@@ -298,8 +297,8 @@ next:
 		entry = next;
 		continue;
 drop:
-		memmove(crc, next,
-			(void *) extent_entry_last(e) - (void *) next);
+		memmove_u64s_down(crc, next,
+				  (u64 *) extent_entry_last(e) - (u64 *) next);
 		e.k->u64s -= crc_u64s;
 	}
 
@@ -782,7 +781,7 @@ static void extent_sort_append(struct btree_keys *b,
 		*prev = start;
 	}
 
-	bkey_copy((void *) *prev, &tmp.k);
+	bkey_copy(*prev, &tmp.k);
 }
 
 struct btree_nr_keys bch_extent_sort_fix_overlapping(struct btree_keys *b,
@@ -1795,9 +1794,9 @@ void bch_extent_entry_append(struct bkey_i_extent *e,
 	BUG_ON(bkey_val_u64s(&e->k) + extent_entry_u64s(entry) >
 	       BKEY_EXTENT_VAL_U64s_MAX);
 
-	memcpy(extent_entry_last(extent_i_to_s(e)),
-	       entry,
-	       extent_entry_bytes(entry));
+	memcpy_u64s(extent_entry_last(extent_i_to_s(e)),
+		    entry,
+		    extent_entry_u64s(entry));
 	e->k.u64s += extent_entry_u64s(entry);
 }
 
@@ -1938,18 +1937,19 @@ found:
 		crc_u64s = extent_entry_u64s(to_entry(src_crc));
 		u64s = crc_u64s + sizeof(*dst_ptr) / sizeof(u64);
 
-		memmove(p + u64s, p,
-			(void *) extent_entry_last(dst) - (void *) p);
+		memmove_u64s_up(p + u64s, p,
+				(u64 *) extent_entry_last(dst) - (u64 *) p);
 		set_bkey_val_u64s(dst.k, bkey_val_u64s(dst.k) + u64s);
 
-		memcpy(p, src_crc, crc_u64s * sizeof(u64));
-		memcpy(p + crc_u64s, src_ptr, sizeof(*src_ptr));
+		memcpy_u64s(p, src_crc, crc_u64s);
+		memcpy_u64s(p + crc_u64s, src_ptr,
+			    sizeof(*src_ptr) / sizeof(u64));
 	}
 
 	/* Sort done - now drop redundant crc entries: */
 	bch_extent_drop_redundant_crcs(dst);
 
-	memcpy(src.v, dst.v, bkey_val_bytes(dst.k));
+	memcpy_u64s(src.v, dst.v, bkey_val_u64s(dst.k));
 	set_bkey_val_u64s(src.k, bkey_val_u64s(dst.k));
 }
 

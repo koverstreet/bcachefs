@@ -479,7 +479,8 @@ static inline void __bch_extent_drop_ptr(struct bkey_s_extent e,
 	EBUG_ON(ptr < &e.v->start->ptr ||
 		ptr >= &extent_entry_last(e)->ptr);
 	EBUG_ON(ptr->type != 1 << BCH_EXTENT_ENTRY_ptr);
-	memmove(ptr, ptr + 1, (void *) extent_entry_last(e) - (void *) (ptr + 1));
+	memmove_u64s_down(ptr, ptr + 1,
+			  (u64 *) extent_entry_last(e) - (u64 *) (ptr + 1));
 	e.k->u64s -= sizeof(*ptr) / sizeof(u64);
 }
 
