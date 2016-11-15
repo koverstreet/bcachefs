@@ -150,8 +150,17 @@ int bch_journal_seq_should_ignore(struct cache_set *, u64, struct btree *);
 
 u64 bch_inode_journal_seq(struct journal *, u64);
 
-void bch_journal_add_keys(struct journal *, struct journal_res *,
-			  enum btree_id, const struct bkey_i *);
+static inline int journal_state_count(union journal_res_state s, int idx)
+{
+	return idx == 0 ? s.buf0_count : s.buf1_count;
+}
+
+static inline void journal_state_inc(union journal_res_state *s)
+{
+	s->buf0_count += s->idx == 0;
+	s->buf1_count += s->idx == 1;
+}
+
 static inline u64 bch_journal_res_seq(struct journal *j,
 				      struct journal_res *res)
 {
@@ -160,9 +169,162 @@ static inline u64 bch_journal_res_seq(struct journal *j,
 	return le64_to_cpu(buf->data->seq);
 }
 
-void bch_journal_res_put(struct journal *, struct journal_res *, u64 *);
-int bch_journal_res_get(struct journal *, struct journal_res *,
-			unsigned, unsigned);
+static inline void bch_journal_set_has_inode(struct journal_buf *buf, u64 inum)
+{
+	set_bit(hash_64(inum, sizeof(buf->has_inode) * 8), buf->has_inode);
+}
+
+/*
+ * Amount of space that will be taken up by some keys in the journal (i.e.
+ * including the jset header)
+ */
+static inline unsigned jset_u64s(unsigned u64s)
+{
+	return u64s + sizeof(struct jset_entry) / sizeof(u64);
+}
+
+static inline void bch_journal_add_entry_at(struct journal_buf *buf,
+					    const void *data, size_t u64s,
+					    unsigned type, enum btree_id id,
+					    unsigned level, unsigned offset)
+{
+	struct jset_entry *entry = bkey_idx(buf->data, offset);
+
+	entry->u64s = cpu_to_le16(u64s);
+	entry->btree_id = id;
+	entry->level = level;
+	entry->flags = 0;
+	SET_JOURNAL_ENTRY_TYPE(entry, type);
+
+	memcpy_u64s(entry->_data, data, u64s);
+}
+
+static inline void bch_journal_add_keys(struct journal *j, struct journal_res *res,
+					enum btree_id id, const struct bkey_i *k)
+{
+	struct journal_buf *buf = &j->buf[res->idx];
+	unsigned actual = jset_u64s(k->k.u64s);
+
+	EBUG_ON(!res->ref);
+	BUG_ON(actual > res->u64s);
+
+	bch_journal_set_has_inode(buf, k->k.p.inode);
+
+	bch_journal_add_entry_at(buf, k, k->k.u64s,
+				 JOURNAL_ENTRY_BTREE_KEYS, id,
+				 0, res->offset);
+
+	res->offset	+= actual;
+	res->u64s	-= actual;
+}
+
+void bch_journal_buf_put_slowpath(struct journal *, bool);
+
+static inline void bch_journal_buf_put(struct journal *j, unsigned idx,
+				       bool need_write_just_set)
+{
+	union journal_res_state s;
+
+	s.v = atomic64_sub_return(((union journal_res_state) {
+				    .buf0_count = idx == 0,
+				    .buf1_count = idx == 1,
+				    }).v, &j->reservations.counter);
+
+	EBUG_ON(s.idx != idx && !s.prev_buf_unwritten);
+
+	/*
+	 * Do not initiate a journal write if the journal is in an error state
+	 * (previous journal entry write may have failed)
+	 */
+	if (s.idx != idx &&
+	    !journal_state_count(s, idx) &&
+	    s.cur_entry_offset != JOURNAL_ENTRY_ERROR_VAL)
+		bch_journal_buf_put_slowpath(j, need_write_just_set);
+}
+
+/*
+ * This function releases the journal write structure so other threads can
+ * then proceed to add their keys as well.
+ */
+static inline void bch_journal_res_put(struct journal *j,
+				       struct journal_res *res,
+				       u64 *journal_seq)
+{
+	if (!res->ref)
+		return;
+
+	lock_release(&j->res_map, 0, _RET_IP_);
+
+	while (res->u64s) {
+		bch_journal_add_entry_at(&j->buf[res->idx], NULL, 0,
+					 JOURNAL_ENTRY_BTREE_KEYS,
+					 0, 0, res->offset);
+		res->offset	+= jset_u64s(0);
+		res->u64s	-= jset_u64s(0);
+	}
+
+	if (journal_seq)
+		*journal_seq = bch_journal_res_seq(j, res);
+
+	bch_journal_buf_put(j, res->idx, false);
+
+	memset(res, 0, sizeof(*res));
+}
+
+int bch_journal_res_get_slowpath(struct journal *, struct journal_res *,
+				 unsigned, unsigned);
+
+static inline int journal_res_get_fast(struct journal *j,
+				       struct journal_res *res,
+				       unsigned u64s_min,
+				       unsigned u64s_max)
+{
+	union journal_res_state old, new;
+	u64 v = atomic64_read(&j->reservations.counter);
+
+	do {
+		old.v = new.v = v;
+
+		/*
+		 * Check if there is still room in the current journal
+		 * entry:
+		 */
+		if (old.cur_entry_offset + u64s_min > j->cur_entry_u64s)
+			return 0;
+
+		res->offset	= old.cur_entry_offset;
+		res->u64s	= min(u64s_max, j->cur_entry_u64s -
+				      old.cur_entry_offset);
+
+		journal_state_inc(&new);
+		new.cur_entry_offset += res->u64s;
+	} while ((v = atomic64_cmpxchg(&j->reservations.counter,
+				       old.v, new.v)) != old.v);
+
+	res->ref = true;
+	res->idx = new.idx;
+	return 1;
+}
+
+static inline int bch_journal_res_get(struct journal *j, struct journal_res *res,
+				      unsigned u64s_min, unsigned u64s_max)
+{
+	int ret;
+
+	EBUG_ON(res->ref);
+	EBUG_ON(u64s_max < u64s_min);
+
+	if (journal_res_get_fast(j, res, u64s_min, u64s_max))
+		goto out;
+
+	ret = bch_journal_res_get_slowpath(j, res, u64s_min, u64s_max);
+	if (ret)
+		return ret;
+out:
+	lock_acquire_shared(&j->res_map, 0, 0, NULL, _THIS_IP_);
+	EBUG_ON(!res->ref);
+	return 0;
+}
 
 void bch_journal_flush_seq_async(struct journal *, u64, struct closure *);
 void bch_journal_flush_async(struct journal *, struct closure *);
@@ -178,15 +340,6 @@ static inline int bch_journal_error(struct journal *j)
 {
 	return j->reservations.cur_entry_offset == JOURNAL_ENTRY_ERROR_VAL
 		? -EIO : 0;
-}
-
-/*
- * Amount of space that will be taken up by some keys in the journal (i.e.
- * including the jset header)
- */
-static inline unsigned jset_u64s(unsigned u64s)
-{
-	return u64s + sizeof(struct jset_entry) / sizeof(u64);
 }
 
 static inline bool journal_flushes_device(struct cache *ca)
