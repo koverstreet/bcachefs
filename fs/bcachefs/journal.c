@@ -1032,6 +1032,8 @@ static enum {
 			     journal_entry_u64s_reserve(j),
 			     block_bytes(c)) * c->sb.block_size;
 
+	BUG_ON(j->prev_buf_sectors > j->cur_buf_sectors);
+
 	atomic_dec_bug(&fifo_peek_back(&j->pin).count);
 	__bch_journal_next_entry(j);
 	spin_unlock(&j->lock);
@@ -1167,6 +1169,8 @@ static int journal_entry_open(struct journal *j)
 	sectors = journal_entry_sectors(j);
 	if (sectors <= 0)
 		return sectors;
+
+	j->cur_buf_sectors = sectors;
 
 	u64s = (sectors << 9) / sizeof(u64);
 
