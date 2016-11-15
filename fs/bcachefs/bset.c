@@ -1046,7 +1046,7 @@ static void bch_bset_verify_lookup_table(struct btree_keys *b,
 					 struct bset_tree *t)
 {
 	struct bkey_packed *k;
-	unsigned j;
+	unsigned j = 0;
 
 	if (!btree_keys_expensive_checks(b))
 		return;
@@ -1058,6 +1058,11 @@ static void bch_bset_verify_lookup_table(struct btree_keys *b,
 
 	BUG_ON(t->size < 1);
 	BUG_ON(table_to_bkey(t, 0) != t->data->start);
+
+	if (!t->data->u64s) {
+		BUG_ON(t->size != 1);
+		return;
+	}
 
 	for (k = t->data->start;
 	     k != bset_bkey_last(t->data);
