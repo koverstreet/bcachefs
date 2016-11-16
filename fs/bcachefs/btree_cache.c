@@ -53,25 +53,10 @@ static void mca_data_free(struct cache_set *c, struct btree *b)
 
 #define PTR_HASH(_k)	(bkey_i_to_extent_c(_k)->v._data[0])
 
-/*
- * gcc isn't smart enough to optimize away a memcmp for a constant number of
- * bytes :(
- */
-static inline int btree_rhash_cmp(struct rhashtable_compare_arg *arg,
-			   const void *obj)
-{
-	const u64 *v = arg->key;
-	const struct btree *b = obj;
-
-	return PTR_HASH(&b->key) == *v ? 0 : 1;
-}
-
 static const struct rhashtable_params bch_btree_cache_params = {
 	.head_offset	= offsetof(struct btree, hash),
 	.key_offset	= offsetof(struct btree, key.v),
 	.key_len	= sizeof(struct bch_extent_ptr),
-	.hashfn		= jhash,
-	.obj_cmpfn	= btree_rhash_cmp,
 };
 
 static void mca_data_alloc(struct cache_set *c, struct btree *b, gfp_t gfp)
@@ -151,7 +136,8 @@ int mca_hash_insert(struct cache_set *c, struct btree *b,
 	return 0;
 }
 
-static inline struct btree *mca_find(struct cache_set *c,
+noinline __flatten
+static struct btree *mca_find(struct cache_set *c,
 				     const struct bkey_i *k)
 {
 	return rhashtable_lookup_fast(&c->btree_cache_table, &PTR_HASH(k),
