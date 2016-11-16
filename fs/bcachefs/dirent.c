@@ -187,7 +187,7 @@ int bch_dirent_create(struct inode *dir, u8 type,
 
 	ret = bch_hash_set(dirent_hash_desc, &ei->str_hash, c,
 			   ei->vfs_inode.i_ino, &ei->journal_seq,
-			   &dirent->k_i, 0);
+			   &dirent->k_i, BCH_HASH_SET_MUST_CREATE);
 	kfree(dirent);
 
 	return ret;
