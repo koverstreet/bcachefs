@@ -588,7 +588,9 @@ static void bch_coalesce_nodes(struct btree *old_nodes[GC_MERGE_NODES],
 		recalc_packed_keys(n);
 		btree_node_reset_sib_u64s(n);
 
+		bch_btree_build_aux_trees(n);
 		six_unlock_write(&n->lock);
+
 		bch_btree_node_write(n, &as->cl, NULL);
 	}
 

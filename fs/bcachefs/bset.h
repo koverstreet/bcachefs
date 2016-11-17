@@ -198,6 +198,7 @@ static inline enum bset_aux_tree_type bset_aux_tree_type(struct bset_tree *t)
 {
 	switch (t->extra) {
 	case BSET_NO_AUX_TREE_VAL:
+		EBUG_ON(t->size);
 		return BSET_NO_AUX_TREE;
 	case BSET_RW_AUX_TREE_VAL:
 		EBUG_ON(!t->size);
@@ -273,6 +274,18 @@ static inline bool bset_has_rw_aux_tree(struct bset_tree *t)
 	return bset_aux_tree_type(t) == BSET_RW_AUX_TREE;
 }
 
+static inline void bch_bset_set_no_aux_tree(struct btree_keys *b,
+					    struct bset_tree *t)
+{
+	BUG_ON(t < b->set);
+
+	for (; t < b->set + ARRAY_SIZE(b->set); t++) {
+		t->size = 0;
+		t->extra = BSET_NO_AUX_TREE_VAL;
+	}
+
+}
+
 #define __set_bytes(_i, _u64s)	(sizeof(*(_i)) + (_u64s) * sizeof(u64))
 #define set_bytes(_i)		__set_bytes(_i, (_i)->u64s)
 
@@ -298,7 +311,7 @@ void bch_btree_keys_init(struct btree_keys *, bool *);
 
 void bch_bset_init_first(struct btree_keys *, struct bset *);
 void bch_bset_init_next(struct btree_keys *, struct bset *);
-void bch_bset_build_ro_aux_tree(struct btree_keys *, struct bset_tree *);
+void bch_bset_build_aux_tree(struct btree_keys *, struct bset_tree *, bool);
 void bch_bset_fix_invalidated_key(struct btree_keys *, struct bset_tree *,
 				  struct bkey_packed *);
 

@@ -130,7 +130,7 @@ static void btree_node_sort(struct cache_set *c, struct btree *b,
 	}
 
 	b->keys.nsets = from + 1;
-	bch_bset_build_ro_aux_tree(&b->keys, &b->keys.set[from]);
+	bch_bset_set_no_aux_tree(&b->keys, &b->keys.set[from]);
 
 	if (!is_write_locked)
 		__btree_node_unlock_write(b, iter);
@@ -158,7 +158,7 @@ static bool btree_node_compact(struct cache_set *c, struct btree *b,
 
 	/* Don't sort if nothing to do */
 	if (b->keys.nsets == 1)
-		goto nosort;
+		return false;
 
 	/* If not a leaf node, always sort */
 	if (b->level)
@@ -177,14 +177,20 @@ static bool btree_node_compact(struct cache_set *c, struct btree *b,
 		goto sort;
 	}
 
-nosort:
-	__btree_node_lock_write(b, iter);
-	bch_bset_build_ro_aux_tree(&b->keys, bset_tree_last(&b->keys));
-	__btree_node_unlock_write(b, iter);
 	return false;
 sort:
 	btree_node_sort(c, b, iter, i, NULL, NULL, false);
 	return true;
+}
+
+void bch_btree_build_aux_trees(struct btree *b)
+{
+	struct bset_tree *t;
+
+	for_each_bset(&b->keys, t)
+		bch_bset_build_aux_tree(&b->keys, t,
+				bset_unwritten(b, t->data) &&
+				t == bset_tree_last(&b->keys));
 }
 
 /*
@@ -209,11 +215,17 @@ void bch_btree_init_next(struct cache_set *c, struct btree *b,
 	if (did_sort && b->keys.nsets == 1)
 		bch_btree_verify(c, b);
 
+	__btree_node_lock_write(b, iter);
+
 	if (b->written < c->sb.btree_node_size) {
-		__btree_node_lock_write(b, iter);
-		bch_bset_init_next(&b->keys, &write_block(b)->keys);
-		__btree_node_unlock_write(b, iter);
+		struct btree_node_entry *bne = write_block(b);
+
+		bch_bset_init_next(&b->keys, &bne->keys);
 	}
+
+	bch_btree_build_aux_trees(b);
+
+	__btree_node_unlock_write(b, iter);
 
 	if (iter && did_sort)
 		bch_btree_iter_reinit_node(iter, b);
@@ -437,6 +449,8 @@ void bch_btree_node_read_done(struct cache_set *c, struct btree *b,
 			? bch_extent_sort_fix_overlapping
 			: bch_key_sort_fix_overlapping,
 			true);
+
+	bch_bset_build_aux_tree(&b->keys, b->keys.set, false);
 
 	btree_node_reset_sib_u64s(b);
 

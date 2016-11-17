@@ -300,6 +300,8 @@ static struct btree *bch_btree_node_alloc(struct cache_set *c,
 	b->data->magic = cpu_to_le64(bset_magic(&c->disk_sb));
 	SET_BSET_BTREE_LEVEL(&b->data->keys, level);
 
+	bch_btree_build_aux_trees(b);
+
 	bch_check_mark_super(c, &b->key, true);
 
 	trace_bcache_btree_node_alloc(b);
@@ -316,7 +318,7 @@ static void bch_btree_sort_into(struct cache_set *c,
 
 	BUG_ON(dst->keys.nsets != 1);
 
-	dst->keys.set[0].extra = BSET_NO_AUX_TREE_VAL;
+	bch_bset_set_no_aux_tree(&dst->keys, &dst->keys.set[0]);
 
 	bch_btree_node_iter_init_from_start(&iter, &src->keys,
 					    btree_node_is_extents(src));
@@ -799,15 +801,13 @@ static void btree_node_lock_for_insert(struct btree *b, struct btree_iter *iter)
 relock:
 	btree_node_lock_write(b, iter);
 
-	BUG_ON(&write_block(b)->keys < btree_bset_last(b));
-
 	/*
 	 * If the last bset has been written, initialize a new one - check after
 	 * taking the write lock because it can be written with only a read
 	 * lock:
 	 */
 	if (b->written != c->sb.btree_node_size &&
-	    &write_block(b)->keys > btree_bset_last(b)) {
+	    bset_written(b, btree_bset_last(b))) {
 		btree_node_unlock_write(b, iter);
 		bch_btree_init_next(c, b, iter);
 		goto relock;
@@ -1213,6 +1213,7 @@ static struct btree *__btree_split_node(struct btree_iter *iter, struct btree *n
 	n2 = bch_btree_node_alloc(iter->c, n1->level, iter->btree_id, reserve);
 	n2->data->max_key	= n1->data->max_key;
 	n2->keys.format		= n1->keys.format;
+	n2->data->format	= n1->keys.format;
 	n2->key.k.p = n1->key.k.p;
 
 	set1 = btree_bset_first(n1);
@@ -1266,11 +1267,6 @@ static struct btree *__btree_split_node(struct btree_iter *iter, struct btree *n
 	memcpy_u64s(set2->start,
 		    bset_bkey_last(set1),
 		    le16_to_cpu(set2->u64s));
-
-	n1->keys.set->size = 0;
-	n1->keys.set->extra = BSET_NO_AUX_TREE_VAL;
-	n2->keys.set->size = 0;
-	n2->keys.set->extra = BSET_NO_AUX_TREE_VAL;
 
 	btree_node_reset_sib_u64s(n1);
 	btree_node_reset_sib_u64s(n2);
@@ -1369,6 +1365,9 @@ static void btree_split(struct btree *b, struct btree_iter *iter,
 		trace_bcache_btree_node_split(b, b->keys.nr.live_u64s);
 
 		n2 = __btree_split_node(iter, n1, reserve);
+
+		bch_btree_build_aux_trees(n2);
+		bch_btree_build_aux_trees(n1);
 		six_unlock_write(&n2->lock);
 		six_unlock_write(&n1->lock);
 
@@ -1396,6 +1395,8 @@ static void btree_split(struct btree *b, struct btree_iter *iter,
 		}
 	} else {
 		trace_bcache_btree_node_compact(b, b->keys.nr.live_u64s);
+
+		bch_btree_build_aux_trees(n1);
 		six_unlock_write(&n1->lock);
 
 		bch_keylist_add(&as->parent_keys, &n1->key);
@@ -1691,6 +1692,8 @@ retry:
 
 	bch_btree_sort_into(c, n, prev);
 	bch_btree_sort_into(c, n, next);
+
+	bch_btree_build_aux_trees(n);
 	six_unlock_write(&n->lock);
 
 	bkey_init(&delete.k);
@@ -2221,6 +2224,8 @@ int bch_btree_node_rewrite(struct btree_iter *iter, struct btree *b,
 	bch_btree_interior_update_will_free_node(c, as, b);
 
 	n = btree_node_alloc_replacement(c, b, reserve);
+
+	bch_btree_build_aux_trees(n);
 	six_unlock_write(&n->lock);
 
 	trace_bcache_btree_gc_rewrite_node(b);

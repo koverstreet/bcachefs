@@ -171,27 +171,34 @@ void bch_btree_bset_insert_key(struct btree_iter *, struct btree *,
 void bch_btree_journal_key(struct btree_iter *, struct bkey_i *,
 			   struct journal_res *);
 
-static inline struct btree_node_entry *write_block(struct btree *b)
+static inline void *write_block(struct btree *b)
 {
-	EBUG_ON(!b->written);
-
 	return (void *) b->data + (b->written << 9);
+}
+
+static inline bool bset_written(struct btree *b, struct bset *i)
+{
+	return (void *) i < write_block(b);
+}
+
+static inline bool bset_unwritten(struct btree *b, struct bset *i)
+{
+	return (void *) i > write_block(b);
 }
 
 static inline size_t bch_btree_keys_u64s_remaining(struct cache_set *c,
 						   struct btree *b)
 {
 	struct bset *i = btree_bset_last(b);
-	size_t bytes_used = bset_byte_offset(b, i) +
-		__set_bytes(i, le16_to_cpu(i->u64s));
+	unsigned used = bset_byte_offset(b, bset_bkey_last(i)) / sizeof(u64);
+	unsigned total = c->sb.btree_node_size << 6;
 
-	if (b->written == c->sb.btree_node_size)
+	EBUG_ON(used > total);
+
+	if (bset_written(b, i))
 		return 0;
 
-	EBUG_ON(bytes_used > btree_bytes(c));
-	EBUG_ON(i != (b->written ? &write_block(b)->keys : &b->data->keys));
-
-	return (btree_bytes(c) - bytes_used) / sizeof(u64);
+	return total - used;
 }
 
 /*

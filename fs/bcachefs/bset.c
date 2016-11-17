@@ -415,11 +415,10 @@ void bch_btree_keys_init(struct btree_keys *b, bool *expensive_debug_checks)
 #ifdef CONFIG_BCACHEFS_DEBUG
 	b->expensive_debug_checks = expensive_debug_checks;
 #endif
-	for (i = 0; i < MAX_BSETS; i++) {
+	for (i = 0; i < MAX_BSETS; i++)
 		b->set[i].data = NULL;
-		b->set[i].size = 0;
-		b->set[i].extra = BSET_NO_AUX_TREE_VAL;
-	}
+
+	bch_bset_set_no_aux_tree(b, b->set);
 }
 EXPORT_SYMBOL(bch_btree_keys_init);
 
@@ -734,28 +733,6 @@ static void make_bfloat(struct bkey_format *format,
 	}
 }
 
-static void bset_alloc_tree(struct btree_keys *b, struct bset_tree *t)
-{
-	if (t != b->set) {
-		unsigned j = round_up(t[-1].size,
-				      64 / sizeof(struct bkey_float));
-
-		t->tree = t[-1].tree + j;
-		t->prev = t[-1].prev + j;
-
-		BUG_ON(t->tree > b->set->tree + btree_keys_cachelines(b));
-	}
-
-	t->size = 0;
-
-	while (++t < b->set + MAX_BSETS) {
-		t->size = 0;
-		t->extra = BSET_NO_AUX_TREE_VAL;
-		t->tree = NULL;
-		t->prev = NULL;
-	}
-}
-
 /* Only valid for the last bset: */
 static unsigned bset_tree_capacity(struct btree_keys *b, struct bset_tree *t)
 {
@@ -782,15 +759,8 @@ static void bch_bset_lookup_table_add_entries(struct btree_keys *b,
 		}
 }
 
-static void bch_bset_build_rw_aux_tree(struct btree_keys *b, struct bset_tree *t)
+static void __build_rw_aux_tree(struct btree_keys *b, struct bset_tree *t)
 {
-	bset_alloc_tree(b, t);
-
-	if (!bset_tree_capacity(b, t)) {
-		t->extra = BSET_NO_AUX_TREE_VAL;
-		return;
-	}
-
 	t->prev[0] = bkey_to_cacheline_offset(t, 0, t->data->start);
 	t->size = 1;
 	t->extra = BSET_RW_AUX_TREE_VAL;
@@ -798,50 +768,16 @@ static void bch_bset_build_rw_aux_tree(struct btree_keys *b, struct bset_tree *t
 	bch_bset_lookup_table_add_entries(b, t);
 }
 
-void bch_bset_init_first(struct btree_keys *b, struct bset *i)
-{
-	struct bset_tree *t;
-
-	BUG_ON(b->nsets);
-
-	t = &b->set[b->nsets++];
-	t->data = i;
-	memset(i, 0, sizeof(*i));
-	get_random_bytes(&i->seq, sizeof(i->seq));
-	SET_BSET_BIG_ENDIAN(i, CPU_BIG_ENDIAN);
-
-	bch_bset_build_rw_aux_tree(b, t);
-}
-
-void bch_bset_init_next(struct btree_keys *b, struct bset *i)
-{
-	struct bset_tree *t;
-
-	BUG_ON(b->nsets >= MAX_BSETS);
-
-	t = &b->set[b->nsets++];
-	t->data = i;
-	memset(i, 0, sizeof(*i));
-	i->seq = b->set->data->seq;
-	SET_BSET_BIG_ENDIAN(i, CPU_BIG_ENDIAN);
-
-	bch_bset_build_rw_aux_tree(b, t);
-}
-
-void bch_bset_build_ro_aux_tree(struct btree_keys *b,
-				struct bset_tree *t)
+static void __build_ro_aux_tree(struct btree_keys *b, struct bset_tree *t)
 {
 	struct bkey_packed *prev = NULL, *k = t->data->start;
 	unsigned j, cacheline = 1;
-
-	bset_alloc_tree(b, t);
 
 	t->size = min(bkey_to_cacheline(t, bset_bkey_last(t->data)),
 		      bset_tree_capacity(b, t));
 retry:
 	if (t->size < 2) {
-		t->size = 0;
-		t->extra = BSET_NO_AUX_TREE_VAL;
+		bch_bset_set_no_aux_tree(b, t);
 		return;
 	}
 
@@ -876,6 +812,74 @@ retry:
 	     j;
 	     j = inorder_next(j, t->size))
 		make_bfloat(&b->format, t, j);
+}
+
+static void bset_alloc_tree(struct btree_keys *b, struct bset_tree *t)
+{
+	struct bset_tree *i;
+
+	for (i = b->set; i != t; i++)
+		BUG_ON(bset_has_rw_aux_tree(i));
+
+	if (t != b->set) {
+		unsigned j = round_up(t[-1].size,
+				      64 / sizeof(struct bkey_float));
+
+		t->tree = t[-1].tree + j;
+		t->prev = t[-1].prev + j;
+
+		BUG_ON(t->tree > b->set->tree + btree_keys_cachelines(b));
+	}
+
+	bch_bset_set_no_aux_tree(b, t);
+}
+
+void bch_bset_build_aux_tree(struct btree_keys *b, struct bset_tree *t,
+			     bool writeable)
+{
+	if (writeable
+	    ? bset_has_rw_aux_tree(t)
+	    : bset_has_ro_aux_tree(t))
+		return;
+
+	bset_alloc_tree(b, t);
+
+	if (!bset_tree_capacity(b, t)) {
+		bch_bset_set_no_aux_tree(b, t);
+		return;
+	}
+
+	if (writeable)
+		__build_rw_aux_tree(b, t);
+	else
+		__build_ro_aux_tree(b, t);
+
+}
+
+void bch_bset_init_first(struct btree_keys *b, struct bset *i)
+{
+	struct bset_tree *t;
+
+	BUG_ON(b->nsets);
+
+	t = &b->set[b->nsets++];
+	t->data = i;
+	memset(i, 0, sizeof(*i));
+	get_random_bytes(&i->seq, sizeof(i->seq));
+	SET_BSET_BIG_ENDIAN(i, CPU_BIG_ENDIAN);
+}
+
+void bch_bset_init_next(struct btree_keys *b, struct bset *i)
+{
+	struct bset_tree *t;
+
+	BUG_ON(b->nsets >= MAX_BSETS);
+
+	t = &b->set[b->nsets++];
+	t->data = i;
+	memset(i, 0, sizeof(*i));
+	i->seq = b->set->data->seq;
+	SET_BSET_BIG_ENDIAN(i, CPU_BIG_ENDIAN);
 }
 
 static struct bkey_packed *__bkey_prev(struct bset_tree *t, struct bkey_packed *k)
@@ -1775,6 +1779,7 @@ bool bch_maybe_compact_deleted_keys(struct btree_keys *b)
 		}
 
 		i->u64s = cpu_to_le16((u64 *) out - i->_data);
+		bch_bset_set_no_aux_tree(b, t);
 
 		if (!rebuild_from)
 			rebuild_from = t;
@@ -1783,12 +1788,10 @@ bool bch_maybe_compact_deleted_keys(struct btree_keys *b)
 	if (!rebuild_from)
 		return false;
 
-	for (t = rebuild_from; t < b->set + b->nsets; t++) {
-		if (t == bset_tree_last(b) && !last_set_aux_tree_ro)
-			bch_bset_build_rw_aux_tree(b, t);
-		else
-			bch_bset_build_ro_aux_tree(b, t);
-	}
+	for (t = rebuild_from; t < b->set + b->nsets; t++)
+		bch_bset_build_aux_tree(b, t,
+					t == bset_tree_last(b) &&
+					!last_set_aux_tree_ro);
 
 	return true;
 }
