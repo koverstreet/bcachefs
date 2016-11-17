@@ -410,7 +410,7 @@ found:
 		struct bset_tree *t;
 		struct bkey_packed *k;
 
-		for (t = b->keys.set; t <= b->keys.set + b->keys.nsets; t++) {
+		for_each_bset(&b->keys, t) {
 			if (bch_bkey_to_bset(&b->keys, where) == t)
 				continue;
 

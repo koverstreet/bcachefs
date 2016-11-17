@@ -607,8 +607,8 @@ struct btree *bch_btree_node_get(struct btree_iter *iter,
 				 const struct bkey_i *k, unsigned level,
 				 enum six_lock_type lock_type)
 {
-	int i = 0;
 	struct btree *b;
+	struct bset_tree *t;
 
 	BUG_ON(level >= BTREE_MAX_DEPTH);
 retry:
@@ -676,9 +676,9 @@ retry:
 		}
 	}
 
-	for (; i <= b->keys.nsets; i++) {
-		prefetch(b->keys.set[i].tree);
-		prefetch(b->keys.set[i].data);
+	for_each_bset(&b->keys, t) {
+		prefetch(t->tree);
+		prefetch(t->data);
 	}
 
 	/* avoid atomic set bit if it's not needed: */

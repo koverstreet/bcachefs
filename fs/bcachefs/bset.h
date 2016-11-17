@@ -243,6 +243,9 @@ struct btree_keys {
 #endif
 };
 
+#define for_each_bset(_b, _t)					\
+	for (_t = (_b)->set; _t < (_b)->set + (_b)->nsets; _t++)
+
 extern bool bch_expensive_debug_checks;
 
 static inline bool btree_keys_expensive_checks(struct btree_keys *b)
@@ -256,7 +259,8 @@ static inline bool btree_keys_expensive_checks(struct btree_keys *b)
 
 static inline struct bset_tree *bset_tree_last(struct btree_keys *b)
 {
-	return b->set + b->nsets;
+	EBUG_ON(!b->nsets);
+	return b->set + b->nsets - 1;
 }
 
 static inline bool bset_has_ro_aux_tree(struct bset_tree *t)

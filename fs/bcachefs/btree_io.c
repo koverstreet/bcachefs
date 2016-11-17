@@ -36,7 +36,7 @@ static void btree_node_sort(struct cache_set *c, struct btree *b,
 		__bch_btree_node_iter_init(sort_iter, btree_node_is_extents(b));
 
 		for (t = b->keys.set + from;
-		     t <= b->keys.set + b->keys.nsets;
+		     t < b->keys.set + b->keys.nsets;
 		     t++)
 			bch_btree_node_iter_push(sort_iter, &b->keys,
 						 t->data->start,
@@ -129,7 +129,7 @@ static void btree_node_sort(struct cache_set *c, struct btree *b,
 		}
 	}
 
-	b->keys.nsets = from;
+	b->keys.nsets = from + 1;
 	bch_bset_build_ro_aux_tree(&b->keys, &b->keys.set[from]);
 
 	if (!is_write_locked)
@@ -157,14 +157,14 @@ static bool btree_node_compact(struct cache_set *c, struct btree *b,
 	int i = 0;
 
 	/* Don't sort if nothing to do */
-	if (!b->keys.nsets)
+	if (b->keys.nsets == 1)
 		goto nosort;
 
 	/* If not a leaf node, always sort */
 	if (b->level)
 		goto sort;
 
-	for (i = b->keys.nsets - 1; i >= 0; --i) {
+	for (i = b->keys.nsets - 2; i >= 0; --i) {
 		crit *= crit_factor;
 
 		if (le16_to_cpu(b->keys.set[i].data->u64s) < crit)
@@ -172,7 +172,7 @@ static bool btree_node_compact(struct cache_set *c, struct btree *b,
 	}
 
 	/* Sort if we'd overflow */
-	if (b->keys.nsets + 1 == MAX_BSETS) {
+	if (b->keys.nsets == MAX_BSETS) {
 		i = 0;
 		goto sort;
 	}
@@ -206,7 +206,7 @@ void bch_btree_init_next(struct cache_set *c, struct btree *b,
 	did_sort = btree_node_compact(c, b, iter);
 
 	/* do verify if we sorted down to a single set: */
-	if (did_sort && !b->keys.nsets)
+	if (did_sort && b->keys.nsets == 1)
 		bch_btree_verify(c, b);
 
 	if (b->written < c->sb.btree_node_size) {
@@ -866,7 +866,7 @@ void bch_btree_node_flush_journal_entries(struct cache_set *c,
 					  struct btree *b,
 					  struct closure *cl)
 {
-	int i;
+	int i = b->keys.nsets;
 
 	/*
 	 * Journal sequence numbers in the different bsets will always be in
@@ -874,7 +874,7 @@ void bch_btree_node_flush_journal_entries(struct cache_set *c,
 	 * most recent bset might not have a journal sequence number yet, so we
 	 * need to loop:
 	 */
-	for (i = b->keys.nsets; i >= 0; --i) {
+	while (i--) {
 		u64 seq = le64_to_cpu(b->keys.set[i].data->journal_seq);
 
 		if (seq) {

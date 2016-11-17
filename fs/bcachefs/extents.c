@@ -2247,7 +2247,10 @@ static bool extent_merge_do_overlapping(struct btree_iter *iter,
 	 * But in the other bsets, we have to check for and fix such extents:
 	 */
 do_fixup:
-	for (t = b->set; t < b->set + b->nsets; t++) {
+	for_each_bset(b, t) {
+		if (t == bset_tree_last(b))
+			break;
+
 		if (!t->data->u64s)
 			continue;
 

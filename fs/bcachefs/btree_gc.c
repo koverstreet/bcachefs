@@ -438,7 +438,7 @@ static void recalc_packed_keys(struct btree *b)
 
 	memset(&b->keys.nr, 0, sizeof(b->keys.nr));
 
-	BUG_ON(b->keys.nsets);
+	BUG_ON(b->keys.nsets != 1);
 
 	for (k = b->keys.set[0].data->start;
 	     k != bset_bkey_last(b->keys.set[0].data);

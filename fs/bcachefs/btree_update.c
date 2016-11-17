@@ -30,7 +30,7 @@ void __bch_btree_calc_format(struct bkey_format_state *s, struct btree *b)
 	struct bset_tree *t;
 	struct bkey uk;
 
-	for (t = b->keys.set; t <= b->keys.set + b->keys.nsets; t++)
+	for_each_bset(&b->keys, t)
 		for (k = t->data->start;
 		     k != bset_bkey_last(t->data);
 		     k = bkey_next(k))
@@ -314,7 +314,7 @@ static void bch_btree_sort_into(struct cache_set *c,
 	struct btree_node_iter iter;
 	u64 start_time = local_clock();
 
-	BUG_ON(dst->keys.nsets);
+	BUG_ON(dst->keys.nsets != 1);
 
 	dst->keys.set[0].extra = BSET_NO_AUX_TREE_VAL;
 
@@ -1042,7 +1042,7 @@ void bch_btree_interior_update_will_free_node(struct cache_set *c,
 	 * over the bset->journal_seq tracking, since we'll be mixing those keys
 	 * in with keys that aren't in the journal anymore:
 	 */
-	for (t = b->keys.set; t <= b->keys.set + b->keys.nsets; t++)
+	for_each_bset(&b->keys, t)
 		as->journal_seq = max(as->journal_seq, t->data->journal_seq);
 
 	/*
@@ -1338,7 +1338,7 @@ static void btree_split_insert_keys(struct btree_iter *iter, struct btree *b,
 		} else
 			p = bkey_next(p);
 
-	BUG_ON(b->keys.nsets ||
+	BUG_ON(b->keys.nsets != 1 ||
 	       b->keys.nr.live_u64s != le16_to_cpu(b->keys.set->data->u64s));
 
 	btree_node_interior_verify(b);
