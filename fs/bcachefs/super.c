@@ -1150,10 +1150,10 @@ static struct cache_set *bch_cache_set_alloc(struct cache_sb *sb,
 	    mempool_init_kmalloc_pool(&c->btree_interior_update_pool, 1,
 				      sizeof(struct btree_interior_update)) ||
 	    mempool_init_kmalloc_pool(&c->fill_iter, 1, iter_size) ||
-	    bioset_init(&c->btree_read_bio, 1, offsetof(struct bbio, bio)) ||
+	    bioset_init(&c->btree_read_bio, 1, 0) ||
 	    bioset_init(&c->bio_read, 1, offsetof(struct bch_read_bio, bio)) ||
 	    bioset_init(&c->bio_read_split, 1, offsetof(struct bch_read_bio, bio)) ||
-	    bioset_init(&c->bio_write, 1, offsetof(struct bch_write_bio, bio.bio)) ||
+	    bioset_init(&c->bio_write, 1, offsetof(struct bch_write_bio, bio)) ||
 	    mempool_init_page_pool(&c->bio_bounce_pages,
 				   max_t(unsigned,
 					 c->sb.btree_node_size,
@@ -1976,7 +1976,7 @@ static const char *cache_alloc(struct bcache_superblock *sb,
 					       sizeof(u64), GFP_KERNEL)) ||
 	    !(ca->bio_prio = bio_kmalloc(GFP_NOIO, bucket_pages(ca))) ||
 	    bioset_init(&ca->replica_set, 4,
-			offsetof(struct bch_write_bio, bio.bio)) ||
+			offsetof(struct bch_write_bio, bio)) ||
 	    !(ca->sectors_written = alloc_percpu(*ca->sectors_written)))
 		goto err;
 

@@ -8,14 +8,6 @@
 #include <linux/llist.h>
 #include <linux/workqueue.h>
 
-/* XXX kill kill kill */
-struct bbio {
-	struct cache		*ca;
-	struct bch_extent_ptr	ptr;
-	unsigned		submit_time_us;
-	struct bio		bio;
-};
-
 struct bch_read_bio {
 	/*
 	 * Reads will often have to be split, and if the extent being read from
@@ -70,10 +62,18 @@ bch_rbio_parent(struct bch_read_bio *rbio)
 }
 
 struct bch_write_bio {
-	struct bio		*orig;
-	unsigned		bounce:1,
-				split:1;
-	struct bbio		bio;
+	struct cache		*ca;
+	union {
+		struct bio	*orig;
+		struct closure	*cl;
+	};
+
+	unsigned		submit_time_us;
+	unsigned		split:1,
+				bounce:1,
+				put_bio:1;
+
+	struct bio		bio;
 };
 
 struct bch_replace_info {

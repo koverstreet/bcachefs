@@ -770,7 +770,7 @@ static void bch_writepage_io_free(struct closure *cl)
 {
 	struct bch_writepage_io *io = container_of(cl,
 					struct bch_writepage_io, cl);
-	struct bio *bio = &io->bio.bio.bio;
+	struct bio *bio = &io->bio.bio;
 
 	bio_put(bio);
 }
@@ -780,7 +780,7 @@ static void bch_writepage_io_done(struct closure *cl)
 	struct bch_writepage_io *io = container_of(cl,
 					struct bch_writepage_io, cl);
 	struct cache_set *c = io->op.op.c;
-	struct bio *bio = &io->bio.bio.bio;
+	struct bio *bio = &io->bio.bio;
 	struct bio_vec *bvec;
 	unsigned i;
 
@@ -841,9 +841,9 @@ static void bch_writepage_do_io(struct bch_writepage_state *w)
 	struct bch_writepage_io *io = w->io;
 
 	w->io = NULL;
-	atomic_add(io->bio.bio.bio.bi_vcnt, &io->op.op.c->writeback_pages);
+	atomic_add(io->bio.bio.bi_vcnt, &io->op.op.c->writeback_pages);
 
-	io->op.op.pos.offset = io->bio.bio.bio.bi_iter.bi_sector;
+	io->op.op.pos.offset = io->bio.bio.bi_iter.bi_sector;
 
 	closure_call(&io->op.op.cl, bch_write, NULL, &io->cl);
 	continue_at(&io->cl, bch_writepage_io_done, NULL);
@@ -865,7 +865,7 @@ alloc_io:
 		w->io = container_of(bio_alloc_bioset(GFP_NOFS,
 						      BIO_MAX_PAGES,
 						      bch_writepage_bioset),
-				     struct bch_writepage_io, bio.bio.bio);
+				     struct bch_writepage_io, bio.bio);
 
 		closure_init(&w->io->cl, NULL);
 		w->io->op.ei		= ei;
@@ -881,7 +881,7 @@ alloc_io:
 		w->io->op.op.index_update_fn = bchfs_write_index_update;
 	}
 
-	if (bio_add_page_contig(&w->io->bio.bio.bio, page)) {
+	if (bio_add_page_contig(&w->io->bio.bio, page)) {
 		bch_writepage_do_io(w);
 		goto alloc_io;
 	}
@@ -932,7 +932,7 @@ do_io:
 	w->io->op.new_i_size = i_size;
 
 	if (wbc->sync_mode == WB_SYNC_ALL)
-		w->io->bio.bio.bio.bi_opf |= WRITE_SYNC;
+		w->io->bio.bio.bi_opf |= WRITE_SYNC;
 
 	/* Before unlocking the page, transfer reservation to w->io: */
 	old = page_state_cmpxchg(page_state(page), new, {
@@ -1002,7 +1002,7 @@ get_pages:
 		done_index = page->index;
 
 		if (w.io &&
-		    !bio_can_add_page_contig(&w.io->bio.bio.bio, page))
+		    !bio_can_add_page_contig(&w.io->bio.bio, page))
 			bch_writepage_do_io(&w);
 
 		if (!w.io &&
@@ -1389,7 +1389,7 @@ static long __bch_dio_write_complete(struct dio_write *dio)
 	if (dio->iovec && dio->iovec != dio->inline_vecs)
 		kfree(dio->iovec);
 
-	bio_put(&dio->bio.bio.bio);
+	bio_put(&dio->bio.bio);
 	return ret;
 }
 
@@ -1411,11 +1411,11 @@ static void bch_dio_write_done(struct dio_write *dio)
 	if (dio->iop.op.error)
 		dio->error = dio->iop.op.error;
 
-	bio_for_each_segment_all(bv, &dio->bio.bio.bio, i)
+	bio_for_each_segment_all(bv, &dio->bio.bio, i)
 		put_page(bv->bv_page);
 
 	if (dio->iter.count)
-		bio_reset(&dio->bio.bio.bio);
+		bio_reset(&dio->bio.bio);
 }
 
 static void bch_do_direct_IO_write(struct dio_write *dio)
@@ -1423,7 +1423,7 @@ static void bch_do_direct_IO_write(struct dio_write *dio)
 	struct file *file = dio->req->ki_filp;
 	struct inode *inode = file->f_inode;
 	struct bch_inode_info *ei = to_bch_ei(inode);
-	struct bio *bio = &dio->bio.bio.bio;
+	struct bio *bio = &dio->bio.bio;
 	unsigned flags = 0;
 	int ret;
 
@@ -1513,7 +1513,7 @@ static int bch_direct_IO_write(struct cache_set *c, struct kiocb *req,
 	bio = bio_alloc_bioset(GFP_KERNEL,
 			       iov_iter_npages(iter, BIO_MAX_PAGES),
 			       bch_dio_write_bioset);
-	dio = container_of(bio, struct dio_write, bio.bio.bio);
+	dio = container_of(bio, struct dio_write, bio.bio);
 	dio->req	= req;
 	dio->c		= c;
 	dio->written	= 0;

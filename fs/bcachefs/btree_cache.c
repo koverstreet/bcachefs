@@ -144,9 +144,6 @@ static struct btree *mca_find(struct cache_set *c,
  */
 static int mca_reap_notrace(struct cache_set *c, struct btree *b, bool flush)
 {
-	struct closure cl;
-
-	closure_init_stack(&cl);
 	lockdep_assert_held(&c->btree_cache_lock);
 
 	if (!six_trylock_intent(&b->lock))
@@ -171,9 +168,7 @@ static int mca_reap_notrace(struct cache_set *c, struct btree *b, bool flush)
 	 * after the write, since this node is about to be evicted:
 	 */
 	if (btree_node_dirty(b))
-		__bch_btree_node_write(b, &cl, -1);
-
-	closure_sync(&cl);
+		__bch_btree_node_write(c, b, NULL, -1);
 
 	/* wait for any in flight btree write */
 	wait_on_bit_io(&b->flags, BTREE_NODE_write_in_flight,

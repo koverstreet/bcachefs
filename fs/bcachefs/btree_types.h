@@ -74,7 +74,6 @@ struct btree {
 	/* lru list */
 	struct list_head	list;
 
-	struct closure		io;
 	struct btree_write	writes[2];
 };
 

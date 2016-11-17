@@ -34,10 +34,13 @@ int bch_btree_root_read(struct cache_set *, enum btree_id,
 void bch_btree_complete_write(struct cache_set *, struct btree *,
 			      struct btree_write *);
 
-void __bch_btree_node_write(struct btree *, struct closure *, int);
-void bch_btree_node_write(struct btree *, struct closure *,
-			  struct btree_iter *);
-void bch_btree_node_write_lazy(struct btree *, struct btree_iter *);
+void __bch_btree_node_write(struct cache_set *, struct btree *,
+			    struct closure *, int);
+void bch_btree_node_write(struct cache_set *, struct btree *,
+			  struct closure *, enum six_lock_type,
+			  struct btree_iter *, int);
+void bch_btree_node_write_lazy(struct cache_set *, struct btree *,
+			       struct btree_iter *);
 
 void bch_btree_flush(struct cache_set *);
 void bch_btree_node_flush_journal_entries(struct cache_set *, struct btree *,

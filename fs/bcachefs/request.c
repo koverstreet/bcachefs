@@ -212,7 +212,7 @@ static void bio_complete(struct search *s)
 static void do_bio_hook(struct search *s, struct bio *orig_bio)
 {
 	int rw = bio_data_dir(orig_bio);
-	struct bio *bio = rw ? &s->wbio.bio.bio : &s->rbio.bio;
+	struct bio *bio = rw ? &s->wbio.bio : &s->rbio.bio;
 
 	bio_init(bio);
 	__bio_clone_fast(bio, orig_bio);
@@ -229,7 +229,7 @@ static void search_free(struct closure *cl)
 	bio_complete(s);
 
 	if (s->iop.bio)
-		bio_put(&s->iop.bio->bio.bio);
+		bio_put(&s->iop.bio->bio);
 
 	closure_debug_destroy(cl);
 	mempool_free(s, &s->d->c->search);
@@ -331,7 +331,7 @@ static void cached_dev_read_done_bh(struct closure *cl)
  *
  * @orig_bio must actually be a bbio with a valid key.
  */
-void __cache_promote(struct cache_set *c, struct bbio *orig_bio,
+void __cache_promote(struct cache_set *c, struct bch_read_bio *orig_bio,
 		     struct bkey_s_c old,
 		     struct bkey_s_c new,
 		     unsigned write_flags)
@@ -437,10 +437,10 @@ static int cached_dev_cache_miss(struct btree_iter *iter, struct search *s,
 	//to_bbio(miss)->key.k = KEY(s->inode,
 	//			   bio_end_sector(miss),
 	//			   bio_sectors(miss));
-	to_bbio(miss)->ca = NULL;
+	to_rbio(miss)->ca = NULL;
 
 	closure_get(&s->cl);
-	__cache_promote(s->iop.c, to_bbio(miss),
+	__cache_promote(s->iop.c, to_rbio(miss),
 			bkey_i_to_s_c(&replace.key),
 			bkey_to_s_c(&KEY(replace.key.k.p.inode,
 					 replace.key.k.p.offset,
@@ -548,7 +548,7 @@ static void cached_dev_write_complete(struct closure *cl)
 static void cached_dev_write(struct cached_dev *dc, struct search *s)
 {
 	struct closure *cl = &s->cl;
-	struct bio *bio = &s->wbio.bio.bio;
+	struct bio *bio = &s->wbio.bio;
 	bool writeback = false;
 	bool bypass = s->bypass;
 	struct bkey insert_key = KEY(s->inode,
@@ -656,7 +656,7 @@ static void __cached_dev_make_request(struct request_queue *q, struct bio *bio)
 		s = search_alloc(bio, d);
 		trace_bcache_request_start(s->d, bio);
 
-		clone = rw ? &s->wbio.bio.bio : &s->rbio.bio;
+		clone = rw ? &s->wbio.bio : &s->rbio.bio;
 
 		if (!bio->bi_iter.bi_size) {
 			if (s->orig_bio->bi_opf & (REQ_PREFLUSH|REQ_FUA))

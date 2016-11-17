@@ -670,7 +670,7 @@ err:
 
 static void btree_node_read_endio(struct bio *bio)
 {
-	bch_bbio_endio(to_bbio(bio));
+	closure_put(bio->bi_private);
 }
 
 void bch_btree_node_read(struct cache_set *c, struct btree *b)
@@ -691,9 +691,9 @@ void bch_btree_node_read(struct cache_set *c, struct btree *b)
 		return;
 	}
 
-	percpu_ref_get(&pick.ca->ref);
-
 	bio = bio_alloc_bioset(GFP_NOIO, btree_pages(c), &c->btree_read_bio);
+	bio->bi_bdev		= pick.ca->disk_sb.bdev;
+	bio->bi_iter.bi_sector	= pick.ptr.offset;
 	bio->bi_iter.bi_size	= btree_bytes(c);
 	bio->bi_end_io		= btree_node_read_endio;
 	bio->bi_private		= &cl;
@@ -701,9 +701,8 @@ void bch_btree_node_read(struct cache_set *c, struct btree *b)
 
 	bch_bio_map(bio, b->data);
 
-	bio_get(bio);
-	bch_submit_bbio(to_bbio(bio), pick.ca, &pick.ptr, true);
-
+	closure_get(&cl);
+	bch_generic_make_request(bio, c);
 	closure_sync(&cl);
 
 	if (cache_fatal_io_err_on(bio->bi_error,
@@ -764,18 +763,9 @@ void bch_btree_complete_write(struct cache_set *c, struct btree *b,
 	closure_wake_up(&w->wait);
 }
 
-static void btree_node_write_unlock(struct closure *cl)
+static void btree_node_write_done(struct cache_set *c, struct btree *b)
 {
-	struct btree *b = container_of(cl, struct btree, io);
-
-	btree_node_io_unlock(b);
-}
-
-static void btree_node_write_done(struct closure *cl)
-{
-	struct btree *b = container_of(cl, struct btree, io);
 	struct btree_write *w = btree_prev_write(b);
-	struct cache_set *c = b->c;
 
 	/*
 	 * Before calling bch_btree_complete_write() - if the write errored, we
@@ -786,34 +776,47 @@ static void btree_node_write_done(struct closure *cl)
 		bch_journal_halt(&c->journal);
 
 	bch_btree_complete_write(c, b, w);
-	closure_return_with_destructor(cl, btree_node_write_unlock);
+	btree_node_io_unlock(b);
 }
 
 static void btree_node_write_endio(struct bio *bio)
 {
-	struct closure *cl = bio->bi_private;
-	struct btree *b = container_of(cl, struct btree, io);
+	struct btree *b = bio->bi_private;
+	struct cache_set *c = b->c;
 	struct bch_write_bio *wbio = to_wbio(bio);
+	struct bio *orig	= wbio->split ? wbio->orig : NULL;
+	struct closure *cl	= !wbio->split ? wbio->cl : NULL;
+	struct cache *ca	= wbio->ca;
 
-	if (cache_fatal_io_err_on(bio->bi_error, wbio->bio.ca, "btree write") ||
+	if (cache_fatal_io_err_on(bio->bi_error, ca, "btree write") ||
 	    bch_meta_write_fault("btree"))
 		set_btree_node_write_error(b);
 
-	if (wbio->orig)
-		bio_endio(wbio->orig);
-	else if (wbio->bounce)
-		bch_bio_free_pages_pool(b->c, bio);
+	if (wbio->bounce)
+		bch_bio_free_pages_pool(c, bio);
 
-	bch_bbio_endio(to_bbio(bio));
+	if (wbio->put_bio)
+		bio_put(bio);
+
+	if (orig) {
+		bio_endio(orig);
+	} else {
+		btree_node_write_done(c, b);
+		if (cl)
+			closure_put(cl);
+	}
+
+	if (ca)
+		percpu_ref_put(&ca->ref);
 }
 
-static void do_btree_node_write(struct closure *cl)
+void __bch_btree_node_write(struct cache_set *c, struct btree *b,
+			    struct closure *parent,
+			    int idx_to_write)
 {
-	struct btree *b = container_of(cl, struct btree, io);
 	struct bio *bio;
 	struct bch_write_bio *wbio;
-	struct cache_set *c = b->c;
-	struct bset *i = btree_bset_last(b);
+	struct bset *i;
 	BKEY_PADDED(key) k;
 	struct bkey_s_extent e;
 	struct bch_extent_ptr *ptr;
@@ -821,8 +824,36 @@ static void do_btree_node_write(struct closure *cl)
 	size_t sectors_to_write;
 	void *data;
 
+	/*
+	 * We may only have a read lock on the btree node - the dirty bit is our
+	 * "lock" against racing with other threads that may be trying to start
+	 * a write, we do a write iff we clear the dirty bit. Since setting the
+	 * dirty bit requires a write lock, we can't race with other threads
+	 * redirtying it:
+	 */
+	if (!test_and_clear_bit(BTREE_NODE_dirty, &b->flags))
+		return;
+
+	btree_node_io_lock(b);
+
+	BUG_ON(!list_empty(&b->write_blocked));
+#if 0
+	/*
+	 * This is an optimization for when journal flushing races with the
+	 * btree node being written for some other reason, and the write the
+	 * journal wanted to flush has already happened - in that case we'd
+	 * prefer not to write a mostly empty bset. It seemed to be buggy,
+	 * though:
+	 */
+	if (idx_to_write != -1 &&
+	    idx_to_write != btree_node_write_idx(b)) {
+		btree_node_io_unlock(b);
+		return;
+	}
+#endif
 	trace_bcache_btree_write(b);
 
+	i = btree_bset_last(b);
 	BUG_ON(b->written >= c->sb.btree_node_size);
 	BUG_ON(b->written && !i->u64s);
 	BUG_ON(btree_bset_first(b)->seq != i->seq);
@@ -870,24 +901,25 @@ static void do_btree_node_write(struct closure *cl)
 	 * break:
 	 */
 	if (bch_journal_error(&c->journal)) {
-		struct btree_write *w = btree_prev_write(b);
-
 		set_btree_node_write_error(b);
 		b->written += sectors_to_write;
-		bch_btree_complete_write(c, b, w);
 
-		closure_return_with_destructor(cl, btree_node_write_unlock);
+		btree_node_write_done(c, b);
+		return;
 	}
 
 	bio = bio_alloc_bioset(GFP_NOIO, btree_pages(c), &c->bio_write);
 
-	wbio		= to_wbio(bio);
-	wbio->orig	= NULL;
-	wbio->bounce	= true;
-
+	wbio			= to_wbio(bio);
+	wbio->cl		= parent;
+	wbio->bounce		= true;
+	wbio->put_bio		= true;
 	bio->bi_end_io		= btree_node_write_endio;
-	bio->bi_private		= cl;
+	bio->bi_private		= b;
 	bio_set_op_attrs(bio, REQ_OP_WRITE, REQ_META|WRITE_SYNC|REQ_FUA);
+
+	if (parent)
+		closure_get(parent);
 
 	bch_bio_alloc_pages_pool(c, bio, sectors_to_write << 9);
 	memcpy_to_bio(bio, bio->bi_iter, data);
@@ -920,67 +952,36 @@ static void do_btree_node_write(struct closure *cl)
 
 	b->written += sectors_to_write;
 
-	bch_submit_bbio_replicas(wbio, c, &k.key, true);
-	continue_at(cl, btree_node_write_done, NULL);
+	bch_submit_wbio_replicas(wbio, c, &k.key, true);
 }
 
-/*
- * Only requires a read lock:
- */
-void __bch_btree_node_write(struct btree *b, struct closure *parent,
-			    int idx_to_write)
+void bch_btree_node_write(struct cache_set *c, struct btree *b,
+			  struct closure *parent,
+			  enum six_lock_type lock_type_held,
+			  struct btree_iter *iter,
+			  int idx_to_write)
 {
-	/*
-	 * We may only have a read lock on the btree node - the dirty bit is our
-	 * "lock" against racing with other threads that may be trying to start
-	 * a write, we do a write iff we clear the dirty bit. Since setting the
-	 * dirty bit requires a write lock, we can't race with other threads
-	 * redirtying it:
-	 */
-	if (!test_and_clear_bit(BTREE_NODE_dirty, &b->flags))
-		return;
+	BUG_ON(lock_type_held == SIX_LOCK_write);
 
-	btree_node_io_lock(b);
+	__bch_btree_node_write(c, b, parent, -1);
 
-	BUG_ON(!list_empty(&b->write_blocked));
-#if 0
-	/*
-	 * This is an optimization for when journal flushing races with the
-	 * btree node being written for some other reason, and the write the
-	 * journal wanted to flush has already happened - in that case we'd
-	 * prefer not to write a mostly empty bset. It seemed to be buggy,
-	 * though:
-	 */
-	if (idx_to_write != -1 &&
-	    idx_to_write != btree_node_write_idx(b)) {
-		btree_node_io_unlock(b);
-		return;
+	if (lock_type_held == SIX_LOCK_intent ||
+	    six_trylock_convert(&b->lock, SIX_LOCK_read,
+				SIX_LOCK_intent)) {
+		bch_btree_init_next(c, b, iter);
+
+		if (lock_type_held == SIX_LOCK_read)
+			six_lock_downgrade(&b->lock);
 	}
-#endif
-	/*
-	 * do_btree_node_write() must not run asynchronously (NULL is passed for
-	 * workqueue) - it needs the lock we have on the btree node
-	 */
-	closure_call(&b->io, do_btree_node_write, NULL, parent ?: &b->c->cl);
 }
 
-/*
- * Use this one if the node is intent locked:
- */
-void bch_btree_node_write(struct btree *b, struct closure *parent,
-			  struct btree_iter *iter)
-{
-	__bch_btree_node_write(b, parent, -1);
-
-	bch_btree_init_next(b->c, b, iter);
-}
-
-static void bch_btree_node_write_dirty(struct btree *b, struct closure *parent)
+static void bch_btree_node_write_dirty(struct cache_set *c, struct btree *b,
+				       struct closure *parent)
 {
 	six_lock_read(&b->lock);
 	BUG_ON(b->level);
 
-	__bch_btree_node_write(b, parent, -1);
+	bch_btree_node_write(c, b, parent, SIX_LOCK_read, NULL, -1);
 	six_unlock_read(&b->lock);
 }
 
@@ -990,7 +991,8 @@ static void bch_btree_node_write_dirty(struct btree *b, struct closure *parent)
 /*
  * Write leaf nodes if the unwritten bset is getting too big:
  */
-void bch_btree_node_write_lazy(struct btree *b, struct btree_iter *iter)
+void bch_btree_node_write_lazy(struct cache_set *c, struct btree *b,
+			       struct btree_iter *iter)
 {
 	struct btree_node_entry *bne =
 		container_of(btree_bset_last(b),
@@ -1001,7 +1003,7 @@ void bch_btree_node_write_lazy(struct btree *b, struct btree_iter *iter)
 		 PAGE_SIZE) - bytes < 48 ||
 	     bytes > BTREE_WRITE_SET_BUFFER) &&
 	    !btree_node_write_in_flight(b))
-		bch_btree_node_write(b, NULL, iter);
+		bch_btree_node_write(c, b, NULL, SIX_LOCK_intent, iter, -1);
 }
 
 /*
@@ -1035,7 +1037,7 @@ restart:
 				 */
 				if (!b->level && btree_node_dirty(b)) {
 					rcu_read_unlock();
-					bch_btree_node_write_dirty(b, &cl);
+					bch_btree_node_write_dirty(c, b, &cl);
 					dropped_lock = true;
 					rcu_read_lock();
 					goto restart;

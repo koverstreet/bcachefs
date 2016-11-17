@@ -67,15 +67,17 @@ void __bch_btree_verify(struct cache_set *c, struct btree *b)
 
 	bio = bio_alloc_bioset(GFP_NOIO, btree_pages(c), &c->btree_read_bio);
 	bio->bi_bdev		= pick.ca->disk_sb.bdev;
+	bio->bi_iter.bi_sector	= pick.ptr.offset;
 	bio->bi_iter.bi_size	= btree_bytes(c);
 	bio_set_op_attrs(bio, REQ_OP_READ, REQ_META|READ_SYNC);
 	bio->bi_private		= &cl;
 	bio->bi_end_io		= btree_verify_endio;
 	bch_bio_map(bio, n_sorted);
 
-	bch_submit_bbio(to_bbio(bio), pick.ca, &pick.ptr, true);
-
+	closure_get(&cl);
+	bch_generic_make_request(bio, c);
 	closure_sync(&cl);
+
 	bio_put(bio);
 
 	memcpy(n_ondisk, n_sorted, btree_bytes(c));

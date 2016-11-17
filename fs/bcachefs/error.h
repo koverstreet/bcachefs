@@ -5,7 +5,6 @@
 
 struct cache;
 struct cache_set;
-struct bbio;
 
 /*
  * XXX: separate out errors that indicate on disk data is inconsistent, and flag

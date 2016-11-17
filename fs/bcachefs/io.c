@@ -115,31 +115,24 @@ void bch_bio_alloc_pages_pool(struct cache_set *c, struct bio *bio,
 
 /* Bios with headers */
 
-static void bch_bbio_prep(struct bbio *b, struct cache *ca)
+static void bch_submit_wbio(struct cache_set *c, struct bch_write_bio *wbio,
+			    struct cache *ca, const struct bch_extent_ptr *ptr,
+			    bool punt)
 {
-	b->ca				= ca;
-	b->bio.bi_iter.bi_sector	= b->ptr.offset;
-	b->bio.bi_bdev			= ca ? ca->disk_sb.bdev : NULL;
-}
+	wbio->ca		= ca;
+	wbio->submit_time_us	= local_clock_us();
+	wbio->bio.bi_iter.bi_sector = ptr->offset;
+	wbio->bio.bi_bdev	= ca ? ca->disk_sb.bdev : NULL;
 
-void bch_submit_bbio(struct bbio *b, struct cache *ca,
-		     const struct bch_extent_ptr *ptr, bool punt)
-{
-	struct bio *bio = &b->bio;
-
-	b->ptr = *ptr;
-	bch_bbio_prep(b, ca);
-	b->submit_time_us = local_clock_us();
-
-	if (!ca) {
-		bcache_io_error(ca->set, bio, "device has been removed");
-	} else if (punt)
-		closure_bio_submit_punt(bio, bio->bi_private, ca->set);
+	if (!ca)
+		bcache_io_error(c, &wbio->bio, "device has been removed");
+	else if (punt)
+		bch_generic_make_request(&wbio->bio, c);
 	else
-		closure_bio_submit(bio, bio->bi_private);
+		generic_make_request(&wbio->bio);
 }
 
-void bch_submit_bbio_replicas(struct bch_write_bio *bio, struct cache_set *c,
+void bch_submit_wbio_replicas(struct bch_write_bio *wbio, struct cache_set *c,
 			      const struct bkey_i *k, bool punt)
 {
 	struct bkey_s_c_extent e = bkey_i_to_s_c_extent(k);
@@ -147,7 +140,7 @@ void bch_submit_bbio_replicas(struct bch_write_bio *bio, struct cache_set *c,
 	struct bch_write_bio *n;
 	struct cache *ca;
 
-	BUG_ON(bio->orig);
+	wbio->split = false;
 
 	extent_for_each_ptr(e, ptr) {
 		rcu_read_lock();
@@ -157,43 +150,33 @@ void bch_submit_bbio_replicas(struct bch_write_bio *bio, struct cache_set *c,
 		rcu_read_unlock();
 
 		if (!ca) {
-			bch_submit_bbio(&bio->bio, ca, ptr, punt);
+			bch_submit_wbio(c, wbio, ca, ptr, punt);
 			break;
 		}
 
 		if (ptr + 1 < &extent_entry_last(e)->ptr) {
-			n = to_wbio(bio_clone_fast(&bio->bio.bio, GFP_NOIO,
+			n = to_wbio(bio_clone_fast(&wbio->bio, GFP_NOIO,
 						   &ca->replica_set));
 
-			n->bio.bio.bi_end_io	= bio->bio.bio.bi_end_io;
-			n->bio.bio.bi_private	= bio->bio.bio.bi_private;
-			n->orig			= &bio->bio.bio;
+			n->bio.bi_end_io	= wbio->bio.bi_end_io;
+			n->bio.bi_private	= wbio->bio.bi_private;
+			n->orig			= &wbio->bio;
+			n->bounce		= false;
+			n->split		= true;
+			n->bio.bi_opf		= wbio->bio.bi_opf;
 			__bio_inc_remaining(n->orig);
 		} else {
-			n = bio;
+			n = wbio;
 		}
 
 		if (!journal_flushes_device(ca))
-			n->bio.bio.bi_opf |= REQ_FUA;
+			n->bio.bi_opf |= REQ_FUA;
 
-		bch_submit_bbio(&n->bio, ca, ptr, punt);
+		bch_submit_wbio(c, n, ca, ptr, punt);
 	}
 }
 
 /* IO errors */
-
-void bch_bbio_endio(struct bbio *bio)
-{
-	struct closure *cl = bio->bio.bi_private;
-	struct cache *ca = bio->ca;
-
-	bch_account_io_completion_time(ca, bio->submit_time_us,
-				       bio_op(&bio->bio));
-	bio_put(&bio->bio);
-	if (ca)
-		percpu_ref_put(&ca->ref);
-	closure_put(cl);
-}
 
 /* Writes */
 
@@ -295,7 +278,7 @@ static void bch_write_index(struct closure *cl)
 static void bch_write_discard(struct closure *cl)
 {
 	struct bch_write_op *op = container_of(cl, struct bch_write_op, cl);
-	struct bio *bio = &op->bio->bio.bio;
+	struct bio *bio = &op->bio->bio;
 	struct bpos end = op->pos;
 
 	end.offset += bio_sectors(bio);
@@ -356,28 +339,31 @@ static void bch_write_endio(struct bio *bio)
 	struct closure *cl = bio->bi_private;
 	struct bch_write_op *op = container_of(cl, struct bch_write_op, cl);
 	struct bch_write_bio *wbio = to_wbio(bio);
-	struct cache *ca = wbio->bio.ca;
+	struct bio *orig = wbio->orig;
+	struct cache *ca = wbio->ca;
 
 	if (cache_nonfatal_io_err_on(bio->bi_error, ca,
 				     "data write"))
 		set_closure_fn(cl, bch_write_io_error, op->c->wq);
 
-	if (wbio->orig) {
-		if (bio->bi_error)
-			wbio->orig->bi_error = bio->bi_error;
-		bio_endio(wbio->orig);
-	} else if (wbio->bounce) {
-		bch_bio_free_pages_pool(op->c, bio);
-	}
-
-	bch_account_io_completion_time(ca,
-				       wbio->bio.submit_time_us,
+	bch_account_io_completion_time(ca, wbio->submit_time_us,
 				       REQ_OP_WRITE);
-	if (wbio->split)
-		bio_put(&wbio->bio.bio);
 	if (ca)
 		percpu_ref_put(&ca->ref);
-	closure_put(cl);
+
+	if (bio->bi_error && orig)
+		orig->bi_error = bio->bi_error;
+
+	if (wbio->bounce)
+		bch_bio_free_pages_pool(op->c, bio);
+
+	if (wbio->put_bio)
+		bio_put(bio);
+
+	if (orig)
+		bio_endio(orig);
+	else
+		closure_put(cl);
 }
 
 static int bch_write_extent(struct bch_write_op *op,
@@ -423,7 +409,7 @@ static int bch_write_extent(struct bch_write_op *op,
 		wbio			= to_wbio(bio);
 		wbio->orig		= NULL;
 		wbio->bounce		= false;
-		wbio->split		= false;
+		wbio->put_bio		= false;
 		ret			= 0;
 	} else if (csum_type != BCH_CSUM_NONE ||
 		   compression_type != BCH_COMPRESSION_NONE) {
@@ -458,7 +444,7 @@ static int bch_write_extent(struct bch_write_op *op,
 		wbio			= to_wbio(bio);
 		wbio->orig		= NULL;
 		wbio->bounce		= true;
-		wbio->split		= true;
+		wbio->put_bio		= true;
 
 		/*
 		 * Set the (uncompressed) size of the key we're creating to the
@@ -510,7 +496,7 @@ static int bch_write_extent(struct bch_write_op *op,
 		wbio			= to_wbio(bio);
 		wbio->orig		= NULL;
 		wbio->bounce		= false;
-		wbio->split		= bio != orig;
+		wbio->put_bio		= bio != orig;
 
 		ret = bio != orig;
 	}
@@ -519,14 +505,15 @@ static int bch_write_extent(struct bch_write_op *op,
 	bio->bi_private	= &op->cl;
 	bio_set_op_attrs(bio, REQ_OP_WRITE, 0);
 
-	bch_submit_bbio_replicas(wbio, op->c, &e->k_i, false);
+	closure_get(bio->bi_private);
+	bch_submit_wbio_replicas(wbio, op->c, &e->k_i, false);
 	return ret;
 }
 
 static void __bch_write(struct closure *cl)
 {
 	struct bch_write_op *op = container_of(cl, struct bch_write_op, cl);
-	struct bio *bio = &op->bio->bio.bio;
+	struct bio *bio = &op->bio->bio;
 	unsigned open_bucket_nr = 0;
 	struct open_bucket *b;
 	int ret;
@@ -712,7 +699,7 @@ void bch_wake_delayed_writes(unsigned long data)
 void bch_write(struct closure *cl)
 {
 	struct bch_write_op *op = container_of(cl, struct bch_write_op, cl);
-	struct bio *bio = &op->bio->bio.bio;
+	struct bio *bio = &op->bio->bio;
 	struct cache_set *c = op->c;
 	u64 inode = op->pos.inode;
 
@@ -976,7 +963,7 @@ static void cache_promote_done(struct closure *cl)
 	struct cache_promote_op *op =
 		container_of(cl, struct cache_promote_op, cl);
 
-	bch_bio_free_pages_pool(op->write.op.c, &op->write.wbio.bio.bio);
+	bch_bio_free_pages_pool(op->write.op.c, &op->write.wbio.bio);
 	kfree(op);
 }
 
@@ -1000,7 +987,7 @@ static void __bch_read_endio(struct cache_set *c, struct bch_read_bio *rbio)
 		BUG_ON(!rbio->split || !rbio->bounce);
 
 		/* we now own pages: */
-		swap(promote->write.wbio.bio.bio.bi_vcnt, rbio->bio.bi_vcnt);
+		swap(promote->write.wbio.bio.bi_vcnt, rbio->bio.bi_vcnt);
 		rbio->promote = NULL;
 
 		bch_rbio_done(c, rbio);
@@ -1093,7 +1080,7 @@ void bch_read_extent_iter(struct cache_set *c, struct bch_read_bio *orig,
 		promote_op = kmalloc(sizeof(*promote_op) +
 				sizeof(struct bio_vec) * pages, GFP_NOIO);
 		if (promote_op) {
-			struct bio *promote_bio = &promote_op->write.wbio.bio.bio;
+			struct bio *promote_bio = &promote_op->write.wbio.bio;
 
 			bio_init(promote_bio);
 			promote_bio->bi_max_vecs = pages;
@@ -1180,7 +1167,7 @@ void bch_read_extent_iter(struct cache_set *c, struct bch_read_bio *orig,
 	rbio->bio.bi_end_io	= bch_read_endio;
 
 	if (promote_op) {
-		struct bio *promote_bio = &promote_op->write.wbio.bio.bio;
+		struct bio *promote_bio = &promote_op->write.wbio.bio;
 
 		promote_bio->bi_iter = rbio->bio.bi_iter;
 		memcpy(promote_bio->bi_io_vec, rbio->bio.bi_io_vec,

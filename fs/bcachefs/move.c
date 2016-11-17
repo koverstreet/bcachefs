@@ -188,7 +188,7 @@ static void moving_io_destructor(struct closure *cl)
 	atomic_sub(io->write.key.k.size, &ctxt->sectors_in_flight);
 	wake_up(&ctxt->wait);
 
-	bio_for_each_segment_all(bv, &io->write.wbio.bio.bio, i)
+	bio_for_each_segment_all(bv, &io->write.wbio.bio, i)
 		if (bv->bv_page)
 			__free_page(bv->bv_page);
 
@@ -301,9 +301,9 @@ int bch_data_move(struct cache_set *c,
 		return -ENOMEM;
 	}
 
-	migrate_bio_init(io, &io->write.wbio.bio.bio, k.k->size);
-	bio_get(&io->write.wbio.bio.bio);
-	io->write.wbio.bio.bio.bi_iter.bi_sector = bkey_start_offset(k.k);
+	migrate_bio_init(io, &io->write.wbio.bio, k.k->size);
+	bio_get(&io->write.wbio.bio);
+	io->write.wbio.bio.bi_iter.bi_sector = bkey_start_offset(k.k);
 
 	bch_migrate_write_init(c, &io->write, wp, k, move_ptr, 0);
 

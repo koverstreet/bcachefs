@@ -205,7 +205,7 @@ static int bcache_device_init(struct bcache_device *d, unsigned block_size,
 	}
 
 	if (!(d->disk = alloc_disk(1)) ||
-	    bioset_init(&d->bio_split, 4, offsetof(struct bbio, bio))) {
+	    bioset_init(&d->bio_split, 4, offsetof(struct bch_read_bio, bio))) {
 		pr_err("cannot allocate disk");
 		ida_simple_remove(&bch_blockdev_minor, minor);
 		return -ENOMEM;

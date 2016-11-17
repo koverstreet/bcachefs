@@ -3,10 +3,11 @@
 
 #include "io_types.h"
 
-#define to_bbio(_bio)		container_of((_bio), struct bbio, bio)
-
 #define to_wbio(_bio)			\
-	container_of((_bio), struct bch_write_bio, bio.bio)
+	container_of((_bio), struct bch_write_bio, bio)
+
+#define to_rbio(_bio)			\
+	container_of((_bio), struct bch_read_bio, bio)
 
 void bch_bio_free_pages_pool(struct cache_set *, struct bio *);
 void bch_bio_alloc_pages_pool(struct cache_set *, struct bio *, size_t);
@@ -72,13 +73,9 @@ enum bch_read_flags {
 
 void bch_read(struct cache_set *, struct bch_read_bio *, u64);
 
-void bch_bbio_endio(struct bbio *);
-
 void bch_generic_make_request(struct bio *, struct cache_set *);
 void bch_bio_submit_work(struct work_struct *);
-void bch_submit_bbio(struct bbio *, struct cache *,
-		     const struct bch_extent_ptr *, bool);
-void bch_submit_bbio_replicas(struct bch_write_bio *, struct cache_set *,
+void bch_submit_wbio_replicas(struct bch_write_bio *, struct cache_set *,
 			      const struct bkey_i *, bool);
 
 int bch_discard(struct cache_set *, struct bpos, struct bpos,
