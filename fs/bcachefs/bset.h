@@ -378,29 +378,21 @@ struct bkey_packed *bkey_prev_all(struct bset_tree *, struct bkey_packed *);
 struct bkey_packed *bkey_prev(struct bset_tree *, struct bkey_packed *);
 
 enum bch_extent_overlap {
-	BCH_EXTENT_OVERLAP_FRONT,
-	BCH_EXTENT_OVERLAP_BACK,
-	BCH_EXTENT_OVERLAP_ALL,
-	BCH_EXTENT_OVERLAP_MIDDLE,
+	BCH_EXTENT_OVERLAP_ALL		= 0,
+	BCH_EXTENT_OVERLAP_BACK		= 1,
+	BCH_EXTENT_OVERLAP_FRONT	= 2,
+	BCH_EXTENT_OVERLAP_MIDDLE	= 3,
 };
 
 /* Returns how k overlaps with m */
 static inline enum bch_extent_overlap bch_extent_overlap(const struct bkey *k,
 							 const struct bkey *m)
 {
-	if (bkey_cmp(k->p, m->p) < 0) {
-		if (bkey_cmp(bkey_start_pos(k),
-			     bkey_start_pos(m)) > 0)
-			return BCH_EXTENT_OVERLAP_MIDDLE;
-		else
-			return BCH_EXTENT_OVERLAP_FRONT;
-	} else {
-		if (bkey_cmp(bkey_start_pos(k),
-			     bkey_start_pos(m)) <= 0)
-			return BCH_EXTENT_OVERLAP_ALL;
-		else
-			return BCH_EXTENT_OVERLAP_BACK;
-	}
+	int cmp1 = bkey_cmp(k->p, m->p) < 0;
+	int cmp2 = bkey_cmp(bkey_start_pos(k),
+			    bkey_start_pos(m)) > 0;
+
+	return (cmp1 << 1) + cmp2;
 }
 
 /* Btree key iteration */
