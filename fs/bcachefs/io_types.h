@@ -62,6 +62,7 @@ bch_rbio_parent(struct bch_read_bio *rbio)
 }
 
 struct bch_write_bio {
+	struct cache_set	*c;
 	struct cache		*ca;
 	union {
 		struct bio	*orig;

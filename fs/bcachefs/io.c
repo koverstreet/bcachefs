@@ -141,6 +141,7 @@ void bch_submit_wbio_replicas(struct bch_write_bio *wbio, struct cache_set *c,
 	struct cache *ca;
 
 	wbio->split = false;
+	wbio->c = c;
 
 	extent_for_each_ptr(e, ptr) {
 		rcu_read_lock();
@@ -160,6 +161,7 @@ void bch_submit_wbio_replicas(struct bch_write_bio *wbio, struct cache_set *c,
 
 			n->bio.bi_end_io	= wbio->bio.bi_end_io;
 			n->bio.bi_private	= wbio->bio.bi_private;
+			n->c			= c;
 			n->orig			= &wbio->bio;
 			n->bounce		= false;
 			n->split		= true;
@@ -337,14 +339,14 @@ static void bch_write_io_error(struct closure *cl)
 static void bch_write_endio(struct bio *bio)
 {
 	struct closure *cl = bio->bi_private;
-	struct bch_write_op *op = container_of(cl, struct bch_write_op, cl);
 	struct bch_write_bio *wbio = to_wbio(bio);
+	struct cache_set *c = wbio->c;
 	struct bio *orig = wbio->orig;
 	struct cache *ca = wbio->ca;
 
 	if (cache_nonfatal_io_err_on(bio->bi_error, ca,
 				     "data write"))
-		set_closure_fn(cl, bch_write_io_error, op->c->wq);
+		set_closure_fn(cl, bch_write_io_error, c->wq);
 
 	bch_account_io_completion_time(ca, wbio->submit_time_us,
 				       REQ_OP_WRITE);
@@ -355,7 +357,7 @@ static void bch_write_endio(struct bio *bio)
 		orig->bi_error = bio->bi_error;
 
 	if (wbio->bounce)
-		bch_bio_free_pages_pool(op->c, bio);
+		bch_bio_free_pages_pool(c, bio);
 
 	if (wbio->put_bio)
 		bio_put(bio);

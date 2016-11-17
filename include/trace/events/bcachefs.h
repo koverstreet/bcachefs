@@ -406,8 +406,8 @@ DEFINE_EVENT(bpos, bkey_pack_pos_lossy_fail,
 /* Btree */
 
 DECLARE_EVENT_CLASS(btree_node,
-	TP_PROTO(struct btree *b),
-	TP_ARGS(b),
+	TP_PROTO(struct cache_set *c, struct btree *b),
+	TP_ARGS(c, b),
 
 	TP_STRUCT__entry(
 		__array(char,		uuid,		16	)
@@ -419,8 +419,8 @@ DECLARE_EVENT_CLASS(btree_node,
 	),
 
 	TP_fast_assign(
-		memcpy(__entry->uuid, b->c->disk_sb.user_uuid.b, 16);
-		__entry->bucket		= PTR_BUCKET_NR_TRACE(b->c, &b->key, 0);
+		memcpy(__entry->uuid, c->disk_sb.user_uuid.b, 16);
+		__entry->bucket		= PTR_BUCKET_NR_TRACE(c, &b->key, 0);
 		__entry->level		= b->level;
 		__entry->id		= b->btree_id;
 		__entry->inode		= b->key.k.p.inode;
@@ -433,13 +433,13 @@ DECLARE_EVENT_CLASS(btree_node,
 );
 
 DEFINE_EVENT(btree_node, bcache_btree_read,
-	TP_PROTO(struct btree *b),
-	TP_ARGS(b)
+	TP_PROTO(struct cache_set *c, struct btree *b),
+	TP_ARGS(c, b)
 );
 
 TRACE_EVENT(bcache_btree_write,
-	TP_PROTO(struct btree *b),
-	TP_ARGS(b),
+	TP_PROTO(struct cache_set *c, struct btree *b),
+	TP_ARGS(c, b),
 
 	TP_STRUCT__entry(
 		__field(u64,		bucket			)
@@ -448,7 +448,7 @@ TRACE_EVENT(bcache_btree_write,
 	),
 
 	TP_fast_assign(
-		__entry->bucket	= PTR_BUCKET_NR_TRACE(b->c, &b->key, 0);
+		__entry->bucket	= PTR_BUCKET_NR_TRACE(c, &b->key, 0);
 		__entry->block	= b->written;
 		__entry->u64s	= le16_to_cpu(b->keys.set[b->keys.nsets].data->u64s);
 	),
@@ -457,14 +457,9 @@ TRACE_EVENT(bcache_btree_write,
 		  __entry->bucket, __entry->block, __entry->u64s)
 );
 
-DEFINE_EVENT(btree_node, bcache_btree_bounce_write_fail,
-	TP_PROTO(struct btree *b),
-	TP_ARGS(b)
-);
-
 DEFINE_EVENT(btree_node, bcache_btree_node_alloc,
-	TP_PROTO(struct btree *b),
-	TP_ARGS(b)
+	TP_PROTO(struct cache_set *c, struct btree *b),
+	TP_ARGS(c, b)
 );
 
 TRACE_EVENT(bcache_btree_node_alloc_fail,
@@ -485,13 +480,13 @@ TRACE_EVENT(bcache_btree_node_alloc_fail,
 );
 
 DEFINE_EVENT(btree_node, bcache_btree_node_free,
-	TP_PROTO(struct btree *b),
-	TP_ARGS(b)
+	TP_PROTO(struct cache_set *c, struct btree *b),
+	TP_ARGS(c, b)
 );
 
 TRACE_EVENT(bcache_mca_reap,
-	TP_PROTO(struct btree *b, int ret),
-	TP_ARGS(b, ret),
+	TP_PROTO(struct cache_set *c, struct btree *b, int ret),
+	TP_ARGS(c, b, ret),
 
 	TP_STRUCT__entry(
 		__field(u64,			bucket		)
@@ -499,7 +494,7 @@ TRACE_EVENT(bcache_mca_reap,
 	),
 
 	TP_fast_assign(
-		__entry->bucket	= PTR_BUCKET_NR_TRACE(b->c, &b->key, 0);
+		__entry->bucket	= PTR_BUCKET_NR_TRACE(c, &b->key, 0);
 		__entry->ret = ret;
 	),
 
@@ -568,8 +563,8 @@ DEFINE_EVENT(cache_set, bcache_mca_cannibalize_unlock,
 );
 
 TRACE_EVENT(bcache_btree_insert_key,
-	TP_PROTO(struct btree *b, struct bkey_i *k),
-	TP_ARGS(b, k),
+	TP_PROTO(struct cache_set *c, struct btree *b, struct bkey_i *k),
+	TP_ARGS(c, b, k),
 
 	TP_STRUCT__entry(
 		__field(u64,		b_bucket		)
@@ -583,7 +578,7 @@ TRACE_EVENT(bcache_btree_insert_key,
 	),
 
 	TP_fast_assign(
-		__entry->b_bucket	= PTR_BUCKET_NR_TRACE(b->c, &b->key, 0);
+		__entry->b_bucket	= PTR_BUCKET_NR_TRACE(c, &b->key, 0);
 		__entry->level		= b->level;
 		__entry->id		= b->btree_id;
 		__entry->b_inode	= b->key.k.p.inode;
@@ -600,8 +595,8 @@ TRACE_EVENT(bcache_btree_insert_key,
 );
 
 DECLARE_EVENT_CLASS(btree_split,
-	TP_PROTO(struct btree *b, unsigned keys),
-	TP_ARGS(b, keys),
+	TP_PROTO(struct cache_set *c, struct btree *b, unsigned keys),
+	TP_ARGS(c, b, keys),
 
 	TP_STRUCT__entry(
 		__field(u64,		bucket			)
@@ -613,7 +608,7 @@ DECLARE_EVENT_CLASS(btree_split,
 	),
 
 	TP_fast_assign(
-		__entry->bucket	= PTR_BUCKET_NR_TRACE(b->c, &b->key, 0);
+		__entry->bucket	= PTR_BUCKET_NR_TRACE(c, &b->key, 0);
 		__entry->level	= b->level;
 		__entry->id	= b->btree_id;
 		__entry->inode	= b->key.k.p.inode;
@@ -627,25 +622,25 @@ DECLARE_EVENT_CLASS(btree_split,
 );
 
 DEFINE_EVENT(btree_split, bcache_btree_node_split,
-	TP_PROTO(struct btree *b, unsigned keys),
-	TP_ARGS(b, keys)
+	TP_PROTO(struct cache_set *c, struct btree *b, unsigned keys),
+	TP_ARGS(c, b, keys)
 );
 
 DEFINE_EVENT(btree_split, bcache_btree_node_compact,
-	TP_PROTO(struct btree *b, unsigned keys),
-	TP_ARGS(b, keys)
+	TP_PROTO(struct cache_set *c, struct btree *b, unsigned keys),
+	TP_ARGS(c, b, keys)
 );
 
 DEFINE_EVENT(btree_node, bcache_btree_set_root,
-	TP_PROTO(struct btree *b),
-	TP_ARGS(b)
+	TP_PROTO(struct cache_set *c, struct btree *b),
+	TP_ARGS(c, b)
 );
 
 /* Garbage collection */
 
 TRACE_EVENT(bcache_btree_gc_coalesce,
-	TP_PROTO(struct btree *b, unsigned nodes),
-	TP_ARGS(b, nodes),
+	TP_PROTO(struct cache_set *c, struct btree *b, unsigned nodes),
+	TP_ARGS(c, b, nodes),
 
 	TP_STRUCT__entry(
 		__field(u64,		bucket			)
@@ -657,7 +652,7 @@ TRACE_EVENT(bcache_btree_gc_coalesce,
 	),
 
 	TP_fast_assign(
-		__entry->bucket		= PTR_BUCKET_NR_TRACE(b->c, &b->key, 0);
+		__entry->bucket		= PTR_BUCKET_NR_TRACE(c, &b->key, 0);
 		__entry->level		= b->level;
 		__entry->id		= b->btree_id;
 		__entry->inode		= b->key.k.p.inode;
@@ -688,8 +683,8 @@ TRACE_EVENT(bcache_btree_gc_coalesce_fail,
 );
 
 TRACE_EVENT(bcache_btree_node_alloc_replacement,
-	TP_PROTO(struct btree *old, struct btree *b),
-	TP_ARGS(old, b),
+	TP_PROTO(struct cache_set *c, struct btree *old, struct btree *b),
+	TP_ARGS(c, old, b),
 
 	TP_STRUCT__entry(
 		__array(char,		uuid,		16	)
@@ -702,10 +697,10 @@ TRACE_EVENT(bcache_btree_node_alloc_replacement,
 	),
 
 	TP_fast_assign(
-		memcpy(__entry->uuid, b->c->disk_sb.user_uuid.b, 16);
-		__entry->old_bucket	= PTR_BUCKET_NR_TRACE(old->c,
+		memcpy(__entry->uuid, c->disk_sb.user_uuid.b, 16);
+		__entry->old_bucket	= PTR_BUCKET_NR_TRACE(c,
 							      &old->key, 0);
-		__entry->bucket		= PTR_BUCKET_NR_TRACE(b->c, &b->key, 0);
+		__entry->bucket		= PTR_BUCKET_NR_TRACE(c, &b->key, 0);
 		__entry->level		= b->level;
 		__entry->id		= b->btree_id;
 		__entry->inode		= b->key.k.p.inode;
@@ -719,13 +714,13 @@ TRACE_EVENT(bcache_btree_node_alloc_replacement,
 );
 
 DEFINE_EVENT(btree_node, bcache_btree_gc_rewrite_node,
-	TP_PROTO(struct btree *b),
-	TP_ARGS(b)
+	TP_PROTO(struct cache_set *c, struct btree *b),
+	TP_ARGS(c, b)
 );
 
 DEFINE_EVENT(btree_node, bcache_btree_gc_rewrite_node_fail,
-	TP_PROTO(struct btree *b),
-	TP_ARGS(b)
+	TP_PROTO(struct cache_set *c, struct btree *b),
+	TP_ARGS(c, b)
 );
 
 DEFINE_EVENT(cache_set, bcache_gc_start,

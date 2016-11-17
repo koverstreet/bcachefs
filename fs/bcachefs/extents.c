@@ -566,17 +566,17 @@ bch_btree_pick_ptr(struct cache_set *c, const struct btree *b)
 	rcu_read_lock();
 
 	extent_for_each_online_device_crc(c, e, crc, ptr, ca) {
+		struct btree *root = btree_node_root(c, b);
+
 		if (cache_set_inconsistent_on(crc, c,
 				"btree node pointer with crc at btree %u level %u/%u bucket %zu",
-				b->btree_id, b->level, btree_node_root(b)
-				? btree_node_root(b)->level : -1,
+				b->btree_id, b->level, root ? root->level : -1,
 				PTR_BUCKET_NR(ca, ptr)))
 			break;
 
 		if (cache_inconsistent_on(ptr_stale(ca, ptr), ca,
 				"stale btree node pointer at btree %u level %u/%u bucket %zu",
-				b->btree_id, b->level, btree_node_root(b)
-				? btree_node_root(b)->level : -1,
+				b->btree_id, b->level, root ? root->level : -1,
 				PTR_BUCKET_NR(ca, ptr)))
 			continue;
 

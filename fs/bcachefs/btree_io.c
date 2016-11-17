@@ -421,8 +421,8 @@ void bch_btree_init_next(struct cache_set *c, struct btree *b,
 #define btree_node_error(b, c, ptr, fmt, ...)				\
 	cache_set_inconsistent(c,					\
 		"btree node error at btree %u level %u/%u bucket %zu block %u u64s %u: " fmt,\
-		(b)->btree_id, (b)->level, btree_node_root(b)		\
-			    ? btree_node_root(b)->level : -1,		\
+		(b)->btree_id, (b)->level, btree_node_root(c, b)	\
+			    ? btree_node_root(c, b)->level : -1,	\
 		PTR_BUCKET_NR(ca, ptr), (b)->written,			\
 		(i)->u64s, ##__VA_ARGS__)
 
@@ -680,7 +680,7 @@ void bch_btree_node_read(struct cache_set *c, struct btree *b)
 	struct bio *bio;
 	struct extent_pick_ptr pick;
 
-	trace_bcache_btree_read(b);
+	trace_bcache_btree_read(c, b);
 
 	closure_init_stack(&cl);
 
@@ -782,8 +782,8 @@ static void btree_node_write_done(struct cache_set *c, struct btree *b)
 static void btree_node_write_endio(struct bio *bio)
 {
 	struct btree *b = bio->bi_private;
-	struct cache_set *c = b->c;
 	struct bch_write_bio *wbio = to_wbio(bio);
+	struct cache_set *c	= wbio->c;
 	struct bio *orig	= wbio->split ? wbio->orig : NULL;
 	struct closure *cl	= !wbio->split ? wbio->cl : NULL;
 	struct cache *ca	= wbio->ca;
@@ -851,7 +851,7 @@ void __bch_btree_node_write(struct cache_set *c, struct btree *b,
 		return;
 	}
 #endif
-	trace_bcache_btree_write(b);
+	trace_bcache_btree_write(c, b);
 
 	i = btree_bset_last(b);
 	BUG_ON(b->written >= c->sb.btree_node_size);

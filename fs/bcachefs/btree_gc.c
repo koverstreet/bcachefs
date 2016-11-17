@@ -509,7 +509,7 @@ static void bch_coalesce_nodes(struct btree *old_nodes[GC_MERGE_NODES],
 			goto out;
 		}
 
-	trace_bcache_btree_gc_coalesce(parent, nr_old_nodes);
+	trace_bcache_btree_gc_coalesce(c, parent, nr_old_nodes);
 
 	as = bch_btree_interior_update_alloc(c);
 

@@ -67,8 +67,6 @@ struct btree {
 	struct btree_keys	keys;
 	struct btree_node	*data;
 
-	struct cache_set	*c;
-
 	struct open_bucket	*ob;
 
 	/* lru list */
