@@ -460,7 +460,7 @@ __btree_node_offset_to_key(struct btree_keys *b, u16 k)
 	return (void *) ((u64 *) b->set->data + k);
 }
 
-static inline int __btree_node_iter_cmp(struct btree_node_iter *iter,
+static inline int __btree_node_iter_cmp(bool is_extents,
 					struct btree_keys *b,
 					struct bkey_packed *l,
 					struct bkey_packed *r)
@@ -473,7 +473,7 @@ static inline int __btree_node_iter_cmp(struct btree_node_iter *iter,
 	 * For extents, bkey_deleted() is used as a proxy for k->size == 0, so
 	 * deleted keys have to sort last.
 	 */
-	return bkey_cmp_packed(&b->format, l, r) ?: iter->is_extents
+	return bkey_cmp_packed(&b->format, l, r) ?: is_extents
 		? (int) bkey_deleted(l) - (int) bkey_deleted(r)
 		: (int) bkey_deleted(r) - (int) bkey_deleted(l);
 }
@@ -483,7 +483,7 @@ static inline int btree_node_iter_cmp(struct btree_node_iter *iter,
 				      struct btree_node_iter_set l,
 				      struct btree_node_iter_set r)
 {
-	return __btree_node_iter_cmp(iter, b,
+	return __btree_node_iter_cmp(iter->is_extents, b,
 			__btree_node_offset_to_key(b, l.k),
 			__btree_node_offset_to_key(b, r.k));
 }

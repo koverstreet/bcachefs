@@ -109,7 +109,13 @@ struct bkey {
 	__u8		u64s;
 
 	/* Format of key (0 for format local to btree node) */
-	__u8		format;
+#if defined(__LITTLE_ENDIAN_BITFIELD)
+	__u8		format:7,
+			needs_whiteout:1;
+#elif defined (__BIG_ENDIAN_BITFIELD)
+	__u8		needs_whiteout:1,
+			format:7;
+#endif
 
 	/* Type of the value */
 	__u8		type;
@@ -136,7 +142,19 @@ struct bkey_packed {
 	__u8		u64s;
 
 	/* Format of key (0 for format local to btree node) */
-	__u8		format;
+
+	/*
+	 * XXX: next incompat on disk format change, switch format and
+	 * needs_whiteout - bkey_packed() will be cheaper if format is the high
+	 * bits of the bitfield
+	 */
+#if defined(__LITTLE_ENDIAN_BITFIELD)
+	__u8		format:7,
+			needs_whiteout:1;
+#elif defined (__BIG_ENDIAN_BITFIELD)
+	__u8		needs_whiteout:1,
+			format:7;
+#endif
 
 	/* Type of the value */
 	__u8		type;
@@ -256,6 +274,7 @@ struct bkey_i_##name {							\
 #define KEY_TYPE_DISCARD		1
 #define KEY_TYPE_ERROR			2
 #define KEY_TYPE_COOKIE			3
+#define KEY_TYPE_PERSISTENT_DISCARD	4
 #define KEY_TYPE_GENERIC_NR		128
 
 struct bch_cookie {

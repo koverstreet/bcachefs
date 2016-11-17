@@ -232,8 +232,12 @@ static bool bch_bkey_transform_key(const struct bkey_format *out_f,
 		if (!set_inc_field(&out_s, i, get_inc_field(&in_s, i)))
 			return false;
 
+	/* Can't happen because the val would be too big to unpack: */
+	EBUG_ON(in->u64s - in_f->key_u64s + out_f->key_u64s > U8_MAX);
+
 	pack_state_finish(&out_s, out);
 	out->u64s	= out_f->key_u64s + in->u64s - in_f->key_u64s;
+	out->needs_whiteout = in->needs_whiteout;
 	out->type	= in->type;
 
 	return true;
@@ -262,9 +266,11 @@ static struct bkey __bkey_unpack_key(const struct bkey_format *format,
 	EBUG_ON(format->nr_fields != 5);
 	EBUG_ON(in->u64s < format->key_u64s);
 	EBUG_ON(in->format != KEY_FORMAT_LOCAL_BTREE);
+	EBUG_ON(in->u64s - format->key_u64s + BKEY_U64s > U8_MAX);
 
 	out.u64s	= BKEY_U64s + in->u64s - format->key_u64s;
 	out.format	= KEY_FORMAT_CURRENT;
+	out.needs_whiteout = in->needs_whiteout;
 	out.type	= in->type;
 	out.pad[0]	= 0;
 	out.p.inode	= get_inc_field(&state, BKEY_FIELD_INODE);
@@ -301,6 +307,7 @@ bool bkey_pack_key(struct bkey_packed *out, const struct bkey *in,
 {
 	struct pack_state state = pack_state_init(format, out);
 
+	EBUG_ON((void *) in == (void *) out);
 	EBUG_ON(format->nr_fields != 5);
 	EBUG_ON(in->format != KEY_FORMAT_CURRENT);
 
@@ -323,6 +330,7 @@ bool bkey_pack_key(struct bkey_packed *out, const struct bkey *in,
 	pack_state_finish(&state, out);
 	out->u64s	= format->key_u64s + in->u64s - BKEY_U64s;
 	out->format	= KEY_FORMAT_LOCAL_BTREE;
+	out->needs_whiteout = in->needs_whiteout;
 	out->type	= in->type;
 
 	bch_bkey_pack_verify(out, in, format);

@@ -655,7 +655,7 @@ static void bch_insert_fixup_btree_ptr(struct btree_iter *iter,
 /* Inserting into a given leaf node (last stage of insert): */
 
 /* Handle overwrites and do insert, for non extents: */
-void bch_btree_bset_insert_key(struct btree_iter *iter,
+bool bch_btree_bset_insert_key(struct btree_iter *iter,
 			       struct btree *b,
 			       struct btree_node_iter *node_iter,
 			       struct bkey_i *insert)
@@ -665,27 +665,69 @@ void bch_btree_bset_insert_key(struct btree_iter *iter,
 	struct bset_tree *t;
 	unsigned clobber_u64s;
 
+	EBUG_ON(btree_node_just_written(b));
+	EBUG_ON(bset_written(b, btree_bset_last(b)));
 	EBUG_ON(bkey_deleted(&insert->k) && bkey_val_u64s(&insert->k));
-	EBUG_ON(insert->k.u64s > bch_btree_keys_u64s_remaining(iter->c, b));
 	EBUG_ON(bkey_cmp(bkey_start_pos(&insert->k), b->data->min_key) < 0 ||
 		bkey_cmp(insert->k.p, b->data->max_key) > 0);
+	BUG_ON(insert->k.u64s > bch_btree_keys_u64s_remaining(iter->c, b));
 
 	k = bch_btree_node_iter_peek_all(node_iter, &b->keys);
 	if (k && !bkey_cmp_packed(f, k, &insert->k)) {
+		BUG_ON(bkey_whiteout(k));
+
 		t = bch_bkey_to_bset(&b->keys, k);
 
-		if (!bkey_whiteout(k))
-			btree_keys_account_key_drop(&b->keys.nr,
-						t - b->keys.set, k);
+		if (bset_unwritten(b, t->data) &&
+		    bkey_val_u64s(&insert->k) == bkeyp_val_u64s(f, k)) {
+			BUG_ON(bkey_whiteout(k) != bkey_whiteout(&insert->k));
+
+			k->type = insert->k.type;
+			memcpy_u64s(bkeyp_val(f, k), &insert->v,
+				    bkey_val_u64s(&insert->k));
+			return true;
+		}
+
+		insert->k.needs_whiteout = k->needs_whiteout;
+
+		btree_keys_account_key_drop(&b->keys.nr, t - b->keys.set, k);
 
 		if (t == bset_tree_last(&b->keys)) {
 			clobber_u64s = k->u64s;
+
+			/*
+			 * If we're deleting, and the key we're deleting doesn't
+			 * need a whiteout (it wasn't overwriting a key that had
+			 * been written to disk) - just delete it:
+			 */
+			if (bkey_whiteout(&insert->k) && !k->needs_whiteout) {
+				bch_bset_delete(&b->keys, k, clobber_u64s);
+				bch_btree_node_iter_fix(iter, b, node_iter, t,
+							k, clobber_u64s, 0);
+				return true;
+			}
+
 			goto overwrite;
 		}
 
 		k->type = KEY_TYPE_DELETED;
 		bch_btree_node_iter_fix(iter, b, node_iter, t, k,
 					k->u64s, k->u64s);
+
+		if (bkey_whiteout(&insert->k)) {
+			reserve_whiteout(b, t, k);
+			return true;
+		} else {
+			k->needs_whiteout = false;
+		}
+	} else {
+		/*
+		 * Deleting, but the key to delete wasn't found - nothing to do:
+		 */
+		if (bkey_whiteout(&insert->k))
+			return false;
+
+		insert->k.needs_whiteout = false;
 	}
 
 	t = bset_tree_last(&b->keys);
@@ -693,9 +735,10 @@ void bch_btree_bset_insert_key(struct btree_iter *iter,
 	clobber_u64s = 0;
 overwrite:
 	bch_bset_insert(&b->keys, node_iter, k, insert, clobber_u64s);
-	if (k->u64s != clobber_u64s || bkey_deleted(&insert->k))
+	if (k->u64s != clobber_u64s || bkey_whiteout(&insert->k))
 		bch_btree_node_iter_fix(iter, b, node_iter, t, k,
 					clobber_u64s, k->u64s);
+	return true;
 }
 
 static void __btree_node_flush(struct journal *j, struct journal_entry_pin *pin,
@@ -720,7 +763,7 @@ static void __btree_node_flush(struct journal *j, struct journal_entry_pin *pin,
 	 * shouldn't:
 	 */
 	if (!b->level)
-		__bch_btree_node_write(c, b, NULL, i);
+		bch_btree_node_write(c, b, NULL, SIX_LOCK_read, i);
 	six_unlock_read(&b->lock);
 }
 
@@ -755,9 +798,13 @@ void bch_btree_journal_key(struct btree_insert *trans,
 
 	if (trans->journal_res.ref) {
 		u64 seq = bch_journal_res_seq(j, &trans->journal_res);
+		bool needs_whiteout = insert->k.needs_whiteout;
 
+		/* ick */
+		insert->k.needs_whiteout = false;
 		bch_journal_add_keys(j, &trans->journal_res,
 				     b->btree_id, insert);
+		insert->k.needs_whiteout = needs_whiteout;
 
 		if (trans->journal_seq)
 			*trans->journal_seq = seq;
@@ -776,11 +823,11 @@ bch_insert_fixup_key(struct btree_insert *trans,
 
 	BUG_ON(iter->level);
 
-	bch_btree_journal_key(trans, iter, insert->k);
-	bch_btree_bset_insert_key(iter,
-				  iter->nodes[0],
-				  &iter->node_iters[0],
-				  insert->k);
+	if (bch_btree_bset_insert_key(iter,
+				      iter->nodes[0],
+				      &iter->node_iters[0],
+				      insert->k))
+		bch_btree_journal_key(trans, iter, insert->k);
 
 	trans->did_work = true;
 	return BTREE_INSERT_OK;
@@ -800,22 +847,19 @@ static void verify_keys_sorted(struct keylist *l)
 static void btree_node_lock_for_insert(struct btree *b, struct btree_iter *iter)
 {
 	struct cache_set *c = iter->c;
-	struct bset *i;
-relock:
+
 	btree_node_lock_write(b, iter);
-	i = btree_bset_last(b);
+
+	if (btree_node_just_written(b) &&
+	    bch_btree_post_write_cleanup(c, b))
+		bch_btree_iter_reinit_node(iter, b);
 
 	/*
 	 * If the last bset has been written, or if it's gotten too big - start
 	 * a new bset to insert into:
 	 */
-	if (next_bset_offset(c, b) < c->sb.btree_node_size &&
-	    (bset_written(b, i) ||
-	     le16_to_cpu(i->u64s) * sizeof(u64) > BTREE_WRITE_SET_BUFFER)) {
-		btree_node_unlock_write(b, iter);
+	if (want_new_bset(c, b))
 		bch_btree_init_next(c, b, iter);
-		goto relock;
-	}
 }
 
 /* Asynchronous interior node update machinery */
@@ -1877,6 +1921,12 @@ retry:
 		if (!same_leaf_as_prev(trans, i))
 			u64s = 0;
 
+		/*
+		 * bch_btree_node_insert_fits() must be called under write lock:
+		 * with only an intent lock, another thread can still call
+		 * bch_btree_node_write(), converting an unwritten bset to a
+		 * written one
+		 */
 		if (!i->done) {
 			u64s += i->k->k.u64s;
 			if (!bch_btree_node_insert_fits(c,

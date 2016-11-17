@@ -45,6 +45,12 @@ struct btree {
 	u8			level;
 	u8			btree_id;
 	u16			sib_u64s[2];
+	u16			whiteout_u64s;
+	u16			uncompacted_whiteout_u64s;
+
+	struct btree_keys	keys;
+	struct btree_node	*data;
+
 	/*
 	 * XXX: add a delete sequence number, so when btree_node_relock() fails
 	 * because the lock sequence number has changed - i.e. the contents were
@@ -62,9 +68,6 @@ struct btree {
 	 * written:
 	 */
 	struct list_head	write_blocked;
-
-	struct btree_keys	keys;
-	struct btree_node	*data;
 
 	struct open_bucket	*ob;
 
@@ -91,6 +94,7 @@ enum btree_flags {
 	BTREE_NODE_write_idx,
 	BTREE_NODE_accessed,
 	BTREE_NODE_write_in_flight,
+	BTREE_NODE_just_written,
 };
 
 BTREE_FLAG(read_error);
@@ -99,6 +103,7 @@ BTREE_FLAG(dirty);
 BTREE_FLAG(write_idx);
 BTREE_FLAG(accessed);
 BTREE_FLAG(write_in_flight);
+BTREE_FLAG(just_written);
 
 static inline struct btree_write *btree_current_write(struct btree *b)
 {

@@ -166,7 +166,7 @@ static int mca_reap_notrace(struct cache_set *c, struct btree *b, bool flush)
 	 * after the write, since this node is about to be evicted:
 	 */
 	if (btree_node_dirty(b))
-		__bch_btree_node_write(c, b, NULL, -1);
+		__bch_btree_node_write(c, b, NULL, SIX_LOCK_read, -1);
 
 	/* wait for any in flight btree write */
 	wait_on_bit_io(&b->flags, BTREE_NODE_write_in_flight,
@@ -507,12 +507,14 @@ out_unlock:
 	list_del_init(&b->list);
 	mutex_unlock(&c->btree_cache_lock);
 out:
-	b->flags	= 0;
-	b->written	= 0;
-	b->keys.nsets	= 0;
-	b->keys.set[0].data = NULL;
-	b->sib_u64s[0]	= 0;
-	b->sib_u64s[1]	= 0;
+	b->flags		= 0;
+	b->written		= 0;
+	b->keys.nsets		= 0;
+	b->keys.set[0].data	= NULL;
+	b->sib_u64s[0]		= 0;
+	b->sib_u64s[1]		= 0;
+	b->whiteout_u64s	= 0;
+	b->uncompacted_whiteout_u64s = 0;
 	bch_btree_keys_init(&b->keys, &c->expensive_debug_checks);
 
 	bch_time_stats_update(&c->mca_alloc_time, start_time);

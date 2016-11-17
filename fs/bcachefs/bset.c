@@ -203,7 +203,8 @@ void bch_btree_node_iter_verify(struct btree_node_iter *iter,
 		if (bch_btree_node_iter_bset_pos(iter, b, t->data) ==
 		    bset_bkey_last(t->data) &&
 		    (k = bkey_prev_all(t, bset_bkey_last(t->data))))
-			BUG_ON(__btree_node_iter_cmp(iter, b, k, first) > 0);
+			BUG_ON(__btree_node_iter_cmp(iter->is_extents, b,
+						     k, first) > 0);
 }
 
 void bch_verify_key_order(struct btree_keys *b,
@@ -1558,7 +1559,8 @@ struct bkey_packed *bch_btree_node_iter_prev_all(struct btree_node_iter *iter,
 		k = bkey_prev_all(t,
 			bch_btree_node_iter_bset_pos(iter, b, t->data));
 		if (k &&
-		    (!prev || __btree_node_iter_cmp(iter, b, k, prev) > 0)) {
+		    (!prev || __btree_node_iter_cmp(iter->is_extents, b,
+						    k, prev) > 0)) {
 			prev = k;
 			prev_i = t->data;
 		}

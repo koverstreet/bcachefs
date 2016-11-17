@@ -74,6 +74,10 @@ struct bch_write_bio {
 				bounce:1,
 				put_bio:1;
 
+	/* Only for btree writes: */
+	unsigned		used_mempool:1;
+	u8			order;
+
 	struct bio		bio;
 };
 

@@ -166,10 +166,27 @@ int bch_btree_root_alloc(struct cache_set *, enum btree_id, struct closure *);
 
 /* Inserting into a given leaf node (last stage of insert): */
 
-void bch_btree_bset_insert_key(struct btree_iter *, struct btree *,
+bool bch_btree_bset_insert_key(struct btree_iter *, struct btree *,
 			       struct btree_node_iter *, struct bkey_i *);
 void bch_btree_journal_key(struct btree_insert *trans, struct btree_iter *,
 			   struct bkey_i *);
+
+static inline void *btree_data_end(struct cache_set *c, struct btree *b)
+{
+	return (void *) b->data + btree_bytes(c);
+}
+
+static inline struct bkey_packed *unwritten_whiteouts_start(struct cache_set *c,
+							    struct btree *b)
+{
+	return (void *) ((u64 *) btree_data_end(c, b) - b->whiteout_u64s);
+}
+
+static inline struct bkey_packed *unwritten_whiteouts_end(struct cache_set *c,
+							  struct btree *b)
+{
+	return btree_data_end(c, b);
+}
 
 static inline void *write_block(struct btree *b)
 {
@@ -193,21 +210,13 @@ static inline unsigned bset_end_sector(struct cache_set *c, struct btree *b,
 			block_bytes(c)) >> 9;
 }
 
-static inline unsigned next_bset_offset(struct cache_set *c, struct btree *b)
-{
-
-	unsigned offset = max_t(unsigned, b->written,
-			bset_end_sector(c, b, btree_bset_last(b)));
-
-	EBUG_ON(offset > c->sb.btree_node_size);
-	return offset;
-}
-
 static inline size_t bch_btree_keys_u64s_remaining(struct cache_set *c,
 						   struct btree *b)
 {
 	struct bset *i = btree_bset_last(b);
-	unsigned used = bset_byte_offset(b, bset_bkey_last(i)) / sizeof(u64);
+	unsigned used = bset_byte_offset(b, bset_bkey_last(i)) / sizeof(u64) +
+		b->whiteout_u64s +
+		b->uncompacted_whiteout_u64s;
 	unsigned total = c->sb.btree_node_size << 6;
 
 	EBUG_ON(used > total);
@@ -216,6 +225,36 @@ static inline size_t bch_btree_keys_u64s_remaining(struct cache_set *c,
 		return 0;
 
 	return total - used;
+}
+
+static inline unsigned btree_write_set_buffer(struct btree *b)
+{
+	/*
+	 * Could buffer up larger amounts of keys for btrees with larger keys,
+	 * pending benchmarking:
+	 */
+	return 4 << 10;
+}
+
+static inline struct btree_node_entry *want_new_bset(struct cache_set *c,
+						     struct btree *b)
+{
+	struct bset *i = btree_bset_last(b);
+	unsigned offset = max_t(unsigned, b->written << 9,
+				bset_byte_offset(b, bset_bkey_last(i)));
+	ssize_t n = (ssize_t) btree_bytes(c) - (ssize_t)
+		(offset + sizeof(struct btree_node_entry) +
+		 b->whiteout_u64s * sizeof(u64) +
+		 b->uncompacted_whiteout_u64s * sizeof(u64));
+
+	EBUG_ON(offset > btree_bytes(c));
+
+	if ((unlikely(bset_written(b, i)) && n > 0) ||
+	    (unlikely(__set_bytes(i, le16_to_cpu(i->u64s)) >
+		      btree_write_set_buffer(b)) && n > btree_write_set_buffer(b)))
+		return (void *) b->data + offset;
+
+	return NULL;
 }
 
 /*
@@ -233,6 +272,27 @@ static inline bool bch_btree_node_insert_fits(struct cache_set *c,
 	}
 
 	return u64s <= bch_btree_keys_u64s_remaining(c, b);
+}
+
+static inline void unreserve_whiteout(struct btree *b, struct bset_tree *t,
+				      struct bkey_packed *k)
+{
+	if (bset_written(b, t->data)) {
+		EBUG_ON(b->uncompacted_whiteout_u64s <
+			bkeyp_key_u64s(&b->keys.format, k));
+		b->uncompacted_whiteout_u64s -=
+			bkeyp_key_u64s(&b->keys.format, k);
+	}
+}
+
+static inline void reserve_whiteout(struct btree *b, struct bset_tree *t,
+				    struct bkey_packed *k)
+{
+	if (bset_written(b, t->data)) {
+		BUG_ON(!k->needs_whiteout);
+		b->uncompacted_whiteout_u64s +=
+			bkeyp_key_u64s(&b->keys.format, k);
+	}
 }
 
 void bch_btree_insert_node(struct btree *, struct btree_iter *,
