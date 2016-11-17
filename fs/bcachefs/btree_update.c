@@ -678,8 +678,6 @@ overwrite:
 	if (k->u64s != clobber_u64s || bkey_deleted(&insert->k))
 		bch_btree_node_iter_fix(iter, b, node_iter, t, k,
 					clobber_u64s, k->u64s);
-	else
-		bch_btree_iter_verify(iter, b);
 }
 
 static void btree_node_flush(struct journal *j, struct journal_entry_pin *pin)
@@ -1095,6 +1093,7 @@ bch_btree_insert_keys_interior(struct btree *b,
 			       struct btree_interior_update *as,
 			       struct btree_reserve *res)
 {
+	struct btree_iter *linked;
 	struct btree_node_iter node_iter;
 	const struct bkey_format *f = &b->keys.format;
 	struct bkey_i *insert = bch_keylist_front(insert_keys);
@@ -1134,6 +1133,13 @@ bch_btree_insert_keys_interior(struct btree *b,
 	}
 
 	btree_interior_update_updated_btree(iter->c, as, b);
+
+	for_each_linked_btree_node(iter, b, linked)
+		bch_btree_node_iter_peek(&linked->node_iters[b->level],
+					 &b->keys);
+	bch_btree_node_iter_peek(&iter->node_iters[b->level], &b->keys);
+
+	bch_btree_iter_verify(iter, b);
 
 	if (bch_maybe_compact_deleted_keys(&b->keys))
 		bch_btree_iter_reinit_node(iter, b);

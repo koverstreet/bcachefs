@@ -207,8 +207,17 @@ void bch_verify_key_order(struct btree_keys *b,
 	struct bkey uk, uw = bkey_unpack_key(f, where);
 
 	k = bkey_prev_all(t, where);
-	BUG_ON(k &&
-	       keys_out_of_order(f, k, where, b->ops->is_extents));
+	if (k &&
+	    keys_out_of_order(f, k, where, b->ops->is_extents)) {
+		char buf1[100], buf2[100];
+
+		bch_dump_bucket(b);
+		uk = bkey_unpack_key(f, k);
+		bch_bkey_to_text(buf1, sizeof(buf1), &uk);
+		bch_bkey_to_text(buf2, sizeof(buf2), &uw);
+		panic("out of order with prev:\n%s\n%s\n",
+		      buf1, buf2);
+	}
 
 	k = bkey_next(where);
 	BUG_ON(k != bset_bkey_last(t->data) &&
