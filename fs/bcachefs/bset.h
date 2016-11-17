@@ -597,16 +597,6 @@ static inline void btree_keys_account_key(struct btree_nr_keys *n,
 #define btree_keys_account_key_drop(_nr, _bset_idx, _k)	\
 	btree_keys_account_key(_nr, _bset_idx, _k, -1)
 
-/* Sorting */
-
-struct btree_nr_keys bch_sort_bsets(struct bset *,
-				    struct btree_keys *,
-				    struct btree_node_iter *,
-				    struct bkey_format *,
-				    struct bkey_format *,
-				    key_filter_fn,
-				    key_merge_fn);
-
 bool bch_maybe_compact_deleted_keys(struct btree_keys *);
 
 struct bset_stats {

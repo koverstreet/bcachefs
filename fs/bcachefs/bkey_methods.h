@@ -41,8 +41,10 @@ enum merge_result {
 	BCH_MERGE_MERGE,
 };
 
-typedef bool (*key_filter_fn)(struct btree_keys *, struct bkey_s);
-typedef enum merge_result (*key_merge_fn)(struct btree_keys *,
+typedef bool (*key_filter_fn)(struct cache_set *, struct btree_keys *,
+			      struct bkey_s);
+typedef enum merge_result (*key_merge_fn)(struct cache_set *,
+					  struct btree_keys *,
 					  struct bkey_i *, struct bkey_i *);
 
 struct bkey_ops {

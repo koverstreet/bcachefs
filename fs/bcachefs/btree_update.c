@@ -307,37 +307,6 @@ static struct btree *bch_btree_node_alloc(struct cache_set *c,
 	return b;
 }
 
-static void bch_btree_sort_into(struct cache_set *c,
-				struct btree *dst,
-				struct btree *src)
-{
-	struct btree_nr_keys nr;
-	struct btree_node_iter iter;
-	u64 start_time = local_clock();
-
-	BUG_ON(dst->keys.nsets != 1);
-
-	bch_bset_set_no_aux_tree(&dst->keys, &dst->keys.set[0]);
-
-	bch_btree_node_iter_init_from_start(&iter, &src->keys,
-					    btree_node_is_extents(src));
-
-	nr = bch_sort_bsets(dst->keys.set->data,
-			    &src->keys, &iter,
-			    &src->keys.format,
-			    &dst->keys.format,
-			    btree_node_ops(src)->key_normalize,
-			    btree_node_ops(src)->key_merge);
-	bch_time_stats_update(&c->btree_sort_time, start_time);
-
-	dst->keys.nr.live_u64s		+= nr.live_u64s;
-	dst->keys.nr.bset_u64s[0]	+= nr.bset_u64s[0];
-	dst->keys.nr.packed_keys	+= nr.packed_keys;
-	dst->keys.nr.unpacked_keys	+= nr.unpacked_keys;
-
-	bch_verify_btree_nr_keys(&dst->keys);
-}
-
 struct btree *__btree_node_alloc_replacement(struct cache_set *c,
 					     struct btree *b,
 					     struct bkey_format format,

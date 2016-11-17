@@ -12,7 +12,8 @@ struct btree_insert_entry;
 struct btree_nr_keys bch_key_sort_fix_overlapping(struct bset *,
 						  struct btree_keys *,
 						  struct btree_node_iter *);
-struct btree_nr_keys bch_extent_sort_fix_overlapping(struct bset *,
+struct btree_nr_keys bch_extent_sort_fix_overlapping(struct cache_set *c,
+						     struct bset *,
 						     struct btree_keys *,
 						     struct btree_node_iter *);
 

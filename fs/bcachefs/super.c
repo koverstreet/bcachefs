@@ -897,7 +897,7 @@ static void cache_set_free(struct cache_set *c)
 	bdi_destroy(&c->bdi);
 	free_percpu(c->bucket_stats_lock.lock);
 	free_percpu(c->bucket_stats_percpu);
-	mempool_exit(&c->btree_sort_pool);
+	mempool_exit(&c->btree_bounce_pool);
 	mempool_exit(&c->bio_bounce_pages);
 	bioset_exit(&c->bio_write);
 	bioset_exit(&c->bio_read_split);
@@ -1161,7 +1161,7 @@ static struct cache_set *bch_cache_set_alloc(struct cache_sb *sb,
 				   PAGE_SECTORS, 0) ||
 	    !(c->bucket_stats_percpu = alloc_percpu(struct bucket_stats_cache_set)) ||
 	    !(c->bucket_stats_lock.lock = alloc_percpu(*c->bucket_stats_lock.lock)) ||
-	    mempool_init_page_pool(&c->btree_sort_pool, 1,
+	    mempool_init_page_pool(&c->btree_bounce_pool, 1,
 				   ilog2(btree_pages(c))) ||
 	    bdi_setup_and_register(&c->bdi, "bcache") ||
 	    bch_io_clock_init(&c->io_clock[READ]) ||

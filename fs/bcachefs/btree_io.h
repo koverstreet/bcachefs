@@ -19,6 +19,8 @@ static inline void btree_node_io_lock(struct btree *b)
 			    TASK_UNINTERRUPTIBLE);
 }
 
+void bch_btree_sort_into(struct cache_set *, struct btree *, struct btree *);
+
 void bch_btree_build_aux_trees(struct btree *);
 void bch_btree_init_next(struct cache_set *, struct btree *,
 			 struct btree_iter *);

@@ -755,7 +755,7 @@ struct cache_set {
 	 */
 	mempool_t		fill_iter;
 
-	mempool_t		btree_sort_pool;
+	mempool_t		btree_bounce_pool;
 
 	struct journal		journal;
 
