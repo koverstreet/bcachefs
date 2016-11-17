@@ -758,7 +758,6 @@ struct cache_set {
 	mempool_t		btree_sort_pool;
 
 	struct journal		journal;
-	unsigned		btree_flush_delay;
 
 	/* CACHING OTHER BLOCK DEVICES */
 	mempool_t		search;

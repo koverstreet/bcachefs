@@ -587,11 +587,6 @@ static void btree_node_write_done(struct closure *cl)
 		bch_journal_halt(&c->journal);
 
 	bch_btree_complete_write(c, b, w);
-
-	if (btree_node_dirty(b) && c->btree_flush_delay)
-		queue_delayed_work(system_freezable_wq, &b->work,
-				   c->btree_flush_delay * HZ);
-
 	closure_return_with_destructor(cl, btree_node_write_unlock);
 }
 
@@ -633,8 +628,6 @@ static void do_btree_node_write(struct closure *cl)
 	BUG_ON(b->written && !i->u64s);
 	BUG_ON(btree_bset_first(b)->seq != i->seq);
 	BUG_ON(BSET_BIG_ENDIAN(i) != CPU_BIG_ENDIAN);
-
-	cancel_delayed_work(&b->work);
 
 	change_bit(BTREE_NODE_write_idx, &b->flags);
 
@@ -810,13 +803,6 @@ void bch_btree_node_write_lazy(struct btree *b, struct btree_iter *iter)
 	     bytes > BTREE_WRITE_SET_BUFFER) &&
 	    !btree_node_write_in_flight(b))
 		bch_btree_node_write(b, NULL, iter);
-}
-
-void btree_node_write_work(struct work_struct *w)
-{
-	struct btree *b = container_of(to_delayed_work(w), struct btree, work);
-
-	bch_btree_node_write_dirty(b, NULL);
 }
 
 /*

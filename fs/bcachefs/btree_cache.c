@@ -87,7 +87,6 @@ static struct btree *mca_bucket_alloc(struct cache_set *c, gfp_t gfp)
 
 	six_lock_init(&b->lock);
 	INIT_LIST_HEAD(&b->list);
-	INIT_DELAYED_WORK(&b->work, btree_node_write_work);
 	b->c = c;
 	b->writes[1].index = 1;
 	INIT_LIST_HEAD(&b->write_blocked);
@@ -351,7 +350,6 @@ void bch_btree_cache_free(struct cache_set *c)
 		b = list_first_entry(&c->btree_cache_freed,
 				     struct btree, list);
 		list_del(&b->list);
-		cancel_delayed_work_sync(&b->work);
 		kfree(b);
 	}
 

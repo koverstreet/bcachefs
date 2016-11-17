@@ -709,6 +709,7 @@ static void __bch_cache_set_read_only(struct cache_set *c)
 		bch_journal_meta(&c->journal);
 
 	cancel_delayed_work_sync(&c->journal.write_work);
+	cancel_delayed_work_sync(&c->journal.reclaim_work);
 }
 
 static void bch_writes_disabled(struct percpu_ref *writes)
@@ -1110,8 +1111,6 @@ static struct cache_set *bch_cache_set_alloc(struct cache_sb *sb,
 	init_waitqueue_head(&c->writeback_wait);
 
 	c->writeback_pages_max = (256 << 10) / PAGE_SIZE;
-
-	c->btree_flush_delay = 30;
 
 	c->copy_gc_enabled = 1;
 	c->tiering_enabled = 1;

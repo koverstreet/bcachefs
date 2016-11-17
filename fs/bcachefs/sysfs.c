@@ -128,7 +128,9 @@ sysfs_pd_controller_attribute(writeback);
 read_attribute(stripe_size);
 read_attribute(partial_stripes_expensive);
 
-rw_attribute(journal_delay_ms);
+rw_attribute(journal_write_delay_ms);
+rw_attribute(journal_reclaim_delay_ms);
+
 rw_attribute(discard);
 rw_attribute(running);
 rw_attribute(label);
@@ -146,7 +148,6 @@ sysfs_pd_controller_attribute(tiering);
 
 sysfs_pd_controller_attribute(foreground_write);
 
-rw_attribute(btree_flush_delay);
 rw_attribute(pd_controllers_update_seconds);
 
 rw_attribute(foreground_target_percent);
@@ -647,7 +648,8 @@ SHOW(bch_cache_set)
 
 	sysfs_print(minor,			c->minor);
 
-	sysfs_print(journal_delay_ms,		c->journal.delay_ms);
+	sysfs_print(journal_write_delay_ms,	c->journal.write_delay_ms);
+	sysfs_print(journal_reclaim_delay_ms,	c->journal.reclaim_delay_ms);
 
 	sysfs_hprint(block_size,		block_bytes(c));
 	sysfs_print(block_size_bytes,		block_bytes(c));
@@ -697,8 +699,6 @@ SHOW(bch_cache_set)
 	sysfs_printf(tiering_enabled,		"%i", c->tiering_enabled);
 	sysfs_print(tiering_percent,		c->tiering_percent);
 	sysfs_pd_controller_show(tiering,	&c->tiering_pd);
-
-	sysfs_print(btree_flush_delay,		c->btree_flush_delay);
 
 	sysfs_printf(meta_replicas_have, "%llu",
 		     CACHE_SET_META_REPLICAS_HAVE(&c->disk_sb));
@@ -771,7 +771,9 @@ STORE(__bch_cache_set)
 		return size;
 	}
 
-	sysfs_strtoul(journal_delay_ms, c->journal.delay_ms);
+	sysfs_strtoul(journal_write_delay_ms, c->journal.write_delay_ms);
+	sysfs_strtoul(journal_reclaim_delay_ms, c->journal.reclaim_delay_ms);
+
 	sysfs_strtoul(foreground_write_ratelimit_enabled,
 		      c->foreground_write_ratelimit_enabled);
 
@@ -797,8 +799,6 @@ STORE(__bch_cache_set)
 	}
 
 	sysfs_pd_controller_store(foreground_write, &c->foreground_write_pd);
-
-	sysfs_strtoul(btree_flush_delay, c->btree_flush_delay);
 
 	if (attr == &sysfs_journal_flush) {
 		bch_journal_meta_async(&c->journal, NULL);
@@ -875,7 +875,8 @@ STORE(bch_cache_set)
 static struct attribute *bch_cache_set_files[] = {
 	&sysfs_unregister,
 	&sysfs_stop,
-	&sysfs_journal_delay_ms,
+	&sysfs_journal_write_delay_ms,
+	&sysfs_journal_reclaim_delay_ms,
 	&sysfs_blockdev_volume_create,
 	&sysfs_add_device,
 
@@ -901,7 +902,6 @@ static struct attribute *bch_cache_set_files[] = {
 	&sysfs_meta_replicas_have,
 	&sysfs_data_replicas_have,
 
-	&sysfs_btree_flush_delay,
 	&sysfs_foreground_target_percent,
 	&sysfs_tiering_percent,
 

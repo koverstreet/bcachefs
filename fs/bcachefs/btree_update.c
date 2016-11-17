@@ -168,7 +168,6 @@ static void __btree_node_free(struct cache_set *c, struct btree *b,
 	if (btree_node_dirty(b))
 		bch_btree_complete_write(c, b, btree_current_write(b));
 	clear_btree_node_dirty(b);
-	cancel_delayed_work(&b->work);
 
 	mca_hash_remove(c, b);
 
@@ -775,13 +774,8 @@ void bch_btree_journal_key(struct btree_iter *iter,
 			cpu_to_le64(bch_journal_res_seq(j, res));
 	}
 
-	if (!btree_node_dirty(b)) {
+	if (!btree_node_dirty(b))
 		set_btree_node_dirty(b);
-
-		if (c->btree_flush_delay)
-			queue_delayed_work(system_freezable_wq, &b->work,
-					   c->btree_flush_delay * HZ);
-	}
 }
 
 static void verify_keys_sorted(struct keylist *l)

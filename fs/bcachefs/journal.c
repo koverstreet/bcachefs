@@ -1216,7 +1216,7 @@ static int journal_entry_open(struct journal *j)
 		if (!old.prev_buf_unwritten)
 			mod_delayed_work(system_freezable_wq,
 					 &j->write_work,
-					 msecs_to_jiffies(j->delay_ms));
+					 msecs_to_jiffies(j->write_delay_ms));
 	}
 
 	return ret;
@@ -1271,7 +1271,7 @@ void bch_journal_start(struct cache_set *c)
 
 	spin_unlock(&j->lock);
 
-	queue_work(system_freezable_wq, &j->reclaim_work);
+	queue_delayed_work(system_freezable_wq, &j->reclaim_work, 0);
 }
 
 int bch_journal_replay(struct cache_set *c, struct list_head *list)
@@ -1597,14 +1597,15 @@ static bool should_discard_bucket(struct journal *j, struct journal_device *ja)
  */
 static void journal_reclaim_work(struct work_struct *work)
 {
-	struct cache_set *c = container_of(work, struct cache_set,
-					   journal.reclaim_work);
+	struct cache_set *c = container_of(to_delayed_work(work),
+				struct cache_set, journal.reclaim_work);
 	struct journal *j = &c->journal;
 	struct cache *ca;
 	struct journal_entry_pin *pin;
 	u64 seq_to_flush = 0;
 	unsigned iter, nr, bucket_to_flush;
 	bool reclaim_lock_held = false;
+	bool flushed = false;
 
 	/*
 	 * Advance last_idx to point to the oldest journal entry containing
@@ -1665,10 +1666,17 @@ static void journal_reclaim_work(struct work_struct *work)
 	seq_to_flush = max_t(s64, seq_to_flush,
 			     (s64) j->seq - (j->pin.size >> 1));
 
-	while ((pin = journal_get_next_pin(j, seq_to_flush))) {
+	/* Ensure we always flush at least one journal pin: */
+
+	while ((pin = journal_get_next_pin(j, flushed ? seq_to_flush : U64_MAX))) {
 		__set_current_state(TASK_RUNNING);
 		pin->flush(j, pin);
+		flushed = true;
 	}
+
+	if (flushed && !test_bit(CACHE_SET_RO, &c->flags))
+		queue_delayed_work(system_freezable_wq, &j->reclaim_work,
+				   msecs_to_jiffies(j->reclaim_delay_ms));
 }
 
 /**
@@ -1844,13 +1852,13 @@ static void journal_write_done(struct closure *cl)
 	if (journal_entry_is_open(j))
 		mod_delayed_work(system_freezable_wq, &j->write_work,
 				 test_bit(JOURNAL_NEED_WRITE, &j->flags)
-				 ? 0 : msecs_to_jiffies(j->delay_ms));
+				 ? 0 : msecs_to_jiffies(j->write_delay_ms));
 
 	/*
 	 * Updating last_seq_ondisk may let journal_reclaim_work() discard more
 	 * buckets:
 	 */
-	queue_work(system_freezable_wq, &j->reclaim_work);
+	mod_delayed_work(system_freezable_wq, &j->reclaim_work, 0);
 }
 
 static void journal_write(struct closure *cl)
@@ -2046,7 +2054,7 @@ retry:
 	 * Direct reclaim - can't rely on reclaim from work item
 	 * due to freezing..
 	 */
-	journal_reclaim_work(&j->reclaim_work);
+	journal_reclaim_work(&j->reclaim_work.work);
 
 	trace_bcache_journal_full(c);
 blocked:
@@ -2229,14 +2237,15 @@ int bch_journal_alloc(struct journal *j)
 	spin_lock_init(&j->pin_lock);
 	init_waitqueue_head(&j->wait);
 	INIT_DELAYED_WORK(&j->write_work, journal_write_work);
-	INIT_WORK(&j->reclaim_work, journal_reclaim_work);
+	INIT_DELAYED_WORK(&j->reclaim_work, journal_reclaim_work);
 	mutex_init(&j->blacklist_lock);
 	INIT_LIST_HEAD(&j->seq_blacklist);
 	mutex_init(&j->reclaim_lock);
 
 	lockdep_init_map(&j->res_map, "journal res", &res_key, 0);
 
-	j->delay_ms = 10;
+	j->write_delay_ms	= 100;
+	j->reclaim_delay_ms	= 100;
 
 	bkey_extent_init(&j->key);
 
