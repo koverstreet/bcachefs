@@ -259,10 +259,12 @@ void bch_btree_init_next(struct cache_set *c, struct btree *b,
 static const char *validate_bset(struct cache_set *c, struct btree *b,
 				 struct cache *ca,
 				 const struct bch_extent_ptr *ptr,
-				 struct bset *i, unsigned sectors)
+				 struct bset *i, unsigned sectors,
+				 unsigned *whiteout_u64s)
 {
 	struct bkey_format *f = &b->keys.format;
 	struct bkey_packed *k;
+	bool seen_non_whiteout = false;
 
 	if (le16_to_cpu(i->version) != BCACHE_BSET_VERSION)
 		return "unsupported bset version";
@@ -326,6 +328,13 @@ static const char *validate_bset(struct cache_set *c, struct btree *b,
 			continue;
 		}
 
+		if (BSET_SEPARATE_WHITEOUTS(i) &&
+		    !seen_non_whiteout &&
+		    !bkey_packed_is_whiteout(&b->keys, k)) {
+			*whiteout_u64s = k->_data - i->_data;
+			seen_non_whiteout = true;
+		}
+
 		k = bkey_next(k);
 	}
 
@@ -353,7 +362,7 @@ void bch_btree_node_read_done(struct cache_set *c, struct btree *b,
 		goto err;
 
 	while (b->written < c->sb.btree_node_size) {
-		unsigned sectors;
+		unsigned sectors, whiteout_u64s = 0;
 
 		if (!b->written) {
 			i = &b->data->keys;
@@ -421,7 +430,7 @@ void bch_btree_node_read_done(struct cache_set *c, struct btree *b,
 					       block_bytes(c)) << c->block_bits;
 		}
 
-		err = validate_bset(c, b, ca, ptr, i, sectors);
+		err = validate_bset(c, b, ca, ptr, i, sectors, &whiteout_u64s);
 		if (err)
 			goto err;
 
@@ -434,7 +443,12 @@ void bch_btree_node_read_done(struct cache_set *c, struct btree *b,
 			continue;
 
 		__bch_btree_node_iter_push(iter, &b->keys,
-					   i->start, bset_bkey_last(i));
+					   i->start,
+					   bkey_idx(i, whiteout_u64s));
+
+		__bch_btree_node_iter_push(iter, &b->keys,
+					   bkey_idx(i, whiteout_u64s),
+					   bset_bkey_last(i));
 	}
 
 	err = "corrupted btree";

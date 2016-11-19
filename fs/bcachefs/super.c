@@ -1138,7 +1138,7 @@ static struct cache_set *bch_cache_set_alloc(struct cache_sb *sb,
 	if (cache_set_init_fault("cache_set_alloc"))
 		goto err;
 
-	iter_size = (btree_blocks(c) + 1) *
+	iter_size = (btree_blocks(c) + 1) * 2 *
 		sizeof(struct btree_node_iter_set);
 
 	if (!(c->wq = alloc_workqueue("bcache",

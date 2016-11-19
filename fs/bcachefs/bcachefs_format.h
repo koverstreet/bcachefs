@@ -1132,6 +1132,8 @@ LE32_BITMASK(BSET_CSUM_TYPE,	struct bset, flags, 0, 4);
 LE32_BITMASK(BSET_BTREE_LEVEL,	struct bset, flags, 4, 8);
 
 LE32_BITMASK(BSET_BIG_ENDIAN,	struct bset, flags, 8, 9);
+LE32_BITMASK(BSET_SEPARATE_WHITEOUTS,
+				struct bset, flags, 9, 10);
 
 struct btree_node {
 	__le64			csum;
