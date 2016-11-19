@@ -41,25 +41,144 @@ static void *btree_bounce_alloc(struct cache_set *c, unsigned order,
 	return page_address(mempool_alloc(&c->btree_bounce_pool, GFP_NOIO));
 }
 
+typedef int (*sort_cmp_fn)(struct btree_keys *,
+			   struct bkey_packed *,
+			   struct bkey_packed *);
+
+struct sort_iter {
+	struct btree_keys	*b;
+	unsigned		used;
+
+	struct sort_iter_set {
+		struct bkey_packed *k, *end;
+	} data[MAX_BSETS + 1];
+};
+
+static void sort_iter_init(struct sort_iter *iter, struct btree_keys *b)
+{
+	memset(iter, 0, sizeof(*iter));
+	iter->b = b;
+}
+
+static inline void __sort_iter_sift(struct sort_iter *iter,
+				    unsigned from,
+				    sort_cmp_fn cmp)
+{
+	unsigned i;
+
+	for (i = from;
+	     i + 1 < iter->used &&
+	     cmp(iter->b, iter->data[i].k, iter->data[i + 1].k) > 0;
+	     i++)
+		swap(iter->data[i], iter->data[i + 1]);
+}
+
+static inline void sort_iter_sift(struct sort_iter *iter, sort_cmp_fn cmp)
+{
+
+	__sort_iter_sift(iter, 0, cmp);
+}
+
+static inline void sort_iter_sort(struct sort_iter *iter, sort_cmp_fn cmp)
+{
+	unsigned i = iter->used;
+
+	while (i--)
+		__sort_iter_sift(iter, i, cmp);
+}
+
+static void sort_iter_add(struct sort_iter *iter,
+			  struct bkey_packed *k,
+			  struct bkey_packed *end)
+{
+	BUG_ON(iter->used >= ARRAY_SIZE(iter->data));
+
+	if (k != end)
+		iter->data[iter->used++] = (struct sort_iter_set) { k, end };
+}
+
+static inline struct bkey_packed *sort_iter_peek(struct sort_iter *iter)
+{
+	return iter->used ? iter->data->k : NULL;
+}
+
+static inline void sort_iter_advance(struct sort_iter *iter, sort_cmp_fn cmp)
+{
+	iter->data->k = bkey_next(iter->data->k);
+
+	BUG_ON(iter->data->k > iter->data->end);
+
+	if (iter->data->k == iter->data->end)
+		memmove(&iter->data[0],
+			&iter->data[1],
+			sizeof(iter->data[0]) * --iter->used);
+	else
+		sort_iter_sift(iter, cmp);
+}
+
+static inline struct bkey_packed *sort_iter_next(struct sort_iter *iter,
+						 sort_cmp_fn cmp)
+{
+	struct bkey_packed *ret = sort_iter_peek(iter);
+
+	if (ret)
+		sort_iter_advance(iter, cmp);
+
+	return ret;
+}
+
+static inline int sort_keys_cmp(struct btree_keys *b,
+				struct bkey_packed *l,
+				struct bkey_packed *r)
+{
+	return bkey_cmp_packed(&b->format, l, r) ?:
+		(int) bkey_deleted(r) - (int) bkey_deleted(l);
+}
+
 static unsigned sort_keys(struct bkey_packed *dst,
-			  struct btree_keys *b,
-			  struct btree_node_iter *iter,
-			  bool filter_whiteouts,
-			  bool filter_deleted,
-			  bool filter_dups)
+			  struct sort_iter *iter,
+			  bool filter_whiteouts)
 {
 	struct bkey_packed *in, *next, *out = dst;
 
-	while ((in = bch_btree_node_iter_next_all(iter, b))) {
-		if (filter_dups &&
-		    (next = bch_btree_node_iter_peek_all(iter, b)) &&
-		    !bkey_cmp_packed(&b->format, in, next))
+	sort_iter_sort(iter, sort_keys_cmp);
+
+	while ((in = sort_iter_next(iter, sort_keys_cmp))) {
+		if ((next = sort_iter_peek(iter)) &&
+		    !bkey_cmp_packed(&iter->b->format, in, next))
 			continue;
 
-		if (filter_whiteouts && bkey_packed_is_whiteout(b, in))
+		if (filter_whiteouts && bkey_deleted(in))
 			continue;
 
-		if (filter_deleted && bkey_deleted(in))
+		bkey_copy(out, in);
+		out = bkey_next(out);
+	}
+
+	return (u64 *) out - (u64 *) dst;
+}
+
+static inline int sort_extents_cmp(struct btree_keys *b,
+				   struct bkey_packed *l,
+				   struct bkey_packed *r)
+{
+	return bkey_cmp_packed(&b->format, l, r) ?:
+		(int) bkey_deleted(l) - (int) bkey_deleted(r);
+}
+
+static unsigned sort_extents(struct bkey_packed *dst,
+			     struct sort_iter *iter,
+			     bool filter_whiteouts)
+{
+	struct bkey_packed *in, *out = dst;
+
+	sort_iter_sort(iter, sort_extents_cmp);
+
+	while ((in = sort_iter_next(iter, sort_extents_cmp))) {
+		if (bkey_deleted(in))
+			continue;
+
+		if (filter_whiteouts && bkey_packed_is_whiteout(iter->b, in))
 			continue;
 
 		bkey_copy(out, in);
@@ -74,43 +193,36 @@ static void btree_node_sort(struct cache_set *c, struct btree *b,
 			    bool is_write_locked)
 {
 	struct btree_node *out;
-	struct btree_node_iter sort_iter;
+	struct sort_iter sort_iter;
 	struct bset_tree *t;
-	bool used_mempool = false;
+	bool used_mempool = false, filter_whiteouts;
 	u64 start_time;
 	unsigned i, u64s, order, shift = b->keys.nsets - from - 1;
 	bool sorting_entire_node = from == 0;
 
-	__bch_btree_node_iter_init(&sort_iter, btree_node_is_extents(b));
+	sort_iter_init(&sort_iter, &b->keys);
 
 	for (t = b->keys.set + from;
 	     t < b->keys.set + b->keys.nsets;
-	     t++)
-		bch_btree_node_iter_push(&sort_iter, &b->keys,
-					 t->data->start,
-					 bset_bkey_last(t->data));
-
-	if (!from) {
-		order = b->keys.page_order;
-	} else {
-		struct btree_node_iter_set *set;
-		unsigned u64s = 0;
-
-		btree_node_iter_for_each(&sort_iter, set)
-			u64s += set->end - set->k;
-
-		order = get_order(__set_bytes(b->data, u64s));
+	     t++) {
+		u64s += le16_to_cpu(t->data->u64s);
+		sort_iter_add(&sort_iter, t->data->start,
+			      bset_bkey_last(t->data));
 	}
+
+	order = sorting_entire_node
+		? b->keys.page_order
+		: get_order(__set_bytes(b->data, u64s));
 
 	out = btree_bounce_alloc(c, order, &used_mempool);
 
 	start_time = local_clock();
 
-	u64s = sort_keys(out->keys.start,
-			 &b->keys, &sort_iter,
-			 bset_written(b, b->keys.set[from].data),
-			 btree_node_is_extents(b),
-			 !btree_node_is_extents(b));
+	filter_whiteouts = bset_written(b, b->keys.set[from].data);
+
+	u64s = btree_node_is_extents(b)
+		? sort_extents(out->keys.start, &sort_iter, filter_whiteouts)
+		: sort_keys(out->keys.start, &sort_iter, filter_whiteouts);
 
 	out->keys.u64s = cpu_to_le16(u64s);
 
