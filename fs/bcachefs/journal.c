@@ -210,8 +210,13 @@ redo_peek:
 			}
 			if (ret == -EINTR)
 				goto redo_peek;
-			if (ret)
-				BUG();
+			if (ret) {
+				/* -EROFS or perhaps -ENOSPC - bail out: */
+
+				bch_btree_iter_unlock(&iter);
+				closure_sync(&cl);
+				return;
+			}
 		}
 
 		bch_btree_iter_unlock(&iter);
