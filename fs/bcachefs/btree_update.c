@@ -698,11 +698,12 @@ overwrite:
 					clobber_u64s, k->u64s);
 }
 
-static void btree_node_flush(struct journal *j, struct journal_entry_pin *pin)
+static void __btree_node_flush(struct journal *j, struct journal_entry_pin *pin,
+			       unsigned i)
 {
 	struct cache_set *c = container_of(j, struct cache_set, journal);
 	struct btree_write *w = container_of(pin, struct btree_write, journal);
-	struct btree *b = container_of(w, struct btree, writes[w->index]);
+	struct btree *b = container_of(w, struct btree, writes[i]);
 
 	six_lock_read(&b->lock);
 	/*
@@ -719,8 +720,18 @@ static void btree_node_flush(struct journal *j, struct journal_entry_pin *pin)
 	 * shouldn't:
 	 */
 	if (!b->level)
-		__bch_btree_node_write(c, b, NULL, w->index);
+		__bch_btree_node_write(c, b, NULL, i);
 	six_unlock_read(&b->lock);
+}
+
+static void btree_node_flush0(struct journal *j, struct journal_entry_pin *pin)
+{
+	return __btree_node_flush(j, pin, 0);
+}
+
+static void btree_node_flush1(struct journal *j, struct journal_entry_pin *pin)
+{
+	return __btree_node_flush(j, pin, 1);
 }
 
 void bch_btree_journal_key(struct btree_iter *iter,
@@ -736,7 +747,10 @@ void bch_btree_journal_key(struct btree_iter *iter,
 	EBUG_ON(!res->ref && test_bit(JOURNAL_REPLAY_DONE, &j->flags));
 
 	if (!journal_pin_active(&w->journal))
-		bch_journal_pin_add(j, &w->journal, btree_node_flush);
+		bch_journal_pin_add(j, &w->journal,
+				    btree_node_write_idx(b) == 0
+				    ? btree_node_flush0
+				    : btree_node_flush1);
 
 	if (res->ref) {
 		bch_journal_add_keys(j, res, b->btree_id, insert);

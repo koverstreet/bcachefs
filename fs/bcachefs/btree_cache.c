@@ -87,7 +87,6 @@ static struct btree *mca_bucket_alloc(struct cache_set *c, gfp_t gfp)
 
 	six_lock_init(&b->lock);
 	INIT_LIST_HEAD(&b->list);
-	b->writes[1].index = 1;
 	INIT_LIST_HEAD(&b->write_blocked);
 
 	mca_data_alloc(c, b, gfp);

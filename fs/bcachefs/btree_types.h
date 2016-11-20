@@ -16,7 +16,6 @@ struct open_bucket;
 struct btree_interior_update;
 
 struct btree_write {
-	unsigned			index;
 	struct journal_entry_pin	journal;
 	struct closure_waitlist		wait;
 };
