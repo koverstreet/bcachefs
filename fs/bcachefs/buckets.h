@@ -236,10 +236,10 @@ void bch_mark_alloc_bucket(struct cache *, struct bucket *);
 void bch_mark_metadata_bucket(struct cache *, struct bucket *, bool);
 void bch_unmark_open_bucket(struct cache *, struct bucket *);
 
-void __bch_gc_mark_key(struct cache_set *, struct bkey_s_c, int, bool,
+void __bch_gc_mark_key(struct cache_set *, struct bkey_s_c, s64, bool,
 		       struct bucket_stats_cache_set *);
-void bch_gc_mark_key(struct cache_set *, struct bkey_s_c, int, bool);
-void bch_mark_key(struct cache_set *, struct bkey_s_c, int, bool,
+void bch_gc_mark_key(struct cache_set *, struct bkey_s_c, s64, bool);
+void bch_mark_key(struct cache_set *, struct bkey_s_c, s64, bool,
 		  struct gc_pos, struct bucket_stats_cache_set *);
 
 void bch_recalc_sectors_available(struct cache_set *);

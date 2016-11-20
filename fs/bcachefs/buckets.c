@@ -395,7 +395,7 @@ static void bch_mark_pointer(struct cache_set *c,
 			     struct cache *ca,
 			     const union bch_extent_crc *crc,
 			     const struct bch_extent_ptr *ptr,
-			     int sectors, enum s_alloc type,
+			     s64 sectors, enum s_alloc type,
 			     bool may_make_unavailable,
 			     struct bucket_stats_cache_set *stats,
 			     bool is_gc, struct gc_pos gc_pos)
@@ -497,7 +497,7 @@ out:
 }
 
 static void bch_mark_extent(struct cache_set *c, struct bkey_s_c_extent e,
-			    int sectors, bool metadata,
+			    s64 sectors, bool metadata,
 			    bool may_make_unavailable,
 			    struct bucket_stats_cache_set *stats,
 			    bool is_gc, struct gc_pos gc_pos)
@@ -525,7 +525,7 @@ static void bch_mark_extent(struct cache_set *c, struct bkey_s_c_extent e,
 }
 
 static void __bch_mark_key(struct cache_set *c, struct bkey_s_c k,
-			   int sectors, bool metadata,
+			   s64 sectors, bool metadata,
 			   bool may_make_unavailable,
 			   struct bucket_stats_cache_set *stats,
 			   bool is_gc, struct gc_pos gc_pos)
@@ -543,14 +543,14 @@ static void __bch_mark_key(struct cache_set *c, struct bkey_s_c k,
 }
 
 void __bch_gc_mark_key(struct cache_set *c, struct bkey_s_c k,
-		       int sectors, bool metadata,
+		       s64 sectors, bool metadata,
 		       struct bucket_stats_cache_set *stats)
 {
 	__bch_mark_key(c, k, sectors, metadata, true, stats, true, GC_POS_MIN);
 }
 
 void bch_gc_mark_key(struct cache_set *c, struct bkey_s_c k,
-		     int sectors, bool metadata)
+		     s64 sectors, bool metadata)
 {
 	struct bucket_stats_cache_set stats = { 0 };
 
@@ -562,7 +562,7 @@ void bch_gc_mark_key(struct cache_set *c, struct bkey_s_c k,
 }
 
 void bch_mark_key(struct cache_set *c, struct bkey_s_c k,
-		  int sectors, bool metadata, struct gc_pos gc_pos,
+		  s64 sectors, bool metadata, struct gc_pos gc_pos,
 		  struct bucket_stats_cache_set *stats)
 {
 	lg_local_lock(&c->bucket_stats_lock);
