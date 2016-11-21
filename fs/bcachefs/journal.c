@@ -331,7 +331,11 @@ int bch_journal_seq_should_ignore(struct cache_set *c, u64 seq, struct btree *b)
 	if (seq <= j->seq)
 		goto out;
 
-	cache_set_inconsistent_on(seq > j->seq + 2, c,
+	/*
+	 * Decrease this back to j->seq + 2 when we next rev the on disk format:
+	 * increasing it temporarily to work around bug in old kernels
+	 */
+	cache_set_inconsistent_on(seq > j->seq + 4, c,
 			 "bset journal seq too far in the future: %llu > %llu",
 			 seq, j->seq);
 

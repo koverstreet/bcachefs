@@ -1344,6 +1344,17 @@ static const char *run_cache_set(struct cache_set *c)
 
 		bch_verbose(c, "journal replay done");
 
+		/*
+		 * Write a new journal entry _before_ we start journalling new
+		 * data - otherwise, we could end up with btree node bsets with
+		 * journal seqs arbitrarily far in the future vs. the most
+		 * recently written journal entry on disk, if we crash before
+		 * writing the next journal entry:
+		 */
+		err = "error writing journal entry";
+		if (bch_journal_meta(&c->journal))
+			goto err;
+
 		bch_verbose(c, "starting fs gc:");
 		err = "error in fs gc";
 		ret = bch_gc_inode_nlinks(c);
