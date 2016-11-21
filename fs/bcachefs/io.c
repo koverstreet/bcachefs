@@ -569,6 +569,7 @@ static void __bch_write(struct closure *cl)
 
 		b = bch_alloc_sectors_start(op->c, op->wp,
 			bkey_i_to_extent(k), op->nr_replicas,
+			op->alloc_reserve,
 			(op->flags & BCH_WRITE_ALLOC_NOWAIT) ? NULL : cl);
 		EBUG_ON(!b);
 
@@ -787,6 +788,7 @@ void bch_write_op_init(struct bch_write_op *op, struct cache_set *c,
 	op->flags	= flags;
 	op->compression_type = c->opts.compression;
 	op->nr_replicas	= res.nr_replicas;
+	op->alloc_reserve = RESERVE_NONE;
 	op->pos		= pos;
 	op->version	= 0;
 	op->res		= res;

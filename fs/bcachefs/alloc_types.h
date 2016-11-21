@@ -88,11 +88,6 @@ struct write_point {
 	bool			throttle;
 
 	/*
-	 * Bucket reserve to allocate from.
-	 */
-	enum alloc_reserve	reserve;
-
-	/*
 	 * If not NULL, cache group for tiering, promotion and moving GC -
 	 * always allocates a single replica
 	 */

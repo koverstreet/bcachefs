@@ -228,15 +228,17 @@ void btree_open_bucket_put(struct cache_set *c, struct btree *b)
 }
 
 static struct btree *__bch_btree_node_alloc(struct cache_set *c,
+					    bool use_reserve,
 					    struct disk_reservation *res,
 					    struct closure *cl)
 {
 	BKEY_PADDED(k) tmp;
 	struct open_bucket *ob;
 	struct btree *b;
+	unsigned reserve = use_reserve ? 0 : BTREE_NODE_RESERVE;
 
 	mutex_lock(&c->btree_reserve_cache_lock);
-	if (c->btree_reserve_cache_nr) {
+	if (c->btree_reserve_cache_nr > reserve) {
 		struct btree_alloc *a =
 			&c->btree_reserve_cache[--c->btree_reserve_cache_nr];
 
@@ -254,7 +256,9 @@ retry:
 
 	ob = bch_alloc_sectors(c, &c->btree_write_point,
 			       bkey_i_to_extent(&tmp.k),
-			       res->nr_replicas, cl);
+			       res->nr_replicas,
+			       use_reserve ? RESERVE_BTREE : RESERVE_NONE,
+			       cl);
 	if (IS_ERR(ob))
 		return ERR_CAST(ob);
 
@@ -503,19 +507,19 @@ void bch_btree_reserve_put(struct cache_set *c, struct btree_reserve *reserve)
 }
 
 static struct btree_reserve *__bch_btree_reserve_get(struct cache_set *c,
-					bool check_enospc,
-					unsigned nr_nodes,
-					struct closure *cl)
+						     unsigned nr_nodes,
+						     unsigned flags,
+						     struct closure *cl)
 {
 	struct btree_reserve *reserve;
 	struct btree *b;
 	struct disk_reservation disk_res = { 0, 0 };
 	unsigned sectors = nr_nodes * c->sb.btree_node_size;
-	int ret, flags = BCH_DISK_RESERVATION_GC_LOCK_HELD|
+	int ret, disk_res_flags = BCH_DISK_RESERVATION_GC_LOCK_HELD|
 		BCH_DISK_RESERVATION_METADATA;
 
-	if (!check_enospc)
-		flags |= BCH_DISK_RESERVATION_NOFAIL;
+	if (flags & BTREE_INSERT_NOFAIL)
+		disk_res_flags |= BCH_DISK_RESERVATION_NOFAIL;
 
 	/*
 	 * This check isn't necessary for correctness - it's just to potentially
@@ -525,7 +529,7 @@ static struct btree_reserve *__bch_btree_reserve_get(struct cache_set *c,
 	if (ret)
 		return ERR_PTR(ret);
 
-	if (bch_disk_reservation_get(c, &disk_res, sectors, flags))
+	if (bch_disk_reservation_get(c, &disk_res, sectors, disk_res_flags))
 		return ERR_PTR(-ENOSPC);
 
 	BUG_ON(nr_nodes > BTREE_RESERVE_MAX);
@@ -546,7 +550,8 @@ static struct btree_reserve *__bch_btree_reserve_get(struct cache_set *c,
 	reserve->nr = 0;
 
 	while (reserve->nr < nr_nodes) {
-		b = __bch_btree_node_alloc(c, &disk_res, cl);
+		b = __bch_btree_node_alloc(c, flags & BTREE_INSERT_USE_RESERVE,
+					   &disk_res, cl);
 		if (IS_ERR(b)) {
 			ret = PTR_ERR(b);
 			goto err_free;
@@ -567,14 +572,13 @@ err_free:
 struct btree_reserve *bch_btree_reserve_get(struct cache_set *c,
 					    struct btree *b,
 					    unsigned extra_nodes,
-					    bool check_enospc,
+					    unsigned flags,
 					    struct closure *cl)
 {
 	unsigned depth = btree_node_root(b)->level - b->level;
 	unsigned nr_nodes = btree_reserve_required_nodes(depth) + extra_nodes;
 
-	return __bch_btree_reserve_get(c, check_enospc,
-				       nr_nodes, cl);
+	return __bch_btree_reserve_get(c, nr_nodes, flags, cl);
 
 }
 
@@ -589,7 +593,7 @@ int bch_btree_root_alloc(struct cache_set *c, enum btree_id id,
 
 	while (1) {
 		/* XXX haven't calculated capacity yet :/ */
-		reserve = __bch_btree_reserve_get(c, false, 1, &cl);
+		reserve = __bch_btree_reserve_get(c, 1, 0, &cl);
 		if (!IS_ERR(reserve))
 			break;
 
@@ -1470,8 +1474,7 @@ static int bch_btree_split_leaf(struct btree_iter *iter, unsigned flags)
 		goto out;
 	}
 
-	reserve = bch_btree_reserve_get(c, b, 0,
-			!(flags & BTREE_INSERT_NOFAIL), &cl);
+	reserve = bch_btree_reserve_get(c, b, 0, flags, &cl);
 	if (IS_ERR(reserve)) {
 		ret = PTR_ERR(reserve);
 		if (ret == -EAGAIN) {
@@ -1636,7 +1639,10 @@ retry:
 		goto out_unlock;
 	}
 
-	reserve = bch_btree_reserve_get(c, b, 0, false, &cl);
+	reserve = bch_btree_reserve_get(c, b, 0,
+					BTREE_INSERT_NOFAIL|
+					BTREE_INSERT_USE_RESERVE,
+					&cl);
 	if (IS_ERR(reserve)) {
 		ret = PTR_ERR(reserve);
 		goto out_unlock;
@@ -2167,11 +2173,19 @@ int bch_btree_node_rewrite(struct btree_iter *iter, struct btree *b,
 	struct btree *n, *parent = iter->nodes[b->level + 1];
 	struct btree_reserve *reserve;
 	struct btree_interior_update *as;
+	unsigned flags = BTREE_INSERT_NOFAIL;
+
+	/*
+	 * if caller is going to wait if allocating reserve fails, then this is
+	 * a rewrite that must succeed:
+	 */
+	if (cl)
+		flags |= BTREE_INSERT_USE_RESERVE;
 
 	if (!bch_btree_iter_set_locks_want(iter, U8_MAX))
 		return -EINTR;
 
-	reserve = bch_btree_reserve_get(c, b, 0, false, cl);
+	reserve = bch_btree_reserve_get(c, b, 0, flags, cl);
 	if (IS_ERR(reserve)) {
 		trace_bcache_btree_gc_rewrite_node_fail(b);
 		return PTR_ERR(reserve);

@@ -88,6 +88,14 @@ static int bch_migrate_index_update(struct bch_write_op *op)
 
 		ptr = bch_migrate_matching_ptr(m, e);
 		if (ptr) {
+			unsigned insert_flags =
+				BTREE_INSERT_ATOMIC|
+				BTREE_INSERT_NOFAIL;
+
+			/* copygc uses btree node reserve: */
+			if (m->move)
+				insert_flags |= BTREE_INSERT_USE_RESERVE;
+
 			if (m->move)
 				__bch_extent_drop_ptr(e, ptr);
 
@@ -102,7 +110,7 @@ static int bch_migrate_index_update(struct bch_write_op *op)
 
 			ret = bch_btree_insert_at(c, &op->res,
 					NULL, op_journal_seq(op),
-					BTREE_INSERT_NOFAIL|BTREE_INSERT_ATOMIC,
+					insert_flags,
 					BTREE_INSERT_ENTRY(&iter, &new.k));
 			if (ret && ret != -EINTR)
 				break;
@@ -146,6 +154,9 @@ void bch_migrate_write_init(struct cache_set *c,
 			  wp,
 			  bkey_start_pos(k.k),
 			  NULL, flags);
+
+	if (m->move)
+		m->op.alloc_reserve = RESERVE_MOVINGGC;
 
 	m->op.nr_replicas	= 1;
 	m->op.index_update_fn	= bch_migrate_index_update;

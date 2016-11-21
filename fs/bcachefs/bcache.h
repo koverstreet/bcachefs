@@ -597,7 +597,7 @@ struct cache_set {
 	struct btree_alloc {
 		struct open_bucket	*ob;
 		BKEY_PADDED(k);
-	}			btree_reserve_cache[BTREE_NODE_RESERVE];
+	}			btree_reserve_cache[BTREE_NODE_RESERVE * 2];
 	unsigned		btree_reserve_cache_nr;
 	struct mutex		btree_reserve_cache_lock;
 

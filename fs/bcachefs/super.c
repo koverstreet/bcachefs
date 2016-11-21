@@ -1988,10 +1988,7 @@ static const char *cache_alloc(struct bcache_superblock *sb,
 		total_reserve += ca->free[i].size;
 	pr_debug("%zu buckets reserved", total_reserve);
 
-	ca->copygc_write_point.reserve = RESERVE_MOVINGGC;
 	ca->copygc_write_point.group = &ca->self;
-
-	ca->tiering_write_point.reserve = RESERVE_NONE;
 	ca->tiering_write_point.group = &ca->self;
 
 	kobject_get(&c->kobj);

@@ -98,6 +98,7 @@ struct bch_write_op {
 	u16			flags;
 	unsigned		compression_type:4;
 	unsigned		nr_replicas:4;
+	unsigned		alloc_reserve:4;
 
 	struct bpos		pos;
 	unsigned		version;

@@ -160,7 +160,7 @@ void bch_btree_set_root_initial(struct cache_set *, struct btree *,
 void bch_btree_reserve_put(struct cache_set *, struct btree_reserve *);
 struct btree_reserve *bch_btree_reserve_get(struct cache_set *,
 					    struct btree *, unsigned,
-					    bool, struct closure *);
+					    unsigned, struct closure *);
 
 int bch_btree_root_alloc(struct cache_set *, enum btree_id, struct closure *);
 
@@ -284,11 +284,14 @@ int __bch_btree_insert_at(struct btree_insert *, u64 *);
 /* Don't check for -ENOSPC: */
 #define BTREE_INSERT_NOFAIL		(1 << 1)
 
+/* for copygc, or when merging btree nodes */
+#define BTREE_INSERT_USE_RESERVE	(1 << 2)
+
 /*
  * Insert is for journal replay: don't get journal reservations, or mark extents
  * (bch_mark_key)
  */
-#define BTREE_INSERT_JOURNAL_REPLAY	(1 << 2)
+#define BTREE_INSERT_JOURNAL_REPLAY	(1 << 3)
 
 int bch_btree_insert_list_at(struct btree_iter *, struct keylist *,
 			     struct disk_reservation *,
