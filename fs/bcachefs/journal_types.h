@@ -165,6 +165,8 @@ struct journal {
 	BKEY_PADDED(key);
 
 	struct delayed_work	reclaim_work;
+	unsigned long		last_flushed;
+
 	/* protects advancing ja->last_idx: */
 	struct mutex		reclaim_lock;
 

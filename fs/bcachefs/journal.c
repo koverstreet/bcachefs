@@ -1604,8 +1604,8 @@ static void journal_reclaim_work(struct work_struct *work)
 	struct journal_entry_pin *pin;
 	u64 seq_to_flush = 0;
 	unsigned iter, nr, bucket_to_flush;
-	bool reclaim_lock_held = false;
-	bool flushed = false;
+	unsigned long next_flush;
+	bool reclaim_lock_held = false, need_flush;
 
 	/*
 	 * Advance last_idx to point to the oldest journal entry containing
@@ -1666,15 +1666,24 @@ static void journal_reclaim_work(struct work_struct *work)
 	seq_to_flush = max_t(s64, seq_to_flush,
 			     (s64) j->seq - (j->pin.size >> 1));
 
-	/* Ensure we always flush at least one journal pin: */
+	/*
+	 * If it's been longer than j->reclaim_delay_ms since we last flushed,
+	 * make sure to flush at least one journal pin:
+	 */
+	next_flush = j->last_flushed + msecs_to_jiffies(j->reclaim_delay_ms);
+	need_flush = time_after(jiffies, next_flush);
 
-	while ((pin = journal_get_next_pin(j, flushed ? seq_to_flush : U64_MAX))) {
+	while ((pin = journal_get_next_pin(j, need_flush
+					   ? U64_MAX
+					   : seq_to_flush))) {
 		__set_current_state(TASK_RUNNING);
 		pin->flush(j, pin);
-		flushed = true;
+		need_flush = false;
+
+		j->last_flushed = jiffies;
 	}
 
-	if (flushed && !test_bit(CACHE_SET_RO, &c->flags))
+	if (!test_bit(CACHE_SET_RO, &c->flags))
 		queue_delayed_work(system_freezable_wq, &j->reclaim_work,
 				   msecs_to_jiffies(j->reclaim_delay_ms));
 }
