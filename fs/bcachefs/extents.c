@@ -107,27 +107,6 @@ struct btree_nr_keys bch_key_sort_fix_overlapping(struct bset *dst,
 	return nr;
 }
 
-/* This returns true if insert should be inserted, false otherwise */
-
-enum btree_insert_ret
-bch_insert_fixup_key(struct btree_insert *trans,
-		     struct btree_insert_entry *insert,
-		     struct journal_res *res)
-{
-	struct btree_iter *iter = insert->iter;
-
-	BUG_ON(iter->level);
-
-	bch_btree_journal_key(iter, insert->k, res);
-	bch_btree_bset_insert_key(iter,
-				  iter->nodes[0],
-				  &iter->node_iters[0],
-				  insert->k);
-
-	trans->did_work = true;
-	return BTREE_INSERT_OK;
-}
-
 /* Common among btree and extent ptrs */
 
 bool bch_extent_has_device(struct bkey_s_c_extent e, unsigned dev)
@@ -1066,7 +1045,6 @@ static bool bch_extent_merge_inline(struct cache_set *,
 
 static enum btree_insert_ret extent_insert_should_stop(struct btree_insert *trans,
 						       struct btree_insert_entry *insert,
-						       struct journal_res *res,
 						       u64 start_time,
 						       unsigned nr_done)
 {
@@ -1086,7 +1064,7 @@ static enum btree_insert_ret extent_insert_should_stop(struct btree_insert *tran
 	 */
 	if (!bch_btree_node_insert_fits(trans->c, b, insert->k->k.u64s))
 		return BTREE_INSERT_BTREE_NODE_FULL;
-	else if (!journal_res_insert_fits(trans, insert, res))
+	else if (!journal_res_insert_fits(trans, insert))
 		return BTREE_INSERT_JOURNAL_RES_FULL; /* XXX worth tracing */
 	else if (nr_done > 10 &&
 		 time_after64(local_clock(), start_time +
@@ -1140,19 +1118,9 @@ drop_deleted_keys:
 	bch_btree_node_iter_fix(iter, b, node_iter, t, where, clobber_u64s, 0);
 }
 
-static void extent_insert_and_journal(struct cache_set *c, struct btree_iter *iter,
-				      struct bkey_i *insert,
-				      struct journal_res *res)
-{
-	bch_btree_journal_key(iter, insert, res);
-
-	extent_bset_insert(c, iter, insert);
-}
-
 static void extent_insert_committed(struct btree_insert *trans,
 				    struct btree_insert_entry *insert,
 				    struct bpos committed_pos,
-				    struct journal_res *res,
 				    struct bucket_stats_cache_set *stats)
 {
 	struct cache_set *c = trans->c;
@@ -1188,7 +1156,9 @@ static void extent_insert_committed(struct btree_insert *trans,
 			bkey_debugcheck(c, iter->nodes[iter->level],
 					bkey_i_to_s_c(&split.k));
 
-		extent_insert_and_journal(c, iter, &split.k, res);
+		bch_btree_journal_key(trans, iter, &split.k);
+
+		extent_bset_insert(c, iter, &split.k);
 
 		bch_btree_iter_set_pos_same_leaf(iter, committed_pos);
 
@@ -1202,7 +1172,6 @@ __extent_insert_advance_pos(struct btree_insert *trans,
 			    struct bpos *committed_pos,
 			    struct bpos next_pos,
 			    struct bkey_s_c k,
-			    struct journal_res *res,
 			    struct bucket_stats_cache_set *stats)
 {
 	struct extent_insert_hook *hook = trans->hook;
@@ -1223,8 +1192,7 @@ __extent_insert_advance_pos(struct btree_insert *trans,
 	case BTREE_HOOK_DO_INSERT:
 		break;
 	case BTREE_HOOK_NO_INSERT:
-		extent_insert_committed(trans, insert, *committed_pos,
-					res, stats);
+		extent_insert_committed(trans, insert, *committed_pos, stats);
 		bch_cut_subtract_front(insert->iter, next_pos,
 				       bkey_i_to_s(insert->k), stats);
 
@@ -1247,7 +1215,6 @@ extent_insert_advance_pos(struct btree_insert *trans,
 			  struct btree_insert_entry *insert,
 			  struct bpos *committed_pos,
 			  struct bkey_s_c k,
-			  struct journal_res *res,
 			  struct bucket_stats_cache_set *stats)
 {
 	struct btree *b = insert->iter->nodes[0];
@@ -1263,7 +1230,7 @@ extent_insert_advance_pos(struct btree_insert *trans,
 						    committed_pos,
 						    bkey_start_pos(k.k),
 						    bkey_s_c_null,
-						    res, stats)) {
+						    stats)) {
 		case BTREE_HOOK_DO_INSERT:
 			break;
 		case BTREE_HOOK_NO_INSERT:
@@ -1285,7 +1252,7 @@ extent_insert_advance_pos(struct btree_insert *trans,
 		return BTREE_HOOK_DO_INSERT;
 
 	return __extent_insert_advance_pos(trans, insert, committed_pos,
-					   next_pos, k, res, stats);
+					   next_pos, k, stats);
 }
 
 /**
@@ -1329,8 +1296,7 @@ extent_insert_advance_pos(struct btree_insert *trans,
  */
 enum btree_insert_ret
 bch_insert_fixup_extent(struct btree_insert *trans,
-			struct btree_insert_entry *insert,
-			struct journal_res *res)
+			struct btree_insert_entry *insert)
 {
 	struct cache_set *c = trans->c;
 	struct btree_iter *iter = insert->iter;
@@ -1362,7 +1328,7 @@ bch_insert_fixup_extent(struct btree_insert *trans,
 				insert->k->k.size, &stats);
 
 	while (bkey_cmp(committed_pos, insert->k->k.p) < 0 &&
-	       (ret = extent_insert_should_stop(trans, insert, res,
+	       (ret = extent_insert_should_stop(trans, insert,
 				start_time, nr_done)) == BTREE_INSERT_OK &&
 	       (_k = bch_btree_node_iter_peek_all(node_iter, &b->keys))) {
 		struct bset_tree *t = bch_bkey_to_bset(&b->keys, _k);
@@ -1409,7 +1375,7 @@ bch_insert_fixup_extent(struct btree_insert *trans,
 		if (k.k->size)
 			switch (extent_insert_advance_pos(trans, insert,
 							  &committed_pos,
-							  k.s_c, res, &stats)) {
+							  k.s_c, &stats)) {
 			case BTREE_HOOK_DO_INSERT:
 				break;
 			case BTREE_HOOK_NO_INSERT:
@@ -1468,13 +1434,13 @@ bch_insert_fixup_extent(struct btree_insert *trans,
 
 				if (extent_insert_advance_pos(trans, insert,
 							&committed_pos,
-							k.s_c, res, &stats) ==
+							k.s_c, &stats) ==
 				    BTREE_HOOK_RESTART_TRANS) {
 					ret = BTREE_INSERT_NEED_TRAVERSE;
 					goto stop;
 				}
 				extent_insert_committed(trans, insert, committed_pos,
-							res, &stats);
+							&stats);
 				/*
 				 * We split and inserted upto at k.k->p - that
 				 * has to coincide with iter->pos, so that we
@@ -1526,11 +1492,11 @@ bch_insert_fixup_extent(struct btree_insert *trans,
 	if (bkey_cmp(committed_pos, insert->k->k.p) < 0 &&
 	    ret == BTREE_INSERT_OK &&
 	    extent_insert_advance_pos(trans, insert, &committed_pos,
-				      bkey_s_c_null, res,
+				      bkey_s_c_null,
 				      &stats) == BTREE_HOOK_RESTART_TRANS)
 		ret = BTREE_INSERT_NEED_TRAVERSE;
 stop:
-	extent_insert_committed(trans, insert, committed_pos, res, &stats);
+	extent_insert_committed(trans, insert, committed_pos, &stats);
 	/*
 	 * Subtract any remaining sectors from @insert, if we bailed out early
 	 * and didn't fully insert @insert:

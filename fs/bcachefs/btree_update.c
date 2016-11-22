@@ -734,17 +734,18 @@ static void btree_node_flush1(struct journal *j, struct journal_entry_pin *pin)
 	return __btree_node_flush(j, pin, 1);
 }
 
-void bch_btree_journal_key(struct btree_iter *iter,
-			   struct bkey_i *insert,
-			   struct journal_res *res)
+void bch_btree_journal_key(struct btree_insert *trans,
+			   struct btree_iter *iter,
+			   struct bkey_i *insert)
 {
-	struct cache_set *c = iter->c;
+	struct cache_set *c = trans->c;
 	struct journal *j = &c->journal;
 	struct btree *b = iter->nodes[0];
 	struct btree_write *w = btree_current_write(b);
 
 	EBUG_ON(iter->level || b->level);
-	EBUG_ON(!res->ref && test_bit(JOURNAL_REPLAY_DONE, &j->flags));
+	EBUG_ON(!trans->journal_res.ref &&
+		test_bit(JOURNAL_REPLAY_DONE, &j->flags));
 
 	if (!journal_pin_active(&w->journal))
 		bch_journal_pin_add(j, &w->journal,
@@ -752,14 +753,37 @@ void bch_btree_journal_key(struct btree_iter *iter,
 				    ? btree_node_flush0
 				    : btree_node_flush1);
 
-	if (res->ref) {
-		bch_journal_add_keys(j, res, b->btree_id, insert);
-		btree_bset_last(b)->journal_seq =
-			cpu_to_le64(bch_journal_res_seq(j, res));
+	if (trans->journal_res.ref) {
+		u64 seq = bch_journal_res_seq(j, &trans->journal_res);
+
+		bch_journal_add_keys(j, &trans->journal_res,
+				     b->btree_id, insert);
+
+		if (trans->journal_seq)
+			*trans->journal_seq = seq;
+		btree_bset_last(b)->journal_seq = cpu_to_le64(seq);
 	}
 
 	if (!btree_node_dirty(b))
 		set_btree_node_dirty(b);
+}
+
+static enum btree_insert_ret
+bch_insert_fixup_key(struct btree_insert *trans,
+		     struct btree_insert_entry *insert)
+{
+	struct btree_iter *iter = insert->iter;
+
+	BUG_ON(iter->level);
+
+	bch_btree_journal_key(trans, iter, insert->k);
+	bch_btree_bset_insert_key(iter,
+				  iter->nodes[0],
+				  &iter->node_iters[0],
+				  insert->k);
+
+	trans->did_work = true;
+	return BTREE_INSERT_OK;
 }
 
 static void verify_keys_sorted(struct keylist *l)
@@ -1721,8 +1745,7 @@ out:
  */
 static enum btree_insert_ret
 btree_insert_key(struct btree_insert *trans,
-		 struct btree_insert_entry *insert,
-		 struct journal_res *res)
+		 struct btree_insert_entry *insert)
 {
 	struct cache_set *c = trans->c;
 	struct btree_iter *iter = insert->iter;
@@ -1733,8 +1756,8 @@ btree_insert_key(struct btree_insert *trans,
 	int live_u64s_added, u64s_added;
 
 	ret = !btree_node_is_extents(b)
-		? bch_insert_fixup_key(trans, insert, res)
-		: bch_insert_fixup_extent(trans, insert, res);
+		? bch_insert_fixup_key(trans, insert)
+		: bch_insert_fixup_extent(trans, insert);
 
 	live_u64s_added = (int) b->keys.nr.live_u64s - old_live_u64s;
 	u64s_added = (int) le16_to_cpu(btree_bset_last(b)->u64s) - old_u64s;
@@ -1805,10 +1828,9 @@ static int btree_trans_entry_cmp(const void *_l, const void *_r)
  * -EROFS: cache set read only
  * -EIO: journal or btree node IO error
  */
-int __bch_btree_insert_at(struct btree_insert *trans, u64 *journal_seq)
+int __bch_btree_insert_at(struct btree_insert *trans)
 {
 	struct cache_set *c = trans->c;
-	struct journal_res res = { 0, 0 };
 	struct btree_insert_entry *i;
 	struct btree_iter *split = NULL;
 	bool cycle_gc_lock = false;
@@ -1837,8 +1859,12 @@ retry:
 		if (!i->done)
 			u64s += jset_u64s(i->k->k.u64s);
 
+	memset(&trans->journal_res, 0, sizeof(trans->journal_res));
+
 	ret = !(trans->flags & BTREE_INSERT_JOURNAL_REPLAY)
-		? bch_journal_res_get(&c->journal, &res, u64s, u64s)
+		? bch_journal_res_get(&c->journal,
+				      &trans->journal_res,
+				      u64s, u64s)
 		: 0;
 	if (ret)
 		goto err;
@@ -1869,7 +1895,7 @@ retry:
 		if (i->done)
 			continue;
 
-		switch (btree_insert_key(trans, i, &res)) {
+		switch (btree_insert_key(trans, i)) {
 		case BTREE_INSERT_OK:
 			i->done = true;
 			break;
@@ -1899,7 +1925,7 @@ retry:
 	}
 unlock:
 	multi_unlock_write(trans);
-	bch_journal_res_put(&c->journal, &res, journal_seq);
+	bch_journal_res_put(&c->journal, &trans->journal_res, NULL);
 
 	if (split)
 		goto split;

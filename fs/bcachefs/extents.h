@@ -17,11 +17,6 @@ struct btree_nr_keys bch_extent_sort_fix_overlapping(struct cache_set *c,
 						     struct btree_keys *,
 						     struct btree_node_iter *);
 
-enum btree_insert_ret
-bch_insert_fixup_key(struct btree_insert *,
-		     struct btree_insert_entry *,
-		     struct journal_res *);
-
 extern const struct bkey_ops bch_bkey_btree_ops;
 extern const struct bkey_ops bch_bkey_extent_ops;
 
@@ -53,8 +48,7 @@ bch_extent_cmpxchg(struct extent_insert_hook *, struct bpos, struct bpos,
 
 enum btree_insert_ret
 bch_insert_fixup_extent(struct btree_insert *,
-			struct btree_insert_entry *,
-			struct journal_res *);
+			struct btree_insert_entry *);
 
 bool bch_extent_normalize(struct cache_set *, struct bkey_s);
 
