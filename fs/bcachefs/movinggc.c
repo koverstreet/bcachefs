@@ -77,9 +77,15 @@ static void read_moving(struct cache *ca, size_t buckets_to_move)
 				SECTORS_IN_FLIGHT_PER_DEVICE);
 	bch_btree_iter_init(&iter, c, BTREE_ID_EXTENTS, POS_MIN);
 
-	while (!bch_move_ctxt_wait(&ctxt) &&
-	       (k = bch_btree_iter_peek(&iter)).k &&
-	       !btree_iter_err(k)) {
+	while (1) {
+		if (bch_move_ctxt_wait(&ctxt))
+			goto out;
+		k = bch_btree_iter_peek(&iter);
+		if (!k.k)
+			break;
+		if (btree_iter_err(k))
+			goto out;
+
 		if (!moving_pred(ca, k))
 			goto next;
 
@@ -99,6 +105,14 @@ next:
 		cond_resched();
 	}
 
+	/* don't check this if we bailed out early: */
+	if (IS_ENABLED(CONFIG_BCACHEFS_DEBUG)) {
+		struct bucket *g;
+
+		for_each_bucket(g, ca)
+			BUG_ON(g->copygc_gen && bucket_sectors_used(g));
+	}
+out:
 	bch_btree_iter_unlock(&iter);
 	bch_move_ctxt_exit(&ctxt);
 	trace_bcache_moving_gc_end(ca, ctxt.sectors_moved, ctxt.keys_moved,
