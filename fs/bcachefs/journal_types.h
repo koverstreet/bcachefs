@@ -129,7 +129,7 @@ struct journal {
 	struct delayed_work	write_work;
 
 	/* Sequence number of most recent journal entry (last entry in @pin) */
-	u64			seq;
+	atomic64_t		seq;
 
 	/* last_seq from the most recent journal entry written */
 	u64			last_seq_ondisk;

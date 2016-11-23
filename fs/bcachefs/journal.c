@@ -43,7 +43,7 @@ static inline struct journal_buf *journal_prev_buf(struct journal *j)
 
 static inline u64 last_seq(struct journal *j)
 {
-	return j->seq - fifo_used(&j->pin) + 1;
+	return atomic64_read(&j->seq) - fifo_used(&j->pin) + 1;
 }
 
 static inline u64 journal_pin_seq(struct journal *j,
@@ -187,18 +187,16 @@ redo_peek:
 		if (b->data->keys.seq == n.seq &&
 		    !bkey_cmp(b->key.k.p, n.pos)) {
 			ret = bch_btree_node_rewrite(&iter, b, &cl);
-			if (ret == -EAGAIN) {
-				bch_btree_iter_unlock(&iter);
-				closure_sync(&cl);
-				ret = -EINTR;
-			}
-			if (ret == -EINTR)
-				goto redo_peek;
 			if (ret) {
-				/* -EROFS or perhaps -ENOSPC - bail out: */
-
 				bch_btree_iter_unlock(&iter);
 				closure_sync(&cl);
+
+				if (ret == -EAGAIN ||
+				    ret == -EINTR)
+					goto redo_peek;
+
+				/* -EROFS or perhaps -ENOSPC - bail out: */
+				/* XXX warn here */
 				return;
 			}
 		}
@@ -291,18 +289,19 @@ int bch_journal_seq_should_ignore(struct cache_set *c, u64 seq, struct btree *b)
 	struct journal *j = &c->journal;
 	struct journal_seq_blacklist *bl;
 	struct blacklisted_node *n;
+	u64 journal_seq, i;
 	int ret = 0;
 
-	/* Interier updates aren't journalled: */
-	if (b->level)
+	if (!seq)
 		return 0;
 
-	/*
-	 * After initial GC has finished, we've scanned the entire btree and
-	 * found all the blacklisted sequence numbers - we won't be creating any
-	 * new ones after startup:
-	 */
-	if (test_bit(CACHE_SET_INITIAL_GC_DONE, &c->flags)) {
+	journal_seq = atomic64_read(&j->seq);
+
+	/* Interier updates aren't journalled: */
+	BUG_ON(b->level);
+	BUG_ON(seq > journal_seq && test_bit(CACHE_SET_INITIAL_GC_DONE, &c->flags));
+
+	if (seq <= journal_seq) {
 		if (list_empty_careful(&j->seq_blacklist))
 			return 0;
 
@@ -312,33 +311,33 @@ int bch_journal_seq_should_ignore(struct cache_set *c, u64 seq, struct btree *b)
 		return ret;
 	}
 
-	mutex_lock(&j->blacklist_lock);
-	bl = journal_seq_blacklist_find(j, seq);
-	if (bl)
-		goto found;
-
-	if (seq <= j->seq)
-		goto out;
-
 	/*
 	 * Decrease this back to j->seq + 2 when we next rev the on disk format:
 	 * increasing it temporarily to work around bug in old kernels
 	 */
-	cache_set_inconsistent_on(seq > j->seq + 4, c,
+	cache_set_inconsistent_on(seq > journal_seq + 4, c,
 			 "bset journal seq too far in the future: %llu > %llu",
-			 seq, j->seq);
+			 seq, journal_seq);
 
-	bch_verbose(c, "blacklisting journal sequence number %llu", seq);
+	bch_verbose(c, "btree node %u:%llu:%llu has future journal sequence number %llu, blacklisting",
+		    b->btree_id, b->key.k.p.inode, b->key.k.p.offset, seq);
 
 	/*
 	 * When we start the journal, bch_journal_start() will skip over @seq:
 	 */
-	bl = bch_journal_seq_blacklisted_new(&c->journal, seq);
-	if (!bl) {
-		ret = -ENOMEM;
-		goto out;
+
+	mutex_lock(&j->blacklist_lock);
+
+	for (i = journal_seq + 1; i <= seq; i++) {
+		bl = journal_seq_blacklist_find(j, i) ?:
+			bch_journal_seq_blacklisted_new(j, i);
+
+		if (!bl) {
+			ret = -ENOMEM;
+			goto out;
+		}
 	}
-found:
+
 	for (n = bl->entries; n < bl->entries + bl->nr_entries; n++)
 		if (b->data->keys.seq	== n->seq &&
 		    b->btree_id		== n->btree_id &&
@@ -857,7 +856,7 @@ const char *bch_journal_read(struct cache_set *c, struct list_head *list)
 	c->journal.pin.back = le64_to_cpu(j->seq) -
 		le64_to_cpu(j->last_seq) + 1;
 
-	c->journal.seq = le64_to_cpu(j->seq);
+	atomic64_set(&c->journal.seq, le64_to_cpu(j->seq));
 	c->journal.last_seq_ondisk = le64_to_cpu(j->last_seq);
 
 	BUG_ON(last_seq(&c->journal) != le64_to_cpu(j->last_seq));
@@ -968,11 +967,11 @@ static void __bch_journal_next_entry(struct journal *j)
 	buf = journal_cur_buf(j);
 	memset(buf->has_inode, 0, sizeof(buf->has_inode));
 
-	jset = buf->data;
-	jset->seq	= cpu_to_le64(++j->seq);
+	jset		= buf->data;
+	jset->seq	= cpu_to_le64(atomic64_inc_return(&j->seq));
 	jset->u64s	= 0;
 
-	BUG_ON(journal_pin_seq(j, p) != j->seq);
+	BUG_ON(journal_pin_seq(j, p) != atomic64_read(&j->seq));
 }
 
 static inline size_t journal_entry_u64s_reserve(struct journal *j)
@@ -1233,7 +1232,7 @@ void bch_journal_start(struct cache_set *c)
 
 	spin_lock(&j->lock);
 
-	while (j->seq < new_seq) {
+	while (atomic64_read(&j->seq) < new_seq) {
 		struct journal_entry_pin_list pin_list, *p;
 
 		BUG_ON(!fifo_push(&j->pin, pin_list));
@@ -1241,7 +1240,7 @@ void bch_journal_start(struct cache_set *c)
 
 		INIT_LIST_HEAD(&p->list);
 		atomic_set(&p->count, 0);
-		j->seq++;
+		atomic64_inc(&j->seq);
 	}
 
 	/*
@@ -1308,7 +1307,8 @@ int bch_journal_replay(struct cache_set *c, struct list_head *list)
 
 		j->cur_pin_list =
 			&j->pin.data[((j->pin.back - 1 -
-				       (j->seq - le64_to_cpu(i->j.seq))) &
+				       (atomic64_read(&j->seq) -
+					le64_to_cpu(i->j.seq))) &
 				      j->pin.mask)];
 
 		for_each_jset_key(k, _n, entry, &i->j) {
@@ -1342,7 +1342,7 @@ int bch_journal_replay(struct cache_set *c, struct list_head *list)
 	}
 
 	bch_info(c, "journal replay done, %i keys in %i entries, seq %llu",
-		 keys, entries, j->seq);
+		 keys, entries, (u64) atomic64_read(&j->seq));
 
 	bch_journal_set_replay_done(&c->journal);
 err:
@@ -1664,7 +1664,8 @@ static void journal_reclaim_work(struct work_struct *work)
 
 	/* Also flush if the pin fifo is more than half full */
 	seq_to_flush = max_t(s64, seq_to_flush,
-			     (s64) j->seq - (j->pin.size >> 1));
+			     (s64) atomic64_read(&j->seq) -
+			     (j->pin.size >> 1));
 
 	/*
 	 * If it's been longer than j->reclaim_delay_ms since we last flushed,
@@ -1744,7 +1745,7 @@ static int journal_write_alloc(struct journal *j, unsigned sectors)
 
 		ja->sectors_free = ca->mi.bucket_size - sectors;
 		ja->cur_idx = (ja->cur_idx + 1) % nr_buckets;
-		ja->bucket_seq[ja->cur_idx] = j->seq;
+		ja->bucket_seq[ja->cur_idx] = atomic64_read(&j->seq);
 
 		extent_ptr_append(bkey_i_to_extent(&j->key),
 			(struct bch_extent_ptr) {
@@ -1999,9 +2000,9 @@ u64 bch_inode_journal_seq(struct journal *j, u64 inode)
 
 	spin_lock(&j->lock);
 	if (test_bit(h, journal_cur_buf(j)->has_inode))
-		seq = j->seq;
+		seq = atomic64_read(&j->seq);
 	else if (test_bit(h, journal_prev_buf(j)->has_inode))
-		seq = j->seq - 1;
+		seq = atomic64_read(&j->seq) - 1;
 	spin_unlock(&j->lock);
 
 	return seq;
@@ -2097,14 +2098,14 @@ void bch_journal_flush_seq_async(struct journal *j, u64 seq, struct closure *par
 {
 	spin_lock(&j->lock);
 
-	BUG_ON(seq > j->seq);
+	BUG_ON(seq > atomic64_read(&j->seq));
 
 	if (bch_journal_error(j)) {
 		spin_unlock(&j->lock);
 		return;
 	}
 
-	if (seq == j->seq) {
+	if (seq == atomic64_read(&j->seq)) {
 		bool set_need_write = false;
 
 		if (parent &&
@@ -2133,7 +2134,7 @@ void bch_journal_flush_seq_async(struct journal *j, u64 seq, struct closure *par
 			return;
 		}
 	} else if (parent &&
-		   seq + 1 == j->seq &&
+		   seq + 1 == atomic64_read(&j->seq) &&
 		   j->reservations.prev_buf_unwritten) {
 		if (!closure_wait(&journal_prev_buf(j)->wait, parent))
 			BUG();
@@ -2197,13 +2198,15 @@ int bch_journal_meta(struct journal *j)
 
 void bch_journal_flush_async(struct journal *j, struct closure *parent)
 {
-	u64 seq;
+	u64 seq, journal_seq;
 
 	spin_lock(&j->lock);
+	journal_seq = atomic64_read(&j->seq);
+
 	if (journal_entry_is_open(j)) {
-		seq = j->seq;
-	} else if (j->seq) {
-		seq = j->seq - 1;
+		seq = journal_seq;
+	} else if (journal_seq) {
+		seq = journal_seq - 1;
 	} else {
 		spin_unlock(&j->lock);
 		return;
@@ -2215,13 +2218,15 @@ void bch_journal_flush_async(struct journal *j, struct closure *parent)
 
 int bch_journal_flush(struct journal *j)
 {
-	u64 seq;
+	u64 seq, journal_seq;
 
 	spin_lock(&j->lock);
+	journal_seq = atomic64_read(&j->seq);
+
 	if (journal_entry_is_open(j)) {
-		seq = j->seq;
-	} else if (j->seq) {
-		seq = j->seq - 1;
+		seq = journal_seq;
+	} else if (journal_seq) {
+		seq = journal_seq - 1;
 	} else {
 		spin_unlock(&j->lock);
 		return 0;
@@ -2296,7 +2301,7 @@ ssize_t bch_journal_print_debug(struct journal *j, char *buf)
 			 "dirty:\t\t\t%i\n"
 			 "replay done:\t\t%i\n",
 			 fifo_used(&j->pin),
-			 j->seq,
+			 (u64) atomic64_read(&j->seq),
 			 last_seq(j),
 			 j->last_seq_ondisk,
 			 journal_state_count(*s, s->idx),
