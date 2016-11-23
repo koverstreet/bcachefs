@@ -1334,9 +1334,8 @@ struct open_bucket *bch_alloc_sectors_start(struct cache_set *c,
 					    struct closure *cl)
 {
 	struct open_bucket *ob;
-	unsigned open_buckets_reserved = allocation_is_metadata(reserve)
-		? 0
-		: BTREE_NODE_RESERVE;
+	unsigned open_buckets_reserved = wp == &c->btree_write_point
+		? 0 : BTREE_NODE_RESERVE;
 	int ret;
 
 	BUG_ON(!wp->group);
