@@ -398,6 +398,14 @@ void bkey_unpack(struct bkey_i *, const struct bkey_format *,
 bool bkey_pack(struct bkey_packed *, const struct bkey_i *,
 	       const struct bkey_format *);
 
+static inline u64 bkey_field_max(const struct bkey_format *f,
+				 enum bch_bkey_fields nr)
+{
+	return f->bits_per_field[nr] < 64
+		? f->field_offset[nr] + ~(~0ULL << f->bits_per_field[nr])
+		: U64_MAX;
+}
+
 /* Disassembled bkeys */
 
 static inline struct bkey_s_c bkey_disassemble(const struct bkey_format *f,

@@ -16,15 +16,23 @@
 
 #include <trace/events/bcachefs.h>
 
-static void verify_no_dups(struct btree_keys *b,
+static void verify_no_dups(struct btree *b,
 			   struct bkey_packed *start,
 			   struct bkey_packed *end)
 {
 #ifdef CONFIG_BCACHEFS_DEBUG
+	const struct bkey_format *f = &b->keys.format;
 	struct bkey_packed *k;
 
-	for (k = start; k != end && bkey_next(k) != end; k = bkey_next(k))
-		BUG_ON(bkey_cmp_packed(&b->format, k, bkey_next(k)) >= 0);
+	for (k = start; k != end && bkey_next(k) != end; k = bkey_next(k)) {
+		struct bkey l = bkey_unpack_key(f, k);
+		struct bkey r = bkey_unpack_key(f, bkey_next(k));
+
+		BUG_ON(btree_node_is_extents(b)
+		       ? bkey_cmp(l.p, bkey_start_pos(&r)) > 0
+		       : bkey_cmp(l.p, bkey_start_pos(&r)) >= 0);
+		//BUG_ON(bkey_cmp_packed(&b->format, k, bkey_next(k)) >= 0);
+	}
 #endif
 }
 
@@ -177,10 +185,80 @@ static unsigned sort_key_whiteouts(struct bkey_packed *dst,
 	return (u64 *) out - (u64 *) dst;
 }
 
+static inline int sort_extent_whiteouts_cmp(struct btree_keys *b,
+					    struct bkey_packed *l,
+					    struct bkey_packed *r)
+{
+	struct bkey ul = bkey_unpack_key(&b->format, l);
+	struct bkey ur = bkey_unpack_key(&b->format, r);
+
+	return bkey_cmp(bkey_start_pos(&ul), bkey_start_pos(&ur));
+}
+
 static unsigned sort_extent_whiteouts(struct bkey_packed *dst,
 				      struct sort_iter *iter)
 {
-	struct bkey_packed *out = dst;
+	const struct bkey_format *f = &iter->b->format;
+	struct bkey_packed *in, *out = dst;
+	struct bkey_i l, r;
+	bool prev = false, l_packed;
+	u64 max_packed_size	= bkey_field_max(f, BKEY_FIELD_SIZE);
+	u64 max_packed_offset	= bkey_field_max(f, BKEY_FIELD_OFFSET);
+	u64 new_size;
+
+	max_packed_size = min_t(u64, max_packed_size, KEY_SIZE_MAX);
+
+	sort_iter_sort(iter, sort_extent_whiteouts_cmp);
+
+	while ((in = sort_iter_next(iter, sort_extent_whiteouts_cmp))) {
+		EBUG_ON(bkeyp_val_u64s(f, in));
+		EBUG_ON(in->type != KEY_TYPE_DISCARD);
+
+		r.k = bkey_unpack_key(f, in);
+
+		if (prev &&
+		    bkey_cmp(l.k.p, bkey_start_pos(&r.k)) >= 0) {
+			if (bkey_cmp(l.k.p, r.k.p) >= 0)
+				continue;
+
+			new_size = l_packed
+				? min(max_packed_size, max_packed_offset -
+				      bkey_start_offset(&l.k))
+				: KEY_SIZE_MAX;
+
+			new_size = min(new_size, r.k.p.offset -
+				       bkey_start_offset(&l.k));
+
+			BUG_ON(new_size < l.k.size);
+
+			bch_key_resize(&l.k, new_size);
+
+			if (bkey_cmp(l.k.p, r.k.p) >= 0)
+				continue;
+
+			bch_cut_front(l.k.p, &r);
+		}
+
+		if (prev) {
+			if (!bkey_pack(out, &l, f)) {
+				BUG_ON(l_packed);
+				bkey_copy(out, &l);
+			}
+			out = bkey_next(out);
+		}
+
+		l = r;
+		prev = true;
+		l_packed = bkey_packed(in);
+	}
+
+	if (prev) {
+		if (!bkey_pack(out, &l, f)) {
+			BUG_ON(l_packed);
+			bkey_copy(out, &l);
+		}
+		out = bkey_next(out);
+	}
 
 	return (u64 *) out - (u64 *) dst;
 }
@@ -223,9 +301,6 @@ static bool __compact_whiteouts(struct cache_set *c, struct btree *b,
 	struct sort_iter sort_iter;
 	unsigned order, whiteout_u64s = 0, u64s;
 	bool used_mempool, compacting = false;
-
-	if (btree_node_is_extents(b))
-		return false;
 
 	for_each_bset(&b->keys, t)
 		whiteout_u64s += should_compact_bset(b, t,
@@ -324,8 +399,18 @@ static bool __compact_whiteouts(struct cache_set *c, struct btree *b,
 		: sort_key_whiteouts(unwritten_whiteouts_start(c, b),
 				     &sort_iter);
 
-	BUG_ON(u64s != b->whiteout_u64s);
-	verify_no_dups(&b->keys,
+	BUG_ON(u64s > b->whiteout_u64s);
+	BUG_ON(u64s != b->whiteout_u64s && !btree_node_is_extents(b));
+	BUG_ON(u_pos != whiteouts && !u64s);
+
+	if (u64s != b->whiteout_u64s) {
+		void *src = unwritten_whiteouts_start(c, b);
+
+		b->whiteout_u64s = u64s;
+		memmove_u64s_up(unwritten_whiteouts_start(c, b), src, u64s);
+	}
+
+	verify_no_dups(b,
 		       unwritten_whiteouts_start(c, b),
 		       unwritten_whiteouts_end(c, b));
 
@@ -455,7 +540,8 @@ static unsigned sort_extents(struct bkey_packed *dst,
 		if (bkey_deleted(in))
 			continue;
 
-		if (filter_whiteouts && bkey_whiteout(in))
+		if (bkey_whiteout(in) &&
+		    (filter_whiteouts || !in->needs_whiteout))
 			continue;
 
 		bkey_copy(out, in);
@@ -804,7 +890,7 @@ static const char *validate_bset(struct cache_set *c, struct btree *b,
 				 unsigned *whiteout_u64s)
 {
 	struct bkey_format *f = &b->keys.format;
-	struct bkey_packed *k;
+	struct bkey_packed *k, *prev = NULL;
 	bool seen_non_whiteout = false;
 
 	if (le16_to_cpu(i->version) != BCACHE_BSET_VERSION)
@@ -815,6 +901,11 @@ static const char *validate_bset(struct cache_set *c, struct btree *b,
 
 	if (i != &b->data->keys && !i->u64s)
 		btree_node_error(b, c, ptr, "empty set");
+
+	if (!BSET_SEPARATE_WHITEOUTS(i)) {
+		seen_non_whiteout = true;
+		whiteout_u64s = 0;
+	}
 
 	for (k = i->start;
 	     k != bset_bkey_last(i);) {
@@ -861,7 +952,7 @@ static const char *validate_bset(struct cache_set *c, struct btree *b,
 			bch_bkey_val_to_text(c, btree_node_type(b),
 					     buf, sizeof(buf), u);
 			btree_node_error(b, c, ptr,
-					 "invalid bkey %s", buf);
+					 "invalid bkey %s: %s", buf, invalid);
 
 			i->u64s = cpu_to_le16(le16_to_cpu(i->u64s) - k->u64s);
 			memmove_u64s_down(k, bkey_next(k),
@@ -869,13 +960,21 @@ static const char *validate_bset(struct cache_set *c, struct btree *b,
 			continue;
 		}
 
-		if (BSET_SEPARATE_WHITEOUTS(i) &&
-		    !seen_non_whiteout &&
-		    !bkey_whiteout(k)) {
+		/*
+		 * with the separate whiteouts thing (used for extents), the
+		 * second set of keys actually can have whiteouts too, so we
+		 * can't solely go off bkey_whiteout()...
+		 */
+
+		if (!seen_non_whiteout &&
+		    (!bkey_whiteout(k) ||
+		     (prev && bkey_cmp_left_packed(f, prev,
+					bkey_start_pos(u.k)) > 0))) {
 			*whiteout_u64s = k->_data - i->_data;
 			seen_non_whiteout = true;
 		}
 
+		prev = k;
 		k = bkey_next(k);
 	}
 
@@ -1265,10 +1364,6 @@ void __bch_btree_node_write(struct cache_set *c, struct btree *b,
 		: sizeof(struct btree_node_entry);
 
 	bytes += b->whiteout_u64s * sizeof(u64);
-	sort_iter_add(&sort_iter,
-		      unwritten_whiteouts_start(c, b),
-		      unwritten_whiteouts_end(c, b));
-	b->whiteout_u64s = 0;
 
 	for_each_bset(&b->keys, t) {
 		i = t->data;
@@ -1295,11 +1390,27 @@ void __bch_btree_node_write(struct cache_set *c, struct btree *b,
 	}
 
 	i->journal_seq	= cpu_to_le64(seq);
+	i->u64s		= 0;
+
+	if (!btree_node_is_extents(b)) {
+		sort_iter_add(&sort_iter,
+			      unwritten_whiteouts_start(c, b),
+			      unwritten_whiteouts_end(c, b));
+		SET_BSET_SEPARATE_WHITEOUTS(i, false);
+	} else {
+		memcpy_u64s(i->start,
+			    unwritten_whiteouts_start(c, b),
+			    b->whiteout_u64s);
+		i->u64s = cpu_to_le16(b->whiteout_u64s);
+		SET_BSET_SEPARATE_WHITEOUTS(i, true);
+	}
+
+	b->whiteout_u64s = 0;
 
 	u64s = btree_node_is_extents(b)
-		? sort_extents(i->start, &sort_iter, false)
+		? sort_extents(bset_bkey_last(i), &sort_iter, false)
 		: sort_keys(i->start, &sort_iter, false);
-	i->u64s = cpu_to_le16(u64s);
+	le16_add_cpu(&i->u64s, u64s);
 
 	clear_needs_whiteout(i);
 

@@ -31,9 +31,9 @@ const char *bkey_invalid(struct cache_set *c, enum bkey_type type,
 
 	switch (k.k->type) {
 	case KEY_TYPE_DELETED:
+	case KEY_TYPE_DISCARD:
 		return NULL;
 
-	case KEY_TYPE_DISCARD:
 	case KEY_TYPE_ERROR:
 		return bkey_val_bytes(k.k) != 0
 			? "value size should be zero"

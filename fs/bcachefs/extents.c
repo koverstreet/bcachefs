@@ -1048,6 +1048,10 @@ struct extent_insert_state {
 	struct btree_insert_entry	*insert;
 	struct bpos			committed;
 	struct bucket_stats_cache_set	stats;
+
+	/* for deleting: */
+	struct bkey_i			whiteout;
+	bool				do_journal;
 };
 
 static enum btree_insert_ret
@@ -1118,51 +1122,56 @@ drop_deleted_keys:
 static void extent_insert_committed(struct extent_insert_state *s)
 {
 	struct cache_set *c = s->trans->c;
-	struct bkey_i *insert = s->insert->k;
 	struct btree_iter *iter = s->insert->iter;
+	struct bkey_i *insert = !bkey_whiteout(&s->insert->k->k)
+		? s->insert->k
+		: &s->whiteout;
+	BKEY_PADDED(k) split;
 
-	EBUG_ON(bkey_cmp(bkey_start_pos(&insert->k), iter->pos));
 	EBUG_ON(bkey_cmp(insert->k.p, s->committed) < 0);
-	EBUG_ON(bkey_cmp(s->committed, iter->pos) < 0);
+	EBUG_ON(bkey_cmp(s->committed, bkey_start_pos(&insert->k)) < 0);
 
-	if (bkey_cmp(s->committed, iter->pos) > 0) {
-		BKEY_PADDED(k) split;
+	if (!bkey_cmp(s->committed, bkey_start_pos(&insert->k)))
+		return;
 
-		EBUG_ON(bkey_deleted(&insert->k) || !insert->k.size);
-
-		bkey_copy(&split.k, insert);
-
-		if (!(s->trans->flags & BTREE_INSERT_JOURNAL_REPLAY) &&
-		    bkey_cmp(s->committed, insert->k.p) &&
-		    bkey_extent_is_compressed(c, bkey_i_to_s_c(insert))) {
-			/* XXX: possibly need to increase our reservation? */
-			bch_cut_subtract_back(iter, s->committed,
-					      bkey_i_to_s(&split.k), &s->stats);
-			bch_cut_front(s->committed, insert);
-			bch_add_sectors(iter, bkey_i_to_s_c(insert),
-					bkey_start_offset(&insert->k),
-					insert->k.size, &s->stats);
-		} else {
-			bch_cut_back(s->committed, &split.k.k);
-			bch_cut_front(s->committed, insert);
-		}
-
-		if (debug_check_bkeys(c))
-			bkey_debugcheck(c, iter->nodes[iter->level],
-					bkey_i_to_s_c(&split.k));
-
-		/*
-		 * XXX: if this is a delete, and we didn't overlap with
-		 * anything, we don't need to journal this:
-		 */
-		bch_btree_journal_key(s->trans, iter, &split.k);
-
-		extent_bset_insert(c, iter, &split.k);
-
-		bch_btree_iter_set_pos_same_leaf(iter, s->committed);
-
-		s->trans->did_work = true;
+	if (bkey_whiteout(&s->insert->k->k) && !s->do_journal) {
+		bch_cut_front(s->committed, insert);
+		goto done;
 	}
+
+	EBUG_ON(bkey_deleted(&insert->k) || !insert->k.size);
+
+	bkey_copy(&split.k, insert);
+
+	if (!(s->trans->flags & BTREE_INSERT_JOURNAL_REPLAY) &&
+	    bkey_cmp(s->committed, insert->k.p) &&
+	    bkey_extent_is_compressed(c, bkey_i_to_s_c(insert))) {
+		/* XXX: possibly need to increase our reservation? */
+		bch_cut_subtract_back(iter, s->committed,
+				      bkey_i_to_s(&split.k), &s->stats);
+		bch_cut_front(s->committed, insert);
+		bch_add_sectors(iter, bkey_i_to_s_c(insert),
+				bkey_start_offset(&insert->k),
+				insert->k.size, &s->stats);
+	} else {
+		bch_cut_back(s->committed, &split.k.k);
+		bch_cut_front(s->committed, insert);
+	}
+
+	if (debug_check_bkeys(c))
+		bkey_debugcheck(c, iter->nodes[iter->level],
+				bkey_i_to_s_c(&split.k));
+
+	bch_btree_journal_key(s->trans, iter, &split.k);
+
+	if (!bkey_whiteout(&split.k.k))
+		extent_bset_insert(c, iter, &split.k);
+done:
+	bch_btree_iter_set_pos_same_leaf(iter, s->committed);
+
+	insert->k.needs_whiteout	= false;
+	s->do_journal			= false;
+	s->trans->did_work		= true;
 }
 
 static enum extent_insert_hook_ret
@@ -1251,8 +1260,7 @@ extent_insert_check_split_compressed(struct extent_insert_state *s,
 	struct cache_set *c = s->trans->c;
 	unsigned sectors;
 
-	if (k.k->size &&
-	    overlap == BCH_EXTENT_OVERLAP_MIDDLE &&
+	if (overlap == BCH_EXTENT_OVERLAP_MIDDLE &&
 	    (sectors = bkey_extent_is_compressed(c, k))) {
 		int flags = BCH_DISK_RESERVATION_BTREE_LOCKS_HELD;
 
@@ -1333,9 +1341,9 @@ extent_squash(struct extent_insert_state *s, struct bkey_i *insert,
 			extent_save(&b->keys, node_iter, _k, k.k);
 
 			if (extent_insert_advance_pos(s, k.s_c) ==
-			    BTREE_HOOK_RESTART_TRANS) {
+			    BTREE_HOOK_RESTART_TRANS)
 				return BTREE_INSERT_NEED_TRAVERSE;
-			}
+
 			extent_insert_committed(s);
 			/*
 			 * We split and inserted upto at k.k->p - that
@@ -1369,6 +1377,8 @@ extent_squash(struct extent_insert_state *s, struct bkey_i *insert,
 		 * what k points to)
 		 */
 		bkey_reassemble(&split.k, k.s_c);
+		split.k.k.needs_whiteout |= bset_written(b, t->data);
+
 		bch_cut_back(bkey_start_pos(&insert->k), &split.k.k);
 		BUG_ON(bkey_deleted(&split.k.k));
 
@@ -1385,6 +1395,121 @@ extent_squash(struct extent_insert_state *s, struct bkey_i *insert,
 	}
 
 	return BTREE_INSERT_OK;
+}
+
+static enum btree_insert_ret
+bch_delete_fixup_extent(struct extent_insert_state *s)
+{
+	struct cache_set *c = s->trans->c;
+	struct btree_iter *iter = s->insert->iter;
+	struct btree *b = iter->nodes[0];
+	struct btree_node_iter *node_iter = &iter->node_iters[0];
+	const struct bkey_format *f = &b->keys.format;
+	struct bkey_packed *_k;
+	struct bkey unpacked;
+	struct bkey_i *insert = s->insert->k;
+	enum btree_insert_ret ret = BTREE_INSERT_OK;
+
+	EBUG_ON(bkey_cmp(iter->pos, bkey_start_pos(&insert->k)));
+
+	s->whiteout	= *insert;
+	s->do_journal	= false;
+
+	while (bkey_cmp(s->committed, insert->k.p) < 0 &&
+	       (ret = extent_insert_should_stop(s)) == BTREE_INSERT_OK &&
+	       (_k = bch_btree_node_iter_peek_all(node_iter, &b->keys))) {
+		struct bset_tree *t = bch_bkey_to_bset(&b->keys, _k);
+		struct bkey_s k = __bkey_disassemble(f, _k, &unpacked);
+		enum bch_extent_overlap overlap;
+
+		EBUG_ON(bkey_cmp(iter->pos, bkey_start_pos(&insert->k)));
+		EBUG_ON(bkey_cmp(iter->pos, k.k->p) >= 0);
+
+		if (bkey_cmp(bkey_start_pos(k.k), insert->k.p) >= 0)
+			break;
+
+		if (bkey_whiteout(k.k)) {
+			s->committed = bpos_min(insert->k.p, k.k->p);
+			goto next;
+		}
+
+		overlap = bch_extent_overlap(&insert->k, k.k);
+
+		ret = extent_insert_check_split_compressed(s, k.s_c, overlap);
+		if (ret != BTREE_INSERT_OK)
+			goto stop;
+
+		switch (extent_insert_advance_pos(s, k.s_c)) {
+		case BTREE_HOOK_DO_INSERT:
+			break;
+		case BTREE_HOOK_NO_INSERT:
+			continue;
+		case BTREE_HOOK_RESTART_TRANS:
+			ret = BTREE_INSERT_NEED_TRAVERSE;
+			goto stop;
+		}
+
+		s->do_journal = true;
+
+		if (overlap == BCH_EXTENT_OVERLAP_ALL) {
+			btree_keys_account_key_drop(&b->keys.nr,
+						t - b->keys.set, _k);
+			bch_subtract_sectors(iter, k.s_c,
+					     bkey_start_offset(k.k), k.k->size,
+					     &s->stats);
+			_k->type = KEY_TYPE_DISCARD;
+			reserve_whiteout(b, t, _k);
+		} else if (k.k->needs_whiteout ||
+			   bset_written(b, t->data)) {
+			struct bkey_i discard = *insert;
+
+			switch (overlap) {
+			case BCH_EXTENT_OVERLAP_FRONT:
+				bch_cut_front(bkey_start_pos(k.k), &discard);
+				break;
+			case BCH_EXTENT_OVERLAP_BACK:
+				bch_cut_back(k.k->p, &discard.k);
+				break;
+			default:
+				break;
+			}
+
+			discard.k.needs_whiteout = true;
+
+			ret = extent_squash(s, insert, t, _k, k, overlap);
+			BUG_ON(ret != BTREE_INSERT_OK);
+
+			extent_bset_insert(c, iter, &discard);
+		} else {
+			ret = extent_squash(s, insert, t, _k, k, overlap);
+			BUG_ON(ret != BTREE_INSERT_OK);
+		}
+next:
+		bch_cut_front(s->committed, insert);
+		bch_btree_iter_set_pos_same_leaf(iter, s->committed);
+	}
+
+	if (bkey_cmp(s->committed, insert->k.p) < 0 &&
+	    ret == BTREE_INSERT_OK &&
+	    extent_insert_advance_pos(s, bkey_s_c_null) == BTREE_HOOK_RESTART_TRANS)
+		ret = BTREE_INSERT_NEED_TRAVERSE;
+stop:
+	extent_insert_committed(s);
+
+	bch_cache_set_stats_apply(c, &s->stats, s->trans->disk_res,
+				  gc_pos_btree_node(b));
+
+	EBUG_ON(bkey_cmp(iter->pos, s->committed));
+	EBUG_ON((bkey_cmp(iter->pos, b->key.k.p) == 0) != iter->at_end_of_leaf);
+
+	bch_cut_front(iter->pos, insert);
+
+	if (insert->k.size && iter->at_end_of_leaf)
+		ret = BTREE_INSERT_NEED_TRAVERSE;
+
+	EBUG_ON(insert->k.size && ret == BTREE_INSERT_OK);
+
+	return ret;
 }
 
 /**
@@ -1448,6 +1573,9 @@ bch_insert_fixup_extent(struct btree_insert *trans,
 	EBUG_ON(iter->level);
 	EBUG_ON(bkey_deleted(&insert->k->k) || !insert->k->k.size);
 
+	if (bkey_whiteout(&insert->k->k))
+		return bch_delete_fixup_extent(&s);
+
 	/*
 	 * As we process overlapping extents, we advance @iter->pos both to
 	 * signal to our caller (btree_insert_key()) how much of @insert->k has
@@ -1497,8 +1625,21 @@ bch_insert_fixup_extent(struct btree_insert *trans,
 			ret = BTREE_INSERT_NEED_TRAVERSE;
 			goto stop;
 		}
+
+		if (k.k->size &&
+		    (k.k->needs_whiteout || bset_written(b, t->data)))
+			insert->k->k.needs_whiteout = true;
+
+		if (overlap == BCH_EXTENT_OVERLAP_ALL &&
+		    bkey_whiteout(k.k) &&
+		    k.k->needs_whiteout) {
+			unreserve_whiteout(b, t, _k);
+			_k->needs_whiteout = false;
+		}
 squash:
-		extent_squash(&s, insert->k, t, _k, k, overlap);
+		ret = extent_squash(&s, insert->k, t, _k, k, overlap);
+		if (ret != BTREE_INSERT_OK)
+			goto stop;
 	}
 
 	if (bkey_cmp(s.committed, insert->k->k.p) < 0 &&
@@ -2145,6 +2286,8 @@ static enum merge_result bch_extent_merge(struct cache_set *c,
 	default:
 		return BCH_MERGE_NOMERGE;
 	}
+
+	l->k.needs_whiteout |= r->k.needs_whiteout;
 
 	/* Keys with no pointers aren't restricted to one bucket and could
 	 * overflow KEY_SIZE
