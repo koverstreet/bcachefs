@@ -749,7 +749,51 @@ unsigned bkey_ffs(const struct bkey_format *format,
 	return 0;
 }
 
-static int __bkey_cmp_bits(unsigned nr_key_bits, const u64 *l, const u64 *r)
+#ifdef CONFIG_X86_64
+static int __bkey_cmp_bits(const u64 *l, const u64 *r, unsigned nr_key_bits)
+{
+	long d0, d1, d2, d3;
+	int cmp;
+
+	/* we shouldn't need asm for this, but gcc is being retarded: */
+
+	asm(".intel_syntax noprefix;"
+	    "xor eax, eax;"
+	    "xor edx, edx;"
+	    "1:;"
+	    "mov r8, [rdi];"
+	    "mov r9, [rsi];"
+	    "sub ecx, 64;"
+	    "jl 2f;"
+
+	    "cmp r8, r9;"
+	    "jnz 3f;"
+
+	    "lea rdi, [rdi - 8];"
+	    "lea rsi, [rsi - 8];"
+	    "jmp 1b;"
+
+	    "2:;"
+	    "not ecx;"
+	    "shr r8, 1;"
+	    "shr r9, 1;"
+	    "shr r8, cl;"
+	    "shr r9, cl;"
+	    "cmp r8, r9;"
+
+	    "3:\n"
+	    "seta al;"
+	    "setb dl;"
+	    "sub eax, edx;"
+	    ".att_syntax prefix;"
+	    : "=&D" (d0), "=&S" (d1), "=&d" (d2), "=&c" (d3), "=&a" (cmp)
+	    : "0" (l), "1" (r), "3" (nr_key_bits)
+	    : "r8", "r9", "cc", "memory");
+
+	return cmp;
+}
+#else
+static int __bkey_cmp_bits(const u64 *l, const u64 *r, unsigned nr_key_bits)
 {
 	u64 l_v, r_v;
 
@@ -783,6 +827,7 @@ static int __bkey_cmp_bits(unsigned nr_key_bits, const u64 *l, const u64 *r)
 		r_v = *r;
 	}
 }
+#endif
 
 /*
  * Would like to use this if we can make __bkey_cmp_bits() fast enough, it'll be
@@ -829,9 +874,9 @@ int __bkey_cmp_packed(const struct bkey_format *f,
 
 	EBUG_ON(!bkey_packed(l) || !bkey_packed(r));
 
-	ret = __bkey_cmp_bits(bkey_format_key_bits(f),
-			      high_word(f, l),
-			      high_word(f, r));
+	ret = __bkey_cmp_bits(high_word(f, l),
+			      high_word(f, r),
+			      bkey_format_key_bits(f));
 
 	EBUG_ON(ret != bkey_cmp(bkey_unpack_key(f, l).p,
 				bkey_unpack_key(f, r).p));
