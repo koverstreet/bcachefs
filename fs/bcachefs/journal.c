@@ -765,19 +765,20 @@ static int journal_seq_blacklist_read(struct journal *j,
 				      struct journal_replay *i,
 				      struct journal_entry_pin_list *p)
 {
+	struct cache_set *c = container_of(j, struct cache_set, journal);
 	struct jset_entry *entry;
 	struct journal_seq_blacklist *bl;
 	u64 seq;
 
 	for_each_jset_entry_type(entry, &i->j,
 			JOURNAL_ENTRY_JOURNAL_SEQ_BLACKLISTED) {
-		seq = entry->_data[0];
+		seq = le64_to_cpu(entry->_data[0]);
+
+		bch_verbose(c, "blacklisting existing journal seq %llu", seq);
 
 		bl = bch_journal_seq_blacklisted_new(j, seq);
-		if (!bl) {
-			mutex_unlock(&j->blacklist_lock);
+		if (!bl)
 			return -ENOMEM;
-		}
 
 		journal_pin_add_entry(j, p, &bl->pin,
 				  journal_seq_blacklist_flush);
@@ -795,6 +796,7 @@ const char *bch_journal_read(struct cache_set *c, struct list_head *list)
 	struct jset *j;
 	struct journal_entry_pin_list *p;
 	struct cache *ca;
+	u64 cur_seq, end_seq;
 	unsigned iter;
 
 	closure_init_stack(&jlist.cl);
@@ -873,8 +875,10 @@ const char *bch_journal_read(struct cache_set *c, struct list_head *list)
 		if (i && le64_to_cpu(i->j.seq) == seq) {
 			atomic_set(&p->count, 1);
 
-			if (journal_seq_blacklist_read(&c->journal, i, p))
+			if (journal_seq_blacklist_read(&c->journal, i, p)) {
+				mutex_unlock(&c->journal.blacklist_lock);
 				return "insufficient memory";
+			}
 
 			i = list_is_last(&i->list, list)
 				? NULL
@@ -885,6 +889,32 @@ const char *bch_journal_read(struct cache_set *c, struct list_head *list)
 	}
 
 	mutex_unlock(&c->journal.blacklist_lock);
+
+	cur_seq = last_seq(&c->journal);
+	end_seq = le64_to_cpu(list_last_entry(list,
+				struct journal_replay, list)->j.seq);
+
+	list_for_each_entry(i, list, list) {
+		mutex_lock(&c->journal.blacklist_lock);
+
+		while (cur_seq < le64_to_cpu(i->j.seq) &&
+		       journal_seq_blacklist_find(&c->journal, cur_seq))
+			cur_seq++;
+
+		cache_set_inconsistent_on(journal_seq_blacklist_find(&c->journal,
+							le64_to_cpu(i->j.seq)), c,
+				 "found blacklisted journal entry %llu",
+				 le64_to_cpu(i->j.seq));
+
+		mutex_unlock(&c->journal.blacklist_lock);
+
+		cache_set_inconsistent_on(le64_to_cpu(i->j.seq) != cur_seq, c,
+			"journal entries %llu-%llu missing! (replaying %llu-%llu)",
+			cur_seq, le64_to_cpu(i->j.seq) - 1,
+			last_seq(&c->journal), end_seq);
+
+		cur_seq = le64_to_cpu(i->j.seq) + 1;
+	}
 
 	prio_ptrs = bch_journal_find_entry(j, JOURNAL_ENTRY_PRIO_PTRS, 0);
 	if (!prio_ptrs) {
@@ -1280,31 +1310,8 @@ int bch_journal_replay(struct cache_set *c, struct list_head *list)
 	struct bkey_i *k, *_n;
 	struct jset_entry *entry;
 	struct journal_replay *i, *n;
-	u64 cur_seq = last_seq(j);
-	u64 end_seq = le64_to_cpu(list_last_entry(list, struct journal_replay,
-						  list)->j.seq);
 
 	list_for_each_entry_safe(i, n, list, list) {
-		mutex_lock(&j->blacklist_lock);
-
-		while (cur_seq < le64_to_cpu(i->j.seq) &&
-		       journal_seq_blacklist_find(j, cur_seq))
-			cur_seq++;
-
-		cache_set_inconsistent_on(journal_seq_blacklist_find(j,
-							le64_to_cpu(i->j.seq)), c,
-				 "found blacklisted journal entry %llu",
-				 le64_to_cpu(i->j.seq));
-
-		mutex_unlock(&j->blacklist_lock);
-
-		cache_set_inconsistent_on(le64_to_cpu(i->j.seq) != cur_seq, c,
-			"journal entries %llu-%llu missing! (replaying %llu-%llu)",
-			cur_seq, le64_to_cpu(i->j.seq) - 1,
-			last_seq(j), end_seq);
-
-		cur_seq = le64_to_cpu(i->j.seq) + 1;
-
 		j->cur_pin_list =
 			&j->pin.data[((j->pin.back - 1 -
 				       (atomic64_read(&j->seq) -
