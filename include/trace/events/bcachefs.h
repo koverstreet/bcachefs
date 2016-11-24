@@ -398,11 +398,6 @@ DEFINE_EVENT(bpos, bkey_pack_pos_fail,
 	TP_ARGS(p)
 );
 
-DEFINE_EVENT(bpos, bkey_pack_pos_lossy_fail,
-	TP_PROTO(struct bpos p),
-	TP_ARGS(p)
-);
-
 /* Btree */
 
 DECLARE_EVENT_CLASS(btree_node,

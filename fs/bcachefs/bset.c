@@ -1419,12 +1419,11 @@ void bch_btree_node_iter_init(struct btree_node_iter *iter,
 	case BKEY_PACK_POS_SMALLER:
 		packed_search = NULL;
 		lossy_packed_search = &p;
-		trace_bkey_pack_pos_fail(search);
 		break;
 	case BKEY_PACK_POS_FAIL:
 		packed_search = NULL;
 		lossy_packed_search = NULL;
-		trace_bkey_pack_pos_lossy_fail(search);
+		trace_bkey_pack_pos_fail(search);
 		break;
 	default:
 		BUG();
