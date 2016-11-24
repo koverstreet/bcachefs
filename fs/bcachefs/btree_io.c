@@ -1205,6 +1205,7 @@ void __bch_btree_node_write(struct cache_set *c, struct btree *b,
 	unsigned sectors_to_write, order, bytes, u64s;
 	u64 seq = 0;
 	bool used_mempool;
+	unsigned long old, new;
 	void *data;
 
 	/*
@@ -1214,28 +1215,31 @@ void __bch_btree_node_write(struct cache_set *c, struct btree *b,
 	 * dirty bit requires a write lock, we can't race with other threads
 	 * redirtying it:
 	 */
-	if (!test_and_clear_bit(BTREE_NODE_dirty, &b->flags))
-		return;
+	do {
+		old = new = READ_ONCE(b->flags);
 
-	btree_node_io_lock(b);
+		if (!(old & (1 << BTREE_NODE_dirty)))
+			return;
 
-	set_btree_node_just_written(b);
+		if (idx_to_write >= 0 &&
+		    idx_to_write != !!(old & (1 << BTREE_NODE_write_idx)))
+			return;
+
+		if (old & (1 << BTREE_NODE_write_in_flight)) {
+			wait_on_bit_io(&b->flags,
+				       BTREE_NODE_write_in_flight,
+				       TASK_UNINTERRUPTIBLE);
+			continue;
+		}
+
+		new &= ~(1 << BTREE_NODE_dirty);
+		new |=  (1 << BTREE_NODE_write_in_flight);
+		new |=  (1 << BTREE_NODE_just_written);
+		new ^=  (1 << BTREE_NODE_write_idx);
+	} while (cmpxchg_acquire(&b->flags, old, new) != old);
 
 	BUG_ON(!list_empty(&b->write_blocked));
-#if 0
-	/*
-	 * This is an optimization for when journal flushing races with the
-	 * btree node being written for some other reason, and the write the
-	 * journal wanted to flush has already happened - in that case we'd
-	 * prefer not to write a mostly empty bset. It seemed to be buggy,
-	 * though:
-	 */
-	if (idx_to_write != -1 &&
-	    idx_to_write != btree_node_write_idx(b)) {
-		btree_node_io_unlock(b);
-		return;
-	}
-#endif
+
 	trace_bcache_btree_write(c, b);
 
 	BUG_ON(b->written >= c->sb.btree_node_size);
@@ -1243,8 +1247,6 @@ void __bch_btree_node_write(struct cache_set *c, struct btree *b,
 	BUG_ON(le64_to_cpu(b->data->magic) != bset_magic(&c->disk_sb));
 	BUG_ON(memcmp(&b->data->format, &b->keys.format,
 		      sizeof(b->keys.format)));
-
-	change_bit(BTREE_NODE_write_idx, &b->flags);
 
 	if (lock_type_held == SIX_LOCK_intent) {
 		six_lock_write(&b->lock);
