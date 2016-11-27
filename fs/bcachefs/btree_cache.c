@@ -163,10 +163,16 @@ static int mca_reap_notrace(struct cache_set *c, struct btree *b, bool flush)
 
 	/*
 	 * Using the underscore version because we don't want to compact bsets
-	 * after the write, since this node is about to be evicted:
+	 * after the write, since this node is about to be evicted - unless
+	 * btree verify mode is enabled, since it runs out of the post write
+	 * cleanup:
 	 */
-	if (btree_node_dirty(b))
-		__bch_btree_node_write(c, b, NULL, SIX_LOCK_read, -1);
+	if (btree_node_dirty(b)) {
+		if (verify_btree_ondisk(c))
+			bch_btree_node_write(c, b, NULL, SIX_LOCK_intent, -1);
+		else
+			__bch_btree_node_write(c, b, NULL, SIX_LOCK_read, -1);
+	}
 
 	/* wait for any in flight btree write */
 	wait_on_bit_io(&b->flags, BTREE_NODE_write_in_flight,

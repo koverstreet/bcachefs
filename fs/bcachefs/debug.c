@@ -94,7 +94,7 @@ void __bch_btree_verify(struct cache_set *c, struct btree *b)
 	    memcmp(inmemory->start,
 		   sorted->start,
 		   (void *) bset_bkey_last(inmemory) - (void *) inmemory->start)) {
-		unsigned block = 0;
+		unsigned offset = 0, sectors;
 		struct bset *i;
 		unsigned j;
 
@@ -106,31 +106,32 @@ void __bch_btree_verify(struct cache_set *c, struct btree *b)
 		printk(KERN_ERR "*** read back in:\n");
 		bch_dump_bset(&v->keys, sorted, 0);
 
-		while (block < btree_blocks(c)) {
-			if (!b->written) {
+		while (offset < b->written) {
+			if (!offset ) {
 				i = &n_ondisk->keys;
-				block += __set_blocks(n_ondisk,
-						      le16_to_cpu(n_ondisk->keys.u64s),
-						      block_bytes(c));
+				sectors = __set_blocks(n_ondisk,
+						       le16_to_cpu(n_ondisk->keys.u64s),
+						       block_bytes(c)) <<
+					c->block_bits;
 			} else {
 				struct btree_node_entry *bne =
-					(void *) n_ondisk +
-					(block << (c->block_bits + 9));
+					(void *) n_ondisk + (offset << 9);
 				i = &bne->keys;
 
-				block += __set_blocks(bne,
-						      le16_to_cpu(bne->keys.u64s),
-						      block_bytes(c));
+				sectors = __set_blocks(bne,
+						       le16_to_cpu(bne->keys.u64s),
+						       block_bytes(c)) <<
+					c->block_bits;
 			}
 
-			if (i->seq != n_ondisk->keys.seq)
-				break;
+			printk(KERN_ERR "*** on disk block %u:\n", offset);
+			bch_dump_bset(&b->keys, i, offset);
 
-			printk(KERN_ERR "*** on disk block %u:\n", block);
-			bch_dump_bset(&b->keys, i, block);
+			offset += sectors;
 		}
 
-		printk(KERN_ERR "*** block %u not written\n", block);
+		printk(KERN_ERR "*** block %u/%u not written\n",
+		       offset >> c->block_bits, btree_blocks(c));
 
 		for (j = 0; j < le16_to_cpu(inmemory->u64s); j++)
 			if (inmemory->_data[j] != sorted->_data[j])

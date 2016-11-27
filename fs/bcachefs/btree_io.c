@@ -762,9 +762,6 @@ void bch_btree_init_next(struct cache_set *c, struct btree *b,
 
 	did_sort = btree_node_compact(c, b, iter);
 
-	if (did_sort && b->keys.nsets == 1)
-		bch_btree_verify(c, b);
-
 	bne = want_new_bset(c, b);
 	if (bne)
 		bch_bset_init_next(&b->keys, &bne->keys);
@@ -1437,6 +1434,8 @@ bool bch_btree_post_write_cleanup(struct cache_set *c, struct btree *b)
 
 	for_each_bset(&b->keys, t)
 		set_needs_whiteout(t->data);
+
+	bch_btree_verify(c, b);
 
 	/*
 	 * If later we don't unconditionally sort down to a single bset, we have
