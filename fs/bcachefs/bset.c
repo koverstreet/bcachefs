@@ -278,37 +278,24 @@ static void bch_btree_node_iter_next_check(struct btree_node_iter *iter,
 
 /* 32 bits total: */
 #define BKEY_MID_BITS		8U
-#define BKEY_EXPONENT_BITS	9U
-#define BKEY_MANTISSA_BITS	15
-#define BKEY_MANTISSA_MASK	((1ULL << BKEY_MANTISSA_BITS) - 1)
+#define BKEY_EXPONENT_BITS	8U
+#define BKEY_MANTISSA_BITS	(32 - BKEY_MID_BITS - BKEY_EXPONENT_BITS)
+#define BKEY_MANTISSA_MASK	((1 << BKEY_MANTISSA_BITS) - 1)
 
 #define BFLOAT_EXPONENT_MAX	((1 << BKEY_EXPONENT_BITS) - 1)
 
 #define BFLOAT_FAILED_UNPACKED	(BFLOAT_EXPONENT_MAX - 0)
-#define BFLOAT_FAILED_OVERFLOW	(BFLOAT_EXPONENT_MAX - 1)
-#define BFLOAT_REALLY_FAILED	(BFLOAT_EXPONENT_MAX - 1)
-
-#define BFLOAT_FAILED_PREV	(1 << (BKEY_EXPONENT_BITS - 1))
-#define BFLOAT_FAILED		(1 << (BKEY_EXPONENT_BITS - 1))
+#define BFLOAT_FAILED_PREV	(BFLOAT_EXPONENT_MAX - 1)
+#define BFLOAT_FAILED_OVERFLOW	(BFLOAT_EXPONENT_MAX - 2)
+#define BFLOAT_FAILED		(BFLOAT_EXPONENT_MAX - 2)
 
 #define KEY_WORDS		BITS_TO_LONGS(1 << BKEY_EXPONENT_BITS)
 
 struct bkey_float {
-	unsigned	m:BKEY_MID_BITS;
 	unsigned	exponent:BKEY_EXPONENT_BITS;
+	unsigned	m:BKEY_MID_BITS;
 	unsigned	mantissa:BKEY_MANTISSA_BITS;
 } __packed;
-
-static inline unsigned bkey_float_type(struct bkey_float *f)
-{
-	if (f->exponent == BFLOAT_FAILED_UNPACKED)
-		return BFLOAT_FAILED_UNPACKED;
-	if (f->exponent == BFLOAT_FAILED_OVERFLOW)
-		return BFLOAT_FAILED_OVERFLOW;
-	if (f->exponent >= BFLOAT_FAILED_PREV)
-		return BFLOAT_FAILED_PREV;
-	return 0;
-}
 
 /*
  * BSET_CACHELINE was originally intended to match the hardware cacheline size -
@@ -626,12 +613,11 @@ static struct bkey_packed *table_to_bkey(struct bset_tree *t,
 static inline unsigned bfloat_mantissa(const struct bkey_packed *k,
 				       const struct bkey_float *f)
 {
-	unsigned exponent = f->exponent & ~BFLOAT_FAILED_PREV;
 	u64 v;
 
 	EBUG_ON(!bkey_packed(k));
 
-	v = get_unaligned((u64 *) (((u8 *) k->_data) + (exponent >> 3)));
+	v = get_unaligned((u64 *) (((u8 *) k->_data) + (f->exponent >> 3)));
 
 	/*
 	 * In little endian, we're shifting off low bits (and then the bits we
@@ -640,9 +626,9 @@ static inline unsigned bfloat_mantissa(const struct bkey_packed *k,
 	 * back down):
 	 */
 #ifdef __LITTLE_ENDIAN
-	v >>= exponent & 7;
+	v >>= f->exponent & 7;
 #else
-	v >>= 64 - BKEY_MANTISSA_BITS - (exponent & 7);
+	v >>= 64 - BKEY_MANTISSA_BITS - (f->exponent & 7);
 #endif
 	return v & BKEY_MANTISSA_MASK;
 }
@@ -728,7 +714,7 @@ static void make_bfloat(const struct btree_keys *b,
 	if (exponent > 0 &&
 	    f->mantissa == bfloat_mantissa(p, f) &&
 	    bkey_cmp_packed(b, p, m)) {
-		f->exponent |= BFLOAT_FAILED_PREV;
+		f->exponent = BFLOAT_FAILED_PREV;
 		return;
 	}
 
@@ -1215,9 +1201,7 @@ static struct bkey_packed *bset_search_tree(const struct btree_keys *b,
 		f = &t->tree[n];
 
 		if (packed_search &&
-		    (likely(f->exponent < BFLOAT_FAILED) ||
-		     (f->exponent < BFLOAT_REALLY_FAILED &&
-		      f->mantissa != bfloat_mantissa(packed_search, f))))
+		    likely(f->exponent < BFLOAT_FAILED))
 			n = n * 2 + (f->mantissa <
 				     bfloat_mantissa(packed_search, f));
 		else
@@ -1630,7 +1614,7 @@ void bch_btree_keys_stats(struct btree_keys *b, struct bset_stats *stats)
 			stats->floats += t->size - 1;
 
 			for (j = 1; j < t->size; j++)
-				switch (bkey_float_type(&t->tree[j])) {
+				switch (t->tree[j].exponent) {
 				case BFLOAT_FAILED_UNPACKED:
 					stats->failed_unpacked++;
 					break;
@@ -1664,7 +1648,7 @@ int bch_bkey_print_bfloat(struct btree_keys *b, struct bkey_packed *k,
 	if (j &&
 	    j < t->size &&
 	    k == tree_to_bkey(t, j))
-		switch (bkey_float_type(&t->tree[j])) {
+		switch (t->tree[j].exponent) {
 		case BFLOAT_FAILED_UNPACKED:
 			uk = bkey_unpack_key(b, k);
 			return scnprintf(buf, size,
