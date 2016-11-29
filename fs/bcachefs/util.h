@@ -634,4 +634,82 @@ size_t bch_rand_range(size_t);
 void memcpy_to_bio(struct bio *, struct bvec_iter, void *);
 void memcpy_from_bio(void *, struct bio *, struct bvec_iter);
 
+static inline void __memcpy_u64s(void *dst, const void *src,
+				 unsigned u64s)
+{
+#ifdef CONFIG_X86_64
+	long d0, d1, d2;
+	asm volatile("rep ; movsq"
+		     : "=&c" (d0), "=&D" (d1), "=&S" (d2)
+		     : "0" (u64s), "1" (dst), "2" (src)
+		     : "memory");
+#else
+	u64 *d = dst;
+	const u64 *s = src;
+
+	while (u64s--)
+		*d++ = *s++;
+#endif
+}
+
+static inline void memcpy_u64s(void *dst, const void *src,
+			       unsigned u64s)
+{
+	EBUG_ON(!(dst >= src + u64s * sizeof(u64) ||
+		 dst + u64s * sizeof(u64) <= src));
+
+	__memcpy_u64s(dst, src, u64s);
+}
+
+static inline void __memmove_u64s_down(void *dst, const void *src,
+				       unsigned u64s)
+{
+	__memcpy_u64s(dst, src, u64s);
+}
+
+static inline void memmove_u64s_down(void *dst, const void *src,
+				     unsigned u64s)
+{
+	EBUG_ON(dst > src);
+
+	__memmove_u64s_down(dst, src, u64s);
+}
+
+static inline void __memmove_u64s_up(void *_dst, const void *_src,
+				     unsigned u64s)
+{
+	u64 *dst = (u64 *) _dst + u64s - 1;
+	u64 *src = (u64 *) _src + u64s - 1;
+
+#ifdef CONFIG_X86_64
+	long d0, d1, d2;
+	asm volatile("std ;\n"
+		     "rep ; movsq\n"
+		     "cld ;\n"
+		     : "=&c" (d0), "=&D" (d1), "=&S" (d2)
+		     : "0" (u64s), "1" (dst), "2" (src)
+		     : "memory");
+#else
+	while (u64s--)
+		*dst-- = *src--;
+#endif
+}
+
+static inline void memmove_u64s_up(void *dst, const void *src,
+				   unsigned u64s)
+{
+	EBUG_ON(dst < src);
+
+	__memmove_u64s_up(dst, src, u64s);
+}
+
+static inline void memmove_u64s(void *dst, const void *src,
+				unsigned u64s)
+{
+	if (dst < src)
+		__memmove_u64s_down(dst, src, u64s);
+	else
+		__memmove_u64s_up(dst, src, u64s);
+}
+
 #endif /* _BCACHE_UTIL_H */

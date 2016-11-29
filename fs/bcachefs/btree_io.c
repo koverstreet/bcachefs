@@ -21,12 +21,11 @@ static void verify_no_dups(struct btree *b,
 			   struct bkey_packed *end)
 {
 #ifdef CONFIG_BCACHEFS_DEBUG
-	const struct bkey_format *f = &b->keys.format;
 	struct bkey_packed *k;
 
 	for (k = start; k != end && bkey_next(k) != end; k = bkey_next(k)) {
-		struct bkey l = bkey_unpack_key(f, k);
-		struct bkey r = bkey_unpack_key(f, bkey_next(k));
+		struct bkey l = bkey_unpack_key(&b->keys, k);
+		struct bkey r = bkey_unpack_key(&b->keys, bkey_next(k));
 
 		BUG_ON(btree_node_is_extents(b)
 		       ? bkey_cmp(l.p, bkey_start_pos(&r)) > 0
@@ -167,7 +166,7 @@ static inline int sort_key_whiteouts_cmp(struct btree_keys *b,
 					 struct bkey_packed *l,
 					 struct bkey_packed *r)
 {
-	return bkey_cmp_packed(&b->format, l, r);
+	return bkey_cmp_packed(b, l, r);
 }
 
 static unsigned sort_key_whiteouts(struct bkey_packed *dst,
@@ -189,8 +188,8 @@ static inline int sort_extent_whiteouts_cmp(struct btree_keys *b,
 					    struct bkey_packed *l,
 					    struct bkey_packed *r)
 {
-	struct bkey ul = bkey_unpack_key(&b->format, l);
-	struct bkey ur = bkey_unpack_key(&b->format, r);
+	struct bkey ul = bkey_unpack_key(b, l);
+	struct bkey ur = bkey_unpack_key(b, r);
 
 	return bkey_cmp(bkey_start_pos(&ul), bkey_start_pos(&ur));
 }
@@ -214,7 +213,7 @@ static unsigned sort_extent_whiteouts(struct bkey_packed *dst,
 		EBUG_ON(bkeyp_val_u64s(f, in));
 		EBUG_ON(in->type != KEY_TYPE_DISCARD);
 
-		r.k = bkey_unpack_key(f, in);
+		r.k = bkey_unpack_key(iter->b, in);
 
 		if (prev &&
 		    bkey_cmp(l.k.p, bkey_start_pos(&r.k)) >= 0) {
@@ -480,7 +479,7 @@ static int sort_keys_cmp(struct btree_keys *b,
 			 struct bkey_packed *l,
 			 struct bkey_packed *r)
 {
-	return bkey_cmp_packed(&b->format, l, r) ?:
+	return bkey_cmp_packed(b, l, r) ?:
 		(int) bkey_whiteout(r) - (int) bkey_whiteout(l) ?:
 		(int) l->needs_whiteout - (int) r->needs_whiteout;
 }
@@ -501,7 +500,7 @@ static unsigned sort_keys(struct bkey_packed *dst,
 
 		if (bkey_whiteout(in) &&
 		    (next = sort_iter_peek(iter)) &&
-		    !bkey_cmp_packed(f, in, next)) {
+		    !bkey_cmp_packed(iter->b, in, next)) {
 			BUG_ON(in->needs_whiteout &&
 			       next->needs_whiteout);
 			next->needs_whiteout |= in->needs_whiteout;
@@ -524,7 +523,7 @@ static inline int sort_extents_cmp(struct btree_keys *b,
 				   struct bkey_packed *l,
 				   struct bkey_packed *r)
 {
-	return bkey_cmp_packed(&b->format, l, r) ?:
+	return bkey_cmp_packed(b, l, r) ?:
 		(int) bkey_deleted(l) - (int) bkey_deleted(r);
 }
 
@@ -653,10 +652,10 @@ static void btree_node_sort(struct cache_set *c, struct btree *b,
 static struct btree_nr_keys sort_repack(struct bset *dst,
 					struct btree_keys *src,
 					struct btree_node_iter *src_iter,
-					struct bkey_format *in_f,
 					struct bkey_format *out_f,
 					bool filter_whiteouts)
 {
+	struct bkey_format *in_f = &src->format;
 	struct bkey_packed *in, *out = bset_bkey_last(dst);
 	struct btree_nr_keys nr;
 
@@ -670,7 +669,7 @@ static struct btree_nr_keys sort_repack(struct bset *dst,
 				       ? in_f : &bch_bkey_format_current, in))
 			out->format = KEY_FORMAT_LOCAL_BTREE;
 		else
-			bkey_unpack((void *) out, in_f, in);
+			bkey_unpack(src, (void *) out, in);
 
 		btree_keys_account_key_add(&nr, 0, out);
 		out = bkey_next(out);
@@ -685,7 +684,6 @@ static struct btree_nr_keys sort_repack_merge(struct cache_set *c,
 					      struct bset *dst,
 					      struct btree_keys *src,
 					      struct btree_node_iter *iter,
-					      struct bkey_format *in_f,
 					      struct bkey_format *out_f,
 					      bool filter_whiteouts,
 					      key_filter_fn filter,
@@ -705,7 +703,7 @@ static struct btree_nr_keys sort_repack_merge(struct cache_set *c,
 		 * The filter might modify pointers, so we have to unpack the
 		 * key and values to &tmp.k:
 		 */
-		bkey_unpack(&tmp.k, in_f, k);
+		bkey_unpack(src, &tmp.k, k);
 
 		if (filter && filter(c, src, bkey_i_to_s(&tmp.k)))
 			continue;
@@ -764,7 +762,6 @@ void bch_btree_sort_into(struct cache_set *c,
 	    btree_node_ops(src)->key_merge)
 		nr = sort_repack_merge(c, dst->keys.set->data,
 				&src->keys, &src_iter,
-				&src->keys.format,
 				&dst->keys.format,
 				true,
 				btree_node_ops(src)->key_normalize,
@@ -772,7 +769,6 @@ void bch_btree_sort_into(struct cache_set *c,
 	else
 		nr = sort_repack(dst->keys.set->data,
 				&src->keys, &src_iter,
-				&src->keys.format,
 				&dst->keys.format,
 				true);
 
@@ -889,7 +885,6 @@ static const char *validate_bset(struct cache_set *c, struct btree *b,
 				 struct bset *i, unsigned sectors,
 				 unsigned *whiteout_u64s)
 {
-	struct bkey_format *f = &b->keys.format;
 	struct bkey_packed *k, *prev = NULL;
 	bool seen_non_whiteout = false;
 
@@ -943,7 +938,7 @@ static const char *validate_bset(struct cache_set *c, struct btree *b,
 		if (BSET_BIG_ENDIAN(i) != CPU_BIG_ENDIAN)
 			bch_bkey_swab(btree_node_type(b), &b->keys.format, k);
 
-		u = bkey_disassemble(f, k, &tmp);
+		u = bkey_disassemble(&b->keys, k, &tmp);
 
 		invalid = btree_bkey_invalid(c, b, u);
 		if (invalid) {
@@ -968,7 +963,7 @@ static const char *validate_bset(struct cache_set *c, struct btree *b,
 
 		if (!seen_non_whiteout &&
 		    (!bkey_whiteout(k) ||
-		     (prev && bkey_cmp_left_packed(f, prev,
+		     (prev && bkey_cmp_left_packed(&b->keys, prev,
 					bkey_start_pos(u.k)) > 0))) {
 			*whiteout_u64s = k->_data - i->_data;
 			seen_non_whiteout = true;
@@ -1050,8 +1045,9 @@ void bch_btree_node_read_done(struct cache_set *c, struct btree *b,
 			if (err)
 				goto err;
 
-			b->keys.format = b->data->format;
 			b->keys.set->data = &b->data->keys;
+
+			btree_node_set_format(&b->keys, b->data->format);
 		} else {
 			bne = write_block(b);
 			i = &bne->keys;
@@ -1127,8 +1123,7 @@ void bch_btree_node_read_done(struct cache_set *c, struct btree *b,
 
 	err = "short btree key";
 	if (b->keys.set[0].size &&
-	    bkey_cmp_packed(&b->keys.format, &b->key.k,
-			    &b->keys.set[0].end) < 0)
+	    bkey_cmp_packed(&b->keys, &b->key.k, &b->keys.set[0].end) < 0)
 		goto err;
 
 out:

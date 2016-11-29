@@ -565,7 +565,7 @@ static void bch_coalesce_nodes(struct btree *old_nodes[GC_MERGE_NODES],
 		} else if (u64s) {
 			/* move part of n2 into n1 */
 			n1->key.k.p = n1->data->max_key =
-				bkey_unpack_key(&n1->keys.format, last).p;
+				bkey_unpack_key(&n1->keys, last).p;
 
 			n2->data->min_key =
 				btree_type_successor(iter->btree_id,

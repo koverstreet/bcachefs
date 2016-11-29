@@ -226,6 +226,7 @@ struct btree_nr_keys {
 struct btree_keys {
 	u8			nsets;
 	u8			page_order;
+	u8			nr_key_bits;
 
 	struct btree_nr_keys	nr;
 
@@ -243,6 +244,34 @@ struct btree_keys {
 	bool			*expensive_debug_checks;
 #endif
 };
+
+static inline void btree_node_set_format(struct btree_keys *b,
+					 struct bkey_format f)
+{
+	b->format	= f;
+	b->nr_key_bits	= bkey_format_key_bits(&f);
+}
+
+/* Disassembled bkeys */
+
+static inline struct bkey_s_c bkey_disassemble(struct btree_keys *b,
+					       const struct bkey_packed *k,
+					       struct bkey *u)
+{
+	*u = bkey_unpack_key(b, k);
+
+	return (struct bkey_s_c) { u, bkeyp_val(&b->format, k), };
+}
+
+/* non const version: */
+static inline struct bkey_s __bkey_disassemble(struct btree_keys *b,
+					       struct bkey_packed *k,
+					       struct bkey *u)
+{
+	*u = bkey_unpack_key(b, k);
+
+	return (struct bkey_s) { .k = u, .v = bkeyp_val(&b->format, k), };
+}
 
 #define for_each_bset(_b, _t)					\
 	for (_t = (_b)->set; _t < (_b)->set + (_b)->nsets; _t++)
@@ -321,6 +350,25 @@ void bch_bset_delete(struct btree_keys *, struct bkey_packed *, unsigned);
 
 /* Bkey utility code */
 
+/* packed or unpacked */
+static inline int bkey_cmp_p_or_unp(const struct btree_keys *b,
+				    const struct bkey_packed *l,
+				    const struct bkey_packed *r_packed,
+				    struct bpos r)
+{
+	const struct bkey *l_unpacked;
+
+	EBUG_ON(r_packed && !bkey_packed(r_packed));
+
+	if (unlikely(l_unpacked = packed_to_bkey_c(l)))
+		return bkey_cmp(l_unpacked->p, r);
+
+	if (likely(r_packed))
+		return __bkey_cmp_packed(l, r_packed, b);
+
+	return __bkey_cmp_left_packed(b, l, r);
+}
+
 /* Returns true if @k is after iterator position @pos */
 static inline bool btree_iter_pos_cmp(struct bpos pos, const struct bkey *k,
 				      bool strictly_greater)
@@ -331,24 +379,24 @@ static inline bool btree_iter_pos_cmp(struct bpos pos, const struct bkey *k,
 		(cmp == 0 && !strictly_greater && !bkey_deleted(k));
 }
 
-static inline bool btree_iter_pos_cmp_packed(const struct bkey_format *f,
+static inline bool btree_iter_pos_cmp_packed(const struct btree_keys *b,
 					     struct bpos pos,
 					     const struct bkey_packed *k,
 					     bool strictly_greater)
 {
-	int cmp = bkey_cmp_left_packed(f, k, pos);
+	int cmp = bkey_cmp_left_packed(b, k, pos);
 
 	return cmp > 0 ||
 		(cmp == 0 && !strictly_greater && !bkey_deleted(k));
 }
 
-static inline bool btree_iter_pos_cmp_p_or_unp(const struct bkey_format *f,
+static inline bool btree_iter_pos_cmp_p_or_unp(const struct btree_keys *b,
 					struct bpos pos,
 					const struct bkey_packed *pos_packed,
 					const struct bkey_packed *k,
 					bool strictly_greater)
 {
-	int cmp = bkey_cmp_p_or_unp(f, k, pos_packed, pos);
+	int cmp = bkey_cmp_p_or_unp(b, k, pos_packed, pos);
 
 	return cmp > 0 ||
 		(cmp == 0 && !strictly_greater && !bkey_deleted(k));
@@ -465,7 +513,7 @@ static inline int __btree_node_iter_cmp(bool is_extents,
 	 * For extents, bkey_deleted() is used as a proxy for k->size == 0, so
 	 * deleted keys have to sort last.
 	 */
-	return bkey_cmp_packed(&b->format, l, r) ?: is_extents
+	return bkey_cmp_packed(b, l, r) ?: is_extents
 		? (int) bkey_deleted(l) - (int) bkey_deleted(r)
 		: (int) bkey_deleted(r) - (int) bkey_deleted(l);
 }
