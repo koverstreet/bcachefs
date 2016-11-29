@@ -148,9 +148,14 @@ static inline struct bpos bpos_min(struct bpos l, struct bpos r)
 void bch_bpos_swab(struct bpos *);
 void bch_bkey_swab_key(const struct bkey_format *, struct bkey_packed *);
 
+#ifdef CONFIG_BCACHEFS_DEBUG
+/* statement expressions confusing unlikely()? */
 #define bkey_packed(_k)							\
 	({ EBUG_ON((_k)->format > KEY_FORMAT_CURRENT);			\
 	 (_k)->format != KEY_FORMAT_CURRENT; })
+#else
+#define bkey_packed(_k)		((_k)->format != KEY_FORMAT_CURRENT)
+#endif
 
 /*
  * It's safe to treat an unpacked bkey as a packed one, but not the reverse

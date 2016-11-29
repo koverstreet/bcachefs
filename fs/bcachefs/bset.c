@@ -433,8 +433,8 @@ static unsigned inorder_next(unsigned j, unsigned size)
 	if (j * 2 + 1 < size) {
 		j = j * 2 + 1;
 
-		while (j * 2 < size)
-			j *= 2;
+		j <<= fls(size) - fls(j);
+		j >>= j >= size;
 	} else
 		j >>= ffz(j) + 1;
 
@@ -444,10 +444,15 @@ static unsigned inorder_next(unsigned j, unsigned size)
 static unsigned inorder_prev(unsigned j, unsigned size)
 {
 	if (j * 2 < size) {
+		unsigned shift;
+
 		j = j * 2;
 
-		while (j * 2 + 1 < size)
-			j = j * 2 + 1;
+		shift = fls(size) - fls(j);
+		j += 1;
+		j <<= shift;
+		j -= 1;
+		j >>= j >= size;
 	} else
 		j >>= ffs(j);
 
@@ -477,8 +482,13 @@ static inline unsigned __to_inorder(unsigned j, unsigned size, unsigned extra)
 	j  |= 1;
 	j <<= shift;
 
+	/* sign bit trick: */
+#if 0
 	if (j > extra)
 		j -= (j - extra) >> 1;
+#else
+	j -= ((j - extra) >> 1) & (((int) (extra - j)) >> 31);
+#endif
 
 	return j;
 }
@@ -1190,18 +1200,6 @@ static struct bkey_packed *bset_search_tree(const struct btree_keys *b,
 	struct bkey_float *f = &t->tree[1];
 	unsigned inorder, n = 1;
 
-	/*
-	 * If there are bits in search that don't fit in the packed format,
-	 * packed_search will always compare less than search - it'll
-	 * effectively have 0s where search did not - so we can still use
-	 * packed_search and we'll just do more linear searching than we would
-	 * have.
-	 *
-	 * If we can't pack a pos that compares <= search, we're screwed:
-	 */
-	if (!packed_search)
-		return t->data->start;
-
 	while (1) {
 		if (likely(n << 4 < t->size)) {
 			prefetch(&t->tree[n << 4]);
@@ -1216,31 +1214,16 @@ static struct bkey_packed *bset_search_tree(const struct btree_keys *b,
 
 		f = &t->tree[n];
 
-		/*
-		 * n *= 2;
-		 * if (bfloat_mantissa(search) >= f->mantissa)
-		 *	n++;
-		 *
-		 * n = (f->mantissa >= bfloat_mantissa(search))
-		 *	? n * 2
-		 *	: n * 2 + 1;
-		 *
-		 * n = (f->mantissa - bfloat_mantissa(search) >= 0)
-		 *	? n * 2
-		 *	: n * 2 + 1;
-		 */
-		if (likely(f->exponent < BFLOAT_FAILED) ||
-		    (f->exponent < BFLOAT_REALLY_FAILED &&
-		     f->mantissa != bfloat_mantissa(packed_search, f)))
-			n = n * 2 + (((unsigned)
-				      (f->mantissa -
-				       bfloat_mantissa(packed_search,
-						       f))) >> 31);
+		if (packed_search &&
+		    (likely(f->exponent < BFLOAT_FAILED) ||
+		     (f->exponent < BFLOAT_REALLY_FAILED &&
+		      f->mantissa != bfloat_mantissa(packed_search, f))))
+			n = n * 2 + (f->mantissa <
+				     bfloat_mantissa(packed_search, f));
 		else
-			n = bkey_cmp_p_or_unp(b, tree_to_bkey(t, n),
-					      packed_search, search) >= 0
-				? n * 2
-				: n * 2 + 1;
+			n = n * 2 + (bkey_cmp_p_or_unp(b, tree_to_bkey(t, n),
+						       packed_search,
+						       search) < 0);
 	} while (n < t->size);
 
 	inorder = to_inorder(n >> 1, t);
@@ -1260,12 +1243,10 @@ static struct bkey_packed *bset_search_tree(const struct btree_keys *b,
 	}
 }
 
-/* XXX: different version for lossy_packed_search = NULL */
-
 /*
  * Returns the first key greater than or equal to @search
  */
-__always_inline
+__always_inline __flatten
 static struct bkey_packed *bch_bset_search(struct btree_keys *b,
 				struct bset_tree *t,
 				struct bpos search,
@@ -1364,6 +1345,26 @@ void bch_btree_node_iter_push(struct btree_node_iter *iter,
 	}
 }
 
+noinline __flatten __attribute__((cold))
+static void btree_node_iter_init_pack_failed(struct btree_node_iter *iter,
+			      struct btree_keys *b, struct bpos search,
+			      bool strictly_greater, bool is_extents)
+{
+	struct bset_tree *t;
+
+	trace_bkey_pack_pos_fail(search);
+
+	__bch_btree_node_iter_init(iter, is_extents);
+
+	for_each_bset(b, t)
+		__bch_btree_node_iter_push(iter, b,
+			bch_bset_search(b, t, search, NULL, NULL,
+					strictly_greater),
+			bset_bkey_last(t->data));
+
+	bch_btree_node_iter_sort(iter, b);
+}
+
 /**
  * bch_btree_node_iter_init - initialize a btree node iterator, starting from a
  * given position
@@ -1409,24 +1410,21 @@ void bch_btree_node_iter_init(struct btree_node_iter *iter,
 			      bool strictly_greater, bool is_extents)
 {
 	struct bset_tree *t;
-	struct bkey_packed p, *packed_search, *lossy_packed_search;
+	struct bkey_packed p, *packed_search;
 
 	BUG_ON(b->nsets > MAX_BSETS);
 
 	switch (bkey_pack_pos_lossy(&p, search, b)) {
 	case BKEY_PACK_POS_EXACT:
 		packed_search = &p;
-		lossy_packed_search = &p;
 		break;
 	case BKEY_PACK_POS_SMALLER:
 		packed_search = NULL;
-		lossy_packed_search = &p;
 		break;
 	case BKEY_PACK_POS_FAIL:
-		packed_search = NULL;
-		lossy_packed_search = NULL;
-		trace_bkey_pack_pos_fail(search);
-		break;
+		btree_node_iter_init_pack_failed(iter, b, search,
+					strictly_greater, is_extents);
+		return;
 	default:
 		BUG();
 	}
@@ -1436,13 +1434,12 @@ void bch_btree_node_iter_init(struct btree_node_iter *iter,
 	for_each_bset(b, t)
 		__bch_btree_node_iter_push(iter, b,
 					   bch_bset_search(b, t, search,
-							   packed_search,
-							   lossy_packed_search,
+							   packed_search, &p,
 							   strictly_greater),
 					   bset_bkey_last(t->data));
+
 	bch_btree_node_iter_sort(iter, b);
 }
-EXPORT_SYMBOL(bch_btree_node_iter_init);
 
 void bch_btree_node_iter_init_from_start(struct btree_node_iter *iter,
 					 struct btree_keys *b,

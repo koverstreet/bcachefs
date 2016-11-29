@@ -390,12 +390,10 @@ static inline int bkey_cmp_p_or_unp(const struct btree_keys *b,
 				    const struct bkey_packed *r_packed,
 				    struct bpos r)
 {
-	const struct bkey *l_unpacked;
-
 	EBUG_ON(r_packed && !bkey_packed(r_packed));
 
-	if (unlikely(l_unpacked = packed_to_bkey_c(l)))
-		return bkey_cmp(l_unpacked->p, r);
+	if (unlikely(!bkey_packed(l)))
+		return bkey_cmp(packed_to_bkey_c(l)->p, r);
 
 	if (likely(r_packed))
 		return __bkey_cmp_packed(l, r_packed, b);
