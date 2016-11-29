@@ -1633,8 +1633,8 @@ static struct btree *btree_node_get_sibling(struct btree_iter *iter,
 	return ret;
 }
 
-static int foreground_maybe_merge(struct btree_iter *iter,
-				  enum btree_node_sibling sib)
+static int __foreground_maybe_merge(struct btree_iter *iter,
+				    enum btree_node_sibling sib)
 {
 	struct cache_set *c = iter->c;
 	struct btree_reserve *reserve;
@@ -1785,6 +1785,22 @@ out:
 	}
 
 	return ret;
+}
+
+static int inline foreground_maybe_merge(struct btree_iter *iter,
+					 enum btree_node_sibling sib)
+{
+	struct cache_set *c = iter->c;
+	struct btree *b;
+
+	if (!btree_node_locked(iter, iter->level))
+		return 0;
+
+	b = iter->nodes[iter->level];
+	if (b->sib_u64s[sib] > BTREE_FOREGROUND_MERGE_THRESHOLD(c))
+		return 0;
+
+	return __foreground_maybe_merge(iter, sib);
 }
 
 /**

@@ -19,7 +19,30 @@ static inline void btree_node_io_lock(struct btree *b)
 			    TASK_UNINTERRUPTIBLE);
 }
 
-bool bch_maybe_compact_whiteouts(struct cache_set *, struct btree *);
+enum compact_mode {
+	COMPACT_LAZY,
+	COMPACT_WRITTEN,
+	COMPACT_WRITTEN_NO_WRITE_LOCK,
+};
+
+bool __bch_compact_whiteouts(struct cache_set *, struct btree *, enum compact_mode);
+
+static inline bool bch_maybe_compact_whiteouts(struct cache_set *c, struct btree *b)
+{
+	struct bset_tree *t;
+
+	for_each_bset(&b->keys, t) {
+		unsigned live_u64s = b->keys.nr.bset_u64s[t - b->keys.set];
+		unsigned bset_u64s = le16_to_cpu(t->data->u64s);
+
+		if (live_u64s * 4 < bset_u64s * 3)
+			goto compact;
+	}
+
+	return false;
+compact:
+	return __bch_compact_whiteouts(c, b, COMPACT_LAZY);
+}
 
 void bch_btree_sort_into(struct cache_set *, struct btree *, struct btree *);
 

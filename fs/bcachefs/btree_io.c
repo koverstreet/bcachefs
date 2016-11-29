@@ -262,12 +262,6 @@ static unsigned sort_extent_whiteouts(struct bkey_packed *dst,
 	return (u64 *) out - (u64 *) dst;
 }
 
-enum compact_mode {
-	COMPACT_LAZY,
-	COMPACT_WRITTEN,
-	COMPACT_WRITTEN_NO_WRITE_LOCK,
-};
-
 static unsigned should_compact_bset(struct btree *b, struct bset_tree *t,
 				    bool compacting,
 				    enum compact_mode mode)
@@ -290,8 +284,8 @@ static unsigned should_compact_bset(struct btree *b, struct bset_tree *t,
 	return 0;
 }
 
-static bool __compact_whiteouts(struct cache_set *c, struct btree *b,
-				enum compact_mode mode)
+bool __bch_compact_whiteouts(struct cache_set *c, struct btree *b,
+			     enum compact_mode mode)
 {
 	const struct bkey_format *f = &b->keys.format;
 	struct bset_tree *t;
@@ -424,11 +418,6 @@ static bool __compact_whiteouts(struct cache_set *c, struct btree *b,
 	return true;
 }
 
-bool bch_maybe_compact_whiteouts(struct cache_set *c, struct btree *b)
-{
-	return __compact_whiteouts(c, b, COMPACT_LAZY);
-}
-
 static bool bch_drop_whiteouts(struct btree *b)
 {
 	struct bset_tree *t;
@@ -475,9 +464,9 @@ static bool bch_drop_whiteouts(struct btree *b)
 	return ret;
 }
 
-static int sort_keys_cmp(struct btree_keys *b,
-			 struct bkey_packed *l,
-			 struct bkey_packed *r)
+static inline int sort_keys_cmp(struct btree_keys *b,
+				struct bkey_packed *l,
+				struct bkey_packed *r)
 {
 	return bkey_cmp_packed(b, l, r) ?:
 		(int) bkey_whiteout(r) - (int) bkey_whiteout(l) ?:
@@ -1348,10 +1337,10 @@ void __bch_btree_node_write(struct cache_set *c, struct btree *b,
 
 	if (lock_type_held == SIX_LOCK_intent) {
 		six_lock_write(&b->lock);
-		__compact_whiteouts(c, b, COMPACT_WRITTEN);
+		__bch_compact_whiteouts(c, b, COMPACT_WRITTEN);
 		six_unlock_write(&b->lock);
 	} else {
-		__compact_whiteouts(c, b, COMPACT_WRITTEN_NO_WRITE_LOCK);
+		__bch_compact_whiteouts(c, b, COMPACT_WRITTEN_NO_WRITE_LOCK);
 	}
 
 	BUG_ON(b->uncompacted_whiteout_u64s);

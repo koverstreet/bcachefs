@@ -129,7 +129,7 @@ int mca_hash_insert(struct cache_set *c, struct btree *b,
 }
 
 noinline __flatten
-static struct btree *mca_find(struct cache_set *c,
+static inline struct btree *mca_find(struct cache_set *c,
 				     const struct bkey_i *k)
 {
 	return rhashtable_lookup_fast(&c->btree_cache_table, &PTR_HASH(k),
