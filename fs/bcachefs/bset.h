@@ -223,6 +223,8 @@ struct btree_nr_keys {
 	u16			unpacked_keys;
 };
 
+typedef void (*compiled_unpack_fn)(struct bkey *, const struct bkey_packed *);
+
 struct btree_keys {
 	u8			nsets;
 	u8			page_order;
@@ -243,13 +245,45 @@ struct btree_keys {
 #ifdef CONFIG_BCACHEFS_DEBUG
 	bool			*expensive_debug_checks;
 #endif
+
+	compiled_unpack_fn	unpack_fn;
 };
 
 static inline void btree_node_set_format(struct btree_keys *b,
 					 struct bkey_format f)
 {
+	int len;
+
 	b->format	= f;
 	b->nr_key_bits	= bkey_format_key_bits(&f);
+
+	len = bch_compile_bkey_format(&b->format, b->unpack_fn);
+	BUG_ON(len < 0 || len > 200);
+}
+
+/**
+ * bkey_unpack_key -- unpack just the key, not the value
+ */
+static inline struct bkey bkey_unpack_key(const struct btree_keys *b,
+					  const struct bkey_packed *src)
+{
+	struct bkey dst;
+
+	if (unlikely(!bkey_packed(src)))
+		return *packed_to_bkey_c(src);
+
+#ifdef HAVE_BCACHE_COMPILED_UNPACK
+	b->unpack_fn(&dst, src);
+
+	if (IS_ENABLED(CONFIG_BCACHEFS_DEBUG)) {
+		struct bkey dst2 = __bkey_unpack_key(&b->format, src);
+
+		BUG_ON(memcmp(&dst, &dst2, sizeof(dst)));
+	}
+#else
+	dst = __bkey_unpack_key(&b->format, src);
+#endif
+	return dst;
 }
 
 /* Disassembled bkeys */

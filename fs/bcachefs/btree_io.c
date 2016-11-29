@@ -503,6 +503,12 @@ static unsigned sort_keys(struct bkey_packed *dst,
 		    !bkey_cmp_packed(iter->b, in, next)) {
 			BUG_ON(in->needs_whiteout &&
 			       next->needs_whiteout);
+			/*
+			 * XXX racy, called with read lock from write path
+			 *
+			 * leads to spurious BUG_ON() in bkey_unpack_key() in
+			 * debug mode
+			 */
 			next->needs_whiteout |= in->needs_whiteout;
 			continue;
 		}

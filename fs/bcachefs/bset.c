@@ -356,6 +356,8 @@ void bch_btree_keys_free(struct btree_keys *b)
 {
 	struct bset_tree *t = b->set;
 
+	vfree(b->unpack_fn);
+
 	if (bset_prev_bytes(b) < PAGE_SIZE)
 		kfree(t->prev);
 	else
@@ -391,6 +393,10 @@ int bch_btree_keys_alloc(struct btree_keys *b, unsigned page_order, gfp_t gfp)
 		? kmalloc(bset_prev_bytes(b), gfp)
 		: (void *) __get_free_pages(gfp, get_order(bset_prev_bytes(b)));
 	if (!t->prev)
+		goto err;
+
+	b->unpack_fn = vmalloc_exec(200);
+	if (!b->unpack_fn)
 		goto err;
 
 	return 0;

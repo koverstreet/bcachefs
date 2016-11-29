@@ -276,8 +276,8 @@ bool bch_bkey_transform(const struct bkey_format *,
 			const struct bkey_format *,
 			const struct bkey_packed *);
 
-struct bkey bkey_unpack_key(const struct btree_keys *,
-			    const struct bkey_packed *);
+struct bkey __bkey_unpack_key(const struct bkey_format *,
+			      const struct bkey_packed *);
 bool bkey_pack_key(struct bkey_packed *, const struct bkey *,
 		   const struct bkey_format *);
 
@@ -308,6 +308,18 @@ static inline u64 bkey_field_max(const struct bkey_format *f,
 		? f->field_offset[nr] + ~(~0ULL << f->bits_per_field[nr])
 		: U64_MAX;
 }
+
+#ifdef CONFIG_X86_64
+#define HAVE_BCACHE_COMPILED_UNPACK	1
+
+int bch_compile_bkey_format(const struct bkey_format *, void *);
+
+#else
+
+static inline int bch_compile_bkey_format(const struct bkey_format *format,
+					  void *out) { return 0; }
+
+#endif
 
 static inline void bkey_reassemble(struct bkey_i *dst,
 				   struct bkey_s_c src)

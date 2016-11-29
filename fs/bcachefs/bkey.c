@@ -283,6 +283,7 @@ struct bkey __bkey_unpack_key(const struct bkey_format *format,
 	return out;
 }
 
+#ifndef HAVE_BCACHE_COMPILED_UNPACK
 static struct bpos __bkey_unpack_pos(const struct bkey_format *format,
 				     const struct bkey_packed *in)
 {
@@ -299,6 +300,7 @@ static struct bpos __bkey_unpack_pos(const struct bkey_format *format,
 
 	return out;
 }
+#endif
 
 /**
  * bkey_pack_key -- pack just the key, not the value
@@ -378,18 +380,6 @@ bool bkey_pack_key(struct bkey_packed *out, const struct bkey *in,
 	return true;
 }
 #endif
-
-/**
- * bkey_unpack_key -- unpack just the key, not the value
- */
-__flatten
-struct bkey bkey_unpack_key(const struct btree_keys *b,
-			    const struct bkey_packed *src)
-{
-	return likely(bkey_packed(src))
-		? __bkey_unpack_key(&b->format, src)
-		: *packed_to_bkey_c(src);
-}
 
 /**
  * bkey_unpack -- unpack the key and the value
@@ -758,6 +748,7 @@ unsigned bkey_ffs(const struct btree_keys *b,
 }
 
 #ifdef CONFIG_X86_64
+
 static inline int __bkey_cmp_bits(const u64 *l, const u64 *r,
 				  unsigned nr_key_bits)
 {
@@ -801,6 +792,231 @@ static inline int __bkey_cmp_bits(const u64 *l, const u64 *r,
 
 	return cmp;
 }
+
+#define I(_x)			(*(out)++ = (_x))
+#define I1(i0)						I(i0)
+#define I2(i0, i1)		(I1(i0),		I(i1))
+#define I3(i0, i1, i2)		(I2(i0, i1),		I(i2))
+#define I4(i0, i1, i2, i3)	(I3(i0, i1, i2),	I(i3))
+#define I5(i0, i1, i2, i3, i4)	(I4(i0, i1, i2, i3),	I(i4))
+
+static u8 *compile_bkey_field(const struct bkey_format *format, u8 *out,
+			      enum bch_bkey_fields field,
+			      unsigned dst_offset, unsigned dst_size,
+			      bool *eax_zeroed)
+{
+	unsigned byte = format->key_u64s * sizeof(u64);
+	unsigned bits = format->bits_per_field[field];
+	u64 offset = format->field_offset[field];
+	unsigned i, bit_offset = 0;
+	unsigned shl, shr;
+
+	if (!bits && !offset) {
+		if (!*eax_zeroed) {
+			/* xor eax, eax */
+			I2(0x31, 0xc0);
+		}
+
+		*eax_zeroed = true;
+		goto set_field;
+	}
+
+	if (!bits) {
+		/* just return offset: */
+
+		switch (dst_size) {
+		case 8:
+			if (offset > S32_MAX) {
+				/* mov [rdi + dst_offset], offset */
+				I3(0xc7, 0x47, dst_offset);
+				memcpy(out, &offset, 4);
+				out += 4;
+
+				I3(0xc7, 0x47, dst_offset + 4);
+				memcpy(out, (void *) &offset + 4, 4);
+				out += 4;
+			} else {
+				/* mov [rdi + dst_offset], offset */
+				/* sign extended */
+				I4(0x48, 0xc7, 0x47, dst_offset);
+				memcpy(out, &offset, 4);
+				out += 4;
+			}
+			break;
+		case 4:
+			/* mov [rdi + dst_offset], offset */
+			I3(0xc7, 0x47, dst_offset);
+			memcpy(out, &offset, 4);
+			out += 4;
+			break;
+		default:
+			BUG();
+		}
+
+		return out;
+	}
+
+	for (i = 0; i <= field; i++)
+		bit_offset += format->bits_per_field[i];
+
+	byte -= DIV_ROUND_UP(bit_offset, 8);
+	bit_offset = round_up(bit_offset, 8) - bit_offset;
+
+	*eax_zeroed = false;
+
+	if (bit_offset == 0 && bits == 8) {
+		/* movzx eax, BYTE PTR [rsi + imm8] */
+		I4(0x0f, 0xb6, 0x46, byte);
+	} else if (bit_offset == 0 && bits == 16) {
+		/* movzx eax, WORD PTR [rsi + imm8] */
+		I4(0x0f, 0xb7, 0x46, byte);
+	} else if (bit_offset + bits <= 32) {
+		/* mov eax, [rsi + imm8] */
+		I3(0x8b, 0x46, byte);
+
+		if (bit_offset) {
+			/* shr eax, imm8 */
+			I3(0xc1, 0xe8, bit_offset);
+		}
+
+		if (bit_offset + bits < 32) {
+			unsigned mask = ~0U >> (32 - bits);
+
+			/* and eax, imm32 */
+			I1(0x25);
+			memcpy(out, &mask, 4);
+			out += 4;
+		}
+	} else if (bit_offset + bits <= 64) {
+		/* mov rax, [rsi + imm8] */
+		I4(0x48, 0x8b, 0x46, byte);
+
+		shl = 64 - bit_offset - bits;
+		shr = bit_offset + shl;
+
+		if (shl) {
+			/* shl rax, imm8 */
+			I4(0x48, 0xc1, 0xe0, shl);
+		}
+
+		if (shr) {
+			/* shr rax, imm8 */
+			I4(0x48, 0xc1, 0xe8, shr);
+		}
+	} else {
+		/* mov rax, [rsi + byte] */
+		I4(0x48, 0x8b, 0x46, byte);
+
+		/* mov edx, [rsi + byte + 8] */
+		I3(0x8b, 0x56, byte + 8);
+
+		/* bits from next word: */
+		shr = bit_offset + bits - 64;
+		BUG_ON(shr > bit_offset);
+
+		/* shr rax, bit_offset */
+		I4(0x48, 0xc1, 0xe8, shr);
+
+		/* shl rdx, imm8 */
+		I4(0x48, 0xc1, 0xe2, 64 - shr);
+
+		/* or rax, rdx */
+		I3(0x48, 0x09, 0xd0);
+
+		shr = bit_offset - shr;
+
+		if (shr) {
+			/* shr rax, imm8 */
+			I4(0x48, 0xc1, 0xe8, shr);
+		}
+	}
+
+	/* rax += offset: */
+	if (offset > S32_MAX) {
+		/* mov rdx, imm64 */
+		I2(0x48, 0xba);
+		memcpy(out, &offset, 8);
+		out += 8;
+		/* add %rdx, %rax */
+		I3(0x48, 0x01, 0xd0);
+	} else if (offset + (~0ULL >> (64 - bits)) > U32_MAX) {
+		/* add rax, imm32 */
+		I2(0x48, 0x05);
+		memcpy(out, &offset, 4);
+		out += 4;
+	} else if (offset) {
+		/* add eax, imm32 */
+		I1(0x05);
+		memcpy(out, &offset, 4);
+		out += 4;
+	}
+set_field:
+	switch (dst_size) {
+	case 8:
+		/* mov [rdi + dst_offset], rax */
+		I4(0x48, 0x89, 0x47, dst_offset);
+		break;
+	case 4:
+		/* mov [rdi + dst_offset], eax */
+		I3(0x89, 0x47, dst_offset);
+		break;
+	default:
+		BUG();
+	}
+
+	return out;
+}
+
+int bch_compile_bkey_format(const struct bkey_format *format, void *_out)
+{
+	bool eax_zeroed = false;
+	u8 *out = _out;
+
+	/*
+	 * rdi: dst - unpacked key
+	 * rsi: src - packed key
+	 */
+
+	/* k->u64s, k->format, k->type */
+
+	/* mov eax, [rsi] */
+	I2(0x8b, 0x06);
+
+	/* add eax, BKEY_U64s - format->key_u64s */
+	I5(0x05, BKEY_U64s - format->key_u64s, KEY_FORMAT_CURRENT, 0, 0);
+
+	/* and eax, imm32: mask out k->pad: */
+	I5(0x25, 0xff, 0xff, 0xff, 0);
+
+	/* mov [rdi], eax */
+	I2(0x89, 0x07);
+
+	out = compile_bkey_field(format, out,	BKEY_FIELD_INODE,
+				 offsetof(struct bkey, p.inode), 8,
+				 &eax_zeroed);
+
+	out = compile_bkey_field(format, out,	BKEY_FIELD_OFFSET,
+				 offsetof(struct bkey, p.offset), 8,
+				 &eax_zeroed);
+
+	out = compile_bkey_field(format, out,	BKEY_FIELD_SNAPSHOT,
+				 offsetof(struct bkey, p.snapshot), 4,
+				 &eax_zeroed);
+
+	out = compile_bkey_field(format, out,	BKEY_FIELD_SIZE,
+				 offsetof(struct bkey, size), 4,
+				 &eax_zeroed);
+
+	out = compile_bkey_field(format, out,	BKEY_FIELD_VERSION,
+				 offsetof(struct bkey, version), 4,
+				 &eax_zeroed);
+
+	/* retq */
+	I1(0xc3);
+
+	return (void *) out - _out;
+}
+
 #else
 static inline int __bkey_cmp_bits(const u64 *l, const u64 *r,
 				  unsigned nr_key_bits)
@@ -899,9 +1115,11 @@ __flatten
 int __bkey_cmp_left_packed(const struct btree_keys *b,
 			   const struct bkey_packed *l, struct bpos r)
 {
-	const struct bkey_format *f = &b->format;
-
-	return bkey_cmp(__bkey_unpack_pos(f, l), r);
+#ifdef HAVE_BCACHE_COMPILED_UNPACK
+	return bkey_cmp(bkey_unpack_key(b, l).p, r);
+#else
+	return bkey_cmp(__bkey_unpack_pos(&b->format, l), r);
+#endif
 }
 
 void bch_bpos_swab(struct bpos *p)

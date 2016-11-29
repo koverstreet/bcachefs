@@ -300,6 +300,9 @@ static int print_btree_node(struct dump_iter *i, struct btree *b)
 {
 	const struct bkey_format *f = &b->keys.format;
 	struct bset_stats stats;
+	u8 unpack_fn[200];
+	int unpack_fn_len =
+		bch_compile_bkey_format(&b->keys.format, unpack_fn);
 
 	memset(&stats, 0, sizeof(stats));
 
@@ -308,6 +311,7 @@ static int print_btree_node(struct dump_iter *i, struct btree *b)
 	i->bytes = scnprintf(i->buf, sizeof(i->buf),
 			     "l %u %llu:%llu - %llu:%llu:\n"
 			     "    format: u64s %u fields %u %u %u %u %u\n"
+			     "    unpack fn len: %u\n"
 			     "    bytes used %zu/%zu (%zu%% full)\n"
 			     "    sib u64s: %u, %u (merge threshold %zu)\n"
 			     "    nr packed keys %u\n"
@@ -327,6 +331,7 @@ static int print_btree_node(struct dump_iter *i, struct btree *b)
 			     f->bits_per_field[2],
 			     f->bits_per_field[3],
 			     f->bits_per_field[4],
+			     unpack_fn_len,
 			     b->keys.nr.live_u64s * sizeof(u64),
 			     btree_bytes(i->c) - sizeof(struct btree_node),
 			     b->keys.nr.live_u64s * 100 / btree_max_u64s(i->c),
