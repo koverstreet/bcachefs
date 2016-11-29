@@ -676,7 +676,7 @@ static inline int btree_iter_lock_root(struct btree_iter *iter,
 		b = READ_ONCE(c->btree_roots[iter->btree_id].b);
 		iter->level = READ_ONCE(b->level);
 
-		if (iter->level < depth_want) {
+		if (unlikely(iter->level < depth_want)) {
 			/*
 			 * the root is at a lower depth than the depth we want:
 			 * got to the end of the btree, or we're walking nodes
@@ -689,13 +689,13 @@ static inline int btree_iter_lock_root(struct btree_iter *iter,
 		}
 
 		lock_type = btree_lock_want(iter, iter->level);
-		if (!btree_node_lock(b, POS_MAX, iter->level,
-				     iter, lock_type))
+		if (unlikely(!btree_node_lock(b, POS_MAX, iter->level,
+					      iter, lock_type)))
 			return -EINTR;
 
-		if (b == c->btree_roots[iter->btree_id].b &&
-		    b->level == iter->level &&
-		    !race_fault()) {
+		if (likely(b == c->btree_roots[iter->btree_id].b &&
+			   b->level == iter->level &&
+			   !race_fault())) {
 			for (i = 0; i < iter->level; i++)
 				iter->nodes[i] = BTREE_ITER_NOT_END;
 			iter->nodes[iter->level] = b;
@@ -1117,6 +1117,8 @@ void __bch_btree_iter_init(struct btree_iter *iter, struct cache_set *c,
 	memset(iter->nodes, 0, sizeof(iter->nodes));
 	iter->nodes[iter->level]	= BTREE_ITER_NOT_END;
 	iter->next			= iter;
+
+	prefetch(c->btree_roots[btree_id].b);
 }
 
 void bch_btree_iter_link(struct btree_iter *iter, struct btree_iter *new)

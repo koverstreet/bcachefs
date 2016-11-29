@@ -104,7 +104,7 @@ static inline bool btree_node_lock(struct btree *b, struct bpos pos,
 				   struct btree_iter *iter,
 				   enum six_lock_type type)
 {
-	return six_trylock_type(&b->lock, type) ||
+	return likely(six_trylock_type(&b->lock, type)) ||
 		__bch_btree_node_lock(b, pos, level, iter, type);
 }
 
