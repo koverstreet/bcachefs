@@ -128,7 +128,7 @@ int mca_hash_insert(struct cache_set *c, struct btree *b,
 	return 0;
 }
 
-noinline __flatten
+__flatten
 static inline struct btree *mca_find(struct cache_set *c,
 				     const struct bkey_i *k)
 {

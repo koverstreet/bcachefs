@@ -415,12 +415,38 @@ EXPORT_SYMBOL(bch_btree_keys_init);
 
 /* Binary tree stuff for auxiliary search trees */
 
+#ifdef CONFIG_X86_64
+/* we don't need the rex prefixes, or the rep prefix (lzcnt/tzcnt) */
+
+#define __fls(_x)					\
+({							\
+	unsigned _r;					\
+	asm("bsr %1,%0" : "=r" (_r) : "rm" (_x));	\
+	_r;						\
+})
+
+#define __ffs(_x)					\
+({							\
+	unsigned _r;					\
+	asm("bsf %1,%0" : "=r" (_r) : "rm" (_x));	\
+	_r;						\
+})
+
+#define ffz(_x)						\
+({							\
+	unsigned _r;					\
+	asm("bsf %1,%0" : "=r" (_r) : "rm" (~(_x)));	\
+	_r;						\
+})
+
+#endif
+
 static unsigned inorder_next(unsigned j, unsigned size)
 {
 	if (j * 2 + 1 < size) {
 		j = j * 2 + 1;
 
-		j <<= fls(size) - fls(j);
+		j <<= __fls(size) - __fls(j);
 		j >>= j >= size;
 	} else
 		j >>= ffz(j) + 1;
@@ -431,17 +457,13 @@ static unsigned inorder_next(unsigned j, unsigned size)
 static unsigned inorder_prev(unsigned j, unsigned size)
 {
 	if (j * 2 < size) {
-		unsigned shift;
+		j = j * 2 + 1;
 
-		j = j * 2;
-
-		shift = fls(size) - fls(j);
-		j += 1;
-		j <<= shift;
+		j <<= __fls(size) - __fls(j);
 		j -= 1;
 		j >>= j >= size;
 	} else
-		j >>= ffs(j);
+		j >>= __ffs(j) + 1;
 
 	return j;
 }
@@ -461,10 +483,11 @@ static unsigned inorder_prev(unsigned j, unsigned size)
  */
 static inline unsigned __to_inorder(unsigned j, unsigned size, unsigned extra)
 {
-	unsigned b = fls(j);
-	unsigned shift = fls(size - 1) - b;
+	unsigned b = __fls(j);
+	unsigned shift = __fls(size - 1) - b;
+	int s;
 
-	j  ^= 1U << (b - 1);
+	j  ^= 1U << b;
 	j <<= 1;
 	j  |= 1;
 	j <<= shift;
@@ -474,7 +497,8 @@ static inline unsigned __to_inorder(unsigned j, unsigned size, unsigned extra)
 	if (j > extra)
 		j -= (j - extra) >> 1;
 #else
-	j -= ((j - extra) >> 1) & (((int) (extra - j)) >> 31);
+	s = extra - j;
+	j += (s >> 1) & (s >> 31);
 #endif
 
 	return j;
@@ -488,14 +512,15 @@ static inline unsigned to_inorder(unsigned j, struct bset_tree *t)
 static unsigned __inorder_to_tree(unsigned j, unsigned size, unsigned extra)
 {
 	unsigned shift;
+	int s;
 
-	if (j > extra)
-		j += j - extra;
+	s = extra - j;
+	j -= s & (s >> 31);
 
-	shift = ffs(j);
+	shift = __ffs(j);
 
-	j >>= shift;
-	j  |= roundup_pow_of_two(size) >> shift;
+	j >>= shift + 1;
+	j  |= 1U << (__fls(size - 1) - shift);
 
 	return j;
 }
@@ -586,11 +611,11 @@ static unsigned bkey_to_cacheline_offset(struct bset_tree *t,
 {
 	size_t m = __bkey_to_cacheline_offset(t, cacheline, k);
 
-	BUG_ON(m > (1U << BKEY_MID_BITS) - 1);
+	EBUG_ON(m > (1U << BKEY_MID_BITS) - 1);
 	return m;
 }
 
-static struct bkey_packed *tree_to_bkey(struct bset_tree *t, unsigned j)
+static inline struct bkey_packed *tree_to_bkey(struct bset_tree *t, unsigned j)
 {
 	return cacheline_to_bkey(t, to_inorder(j, t), t->tree[j].m);
 }
@@ -1190,11 +1215,25 @@ static struct bkey_packed *bset_search_tree(const struct btree_keys *b,
 		if (likely(n << 4 < t->size)) {
 			prefetch(&t->tree[n << 4]);
 		} else if (n << 3 < t->size) {
+			void *p;
+
 			inorder = to_inorder(n, t);
-			prefetch(cacheline_to_bkey(t, inorder, 0));
-			prefetch(cacheline_to_bkey(t, inorder + 1, 0));
-			prefetch(cacheline_to_bkey(t, inorder + 2, 0));
-			prefetch(cacheline_to_bkey(t, inorder + 3, 0));
+			p = cacheline_to_bkey(t, inorder, 0);
+#ifdef CONFIG_X86_64
+			asm(".intel_syntax noprefix;"
+			    "prefetcht0 [%0 - 127 + 64 * 0];"
+			    "prefetcht0 [%0 - 127 + 64 * 1];"
+			    "prefetcht0 [%0 - 127 + 64 * 2];"
+			    "prefetcht0 [%0 - 127 + 64 * 3];"
+			    ".att_syntax prefix;"
+			    :
+			    : "r" (p + 127));
+#else
+			prefetch(p + L1_CACHE_BYTES * 0);
+			prefetch(p + L1_CACHE_BYTES * 1);
+			prefetch(p + L1_CACHE_BYTES * 2);
+			prefetch(p + L1_CACHE_BYTES * 3);
+#endif
 		} else if (n >= t->size)
 			break;
 
@@ -1409,8 +1448,6 @@ void bch_btree_node_iter_init(struct btree_node_iter *iter,
 		btree_node_iter_init_pack_failed(iter, b, search,
 					strictly_greater, is_extents);
 		return;
-	default:
-		BUG();
 	}
 
 	__bch_btree_node_iter_init(iter, is_extents);
