@@ -76,6 +76,26 @@ static inline void set_bkey_deleted(struct bkey *k)
 #define bkey_whiteout(_k)				\
 	((_k)->type == KEY_TYPE_DELETED || (_k)->type == KEY_TYPE_DISCARD)
 
+#define bkey_packed_typecheck(_k)					\
+({									\
+	BUILD_BUG_ON(!type_is(_k, struct bkey *) &&			\
+		     !type_is(_k, struct bkey_packed *));		\
+	type_is(_k, struct bkey_packed *);				\
+})
+
+enum bkey_lr_packed {
+	BKEY_PACKED_BOTH,
+	BKEY_PACKED_RIGHT,
+	BKEY_PACKED_LEFT,
+	BKEY_PACKED_NONE,
+};
+
+#define bkey_lr_packed_typecheck(_l, _r)				\
+	(!bkey_packed_typecheck(_l) + ((!bkey_packed_typecheck(_r)) << 1))
+
+#define bkey_lr_packed(_l, _r)						\
+	((_l)->format + ((_r)->format << 1))
+
 #define bkey_copy(_dst, _src)					\
 do {								\
 	BUILD_BUG_ON(!type_is(_dst, struct bkey_i *) &&		\
@@ -103,27 +123,75 @@ void bch_bkey_format_add_pos(struct bkey_format_state *, struct bpos);
 struct bkey_format bch_bkey_format_done(struct bkey_format_state *);
 const char *bch_bkey_format_validate(struct bkey_format *);
 
+__pure
 unsigned bkey_greatest_differing_bit(const struct btree_keys *,
 				     const struct bkey_packed *,
 				     const struct bkey_packed *);
+__pure
 unsigned bkey_ffs(const struct btree_keys *, const struct bkey_packed *);
 
-int __bkey_cmp_left_packed(const struct btree_keys *,
-			   const struct bkey_packed *,
-			   struct bpos);
+__pure
+int __bkey_cmp_packed_format_checked(const struct bkey_packed *,
+				     const struct bkey_packed *,
+				     const struct btree_keys *);
 
-#define bkey_cmp_left_packed(_format, _l, _r)			\
-({								\
-	const struct bkey *_l_unpacked;				\
-								\
-	unlikely(_l_unpacked = packed_to_bkey_c(_l))		\
-		? bkey_cmp(_l_unpacked->p, _r)			\
-		: __bkey_cmp_left_packed(_format, _l, _r);	\
-})
+__pure
+int __bkey_cmp_left_packed_format_checked(const struct btree_keys *,
+					  const struct bkey_packed *,
+					  const struct bpos *);
 
+__pure
 int __bkey_cmp_packed(const struct bkey_packed *,
 		      const struct bkey_packed *,
 		      const struct btree_keys *);
+
+__pure
+int bkey_cmp_left_packed(const struct btree_keys *,
+			 const struct bkey_packed *,
+			 const struct bpos *);
+
+/*
+ * we prefer to pass bpos by ref, but it's often enough terribly convenient to
+ * pass it by by val... as much as I hate c++, const ref would be nice here:
+ */
+__pure __flatten
+static inline int bkey_cmp_left_packed_byval(const struct btree_keys *b,
+					     const struct bkey_packed *l,
+					     struct bpos r)
+{
+	return bkey_cmp_left_packed(b, l, &r);
+}
+
+/*
+ * If @_l or @_r are struct bkey * (not bkey_packed *), uses type information to
+ * skip dispatching on k->format:
+ */
+#define bkey_cmp_packed(_b, _l, _r)					\
+({									\
+	int _cmp;							\
+									\
+	switch (bkey_lr_packed_typecheck(_l, _r)) {			\
+	case BKEY_PACKED_NONE:						\
+		_cmp = bkey_cmp(((struct bkey *) (_l))->p,		\
+				((struct bkey *) (_r))->p);		\
+		break;							\
+	case BKEY_PACKED_LEFT:						\
+		_cmp = bkey_cmp_left_packed((_b),			\
+				  (struct bkey_packed *) (_l),		\
+				  &((struct bkey *) (_r))->p);		\
+		break;							\
+	case BKEY_PACKED_RIGHT:						\
+		_cmp = -bkey_cmp_left_packed((_b),			\
+				  (struct bkey_packed *) (_r),		\
+				  &((struct bkey *) (_l))->p);		\
+		break;							\
+	case BKEY_PACKED_BOTH:						\
+		_cmp = __bkey_cmp_packed((void *) (_l),			\
+					 (void *) (_r), (_b));		\
+		break;							\
+	}								\
+	_cmp;								\
+})
 
 #if 1
 static __always_inline int bkey_cmp(struct bpos l, struct bpos r)
@@ -186,31 +254,6 @@ static inline unsigned bkey_format_key_bits(const struct bkey_format *format)
 		format->bits_per_field[BKEY_FIELD_OFFSET] +
 		format->bits_per_field[BKEY_FIELD_SNAPSHOT];
 }
-
-#define bkey_packed_typecheck(_k)					\
-({									\
-	BUILD_BUG_ON(!type_is(_k, struct bkey *) &&			\
-		     !type_is(_k, struct bkey_packed *));		\
-	type_is(_k, struct bkey_packed *) && bkey_packed(_k);		\
-})
-
-/*
- * If @_l and @_r are in the same format, does the comparison without unpacking.
- * Otherwise, unpacks whichever one is packed.
- */
-#define bkey_cmp_packed(_b, _l, _r)					\
-	((bkey_packed_typecheck(_l) && bkey_packed_typecheck(_r))	\
-	 ? __bkey_cmp_packed((void *) (_l), (void *) (_r), (_b))	\
-	 : bkey_packed_typecheck(_l)					\
-	 ? __bkey_cmp_left_packed(_b,					\
-				  (struct bkey_packed *) (_l),		\
-				  ((struct bkey *) (_r))->p)		\
-	 : bkey_packed_typecheck(_r)					\
-	 ? -__bkey_cmp_left_packed((_b),				\
-				   (struct bkey_packed *) (_r),		\
-				   ((struct bkey *) (_l))->p)		\
-	 : bkey_cmp(((struct bkey *) (_l))->p,				\
-		    ((struct bkey *) (_r))->p))
 
 static inline struct bpos bkey_successor(struct bpos p)
 {

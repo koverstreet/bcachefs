@@ -261,16 +261,11 @@ static inline void btree_node_set_format(struct btree_keys *b,
 	BUG_ON(len < 0 || len > 200);
 }
 
-/**
- * bkey_unpack_key -- unpack just the key, not the value
- */
-static inline struct bkey bkey_unpack_key(const struct btree_keys *b,
-					  const struct bkey_packed *src)
+static inline struct bkey
+bkey_unpack_key_format_checked(const struct btree_keys *b,
+			       const struct bkey_packed *src)
 {
 	struct bkey dst;
-
-	if (unlikely(!bkey_packed(src)))
-		return *packed_to_bkey_c(src);
 
 #ifdef HAVE_BCACHE_COMPILED_UNPACK
 	b->unpack_fn(&dst, src);
@@ -284,6 +279,17 @@ static inline struct bkey bkey_unpack_key(const struct btree_keys *b,
 	dst = __bkey_unpack_key(&b->format, src);
 #endif
 	return dst;
+}
+
+/**
+ * bkey_unpack_key -- unpack just the key, not the value
+ */
+static inline struct bkey bkey_unpack_key(const struct btree_keys *b,
+					  const struct bkey_packed *src)
+{
+	return likely(bkey_packed(src))
+		? bkey_unpack_key_format_checked(b, src)
+		: *packed_to_bkey_c(src);
 }
 
 /* Disassembled bkeys */
@@ -388,17 +394,17 @@ void bch_bset_delete(struct btree_keys *, struct bkey_packed *, unsigned);
 static inline int bkey_cmp_p_or_unp(const struct btree_keys *b,
 				    const struct bkey_packed *l,
 				    const struct bkey_packed *r_packed,
-				    struct bpos r)
+				    struct bpos *r)
 {
 	EBUG_ON(r_packed && !bkey_packed(r_packed));
 
 	if (unlikely(!bkey_packed(l)))
-		return bkey_cmp(packed_to_bkey_c(l)->p, r);
+		return bkey_cmp(packed_to_bkey_c(l)->p, *r);
 
 	if (likely(r_packed))
-		return __bkey_cmp_packed(l, r_packed, b);
+		return __bkey_cmp_packed_format_checked(l, r_packed, b);
 
-	return __bkey_cmp_left_packed(b, l, r);
+	return __bkey_cmp_left_packed_format_checked(b, l, r);
 }
 
 /* Returns true if @k is after iterator position @pos */
@@ -412,7 +418,7 @@ static inline bool btree_iter_pos_cmp(struct bpos pos, const struct bkey *k,
 }
 
 static inline bool btree_iter_pos_cmp_packed(const struct btree_keys *b,
-					     struct bpos pos,
+					     struct bpos *pos,
 					     const struct bkey_packed *k,
 					     bool strictly_greater)
 {
@@ -428,7 +434,7 @@ static inline bool btree_iter_pos_cmp_p_or_unp(const struct btree_keys *b,
 					const struct bkey_packed *k,
 					bool strictly_greater)
 {
-	int cmp = bkey_cmp_p_or_unp(b, k, pos_packed, pos);
+	int cmp = bkey_cmp_p_or_unp(b, k, pos_packed, &pos);
 
 	return cmp > 0 ||
 		(cmp == 0 && !strictly_greater && !bkey_deleted(k));

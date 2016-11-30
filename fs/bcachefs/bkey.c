@@ -471,7 +471,7 @@ static bool bkey_packed_successor(struct bkey_packed *out,
 
 		if ((*p & mask) != mask) {
 			*p += 1ULL << offset;
-			EBUG_ON(__bkey_cmp_packed(out, &k, b) <= 0);
+			EBUG_ON(bkey_cmp_packed(b, out, &k) <= 0);
 			return true;
 		}
 
@@ -549,13 +549,13 @@ enum bkey_pack_pos_ret bkey_pack_pos_lossy(struct bkey_packed *out,
 
 #ifdef CONFIG_BCACHEFS_DEBUG
 	if (exact) {
-		BUG_ON(bkey_cmp_left_packed(b, out, orig));
+		BUG_ON(bkey_cmp_left_packed(b, out, &orig));
 	} else {
 		struct bkey_packed successor;
 
-		BUG_ON(bkey_cmp_left_packed(b, out, orig) >= 0);
+		BUG_ON(bkey_cmp_left_packed(b, out, &orig) >= 0);
 		BUG_ON(bkey_packed_successor(&successor, b, *out) &&
-		       bkey_cmp_left_packed(b, &successor, orig) < 0);
+		       bkey_cmp_left_packed(b, &successor, &orig) < 0);
 	}
 #endif
 
@@ -689,6 +689,7 @@ const char *bch_bkey_format_validate(struct bkey_format *f)
  * Most significant differing bit
  * Bits are indexed from 0 - return is [0, nr_key_bits)
  */
+__pure
 unsigned bkey_greatest_differing_bit(const struct btree_keys *b,
 				     const struct bkey_packed *l_k,
 				     const struct bkey_packed *r_k)
@@ -732,6 +733,7 @@ unsigned bkey_greatest_differing_bit(const struct btree_keys *b,
  * First set bit
  * Bits are indexed from 0 - return is [0, nr_key_bits)
  */
+__pure
 unsigned bkey_ffs(const struct btree_keys *b,
 		  const struct bkey_packed *k)
 {
@@ -1113,9 +1115,10 @@ int bkey_cmp(const struct bkey *l, const struct bkey *r)
 }
 #endif
 
-int __bkey_cmp_packed(const struct bkey_packed *l,
-		      const struct bkey_packed *r,
-		      const struct btree_keys *b)
+__pure
+int __bkey_cmp_packed_format_checked(const struct bkey_packed *l,
+				     const struct bkey_packed *r,
+				     const struct btree_keys *b)
 {
 	const struct bkey_format *f = &b->format;
 	int ret;
@@ -1127,20 +1130,59 @@ int __bkey_cmp_packed(const struct bkey_packed *l,
 			      high_word(f, r),
 			      b->nr_key_bits);
 
-	EBUG_ON(ret != bkey_cmp(bkey_unpack_key(b, l).p,
-				bkey_unpack_key(b, r).p));
+	EBUG_ON(ret != bkey_cmp(bkey_unpack_key_format_checked(b, l).p,
+				bkey_unpack_key_format_checked(b, r).p));
 	return ret;
 }
 
-__flatten
-int __bkey_cmp_left_packed(const struct btree_keys *b,
-			   const struct bkey_packed *l, struct bpos r)
+__pure __flatten
+int __bkey_cmp_left_packed_format_checked(const struct btree_keys *b,
+					  const struct bkey_packed *l,
+					  const struct bpos *r)
 {
 #ifdef HAVE_BCACHE_COMPILED_UNPACK
-	return bkey_cmp(bkey_unpack_key(b, l).p, r);
+	return bkey_cmp(bkey_unpack_key_format_checked(b, l).p, *r);
 #else
-	return bkey_cmp(__bkey_unpack_pos(&b->format, l), r);
+	return bkey_cmp(__bkey_unpack_pos(&b->format, l), *r);
 #endif
+}
+
+__pure __flatten
+int __bkey_cmp_packed(const struct bkey_packed *l,
+		      const struct bkey_packed *r,
+		      const struct btree_keys *b)
+{
+	int packed = bkey_lr_packed(l, r);
+
+	if (likely(packed == BKEY_PACKED_BOTH))
+		return __bkey_cmp_packed_format_checked(l, r, b);
+
+	switch (packed) {
+	case BKEY_PACKED_NONE:
+		return bkey_cmp(((struct bkey *) l)->p,
+				((struct bkey *) r)->p);
+	case BKEY_PACKED_LEFT:
+		return __bkey_cmp_left_packed_format_checked(b,
+				  (struct bkey_packed *) l,
+				  &((struct bkey *) r)->p);
+	case BKEY_PACKED_RIGHT:
+		return -__bkey_cmp_left_packed_format_checked(b,
+				  (struct bkey_packed *) r,
+				  &((struct bkey *) l)->p);
+	default:
+		unreachable();
+	}
+}
+
+__pure __flatten
+int bkey_cmp_left_packed(const struct btree_keys *b,
+			 const struct bkey_packed *l, const struct bpos *r)
+{
+	const struct bkey *l_unpacked;
+
+	return unlikely(l_unpacked = packed_to_bkey_c(l))
+		? bkey_cmp(l_unpacked->p, *r)
+		: __bkey_cmp_left_packed_format_checked(b, l, r);
 }
 
 void bch_bpos_swab(struct bpos *p)

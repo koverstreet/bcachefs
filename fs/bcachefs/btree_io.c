@@ -958,7 +958,7 @@ static const char *validate_bset(struct cache_set *c, struct btree *b,
 
 		if (!seen_non_whiteout &&
 		    (!bkey_whiteout(k) ||
-		     (prev && bkey_cmp_left_packed(&b->keys, prev,
+		     (prev && bkey_cmp_left_packed_byval(&b->keys, prev,
 					bkey_start_pos(u.k)) > 0))) {
 			*whiteout_u64s = k->_data - i->_data;
 			seen_non_whiteout = true;

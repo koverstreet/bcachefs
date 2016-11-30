@@ -300,7 +300,7 @@ static void __bch_btree_iter_verify(struct btree_iter *iter,
 	k = b->level
 		? bch_btree_node_iter_prev(&tmp, &b->keys)
 		: bch_btree_node_iter_prev_all(&tmp, &b->keys);
-	if (k && btree_iter_pos_cmp_packed(&b->keys, iter->pos, k,
+	if (k && btree_iter_pos_cmp_packed(&b->keys, &iter->pos, k,
 					   iter->is_extents)) {
 		char buf[100];
 		struct bkey uk = bkey_unpack_key(&b->keys, k);
@@ -311,7 +311,7 @@ static void __bch_btree_iter_verify(struct btree_iter *iter,
 	}
 
 	k = bch_btree_node_iter_peek_all(node_iter, &b->keys);
-	if (k && !btree_iter_pos_cmp_packed(&b->keys, iter->pos, k,
+	if (k && !btree_iter_pos_cmp_packed(&b->keys, &iter->pos, k,
 					    iter->is_extents)) {
 		char buf[100];
 		struct bkey uk = bkey_unpack_key(&b->keys, k);
@@ -355,7 +355,7 @@ static void __bch_btree_node_iter_fix(struct btree_iter *iter,
 
 	/* didn't find the bset in the iterator - might have to readd it: */
 	if (new_u64s &&
-	    btree_iter_pos_cmp_packed(&b->keys, iter->pos, where,
+	    btree_iter_pos_cmp_packed(&b->keys, &iter->pos, where,
 				      iter->is_extents))
 		bch_btree_node_iter_push(node_iter, &b->keys, where, end);
 	return;
@@ -367,7 +367,7 @@ found:
 		return;
 
 	if (new_u64s &&
-	    btree_iter_pos_cmp_packed(&b->keys, iter->pos, where,
+	    btree_iter_pos_cmp_packed(&b->keys, &iter->pos, where,
 				      iter->is_extents)) {
 		set->k = offset;
 		bch_btree_node_iter_sort(node_iter, &b->keys);
@@ -403,7 +403,7 @@ found:
 	 * to.
 	 */
 	if (b->level && new_u64s && !bkey_deleted(where) &&
-	    btree_iter_pos_cmp_packed(&b->keys, iter->pos, where,
+	    btree_iter_pos_cmp_packed(&b->keys, &iter->pos, where,
 				      iter->is_extents)) {
 		struct bset_tree *t;
 		struct bkey_packed *k;
@@ -536,7 +536,7 @@ static void btree_iter_verify_new_node(struct btree_iter *iter, struct btree *b)
 	if (!k ||
 	    bkey_deleted(k) ||
 	    bkey_cmp_left_packed(&iter->nodes[b->level + 1]->keys,
-				 k, b->key.k.p)) {
+				 k, &b->key.k.p)) {
 		char buf[100];
 		struct bkey uk = bkey_unpack_key(&b->keys, k);
 
@@ -974,7 +974,7 @@ void bch_btree_iter_set_pos_same_leaf(struct btree_iter *iter, struct bpos new_p
 	EBUG_ON(bkey_cmp(new_pos, iter->nodes[0]->key.k.p) > 0);
 
 	while ((k = bch_btree_node_iter_peek_all(node_iter, b)) &&
-	       !btree_iter_pos_cmp_packed(b, new_pos, k,
+	       !btree_iter_pos_cmp_packed(b, &new_pos, k,
 					  iter->is_extents))
 		bch_btree_node_iter_advance(node_iter, b);
 

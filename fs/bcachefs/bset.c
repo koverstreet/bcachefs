@@ -128,7 +128,7 @@ static bool keys_out_of_order(struct btree_keys *b,
 {
 	struct bkey nextu = bkey_unpack_key(b, next);
 
-	return bkey_cmp_left_packed(b, prev, bkey_start_pos(&nextu)) > 0 ||
+	return bkey_cmp_left_packed_byval(b, prev, bkey_start_pos(&nextu)) > 0 ||
 		((is_extents
 		  ? !bkey_deleted(next)
 		  : !bkey_deleted(prev)) &&
@@ -243,7 +243,7 @@ void bch_verify_key_order(struct btree_keys *b,
 		if (k == bset_bkey_last(t->data))
 			k = bkey_prev_all(t, k);
 
-		while (bkey_cmp_left_packed(b, k, bkey_start_pos(&uw)) > 0 &&
+		while (bkey_cmp_left_packed_byval(b, k, bkey_start_pos(&uw)) > 0 &&
 		       (prev = bkey_prev_all(t, k)))
 			k = prev;
 
@@ -1193,13 +1193,23 @@ static struct bkey_packed *bset_search_write_set(const struct btree_keys *b,
 		unsigned m = (li + ri) >> 1;
 
 		if (bkey_cmp_p_or_unp(b, table_to_bkey(t, m),
-				      packed_search, search) >= 0)
+				      packed_search, &search) >= 0)
 			ri = m;
 		else
 			li = m;
 	}
 
 	return table_to_bkey(t, li);
+}
+
+noinline
+static int bset_search_tree_slowpath(const struct btree_keys *b,
+				struct bset_tree *t, struct bpos *search,
+				const struct bkey_packed *packed_search,
+				unsigned n)
+{
+	return bkey_cmp_p_or_unp(b, tree_to_bkey(t, n),
+				 packed_search, search) < 0;
 }
 
 __flatten
@@ -1244,9 +1254,8 @@ static struct bkey_packed *bset_search_tree(const struct btree_keys *b,
 			n = n * 2 + (f->mantissa <
 				     bfloat_mantissa(packed_search, f));
 		else
-			n = n * 2 + (bkey_cmp_p_or_unp(b, tree_to_bkey(t, n),
-						       packed_search,
-						       search) < 0);
+			n = n * 2 + bset_search_tree_slowpath(b, t,
+						&search, packed_search, n);
 	} while (n < t->size);
 
 	inorder = to_inorder(n >> 1, t);
@@ -1310,11 +1319,11 @@ static struct bkey_packed *bch_bset_search(struct btree_keys *b,
 		 */
 
 		if (unlikely(bkey_cmp_p_or_unp(b, &t->end,
-					       packed_search, search) < 0))
+					       packed_search, &search) < 0))
 			return bset_bkey_last(t->data);
 
 		if (unlikely(bkey_cmp_p_or_unp(b, t->data->start,
-					       packed_search, search) >= 0))
+					       packed_search, &search) >= 0))
 			m = t->data->start;
 		else
 			m = bset_search_tree(b, t, search, lossy_packed_search);
@@ -1329,7 +1338,7 @@ static struct bkey_packed *bch_bset_search(struct btree_keys *b,
 
 	if (!packed_search)
 		while (m != bset_bkey_last(t->data) &&
-		       !btree_iter_pos_cmp_packed(b, search, m, strictly_greater))
+		       !btree_iter_pos_cmp_packed(b, &search, m, strictly_greater))
 			m = bkey_next(m);
 
 	if (IS_ENABLED(CONFIG_BCACHEFS_DEBUG)) {

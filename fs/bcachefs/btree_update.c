@@ -636,7 +636,7 @@ static void bch_insert_fixup_btree_ptr(struct btree_iter *iter,
 			     gc_pos_btree_node(b), &stats);
 
 	while ((k = bch_btree_node_iter_peek_all(node_iter, &b->keys)) &&
-	       !btree_iter_pos_cmp_packed(&b->keys, insert->k.p, k, false))
+	       !btree_iter_pos_cmp_packed(&b->keys, &insert->k.p, k, false))
 		bch_btree_node_iter_advance(node_iter, &b->keys);
 
 	/*
@@ -1153,7 +1153,7 @@ static void btree_node_interior_verify(struct btree *b)
 	bch_btree_node_iter_init(&iter, &b->keys, b->key.k.p, false, false);
 #if 1
 	BUG_ON(!(k = bch_btree_node_iter_peek(&iter, &b->keys)) ||
-	       bkey_cmp_left_packed(&b->keys, k, b->key.k.p));
+	       bkey_cmp_left_packed(&b->keys, k, &b->key.k.p));
 
 	BUG_ON((bch_btree_node_iter_advance(&iter, &b->keys),
 		!bch_btree_node_iter_end(&iter)));
@@ -1166,7 +1166,7 @@ static void btree_node_interior_verify(struct btree *b)
 		goto err;
 
 	msg = "isn't what it should be";
-	if (bkey_cmp_left_packed(&b->keys, k, b->key.k.p))
+	if (bkey_cmp_left_packed(&b->keys, k, &b->key.k.p))
 		goto err;
 
 	bch_btree_node_iter_advance(&iter, &b->keys);
@@ -1605,7 +1605,7 @@ static struct btree *btree_node_get_sibling(struct btree_iter *iter,
 	node_iter = iter->node_iters[parent->level];
 
 	k = bch_btree_node_iter_peek_all(&node_iter, &parent->keys);
-	BUG_ON(bkey_cmp_left_packed(&parent->keys, k, b->key.k.p));
+	BUG_ON(bkey_cmp_left_packed(&parent->keys, k, &b->key.k.p));
 
 	do {
 		k = sib == btree_prev_sib
