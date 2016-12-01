@@ -229,10 +229,12 @@ struct btree_keys {
 	u8			nsets;
 	u8			page_order;
 	u8			nr_key_bits;
+	u8			unpack_fn_len;
 
 	struct btree_nr_keys	nr;
 
 	struct bkey_format	format;
+	void			*aux_data;
 
 	/*
 	 * Sets of sorted keys - the real btree node - plus a binary search tree
@@ -245,21 +247,7 @@ struct btree_keys {
 #ifdef CONFIG_BCACHEFS_DEBUG
 	bool			*expensive_debug_checks;
 #endif
-
-	compiled_unpack_fn	unpack_fn;
 };
-
-static inline void btree_node_set_format(struct btree_keys *b,
-					 struct bkey_format f)
-{
-	int len;
-
-	b->format	= f;
-	b->nr_key_bits	= bkey_format_key_bits(&f);
-
-	len = bch_compile_bkey_format(&b->format, b->unpack_fn);
-	BUG_ON(len < 0 || len > 200);
-}
 
 static inline struct bkey
 bkey_unpack_key_format_checked(const struct btree_keys *b,
@@ -268,12 +256,15 @@ bkey_unpack_key_format_checked(const struct btree_keys *b,
 	struct bkey dst;
 
 #ifdef HAVE_BCACHE_COMPILED_UNPACK
-	b->unpack_fn(&dst, src);
+	{
+		compiled_unpack_fn unpack_fn = b->aux_data;
+		unpack_fn(&dst, src);
 
-	if (IS_ENABLED(CONFIG_BCACHEFS_DEBUG)) {
-		struct bkey dst2 = __bkey_unpack_key(&b->format, src);
+		if (IS_ENABLED(CONFIG_BCACHEFS_DEBUG)) {
+			struct bkey dst2 = __bkey_unpack_key(&b->format, src);
 
-		BUG_ON(memcmp(&dst, &dst2, sizeof(dst)));
+			BUG_ON(memcmp(&dst, &dst2, sizeof(dst)));
+		}
 	}
 #else
 	dst = __bkey_unpack_key(&b->format, src);
@@ -351,8 +342,26 @@ static inline void bch_bset_set_no_aux_tree(struct btree_keys *b,
 	for (; t < b->set + ARRAY_SIZE(b->set); t++) {
 		t->size = 0;
 		t->extra = BSET_NO_AUX_TREE_VAL;
+		t->tree = NULL;
+		t->prev = NULL;
 	}
 
+}
+
+static inline void btree_node_set_format(struct btree_keys *b,
+					 struct bkey_format f)
+{
+	int len;
+
+	b->format	= f;
+	b->nr_key_bits	= bkey_format_key_bits(&f);
+
+	len = bch_compile_bkey_format(&b->format, b->aux_data);
+	BUG_ON(len < 0 || len > U8_MAX);
+
+	b->unpack_fn_len = len;
+
+	bch_bset_set_no_aux_tree(b, b->set);
 }
 
 #define __set_bytes(_i, _u64s)	(sizeof(*(_i)) + (_u64s) * sizeof(u64))

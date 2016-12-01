@@ -469,6 +469,7 @@ static struct btree *__btree_root_alloc(struct cache_set *c, unsigned level,
 	b->key.k.p = POS_MAX;
 
 	btree_node_set_format(&b->keys, b->data->format);
+	bch_btree_build_aux_trees(b);
 
 	six_unlock_write(&b->lock);
 
