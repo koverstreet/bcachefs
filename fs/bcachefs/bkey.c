@@ -605,6 +605,20 @@ void bch_bkey_format_add_pos(struct bkey_format_state *s, struct bpos p)
 	__bkey_format_add(s, field++, p.snapshot);
 }
 
+/*
+ * We don't want it to be possible for the packed format to represent fields
+ * bigger than a u64... that will cause confusion and issues (like with
+ * bkey_packed_successor())
+ */
+static void set_format_field(struct bkey_format *f, enum bch_bkey_fields i,
+			     unsigned bits, u64 offset)
+{
+	offset = bits == 64 ? 0 : min(offset, U64_MAX - ((1ULL << bits) - 1));
+
+	f->bits_per_field[i]	= bits;
+	f->field_offset[i]	= cpu_to_le64(offset);
+}
+
 struct bkey_format bch_bkey_format_done(struct bkey_format_state *s)
 {
 	unsigned i, bits = KEY_PACKED_BITS_START;
@@ -613,26 +627,33 @@ struct bkey_format bch_bkey_format_done(struct bkey_format_state *s)
 	};
 
 	for (i = 0; i < ARRAY_SIZE(s->field_min); i++) {
-		u64 field_offset	= min(s->field_min[i], s->field_max[i]);
-		ret.bits_per_field[i]	= fls64(s->field_max[i] - field_offset);
+		s->field_min[i] = min(s->field_min[i], s->field_max[i]);
 
-		/*
-		 * We don't want it to be possible for the packed format to
-		 * represent fields bigger than a u64... that will cause
-		 * confusion and issues (like with bkey_packed_successor())
-		 */
-
-		field_offset = ret.bits_per_field[i] != 64
-			? min(field_offset, U64_MAX -
-			      ((1ULL << ret.bits_per_field[i]) - 1))
-			: 0;
-		ret.field_offset[i] = cpu_to_le64(field_offset);
+		set_format_field(&ret, i,
+				 fls64(s->field_max[i] - s->field_min[i]),
+				 s->field_min[i]);
 
 		bits += ret.bits_per_field[i];
 	}
 
 	ret.key_u64s = DIV_ROUND_UP(bits, 64);
 
+	/* if we have enough spare bits, round fields up to nearest byte */
+	bits = ret.key_u64s * 64 - bits;
+
+	for (i = 0; i < ARRAY_SIZE(ret.bits_per_field); i++) {
+		unsigned r = round_up(ret.bits_per_field[i], 8) -
+			ret.bits_per_field[i];
+
+		if (r <= bits) {
+			set_format_field(&ret, i,
+					 ret.bits_per_field[i] + r,
+					 le64_to_cpu(ret.field_offset[i]));
+			bits -= r;
+		}
+	}
+
+	EBUG_ON(bch_bkey_format_validate(&ret));
 	return ret;
 }
 
