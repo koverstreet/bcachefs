@@ -479,7 +479,7 @@ static int bch_bset_print_stats(struct cache_set *c, char *buf)
 
 	rcu_read_lock();
 	for_each_cached_btree(b, c, tbl, iter, pos) {
-		bch_btree_keys_stats(&b->keys, &stats);
+		bch_btree_keys_stats(b, &stats);
 		nodes++;
 	}
 	rcu_read_unlock();
@@ -525,7 +525,7 @@ lock_root:
 		six_lock_read(&b->lock);
 	} while (b != c->btree_roots[BTREE_ID_EXTENTS].b);
 
-	for_each_btree_node_key(&b->keys, k, &iter, btree_node_is_extents(b))
+	for_each_btree_node_key(b, k, &iter, btree_node_is_extents(b))
 		bytes += bkey_bytes(k);
 
 	six_unlock_read(&b->lock);
@@ -540,7 +540,7 @@ static size_t bch_cache_size(struct cache_set *c)
 
 	mutex_lock(&c->btree_cache_lock);
 	list_for_each_entry(b, &c->btree_cache, list)
-		ret += 1 << (b->keys.page_order + PAGE_SHIFT);
+		ret += 1 << (b->page_order + PAGE_SHIFT);
 
 	mutex_unlock(&c->btree_cache_lock);
 	return ret;

@@ -59,7 +59,7 @@ void __bch_btree_verify(struct cache_set *c, struct btree *b)
 	v->written	= 0;
 	v->level	= b->level;
 	v->btree_id	= b->btree_id;
-	bch_btree_keys_init(&v->keys, &c->expensive_debug_checks);
+	bch_btree_keys_init(v, &c->expensive_debug_checks);
 
 	pick = bch_btree_pick_ptr(c, b);
 	if (IS_ERR_OR_NULL(pick.ca))
@@ -101,10 +101,10 @@ void __bch_btree_verify(struct cache_set *c, struct btree *b)
 		console_lock();
 
 		printk(KERN_ERR "*** in memory:\n");
-		bch_dump_bset(&b->keys, inmemory, 0);
+		bch_dump_bset(b, inmemory, 0);
 
 		printk(KERN_ERR "*** read back in:\n");
-		bch_dump_bset(&v->keys, sorted, 0);
+		bch_dump_bset(v, sorted, 0);
 
 		while (offset < b->written) {
 			if (!offset ) {
@@ -125,7 +125,7 @@ void __bch_btree_verify(struct cache_set *c, struct btree *b)
 			}
 
 			printk(KERN_ERR "*** on disk block %u:\n", offset);
-			bch_dump_bset(&b->keys, i, offset);
+			bch_dump_bset(b, i, offset);
 
 			offset += sectors;
 		}
@@ -298,12 +298,12 @@ static const struct file_operations btree_debug_ops = {
 
 static int print_btree_node(struct dump_iter *i, struct btree *b)
 {
-	const struct bkey_format *f = &b->keys.format;
+	const struct bkey_format *f = &b->format;
 	struct bset_stats stats;
 
 	memset(&stats, 0, sizeof(stats));
 
-	bch_btree_keys_stats(&b->keys, &stats);
+	bch_btree_keys_stats(b, &stats);
 
 	i->bytes = scnprintf(i->buf, sizeof(i->buf),
 			     "l %u %llu:%llu - %llu:%llu:\n"
@@ -328,15 +328,15 @@ static int print_btree_node(struct dump_iter *i, struct btree *b)
 			     f->bits_per_field[2],
 			     f->bits_per_field[3],
 			     f->bits_per_field[4],
-			     b->keys.unpack_fn_len,
-			     b->keys.nr.live_u64s * sizeof(u64),
+			     b->unpack_fn_len,
+			     b->nr.live_u64s * sizeof(u64),
 			     btree_bytes(i->c) - sizeof(struct btree_node),
-			     b->keys.nr.live_u64s * 100 / btree_max_u64s(i->c),
+			     b->nr.live_u64s * 100 / btree_max_u64s(i->c),
 			     b->sib_u64s[0],
 			     b->sib_u64s[1],
 			     BTREE_FOREGROUND_MERGE_THRESHOLD(i->c),
-			     b->keys.nr.packed_keys,
-			     b->keys.nr.unpacked_keys,
+			     b->nr.packed_keys,
+			     b->nr.unpacked_keys,
 			     stats.floats,
 			     stats.failed_unpacked,
 			     stats.failed_prev,
@@ -416,7 +416,7 @@ static ssize_t bch_read_bfloat_failed(struct file *file, char __user *buf,
 
 	while ((k = bch_btree_iter_peek(&iter)).k &&
 	       !(err = btree_iter_err(k))) {
-		struct btree_keys *b = &iter.nodes[0]->keys;
+		struct btree *b = iter.nodes[0];
 		struct btree_node_iter *node_iter = &iter.node_iters[0];
 		struct bkey_packed *_k = bch_btree_node_iter_peek(node_iter, b);
 

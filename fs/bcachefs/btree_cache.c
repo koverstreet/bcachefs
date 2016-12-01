@@ -39,9 +39,9 @@ static void __mca_data_free(struct btree *b)
 {
 	EBUG_ON(btree_node_write_in_flight(b));
 
-	free_pages((unsigned long) b->data, b->keys.page_order);
+	free_pages((unsigned long) b->data, b->page_order);
 	b->data = NULL;
-	bch_btree_keys_free(&b->keys);
+	bch_btree_keys_free(b);
 }
 
 static void mca_data_free(struct cache_set *c, struct btree *b)
@@ -67,7 +67,7 @@ static void mca_data_alloc(struct cache_set *c, struct btree *b, gfp_t gfp)
 	if (!b->data)
 		goto err;
 
-	if (bch_btree_keys_alloc(&b->keys, order, gfp))
+	if (bch_btree_keys_alloc(b, order, gfp))
 		goto err;
 
 	c->btree_cache_used++;
@@ -99,8 +99,8 @@ void mca_hash_remove(struct cache_set *c, struct btree *b)
 {
 	BUG_ON(btree_node_dirty(b));
 
-	b->keys.nsets = 0;
-	b->keys.set[0].data = NULL;
+	b->nsets = 0;
+	b->set[0].data = NULL;
 
 	rhashtable_remove_fast(&c->btree_cache_table, &b->hash,
 			       bch_btree_cache_params);
@@ -515,13 +515,13 @@ out_unlock:
 out:
 	b->flags		= 0;
 	b->written		= 0;
-	b->keys.nsets		= 0;
-	b->keys.set[0].data	= NULL;
+	b->nsets		= 0;
+	b->set[0].data		= NULL;
 	b->sib_u64s[0]		= 0;
 	b->sib_u64s[1]		= 0;
 	b->whiteout_u64s	= 0;
 	b->uncompacted_whiteout_u64s = 0;
-	bch_btree_keys_init(&b->keys, &c->expensive_debug_checks);
+	bch_btree_keys_init(b, &c->expensive_debug_checks);
 
 	bch_time_stats_update(&c->mca_alloc_time, start_time);
 
@@ -675,10 +675,10 @@ retry:
 		}
 	}
 
-	prefetch(b->keys.aux_data);
+	prefetch(b->aux_data);
 
-	for_each_bset(&b->keys, t)
-		prefetch((u64 *) b->keys.aux_data + t->aux_data_offset);
+	for_each_bset(b, t)
+		prefetch((u64 *) b->aux_data + t->aux_data_offset);
 
 	/* avoid atomic set bit if it's not needed: */
 	if (btree_node_accessed(b))

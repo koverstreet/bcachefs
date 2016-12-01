@@ -9,6 +9,8 @@
 void bch_to_binary(char *, const u64 *, unsigned);
 int bch_bkey_to_text(char *, size_t, const struct bkey *);
 
+#define BKEY_PADDED(key)	__BKEY_PADDED(key, BKEY_EXTENT_VAL_U64s_MAX)
+
 /* bkey with split value, const */
 struct bkey_s_c {
 	const struct bkey	*k;
@@ -110,7 +112,7 @@ do {								\
 			    ((struct bkey *) (_src))->u64s);	\
 } while (0)
 
-struct btree_keys;
+struct btree;
 
 struct bkey_format_state {
 	u64 field_min[BKEY_NR_FIELDS];
@@ -124,29 +126,29 @@ struct bkey_format bch_bkey_format_done(struct bkey_format_state *);
 const char *bch_bkey_format_validate(struct bkey_format *);
 
 __pure
-unsigned bkey_greatest_differing_bit(const struct btree_keys *,
+unsigned bkey_greatest_differing_bit(const struct btree *,
 				     const struct bkey_packed *,
 				     const struct bkey_packed *);
 __pure
-unsigned bkey_ffs(const struct btree_keys *, const struct bkey_packed *);
+unsigned bkey_ffs(const struct btree *, const struct bkey_packed *);
 
 __pure
 int __bkey_cmp_packed_format_checked(const struct bkey_packed *,
 				     const struct bkey_packed *,
-				     const struct btree_keys *);
+				     const struct btree *);
 
 __pure
-int __bkey_cmp_left_packed_format_checked(const struct btree_keys *,
+int __bkey_cmp_left_packed_format_checked(const struct btree *,
 					  const struct bkey_packed *,
 					  const struct bpos *);
 
 __pure
 int __bkey_cmp_packed(const struct bkey_packed *,
 		      const struct bkey_packed *,
-		      const struct btree_keys *);
+		      const struct btree *);
 
 __pure
-int bkey_cmp_left_packed(const struct btree_keys *,
+int bkey_cmp_left_packed(const struct btree *,
 			 const struct bkey_packed *,
 			 const struct bpos *);
 
@@ -155,7 +157,7 @@ int bkey_cmp_left_packed(const struct btree_keys *,
  * pass it by by val... as much as I hate c++, const ref would be nice here:
  */
 __pure __flatten
-static inline int bkey_cmp_left_packed_byval(const struct btree_keys *b,
+static inline int bkey_cmp_left_packed_byval(const struct btree *b,
 					     const struct bkey_packed *l,
 					     struct bpos r)
 {
@@ -336,15 +338,15 @@ enum bkey_pack_pos_ret {
 };
 
 enum bkey_pack_pos_ret bkey_pack_pos_lossy(struct bkey_packed *, struct bpos,
-					   const struct btree_keys *);
+					   const struct btree *);
 
 static inline bool bkey_pack_pos(struct bkey_packed *out, struct bpos in,
-				 const struct btree_keys *b)
+				 const struct btree *b)
 {
 	return bkey_pack_pos_lossy(out, in, b) == BKEY_PACK_POS_EXACT;
 }
 
-void bkey_unpack(const struct btree_keys *, struct bkey_i *,
+void bkey_unpack(const struct btree *, struct bkey_i *,
 		 const struct bkey_packed *);
 bool bkey_pack(struct bkey_packed *, const struct bkey_i *,
 	       const struct bkey_format *);

@@ -20,8 +20,8 @@ struct btree;
 
 static inline void btree_node_reset_sib_u64s(struct btree *b)
 {
-	b->sib_u64s[0] = b->keys.nr.live_u64s;
-	b->sib_u64s[1] = b->keys.nr.live_u64s;
+	b->sib_u64s[0] = b->nr.live_u64s;
+	b->sib_u64s[1] = b->nr.live_u64s;
 }
 
 struct btree_reserve {
@@ -279,9 +279,9 @@ static inline void unreserve_whiteout(struct btree *b, struct bset_tree *t,
 {
 	if (bset_written(b, t->data)) {
 		EBUG_ON(b->uncompacted_whiteout_u64s <
-			bkeyp_key_u64s(&b->keys.format, k));
+			bkeyp_key_u64s(&b->format, k));
 		b->uncompacted_whiteout_u64s -=
-			bkeyp_key_u64s(&b->keys.format, k);
+			bkeyp_key_u64s(&b->format, k);
 	}
 }
 
@@ -291,7 +291,7 @@ static inline void reserve_whiteout(struct btree *b, struct bset_tree *t,
 	if (bset_written(b, t->data)) {
 		BUG_ON(!k->needs_whiteout);
 		b->uncompacted_whiteout_u64s +=
-			bkeyp_key_u64s(&b->keys.format, k);
+			bkeyp_key_u64s(&b->format, k);
 	}
 }
 

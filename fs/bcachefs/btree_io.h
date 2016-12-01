@@ -31,8 +31,8 @@ static inline bool bch_maybe_compact_whiteouts(struct cache_set *c, struct btree
 {
 	struct bset_tree *t;
 
-	for_each_bset(&b->keys, t) {
-		unsigned live_u64s = b->keys.nr.bset_u64s[t - b->keys.set];
+	for_each_bset(b, t) {
+		unsigned live_u64s = b->nr.bset_u64s[t - b->set];
 		unsigned bset_u64s = le16_to_cpu(t->data->u64s);
 
 		if (live_u64s * 4 < bset_u64s * 3)

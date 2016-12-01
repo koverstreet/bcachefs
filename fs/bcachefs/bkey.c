@@ -384,7 +384,7 @@ bool bkey_pack_key(struct bkey_packed *out, const struct bkey *in,
 /**
  * bkey_unpack -- unpack the key and the value
  */
-void bkey_unpack(const struct btree_keys *b, struct bkey_i *dst,
+void bkey_unpack(const struct btree *b, struct bkey_i *dst,
 		 const struct bkey_packed *src)
 {
 	dst->k = bkey_unpack_key(b, src);
@@ -446,7 +446,7 @@ static bool set_inc_field_lossy(struct pack_state *state, unsigned field, u64 v)
 
 #ifdef CONFIG_BCACHEFS_DEBUG
 static bool bkey_packed_successor(struct bkey_packed *out,
-				  const struct btree_keys *b,
+				  const struct btree *b,
 				  struct bkey_packed k)
 {
 	const struct bkey_format *f = &b->format;
@@ -495,7 +495,7 @@ static bool bkey_packed_successor(struct bkey_packed *out,
  */
 enum bkey_pack_pos_ret bkey_pack_pos_lossy(struct bkey_packed *out,
 					   struct bpos in,
-					   const struct btree_keys *b)
+					   const struct btree *b)
 {
 	const struct bkey_format *f = &b->format;
 	struct pack_state state = pack_state_init(f, out);
@@ -690,7 +690,7 @@ const char *bch_bkey_format_validate(struct bkey_format *f)
  * Bits are indexed from 0 - return is [0, nr_key_bits)
  */
 __pure
-unsigned bkey_greatest_differing_bit(const struct btree_keys *b,
+unsigned bkey_greatest_differing_bit(const struct btree *b,
 				     const struct bkey_packed *l_k,
 				     const struct bkey_packed *r_k)
 {
@@ -734,7 +734,7 @@ unsigned bkey_greatest_differing_bit(const struct btree_keys *b,
  * Bits are indexed from 0 - return is [0, nr_key_bits)
  */
 __pure
-unsigned bkey_ffs(const struct btree_keys *b,
+unsigned bkey_ffs(const struct btree *b,
 		  const struct bkey_packed *k)
 {
 	const u64 *p = high_word(&b->format, k);
@@ -1118,7 +1118,7 @@ int bkey_cmp(const struct bkey *l, const struct bkey *r)
 __pure
 int __bkey_cmp_packed_format_checked(const struct bkey_packed *l,
 				     const struct bkey_packed *r,
-				     const struct btree_keys *b)
+				     const struct btree *b)
 {
 	const struct bkey_format *f = &b->format;
 	int ret;
@@ -1136,7 +1136,7 @@ int __bkey_cmp_packed_format_checked(const struct bkey_packed *l,
 }
 
 __pure __flatten
-int __bkey_cmp_left_packed_format_checked(const struct btree_keys *b,
+int __bkey_cmp_left_packed_format_checked(const struct btree *b,
 					  const struct bkey_packed *l,
 					  const struct bpos *r)
 {
@@ -1150,7 +1150,7 @@ int __bkey_cmp_left_packed_format_checked(const struct btree_keys *b,
 __pure __flatten
 int __bkey_cmp_packed(const struct bkey_packed *l,
 		      const struct bkey_packed *r,
-		      const struct btree_keys *b)
+		      const struct btree *b)
 {
 	int packed = bkey_lr_packed(l, r);
 
@@ -1175,7 +1175,7 @@ int __bkey_cmp_packed(const struct bkey_packed *l,
 }
 
 __pure __flatten
-int bkey_cmp_left_packed(const struct btree_keys *b,
+int bkey_cmp_left_packed(const struct btree *b,
 			 const struct bkey_packed *l, const struct bpos *r)
 {
 	const struct bkey *l_unpacked;

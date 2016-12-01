@@ -26,7 +26,6 @@ static inline bool btree_type_has_ptrs(enum bkey_type type)
 }
 
 struct cache_set;
-struct btree_keys;
 struct btree;
 struct bkey;
 
@@ -41,10 +40,10 @@ enum merge_result {
 	BCH_MERGE_MERGE,
 };
 
-typedef bool (*key_filter_fn)(struct cache_set *, struct btree_keys *,
+typedef bool (*key_filter_fn)(struct cache_set *, struct btree *,
 			      struct bkey_s);
 typedef enum merge_result (*key_merge_fn)(struct cache_set *,
-					  struct btree_keys *,
+					  struct btree *,
 					  struct bkey_i *, struct bkey_i *);
 
 struct bkey_ops {
