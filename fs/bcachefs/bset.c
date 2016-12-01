@@ -276,13 +276,8 @@ static void bch_btree_node_iter_next_check(struct btree_node_iter *iter,
 
 /* Auxiliary search trees */
 
-/* 32 bits total: */
-#define BKEY_MID_BITS		8U
-#define BKEY_EXPONENT_BITS	8U
-#define BKEY_MANTISSA_BITS	(32 - BKEY_MID_BITS - BKEY_EXPONENT_BITS)
-#define BKEY_MANTISSA_MASK	((1 << BKEY_MANTISSA_BITS) - 1)
-
-#define BFLOAT_EXPONENT_MAX	((1 << BKEY_EXPONENT_BITS) - 1)
+#define BFLOAT_EXPONENT_MAX	U8_MAX
+#define BFLOAT_KEY_OFFSET_MAX	U8_MAX
 
 #define BFLOAT_FAILED_UNPACKED	(BFLOAT_EXPONENT_MAX - 0)
 #define BFLOAT_FAILED_PREV	(BFLOAT_EXPONENT_MAX - 1)
@@ -292,10 +287,27 @@ static void bch_btree_node_iter_next_check(struct btree_node_iter *iter,
 #define KEY_WORDS		BITS_TO_LONGS(1 << BKEY_EXPONENT_BITS)
 
 struct bkey_float {
-	unsigned	exponent:BKEY_EXPONENT_BITS;
-	unsigned	m:BKEY_MID_BITS;
-	unsigned	mantissa:BKEY_MANTISSA_BITS;
+	u8		exponent;
+	u8		key_offset;
+	union {
+		u32	mantissa32;
+	struct {
+		u16	mantissa16;
+		u16	_pad;
+	};
+	};
 } __packed;
+
+#define BFLOAT_32BIT_NR		32U
+
+static unsigned bkey_float_byte_offset(unsigned idx)
+{
+	int d = (idx - BFLOAT_32BIT_NR) << 1;
+
+	d &= ~(d >> 31);
+
+	return idx * 6 - d;
+}
 
 struct ro_aux_tree {
 	struct bkey_float	_d[0];
@@ -331,7 +343,7 @@ static inline size_t btree_keys_cachelines(struct btree_keys *b)
 
 static inline size_t btree_aux_data_bytes(struct btree_keys *b)
 {
-	return btree_keys_cachelines(b) * sizeof(struct bkey_float) * 2;
+	return btree_keys_cachelines(b) * 8;
 }
 
 static inline size_t btree_aux_data_u64s(struct btree_keys *b)
@@ -348,8 +360,8 @@ static unsigned bset_aux_tree_buf_end(const struct bset_tree *t)
 		return t->aux_data_offset;
 	case BSET_RO_AUX_TREE:
 		return t->aux_data_offset +
-			DIV_ROUND_UP((sizeof(struct bkey_float) +
-				      sizeof(u8)) * t->size, 8);
+			DIV_ROUND_UP(bkey_float_byte_offset(t->size) +
+				     sizeof(u8) * t->size, 8);
 	case BSET_RW_AUX_TREE:
 		return t->aux_data_offset +
 			DIV_ROUND_UP(sizeof(u8) * t->size, 8);
@@ -385,13 +397,13 @@ static u8 *ro_aux_tree_prev(const struct btree_keys *b,
 {
 	EBUG_ON(bset_aux_tree_type(t) != BSET_RO_AUX_TREE);
 
-	return __aux_tree_base(b, t) + t->size * sizeof(struct bkey_float);
+	return __aux_tree_base(b, t) + bkey_float_byte_offset(t->size);
 }
 
 static struct bkey_float *bkey_float_get(struct ro_aux_tree *b,
 					 unsigned idx)
 {
-	return &b->_d[idx];
+	return (void *) b + bkey_float_byte_offset(idx);
 }
 
 static struct bkey_float *bkey_float(const struct btree_keys *b,
@@ -652,14 +664,15 @@ static unsigned bkey_to_cacheline_offset(struct bset_tree *t,
 {
 	size_t m = __bkey_to_cacheline_offset(t, cacheline, k);
 
-	EBUG_ON(m > (1U << BKEY_MID_BITS) - 1);
+	EBUG_ON(m > BFLOAT_KEY_OFFSET_MAX);
 	return m;
 }
 
 static struct bkey_packed *tree_to_bkey(const struct btree_keys *b,
 					struct bset_tree *t, unsigned j)
 {
-	return cacheline_to_bkey(t, to_inorder(j, t), bkey_float(b, t, j)->m);
+	return cacheline_to_bkey(t, to_inorder(j, t),
+				 bkey_float(b, t, j)->key_offset);
 }
 
 static struct bkey_packed *tree_to_prev_bkey(struct btree_keys *b,
@@ -689,8 +702,24 @@ static struct bkey_packed *table_to_bkey(const struct btree_keys *b,
 	return cacheline_to_bkey(t, cacheline, rw_aux_tree(b, t)[cacheline]);
 }
 
-static inline unsigned bfloat_mantissa(const struct bkey_packed *k,
-				       const struct bkey_float *f)
+static inline unsigned bfloat_mantissa(const struct bkey_float *f,
+				       unsigned idx)
+{
+	return idx < BFLOAT_32BIT_NR ? f->mantissa32 : f->mantissa16;
+}
+
+static inline void bfloat_mantissa_set(struct bkey_float *f,
+				       unsigned idx, unsigned mantissa)
+{
+	if (idx < BFLOAT_32BIT_NR)
+		f->mantissa32 = mantissa;
+	else
+		f->mantissa16 = mantissa;
+}
+
+static inline unsigned bkey_mantissa(const struct bkey_packed *k,
+				     const struct bkey_float *f,
+				     unsigned idx)
 {
 	u64 v;
 
@@ -707,9 +736,9 @@ static inline unsigned bfloat_mantissa(const struct bkey_packed *k,
 #ifdef __LITTLE_ENDIAN
 	v >>= f->exponent & 7;
 #else
-	v >>= 64 - BKEY_MANTISSA_BITS - (f->exponent & 7);
+	v >>= 64 - (f->exponent & 7) - (idx < BFLOAT_32BIT_NR ? 32 : 16);
 #endif
-	return v & BKEY_MANTISSA_MASK;
+	return idx < BFLOAT_32BIT_NR ? (u32) v : (u16) v;
 }
 
 static void make_bfloat(struct btree_keys *b,
@@ -718,6 +747,8 @@ static void make_bfloat(struct btree_keys *b,
 	struct bkey_float *f = bkey_float(b, t, j);
 	struct bkey_packed *m = tree_to_bkey(b, t, j);
 	struct bkey_packed *p = tree_to_prev_bkey(b, t, j);
+	unsigned bits = j < BFLOAT_32BIT_NR ? 32 : 16;
+	unsigned mantissa;
 
 	struct bkey_packed *l = is_power_of_2(j)
 		? t->data->start
@@ -753,8 +784,7 @@ static void make_bfloat(struct btree_keys *b,
 	 * Note that this may be negative - we may be running off the low end
 	 * of the key: we handle this later:
 	 */
-	exponent = (int) bkey_greatest_differing_bit(b, l, r) -
-		(BKEY_MANTISSA_BITS - 1);
+	exponent = (int) bkey_greatest_differing_bit(b, l, r) - (bits - 1);
 
 	/*
 	 * Then we calculate the actual shift value, from the start of the key
@@ -763,26 +793,28 @@ static void make_bfloat(struct btree_keys *b,
 #ifdef __LITTLE_ENDIAN
 	shift = (int) (b->format.key_u64s * 64 - b->nr_key_bits) + exponent;
 
-	EBUG_ON(shift + BKEY_MANTISSA_BITS > b->format.key_u64s * 64);
+	EBUG_ON(shift + bits > b->format.key_u64s * 64);
 #else
 	shift = high_bit_offset +
 		b->nr_key_bits -
 		exponent -
-		BKEY_MANTISSA_BITS;
+		bits;
 
 	EBUG_ON(shift < KEY_PACKED_BITS_START);
 #endif
 	EBUG_ON(shift < 0 || shift >= BFLOAT_FAILED);
 
 	f->exponent = shift;
-	f->mantissa = bfloat_mantissa(m, f);
+	mantissa = bkey_mantissa(m, f, j);
 
 	/*
 	 * If we've got garbage bits, set them to all 1s - it's legal for the
 	 * bfloat to compare larger than the original key, but not smaller:
 	 */
 	if (exponent < 0)
-		f->mantissa |= ~(~0U << -exponent);
+		mantissa |= ~(~0U << -exponent);
+
+	bfloat_mantissa_set(f, j, mantissa);
 
 	/*
 	 * The bfloat must be able to tell its key apart from the previous key -
@@ -791,7 +823,7 @@ static void make_bfloat(struct btree_keys *b,
 	 * we aren't required to return a specific one:
 	 */
 	if (exponent > 0 &&
-	    f->mantissa == bfloat_mantissa(p, f) &&
+	    bfloat_mantissa(f, j) == bkey_mantissa(p, f, j) &&
 	    bkey_cmp_packed(b, p, m)) {
 		f->exponent = BFLOAT_FAILED_PREV;
 		return;
@@ -803,10 +835,15 @@ static void make_bfloat(struct btree_keys *b,
 	 * increment it:
 	 */
 	if (exponent > (int) bkey_ffs(b, m)) {
-		if (f->mantissa == BKEY_MANTISSA_MASK)
+		if (j < BFLOAT_32BIT_NR
+		    ? f->mantissa32 == U32_MAX
+		    : f->mantissa16 == U16_MAX)
 			f->exponent = BFLOAT_FAILED_OVERFLOW;
 
-		f->mantissa++;
+		if (j < BFLOAT_32BIT_NR)
+			f->mantissa32++;
+		else
+			f->mantissa16++;
 	}
 }
 
@@ -820,9 +857,14 @@ static unsigned __bset_tree_capacity(struct btree_keys *b, struct bset_tree *t)
 
 static unsigned bset_ro_tree_capacity(struct btree_keys *b, struct bset_tree *t)
 {
+	unsigned bytes = __bset_tree_capacity(b, t);
 
-	return __bset_tree_capacity(b, t) /
-		(sizeof(struct bkey_float) + sizeof(u8));
+	if (bytes < 7 * BFLOAT_32BIT_NR)
+		return bytes / 7;
+
+	bytes -= 7 * BFLOAT_32BIT_NR;
+
+	return BFLOAT_32BIT_NR + bytes / 5;
 }
 
 static unsigned bset_rw_tree_capacity(struct btree_keys *b, struct bset_tree *t)
@@ -889,7 +931,7 @@ retry:
 		}
 
 		ro_aux_tree_prev(b, t)[j] = prev->u64s;
-		bkey_float(b, t, j)->m =
+		bkey_float(b, t, j)->key_offset =
 			bkey_to_cacheline_offset(t, cacheline++, k);
 
 		BUG_ON(tree_to_prev_bkey(b, t, j) != prev);
@@ -1323,8 +1365,8 @@ static struct bkey_packed *bset_search_tree(const struct btree_keys *b,
 
 		if (packed_search &&
 		    likely(f->exponent < BFLOAT_FAILED))
-			n = n * 2 + (f->mantissa <
-				     bfloat_mantissa(packed_search, f));
+			n = n * 2 + (bfloat_mantissa(f, n) <
+				     bkey_mantissa(packed_search, f, n));
 		else
 			n = n * 2 + bset_search_tree_slowpath(b, t,
 						&search, packed_search, n);
@@ -1337,12 +1379,12 @@ static struct bkey_packed *bset_search_tree(const struct btree_keys *b,
 	 * we recursed left or recursed right.
 	 */
 	if (n & 1) {
-		return cacheline_to_bkey(t, inorder, f->m);
+		return cacheline_to_bkey(t, inorder, f->key_offset);
 	} else {
 		if (--inorder) {
 			n = inorder_prev(n >> 1, t->size);
 			f = bkey_float_get(base, n);
-			return cacheline_to_bkey(t, inorder, f->m);
+			return cacheline_to_bkey(t, inorder, f->key_offset);
 		} else
 			return t->data->start;
 	}
