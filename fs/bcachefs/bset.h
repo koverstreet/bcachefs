@@ -163,17 +163,7 @@ struct bset_tree {
 	/* function of size - precalculated for to_inorder() */
 	u16			extra;
 
-	u16			tree_offset;
-
-	/*
-	 * The nodes in the bset tree point to specific keys - this
-	 * array holds the sizes of the previous key.
-	 *
-	 * Conceptually it's a member of struct bkey_float, but we want
-	 * to keep bkey_float to 4 bytes and prev isn't used in the fast
-	 * path.
-	 */
-	u16			prev_offset;
+	u16			aux_data_offset;
 
 	/* copy of the last key in the set */
 	struct bkey_packed	end;
@@ -193,7 +183,7 @@ enum bset_aux_tree_type {
 #define BSET_NO_AUX_TREE_VAL	(U16_MAX)
 #define BSET_RW_AUX_TREE_VAL	(U16_MAX - 1)
 
-static inline enum bset_aux_tree_type bset_aux_tree_type(struct bset_tree *t)
+static inline enum bset_aux_tree_type bset_aux_tree_type(const struct bset_tree *t)
 {
 	switch (t->extra) {
 	case BSET_NO_AUX_TREE_VAL:
@@ -341,8 +331,7 @@ static inline void bch_bset_set_no_aux_tree(struct btree_keys *b,
 	for (; t < b->set + ARRAY_SIZE(b->set); t++) {
 		t->size = 0;
 		t->extra = BSET_NO_AUX_TREE_VAL;
-		t->tree_offset = U16_MAX;
-		t->prev_offset = U16_MAX;
+		t->aux_data_offset = U16_MAX;
 	}
 }
 
