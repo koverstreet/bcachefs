@@ -144,10 +144,8 @@
  * first key in that range of bytes again.
  */
 
-struct btree_keys;
 struct btree_node_iter;
 struct btree_node_iter_set;
-struct bkey_float;
 
 #define MAX_BSETS		3U
 
@@ -160,14 +158,12 @@ struct bset_tree {
 	 */
 
 	/* size of the binary tree and prev array */
-	unsigned		size;
+	u16			size;
 
 	/* function of size - precalculated for to_inorder() */
-	unsigned		extra;
+	u16			extra;
 
-	/* copy of the last key in the set */
-	struct bkey_packed	end;
-	struct bkey_float	*tree;
+	u16			tree_offset;
 
 	/*
 	 * The nodes in the bset tree point to specific keys - this
@@ -177,7 +173,10 @@ struct bset_tree {
 	 * to keep bkey_float to 4 bytes and prev isn't used in the fast
 	 * path.
 	 */
-	u8			*prev;
+	u16			prev_offset;
+
+	/* copy of the last key in the set */
+	struct bkey_packed	end;
 
 	/* The actual btree node, with pointers to each sorted set */
 	struct bset		*data;
@@ -191,8 +190,8 @@ enum bset_aux_tree_type {
 
 #define BSET_TREE_NR_TYPES	3
 
-#define BSET_NO_AUX_TREE_VAL	(UINT_MAX)
-#define BSET_RW_AUX_TREE_VAL	(UINT_MAX - 1)
+#define BSET_NO_AUX_TREE_VAL	(U16_MAX)
+#define BSET_RW_AUX_TREE_VAL	(U16_MAX - 1)
 
 static inline enum bset_aux_tree_type bset_aux_tree_type(struct bset_tree *t)
 {
@@ -342,10 +341,9 @@ static inline void bch_bset_set_no_aux_tree(struct btree_keys *b,
 	for (; t < b->set + ARRAY_SIZE(b->set); t++) {
 		t->size = 0;
 		t->extra = BSET_NO_AUX_TREE_VAL;
-		t->tree = NULL;
-		t->prev = NULL;
+		t->tree_offset = U16_MAX;
+		t->prev_offset = U16_MAX;
 	}
-
 }
 
 static inline void btree_node_set_format(struct btree_keys *b,
@@ -469,8 +467,10 @@ static inline struct bkey_packed *bset_bkey_idx(struct bset *i, unsigned idx)
 }
 
 struct bset_tree *bch_bkey_to_bset(struct btree_keys *, struct bkey_packed *);
-struct bkey_packed *bkey_prev_all(struct bset_tree *, struct bkey_packed *);
-struct bkey_packed *bkey_prev(struct bset_tree *, struct bkey_packed *);
+struct bkey_packed *bkey_prev_all(struct btree_keys *, struct bset_tree *,
+				  struct bkey_packed *);
+struct bkey_packed *bkey_prev(struct btree_keys *, struct bset_tree *,
+			      struct bkey_packed *);
 
 enum bch_extent_overlap {
 	BCH_EXTENT_OVERLAP_ALL		= 0,

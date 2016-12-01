@@ -675,10 +675,10 @@ retry:
 		}
 	}
 
-	for_each_bset(&b->keys, t) {
-		prefetch(t->tree);
-		prefetch(t->data);
-	}
+	prefetch(b->keys.aux_data);
+
+	for_each_bset(&b->keys, t)
+		prefetch((u64 *) b->keys.aux_data + t->tree_offset);
 
 	/* avoid atomic set bit if it's not needed: */
 	if (btree_node_accessed(b))

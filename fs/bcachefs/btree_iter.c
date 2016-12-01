@@ -412,7 +412,7 @@ found:
 			if (bch_bkey_to_bset(&b->keys, where) == t)
 				continue;
 
-			k = bkey_prev_all(t,
+			k = bkey_prev_all(&b->keys, t,
 				bch_btree_node_iter_bset_pos(node_iter,
 							     &b->keys, t->data));
 			if (k &&

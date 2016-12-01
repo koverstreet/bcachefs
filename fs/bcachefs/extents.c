@@ -1083,7 +1083,7 @@ static void extent_bset_insert(struct cache_set *c, struct btree_iter *iter,
 	struct bset_tree *t = bset_tree_last(&b->keys);
 	struct bkey_packed *where =
 		bch_btree_node_iter_bset_pos(node_iter, &b->keys, t->data);
-	struct bkey_packed *prev = bkey_prev(t, where);
+	struct bkey_packed *prev = bkey_prev(&b->keys, t, where);
 	struct bkey_packed *next_live_key = where;
 	unsigned clobber_u64s;
 
@@ -2380,7 +2380,7 @@ do_fixup:
 		k = bch_btree_node_iter_bset_pos(node_iter, b, t->data);
 
 		if (k == bset_bkey_last(t->data))
-			k = bkey_prev_all(t, k);
+			k = bkey_prev_all(b, t, k);
 
 		if (back_merge) {
 			/*
@@ -2392,7 +2392,7 @@ do_fixup:
 			     k &&
 			     (uk = bkey_unpack_key(b, k),
 			      bkey_cmp(uk.p, bkey_start_pos(m)) > 0);
-			     k = bkey_prev_all(t, k)) {
+			     k = bkey_prev_all(b, t, k)) {
 				if (bkey_cmp(uk.p, m->p) >= 0)
 					continue;
 
