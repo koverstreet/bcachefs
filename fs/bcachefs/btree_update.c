@@ -30,6 +30,8 @@ void __bch_btree_calc_format(struct bkey_format_state *s, struct btree *b)
 	struct bset_tree *t;
 	struct bkey uk;
 
+	bch_bkey_format_add_pos(s, b->data->min_key);
+
 	for_each_bset(b, t)
 		for (k = bset(b, t)->start;
 		     k != bset_bkey_last(bset(b, t));

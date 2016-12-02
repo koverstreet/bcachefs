@@ -754,26 +754,42 @@ static inline unsigned bkey_mantissa(const struct bkey_packed *k,
 	return idx < BFLOAT_32BIT_NR ? (u32) v : (u16) v;
 }
 
-static void make_bfloat(struct btree *b,
-			struct bset_tree *t, unsigned j)
+static void make_bfloat(struct btree *b, struct bset_tree *t,
+			unsigned j,
+			struct bkey_packed *min_key)
 {
+	struct bset *i = bset(b, t);
 	struct bkey_float *f = bkey_float(b, t, j);
 	struct bkey_packed *m = tree_to_bkey(b, t, j);
 	struct bkey_packed *p = tree_to_prev_bkey(b, t, j);
-	struct bset *i = bset(b, t);
+	struct bkey_packed *l, *r;
 	unsigned bits = j < BFLOAT_32BIT_NR ? 32 : 16;
 	unsigned mantissa;
-
-	struct bkey_packed *l = is_power_of_2(j)
-		? i->start
-		: tree_to_prev_bkey(b, t, j >> ffs(j));
-
-	struct bkey_packed *r = is_power_of_2(j + 1)
-		? bset_bkey_idx(i, le16_to_cpu(i->u64s) - t->end.u64s)
-		: tree_to_bkey(b, t, j >> (ffz(j) + 1));
 	int shift, exponent;
 
-	EBUG_ON(m < l || m > r);
+	if (is_power_of_2(j)) {
+		if (!min_key->u64s) {
+			if (!bkey_pack_pos(min_key, b->data->min_key, b)) {
+				struct bkey_i tmp;
+
+				bkey_init(&tmp.k);
+				tmp.k.p = b->data->min_key;
+				bkey_copy(min_key, &tmp);
+			}
+		}
+
+		l = min_key;
+	} else {
+		l = tree_to_prev_bkey(b, t, j >> ffs(j));
+
+		EBUG_ON(m < l);
+	}
+
+	r = is_power_of_2(j + 1)
+		? bset_bkey_idx(i, le16_to_cpu(i->u64s) - t->end.u64s)
+		: tree_to_bkey(b, t, j >> (ffz(j) + 1));
+
+	EBUG_ON(m > r);
 	EBUG_ON(bkey_next(p) != m);
 
 	/*
@@ -919,6 +935,7 @@ static void __build_ro_aux_tree(struct btree *b, struct bset_tree *t)
 {
 	struct bset *i = bset(b, t);
 	struct bkey_packed *prev = NULL, *k = i->start;
+	struct bkey_packed min_key = { .u64s = 0 };
 	unsigned j, cacheline = 1;
 
 	t->size = min(bkey_to_cacheline(b, t, bset_bkey_last(i)),
@@ -961,7 +978,7 @@ retry:
 	for (j = inorder_next(0, t->size);
 	     j;
 	     j = inorder_next(j, t->size))
-		make_bfloat(b, t, j);
+		make_bfloat(b, t, j, &min_key);
 }
 
 static void bset_alloc_tree(struct btree *b, struct bset_tree *t)
@@ -1110,22 +1127,26 @@ struct bkey_packed *bkey_prev(struct btree *b, struct bset_tree *t,
 void bch_bset_fix_invalidated_key(struct btree *b, struct bset_tree *t,
 				  struct bkey_packed *k)
 {
+	struct bkey_packed min_key;
 	unsigned inorder, j = 1;
 
 	if (bset_aux_tree_type(t) != BSET_RO_AUX_TREE)
 		return;
 
+	/* signal to make_bfloat() that min_key is uninitialized: */
+	min_key.u64s = 0;
+
 	inorder = bkey_to_cacheline(b, t, k);
 
 	if (k == bset(b, t)->start)
 		for (j = 1; j < t->size; j = j * 2)
-			make_bfloat(b, t, j);
+			make_bfloat(b, t, j, &min_key);
 
 	if (bkey_next(k) == bset_bkey_last(bset(b, t))) {
 		t->end = *k;
 
 		for (j = 1; j < t->size; j = j * 2 + 1)
-			make_bfloat(b, t, j);
+			make_bfloat(b, t, j, &min_key);
 	}
 
 	j = inorder_to_tree(inorder, t);
@@ -1134,11 +1155,11 @@ void bch_bset_fix_invalidated_key(struct btree *b, struct bset_tree *t,
 	    j < t->size &&
 	    k == tree_to_bkey(b, t, j)) {
 		/* Fix the auxiliary search tree node this key corresponds to */
-		make_bfloat(b, t, j);
+		make_bfloat(b, t, j, &min_key);
 
 		/* Children for which this key is the right side boundary */
 		for (j = j * 2; j < t->size; j = j * 2 + 1)
-			make_bfloat(b, t, j);
+			make_bfloat(b, t, j, &min_key);
 	}
 
 	j = inorder_to_tree(inorder + 1, t);
@@ -1146,11 +1167,11 @@ void bch_bset_fix_invalidated_key(struct btree *b, struct bset_tree *t,
 	if (j &&
 	    j < t->size &&
 	    k == tree_to_prev_bkey(b, t, j)) {
-		make_bfloat(b, t, j);
+		make_bfloat(b, t, j, &min_key);
 
 		/* Children for which this key is the left side boundary */
 		for (j = j * 2 + 1; j < t->size; j = j * 2)
-			make_bfloat(b, t, j);
+			make_bfloat(b, t, j, &min_key);
 	}
 }
 EXPORT_SYMBOL(bch_bset_fix_invalidated_key);
@@ -1448,15 +1469,10 @@ static struct bkey_packed *bch_bset_search(struct btree *b,
 		 * start and end - handle that here:
 		 */
 
-		if (unlikely(bkey_cmp_p_or_unp(b, &t->end,
-					       packed_search, &search) < 0))
+		if (bkey_cmp_p_or_unp(b, &t->end, packed_search, &search) < 0)
 			return bset_bkey_last(bset(b, t));
 
-		if (unlikely(bkey_cmp_p_or_unp(b, bset(b, t)->start,
-					       packed_search, &search) >= 0))
-			m = bset(b, t)->start;
-		else
-			m = bset_search_tree(b, t, search, lossy_packed_search);
+		m = bset_search_tree(b, t, search, lossy_packed_search);
 		break;
 	}
 
@@ -1574,7 +1590,7 @@ void bch_btree_node_iter_init(struct btree_node_iter *iter,
 	struct bset_tree *t;
 	struct bkey_packed p, *packed_search;
 
-	BUG_ON(b->nsets > MAX_BSETS);
+	EBUG_ON(bkey_cmp(search, b->data->min_key) < 0);
 
 	bset_aux_tree_verify(b);
 

@@ -561,23 +561,25 @@ static inline void __btree_iter_init(struct btree_iter *iter,
 		bch_btree_node_iter_peek(&iter->node_iters[b->level], b);
 }
 
+static inline bool btree_iter_pos_in_node(struct btree_iter *iter,
+					  struct btree *b)
+{
+	return iter->btree_id == b->btree_id &&
+		bkey_cmp(iter->pos, b->data->min_key) >= 0 &&
+		btree_iter_pos_cmp(iter->pos, &b->key.k, iter->is_extents);
+}
+
 static inline void btree_iter_node_set(struct btree_iter *iter,
 				       struct btree *b)
 {
 	btree_iter_verify_new_node(iter, b);
 
-	BUG_ON(b->lock.state.seq & 1);
+	EBUG_ON(!btree_iter_pos_in_node(iter, b));
+	EBUG_ON(b->lock.state.seq & 1);
 
 	iter->lock_seq[b->level] = b->lock.state.seq;
 	iter->nodes[b->level] = b;
 	__btree_iter_init(iter, b);
-}
-
-static bool btree_iter_pos_in_node(struct btree_iter *iter, struct btree *b)
-{
-	return iter->btree_id == b->btree_id &&
-		bkey_cmp(iter->pos, b->data->min_key) >= 0 &&
-		btree_iter_pos_cmp(iter->pos, &b->key.k, iter->is_extents);
 }
 
 /*
@@ -945,7 +947,11 @@ struct btree *bch_btree_iter_next_node(struct btree_iter *iter, unsigned depth)
 
 	if (bkey_cmp(iter->pos, b->key.k.p) < 0) {
 		/* Haven't gotten to the end of the parent node: */
-		iter->pos	= bkey_successor(iter->pos);
+
+		/* ick: */
+		iter->pos	= iter->btree_id == BTREE_ID_INODES
+			? btree_type_successor(iter->btree_id, iter->pos)
+			: bkey_successor(iter->pos);
 		iter->level	= depth;
 
 		ret = bch_btree_iter_traverse(iter);
