@@ -31,8 +31,8 @@ void __bch_btree_calc_format(struct bkey_format_state *s, struct btree *b)
 	struct bkey uk;
 
 	for_each_bset(b, t)
-		for (k = t->data->start;
-		     k != bset_bkey_last(t->data);
+		for (k = bset(b, t)->start;
+		     k != bset_bkey_last(bset(b, t));
 		     k = bkey_next(k))
 			if (!bkey_whiteout(k)) {
 				uk = bkey_unpack_key(b, k);
@@ -73,12 +73,12 @@ static size_t btree_node_u64s_with_format(struct btree *b,
  * This assumes all keys can pack with the new format -- it just checks if
  * the re-packed keys would fit inside the node itself.
  */
-bool bch_btree_node_format_fits(struct btree *b, struct bkey_format *new_f)
+bool bch_btree_node_format_fits(struct cache_set *c, struct btree *b,
+				struct bkey_format *new_f)
 {
 	size_t u64s = btree_node_u64s_with_format(b, new_f);
 
-	return __set_bytes(b->data, u64s) <
-		PAGE_SIZE << b->page_order;
+	return __set_bytes(b->data, u64s) < btree_bytes(c);
 }
 
 /* Btree node freeing/allocation: */
@@ -342,7 +342,7 @@ struct btree *btree_node_alloc_replacement(struct cache_set *c,
 	 * The keys might expand with the new format - if they wouldn't fit in
 	 * the btree node anymore, use the old format for now:
 	 */
-	if (!bch_btree_node_format_fits(b, &new_f))
+	if (!bch_btree_node_format_fits(c, b, &new_f))
 		new_f = b->format;
 
 	return __btree_node_alloc_replacement(c, b, new_f, reserve);
@@ -681,7 +681,7 @@ bool bch_btree_bset_insert_key(struct btree_iter *iter,
 
 		t = bch_bkey_to_bset(b, k);
 
-		if (bset_unwritten(b, t->data) &&
+		if (bset_unwritten(b, bset(b, t)) &&
 		    bkey_val_u64s(&insert->k) == bkeyp_val_u64s(f, k)) {
 			BUG_ON(bkey_whiteout(k) != bkey_whiteout(&insert->k));
 
@@ -734,7 +734,7 @@ bool bch_btree_bset_insert_key(struct btree_iter *iter,
 	}
 
 	t = bset_tree_last(b);
-	k = bch_btree_node_iter_bset_pos(node_iter, b, t->data);
+	k = bch_btree_node_iter_bset_pos(node_iter, b, bset(b, t));
 	clobber_u64s = 0;
 overwrite:
 	bch_bset_insert(b, node_iter, k, insert, clobber_u64s);
@@ -1094,7 +1094,7 @@ void bch_btree_interior_update_will_free_node(struct cache_set *c,
 	 * in with keys that aren't in the journal anymore:
 	 */
 	for_each_bset(b, t)
-		as->journal_seq = max(as->journal_seq, t->data->journal_seq);
+		as->journal_seq = max(as->journal_seq, bset(b, t)->journal_seq);
 
 	/*
 	 * Does this node have unwritten data that has a pin on the journal?
@@ -1384,7 +1384,7 @@ static void btree_split_insert_keys(struct btree_iter *iter, struct btree *b,
 			p = bkey_next(p);
 
 	BUG_ON(b->nsets != 1 ||
-	       b->nr.live_u64s != le16_to_cpu(b->set->data->u64s));
+	       b->nr.live_u64s != le16_to_cpu(btree_bset_first(b)->u64s));
 
 	btree_node_interior_verify(b);
 }

@@ -31,7 +31,8 @@ struct btree_reserve {
 };
 
 void __bch_btree_calc_format(struct bkey_format_state *, struct btree *);
-bool bch_btree_node_format_fits(struct btree *, struct bkey_format *);
+bool bch_btree_node_format_fits(struct cache_set *c, struct btree *,
+				struct bkey_format *);
 
 /* Btree node freeing/allocation: */
 
@@ -277,7 +278,7 @@ static inline bool bch_btree_node_insert_fits(struct cache_set *c,
 static inline void unreserve_whiteout(struct btree *b, struct bset_tree *t,
 				      struct bkey_packed *k)
 {
-	if (bset_written(b, t->data)) {
+	if (bset_written(b, bset(b, t))) {
 		EBUG_ON(b->uncompacted_whiteout_u64s <
 			bkeyp_key_u64s(&b->format, k));
 		b->uncompacted_whiteout_u64s -=
@@ -288,7 +289,7 @@ static inline void unreserve_whiteout(struct btree *b, struct bset_tree *t,
 static inline void reserve_whiteout(struct btree *b, struct bset_tree *t,
 				    struct bkey_packed *k)
 {
-	if (bset_written(b, t->data)) {
+	if (bset_written(b, bset(b, t))) {
 		BUG_ON(!k->needs_whiteout);
 		b->uncompacted_whiteout_u64s +=
 			bkeyp_key_u64s(&b->format, k);

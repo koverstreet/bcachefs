@@ -440,8 +440,8 @@ static void recalc_packed_keys(struct btree *b)
 
 	BUG_ON(b->nsets != 1);
 
-	for (k = b->set[0].data->start;
-	     k != bset_bkey_last(b->set[0].data);
+	for (k = bset(b, &b->set[0])->start;
+	     k != bset_bkey_last(bset(b, &b->set[0]));
 	     k = bkey_next(k))
 		btree_keys_account_key_add(&b->nr, 0, k);
 }
@@ -503,7 +503,7 @@ static void bch_coalesce_nodes(struct btree *old_nodes[GC_MERGE_NODES],
 
 	/* Check if repacking would make any nodes too big to fit */
 	for (i = 0; i < nr_old_nodes; i++)
-		if (!bch_btree_node_format_fits(old_nodes[i], &new_format)) {
+		if (!bch_btree_node_format_fits(c, old_nodes[i], &new_format)) {
 			trace_bcache_btree_gc_coalesce_fail(c,
 					BTREE_GC_COALESCE_FAIL_FORMAT_FITS);
 			goto out;

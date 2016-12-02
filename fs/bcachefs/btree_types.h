@@ -44,13 +44,11 @@ struct bset_tree {
 	/* function of size - precalculated for to_inorder() */
 	u16			extra;
 
+	u16			data_offset;
 	u16			aux_data_offset;
 
 	/* copy of the last key in the set */
 	struct bkey_packed	end;
-
-	/* The actual btree node, with pointers to each sorted set */
-	struct bset		*data;
 };
 
 struct btree_write {
@@ -71,16 +69,8 @@ struct btree {
 	u16			written;
 	u8			level;
 	u8			btree_id;
-	u16			sib_u64s[2];
-	u16			whiteout_u64s;
-	u16			uncompacted_whiteout_u64s;
-
 	u8			nsets;
-	u8			page_order;
 	u8			nr_key_bits;
-	u8			unpack_fn_len;
-
-	struct btree_nr_keys	nr;
 
 	struct bkey_format	format;
 
@@ -95,6 +85,13 @@ struct btree {
 	 * set[0]->data points to the entire btree node as it exists on disk.
 	 */
 	struct bset_tree	set[MAX_BSETS];
+
+	struct btree_nr_keys	nr;
+	u16			sib_u64s[2];
+	u16			whiteout_u64s;
+	u16			uncompacted_whiteout_u64s;
+	u8			page_order;
+	u8			unpack_fn_len;
 
 	/*
 	 * XXX: add a delete sequence number, so when btree_node_relock() fails
@@ -164,20 +161,34 @@ static inline struct btree_write *btree_prev_write(struct btree *b)
 	return b->writes + (btree_node_write_idx(b) ^ 1);
 }
 
-static inline struct bset *btree_bset_first(struct btree *b)
-{
-	return b->set->data;
-}
-
 static inline struct bset_tree *bset_tree_last(struct btree *b)
 {
 	EBUG_ON(!b->nsets);
 	return b->set + b->nsets - 1;
 }
 
+static inline struct bset *bset(const struct btree *b,
+				const struct bset_tree *t)
+{
+	return (void *) b->data + t->data_offset * sizeof(u64);
+}
+
+static inline void set_btree_bset(struct btree *b, struct bset_tree *t,
+				  const struct bset *i)
+{
+	t->data_offset = (u64 *) i - (u64 *) b->data;
+
+	EBUG_ON(bset(b, t) != i);
+}
+
+static inline struct bset *btree_bset_first(struct btree *b)
+{
+	return bset(b, b->set);
+}
+
 static inline struct bset *btree_bset_last(struct btree *b)
 {
-	return bset_tree_last(b)->data;
+	return bset(b, bset_tree_last(b));
 }
 
 static inline unsigned bset_byte_offset(struct btree *b, void *i)

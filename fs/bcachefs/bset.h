@@ -295,7 +295,7 @@ static inline void btree_node_set_format(struct btree *b,
 static inline struct bset *bset_next_set(struct btree *b,
 					 unsigned block_bytes)
 {
-	struct bset *i = bset_tree_last(b)->data;
+	struct bset *i = btree_bset_last(b);
 
 	EBUG_ON(!is_power_of_2(block_bytes));
 
@@ -454,7 +454,7 @@ static inline bool bch_btree_node_iter_end(struct btree_node_iter *iter)
 static inline u16
 __btree_node_key_to_offset(struct btree *b, const struct bkey_packed *k)
 {
-	size_t ret = (u64 *) k - (u64 *) b->set->data;
+	size_t ret = (u64 *) k - (u64 *) b->data - 1;
 
 	EBUG_ON(ret > U16_MAX);
 	return ret;
@@ -463,7 +463,7 @@ __btree_node_key_to_offset(struct btree *b, const struct bkey_packed *k)
 static inline struct bkey_packed *
 __btree_node_offset_to_key(struct btree *b, u16 k)
 {
-	return (void *) ((u64 *) b->set->data + k);
+	return (void *) ((u64 *) b->data + k + 1);
 }
 
 static inline int __btree_node_iter_cmp(bool is_extents,

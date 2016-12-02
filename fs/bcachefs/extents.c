@@ -1082,7 +1082,7 @@ static void extent_bset_insert(struct cache_set *c, struct btree_iter *iter,
 	struct btree_node_iter *node_iter = &iter->node_iters[0];
 	struct bset_tree *t = bset_tree_last(b);
 	struct bkey_packed *where =
-		bch_btree_node_iter_bset_pos(node_iter, b, t->data);
+		bch_btree_node_iter_bset_pos(node_iter, b, bset(b, t));
 	struct bkey_packed *prev = bkey_prev(b, t, where);
 	struct bkey_packed *next_live_key = where;
 	unsigned clobber_u64s;
@@ -1090,7 +1090,7 @@ static void extent_bset_insert(struct cache_set *c, struct btree_iter *iter,
 	if (prev)
 		where = bkey_next(prev);
 
-	while (next_live_key != bset_bkey_last(t->data) &&
+	while (next_live_key != bset_bkey_last(bset(b, t)) &&
 	       bkey_deleted(next_live_key))
 		next_live_key = bkey_next(next_live_key);
 
@@ -1104,7 +1104,7 @@ static void extent_bset_insert(struct cache_set *c, struct btree_iter *iter,
 	    bch_extent_merge_inline(c, iter, prev, bkey_to_packed(insert), true))
 		goto drop_deleted_keys;
 
-	if (next_live_key != bset_bkey_last(t->data) &&
+	if (next_live_key != bset_bkey_last(bset(b, t)) &&
 	    bch_extent_merge_inline(c, iter, bkey_to_packed(insert),
 				    next_live_key, false))
 		goto drop_deleted_keys;
@@ -1376,7 +1376,7 @@ extent_squash(struct extent_insert_state *s, struct bkey_i *insert,
 		 * what k points to)
 		 */
 		bkey_reassemble(&split.k, k.s_c);
-		split.k.k.needs_whiteout |= bset_written(b, t->data);
+		split.k.k.needs_whiteout |= bset_written(b, bset(b, t));
 
 		bch_cut_back(bkey_start_pos(&insert->k), &split.k.k);
 		BUG_ON(bkey_deleted(&split.k.k));
@@ -1458,7 +1458,7 @@ bch_delete_fixup_extent(struct extent_insert_state *s)
 			_k->type = KEY_TYPE_DISCARD;
 			reserve_whiteout(b, t, _k);
 		} else if (k.k->needs_whiteout ||
-			   bset_written(b, t->data)) {
+			   bset_written(b, bset(b, t))) {
 			struct bkey_i discard = *insert;
 
 			switch (overlap) {
@@ -1625,7 +1625,7 @@ bch_insert_fixup_extent(struct btree_insert *trans,
 		}
 
 		if (k.k->size &&
-		    (k.k->needs_whiteout || bset_written(b, t->data)))
+		    (k.k->needs_whiteout || bset_written(b, bset(b, t))))
 			insert->k->k.needs_whiteout = true;
 
 		if (overlap == BCH_EXTENT_OVERLAP_ALL &&
@@ -2367,19 +2367,21 @@ static bool extent_merge_do_overlapping(struct btree_iter *iter,
 	 */
 do_fixup:
 	for_each_bset(b, t) {
+		struct bset *i = bset(b, t);
+
 		if (t == bset_tree_last(b))
 			break;
 
-		if (!t->data->u64s)
+		if (!i->u64s)
 			continue;
 
 		/*
 		 * if we don't find this bset in the iterator we already got to
 		 * the end of that bset, so start searching from the end.
 		 */
-		k = bch_btree_node_iter_bset_pos(node_iter, b, t->data);
+		k = bch_btree_node_iter_bset_pos(node_iter, b, i);
 
-		if (k == bset_bkey_last(t->data))
+		if (k == bset_bkey_last(i))
 			k = bkey_prev_all(b, t, k);
 
 		if (back_merge) {
@@ -2403,7 +2405,7 @@ do_fixup:
 		} else {
 			/* Front merge - walk forwards */
 			for (;
-			     k != bset_bkey_last(t->data) &&
+			     k != bset_bkey_last(i) &&
 			     (uk = bkey_unpack_key(b, k),
 			      bkey_cmp(uk.p, m->p) < 0);
 			     k = bkey_next(k)) {

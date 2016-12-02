@@ -33,7 +33,7 @@ static inline bool bch_maybe_compact_whiteouts(struct cache_set *c, struct btree
 
 	for_each_bset(b, t) {
 		unsigned live_u64s = b->nr.bset_u64s[t - b->set];
-		unsigned bset_u64s = le16_to_cpu(t->data->u64s);
+		unsigned bset_u64s = le16_to_cpu(bset(b, t)->u64s);
 
 		if (live_u64s * 4 < bset_u64s * 3)
 			goto compact;

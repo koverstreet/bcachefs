@@ -46,6 +46,11 @@ static inline size_t btree_pages(struct cache_set *c)
 	return c->sb.btree_node_size >> (PAGE_SHIFT - 9);
 }
 
+static inline size_t btree_page_order(struct cache_set *c)
+{
+	return ilog2(btree_pages(c));
+}
+
 static inline unsigned btree_blocks(struct cache_set *c)
 {
 	return c->sb.btree_node_size >> c->block_bits;

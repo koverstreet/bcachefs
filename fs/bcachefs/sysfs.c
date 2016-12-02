@@ -540,7 +540,7 @@ static size_t bch_cache_size(struct cache_set *c)
 
 	mutex_lock(&c->btree_cache_lock);
 	list_for_each_entry(b, &c->btree_cache, list)
-		ret += 1 << (b->page_order + PAGE_SHIFT);
+		ret += btree_bytes(c);
 
 	mutex_unlock(&c->btree_cache_lock);
 	return ret;

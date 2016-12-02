@@ -35,18 +35,18 @@ void bch_recalc_btree_reserve(struct cache_set *c)
 #define mca_can_free(c)						\
 	max_t(int, 0, c->btree_cache_used - c->btree_cache_reserve)
 
-static void __mca_data_free(struct btree *b)
+static void __mca_data_free(struct cache_set *c, struct btree *b)
 {
 	EBUG_ON(btree_node_write_in_flight(b));
 
-	free_pages((unsigned long) b->data, b->page_order);
+	free_pages((unsigned long) b->data, btree_page_order(c));
 	b->data = NULL;
 	bch_btree_keys_free(b);
 }
 
 static void mca_data_free(struct cache_set *c, struct btree *b)
 {
-	__mca_data_free(b);
+	__mca_data_free(c, b);
 	c->btree_cache_used--;
 	list_move(&b->list, &c->btree_cache_freed);
 }
@@ -100,7 +100,6 @@ void mca_hash_remove(struct cache_set *c, struct btree *b)
 	BUG_ON(btree_node_dirty(b));
 
 	b->nsets = 0;
-	b->set[0].data = NULL;
 
 	rhashtable_remove_fast(&c->btree_cache_table, &b->hash,
 			       bch_btree_cache_params);
@@ -516,7 +515,6 @@ out:
 	b->flags		= 0;
 	b->written		= 0;
 	b->nsets		= 0;
-	b->set[0].data		= NULL;
 	b->sib_u64s[0]		= 0;
 	b->sib_u64s[1]		= 0;
 	b->whiteout_u64s	= 0;

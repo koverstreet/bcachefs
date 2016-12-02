@@ -343,7 +343,7 @@ static void __bch_btree_node_iter_fix(struct btree_iter *iter,
 				      unsigned clobber_u64s,
 				      unsigned new_u64s)
 {
-	const struct bkey_packed *end = bset_bkey_last(t->data);
+	const struct bkey_packed *end = bset_bkey_last(bset(b, t));
 	struct btree_node_iter_set *set;
 	unsigned offset = __btree_node_key_to_offset(b, where);
 	int shift = new_u64s - clobber_u64s;
@@ -414,7 +414,7 @@ found:
 
 			k = bkey_prev_all(b, t,
 				bch_btree_node_iter_bset_pos(node_iter,
-							     b, t->data));
+							     b, bset(b, t)));
 			if (k &&
 			    __btree_node_iter_cmp(node_iter, b,
 						  k, where) > 0) {
@@ -430,7 +430,7 @@ found:
 					}
 
 				bch_btree_node_iter_push(node_iter, b, k,
-						bset_bkey_last(t->data));
+						bset_bkey_last(bset(b, t)));
 			}
 next_bset:
 			t = t;
