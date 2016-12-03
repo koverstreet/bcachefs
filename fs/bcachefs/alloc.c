@@ -1810,7 +1810,11 @@ void bch_open_buckets_init(struct cache_set *c)
 	bch_prio_timer_init(c, READ);
 	bch_prio_timer_init(c, WRITE);
 
-	for (i = 0; i < ARRAY_SIZE(c->open_buckets); i++) {
+	/* open bucket 0 is a sentinal NULL: */
+	mutex_init(&c->open_buckets[0].lock);
+	INIT_LIST_HEAD(&c->open_buckets[0].list);
+
+	for (i = 1; i < ARRAY_SIZE(c->open_buckets); i++) {
 		mutex_init(&c->open_buckets[i].lock);
 		c->open_buckets_nr_free++;
 		list_add(&c->open_buckets[i].list, &c->open_buckets_free);

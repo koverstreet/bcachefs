@@ -117,7 +117,7 @@ struct bch_write_op {
 	struct write_point	*wp;
 
 	union {
-	struct open_bucket	*open_buckets[2];
+	u8			open_buckets[16];
 	struct {
 	struct bch_write_op	*next;
 	unsigned long		expires;

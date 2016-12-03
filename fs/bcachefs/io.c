@@ -233,6 +233,7 @@ static int bch_write_index_default(struct bch_write_op *op)
 static void bch_write_index(struct closure *cl)
 {
 	struct bch_write_op *op = container_of(cl, struct bch_write_op, cl);
+	struct cache_set *c = op->c;
 	struct keylist *keys = &op->insert_keys;
 	unsigned i;
 
@@ -247,25 +248,27 @@ static void bch_write_index(struct closure *cl)
 		op->written += sectors_start - keylist_sectors(keys);
 
 		if (ret) {
-			__bcache_io_error(op->c, "btree IO error %i", ret);
+			__bcache_io_error(c, "btree IO error %i", ret);
 			op->error = ret;
 		}
 	}
 
 	for (i = 0; i < ARRAY_SIZE(op->open_buckets); i++)
 		if (op->open_buckets[i]) {
-			bch_open_bucket_put(op->c, op->open_buckets[i]);
-			op->open_buckets[i] = NULL;
+			bch_open_bucket_put(c,
+					    c->open_buckets +
+					    op->open_buckets[i]);
+			op->open_buckets[i] = 0;
 		}
 
 	if (!(op->flags & BCH_WRITE_DONE))
 		continue_at(cl, __bch_write, op->io_wq);
 
 	if (!op->error && (op->flags & BCH_WRITE_FLUSH)) {
-		bch_journal_flush_seq_async(&op->c->journal,
+		bch_journal_flush_seq_async(&c->journal,
 					    *op_journal_seq(op),
 					    cl);
-		continue_at(cl, bch_write_done, op->c->wq);
+		continue_at(cl, bch_write_done, c->wq);
 	} else {
 		continue_at_nobarrier(cl, bch_write_done, NULL);
 	}
@@ -515,6 +518,7 @@ static int bch_write_extent(struct bch_write_op *op,
 static void __bch_write(struct closure *cl)
 {
 	struct bch_write_op *op = container_of(cl, struct bch_write_op, cl);
+	struct cache_set *c = op->c;
 	struct bio *bio = &op->bio->bio;
 	unsigned open_bucket_nr = 0;
 	struct open_bucket *b;
@@ -526,7 +530,7 @@ static void __bch_write(struct closure *cl)
 		op->flags |= BCH_WRITE_DONE;
 		bch_write_discard(cl);
 		bio_put(bio);
-		continue_at(cl, bch_write_done, op->c->wq);
+		continue_at(cl, bch_write_done, c->wq);
 	}
 
 	/*
@@ -542,14 +546,14 @@ static void __bch_write(struct closure *cl)
 		EBUG_ON(!bio_sectors(bio));
 
 		if (open_bucket_nr == ARRAY_SIZE(op->open_buckets))
-			continue_at(cl, bch_write_index, op->c->wq);
+			continue_at(cl, bch_write_index, c->wq);
 
 		/* for the device pointers and 1 for the chksum */
 		if (bch_keylist_realloc(&op->insert_keys,
 					op->inline_keys,
 					ARRAY_SIZE(op->inline_keys),
 					BKEY_EXTENT_U64s_MAX))
-			continue_at(cl, bch_write_index, op->c->wq);
+			continue_at(cl, bch_write_index, c->wq);
 
 		k = op->insert_keys.top;
 		bkey_extent_init(k);
@@ -559,7 +563,7 @@ static void __bch_write(struct closure *cl)
 			       ? op->size
 			       : bio_sectors(bio));
 
-		b = bch_alloc_sectors_start(op->c, op->wp,
+		b = bch_alloc_sectors_start(c, op->wp,
 			bkey_i_to_extent(k), op->nr_replicas,
 			op->alloc_reserve,
 			(op->flags & BCH_WRITE_ALLOC_NOWAIT) ? NULL : cl);
@@ -577,7 +581,7 @@ static void __bch_write(struct closure *cl)
 			 * this case if open_bucket_nr > 1.
 			 */
 			if (!bch_keylist_empty(&op->insert_keys))
-				continue_at(cl, bch_write_index, op->c->wq);
+				continue_at(cl, bch_write_index, c->wq);
 
 			/*
 			 * If we've looped, we're running out of a workqueue -
@@ -599,7 +603,9 @@ static void __bch_write(struct closure *cl)
 			continue;
 		}
 
-		op->open_buckets[open_bucket_nr++] = b;
+		BUG_ON(b - c->open_buckets == 0 ||
+		       b - c->open_buckets > U8_MAX);
+		op->open_buckets[open_bucket_nr++] = b - c->open_buckets;
 
 		ret = bch_write_extent(op, b, bkey_i_to_extent(k), bio);
 		if (ret < 0)
@@ -610,7 +616,7 @@ static void __bch_write(struct closure *cl)
 		bkey_extent_set_cached(&k->k, (op->flags & BCH_WRITE_CACHED));
 
 		if (!(op->flags & BCH_WRITE_CACHED))
-			bch_check_mark_super(op->c, k, false);
+			bch_check_mark_super(c, k, false);
 
 		bch_keylist_push(&op->insert_keys);
 
@@ -618,7 +624,7 @@ static void __bch_write(struct closure *cl)
 	} while (ret);
 
 	op->flags |= BCH_WRITE_DONE;
-	continue_at(cl, bch_write_index, op->c->wq);
+	continue_at(cl, bch_write_index, c->wq);
 err:
 	if (op->flags & BCH_WRITE_DISCARD_ON_ERROR) {
 		/*
@@ -650,7 +656,7 @@ err:
 	 */
 	continue_at(cl, !bch_keylist_empty(&op->insert_keys)
 		    ? bch_write_index
-		    : bch_write_done, op->c->wq);
+		    : bch_write_done, c->wq);
 }
 
 void bch_wake_delayed_writes(unsigned long data)
