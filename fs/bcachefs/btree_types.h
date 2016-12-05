@@ -184,7 +184,7 @@ static inline struct bset *btree_bset_last(struct btree *b)
 }
 
 static inline u16
-__btree_node_key_to_offset(struct btree *b, const struct bkey_packed *k)
+__btree_node_key_to_offset(const struct btree *b, const struct bkey_packed *k)
 {
 	size_t ret = (u64 *) k - (u64 *) b->data - 1;
 
@@ -193,7 +193,7 @@ __btree_node_key_to_offset(struct btree *b, const struct bkey_packed *k)
 }
 
 static inline struct bkey_packed *
-__btree_node_offset_to_key(struct btree *b, u16 k)
+__btree_node_offset_to_key(const struct btree *b, u16 k)
 {
 	return (void *) ((u64 *) b->data + k + 1);
 }

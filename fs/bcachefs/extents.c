@@ -2301,8 +2301,8 @@ static enum merge_result bch_extent_merge(struct cache_set *c,
 	return BCH_MERGE_MERGE;
 }
 
-static void extent_i_save(struct btree *b, struct btree_node_iter *iter,
-			  struct bkey_packed *dst, struct bkey_i *src)
+static void extent_i_save(struct btree *b, struct bkey_packed *dst,
+			  struct bkey_i *src)
 {
 	struct bkey_format *f = &b->format;
 	struct bkey_i *dst_unpacked;
@@ -2472,7 +2472,8 @@ static bool bch_extent_merge_inline(struct cache_set *c,
 		if (!extent_merge_do_overlapping(iter, &li.k.k, back_merge))
 			return false;
 
-		extent_i_save(b, node_iter, m, mi);
+		extent_i_save(b, m, mi);
+		bch_bset_fix_invalidated_key(b, t, m);
 
 		/*
 		 * Update iterator to reflect what we just inserted - otherwise,
@@ -2497,7 +2498,9 @@ static bool bch_extent_merge_inline(struct cache_set *c,
 		if (!extent_merge_do_overlapping(iter, &li.k.k, back_merge))
 			return false;
 
-		extent_i_save(b, node_iter, m, &li.k);
+		extent_i_save(b, m, &li.k);
+		bch_bset_fix_invalidated_key(b, t, m);
+
 		bch_btree_node_iter_fix(iter, iter->nodes[0], node_iter,
 					t, m, m->u64s, m->u64s);
 		return true;

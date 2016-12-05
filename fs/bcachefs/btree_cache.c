@@ -675,8 +675,13 @@ retry:
 
 	prefetch(b->aux_data);
 
-	for_each_bset(b, t)
-		prefetch((u64 *) b->aux_data + t->aux_data_offset);
+	for_each_bset(b, t) {
+		void *p = (u64 *) b->aux_data + t->aux_data_offset;
+
+		prefetch(p + L1_CACHE_BYTES * 0);
+		prefetch(p + L1_CACHE_BYTES * 1);
+		prefetch(p + L1_CACHE_BYTES * 2);
+	}
 
 	/* avoid atomic set bit if it's not needed: */
 	if (btree_node_accessed(b))
