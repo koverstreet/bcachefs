@@ -210,6 +210,25 @@ static inline struct bkey bkey_unpack_key(const struct btree *b,
 		: *packed_to_bkey_c(src);
 }
 
+static inline struct bpos
+bkey_unpack_pos_format_checked(const struct btree *b,
+			       const struct bkey_packed *src)
+{
+#ifdef HAVE_BCACHE_COMPILED_UNPACK
+	return bkey_unpack_key_format_checked(b, src).p;
+#else
+	return __bkey_unpack_pos(&b->format, src);
+#endif
+}
+
+static inline struct bpos bkey_unpack_pos(const struct btree *b,
+					  const struct bkey_packed *src)
+{
+	return likely(bkey_packed(src))
+		? bkey_unpack_pos_format_checked(b, src)
+		: packed_to_bkey_c(src)->p;
+}
+
 /* Disassembled bkeys */
 
 static inline struct bkey_s_c bkey_disassemble(struct btree *b,

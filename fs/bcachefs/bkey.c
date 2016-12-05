@@ -284,7 +284,7 @@ struct bkey __bkey_unpack_key(const struct bkey_format *format,
 }
 
 #ifndef HAVE_BCACHE_COMPILED_UNPACK
-static struct bpos __bkey_unpack_pos(const struct bkey_format *format,
+struct bpos __bkey_unpack_pos(const struct bkey_format *format,
 				     const struct bkey_packed *in)
 {
 	struct unpack_state state = unpack_state_init(format, in);
@@ -1140,11 +1140,7 @@ int __bkey_cmp_left_packed_format_checked(const struct btree *b,
 					  const struct bkey_packed *l,
 					  const struct bpos *r)
 {
-#ifdef HAVE_BCACHE_COMPILED_UNPACK
-	return bkey_cmp(bkey_unpack_key_format_checked(b, l).p, *r);
-#else
-	return bkey_cmp(__bkey_unpack_pos(&b->format, l), *r);
-#endif
+	return bkey_cmp(bkey_unpack_pos_format_checked(b, l), *r);
 }
 
 __pure __flatten

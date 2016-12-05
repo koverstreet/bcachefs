@@ -1294,7 +1294,7 @@ static struct btree *__btree_split_node(struct btree_iter *iter, struct btree *n
 
 	BUG_ON(!prev);
 
-	n1->key.k.p = bkey_unpack_key(n1, prev).p;
+	n1->key.k.p = bkey_unpack_pos(n1, prev);
 	n1->data->max_key = n1->key.k.p;
 	n2->data->min_key =
 		btree_type_successor(n1->btree_id, n1->key.k.p);

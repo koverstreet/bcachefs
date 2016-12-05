@@ -328,6 +328,12 @@ bool bch_bkey_transform(const struct bkey_format *,
 
 struct bkey __bkey_unpack_key(const struct bkey_format *,
 			      const struct bkey_packed *);
+
+#ifndef HAVE_BCACHE_COMPILED_UNPACK
+struct bpos __bkey_unpack_pos(const struct bkey_format *,
+			      const struct bkey_packed *);
+#endif
+
 bool bkey_pack_key(struct bkey_packed *, const struct bkey *,
 		   const struct bkey_format *);
 

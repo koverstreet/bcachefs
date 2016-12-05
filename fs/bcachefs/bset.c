@@ -980,7 +980,7 @@ retry:
 	while (bkey_next(k) != btree_bkey_last(b, t))
 		k = bkey_next(k);
 
-	t->max_key = bkey_unpack_key(b, k).p;
+	t->max_key = bkey_unpack_pos(b, k);
 
 	/* Then we build the tree */
 	for (j = inorder_next(0, t->size);
@@ -1147,7 +1147,7 @@ void bch_bset_fix_invalidated_key(struct btree *b, struct bset_tree *t,
 	min_key.u64s = max_key.u64s = 0;
 
 	if (bkey_next(k) == btree_bkey_last(b, t)) {
-		t->max_key = bkey_unpack_key(b, k).p;
+		t->max_key = bkey_unpack_pos(b, k);
 
 		for (j = 1; j < t->size; j = j * 2 + 1)
 			make_bfloat(b, t, j, &min_key, &max_key);
