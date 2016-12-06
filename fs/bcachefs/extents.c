@@ -1082,7 +1082,7 @@ static void extent_bset_insert(struct cache_set *c, struct btree_iter *iter,
 	struct btree_node_iter *node_iter = &iter->node_iters[0];
 	struct bset_tree *t = bset_tree_last(b);
 	struct bkey_packed *where =
-		bch_btree_node_iter_bset_pos(node_iter, b, bset(b, t));
+		bch_btree_node_iter_bset_pos(node_iter, b, t);
 	struct bkey_packed *prev = bkey_prev(b, t, where);
 	struct bkey_packed *next_live_key = where;
 	unsigned clobber_u64s;
@@ -1090,7 +1090,7 @@ static void extent_bset_insert(struct cache_set *c, struct btree_iter *iter,
 	if (prev)
 		where = bkey_next(prev);
 
-	while (next_live_key != bset_bkey_last(bset(b, t)) &&
+	while (next_live_key != btree_bkey_last(b, t) &&
 	       bkey_deleted(next_live_key))
 		next_live_key = bkey_next(next_live_key);
 
@@ -1104,7 +1104,7 @@ static void extent_bset_insert(struct cache_set *c, struct btree_iter *iter,
 	    bch_extent_merge_inline(c, iter, prev, bkey_to_packed(insert), true))
 		goto drop_deleted_keys;
 
-	if (next_live_key != bset_bkey_last(bset(b, t)) &&
+	if (next_live_key != btree_bkey_last(b, t) &&
 	    bch_extent_merge_inline(c, iter, bkey_to_packed(insert),
 				    next_live_key, false))
 		goto drop_deleted_keys;
@@ -2367,22 +2367,19 @@ static bool extent_merge_do_overlapping(struct btree_iter *iter,
 	 */
 do_fixup:
 	for_each_bset(b, t) {
-		struct bset *i = bset(b, t);
-
 		if (t == bset_tree_last(b))
 			break;
-
-		if (!i->u64s)
-			continue;
 
 		/*
 		 * if we don't find this bset in the iterator we already got to
 		 * the end of that bset, so start searching from the end.
 		 */
-		k = bch_btree_node_iter_bset_pos(node_iter, b, i);
+		k = bch_btree_node_iter_bset_pos(node_iter, b, t);
 
-		if (k == bset_bkey_last(i))
+		if (k == btree_bkey_last(b, t))
 			k = bkey_prev_all(b, t, k);
+		if (!k)
+			continue;
 
 		if (back_merge) {
 			/*
@@ -2405,7 +2402,7 @@ do_fixup:
 		} else {
 			/* Front merge - walk forwards */
 			for (;
-			     k != bset_bkey_last(i) &&
+			     k != btree_bkey_last(b, t) &&
 			     (uk = bkey_unpack_key(b, k),
 			      bkey_cmp(uk.p, m->p) < 0);
 			     k = bkey_next(k)) {

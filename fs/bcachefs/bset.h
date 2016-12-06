@@ -368,18 +368,6 @@ static inline bool btree_iter_pos_cmp_p_or_unp(const struct btree *b,
 		(cmp == 0 && !strictly_greater && !bkey_deleted(k));
 }
 
-#define __bkey_idx(_set, _offset)				\
-	((_set)->_data + (_offset))
-
-#define bkey_idx(_set, _offset)					\
-	((typeof(&(_set)->start[0])) __bkey_idx((_set), (_offset)))
-
-#define __bset_bkey_last(_set)					\
-	 __bkey_idx((_set), (_set)->u64s)
-
-#define bset_bkey_last(_set)					\
-	 bkey_idx((_set), le16_to_cpu((_set)->u64s))
-
 static inline struct bkey_packed *bset_bkey_idx(struct bset *i, unsigned idx)
 {
 	return bkey_idx(i, idx);
@@ -436,7 +424,7 @@ void bch_btree_node_iter_init_from_start(struct btree_node_iter *,
 					 struct btree *, bool);
 struct bkey_packed *bch_btree_node_iter_bset_pos(struct btree_node_iter *,
 						 struct btree *,
-						 struct bset *);
+						 struct bset_tree *);
 
 void bch_btree_node_iter_sort(struct btree_node_iter *, struct btree *);
 void bch_btree_node_iter_advance(struct btree_node_iter *, struct btree *);
@@ -449,21 +437,6 @@ void bch_btree_node_iter_advance(struct btree_node_iter *, struct btree *);
 static inline bool bch_btree_node_iter_end(struct btree_node_iter *iter)
 {
 	return !iter->used;
-}
-
-static inline u16
-__btree_node_key_to_offset(struct btree *b, const struct bkey_packed *k)
-{
-	size_t ret = (u64 *) k - (u64 *) b->data - 1;
-
-	EBUG_ON(ret > U16_MAX);
-	return ret;
-}
-
-static inline struct bkey_packed *
-__btree_node_offset_to_key(struct btree *b, u16 k)
-{
-	return (void *) ((u64 *) b->data + k + 1);
 }
 
 static inline int __btree_node_iter_cmp(bool is_extents,

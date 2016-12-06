@@ -33,8 +33,8 @@ void __bch_btree_calc_format(struct bkey_format_state *s, struct btree *b)
 	bch_bkey_format_add_pos(s, b->data->min_key);
 
 	for_each_bset(b, t)
-		for (k = bset(b, t)->start;
-		     k != bset_bkey_last(bset(b, t));
+		for (k = btree_bkey_first(b, t);
+		     k != btree_bkey_last(b, t);
 		     k = bkey_next(k))
 			if (!bkey_whiteout(k)) {
 				uk = bkey_unpack_key(b, k);
@@ -736,7 +736,7 @@ bool bch_btree_bset_insert_key(struct btree_iter *iter,
 	}
 
 	t = bset_tree_last(b);
-	k = bch_btree_node_iter_bset_pos(node_iter, b, bset(b, t));
+	k = bch_btree_node_iter_bset_pos(node_iter, b, t);
 	clobber_u64s = 0;
 overwrite:
 	bch_bset_insert(b, node_iter, k, insert, clobber_u64s);
@@ -1302,6 +1302,9 @@ static struct btree *__btree_split_node(struct btree_iter *iter, struct btree *n
 	set2->u64s = cpu_to_le16((u64 *) bset_bkey_last(set1) - (u64 *) k);
 	set1->u64s = cpu_to_le16(le16_to_cpu(set1->u64s) - le16_to_cpu(set2->u64s));
 
+	set_btree_bset_end(n1, n1->set);
+	set_btree_bset_end(n2, n2->set);
+
 	n2->nr.live_u64s	= le16_to_cpu(set2->u64s);
 	n2->nr.bset_u64s[0]	= le16_to_cpu(set2->u64s);
 	n2->nr.packed_keys	= n1->nr.packed_keys - nr_packed;
@@ -1378,7 +1381,8 @@ static void btree_split_insert_keys(struct btree_iter *iter, struct btree *b,
 	p = i->start;
 	while (p != bset_bkey_last(i))
 		if (bkey_deleted(p)) {
-			i->u64s = cpu_to_le16(le16_to_cpu(i->u64s) - p->u64s);
+			le16_add_cpu(&i->u64s, -p->u64s);
+			set_btree_bset_end(b, b->set);
 			memmove_u64s_down(p, bkey_next(p),
 					  (u64 *) bset_bkey_last(i) -
 					  (u64 *) p);

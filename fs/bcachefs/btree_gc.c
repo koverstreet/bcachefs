@@ -440,8 +440,8 @@ static void recalc_packed_keys(struct btree *b)
 
 	BUG_ON(b->nsets != 1);
 
-	for (k = bset(b, &b->set[0])->start;
-	     k != bset_bkey_last(bset(b, &b->set[0]));
+	for (k =  btree_bkey_first(b, b->set);
+	     k != btree_bkey_last(b, b->set);
 	     k = bkey_next(k))
 		btree_keys_account_key_add(&b->nr, 0, k);
 }
@@ -554,6 +554,8 @@ static void bch_coalesce_nodes(struct btree *old_nodes[GC_MERGE_NODES],
 				    le16_to_cpu(s2->u64s));
 			le16_add_cpu(&s1->u64s, le16_to_cpu(s2->u64s));
 
+			set_btree_bset_end(n1, n1->set);
+
 			six_unlock_write(&n2->lock);
 			bch_btree_node_free_never_inserted(c, n2);
 			six_unlock_intent(&n2->lock);
@@ -579,6 +581,9 @@ static void bch_coalesce_nodes(struct btree *old_nodes[GC_MERGE_NODES],
 				bset_bkey_idx(s2, u64s),
 				(le16_to_cpu(s2->u64s) - u64s) * sizeof(u64));
 			s2->u64s = cpu_to_le16(le16_to_cpu(s2->u64s) - u64s);
+
+			set_btree_bset_end(n1, n1->set);
+			set_btree_bset_end(n2, n2->set);
 		}
 	}
 
