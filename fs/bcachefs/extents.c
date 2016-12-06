@@ -1052,6 +1052,7 @@ struct extent_insert_state {
 	/* for deleting: */
 	struct bkey_i			whiteout;
 	bool				do_journal;
+	bool				deleting;
 };
 
 static enum btree_insert_ret
@@ -1123,7 +1124,7 @@ static void extent_insert_committed(struct extent_insert_state *s)
 {
 	struct cache_set *c = s->trans->c;
 	struct btree_iter *iter = s->insert->iter;
-	struct bkey_i *insert = !bkey_whiteout(&s->insert->k->k)
+	struct bkey_i *insert = !s->deleting
 		? s->insert->k
 		: &s->whiteout;
 	BKEY_PADDED(k) split;
@@ -1134,7 +1135,7 @@ static void extent_insert_committed(struct extent_insert_state *s)
 	if (!bkey_cmp(s->committed, bkey_start_pos(&insert->k)))
 		return;
 
-	if (bkey_whiteout(&s->insert->k->k) && !s->do_journal) {
+	if (s->deleting && !s->do_journal) {
 		bch_cut_front(s->committed, insert);
 		goto done;
 	}
@@ -1164,7 +1165,7 @@ static void extent_insert_committed(struct extent_insert_state *s)
 
 	bch_btree_journal_key(s->trans, iter, &split.k);
 
-	if (!bkey_whiteout(&split.k.k))
+	if (!s->deleting)
 		extent_bset_insert(c, iter, &split.k);
 done:
 	bch_btree_iter_set_pos_same_leaf(iter, s->committed);
@@ -1568,12 +1569,13 @@ bch_insert_fixup_extent(struct btree_insert *trans,
 		.trans		= trans,
 		.insert		= insert,
 		.committed	= insert->iter->pos,
+		.deleting	= bkey_whiteout(&insert->k->k),
 	};
 
 	EBUG_ON(iter->level);
 	EBUG_ON(bkey_deleted(&insert->k->k) || !insert->k->k.size);
 
-	if (bkey_whiteout(&insert->k->k))
+	if (s.deleting)
 		return bch_delete_fixup_extent(&s);
 
 	/*
