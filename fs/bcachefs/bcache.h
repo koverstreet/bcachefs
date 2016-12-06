@@ -608,6 +608,8 @@ struct cache_set {
 	struct mutex		btree_interior_update_lock;
 
 	struct workqueue_struct	*wq;
+	/* copygc needs its own workqueue for index updates.. */
+	struct workqueue_struct	*copygc_wq;
 
 	/* ALLOCATION */
 	struct bch_pd_controller foreground_write_pd;

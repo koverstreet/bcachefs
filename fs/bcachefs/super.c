@@ -909,6 +909,8 @@ static void cache_set_free(struct cache_set *c)
 	mempool_exit(&c->search);
 	percpu_ref_exit(&c->writes);
 
+	if (c->copygc_wq)
+		destroy_workqueue(c->copygc_wq);
 	if (c->wq)
 		destroy_workqueue(c->wq);
 
@@ -1142,6 +1144,8 @@ static struct cache_set *bch_cache_set_alloc(struct cache_sb *sb,
 		sizeof(struct btree_node_iter_set);
 
 	if (!(c->wq = alloc_workqueue("bcache",
+				WQ_FREEZABLE|WQ_MEM_RECLAIM|WQ_HIGHPRI, 1)) ||
+	    !(c->copygc_wq = alloc_workqueue("bcache_copygc",
 				WQ_FREEZABLE|WQ_MEM_RECLAIM|WQ_HIGHPRI, 1)) ||
 	    percpu_ref_init(&c->writes, bch_writes_disabled, 0, GFP_KERNEL) ||
 	    mempool_init_slab_pool(&c->search, 1, bch_search_cache) ||

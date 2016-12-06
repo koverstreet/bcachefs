@@ -182,6 +182,13 @@ void bch_submit_wbio_replicas(struct bch_write_bio *wbio, struct cache_set *c,
 
 /* Writes */
 
+static struct workqueue_struct *index_update_wq(struct bch_write_op *op)
+{
+	return op->alloc_reserve == RESERVE_MOVINGGC
+		? op->c->copygc_wq
+		: op->c->wq;
+}
+
 static void __bch_write(struct closure *);
 
 static void bch_write_done(struct closure *cl)
@@ -268,7 +275,7 @@ static void bch_write_index(struct closure *cl)
 		bch_journal_flush_seq_async(&c->journal,
 					    *op_journal_seq(op),
 					    cl);
-		continue_at(cl, bch_write_done, c->wq);
+		continue_at(cl, bch_write_done, index_update_wq(op));
 	} else {
 		continue_at_nobarrier(cl, bch_write_done, NULL);
 	}
@@ -342,6 +349,7 @@ static void bch_write_io_error(struct closure *cl)
 static void bch_write_endio(struct bio *bio)
 {
 	struct closure *cl = bio->bi_private;
+	struct bch_write_op *op = container_of(cl, struct bch_write_op, cl);
 	struct bch_write_bio *wbio = to_wbio(bio);
 	struct cache_set *c = wbio->c;
 	struct bio *orig = wbio->orig;
@@ -349,7 +357,7 @@ static void bch_write_endio(struct bio *bio)
 
 	if (cache_nonfatal_io_err_on(bio->bi_error, ca,
 				     "data write"))
-		set_closure_fn(cl, bch_write_io_error, c->wq);
+		set_closure_fn(cl, bch_write_io_error, index_update_wq(op));
 
 	bch_account_io_completion_time(ca, wbio->submit_time_us,
 				       REQ_OP_WRITE);
@@ -530,7 +538,7 @@ static void __bch_write(struct closure *cl)
 		op->flags |= BCH_WRITE_DONE;
 		bch_write_discard(cl);
 		bio_put(bio);
-		continue_at(cl, bch_write_done, c->wq);
+		continue_at(cl, bch_write_done, index_update_wq(op));
 	}
 
 	/*
@@ -546,14 +554,14 @@ static void __bch_write(struct closure *cl)
 		EBUG_ON(!bio_sectors(bio));
 
 		if (open_bucket_nr == ARRAY_SIZE(op->open_buckets))
-			continue_at(cl, bch_write_index, c->wq);
+			continue_at(cl, bch_write_index, index_update_wq(op));
 
 		/* for the device pointers and 1 for the chksum */
 		if (bch_keylist_realloc(&op->insert_keys,
 					op->inline_keys,
 					ARRAY_SIZE(op->inline_keys),
 					BKEY_EXTENT_U64s_MAX))
-			continue_at(cl, bch_write_index, c->wq);
+			continue_at(cl, bch_write_index, index_update_wq(op));
 
 		k = op->insert_keys.top;
 		bkey_extent_init(k);
@@ -581,7 +589,8 @@ static void __bch_write(struct closure *cl)
 			 * this case if open_bucket_nr > 1.
 			 */
 			if (!bch_keylist_empty(&op->insert_keys))
-				continue_at(cl, bch_write_index, c->wq);
+				continue_at(cl, bch_write_index,
+					    index_update_wq(op));
 
 			/*
 			 * If we've looped, we're running out of a workqueue -
@@ -624,7 +633,7 @@ static void __bch_write(struct closure *cl)
 	} while (ret);
 
 	op->flags |= BCH_WRITE_DONE;
-	continue_at(cl, bch_write_index, c->wq);
+	continue_at(cl, bch_write_index, index_update_wq(op));
 err:
 	if (op->flags & BCH_WRITE_DISCARD_ON_ERROR) {
 		/*
@@ -656,7 +665,7 @@ err:
 	 */
 	continue_at(cl, !bch_keylist_empty(&op->insert_keys)
 		    ? bch_write_index
-		    : bch_write_done, c->wq);
+		    : bch_write_done, index_update_wq(op));
 }
 
 void bch_wake_delayed_writes(unsigned long data)
@@ -764,7 +773,7 @@ void bch_write(struct closure *cl)
 
 			spin_unlock_irqrestore(&c->foreground_write_pd_lock,
 					       flags);
-			continue_at(cl, __bch_write, op->c->wq);
+			continue_at(cl, __bch_write, index_update_wq(op));
 		}
 
 		spin_unlock_irqrestore(&c->foreground_write_pd_lock, flags);
@@ -779,7 +788,7 @@ void bch_write_op_init(struct bch_write_op *op, struct cache_set *c,
 		       u64 *journal_seq, unsigned flags)
 {
 	op->c		= c;
-	op->io_wq	= op->c->wq;
+	op->io_wq	= index_update_wq(op);
 	op->bio		= bio;
 	op->written	= 0;
 	op->error	= 0;

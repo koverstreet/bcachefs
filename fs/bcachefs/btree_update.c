@@ -1558,8 +1558,9 @@ static int bch_btree_split_leaf(struct btree_iter *iter, unsigned flags)
 		ret = PTR_ERR(reserve);
 		if (ret == -EAGAIN) {
 			bch_btree_iter_unlock(iter);
+			up_read(&c->gc_lock);
 			closure_sync(&cl);
-			ret = -EINTR;
+			return -EINTR;
 		}
 		goto out;
 	}
