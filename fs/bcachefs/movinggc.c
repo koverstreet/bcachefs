@@ -65,12 +65,16 @@ found:
 	return ret;
 }
 
-static void read_moving(struct cache *ca, size_t buckets_to_move)
+static void read_moving(struct cache *ca, size_t buckets_to_move,
+			u64 sectors_to_move)
 {
 	struct cache_set *c = ca->set;
+	struct bucket *g;
 	struct moving_context ctxt;
 	struct btree_iter iter;
 	struct bkey_s_c k;
+	u64 sectors_not_moved = 0;
+	size_t buckets_not_moved = 0;
 
 	bch_ratelimit_reset(&ca->moving_gc_pd.rate);
 	bch_move_ctxt_init(&ctxt, &ca->moving_gc_pd.rate,
@@ -105,13 +109,23 @@ next:
 		cond_resched();
 	}
 
-	/* don't check this if we bailed out early: */
-	if (IS_ENABLED(CONFIG_BCACHEFS_DEBUG)) {
-		struct bucket *g;
+	bch_btree_iter_unlock(&iter);
+	bch_move_ctxt_exit(&ctxt);
+	trace_bcache_moving_gc_end(ca, ctxt.sectors_moved, ctxt.keys_moved,
+				   buckets_to_move);
 
-		for_each_bucket(g, ca)
-			BUG_ON(g->copygc_gen && bucket_sectors_used(g));
-	}
+	/* don't check this if we bailed out early: */
+	for_each_bucket(g, ca)
+		if (g->copygc_gen && bucket_sectors_used(g)) {
+			sectors_not_moved += bucket_sectors_used(g);
+			buckets_not_moved++;
+		}
+
+	if (sectors_not_moved)
+		bch_warn(c, "copygc finished but %llu/%llu sectors, %zu/%zu buckets not moved",
+			 sectors_not_moved, sectors_to_move,
+			 buckets_not_moved, buckets_to_move);
+	return;
 out:
 	bch_btree_iter_unlock(&iter);
 	bch_move_ctxt_exit(&ctxt);
@@ -213,12 +227,7 @@ static void bch_moving_gc(struct cache *ca)
 	mutex_unlock(&ca->heap_lock);
 	up_read(&c->gc_lock);
 
-	read_moving(ca, buckets_to_move);
-
-	if (IS_ENABLED(CONFIG_BCACHEFS_DEBUG)) {
-		for_each_bucket(g, ca)
-			BUG_ON(g->copygc_gen && bucket_sectors_used(g));
-	}
+	read_moving(ca, buckets_to_move, sectors_to_move);
 }
 
 static int bch_moving_gc_thread(void *arg)

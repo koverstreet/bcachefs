@@ -215,6 +215,8 @@
 	printk(KERN_INFO bch_fmt(c, fmt), ##__VA_ARGS__)
 #define bch_notice(c, fmt, ...) \
 	printk(KERN_NOTICE bch_fmt(c, fmt), ##__VA_ARGS__)
+#define bch_warn(c, fmt, ...) \
+	printk(KERN_WARNING bch_fmt(c, fmt), ##__VA_ARGS__)
 #define bch_err(c, fmt, ...) \
 	printk(KERN_ERR bch_fmt(c, fmt), ##__VA_ARGS__)
 
