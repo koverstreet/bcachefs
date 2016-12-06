@@ -438,23 +438,23 @@ DEFINE_EVENT(btree_node, bcache_btree_read,
 );
 
 TRACE_EVENT(bcache_btree_write,
-	TP_PROTO(struct cache_set *c, struct btree *b),
-	TP_ARGS(c, b),
+	TP_PROTO(struct btree *b, unsigned bytes, unsigned sectors),
+	TP_ARGS(b, bytes, sectors),
 
 	TP_STRUCT__entry(
-		__field(u64,		bucket			)
-		__field(unsigned,	block			)
-		__field(unsigned,	u64s			)
+		__field(enum bkey_type,	type)
+		__field(unsigned,	bytes			)
+		__field(unsigned,	sectors			)
 	),
 
 	TP_fast_assign(
-		__entry->bucket	= PTR_BUCKET_NR_TRACE(c, &b->key, 0);
-		__entry->block	= b->written;
-		__entry->u64s	= le16_to_cpu(b->keys.set[b->keys.nsets].data->u64s);
+		__entry->type	= btree_node_type(b);
+		__entry->bytes	= bytes;
+		__entry->sectors = sectors;
 	),
 
-	TP_printk("bucket %llu block %u u64s %u",
-		  __entry->bucket, __entry->block, __entry->u64s)
+	TP_printk("bkey type %u bytes %u sectors %u",
+		  __entry->type , __entry->bytes, __entry->sectors)
 );
 
 DEFINE_EVENT(btree_node, bcache_btree_node_alloc,

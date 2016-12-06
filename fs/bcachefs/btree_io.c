@@ -1301,7 +1301,7 @@ void __bch_btree_node_write(struct cache_set *c, struct btree *b,
 	struct bch_extent_ptr *ptr;
 	struct cache *ca;
 	struct sort_iter sort_iter;
-	unsigned sectors_to_write, order, bytes, u64s;
+	unsigned bytes_to_write, sectors_to_write, order, bytes, u64s;
 	u64 seq = 0;
 	bool used_mempool;
 	unsigned long old, new;
@@ -1338,8 +1338,6 @@ void __bch_btree_node_write(struct cache_set *c, struct btree *b,
 	} while (cmpxchg_acquire(&b->flags, old, new) != old);
 
 	BUG_ON(!list_empty(&b->write_blocked));
-
-	trace_bcache_btree_write(c, b);
 
 	BUG_ON(b->written >= c->sb.btree_node_size);
 	BUG_ON(bset_written(b, btree_bset_last(b)));
@@ -1432,10 +1430,12 @@ void __bch_btree_node_write(struct cache_set *c, struct btree *b,
 	else
 		bne->csum = cpu_to_le64(btree_csum_set(b, bne));
 
-	sectors_to_write = round_up((void *) bset_bkey_last(i) - data,
-				    block_bytes(c)) >> 9;
+	bytes_to_write = (void *) bset_bkey_last(i) - data;
+	sectors_to_write = round_up(bytes_to_write, block_bytes(c)) >> 9;
 
 	BUG_ON(b->written + sectors_to_write > c->sb.btree_node_size);
+
+	trace_bcache_btree_write(b, bytes_to_write, sectors_to_write);
 
 	/*
 	 * We handle btree write errors by immediately halting the journal -
