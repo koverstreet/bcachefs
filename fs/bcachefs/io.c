@@ -165,6 +165,7 @@ void bch_submit_wbio_replicas(struct bch_write_bio *wbio, struct cache_set *c,
 			n->orig			= &wbio->bio;
 			n->bounce		= false;
 			n->split		= true;
+			n->put_bio		= true;
 			n->bio.bi_opf		= wbio->bio.bi_opf;
 			__bio_inc_remaining(n->orig);
 		} else {
