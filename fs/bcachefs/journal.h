@@ -171,7 +171,7 @@ static inline u64 bch_journal_res_seq(struct journal *j,
 
 static inline void bch_journal_set_has_inode(struct journal_buf *buf, u64 inum)
 {
-	set_bit(hash_64(inum, sizeof(buf->has_inode) * 8), buf->has_inode);
+	set_bit(hash_64(inum, ilog2(sizeof(buf->has_inode) * 8)), buf->has_inode);
 }
 
 /*

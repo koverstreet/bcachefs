@@ -1998,7 +1998,7 @@ static void journal_write_work(struct work_struct *work)
  */
 u64 bch_inode_journal_seq(struct journal *j, u64 inode)
 {
-	size_t h = hash_64(inode, sizeof(j->buf[0].has_inode) * 8);
+	size_t h = hash_64(inode, ilog2(sizeof(j->buf[0].has_inode) * 8));
 	u64 seq = 0;
 
 	if (!test_bit(h, j->buf[0].has_inode) &&
