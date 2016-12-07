@@ -561,10 +561,13 @@ static inline unsigned to_inorder(unsigned j, const struct bset_tree *t)
 	return __to_inorder(j, t->size, t->extra);
 }
 
+/* j in [1..size) */
 static unsigned __inorder_to_tree(unsigned j, unsigned size, unsigned extra)
 {
 	unsigned shift;
 	int s;
+
+	EBUG_ON(!j || j >= size);
 
 	s = extra - j;
 	j -= s & (s >> 31);
@@ -1147,10 +1150,10 @@ static struct bkey_packed *__bkey_prev(struct btree *b, struct bset_tree *t,
 		p = btree_bkey_first(b, t);
 		break;
 	case BSET_RO_AUX_TREE:
-		j = min_t(unsigned, t->size, bkey_to_cacheline(b, t, k));
+		j = min_t(unsigned, t->size - 1, bkey_to_cacheline(b, t, k));
 
 		do {
-			p = j ? tree_to_bkey(b, t, inorder_to_tree(--j, t))
+			p = j ? tree_to_bkey(b, t, inorder_to_tree(j--, t))
 			      : btree_bkey_first(b, t);
 		} while (p >= k);
 		break;
@@ -1237,11 +1240,10 @@ static void ro_aux_tree_fix_invalidated_key(struct btree *b,
 	}
 
 	inorder = bkey_to_cacheline(b, t, k);
-	j = inorder_to_tree(inorder, t);
 
-	if (j &&
-	    j < t->size &&
-	    k == tree_to_bkey(b, t, j)) {
+	if (inorder &&
+	    inorder < t->size &&
+	    k == tree_to_bkey(b, t, j = inorder_to_tree(inorder, t))) {
 		/* Fix the auxiliary search tree node this key corresponds to */
 		make_bfloat(b, t, j, &min_key, &max_key);
 
@@ -1250,11 +1252,8 @@ static void ro_aux_tree_fix_invalidated_key(struct btree *b,
 			make_bfloat(b, t, j, &min_key, &max_key);
 	}
 
-	j = inorder_to_tree(inorder + 1, t);
-
-	if (j &&
-	    j < t->size &&
-	    k == tree_to_prev_bkey(b, t, j)) {
+	if (inorder + 1 < t->size &&
+	    k == tree_to_prev_bkey(b, t, j = inorder_to_tree(inorder + 1, t))) {
 		make_bfloat(b, t, j, &min_key, &max_key);
 
 		/* Children for which this key is the left side boundary */
