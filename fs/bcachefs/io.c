@@ -382,10 +382,26 @@ static void bch_write_endio(struct bio *bio)
 		closure_put(cl);
 }
 
+static struct nonce extent_nonce(struct bversion version,
+				 unsigned nonce,
+				 unsigned uncompressed_size,
+				 unsigned compression_type)
+{
+	return (struct nonce) {{
+		[0] = cpu_to_le32((nonce		<< 12) |
+				  (uncompressed_size	<< 22)),
+		[1] = cpu_to_le32(version.lo),
+		[2] = cpu_to_le32(version.lo >> 32),
+		[3] = cpu_to_le32(version.hi|
+				  (compression_type << 24))^BCH_NONCE_EXTENT,
+	}};
+}
+
 static void init_append_extent(struct bch_write_op *op,
 			       unsigned compressed_size,
 			       unsigned uncompressed_size,
 			       unsigned compression_type,
+			       unsigned nonce,
 			       u64 csum, unsigned csum_type,
 			       struct open_bucket *ob)
 {
@@ -394,11 +410,12 @@ static void init_append_extent(struct bch_write_op *op,
 	op->pos.offset += uncompressed_size;
 	e->k.p = op->pos;
 	e->k.size = uncompressed_size;
+	e->k.version = op->version;
 
 	bch_extent_crc_append(e, compressed_size,
 			      uncompressed_size,
 			      compression_type,
-			      csum, csum_type);
+			      nonce, csum, csum_type);
 
 	bch_alloc_sectors_append_ptrs(op->c, e, op->nr_replicas,
 				      ob, compressed_size);
@@ -417,7 +434,7 @@ static int bch_write_extent(struct bch_write_op *op,
 	unsigned key_to_write_offset = op->insert_keys.top_p -
 		op->insert_keys.keys_p;
 	struct bkey_i *key_to_write;
-	unsigned csum_type = c->opts.data_checksum;
+	unsigned csum_type = op->csum_type;
 	unsigned compression_type = op->compression_type;
 	int ret;
 
@@ -442,6 +459,7 @@ static int bch_write_extent(struct bch_write_op *op,
 				   op->crc.compressed_size,
 				   op->crc.uncompressed_size,
 				   op->crc.compression_type,
+				   op->crc.nonce,
 				   op->crc.csum,
 				   op->crc.csum_type,
 				   ob);
@@ -457,6 +475,9 @@ static int bch_write_extent(struct bch_write_op *op,
 		/* all units here in bytes */
 		unsigned total_output = 0, output_available =
 			min(ob->sectors_free << 9, orig->bi_iter.bi_size);
+		unsigned crc_nonce = bch_csum_type_is_encryption(csum_type)
+			? op->nonce : 0;
+		struct nonce nonce;
 		u64 csum;
 
 		bio = bio_alloc_bioset(GFP_NOIO,
@@ -489,13 +510,20 @@ static int bch_write_extent(struct bch_write_op *op,
 			BUG_ON(src_len & (block_bytes(c) - 1));
 
 			swap(bio->bi_iter.bi_size, dst_len);
-			csum = bch_checksum_bio(bio, csum_type);
+			nonce = extent_nonce(op->version,
+					     crc_nonce,
+					     src_len >> 9,
+					     compression_type),
+
+			bch_encrypt_bio(c, csum_type, nonce, bio);
+
+			csum = bch_checksum_bio(c, csum_type, nonce, bio).lo;
 			swap(bio->bi_iter.bi_size, dst_len);
 
 			init_append_extent(op,
 					   dst_len >> 9, src_len >> 9,
 					   fragment_compression_type,
-					   csum, csum_type, ob);
+					   crc_nonce, csum, csum_type, ob);
 
 			total_output += dst_len;
 			bio_advance(bio, dst_len);
@@ -531,7 +559,7 @@ static int bch_write_extent(struct bch_write_op *op,
 		wbio->put_bio		= bio != orig;
 
 		init_append_extent(op, bio_sectors(bio), bio_sectors(bio),
-				   compression_type, 0, csum_type, ob);
+				   compression_type, 0, 0, csum_type, ob);
 
 		ret = bio != orig;
 	}
@@ -743,6 +771,11 @@ void bch_write(struct closure *cl)
 		closure_return(cl);
 	}
 
+	if (bversion_zero(op->version) &&
+	    bch_csum_type_is_encryption(op->csum_type))
+		op->version.lo =
+			atomic64_inc_return(&c->key_version) + 1;
+
 	if (!(op->flags & BCH_WRITE_DISCARD))
 		bch_increment_clock(c, bio_sectors(bio), WRITE);
 
@@ -805,6 +838,8 @@ void bch_write_op_init(struct bch_write_op *op, struct cache_set *c,
 	op->written	= 0;
 	op->error	= 0;
 	op->flags	= flags;
+	op->csum_type	= bch_data_checksum_type(c);
+
 	op->compression_type = c->opts.compression;
 	op->nr_replicas	= res.nr_replicas;
 	op->alloc_reserve = RESERVE_NONE;
@@ -873,6 +908,10 @@ static int bio_checksum_uncompress(struct cache_set *c,
 	struct bio *src = &rbio->bio;
 	struct bio *dst = &bch_rbio_parent(rbio)->bio;
 	struct bvec_iter dst_iter = rbio->parent_iter;
+	struct nonce nonce = extent_nonce(rbio->version,
+					  rbio->crc.nonce,
+					  rbio->crc.uncompressed_size,
+					  rbio->crc.compression_type);
 	u64 csum;
 	int ret = 0;
 
@@ -890,7 +929,7 @@ static int bio_checksum_uncompress(struct cache_set *c,
 		src->bi_iter = rbio->parent_iter;
 	}
 
-	csum = bch_checksum_bio(src, rbio->crc.csum_type);
+	csum = bch_checksum_bio(c, rbio->crc.csum_type, nonce, src).lo;
 	if (cache_nonfatal_io_err_on(rbio->crc.csum != csum, rbio->ca,
 			"data checksum error, inode %llu offset %llu: expected %0llx got %0llx (type %u)",
 			rbio->inode, (u64) rbio->parent_iter.bi_sector << 9,
@@ -903,6 +942,7 @@ static int bio_checksum_uncompress(struct cache_set *c,
 	 */
 	if (rbio->crc.compression_type != BCH_COMPRESSION_NONE) {
 		if (!ret) {
+			bch_encrypt_bio(c, rbio->crc.csum_type, nonce, src);
 			ret = bch_bio_uncompress(c, src, dst,
 						 dst_iter, rbio->crc);
 			if (ret)
@@ -910,8 +950,20 @@ static int bio_checksum_uncompress(struct cache_set *c,
 		}
 	} else if (rbio->bounce) {
 		bio_advance(src, rbio->crc.offset << 9);
+
+		/* don't need to decrypt the entire bio: */
+		BUG_ON(src->bi_iter.bi_size < dst_iter.bi_size);
+		src->bi_iter.bi_size = dst_iter.bi_size;
+
+		nonce = nonce_add(nonce, rbio->crc.offset << 9);
+
+		bch_encrypt_bio(c, rbio->crc.csum_type,
+				nonce, src);
+
 		bio_copy_data_iter(dst, dst_iter,
 				   src, src->bi_iter);
+	} else {
+		bch_encrypt_bio(c, rbio->crc.csum_type, nonce, src);
 	}
 
 	return ret;
@@ -1178,6 +1230,7 @@ void bch_read_extent_iter(struct cache_set *c, struct bch_read_bio *orig,
 	rbio->flags		= flags;
 	rbio->bounce		= bounce;
 	rbio->split		= split;
+	rbio->version		= k.k->version;
 	rbio->crc		= pick->crc;
 	/*
 	 * crc.compressed_size will be 0 if there wasn't any checksum

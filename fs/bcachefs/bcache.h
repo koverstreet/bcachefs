@@ -314,6 +314,8 @@ do {									\
 
 struct btree;
 struct cache;
+struct crypto_blkcipher;
+struct crypto_ahash;
 
 enum gc_phase {
 	GC_PHASE_PENDING_DELETE		= BTREE_ID_NR + 1,
@@ -541,6 +543,7 @@ struct cache_set {
 		u8		data_replicas_have;
 
 		u8		str_hash_type;
+		u8		encryption_type;
 	}			sb;
 
 	struct cache_sb		disk_sb;
@@ -723,6 +726,11 @@ struct cache_set {
 	mempool_t		compression_bounce[2];
 	struct bio_decompress_worker __percpu
 				*bio_decompress_worker;
+
+	struct crypto_blkcipher	*chacha20;
+	struct crypto_shash	*poly1305;
+
+	atomic64_t		key_version;
 
 	/* For punting bio submissions to workqueue, io.c */
 	struct bio_list		bio_submit_list;

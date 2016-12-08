@@ -160,6 +160,7 @@ void bch_migrate_write_init(struct cache_set *c,
 	if (m->move)
 		m->op.alloc_reserve = RESERVE_MOVINGGC;
 
+	m->op.nonce		= extent_current_nonce(bkey_s_c_to_extent(k));
 	m->op.nr_replicas	= 1;
 	m->op.index_update_fn	= bch_migrate_index_update;
 }

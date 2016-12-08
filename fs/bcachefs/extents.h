@@ -321,7 +321,7 @@ out:									\
 
 void bch_extent_entry_append(struct bkey_i_extent *, union bch_extent_entry *);
 void bch_extent_crc_append(struct bkey_i_extent *, unsigned, unsigned,
-			   unsigned, u64, unsigned);
+			   unsigned, unsigned, u64, unsigned);
 
 static inline void extent_ptr_append(struct bkey_i_extent *e,
 				     struct bch_extent_ptr ptr)
@@ -395,6 +395,19 @@ static inline unsigned crc_offset(const union bch_extent_crc *crc)
 	}
 }
 
+static inline unsigned crc_nonce(const union bch_extent_crc *crc)
+{
+	switch (extent_crc_type(crc)) {
+	case BCH_EXTENT_CRC_NONE:
+	case BCH_EXTENT_CRC32:
+		return 0;
+	case BCH_EXTENT_CRC64:
+		return crc->crc64.nonce;
+	default:
+		BUG();
+	}
+}
+
 static inline unsigned crc_csum_type(const union bch_extent_crc *crc)
 {
 	switch (extent_crc_type(crc)) {
@@ -459,6 +472,17 @@ static inline unsigned bkey_extent_is_compressed(struct cache_set *c,
 	}
 
 	return ret;
+}
+
+static inline unsigned extent_current_nonce(struct bkey_s_c_extent e)
+{
+	const union bch_extent_crc *crc;
+
+	extent_for_each_crc(e, crc)
+		if (bch_csum_type_is_encryption(crc_csum_type(crc)))
+			return crc_offset(crc) + crc_nonce(crc);
+
+	return 0;
 }
 
 void bch_extent_narrow_crcs(struct bkey_s_extent);

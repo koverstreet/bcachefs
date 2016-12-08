@@ -68,7 +68,6 @@ static struct class *bch_chardev_class;
 static struct device *bch_chardev;
 static DEFINE_IDR(bch_chardev_minor);
 static DECLARE_WAIT_QUEUE_HEAD(bch_read_only_wait);
-
 struct workqueue_struct *bcache_io_wq;
 struct crypto_shash *bch_sha256;
 
@@ -248,7 +247,8 @@ static const char *validate_cache_super(struct bcache_superblock *disk_sb)
 	    CACHE_SET_DATA_REPLICAS_WANT(sb))
 		return "Invalid number of data replicas";
 
-	if (CACHE_SB_CSUM_TYPE(sb) >= BCH_CSUM_NR)
+	if (CACHE_SB_CSUM_TYPE(sb) >= BCH_CSUM_NR ||
+	    bch_csum_type_is_encryption(CACHE_SB_CSUM_TYPE(sb)))
 		return "Invalid checksum type";
 
 	if (!CACHE_SET_BTREE_NODE_SIZE(sb))
@@ -431,12 +431,14 @@ retry:
 		goto retry;
 
 	err = "bad checksum reading superblock";
-	if (le64_to_cpu(sb->sb->csum) !=
-	    __csum_set(sb->sb, le16_to_cpu(sb->sb->u64s),
-		       le64_to_cpu(sb->sb->version) <
-		       BCACHE_SB_VERSION_CDEV_V3
-		       ? BCH_CSUM_CRC64
-		       : CACHE_SB_CSUM_TYPE(sb->sb)))
+	if (sb->sb->csum !=
+	    csum_set(NULL,
+		     le64_to_cpu(sb->sb->version) <
+		     BCACHE_SB_VERSION_CDEV_V3
+		     ? BCH_CSUM_CRC64
+		     : CACHE_SB_CSUM_TYPE(sb->sb),
+		     (struct nonce) { 0 },
+		     sb->sb, le16_to_cpu(sb->sb->u64s)).lo)
 		goto err;
 
 	return NULL;
@@ -535,6 +537,8 @@ static void __copy_super(struct cache_sb *dst, struct cache_sb *src)
 	dst->user_uuid		= src->user_uuid;
 	dst->set_uuid		= src->set_uuid;
 	memcpy(dst->label, src->label, SB_LABEL_SIZE);
+	memcpy(dst->encryption_key, src->encryption_key,
+	       sizeof(src->encryption_key));
 	dst->flags		= src->flags;
 	dst->flags2		= src->flags2;
 	dst->nr_in_set		= src->nr_in_set;
@@ -572,6 +576,7 @@ static int cache_sb_to_cache_set(struct cache_set *c, struct cache_sb *src)
 	c->sb.meta_replicas_have= CACHE_SET_META_REPLICAS_HAVE(src);
 	c->sb.data_replicas_have= CACHE_SET_DATA_REPLICAS_HAVE(src);
 	c->sb.str_hash_type	= CACHE_SET_STR_HASH_TYPE(src);
+	c->sb.encryption_type	= CACHE_SET_ENCRYPTION_TYPE(src);
 
 	return 0;
 }
@@ -632,9 +637,10 @@ static void __bcache_write_super(struct cache_set *c)
 		cache_sb_from_cache_set(c, ca);
 
 		SET_CACHE_SB_CSUM_TYPE(sb, c->opts.metadata_checksum);
-		sb->csum = cpu_to_le64(__csum_set(sb,
-						  le16_to_cpu(sb->u64s),
-						  CACHE_SB_CSUM_TYPE(sb)));
+		sb->csum = csum_set(NULL,
+				    CACHE_SB_CSUM_TYPE(sb),
+				    (struct nonce) { 0 },
+				    sb, le16_to_cpu(sb->u64s)).lo;
 
 		bio_reset(bio);
 		bio->bi_bdev	= ca->disk_sb.bdev;
@@ -924,6 +930,7 @@ static void cache_set_free(struct cache_set *c)
 	cancel_work_sync(&c->bio_submit_work);
 	cancel_work_sync(&c->read_retry_work);
 
+	bch_cache_set_encryption_free(c);
 	bch_btree_cache_free(c);
 	bch_journal_free(&c->journal);
 	bch_io_clock_exit(&c->io_clock[WRITE]);
@@ -1207,6 +1214,7 @@ static struct cache_set *bch_cache_set_alloc(struct cache_sb *sb,
 	    bch_io_clock_init(&c->io_clock[WRITE]) ||
 	    bch_journal_alloc(&c->journal, journal_entry_bytes) ||
 	    bch_btree_cache_alloc(c) ||
+	    bch_cache_set_encryption_init(c) ||
 	    bch_compress_init(c) ||
 	    bch_check_set_has_compressed_data(c, c->opts.compression))
 		goto err;

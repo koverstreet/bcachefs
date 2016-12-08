@@ -177,6 +177,8 @@ void bch_extent_crc_narrow_pointers(struct bkey_s_extent e, union bch_extent_crc
  *
  * and then verify that crc_dead1 + crc_live + crc_dead2 == orig_crc, and then
  * use crc_live here (that we verified was correct earlier)
+ *
+ * note: doesn't work with encryption
  */
 void bch_extent_narrow_crcs(struct bkey_s_extent e)
 {
@@ -186,7 +188,8 @@ void bch_extent_narrow_crcs(struct bkey_s_extent e)
 	unsigned csum_type = 0;
 
 	extent_for_each_crc(e, crc) {
-		if (crc_compression_type(crc))
+		if (crc_compression_type(crc) ||
+		    bch_csum_type_is_encryption(crc_csum_type(crc)))
 			continue;
 
 		if (crc_uncompressed_size(e.k, crc) != e.k->size) {
@@ -1178,12 +1181,19 @@ __extent_insert_advance_pos(struct extent_insert_state *s,
 {
 	struct extent_insert_hook *hook = s->trans->hook;
 	enum extent_insert_hook_ret ret;
-
+#if 0
+	/*
+	 * Currently disabled for encryption - broken with fcollapse. Will have
+	 * to reenable when versions are exposed for send/receive - versions
+	 * will have to be monotonic then:
+	 */
 	if (k.k && k.k->size &&
 	    !bversion_zero(s->insert->k->k.version) &&
-	    bversion_cmp(k.k->version, s->insert->k->k.version) > 0)
+	    bversion_cmp(k.k->version, s->insert->k->k.version) > 0) {
 		ret = BTREE_HOOK_NO_INSERT;
-	else if (hook)
+	} else
+#endif
+	if (hook)
 		ret = hook->fn(hook, s->committed, next_pos, k, s->insert->k);
 	else
 		ret = BTREE_HOOK_DO_INSERT;
@@ -1917,16 +1927,19 @@ const unsigned bch_crc_size[] = {
 	[BCH_CSUM_NONE]			= 0,
 	[BCH_CSUM_CRC32C]		= 4,
 	[BCH_CSUM_CRC64]		= 8,
+	[BCH_CSUM_CHACHA20_POLY1305]	= 8,
 };
 
 static void bch_extent_crc_init(union bch_extent_crc *crc,
 				unsigned compressed_size,
 				unsigned uncompressed_size,
 				unsigned compression_type,
+				unsigned nonce,
 				u64 csum, unsigned csum_type)
 {
 	if (bch_crc_size[csum_type] <= 4 &&
-	    uncompressed_size <= CRC32_EXTENT_SIZE_MAX) {
+	    uncompressed_size <= CRC32_EXTENT_SIZE_MAX &&
+	    !nonce) {
 		crc->crc32 = (struct bch_extent_crc32) {
 			.type = 1 << BCH_EXTENT_ENTRY_crc32,
 			.compressed_size	= compressed_size,
@@ -1938,12 +1951,14 @@ static void bch_extent_crc_init(union bch_extent_crc *crc,
 		};
 	} else {
 		BUG_ON(uncompressed_size > CRC64_EXTENT_SIZE_MAX);
+		BUG_ON(nonce >= CRC64_NONCE_MAX);
 
 		crc->crc64 = (struct bch_extent_crc64) {
 			.type = 1 << BCH_EXTENT_ENTRY_crc64,
 			.compressed_size	= compressed_size,
 			.uncompressed_size	= uncompressed_size,
 			.offset			= 0,
+			.nonce			= nonce,
 			.compression_type	= compression_type,
 			.csum_type		= csum_type,
 			.csum			= csum,
@@ -1955,6 +1970,7 @@ void bch_extent_crc_append(struct bkey_i_extent *e,
 			   unsigned compressed_size,
 			   unsigned uncompressed_size,
 			   unsigned compression_type,
+			   unsigned nonce,
 			   u64 csum, unsigned csum_type)
 {
 	union bch_extent_crc *crc;
@@ -1983,7 +1999,8 @@ void bch_extent_crc_append(struct bkey_i_extent *e,
 		    crc_offset(crc)			== 0 &&
 		    crc_compression_type(crc)		== compression_type &&
 		    crc_csum_type(crc)			== csum_type &&
-		    crc_csum(crc)			== csum)
+		    crc_csum(crc)			== csum &&
+		    crc_nonce(crc)			== nonce)
 			return;
 		break;
 	}
@@ -1992,7 +2009,7 @@ void bch_extent_crc_append(struct bkey_i_extent *e,
 			    compressed_size,
 			    uncompressed_size,
 			    compression_type,
-			    csum, csum_type);
+			    nonce, csum, csum_type);
 	bch_extent_entry_append(e, to_entry(&new));
 }
 
@@ -2039,7 +2056,7 @@ found:
 
 		if (!src_crc) {
 			bch_extent_crc_init(&_src, src.k->size,
-					    src.k->size, 0, 0, 0);
+					    src.k->size, 0, 0, 0, 0);
 			src_crc = &_src;
 		}
 

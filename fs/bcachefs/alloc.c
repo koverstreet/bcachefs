@@ -246,6 +246,16 @@ static int prio_io(struct cache *ca, uint64_t bucket, int op)
 	return submit_bio_wait(ca->bio_prio);
 }
 
+static struct nonce prio_nonce(struct prio_set *p)
+{
+	return (struct nonce) {{
+		[0] = 0,
+		[1] = p->nonce[0],
+		[2] = p->nonce[1],
+		[3] = p->nonce[2]^BCH_NONCE_PRIO,
+	}};
+}
+
 static int bch_prio_write(struct cache *ca)
 {
 	struct cache_set *c = ca->set;
@@ -280,11 +290,7 @@ static int bch_prio_write(struct cache *ca)
 
 		p->next_bucket	= cpu_to_le64(ca->prio_buckets[i + 1]);
 		p->magic	= cpu_to_le64(pset_magic(&c->disk_sb));
-
-		SET_PSET_CSUM_TYPE(p, c->opts.metadata_checksum);
-		p->csum		= cpu_to_le64(bch_checksum(PSET_CSUM_TYPE(p),
-							   &p->magic,
-							   bucket_bytes(ca) - 8));
+		get_random_bytes(&p->nonce, sizeof(p->nonce));
 
 		spin_lock(&ca->prio_buckets_lock);
 		r = bch_bucket_alloc(ca, RESERVE_PRIO);
@@ -297,6 +303,19 @@ static int bch_prio_write(struct cache *ca)
 		ca->prio_buckets[i] = r;
 		bch_mark_metadata_bucket(ca, ca->buckets + r, false);
 		spin_unlock(&ca->prio_buckets_lock);
+
+		SET_PSET_CSUM_TYPE(p, bch_meta_checksum_type(c));
+
+		bch_encrypt(c, PSET_CSUM_TYPE(p),
+			    prio_nonce(p),
+			    p->encrypted_start,
+			    bucket_bytes(ca) -
+			    offsetof(struct prio_set, encrypted_start));
+
+		p->csum	 = bch_checksum(c, PSET_CSUM_TYPE(p),
+					prio_nonce(p),
+					(void *) p + sizeof(p->csum),
+					bucket_bytes(ca) - sizeof(p->csum));
 
 		ret = prio_io(ca, r, REQ_OP_WRITE);
 		if (cache_fatal_io_err_on(ret, ca,
@@ -355,6 +374,7 @@ int bch_prio_read(struct cache *ca)
 	struct prio_set *p = ca->disk_buckets;
 	struct bucket_disk *d = p->data + prios_per_bucket(ca), *end = d;
 	struct bucket_mark new;
+	struct bch_csum csum;
 	unsigned bucket_nr = 0;
 	u64 bucket, expect, got;
 	size_t b;
@@ -392,13 +412,23 @@ int bch_prio_read(struct cache *ca)
 				"bad magic (got %llu expect %llu) while reading prios from bucket %llu",
 				got, expect, bucket);
 
-			got = le64_to_cpu(p->csum);
-			expect = bch_checksum(PSET_CSUM_TYPE(p),
-					      &p->magic,
-					      bucket_bytes(ca) - 8);
-			unfixable_fsck_err_on(got != expect, c,
-				"bad checksum (got %llu expect %llu) while reading prios from bucket %llu",
-				got, expect, bucket);
+			unfixable_fsck_err_on(PSET_CSUM_TYPE(p) >= BCH_CSUM_NR, c,
+				"prio bucket with unknown csum type %llu bucket %lluu",
+				PSET_CSUM_TYPE(p), bucket);
+
+			csum = bch_checksum(c, PSET_CSUM_TYPE(p),
+					    prio_nonce(p),
+					    (void *) p + sizeof(p->csum),
+					    bucket_bytes(ca) - sizeof(p->csum));
+			unfixable_fsck_err_on(memcmp(&csum, &p->csum, sizeof(csum)), c,
+				"bad checksum reading prios from bucket %llu",
+				bucket);
+
+			bch_encrypt(c, PSET_CSUM_TYPE(p),
+				    prio_nonce(p),
+				    p->encrypted_start,
+				    bucket_bytes(ca) -
+				    offsetof(struct prio_set, encrypted_start));
 
 			bucket = le64_to_cpu(p->next_bucket);
 			d = p->data;

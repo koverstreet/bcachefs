@@ -299,7 +299,10 @@ static struct btree *bch_btree_node_alloc(struct cache_set *c,
 	bch_bset_init_first(b, &b->data->keys);
 	memset(&b->nr, 0, sizeof(b->nr));
 	b->data->magic = cpu_to_le64(bset_magic(&c->disk_sb));
-	SET_BSET_BTREE_LEVEL(&b->data->keys, level);
+	b->data->flags = 0;
+	SET_BTREE_NODE_ID(b->data, id);
+	SET_BTREE_NODE_LEVEL(b->data, level);
+	b->data->ptr = bkey_i_to_extent(&b->key)->v.start->ptr;
 
 	bch_btree_build_aux_trees(b);
 

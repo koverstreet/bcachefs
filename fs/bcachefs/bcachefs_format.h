@@ -406,23 +406,26 @@ struct bch_extent_crc32 {
 struct bch_extent_crc64 {
 #if defined(__LITTLE_ENDIAN_BITFIELD)
 	__u64			type:3,
-				offset:17,
-				compressed_size:18,
-				uncompressed_size:18,
+				compressed_size:13,
+				uncompressed_size:13,
+				offset:13,
+				nonce:14,
 				csum_type:4,
 				compression_type:4;
 #elif defined (__BIG_ENDIAN_BITFIELD)
 	__u64			compression_type:4,
 				csum_type:4,
-				uncompressed_size:18,
-				compressed_size:18,
-				offset:17,
+				nonce:14,
+				offset:13,
+				uncompressed_size:13,
+				compressed_size:13,
 				type:3;
 #endif
 	__u64			csum;
 } __attribute__((packed, aligned(8)));
 
-#define CRC64_EXTENT_SIZE_MAX	(1U << 17)
+#define CRC64_EXTENT_SIZE_MAX	(1U << 13) /* inclusive */
+#define CRC64_NONCE_MAX		(1U << 14) /* exclusive */
 
 /*
  * @reservation - pointer hasn't been written to, just reserved
@@ -741,7 +744,7 @@ struct cache_sb {
 	uuid_le			user_uuid;
 
 	__le64			flags2;
-	__le64			pad1[5];
+	__le64			encryption_key[5];
 
 	/* Number of cache_member entries: */
 	__u8			nr_in_set;
@@ -785,11 +788,22 @@ LE64_BITMASK(CACHE_SET_DATA_REPLICAS_WANT,struct cache_sb, flags, 8, 12);
 
 LE64_BITMASK(CACHE_SB_CSUM_TYPE,	struct cache_sb, flags, 12, 16);
 
-LE64_BITMASK(CACHE_SET_META_PREFERRED_CSUM_TYPE,struct cache_sb, flags, 16, 20);
+LE64_BITMASK(CACHE_SET_META_CSUM_TYPE,struct cache_sb, flags, 16, 20);
 #define BCH_CSUM_NONE			0U
 #define BCH_CSUM_CRC32C			1U
 #define BCH_CSUM_CRC64			2U
-#define BCH_CSUM_NR			3U
+#define BCH_CSUM_CHACHA20_POLY1305	3U
+#define BCH_CSUM_NR			4U
+
+static inline _Bool bch_csum_type_is_encryption(unsigned type)
+{
+	switch (type) {
+	case BCH_CSUM_CHACHA20_POLY1305:
+		return true;
+	default:
+		return false;
+	}
+}
 
 LE64_BITMASK(CACHE_SET_BTREE_NODE_SIZE,	struct cache_sb, flags, 20, 36);
 
@@ -805,7 +819,7 @@ enum bch_str_hash_type {
 
 #define BCH_STR_HASH_NR			3
 
-LE64_BITMASK(CACHE_SET_DATA_PREFERRED_CSUM_TYPE, struct cache_sb, flags, 48, 52);
+LE64_BITMASK(CACHE_SET_DATA_CSUM_TYPE, struct cache_sb, flags, 48, 52);
 
 LE64_BITMASK(CACHE_SET_COMPRESSION_TYPE, struct cache_sb, flags, 52, 56);
 enum {
@@ -834,6 +848,22 @@ LE64_BITMASK(CACHE_SET_HAS_LZ4_DATA,	struct cache_sb, flags2, 7,  8);
 LE64_BITMASK(CACHE_SET_HAS_GZIP_DATA,	struct cache_sb, flags2, 8,  9);
 
 LE64_BITMASK(CACHE_SET_JOURNAL_ENTRY_SIZE, struct cache_sb, flags2, 7, 15);
+
+/*
+ * If nonzero, we have an encryption key in the superblock, which is the key
+ * used to encrypt all other data/metadata. The key will normally be encrypted
+ * with the key userspace provides, but if encryption has been turned off we'll
+ * just store the master key unencrypted in the superblock so we can access the
+ * previously encrypted data.
+ */
+LE64_BITMASK(CACHE_SET_ENCRYPTION_KEY,	struct cache_sb, flags2, 15, 16);
+
+/*
+ * If nonzero, encryption is enabled; overrides DATA/META_CSUM_TYPE. Also
+ * indicates encryption algorithm in use, if/when we get more than one:
+ *
+ */
+LE64_BITMASK(CACHE_SET_ENCRYPTION_TYPE,	struct cache_sb, flags2, 16, 20);
 
 /* options: */
 
@@ -875,12 +905,12 @@ LE64_BITMASK(CACHE_SET_JOURNAL_ENTRY_SIZE, struct cache_sb, flags2, 7, 15);
 	CACHE_SET_OPT(metadata_checksum,			\
 		      bch_csum_types,				\
 		      0, BCH_CSUM_NR,				\
-		      CACHE_SET_META_PREFERRED_CSUM_TYPE,	\
+		      CACHE_SET_META_CSUM_TYPE,			\
 		      true)					\
 	CACHE_SET_OPT(data_checksum,				\
 		      bch_csum_types,				\
 		      0, BCH_CSUM_NR,				\
-		      CACHE_SET_DATA_PREFERRED_CSUM_TYPE,	\
+		      CACHE_SET_DATA_CSUM_TYPE,			\
 		      true)					\
 	CACHE_SET_OPT(compression,				\
 		      bch_compression_types,			\
@@ -1020,8 +1050,13 @@ static inline __u64 bset_magic(struct cache_sb *sb)
 	return __le64_to_cpu(sb->set_magic) ^ BSET_MAGIC;
 }
 
-/* Journal */
+/* 128 bits, sufficient for cryptographic MACs: */
+struct bch_csum {
+	__le64			lo;
+	__le64			hi;
+};
 
+/* Journal */
 
 #define BCACHE_JSET_VERSION_UUIDv1	1
 #define BCACHE_JSET_VERSION_UUID	1	/* Always latest UUID format */
@@ -1072,24 +1107,29 @@ enum {
  * version is for on disk format changes.
  */
 struct jset {
-	__le64			csum;
+	struct bch_csum		csum;
+
 	__le64			magic;
+	__le64			seq;
 	__le32			version;
 	__le32			flags;
 
-	/* Sequence number of oldest dirty journal entry */
-	__le64			seq;
-	__le64			last_seq;
+	__le32			u64s; /* size of d[] in u64s */
+
+	__u8			encrypted_start[0];
 
 	__le16			read_clock;
 	__le16			write_clock;
-	__le32			u64s; /* size of d[] in u64s */
+
+	/* Sequence number of oldest dirty journal entry */
+	__le64			last_seq;
+
 
 	union {
 		struct jset_entry start[0];
 		__u64		_data[0];
 	};
-};
+} __attribute__((packed));
 
 LE32_BITMASK(JSET_CSUM_TYPE,	struct jset, flags, 0, 4);
 LE32_BITMASK(JSET_BIG_ENDIAN,	struct jset, flags, 4, 5);
@@ -1099,10 +1139,14 @@ LE32_BITMASK(JSET_BIG_ENDIAN,	struct jset, flags, 4, 5);
 /* Bucket prios/gens */
 
 struct prio_set {
-	__le64			csum;
+	struct bch_csum		csum;
+
 	__le64			magic;
-	__le32			version;
-	__le32			flags;
+	__le32			nonce[3];
+	__le16			version;
+	__le16			flags;
+
+	__u8			encrypted_start[0];
 
 	__le64			next_bucket;
 
@@ -1111,7 +1155,7 @@ struct prio_set {
 		__le16		write_prio;
 		__u8		gen;
 	} __attribute__((packed)) data[];
-};
+} __attribute__((packed));
 
 LE32_BITMASK(PSET_CSUM_TYPE,	struct prio_set, flags, 0, 4);
 
@@ -1173,29 +1217,42 @@ struct bset {
 
 LE32_BITMASK(BSET_CSUM_TYPE,	struct bset, flags, 0, 4);
 
-/* Only used in first bset */
-LE32_BITMASK(BSET_BTREE_LEVEL,	struct bset, flags, 4, 8);
-
-LE32_BITMASK(BSET_BIG_ENDIAN,	struct bset, flags, 8, 9);
+LE32_BITMASK(BSET_BIG_ENDIAN,	struct bset, flags, 4, 5);
 LE32_BITMASK(BSET_SEPARATE_WHITEOUTS,
-				struct bset, flags, 9, 10);
+				struct bset, flags, 5, 6);
 
 struct btree_node {
-	__le64			csum;
+	struct bch_csum		csum;
 	__le64			magic;
+
+	/* this flags field is encrypted, unlike bset->flags: */
+	__le64			flags;
 
 	/* Closed interval: */
 	struct bpos		min_key;
 	struct bpos		max_key;
+	struct bch_extent_ptr	ptr;
 	struct bkey_format	format;
 
 	struct bset		keys;
 } __attribute__((packed));
 
+LE64_BITMASK(BTREE_NODE_ID,	struct btree_node, flags, 0, 4);
+LE64_BITMASK(BTREE_NODE_LEVEL,	struct btree_node, flags, 4, 8);
+
 struct btree_node_entry {
-	__le64			csum;
+	struct bch_csum		csum;
+
 	struct bset		keys;
 } __attribute__((packed));
+
+/* Crypto: */
+
+struct nonce {
+	__le32 d[4];
+};
+
+#define BCACHE_MASTER_KEY_HEADER	"bch**key"
 
 /* OBSOLETE */
 

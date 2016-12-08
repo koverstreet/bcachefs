@@ -118,8 +118,8 @@ u8 bch_btree_key_recalc_oldest_gen(struct cache_set *c, struct bkey_s_c k)
 /*
  * For runtime mark and sweep:
  */
-u8 __bch_btree_mark_key(struct cache_set *c, enum bkey_type type,
-			struct bkey_s_c k)
+static u8 bch_btree_mark_key(struct cache_set *c, enum bkey_type type,
+			     struct bkey_s_c k)
 {
 	switch (type) {
 	case BKEY_TYPE_BTREE:
@@ -133,10 +133,14 @@ u8 __bch_btree_mark_key(struct cache_set *c, enum bkey_type type,
 	}
 }
 
-static u8 btree_mark_key(struct cache_set *c, struct btree *b,
-			 struct bkey_s_c k)
+u8 bch_btree_mark_key_initial(struct cache_set *c, enum bkey_type type,
+			  struct bkey_s_c k)
 {
-	return __bch_btree_mark_key(c, btree_node_type(b), k);
+	atomic64_set(&c->key_version,
+		     max_t(u64, k.k->version.lo,
+			   atomic64_read(&c->key_version)));
+
+	return bch_btree_mark_key(c, type, k);
 }
 
 static bool btree_gc_mark_node(struct cache_set *c, struct btree *b)
@@ -151,7 +155,8 @@ static bool btree_gc_mark_node(struct cache_set *c, struct btree *b)
 					       btree_node_is_extents(b),
 					       &unpacked) {
 			bkey_debugcheck(c, b, k);
-			stale = max(stale, btree_mark_key(c, b, k));
+			stale = max(stale, bch_btree_mark_key(c,
+							btree_node_type(b), k));
 		}
 
 		if (btree_gc_rewrite_disabled(c))
@@ -218,7 +223,7 @@ static int bch_gc_btree(struct cache_set *c, enum btree_id btree_id)
 	mutex_lock(&c->btree_root_lock);
 
 	b = c->btree_roots[btree_id].b;
-	__bch_btree_mark_key(c, BKEY_TYPE_BTREE, bkey_i_to_s_c(&b->key));
+	bch_btree_mark_key(c, BKEY_TYPE_BTREE, bkey_i_to_s_c(&b->key));
 	gc_pos_set(c, gc_pos_btree_root(b->btree_id));
 
 	mutex_unlock(&c->btree_root_lock);
@@ -866,7 +871,7 @@ static void bch_initial_gc_btree(struct cache_set *c, enum btree_id id)
 			for_each_btree_node_key_unpack(b, k, &node_iter,
 						       btree_node_is_extents(b),
 						       &unpacked)
-				btree_mark_key(c, b, k);
+				bch_btree_mark_key_initial(c, btree_node_type(b), k);
 		}
 
 		bch_btree_iter_cond_resched(&iter);
@@ -874,8 +879,8 @@ static void bch_initial_gc_btree(struct cache_set *c, enum btree_id id)
 
 	bch_btree_iter_unlock(&iter);
 
-	__bch_btree_mark_key(c, BKEY_TYPE_BTREE,
-			     bkey_i_to_s_c(&c->btree_roots[id].b->key));
+	bch_btree_mark_key(c, BKEY_TYPE_BTREE,
+			   bkey_i_to_s_c(&c->btree_roots[id].b->key));
 }
 
 int bch_initial_gc(struct cache_set *c, struct list_head *journal)
@@ -888,6 +893,13 @@ int bch_initial_gc(struct cache_set *c, struct list_head *journal)
 
 		bch_journal_mark(c, journal);
 	}
+
+	/*
+	 * Skip past versions that might have possibly been used (as nonces),
+	 * but hadn't had their pointers written:
+	 */
+	if (CACHE_SET_ENCRYPTION_TYPE(&c->disk_sb))
+		atomic64_add(1 << 16, &c->key_version);
 
 	bch_mark_metadata(c);
 

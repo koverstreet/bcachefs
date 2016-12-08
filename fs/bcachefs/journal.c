@@ -52,9 +52,11 @@ static inline u64 journal_pin_seq(struct journal *j,
 	return last_seq(j) + fifo_entry_idx(&j->pin, pin_list);
 }
 
+#define jset_end(_jset)	bkey_idx(_jset, le32_to_cpu((_jset)->u64s))
+
 #define for_each_jset_entry(entry, jset)				\
 	for (entry = (jset)->start;					\
-	     entry < bkey_idx(jset, le32_to_cpu((jset)->u64s));		\
+	     entry < jset_end(jset);					\
 	     entry = jset_keys_next(entry))
 
 static inline struct jset_entry *__jset_entry_type_next(struct jset *jset,
@@ -455,6 +457,16 @@ fsck_err:
 	return ret;
 }
 
+static struct nonce journal_nonce(const struct jset *jset)
+{
+	return (struct nonce) {{
+		[0] = 0,
+		[1] = ((__le32 *) &jset->seq)[0],
+		[2] = ((__le32 *) &jset->seq)[1],
+		[3] = BCH_NONCE_JOURNAL,
+	}};
+}
+
 static void journal_entry_null_range(void *start, void *end)
 {
 	struct jset_entry *entry;
@@ -531,7 +543,7 @@ static int journal_entry_validate(struct cache_set *c, struct jset *j, u64 secto
 {
 	struct jset_entry *entry;
 	size_t bytes = __set_bytes(j, le32_to_cpu(j->u64s));
-	u64 got, expect;
+	struct bch_csum csum;
 	int ret = 0;
 
 	if (le64_to_cpu(j->magic) != jset_magic(&c->disk_sb))
@@ -554,18 +566,26 @@ static int journal_entry_validate(struct cache_set *c, struct jset *j, u64 secto
 	if (bytes > sectors_read << 9)
 		return JOURNAL_ENTRY_REREAD;
 
-	got = le64_to_cpu(j->csum);
-	expect = __csum_set(j, le32_to_cpu(j->u64s), JSET_CSUM_TYPE(j));
-	if (mustfix_fsck_err_on(got != expect, c,
-			"journal checksum bad (got %llu expect %llu), sector %lluu",
-			got, expect, sector)) {
+	if (fsck_err_on(JSET_CSUM_TYPE(j) >= BCH_CSUM_NR, c,
+			"journal entry with unknown csum type %llu sector %lluu",
+			JSET_CSUM_TYPE(j), sector))
+		return JOURNAL_ENTRY_BAD;
+
+	csum = csum_set(c, JSET_CSUM_TYPE(j), journal_nonce(j),
+			j, le32_to_cpu(j->u64s));
+	if (mustfix_fsck_err_on(memcmp(&csum, &j->csum, sizeof(csum)), c,
+			"journal checksum bad, sector %llu", sector)) {
 		/* XXX: retry IO, when we start retrying checksum errors */
 		/* XXX: note we might have missing journal entries */
 		return JOURNAL_ENTRY_BAD;
 	}
 
-	if (mustfix_fsck_err_on(le64_to_cpu(j->last_seq) > le64_to_cpu(j->seq),
-			c, "invalid journal entry: last_seq > seq"))
+	bch_encrypt(c, JSET_CSUM_TYPE(j), journal_nonce(j),
+		    j->encrypted_start,
+		    (void *) jset_end(j) - (void *) j->encrypted_start);
+
+	if (mustfix_fsck_err_on(le64_to_cpu(j->last_seq) > le64_to_cpu(j->seq), c,
+			"invalid journal entry: last_seq > seq"))
 		j->last_seq = j->seq;
 
 	for_each_jset_entry(entry, j) {
@@ -1057,7 +1077,7 @@ void bch_journal_mark(struct cache_set *c, struct list_head *list)
 			struct bkey_s_c k_s_c = bkey_i_to_s_c(k);
 
 			if (btree_type_has_ptrs(type))
-				__bch_btree_mark_key(c, type, k_s_c);
+				bch_btree_mark_key_initial(c, type, k_s_c);
 		}
 }
 
@@ -2019,6 +2039,7 @@ static void journal_write(struct closure *cl)
 	struct cache_set *c = container_of(j, struct cache_set, journal);
 	struct cache *ca;
 	struct journal_buf *w = journal_prev_buf(j);
+	struct jset *jset = w->data;
 	struct bio *bio;
 	struct bch_extent_ptr *ptr;
 	unsigned i, sectors, bytes;
@@ -2036,20 +2057,24 @@ static void journal_write(struct closure *cl)
 	}
 	mutex_unlock(&c->btree_root_lock);
 
-	journal_write_compact(w->data);
+	journal_write_compact(jset);
 
-	w->data->read_clock	= cpu_to_le16(c->prio_clock[READ].hand);
-	w->data->write_clock	= cpu_to_le16(c->prio_clock[WRITE].hand);
-	w->data->magic		= cpu_to_le64(jset_magic(&c->disk_sb));
-	w->data->version	= cpu_to_le32(BCACHE_JSET_VERSION);
+	jset->read_clock	= cpu_to_le16(c->prio_clock[READ].hand);
+	jset->write_clock	= cpu_to_le16(c->prio_clock[WRITE].hand);
+	jset->magic		= cpu_to_le64(jset_magic(&c->disk_sb));
+	jset->version		= cpu_to_le32(BCACHE_JSET_VERSION);
 
-	SET_JSET_BIG_ENDIAN(w->data, CPU_BIG_ENDIAN);
-	SET_JSET_CSUM_TYPE(w->data, c->opts.metadata_checksum);
-	w->data->csum = cpu_to_le64(__csum_set(w->data,
-					       le32_to_cpu(w->data->u64s),
-					       JSET_CSUM_TYPE(w->data)));
+	SET_JSET_BIG_ENDIAN(jset, CPU_BIG_ENDIAN);
+	SET_JSET_CSUM_TYPE(jset, bch_meta_checksum_type(c));
 
-	sectors = __set_blocks(w->data, le32_to_cpu(w->data->u64s),
+	bch_encrypt(c, JSET_CSUM_TYPE(jset), journal_nonce(jset),
+		    jset->encrypted_start,
+		    (void *) jset_end(jset) - (void *) jset->encrypted_start);
+
+	jset->csum = csum_set(c, JSET_CSUM_TYPE(jset), journal_nonce(jset),
+			      jset, le32_to_cpu(jset->u64s));
+
+	sectors = __set_blocks(jset, le32_to_cpu(jset->u64s),
 			       block_bytes(c)) * c->sb.block_size;
 	BUG_ON(sectors > j->prev_buf_sectors);
 
@@ -2096,7 +2121,7 @@ static void journal_write(struct closure *cl)
 		bio->bi_private		= ca;
 		bio_set_op_attrs(bio, REQ_OP_WRITE,
 				 REQ_SYNC|REQ_META|REQ_PREFLUSH|REQ_FUA);
-		bch_bio_map(bio, w->data);
+		bch_bio_map(bio, jset);
 
 		trace_bcache_journal_write(bio);
 		closure_bio_submit_punt(bio, cl, c);
