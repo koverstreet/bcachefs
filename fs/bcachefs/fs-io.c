@@ -1981,7 +1981,7 @@ static long bch_fpunch(struct inode *inode, loff_t offset, loff_t len)
 		ret = bch_discard(c,
 				  POS(ino, discard_start),
 				  POS(ino, discard_end),
-				  0,
+				  ZERO_VERSION,
 				  &disk_res,
 				  &i_sectors_hook.hook,
 				  &ei->journal_seq);

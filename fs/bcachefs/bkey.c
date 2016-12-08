@@ -81,9 +81,9 @@ int bch_bkey_to_text(char *buf, size_t size, const struct bkey *k)
 
 #define p(...)	(out += scnprintf(out, end - out, __VA_ARGS__))
 
-	p("u64s %u type %u %llu:%llu snap %u len %u ver %u",
+	p("u64s %u type %u %llu:%llu snap %u len %u ver %llu",
 	  k->u64s, k->type, k->p.inode, k->p.offset,
-	  k->p.snapshot, k->size, k->version);
+	  k->p.snapshot, k->size, k->version.lo);
 
 	BUG_ON(bkey_packed(k));
 
@@ -258,13 +258,21 @@ bool bch_bkey_transform(const struct bkey_format *out_f,
 	return true;
 }
 
+#define bkey_fields()							\
+	x(BKEY_FIELD_INODE,		p.inode)			\
+	x(BKEY_FIELD_OFFSET,		p.offset)			\
+	x(BKEY_FIELD_SNAPSHOT,		p.snapshot)			\
+	x(BKEY_FIELD_SIZE,		size)				\
+	x(BKEY_FIELD_VERSION_HI,	version.hi)			\
+	x(BKEY_FIELD_VERSION_LO,	version.lo)
+
 struct bkey __bkey_unpack_key(const struct bkey_format *format,
 			      const struct bkey_packed *in)
 {
 	struct unpack_state state = unpack_state_init(format, in);
 	struct bkey out;
 
-	EBUG_ON(format->nr_fields != 5);
+	EBUG_ON(format->nr_fields != BKEY_NR_FIELDS);
 	EBUG_ON(in->u64s < format->key_u64s);
 	EBUG_ON(in->format != KEY_FORMAT_LOCAL_BTREE);
 	EBUG_ON(in->u64s - format->key_u64s + BKEY_U64s > U8_MAX);
@@ -274,11 +282,10 @@ struct bkey __bkey_unpack_key(const struct bkey_format *format,
 	out.needs_whiteout = in->needs_whiteout;
 	out.type	= in->type;
 	out.pad[0]	= 0;
-	out.p.inode	= get_inc_field(&state, BKEY_FIELD_INODE);
-	out.p.offset	= get_inc_field(&state, BKEY_FIELD_OFFSET);
-	out.p.snapshot	= get_inc_field(&state, BKEY_FIELD_SNAPSHOT);
-	out.size	= get_inc_field(&state, BKEY_FIELD_SIZE);
-	out.version	= get_inc_field(&state, BKEY_FIELD_VERSION);
+
+#define x(id, field)	out.field = get_inc_field(&state, id);
+	bkey_fields()
+#undef x
 
 	return out;
 }
@@ -290,7 +297,7 @@ struct bpos __bkey_unpack_pos(const struct bkey_format *format,
 	struct unpack_state state = unpack_state_init(format, in);
 	struct bpos out;
 
-	EBUG_ON(format->nr_fields != 5);
+	EBUG_ON(format->nr_fields != BKEY_NR_FIELDS);
 	EBUG_ON(in->u64s < format->key_u64s);
 	EBUG_ON(in->format != KEY_FORMAT_LOCAL_BTREE);
 
@@ -311,17 +318,14 @@ bool bkey_pack_key(struct bkey_packed *out, const struct bkey *in,
 	struct pack_state state = pack_state_init(format, out);
 
 	EBUG_ON((void *) in == (void *) out);
-	EBUG_ON(format->nr_fields != 5);
+	EBUG_ON(format->nr_fields != BKEY_NR_FIELDS);
 	EBUG_ON(in->format != KEY_FORMAT_CURRENT);
 
 	out->_data[0] = 0;
 
-	if (!set_inc_field(&state, BKEY_FIELD_INODE,	in->p.inode) ||
-	    !set_inc_field(&state, BKEY_FIELD_OFFSET,	in->p.offset) ||
-	    !set_inc_field(&state, BKEY_FIELD_SNAPSHOT,	in->p.snapshot) ||
-	    !set_inc_field(&state, BKEY_FIELD_SIZE,	in->size) ||
-	    !set_inc_field(&state, BKEY_FIELD_VERSION,	in->version))
-		return false;
+#define x(id, field)	if (!set_inc_field(&state, id, in->field)) return false;
+	bkey_fields()
+#undef x
 
 	/*
 	 * Extents - we have to guarantee that if an extent is packed, a trimmed
@@ -339,47 +343,6 @@ bool bkey_pack_key(struct bkey_packed *out, const struct bkey *in,
 	bch_bkey_pack_verify(out, in, format);
 	return true;
 }
-
-/*
- * Alternate implementations using bch_bkey_transform_key() - unfortunately, too
- * slow
- */
-#if 0
-struct bkey __bkey_unpack_key(const struct bkey_format *format,
-			      const struct bkey_packed *in)
-{
-	struct bkey out;
-	bool s;
-
-	EBUG_ON(format->nr_fields != 5);
-	EBUG_ON(in->u64s < format->key_u64s);
-	EBUG_ON(in->format != KEY_FORMAT_LOCAL_BTREE);
-
-	s = bch_bkey_transform_key(&bch_bkey_format_current, (void *) &out,
-				   format, in);
-	EBUG_ON(!s);
-
-	out.format = KEY_FORMAT_CURRENT;
-
-	return out;
-}
-
-bool bkey_pack_key(struct bkey_packed *out, const struct bkey *in,
-		   const struct bkey_format *format)
-{
-	EBUG_ON(format->nr_fields != 5);
-	EBUG_ON(in->format != KEY_FORMAT_CURRENT);
-
-	if (!bch_bkey_transform_key(format, out,
-				    &bch_bkey_format_current, (void *) in))
-		return false;
-
-	out->format = KEY_FORMAT_LOCAL_BTREE;
-
-	bch_bkey_pack_verify(out, in, format);
-	return true;
-}
-#endif
 
 /**
  * bkey_unpack -- unpack the key and the value
@@ -588,12 +551,10 @@ static void __bkey_format_add(struct bkey_format_state *s,
  */
 void bch_bkey_format_add_key(struct bkey_format_state *s, const struct bkey *k)
 {
-	__bkey_format_add(s, BKEY_FIELD_INODE, k->p.inode);
-	__bkey_format_add(s, BKEY_FIELD_OFFSET, k->p.offset);
+#define x(id, field) __bkey_format_add(s, id, k->field);
+	bkey_fields()
+#undef x
 	__bkey_format_add(s, BKEY_FIELD_OFFSET, bkey_start_offset(k));
-	__bkey_format_add(s, BKEY_FIELD_SNAPSHOT, k->p.snapshot);
-	__bkey_format_add(s, BKEY_FIELD_SIZE, k->size);
-	__bkey_format_add(s, BKEY_FIELD_VERSION, k->version);
 }
 
 void bch_bkey_format_add_pos(struct bkey_format_state *s, struct bpos p)
@@ -634,6 +595,12 @@ struct bkey_format bch_bkey_format_done(struct bkey_format_state *s)
 				 s->field_min[i]);
 
 		bits += ret.bits_per_field[i];
+	}
+
+	/* allow for extent merging: */
+	if (ret.bits_per_field[BKEY_FIELD_SIZE]) {
+		ret.bits_per_field[BKEY_FIELD_SIZE] += 4;
+		bits += 4;
 	}
 
 	ret.key_u64s = DIV_ROUND_UP(bits, 64);
@@ -1014,25 +981,13 @@ int bch_compile_bkey_format(const struct bkey_format *format, void *_out)
 	/* mov [rdi], eax */
 	I2(0x89, 0x07);
 
-	out = compile_bkey_field(format, out,	BKEY_FIELD_INODE,
-				 offsetof(struct bkey, p.inode), 8,
+#define x(id, field)							\
+	out = compile_bkey_field(format, out, id,			\
+				 offsetof(struct bkey, field),		\
+				 sizeof(((struct bkey *) NULL)->field),	\
 				 &eax_zeroed);
-
-	out = compile_bkey_field(format, out,	BKEY_FIELD_OFFSET,
-				 offsetof(struct bkey, p.offset), 8,
-				 &eax_zeroed);
-
-	out = compile_bkey_field(format, out,	BKEY_FIELD_SNAPSHOT,
-				 offsetof(struct bkey, p.snapshot), 4,
-				 &eax_zeroed);
-
-	out = compile_bkey_field(format, out,	BKEY_FIELD_SIZE,
-				 offsetof(struct bkey, size), 4,
-				 &eax_zeroed);
-
-	out = compile_bkey_field(format, out,	BKEY_FIELD_VERSION,
-				 offsetof(struct bkey, version), 4,
-				 &eax_zeroed);
+	bkey_fields()
+#undef x
 
 	/* retq */
 	I1(0xc3);
@@ -1075,43 +1030,6 @@ static inline int __bkey_cmp_bits(const u64 *l, const u64 *r,
 		l_v = *l;
 		r_v = *r;
 	}
-}
-#endif
-
-/*
- * Would like to use this if we can make __bkey_cmp_bits() fast enough, it'll be
- * a decent reduction in code size
- */
-#if 0
-static int bkey_cmp_verify(const struct bkey *l, const struct bkey *r)
-{
-	if (l->p.inode != r->p.inode)
-		return l->p.inode < r->p.inode ? -1 : 1;
-
-	if (l->p.offset != r->p.offset)
-		return l->p.offset < r->p.offset ? -1 : 1;
-
-	if (l->p.snapshot != r->p.snapshot)
-		return l->p.snapshot < r->p.snapshot ? -1 : 1;
-
-	return 0;
-}
-
-int bkey_cmp(const struct bkey *l, const struct bkey *r)
-{
-	int ret;
-
-	EBUG_ON(bkey_packed(l) || bkey_packed(r));
-
-	ret = __bkey_cmp_bits((sizeof(l->inode) +
-			       sizeof(l->offset) +
-			       sizeof(l->snapshot)) * BITS_PER_BYTE,
-			      __high_word(BKEY_U64s, l),
-			      __high_word(BKEY_U64s, r));
-
-	BUG_ON(ret != bkey_cmp_verify(l, r));
-
-	return ret;
 }
 #endif
 
@@ -1214,7 +1132,7 @@ void bkey_pack_test(void)
 
 	struct bkey_format test_format = {
 		.key_u64s	= 2,
-		.nr_fields	= 5,
+		.nr_fields	= BKEY_NR_FIELDS,
 		.bits_per_field = {
 			13,
 			64,
@@ -1230,21 +1148,9 @@ void bkey_pack_test(void)
 		u64 a, v = get_inc_field(&in_s, i);
 
 		switch (i) {
-		case 0:
-			a = t.p.inode;
-			break;
-		case 1:
-			a = t.p.offset;
-			break;
-		case 2:
-			a = t.p.snapshot;
-			break;
-		case 3:
-			a = t.size;
-			break;
-		case 4:
-			a = t.version;
-			break;
+#define x(id, field)	case id: a = t.field; break;
+	bkey_fields()
+#undef x
 		default:
 			BUG();
 		}

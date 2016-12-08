@@ -102,6 +102,16 @@ struct bch_val {
 	__u64		__nothing[0];
 };
 
+struct bversion {
+#if defined(__LITTLE_ENDIAN)
+	__u64		lo;
+	__u32		hi;
+#elif defined(__BIG_ENDIAN)
+	__u32		hi;
+	__u64		lo;
+#endif
+} __attribute__((packed, aligned(4)));
+
 struct bkey {
 	__u64		_data[0];
 
@@ -125,13 +135,13 @@ struct bkey {
 #if defined(__LITTLE_ENDIAN)
 	__u8		pad[1];
 
-	__u32		version;
+	struct bversion	version;
 	__u32		size;		/* extent size, in sectors */
 	struct bpos	p;
 #elif defined(__BIG_ENDIAN)
 	struct bpos	p;
 	__u32		size;		/* extent size, in sectors */
-	__u32		version;
+	struct bversion	version;
 
 	__u8		pad[1];
 #endif
@@ -184,7 +194,8 @@ enum bch_bkey_fields {
 	BKEY_FIELD_OFFSET,
 	BKEY_FIELD_SNAPSHOT,
 	BKEY_FIELD_SIZE,
-	BKEY_FIELD_VERSION,
+	BKEY_FIELD_VERSION_HI,
+	BKEY_FIELD_VERSION_LO,
 	BKEY_NR_FIELDS,
 };
 
@@ -200,7 +211,8 @@ enum bch_bkey_fields {
 		bkey_format_field(OFFSET,	p.offset),		\
 		bkey_format_field(SNAPSHOT,	p.snapshot),		\
 		bkey_format_field(SIZE,		size),			\
-		bkey_format_field(VERSION,	version),		\
+		bkey_format_field(VERSION_HI,	version.hi),		\
+		bkey_format_field(VERSION_LO,	version.lo),		\
 	},								\
 })
 

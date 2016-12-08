@@ -948,7 +948,7 @@ static bool bch_extent_cmpxchg_cmp(struct bkey_s_c l, struct bkey_s_c r)
 	BUG_ON(!l.k->size || !r.k->size);
 
 	if (l.k->type != r.k->type ||
-	    l.k->version != r.k->version)
+	    bversion_cmp(l.k->version, r.k->version))
 		return false;
 
 	switch (l.k->type) {
@@ -1180,8 +1180,8 @@ __extent_insert_advance_pos(struct extent_insert_state *s,
 	enum extent_insert_hook_ret ret;
 
 	if (k.k && k.k->size &&
-	    s->insert->k->k.version &&
-	    k.k->version > s->insert->k->k.version)
+	    !bversion_zero(s->insert->k->k.version) &&
+	    bversion_cmp(k.k->version, s->insert->k->k.version) > 0)
 		ret = BTREE_HOOK_NO_INSERT;
 	else if (hook)
 		ret = hook->fn(hook, s->committed, next_pos, k, s->insert->k);
@@ -2112,7 +2112,7 @@ static bool __bch_extent_normalize(struct cache_set *c, struct bkey_s k,
 		return true;
 
 	case KEY_TYPE_DISCARD:
-		return !k.k->version;
+		return bversion_zero(k.k->version);
 
 	case BCH_EXTENT:
 	case BCH_EXTENT_CACHED:
@@ -2126,7 +2126,7 @@ static bool __bch_extent_normalize(struct cache_set *c, struct bkey_s k,
 		if (!bkey_val_u64s(e.k)) {
 			if (bkey_extent_is_cached(e.k)) {
 				k.k->type = KEY_TYPE_DISCARD;
-				if (!k.k->version)
+				if (bversion_zero(k.k->version))
 					return true;
 			} else {
 				k.k->type = KEY_TYPE_ERROR;
@@ -2227,7 +2227,7 @@ static enum merge_result bch_extent_merge(struct cache_set *c,
 
 	if (l->k.u64s		!= r->k.u64s ||
 	    l->k.type		!= r->k.type ||
-	    l->k.version	!= r->k.version ||
+	    bversion_cmp(l->k.version, r->k.version) ||
 	    bkey_cmp(l->k.p, bkey_start_pos(&r->k)))
 		return BCH_MERGE_NOMERGE;
 

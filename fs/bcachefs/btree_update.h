@@ -404,7 +404,7 @@ int bch_btree_update(struct cache_set *, enum btree_id,
 		     struct bkey_i *, u64 *);
 
 int bch_btree_delete_range(struct cache_set *, enum btree_id,
-			   struct bpos, struct bpos, u64,
+			   struct bpos, struct bpos, struct bversion,
 			   struct disk_reservation *,
 			   struct extent_insert_hook *, u64 *);
 

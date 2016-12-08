@@ -809,7 +809,7 @@ void bch_write_op_init(struct bch_write_op *op, struct cache_set *c,
 	op->nr_replicas	= res.nr_replicas;
 	op->alloc_reserve = RESERVE_NONE;
 	op->pos		= pos;
-	op->version	= 0;
+	op->version	= ZERO_VERSION;
 	op->res		= res;
 	op->wp		= wp;
 
@@ -848,7 +848,7 @@ void bch_write_op_init(struct bch_write_op *op, struct cache_set *c,
  *	appropriately inode_truncate should call this
  */
 int bch_discard(struct cache_set *c, struct bpos start,
-		struct bpos end, u64 version,
+		struct bpos end, struct bversion version,
 		struct disk_reservation *disk_res,
 		struct extent_insert_hook *hook,
 		u64 *journal_seq)

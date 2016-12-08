@@ -79,7 +79,7 @@ void bch_submit_wbio_replicas(struct bch_write_bio *, struct cache_set *,
 			      const struct bkey_i *, bool);
 
 int bch_discard(struct cache_set *, struct bpos, struct bpos,
-		u64, struct disk_reservation *,
+		struct bversion, struct disk_reservation *,
 		struct extent_insert_hook *, u64 *);
 
 void bch_read_retry_work(struct work_struct *);

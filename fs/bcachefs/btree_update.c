@@ -2217,7 +2217,7 @@ int bch_btree_update(struct cache_set *c, enum btree_id id,
 int bch_btree_delete_range(struct cache_set *c, enum btree_id id,
 			   struct bpos start,
 			   struct bpos end,
-			   u64 version,
+			   struct bversion version,
 			   struct disk_reservation *disk_res,
 			   struct extent_insert_hook *hook,
 			   u64 *journal_seq)

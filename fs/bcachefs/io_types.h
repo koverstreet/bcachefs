@@ -106,7 +106,7 @@ struct bch_write_op {
 	unsigned		alloc_reserve:4;
 
 	struct bpos		pos;
-	unsigned		version;
+	struct bversion		version;
 
 	/* For BCH_WRITE_DATA_COMPRESSED: */
 	struct bch_extent_crc64	crc;
