@@ -7,6 +7,7 @@
 
 #define pr_fmt(fmt) "bcache: %s() " fmt "\n", __func__
 
+#include "eytzinger.h"
 #include "util.h"
 #include "bset.h"
 #include "bcache.h"
@@ -467,161 +468,6 @@ void bch_btree_keys_init(struct btree *b, bool *expensive_debug_checks)
 
 /* Binary tree stuff for auxiliary search trees */
 
-#ifdef CONFIG_X86_64
-/* we don't need the rex prefixes, or the rep prefix (lzcnt/tzcnt) */
-
-#define __fls(_x)					\
-({							\
-	unsigned _r;					\
-	asm("bsr %1,%0" : "=r" (_r) : "rm" (_x));	\
-	_r;						\
-})
-
-#define __ffs(_x)					\
-({							\
-	unsigned _r;					\
-	asm("bsf %1,%0" : "=r" (_r) : "rm" (_x));	\
-	_r;						\
-})
-
-#define ffz(_x)						\
-({							\
-	unsigned _r;					\
-	asm("bsf %1,%0" : "=r" (_r) : "rm" (~(_x)));	\
-	_r;						\
-})
-
-#endif
-
-static unsigned inorder_next(unsigned j, unsigned size)
-{
-	if (j * 2 + 1 < size) {
-		j = j * 2 + 1;
-
-		j <<= __fls(size) - __fls(j);
-		j >>= j >= size;
-	} else
-		j >>= ffz(j) + 1;
-
-	return j;
-}
-
-static unsigned inorder_prev(unsigned j, unsigned size)
-{
-	if (j * 2 < size) {
-		j = j * 2 + 1;
-
-		j <<= __fls(size) - __fls(j);
-		j -= 1;
-		j >>= j >= size;
-	} else
-		j >>= __ffs(j) + 1;
-
-	return j;
-}
-
-/* I have no idea why this code works... and I'm the one who wrote it
- *
- * However, I do know what it does:
- * Given a binary tree constructed in an array (i.e. how you normally implement
- * a heap), it converts a node in the tree - referenced by array index - to the
- * index it would have if you did an inorder traversal.
- *
- * Also tested for every j, size up to size somewhere around 6 million.
- *
- * The binary tree starts at array index 1, not 0
- * extra is a function of size:
- *   extra = (size - rounddown_pow_of_two(size - 1)) << 1;
- */
-static inline unsigned __to_inorder(unsigned j, unsigned size, unsigned extra)
-{
-	unsigned b = __fls(j);
-	unsigned shift = __fls(size - 1) - b;
-	int s;
-
-	j  ^= 1U << b;
-	j <<= 1;
-	j  |= 1;
-	j <<= shift;
-
-	/* sign bit trick: */
-#if 0
-	if (j > extra)
-		j -= (j - extra) >> 1;
-#else
-	s = extra - j;
-	j += (s >> 1) & (s >> 31);
-#endif
-
-	return j;
-}
-
-static inline unsigned to_inorder(unsigned j, const struct bset_tree *t)
-{
-	return __to_inorder(j, t->size, t->extra);
-}
-
-/* j in [1..size) */
-static unsigned __inorder_to_tree(unsigned j, unsigned size, unsigned extra)
-{
-	unsigned shift;
-	int s;
-
-	EBUG_ON(!j || j >= size);
-
-	s = extra - j;
-	j -= s & (s >> 31);
-
-	shift = __ffs(j);
-
-	j >>= shift + 1;
-	j  |= 1U << (__fls(size - 1) - shift);
-
-	return j;
-}
-
-static unsigned inorder_to_tree(unsigned j, const struct bset_tree *t)
-{
-	return __inorder_to_tree(j, t->size, t->extra);
-}
-
-#if 0
-void inorder_test(void)
-{
-	unsigned long done = 0;
-	ktime_t start = ktime_get();
-
-	for (unsigned size = 2;
-	     size < 65536000;
-	     size++) {
-		unsigned extra = (size - rounddown_pow_of_two(size - 1)) << 1;
-		unsigned i = 1, j = rounddown_pow_of_two(size - 1);
-
-		if (!(size % 4096))
-			printk(KERN_NOTICE "loop %u, %llu per us\n", size,
-			       done / ktime_us_delta(ktime_get(), start));
-
-		while (1) {
-			if (__inorder_to_tree(i, size, extra) != j)
-				panic("size %10u j %10u i %10u", size, j, i);
-
-			if (__to_inorder(j, size, extra) != i)
-				panic("size %10u j %10u i %10u", size, j, i);
-
-			if (j == rounddown_pow_of_two(size) - 1)
-				break;
-
-			BUG_ON(inorder_prev(inorder_next(j, size), size) != j);
-
-			j = inorder_next(j, size);
-			i++;
-		}
-
-		done += size - 1;
-	}
-}
-#endif
-
 /*
  * Cacheline/offset <-> bkey pointer arithmetic:
  *
@@ -629,8 +475,9 @@ void inorder_test(void)
  * in one cacheline in t->set (BSET_CACHELINE bytes).
  *
  * This means we don't have to store the full index of the key that a node in
- * the binary tree points to; to_inorder() gives us the cacheline, and then
- * bkey_float->m gives us the offset within that cacheline, in units of 8 bytes.
+ * the binary tree points to; eytzinger_to_inorder() gives us the cacheline, and
+ * then bkey_float->m gives us the offset within that cacheline, in units of 8
+ * bytes.
  *
  * cacheline_to_bkey() and friends abstract out all the pointer arithmetic to
  * make this work.
@@ -688,8 +535,9 @@ static inline struct bkey_packed *tree_to_bkey(const struct btree *b,
 					       const struct bset_tree *t,
 					       unsigned j)
 {
-	return cacheline_to_bkey(b, t, to_inorder(j, t),
-				 bkey_float(b, t, j)->key_offset);
+	return cacheline_to_bkey(b, t,
+			__eytzinger_to_inorder(j, t->size, t->extra),
+			bkey_float(b, t, j)->key_offset);
 }
 
 static struct bkey_packed *tree_to_prev_bkey(const struct btree *b,
@@ -1036,9 +884,7 @@ retry:
 	t->extra = (t->size - rounddown_pow_of_two(t->size - 1)) << 1;
 
 	/* First we figure out where the first key in each cacheline is */
-	for (j = inorder_next(0, t->size);
-	     j;
-	     j = inorder_next(j, t->size)) {
+	eytzinger_for_each(j, t->size) {
 		while (bkey_to_cacheline(b, t, k) < cacheline)
 			prev = k, k = bkey_next(k);
 
@@ -1061,9 +907,7 @@ retry:
 	t->max_key = bkey_unpack_pos(b, k);
 
 	/* Then we build the tree */
-	for (j = inorder_next(0, t->size);
-	     j;
-	     j = inorder_next(j, t->size))
+	eytzinger_for_each(j, t->size)
 		make_bfloat(b, t, j, &min_key, &max_key);
 }
 
@@ -1153,7 +997,9 @@ static struct bkey_packed *__bkey_prev(struct btree *b, struct bset_tree *t,
 		j = min_t(unsigned, t->size - 1, bkey_to_cacheline(b, t, k));
 
 		do {
-			p = j ? tree_to_bkey(b, t, inorder_to_tree(j--, t))
+			p = j ? tree_to_bkey(b, t,
+					__inorder_to_eytzinger(j--,
+							t->size, t->extra))
 			      : btree_bkey_first(b, t);
 		} while (p >= k);
 		break;
@@ -1242,23 +1088,33 @@ static void ro_aux_tree_fix_invalidated_key(struct btree *b,
 	inorder = bkey_to_cacheline(b, t, k);
 
 	if (inorder &&
-	    inorder < t->size &&
-	    k == tree_to_bkey(b, t, j = inorder_to_tree(inorder, t))) {
-		/* Fix the auxiliary search tree node this key corresponds to */
-		make_bfloat(b, t, j, &min_key, &max_key);
+	    inorder < t->size) {
+		j = __inorder_to_eytzinger(inorder, t->size, t->extra);
 
-		/* Children for which this key is the right side boundary */
-		for (j = j * 2; j < t->size; j = j * 2 + 1)
+		if (k == tree_to_bkey(b, t, j)) {
+			/* Fix the node this key corresponds to */
 			make_bfloat(b, t, j, &min_key, &max_key);
+
+			/* Children for which this key is the right boundary */
+			for (j = eytzinger_left_child(j);
+			     j < t->size;
+			     j = eytzinger_right_child(j))
+				make_bfloat(b, t, j, &min_key, &max_key);
+		}
 	}
 
-	if (inorder + 1 < t->size &&
-	    k == tree_to_prev_bkey(b, t, j = inorder_to_tree(inorder + 1, t))) {
-		make_bfloat(b, t, j, &min_key, &max_key);
+	if (inorder + 1 < t->size) {
+		j = __inorder_to_eytzinger(inorder + 1, t->size, t->extra);
 
-		/* Children for which this key is the left side boundary */
-		for (j = j * 2 + 1; j < t->size; j = j * 2)
+		if (k == tree_to_prev_bkey(b, t, j)) {
 			make_bfloat(b, t, j, &min_key, &max_key);
+
+			/* Children for which this key is the left boundary */
+			for (j = eytzinger_right_child(j);
+			     j < t->size;
+			     j = eytzinger_left_child(j))
+				make_bfloat(b, t, j, &min_key, &max_key);
+		}
 	}
 }
 
@@ -1477,7 +1333,7 @@ static struct bkey_packed *bset_search_tree(const struct btree *b,
 			p = bkey_float_get(base, n << 4);
 			prefetch(p);
 		} else if (n << 3 < t->size) {
-			inorder = to_inorder(n, t);
+			inorder = __eytzinger_to_inorder(n, t->size, t->extra);
 			p = bset_cacheline(b, t, inorder);
 #ifdef CONFIG_X86_64
 			asm(".intel_syntax noprefix;"
@@ -1508,7 +1364,7 @@ static struct bkey_packed *bset_search_tree(const struct btree *b,
 						&search, packed_search, n);
 	} while (n < t->size);
 
-	inorder = to_inorder(n >> 1, t);
+	inorder = __eytzinger_to_inorder(n >> 1, t->size, t->extra);
 
 	/*
 	 * n would have been the node we recursed to - the low bit tells us if
@@ -1518,7 +1374,7 @@ static struct bkey_packed *bset_search_tree(const struct btree *b,
 		return cacheline_to_bkey(b, t, inorder, f->key_offset);
 	} else {
 		if (--inorder) {
-			n = inorder_prev(n >> 1, t->size);
+			n = eytzinger_prev(n >> 1, t->size);
 			f = bkey_float_get(base, n);
 			return cacheline_to_bkey(b, t, inorder, f->key_offset);
 		} else
@@ -1938,7 +1794,7 @@ int bch_bkey_print_bfloat(struct btree *b, struct bkey_packed *k,
 	if (!bset_has_ro_aux_tree(t))
 		goto out;
 
-	j = inorder_to_tree(bkey_to_cacheline(b, t, k), t);
+	j = __inorder_to_eytzinger(bkey_to_cacheline(b, t, k), t->size, t->extra);
 	if (j &&
 	    j < t->size &&
 	    k == tree_to_bkey(b, t, j))
