@@ -17,12 +17,13 @@ void bch_open_bucket_put(struct cache_set *, struct open_bucket *);
 
 struct open_bucket *bch_alloc_sectors_start(struct cache_set *,
 					    struct write_point *,
-					    struct bkey_i_extent *,
 					    unsigned, enum alloc_reserve,
 					    struct closure *);
+
+void bch_alloc_sectors_append_ptrs(struct cache_set *, struct bkey_i_extent *,
+				   unsigned, struct open_bucket *, unsigned);
 void bch_alloc_sectors_done(struct cache_set *, struct write_point *,
-			    struct bkey_i_extent *, unsigned,
-			    struct open_bucket *, unsigned);
+			    struct open_bucket *);
 
 struct open_bucket *bch_alloc_sectors(struct cache_set *, struct write_point *,
 				      struct bkey_i_extent *, unsigned,

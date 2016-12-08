@@ -226,11 +226,6 @@ DEFINE_EVENT(bcache_bio, bcache_read_retry,
 	TP_ARGS(bio)
 );
 
-DEFINE_EVENT(bkey, bcache_cache_insert,
-	TP_PROTO(const struct bkey *k),
-	TP_ARGS(k)
-);
-
 DECLARE_EVENT_CLASS(page_alloc_fail,
 	TP_PROTO(struct cache_set *c, u64 size),
 	TP_ARGS(c, size),

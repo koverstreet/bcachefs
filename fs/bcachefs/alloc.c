@@ -1294,12 +1294,10 @@ static struct open_bucket *lock_writepoint(struct cache_set *c,
 static int open_bucket_add_buckets(struct cache_set *c,
 				   struct write_point *wp,
 				   struct open_bucket *ob,
-				   struct bkey_i_extent *e,
 				   unsigned nr_replicas,
 				   enum alloc_reserve reserve,
 				   struct closure *cl)
 {
-	const struct bch_extent_ptr *ptr;
 	long caches_used[BITS_TO_LONGS(MAX_CACHES_PER_SET)];
 	int i, dst;
 
@@ -1311,13 +1309,10 @@ static int open_bucket_add_buckets(struct cache_set *c,
 	 */
 
 	/* Short circuit all the fun stuff if posssible: */
-	if (!bkey_val_u64s(&e->k) && ob->nr_ptrs >= nr_replicas)
+	if (ob->nr_ptrs >= nr_replicas)
 		return 0;
 
 	memset(caches_used, 0, sizeof(caches_used));
-
-	extent_for_each_ptr(extent_i_to_s_c(e), ptr)
-		__set_bit(ptr->dev, caches_used);
 
 	/*
 	 * Shuffle pointers to devices we already have to the end:
@@ -1343,7 +1338,6 @@ static int open_bucket_add_buckets(struct cache_set *c,
  */
 struct open_bucket *bch_alloc_sectors_start(struct cache_set *c,
 					    struct write_point *wp,
-					    struct bkey_i_extent *e,
 					    unsigned nr_replicas,
 					    enum alloc_reserve reserve,
 					    struct closure *cl)
@@ -1398,7 +1392,7 @@ retry:
 		ob = new_ob;
 	}
 
-	ret = open_bucket_add_buckets(c, wp, ob, e, nr_replicas,
+	ret = open_bucket_add_buckets(c, wp, ob, nr_replicas,
 				      reserve, cl);
 	if (ret) {
 		mutex_unlock(&ob->lock);
@@ -1417,11 +1411,10 @@ retry:
  * Append pointers to the space we just allocated to @k, and mark @sectors space
  * as allocated out of @ob
  */
-void bch_alloc_sectors_done(struct cache_set *c, struct write_point *wp,
-			    struct bkey_i_extent *e, unsigned nr_replicas,
-			    struct open_bucket *ob, unsigned sectors)
+void bch_alloc_sectors_append_ptrs(struct cache_set *c, struct bkey_i_extent *e,
+				   unsigned nr_replicas, struct open_bucket *ob,
+				   unsigned sectors)
 {
-	struct cache_member_rcu *mi = cache_member_info_get(c);
 	struct bch_extent_ptr tmp, *ptr;
 	struct cache *ca;
 	bool has_data = false;
@@ -1450,21 +1443,36 @@ void bch_alloc_sectors_done(struct cache_set *c, struct write_point *wp,
 		extent_ptr_append(e, tmp);
 
 		ob->ptr_offset[i] += sectors;
+	}
 
+	open_bucket_for_each_online_device(c, ob, ptr, ca)
+		this_cpu_add(*ca->sectors_written, sectors);
+}
+
+/*
+ * Append pointers to the space we just allocated to @k, and mark @sectors space
+ * as allocated out of @ob
+ */
+void bch_alloc_sectors_done(struct cache_set *c, struct write_point *wp,
+			    struct open_bucket *ob)
+{
+	struct cache_member_rcu *mi = cache_member_info_get(c);
+	bool has_data = false;
+	unsigned i;
+
+	for (i = 0; i < ob->nr_ptrs; i++) {
 		if (!ob_ptr_sectors_free(ob, mi, &ob->ptrs[i]))
 			ob->has_full_ptrs = true;
 		else
 			has_data = true;
 	}
 
+	cache_member_info_put();
+
 	if (likely(has_data))
 		atomic_inc(&ob->pin);
 	else
 		BUG_ON(xchg(&wp->b, NULL) != ob);
-
-	open_bucket_for_each_online_device(c, ob, ptr, ca)
-		this_cpu_add(*ca->sectors_written, sectors);
-	cache_member_info_put();
 
 	mutex_unlock(&ob->lock);
 }
@@ -1495,14 +1503,16 @@ struct open_bucket *bch_alloc_sectors(struct cache_set *c,
 {
 	struct open_bucket *ob;
 
-	ob = bch_alloc_sectors_start(c, wp, e, nr_replicas, reserve, cl);
+	ob = bch_alloc_sectors_start(c, wp, nr_replicas, reserve, cl);
 	if (IS_ERR_OR_NULL(ob))
 		return ob;
 
 	if (e->k.size > ob->sectors_free)
 		bch_key_resize(&e->k, ob->sectors_free);
 
-	bch_alloc_sectors_done(c, wp, e, nr_replicas, ob, e->k.size);
+	bch_alloc_sectors_append_ptrs(c, e, nr_replicas, ob, e->k.size);
+
+	bch_alloc_sectors_done(c, wp, ob);
 
 	return ob;
 }

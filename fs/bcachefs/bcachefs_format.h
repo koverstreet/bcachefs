@@ -387,7 +387,7 @@ struct bch_extent_crc32 {
 #define CRC32_EXTENT_SIZE_MAX	(1U << 7)
 
 /* 64k */
-#define BCH_COMPRESSED_EXTENT_MAX 128
+#define BCH_COMPRESSED_EXTENT_MAX 128U
 
 struct bch_extent_crc64 {
 #if defined(__LITTLE_ENDIAN_BITFIELD)
