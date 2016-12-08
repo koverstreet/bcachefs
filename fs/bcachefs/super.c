@@ -2003,6 +2003,15 @@ static const char *cache_alloc(struct bcache_superblock *sb,
 	if (le64_to_cpu(ca->disk_sb.sb->seq) > le64_to_cpu(c->disk_sb.seq))
 		cache_sb_to_cache_set(c, ca->disk_sb.sb);
 
+	/*
+	 * Increase journal write timeout if flushes to this device are
+	 * expensive:
+	 */
+	if (!blk_queue_nonrot(bdev_get_queue(ca->disk_sb.bdev)) &&
+	    journal_flushes_device(ca))
+		c->journal.write_delay_ms =
+			max(c->journal.write_delay_ms, 1000U);
+
 	err = "error creating kobject";
 	if (c->kobj.state_in_sysfs &&
 	    bch_cache_online(ca))
