@@ -2373,7 +2373,7 @@ static bool page_slot_is_data(struct address_space *mapping, pgoff_t index)
 	bool ret;
 
 	page = find_lock_entry(mapping, index);
-	if (!page)
+	if (!page || radix_tree_exception(page))
 		return false;
 
 	ret = page_is_data(page);
