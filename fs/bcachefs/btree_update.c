@@ -1033,7 +1033,7 @@ static void btree_interior_update_updated_btree(struct cache_set *c,
 
 	mutex_unlock(&c->btree_interior_update_lock);
 
-	bch_journal_flush_seq_async(&c->journal, as->journal_seq, &as->cl);
+	bch_journal_wait_on_seq(&c->journal, as->journal_seq, &as->cl);
 
 	continue_at(&as->cl, btree_interior_update_nodes_written,
 		    system_freezable_wq);
@@ -1068,10 +1068,18 @@ static void btree_interior_update_updated_root(struct cache_set *c,
 
 	mutex_unlock(&c->btree_interior_update_lock);
 
-	bch_journal_flush_seq_async(&c->journal, as->journal_seq, &as->cl);
+	bch_journal_wait_on_seq(&c->journal, as->journal_seq, &as->cl);
 
 	continue_at(&as->cl, btree_interior_update_nodes_written,
 		    system_freezable_wq);
+}
+
+static void interior_update_flush(struct journal *j, struct journal_entry_pin *pin)
+{
+	struct btree_interior_update *as =
+		container_of(pin, struct btree_interior_update, journal);
+
+	bch_journal_flush_seq_async(j, as->journal_seq, NULL);
 }
 
 /*
@@ -1108,10 +1116,10 @@ void bch_btree_interior_update_will_free_node(struct cache_set *c,
 	 */
 	bch_journal_pin_add_if_older(&c->journal,
 				     &b->writes[0].journal,
-				     &as->journal, NULL);
+				     &as->journal, interior_update_flush);
 	bch_journal_pin_add_if_older(&c->journal,
 				     &b->writes[1].journal,
-				     &as->journal, NULL);
+				     &as->journal, interior_update_flush);
 
 	mutex_lock(&c->btree_interior_update_lock);
 

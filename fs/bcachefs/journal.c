@@ -2111,6 +2111,36 @@ int bch_journal_res_get_slowpath(struct journal *j, struct journal_res *res,
 	return ret < 0 ? ret : 0;
 }
 
+void bch_journal_wait_on_seq(struct journal *j, u64 seq, struct closure *parent)
+{
+	spin_lock(&j->lock);
+
+	BUG_ON(seq > atomic64_read(&j->seq));
+
+	if (bch_journal_error(j)) {
+		spin_unlock(&j->lock);
+		return;
+	}
+
+	if (seq == atomic64_read(&j->seq)) {
+		if (!closure_wait(&journal_cur_buf(j)->wait, parent))
+			BUG();
+	} else if (seq + 1 == atomic64_read(&j->seq) &&
+		   j->reservations.prev_buf_unwritten) {
+		if (!closure_wait(&journal_prev_buf(j)->wait, parent))
+			BUG();
+
+		smp_mb();
+
+		/* check if raced with write completion (or failure) */
+		if (!j->reservations.prev_buf_unwritten ||
+		    bch_journal_error(j))
+			closure_wake_up(&journal_prev_buf(j)->wait);
+	}
+
+	spin_unlock(&j->lock);
+}
+
 void bch_journal_flush_seq_async(struct journal *j, u64 seq, struct closure *parent)
 {
 	spin_lock(&j->lock);

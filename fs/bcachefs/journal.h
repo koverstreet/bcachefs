@@ -315,6 +315,7 @@ out:
 	return 0;
 }
 
+void bch_journal_wait_on_seq(struct journal *, u64, struct closure *);
 void bch_journal_flush_seq_async(struct journal *, u64, struct closure *);
 void bch_journal_flush_async(struct journal *, struct closure *);
 void bch_journal_meta_async(struct journal *, struct closure *);
