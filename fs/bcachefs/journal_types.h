@@ -20,6 +20,12 @@ struct journal_buf {
 	struct jset		*data;
 	struct closure_waitlist	wait;
 
+	/*
+	 * ugh, prio_buckets are stupid - need to convert them to new
+	 * transaction machinery when it arrives
+	 */
+	unsigned		nr_prio_buckets;
+
 	/* bloom filter: */
 	unsigned long		has_inode[1024 / sizeof(unsigned long)];
 };
@@ -170,6 +176,10 @@ struct journal {
 	/* protects advancing ja->last_idx: */
 	struct mutex		reclaim_lock;
 
+	/*
+	 * ugh: need to get prio_buckets converted over to the eventual new
+	 * transaction machinery
+	 */
 	__le64			prio_buckets[MAX_CACHES_PER_SET];
 	unsigned		nr_prio_buckets;
 

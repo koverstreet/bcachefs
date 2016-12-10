@@ -144,10 +144,10 @@ static inline void bch_journal_add_prios(struct journal *j,
 	 * no prio bucket ptrs yet... XXX should change the allocator so this
 	 * can't happen:
 	 */
-	if (!j->nr_prio_buckets)
+	if (!buf->nr_prio_buckets)
 		return;
 
-	bch_journal_add_entry(buf, j->prio_buckets, j->nr_prio_buckets,
+	bch_journal_add_entry(buf, j->prio_buckets, buf->nr_prio_buckets,
 			      JOURNAL_ENTRY_PRIO_PTRS, 0, 0);
 }
 
@@ -1004,10 +1004,14 @@ static void __bch_journal_next_entry(struct journal *j)
 	BUG_ON(journal_pin_seq(j, p) != atomic64_read(&j->seq));
 }
 
-static inline size_t journal_entry_u64s_reserve(struct journal *j)
+static inline size_t journal_entry_u64s_reserve(struct journal_buf *buf)
 {
-	return BTREE_ID_NR * (JSET_KEYS_U64s + BKEY_EXTENT_U64s_MAX) +
-		JSET_KEYS_U64s + j->nr_prio_buckets;
+	unsigned ret = BTREE_ID_NR * (JSET_KEYS_U64s + BKEY_EXTENT_U64s_MAX);
+
+	if (buf->nr_prio_buckets)
+		ret += JSET_KEYS_U64s + buf->nr_prio_buckets;
+
+	return ret;
 }
 
 static enum {
@@ -1058,7 +1062,7 @@ static enum {
 	j->prev_buf_sectors =
 		__set_blocks(buf->data,
 			     le32_to_cpu(buf->data->u64s) +
-			     journal_entry_u64s_reserve(j),
+			     journal_entry_u64s_reserve(buf),
 			     block_bytes(c)) * c->sb.block_size;
 
 	BUG_ON(j->prev_buf_sectors > j->cur_buf_sectors);
@@ -1199,18 +1203,18 @@ static int journal_entry_open(struct journal *j)
 	if (sectors <= 0)
 		return sectors;
 
-	j->cur_buf_sectors = sectors;
+	j->cur_buf_sectors	= sectors;
+	buf->nr_prio_buckets	= j->nr_prio_buckets;
 
 	u64s = (sectors << 9) / sizeof(u64);
 
 	/* Subtract the journal header */
 	u64s -= sizeof(struct jset) / sizeof(u64);
-
 	/*
 	 * Btree roots, prio pointers don't get added until right before we do
 	 * the write:
 	 */
-	u64s -= journal_entry_u64s_reserve(j);
+	u64s -= journal_entry_u64s_reserve(buf);
 	u64s  = max_t(ssize_t, 0L, u64s);
 
 	if (u64s > le32_to_cpu(buf->data->u64s)) {

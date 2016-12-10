@@ -241,6 +241,9 @@ static int prio_io(struct cache *ca, uint64_t bucket, int op)
 static int bch_prio_write(struct cache *ca)
 {
 	struct cache_set *c = ca->set;
+	struct journal *j = &c->journal;
+	struct journal_res res = { 0 };
+	bool need_new_journal_entry;
 	int i, ret;
 
 	trace_bcache_prio_write_start(ca);
@@ -291,16 +294,29 @@ static int bch_prio_write(struct cache *ca)
 			return ret;
 	}
 
-	spin_lock(&c->journal.lock);
-	c->journal.prio_buckets[ca->sb.nr_this_dev] = cpu_to_le64(ca->prio_buckets[0]);
-	c->journal.nr_prio_buckets = max_t(unsigned,
-					   ca->sb.nr_this_dev + 1,
-					   c->journal.nr_prio_buckets);
-	spin_unlock(&c->journal.lock);
+	spin_lock(&j->lock);
+	j->prio_buckets[ca->sb.nr_this_dev] = cpu_to_le64(ca->prio_buckets[0]);
+	j->nr_prio_buckets = max_t(unsigned,
+				   ca->sb.nr_this_dev + 1,
+				   j->nr_prio_buckets);
+	spin_unlock(&j->lock);
 
-	ret = bch_journal_meta(&c->journal);
-	if (ret)
-		return ret;
+	do {
+		unsigned u64s = jset_u64s(0);
+		u64 seq;
+
+		ret = bch_journal_res_get(j, &res, u64s, u64s);
+		if (ret)
+			return ret;
+
+		need_new_journal_entry = j->buf[res.idx].nr_prio_buckets <
+			ca->sb.nr_this_dev + 1;
+		bch_journal_res_put(j, &res, &seq);
+
+		ret = bch_journal_flush_seq(j, seq);
+		if (ret)
+			return ret;
+	} while (need_new_journal_entry);
 
 	/*
 	 * Don't want the old priorities to get garbage collected until after we
