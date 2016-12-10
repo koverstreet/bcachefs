@@ -2175,14 +2175,13 @@ void bch_journal_meta_async(struct journal *j, struct closure *parent)
 {
 	struct journal_res res;
 	unsigned u64s = jset_u64s(0);
-	u64 seq;
 
 	memset(&res, 0, sizeof(res));
 
 	bch_journal_res_get(j, &res, u64s, u64s);
-	bch_journal_res_put(j, &res, &seq);
+	bch_journal_res_put(j, &res);
 
-	bch_journal_flush_seq_async(j, seq, parent);
+	bch_journal_flush_seq_async(j, res.seq, parent);
 }
 
 int bch_journal_meta(struct journal *j)
@@ -2190,7 +2189,6 @@ int bch_journal_meta(struct journal *j)
 	struct journal_res res;
 	unsigned u64s = jset_u64s(0);
 	int ret;
-	u64 seq;
 
 	memset(&res, 0, sizeof(res));
 
@@ -2198,9 +2196,9 @@ int bch_journal_meta(struct journal *j)
 	if (ret)
 		return ret;
 
-	bch_journal_res_put(j, &res, &seq);
+	bch_journal_res_put(j, &res);
 
-	return bch_journal_flush_seq(j, seq);
+	return bch_journal_flush_seq(j, res.seq);
 }
 
 void bch_journal_flush_async(struct journal *j, struct closure *parent)

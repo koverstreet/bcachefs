@@ -161,14 +161,6 @@ static inline void journal_state_inc(union journal_res_state *s)
 	s->buf1_count += s->idx == 1;
 }
 
-static inline u64 bch_journal_res_seq(struct journal *j,
-				      struct journal_res *res)
-{
-	struct journal_buf *buf = &j->buf[res->idx];
-
-	return le64_to_cpu(buf->data->seq);
-}
-
 static inline void bch_journal_set_has_inode(struct journal_buf *buf, u64 inum)
 {
 	set_bit(hash_64(inum, ilog2(sizeof(buf->has_inode) * 8)), buf->has_inode);
@@ -247,8 +239,7 @@ static inline void bch_journal_buf_put(struct journal *j, unsigned idx,
  * then proceed to add their keys as well.
  */
 static inline void bch_journal_res_put(struct journal *j,
-				       struct journal_res *res,
-				       u64 *journal_seq)
+				       struct journal_res *res)
 {
 	if (!res->ref)
 		return;
@@ -262,9 +253,6 @@ static inline void bch_journal_res_put(struct journal *j,
 		res->offset	+= jset_u64s(0);
 		res->u64s	-= jset_u64s(0);
 	}
-
-	if (journal_seq)
-		*journal_seq = bch_journal_res_seq(j, res);
 
 	bch_journal_buf_put(j, res->idx, false);
 
@@ -303,6 +291,7 @@ static inline int journal_res_get_fast(struct journal *j,
 
 	res->ref = true;
 	res->idx = new.idx;
+	res->seq = le64_to_cpu(j->buf[res->idx].data->seq);
 	return 1;
 }
 

@@ -303,7 +303,6 @@ static int bch_prio_write(struct cache *ca)
 
 	do {
 		unsigned u64s = jset_u64s(0);
-		u64 seq;
 
 		ret = bch_journal_res_get(j, &res, u64s, u64s);
 		if (ret)
@@ -311,9 +310,9 @@ static int bch_prio_write(struct cache *ca)
 
 		need_new_journal_entry = j->buf[res.idx].nr_prio_buckets <
 			ca->sb.nr_this_dev + 1;
-		bch_journal_res_put(j, &res, &seq);
+		bch_journal_res_put(j, &res);
 
-		ret = bch_journal_flush_seq(j, seq);
+		ret = bch_journal_flush_seq(j, res.seq);
 		if (ret)
 			return ret;
 	} while (need_new_journal_entry);

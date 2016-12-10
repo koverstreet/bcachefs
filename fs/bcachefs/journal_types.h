@@ -72,6 +72,7 @@ struct journal_res {
 	u8			idx;
 	u16			offset;
 	u16			u64s;
+	u64			seq;
 };
 
 union journal_res_state {

@@ -802,7 +802,7 @@ void bch_btree_journal_key(struct btree_insert *trans,
 				    : btree_node_flush1);
 
 	if (trans->journal_res.ref) {
-		u64 seq = bch_journal_res_seq(j, &trans->journal_res);
+		u64 seq = trans->journal_res.seq;
 		bool needs_whiteout = insert->k.needs_whiteout;
 
 		/* ick */
@@ -1999,7 +1999,7 @@ retry:
 	}
 unlock:
 	multi_unlock_write(trans);
-	bch_journal_res_put(&c->journal, &trans->journal_res, NULL);
+	bch_journal_res_put(&c->journal, &trans->journal_res);
 
 	if (split)
 		goto split;
