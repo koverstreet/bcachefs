@@ -1069,6 +1069,8 @@ static enum {
 
 	atomic_dec_bug(&fifo_peek_back(&j->pin).count);
 	__bch_journal_next_entry(j);
+
+	cancel_delayed_work(&j->write_work);
 	spin_unlock(&j->lock);
 
 	/* ugh - might be called from __journal_res_get() under wait_event() */
@@ -1246,10 +1248,9 @@ static int journal_entry_open(struct journal *j)
 			j->res_get_blocked_start = 0;
 		}
 
-		if (!old.prev_buf_unwritten)
-			mod_delayed_work(system_freezable_wq,
-					 &j->write_work,
-					 msecs_to_jiffies(j->write_delay_ms));
+		mod_delayed_work(system_freezable_wq,
+				 &j->write_work,
+				 msecs_to_jiffies(j->write_delay_ms));
 	}
 
 	return ret;
@@ -1869,11 +1870,6 @@ static void journal_write_done(struct closure *cl)
 
 	closure_wake_up(&w->wait);
 	wake_up(&j->wait);
-
-	if (journal_entry_is_open(j))
-		mod_delayed_work(system_freezable_wq, &j->write_work,
-				 test_bit(JOURNAL_NEED_WRITE, &j->flags)
-				 ? 0 : msecs_to_jiffies(j->write_delay_ms));
 
 	/*
 	 * Updating last_seq_ondisk may let journal_reclaim_work() discard more
