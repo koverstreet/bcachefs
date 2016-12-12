@@ -4,14 +4,27 @@
 struct bucket_mark {
 	union {
 	struct {
-		u32		counter;
+		u64		counter;
 	};
 
 	struct {
+		u8		gen;
+
+		/* generation copygc is going to move this bucket into */
+		unsigned	copygc:1;
+		unsigned	wait_on_journal:1;
+
 		unsigned	owned_by_allocator:1;
-		unsigned	cached_sectors:15;
 		unsigned	is_metadata:1;
-		unsigned	dirty_sectors:15;
+
+		u16		cached_sectors;
+		u16		dirty_sectors;
+
+		/*
+		 * low bits of journal sequence number when this bucket was most
+		 * recently modified:
+		 */
+		u16		journal_seq;
 	};
 	};
 };
@@ -24,12 +37,11 @@ struct bucket {
 		};
 		u16		prio[2];
 	};
-	struct bucket_mark	mark;
-	/* Most out of date gen in the btree */
-	u8			oldest_gen;
 
-	/* generation copygc is going to move this bucket into */
-	u8			copygc_gen;
+	union {
+		struct bucket_mark	_mark;
+		const struct bucket_mark mark;
+	};
 };
 
 struct bucket_stats_cache {

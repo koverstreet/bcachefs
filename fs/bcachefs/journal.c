@@ -1077,6 +1077,11 @@ static enum {
 	cancel_delayed_work(&j->write_work);
 	spin_unlock(&j->lock);
 
+	if (c->bucket_journal_seq > 1 << 14) {
+		c->bucket_journal_seq = 0;
+		bch_bucket_seq_cleanup(c);
+	}
+
 	/* ugh - might be called from __journal_res_get() under wait_event() */
 	__set_current_state(TASK_RUNNING);
 	bch_journal_buf_put(j, old.idx, need_write_just_set);

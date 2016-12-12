@@ -407,7 +407,9 @@ struct cache {
 	size_t			fifo_last_bucket;
 
 	/* Allocation stuff: */
-	u8			*bucket_gens;
+
+	/* most out of date gen in the btree */
+	u8			*oldest_gens;
 	struct bucket		*buckets;
 	unsigned short		bucket_bits;	/* ilog2(bucket_size) */
 
@@ -762,6 +764,8 @@ struct cache_set {
 	mempool_t		btree_bounce_pool;
 
 	struct journal		journal;
+
+	unsigned		bucket_journal_seq;
 
 	/* CACHING OTHER BLOCK DEVICES */
 	mempool_t		search;

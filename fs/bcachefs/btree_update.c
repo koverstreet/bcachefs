@@ -146,7 +146,7 @@ found:
 			     -c->sb.btree_node_size, true, b
 			     ? gc_pos_btree_node(b)
 			     : gc_pos_btree_root(id),
-			     &tmp);
+			     &tmp, 0);
 		/*
 		 * Don't apply tmp - pending deletes aren't tracked in
 		 * cache_set_stats:
@@ -215,7 +215,7 @@ static void bch_btree_node_free_ondisk(struct cache_set *c,
 	bch_mark_key(c, bkey_i_to_s_c(&pending->key),
 		     -c->sb.btree_node_size, true,
 		     gc_phase(GC_PHASE_PENDING_DELETE),
-		     &stats);
+		     &stats, 0);
 	/*
 	 * Don't apply stats - pending deletes aren't tracked in
 	 * cache_set_stats:
@@ -375,7 +375,7 @@ static void bch_btree_set_root_inmem(struct cache_set *c, struct btree *b,
 		bch_mark_key(c, bkey_i_to_s_c(&b->key),
 			     c->sb.btree_node_size, true,
 			     gc_pos_btree_root(b->btree_id),
-			     &stats);
+			     &stats, 0);
 
 		if (old)
 			bch_btree_node_free_index(c, NULL, old->btree_id,
@@ -636,7 +636,7 @@ static void bch_insert_fixup_btree_ptr(struct btree_iter *iter,
 	if (bkey_extent_is_data(&insert->k))
 		bch_mark_key(c, bkey_i_to_s_c(insert),
 			     c->sb.btree_node_size, true,
-			     gc_pos_btree_node(b), &stats);
+			     gc_pos_btree_node(b), &stats, 0);
 
 	while ((k = bch_btree_node_iter_peek_all(node_iter, b)) &&
 	       !btree_iter_pos_cmp_packed(b, &insert->k.p, k, false))

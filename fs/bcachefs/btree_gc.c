@@ -102,10 +102,10 @@ u8 bch_btree_key_recalc_oldest_gen(struct cache_set *c, struct bkey_s_c k)
 		rcu_read_lock();
 
 		extent_for_each_online_device(c, e, ptr, ca) {
-			struct bucket *g = PTR_BUCKET(ca, ptr);
+			size_t b = PTR_BUCKET_NR(ca, ptr);
 
-			if (__gen_after(g->oldest_gen, ptr->gen))
-				g->oldest_gen = ptr->gen;
+			if (__gen_after(ca->oldest_gens[b], ptr->gen))
+				ca->oldest_gens[b] = ptr->gen;
 
 			max_stale = max(max_stale, ptr_stale(ca, ptr));
 		}
@@ -237,11 +237,11 @@ static void bch_mark_allocator_buckets(struct cache_set *c)
 		spin_lock(&ca->freelist_lock);
 
 		fifo_for_each_entry(i, &ca->free_inc, iter)
-			bch_mark_alloc_bucket(ca, &ca->buckets[i]);
+			bch_mark_alloc_bucket(ca, &ca->buckets[i], true);
 
 		for (j = 0; j < RESERVE_NR; j++)
 			fifo_for_each_entry(i, &ca->free[j], iter)
-				bch_mark_alloc_bucket(ca, &ca->buckets[i]);
+				bch_mark_alloc_bucket(ca, &ca->buckets[i], true);
 
 		spin_unlock(&ca->freelist_lock);
 	}
@@ -254,7 +254,7 @@ static void bch_mark_allocator_buckets(struct cache_set *c)
 		mutex_lock(&ob->lock);
 		rcu_read_lock();
 		open_bucket_for_each_online_device(c, ob, ptr, ca)
-			bch_mark_alloc_bucket(ca, PTR_BUCKET(ca, ptr));
+			bch_mark_alloc_bucket(ca, PTR_BUCKET(ca, ptr), true);
 		rcu_read_unlock();
 		mutex_unlock(&ob->lock);
 	}
@@ -317,6 +317,7 @@ void bch_gc(struct cache_set *c)
 {
 	struct cache *ca;
 	struct bucket *g;
+	struct bucket_mark new;
 	u64 start_time = local_clock();
 	unsigned i;
 	int cpu;
@@ -385,8 +386,13 @@ void bch_gc(struct cache_set *c)
 	/* Clear bucket marks: */
 	for_each_cache(ca, c, i)
 		for_each_bucket(g, ca) {
-			g->oldest_gen	= ca->bucket_gens[g - ca->buckets];
-			atomic_set((atomic_t *) &g->mark.counter, 0);
+			bucket_cmpxchg(g, new, ({
+				new.owned_by_allocator	= 0;
+				new.is_metadata		= 0;
+				new.cached_sectors	= 0;
+				new.dirty_sectors	= 0;
+			}));
+			ca->oldest_gens[g - ca->buckets] = new.gen;
 		}
 
 	/* Walk allocator's references: */

@@ -101,6 +101,27 @@ static void bch_cache_set_stats_verify(struct cache_set *c) {}
 
 #endif
 
+void bch_bucket_seq_cleanup(struct cache_set *c)
+{
+	u16 last_seq_ondisk = c->journal.last_seq_ondisk;
+	struct cache *ca;
+	struct bucket *g;
+	struct bucket_mark m;
+	unsigned i;
+
+	for_each_cache(ca, c, i)
+		for_each_bucket(g, ca) {
+			bucket_cmpxchg(g, m, ({
+				if (!m.wait_on_journal ||
+				    ((s16) last_seq_ondisk -
+				     (s16) m.journal_seq < 0))
+					break;
+
+				m.wait_on_journal = 0;
+			}));
+		}
+}
+
 #define bucket_stats_add(_acc, _stats)					\
 do {									\
 	typeof(_acc) _a = (_acc), _s = (_stats);			\
@@ -268,16 +289,23 @@ static void bucket_stats_update(struct cache *ca,
 		bch_wake_allocator(ca);
 }
 
-static struct bucket_mark bch_bucket_mark_set(struct cache *ca,
-				struct bucket *g, struct bucket_mark new,
-				bool may_make_unavailable)
+void bch_invalidate_bucket(struct cache *ca, struct bucket *g)
 {
 	struct bucket_stats_cache_set stats = { 0 };
-	struct bucket_mark old;
+	struct bucket_mark old, new;
 
-	old.counter = xchg(&g->mark.counter, new.counter);
+	old = bucket_cmpxchg(g, new, ({
+		new.owned_by_allocator	= 1;
+		new.is_metadata		= 0;
+		new.cached_sectors	= 0;
+		new.dirty_sectors	= 0;
+		new.copygc		= 0;
+		new.gen++;
+	}));
 
-	bucket_stats_update(ca, old, new, may_make_unavailable, &stats);
+	BUG_ON(old.dirty_sectors);
+
+	bucket_stats_update(ca, old, new, true, &stats);
 
 	/*
 	 * Ick:
@@ -293,55 +321,51 @@ static struct bucket_mark bch_bucket_mark_set(struct cache *ca,
 	stats.s[S_UNCOMPRESSED][S_CACHED] = 0;
 	BUG_ON(!bch_is_zero(&stats, sizeof(stats)));
 
-	return old;
-}
-
-#define bucket_cmpxchg(g, old, new,				\
-		       may_make_unavailable,			\
-		       cache_set_stats, expr)			\
-do {								\
-	u32 _v = READ_ONCE((g)->mark.counter);			\
-								\
-	do {							\
-		new.counter = old.counter = _v;			\
-		expr;						\
-	} while ((_v = cmpxchg(&(g)->mark.counter,		\
-			       old.counter,			\
-			       new.counter)) != old.counter);	\
-	bucket_stats_update(ca, old, new,			\
-			    may_make_unavailable,		\
-			    cache_set_stats);			\
-} while (0)
-
-void bch_mark_free_bucket(struct cache *ca, struct bucket *g)
-{
-	bch_bucket_mark_set(ca, g,
-			    (struct bucket_mark) { .counter = 0 },
-			    false);
-}
-
-void bch_mark_alloc_bucket(struct cache *ca, struct bucket *g)
-{
-	struct bucket_mark old = bch_bucket_mark_set(ca, g,
-			(struct bucket_mark) { .owned_by_allocator = 1 },
-			true);
-
-	BUG_ON(old.dirty_sectors);
-
 	if (!old.owned_by_allocator && old.cached_sectors)
 		trace_bcache_invalidate(ca, g - ca->buckets,
 					old.cached_sectors);
 }
 
+void bch_mark_free_bucket(struct cache *ca, struct bucket *g)
+{
+	struct bucket_stats_cache_set stats = { 0 };
+	struct bucket_mark old, new;
+
+	old = bucket_cmpxchg(g, new, ({
+		new.owned_by_allocator	= 0;
+		new.is_metadata		= 0;
+		new.cached_sectors	= 0;
+		new.dirty_sectors	= 0;
+	}));
+
+	bucket_stats_update(ca, old, new, false, &stats);
+}
+
+void bch_mark_alloc_bucket(struct cache *ca, struct bucket *g,
+			   bool owned_by_allocator)
+{
+	struct bucket_stats_cache_set stats = { 0 };
+	struct bucket_mark old, new;
+
+	old = bucket_cmpxchg(g, new, new.owned_by_allocator = owned_by_allocator);
+
+	bucket_stats_update(ca, old, new, true, &stats);
+}
+
 void bch_mark_metadata_bucket(struct cache *ca, struct bucket *g,
 			      bool may_make_unavailable)
 {
-	struct bucket_mark old = bch_bucket_mark_set(ca, g,
-			(struct bucket_mark) { .is_metadata = 1 },
-			may_make_unavailable);
+	struct bucket_stats_cache_set stats = { 0 };
+	struct bucket_mark old, new;
+
+	old = bucket_cmpxchg(g, new, ({
+		new.is_metadata = 1;
+	}));
 
 	BUG_ON(old.cached_sectors);
 	BUG_ON(old.dirty_sectors);
+
+	bucket_stats_update(ca, old, new, may_make_unavailable, &stats);
 }
 
 #define saturated_add(ca, dst, src, max)			\
@@ -398,12 +422,12 @@ static void bch_mark_pointer(struct cache_set *c,
 			     s64 sectors, enum s_alloc type,
 			     bool may_make_unavailable,
 			     struct bucket_stats_cache_set *stats,
-			     bool is_gc, struct gc_pos gc_pos)
+			     bool gc_will_visit, u64 journal_seq)
 {
 	struct bucket_mark old, new;
 	unsigned saturated;
 	struct bucket *g = ca->buckets + PTR_BUCKET_NR(ca, ptr);
-	u32 v = READ_ONCE(g->mark.counter);
+	u64 v = READ_ONCE(g->_mark.counter);
 	unsigned old_sectors, new_sectors;
 	int disk_sectors, compressed_sectors;
 
@@ -420,35 +444,27 @@ static void bch_mark_pointer(struct cache_set *c,
 	compressed_sectors = -__compressed_sectors(crc, old_sectors)
 		+ __compressed_sectors(crc, new_sectors);
 
+	if (gc_will_visit) {
+		if (journal_seq)
+			bucket_cmpxchg(g, new, new.journal_seq = journal_seq);
+
+		goto out;
+	}
+
 	do {
 		new.counter = old.counter = v;
 		saturated = 0;
-		/*
-		 * cmpxchg() only implies a full barrier on success, not
-		 * failure, so we need a read barrier on all iterations -
-		 * between reading the mark and checking pointer validity/gc
-		 * status
-		 */
-		smp_rmb();
 
 		/*
 		 * Check this after reading bucket mark to guard against
 		 * the allocator invalidating a bucket after we've already
 		 * checked the gen
 		 */
-		if (ptr_stale(ca, ptr)) {
+		if (gen_after(old.gen, ptr->gen)) {
 			EBUG_ON(type != S_CACHED &&
 				test_bit(JOURNAL_REPLAY_DONE, &c->journal.flags));
 			return;
 		}
-
-		/*
-		 * Check this after reading bucket mark to guard against
-		 * GC starting between when we check gc_cur_key and when
-		 * the GC zeroes out marks
-		 */
-		if (!is_gc && gc_will_visit(c, gc_pos))
-			goto out;
 
 		EBUG_ON(type != S_CACHED &&
 			!may_make_unavailable &&
@@ -472,11 +488,17 @@ static void bch_mark_pointer(struct cache_set *c,
 				      GC_MAX_SECTORS_USED);
 
 		if (!new.dirty_sectors &&
-		    !new.cached_sectors)
+		    !new.cached_sectors) {
 			new.is_metadata = false;
-		else
+
+			if (journal_seq) {
+				new.wait_on_journal = true;
+				new.journal_seq = journal_seq;
+			}
+		} else {
 			new.is_metadata = (type == S_META);
-	} while ((v = cmpxchg(&g->mark.counter,
+		}
+	} while ((v = cmpxchg(&g->_mark.counter,
 			      old.counter,
 			      new.counter)) != old.counter);
 
@@ -500,7 +522,7 @@ static void bch_mark_extent(struct cache_set *c, struct bkey_s_c_extent e,
 			    s64 sectors, bool metadata,
 			    bool may_make_unavailable,
 			    struct bucket_stats_cache_set *stats,
-			    bool is_gc, struct gc_pos gc_pos)
+			    bool gc_will_visit, u64 journal_seq)
 {
 	const struct bch_extent_ptr *ptr;
 	const union bch_extent_crc *crc;
@@ -519,7 +541,7 @@ static void bch_mark_extent(struct cache_set *c, struct bkey_s_c_extent e,
 		bch_mark_pointer(c, e, ca, crc, ptr, sectors,
 				 dirty ? type : S_CACHED,
 				 may_make_unavailable,
-				 stats, is_gc, gc_pos);
+				 stats, gc_will_visit, journal_seq);
 	}
 	rcu_read_unlock();
 }
@@ -528,13 +550,14 @@ static void __bch_mark_key(struct cache_set *c, struct bkey_s_c k,
 			   s64 sectors, bool metadata,
 			   bool may_make_unavailable,
 			   struct bucket_stats_cache_set *stats,
-			   bool is_gc, struct gc_pos gc_pos)
+			   bool gc_will_visit, u64 journal_seq)
 {
 	switch (k.k->type) {
 	case BCH_EXTENT:
 	case BCH_EXTENT_CACHED:
 		bch_mark_extent(c, bkey_s_c_to_extent(k), sectors, metadata,
-				may_make_unavailable, stats, is_gc, gc_pos);
+				may_make_unavailable, stats,
+				gc_will_visit, journal_seq);
 		break;
 	case BCH_RESERVATION:
 		stats->persistent_reserved += sectors;
@@ -546,7 +569,7 @@ void __bch_gc_mark_key(struct cache_set *c, struct bkey_s_c k,
 		       s64 sectors, bool metadata,
 		       struct bucket_stats_cache_set *stats)
 {
-	__bch_mark_key(c, k, sectors, metadata, true, stats, true, GC_POS_MIN);
+	__bch_mark_key(c, k, sectors, metadata, true, stats, false, 0);
 }
 
 void bch_gc_mark_key(struct cache_set *c, struct bkey_s_c k,
@@ -563,26 +586,41 @@ void bch_gc_mark_key(struct cache_set *c, struct bkey_s_c k,
 
 void bch_mark_key(struct cache_set *c, struct bkey_s_c k,
 		  s64 sectors, bool metadata, struct gc_pos gc_pos,
-		  struct bucket_stats_cache_set *stats)
+		  struct bucket_stats_cache_set *stats, u64 journal_seq)
 {
+	/*
+	 * synchronization w.r.t. GC:
+	 *
+	 * Normally, bucket sector counts/marks are updated on the fly, as
+	 * references are added/removed from the btree, the lists of buckets the
+	 * allocator owns, other metadata buckets, etc.
+	 *
+	 * When GC is in progress and going to mark this reference, we do _not_
+	 * mark this reference here, to avoid double counting - GC will count it
+	 * when it gets to it.
+	 *
+	 * To know whether we should mark a given reference (GC either isn't
+	 * running, or has already marked references at this position) we
+	 * construct a total order for everything GC walks. Then, we can simply
+	 * compare the position of the reference we're marking - @gc_pos - with
+	 * GC's current position. If GC is going to mark this reference, GC's
+	 * current position will be less than @gc_pos; if GC's current position
+	 * is greater than @gc_pos GC has either already walked this position,
+	 * or isn't running.
+	 *
+	 * To avoid racing with GC's position changing, we have to deal with
+	 *  - GC's position being set to GC_POS_MIN when GC starts:
+	 *    bucket_stats_lock guards against this
+	 *  - GC's position overtaking @gc_pos: we guard against this with
+	 *    whatever lock protects the data structure the reference lives in
+	 *    (e.g. the btree node lock, or the relevant allocator lock).
+	 */
 	lg_local_lock(&c->bucket_stats_lock);
-	__bch_mark_key(c, k, sectors, metadata, false, stats, false, gc_pos);
+	__bch_mark_key(c, k, sectors, metadata, false, stats,
+		       gc_will_visit(c, gc_pos), journal_seq);
 
 	bch_cache_set_stats_verify(c);
 	lg_local_unlock(&c->bucket_stats_lock);
-}
-
-void bch_unmark_open_bucket(struct cache *ca, struct bucket *g)
-{
-	struct bucket_stats_cache_set stats = { 0 };
-	struct bucket_mark old, new;
-
-	bucket_cmpxchg(g, old, new, false, NULL, ({
-		new.owned_by_allocator = 0;
-	}));
-
-	/* owned_by_allocator buckets aren't tracked in cache_set_stats: */
-	BUG_ON(!bch_is_zero(&stats, sizeof(stats)));
 }
 
 static u64 __recalc_sectors_available(struct cache_set *c)

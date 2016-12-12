@@ -21,24 +21,21 @@
 
 /* Moving GC - IO loop */
 
-static bool moving_pred(struct cache *ca, struct bkey_s_c k)
+static const struct bch_extent_ptr *moving_pred(struct cache *ca,
+						struct bkey_s_c k)
 {
-	struct cache_set *c = ca->set;
 	const struct bch_extent_ptr *ptr;
-	bool ret = false;
 
 	if (bkey_extent_is_data(k.k)) {
 		struct bkey_s_c_extent e = bkey_s_c_to_extent(k);
 
-		rcu_read_lock();
 		extent_for_each_ptr(e, ptr)
-			if (PTR_CACHE(c, ptr) == ca &&
-			    PTR_BUCKET(ca, ptr)->copygc_gen)
-				ret = true;
-		rcu_read_unlock();
+			if ((ca->sb.nr_this_dev == ptr->dev) &&
+			    PTR_BUCKET(ca, ptr)->mark.copygc)
+				return ptr;
 	}
 
-	return ret;
+	return NULL;
 }
 
 static int issue_moving_gc_move(struct cache *ca,
@@ -49,14 +46,10 @@ static int issue_moving_gc_move(struct cache *ca,
 	const struct bch_extent_ptr *ptr;
 	int ret;
 
-	extent_for_each_ptr(bkey_s_c_to_extent(k), ptr)
-		if ((ca->sb.nr_this_dev == ptr->dev) &&
-		    PTR_BUCKET(ca, ptr)->copygc_gen)
-			goto found;
+	ptr = moving_pred(ca, k);
+	if (!ptr) /* We raced - bucket's been reused */
+		return 0;
 
-	/* We raced - bucket's been reused */
-	return 0;
-found:
 	ret = bch_data_move(c, ctxt, &ca->copygc_write_point, k, ptr);
 	if (!ret)
 		trace_bcache_gc_copy(k.k);
@@ -116,7 +109,7 @@ next:
 
 	/* don't check this if we bailed out early: */
 	for_each_bucket(g, ca)
-		if (g->copygc_gen && bucket_sectors_used(g)) {
+		if (g->mark.copygc && bucket_sectors_used(g)) {
 			sectors_not_moved += bucket_sectors_used(g);
 			buckets_not_moved++;
 		}
@@ -149,6 +142,7 @@ static void bch_moving_gc(struct cache *ca)
 {
 	struct cache_set *c = ca->set;
 	struct bucket *g;
+	struct bucket_mark new;
 	u64 sectors_to_move;
 	size_t buckets_to_move, buckets_unused = 0;
 	struct bucket_heap_entry e;
@@ -182,7 +176,7 @@ static void bch_moving_gc(struct cache *ca)
 	/*
 	 * We need bucket marks to be up to date, so gc can't be recalculating
 	 * them, and we don't want the allocator invalidating a bucket after
-	 * we've decided to evacuate it but before we set copygc_gen:
+	 * we've decided to evacuate it but before we set copygc:
 	 */
 	down_read(&c->gc_lock);
 	mutex_lock(&ca->heap_lock);
@@ -190,7 +184,7 @@ static void bch_moving_gc(struct cache *ca)
 
 	ca->heap.used = 0;
 	for_each_bucket(g, ca) {
-		g->copygc_gen = 0;
+		bucket_cmpxchg(g, new, new.copygc = 0);
 
 		if (bucket_unused(g)) {
 			buckets_unused++;
@@ -219,7 +213,7 @@ static void bch_moving_gc(struct cache *ca)
 	}
 
 	for (i = 0; i < ca->heap.used; i++)
-		ca->heap.data[i].g->copygc_gen = 1;
+		bucket_cmpxchg(ca->heap.data[i].g, new, new.copygc = 1);
 
 	buckets_to_move = ca->heap.used;
 

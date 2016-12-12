@@ -1341,9 +1341,10 @@ static const char *run_cache_set(struct cache_set *c)
 		 */
 		bch_journal_start(c);
 
+		err = "error starting allocator thread";
 		for_each_cache(ca, c, i)
 			if (ca->mi.state == CACHE_ACTIVE &&
-			    (err = bch_cache_allocator_start_once(ca))) {
+			    bch_cache_allocator_start(ca)) {
 				percpu_ref_put(&ca->ref);
 				goto err;
 			}
@@ -1406,9 +1407,10 @@ static const char *run_cache_set(struct cache_set *c)
 		bch_journal_start(c);
 		bch_journal_set_replay_done(&c->journal);
 
+		err = "error starting allocator thread";
 		for_each_cache(ca, c, i)
 			if (ca->mi.state == CACHE_ACTIVE &&
-			    (err = bch_cache_allocator_start_once(ca))) {
+			    bch_cache_allocator_start(ca)) {
 				percpu_ref_put(&ca->ref);
 				goto err;
 			}
@@ -1709,7 +1711,7 @@ static void bch_cache_free_work(struct work_struct *work)
 	kfree(ca->bio_prio);
 	kfree(ca->journal.bio);
 	vfree(ca->buckets);
-	vfree(ca->bucket_gens);
+	vfree(ca->oldest_gens);
 	free_heap(&ca->heap);
 	free_fifo(&ca->free_inc);
 
@@ -1979,7 +1981,7 @@ static const char *cache_alloc(struct bcache_superblock *sb,
 	    !init_fifo(&ca->free[RESERVE_NONE], reserve_none, GFP_KERNEL) ||
 	    !init_fifo(&ca->free_inc,	free_inc_reserve, GFP_KERNEL) ||
 	    !init_heap(&ca->heap,	heap_size, GFP_KERNEL) ||
-	    !(ca->bucket_gens	= vzalloc(sizeof(u8) *
+	    !(ca->oldest_gens	= vzalloc(sizeof(u8) *
 					  ca->mi.nbuckets)) ||
 	    !(ca->buckets	= vzalloc(sizeof(struct bucket) *
 					  ca->mi.nbuckets)) ||
@@ -2211,8 +2213,8 @@ have_slot:
 	bch_notify_cache_added(ca);
 
 	if (ca->mi.state == CACHE_ACTIVE) {
-		err = bch_cache_allocator_start_once(ca);
-		if (err)
+		err = "error starting allocator thread";
+		if (bch_cache_allocator_start(ca))
 			goto err_put;
 
 		err = __bch_cache_read_write(ca);

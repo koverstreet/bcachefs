@@ -264,7 +264,7 @@ static int bch_prio_write(struct cache *ca)
 			g = ca->buckets + r;
 			d->read_prio = cpu_to_le16(g->read_prio);
 			d->write_prio = cpu_to_le16(g->write_prio);
-			d->gen = ca->bucket_gens[r];
+			d->gen = ca->buckets[r].mark.gen;
 		}
 
 		p->next_bucket	= cpu_to_le64(ca->prio_buckets[i + 1]);
@@ -343,6 +343,7 @@ int bch_prio_read(struct cache *ca)
 	struct cache_set *c = ca->set;
 	struct prio_set *p = ca->disk_buckets;
 	struct bucket_disk *d = p->data + prios_per_bucket(ca), *end = d;
+	struct bucket_mark new;
 	unsigned bucket_nr = 0;
 	u64 bucket, expect, got;
 	size_t b;
@@ -398,8 +399,8 @@ int bch_prio_read(struct cache *ca)
 
 		ca->buckets[b].read_prio = le16_to_cpu(d->read_prio);
 		ca->buckets[b].write_prio = le16_to_cpu(d->write_prio);
-		ca->buckets[b].oldest_gen = d->gen;
-		ca->bucket_gens[b] = d->gen;
+
+		bucket_cmpxchg(&ca->buckets[b], new, new.gen = d->gen);
 	}
 
 	return 0;
@@ -586,31 +587,18 @@ static bool bch_can_invalidate_bucket(struct cache *ca, struct bucket *g)
 	return can_inc_bucket_gen(ca, g);
 }
 
-static void __bch_invalidate_one_bucket(struct cache *ca, struct bucket *g)
-{
-	lockdep_assert_held(&ca->freelist_lock);
-
-	/* Ordering matters: see bch_mark_data_bucket() */
-
-	/* bucket mark updates imply a write barrier */
-	bch_mark_alloc_bucket(ca, g);
-
-	g->read_prio = ca->set->prio_clock[READ].hand;
-	g->write_prio = ca->set->prio_clock[WRITE].hand;
-	g->copygc_gen = 0;
-
-	verify_not_on_freelist(ca, g - ca->buckets);
-}
-
 static void bch_invalidate_one_bucket(struct cache *ca, struct bucket *g)
 {
 	spin_lock(&ca->freelist_lock);
 
-	/* this is what makes ptrs to the bucket invalid */
-	ca->bucket_gens[g - ca->buckets]++;
+	bch_invalidate_bucket(ca, g);
 
-	__bch_invalidate_one_bucket(ca, g);
+	g->read_prio = ca->set->prio_clock[READ].hand;
+	g->write_prio = ca->set->prio_clock[WRITE].hand;
+
+	verify_not_on_freelist(ca, g - ca->buckets);
 	BUG_ON(!fifo_push(&ca->free_inc, g - ca->buckets));
+
 	spin_unlock(&ca->freelist_lock);
 }
 
@@ -779,6 +767,35 @@ static bool bch_allocator_push(struct cache *ca, long bucket)
 	return ret;
 }
 
+static void bch_find_empty_buckets(struct cache_set *c, struct cache *ca)
+{
+	u16 last_seq_ondisk = c->journal.last_seq_ondisk;
+	struct bucket *g;
+
+	for_each_bucket(g, ca) {
+		struct bucket_mark m = READ_ONCE(g->mark);
+
+		if (is_available_bucket(m) &&
+		    !m.cached_sectors &&
+		    (!m.wait_on_journal ||
+		     ((s16) last_seq_ondisk - (s16) m.journal_seq >= 0))) {
+			spin_lock(&ca->freelist_lock);
+
+			bch_mark_alloc_bucket(ca, g, true);
+			g->read_prio = ca->set->prio_clock[READ].hand;
+			g->write_prio = ca->set->prio_clock[WRITE].hand;
+
+			verify_not_on_freelist(ca, g - ca->buckets);
+			BUG_ON(!fifo_push(&ca->free_inc, g - ca->buckets));
+
+			spin_unlock(&ca->freelist_lock);
+
+			if (fifo_full(&ca->free_inc))
+				break;
+		}
+	}
+}
+
 /**
  * bch_allocator_thread - move buckets from free_inc to reserves
  *
@@ -833,9 +850,20 @@ static int bch_allocator_thread(void *arg)
 			__set_current_state(TASK_RUNNING);
 		}
 
-		/* We've run out of free buckets! */
-
 		down_read(&c->gc_lock);
+
+		/*
+		 * See if we have buckets we can reuse without invalidating them
+		 * or forcing a journal commit:
+		 */
+		bch_find_empty_buckets(c, ca);
+
+		if (fifo_used(&ca->free_inc) * 2 > ca->free_inc.size) {
+			up_read(&c->gc_lock);
+			continue;
+		}
+
+		/* We've run out of free buckets! */
 
 		while (!fifo_full(&ca->free_inc)) {
 			if (wait_buckets_available(ca)) {
@@ -1044,7 +1072,7 @@ static enum bucket_alloc_ret bch_bucket_alloc_group(struct cache_set *c,
 			ob->nr_ptrs * sizeof(ob->ptr_offset[0]));
 		ob->nr_ptrs++;
 		ob->ptrs[0] = (struct bch_extent_ptr) {
-			.gen	= ca->bucket_gens[bucket],
+			.gen	= ca->buckets[bucket].mark.gen,
 			.offset	= bucket_to_sector(ca, bucket),
 			.dev	= ca->sb.nr_this_dev,
 		};
@@ -1155,7 +1183,7 @@ static void __bch_open_bucket_put(struct cache_set *c, struct open_bucket *ob)
 
 	rcu_read_lock();
 	open_bucket_for_each_online_device(c, ob, ptr, ca)
-		bch_unmark_open_bucket(ca, PTR_BUCKET(ca, ptr));
+		bch_mark_alloc_bucket(ca, PTR_BUCKET(ca, ptr), false);
 	rcu_read_unlock();
 
 	ob->nr_ptrs = 0;
@@ -1746,8 +1774,6 @@ int bch_cache_allocator_start(struct cache *ca)
 
 	/*
 	 * allocator thread already started?
-	 * (run_cache_set() starts allocator separately from normal rw path, via
-	 * bch_cache_allocator_start_once())
 	 */
 	if (ca->alloc_thread)
 		return 0;
@@ -1771,58 +1797,6 @@ int bch_cache_allocator_start(struct cache *ca)
 	 */
 	wake_up_process(k);
 	return 0;
-}
-
-/*
- * bch_cache_allocator_start - fill freelists directly with completely unused
- * buckets
- *
- * The allocator thread needs freed buckets to rewrite the prios and gens, and
- * it needs to rewrite prios and gens in order to free buckets.
- *
- * Don't increment gens. We are only re-using completely free buckets here, so
- * there are no existing pointers into them.
- *
- * Also, we can't increment gens until we re-write prios and gens, but we
- * can't do that until we can write a journal entry.
- *
- * If the journal is completely full, we cannot write a journal entry until we
- * reclaim a journal bucket, and we cannot do that until we possibly allocate
- * some buckets for btree nodes.
- *
- * So dig ourselves out of that hole here.
- *
- * This is only safe for buckets that have no live data in them, which there
- * should always be some of when this function is called, since the last time
- * we shut down there should have been unused buckets stranded on freelists.
- */
-const char *bch_cache_allocator_start_once(struct cache *ca)
-{
-	struct bucket *g;
-
-	spin_lock(&ca->freelist_lock);
-	for_each_bucket(g, ca) {
-		if (fifo_full(&ca->free[RESERVE_NONE]))
-			break;
-
-		if (bch_can_invalidate_bucket(ca, g) &&
-		    !g->mark.cached_sectors) {
-			__bch_invalidate_one_bucket(ca, g);
-			BUG_ON(!__bch_allocator_push(ca, g - ca->buckets));
-		}
-	}
-	spin_unlock(&ca->freelist_lock);
-
-	if (cache_set_init_fault("alloc_start"))
-		return "dynamic fault";
-
-	if (!fifo_full(&ca->free[RESERVE_PRIO]))
-		return "couldn't find enough available buckets to write prios";
-
-	if (bch_cache_allocator_start(ca))
-		return "error starting allocator thread";
-
-	return NULL;
 }
 
 void bch_open_buckets_init(struct cache_set *c)

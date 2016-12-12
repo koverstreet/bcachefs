@@ -10,9 +10,23 @@
 #include "buckets_types.h"
 #include "super.h"
 
-#define for_each_bucket(b, ca)						\
-	for (b = (ca)->buckets + (ca)->mi.first_bucket;			\
+#define for_each_bucket(b, ca)					\
+	for (b = (ca)->buckets + (ca)->mi.first_bucket;		\
 	     b < (ca)->buckets + (ca)->mi.nbuckets; b++)
+
+#define bucket_cmpxchg(g, new, expr)				\
+({								\
+	u64 _v = READ_ONCE((g)->_mark.counter);			\
+	struct bucket_mark _old;				\
+								\
+	do {							\
+		(new).counter = _old.counter = _v;		\
+		expr;						\
+	} while ((_v = cmpxchg(&(g)->_mark.counter,		\
+			       _old.counter,			\
+			       (new).counter)) != _old.counter);\
+	_old;							\
+})
 
 /*
  * bucket_gc_gen() returns the difference between the bucket's current gen and
@@ -22,7 +36,7 @@
 static inline u8 bucket_gc_gen(struct cache *ca, struct bucket *g)
 {
 	unsigned long r = g - ca->buckets;
-	return ca->bucket_gens[r] - ca->buckets[r].oldest_gen;
+	return g->mark.gen - ca->oldest_gens[r];
 }
 
 static inline struct cache *PTR_CACHE(const struct cache_set *c,
@@ -63,13 +77,7 @@ static inline size_t PTR_BUCKET_NR_TRACE(const struct cache_set *c,
 	return bucket;
 }
 
-static inline u8 PTR_BUCKET_GEN(const struct cache *ca,
-				const struct bch_extent_ptr *ptr)
-{
-	return ca->bucket_gens[PTR_BUCKET_NR(ca, ptr)];
-}
-
-static inline struct bucket *PTR_BUCKET(struct cache *ca,
+static inline struct bucket *PTR_BUCKET(const struct cache *ca,
 					const struct bch_extent_ptr *ptr)
 {
 	return ca->buckets + PTR_BUCKET_NR(ca, ptr);
@@ -100,7 +108,7 @@ static inline u8 gen_after(u8 a, u8 b)
 static inline u8 ptr_stale(const struct cache *ca,
 			   const struct bch_extent_ptr *ptr)
 {
-	return gen_after(PTR_BUCKET_GEN(ca, ptr), ptr->gen);
+	return gen_after(PTR_BUCKET(ca, ptr)->mark.gen, ptr->gen);
 }
 
 /* bucket heaps */
@@ -231,16 +239,18 @@ static inline bool is_available_bucket(struct bucket_mark mark)
 		!mark.dirty_sectors);
 }
 
+void bch_bucket_seq_cleanup(struct cache_set *);
+
+void bch_invalidate_bucket(struct cache *, struct bucket *);
 void bch_mark_free_bucket(struct cache *, struct bucket *);
-void bch_mark_alloc_bucket(struct cache *, struct bucket *);
+void bch_mark_alloc_bucket(struct cache *, struct bucket *, bool);
 void bch_mark_metadata_bucket(struct cache *, struct bucket *, bool);
-void bch_unmark_open_bucket(struct cache *, struct bucket *);
 
 void __bch_gc_mark_key(struct cache_set *, struct bkey_s_c, s64, bool,
 		       struct bucket_stats_cache_set *);
 void bch_gc_mark_key(struct cache_set *, struct bkey_s_c, s64, bool);
 void bch_mark_key(struct cache_set *, struct bkey_s_c, s64, bool,
-		  struct gc_pos, struct bucket_stats_cache_set *);
+		  struct gc_pos, struct bucket_stats_cache_set *, u64);
 
 void bch_recalc_sectors_available(struct cache_set *);
 

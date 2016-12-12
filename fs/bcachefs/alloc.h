@@ -91,7 +91,6 @@ static inline struct cache *cache_group_next(struct cache_group *devs,
 
 void bch_cache_allocator_stop(struct cache *);
 int bch_cache_allocator_start(struct cache *);
-const char *bch_cache_allocator_start_once(struct cache *);
 void bch_open_buckets_init(struct cache_set *);
 
 #endif /* _BCACHE_ALLOC_H */
