@@ -130,6 +130,7 @@ read_attribute(partial_stripes_expensive);
 
 rw_attribute(journal_write_delay_ms);
 rw_attribute(journal_reclaim_delay_ms);
+read_attribute(journal_entry_size_max);
 
 rw_attribute(discard);
 rw_attribute(running);
@@ -650,6 +651,7 @@ SHOW(bch_cache_set)
 
 	sysfs_print(journal_write_delay_ms,	c->journal.write_delay_ms);
 	sysfs_print(journal_reclaim_delay_ms,	c->journal.reclaim_delay_ms);
+	sysfs_hprint(journal_entry_size_max,	c->journal.entry_size_max);
 
 	sysfs_hprint(block_size,		block_bytes(c));
 	sysfs_print(block_size_bytes,		block_bytes(c));
@@ -877,6 +879,7 @@ static struct attribute *bch_cache_set_files[] = {
 	&sysfs_stop,
 	&sysfs_journal_write_delay_ms,
 	&sysfs_journal_reclaim_delay_ms,
+	&sysfs_journal_entry_size_max,
 	&sysfs_blockdev_volume_create,
 	&sysfs_add_device,
 

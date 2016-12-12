@@ -260,6 +260,13 @@ static const char *validate_cache_super(struct bcache_superblock *disk_sb)
 	if (CACHE_SET_GC_RESERVE(sb) < 5)
 		return "gc reserve percentage too small";
 
+	if (!CACHE_SET_JOURNAL_ENTRY_SIZE(sb))
+		SET_CACHE_SET_JOURNAL_ENTRY_SIZE(sb, 9);
+
+	/* 4 mb max: */
+	if (512U << CACHE_SET_JOURNAL_ENTRY_SIZE(sb) > JOURNAL_ENTRY_SIZE_MAX)
+		return "max journal entry size too big";
+
 	if (le16_to_cpu(sb->u64s) < bch_journal_buckets_offset(sb))
 		return "Invalid superblock: member info area missing";
 
@@ -1053,7 +1060,7 @@ static struct cache_set *bch_cache_set_alloc(struct cache_sb *sb,
 					     struct cache_set_opts opts)
 {
 	struct cache_set *c;
-	unsigned iter_size;
+	unsigned iter_size, journal_entry_bytes;
 
 	c = kzalloc(sizeof(struct cache_set), GFP_KERNEL);
 	if (!c)
@@ -1143,6 +1150,8 @@ static struct cache_set *bch_cache_set_alloc(struct cache_sb *sb,
 	iter_size = (btree_blocks(c) + 1) * 2 *
 		sizeof(struct btree_node_iter_set);
 
+	journal_entry_bytes = 512U << CACHE_SET_JOURNAL_ENTRY_SIZE(sb);
+
 	if (!(c->wq = alloc_workqueue("bcache",
 				WQ_FREEZABLE|WQ_MEM_RECLAIM|WQ_HIGHPRI, 1)) ||
 	    !(c->copygc_wq = alloc_workqueue("bcache_copygc",
@@ -1170,7 +1179,7 @@ static struct cache_set *bch_cache_set_alloc(struct cache_sb *sb,
 	    bdi_setup_and_register(&c->bdi, "bcache") ||
 	    bch_io_clock_init(&c->io_clock[READ]) ||
 	    bch_io_clock_init(&c->io_clock[WRITE]) ||
-	    bch_journal_alloc(&c->journal) ||
+	    bch_journal_alloc(&c->journal, journal_entry_bytes) ||
 	    bch_btree_cache_alloc(c) ||
 	    bch_compress_init(c))
 		goto err;
@@ -1698,6 +1707,7 @@ static void bch_cache_free_work(struct work_struct *work)
 	free_pages((unsigned long) ca->disk_buckets, ilog2(bucket_pages(ca)));
 	kfree(ca->prio_buckets);
 	kfree(ca->bio_prio);
+	kfree(ca->journal.bio);
 	vfree(ca->buckets);
 	vfree(ca->bucket_gens);
 	free_heap(&ca->heap);
@@ -1899,7 +1909,7 @@ static const char *cache_alloc(struct bcache_superblock *sb,
 {
 	size_t reserve_none, movinggc_reserve, free_inc_reserve, total_reserve;
 	size_t heap_size;
-	unsigned i;
+	unsigned i, journal_entry_pages;
 	const char *err = "cannot allocate memory";
 	struct cache *ca;
 
@@ -1928,9 +1938,6 @@ static const char *cache_alloc(struct bcache_superblock *sb,
 
 	INIT_WORK(&ca->free_work, bch_cache_free_work);
 	INIT_WORK(&ca->remove_work, bch_cache_remove_work);
-	bio_init(&ca->journal.bio);
-	ca->journal.bio.bi_max_vecs = 8;
-	ca->journal.bio.bi_io_vec = ca->journal.bio.bi_inline_vecs;
 	spin_lock_init(&ca->freelist_lock);
 	spin_lock_init(&ca->prio_buckets_lock);
 	mutex_init(&ca->heap_lock);
@@ -1961,6 +1968,10 @@ static const char *cache_alloc(struct bcache_superblock *sb,
 	free_inc_reserve = movinggc_reserve / 2;
 	heap_size = movinggc_reserve * 8;
 
+	journal_entry_pages =
+		DIV_ROUND_UP(1U << CACHE_SET_JOURNAL_ENTRY_SIZE(ca->disk_sb.sb),
+			     PAGE_SECTORS);
+
 	if (!init_fifo(&ca->free[RESERVE_PRIO], prio_buckets(ca), GFP_KERNEL) ||
 	    !init_fifo(&ca->free[RESERVE_BTREE], BTREE_NODE_RESERVE, GFP_KERNEL) ||
 	    !init_fifo(&ca->free[RESERVE_MOVINGGC],
@@ -1978,7 +1989,8 @@ static const char *cache_alloc(struct bcache_superblock *sb,
 	    !(ca->bucket_stats_percpu = alloc_percpu(struct bucket_stats_cache)) ||
 	    !(ca->journal.bucket_seq = kcalloc(bch_nr_journal_buckets(ca->disk_sb.sb),
 					       sizeof(u64), GFP_KERNEL)) ||
-	    !(ca->bio_prio = bio_kmalloc(GFP_NOIO, bucket_pages(ca))) ||
+	    !(ca->journal.bio = bio_kmalloc(GFP_KERNEL, journal_entry_pages)) ||
+	    !(ca->bio_prio = bio_kmalloc(GFP_KERNEL, bucket_pages(ca))) ||
 	    bioset_init(&ca->replica_set, 4,
 			offsetof(struct bch_write_bio, bio)) ||
 	    !(ca->sectors_written = alloc_percpu(*ca->sectors_written)))

@@ -809,6 +809,8 @@ LE64_BITMASK(CACHE_SET_ROOT_RESERVE,	struct cache_sb, flags2, 0,  6);
  */
 LE64_BITMASK(CACHE_SET_CLEAN,		struct cache_sb, flags2, 6, 7);
 
+LE64_BITMASK(CACHE_SET_JOURNAL_ENTRY_SIZE, struct cache_sb, flags2, 7, 15);
+
 /* options: */
 
 /**

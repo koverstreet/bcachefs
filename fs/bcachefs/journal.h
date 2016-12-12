@@ -350,7 +350,7 @@ static inline void bch_journal_set_replay_done(struct journal *j)
 }
 
 void bch_journal_free(struct journal *);
-int bch_journal_alloc(struct journal *);
+int bch_journal_alloc(struct journal *, unsigned);
 
 ssize_t bch_journal_print_debug(struct journal *, char *);
 

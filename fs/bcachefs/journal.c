@@ -465,13 +465,14 @@ static enum {
 } journal_entry_validate(struct cache *ca, const struct jset *j, u64 sector,
 			 unsigned bucket_sectors_left, unsigned sectors_read)
 {
+	struct cache_set *c = ca->set;
 	size_t bytes = __set_bytes(j, le32_to_cpu(j->u64s));
 	u64 got, expect;
 
 	if (bch_meta_read_fault("journal"))
 		return JOURNAL_ENTRY_BAD;
 
-	if (le64_to_cpu(j->magic) != jset_magic(&ca->set->disk_sb)) {
+	if (le64_to_cpu(j->magic) != jset_magic(&c->disk_sb)) {
 		pr_debug("bad magic while reading journal from %llu", sector);
 		return JOURNAL_ENTRY_BAD;
 	}
@@ -485,7 +486,7 @@ static enum {
 		return JOURNAL_ENTRY_BAD;
 
 	if (cache_inconsistent_on(bytes > bucket_sectors_left << 9 ||
-				  bytes > JOURNAL_BUF_BYTES, ca,
+				  bytes > c->journal.entry_size_max, ca,
 			"journal entry too big (%zu bytes), sector %lluu",
 			bytes, sector))
 		return JOURNAL_ENTRY_BAD;
@@ -515,15 +516,17 @@ static int journal_read_bucket(struct cache *ca, struct journal_list *jlist,
 {
 	struct cache_set *c = ca->set;
 	struct journal_device *ja = &ca->journal;
-	struct bio *bio = &ja->bio;
+	struct bio *bio = ja->bio;
 	struct jset *j, *data;
 	unsigned blocks, sectors_read, bucket_offset = 0;
+	unsigned max_entry_sectors = c->journal.entry_size_max >> 9;
 	u64 sector = bucket_to_sector(ca,
 				journal_bucket(ca->disk_sb.sb, bucket));
 	bool entries_found = false;
 	int ret = 0;
 
-	data = (void *) __get_free_pages(GFP_KERNEL, JOURNAL_BUF_ORDER);
+	data = (void *) __get_free_pages(GFP_KERNEL,
+				get_order(c->journal.entry_size_max));
 	if (!data) {
 		mutex_lock(&jlist->cache_set_buffer_lock);
 		data = c->journal.buf[0].data;
@@ -535,7 +538,7 @@ static int journal_read_bucket(struct cache *ca, struct journal_list *jlist,
 reread:
 		sectors_read = min_t(unsigned,
 				     ca->mi.bucket_size - bucket_offset,
-				     JOURNAL_BUF_SECTORS);
+				     max_entry_sectors);
 
 		bio_reset(bio);
 		bio->bi_bdev		= ca->disk_sb.bdev;
@@ -616,7 +619,8 @@ err:
 	if (data == c->journal.buf[0].data)
 		mutex_unlock(&jlist->cache_set_buffer_lock);
 	else
-		free_pages((unsigned long) data, JOURNAL_BUF_ORDER);
+		free_pages((unsigned long) data,
+				get_order(c->journal.entry_size_max));
 
 	return ret;
 }
@@ -1137,7 +1141,7 @@ static int journal_entry_sectors(struct journal *j)
 	struct cache_set *c = container_of(j, struct cache_set, journal);
 	struct cache *ca;
 	struct bkey_s_extent e = bkey_i_to_s_extent(&j->key);
-	unsigned sectors_available = JOURNAL_BUF_SECTORS;
+	unsigned sectors_available = j->entry_size_max >> 9;
 	unsigned i, nr_online = 0, nr_devs = 0;
 
 	lockdep_assert_held(&j->lock);
@@ -1218,6 +1222,8 @@ static int journal_entry_open(struct journal *j)
 	 */
 	u64s -= journal_entry_u64s_reserve(buf);
 	u64s  = max_t(ssize_t, 0L, u64s);
+
+	BUG_ON(u64s >= JOURNAL_ENTRY_CLOSED_VAL);
 
 	if (u64s > le32_to_cpu(buf->data->u64s)) {
 		union journal_res_state old, new;
@@ -1829,7 +1835,7 @@ static void journal_write_compact(struct jset *jset)
 
 static void journal_write_endio(struct bio *bio)
 {
-	struct cache *ca = container_of(bio, struct cache, journal.bio);
+	struct cache *ca = bio->bi_private;
 	struct journal *j = &ca->set->journal;
 
 	if (cache_fatal_io_err_on(bio->bi_error, ca, "journal write") ||
@@ -1940,16 +1946,15 @@ static void journal_write(struct closure *cl)
 			continue;
 		}
 
-		bio = &ca->journal.bio;
-
 		atomic64_add(sectors, &ca->meta_sectors_written);
 
+		bio = ca->journal.bio;
 		bio_reset(bio);
 		bio->bi_iter.bi_sector	= ptr->offset;
 		bio->bi_bdev		= ca->disk_sb.bdev;
 		bio->bi_iter.bi_size	= sectors << 9;
 		bio->bi_end_io		= journal_write_endio;
-		bio->bi_private		= w;
+		bio->bi_private		= ca;
 		bio_set_op_attrs(bio, REQ_OP_WRITE,
 				 REQ_SYNC|REQ_META|REQ_PREFLUSH|REQ_FUA);
 		bch_bio_map(bio, w->data);
@@ -1968,11 +1973,11 @@ static void journal_write(struct closure *cl)
 		    !bch_extent_has_device(bkey_i_to_s_c_extent(&j->key), i)) {
 			percpu_ref_get(&ca->ref);
 
-			bio = &ca->journal.bio;
+			bio = ca->journal.bio;
 			bio_reset(bio);
 			bio->bi_bdev		= ca->disk_sb.bdev;
 			bio->bi_end_io		= journal_write_endio;
-			bio->bi_private		= w;
+			bio->bi_private		= ca;
 			bio_set_op_attrs(bio, REQ_OP_WRITE, WRITE_FLUSH);
 			closure_bio_submit_punt(bio, cl, c);
 		}
@@ -2243,14 +2248,17 @@ int bch_journal_flush(struct journal *j)
 
 void bch_journal_free(struct journal *j)
 {
-	free_pages((unsigned long) j->buf[1].data, JOURNAL_BUF_ORDER);
-	free_pages((unsigned long) j->buf[0].data, JOURNAL_BUF_ORDER);
+	unsigned order = get_order(j->entry_size_max);
+
+	free_pages((unsigned long) j->buf[1].data, order);
+	free_pages((unsigned long) j->buf[0].data, order);
 	free_fifo(&j->pin);
 }
 
-int bch_journal_alloc(struct journal *j)
+int bch_journal_alloc(struct journal *j, unsigned entry_size_max)
 {
 	static struct lock_class_key res_key;
+	unsigned order = get_order(entry_size_max);
 
 	spin_lock_init(&j->lock);
 	spin_lock_init(&j->pin_lock);
@@ -2263,6 +2271,7 @@ int bch_journal_alloc(struct journal *j)
 
 	lockdep_init_map(&j->res_map, "journal res", &res_key, 0);
 
+	j->entry_size_max	= entry_size_max;
 	j->write_delay_ms	= 100;
 	j->reclaim_delay_ms	= 100;
 
@@ -2273,10 +2282,8 @@ int bch_journal_alloc(struct journal *j)
 		 { .cur_entry_offset = JOURNAL_ENTRY_CLOSED_VAL }).v);
 
 	if (!(init_fifo(&j->pin, JOURNAL_PIN, GFP_KERNEL)) ||
-	    !(j->buf[0].data = (void *) __get_free_pages(GFP_KERNEL,
-						JOURNAL_BUF_ORDER)) ||
-	    !(j->buf[1].data = (void *) __get_free_pages(GFP_KERNEL,
-						JOURNAL_BUF_ORDER)))
+	    !(j->buf[0].data = (void *) __get_free_pages(GFP_KERNEL, order)) ||
+	    !(j->buf[1].data = (void *) __get_free_pages(GFP_KERNEL, order)))
 		return -ENOMEM;
 
 	return 0;
