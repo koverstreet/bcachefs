@@ -376,7 +376,7 @@ static size_t extent_print_ptrs(struct cache_set *c, char *buf,
 		if (!first)
 			p(" ");
 
-		switch (extent_entry_type(entry)) {
+		switch (__extent_entry_type(entry)) {
 		case BCH_EXTENT_ENTRY_crc32:
 		case BCH_EXTENT_ENTRY_crc64:
 			crc = entry_to_crc(entry);
@@ -393,10 +393,14 @@ static size_t extent_print_ptrs(struct cache_set *c, char *buf,
 			  (ca = PTR_CACHE(c, ptr)) && ptr_stale(ca, ptr)
 			  ? " stale" : "");
 			break;
+		default:
+			p("(invalid extent entry %.16llx)", *((u64 *) entry));
+			goto out;
 		}
 
 		first = false;
 	}
+out:
 	rcu_read_unlock();
 
 	if (bkey_extent_is_cached(e.k))

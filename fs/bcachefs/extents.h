@@ -92,7 +92,7 @@ static inline void bkey_extent_set_cached(struct bkey *k, bool cached)
 	k->type = cached ? BCH_EXTENT_CACHED : BCH_EXTENT;
 }
 
-static inline enum bch_extent_entry_type
+static inline unsigned
 __extent_entry_type(const union bch_extent_entry *e)
 {
 	return e->type ? __ffs(e->type) : BCH_EXTENT_ENTRY_MAX;

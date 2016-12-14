@@ -54,7 +54,7 @@ static inline u64 journal_pin_seq(struct journal *j,
 
 #define for_each_jset_entry(entry, jset)				\
 	for (entry = (jset)->start;					\
-	     entry < bkey_idx(jset, le32_to_cpu((jset)->u64s));\
+	     entry < bkey_idx(jset, le32_to_cpu((jset)->u64s));		\
 	     entry = jset_keys_next(entry))
 
 static inline struct jset_entry *__jset_entry_type_next(struct jset *jset,
@@ -118,13 +118,6 @@ struct bkey_i *bch_journal_find_btree_root(struct cache_set *c, struct jset *j,
 
 	k = entry->start;
 	*level = entry->level;
-
-	if (cache_set_inconsistent_on(!entry->u64s ||
-			le16_to_cpu(entry->u64s) != k->k.u64s ||
-			bkey_invalid(c, BKEY_TYPE_BTREE, bkey_i_to_s_c(k)),
-			c, "invalid btree root in journal"))
-		return NULL;
-
 	*level = entry->level;
 	return k;
 }
@@ -458,14 +451,79 @@ out:
 	return ret;
 }
 
+static void journal_entry_null_range(void *start, void *end)
+{
+	struct jset_entry *entry;
+
+	for (entry = start; entry != end; entry = jset_keys_next(entry)) {
+		entry->u64s	= 0;
+		entry->btree_id	= 0;
+		entry->level	= 0;
+		entry->flags	= 0;
+		SET_JOURNAL_ENTRY_TYPE(entry, 0);
+	}
+}
+
+static void journal_validate_key(struct cache *ca, struct jset *j,
+				 struct jset_entry *entry,
+				 struct bkey_i *k, enum bkey_type key_type,
+				 const char *type)
+{
+	struct cache_set *c = ca->set;
+	void *next = jset_keys_next(entry);
+	const char *invalid;
+	char buf[160];
+
+	if (cache_inconsistent_on(!k->k.u64s, ca,
+				  "invalid %s in journal: k->u64s 0", type)) {
+		entry->u64s = cpu_to_le16((u64 *) k - entry->_data);
+		journal_entry_null_range(jset_keys_next(entry), next);
+		return;
+	}
+
+	if (cache_inconsistent_on((void *) bkey_next(k) >
+				  (void *) jset_keys_next(entry), ca,
+			"invalid %s in journal: extends past end of journal entry",
+			type)) {
+		entry->u64s = cpu_to_le16((u64 *) k - entry->_data);
+		journal_entry_null_range(jset_keys_next(entry), next);
+		return;
+	}
+
+	if (cache_inconsistent_on(k->k.format != KEY_FORMAT_CURRENT, ca,
+			"invalid %s in journal: bad format %u",
+			type, k->k.format)) {
+		le16_add_cpu(&entry->u64s, -k->k.u64s);
+		memmove(k, bkey_next(k), next - (void *) bkey_next(k));
+		journal_entry_null_range(jset_keys_next(entry), next);
+		return;
+	}
+
+	if (JSET_BIG_ENDIAN(j) != CPU_BIG_ENDIAN)
+		bch_bkey_swab(key_type, NULL, bkey_to_packed(k));
+
+	invalid = bkey_invalid(c, key_type, bkey_i_to_s_c(k));
+	if (invalid) {
+		bch_bkey_val_to_text(c, key_type, buf, sizeof(buf),
+				     bkey_i_to_s_c(k));
+		cache_inconsistent(ca, "invalid %s in journal: %s", type, buf);
+
+		le16_add_cpu(&entry->u64s, -k->k.u64s);
+		memmove(k, bkey_next(k), next - (void *) bkey_next(k));
+		journal_entry_null_range(jset_keys_next(entry), next);
+		return;
+	}
+}
+
 static enum {
 	JOURNAL_ENTRY_BAD,
 	JOURNAL_ENTRY_REREAD,
 	JOURNAL_ENTRY_OK,
-} journal_entry_validate(struct cache *ca, const struct jset *j, u64 sector,
+} journal_entry_validate(struct cache *ca, struct jset *j, u64 sector,
 			 unsigned bucket_sectors_left, unsigned sectors_read)
 {
 	struct cache_set *c = ca->set;
+	struct jset_entry *entry;
 	size_t bytes = __set_bytes(j, le32_to_cpu(j->u64s));
 	u64 got, expect;
 
@@ -507,6 +565,53 @@ static enum {
 				  le64_to_cpu(j->seq), ca,
 				  "invalid journal entry: last_seq > seq"))
 		return JOURNAL_ENTRY_BAD;
+
+	/*
+	 * XXX: return errors directly, key off of c->opts.fix_errors like
+	 * fs-gc.c
+	 */
+	for_each_jset_entry(entry, j) {
+		struct bkey_i *k;
+
+		if (cache_inconsistent_on(jset_keys_next(entry) >
+					  bkey_idx(j, le32_to_cpu(j->u64s)), ca,
+					  "journal entry extents past end of jset")) {
+			j->u64s = cpu_to_le64((u64 *) entry - j->_data);
+			break;
+		}
+
+		switch (JOURNAL_ENTRY_TYPE(entry)) {
+		case JOURNAL_ENTRY_BTREE_KEYS:
+			for (k = entry->start;
+			     k < bkey_idx(entry, le16_to_cpu(entry->u64s));
+			     k = bkey_next(k))
+				journal_validate_key(ca, j, entry, k,
+					bkey_type(entry->level, entry->btree_id),
+					"key");
+			break;
+
+		case JOURNAL_ENTRY_BTREE_ROOT:
+			k = entry->start;
+
+			if (cache_inconsistent_on(!entry->u64s ||
+					le16_to_cpu(entry->u64s) != k->k.u64s, ca,
+					"invalid btree root journal entry: wrong number of keys")) {
+				journal_entry_null_range(entry,
+						jset_keys_next(entry));
+				continue;
+			}
+
+			journal_validate_key(ca, j, entry, k,
+					     BKEY_TYPE_BTREE, "btree root");
+			break;
+
+		case JOURNAL_ENTRY_JOURNAL_SEQ_BLACKLISTED:
+			cache_inconsistent_on(le16_to_cpu(entry->u64s) != 1, ca,
+					      "invalid journal seq blacklist entry: bad size");
+
+			break;
+		}
+	}
 
 	return JOURNAL_ENTRY_OK;
 }
@@ -828,31 +933,6 @@ const char *bch_journal_read(struct cache_set *c, struct list_head *list)
 	if (list_empty(list))
 		return "no journal entries found";
 
-	/* Swabbing: */
-	list_for_each_entry(i, list, list) {
-		struct jset_entry *entry;
-		struct bkey_i *k;
-
-		if (JSET_BIG_ENDIAN(&i->j) == CPU_BIG_ENDIAN)
-			continue;
-
-		for_each_jset_entry(entry, &i->j)
-			switch (JOURNAL_ENTRY_TYPE(entry)) {
-			case JOURNAL_ENTRY_BTREE_KEYS:
-				for (k = entry->start;
-				     k < bkey_idx(entry, le16_to_cpu(entry->u64s));
-				     k = bkey_next(k))
-					bch_bkey_swab(bkey_type(entry->level,
-								entry->btree_id),
-						      NULL, bkey_to_packed(k));
-				break;
-			case JOURNAL_ENTRY_BTREE_ROOT:
-				bch_bkey_swab(BKEY_TYPE_BTREE,
-					      NULL, bkey_to_packed(entry->start));
-				break;
-			}
-	}
-
 	j = &list_entry(list->prev, struct journal_replay, list)->j;
 
 	if (le64_to_cpu(j->seq) -
@@ -948,8 +1028,7 @@ void bch_journal_mark(struct cache_set *c, struct list_head *list)
 			enum bkey_type type = bkey_type(j->level, j->btree_id);
 			struct bkey_s_c k_s_c = bkey_i_to_s_c(k);
 
-			if (btree_type_has_ptrs(type) &&
-			    !bkey_invalid(c, type, k_s_c))
+			if (btree_type_has_ptrs(type))
 				__bch_btree_mark_key(c, type, k_s_c);
 		}
 }
