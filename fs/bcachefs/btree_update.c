@@ -805,6 +805,12 @@ void bch_btree_journal_key(struct btree_insert *trans,
 		u64 seq = trans->journal_res.seq;
 		bool needs_whiteout = insert->k.needs_whiteout;
 
+		/*
+		 * have a bug where we're seeing an extent with an invalid crc
+		 * entry in the journal, trying to track it down:
+		 */
+		BUG_ON(bkey_invalid(c, b->btree_id, bkey_i_to_s_c(insert)));
+
 		/* ick */
 		insert->k.needs_whiteout = false;
 		bch_journal_add_keys(j, &trans->journal_res,
