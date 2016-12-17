@@ -1899,7 +1899,8 @@ static void journal_write_compact(struct jset *jset)
 		    i->btree_id == prev->btree_id &&
 		    i->level	== prev->level &&
 		    JOURNAL_ENTRY_TYPE(i) == JOURNAL_ENTRY_TYPE(prev) &&
-		    JOURNAL_ENTRY_TYPE(i) == JOURNAL_ENTRY_BTREE_KEYS) {
+		    JOURNAL_ENTRY_TYPE(i) == JOURNAL_ENTRY_BTREE_KEYS &&
+		    le16_to_cpu(prev->u64s) + u64s <= U16_MAX) {
 			memmove_u64s_down(jset_keys_next(prev),
 					  i->_data,
 					  u64s);
