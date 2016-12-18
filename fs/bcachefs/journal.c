@@ -605,6 +605,9 @@ static enum {
 					     BKEY_TYPE_BTREE, "btree root");
 			break;
 
+		case JOURNAL_ENTRY_PRIO_PTRS:
+			break;
+
 		case JOURNAL_ENTRY_JOURNAL_SEQ_BLACKLISTED:
 			cache_inconsistent_on(le16_to_cpu(entry->u64s) != 1, ca,
 					      "invalid journal seq blacklist entry: bad size");
