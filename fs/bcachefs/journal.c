@@ -436,7 +436,7 @@ static enum {
 
 	where = jlist->head;
 add:
-	i = kmalloc(offsetof(struct journal_replay, j) + bytes, GFP_KERNEL);
+	i = kvmalloc(offsetof(struct journal_replay, j) + bytes, GFP_KERNEL);
 	if (!i) {
 		ret = JOURNAL_ENTRY_ADD_ERROR;
 		goto out;
@@ -863,15 +863,14 @@ search_done:
 #undef read_bucket
 }
 
-static void journal_entries_free(struct journal *j,
-				 struct list_head *list)
+void bch_journal_entries_free(struct list_head *list)
 {
 
 	while (!list_empty(list)) {
 		struct journal_replay *i =
 			list_first_entry(list, struct journal_replay, list);
 		list_del(&i->list);
-		kfree(i);
+		kvfree(i);
 	}
 }
 
@@ -928,7 +927,7 @@ const char *bch_journal_read(struct cache_set *c, struct list_head *list)
 	closure_sync(&jlist.cl);
 
 	if (jlist.ret) {
-		journal_entries_free(&c->journal, list);
+		bch_journal_entries_free(list);
 
 		return jlist.ret == -ENOMEM
 			? "cannot allocate memory for journal"
@@ -1456,7 +1455,7 @@ err:
 	if (ret)
 		bch_err(c, "journal replay error: %d", ret);
 
-	journal_entries_free(j, list);
+	bch_journal_entries_free(list);
 
 	return ret;
 }

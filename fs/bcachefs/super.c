@@ -1485,14 +1485,7 @@ static const char *run_cache_set(struct cache_set *c)
 	BUG_ON(!list_empty(&journal));
 	return NULL;
 err:
-	while (!list_empty(&journal)) {
-		struct journal_replay *r =
-			list_first_entry(&journal, struct journal_replay, list);
-
-		list_del(&r->list);
-		kfree(r);
-	}
-
+	bch_journal_entries_free(&journal);
 	set_bit(CACHE_SET_ERROR, &c->flags);
 	bch_cache_set_unregister(c);
 	closure_put(&c->caching);

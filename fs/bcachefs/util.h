@@ -76,6 +76,18 @@ do {									\
 	(__builtin_types_compatible_p(typeof(_val), _type) ||		\
 	 __builtin_types_compatible_p(typeof(_val), const _type))
 
+static inline void *kvmalloc(size_t bytes, gfp_t gfp)
+{
+	if (bytes <= PAGE_SIZE ||
+	    !(gfp & GFP_KERNEL))
+		return kmalloc(bytes, gfp);
+
+	return ((bytes <= KMALLOC_MAX_SIZE)
+		? kmalloc(bytes, gfp|__GFP_NOWARN)
+		: NULL) ?:
+		vmalloc(bytes);
+}
+
 #define DECLARE_HEAP(type, name)					\
 	struct {							\
 		size_t size, used;					\
@@ -88,11 +100,7 @@ do {									\
 	(heap)->used = 0;						\
 	(heap)->size = (_size);						\
 	_bytes = (heap)->size * sizeof(*(heap)->data);			\
-	(heap)->data = NULL;						\
-	if (_bytes < KMALLOC_MAX_SIZE)					\
-		(heap)->data = kmalloc(_bytes, (gfp));			\
-	if ((!(heap)->data) && ((gfp) & GFP_KERNEL))			\
-		(heap)->data = vmalloc(_bytes);				\
+	(heap)->data = kvmalloc(_bytes, (gfp));				\
 	(heap)->data;							\
 })
 
