@@ -610,6 +610,11 @@ static enum {
 					      "invalid journal seq blacklist entry: bad size");
 
 			break;
+		default:
+			cache_inconsistent(ca,
+					   "invalid journal entry type %llu",
+					   JOURNAL_ENTRY_TYPE(entry));
+			break;
 		}
 	}
 
