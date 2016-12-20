@@ -1282,8 +1282,8 @@ static const char *run_cache_set(struct cache_set *c)
 	 */
 
 	if (CACHE_SET_SYNC(&c->disk_sb)) {
-		err = bch_journal_read(c, &journal);
-		if (err)
+		ret = bch_journal_read(c, &journal);
+		if (ret)
 			goto err;
 
 		pr_debug("btree_journal_read() done");
@@ -1291,11 +1291,13 @@ static const char *run_cache_set(struct cache_set *c)
 		j = &list_entry(journal.prev, struct journal_replay, list)->j;
 
 		err = "error reading priorities";
-		for_each_cache(ca, c, i)
-			if (bch_prio_read(ca)) {
+		for_each_cache(ca, c, i) {
+			ret = bch_prio_read(ca);
+			if (ret) {
 				percpu_ref_put(&ca->ref);
 				goto err;
 			}
+		}
 
 		c->prio_clock[READ].hand = le16_to_cpu(j->read_clock);
 		c->prio_clock[WRITE].hand = le16_to_cpu(j->write_clock);
@@ -1355,7 +1357,8 @@ static const char *run_cache_set(struct cache_set *c)
 		bch_verbose(c, "starting journal replay:");
 
 		err = "journal replay failed";
-		if (bch_journal_replay(c, &journal))
+		ret = bch_journal_replay(c, &journal);
+		if (ret)
 			goto err;
 
 		bch_verbose(c, "journal replay done");
@@ -1375,7 +1378,7 @@ static const char *run_cache_set(struct cache_set *c)
 		err = "error in fs gc";
 		ret = bch_gc_inode_nlinks(c);
 		if (ret)
-			goto fsck_err;
+			goto err;
 		bch_verbose(c, "fs gc done");
 
 		if (!c->opts.nofsck) {
@@ -1383,7 +1386,7 @@ static const char *run_cache_set(struct cache_set *c)
 			err = "error in fsck";
 			ret = bch_fsck(c);
 			if (ret)
-				goto fsck_err;
+				goto err;
 			bch_verbose(c, "fsck done");
 		}
 	} else {
@@ -1487,27 +1490,40 @@ static const char *run_cache_set(struct cache_set *c)
 	BUG_ON(!list_empty(&journal));
 	return NULL;
 err:
+	switch (ret) {
+	case BCH_FSCK_ERRORS_NOT_FIXED:
+		err = NULL;
+		bch_err(c, "filesystem contains errors: please report this to the developers");
+		pr_cont("mount with -o fix_errors to repair");
+		break;
+	case BCH_FSCK_REPAIR_UNIMPLEMENTED:
+		err = NULL;
+		bch_err(c, "filesystem contains errors: please report this to the developers");
+		pr_cont("repair unimplemented: inform the developers so that it can be added");
+		break;
+	case BCH_FSCK_REPAIR_IMPOSSIBLE:
+		err = NULL;
+		bch_err(c, "filesystem contains errors, but repair impossible");
+		break;
+	case BCH_FSCK_UNKNOWN_VERSION:
+		err = NULL;
+		bch_err(c, "cannot mount: unknown metadata version");
+		break;
+	case -ENOMEM:
+		err = NULL;
+		bch_err(c, "cannot mount: insufficient memory");
+		break;
+	case -EIO:
+		err = NULL;
+		bch_err(c, "cannot mount: IO error");
+		break;
+	}
+
 	bch_journal_entries_free(&journal);
 	set_bit(CACHE_SET_ERROR, &c->flags);
 	bch_cache_set_unregister(c);
 	closure_put(&c->caching);
 	return err;
-fsck_err:
-	switch (ret) {
-	case BCH_FSCK_OK:
-		break;
-	case BCH_FSCK_ERRORS_NOT_FIXED:
-		bch_err(c, "filesystem contains errors: please report this to the developers");
-		pr_cont("mount with -o fix_errors to repair");
-		goto err;
-	case BCH_FSCK_REPAIR_UNIMPLEMENTED:
-		bch_err(c, "filesystem contains errors: please report this to the developers");
-		pr_cont("repair unimplemented: inform the developers so that it can be added");
-		goto err;
-	default:
-		goto err;
-	}
-	goto err;
 }
 
 static const char *can_add_cache(struct cache_sb *sb,

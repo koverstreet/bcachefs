@@ -89,6 +89,52 @@ do {									\
 })
 
 /*
+ * Fsck errors: inconsistency errors we detect at mount time, and should ideally
+ * be able to repair:
+ */
+
+enum {
+	BCH_FSCK_OK			= 0,
+	BCH_FSCK_ERRORS_NOT_FIXED	= 1,
+	BCH_FSCK_REPAIR_UNIMPLEMENTED	= 2,
+	BCH_FSCK_REPAIR_IMPOSSIBLE	= 3,
+	BCH_FSCK_UNKNOWN_VERSION	= 4,
+};
+
+#define unfixable_fsck_err(c, msg, ...)					\
+do {									\
+	bch_err(c, msg " (repair unimplemented)", ##__VA_ARGS__);	\
+	ret = BCH_FSCK_REPAIR_UNIMPLEMENTED;				\
+	goto fsck_err;							\
+} while (0)
+
+#define unfixable_fsck_err_on(cond, c, ...)				\
+do {									\
+	if (cond)							\
+		unfixable_fsck_err(c, __VA_ARGS__);			\
+} while (0)
+
+#define fsck_err(c, msg, ...)						\
+do {									\
+	if (!(c)->opts.fix_errors) {					\
+		bch_err(c, msg, ##__VA_ARGS__);				\
+		ret = BCH_FSCK_ERRORS_NOT_FIXED;			\
+		goto fsck_err;						\
+	}								\
+	set_bit(CACHE_SET_FSCK_FIXED_ERRORS, &(c)->flags);		\
+	bch_err(c, msg ", fixing", ##__VA_ARGS__);			\
+} while (0)
+
+#define fsck_err_on(cond, c, ...)					\
+({									\
+	bool _ret = (cond);						\
+									\
+	if (_ret)							\
+		fsck_err(c, __VA_ARGS__);				\
+	_ret;								\
+})
+
+/*
  * Fatal errors: these don't indicate a bug, but we can't continue running in RW
  * mode - pretty much just due to metadata IO errors:
  */

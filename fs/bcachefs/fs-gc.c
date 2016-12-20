@@ -11,39 +11,6 @@
 
 #include <linux/generic-radix-tree.h>
 
-#define unfixable_fsck_err(c, msg, ...)					\
-do {									\
-	bch_err(c, msg " (repair unimplemented)", ##__VA_ARGS__);	\
-	ret = BCH_FSCK_REPAIR_UNIMPLEMENTED;				\
-	goto fsck_err;							\
-} while (0)
-
-#define unfixable_fsck_err_on(cond, c, ...)				\
-do {									\
-	if (cond)							\
-		unfixable_fsck_err(c, __VA_ARGS__);			\
-} while (0)
-
-#define fsck_err(c, msg, ...)						\
-do {									\
-	if (!(c)->opts.fix_errors) {					\
-		bch_err(c, msg, ##__VA_ARGS__);				\
-		ret = BCH_FSCK_ERRORS_NOT_FIXED;			\
-		goto fsck_err;						\
-	}								\
-	set_bit(CACHE_SET_FSCK_FIXED_ERRORS, &(c)->flags);		\
-	bch_err(c, msg ", fixing", ##__VA_ARGS__);			\
-} while (0)
-
-#define fsck_err_on(cond, c, ...)					\
-({									\
-	bool _ret = (cond);						\
-									\
-	if (_ret)							\
-		fsck_err(c, __VA_ARGS__);				\
-	_ret;								\
-})
-
 struct nlink {
 	u32	count;
 	u32	dir_count;
