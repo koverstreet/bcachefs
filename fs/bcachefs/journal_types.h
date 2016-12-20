@@ -3,6 +3,8 @@
 
 #include <linux/cache.h>
 #include <linux/workqueue.h>
+
+#include "alloc_types.h"
 #include "fifo.h"
 
 struct journal_res;
@@ -106,8 +108,9 @@ union journal_res_state {
  */
 
 enum {
-	JOURNAL_NEED_WRITE,
 	JOURNAL_REPLAY_DONE,
+	JOURNAL_STARTED,
+	JOURNAL_NEED_WRITE,
 };
 
 /* Embedded in struct cache_set */
@@ -171,6 +174,7 @@ struct journal {
 	struct list_head	seq_blacklist;
 
 	BKEY_PADDED(key);
+	struct cache_group	devs;
 
 	struct delayed_work	reclaim_work;
 	unsigned long		last_flushed;

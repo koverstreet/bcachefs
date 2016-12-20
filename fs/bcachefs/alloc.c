@@ -77,7 +77,7 @@ static void __bch_bucket_free(struct cache *, struct bucket *);
 
 /* Allocation groups: */
 
-static void bch_cache_group_remove_cache(struct cache_group *grp, struct cache *ca)
+void bch_cache_group_remove_cache(struct cache_group *grp, struct cache *ca)
 {
 	unsigned i;
 
@@ -95,12 +95,19 @@ static void bch_cache_group_remove_cache(struct cache_group *grp, struct cache *
 	spin_unlock(&grp->lock);
 }
 
-static void bch_cache_group_add_cache(struct cache_group *grp, struct cache *ca)
+void bch_cache_group_add_cache(struct cache_group *grp, struct cache *ca)
 {
+	unsigned i;
+
 	spin_lock(&grp->lock);
+	for (i = 0; i < grp->nr_devices; i++)
+		if (rcu_access_pointer(grp->d[i].dev) == ca)
+			goto out;
+
 	BUG_ON(grp->nr_devices >= MAX_CACHES_PER_SET);
 
 	rcu_assign_pointer(grp->d[grp->nr_devices++].dev, ca);
+out:
 	spin_unlock(&grp->lock);
 }
 

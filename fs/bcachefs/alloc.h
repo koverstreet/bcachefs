@@ -9,6 +9,9 @@ struct cache;
 struct cache_set;
 struct cache_group;
 
+void bch_cache_group_remove_cache(struct cache_group *, struct cache *);
+void bch_cache_group_add_cache(struct cache_group *, struct cache *);
+
 int bch_prio_read(struct cache *);
 
 void bch_recalc_min_prio(struct cache *, int);

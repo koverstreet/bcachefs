@@ -1246,7 +1246,7 @@ static int journal_entry_sectors(struct journal *j)
 	lockdep_assert_held(&j->lock);
 
 	rcu_read_lock();
-	group_for_each_cache_rcu(ca, &c->cache_tiers[0], i) {
+	group_for_each_cache_rcu(ca, &j->devs, i) {
 		unsigned buckets_required = 0;
 
 		sectors_available = min_t(unsigned, sectors_available,
@@ -1365,12 +1365,20 @@ void bch_journal_start(struct cache_set *c)
 {
 	struct journal *j = &c->journal;
 	struct journal_seq_blacklist *bl;
+	struct cache *ca;
 	u64 new_seq = 0;
+	unsigned i;
+
+	for_each_cache(ca, c, i)
+		if (is_journal_device(ca))
+			bch_cache_group_add_cache(&c->journal.devs, ca);
 
 	list_for_each_entry(bl, &j->seq_blacklist, list)
 		new_seq = max(new_seq, bl->seq);
 
 	spin_lock(&j->lock);
+
+	set_bit(JOURNAL_STARTED, &j->flags);
 
 	while (atomic64_read(&j->seq) < new_seq) {
 		struct journal_entry_pin_list pin_list, *p;
@@ -1461,11 +1469,16 @@ int bch_journal_replay(struct cache_set *c, struct list_head *list)
 	bch_info(c, "journal replay done, %i keys in %i entries, seq %llu",
 		 keys, entries, (u64) atomic64_read(&j->seq));
 
+	fsck_err_on(c->sb.clean && keys, c,
+		    "filesystem marked clean, but journal had keys to replay");
+
 	bch_journal_set_replay_done(&c->journal);
 err:
 	if (ret)
 		bch_err(c, "journal replay error: %d", ret);
+fsck_err:
 	bch_journal_entries_free(list);
+
 	return ret;
 }
 
@@ -1731,7 +1744,7 @@ static void journal_reclaim_work(struct work_struct *work)
 	 * Advance last_idx to point to the oldest journal entry containing
 	 * btree node updates that have not yet been written out
 	 */
-	group_for_each_cache(ca, &c->cache_tiers[0], iter) {
+	group_for_each_cache(ca, &j->devs, iter) {
 		struct journal_device *ja = &ca->journal;
 
 		while (should_discard_bucket(j, ja)) {
@@ -1847,7 +1860,7 @@ static int journal_write_alloc(struct journal *j, unsigned sectors)
 	 * Determine location of the next journal write:
 	 * XXX: sort caches by free journal space
 	 */
-	group_for_each_cache_rcu(ca, &c->cache_tiers[0], iter) {
+	group_for_each_cache_rcu(ca, &j->devs, iter) {
 		struct journal_device *ja = &ca->journal;
 		unsigned nr_buckets = bch_nr_journal_buckets(ca->disk_sb.sb);
 
@@ -2400,6 +2413,7 @@ int bch_journal_alloc(struct journal *j, unsigned entry_size_max)
 	INIT_DELAYED_WORK(&j->reclaim_work, journal_reclaim_work);
 	mutex_init(&j->blacklist_lock);
 	INIT_LIST_HEAD(&j->seq_blacklist);
+	spin_lock_init(&j->devs.lock);
 	mutex_init(&j->reclaim_lock);
 
 	lockdep_init_map(&j->res_map, "journal res", &res_key, 0);
@@ -2424,7 +2438,6 @@ int bch_journal_alloc(struct journal *j, unsigned entry_size_max)
 
 ssize_t bch_journal_print_debug(struct journal *j, char *buf)
 {
-	struct cache_set *c = container_of(j, struct cache_set, journal);
 	union journal_res_state *s = &j->reservations;
 	struct cache *ca;
 	unsigned iter;
@@ -2457,7 +2470,7 @@ ssize_t bch_journal_print_debug(struct journal *j, char *buf)
 			 journal_entry_is_open(j),
 			 test_bit(JOURNAL_REPLAY_DONE,	&j->flags));
 
-	group_for_each_cache_rcu(ca, &c->cache_tiers[0], iter) {
+	group_for_each_cache_rcu(ca, &j->devs, iter) {
 		struct journal_device *ja = &ca->journal;
 
 		ret += scnprintf(buf + ret, PAGE_SIZE - ret,
