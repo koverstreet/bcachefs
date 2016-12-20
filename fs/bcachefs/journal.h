@@ -256,7 +256,7 @@ static inline void bch_journal_res_put(struct journal *j,
 
 	bch_journal_buf_put(j, res->idx, false);
 
-	memset(res, 0, sizeof(*res));
+	res->ref = 0;
 }
 
 int bch_journal_res_get_slowpath(struct journal *, struct journal_res *,
