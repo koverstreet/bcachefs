@@ -1064,12 +1064,12 @@ static void __bch_journal_next_entry(struct journal *j)
 {
 	struct journal_entry_pin_list pin_list, *p;
 	struct journal_buf *buf;
-	struct jset *jset;
 
 	/*
 	 * The fifo_push() needs to happen at the same time as j->seq is
 	 * incremented for last_seq() to be calculated correctly
 	 */
+	atomic64_inc(&j->seq);
 	BUG_ON(!fifo_push(&j->pin, pin_list));
 	p = &fifo_peek_back(&j->pin);
 
@@ -1084,9 +1084,8 @@ static void __bch_journal_next_entry(struct journal *j)
 	buf = journal_cur_buf(j);
 	memset(buf->has_inode, 0, sizeof(buf->has_inode));
 
-	jset		= buf->data;
-	jset->seq	= cpu_to_le64(atomic64_inc_return(&j->seq));
-	jset->u64s	= 0;
+	buf->data->seq	= cpu_to_le64(atomic64_read(&j->seq));
+	buf->data->u64s	= 0;
 
 	BUG_ON(journal_pin_seq(j, p) != atomic64_read(&j->seq));
 }
