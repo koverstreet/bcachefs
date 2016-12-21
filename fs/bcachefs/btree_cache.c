@@ -693,6 +693,9 @@ retry:
 	}
 
 	EBUG_ON(!b->written);
+	EBUG_ON(b->btree_id != iter->btree_id ||
+		BSET_BTREE_LEVEL(&b->data->keys) != level ||
+		bkey_cmp(b->data->max_key, k->k.p));
 
 	return b;
 }

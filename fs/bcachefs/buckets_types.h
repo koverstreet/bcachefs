@@ -14,6 +14,12 @@ struct bucket_mark {
 		unsigned	copygc:1;
 		unsigned	wait_on_journal:1;
 
+		/*
+		 * If this bucket ever had metadata in it, the allocator must
+		 * increment its gen before we reuse it:
+		 */
+		unsigned	had_metadata:1;
+
 		unsigned	owned_by_allocator:1;
 		unsigned	is_metadata:1;
 

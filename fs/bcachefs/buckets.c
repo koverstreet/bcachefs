@@ -360,6 +360,7 @@ void bch_mark_metadata_bucket(struct cache *ca, struct bucket *g,
 
 	old = bucket_cmpxchg(g, new, ({
 		new.is_metadata = 1;
+		new.had_metadata = 1;
 	}));
 
 	BUG_ON(old.cached_sectors);
@@ -471,10 +472,6 @@ static void bch_mark_pointer(struct cache_set *c,
 			is_available_bucket(old) &&
 			test_bit(JOURNAL_REPLAY_DONE, &c->journal.flags));
 
-		BUG_ON((old.dirty_sectors ||
-			old.cached_sectors) &&
-		       old.is_metadata != (type == S_META));
-
 		if (type != S_CACHED &&
 		    new.dirty_sectors == GC_MAX_SECTORS_USED &&
 		    disk_sectors < 0)
@@ -498,6 +495,8 @@ static void bch_mark_pointer(struct cache_set *c,
 		} else {
 			new.is_metadata = (type == S_META);
 		}
+
+		new.had_metadata |= new.is_metadata;
 	} while ((v = cmpxchg(&g->_mark.counter,
 			      old.counter,
 			      new.counter)) != old.counter);
