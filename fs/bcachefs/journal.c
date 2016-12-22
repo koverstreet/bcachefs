@@ -1529,6 +1529,7 @@ int bch_cache_journal_alloc(struct cache *ca)
 static void journal_reclaim_fast(struct journal *j)
 {
 	struct journal_entry_pin_list temp;
+	bool popped = false;
 
 	lockdep_assert_held(&j->lock);
 
@@ -1539,7 +1540,11 @@ static void journal_reclaim_fast(struct journal *j)
 	while (!atomic_read(&fifo_peek_front(&j->pin).count)) {
 		BUG_ON(!list_empty(&fifo_peek_front(&j->pin).list));
 		BUG_ON(!fifo_pop(&j->pin, temp));
+		popped = true;
 	}
+
+	if (popped)
+		wake_up(&j->wait);
 }
 
 /*
