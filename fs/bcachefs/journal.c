@@ -848,11 +848,19 @@ bsearch:
 	}
 
 search_done:
-	/* Find the journal bucket with the highest sequence number: */
+	/*
+	 * Find the journal bucket with the highest sequence number:
+	 *
+	 * If there's duplicate journal entries in multiple buckets (which
+	 * definitely isn't supposed to happen, but...) - make sure to start
+	 * cur_idx at the last of those buckets, so we don't deadlock trying to
+	 * allocate
+	 */
 	seq = 0;
 
 	for (i = 0; i < nr_buckets; i++)
-		if (ja->bucket_seq[i] > seq) {
+		if (ja->bucket_seq[i] >= seq &&
+		    ja->bucket_seq[i] != ja->bucket_seq[(i + 1) % nr_buckets]) {
 			/*
 			 * When journal_next_bucket() goes to allocate for
 			 * the first time, it'll use the bucket after
