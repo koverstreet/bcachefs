@@ -382,36 +382,34 @@ struct journal_list {
 	int			ret;
 };
 
+#define JOURNAL_ENTRY_ADD_OK		0
+#define JOURNAL_ENTRY_ADD_OUT_OF_RANGE	5
+
 /*
  * Given a journal entry we just read, add it to the list of journal entries to
  * be replayed:
  */
-static enum {
-	JOURNAL_ENTRY_ADD_ERROR,
-	JOURNAL_ENTRY_ADD_OUT_OF_RANGE,
-	JOURNAL_ENTRY_ADD_OK,
-
-} journal_entry_add(struct journal_list *jlist, struct jset *j)
+static int journal_entry_add(struct cache_set *c, struct journal_list *jlist,
+		    struct jset *j)
 {
 	struct journal_replay *i, *pos;
 	struct list_head *where;
 	size_t bytes = __set_bytes(j, le32_to_cpu(j->u64s));
-	int ret = JOURNAL_ENTRY_ADD_OUT_OF_RANGE;
+	__le64 last_seq;
+	int ret;
 
 	mutex_lock(&jlist->lock);
 
-	/* This entry too old? */
-	if (!list_empty(jlist->head)) {
-		i = list_last_entry(jlist->head, struct journal_replay, list);
-		if (le64_to_cpu(j->seq) < le64_to_cpu(i->j.last_seq)) {
-			pr_debug("j->seq %llu i->j.seq %llu",
-				 le64_to_cpu(j->seq),
-				 le64_to_cpu(i->j.seq));
-			goto out;
-		}
-	}
+	last_seq = !list_empty(jlist->head)
+		? list_last_entry(jlist->head, struct journal_replay,
+				  list)->j.last_seq
+		: 0;
 
-	ret = JOURNAL_ENTRY_ADD_OK;
+	/* Is this entry older than the range we need? */
+	if (le64_to_cpu(j->seq) < le64_to_cpu(last_seq)) {
+		ret = JOURNAL_ENTRY_ADD_OUT_OF_RANGE;
+		goto out;
+	}
 
 	/* Drop entries we don't need anymore */
 	list_for_each_entry_safe(i, pos, jlist->head, list) {
@@ -422,9 +420,15 @@ static enum {
 	}
 
 	list_for_each_entry_reverse(i, jlist->head, list) {
+		/* Duplicate? */
 		if (le64_to_cpu(j->seq) == le64_to_cpu(i->j.seq)) {
-			pr_debug("j->seq %llu i->j.seq %llu",
-				 j->seq, i->j.seq);
+			fsck_err_on(bytes != __set_bytes(&i->j,
+						le32_to_cpu(i->j.u64s)) ||
+				    memcmp(j, &i->j, bytes), c,
+				    "found duplicate but non identical journal entries (seq %llu)",
+				    le64_to_cpu(j->seq));
+
+			ret = JOURNAL_ENTRY_ADD_OK;
 			goto out;
 		}
 
@@ -438,15 +442,15 @@ static enum {
 add:
 	i = kvmalloc(offsetof(struct journal_replay, j) + bytes, GFP_KERNEL);
 	if (!i) {
-		ret = JOURNAL_ENTRY_ADD_ERROR;
+		ret = -ENOMEM;
 		goto out;
 	}
 
 	memcpy(&i->j, j, bytes);
 	list_add(&i->list, where);
-
-	pr_debug("seq %llu", le64_to_cpu(j->seq));
+	ret = JOURNAL_ENTRY_ADD_OK;
 out:
+fsck_err:
 	mutex_unlock(&jlist->lock);
 	return ret;
 }
@@ -715,15 +719,15 @@ reread:
 
 			ja->bucket_seq[bucket] = le64_to_cpu(j->seq);
 
-			switch (journal_entry_add(jlist, j)) {
-			case JOURNAL_ENTRY_ADD_ERROR:
-				ret = -ENOMEM;
-				goto err;
-			case JOURNAL_ENTRY_ADD_OUT_OF_RANGE:
-				break;
+			ret = journal_entry_add(c, jlist, j);
+			switch (ret) {
 			case JOURNAL_ENTRY_ADD_OK:
 				*entries_found = true;
 				break;
+			case JOURNAL_ENTRY_ADD_OUT_OF_RANGE:
+				break;
+			default:
+				goto err;
 			}
 
 			if (le64_to_cpu(j->seq) > *seq)
