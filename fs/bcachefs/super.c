@@ -1497,32 +1497,31 @@ static const char *run_cache_set(struct cache_set *c)
 err:
 	switch (ret) {
 	case BCH_FSCK_ERRORS_NOT_FIXED:
-		err = NULL;
 		bch_err(c, "filesystem contains errors: please report this to the developers");
 		pr_cont("mount with -o fix_errors to repair");
+		err = "fsck error";
 		break;
 	case BCH_FSCK_REPAIR_UNIMPLEMENTED:
-		err = NULL;
 		bch_err(c, "filesystem contains errors: please report this to the developers");
 		pr_cont("repair unimplemented: inform the developers so that it can be added");
+		err = "fsck error";
 		break;
 	case BCH_FSCK_REPAIR_IMPOSSIBLE:
-		err = NULL;
 		bch_err(c, "filesystem contains errors, but repair impossible");
+		err = "fsck error";
 		break;
 	case BCH_FSCK_UNKNOWN_VERSION:
-		err = NULL;
-		bch_err(c, "cannot mount: unknown metadata version");
+		err = "unknown metadata version";;
 		break;
 	case -ENOMEM:
-		err = NULL;
-		bch_err(c, "cannot mount: insufficient memory");
+		err = "cannot allocate memory";
 		break;
 	case -EIO:
-		err = NULL;
-		bch_err(c, "cannot mount: IO error");
+		err = "IO error";
 		break;
 	}
+
+	BUG_ON(!err);
 
 	bch_journal_entries_free(&journal);
 	set_bit(CACHE_SET_ERROR, &c->flags);
