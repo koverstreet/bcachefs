@@ -27,12 +27,6 @@
 
 #ifdef CONFIG_SMP
 
-#ifdef CONFIG_DEBUG_LOCK_ALLOC
-#define LOCKDEP_INIT_MAP lockdep_init_map
-#else
-#define LOCKDEP_INIT_MAP(a, b, c, d)
-#endif
-
 struct lglock {
 	arch_spinlock_t __percpu *lock;
 #ifdef CONFIG_DEBUG_LOCK_ALLOC
@@ -50,12 +44,29 @@ struct lglock {
 	= __ARCH_SPIN_LOCK_UNLOCKED;					\
 	static struct lglock name = { .lock = &name ## _lock }
 
-#define lg_lock_init(lock)						\
+static inline void lg_lock_free(struct lglock *lg)
+{
+	free_percpu(lg->lock);
+}
+
+#define lg_lock_lockdep_init(lock)					\
 do {									\
 	static struct lock_class_key __key;				\
 									\
 	lockdep_init_map(&(lock)->lock_dep_map, #lock, &__key, 0);	\
 } while (0)
+
+static inline int __lg_lock_init(struct lglock *lg)
+{
+	lg->lock = alloc_percpu(*lg->lock);
+	return lg->lock ? 0 : -ENOMEM;
+}
+
+#define lg_lock_init(lock)						\
+({									\
+	lg_lock_lockdep_init(lock);					\
+	__lg_lock_init(lock);						\
+})
 
 void lg_local_lock(struct lglock *lg);
 void lg_local_unlock(struct lglock *lg);

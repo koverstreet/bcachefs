@@ -910,7 +910,7 @@ static void cache_set_free(struct cache_set *c)
 	bch_io_clock_exit(&c->io_clock[READ]);
 	bch_compress_free(c);
 	bdi_destroy(&c->bdi);
-	free_percpu(c->bucket_stats_lock.lock);
+	lg_lock_free(&c->bucket_stats_lock);
 	free_percpu(c->bucket_stats_percpu);
 	mempool_exit(&c->btree_bounce_pool);
 	mempool_exit(&c->bio_bounce_pages);
@@ -1081,7 +1081,6 @@ static struct cache_set *bch_cache_set_alloc(struct cache_sb *sb,
 	sema_init(&c->sb_write_mutex, 1);
 	INIT_RADIX_TREE(&c->devices, GFP_KERNEL);
 	mutex_init(&c->btree_cache_lock);
-	lg_lock_init(&c->bucket_stats_lock);
 	mutex_init(&c->bucket_lock);
 	mutex_init(&c->btree_root_lock);
 	INIT_WORK(&c->read_only_work, bch_cache_set_read_only_work);
@@ -1181,7 +1180,7 @@ static struct cache_set *bch_cache_set_alloc(struct cache_sb *sb,
 					 CRC32_EXTENT_SIZE_MAX) /
 				   PAGE_SECTORS, 0) ||
 	    !(c->bucket_stats_percpu = alloc_percpu(struct bucket_stats_cache_set)) ||
-	    !(c->bucket_stats_lock.lock = alloc_percpu(*c->bucket_stats_lock.lock)) ||
+	    lg_lock_init(&c->bucket_stats_lock) ||
 	    mempool_init_page_pool(&c->btree_bounce_pool, 1,
 				   ilog2(btree_pages(c))) ||
 	    bdi_setup_and_register(&c->bdi, "bcache") ||
