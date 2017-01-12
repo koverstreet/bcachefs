@@ -175,6 +175,7 @@
  * - updates to non leaf nodes just happen synchronously (see btree_split()).
  */
 
+#undef pr_fmt
 #define pr_fmt(fmt) "bcache: %s() " fmt "\n", __func__
 
 #include <linux/bug.h>
@@ -190,6 +191,7 @@
 #include <linux/rhashtable.h>
 #include <linux/rwsem.h>
 #include <linux/seqlock.h>
+#include <linux/shrinker.h>
 #include <linux/types.h>
 #include <linux/workqueue.h>
 
@@ -821,25 +823,9 @@ static inline unsigned bucket_bytes(const struct cache *ca)
 	return ca->mi.bucket_size << 9;
 }
 
-static inline unsigned block_bytes(struct cache_set *c)
+static inline unsigned block_bytes(const struct cache_set *c)
 {
 	return c->sb.block_size << 9;
 }
-
-#define prios_per_bucket(ca)				\
-	((bucket_bytes(ca) - sizeof(struct prio_set)) /	\
-	 sizeof(struct bucket_disk))
-#define prio_buckets(ca)					\
-	DIV_ROUND_UP((size_t) (ca)->mi.nbuckets, prios_per_bucket(ca))
-
-/* Forward declarations */
-
-long bch_cache_set_ioctl(struct cache_set *, unsigned, void __user *);
-long bch_chardev_ioctl(struct file *, unsigned, unsigned long);
-
-void bch_debug_exit(void);
-int bch_debug_init(void);
-void bch_fs_exit(void);
-int bch_fs_init(void);
 
 #endif /* _BCACHE_H */

@@ -9,6 +9,17 @@ struct cache;
 struct cache_set;
 struct cache_group;
 
+static inline size_t prios_per_bucket(const struct cache *ca)
+{
+	return (bucket_bytes(ca) - sizeof(struct prio_set)) /
+		sizeof(struct bucket_disk);
+}
+
+static inline size_t prio_buckets(const struct cache *ca)
+{
+	return DIV_ROUND_UP((size_t) (ca)->mi.nbuckets, prios_per_bucket(ca));
+}
+
 void bch_cache_group_remove_cache(struct cache_group *, struct cache *);
 void bch_cache_group_add_cache(struct cache_group *, struct cache *);
 

@@ -47,7 +47,7 @@
 //#include <sys/systm.h>
 
 #include <asm/byteorder.h>
-#include <asm/string.h>
+#include <linux/string.h>
 
 #include "siphash.h"
 

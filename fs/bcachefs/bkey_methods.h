@@ -1,6 +1,8 @@
 #ifndef _BCACHE_BKEY_METHODS_H
 #define _BCACHE_BKEY_METHODS_H
 
+#include "bkey.h"
+
 #define DEF_BTREE_ID(kwd, val, name) BKEY_TYPE_##kwd = val,
 
 enum bkey_type {

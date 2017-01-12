@@ -13,11 +13,13 @@
 #include "btree_gc.h"
 #include "btree_update.h"
 #include "btree_io.h"
+#include "chardev.h"
 #include "checksum.h"
 #include "clock.h"
 #include "compress.h"
 #include "debug.h"
 #include "error.h"
+#include "fs.h"
 #include "fs-gc.h"
 #include "inode.h"
 #include "io.h"
@@ -942,19 +944,15 @@ static void cache_set_free(struct cache_set *c)
 void bch_cache_set_release(struct kobject *kobj)
 {
 	struct cache_set *c = container_of(kobj, struct cache_set, kobj);
-
-	/*
-	 * This needs to happen after we've closed the block devices - i.e.
-	 * after all the caches have exited, which happens when they all drop
-	 * their refs on c->kobj:
-	 */
-	if (c->stop_completion)
-		complete(c->stop_completion);
+	struct completion *stop_completion = c->stop_completion;
 
 	bch_notify_cache_set_stopped(c);
 	bch_info(c, "stopped");
 
 	cache_set_free(c);
+
+	if (stop_completion)
+		complete(stop_completion);
 }
 
 /*
@@ -1264,7 +1262,7 @@ static const char *run_cache_set(struct cache_set *c)
 	time64_t now;
 	LIST_HEAD(journal);
 	struct jset *j;
-	int ret;
+	int ret = -EINVAL;
 
 	lockdep_assert_held(&bch_register_lock);
 	BUG_ON(test_bit(CACHE_SET_RUNNING, &c->flags));
@@ -1692,9 +1690,6 @@ static void bch_cache_free_work(struct work_struct *work)
 
 	free_super(&ca->disk_sb);
 
-	if (c)
-		kobject_put(&c->kobj);
-
 	/*
 	 * bch_cache_stop can be called in the middle of initialization
 	 * of the struct cache object.
@@ -1719,6 +1714,9 @@ static void bch_cache_free_work(struct work_struct *work)
 		free_fifo(&ca->free[i]);
 
 	kobject_put(&ca->kobj);
+
+	if (c)
+		kobject_put(&c->kobj);
 }
 
 static void bch_cache_percpu_ref_release(struct percpu_ref *ref)
@@ -2447,12 +2445,6 @@ static void bcache_exit(void)
 		crypto_free_shash(bch_sha1);
 	unregister_reboot_notifier(&reboot);
 }
-
-static const struct file_operations bch_chardev_fops = {
-	.owner		= THIS_MODULE,
-	.unlocked_ioctl = bch_chardev_ioctl,
-	.open		= nonseekable_open,
-};
 
 static int __init bcache_init(void)
 {

@@ -162,10 +162,9 @@ const struct bkey_ops bch_bkey_xattr_ops = {
 	.val_to_text	= bch_xattr_to_text,
 };
 
-int bch_xattr_get(struct inode *inode, const char *name,
-		  void *buffer, size_t size, int type)
+int bch_xattr_get(struct cache_set *c, struct inode *inode,
+		  const char *name, void *buffer, size_t size, int type)
 {
-	struct cache_set *c = inode->i_sb->s_fs_info;
 	struct bch_inode_info *ei = to_bch_ei(inode);
 	struct btree_iter iter;
 	struct bkey_s_c k;
@@ -191,12 +190,11 @@ int bch_xattr_get(struct inode *inode, const char *name,
 	return ret;
 }
 
-int bch_xattr_set(struct inode *inode, const char *name,
-		  const void *value, size_t size,
+int bch_xattr_set(struct cache_set *c, struct inode *inode,
+		  const char *name, const void *value, size_t size,
 		  int flags, int type)
 {
 	struct bch_inode_info *ei = to_bch_ei(inode);
-	struct cache_set *c = inode->i_sb->s_fs_info;
 	struct xattr_search_key search = X_SEARCH(type, name, strlen(name));
 	int ret;
 
@@ -311,7 +309,9 @@ static int bch_xattr_get_handler(const struct xattr_handler *handler,
 				 struct dentry *dentry, struct inode *inode,
 				 const char *name, void *buffer, size_t size)
 {
-	return bch_xattr_get(inode, name, buffer, size, handler->flags);
+	struct cache_set *c = inode->i_sb->s_fs_info;
+
+	return bch_xattr_get(c, inode, name, buffer, size, handler->flags);
 }
 
 static int bch_xattr_set_handler(const struct xattr_handler *handler,
@@ -319,7 +319,9 @@ static int bch_xattr_set_handler(const struct xattr_handler *handler,
 				 const char *name, const void *value,
 				 size_t size, int flags)
 {
-	return bch_xattr_set(inode, name, value, size, flags,
+	struct cache_set *c = inode->i_sb->s_fs_info;
+
+	return bch_xattr_set(c, inode, name, value, size, flags,
 			     handler->flags);
 }
 

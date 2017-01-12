@@ -68,6 +68,7 @@
 
 #include <linux/blkdev.h>
 #include <linux/kthread.h>
+#include <linux/math64.h>
 #include <linux/random.h>
 #include <linux/rcupdate.h>
 #include <trace/events/bcachefs.h>

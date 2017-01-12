@@ -59,4 +59,7 @@ static inline void bch_debug_exit_cache_set(struct cache_set *c) {}
 static inline void bch_debug_init_cache_set(struct cache_set *c) {}
 #endif
 
+void bch_debug_exit(void);
+int bch_debug_init(void);
+
 #endif

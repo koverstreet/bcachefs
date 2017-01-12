@@ -10,7 +10,6 @@
 #include "move.h"
 #include "tier.h"
 
-#include <linux/delay.h>
 #include <linux/freezer.h>
 #include <linux/kthread.h>
 #include <trace/events/bcachefs.h>

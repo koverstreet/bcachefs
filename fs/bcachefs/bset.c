@@ -1542,7 +1542,7 @@ void bch_btree_node_iter_init(struct btree_node_iter *iter,
 			      bool strictly_greater, bool is_extents)
 {
 	struct bset_tree *t;
-	struct bkey_packed p, *packed_search;
+	struct bkey_packed p, *packed_search = NULL;
 
 	EBUG_ON(bkey_cmp(search, b->data->min_key) < 0);
 	bset_aux_tree_verify(b);

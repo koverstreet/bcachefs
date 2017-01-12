@@ -8,6 +8,8 @@
 #include "super.h"
 #include "keylist.h"
 
+#include <linux/ioprio.h>
+
 #include <trace/events/bcachefs.h>
 
 static struct bch_extent_ptr *bkey_find_ptr(struct cache_set *c,
@@ -198,7 +200,7 @@ static void moving_io_destructor(struct closure *cl)
 static void moving_error(struct moving_context *ctxt, unsigned flag)
 {
 	atomic_inc(&ctxt->error_count);
-	atomic_or(flag, &ctxt->error_flags);
+	//atomic_or(flag, &ctxt->error_flags);
 }
 
 static void moving_io_after_write(struct closure *cl)

@@ -8,6 +8,8 @@
 #include "keylist.h"
 #include "str_hash.h"
 
+#include <linux/dcache.h>
+
 static unsigned dirent_name_bytes(struct bkey_s_c_dirent d)
 {
 	unsigned len = bkey_val_bytes(d.k) - sizeof(struct bch_dirent);
@@ -170,10 +172,9 @@ static struct bkey_i_dirent *dirent_create_key(u8 type,
 	return dirent;
 }
 
-int bch_dirent_create(struct inode *dir, u8 type,
+int bch_dirent_create(struct cache_set *c, struct inode *dir, u8 type,
 		      const struct qstr *name, u64 dst_inum)
 {
-	struct cache_set *c = dir->i_sb->s_fs_info;
 	struct bch_inode_info *ei = to_bch_ei(dir);
 	struct bkey_i_dirent *dirent;
 	int ret;
@@ -345,9 +346,9 @@ err:
 	return ret;
 }
 
-int bch_dirent_delete(struct inode *dir, const struct qstr *name)
+int bch_dirent_delete(struct cache_set *c, struct inode *dir,
+		      const struct qstr *name)
 {
-	struct cache_set *c = dir->i_sb->s_fs_info;
 	struct bch_inode_info *ei = to_bch_ei(dir);
 
 	return bch_hash_delete(dirent_hash_desc, &ei->str_hash,
@@ -355,9 +356,9 @@ int bch_dirent_delete(struct inode *dir, const struct qstr *name)
 			       &ei->journal_seq, name);
 }
 
-u64 bch_dirent_lookup(struct inode *dir, const struct qstr *name)
+u64 bch_dirent_lookup(struct cache_set *c, struct inode *dir,
+		      const struct qstr *name)
 {
-	struct cache_set *c = dir->i_sb->s_fs_info;
 	struct bch_inode_info *ei = to_bch_ei(dir);
 	struct btree_iter iter;
 	struct bkey_s_c k;
@@ -396,11 +397,10 @@ int bch_empty_dir(struct cache_set *c, u64 dir_inum)
 	return ret;
 }
 
-int bch_readdir(struct file *file, struct dir_context *ctx)
+int bch_readdir(struct cache_set *c, struct file *file,
+		struct dir_context *ctx)
 {
 	struct inode *inode = file_inode(file);
-	struct super_block *sb = inode->i_sb;
-	struct cache_set *c = sb->s_fs_info;
 	struct btree_iter iter;
 	struct bkey_s_c k;
 	struct bkey_s_c_dirent dirent;

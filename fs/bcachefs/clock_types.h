@@ -1,6 +1,8 @@
 #ifndef _BCACHE_CLOCK_TYPES_H
 #define _BCACHE_CLOCK_TYPES_H
 
+#include "util.h"
+
 #define NR_IO_TIMERS		8
 
 /*

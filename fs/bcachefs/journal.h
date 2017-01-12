@@ -108,6 +108,8 @@
  * nodes that are pinning the oldest journal entries first.
  */
 
+#include <linux/hash.h>
+
 #include "journal_types.h"
 
 static inline struct jset_entry *jset_keys_next(struct jset_entry *j)

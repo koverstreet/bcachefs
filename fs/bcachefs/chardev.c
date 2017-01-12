@@ -302,7 +302,7 @@ long bch_cache_set_ioctl(struct cache_set *c, unsigned cmd, void __user *arg)
 	}
 }
 
-long bch_chardev_ioctl(struct file *filp, unsigned cmd, unsigned long v)
+static long bch_chardev_ioctl(struct file *filp, unsigned cmd, unsigned long v)
 {
 	struct cache_set *c = filp->private_data;
 	void __user *arg = (void __user *) v;
@@ -311,3 +311,9 @@ long bch_chardev_ioctl(struct file *filp, unsigned cmd, unsigned long v)
 		? bch_cache_set_ioctl(c, cmd, arg)
 		: bch_global_ioctl(cmd, arg);
 }
+
+const struct file_operations bch_chardev_fops = {
+	.owner		= THIS_MODULE,
+	.unlocked_ioctl = bch_chardev_ioctl,
+	.open		= nonseekable_open,
+};

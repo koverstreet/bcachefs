@@ -1,6 +1,8 @@
 #ifndef _BCACHE_CHECKSUM_H
 #define _BCACHE_CHECKSUM_H
 
+#include "btree_types.h"
+
 u64 bch_crc64_update(u64, const void *, size_t);
 
 u64 bch_checksum_update(unsigned, u64, const void *, size_t);

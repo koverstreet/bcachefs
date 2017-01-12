@@ -134,7 +134,7 @@ static bool check_should_bypass(struct cached_dev *dc, struct bio *bio, int rw)
 
 	hlist_for_each_entry(i, iohash(dc, bio->bi_iter.bi_sector), hash)
 		if (i->last == bio->bi_iter.bi_sector &&
-		    time_before(jiffies, i->jiffies))
+		    time_before(jiffies, i->last_io))
 			goto found;
 
 	i = list_first_entry(&dc->io_lru, struct io, lru);
@@ -146,7 +146,7 @@ found:
 		i->sequential	+= bio->bi_iter.bi_size;
 
 	i->last			 = bio_end_sector(bio);
-	i->jiffies		 = jiffies + msecs_to_jiffies(5000);
+	i->last_io		 = jiffies + msecs_to_jiffies(5000);
 	task->sequential_io	 = i->sequential;
 
 	hlist_del(&i->hash);

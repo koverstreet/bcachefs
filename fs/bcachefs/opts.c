@@ -4,16 +4,6 @@
 #include "opts.h"
 #include "util.h"
 
-const char * const bch_bool_opt[] = {
-	"0",
-	"1",
-	NULL
-};
-
-const char * const bch_uint_opt[] = {
-	NULL
-};
-
 const char * const bch_error_actions[] = {
 	"continue",
 	"remount-ro",
@@ -40,6 +30,42 @@ const char * const bch_str_hash_types[] = {
 	"crc64",
 	"siphash",
 	"sha1",
+	NULL
+};
+
+const char * const bch_cache_replacement_policies[] = {
+	"lru",
+	"fifo",
+	"random",
+	NULL
+};
+
+/* Default is -1; we skip past it for struct cached_dev's cache mode */
+const char * const bch_cache_modes[] = {
+	"default",
+	"writethrough",
+	"writeback",
+	"writearound",
+	"none",
+	NULL
+};
+
+const char * const bch_cache_state[] = {
+	"active",
+	"readonly",
+	"failed",
+	"spare",
+	NULL
+};
+
+
+const char * const bch_bool_opt[] = {
+	"0",
+	"1",
+	NULL
+};
+
+const char * const bch_uint_opt[] = {
 	NULL
 };
 

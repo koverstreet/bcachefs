@@ -77,7 +77,7 @@ STRTO_H(strtouint, unsigned int)
 STRTO_H(strtoll, long long)
 STRTO_H(strtoull, unsigned long long)
 
-ssize_t bch_hprint(char *buf, int64_t v)
+ssize_t bch_hprint(char *buf, s64 v)
 {
 	static const char units[] = "?kMGTPEZY";
 	char dec[4] = "";

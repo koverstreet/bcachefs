@@ -280,7 +280,7 @@ bch_journal_seq_blacklisted_new(struct journal *j, u64 seq)
 int bch_journal_seq_should_ignore(struct cache_set *c, u64 seq, struct btree *b)
 {
 	struct journal *j = &c->journal;
-	struct journal_seq_blacklist *bl;
+	struct journal_seq_blacklist *bl = NULL;
 	struct blacklisted_node *n;
 	u64 journal_seq, i;
 	int ret = 0;

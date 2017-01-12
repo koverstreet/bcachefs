@@ -3,6 +3,7 @@
 #include "acl.h"
 #include "btree_update.h"
 #include "buckets.h"
+#include "chardev.h"
 #include "dirent.h"
 #include "extents.h"
 #include "fs.h"
@@ -271,7 +272,7 @@ static int bch_vfs_dirent_create(struct cache_set *c, struct inode *dir,
 {
 	int ret;
 
-	ret = bch_dirent_create(dir, type, name, dst->i_ino);
+	ret = bch_dirent_create(c, dir, type, name, dst->i_ino);
 	if (unlikely(ret))
 		return ret;
 
@@ -315,10 +316,11 @@ static int __bch_create(struct inode *dir, struct dentry *dentry,
 static struct dentry *bch_lookup(struct inode *dir, struct dentry *dentry,
 				 unsigned int flags)
 {
+	struct cache_set *c = dir->i_sb->s_fs_info;
 	struct inode *inode = NULL;
 	u64 inum;
 
-	inum = bch_dirent_lookup(dir, &dentry->d_name);
+	inum = bch_dirent_lookup(c, dir, &dentry->d_name);
 
 	if (inum)
 		inode = bch_vfs_inode_get(dir->i_sb, inum);
@@ -372,7 +374,7 @@ static int bch_unlink(struct inode *dir, struct dentry *dentry)
 
 	lockdep_assert_held(&inode->i_rwsem);
 
-	ret = bch_dirent_delete(dir, &dentry->d_name);
+	ret = bch_dirent_delete(c, dir, &dentry->d_name);
 	if (ret)
 		return ret;
 
@@ -913,10 +915,20 @@ static long bch_compat_fs_ioctl(struct file *file, unsigned int cmd, unsigned lo
 }
 #endif
 
+/* Directories: */
+
 static loff_t bch_dir_llseek(struct file *file, loff_t offset, int whence)
 {
 	return generic_file_llseek_size(file, offset, whence,
 					S64_MAX, S64_MAX);
+}
+
+static int bch_vfs_readdir(struct file *file, struct dir_context *ctx)
+{
+	struct inode *inode = file_inode(file);
+	struct cache_set *c = inode->i_sb->s_fs_info;
+
+	return bch_readdir(c, file, ctx);
 }
 
 static const struct file_operations bch_file_operations = {
@@ -963,7 +975,7 @@ static const struct inode_operations bch_dir_inode_operations = {
 static const struct file_operations bch_dir_file_operations = {
 	.llseek		= bch_dir_llseek,
 	.read		= generic_read_dir,
-	.iterate	= bch_readdir,
+	.iterate	= bch_vfs_readdir,
 	.fsync		= bch_fsync,
 	.unlocked_ioctl = bch_fs_ioctl,
 #ifdef CONFIG_COMPAT

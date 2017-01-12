@@ -9,6 +9,7 @@
 #include <linux/kernel.h>
 #include <linux/llist.h>
 #include <linux/ratelimit.h>
+#include <linux/slab.h>
 #include <linux/vmalloc.h>
 #include <linux/workqueue.h>
 
@@ -314,7 +315,7 @@ static inline int bch_strtoul_h(const char *cp, long *res)
 		 : type_is(var, char *)		? "%s\n"		\
 		 : "%i\n", var)
 
-ssize_t bch_hprint(char *buf, int64_t v);
+ssize_t bch_hprint(char *buf, s64 v);
 
 bool bch_is_zero(const void *, size_t);
 
@@ -415,7 +416,7 @@ read_attribute(name ## _last_ ## frequency_units)
 
 struct bch_ratelimit {
 	/* Next time we want to do some work, in nanoseconds */
-	uint64_t		next;
+	u64			next;
 
 	/*
 	 * Rate at which we want to do work, in units per nanosecond

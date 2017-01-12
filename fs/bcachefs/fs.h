@@ -43,4 +43,7 @@ int __must_check __bch_write_inode(struct cache_set *, struct bch_inode_info *,
 int __must_check bch_write_inode(struct cache_set *,
 				 struct bch_inode_info *);
 
+void bch_fs_exit(void);
+int bch_fs_init(void);
+
 #endif /* _BCACHE_FS_H */

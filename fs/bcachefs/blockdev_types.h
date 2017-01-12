@@ -44,7 +44,7 @@ struct io {
 	struct hlist_node	hash;
 	struct list_head	lru;
 
-	unsigned long		jiffies;
+	unsigned long		last_io;
 	unsigned		sequential;
 	sector_t		last;
 };
