@@ -1423,6 +1423,9 @@ void __bch_btree_node_write(struct cache_set *c, struct btree *b,
 	bytes_to_write = (void *) bset_bkey_last(i) - data;
 	sectors_to_write = round_up(bytes_to_write, block_bytes(c)) >> 9;
 
+	memset(data + bytes_to_write, 0,
+	       (sectors_to_write << 9) - bytes_to_write);
+
 	BUG_ON(b->written + sectors_to_write > c->sb.btree_node_size);
 
 	trace_bcache_btree_write(b, bytes_to_write, sectors_to_write);

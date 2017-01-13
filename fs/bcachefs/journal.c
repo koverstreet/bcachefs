@@ -1108,6 +1108,7 @@ static void __bch_journal_next_entry(struct journal *j)
 	buf = journal_cur_buf(j);
 	memset(buf->has_inode, 0, sizeof(buf->has_inode));
 
+	memset(buf->data, 0, sizeof(*buf->data));
 	buf->data->seq	= cpu_to_le64(atomic64_read(&j->seq));
 	buf->data->u64s	= 0;
 
@@ -2020,7 +2021,7 @@ static void journal_write(struct closure *cl)
 	struct journal_buf *w = journal_prev_buf(j);
 	struct bio *bio;
 	struct bch_extent_ptr *ptr;
-	unsigned i, sectors;
+	unsigned i, sectors, bytes;
 
 	j->write_start_time = local_clock();
 
@@ -2051,6 +2052,9 @@ static void journal_write(struct closure *cl)
 	sectors = __set_blocks(w->data, le32_to_cpu(w->data->u64s),
 			       block_bytes(c)) * c->sb.block_size;
 	BUG_ON(sectors > j->prev_buf_sectors);
+
+	bytes = __set_bytes(w->data, le32_to_cpu(w->data->u64s));
+	memset((void *) w->data + bytes, 0, (sectors << 9) - bytes);
 
 	if (journal_write_alloc(j, sectors)) {
 		bch_journal_halt(j);
