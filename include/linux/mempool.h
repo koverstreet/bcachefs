@@ -24,6 +24,11 @@ typedef struct mempool_s {
 	wait_queue_head_t wait;
 } mempool_t;
 
+static inline bool mempool_initialized(mempool_t *pool)
+{
+	return pool->elements != NULL;
+}
+
 void mempool_exit(mempool_t *pool);
 int mempool_init_node(mempool_t *pool, int min_nr, mempool_alloc_t *alloc_fn,
 		      mempool_free_t *free_fn, void *pool_data,
