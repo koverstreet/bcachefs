@@ -219,11 +219,11 @@ static int check_lostfound(struct cache_set *c,
 			   struct bkey_i_inode *lostfound_inode)
 {
 	struct qstr lostfound = QSTR("lost+found");
-	struct bch_hash_info root_str_hash = bch_hash_info_init(&root_inode->v);
+	struct bch_hash_info root_hash_info = bch_hash_info_init(&root_inode->v);
 	u64 inum;
 	int ret;
 
-	inum = bch_dirent_lookup(c, BCACHE_ROOT_INO, &root_str_hash,
+	inum = bch_dirent_lookup(c, BCACHE_ROOT_INO, &root_hash_info,
 				 &lostfound);
 	if (!inum) {
 		bch_notice(c, "creating lost+found");
@@ -259,7 +259,7 @@ create_lostfound:
 	if (ret)
 		return ret;
 
-	ret = bch_dirent_create(c, BCACHE_ROOT_INO, &root_str_hash, DT_DIR,
+	ret = bch_dirent_create(c, BCACHE_ROOT_INO, &root_hash_info, DT_DIR,
 				&lostfound, lostfound_inode->k.p.inode, NULL, 0);
 	if (ret)
 		return ret;
@@ -329,6 +329,65 @@ static int path_down(struct pathbuf *p, u64 inum)
 	return 0;
 }
 
+static int detach_dir(struct cache_set *c, struct btree_iter *iter,
+		      struct bkey_s_c_dirent dirent)
+{
+	struct qstr name;
+	struct bkey_i_inode dir_inode;
+	struct bch_hash_info dir_hash_info;
+	u64 dir_inum = dirent.k->p.inode;
+	int ret;
+	char *buf;
+
+	name.len = bch_dirent_name_bytes(dirent);
+	buf = kmalloc(name.len + 1, GFP_KERNEL);
+	if (!buf)
+		return -ENOMEM;
+
+	memcpy(buf, dirent.v->d_name, name.len);
+	buf[name.len] = '\0';
+	name.name = buf;
+
+	/* Unlock iter so we don't deadlock, after copying name: */
+	bch_btree_iter_unlock(iter);
+
+	ret = bch_inode_find_by_inum(c, dir_inum, &dir_inode);
+	if (ret)
+		goto err;
+
+	dir_hash_info = bch_hash_info_init(&dir_inode.v);
+
+	ret = bch_dirent_delete(c, dir_inum, &dir_hash_info, &name, NULL);
+err:
+	kfree(buf);
+	return ret;
+}
+
+static int reattach_dir(struct cache_set *c,
+			struct bkey_i_inode *lostfound_inode,
+			u64 inum)
+{
+	struct bch_hash_info lostfound_hash_info =
+		bch_hash_info_init(&lostfound_inode->v);
+	char name_buf[20];
+	struct qstr name;
+	int ret;
+
+	snprintf(name_buf, sizeof(name_buf), "%llu", inum);
+	name = (struct qstr) QSTR(name_buf);
+
+	le32_add_cpu(&lostfound_inode->v.i_nlink, 1);
+
+	ret = bch_btree_insert(c, BTREE_ID_INODES, &lostfound_inode->k_i,
+			       NULL, NULL, NULL, 0);
+	if (ret)
+		return ret;
+
+	return bch_dirent_create(c, lostfound_inode->k.p.inode,
+				 &lostfound_hash_info,
+				 DT_DIR, &name, inum, NULL, 0);
+}
+
 noinline_for_stack
 static int check_directory_structure(struct cache_set *c)
 {
@@ -339,6 +398,7 @@ static int check_directory_structure(struct cache_set *c)
 	struct btree_iter iter;
 	struct bkey_s_c k;
 	struct bkey_s_c_dirent dirent;
+	bool had_unreachable;
 	u64 d_inum;
 	int ret = 0;
 
@@ -351,7 +411,7 @@ static int check_directory_structure(struct cache_set *c)
 		return ret;
 
 	/* DFS: */
-
+restart_dfs:
 	ret = inode_bitmap_set(&dirs_done, BCACHE_ROOT_INO);
 	if (ret)
 		goto err;
@@ -361,7 +421,7 @@ static int check_directory_structure(struct cache_set *c)
 		return ret;
 
 	while (path.nr) {
-down:
+next:
 		e = &path.entries[path.nr - 1];
 
 		if (e->offset == U64_MAX)
@@ -384,8 +444,13 @@ down:
 
 			d_inum = le64_to_cpu(dirent.v->d_inum);
 
-			unfixable_fsck_err_on(inode_bitmap_test(&dirs_done, d_inum), c,
-					      "directory with multiple hardlinks");
+			if (fsck_err_on(inode_bitmap_test(&dirs_done, d_inum), c,
+					"directory with multiple hardlinks")) {
+				ret = detach_dir(c, &iter, dirent);
+				if (ret)
+					goto err;
+				continue;
+			}
 
 			ret = inode_bitmap_set(&dirs_done, d_inum);
 			if (ret)
@@ -396,7 +461,7 @@ down:
 				goto err;
 
 			bch_btree_iter_unlock(&iter);
-			goto down;
+			goto next;
 		}
 		ret = bch_btree_iter_unlock(&iter);
 		if (ret)
@@ -405,18 +470,38 @@ up:
 		path.nr--;
 	}
 
+	had_unreachable = false;
+
 	for_each_btree_key(&iter, c, BTREE_ID_INODES, POS_MIN, k) {
 		if (k.k->type != BCH_INODE_FS ||
 		    !S_ISDIR(le16_to_cpu(bkey_s_c_to_inode(k).v->i_mode)))
 			continue;
 
-		unfixable_fsck_err_on(!inode_bitmap_test(&dirs_done, k.k->p.inode), c,
-				      "unreachable directory found (inum %llu)",
-				      k.k->p.inode);
+		if (fsck_err_on(!inode_bitmap_test(&dirs_done, k.k->p.inode), c,
+				"unreachable directory found (inum %llu)",
+				k.k->p.inode)) {
+			bch_btree_iter_unlock(&iter);
+
+			ret = reattach_dir(c, &lostfound_inode, k.k->p.inode);
+			if (ret)
+				goto err;
+
+			had_unreachable = true;
+		}
 	}
 	ret = bch_btree_iter_unlock(&iter);
 	if (ret)
 		goto err;
+
+	if (had_unreachable) {
+		bch_info(c, "reattached unreachable directories, restarting pass to check for loops");
+		kfree(dirs_done.bits);
+		kfree(path.entries);
+		memset(&dirs_done, 0, sizeof(dirs_done));
+		memset(&path, 0, sizeof(path));
+		goto restart_dfs;
+	}
+
 out:
 	kfree(dirs_done.bits);
 	kfree(path.entries);
