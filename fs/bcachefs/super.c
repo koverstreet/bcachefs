@@ -1376,21 +1376,12 @@ static const char *run_cache_set(struct cache_set *c)
 		if (bch_journal_meta(&c->journal))
 			goto err;
 
-		bch_verbose(c, "starting fs gc:");
-		err = "error in fs gc";
-		ret = bch_gc_inode_nlinks(c);
+		bch_verbose(c, "starting fsck:");
+		err = "error in fsck";
+		ret = bch_fsck(c, !c->opts.nofsck);
 		if (ret)
 			goto err;
-		bch_verbose(c, "fs gc done");
-
-		if (!c->opts.nofsck) {
-			bch_verbose(c, "starting fsck:");
-			err = "error in fsck";
-			ret = bch_fsck(c);
-			if (ret)
-				goto err;
-			bch_verbose(c, "fsck done");
-		}
+		bch_verbose(c, "fsck done");
 	} else {
 		struct bkey_i_inode inode;
 		struct closure cl;
