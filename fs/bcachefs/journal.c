@@ -478,14 +478,14 @@ static int journal_validate_key(struct cache_set *c, struct jset *j,
 	char buf[160];
 	int ret = 0;
 
-	if (fsck_err_on(!k->k.u64s, c,
+	if (mustfix_fsck_err_on(!k->k.u64s, c,
 			"invalid %s in journal: k->u64s 0", type)) {
 		entry->u64s = cpu_to_le16((u64 *) k - entry->_data);
 		journal_entry_null_range(jset_keys_next(entry), next);
 		return 0;
 	}
 
-	if (fsck_err_on((void *) bkey_next(k) >
+	if (mustfix_fsck_err_on((void *) bkey_next(k) >
 			(void *) jset_keys_next(entry), c,
 			"invalid %s in journal: extends past end of journal entry",
 			type)) {
@@ -494,7 +494,7 @@ static int journal_validate_key(struct cache_set *c, struct jset *j,
 		return 0;
 	}
 
-	if (fsck_err_on(k->k.format != KEY_FORMAT_CURRENT, c,
+	if (mustfix_fsck_err_on(k->k.format != KEY_FORMAT_CURRENT, c,
 			"invalid %s in journal: bad format %u",
 			type, k->k.format)) {
 		le16_add_cpu(&entry->u64s, -k->k.u64s);
@@ -510,7 +510,7 @@ static int journal_validate_key(struct cache_set *c, struct jset *j,
 	if (invalid) {
 		bch_bkey_val_to_text(c, key_type, buf, sizeof(buf),
 				     bkey_i_to_s_c(k));
-		fsck_err(c, "invalid %s in journal: %s", type, buf);
+		mustfix_fsck_err(c, "invalid %s in journal: %s", type, buf);
 
 		le16_add_cpu(&entry->u64s, -k->k.u64s);
 		memmove(k, bkey_next(k), next - (void *) bkey_next(k));
@@ -543,7 +543,7 @@ static int journal_entry_validate(struct cache_set *c, struct jset *j, u64 secto
 		return BCH_FSCK_UNKNOWN_VERSION;
 	}
 
-	if (fsck_err_on(bytes > bucket_sectors_left << 9 ||
+	if (mustfix_fsck_err_on(bytes > bucket_sectors_left << 9 ||
 			bytes > c->journal.entry_size_max, c,
 			"journal entry too big (%zu bytes), sector %lluu",
 			bytes, sector)) {
@@ -556,7 +556,7 @@ static int journal_entry_validate(struct cache_set *c, struct jset *j, u64 secto
 
 	got = le64_to_cpu(j->csum);
 	expect = __csum_set(j, le32_to_cpu(j->u64s), JSET_CSUM_TYPE(j));
-	if (fsck_err_on(got != expect, c,
+	if (mustfix_fsck_err_on(got != expect, c,
 			"journal checksum bad (got %llu expect %llu), sector %lluu",
 			got, expect, sector)) {
 		/* XXX: retry IO, when we start retrying checksum errors */
@@ -564,14 +564,14 @@ static int journal_entry_validate(struct cache_set *c, struct jset *j, u64 secto
 		return JOURNAL_ENTRY_BAD;
 	}
 
-	if (fsck_err_on(le64_to_cpu(j->last_seq) > le64_to_cpu(j->seq), c,
-			"invalid journal entry: last_seq > seq"))
+	if (mustfix_fsck_err_on(le64_to_cpu(j->last_seq) > le64_to_cpu(j->seq),
+			c, "invalid journal entry: last_seq > seq"))
 		j->last_seq = j->seq;
 
 	for_each_jset_entry(entry, j) {
 		struct bkey_i *k;
 
-		if (fsck_err_on(jset_keys_next(entry) >
+		if (mustfix_fsck_err_on(jset_keys_next(entry) >
 				bkey_idx(j, le32_to_cpu(j->u64s)), c,
 				"journal entry extents past end of jset")) {
 			j->u64s = cpu_to_le64((u64 *) entry - j->_data);
@@ -595,7 +595,7 @@ static int journal_entry_validate(struct cache_set *c, struct jset *j, u64 secto
 		case JOURNAL_ENTRY_BTREE_ROOT:
 			k = entry->start;
 
-			if (fsck_err_on(!entry->u64s ||
+			if (mustfix_fsck_err_on(!entry->u64s ||
 					le16_to_cpu(entry->u64s) != k->k.u64s, c,
 					"invalid btree root journal entry: wrong number of keys")) {
 				journal_entry_null_range(entry,
@@ -613,7 +613,7 @@ static int journal_entry_validate(struct cache_set *c, struct jset *j, u64 secto
 			break;
 
 		case JOURNAL_ENTRY_JOURNAL_SEQ_BLACKLISTED:
-			if (fsck_err_on(le16_to_cpu(entry->u64s) != 1, c,
+			if (mustfix_fsck_err_on(le16_to_cpu(entry->u64s) != 1, c,
 				"invalid journal seq blacklist entry: bad size")) {
 				journal_entry_null_range(entry,
 						jset_keys_next(entry));
@@ -621,7 +621,7 @@ static int journal_entry_validate(struct cache_set *c, struct jset *j, u64 secto
 
 			break;
 		default:
-			fsck_err(c, "invalid journal entry type %llu",
+			mustfix_fsck_err(c, "invalid journal entry type %llu",
 				 JOURNAL_ENTRY_TYPE(entry));
 			journal_entry_null_range(entry, jset_keys_next(entry));
 			break;

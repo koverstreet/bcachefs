@@ -101,38 +101,51 @@ enum {
 	BCH_FSCK_UNKNOWN_VERSION	= 4,
 };
 
-#define unfixable_fsck_err(c, msg, ...)					\
-do {									\
-	bch_err(c, msg " (repair unimplemented)", ##__VA_ARGS__);	\
-	ret = BCH_FSCK_REPAIR_UNIMPLEMENTED;				\
-	goto fsck_err;							\
-} while (0)
+/* These macros return true if error should be fixed: */
 
-#define unfixable_fsck_err_on(cond, c, ...)				\
-do {									\
-	if (cond)							\
-		unfixable_fsck_err(c, __VA_ARGS__);			\
-} while (0)
+/* XXX: mark in superblock that filesystem contains errors, if we ignore: */
 
-#define fsck_err(c, msg, ...)						\
-do {									\
-	if (!(c)->opts.fix_errors) {					\
-		bch_err(c, msg, ##__VA_ARGS__);				\
+#ifndef __fsck_err
+#define __fsck_err(c, _can_fix, _can_ignore, _nofix_msg, msg, ...)	\
+({									\
+	bool _fix = false;						\
+									\
+	if (_can_fix && (c)->opts.fix_errors) {				\
+		bch_err(c, msg ", fixing", ##__VA_ARGS__);		\
+		set_bit(CACHE_SET_FSCK_FIXED_ERRORS, &(c)->flags);	\
+		_fix = true;						\
+	} else if (_can_ignore &&					\
+		   (c)->opts.errors == BCH_ON_ERROR_CONTINUE) {		\
+		bch_err(c, msg " (ignoring)", ##__VA_ARGS__);		\
+	} else {							\
+		bch_err(c, msg " ("_nofix_msg")", ##__VA_ARGS__);	\
 		ret = BCH_FSCK_ERRORS_NOT_FIXED;			\
 		goto fsck_err;						\
 	}								\
-	set_bit(CACHE_SET_FSCK_FIXED_ERRORS, &(c)->flags);		\
-	bch_err(c, msg ", fixing", ##__VA_ARGS__);			\
-} while (0)
+									\
+	BUG_ON(!_fix && !_can_ignore);					\
+	_fix;								\
+})
+#endif
+
+#define __fsck_err_on(cond, c, _can_fix, _can_ignore, _nofix_msg, ...)	\
+	((cond) ? __fsck_err(c, _can_fix, _can_ignore,			\
+			     _nofix_msg, ##__VA_ARGS__) : false)
+
+#define unfixable_fsck_err_on(cond, c, ...)				\
+	__fsck_err_on(cond, c, false, true, "repair unimplemented", ##__VA_ARGS__)
+
+#define need_fsck_err_on(cond, c, ...)					\
+	__fsck_err_on(cond, c, false, true, "run fsck to correct", ##__VA_ARGS__)
+
+#define mustfix_fsck_err(c, ...)					\
+	__fsck_err(c, true, false, "not fixing", ##__VA_ARGS__)
+
+#define mustfix_fsck_err_on(cond, c, ...)				\
+	__fsck_err_on(cond, c, true, false, "not fixing", ##__VA_ARGS__)
 
 #define fsck_err_on(cond, c, ...)					\
-({									\
-	bool _ret = (cond);						\
-									\
-	if (_ret)							\
-		fsck_err(c, __VA_ARGS__);				\
-	_ret;								\
-})
+	__fsck_err_on(cond, c, true, true, "not fixing", ##__VA_ARGS__)
 
 /*
  * Fatal errors: these don't indicate a bug, but we can't continue running in RW

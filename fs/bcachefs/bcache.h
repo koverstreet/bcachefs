@@ -210,8 +210,9 @@
 #define bch_meta_write_fault(name)					\
 	 dynamic_fault("bcache:meta:write:" name)
 
-#define bch_fmt(_c, fmt)					\
-	"bcache (%s): " fmt "\n", ((_c)->name)
+#ifndef bch_fmt
+#define bch_fmt(_c, fmt)	"bcache (%s): " fmt "\n", ((_c)->name)
+#endif
 
 #define bch_info(c, fmt, ...) \
 	printk(KERN_INFO bch_fmt(c, fmt), ##__VA_ARGS__)
