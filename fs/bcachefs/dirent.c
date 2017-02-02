@@ -10,7 +10,7 @@
 
 #include <linux/dcache.h>
 
-static unsigned dirent_name_bytes(struct bkey_s_c_dirent d)
+unsigned bch_dirent_name_bytes(struct bkey_s_c_dirent d)
 {
 	unsigned len = bkey_val_bytes(d.k) - sizeof(struct bch_dirent);
 
@@ -61,7 +61,7 @@ static u64 dirent_hash_key(const struct bch_hash_info *info, const void *key)
 static u64 dirent_hash_bkey(const struct bch_hash_info *info, struct bkey_s_c k)
 {
 	struct bkey_s_c_dirent d = bkey_s_c_to_dirent(k);
-	struct qstr name = QSTR_INIT(d.v->d_name, dirent_name_bytes(d));
+	struct qstr name = QSTR_INIT(d.v->d_name, bch_dirent_name_bytes(d));
 
 	return bch_dirent_hash(info, &name);
 }
@@ -69,7 +69,7 @@ static u64 dirent_hash_bkey(const struct bch_hash_info *info, struct bkey_s_c k)
 static bool dirent_cmp_key(struct bkey_s_c _l, const void *_r)
 {
 	struct bkey_s_c_dirent l = bkey_s_c_to_dirent(_l);
-	int len = dirent_name_bytes(l);
+	int len = bch_dirent_name_bytes(l);
 	const struct qstr *r = _r;
 
 	return len - r->len ?: memcmp(l.v->d_name, r->name, len);
@@ -79,8 +79,8 @@ static bool dirent_cmp_bkey(struct bkey_s_c _l, struct bkey_s_c _r)
 {
 	struct bkey_s_c_dirent l = bkey_s_c_to_dirent(_l);
 	struct bkey_s_c_dirent r = bkey_s_c_to_dirent(_r);
-	int l_len = dirent_name_bytes(l);
-	int r_len = dirent_name_bytes(r);
+	int l_len = bch_dirent_name_bytes(l);
+	int r_len = bch_dirent_name_bytes(r);
 
 	return l_len - r_len ?: memcmp(l.v->d_name, r.v->d_name, l_len);
 }
@@ -125,7 +125,7 @@ static void bch_dirent_to_text(struct cache_set *c, char *buf,
 
 		if (size) {
 			unsigned n = min_t(unsigned, size,
-					   dirent_name_bytes(d));
+					   bch_dirent_name_bytes(d));
 			memcpy(buf, d.v->d_name, n);
 			buf[size - 1] = '\0';
 			buf += n;
@@ -167,15 +167,16 @@ static struct bkey_i_dirent *dirent_create_key(u8 type,
 	       bkey_val_bytes(&dirent->k) -
 	       (sizeof(struct bch_dirent) + name->len));
 
-	EBUG_ON(dirent_name_bytes(dirent_i_to_s_c(dirent)) != name->len);
+	EBUG_ON(bch_dirent_name_bytes(dirent_i_to_s_c(dirent)) != name->len);
 
 	return dirent;
 }
 
-int bch_dirent_create(struct cache_set *c, struct inode *dir, u8 type,
-		      const struct qstr *name, u64 dst_inum)
+int bch_dirent_create(struct cache_set *c, u64 dir_inum,
+		      const struct bch_hash_info *hash_info,
+		      u8 type, const struct qstr *name, u64 dst_inum,
+		      u64 *journal_seq, int flags)
 {
-	struct bch_inode_info *ei = to_bch_ei(dir);
 	struct bkey_i_dirent *dirent;
 	int ret;
 
@@ -183,9 +184,8 @@ int bch_dirent_create(struct cache_set *c, struct inode *dir, u8 type,
 	if (!dirent)
 		return -ENOMEM;
 
-	ret = bch_hash_set(dirent_hash_desc, &ei->str_hash, c,
-			   ei->vfs_inode.i_ino, &ei->journal_seq,
-			   &dirent->k_i, BCH_HASH_SET_MUST_CREATE);
+	ret = bch_hash_set(dirent_hash_desc, hash_info, c, dir_inum,
+			   journal_seq, &dirent->k_i, flags);
 	kfree(dirent);
 
 	return ret;
@@ -346,26 +346,25 @@ err:
 	return ret;
 }
 
-int bch_dirent_delete(struct cache_set *c, struct inode *dir,
-		      const struct qstr *name)
+int bch_dirent_delete(struct cache_set *c, u64 dir_inum,
+		      const struct bch_hash_info *hash_info,
+		      const struct qstr *name,
+		      u64 *journal_seq)
 {
-	struct bch_inode_info *ei = to_bch_ei(dir);
-
-	return bch_hash_delete(dirent_hash_desc, &ei->str_hash,
-			       c, ei->vfs_inode.i_ino,
-			       &ei->journal_seq, name);
+	return bch_hash_delete(dirent_hash_desc, hash_info,
+			       c, dir_inum, journal_seq, name);
 }
 
-u64 bch_dirent_lookup(struct cache_set *c, struct inode *dir,
+u64 bch_dirent_lookup(struct cache_set *c, u64 dir_inum,
+		      const struct bch_hash_info *hash_info,
 		      const struct qstr *name)
 {
-	struct bch_inode_info *ei = to_bch_ei(dir);
 	struct btree_iter iter;
 	struct bkey_s_c k;
 	u64 inum;
 
-	k = bch_hash_lookup(dirent_hash_desc, &ei->str_hash, c,
-			    ei->vfs_inode.i_ino, &iter, name);
+	k = bch_hash_lookup(dirent_hash_desc, hash_info, c,
+			    dir_inum, &iter, name);
 	if (IS_ERR(k.k)) {
 		bch_btree_iter_unlock(&iter);
 		return 0;
@@ -428,7 +427,7 @@ int bch_readdir(struct cache_set *c, struct file *file,
 		if (k.k->p.inode > inode->i_ino)
 			break;
 
-		len = dirent_name_bytes(dirent);
+		len = bch_dirent_name_bytes(dirent);
 
 		pr_debug("emitting %s", dirent.v->d_name);
 

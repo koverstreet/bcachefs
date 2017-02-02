@@ -7,6 +7,8 @@
 #include "io.h"
 #include "keylist.h"
 
+#include <linux/random.h>
+
 ssize_t bch_inode_status(char *buf, size_t len, const struct bkey *k)
 {
 	if (k->p.offset)
@@ -104,6 +106,28 @@ const struct bkey_ops bch_bkey_inode_ops = {
 	.key_invalid	= bch_inode_invalid,
 	.val_to_text	= bch_inode_to_text,
 };
+
+void bch_inode_init(struct cache_set *c, struct bkey_i_inode *inode,
+		    uid_t uid, gid_t gid, umode_t mode, dev_t rdev)
+{
+	struct timespec ts = CURRENT_TIME;
+	s64 now = timespec_to_ns(&ts);
+	struct bch_inode *bi;
+
+	bi = &bkey_inode_init(&inode->k_i)->v;
+	bi->i_uid	= cpu_to_le32(uid);
+	bi->i_gid	= cpu_to_le32(gid);
+
+	bi->i_mode	= cpu_to_le16(mode);
+	bi->i_dev	= cpu_to_le32(rdev);
+	bi->i_atime	= cpu_to_le64(now);
+	bi->i_mtime	= cpu_to_le64(now);
+	bi->i_ctime	= cpu_to_le64(now);
+	bi->i_nlink	= cpu_to_le32(S_ISDIR(mode) ? 2 : 1);
+
+	get_random_bytes(&bi->i_hash_seed, sizeof(bi->i_hash_seed));
+	SET_INODE_STR_HASH_TYPE(bi, c->sb.str_hash_type);
+}
 
 int bch_inode_create(struct cache_set *c, struct bkey_i *inode,
 		     u64 min, u64 max, u64 *hint)
@@ -228,15 +252,14 @@ int bch_inode_find_by_inum(struct cache_set *c, u64 inode_nr,
 {
 	struct btree_iter iter;
 	struct bkey_s_c k;
-	int ret = -ENOENT;
 
 	for_each_btree_key_with_holes(&iter, c, BTREE_ID_INODES,
 				      POS(inode_nr, 0), k) {
 		switch (k.k->type) {
 		case BCH_INODE_FS:
-			ret = 0;
 			bkey_reassemble(&inode->k_i, k);
-			break;
+			bch_btree_iter_unlock(&iter);
+			return 0;
 		default:
 			/* hole, not found */
 			break;
@@ -245,9 +268,8 @@ int bch_inode_find_by_inum(struct cache_set *c, u64 inode_nr,
 		break;
 
 	}
-	bch_btree_iter_unlock(&iter);
 
-	return ret;
+	return bch_btree_iter_unlock(&iter) ?: -ENOENT;
 }
 
 int bch_cached_dev_inode_find_by_uuid(struct cache_set *c, uuid_le *uuid,

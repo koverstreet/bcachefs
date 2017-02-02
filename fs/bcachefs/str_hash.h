@@ -79,6 +79,14 @@ struct bch_hash_info {
 	u8		type;
 };
 
+static inline struct bch_hash_info bch_hash_info_init(const struct bch_inode *bi)
+{
+	return (struct bch_hash_info) {
+		.seed = le64_to_cpu(bi->i_hash_seed),
+		.type = INODE_STR_HASH_TYPE(bi),
+	};
+}
+
 struct bch_hash_desc {
 	enum btree_id	btree_id;
 	u8		key_type;

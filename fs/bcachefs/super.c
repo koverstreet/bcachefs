@@ -1433,12 +1433,9 @@ static const char *run_cache_set(struct cache_set *c)
 		/* Wait for new btree roots to be written: */
 		closure_sync(&cl);
 
-		bkey_inode_init(&inode.k_i);
+		bch_inode_init(c, &inode, 0, 0,
+			       S_IFDIR|S_IRWXU|S_IRUGO|S_IXUGO, 0);
 		inode.k.p.inode = BCACHE_ROOT_INO;
-		inode.v.i_mode = cpu_to_le16(S_IFDIR|S_IRWXU|S_IRUGO|S_IXUGO);
-		inode.v.i_nlink = cpu_to_le32(2);
-		get_random_bytes(&inode.v.i_hash_seed, sizeof(inode.v.i_hash_seed));
-		SET_INODE_STR_HASH_TYPE(&inode.v, c->sb.str_hash_type);
 
 		err = "error creating root directory";
 		if (bch_btree_insert(c, BTREE_ID_INODES, &inode.k_i,

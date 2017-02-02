@@ -5,6 +5,8 @@ extern const struct bkey_ops bch_bkey_inode_ops;
 
 ssize_t bch_inode_status(char *, size_t, const struct bkey *);
 
+void bch_inode_init(struct cache_set *, struct bkey_i_inode *,
+		    uid_t, gid_t, umode_t, dev_t);
 int bch_inode_create(struct cache_set *, struct bkey_i *, u64, u64, u64 *);
 int bch_inode_truncate(struct cache_set *, u64, u64,
 		       struct extent_insert_hook *, u64 *);
