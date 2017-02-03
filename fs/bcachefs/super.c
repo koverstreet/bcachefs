@@ -2315,6 +2315,7 @@ const char *bch_register_cache_set(char * const *devices, unsigned nr_devices,
 out:
 	kfree(sb);
 	module_put(THIS_MODULE);
+	BUG_ON(!err == !c);
 	return err;
 err_unlock:
 	if (c)

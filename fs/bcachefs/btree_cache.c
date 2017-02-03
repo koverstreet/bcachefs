@@ -700,3 +700,51 @@ retry:
 
 	return b;
 }
+
+int bch_print_btree_node(struct cache_set *c, struct btree *b,
+			 char *buf, size_t len)
+{
+	const struct bkey_format *f = &b->format;
+	struct bset_stats stats;
+
+	memset(&stats, 0, sizeof(stats));
+
+	bch_btree_keys_stats(b, &stats);
+
+	return scnprintf(buf, len,
+			 "l %u %llu:%llu - %llu:%llu:\n"
+			 "    format: u64s %u fields %u %u %u %u %u\n"
+			 "    unpack fn len: %u\n"
+			 "    bytes used %zu/%zu (%zu%% full)\n"
+			 "    sib u64s: %u, %u (merge threshold %zu)\n"
+			 "    nr packed keys %u\n"
+			 "    nr unpacked keys %u\n"
+			 "    floats %zu\n"
+			 "    failed unpacked %zu\n"
+			 "    failed prev %zu\n"
+			 "    failed overflow %zu\n",
+			 b->level,
+			 b->data->min_key.inode,
+			 b->data->min_key.offset,
+			 b->data->max_key.inode,
+			 b->data->max_key.offset,
+			 f->key_u64s,
+			 f->bits_per_field[0],
+			 f->bits_per_field[1],
+			 f->bits_per_field[2],
+			 f->bits_per_field[3],
+			 f->bits_per_field[4],
+			 b->unpack_fn_len,
+			 b->nr.live_u64s * sizeof(u64),
+			 btree_bytes(c) - sizeof(struct btree_node),
+			 b->nr.live_u64s * 100 / btree_max_u64s(c),
+			 b->sib_u64s[0],
+			 b->sib_u64s[1],
+			 BTREE_FOREGROUND_MERGE_THRESHOLD(c),
+			 b->nr.packed_keys,
+			 b->nr.unpacked_keys,
+			 stats.floats,
+			 stats.failed_unpacked,
+			 stats.failed_prev,
+			 stats.failed_overflow);
+}

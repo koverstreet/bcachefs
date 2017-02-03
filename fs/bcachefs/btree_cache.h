@@ -56,6 +56,16 @@ static inline unsigned btree_blocks(struct cache_set *c)
 	return c->sb.btree_node_size >> c->block_bits;
 }
 
+#define BTREE_SPLIT_THRESHOLD(c)		(btree_blocks(c) * 3 / 4)
+
+#define BTREE_FOREGROUND_MERGE_THRESHOLD(c)	(btree_max_u64s(c) * 1 / 3)
+#define BTREE_FOREGROUND_MERGE_HYSTERESIS(c)			\
+	(BTREE_FOREGROUND_MERGE_THRESHOLD(c) +			\
+	 (BTREE_FOREGROUND_MERGE_THRESHOLD(c) << 2))
+
 #define btree_node_root(_c, _b)	((_c)->btree_roots[(_b)->btree_id].b)
+
+int bch_print_btree_node(struct cache_set *, struct btree *,
+			 char *, size_t);
 
 #endif /* _BCACHE_BTREE_CACHE_H */
