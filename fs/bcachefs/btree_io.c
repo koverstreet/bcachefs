@@ -1443,8 +1443,9 @@ void __bch_btree_node_write(struct cache_set *c, struct btree *b,
 	 * Make sure to update b->written so bch_btree_init_next() doesn't
 	 * break:
 	 */
-	if (bch_journal_error(&c->journal)) {
-		set_btree_node_write_error(b);
+	if (bch_journal_error(&c->journal) ||
+	    c->opts.nochanges) {
+		set_btree_node_noevict(b);
 		b->written += sectors_to_write;
 
 		btree_bounce_free(c, order, used_mempool, data);

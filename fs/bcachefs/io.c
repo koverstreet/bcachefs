@@ -140,6 +140,8 @@ void bch_submit_wbio_replicas(struct bch_write_bio *wbio, struct cache_set *c,
 	struct bch_write_bio *n;
 	struct cache *ca;
 
+	BUG_ON(c->opts.nochanges);
+
 	wbio->split = false;
 	wbio->c = c;
 
@@ -733,7 +735,8 @@ void bch_write(struct closure *cl)
 			   !(op->flags & BCH_WRITE_CACHED),
 			   op->flags & BCH_WRITE_DISCARD);
 
-	if (!percpu_ref_tryget(&c->writes)) {
+	if (c->opts.nochanges ||
+	    !percpu_ref_tryget(&c->writes)) {
 		__bcache_io_error(c, "read only");
 		op->error = -EROFS;
 		bch_disk_reservation_put(c, &op->res);

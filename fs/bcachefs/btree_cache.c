@@ -149,7 +149,8 @@ static int mca_reap_notrace(struct cache_set *c, struct btree *b, bool flush)
 	if (!six_trylock_write(&b->lock))
 		goto out_unlock_intent;
 
-	if (btree_node_write_error(b))
+	if (btree_node_write_error(b) ||
+	    btree_node_noevict(b))
 		goto out_unlock;
 
 	if (!list_empty(&b->write_blocked))

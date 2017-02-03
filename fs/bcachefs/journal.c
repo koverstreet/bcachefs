@@ -2065,6 +2065,13 @@ static void journal_write(struct closure *cl)
 
 	bch_check_mark_super(c, &j->key, true);
 
+	/*
+	 * XXX: we really should just disable the entire journal in nochanges
+	 * mode
+	 */
+	if (c->opts.nochanges)
+		goto no_io;
+
 	extent_for_each_ptr(bkey_i_to_s_extent(&j->key), ptr) {
 		rcu_read_lock();
 		ca = PTR_CACHE(c, ptr);
@@ -2094,8 +2101,6 @@ static void journal_write(struct closure *cl)
 		trace_bcache_journal_write(bio);
 		closure_bio_submit_punt(bio, cl, c);
 
-		ptr->offset += sectors;
-
 		ca->journal.bucket_seq[ca->journal.cur_idx] = le64_to_cpu(w->data->seq);
 	}
 
@@ -2113,6 +2118,10 @@ static void journal_write(struct closure *cl)
 			bio_set_op_attrs(bio, REQ_OP_WRITE, WRITE_FLUSH);
 			closure_bio_submit_punt(bio, cl, c);
 		}
+
+no_io:
+	extent_for_each_ptr(bkey_i_to_s_extent(&j->key), ptr)
+		ptr->offset += sectors;
 
 	closure_return_with_destructor(cl, journal_write_done);
 }

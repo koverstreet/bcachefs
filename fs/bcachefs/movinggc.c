@@ -274,6 +274,9 @@ int bch_moving_gc_thread_start(struct cache *ca)
 	/* The moving gc read thread must be stopped */
 	BUG_ON(ca->moving_gc_read != NULL);
 
+	if (ca->set->opts.nochanges)
+		return 0;
+
 	if (cache_set_init_fault("moving_gc_start"))
 		return -ENOMEM;
 

@@ -46,6 +46,9 @@ void __bch_btree_verify(struct cache_set *c, struct btree *b)
 	struct bio *bio;
 	struct closure cl;
 
+	if (c->opts.nochanges)
+		return;
+
 	closure_init_stack(&cl);
 
 	btree_node_io_lock(b);

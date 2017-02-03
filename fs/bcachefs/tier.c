@@ -224,6 +224,9 @@ int bch_tiering_read_start(struct cache_set *c)
 {
 	struct task_struct *t;
 
+	if (c->opts.nochanges)
+		return 0;
+
 	t = kthread_create(bch_tiering_thread, c, "bch_tier_read");
 	if (IS_ERR(t))
 		return PTR_ERR(t);

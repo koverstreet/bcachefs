@@ -254,6 +254,9 @@ static int bch_prio_write(struct cache *ca)
 	bool need_new_journal_entry;
 	int i, ret;
 
+	if (c->opts.nochanges)
+		return 0;
+
 	trace_bcache_prio_write_start(ca);
 
 	atomic64_add(ca->mi.bucket_size * prio_buckets(ca),

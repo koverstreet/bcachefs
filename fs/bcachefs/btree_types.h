@@ -138,6 +138,7 @@ enum btree_flags {
 	BTREE_NODE_read_error,
 	BTREE_NODE_write_error,
 	BTREE_NODE_dirty,
+	BTREE_NODE_noevict,
 	BTREE_NODE_write_idx,
 	BTREE_NODE_accessed,
 	BTREE_NODE_write_in_flight,
@@ -147,6 +148,7 @@ enum btree_flags {
 BTREE_FLAG(read_error);
 BTREE_FLAG(write_error);
 BTREE_FLAG(dirty);
+BTREE_FLAG(noevict);
 BTREE_FLAG(write_idx);
 BTREE_FLAG(accessed);
 BTREE_FLAG(write_in_flight);
