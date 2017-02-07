@@ -200,7 +200,7 @@ static unsigned sort_extent_whiteouts(struct bkey_packed *dst,
 	const struct bkey_format *f = &iter->b->format;
 	struct bkey_packed *in, *out = dst;
 	struct bkey_i l, r;
-	bool prev = false, l_packed;
+	bool prev = false, l_packed = false;
 	u64 max_packed_size	= bkey_field_max(f, BKEY_FIELD_SIZE);
 	u64 max_packed_offset	= bkey_field_max(f, BKEY_FIELD_OFFSET);
 	u64 new_size;
