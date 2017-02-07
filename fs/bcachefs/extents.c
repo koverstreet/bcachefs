@@ -108,15 +108,16 @@ struct btree_nr_keys bch_key_sort_fix_overlapping(struct bset *dst,
 
 /* Common among btree and extent ptrs */
 
-bool bch_extent_has_device(struct bkey_s_c_extent e, unsigned dev)
+const struct bch_extent_ptr *
+bch_extent_has_device(struct bkey_s_c_extent e, unsigned dev)
 {
 	const struct bch_extent_ptr *ptr;
 
 	extent_for_each_ptr(e, ptr)
 		if (ptr->dev == dev)
-			return true;
+			return ptr;
 
-	return false;
+	return NULL;
 }
 
 unsigned bch_extent_nr_ptrs_from(struct bkey_s_c_extent e,
