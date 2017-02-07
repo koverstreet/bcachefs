@@ -706,13 +706,17 @@ int bch_print_btree_node(struct cache_set *c, struct btree *b,
 {
 	const struct bkey_format *f = &b->format;
 	struct bset_stats stats;
+	char ptrs[100];
 
 	memset(&stats, 0, sizeof(stats));
 
+	bch_val_to_text(c, BKEY_TYPE_BTREE, ptrs, sizeof(ptrs),
+			bkey_i_to_s_c(&b->key));
 	bch_btree_keys_stats(b, &stats);
 
 	return scnprintf(buf, len,
 			 "l %u %llu:%llu - %llu:%llu:\n"
+			 "    ptrs: %s\n"
 			 "    format: u64s %u fields %u %u %u %u %u\n"
 			 "    unpack fn len: %u\n"
 			 "    bytes used %zu/%zu (%zu%% full)\n"
@@ -728,6 +732,7 @@ int bch_print_btree_node(struct cache_set *c, struct btree *b,
 			 b->data->min_key.offset,
 			 b->data->max_key.inode,
 			 b->data->max_key.offset,
+			 ptrs,
 			 f->key_u64s,
 			 f->bits_per_field[0],
 			 f->bits_per_field[1],

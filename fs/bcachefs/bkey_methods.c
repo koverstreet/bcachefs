@@ -89,6 +89,16 @@ void bkey_debugcheck(struct cache_set *c, struct btree *b, struct bkey_s_c k)
 		ops->key_debugcheck(c, b, k);
 }
 
+void bch_val_to_text(struct cache_set *c, enum bkey_type type,
+		     char *buf, size_t size, struct bkey_s_c k)
+{
+	const struct bkey_ops *ops = bch_bkey_ops[type];
+
+	if (k.k->type >= KEY_TYPE_GENERIC_NR &&
+	    ops->val_to_text)
+		ops->val_to_text(c, buf, size, k);
+}
+
 void bch_bkey_val_to_text(struct cache_set *c, enum bkey_type type,
 			  char *buf, size_t size, struct bkey_s_c k)
 {
