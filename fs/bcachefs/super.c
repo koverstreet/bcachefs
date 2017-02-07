@@ -1154,7 +1154,7 @@ static struct cache_set *bch_cache_set_alloc(struct cache_sb *sb,
 	c->opts = cache_superblock_opts(sb);
 	cache_set_opts_apply(&c->opts, opts);
 
-	c->opts.nochanges	|= c->opts.norecovery;
+	c->opts.nochanges	|= c->opts.noreplay;
 	c->opts.read_only	|= c->opts.nochanges;
 
 	c->block_bits		= ilog2(c->sb.block_size);
@@ -1349,10 +1349,8 @@ static const char *run_cache_set(struct cache_set *c)
 		if (bch_initial_gc(c, &journal))
 			goto err;
 
-		if (c->opts.norecovery) {
-			bch_journal_entries_free(&journal);
+		if (c->opts.noreplay)
 			goto recovery_done;
-		}
 
 		bch_verbose(c, "mark and sweep done");
 
@@ -1379,6 +1377,9 @@ static const char *run_cache_set(struct cache_set *c)
 			goto err;
 
 		bch_verbose(c, "journal replay done");
+
+		if (c->opts.norecovery)
+			goto recovery_done;
 
 		/*
 		 * Write a new journal entry _before_ we start journalling new
@@ -1488,12 +1489,12 @@ recovery_done:
 	set_bit(CACHE_SET_RUNNING, &c->flags);
 	bch_attach_backing_devs(c);
 
-	closure_put(&c->caching);
-
 	bch_notify_cache_set_read_write(c);
-
-	BUG_ON(!list_empty(&journal));
-	return NULL;
+	err = NULL;
+out:
+	bch_journal_entries_free(&journal);
+	closure_put(&c->caching);
+	return err;
 err:
 	switch (ret) {
 	case BCH_FSCK_ERRORS_NOT_FIXED:
@@ -1522,12 +1523,8 @@ err:
 	}
 
 	BUG_ON(!err);
-
-	bch_journal_entries_free(&journal);
 	set_bit(CACHE_SET_ERROR, &c->flags);
-	bch_cache_set_unregister(c);
-	closure_put(&c->caching);
-	return err;
+	goto out;
 }
 
 static const char *can_add_cache(struct cache_sb *sb,
@@ -2059,8 +2056,9 @@ static const char *register_cache(struct bcache_superblock *sb,
 				  struct cache_set_opts opts)
 {
 	char name[BDEVNAME_SIZE];
-	const char *err = "cannot allocate memory";
+	const char *err;
 	struct cache_set *c;
+	bool allocated_cache_set = false;
 
 	err = validate_cache_super(sb);
 	if (err)
@@ -2070,41 +2068,36 @@ static const char *register_cache(struct bcache_superblock *sb,
 
 	c = cache_set_lookup(sb->sb->set_uuid);
 	if (c) {
-		if ((err = (can_attach_cache(sb->sb, c) ?:
-			    cache_alloc(sb, c, NULL))))
+		err = can_attach_cache(sb->sb, c);
+		if (err)
 			return err;
+	} else {
+		c = bch_cache_set_alloc(sb->sb, opts);
+		if (!c)
+			return "cannot allocate memory";
 
-		if (cache_set_nr_online_devices(c) == cache_set_nr_devices(c)) {
-			err = run_cache_set(c);
-			if (err)
-				return err;
-		}
-		goto out;
+		allocated_cache_set = true;
 	}
-
-	c = bch_cache_set_alloc(sb->sb, opts);
-	if (!c)
-		return err;
 
 	err = cache_alloc(sb, c, NULL);
 	if (err)
-		goto err_stop;
+		goto err;
 
 	if (cache_set_nr_online_devices(c) == cache_set_nr_devices(c)) {
 		err = run_cache_set(c);
 		if (err)
-			goto err_stop;
+			goto err;
+	} else {
+		err = "error creating kobject";
+		if (bch_cache_set_online(c))
+			goto err;
 	}
-
-	err = "error creating kobject";
-	if (bch_cache_set_online(c))
-		goto err_stop;
-out:
 
 	bch_info(c, "started");
 	return NULL;
-err_stop:
-	bch_cache_set_stop(c);
+err:
+	if (allocated_cache_set)
+		bch_cache_set_stop(c);
 	return err;
 }
 
@@ -2315,7 +2308,8 @@ const char *bch_register_cache_set(char * const *devices, unsigned nr_devices,
 out:
 	kfree(sb);
 	module_put(THIS_MODULE);
-	BUG_ON(!err == !c);
+	if (err)
+		c = NULL;
 	return err;
 err_unlock:
 	if (c)

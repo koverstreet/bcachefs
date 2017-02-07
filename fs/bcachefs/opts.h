@@ -48,16 +48,19 @@ LE64_BITMASK(NO_SB_OPT,		struct cache_sb, flags, 0, 0);
 	CACHE_SET_OPT(fix_errors,				\
 		      bch_bool_opt, 0, 2,			\
 		      NO_SB_OPT, true)				\
+	CACHE_SET_OPT(nochanges,				\
+		      bch_bool_opt, 0, 2,			\
+		      NO_SB_OPT, 0)				\
+	CACHE_SET_OPT(noreplay,					\
+		      bch_bool_opt, 0, 2,			\
+		      NO_SB_OPT, 0)				\
+	CACHE_SET_OPT(norecovery,				\
+		      bch_bool_opt, 0, 2,			\
+		      NO_SB_OPT, 0)				\
 	CACHE_SET_SB_OPTS()
 
 #define CACHE_SET_OPTS()					\
 	CACHE_SET_OPT(read_only,				\
-		      bch_bool_opt, 0, 2,			\
-		      NO_SB_OPT, 0)				\
-	CACHE_SET_OPT(nochanges,				\
-		      bch_bool_opt, 0, 2,			\
-		      NO_SB_OPT, 0)				\
-	CACHE_SET_OPT(norecovery,				\
 		      bch_bool_opt, 0, 2,			\
 		      NO_SB_OPT, 0)				\
 	CACHE_SET_VISIBLE_OPTS()
