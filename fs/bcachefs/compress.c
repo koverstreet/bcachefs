@@ -273,28 +273,23 @@ static int __bio_compress(struct cache_set *c,
 		*src_len = src->bi_iter.bi_size;
 
 		workspace = mempool_alloc(&c->lz4_workspace_pool, GFP_NOIO);
-retry_compress:
-		ret = lz4_compress(src_data, *src_len,
-				   dst_data, dst_len,
-				   workspace);
-		/*
-		 * On error, the compressed data was bigger than dst_len, and
-		 * -ret is the amount of data we were able to compress - round
-		 * down to nearest block and try again:
-		 */
-		if (ret && round_down(-ret, block_bytes(c)) > *dst_len) {
-			BUG_ON(ret > 0);
 
-			/* not supposed to happen */
-			if (WARN_ON(-ret >= *src_len))
-				goto err;
+		while (*src_len > block_bytes(c) &&
+		       (ret = lz4_compress(src_data, *src_len,
+					   dst_data, dst_len,
+					   workspace))) {
+			/*
+			 * On error, the compressed data was bigger than
+			 * dst_len, and -ret is the amount of data we were able
+			 * to compress - round down to nearest block and try
+			 * again:
+			 */
+			BUG_ON(ret > 0);
+			BUG_ON(-ret >= *src_len);
 
 			*src_len = round_down(-ret, block_bytes(c));
-			if (!*src_len)
-				goto err;
-
-			goto retry_compress;
 		}
+
 		mempool_free(workspace, &c->lz4_workspace_pool);
 
 		if (ret)
@@ -354,6 +349,10 @@ zlib_err:
 	}
 
 	BUG_ON(!*dst_len);
+	BUG_ON(*dst_len > dst->bi_iter.bi_size);
+
+	BUG_ON(*src_len & (block_bytes(c) - 1));
+	BUG_ON(*src_len > src->bi_iter.bi_size);
 
 	/* Didn't get smaller: */
 	if (round_up(*dst_len, block_bytes(c)) >= *src_len) {
