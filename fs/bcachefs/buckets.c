@@ -395,17 +395,21 @@ void bch2_mark_metadata_bucket(struct bch_dev *ca, struct bucket *g,
 #if 0
 /* Reverting this until the copygc + compression issue is fixed: */
 
-static unsigned __disk_sectors(const union bch_extent_crc *crc, unsigned sectors)
+static unsigned __disk_sectors(const struct bkey *k,
+			       const union bch_extent_crc *crc,
+			       unsigned sectors)
 {
 	return crc_compression_type(crc)
-		? sectors * crc_compressed_size(crc) / crc_uncompressed_size(crc)
+		? sectors * crc_compressed_size(k, crc) / crc_uncompressed_size(k, crc)
 		: sectors;
 }
 
-static unsigned __compressed_sectors(const union bch_extent_crc *crc, unsigned sectors)
+static unsigned __compressed_sectors(const struct bkey *k,
+				     const union bch_extent_crc *crc,
+				     unsigned sectors)
 {
 	return crc_compression_type(crc)
-		? min_t(unsigned, crc_compressed_size(crc), sectors)
+		? min_t(unsigned, crc_compressed_size(k, crc), sectors)
 		: sectors;
 }
 #else
@@ -451,10 +455,10 @@ static void bch2_mark_pointer(struct bch_fs *c,
 		new_sectors = e.k->size + sectors;
 	}
 
-	disk_sectors = -__disk_sectors(crc, old_sectors)
-		+ __disk_sectors(crc, new_sectors);
-	compressed_sectors = -__compressed_sectors(crc, old_sectors)
-		+ __compressed_sectors(crc, new_sectors);
+	disk_sectors = -__disk_sectors(e.k, crc, old_sectors)
+		+ __disk_sectors(e.k, crc, new_sectors);
+	compressed_sectors = -__compressed_sectors(e.k, crc, old_sectors)
+		+ __compressed_sectors(e.k, crc, new_sectors);
 
 	if (gc_will_visit) {
 		if (journal_seq)
