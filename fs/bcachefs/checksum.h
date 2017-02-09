@@ -2,6 +2,7 @@
 #define _BCACHE_CHECKSUM_H
 
 #include "bcache.h"
+#include "super-io.h"
 
 #include <crypto/chacha20.h>
 
@@ -95,6 +96,35 @@ static inline struct nonce nonce_add(struct nonce nonce, unsigned offset)
 
 	le32_add_cpu(&nonce.d[0], offset / CHACHA20_BLOCK_SIZE);
 	return nonce;
+}
+
+static inline bool bch_key_is_encrypted(struct bch_encrypted_key *key)
+{
+	return le64_to_cpu(key->magic) != BCH_KEY_MAGIC;
+}
+
+static inline struct nonce __bch_sb_key_nonce(struct bch_sb *sb)
+{
+	__le64 magic = __bch_sb_magic(sb);
+
+	return (struct nonce) {{
+		[0] = 0,
+		[1] = 0,
+		[2] = ((__le32 *) &magic)[0],
+		[3] = ((__le32 *) &magic)[1],
+	}};
+}
+
+static inline struct nonce bch_sb_key_nonce(struct cache_set *c)
+{
+	__le64 magic = bch_sb_magic(c);
+
+	return (struct nonce) {{
+		[0] = 0,
+		[1] = 0,
+		[2] = ((__le32 *) &magic)[0],
+		[3] = ((__le32 *) &magic)[1],
+	}};
 }
 
 #endif /* _BCACHE_CHECKSUM_H */

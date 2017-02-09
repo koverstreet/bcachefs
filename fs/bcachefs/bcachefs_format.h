@@ -838,6 +838,27 @@ struct bch_sb_field_members {
 	struct bch_member	members[0];
 };
 
+/* Crypto: */
+
+struct nonce {
+	__le32			d[4];
+};
+
+struct bch_key {
+	__le64			key[4];
+};
+
+#define BCH_KEY_MAGIC					\
+	(((u64) 'b' <<  0)|((u64) 'c' <<  8)|		\
+	 ((u64) 'h' << 16)|((u64) '*' << 24)|		\
+	 ((u64) '*' << 32)|((u64) 'k' << 40)|		\
+	 ((u64) 'e' << 48)|((u64) 'y' << 56))
+
+struct bch_encrypted_key {
+	__le64			magic;
+	struct bch_key		key;
+};
+
 /*
  * If this field is present in the superblock, it stores an encryption key which
  * is used encrypt all other data/metadata. The key will normally be encrypted
@@ -850,7 +871,7 @@ struct bch_sb_field_crypt {
 
 	__le64			flags;
 	__le64			kdf_flags;
-	__le64			encryption_key[5];
+	struct bch_encrypted_key key;
 };
 
 LE64_BITMASK(BCH_CRYPT_KDF_TYPE,	struct bch_sb_field_crypt, flags, 0, 4);
@@ -1389,14 +1410,6 @@ struct btree_node_entry {
 	};
 	};
 } __attribute__((packed));
-
-/* Crypto: */
-
-struct nonce {
-	__le32 d[4];
-};
-
-#define BCACHE_MASTER_KEY_HEADER	"bch**key"
 
 /* OBSOLETE */
 
