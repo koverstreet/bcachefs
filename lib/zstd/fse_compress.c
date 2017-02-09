@@ -443,16 +443,6 @@ size_t FSE_sizeof_CTable (unsigned maxSymbolValue, unsigned tableLog)
     return FSE_CTABLE_SIZE_U32 (tableLog, maxSymbolValue) * sizeof(u32);
 }
 
-FSE_CTable* FSE_createCTable (unsigned maxSymbolValue, unsigned tableLog)
-{
-    size_t size;
-    if (tableLog > FSE_TABLELOG_ABSOLUTE_MAX) tableLog = FSE_TABLELOG_ABSOLUTE_MAX;
-    size = FSE_CTABLE_SIZE_U32 (tableLog, maxSymbolValue) * sizeof(u32);
-    return kmalloc(size, GFP_KERNEL);
-}
-
-void FSE_freeCTable (FSE_CTable* ct) { kfree(ct); }
-
 /* provides the minimum logSize to safely represent a distribution */
 static unsigned FSE_minTableLog(size_t srcSize, unsigned maxSymbolValue)
 {

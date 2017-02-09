@@ -153,8 +153,6 @@ size_t FSE_writeNCount (void* buffer, size_t bufferSize, const short* normalized
 /*! Constructor and Destructor of FSE_CTable.
     Note that FSE_CTable size depends on 'tableLog' and 'maxSymbolValue' */
 typedef unsigned FSE_CTable;   /* don't allocate that. It's only meant to be more restrictive than void* */
-FSE_CTable* FSE_createCTable (unsigned tableLog, unsigned maxSymbolValue);
-void        FSE_freeCTable (FSE_CTable* ct);
 
 /*! FSE_buildCTable():
     Builds `ct`, which must be already allocated, using FSE_createCTable().
@@ -224,8 +222,6 @@ size_t FSE_readNCount (short* normalizedCounter, unsigned* maxSymbolValuePtr, un
 /*! Constructor and Destructor of FSE_DTable.
     Note that its size depends on 'tableLog' */
 typedef unsigned FSE_DTable;   /* don't allocate that. It's just a way to be more restrictive than void* */
-FSE_DTable* FSE_createDTable(unsigned tableLog);
-void        FSE_freeDTable(FSE_DTable* dt);
 
 /*! FSE_buildDTable():
     Builds 'dt', which must be already allocated, using FSE_createDTable().

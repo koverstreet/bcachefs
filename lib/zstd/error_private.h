@@ -33,7 +33,7 @@ typedef ZSTD_ErrorCode ERR_enum;
 
 static inline unsigned ERR_isError(size_t code)
 {
-	return (code > ERROR(maxCode));
+	return code > ERROR(maxCode);
 }
 
 static inline ERR_enum ERR_getErrorCode(size_t code)

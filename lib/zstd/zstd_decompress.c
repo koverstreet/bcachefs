@@ -1659,7 +1659,8 @@ struct ZSTD_DDict_s {
     ZSTD_DCtx* refContext;
 };  /* typedef'd to ZSTD_DDict within "zstd.h" */
 
-ZSTD_DDict* ZSTD_createDDict_advanced(const void* dict, size_t dictSize, unsigned byReference)
+ZSTD_DDict* ZSTD_createDDict_advanced(const void* dict, size_t dictSize,
+				      unsigned byReference)
 {
     {   ZSTD_DDict* const ddict = kmalloc(sizeof(ZSTD_DDict), GFP_KERNEL);
         ZSTD_DCtx* const dctx = ZSTD_createDCtx();
@@ -1680,13 +1681,15 @@ ZSTD_DDict* ZSTD_createDDict_advanced(const void* dict, size_t dictSize, unsigne
             ddict->dictBuffer = internalBuffer;
             ddict->dictContent = internalBuffer;
         }
-        {   size_t const errorCode = ZSTD_decompressBegin_usingDict(dctx, ddict->dictContent, dictSize);
+        {
+	    size_t const errorCode = ZSTD_decompressBegin_usingDict(dctx, ddict->dictContent, dictSize);
             if (ZSTD_isError(errorCode)) {
                 kfree(ddict->dictBuffer);
                 kfree(ddict);
                 kfree(dctx);
                 return NULL;
-        }   }
+	    }
+	}
 
         ddict->dictSize = dictSize;
         ddict->refContext = dctx;

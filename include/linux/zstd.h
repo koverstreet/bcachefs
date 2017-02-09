@@ -292,12 +292,6 @@ size_t ZSTD_decompressStream(ZSTD_DStream* zds, ZSTD_outBuffer* output, ZSTD_inB
 size_t ZSTD_DStreamInSize(void);    /*!< recommended size for input buffer */
 size_t ZSTD_DStreamOutSize(void);   /*!< recommended size for output buffer. Guarantee to successfully flush at least one complete block in all circumstances. */
 
-#endif  /* ZSTD_H_235446 */
-
-
-#if defined(ZSTD_STATIC_LINKING_ONLY) && !defined(ZSTD_H_ZSTD_STATIC_LINKING_ONLY)
-#define ZSTD_H_ZSTD_STATIC_LINKING_ONLY
-
 /****************************************************************************************
  * START OF ADVANCED AND EXPERIMENTAL FUNCTIONS
  * The definitions in this section are considered experimental.
@@ -668,5 +662,4 @@ size_t ZSTD_compressBlock  (ZSTD_CCtx* cctx, void* dst, size_t dstCapacity, cons
 size_t ZSTD_decompressBlock(ZSTD_DCtx* dctx, void* dst, size_t dstCapacity, const void* src, size_t srcSize);
 size_t ZSTD_insertBlock(ZSTD_DCtx* dctx, const void* blockStart, size_t blockSize);  /**< insert block into `dctx` history. Useful for uncompressed blocks */
 
-
-#endif   /* ZSTD_H_ZSTD_STATIC_LINKING_ONLY */
+#endif  /* ZSTD_H_235446 */

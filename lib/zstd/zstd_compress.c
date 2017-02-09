@@ -14,6 +14,7 @@
 #include <linux/kernel.h>
 #include <linux/slab.h>
 #include <linux/string.h>         /* memset */
+#include <linux/zstd.h>         /* memset */
 #include "mem.h"
 #include "xxhash.h"               /* XXH_reset, update, digest */
 #include "fse.h"
