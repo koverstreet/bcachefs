@@ -15,7 +15,6 @@
 ***************************************/
 #include "mem.h"
 #include "error_private.h"
-#define ZSTD_STATIC_LINKING_ONLY
 #include <linux/zstd.h>
 
 
@@ -115,7 +114,7 @@ static void ZSTD_copy8(void* dst, const void* src) { memcpy(dst, src, 8); }
 /*! ZSTD_wildcopy() :
 *   custom version of memcpy(), can copy up to 7 bytes too many (8 bytes if length==0) */
 #define WILDCOPY_OVERLENGTH 8
-MEM_STATIC void ZSTD_wildcopy(void* dst, const void* src, ptrdiff_t length)
+static inline void ZSTD_wildcopy(void* dst, const void* src, ptrdiff_t length)
 {
     const u8* ip = (const u8*)src;
     u8* op = (u8*)dst;
@@ -125,7 +124,7 @@ MEM_STATIC void ZSTD_wildcopy(void* dst, const void* src, ptrdiff_t length)
     while (op < oend);
 }
 
-MEM_STATIC void ZSTD_wildcopy_e(void* dst, const void* src, void* dstEnd)   /* should be faster for decoding, but strangely, not verified on all platform */
+static inline void ZSTD_wildcopy_e(void* dst, const void* src, void* dstEnd)   /* should be faster for decoding, but strangely, not verified on all platform */
 {
     const u8* ip = (const u8*)src;
     u8* op = (u8*)dst;

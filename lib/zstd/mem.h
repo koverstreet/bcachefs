@@ -10,316 +10,154 @@
 #ifndef MEM_H_MODULE
 #define MEM_H_MODULE
 
-/*-****************************************
-*  Dependencies
-******************************************/
+#include <asm/unaligned.h>
 #include <linux/kernel.h>
 #include <linux/string.h>
-
-
-/*-****************************************
-*  Compiler specifics
-******************************************/
-#define MEM_STATIC static __inline __attribute__((unused))
-
-/* code only tested on 32 and 64 bits systems */
-#define MEM_STATIC_ASSERT(c)   { enum { MEM_static_assert = 1/(int)(!!(c)) }; }
-MEM_STATIC void MEM_check(void) { MEM_STATIC_ASSERT((sizeof(size_t)==4) || (sizeof(size_t)==8)); }
 
 /*-**************************************************************
 *  Memory I/O
 *****************************************************************/
-/* MEM_FORCE_MEMORY_ACCESS :
- * By default, access to unaligned memory is controlled by `memcpy()`, which is safe and portable.
- * Unfortunately, on some target/compiler combinations, the generated assembly is sub-optimal.
- * The below switch allow to select different access method for improved performance.
- * Method 0 (default) : use `memcpy()`. Safe and portable.
- * Method 1 : `__packed` statement. It depends on compiler extension (ie, not portable).
- *            This method is safe if your compiler supports it, and *generally* as fast or faster than `memcpy`.
- * Method 2 : direct access. This method is portable but violate C standard.
- *            It can generate buggy code on targets depending on alignment.
- *            In some circumstances, it's the only known way to get the most performance (ie GCC + ARMv6)
- * See http://fastcompression.blogspot.fr/2015/08/accessing-unaligned-memory.html for details.
- * Prefer these methods in priority order (0 > 1 > 2)
- */
-#ifndef MEM_FORCE_MEMORY_ACCESS   /* can be defined externally, on command line for example */
-#  if defined(__GNUC__) && ( defined(__ARM_ARCH_6__) || defined(__ARM_ARCH_6J__) || defined(__ARM_ARCH_6K__) || defined(__ARM_ARCH_6Z__) || defined(__ARM_ARCH_6ZK__) || defined(__ARM_ARCH_6T2__) )
-#    define MEM_FORCE_MEMORY_ACCESS 2
-#  elif defined(__INTEL_COMPILER) /*|| defined(_MSC_VER)*/ || \
-  (defined(__GNUC__) && ( defined(__ARM_ARCH_7__) || defined(__ARM_ARCH_7A__) || defined(__ARM_ARCH_7R__) || defined(__ARM_ARCH_7M__) || defined(__ARM_ARCH_7S__) ))
-#    define MEM_FORCE_MEMORY_ACCESS 1
-#  endif
-#endif
 
-MEM_STATIC unsigned MEM_32bits(void) { return sizeof(size_t)==4; }
-MEM_STATIC unsigned MEM_64bits(void) { return sizeof(size_t)==8; }
+static inline unsigned MEM_32bits(void) { return sizeof(size_t)==4; }
+static inline unsigned MEM_64bits(void) { return sizeof(size_t)==8; }
 
-MEM_STATIC unsigned MEM_isLittleEndian(void)
+static inline unsigned MEM_isLittleEndian(void)
 {
     const union { u32 u; u8 c[4]; } one = { 1 };   /* don't use static : performance detrimental  */
     return one.c[0];
 }
 
-#if defined(MEM_FORCE_MEMORY_ACCESS) && (MEM_FORCE_MEMORY_ACCESS==2)
-
-/* violates C standard, by lying on structure alignment.
-Only use if no other choice to achieve best performance on target platform */
-MEM_STATIC u16 MEM_read16(const void* memPtr) { return *(const u16*) memPtr; }
-MEM_STATIC u32 MEM_read32(const void* memPtr) { return *(const u32*) memPtr; }
-MEM_STATIC u64 MEM_read64(const void* memPtr) { return *(const u64*) memPtr; }
-MEM_STATIC u64 MEM_readST(const void* memPtr) { return *(const size_t*) memPtr; }
-
-MEM_STATIC void MEM_write16(void* memPtr, u16 value) { *(u16*)memPtr = value; }
-MEM_STATIC void MEM_write32(void* memPtr, u32 value) { *(u32*)memPtr = value; }
-MEM_STATIC void MEM_write64(void* memPtr, u64 value) { *(u64*)memPtr = value; }
-
-#elif defined(MEM_FORCE_MEMORY_ACCESS) && (MEM_FORCE_MEMORY_ACCESS==1)
-
-/* __pack instructions are safer, but compiler specific, hence potentially problematic for some compilers */
-/* currently only defined for gcc and icc */
-#if defined(_MSC_VER) || (defined(__INTEL_COMPILER) && defined(WIN32))
-	__pragma( pack(push, 1) )
-    typedef union { u16 u16; u32 u32; u64 u64; size_t st; } unalign;
-    __pragma( pack(pop) )
-#else
-    typedef union { u16 u16; u32 u32; u64 u64; size_t st; } __attribute__((packed)) unalign;
-#endif
-
-MEM_STATIC u16 MEM_read16(const void* ptr) { return ((const unalign*)ptr)->u16; }
-MEM_STATIC u32 MEM_read32(const void* ptr) { return ((const unalign*)ptr)->u32; }
-MEM_STATIC u64 MEM_read64(const void* ptr) { return ((const unalign*)ptr)->u64; }
-MEM_STATIC u64 MEM_readST(const void* ptr) { return ((const unalign*)ptr)->st; }
-
-MEM_STATIC void MEM_write16(void* memPtr, u16 value) { ((unalign*)memPtr)->u16 = value; }
-MEM_STATIC void MEM_write32(void* memPtr, u32 value) { ((unalign*)memPtr)->u32 = value; }
-MEM_STATIC void MEM_write64(void* memPtr, u64 value) { ((unalign*)memPtr)->u64 = value; }
-
-#else
-
-/* default method, safe and standard.
-   can sometimes prove slower */
-
-MEM_STATIC u16 MEM_read16(const void* memPtr)
+static inline u16 MEM_read16(const void *p)
 {
-    u16 val; memcpy(&val, memPtr, sizeof(val)); return val;
+    return get_unaligned((u16 *) p);
 }
 
-MEM_STATIC u32 MEM_read32(const void* memPtr)
+static inline u32 MEM_read32(const void *p)
 {
-    u32 val; memcpy(&val, memPtr, sizeof(val)); return val;
+    return get_unaligned((u32 *) p);
 }
 
-MEM_STATIC u64 MEM_read64(const void* memPtr)
+static inline u64 MEM_read64(const void *p)
 {
-    u64 val; memcpy(&val, memPtr, sizeof(val)); return val;
+    return get_unaligned((u64 *) p);
 }
 
-MEM_STATIC size_t MEM_readST(const void* memPtr)
+static inline size_t MEM_readST(const void *p)
 {
-    size_t val; memcpy(&val, memPtr, sizeof(val)); return val;
+    return get_unaligned((size_t *) p);
 }
 
-MEM_STATIC void MEM_write16(void* memPtr, u16 value)
+static inline void MEM_write16(void *p, u16 v)
 {
-    memcpy(memPtr, &value, sizeof(value));
+    put_unaligned(v, (u16 *) p);
 }
 
-MEM_STATIC void MEM_write32(void* memPtr, u32 value)
+static inline void MEM_write32(void *p, u32 v)
 {
-    memcpy(memPtr, &value, sizeof(value));
+    put_unaligned(v, (u32 *) p);
 }
 
-MEM_STATIC void MEM_write64(void* memPtr, u64 value)
+static inline void MEM_write64(void *p, u64 v)
 {
-    memcpy(memPtr, &value, sizeof(value));
-}
-
-#endif /* MEM_FORCE_MEMORY_ACCESS */
-
-MEM_STATIC u32 MEM_swap32(u32 in)
-{
-#if defined(_MSC_VER)     /* Visual Studio */
-    return _byteswap_ulong(in);
-#elif defined (__GNUC__)
-    return __builtin_bswap32(in);
-#else
-    return  ((in << 24) & 0xff000000 ) |
-            ((in <<  8) & 0x00ff0000 ) |
-            ((in >>  8) & 0x0000ff00 ) |
-            ((in >> 24) & 0x000000ff );
-#endif
-}
-
-MEM_STATIC u64 MEM_swap64(u64 in)
-{
-#if defined(_MSC_VER)     /* Visual Studio */
-    return _byteswap_uint64(in);
-#elif defined (__GNUC__)
-    return __builtin_bswap64(in);
-#else
-    return  ((in << 56) & 0xff00000000000000ULL) |
-            ((in << 40) & 0x00ff000000000000ULL) |
-            ((in << 24) & 0x0000ff0000000000ULL) |
-            ((in << 8)  & 0x000000ff00000000ULL) |
-            ((in >> 8)  & 0x00000000ff000000ULL) |
-            ((in >> 24) & 0x0000000000ff0000ULL) |
-            ((in >> 40) & 0x000000000000ff00ULL) |
-            ((in >> 56) & 0x00000000000000ffULL);
-#endif
-}
-
-MEM_STATIC size_t MEM_swapST(size_t in)
-{
-    if (MEM_32bits())
-        return (size_t)MEM_swap32((u32)in);
-    else
-        return (size_t)MEM_swap64((u64)in);
+    put_unaligned(v, (u64 *) p);
 }
 
 /*=== Little endian r/w ===*/
 
-MEM_STATIC u16 MEM_readLE16(const void* memPtr)
+static inline u16 MEM_readLE16(const void *p)
 {
-    if (MEM_isLittleEndian())
-        return MEM_read16(memPtr);
-    else {
-        const u8* p = (const u8*)memPtr;
-        return (u16)(p[0] + (p[1]<<8));
-    }
+    return get_unaligned_le16(p);
 }
 
-MEM_STATIC void MEM_writeLE16(void* memPtr, u16 val)
+static inline void MEM_writeLE16(void *p, u16 v)
 {
-    if (MEM_isLittleEndian()) {
-        MEM_write16(memPtr, val);
-    } else {
-        u8* p = (u8*)memPtr;
-        p[0] = (u8)val;
-        p[1] = (u8)(val>>8);
-    }
+    put_unaligned_le16(v, p);
 }
 
-MEM_STATIC u32 MEM_readLE24(const void* memPtr)
+static inline u32 MEM_readLE24(const void *p)
 {
-    return MEM_readLE16(memPtr) + (((const u8*)memPtr)[2] << 16);
+    return MEM_readLE16(p) + (((const u8*) p)[2] << 16);
 }
 
-MEM_STATIC void MEM_writeLE24(void* memPtr, u32 val)
+static inline void MEM_writeLE24(void *p, u32 v)
 {
-    MEM_writeLE16(memPtr, (u16)val);
-    ((u8*)memPtr)[2] = (u8)(val>>16);
+    MEM_writeLE16(p, (u16)v);
+    ((u8*)p)[2] = (u8)(v>>16);
 }
 
-MEM_STATIC u32 MEM_readLE32(const void* memPtr)
+static inline u32 MEM_readLE32(const void *p)
 {
-    if (MEM_isLittleEndian())
-        return MEM_read32(memPtr);
-    else
-        return MEM_swap32(MEM_read32(memPtr));
+    return get_unaligned_le32(p);
 }
 
-MEM_STATIC void MEM_writeLE32(void* memPtr, u32 val32)
+static inline void MEM_writeLE32(void *p, u32 v)
 {
-    if (MEM_isLittleEndian())
-        MEM_write32(memPtr, val32);
-    else
-        MEM_write32(memPtr, MEM_swap32(val32));
+    put_unaligned_le32(v, p);
 }
 
-MEM_STATIC u64 MEM_readLE64(const void* memPtr)
+static inline u64 MEM_readLE64(const void *p)
 {
-    if (MEM_isLittleEndian())
-        return MEM_read64(memPtr);
-    else
-        return MEM_swap64(MEM_read64(memPtr));
+    return get_unaligned_le64(p);
 }
 
-MEM_STATIC void MEM_writeLE64(void* memPtr, u64 val64)
+static inline void MEM_writeLE64(void *p, u64 v)
 {
-    if (MEM_isLittleEndian())
-        MEM_write64(memPtr, val64);
-    else
-        MEM_write64(memPtr, MEM_swap64(val64));
+    put_unaligned_le64(v, p);
 }
 
-MEM_STATIC size_t MEM_readLEST(const void* memPtr)
+static inline size_t MEM_readLEST(const void *p)
 {
-    if (MEM_32bits())
-        return (size_t)MEM_readLE32(memPtr);
-    else
-        return (size_t)MEM_readLE64(memPtr);
+    return __get_unaligned_le((size_t *) p);
 }
 
-MEM_STATIC void MEM_writeLEST(void* memPtr, size_t val)
+static inline void MEM_writeLEST(void *p, size_t v)
 {
-    if (MEM_32bits())
-        MEM_writeLE32(memPtr, (u32)val);
-    else
-        MEM_writeLE64(memPtr, (u64)val);
+    __put_unaligned_le(v, (size_t *) p);
 }
 
 /*=== Big endian r/w ===*/
 
-MEM_STATIC u32 MEM_readBE32(const void* memPtr)
+static inline u32 MEM_readBE32(const void *p)
 {
-    if (MEM_isLittleEndian())
-        return MEM_swap32(MEM_read32(memPtr));
-    else
-        return MEM_read32(memPtr);
+    return get_unaligned_be32(p);
 }
 
-MEM_STATIC void MEM_writeBE32(void* memPtr, u32 val32)
+static inline void MEM_writeBE32(void *p, u32 v)
 {
-    if (MEM_isLittleEndian())
-        MEM_write32(memPtr, MEM_swap32(val32));
-    else
-        MEM_write32(memPtr, val32);
+    put_unaligned_be32(v, p);
 }
 
-MEM_STATIC u64 MEM_readBE64(const void* memPtr)
+static inline u64 MEM_readBE64(const void *p)
 {
-    if (MEM_isLittleEndian())
-        return MEM_swap64(MEM_read64(memPtr));
-    else
-        return MEM_read64(memPtr);
+    return get_unaligned_be64(p);
 }
 
-MEM_STATIC void MEM_writeBE64(void* memPtr, u64 val64)
+static inline void MEM_writeBE64(void *p, u64 v)
 {
-    if (MEM_isLittleEndian())
-        MEM_write64(memPtr, MEM_swap64(val64));
-    else
-        MEM_write64(memPtr, val64);
+    put_unaligned_be64(v, p);
 }
 
-MEM_STATIC size_t MEM_readBEST(const void* memPtr)
+static inline size_t MEM_readBEST(const void *p)
 {
-    if (MEM_32bits())
-        return (size_t)MEM_readBE32(memPtr);
-    else
-        return (size_t)MEM_readBE64(memPtr);
+    return __get_unaligned_be((size_t *) p);
 }
 
-MEM_STATIC void MEM_writeBEST(void* memPtr, size_t val)
+static inline void MEM_writeBEST(void *p, size_t v)
 {
-    if (MEM_32bits())
-        MEM_writeBE32(memPtr, (u32)val);
-    else
-        MEM_writeBE64(memPtr, (u64)val);
+    __put_unaligned_be(v, (size_t *) p);
 }
 
 
 /* function safe only for comparisons */
-MEM_STATIC u32 MEM_readMINMATCH(const void* memPtr, u32 length)
+static inline u32 MEM_readMINMATCH(const void *p, u32 length)
 {
-    switch (length)
-    {
+    switch (length) {
     default :
-    case 4 : return MEM_read32(memPtr);
+    case 4 : return MEM_read32(p);
     case 3 : if (MEM_isLittleEndian())
-                return MEM_read32(memPtr)<<8;
+                return MEM_read32(p)<<8;
              else
-                return MEM_read32(memPtr)>>8;
+                return MEM_read32(p)>>8;
     }
 }
 

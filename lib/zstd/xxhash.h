@@ -67,11 +67,6 @@ XXH32        6.8 GB/s            6.0 GB/s
 #ifndef XXHASH_H_5627135585666179
 #define XXHASH_H_5627135585666179 1
 
-#ifndef XXH_NAMESPACE
-#  define XXH_NAMESPACE ZSTD_  /* Zstandard specific */
-#endif
-
-
 /* ****************************
 *  Definitions
 ******************************/
@@ -83,42 +78,6 @@ typedef enum { XXH_OK=0, XXH_ERROR } XXH_errorcode;
 *  API modifier
 ******************************/
 
-/*!XXH_NAMESPACE, aka Namespace Emulation :
-
-If you want to include _and expose_ xxHash functions from within your own library,
-but also want to avoid symbol collisions with another library which also includes xxHash,
-
-you can use XXH_NAMESPACE, to automatically prefix any public symbol from xxhash library
-with the value of XXH_NAMESPACE (so avoid to keep it NULL and avoid numeric values).
-
-Note that no change is required within the calling program as long as it includes `xxhash.h` :
-regular symbol name will be automatically translated by this header.
-*/
-#ifdef XXH_NAMESPACE
-#  define XXH_CAT(A,B) A##B
-#  define XXH_NAME2(A,B) XXH_CAT(A,B)
-#  define XXH32 XXH_NAME2(XXH_NAMESPACE, XXH32)
-#  define XXH64 XXH_NAME2(XXH_NAMESPACE, XXH64)
-#  define XXH_versionNumber XXH_NAME2(XXH_NAMESPACE, XXH_versionNumber)
-#  define XXH32_createState XXH_NAME2(XXH_NAMESPACE, XXH32_createState)
-#  define XXH64_createState XXH_NAME2(XXH_NAMESPACE, XXH64_createState)
-#  define XXH32_freeState XXH_NAME2(XXH_NAMESPACE, XXH32_freeState)
-#  define XXH64_freeState XXH_NAME2(XXH_NAMESPACE, XXH64_freeState)
-#  define XXH32_reset XXH_NAME2(XXH_NAMESPACE, XXH32_reset)
-#  define XXH64_reset XXH_NAME2(XXH_NAMESPACE, XXH64_reset)
-#  define XXH32_update XXH_NAME2(XXH_NAMESPACE, XXH32_update)
-#  define XXH64_update XXH_NAME2(XXH_NAMESPACE, XXH64_update)
-#  define XXH32_digest XXH_NAME2(XXH_NAMESPACE, XXH32_digest)
-#  define XXH64_digest XXH_NAME2(XXH_NAMESPACE, XXH64_digest)
-#  define XXH32_copyState XXH_NAME2(XXH_NAMESPACE, XXH32_copyState)
-#  define XXH64_copyState XXH_NAME2(XXH_NAMESPACE, XXH64_copyState)
-#  define XXH32_canonicalFromHash XXH_NAME2(XXH_NAMESPACE, XXH32_canonicalFromHash)
-#  define XXH64_canonicalFromHash XXH_NAME2(XXH_NAMESPACE, XXH64_canonicalFromHash)
-#  define XXH32_hashFromCanonical XXH_NAME2(XXH_NAMESPACE, XXH32_hashFromCanonical)
-#  define XXH64_hashFromCanonical XXH_NAME2(XXH_NAMESPACE, XXH64_hashFromCanonical)
-#endif
-
-
 /* *************************************
 *  Version
 ***************************************/
@@ -126,15 +85,14 @@ regular symbol name will be automatically translated by this header.
 #define XXH_VERSION_MINOR    6
 #define XXH_VERSION_RELEASE  2
 #define XXH_VERSION_NUMBER  (XXH_VERSION_MAJOR *100*100 + XXH_VERSION_MINOR *100 + XXH_VERSION_RELEASE)
-unsigned XXH_versionNumber (void);
 
 
 /* ****************************
 *  Simple Hash Functions
 ******************************/
 
-u32 XXH32 (const void* input, size_t length, unsigned int seed);
-u64 XXH64 (const void* input, size_t length, unsigned long long seed);
+u32 XXH32 (const void *input, size_t length, unsigned int seed);
+u64 XXH64 (const void *input, size_t length, unsigned long long seed);
 
 /*!
 XXH32() :
@@ -155,24 +113,15 @@ XXH64() :
 typedef struct XXH32_state_s XXH32_state_t;   /* incomplete type */
 typedef struct XXH64_state_s XXH64_state_t;   /* incomplete type */
 
-/*! State allocation, compatible with dynamic libraries */
-
-XXH32_state_t* XXH32_createState(void);
-XXH_errorcode  XXH32_freeState(XXH32_state_t* statePtr);
-
-XXH64_state_t* XXH64_createState(void);
-XXH_errorcode  XXH64_freeState(XXH64_state_t* statePtr);
-
-
 /* hash streaming */
 
-XXH_errorcode XXH32_reset  (XXH32_state_t* statePtr, unsigned int seed);
-XXH_errorcode XXH32_update (XXH32_state_t* statePtr, const void* input, size_t length);
+XXH_errorcode XXH32_reset  (XXH32_state_t *statePtr, unsigned int seed);
+XXH_errorcode XXH32_update (XXH32_state_t *statePtr, const void *input, size_t length);
 u32  XXH32_digest (const XXH32_state_t* statePtr);
 
-XXH_errorcode XXH64_reset  (XXH64_state_t* statePtr, unsigned long long seed);
-XXH_errorcode XXH64_update (XXH64_state_t* statePtr, const void* input, size_t length);
-u64  XXH64_digest (const XXH64_state_t* statePtr);
+XXH_errorcode XXH64_reset  (XXH64_state_t *statePtr, unsigned long long seed);
+XXH_errorcode XXH64_update (XXH64_state_t *statePtr, const void *input, size_t length);
+u64  XXH64_digest (const XXH64_state_t *statePtr);
 
 /*
 These functions generate the xxHash of an input provided in multiple segments.
@@ -227,43 +176,27 @@ u64 XXH64_hashFromCanonical(const XXH64_canonical_t* src);
 */
 
 
-#ifdef XXH_STATIC_LINKING_ONLY
+struct XXH32_state_s {
+   unsigned total_len_32;
+   unsigned large_len;
+   unsigned v1;
+   unsigned v2;
+   unsigned v3;
+   unsigned v4;
+   unsigned mem32[4];   /* buffer defined as u32 for alignment */
+   unsigned memsize;
+   unsigned reserved;   /* never read nor write, will be removed in a future version */
+};   /* typedef'd to XXH32_state_t */
 
-/* ================================================================================================
-   This section contains definitions which are not guaranteed to remain stable.
-   They may change in future versions, becoming incompatible with a different version of the library.
-   They shall only be used with static linking.
-   Never use these definitions in association with dynamic linking !
-=================================================================================================== */
-
-/* These definitions are only meant to allow allocation of XXH state
-   statically, on stack, or in a struct for example.
-   Do not use members directly. */
-
-   struct XXH32_state_s {
-       unsigned total_len_32;
-       unsigned large_len;
-       unsigned v1;
-       unsigned v2;
-       unsigned v3;
-       unsigned v4;
-       unsigned mem32[4];   /* buffer defined as u32 for alignment */
-       unsigned memsize;
-       unsigned reserved;   /* never read nor write, will be removed in a future version */
-   };   /* typedef'd to XXH32_state_t */
-
-   struct XXH64_state_s {
-       unsigned long long total_len;
-       unsigned long long v1;
-       unsigned long long v2;
-       unsigned long long v3;
-       unsigned long long v4;
-       unsigned long long mem64[4];   /* buffer defined as u64 for alignment */
-       unsigned memsize;
-       unsigned reserved[2];          /* never read nor write, will be removed in a future version */
-   };   /* typedef'd to XXH64_state_t */
-
-
-#endif /* XXH_STATIC_LINKING_ONLY */
+struct XXH64_state_s {
+   unsigned long long total_len;
+   unsigned long long v1;
+   unsigned long long v2;
+   unsigned long long v3;
+   unsigned long long v4;
+   unsigned long long mem64[4];   /* buffer defined as u64 for alignment */
+   unsigned memsize;
+   unsigned reserved[2];          /* never read nor write, will be removed in a future version */
+};   /* typedef'd to XXH64_state_t */
 
 #endif /* XXHASH_H_5627135585666179 */

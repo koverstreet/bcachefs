@@ -37,9 +37,7 @@
 ***************************************/
 #include "mem.h"
 #include "error_private.h"       /* ERR_*, ERROR */
-#define FSE_STATIC_LINKING_ONLY  /* FSE_MIN_TABLELOG */
 #include "fse.h"
-#define HUF_STATIC_LINKING_ONLY  /* HUF_TABLELOG_ABSOLUTEMAX */
 #include "huf.h"
 
 
@@ -205,14 +203,14 @@ size_t HUF_readStats(u8* huffWeight, size_t hwSize, u32* rankStats,
     if (weightTotal == 0) return ERROR(corruption_detected);
 
     /* get last non-null symbol weight (implied, total must be 2^n) */
-    {   u32 const tableLog = BIT_highbit32(weightTotal) + 1;
+    {   u32 const tableLog = __fls(weightTotal) + 1;
         if (tableLog > HUF_TABLELOG_MAX) return ERROR(corruption_detected);
         *tableLogPtr = tableLog;
         /* determine last weight */
         {   u32 const total = 1 << tableLog;
             u32 const rest = total - weightTotal;
-            u32 const verif = 1 << BIT_highbit32(rest);
-            u32 const lastWeight = BIT_highbit32(rest) + 1;
+            u32 const verif = 1 << __fls(rest);
+            u32 const lastWeight = __fls(rest) + 1;
             if (verif != rest) return ERROR(corruption_detected);    /* last value must be a clean power of 2 */
             huffWeight[oSize] = (u8)lastWeight;
             rankStats[lastWeight]++;

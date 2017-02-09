@@ -39,7 +39,6 @@
 #include <linux/slab.h>     /* memcpy, memset */
 //#include <stdio.h>      /* printf (debug) */
 #include "bitstream.h"
-#define FSE_STATIC_LINKING_ONLY
 #include "fse.h"
 
 
@@ -150,7 +149,7 @@ size_t FSE_buildCTable_wksp(FSE_CTable* ct, const short* normalizedCounter, unsi
                 break;
             default :
                 {
-                    u32 const maxBitsOut = tableLog - BIT_highbit32 (normalizedCounter[s]-1);
+                    u32 const maxBitsOut = tableLog - __fls (normalizedCounter[s]-1);
                     u32 const minStatePlus = normalizedCounter[s] << maxBitsOut;
                     symbolTT[s].deltaNbBits = (maxBitsOut << 16) - minStatePlus;
                     symbolTT[s].deltaFindState = total - normalizedCounter[s];
@@ -457,15 +456,15 @@ void FSE_freeCTable (FSE_CTable* ct) { kfree(ct); }
 /* provides the minimum logSize to safely represent a distribution */
 static unsigned FSE_minTableLog(size_t srcSize, unsigned maxSymbolValue)
 {
-	u32 minBitsSrc = BIT_highbit32((u32)(srcSize - 1)) + 1;
-	u32 minBitsSymbols = BIT_highbit32(maxSymbolValue) + 2;
+	u32 minBitsSrc = __fls((u32)(srcSize - 1)) + 1;
+	u32 minBitsSymbols = __fls(maxSymbolValue) + 2;
 	u32 minBits = minBitsSrc < minBitsSymbols ? minBitsSrc : minBitsSymbols;
 	return minBits;
 }
 
 unsigned FSE_optimalTableLog_internal(unsigned maxTableLog, size_t srcSize, unsigned maxSymbolValue, unsigned minus)
 {
-	u32 maxBitsSrc = BIT_highbit32((u32)(srcSize - 1)) - minus;
+	u32 maxBitsSrc = __fls((u32)(srcSize - 1)) - minus;
     u32 tableLog = maxTableLog;
 	u32 minBits = FSE_minTableLog(srcSize, maxSymbolValue);
     if (tableLog==0) tableLog = FSE_DEFAULT_TABLELOG;

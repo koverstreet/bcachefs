@@ -38,9 +38,7 @@
 ****************************************************************/
 #include <linux/string.h>     /* memcpy, memset */
 #include "bitstream.h"
-#define FSE_STATIC_LINKING_ONLY   /* FSE_optimalTableLog_internal */
 #include "fse.h"        /* header compression */
-#define HUF_STATIC_LINKING_ONLY
 #include "huf.h"
 
 
@@ -247,7 +245,7 @@ static u32 HUF_setMaxHeight(nodeElt* huffNode, u32 lastNonNull, u32 maxNbBits)
             }   }
 
             while (totalCost > 0) {
-                u32 nBitsToDecrease = BIT_highbit32(totalCost) + 1;
+                u32 nBitsToDecrease = __fls(totalCost) + 1;
                 for ( ; nBitsToDecrease > 1; nBitsToDecrease--) {
                     u32 highPos = rankLast[nBitsToDecrease];
                     u32 lowPos = rankLast[nBitsToDecrease-1];
@@ -301,14 +299,14 @@ static void HUF_sort(nodeElt* huffNode, const u32* count, u32 maxSymbolValue)
 
     memset(rank, 0, sizeof(rank));
     for (n=0; n<=maxSymbolValue; n++) {
-        u32 r = BIT_highbit32(count[n] + 1);
+        u32 r = __fls(count[n] + 1);
         rank[r].base ++;
     }
     for (n=30; n>0; n--) rank[n-1].base += rank[n].base;
     for (n=0; n<32; n++) rank[n].current = rank[n].base;
     for (n=0; n<=maxSymbolValue; n++) {
         u32 const c = count[n];
-        u32 const r = BIT_highbit32(c+1) + 1;
+        u32 const r = __fls(c+1) + 1;
         u32 pos = rank[r].current++;
         while ((pos > rank[r].base) && (c > huffNode[pos-1].count)) huffNode[pos]=huffNode[pos-1], pos--;
         huffNode[pos].count = c;

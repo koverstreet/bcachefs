@@ -15,11 +15,8 @@
 #include <linux/slab.h>
 #include <linux/string.h>         /* memset */
 #include "mem.h"
-#define XXH_STATIC_LINKING_ONLY   /* XXH64_state_t */
 #include "xxhash.h"               /* XXH_reset, update, digest */
-#define FSE_STATIC_LINKING_ONLY   /* FSE_encodeSymbol */
 #include "fse.h"
-#define HUF_STATIC_LINKING_ONLY
 #include "huf.h"
 #include "zstd_internal.h"  /* includes zstd.h */
 
@@ -756,7 +753,7 @@ const u8* g_start = NULL;
     `offsetCode` : distance to match, or 0 == repCode.
     `matchCode` : matchLength - MINMATCH
 */
-MEM_STATIC void ZSTD_storeSeq(seqStore_t* seqStorePtr, size_t litLength, const void* literals, u32 offsetCode, size_t matchCode)
+static inline void ZSTD_storeSeq(seqStore_t* seqStorePtr, size_t litLength, const void* literals, u32 offsetCode, size_t matchCode)
 {
 #ifdef STORESEQ_DEBUG
     if (g_startDebug) {
@@ -793,57 +790,15 @@ static unsigned ZSTD_NbCommonBytes (register size_t val)
 {
     if (MEM_isLittleEndian()) {
         if (MEM_64bits()) {
-#       if defined(_MSC_VER) && defined(_WIN64)
-            unsigned long r = 0;
-            _BitScanForward64( &r, (u64)val );
-            return (unsigned)(r>>3);
-#       elif defined(__GNUC__) && (__GNUC__ >= 3)
             return (__builtin_ctzll((u64)val) >> 3);
-#       else
-            static const int DeBruijnBytePos[64] = { 0, 0, 0, 0, 0, 1, 1, 2, 0, 3, 1, 3, 1, 4, 2, 7, 0, 2, 3, 6, 1, 5, 3, 5, 1, 3, 4, 4, 2, 5, 6, 7, 7, 0, 1, 2, 3, 3, 4, 6, 2, 6, 5, 5, 3, 4, 5, 6, 7, 1, 2, 4, 6, 4, 4, 5, 7, 2, 6, 5, 7, 6, 7, 7 };
-            return DeBruijnBytePos[((u64)((val & -(long long)val) * 0x0218A392CDABBD3FULL)) >> 58];
-#       endif
         } else { /* 32 bits */
-#       if defined(_MSC_VER)
-            unsigned long r=0;
-            _BitScanForward( &r, (u32)val );
-            return (unsigned)(r>>3);
-#       elif defined(__GNUC__) && (__GNUC__ >= 3)
             return (__builtin_ctz((u32)val) >> 3);
-#       else
-            static const int DeBruijnBytePos[32] = { 0, 0, 3, 0, 3, 1, 3, 0, 3, 2, 2, 1, 3, 2, 0, 1, 3, 3, 1, 2, 2, 2, 2, 0, 3, 1, 2, 0, 1, 0, 1, 1 };
-            return DeBruijnBytePos[((u32)((val & -(s32)val) * 0x077CB531U)) >> 27];
-#       endif
         }
     } else {  /* Big Endian CPU */
         if (MEM_64bits()) {
-#       if defined(_MSC_VER) && defined(_WIN64)
-            unsigned long r = 0;
-            _BitScanReverse64( &r, val );
-            return (unsigned)(r>>3);
-#       elif defined(__GNUC__) && (__GNUC__ >= 3)
-            return (__builtin_clzll(val) >> 3);
-#       else
-            unsigned r;
-            const unsigned n32 = sizeof(size_t)*4;   /* calculate this way due to compiler complaining in 32-bits mode */
-            if (!(val>>n32)) { r=4; } else { r=0; val>>=n32; }
-            if (!(val>>16)) { r+=2; val>>=8; } else { val>>=24; }
-            r += (!val);
-            return r;
-#       endif
+            return __builtin_clzll(val) >> 3;
         } else { /* 32 bits */
-#       if defined(_MSC_VER)
-            unsigned long r = 0;
-            _BitScanReverse( &r, (unsigned long)val );
-            return (unsigned)(r>>3);
-#       elif defined(__GNUC__) && (__GNUC__ >= 3)
-            return (__builtin_clz((u32)val) >> 3);
-#       else
-            unsigned r;
-            if (!(val>>16)) { r=2; val>>=8; } else { r=0; val>>=24; }
-            r += (!val);
-            return r;
-#       endif
+            return __builtin_clz((u32)val) >> 3;
     }   }
 }
 
@@ -883,7 +838,7 @@ static size_t ZSTD_count_2segments(const u8* ip, const u8* match, const u8* iEnd
 ***************************************/
 static const u32 prime3bytes = 506832829U;
 static u32    ZSTD_hash3(u32 u, u32 h) { return ((u << (32-24)) * prime3bytes)  >> (32-h) ; }
-MEM_STATIC size_t ZSTD_hash3Ptr(const void* ptr, u32 h) { return ZSTD_hash3(MEM_readLE32(ptr), h); }   /* only in zstd_opt.h */
+static inline size_t ZSTD_hash3Ptr(const void* ptr, u32 h) { return ZSTD_hash3(MEM_readLE32(ptr), h); }   /* only in zstd_opt.h */
 
 static const u32 prime4bytes = 2654435761U;
 static u32    ZSTD_hash4(u32 u, u32 h) { return (u * prime4bytes) >> (32-h) ; }
@@ -2685,9 +2640,9 @@ static size_t ZSTD_writeEpilogue(ZSTD_CCtx* cctx, void* dst, size_t dstCapacity)
 }
 
 
-size_t ZSTD_compressEnd (ZSTD_CCtx* cctx,
-                         void* dst, size_t dstCapacity,
-                   const void* src, size_t srcSize)
+size_t ZSTD_compressEnd(ZSTD_CCtx *cctx,
+			void *dst, size_t dstCapacity,
+			const void *src, size_t srcSize)
 {
     size_t endResult;
     size_t const cSize = ZSTD_compressContinue_internal(cctx, dst, dstCapacity, src, srcSize, 1, 1);
@@ -2999,7 +2954,7 @@ size_t ZSTD_sizeof_CStream(const ZSTD_CStream* zcs)
 
 typedef enum { zsf_gather, zsf_flush, zsf_end } ZSTD_flush_e;
 
-MEM_STATIC size_t ZSTD_limitCopy(void* dst, size_t dstCapacity, const void* src, size_t srcSize)
+static inline size_t ZSTD_limitCopy(void* dst, size_t dstCapacity, const void* src, size_t srcSize)
 {
     size_t const length = MIN(dstCapacity, srcSize);
     memcpy(dst, src, length);

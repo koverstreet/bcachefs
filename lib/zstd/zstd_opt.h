@@ -32,7 +32,7 @@ __always_inline void ZSTD_setLog2Prices(seqStore_t* ssPtr)
 }
 
 
-MEM_STATIC void ZSTD_rescaleFreqs(seqStore_t* ssPtr, const u8* src, size_t srcSize)
+static inline void ZSTD_rescaleFreqs(seqStore_t* ssPtr, const u8* src, size_t srcSize)
 {
     unsigned u;
 
@@ -158,7 +158,7 @@ __always_inline u32 ZSTD_getPrice(seqStore_t* seqStorePtr, u32 litLength, const 
 }
 
 
-MEM_STATIC void ZSTD_updatePrice(seqStore_t* seqStorePtr, u32 litLength, const u8* literals, u32 offset, u32 matchLength)
+static inline void ZSTD_updatePrice(seqStore_t* seqStorePtr, u32 litLength, const u8* literals, u32 offset, u32 matchLength)
 {
     u32 u;
 

@@ -12,30 +12,11 @@
 #ifndef ERROR_H_MODULE
 #define ERROR_H_MODULE
 
-#if defined (__cplusplus)
-extern "C" {
-#endif
-
-
 /* ****************************************
 *  Dependencies
 ******************************************/
 #include <stddef.h>        /* size_t */
 #include "zstd_errors.h"  /* enum list */
-
-
-/* ****************************************
-*  Compiler-specific
-******************************************/
-#if defined(__GNUC__)
-#  define ERR_STATIC static __attribute__((unused))
-#elif defined (__cplusplus) || (defined (__STDC_VERSION__) && (__STDC_VERSION__ >= 199901L) /* C99 */)
-#  define ERR_STATIC static inline
-#elif defined(_MSC_VER)
-#  define ERR_STATIC static __inline
-#else
-#  define ERR_STATIC static  /* this version may generate warnings for unused static functions; disable the relevant warning */
-#endif
 
 
 /*-****************************************
@@ -48,14 +29,19 @@ typedef ZSTD_ErrorCode ERR_enum;
 /*-****************************************
 *  Error codes handling
 ******************************************/
-#ifdef ERROR
-#  undef ERROR   /* reported already defined on VS 2015 (Rich Geldreich) */
-#endif
 #define ERROR(name) ((size_t)-PREFIX(name))
 
-ERR_STATIC unsigned ERR_isError(size_t code) { return (code > ERROR(maxCode)); }
+static inline unsigned ERR_isError(size_t code)
+{
+	return (code > ERROR(maxCode));
+}
 
-ERR_STATIC ERR_enum ERR_getErrorCode(size_t code) { if (!ERR_isError(code)) return (ERR_enum)0; return (ERR_enum) (0-code); }
+static inline ERR_enum ERR_getErrorCode(size_t code)
+{
+	if (!ERR_isError(code))
+		return (ERR_enum)0;
+	return (ERR_enum) (0-code);
+}
 
 
 /*-****************************************
@@ -64,13 +50,9 @@ ERR_STATIC ERR_enum ERR_getErrorCode(size_t code) { if (!ERR_isError(code)) retu
 
 const char* ERR_getErrorString(ERR_enum code);   /* error_private.c */
 
-ERR_STATIC const char* ERR_getErrorName(size_t code)
+static inline const char *ERR_getErrorName(size_t code)
 {
     return ERR_getErrorString(ERR_getErrorCode(code));
 }
-
-#if defined (__cplusplus)
-}
-#endif
 
 #endif /* ERROR_H_MODULE */

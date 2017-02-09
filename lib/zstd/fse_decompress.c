@@ -38,7 +38,6 @@
 #include <linux/slab.h>
 #include <linux/string.h>     /* memcpy, memset */
 #include "bitstream.h"
-#define FSE_STATIC_LINKING_ONLY
 #include "fse.h"
 
 
@@ -137,7 +136,7 @@ size_t FSE_buildDTable(FSE_DTable* dt, const short* normalizedCounter, unsigned 
         for (u=0; u<tableSize; u++) {
             FSE_FUNCTION_TYPE const symbol = (FSE_FUNCTION_TYPE)(tableDecode[u].symbol);
             u16 nextState = symbolNext[symbol]++;
-            tableDecode[u].nbBits = (u8) (tableLog - BIT_highbit32 ((u32)nextState) );
+            tableDecode[u].nbBits = (u8) (tableLog - __fls ((u32)nextState) );
             tableDecode[u].newState = (u16) ( (nextState << tableDecode[u].nbBits) - tableSize);
     }   }
 

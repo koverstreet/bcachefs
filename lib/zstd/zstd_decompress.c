@@ -7,15 +7,6 @@
  * of patent rights can be found in the PATENTS file in the same directory.
  */
 
-
-/*!
-*  LEGACY_SUPPORT :
-*  if set to 1, ZSTD_decompress() can decode older formats (v0.1+)
-*/
-#ifndef ZSTD_LEGACY_SUPPORT
-#  define ZSTD_LEGACY_SUPPORT 0
-#endif
-
 /*!
 *  MAXWINDOWSIZE_DEFAULT :
 *  maximum window size accepted by DStream, by default.
@@ -29,30 +20,14 @@
 /*-*******************************************************
 *  Dependencies
 *********************************************************/
+#include <linux/prefetch.h>
 #include <linux/slab.h>
 #include <linux/string.h>      /* memcpy, memmove, memset */
 #include "mem.h"         /* low level memory routines */
-#define XXH_STATIC_LINKING_ONLY   /* XXH64_state_t */
 #include "xxhash.h"      /* XXH64_* */
-#define FSE_STATIC_LINKING_ONLY
 #include "fse.h"
-#define HUF_STATIC_LINKING_ONLY
 #include "huf.h"
 #include "zstd_internal.h"
-
-#if defined(ZSTD_LEGACY_SUPPORT) && (ZSTD_LEGACY_SUPPORT>=1)
-#  include "zstd_legacy.h"
-#endif
-
-
-#if defined(_MSC_VER)
-#  include <mmintrin.h>   /* https://msdn.microsoft.com/fr-fr/library/84szxsww(v=vs.90).aspx */
-#  define ZSTD_PREFETCH(ptr)   _mm_prefetch((const char*)ptr, _MM_HINT_T0)
-#elif defined(__GNUC__)
-#  define ZSTD_PREFETCH(ptr)   __builtin_prefetch(ptr, 0, 0)
-#else
-#  define ZSTD_PREFETCH(ptr)   /* disabled */
-#endif
 
 /*-*************************************
 *  Macros
@@ -76,8 +51,7 @@ typedef enum { ZSTDds_getFrameHeaderSize, ZSTDds_decodeFrameHeader,
                ZSTDds_decompressLastBlock, ZSTDds_checkChecksum,
                ZSTDds_decodeSkippableHeader, ZSTDds_skipFrame } ZSTD_dStage;
 
-struct ZSTD_DCtx_s
-{
+struct ZSTD_DCtx_s {
     const FSE_DTable* LLTptr;
     const FSE_DTable* MLTptr;
     const FSE_DTable* OFTptr;
@@ -123,7 +97,7 @@ size_t ZSTD_decompressBegin(ZSTD_DCtx* dctx)
     dctx->hufTable[0] = (HUF_DTable)((HufLog)*0x1000001);  /* cover both little and big endian */
     dctx->litEntropy = dctx->fseEntropy = 0;
     dctx->dictID = 0;
-    MEM_STATIC_ASSERT(sizeof(dctx->rep) == sizeof(repStartValue));
+    BUILD_BUG_ON(sizeof(dctx->rep) != sizeof(repStartValue));
     memcpy(dctx->rep, repStartValue, sizeof(repStartValue));  /* initial repcodes */
     dctx->LLTptr = dctx->LLTable;
     dctx->MLTptr = dctx->MLTable;
@@ -194,9 +168,6 @@ unsigned ZSTD_isFrame(const void* buffer, size_t size)
         if (magic == ZSTD_MAGICNUMBER) return 1;
         if ((magic & 0xFFFFFFF0U) == ZSTD_MAGIC_SKIPPABLE_START) return 1;
     }
-#if defined(ZSTD_LEGACY_SUPPORT) && (ZSTD_LEGACY_SUPPORT >= 1)
-    if (ZSTD_isLegacy(buffer, size)) return 1;
-#endif
     return 0;
 }
 
@@ -297,14 +268,10 @@ size_t ZSTD_getFrameParams(ZSTD_frameParams* fparamsPtr, const void* src, size_t
                    - frame header not complete (`srcSize` too small) */
 unsigned long long ZSTD_getDecompressedSize(const void* src, size_t srcSize)
 {
-#if defined(ZSTD_LEGACY_SUPPORT) && (ZSTD_LEGACY_SUPPORT==1)
-    if (ZSTD_isLegacy(src, srcSize)) return ZSTD_getDecompressedSize_legacy(src, srcSize);
-#endif
-    {   ZSTD_frameParams fparams;
-        size_t const frResult = ZSTD_getFrameParams(&fparams, src, srcSize);
-        if (frResult!=0) return 0;
-        return fparams.frameContentSize;
-    }
+    ZSTD_frameParams fparams;
+    size_t const frResult = ZSTD_getFrameParams(&fparams, src, srcSize);
+    if (frResult!=0) return 0;
+    return fparams.frameContentSize;
 }
 
 
@@ -1257,7 +1224,7 @@ static size_t ZSTD_decompressSequencesLong(
             seq_t const sequence = ZSTD_decodeSequenceLong(&seqState);
             size_t const oneSeqSize = ZSTD_execSequenceLong(op, oend, sequences[(seqNb-ADVANCED_SEQS) & STOSEQ_MASK], &litPtr, litEnd, base, vBase, dictEnd);
             if (ZSTD_isError(oneSeqSize)) return oneSeqSize;
-            ZSTD_PREFETCH(sequence.match);
+            prefetch(sequence.match);
             sequences[seqNb&STOSEQ_MASK] = sequence;
             op += oneSeqSize;
         }
@@ -1422,9 +1389,6 @@ size_t ZSTD_decompress_usingDict(ZSTD_DCtx* dctx,
                            const void* src, size_t srcSize,
                            const void* dict, size_t dictSize)
 {
-#if defined(ZSTD_LEGACY_SUPPORT) && (ZSTD_LEGACY_SUPPORT==1)
-    if (ZSTD_isLegacy(src, srcSize)) return ZSTD_decompressLegacy(dst, dstCapacity, src, srcSize, dict, dictSize);
-#endif
     CHECK_F(ZSTD_decompressBegin_usingDict(dctx, dict, dictSize));
     ZSTD_checkContinuity(dctx, dst);
     return ZSTD_decompressFrame(dctx, dst, dstCapacity, src, srcSize);
@@ -1814,9 +1778,6 @@ size_t ZSTD_decompress_usingDDict(ZSTD_DCtx* dctx,
                             const void* src, size_t srcSize,
                             const ZSTD_DDict* ddict)
 {
-#if defined(ZSTD_LEGACY_SUPPORT) && (ZSTD_LEGACY_SUPPORT==1)
-    if (ZSTD_isLegacy(src, srcSize)) return ZSTD_decompressLegacy(dst, dstCapacity, src, srcSize, ddict->dictContent, ddict->dictSize);
-#endif
     ZSTD_refDCtx(dctx, ddict->refContext);
     ZSTD_checkContinuity(dctx, dst);
     return ZSTD_decompressFrame(dctx, dst, dstCapacity, src, srcSize);
@@ -1877,10 +1838,6 @@ size_t ZSTD_freeDStream(ZSTD_DStream* zds)
         ZSTD_freeDDict(zds->ddictLocal);
         kfree(zds->inBuff);
         kfree(zds->outBuff);
-#if defined(ZSTD_LEGACY_SUPPORT) && (ZSTD_LEGACY_SUPPORT >= 1)
-        if (zds->legacyContext)
-            ZSTD_freeLegacyStreamContext(zds->legacyContext, zds->previousLegacyVersion);
-#endif
         kfree(zds);
         return 0;
     }
@@ -1949,7 +1906,7 @@ size_t ZSTD_sizeof_DStream(const ZSTD_DStream* zds)
 
 /* *****   Decompression   ***** */
 
-MEM_STATIC size_t ZSTD_limitCopy(void* dst, size_t dstCapacity, const void* src, size_t srcSize)
+static inline size_t ZSTD_limitCopy(void* dst, size_t dstCapacity, const void* src, size_t srcSize)
 {
     size_t const length = MIN(dstCapacity, srcSize);
     memcpy(dst, src, length);
@@ -1967,11 +1924,6 @@ size_t ZSTD_decompressStream(ZSTD_DStream* zds, ZSTD_outBuffer* output, ZSTD_inB
     char* op = ostart;
     u32 someMoreWork = 1;
 
-#if defined(ZSTD_LEGACY_SUPPORT) && (ZSTD_LEGACY_SUPPORT>=1)
-    if (zds->legacyVersion)
-        return ZSTD_decompressLegacyStream(zds->legacyContext, zds->legacyVersion, output, input);
-#endif
-
     while (someMoreWork) {
         switch(zds->stage)
         {
@@ -1980,23 +1932,11 @@ size_t ZSTD_decompressStream(ZSTD_DStream* zds, ZSTD_outBuffer* output, ZSTD_inB
             /* fall-through */
 
         case zdss_loadHeader :
-            {   size_t const hSize = ZSTD_getFrameParams(&zds->fParams, zds->headerBuffer, zds->lhSize);
+            {
+		size_t const hSize = ZSTD_getFrameParams(&zds->fParams, zds->headerBuffer, zds->lhSize);
                 if (ZSTD_isError(hSize))
-#if defined(ZSTD_LEGACY_SUPPORT) && (ZSTD_LEGACY_SUPPORT>=1)
-                {   u32 const legacyVersion = ZSTD_isLegacy(istart, iend-istart);
-                    if (legacyVersion) {
-                        const void* const dict = zds->ddict ? zds->ddict->dictContent : NULL;
-                        size_t const dictSize = zds->ddict ? zds->ddict->dictSize : 0;
-                        CHECK_F(ZSTD_initLegacyStream(&zds->legacyContext, zds->previousLegacyVersion, legacyVersion,
-                                                       dict, dictSize));
-                        zds->legacyVersion = zds->previousLegacyVersion = legacyVersion;
-                        return ZSTD_decompressLegacyStream(zds->legacyContext, zds->legacyVersion, output, input);
-                    } else {
-                        return hSize; /* error */
-                }   }
-#else
-                return hSize;
-#endif
+			return hSize;
+
                 if (hSize != 0) {   /* need more input */
                     size_t const toLoad = hSize - zds->lhSize;   /* if hSize!=0, hSize > zds->lhSize */
                     if (toLoad > (size_t)(iend-ip)) {   /* not enough input to load full header */
