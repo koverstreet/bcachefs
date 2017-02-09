@@ -80,40 +80,36 @@ static inline const u8 *hash_table_add16(const struct lz4_hash_table hash,
 	return hash.base + offset;
 }
 
-static inline const u8 *try_match(const struct lz4_hash_table hash,
-				  const u8 *ip)
-{
-	const u8 *ref = hash.add(hash, ip);
-
-	return ref >= ip - MAX_DISTANCE &&
-		A32(ref) == A32(ip) ? ref : NULL;
-}
-
 static inline const u8 *find_match(const struct lz4_hash_table hash,
 				   const u8 **ip, const u8 *anchor,
-				   const u8 *start, const u8 *end)
+				   const u8 *start, const u8 *mflimit)
 {
-
 	int findmatchattempts = (1U << SKIPSTRENGTH) + 3;
-	const u8 *next_ip = *ip, *ref;
 
-	do {
-		*ip = next_ip;
-		next_ip += findmatchattempts++ >> SKIPSTRENGTH;
+	while (*ip <= mflimit) {
+		const u8 *ref = hash.add(hash, *ip);
 
-		if (unlikely(next_ip > end))
-			return NULL;
-	} while (!(ref = try_match(hash, *ip)));
+		if (ref >= *ip - MAX_DISTANCE && A32(ref) == A32(*ip)) {
+			/* found match: */
+			while (*ip > anchor &&
+			       ref > start &&
+			       unlikely((*ip)[-1] == ref[-1])) {
+				(*ip)--;
+				ref--;
+			}
 
-	/* Catch up */
-	while (*ip > anchor &&
-	       ref > start &&
-	       unlikely((*ip)[-1] == ref[-1])) {
-		(*ip)--;
-		ref--;
+			return ref;
+		}
+
+		*ip += findmatchattempts++ >> SKIPSTRENGTH;
 	}
 
-	return ref;
+	return NULL;
+}
+
+static inline int length_len(unsigned length)
+{
+	return length / 255 + 1;
 }
 
 /*
@@ -129,102 +125,77 @@ static inline int lz4_compressctx(const struct lz4_hash_table hash,
 				  const u8 *src, size_t src_len,
 				  u8 *dst, size_t *dst_len)
 {
-	const u8 *ip = src;
-	const u8 *anchor = ip, *ref;
+	const u8 *ip = src, *anchor = ip, *ref;
 	const u8 *const iend = ip + src_len;
 	const u8 *const mflimit = iend - MFLIMIT;
 	const u8 *const matchlimit = iend - LASTLITERALS;
-	size_t maxoutputsize = *dst_len;
-	u8 *op = dst;
-	u8 *const oend = op + maxoutputsize;
-	int length;
-	u8 *token;
+	u8 *op = dst, *token;
+	u8 *const oend = op + *dst_len;
+	size_t literal_len, match_len, match_offset;
 
 	/* Init */
-	if (src_len < MINLENGTH)
-		goto _last_literals;
-
 	memset(hash.ctx, 0, LZ4_MEM_COMPRESS);
 	hash.add(hash, ip);
 
-	/* Main Loop */
-	while (1) {
-		/* Starting a literal: */
-		anchor = ip++;
-		ref = find_match(hash, &ip, anchor, src, mflimit);
-		if (!ref)
-			goto _last_literals;
+	/* Always start with a literal: */
+	ip++;
 
+	while ((ref = find_match(hash, &ip, anchor, src, mflimit))) {
 		/*
 		 * We found a match; @ip now points to the match and @ref points
 		 * to the prior part of the input we matched with. Everything up
 		 * to @anchor has been encoded; the range from @anchor to @ip
 		 * didn't match and now has to be encoded as a literal:
 		 */
-		length = ip - anchor;
-		token = op++;
+		literal_len = ip - anchor;
+		match_offset = ip - ref;
+
+		/* MINMATCH bytes already matched from find_match(): */
+		ip += MINMATCH;
+		ref += MINMATCH;
+		match_len = common_length(ip, ref, matchlimit);
+		ip += match_len;
 
 		/* check output limit */
-		if (unlikely(op + length + (2 + 1 + LASTLITERALS) +
-			     (length >> 8) > oend))
-			return -(ip - src);
+		if (unlikely(op +
+			     1 + /* token */
+			     2 + /* match ofset */
+			     literal_len +
+			     length_len(literal_len) +
+			     length_len(match_len) +
+			     LASTLITERALS > oend))
+			break;
 
-		*token = encode_length(&op, length) << ML_BITS;
+		token = op++;
+		*token = encode_length(&op, literal_len) << ML_BITS;
+		MEMCPY_ADVANCE_CHUNKED(op, anchor, literal_len);
+		PUT_LE16_ADVANCE(op, match_offset);
+		*token += encode_length(&op, match_len);
 
-		/* Copy Literals */
-		MEMCPY_ADVANCE_CHUNKED(op, anchor, length);
-
-		/* Encode matches: */
-		while (1) {
-			/* Match offset: */
-			PUT_LE16_ADVANCE(op, ip - ref);
-
-			/* MINMATCH bytes already matched from find_match(): */
-			ip += MINMATCH;
-			ref += MINMATCH;
-
-			length = common_length(ip, ref, matchlimit);
-
-			/* Check output limit */
-			if (unlikely(op + (1 + LASTLITERALS) +
-				     (length >> 8) > oend))
-				return -(ip - src);
-
-			ip += length;
-
-			*token += encode_length(&op, length);
-
-			/* Test end of chunk */
-			if (ip > mflimit) {
-				anchor = ip;
-				break;
-			}
-
-			/* Fill table */
-			hash.add(hash, ip - 2);
-
-			/* Test next position */
-			ref = try_match(hash, ip);
-			if (!ref)
-				break;
-
-			token = op++;
-			*token = 0;
-		}
+		anchor = ip;
 	}
 
-_last_literals:
-	/* Encode Last Literals */
-	length = iend - anchor;
-	if ((op - dst) + length + 1 +
-	    ((length + 255 - RUN_MASK) / 255) > (u32)maxoutputsize)
-		return -(ip - src);
+	/* Encode remaining input as literal: */
+	literal_len = iend - anchor;
+	if (unlikely(op +
+		     1 +
+		     literal_len +
+		     length_len(literal_len) > oend)) {
+		/* Return how much would be able to fit: */
+		ssize_t remaining = oend - op;
+		ssize_t encoded = anchor - src;
+
+		remaining -= length_len(remaining) + 1;
+
+		return -max(encoded + remaining, 1L);
+	}
 
 	token = op++;
-	*token = encode_length(&op, length) << ML_BITS;
-	MEMCPY_ADVANCE(op, anchor, iend - anchor);
+	*token = encode_length(&op, literal_len) << ML_BITS;
+	MEMCPY_ADVANCE(op, anchor, literal_len);
 
 	/* End */
+	BUG_ON(op > oend);
 	*dst_len = op - dst;
 	return 0;
 }
