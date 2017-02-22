@@ -199,8 +199,6 @@ redo_peek:
 
 	closure_sync(&cl);
 
-	mutex_lock(&c->btree_interior_update_lock);
-
 	for (i = 0;; i++) {
 		struct btree_interior_update *as;
 		struct pending_btree_node_free *d;
@@ -212,6 +210,8 @@ redo_peek:
 		}
 		n = bl->entries[i];
 		mutex_unlock(&j->blacklist_lock);
+redo_wait:
+		mutex_lock(&c->btree_interior_update_lock);
 
 		/*
 		 * Is the node on the list of pending interior node updates -
@@ -225,11 +225,11 @@ redo_peek:
 				closure_wait(&as->wait, &cl);
 				mutex_unlock(&c->btree_interior_update_lock);
 				closure_sync(&cl);
-				break;
+				goto redo_wait;
 			}
-	}
 
-	mutex_unlock(&c->btree_interior_update_lock);
+		mutex_unlock(&c->btree_interior_update_lock);
+	}
 
 	mutex_lock(&j->blacklist_lock);
 
