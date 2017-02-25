@@ -817,22 +817,12 @@ static const char *run_cache_set(struct cache_set *c)
 		if (c->opts.norecovery)
 			goto recovery_done;
 
-		/*
-		 * Write a new journal entry _before_ we start journalling new
-		 * data - otherwise, we could end up with btree node bsets with
-		 * journal seqs arbitrarily far in the future vs. the most
-		 * recently written journal entry on disk, if we crash before
-		 * writing the next journal entry:
-		 */
-		err = "error writing journal entry";
-		if (bch_journal_meta(&c->journal))
-			goto err;
-
 		bch_verbose(c, "starting fsck:");
 		err = "error in fsck";
 		ret = bch_fsck(c, !c->opts.nofsck);
 		if (ret)
 			goto err;
+
 		bch_verbose(c, "fsck done");
 	} else {
 		struct bch_inode_unpacked inode;

@@ -935,6 +935,19 @@ static int journal_seq_blacklist_read(struct journal *j,
 	return 0;
 }
 
+static inline bool journal_has_keys(struct list_head *list)
+{
+	struct journal_replay *i;
+	struct jset_entry *entry;
+	struct bkey_i *k, *_n;
+
+	list_for_each_entry(i, list, list)
+		for_each_jset_key(k, _n, entry, &i->j)
+			return true;
+
+	return false;
+}
+
 int bch_journal_read(struct cache_set *c, struct list_head *list)
 {
 	struct jset_entry *prio_ptrs;
@@ -968,6 +981,9 @@ int bch_journal_read(struct cache_set *c, struct list_head *list)
 		bch_err(c, "no journal entries found");
 		return BCH_FSCK_REPAIR_IMPOSSIBLE;
 	}
+
+	fsck_err_on(c->sb.clean && journal_has_keys(list), c,
+		    "filesystem marked clean but journal has keys to replay");
 
 	j = &list_entry(list->prev, struct journal_replay, list)->j;
 
@@ -1482,17 +1498,28 @@ int bch_journal_replay(struct cache_set *c, struct list_head *list)
 		entries++;
 	}
 
+	if (keys) {
+		bch_btree_flush(c);
+
+		/*
+		 * Write a new journal entry _before_ we start journalling new data -
+		 * otherwise, we could end up with btree node bsets with journal seqs
+		 * arbitrarily far in the future vs. the most recently written journal
+		 * entry on disk, if we crash before writing the next journal entry:
+		 */
+		ret = bch_journal_meta(&c->journal);
+		if (ret)
+			goto err;
+	}
+
 	bch_info(c, "journal replay done, %i keys in %i entries, seq %llu",
 		 keys, entries, (u64) atomic64_read(&j->seq));
-
-	fsck_err_on(c->sb.clean && keys, c,
-		    "filesystem marked clean, but journal had keys to replay");
 
 	bch_journal_set_replay_done(&c->journal);
 err:
 	if (ret)
 		bch_err(c, "journal replay error: %d", ret);
-fsck_err:
+
 	bch_journal_entries_free(list);
 
 	return ret;
