@@ -732,10 +732,10 @@ reread:
 
 			if (le64_to_cpu(j->seq) > *seq)
 				*seq = le64_to_cpu(j->seq);
-next_block:
+
 			blocks = __set_blocks(j, le32_to_cpu(j->u64s),
 					      block_bytes(c));
-
+next_block:
 			pr_debug("next");
 			bucket_offset	+= blocks * c->sb.block_size;
 			sectors_read	-= blocks * c->sb.block_size;
