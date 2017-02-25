@@ -370,7 +370,6 @@ out:
 struct journal_list {
 	struct closure		cl;
 	struct mutex		lock;
-	struct mutex		cache_set_buffer_lock;
 	struct list_head	*head;
 	int			ret;
 };
@@ -527,7 +526,8 @@ fsck_err:
 #define JOURNAL_ENTRY_NONE	6
 #define JOURNAL_ENTRY_BAD	7
 
-static int journal_entry_validate(struct cache_set *c, struct jset *j, u64 sector,
+static int journal_entry_validate(struct cache_set *c,
+				  struct jset *j, u64 sector,
 				  unsigned bucket_sectors_left,
 				  unsigned sectors_read)
 {
@@ -639,125 +639,127 @@ fsck_err:
 	return ret;
 }
 
+struct journal_read_buf {
+	void		*data;
+	size_t		size;
+};
+
+static int journal_read_buf_realloc(struct journal_read_buf *b,
+				    size_t new_size)
+{
+	void *n;
+
+	new_size = roundup_pow_of_two(new_size);
+	n = (void *) __get_free_pages(GFP_KERNEL, get_order(new_size));
+	if (!n)
+		return -ENOMEM;
+
+	free_pages((unsigned long) b->data, get_order(b->size));
+	b->data = n;
+	b->size = new_size;
+	return 0;
+}
+
 static int journal_read_bucket(struct cache *ca,
+			       struct journal_read_buf *buf,
 			       struct journal_list *jlist,
 			       unsigned bucket, u64 *seq, bool *entries_found)
 {
 	struct cache_set *c = ca->set;
 	struct journal_device *ja = &ca->journal;
 	struct bio *bio = ja->bio;
-	struct jset *j, *data;
-	unsigned sectors, sectors_read, bucket_offset = 0;
-	unsigned max_entry_sectors = c->journal.entry_size_max >> 9;
-	u64 sector = bucket_to_sector(ca, ja->buckets[bucket]);
+	struct jset *j = NULL;
+	unsigned sectors, sectors_read = 0;
+	u64 offset = bucket_to_sector(ca, ja->buckets[bucket]),
+	    end = offset + ca->mi.bucket_size;
 	bool saw_bad = false;
 	int ret = 0;
 
-	data = (void *) __get_free_pages(GFP_KERNEL,
-				get_order(c->journal.entry_size_max));
-	if (!data) {
-		mutex_lock(&jlist->cache_set_buffer_lock);
-		data = c->journal.buf[0].data;
-	}
-
 	pr_debug("reading %u", bucket);
 
-	while (bucket_offset < ca->mi.bucket_size) {
-reread:
-		sectors_read = min_t(unsigned,
-				     ca->mi.bucket_size - bucket_offset,
-				     max_entry_sectors);
+	while (offset < end) {
+		if (!sectors_read) {
+reread:			sectors_read = min_t(unsigned,
+				end - offset, buf->size >> 9);
 
-		bio_reset(bio);
-		bio->bi_bdev		= ca->disk_sb.bdev;
-		bio->bi_iter.bi_sector	= sector + bucket_offset;
-		bio->bi_iter.bi_size	= sectors_read << 9;
-		bio_set_op_attrs(bio, REQ_OP_READ, 0);
-		bch_bio_map(bio, data);
+			bio_reset(bio);
+			bio->bi_bdev		= ca->disk_sb.bdev;
+			bio->bi_iter.bi_sector	= offset;
+			bio->bi_iter.bi_size	= sectors_read << 9;
+			bio_set_op_attrs(bio, REQ_OP_READ, 0);
+			bch_bio_map(bio, buf->data);
 
-		ret = submit_bio_wait(bio);
+			ret = submit_bio_wait(bio);
 
-		if (cache_fatal_io_err_on(ret, ca,
-					  "journal read from sector %llu",
-					  sector + bucket_offset) ||
-		    bch_meta_read_fault("journal")) {
-			ret = -EIO;
-			goto err;
+			if (cache_fatal_io_err_on(ret, ca,
+						  "journal read from sector %llu",
+						  offset) ||
+			    bch_meta_read_fault("journal"))
+				return -EIO;
+
+			j = buf->data;
 		}
 
-		/* This function could be simpler now since we no longer write
-		 * journal entries that overlap bucket boundaries; this means
-		 * the start of a bucket will always have a valid journal entry
-		 * if it has any journal entries at all.
+		ret = journal_entry_validate(c, j, offset,
+					end - offset, sectors_read);
+		switch (ret) {
+		case BCH_FSCK_OK:
+			break;
+		case JOURNAL_ENTRY_REREAD:
+			if (vstruct_bytes(j) > buf->size) {
+				ret = journal_read_buf_realloc(buf,
+							vstruct_bytes(j));
+				if (ret)
+					return ret;
+			}
+			goto reread;
+		case JOURNAL_ENTRY_NONE:
+			if (!saw_bad)
+				return 0;
+			sectors = c->sb.block_size;
+			goto next_block;
+		case JOURNAL_ENTRY_BAD:
+			saw_bad = true;
+			sectors = c->sb.block_size;
+			goto next_block;
+		default:
+			return ret;
+		}
+
+		/*
+		 * This happens sometimes if we don't have discards on -
+		 * when we've partially overwritten a bucket with new
+		 * journal entries. We don't need the rest of the
+		 * bucket:
 		 */
+		if (le64_to_cpu(j->seq) < ja->bucket_seq[bucket])
+			return 0;
 
-		j = data;
-		while (sectors_read) {
-			ret = journal_entry_validate(c, j,
-					sector + bucket_offset,
-					ca->mi.bucket_size - bucket_offset,
-					sectors_read);
-			switch (ret) {
-			case BCH_FSCK_OK:
-				break;
-			case JOURNAL_ENTRY_REREAD:
-				goto reread;
-			case JOURNAL_ENTRY_NONE:
-				if (!saw_bad)
-					goto out;
-				sectors = c->sb.block_size;
-				goto next_block;
-			case JOURNAL_ENTRY_BAD:
-				saw_bad = true;
-				sectors = c->sb.block_size;
-				goto next_block;
-			default:
-				goto err;
-			}
+		ja->bucket_seq[bucket] = le64_to_cpu(j->seq);
 
-			/*
-			 * This happens sometimes if we don't have discards on -
-			 * when we've partially overwritten a bucket with new
-			 * journal entries. We don't need the rest of the
-			 * bucket:
-			 */
-			if (le64_to_cpu(j->seq) < ja->bucket_seq[bucket])
-				goto out;
-
-			ja->bucket_seq[bucket] = le64_to_cpu(j->seq);
-
-			ret = journal_entry_add(c, jlist, j);
-			switch (ret) {
-			case JOURNAL_ENTRY_ADD_OK:
-				*entries_found = true;
-				break;
-			case JOURNAL_ENTRY_ADD_OUT_OF_RANGE:
-				break;
-			default:
-				goto err;
-			}
-
-			if (le64_to_cpu(j->seq) > *seq)
-				*seq = le64_to_cpu(j->seq);
-
-			sectors = vstruct_sectors(j, c->block_bits);
-next_block:
-			pr_debug("next");
-			bucket_offset	+= sectors;
-			sectors_read	-= sectors;
-			j = ((void *) j) + (sectors << 9);
+		ret = journal_entry_add(c, jlist, j);
+		switch (ret) {
+		case JOURNAL_ENTRY_ADD_OK:
+			*entries_found = true;
+			break;
+		case JOURNAL_ENTRY_ADD_OUT_OF_RANGE:
+			break;
+		default:
+			return ret;
 		}
-	}
-out:
-	ret = 0;
-err:
-	if (data == c->journal.buf[0].data)
-		mutex_unlock(&jlist->cache_set_buffer_lock);
-	else
-		free_pages((unsigned long) data,
-				get_order(c->journal.entry_size_max));
 
-	return ret;
+		if (le64_to_cpu(j->seq) > *seq)
+			*seq = le64_to_cpu(j->seq);
+
+		sectors = vstruct_sectors(j, c->block_bits);
+next_block:
+		pr_debug("next");
+		offset		+= sectors;
+		sectors_read	-= sectors;
+		j = ((void *) j) + (sectors << 9);
+	}
+
+	return 0;
 }
 
 static void bch_journal_read_device(struct closure *cl)
@@ -765,15 +767,11 @@ static void bch_journal_read_device(struct closure *cl)
 #define read_bucket(b)							\
 	({								\
 		bool entries_found = false;				\
-		int ret = journal_read_bucket(ca, jlist, b, &seq,	\
-					      &entries_found);		\
+		ret = journal_read_bucket(ca, &buf, jlist, b, &seq,	\
+					  &entries_found);		\
+		if (ret)						\
+			goto err;					\
 		__set_bit(b, bitmap);					\
-		if (ret) {						\
-			mutex_lock(&jlist->lock);			\
-			jlist->ret = ret;				\
-			mutex_unlock(&jlist->lock);			\
-			closure_return(cl);				\
-		}							\
 		entries_found;						\
 	 })
 
@@ -783,15 +781,21 @@ static void bch_journal_read_device(struct closure *cl)
 	struct journal_list *jlist =
 		container_of(cl->parent, struct journal_list, cl);
 	struct request_queue *q = bdev_get_queue(ca->disk_sb.bdev);
+	struct journal_read_buf buf = { NULL, 0 };
 
 	DECLARE_BITMAP(bitmap, ja->nr);
 	unsigned i, l, r;
 	u64 seq = 0;
+	int ret;
 
 	if (!ja->nr)
-		closure_return(cl);
+		goto out;
 
 	bitmap_zero(bitmap, ja->nr);
+	ret = journal_read_buf_realloc(&buf, PAGE_SIZE);
+	if (ret)
+		goto err;
+
 	pr_debug("%u journal buckets", ja->nr);
 
 	/*
@@ -834,7 +838,7 @@ linear_scan:
 
 	/* no journal entries on this device? */
 	if (l == ja->nr)
-		closure_return(cl);
+		goto out;
 bsearch:
 	/* Binary search */
 	r = find_next_bit(bitmap, ja->nr, l + 1);
@@ -892,8 +896,14 @@ search_done:
 		if (!test_bit(i, bitmap) &&
 		    !read_bucket(i))
 			break;
-
+out:
+	free_pages((unsigned long) buf.data, get_order(buf.size));
 	closure_return(cl);
+err:
+	mutex_lock(&jlist->lock);
+	jlist->ret = ret;
+	mutex_unlock(&jlist->lock);
+	goto out;
 #undef read_bucket
 }
 
@@ -962,7 +972,6 @@ int bch_journal_read(struct cache_set *c, struct list_head *list)
 
 	closure_init_stack(&jlist.cl);
 	mutex_init(&jlist.lock);
-	mutex_init(&jlist.cache_set_buffer_lock);
 	jlist.head = list;
 	jlist.ret = 0;
 
