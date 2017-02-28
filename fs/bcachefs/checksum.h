@@ -29,6 +29,9 @@ struct bch_csum bch_checksum(struct cache_set *, unsigned, struct nonce,
 	bch_checksum(_c, _type, _nonce, start, end - start);		\
 })
 
+int bch_chacha_encrypt_key(struct bch_key *, struct nonce, void *, size_t);
+int bch_request_key(struct bch_sb *, struct bch_key *);
+
 void bch_encrypt(struct cache_set *, unsigned, struct nonce,
 		 void *data, size_t);
 

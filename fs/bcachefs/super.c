@@ -38,6 +38,7 @@
 #include <linux/backing-dev.h>
 #include <linux/blkdev.h>
 #include <linux/debugfs.h>
+#include <linux/device.h>
 #include <linux/genhd.h>
 #include <linux/idr.h>
 #include <linux/kthread.h>

@@ -8,6 +8,7 @@
 #include <linux/crypto.h>
 #include <linux/key.h>
 #include <linux/random.h>
+#include <linux/scatterlist.h>
 #include <crypto/algapi.h>
 #include <crypto/chacha20.h>
 #include <crypto/hash.h>
@@ -199,6 +200,26 @@ static inline void do_encrypt(struct crypto_blkcipher *tfm,
 	do_encrypt_sg(tfm, nonce, &sg, len);
 }
 
+int bch_chacha_encrypt_key(struct bch_key *key, struct nonce nonce,
+			   void *buf, size_t len)
+{
+	struct crypto_blkcipher *chacha20 =
+		crypto_alloc_blkcipher("chacha20", 0, CRYPTO_ALG_ASYNC);
+	int ret;
+
+	if (!chacha20)
+		return PTR_ERR(chacha20);
+
+	ret = crypto_blkcipher_setkey(chacha20, (void *) key, sizeof(*key));
+	if (ret)
+		goto err;
+
+	do_encrypt(chacha20, nonce, buf, len);
+err:
+	crypto_free_blkcipher(chacha20);
+	return ret;
+}
+
 static void gen_poly_key(struct cache_set *c, struct shash_desc *desc,
 			 struct nonce nonce)
 {
@@ -342,79 +363,93 @@ void bch_encrypt_bio(struct cache_set *c, unsigned type,
 	do_encrypt_sg(c->chacha20, nonce, sgl, bytes);
 }
 
-static int bch_request_key(struct cache_set *c,
-			   struct bch_key *key)
+#ifdef __KERNEL__
+int bch_request_key(struct bch_sb *sb, struct bch_key *key)
 {
 	char key_description[60];
 	struct key *keyring_key;
 	const struct user_key_payload *ukp;
-	int ret = -1;
+	int ret;
 
 	snprintf(key_description, sizeof(key_description),
-		 "bcache:%pUb", &c->sb.user_uuid);
+		 "bcache:%pUb", &sb->user_uuid);
 
 	keyring_key = request_key(&key_type_logon, key_description, NULL);
-	if (IS_ERR(keyring_key)) {
-		bch_err(c, "error requesting encryption key");
+	if (IS_ERR(keyring_key))
 		return PTR_ERR(keyring_key);
-	}
 
 	down_read(&keyring_key->sem);
 	ukp = user_key_payload(keyring_key);
 	if (ukp->datalen == sizeof(*key)) {
 		memcpy(key, ukp->data, ukp->datalen);
 		ret = 0;
+	} else {
+		ret = -EINVAL;
 	}
 	up_read(&keyring_key->sem);
-
 	key_put(keyring_key);
+
 	return ret;
 }
+#else
+#include <keyutils.h>
+#include <uuid/uuid.h>
+
+int bch_request_key(struct bch_sb *sb, struct bch_key *key)
+{
+	key_serial_t key_id;
+	char key_description[60];
+	char uuid[40];
+
+	uuid_unparse_lower(sb->user_uuid.b, uuid);
+	sprintf(key_description, "bcache:%s", uuid);
+
+	key_id = request_key("user", key_description, NULL,
+			     KEY_SPEC_USER_KEYRING);
+	if (key_id < 0)
+		return -errno;
+
+	if (keyctl_read(key_id, (void *) key, sizeof(*key)) != sizeof(*key))
+		return -1;
+
+	return 0;
+}
+#endif
 
 static int bch_decrypt_sb_key(struct cache_set *c,
 			      struct bch_sb_field_crypt *crypt,
 			      struct bch_key *key)
 {
-	struct bch_encrypted_key encrypted_key = crypt->key;
+	struct bch_encrypted_key sb_key = crypt->key;
 	struct bch_key user_key;
-	struct crypto_blkcipher *chacha20 = NULL;
 	int ret = 0;
 
 	/* is key encrypted? */
-	if (!bch_key_is_encrypted(&encrypted_key))
+	if (!bch_key_is_encrypted(&sb_key))
 		goto out;
 
-	chacha20 = crypto_alloc_blkcipher("chacha20", 0, CRYPTO_ALG_ASYNC);
-	if (!chacha20) {
-		ret = PTR_ERR(chacha20);
+	ret = bch_request_key(c->disk_sb, &user_key);
+	if (ret) {
+		bch_err(c, "error requesting encryption key");
 		goto err;
 	}
 
-	ret = bch_request_key(c, &user_key);
-	if (ret)
-		goto err;
-
-	ret = crypto_blkcipher_setkey(chacha20, (void *) &user_key,
-				      sizeof(user_key));
-	if (ret)
-		goto err;
-
 	/* decrypt real key: */
-	do_encrypt(chacha20, bch_sb_key_nonce(c),
-		   &encrypted_key, sizeof(encrypted_key));
+	ret = bch_chacha_encrypt_key(&user_key, bch_sb_key_nonce(c),
+			     &sb_key, sizeof(sb_key));
+	if (ret)
+		goto err;
 
-	if (bch_key_is_encrypted(&encrypted_key)) {
+	if (bch_key_is_encrypted(&sb_key)) {
 		bch_err(c, "incorrect encryption key");
 		ret = -EINVAL;
 		goto err;
 	}
 out:
-	*key = encrypted_key.key;
+	*key = sb_key.key;
 err:
-	memzero_explicit(&encrypted_key, sizeof(encrypted_key));
+	memzero_explicit(&sb_key, sizeof(sb_key));
 	memzero_explicit(&user_key, sizeof(user_key));
-	if (!IS_ERR_OR_NULL(c->chacha20))
-		crypto_free_blkcipher(chacha20);
 	return ret;
 }
 
@@ -487,16 +522,16 @@ int bch_enable_encryption(struct cache_set *c, bool keyed)
 	get_random_bytes(&key.key, sizeof(key.key));
 
 	if (keyed) {
-		ret = bch_request_key(c, &user_key);
+		ret = bch_request_key(c->disk_sb, &user_key);
+		if (ret) {
+			bch_err(c, "error requesting encryption key");
+			goto err;
+		}
+
+		ret = bch_chacha_encrypt_key(&user_key, bch_sb_key_nonce(c),
+					     &key, sizeof(key));
 		if (ret)
 			goto err;
-
-		ret = crypto_blkcipher_setkey(c->chacha20, (void *) &user_key,
-					      sizeof(user_key));
-		if (ret)
-			goto err;
-
-		do_encrypt(c->chacha20, bch_sb_key_nonce(c), &key, sizeof(key));
 	}
 
 	ret = crypto_blkcipher_setkey(c->chacha20,
