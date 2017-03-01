@@ -38,8 +38,10 @@ struct bucket_mark {
 
 		unsigned	data_type:3;
 
-		u16		cached_sectors;
+		unsigned	nouse:1;
+
 		u16		dirty_sectors;
+		u16		cached_sectors;
 
 		/*
 		 * low bits of journal sequence number when this bucket was most

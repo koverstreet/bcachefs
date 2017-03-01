@@ -429,10 +429,14 @@ static const char *bch_blkdev_open(const char *path, void *holder,
 				   struct block_device **ret)
 {
 	struct block_device *bdev;
-	fmode_t mode = opts.nochanges > 0
-		? FMODE_READ
-		: FMODE_READ|FMODE_WRITE|FMODE_EXCL;
+	fmode_t mode = FMODE_READ;
 	const char *err;
+
+	if (!(opt_defined(opts.noexcl) && opts.noexcl))
+		mode |= FMODE_EXCL;
+
+	if (!(opt_defined(opts.nochanges) && opts.nochanges))
+		mode |= FMODE_WRITE;
 
 	*ret = NULL;
 	bdev = blkdev_get_by_path(path, mode, holder);

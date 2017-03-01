@@ -236,7 +236,8 @@ static inline bool is_available_bucket(struct bucket_mark mark)
 {
 	return (!mark.owned_by_allocator &&
 		mark.data_type == BUCKET_DATA &&
-		!mark.dirty_sectors);
+		!mark.dirty_sectors &&
+		!mark.nouse);
 }
 
 void bch_bucket_seq_cleanup(struct cache_set *);

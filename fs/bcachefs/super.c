@@ -704,7 +704,7 @@ static int bch_fs_online(struct cache_set *c)
 	return 0;
 }
 
-static const char *bch_fs_start(struct cache_set *c)
+const char *bch_fs_start(struct cache_set *c)
 {
 	const char *err = "cannot allocate memory";
 	struct bch_sb_field_members *mi;
@@ -1695,9 +1695,11 @@ const char *bch_fs_open(char * const *devices, unsigned nr_devices,
 	if (bch_fs_nr_online_devices(c) != bch_fs_nr_devices(c))
 		goto err_unlock;
 
-	err = bch_fs_start(c);
-	if (err)
-		goto err_unlock;
+	if (!c->opts.nostart) {
+		err = bch_fs_start(c);
+		if (err)
+			goto err_unlock;
+	}
 
 	err = "error creating kobject";
 	if (bch_fs_online(c))
@@ -1758,7 +1760,8 @@ static const char *__bch_fs_open_incremental(struct bcache_superblock *sb,
 	if (err)
 		goto err;
 
-	if (bch_fs_nr_online_devices(c) == bch_fs_nr_devices(c)) {
+	if (bch_fs_nr_online_devices(c) == bch_fs_nr_devices(c) &&
+	    !c->opts.nostart) {
 		err = bch_fs_start(c);
 		if (err)
 			goto err;

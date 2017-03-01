@@ -87,11 +87,15 @@ enum opt_type {
 		s8,  OPT_BOOL())					\
 	BCH_OPT(norecovery,		0444,	NO_SB_OPT,		\
 		s8,  OPT_BOOL())					\
+	BCH_OPT(noexcl,			0444,	NO_SB_OPT,		\
+		s8,  OPT_BOOL())					\
 	BCH_OPT(sb,			0444,	NO_SB_OPT,		\
 		s64, OPT_UINT(0, S64_MAX))				\
 
 #define BCH_OPTS()							\
 	BCH_OPT(read_only,		0444,	NO_SB_OPT,		\
+		s8,  OPT_BOOL())					\
+	BCH_OPT(nostart,		0444,	NO_SB_OPT,		\
 		s8,  OPT_BOOL())					\
 	BCH_VISIBLE_OPTS()
 

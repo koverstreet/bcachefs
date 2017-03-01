@@ -98,6 +98,7 @@ void bch_fs_release(struct kobject *);
 void bch_fs_stop(struct cache_set *);
 void bch_fs_stop_sync(struct cache_set *);
 
+const char *bch_fs_start(struct cache_set *);
 const char *bch_fs_open(char * const *, unsigned, struct bch_opts,
 			struct cache_set **);
 const char *bch_fs_open_incremental(const char *path);
