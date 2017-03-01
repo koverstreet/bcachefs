@@ -262,30 +262,67 @@ static void bch_mark_allocator_buckets(struct cache_set *c)
 	}
 }
 
+static void mark_metadata_sectors(struct cache *ca, u64 start, u64 end)
+{
+	u64 b = start >> ca->bucket_bits;
+
+	do {
+		bch_mark_metadata_bucket(ca, ca->buckets + b, true);
+		b++;
+	} while (b < end >> ca->bucket_bits);
+}
+
 /*
  * Mark non btree metadata - prios, journal
  */
+static void bch_mark_dev_metadata(struct cache_set *c, struct cache *ca)
+{
+	struct bch_sb_layout *layout = &ca->disk_sb.sb->layout;
+	unsigned i;
+	u64 b;
+
+	/* Mark superblocks: */
+	for (i = 0; i < layout->nr_superblocks; i++) {
+		if (layout->sb_offset[i] == BCH_SB_SECTOR)
+			mark_metadata_sectors(ca, 0, BCH_SB_SECTOR);
+
+		mark_metadata_sectors(ca,
+				      layout->sb_offset[i],
+				      layout->sb_offset[i] +
+				      (1 << layout->sb_max_size_bits));
+	}
+
+	spin_lock(&c->journal.lock);
+
+	for (i = 0; i < ca->journal.nr; i++) {
+		b = ca->journal.buckets[i];
+		bch_mark_metadata_bucket(ca, ca->buckets + b, true);
+	}
+
+	spin_unlock(&c->journal.lock);
+
+	spin_lock(&ca->prio_buckets_lock);
+
+	for (i = 0; i < prio_buckets(ca) * 2; i++) {
+		b = ca->prio_buckets[i];
+		if (b)
+			bch_mark_metadata_bucket(ca, ca->buckets + b, true);
+	}
+
+	spin_unlock(&ca->prio_buckets_lock);
+}
+
 static void bch_mark_metadata(struct cache_set *c)
 {
 	struct cache *ca;
-	unsigned i, j;
-	u64 b;
+	unsigned i;
 
-	for_each_cache(ca, c, i) {
-		for (j = 0; j < ca->journal.nr; j++) {
-			b = ca->journal.buckets[j];
-			bch_mark_metadata_bucket(ca, ca->buckets + b, true);
-		}
+	mutex_lock(&c->sb_lock);
 
-		spin_lock(&ca->prio_buckets_lock);
+	for_each_cache(ca, c, i)
+		bch_mark_dev_metadata(c, ca);
 
-		for (j = 0; j < prio_buckets(ca) * 2; j++) {
-			b = ca->prio_buckets[j];
-			bch_mark_metadata_bucket(ca, ca->buckets + b, true);
-		}
-
-		spin_unlock(&ca->prio_buckets_lock);
-	}
+	mutex_unlock(&c->sb_lock);
 }
 
 /* Also see bch_pending_btree_node_free_insert_done() */
@@ -883,12 +920,13 @@ int bch_initial_gc(struct cache_set *c, struct list_head *journal)
 {
 	enum btree_id id;
 
-	if (journal) {
-		for (id = 0; id < BTREE_ID_NR; id++)
-			bch_initial_gc_btree(c, id);
+	bch_mark_metadata(c);
 
+	for (id = 0; id < BTREE_ID_NR; id++)
+		bch_initial_gc_btree(c, id);
+
+	if (journal)
 		bch_journal_mark(c, journal);
-	}
 
 	/*
 	 * Skip past versions that might have possibly been used (as nonces),
@@ -896,8 +934,6 @@ int bch_initial_gc(struct cache_set *c, struct list_head *journal)
 	 */
 	if (c->sb.encryption_type)
 		atomic64_add(1 << 16, &c->key_version);
-
-	bch_mark_metadata(c);
 
 	gc_pos_set(c, gc_phase(GC_PHASE_DONE));
 	set_bit(BCH_FS_INITIAL_GC_DONE, &c->flags);

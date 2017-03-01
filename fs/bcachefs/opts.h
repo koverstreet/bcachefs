@@ -86,7 +86,9 @@ enum opt_type {
 	BCH_OPT(noreplay,		0444,	NO_SB_OPT,		\
 		s8,  OPT_BOOL())					\
 	BCH_OPT(norecovery,		0444,	NO_SB_OPT,		\
-		s8,  OPT_BOOL())
+		s8,  OPT_BOOL())					\
+	BCH_OPT(sb,			0444,	NO_SB_OPT,		\
+		s64, OPT_UINT(0, S64_MAX))				\
 
 #define BCH_OPTS()							\
 	BCH_OPT(read_only,		0444,	NO_SB_OPT,		\
@@ -144,6 +146,8 @@ static inline void bch_opts_apply(struct bch_opts *dst, struct bch_opts src)
 	BCH_OPTS()
 #undef BCH_OPT
 }
+
+#define opt_defined(_opt)		((_opt) >= 0)
 
 void bch_opt_set(struct bch_opts *, enum bch_opt_id, u64);
 struct bch_opts bch_sb_opts(struct bch_sb *);

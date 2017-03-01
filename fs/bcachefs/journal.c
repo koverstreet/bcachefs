@@ -1572,6 +1572,7 @@ int bch_dev_journal_alloc(struct cache *ca)
 	struct bch_sb_field_journal *journal_buckets;
 	int ret;
 	unsigned i;
+	u64 b;
 
 	if (ca->mi.tier != 0)
 		return 0;
@@ -1593,14 +1594,19 @@ int bch_dev_journal_alloc(struct cache *ca)
 
 	journal_buckets = bch_sb_get_journal(ca->disk_sb.sb);
 
-	for (i = 0; i < ja->nr; i++) {
-		u64 bucket = ca->mi.first_bucket + i;
+	for (i = 0, b = ca->mi.first_bucket;
+	     i < ja->nr && b < ca->mi.nbuckets; b++) {
+		if (!is_available_bucket(ca->buckets[b].mark))
+			continue;
 
-		ja->buckets[i] = bucket;
-		journal_buckets->buckets[i] = cpu_to_le64(bucket);
-
-		bch_mark_metadata_bucket(ca, &ca->buckets[bucket], true);
+		bch_mark_metadata_bucket(ca, &ca->buckets[b], true);
+		ja->buckets[i] = b;
+		journal_buckets->buckets[i] = cpu_to_le64(b);
+		i++;
 	}
+
+	if (i < ja->nr)
+		return -ENOSPC;
 
 	return 0;
 }

@@ -203,9 +203,6 @@ static const char *validate_sb_layout(struct bch_sb_layout *layout)
 
 	prev_offset = le64_to_cpu(layout->sb_offset[0]);
 
-	if (prev_offset != BCH_SB_SECTOR)
-		return "Invalid superblock layout: doesn't have default superblock location";
-
 	for (i = 1; i < layout->nr_superblocks; i++) {
 		offset = le64_to_cpu(layout->sb_offset[i]);
 
@@ -323,14 +320,6 @@ const char *bch_validate_cache_super(struct bcache_superblock *disk_sb)
 		return "Invalid superblock: bad member info";
 
 	mi = cache_mi_to_cpu_mi(sb_mi->members + sb->dev_idx);
-
-	for (i = 0; i < sb->layout.nr_superblocks; i++) {
-		u64 offset = le64_to_cpu(sb->layout.sb_offset[i]);
-		u64 max_size = 1 << sb->layout.sb_max_size_bits;
-
-		if (offset + max_size > mi.first_bucket * mi.bucket_size)
-			return "Invalid superblock: first bucket comes before end of super";
-	}
 
 	if (mi.nbuckets > LONG_MAX)
 		return "Too many buckets";
@@ -567,7 +556,7 @@ static const char *read_one_super(struct bcache_superblock *sb, u64 offset)
 reread:
 	bio_reset(sb->bio);
 	sb->bio->bi_bdev = sb->bdev;
-	sb->bio->bi_iter.bi_sector = BCH_SB_SECTOR;
+	sb->bio->bi_iter.bi_sector = offset;
 	sb->bio->bi_iter.bi_size = PAGE_SIZE << sb->page_order;
 	bio_set_op_attrs(sb->bio, REQ_OP_READ, REQ_SYNC|REQ_META);
 	bch_bio_map(sb->bio, sb->sb);
@@ -610,6 +599,7 @@ const char *bch_read_super(struct bcache_superblock *sb,
 			   struct bch_opts opts,
 			   const char *path)
 {
+	u64 offset = opt_defined(opts.sb) ? opts.sb : BCH_SB_SECTOR;
 	struct bch_sb_layout layout;
 	const char *err;
 	unsigned i;
@@ -630,11 +620,16 @@ const char *bch_read_super(struct bcache_superblock *sb,
 	if (bch_fs_init_fault("read_super"))
 		goto err;
 
-	err = read_one_super(sb, BCH_SB_SECTOR);
+	err = read_one_super(sb, offset);
 	if (!err)
 		goto got_super;
 
-	pr_err("error reading default super: %s", err);
+	if (offset != BCH_SB_SECTOR) {
+		pr_err("error reading superblock: %s", err);
+		goto err;
+	}
+
+	pr_err("error reading default superblock: %s", err);
 
 	/*
 	 * Error reading primary superblock - read location of backup

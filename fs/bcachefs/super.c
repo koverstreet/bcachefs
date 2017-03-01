@@ -826,14 +826,14 @@ static const char *bch_fs_start(struct cache_set *c)
 
 		bch_notice(c, "initializing new filesystem");
 
+		bch_initial_gc(c, NULL);
+
 		err = "unable to allocate journal buckets";
 		for_each_cache(ca, c, i)
 			if (bch_dev_journal_alloc(ca)) {
 				percpu_ref_put(&ca->ref);
 				goto err;
 			}
-
-		bch_initial_gc(c, NULL);
 
 		/*
 		 * journal_res_get() will crash if called before this has
