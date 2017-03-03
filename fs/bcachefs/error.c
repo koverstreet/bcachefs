@@ -6,19 +6,19 @@
 
 void bch_inconsistent_error(struct cache_set *c)
 {
-	set_bit(CACHE_SET_ERROR, &c->flags);
+	set_bit(BCH_FS_ERROR, &c->flags);
 
 	switch (c->opts.errors) {
 	case BCH_ON_ERROR_CONTINUE:
 		break;
 	case BCH_ON_ERROR_RO:
-		if (!test_bit(CACHE_SET_INITIAL_GC_DONE, &c->flags)) {
+		if (!test_bit(BCH_FS_INITIAL_GC_DONE, &c->flags)) {
 			/* XXX do something better here? */
-			bch_cache_set_stop(c);
+			bch_fs_stop(c);
 			return;
 		}
 
-		if (bch_cache_set_emergency_read_only(c))
+		if (bch_fs_emergency_read_only(c))
 			bch_err(c, "emergency read only");
 		break;
 	case BCH_ON_ERROR_PANIC:
@@ -29,7 +29,7 @@ void bch_inconsistent_error(struct cache_set *c)
 
 void bch_fatal_error(struct cache_set *c)
 {
-	if (bch_cache_set_emergency_read_only(c))
+	if (bch_fs_emergency_read_only(c))
 		bch_err(c, "emergency read only");
 }
 
@@ -116,15 +116,15 @@ void bch_nonfatal_io_error_work(struct work_struct *work)
 	bool dev;
 
 	if (errors < c->error_limit) {
-		bch_notify_cache_error(ca, false);
+		bch_notify_dev_error(ca, false);
 	} else {
-		bch_notify_cache_error(ca, true);
+		bch_notify_dev_error(ca, true);
 
 		mutex_lock(&bch_register_lock);
-		dev = bch_cache_may_remove(ca);
+		dev = bch_dev_may_remove(ca);
 		if (dev
-		    ? bch_cache_read_only(ca)
-		    : bch_cache_set_emergency_read_only(c))
+		    ? bch_dev_read_only(ca)
+		    : bch_fs_emergency_read_only(c))
 			bch_err(c,
 				"too many IO errors on %s, setting %s RO",
 				bdevname(ca->disk_sb.bdev, buf),

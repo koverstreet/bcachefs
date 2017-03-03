@@ -13,7 +13,7 @@ struct cache_set;
 
 /* Error messages: */
 
-#define __bch_cache_error(ca, fmt, ...)					\
+#define __bch_dev_error(ca, fmt, ...)					\
 do {									\
 	char _buf[BDEVNAME_SIZE];					\
 	bch_err((ca)->set, "%s: " fmt,					\
@@ -28,16 +28,16 @@ do {									\
  * XXX: audit and convert to inconsistent() checks
  */
 
-#define cache_set_bug(c, ...)						\
+#define bch_fs_bug(c, ...)						\
 do {									\
 	bch_err(c, __VA_ARGS__);					\
 	BUG();								\
 } while (0)
 
-#define cache_set_bug_on(cond, c, ...)					\
+#define bch_fs_bug_on(cond, c, ...)					\
 do {									\
 	if (cond)							\
-		cache_set_bug(c, __VA_ARGS__);				\
+		bch_fs_bug(c, __VA_ARGS__);				\
 } while (0)
 
 /*
@@ -53,18 +53,18 @@ do {									\
 
 void bch_inconsistent_error(struct cache_set *);
 
-#define cache_set_inconsistent(c, ...)					\
+#define bch_fs_inconsistent(c, ...)					\
 do {									\
 	bch_err(c, __VA_ARGS__);					\
 	bch_inconsistent_error(c);					\
 } while (0)
 
-#define cache_set_inconsistent_on(cond, c, ...)				\
+#define bch_fs_inconsistent_on(cond, c, ...)				\
 ({									\
 	int _ret = !!(cond);						\
 									\
 	if (_ret)							\
-		cache_set_inconsistent(c, __VA_ARGS__);			\
+		bch_fs_inconsistent(c, __VA_ARGS__);			\
 	_ret;								\
 })
 
@@ -73,18 +73,18 @@ do {									\
  * entire cache set:
  */
 
-#define cache_inconsistent(ca, ...)					\
+#define bch_dev_inconsistent(ca, ...)					\
 do {									\
-	__bch_cache_error(ca, __VA_ARGS__);				\
+	__bch_dev_error(ca, __VA_ARGS__);				\
 	bch_inconsistent_error((ca)->set);				\
 } while (0)
 
-#define cache_inconsistent_on(cond, ca, ...)				\
+#define bch_dev_inconsistent_on(cond, ca, ...)				\
 ({									\
 	int _ret = !!(cond);						\
 									\
 	if (_ret)							\
-		cache_inconsistent(ca, __VA_ARGS__);			\
+		bch_dev_inconsistent(ca, __VA_ARGS__);			\
 	_ret;								\
 })
 
@@ -112,7 +112,7 @@ enum {
 									\
 	if (_can_fix && (c)->opts.fix_errors) {				\
 		bch_err(c, msg ", fixing", ##__VA_ARGS__);		\
-		set_bit(CACHE_SET_FSCK_FIXED_ERRORS, &(c)->flags);	\
+		set_bit(BCH_FS_FSCK_FIXED_ERRORS, &(c)->flags);	\
 		_fix = true;						\
 	} else if (_can_ignore &&					\
 		   (c)->opts.errors == BCH_ON_ERROR_CONTINUE) {		\
@@ -154,28 +154,28 @@ enum {
 
 void bch_fatal_error(struct cache_set *);
 
-#define cache_set_fatal_error(c, ...)					\
+#define bch_fs_fatal_error(c, ...)					\
 do {									\
 	bch_err(c, __VA_ARGS__);					\
 	bch_fatal_error(c);						\
 } while (0)
 
-#define cache_set_fatal_err_on(cond, c, ...)				\
+#define bch_fs_fatal_err_on(cond, c, ...)				\
 ({									\
 	int _ret = !!(cond);						\
 									\
 	if (_ret)							\
-		cache_set_fatal_error(c, __VA_ARGS__);			\
+		bch_fs_fatal_error(c, __VA_ARGS__);			\
 	_ret;								\
 })
 
-#define cache_fatal_error(ca, ...)					\
+#define bch_dev_fatal_error(ca, ...)					\
 do {									\
-	__bch_cache_error(ca, __VA_ARGS__);				\
+	__bch_dev_error(ca, __VA_ARGS__);				\
 	bch_fatal_error(c);						\
 } while (0)
 
-#define cache_fatal_io_error(ca, fmt, ...)				\
+#define bch_dev_fatal_io_error(ca, fmt, ...)				\
 do {									\
 	char _buf[BDEVNAME_SIZE];					\
 									\
@@ -185,12 +185,12 @@ do {									\
 	bch_fatal_error((ca)->set);					\
 } while (0)
 
-#define cache_fatal_io_err_on(cond, ca, ...)				\
+#define bch_dev_fatal_io_err_on(cond, ca, ...)				\
 ({									\
 	int _ret = !!(cond);						\
 									\
 	if (_ret)							\
-		cache_fatal_io_error(ca, __VA_ARGS__);			\
+		bch_dev_fatal_io_error(ca, __VA_ARGS__);		\
 	_ret;								\
 })
 
@@ -209,7 +209,7 @@ void bch_nonfatal_io_error_work(struct work_struct *);
 void bch_nonfatal_io_error(struct cache *);
 
 #if 0
-#define cache_set_nonfatal_io_error(c, ...)				\
+#define bch_fs_nonfatal_io_error(c, ...)				\
 do {									\
 	bch_err(c, __VA_ARGS__);					\
 	bch_nonfatal_io_error(c);					\
@@ -217,7 +217,7 @@ do {									\
 #endif
 
 /* Logs message and handles the error: */
-#define cache_nonfatal_io_error(ca, fmt, ...)				\
+#define bch_dev_nonfatal_io_error(ca, fmt, ...)				\
 do {									\
 	char _buf[BDEVNAME_SIZE];					\
 									\
@@ -227,12 +227,12 @@ do {									\
 	bch_nonfatal_io_error(ca);					\
 } while (0)
 
-#define cache_nonfatal_io_err_on(cond, ca, ...)				\
+#define bch_dev_nonfatal_io_err_on(cond, ca, ...)			\
 ({									\
 	bool _ret = (cond);						\
 									\
 	if (_ret)							\
-		cache_nonfatal_io_error(ca, __VA_ARGS__);		\
+		bch_dev_nonfatal_io_error(ca, __VA_ARGS__);		\
 	_ret;								\
 })
 

@@ -560,7 +560,7 @@ err:
 	return ret;
 }
 
-void bch_cache_set_encryption_free(struct cache_set *c)
+void bch_fs_encryption_free(struct cache_set *c)
 {
 	if (!IS_ERR_OR_NULL(c->poly1305))
 		crypto_free_shash(c->poly1305);
@@ -568,7 +568,7 @@ void bch_cache_set_encryption_free(struct cache_set *c)
 		crypto_free_blkcipher(c->chacha20);
 }
 
-int bch_cache_set_encryption_init(struct cache_set *c)
+int bch_fs_encryption_init(struct cache_set *c)
 {
 	struct bch_sb_field_crypt *crypt;
 	struct bch_key key;

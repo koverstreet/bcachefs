@@ -169,7 +169,7 @@ static void read_dirty_endio(struct bio *bio)
 {
 	struct dirty_io *io = container_of(bio, struct dirty_io, bio);
 
-	cache_nonfatal_io_err_on(bio->bi_error, io->ca, "writeback read");
+	bch_dev_nonfatal_io_err_on(bio->bi_error, io->ca, "writeback read");
 
 	bch_account_io_completion(io->ca);
 

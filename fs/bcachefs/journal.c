@@ -285,7 +285,7 @@ int bch_journal_seq_should_ignore(struct cache_set *c, u64 seq, struct btree *b)
 
 	/* Interier updates aren't journalled: */
 	BUG_ON(b->level);
-	BUG_ON(seq > journal_seq && test_bit(CACHE_SET_INITIAL_GC_DONE, &c->flags));
+	BUG_ON(seq > journal_seq && test_bit(BCH_FS_INITIAL_GC_DONE, &c->flags));
 
 	if (seq <= journal_seq) {
 		if (list_empty_careful(&j->seq_blacklist))
@@ -301,7 +301,7 @@ int bch_journal_seq_should_ignore(struct cache_set *c, u64 seq, struct btree *b)
 	 * Decrease this back to j->seq + 2 when we next rev the on disk format:
 	 * increasing it temporarily to work around bug in old kernels
 	 */
-	cache_set_inconsistent_on(seq > journal_seq + 4, c,
+	bch_fs_inconsistent_on(seq > journal_seq + 4, c,
 			 "bset journal seq too far in the future: %llu > %llu",
 			 seq, journal_seq);
 
@@ -691,7 +691,7 @@ reread:			sectors_read = min_t(unsigned,
 
 			ret = submit_bio_wait(bio);
 
-			if (cache_fatal_io_err_on(ret, ca,
+			if (bch_dev_fatal_io_err_on(ret, ca,
 						  "journal read from sector %llu",
 						  offset) ||
 			    bch_meta_read_fault("journal"))
@@ -1412,7 +1412,7 @@ void bch_journal_start(struct cache_set *c)
 
 	for_each_cache(ca, c, i)
 		if (is_journal_device(ca))
-			bch_cache_group_add_cache(&c->journal.devs, ca);
+			bch_dev_group_add(&c->journal.devs, ca);
 
 	list_for_each_entry(bl, &j->seq_blacklist, list)
 		new_seq = max(new_seq, bl->seq);
@@ -1566,7 +1566,7 @@ static int bch_set_nr_journal_buckets(struct cache *ca, unsigned nr)
 	return 0;
 }
 
-int bch_cache_journal_alloc(struct cache *ca)
+int bch_dev_journal_alloc(struct cache *ca)
 {
 	struct journal_device *ja = &ca->journal;
 	struct bch_sb_field_journal *journal_buckets;
@@ -1882,7 +1882,7 @@ static void journal_reclaim_work(struct work_struct *work)
 		j->last_flushed = jiffies;
 	}
 
-	if (!test_bit(CACHE_SET_RO, &c->flags))
+	if (!test_bit(BCH_FS_RO, &c->flags))
 		queue_delayed_work(system_freezable_wq, &j->reclaim_work,
 				   msecs_to_jiffies(j->reclaim_delay_ms));
 }
@@ -2014,7 +2014,7 @@ static void journal_write_endio(struct bio *bio)
 	struct cache *ca = bio->bi_private;
 	struct journal *j = &ca->set->journal;
 
-	if (cache_fatal_io_err_on(bio->bi_error, ca, "journal write") ||
+	if (bch_dev_fatal_io_err_on(bio->bi_error, ca, "journal write") ||
 	    bch_meta_write_fault("journal"))
 		bch_journal_halt(j);
 

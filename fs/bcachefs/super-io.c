@@ -370,7 +370,7 @@ static bool bch_is_open_cache(struct block_device *bdev)
 	unsigned i;
 
 	rcu_read_lock();
-	list_for_each_entry(c, &bch_cache_sets, list)
+	list_for_each_entry(c, &bch_fs_list, list)
 		for_each_cache_rcu(ca, c, i)
 			if (ca->disk_sb.bdev == bdev) {
 				rcu_read_unlock();
@@ -423,9 +423,8 @@ static const char *bch_blkdev_open(const char *path, void *holder,
 }
 
 /* Update cached mi: */
-int bch_cache_set_mi_update(struct cache_set *c,
-			    struct bch_member *mi,
-			    unsigned nr_devices)
+int bch_fs_mi_update(struct cache_set *c, struct bch_member *mi,
+		     unsigned nr_devices)
 {
 	struct cache_member_rcu *new, *old;
 	struct cache *ca;
@@ -529,7 +528,7 @@ int bch_sb_to_cache_set(struct cache_set *c, struct bch_sb *src)
 	if (bch_fs_sb_realloc(c, le32_to_cpu(src->u64s) - journal_u64s))
 		return -ENOMEM;
 
-	if (bch_cache_set_mi_update(c, members->members, src->nr_devices))
+	if (bch_fs_mi_update(c, members->members, src->nr_devices))
 		return -ENOMEM;
 
 	__copy_super(c->disk_sb, src);
@@ -628,7 +627,7 @@ const char *bch_read_super(struct bcache_superblock *sb,
 		goto err;
 
 	err = "dynamic fault";
-	if (cache_set_init_fault("read_super"))
+	if (bch_fs_init_fault("read_super"))
 		goto err;
 
 	err = read_one_super(sb, BCH_SB_SECTOR);
@@ -698,7 +697,7 @@ static void write_super_endio(struct bio *bio)
 
 	/* XXX: return errors directly */
 
-	cache_fatal_io_err_on(bio->bi_error, ca, "superblock write");
+	bch_dev_fatal_io_err_on(bio->bi_error, ca, "superblock write");
 
 	bch_account_io_completion(ca);
 
@@ -766,7 +765,7 @@ void bch_write_super(struct cache_set *c)
 	} while (wrote);
 
 	/* Make new options visible after they're persistent: */
-	bch_cache_set_mi_update(c, members->members, c->sb.nr_devices);
+	bch_fs_mi_update(c, members->members, c->sb.nr_devices);
 	bch_sb_update(c);
 }
 

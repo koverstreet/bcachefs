@@ -361,7 +361,7 @@ int bch_journal_alloc(struct journal *, unsigned);
 
 ssize_t bch_journal_print_debug(struct journal *, char *);
 
-int bch_cache_journal_alloc(struct cache *);
+int bch_dev_journal_alloc(struct cache *);
 
 static inline unsigned bch_nr_journal_buckets(struct bch_sb_field_journal *j)
 {

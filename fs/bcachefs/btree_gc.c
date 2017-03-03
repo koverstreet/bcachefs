@@ -54,8 +54,7 @@ static void btree_node_range_checks(struct cache_set *c, struct btree *b,
 		? btree_type_successor(b->btree_id, l->max)
 		: l->max;
 
-	cache_set_inconsistent_on(bkey_cmp(b->data->min_key,
-					   expected_min), c,
+	bch_fs_inconsistent_on(bkey_cmp(b->data->min_key, expected_min), c,
 		"btree node has incorrect min key: %llu:%llu != %llu:%llu",
 		b->data->min_key.inode,
 		b->data->min_key.offset,
@@ -67,16 +66,14 @@ static void btree_node_range_checks(struct cache_set *c, struct btree *b,
 	if (b->level > r->depth) {
 		l = &r->l[b->level - 1];
 
-		cache_set_inconsistent_on(bkey_cmp(b->data->min_key,
-						   l->min), c,
+		bch_fs_inconsistent_on(bkey_cmp(b->data->min_key, l->min), c,
 			"btree node min doesn't match min of child nodes: %llu:%llu != %llu:%llu",
 			b->data->min_key.inode,
 			b->data->min_key.offset,
 			l->min.inode,
 			l->min.offset);
 
-		cache_set_inconsistent_on(bkey_cmp(b->data->max_key,
-						   l->max), c,
+		bch_fs_inconsistent_on(bkey_cmp(b->data->max_key, l->max), c,
 			"btree node max doesn't match max of child nodes: %llu:%llu != %llu:%llu",
 			b->data->max_key.inode,
 			b->data->max_key.offset,
@@ -308,7 +305,7 @@ static void bch_mark_pending_btree_node_frees(struct cache_set *c)
 					  &stats);
 	/*
 	 * Don't apply stats - pending deletes aren't tracked in
-	 * cache_set_stats:
+	 * bch_alloc_stats:
 	 */
 
 	mutex_unlock(&c->btree_interior_update_lock);
@@ -345,7 +342,7 @@ void bch_gc(struct cache_set *c)
 	 *    uses, GC could skip past them
 	 */
 
-	if (test_bit(CACHE_SET_GC_FAILURE, &c->flags))
+	if (test_bit(BCH_FS_GC_FAILURE, &c->flags))
 		return;
 
 	trace_bcache_gc_start(c);
@@ -410,7 +407,7 @@ void bch_gc(struct cache_set *c)
 
 		if (ret) {
 			bch_err(c, "btree gc failed: %d", ret);
-			set_bit(CACHE_SET_GC_FAILURE, &c->flags);
+			set_bit(BCH_FS_GC_FAILURE, &c->flags);
 			up_write(&c->gc_lock);
 			return;
 		}
@@ -725,7 +722,7 @@ static int bch_coalesce_btree(struct cache_set *c, enum btree_id btree_id)
 
 		lock_seq[0] = merge[0]->lock.state.seq;
 
-		if (test_bit(CACHE_SET_GC_STOPPING, &c->flags)) {
+		if (test_bit(BCH_FS_GC_STOPPING, &c->flags)) {
 			bch_btree_iter_unlock(&iter);
 			return -ESHUTDOWN;
 		}
@@ -756,7 +753,7 @@ void bch_coalesce(struct cache_set *c)
 	if (btree_gc_coalesce_disabled(c))
 		return;
 
-	if (test_bit(CACHE_SET_GC_FAILURE, &c->flags))
+	if (test_bit(BCH_FS_GC_FAILURE, &c->flags))
 		return;
 
 	down_read(&c->gc_lock);
@@ -771,7 +768,7 @@ void bch_coalesce(struct cache_set *c)
 		if (ret) {
 			if (ret != -ESHUTDOWN)
 				bch_err(c, "btree coalescing failed: %d", ret);
-			set_bit(CACHE_SET_GC_FAILURE, &c->flags);
+			set_bit(BCH_FS_GC_FAILURE, &c->flags);
 			return;
 		}
 	}
@@ -824,7 +821,7 @@ static int bch_gc_thread(void *arg)
 
 void bch_gc_thread_stop(struct cache_set *c)
 {
-	set_bit(CACHE_SET_GC_STOPPING, &c->flags);
+	set_bit(BCH_FS_GC_STOPPING, &c->flags);
 
 	if (!IS_ERR_OR_NULL(c->gc_thread))
 		kthread_stop(c->gc_thread);
@@ -832,7 +829,7 @@ void bch_gc_thread_stop(struct cache_set *c)
 
 int bch_gc_thread_start(struct cache_set *c)
 {
-	clear_bit(CACHE_SET_GC_STOPPING, &c->flags);
+	clear_bit(BCH_FS_GC_STOPPING, &c->flags);
 
 	c->gc_thread = kthread_create(bch_gc_thread, c, "bcache_gc");
 	if (IS_ERR(c->gc_thread))
@@ -903,7 +900,7 @@ int bch_initial_gc(struct cache_set *c, struct list_head *journal)
 	bch_mark_metadata(c);
 
 	gc_pos_set(c, gc_phase(GC_PHASE_DONE));
-	set_bit(CACHE_SET_INITIAL_GC_DONE, &c->flags);
+	set_bit(BCH_FS_INITIAL_GC_DONE, &c->flags);
 
 	return 0;
 }

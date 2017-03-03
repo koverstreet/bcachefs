@@ -274,7 +274,7 @@ int bch_moving_gc_thread_start(struct cache *ca)
 	if (ca->set->opts.nochanges)
 		return 0;
 
-	if (cache_set_init_fault("moving_gc_start"))
+	if (bch_fs_init_fault("moving_gc_start"))
 		return -ENOMEM;
 
 	t = kthread_create(bch_moving_gc_thread, ca, "bch_copygc_read");

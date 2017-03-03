@@ -80,7 +80,7 @@ void bkey_debugcheck(struct cache_set *c, struct btree *b, struct bkey_s_c k)
 		char buf[160];
 
 		bch_bkey_val_to_text(c, type, buf, sizeof(buf), k);
-		cache_set_bug(c, "invalid bkey %s: %s", buf, invalid);
+		bch_fs_bug(c, "invalid bkey %s: %s", buf, invalid);
 		return;
 	}
 

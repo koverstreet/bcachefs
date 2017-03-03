@@ -78,7 +78,7 @@ static void __bch_bucket_free(struct cache *, struct bucket *);
 
 /* Allocation groups: */
 
-void bch_cache_group_remove_cache(struct cache_group *grp, struct cache *ca)
+void bch_dev_group_remove(struct cache_group *grp, struct cache *ca)
 {
 	unsigned i;
 
@@ -96,7 +96,7 @@ void bch_cache_group_remove_cache(struct cache_group *grp, struct cache *ca)
 	spin_unlock(&grp->lock);
 }
 
-void bch_cache_group_add_cache(struct cache_group *grp, struct cache *ca)
+void bch_dev_group_add(struct cache_group *grp, struct cache *ca)
 {
 	unsigned i;
 
@@ -318,7 +318,7 @@ static int bch_prio_write(struct cache *ca)
 					bucket_bytes(ca) - sizeof(p->csum));
 
 		ret = prio_io(ca, r, REQ_OP_WRITE);
-		if (cache_fatal_io_err_on(ret, ca,
+		if (bch_dev_fatal_io_err_on(ret, ca,
 					  "prio write to bucket %zu", r) ||
 		    bch_meta_write_fault("prio"))
 			return ret;
@@ -400,7 +400,7 @@ int bch_prio_read(struct cache *ca)
 			bucket_nr++;
 
 			ret = prio_io(ca, bucket, REQ_OP_READ);
-			if (cache_fatal_io_err_on(ret, ca,
+			if (bch_dev_fatal_io_err_on(ret, ca,
 					"prior read from bucket %llu",
 					bucket) ||
 			    bch_meta_read_fault("prio"))
@@ -1724,7 +1724,7 @@ static bool bch_dev_has_open_write_point(struct cache *ca)
 }
 
 /* device goes ro: */
-void bch_cache_allocator_stop(struct cache *ca)
+void bch_dev_allocator_stop(struct cache *ca)
 {
 	struct cache_set *c = ca->set;
 	struct cache_group *tier = &c->cache_tiers[ca->mi.tier];
@@ -1736,8 +1736,8 @@ void bch_cache_allocator_stop(struct cache *ca)
 
 	/* First, remove device from allocation groups: */
 
-	bch_cache_group_remove_cache(tier, ca);
-	bch_cache_group_remove_cache(&c->cache_all, ca);
+	bch_dev_group_remove(tier, ca);
+	bch_dev_group_remove(&c->cache_all, ca);
 
 	bch_recalc_capacity(c);
 
@@ -1805,7 +1805,7 @@ void bch_cache_allocator_stop(struct cache *ca)
 /*
  * Startup the allocator thread for transition to RW mode:
  */
-int bch_cache_allocator_start(struct cache *ca)
+int bch_dev_allocator_start(struct cache *ca)
 {
 	struct cache_set *c = ca->set;
 	struct cache_group *tier = &c->cache_tiers[ca->mi.tier];
@@ -1824,8 +1824,8 @@ int bch_cache_allocator_start(struct cache *ca)
 	get_task_struct(k);
 	ca->alloc_thread = k;
 
-	bch_cache_group_add_cache(tier, ca);
-	bch_cache_group_add_cache(&c->cache_all, ca);
+	bch_dev_group_add(tier, ca);
+	bch_dev_group_add(&c->cache_all, ca);
 
 	bch_recalc_capacity(c);
 

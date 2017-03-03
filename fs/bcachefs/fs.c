@@ -831,7 +831,8 @@ static int bch_inode_user_flags_set(struct bch_inode_info *ei,
 
 #define FS_IOC_GOINGDOWN	     _IOR ('X', 125, __u32)
 
-static long bch_fs_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
+static long bch_fs_file_ioctl(struct file *filp, unsigned int cmd,
+			      unsigned long arg)
 {
 	struct inode *inode = file_inode(filp);
 	struct super_block *sb = inode->i_sb;
@@ -893,12 +894,12 @@ setflags_out:
 
 		down_write(&sb->s_umount);
 		sb->s_flags |= MS_RDONLY;
-		bch_cache_set_emergency_read_only(c);
+		bch_fs_emergency_read_only(c);
 		up_write(&sb->s_umount);
 		return 0;
 
 	default:
-		return bch_cache_set_ioctl(c, cmd, (void __user *) arg);
+		return bch_fs_ioctl(c, cmd, (void __user *) arg);
 	}
 }
 
@@ -916,7 +917,7 @@ static long bch_compat_fs_ioctl(struct file *file, unsigned int cmd, unsigned lo
 	default:
 		return -ENOIOCTLCMD;
 	}
-	return bch_fs_ioctl(file, cmd, (unsigned long) compat_ptr(arg));
+	return bch_fs_file_ioctl(file, cmd, (unsigned long) compat_ptr(arg));
 }
 #endif
 
@@ -946,7 +947,7 @@ static const struct file_operations bch_file_operations = {
 	.splice_read	= generic_file_splice_read,
 	.splice_write	= iter_file_splice_write,
 	.fallocate	= bch_fallocate_dispatch,
-	.unlocked_ioctl = bch_fs_ioctl,
+	.unlocked_ioctl = bch_fs_file_ioctl,
 #ifdef CONFIG_COMPAT
 	.compat_ioctl	= bch_compat_fs_ioctl,
 #endif
@@ -982,7 +983,7 @@ static const struct file_operations bch_dir_file_operations = {
 	.read		= generic_read_dir,
 	.iterate	= bch_vfs_readdir,
 	.fsync		= bch_fsync,
-	.unlocked_ioctl = bch_fs_ioctl,
+	.unlocked_ioctl = bch_fs_file_ioctl,
 #ifdef CONFIG_COMPAT
 	.compat_ioctl	= bch_compat_fs_ioctl,
 #endif
@@ -1156,7 +1157,7 @@ static int bch_statfs(struct dentry *dentry, struct kstatfs *buf)
 	buf->f_type	= BCACHE_STATFS_MAGIC;
 	buf->f_bsize	= sb->s_blocksize;
 	buf->f_blocks	= c->capacity >> PAGE_SECTOR_SHIFT;
-	buf->f_bfree	= (c->capacity - cache_set_sectors_used(c)) >> PAGE_SECTOR_SHIFT;
+	buf->f_bfree	= (c->capacity - bch_fs_sectors_used(c)) >> PAGE_SECTOR_SHIFT;
 	buf->f_bavail	= buf->f_bfree;
 	buf->f_files	= atomic_long_read(&c->nr_inodes);
 	buf->f_ffree	= U64_MAX;
@@ -1190,7 +1191,7 @@ static struct cache_set *bdev_to_cache_set(struct block_device *bdev)
 
 	rcu_read_lock();
 
-	list_for_each_entry(c, &bch_cache_sets, list)
+	list_for_each_entry(c, &bch_fs_list, list)
 		for_each_cache_rcu(ca, c, i)
 			if (ca->disk_sb.bdev == bdev) {
 				rcu_read_unlock();
@@ -1226,7 +1227,7 @@ static struct cache_set *bch_open_as_blockdevs(const char *_dev_name,
 	     (s = strchr(s, ':')) && (*s++ = '\0'))
 		devs[i++] = s;
 
-	err = bch_register_cache_set(devs, nr_devs, opts, &c);
+	err = bch_fs_open(devs, nr_devs, opts, &c);
 	if (err) {
 		/*
 		 * Already open?
@@ -1256,7 +1257,7 @@ static struct cache_set *bch_open_as_blockdevs(const char *_dev_name,
 		if (!c)
 			goto err_unlock;
 
-		if (!test_bit(CACHE_SET_RUNNING, &c->flags)) {
+		if (!test_bit(BCH_FS_RUNNING, &c->flags)) {
 			err = "incomplete cache set";
 			c = NULL;
 			goto err_unlock;
@@ -1266,7 +1267,7 @@ static struct cache_set *bch_open_as_blockdevs(const char *_dev_name,
 		mutex_unlock(&bch_register_lock);
 	}
 
-	set_bit(CACHE_SET_BDEV_MOUNTED, &c->flags);
+	set_bit(BCH_FS_BDEV_MOUNTED, &c->flags);
 err:
 	kfree(devs);
 	kfree(dev_name);
@@ -1297,11 +1298,11 @@ static int bch_remount(struct super_block *sb, int *flags, char *data)
 		const char *err = NULL;
 
 		if (opts.read_only) {
-			bch_cache_set_read_only_sync(c);
+			bch_fs_read_only_sync(c);
 
 			sb->s_flags |= MS_RDONLY;
 		} else {
-			err = bch_cache_set_read_write(c);
+			err = bch_fs_read_write(c);
 			if (err) {
 				bch_err(c, "error going rw: %s", err);
 				ret = -EINVAL;
@@ -1447,16 +1448,9 @@ static void bch_kill_sb(struct super_block *sb)
 
 	generic_shutdown_super(sb);
 
-	if (test_bit(CACHE_SET_BDEV_MOUNTED, &c->flags)) {
-		DECLARE_COMPLETION_ONSTACK(complete);
-
-		c->stop_completion = &complete;
-		bch_cache_set_stop(c);
-		closure_put(&c->cl);
-
-		/* Killable? */
-		wait_for_completion(&complete);
-	} else
+	if (test_bit(BCH_FS_BDEV_MOUNTED, &c->flags))
+		bch_fs_stop_sync(c);
+	else
 		closure_put(&c->cl);
 }
 

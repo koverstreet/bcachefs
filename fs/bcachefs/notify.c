@@ -47,28 +47,28 @@ static void notify_put(struct cache_set *c)
 	mutex_unlock(&c->uevent_lock);
 }
 
-void bch_notify_cache_set_read_write(struct cache_set *c)
+void bch_notify_fs_read_write(struct cache_set *c)
 {
 	notify_get(c);
 	notify_var(c, "STATE=active");
 	notify_put(c);
 }
 
-void bch_notify_cache_set_read_only(struct cache_set *c)
+void bch_notify_fs_read_only(struct cache_set *c)
 {
 	notify_get(c);
 	notify_var(c, "STATE=readonly");
 	notify_put(c);
 }
 
-void bch_notify_cache_set_stopped(struct cache_set *c)
+void bch_notify_fs_stopped(struct cache_set *c)
 {
 	notify_get(c);
 	notify_var(c, "STATE=stopped");
 	notify_put(c);
 }
 
-void bch_notify_cache_read_write(struct cache *ca)
+void bch_notify_dev_read_write(struct cache *ca)
 {
 	struct cache_set *c = ca->set;
 
@@ -77,7 +77,7 @@ void bch_notify_cache_read_write(struct cache *ca)
 	notify_put(c);
 }
 
-void bch_notify_cache_read_only(struct cache *ca)
+void bch_notify_dev_read_only(struct cache *ca)
 {
 	struct cache_set *c = ca->set;
 
@@ -86,7 +86,7 @@ void bch_notify_cache_read_only(struct cache *ca)
 	notify_put(c);
 }
 
-void bch_notify_cache_added(struct cache *ca)
+void bch_notify_dev_added(struct cache *ca)
 {
 	struct cache_set *c = ca->set;
 
@@ -95,7 +95,7 @@ void bch_notify_cache_added(struct cache *ca)
 	notify_put(c);
 }
 
-void bch_notify_cache_removing(struct cache *ca)
+void bch_notify_dev_removing(struct cache *ca)
 {
 	struct cache_set *c = ca->set;
 
@@ -104,7 +104,7 @@ void bch_notify_cache_removing(struct cache *ca)
 	notify_put(c);
 }
 
-void bch_notify_cache_remove_failed(struct cache *ca)
+void bch_notify_dev_remove_failed(struct cache *ca)
 {
 	struct cache_set *c = ca->set;
 
@@ -113,7 +113,7 @@ void bch_notify_cache_remove_failed(struct cache *ca)
 	notify_put(c);
 }
 
-void bch_notify_cache_removed(struct cache *ca)
+void bch_notify_dev_removed(struct cache *ca)
 {
 	struct cache_set *c = ca->set;
 
@@ -122,7 +122,7 @@ void bch_notify_cache_removed(struct cache *ca)
 	notify_put(c);
 }
 
-void bch_notify_cache_error(struct cache *ca, bool fatal)
+void bch_notify_dev_error(struct cache *ca, bool fatal)
 {
 	struct cache_set *c = ca->set;
 

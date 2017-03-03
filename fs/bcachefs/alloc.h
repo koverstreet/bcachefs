@@ -20,8 +20,8 @@ static inline size_t prio_buckets(const struct cache *ca)
 	return DIV_ROUND_UP((size_t) (ca)->mi.nbuckets, prios_per_bucket(ca));
 }
 
-void bch_cache_group_remove_cache(struct cache_group *, struct cache *);
-void bch_cache_group_add_cache(struct cache_group *, struct cache *);
+void bch_dev_group_remove(struct cache_group *, struct cache *);
+void bch_dev_group_add(struct cache_group *, struct cache *);
 
 int bch_prio_read(struct cache *);
 
@@ -103,8 +103,8 @@ static inline struct cache *cache_group_next(struct cache_group *devs,
 	     ((_ca) = __open_bucket_next_online_device(_c, _ob,	_ptr, _ca));\
 	     (_ptr)++)
 
-void bch_cache_allocator_stop(struct cache *);
-int bch_cache_allocator_start(struct cache *);
+void bch_dev_allocator_stop(struct cache *);
+int bch_dev_allocator_start(struct cache *);
 void bch_open_buckets_init(struct cache_set *);
 
 #endif /* _BCACHE_ALLOC_H */

@@ -339,12 +339,12 @@ DEFINE_EVENT(bcache_bio, bcache_journal_write,
 
 /* Device state changes */
 
-DEFINE_EVENT(cache_set, bcache_cache_set_read_only,
+DEFINE_EVENT(cache_set, fs_read_only,
 	TP_PROTO(struct cache_set *c),
 	TP_ARGS(c)
 );
 
-DEFINE_EVENT(cache_set, bcache_cache_set_read_only_done,
+DEFINE_EVENT(cache_set, fs_read_only_done,
 	TP_PROTO(struct cache_set *c),
 	TP_ARGS(c)
 );
@@ -887,7 +887,7 @@ DEFINE_EVENT(cache_bucket_alloc, bcache_bucket_alloc_fail,
 	TP_ARGS(ca, reserve)
 );
 
-DECLARE_EVENT_CLASS(cache_set_bucket_alloc,
+TRACE_EVENT(bcache_freelist_empty_fail,
 	TP_PROTO(struct cache_set *c, enum alloc_reserve reserve,
 		 struct closure *cl),
 	TP_ARGS(c, reserve, cl),
@@ -906,12 +906,6 @@ DECLARE_EVENT_CLASS(cache_set_bucket_alloc,
 
 	TP_printk("%pU reserve %d cl %p", __entry->uuid, __entry->reserve,
 		  __entry->cl)
-);
-
-DEFINE_EVENT(cache_set_bucket_alloc, bcache_freelist_empty_fail,
-	TP_PROTO(struct cache_set *c, enum alloc_reserve reserve,
-		 struct closure *cl),
-	TP_ARGS(c, reserve, cl)
 );
 
 DECLARE_EVENT_CLASS(open_bucket_alloc,

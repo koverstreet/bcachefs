@@ -49,7 +49,7 @@ const char * const bch_cache_modes[] = {
 	NULL
 };
 
-const char * const bch_cache_state[] = {
+const char * const bch_dev_state[] = {
 	"active",
 	"readonly",
 	"failed",

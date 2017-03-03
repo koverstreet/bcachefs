@@ -112,7 +112,7 @@ found:
 	d->index_update_done = true;
 
 	/*
-	 * Btree nodes are accounted as freed in cache_set_stats when they're
+	 * Btree nodes are accounted as freed in bch_alloc_stats when they're
 	 * freed from the index:
 	 */
 	stats->s[S_COMPRESSED][S_META]	 -= c->sb.btree_node_size;
@@ -149,7 +149,7 @@ found:
 			     &tmp, 0);
 		/*
 		 * Don't apply tmp - pending deletes aren't tracked in
-		 * cache_set_stats:
+		 * bch_alloc_stats:
 		 */
 	}
 
@@ -218,7 +218,7 @@ static void bch_btree_node_free_ondisk(struct cache_set *c,
 		     &stats, 0);
 	/*
 	 * Don't apply stats - pending deletes aren't tracked in
-	 * cache_set_stats:
+	 * bch_alloc_stats:
 	 */
 }
 
@@ -384,8 +384,8 @@ static void bch_btree_set_root_inmem(struct cache_set *c, struct btree *b,
 			bch_btree_node_free_index(c, NULL, old->btree_id,
 						  bkey_i_to_s_c(&old->key),
 						  &stats);
-		bch_cache_set_stats_apply(c, &stats, &btree_reserve->disk_res,
-					  gc_pos_btree_root(b->btree_id));
+		bch_fs_stats_apply(c, &stats, &btree_reserve->disk_res,
+				   gc_pos_btree_root(b->btree_id));
 	}
 
 	bch_recalc_btree_reserve(c);
@@ -654,7 +654,7 @@ static void bch_insert_fixup_btree_ptr(struct btree_iter *iter,
 					  bkey_disassemble(b, k, &tmp),
 					  &stats);
 
-	bch_cache_set_stats_apply(c, &stats, disk_res, gc_pos_btree_node(b));
+	bch_fs_stats_apply(c, &stats, disk_res, gc_pos_btree_node(b));
 
 	bch_btree_bset_insert_key(iter, b, node_iter, insert);
 	set_btree_node_dirty(b);

@@ -53,9 +53,7 @@ static long bch_ioctl_assemble(struct bch_ioctl_assemble __user *user_arg)
 		}
 	}
 
-	err = bch_register_cache_set(devs, arg.nr_devs,
-				     bch_opts_empty(),
-				     NULL);
+	err = bch_fs_open(devs, arg.nr_devs, bch_opts_empty(), NULL);
 	if (err) {
 		pr_err("Could not register cache set: %s", err);
 		ret = -EINVAL;
@@ -84,7 +82,7 @@ static long bch_ioctl_incremental(struct bch_ioctl_incremental __user *user_arg)
 	if (!path)
 		return -ENOMEM;
 
-	err = bch_register_one(path);
+	err = bch_fs_open_incremental(path);
 	kfree(path);
 
 	if (err) {
@@ -109,7 +107,7 @@ static long bch_global_ioctl(unsigned cmd, void __user *arg)
 
 static long bch_ioctl_stop(struct cache_set *c)
 {
-	bch_cache_set_stop(c);
+	bch_fs_stop(c);
 	return 0;
 }
 
@@ -127,7 +125,7 @@ static long bch_ioctl_disk_add(struct cache_set *c,
 	if (!path)
 		return -ENOMEM;
 
-	ret = bch_cache_set_add_cache(c, path);
+	ret = bch_dev_add(c, path);
 	kfree(path);
 
 	return ret;
@@ -175,7 +173,7 @@ static long bch_ioctl_disk_remove(struct cache_set *c,
 	if (IS_ERR(ca))
 		return PTR_ERR(ca);
 
-	ret = bch_cache_remove(ca, arg.flags & BCH_FORCE_IF_DATA_MISSING)
+	ret = bch_dev_remove(ca, arg.flags & BCH_FORCE_IF_DATA_MISSING)
 		? 0 : -EBUSY;
 
 	percpu_ref_put(&ca->ref);
@@ -197,7 +195,7 @@ static long bch_ioctl_disk_fail(struct cache_set *c,
 		return PTR_ERR(ca);
 
 	/* XXX: failed not actually implemented yet */
-	ret = bch_cache_remove(ca, true);
+	ret = bch_dev_remove(ca, true);
 
 	percpu_ref_put(&ca->ref);
 	return ret;
@@ -268,7 +266,7 @@ static long bch_ioctl_query_uuid(struct cache_set *c,
 			    sizeof(c->sb.user_uuid));
 }
 
-long bch_cache_set_ioctl(struct cache_set *c, unsigned cmd, void __user *arg)
+long bch_fs_ioctl(struct cache_set *c, unsigned cmd, void __user *arg)
 {
 	/* ioctls that don't require admin cap: */
 	switch (cmd) {
@@ -309,7 +307,7 @@ static long bch_chardev_ioctl(struct file *filp, unsigned cmd, unsigned long v)
 	void __user *arg = (void __user *) v;
 
 	return c
-		? bch_cache_set_ioctl(c, cmd, arg)
+		? bch_fs_ioctl(c, cmd, arg)
 		: bch_global_ioctl(cmd, arg);
 }
 

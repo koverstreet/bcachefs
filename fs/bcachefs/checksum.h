@@ -43,8 +43,8 @@ void bch_encrypt_bio(struct cache_set *, unsigned,
 int bch_disable_encryption(struct cache_set *);
 int bch_enable_encryption(struct cache_set *, bool);
 
-void bch_cache_set_encryption_free(struct cache_set *);
-int bch_cache_set_encryption_init(struct cache_set *);
+void bch_fs_encryption_free(struct cache_set *);
+int bch_fs_encryption_init(struct cache_set *);
 
 static inline unsigned bch_data_checksum_type(struct cache_set *c)
 {

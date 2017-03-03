@@ -195,12 +195,12 @@ static inline u64 buckets_free_cache(struct cache *ca)
 
 struct bucket_stats_cache_set __bch_bucket_stats_read_cache_set(struct cache_set *);
 struct bucket_stats_cache_set bch_bucket_stats_read_cache_set(struct cache_set *);
-void bch_cache_set_stats_apply(struct cache_set *,
-			       struct bucket_stats_cache_set *,
-			       struct disk_reservation *,
+void bch_fs_stats_apply(struct cache_set *,
+			struct bucket_stats_cache_set *,
+			struct disk_reservation *,
 			       struct gc_pos);
 
-static inline u64 __cache_set_sectors_used(struct cache_set *c)
+static inline u64 __bch_fs_sectors_used(struct cache_set *c)
 {
 	struct bucket_stats_cache_set stats = __bch_bucket_stats_read_cache_set(c);
 	u64 reserved = stats.persistent_reserved +
@@ -212,9 +212,9 @@ static inline u64 __cache_set_sectors_used(struct cache_set *c)
 		(reserved >> 7);
 }
 
-static inline u64 cache_set_sectors_used(struct cache_set *c)
+static inline u64 bch_fs_sectors_used(struct cache_set *c)
 {
-	return min(c->capacity, __cache_set_sectors_used(c));
+	return min(c->capacity, __bch_fs_sectors_used(c));
 }
 
 /* XXX: kill? */

@@ -203,8 +203,8 @@
 
 #include <linux/dynamic_fault.h>
 
-#define cache_set_init_fault(name)					\
-	dynamic_fault("bcache:cache_set_init:" name)
+#define bch_fs_init_fault(name)						\
+	dynamic_fault("bcache:bch_fs_init:" name)
 #define bch_meta_read_fault(name)					\
 	 dynamic_fault("bcache:meta:read:" name)
 #define bch_meta_write_fault(name)					\
@@ -349,8 +349,8 @@ struct cache_member_rcu {
 
 /* cache->flags: */
 enum {
-	CACHE_DEV_REMOVING,
-	CACHE_DEV_FORCE_REMOVE,
+	BCH_DEV_REMOVING,
+	BCH_DEV_FORCE_REMOVE,
 };
 
 struct cache {
@@ -367,7 +367,7 @@ struct cache {
 	u8			dev_idx;
 	/*
 	 * Cached version of this device's member info from superblock
-	 * Committed by bch_write_super() -> bch_cache_set_mi_update()
+	 * Committed by bch_write_super() -> bch_fs_mi_update()
 	 */
 	struct cache_member_cpu	mi;
 	uuid_le			uuid;
@@ -461,34 +461,34 @@ struct cache {
  * Flag bits for what phase of startup/shutdown the cache set is at, how we're
  * shutting down, etc.:
  *
- * CACHE_SET_UNREGISTERING means we're not just shutting down, we're detaching
+ * BCH_FS_UNREGISTERING means we're not just shutting down, we're detaching
  * all the backing devices first (their cached data gets invalidated, and they
  * won't automatically reattach).
  *
- * CACHE_SET_STOPPING always gets set first when we're closing down a cache set;
- * we'll continue to run normally for awhile with CACHE_SET_STOPPING set (i.e.
+ * BCH_FS_STOPPING always gets set first when we're closing down a cache set;
+ * we'll continue to run normally for awhile with BCH_FS_STOPPING set (i.e.
  * flushing dirty data).
  *
- * CACHE_SET_RUNNING means all cache devices have been registered and journal
+ * BCH_FS_RUNNING means all cache devices have been registered and journal
  * replay is complete.
  */
 enum {
 	/* Startup: */
-	CACHE_SET_INITIAL_GC_DONE,
-	CACHE_SET_RUNNING,
+	BCH_FS_INITIAL_GC_DONE,
+	BCH_FS_RUNNING,
 
 	/* Shutdown: */
-	CACHE_SET_UNREGISTERING,
-	CACHE_SET_STOPPING,
-	CACHE_SET_RO,
-	CACHE_SET_RO_COMPLETE,
-	CACHE_SET_EMERGENCY_RO,
-	CACHE_SET_WRITE_DISABLE_COMPLETE,
-	CACHE_SET_GC_STOPPING,
-	CACHE_SET_GC_FAILURE,
-	CACHE_SET_BDEV_MOUNTED,
-	CACHE_SET_ERROR,
-	CACHE_SET_FSCK_FIXED_ERRORS,
+	BCH_FS_DETACHING,
+	BCH_FS_STOPPING,
+	BCH_FS_RO,
+	BCH_FS_RO_COMPLETE,
+	BCH_FS_EMERGENCY_RO,
+	BCH_FS_WRITE_DISABLE_COMPLETE,
+	BCH_FS_GC_STOPPING,
+	BCH_FS_GC_FAILURE,
+	BCH_FS_BDEV_MOUNTED,
+	BCH_FS_ERROR,
+	BCH_FS_FSCK_FIXED_ERRORS,
 };
 
 struct btree_debug {
@@ -524,7 +524,7 @@ struct cache_set {
 
 	/*
 	 * Cached copy in native endianness:
-	 * Set by bch_cache_set_mi_update():
+	 * Set by bch_fs_mi_update():
 	 */
 	struct cache_member_rcu __rcu *members;
 

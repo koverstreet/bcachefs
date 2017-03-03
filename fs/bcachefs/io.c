@@ -358,8 +358,8 @@ static void bch_write_endio(struct bio *bio)
 	struct bio *orig = wbio->orig;
 	struct cache *ca = wbio->ca;
 
-	if (cache_nonfatal_io_err_on(bio->bi_error, ca,
-				     "data write"))
+	if (bch_dev_nonfatal_io_err_on(bio->bi_error, ca,
+				       "data write"))
 		set_closure_fn(cl, bch_write_io_error, index_update_wq(op));
 
 	bch_account_io_completion_time(ca, wbio->submit_time_us,
@@ -717,8 +717,8 @@ void bch_wake_delayed_writes(unsigned long data)
 	spin_lock_irqsave(&c->foreground_write_pd_lock, flags);
 
 	while ((op = c->write_wait_head)) {
-		if (!test_bit(CACHE_SET_RO, &c->flags) &&
-		    !test_bit(CACHE_SET_STOPPING, &c->flags) &&
+		if (!test_bit(BCH_FS_RO, &c->flags) &&
+		    !test_bit(BCH_FS_STOPPING, &c->flags) &&
 		    time_after(op->expires, jiffies)) {
 			mod_timer(&c->foreground_write_wakeup, op->expires);
 			break;
@@ -933,7 +933,7 @@ static int bio_checksum_uncompress(struct cache_set *c,
 	}
 
 	csum = bch_checksum_bio(c, rbio->crc.csum_type, nonce, src);
-	if (cache_nonfatal_io_err_on(bch_crc_cmp(rbio->crc.csum, csum), rbio->ca,
+	if (bch_dev_nonfatal_io_err_on(bch_crc_cmp(rbio->crc.csum, csum), rbio->ca,
 			"data checksum error, inode %llu offset %llu: expected %0llx%0llx got %0llx%0llx (type %u)",
 			rbio->inode, (u64) rbio->parent_iter.bi_sector << 9,
 			rbio->crc.csum.hi, rbio->crc.csum.lo, csum.hi, csum.lo,
@@ -1064,8 +1064,8 @@ static void __bch_read_endio(struct cache_set *c, struct bch_read_bio *rbio)
 	}
 
 	if (rbio->promote &&
-	    !test_bit(CACHE_SET_RO, &c->flags) &&
-	    !test_bit(CACHE_SET_STOPPING, &c->flags)) {
+	    !test_bit(BCH_FS_RO, &c->flags) &&
+	    !test_bit(BCH_FS_STOPPING, &c->flags)) {
 		struct cache_promote_op *promote = rbio->promote;
 		struct closure *cl = &promote->cl;
 
@@ -1114,7 +1114,7 @@ static void bch_read_endio(struct bio *bio)
 
 	bch_account_io_completion_time(rbio->ca, rbio->submit_time_us, REQ_OP_READ);
 
-	cache_nonfatal_io_err_on(bio->bi_error, rbio->ca, "data read");
+	bch_dev_nonfatal_io_err_on(bio->bi_error, rbio->ca, "data read");
 
 	if (error) {
 		bch_read_error_maybe_retry(c, rbio, error);

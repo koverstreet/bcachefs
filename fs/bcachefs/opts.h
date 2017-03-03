@@ -12,7 +12,7 @@ extern const char * const bch_compression_types[];
 extern const char * const bch_str_hash_types[];
 extern const char * const bch_cache_replacement_policies[];
 extern const char * const bch_cache_modes[];
-extern const char * const bch_cache_state[];
+extern const char * const bch_dev_state[];
 
 /*
  * Mount options; we also store defaults in the superblock.
@@ -22,8 +22,8 @@ extern const char * const bch_cache_state[];
  * updates the superblock.
  *
  * We store options as signed integers, where -1 means undefined. This means we
- * can pass the mount options to cache_set_alloc() as a whole struct, and then
- * only apply the options from that struct that are defined.
+ * can pass the mount options to bch_fs_alloc() as a whole struct, and then only
+ * apply the options from that struct that are defined.
  */
 
 /* dummy option, for options that aren't stored in the superblock */

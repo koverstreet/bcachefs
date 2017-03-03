@@ -80,7 +80,7 @@ static inline struct cache_member_cpu cache_mi_to_cpu_mi(struct bch_member *mi)
 	};
 }
 
-int bch_cache_set_mi_update(struct cache_set *, struct bch_member *, unsigned);
+int bch_fs_mi_update(struct cache_set *, struct bch_member *, unsigned);
 
 int bch_sb_to_cache_set(struct cache_set *, struct bch_sb *);
 int bch_sb_from_cache_set(struct cache_set *, struct cache *);

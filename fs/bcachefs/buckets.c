@@ -75,7 +75,7 @@
 #define lg_local_lock	lg_global_lock
 #define lg_local_unlock	lg_global_unlock
 
-static void bch_cache_set_stats_verify(struct cache_set *c)
+static void bch_fs_stats_verify(struct cache_set *c)
 {
 	struct bucket_stats_cache_set stats =
 		__bch_bucket_stats_read_cache_set(c);
@@ -98,7 +98,7 @@ static void bch_cache_set_stats_verify(struct cache_set *c)
 
 #else
 
-static void bch_cache_set_stats_verify(struct cache_set *c) {}
+static void bch_fs_stats_verify(struct cache_set *c) {}
 
 #endif
 
@@ -199,10 +199,10 @@ static inline int is_cached_bucket(struct bucket_mark m)
 	return !m.owned_by_allocator && !m.dirty_sectors && !!m.cached_sectors;
 }
 
-void bch_cache_set_stats_apply(struct cache_set *c,
-			       struct bucket_stats_cache_set *stats,
-			       struct disk_reservation *disk_res,
-			       struct gc_pos gc_pos)
+void bch_fs_stats_apply(struct cache_set *c,
+			struct bucket_stats_cache_set *stats,
+			struct disk_reservation *disk_res,
+			struct gc_pos gc_pos)
 {
 	s64 added =
 		stats->s[S_COMPRESSED][S_META] +
@@ -230,7 +230,7 @@ void bch_cache_set_stats_apply(struct cache_set *c,
 	if (!gc_will_visit(c, gc_pos))
 		bucket_stats_add(this_cpu_ptr(c->bucket_stats_percpu), stats);
 
-	bch_cache_set_stats_verify(c);
+	bch_fs_stats_verify(c);
 	lg_local_unlock(&c->bucket_stats_lock);
 
 	memset(stats, 0, sizeof(*stats));
@@ -239,7 +239,7 @@ void bch_cache_set_stats_apply(struct cache_set *c,
 static void bucket_stats_update(struct cache *ca,
 			struct bucket_mark old, struct bucket_mark new,
 			bool may_make_unavailable,
-			struct bucket_stats_cache_set *cache_set_stats)
+			struct bucket_stats_cache_set *bch_alloc_stats)
 {
 	struct cache_set *c = ca->set;
 	struct bucket_stats_cache *cache_stats;
@@ -249,15 +249,15 @@ static void bucket_stats_update(struct cache *ca,
 	       !is_available_bucket(new) &&
 	       c->gc_pos.phase == GC_PHASE_DONE);
 
-	if (cache_set_stats) {
-		cache_set_stats->s[S_COMPRESSED][S_CACHED] +=
+	if (bch_alloc_stats) {
+		bch_alloc_stats->s[S_COMPRESSED][S_CACHED] +=
 			(int) new.cached_sectors - (int) old.cached_sectors;
 
-		cache_set_stats->s[S_COMPRESSED]
+		bch_alloc_stats->s[S_COMPRESSED]
 			[old.is_metadata ? S_META : S_DIRTY] -=
 			old.dirty_sectors;
 
-		cache_set_stats->s[S_COMPRESSED]
+		bch_alloc_stats->s[S_COMPRESSED]
 			[new.is_metadata ? S_META : S_DIRTY] +=
 			new.dirty_sectors;
 	}
@@ -312,7 +312,7 @@ void bch_invalidate_bucket(struct cache *ca, struct bucket *g)
 	 * Ick:
 	 *
 	 * Only stats.sectors_cached should be nonzero: this is important
-	 * because in this path we modify cache_set_stats based on how the
+	 * because in this path we modify bch_alloc_stats based on how the
 	 * bucket_mark was modified, and the sector counts in bucket_mark are
 	 * subject to (saturating) overflow - and if they did overflow, the
 	 * cache set stats will now be off. We can tolerate this for
@@ -620,13 +620,13 @@ void bch_mark_key(struct cache_set *c, struct bkey_s_c k,
 	__bch_mark_key(c, k, sectors, metadata, false, stats,
 		       gc_will_visit(c, gc_pos), journal_seq);
 
-	bch_cache_set_stats_verify(c);
+	bch_fs_stats_verify(c);
 	lg_local_unlock(&c->bucket_stats_lock);
 }
 
 static u64 __recalc_sectors_available(struct cache_set *c)
 {
-	return c->capacity - cache_set_sectors_used(c);
+	return c->capacity - bch_fs_sectors_used(c);
 }
 
 /* Used by gc when it's starting: */
@@ -653,7 +653,7 @@ void bch_disk_reservation_put(struct cache_set *c,
 		this_cpu_sub(c->bucket_stats_percpu->online_reserved,
 			     res->sectors);
 
-		bch_cache_set_stats_verify(c);
+		bch_fs_stats_verify(c);
 		lg_local_unlock(&c->bucket_stats_lock);
 
 		res->sectors = 0;
@@ -697,7 +697,7 @@ out:
 	stats->online_reserved	+= sectors;
 	res->sectors		+= sectors;
 
-	bch_cache_set_stats_verify(c);
+	bch_fs_stats_verify(c);
 	lg_local_unlock(&c->bucket_stats_lock);
 	return 0;
 
@@ -734,7 +734,7 @@ recalculate:
 		ret = -ENOSPC;
 	}
 
-	bch_cache_set_stats_verify(c);
+	bch_fs_stats_verify(c);
 	lg_global_unlock(&c->bucket_stats_lock);
 	if (!(flags & BCH_DISK_RESERVATION_GC_LOCK_HELD))
 		up_read(&c->gc_lock);

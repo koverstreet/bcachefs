@@ -634,7 +634,7 @@ static int bch_gc_do_inode(struct cache_set *c,
 	bool do_update = false;
 
 	ret = bch_inode_unpack(inode, &u);
-	if (cache_set_inconsistent_on(ret, c,
+	if (bch_fs_inconsistent_on(ret, c,
 			 "error unpacking inode %llu in fs-gc",
 			 inode.k->p.inode))
 		return ret;

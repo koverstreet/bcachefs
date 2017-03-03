@@ -873,7 +873,7 @@ static void bset_encrypt(struct cache_set *c, struct bset *i, struct nonce nonce
 }
 
 #define btree_node_error(b, c, ptr, fmt, ...)				\
-	cache_set_inconsistent(c,					\
+	bch_fs_inconsistent(c,						\
 		"btree node error at btree %u level %u/%u bucket %zu block %u u64s %u: " fmt,\
 		(b)->btree_id, (b)->level, btree_node_root(c, b)	\
 			    ? btree_node_root(c, b)->level : -1,	\
@@ -1194,8 +1194,8 @@ void bch_btree_node_read(struct cache_set *c, struct btree *b)
 	closure_init_stack(&cl);
 
 	pick = bch_btree_pick_ptr(c, b);
-	if (cache_set_fatal_err_on(!pick.ca, c,
-				   "no cache device for btree node")) {
+	if (bch_fs_fatal_err_on(!pick.ca, c,
+				"no cache device for btree node")) {
 		set_btree_node_read_error(b);
 		return;
 	}
@@ -1214,7 +1214,7 @@ void bch_btree_node_read(struct cache_set *c, struct btree *b)
 	bch_generic_make_request(bio, c);
 	closure_sync(&cl);
 
-	if (cache_fatal_io_err_on(bio->bi_error,
+	if (bch_dev_fatal_io_err_on(bio->bi_error,
 				  pick.ca, "IO error reading bucket %zu",
 				  PTR_BUCKET_NR(pick.ca, &pick.ptr)) ||
 	    bch_meta_read_fault("btree")) {
@@ -1297,7 +1297,7 @@ static void btree_node_write_endio(struct bio *bio)
 	struct closure *cl	= !wbio->split ? wbio->cl : NULL;
 	struct cache *ca	= wbio->ca;
 
-	if (cache_fatal_io_err_on(bio->bi_error, ca, "btree write") ||
+	if (bch_dev_fatal_io_err_on(bio->bi_error, ca, "btree write") ||
 	    bch_meta_write_fault("btree"))
 		set_btree_node_write_error(b);
 

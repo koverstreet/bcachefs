@@ -561,7 +561,7 @@ static void btree_ptr_debugcheck(struct cache_set *c, struct btree *b,
 	if (replicas < c->sb.meta_replicas_have) {
 		bch_bkey_val_to_text(c, btree_node_type(b),
 				     buf, sizeof(buf), k);
-		cache_set_bug(c,
+		bch_fs_bug(c,
 			"btree key bad (too few replicas, %u < %u): %s",
 			replicas, c->sb.meta_replicas_have, buf);
 		return;
@@ -570,7 +570,7 @@ static void btree_ptr_debugcheck(struct cache_set *c, struct btree *b,
 	return;
 err:
 	bch_bkey_val_to_text(c, btree_node_type(b), buf, sizeof(buf), k);
-	cache_set_bug(c, "%s btree pointer %s: bucket %zi prio %i "
+	bch_fs_bug(c, "%s btree pointer %s: bucket %zi prio %i "
 		      "gen %i last_gc %i mark %08x",
 		      err, buf, PTR_BUCKET_NR(ca, ptr),
 		      g->read_prio, PTR_BUCKET(ca, ptr)->mark.gen,
@@ -609,13 +609,13 @@ bch_btree_pick_ptr(struct cache_set *c, const struct btree *b)
 	extent_for_each_online_device_crc(c, e, crc, ptr, ca) {
 		struct btree *root = btree_node_root(c, b);
 
-		if (cache_set_inconsistent_on(crc, c,
+		if (bch_fs_inconsistent_on(crc, c,
 				"btree node pointer with crc at btree %u level %u/%u bucket %zu",
 				b->btree_id, b->level, root ? root->level : -1,
 				PTR_BUCKET_NR(ca, ptr)))
 			break;
 
-		if (cache_inconsistent_on(ptr_stale(ca, ptr), ca,
+		if (bch_dev_inconsistent_on(ptr_stale(ca, ptr), ca,
 				"stale btree node pointer at btree %u level %u/%u bucket %zu",
 				b->btree_id, b->level, root ? root->level : -1,
 				PTR_BUCKET_NR(ca, ptr)))
@@ -1556,8 +1556,8 @@ next:
 stop:
 	extent_insert_committed(s);
 
-	bch_cache_set_stats_apply(c, &s->stats, s->trans->disk_res,
-				  gc_pos_btree_node(b));
+	bch_fs_stats_apply(c, &s->stats, s->trans->disk_res,
+			   gc_pos_btree_node(b));
 
 	EBUG_ON(bkey_cmp(iter->pos, s->committed));
 	EBUG_ON((bkey_cmp(iter->pos, b->key.k.p) == 0) != iter->at_end_of_leaf);
@@ -1718,8 +1718,8 @@ stop:
 				     bkey_start_offset(&insert->k->k),
 				     insert->k->k.size);
 
-	bch_cache_set_stats_apply(c, &s.stats, trans->disk_res,
-				  gc_pos_btree_node(b));
+	bch_fs_stats_apply(c, &s.stats, trans->disk_res,
+			   gc_pos_btree_node(b));
 
 	EBUG_ON(bkey_cmp(iter->pos, bkey_start_pos(&insert->k->k)));
 	EBUG_ON(bkey_cmp(iter->pos, s.committed));
@@ -1870,10 +1870,10 @@ static void bch_extent_debugcheck_extent(struct cache_set *c, struct btree *b,
 
 				stale = ptr_stale(ca, ptr);
 
-				cache_set_bug_on(stale && !ptr->cached, c,
+				bch_fs_bug_on(stale && !ptr->cached, c,
 						 "stale dirty pointer");
 
-				cache_set_bug_on(stale > 96, c,
+				bch_fs_bug_on(stale > 96, c,
 						 "key too stale: %i",
 						 stale);
 
@@ -1897,7 +1897,7 @@ static void bch_extent_debugcheck_extent(struct cache_set *c, struct btree *b,
 	if (replicas > BCH_REPLICAS_MAX) {
 		bch_bkey_val_to_text(c, btree_node_type(b), buf,
 				     sizeof(buf), e.s_c);
-		cache_set_bug(c,
+		bch_fs_bug(c,
 			"extent key bad (too many replicas: %u): %s",
 			replicas, buf);
 		return;
@@ -1907,7 +1907,7 @@ static void bch_extent_debugcheck_extent(struct cache_set *c, struct btree *b,
 	    replicas < c->sb.data_replicas_have) {
 		bch_bkey_val_to_text(c, btree_node_type(b), buf,
 				     sizeof(buf), e.s_c);
-		cache_set_bug(c,
+		bch_fs_bug(c,
 			"extent key bad (too few replicas, %u < %u): %s",
 			replicas, c->sb.data_replicas_have, buf);
 		return;
@@ -1918,20 +1918,20 @@ static void bch_extent_debugcheck_extent(struct cache_set *c, struct btree *b,
 bad_device:
 	bch_bkey_val_to_text(c, btree_node_type(b), buf,
 			     sizeof(buf), e.s_c);
-	cache_set_bug(c, "extent pointer to dev %u missing device: %s",
-		      ptr->dev, buf);
+	bch_fs_bug(c, "extent pointer to dev %u missing device: %s",
+		   ptr->dev, buf);
 	cache_member_info_put();
 	return;
 
 bad_ptr:
 	bch_bkey_val_to_text(c, btree_node_type(b), buf,
 			     sizeof(buf), e.s_c);
-	cache_set_bug(c, "extent pointer bad gc mark: %s:\nbucket %zu prio %i "
-		      "gen %i last_gc %i mark 0x%08x",
-		      buf, PTR_BUCKET_NR(ca, ptr),
-		      g->read_prio, PTR_BUCKET(ca, ptr)->mark.gen,
-		      ca->oldest_gens[PTR_BUCKET_NR(ca, ptr)],
-		      (unsigned) g->mark.counter);
+	bch_fs_bug(c, "extent pointer bad gc mark: %s:\nbucket %zu prio %i "
+		   "gen %i last_gc %i mark 0x%08x",
+		   buf, PTR_BUCKET_NR(ca, ptr),
+		   g->read_prio, PTR_BUCKET(ca, ptr)->mark.gen,
+		   ca->oldest_gens[PTR_BUCKET_NR(ca, ptr)],
+		   (unsigned) g->mark.counter);
 	cache_member_info_put();
 	return;
 }
