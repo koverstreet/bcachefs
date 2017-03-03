@@ -7,10 +7,26 @@ struct cache_set;
 struct cached_dev;
 struct bcache_device;
 
+#ifndef NO_BCACHE_ACCOUNTING
+
 void bch_cache_accounting_init(struct cache_accounting *, struct closure *);
 int bch_cache_accounting_add_kobjs(struct cache_accounting *, struct kobject *);
 void bch_cache_accounting_clear(struct cache_accounting *);
 void bch_cache_accounting_destroy(struct cache_accounting *);
+
+#else
+
+static inline void bch_cache_accounting_init(struct cache_accounting *acc,
+					     struct closure *cl) {}
+static inline int bch_cache_accounting_add_kobjs(struct cache_accounting *acc,
+						 struct kobject *cl)
+{
+	return 0;
+}
+static inline void bch_cache_accounting_clear(struct cache_accounting *acc) {}
+static inline void bch_cache_accounting_destroy(struct cache_accounting *acc) {}
+
+#endif
 
 static inline void mark_cache_stats(struct cache_stat_collector *stats,
 				    bool hit, bool bypass)

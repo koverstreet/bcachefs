@@ -311,8 +311,67 @@ static long bch_chardev_ioctl(struct file *filp, unsigned cmd, unsigned long v)
 		: bch_global_ioctl(cmd, arg);
 }
 
-const struct file_operations bch_chardev_fops = {
+static const struct file_operations bch_chardev_fops = {
 	.owner		= THIS_MODULE,
 	.unlocked_ioctl = bch_chardev_ioctl,
 	.open		= nonseekable_open,
 };
+
+static int bch_chardev_major;
+static struct class *bch_chardev_class;
+static struct device *bch_chardev;
+static DEFINE_IDR(bch_chardev_minor);
+
+void bch_fs_chardev_exit(struct cache_set *c)
+{
+	if (!IS_ERR_OR_NULL(c->chardev))
+		device_unregister(c->chardev);
+	if (c->minor >= 0)
+		idr_remove(&bch_chardev_minor, c->minor);
+}
+
+int bch_fs_chardev_init(struct cache_set *c)
+{
+	c->minor = idr_alloc(&bch_chardev_minor, c, 0, 0, GFP_KERNEL);
+	if (c->minor < 0)
+		return c->minor;
+
+	c->chardev = device_create(bch_chardev_class, NULL,
+				   MKDEV(bch_chardev_major, c->minor), NULL,
+				   "bcache%u-ctl", c->minor);
+	if (IS_ERR(c->chardev))
+		return PTR_ERR(c->chardev);
+
+	return 0;
+}
+
+void bch_chardev_exit(void)
+{
+	if (!IS_ERR_OR_NULL(bch_chardev_class))
+		device_destroy(bch_chardev_class,
+			       MKDEV(bch_chardev_major, 0));
+	if (!IS_ERR_OR_NULL(bch_chardev_class))
+		class_destroy(bch_chardev_class);
+	if (bch_chardev_major > 0)
+		unregister_chrdev(bch_chardev_major, "bcache");
+
+}
+
+int __init bch_chardev_init(void)
+{
+	bch_chardev_major = register_chrdev(0, "bcache-ctl", &bch_chardev_fops);
+	if (bch_chardev_major < 0)
+		return bch_chardev_major;
+
+	bch_chardev_class = class_create(THIS_MODULE, "bcache");
+	if (IS_ERR(bch_chardev_class))
+		return PTR_ERR(bch_chardev_class);
+
+	bch_chardev = device_create(bch_chardev_class, NULL,
+				    MKDEV(bch_chardev_major, 255),
+				    NULL, "bcache-ctl");
+	if (IS_ERR(bch_chardev))
+		return PTR_ERR(bch_chardev);
+
+	return 0;
+}

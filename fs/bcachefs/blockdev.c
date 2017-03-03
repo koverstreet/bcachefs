@@ -17,7 +17,7 @@
 static int bch_blockdev_major;
 static DEFINE_IDA(bch_blockdev_minor);
 static LIST_HEAD(uncached_devices);
-struct kmem_cache *bch_search_cache;
+static struct kmem_cache *bch_search_cache;
 
 static void write_bdev_super_endio(struct bio *bio)
 {
@@ -809,6 +809,16 @@ void bch_blockdevs_stop(struct cache_set *c)
 
 	rcu_read_unlock();
 	mutex_unlock(&bch_register_lock);
+}
+
+void bch_fs_blockdev_exit(struct cache_set *c)
+{
+	mempool_exit(&c->search);
+}
+
+int bch_fs_blockdev_init(struct cache_set *c)
+{
+	return mempool_init_slab_pool(&c->search, 1, bch_search_cache);
 }
 
 void bch_blockdev_exit(void)

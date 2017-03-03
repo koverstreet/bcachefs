@@ -87,6 +87,8 @@ static inline void bch_writeback_add(struct cached_dev *dc)
 	}
 }
 
+#ifndef NO_BCACHE_WRITEBACK
+
 void bcache_dev_sectors_dirty_add(struct cache_set *, unsigned, u64, int);
 
 void bch_writeback_recalc_oldest_gens(struct cache_set *);
@@ -96,5 +98,25 @@ void bch_cached_dev_writeback_stop(struct cached_dev *);
 void bch_cached_dev_writeback_free(struct cached_dev *);
 int bch_cached_dev_writeback_init(struct cached_dev *);
 int bch_cached_dev_writeback_start(struct cached_dev *);
+
+#else
+
+static inline void bcache_dev_sectors_dirty_add(struct cache_set *c,
+						unsigned i, u64 o, int n) {}
+static inline void bch_writeback_recalc_oldest_gens(struct cache_set *c) {}
+static inline void bch_sectors_dirty_init(struct cached_dev *dc,
+					  struct cache_set *c) {}
+static inline void bch_cached_dev_writeback_stop(struct cached_dev *dc) {}
+static inline void bch_cached_dev_writeback_free(struct cached_dev *dc) {}
+static inline int bch_cached_dev_writeback_init(struct cached_dev *dc)
+{
+	return 0;
+}
+static inline int bch_cached_dev_writeback_start(struct cached_dev *dc)
+{
+	return 0;
+}
+
+#endif
 
 #endif

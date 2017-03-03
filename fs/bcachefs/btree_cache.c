@@ -11,8 +11,9 @@
 
 #define DEF_BTREE_ID(kwd, val, name) name,
 
-const char *bch_btree_id_names[BTREE_ID_NR] = {
+const char * const bch_btree_ids[] = {
 	DEFINE_BCH_BTREE_IDS()
+	NULL
 };
 
 #undef DEF_BTREE_ID

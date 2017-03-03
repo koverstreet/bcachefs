@@ -119,6 +119,13 @@ static void bio_unmap_or_unbounce(struct cache_set *c, void *data,
 	}
 }
 
+static inline void zlib_set_workspace(z_stream *strm, void *workspace)
+{
+#ifdef __KERNEL__
+	strm->workspace = workspace;
+#endif
+}
+
 static int __bio_uncompress(struct cache_set *c, struct bio *src,
 			    void *dst_data, struct bch_extent_crc128 crc)
 {
@@ -150,11 +157,11 @@ static int __bio_uncompress(struct cache_set *c, struct bio *src,
 			workspace = c->zlib_workspace;
 		}
 
-		strm.workspace	= workspace;
 		strm.next_in	= src_data;
 		strm.avail_in	= src_len;
 		strm.next_out	= dst_data;
 		strm.avail_out	= dst_len;
+		zlib_set_workspace(&strm, workspace);
 		zlib_inflateInit2(&strm, -MAX_WBITS);
 
 		ret = zlib_inflate(&strm, Z_FINISH);
@@ -310,12 +317,12 @@ static int __bio_compress(struct cache_set *c,
 			workspace = c->zlib_workspace;
 		}
 
-		strm.workspace	= workspace;
 		strm.next_in	= src_data;
 		strm.avail_in	= min(src->bi_iter.bi_size,
 				      dst->bi_iter.bi_size);
 		strm.next_out	= dst_data;
 		strm.avail_out	= dst->bi_iter.bi_size;
+		zlib_set_workspace(&strm, workspace);
 		zlib_deflateInit2(&strm, Z_DEFAULT_COMPRESSION,
 				  Z_DEFLATED, -MAX_WBITS, DEF_MEM_LEVEL,
 				  Z_DEFAULT_STRATEGY);

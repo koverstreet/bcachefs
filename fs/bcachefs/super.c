@@ -65,10 +65,6 @@ static struct kset *bcache_kset;
 struct mutex bch_register_lock;
 LIST_HEAD(bch_fs_list);
 
-static int bch_chardev_major;
-static struct class *bch_chardev_class;
-static struct device *bch_chardev;
-static DEFINE_IDR(bch_chardev_minor);
 static DECLARE_WAIT_QUEUE_HEAD(bch_read_only_wait);
 struct workqueue_struct *bcache_io_wq;
 struct crypto_shash *bch_sha256;
@@ -350,6 +346,7 @@ static void bch_fs_free(struct cache_set *c)
 	bch_io_clock_exit(&c->io_clock[WRITE]);
 	bch_io_clock_exit(&c->io_clock[READ]);
 	bch_compress_free(c);
+	bch_fs_blockdev_exit(c);
 	bdi_destroy(&c->bdi);
 	lg_lock_free(&c->bucket_stats_lock);
 	free_percpu(c->bucket_stats_percpu);
@@ -362,7 +359,6 @@ static void bch_fs_free(struct cache_set *c)
 	mempool_exit(&c->btree_interior_update_pool);
 	mempool_exit(&c->btree_reserve_pool);
 	mempool_exit(&c->fill_iter);
-	mempool_exit(&c->search);
 	percpu_ref_exit(&c->writes);
 
 	if (c->copygc_wq)
@@ -406,12 +402,8 @@ static void __bch_fs_stop3(struct closure *cl)
 	mutex_lock(&bch_register_lock);
 	for_each_cache(ca, c, i)
 		bch_dev_stop(ca);
-	mutex_unlock(&bch_register_lock);
 
-	mutex_lock(&bch_register_lock);
 	list_del(&c->list);
-	if (c->minor >= 0)
-		idr_remove(&bch_chardev_minor, c->minor);
 	mutex_unlock(&bch_register_lock);
 
 	closure_debug_destroy(&c->cl);
@@ -427,9 +419,7 @@ static void __bch_fs_stop2(struct closure *cl)
 	struct cache_set *c = container_of(cl, struct cache_set, caching);
 
 	bch_debug_exit_cache_set(c);
-
-	if (!IS_ERR_OR_NULL(c->chardev))
-		device_unregister(c->chardev);
+	bch_fs_chardev_exit(c);
 
 	if (c->kobj.state_in_sysfs)
 		kobject_del(&c->kobj);
@@ -624,7 +614,6 @@ static struct cache_set *bch_fs_alloc(struct bch_sb *sb, struct bch_opts opts)
 	    !(c->copygc_wq = alloc_workqueue("bcache_copygc",
 				WQ_FREEZABLE|WQ_MEM_RECLAIM|WQ_HIGHPRI, 1)) ||
 	    percpu_ref_init(&c->writes, bch_writes_disabled, 0, GFP_KERNEL) ||
-	    mempool_init_slab_pool(&c->search, 1, bch_search_cache) ||
 	    mempool_init_kmalloc_pool(&c->btree_reserve_pool, 1,
 				      sizeof(struct btree_reserve)) ||
 	    mempool_init_kmalloc_pool(&c->btree_interior_update_pool, 1,
@@ -644,6 +633,7 @@ static struct cache_set *bch_fs_alloc(struct bch_sb *sb, struct bch_opts opts)
 	    mempool_init_page_pool(&c->btree_bounce_pool, 1,
 				   ilog2(btree_pages(c))) ||
 	    bdi_setup_and_register(&c->bdi, "bcache") ||
+	    bch_fs_blockdev_init(c) ||
 	    bch_io_clock_init(&c->io_clock[READ]) ||
 	    bch_io_clock_init(&c->io_clock[WRITE]) ||
 	    bch_journal_alloc(&c->journal, journal_entry_bytes) ||
@@ -685,21 +675,18 @@ static int bch_fs_online(struct cache_set *c)
 {
 	struct cache *ca;
 	unsigned i;
+	int ret;
 
 	lockdep_assert_held(&bch_register_lock);
 
-	if (c->kobj.state_in_sysfs)
+	if (!list_empty(&c->list))
 		return 0;
 
-	c->minor = idr_alloc(&bch_chardev_minor, c, 0, 0, GFP_KERNEL);
-	if (c->minor < 0)
-		return c->minor;
+	list_add(&c->list, &bch_fs_list);
 
-	c->chardev = device_create(bch_chardev_class, NULL,
-				   MKDEV(bch_chardev_major, c->minor), NULL,
-				   "bcache%u-ctl", c->minor);
-	if (IS_ERR(c->chardev))
-		return PTR_ERR(c->chardev);
+	ret = bch_fs_chardev_init(c);
+	if (ret)
+		return ret;
 
 	if (kobject_add(&c->kobj, NULL, "%pU", c->sb.user_uuid.b) ||
 	    kobject_add(&c->internal, &c->kobj, "internal") ||
@@ -714,7 +701,6 @@ static int bch_fs_online(struct cache_set *c)
 			return -1;
 		}
 
-	list_add(&c->list, &bch_fs_list);
 	return 0;
 }
 
@@ -1898,17 +1884,11 @@ static void bcache_exit(void)
 	bch_debug_exit();
 	bch_fs_exit();
 	bch_blockdev_exit();
+	bch_chardev_exit();
 	if (bcache_kset)
 		kset_unregister(bcache_kset);
 	if (bcache_io_wq)
 		destroy_workqueue(bcache_io_wq);
-	if (!IS_ERR_OR_NULL(bch_chardev_class))
-		device_destroy(bch_chardev_class,
-			       MKDEV(bch_chardev_major, 0));
-	if (!IS_ERR_OR_NULL(bch_chardev_class))
-		class_destroy(bch_chardev_class);
-	if (bch_chardev_major > 0)
-		unregister_chrdev(bch_chardev_major, "bcache");
 	if (!IS_ERR_OR_NULL(bch_sha256))
 		crypto_free_shash(bch_sha256);
 	unregister_reboot_notifier(&reboot);
@@ -1931,23 +1911,10 @@ static int __init bcache_init(void)
 	if (IS_ERR(bch_sha256))
 		goto err;
 
-	bch_chardev_major = register_chrdev(0, "bcache-ctl", &bch_chardev_fops);
-	if (bch_chardev_major < 0)
-		goto err;
-
-	bch_chardev_class = class_create(THIS_MODULE, "bcache");
-	if (IS_ERR(bch_chardev_class))
-		goto err;
-
-	bch_chardev = device_create(bch_chardev_class, NULL,
-				    MKDEV(bch_chardev_major, 255),
-				    NULL, "bcache-ctl");
-	if (IS_ERR(bch_chardev))
-		goto err;
-
 	if (!(bcache_io_wq = create_freezable_workqueue("bcache_io")) ||
 	    !(bcache_kset = kset_create_and_add("bcache", NULL, fs_kobj)) ||
 	    sysfs_create_files(&bcache_kset->kobj, files) ||
+	    bch_chardev_init() ||
 	    bch_blockdev_init() ||
 	    bch_fs_init() ||
 	    bch_debug_init())

@@ -6,7 +6,7 @@
 
 struct btree_iter;
 
-extern const char *bch_btree_id_names[BTREE_ID_NR];
+extern const char * const bch_btree_ids[];
 
 void bch_recalc_btree_reserve(struct cache_set *);
 

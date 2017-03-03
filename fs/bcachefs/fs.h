@@ -41,6 +41,8 @@ static inline unsigned nlink_bias(umode_t mode)
 
 struct bch_inode_unpacked;
 
+#ifndef NO_BCACHE_FS
+
 /* returns 0 if we want to do the update, or error is passed up */
 typedef int (*inode_set_fn)(struct bch_inode_info *,
 			    struct bch_inode_unpacked *, void *);
@@ -52,5 +54,12 @@ int __must_check bch_write_inode(struct cache_set *,
 
 void bch_fs_exit(void);
 int bch_fs_init(void);
+
+#else
+
+static inline void bch_fs_exit(void) {}
+static inline int bch_fs_init(void) { return 0; }
+
+#endif
 
 #endif /* _BCACHE_FS_H */

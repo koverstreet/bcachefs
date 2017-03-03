@@ -1,6 +1,8 @@
 #ifndef _BCACHE_INODE_H
 #define _BCACHE_INODE_H
 
+#include <linux/math64.h>
+
 extern const struct bkey_ops bch_bkey_inode_ops;
 
 struct bch_inode_unpacked {
