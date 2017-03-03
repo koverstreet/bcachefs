@@ -1203,7 +1203,7 @@ static struct cache_set *bdev_to_cache_set(struct block_device *bdev)
 }
 
 static struct cache_set *bch_open_as_blockdevs(const char *_dev_name,
-					       struct cache_set_opts opts)
+					       struct bch_opts opts)
 {
 	size_t nr_devs = 0, i = 0;
 	char *dev_name, *s, **devs;
@@ -1281,10 +1281,12 @@ err_unlock:
 static int bch_remount(struct super_block *sb, int *flags, char *data)
 {
 	struct cache_set *c = sb->s_fs_info;
-	struct cache_set_opts opts;
+	struct bch_opts opts = bch_opts_empty();
 	int ret;
 
-	ret = bch_parse_options(&opts, *flags, data);
+	opts.read_only = (*flags & MS_RDONLY) != 0;
+
+	ret = bch_parse_mount_opts(&opts, data);
 	if (ret)
 		return ret;
 
@@ -1355,11 +1357,13 @@ static struct dentry *bch_mount(struct file_system_type *fs_type,
 	struct cache *ca;
 	struct super_block *sb;
 	struct inode *inode;
-	struct cache_set_opts opts;
+	struct bch_opts opts = bch_opts_empty();
 	unsigned i;
 	int ret;
 
-	ret = bch_parse_options(&opts, flags, data);
+	opts.read_only = (flags & MS_RDONLY) != 0;
+
+	ret = bch_parse_mount_opts(&opts, data);
 	if (ret)
 		return ERR_PTR(ret);
 

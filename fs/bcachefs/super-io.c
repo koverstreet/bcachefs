@@ -388,7 +388,7 @@ static bool bch_is_open(struct block_device *bdev)
 }
 
 static const char *bch_blkdev_open(const char *path, void *holder,
-				   struct cache_set_opts opts,
+				   struct bch_opts opts,
 				   struct block_device **ret)
 {
 	struct block_device *bdev;
@@ -608,7 +608,7 @@ reread:
 }
 
 const char *bch_read_super(struct bcache_superblock *sb,
-			   struct cache_set_opts opts,
+			   struct bch_opts opts,
 			   const char *path)
 {
 	struct bch_sb_layout layout;

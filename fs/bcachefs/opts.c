@@ -57,148 +57,186 @@ const char * const bch_cache_state[] = {
 	NULL
 };
 
+const struct bch_option bch_opt_table[] = {
+#define OPT_BOOL()		.type = BCH_OPT_BOOL
+#define OPT_UINT(_min, _max)	.type = BCH_OPT_UINT, .min = _min, .max = _max
+#define OPT_STR(_choices)	.type = BCH_OPT_STR, .choices = _choices
 
-const char * const bch_bool_opt[] = {
-	"0",
-	"1",
-	NULL
-};
-
-const char * const bch_uint_opt[] = {
-	NULL
-};
-
-enum bch_opts {
-#define BCH_OPT(_name, _choices, _min, _max, _sb_opt, _perm)		\
-	Opt_##_name,
-
+#define BCH_OPT(_name, _mode, _sb_opt, _bits, _type)			\
+	[Opt_##_name] = {						\
+		.name	= #_name,					\
+		.set_sb	= SET_##_sb_opt,				\
+		_type							\
+	},
 	BCH_VISIBLE_OPTS()
 #undef BCH_OPT
-
-	Opt_bad_opt,
 };
 
-struct bch_option {
-	const char		*name;
-	const char * const	*opts;
-	unsigned long		min, max;
-};
-
-struct bch_opt_result {
-	enum bch_opts		opt;
-	unsigned		val;
-};
-
-static int parse_bool_opt(const struct bch_option *opt, const char *s)
+static enum bch_opt_id bch_opt_lookup(const char *name)
 {
-	if (!strcmp(opt->name, s))
-		return true;
+	const struct bch_option *i;
 
-	if (!strncmp("no", s, 2) && !strcmp(opt->name, s + 2))
-		return false;
+	for (i = bch_opt_table;
+	     i < bch_opt_table + ARRAY_SIZE(bch_opt_table);
+	     i++)
+		if (!strcmp(name, i->name))
+			return i - bch_opt_table;
 
 	return -1;
 }
 
-static int parse_uint_opt(const struct bch_option *opt, const char *s)
+static u64 bch_opt_get(struct bch_opts *opts, enum bch_opt_id id)
 {
-	unsigned long v;
+	switch (id) {
+#define BCH_OPT(_name, ...)						\
+	case Opt_##_name:						\
+		return opts->_name;					\
+
+	BCH_VISIBLE_OPTS()
+#undef BCH_OPT
+
+	default:
+		BUG();
+	}
+}
+
+void bch_opt_set(struct bch_opts *opts, enum bch_opt_id id, u64 v)
+{
+	switch (id) {
+#define BCH_OPT(_name, ...)						\
+	case Opt_##_name:						\
+		opts->_name = v;					\
+		break;
+
+	BCH_VISIBLE_OPTS()
+#undef BCH_OPT
+
+	default:
+		BUG();
+	}
+}
+
+/*
+ * Initial options from superblock - here we don't want any options undefined,
+ * any options the superblock doesn't specify are set to 0:
+ */
+struct bch_opts bch_sb_opts(struct bch_sb *sb)
+{
+	struct bch_opts opts = bch_opts_empty();
+
+#define BCH_OPT(_name, _mode, _sb_opt, ...)				\
+	if (_sb_opt != NO_SB_OPT)					\
+		opts._name = _sb_opt(sb);
+
+	BCH_OPTS()
+#undef BCH_OPT
+
+	return opts;
+}
+
+int parse_one_opt(enum bch_opt_id id, const char *val, u64 *res)
+{
+	const struct bch_option *opt = &bch_opt_table[id];
+	ssize_t ret;
+
+	switch (opt->type) {
+	case BCH_OPT_BOOL:
+		ret = kstrtou64(val, 10, res);
+		if (ret < 0)
+			return ret;
+
+		if (*res > 1)
+			return -ERANGE;
+		break;
+	case BCH_OPT_UINT:
+		ret = kstrtou64(val, 10, res);
+		if (ret < 0)
+			return ret;
+
+		if (*res < opt->min || *res >= opt->max)
+			return -ERANGE;
+		break;
+	case BCH_OPT_STR:
+		ret = bch_read_string_list(val, opt->choices);
+		if (ret < 0)
+			return ret;
+
+		*res = ret;
+		break;
+	}
+
+	return 0;
+}
+
+int bch_parse_mount_opts(struct bch_opts *opts, char *options)
+{
+	char *opt, *name, *val;
+	enum bch_opt_id id;
+	int ret;
+	u64 v;
+
+	while ((opt = strsep(&options, ",")) != NULL) {
+		name	= strsep(&opt, "=");
+		val	= opt;
+
+		if (val) {
+			id = bch_opt_lookup(name);
+			if (id < 0)
+				return -EINVAL;
+
+			ret = parse_one_opt(id, val, &v);
+			if (ret < 0)
+				return ret;
+		} else {
+			id = bch_opt_lookup(name);
+			v = 1;
+
+			if (id < 0 &&
+			    !strncmp("no", name, 2)) {
+				id = bch_opt_lookup(name + 2);
+				v = 0;
+			}
+
+			if (bch_opt_table[id].type != BCH_OPT_BOOL)
+				return -EINVAL;
+		}
+
+		bch_opt_set(opts, id, v);
+	}
+
+	return 0;
+}
+
+enum bch_opt_id bch_parse_sysfs_opt(const char *name, const char *val,
+				    u64 *res)
+{
+	enum bch_opt_id id = bch_opt_lookup(name);
 	int ret;
 
-	if (strncmp(opt->name, s, strlen(opt->name)))
-		return -1;
+	if (id < 0)
+		return -EINVAL;
 
-	s += strlen(opt->name);
-
-	if (*s != '=')
-		return -1;
-
-	s++;
-
-	ret = kstrtoul(s, 10, &v);
-	if (ret)
+	ret = parse_one_opt(id, val, res);
+	if (ret < 0)
 		return ret;
 
-	if (v < opt->min || v >= opt->max)
-		return -ERANGE;
-
-	return 0;
+	return id;
 }
 
-static int parse_string_opt(const struct bch_option *opt, const char *s)
+ssize_t bch_opt_show(struct bch_opts *opts, const char *name,
+		     char *buf, size_t size)
 {
-	if (strncmp(opt->name, s, strlen(opt->name)))
-		return -1;
+	enum bch_opt_id id = bch_opt_lookup(name);
+	const struct bch_option *opt;
+	u64 v;
 
-	s += strlen(opt->name);
+	if (id < 0)
+		return -EINVAL;
 
-	if (*s != '=')
-		return -1;
+	v = bch_opt_get(opts, id);
+	opt = &bch_opt_table[id];
 
-	s++;
-
-	return bch_read_string_list(s, opt->opts);
-}
-
-static struct bch_opt_result parse_one_opt(const char *opt)
-{
-	static const struct bch_option opt_table[] = {
-#define BCH_OPT(_name, _choices, _min, _max, _sb_opt, _perm)		\
-		[Opt_##_name] = {					\
-			.name = #_name,					\
-			.opts = _choices,				\
-			.min = _min,					\
-			.max = _max,					\
-		},
-		BCH_VISIBLE_OPTS()
-#undef BCH_OPT
-	}, *i;
-
-	for (i = opt_table;
-	     i < opt_table + ARRAY_SIZE(opt_table);
-	     i++) {
-		int res = i->opts == bch_bool_opt ? parse_bool_opt(i, opt)
-			: i->opts == bch_uint_opt ? parse_uint_opt(i, opt)
-			: parse_string_opt(i, opt);
-
-		if (res >= 0)
-			return (struct bch_opt_result) {
-				i - opt_table, res
-			};
-	}
-
-	return (struct bch_opt_result) { Opt_bad_opt };
-}
-
-int bch_parse_options(struct cache_set_opts *opts, int flags, char *options)
-{
-	char *p;
-
-	*opts = cache_set_opts_empty();
-
-	opts->read_only = (flags & MS_RDONLY) != 0;
-
-	if (!options)
-		return 0;
-
-	while ((p = strsep(&options, ",")) != NULL) {
-		struct bch_opt_result res = parse_one_opt(p);
-
-		switch (res.opt) {
-#define BCH_OPT(_name, _choices, _min, _max, _sb_opt, _perm)		\
-		case Opt_##_name:					\
-			opts->_name = res.val;				\
-			break;
-
-		BCH_VISIBLE_OPTS()
-#undef BCH_OPT
-
-		case Opt_bad_opt:
-			return -EINVAL;
-		default:
-			BUG();
-		}
-	}
-
-	return 0;
+	return opt->type == BCH_OPT_STR
+		? bch_snprint_string_list(buf, size, opt->choices, v)
+		: snprintf(buf, size, "%lli\n", v);
 }

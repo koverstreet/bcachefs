@@ -142,10 +142,9 @@ read_attribute(tier);
 	BCH_DEBUG_PARAMS()
 #undef BCH_DEBUG_PARAM
 
-#define BCH_OPT(_name, _choices, _min, _max, _sb_opt, _perm)		\
+#define BCH_OPT(_name, _mode, ...)					\
 	static struct attribute sysfs_opt_##_name = {			\
-		.name = #_name,						\
-		.mode = S_IRUGO|(_perm ? S_IWUSR : 0)			\
+		.name = #_name,	.mode = _mode,				\
 	};
 
 	BCH_VISIBLE_OPTS()
@@ -949,55 +948,40 @@ SHOW(bch_cache_set_opts_dir)
 {
 	struct cache_set *c = container_of(kobj, struct cache_set, opts_dir);
 
-#define BCH_OPT(_name, _choices, _min, _max, _sb_opt, _perm)		\
-	if (attr == &sysfs_opt_##_name)					\
-		return _choices == bch_bool_opt || _choices == bch_uint_opt\
-			? snprintf(buf, PAGE_SIZE, "%i\n", c->opts._name)\
-			: bch_snprint_string_list(buf, PAGE_SIZE,	\
-						_choices, c->opts._name);\
-
-	BCH_VISIBLE_OPTS()
-#undef BCH_OPT
-
-	return 0;
+	return bch_opt_show(&c->opts, attr->name, buf, PAGE_SIZE);
 }
 
 STORE(bch_cache_set_opts_dir)
 {
 	struct cache_set *c = container_of(kobj, struct cache_set, opts_dir);
+	const struct bch_option *opt;
+	enum bch_opt_id id;
+	u64 v;
 
-#define BCH_OPT(_name, _choices, _min, _max, _sb_opt, _perm)		\
-	if (attr == &sysfs_opt_##_name) {				\
-		ssize_t v = (_choices == bch_bool_opt ||		\
-			     _choices == bch_uint_opt)			\
-			? strtoul_restrict_or_return(buf, _min, _max - 1)\
-			: bch_read_string_list(buf, _choices);		\
-									\
-		if (v < 0)						\
-			return v;					\
-									\
-		mutex_lock(&c->sb_lock);				\
-		if (attr == &sysfs_opt_compression) {			\
-			int ret = bch_check_set_has_compressed_data(c, v);\
-			if (ret) {					\
-				mutex_unlock(&c->sb_lock);		\
-				return ret;				\
-			}						\
-		}							\
-									\
-		if (_sb_opt##_BITS && v != _sb_opt(c->disk_sb)) {	\
-			SET_##_sb_opt(c->disk_sb, v);			\
-			bch_write_super(c);			\
-		}							\
-									\
-		c->opts._name = v;					\
-		mutex_unlock(&c->sb_lock);				\
-									\
-		return size;						\
+	id = bch_parse_sysfs_opt(attr->name, buf, &v);
+	if (id < 0)
+		return id;
+
+	opt = &bch_opt_table[id];
+
+	mutex_lock(&c->sb_lock);
+
+	if (id == Opt_compression) {
+		int ret = bch_check_set_has_compressed_data(c, v);
+		if (ret) {
+			mutex_unlock(&c->sb_lock);
+			return ret;
+		}
 	}
 
-	BCH_VISIBLE_OPTS()
-#undef BCH_OPT
+	if (opt->set_sb != SET_NO_SB_OPT) {
+		opt->set_sb(c->disk_sb, v);
+		bch_write_super(c);
+	}
+
+	bch_opt_set(&c->opts, id, v);
+
+	mutex_unlock(&c->sb_lock);
 
 	return size;
 }
@@ -1007,7 +991,7 @@ static void bch_cache_set_opts_dir_release(struct kobject *k)
 }
 
 static struct attribute *bch_cache_set_opts_dir_files[] = {
-#define BCH_OPT(_name, _choices, _min, _max, _sb_opt, _perm)	\
+#define BCH_OPT(_name, ...)						\
 	&sysfs_opt_##_name,
 
 	BCH_VISIBLE_OPTS()

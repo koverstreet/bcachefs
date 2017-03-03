@@ -26,88 +26,131 @@ extern const char * const bch_cache_state[];
  * only apply the options from that struct that are defined.
  */
 
-extern const char * const bch_bool_opt[];
-extern const char * const bch_uint_opt[];
-
 /* dummy option, for options that aren't stored in the superblock */
 LE64_BITMASK(NO_SB_OPT,		struct bch_sb, flags[0], 0, 0);
 
-#define BCH_VISIBLE_OPTS()					\
-	BCH_OPT(verbose_recovery,				\
-		bch_bool_opt, 0, 2,				\
-		NO_SB_OPT, false)				\
-	BCH_OPT(posix_acl,					\
-		bch_bool_opt, 0, 2,				\
-		NO_SB_OPT, false)				\
-	BCH_OPT(journal_flush_disabled,				\
-		bch_bool_opt, 0, 2,				\
-		NO_SB_OPT, true)				\
-	BCH_OPT(nofsck,						\
-		bch_bool_opt, 0, 2,				\
-		NO_SB_OPT, true)				\
-	BCH_OPT(fix_errors,					\
-		bch_bool_opt, 0, 2,				\
-		NO_SB_OPT, true)				\
-	BCH_OPT(nochanges,					\
-		bch_bool_opt, 0, 2,				\
-		NO_SB_OPT, 0)					\
-	BCH_OPT(noreplay,					\
-		bch_bool_opt, 0, 2,				\
-		NO_SB_OPT, 0)					\
-	BCH_OPT(norecovery,					\
-		bch_bool_opt, 0, 2,				\
-		NO_SB_OPT, 0)					\
-	BCH_SB_OPTS()
+/**
+ * BCH_OPT(name, mode, sb_opt, type, ...)
+ *
+ * @name	- name of mount option, sysfs attribute, and struct bch_opts
+ *		  member
+ *
+ * @mode	- sysfs attr permissions
+ *
+ * @sb_option	- name of corresponding superblock option
+ *
+ * @type	- one of OPT_BOOL, OPT_UINT, OPT_STR
+ */
 
-#define BCH_OPTS()						\
-	BCH_OPT(read_only,					\
-		bch_bool_opt, 0, 2,				\
-		NO_SB_OPT, 0)					\
+enum opt_type {
+	BCH_OPT_BOOL,
+	BCH_OPT_UINT,
+	BCH_OPT_STR,
+};
+
+#define BCH_VISIBLE_OPTS()						\
+	BCH_OPT(errors,			0644,	BCH_SB_ERROR_ACTION,	\
+		s8,  OPT_STR(bch_error_actions))			\
+	BCH_OPT(metadata_replicas,	0444,	BCH_SB_META_REPLICAS_WANT,\
+		s8,  OPT_UINT(0, BCH_REPLICAS_MAX))			\
+	BCH_OPT(data_replicas,		0444,	BCH_SB_DATA_REPLICAS_WANT,\
+		s8,  OPT_UINT(0, BCH_REPLICAS_MAX))			\
+	BCH_OPT(metadata_checksum,	0644,	BCH_SB_META_CSUM_TYPE,	\
+		s8,  OPT_STR(bch_csum_types))				\
+	BCH_OPT(data_checksum,		0644,	BCH_SB_DATA_CSUM_TYPE,	\
+		s8,  OPT_STR(bch_csum_types))				\
+	BCH_OPT(compression,		0644,	BCH_SB_COMPRESSION_TYPE,\
+		s8,  OPT_STR(bch_compression_types))			\
+	BCH_OPT(str_hash,		0644,	BCH_SB_STR_HASH_TYPE,	\
+		s8,  OPT_STR(bch_str_hash_types))			\
+	BCH_OPT(inodes_32bit,		0644,	BCH_SB_INODE_32BIT,	\
+		s8,  OPT_BOOL())					\
+	BCH_OPT(gc_reserve_percent,	0444,	BCH_SB_GC_RESERVE,	\
+		s8,  OPT_UINT(5, 21))					\
+	BCH_OPT(root_reserve_percent,	0444,	BCH_SB_ROOT_RESERVE,	\
+		s8,  OPT_UINT(0, 100))					\
+	BCH_OPT(wide_macs,		0644,	BCH_SB_128_BIT_MACS,	\
+		s8,  OPT_BOOL())					\
+	BCH_OPT(verbose_recovery,	0444,	NO_SB_OPT,		\
+		s8,  OPT_BOOL())					\
+	BCH_OPT(posix_acl,		0444,	NO_SB_OPT,		\
+		s8,  OPT_BOOL())					\
+	BCH_OPT(journal_flush_disabled,	0644,	NO_SB_OPT,		\
+		s8,  OPT_BOOL())					\
+	BCH_OPT(nofsck,			0444,	NO_SB_OPT,		\
+		s8,  OPT_BOOL())					\
+	BCH_OPT(fix_errors,		0444,	NO_SB_OPT,		\
+		s8,  OPT_BOOL())					\
+	BCH_OPT(nochanges,		0444,	NO_SB_OPT,		\
+		s8,  OPT_BOOL())					\
+	BCH_OPT(noreplay,		0444,	NO_SB_OPT,		\
+		s8,  OPT_BOOL())					\
+	BCH_OPT(norecovery,		0444,	NO_SB_OPT,		\
+		s8,  OPT_BOOL())
+
+#define BCH_OPTS()							\
+	BCH_OPT(read_only,		0444,	NO_SB_OPT,		\
+		s8,  OPT_BOOL())					\
 	BCH_VISIBLE_OPTS()
 
-struct cache_set_opts {
-#define BCH_OPT(_name, _choices, _min, _max, _sb_opt, _perm)\
-	s8 _name;
+struct bch_opts {
+#define BCH_OPT(_name, _mode, _sb_opt, _bits, ...)			\
+	_bits	_name;
 
 	BCH_OPTS()
 #undef BCH_OPT
 };
 
-static inline struct cache_set_opts cache_set_opts_empty(void)
+enum bch_opt_id {
+#define BCH_OPT(_name, ...)			\
+	Opt_##_name,
+
+	BCH_VISIBLE_OPTS()
+#undef BCH_OPT
+};
+
+struct bch_option {
+	const char		*name;
+	void			(*set_sb)(struct bch_sb *, u64);
+	enum opt_type		type;
+
+	union {
+	struct {
+		u64		min, max;
+	};
+	struct {
+		const char * const *choices;
+	};
+	};
+
+};
+
+extern const struct bch_option bch_opt_table[];
+
+static inline struct bch_opts bch_opts_empty(void)
 {
-	struct cache_set_opts ret;
+	struct bch_opts ret;
 
 	memset(&ret, 255, sizeof(ret));
 	return ret;
 }
 
-/*
- * Initial options from superblock - here we don't want any options undefined,
- * any options the superblock doesn't specify are set to 0:
- */
-static inline struct cache_set_opts cache_superblock_opts(struct bch_sb *sb)
+static inline void bch_opts_apply(struct bch_opts *dst, struct bch_opts src)
 {
-	return (struct cache_set_opts) {
-#define BCH_OPT(_name, _choices, _min, _max, _sb_opt, _perm)\
-		._name = _sb_opt##_BITS ? _sb_opt(sb) : 0,
-
-	BCH_SB_OPTS()
-#undef BCH_OPT
-	};
-}
-
-static inline void cache_set_opts_apply(struct cache_set_opts *dst,
-					struct cache_set_opts src)
-{
-#define BCH_OPT(_name, _choices, _min, _max, _sb_opt, _perm)\
-	BUILD_BUG_ON(_max > S8_MAX);				\
-	if (src._name >= 0)					\
+#define BCH_OPT(_name, ...)			\
+	if (src._name >= 0)						\
 		dst->_name = src._name;
 
-	BCH_SB_OPTS()
+	BCH_OPTS()
 #undef BCH_OPT
 }
 
-int bch_parse_options(struct cache_set_opts *, int, char *);
+void bch_opt_set(struct bch_opts *, enum bch_opt_id, u64);
+struct bch_opts bch_sb_opts(struct bch_sb *);
+
+int bch_parse_mount_opts(struct bch_opts *, char *);
+enum bch_opt_id bch_parse_sysfs_opt(const char *, const char *, u64 *);
+
+ssize_t bch_opt_show(struct bch_opts *, const char *, char *, size_t);
 
 #endif /* _BCACHE_OPTS_H */

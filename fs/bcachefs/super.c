@@ -505,7 +505,7 @@ static unsigned cache_set_nr_online_devices(struct cache_set *c)
 	((void *) __get_free_pages(__GFP_ZERO|gfp, ilog2(bucket_pages(ca))))
 
 static struct cache_set *bch_cache_set_alloc(struct bch_sb *sb,
-					     struct cache_set_opts opts)
+					     struct bch_opts opts)
 {
 	struct cache_set *c;
 	unsigned iter_size, journal_entry_bytes;
@@ -591,8 +591,8 @@ static struct cache_set *bch_cache_set_alloc(struct bch_sb *sb,
 
 	scnprintf(c->name, sizeof(c->name), "%pU", &c->sb.user_uuid);
 
-	c->opts = cache_superblock_opts(sb);
-	cache_set_opts_apply(&c->opts, opts);
+	bch_opts_apply(&c->opts, bch_sb_opts(sb));
+	bch_opts_apply(&c->opts, opts);
 
 	c->opts.nochanges	|= c->opts.noreplay;
 	c->opts.read_only	|= c->opts.nochanges;
@@ -1517,7 +1517,7 @@ static struct cache_set *cache_set_lookup(uuid_le uuid)
 }
 
 static const char *register_cache(struct bcache_superblock *sb,
-				  struct cache_set_opts opts)
+				  struct bch_opts opts)
 {
 	char name[BDEVNAME_SIZE];
 	const char *err;
@@ -1692,7 +1692,7 @@ err_unlock_register:
 }
 
 const char *bch_register_cache_set(char * const *devices, unsigned nr_devices,
-				   struct cache_set_opts opts,
+				   struct bch_opts opts,
 				   struct cache_set **ret)
 {
 	const char *err;
@@ -1789,7 +1789,7 @@ err:
 const char *bch_register_one(const char *path)
 {
 	struct bcache_superblock sb;
-	struct cache_set_opts opts = cache_set_opts_empty();
+	struct bch_opts opts = bch_opts_empty();
 	const char *err;
 
 	mutex_lock(&bch_register_lock);

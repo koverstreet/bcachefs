@@ -96,7 +96,7 @@ int bch_super_realloc(struct bcache_superblock *, unsigned);
 const char *bch_validate_cache_super(struct bcache_superblock *);
 
 const char *bch_read_super(struct bcache_superblock *,
-			   struct cache_set_opts, const char *);
+			   struct bch_opts, const char *);
 void bch_write_super(struct cache_set *);
 
 void bch_check_mark_super_slowpath(struct cache_set *,

@@ -88,7 +88,7 @@ void bch_cache_set_stop(struct cache_set *);
 
 const char *bch_register_one(const char *path);
 const char *bch_register_cache_set(char * const *, unsigned,
-				   struct cache_set_opts,
+				   struct bch_opts,
 				   struct cache_set **);
 
 bool bch_cache_set_read_only(struct cache_set *);

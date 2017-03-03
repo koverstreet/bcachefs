@@ -520,7 +520,7 @@ struct cache_set {
 
 	struct cache __rcu	*cache[BCH_SB_MEMBERS_MAX];
 
-	struct cache_set_opts	opts;
+	struct bch_opts		opts;
 
 	/*
 	 * Cached copy in native endianness:
