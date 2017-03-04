@@ -1121,7 +1121,8 @@ static void bch_read_endio(struct bio *bio)
 		return;
 	}
 
-	if (rbio->crc.compression_type != BCH_COMPRESSION_NONE) {
+	if (rbio->crc.compression_type != BCH_COMPRESSION_NONE ||
+	    bch_csum_type_is_encryption(rbio->crc.csum_type)) {
 		struct bio_decompress_worker *d;
 
 		preempt_disable();

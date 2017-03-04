@@ -455,10 +455,6 @@ int bch_compress_init(struct cache_set *c)
 	unsigned order = get_order(BCH_ENCODED_EXTENT_MAX << 9);
 	int ret, cpu;
 
-	if (!bch_sb_test_feature(c->disk_sb, BCH_FEATURE_LZ4) &&
-	    !bch_sb_test_feature(c->disk_sb, BCH_FEATURE_GZIP))
-		return 0;
-
 	if (!c->bio_decompress_worker) {
 		c->bio_decompress_worker = alloc_percpu(*c->bio_decompress_worker);
 		if (!c->bio_decompress_worker)
@@ -473,6 +469,10 @@ int bch_compress_init(struct cache_set *c)
 			init_llist_head(&d->bio_list);
 		}
 	}
+
+	if (!bch_sb_test_feature(c->disk_sb, BCH_FEATURE_LZ4) &&
+	    !bch_sb_test_feature(c->disk_sb, BCH_FEATURE_GZIP))
+		return 0;
 
 	if (!mempool_initialized(&c->compression_bounce[READ])) {
 		ret = mempool_init_page_pool(&c->compression_bounce[READ],
