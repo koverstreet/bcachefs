@@ -547,7 +547,7 @@ static void btree_ptr_debugcheck(struct cache_set *c, struct btree *b,
 			do {
 				seq = read_seqcount_begin(&c->gc_pos_lock);
 				bad = gc_pos_cmp(c->gc_pos, gc_pos_btree_node(b)) > 0 &&
-				       !g->mark.is_metadata;
+				       g->mark.data_type != BUCKET_BTREE;
 			} while (read_seqcount_retry(&c->gc_pos_lock, seq));
 
 			err = "inconsistent";
@@ -1880,7 +1880,7 @@ static void bch_extent_debugcheck_extent(struct cache_set *c, struct btree *b,
 				if (stale)
 					break;
 
-				bad = (mark.is_metadata ||
+				bad = (mark.data_type != BUCKET_DATA ||
 				       (gc_pos_cmp(c->gc_pos, gc_pos_btree_node(b)) > 0 &&
 					!mark.owned_by_allocator &&
 					!(ptr->cached

@@ -1599,7 +1599,8 @@ int bch_dev_journal_alloc(struct cache *ca)
 		if (!is_available_bucket(ca->buckets[b].mark))
 			continue;
 
-		bch_mark_metadata_bucket(ca, &ca->buckets[b], true);
+		bch_mark_metadata_bucket(ca, &ca->buckets[b],
+					 BUCKET_JOURNAL, true);
 		ja->buckets[i] = b;
 		journal_buckets->buckets[i] = cpu_to_le64(b);
 		i++;

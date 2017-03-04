@@ -191,7 +191,7 @@ static void bch_moving_gc(struct cache *ca)
 		}
 
 		if (g->mark.owned_by_allocator ||
-		    g->mark.is_metadata)
+		    g->mark.data_type != BUCKET_DATA)
 			continue;
 
 		sectors_used = bucket_sectors_used(g);

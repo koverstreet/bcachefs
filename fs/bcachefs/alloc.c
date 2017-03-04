@@ -301,7 +301,8 @@ static int bch_prio_write(struct cache *ca)
 		 * it getting gc'd from under us
 		 */
 		ca->prio_buckets[i] = r;
-		bch_mark_metadata_bucket(ca, ca->buckets + r, false);
+		bch_mark_metadata_bucket(ca, ca->buckets + r,
+					 BUCKET_PRIOS, false);
 		spin_unlock(&ca->prio_buckets_lock);
 
 		SET_PSET_CSUM_TYPE(p, bch_meta_checksum_type(c));

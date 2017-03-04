@@ -262,12 +262,13 @@ static void bch_mark_allocator_buckets(struct cache_set *c)
 	}
 }
 
-static void mark_metadata_sectors(struct cache *ca, u64 start, u64 end)
+static void mark_metadata_sectors(struct cache *ca, u64 start, u64 end,
+				  enum bucket_data_type type)
 {
 	u64 b = start >> ca->bucket_bits;
 
 	do {
-		bch_mark_metadata_bucket(ca, ca->buckets + b, true);
+		bch_mark_metadata_bucket(ca, ca->buckets + b, type, true);
 		b++;
 	} while (b < end >> ca->bucket_bits);
 }
@@ -284,19 +285,22 @@ static void bch_mark_dev_metadata(struct cache_set *c, struct cache *ca)
 	/* Mark superblocks: */
 	for (i = 0; i < layout->nr_superblocks; i++) {
 		if (layout->sb_offset[i] == BCH_SB_SECTOR)
-			mark_metadata_sectors(ca, 0, BCH_SB_SECTOR);
+			mark_metadata_sectors(ca, 0, BCH_SB_SECTOR,
+					      BUCKET_SB);
 
 		mark_metadata_sectors(ca,
 				      layout->sb_offset[i],
 				      layout->sb_offset[i] +
-				      (1 << layout->sb_max_size_bits));
+				      (1 << layout->sb_max_size_bits),
+				      BUCKET_SB);
 	}
 
 	spin_lock(&c->journal.lock);
 
 	for (i = 0; i < ca->journal.nr; i++) {
 		b = ca->journal.buckets[i];
-		bch_mark_metadata_bucket(ca, ca->buckets + b, true);
+		bch_mark_metadata_bucket(ca, ca->buckets + b,
+					 BUCKET_JOURNAL, true);
 	}
 
 	spin_unlock(&c->journal.lock);
@@ -306,7 +310,8 @@ static void bch_mark_dev_metadata(struct cache_set *c, struct cache *ca)
 	for (i = 0; i < prio_buckets(ca) * 2; i++) {
 		b = ca->prio_buckets[i];
 		if (b)
-			bch_mark_metadata_bucket(ca, ca->buckets + b, true);
+			bch_mark_metadata_bucket(ca, ca->buckets + b,
+						 BUCKET_PRIOS, true);
 	}
 
 	spin_unlock(&ca->prio_buckets_lock);
@@ -426,7 +431,7 @@ void bch_gc(struct cache_set *c)
 		for_each_bucket(g, ca) {
 			bucket_cmpxchg(g, new, ({
 				new.owned_by_allocator	= 0;
-				new.is_metadata		= 0;
+				new.data_type		= 0;
 				new.cached_sectors	= 0;
 				new.dirty_sectors	= 0;
 			}));

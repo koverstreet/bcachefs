@@ -66,6 +66,7 @@
 #include "alloc.h"
 #include "btree_gc.h"
 #include "buckets.h"
+#include "error.h"
 
 #include <linux/preempt.h>
 #include <trace/events/bcachefs.h>
@@ -186,17 +187,18 @@ bch_bucket_stats_read_cache_set(struct cache_set *c)
 
 static inline int is_meta_bucket(struct bucket_mark m)
 {
-	return !m.owned_by_allocator && m.is_metadata;
+	return m.data_type != BUCKET_DATA;
 }
 
 static inline int is_dirty_bucket(struct bucket_mark m)
 {
-	return !m.owned_by_allocator && !m.is_metadata && !!m.dirty_sectors;
+	return m.data_type == BUCKET_DATA && !!m.dirty_sectors;
 }
 
 static inline int is_cached_bucket(struct bucket_mark m)
 {
-	return !m.owned_by_allocator && !m.dirty_sectors && !!m.cached_sectors;
+	return m.data_type == BUCKET_DATA &&
+		!m.dirty_sectors && !!m.cached_sectors;
 }
 
 void bch_fs_stats_apply(struct cache_set *c,
@@ -236,29 +238,37 @@ void bch_fs_stats_apply(struct cache_set *c,
 	memset(stats, 0, sizeof(*stats));
 }
 
+static bool bucket_became_unavailable(struct cache_set *c,
+				      struct bucket_mark old,
+				      struct bucket_mark new)
+{
+	return is_available_bucket(old) &&
+	       !is_available_bucket(new) &&
+	       c->gc_pos.phase == GC_PHASE_DONE;
+}
+
 static void bucket_stats_update(struct cache *ca,
 			struct bucket_mark old, struct bucket_mark new,
-			bool may_make_unavailable,
 			struct bucket_stats_cache_set *bch_alloc_stats)
 {
 	struct cache_set *c = ca->set;
 	struct bucket_stats_cache *cache_stats;
 
-	BUG_ON(!may_make_unavailable &&
-	       is_available_bucket(old) &&
-	       !is_available_bucket(new) &&
-	       c->gc_pos.phase == GC_PHASE_DONE);
+	bch_fs_inconsistent_on(old.data_type && new.data_type &&
+			old.data_type != new.data_type, c,
+			"different types of metadata in same bucket: %u, %u",
+			old.data_type, new.data_type);
 
 	if (bch_alloc_stats) {
 		bch_alloc_stats->s[S_COMPRESSED][S_CACHED] +=
 			(int) new.cached_sectors - (int) old.cached_sectors;
 
 		bch_alloc_stats->s[S_COMPRESSED]
-			[old.is_metadata ? S_META : S_DIRTY] -=
+			[is_meta_bucket(old) ? S_META : S_DIRTY] -=
 			old.dirty_sectors;
 
 		bch_alloc_stats->s[S_COMPRESSED]
-			[new.is_metadata ? S_META : S_DIRTY] +=
+			[is_meta_bucket(new) ? S_META : S_DIRTY] +=
 			new.dirty_sectors;
 	}
 
@@ -268,12 +278,12 @@ static void bucket_stats_update(struct cache *ca,
 	cache_stats->sectors_cached +=
 		(int) new.cached_sectors - (int) old.cached_sectors;
 
-	if (old.is_metadata)
+	if (is_meta_bucket(old))
 		cache_stats->sectors_meta -= old.dirty_sectors;
 	else
 		cache_stats->sectors_dirty -= old.dirty_sectors;
 
-	if (new.is_metadata)
+	if (is_meta_bucket(new))
 		cache_stats->sectors_meta += new.dirty_sectors;
 	else
 		cache_stats->sectors_dirty += new.dirty_sectors;
@@ -290,6 +300,15 @@ static void bucket_stats_update(struct cache *ca,
 		bch_wake_allocator(ca);
 }
 
+#define bucket_data_cmpxchg(ca, g, new, expr)			\
+({								\
+	struct bucket_stats_cache_set _stats = { 0 };		\
+	struct bucket_mark _old = bucket_cmpxchg(g, new, expr);	\
+								\
+	bucket_stats_update(ca, _old, new, &_stats);		\
+	_old;							\
+})
+
 void bch_invalidate_bucket(struct cache *ca, struct bucket *g)
 {
 	struct bucket_stats_cache_set stats = { 0 };
@@ -297,16 +316,17 @@ void bch_invalidate_bucket(struct cache *ca, struct bucket *g)
 
 	old = bucket_cmpxchg(g, new, ({
 		new.owned_by_allocator	= 1;
-		new.is_metadata		= 0;
+		new.had_metadata	= 0;
+		new.data_type		= 0;
 		new.cached_sectors	= 0;
 		new.dirty_sectors	= 0;
 		new.copygc		= 0;
 		new.gen++;
 	}));
 
-	BUG_ON(old.dirty_sectors);
+	bucket_stats_update(ca, old, new, &stats);
 
-	bucket_stats_update(ca, old, new, true, &stats);
+	BUG_ON(old.dirty_sectors);
 
 	/*
 	 * Ick:
@@ -329,45 +349,45 @@ void bch_invalidate_bucket(struct cache *ca, struct bucket *g)
 
 void bch_mark_free_bucket(struct cache *ca, struct bucket *g)
 {
-	struct bucket_stats_cache_set stats = { 0 };
 	struct bucket_mark old, new;
 
-	old = bucket_cmpxchg(g, new, ({
+	old = bucket_data_cmpxchg(ca, g, new, ({
 		new.owned_by_allocator	= 0;
-		new.is_metadata		= 0;
+		new.data_type		= 0;
 		new.cached_sectors	= 0;
 		new.dirty_sectors	= 0;
 	}));
 
-	bucket_stats_update(ca, old, new, false, &stats);
+	BUG_ON(bucket_became_unavailable(ca->set, old, new));
 }
 
 void bch_mark_alloc_bucket(struct cache *ca, struct bucket *g,
 			   bool owned_by_allocator)
 {
-	struct bucket_stats_cache_set stats = { 0 };
-	struct bucket_mark old, new;
+	struct bucket_mark new;
 
-	old = bucket_cmpxchg(g, new, new.owned_by_allocator = owned_by_allocator);
-
-	bucket_stats_update(ca, old, new, true, &stats);
+	bucket_data_cmpxchg(ca, g, new, ({
+		new.owned_by_allocator = owned_by_allocator;
+	}));
 }
 
 void bch_mark_metadata_bucket(struct cache *ca, struct bucket *g,
+			      enum bucket_data_type type,
 			      bool may_make_unavailable)
 {
-	struct bucket_stats_cache_set stats = { 0 };
 	struct bucket_mark old, new;
 
-	old = bucket_cmpxchg(g, new, ({
-		new.is_metadata = 1;
+	BUG_ON(!type);
+
+	old = bucket_data_cmpxchg(ca, g, new, ({
+		new.data_type = type;
 		new.had_metadata = 1;
 	}));
 
 	BUG_ON(old.cached_sectors);
 	BUG_ON(old.dirty_sectors);
-
-	bucket_stats_update(ca, old, new, may_make_unavailable, &stats);
+	BUG_ON(!may_make_unavailable &&
+	       bucket_became_unavailable(ca->set, old, new));
 }
 
 #define saturated_add(ca, dst, src, max)			\
@@ -487,22 +507,26 @@ static void bch_mark_pointer(struct cache_set *c,
 
 		if (!new.dirty_sectors &&
 		    !new.cached_sectors) {
-			new.is_metadata = false;
+			new.data_type	= 0;
 
 			if (journal_seq) {
 				new.wait_on_journal = true;
 				new.journal_seq = journal_seq;
 			}
 		} else {
-			new.is_metadata = (type == S_META);
+			new.data_type = type == S_META
+				? BUCKET_BTREE : BUCKET_DATA;
 		}
 
-		new.had_metadata |= new.is_metadata;
+		new.had_metadata |= is_meta_bucket(new);
 	} while ((v = cmpxchg(&g->_mark.counter,
 			      old.counter,
 			      new.counter)) != old.counter);
 
-	bucket_stats_update(ca, old, new, may_make_unavailable, NULL);
+	bucket_stats_update(ca, old, new, NULL);
+
+	BUG_ON(!may_make_unavailable &&
+	       bucket_became_unavailable(c, old, new));
 
 	if (saturated &&
 	    atomic_long_add_return(saturated,

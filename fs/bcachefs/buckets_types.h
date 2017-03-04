@@ -1,6 +1,14 @@
 #ifndef _BUCKETS_TYPES_H
 #define _BUCKETS_TYPES_H
 
+enum bucket_data_type {
+	BUCKET_DATA	= 0,
+	BUCKET_BTREE,
+	BUCKET_PRIOS,
+	BUCKET_JOURNAL,
+	BUCKET_SB,
+};
+
 struct bucket_mark {
 	union {
 	struct {
@@ -12,16 +20,23 @@ struct bucket_mark {
 
 		/* generation copygc is going to move this bucket into */
 		unsigned	copygc:1;
+
+		/*
+		 * If true, this bucket can't be reused until the journal
+		 * commits:
+		 */
 		unsigned	wait_on_journal:1;
 
 		/*
-		 * If this bucket ever had metadata in it, the allocator must
-		 * increment its gen before we reuse it:
+		 * If this bucket had metadata while at the current generation
+		 * number, the allocator must increment its gen before we reuse
+		 * it:
 		 */
 		unsigned	had_metadata:1;
 
 		unsigned	owned_by_allocator:1;
-		unsigned	is_metadata:1;
+
+		unsigned	data_type:3;
 
 		u16		cached_sectors;
 		u16		dirty_sectors;

@@ -10,6 +10,7 @@
 #include "vstructs.h"
 
 #include <linux/backing-dev.h>
+#include <linux/sort.h>
 
 static inline void __bch_sb_layout_size_assert(void)
 {
@@ -214,16 +215,70 @@ static const char *validate_sb_layout(struct bch_sb_layout *layout)
 	return NULL;
 }
 
+static int u64_cmp(const void *_l, const void *_r)
+{
+	u64 l = *((const u64 *) _l), r = *((const u64 *) _r);
+
+	return l < r ? -1 : l > r ? 1 : 0;
+}
+
+static const char *validate_journal_layout(struct bch_sb *sb,
+					   struct cache_member_cpu mi)
+{
+	struct bch_sb_field_journal *journal;
+	const char *err;
+	unsigned nr;
+	unsigned i;
+	u64 *b;
+
+	journal = bch_sb_get_journal(sb);
+	if (!journal)
+		return NULL;
+
+	nr = bch_nr_journal_buckets(journal);
+	if (!nr)
+		return NULL;
+
+	b = kmalloc_array(sizeof(u64), nr, GFP_KERNEL);
+	if (!b)
+		return "cannot allocate memory";
+
+	for (i = 0; i < nr; i++)
+		b[i] = le64_to_cpu(journal->buckets[i]);
+
+	sort(b, nr, sizeof(u64), u64_cmp, NULL);
+
+	err = "journal bucket at sector 0";
+	if (!b[0])
+		goto err;
+
+	err = "journal bucket before first bucket";
+	if (b[0] < mi.first_bucket)
+		goto err;
+
+	err = "journal bucket past end of device";
+	if (b[nr - 1] >= mi.nbuckets)
+		goto err;
+
+	err = "duplicate journal buckets";
+	for (i = 0; i + 1 < nr; i++)
+		if (b[i] == b[i + 1])
+			goto err;
+
+	err = NULL;
+err:
+	kfree(b);
+	return err;
+}
+
 const char *bch_validate_cache_super(struct bcache_superblock *disk_sb)
 {
 	struct bch_sb *sb = disk_sb->sb;
 	struct bch_sb_field *f;
 	struct bch_sb_field_members *sb_mi;
-	struct bch_sb_field_journal *journal;
 	struct cache_member_cpu	mi;
 	const char *err;
 	u16 block_size;
-	unsigned i;
 
 	switch (le64_to_cpu(sb->version)) {
 	case BCACHE_SB_VERSION_CDEV_V4:
@@ -336,16 +391,9 @@ const char *bch_validate_cache_super(struct bcache_superblock *disk_sb)
 	    mi.bucket_size * mi.nbuckets)
 		return "Invalid superblock: device too small";
 
-	/* Validate journal buckets: */
-	journal = bch_sb_get_journal(sb);
-	if (journal) {
-		for (i = 0; i < bch_nr_journal_buckets(journal); i++) {
-			u64 b = le64_to_cpu(journal->buckets[i]);
-
-			if (b <  mi.first_bucket || b >= mi.nbuckets)
-				return "bad journal bucket";
-		}
-	}
+	err = validate_journal_layout(sb, mi);
+	if (err)
+		return err;
 
 	return NULL;
 }

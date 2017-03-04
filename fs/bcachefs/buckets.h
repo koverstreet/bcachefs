@@ -235,7 +235,7 @@ static inline u64 sectors_available(struct cache_set *c)
 static inline bool is_available_bucket(struct bucket_mark mark)
 {
 	return (!mark.owned_by_allocator &&
-		!mark.is_metadata &&
+		mark.data_type == BUCKET_DATA &&
 		!mark.dirty_sectors);
 }
 
@@ -244,7 +244,8 @@ void bch_bucket_seq_cleanup(struct cache_set *);
 void bch_invalidate_bucket(struct cache *, struct bucket *);
 void bch_mark_free_bucket(struct cache *, struct bucket *);
 void bch_mark_alloc_bucket(struct cache *, struct bucket *, bool);
-void bch_mark_metadata_bucket(struct cache *, struct bucket *, bool);
+void bch_mark_metadata_bucket(struct cache *, struct bucket *,
+			      enum bucket_data_type, bool);
 
 void __bch_gc_mark_key(struct cache_set *, struct bkey_s_c, s64, bool,
 		       struct bucket_stats_cache_set *);
