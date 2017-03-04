@@ -828,6 +828,14 @@ const char *bch_fs_start(struct cache_set *c)
 
 		bch_initial_gc(c, NULL);
 
+		err = "error starting allocator thread";
+		for_each_cache(ca, c, i)
+			if (ca->mi.state == BCH_MEMBER_STATE_ACTIVE &&
+			    bch_dev_allocator_start(ca)) {
+				percpu_ref_put(&ca->ref);
+				goto err;
+			}
+
 		err = "unable to allocate journal buckets";
 		for_each_cache(ca, c, i)
 			if (bch_dev_journal_alloc(ca)) {
@@ -841,14 +849,6 @@ const char *bch_fs_start(struct cache_set *c)
 		 */
 		bch_journal_start(c);
 		bch_journal_set_replay_done(&c->journal);
-
-		err = "error starting allocator thread";
-		for_each_cache(ca, c, i)
-			if (ca->mi.state == BCH_MEMBER_STATE_ACTIVE &&
-			    bch_dev_allocator_start(ca)) {
-				percpu_ref_put(&ca->ref);
-				goto err;
-			}
 
 		err = "cannot allocate new btree root";
 		for (id = 0; id < BTREE_ID_NR; id++)

@@ -222,8 +222,8 @@ static int u64_cmp(const void *_l, const void *_r)
 	return l < r ? -1 : l > r ? 1 : 0;
 }
 
-static const char *validate_journal_layout(struct bch_sb *sb,
-					   struct cache_member_cpu mi)
+const char *bch_validate_journal_layout(struct bch_sb *sb,
+					struct cache_member_cpu mi)
 {
 	struct bch_sb_field_journal *journal;
 	const char *err;
@@ -391,7 +391,7 @@ const char *bch_validate_cache_super(struct bcache_superblock *disk_sb)
 	    mi.bucket_size * mi.nbuckets)
 		return "Invalid superblock: device too small";
 
-	err = validate_journal_layout(sb, mi);
+	err = bch_validate_journal_layout(sb, mi);
 	if (err)
 		return err;
 

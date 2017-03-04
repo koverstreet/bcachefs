@@ -1534,46 +1534,115 @@ err:
 	return ret;
 }
 
-static int bch_set_nr_journal_buckets(struct cache *ca, unsigned nr)
+static int bch_set_nr_journal_buckets(struct cache_set *c, struct cache *ca,
+				      unsigned nr, bool write_super)
 {
+	struct journal *j = &c->journal;
 	struct journal_device *ja = &ca->journal;
-	struct bch_sb_field_journal *journal_buckets =
-		bch_sb_get_journal(ca->disk_sb.sb);
+	struct bch_sb_field_journal *journal_buckets;
 	struct bch_sb_field *f;
-	u64 *p;
+	struct disk_reservation disk_res = { 0, 0 };
+	struct closure cl;
+	u64 *new_bucket_seq = NULL, *new_buckets = NULL;
+	int ret = 0;
 
-	p = krealloc(ja->bucket_seq, nr * sizeof(u64),
-		     GFP_KERNEL|__GFP_ZERO);
-	if (!p)
-		return -ENOMEM;
+	closure_init_stack(&cl);
 
-	ja->bucket_seq = p;
+	mutex_lock(&c->sb_lock);
 
-	p = krealloc(ja->buckets, nr * sizeof(u64),
-		     GFP_KERNEL|__GFP_ZERO);
-	if (!p)
-		return -ENOMEM;
+	/* don't handle reducing nr of buckets yet: */
+	if (nr <= ja->nr)
+		goto err;
 
-	ja->buckets = p;
+	/*
+	 * note: journal buckets aren't really counted as _sectors_ used yet, so
+	 * we don't need the disk reservation to avoid the BUG_ON() in buckets.c
+	 * when space used goes up without a reservation - but we do need the
+	 * reservation to ensure we'll actually be able to allocate:
+	 */
 
+	ret = ENOSPC;
+	if (bch_disk_reservation_get(c, &disk_res,
+			(nr - ja->nr) << ca->bucket_bits, 0))
+		goto err;
+
+	ret = -ENOMEM;
+	new_buckets	= kzalloc(nr * sizeof(u64), GFP_KERNEL);
+	new_bucket_seq	= kzalloc(nr * sizeof(u64), GFP_KERNEL);
+	if (!new_buckets || !new_bucket_seq)
+		goto err;
+
+	journal_buckets = bch_sb_get_journal(ca->disk_sb.sb);
 	f = bch_dev_sb_field_resize(&ca->disk_sb, &journal_buckets->field, nr +
 				    sizeof(*journal_buckets) / sizeof(u64));
 	if (!f)
-		return -ENOMEM;
+		goto err;
 	f->type = BCH_SB_FIELD_journal;
+	journal_buckets = container_of(f, struct bch_sb_field_journal, field);
 
-	ja->nr = nr;
-	return 0;
+	spin_lock(&j->lock);
+	memcpy(new_buckets,	ja->buckets,	ja->nr * sizeof(u64));
+	memcpy(new_bucket_seq,	ja->bucket_seq,	ja->nr * sizeof(u64));
+	swap(new_buckets,	ja->buckets);
+	swap(new_bucket_seq,	ja->bucket_seq);
+
+	while (ja->nr < nr) {
+		/* must happen under journal lock, to avoid racing with gc: */
+		u64 b = bch_bucket_alloc(ca, RESERVE_NONE);
+		if (!b) {
+			if (!closure_wait(&c->freelist_wait, &cl)) {
+				spin_unlock(&j->lock);
+				closure_sync(&cl);
+				spin_lock(&j->lock);
+			}
+			continue;
+		}
+
+		bch_mark_metadata_bucket(ca, &ca->buckets[b],
+					 BUCKET_JOURNAL, false);
+		bch_mark_alloc_bucket(ca, &ca->buckets[b], false);
+
+		memmove(ja->buckets + ja->last_idx + 1,
+			ja->buckets + ja->last_idx,
+			(ja->nr - ja->last_idx) * sizeof(u64));
+		memmove(ja->bucket_seq + ja->last_idx + 1,
+			ja->bucket_seq + ja->last_idx,
+			(ja->nr - ja->last_idx) * sizeof(u64));
+		memmove(journal_buckets->buckets + ja->last_idx + 1,
+			journal_buckets->buckets + ja->last_idx,
+			(ja->nr - ja->last_idx) * sizeof(u64));
+
+		ja->buckets[ja->last_idx] = b;
+		journal_buckets->buckets[ja->last_idx] = cpu_to_le64(b);
+
+		if (ja->last_idx < ja->nr) {
+			if (ja->cur_idx >= ja->last_idx)
+				ja->cur_idx++;
+			ja->last_idx++;
+		}
+		ja->nr++;
+
+	}
+	spin_unlock(&j->lock);
+
+	BUG_ON(bch_validate_journal_layout(ca->disk_sb.sb, ca->mi));
+
+	if (write_super)
+		bch_write_super(c);
+
+	ret = 0;
+err:
+	mutex_unlock(&c->sb_lock);
+
+	kfree(new_bucket_seq);
+	kfree(new_buckets);
+	bch_disk_reservation_put(c, &disk_res);
+
+	return ret;
 }
 
 int bch_dev_journal_alloc(struct cache *ca)
 {
-	struct journal_device *ja = &ca->journal;
-	struct bch_sb_field_journal *journal_buckets;
-	int ret;
-	unsigned i;
-	u64 b;
-
 	if (ca->mi.tier != 0)
 		return 0;
 
@@ -1584,32 +1653,12 @@ int bch_dev_journal_alloc(struct cache *ca)
 	 * clamp journal size to 1024 buckets or 512MB (in sectors), whichever
 	 * is smaller:
 	 */
-	ret = bch_set_nr_journal_buckets(ca,
+	return bch_set_nr_journal_buckets(ca->set, ca,
 			clamp_t(unsigned, ca->mi.nbuckets >> 8,
 				BCH_JOURNAL_BUCKETS_MIN,
 				min(1 << 10,
-				    (1 << 20) / ca->mi.bucket_size)));
-	if (ret)
-		return ret;
-
-	journal_buckets = bch_sb_get_journal(ca->disk_sb.sb);
-
-	for (i = 0, b = ca->mi.first_bucket;
-	     i < ja->nr && b < ca->mi.nbuckets; b++) {
-		if (!is_available_bucket(ca->buckets[b].mark))
-			continue;
-
-		bch_mark_metadata_bucket(ca, &ca->buckets[b],
-					 BUCKET_JOURNAL, true);
-		ja->buckets[i] = b;
-		journal_buckets->buckets[i] = cpu_to_le64(b);
-		i++;
-	}
-
-	if (i < ja->nr)
-		return -ENOSPC;
-
-	return 0;
+				    (1 << 20) / ca->mi.bucket_size)),
+			false);
 }
 
 /* Journalling */

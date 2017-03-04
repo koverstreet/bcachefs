@@ -93,6 +93,8 @@ struct bch_sb_field *bch_dev_sb_field_resize(struct bcache_superblock *,
 void bch_free_super(struct bcache_superblock *);
 int bch_super_realloc(struct bcache_superblock *, unsigned);
 
+const char *bch_validate_journal_layout(struct bch_sb *,
+					struct cache_member_cpu);
 const char *bch_validate_cache_super(struct bcache_superblock *);
 
 const char *bch_read_super(struct bcache_superblock *,
