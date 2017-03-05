@@ -240,6 +240,13 @@ static inline bool is_available_bucket(struct bucket_mark mark)
 		!mark.nouse);
 }
 
+static inline bool bucket_needs_journal_commit(struct bucket_mark m,
+					       u16 last_seq_ondisk)
+{
+	return m.journal_seq_valid &&
+		((s16) m.journal_seq - (s16) last_seq_ondisk > 0);
+}
+
 void bch_bucket_seq_cleanup(struct cache_set *);
 
 void bch_invalidate_bucket(struct cache *, struct bucket *);

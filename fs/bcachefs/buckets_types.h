@@ -21,11 +21,7 @@ struct bucket_mark {
 		/* generation copygc is going to move this bucket into */
 		unsigned	copygc:1;
 
-		/*
-		 * If true, this bucket can't be reused until the journal
-		 * commits:
-		 */
-		unsigned	wait_on_journal:1;
+		unsigned	journal_seq_valid:1;
 
 		/*
 		 * If this bucket had metadata while at the current generation
@@ -45,7 +41,9 @@ struct bucket_mark {
 
 		/*
 		 * low bits of journal sequence number when this bucket was most
-		 * recently modified:
+		 * recently modified: if journal_seq_valid is set, this bucket
+		 * can't be reused until the journal sequence number written to
+		 * disk is >= the bucket's journal sequence number:
 		 */
 		u16		journal_seq;
 	};

@@ -103,6 +103,10 @@ static void bch_fs_stats_verify(struct cache_set *c) {}
 
 #endif
 
+/*
+ * Clear journal_seq_valid for buckets for which it's not needed, to prevent
+ * wraparound:
+ */
 void bch_bucket_seq_cleanup(struct cache_set *c)
 {
 	u16 last_seq_ondisk = c->journal.last_seq_ondisk;
@@ -114,12 +118,11 @@ void bch_bucket_seq_cleanup(struct cache_set *c)
 	for_each_cache(ca, c, i)
 		for_each_bucket(g, ca) {
 			bucket_cmpxchg(g, m, ({
-				if (!m.wait_on_journal ||
-				    ((s16) last_seq_ondisk -
-				     (s16) m.journal_seq < 0))
+				if (!m.journal_seq_valid ||
+				    bucket_needs_journal_commit(m, last_seq_ondisk))
 					break;
 
-				m.wait_on_journal = 0;
+				m.journal_seq_valid = 0;
 			}));
 		}
 }
@@ -510,7 +513,7 @@ static void bch_mark_pointer(struct cache_set *c,
 			new.data_type	= 0;
 
 			if (journal_seq) {
-				new.wait_on_journal = true;
+				new.journal_seq_valid = 1;
 				new.journal_seq = journal_seq;
 			}
 		} else {

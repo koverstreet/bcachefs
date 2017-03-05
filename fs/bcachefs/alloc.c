@@ -818,8 +818,7 @@ static void bch_find_empty_buckets(struct cache_set *c, struct cache *ca)
 		if (is_available_bucket(m) &&
 		    !m.cached_sectors &&
 		    !m.had_metadata &&
-		    (!m.wait_on_journal ||
-		     ((s16) last_seq_ondisk - (s16) m.journal_seq >= 0))) {
+		    !bucket_needs_journal_commit(m, last_seq_ondisk)) {
 			spin_lock(&ca->freelist_lock);
 
 			bch_mark_alloc_bucket(ca, g, true);
