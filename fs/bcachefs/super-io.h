@@ -6,16 +6,35 @@
 
 #include <asm/byteorder.h>
 
-struct bch_sb_field *bch_sb_field_get(struct bch_sb *, enum bch_sb_field_types);
+struct bch_sb_field *bch_sb_field_get(struct bch_sb *, enum bch_sb_field_type);
+struct bch_sb_field *bch_sb_field_resize(struct bcache_superblock *,
+					 enum bch_sb_field_type, unsigned);
+struct bch_sb_field *bch_fs_sb_field_resize(struct cache_set *,
+					 enum bch_sb_field_type, unsigned);
 
-#define BCH_SB_FIELD_TYPE(_name)				\
-static inline struct bch_sb_field_##_name *			\
-bch_sb_get_##_name(struct bch_sb *sb)				\
-{								\
-	struct bch_sb_field *f =				\
-		bch_sb_field_get(sb, BCH_SB_FIELD_##_name);	\
-								\
-	return container_of_or_null(f, struct bch_sb_field_##_name, field);\
+#define field_to_type(_f, _name)					\
+	container_of_or_null(_f, struct bch_sb_field_##_name, field)
+
+#define BCH_SB_FIELD_TYPE(_name)					\
+static inline struct bch_sb_field_##_name *				\
+bch_sb_get_##_name(struct bch_sb *sb)					\
+{									\
+	return field_to_type(bch_sb_field_get(sb,			\
+				BCH_SB_FIELD_##_name), _name);		\
+}									\
+									\
+static inline struct bch_sb_field_##_name *				\
+bch_sb_resize_##_name(struct bcache_superblock *sb, unsigned u64s)	\
+{									\
+	return field_to_type(bch_sb_field_resize(sb,			\
+				BCH_SB_FIELD_##_name, u64s), _name);	\
+}									\
+									\
+static inline struct bch_sb_field_##_name *				\
+bch_fs_sb_resize_##_name(struct cache_set *c, unsigned u64s)		\
+{									\
+	return field_to_type(bch_fs_sb_field_resize(c,			\
+				BCH_SB_FIELD_##_name, u64s), _name);	\
 }
 
 BCH_SB_FIELD_TYPE(journal);
@@ -84,11 +103,6 @@ int bch_fs_mi_update(struct cache_set *, struct bch_member *, unsigned);
 
 int bch_sb_to_cache_set(struct cache_set *, struct bch_sb *);
 int bch_sb_from_cache_set(struct cache_set *, struct cache *);
-
-struct bch_sb_field *bch_fs_sb_field_resize(struct cache_set *,
-				struct bch_sb_field *, unsigned);
-struct bch_sb_field *bch_dev_sb_field_resize(struct bcache_superblock *,
-				struct bch_sb_field *, unsigned);
 
 void bch_free_super(struct bcache_superblock *);
 int bch_super_realloc(struct bcache_superblock *, unsigned);

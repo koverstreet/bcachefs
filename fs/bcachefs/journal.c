@@ -545,8 +545,7 @@ static int journal_entry_validate(struct cache_set *c,
 		return BCH_FSCK_UNKNOWN_VERSION;
 	}
 
-	if (mustfix_fsck_err_on(bytes > bucket_sectors_left << 9 ||
-			bytes > c->journal.entry_size_max, c,
+	if (mustfix_fsck_err_on(bytes > bucket_sectors_left << 9, c,
 			"journal entry too big (%zu bytes), sector %lluu",
 			bytes, sector)) {
 		/* XXX: note we might have missing journal entries */
@@ -1540,7 +1539,6 @@ static int bch_set_nr_journal_buckets(struct cache_set *c, struct cache *ca,
 	struct journal *j = &c->journal;
 	struct journal_device *ja = &ca->journal;
 	struct bch_sb_field_journal *journal_buckets;
-	struct bch_sb_field *f;
 	struct disk_reservation disk_res = { 0, 0 };
 	struct closure cl;
 	u64 *new_bucket_seq = NULL, *new_buckets = NULL;
@@ -1572,13 +1570,10 @@ static int bch_set_nr_journal_buckets(struct cache_set *c, struct cache *ca,
 	if (!new_buckets || !new_bucket_seq)
 		goto err;
 
-	journal_buckets = bch_sb_get_journal(ca->disk_sb.sb);
-	f = bch_dev_sb_field_resize(&ca->disk_sb, &journal_buckets->field, nr +
-				    sizeof(*journal_buckets) / sizeof(u64));
-	if (!f)
+	journal_buckets = bch_sb_resize_journal(&ca->disk_sb,
+				nr + sizeof(*journal_buckets) / sizeof(u64));
+	if (!journal_buckets)
 		goto err;
-	f->type = BCH_SB_FIELD_journal;
-	journal_buckets = container_of(f, struct bch_sb_field_journal, field);
 
 	spin_lock(&j->lock);
 	memcpy(new_buckets,	ja->buckets,	ja->nr * sizeof(u64));

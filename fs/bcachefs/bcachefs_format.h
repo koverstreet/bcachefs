@@ -821,7 +821,7 @@ struct bch_sb_field {
 	__le32			type;
 };
 
-enum bch_sb_field_types {
+enum bch_sb_field_type {
 	BCH_SB_FIELD_journal	= 0,
 	BCH_SB_FIELD_members	= 1,
 	BCH_SB_FIELD_crypt	= 2,

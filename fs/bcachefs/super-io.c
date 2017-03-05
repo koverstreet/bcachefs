@@ -18,7 +18,7 @@ static inline void __bch_sb_layout_size_assert(void)
 }
 
 struct bch_sb_field *bch_sb_field_get(struct bch_sb *sb,
-				      enum bch_sb_field_types type)
+				      enum bch_sb_field_type type)
 {
 	struct bch_sb_field *f;
 
@@ -75,7 +75,7 @@ static int __bch_super_realloc(struct bcache_superblock *sb, unsigned order)
 	return 0;
 }
 
-int bch_dev_sb_realloc(struct bcache_superblock *sb, unsigned u64s)
+static int bch_sb_realloc(struct bcache_superblock *sb, unsigned u64s)
 {
 	u64 new_bytes = __vstruct_bytes(struct bch_sb, u64s);
 	u64 max_bytes = 512 << sb->sb->layout.sb_max_size_bits;
@@ -141,13 +141,29 @@ static struct bch_sb_field *__bch_sb_field_resize(struct bch_sb *sb,
 	le32_add_cpu(&sb->u64s, u64s - old_u64s);
 
 	return f;
+}
 
+struct bch_sb_field *bch_sb_field_resize(struct bcache_superblock *sb,
+					 enum bch_sb_field_type type,
+					 unsigned u64s)
+{
+	struct bch_sb_field *f = bch_sb_field_get(sb->sb, type);
+	ssize_t old_u64s = f ? le32_to_cpu(f->u64s) : 0;
+	ssize_t d = -old_u64s + u64s;
+
+	if (bch_sb_realloc(sb, le32_to_cpu(sb->sb->u64s) + d))
+		return NULL;
+
+	f = __bch_sb_field_resize(sb->sb, f, u64s);
+	f->type = type;
+	return f;
 }
 
 struct bch_sb_field *bch_fs_sb_field_resize(struct cache_set *c,
-					    struct bch_sb_field *f,
+					    enum bch_sb_field_type type,
 					    unsigned u64s)
 {
+	struct bch_sb_field *f = bch_sb_field_get(c->disk_sb, type);
 	ssize_t old_u64s = f ? le32_to_cpu(f->u64s) : 0;
 	ssize_t d = -old_u64s + u64s;
 	struct cache *ca;
@@ -161,26 +177,15 @@ struct bch_sb_field *bch_fs_sb_field_resize(struct cache_set *c,
 	for_each_cache(ca, c, i) {
 		struct bcache_superblock *sb = &ca->disk_sb;
 
-		if (bch_dev_sb_realloc(sb, le32_to_cpu(sb->sb->u64s) + d)) {
+		if (bch_sb_realloc(sb, le32_to_cpu(sb->sb->u64s) + d)) {
 			percpu_ref_put(&ca->ref);
 			return NULL;
 		}
 	}
 
-	return __bch_sb_field_resize(c->disk_sb, f, u64s);
-}
-
-struct bch_sb_field *bch_dev_sb_field_resize(struct bcache_superblock *sb,
-					     struct bch_sb_field *f,
-					     unsigned u64s)
-{
-	ssize_t old_u64s = f ? le32_to_cpu(f->u64s) : 0;
-	ssize_t d = -old_u64s + u64s;
-
-	if (bch_dev_sb_realloc(sb, le32_to_cpu(sb->sb->u64s) + d))
-		return NULL;
-
-	return __bch_sb_field_resize(sb->sb, f, u64s);
+	f = __bch_sb_field_resize(c->disk_sb, f, u64s);
+	f->type = type;
+	return f;
 }
 
 static const char *validate_sb_layout(struct bch_sb_layout *layout)
@@ -589,7 +594,7 @@ int bch_sb_from_cache_set(struct cache_set *c, struct cache *ca)
 	unsigned u64s = le32_to_cpu(src->u64s) + journal_u64s;
 	int ret;
 
-	ret = bch_dev_sb_realloc(&ca->disk_sb, u64s);
+	ret = bch_sb_realloc(&ca->disk_sb, u64s);
 	if (ret)
 		return ret;
 

@@ -1512,7 +1512,6 @@ int bch_dev_add(struct cache_set *c, const char *path)
 	struct bcache_superblock sb;
 	const char *err;
 	struct cache *ca;
-	struct bch_sb_field *f;
 	struct bch_sb_field_members *mi, *dev_mi;
 	struct bch_member saved_mi;
 	unsigned dev_idx, nr_devices, u64s;
@@ -1571,17 +1570,14 @@ have_slot:
 		sizeof(struct bch_member) * nr_devices) / sizeof(u64);
 	err = "no space in superblock for member info";
 
-	f = bch_fs_sb_field_resize(c, &mi->field, u64s);
-	if (!f)
+	mi = bch_fs_sb_resize_members(c, u64s);
+	if (!mi)
 		goto err_unlock;
 
-	mi = container_of(f, struct bch_sb_field_members, field);
-
-	f = bch_dev_sb_field_resize(&sb, &dev_mi->field, u64s);
-	if (!f)
+	dev_mi = bch_sb_resize_members(&sb, u64s);
+	if (!dev_mi)
 		goto err_unlock;
 
-	dev_mi = container_of(f, struct bch_sb_field_members, field);
 	memcpy(dev_mi, mi, u64s * sizeof(u64));
 	dev_mi->members[dev_idx] = saved_mi;
 
