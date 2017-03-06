@@ -851,6 +851,8 @@ static int bch_allocator_thread(void *arg)
 
 	set_freezable();
 
+	bch_find_empty_buckets(c, ca);
+
 	while (1) {
 		/*
 		 * First, we pull buckets off of the free_inc list, possibly
@@ -895,7 +897,7 @@ static int bch_allocator_thread(void *arg)
 		 * See if we have buckets we can reuse without invalidating them
 		 * or forcing a journal commit:
 		 */
-		bch_find_empty_buckets(c, ca);
+		//bch_find_empty_buckets(c, ca);
 
 		if (fifo_used(&ca->free_inc) * 2 > ca->free_inc.size) {
 			up_read(&c->gc_lock);
