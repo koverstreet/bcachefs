@@ -1405,13 +1405,7 @@ void bch_journal_start(struct cache_set *c)
 {
 	struct journal *j = &c->journal;
 	struct journal_seq_blacklist *bl;
-	struct cache *ca;
 	u64 new_seq = 0;
-	unsigned i;
-
-	for_each_cache(ca, c, i)
-		if (is_journal_device(ca))
-			bch_dev_group_add(&c->journal.devs, ca);
 
 	list_for_each_entry(bl, &j->seq_blacklist, list)
 		new_seq = max(new_seq, bl->seq);
@@ -1638,9 +1632,6 @@ err:
 
 int bch_dev_journal_alloc(struct cache *ca)
 {
-	if (ca->mi.tier != 0)
-		return 0;
-
 	if (dynamic_fault("bcache:add:journal_alloc"))
 		return -ENOMEM;
 
@@ -1967,8 +1958,10 @@ static int journal_write_alloc(struct journal *j, unsigned sectors)
 	struct cache_set *c = container_of(j, struct cache_set, journal);
 	struct bkey_s_extent e = bkey_i_to_s_extent(&j->key);
 	struct bch_extent_ptr *ptr;
+	struct journal_device *ja;
 	struct cache *ca;
-	unsigned iter, replicas, replicas_want =
+	bool swapped;
+	unsigned i, replicas, replicas_want =
 		READ_ONCE(c->opts.metadata_replicas);
 
 	spin_lock(&j->lock);
@@ -1993,12 +1986,27 @@ static int journal_write_alloc(struct journal *j, unsigned sectors)
 
 	replicas = bch_extent_nr_ptrs(e.c);
 
+	spin_lock(&j->devs.lock);
+
+	/* Sort by tier: */
+	do {
+		swapped = false;
+
+		for (i = 0; i + 1 < j->devs.nr; i++)
+			if (j->devs.d[i + 0].dev->mi.tier >
+			    j->devs.d[i + 1].dev->mi.tier) {
+				swap(j->devs.d[i], j->devs.d[i + 1]);
+				swapped = true;
+			}
+	} while (swapped);
+
 	/*
-	 * Determine location of the next journal write:
-	 * XXX: sort caches by free journal space
+	 * Pick devices for next journal write:
+	 * XXX: sort devices by free journal space?
 	 */
-	group_for_each_cache_rcu(ca, &j->devs, iter) {
-		struct journal_device *ja = &ca->journal;
+	for (i = 0; i < j->devs.nr; i++) {
+		ca = j->devs.d[i].dev;
+		ja = &ca->journal;
 
 		if (replicas >= replicas_want)
 			break;
@@ -2026,7 +2034,7 @@ static int journal_write_alloc(struct journal *j, unsigned sectors)
 
 		trace_bcache_journal_next_bucket(ca, ja->cur_idx, ja->last_idx);
 	}
-
+	spin_unlock(&j->devs.lock);
 	rcu_read_unlock();
 
 	j->prev_buf_sectors = 0;

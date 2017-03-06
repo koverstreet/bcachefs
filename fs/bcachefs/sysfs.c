@@ -22,6 +22,7 @@
 #include "opts.h"
 #include "request.h"
 #include "super-io.h"
+#include "tier.h"
 #include "writeback.h"
 
 #include <linux/blkdev.h>
@@ -121,6 +122,8 @@ rw_attribute(cache_replacement_policy);
 rw_attribute(foreground_write_ratelimit_enabled);
 rw_attribute(copy_gc_enabled);
 sysfs_pd_controller_attribute(copy_gc);
+
+rw_attribute(tier);
 rw_attribute(tiering_enabled);
 rw_attribute(tiering_percent);
 sysfs_pd_controller_attribute(tiering);
@@ -134,7 +137,6 @@ rw_attribute(foreground_target_percent);
 rw_attribute(size);
 read_attribute(meta_replicas_have);
 read_attribute(data_replicas_have);
-read_attribute(tier);
 
 #define BCH_DEBUG_PARAM(name, description)				\
 	rw_attribute(name);
@@ -680,7 +682,8 @@ SHOW(bch_fs)
 
 	sysfs_printf(tiering_enabled,		"%i", c->tiering_enabled);
 	sysfs_print(tiering_percent,		c->tiering_percent);
-	sysfs_pd_controller_show(tiering,	&c->tiering_pd);
+
+	sysfs_pd_controller_show(tiering,	&c->tiers[1].pd); /* XXX */
 
 	sysfs_printf(meta_replicas_have, "%u",	c->sb.meta_replicas_have);
 	sysfs_printf(data_replicas_have, "%u",	c->sb.data_replicas_have);
@@ -773,8 +776,7 @@ STORE(__bch_fs)
 		ssize_t ret = strtoul_safe(buf, c->tiering_enabled)
 			?: (ssize_t) size;
 
-		if (c->tiering_read)
-			wake_up_process(c->tiering_read);
+		bch_tiering_start(c); /* issue wakeups */
 		return ret;
 	}
 
@@ -791,7 +793,7 @@ STORE(__bch_fs)
 	sysfs_strtoul(foreground_target_percent, c->foreground_target_percent);
 
 	sysfs_strtoul(tiering_percent,		c->tiering_percent);
-	sysfs_pd_controller_store(tiering,	&c->tiering_pd);
+	sysfs_pd_controller_store(tiering,	&c->tiers[1].pd); /* XXX */
 
 	/* Debugging: */
 
@@ -1271,6 +1273,31 @@ STORE(__bch_dev)
 			bch_write_super(c);
 		}
 		mutex_unlock(&c->sb_lock);
+	}
+
+	if (attr == &sysfs_tier) {
+		unsigned prev_tier;
+		unsigned v = strtoul_restrict_or_return(buf,
+					0, BCH_TIER_MAX - 1);
+
+		mutex_lock(&c->sb_lock);
+		prev_tier = ca->mi.tier;
+
+		if (v == ca->mi.tier) {
+			mutex_unlock(&c->sb_lock);
+			return size;
+		}
+
+		mi = &bch_sb_get_members(c->disk_sb)->members[ca->dev_idx];
+		SET_BCH_MEMBER_TIER(mi, v);
+		bch_write_super(c);
+
+		bch_dev_group_remove(&c->tiers[prev_tier].devs, ca);
+		bch_dev_group_add(&c->tiers[ca->mi.tier].devs, ca);
+		mutex_unlock(&c->sb_lock);
+
+		bch_recalc_capacity(c);
+		bch_tiering_start(c);
 	}
 
 	if (attr == &sysfs_state_rw) {

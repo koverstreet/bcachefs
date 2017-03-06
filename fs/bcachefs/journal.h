@@ -330,11 +330,6 @@ static inline int bch_journal_error(struct journal *j)
 		? -EIO : 0;
 }
 
-static inline bool is_journal_device(struct cache *ca)
-{
-	return ca->mi.state == BCH_MEMBER_STATE_ACTIVE && ca->mi.tier == 0;
-}
-
 static inline bool journal_flushes_device(struct cache *ca)
 {
 	return true;

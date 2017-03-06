@@ -92,8 +92,11 @@ static int bch_congested_fn(void *data, int bdi_bits)
 			}
 		}
 	} else {
-		/* Writes only go to tier 0: */
-		group_for_each_cache_rcu(ca, &c->cache_tiers[0], i) {
+		/* Writes prefer fastest tier: */
+		struct bch_tier *tier = READ_ONCE(c->fastest_tier);
+		struct cache_group *grp = tier ? &tier->devs : &c->cache_all;
+
+		group_for_each_cache_rcu(ca, grp, i) {
 			bdi = blk_get_backing_dev_info(ca->disk_sb.bdev);
 
 			if (bdi_congested(bdi, bdi_bits)) {
@@ -129,9 +132,7 @@ static void __bch_fs_read_only(struct cache_set *c)
 	struct cache *ca;
 	unsigned i;
 
-	c->tiering_pd.rate.rate = UINT_MAX;
-	bch_ratelimit_reset(&c->tiering_pd.rate);
-	bch_tiering_read_stop(c);
+	bch_tiering_stop(c);
 
 	for_each_cache(ca, c, i)
 		bch_moving_gc_stop(ca);
@@ -299,7 +300,7 @@ static const char *__bch_fs_read_write(struct cache_set *c)
 	}
 
 	err = "error starting tiering thread";
-	if (bch_tiering_read_start(c))
+	if (bch_tiering_start(c))
 		goto err;
 
 	schedule_delayed_work(&c->pd_controllers_update, 5 * HZ);
@@ -536,8 +537,8 @@ static struct cache_set *bch_fs_alloc(struct bch_sb *sb, struct bch_opts opts)
 	BCH_TIME_STATS()
 #undef BCH_TIME_STAT
 
-	bch_open_buckets_init(c);
-	bch_tiering_init_cache_set(c);
+	bch_fs_allocator_init(c);
+	bch_fs_tiering_init(c);
 
 	INIT_LIST_HEAD(&c->list);
 	INIT_LIST_HEAD(&c->cached_devs);
@@ -1071,9 +1072,8 @@ static const char *__bch_dev_read_write(struct cache_set *c, struct cache *ca)
 	if (bch_moving_gc_thread_start(ca))
 		return "error starting moving GC thread";
 
-	bch_dev_group_add(&c->journal.devs, ca);
-
-	wake_up_process(c->tiering_read);
+	if (bch_tiering_start(c))
+		return "error starting tiering thread";
 
 	bch_notify_dev_read_write(ca);
 	trace_bcache_cache_read_write_done(ca);
@@ -1318,8 +1318,7 @@ bool bch_dev_remove(struct cache *ca, bool force)
 		return false;
 
 	if (!bch_dev_may_remove(ca)) {
-		bch_err(ca->set, "Can't remove last device in tier %u",
-			ca->mi.tier);
+		bch_err(ca->set, "Can't remove last RW device");
 		bch_notify_dev_remove_failed(ca);
 		return false;
 	}
@@ -1388,7 +1387,7 @@ static const char *bch_dev_alloc(struct bcache_superblock *sb,
 	kobject_init(&ca->kobj, &bch_dev_ktype);
 
 	spin_lock_init(&ca->self.lock);
-	ca->self.nr_devices = 1;
+	ca->self.nr = 1;
 	rcu_assign_pointer(ca->self.d[0].dev, ca);
 	ca->dev_idx = sb->sb->dev_idx;
 

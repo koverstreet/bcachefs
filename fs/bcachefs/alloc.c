@@ -83,12 +83,12 @@ void bch_dev_group_remove(struct cache_group *grp, struct cache *ca)
 
 	spin_lock(&grp->lock);
 
-	for (i = 0; i < grp->nr_devices; i++)
+	for (i = 0; i < grp->nr; i++)
 		if (rcu_access_pointer(grp->d[i].dev) == ca) {
-			grp->nr_devices--;
+			grp->nr--;
 			memmove(&grp->d[i],
 				&grp->d[i + 1],
-				(grp->nr_devices - i) * sizeof(grp->d[0]));
+				(grp->nr- i) * sizeof(grp->d[0]));
 			break;
 		}
 
@@ -100,13 +100,13 @@ void bch_dev_group_add(struct cache_group *grp, struct cache *ca)
 	unsigned i;
 
 	spin_lock(&grp->lock);
-	for (i = 0; i < grp->nr_devices; i++)
+	for (i = 0; i < grp->nr; i++)
 		if (rcu_access_pointer(grp->d[i].dev) == ca)
 			goto out;
 
-	BUG_ON(grp->nr_devices >= BCH_SB_MEMBERS_MAX);
+	BUG_ON(grp->nr>= BCH_SB_MEMBERS_MAX);
 
-	rcu_assign_pointer(grp->d[grp->nr_devices++].dev, ca);
+	rcu_assign_pointer(grp->d[grp->nr++].dev, ca);
 out:
 	spin_unlock(&grp->lock);
 }
@@ -119,25 +119,32 @@ static void pd_controllers_update(struct work_struct *work)
 					   struct cache_set,
 					   pd_controllers_update);
 	struct cache *ca;
-	unsigned iter;
-	int i;
+	unsigned i, iter;
 
 	/* All units are in bytes */
-	u64 tier_size[BCH_TIER_MAX];
-	u64 tier_free[BCH_TIER_MAX];
-	u64 tier_dirty[BCH_TIER_MAX];
-	u64 tier0_can_free = 0;
+	u64 faster_tiers_size	= 0;
+	u64 faster_tiers_dirty	= 0;
 
-	memset(tier_size, 0, sizeof(tier_size));
-	memset(tier_free, 0, sizeof(tier_free));
-	memset(tier_dirty, 0, sizeof(tier_dirty));
+	u64 fastest_tier_size	= 0;
+	u64 fastest_tier_free	= 0;
+	u64 copygc_can_free	= 0;
 
 	rcu_read_lock();
-	for (i = BCH_TIER_MAX - 1; i >= 0; --i)
-		group_for_each_cache_rcu(ca, &c->cache_tiers[i], iter) {
+	for (i = 0; i < ARRAY_SIZE(c->tiers); i++) {
+		bch_pd_controller_update(&c->tiers[i].pd,
+				div_u64(faster_tiers_size *
+					c->tiering_percent, 100),
+				faster_tiers_dirty,
+				-1);
+
+		group_for_each_cache_rcu(ca, &c->tiers[i].devs, iter) {
 			struct bucket_stats_cache stats = bch_bucket_stats_read_cache(ca);
 			unsigned bucket_bits = ca->bucket_bits + 9;
 
+			u64 size = (ca->mi.nbuckets -
+				    ca->mi.first_bucket) << bucket_bits;
+			u64 dirty = stats.buckets_dirty << bucket_bits;
+			u64 free = __buckets_free_cache(ca, stats) << bucket_bits;
 			/*
 			 * Bytes of internal fragmentation, which can be
 			 * reclaimed by copy GC
@@ -148,41 +155,30 @@ static void pd_controllers_update(struct work_struct *work)
 				((stats.sectors_dirty +
 				  stats.sectors_cached) << 9);
 
-			u64 dev_size = (ca->mi.nbuckets -
-					ca->mi.first_bucket) << bucket_bits;
-
-			u64 free = __buckets_free_cache(ca, stats) << bucket_bits;
-
 			if (fragmented < 0)
 				fragmented = 0;
 
 			bch_pd_controller_update(&ca->moving_gc_pd,
 						 free, fragmented, -1);
 
-			if (i == 0)
-				tier0_can_free += fragmented;
+			faster_tiers_size		+= size;
+			faster_tiers_dirty		+= dirty;
 
-			tier_size[i] += dev_size;
-			tier_free[i] += free;
-			tier_dirty[i] += stats.buckets_dirty << bucket_bits;
+			if (!c->fastest_tier ||
+			    c->fastest_tier == &c->tiers[i]) {
+				fastest_tier_size	+= size;
+				fastest_tier_free	+= free;
+			}
+
+			copygc_can_free			+= fragmented;
 		}
-	rcu_read_unlock();
-
-	if (tier_size[1]) {
-		u64 target = div_u64(tier_size[0] * c->tiering_percent, 100);
-
-		tier0_can_free = max_t(s64, 0, tier_dirty[0] - target);
-
-		bch_pd_controller_update(&c->tiering_pd,
-					 target,
-					 tier_dirty[0],
-					 -1);
 	}
+
+	rcu_read_unlock();
 
 	/*
 	 * Throttle foreground writes if tier 0 is running out of free buckets,
-	 * and either tiering or copygc can free up space (but don't take both
-	 * into account).
+	 * and either tiering or copygc can free up space.
 	 *
 	 * Target will be small if there isn't any work to do - we don't want to
 	 * throttle foreground writes if we currently have all the free space
@@ -191,12 +187,15 @@ static void pd_controllers_update(struct work_struct *work)
 	 * Otherwise, if there's work to do, try to keep 20% of tier0 available
 	 * for foreground writes.
 	 */
+	if (c->fastest_tier)
+		copygc_can_free = U64_MAX;
+
 	bch_pd_controller_update(&c->foreground_write_pd,
-				 min(tier0_can_free,
-				     div_u64(tier_size[0] *
+				 min(copygc_can_free,
+				     div_u64(fastest_tier_size *
 					     c->foreground_target_percent,
 					     100)),
-				 tier_free[0],
+				 fastest_tier_free,
 				 -1);
 
 	schedule_delayed_work(&c->pd_controllers_update,
@@ -1020,21 +1019,21 @@ static void recalc_alloc_group_weights(struct cache_set *c,
 	u64 available_buckets = 1; /* avoid a divide by zero... */
 	unsigned i;
 
-	for (i = 0; i < devs->nr_devices; i++) {
+	for (i = 0; i < devs->nr; i++) {
 		ca = devs->d[i].dev;
 
 		devs->d[i].weight = buckets_free_cache(ca);
 		available_buckets += devs->d[i].weight;
 	}
 
-	for (i = 0; i < devs->nr_devices; i++) {
+	for (i = 0; i < devs->nr; i++) {
 		const unsigned min_weight = U32_MAX >> 4;
 		const unsigned max_weight = U32_MAX;
 
 		devs->d[i].weight =
 			min_weight +
 			div64_u64(devs->d[i].weight *
-				  devs->nr_devices *
+				  devs->nr *
 				  (max_weight - min_weight),
 				  available_buckets);
 		devs->d[i].weight = min_t(u64, devs->d[i].weight, max_weight);
@@ -1060,7 +1059,7 @@ static enum bucket_alloc_ret bch_bucket_alloc_group(struct cache_set *c,
 	rcu_read_lock();
 	spin_lock(&devs->lock);
 
-	for (i = 0; i < devs->nr_devices; i++)
+	for (i = 0; i < devs->nr; i++)
 		available += !test_bit(devs->d[i].dev->dev_idx,
 				       caches_used);
 
@@ -1078,7 +1077,7 @@ static enum bucket_alloc_ret bch_bucket_alloc_group(struct cache_set *c,
 		}
 
 		i++;
-		i %= devs->nr_devices;
+		i %= devs->nr;
 
 		ret = FREELIST_EMPTY;
 		if (i == fail_idx)
@@ -1138,20 +1137,25 @@ static enum bucket_alloc_ret __bch_bucket_alloc_set(struct cache_set *c,
 						    enum alloc_reserve reserve,
 						    long *caches_used)
 {
+	struct bch_tier *tier;
 	/*
 	 * this should implement policy - for a given type of allocation, decide
 	 * which devices to allocate from:
 	 *
 	 * XXX: switch off wp->type and do something more intelligent here
 	 */
+	if (wp->group)
+		return bch_bucket_alloc_group(c, ob, reserve, nr_replicas,
+					      wp->group, caches_used);
 
-	/* foreground writes: prefer tier 0: */
-	if (wp->group == &c->cache_all)
+	/* foreground writes: prefer fastest tier: */
+	tier = READ_ONCE(c->fastest_tier);
+	if (tier)
 		bch_bucket_alloc_group(c, ob, reserve, nr_replicas,
-				       &c->cache_tiers[0], caches_used);
+				       &tier->devs, caches_used);
 
 	return bch_bucket_alloc_group(c, ob, reserve, nr_replicas,
-				      wp->group, caches_used);
+				      &c->cache_all, caches_used);
 }
 
 static int bch_bucket_alloc_set(struct cache_set *c, struct write_point *wp,
@@ -1415,7 +1419,6 @@ struct open_bucket *bch_alloc_sectors_start(struct cache_set *c,
 		? 0 : BTREE_NODE_RESERVE;
 	int ret;
 
-	BUG_ON(!wp->group);
 	BUG_ON(!reserve);
 	BUG_ON(!nr_replicas);
 retry:
@@ -1483,7 +1486,7 @@ void bch_alloc_sectors_append_ptrs(struct cache_set *c, struct bkey_i_extent *e,
 				   unsigned nr_replicas, struct open_bucket *ob,
 				   unsigned sectors)
 {
-	struct bch_extent_ptr tmp, *ptr;
+	struct bch_extent_ptr tmp;
 	struct cache *ca;
 	bool has_data = false;
 	unsigned i;
@@ -1503,6 +1506,8 @@ void bch_alloc_sectors_append_ptrs(struct cache_set *c, struct bkey_i_extent *e,
 	if (nr_replicas < ob->nr_ptrs)
 		has_data = true;
 
+	rcu_read_lock();
+
 	for (i = 0; i < nr_replicas; i++) {
 		EBUG_ON(bch_extent_has_device(extent_i_to_s_c(e), ob->ptrs[i].dev));
 
@@ -1512,10 +1517,12 @@ void bch_alloc_sectors_append_ptrs(struct cache_set *c, struct bkey_i_extent *e,
 		extent_ptr_append(e, tmp);
 
 		ob->ptr_offset[i] += sectors;
+
+		if ((ca = PTR_CACHE(c, &ob->ptrs[i])))
+			this_cpu_add(*ca->sectors_written, sectors);
 	}
 
-	open_bucket_for_each_online_device(c, ob, ptr, ca)
-		this_cpu_add(*ca->sectors_written, sectors);
+	rcu_read_unlock();
 }
 
 /*
@@ -1588,9 +1595,9 @@ struct open_bucket *bch_alloc_sectors(struct cache_set *c,
 
 /* Startup/shutdown (ro/rw): */
 
-static void bch_recalc_capacity(struct cache_set *c)
+void bch_recalc_capacity(struct cache_set *c)
 {
-	struct cache_group *tier = c->cache_tiers + ARRAY_SIZE(c->cache_tiers);
+	struct bch_tier *fastest_tier = NULL, *slowest_tier = NULL, *tier;
 	struct cache *ca;
 	u64 total_capacity, capacity = 0, reserved_sectors = 0;
 	unsigned long ra_pages = 0;
@@ -1606,16 +1613,29 @@ static void bch_recalc_capacity(struct cache_set *c)
 
 	c->bdi.ra_pages = ra_pages;
 
+	/* Find fastest, slowest tiers with devices: */
+
+	for (tier = c->tiers;
+	     tier < c->tiers + ARRAY_SIZE(c->tiers); tier++) {
+		if (!tier->devs.nr)
+			continue;
+		if (!fastest_tier)
+			fastest_tier = tier;
+		slowest_tier = tier;
+	}
+
+	c->fastest_tier = fastest_tier != slowest_tier ? fastest_tier : NULL;
+
+	c->promote_write_point.group = &fastest_tier->devs;
+
+	if (!fastest_tier)
+		goto set_capacity;
+
 	/*
 	 * Capacity of the cache set is the capacity of all the devices in the
 	 * slowest (highest) tier - we don't include lower tier devices.
 	 */
-	for (tier = c->cache_tiers + ARRAY_SIZE(c->cache_tiers) - 1;
-	     tier > c->cache_tiers && !tier->nr_devices;
-	     --tier)
-		;
-
-	group_for_each_cache_rcu(ca, tier, i) {
+	group_for_each_cache_rcu(ca, &slowest_tier->devs, i) {
 		size_t reserve = 0;
 
 		/*
@@ -1651,8 +1671,8 @@ static void bch_recalc_capacity(struct cache_set *c)
 			     ca->mi.first_bucket) <<
 			ca->bucket_bits;
 	}
+set_capacity:
 	rcu_read_unlock();
-
 	total_capacity = capacity;
 
 	capacity *= (100 - c->opts.gc_reserve_percent);
@@ -1729,7 +1749,7 @@ static bool bch_dev_has_open_write_point(struct cache *ca)
 void bch_dev_allocator_stop(struct cache *ca)
 {
 	struct cache_set *c = ca->set;
-	struct cache_group *tier = &c->cache_tiers[ca->mi.tier];
+	struct cache_group *tier = &c->tiers[ca->mi.tier].devs;
 	struct task_struct *p;
 	struct closure cl;
 	unsigned i;
@@ -1810,7 +1830,7 @@ void bch_dev_allocator_stop(struct cache *ca)
 int bch_dev_allocator_start(struct cache *ca)
 {
 	struct cache_set *c = ca->set;
-	struct cache_group *tier = &c->cache_tiers[ca->mi.tier];
+	struct cache_group *tier = &c->tiers[ca->mi.tier].devs;
 	struct task_struct *k;
 
 	/*
@@ -1828,6 +1848,7 @@ int bch_dev_allocator_start(struct cache *ca)
 
 	bch_dev_group_add(tier, ca);
 	bch_dev_group_add(&c->cache_all, ca);
+	bch_dev_group_add(&c->journal.devs, ca);
 
 	bch_recalc_capacity(c);
 
@@ -1840,7 +1861,7 @@ int bch_dev_allocator_start(struct cache *ca)
 	return 0;
 }
 
-void bch_open_buckets_init(struct cache_set *c)
+void bch_fs_allocator_init(struct cache_set *c)
 {
 	unsigned i;
 
@@ -1862,19 +1883,11 @@ void bch_open_buckets_init(struct cache_set *c)
 
 	spin_lock_init(&c->cache_all.lock);
 
-	for (i = 0; i < ARRAY_SIZE(c->write_points); i++) {
+	for (i = 0; i < ARRAY_SIZE(c->tiers); i++)
+		spin_lock_init(&c->tiers[i].devs.lock);
+
+	for (i = 0; i < ARRAY_SIZE(c->write_points); i++)
 		c->write_points[i].throttle = true;
-		c->write_points[i].group = &c->cache_tiers[0];
-	}
-
-	for (i = 0; i < ARRAY_SIZE(c->cache_tiers); i++)
-		spin_lock_init(&c->cache_tiers[i].lock);
-
-	c->promote_write_point.group = &c->cache_tiers[0];
-
-	c->migration_write_point.group = &c->cache_all;
-
-	c->btree_write_point.group = &c->cache_all;
 
 	c->pd_controllers_update_seconds = 5;
 	INIT_DELAYED_WORK(&c->pd_controllers_update, pd_controllers_update);

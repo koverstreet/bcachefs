@@ -498,6 +498,14 @@ struct btree_debug {
 	struct dentry		*failed;
 };
 
+struct bch_tier {
+	unsigned		idx;
+	struct task_struct	*migrate;
+	struct bch_pd_controller pd;
+
+	struct cache_group	devs;
+};
+
 struct cache_set {
 	struct closure		cl;
 
@@ -640,7 +648,9 @@ struct cache_set {
 	 * allocate from:
 	 */
 	struct cache_group	cache_all;
-	struct cache_group	cache_tiers[BCH_TIER_MAX];
+	struct bch_tier		tiers[BCH_TIER_MAX];
+	/* NULL if we only have devices in one tier: */
+	struct bch_tier		*fastest_tier;
 
 	u64			capacity; /* sectors */
 
@@ -752,10 +762,6 @@ struct cache_set {
 	atomic_t		writeback_pages;
 	unsigned		writeback_pages_max;
 	atomic_long_t		nr_inodes;
-
-	/* TIERING */
-	struct task_struct	*tiering_read;
-	struct bch_pd_controller tiering_pd;
 
 	/* NOTIFICATIONS */
 	struct mutex		uevent_lock;

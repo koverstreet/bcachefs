@@ -51,7 +51,7 @@ static inline bool allocation_is_metadata(enum alloc_reserve id)
 
 struct cache_group {
 	spinlock_t		lock;
-	unsigned		nr_devices;
+	unsigned		nr;
 	unsigned		cur_device;
 	struct {
 		u64		weight;

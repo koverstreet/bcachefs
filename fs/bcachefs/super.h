@@ -57,27 +57,11 @@ static inline struct cache *bch_get_next_cache(struct cache_set *c,
 static inline bool bch_dev_may_remove(struct cache *ca)
 {
 	struct cache_set *c = ca->set;
-	struct cache_group *tier = &c->cache_tiers[ca->mi.tier];
+	struct cache_group *grp = &c->cache_all;
 
-	/*
-	 * Right now, we can't remove the last device from a tier,
-	 * - For tier 0, because all metadata lives in tier 0 and because
-	 *   there is no way to have foreground writes go directly to tier 1.
-	 * - For tier 1, because the code doesn't completely support an
-	 *   empty tier 1.
-	 */
-
-	/*
-	 * Turning a device read-only removes it from the cache group,
-	 * so there may only be one read-write device in a tier, and yet
-	 * the device we are removing is in the same tier, so we have
-	 * to check for identity.
-	 * Removing the last RW device from a tier requires turning the
-	 * whole cache set RO.
-	 */
-
-	return tier->nr_devices != 1 ||
-		rcu_access_pointer(tier->d[0].dev) != ca;
+	/* Can't remove the last RW device: */
+	return grp->nr != 1 ||
+		rcu_access_pointer(grp->d[0].dev) != ca;
 }
 
 void bch_dev_release(struct kobject *);

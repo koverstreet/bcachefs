@@ -602,6 +602,7 @@ bch_btree_pick_ptr(struct cache_set *c, const struct btree *b)
 	struct bkey_s_c_extent e = bkey_i_to_s_c_extent(&b->key);
 	const union bch_extent_crc *crc;
 	const struct bch_extent_ptr *ptr;
+	struct extent_pick_ptr pick = { .ca = NULL };
 	struct cache *ca;
 
 	rcu_read_lock();
@@ -621,15 +622,19 @@ bch_btree_pick_ptr(struct cache_set *c, const struct btree *b)
 				PTR_BUCKET_NR(ca, ptr)))
 			continue;
 
-		percpu_ref_get(&ca->ref);
-		rcu_read_unlock();
+		if (pick.ca && pick.ca->mi.tier < ca->mi.tier)
+			continue;
 
-		return (struct extent_pick_ptr) { .ptr = *ptr, .ca = ca };
+		pick.ca		= ca;
+		pick.ptr	= *ptr;
 	}
+
+	if (pick.ca)
+		percpu_ref_get(&pick.ca->ref);
 
 	rcu_read_unlock();
 
-	return (struct extent_pick_ptr) { .ca = NULL, };
+	return pick;
 }
 
 const struct bkey_ops bch_bkey_btree_ops = {
@@ -2193,17 +2198,21 @@ void bch_extent_pick_ptr_avoiding(struct cache_set *c, struct bkey_s_c k,
 		rcu_read_lock();
 		ret->ca = NULL;
 
-		extent_for_each_online_device_crc(c, e, crc, ptr, ca)
-			if (!ptr_stale(ca, ptr)) {
-				*ret = (struct extent_pick_ptr) {
-					.crc = crc_to_128(e.k, crc),
-					.ptr = *ptr,
-					.ca = ca,
-				};
+		extent_for_each_online_device_crc(c, e, crc, ptr, ca) {
+			if (ptr_stale(ca, ptr))
+				continue;
 
-				if (ca != avoid)
-					break;
-			}
+			if (ret->ca &&
+			    (ca == avoid ||
+			     ret->ca->mi.tier < ca->mi.tier))
+				continue;
+
+			*ret = (struct extent_pick_ptr) {
+				.crc = crc_to_128(e.k, crc),
+				.ptr = *ptr,
+				.ca = ca,
+			};
+		}
 
 		if (ret->ca)
 			percpu_ref_get(&ret->ca->ref);
