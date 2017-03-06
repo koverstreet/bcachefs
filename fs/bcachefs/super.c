@@ -1399,7 +1399,8 @@ static const char *bch_dev_alloc(struct bcache_superblock *sb,
 	bch_moving_init_cache(ca);
 
 	ca->disk_sb = *sb;
-	ca->disk_sb.bdev->bd_holder = ca;
+	if (sb->mode & FMODE_EXCL)
+		ca->disk_sb.bdev->bd_holder = ca;
 	memset(sb, 0, sizeof(*sb));
 
 	INIT_WORK(&ca->io_error_work, bch_nonfatal_io_error_work);
@@ -1727,7 +1728,7 @@ err:
 }
 
 static const char *__bch_fs_open_incremental(struct bcache_superblock *sb,
-				  struct bch_opts opts)
+					     struct bch_opts opts)
 {
 	char name[BDEVNAME_SIZE];
 	const char *err;

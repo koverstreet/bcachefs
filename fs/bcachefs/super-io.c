@@ -35,7 +35,7 @@ void bch_free_super(struct bcache_superblock *sb)
 	if (sb->bio)
 		bio_put(sb->bio);
 	if (!IS_ERR_OR_NULL(sb->bdev))
-		blkdev_put(sb->bdev, FMODE_READ|FMODE_WRITE|FMODE_EXCL);
+		blkdev_put(sb->bdev, sb->mode);
 
 	free_pages((unsigned long) sb->sb, sb->page_order);
 	memset(sb, 0, sizeof(*sb));
@@ -429,19 +429,11 @@ static bool bch_is_open(struct block_device *bdev)
 	return bch_is_open_cache(bdev) || bch_is_open_backing_dev(bdev);
 }
 
-static const char *bch_blkdev_open(const char *path, void *holder,
-				   struct bch_opts opts,
-				   struct block_device **ret)
+static const char *bch_blkdev_open(const char *path, fmode_t mode,
+				   void *holder, struct block_device **ret)
 {
 	struct block_device *bdev;
-	fmode_t mode = FMODE_READ;
 	const char *err;
-
-	if (!(opt_defined(opts.noexcl) && opts.noexcl))
-		mode |= FMODE_EXCL;
-
-	if (!(opt_defined(opts.nochanges) && opts.nochanges))
-		mode |= FMODE_WRITE;
 
 	*ret = NULL;
 	bdev = blkdev_get_by_path(path, mode, holder);
@@ -664,8 +656,15 @@ const char *bch_read_super(struct bcache_superblock *sb,
 	lockdep_assert_held(&bch_register_lock);
 
 	memset(sb, 0, sizeof(*sb));
+	sb->mode = FMODE_READ;
 
-	err = bch_blkdev_open(path, &sb, opts, &sb->bdev);
+	if (!(opt_defined(opts.noexcl) && opts.noexcl))
+		sb->mode |= FMODE_EXCL;
+
+	if (!(opt_defined(opts.nochanges) && opts.nochanges))
+		sb->mode |= FMODE_WRITE;
+
+	err = bch_blkdev_open(path, sb->mode, sb, &sb->bdev);
 	if (err)
 		return err;
 
