@@ -1777,13 +1777,11 @@ void bch_journal_pin_add_if_older(struct journal *j,
 	     fifo_entry_idx(&j->pin, pin->pin_list))) {
 		if (journal_pin_active(pin))
 			__journal_pin_drop(j, pin);
-		__journal_pin_add(j, src_pin->pin_list,
-				  pin, NULL);
+		__journal_pin_add(j, src_pin->pin_list, pin, flush_fn);
 	}
 
 	spin_unlock_irq(&j->pin_lock);
 }
-
 
 static struct journal_entry_pin *
 journal_get_next_pin(struct journal *j, u64 seq_to_flush)
@@ -1815,6 +1813,29 @@ journal_get_next_pin(struct journal *j, u64 seq_to_flush)
 	spin_unlock_irq(&j->pin_lock);
 
 	return ret;
+}
+
+static bool journal_has_pins(struct journal *j)
+{
+	bool ret;
+
+	spin_lock(&j->lock);
+	journal_reclaim_fast(j);
+	ret = fifo_used(&j->pin) > 1 ||
+		atomic_read(&fifo_peek_front(&j->pin).count) > 1;
+	spin_unlock(&j->lock);
+
+	return ret;
+}
+
+void bch_journal_flush_pins(struct journal *j)
+{
+	struct journal_entry_pin *pin;
+
+	while ((pin = journal_get_next_pin(j, U64_MAX)))
+		pin->flush(j, pin);
+
+	wait_event(j->wait, !journal_has_pins(j));
 }
 
 static bool should_discard_bucket(struct journal *j, struct journal_device *ja)

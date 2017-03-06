@@ -150,7 +150,9 @@ static void __bch_fs_read_only(struct cache_set *c)
 	if (test_bit(JOURNAL_STARTED, &c->journal.flags)) {
 		int ret;
 
+		bch_journal_flush_pins(&c->journal);
 		bch_journal_flush_async(&c->journal, NULL);
+
 		ret = bch_journal_meta(&c->journal);
 		BUG_ON(ret && !bch_journal_error(&c->journal));
 	}

@@ -111,7 +111,6 @@
 #include <linux/hash.h>
 
 #include "journal_types.h"
-//#include "super-io.h"
 
 /*
  * Only used for holding the journal entries we read in btree_journal_read()
@@ -136,6 +135,7 @@ void bch_journal_pin_add_if_older(struct journal *,
 				  struct journal_entry_pin *,
 				  struct journal_entry_pin *,
 				  journal_pin_flush_fn);
+void bch_journal_flush_pins(struct journal *);
 
 struct closure;
 struct cache_set;
