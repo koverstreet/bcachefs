@@ -1257,13 +1257,17 @@ static struct cache_set *bch_open_as_blockdevs(const char *_dev_name,
 		if (!c)
 			goto err_unlock;
 
-		if (!test_bit(BCH_FS_RUNNING, &c->flags)) {
+		mutex_lock(&c->state_lock);
+
+		if (!bch_fs_running(c)) {
+			mutex_unlock(&c->state_lock);
 			err = "incomplete cache set";
 			c = NULL;
 			goto err_unlock;
 		}
 
 		closure_get(&c->cl);
+		mutex_unlock(&c->state_lock);
 		mutex_unlock(&bch_register_lock);
 	}
 
@@ -1291,8 +1295,6 @@ static int bch_remount(struct super_block *sb, int *flags, char *data)
 	if (ret)
 		return ret;
 
-	mutex_lock(&bch_register_lock);
-
 	if (opts.read_only >= 0 &&
 	    opts.read_only != c->opts.read_only) {
 		const char *err = NULL;
@@ -1305,8 +1307,7 @@ static int bch_remount(struct super_block *sb, int *flags, char *data)
 			err = bch_fs_read_write(c);
 			if (err) {
 				bch_err(c, "error going rw: %s", err);
-				ret = -EINVAL;
-				goto unlock;
+				return -EINVAL;
 			}
 
 			sb->s_flags &= ~MS_RDONLY;
@@ -1317,9 +1318,6 @@ static int bch_remount(struct super_block *sb, int *flags, char *data)
 
 	if (opts.errors >= 0)
 		c->opts.errors = opts.errors;
-
-unlock:
-	mutex_unlock(&bch_register_lock);
 
 	return ret;
 }

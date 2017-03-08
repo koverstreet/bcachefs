@@ -219,7 +219,7 @@ static void __bch_tiering_stop(struct bch_tier *tier)
 	tier->pd.rate.rate = UINT_MAX;
 	bch_ratelimit_reset(&tier->pd.rate);
 
-	if (!IS_ERR_OR_NULL(tier->migrate))
+	if (tier->migrate)
 		kthread_stop(tier->migrate);
 
 	tier->migrate = NULL;

@@ -792,9 +792,6 @@ void bch_coalesce(struct cache_set *c)
 	u64 start_time;
 	enum btree_id id;
 
-	if (btree_gc_coalesce_disabled(c))
-		return;
-
 	if (test_bit(BCH_FS_GC_FAILURE, &c->flags))
 		return;
 
@@ -853,7 +850,8 @@ static int bch_gc_thread(void *arg)
 		last_kick = atomic_read(&c->kick_gc);
 
 		bch_gc(c);
-		bch_coalesce(c);
+		if (!btree_gc_coalesce_disabled(c))
+			bch_coalesce(c);
 
 		debug_check_no_locks_held();
 	}
@@ -865,18 +863,24 @@ void bch_gc_thread_stop(struct cache_set *c)
 {
 	set_bit(BCH_FS_GC_STOPPING, &c->flags);
 
-	if (!IS_ERR_OR_NULL(c->gc_thread))
+	if (c->gc_thread)
 		kthread_stop(c->gc_thread);
+
+	c->gc_thread = NULL;
+	clear_bit(BCH_FS_GC_STOPPING, &c->flags);
 }
 
 int bch_gc_thread_start(struct cache_set *c)
 {
-	clear_bit(BCH_FS_GC_STOPPING, &c->flags);
+	struct task_struct *p;
 
-	c->gc_thread = kthread_create(bch_gc_thread, c, "bcache_gc");
-	if (IS_ERR(c->gc_thread))
-		return PTR_ERR(c->gc_thread);
+	BUG_ON(c->gc_thread);
 
+	p = kthread_create(bch_gc_thread, c, "bcache_gc");
+	if (IS_ERR(p))
+		return PTR_ERR(p);
+
+	c->gc_thread = p;
 	wake_up_process(c->gc_thread);
 	return 0;
 }

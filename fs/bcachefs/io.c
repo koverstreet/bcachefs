@@ -717,9 +717,7 @@ void bch_wake_delayed_writes(unsigned long data)
 	spin_lock_irqsave(&c->foreground_write_pd_lock, flags);
 
 	while ((op = c->write_wait_head)) {
-		if (!test_bit(BCH_FS_RO, &c->flags) &&
-		    !test_bit(BCH_FS_STOPPING, &c->flags) &&
-		    time_after(op->expires, jiffies)) {
+		if (time_after(op->expires, jiffies)) {
 			mod_timer(&c->foreground_write_wakeup, op->expires);
 			break;
 		}
@@ -1063,9 +1061,7 @@ static void __bch_read_endio(struct cache_set *c, struct bch_read_bio *rbio)
 		return;
 	}
 
-	if (rbio->promote &&
-	    !test_bit(BCH_FS_RO, &c->flags) &&
-	    !test_bit(BCH_FS_STOPPING, &c->flags)) {
+	if (rbio->promote) {
 		struct cache_promote_op *promote = rbio->promote;
 		struct closure *cl = &promote->cl;
 
@@ -1139,6 +1135,9 @@ static bool should_promote(struct cache_set *c,
 			   struct extent_pick_ptr *pick, unsigned flags)
 {
 	if (!(flags & BCH_READ_PROMOTE))
+		return false;
+
+	if (percpu_ref_is_dying(&c->writes))
 		return false;
 
 	return c->fastest_tier &&

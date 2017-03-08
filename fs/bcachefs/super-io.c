@@ -424,9 +424,13 @@ static bool bch_is_open_cache(struct block_device *bdev)
 
 static bool bch_is_open(struct block_device *bdev)
 {
-	lockdep_assert_held(&bch_register_lock);
+	bool ret;
 
-	return bch_is_open_cache(bdev) || bch_is_open_backing_dev(bdev);
+	mutex_lock(&bch_register_lock);
+	ret = bch_is_open_cache(bdev) || bch_is_open_backing_dev(bdev);
+	mutex_unlock(&bch_register_lock);
+
+	return ret;
 }
 
 static const char *bch_blkdev_open(const char *path, fmode_t mode,
@@ -653,8 +657,6 @@ const char *bch_read_super(struct bcache_superblock *sb,
 	const char *err;
 	unsigned i;
 
-	lockdep_assert_held(&bch_register_lock);
-
 	memset(sb, 0, sizeof(*sb));
 	sb->mode = FMODE_READ;
 
@@ -797,6 +799,9 @@ void bch_write_super(struct cache_set *c)
 	bool wrote;
 
 	lockdep_assert_held(&c->sb_lock);
+
+	if (c->opts.nochanges)
+		return;
 
 	closure_init_stack(cl);
 

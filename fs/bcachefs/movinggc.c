@@ -258,18 +258,21 @@ static int bch_moving_gc_thread(void *arg)
 	return 0;
 }
 
-void bch_moving_init_cache(struct cache *ca)
+void bch_moving_gc_stop(struct cache *ca)
 {
-	bch_pd_controller_init(&ca->moving_gc_pd);
-	ca->moving_gc_pd.d_term = 0;
+	ca->moving_gc_pd.rate.rate = UINT_MAX;
+	bch_ratelimit_reset(&ca->moving_gc_pd.rate);
+
+	if (ca->moving_gc_read)
+		kthread_stop(ca->moving_gc_read);
+	ca->moving_gc_read = NULL;
 }
 
-int bch_moving_gc_thread_start(struct cache *ca)
+int bch_moving_gc_start(struct cache *ca)
 {
 	struct task_struct *t;
 
-	/* The moving gc read thread must be stopped */
-	BUG_ON(ca->moving_gc_read != NULL);
+	BUG_ON(ca->moving_gc_read);
 
 	if (ca->set->opts.nochanges)
 		return 0;
@@ -287,12 +290,8 @@ int bch_moving_gc_thread_start(struct cache *ca)
 	return 0;
 }
 
-void bch_moving_gc_stop(struct cache *ca)
+void bch_dev_moving_gc_init(struct cache *ca)
 {
-	ca->moving_gc_pd.rate.rate = UINT_MAX;
-	bch_ratelimit_reset(&ca->moving_gc_pd.rate);
-
-	if (ca->moving_gc_read)
-		kthread_stop(ca->moving_gc_read);
-	ca->moving_gc_read = NULL;
+	bch_pd_controller_init(&ca->moving_gc_pd);
+	ca->moving_gc_pd.d_term = 0;
 }

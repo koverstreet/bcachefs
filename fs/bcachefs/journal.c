@@ -1826,7 +1826,7 @@ void bch_journal_flush_pins(struct journal *j)
 	while ((pin = journal_get_next_pin(j, U64_MAX)))
 		pin->flush(j, pin);
 
-	wait_event(j->wait, !journal_has_pins(j));
+	wait_event(j->wait, !journal_has_pins(j) || bch_journal_error(j));
 }
 
 static bool should_discard_bucket(struct journal *j, struct journal_device *ja)
@@ -2677,6 +2677,24 @@ int bch_journal_move(struct cache *ca)
 		BUG_ON(ja->bucket_seq[i] > last_flushed_seq);
 
 	return ret;
+}
+
+void bch_fs_journal_stop(struct journal *j)
+{
+	if (!test_bit(JOURNAL_STARTED, &j->flags))
+		return;
+
+	/*
+	 * Empty out the journal by first flushing everything pinning existing
+	 * journal entries, then force a brand new empty journal entry to be
+	 * written:
+	 */
+	bch_journal_flush_pins(j);
+	bch_journal_flush_async(j, NULL);
+	bch_journal_meta(j);
+
+	cancel_delayed_work_sync(&j->write_work);
+	cancel_delayed_work_sync(&j->reclaim_work);
 }
 
 void bch_dev_journal_exit(struct cache *ca)

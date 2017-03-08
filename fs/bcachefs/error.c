@@ -120,7 +120,7 @@ void bch_nonfatal_io_error_work(struct work_struct *work)
 	} else {
 		bch_notify_dev_error(ca, true);
 
-		mutex_lock(&bch_register_lock);
+		mutex_lock(&c->state_lock);
 		dev = bch_dev_may_remove(ca);
 		if (dev
 		    ? bch_dev_read_only(ca)
@@ -129,7 +129,7 @@ void bch_nonfatal_io_error_work(struct work_struct *work)
 				"too many IO errors on %s, setting %s RO",
 				bdevname(ca->disk_sb.bdev, buf),
 				dev ? "device" : "filesystem");
-		mutex_unlock(&bch_register_lock);
+		mutex_unlock(&c->state_lock);
 	}
 }
 

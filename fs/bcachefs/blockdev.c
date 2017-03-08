@@ -375,6 +375,8 @@ int bch_cached_dev_attach(struct cached_dev *dc, struct cache_set *c)
 	bool found;
 	int ret;
 
+	lockdep_assert_held(&c->state_lock);
+
 	bdevname(dc->disk_sb.bdev, buf);
 
 	if (memcmp(&dc->disk_sb.sb->set_uuid,
@@ -387,11 +389,8 @@ int bch_cached_dev_attach(struct cached_dev *dc, struct cache_set *c)
 		return -EINVAL;
 	}
 
-	if (!test_bit(BCH_FS_RUNNING, &c->flags))
-		return 0;
-
-	if (test_bit(BCH_FS_STOPPING, &c->flags)) {
-		pr_err("Can't attach %s: shutting down", buf);
+	if (!bch_fs_running(c)) {
+		pr_err("Can't attach %s: not running", buf);
 		return -EINVAL;
 	}
 
@@ -497,6 +496,7 @@ void bch_attach_backing_devs(struct cache_set *c)
 	struct cached_dev *dc, *t;
 
 	lockdep_assert_held(&bch_register_lock);
+	lockdep_assert_held(&c->state_lock);
 
 	list_for_each_entry_safe(dc, t, &uncached_devices, list)
 		bch_cached_dev_attach(dc, c);
@@ -742,7 +742,7 @@ int bch_blockdev_volumes_start(struct cache_set *c)
 	struct bkey_s_c_inode_blockdev inode;
 	int ret = 0;
 
-	if (test_bit(BCH_FS_STOPPING, &c->flags))
+	if (!bch_fs_running(c))
 		return -EINVAL;
 
 	for_each_btree_key(&iter, c, BTREE_ID_INODES, POS_MIN, k) {

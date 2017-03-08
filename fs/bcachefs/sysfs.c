@@ -697,7 +697,7 @@ SHOW(bch_fs)
 	BCH_DEBUG_PARAMS()
 #undef BCH_DEBUG_PARAM
 
-	if (!test_bit(BCH_FS_RUNNING, &c->flags))
+	if (!bch_fs_running(c))
 		return -EPERM;
 
 	if (attr == &sysfs_bset_tree_stats)
@@ -782,12 +782,6 @@ STORE(__bch_fs)
 
 	sysfs_pd_controller_store(foreground_write, &c->foreground_write_pd);
 
-	if (attr == &sysfs_journal_flush) {
-		bch_journal_meta_async(&c->journal, NULL);
-
-		return size;
-	}
-
 	sysfs_strtoul(pd_controllers_update_seconds,
 		      c->pd_controllers_update_seconds);
 	sysfs_strtoul(foreground_target_percent, c->foreground_target_percent);
@@ -801,11 +795,14 @@ STORE(__bch_fs)
 	BCH_DEBUG_PARAMS()
 #undef BCH_DEBUG_PARAM
 
-	if (!test_bit(BCH_FS_RUNNING, &c->flags))
+	if (!bch_fs_running(c))
 		return -EPERM;
 
-	if (test_bit(BCH_FS_STOPPING, &c->flags))
-		return -EINTR;
+	if (attr == &sysfs_journal_flush) {
+		bch_journal_meta_async(&c->journal, NULL);
+
+		return size;
+	}
 
 	if (attr == &sysfs_blockdev_volume_create) {
 		u64 v = strtoi_h_or_return(buf);
@@ -838,9 +835,9 @@ STORE(bch_fs)
 {
 	struct cache_set *c = container_of(kobj, struct cache_set, kobj);
 
-	mutex_lock(&bch_register_lock);
+	mutex_lock(&c->state_lock);
 	size = __bch_fs_store(kobj, attr, buf, size);
-	mutex_unlock(&bch_register_lock);
+	mutex_unlock(&c->state_lock);
 
 	if (attr == &sysfs_add_device) {
 		char *path = kstrdup(buf, GFP_KERNEL);
