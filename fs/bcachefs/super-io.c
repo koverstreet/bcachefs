@@ -317,6 +317,10 @@ const char *bch_validate_cache_super(struct bcache_superblock *disk_sb)
 	    BCH_SB_META_REPLICAS_WANT(sb) >= BCH_REPLICAS_MAX)
 		return "Invalid number of metadata replicas";
 
+	if (!BCH_SB_META_REPLICAS_REQ(sb) ||
+	    BCH_SB_META_REPLICAS_REQ(sb) >= BCH_REPLICAS_MAX)
+		return "Invalid number of metadata replicas";
+
 	if (!BCH_SB_META_REPLICAS_HAVE(sb) ||
 	    BCH_SB_META_REPLICAS_HAVE(sb) >
 	    BCH_SB_META_REPLICAS_WANT(sb))
@@ -325,6 +329,10 @@ const char *bch_validate_cache_super(struct bcache_superblock *disk_sb)
 	if (!BCH_SB_DATA_REPLICAS_WANT(sb) ||
 	    BCH_SB_DATA_REPLICAS_WANT(sb) >= BCH_REPLICAS_MAX)
 		return "Invalid number of data replicas";
+
+	if (!BCH_SB_DATA_REPLICAS_REQ(sb) ||
+	    BCH_SB_DATA_REPLICAS_REQ(sb) >= BCH_REPLICAS_MAX)
+		return "Invalid number of metadata replicas";
 
 	if (!BCH_SB_DATA_REPLICAS_HAVE(sb) ||
 	    BCH_SB_DATA_REPLICAS_HAVE(sb) >
@@ -831,6 +839,7 @@ void bch_check_mark_super_slowpath(struct cache_set *c, const struct bkey_i *k,
 	struct bch_member *mi;
 	struct bkey_s_c_extent e = bkey_i_to_s_c_extent(k);
 	const struct bch_extent_ptr *ptr;
+	unsigned nr_replicas = 0;
 
 	mutex_lock(&c->sb_lock);
 
@@ -843,10 +852,20 @@ void bch_check_mark_super_slowpath(struct cache_set *c, const struct bkey_i *k,
 	mi = bch_sb_get_members(c->disk_sb)->members;
 
 	extent_for_each_ptr(e, ptr)
-		if (!ptr->cached)
+		if (!ptr->cached) {
 			(meta
 			 ? SET_BCH_MEMBER_HAS_METADATA
 			 : SET_BCH_MEMBER_HAS_DATA)(mi + ptr->dev, true);
+			nr_replicas++;
+		}
+
+	nr_replicas = min_t(unsigned, nr_replicas,
+			    (meta
+			     ? BCH_SB_META_REPLICAS_HAVE
+			     : BCH_SB_DATA_REPLICAS_HAVE)(c->disk_sb));
+	(meta
+	 ? SET_BCH_SB_META_REPLICAS_HAVE
+	 : SET_BCH_SB_DATA_REPLICAS_HAVE)(c->disk_sb, nr_replicas);
 
 	bch_write_super(c);
 	mutex_unlock(&c->sb_lock);

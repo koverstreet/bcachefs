@@ -159,7 +159,7 @@ read_attribute(data_replicas_have);
 
 static struct attribute sysfs_state_rw = {
 	.name = "state",
-	.mode = S_IRUGO|S_IWUSR
+	.mode = S_IRUGO
 };
 
 SHOW(bch_cached_dev)
@@ -1297,52 +1297,6 @@ STORE(__bch_dev)
 		bch_tiering_start(c);
 	}
 
-	if (attr == &sysfs_state_rw) {
-		char name[BDEVNAME_SIZE];
-		const char *err = NULL;
-		ssize_t v = bch_read_string_list(buf, bch_dev_state);
-
-		if (v < 0)
-			return v;
-
-		if (v == ca->mi.state)
-			return size;
-
-		switch (v) {
-		case BCH_MEMBER_STATE_ACTIVE:
-			err = bch_dev_read_write(ca);
-			break;
-		case BCH_MEMBER_STATE_RO:
-			bch_dev_read_only(ca);
-			break;
-		case BCH_MEMBER_STATE_FAILED:
-		case BCH_MEMBER_STATE_SPARE:
-			/*
-			 * XXX: need to migrate data off and set correct state
-			 */
-			pr_err("can't set %s %s: not supported",
-			       bdevname(ca->disk_sb.bdev, name),
-			       bch_dev_state[v]);
-			return -EINVAL;
-		}
-
-		if (err) {
-			pr_err("can't set %s %s: %s",
-			       bdevname(ca->disk_sb.bdev, name),
-			       bch_dev_state[v], err);
-			return -EINVAL;
-		}
-	}
-
-	if (attr == &sysfs_unregister) {
-		bool force = false;
-
-		if (!strncmp(buf, "force", 5) &&
-		    (buf[5] == '\0' || buf[5] == '\n'))
-			force = true;
-		bch_dev_remove(ca, force);
-	}
-
 	if (attr == &sysfs_clear_stats) {
 		int cpu;
 
@@ -1361,7 +1315,6 @@ STORE_LOCKED(bch_dev)
 
 static struct attribute *bch_dev_files[] = {
 	&sysfs_uuid,
-	&sysfs_unregister,
 	&sysfs_bucket_size,
 	&sysfs_bucket_size_bytes,
 	&sysfs_block_size,

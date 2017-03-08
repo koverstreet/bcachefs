@@ -1319,10 +1319,10 @@ static int journal_entry_sectors(struct journal *j)
 	}
 	rcu_read_unlock();
 
-	if (nr_online < c->opts.metadata_replicas)
+	if (nr_online < c->opts.metadata_replicas_required)
 		return -EROFS;
 
-	if (nr_devs < c->opts.metadata_replicas)
+	if (nr_devs < min_t(unsigned, nr_online, c->opts.metadata_replicas))
 		return 0;
 
 	return sectors_available;
@@ -1540,11 +1540,9 @@ static int bch_set_nr_journal_buckets(struct cache_set *c, struct cache *ca,
 
 	closure_init_stack(&cl);
 
-	mutex_lock(&c->sb_lock);
-
 	/* don't handle reducing nr of buckets yet: */
 	if (nr <= ja->nr)
-		goto err;
+		return 0;
 
 	/*
 	 * note: journal buckets aren't really counted as _sectors_ used yet, so
@@ -1553,10 +1551,11 @@ static int bch_set_nr_journal_buckets(struct cache_set *c, struct cache *ca,
 	 * reservation to ensure we'll actually be able to allocate:
 	 */
 
-	ret = ENOSPC;
 	if (bch_disk_reservation_get(c, &disk_res,
 			(nr - ja->nr) << ca->bucket_bits, 0))
-		goto err;
+		return -ENOSPC;
+
+	mutex_lock(&c->sb_lock);
 
 	ret = -ENOMEM;
 	new_buckets	= kzalloc(nr * sizeof(u64), GFP_KERNEL);
@@ -2040,8 +2039,10 @@ static int journal_write_alloc(struct journal *j, unsigned sectors)
 	j->prev_buf_sectors = 0;
 	spin_unlock(&j->lock);
 
-	if (replicas < replicas_want)
+	if (replicas < c->opts.metadata_replicas_required)
 		return -EROFS;
+
+	BUG_ON(!replicas);
 
 	return 0;
 }

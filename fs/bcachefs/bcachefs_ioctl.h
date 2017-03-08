@@ -10,8 +10,14 @@ extern "C" {
 
 /* global control dev: */
 
-#define BCH_FORCE_IF_DATA_MISSING	(1 << 0)
-#define BCH_FORCE_IF_METADATA_MISSING	(1 << 1)
+#define BCH_FORCE_IF_DATA_LOST		(1 << 0)
+#define BCH_FORCE_IF_METADATA_LOST	(1 << 1)
+#define BCH_FORCE_IF_DATA_DEGRADED	(1 << 2)
+#define BCH_FORCE_IF_METADATA_DEGRADED	(1 << 3)
+
+#define BCH_FORCE_IF_DEGRADED			\
+	(BCH_FORCE_IF_DATA_DEGRADED|		\
+	 BCH_FORCE_IF_METADATA_DEGRADED)
 
 #define BCH_IOCTL_ASSEMBLE	_IOW('r', 1, struct bch_ioctl_assemble)
 #define BCH_IOCTL_INCREMENTAL	_IOW('r', 1, struct bch_ioctl_incremental)
@@ -23,7 +29,7 @@ extern "C" {
 
 #define BCH_IOCTL_DISK_ADD	_IOW('r', 4, struct bch_ioctl_disk_add)
 #define BCH_IOCTL_DISK_REMOVE	_IOW('r', 5, struct bch_ioctl_disk_remove)
-#define BCH_IOCTL_DISK_FAIL	_IOW('r', 6, struct bch_ioctl_disk_fail)
+#define BCH_IOCTL_DISK_SET_STATE _IOW('r', 6, struct bch_ioctl_disk_set_state)
 
 #define BCH_IOCTL_DISK_REMOVE_BY_UUID					\
 	_IOW('r', 5, struct bch_ioctl_disk_remove_by_uuid)
@@ -57,9 +63,10 @@ struct bch_ioctl_disk_remove {
 	__u64			dev;
 };
 
-struct bch_ioctl_disk_fail {
+struct bch_ioctl_disk_set_state {
 	__u32			flags;
-	__u32			pad;
+	__u8			new_state;
+	__u8			pad[3];
 	__u64			dev;
 };
 

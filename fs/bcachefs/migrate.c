@@ -11,6 +11,7 @@
 #include "keylist.h"
 #include "migrate.h"
 #include "move.h"
+#include "super-io.h"
 
 static int issue_migration_move(struct cache *ca,
 				struct moving_context *ctxt,
@@ -58,11 +59,15 @@ int bch_move_data_off_device(struct cache *ca)
 {
 	struct moving_context ctxt;
 	struct cache_set *c = ca->set;
+	struct bch_sb_field_members *mi;
 	unsigned pass = 0;
 	u64 seen_key_count;
 	int ret = 0;
 
 	BUG_ON(ca->mi.state == BCH_MEMBER_STATE_ACTIVE);
+
+	if (!ca->mi.has_data)
+		return 0;
 
 	bch_move_ctxt_init(&ctxt, NULL, SECTORS_IN_FLIGHT_PER_DEVICE);
 	ctxt.avoid = ca;
@@ -135,6 +140,13 @@ next:
 		       MAX_DATA_OFF_ITER);
 		return -1;
 	}
+
+	mutex_lock(&c->sb_lock);
+	mi = bch_sb_get_members(c->disk_sb);
+	SET_BCH_MEMBER_HAS_DATA(&mi->members[ca->dev_idx], false);
+
+	bch_write_super(c);
+	mutex_unlock(&c->sb_lock);
 
 	return 0;
 }
@@ -240,10 +252,17 @@ retry:
  *   is written.
  */
 
-int bch_move_meta_data_off_device(struct cache *ca)
+int bch_move_metadata_off_device(struct cache *ca)
 {
+	struct cache_set *c = ca->set;
+	struct bch_sb_field_members *mi;
 	unsigned i;
 	int ret;
+
+	BUG_ON(ca->mi.state == BCH_MEMBER_STATE_ACTIVE);
+
+	if (!ca->mi.has_metadata)
+		return 0;
 
 	/* 1st, Move the btree nodes off the device */
 
@@ -260,6 +279,13 @@ int bch_move_meta_data_off_device(struct cache *ca)
 	ret = bch_journal_move(ca);
 	if (ret)
 		return ret;
+
+	mutex_lock(&c->sb_lock);
+	mi = bch_sb_get_members(c->disk_sb);
+	SET_BCH_MEMBER_HAS_METADATA(&mi->members[ca->dev_idx], false);
+
+	bch_write_super(c);
+	mutex_unlock(&c->sb_lock);
 
 	return 0;
 }
@@ -303,11 +329,11 @@ static int bch_flag_key_bad(struct btree_iter *iter,
  * and don't have other valid pointers.  If there are valid pointers,
  * the necessary pointers to the removed device are replaced with
  * bad pointers instead.
+ *
  * This is only called if bch_move_data_off_device above failed, meaning
  * that we've already tried to move the data MAX_DATA_OFF_ITER times and
  * are not likely to succeed if we try again.
  */
-
 int bch_flag_data_bad(struct cache *ca)
 {
 	int ret = 0;

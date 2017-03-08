@@ -620,7 +620,9 @@ static void __bch_write(struct closure *cl)
 					BKEY_EXTENT_U64s_MAX))
 			continue_at(cl, bch_write_index, index_update_wq(op));
 
-		b = bch_alloc_sectors_start(c, op->wp, op->nr_replicas,
+		b = bch_alloc_sectors_start(c, op->wp,
+			op->nr_replicas,
+			c->opts.data_replicas_required,
 			op->alloc_reserve,
 			(op->flags & BCH_WRITE_ALLOC_NOWAIT) ? NULL : cl);
 		EBUG_ON(!b);

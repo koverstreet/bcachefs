@@ -1015,104 +1015,7 @@ static const char *bch_dev_in_fs(struct bch_sb *sb, struct cache_set *c)
 	return NULL;
 }
 
-/* Device startup/shutdown, ro/rw: */
-
-bool bch_dev_read_only(struct cache *ca)
-{
-	struct cache_set *c = ca->set;
-	struct bch_sb_field_members *mi;
-	char buf[BDEVNAME_SIZE];
-
-	bdevname(ca->disk_sb.bdev, buf);
-
-	lockdep_assert_held(&c->state_lock);
-
-	if (ca->mi.state != BCH_MEMBER_STATE_ACTIVE)
-		return false;
-
-	if (!bch_dev_may_remove(ca)) {
-		bch_err(c, "required member %s going RO, forcing fs RO", buf);
-		bch_fs_read_only(c);
-	}
-
-	trace_bcache_cache_read_only(ca);
-
-	bch_moving_gc_stop(ca);
-
-	/*
-	 * This stops new data writes (e.g. to existing open data
-	 * buckets) and then waits for all existing writes to
-	 * complete.
-	 */
-	bch_dev_allocator_stop(ca);
-
-	bch_dev_group_remove(&c->journal.devs, ca);
-
-	/*
-	 * Device data write barrier -- no non-meta-data writes should
-	 * occur after this point.  However, writes to btree buckets,
-	 * journal buckets, and the superblock can still occur.
-	 */
-	trace_bcache_cache_read_only_done(ca);
-
-	bch_notice(c, "%s read only", bdevname(ca->disk_sb.bdev, buf));
-	bch_notify_dev_read_only(ca);
-
-	mutex_lock(&c->sb_lock);
-	mi = bch_sb_get_members(c->disk_sb);
-	SET_BCH_MEMBER_STATE(&mi->members[ca->dev_idx],
-			     BCH_MEMBER_STATE_RO);
-	bch_write_super(c);
-	mutex_unlock(&c->sb_lock);
-	return true;
-}
-
-static const char *__bch_dev_read_write(struct cache_set *c, struct cache *ca)
-{
-	lockdep_assert_held(&c->state_lock);
-
-	if (ca->mi.state == BCH_MEMBER_STATE_ACTIVE)
-		return NULL;
-
-	if (test_bit(BCH_DEV_REMOVING, &ca->flags))
-		return "removing";
-
-	trace_bcache_cache_read_write(ca);
-
-	if (bch_dev_allocator_start(ca))
-		return "error starting allocator thread";
-
-	if (bch_moving_gc_start(ca))
-		return "error starting moving GC thread";
-
-	if (bch_tiering_start(c))
-		return "error starting tiering thread";
-
-	bch_notify_dev_read_write(ca);
-	trace_bcache_cache_read_write_done(ca);
-
-	return NULL;
-}
-
-const char *bch_dev_read_write(struct cache *ca)
-{
-	struct cache_set *c = ca->set;
-	struct bch_sb_field_members *mi;
-	const char *err;
-
-	err = __bch_dev_read_write(c, ca);
-	if (err)
-		return err;
-
-	mutex_lock(&c->sb_lock);
-	mi = bch_sb_get_members(c->disk_sb);
-	SET_BCH_MEMBER_STATE(&mi->members[ca->dev_idx],
-			     BCH_MEMBER_STATE_ACTIVE);
-	bch_write_super(c);
-	mutex_unlock(&c->sb_lock);
-
-	return NULL;
-}
+/* Device startup/shutdown: */
 
 void bch_dev_release(struct kobject *kobj)
 {
@@ -1209,148 +1112,6 @@ static void bch_dev_stop(struct cache *ca)
 	call_rcu(&ca->free_rcu, bch_dev_free_rcu);
 }
 
-static void bch_dev_remove_work(struct work_struct *work)
-{
-	struct cache *ca = container_of(work, struct cache, remove_work);
-	struct bch_sb_field_members *mi;
-	struct cache_set *c = ca->set;
-	char name[BDEVNAME_SIZE];
-	bool force = test_bit(BCH_DEV_FORCE_REMOVE, &ca->flags);
-	unsigned dev_idx = ca->dev_idx;
-
-	bdevname(ca->disk_sb.bdev, name);
-
-	/*
-	 * Device should already be RO, now migrate data off:
-	 *
-	 * XXX: locking is sketchy, bch_dev_read_write() has to check
-	 * BCH_DEV_REMOVING bit
-	 */
-	if (!ca->mi.has_data) {
-		/* Nothing to do: */
-	} else if (!bch_move_data_off_device(ca)) {
-		mutex_lock(&c->sb_lock);
-		mi = bch_sb_get_members(c->disk_sb);
-		SET_BCH_MEMBER_HAS_DATA(&mi->members[ca->dev_idx], false);
-
-		bch_write_super(c);
-		mutex_unlock(&c->sb_lock);
-	} else if (force) {
-		bch_flag_data_bad(ca);
-
-		mutex_lock(&c->sb_lock);
-		mi = bch_sb_get_members(c->disk_sb);
-		SET_BCH_MEMBER_HAS_DATA(&mi->members[ca->dev_idx], false);
-
-		bch_write_super(c);
-		mutex_unlock(&c->sb_lock);
-	} else {
-		bch_err(c, "Remove of %s failed, unable to migrate data off",
-			name);
-		clear_bit(BCH_DEV_REMOVING, &ca->flags);
-		return;
-	}
-
-	/* Now metadata: */
-
-	if (!ca->mi.has_metadata) {
-		/* Nothing to do: */
-	} else if (!bch_move_meta_data_off_device(ca)) {
-		mutex_lock(&c->sb_lock);
-		mi = bch_sb_get_members(c->disk_sb);
-		SET_BCH_MEMBER_HAS_METADATA(&mi->members[ca->dev_idx], false);
-
-		bch_write_super(c);
-		mutex_unlock(&c->sb_lock);
-	} else {
-		bch_err(c, "Remove of %s failed, unable to migrate metadata off",
-			name);
-		clear_bit(BCH_DEV_REMOVING, &ca->flags);
-		return;
-	}
-
-	/*
-	 * Ok, really doing the remove:
-	 * Drop device's prio pointer before removing it from superblock:
-	 */
-	bch_notify_dev_removed(ca);
-
-	spin_lock(&c->journal.lock);
-	c->journal.prio_buckets[dev_idx] = 0;
-	spin_unlock(&c->journal.lock);
-
-	bch_journal_meta(&c->journal);
-
-	/*
-	 * Stop device before removing it from the cache set's list of devices -
-	 * and get our own ref on cache set since ca is going away:
-	 */
-	closure_get(&c->cl);
-
-	mutex_lock(&c->state_lock);
-
-	bch_dev_stop(ca);
-
-	/*
-	 * RCU barrier between dropping between c->cache and dropping from
-	 * member info:
-	 */
-	synchronize_rcu();
-
-	/*
-	 * Free this device's slot in the bch_member array - all pointers to
-	 * this device must be gone:
-	 */
-	mutex_lock(&c->sb_lock);
-	mi = bch_sb_get_members(c->disk_sb);
-	memset(&mi->members[dev_idx].uuid, 0, sizeof(mi->members[dev_idx].uuid));
-
-	bch_write_super(c);
-
-	mutex_unlock(&c->sb_lock);
-	mutex_unlock(&c->state_lock);
-
-	closure_put(&c->cl);
-}
-
-static bool __bch_dev_remove(struct cache_set *c, struct cache *ca, bool force)
-{
-	if (test_bit(BCH_DEV_REMOVING, &ca->flags))
-		return false;
-
-	if (!bch_dev_may_remove(ca)) {
-		bch_err(ca->set, "Can't remove last RW device");
-		bch_notify_dev_remove_failed(ca);
-		return false;
-	}
-
-	/* First, go RO before we try to migrate data off: */
-	bch_dev_read_only(ca);
-
-	if (force)
-		set_bit(BCH_DEV_FORCE_REMOVE, &ca->flags);
-
-	set_bit(BCH_DEV_REMOVING, &ca->flags);
-	bch_notify_dev_removing(ca);
-
-	/* Migrate the data and finish removal asynchronously: */
-
-	queue_work(system_long_wq, &ca->remove_work);
-	return true;
-}
-
-bool bch_dev_remove(struct cache *ca, bool force)
-{
-	struct cache_set *c = ca->set;
-	bool ret;
-
-	mutex_lock(&c->state_lock);
-	ret = __bch_dev_remove(c, ca, force);
-	mutex_unlock(&c->state_lock);
-
-	return ret;
-}
-
 static int bch_dev_online(struct cache *ca)
 {
 	char buf[12];
@@ -1402,7 +1163,6 @@ static const char *bch_dev_alloc(struct bcache_superblock *sb,
 	ca->dev_idx = sb->sb->dev_idx;
 
 	INIT_WORK(&ca->free_work, bch_dev_free_work);
-	INIT_WORK(&ca->remove_work, bch_dev_remove_work);
 	spin_lock_init(&ca->freelist_lock);
 	spin_lock_init(&ca->prio_buckets_lock);
 	mutex_init(&ca->heap_lock);
@@ -1504,6 +1264,232 @@ static const char *bch_dev_alloc(struct bcache_superblock *sb,
 err:
 	bch_dev_free(ca);
 	return err;
+}
+
+/* Device management: */
+
+static void __bch_dev_read_only(struct cache_set *c, struct cache *ca)
+{
+	bch_moving_gc_stop(ca);
+
+	/*
+	 * This stops new data writes (e.g. to existing open data
+	 * buckets) and then waits for all existing writes to
+	 * complete.
+	 */
+	bch_dev_allocator_stop(ca);
+
+	bch_dev_group_remove(&c->journal.devs, ca);
+}
+
+static const char *__bch_dev_read_write(struct cache_set *c, struct cache *ca)
+{
+	lockdep_assert_held(&c->state_lock);
+
+	if (ca->mi.state == BCH_MEMBER_STATE_ACTIVE)
+		return NULL;
+
+	trace_bcache_cache_read_write(ca);
+
+	if (bch_dev_allocator_start(ca))
+		return "error starting allocator thread";
+
+	if (bch_moving_gc_start(ca))
+		return "error starting moving GC thread";
+
+	if (bch_tiering_start(c))
+		return "error starting tiering thread";
+
+	bch_notify_dev_read_write(ca);
+	trace_bcache_cache_read_write_done(ca);
+
+	return NULL;
+}
+
+bool bch_dev_state_allowed(struct cache_set *c, struct cache *ca,
+			   enum bch_member_state new_state, int flags)
+{
+	lockdep_assert_held(&c->state_lock);
+
+	if (new_state == BCH_MEMBER_STATE_ACTIVE)
+		return true;
+
+	if (ca->mi.has_data &&
+	    !(flags & BCH_FORCE_IF_DATA_DEGRADED))
+		return false;
+
+	if (ca->mi.has_data &&
+	    c->sb.data_replicas_have <= 1 &&
+	    !(flags & BCH_FORCE_IF_DATA_LOST))
+		return false;
+
+	if (ca->mi.has_metadata &&
+	    !(flags & BCH_FORCE_IF_METADATA_DEGRADED))
+		return false;
+
+	if (ca->mi.has_metadata &&
+	    c->sb.meta_replicas_have <= 1 &&
+	    !(flags & BCH_FORCE_IF_METADATA_LOST))
+		return false;
+
+	return true;
+}
+
+int __bch_dev_set_state(struct cache_set *c, struct cache *ca,
+			enum bch_member_state new_state, int flags)
+{
+	struct bch_sb_field_members *mi;
+	char buf[BDEVNAME_SIZE];
+
+	if (ca->mi.state == new_state)
+		return 0;
+
+	if (!bch_dev_state_allowed(c, ca, new_state, flags))
+		return -EINVAL;
+
+	if (new_state == BCH_MEMBER_STATE_ACTIVE) {
+		if (__bch_dev_read_write(c, ca))
+			return -ENOMEM;
+	} else {
+		__bch_dev_read_only(c, ca);
+	}
+
+	bch_notice(c, "%s %s",
+		   bdevname(ca->disk_sb.bdev, buf),
+		   bch_dev_state[new_state]);
+
+	mutex_lock(&c->sb_lock);
+	mi = bch_sb_get_members(c->disk_sb);
+	SET_BCH_MEMBER_STATE(&mi->members[ca->dev_idx], new_state);
+	bch_write_super(c);
+	mutex_unlock(&c->sb_lock);
+
+	return 0;
+}
+
+int bch_dev_set_state(struct cache_set *c, struct cache *ca,
+		      enum bch_member_state new_state, int flags)
+{
+	int ret;
+
+	mutex_lock(&c->state_lock);
+	ret = __bch_dev_set_state(c, ca, new_state, flags);
+	mutex_unlock(&c->state_lock);
+
+	return ret;
+}
+
+#if 0
+int bch_dev_migrate_from(struct cache_set *c, struct cache *ca)
+{
+	/* First, go RO before we try to migrate data off: */
+	ret = bch_dev_set_state(c, ca, BCH_MEMBER_STATE_RO, flags);
+	if (ret)
+		return ret;
+
+	bch_notify_dev_removing(ca);
+
+	/* Migrate data, metadata off device: */
+
+	ret = bch_move_data_off_device(ca);
+	if (ret && !(flags & BCH_FORCE_IF_DATA_LOST)) {
+		bch_err(c, "Remove of %s failed, unable to migrate data off",
+			name);
+		return ret;
+	}
+
+	if (ret)
+		ret = bch_flag_data_bad(ca);
+	if (ret) {
+		bch_err(c, "Remove of %s failed, unable to migrate data off",
+			name);
+		return ret;
+	}
+
+	ret = bch_move_metadata_off_device(ca);
+	if (ret)
+		return ret;
+}
+#endif
+
+/* Device add/removal: */
+
+static int __bch_dev_remove(struct cache_set *c, struct cache *ca, int flags)
+{
+	struct bch_sb_field_members *mi;
+	char name[BDEVNAME_SIZE];
+	unsigned dev_idx = ca->dev_idx;
+	int ret;
+
+	bdevname(ca->disk_sb.bdev, name);
+
+	if (ca->mi.state == BCH_MEMBER_STATE_ACTIVE) {
+		bch_err(ca->set, "Cannot remove RW device");
+		bch_notify_dev_remove_failed(ca);
+		return -EINVAL;
+	}
+
+	if (!bch_dev_state_allowed(c, ca, BCH_MEMBER_STATE_FAILED, flags)) {
+		bch_err(ca->set, "Cannot remove %s without losing data", name);
+		bch_notify_dev_remove_failed(ca);
+		return -EINVAL;
+	}
+
+	/*
+	 * XXX: verify that dev_idx is really not in use anymore, anywhere
+	 *
+	 * flag_data_bad() does not check btree pointers
+	 */
+	ret = bch_flag_data_bad(ca);
+	if (ret) {
+		bch_err(c, "Remove of %s failed", name);
+		return ret;
+	}
+
+	/*
+	 * Ok, really doing the remove:
+	 * Drop device's prio pointer before removing it from superblock:
+	 */
+	bch_notify_dev_removed(ca);
+
+	spin_lock(&c->journal.lock);
+	c->journal.prio_buckets[dev_idx] = 0;
+	spin_unlock(&c->journal.lock);
+
+	bch_journal_meta(&c->journal);
+
+	bch_dev_stop(ca);
+
+	/*
+	 * RCU barrier between dropping between c->cache and dropping from
+	 * member info:
+	 */
+	synchronize_rcu();
+
+	/*
+	 * Free this device's slot in the bch_member array - all pointers to
+	 * this device must be gone:
+	 */
+	mutex_lock(&c->sb_lock);
+	mi = bch_sb_get_members(c->disk_sb);
+	memset(&mi->members[dev_idx].uuid, 0, sizeof(mi->members[dev_idx].uuid));
+
+	bch_write_super(c);
+
+	mutex_unlock(&c->sb_lock);
+
+	return 0;
+}
+
+int bch_dev_remove(struct cache_set *c, struct cache *ca, int flags)
+{
+	int ret;
+
+	mutex_lock(&c->state_lock);
+	ret = __bch_dev_remove(c, ca, flags);
+	mutex_unlock(&c->state_lock);
+
+	return ret;
 }
 
 int bch_dev_add(struct cache_set *c, const char *path)
@@ -1625,6 +1611,8 @@ err_unlock:
 	bch_err(c, "Unable to add device: %s", err);
 	return ret ?: -EINVAL;
 }
+
+/* Filesystem open: */
 
 const char *bch_fs_open(char * const *devices, unsigned nr_devices,
 			struct bch_opts opts, struct cache_set **ret)

@@ -121,9 +121,11 @@ void bch_nonfatal_io_error_work(struct work_struct *work)
 		bch_notify_dev_error(ca, true);
 
 		mutex_lock(&c->state_lock);
-		dev = bch_dev_may_remove(ca);
+		dev = bch_dev_state_allowed(c, ca, BCH_MEMBER_STATE_RO,
+					    BCH_FORCE_IF_DEGRADED);
 		if (dev
-		    ? bch_dev_read_only(ca)
+		    ? __bch_dev_set_state(c, ca, BCH_MEMBER_STATE_RO,
+					  BCH_FORCE_IF_DEGRADED)
 		    : bch_fs_emergency_read_only(c))
 			bch_err(c,
 				"too many IO errors on %s, setting %s RO",

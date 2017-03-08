@@ -3,6 +3,8 @@
 
 #include "extents.h"
 
+#include "bcachefs_ioctl.h"
+
 static inline size_t sector_to_bucket(const struct cache *ca, sector_t s)
 {
 	return s >> ca->bucket_bits;
@@ -54,21 +56,17 @@ static inline struct cache *bch_get_next_cache(struct cache_set *c,
 	     (ca = bch_get_next_cache(c, &(iter)));			\
 	     percpu_ref_put(&ca->ref), (iter)++)
 
-static inline bool bch_dev_may_remove(struct cache *ca)
-{
-	struct cache_set *c = ca->set;
-	struct cache_group *grp = &c->cache_all;
-
-	/* Can't remove the last RW device: */
-	return grp->nr != 1 ||
-		rcu_access_pointer(grp->d[0].dev) != ca;
-}
-
 void bch_dev_release(struct kobject *);
 
-bool bch_dev_read_only(struct cache *);
-const char *bch_dev_read_write(struct cache *);
-bool bch_dev_remove(struct cache *, bool force);
+bool bch_dev_state_allowed(struct cache_set *, struct cache *,
+			   enum bch_member_state, int);
+int __bch_dev_set_state(struct cache_set *, struct cache *,
+			enum bch_member_state, int);
+int bch_dev_set_state(struct cache_set *, struct cache *,
+		      enum bch_member_state, int);
+
+int bch_dev_fail(struct cache *, int);
+int bch_dev_remove(struct cache_set *, struct cache *, int);
 int bch_dev_add(struct cache_set *, const char *);
 
 void bch_fs_detach(struct cache_set *);

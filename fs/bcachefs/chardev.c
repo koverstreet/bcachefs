@@ -173,17 +173,16 @@ static long bch_ioctl_disk_remove(struct cache_set *c,
 	if (IS_ERR(ca))
 		return PTR_ERR(ca);
 
-	ret = bch_dev_remove(ca, arg.flags & BCH_FORCE_IF_DATA_MISSING)
-		? 0 : -EBUSY;
+	ret = bch_dev_remove(c, ca, arg.flags);
 
 	percpu_ref_put(&ca->ref);
 	return ret;
 }
 
-static long bch_ioctl_disk_fail(struct cache_set *c,
-				struct bch_ioctl_disk_fail __user *user_arg)
+static long bch_ioctl_disk_set_state(struct cache_set *c,
+				     struct bch_ioctl_disk_set_state __user *user_arg)
 {
-	struct bch_ioctl_disk_fail arg;
+	struct bch_ioctl_disk_set_state arg;
 	struct cache *ca;
 	int ret;
 
@@ -194,8 +193,7 @@ static long bch_ioctl_disk_fail(struct cache_set *c,
 	if (IS_ERR(ca))
 		return PTR_ERR(ca);
 
-	/* XXX: failed not actually implemented yet */
-	ret = bch_dev_remove(ca, true);
+	ret = bch_dev_set_state(c, ca, arg.new_state, arg.flags);
 
 	percpu_ref_put(&ca->ref);
 	return ret;
@@ -288,8 +286,8 @@ long bch_fs_ioctl(struct cache_set *c, unsigned cmd, void __user *arg)
 		return bch_ioctl_disk_add(c, arg);
 	case BCH_IOCTL_DISK_REMOVE:
 		return bch_ioctl_disk_remove(c, arg);
-	case BCH_IOCTL_DISK_FAIL:
-		return bch_ioctl_disk_fail(c, arg);
+	case BCH_IOCTL_DISK_SET_STATE:
+		return bch_ioctl_disk_set_state(c, arg);
 
 	case BCH_IOCTL_DISK_REMOVE_BY_UUID:
 		return bch_ioctl_disk_remove_by_uuid(c, arg);

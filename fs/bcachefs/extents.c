@@ -622,6 +622,9 @@ bch_btree_pick_ptr(struct cache_set *c, const struct btree *b)
 				PTR_BUCKET_NR(ca, ptr)))
 			continue;
 
+		if (ca->mi.state == BCH_MEMBER_STATE_FAILED)
+			continue;
+
 		if (pick.ca && pick.ca->mi.tier < ca->mi.tier)
 			continue;
 
@@ -2200,6 +2203,9 @@ void bch_extent_pick_ptr_avoiding(struct cache_set *c, struct bkey_s_c k,
 
 		extent_for_each_online_device_crc(c, e, crc, ptr, ca) {
 			if (ptr_stale(ca, ptr))
+				continue;
+
+			if (ca->mi.state == BCH_MEMBER_STATE_FAILED)
 				continue;
 
 			if (ret->ca &&

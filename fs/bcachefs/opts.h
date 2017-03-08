@@ -52,9 +52,13 @@ enum opt_type {
 	BCH_OPT(errors,			0644,	BCH_SB_ERROR_ACTION,	\
 		s8,  OPT_STR(bch_error_actions))			\
 	BCH_OPT(metadata_replicas,	0444,	BCH_SB_META_REPLICAS_WANT,\
-		s8,  OPT_UINT(0, BCH_REPLICAS_MAX))			\
+		s8,  OPT_UINT(1, BCH_REPLICAS_MAX))			\
 	BCH_OPT(data_replicas,		0444,	BCH_SB_DATA_REPLICAS_WANT,\
-		s8,  OPT_UINT(0, BCH_REPLICAS_MAX))			\
+		s8,  OPT_UINT(1, BCH_REPLICAS_MAX))			\
+	BCH_OPT(metadata_replicas_required, 0444, BCH_SB_META_REPLICAS_REQ,\
+		s8,  OPT_UINT(1, BCH_REPLICAS_MAX))			\
+	BCH_OPT(data_replicas_required,	0444,	BCH_SB_DATA_REPLICAS_REQ,\
+		s8,  OPT_UINT(1, BCH_REPLICAS_MAX))			\
 	BCH_OPT(metadata_checksum,	0644,	BCH_SB_META_CSUM_TYPE,	\
 		s8,  OPT_STR(bch_csum_types))				\
 	BCH_OPT(data_checksum,		0644,	BCH_SB_DATA_CSUM_TYPE,	\

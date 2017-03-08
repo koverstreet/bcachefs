@@ -258,6 +258,7 @@ retry:
 	ob = bch_alloc_sectors(c, &c->btree_write_point,
 			       bkey_i_to_extent(&tmp.k),
 			       res->nr_replicas,
+			       c->opts.metadata_replicas_required,
 			       use_reserve ? RESERVE_BTREE : RESERVE_NONE,
 			       cl);
 	if (IS_ERR(ob))

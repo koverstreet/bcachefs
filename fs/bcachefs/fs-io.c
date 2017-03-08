@@ -974,7 +974,9 @@ do_io:
 		new.reserved = 0;
 	});
 
-	w->io->op.op.res.sectors += PAGE_SECTORS * (old.reserved - new.reserved);
+	w->io->op.op.res.sectors += PAGE_SECTORS *
+		(old.reserved - new.reserved) *
+		old.nr_replicas;
 out:
 	BUG_ON(PageWriteback(page));
 	set_page_writeback(page);

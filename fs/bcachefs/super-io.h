@@ -129,16 +129,26 @@ static inline bool bch_check_super_marked(struct cache_set *c,
 	struct bkey_s_c_extent e = bkey_i_to_s_c_extent(k);
 	const struct bch_extent_ptr *ptr;
 	struct cache_member_cpu *mi = cache_member_info_get(c)->m;
+	unsigned nr_replicas = 0;
 	bool ret = true;
 
-	extent_for_each_ptr(e, ptr)
-		if (!ptr->cached &&
-		    !(meta
+	extent_for_each_ptr(e, ptr) {
+		if (ptr->cached)
+			continue;
+
+		if (!(meta
 		      ? mi[ptr->dev].has_metadata
 		      : mi[ptr->dev].has_data)) {
 			ret = false;
 			break;
 		}
+
+		nr_replicas++;
+	}
+
+	if (nr_replicas <
+	    (meta ? c->sb.meta_replicas_have : c->sb.data_replicas_have))
+		ret = false;
 
 	cache_member_info_put();
 

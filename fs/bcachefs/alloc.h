@@ -33,7 +33,8 @@ void bch_open_bucket_put(struct cache_set *, struct open_bucket *);
 
 struct open_bucket *bch_alloc_sectors_start(struct cache_set *,
 					    struct write_point *,
-					    unsigned, enum alloc_reserve,
+					    unsigned, unsigned,
+					    enum alloc_reserve,
 					    struct closure *);
 
 void bch_alloc_sectors_append_ptrs(struct cache_set *, struct bkey_i_extent *,
@@ -42,7 +43,7 @@ void bch_alloc_sectors_done(struct cache_set *, struct write_point *,
 			    struct open_bucket *);
 
 struct open_bucket *bch_alloc_sectors(struct cache_set *, struct write_point *,
-				      struct bkey_i_extent *, unsigned,
+				      struct bkey_i_extent *, unsigned, unsigned,
 				      enum alloc_reserve, struct closure *);
 
 static inline void bch_wake_allocator(struct cache *ca)
