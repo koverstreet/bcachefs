@@ -41,20 +41,14 @@ struct __genradix {
  * genradix.
  */
 
-#define DECLARE_GENRADIX_TYPE(_name, _type)			\
-struct _name {							\
+#define GENRADIX(_type)						\
+struct {							\
 	struct __genradix	tree;				\
 	_type			type[0] __aligned(1);		\
 }
 
-#define DECLARE_GENRADIX(_name, _type)				\
-struct {							\
-	struct __genradix	tree;				\
-	_type			type[0] __aligned(1);		\
-} _name
-
 #define DEFINE_GENRADIX(_name, _type)				\
-	DECLARE_GENRADIX(_name, _type) = __GENRADIX_INITIALIZER
+	GENRADIX(_type) _name = __GENRADIX_INITIALIZER
 
 #define genradix_init(_radix)					\
 do {								\

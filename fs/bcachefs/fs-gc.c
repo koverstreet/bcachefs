@@ -545,9 +545,9 @@ struct nlink {
 	u32	dir_count;
 };
 
-DECLARE_GENRADIX_TYPE(nlinks, struct nlink);
+typedef GENRADIX(struct nlink) nlink_table;
 
-static void inc_link(struct cache_set *c, struct nlinks *links,
+static void inc_link(struct cache_set *c, nlink_table *links,
 		     u64 range_start, u64 *range_end,
 		     u64 inum, bool dir)
 {
@@ -570,7 +570,7 @@ static void inc_link(struct cache_set *c, struct nlinks *links,
 }
 
 noinline_for_stack
-static int bch_gc_walk_dirents(struct cache_set *c, struct nlinks *links,
+static int bch_gc_walk_dirents(struct cache_set *c, nlink_table *links,
 			       u64 range_start, u64 *range_end)
 {
 	struct btree_iter iter;
@@ -776,7 +776,7 @@ fsck_err:
 noinline_for_stack
 static int bch_gc_walk_inodes(struct cache_set *c,
 			      struct bch_inode_unpacked *lostfound_inode,
-			      struct nlinks *links,
+			      nlink_table *links,
 			      u64 range_start, u64 range_end)
 {
 	struct btree_iter iter;
@@ -850,7 +850,7 @@ noinline_for_stack
 static int check_inode_nlinks(struct cache_set *c,
 			      struct bch_inode_unpacked *lostfound_inode)
 {
-	struct nlinks links;
+	nlink_table links;
 	u64 this_iter_range_start, next_iter_range_start = 0;
 	int ret = 0;
 
