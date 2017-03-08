@@ -409,13 +409,13 @@ static const struct file_operations bfloat_failed_debug_ops = {
 	.read		= bch_read_bfloat_failed,
 };
 
-void bch_debug_exit_cache_set(struct cache_set *c)
+void bch_fs_debug_exit(struct cache_set *c)
 {
 	if (!IS_ERR_OR_NULL(c->debug))
 		debugfs_remove_recursive(c->debug);
 }
 
-void bch_debug_init_cache_set(struct cache_set *c)
+void bch_fs_debug_init(struct cache_set *c)
 {
 	struct btree_debug *bd;
 	char name[100];

@@ -434,10 +434,10 @@ int bch_check_set_has_compressed_data(struct cache_set *c,
 		break;
 	}
 
-	return bch_compress_init(c);
+	return bch_fs_compress_init(c);
 }
 
-void bch_compress_free(struct cache_set *c)
+void bch_fs_compress_exit(struct cache_set *c)
 {
 	vfree(c->zlib_workspace);
 	mempool_exit(&c->lz4_workspace_pool);
@@ -450,7 +450,7 @@ void bch_compress_free(struct cache_set *c)
 	max_t(size_t, zlib_inflate_workspacesize(),			\
 	      zlib_deflate_workspacesize(MAX_WBITS, DEF_MEM_LEVEL))
 
-int bch_compress_init(struct cache_set *c)
+int bch_fs_compress_init(struct cache_set *c)
 {
 	unsigned order = get_order(BCH_ENCODED_EXTENT_MAX << 9);
 	int ret, cpu;

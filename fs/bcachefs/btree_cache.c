@@ -312,7 +312,7 @@ static unsigned long bch_mca_count(struct shrinker *shrink,
 	return mca_can_free(c) * btree_pages(c);
 }
 
-void bch_btree_cache_free(struct cache_set *c)
+void bch_fs_btree_exit(struct cache_set *c)
 {
 	struct btree *b;
 	unsigned i;
@@ -359,7 +359,7 @@ void bch_btree_cache_free(struct cache_set *c)
 		rhashtable_destroy(&c->btree_cache_table);
 }
 
-int bch_btree_cache_alloc(struct cache_set *c)
+int bch_fs_btree_init(struct cache_set *c)
 {
 	unsigned i;
 	int ret;

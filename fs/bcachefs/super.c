@@ -222,7 +222,7 @@ static void bch_fs_read_only_work(struct work_struct *work)
 	wake_up(&bch_read_only_wait);
 }
 
-bool bch_fs_read_only(struct cache_set *c)
+bool bch_fs_read_only_async(struct cache_set *c)
 {
 	if (test_and_set_bit(BCH_FS_RO, &c->flags))
 		return false;
@@ -249,19 +249,19 @@ bool bch_fs_emergency_read_only(struct cache_set *c)
 {
 	bool ret = !test_and_set_bit(BCH_FS_EMERGENCY_RO, &c->flags);
 
-	bch_fs_read_only(c);
+	bch_fs_read_only_async(c);
 	bch_journal_halt(&c->journal);
 
 	wake_up(&bch_read_only_wait);
 	return ret;
 }
 
-void bch_fs_read_only_sync(struct cache_set *c)
+void bch_fs_read_only(struct cache_set *c)
 {
 	/* so we don't race with bch_fs_read_write() */
 	lockdep_assert_held(&bch_register_lock);
 
-	bch_fs_read_only(c);
+	bch_fs_read_only_async(c);
 
 	wait_event(bch_read_only_wait,
 		   test_bit(BCH_FS_RO_COMPLETE, &c->flags) &&
@@ -343,12 +343,12 @@ static void bch_fs_free(struct cache_set *c)
 	cancel_work_sync(&c->bio_submit_work);
 	cancel_work_sync(&c->read_retry_work);
 
-	bch_fs_encryption_free(c);
-	bch_btree_cache_free(c);
-	bch_journal_free(&c->journal);
+	bch_fs_encryption_exit(c);
+	bch_fs_btree_exit(c);
+	bch_fs_journal_exit(&c->journal);
 	bch_io_clock_exit(&c->io_clock[WRITE]);
 	bch_io_clock_exit(&c->io_clock[READ]);
-	bch_compress_free(c);
+	bch_fs_compress_exit(c);
 	bch_fs_blockdev_exit(c);
 	bdi_destroy(&c->bdi);
 	lg_lock_free(&c->bucket_stats_lock);
@@ -421,7 +421,7 @@ static void __bch_fs_stop2(struct closure *cl)
 {
 	struct cache_set *c = container_of(cl, struct cache_set, caching);
 
-	bch_debug_exit_cache_set(c);
+	bch_fs_debug_exit(c);
 	bch_fs_chardev_exit(c);
 
 	if (c->kobj.state_in_sysfs)
@@ -434,7 +434,7 @@ static void __bch_fs_stop2(struct closure *cl)
 	kobject_put(&c->internal);
 
 	mutex_lock(&bch_register_lock);
-	bch_fs_read_only_sync(c);
+	bch_fs_read_only(c);
 	mutex_unlock(&bch_register_lock);
 
 	closure_return(cl);
@@ -454,18 +454,18 @@ static void __bch_fs_stop1(struct closure *cl)
 	continue_at(cl, __bch_fs_stop2, system_wq);
 }
 
-void bch_fs_stop(struct cache_set *c)
+void bch_fs_stop_async(struct cache_set *c)
 {
 	if (!test_and_set_bit(BCH_FS_STOPPING, &c->flags))
 		closure_queue(&c->caching);
 }
 
-void bch_fs_stop_sync(struct cache_set *c)
+void bch_fs_stop(struct cache_set *c)
 {
 	DECLARE_COMPLETION_ONSTACK(complete);
 
 	c->stop_completion = &complete;
-	bch_fs_stop(c);
+	bch_fs_stop_async(c);
 	closure_put(&c->cl);
 
 	/* Killable? */
@@ -476,7 +476,7 @@ void bch_fs_stop_sync(struct cache_set *c)
 void bch_fs_detach(struct cache_set *c)
 {
 	if (!test_and_set_bit(BCH_FS_DETACHING, &c->flags))
-		bch_fs_stop(c);
+		bch_fs_stop_async(c);
 }
 
 static unsigned bch_fs_nr_devices(struct cache_set *c)
@@ -639,10 +639,10 @@ static struct cache_set *bch_fs_alloc(struct bch_sb *sb, struct bch_opts opts)
 	    bch_fs_blockdev_init(c) ||
 	    bch_io_clock_init(&c->io_clock[READ]) ||
 	    bch_io_clock_init(&c->io_clock[WRITE]) ||
-	    bch_journal_alloc(&c->journal, journal_entry_bytes) ||
-	    bch_btree_cache_alloc(c) ||
+	    bch_fs_journal_init(&c->journal, journal_entry_bytes) ||
+	    bch_fs_btree_init(c) ||
 	    bch_fs_encryption_init(c) ||
-	    bch_compress_init(c) ||
+	    bch_fs_compress_init(c) ||
 	    bch_check_set_has_compressed_data(c, c->opts.compression))
 		goto err;
 
@@ -690,6 +690,8 @@ static int bch_fs_online(struct cache_set *c)
 	ret = bch_fs_chardev_init(c);
 	if (ret)
 		return ret;
+
+	bch_fs_debug_init(c);
 
 	if (kobject_add(&c->kobj, NULL, "%pU", c->sb.user_uuid.b) ||
 	    kobject_add(&c->internal, &c->kobj, "internal") ||
@@ -881,7 +883,7 @@ const char *bch_fs_start(struct cache_set *c)
 	}
 recovery_done:
 	if (c->opts.read_only) {
-		bch_fs_read_only_sync(c);
+		bch_fs_read_only(c);
 	} else {
 		err = __bch_fs_read_write(c);
 		if (err)
@@ -916,7 +918,6 @@ recovery_done:
 	if (bch_blockdev_volumes_start(c))
 		goto err;
 
-	bch_debug_init_cache_set(c);
 	set_bit(BCH_FS_RUNNING, &c->flags);
 	bch_attach_backing_devs(c);
 
@@ -1019,7 +1020,7 @@ bool bch_dev_read_only(struct cache *ca)
 
 	if (!bch_dev_may_remove(ca)) {
 		bch_err(c, "required member %s going RO, forcing fs RO", buf);
-		bch_fs_read_only_sync(c);
+		bch_fs_read_only(c);
 	}
 
 	trace_bcache_cache_read_only(ca);
@@ -1141,7 +1142,7 @@ static void bch_dev_free_work(struct work_struct *work)
 	 * However, they were zeroed when the object was allocated.
 	 */
 
-	bch_journal_free_cache(ca);
+	bch_dev_journal_exit(ca);
 	free_percpu(ca->sectors_written);
 	bioset_exit(&ca->replica_set);
 	free_percpu(ca->bucket_stats_percpu);
@@ -1446,7 +1447,7 @@ static const char *bch_dev_alloc(struct bcache_superblock *sb,
 	    bioset_init(&ca->replica_set, 4,
 			offsetof(struct bch_write_bio, bio)) ||
 	    !(ca->sectors_written = alloc_percpu(*ca->sectors_written)) ||
-	    bch_journal_init_cache(ca))
+	    bch_dev_journal_init(ca))
 		goto err;
 
 	ca->prio_last_buckets = ca->prio_buckets + prio_buckets(ca);
@@ -1719,7 +1720,7 @@ out:
 	return err;
 err_unlock:
 	if (c)
-		bch_fs_stop(c);
+		bch_fs_stop_async(c);
 	mutex_unlock(&bch_register_lock);
 err:
 	for (i = 0; i < nr_devices; i++)
@@ -1773,7 +1774,7 @@ static const char *__bch_fs_open_incremental(struct bcache_superblock *sb,
 	return NULL;
 err:
 	if (allocated_cache_set)
-		bch_fs_stop(c);
+		bch_fs_stop_async(c);
 	return err;
 }
 
@@ -1855,10 +1856,10 @@ static int bcache_reboot(struct notifier_block *n, unsigned long code, void *x)
 			pr_info("Setting all devices read only:");
 
 		list_for_each_entry(c, &bch_fs_list, list)
-			bch_fs_read_only(c);
+			bch_fs_read_only_async(c);
 
 		list_for_each_entry(c, &bch_fs_list, list)
-			bch_fs_read_only_sync(c);
+			bch_fs_read_only(c);
 
 		mutex_unlock(&bch_register_lock);
 	}
@@ -1883,7 +1884,7 @@ kobj_attribute_write(reboot,		reboot_test);
 static void bcache_exit(void)
 {
 	bch_debug_exit();
-	bch_fs_exit();
+	bch_vfs_exit();
 	bch_blockdev_exit();
 	bch_chardev_exit();
 	if (bcache_kset)
@@ -1917,7 +1918,7 @@ static int __init bcache_init(void)
 	    sysfs_create_files(&bcache_kset->kobj, files) ||
 	    bch_chardev_init() ||
 	    bch_blockdev_init() ||
-	    bch_fs_init() ||
+	    bch_vfs_init() ||
 	    bch_debug_init())
 		goto err;
 

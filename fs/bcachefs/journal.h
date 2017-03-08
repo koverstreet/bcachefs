@@ -351,9 +351,6 @@ static inline void bch_journal_set_replay_done(struct journal *j)
 	spin_unlock(&j->lock);
 }
 
-void bch_journal_free(struct journal *);
-int bch_journal_alloc(struct journal *, unsigned);
-
 ssize_t bch_journal_print_debug(struct journal *, char *);
 
 int bch_dev_journal_alloc(struct cache *);
@@ -367,7 +364,9 @@ static inline unsigned bch_nr_journal_buckets(struct bch_sb_field_journal *j)
 
 int bch_journal_move(struct cache *);
 
-void bch_journal_free_cache(struct cache *);
-int bch_journal_init_cache(struct cache *);
+void bch_dev_journal_exit(struct cache *);
+int bch_dev_journal_init(struct cache *);
+void bch_fs_journal_exit(struct journal *);
+int bch_fs_journal_init(struct journal *, unsigned);
 
 #endif /* _BCACHE_JOURNAL_H */

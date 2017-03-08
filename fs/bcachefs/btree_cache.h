@@ -22,8 +22,8 @@ struct btree *mca_alloc(struct cache_set *);
 struct btree *bch_btree_node_get(struct btree_iter *, const struct bkey_i *,
 				 unsigned, enum six_lock_type);
 
-void bch_btree_cache_free(struct cache_set *);
-int bch_btree_cache_alloc(struct cache_set *);
+void bch_fs_btree_exit(struct cache_set *);
+int bch_fs_btree_init(struct cache_set *);
 
 #define for_each_cached_btree(_b, _c, _tbl, _iter, _pos)		\
 	for ((_tbl) = rht_dereference_rcu((_c)->btree_cache_table.tbl,	\

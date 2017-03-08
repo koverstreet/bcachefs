@@ -73,14 +73,13 @@ int bch_dev_add(struct cache_set *, const char *);
 
 void bch_fs_detach(struct cache_set *);
 
-bool bch_fs_read_only(struct cache_set *);
 bool bch_fs_emergency_read_only(struct cache_set *);
-void bch_fs_read_only_sync(struct cache_set *);
+void bch_fs_read_only(struct cache_set *);
 const char *bch_fs_read_write(struct cache_set *);
 
 void bch_fs_release(struct kobject *);
+void bch_fs_stop_async(struct cache_set *);
 void bch_fs_stop(struct cache_set *);
-void bch_fs_stop_sync(struct cache_set *);
 
 const char *bch_fs_start(struct cache_set *);
 const char *bch_fs_open(char * const *, unsigned, struct bch_opts,

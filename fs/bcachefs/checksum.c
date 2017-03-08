@@ -557,7 +557,7 @@ err:
 	return ret;
 }
 
-void bch_fs_encryption_free(struct cache_set *c)
+void bch_fs_encryption_exit(struct cache_set *c)
 {
 	if (!IS_ERR_OR_NULL(c->poly1305))
 		crypto_free_shash(c->poly1305);

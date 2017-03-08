@@ -1298,7 +1298,7 @@ static int bch_remount(struct super_block *sb, int *flags, char *data)
 		const char *err = NULL;
 
 		if (opts.read_only) {
-			bch_fs_read_only_sync(c);
+			bch_fs_read_only(c);
 
 			sb->s_flags |= MS_RDONLY;
 		} else {
@@ -1449,7 +1449,7 @@ static void bch_kill_sb(struct super_block *sb)
 	generic_shutdown_super(sb);
 
 	if (test_bit(BCH_FS_BDEV_MOUNTED, &c->flags))
-		bch_fs_stop_sync(c);
+		bch_fs_stop(c);
 	else
 		closure_put(&c->cl);
 }
@@ -1464,7 +1464,7 @@ static struct file_system_type bcache_fs_type = {
 
 MODULE_ALIAS_FS("bcache");
 
-void bch_fs_exit(void)
+void bch_vfs_exit(void)
 {
 	unregister_filesystem(&bcache_fs_type);
 	if (bch_dio_write_bioset)
@@ -1477,7 +1477,7 @@ void bch_fs_exit(void)
 		kmem_cache_destroy(bch_inode_cache);
 }
 
-int __init bch_fs_init(void)
+int __init bch_vfs_init(void)
 {
 	int ret = -ENOMEM;
 
@@ -1504,6 +1504,6 @@ int __init bch_fs_init(void)
 
 	return 0;
 err:
-	bch_fs_exit();
+	bch_vfs_exit();
 	return ret;
 }

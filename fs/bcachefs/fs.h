@@ -52,13 +52,13 @@ int __must_check __bch_write_inode(struct cache_set *, struct bch_inode_info *,
 int __must_check bch_write_inode(struct cache_set *,
 				 struct bch_inode_info *);
 
-void bch_fs_exit(void);
-int bch_fs_init(void);
+void bch_vfs_exit(void);
+int bch_vfs_init(void);
 
 #else
 
-static inline void bch_fs_exit(void) {}
-static inline int bch_fs_init(void) { return 0; }
+static inline void bch_vfs_exit(void) {}
+static inline int bch_vfs_init(void) { return 0; }
 
 #endif
 

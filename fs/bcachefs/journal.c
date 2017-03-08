@@ -2548,50 +2548,6 @@ int bch_journal_flush(struct journal *j)
 	return bch_journal_flush_seq(j, seq);
 }
 
-void bch_journal_free(struct journal *j)
-{
-	unsigned order = get_order(j->entry_size_max);
-
-	free_pages((unsigned long) j->buf[1].data, order);
-	free_pages((unsigned long) j->buf[0].data, order);
-	free_fifo(&j->pin);
-}
-
-int bch_journal_alloc(struct journal *j, unsigned entry_size_max)
-{
-	static struct lock_class_key res_key;
-	unsigned order = get_order(entry_size_max);
-
-	spin_lock_init(&j->lock);
-	spin_lock_init(&j->pin_lock);
-	init_waitqueue_head(&j->wait);
-	INIT_DELAYED_WORK(&j->write_work, journal_write_work);
-	INIT_DELAYED_WORK(&j->reclaim_work, journal_reclaim_work);
-	mutex_init(&j->blacklist_lock);
-	INIT_LIST_HEAD(&j->seq_blacklist);
-	spin_lock_init(&j->devs.lock);
-	mutex_init(&j->reclaim_lock);
-
-	lockdep_init_map(&j->res_map, "journal res", &res_key, 0);
-
-	j->entry_size_max	= entry_size_max;
-	j->write_delay_ms	= 100;
-	j->reclaim_delay_ms	= 100;
-
-	bkey_extent_init(&j->key);
-
-	atomic64_set(&j->reservations.counter,
-		((union journal_res_state)
-		 { .cur_entry_offset = JOURNAL_ENTRY_CLOSED_VAL }).v);
-
-	if (!(init_fifo(&j->pin, JOURNAL_PIN, GFP_KERNEL)) ||
-	    !(j->buf[0].data = (void *) __get_free_pages(GFP_KERNEL, order)) ||
-	    !(j->buf[1].data = (void *) __get_free_pages(GFP_KERNEL, order)))
-		return -ENOMEM;
-
-	return 0;
-}
-
 ssize_t bch_journal_print_debug(struct journal *j, char *buf)
 {
 	union journal_res_state *s = &j->reservations;
@@ -2723,13 +2679,13 @@ int bch_journal_move(struct cache *ca)
 	return ret;
 }
 
-void bch_journal_free_cache(struct cache *ca)
+void bch_dev_journal_exit(struct cache *ca)
 {
 	kfree(ca->journal.buckets);
 	kfree(ca->journal.bucket_seq);
 }
 
-int bch_journal_init_cache(struct cache *ca)
+int bch_dev_journal_init(struct cache *ca)
 {
 	struct journal_device *ja = &ca->journal;
 	struct bch_sb_field_journal *journal_buckets =
@@ -2756,6 +2712,50 @@ int bch_journal_init_cache(struct cache *ca)
 
 	for (i = 0; i < ja->nr; i++)
 		ja->buckets[i] = le64_to_cpu(journal_buckets->buckets[i]);
+
+	return 0;
+}
+
+void bch_fs_journal_exit(struct journal *j)
+{
+	unsigned order = get_order(j->entry_size_max);
+
+	free_pages((unsigned long) j->buf[1].data, order);
+	free_pages((unsigned long) j->buf[0].data, order);
+	free_fifo(&j->pin);
+}
+
+int bch_fs_journal_init(struct journal *j, unsigned entry_size_max)
+{
+	static struct lock_class_key res_key;
+	unsigned order = get_order(entry_size_max);
+
+	spin_lock_init(&j->lock);
+	spin_lock_init(&j->pin_lock);
+	init_waitqueue_head(&j->wait);
+	INIT_DELAYED_WORK(&j->write_work, journal_write_work);
+	INIT_DELAYED_WORK(&j->reclaim_work, journal_reclaim_work);
+	mutex_init(&j->blacklist_lock);
+	INIT_LIST_HEAD(&j->seq_blacklist);
+	spin_lock_init(&j->devs.lock);
+	mutex_init(&j->reclaim_lock);
+
+	lockdep_init_map(&j->res_map, "journal res", &res_key, 0);
+
+	j->entry_size_max	= entry_size_max;
+	j->write_delay_ms	= 100;
+	j->reclaim_delay_ms	= 100;
+
+	bkey_extent_init(&j->key);
+
+	atomic64_set(&j->reservations.counter,
+		((union journal_res_state)
+		 { .cur_entry_offset = JOURNAL_ENTRY_CLOSED_VAL }).v);
+
+	if (!(init_fifo(&j->pin, JOURNAL_PIN, GFP_KERNEL)) ||
+	    !(j->buf[0].data = (void *) __get_free_pages(GFP_KERNEL, order)) ||
+	    !(j->buf[1].data = (void *) __get_free_pages(GFP_KERNEL, order)))
+		return -ENOMEM;
 
 	return 0;
 }

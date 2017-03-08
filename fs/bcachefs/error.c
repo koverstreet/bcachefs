@@ -14,7 +14,7 @@ void bch_inconsistent_error(struct cache_set *c)
 	case BCH_ON_ERROR_RO:
 		if (!test_bit(BCH_FS_INITIAL_GC_DONE, &c->flags)) {
 			/* XXX do something better here? */
-			bch_fs_stop(c);
+			bch_fs_stop_async(c);
 			return;
 		}
 

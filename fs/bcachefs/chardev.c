@@ -107,7 +107,7 @@ static long bch_global_ioctl(unsigned cmd, void __user *arg)
 
 static long bch_ioctl_stop(struct cache_set *c)
 {
-	bch_fs_stop(c);
+	bch_fs_stop_async(c);
 	return 0;
 }
 

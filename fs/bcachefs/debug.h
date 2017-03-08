@@ -52,11 +52,11 @@ static inline void bch_btree_verify(struct cache_set *c, struct btree *b)
 }
 
 #ifdef CONFIG_DEBUG_FS
-void bch_debug_exit_cache_set(struct cache_set *);
-void bch_debug_init_cache_set(struct cache_set *);
+void bch_fs_debug_exit(struct cache_set *);
+void bch_fs_debug_init(struct cache_set *);
 #else
-static inline void bch_debug_exit_cache_set(struct cache_set *c) {}
-static inline void bch_debug_init_cache_set(struct cache_set *c) {}
+static inline void bch_fs_debug_exit(struct cache_set *c) {}
+static inline void bch_fs_debug_init(struct cache_set *c) {}
 #endif
 
 void bch_debug_exit(void);

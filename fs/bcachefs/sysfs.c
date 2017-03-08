@@ -726,7 +726,7 @@ STORE(__bch_fs)
 	}
 
 	if (attr == &sysfs_stop) {
-		bch_fs_stop(c);
+		bch_fs_stop_async(c);
 		return size;
 	}
 
