@@ -27,7 +27,7 @@ static inline int keybuf_nonoverlapping_cmp(struct keybuf_key *l,
 	return clamp_t(s64, bkey_cmp(l->key.k.p, r->key.k.p), -1, 1);
 }
 
-void bch_refill_keybuf(struct cache_set *c, struct keybuf *buf,
+void bch_refill_keybuf(struct bch_fs *c, struct keybuf *buf,
 		       struct bpos end, keybuf_pred_fn *pred)
 {
 	struct bpos start = buf->last_scanned;
@@ -118,7 +118,7 @@ void bch_keybuf_put(struct keybuf *buf, struct keybuf_key *w)
 	}
 }
 
-void bch_keybuf_recalc_oldest_gens(struct cache_set *c, struct keybuf *buf)
+void bch_keybuf_recalc_oldest_gens(struct bch_fs *c, struct keybuf *buf)
 {
 	struct keybuf_key *w, *n;
 

@@ -27,7 +27,7 @@ static inline bool btree_type_has_ptrs(enum bkey_type type)
 	}
 }
 
-struct cache_set;
+struct bch_fs;
 struct btree;
 struct bkey;
 
@@ -42,19 +42,19 @@ enum merge_result {
 	BCH_MERGE_MERGE,
 };
 
-typedef bool (*key_filter_fn)(struct cache_set *, struct btree *,
+typedef bool (*key_filter_fn)(struct bch_fs *, struct btree *,
 			      struct bkey_s);
-typedef enum merge_result (*key_merge_fn)(struct cache_set *,
+typedef enum merge_result (*key_merge_fn)(struct bch_fs *,
 					  struct btree *,
 					  struct bkey_i *, struct bkey_i *);
 
 struct bkey_ops {
 	/* Returns reason for being invalid if invalid, else NULL: */
-	const char *	(*key_invalid)(const struct cache_set *,
+	const char *	(*key_invalid)(const struct bch_fs *,
 				       struct bkey_s_c);
-	void		(*key_debugcheck)(struct cache_set *, struct btree *,
+	void		(*key_debugcheck)(struct bch_fs *, struct btree *,
 					  struct bkey_s_c);
-	void		(*val_to_text)(struct cache_set *, char *,
+	void		(*val_to_text)(struct bch_fs *, char *,
 				       size_t, struct bkey_s_c);
 	void		(*swab)(const struct bkey_format *, struct bkey_packed *);
 	key_filter_fn	key_normalize;
@@ -62,14 +62,14 @@ struct bkey_ops {
 	bool		is_extents;
 };
 
-const char *bkey_invalid(struct cache_set *, enum bkey_type, struct bkey_s_c);
-const char *btree_bkey_invalid(struct cache_set *, struct btree *,
+const char *bkey_invalid(struct bch_fs *, enum bkey_type, struct bkey_s_c);
+const char *btree_bkey_invalid(struct bch_fs *, struct btree *,
 			       struct bkey_s_c);
 
-void bkey_debugcheck(struct cache_set *, struct btree *, struct bkey_s_c);
-void bch_val_to_text(struct cache_set *, enum bkey_type,
+void bkey_debugcheck(struct bch_fs *, struct btree *, struct bkey_s_c);
+void bch_val_to_text(struct bch_fs *, enum bkey_type,
 		     char *, size_t, struct bkey_s_c);
-void bch_bkey_val_to_text(struct cache_set *, enum bkey_type,
+void bch_bkey_val_to_text(struct bch_fs *, enum bkey_type,
 			  char *, size_t, struct bkey_s_c);
 
 void bch_bkey_swab(enum bkey_type, const struct bkey_format *,

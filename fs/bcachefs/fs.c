@@ -26,7 +26,7 @@
 
 static struct kmem_cache *bch_inode_cache;
 
-static void bch_vfs_inode_init(struct cache_set *,
+static void bch_vfs_inode_init(struct bch_fs *,
 			       struct bch_inode_info *,
 			       struct bch_inode_unpacked *);
 
@@ -58,7 +58,7 @@ static void bch_vfs_inode_init(struct cache_set *,
  * be set explicitly.
  */
 
-int __must_check __bch_write_inode(struct cache_set *c,
+int __must_check __bch_write_inode(struct bch_fs *c,
 				   struct bch_inode_info *ei,
 				   inode_set_fn set,
 				   void *p)
@@ -137,13 +137,13 @@ out:
 	return ret < 0 ? ret : 0;
 }
 
-int __must_check bch_write_inode(struct cache_set *c,
+int __must_check bch_write_inode(struct bch_fs *c,
 				 struct bch_inode_info *ei)
 {
 	return __bch_write_inode(c, ei, NULL, NULL);
 }
 
-int bch_inc_nlink(struct cache_set *c, struct bch_inode_info *ei)
+int bch_inc_nlink(struct bch_fs *c, struct bch_inode_info *ei)
 {
 	int ret;
 
@@ -155,7 +155,7 @@ int bch_inc_nlink(struct cache_set *c, struct bch_inode_info *ei)
 	return ret;
 }
 
-int bch_dec_nlink(struct cache_set *c, struct bch_inode_info *ei)
+int bch_dec_nlink(struct bch_fs *c, struct bch_inode_info *ei)
 {
 	int ret = 0;
 
@@ -169,7 +169,7 @@ int bch_dec_nlink(struct cache_set *c, struct bch_inode_info *ei)
 
 static struct inode *bch_vfs_inode_get(struct super_block *sb, u64 inum)
 {
-	struct cache_set *c = sb->s_fs_info;
+	struct bch_fs *c = sb->s_fs_info;
 	struct inode *inode;
 	struct bch_inode_unpacked inode_u;
 	struct bch_inode_info *ei;
@@ -199,7 +199,7 @@ static struct inode *bch_vfs_inode_get(struct super_block *sb, u64 inum)
 	return inode;
 }
 
-static struct inode *bch_vfs_inode_create(struct cache_set *c,
+static struct inode *bch_vfs_inode_create(struct bch_fs *c,
 					  struct inode *parent,
 					  umode_t mode, dev_t rdev)
 {
@@ -268,7 +268,7 @@ err:
 	goto out;
 }
 
-static int bch_vfs_dirent_create(struct cache_set *c, struct inode *dir,
+static int bch_vfs_dirent_create(struct bch_fs *c, struct inode *dir,
 				 u8 type, const struct qstr *name,
 				 struct inode *dst)
 {
@@ -291,7 +291,7 @@ static int __bch_create(struct inode *dir, struct dentry *dentry,
 			umode_t mode, dev_t rdev)
 {
 	struct bch_inode_info *dir_ei = to_bch_ei(dir);
-	struct cache_set *c = dir->i_sb->s_fs_info;
+	struct bch_fs *c = dir->i_sb->s_fs_info;
 	struct inode *inode;
 	struct bch_inode_info *ei;
 	int ret;
@@ -322,7 +322,7 @@ static int __bch_create(struct inode *dir, struct dentry *dentry,
 static struct dentry *bch_lookup(struct inode *dir, struct dentry *dentry,
 				 unsigned int flags)
 {
-	struct cache_set *c = dir->i_sb->s_fs_info;
+	struct bch_fs *c = dir->i_sb->s_fs_info;
 	struct bch_inode_info *dir_ei = to_bch_ei(dir);
 	struct inode *inode = NULL;
 	u64 inum;
@@ -346,7 +346,7 @@ static int bch_create(struct inode *dir, struct dentry *dentry,
 static int bch_link(struct dentry *old_dentry, struct inode *dir,
 		    struct dentry *dentry)
 {
-	struct cache_set *c = dir->i_sb->s_fs_info;
+	struct bch_fs *c = dir->i_sb->s_fs_info;
 	struct inode *inode = old_dentry->d_inode;
 	struct bch_inode_info *ei = to_bch_ei(inode);
 	int ret;
@@ -375,7 +375,7 @@ static int bch_link(struct dentry *old_dentry, struct inode *dir,
 
 static int bch_unlink(struct inode *dir, struct dentry *dentry)
 {
-	struct cache_set *c = dir->i_sb->s_fs_info;
+	struct bch_fs *c = dir->i_sb->s_fs_info;
 	struct bch_inode_info *dir_ei = to_bch_ei(dir);
 	struct inode *inode = dentry->d_inode;
 	struct bch_inode_info *ei = to_bch_ei(inode);
@@ -406,7 +406,7 @@ static int bch_unlink(struct inode *dir, struct dentry *dentry)
 static int bch_symlink(struct inode *dir, struct dentry *dentry,
 		       const char *symname)
 {
-	struct cache_set *c = dir->i_sb->s_fs_info;
+	struct bch_fs *c = dir->i_sb->s_fs_info;
 	struct inode *inode;
 	struct bch_inode_info *ei, *dir_ei = to_bch_ei(dir);
 	int ret;
@@ -446,7 +446,7 @@ err:
 
 static int bch_mkdir(struct inode *dir, struct dentry *dentry, umode_t mode)
 {
-	struct cache_set *c = dir->i_sb->s_fs_info;
+	struct bch_fs *c = dir->i_sb->s_fs_info;
 	int ret;
 
 	lockdep_assert_held(&dir->i_rwsem);
@@ -462,7 +462,7 @@ static int bch_mkdir(struct inode *dir, struct dentry *dentry, umode_t mode)
 
 static int bch_rmdir(struct inode *dir, struct dentry *dentry)
 {
-	struct cache_set *c = dir->i_sb->s_fs_info;
+	struct bch_fs *c = dir->i_sb->s_fs_info;
 	struct inode *inode = dentry->d_inode;
 
 	if (bch_empty_dir(c, inode->i_ino))
@@ -480,7 +480,7 @@ static int bch_mknod(struct inode *dir, struct dentry *dentry,
 static int bch_rename(struct inode *old_dir, struct dentry *old_dentry,
 		      struct inode *new_dir, struct dentry *new_dentry)
 {
-	struct cache_set *c = old_dir->i_sb->s_fs_info;
+	struct bch_fs *c = old_dir->i_sb->s_fs_info;
 	struct inode *old_inode = old_dentry->d_inode;
 	struct bch_inode_info *ei = to_bch_ei(old_inode);
 	struct inode *new_inode = new_dentry->d_inode;
@@ -557,7 +557,7 @@ static int bch_rename(struct inode *old_dir, struct dentry *old_dentry,
 static int bch_rename_exchange(struct inode *old_dir, struct dentry *old_dentry,
 			       struct inode *new_dir, struct dentry *new_dentry)
 {
-	struct cache_set *c = old_dir->i_sb->s_fs_info;
+	struct bch_fs *c = old_dir->i_sb->s_fs_info;
 	struct inode *old_inode = old_dentry->d_inode;
 	struct inode *new_inode = new_dentry->d_inode;
 	struct bch_inode_info *ei = to_bch_ei(old_inode);
@@ -613,7 +613,7 @@ static int bch_setattr(struct dentry *dentry, struct iattr *iattr)
 {
 	struct inode *inode = dentry->d_inode;
 	struct bch_inode_info *ei = to_bch_ei(inode);
-	struct cache_set *c = inode->i_sb->s_fs_info;
+	struct bch_fs *c = inode->i_sb->s_fs_info;
 	int ret = 0;
 
 	lockdep_assert_held(&inode->i_rwsem);
@@ -645,7 +645,7 @@ static int bch_setattr(struct dentry *dentry, struct iattr *iattr)
 
 static int bch_tmpfile(struct inode *dir, struct dentry *dentry, umode_t mode)
 {
-	struct cache_set *c = dir->i_sb->s_fs_info;
+	struct bch_fs *c = dir->i_sb->s_fs_info;
 	struct inode *inode;
 
 	/* XXX: i_nlink should be 0? */
@@ -703,7 +703,7 @@ static int bch_fill_extent(struct fiemap_extent_info *info,
 static int bch_fiemap(struct inode *inode, struct fiemap_extent_info *info,
 		      u64 start, u64 len)
 {
-	struct cache_set *c = inode->i_sb->s_fs_info;
+	struct bch_fs *c = inode->i_sb->s_fs_info;
 	struct btree_iter iter;
 	struct bkey_s_c k;
 	BKEY_PADDED(k) tmp;
@@ -836,7 +836,7 @@ static long bch_fs_file_ioctl(struct file *filp, unsigned int cmd,
 {
 	struct inode *inode = file_inode(filp);
 	struct super_block *sb = inode->i_sb;
-	struct cache_set *c = sb->s_fs_info;
+	struct bch_fs *c = sb->s_fs_info;
 	struct bch_inode_info *ei = to_bch_ei(inode);
 	unsigned flags;
 	int ret;
@@ -932,7 +932,7 @@ static loff_t bch_dir_llseek(struct file *file, loff_t offset, int whence)
 static int bch_vfs_readdir(struct file *file, struct dir_context *ctx)
 {
 	struct inode *inode = file_inode(file);
-	struct cache_set *c = inode->i_sb->s_fs_info;
+	struct bch_fs *c = inode->i_sb->s_fs_info;
 
 	return bch_readdir(c, file, ctx);
 }
@@ -1022,7 +1022,7 @@ static const struct address_space_operations bch_address_space_operations = {
 	.error_remove_page = generic_error_remove_page,
 };
 
-static void bch_vfs_inode_init(struct cache_set *c,
+static void bch_vfs_inode_init(struct bch_fs *c,
 			       struct bch_inode_info *ei,
 			       struct bch_inode_unpacked *bi)
 {
@@ -1109,7 +1109,7 @@ static void bch_destroy_inode(struct inode *inode)
 static int bch_vfs_write_inode(struct inode *inode,
 			       struct writeback_control *wbc)
 {
-	struct cache_set *c = inode->i_sb->s_fs_info;
+	struct bch_fs *c = inode->i_sb->s_fs_info;
 	struct bch_inode_info *ei = to_bch_ei(inode);
 	int ret;
 
@@ -1128,7 +1128,7 @@ static int bch_vfs_write_inode(struct inode *inode,
 
 static void bch_evict_inode(struct inode *inode)
 {
-	struct cache_set *c = inode->i_sb->s_fs_info;
+	struct bch_fs *c = inode->i_sb->s_fs_info;
 
 	truncate_inode_pages_final(&inode->i_data);
 
@@ -1151,7 +1151,7 @@ static void bch_evict_inode(struct inode *inode)
 static int bch_statfs(struct dentry *dentry, struct kstatfs *buf)
 {
 	struct super_block *sb = dentry->d_sb;
-	struct cache_set *c = sb->s_fs_info;
+	struct bch_fs *c = sb->s_fs_info;
 	u64 fsid;
 
 	buf->f_type	= BCACHE_STATFS_MAGIC;
@@ -1173,7 +1173,7 @@ static int bch_statfs(struct dentry *dentry, struct kstatfs *buf)
 
 static int bch_sync_fs(struct super_block *sb, int wait)
 {
-	struct cache_set *c = sb->s_fs_info;
+	struct bch_fs *c = sb->s_fs_info;
 
 	if (!wait) {
 		bch_journal_flush_async(&c->journal, NULL);
@@ -1183,16 +1183,16 @@ static int bch_sync_fs(struct super_block *sb, int wait)
 	return bch_journal_flush(&c->journal);
 }
 
-static struct cache_set *bdev_to_cache_set(struct block_device *bdev)
+static struct bch_fs *bch_bdev_to_fs(struct block_device *bdev)
 {
-	struct cache_set *c;
-	struct cache *ca;
+	struct bch_fs *c;
+	struct bch_dev *ca;
 	unsigned i;
 
 	rcu_read_lock();
 
 	list_for_each_entry(c, &bch_fs_list, list)
-		for_each_cache_rcu(ca, c, i)
+		for_each_member_device_rcu(ca, c, i)
 			if (ca->disk_sb.bdev == bdev) {
 				rcu_read_unlock();
 				return c;
@@ -1203,12 +1203,12 @@ static struct cache_set *bdev_to_cache_set(struct block_device *bdev)
 	return NULL;
 }
 
-static struct cache_set *bch_open_as_blockdevs(const char *_dev_name,
+static struct bch_fs *bch_open_as_blockdevs(const char *_dev_name,
 					       struct bch_opts opts)
 {
 	size_t nr_devs = 0, i = 0;
 	char *dev_name, *s, **devs;
-	struct cache_set *c = NULL;
+	struct bch_fs *c = NULL;
 	const char *err;
 
 	dev_name = kstrdup(_dev_name, GFP_KERNEL);
@@ -1232,19 +1232,19 @@ static struct cache_set *bch_open_as_blockdevs(const char *_dev_name,
 		/*
 		 * Already open?
 		 * Look up each block device, make sure they all belong to a
-		 * cache set and they all belong to the _same_ cache set
+		 * filesystem and they all belong to the _same_ filesystem
 		 */
 
 		mutex_lock(&bch_register_lock);
 
 		for (i = 0; i < nr_devs; i++) {
 			struct block_device *bdev = lookup_bdev(devs[i]);
-			struct cache_set *c2;
+			struct bch_fs *c2;
 
 			if (IS_ERR(bdev))
 				goto err_unlock;
 
-			c2 = bdev_to_cache_set(bdev);
+			c2 = bch_bdev_to_fs(bdev);
 			bdput(bdev);
 
 			if (!c)
@@ -1261,7 +1261,7 @@ static struct cache_set *bch_open_as_blockdevs(const char *_dev_name,
 
 		if (!bch_fs_running(c)) {
 			mutex_unlock(&c->state_lock);
-			err = "incomplete cache set";
+			err = "incomplete filesystem";
 			c = NULL;
 			goto err_unlock;
 		}
@@ -1279,13 +1279,13 @@ err:
 	return c;
 err_unlock:
 	mutex_unlock(&bch_register_lock);
-	pr_err("register_cache_set err %s", err);
+	pr_err("bch_fs_open err %s", err);
 	goto err;
 }
 
 static int bch_remount(struct super_block *sb, int *flags, char *data)
 {
-	struct cache_set *c = sb->s_fs_info;
+	struct bch_fs *c = sb->s_fs_info;
 	struct bch_opts opts = bch_opts_empty();
 	int ret;
 
@@ -1352,8 +1352,8 @@ static int bch_set_super(struct super_block *s, void *data)
 static struct dentry *bch_mount(struct file_system_type *fs_type,
 				int flags, const char *dev_name, void *data)
 {
-	struct cache_set *c;
-	struct cache *ca;
+	struct bch_fs *c;
+	struct bch_dev *ca;
 	struct super_block *sb;
 	struct inode *inode;
 	struct bch_opts opts = bch_opts_empty();
@@ -1400,7 +1400,7 @@ static struct dentry *bch_mount(struct file_system_type *fs_type,
 	sb->s_bdi		= &c->bdi;
 
 	rcu_read_lock();
-	for_each_cache_rcu(ca, c, i) {
+	for_each_member_device_rcu(ca, c, i) {
 		struct block_device *bdev = ca->disk_sb.bdev;
 
 		BUILD_BUG_ON(sizeof(sb->s_id) < BDEVNAME_SIZE);
@@ -1442,7 +1442,7 @@ err_put_super:
 
 static void bch_kill_sb(struct super_block *sb)
 {
-	struct cache_set *c = sb->s_fs_info;
+	struct bch_fs *c = sb->s_fs_info;
 
 	generic_shutdown_super(sb);
 

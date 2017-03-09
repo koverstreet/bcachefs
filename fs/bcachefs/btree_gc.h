@@ -5,15 +5,15 @@
 
 enum bkey_type;
 
-void bch_coalesce(struct cache_set *);
-void bch_gc(struct cache_set *);
-void bch_gc_thread_stop(struct cache_set *);
-int bch_gc_thread_start(struct cache_set *);
-int bch_initial_gc(struct cache_set *, struct list_head *);
-u8 bch_btree_key_recalc_oldest_gen(struct cache_set *, struct bkey_s_c);
-u8 bch_btree_mark_key_initial(struct cache_set *, enum bkey_type,
+void bch_coalesce(struct bch_fs *);
+void bch_gc(struct bch_fs *);
+void bch_gc_thread_stop(struct bch_fs *);
+int bch_gc_thread_start(struct bch_fs *);
+int bch_initial_gc(struct bch_fs *, struct list_head *);
+u8 bch_btree_key_recalc_oldest_gen(struct bch_fs *, struct bkey_s_c);
+u8 bch_btree_mark_key_initial(struct bch_fs *, enum bkey_type,
 				struct bkey_s_c);
-void bch_dev_mark_superblocks(struct cache *);
+void bch_dev_mark_superblocks(struct bch_dev *);
 
 /*
  * For concurrent mark and sweep (with other index updates), we define a total
@@ -88,7 +88,7 @@ static inline struct gc_pos gc_pos_btree_root(enum btree_id id)
 	};
 }
 
-static inline bool gc_will_visit(struct cache_set *c, struct gc_pos pos)
+static inline bool gc_will_visit(struct bch_fs *c, struct gc_pos pos)
 {
 	unsigned seq;
 	bool ret;

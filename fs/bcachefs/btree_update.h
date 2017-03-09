@@ -7,7 +7,7 @@
 #include "journal.h"
 #include "vstructs.h"
 
-struct cache_set;
+struct bch_fs;
 struct bkey_format_state;
 struct bkey_format;
 struct btree;
@@ -25,7 +25,7 @@ struct btree_reserve {
 };
 
 void __bch_btree_calc_format(struct bkey_format_state *, struct btree *);
-bool bch_btree_node_format_fits(struct cache_set *c, struct btree *,
+bool bch_btree_node_format_fits(struct bch_fs *c, struct btree *,
 				struct bkey_format *);
 
 /* Btree node freeing/allocation: */
@@ -64,7 +64,7 @@ struct pending_btree_node_free {
  */
 struct btree_interior_update {
 	struct closure			cl;
-	struct cache_set		*c;
+	struct bch_fs		*c;
 
 	struct list_head		list;
 
@@ -131,33 +131,33 @@ struct btree_interior_update {
 		for (p = as->pending; p < as->pending + as->nr_pending; p++)
 
 void bch_btree_node_free_inmem(struct btree_iter *, struct btree *);
-void bch_btree_node_free_never_inserted(struct cache_set *, struct btree *);
+void bch_btree_node_free_never_inserted(struct bch_fs *, struct btree *);
 
-void btree_open_bucket_put(struct cache_set *c, struct btree *);
+void btree_open_bucket_put(struct bch_fs *c, struct btree *);
 
-struct btree *__btree_node_alloc_replacement(struct cache_set *,
+struct btree *__btree_node_alloc_replacement(struct bch_fs *,
 					     struct btree *,
 					     struct bkey_format,
 					     struct btree_reserve *);
-struct btree *btree_node_alloc_replacement(struct cache_set *, struct btree *,
+struct btree *btree_node_alloc_replacement(struct bch_fs *, struct btree *,
 					   struct btree_reserve *);
 
 struct btree_interior_update *
-bch_btree_interior_update_alloc(struct cache_set *);
+bch_btree_interior_update_alloc(struct bch_fs *);
 
-void bch_btree_interior_update_will_free_node(struct cache_set *,
+void bch_btree_interior_update_will_free_node(struct bch_fs *,
 					      struct btree_interior_update *,
 					      struct btree *);
 
-void bch_btree_set_root_initial(struct cache_set *, struct btree *,
+void bch_btree_set_root_initial(struct bch_fs *, struct btree *,
 				struct btree_reserve *);
 
-void bch_btree_reserve_put(struct cache_set *, struct btree_reserve *);
-struct btree_reserve *bch_btree_reserve_get(struct cache_set *,
+void bch_btree_reserve_put(struct bch_fs *, struct btree_reserve *);
+struct btree_reserve *bch_btree_reserve_get(struct bch_fs *,
 					    struct btree *, unsigned,
 					    unsigned, struct closure *);
 
-int bch_btree_root_alloc(struct cache_set *, enum btree_id, struct closure *);
+int bch_btree_root_alloc(struct bch_fs *, enum btree_id, struct closure *);
 
 /* Inserting into a given leaf node (last stage of insert): */
 
@@ -166,18 +166,18 @@ bool bch_btree_bset_insert_key(struct btree_iter *, struct btree *,
 void bch_btree_journal_key(struct btree_insert *trans, struct btree_iter *,
 			   struct bkey_i *);
 
-static inline void *btree_data_end(struct cache_set *c, struct btree *b)
+static inline void *btree_data_end(struct bch_fs *c, struct btree *b)
 {
 	return (void *) b->data + btree_bytes(c);
 }
 
-static inline struct bkey_packed *unwritten_whiteouts_start(struct cache_set *c,
+static inline struct bkey_packed *unwritten_whiteouts_start(struct bch_fs *c,
 							    struct btree *b)
 {
 	return (void *) ((u64 *) btree_data_end(c, b) - b->whiteout_u64s);
 }
 
-static inline struct bkey_packed *unwritten_whiteouts_end(struct cache_set *c,
+static inline struct bkey_packed *unwritten_whiteouts_end(struct bch_fs *c,
 							  struct btree *b)
 {
 	return btree_data_end(c, b);
@@ -198,14 +198,14 @@ static inline bool bset_unwritten(struct btree *b, struct bset *i)
 	return (void *) i > write_block(b);
 }
 
-static inline unsigned bset_end_sector(struct cache_set *c, struct btree *b,
+static inline unsigned bset_end_sector(struct bch_fs *c, struct btree *b,
 				       struct bset *i)
 {
 	return round_up(bset_byte_offset(b, vstruct_end(i)),
 			block_bytes(c)) >> 9;
 }
 
-static inline size_t bch_btree_keys_u64s_remaining(struct cache_set *c,
+static inline size_t bch_btree_keys_u64s_remaining(struct bch_fs *c,
 						   struct btree *b)
 {
 	struct bset *i = btree_bset_last(b);
@@ -231,7 +231,7 @@ static inline unsigned btree_write_set_buffer(struct btree *b)
 	return 4 << 10;
 }
 
-static inline struct btree_node_entry *want_new_bset(struct cache_set *c,
+static inline struct btree_node_entry *want_new_bset(struct bch_fs *c,
 						     struct btree *b)
 {
 	struct bset *i = btree_bset_last(b);
@@ -256,7 +256,7 @@ static inline struct btree_node_entry *want_new_bset(struct cache_set *c,
  * write lock must be held on @b (else the dirty bset that we were going to
  * insert into could be written out from under us)
  */
-static inline bool bch_btree_node_insert_fits(struct cache_set *c,
+static inline bool bch_btree_node_insert_fits(struct bch_fs *c,
 					      struct btree *b, unsigned u64s)
 {
 	if (btree_node_is_extents(b)) {
@@ -297,7 +297,7 @@ void bch_btree_insert_node(struct btree *, struct btree_iter *,
 /* Normal update interface: */
 
 struct btree_insert {
-	struct cache_set	*c;
+	struct bch_fs	*c;
 	struct disk_reservation *disk_res;
 	struct journal_res	journal_res;
 	u64			*journal_seq;
@@ -349,7 +349,7 @@ int __bch_btree_insert_at(struct btree_insert *);
  * Return values:
  * -EINTR: locking changed, this function should be called again. Only returned
  *  if passed BTREE_INSERT_ATOMIC.
- * -EROFS: cache set read only
+ * -EROFS: filesystem read only
  * -EIO: journal or btree node IO error
  */
 #define bch_btree_insert_at(_c, _disk_res, _hook,			\
@@ -407,13 +407,13 @@ static inline bool journal_res_insert_fits(struct btree_insert *trans,
 }
 
 int bch_btree_insert_check_key(struct btree_iter *, struct bkey_i *);
-int bch_btree_insert(struct cache_set *, enum btree_id, struct bkey_i *,
+int bch_btree_insert(struct bch_fs *, enum btree_id, struct bkey_i *,
 		     struct disk_reservation *,
 		     struct extent_insert_hook *, u64 *, int flags);
-int bch_btree_update(struct cache_set *, enum btree_id,
+int bch_btree_update(struct bch_fs *, enum btree_id,
 		     struct bkey_i *, u64 *);
 
-int bch_btree_delete_range(struct cache_set *, enum btree_id,
+int bch_btree_delete_range(struct bch_fs *, enum btree_id,
 			   struct bpos, struct bpos, struct bversion,
 			   struct disk_reservation *,
 			   struct extent_insert_hook *, u64 *);

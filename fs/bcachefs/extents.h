@@ -12,7 +12,7 @@ struct extent_insert_hook;
 struct btree_nr_keys bch_key_sort_fix_overlapping(struct bset *,
 						  struct btree *,
 						  struct btree_node_iter *);
-struct btree_nr_keys bch_extent_sort_fix_overlapping(struct cache_set *c,
+struct btree_nr_keys bch_extent_sort_fix_overlapping(struct bch_fs *c,
 						     struct bset *,
 						     struct btree *,
 						     struct btree_node_iter *);
@@ -20,23 +20,23 @@ struct btree_nr_keys bch_extent_sort_fix_overlapping(struct cache_set *c,
 extern const struct bkey_ops bch_bkey_btree_ops;
 extern const struct bkey_ops bch_bkey_extent_ops;
 
-struct cache_set;
+struct bch_fs;
 struct journal_res;
 
 struct extent_pick_ptr {
 	struct bch_extent_crc128	crc;
 	struct bch_extent_ptr		ptr;
-	struct cache			*ca;
+	struct bch_dev			*ca;
 };
 
 struct extent_pick_ptr
-bch_btree_pick_ptr(struct cache_set *, const struct btree *);
+bch_btree_pick_ptr(struct bch_fs *, const struct btree *);
 
-void bch_extent_pick_ptr_avoiding(struct cache_set *, struct bkey_s_c,
-				  struct cache *, struct extent_pick_ptr *);
+void bch_extent_pick_ptr_avoiding(struct bch_fs *, struct bkey_s_c,
+				  struct bch_dev *, struct extent_pick_ptr *);
 
 static inline void
-bch_extent_pick_ptr(struct cache_set *c, struct bkey_s_c k,
+bch_extent_pick_ptr(struct bch_fs *c, struct bkey_s_c k,
 		    struct extent_pick_ptr *ret)
 {
 	bch_extent_pick_ptr_avoiding(c, k, NULL, ret);
@@ -50,8 +50,8 @@ enum btree_insert_ret
 bch_insert_fixup_extent(struct btree_insert *,
 			struct btree_insert_entry *);
 
-bool bch_extent_normalize(struct cache_set *, struct bkey_s);
-void bch_extent_mark_replicas_cached(struct cache_set *,
+bool bch_extent_normalize(struct bch_fs *, struct bkey_s);
+void bch_extent_mark_replicas_cached(struct bch_fs *,
 				     struct bkey_s_extent, unsigned);
 
 unsigned bch_extent_nr_ptrs(struct bkey_s_c_extent);
@@ -287,7 +287,7 @@ out:									\
 
 #define extent_for_each_online_device_crc(_c, _e, _crc, _ptr, _ca)	\
 	extent_for_each_ptr_crc_filter(_e, _ptr, _crc,			\
-				       ((_ca) = PTR_CACHE(_c, _ptr)))
+				       ((_ca) = PTR_DEV(_c, _ptr)))
 
 /* Iterate over pointers only, and from a given position: */
 
@@ -310,7 +310,7 @@ out:									\
 	extent_for_each_ptr_filter(_e, _ptr, true)
 
 #define extent_for_each_online_device(_c, _e, _ptr, _ca)		\
-	extent_for_each_ptr_filter(_e, _ptr, ((_ca) = PTR_CACHE(_c, _ptr)))
+	extent_for_each_ptr_filter(_e, _ptr, ((_ca) = PTR_DEV(_c, _ptr)))
 
 #define extent_ptr_prev(_e, _ptr)					\
 ({									\

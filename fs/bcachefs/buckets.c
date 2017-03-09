@@ -76,7 +76,7 @@
 #define lg_local_lock	lg_global_lock
 #define lg_local_unlock	lg_global_unlock
 
-static void bch_fs_stats_verify(struct cache_set *c)
+static void bch_fs_stats_verify(struct bch_fs *c)
 {
 	struct bch_fs_usage stats =
 		__bch_fs_usage_read(c);
@@ -99,7 +99,7 @@ static void bch_fs_stats_verify(struct cache_set *c)
 
 #else
 
-static void bch_fs_stats_verify(struct cache_set *c) {}
+static void bch_fs_stats_verify(struct bch_fs *c) {}
 
 #endif
 
@@ -107,15 +107,15 @@ static void bch_fs_stats_verify(struct cache_set *c) {}
  * Clear journal_seq_valid for buckets for which it's not needed, to prevent
  * wraparound:
  */
-void bch_bucket_seq_cleanup(struct cache_set *c)
+void bch_bucket_seq_cleanup(struct bch_fs *c)
 {
 	u16 last_seq_ondisk = c->journal.last_seq_ondisk;
-	struct cache *ca;
+	struct bch_dev *ca;
 	struct bucket *g;
 	struct bucket_mark m;
 	unsigned i;
 
-	for_each_cache(ca, c, i)
+	for_each_member_device(ca, c, i)
 		for_each_bucket(g, ca) {
 			bucket_cmpxchg(g, m, ({
 				if (!m.journal_seq_valid ||
@@ -127,7 +127,7 @@ void bch_bucket_seq_cleanup(struct cache_set *c)
 		}
 }
 
-#define bucket_stats_add(_acc, _stats)					\
+#define bch_usage_add(_acc, _stats)					\
 do {									\
 	typeof(_acc) _a = (_acc), _s = (_stats);			\
 	unsigned i;							\
@@ -136,18 +136,18 @@ do {									\
 		((u64 *) (_a))[i] += ((u64 *) (_s))[i];			\
 } while (0)
 
-#define bucket_stats_read_raw(_stats)					\
+#define bch_usage_read_raw(_stats)					\
 ({									\
 	typeof(*this_cpu_ptr(_stats)) _acc = { 0 };			\
 	int cpu;							\
 									\
 	for_each_possible_cpu(cpu)					\
-		bucket_stats_add(&_acc, per_cpu_ptr((_stats), cpu));	\
+		bch_usage_add(&_acc, per_cpu_ptr((_stats), cpu));	\
 									\
 	_acc;								\
 })
 
-#define bucket_stats_read_cached(_c, _cached, _uncached)		\
+#define bch_usage_read_cached(_c, _cached, _uncached)			\
 ({									\
 	typeof(_cached) _ret;						\
 	unsigned _seq;							\
@@ -155,37 +155,37 @@ do {									\
 	do {								\
 		_seq = read_seqcount_begin(&(_c)->gc_pos_lock);		\
 		_ret = (_c)->gc_pos.phase == GC_PHASE_DONE		\
-			? bucket_stats_read_raw(_uncached)		\
+			? bch_usage_read_raw(_uncached)			\
 			: (_cached);					\
 	} while (read_seqcount_retry(&(_c)->gc_pos_lock, _seq));	\
 									\
 	_ret;								\
 })
 
-struct bch_dev_usage __bch_dev_usage_read(struct cache *ca)
+struct bch_dev_usage __bch_dev_usage_read(struct bch_dev *ca)
 {
-	return bucket_stats_read_raw(ca->bucket_stats_percpu);
+	return bch_usage_read_raw(ca->usage_percpu);
 }
 
-struct bch_dev_usage bch_dev_usage_read(struct cache *ca)
+struct bch_dev_usage bch_dev_usage_read(struct bch_dev *ca)
 {
-	return bucket_stats_read_cached(ca->set,
-				ca->bucket_stats_cached,
-				ca->bucket_stats_percpu);
-}
-
-struct bch_fs_usage
-__bch_fs_usage_read(struct cache_set *c)
-{
-	return bucket_stats_read_raw(c->bucket_stats_percpu);
+	return bch_usage_read_cached(ca->fs,
+				ca->usage_cached,
+				ca->usage_percpu);
 }
 
 struct bch_fs_usage
-bch_fs_usage_read(struct cache_set *c)
+__bch_fs_usage_read(struct bch_fs *c)
 {
-	return bucket_stats_read_cached(c,
-				c->bucket_stats_cached,
-				c->bucket_stats_percpu);
+	return bch_usage_read_raw(c->usage_percpu);
+}
+
+struct bch_fs_usage
+bch_fs_usage_read(struct bch_fs *c)
+{
+	return bch_usage_read_cached(c,
+				     c->usage_cached,
+				     c->usage_percpu);
 }
 
 static inline int is_meta_bucket(struct bucket_mark m)
@@ -204,7 +204,7 @@ static inline int is_cached_bucket(struct bucket_mark m)
 		!m.dirty_sectors && !!m.cached_sectors;
 }
 
-void bch_fs_stats_apply(struct cache_set *c,
+void bch_fs_stats_apply(struct bch_fs *c,
 			struct bch_fs_usage *stats,
 			struct disk_reservation *disk_res,
 			struct gc_pos gc_pos)
@@ -226,22 +226,22 @@ void bch_fs_stats_apply(struct cache_set *c,
 		stats->online_reserved	-= added;
 	}
 
-	lg_local_lock(&c->bucket_stats_lock);
+	lg_local_lock(&c->usage_lock);
 	/* online_reserved not subject to gc: */
-	this_cpu_ptr(c->bucket_stats_percpu)->online_reserved +=
+	this_cpu_ptr(c->usage_percpu)->online_reserved +=
 		stats->online_reserved;
 	stats->online_reserved = 0;
 
 	if (!gc_will_visit(c, gc_pos))
-		bucket_stats_add(this_cpu_ptr(c->bucket_stats_percpu), stats);
+		bch_usage_add(this_cpu_ptr(c->usage_percpu), stats);
 
 	bch_fs_stats_verify(c);
-	lg_local_unlock(&c->bucket_stats_lock);
+	lg_local_unlock(&c->usage_lock);
 
 	memset(stats, 0, sizeof(*stats));
 }
 
-static bool bucket_became_unavailable(struct cache_set *c,
+static bool bucket_became_unavailable(struct bch_fs *c,
 				      struct bucket_mark old,
 				      struct bucket_mark new)
 {
@@ -250,11 +250,11 @@ static bool bucket_became_unavailable(struct cache_set *c,
 	       c && c->gc_pos.phase == GC_PHASE_DONE;
 }
 
-static void bucket_stats_update(struct cache *ca,
-				struct bucket_mark old, struct bucket_mark new,
-				struct bch_fs_usage *bch_alloc_stats)
+static void bch_usage_update(struct bch_dev *ca,
+			     struct bucket_mark old, struct bucket_mark new,
+			     struct bch_fs_usage *bch_alloc_stats)
 {
-	struct cache_set *c = ca->set;
+	struct bch_fs *c = ca->fs;
 	struct bch_dev_usage *cache_stats;
 
 	bch_fs_inconsistent_on(old.data_type && new.data_type &&
@@ -276,7 +276,7 @@ static void bucket_stats_update(struct cache *ca,
 	}
 
 	preempt_disable();
-	cache_stats = this_cpu_ptr(ca->bucket_stats_percpu);
+	cache_stats = this_cpu_ptr(ca->usage_percpu);
 
 	cache_stats->sectors_cached +=
 		(int) new.cached_sectors - (int) old.cached_sectors;
@@ -308,11 +308,11 @@ static void bucket_stats_update(struct cache *ca,
 	struct bch_fs_usage _stats = { 0 };		\
 	struct bucket_mark _old = bucket_cmpxchg(g, new, expr);	\
 								\
-	bucket_stats_update(ca, _old, new, &_stats);		\
+	bch_usage_update(ca, _old, new, &_stats);		\
 	_old;							\
 })
 
-void bch_invalidate_bucket(struct cache *ca, struct bucket *g)
+void bch_invalidate_bucket(struct bch_dev *ca, struct bucket *g)
 {
 	struct bch_fs_usage stats = { 0 };
 	struct bucket_mark old, new;
@@ -327,7 +327,7 @@ void bch_invalidate_bucket(struct cache *ca, struct bucket *g)
 		new.gen++;
 	}));
 
-	bucket_stats_update(ca, old, new, &stats);
+	bch_usage_update(ca, old, new, &stats);
 
 	BUG_ON(old.dirty_sectors);
 
@@ -338,7 +338,7 @@ void bch_invalidate_bucket(struct cache *ca, struct bucket *g)
 	 * because in this path we modify bch_alloc_stats based on how the
 	 * bucket_mark was modified, and the sector counts in bucket_mark are
 	 * subject to (saturating) overflow - and if they did overflow, the
-	 * cache set stats will now be off. We can tolerate this for
+	 * bch_fs_usage stats will now be off. We can tolerate this for
 	 * sectors_cached, but not anything else:
 	 */
 	stats.s[S_COMPRESSED][S_CACHED] = 0;
@@ -350,7 +350,7 @@ void bch_invalidate_bucket(struct cache *ca, struct bucket *g)
 					old.cached_sectors);
 }
 
-void bch_mark_free_bucket(struct cache *ca, struct bucket *g)
+void bch_mark_free_bucket(struct bch_dev *ca, struct bucket *g)
 {
 	struct bucket_mark old, new;
 
@@ -361,10 +361,10 @@ void bch_mark_free_bucket(struct cache *ca, struct bucket *g)
 		new.dirty_sectors	= 0;
 	}));
 
-	BUG_ON(bucket_became_unavailable(ca->set, old, new));
+	BUG_ON(bucket_became_unavailable(ca->fs, old, new));
 }
 
-void bch_mark_alloc_bucket(struct cache *ca, struct bucket *g,
+void bch_mark_alloc_bucket(struct bch_dev *ca, struct bucket *g,
 			   bool owned_by_allocator)
 {
 	struct bucket_mark new;
@@ -374,7 +374,7 @@ void bch_mark_alloc_bucket(struct cache *ca, struct bucket *g,
 	}));
 }
 
-void bch_mark_metadata_bucket(struct cache *ca, struct bucket *g,
+void bch_mark_metadata_bucket(struct bch_dev *ca, struct bucket *g,
 			      enum bucket_data_type type,
 			      bool may_make_unavailable)
 {
@@ -390,7 +390,7 @@ void bch_mark_metadata_bucket(struct cache *ca, struct bucket *g,
 	BUG_ON(old.cached_sectors);
 	BUG_ON(old.dirty_sectors);
 	BUG_ON(!may_make_unavailable &&
-	       bucket_became_unavailable(ca->set, old, new));
+	       bucket_became_unavailable(ca->fs, old, new));
 }
 
 #define saturated_add(ca, dst, src, max)			\
@@ -439,7 +439,7 @@ static unsigned __compressed_sectors(const union bch_extent_crc *crc, unsigned s
  * loop, to avoid racing with the start of gc clearing all the marks - GC does
  * that with the gc pos seqlock held.
  */
-static void bch_mark_pointer(struct cache_set *c,
+static void bch_mark_pointer(struct bch_fs *c,
 			     struct bkey_s_c_extent e,
 			     const union bch_extent_crc *crc,
 			     const struct bch_extent_ptr *ptr,
@@ -450,7 +450,7 @@ static void bch_mark_pointer(struct cache_set *c,
 {
 	struct bucket_mark old, new;
 	unsigned saturated;
-	struct cache *ca;
+	struct bch_dev *ca;
 	struct bucket *g;
 	u64 v;
 	unsigned old_sectors, new_sectors;
@@ -469,7 +469,7 @@ static void bch_mark_pointer(struct cache_set *c,
 	compressed_sectors = -__compressed_sectors(crc, old_sectors)
 		+ __compressed_sectors(crc, new_sectors);
 
-	ca = PTR_CACHE(c, ptr);
+	ca = PTR_DEV(c, ptr);
 	if (!ca)
 		goto out;
 
@@ -533,7 +533,7 @@ static void bch_mark_pointer(struct cache_set *c,
 			      old.counter,
 			      new.counter)) != old.counter);
 
-	bucket_stats_update(ca, old, new, NULL);
+	bch_usage_update(ca, old, new, NULL);
 
 	BUG_ON(!may_make_unavailable &&
 	       bucket_became_unavailable(c, old, new));
@@ -552,7 +552,7 @@ out:
 	stats->s[S_UNCOMPRESSED][type]	+= sectors;
 }
 
-static void bch_mark_extent(struct cache_set *c, struct bkey_s_c_extent e,
+static void bch_mark_extent(struct bch_fs *c, struct bkey_s_c_extent e,
 			    s64 sectors, bool metadata,
 			    bool may_make_unavailable,
 			    struct bch_fs_usage *stats,
@@ -574,7 +574,7 @@ static void bch_mark_extent(struct cache_set *c, struct bkey_s_c_extent e,
 	rcu_read_unlock();
 }
 
-static void __bch_mark_key(struct cache_set *c, struct bkey_s_c k,
+static void __bch_mark_key(struct bch_fs *c, struct bkey_s_c k,
 			   s64 sectors, bool metadata,
 			   bool may_make_unavailable,
 			   struct bch_fs_usage *stats,
@@ -596,14 +596,14 @@ static void __bch_mark_key(struct cache_set *c, struct bkey_s_c k,
 	}
 }
 
-void __bch_gc_mark_key(struct cache_set *c, struct bkey_s_c k,
+void __bch_gc_mark_key(struct bch_fs *c, struct bkey_s_c k,
 		       s64 sectors, bool metadata,
 		       struct bch_fs_usage *stats)
 {
 	__bch_mark_key(c, k, sectors, metadata, true, stats, false, 0);
 }
 
-void bch_gc_mark_key(struct cache_set *c, struct bkey_s_c k,
+void bch_gc_mark_key(struct bch_fs *c, struct bkey_s_c k,
 		     s64 sectors, bool metadata)
 {
 	struct bch_fs_usage stats = { 0 };
@@ -611,11 +611,11 @@ void bch_gc_mark_key(struct cache_set *c, struct bkey_s_c k,
 	__bch_gc_mark_key(c, k, sectors, metadata, &stats);
 
 	preempt_disable();
-	bucket_stats_add(this_cpu_ptr(c->bucket_stats_percpu), &stats);
+	bch_usage_add(this_cpu_ptr(c->usage_percpu), &stats);
 	preempt_enable();
 }
 
-void bch_mark_key(struct cache_set *c, struct bkey_s_c k,
+void bch_mark_key(struct bch_fs *c, struct bkey_s_c k,
 		  s64 sectors, bool metadata, struct gc_pos gc_pos,
 		  struct bch_fs_usage *stats, u64 journal_seq)
 {
@@ -641,50 +641,50 @@ void bch_mark_key(struct cache_set *c, struct bkey_s_c k,
 	 *
 	 * To avoid racing with GC's position changing, we have to deal with
 	 *  - GC's position being set to GC_POS_MIN when GC starts:
-	 *    bucket_stats_lock guards against this
+	 *    usage_lock guards against this
 	 *  - GC's position overtaking @gc_pos: we guard against this with
 	 *    whatever lock protects the data structure the reference lives in
 	 *    (e.g. the btree node lock, or the relevant allocator lock).
 	 */
-	lg_local_lock(&c->bucket_stats_lock);
+	lg_local_lock(&c->usage_lock);
 	__bch_mark_key(c, k, sectors, metadata, false, stats,
 		       gc_will_visit(c, gc_pos), journal_seq);
 
 	bch_fs_stats_verify(c);
-	lg_local_unlock(&c->bucket_stats_lock);
+	lg_local_unlock(&c->usage_lock);
 }
 
-static u64 __recalc_sectors_available(struct cache_set *c)
+static u64 __recalc_sectors_available(struct bch_fs *c)
 {
 	return c->capacity - bch_fs_sectors_used(c);
 }
 
 /* Used by gc when it's starting: */
-void bch_recalc_sectors_available(struct cache_set *c)
+void bch_recalc_sectors_available(struct bch_fs *c)
 {
 	int cpu;
 
-	lg_global_lock(&c->bucket_stats_lock);
+	lg_global_lock(&c->usage_lock);
 
 	for_each_possible_cpu(cpu)
-		per_cpu_ptr(c->bucket_stats_percpu, cpu)->available_cache = 0;
+		per_cpu_ptr(c->usage_percpu, cpu)->available_cache = 0;
 
 	atomic64_set(&c->sectors_available,
 		     __recalc_sectors_available(c));
 
-	lg_global_unlock(&c->bucket_stats_lock);
+	lg_global_unlock(&c->usage_lock);
 }
 
-void bch_disk_reservation_put(struct cache_set *c,
+void bch_disk_reservation_put(struct bch_fs *c,
 			      struct disk_reservation *res)
 {
 	if (res->sectors) {
-		lg_local_lock(&c->bucket_stats_lock);
-		this_cpu_sub(c->bucket_stats_percpu->online_reserved,
+		lg_local_lock(&c->usage_lock);
+		this_cpu_sub(c->usage_percpu->online_reserved,
 			     res->sectors);
 
 		bch_fs_stats_verify(c);
-		lg_local_unlock(&c->bucket_stats_lock);
+		lg_local_unlock(&c->usage_lock);
 
 		res->sectors = 0;
 	}
@@ -692,7 +692,7 @@ void bch_disk_reservation_put(struct cache_set *c,
 
 #define SECTORS_CACHE	1024
 
-int bch_disk_reservation_add(struct cache_set *c,
+int bch_disk_reservation_add(struct bch_fs *c,
 			     struct disk_reservation *res,
 			     unsigned sectors, int flags)
 {
@@ -703,8 +703,8 @@ int bch_disk_reservation_add(struct cache_set *c,
 
 	sectors *= res->nr_replicas;
 
-	lg_local_lock(&c->bucket_stats_lock);
-	stats = this_cpu_ptr(c->bucket_stats_percpu);
+	lg_local_lock(&c->usage_lock);
+	stats = this_cpu_ptr(c->usage_percpu);
 
 	if (sectors >= stats->available_cache)
 		goto out;
@@ -713,7 +713,7 @@ int bch_disk_reservation_add(struct cache_set *c,
 	do {
 		old = v;
 		if (old < sectors) {
-			lg_local_unlock(&c->bucket_stats_lock);
+			lg_local_unlock(&c->usage_lock);
 			goto recalculate;
 		}
 
@@ -728,7 +728,7 @@ out:
 	res->sectors		+= sectors;
 
 	bch_fs_stats_verify(c);
-	lg_local_unlock(&c->bucket_stats_lock);
+	lg_local_unlock(&c->usage_lock);
 	return 0;
 
 recalculate:
@@ -748,7 +748,7 @@ recalculate:
 		else if (!down_read_trylock(&c->gc_lock))
 			return -EINTR;
 	}
-	lg_global_lock(&c->bucket_stats_lock);
+	lg_global_lock(&c->usage_lock);
 
 	sectors_available = __recalc_sectors_available(c);
 
@@ -765,14 +765,14 @@ recalculate:
 	}
 
 	bch_fs_stats_verify(c);
-	lg_global_unlock(&c->bucket_stats_lock);
+	lg_global_unlock(&c->usage_lock);
 	if (!(flags & BCH_DISK_RESERVATION_GC_LOCK_HELD))
 		up_read(&c->gc_lock);
 
 	return ret;
 }
 
-int bch_disk_reservation_get(struct cache_set *c,
+int bch_disk_reservation_get(struct bch_fs *c,
 			     struct disk_reservation *res,
 			     unsigned sectors, int flags)
 {

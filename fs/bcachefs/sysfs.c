@@ -211,7 +211,7 @@ STORE(__cached_dev)
 	struct cached_dev *dc = container_of(kobj, struct cached_dev,
 					     disk.kobj);
 	unsigned v = size;
-	struct cache_set *c;
+	struct bch_fs *c;
 	struct kobj_uevent_env *env;
 
 #define d_strtoul(var)		sysfs_strtoul(var, dc->var)
@@ -448,7 +448,7 @@ static struct attribute *bch_blockdev_volume_files[] = {
 };
 KTYPE(bch_blockdev_volume);
 
-static int bch_bset_print_stats(struct cache_set *c, char *buf)
+static int bch_bset_print_stats(struct bch_fs *c, char *buf)
 {
 	struct bset_stats stats;
 	size_t nodes = 0;
@@ -491,7 +491,7 @@ static int bch_bset_print_stats(struct cache_set *c, char *buf)
 			stats.failed_overflow);
 }
 
-static unsigned bch_root_usage(struct cache_set *c)
+static unsigned bch_root_usage(struct bch_fs *c)
 {
 	unsigned bytes = 0;
 	struct bkey_packed *k;
@@ -515,7 +515,7 @@ lock_root:
 	return (bytes * 100) / btree_bytes(c);
 }
 
-static size_t bch_btree_cache_size(struct cache_set *c)
+static size_t bch_btree_cache_size(struct bch_fs *c)
 {
 	size_t ret = 0;
 	struct btree *b;
@@ -528,20 +528,20 @@ static size_t bch_btree_cache_size(struct cache_set *c)
 	return ret;
 }
 
-static unsigned bch_fs_available_percent(struct cache_set *c)
+static unsigned bch_fs_available_percent(struct bch_fs *c)
 {
 	return div64_u64((u64) sectors_available(c) * 100,
 			 c->capacity ?: 1);
 }
 
 #if 0
-static unsigned bch_btree_used(struct cache_set *c)
+static unsigned bch_btree_used(struct bch_fs *c)
 {
 	return div64_u64(c->gc_stats.key_bytes * 100,
 			 (c->gc_stats.nodes ?: 1) * btree_bytes(c));
 }
 
-static unsigned bch_average_key_size(struct cache_set *c)
+static unsigned bch_average_key_size(struct bch_fs *c)
 {
 	return c->gc_stats.nkeys
 		? div64_u64(c->gc_stats.data, c->gc_stats.nkeys)
@@ -549,7 +549,7 @@ static unsigned bch_average_key_size(struct cache_set *c)
 }
 #endif
 
-static ssize_t show_fs_alloc_debug(struct cache_set *c, char *buf)
+static ssize_t show_fs_alloc_debug(struct bch_fs *c, char *buf)
 {
 	struct bch_fs_usage stats = bch_fs_usage_read(c);
 
@@ -576,7 +576,7 @@ static ssize_t show_fs_alloc_debug(struct cache_set *c, char *buf)
 			 stats.online_reserved);
 }
 
-static ssize_t bch_compression_stats(struct cache_set *c, char *buf)
+static ssize_t bch_compression_stats(struct bch_fs *c, char *buf)
 {
 	struct btree_iter iter;
 	struct bkey_s_c k;
@@ -626,7 +626,7 @@ static ssize_t bch_compression_stats(struct cache_set *c, char *buf)
 
 SHOW(bch_fs)
 {
-	struct cache_set *c = container_of(kobj, struct cache_set, kobj);
+	struct bch_fs *c = container_of(kobj, struct bch_fs, kobj);
 
 	sysfs_print(minor,			c->minor);
 
@@ -717,7 +717,7 @@ SHOW(bch_fs)
 
 STORE(__bch_fs)
 {
-	struct cache_set *c = container_of(kobj, struct cache_set, kobj);
+	struct bch_fs *c = container_of(kobj, struct bch_fs, kobj);
 
 	if (attr == &sysfs_unregister) {
 		bch_fs_detach(c);
@@ -760,12 +760,12 @@ STORE(__bch_fs)
 		      c->foreground_write_ratelimit_enabled);
 
 	if (attr == &sysfs_copy_gc_enabled) {
-		struct cache *ca;
+		struct bch_dev *ca;
 		unsigned i;
 		ssize_t ret = strtoul_safe(buf, c->copy_gc_enabled)
 			?: (ssize_t) size;
 
-		for_each_cache(ca, c, i)
+		for_each_member_device(ca, c, i)
 			if (ca->moving_gc_read)
 				wake_up_process(ca->moving_gc_read);
 		return ret;
@@ -832,7 +832,7 @@ STORE(__bch_fs)
 
 STORE(bch_fs)
 {
-	struct cache_set *c = container_of(kobj, struct cache_set, kobj);
+	struct bch_fs *c = container_of(kobj, struct bch_fs, kobj);
 
 	mutex_lock(&c->state_lock);
 	size = __bch_fs_store(kobj, attr, buf, size);
@@ -883,13 +883,13 @@ KTYPE(bch_fs);
 
 SHOW(bch_fs_internal)
 {
-	struct cache_set *c = container_of(kobj, struct cache_set, internal);
+	struct bch_fs *c = container_of(kobj, struct bch_fs, internal);
 	return bch_fs_show(&c->kobj, attr, buf);
 }
 
 STORE(bch_fs_internal)
 {
-	struct cache_set *c = container_of(kobj, struct cache_set, internal);
+	struct bch_fs *c = container_of(kobj, struct bch_fs, internal);
 	return bch_fs_store(&c->kobj, attr, buf, size);
 }
 
@@ -934,14 +934,14 @@ KTYPE(bch_fs_internal);
 
 SHOW(bch_fs_opts_dir)
 {
-	struct cache_set *c = container_of(kobj, struct cache_set, opts_dir);
+	struct bch_fs *c = container_of(kobj, struct bch_fs, opts_dir);
 
 	return bch_opt_show(&c->opts, attr->name, buf, PAGE_SIZE);
 }
 
 STORE(bch_fs_opts_dir)
 {
-	struct cache_set *c = container_of(kobj, struct cache_set, opts_dir);
+	struct bch_fs *c = container_of(kobj, struct bch_fs, opts_dir);
 	const struct bch_option *opt;
 	enum bch_opt_id id;
 	u64 v;
@@ -993,7 +993,7 @@ KTYPE(bch_fs_opts_dir);
 
 SHOW(bch_fs_time_stats)
 {
-	struct cache_set *c = container_of(kobj, struct cache_set, time_stats);
+	struct bch_fs *c = container_of(kobj, struct bch_fs, time_stats);
 
 #define BCH_TIME_STAT(name, frequency_units, duration_units)		\
 	sysfs_print_time_stats(&c->name##_time, name,			\
@@ -1006,7 +1006,7 @@ SHOW(bch_fs_time_stats)
 
 STORE(bch_fs_time_stats)
 {
-	struct cache_set *c = container_of(kobj, struct cache_set, time_stats);
+	struct bch_fs *c = container_of(kobj, struct bch_fs, time_stats);
 
 #define BCH_TIME_STAT(name, frequency_units, duration_units)		\
 	sysfs_clear_time_stats(&c->name##_time, name);
@@ -1030,29 +1030,29 @@ static struct attribute *bch_fs_time_stats_files[] = {
 };
 KTYPE(bch_fs_time_stats);
 
-typedef unsigned (bucket_map_fn)(struct cache *, struct bucket *, void *);
+typedef unsigned (bucket_map_fn)(struct bch_dev *, struct bucket *, void *);
 
-static unsigned bucket_priority_fn(struct cache *ca, struct bucket *g,
+static unsigned bucket_priority_fn(struct bch_dev *ca, struct bucket *g,
 				   void *private)
 {
 	int rw = (private ? 1 : 0);
 
-	return ca->set->prio_clock[rw].hand - g->prio[rw];
+	return ca->fs->prio_clock[rw].hand - g->prio[rw];
 }
 
-static unsigned bucket_sectors_used_fn(struct cache *ca, struct bucket *g,
+static unsigned bucket_sectors_used_fn(struct bch_dev *ca, struct bucket *g,
 				       void *private)
 {
 	return bucket_sectors_used(g);
 }
 
-static unsigned bucket_oldest_gen_fn(struct cache *ca, struct bucket *g,
+static unsigned bucket_oldest_gen_fn(struct bch_dev *ca, struct bucket *g,
 				     void *private)
 {
 	return bucket_gc_gen(ca, g);
 }
 
-static ssize_t show_quantiles(struct cache *ca, char *buf,
+static ssize_t show_quantiles(struct bch_dev *ca, char *buf,
 			      bucket_map_fn *fn, void *private)
 {
 	int cmp(const void *l, const void *r)
@@ -1090,7 +1090,7 @@ static ssize_t show_quantiles(struct cache *ca, char *buf,
 
 }
 
-static ssize_t show_reserve_stats(struct cache *ca, char *buf)
+static ssize_t show_reserve_stats(struct bch_dev *ca, char *buf)
 {
 	enum alloc_reserve i;
 	ssize_t ret;
@@ -1113,9 +1113,9 @@ static ssize_t show_reserve_stats(struct cache *ca, char *buf)
 	return ret;
 }
 
-static ssize_t show_dev_alloc_debug(struct cache *ca, char *buf)
+static ssize_t show_dev_alloc_debug(struct bch_dev *ca, char *buf)
 {
-	struct cache_set *c = ca->set;
+	struct bch_fs *c = ca->fs;
 	struct bch_dev_usage stats = bch_dev_usage_read(ca);
 
 	return scnprintf(buf, PAGE_SIZE,
@@ -1139,13 +1139,13 @@ static ssize_t show_dev_alloc_debug(struct cache *ca, char *buf)
 		stats.buckets_alloc,			ca->mi.nbuckets - ca->mi.first_bucket,
 		stats.buckets_meta,			ca->mi.nbuckets - ca->mi.first_bucket,
 		stats.buckets_dirty,			ca->mi.nbuckets - ca->mi.first_bucket,
-		__buckets_available_cache(ca, stats),	ca->mi.nbuckets - ca->mi.first_bucket,
+		__dev_buckets_available(ca, stats),	ca->mi.nbuckets - ca->mi.first_bucket,
 		c->freelist_wait.list.first		? "waiting" : "empty",
 		c->open_buckets_nr_free, OPEN_BUCKETS_COUNT, BTREE_NODE_RESERVE,
 		c->open_buckets_wait.list.first		? "waiting" : "empty");
 }
 
-static u64 sectors_written(struct cache *ca)
+static u64 sectors_written(struct bch_dev *ca)
 {
 	u64 ret = 0;
 	int cpu;
@@ -1158,8 +1158,8 @@ static u64 sectors_written(struct cache *ca)
 
 SHOW(bch_dev)
 {
-	struct cache *ca = container_of(kobj, struct cache, kobj);
-	struct cache_set *c = ca->set;
+	struct bch_dev *ca = container_of(kobj, struct bch_dev, kobj);
+	struct bch_fs *c = ca->fs;
 	struct bch_dev_usage stats = bch_dev_usage_read(ca);
 
 	sysfs_printf(uuid,		"%pU\n", ca->uuid.b);
@@ -1189,8 +1189,8 @@ SHOW(bch_dev)
 	sysfs_print(cached_buckets,	stats.buckets_cached);
 	sysfs_print(meta_buckets,	stats.buckets_meta);
 	sysfs_print(alloc_buckets,	stats.buckets_alloc);
-	sysfs_print(available_buckets,	buckets_available_cache(ca));
-	sysfs_print(free_buckets,	buckets_free_cache(ca));
+	sysfs_print(available_buckets,	dev_buckets_available(ca));
+	sysfs_print(free_buckets,	dev_buckets_free(ca));
 	sysfs_print(has_data,		ca->mi.has_data);
 	sysfs_print(has_metadata,	ca->mi.has_metadata);
 
@@ -1226,8 +1226,8 @@ SHOW(bch_dev)
 
 STORE(__bch_dev)
 {
-	struct cache *ca = container_of(kobj, struct cache, kobj);
-	struct cache_set *c = ca->set;
+	struct bch_dev *ca = container_of(kobj, struct bch_dev, kobj);
+	struct bch_fs *c = ca->fs;
 	struct bch_member *mi;
 
 	sysfs_pd_controller_store(copy_gc, &ca->moving_gc_pd);

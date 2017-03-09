@@ -12,17 +12,17 @@
 
 #include <trace/events/bcachefs.h>
 
-static struct bch_extent_ptr *bkey_find_ptr(struct cache_set *c,
+static struct bch_extent_ptr *bkey_find_ptr(struct bch_fs *c,
 					    struct bkey_s_extent e,
 					    struct bch_extent_ptr ptr)
 {
 	struct bch_extent_ptr *ptr2;
-	struct cache_member_rcu *mi;
+	struct bch_member_rcu *mi;
 	unsigned bucket_bits;
 
-	mi = cache_member_info_get(c);
+	mi = fs_member_info_get(c);
 	bucket_bits = ilog2(mi->m[ptr.dev].bucket_size);
-	cache_member_info_put();
+	fs_member_info_put();
 
 	extent_for_each_ptr(e, ptr2)
 		if (ptr2->dev == ptr.dev &&
@@ -52,7 +52,7 @@ static struct bch_extent_ptr *bch_migrate_matching_ptr(struct migrate_write *m,
 
 static int bch_migrate_index_update(struct bch_write_op *op)
 {
-	struct cache_set *c = op->c;
+	struct bch_fs *c = op->c;
 	struct migrate_write *m =
 		container_of(op, struct migrate_write, op);
 	struct keylist *keys = &op->insert_keys;
@@ -141,7 +141,7 @@ out:
 	return ret;
 }
 
-void bch_migrate_write_init(struct cache_set *c,
+void bch_migrate_write_init(struct bch_fs *c,
 			    struct migrate_write *m,
 			    struct write_point *wp,
 			    struct bkey_s_c k,
@@ -266,7 +266,7 @@ static void read_moving_endio(struct bio *bio)
 static void __bch_data_move(struct closure *cl)
 {
 	struct moving_io *io = container_of(cl, struct moving_io, cl);
-	struct cache_set *c = io->write.op.c;
+	struct bch_fs *c = io->write.op.c;
 	struct extent_pick_ptr pick;
 
 	bch_extent_pick_ptr_avoiding(c, bkey_i_to_s_c(&io->write.key),
@@ -289,7 +289,7 @@ static void __bch_data_move(struct closure *cl)
 			&pick, BCH_READ_IS_LAST);
 }
 
-int bch_data_move(struct cache_set *c,
+int bch_data_move(struct bch_fs *c,
 		  struct moving_context *ctxt,
 		  struct write_point *wp,
 		  struct bkey_s_c k,

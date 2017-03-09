@@ -52,8 +52,8 @@ void bch_write_bdev_super(struct cached_dev *, struct closure *);
 void bch_cached_dev_release(struct kobject *);
 void bch_blockdev_volume_release(struct kobject *);
 
-int bch_cached_dev_attach(struct cached_dev *, struct cache_set *);
-void bch_attach_backing_devs(struct cache_set *);
+int bch_cached_dev_attach(struct cached_dev *, struct bch_fs *);
+void bch_attach_backing_devs(struct bch_fs *);
 
 void bch_cached_dev_detach(struct cached_dev *);
 void bch_cached_dev_run(struct cached_dev *);
@@ -62,13 +62,13 @@ void bch_blockdev_stop(struct bcache_device *);
 bool bch_is_open_backing_dev(struct block_device *);
 const char *bch_backing_dev_register(struct bcache_superblock *);
 
-int bch_blockdev_volume_create(struct cache_set *, u64);
-int bch_blockdev_volumes_start(struct cache_set *);
+int bch_blockdev_volume_create(struct bch_fs *, u64);
+int bch_blockdev_volumes_start(struct bch_fs *);
 
-void bch_blockdevs_stop(struct cache_set *);
+void bch_blockdevs_stop(struct bch_fs *);
 
-void bch_fs_blockdev_exit(struct cache_set *);
-int bch_fs_blockdev_init(struct cache_set *);
+void bch_fs_blockdev_exit(struct bch_fs *);
+int bch_fs_blockdev_init(struct bch_fs *);
 void bch_blockdev_exit(void);
 int bch_blockdev_init(void);
 
@@ -80,11 +80,11 @@ static inline void bch_write_bdev_super(struct cached_dev *dc,
 static inline void bch_cached_dev_release(struct kobject *kobj) {}
 static inline void bch_blockdev_volume_release(struct kobject *kobj) {}
 
-static inline int bch_cached_dev_attach(struct cached_dev *dc, struct cache_set *c)
+static inline int bch_cached_dev_attach(struct cached_dev *dc, struct bch_fs *c)
 {
 	return 0;
 }
-static inline void bch_attach_backing_devs(struct cache_set *c) {}
+static inline void bch_attach_backing_devs(struct bch_fs *c) {}
 
 static inline void bch_cached_dev_detach(struct cached_dev *dc) {}
 static inline void bch_cached_dev_run(struct cached_dev *dc) {}
@@ -99,12 +99,12 @@ static inline const char *bch_backing_dev_register(struct bcache_superblock *sb)
 	return "not implemented";
 }
 
-static inline int bch_blockdev_volume_create(struct cache_set *c, u64 s) { return 0; }
-static inline int bch_blockdev_volumes_start(struct cache_set *c) { return 0; }
+static inline int bch_blockdev_volume_create(struct bch_fs *c, u64 s) { return 0; }
+static inline int bch_blockdev_volumes_start(struct bch_fs *c) { return 0; }
 
-static inline void bch_blockdevs_stop(struct cache_set *c) {}
-static inline void bch_fs_blockdev_exit(struct cache_set *c) {}
-static inline int bch_fs_blockdev_init(struct cache_set *c) { return 0; }
+static inline void bch_blockdevs_stop(struct bch_fs *c) {}
+static inline void bch_fs_blockdev_exit(struct bch_fs *c) {}
+static inline int bch_fs_blockdev_init(struct bch_fs *c) { return 0; }
 static inline void bch_blockdev_exit(void) {}
 static inline int bch_blockdev_init(void) { return 0; }
 
@@ -131,7 +131,7 @@ static inline u64 bcache_dev_inum(struct bcache_device *d)
 	return d->inode.k.p.inode;
 }
 
-static inline struct bcache_device *bch_dev_find(struct cache_set *c, u64 inode)
+static inline struct bcache_device *bch_dev_find(struct bch_fs *c, u64 inode)
 {
 	return radix_tree_lookup(&c->devices, inode);
 }

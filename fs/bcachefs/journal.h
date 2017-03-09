@@ -138,13 +138,13 @@ void bch_journal_pin_add_if_older(struct journal *,
 void bch_journal_flush_pins(struct journal *);
 
 struct closure;
-struct cache_set;
+struct bch_fs;
 struct keylist;
 
-struct bkey_i *bch_journal_find_btree_root(struct cache_set *, struct jset *,
+struct bkey_i *bch_journal_find_btree_root(struct bch_fs *, struct jset *,
 					   enum btree_id, unsigned *);
 
-int bch_journal_seq_should_ignore(struct cache_set *, u64, struct btree *);
+int bch_journal_seq_should_ignore(struct bch_fs *, u64, struct btree *);
 
 u64 bch_inode_journal_seq(struct journal *, u64);
 
@@ -330,16 +330,16 @@ static inline int bch_journal_error(struct journal *j)
 		? -EIO : 0;
 }
 
-static inline bool journal_flushes_device(struct cache *ca)
+static inline bool journal_flushes_device(struct bch_dev *ca)
 {
 	return true;
 }
 
-void bch_journal_start(struct cache_set *);
-void bch_journal_mark(struct cache_set *, struct list_head *);
+void bch_journal_start(struct bch_fs *);
+void bch_journal_mark(struct bch_fs *, struct list_head *);
 void bch_journal_entries_free(struct list_head *);
-int bch_journal_read(struct cache_set *, struct list_head *);
-int bch_journal_replay(struct cache_set *, struct list_head *);
+int bch_journal_read(struct bch_fs *, struct list_head *);
+int bch_journal_replay(struct bch_fs *, struct list_head *);
 
 static inline void bch_journal_set_replay_done(struct journal *j)
 {
@@ -353,7 +353,7 @@ static inline void bch_journal_set_replay_done(struct journal *j)
 
 ssize_t bch_journal_print_debug(struct journal *, char *);
 
-int bch_dev_journal_alloc(struct cache *);
+int bch_dev_journal_alloc(struct bch_dev *);
 
 static inline unsigned bch_nr_journal_buckets(struct bch_sb_field_journal *j)
 {
@@ -362,11 +362,11 @@ static inline unsigned bch_nr_journal_buckets(struct bch_sb_field_journal *j)
 		: 0;
 }
 
-int bch_journal_move(struct cache *);
+int bch_journal_move(struct bch_dev *);
 
 void bch_fs_journal_stop(struct journal *);
-void bch_dev_journal_exit(struct cache *);
-int bch_dev_journal_init(struct cache *);
+void bch_dev_journal_exit(struct bch_dev *);
+int bch_dev_journal_init(struct bch_dev *);
 void bch_fs_journal_exit(struct journal *);
 int bch_fs_journal_init(struct journal *, unsigned);
 

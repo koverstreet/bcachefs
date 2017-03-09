@@ -220,7 +220,7 @@ err:
 	return ret;
 }
 
-static void gen_poly_key(struct cache_set *c, struct shash_desc *desc,
+static void gen_poly_key(struct bch_fs *c, struct shash_desc *desc,
 			 struct nonce nonce)
 {
 	u8 key[POLY1305_KEY_SIZE];
@@ -236,7 +236,7 @@ static void gen_poly_key(struct cache_set *c, struct shash_desc *desc,
 	crypto_shash_update(desc, key, sizeof(key));
 }
 
-struct bch_csum bch_checksum(struct cache_set *c, unsigned type,
+struct bch_csum bch_checksum(struct bch_fs *c, unsigned type,
 			     struct nonce nonce, const void *data, size_t len)
 {
 	switch (type) {
@@ -270,7 +270,7 @@ struct bch_csum bch_checksum(struct cache_set *c, unsigned type,
 	}
 }
 
-void bch_encrypt(struct cache_set *c, unsigned type,
+void bch_encrypt(struct bch_fs *c, unsigned type,
 		 struct nonce nonce, void *data, size_t len)
 {
 	if (!bch_csum_type_is_encryption(type))
@@ -279,7 +279,7 @@ void bch_encrypt(struct cache_set *c, unsigned type,
 	do_encrypt(c->chacha20, nonce, data, len);
 }
 
-struct bch_csum bch_checksum_bio(struct cache_set *c, unsigned type,
+struct bch_csum bch_checksum_bio(struct bch_fs *c, unsigned type,
 				 struct nonce nonce, struct bio *bio)
 {
 	struct bio_vec bv;
@@ -329,7 +329,7 @@ struct bch_csum bch_checksum_bio(struct cache_set *c, unsigned type,
 	}
 }
 
-void bch_encrypt_bio(struct cache_set *c, unsigned type,
+void bch_encrypt_bio(struct bch_fs *c, unsigned type,
 		     struct nonce nonce, struct bio *bio)
 {
 	struct bio_vec bv;
@@ -416,7 +416,7 @@ int bch_request_key(struct bch_sb *sb, struct bch_key *key)
 }
 #endif
 
-static int bch_decrypt_sb_key(struct cache_set *c,
+static int bch_decrypt_sb_key(struct bch_fs *c,
 			      struct bch_sb_field_crypt *crypt,
 			      struct bch_key *key)
 {
@@ -453,7 +453,7 @@ err:
 	return ret;
 }
 
-static int bch_alloc_ciphers(struct cache_set *c)
+static int bch_alloc_ciphers(struct bch_fs *c)
 {
 	if (!c->chacha20)
 		c->chacha20 = crypto_alloc_blkcipher("chacha20", 0,
@@ -469,7 +469,7 @@ static int bch_alloc_ciphers(struct cache_set *c)
 	return 0;
 }
 
-int bch_disable_encryption(struct cache_set *c)
+int bch_disable_encryption(struct bch_fs *c)
 {
 	struct bch_sb_field_crypt *crypt;
 	struct bch_key key;
@@ -501,7 +501,7 @@ out:
 	return ret;
 }
 
-int bch_enable_encryption(struct cache_set *c, bool keyed)
+int bch_enable_encryption(struct bch_fs *c, bool keyed)
 {
 	struct bch_encrypted_key key;
 	struct bch_key user_key;
@@ -557,7 +557,7 @@ err:
 	return ret;
 }
 
-void bch_fs_encryption_exit(struct cache_set *c)
+void bch_fs_encryption_exit(struct bch_fs *c)
 {
 	if (!IS_ERR_OR_NULL(c->poly1305))
 		crypto_free_shash(c->poly1305);
@@ -565,7 +565,7 @@ void bch_fs_encryption_exit(struct cache_set *c)
 		crypto_free_blkcipher(c->chacha20);
 }
 
-int bch_fs_encryption_init(struct cache_set *c)
+int bch_fs_encryption_init(struct bch_fs *c)
 {
 	struct bch_sb_field_crypt *crypt;
 	struct bch_key key;

@@ -183,7 +183,7 @@ bch_hash_lookup_bkey_at(const struct bch_hash_desc desc,
 static inline struct bkey_s_c
 bch_hash_lookup(const struct bch_hash_desc desc,
 		const struct bch_hash_info *info,
-		struct cache_set *c, u64 inode,
+		struct bch_fs *c, u64 inode,
 		struct btree_iter *iter, const void *key)
 {
 	bch_btree_iter_init(iter, c, desc.btree_id,
@@ -195,7 +195,7 @@ bch_hash_lookup(const struct bch_hash_desc desc,
 static inline struct bkey_s_c
 bch_hash_lookup_intent(const struct bch_hash_desc desc,
 		       const struct bch_hash_info *info,
-		       struct cache_set *c, u64 inode,
+		       struct bch_fs *c, u64 inode,
 		       struct btree_iter *iter, const void *key)
 {
 	bch_btree_iter_init_intent(iter, c, desc.btree_id,
@@ -225,7 +225,7 @@ bch_hash_hole_at(const struct bch_hash_desc desc, struct btree_iter *iter)
 
 static inline struct bkey_s_c bch_hash_hole(const struct bch_hash_desc desc,
 					    const struct bch_hash_info *info,
-					    struct cache_set *c, u64 inode,
+					    struct bch_fs *c, u64 inode,
 					    struct btree_iter *iter,
 					    const void *key)
 {
@@ -267,7 +267,7 @@ static inline int bch_hash_needs_whiteout(const struct bch_hash_desc desc,
 
 static inline int bch_hash_set(const struct bch_hash_desc desc,
 			       const struct bch_hash_info *info,
-			       struct cache_set *c, u64 inode,
+			       struct bch_fs *c, u64 inode,
 			       u64 *journal_seq,
 			       struct bkey_i *insert, int flags)
 {
@@ -342,7 +342,7 @@ err:
 
 static inline int bch_hash_delete(const struct bch_hash_desc desc,
 				  const struct bch_hash_info *info,
-				  struct cache_set *c, u64 inode,
+				  struct bch_fs *c, u64 inode,
 				  u64 *journal_seq, const void *key)
 {
 	struct btree_iter iter, whiteout_iter;

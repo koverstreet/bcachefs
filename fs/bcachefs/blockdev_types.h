@@ -11,7 +11,7 @@ struct bcache_device {
 
 	struct kobject		kobj;
 
-	struct cache_set	*c;
+	struct bch_fs	*c;
 
 	struct rb_node		node;
 	struct bkey_i_inode_blockdev inode;

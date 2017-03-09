@@ -91,7 +91,7 @@ static int bch_sb_realloc(struct bcache_superblock *sb, unsigned u64s)
 	return __bch_super_realloc(sb, get_order(new_bytes));
 }
 
-static int bch_fs_sb_realloc(struct cache_set *c, unsigned u64s)
+static int bch_fs_sb_realloc(struct bch_fs *c, unsigned u64s)
 {
 	u64 bytes = __vstruct_bytes(struct bch_sb, u64s);
 	struct bch_sb *sb;
@@ -159,14 +159,14 @@ struct bch_sb_field *bch_sb_field_resize(struct bcache_superblock *sb,
 	return f;
 }
 
-struct bch_sb_field *bch_fs_sb_field_resize(struct cache_set *c,
+struct bch_sb_field *bch_fs_sb_field_resize(struct bch_fs *c,
 					    enum bch_sb_field_type type,
 					    unsigned u64s)
 {
 	struct bch_sb_field *f = bch_sb_field_get(c->disk_sb, type);
 	ssize_t old_u64s = f ? le32_to_cpu(f->u64s) : 0;
 	ssize_t d = -old_u64s + u64s;
-	struct cache *ca;
+	struct bch_dev *ca;
 	unsigned i;
 
 	lockdep_assert_held(&c->sb_lock);
@@ -174,7 +174,7 @@ struct bch_sb_field *bch_fs_sb_field_resize(struct cache_set *c,
 	if (bch_fs_sb_realloc(c, le32_to_cpu(c->disk_sb->u64s) + d))
 		return NULL;
 
-	for_each_cache(ca, c, i) {
+	for_each_member_device(ca, c, i) {
 		struct bcache_superblock *sb = &ca->disk_sb;
 
 		if (bch_sb_realloc(sb, le32_to_cpu(sb->sb->u64s) + d)) {
@@ -228,7 +228,7 @@ static int u64_cmp(const void *_l, const void *_r)
 }
 
 const char *bch_validate_journal_layout(struct bch_sb *sb,
-					struct cache_member_cpu mi)
+					struct bch_member_cpu mi)
 {
 	struct bch_sb_field_journal *journal;
 	const char *err;
@@ -306,7 +306,7 @@ const char *bch_validate_cache_super(struct bcache_superblock *disk_sb)
 	struct bch_sb *sb = disk_sb->sb;
 	struct bch_sb_field *f;
 	struct bch_sb_field_members *sb_mi;
-	struct cache_member_cpu	mi;
+	struct bch_member_cpu	mi;
 	const char *err;
 	u16 block_size;
 
@@ -436,13 +436,13 @@ const char *bch_validate_cache_super(struct bcache_superblock *disk_sb)
 
 static bool bch_is_open_cache(struct block_device *bdev)
 {
-	struct cache_set *c;
-	struct cache *ca;
+	struct bch_fs *c;
+	struct bch_dev *ca;
 	unsigned i;
 
 	rcu_read_lock();
 	list_for_each_entry(c, &bch_fs_list, list)
-		for_each_cache_rcu(ca, c, i)
+		for_each_member_device_rcu(ca, c, i)
 			if (ca->disk_sb.bdev == bdev) {
 				rcu_read_unlock();
 				return true;
@@ -494,17 +494,17 @@ static const char *bch_blkdev_open(const char *path, fmode_t mode,
 }
 
 /* Update cached mi: */
-int bch_fs_mi_update(struct cache_set *c, struct bch_member *mi,
+int bch_fs_mi_update(struct bch_fs *c, struct bch_member *mi,
 		     unsigned nr_devices)
 {
-	struct cache_member_rcu *new, *old;
-	struct cache *ca;
+	struct bch_member_rcu *new, *old;
+	struct bch_dev *ca;
 	unsigned i;
 
 	lockdep_assert_held(&c->sb_lock);
 
-	new = kzalloc(sizeof(struct cache_member_rcu) +
-		      sizeof(struct cache_member_cpu) * nr_devices,
+	new = kzalloc(sizeof(struct bch_member_rcu) +
+		      sizeof(struct bch_member_cpu) * nr_devices,
 		      GFP_KERNEL);
 	if (!new)
 		return -ENOMEM;
@@ -515,7 +515,7 @@ int bch_fs_mi_update(struct cache_set *c, struct bch_member *mi,
 		new->m[i] = cache_mi_to_cpu_mi(&mi[i]);
 
 	rcu_read_lock();
-	for_each_cache(ca, c, i)
+	for_each_member_device(ca, c, i)
 		ca->mi = new->m[i];
 	rcu_read_unlock();
 
@@ -529,7 +529,7 @@ int bch_fs_mi_update(struct cache_set *c, struct bch_member *mi,
 	return 0;
 }
 
-static void bch_sb_update(struct cache_set *c)
+static void bch_sb_update(struct bch_fs *c)
 {
 	struct bch_sb *src = c->disk_sb;
 
@@ -584,7 +584,7 @@ static void __copy_super(struct bch_sb *dst, struct bch_sb *src)
 	}
 }
 
-int bch_sb_to_cache_set(struct cache_set *c, struct bch_sb *src)
+int bch_sb_to_fs(struct bch_fs *c, struct bch_sb *src)
 {
 	struct bch_sb_field_members *members =
 		bch_sb_get_members(src);
@@ -608,7 +608,7 @@ int bch_sb_to_cache_set(struct cache_set *c, struct bch_sb *src)
 	return 0;
 }
 
-int bch_sb_from_cache_set(struct cache_set *c, struct cache *ca)
+int bch_sb_from_fs(struct bch_fs *c, struct bch_dev *ca)
 {
 	struct bch_sb *src = c->disk_sb, *dst = ca->disk_sb.sb;
 	struct bch_sb_field_journal *journal_buckets =
@@ -775,7 +775,7 @@ err:
 
 static void write_super_endio(struct bio *bio)
 {
-	struct cache *ca = bio->bi_private;
+	struct bch_dev *ca = bio->bi_private;
 
 	/* XXX: return errors directly */
 
@@ -783,11 +783,11 @@ static void write_super_endio(struct bio *bio)
 
 	bch_account_io_completion(ca);
 
-	closure_put(&ca->set->sb_write);
+	closure_put(&ca->fs->sb_write);
 	percpu_ref_put(&ca->ref);
 }
 
-static bool write_one_super(struct cache_set *c, struct cache *ca, unsigned idx)
+static bool write_one_super(struct bch_fs *c, struct bch_dev *ca, unsigned idx)
 {
 	struct bch_sb *sb = ca->disk_sb.sb;
 	struct bio *bio = ca->disk_sb.bio;
@@ -818,12 +818,12 @@ static bool write_one_super(struct cache_set *c, struct cache *ca, unsigned idx)
 	return true;
 }
 
-void bch_write_super(struct cache_set *c)
+void bch_write_super(struct bch_fs *c)
 {
 	struct bch_sb_field_members *members =
 		bch_sb_get_members(c->disk_sb);
 	struct closure *cl = &c->sb_write;
-	struct cache *ca;
+	struct bch_dev *ca;
 	unsigned i, super_idx = 0;
 	bool wrote;
 
@@ -833,15 +833,15 @@ void bch_write_super(struct cache_set *c)
 
 	le64_add_cpu(&c->disk_sb->seq, 1);
 
-	for_each_cache(ca, c, i)
-		bch_sb_from_cache_set(c, ca);
+	for_each_member_device(ca, c, i)
+		bch_sb_from_fs(c, ca);
 
 	if (c->opts.nochanges)
 		goto out;
 
 	do {
 		wrote = false;
-		for_each_cache(ca, c, i)
+		for_each_member_device(ca, c, i)
 			if (write_one_super(c, ca, super_idx))
 				wrote = true;
 
@@ -854,7 +854,7 @@ out:
 	bch_sb_update(c);
 }
 
-void bch_check_mark_super_slowpath(struct cache_set *c, const struct bkey_i *k,
+void bch_check_mark_super_slowpath(struct bch_fs *c, const struct bkey_i *k,
 				   bool meta)
 {
 	struct bch_member *mi;

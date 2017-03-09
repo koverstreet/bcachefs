@@ -21,7 +21,7 @@
 
 /* Moving GC - IO loop */
 
-static const struct bch_extent_ptr *moving_pred(struct cache *ca,
+static const struct bch_extent_ptr *moving_pred(struct bch_dev *ca,
 						struct bkey_s_c k)
 {
 	const struct bch_extent_ptr *ptr;
@@ -35,11 +35,11 @@ static const struct bch_extent_ptr *moving_pred(struct cache *ca,
 	return NULL;
 }
 
-static int issue_moving_gc_move(struct cache *ca,
+static int issue_moving_gc_move(struct bch_dev *ca,
 				struct moving_context *ctxt,
 				struct bkey_s_c k)
 {
-	struct cache_set *c = ca->set;
+	struct bch_fs *c = ca->fs;
 	const struct bch_extent_ptr *ptr;
 	int ret;
 
@@ -55,10 +55,10 @@ static int issue_moving_gc_move(struct cache *ca,
 	return ret;
 }
 
-static void read_moving(struct cache *ca, size_t buckets_to_move,
+static void read_moving(struct bch_dev *ca, size_t buckets_to_move,
 			u64 sectors_to_move)
 {
-	struct cache_set *c = ca->set;
+	struct bch_fs *c = ca->fs;
 	struct bucket *g;
 	struct moving_context ctxt;
 	struct btree_iter iter;
@@ -125,7 +125,7 @@ out:
 				   buckets_to_move);
 }
 
-static bool have_copygc_reserve(struct cache *ca)
+static bool have_copygc_reserve(struct bch_dev *ca)
 {
 	bool ret;
 
@@ -137,9 +137,9 @@ static bool have_copygc_reserve(struct cache *ca)
 	return ret;
 }
 
-static void bch_moving_gc(struct cache *ca)
+static void bch_moving_gc(struct bch_dev *ca)
 {
-	struct cache_set *c = ca->set;
+	struct bch_fs *c = ca->fs;
 	struct bucket *g;
 	struct bucket_mark new;
 	u64 sectors_to_move;
@@ -179,7 +179,7 @@ static void bch_moving_gc(struct cache *ca)
 	 */
 	down_read(&c->gc_lock);
 	mutex_lock(&ca->heap_lock);
-	mutex_lock(&ca->set->bucket_lock);
+	mutex_lock(&ca->fs->bucket_lock);
 
 	ca->heap.used = 0;
 	for_each_bucket(g, ca) {
@@ -216,7 +216,7 @@ static void bch_moving_gc(struct cache *ca)
 
 	buckets_to_move = ca->heap.used;
 
-	mutex_unlock(&ca->set->bucket_lock);
+	mutex_unlock(&ca->fs->bucket_lock);
 	mutex_unlock(&ca->heap_lock);
 	up_read(&c->gc_lock);
 
@@ -225,8 +225,8 @@ static void bch_moving_gc(struct cache *ca)
 
 static int bch_moving_gc_thread(void *arg)
 {
-	struct cache *ca = arg;
-	struct cache_set *c = ca->set;
+	struct bch_dev *ca = arg;
+	struct bch_fs *c = ca->fs;
 	struct io_clock *clock = &c->io_clock[WRITE];
 	unsigned long last;
 	u64 available, want, next;
@@ -242,7 +242,7 @@ static int bch_moving_gc_thread(void *arg)
 		 * don't start copygc until less than half the gc reserve is
 		 * available:
 		 */
-		available = buckets_available_cache(ca);
+		available = dev_buckets_available(ca);
 		want = div64_u64((ca->mi.nbuckets - ca->mi.first_bucket) *
 				 c->opts.gc_reserve_percent, 200);
 		if (available > want) {
@@ -258,7 +258,7 @@ static int bch_moving_gc_thread(void *arg)
 	return 0;
 }
 
-void bch_moving_gc_stop(struct cache *ca)
+void bch_moving_gc_stop(struct bch_dev *ca)
 {
 	ca->moving_gc_pd.rate.rate = UINT_MAX;
 	bch_ratelimit_reset(&ca->moving_gc_pd.rate);
@@ -268,13 +268,13 @@ void bch_moving_gc_stop(struct cache *ca)
 	ca->moving_gc_read = NULL;
 }
 
-int bch_moving_gc_start(struct cache *ca)
+int bch_moving_gc_start(struct bch_dev *ca)
 {
 	struct task_struct *t;
 
 	BUG_ON(ca->moving_gc_read);
 
-	if (ca->set->opts.nochanges)
+	if (ca->fs->opts.nochanges)
 		return 0;
 
 	if (bch_fs_init_fault("moving_gc_start"))
@@ -290,7 +290,7 @@ int bch_moving_gc_start(struct cache *ca)
 	return 0;
 }
 
-void bch_dev_moving_gc_init(struct cache *ca)
+void bch_dev_moving_gc_init(struct bch_dev *ca)
 {
 	bch_pd_controller_init(&ca->moving_gc_pd);
 	ca->moving_gc_pd.d_term = 0;

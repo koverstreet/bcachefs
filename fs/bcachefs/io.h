@@ -9,8 +9,8 @@
 #define to_rbio(_bio)			\
 	container_of((_bio), struct bch_read_bio, bio)
 
-void bch_bio_free_pages_pool(struct cache_set *, struct bio *);
-void bch_bio_alloc_pages_pool(struct cache_set *, struct bio *, size_t);
+void bch_bio_free_pages_pool(struct bch_fs *, struct bio *);
+void bch_bio_alloc_pages_pool(struct bch_fs *, struct bio *, size_t);
 
 enum bch_write_flags {
 	BCH_WRITE_ALLOC_NOWAIT		= (1 << 0),
@@ -32,14 +32,14 @@ static inline u64 *op_journal_seq(struct bch_write_op *op)
 		? op->journal_seq_p : &op->journal_seq;
 }
 
-static inline struct write_point *foreground_write_point(struct cache_set *c,
+static inline struct write_point *foreground_write_point(struct bch_fs *c,
 							 unsigned long v)
 {
 	return c->write_points +
 		hash_long(v, ilog2(ARRAY_SIZE(c->write_points)));
 }
 
-void bch_write_op_init(struct bch_write_op *, struct cache_set *,
+void bch_write_op_init(struct bch_write_op *, struct bch_fs *,
 		       struct bch_write_bio *,
 		       struct disk_reservation, struct write_point *,
 		       struct bpos, u64 *, unsigned);
@@ -49,11 +49,11 @@ struct cache_promote_op;
 
 struct extent_pick_ptr;
 
-void bch_read_extent_iter(struct cache_set *, struct bch_read_bio *,
+void bch_read_extent_iter(struct bch_fs *, struct bch_read_bio *,
 			  struct bvec_iter, struct bkey_s_c k,
 			  struct extent_pick_ptr *, unsigned);
 
-static inline void bch_read_extent(struct cache_set *c,
+static inline void bch_read_extent(struct bch_fs *c,
 				   struct bch_read_bio *orig,
 				   struct bkey_s_c k,
 				   struct extent_pick_ptr *pick,
@@ -71,14 +71,14 @@ enum bch_read_flags {
 	BCH_READ_MAY_REUSE_BIO		= 1 << 4,
 };
 
-void bch_read(struct cache_set *, struct bch_read_bio *, u64);
+void bch_read(struct bch_fs *, struct bch_read_bio *, u64);
 
-void bch_generic_make_request(struct bio *, struct cache_set *);
+void bch_generic_make_request(struct bio *, struct bch_fs *);
 void bch_bio_submit_work(struct work_struct *);
-void bch_submit_wbio_replicas(struct bch_write_bio *, struct cache_set *,
+void bch_submit_wbio_replicas(struct bch_write_bio *, struct bch_fs *,
 			      const struct bkey_i *, bool);
 
-int bch_discard(struct cache_set *, struct bpos, struct bpos,
+int bch_discard(struct bch_fs *, struct bpos, struct bpos,
 		struct bversion, struct disk_reservation *,
 		struct extent_insert_hook *, u64 *);
 

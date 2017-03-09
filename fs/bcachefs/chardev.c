@@ -1,12 +1,3 @@
-/*
- * This file adds support for a character device /dev/bcache that is used to
- * atomically register a list of devices, remove a device from a cache_set
- * and add a device to a cache set.
- *
- * Copyright (c) 2014 Datera, Inc.
- *
- */
-
 #include "bcache.h"
 #include "bcachefs_ioctl.h"
 #include "super.h"
@@ -55,7 +46,7 @@ static long bch_ioctl_assemble(struct bch_ioctl_assemble __user *user_arg)
 
 	err = bch_fs_open(devs, arg.nr_devs, bch_opts_empty(), NULL);
 	if (err) {
-		pr_err("Could not register cache set: %s", err);
+		pr_err("Could not open filesystem: %s", err);
 		ret = -EINVAL;
 		goto err;
 	}
@@ -105,13 +96,13 @@ static long bch_global_ioctl(unsigned cmd, void __user *arg)
 	}
 }
 
-static long bch_ioctl_stop(struct cache_set *c)
+static long bch_ioctl_stop(struct bch_fs *c)
 {
 	bch_fs_stop_async(c);
 	return 0;
 }
 
-static long bch_ioctl_disk_add(struct cache_set *c,
+static long bch_ioctl_disk_add(struct bch_fs *c,
 			       struct bch_ioctl_disk_add __user *user_arg)
 {
 	struct bch_ioctl_disk_add arg;
@@ -132,11 +123,11 @@ static long bch_ioctl_disk_add(struct cache_set *c,
 }
 
 /* returns with ref on ca->ref */
-static struct cache *bch_device_lookup(struct cache_set *c,
+static struct bch_dev *bch_device_lookup(struct bch_fs *c,
 				       const char __user *dev)
 {
 	struct block_device *bdev;
-	struct cache *ca;
+	struct bch_dev *ca;
 	char *path;
 	unsigned i;
 
@@ -149,7 +140,7 @@ static struct cache *bch_device_lookup(struct cache_set *c,
 	if (IS_ERR(bdev))
 		return ERR_CAST(bdev);
 
-	for_each_cache(ca, c, i)
+	for_each_member_device(ca, c, i)
 		if (ca->disk_sb.bdev == bdev)
 			goto found;
 
@@ -159,11 +150,11 @@ found:
 	return ca;
 }
 
-static long bch_ioctl_disk_remove(struct cache_set *c,
+static long bch_ioctl_disk_remove(struct bch_fs *c,
 				  struct bch_ioctl_disk_remove __user *user_arg)
 {
 	struct bch_ioctl_disk_remove arg;
-	struct cache *ca;
+	struct bch_dev *ca;
 	int ret;
 
 	if (copy_from_user(&arg, user_arg, sizeof(arg)))
@@ -179,11 +170,11 @@ static long bch_ioctl_disk_remove(struct cache_set *c,
 	return ret;
 }
 
-static long bch_ioctl_disk_set_state(struct cache_set *c,
+static long bch_ioctl_disk_set_state(struct bch_fs *c,
 				     struct bch_ioctl_disk_set_state __user *user_arg)
 {
 	struct bch_ioctl_disk_set_state arg;
-	struct cache *ca;
+	struct bch_dev *ca;
 	int ret;
 
 	if (copy_from_user(&arg, user_arg, sizeof(arg)))
@@ -199,7 +190,7 @@ static long bch_ioctl_disk_set_state(struct cache_set *c,
 	return ret;
 }
 
-static struct bch_member *bch_uuid_lookup(struct cache_set *c, uuid_le uuid)
+static struct bch_member *bch_uuid_lookup(struct bch_fs *c, uuid_le uuid)
 {
 	struct bch_sb_field_members *mi = bch_sb_get_members(c->disk_sb);
 	unsigned i;
@@ -213,7 +204,7 @@ static struct bch_member *bch_uuid_lookup(struct cache_set *c, uuid_le uuid)
 	return NULL;
 }
 
-static long bch_ioctl_disk_remove_by_uuid(struct cache_set *c,
+static long bch_ioctl_disk_remove_by_uuid(struct bch_fs *c,
 			struct bch_ioctl_disk_remove_by_uuid __user *user_arg)
 {
 	struct bch_ioctl_disk_fail_by_uuid arg;
@@ -235,7 +226,7 @@ static long bch_ioctl_disk_remove_by_uuid(struct cache_set *c,
 	return ret;
 }
 
-static long bch_ioctl_disk_fail_by_uuid(struct cache_set *c,
+static long bch_ioctl_disk_fail_by_uuid(struct bch_fs *c,
 			struct bch_ioctl_disk_fail_by_uuid __user *user_arg)
 {
 	struct bch_ioctl_disk_fail_by_uuid arg;
@@ -256,7 +247,7 @@ static long bch_ioctl_disk_fail_by_uuid(struct cache_set *c,
 	return ret;
 }
 
-static long bch_ioctl_query_uuid(struct cache_set *c,
+static long bch_ioctl_query_uuid(struct bch_fs *c,
 			struct bch_ioctl_query_uuid __user *user_arg)
 {
 	return copy_to_user(&user_arg->uuid,
@@ -264,7 +255,7 @@ static long bch_ioctl_query_uuid(struct cache_set *c,
 			    sizeof(c->sb.user_uuid));
 }
 
-long bch_fs_ioctl(struct cache_set *c, unsigned cmd, void __user *arg)
+long bch_fs_ioctl(struct bch_fs *c, unsigned cmd, void __user *arg)
 {
 	/* ioctls that don't require admin cap: */
 	switch (cmd) {
@@ -301,7 +292,7 @@ long bch_fs_ioctl(struct cache_set *c, unsigned cmd, void __user *arg)
 
 static long bch_chardev_ioctl(struct file *filp, unsigned cmd, unsigned long v)
 {
-	struct cache_set *c = filp->private_data;
+	struct bch_fs *c = filp->private_data;
 	void __user *arg = (void __user *) v;
 
 	return c
@@ -320,7 +311,7 @@ static struct class *bch_chardev_class;
 static struct device *bch_chardev;
 static DEFINE_IDR(bch_chardev_minor);
 
-void bch_fs_chardev_exit(struct cache_set *c)
+void bch_fs_chardev_exit(struct bch_fs *c)
 {
 	if (!IS_ERR_OR_NULL(c->chardev))
 		device_unregister(c->chardev);
@@ -328,7 +319,7 @@ void bch_fs_chardev_exit(struct cache_set *c)
 		idr_remove(&bch_chardev_minor, c->minor);
 }
 
-int bch_fs_chardev_init(struct cache_set *c)
+int bch_fs_chardev_init(struct bch_fs *c)
 {
 	c->minor = idr_alloc(&bch_chardev_minor, c, 0, 0, GFP_KERNEL);
 	if (c->minor < 0)

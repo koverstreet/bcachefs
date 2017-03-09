@@ -198,7 +198,7 @@ int bch_inode_unpack(struct bkey_s_c_inode inode,
 	return 0;
 }
 
-static const char *bch_inode_invalid(const struct cache_set *c,
+static const char *bch_inode_invalid(const struct bch_fs *c,
 				     struct bkey_s_c k)
 {
 	if (k.k->p.offset)
@@ -236,7 +236,7 @@ static const char *bch_inode_invalid(const struct cache_set *c,
 	}
 }
 
-static void bch_inode_to_text(struct cache_set *c, char *buf,
+static void bch_inode_to_text(struct bch_fs *c, char *buf,
 			      size_t size, struct bkey_s_c k)
 {
 	struct bkey_s_c_inode inode;
@@ -260,7 +260,7 @@ const struct bkey_ops bch_bkey_inode_ops = {
 	.val_to_text	= bch_inode_to_text,
 };
 
-void bch_inode_init(struct cache_set *c, struct bch_inode_unpacked *inode_u,
+void bch_inode_init(struct bch_fs *c, struct bch_inode_unpacked *inode_u,
 		    uid_t uid, gid_t gid, umode_t mode, dev_t rdev)
 {
 	s64 now = timespec_to_bch_time(c, CURRENT_TIME);
@@ -281,7 +281,7 @@ void bch_inode_init(struct cache_set *c, struct bch_inode_unpacked *inode_u,
 	inode_u->i_otime	= now;
 }
 
-int bch_inode_create(struct cache_set *c, struct bkey_i *inode,
+int bch_inode_create(struct bch_fs *c, struct bkey_i *inode,
 		     u64 min, u64 max, u64 *hint)
 {
 	struct btree_iter iter;
@@ -348,14 +348,14 @@ again:
 	return -ENOSPC;
 }
 
-int bch_inode_truncate(struct cache_set *c, u64 inode_nr, u64 new_size,
+int bch_inode_truncate(struct bch_fs *c, u64 inode_nr, u64 new_size,
 		       struct extent_insert_hook *hook, u64 *journal_seq)
 {
 	return bch_discard(c, POS(inode_nr, new_size), POS(inode_nr + 1, 0),
 			   ZERO_VERSION, NULL, hook, journal_seq);
 }
 
-int bch_inode_rm(struct cache_set *c, u64 inode_nr)
+int bch_inode_rm(struct bch_fs *c, u64 inode_nr)
 {
 	struct bkey_i delete;
 	int ret;
@@ -393,7 +393,7 @@ int bch_inode_rm(struct cache_set *c, u64 inode_nr)
 				NULL, NULL, BTREE_INSERT_NOFAIL);
 }
 
-int bch_inode_find_by_inum(struct cache_set *c, u64 inode_nr,
+int bch_inode_find_by_inum(struct bch_fs *c, u64 inode_nr,
 			   struct bch_inode_unpacked *inode)
 {
 	struct btree_iter iter;
@@ -418,7 +418,7 @@ int bch_inode_find_by_inum(struct cache_set *c, u64 inode_nr,
 	return bch_btree_iter_unlock(&iter) ?: ret;
 }
 
-int bch_cached_dev_inode_find_by_uuid(struct cache_set *c, uuid_le *uuid,
+int bch_cached_dev_inode_find_by_uuid(struct bch_fs *c, uuid_le *uuid,
 				      struct bkey_i_inode_blockdev *ret)
 {
 	struct btree_iter iter;

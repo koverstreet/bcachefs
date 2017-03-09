@@ -22,7 +22,7 @@
 
 #include <trace/events/bcachefs.h>
 
-static enum merge_result bch_extent_merge(struct cache_set *, struct btree *,
+static enum merge_result bch_extent_merge(struct bch_fs *, struct btree *,
 					  struct bkey_i *, struct bkey_i *);
 
 static void sort_key_next(struct btree_node_iter *iter,
@@ -318,16 +318,16 @@ drop:
 	EBUG_ON(bkey_val_u64s(e.k) && !bch_extent_nr_ptrs(e.c));
 }
 
-static bool should_drop_ptr(const struct cache_set *c,
+static bool should_drop_ptr(const struct bch_fs *c,
 			    struct bkey_s_c_extent e,
 			    const struct bch_extent_ptr *ptr)
 {
-	struct cache *ca;
+	struct bch_dev *ca;
 
-	return (ca = PTR_CACHE(c, ptr)) && ptr_stale(ca, ptr);
+	return (ca = PTR_DEV(c, ptr)) && ptr_stale(ca, ptr);
 }
 
-static void bch_extent_drop_stale(struct cache_set *c, struct bkey_s_extent e)
+static void bch_extent_drop_stale(struct bch_fs *c, struct bkey_s_extent e)
 {
 	struct bch_extent_ptr *ptr = &e.v->start->ptr;
 	bool dropped = false;
@@ -345,7 +345,7 @@ static void bch_extent_drop_stale(struct cache_set *c, struct bkey_s_extent e)
 		bch_extent_drop_redundant_crcs(e);
 }
 
-static bool bch_ptr_normalize(struct cache_set *c, struct btree *bk,
+static bool bch_ptr_normalize(struct bch_fs *c, struct btree *bk,
 			      struct bkey_s k)
 {
 	return bch_extent_normalize(c, k);
@@ -388,12 +388,12 @@ static void bch_ptr_swab(const struct bkey_format *f, struct bkey_packed *k)
 }
 
 static const char *extent_ptr_invalid(struct bkey_s_c_extent e,
-				      const struct cache_member_rcu *mi,
+				      const struct bch_member_rcu *mi,
 				      const struct bch_extent_ptr *ptr,
 				      unsigned size_ondisk)
 {
 	const struct bch_extent_ptr *ptr2;
-	const struct cache_member_cpu *m = mi->m + ptr->dev;
+	const struct bch_member_cpu *m = mi->m + ptr->dev;
 
 	if (ptr->dev > mi->nr_devices || !m->valid)
 		return "pointer to invalid device";
@@ -414,14 +414,14 @@ static const char *extent_ptr_invalid(struct bkey_s_c_extent e,
 	return NULL;
 }
 
-static size_t extent_print_ptrs(struct cache_set *c, char *buf,
+static size_t extent_print_ptrs(struct bch_fs *c, char *buf,
 				size_t size, struct bkey_s_c_extent e)
 {
 	char *out = buf, *end = buf + size;
 	const union bch_extent_entry *entry;
 	const union bch_extent_crc *crc;
 	const struct bch_extent_ptr *ptr;
-	struct cache *ca;
+	struct bch_dev *ca;
 	bool first = true;
 
 #define p(...)	(out += scnprintf(out, end - out, __VA_ARGS__))
@@ -448,7 +448,7 @@ static size_t extent_print_ptrs(struct cache_set *c, char *buf,
 
 			p("ptr: %u:%llu gen %u%s", ptr->dev,
 			  (u64) ptr->offset, ptr->gen,
-			  (ca = PTR_CACHE(c, ptr)) && ptr_stale(ca, ptr)
+			  (ca = PTR_DEV(c, ptr)) && ptr_stale(ca, ptr)
 			  ? " stale" : "");
 			break;
 		default:
@@ -469,7 +469,7 @@ out:
 
 /* Btree ptrs */
 
-static const char *bch_btree_ptr_invalid(const struct cache_set *c,
+static const char *bch_btree_ptr_invalid(const struct bch_fs *c,
 					 struct bkey_s_c k)
 {
 	if (bkey_extent_is_cached(k.k))
@@ -487,26 +487,26 @@ static const char *bch_btree_ptr_invalid(const struct cache_set *c,
 		const union bch_extent_entry *entry;
 		const struct bch_extent_ptr *ptr;
 		const union bch_extent_crc *crc;
-		struct cache_member_rcu *mi;
+		struct bch_member_rcu *mi;
 		const char *reason;
 
 		extent_for_each_entry(e, entry)
 			if (__extent_entry_type(entry) >= BCH_EXTENT_ENTRY_MAX)
 				return "invalid extent entry type";
 
-		mi = cache_member_info_get(c);
+		mi = fs_member_info_get(c);
 
 		extent_for_each_ptr_crc(e, ptr, crc) {
 			reason = extent_ptr_invalid(e, mi, ptr,
 						c->sb.btree_node_size);
 
 			if (reason) {
-				cache_member_info_put();
+				fs_member_info_put();
 				return reason;
 			}
 		}
 
-		cache_member_info_put();
+		fs_member_info_put();
 
 		if (crc)
 			return "has crc field";
@@ -519,7 +519,7 @@ static const char *bch_btree_ptr_invalid(const struct cache_set *c,
 	}
 }
 
-static void btree_ptr_debugcheck(struct cache_set *c, struct btree *b,
+static void btree_ptr_debugcheck(struct bch_fs *c, struct btree *b,
 				 struct bkey_s_c k)
 {
 	struct bkey_s_c_extent e = bkey_s_c_to_extent(k);
@@ -528,7 +528,7 @@ static void btree_ptr_debugcheck(struct cache_set *c, struct btree *b,
 	const char *err;
 	char buf[160];
 	struct bucket *g;
-	struct cache *ca;
+	struct bch_dev *ca;
 	unsigned replicas = 0;
 	bool bad;
 
@@ -537,7 +537,7 @@ static void btree_ptr_debugcheck(struct cache_set *c, struct btree *b,
 	extent_for_each_online_device(c, e, ptr, ca) {
 		replicas++;
 
-		if ((ca = PTR_CACHE(c, ptr))) {
+		if ((ca = PTR_DEV(c, ptr))) {
 			g = PTR_BUCKET(ca, ptr);
 
 			err = "stale";
@@ -579,7 +579,7 @@ err:
 	rcu_read_unlock();
 }
 
-static void bch_btree_ptr_to_text(struct cache_set *c, char *buf,
+static void bch_btree_ptr_to_text(struct bch_fs *c, char *buf,
 				  size_t size, struct bkey_s_c k)
 {
 	char *out = buf, *end = buf + size;
@@ -597,13 +597,13 @@ static void bch_btree_ptr_to_text(struct cache_set *c, char *buf,
 }
 
 struct extent_pick_ptr
-bch_btree_pick_ptr(struct cache_set *c, const struct btree *b)
+bch_btree_pick_ptr(struct bch_fs *c, const struct btree *b)
 {
 	struct bkey_s_c_extent e = bkey_i_to_s_c_extent(&b->key);
 	const union bch_extent_crc *crc;
 	const struct bch_extent_ptr *ptr;
 	struct extent_pick_ptr pick = { .ca = NULL };
-	struct cache *ca;
+	struct bch_dev *ca;
 
 	rcu_read_lock();
 
@@ -804,7 +804,7 @@ static inline void extent_sort_next(struct btree_node_iter *iter,
 	heap_sift(iter, i - iter->data, extent_sort_cmp);
 }
 
-static void extent_sort_append(struct cache_set *c,
+static void extent_sort_append(struct bch_fs *c,
 			       struct btree *b,
 			       struct btree_nr_keys *nr,
 			       struct bkey_packed *start,
@@ -835,7 +835,7 @@ static void extent_sort_append(struct cache_set *c,
 	bkey_copy(*prev, &tmp.k);
 }
 
-struct btree_nr_keys bch_extent_sort_fix_overlapping(struct cache_set *c,
+struct btree_nr_keys bch_extent_sort_fix_overlapping(struct bch_fs *c,
 					struct bset *dst,
 					struct btree *b,
 					struct btree_node_iter *iter)
@@ -952,7 +952,7 @@ struct extent_insert_state {
 static void bch_add_sectors(struct extent_insert_state *s,
 			    struct bkey_s_c k, u64 offset, s64 sectors)
 {
-	struct cache_set *c = s->trans->c;
+	struct bch_fs *c = s->trans->c;
 	struct btree *b = s->insert->iter->nodes[0];
 
 	EBUG_ON(bkey_cmp(bkey_start_pos(k.k), b->data->min_key) < 0);
@@ -1112,7 +1112,7 @@ enum extent_insert_hook_ret bch_extent_cmpxchg(struct extent_insert_hook *hook,
 	}
 }
 
-static bool bch_extent_merge_inline(struct cache_set *,
+static bool bch_extent_merge_inline(struct bch_fs *,
 				    struct btree_iter *,
 				    struct bkey_packed *,
 				    struct bkey_packed *,
@@ -1142,7 +1142,7 @@ extent_insert_should_stop(struct extent_insert_state *s)
 		return BTREE_INSERT_OK;
 }
 
-static void extent_bset_insert(struct cache_set *c, struct btree_iter *iter,
+static void extent_bset_insert(struct bch_fs *c, struct btree_iter *iter,
 			       struct bkey_i *insert)
 {
 	struct btree *b = iter->nodes[0];
@@ -1187,7 +1187,7 @@ drop_deleted_keys:
 
 static void extent_insert_committed(struct extent_insert_state *s)
 {
-	struct cache_set *c = s->trans->c;
+	struct bch_fs *c = s->trans->c;
 	struct btree_iter *iter = s->insert->iter;
 	struct bkey_i *insert = !s->deleting
 		? s->insert->k
@@ -1329,7 +1329,7 @@ extent_insert_check_split_compressed(struct extent_insert_state *s,
 				     struct bkey_s_c k,
 				     enum bch_extent_overlap overlap)
 {
-	struct cache_set *c = s->trans->c;
+	struct bch_fs *c = s->trans->c;
 	unsigned sectors;
 
 	if (overlap == BCH_EXTENT_OVERLAP_MIDDLE &&
@@ -1361,7 +1361,7 @@ extent_squash(struct extent_insert_state *s, struct bkey_i *insert,
 	      struct bset_tree *t, struct bkey_packed *_k, struct bkey_s k,
 	      enum bch_extent_overlap overlap)
 {
-	struct cache_set *c = s->trans->c;
+	struct bch_fs *c = s->trans->c;
 	struct btree_iter *iter = s->insert->iter;
 	struct btree *b = iter->nodes[0];
 	struct btree_node_iter *node_iter = &iter->node_iters[0];
@@ -1470,7 +1470,7 @@ extent_squash(struct extent_insert_state *s, struct bkey_i *insert,
 static enum btree_insert_ret
 bch_delete_fixup_extent(struct extent_insert_state *s)
 {
-	struct cache_set *c = s->trans->c;
+	struct bch_fs *c = s->trans->c;
 	struct btree_iter *iter = s->insert->iter;
 	struct btree *b = iter->nodes[0];
 	struct btree_node_iter *node_iter = &iter->node_iters[0];
@@ -1623,7 +1623,7 @@ enum btree_insert_ret
 bch_insert_fixup_extent(struct btree_insert *trans,
 			struct btree_insert_entry *insert)
 {
-	struct cache_set *c = trans->c;
+	struct bch_fs *c = trans->c;
 	struct btree_iter *iter = insert->iter;
 	struct btree *b = iter->nodes[0];
 	struct btree_node_iter *node_iter = &iter->node_iters[0];
@@ -1741,7 +1741,7 @@ stop:
 	return ret;
 }
 
-static const char *bch_extent_invalid(const struct cache_set *c,
+static const char *bch_extent_invalid(const struct bch_fs *c,
 				      struct bkey_s_c k)
 {
 	if (bkey_val_u64s(k.k) > BKEY_EXTENT_VAL_U64s_MAX)
@@ -1757,7 +1757,7 @@ static const char *bch_extent_invalid(const struct cache_set *c,
 		const union bch_extent_entry *entry;
 		const union bch_extent_crc *crc;
 		const struct bch_extent_ptr *ptr;
-		struct cache_member_rcu *mi = cache_member_info_get(c);
+		struct bch_member_rcu *mi = fs_member_info_get(c);
 		unsigned size_ondisk = e.k->size;
 		const char *reason;
 
@@ -1793,10 +1793,10 @@ static const char *bch_extent_invalid(const struct cache_set *c,
 			}
 		}
 
-		cache_member_info_put();
+		fs_member_info_put();
 		return NULL;
 invalid:
-		cache_member_info_put();
+		fs_member_info_put();
 		return reason;
 	}
 
@@ -1817,12 +1817,12 @@ invalid:
 	}
 }
 
-static void bch_extent_debugcheck_extent(struct cache_set *c, struct btree *b,
+static void bch_extent_debugcheck_extent(struct bch_fs *c, struct btree *b,
 					 struct bkey_s_c_extent e)
 {
 	const struct bch_extent_ptr *ptr;
-	struct cache_member_rcu *mi;
-	struct cache *ca;
+	struct bch_member_rcu *mi;
+	struct bch_dev *ca;
 	struct bucket *g;
 	unsigned seq, stale;
 	char buf[160];
@@ -1841,7 +1841,7 @@ static void bch_extent_debugcheck_extent(struct cache_set *c, struct btree *b,
 
 	memset(ptrs_per_tier, 0, sizeof(ptrs_per_tier));
 
-	mi = cache_member_info_get(c);
+	mi = fs_member_info_get(c);
 
 	extent_for_each_ptr(e, ptr) {
 		replicas++;
@@ -1864,7 +1864,7 @@ static void bch_extent_debugcheck_extent(struct cache_set *c, struct btree *b,
 
 		stale = 0;
 
-		if ((ca = PTR_CACHE(c, ptr))) {
+		if ((ca = PTR_DEV(c, ptr))) {
 			g = PTR_BUCKET(ca, ptr);
 
 			do {
@@ -1900,7 +1900,7 @@ static void bch_extent_debugcheck_extent(struct cache_set *c, struct btree *b,
 				goto bad_ptr;
 		}
 	}
-	cache_member_info_put();
+	fs_member_info_put();
 
 	if (replicas > BCH_REPLICAS_MAX) {
 		bch_bkey_val_to_text(c, btree_node_type(b), buf,
@@ -1928,7 +1928,7 @@ bad_device:
 			     sizeof(buf), e.s_c);
 	bch_fs_bug(c, "extent pointer to dev %u missing device: %s",
 		   ptr->dev, buf);
-	cache_member_info_put();
+	fs_member_info_put();
 	return;
 
 bad_ptr:
@@ -1940,11 +1940,11 @@ bad_ptr:
 		   g->read_prio, PTR_BUCKET(ca, ptr)->mark.gen,
 		   ca->oldest_gens[PTR_BUCKET_NR(ca, ptr)],
 		   (unsigned) g->mark.counter);
-	cache_member_info_put();
+	fs_member_info_put();
 	return;
 }
 
-static void bch_extent_debugcheck(struct cache_set *c, struct btree *b,
+static void bch_extent_debugcheck(struct bch_fs *c, struct btree *b,
 				  struct bkey_s_c k)
 {
 	switch (k.k->type) {
@@ -1959,7 +1959,7 @@ static void bch_extent_debugcheck(struct cache_set *c, struct btree *b,
 	}
 }
 
-static void bch_extent_to_text(struct cache_set *c, char *buf,
+static void bch_extent_to_text(struct bch_fs *c, char *buf,
 			       size_t size, struct bkey_s_c k)
 {
 	char *out = buf, *end = buf + size;
@@ -1976,7 +1976,7 @@ static void bch_extent_to_text(struct cache_set *c, char *buf,
 #undef p
 }
 
-static unsigned PTR_TIER(struct cache_member_rcu *mi,
+static unsigned PTR_TIER(struct bch_member_rcu *mi,
 			 const struct bch_extent_ptr *ptr)
 {
 	return ptr->dev < mi->nr_devices
@@ -2092,7 +2092,7 @@ void bch_extent_crc_append(struct bkey_i_extent *e,
  * For existing keys, only called when btree nodes are being rewritten, not when
  * they're merely being compacted/resorted in memory.
  */
-bool bch_extent_normalize(struct cache_set *c, struct bkey_s k)
+bool bch_extent_normalize(struct bch_fs *c, struct bkey_s k)
 {
 	struct bkey_s_extent e;
 
@@ -2131,19 +2131,19 @@ bool bch_extent_normalize(struct cache_set *c, struct bkey_s k)
 	}
 }
 
-void bch_extent_mark_replicas_cached(struct cache_set *c,
+void bch_extent_mark_replicas_cached(struct bch_fs *c,
 				     struct bkey_s_extent e,
 				     unsigned nr_cached)
 {
 	struct bch_extent_ptr *ptr;
-	struct cache_member_rcu *mi;
+	struct bch_member_rcu *mi;
 	bool have_higher_tier;
 	unsigned tier = 0;
 
 	if (!nr_cached)
 		return;
 
-	mi = cache_member_info_get(c);
+	mi = fs_member_info_get(c);
 
 	do {
 		have_higher_tier = false;
@@ -2164,7 +2164,7 @@ void bch_extent_mark_replicas_cached(struct cache_set *c,
 		tier++;
 	} while (have_higher_tier);
 out:
-	cache_member_info_put();
+	fs_member_info_put();
 }
 
 /*
@@ -2175,14 +2175,14 @@ out:
  * as the pointers are sorted by tier, hence preferring pointers to tier 0
  * rather than pointers to tier 1.
  */
-void bch_extent_pick_ptr_avoiding(struct cache_set *c, struct bkey_s_c k,
-				  struct cache *avoid,
+void bch_extent_pick_ptr_avoiding(struct bch_fs *c, struct bkey_s_c k,
+				  struct bch_dev *avoid,
 				  struct extent_pick_ptr *ret)
 {
 	struct bkey_s_c_extent e;
 	const union bch_extent_crc *crc;
 	const struct bch_extent_ptr *ptr;
-	struct cache *ca;
+	struct bch_dev *ca;
 
 	switch (k.k->type) {
 	case KEY_TYPE_DELETED:
@@ -2237,7 +2237,7 @@ void bch_extent_pick_ptr_avoiding(struct cache_set *c, struct bkey_s_c k,
 	}
 }
 
-static enum merge_result bch_extent_merge(struct cache_set *c,
+static enum merge_result bch_extent_merge(struct bch_fs *c,
 					  struct btree *bk,
 					  struct bkey_i *l, struct bkey_i *r)
 {
@@ -2273,7 +2273,7 @@ static enum merge_result bch_extent_merge(struct cache_set *c,
 
 		extent_for_each_entry(el, en_l) {
 			struct bch_extent_ptr *lp, *rp;
-			struct cache_member_cpu *m;
+			struct bch_member_cpu *m;
 
 			en_r = vstruct_idx(er.v, (u64 *) en_l - el.v->_data);
 
@@ -2292,14 +2292,14 @@ static enum merge_result bch_extent_merge(struct cache_set *c,
 
 			/* We don't allow extents to straddle buckets: */
 
-			m = cache_member_info_get(c)->m + lp->dev;
+			m = fs_member_info_get(c)->m + lp->dev;
 			if ((lp->offset & ~((u64) m->bucket_size - 1)) !=
 			    (rp->offset & ~((u64) m->bucket_size - 1))) {
-				cache_member_info_put();
+				fs_member_info_put();
 				return BCH_MERGE_NOMERGE;
 
 			}
-			cache_member_info_put();
+			fs_member_info_put();
 		}
 
 		break;
@@ -2464,7 +2464,7 @@ do_fixup:
  *
  * Also unpacks and repacks.
  */
-static bool bch_extent_merge_inline(struct cache_set *c,
+static bool bch_extent_merge_inline(struct bch_fs *c,
 				    struct btree_iter *iter,
 				    struct bkey_packed *l,
 				    struct bkey_packed *r,

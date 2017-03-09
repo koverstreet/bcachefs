@@ -9,7 +9,7 @@
 struct bch_sb_field *bch_sb_field_get(struct bch_sb *, enum bch_sb_field_type);
 struct bch_sb_field *bch_sb_field_resize(struct bcache_superblock *,
 					 enum bch_sb_field_type, unsigned);
-struct bch_sb_field *bch_fs_sb_field_resize(struct cache_set *,
+struct bch_sb_field *bch_fs_sb_field_resize(struct bch_fs *,
 					 enum bch_sb_field_type, unsigned);
 
 #define field_to_type(_f, _name)					\
@@ -31,7 +31,7 @@ bch_sb_resize_##_name(struct bcache_superblock *sb, unsigned u64s)	\
 }									\
 									\
 static inline struct bch_sb_field_##_name *				\
-bch_fs_sb_resize_##_name(struct cache_set *c, unsigned u64s)		\
+bch_fs_sb_resize_##_name(struct bch_fs *c, unsigned u64s)		\
 {									\
 	return field_to_type(bch_fs_sb_field_resize(c,			\
 				BCH_SB_FIELD_##_name, u64s), _name);	\
@@ -61,31 +61,31 @@ static inline void bch_sb_set_feature(struct bch_sb *sb,
 	}
 }
 
-static inline __le64 bch_sb_magic(struct cache_set *c)
+static inline __le64 bch_sb_magic(struct bch_fs *c)
 {
 	__le64 ret;
 	memcpy(&ret, &c->sb.uuid, sizeof(ret));
 	return ret;
 }
 
-static inline __u64 jset_magic(struct cache_set *c)
+static inline __u64 jset_magic(struct bch_fs *c)
 {
 	return __le64_to_cpu(bch_sb_magic(c) ^ JSET_MAGIC);
 }
 
-static inline __u64 pset_magic(struct cache_set *c)
+static inline __u64 pset_magic(struct bch_fs *c)
 {
 	return __le64_to_cpu(bch_sb_magic(c) ^ PSET_MAGIC);
 }
 
-static inline __u64 bset_magic(struct cache_set *c)
+static inline __u64 bset_magic(struct bch_fs *c)
 {
 	return __le64_to_cpu(bch_sb_magic(c) ^ BSET_MAGIC);
 }
 
-static inline struct cache_member_cpu cache_mi_to_cpu_mi(struct bch_member *mi)
+static inline struct bch_member_cpu cache_mi_to_cpu_mi(struct bch_member *mi)
 {
-	return (struct cache_member_cpu) {
+	return (struct bch_member_cpu) {
 		.nbuckets	= le64_to_cpu(mi->nbuckets),
 		.first_bucket	= le16_to_cpu(mi->first_bucket),
 		.bucket_size	= le16_to_cpu(mi->bucket_size),
@@ -99,36 +99,36 @@ static inline struct cache_member_cpu cache_mi_to_cpu_mi(struct bch_member *mi)
 	};
 }
 
-int bch_fs_mi_update(struct cache_set *, struct bch_member *, unsigned);
+int bch_fs_mi_update(struct bch_fs *, struct bch_member *, unsigned);
 
-int bch_sb_to_cache_set(struct cache_set *, struct bch_sb *);
-int bch_sb_from_cache_set(struct cache_set *, struct cache *);
+int bch_sb_to_fs(struct bch_fs *, struct bch_sb *);
+int bch_sb_from_fs(struct bch_fs *, struct bch_dev *);
 
 void bch_free_super(struct bcache_superblock *);
 int bch_super_realloc(struct bcache_superblock *, unsigned);
 
 const char *bch_validate_journal_layout(struct bch_sb *,
-					struct cache_member_cpu);
+					struct bch_member_cpu);
 const char *bch_validate_cache_super(struct bcache_superblock *);
 
 const char *bch_read_super(struct bcache_superblock *,
 			   struct bch_opts, const char *);
-void bch_write_super(struct cache_set *);
+void bch_write_super(struct bch_fs *);
 
-void bch_check_mark_super_slowpath(struct cache_set *,
+void bch_check_mark_super_slowpath(struct bch_fs *,
 				   const struct bkey_i *, bool);
 
-#define cache_member_info_get(_c)					\
+#define fs_member_info_get(_c)					\
 	(rcu_read_lock(), rcu_dereference((_c)->members))
 
-#define cache_member_info_put()	rcu_read_unlock()
+#define fs_member_info_put()	rcu_read_unlock()
 
-static inline bool bch_check_super_marked(struct cache_set *c,
+static inline bool bch_check_super_marked(struct bch_fs *c,
 					  const struct bkey_i *k, bool meta)
 {
 	struct bkey_s_c_extent e = bkey_i_to_s_c_extent(k);
 	const struct bch_extent_ptr *ptr;
-	struct cache_member_cpu *mi = cache_member_info_get(c)->m;
+	struct bch_member_cpu *mi = fs_member_info_get(c)->m;
 	unsigned nr_replicas = 0;
 	bool ret = true;
 
@@ -150,12 +150,12 @@ static inline bool bch_check_super_marked(struct cache_set *c,
 	    (meta ? c->sb.meta_replicas_have : c->sb.data_replicas_have))
 		ret = false;
 
-	cache_member_info_put();
+	fs_member_info_put();
 
 	return ret;
 }
 
-static inline void bch_check_mark_super(struct cache_set *c,
+static inline void bch_check_mark_super(struct bch_fs *c,
 					const struct bkey_i *k, bool meta)
 {
 	if (bch_check_super_marked(c, k, meta))

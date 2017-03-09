@@ -36,7 +36,7 @@ static inline void __bio_inc_remaining(struct bio *bio)
 	atomic_inc(&bio->__bi_remaining);
 }
 
-void bch_generic_make_request(struct bio *bio, struct cache_set *c)
+void bch_generic_make_request(struct bio *bio, struct bch_fs *c)
 {
 	if (current->bio_list) {
 		spin_lock(&c->bio_submit_lock);
@@ -50,7 +50,7 @@ void bch_generic_make_request(struct bio *bio, struct cache_set *c)
 
 void bch_bio_submit_work(struct work_struct *work)
 {
-	struct cache_set *c = container_of(work, struct cache_set,
+	struct bch_fs *c = container_of(work, struct bch_fs,
 					   bio_submit_work);
 	struct bio_list bl;
 	struct bio *bio;
@@ -66,7 +66,7 @@ void bch_bio_submit_work(struct work_struct *work)
 
 /* Allocate, free from mempool: */
 
-void bch_bio_free_pages_pool(struct cache_set *c, struct bio *bio)
+void bch_bio_free_pages_pool(struct bch_fs *c, struct bio *bio)
 {
 	struct bio_vec *bv;
 	unsigned i;
@@ -77,7 +77,7 @@ void bch_bio_free_pages_pool(struct cache_set *c, struct bio *bio)
 	bio->bi_vcnt = 0;
 }
 
-static void bch_bio_alloc_page_pool(struct cache_set *c, struct bio *bio,
+static void bch_bio_alloc_page_pool(struct bch_fs *c, struct bio *bio,
 				    bool *using_mempool)
 {
 	struct bio_vec *bv = &bio->bi_io_vec[bio->bi_vcnt++];
@@ -99,7 +99,7 @@ pool_alloc:
 	bv->bv_offset = 0;
 }
 
-void bch_bio_alloc_pages_pool(struct cache_set *c, struct bio *bio,
+void bch_bio_alloc_pages_pool(struct bch_fs *c, struct bio *bio,
 			      size_t bytes)
 {
 	bool using_mempool = false;
@@ -115,8 +115,8 @@ void bch_bio_alloc_pages_pool(struct cache_set *c, struct bio *bio,
 
 /* Bios with headers */
 
-static void bch_submit_wbio(struct cache_set *c, struct bch_write_bio *wbio,
-			    struct cache *ca, const struct bch_extent_ptr *ptr,
+static void bch_submit_wbio(struct bch_fs *c, struct bch_write_bio *wbio,
+			    struct bch_dev *ca, const struct bch_extent_ptr *ptr,
 			    bool punt)
 {
 	wbio->ca		= ca;
@@ -132,13 +132,13 @@ static void bch_submit_wbio(struct cache_set *c, struct bch_write_bio *wbio,
 		generic_make_request(&wbio->bio);
 }
 
-void bch_submit_wbio_replicas(struct bch_write_bio *wbio, struct cache_set *c,
+void bch_submit_wbio_replicas(struct bch_write_bio *wbio, struct bch_fs *c,
 			      const struct bkey_i *k, bool punt)
 {
 	struct bkey_s_c_extent e = bkey_i_to_s_c_extent(k);
 	const struct bch_extent_ptr *ptr;
 	struct bch_write_bio *n;
-	struct cache *ca;
+	struct bch_dev *ca;
 
 	BUG_ON(c->opts.nochanges);
 
@@ -147,7 +147,7 @@ void bch_submit_wbio_replicas(struct bch_write_bio *wbio, struct cache_set *c,
 
 	extent_for_each_ptr(e, ptr) {
 		rcu_read_lock();
-		ca = PTR_CACHE(c, ptr);
+		ca = PTR_DEV(c, ptr);
 		if (ca)
 			percpu_ref_get(&ca->ref);
 		rcu_read_unlock();
@@ -243,7 +243,7 @@ static int bch_write_index_default(struct bch_write_op *op)
 static void bch_write_index(struct closure *cl)
 {
 	struct bch_write_op *op = container_of(cl, struct bch_write_op, cl);
-	struct cache_set *c = op->c;
+	struct bch_fs *c = op->c;
 	struct keylist *keys = &op->insert_keys;
 	unsigned i;
 
@@ -354,9 +354,9 @@ static void bch_write_endio(struct bio *bio)
 	struct closure *cl = bio->bi_private;
 	struct bch_write_op *op = container_of(cl, struct bch_write_op, cl);
 	struct bch_write_bio *wbio = to_wbio(bio);
-	struct cache_set *c = wbio->c;
+	struct bch_fs *c = wbio->c;
 	struct bio *orig = wbio->orig;
-	struct cache *ca = wbio->ca;
+	struct bch_dev *ca = wbio->ca;
 
 	if (bch_dev_nonfatal_io_err_on(bio->bi_error, ca,
 				       "data write"))
@@ -429,7 +429,7 @@ static int bch_write_extent(struct bch_write_op *op,
 			    struct open_bucket *ob,
 			    struct bio *orig)
 {
-	struct cache_set *c = op->c;
+	struct bch_fs *c = op->c;
 	struct bio *bio;
 	struct bch_write_bio *wbio;
 	unsigned key_to_write_offset = op->insert_keys.top_p -
@@ -585,7 +585,7 @@ static int bch_write_extent(struct bch_write_op *op,
 static void __bch_write(struct closure *cl)
 {
 	struct bch_write_op *op = container_of(cl, struct bch_write_op, cl);
-	struct cache_set *c = op->c;
+	struct bch_fs *c = op->c;
 	struct bio *bio = &op->bio->bio;
 	unsigned open_bucket_nr = 0;
 	struct open_bucket *b;
@@ -712,7 +712,7 @@ err:
 
 void bch_wake_delayed_writes(unsigned long data)
 {
-	struct cache_set *c = (void *) data;
+	struct bch_fs *c = (void *) data;
 	struct bch_write_op *op;
 	unsigned long flags;
 
@@ -757,7 +757,7 @@ void bch_write(struct closure *cl)
 {
 	struct bch_write_op *op = container_of(cl, struct bch_write_op, cl);
 	struct bio *bio = &op->bio->bio;
-	struct cache_set *c = op->c;
+	struct bch_fs *c = op->c;
 	u64 inode = op->pos.inode;
 
 	trace_bcache_write(c, inode, bio,
@@ -828,7 +828,7 @@ void bch_write(struct closure *cl)
 	continue_at_nobarrier(cl, __bch_write, NULL);
 }
 
-void bch_write_op_init(struct bch_write_op *op, struct cache_set *c,
+void bch_write_op_init(struct bch_write_op *op, struct bch_fs *c,
 		       struct bch_write_bio *bio, struct disk_reservation res,
 		       struct write_point *wp, struct bpos pos,
 		       u64 *journal_seq, unsigned flags)
@@ -871,7 +871,7 @@ void bch_write_op_init(struct bch_write_op *op, struct cache_set *c,
 /* Discard */
 
 /* bch_discard - discard a range of keys from start_key to end_key.
- * @c		cache set
+ * @c		filesystem
  * @start_key	pointer to start location
  *		NOTE: discard starts at bkey_start_offset(start_key)
  * @end_key	pointer to end location
@@ -885,7 +885,7 @@ void bch_write_op_init(struct bch_write_op *op, struct cache_set *c,
  * XXX: this needs to be refactored with inode_truncate, or more
  *	appropriately inode_truncate should call this
  */
-int bch_discard(struct cache_set *c, struct bpos start,
+int bch_discard(struct bch_fs *c, struct bpos start,
 		struct bpos end, struct bversion version,
 		struct disk_reservation *disk_res,
 		struct extent_insert_hook *hook,
@@ -905,7 +905,7 @@ struct cache_promote_op {
 
 /* Read */
 
-static int bio_checksum_uncompress(struct cache_set *c,
+static int bio_checksum_uncompress(struct bch_fs *c,
 				   struct bch_read_bio *rbio)
 {
 	struct bio *src = &rbio->bio;
@@ -973,7 +973,7 @@ static int bio_checksum_uncompress(struct cache_set *c,
 	return ret;
 }
 
-static void bch_rbio_free(struct cache_set *c, struct bch_read_bio *rbio)
+static void bch_rbio_free(struct bch_fs *c, struct bch_read_bio *rbio)
 {
 	struct bio *bio = &rbio->bio;
 
@@ -988,7 +988,7 @@ static void bch_rbio_free(struct cache_set *c, struct bch_read_bio *rbio)
 	bio_put(bio);
 }
 
-static void bch_rbio_done(struct cache_set *c, struct bch_read_bio *rbio)
+static void bch_rbio_done(struct bch_fs *c, struct bch_read_bio *rbio)
 {
 	struct bio *orig = &bch_rbio_parent(rbio)->bio;
 
@@ -1014,7 +1014,7 @@ static void bch_rbio_done(struct cache_set *c, struct bch_read_bio *rbio)
  * Decide if we want to retry the read - returns true if read is being retried,
  * false if caller should pass error on up
  */
-static void bch_read_error_maybe_retry(struct cache_set *c,
+static void bch_read_error_maybe_retry(struct bch_fs *c,
 				       struct bch_read_bio *rbio,
 				       int error)
 {
@@ -1053,7 +1053,7 @@ static void cache_promote_done(struct closure *cl)
 }
 
 /* Inner part that may run in process context */
-static void __bch_read_endio(struct cache_set *c, struct bch_read_bio *rbio)
+static void __bch_read_endio(struct bch_fs *c, struct bch_read_bio *rbio)
 {
 	int ret;
 
@@ -1105,7 +1105,7 @@ static void bch_read_endio(struct bio *bio)
 {
 	struct bch_read_bio *rbio =
 		container_of(bio, struct bch_read_bio, bio);
-	struct cache_set *c = rbio->ca->set;
+	struct bch_fs *c = rbio->ca->fs;
 	int stale = ((rbio->flags & BCH_READ_RETRY_IF_STALE) && race_fault()) ||
 		ptr_stale(rbio->ca, &rbio->ptr) ? -EINTR : 0;
 	int error = bio->bi_error ?: stale;
@@ -1133,7 +1133,7 @@ static void bch_read_endio(struct bio *bio)
 	}
 }
 
-static bool should_promote(struct cache_set *c,
+static bool should_promote(struct bch_fs *c,
 			   struct extent_pick_ptr *pick, unsigned flags)
 {
 	if (!(flags & BCH_READ_PROMOTE))
@@ -1146,7 +1146,7 @@ static bool should_promote(struct cache_set *c,
 		c->fastest_tier < c->tiers + pick->ca->mi.tier;
 }
 
-void bch_read_extent_iter(struct cache_set *c, struct bch_read_bio *orig,
+void bch_read_extent_iter(struct bch_fs *c, struct bch_read_bio *orig,
 			  struct bvec_iter iter, struct bkey_s_c k,
 			  struct extent_pick_ptr *pick, unsigned flags)
 {
@@ -1313,7 +1313,7 @@ void bch_read_extent_iter(struct cache_set *c, struct bch_read_bio *orig,
 	generic_make_request(&rbio->bio);
 }
 
-static void bch_read_iter(struct cache_set *c, struct bch_read_bio *rbio,
+static void bch_read_iter(struct bch_fs *c, struct bch_read_bio *rbio,
 			  struct bvec_iter bvec_iter, u64 inode,
 			  unsigned flags)
 {
@@ -1386,7 +1386,7 @@ static void bch_read_iter(struct cache_set *c, struct bch_read_bio *rbio,
 	bio_endio(bio);
 }
 
-void bch_read(struct cache_set *c, struct bch_read_bio *bio, u64 inode)
+void bch_read(struct bch_fs *c, struct bch_read_bio *bio, u64 inode)
 {
 	bch_increment_clock(c, bio_sectors(&bio->bio), READ);
 
@@ -1401,7 +1401,7 @@ EXPORT_SYMBOL(bch_read);
 /**
  * bch_read_retry - re-submit a bio originally from bch_read()
  */
-static void bch_read_retry(struct cache_set *c, struct bch_read_bio *rbio)
+static void bch_read_retry(struct bch_fs *c, struct bch_read_bio *rbio)
 {
 	struct bch_read_bio *parent = bch_rbio_parent(rbio);
 	struct bvec_iter iter = rbio->parent_iter;
@@ -1422,7 +1422,7 @@ static void bch_read_retry(struct cache_set *c, struct bch_read_bio *rbio)
 
 void bch_read_retry_work(struct work_struct *work)
 {
-	struct cache_set *c = container_of(work, struct cache_set,
+	struct bch_fs *c = container_of(work, struct bch_fs,
 					   read_retry_work);
 	struct bch_read_bio *rbio;
 	struct bio *bio;

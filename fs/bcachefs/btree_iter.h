@@ -30,7 +30,7 @@ struct btree_iter {
 
 	s8			error;
 
-	struct cache_set	*c;
+	struct bch_fs	*c;
 
 	/* Current position of the iterator */
 	struct bpos		pos;
@@ -165,11 +165,11 @@ void bch_btree_iter_set_pos(struct btree_iter *, struct bpos);
 void bch_btree_iter_advance_pos(struct btree_iter *);
 void bch_btree_iter_rewind(struct btree_iter *, struct bpos);
 
-void __bch_btree_iter_init(struct btree_iter *, struct cache_set *,
+void __bch_btree_iter_init(struct btree_iter *, struct bch_fs *,
 			   enum btree_id, struct bpos, unsigned , unsigned);
 
 static inline void bch_btree_iter_init(struct btree_iter *iter,
-				       struct cache_set *c,
+				       struct bch_fs *c,
 				       enum btree_id btree_id,
 				       struct bpos pos)
 {
@@ -177,7 +177,7 @@ static inline void bch_btree_iter_init(struct btree_iter *iter,
 }
 
 static inline void bch_btree_iter_init_intent(struct btree_iter *iter,
-					      struct cache_set *c,
+					      struct bch_fs *c,
 					      enum btree_id btree_id,
 					      struct bpos pos)
 {

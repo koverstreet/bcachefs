@@ -64,7 +64,7 @@ void bch_write_bdev_super(struct cached_dev *dc, struct closure *parent)
 
 bool bch_is_open_backing_dev(struct block_device *bdev)
 {
-	struct cache_set *c, *tc;
+	struct bch_fs *c, *tc;
 	struct cached_dev *dc, *t;
 
 	list_for_each_entry_safe(c, tc, &bch_fs_list, list)
@@ -126,7 +126,7 @@ static void bcache_device_unlink(struct bcache_device *d)
 	}
 }
 
-static void bcache_device_link(struct bcache_device *d, struct cache_set *c,
+static void bcache_device_link(struct bcache_device *d, struct bch_fs *c,
 			       const char *name)
 {
 	snprintf(d->name, BCACHEDEVNAME_SIZE,
@@ -157,7 +157,7 @@ static void bcache_device_detach(struct bcache_device *d)
 	d->c = NULL;
 }
 
-static int bcache_device_attach(struct bcache_device *d, struct cache_set *c)
+static int bcache_device_attach(struct bcache_device *d, struct bch_fs *c)
 {
 	int ret;
 
@@ -257,7 +257,7 @@ static int bcache_device_init(struct bcache_device *d, unsigned block_size,
 
 /* Cached device */
 
-static void calc_cached_dev_sectors(struct cache_set *c)
+static void calc_cached_dev_sectors(struct bch_fs *c)
 {
 	u64 sectors = 0;
 	struct cached_dev *dc;
@@ -368,7 +368,7 @@ void bch_cached_dev_detach(struct cached_dev *dc)
 	cached_dev_put(dc);
 }
 
-int bch_cached_dev_attach(struct cached_dev *dc, struct cache_set *c)
+int bch_cached_dev_attach(struct cached_dev *dc, struct bch_fs *c)
 {
 	__le64 rtime = cpu_to_le64(ktime_get_seconds());
 	char buf[BDEVNAME_SIZE];
@@ -491,7 +491,7 @@ int bch_cached_dev_attach(struct cached_dev *dc, struct cache_set *c)
 	return 0;
 }
 
-void bch_attach_backing_devs(struct cache_set *c)
+void bch_attach_backing_devs(struct bch_fs *c)
 {
 	struct cached_dev *dc, *t;
 
@@ -609,7 +609,7 @@ const char *bch_backing_dev_register(struct bcache_superblock *sb)
 {
 	char name[BDEVNAME_SIZE];
 	const char *err;
-	struct cache_set *c;
+	struct bch_fs *c;
 	struct cached_dev *dc;
 
 	dc = kzalloc(sizeof(*dc), GFP_KERNEL);
@@ -695,7 +695,7 @@ static void blockdev_volume_flush(struct closure *cl)
 	continue_at(cl, blockdev_volume_free, system_wq);
 }
 
-static int blockdev_volume_run(struct cache_set *c,
+static int blockdev_volume_run(struct bch_fs *c,
 			       struct bkey_s_c_inode_blockdev inode)
 {
 	struct bcache_device *d = kzalloc(sizeof(struct bcache_device),
@@ -735,7 +735,7 @@ err:
 	return ret;
 }
 
-int bch_blockdev_volumes_start(struct cache_set *c)
+int bch_blockdev_volumes_start(struct bch_fs *c)
 {
 	struct btree_iter iter;
 	struct bkey_s_c k;
@@ -763,7 +763,7 @@ int bch_blockdev_volumes_start(struct cache_set *c)
 	return ret;
 }
 
-int bch_blockdev_volume_create(struct cache_set *c, u64 size)
+int bch_blockdev_volume_create(struct bch_fs *c, u64 size)
 {
 	__le64 rtime = cpu_to_le64(ktime_get_seconds());
 	struct bkey_i_inode_blockdev inode;
@@ -785,7 +785,7 @@ int bch_blockdev_volume_create(struct cache_set *c, u64 size)
 	return blockdev_volume_run(c, inode_blockdev_i_to_s_c(&inode));
 }
 
-void bch_blockdevs_stop(struct cache_set *c)
+void bch_blockdevs_stop(struct bch_fs *c)
 {
 	struct cached_dev *dc;
 	struct bcache_device *d;
@@ -811,12 +811,12 @@ void bch_blockdevs_stop(struct cache_set *c)
 	mutex_unlock(&bch_register_lock);
 }
 
-void bch_fs_blockdev_exit(struct cache_set *c)
+void bch_fs_blockdev_exit(struct bch_fs *c)
 {
 	mempool_exit(&c->search);
 }
 
-int bch_fs_blockdev_init(struct cache_set *c)
+int bch_fs_blockdev_init(struct bch_fs *c)
 {
 	return mempool_init_slab_pool(&c->search, 1, bch_search_cache);
 }

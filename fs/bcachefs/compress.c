@@ -14,7 +14,7 @@ enum bounced {
 	BOUNCED_MEMPOOLED,
 };
 
-static void *__bounce_alloc(struct cache_set *c, unsigned size,
+static void *__bounce_alloc(struct bch_fs *c, unsigned size,
 			    unsigned *bounced, int direction)
 {
 	void *data;
@@ -39,7 +39,7 @@ static void *__bounce_alloc(struct cache_set *c, unsigned size,
 	return page_address(data);
 }
 
-static void *__bio_map_or_bounce(struct cache_set *c,
+static void *__bio_map_or_bounce(struct bch_fs *c,
 				 struct bio *bio, struct bvec_iter start,
 				 unsigned *bounced, int direction)
 {
@@ -91,13 +91,13 @@ bounce:
 	return data;
 }
 
-static void *bio_map_or_bounce(struct cache_set *c, struct bio *bio,
+static void *bio_map_or_bounce(struct bch_fs *c, struct bio *bio,
 			       unsigned *bounced, int direction)
 {
 	return __bio_map_or_bounce(c, bio, bio->bi_iter, bounced, direction);
 }
 
-static void bio_unmap_or_unbounce(struct cache_set *c, void *data,
+static void bio_unmap_or_unbounce(struct bch_fs *c, void *data,
 				  unsigned bounced, int direction)
 {
 	if (!data)
@@ -126,7 +126,7 @@ static inline void zlib_set_workspace(z_stream *strm, void *workspace)
 #endif
 }
 
-static int __bio_uncompress(struct cache_set *c, struct bio *src,
+static int __bio_uncompress(struct bch_fs *c, struct bio *src,
 			    void *dst_data, struct bch_extent_crc128 crc)
 {
 	void *src_data = NULL;
@@ -186,7 +186,7 @@ err:
 	return ret;
 }
 
-int bch_bio_uncompress_inplace(struct cache_set *c, struct bio *bio,
+int bch_bio_uncompress_inplace(struct bch_fs *c, struct bio *bio,
 			       unsigned live_data_sectors,
 			       struct bch_extent_crc128 crc)
 {
@@ -238,7 +238,7 @@ use_mempool:
 	goto copy_data;
 }
 
-int bch_bio_uncompress(struct cache_set *c, struct bio *src,
+int bch_bio_uncompress(struct bch_fs *c, struct bio *src,
 		       struct bio *dst, struct bvec_iter dst_iter,
 		       struct bch_extent_crc128 crc)
 {
@@ -262,7 +262,7 @@ err:
 	return ret;
 }
 
-static int __bio_compress(struct cache_set *c,
+static int __bio_compress(struct bch_fs *c,
 			  struct bio *dst, size_t *dst_len,
 			  struct bio *src, size_t *src_len,
 			  unsigned compression_type)
@@ -382,7 +382,7 @@ err:
 	return ret;
 }
 
-void bch_bio_compress(struct cache_set *c,
+void bch_bio_compress(struct bch_fs *c,
 		      struct bio *dst, size_t *dst_len,
 		      struct bio *src, size_t *src_len,
 		      unsigned *compression_type)
@@ -414,7 +414,7 @@ out:
 }
 
 /* doesn't write superblock: */
-int bch_check_set_has_compressed_data(struct cache_set *c,
+int bch_check_set_has_compressed_data(struct bch_fs *c,
 				      unsigned compression_type)
 {
 	switch (compression_type) {
@@ -437,7 +437,7 @@ int bch_check_set_has_compressed_data(struct cache_set *c,
 	return bch_fs_compress_init(c);
 }
 
-void bch_fs_compress_exit(struct cache_set *c)
+void bch_fs_compress_exit(struct bch_fs *c)
 {
 	vfree(c->zlib_workspace);
 	mempool_exit(&c->lz4_workspace_pool);
@@ -450,7 +450,7 @@ void bch_fs_compress_exit(struct cache_set *c)
 	max_t(size_t, zlib_inflate_workspacesize(),			\
 	      zlib_deflate_workspacesize(MAX_WBITS, DEF_MEM_LEVEL))
 
-int bch_fs_compress_init(struct cache_set *c)
+int bch_fs_compress_init(struct bch_fs *c)
 {
 	unsigned order = get_order(BCH_ENCODED_EXTENT_MAX << 9);
 	int ret, cpu;

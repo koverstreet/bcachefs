@@ -13,11 +13,11 @@
 #include "move.h"
 #include "super-io.h"
 
-static int issue_migration_move(struct cache *ca,
+static int issue_migration_move(struct bch_dev *ca,
 				struct moving_context *ctxt,
 				struct bkey_s_c k)
 {
-	struct cache_set *c = ca->set;
+	struct bch_fs *c = ca->fs;
 	struct disk_reservation res;
 	const struct bch_extent_ptr *ptr;
 	int ret;
@@ -55,10 +55,10 @@ found:
  * land in the same device even if there are others available.
  */
 
-int bch_move_data_off_device(struct cache *ca)
+int bch_move_data_off_device(struct bch_dev *ca)
 {
 	struct moving_context ctxt;
-	struct cache_set *c = ca->set;
+	struct bch_fs *c = ca->fs;
 	struct bch_sb_field_members *mi;
 	unsigned pass = 0;
 	u64 seen_key_count;
@@ -155,9 +155,9 @@ next:
  * This walks the btree, and for any node on the relevant device it moves the
  * node elsewhere.
  */
-static int bch_move_btree_off(struct cache *ca, enum btree_id id)
+static int bch_move_btree_off(struct bch_dev *ca, enum btree_id id)
 {
-	struct cache_set *c = ca->set;
+	struct bch_fs *c = ca->fs;
 	struct btree_iter iter;
 	struct closure cl;
 	struct btree *b;
@@ -252,9 +252,9 @@ retry:
  *   is written.
  */
 
-int bch_move_metadata_off_device(struct cache *ca)
+int bch_move_metadata_off_device(struct bch_dev *ca)
 {
-	struct cache_set *c = ca->set;
+	struct bch_fs *c = ca->fs;
 	struct bch_sb_field_members *mi;
 	unsigned i;
 	int ret;
@@ -296,13 +296,13 @@ int bch_move_metadata_off_device(struct cache *ca)
  */
 
 static int bch_flag_key_bad(struct btree_iter *iter,
-			    struct cache *ca,
+			    struct bch_dev *ca,
 			    struct bkey_s_c_extent orig)
 {
 	BKEY_PADDED(key) tmp;
 	struct bkey_s_extent e;
 	struct bch_extent_ptr *ptr;
-	struct cache_set *c = ca->set;
+	struct bch_fs *c = ca->fs;
 
 	bkey_reassemble(&tmp.key, orig.s_c);
 	e = bkey_i_to_s_extent(&tmp.key);
@@ -334,14 +334,14 @@ static int bch_flag_key_bad(struct btree_iter *iter,
  * that we've already tried to move the data MAX_DATA_OFF_ITER times and
  * are not likely to succeed if we try again.
  */
-int bch_flag_data_bad(struct cache *ca)
+int bch_flag_data_bad(struct bch_dev *ca)
 {
 	int ret = 0;
 	struct bkey_s_c k;
 	struct bkey_s_c_extent e;
 	struct btree_iter iter;
 
-	bch_btree_iter_init(&iter, ca->set, BTREE_ID_EXTENTS, POS_MIN);
+	bch_btree_iter_init(&iter, ca->fs, BTREE_ID_EXTENTS, POS_MIN);
 
 	while ((k = bch_btree_iter_peek(&iter)).k &&
 	       !(ret = btree_iter_err(k))) {

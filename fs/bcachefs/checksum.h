@@ -14,7 +14,7 @@ u64 bch_crc64_update(u64, const void *, size_t);
 #define BCH_NONCE_PRIO		cpu_to_le32(4 << 28)
 #define BCH_NONCE_POLY		cpu_to_le32(1 << 31)
 
-struct bch_csum bch_checksum(struct cache_set *, unsigned, struct nonce,
+struct bch_csum bch_checksum(struct bch_fs *, unsigned, struct nonce,
 			     const void *, size_t);
 
 /*
@@ -32,21 +32,21 @@ struct bch_csum bch_checksum(struct cache_set *, unsigned, struct nonce,
 int bch_chacha_encrypt_key(struct bch_key *, struct nonce, void *, size_t);
 int bch_request_key(struct bch_sb *, struct bch_key *);
 
-void bch_encrypt(struct cache_set *, unsigned, struct nonce,
+void bch_encrypt(struct bch_fs *, unsigned, struct nonce,
 		 void *data, size_t);
 
-struct bch_csum bch_checksum_bio(struct cache_set *, unsigned,
+struct bch_csum bch_checksum_bio(struct bch_fs *, unsigned,
 				 struct nonce, struct bio *);
-void bch_encrypt_bio(struct cache_set *, unsigned,
+void bch_encrypt_bio(struct bch_fs *, unsigned,
 		    struct nonce, struct bio *);
 
-int bch_disable_encryption(struct cache_set *);
-int bch_enable_encryption(struct cache_set *, bool);
+int bch_disable_encryption(struct bch_fs *);
+int bch_enable_encryption(struct bch_fs *, bool);
 
-void bch_fs_encryption_exit(struct cache_set *);
-int bch_fs_encryption_init(struct cache_set *);
+void bch_fs_encryption_exit(struct bch_fs *);
+int bch_fs_encryption_init(struct bch_fs *);
 
-static inline unsigned bch_data_checksum_type(struct cache_set *c)
+static inline unsigned bch_data_checksum_type(struct bch_fs *c)
 {
 	if (c->sb.encryption_type)
 		return c->opts.wide_macs
@@ -56,14 +56,14 @@ static inline unsigned bch_data_checksum_type(struct cache_set *c)
 	return c->opts.data_checksum;
 }
 
-static inline unsigned bch_meta_checksum_type(struct cache_set *c)
+static inline unsigned bch_meta_checksum_type(struct bch_fs *c)
 {
 	return c->sb.encryption_type
 		? BCH_CSUM_CHACHA20_POLY1305_128
 		: c->opts.metadata_checksum;
 }
 
-static inline bool bch_checksum_type_valid(const struct cache_set *c,
+static inline bool bch_checksum_type_valid(const struct bch_fs *c,
 					   unsigned type)
 {
 	if (type >= BCH_CSUM_NR)
@@ -118,7 +118,7 @@ static inline struct nonce __bch_sb_key_nonce(struct bch_sb *sb)
 	}};
 }
 
-static inline struct nonce bch_sb_key_nonce(struct cache_set *c)
+static inline struct nonce bch_sb_key_nonce(struct bch_fs *c)
 {
 	__le64 magic = bch_sb_magic(c);
 

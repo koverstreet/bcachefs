@@ -47,9 +47,9 @@ struct bch_inode_unpacked;
 typedef int (*inode_set_fn)(struct bch_inode_info *,
 			    struct bch_inode_unpacked *, void *);
 
-int __must_check __bch_write_inode(struct cache_set *, struct bch_inode_info *,
+int __must_check __bch_write_inode(struct bch_fs *, struct bch_inode_info *,
 				   inode_set_fn, void *);
-int __must_check bch_write_inode(struct cache_set *,
+int __must_check bch_write_inode(struct bch_fs *,
 				 struct bch_inode_info *);
 
 void bch_vfs_exit(void);

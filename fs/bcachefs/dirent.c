@@ -74,7 +74,7 @@ static const struct bch_hash_desc dirent_hash_desc = {
 	.cmp_bkey	= dirent_cmp_bkey,
 };
 
-static const char *bch_dirent_invalid(const struct cache_set *c,
+static const char *bch_dirent_invalid(const struct bch_fs *c,
 				      struct bkey_s_c k)
 {
 	switch (k.k->type) {
@@ -93,7 +93,7 @@ static const char *bch_dirent_invalid(const struct cache_set *c,
 	}
 }
 
-static void bch_dirent_to_text(struct cache_set *c, char *buf,
+static void bch_dirent_to_text(struct bch_fs *c, char *buf,
 			       size_t size, struct bkey_s_c k)
 {
 	struct bkey_s_c_dirent d;
@@ -151,7 +151,7 @@ static struct bkey_i_dirent *dirent_create_key(u8 type,
 	return dirent;
 }
 
-int bch_dirent_create(struct cache_set *c, u64 dir_inum,
+int bch_dirent_create(struct bch_fs *c, u64 dir_inum,
 		      const struct bch_hash_info *hash_info,
 		      u8 type, const struct qstr *name, u64 dst_inum,
 		      u64 *journal_seq, int flags)
@@ -183,7 +183,7 @@ static struct bpos bch_dirent_pos(struct bch_inode_info *ei,
 	return POS(ei->vfs_inode.i_ino, bch_dirent_hash(&ei->str_hash, name));
 }
 
-int bch_dirent_rename(struct cache_set *c,
+int bch_dirent_rename(struct bch_fs *c,
 		      struct inode *src_dir, const struct qstr *src_name,
 		      struct inode *dst_dir, const struct qstr *dst_name,
 		      u64 *journal_seq, enum bch_rename_mode mode)
@@ -325,7 +325,7 @@ err:
 	return ret;
 }
 
-int bch_dirent_delete(struct cache_set *c, u64 dir_inum,
+int bch_dirent_delete(struct bch_fs *c, u64 dir_inum,
 		      const struct bch_hash_info *hash_info,
 		      const struct qstr *name,
 		      u64 *journal_seq)
@@ -334,7 +334,7 @@ int bch_dirent_delete(struct cache_set *c, u64 dir_inum,
 			       c, dir_inum, journal_seq, name);
 }
 
-u64 bch_dirent_lookup(struct cache_set *c, u64 dir_inum,
+u64 bch_dirent_lookup(struct bch_fs *c, u64 dir_inum,
 		      const struct bch_hash_info *hash_info,
 		      const struct qstr *name)
 {
@@ -355,7 +355,7 @@ u64 bch_dirent_lookup(struct cache_set *c, u64 dir_inum,
 	return inum;
 }
 
-int bch_empty_dir(struct cache_set *c, u64 dir_inum)
+int bch_empty_dir(struct bch_fs *c, u64 dir_inum)
 {
 	struct btree_iter iter;
 	struct bkey_s_c k;
@@ -375,7 +375,7 @@ int bch_empty_dir(struct cache_set *c, u64 dir_inum)
 	return ret;
 }
 
-int bch_readdir(struct cache_set *c, struct file *file,
+int bch_readdir(struct bch_fs *c, struct file *file,
 		struct dir_context *ctx)
 {
 	struct inode *inode = file_inode(file);

@@ -33,21 +33,21 @@
  * the oldest gen of any pointer into that bucket in the btree.
  */
 
-static inline u8 bucket_gc_gen(struct cache *ca, struct bucket *g)
+static inline u8 bucket_gc_gen(struct bch_dev *ca, struct bucket *g)
 {
 	unsigned long r = g - ca->buckets;
 	return g->mark.gen - ca->oldest_gens[r];
 }
 
-static inline struct cache *PTR_CACHE(const struct cache_set *c,
+static inline struct bch_dev *PTR_DEV(const struct bch_fs *c,
 				      const struct bch_extent_ptr *ptr)
 {
 	EBUG_ON(ptr->dev > rcu_dereference(c->members)->nr_devices);
 
-	return rcu_dereference(c->cache[ptr->dev]);
+	return rcu_dereference(c->devs[ptr->dev]);
 }
 
-static inline size_t PTR_BUCKET_NR(const struct cache *ca,
+static inline size_t PTR_BUCKET_NR(const struct bch_dev *ca,
 				   const struct bch_extent_ptr *ptr)
 {
 	return sector_to_bucket(ca, ptr->offset);
@@ -56,7 +56,7 @@ static inline size_t PTR_BUCKET_NR(const struct cache *ca,
 /*
  * Returns 0 if no pointers or device offline - only for tracepoints!
  */
-static inline size_t PTR_BUCKET_NR_TRACE(const struct cache_set *c,
+static inline size_t PTR_BUCKET_NR_TRACE(const struct bch_fs *c,
 					 const struct bkey_i *k,
 					 unsigned ptr)
 {
@@ -64,7 +64,7 @@ static inline size_t PTR_BUCKET_NR_TRACE(const struct cache_set *c,
 #if 0
 	if (bkey_extent_is_data(&k->k)) {
 		const struct bch_extent_ptr *ptr;
-		const struct cache *ca;
+		const struct bch_dev *ca;
 
 		rcu_read_lock();
 		extent_for_each_online_device(c, bkey_i_to_s_c_extent(k), ptr, ca) {
@@ -77,7 +77,7 @@ static inline size_t PTR_BUCKET_NR_TRACE(const struct cache_set *c,
 	return bucket;
 }
 
-static inline struct bucket *PTR_BUCKET(const struct cache *ca,
+static inline struct bucket *PTR_BUCKET(const struct bch_dev *ca,
 					const struct bch_extent_ptr *ptr)
 {
 	return ca->buckets + PTR_BUCKET_NR(ca, ptr);
@@ -103,9 +103,9 @@ static inline u8 gen_after(u8 a, u8 b)
  * ptr_stale() - check if a pointer points into a bucket that has been
  * invalidated.
  *
- * Warning: PTR_CACHE(c, k, ptr) must equal ca.
+ * Warning: PTR_DEV(c, k, ptr) must equal ca.
  */
-static inline u8 ptr_stale(const struct cache *ca,
+static inline u8 ptr_stale(const struct bch_dev *ca,
 			   const struct bch_extent_ptr *ptr)
 {
 	return gen_after(PTR_BUCKET(ca, ptr)->mark.gen, ptr->gen);
@@ -125,7 +125,7 @@ static inline bool bucket_max_cmp(struct bucket_heap_entry l,
 	return l.val > r.val;
 }
 
-static inline void bucket_heap_push(struct cache *ca, struct bucket *g,
+static inline void bucket_heap_push(struct bch_dev *ca, struct bucket *g,
 				    unsigned long val)
 {
 	struct bucket_heap_entry new = { g, val };
@@ -157,11 +157,11 @@ static inline unsigned bucket_sectors_used(struct bucket *g)
 
 /* Per device stats: */
 
-struct bch_dev_usage __bch_dev_usage_read(struct cache *);
-struct bch_dev_usage bch_dev_usage_read(struct cache *);
+struct bch_dev_usage __bch_dev_usage_read(struct bch_dev *);
+struct bch_dev_usage bch_dev_usage_read(struct bch_dev *);
 
-static inline u64 __buckets_available_cache(struct cache *ca,
-					    struct bch_dev_usage stats)
+static inline u64 __dev_buckets_available(struct bch_dev *ca,
+					  struct bch_dev_usage stats)
 {
 	return max_t(s64, 0,
 		     ca->mi.nbuckets - ca->mi.first_bucket -
@@ -173,32 +173,32 @@ static inline u64 __buckets_available_cache(struct cache *ca,
 /*
  * Number of reclaimable buckets - only for use by the allocator thread:
  */
-static inline u64 buckets_available_cache(struct cache *ca)
+static inline u64 dev_buckets_available(struct bch_dev *ca)
 {
-	return __buckets_available_cache(ca, bch_dev_usage_read(ca));
+	return __dev_buckets_available(ca, bch_dev_usage_read(ca));
 }
 
-static inline u64 __buckets_free_cache(struct cache *ca,
+static inline u64 __dev_buckets_free(struct bch_dev *ca,
 				       struct bch_dev_usage stats)
 {
-	return __buckets_available_cache(ca, stats) +
+	return __dev_buckets_available(ca, stats) +
 		fifo_used(&ca->free[RESERVE_NONE]) +
 		fifo_used(&ca->free_inc);
 }
 
-static inline u64 buckets_free_cache(struct cache *ca)
+static inline u64 dev_buckets_free(struct bch_dev *ca)
 {
-	return __buckets_free_cache(ca, bch_dev_usage_read(ca));
+	return __dev_buckets_free(ca, bch_dev_usage_read(ca));
 }
 
 /* Cache set stats: */
 
-struct bch_fs_usage __bch_fs_usage_read(struct cache_set *);
-struct bch_fs_usage bch_fs_usage_read(struct cache_set *);
-void bch_fs_stats_apply(struct cache_set *, struct bch_fs_usage *,
+struct bch_fs_usage __bch_fs_usage_read(struct bch_fs *);
+struct bch_fs_usage bch_fs_usage_read(struct bch_fs *);
+void bch_fs_stats_apply(struct bch_fs *, struct bch_fs_usage *,
 			struct disk_reservation *, struct gc_pos);
 
-static inline u64 __bch_fs_sectors_used(struct cache_set *c)
+static inline u64 __bch_fs_sectors_used(struct bch_fs *c)
 {
 	struct bch_fs_usage stats = __bch_fs_usage_read(c);
 	u64 reserved = stats.persistent_reserved +
@@ -210,21 +210,21 @@ static inline u64 __bch_fs_sectors_used(struct cache_set *c)
 		(reserved >> 7);
 }
 
-static inline u64 bch_fs_sectors_used(struct cache_set *c)
+static inline u64 bch_fs_sectors_used(struct bch_fs *c)
 {
 	return min(c->capacity, __bch_fs_sectors_used(c));
 }
 
 /* XXX: kill? */
-static inline u64 sectors_available(struct cache_set *c)
+static inline u64 sectors_available(struct bch_fs *c)
 {
-	struct cache *ca;
+	struct bch_dev *ca;
 	unsigned i;
 	u64 ret = 0;
 
 	rcu_read_lock();
-	for_each_cache_rcu(ca, c, i)
-		ret += buckets_available_cache(ca) << ca->bucket_bits;
+	for_each_member_device_rcu(ca, c, i)
+		ret += dev_buckets_available(ca) << ca->bucket_bits;
 	rcu_read_unlock();
 
 	return ret;
@@ -245,23 +245,23 @@ static inline bool bucket_needs_journal_commit(struct bucket_mark m,
 		((s16) m.journal_seq - (s16) last_seq_ondisk > 0);
 }
 
-void bch_bucket_seq_cleanup(struct cache_set *);
+void bch_bucket_seq_cleanup(struct bch_fs *);
 
-void bch_invalidate_bucket(struct cache *, struct bucket *);
-void bch_mark_free_bucket(struct cache *, struct bucket *);
-void bch_mark_alloc_bucket(struct cache *, struct bucket *, bool);
-void bch_mark_metadata_bucket(struct cache *, struct bucket *,
+void bch_invalidate_bucket(struct bch_dev *, struct bucket *);
+void bch_mark_free_bucket(struct bch_dev *, struct bucket *);
+void bch_mark_alloc_bucket(struct bch_dev *, struct bucket *, bool);
+void bch_mark_metadata_bucket(struct bch_dev *, struct bucket *,
 			      enum bucket_data_type, bool);
 
-void __bch_gc_mark_key(struct cache_set *, struct bkey_s_c, s64, bool,
+void __bch_gc_mark_key(struct bch_fs *, struct bkey_s_c, s64, bool,
 		       struct bch_fs_usage *);
-void bch_gc_mark_key(struct cache_set *, struct bkey_s_c, s64, bool);
-void bch_mark_key(struct cache_set *, struct bkey_s_c, s64, bool,
+void bch_gc_mark_key(struct bch_fs *, struct bkey_s_c, s64, bool);
+void bch_mark_key(struct bch_fs *, struct bkey_s_c, s64, bool,
 		  struct gc_pos, struct bch_fs_usage *, u64);
 
-void bch_recalc_sectors_available(struct cache_set *);
+void bch_recalc_sectors_available(struct bch_fs *);
 
-void bch_disk_reservation_put(struct cache_set *,
+void bch_disk_reservation_put(struct bch_fs *,
 			      struct disk_reservation *);
 
 #define BCH_DISK_RESERVATION_NOFAIL		(1 << 0)
@@ -269,10 +269,10 @@ void bch_disk_reservation_put(struct cache_set *,
 #define BCH_DISK_RESERVATION_GC_LOCK_HELD	(1 << 2)
 #define BCH_DISK_RESERVATION_BTREE_LOCKS_HELD	(1 << 3)
 
-int bch_disk_reservation_add(struct cache_set *,
+int bch_disk_reservation_add(struct bch_fs *,
 			     struct disk_reservation *,
 			     unsigned, int);
-int bch_disk_reservation_get(struct cache_set *,
+int bch_disk_reservation_get(struct bch_fs *,
 			     struct disk_reservation *,
 			     unsigned, int);
 

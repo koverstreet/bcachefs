@@ -22,7 +22,7 @@ struct migrate_write {
 	struct bch_write_bio	wbio;
 };
 
-void bch_migrate_write_init(struct cache_set *,
+void bch_migrate_write_init(struct bch_fs *,
 			    struct migrate_write *,
 			    struct write_point *,
 			    struct bkey_s_c,
@@ -47,7 +47,7 @@ struct moving_context {
 	struct bch_ratelimit	*rate;
 
 	/* Try to avoid reading the following device */
-	struct cache		*avoid;
+	struct bch_dev		*avoid;
 
 	struct list_head	reads;
 
@@ -71,7 +71,7 @@ struct moving_io {
 	struct bio_vec		bi_inline_vecs[0];
 };
 
-int bch_data_move(struct cache_set *,
+int bch_data_move(struct bch_fs *,
 		  struct moving_context *,
 		  struct write_point *,
 		  struct bkey_s_c,

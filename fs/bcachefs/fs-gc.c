@@ -13,7 +13,7 @@
 
 #define QSTR(n) { { { .len = strlen(n) } }, .name = n }
 
-static int remove_dirent(struct cache_set *c, struct btree_iter *iter,
+static int remove_dirent(struct bch_fs *c, struct btree_iter *iter,
 			 struct bkey_s_c_dirent dirent)
 {
 	struct qstr name;
@@ -47,7 +47,7 @@ err:
 	return ret;
 }
 
-static int reattach_inode(struct cache_set *c,
+static int reattach_inode(struct bch_fs *c,
 			  struct bch_inode_unpacked *lostfound_inode,
 			  u64 inum)
 {
@@ -90,7 +90,7 @@ static struct inode_walker inode_walker_init(void)
 	};
 }
 
-static int walk_inode(struct cache_set *c, struct inode_walker *w, u64 inum)
+static int walk_inode(struct bch_fs *c, struct inode_walker *w, u64 inum)
 {
 	w->first_this_inode	= inum != w->cur_inum;
 	w->cur_inum		= inum;
@@ -112,7 +112,7 @@ static int walk_inode(struct cache_set *c, struct inode_walker *w, u64 inum)
  * that i_size an i_sectors are consistent
  */
 noinline_for_stack
-static int check_extents(struct cache_set *c)
+static int check_extents(struct bch_fs *c)
 {
 	struct inode_walker w = inode_walker_init();
 	struct btree_iter iter;
@@ -158,7 +158,7 @@ fsck_err:
  * validate d_type
  */
 noinline_for_stack
-static int check_dirents(struct cache_set *c)
+static int check_dirents(struct bch_fs *c)
 {
 	struct inode_walker w = inode_walker_init();
 	struct btree_iter iter;
@@ -250,7 +250,7 @@ fsck_err:
  * Walk xattrs: verify that they all have a corresponding inode
  */
 noinline_for_stack
-static int check_xattrs(struct cache_set *c)
+static int check_xattrs(struct bch_fs *c)
 {
 	struct inode_walker w = inode_walker_init();
 	struct btree_iter iter;
@@ -272,7 +272,7 @@ fsck_err:
 }
 
 /* Get root directory, create if it doesn't exist: */
-static int check_root(struct cache_set *c, struct bch_inode_unpacked *root_inode)
+static int check_root(struct bch_fs *c, struct bch_inode_unpacked *root_inode)
 {
 	struct bkey_inode_buf packed;
 	int ret;
@@ -302,7 +302,7 @@ create_root:
 }
 
 /* Get lost+found, create if it doesn't exist: */
-static int check_lostfound(struct cache_set *c,
+static int check_lostfound(struct bch_fs *c,
 			   struct bch_inode_unpacked *root_inode,
 			   struct bch_inode_unpacked *lostfound_inode)
 {
@@ -425,7 +425,7 @@ static int path_down(struct pathbuf *p, u64 inum)
 }
 
 noinline_for_stack
-static int check_directory_structure(struct cache_set *c,
+static int check_directory_structure(struct bch_fs *c,
 				     struct bch_inode_unpacked *lostfound_inode)
 {
 	struct inode_bitmap dirs_done = { NULL, 0 };
@@ -547,7 +547,7 @@ struct nlink {
 
 typedef GENRADIX(struct nlink) nlink_table;
 
-static void inc_link(struct cache_set *c, nlink_table *links,
+static void inc_link(struct bch_fs *c, nlink_table *links,
 		     u64 range_start, u64 *range_end,
 		     u64 inum, bool dir)
 {
@@ -570,7 +570,7 @@ static void inc_link(struct cache_set *c, nlink_table *links,
 }
 
 noinline_for_stack
-static int bch_gc_walk_dirents(struct cache_set *c, nlink_table *links,
+static int bch_gc_walk_dirents(struct bch_fs *c, nlink_table *links,
 			       u64 range_start, u64 *range_end)
 {
 	struct btree_iter iter;
@@ -606,7 +606,7 @@ static int bch_gc_walk_dirents(struct cache_set *c, nlink_table *links,
 	return ret;
 }
 
-s64 bch_count_inode_sectors(struct cache_set *c, u64 inum)
+s64 bch_count_inode_sectors(struct bch_fs *c, u64 inum)
 {
 	struct btree_iter iter;
 	struct bkey_s_c k;
@@ -623,7 +623,7 @@ s64 bch_count_inode_sectors(struct cache_set *c, u64 inum)
 	return bch_btree_iter_unlock(&iter) ?: sectors;
 }
 
-static int bch_gc_do_inode(struct cache_set *c,
+static int bch_gc_do_inode(struct bch_fs *c,
 			   struct bch_inode_unpacked *lostfound_inode,
 			   struct btree_iter *iter,
 			   struct bkey_s_c_inode inode, struct nlink link)
@@ -774,7 +774,7 @@ fsck_err:
 }
 
 noinline_for_stack
-static int bch_gc_walk_inodes(struct cache_set *c,
+static int bch_gc_walk_inodes(struct bch_fs *c,
 			      struct bch_inode_unpacked *lostfound_inode,
 			      nlink_table *links,
 			      u64 range_start, u64 range_end)
@@ -847,7 +847,7 @@ fsck_err:
 }
 
 noinline_for_stack
-static int check_inode_nlinks(struct cache_set *c,
+static int check_inode_nlinks(struct bch_fs *c,
 			      struct bch_inode_unpacked *lostfound_inode)
 {
 	nlink_table links;
@@ -884,7 +884,7 @@ static int check_inode_nlinks(struct cache_set *c,
  * Checks for inconsistencies that shouldn't happen, unless we have a bug.
  * Doesn't fix them yet, mainly because they haven't yet been observed:
  */
-int bch_fsck(struct cache_set *c, bool full_fsck)
+int bch_fsck(struct bch_fs *c, bool full_fsck)
 {
 	struct bch_inode_unpacked root_inode, lostfound_inode;
 	int ret;

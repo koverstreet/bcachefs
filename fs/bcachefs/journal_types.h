@@ -113,7 +113,7 @@ enum {
 	JOURNAL_NEED_WRITE,
 };
 
-/* Embedded in struct cache_set */
+/* Embedded in struct bch_fs */
 struct journal {
 	/* Fastpath stuff up front: */
 
@@ -174,7 +174,7 @@ struct journal {
 	struct list_head	seq_blacklist;
 
 	BKEY_PADDED(key);
-	struct cache_group	devs;
+	struct dev_group	devs;
 
 	struct delayed_work	reclaim_work;
 	unsigned long		last_flushed;
@@ -207,7 +207,7 @@ struct journal {
 };
 
 /*
- * Embedded in struct cache. First three fields refer to the array of journal
+ * Embedded in struct bch_dev. First three fields refer to the array of journal
  * buckets, in bch_sb.
  */
 struct journal_device {

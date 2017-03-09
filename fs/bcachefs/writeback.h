@@ -45,7 +45,7 @@ static inline bool bcache_dev_stripe_dirty(struct cached_dev *dc,
 static inline bool should_writeback(struct cached_dev *dc, struct bio *bio,
 				    unsigned cache_mode, bool would_skip)
 {
-	struct cache_set *c = dc->disk.c;
+	struct bch_fs *c = dc->disk.c;
 	u64 available = sectors_available(c);
 
 	if (cache_mode != CACHE_MODE_WRITEBACK ||
@@ -89,10 +89,10 @@ static inline void bch_writeback_add(struct cached_dev *dc)
 
 #ifndef NO_BCACHE_WRITEBACK
 
-void bcache_dev_sectors_dirty_add(struct cache_set *, unsigned, u64, int);
+void bcache_dev_sectors_dirty_add(struct bch_fs *, unsigned, u64, int);
 
-void bch_writeback_recalc_oldest_gens(struct cache_set *);
-void bch_sectors_dirty_init(struct cached_dev *, struct cache_set *c);
+void bch_writeback_recalc_oldest_gens(struct bch_fs *);
+void bch_sectors_dirty_init(struct cached_dev *, struct bch_fs *c);
 
 void bch_cached_dev_writeback_stop(struct cached_dev *);
 void bch_cached_dev_writeback_free(struct cached_dev *);
@@ -101,11 +101,11 @@ int bch_cached_dev_writeback_start(struct cached_dev *);
 
 #else
 
-static inline void bcache_dev_sectors_dirty_add(struct cache_set *c,
+static inline void bcache_dev_sectors_dirty_add(struct bch_fs *c,
 						unsigned i, u64 o, int n) {}
-static inline void bch_writeback_recalc_oldest_gens(struct cache_set *c) {}
+static inline void bch_writeback_recalc_oldest_gens(struct bch_fs *c) {}
 static inline void bch_sectors_dirty_init(struct cached_dev *dc,
-					  struct cache_set *c) {}
+					  struct bch_fs *c) {}
 static inline void bch_cached_dev_writeback_stop(struct cached_dev *dc) {}
 static inline void bch_cached_dev_writeback_free(struct cached_dev *dc) {}
 static inline int bch_cached_dev_writeback_init(struct cached_dev *dc)

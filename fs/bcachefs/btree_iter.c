@@ -666,7 +666,7 @@ void bch_btree_iter_reinit_node(struct btree_iter *iter, struct btree *b)
 static inline int btree_iter_lock_root(struct btree_iter *iter,
 				       unsigned depth_want)
 {
-	struct cache_set *c = iter->c;
+	struct bch_fs *c = iter->c;
 	struct btree *b;
 	enum six_lock_type lock_type;
 	unsigned i;
@@ -740,7 +740,7 @@ int __must_check __bch_btree_iter_traverse(struct btree_iter *);
 
 static int btree_iter_traverse_error(struct btree_iter *iter, int ret)
 {
-	struct cache_set *c = iter->c;
+	struct bch_fs *c = iter->c;
 	struct btree_iter *linked, *sorted_iters, **i;
 retry_all:
 	bch_btree_iter_unlock(iter);
@@ -1102,7 +1102,7 @@ recheck:
 	}
 }
 
-void __bch_btree_iter_init(struct btree_iter *iter, struct cache_set *c,
+void __bch_btree_iter_init(struct btree_iter *iter, struct bch_fs *c,
 			   enum btree_id btree_id, struct bpos pos,
 			   unsigned locks_want, unsigned depth)
 {

@@ -20,17 +20,17 @@ struct tiering_state {
 	unsigned		sectors;
 	unsigned		stripe_size;
 	unsigned		dev_idx;
-	struct cache		*ca;
+	struct bch_dev		*ca;
 };
 
-static bool tiering_pred(struct cache_set *c,
+static bool tiering_pred(struct bch_fs *c,
 			 struct tiering_state *s,
 			 struct bkey_s_c k)
 {
 	if (bkey_extent_is_data(k.k)) {
 		struct bkey_s_c_extent e = bkey_s_c_to_extent(k);
 		const struct bch_extent_ptr *ptr;
-		struct cache_member_rcu *mi;
+		struct bch_member_rcu *mi;
 		unsigned replicas = 0;
 
 		/* Make sure we have room to add a new pointer: */
@@ -38,12 +38,12 @@ static bool tiering_pred(struct cache_set *c,
 		    BKEY_EXTENT_VAL_U64s_MAX)
 			return false;
 
-		mi = cache_member_info_get(c);
+		mi = fs_member_info_get(c);
 		extent_for_each_ptr(e, ptr)
 			if (ptr->dev < mi->nr_devices &&
 			    mi->m[ptr->dev].tier >= s->tier->idx)
 				replicas++;
-		cache_member_info_put();
+		fs_member_info_put();
 
 		return replicas < c->opts.data_replicas;
 	}
@@ -61,7 +61,7 @@ static void tier_put_device(struct tiering_state *s)
 /**
  * refill_next - move on to refilling the next cache's tiering keylist
  */
-static void tier_next_device(struct cache_set *c, struct tiering_state *s)
+static void tier_next_device(struct bch_fs *c, struct tiering_state *s)
 {
 	if (!s->ca || s->sectors > s->stripe_size) {
 		tier_put_device(s);
@@ -80,7 +80,7 @@ static void tier_next_device(struct cache_set *c, struct tiering_state *s)
 	}
 }
 
-static int issue_tiering_move(struct cache_set *c,
+static int issue_tiering_move(struct bch_fs *c,
 			      struct tiering_state *s,
 			      struct moving_context *ctxt,
 			      struct bkey_s_c k)
@@ -102,7 +102,7 @@ static int issue_tiering_move(struct cache_set *c,
  * tiering_next_cache - issue a move to write an extent to the next cache
  * device in round robin order
  */
-static s64 read_tiering(struct cache_set *c, struct bch_tier *tier)
+static s64 read_tiering(struct bch_fs *c, struct bch_tier *tier)
 {
 	struct moving_context ctxt;
 	struct tiering_state s;
@@ -163,9 +163,9 @@ next:
 static int bch_tiering_thread(void *arg)
 {
 	struct bch_tier *tier = arg;
-	struct cache_set *c = container_of(tier, struct cache_set, tiers[tier->idx]);
+	struct bch_fs *c = container_of(tier, struct bch_fs, tiers[tier->idx]);
 	struct io_clock *clock = &c->io_clock[WRITE];
-	struct cache *ca;
+	struct bch_dev *ca;
 	u64 tier_capacity, available_sectors;
 	unsigned long last;
 	unsigned i;
@@ -187,12 +187,12 @@ static int bch_tiering_thread(void *arg)
 			for (faster_tier = c->tiers;
 			     faster_tier != tier;
 			     faster_tier++) {
-				group_for_each_cache_rcu(ca, &faster_tier->devs, i) {
+				group_for_each_dev_rcu(ca, &faster_tier->devs, i) {
 					tier_capacity +=
 						(ca->mi.nbuckets -
 						 ca->mi.first_bucket) << ca->bucket_bits;
 					available_sectors +=
-						buckets_available_cache(ca) << ca->bucket_bits;
+						dev_buckets_available(ca) << ca->bucket_bits;
 				}
 			}
 			rcu_read_unlock();
@@ -225,7 +225,7 @@ static void __bch_tiering_stop(struct bch_tier *tier)
 	tier->migrate = NULL;
 }
 
-void bch_tiering_stop(struct cache_set *c)
+void bch_tiering_stop(struct bch_fs *c)
 {
 	struct bch_tier *tier;
 
@@ -249,7 +249,7 @@ static int __bch_tiering_start(struct bch_tier *tier)
 	return 0;
 }
 
-int bch_tiering_start(struct cache_set *c)
+int bch_tiering_start(struct bch_fs *c)
 {
 	struct bch_tier *tier;
 	bool have_faster_tier = false;
@@ -275,7 +275,7 @@ int bch_tiering_start(struct cache_set *c)
 	return 0;
 }
 
-void bch_fs_tiering_init(struct cache_set *c)
+void bch_fs_tiering_init(struct bch_fs *c)
 {
 	unsigned i;
 

@@ -49,13 +49,13 @@ static inline bool allocation_is_metadata(enum alloc_reserve id)
 	return id <= RESERVE_METADATA_LAST;
 }
 
-struct cache_group {
+struct dev_group {
 	spinlock_t		lock;
 	unsigned		nr;
 	unsigned		cur_device;
 	struct {
 		u64		weight;
-		struct cache	*dev;
+		struct bch_dev	*dev;
 	}			d[BCH_SB_MEMBERS_MAX];
 };
 
@@ -91,7 +91,7 @@ struct write_point {
 	 * If not NULL, cache group for tiering, promotion and moving GC -
 	 * always allocates a single replica
 	 */
-	struct cache_group	*group;
+	struct dev_group	*group;
 
 	/*
 	 * Otherwise do a normal replicated bucket allocation that could come

@@ -50,7 +50,7 @@
 
 /* Congested? */
 
-unsigned bch_get_congested(struct cache_set *c)
+unsigned bch_get_congested(struct bch_fs *c)
 {
 	int i;
 	long rand;
@@ -92,7 +92,7 @@ static struct hlist_head *iohash(struct cached_dev *dc, uint64_t k)
 
 static bool check_should_bypass(struct cached_dev *dc, struct bio *bio, int rw)
 {
-	struct cache_set *c = dc->disk.c;
+	struct bch_fs *c = dc->disk.c;
 	unsigned mode = BDEV_CACHE_MODE(dc->disk_sb.sb);
 	unsigned sectors, congested = bch_get_congested(c);
 	struct task_struct *task = current;
@@ -331,7 +331,7 @@ static void cached_dev_read_done_bh(struct closure *cl)
  *
  * @orig_bio must actually be a bbio with a valid key.
  */
-void __cache_promote(struct cache_set *c, struct bch_read_bio *orig_bio,
+void __cache_promote(struct bch_fs *c, struct bch_read_bio *orig_bio,
 		     struct bkey_s_c old,
 		     struct bkey_s_c new,
 		     unsigned write_flags)
@@ -460,7 +460,7 @@ nopromote:
 
 static void cached_dev_read(struct cached_dev *dc, struct search *s)
 {
-	struct cache_set *c = s->iop.c;
+	struct bch_fs *c = s->iop.c;
 	struct closure *cl = &s->cl;
 	struct bio *bio = &s->rbio.bio;
 	struct btree_iter iter;
@@ -713,9 +713,9 @@ static int cached_dev_congested(void *data, int bits)
 
 	if (cached_dev_get(dc)) {
 		unsigned i;
-		struct cache *ca;
+		struct bch_dev *ca;
 
-		for_each_cache(ca, d->c, i) {
+		for_each_member_device(ca, d->c, i) {
 			q = bdev_get_queue(ca->disk_sb.bdev);
 			ret |= bdi_congested(&q->backing_dev_info, bits);
 		}
@@ -803,11 +803,11 @@ static int blockdev_volume_congested(void *data, int bits)
 {
 	struct bcache_device *d = data;
 	struct request_queue *q;
-	struct cache *ca;
+	struct bch_dev *ca;
 	unsigned i;
 	int ret = 0;
 
-	for_each_cache(ca, d->c, i) {
+	for_each_member_device(ca, d->c, i) {
 		q = bdev_get_queue(ca->disk_sb.bdev);
 		ret |= bdi_congested(&q->backing_dev_info, bits);
 	}

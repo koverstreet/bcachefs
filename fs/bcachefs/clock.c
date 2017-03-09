@@ -116,7 +116,7 @@ static struct io_timer *get_expired_timer(struct io_clock *clock,
 	return ret;
 }
 
-void bch_increment_clock(struct cache_set *c, unsigned sectors, int rw)
+void bch_increment_clock(struct bch_fs *c, unsigned sectors, int rw)
 {
 	struct io_clock *clock = &c->io_clock[rw];
 	struct io_timer *timer;

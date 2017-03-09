@@ -17,7 +17,7 @@ const struct bkey_ops *bch_bkey_ops[] = {
 };
 
 /* Returns string indicating reason for being invalid, or NULL if valid: */
-const char *bkey_invalid(struct cache_set *c, enum bkey_type type,
+const char *bkey_invalid(struct bch_fs *c, enum bkey_type type,
 			 struct bkey_s_c k)
 {
 	const struct bkey_ops *ops = bch_bkey_ops[type];
@@ -52,7 +52,7 @@ const char *bkey_invalid(struct cache_set *c, enum bkey_type type,
 	}
 }
 
-const char *btree_bkey_invalid(struct cache_set *c, struct btree *b,
+const char *btree_bkey_invalid(struct bch_fs *c, struct btree *b,
 			       struct bkey_s_c k)
 {
 	if (bkey_cmp(bkey_start_pos(k.k), b->data->min_key) < 0)
@@ -67,7 +67,7 @@ const char *btree_bkey_invalid(struct cache_set *c, struct btree *b,
 	return bkey_invalid(c, btree_node_type(b), k);
 }
 
-void bkey_debugcheck(struct cache_set *c, struct btree *b, struct bkey_s_c k)
+void bkey_debugcheck(struct bch_fs *c, struct btree *b, struct bkey_s_c k)
 {
 	enum bkey_type type = btree_node_type(b);
 	const struct bkey_ops *ops = bch_bkey_ops[type];
@@ -89,7 +89,7 @@ void bkey_debugcheck(struct cache_set *c, struct btree *b, struct bkey_s_c k)
 		ops->key_debugcheck(c, b, k);
 }
 
-void bch_val_to_text(struct cache_set *c, enum bkey_type type,
+void bch_val_to_text(struct bch_fs *c, enum bkey_type type,
 		     char *buf, size_t size, struct bkey_s_c k)
 {
 	const struct bkey_ops *ops = bch_bkey_ops[type];
@@ -99,7 +99,7 @@ void bch_val_to_text(struct cache_set *c, enum bkey_type type,
 		ops->val_to_text(c, buf, size, k);
 }
 
-void bch_bkey_val_to_text(struct cache_set *c, enum bkey_type type,
+void bch_bkey_val_to_text(struct bch_fs *c, enum bkey_type type,
 			  char *buf, size_t size, struct bkey_s_c k)
 {
 	const struct bkey_ops *ops = bch_bkey_ops[type];

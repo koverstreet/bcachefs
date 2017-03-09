@@ -3,7 +3,7 @@
 
 #include "stats_types.h"
 
-struct cache_set;
+struct bch_fs;
 struct cached_dev;
 struct bcache_device;
 
@@ -34,7 +34,7 @@ static inline void mark_cache_stats(struct cache_stat_collector *stats,
 	atomic_inc(&stats->cache_hit_array[!bypass][!hit]);
 }
 
-static inline void bch_mark_cache_accounting(struct cache_set *c,
+static inline void bch_mark_cache_accounting(struct bch_fs *c,
 					     struct cached_dev *dc,
 					     bool hit, bool bypass)
 {
@@ -42,7 +42,7 @@ static inline void bch_mark_cache_accounting(struct cache_set *c,
 	mark_cache_stats(&c->accounting.collector, hit, bypass);
 }
 
-static inline void bch_mark_sectors_bypassed(struct cache_set *c,
+static inline void bch_mark_sectors_bypassed(struct bch_fs *c,
 					     struct cached_dev *dc,
 					     unsigned sectors)
 {
@@ -50,17 +50,17 @@ static inline void bch_mark_sectors_bypassed(struct cache_set *c,
 	atomic_add(sectors, &c->accounting.collector.sectors_bypassed);
 }
 
-static inline void bch_mark_gc_write(struct cache_set *c, int sectors)
+static inline void bch_mark_gc_write(struct bch_fs *c, int sectors)
 {
 	atomic_add(sectors, &c->accounting.collector.gc_write_sectors);
 }
 
-static inline void bch_mark_foreground_write(struct cache_set *c, int sectors)
+static inline void bch_mark_foreground_write(struct bch_fs *c, int sectors)
 {
 	atomic_add(sectors, &c->accounting.collector.foreground_write_sectors);
 }
 
-static inline void bch_mark_discard(struct cache_set *c, int sectors)
+static inline void bch_mark_discard(struct bch_fs *c, int sectors)
 {
 	atomic_add(sectors, &c->accounting.collector.discard_sectors);
 }

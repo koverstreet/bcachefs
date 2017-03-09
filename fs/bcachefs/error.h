@@ -3,8 +3,8 @@
 
 #include <linux/printk.h>
 
-struct cache;
-struct cache_set;
+struct bch_dev;
+struct bch_fs;
 
 /*
  * XXX: separate out errors that indicate on disk data is inconsistent, and flag
@@ -16,7 +16,7 @@ struct cache_set;
 #define __bch_dev_error(ca, fmt, ...)					\
 do {									\
 	char _buf[BDEVNAME_SIZE];					\
-	bch_err((ca)->set, "%s: " fmt,					\
+	bch_err((ca)->fs, "%s: " fmt,					\
 		bdevname((ca)->disk_sb.bdev, _buf), ##__VA_ARGS__);	\
 } while (0)
 
@@ -51,7 +51,7 @@ do {									\
  * BCH_ON_ERROR_CONTINUE mode
  */
 
-void bch_inconsistent_error(struct cache_set *);
+void bch_inconsistent_error(struct bch_fs *);
 
 #define bch_fs_inconsistent(c, ...)					\
 do {									\
@@ -70,13 +70,13 @@ do {									\
 
 /*
  * Later we might want to mark only the particular device inconsistent, not the
- * entire cache set:
+ * entire filesystem:
  */
 
 #define bch_dev_inconsistent(ca, ...)					\
 do {									\
 	__bch_dev_error(ca, __VA_ARGS__);				\
-	bch_inconsistent_error((ca)->set);				\
+	bch_inconsistent_error((ca)->fs);				\
 } while (0)
 
 #define bch_dev_inconsistent_on(cond, ca, ...)				\
@@ -152,7 +152,7 @@ enum {
  * mode - pretty much just due to metadata IO errors:
  */
 
-void bch_fatal_error(struct cache_set *);
+void bch_fatal_error(struct bch_fs *);
 
 #define bch_fs_fatal_error(c, ...)					\
 do {									\
@@ -179,10 +179,10 @@ do {									\
 do {									\
 	char _buf[BDEVNAME_SIZE];					\
 									\
-	printk_ratelimited(KERN_ERR bch_fmt((ca)->set,			\
+	printk_ratelimited(KERN_ERR bch_fmt((ca)->fs,			\
 		"fatal IO error on %s for " fmt),			\
 		bdevname((ca)->disk_sb.bdev, _buf), ##__VA_ARGS__);	\
-	bch_fatal_error((ca)->set);					\
+	bch_fatal_error((ca)->fs);					\
 } while (0)
 
 #define bch_dev_fatal_io_err_on(cond, ca, ...)				\
@@ -200,13 +200,13 @@ do {									\
  * don't (necessarily) want to shut down the fs:
  */
 
-void bch_account_io_completion(struct cache *);
-void bch_account_io_completion_time(struct cache *, unsigned, int);
+void bch_account_io_completion(struct bch_dev *);
+void bch_account_io_completion_time(struct bch_dev *, unsigned, int);
 
 void bch_nonfatal_io_error_work(struct work_struct *);
 
 /* Does the error handling without logging a message */
-void bch_nonfatal_io_error(struct cache *);
+void bch_nonfatal_io_error(struct bch_dev *);
 
 #if 0
 #define bch_fs_nonfatal_io_error(c, ...)				\
@@ -221,7 +221,7 @@ do {									\
 do {									\
 	char _buf[BDEVNAME_SIZE];					\
 									\
-	printk_ratelimited(KERN_ERR bch_fmt((ca)->set,			\
+	printk_ratelimited(KERN_ERR bch_fmt((ca)->fs,			\
 		"IO error on %s for " fmt),				\
 		bdevname((ca)->disk_sb.bdev, _buf), ##__VA_ARGS__);	\
 	bch_nonfatal_io_error(ca);					\

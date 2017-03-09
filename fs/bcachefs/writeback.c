@@ -26,7 +26,7 @@
 
 static void __update_writeback_rate(struct cached_dev *dc)
 {
-	struct cache_set *c = dc->disk.c;
+	struct bch_fs *c = dc->disk.c;
 	u64 cache_dirty_target =
 		div_u64(c->capacity * dc->writeback_percent, 100);
 	s64 target = div64_u64(cache_dirty_target *
@@ -63,7 +63,7 @@ struct dirty_io {
 	struct closure		cl;
 	struct bch_replace_info	replace;
 	struct cached_dev	*dc;
-	struct cache		*ca;
+	struct bch_dev		*ca;
 	struct keybuf_key	*w;
 	struct bch_extent_ptr	ptr;
 	int			error;
@@ -222,7 +222,7 @@ static u64 read_dirty(struct cached_dev *dc)
 						  PAGE_SECTORS),
 				     GFP_KERNEL);
 			if (!io) {
-				trace_bcache_writeback_alloc_fail(pick.ca->set,
+				trace_bcache_writeback_alloc_fail(pick.ca->fs,
 								  tmp.k.k.size);
 				io = mempool_alloc(&dc->writeback_io_pool,
 						   GFP_KERNEL);
@@ -331,7 +331,7 @@ static void __bcache_dev_sectors_dirty_add(struct bcache_device *d,
 	}
 }
 
-void bcache_dev_sectors_dirty_add(struct cache_set *c, unsigned inode,
+void bcache_dev_sectors_dirty_add(struct bch_fs *c, unsigned inode,
 				  u64 offset, int nr_sectors)
 {
 	struct bcache_device *d;
@@ -470,7 +470,7 @@ refill_done:
 static int bch_writeback_thread(void *arg)
 {
 	struct cached_dev *dc = arg;
-	struct cache_set *c = dc->disk.c;
+	struct bch_fs *c = dc->disk.c;
 	struct io_clock *clock = &c->io_clock[WRITE];
 	unsigned long last;
 	u64 sectors_written;
@@ -502,7 +502,7 @@ static int bch_writeback_thread(void *arg)
  * writeback keybufs. We don't actually care that the data in those buckets is
  * marked live, only that we don't wrap the gens.
  */
-void bch_writeback_recalc_oldest_gens(struct cache_set *c)
+void bch_writeback_recalc_oldest_gens(struct bch_fs *c)
 {
 	struct radix_tree_iter iter;
 	void **slot;
@@ -527,7 +527,7 @@ void bch_writeback_recalc_oldest_gens(struct cache_set *c)
 
 /* Init */
 
-void bch_sectors_dirty_init(struct cached_dev *dc, struct cache_set *c)
+void bch_sectors_dirty_init(struct cached_dev *dc, struct bch_fs *c)
 {
 	struct bcache_device *d = &dc->disk;
 	struct btree_iter iter;
