@@ -247,7 +247,7 @@ static bool bucket_became_unavailable(struct cache_set *c,
 {
 	return is_available_bucket(old) &&
 	       !is_available_bucket(new) &&
-	       c->gc_pos.phase == GC_PHASE_DONE;
+	       c && c->gc_pos.phase == GC_PHASE_DONE;
 }
 
 static void bucket_stats_update(struct cache *ca,

@@ -37,7 +37,6 @@ write_attribute(trigger_btree_coalesce);
 write_attribute(trigger_gc);
 write_attribute(prune_cache);
 write_attribute(blockdev_volume_create);
-write_attribute(add_device);
 
 read_attribute(uuid);
 read_attribute(minor);
@@ -839,15 +838,6 @@ STORE(bch_fs)
 	size = __bch_fs_store(kobj, attr, buf, size);
 	mutex_unlock(&c->state_lock);
 
-	if (attr == &sysfs_add_device) {
-		char *path = kstrdup(buf, GFP_KERNEL);
-		int r = bch_dev_add(c, strim(path));
-
-		kfree(path);
-		if (r)
-			return r;
-	}
-
 	return size;
 }
 
@@ -858,7 +848,6 @@ static struct attribute *bch_fs_files[] = {
 	&sysfs_journal_reclaim_delay_ms,
 	&sysfs_journal_entry_size_max,
 	&sysfs_blockdev_volume_create,
-	&sysfs_add_device,
 
 	&sysfs_block_size,
 	&sysfs_block_size_bytes,

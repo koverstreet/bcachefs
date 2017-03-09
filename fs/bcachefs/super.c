@@ -463,34 +463,6 @@ void bch_fs_detach(struct cache_set *c)
 		bch_fs_stop_async(c);
 }
 
-static unsigned bch_fs_nr_devices(struct cache_set *c)
-{
-	struct bch_sb_field_members *mi;
-	unsigned i, nr = 0;
-
-	mutex_lock(&c->sb_lock);
-	mi = bch_sb_get_members(c->disk_sb);
-
-	for (i = 0; i < c->disk_sb->nr_devices; i++)
-		if (!bch_is_zero(mi->members[i].uuid.b, sizeof(uuid_le)))
-			nr++;
-
-	mutex_unlock(&c->sb_lock);
-
-	return nr;
-}
-
-static unsigned bch_fs_nr_online_devices(struct cache_set *c)
-{
-	unsigned i, nr = 0;
-
-	for (i = 0; i < c->sb.nr_devices; i++)
-		if (c->cache[i])
-			nr++;
-
-	return nr;
-}
-
 #define alloc_bucket_pages(gfp, ca)			\
 	((void *) __get_free_pages(__GFP_ZERO|gfp, ilog2(bucket_pages(ca))))
 
@@ -746,12 +718,10 @@ static const char *__bch_fs_start(struct cache_set *c)
 
 	BUG_ON(c->state != BCH_FS_STARTING);
 
-	/*
-	 * Make sure that each cache object's mi is up to date before
-	 * we start testing it.
-	 */
+	mutex_lock(&c->sb_lock);
 	for_each_cache(ca, c, i)
 		bch_sb_from_cache_set(c, ca);
+	mutex_unlock(&c->sb_lock);
 
 	if (BCH_SB_INITIALIZED(c->disk_sb)) {
 		ret = bch_journal_read(c, &journal);
@@ -853,14 +823,6 @@ static const char *__bch_fs_start(struct cache_set *c)
 
 		bch_initial_gc(c, NULL);
 
-		err = "error starting allocator thread";
-		for_each_cache(ca, c, i)
-			if (ca->mi.state == BCH_MEMBER_STATE_ACTIVE &&
-			    bch_dev_allocator_start(ca)) {
-				percpu_ref_put(&ca->ref);
-				goto err;
-			}
-
 		err = "unable to allocate journal buckets";
 		for_each_cache(ca, c, i)
 			if (bch_dev_journal_alloc(ca)) {
@@ -874,6 +836,14 @@ static const char *__bch_fs_start(struct cache_set *c)
 		 */
 		bch_journal_start(c);
 		bch_journal_set_replay_done(&c->journal);
+
+		err = "error starting allocator thread";
+		for_each_cache(ca, c, i)
+			if (ca->mi.state == BCH_MEMBER_STATE_ACTIVE &&
+			    bch_dev_allocator_start(ca)) {
+				percpu_ref_put(&ca->ref);
+				goto err;
+			}
 
 		err = "cannot allocate new btree root";
 		for (id = 0; id < BTREE_ID_NR; id++)
@@ -984,33 +954,28 @@ static const char *bch_dev_may_add(struct bch_sb *sb, struct cache_set *c)
 
 	if (le16_to_cpu(sb_mi->members[sb->dev_idx].bucket_size) <
 	    BCH_SB_BTREE_NODE_SIZE(c->disk_sb))
-		return "new cache bucket_size is too small";
+		return "new cache bucket size is too small";
 
 	return NULL;
 }
 
-static const char *bch_dev_in_fs(struct bch_sb *sb, struct cache_set *c)
+static const char *bch_dev_in_fs(struct bch_sb *fs, struct bch_sb *sb)
 {
-	struct bch_sb_field_members *mi = bch_sb_get_members(c->disk_sb);
-	struct bch_sb_field_members *dev_mi = bch_sb_get_members(sb);
-	uuid_le dev_uuid = dev_mi->members[sb->dev_idx].uuid;
-	const char *err;
+	struct bch_sb *newest =
+		le64_to_cpu(fs->seq) > le64_to_cpu(sb->seq) ? fs : sb;
+	struct bch_sb_field_members *mi = bch_sb_get_members(newest);
 
-	err = bch_dev_may_add(sb, c);
-	if (err)
-		return err;
+	if (uuid_le_cmp(fs->uuid, sb->uuid))
+		return "device not a member of filesystem";
 
-	if (bch_is_zero(&dev_uuid, sizeof(dev_uuid)))
+	if (sb->dev_idx >= newest->nr_devices)
+		return "device has invalid dev_idx";
+
+	if (bch_is_zero(mi->members[sb->dev_idx].uuid.b, sizeof(uuid_le)))
 		return "device has been removed";
 
-	/*
-	 * When attaching an existing device, the cache set superblock must
-	 * already contain member_info with a matching UUID
-	 */
-	if (sb->dev_idx >= c->disk_sb->nr_devices ||
-	    memcmp(&mi->members[sb->dev_idx].uuid,
-		   &dev_uuid, sizeof(uuid_le)))
-		return "cache sb does not match set";
+	if (fs->block_size != sb->block_size)
+		return "mismatched block size";
 
 	return NULL;
 }
@@ -1128,31 +1093,25 @@ static int bch_dev_online(struct cache *ca)
 	return 0;
 }
 
-static const char *bch_dev_alloc(struct bcache_superblock *sb,
-				 struct cache_set *c,
-				 struct cache **ret)
+static struct cache *__bch_dev_alloc(struct bcache_superblock *sb)
 {
 	struct bch_member *member;
 	size_t reserve_none, movinggc_reserve, free_inc_reserve, total_reserve;
 	size_t heap_size;
 	unsigned i;
-	const char *err = "cannot allocate memory";
 	struct cache *ca;
 
-	if (c->sb.nr_devices == 1)
-		bdevname(sb->bdev, c->name);
-
 	if (bch_fs_init_fault("dev_alloc"))
-		return err;
+		return NULL;
 
 	ca = kzalloc(sizeof(*ca), GFP_KERNEL);
 	if (!ca)
-		return err;
+		return NULL;
 
 	if (percpu_ref_init(&ca->ref, bch_dev_percpu_ref_release,
 			    0, GFP_KERNEL)) {
 		kfree(ca);
-		return err;
+		return NULL;
 	}
 
 	kobject_init(&ca->kobj, &bch_dev_ktype);
@@ -1175,7 +1134,6 @@ static const char *bch_dev_alloc(struct bcache_superblock *sb,
 
 	INIT_WORK(&ca->io_error_work, bch_nonfatal_io_error_work);
 
-	err = "dynamic fault";
 	if (bch_fs_init_fault("dev_alloc"))
 		goto err;
 
@@ -1229,6 +1187,20 @@ static const char *bch_dev_alloc(struct bcache_superblock *sb,
 	ca->copygc_write_point.group = &ca->self;
 	ca->tiering_write_point.group = &ca->self;
 
+	return ca;
+err:
+	bch_dev_free(ca);
+	return NULL;
+}
+
+static const char *__bch_dev_add(struct cache_set *c, struct cache *ca)
+{
+	if (c->cache[ca->dev_idx])
+		return "already have device online in this slot";
+
+	if (c->sb.nr_devices == 1)
+		bdevname(ca->disk_sb.bdev, c->name);
+
 	/*
 	 * Increase journal write timeout if flushes to this device are
 	 * expensive:
@@ -1244,29 +1216,117 @@ static const char *bch_dev_alloc(struct bcache_superblock *sb,
 	kobject_get(&ca->kobj);
 	rcu_assign_pointer(c->cache[ca->dev_idx], ca);
 
-	mutex_lock(&c->sb_lock);
-
-	if (le64_to_cpu(ca->disk_sb.sb->seq) > le64_to_cpu(c->disk_sb->seq))
-		bch_sb_to_cache_set(c, ca->disk_sb.sb);
-
-	mutex_unlock(&c->sb_lock);
-
-	err = "error creating kobject";
 	if (c->kobj.state_in_sysfs &&
 	    bch_dev_online(ca))
 		pr_warn("error creating sysfs objects");
+
+	return NULL;
+}
+
+static const char *bch_dev_alloc(struct bcache_superblock *sb,
+				 struct cache_set *c,
+				 struct cache **ret)
+{
+	struct cache *ca;
+	const char *err;
+
+	ca = __bch_dev_alloc(sb);
+	if (!ca)
+		return "cannot allocate memory";
+
+	err = __bch_dev_add(c, ca);
+	if (err) {
+		bch_dev_free(ca);
+		return err;
+	}
+
+	mutex_lock(&c->sb_lock);
+	if (le64_to_cpu(ca->disk_sb.sb->seq) >
+	    le64_to_cpu(c->disk_sb->seq))
+		bch_sb_to_cache_set(c, ca->disk_sb.sb);
+	mutex_unlock(&c->sb_lock);
 
 	if (ret)
 		*ret = ca;
 	else
 		kobject_put(&ca->kobj);
 	return NULL;
-err:
-	bch_dev_free(ca);
-	return err;
 }
 
 /* Device management: */
+
+bool bch_fs_may_start(struct cache_set *c, int flags)
+{
+	struct bch_sb_field_members *mi;
+	unsigned meta_missing = 0;
+	unsigned data_missing = 0;
+	bool degraded = false;
+	unsigned i;
+
+	mutex_lock(&c->sb_lock);
+	mi = bch_sb_get_members(c->disk_sb);
+
+	for (i = 0; i < c->disk_sb->nr_devices; i++)
+		if (!c->cache[i] &&
+		    !bch_is_zero(mi->members[i].uuid.b, sizeof(uuid_le))) {
+			degraded = true;
+			if (BCH_MEMBER_HAS_METADATA(&mi->members[i]))
+				meta_missing++;
+			if (BCH_MEMBER_HAS_DATA(&mi->members[i]))
+				data_missing++;
+		}
+	mutex_unlock(&c->sb_lock);
+
+	if (degraded &&
+	    !(flags & BCH_FORCE_IF_DEGRADED))
+		return false;
+
+	if (meta_missing &&
+	    !(flags & BCH_FORCE_IF_METADATA_DEGRADED))
+		return false;
+
+	if (meta_missing >= BCH_SB_META_REPLICAS_HAVE(c->disk_sb) &&
+	    !(flags & BCH_FORCE_IF_METADATA_LOST))
+		return false;
+
+	if (data_missing && !(flags & BCH_FORCE_IF_DATA_DEGRADED))
+		return false;
+
+	if (data_missing >= BCH_SB_DATA_REPLICAS_HAVE(c->disk_sb) &&
+	    !(flags & BCH_FORCE_IF_DATA_LOST))
+		return false;
+
+	return true;
+}
+
+bool bch_dev_state_allowed(struct cache_set *c, struct cache *ca,
+			   enum bch_member_state new_state, int flags)
+{
+	lockdep_assert_held(&c->state_lock);
+
+	if (new_state == BCH_MEMBER_STATE_ACTIVE)
+		return true;
+
+	if (ca->mi.has_data &&
+	    !(flags & BCH_FORCE_IF_DATA_DEGRADED))
+		return false;
+
+	if (ca->mi.has_data &&
+	    c->sb.data_replicas_have <= 1 &&
+	    !(flags & BCH_FORCE_IF_DATA_LOST))
+		return false;
+
+	if (ca->mi.has_metadata &&
+	    !(flags & BCH_FORCE_IF_METADATA_DEGRADED))
+		return false;
+
+	if (ca->mi.has_metadata &&
+	    c->sb.meta_replicas_have <= 1 &&
+	    !(flags & BCH_FORCE_IF_METADATA_LOST))
+		return false;
+
+	return true;
+}
 
 static void __bch_dev_read_only(struct cache_set *c, struct cache *ca)
 {
@@ -1304,35 +1364,6 @@ static const char *__bch_dev_read_write(struct cache_set *c, struct cache *ca)
 	trace_bcache_cache_read_write_done(ca);
 
 	return NULL;
-}
-
-bool bch_dev_state_allowed(struct cache_set *c, struct cache *ca,
-			   enum bch_member_state new_state, int flags)
-{
-	lockdep_assert_held(&c->state_lock);
-
-	if (new_state == BCH_MEMBER_STATE_ACTIVE)
-		return true;
-
-	if (ca->mi.has_data &&
-	    !(flags & BCH_FORCE_IF_DATA_DEGRADED))
-		return false;
-
-	if (ca->mi.has_data &&
-	    c->sb.data_replicas_have <= 1 &&
-	    !(flags & BCH_FORCE_IF_DATA_LOST))
-		return false;
-
-	if (ca->mi.has_metadata &&
-	    !(flags & BCH_FORCE_IF_METADATA_DEGRADED))
-		return false;
-
-	if (ca->mi.has_metadata &&
-	    c->sb.meta_replicas_have <= 1 &&
-	    !(flags & BCH_FORCE_IF_METADATA_LOST))
-		return false;
-
-	return true;
 }
 
 int __bch_dev_set_state(struct cache_set *c, struct cache *ca,
@@ -1496,13 +1527,13 @@ int bch_dev_add(struct cache_set *c, const char *path)
 {
 	struct bcache_superblock sb;
 	const char *err;
-	struct cache *ca;
+	struct cache *ca = NULL;
 	struct bch_sb_field_members *mi, *dev_mi;
 	struct bch_member saved_mi;
 	unsigned dev_idx, nr_devices, u64s;
 	int ret = -EINVAL;
 
-	err = bch_read_super(&sb, c->opts, path);
+	err = bch_read_super(&sb, bch_opts_empty(), path);
 	if (err)
 		return -EINVAL;
 
@@ -1525,6 +1556,10 @@ int bch_dev_add(struct cache_set *c, const char *path)
 	saved_mi = dev_mi->members[sb.sb->dev_idx];
 	saved_mi.last_mount = cpu_to_le64(ktime_get_seconds());
 
+	/*
+	 * XXX: ditch the GC stuff, just don't remove a device until nothing is
+	 * using its dev_idx anymore
+	 */
 	down_read(&c->gc_lock);
 
 	if (dynamic_fault("bcache:add:no_slot"))
@@ -1565,6 +1600,7 @@ have_slot:
 	memcpy(dev_mi, mi, u64s * sizeof(u64));
 	dev_mi->members[dev_idx] = saved_mi;
 
+	sb.sb->uuid		= c->disk_sb->uuid;
 	sb.sb->dev_idx		= dev_idx;
 	sb.sb->nr_devices	= nr_devices;
 
@@ -1579,33 +1615,42 @@ have_slot:
 	c->disk_sb->nr_devices	= nr_devices;
 	c->sb.nr_devices	= nr_devices;
 
-	err = bch_dev_alloc(&sb, c, &ca);
-	if (err)
+	ca = __bch_dev_alloc(&sb);
+	if (!ca) {
+		err = "cannot allocate memory";
+		ret = -ENOMEM;
 		goto err_unlock;
+	}
 
-	bch_write_super(c);
+	bch_dev_mark_superblocks(ca);
 
 	err = "journal alloc failed";
 	if (bch_dev_journal_alloc(ca))
-		goto err_put;
+		goto err_unlock;
 
-	bch_notify_dev_added(ca);
+	err = __bch_dev_add(c, ca);
+	BUG_ON(err);
+
+	bch_write_super(c);
+	mutex_unlock(&c->sb_lock);
 
 	if (ca->mi.state == BCH_MEMBER_STATE_ACTIVE) {
 		err = __bch_dev_read_write(c, ca);
 		if (err)
-			goto err_put;
+			goto err;
 	}
 
+	bch_notify_dev_added(ca);
+
 	kobject_put(&ca->kobj);
-	mutex_unlock(&c->sb_lock);
 	mutex_unlock(&c->state_lock);
 	return 0;
-err_put:
-	bch_dev_stop(ca);
 err_unlock:
 	mutex_unlock(&c->sb_lock);
+err:
 	mutex_unlock(&c->state_lock);
+	if (ca)
+		bch_dev_stop(ca);
 	bch_free_super(&sb);
 
 	bch_err(c, "Unable to add device: %s", err);
@@ -1620,7 +1665,7 @@ const char *bch_fs_open(char * const *devices, unsigned nr_devices,
 	const char *err;
 	struct cache_set *c = NULL;
 	struct bcache_superblock *sb;
-	unsigned i;
+	unsigned i, best_sb = 0;
 
 	if (!nr_devices)
 		return "need at least one device";
@@ -1647,8 +1692,19 @@ const char *bch_fs_open(char * const *devices, unsigned nr_devices,
 			goto err;
 	}
 
+	for (i = 1; i < nr_devices; i++)
+		if (le64_to_cpu(sb[i].sb->seq) >
+		    le64_to_cpu(sb[best_sb].sb->seq))
+			best_sb = i;
+
+	for (i = 0; i < nr_devices; i++) {
+		err = bch_dev_in_fs(sb[best_sb].sb, sb[i].sb);
+		if (err)
+			goto err;
+	}
+
 	err = "cannot allocate memory";
-	c = bch_fs_alloc(sb[0].sb, opts);
+	c = bch_fs_alloc(sb[best_sb].sb, opts);
 	if (!c)
 		goto err;
 
@@ -1659,7 +1715,7 @@ const char *bch_fs_open(char * const *devices, unsigned nr_devices,
 	}
 
 	err = "insufficient devices";
-	if (bch_fs_nr_online_devices(c) != bch_fs_nr_devices(c))
+	if (!bch_fs_may_start(c, 0))
 		goto err;
 
 	if (!c->opts.nostart) {
@@ -1709,7 +1765,7 @@ static const char *__bch_fs_open_incremental(struct bcache_superblock *sb,
 	if (c) {
 		closure_get(&c->cl);
 
-		err = bch_dev_in_fs(sb->sb, c);
+		err = bch_dev_in_fs(c->disk_sb, sb->sb);
 		if (err)
 			goto err;
 	} else {
@@ -1725,8 +1781,7 @@ static const char *__bch_fs_open_incremental(struct bcache_superblock *sb,
 	if (err)
 		goto err;
 
-	if (bch_fs_nr_online_devices(c) == bch_fs_nr_devices(c) &&
-	    !c->opts.nostart) {
+	if (!c->opts.nostart && bch_fs_may_start(c, 0)) {
 		err = __bch_fs_start(c);
 		if (err)
 			goto err;

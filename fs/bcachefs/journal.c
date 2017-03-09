@@ -1527,8 +1527,13 @@ err:
 	return ret;
 }
 
+#if 0
+/*
+ * Allocate more journal space at runtime - not currently making use if it, but
+ * the code works:
+ */
 static int bch_set_nr_journal_buckets(struct cache_set *c, struct cache *ca,
-				      unsigned nr, bool write_super)
+				      unsigned nr)
 {
 	struct journal *j = &c->journal;
 	struct journal_device *ja = &ca->journal;
@@ -1615,8 +1620,7 @@ static int bch_set_nr_journal_buckets(struct cache_set *c, struct cache *ca,
 
 	BUG_ON(bch_validate_journal_layout(ca->disk_sb.sb, ca->mi));
 
-	if (write_super)
-		bch_write_super(c);
+	bch_write_super(c);
 
 	ret = 0;
 err:
@@ -1628,9 +1632,15 @@ err:
 
 	return ret;
 }
+#endif
 
 int bch_dev_journal_alloc(struct cache *ca)
 {
+	struct journal_device *ja = &ca->journal;
+	struct bch_sb_field_journal *journal_buckets;
+	unsigned i, nr;
+	u64 b, *p;
+
 	if (dynamic_fault("bcache:add:journal_alloc"))
 		return -ENOMEM;
 
@@ -1638,12 +1648,50 @@ int bch_dev_journal_alloc(struct cache *ca)
 	 * clamp journal size to 1024 buckets or 512MB (in sectors), whichever
 	 * is smaller:
 	 */
-	return bch_set_nr_journal_buckets(ca->set, ca,
-			clamp_t(unsigned, ca->mi.nbuckets >> 8,
-				BCH_JOURNAL_BUCKETS_MIN,
-				min(1 << 10,
-				    (1 << 20) / ca->mi.bucket_size)),
-			false);
+	nr = clamp_t(unsigned, ca->mi.nbuckets >> 8,
+		     BCH_JOURNAL_BUCKETS_MIN,
+		     min(1 << 10,
+			 (1 << 20) / ca->mi.bucket_size));
+
+	p = krealloc(ja->bucket_seq, nr * sizeof(u64),
+		     GFP_KERNEL|__GFP_ZERO);
+	if (!p)
+		return -ENOMEM;
+
+	ja->bucket_seq = p;
+
+	p = krealloc(ja->buckets, nr * sizeof(u64),
+		     GFP_KERNEL|__GFP_ZERO);
+	if (!p)
+		return -ENOMEM;
+
+	ja->buckets = p;
+
+	journal_buckets = bch_sb_resize_journal(&ca->disk_sb,
+				nr + sizeof(*journal_buckets) / sizeof(u64));
+	if (!journal_buckets)
+		return -ENOMEM;
+
+	for (i = 0, b = ca->mi.first_bucket;
+	     i < nr && b < ca->mi.nbuckets; b++) {
+		if (!is_available_bucket(ca->buckets[b].mark))
+			continue;
+
+		bch_mark_metadata_bucket(ca, &ca->buckets[b],
+					 BUCKET_JOURNAL, true);
+		ja->buckets[i] = b;
+		journal_buckets->buckets[i] = cpu_to_le64(b);
+		i++;
+	}
+
+	if (i < nr)
+		return -ENOSPC;
+
+	BUG_ON(bch_validate_journal_layout(ca->disk_sb.sb, ca->mi));
+
+	ja->nr = nr;
+
+	return 0;
 }
 
 /* Journalling */

@@ -273,16 +273,11 @@ static void mark_metadata_sectors(struct cache *ca, u64 start, u64 end,
 	} while (b < end >> ca->bucket_bits);
 }
 
-/*
- * Mark non btree metadata - prios, journal
- */
-static void bch_mark_dev_metadata(struct cache_set *c, struct cache *ca)
+void bch_dev_mark_superblocks(struct cache *ca)
 {
 	struct bch_sb_layout *layout = &ca->disk_sb.sb->layout;
 	unsigned i;
-	u64 b;
 
-	/* Mark superblocks: */
 	for (i = 0; i < layout->nr_superblocks; i++) {
 		if (layout->sb_offset[i] == BCH_SB_SECTOR)
 			mark_metadata_sectors(ca, 0, BCH_SB_SECTOR,
@@ -294,6 +289,17 @@ static void bch_mark_dev_metadata(struct cache_set *c, struct cache *ca)
 				      (1 << layout->sb_max_size_bits),
 				      BUCKET_SB);
 	}
+}
+
+/*
+ * Mark non btree metadata - prios, journal
+ */
+static void bch_mark_dev_metadata(struct cache_set *c, struct cache *ca)
+{
+	unsigned i;
+	u64 b;
+
+	bch_dev_mark_superblocks(ca);
 
 	spin_lock(&c->journal.lock);
 

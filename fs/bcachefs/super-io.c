@@ -276,6 +276,31 @@ err:
 	return err;
 }
 
+static const char *bch_sb_validate_members(struct bch_sb *sb)
+{
+	struct bch_sb_field_members *mi;
+	unsigned i;
+
+	mi = bch_sb_get_members(sb);
+	if (!mi)
+		return "Invalid superblock: member info area missing";
+
+	if ((void *) (mi->members + sb->nr_devices) >
+	    vstruct_end(&mi->field))
+		return "Invalid superblock: bad member info";
+
+	for (i = 0; i < sb->nr_devices; i++) {
+		if (bch_is_zero(mi->members[i].uuid.b, sizeof(uuid_le)))
+			continue;
+
+		if (le16_to_cpu(mi->members[i].bucket_size) <
+		    BCH_SB_BTREE_NODE_SIZE(sb))
+			return "bucket size smaller than btree node size";
+	}
+
+	return NULL;
+}
+
 const char *bch_validate_cache_super(struct bcache_superblock *disk_sb)
 {
 	struct bch_sb *sb = disk_sb->sb;
@@ -378,15 +403,11 @@ const char *bch_validate_cache_super(struct bcache_superblock *disk_sb)
 			return "Invalid superblock: unknown optional field type";
 	}
 
-	/* Validate member info: */
+	err = bch_sb_validate_members(sb);
+	if (err)
+		return err;
+
 	sb_mi = bch_sb_get_members(sb);
-	if (!sb_mi)
-		return "Invalid superblock: member info area missing";
-
-	if ((void *) (sb_mi->members + sb->nr_devices) >
-	    vstruct_end(&sb_mi->field))
-		return "Invalid superblock: bad member info";
-
 	mi = cache_mi_to_cpu_mi(sb_mi->members + sb->dev_idx);
 
 	if (mi.nbuckets > LONG_MAX)
@@ -808,15 +829,15 @@ void bch_write_super(struct cache_set *c)
 
 	lockdep_assert_held(&c->sb_lock);
 
-	if (c->opts.nochanges)
-		return;
-
 	closure_init_stack(cl);
 
 	le64_add_cpu(&c->disk_sb->seq, 1);
 
 	for_each_cache(ca, c, i)
 		bch_sb_from_cache_set(c, ca);
+
+	if (c->opts.nochanges)
+		goto out;
 
 	do {
 		wrote = false;
@@ -827,7 +848,7 @@ void bch_write_super(struct cache_set *c)
 		closure_sync(cl);
 		super_idx++;
 	} while (wrote);
-
+out:
 	/* Make new options visible after they're persistent: */
 	bch_fs_mi_update(c, members->members, c->sb.nr_devices);
 	bch_sb_update(c);
