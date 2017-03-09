@@ -9,6 +9,7 @@ config BCACHE_FS
 	select FS_POSIX_ACL
 	select LZ4_COMPRESS
 	select LZ4_DECOMPRESS
+	select ZSTD
 	select ZLIB_DEFLATE
 	select ZLIB_INFLATE
 	select CRYPTO_SHA256

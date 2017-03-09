@@ -1025,7 +1025,8 @@ enum bch_compression_opts {
 	BCH_COMPRESSION_NONE		= 0,
 	BCH_COMPRESSION_LZ4		= 1,
 	BCH_COMPRESSION_GZIP		= 2,
-	BCH_COMPRESSION_NR		= 3,
+	BCH_COMPRESSION_ZSTD		= 3,
+	BCH_COMPRESSION_NR		= 4,
 };
 
 /* backing device specific stuff: */

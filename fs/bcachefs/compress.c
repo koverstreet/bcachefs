@@ -6,6 +6,7 @@
 
 #include <linux/lz4.h>
 #include <linux/zlib.h>
+#include <linux/zstd.h>
 
 enum bounced {
 	BOUNCED_CONTIG,
@@ -186,6 +187,22 @@ static int __bio_uncompress(struct bch_fs *c, struct bio *src,
 		}
 		break;
 	}
+	case BCH_COMPRESSION_ZSTD: {
+		ZSTD_DCtx *dctx = ZSTD_createDCtx();
+
+		src_len = le32_to_cpup(src_data);
+
+		ret = ZSTD_decompressDCtx(dctx,
+					  dst_data, dst_len,
+					  src_data + 4, src_len);
+		ZSTD_freeDCtx(dctx);
+
+		if (ret != dst_len) {
+			pr_info("ret %i", ret);
+			ret = -EIO;
+		}
+		break;
+	}
 	default:
 		BUG();
 	}
@@ -362,6 +379,41 @@ zlib_err:
 		*src_len = strm.total_in;
 		break;
 	}
+	case BCH_COMPRESSION_ZSTD: {
+		ZSTD_CCtx *workspace = ZSTD_createCCtx();
+
+		*dst_len = dst->bi_iter.bi_size;
+		*src_len = src->bi_iter.bi_size;
+
+		while (*src_len > block_bytes(c) &&
+		       (ret = ZSTD_compressCCtx(workspace,
+						dst_data + 4, *dst_len - 4,
+						src_data, *src_len,
+						10)) <= 0) {
+			/*
+			 * On error, the compressed data was bigger than
+			 * dst_len, and -ret is the amount of data we were able
+			 * to compress - round down to nearest block and try
+			 * again:
+			 */
+			BUG_ON(ret > 0);
+			BUG_ON(-ret >= *src_len);
+
+			*src_len = round_down(-ret, block_bytes(c));
+		}
+
+		if (ret > 0) {
+			*((__le32 *) dst_data) = cpu_to_le32(ret);
+			*dst_len = ret + 4;
+			ret = 0;
+		}
+
+		ZSTD_freeCCtx(workspace);
+
+		if (ret)
+			goto err;
+		break;
+	}
 	default:
 		BUG();
 	}
@@ -398,6 +450,9 @@ void bch2_bio_compress(struct bch_fs *c,
 {
 	unsigned orig_dst = dst->bi_iter.bi_size;
 	unsigned orig_src = src->bi_iter.bi_size;
+
+	if (*compression_type == BCH_COMPRESSION_LZ4)
+		*compression_type = BCH_COMPRESSION_ZSTD;
 
 	/* Don't consume more than BCH_ENCODED_EXTENT_MAX from @src: */
 	src->bi_iter.bi_size =
