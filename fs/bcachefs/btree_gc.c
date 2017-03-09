@@ -333,7 +333,7 @@ static void bch_mark_metadata(struct cache_set *c)
 /* Also see bch_pending_btree_node_free_insert_done() */
 static void bch_mark_pending_btree_node_frees(struct cache_set *c)
 {
-	struct bucket_stats_cache_set stats = { 0 };
+	struct bch_fs_usage stats = { 0 };
 	struct btree_interior_update *as;
 	struct pending_btree_node_free *d;
 
@@ -407,17 +407,17 @@ void bch_gc(struct cache_set *c)
 
 	/* Save a copy of the existing bucket stats while we recompute them: */
 	for_each_cache(ca, c, i) {
-		ca->bucket_stats_cached = __bch_bucket_stats_read_cache(ca);
+		ca->bucket_stats_cached = __bch_dev_usage_read(ca);
 		for_each_possible_cpu(cpu) {
-			struct bucket_stats_cache *p =
+			struct bch_dev_usage *p =
 				per_cpu_ptr(ca->bucket_stats_percpu, cpu);
 			memset(p, 0, sizeof(*p));
 		}
 	}
 
-	c->bucket_stats_cached = __bch_bucket_stats_read_cache_set(c);
+	c->bucket_stats_cached = __bch_fs_usage_read(c);
 	for_each_possible_cpu(cpu) {
-		struct bucket_stats_cache_set *p =
+		struct bch_fs_usage *p =
 			per_cpu_ptr(c->bucket_stats_percpu, cpu);
 
 		memset(p->s, 0, sizeof(p->s));

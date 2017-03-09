@@ -552,7 +552,7 @@ static unsigned bch_average_key_size(struct cache_set *c)
 
 static ssize_t show_fs_alloc_debug(struct cache_set *c, char *buf)
 {
-	struct bucket_stats_cache_set stats = bch_bucket_stats_read_cache_set(c);
+	struct bch_fs_usage stats = bch_fs_usage_read(c);
 
 	return scnprintf(buf, PAGE_SIZE,
 			 "capacity:\t\t%llu\n"
@@ -1127,7 +1127,7 @@ static ssize_t show_reserve_stats(struct cache *ca, char *buf)
 static ssize_t show_dev_alloc_debug(struct cache *ca, char *buf)
 {
 	struct cache_set *c = ca->set;
-	struct bucket_stats_cache stats = bch_bucket_stats_read_cache(ca);
+	struct bch_dev_usage stats = bch_dev_usage_read(ca);
 
 	return scnprintf(buf, PAGE_SIZE,
 		"free_inc:               %zu/%zu\n"
@@ -1171,7 +1171,7 @@ SHOW(bch_dev)
 {
 	struct cache *ca = container_of(kobj, struct cache, kobj);
 	struct cache_set *c = ca->set;
-	struct bucket_stats_cache stats = bch_bucket_stats_read_cache(ca);
+	struct bch_dev_usage stats = bch_dev_usage_read(ca);
 
 	sysfs_printf(uuid,		"%pU\n", ca->uuid.b);
 

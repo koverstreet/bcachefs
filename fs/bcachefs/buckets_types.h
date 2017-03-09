@@ -65,7 +65,7 @@ struct bucket {
 	};
 };
 
-struct bucket_stats_cache {
+struct bch_dev_usage {
 	u64			buckets_dirty;
 	u64			buckets_cached;
 	u64			buckets_meta;
@@ -89,7 +89,7 @@ enum s_compressed {
 	S_COMPRESSED_NR,
 };
 
-struct bucket_stats_cache_set {
+struct bch_fs_usage {
 	/* all fields are in units of 512 byte sectors: */
 	u64			s[S_COMPRESSED_NR][S_ALLOC_NR];
 	u64			persistent_reserved;

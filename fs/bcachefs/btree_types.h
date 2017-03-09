@@ -271,7 +271,6 @@ struct btree_root {
  */
 
 struct btree_iter;
-struct bucket_stats_cache_set;
 struct btree_node_iter;
 
 enum extent_insert_hook_ret {

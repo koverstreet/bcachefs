@@ -157,11 +157,11 @@ static inline unsigned bucket_sectors_used(struct bucket *g)
 
 /* Per device stats: */
 
-struct bucket_stats_cache __bch_bucket_stats_read_cache(struct cache *);
-struct bucket_stats_cache bch_bucket_stats_read_cache(struct cache *);
+struct bch_dev_usage __bch_dev_usage_read(struct cache *);
+struct bch_dev_usage bch_dev_usage_read(struct cache *);
 
 static inline u64 __buckets_available_cache(struct cache *ca,
-					    struct bucket_stats_cache stats)
+					    struct bch_dev_usage stats)
 {
 	return max_t(s64, 0,
 		     ca->mi.nbuckets - ca->mi.first_bucket -
@@ -175,11 +175,11 @@ static inline u64 __buckets_available_cache(struct cache *ca,
  */
 static inline u64 buckets_available_cache(struct cache *ca)
 {
-	return __buckets_available_cache(ca, bch_bucket_stats_read_cache(ca));
+	return __buckets_available_cache(ca, bch_dev_usage_read(ca));
 }
 
 static inline u64 __buckets_free_cache(struct cache *ca,
-				       struct bucket_stats_cache stats)
+				       struct bch_dev_usage stats)
 {
 	return __buckets_available_cache(ca, stats) +
 		fifo_used(&ca->free[RESERVE_NONE]) +
@@ -188,21 +188,19 @@ static inline u64 __buckets_free_cache(struct cache *ca,
 
 static inline u64 buckets_free_cache(struct cache *ca)
 {
-	return __buckets_free_cache(ca, bch_bucket_stats_read_cache(ca));
+	return __buckets_free_cache(ca, bch_dev_usage_read(ca));
 }
 
 /* Cache set stats: */
 
-struct bucket_stats_cache_set __bch_bucket_stats_read_cache_set(struct cache_set *);
-struct bucket_stats_cache_set bch_bucket_stats_read_cache_set(struct cache_set *);
-void bch_fs_stats_apply(struct cache_set *,
-			struct bucket_stats_cache_set *,
-			struct disk_reservation *,
-			       struct gc_pos);
+struct bch_fs_usage __bch_fs_usage_read(struct cache_set *);
+struct bch_fs_usage bch_fs_usage_read(struct cache_set *);
+void bch_fs_stats_apply(struct cache_set *, struct bch_fs_usage *,
+			struct disk_reservation *, struct gc_pos);
 
 static inline u64 __bch_fs_sectors_used(struct cache_set *c)
 {
-	struct bucket_stats_cache_set stats = __bch_bucket_stats_read_cache_set(c);
+	struct bch_fs_usage stats = __bch_fs_usage_read(c);
 	u64 reserved = stats.persistent_reserved +
 		stats.online_reserved;
 
@@ -256,10 +254,10 @@ void bch_mark_metadata_bucket(struct cache *, struct bucket *,
 			      enum bucket_data_type, bool);
 
 void __bch_gc_mark_key(struct cache_set *, struct bkey_s_c, s64, bool,
-		       struct bucket_stats_cache_set *);
+		       struct bch_fs_usage *);
 void bch_gc_mark_key(struct cache_set *, struct bkey_s_c, s64, bool);
 void bch_mark_key(struct cache_set *, struct bkey_s_c, s64, bool,
-		  struct gc_pos, struct bucket_stats_cache_set *, u64);
+		  struct gc_pos, struct bch_fs_usage *, u64);
 
 void bch_recalc_sectors_available(struct cache_set *);
 

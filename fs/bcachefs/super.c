@@ -616,7 +616,7 @@ static struct cache_set *bch_fs_alloc(struct bch_sb *sb, struct bch_opts opts)
 					 c->sb.btree_node_size,
 					 BCH_ENCODED_EXTENT_MAX) /
 				   PAGE_SECTORS, 0) ||
-	    !(c->bucket_stats_percpu = alloc_percpu(struct bucket_stats_cache_set)) ||
+	    !(c->bucket_stats_percpu = alloc_percpu(struct bch_fs_usage)) ||
 	    lg_lock_init(&c->bucket_stats_lock) ||
 	    mempool_init_page_pool(&c->btree_bounce_pool, 1,
 				   ilog2(btree_pages(c))) ||
@@ -1211,7 +1211,7 @@ static const char *bch_dev_alloc(struct bcache_superblock *sb,
 	    !(ca->prio_buckets	= kzalloc(sizeof(uint64_t) * prio_buckets(ca) *
 					  2, GFP_KERNEL)) ||
 	    !(ca->disk_buckets	= alloc_bucket_pages(GFP_KERNEL, ca)) ||
-	    !(ca->bucket_stats_percpu = alloc_percpu(struct bucket_stats_cache)) ||
+	    !(ca->bucket_stats_percpu = alloc_percpu(struct bch_dev_usage)) ||
 	    !(ca->bio_prio = bio_kmalloc(GFP_NOIO, bucket_pages(ca))) ||
 	    bioset_init(&ca->replica_set, 4,
 			offsetof(struct bch_write_bio, bio)) ||

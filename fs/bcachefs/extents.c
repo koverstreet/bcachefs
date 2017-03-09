@@ -941,7 +941,7 @@ struct extent_insert_state {
 	struct btree_insert		*trans;
 	struct btree_insert_entry	*insert;
 	struct bpos			committed;
-	struct bucket_stats_cache_set	stats;
+	struct bch_fs_usage	stats;
 
 	/* for deleting: */
 	struct bkey_i			whiteout;

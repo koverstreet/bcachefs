@@ -78,8 +78,8 @@
 
 static void bch_fs_stats_verify(struct cache_set *c)
 {
-	struct bucket_stats_cache_set stats =
-		__bch_bucket_stats_read_cache_set(c);
+	struct bch_fs_usage stats =
+		__bch_fs_usage_read(c);
 
 	if ((s64) stats.sectors_dirty < 0)
 		panic("sectors_dirty underflow: %lli\n", stats.sectors_dirty);
@@ -162,26 +162,26 @@ do {									\
 	_ret;								\
 })
 
-struct bucket_stats_cache __bch_bucket_stats_read_cache(struct cache *ca)
+struct bch_dev_usage __bch_dev_usage_read(struct cache *ca)
 {
 	return bucket_stats_read_raw(ca->bucket_stats_percpu);
 }
 
-struct bucket_stats_cache bch_bucket_stats_read_cache(struct cache *ca)
+struct bch_dev_usage bch_dev_usage_read(struct cache *ca)
 {
 	return bucket_stats_read_cached(ca->set,
 				ca->bucket_stats_cached,
 				ca->bucket_stats_percpu);
 }
 
-struct bucket_stats_cache_set
-__bch_bucket_stats_read_cache_set(struct cache_set *c)
+struct bch_fs_usage
+__bch_fs_usage_read(struct cache_set *c)
 {
 	return bucket_stats_read_raw(c->bucket_stats_percpu);
 }
 
-struct bucket_stats_cache_set
-bch_bucket_stats_read_cache_set(struct cache_set *c)
+struct bch_fs_usage
+bch_fs_usage_read(struct cache_set *c)
 {
 	return bucket_stats_read_cached(c,
 				c->bucket_stats_cached,
@@ -205,7 +205,7 @@ static inline int is_cached_bucket(struct bucket_mark m)
 }
 
 void bch_fs_stats_apply(struct cache_set *c,
-			struct bucket_stats_cache_set *stats,
+			struct bch_fs_usage *stats,
 			struct disk_reservation *disk_res,
 			struct gc_pos gc_pos)
 {
@@ -251,11 +251,11 @@ static bool bucket_became_unavailable(struct cache_set *c,
 }
 
 static void bucket_stats_update(struct cache *ca,
-			struct bucket_mark old, struct bucket_mark new,
-			struct bucket_stats_cache_set *bch_alloc_stats)
+				struct bucket_mark old, struct bucket_mark new,
+				struct bch_fs_usage *bch_alloc_stats)
 {
 	struct cache_set *c = ca->set;
-	struct bucket_stats_cache *cache_stats;
+	struct bch_dev_usage *cache_stats;
 
 	bch_fs_inconsistent_on(old.data_type && new.data_type &&
 			old.data_type != new.data_type, c,
@@ -305,7 +305,7 @@ static void bucket_stats_update(struct cache *ca,
 
 #define bucket_data_cmpxchg(ca, g, new, expr)			\
 ({								\
-	struct bucket_stats_cache_set _stats = { 0 };		\
+	struct bch_fs_usage _stats = { 0 };		\
 	struct bucket_mark _old = bucket_cmpxchg(g, new, expr);	\
 								\
 	bucket_stats_update(ca, _old, new, &_stats);		\
@@ -314,7 +314,7 @@ static void bucket_stats_update(struct cache *ca,
 
 void bch_invalidate_bucket(struct cache *ca, struct bucket *g)
 {
-	struct bucket_stats_cache_set stats = { 0 };
+	struct bch_fs_usage stats = { 0 };
 	struct bucket_mark old, new;
 
 	old = bucket_cmpxchg(g, new, ({
@@ -441,18 +441,18 @@ static unsigned __compressed_sectors(const union bch_extent_crc *crc, unsigned s
  */
 static void bch_mark_pointer(struct cache_set *c,
 			     struct bkey_s_c_extent e,
-			     struct cache *ca,
 			     const union bch_extent_crc *crc,
 			     const struct bch_extent_ptr *ptr,
 			     s64 sectors, enum s_alloc type,
 			     bool may_make_unavailable,
-			     struct bucket_stats_cache_set *stats,
+			     struct bch_fs_usage *stats,
 			     bool gc_will_visit, u64 journal_seq)
 {
 	struct bucket_mark old, new;
 	unsigned saturated;
-	struct bucket *g = ca->buckets + PTR_BUCKET_NR(ca, ptr);
-	u64 v = READ_ONCE(g->_mark.counter);
+	struct cache *ca;
+	struct bucket *g;
+	u64 v;
 	unsigned old_sectors, new_sectors;
 	int disk_sectors, compressed_sectors;
 
@@ -469,6 +469,12 @@ static void bch_mark_pointer(struct cache_set *c,
 	compressed_sectors = -__compressed_sectors(crc, old_sectors)
 		+ __compressed_sectors(crc, new_sectors);
 
+	ca = PTR_CACHE(c, ptr);
+	if (!ca)
+		goto out;
+
+	g = ca->buckets + PTR_BUCKET_NR(ca, ptr);
+
 	if (gc_will_visit) {
 		if (journal_seq)
 			bucket_cmpxchg(g, new, new.journal_seq = journal_seq);
@@ -476,6 +482,7 @@ static void bch_mark_pointer(struct cache_set *c,
 		goto out;
 	}
 
+	v = READ_ONCE(g->_mark.counter);
 	do {
 		new.counter = old.counter = v;
 		saturated = 0;
@@ -548,33 +555,29 @@ out:
 static void bch_mark_extent(struct cache_set *c, struct bkey_s_c_extent e,
 			    s64 sectors, bool metadata,
 			    bool may_make_unavailable,
-			    struct bucket_stats_cache_set *stats,
+			    struct bch_fs_usage *stats,
 			    bool gc_will_visit, u64 journal_seq)
 {
 	const struct bch_extent_ptr *ptr;
 	const union bch_extent_crc *crc;
-	struct cache *ca;
 	enum s_alloc type = metadata ? S_META : S_DIRTY;
 
 	BUG_ON(metadata && bkey_extent_is_cached(e.k));
 	BUG_ON(!sectors);
 
 	rcu_read_lock();
-	extent_for_each_online_device_crc(c, e, crc, ptr, ca) {
-		trace_bcache_mark_bucket(ca, e.k, ptr, sectors, !ptr->cached);
-
-		bch_mark_pointer(c, e, ca, crc, ptr, sectors,
+	extent_for_each_ptr_crc(e, ptr, crc)
+		bch_mark_pointer(c, e, crc, ptr, sectors,
 				 ptr->cached ? S_CACHED : type,
 				 may_make_unavailable,
 				 stats, gc_will_visit, journal_seq);
-	}
 	rcu_read_unlock();
 }
 
 static void __bch_mark_key(struct cache_set *c, struct bkey_s_c k,
 			   s64 sectors, bool metadata,
 			   bool may_make_unavailable,
-			   struct bucket_stats_cache_set *stats,
+			   struct bch_fs_usage *stats,
 			   bool gc_will_visit, u64 journal_seq)
 {
 	switch (k.k->type) {
@@ -595,7 +598,7 @@ static void __bch_mark_key(struct cache_set *c, struct bkey_s_c k,
 
 void __bch_gc_mark_key(struct cache_set *c, struct bkey_s_c k,
 		       s64 sectors, bool metadata,
-		       struct bucket_stats_cache_set *stats)
+		       struct bch_fs_usage *stats)
 {
 	__bch_mark_key(c, k, sectors, metadata, true, stats, false, 0);
 }
@@ -603,7 +606,7 @@ void __bch_gc_mark_key(struct cache_set *c, struct bkey_s_c k,
 void bch_gc_mark_key(struct cache_set *c, struct bkey_s_c k,
 		     s64 sectors, bool metadata)
 {
-	struct bucket_stats_cache_set stats = { 0 };
+	struct bch_fs_usage stats = { 0 };
 
 	__bch_gc_mark_key(c, k, sectors, metadata, &stats);
 
@@ -614,7 +617,7 @@ void bch_gc_mark_key(struct cache_set *c, struct bkey_s_c k,
 
 void bch_mark_key(struct cache_set *c, struct bkey_s_c k,
 		  s64 sectors, bool metadata, struct gc_pos gc_pos,
-		  struct bucket_stats_cache_set *stats, u64 journal_seq)
+		  struct bch_fs_usage *stats, u64 journal_seq)
 {
 	/*
 	 * synchronization w.r.t. GC:
@@ -693,7 +696,7 @@ int bch_disk_reservation_add(struct cache_set *c,
 			     struct disk_reservation *res,
 			     unsigned sectors, int flags)
 {
-	struct bucket_stats_cache_set *stats;
+	struct bch_fs_usage *stats;
 	u64 old, new, v;
 	s64 sectors_available;
 	int ret;

@@ -138,7 +138,7 @@ static void pd_controllers_update(struct work_struct *work)
 				-1);
 
 		group_for_each_cache_rcu(ca, &c->tiers[i].devs, iter) {
-			struct bucket_stats_cache stats = bch_bucket_stats_read_cache(ca);
+			struct bch_dev_usage stats = bch_dev_usage_read(ca);
 			unsigned bucket_bits = ca->bucket_bits + 9;
 
 			u64 size = (ca->mi.nbuckets -
