@@ -13,7 +13,7 @@ int bch_initial_gc(struct bch_fs *, struct list_head *);
 u8 bch_btree_key_recalc_oldest_gen(struct bch_fs *, struct bkey_s_c);
 u8 bch_btree_mark_key_initial(struct bch_fs *, enum bkey_type,
 				struct bkey_s_c);
-void bch_dev_mark_superblocks(struct bch_dev *);
+void bch_mark_dev_metadata(struct bch_fs *, struct bch_dev *);
 
 /*
  * For concurrent mark and sweep (with other index updates), we define a total

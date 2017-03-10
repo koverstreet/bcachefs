@@ -112,7 +112,6 @@ void bch_nonfatal_io_error_work(struct work_struct *work)
 	struct bch_dev *ca = container_of(work, struct bch_dev, io_error_work);
 	struct bch_fs *c = ca->fs;
 	unsigned errors = atomic_read(&ca->io_errors);
-	char buf[BDEVNAME_SIZE];
 	bool dev;
 
 	if (errors < c->error_limit) {
@@ -127,9 +126,8 @@ void bch_nonfatal_io_error_work(struct work_struct *work)
 		    ? __bch_dev_set_state(c, ca, BCH_MEMBER_STATE_RO,
 					  BCH_FORCE_IF_DEGRADED)
 		    : bch_fs_emergency_read_only(c))
-			bch_err(c,
-				"too many IO errors on %s, setting %s RO",
-				bdevname(ca->disk_sb.bdev, buf),
+			bch_err(ca,
+				"too many IO errors, setting %s RO",
 				dev ? "device" : "filesystem");
 		mutex_unlock(&c->state_lock);
 	}

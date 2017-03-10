@@ -1183,33 +1183,13 @@ static int bch_sync_fs(struct super_block *sb, int wait)
 	return bch_journal_flush(&c->journal);
 }
 
-static struct bch_fs *bch_bdev_to_fs(struct block_device *bdev)
-{
-	struct bch_fs *c;
-	struct bch_dev *ca;
-	unsigned i;
-
-	rcu_read_lock();
-
-	list_for_each_entry(c, &bch_fs_list, list)
-		for_each_member_device_rcu(ca, c, i)
-			if (ca->disk_sb.bdev == bdev) {
-				rcu_read_unlock();
-				return c;
-			}
-
-	rcu_read_unlock();
-
-	return NULL;
-}
-
 static struct bch_fs *bch_open_as_blockdevs(const char *_dev_name,
-					       struct bch_opts opts)
+					    struct bch_opts opts)
 {
 	size_t nr_devs = 0, i = 0;
 	char *dev_name, *s, **devs;
 	struct bch_fs *c = NULL;
-	const char *err;
+	const char *err = "cannot allocate memory";
 
 	dev_name = kstrdup(_dev_name, GFP_KERNEL);
 	if (!dev_name)
@@ -1235,40 +1215,40 @@ static struct bch_fs *bch_open_as_blockdevs(const char *_dev_name,
 		 * filesystem and they all belong to the _same_ filesystem
 		 */
 
-		mutex_lock(&bch_register_lock);
-
 		for (i = 0; i < nr_devs; i++) {
 			struct block_device *bdev = lookup_bdev(devs[i]);
 			struct bch_fs *c2;
 
 			if (IS_ERR(bdev))
-				goto err_unlock;
+				goto err;
 
 			c2 = bch_bdev_to_fs(bdev);
 			bdput(bdev);
 
 			if (!c)
 				c = c2;
+			else if (c2)
+				closure_put(&c2->cl);
 
-			if (c != c2)
-				goto err_unlock;
+			if (!c)
+				goto err;
+			if (c != c2) {
+				closure_put(&c->cl);
+				goto err;
+			}
 		}
-
-		if (!c)
-			goto err_unlock;
 
 		mutex_lock(&c->state_lock);
 
 		if (!bch_fs_running(c)) {
 			mutex_unlock(&c->state_lock);
+			closure_put(&c->cl);
 			err = "incomplete filesystem";
 			c = NULL;
-			goto err_unlock;
+			goto err;
 		}
 
-		closure_get(&c->cl);
 		mutex_unlock(&c->state_lock);
-		mutex_unlock(&bch_register_lock);
 	}
 
 	set_bit(BCH_FS_BDEV_MOUNTED, &c->flags);
@@ -1276,11 +1256,9 @@ err:
 	kfree(devs);
 	kfree(dev_name);
 
+	if (!c)
+		pr_err("bch_fs_open err %s", err);
 	return c;
-err_unlock:
-	mutex_unlock(&bch_register_lock);
-	pr_err("bch_fs_open err %s", err);
-	goto err;
 }
 
 static int bch_remount(struct super_block *sb, int *flags, char *data)
@@ -1398,21 +1376,17 @@ static struct dentry *bch_mount(struct file_system_type *fs_type,
 	sb->s_time_gran		= c->sb.time_precision;
 	c->vfs_sb		= sb;
 	sb->s_bdi		= &c->bdi;
+	strlcpy(sb->s_id, c->name, sizeof(sb->s_id));
 
-	rcu_read_lock();
-	for_each_member_device_rcu(ca, c, i) {
+	for_each_online_member(ca, c, i) {
 		struct block_device *bdev = ca->disk_sb.bdev;
 
-		BUILD_BUG_ON(sizeof(sb->s_id) < BDEVNAME_SIZE);
-
-		bdevname(bdev, sb->s_id);
-
-		/* XXX: do we even need s_bdev? */
+		/* XXX: create an anonymous device for multi device filesystems */
 		sb->s_bdev	= bdev;
 		sb->s_dev	= bdev->bd_dev;
+		percpu_ref_put(&ca->io_ref);
 		break;
 	}
-	rcu_read_unlock();
 
 	if (opts.posix_acl < 0)
 		sb->s_flags	|= MS_POSIXACL;

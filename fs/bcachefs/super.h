@@ -20,41 +20,78 @@ static inline sector_t bucket_remainder(const struct bch_dev *ca, sector_t s)
 	return s & (ca->mi.bucket_size - 1);
 }
 
-static inline struct bch_dev *bch_next_cache_rcu(struct bch_fs *c,
-					       unsigned *iter)
+static inline struct bch_dev *__bch_next_dev(struct bch_fs *c, unsigned *iter)
 {
-	struct bch_dev *ret = NULL;
+	struct bch_dev *ca = NULL;
 
 	while (*iter < c->sb.nr_devices &&
-	       !(ret = rcu_dereference(c->devs[*iter])))
+	       !(ca = rcu_dereference_check(c->devs[*iter],
+					    lockdep_is_held(&c->state_lock))))
 		(*iter)++;
 
-	return ret;
+	return ca;
 }
 
-#define for_each_member_device_rcu(ca, c, iter)				\
-	for ((iter) = 0; ((ca) = bch_next_cache_rcu((c), &(iter))); (iter)++)
+#define __for_each_member_device(ca, c, iter)				\
+	for ((iter) = 0; ((ca) = __bch_next_dev((c), &(iter))); (iter)++)
 
-static inline struct bch_dev *bch_get_next_cache(struct bch_fs *c,
-					       unsigned *iter)
+#define for_each_member_device_rcu(ca, c, iter)				\
+	__for_each_member_device(ca, c, iter)
+
+static inline struct bch_dev *bch_get_next_dev(struct bch_fs *c, unsigned *iter)
 {
-	struct bch_dev *ret;
+	struct bch_dev *ca;
 
 	rcu_read_lock();
-	if ((ret = bch_next_cache_rcu(c, iter)))
-		percpu_ref_get(&ret->ref);
+	if ((ca = __bch_next_dev(c, iter)))
+		percpu_ref_get(&ca->ref);
 	rcu_read_unlock();
 
-	return ret;
+	return ca;
 }
 
 /*
  * If you break early, you must drop your ref on the current device
  */
-#define for_each_member_device(ca, c, iter)					\
+#define for_each_member_device(ca, c, iter)				\
 	for ((iter) = 0;						\
-	     (ca = bch_get_next_cache(c, &(iter)));			\
+	     (ca = bch_get_next_dev(c, &(iter)));			\
 	     percpu_ref_put(&ca->ref), (iter)++)
+
+static inline struct bch_dev *bch_get_next_online_dev(struct bch_fs *c,
+						      unsigned *iter,
+						      int state_mask)
+{
+	struct bch_dev *ca;
+
+	rcu_read_lock();
+	while ((ca = __bch_next_dev(c, iter)) &&
+	       (!((1 << ca->mi.state) & state_mask) ||
+		!percpu_ref_tryget(&ca->io_ref)))
+		(*iter)++;
+	rcu_read_unlock();
+
+	return ca;
+}
+
+#define __for_each_online_member(ca, c, iter, state_mask)		\
+	for ((iter) = 0;						\
+	     (ca = bch_get_next_online_dev(c, &(iter), state_mask));	\
+	     percpu_ref_put(&ca->io_ref), (iter)++)
+
+#define for_each_online_member(ca, c, iter)				\
+	__for_each_online_member(ca, c, iter, ~0)
+
+#define for_each_rw_member(ca, c, iter)					\
+	__for_each_online_member(ca, c, iter, 1 << BCH_MEMBER_STATE_RW)
+
+#define for_each_readable_member(ca, c, iter)				\
+	__for_each_online_member(ca, c, iter,				\
+		(1 << BCH_MEMBER_STATE_RW)|(1 << BCH_MEMBER_STATE_RO))
+
+struct bch_fs *bch_bdev_to_fs(struct block_device *);
+struct bch_fs *bch_uuid_to_fs(uuid_le);
+int bch_congested(struct bch_fs *, int);
 
 void bch_dev_release(struct kobject *);
 
@@ -84,8 +121,6 @@ const char *bch_fs_open(char * const *, unsigned, struct bch_opts,
 			struct bch_fs **);
 const char *bch_fs_open_incremental(const char *path);
 
-extern struct mutex bch_register_lock;
-extern struct list_head bch_fs_list;
 extern struct workqueue_struct *bcache_io_wq;
 extern struct crypto_shash *bch_sha256;
 

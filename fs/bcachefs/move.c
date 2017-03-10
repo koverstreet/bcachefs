@@ -17,12 +17,7 @@ static struct bch_extent_ptr *bkey_find_ptr(struct bch_fs *c,
 					    struct bch_extent_ptr ptr)
 {
 	struct bch_extent_ptr *ptr2;
-	struct bch_member_rcu *mi;
-	unsigned bucket_bits;
-
-	mi = fs_member_info_get(c);
-	bucket_bits = ilog2(mi->m[ptr.dev].bucket_size);
-	fs_member_info_put();
+	unsigned bucket_bits = c->devs[ptr.dev]->bucket_bits;
 
 	extent_for_each_ptr(e, ptr2)
 		if (ptr2->dev == ptr.dev &&

@@ -88,7 +88,7 @@ void __bch_btree_verify(struct bch_fs *c, struct btree *b)
 	bch_btree_node_read_done(c, v, pick.ca, &pick.ptr);
 	n_sorted = c->verify_data->data;
 
-	percpu_ref_put(&pick.ca->ref);
+	percpu_ref_put(&pick.ca->io_ref);
 
 	sorted = &n_sorted->keys;
 	inmemory = &n_inmemory->keys;

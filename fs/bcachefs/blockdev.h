@@ -59,7 +59,6 @@ void bch_cached_dev_detach(struct cached_dev *);
 void bch_cached_dev_run(struct cached_dev *);
 void bch_blockdev_stop(struct bcache_device *);
 
-bool bch_is_open_backing_dev(struct block_device *);
 const char *bch_backing_dev_register(struct bcache_superblock *);
 
 int bch_blockdev_volume_create(struct bch_fs *, u64);
@@ -90,10 +89,6 @@ static inline void bch_cached_dev_detach(struct cached_dev *dc) {}
 static inline void bch_cached_dev_run(struct cached_dev *dc) {}
 static inline void bch_blockdev_stop(struct bcache_device *d) {}
 
-static inline bool bch_is_open_backing_dev(struct block_device *bdev)
-{
-	return false;
-}
 static inline const char *bch_backing_dev_register(struct bcache_superblock *sb)
 {
 	return "not implemented";

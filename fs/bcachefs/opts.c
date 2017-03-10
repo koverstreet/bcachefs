@@ -50,7 +50,7 @@ const char * const bch_cache_modes[] = {
 };
 
 const char * const bch_dev_state[] = {
-	"active",
+	"readwrite",
 	"readonly",
 	"failed",
 	"spare",

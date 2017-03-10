@@ -206,12 +206,10 @@ SHOW(bch_cached_dev)
 	return 0;
 }
 
-STORE(__cached_dev)
+STORE(bch_cached_dev)
 {
 	struct cached_dev *dc = container_of(kobj, struct cached_dev,
 					     disk.kobj);
-	unsigned v = size;
-	struct bch_fs *c;
 	struct kobj_uevent_env *env;
 
 #define d_strtoul(var)		sysfs_strtoul(var, dc->var)
@@ -227,6 +225,13 @@ STORE(__cached_dev)
 
 	d_strtoi_h(sequential_cutoff);
 	d_strtoi_h(readahead);
+
+	if (attr == &sysfs_writeback_running)
+		bch_writeback_queue(dc);
+
+	if (attr == &sysfs_writeback_percent)
+		schedule_delayed_work(&dc->writeback_pd_update,
+				      dc->writeback_pd_update_seconds * HZ);
 
 	if (attr == &sysfs_clear_stats)
 		bch_cache_accounting_clear(&dc->accounting);
@@ -295,17 +300,25 @@ STORE(__cached_dev)
 	}
 
 	if (attr == &sysfs_attach) {
-		if (uuid_parse(buf, &dc->disk_sb.sb->user_uuid))
+		struct bch_fs *c;
+		uuid_le uuid;
+		int ret;
+
+		if (uuid_parse(buf, &uuid))
 			return -EINVAL;
 
-		list_for_each_entry(c, &bch_fs_list, list) {
-			v = bch_cached_dev_attach(dc, c);
-			if (!v)
-				return size;
+		c = bch_uuid_to_fs(uuid);
+		if (!c) {
+			pr_err("Can't attach %s: cache set not found", buf);
+			return -ENOENT;
 		}
 
-		pr_err("Can't attach %s: cache set not found", buf);
-		size = v;
+		dc->disk_sb.sb->set_uuid = uuid;
+
+		ret = bch_cached_dev_attach(dc, c);
+		closure_put(&c->cl);
+		if (ret)
+			return ret;
 	}
 
 	if (attr == &sysfs_detach && dc->disk.c)
@@ -314,25 +327,6 @@ STORE(__cached_dev)
 	if (attr == &sysfs_stop)
 		bch_blockdev_stop(&dc->disk);
 
-	return size;
-}
-
-STORE(bch_cached_dev)
-{
-	struct cached_dev *dc = container_of(kobj, struct cached_dev,
-					     disk.kobj);
-
-	mutex_lock(&bch_register_lock);
-	size = __cached_dev_store(kobj, attr, buf, size);
-
-	if (attr == &sysfs_writeback_running)
-		bch_writeback_queue(dc);
-
-	if (attr == &sysfs_writeback_percent)
-		schedule_delayed_work(&dc->writeback_pd_update,
-				      dc->writeback_pd_update_seconds * HZ);
-
-	mutex_unlock(&bch_register_lock);
 	return size;
 }
 
@@ -380,7 +374,7 @@ SHOW(bch_blockdev_volume)
 	return 0;
 }
 
-STORE(__bch_blockdev_volume)
+STORE(bch_blockdev_volume)
 {
 	struct bcache_device *d = container_of(kobj, struct bcache_device,
 					       kobj);
@@ -438,7 +432,6 @@ STORE(__bch_blockdev_volume)
 
 	return size;
 }
-STORE_LOCKED(bch_blockdev_volume)
 
 static struct attribute *bch_blockdev_volume_files[] = {
 	&sysfs_unregister,
@@ -1224,7 +1217,7 @@ SHOW(bch_dev)
 	return 0;
 }
 
-STORE(__bch_dev)
+STORE(bch_dev)
 {
 	struct bch_dev *ca = container_of(kobj, struct bch_dev, kobj);
 	struct bch_fs *c = ca->fs;
@@ -1300,7 +1293,6 @@ STORE(__bch_dev)
 
 	return size;
 }
-STORE_LOCKED(bch_dev)
 
 static struct attribute *bch_dev_files[] = {
 	&sysfs_uuid,

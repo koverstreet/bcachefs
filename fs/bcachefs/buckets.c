@@ -450,8 +450,8 @@ static void bch_mark_pointer(struct bch_fs *c,
 {
 	struct bucket_mark old, new;
 	unsigned saturated;
-	struct bch_dev *ca;
-	struct bucket *g;
+	struct bch_dev *ca = c->devs[ptr->dev];
+	struct bucket *g = ca->buckets + PTR_BUCKET_NR(ca, ptr);
 	u64 v;
 	unsigned old_sectors, new_sectors;
 	int disk_sectors, compressed_sectors;
@@ -468,12 +468,6 @@ static void bch_mark_pointer(struct bch_fs *c,
 		+ __disk_sectors(crc, new_sectors);
 	compressed_sectors = -__compressed_sectors(crc, old_sectors)
 		+ __compressed_sectors(crc, new_sectors);
-
-	ca = PTR_DEV(c, ptr);
-	if (!ca)
-		goto out;
-
-	g = ca->buckets + PTR_BUCKET_NR(ca, ptr);
 
 	if (gc_will_visit) {
 		if (journal_seq)
@@ -565,13 +559,11 @@ static void bch_mark_extent(struct bch_fs *c, struct bkey_s_c_extent e,
 	BUG_ON(metadata && bkey_extent_is_cached(e.k));
 	BUG_ON(!sectors);
 
-	rcu_read_lock();
 	extent_for_each_ptr_crc(e, ptr, crc)
 		bch_mark_pointer(c, e, crc, ptr, sectors,
 				 ptr->cached ? S_CACHED : type,
 				 may_make_unavailable,
 				 stats, gc_will_visit, journal_seq);
-	rcu_read_unlock();
 }
 
 static void __bch_mark_key(struct bch_fs *c, struct bkey_s_c k,

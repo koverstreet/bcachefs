@@ -30,7 +30,6 @@ static bool tiering_pred(struct bch_fs *c,
 	if (bkey_extent_is_data(k.k)) {
 		struct bkey_s_c_extent e = bkey_s_c_to_extent(k);
 		const struct bch_extent_ptr *ptr;
-		struct bch_member_rcu *mi;
 		unsigned replicas = 0;
 
 		/* Make sure we have room to add a new pointer: */
@@ -38,12 +37,9 @@ static bool tiering_pred(struct bch_fs *c,
 		    BKEY_EXTENT_VAL_U64s_MAX)
 			return false;
 
-		mi = fs_member_info_get(c);
 		extent_for_each_ptr(e, ptr)
-			if (ptr->dev < mi->nr_devices &&
-			    mi->m[ptr->dev].tier >= s->tier->idx)
+			if (c->devs[ptr->dev]->mi.tier >= s->tier->idx)
 				replicas++;
-		fs_member_info_put();
 
 		return replicas < c->opts.data_replicas;
 	}
@@ -54,7 +50,7 @@ static bool tiering_pred(struct bch_fs *c,
 static void tier_put_device(struct tiering_state *s)
 {
 	if (s->ca)
-		percpu_ref_put(&s->ca->ref);
+		percpu_ref_put(&s->ca->io_ref);
 	s->ca = NULL;
 }
 
@@ -74,7 +70,7 @@ static void tier_next_device(struct bch_fs *c, struct tiering_state *s)
 
 		if (s->tier->devs.nr) {
 			s->ca = s->tier->devs.d[s->dev_idx].dev;
-			percpu_ref_get(&s->ca->ref);
+			percpu_ref_get(&s->ca->io_ref);
 		}
 		spin_unlock(&s->tier->devs.lock);
 	}
@@ -183,19 +179,19 @@ static int bch_tiering_thread(void *arg)
 			last = atomic_long_read(&clock->now);
 
 			tier_capacity = available_sectors = 0;
-			rcu_read_lock();
 			for (faster_tier = c->tiers;
 			     faster_tier != tier;
 			     faster_tier++) {
-				group_for_each_dev_rcu(ca, &faster_tier->devs, i) {
+				spin_lock(&faster_tier->devs.lock);
+				group_for_each_dev(ca, &faster_tier->devs, i) {
 					tier_capacity +=
 						(ca->mi.nbuckets -
 						 ca->mi.first_bucket) << ca->bucket_bits;
 					available_sectors +=
 						dev_buckets_available(ca) << ca->bucket_bits;
 				}
+				spin_unlock(&faster_tier->devs.lock);
 			}
-			rcu_read_unlock();
 
 			if (available_sectors < (tier_capacity >> 1))
 				break;

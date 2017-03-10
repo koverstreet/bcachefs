@@ -90,15 +90,13 @@ static void btree_node_range_checks(struct bch_fs *c, struct btree *b,
 u8 bch_btree_key_recalc_oldest_gen(struct bch_fs *c, struct bkey_s_c k)
 {
 	const struct bch_extent_ptr *ptr;
-	struct bch_dev *ca;
 	u8 max_stale = 0;
 
 	if (bkey_extent_is_data(k.k)) {
 		struct bkey_s_c_extent e = bkey_s_c_to_extent(k);
 
-		rcu_read_lock();
-
-		extent_for_each_online_device(c, e, ptr, ca) {
+		extent_for_each_ptr(e, ptr) {
+			struct bch_dev *ca = c->devs[ptr->dev];
 			size_t b = PTR_BUCKET_NR(ca, ptr);
 
 			if (__gen_after(ca->oldest_gens[b], ptr->gen))
@@ -106,8 +104,6 @@ u8 bch_btree_key_recalc_oldest_gen(struct bch_fs *c, struct bkey_s_c k)
 
 			max_stale = max(max_stale, ptr_stale(ca, ptr));
 		}
-
-		rcu_read_unlock();
 	}
 
 	return max_stale;
@@ -254,10 +250,10 @@ static void bch_mark_allocator_buckets(struct bch_fs *c)
 		const struct bch_extent_ptr *ptr;
 
 		mutex_lock(&ob->lock);
-		rcu_read_lock();
-		open_bucket_for_each_online_device(c, ob, ptr, ca)
+		open_bucket_for_each_ptr(ob, ptr) {
+			ca = c->devs[ptr->dev];
 			bch_mark_alloc_bucket(ca, PTR_BUCKET(ca, ptr), true);
-		rcu_read_unlock();
+		}
 		mutex_unlock(&ob->lock);
 	}
 }
@@ -273,7 +269,7 @@ static void mark_metadata_sectors(struct bch_dev *ca, u64 start, u64 end,
 	} while (b < end >> ca->bucket_bits);
 }
 
-void bch_dev_mark_superblocks(struct bch_dev *ca)
+static void bch_dev_mark_superblocks(struct bch_dev *ca)
 {
 	struct bch_sb_layout *layout = &ca->disk_sb.sb->layout;
 	unsigned i;
@@ -294,10 +290,12 @@ void bch_dev_mark_superblocks(struct bch_dev *ca)
 /*
  * Mark non btree metadata - prios, journal
  */
-static void bch_mark_dev_metadata(struct bch_fs *c, struct bch_dev *ca)
+void bch_mark_dev_metadata(struct bch_fs *c, struct bch_dev *ca)
 {
 	unsigned i;
 	u64 b;
+
+	lockdep_assert_held(&c->sb_lock);
 
 	bch_dev_mark_superblocks(ca);
 
@@ -329,10 +327,10 @@ static void bch_mark_metadata(struct bch_fs *c)
 	unsigned i;
 
 	mutex_lock(&c->sb_lock);
+	gc_pos_set(c, gc_phase(GC_PHASE_SB_METADATA));
 
-	for_each_member_device(ca, c, i)
+	for_each_online_member(ca, c, i)
 		bch_mark_dev_metadata(c, ca);
-
 	mutex_unlock(&c->sb_lock);
 }
 
@@ -935,13 +933,13 @@ int bch_initial_gc(struct bch_fs *c, struct list_head *journal)
 {
 	enum btree_id id;
 
-	bch_mark_metadata(c);
-
 	for (id = 0; id < BTREE_ID_NR; id++)
 		bch_initial_gc_btree(c, id);
 
 	if (journal)
 		bch_journal_mark(c, journal);
+
+	bch_mark_metadata(c);
 
 	/*
 	 * Skip past versions that might have possibly been used (as nonces),

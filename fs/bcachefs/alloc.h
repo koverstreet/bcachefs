@@ -25,8 +25,6 @@ void bch_dev_group_add(struct dev_group *, struct bch_dev *);
 
 int bch_prio_read(struct bch_dev *);
 
-void bch_recalc_min_prio(struct bch_dev *, int);
-
 size_t bch_bucket_alloc(struct bch_dev *, enum alloc_reserve);
 
 void bch_open_bucket_put(struct bch_fs *, struct open_bucket *);
@@ -56,54 +54,27 @@ static inline void bch_wake_allocator(struct bch_dev *ca)
 	rcu_read_unlock();
 }
 
-static inline struct bch_dev *dev_group_next_rcu(struct dev_group *devs,
-						 unsigned *iter)
+static inline struct bch_dev *dev_group_next(struct dev_group *devs,
+					     unsigned *iter)
 {
 	struct bch_dev *ret = NULL;
 
 	while (*iter < devs->nr &&
-	       !(ret = rcu_dereference(devs->d[*iter].dev)))
+	       !(ret = rcu_dereference_check(devs->d[*iter].dev,
+					     lockdep_is_held(&devs->lock))))
 		(*iter)++;
-
-	return ret;
-}
-
-#define group_for_each_dev_rcu(ca, devs, iter)				\
-	for ((iter) = 0;						\
-	     ((ca) = dev_group_next_rcu((devs), &(iter)));		\
-	     (iter)++)
-
-static inline struct bch_dev *dev_group_next(struct dev_group *devs,
-					     unsigned *iter)
-{
-	struct bch_dev *ret;
-
-	rcu_read_lock();
-	if ((ret = dev_group_next_rcu(devs, iter)))
-		percpu_ref_get(&ret->ref);
-	rcu_read_unlock();
 
 	return ret;
 }
 
 #define group_for_each_dev(ca, devs, iter)				\
 	for ((iter) = 0;						\
-	     (ca = dev_group_next(devs, &(iter)));			\
-	     percpu_ref_put(&ca->ref), (iter)++)
+	     ((ca) = dev_group_next((devs), &(iter)));			\
+	     (iter)++)
 
-#define __open_bucket_next_online_device(_c, _ob, _ptr, _ca)            \
-({									\
-	(_ca) = NULL;							\
-									\
-	while ((_ptr) < (_ob)->ptrs + (_ob)->nr_ptrs &&			\
-	       !((_ca) = PTR_DEV(_c, _ptr)))				\
-		(_ptr)++;						\
-	(_ca);								\
-})
-
-#define open_bucket_for_each_online_device(_c, _ob, _ptr, _ca)		\
+#define open_bucket_for_each_ptr(_ob, _ptr)				\
 	for ((_ptr) = (_ob)->ptrs;					\
-	     ((_ca) = __open_bucket_next_online_device(_c, _ob,	_ptr, _ca));\
+	     (_ptr) < (_ob)->ptrs + (_ob)->nr_ptrs;			\
 	     (_ptr)++)
 
 void bch_recalc_capacity(struct bch_fs *);

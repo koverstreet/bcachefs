@@ -788,7 +788,7 @@ LE64_BITMASK(BCH_MEMBER_NR_WRITE_ERRORS,struct bch_member, flags[1], 20, 40);
 #endif
 
 enum bch_member_state {
-	BCH_MEMBER_STATE_ACTIVE		= 0,
+	BCH_MEMBER_STATE_RW		= 0,
 	BCH_MEMBER_STATE_RO		= 1,
 	BCH_MEMBER_STATE_FAILED		= 2,
 	BCH_MEMBER_STATE_SPARE		= 3,

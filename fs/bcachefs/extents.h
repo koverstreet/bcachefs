@@ -285,10 +285,6 @@ out:									\
 #define extent_for_each_ptr_crc(_e, _ptr, _crc)				\
 	extent_for_each_ptr_crc_filter(_e, _ptr, _crc, true)
 
-#define extent_for_each_online_device_crc(_c, _e, _crc, _ptr, _ca)	\
-	extent_for_each_ptr_crc_filter(_e, _ptr, _crc,			\
-				       ((_ca) = PTR_DEV(_c, _ptr)))
-
 /* Iterate over pointers only, and from a given position: */
 
 #define extent_ptr_next_filter(_e, _ptr, _filter)			\
@@ -308,9 +304,6 @@ out:									\
 
 #define extent_for_each_ptr(_e, _ptr)					\
 	extent_for_each_ptr_filter(_e, _ptr, true)
-
-#define extent_for_each_online_device(_c, _e, _ptr, _ca)		\
-	extent_for_each_ptr_filter(_e, _ptr, ((_ca) = PTR_DEV(_c, _ptr)))
 
 #define extent_ptr_prev(_e, _ptr)					\
 ({									\

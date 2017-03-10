@@ -897,6 +897,7 @@ search_done:
 			break;
 out:
 	free_pages((unsigned long) buf.data, get_order(buf.size));
+	percpu_ref_put(&ca->io_ref);
 	closure_return(cl);
 err:
 	mutex_lock(&jlist->lock);
@@ -974,11 +975,13 @@ int bch_journal_read(struct bch_fs *c, struct list_head *list)
 	jlist.head = list;
 	jlist.ret = 0;
 
-	for_each_member_device(ca, c, iter)
+	for_each_readable_member(ca, c, iter) {
+		percpu_ref_get(&ca->io_ref);
 		closure_call(&ca->journal.read,
 			     bch_journal_read_device,
 			     system_unbound_wq,
 			     &jlist.cl);
+	}
 
 	closure_sync(&jlist.cl);
 
@@ -1285,8 +1288,8 @@ static int journal_entry_sectors(struct journal *j)
 
 	lockdep_assert_held(&j->lock);
 
-	rcu_read_lock();
-	group_for_each_dev_rcu(ca, &j->devs, i) {
+	spin_lock(&j->devs.lock);
+	group_for_each_dev(ca, &j->devs, i) {
 		unsigned buckets_required = 0;
 
 		sectors_available = min_t(unsigned, sectors_available,
@@ -1317,7 +1320,7 @@ static int journal_entry_sectors(struct journal *j)
 			nr_devs++;
 		nr_online++;
 	}
-	rcu_read_unlock();
+	spin_unlock(&j->devs.lock);
 
 	if (nr_online < c->opts.metadata_replicas_required)
 		return -EROFS;
@@ -1881,8 +1884,9 @@ static bool should_discard_bucket(struct journal *j, struct journal_device *ja)
 	bool ret;
 
 	spin_lock(&j->lock);
-	ret = (ja->last_idx != ja->cur_idx &&
-	       ja->bucket_seq[ja->last_idx] < j->last_seq_ondisk);
+	ret = ja->nr &&
+		(ja->last_idx != ja->cur_idx &&
+		 ja->bucket_seq[ja->last_idx] < j->last_seq_ondisk);
 	spin_unlock(&j->lock);
 
 	return ret;
@@ -1922,8 +1926,11 @@ static void journal_reclaim_work(struct work_struct *work)
 	 * Advance last_idx to point to the oldest journal entry containing
 	 * btree node updates that have not yet been written out
 	 */
-	group_for_each_dev(ca, &j->devs, iter) {
+	for_each_rw_member(ca, c, iter) {
 		struct journal_device *ja = &ca->journal;
+
+		if (!ja->nr)
+			continue;
 
 		while (should_discard_bucket(j, ja)) {
 			if (!reclaim_lock_held) {
@@ -2012,7 +2019,6 @@ static int journal_write_alloc(struct journal *j, unsigned sectors)
 		READ_ONCE(c->opts.metadata_replicas);
 
 	spin_lock(&j->lock);
-	rcu_read_lock();
 
 	/*
 	 * Drop any pointers to devices that have been removed, are no longer
@@ -2023,13 +2029,15 @@ static int journal_write_alloc(struct journal *j, unsigned sectors)
 	 * entry - that's why we drop pointers to devices <= current free space,
 	 * i.e. whichever device was limiting the current journal entry size.
 	 */
-	extent_for_each_ptr_backwards(e, ptr)
-		if (!(ca = PTR_DEV(c, ptr)) ||
-		    ca->mi.state != BCH_MEMBER_STATE_ACTIVE ||
+	extent_for_each_ptr_backwards(e, ptr) {
+		ca = c->devs[ptr->dev];
+
+		if (ca->mi.state != BCH_MEMBER_STATE_RW ||
 		    ca->journal.sectors_free <= sectors)
 			__bch_extent_drop_ptr(e, ptr);
 		else
 			ca->journal.sectors_free -= sectors;
+	}
 
 	replicas = bch_extent_nr_ptrs(e.c);
 
@@ -2051,8 +2059,7 @@ static int journal_write_alloc(struct journal *j, unsigned sectors)
 	 * Pick devices for next journal write:
 	 * XXX: sort devices by free journal space?
 	 */
-	for (i = 0; i < j->devs.nr; i++) {
-		ca = j->devs.d[i].dev;
+	group_for_each_dev(ca, &j->devs, i) {
 		ja = &ca->journal;
 
 		if (replicas >= replicas_want)
@@ -2082,7 +2089,6 @@ static int journal_write_alloc(struct journal *j, unsigned sectors)
 		trace_bcache_journal_next_bucket(ca, ja->cur_idx, ja->last_idx);
 	}
 	spin_unlock(&j->devs.lock);
-	rcu_read_unlock();
 
 	j->prev_buf_sectors = 0;
 	spin_unlock(&j->lock);
@@ -2148,7 +2154,7 @@ static void journal_write_endio(struct bio *bio)
 		bch_journal_halt(j);
 
 	closure_put(&j->io);
-	percpu_ref_put(&ca->ref);
+	percpu_ref_put(&ca->io_ref);
 }
 
 static void journal_write_done(struct closure *cl)
@@ -2253,13 +2259,8 @@ static void journal_write(struct closure *cl)
 		goto no_io;
 
 	extent_for_each_ptr(bkey_i_to_s_extent(&j->key), ptr) {
-		rcu_read_lock();
-		ca = PTR_DEV(c, ptr);
-		if (ca)
-			percpu_ref_get(&ca->ref);
-		rcu_read_unlock();
-
-		if (!ca) {
+		ca = c->devs[ptr->dev];
+		if (!percpu_ref_tryget(&ca->io_ref)) {
 			/* XXX: fix this */
 			bch_err(c, "missing device for journal write\n");
 			continue;
@@ -2284,11 +2285,10 @@ static void journal_write(struct closure *cl)
 		ca->journal.bucket_seq[ca->journal.cur_idx] = le64_to_cpu(w->data->seq);
 	}
 
-	for_each_member_device(ca, c, i)
-		if (ca->mi.state == BCH_MEMBER_STATE_ACTIVE &&
-		    journal_flushes_device(ca) &&
+	for_each_rw_member(ca, c, i)
+		if (journal_flushes_device(ca) &&
 		    !bch_extent_has_device(bkey_i_to_s_c_extent(&j->key), i)) {
-			percpu_ref_get(&ca->ref);
+			percpu_ref_get(&ca->io_ref);
 
 			bio = ca->journal.bio;
 			bio_reset(bio);
@@ -2631,7 +2631,8 @@ ssize_t bch_journal_print_debug(struct journal *j, char *buf)
 			 journal_entry_is_open(j),
 			 test_bit(JOURNAL_REPLAY_DONE,	&j->flags));
 
-	group_for_each_dev_rcu(ca, &j->devs, iter) {
+	spin_lock(&j->devs.lock);
+	group_for_each_dev(ca, &j->devs, iter) {
 		struct journal_device *ja = &ca->journal;
 
 		ret += scnprintf(buf + ret, PAGE_SIZE - ret,
@@ -2643,6 +2644,7 @@ ssize_t bch_journal_print_debug(struct journal *j, char *buf)
 				 ja->cur_idx,	ja->bucket_seq[ja->cur_idx],
 				 ja->last_idx,	ja->bucket_seq[ja->last_idx]);
 	}
+	spin_unlock(&j->devs.lock);
 
 	spin_unlock(&j->lock);
 	rcu_read_unlock();
@@ -2748,19 +2750,24 @@ void bch_fs_journal_stop(struct journal *j)
 
 void bch_dev_journal_exit(struct bch_dev *ca)
 {
+	kfree(ca->journal.bio);
 	kfree(ca->journal.buckets);
 	kfree(ca->journal.bucket_seq);
+
+	ca->journal.bio		= NULL;
+	ca->journal.buckets	= NULL;
+	ca->journal.bucket_seq	= NULL;
 }
 
-int bch_dev_journal_init(struct bch_dev *ca)
+int bch_dev_journal_init(struct bch_dev *ca, struct bch_sb *sb)
 {
 	struct journal_device *ja = &ca->journal;
 	struct bch_sb_field_journal *journal_buckets =
-		bch_sb_get_journal(ca->disk_sb.sb);
+		bch_sb_get_journal(sb);
 	unsigned i, journal_entry_pages;
 
 	journal_entry_pages =
-		DIV_ROUND_UP(1U << BCH_SB_JOURNAL_ENTRY_SIZE(ca->disk_sb.sb),
+		DIV_ROUND_UP(1U << BCH_SB_JOURNAL_ENTRY_SIZE(sb),
 			     PAGE_SECTORS);
 
 	ja->nr = bch_nr_journal_buckets(journal_buckets);

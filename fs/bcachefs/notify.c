@@ -31,11 +31,10 @@ static void notify_get(struct bch_fs *c)
 static void notify_get_cache(struct bch_dev *ca)
 {
 	struct bch_fs *c = ca->fs;
-	char buf[BDEVNAME_SIZE];
 
 	notify_get(c);
 	notify_var(c, "UUID=%pU", ca->uuid.b);
-	notify_var(c, "BLOCKDEV=%s", bdevname(ca->disk_sb.bdev, buf));
+	notify_var(c, "BLOCKDEV=%s", ca->name);
 }
 
 static void notify_put(struct bch_fs *c)

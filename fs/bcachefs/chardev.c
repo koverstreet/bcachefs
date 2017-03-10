@@ -124,7 +124,7 @@ static long bch_ioctl_disk_add(struct bch_fs *c,
 
 /* returns with ref on ca->ref */
 static struct bch_dev *bch_device_lookup(struct bch_fs *c,
-				       const char __user *dev)
+					 const char __user *dev)
 {
 	struct block_device *bdev;
 	struct bch_dev *ca;
@@ -166,7 +166,6 @@ static long bch_ioctl_disk_remove(struct bch_fs *c,
 
 	ret = bch_dev_remove(c, ca, arg.flags);
 
-	percpu_ref_put(&ca->ref);
 	return ret;
 }
 

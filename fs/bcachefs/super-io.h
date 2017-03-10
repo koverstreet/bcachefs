@@ -83,7 +83,7 @@ static inline __u64 bset_magic(struct bch_fs *c)
 	return __le64_to_cpu(bch_sb_magic(c) ^ BSET_MAGIC);
 }
 
-static inline struct bch_member_cpu cache_mi_to_cpu_mi(struct bch_member *mi)
+static inline struct bch_member_cpu bch_mi_to_cpu(struct bch_member *mi)
 {
 	return (struct bch_member_cpu) {
 		.nbuckets	= le64_to_cpu(mi->nbuckets),
@@ -98,8 +98,6 @@ static inline struct bch_member_cpu cache_mi_to_cpu_mi(struct bch_member *mi)
 		.valid		= !bch_is_zero(mi->uuid.b, sizeof(uuid_le)),
 	};
 }
-
-int bch_fs_mi_update(struct bch_fs *, struct bch_member *, unsigned);
 
 int bch_sb_to_fs(struct bch_fs *, struct bch_sb *);
 int bch_sb_from_fs(struct bch_fs *, struct bch_dev *);
@@ -118,27 +116,23 @@ void bch_write_super(struct bch_fs *);
 void bch_check_mark_super_slowpath(struct bch_fs *,
 				   const struct bkey_i *, bool);
 
-#define fs_member_info_get(_c)					\
-	(rcu_read_lock(), rcu_dereference((_c)->members))
-
-#define fs_member_info_put()	rcu_read_unlock()
-
 static inline bool bch_check_super_marked(struct bch_fs *c,
 					  const struct bkey_i *k, bool meta)
 {
 	struct bkey_s_c_extent e = bkey_i_to_s_c_extent(k);
 	const struct bch_extent_ptr *ptr;
-	struct bch_member_cpu *mi = fs_member_info_get(c)->m;
 	unsigned nr_replicas = 0;
 	bool ret = true;
 
 	extent_for_each_ptr(e, ptr) {
+		struct bch_dev *ca = c->devs[ptr->dev];
+
 		if (ptr->cached)
 			continue;
 
 		if (!(meta
-		      ? mi[ptr->dev].has_metadata
-		      : mi[ptr->dev].has_data)) {
+		      ? ca->mi.has_metadata
+		      : ca->mi.has_data)) {
 			ret = false;
 			break;
 		}
@@ -149,8 +143,6 @@ static inline bool bch_check_super_marked(struct bch_fs *c,
 	if (nr_replicas <
 	    (meta ? c->sb.meta_replicas_have : c->sb.data_replicas_have))
 		ret = false;
-
-	fs_member_info_put();
 
 	return ret;
 }

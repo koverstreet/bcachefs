@@ -64,7 +64,7 @@ int bch_move_data_off_device(struct bch_dev *ca)
 	u64 seen_key_count;
 	int ret = 0;
 
-	BUG_ON(ca->mi.state == BCH_MEMBER_STATE_ACTIVE);
+	BUG_ON(ca->mi.state == BCH_MEMBER_STATE_RW);
 
 	if (!ca->mi.has_data)
 		return 0;
@@ -163,7 +163,7 @@ static int bch_move_btree_off(struct bch_dev *ca, enum btree_id id)
 	struct btree *b;
 	int ret;
 
-	BUG_ON(ca->mi.state == BCH_MEMBER_STATE_ACTIVE);
+	BUG_ON(ca->mi.state == BCH_MEMBER_STATE_RW);
 
 	closure_init_stack(&cl);
 
@@ -259,7 +259,7 @@ int bch_move_metadata_off_device(struct bch_dev *ca)
 	unsigned i;
 	int ret;
 
-	BUG_ON(ca->mi.state == BCH_MEMBER_STATE_ACTIVE);
+	BUG_ON(ca->mi.state == BCH_MEMBER_STATE_RW);
 
 	if (!ca->mi.has_metadata)
 		return 0;

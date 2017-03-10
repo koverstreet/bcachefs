@@ -317,7 +317,8 @@ struct crypto_blkcipher;
 struct crypto_ahash;
 
 enum gc_phase {
-	GC_PHASE_PENDING_DELETE		= BTREE_ID_NR + 1,
+	GC_PHASE_SB_METADATA		= BTREE_ID_NR + 1,
+	GC_PHASE_PENDING_DELETE,
 	GC_PHASE_DONE
 };
 
@@ -340,20 +341,14 @@ struct bch_member_cpu {
 	u8			valid;
 };
 
-struct bch_member_rcu {
-	struct rcu_head		rcu;
-	unsigned		nr_devices;
-	struct bch_member_cpu	m[];
-};
-
 struct bch_dev {
+	struct kobject		kobj;
 	struct percpu_ref	ref;
-	struct rcu_head		free_rcu;
-	struct work_struct	free_work;
+	struct percpu_ref	io_ref;
+	struct completion	stop_complete;
+	struct completion	offline_complete;
 
 	struct bch_fs		*fs;
-
-	struct dev_group	self;
 
 	u8			dev_idx;
 	/*
@@ -362,10 +357,11 @@ struct bch_dev {
 	 */
 	struct bch_member_cpu	mi;
 	uuid_le			uuid;
+	char			name[BDEVNAME_SIZE];
 
 	struct bcache_superblock disk_sb;
 
-	struct kobject		kobj;
+	struct dev_group	self;
 
 	/* biosets used in cloned bios for replicas and moving_gc */
 	struct bio_set		replica_set;
@@ -516,12 +512,6 @@ struct bch_fs {
 	struct bch_dev __rcu	*devs[BCH_SB_MEMBERS_MAX];
 
 	struct bch_opts		opts;
-
-	/*
-	 * Cached copy in native endianness:
-	 * Set by bch_fs_mi_update():
-	 */
-	struct bch_member_rcu __rcu *members;
 
 	/* Updated by bch_sb_update():*/
 	struct {

@@ -13,13 +13,6 @@ struct bch_fs;
 
 /* Error messages: */
 
-#define __bch_dev_error(ca, fmt, ...)					\
-do {									\
-	char _buf[BDEVNAME_SIZE];					\
-	bch_err((ca)->fs, "%s: " fmt,					\
-		bdevname((ca)->disk_sb.bdev, _buf), ##__VA_ARGS__);	\
-} while (0)
-
 /*
  * Very fatal logic/inconsistency errors: these indicate that we've majorly
  * screwed up at runtime, i.e. it's not likely that it was just caused by the
@@ -75,7 +68,7 @@ do {									\
 
 #define bch_dev_inconsistent(ca, ...)					\
 do {									\
-	__bch_dev_error(ca, __VA_ARGS__);				\
+	bch_err(ca, __VA_ARGS__);					\
 	bch_inconsistent_error((ca)->fs);				\
 } while (0)
 
@@ -171,17 +164,15 @@ do {									\
 
 #define bch_dev_fatal_error(ca, ...)					\
 do {									\
-	__bch_dev_error(ca, __VA_ARGS__);				\
+	bch_err(ca, __VA_ARGS__);					\
 	bch_fatal_error(c);						\
 } while (0)
 
 #define bch_dev_fatal_io_error(ca, fmt, ...)				\
 do {									\
-	char _buf[BDEVNAME_SIZE];					\
-									\
 	printk_ratelimited(KERN_ERR bch_fmt((ca)->fs,			\
 		"fatal IO error on %s for " fmt),			\
-		bdevname((ca)->disk_sb.bdev, _buf), ##__VA_ARGS__);	\
+		(ca)->name, ##__VA_ARGS__);				\
 	bch_fatal_error((ca)->fs);					\
 } while (0)
 
@@ -219,11 +210,9 @@ do {									\
 /* Logs message and handles the error: */
 #define bch_dev_nonfatal_io_error(ca, fmt, ...)				\
 do {									\
-	char _buf[BDEVNAME_SIZE];					\
-									\
 	printk_ratelimited(KERN_ERR bch_fmt((ca)->fs,			\
 		"IO error on %s for " fmt),				\
-		bdevname((ca)->disk_sb.bdev, _buf), ##__VA_ARGS__);	\
+		(ca)->name, ##__VA_ARGS__);				\
 	bch_nonfatal_io_error(ca);					\
 } while (0)
 

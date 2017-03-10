@@ -146,14 +146,9 @@ void bch_submit_wbio_replicas(struct bch_write_bio *wbio, struct bch_fs *c,
 	wbio->c = c;
 
 	extent_for_each_ptr(e, ptr) {
-		rcu_read_lock();
-		ca = PTR_DEV(c, ptr);
-		if (ca)
-			percpu_ref_get(&ca->ref);
-		rcu_read_unlock();
-
-		if (!ca) {
-			bch_submit_wbio(c, wbio, ca, ptr, punt);
+		ca = c->devs[ptr->dev];
+		if (!percpu_ref_tryget(&ca->io_ref)) {
+			bch_submit_wbio(c, wbio, NULL, ptr, punt);
 			break;
 		}
 
@@ -365,7 +360,7 @@ static void bch_write_endio(struct bio *bio)
 	bch_account_io_completion_time(ca, wbio->submit_time_us,
 				       REQ_OP_WRITE);
 	if (ca)
-		percpu_ref_put(&ca->ref);
+		percpu_ref_put(&ca->io_ref);
 
 	if (bio->bi_error && orig)
 		orig->bi_error = bio->bi_error;
@@ -992,7 +987,7 @@ static void bch_rbio_done(struct bch_fs *c, struct bch_read_bio *rbio)
 {
 	struct bio *orig = &bch_rbio_parent(rbio)->bio;
 
-	percpu_ref_put(&rbio->ca->ref);
+	percpu_ref_put(&rbio->ca->io_ref);
 	rbio->ca = NULL;
 
 	if (rbio->split) {
@@ -1034,7 +1029,7 @@ static void bch_read_error_maybe_retry(struct bch_fs *c,
 	bch_rbio_done(c, rbio);
 	return;
 retry:
-	percpu_ref_put(&rbio->ca->ref);
+	percpu_ref_put(&rbio->ca->io_ref);
 	rbio->ca = NULL;
 
 	spin_lock_irqsave(&c->read_retry_lock, flags);

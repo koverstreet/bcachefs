@@ -366,7 +366,7 @@ int bch_journal_move(struct bch_dev *);
 
 void bch_fs_journal_stop(struct journal *);
 void bch_dev_journal_exit(struct bch_dev *);
-int bch_dev_journal_init(struct bch_dev *);
+int bch_dev_journal_init(struct bch_dev *, struct bch_sb *);
 void bch_fs_journal_exit(struct journal *);
 int bch_fs_journal_init(struct journal *, unsigned);
 

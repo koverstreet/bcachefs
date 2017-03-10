@@ -21,16 +21,6 @@ static ssize_t fn ## _show(struct kobject *kobj, struct attribute *attr,\
 static ssize_t fn ## _store(struct kobject *kobj, struct attribute *attr,\
 			    const char *buf, size_t size)		\
 
-#define STORE_LOCKED(fn)						\
-STORE(fn)								\
-{									\
-	ssize_t ret;							\
-	mutex_lock(&bch_register_lock);					\
-	ret = __ ## fn ## _store(kobj, attr, buf, size);		\
-	mutex_unlock(&bch_register_lock);				\
-	return ret;							\
-}
-
 #define __sysfs_attribute(_name, _mode)					\
 	static struct attribute sysfs_##_name =				\
 		{ .name = #_name, .mode = _mode }

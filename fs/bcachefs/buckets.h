@@ -39,14 +39,6 @@ static inline u8 bucket_gc_gen(struct bch_dev *ca, struct bucket *g)
 	return g->mark.gen - ca->oldest_gens[r];
 }
 
-static inline struct bch_dev *PTR_DEV(const struct bch_fs *c,
-				      const struct bch_extent_ptr *ptr)
-{
-	EBUG_ON(ptr->dev > rcu_dereference(c->members)->nr_devices);
-
-	return rcu_dereference(c->devs[ptr->dev]);
-}
-
 static inline size_t PTR_BUCKET_NR(const struct bch_dev *ca,
 				   const struct bch_extent_ptr *ptr)
 {
@@ -64,14 +56,12 @@ static inline size_t PTR_BUCKET_NR_TRACE(const struct bch_fs *c,
 #if 0
 	if (bkey_extent_is_data(&k->k)) {
 		const struct bch_extent_ptr *ptr;
-		const struct bch_dev *ca;
 
-		rcu_read_lock();
-		extent_for_each_online_device(c, bkey_i_to_s_c_extent(k), ptr, ca) {
+		extent_for_each_ptr(bkey_i_to_s_c_extent(k), ptr) {
+			const struct bch_dev *ca = c->devs[ptr->dev];
 			bucket = PTR_BUCKET_NR(ca, ptr);
 			break;
 		}
-		rcu_read_unlock();
 	}
 #endif
 	return bucket;
@@ -102,8 +92,6 @@ static inline u8 gen_after(u8 a, u8 b)
 /**
  * ptr_stale() - check if a pointer points into a bucket that has been
  * invalidated.
- *
- * Warning: PTR_DEV(c, k, ptr) must equal ca.
  */
 static inline u8 ptr_stale(const struct bch_dev *ca,
 			   const struct bch_extent_ptr *ptr)

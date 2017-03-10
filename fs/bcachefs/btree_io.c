@@ -1226,7 +1226,7 @@ void bch_btree_node_read(struct bch_fs *c, struct btree *b)
 	bch_time_stats_update(&c->btree_read_time, start_time);
 out:
 	bio_put(bio);
-	percpu_ref_put(&pick.ca->ref);
+	percpu_ref_put(&pick.ca->io_ref);
 }
 
 int bch_btree_root_read(struct bch_fs *c, enum btree_id id,
@@ -1319,7 +1319,7 @@ static void btree_node_write_endio(struct bio *bio)
 	}
 
 	if (ca)
-		percpu_ref_put(&ca->ref);
+		percpu_ref_put(&ca->io_ref);
 }
 
 void __bch_btree_node_write(struct bch_fs *c, struct btree *b,
@@ -1336,7 +1336,6 @@ void __bch_btree_node_write(struct bch_fs *c, struct btree *b,
 	BKEY_PADDED(key) k;
 	struct bkey_s_extent e;
 	struct bch_extent_ptr *ptr;
-	struct bch_dev *ca;
 	struct sort_iter sort_iter;
 	struct nonce nonce;
 	unsigned bytes_to_write, sectors_to_write, order, bytes, u64s;
@@ -1557,10 +1556,9 @@ void __bch_btree_node_write(struct bch_fs *c, struct btree *b,
 	extent_for_each_ptr(e, ptr)
 		ptr->offset += b->written;
 
-	rcu_read_lock();
-	extent_for_each_online_device(c, e, ptr, ca)
-		atomic64_add(sectors_to_write, &ca->btree_sectors_written);
-	rcu_read_unlock();
+	extent_for_each_ptr(e, ptr)
+		atomic64_add(sectors_to_write,
+			     &c->devs[ptr->dev]->btree_sectors_written);
 
 	b->written += sectors_to_write;
 

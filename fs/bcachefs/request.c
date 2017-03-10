@@ -712,14 +712,7 @@ static int cached_dev_congested(void *data, int bits)
 		return 1;
 
 	if (cached_dev_get(dc)) {
-		unsigned i;
-		struct bch_dev *ca;
-
-		for_each_member_device(ca, d->c, i) {
-			q = bdev_get_queue(ca->disk_sb.bdev);
-			ret |= bdi_congested(&q->backing_dev_info, bits);
-		}
-
+		ret |= bch_congested(d->c, bits);
 		cached_dev_put(dc);
 	}
 
@@ -802,17 +795,8 @@ static int blockdev_volume_ioctl(struct bcache_device *d, fmode_t mode,
 static int blockdev_volume_congested(void *data, int bits)
 {
 	struct bcache_device *d = data;
-	struct request_queue *q;
-	struct bch_dev *ca;
-	unsigned i;
-	int ret = 0;
 
-	for_each_member_device(ca, d->c, i) {
-		q = bdev_get_queue(ca->disk_sb.bdev);
-		ret |= bdi_congested(&q->backing_dev_info, bits);
-	}
-
-	return ret;
+	return bch_congested(d->c, bits);
 }
 
 void bch_blockdev_volume_request_init(struct bcache_device *d)
