@@ -1069,7 +1069,7 @@ static void bch_dev_io_ref_release(struct percpu_ref *ref)
 	complete(&ca->offline_complete);
 }
 
-static void bch_dev_offline(struct bch_dev *ca)
+static void __bch_dev_offline(struct bch_dev *ca)
 {
 	struct bch_fs *c = ca->fs;
 
@@ -1244,7 +1244,7 @@ err:
 	return -ENOMEM;
 }
 
-static int bch_dev_online(struct bch_fs *c, struct bcache_superblock *sb)
+static int __bch_dev_online(struct bch_fs *c, struct bcache_superblock *sb)
 {
 	struct bch_dev *ca;
 	int ret;
@@ -1453,57 +1453,26 @@ int bch_dev_set_state(struct bch_fs *c, struct bch_dev *ca,
 	return ret;
 }
 
-#if 0
-int bch_dev_migrate_from(struct bch_fs *c, struct bch_dev *ca)
-{
-	/* First, go RO before we try to migrate data off: */
-	ret = bch_dev_set_state(c, ca, BCH_MEMBER_STATE_RO, flags);
-	if (ret)
-		return ret;
-
-	bch_notify_dev_removing(ca);
-
-	/* Migrate data, metadata off device: */
-
-	ret = bch_move_data_off_device(ca);
-	if (ret && !(flags & BCH_FORCE_IF_DATA_LOST)) {
-		bch_err(c, "Remove of %s failed, unable to migrate data off",
-			name);
-		return ret;
-	}
-
-	if (ret)
-		ret = bch_flag_data_bad(ca);
-	if (ret) {
-		bch_err(c, "Remove of %s failed, unable to migrate data off",
-			name);
-		return ret;
-	}
-
-	ret = bch_move_metadata_off_device(ca);
-	if (ret)
-		return ret;
-}
-#endif
-
 /* Device add/removal: */
 
-static int __bch_dev_remove(struct bch_fs *c, struct bch_dev *ca, int flags)
+int bch_dev_remove(struct bch_fs *c, struct bch_dev *ca, int flags)
 {
 	struct bch_sb_field_members *mi;
 	unsigned dev_idx = ca->dev_idx;
-	int ret;
+	int ret = -EINVAL;
+
+	mutex_lock(&c->state_lock);
+
+	percpu_ref_put(&ca->ref); /* XXX */
 
 	if (ca->mi.state == BCH_MEMBER_STATE_RW) {
 		bch_err(ca, "Cannot remove RW device");
-		bch_notify_dev_remove_failed(ca);
-		return -EINVAL;
+		goto err;
 	}
 
 	if (!bch_dev_state_allowed(c, ca, BCH_MEMBER_STATE_FAILED, flags)) {
 		bch_err(ca, "Cannot remove without losing data");
-		bch_notify_dev_remove_failed(ca);
-		return -EINVAL;
+		goto err;
 	}
 
 	/*
@@ -1514,27 +1483,25 @@ static int __bch_dev_remove(struct bch_fs *c, struct bch_dev *ca, int flags)
 	ret = bch_flag_data_bad(ca);
 	if (ret) {
 		bch_err(ca, "Remove failed");
-		return ret;
+		goto err;
 	}
 
 	if (ca->mi.has_data || ca->mi.has_metadata) {
-		bch_err(ca, "Can't remove, still has data");
-		return ret;
+		bch_err(ca, "Remove failed, still has data");
+		goto err;
 	}
 
 	/*
 	 * Ok, really doing the remove:
 	 * Drop device's prio pointer before removing it from superblock:
 	 */
-	bch_notify_dev_removed(ca);
-
 	spin_lock(&c->journal.lock);
 	c->journal.prio_buckets[dev_idx] = 0;
 	spin_unlock(&c->journal.lock);
 
 	bch_journal_meta(&c->journal);
 
-	bch_dev_offline(ca);
+	__bch_dev_offline(ca);
 	bch_dev_stop(ca);
 	bch_dev_free(ca);
 
@@ -1549,19 +1516,10 @@ static int __bch_dev_remove(struct bch_fs *c, struct bch_dev *ca, int flags)
 	bch_write_super(c);
 
 	mutex_unlock(&c->sb_lock);
-
-	return 0;
-}
-
-int bch_dev_remove(struct bch_fs *c, struct bch_dev *ca, int flags)
-{
-	int ret;
-
-	mutex_lock(&c->state_lock);
-	percpu_ref_put(&ca->ref);
-	ret = __bch_dev_remove(c, ca, flags);
 	mutex_unlock(&c->state_lock);
-
+	return 0;
+err:
+	mutex_unlock(&c->state_lock);
 	return ret;
 }
 
@@ -1644,7 +1602,7 @@ have_slot:
 		goto err_unlock;
 	}
 
-	if (bch_dev_online(c, &sb)) {
+	if (__bch_dev_online(c, &sb)) {
 		err = "bch_dev_online() error";
 		ret = -ENOMEM;
 		goto err_unlock;
@@ -1675,6 +1633,88 @@ err:
 
 	bch_err(c, "Unable to add device: %s", err);
 	return ret ?: -EINVAL;
+}
+
+int bch_dev_online(struct bch_fs *c, const char *path)
+{
+	struct bcache_superblock sb = { 0 };
+	const char *err;
+
+	mutex_lock(&c->state_lock);
+
+	err = bch_read_super(&sb, bch_opts_empty(), path);
+	if (err)
+		goto err;
+
+	err = bch_dev_in_fs(c->disk_sb, sb.sb);
+	if (err)
+		goto err;
+
+	mutex_lock(&c->sb_lock);
+	if (__bch_dev_online(c, &sb)) {
+		mutex_unlock(&c->sb_lock);
+		goto err;
+	}
+	mutex_unlock(&c->sb_lock);
+
+	mutex_unlock(&c->state_lock);
+	return 0;
+err:
+	mutex_unlock(&c->state_lock);
+	bch_free_super(&sb);
+	bch_err(c, "error bringing %s online: %s", path, err);
+	return -EINVAL;
+}
+
+int bch_dev_offline(struct bch_fs *c, struct bch_dev *ca, int flags)
+{
+	mutex_lock(&c->state_lock);
+
+	if (!bch_dev_state_allowed(c, ca, BCH_MEMBER_STATE_FAILED, flags)) {
+		bch_err(ca, "Cannot offline required disk");
+		mutex_unlock(&c->state_lock);
+		return -EINVAL;
+	}
+
+	__bch_dev_read_only(c, ca);
+	__bch_dev_offline(ca);
+
+	mutex_unlock(&c->state_lock);
+	return 0;
+}
+
+int bch_dev_evacuate(struct bch_fs *c, struct bch_dev *ca)
+{
+	int ret;
+
+	mutex_lock(&c->state_lock);
+
+	if (ca->mi.state == BCH_MEMBER_STATE_RW) {
+		bch_err(ca, "Cannot migrate data off RW device");
+		mutex_unlock(&c->state_lock);
+		return -EINVAL;
+	}
+
+	mutex_unlock(&c->state_lock);
+
+	ret = bch_move_data_off_device(ca);
+	if (ret) {
+		bch_err(ca, "Error migrating data: %i", ret);
+		return ret;
+	}
+
+	ret = bch_move_metadata_off_device(ca);
+	if (ret) {
+		bch_err(ca, "Error migrating metadata: %i", ret);
+		return ret;
+	}
+
+	if (ca->mi.has_data || ca->mi.has_metadata) {
+		bch_err(ca, "Migrate error: data still present");
+		return -EINVAL;
+	}
+
+	return 0;
 }
 
 /* Filesystem open: */
@@ -1731,7 +1771,7 @@ const char *bch_fs_open(char * const *devices, unsigned nr_devices,
 	err = "bch_dev_online() error";
 	mutex_lock(&c->sb_lock);
 	for (i = 0; i < nr_devices; i++)
-		if (bch_dev_online(c, &sb[i])) {
+		if (__bch_dev_online(c, &sb[i])) {
 			mutex_unlock(&c->sb_lock);
 			goto err;
 		}
@@ -1803,7 +1843,7 @@ static const char *__bch_fs_open_incremental(struct bcache_superblock *sb,
 	err = "bch_dev_online() error";
 
 	mutex_lock(&c->sb_lock);
-	if (bch_dev_online(c, sb)) {
+	if (__bch_dev_online(c, sb)) {
 		mutex_unlock(&c->sb_lock);
 		goto err;
 	}

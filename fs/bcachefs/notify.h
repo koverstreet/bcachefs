@@ -16,9 +16,6 @@ void bch_notify_fs_stopped(struct bch_fs *);
 void bch_notify_dev_read_write(struct bch_dev *);
 void bch_notify_dev_read_only(struct bch_dev *);
 void bch_notify_dev_added(struct bch_dev *);
-void bch_notify_dev_removing(struct bch_dev *);
-void bch_notify_dev_removed(struct bch_dev *);
-void bch_notify_dev_remove_failed(struct bch_dev *);
 void bch_notify_dev_error(struct bch_dev *, bool);
 
 #else
@@ -30,9 +27,6 @@ static inline void bch_notify_fs_stopped(struct bch_fs *c) {}
 static inline void bch_notify_dev_read_write(struct bch_dev *ca) {}
 static inline void bch_notify_dev_read_only(struct bch_dev *ca) {}
 static inline void bch_notify_dev_added(struct bch_dev *ca) {}
-static inline void bch_notify_dev_removing(struct bch_dev *ca) {}
-static inline void bch_notify_dev_removed(struct bch_dev *ca) {}
-static inline void bch_notify_dev_remove_failed(struct bch_dev *ca) {}
 static inline void bch_notify_dev_error(struct bch_dev *ca, bool b) {}
 
 #endif

@@ -94,33 +94,6 @@ void bch_notify_dev_added(struct bch_dev *ca)
 	notify_put(c);
 }
 
-void bch_notify_dev_removing(struct bch_dev *ca)
-{
-	struct bch_fs *c = ca->fs;
-
-	notify_get_cache(ca);
-	notify_var(c, "STATE=removing");
-	notify_put(c);
-}
-
-void bch_notify_dev_remove_failed(struct bch_dev *ca)
-{
-	struct bch_fs *c = ca->fs;
-
-	notify_get_cache(ca);
-	notify_var(c, "STATE=remove_failed");
-	notify_put(c);
-}
-
-void bch_notify_dev_removed(struct bch_dev *ca)
-{
-	struct bch_fs *c = ca->fs;
-
-	notify_get_cache(ca);
-	notify_var(c, "STATE=removed");
-	notify_put(c);
-}
-
 void bch_notify_dev_error(struct bch_dev *ca, bool fatal)
 {
 	struct bch_fs *c = ca->fs;
