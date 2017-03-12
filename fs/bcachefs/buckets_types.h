@@ -65,15 +65,10 @@ struct bucket {
 	};
 };
 
-struct bch_dev_usage {
-	u64			buckets_dirty;
-	u64			buckets_cached;
-	u64			buckets_meta;
-	u64			buckets_alloc;
-
-	u64			sectors_dirty;
-	u64			sectors_cached;
-	u64			sectors_meta;
+enum s_compressed {
+	S_COMPRESSED,
+	S_UNCOMPRESSED,
+	S_COMPRESSED_NR,
 };
 
 enum s_alloc {
@@ -83,10 +78,13 @@ enum s_alloc {
 	S_ALLOC_NR,
 };
 
-enum s_compressed {
-	S_COMPRESSED,
-	S_UNCOMPRESSED,
-	S_COMPRESSED_NR,
+struct bch_dev_usage {
+	u64			buckets_dirty;
+	u64			buckets_cached;
+	u64			buckets_meta;
+	u64			buckets_alloc;
+
+	u64			sectors[S_ALLOC_NR];
 };
 
 struct bch_fs_usage {

@@ -204,7 +204,21 @@ static inline int is_cached_bucket(struct bucket_mark m)
 		!m.dirty_sectors && !!m.cached_sectors;
 }
 
-void bch_fs_stats_apply(struct bch_fs *c,
+static inline enum s_alloc bucket_type(struct bucket_mark m)
+{
+	return is_meta_bucket(m) ? S_META : S_DIRTY;
+}
+
+static bool bucket_became_unavailable(struct bch_fs *c,
+				      struct bucket_mark old,
+				      struct bucket_mark new)
+{
+	return is_available_bucket(old) &&
+	       !is_available_bucket(new) &&
+	       c && c->gc_pos.phase == GC_PHASE_DONE;
+}
+
+void bch_fs_usage_apply(struct bch_fs *c,
 			struct bch_fs_usage *stats,
 			struct disk_reservation *disk_res,
 			struct gc_pos gc_pos)
@@ -241,62 +255,43 @@ void bch_fs_stats_apply(struct bch_fs *c,
 	memset(stats, 0, sizeof(*stats));
 }
 
-static bool bucket_became_unavailable(struct bch_fs *c,
-				      struct bucket_mark old,
-				      struct bucket_mark new)
+static void bch_fs_usage_update(struct bch_fs_usage *fs_usage,
+				struct bucket_mark old, struct bucket_mark new)
 {
-	return is_available_bucket(old) &&
-	       !is_available_bucket(new) &&
-	       c && c->gc_pos.phase == GC_PHASE_DONE;
+	fs_usage->s[S_COMPRESSED][S_CACHED] +=
+		(int) new.cached_sectors - (int) old.cached_sectors;
+	fs_usage->s[S_COMPRESSED][bucket_type(old)] -=
+		old.dirty_sectors;
+	fs_usage->s[S_COMPRESSED][bucket_type(new)] +=
+		new.dirty_sectors;
 }
 
-static void bch_usage_update(struct bch_dev *ca,
-			     struct bucket_mark old, struct bucket_mark new,
-			     struct bch_fs_usage *bch_alloc_stats)
+static void bch_dev_usage_update(struct bch_dev *ca,
+				 struct bucket_mark old, struct bucket_mark new)
 {
 	struct bch_fs *c = ca->fs;
-	struct bch_dev_usage *cache_stats;
+	struct bch_dev_usage *dev_usage;
 
 	bch_fs_inconsistent_on(old.data_type && new.data_type &&
 			old.data_type != new.data_type, c,
 			"different types of metadata in same bucket: %u, %u",
 			old.data_type, new.data_type);
 
-	if (bch_alloc_stats) {
-		bch_alloc_stats->s[S_COMPRESSED][S_CACHED] +=
-			(int) new.cached_sectors - (int) old.cached_sectors;
-
-		bch_alloc_stats->s[S_COMPRESSED]
-			[is_meta_bucket(old) ? S_META : S_DIRTY] -=
-			old.dirty_sectors;
-
-		bch_alloc_stats->s[S_COMPRESSED]
-			[is_meta_bucket(new) ? S_META : S_DIRTY] +=
-			new.dirty_sectors;
-	}
-
 	preempt_disable();
-	cache_stats = this_cpu_ptr(ca->usage_percpu);
+	dev_usage = this_cpu_ptr(ca->usage_percpu);
 
-	cache_stats->sectors_cached +=
+	dev_usage->sectors[S_CACHED] +=
 		(int) new.cached_sectors - (int) old.cached_sectors;
 
-	if (is_meta_bucket(old))
-		cache_stats->sectors_meta -= old.dirty_sectors;
-	else
-		cache_stats->sectors_dirty -= old.dirty_sectors;
+	dev_usage->sectors[bucket_type(old)] -= old.dirty_sectors;
+	dev_usage->sectors[bucket_type(new)] += new.dirty_sectors;
 
-	if (is_meta_bucket(new))
-		cache_stats->sectors_meta += new.dirty_sectors;
-	else
-		cache_stats->sectors_dirty += new.dirty_sectors;
-
-	cache_stats->buckets_alloc +=
+	dev_usage->buckets_alloc +=
 		(int) new.owned_by_allocator - (int) old.owned_by_allocator;
 
-	cache_stats->buckets_meta += is_meta_bucket(new) - is_meta_bucket(old);
-	cache_stats->buckets_cached += is_cached_bucket(new) - is_cached_bucket(old);
-	cache_stats->buckets_dirty += is_dirty_bucket(new) - is_dirty_bucket(old);
+	dev_usage->buckets_meta += is_meta_bucket(new) - is_meta_bucket(old);
+	dev_usage->buckets_cached += is_cached_bucket(new) - is_cached_bucket(old);
+	dev_usage->buckets_dirty += is_dirty_bucket(new) - is_dirty_bucket(old);
 	preempt_enable();
 
 	if (!is_available_bucket(old) && is_available_bucket(new))
@@ -305,10 +300,9 @@ static void bch_usage_update(struct bch_dev *ca,
 
 #define bucket_data_cmpxchg(ca, g, new, expr)			\
 ({								\
-	struct bch_fs_usage _stats = { 0 };		\
 	struct bucket_mark _old = bucket_cmpxchg(g, new, expr);	\
 								\
-	bch_usage_update(ca, _old, new, &_stats);		\
+	bch_dev_usage_update(ca, _old, new);			\
 	_old;							\
 })
 
@@ -317,7 +311,7 @@ void bch_invalidate_bucket(struct bch_dev *ca, struct bucket *g)
 	struct bch_fs_usage stats = { 0 };
 	struct bucket_mark old, new;
 
-	old = bucket_cmpxchg(g, new, ({
+	old = bucket_data_cmpxchg(ca, g, new, ({
 		new.owned_by_allocator	= 1;
 		new.had_metadata	= 0;
 		new.data_type		= 0;
@@ -327,23 +321,8 @@ void bch_invalidate_bucket(struct bch_dev *ca, struct bucket *g)
 		new.gen++;
 	}));
 
-	bch_usage_update(ca, old, new, &stats);
-
-	BUG_ON(old.dirty_sectors);
-
-	/*
-	 * Ick:
-	 *
-	 * Only stats.sectors_cached should be nonzero: this is important
-	 * because in this path we modify bch_alloc_stats based on how the
-	 * bucket_mark was modified, and the sector counts in bucket_mark are
-	 * subject to (saturating) overflow - and if they did overflow, the
-	 * bch_fs_usage stats will now be off. We can tolerate this for
-	 * sectors_cached, but not anything else:
-	 */
-	stats.s[S_COMPRESSED][S_CACHED] = 0;
-	stats.s[S_UNCOMPRESSED][S_CACHED] = 0;
-	BUG_ON(!bch_is_zero(&stats, sizeof(stats)));
+	/* XXX: we're not actually updating fs usage's cached sectors... */
+	bch_fs_usage_update(&stats, old, new);
 
 	if (!old.owned_by_allocator && old.cached_sectors)
 		trace_bcache_invalidate(ca, g - ca->buckets,
@@ -452,7 +431,6 @@ static void bch_mark_pointer(struct bch_fs *c,
 	unsigned saturated;
 	struct bch_dev *ca = c->devs[ptr->dev];
 	struct bucket *g = ca->buckets + PTR_BUCKET_NR(ca, ptr);
-	u64 v;
 	unsigned old_sectors, new_sectors;
 	int disk_sectors, compressed_sectors;
 
@@ -476,9 +454,7 @@ static void bch_mark_pointer(struct bch_fs *c,
 		goto out;
 	}
 
-	v = READ_ONCE(g->_mark.counter);
-	do {
-		new.counter = old.counter = v;
+	old = bucket_data_cmpxchg(ca, g, new, ({
 		saturated = 0;
 
 		/*
@@ -486,7 +462,7 @@ static void bch_mark_pointer(struct bch_fs *c,
 		 * the allocator invalidating a bucket after we've already
 		 * checked the gen
 		 */
-		if (gen_after(old.gen, ptr->gen)) {
+		if (gen_after(new.gen, ptr->gen)) {
 			EBUG_ON(type != S_CACHED &&
 				test_bit(JOURNAL_REPLAY_DONE, &c->journal.flags));
 			return;
@@ -494,7 +470,7 @@ static void bch_mark_pointer(struct bch_fs *c,
 
 		EBUG_ON(type != S_CACHED &&
 			!may_make_unavailable &&
-			is_available_bucket(old) &&
+			is_available_bucket(new) &&
 			test_bit(JOURNAL_REPLAY_DONE, &c->journal.flags));
 
 		if (type != S_CACHED &&
@@ -523,11 +499,7 @@ static void bch_mark_pointer(struct bch_fs *c,
 		}
 
 		new.had_metadata |= is_meta_bucket(new);
-	} while ((v = cmpxchg(&g->_mark.counter,
-			      old.counter,
-			      new.counter)) != old.counter);
-
-	bch_usage_update(ca, old, new, NULL);
+	}));
 
 	BUG_ON(!may_make_unavailable &&
 	       bucket_became_unavailable(c, old, new));

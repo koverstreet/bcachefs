@@ -931,7 +931,7 @@ struct extent_insert_state {
 	struct btree_insert		*trans;
 	struct btree_insert_entry	*insert;
 	struct bpos			committed;
-	struct bch_fs_usage	stats;
+	struct bch_fs_usage		stats;
 
 	/* for deleting: */
 	struct bkey_i			whiteout;
@@ -1554,7 +1554,7 @@ next:
 stop:
 	extent_insert_committed(s);
 
-	bch_fs_stats_apply(c, &s->stats, s->trans->disk_res,
+	bch_fs_usage_apply(c, &s->stats, s->trans->disk_res,
 			   gc_pos_btree_node(b));
 
 	EBUG_ON(bkey_cmp(iter->pos, s->committed));
@@ -1716,7 +1716,7 @@ stop:
 				     bkey_start_offset(&insert->k->k),
 				     insert->k->k.size);
 
-	bch_fs_stats_apply(c, &s.stats, trans->disk_res,
+	bch_fs_usage_apply(c, &s.stats, trans->disk_res,
 			   gc_pos_btree_node(b));
 
 	EBUG_ON(bkey_cmp(iter->pos, bkey_start_pos(&insert->k->k)));

@@ -183,7 +183,7 @@ static inline u64 dev_buckets_free(struct bch_dev *ca)
 
 struct bch_fs_usage __bch_fs_usage_read(struct bch_fs *);
 struct bch_fs_usage bch_fs_usage_read(struct bch_fs *);
-void bch_fs_stats_apply(struct bch_fs *, struct bch_fs_usage *,
+void bch_fs_usage_apply(struct bch_fs *, struct bch_fs_usage *,
 			struct disk_reservation *, struct gc_pos);
 
 static inline u64 __bch_fs_sectors_used(struct bch_fs *c)

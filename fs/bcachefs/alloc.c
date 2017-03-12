@@ -154,11 +154,10 @@ static void pd_controllers_update(struct work_struct *work)
 			s64 fragmented = ((stats.buckets_dirty +
 					   stats.buckets_cached) <<
 					  bucket_bits) -
-				((stats.sectors_dirty +
-				  stats.sectors_cached) << 9);
+				((stats.sectors[S_DIRTY] +
+				  stats.sectors[S_CACHED] ) << 9);
 
-			if (fragmented < 0)
-				fragmented = 0;
+			fragmented = max(0LL, fragmented);
 
 			bch_pd_controller_update(&ca->moving_gc_pd,
 						 free, fragmented, -1);

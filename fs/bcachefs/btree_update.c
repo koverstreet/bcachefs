@@ -385,7 +385,7 @@ static void bch_btree_set_root_inmem(struct bch_fs *c, struct btree *b,
 			bch_btree_node_free_index(c, NULL, old->btree_id,
 						  bkey_i_to_s_c(&old->key),
 						  &stats);
-		bch_fs_stats_apply(c, &stats, &btree_reserve->disk_res,
+		bch_fs_usage_apply(c, &stats, &btree_reserve->disk_res,
 				   gc_pos_btree_root(b->btree_id));
 	}
 
@@ -655,7 +655,7 @@ static void bch_insert_fixup_btree_ptr(struct btree_iter *iter,
 					  bkey_disassemble(b, k, &tmp),
 					  &stats);
 
-	bch_fs_stats_apply(c, &stats, disk_res, gc_pos_btree_node(b));
+	bch_fs_usage_apply(c, &stats, disk_res, gc_pos_btree_node(b));
 
 	bch_btree_bset_insert_key(iter, b, node_iter, insert);
 	set_btree_node_dirty(b);

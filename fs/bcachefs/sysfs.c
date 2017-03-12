@@ -1174,11 +1174,11 @@ SHOW(bch_dev)
 	sysfs_print(io_errors,
 		    atomic_read(&ca->io_errors) >> IO_ERROR_SHIFT);
 
-	sysfs_hprint(dirty_data,	stats.sectors_dirty << 9);
-	sysfs_print(dirty_bytes,	stats.sectors_dirty << 9);
+	sysfs_hprint(dirty_data,	stats.sectors[S_DIRTY] << 9);
+	sysfs_print(dirty_bytes,	stats.sectors[S_DIRTY] << 9);
 	sysfs_print(dirty_buckets,	stats.buckets_dirty);
-	sysfs_hprint(cached_data,	stats.sectors_cached << 9);
-	sysfs_print(cached_bytes,	stats.sectors_cached << 9);
+	sysfs_hprint(cached_data,	stats.sectors[S_CACHED] << 9);
+	sysfs_print(cached_bytes,	stats.sectors[S_CACHED] << 9);
 	sysfs_print(cached_buckets,	stats.buckets_cached);
 	sysfs_print(meta_buckets,	stats.buckets_meta);
 	sysfs_print(alloc_buckets,	stats.buckets_alloc);
