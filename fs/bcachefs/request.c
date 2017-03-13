@@ -467,8 +467,6 @@ static void cached_dev_read(struct cached_dev *dc, struct search *s)
 	struct bkey_s_c k;
 	int ret;
 
-	bch_increment_clock(c, bio_sectors(bio), READ);
-
 	for_each_btree_key_with_holes(&iter, c, BTREE_ID_EXTENTS,
 				POS(s->inode, bio->bi_iter.bi_sector), k) {
 		BKEY_PADDED(k) tmp;

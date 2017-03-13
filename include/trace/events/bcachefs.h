@@ -131,6 +131,16 @@ DEFINE_EVENT(bkey, bcache_promote_collision,
 	TP_ARGS(k)
 );
 
+DEFINE_EVENT(bcache_bio, bcache_read_split,
+	TP_PROTO(struct bio *bio),
+	TP_ARGS(bio)
+);
+
+DEFINE_EVENT(bcache_bio, bcache_read_bounce,
+	TP_PROTO(struct bio *bio),
+	TP_ARGS(bio)
+);
+
 TRACE_EVENT(bcache_read,
 	TP_PROTO(struct bio *bio, bool hit, bool bypass),
 	TP_ARGS(bio, hit, bypass),

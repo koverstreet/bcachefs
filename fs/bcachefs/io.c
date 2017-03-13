@@ -1138,6 +1138,8 @@ void bch_read_extent_iter(struct bch_fs *c, struct bch_read_bio *orig,
 	unsigned skip = iter.bi_sector - bkey_start_offset(k.k);
 	bool bounce = false, split, read_full = false;
 
+	bch_increment_clock(c, bio_sectors(&orig->bio), READ);
+
 	EBUG_ON(bkey_start_offset(k.k) > iter.bi_sector ||
 		k.k->p.offset < bvec_iter_end_sector(iter));
 
@@ -1297,6 +1299,12 @@ void bch_read_extent_iter(struct bch_fs *c, struct bch_read_bio *orig,
 
 	rbio->submit_time_us = local_clock_us();
 
+	if (bounce)
+		trace_bcache_read_bounce(&rbio->bio);
+
+	if (!(flags & BCH_READ_IS_LAST))
+		trace_bcache_read_split(&rbio->bio);
+
 	generic_make_request(&rbio->bio);
 }
 
@@ -1375,8 +1383,6 @@ static void bch_read_iter(struct bch_fs *c, struct bch_read_bio *rbio,
 
 void bch_read(struct bch_fs *c, struct bch_read_bio *bio, u64 inode)
 {
-	bch_increment_clock(c, bio_sectors(&bio->bio), READ);
-
 	bch_read_iter(c, bio, bio->bio.bi_iter, inode,
 		      BCH_READ_RETRY_IF_STALE|
 		      BCH_READ_PROMOTE|
