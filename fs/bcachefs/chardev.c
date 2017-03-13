@@ -337,12 +337,11 @@ void bch_chardev_exit(void)
 {
 	if (!IS_ERR_OR_NULL(bch_chardev_class))
 		device_destroy(bch_chardev_class,
-			       MKDEV(bch_chardev_major, 0));
+			       MKDEV(bch_chardev_major, 255));
 	if (!IS_ERR_OR_NULL(bch_chardev_class))
 		class_destroy(bch_chardev_class);
 	if (bch_chardev_major > 0)
 		unregister_chrdev(bch_chardev_major, "bcache");
-
 }
 
 int __init bch_chardev_init(void)
