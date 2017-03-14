@@ -322,9 +322,7 @@ static bool should_drop_ptr(const struct bch_fs *c,
 			    struct bkey_s_c_extent e,
 			    const struct bch_extent_ptr *ptr)
 {
-	struct bch_dev *ca = c->devs[ptr->dev];
-
-	return ptr_stale(ca, ptr);
+	return ptr->cached && ptr_stale(c->devs[ptr->dev], ptr);
 }
 
 static void bch_extent_drop_stale(struct bch_fs *c, struct bkey_s_extent e)
@@ -2153,7 +2151,7 @@ void bch_extent_pick_ptr_avoiding(struct bch_fs *c, struct bkey_s_c k,
 		extent_for_each_ptr_crc(e, ptr, crc) {
 			struct bch_dev *ca = c->devs[ptr->dev];
 
-			if (ptr_stale(ca, ptr))
+			if (ptr->cached && ptr_stale(ca, ptr))
 				continue;
 
 			if (ca->mi.state == BCH_MEMBER_STATE_FAILED)

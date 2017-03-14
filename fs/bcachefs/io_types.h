@@ -29,6 +29,19 @@ struct bch_read_bio {
 	 */
 	struct bvec_iter	parent_iter;
 
+	unsigned		submit_time_us;
+	u16			flags;
+	u8			bounce:1,
+				split:1;
+
+	struct bch_fs		*c;
+	struct bch_dev		*ca;
+	struct bch_extent_ptr	ptr;
+	struct bch_extent_crc128 crc;
+	struct bversion		version;
+
+	struct cache_promote_op *promote;
+
 	/*
 	 * If we have to retry the read (IO error, checksum failure, read stale
 	 * data (raced with allocator), we retry the portion of the parent bio
@@ -37,18 +50,6 @@ struct bch_read_bio {
 	 * But we need to stash the inode somewhere:
 	 */
 	u64			inode;
-
-	unsigned		submit_time_us;
-	u16			flags;
-	u8			bounce:1,
-				split:1;
-
-	struct bversion		version;
-	struct bch_extent_crc128 crc;
-	struct bch_extent_ptr	ptr;
-	struct bch_dev		*ca;
-
-	struct cache_promote_op *promote;
 
 	/* bio_decompress_worker list */
 	struct llist_node	list;
@@ -63,7 +64,7 @@ bch_rbio_parent(struct bch_read_bio *rbio)
 }
 
 struct bch_write_bio {
-	struct bch_fs	*c;
+	struct bch_fs		*c;
 	struct bch_dev		*ca;
 	union {
 		struct bio	*orig;

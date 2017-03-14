@@ -1101,12 +1101,15 @@ static void bch_read_endio(struct bio *bio)
 {
 	struct bch_read_bio *rbio =
 		container_of(bio, struct bch_read_bio, bio);
-	struct bch_fs *c = rbio->ca->fs;
-	int stale = ((rbio->flags & BCH_READ_RETRY_IF_STALE) && race_fault()) ||
-		ptr_stale(rbio->ca, &rbio->ptr) ? -EINTR : 0;
+	struct bch_fs *c = rbio->c;
+	int stale = rbio->ptr.cached &&
+		(((rbio->flags & BCH_READ_RETRY_IF_STALE) && race_fault()) ||
+		 ptr_stale(rbio->ca, &rbio->ptr) ? -EINTR : 0);
 	int error = bio->bi_error ?: stale;
 
-	bch_account_io_completion_time(rbio->ca, rbio->submit_time_us, REQ_OP_READ);
+	if (rbio->flags & BCH_READ_ACCOUNT_TIMES)
+		bch_account_io_completion_time(rbio->ca, rbio->submit_time_us,
+					       REQ_OP_READ);
 
 	bch_dev_nonfatal_io_err_on(bio->bi_error, rbio->ca, "data read");
 
@@ -1238,11 +1241,12 @@ void bch_read_extent_iter(struct bch_fs *c, struct bch_read_bio *orig,
 		rbio->orig_bi_end_io = orig->bio.bi_end_io;
 	rbio->parent_iter	= iter;
 
-	rbio->inode		= k.k->p.inode;
 	rbio->flags		= flags;
 	rbio->bounce		= bounce;
 	rbio->split		= split;
-	rbio->version		= k.k->version;
+	rbio->c			= c;
+	rbio->ca		= pick->ca;
+	rbio->ptr		= pick->ptr;
 	rbio->crc		= pick->crc;
 	/*
 	 * crc.compressed_size will be 0 if there wasn't any checksum
@@ -1251,9 +1255,9 @@ void bch_read_extent_iter(struct bch_fs *c, struct bch_read_bio *orig,
 	 * only for promoting)
 	 */
 	rbio->crc._compressed_size = bio_sectors(&rbio->bio) - 1;
-	rbio->ptr		= pick->ptr;
-	rbio->ca		= pick->ca;
+	rbio->version		= k.k->version;
 	rbio->promote		= promote_op;
+	rbio->inode		= k.k->p.inode;
 
 	rbio->bio.bi_bdev	= pick->ca->disk_sb.bdev;
 	rbio->bio.bi_opf	= orig->bio.bi_opf;

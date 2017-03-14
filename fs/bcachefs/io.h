@@ -69,6 +69,7 @@ enum bch_read_flags {
 	BCH_READ_PROMOTE		= 1 << 2,
 	BCH_READ_IS_LAST		= 1 << 3,
 	BCH_READ_MAY_REUSE_BIO		= 1 << 4,
+	BCH_READ_ACCOUNT_TIMES		= 1 << 5,
 };
 
 void bch_read(struct bch_fs *, struct bch_read_bio *, u64);
