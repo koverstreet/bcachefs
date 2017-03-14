@@ -51,8 +51,7 @@ struct bch_read_bio {
 	 */
 	u64			inode;
 
-	/* bio_decompress_worker list */
-	struct llist_node	list;
+	struct work_struct	work;
 
 	struct bio		bio;
 };
@@ -141,12 +140,6 @@ struct bch_write_op {
 
 	struct keylist		insert_keys;
 	u64			inline_keys[BKEY_EXTENT_U64s_MAX * 2];
-};
-
-struct bio_decompress_worker {
-	struct bch_fs		*c;
-	struct work_struct		work;
-	struct llist_head		bio_list;
 };
 
 #endif /* _BCACHE_IO_TYPES_H */

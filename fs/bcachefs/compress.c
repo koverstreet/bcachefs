@@ -443,7 +443,6 @@ void bch_fs_compress_exit(struct bch_fs *c)
 	mempool_exit(&c->lz4_workspace_pool);
 	mempool_exit(&c->compression_bounce[WRITE]);
 	mempool_exit(&c->compression_bounce[READ]);
-	free_percpu(c->bio_decompress_worker);
 }
 
 #define COMPRESSION_WORKSPACE_SIZE					\
@@ -453,22 +452,7 @@ void bch_fs_compress_exit(struct bch_fs *c)
 int bch_fs_compress_init(struct bch_fs *c)
 {
 	unsigned order = get_order(BCH_ENCODED_EXTENT_MAX << 9);
-	int ret, cpu;
-
-	if (!c->bio_decompress_worker) {
-		c->bio_decompress_worker = alloc_percpu(*c->bio_decompress_worker);
-		if (!c->bio_decompress_worker)
-			return -ENOMEM;
-
-		for_each_possible_cpu(cpu) {
-			struct bio_decompress_worker *d =
-				per_cpu_ptr(c->bio_decompress_worker, cpu);
-
-			d->c = c;
-			INIT_WORK(&d->work, bch_bio_decompress_work);
-			init_llist_head(&d->bio_list);
-		}
-	}
+	int ret;
 
 	if (!bch_sb_test_feature(c->disk_sb, BCH_FEATURE_LZ4) &&
 	    !bch_sb_test_feature(c->disk_sb, BCH_FEATURE_GZIP))

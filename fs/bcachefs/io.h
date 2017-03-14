@@ -86,6 +86,4 @@ int bch_discard(struct bch_fs *, struct bpos, struct bpos,
 void bch_read_retry_work(struct work_struct *);
 void bch_wake_delayed_writes(unsigned long data);
 
-void bch_bio_decompress_work(struct work_struct *);
-
 #endif /* _BCACHE_IO_H */

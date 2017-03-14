@@ -1036,8 +1036,11 @@ static void cache_promote_done(struct closure *cl)
 }
 
 /* Inner part that may run in process context */
-static void __bch_read_endio(struct bch_fs *c, struct bch_read_bio *rbio)
+static void __bch_read_endio(struct work_struct *work)
 {
+	struct bch_read_bio *rbio =
+		container_of(work, struct bch_read_bio, work);
+	struct bch_fs *c = rbio->c;
 	int ret;
 
 	ret = bio_checksum_uncompress(c, rbio);
@@ -1074,24 +1077,6 @@ static void __bch_read_endio(struct bch_fs *c, struct bch_read_bio *rbio)
 	}
 }
 
-void bch_bio_decompress_work(struct work_struct *work)
-{
-	struct bio_decompress_worker *d =
-		container_of(work, struct bio_decompress_worker, work);
-	struct llist_node *list, *next;
-	struct bch_read_bio *rbio;
-
-	while ((list = llist_del_all(&d->bio_list)))
-		for (list = llist_reverse_order(list);
-		     list;
-		     list = next) {
-			next = llist_next(list);
-			rbio = container_of(list, struct bch_read_bio, list);
-
-			__bch_read_endio(d->c, rbio);
-		}
-}
-
 static void bch_read_endio(struct bio *bio)
 {
 	struct bch_read_bio *rbio =
@@ -1120,18 +1105,13 @@ static void bch_read_endio(struct bio *bio)
 		return;
 	}
 
-	if (rbio->crc.compression_type != BCH_COMPRESSION_NONE ||
-	    bch_csum_type_is_encryption(rbio->crc.csum_type)) {
-		struct bio_decompress_worker *d;
-
-		preempt_disable();
-		d = this_cpu_ptr(c->bio_decompress_worker);
-		llist_add(&rbio->list, &d->bio_list);
-		queue_work(system_highpri_wq, &d->work);
-		preempt_enable();
-	} else {
-		__bch_read_endio(c, rbio);
-	}
+	if (rbio->crc.compression_type ||
+	    bch_csum_type_is_encryption(rbio->crc.csum_type))
+		queue_work(system_unbound_wq, &rbio->work);
+	else if (rbio->crc.csum_type)
+		queue_work(system_highpri_wq, &rbio->work);
+	else
+		__bch_read_endio(&rbio->work);
 }
 
 static bool should_promote(struct bch_fs *c,
@@ -1260,6 +1240,7 @@ void bch_read_extent_iter(struct bch_fs *c, struct bch_read_bio *orig,
 	rbio->version		= k.k->version;
 	rbio->promote		= promote_op;
 	rbio->inode		= k.k->p.inode;
+	INIT_WORK(&rbio->work, __bch_read_endio);
 
 	rbio->bio.bi_bdev	= pick->ca->disk_sb.bdev;
 	rbio->bio.bi_opf	= orig->bio.bi_opf;

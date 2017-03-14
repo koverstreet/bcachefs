@@ -716,8 +716,6 @@ struct bch_fs {
 	void			*zlib_workspace;
 	struct mutex		zlib_workspace_lock;
 	mempool_t		compression_bounce[2];
-	struct bio_decompress_worker __percpu
-				*bio_decompress_worker;
 
 	struct crypto_blkcipher	*chacha20;
 	struct crypto_shash	*poly1305;
