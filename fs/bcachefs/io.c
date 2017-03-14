@@ -969,8 +969,9 @@ static int bio_checksum_uncompress(struct bch_fs *c,
 	return ret;
 }
 
-static void bch_rbio_free(struct bch_fs *c, struct bch_read_bio *rbio)
+static void bch_rbio_free(struct bch_read_bio *rbio)
 {
+	struct bch_fs *c = rbio->c;
 	struct bio *bio = &rbio->bio;
 
 	BUG_ON(rbio->ca);
@@ -984,7 +985,7 @@ static void bch_rbio_free(struct bch_fs *c, struct bch_read_bio *rbio)
 	bio_put(bio);
 }
 
-static void bch_rbio_done(struct bch_fs *c, struct bch_read_bio *rbio)
+static void bch_rbio_done(struct bch_read_bio *rbio)
 {
 	struct bio *orig = &bch_rbio_parent(rbio)->bio;
 
@@ -996,7 +997,7 @@ static void bch_rbio_done(struct bch_fs *c, struct bch_read_bio *rbio)
 			orig->bi_error = rbio->bio.bi_error;
 
 		bio_endio(orig);
-		bch_rbio_free(c, rbio);
+		bch_rbio_free(rbio);
 	} else {
 		if (rbio->promote)
 			kfree(rbio->promote);
@@ -1006,30 +1007,16 @@ static void bch_rbio_done(struct bch_fs *c, struct bch_read_bio *rbio)
 	}
 }
 
-/*
- * Decide if we want to retry the read - returns true if read is being retried,
- * false if caller should pass error on up
- */
-static void bch_read_error_maybe_retry(struct bch_fs *c,
-				       struct bch_read_bio *rbio,
-				       int error)
+static void bch_rbio_error(struct bch_read_bio *rbio, int error)
+{
+	bch_rbio_parent(rbio)->bio.bi_error = error;
+	bch_rbio_done(rbio);
+}
+
+static void bch_rbio_retry(struct bch_fs *c, struct bch_read_bio *rbio)
 {
 	unsigned long flags;
 
-	if ((error == -EINTR) &&
-	    (rbio->flags & BCH_READ_RETRY_IF_STALE)) {
-		atomic_long_inc(&c->cache_read_races);
-		goto retry;
-	}
-
-	if (error == -EIO) {
-		/* io error - do we have another replica? */
-	}
-
-	bch_rbio_parent(rbio)->bio.bi_error = error;
-	bch_rbio_done(c, rbio);
-	return;
-retry:
 	percpu_ref_put(&rbio->ca->io_ref);
 	rbio->ca = NULL;
 
@@ -1055,7 +1042,15 @@ static void __bch_read_endio(struct bch_fs *c, struct bch_read_bio *rbio)
 
 	ret = bio_checksum_uncompress(c, rbio);
 	if (ret) {
-		bch_read_error_maybe_retry(c, rbio, ret);
+		/*
+		 * Checksum error: if the bio wasn't bounced, we may have been
+		 * reading into buffers owned by userspace (that userspace can
+		 * scribble over) - retry the read, bouncing it this time:
+		 */
+		if (!rbio->bounce)
+			bch_rbio_retry(c, rbio);
+		else
+			bch_rbio_error(rbio, -EIO);
 		return;
 	}
 
@@ -1069,13 +1064,13 @@ static void __bch_read_endio(struct bch_fs *c, struct bch_read_bio *rbio)
 		swap(promote->write.wbio.bio.bi_vcnt, rbio->bio.bi_vcnt);
 		rbio->promote = NULL;
 
-		bch_rbio_done(c, rbio);
+		bch_rbio_done(rbio);
 
 		closure_init(cl, &c->cl);
 		closure_call(&promote->write.op.cl, bch_write, c->wq, cl);
 		closure_return_with_destructor(cl, cache_promote_done);
 	} else {
-		bch_rbio_done(c, rbio);
+		bch_rbio_done(rbio);
 	}
 }
 
@@ -1102,19 +1097,26 @@ static void bch_read_endio(struct bio *bio)
 	struct bch_read_bio *rbio =
 		container_of(bio, struct bch_read_bio, bio);
 	struct bch_fs *c = rbio->c;
-	int stale = rbio->ptr.cached &&
-		(((rbio->flags & BCH_READ_RETRY_IF_STALE) && race_fault()) ||
-		 ptr_stale(rbio->ca, &rbio->ptr) ? -EINTR : 0);
-	int error = bio->bi_error ?: stale;
 
 	if (rbio->flags & BCH_READ_ACCOUNT_TIMES)
 		bch_account_io_completion_time(rbio->ca, rbio->submit_time_us,
 					       REQ_OP_READ);
 
-	bch_dev_nonfatal_io_err_on(bio->bi_error, rbio->ca, "data read");
+	if (bch_dev_nonfatal_io_err_on(bio->bi_error, rbio->ca, "data read")) {
+		/* XXX: retry IO errors when we have another replica */
+		bch_rbio_error(rbio, bio->bi_error);
+		return;
+	}
 
-	if (error) {
-		bch_read_error_maybe_retry(c, rbio, error);
+	if (rbio->ptr.cached &&
+	    (((rbio->flags & BCH_READ_RETRY_IF_STALE) && race_fault()) ||
+	     ptr_stale(rbio->ca, &rbio->ptr))) {
+		atomic_long_inc(&c->cache_read_races);
+
+		if (rbio->flags & BCH_READ_RETRY_IF_STALE)
+			bch_rbio_retry(c, rbio);
+		else
+			bch_rbio_error(rbio, -EINTR);
 		return;
 	}
 
@@ -1391,7 +1393,6 @@ void bch_read(struct bch_fs *c, struct bch_read_bio *bio, u64 inode)
 	bch_increment_clock(c, bio_sectors(&bio->bio), READ);
 
 	bch_read_iter(c, bio, bio->bio.bi_iter, inode,
-		      BCH_READ_FORCE_BOUNCE|
 		      BCH_READ_RETRY_IF_STALE|
 		      BCH_READ_PROMOTE|
 		      BCH_READ_MAY_REUSE_BIO);
@@ -1410,7 +1411,7 @@ static void bch_read_retry(struct bch_fs *c, struct bch_read_bio *rbio)
 	trace_bcache_read_retry(&rbio->bio);
 
 	if (rbio->split)
-		bch_rbio_free(c, rbio);
+		bch_rbio_free(rbio);
 	else
 		rbio->bio.bi_end_io = rbio->orig_bi_end_io;
 
