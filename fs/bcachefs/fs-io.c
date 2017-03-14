@@ -1613,10 +1613,16 @@ ssize_t bch_direct_IO(struct kiocb *req, struct iov_iter *iter)
 	struct file *file = req->ki_filp;
 	struct inode *inode = file->f_inode;
 	struct bch_fs *c = inode->i_sb->s_fs_info;
+	struct blk_plug plug;
+	ssize_t ret;
 
-	return ((iov_iter_rw(iter) == WRITE)
+	blk_start_plug(&plug);
+	ret = ((iov_iter_rw(iter) == WRITE)
 		? bch_direct_IO_write
 		: bch_direct_IO_read)(c, req, file, inode, iter, req->ki_pos);
+	blk_finish_plug(&plug);
+
+	return ret;
 }
 
 static ssize_t

@@ -886,6 +886,10 @@ LE64_BITMASK(BCH_KDF_SCRYPT_N,	struct bch_sb_field_crypt, kdf_flags,  0, 16);
 LE64_BITMASK(BCH_KDF_SCRYPT_R,	struct bch_sb_field_crypt, kdf_flags, 16, 32);
 LE64_BITMASK(BCH_KDF_SCRYPT_P,	struct bch_sb_field_crypt, kdf_flags, 32, 48);
 
+struct bch_sb_field_replication {
+	struct bch_sb_field	field;
+};
+
 /*
  * @offset	- sector where this sb was written
  * @version	- on disk format version

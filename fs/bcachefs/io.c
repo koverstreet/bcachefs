@@ -354,8 +354,9 @@ static void bch_write_endio(struct bio *bio)
 	struct bch_dev *ca = wbio->ca;
 
 	if (bch_dev_nonfatal_io_err_on(bio->bi_error, ca,
-				       "data write"))
+				       "data write")) {
 		set_closure_fn(cl, bch_write_io_error, index_update_wq(op));
+	}
 
 	bch_account_io_completion_time(ca, wbio->submit_time_us,
 				       REQ_OP_WRITE);
