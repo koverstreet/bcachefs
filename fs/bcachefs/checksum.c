@@ -292,9 +292,8 @@ struct bch_csum bch_checksum_bio(struct bch_fs *c, unsigned type,
 	case BCH_CSUM_CRC64: {
 		u64 crc = bch_checksum_init(type);
 
-		bio_for_each_segment(bv, bio, iter) {
+		bio_for_each_contig_segment(bv, bio, iter) {
 			void *p = kmap_atomic(bv.bv_page) + bv.bv_offset;
-
 			crc = bch_checksum_update(type,
 				crc, p, bv.bv_len);
 			kunmap_atomic(p);
@@ -312,7 +311,7 @@ struct bch_csum bch_checksum_bio(struct bch_fs *c, unsigned type,
 
 		gen_poly_key(c, desc, nonce);
 
-		bio_for_each_segment(bv, bio, iter) {
+		bio_for_each_contig_segment(bv, bio, iter) {
 			void *p = kmap_atomic(bv.bv_page) + bv.bv_offset;
 
 			crypto_shash_update(desc, p, bv.bv_len);
@@ -342,7 +341,7 @@ void bch_encrypt_bio(struct bch_fs *c, unsigned type,
 
 	sg_init_table(sgl, ARRAY_SIZE(sgl));
 
-	bio_for_each_segment(bv, bio, iter) {
+	bio_for_each_contig_segment(bv, bio, iter) {
 		if (sg == sgl + ARRAY_SIZE(sgl)) {
 			sg_mark_end(sg - 1);
 			do_encrypt_sg(c->chacha20, nonce, sgl, bytes);

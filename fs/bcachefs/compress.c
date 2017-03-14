@@ -8,6 +8,7 @@
 #include <linux/zlib.h>
 
 enum bounced {
+	BOUNCED_CONTIG,
 	BOUNCED_MAPPED,
 	BOUNCED_KMALLOCED,
 	BOUNCED_VMALLOCED,
@@ -54,6 +55,14 @@ static void *__bio_map_or_bounce(struct bch_fs *c,
 
 	BUG_ON(bvec_iter_sectors(start) > BCH_ENCODED_EXTENT_MAX);
 
+#ifndef CONFIG_HIGHMEM
+	*bounced = BOUNCED_CONTIG;
+
+	__bio_for_each_contig_segment(bv, bio, iter, start) {
+		if (bv.bv_len == start.bi_size)
+			return page_address(bv.bv_page) + bv.bv_offset;
+	}
+#endif
 	*bounced = BOUNCED_MAPPED;
 
 	__bio_for_each_segment(bv, bio, iter, start) {
