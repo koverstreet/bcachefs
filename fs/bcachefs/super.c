@@ -1638,6 +1638,8 @@ err:
 int bch_dev_online(struct bch_fs *c, const char *path)
 {
 	struct bcache_superblock sb = { 0 };
+	struct bch_dev *ca;
+	unsigned dev_idx;
 	const char *err;
 
 	mutex_lock(&c->state_lock);
@@ -1646,16 +1648,26 @@ int bch_dev_online(struct bch_fs *c, const char *path)
 	if (err)
 		goto err;
 
+	dev_idx = sb.sb->dev_idx;
+
 	err = bch_dev_in_fs(c->disk_sb, sb.sb);
 	if (err)
 		goto err;
 
 	mutex_lock(&c->sb_lock);
 	if (__bch_dev_online(c, &sb)) {
+		err = "__bch_dev_online() error";
 		mutex_unlock(&c->sb_lock);
 		goto err;
 	}
 	mutex_unlock(&c->sb_lock);
+
+	ca = c->devs[dev_idx];
+	if (ca->mi.state == BCH_MEMBER_STATE_RW) {
+		err = __bch_dev_read_write(c, ca);
+		if (err)
+			goto err;
+	}
 
 	mutex_unlock(&c->state_lock);
 	return 0;
