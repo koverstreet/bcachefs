@@ -1,0 +1,164 @@
+/* SPDX-License-Identifier: GPL-2.0 */
+#ifndef _BCACHEFS_EC_H
+#define _BCACHEFS_EC_H
+
+#include "ec_types.h"
+#include "keylist_types.h"
+
+const char *bch2_stripe_invalid(const struct bch_fs *, struct bkey_s_c);
+void bch2_stripe_to_text(struct printbuf *, struct bch_fs *,
+			 struct bkey_s_c);
+
+#define bch2_bkey_ops_stripe (struct bkey_ops) {	\
+	.key_invalid	= bch2_stripe_invalid,		\
+	.val_to_text	= bch2_stripe_to_text,		\
+}
+
+static inline unsigned stripe_csums_per_device(const struct bch_stripe *s)
+{
+	return DIV_ROUND_UP(le16_to_cpu(s->sectors),
+			    1 << s->csum_granularity_bits);
+}
+
+static inline unsigned stripe_csum_offset(const struct bch_stripe *s,
+					  unsigned dev, unsigned csum_idx)
+{
+	unsigned csum_bytes = bch_crc_bytes[s->csum_type];
+
+	return sizeof(struct bch_stripe) +
+		sizeof(struct bch_extent_ptr) * s->nr_blocks +
+		(dev * stripe_csums_per_device(s) + csum_idx) * csum_bytes;
+}
+
+static inline unsigned stripe_blockcount_offset(const struct bch_stripe *s,
+						unsigned idx)
+{
+	return stripe_csum_offset(s, s->nr_blocks, 0) +
+		sizeof(u16) * idx;
+}
+
+static inline unsigned stripe_blockcount_get(const struct bch_stripe *s,
+					     unsigned idx)
+{
+	return le16_to_cpup((void *) s + stripe_blockcount_offset(s, idx));
+}
+
+static inline void stripe_blockcount_set(struct bch_stripe *s,
+					 unsigned idx, unsigned v)
+{
+	__le16 *p = (void *) s + stripe_blockcount_offset(s, idx);
+
+	*p = cpu_to_le16(v);
+}
+
+static inline unsigned stripe_val_u64s(const struct bch_stripe *s)
+{
+	return DIV_ROUND_UP(stripe_blockcount_offset(s, s->nr_blocks),
+			    sizeof(u64));
+}
+
+static inline void *stripe_csum(struct bch_stripe *s,
+				unsigned dev, unsigned csum_idx)
+{
+	return (void *) s + stripe_csum_offset(s, dev, csum_idx);
+}
+
+struct bch_read_bio;
+
+struct ec_stripe_buf {
+	/* might not be buffering the entire stripe: */
+	unsigned		offset;
+	unsigned		size;
+	unsigned long		valid[BITS_TO_LONGS(EC_STRIPE_MAX)];
+
+	void			*data[EC_STRIPE_MAX];
+
+	union {
+		struct bkey_i_stripe	key;
+		u64			pad[255];
+	};
+};
+
+struct ec_stripe_head;
+
+struct ec_stripe_new {
+	struct bch_fs		*c;
+	struct ec_stripe_head	*h;
+	struct mutex		lock;
+	struct list_head	list;
+
+	/* counts in flight writes, stripe is created when pin == 0 */
+	atomic_t		pin;
+
+	int			err;
+
+	unsigned long		blocks_allocated[BITS_TO_LONGS(EC_STRIPE_MAX)];
+
+	struct open_buckets	blocks;
+	struct open_buckets	parity;
+
+	struct keylist		keys;
+	u64			inline_keys[BKEY_U64s * 8];
+
+	struct ec_stripe_buf	stripe;
+};
+
+struct ec_stripe_head {
+	struct list_head	list;
+	struct mutex		lock;
+
+	struct list_head	stripes;
+
+	unsigned		target;
+	unsigned		algo;
+	unsigned		redundancy;
+
+	struct bch_devs_mask	devs;
+	unsigned		nr_active_devs;
+
+	unsigned		blocksize;
+
+	struct dev_stripe_state	block_stripe;
+	struct dev_stripe_state	parity_stripe;
+
+	struct open_buckets	blocks;
+	struct open_buckets	parity;
+
+	struct ec_stripe_new	*s;
+};
+
+int bch2_ec_read_extent(struct bch_fs *, struct bch_read_bio *);
+
+void *bch2_writepoint_ec_buf(struct bch_fs *, struct write_point *);
+void bch2_ec_add_backpointer(struct bch_fs *, struct write_point *,
+			     struct bpos, unsigned);
+
+void bch2_ec_bucket_written(struct bch_fs *, struct open_bucket *);
+void bch2_ec_bucket_cancel(struct bch_fs *, struct open_bucket *);
+
+int bch2_ec_stripe_new_alloc(struct bch_fs *, struct ec_stripe_head *);
+
+void bch2_ec_stripe_head_put(struct ec_stripe_head *);
+struct ec_stripe_head *bch2_ec_stripe_head_get(struct bch_fs *, unsigned,
+					       unsigned, unsigned);
+
+void bch2_stripes_heap_update(struct bch_fs *, struct stripe *, size_t);
+void bch2_stripes_heap_del(struct bch_fs *, struct stripe *, size_t);
+void bch2_stripes_heap_insert(struct bch_fs *, struct stripe *, size_t);
+
+void bch2_ec_stop_dev(struct bch_fs *, struct bch_dev *);
+
+void bch2_ec_flush_new_stripes(struct bch_fs *);
+
+struct journal_keys;
+int bch2_stripes_read(struct bch_fs *, struct journal_keys *);
+int bch2_stripes_write(struct bch_fs *, unsigned, bool *);
+
+int bch2_ec_mem_alloc(struct bch_fs *, bool);
+
+int bch2_fs_ec_start(struct bch_fs *);
+
+void bch2_fs_ec_exit(struct bch_fs *);
+int bch2_fs_ec_init(struct bch_fs *);
+
+#endif /* _BCACHEFS_EC_H */
