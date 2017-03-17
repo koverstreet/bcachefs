@@ -1,0 +1,19 @@
+
+config BCACHE_FS
+	tristate "bcachefs filesystem support"
+	depends on BLOCK
+	depends on (64BIT || LBDAF)
+	select EXPORTFS
+	select CLOSURES
+	---help---
+	The bcachefs filesystem - a modern, copy on write filesystem, with
+	support for multiple devices, compression, checksumming, etc.
+
+config BCACHEFS_DEBUG
+	bool "bcachefs debugging"
+	depends on BCACHE_FS
+	---help---
+	Don't select this option unless you're a developer
+
+	Enables extra debugging tools, allows expensive runtime checks to be
+	turned on.
