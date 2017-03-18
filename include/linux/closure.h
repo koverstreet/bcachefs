@@ -153,7 +153,7 @@ struct closure {
 
 	atomic_t		remaining;
 
-#ifdef CONFIG_BCACHE_CLOSURES_DEBUG
+#ifdef CONFIG_DEBUG_CLOSURES
 #define CLOSURE_MAGIC_DEAD	0xc054dead
 #define CLOSURE_MAGIC_ALIVE	0xc054a11e
 
@@ -182,15 +182,13 @@ static inline void closure_sync(struct closure *cl)
 		__closure_sync(cl);
 }
 
-#ifdef CONFIG_BCACHE_CLOSURES_DEBUG
+#ifdef CONFIG_DEBUG_CLOSURES
 
-void closure_debug_init(void);
 void closure_debug_create(struct closure *cl);
 void closure_debug_destroy(struct closure *cl);
 
 #else
 
-static inline void closure_debug_init(void) {}
 static inline void closure_debug_create(struct closure *cl) {}
 static inline void closure_debug_destroy(struct closure *cl) {}
 
@@ -198,21 +196,21 @@ static inline void closure_debug_destroy(struct closure *cl) {}
 
 static inline void closure_set_ip(struct closure *cl)
 {
-#ifdef CONFIG_BCACHE_CLOSURES_DEBUG
+#ifdef CONFIG_DEBUG_CLOSURES
 	cl->ip = _THIS_IP_;
 #endif
 }
 
 static inline void closure_set_ret_ip(struct closure *cl)
 {
-#ifdef CONFIG_BCACHE_CLOSURES_DEBUG
+#ifdef CONFIG_DEBUG_CLOSURES
 	cl->ip = _RET_IP_;
 #endif
 }
 
 static inline void closure_set_waiting(struct closure *cl, unsigned long f)
 {
-#ifdef CONFIG_BCACHE_CLOSURES_DEBUG
+#ifdef CONFIG_DEBUG_CLOSURES
 	cl->waiting_on = f;
 #endif
 }
@@ -235,6 +233,7 @@ static inline void set_closure_fn(struct closure *cl, closure_fn *fn,
 static inline void closure_queue(struct closure *cl)
 {
 	struct workqueue_struct *wq = cl->wq;
+
 	if (wq) {
 		INIT_WORK(&cl->work, cl->work.func);
 		queue_work(wq, &cl->work);
@@ -247,7 +246,7 @@ static inline void closure_queue(struct closure *cl)
  */
 static inline void closure_get(struct closure *cl)
 {
-#ifdef CONFIG_BCACHE_CLOSURES_DEBUG
+#ifdef CONFIG_DEBUG_CLOSURES
 	BUG_ON((atomic_inc_return(&cl->remaining) &
 		CLOSURE_REMAINING_MASK) <= 1);
 #else
@@ -263,7 +262,7 @@ static inline void closure_get(struct closure *cl)
  */
 static inline void closure_init(struct closure *cl, struct closure *parent)
 {
-	memset(cl, 0, sizeof(struct closure));
+	cl->fn = NULL;
 	cl->parent = parent;
 	if (parent)
 		closure_get(parent);
@@ -348,6 +347,12 @@ do {									\
 	return;								\
 } while (0)
 
+#define closure_return_with_destructor_noreturn(_cl, _destructor)	\
+do {									\
+	set_closure_fn(_cl, _destructor, NULL);				\
+	closure_sub(_cl, CLOSURE_RUNNING - CLOSURE_DESTRUCTOR + 1);	\
+} while (0)
+
 /**
  * closure_return - finish execution of a closure, with destructor
  *
@@ -359,8 +364,7 @@ do {									\
  */
 #define closure_return_with_destructor(_cl, _destructor)		\
 do {									\
-	set_closure_fn(_cl, _destructor, NULL);				\
-	closure_sub(_cl, CLOSURE_RUNNING - CLOSURE_DESTRUCTOR + 1);	\
+	closure_return_with_destructor_noreturn(_cl, _destructor);	\
 	return;								\
 } while (0)
 

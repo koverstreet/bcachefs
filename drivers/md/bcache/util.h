@@ -3,6 +3,7 @@
 #define _BCACHE_UTIL_H
 
 #include <linux/blkdev.h>
+#include <linux/closure.h>
 #include <linux/errno.h>
 #include <linux/kernel.h>
 #include <linux/sched/clock.h>
@@ -10,8 +11,6 @@
 #include <linux/ratelimit.h>
 #include <linux/vmalloc.h>
 #include <linux/workqueue.h>
-
-#include "closure.h"
 
 #define PAGE_SECTORS		(PAGE_SIZE / 512)
 
