@@ -2915,7 +2915,6 @@ static int __init bcache_init(void)
 		goto err;
 
 	bch_debug_init();
-	closure_debug_init();
 
 	bcache_is_reboot = false;
 

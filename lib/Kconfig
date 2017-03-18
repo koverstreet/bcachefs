@@ -504,6 +504,9 @@ config ASSOCIATIVE_ARRAY
 
 	  for more information.
 
+config CLOSURES
+	bool
+
 config LAZY_PERCPU_COUNTER
 	bool
 
