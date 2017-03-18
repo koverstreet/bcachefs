@@ -1,18 +1,15 @@
 
-#define pr_fmt(fmt) "bcache: %s() " fmt "\n", __func__
-
-#include <linux/kernel.h>
-
+#include "bcachefs.h"
 #include "bkey.h"
 #include "bset.h"
 #include "util.h"
 
-const struct bkey_format bch_bkey_format_current = BKEY_FORMAT_CURRENT;
+const struct bkey_format bch2_bkey_format_current = BKEY_FORMAT_CURRENT;
 
-struct bkey __bkey_unpack_key(const struct bkey_format *,
+struct bkey __bch2_bkey_unpack_key(const struct bkey_format *,
 			      const struct bkey_packed *);
 
-void bch_to_binary(char *out, const u64 *p, unsigned nr_bits)
+void bch2_to_binary(char *out, const u64 *p, unsigned nr_bits)
 {
 	unsigned bit = high_bit_offset, done = 0;
 
@@ -36,7 +33,7 @@ void bch_to_binary(char *out, const u64 *p, unsigned nr_bits)
 
 #ifdef CONFIG_BCACHEFS_DEBUG
 
-static void bch_bkey_pack_verify(const struct bkey_packed *packed,
+static void bch2_bkey_pack_verify(const struct bkey_packed *packed,
 				 const struct bkey *unpacked,
 				 const struct bkey_format *format)
 {
@@ -47,16 +44,16 @@ static void bch_bkey_pack_verify(const struct bkey_packed *packed,
 
 	BUG_ON(packed->u64s < bkeyp_key_u64s(format, packed));
 
-	tmp = __bkey_unpack_key(format, packed);
+	tmp = __bch2_bkey_unpack_key(format, packed);
 
 	if (memcmp(&tmp, unpacked, sizeof(struct bkey))) {
 		char buf1[160], buf2[160];
 		char buf3[160], buf4[160];
 
-		bch_bkey_to_text(buf1, sizeof(buf1), unpacked);
-		bch_bkey_to_text(buf2, sizeof(buf2), &tmp);
-		bch_to_binary(buf3, (void *) unpacked, 80);
-		bch_to_binary(buf4, high_word(format, packed), 80);
+		bch2_bkey_to_text(buf1, sizeof(buf1), unpacked);
+		bch2_bkey_to_text(buf2, sizeof(buf2), &tmp);
+		bch2_to_binary(buf3, (void *) unpacked, 80);
+		bch2_to_binary(buf4, high_word(format, packed), 80);
 
 		panic("keys differ: format u64s %u fields %u %u %u %u %u\n%s\n%s\n%s\n%s\n",
 		      format->key_u64s,
@@ -70,12 +67,12 @@ static void bch_bkey_pack_verify(const struct bkey_packed *packed,
 }
 
 #else
-static inline void bch_bkey_pack_verify(const struct bkey_packed *packed,
+static inline void bch2_bkey_pack_verify(const struct bkey_packed *packed,
 					const struct bkey *unpacked,
 					const struct bkey_format *format) {}
 #endif
 
-int bch_bkey_to_text(char *buf, size_t size, const struct bkey *k)
+int bch2_bkey_to_text(char *buf, size_t size, const struct bkey *k)
 {
 	char *out = buf, *end = buf + size;
 
@@ -218,7 +215,7 @@ static bool set_inc_field(struct pack_state *state, unsigned field, u64 v)
  * Also: doesn't work on extents - it doesn't preserve the invariant that
  * if k is packed bkey_start_pos(k) will successfully pack
  */
-static bool bch_bkey_transform_key(const struct bkey_format *out_f,
+static bool bch2_bkey_transform_key(const struct bkey_format *out_f,
 				   struct bkey_packed *out,
 				   const struct bkey_format *in_f,
 				   const struct bkey_packed *in)
@@ -244,12 +241,12 @@ static bool bch_bkey_transform_key(const struct bkey_format *out_f,
 	return true;
 }
 
-bool bch_bkey_transform(const struct bkey_format *out_f,
+bool bch2_bkey_transform(const struct bkey_format *out_f,
 			struct bkey_packed *out,
 			const struct bkey_format *in_f,
 			const struct bkey_packed *in)
 {
-	if (!bch_bkey_transform_key(out_f, out, in_f, in))
+	if (!bch2_bkey_transform_key(out_f, out, in_f, in))
 		return false;
 
 	memcpy_u64s((u64 *) out + out_f->key_u64s,
@@ -266,7 +263,7 @@ bool bch_bkey_transform(const struct bkey_format *out_f,
 	x(BKEY_FIELD_VERSION_HI,	version.hi)			\
 	x(BKEY_FIELD_VERSION_LO,	version.lo)
 
-struct bkey __bkey_unpack_key(const struct bkey_format *format,
+struct bkey __bch2_bkey_unpack_key(const struct bkey_format *format,
 			      const struct bkey_packed *in)
 {
 	struct unpack_state state = unpack_state_init(format, in);
@@ -310,9 +307,9 @@ struct bpos __bkey_unpack_pos(const struct bkey_format *format,
 #endif
 
 /**
- * bkey_pack_key -- pack just the key, not the value
+ * bch2_bkey_pack_key -- pack just the key, not the value
  */
-bool bkey_pack_key(struct bkey_packed *out, const struct bkey *in,
+bool bch2_bkey_pack_key(struct bkey_packed *out, const struct bkey *in,
 		   const struct bkey_format *format)
 {
 	struct pack_state state = pack_state_init(format, out);
@@ -340,14 +337,14 @@ bool bkey_pack_key(struct bkey_packed *out, const struct bkey *in,
 	out->needs_whiteout = in->needs_whiteout;
 	out->type	= in->type;
 
-	bch_bkey_pack_verify(out, in, format);
+	bch2_bkey_pack_verify(out, in, format);
 	return true;
 }
 
 /**
- * bkey_unpack -- unpack the key and the value
+ * bch2_bkey_unpack -- unpack the key and the value
  */
-void bkey_unpack(const struct btree *b, struct bkey_i *dst,
+void bch2_bkey_unpack(const struct btree *b, struct bkey_i *dst,
 		 const struct bkey_packed *src)
 {
 	dst->k = bkey_unpack_key(b, src);
@@ -358,14 +355,14 @@ void bkey_unpack(const struct btree *b, struct bkey_i *dst,
 }
 
 /**
- * bkey_pack -- pack the key and the value
+ * bch2_bkey_pack -- pack the key and the value
  */
-bool bkey_pack(struct bkey_packed *out, const struct bkey_i *in,
+bool bch2_bkey_pack(struct bkey_packed *out, const struct bkey_i *in,
 	       const struct bkey_format *format)
 {
 	struct bkey_packed tmp;
 
-	if (!bkey_pack_key(&tmp, &in->k, format))
+	if (!bch2_bkey_pack_key(&tmp, &in->k, format))
 		return false;
 
 	memmove_u64s((u64 *) out + format->key_u64s,
@@ -456,7 +453,7 @@ static bool bkey_packed_successor(struct bkey_packed *out,
  * legal to use a packed pos that isn't equivalent to the original pos,
  * _provided_ it compares <= to the original pos.
  */
-enum bkey_pack_pos_ret bkey_pack_pos_lossy(struct bkey_packed *out,
+enum bkey_pack_pos_ret bch2_bkey_pack_pos_lossy(struct bkey_packed *out,
 					   struct bpos in,
 					   const struct btree *b)
 {
@@ -525,7 +522,7 @@ enum bkey_pack_pos_ret bkey_pack_pos_lossy(struct bkey_packed *out,
 	return exact ? BKEY_PACK_POS_EXACT : BKEY_PACK_POS_SMALLER;
 }
 
-void bch_bkey_format_init(struct bkey_format_state *s)
+void bch2_bkey_format_init(struct bkey_format_state *s)
 {
 	unsigned i;
 
@@ -549,7 +546,7 @@ static void __bkey_format_add(struct bkey_format_state *s,
 /*
  * Changes @format so that @k can be successfully packed with @format
  */
-void bch_bkey_format_add_key(struct bkey_format_state *s, const struct bkey *k)
+void bch2_bkey_format_add_key(struct bkey_format_state *s, const struct bkey *k)
 {
 #define x(id, field) __bkey_format_add(s, id, k->field);
 	bkey_fields()
@@ -557,7 +554,7 @@ void bch_bkey_format_add_key(struct bkey_format_state *s, const struct bkey *k)
 	__bkey_format_add(s, BKEY_FIELD_OFFSET, bkey_start_offset(k));
 }
 
-void bch_bkey_format_add_pos(struct bkey_format_state *s, struct bpos p)
+void bch2_bkey_format_add_pos(struct bkey_format_state *s, struct bpos p)
 {
 	unsigned field = 0;
 
@@ -580,7 +577,7 @@ static void set_format_field(struct bkey_format *f, enum bch_bkey_fields i,
 	f->field_offset[i]	= cpu_to_le64(offset);
 }
 
-struct bkey_format bch_bkey_format_done(struct bkey_format_state *s)
+struct bkey_format bch2_bkey_format_done(struct bkey_format_state *s)
 {
 	unsigned i, bits = KEY_PACKED_BITS_START;
 	struct bkey_format ret = {
@@ -620,11 +617,11 @@ struct bkey_format bch_bkey_format_done(struct bkey_format_state *s)
 		}
 	}
 
-	EBUG_ON(bch_bkey_format_validate(&ret));
+	EBUG_ON(bch2_bkey_format_validate(&ret));
 	return ret;
 }
 
-const char *bch_bkey_format_validate(struct bkey_format *f)
+const char *bch2_bkey_format_validate(struct bkey_format *f)
 {
 	unsigned i, bits = KEY_PACKED_BITS_START;
 
@@ -657,9 +654,9 @@ const char *bch_bkey_format_validate(struct bkey_format *f)
  * Bits are indexed from 0 - return is [0, nr_key_bits)
  */
 __pure
-unsigned bkey_greatest_differing_bit(const struct btree *b,
-				     const struct bkey_packed *l_k,
-				     const struct bkey_packed *r_k)
+unsigned bch2_bkey_greatest_differing_bit(const struct btree *b,
+					  const struct bkey_packed *l_k,
+					  const struct bkey_packed *r_k)
 {
 	const u64 *l = high_word(&b->format, l_k);
 	const u64 *r = high_word(&b->format, r_k);
@@ -701,8 +698,7 @@ unsigned bkey_greatest_differing_bit(const struct btree *b,
  * Bits are indexed from 0 - return is [0, nr_key_bits)
  */
 __pure
-unsigned bkey_ffs(const struct btree *b,
-		  const struct bkey_packed *k)
+unsigned bch2_bkey_ffs(const struct btree *b, const struct bkey_packed *k)
 {
 	const u64 *p = high_word(&b->format, k);
 	unsigned nr_key_bits = b->nr_key_bits;
@@ -957,7 +953,7 @@ set_field:
 	return out;
 }
 
-int bch_compile_bkey_format(const struct bkey_format *format, void *_out)
+int bch2_compile_bkey_format(const struct bkey_format *format, void *_out)
 {
 	bool eax_zeroed = false;
 	u8 *out = _out;
@@ -1034,9 +1030,9 @@ static inline int __bkey_cmp_bits(const u64 *l, const u64 *r,
 #endif
 
 __pure
-int __bkey_cmp_packed_format_checked(const struct bkey_packed *l,
-				     const struct bkey_packed *r,
-				     const struct btree *b)
+int __bch2_bkey_cmp_packed_format_checked(const struct bkey_packed *l,
+					  const struct bkey_packed *r,
+					  const struct btree *b)
 {
 	const struct bkey_format *f = &b->format;
 	int ret;
@@ -1054,33 +1050,33 @@ int __bkey_cmp_packed_format_checked(const struct bkey_packed *l,
 }
 
 __pure __flatten
-int __bkey_cmp_left_packed_format_checked(const struct btree *b,
-					  const struct bkey_packed *l,
-					  const struct bpos *r)
+int __bch2_bkey_cmp_left_packed_format_checked(const struct btree *b,
+					       const struct bkey_packed *l,
+					       const struct bpos *r)
 {
 	return bkey_cmp(bkey_unpack_pos_format_checked(b, l), *r);
 }
 
 __pure __flatten
-int __bkey_cmp_packed(const struct bkey_packed *l,
-		      const struct bkey_packed *r,
-		      const struct btree *b)
+int __bch2_bkey_cmp_packed(const struct bkey_packed *l,
+			   const struct bkey_packed *r,
+			   const struct btree *b)
 {
 	int packed = bkey_lr_packed(l, r);
 
 	if (likely(packed == BKEY_PACKED_BOTH))
-		return __bkey_cmp_packed_format_checked(l, r, b);
+		return __bch2_bkey_cmp_packed_format_checked(l, r, b);
 
 	switch (packed) {
 	case BKEY_PACKED_NONE:
 		return bkey_cmp(((struct bkey *) l)->p,
 				((struct bkey *) r)->p);
 	case BKEY_PACKED_LEFT:
-		return __bkey_cmp_left_packed_format_checked(b,
+		return __bch2_bkey_cmp_left_packed_format_checked(b,
 				  (struct bkey_packed *) l,
 				  &((struct bkey *) r)->p);
 	case BKEY_PACKED_RIGHT:
-		return -__bkey_cmp_left_packed_format_checked(b,
+		return -__bch2_bkey_cmp_left_packed_format_checked(b,
 				  (struct bkey_packed *) r,
 				  &((struct bkey *) l)->p);
 	default:
@@ -1089,17 +1085,18 @@ int __bkey_cmp_packed(const struct bkey_packed *l,
 }
 
 __pure __flatten
-int bkey_cmp_left_packed(const struct btree *b,
-			 const struct bkey_packed *l, const struct bpos *r)
+int __bch2_bkey_cmp_left_packed(const struct btree *b,
+				const struct bkey_packed *l,
+				const struct bpos *r)
 {
 	const struct bkey *l_unpacked;
 
 	return unlikely(l_unpacked = packed_to_bkey_c(l))
 		? bkey_cmp(l_unpacked->p, *r)
-		: __bkey_cmp_left_packed_format_checked(b, l, r);
+		: __bch2_bkey_cmp_left_packed_format_checked(b, l, r);
 }
 
-void bch_bpos_swab(struct bpos *p)
+void bch2_bpos_swab(struct bpos *p)
 {
 	u8 *l = (u8 *) p;
 	u8 *h = ((u8 *) &p[1]) - 1;
@@ -1111,9 +1108,9 @@ void bch_bpos_swab(struct bpos *p)
 	}
 }
 
-void bch_bkey_swab_key(const struct bkey_format *_f, struct bkey_packed *k)
+void bch2_bkey_swab_key(const struct bkey_format *_f, struct bkey_packed *k)
 {
-	const struct bkey_format *f = bkey_packed(k) ? _f : &bch_bkey_format_current;
+	const struct bkey_format *f = bkey_packed(k) ? _f : &bch2_bkey_format_current;
 	u8 *l = k->key_start;
 	u8 *h = (u8 *) (k->_data + f->key_u64s) - 1;
 
@@ -1125,7 +1122,7 @@ void bch_bkey_swab_key(const struct bkey_format *_f, struct bkey_packed *k)
 }
 
 #ifdef CONFIG_BCACHEFS_DEBUG
-void bkey_pack_test(void)
+void bch2_bkey_pack_test(void)
 {
 	struct bkey t = KEY(4134ULL, 1250629070527416633ULL, 0);
 	struct bkey_packed p;
@@ -1140,7 +1137,7 @@ void bkey_pack_test(void)
 	};
 
 	struct unpack_state in_s =
-		unpack_state_init(&bch_bkey_format_current, (void *) &t);
+		unpack_state_init(&bch2_bkey_format_current, (void *) &t);
 	struct pack_state out_s = pack_state_init(&test_format, &p);
 	unsigned i;
 
@@ -1162,6 +1159,6 @@ void bkey_pack_test(void)
 			panic("failed at %u\n", i);
 	}
 
-	BUG_ON(!bkey_pack_key(&p, &t, &test_format));
+	BUG_ON(!bch2_bkey_pack_key(&p, &t, &test_format));
 }
 #endif

@@ -1,8 +1,8 @@
 
-#include "bcache.h"
+#include "bcachefs.h"
 #include "keylist.h"
 
-int bch_keylist_realloc(struct keylist *l, u64 *inline_u64s,
+int bch2_keylist_realloc(struct keylist *l, u64 *inline_u64s,
 			size_t nr_inline_u64s, size_t new_u64s)
 {
 	size_t oldsize = bch_keylist_u64s(l);
@@ -29,7 +29,7 @@ int bch_keylist_realloc(struct keylist *l, u64 *inline_u64s,
 	return 0;
 }
 
-void bch_keylist_add_in_order(struct keylist *l, struct bkey_i *insert)
+void bch2_keylist_add_in_order(struct keylist *l, struct bkey_i *insert)
 {
 	struct bkey_i *where;
 
@@ -45,9 +45,9 @@ void bch_keylist_add_in_order(struct keylist *l, struct bkey_i *insert)
 	bkey_copy(where, insert);
 }
 
-void bch_keylist_pop_front(struct keylist *l)
+void bch2_keylist_pop_front(struct keylist *l)
 {
-	l->top_p -= bch_keylist_front(l)->k.u64s;
+	l->top_p -= bch2_keylist_front(l)->k.u64s;
 
 	memmove_u64s_down(l->keys,
 			  bkey_next(l->keys),

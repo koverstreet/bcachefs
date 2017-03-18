@@ -25,9 +25,9 @@ enum compact_mode {
 	COMPACT_WRITTEN_NO_WRITE_LOCK,
 };
 
-bool __bch_compact_whiteouts(struct bch_fs *, struct btree *, enum compact_mode);
+bool __bch2_compact_whiteouts(struct bch_fs *, struct btree *, enum compact_mode);
 
-static inline bool bch_maybe_compact_whiteouts(struct bch_fs *c, struct btree *b)
+static inline bool bch2_maybe_compact_whiteouts(struct bch_fs *c, struct btree *b)
 {
 	struct bset_tree *t;
 
@@ -41,33 +41,33 @@ static inline bool bch_maybe_compact_whiteouts(struct bch_fs *c, struct btree *b
 
 	return false;
 compact:
-	return __bch_compact_whiteouts(c, b, COMPACT_LAZY);
+	return __bch2_compact_whiteouts(c, b, COMPACT_LAZY);
 }
 
-void bch_btree_sort_into(struct bch_fs *, struct btree *, struct btree *);
+void bch2_btree_sort_into(struct bch_fs *, struct btree *, struct btree *);
 
-void bch_btree_build_aux_trees(struct btree *);
-void bch_btree_init_next(struct bch_fs *, struct btree *,
+void bch2_btree_build_aux_trees(struct btree *);
+void bch2_btree_init_next(struct bch_fs *, struct btree *,
 			 struct btree_iter *);
 
-void bch_btree_node_read_done(struct bch_fs *, struct btree *,
+void bch2_btree_node_read_done(struct bch_fs *, struct btree *,
 			      struct bch_dev *, const struct bch_extent_ptr *);
-void bch_btree_node_read(struct bch_fs *, struct btree *);
-int bch_btree_root_read(struct bch_fs *, enum btree_id,
+void bch2_btree_node_read(struct bch_fs *, struct btree *);
+int bch2_btree_root_read(struct bch_fs *, enum btree_id,
 			const struct bkey_i *, unsigned);
 
-void bch_btree_complete_write(struct bch_fs *, struct btree *,
+void bch2_btree_complete_write(struct bch_fs *, struct btree *,
 			      struct btree_write *);
 
-void __bch_btree_node_write(struct bch_fs *, struct btree *,
+void __bch2_btree_node_write(struct bch_fs *, struct btree *,
 			    struct closure *, enum six_lock_type, int);
-bool bch_btree_post_write_cleanup(struct bch_fs *, struct btree *);
+bool bch2_btree_post_write_cleanup(struct bch_fs *, struct btree *);
 
-void bch_btree_node_write(struct bch_fs *, struct btree *,
+void bch2_btree_node_write(struct bch_fs *, struct btree *,
 			  struct closure *, enum six_lock_type, int);
 
-void bch_btree_flush(struct bch_fs *);
-void bch_btree_node_flush_journal_entries(struct bch_fs *, struct btree *,
+void bch2_btree_flush(struct bch_fs *);
+void bch2_btree_node_flush_journal_entries(struct bch_fs *, struct btree *,
 					  struct closure *);
 
 #endif /* _BCACHE_BTREE_IO_H */

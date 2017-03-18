@@ -3,7 +3,7 @@
 
 #include <linux/math64.h>
 
-extern const struct bkey_ops bch_bkey_inode_ops;
+extern const struct bkey_ops bch2_bkey_inode_ops;
 
 struct bch_inode_unpacked {
 	u64			inum;
@@ -24,27 +24,27 @@ struct bkey_inode_buf {
 #undef  BCH_INODE_FIELD
 } __packed;
 
-void bch_inode_pack(struct bkey_inode_buf *, const struct bch_inode_unpacked *);
-int bch_inode_unpack(struct bkey_s_c_inode, struct bch_inode_unpacked *);
+void bch2_inode_pack(struct bkey_inode_buf *, const struct bch_inode_unpacked *);
+int bch2_inode_unpack(struct bkey_s_c_inode, struct bch_inode_unpacked *);
 
-void bch_inode_init(struct bch_fs *, struct bch_inode_unpacked *,
+void bch2_inode_init(struct bch_fs *, struct bch_inode_unpacked *,
 		    uid_t, gid_t, umode_t, dev_t);
-int bch_inode_create(struct bch_fs *, struct bkey_i *, u64, u64, u64 *);
-int bch_inode_truncate(struct bch_fs *, u64, u64,
+int bch2_inode_create(struct bch_fs *, struct bkey_i *, u64, u64, u64 *);
+int bch2_inode_truncate(struct bch_fs *, u64, u64,
 		       struct extent_insert_hook *, u64 *);
-int bch_inode_rm(struct bch_fs *, u64);
+int bch2_inode_rm(struct bch_fs *, u64);
 
-int bch_inode_find_by_inum(struct bch_fs *, u64,
+int bch2_inode_find_by_inum(struct bch_fs *, u64,
 			   struct bch_inode_unpacked *);
-int bch_cached_dev_inode_find_by_uuid(struct bch_fs *, uuid_le *,
+int bch2_cached_dev_inode_find_by_uuid(struct bch_fs *, uuid_le *,
 				      struct bkey_i_inode_blockdev *);
 
-static inline struct timespec bch_time_to_timespec(struct bch_fs *c, u64 time)
+static inline struct timespec bch2_time_to_timespec(struct bch_fs *c, u64 time)
 {
 	return ns_to_timespec(time * c->sb.time_precision + c->sb.time_base_lo);
 }
 
-static inline u64 timespec_to_bch_time(struct bch_fs *c, struct timespec ts)
+static inline u64 timespec_to_bch2_time(struct bch_fs *c, struct timespec ts)
 {
 	s64 ns = timespec_to_ns(&ts) - c->sb.time_base_lo;
 

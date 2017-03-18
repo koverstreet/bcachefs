@@ -21,16 +21,16 @@ struct bch_fs;
  * XXX: audit and convert to inconsistent() checks
  */
 
-#define bch_fs_bug(c, ...)						\
+#define bch2_fs_bug(c, ...)						\
 do {									\
 	bch_err(c, __VA_ARGS__);					\
 	BUG();								\
 } while (0)
 
-#define bch_fs_bug_on(cond, c, ...)					\
+#define bch2_fs_bug_on(cond, c, ...)					\
 do {									\
 	if (cond)							\
-		bch_fs_bug(c, __VA_ARGS__);				\
+		bch2_fs_bug(c, __VA_ARGS__);				\
 } while (0)
 
 /*
@@ -44,20 +44,20 @@ do {									\
  * BCH_ON_ERROR_CONTINUE mode
  */
 
-void bch_inconsistent_error(struct bch_fs *);
+void bch2_inconsistent_error(struct bch_fs *);
 
-#define bch_fs_inconsistent(c, ...)					\
+#define bch2_fs_inconsistent(c, ...)					\
 do {									\
 	bch_err(c, __VA_ARGS__);					\
-	bch_inconsistent_error(c);					\
+	bch2_inconsistent_error(c);					\
 } while (0)
 
-#define bch_fs_inconsistent_on(cond, c, ...)				\
+#define bch2_fs_inconsistent_on(cond, c, ...)				\
 ({									\
 	int _ret = !!(cond);						\
 									\
 	if (_ret)							\
-		bch_fs_inconsistent(c, __VA_ARGS__);			\
+		bch2_fs_inconsistent(c, __VA_ARGS__);			\
 	_ret;								\
 })
 
@@ -66,18 +66,18 @@ do {									\
  * entire filesystem:
  */
 
-#define bch_dev_inconsistent(ca, ...)					\
+#define bch2_dev_inconsistent(ca, ...)					\
 do {									\
 	bch_err(ca, __VA_ARGS__);					\
-	bch_inconsistent_error((ca)->fs);				\
+	bch2_inconsistent_error((ca)->fs);				\
 } while (0)
 
-#define bch_dev_inconsistent_on(cond, ca, ...)				\
+#define bch2_dev_inconsistent_on(cond, ca, ...)				\
 ({									\
 	int _ret = !!(cond);						\
 									\
 	if (_ret)							\
-		bch_dev_inconsistent(ca, __VA_ARGS__);			\
+		bch2_dev_inconsistent(ca, __VA_ARGS__);			\
 	_ret;								\
 })
 
@@ -145,43 +145,43 @@ enum {
  * mode - pretty much just due to metadata IO errors:
  */
 
-void bch_fatal_error(struct bch_fs *);
+void bch2_fatal_error(struct bch_fs *);
 
-#define bch_fs_fatal_error(c, ...)					\
+#define bch2_fs_fatal_error(c, ...)					\
 do {									\
 	bch_err(c, __VA_ARGS__);					\
-	bch_fatal_error(c);						\
+	bch2_fatal_error(c);						\
 } while (0)
 
-#define bch_fs_fatal_err_on(cond, c, ...)				\
+#define bch2_fs_fatal_err_on(cond, c, ...)				\
 ({									\
 	int _ret = !!(cond);						\
 									\
 	if (_ret)							\
-		bch_fs_fatal_error(c, __VA_ARGS__);			\
+		bch2_fs_fatal_error(c, __VA_ARGS__);			\
 	_ret;								\
 })
 
-#define bch_dev_fatal_error(ca, ...)					\
+#define bch2_dev_fatal_error(ca, ...)					\
 do {									\
 	bch_err(ca, __VA_ARGS__);					\
-	bch_fatal_error(c);						\
+	bch2_fatal_error(c);						\
 } while (0)
 
-#define bch_dev_fatal_io_error(ca, fmt, ...)				\
+#define bch2_dev_fatal_io_error(ca, fmt, ...)				\
 do {									\
-	printk_ratelimited(KERN_ERR bch_fmt((ca)->fs,			\
+	printk_ratelimited(KERN_ERR bch2_fmt((ca)->fs,			\
 		"fatal IO error on %s for " fmt),			\
 		(ca)->name, ##__VA_ARGS__);				\
-	bch_fatal_error((ca)->fs);					\
+	bch2_fatal_error((ca)->fs);					\
 } while (0)
 
-#define bch_dev_fatal_io_err_on(cond, ca, ...)				\
+#define bch2_dev_fatal_io_err_on(cond, ca, ...)				\
 ({									\
 	int _ret = !!(cond);						\
 									\
 	if (_ret)							\
-		bch_dev_fatal_io_error(ca, __VA_ARGS__);		\
+		bch2_dev_fatal_io_error(ca, __VA_ARGS__);		\
 	_ret;								\
 })
 
@@ -191,41 +191,41 @@ do {									\
  * don't (necessarily) want to shut down the fs:
  */
 
-void bch_nonfatal_io_error_work(struct work_struct *);
+void bch2_nonfatal_io_error_work(struct work_struct *);
 
 /* Does the error handling without logging a message */
-void bch_nonfatal_io_error(struct bch_dev *);
+void bch2_nonfatal_io_error(struct bch_dev *);
 
 #if 0
-#define bch_fs_nonfatal_io_error(c, ...)				\
+#define bch2_fs_nonfatal_io_error(c, ...)				\
 do {									\
 	bch_err(c, __VA_ARGS__);					\
-	bch_nonfatal_io_error(c);					\
+	bch2_nonfatal_io_error(c);					\
 } while (0)
 #endif
 
 /* Logs message and handles the error: */
-#define bch_dev_nonfatal_io_error(ca, fmt, ...)				\
+#define bch2_dev_nonfatal_io_error(ca, fmt, ...)				\
 do {									\
-	printk_ratelimited(KERN_ERR bch_fmt((ca)->fs,			\
+	printk_ratelimited(KERN_ERR bch2_fmt((ca)->fs,			\
 		"IO error on %s for " fmt),				\
 		(ca)->name, ##__VA_ARGS__);				\
-	bch_nonfatal_io_error(ca);					\
+	bch2_nonfatal_io_error(ca);					\
 } while (0)
 
-#define bch_dev_nonfatal_io_err_on(cond, ca, ...)			\
+#define bch2_dev_nonfatal_io_err_on(cond, ca, ...)			\
 ({									\
 	bool _ret = (cond);						\
 									\
 	if (_ret)							\
-		bch_dev_nonfatal_io_error(ca, __VA_ARGS__);		\
+		bch2_dev_nonfatal_io_error(ca, __VA_ARGS__);		\
 	_ret;								\
 })
 
 /* kill? */
 
 #define __bcache_io_error(c, fmt, ...)					\
-	printk_ratelimited(KERN_ERR bch_fmt(c,				\
+	printk_ratelimited(KERN_ERR bch2_fmt(c,				\
 			"IO error: " fmt), ##__VA_ARGS__)
 
 #define bcache_io_error(c, bio, fmt, ...)				\

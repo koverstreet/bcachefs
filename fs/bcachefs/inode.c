@@ -1,5 +1,5 @@
 
-#include "bcache.h"
+#include "bcachefs.h"
 #include "bkey_methods.h"
 #include "btree_update.h"
 #include "extents.h"
@@ -103,8 +103,8 @@ static int inode_decode_field(const u8 *in, const u8 *end,
 	return bytes;
 }
 
-void bch_inode_pack(struct bkey_inode_buf *packed,
-		    const struct bch_inode_unpacked *inode)
+void bch2_inode_pack(struct bkey_inode_buf *packed,
+		     const struct bch_inode_unpacked *inode)
 {
 	u8 *out = packed->inode.v.fields;
 	u8 *end = (void *) &packed[1];
@@ -145,7 +145,7 @@ void bch_inode_pack(struct bkey_inode_buf *packed,
 	if (IS_ENABLED(CONFIG_BCACHEFS_DEBUG)) {
 		struct bch_inode_unpacked unpacked;
 
-		int ret = bch_inode_unpack(inode_i_to_s_c(&packed->inode),
+		int ret = bch2_inode_unpack(inode_i_to_s_c(&packed->inode),
 					   &unpacked);
 		BUG_ON(ret);
 		BUG_ON(unpacked.inum		!= inode->inum);
@@ -158,8 +158,8 @@ void bch_inode_pack(struct bkey_inode_buf *packed,
 	}
 }
 
-int bch_inode_unpack(struct bkey_s_c_inode inode,
-		     struct bch_inode_unpacked *unpacked)
+int bch2_inode_unpack(struct bkey_s_c_inode inode,
+		      struct bch_inode_unpacked *unpacked)
 {
 	const u8 *in = inode.v->fields;
 	const u8 *end = (void *) inode.v + bkey_val_bytes(inode.k);
@@ -198,8 +198,8 @@ int bch_inode_unpack(struct bkey_s_c_inode inode,
 	return 0;
 }
 
-static const char *bch_inode_invalid(const struct bch_fs *c,
-				     struct bkey_s_c k)
+static const char *bch2_inode_invalid(const struct bch_fs *c,
+				      struct bkey_s_c k)
 {
 	if (k.k->p.offset)
 		return "nonzero offset";
@@ -218,7 +218,7 @@ static const char *bch_inode_invalid(const struct bch_fs *c,
 		if (INODE_STR_HASH(inode.v) >= BCH_STR_HASH_NR)
 			return "invalid str hash type";
 
-		if (bch_inode_unpack(inode, &unpacked))
+		if (bch2_inode_unpack(inode, &unpacked))
 			return "invalid variable length fields";
 
 		return NULL;
@@ -236,8 +236,8 @@ static const char *bch_inode_invalid(const struct bch_fs *c,
 	}
 }
 
-static void bch_inode_to_text(struct bch_fs *c, char *buf,
-			      size_t size, struct bkey_s_c k)
+static void bch2_inode_to_text(struct bch_fs *c, char *buf,
+			       size_t size, struct bkey_s_c k)
 {
 	struct bkey_s_c_inode inode;
 	struct bch_inode_unpacked unpacked;
@@ -245,7 +245,7 @@ static void bch_inode_to_text(struct bch_fs *c, char *buf,
 	switch (k.k->type) {
 	case BCH_INODE_FS:
 		inode = bkey_s_c_to_inode(k);
-		if (bch_inode_unpack(inode, &unpacked)) {
+		if (bch2_inode_unpack(inode, &unpacked)) {
 			scnprintf(buf, size, "(unpack error)");
 			break;
 		}
@@ -255,15 +255,15 @@ static void bch_inode_to_text(struct bch_fs *c, char *buf,
 	}
 }
 
-const struct bkey_ops bch_bkey_inode_ops = {
-	.key_invalid	= bch_inode_invalid,
-	.val_to_text	= bch_inode_to_text,
+const struct bkey_ops bch2_bkey_inode_ops = {
+	.key_invalid	= bch2_inode_invalid,
+	.val_to_text	= bch2_inode_to_text,
 };
 
-void bch_inode_init(struct bch_fs *c, struct bch_inode_unpacked *inode_u,
-		    uid_t uid, gid_t gid, umode_t mode, dev_t rdev)
+void bch2_inode_init(struct bch_fs *c, struct bch_inode_unpacked *inode_u,
+		     uid_t uid, gid_t gid, umode_t mode, dev_t rdev)
 {
-	s64 now = timespec_to_bch_time(c, CURRENT_TIME);
+	s64 now = timespec_to_bch2_time(c, CURRENT_TIME);
 
 	memset(inode_u, 0, sizeof(*inode_u));
 
@@ -281,8 +281,8 @@ void bch_inode_init(struct bch_fs *c, struct bch_inode_unpacked *inode_u,
 	inode_u->i_otime	= now;
 }
 
-int bch_inode_create(struct bch_fs *c, struct bkey_i *inode,
-		     u64 min, u64 max, u64 *hint)
+int bch2_inode_create(struct bch_fs *c, struct bkey_i *inode,
+		      u64 min, u64 max, u64 *hint)
 {
 	struct btree_iter iter;
 	bool searched_from_start = false;
@@ -300,14 +300,14 @@ int bch_inode_create(struct bch_fs *c, struct bkey_i *inode,
 	if (*hint == min)
 		searched_from_start = true;
 again:
-	bch_btree_iter_init_intent(&iter, c, BTREE_ID_INODES, POS(*hint, 0));
+	bch2_btree_iter_init_intent(&iter, c, BTREE_ID_INODES, POS(*hint, 0));
 
 	while (1) {
-		struct bkey_s_c k = bch_btree_iter_peek_with_holes(&iter);
+		struct bkey_s_c k = bch2_btree_iter_peek_with_holes(&iter);
 
 		ret = btree_iter_err(k);
 		if (ret) {
-			bch_btree_iter_unlock(&iter);
+			bch2_btree_iter_unlock(&iter);
 			return ret;
 		}
 
@@ -317,14 +317,14 @@ again:
 			pr_debug("inserting inode %llu (size %u)",
 				 inode->k.p.inode, inode->k.u64s);
 
-			ret = bch_btree_insert_at(c, NULL, NULL, NULL,
+			ret = bch2_btree_insert_at(c, NULL, NULL, NULL,
 					BTREE_INSERT_ATOMIC,
 					BTREE_INSERT_ENTRY(&iter, inode));
 
 			if (ret == -EINTR)
 				continue;
 
-			bch_btree_iter_unlock(&iter);
+			bch2_btree_iter_unlock(&iter);
 			if (!ret)
 				*hint = k.k->p.inode + 1;
 
@@ -333,10 +333,10 @@ again:
 			if (iter.pos.inode == max)
 				break;
 			/* slot used */
-			bch_btree_iter_advance_pos(&iter);
+			bch2_btree_iter_advance_pos(&iter);
 		}
 	}
-	bch_btree_iter_unlock(&iter);
+	bch2_btree_iter_unlock(&iter);
 
 	if (!searched_from_start) {
 		/* Retry from start */
@@ -348,23 +348,23 @@ again:
 	return -ENOSPC;
 }
 
-int bch_inode_truncate(struct bch_fs *c, u64 inode_nr, u64 new_size,
-		       struct extent_insert_hook *hook, u64 *journal_seq)
+int bch2_inode_truncate(struct bch_fs *c, u64 inode_nr, u64 new_size,
+			struct extent_insert_hook *hook, u64 *journal_seq)
 {
-	return bch_discard(c, POS(inode_nr, new_size), POS(inode_nr + 1, 0),
+	return bch2_discard(c, POS(inode_nr, new_size), POS(inode_nr + 1, 0),
 			   ZERO_VERSION, NULL, hook, journal_seq);
 }
 
-int bch_inode_rm(struct bch_fs *c, u64 inode_nr)
+int bch2_inode_rm(struct bch_fs *c, u64 inode_nr)
 {
 	struct bkey_i delete;
 	int ret;
 
-	ret = bch_inode_truncate(c, inode_nr, 0, NULL, NULL);
+	ret = bch2_inode_truncate(c, inode_nr, 0, NULL, NULL);
 	if (ret < 0)
 		return ret;
 
-	ret = bch_btree_delete_range(c, BTREE_ID_XATTRS,
+	ret = bch2_btree_delete_range(c, BTREE_ID_XATTRS,
 				     POS(inode_nr, 0),
 				     POS(inode_nr + 1, 0),
 				     ZERO_VERSION, NULL, NULL, NULL);
@@ -379,7 +379,7 @@ int bch_inode_rm(struct bch_fs *c, u64 inode_nr)
 	 * XXX: the dirent could ideally would delete whitouts when they're no
 	 * longer needed
 	 */
-	ret = bch_btree_delete_range(c, BTREE_ID_DIRENTS,
+	ret = bch2_btree_delete_range(c, BTREE_ID_DIRENTS,
 				     POS(inode_nr, 0),
 				     POS(inode_nr + 1, 0),
 				     ZERO_VERSION, NULL, NULL, NULL);
@@ -389,12 +389,12 @@ int bch_inode_rm(struct bch_fs *c, u64 inode_nr)
 	bkey_init(&delete.k);
 	delete.k.p.inode = inode_nr;
 
-	return bch_btree_insert(c, BTREE_ID_INODES, &delete, NULL,
+	return bch2_btree_insert(c, BTREE_ID_INODES, &delete, NULL,
 				NULL, NULL, BTREE_INSERT_NOFAIL);
 }
 
-int bch_inode_find_by_inum(struct bch_fs *c, u64 inode_nr,
-			   struct bch_inode_unpacked *inode)
+int bch2_inode_find_by_inum(struct bch_fs *c, u64 inode_nr,
+			    struct bch_inode_unpacked *inode)
 {
 	struct btree_iter iter;
 	struct bkey_s_c k;
@@ -404,7 +404,7 @@ int bch_inode_find_by_inum(struct bch_fs *c, u64 inode_nr,
 				      POS(inode_nr, 0), k) {
 		switch (k.k->type) {
 		case BCH_INODE_FS:
-			ret = bch_inode_unpack(bkey_s_c_to_inode(k), inode);
+			ret = bch2_inode_unpack(bkey_s_c_to_inode(k), inode);
 			break;
 		default:
 			/* hole, not found */
@@ -415,11 +415,11 @@ int bch_inode_find_by_inum(struct bch_fs *c, u64 inode_nr,
 
 	}
 
-	return bch_btree_iter_unlock(&iter) ?: ret;
+	return bch2_btree_iter_unlock(&iter) ?: ret;
 }
 
-int bch_cached_dev_inode_find_by_uuid(struct bch_fs *c, uuid_le *uuid,
-				      struct bkey_i_inode_blockdev *ret)
+int bch2_cached_dev_inode_find_by_uuid(struct bch_fs *c, uuid_le *uuid,
+				       struct bkey_i_inode_blockdev *ret)
 {
 	struct btree_iter iter;
 	struct bkey_s_c k;
@@ -439,13 +439,13 @@ int bch_cached_dev_inode_find_by_uuid(struct bch_fs *c, uuid_le *uuid,
 			if (CACHED_DEV(inode.v) &&
 			    !memcmp(uuid, &inode.v->i_uuid, 16)) {
 				bkey_reassemble(&ret->k_i, k);
-				bch_btree_iter_unlock(&iter);
+				bch2_btree_iter_unlock(&iter);
 				return 0;
 			}
 		}
 
-		bch_btree_iter_cond_resched(&iter);
+		bch2_btree_iter_cond_resched(&iter);
 	}
-	bch_btree_iter_unlock(&iter);
+	bch2_btree_iter_unlock(&iter);
 	return -ENOENT;
 }

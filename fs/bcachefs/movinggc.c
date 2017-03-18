@@ -4,7 +4,7 @@
  * Copyright 2012 Google, Inc.
  */
 
-#include "bcache.h"
+#include "bcachefs.h"
 #include "btree_iter.h"
 #include "buckets.h"
 #include "clock.h"
@@ -27,7 +27,7 @@ static const struct bch_extent_ptr *moving_pred(struct bch_dev *ca,
 	const struct bch_extent_ptr *ptr;
 
 	if (bkey_extent_is_data(k.k) &&
-	    (ptr = bch_extent_has_device(bkey_s_c_to_extent(k),
+	    (ptr = bch2_extent_has_device(bkey_s_c_to_extent(k),
 					 ca->dev_idx)) &&
 	    PTR_BUCKET(ca, ptr)->mark.copygc)
 		return ptr;
@@ -47,11 +47,11 @@ static int issue_moving_gc_move(struct bch_dev *ca,
 	if (!ptr) /* We raced - bucket's been reused */
 		return 0;
 
-	ret = bch_data_move(c, ctxt, &ca->copygc_write_point, k, ptr);
+	ret = bch2_data_move(c, ctxt, &ca->copygc_write_point, k, ptr);
 	if (!ret)
-		trace_bcache_gc_copy(k.k);
+		trace_gc_copy(k.k);
 	else
-		trace_bcache_moving_gc_alloc_fail(c, k.k->size);
+		trace_moving_gc_alloc_fail(c, k.k->size);
 	return ret;
 }
 
@@ -66,17 +66,17 @@ static void read_moving(struct bch_dev *ca, size_t buckets_to_move,
 	u64 sectors_not_moved = 0;
 	size_t buckets_not_moved = 0;
 
-	bch_ratelimit_reset(&ca->moving_gc_pd.rate);
-	bch_move_ctxt_init(&ctxt, &ca->moving_gc_pd.rate,
+	bch2_ratelimit_reset(&ca->moving_gc_pd.rate);
+	bch2_move_ctxt_init(&ctxt, &ca->moving_gc_pd.rate,
 				SECTORS_IN_FLIGHT_PER_DEVICE);
-	bch_btree_iter_init(&iter, c, BTREE_ID_EXTENTS, POS_MIN);
+	bch2_btree_iter_init(&iter, c, BTREE_ID_EXTENTS, POS_MIN);
 
 	while (1) {
 		if (kthread_should_stop())
 			goto out;
-		if (bch_move_ctxt_wait(&ctxt))
+		if (bch2_move_ctxt_wait(&ctxt))
 			goto out;
-		k = bch_btree_iter_peek(&iter);
+		k = bch2_btree_iter_peek(&iter);
 		if (!k.k)
 			break;
 		if (btree_iter_err(k))
@@ -86,24 +86,24 @@ static void read_moving(struct bch_dev *ca, size_t buckets_to_move,
 			goto next;
 
 		if (issue_moving_gc_move(ca, &ctxt, k)) {
-			bch_btree_iter_unlock(&iter);
+			bch2_btree_iter_unlock(&iter);
 
 			/* memory allocation failure, wait for some IO to finish */
-			bch_move_ctxt_wait_for_io(&ctxt);
+			bch2_move_ctxt_wait_for_io(&ctxt);
 			continue;
 		}
 next:
-		bch_btree_iter_advance_pos(&iter);
-		//bch_btree_iter_cond_resched(&iter);
+		bch2_btree_iter_advance_pos(&iter);
+		//bch2_btree_iter_cond_resched(&iter);
 
 		/* unlock before calling moving_context_wait() */
-		bch_btree_iter_unlock(&iter);
+		bch2_btree_iter_unlock(&iter);
 		cond_resched();
 	}
 
-	bch_btree_iter_unlock(&iter);
-	bch_move_ctxt_exit(&ctxt);
-	trace_bcache_moving_gc_end(ca, ctxt.sectors_moved, ctxt.keys_moved,
+	bch2_btree_iter_unlock(&iter);
+	bch2_move_ctxt_exit(&ctxt);
+	trace_moving_gc_end(ca, ctxt.sectors_moved, ctxt.keys_moved,
 				   buckets_to_move);
 
 	/* don't check this if we bailed out early: */
@@ -119,9 +119,9 @@ next:
 			 buckets_not_moved, buckets_to_move);
 	return;
 out:
-	bch_btree_iter_unlock(&iter);
-	bch_move_ctxt_exit(&ctxt);
-	trace_bcache_moving_gc_end(ca, ctxt.sectors_moved, ctxt.keys_moved,
+	bch2_btree_iter_unlock(&iter);
+	bch2_move_ctxt_exit(&ctxt);
+	trace_moving_gc_end(ca, ctxt.sectors_moved, ctxt.keys_moved,
 				   buckets_to_move);
 }
 
@@ -137,7 +137,7 @@ static bool have_copygc_reserve(struct bch_dev *ca)
 	return ret;
 }
 
-static void bch_moving_gc(struct bch_dev *ca)
+static void bch2_moving_gc(struct bch_dev *ca)
 {
 	struct bch_fs *c = ca->fs;
 	struct bucket *g;
@@ -163,7 +163,7 @@ static void bch_moving_gc(struct bch_dev *ca)
 
 	reserve_sectors = COPYGC_SECTORS_PER_ITER(ca);
 
-	trace_bcache_moving_gc_start(ca);
+	trace_moving_gc_start(ca);
 
 	/*
 	 * Find buckets with lowest sector counts, skipping completely
@@ -223,7 +223,7 @@ static void bch_moving_gc(struct bch_dev *ca)
 	read_moving(ca, buckets_to_move, sectors_to_move);
 }
 
-static int bch_moving_gc_thread(void *arg)
+static int bch2_moving_gc_thread(void *arg)
 {
 	struct bch_dev *ca = arg;
 	struct bch_fs *c = ca->fs;
@@ -248,27 +248,27 @@ static int bch_moving_gc_thread(void *arg)
 		if (available > want) {
 			next = last + (available - want) *
 				ca->mi.bucket_size;
-			bch_kthread_io_clock_wait(clock, next);
+			bch2_kthread_io_clock_wait(clock, next);
 			continue;
 		}
 
-		bch_moving_gc(ca);
+		bch2_moving_gc(ca);
 	}
 
 	return 0;
 }
 
-void bch_moving_gc_stop(struct bch_dev *ca)
+void bch2_moving_gc_stop(struct bch_dev *ca)
 {
 	ca->moving_gc_pd.rate.rate = UINT_MAX;
-	bch_ratelimit_reset(&ca->moving_gc_pd.rate);
+	bch2_ratelimit_reset(&ca->moving_gc_pd.rate);
 
 	if (ca->moving_gc_read)
 		kthread_stop(ca->moving_gc_read);
 	ca->moving_gc_read = NULL;
 }
 
-int bch_moving_gc_start(struct bch_dev *ca)
+int bch2_moving_gc_start(struct bch_dev *ca)
 {
 	struct task_struct *t;
 
@@ -277,10 +277,10 @@ int bch_moving_gc_start(struct bch_dev *ca)
 	if (ca->fs->opts.nochanges)
 		return 0;
 
-	if (bch_fs_init_fault("moving_gc_start"))
+	if (bch2_fs_init_fault("moving_gc_start"))
 		return -ENOMEM;
 
-	t = kthread_create(bch_moving_gc_thread, ca, "bch_copygc_read");
+	t = kthread_create(bch2_moving_gc_thread, ca, "bch_copygc_read");
 	if (IS_ERR(t))
 		return PTR_ERR(t);
 
@@ -290,8 +290,8 @@ int bch_moving_gc_start(struct bch_dev *ca)
 	return 0;
 }
 
-void bch_dev_moving_gc_init(struct bch_dev *ca)
+void bch2_dev_moving_gc_init(struct bch_dev *ca)
 {
-	bch_pd_controller_init(&ca->moving_gc_pd);
+	bch2_pd_controller_init(&ca->moving_gc_pd);
 	ca->moving_gc_pd.d_term = 0;
 }

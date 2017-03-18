@@ -1,5 +1,5 @@
 
-#include "bcache.h"
+#include "bcachefs.h"
 #include "alloc.h"
 #include "btree_iter.h"
 #include "buckets.h"
@@ -83,12 +83,12 @@ static int issue_tiering_move(struct bch_fs *c,
 {
 	int ret;
 
-	ret = bch_data_move(c, ctxt, &s->ca->tiering_write_point, k, NULL);
+	ret = bch2_data_move(c, ctxt, &s->ca->tiering_write_point, k, NULL);
 	if (!ret) {
-		trace_bcache_tiering_copy(k.k);
+		trace_tiering_copy(k.k);
 		s->sectors += k.k->size;
 	} else {
-		trace_bcache_tiering_alloc_fail(c, k.k->size);
+		trace_tiering_alloc_fail(c, k.k->size);
 	}
 
 	return ret;
@@ -110,19 +110,19 @@ static s64 read_tiering(struct bch_fs *c, struct bch_tier *tier)
 	if (!nr_devices)
 		return 0;
 
-	trace_bcache_tiering_start(c);
+	trace_tiering_start(c);
 
 	memset(&s, 0, sizeof(s));
 	s.tier		= tier;
 	s.stripe_size	= 2048; /* 1 mb for now */
 
-	bch_move_ctxt_init(&ctxt, &tier->pd.rate,
+	bch2_move_ctxt_init(&ctxt, &tier->pd.rate,
 			   nr_devices * SECTORS_IN_FLIGHT_PER_DEVICE);
-	bch_btree_iter_init(&iter, c, BTREE_ID_EXTENTS, POS_MIN);
+	bch2_btree_iter_init(&iter, c, BTREE_ID_EXTENTS, POS_MIN);
 
 	while (!kthread_should_stop() &&
-	       !bch_move_ctxt_wait(&ctxt) &&
-	       (k = bch_btree_iter_peek(&iter)).k &&
+	       !bch2_move_ctxt_wait(&ctxt) &&
+	       (k = bch2_btree_iter_peek(&iter)).k &&
 	       !btree_iter_err(k)) {
 		if (!tiering_pred(c, &s, k))
 			goto next;
@@ -133,30 +133,30 @@ static s64 read_tiering(struct bch_fs *c, struct bch_tier *tier)
 
 		ret = issue_tiering_move(c, &s, &ctxt, k);
 		if (ret) {
-			bch_btree_iter_unlock(&iter);
+			bch2_btree_iter_unlock(&iter);
 
 			/* memory allocation failure, wait for some IO to finish */
-			bch_move_ctxt_wait_for_io(&ctxt);
+			bch2_move_ctxt_wait_for_io(&ctxt);
 			continue;
 		}
 next:
-		bch_btree_iter_advance_pos(&iter);
-		//bch_btree_iter_cond_resched(&iter);
+		bch2_btree_iter_advance_pos(&iter);
+		//bch2_btree_iter_cond_resched(&iter);
 
 		/* unlock before calling moving_context_wait() */
-		bch_btree_iter_unlock(&iter);
+		bch2_btree_iter_unlock(&iter);
 		cond_resched();
 	}
 
-	bch_btree_iter_unlock(&iter);
+	bch2_btree_iter_unlock(&iter);
 	tier_put_device(&s);
-	bch_move_ctxt_exit(&ctxt);
-	trace_bcache_tiering_end(c, ctxt.sectors_moved, ctxt.keys_moved);
+	bch2_move_ctxt_exit(&ctxt);
+	trace_tiering_end(c, ctxt.sectors_moved, ctxt.keys_moved);
 
 	return ctxt.sectors_moved;
 }
 
-static int bch_tiering_thread(void *arg)
+static int bch2_tiering_thread(void *arg)
 {
 	struct bch_tier *tier = arg;
 	struct bch_fs *c = container_of(tier, struct bch_fs, tiers[tier->idx]);
@@ -196,7 +196,7 @@ static int bch_tiering_thread(void *arg)
 			if (available_sectors < (tier_capacity >> 1))
 				break;
 
-			bch_kthread_io_clock_wait(clock,
+			bch2_kthread_io_clock_wait(clock,
 						  last +
 						  available_sectors -
 						  (tier_capacity >> 1));
@@ -210,10 +210,10 @@ static int bch_tiering_thread(void *arg)
 	return 0;
 }
 
-static void __bch_tiering_stop(struct bch_tier *tier)
+static void __bch2_tiering_stop(struct bch_tier *tier)
 {
 	tier->pd.rate.rate = UINT_MAX;
-	bch_ratelimit_reset(&tier->pd.rate);
+	bch2_ratelimit_reset(&tier->pd.rate);
 
 	if (tier->migrate)
 		kthread_stop(tier->migrate);
@@ -221,19 +221,19 @@ static void __bch_tiering_stop(struct bch_tier *tier)
 	tier->migrate = NULL;
 }
 
-void bch_tiering_stop(struct bch_fs *c)
+void bch2_tiering_stop(struct bch_fs *c)
 {
 	struct bch_tier *tier;
 
 	for (tier = c->tiers; tier < c->tiers + ARRAY_SIZE(c->tiers); tier++)
-		__bch_tiering_stop(tier);
+		__bch2_tiering_stop(tier);
 }
 
-static int __bch_tiering_start(struct bch_tier *tier)
+static int __bch2_tiering_start(struct bch_tier *tier)
 {
 	if (!tier->migrate) {
 		struct task_struct *p =
-			kthread_create(bch_tiering_thread, tier,
+			kthread_create(bch2_tiering_thread, tier,
 				       "bch_tier[%u]", tier->idx);
 		if (IS_ERR(p))
 			return PTR_ERR(p);
@@ -245,7 +245,7 @@ static int __bch_tiering_start(struct bch_tier *tier)
 	return 0;
 }
 
-int bch_tiering_start(struct bch_fs *c)
+int bch2_tiering_start(struct bch_fs *c)
 {
 	struct bch_tier *tier;
 	bool have_faster_tier = false;
@@ -258,11 +258,11 @@ int bch_tiering_start(struct bch_fs *c)
 			continue;
 
 		if (have_faster_tier) {
-			int ret = __bch_tiering_start(tier);
+			int ret = __bch2_tiering_start(tier);
 			if (ret)
 				return ret;
 		} else {
-			__bch_tiering_stop(tier);
+			__bch2_tiering_stop(tier);
 		}
 
 		have_faster_tier = true;
@@ -271,12 +271,12 @@ int bch_tiering_start(struct bch_fs *c)
 	return 0;
 }
 
-void bch_fs_tiering_init(struct bch_fs *c)
+void bch2_fs_tiering_init(struct bch_fs *c)
 {
 	unsigned i;
 
 	for (i = 0; i < ARRAY_SIZE(c->tiers); i++) {
 		c->tiers[i].idx = i;
-		bch_pd_controller_init(&c->tiers[i].pd);
+		bch2_pd_controller_init(&c->tiers[i].pd);
 	}
 }

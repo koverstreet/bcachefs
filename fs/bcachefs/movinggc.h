@@ -23,8 +23,8 @@
 #define COPYGC_SECTORS_PER_ITER(ca)					\
 	((ca)->mi.bucket_size *	COPYGC_BUCKETS_PER_ITER(ca))
 
-void bch_moving_gc_stop(struct bch_dev *);
-int bch_moving_gc_start(struct bch_dev *);
-void bch_dev_moving_gc_init(struct bch_dev *);
+void bch2_moving_gc_stop(struct bch_dev *);
+int bch2_moving_gc_start(struct bch_dev *);
+void bch2_dev_moving_gc_init(struct bch_dev *);
 
 #endif

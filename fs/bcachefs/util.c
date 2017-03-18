@@ -23,7 +23,7 @@
 #define simple_strtouint(c, end, base)	simple_strtoul(c, end, base)
 
 #define STRTO_H(name, type)					\
-int bch_ ## name ## _h(const char *cp, type *res)		\
+int bch2_ ## name ## _h(const char *cp, type *res)		\
 {								\
 	int u = 0;						\
 	char *e;						\
@@ -77,7 +77,7 @@ STRTO_H(strtouint, unsigned int)
 STRTO_H(strtoll, long long)
 STRTO_H(strtoull, unsigned long long)
 
-ssize_t bch_hprint(char *buf, s64 v)
+ssize_t bch2_hprint(char *buf, s64 v)
 {
 	static const char units[] = "?kMGTPEZY";
 	char dec[4] = "";
@@ -101,7 +101,7 @@ ssize_t bch_hprint(char *buf, s64 v)
 	return sprintf(buf, "%lli%s%c", v, dec, units[u]);
 }
 
-ssize_t bch_snprint_string_list(char *buf, size_t size, const char * const list[],
+ssize_t bch2_snprint_string_list(char *buf, size_t size, const char * const list[],
 			    size_t selected)
 {
 	char *out = buf;
@@ -115,7 +115,7 @@ ssize_t bch_snprint_string_list(char *buf, size_t size, const char * const list[
 	return out - buf;
 }
 
-ssize_t bch_read_string_list(const char *buf, const char * const list[])
+ssize_t bch2_read_string_list(const char *buf, const char * const list[])
 {
 	size_t i;
 	char *s, *d = kstrndup(buf, PAGE_SIZE - 1, GFP_KERNEL);
@@ -136,7 +136,7 @@ ssize_t bch_read_string_list(const char *buf, const char * const list[])
 	return i;
 }
 
-bool bch_is_zero(const void *_p, size_t n)
+bool bch2_is_zero(const void *_p, size_t n)
 {
 	const char *p = _p;
 	size_t i;
@@ -147,7 +147,7 @@ bool bch_is_zero(const void *_p, size_t n)
 	return true;
 }
 
-void bch_time_stats_clear(struct time_stats *stats)
+void bch2_time_stats_clear(struct time_stats *stats)
 {
 	spin_lock(&stats->lock);
 
@@ -161,7 +161,7 @@ void bch_time_stats_clear(struct time_stats *stats)
 	spin_unlock(&stats->lock);
 }
 
-void __bch_time_stats_update(struct time_stats *stats, u64 start_time)
+void __bch2_time_stats_update(struct time_stats *stats, u64 start_time)
 {
 	u64 now, duration, last;
 
@@ -193,22 +193,22 @@ void __bch_time_stats_update(struct time_stats *stats, u64 start_time)
 	stats->last = now ?: 1;
 }
 
-void bch_time_stats_update(struct time_stats *stats, u64 start_time)
+void bch2_time_stats_update(struct time_stats *stats, u64 start_time)
 {
 	spin_lock(&stats->lock);
-	__bch_time_stats_update(stats, start_time);
+	__bch2_time_stats_update(stats, start_time);
 	spin_unlock(&stats->lock);
 }
 
 /**
- * bch_ratelimit_delay() - return how long to delay until the next time to do
+ * bch2_ratelimit_delay() - return how long to delay until the next time to do
  * some work
  *
  * @d - the struct bch_ratelimit to update
  *
  * Returns the amount of time to delay by, in jiffies
  */
-u64 bch_ratelimit_delay(struct bch_ratelimit *d)
+u64 bch2_ratelimit_delay(struct bch_ratelimit *d)
 {
 	u64 now = local_clock();
 
@@ -218,12 +218,12 @@ u64 bch_ratelimit_delay(struct bch_ratelimit *d)
 }
 
 /**
- * bch_ratelimit_increment() - increment @d by the amount of work done
+ * bch2_ratelimit_increment() - increment @d by the amount of work done
  *
  * @d - the struct bch_ratelimit to update
  * @done - the amount of work done, in arbitrary units
  */
-void bch_ratelimit_increment(struct bch_ratelimit *d, u64 done)
+void bch2_ratelimit_increment(struct bch_ratelimit *d, u64 done)
 {
 	u64 now = local_clock();
 
@@ -236,10 +236,10 @@ void bch_ratelimit_increment(struct bch_ratelimit *d, u64 done)
 		d->next = now - NSEC_PER_SEC * 2;
 }
 
-int bch_ratelimit_wait_freezable_stoppable(struct bch_ratelimit *d)
+int bch2_ratelimit_wait_freezable_stoppable(struct bch_ratelimit *d)
 {
 	while (1) {
-		u64 delay = bch_ratelimit_delay(d);
+		u64 delay = bch2_ratelimit_delay(d);
 
 		if (delay)
 			set_current_state(TASK_INTERRUPTIBLE);
@@ -263,7 +263,7 @@ int bch_ratelimit_wait_freezable_stoppable(struct bch_ratelimit *d)
  * @sign: 1 or -1; 1 if increasing the rate makes actual go up, -1 if increasing
  * it makes actual go down.
  */
-void bch_pd_controller_update(struct bch_pd_controller *pd,
+void bch2_pd_controller_update(struct bch_pd_controller *pd,
 			      s64 target, s64 actual, int sign)
 {
 	s64 proportional, derivative, change;
@@ -307,7 +307,7 @@ void bch_pd_controller_update(struct bch_pd_controller *pd,
 	pd->last_target		= target;
 }
 
-void bch_pd_controller_init(struct bch_pd_controller *pd)
+void bch2_pd_controller_init(struct bch_pd_controller *pd)
 {
 	pd->rate.rate		= 1024;
 	pd->last_update		= jiffies;
@@ -317,7 +317,7 @@ void bch_pd_controller_init(struct bch_pd_controller *pd)
 	pd->backpressure	= 1;
 }
 
-size_t bch_pd_controller_print_debug(struct bch_pd_controller *pd, char *buf)
+size_t bch2_pd_controller_print_debug(struct bch_pd_controller *pd, char *buf)
 {
 	/* 2^64 - 1 is 20 digits, plus null byte */
 	char rate[21];
@@ -328,12 +328,12 @@ size_t bch_pd_controller_print_debug(struct bch_pd_controller *pd, char *buf)
 	char change[21];
 	s64 next_io;
 
-	bch_hprint(rate,	pd->rate.rate);
-	bch_hprint(actual,	pd->last_actual);
-	bch_hprint(target,	pd->last_target);
-	bch_hprint(proportional, pd->last_proportional);
-	bch_hprint(derivative,	pd->last_derivative);
-	bch_hprint(change,	pd->last_change);
+	bch2_hprint(rate,	pd->rate.rate);
+	bch2_hprint(actual,	pd->last_actual);
+	bch2_hprint(target,	pd->last_target);
+	bch2_hprint(proportional, pd->last_proportional);
+	bch2_hprint(derivative,	pd->last_derivative);
+	bch2_hprint(change,	pd->last_change);
 
 	next_io = div64_s64(pd->rate.next - local_clock(), NSEC_PER_MSEC);
 
@@ -349,7 +349,7 @@ size_t bch_pd_controller_print_debug(struct bch_pd_controller *pd, char *buf)
 		       derivative, change, next_io);
 }
 
-void bch_bio_map(struct bio *bio, void *base)
+void bch2_bio_map(struct bio *bio, void *base)
 {
 	size_t size = bio->bi_iter.bi_size;
 	struct bio_vec *bv = bio->bi_io_vec;
@@ -377,7 +377,7 @@ start:		bv->bv_len	= min_t(size_t, PAGE_SIZE - bv->bv_offset,
 	}
 }
 
-size_t bch_rand_range(size_t max)
+size_t bch2_rand_range(size_t max)
 {
 	size_t rand;
 

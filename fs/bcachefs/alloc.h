@@ -20,31 +20,31 @@ static inline size_t prio_buckets(const struct bch_dev *ca)
 	return DIV_ROUND_UP((size_t) (ca)->mi.nbuckets, prios_per_bucket(ca));
 }
 
-void bch_dev_group_remove(struct dev_group *, struct bch_dev *);
-void bch_dev_group_add(struct dev_group *, struct bch_dev *);
+void bch2_dev_group_remove(struct dev_group *, struct bch_dev *);
+void bch2_dev_group_add(struct dev_group *, struct bch_dev *);
 
-int bch_prio_read(struct bch_dev *);
+int bch2_prio_read(struct bch_dev *);
 
-size_t bch_bucket_alloc(struct bch_dev *, enum alloc_reserve);
+size_t bch2_bucket_alloc(struct bch_dev *, enum alloc_reserve);
 
-void bch_open_bucket_put(struct bch_fs *, struct open_bucket *);
+void bch2_open_bucket_put(struct bch_fs *, struct open_bucket *);
 
-struct open_bucket *bch_alloc_sectors_start(struct bch_fs *,
+struct open_bucket *bch2_alloc_sectors_start(struct bch_fs *,
 					    struct write_point *,
 					    unsigned, unsigned,
 					    enum alloc_reserve,
 					    struct closure *);
 
-void bch_alloc_sectors_append_ptrs(struct bch_fs *, struct bkey_i_extent *,
+void bch2_alloc_sectors_append_ptrs(struct bch_fs *, struct bkey_i_extent *,
 				   unsigned, struct open_bucket *, unsigned);
-void bch_alloc_sectors_done(struct bch_fs *, struct write_point *,
+void bch2_alloc_sectors_done(struct bch_fs *, struct write_point *,
 			    struct open_bucket *);
 
-struct open_bucket *bch_alloc_sectors(struct bch_fs *, struct write_point *,
+struct open_bucket *bch2_alloc_sectors(struct bch_fs *, struct write_point *,
 				      struct bkey_i_extent *, unsigned, unsigned,
 				      enum alloc_reserve, struct closure *);
 
-static inline void bch_wake_allocator(struct bch_dev *ca)
+static inline void bch2_wake_allocator(struct bch_dev *ca)
 {
 	struct task_struct *p;
 
@@ -77,9 +77,9 @@ static inline struct bch_dev *dev_group_next(struct dev_group *devs,
 	     (_ptr) < (_ob)->ptrs + (_ob)->nr_ptrs;			\
 	     (_ptr)++)
 
-void bch_recalc_capacity(struct bch_fs *);
-void bch_dev_allocator_stop(struct bch_dev *);
-int bch_dev_allocator_start(struct bch_dev *);
-void bch_fs_allocator_init(struct bch_fs *);
+void bch2_recalc_capacity(struct bch_fs *);
+void bch2_dev_allocator_stop(struct bch_dev *);
+int bch2_dev_allocator_start(struct bch_dev *);
+void bch2_fs_allocator_init(struct bch_fs *);
 
 #endif /* _BCACHE_ALLOC_H */

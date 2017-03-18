@@ -145,8 +145,8 @@ static inline unsigned bucket_sectors_used(struct bucket *g)
 
 /* Per device stats: */
 
-struct bch_dev_usage __bch_dev_usage_read(struct bch_dev *);
-struct bch_dev_usage bch_dev_usage_read(struct bch_dev *);
+struct bch_dev_usage __bch2_dev_usage_read(struct bch_dev *);
+struct bch_dev_usage bch2_dev_usage_read(struct bch_dev *);
 
 static inline u64 __dev_buckets_available(struct bch_dev *ca,
 					  struct bch_dev_usage stats)
@@ -163,7 +163,7 @@ static inline u64 __dev_buckets_available(struct bch_dev *ca,
  */
 static inline u64 dev_buckets_available(struct bch_dev *ca)
 {
-	return __dev_buckets_available(ca, bch_dev_usage_read(ca));
+	return __dev_buckets_available(ca, bch2_dev_usage_read(ca));
 }
 
 static inline u64 __dev_buckets_free(struct bch_dev *ca,
@@ -176,19 +176,19 @@ static inline u64 __dev_buckets_free(struct bch_dev *ca,
 
 static inline u64 dev_buckets_free(struct bch_dev *ca)
 {
-	return __dev_buckets_free(ca, bch_dev_usage_read(ca));
+	return __dev_buckets_free(ca, bch2_dev_usage_read(ca));
 }
 
 /* Cache set stats: */
 
-struct bch_fs_usage __bch_fs_usage_read(struct bch_fs *);
-struct bch_fs_usage bch_fs_usage_read(struct bch_fs *);
-void bch_fs_usage_apply(struct bch_fs *, struct bch_fs_usage *,
+struct bch_fs_usage __bch2_fs_usage_read(struct bch_fs *);
+struct bch_fs_usage bch2_fs_usage_read(struct bch_fs *);
+void bch2_fs_usage_apply(struct bch_fs *, struct bch_fs_usage *,
 			struct disk_reservation *, struct gc_pos);
 
-static inline u64 __bch_fs_sectors_used(struct bch_fs *c)
+static inline u64 __bch2_fs_sectors_used(struct bch_fs *c)
 {
-	struct bch_fs_usage stats = __bch_fs_usage_read(c);
+	struct bch_fs_usage stats = __bch2_fs_usage_read(c);
 	u64 reserved = stats.persistent_reserved +
 		stats.online_reserved;
 
@@ -198,9 +198,9 @@ static inline u64 __bch_fs_sectors_used(struct bch_fs *c)
 		(reserved >> 7);
 }
 
-static inline u64 bch_fs_sectors_used(struct bch_fs *c)
+static inline u64 bch2_fs_sectors_used(struct bch_fs *c)
 {
-	return min(c->capacity, __bch_fs_sectors_used(c));
+	return min(c->capacity, __bch2_fs_sectors_used(c));
 }
 
 /* XXX: kill? */
@@ -233,23 +233,23 @@ static inline bool bucket_needs_journal_commit(struct bucket_mark m,
 		((s16) m.journal_seq - (s16) last_seq_ondisk > 0);
 }
 
-void bch_bucket_seq_cleanup(struct bch_fs *);
+void bch2_bucket_seq_cleanup(struct bch_fs *);
 
-void bch_invalidate_bucket(struct bch_dev *, struct bucket *);
-void bch_mark_free_bucket(struct bch_dev *, struct bucket *);
-void bch_mark_alloc_bucket(struct bch_dev *, struct bucket *, bool);
-void bch_mark_metadata_bucket(struct bch_dev *, struct bucket *,
+void bch2_invalidate_bucket(struct bch_dev *, struct bucket *);
+void bch2_mark_free_bucket(struct bch_dev *, struct bucket *);
+void bch2_mark_alloc_bucket(struct bch_dev *, struct bucket *, bool);
+void bch2_mark_metadata_bucket(struct bch_dev *, struct bucket *,
 			      enum bucket_data_type, bool);
 
-void __bch_gc_mark_key(struct bch_fs *, struct bkey_s_c, s64, bool,
+void __bch2_gc_mark_key(struct bch_fs *, struct bkey_s_c, s64, bool,
 		       struct bch_fs_usage *);
-void bch_gc_mark_key(struct bch_fs *, struct bkey_s_c, s64, bool);
-void bch_mark_key(struct bch_fs *, struct bkey_s_c, s64, bool,
+void bch2_gc_mark_key(struct bch_fs *, struct bkey_s_c, s64, bool);
+void bch2_mark_key(struct bch_fs *, struct bkey_s_c, s64, bool,
 		  struct gc_pos, struct bch_fs_usage *, u64);
 
-void bch_recalc_sectors_available(struct bch_fs *);
+void bch2_recalc_sectors_available(struct bch_fs *);
 
-void bch_disk_reservation_put(struct bch_fs *,
+void bch2_disk_reservation_put(struct bch_fs *,
 			      struct disk_reservation *);
 
 #define BCH_DISK_RESERVATION_NOFAIL		(1 << 0)
@@ -257,10 +257,10 @@ void bch_disk_reservation_put(struct bch_fs *,
 #define BCH_DISK_RESERVATION_GC_LOCK_HELD	(1 << 2)
 #define BCH_DISK_RESERVATION_BTREE_LOCKS_HELD	(1 << 3)
 
-int bch_disk_reservation_add(struct bch_fs *,
+int bch2_disk_reservation_add(struct bch_fs *,
 			     struct disk_reservation *,
 			     unsigned, int);
-int bch_disk_reservation_get(struct bch_fs *,
+int bch2_disk_reservation_get(struct bch_fs *,
 			     struct disk_reservation *,
 			     unsigned, int);
 

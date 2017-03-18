@@ -1,4 +1,4 @@
-#include "bcache.h"
+#include "bcachefs.h"
 #include "clock.h"
 
 #include <linux/freezer.h>
@@ -9,7 +9,7 @@ static inline bool io_timer_cmp(struct io_timer *l, struct io_timer *r)
 	return time_after(l->expire, r->expire);
 }
 
-void bch_io_timer_add(struct io_clock *clock, struct io_timer *timer)
+void bch2_io_timer_add(struct io_clock *clock, struct io_timer *timer)
 {
 	size_t i;
 
@@ -23,7 +23,7 @@ out:
 	spin_unlock(&clock->timer_lock);
 }
 
-void bch_io_timer_del(struct io_clock *clock, struct io_timer *timer)
+void bch2_io_timer_del(struct io_clock *clock, struct io_timer *timer)
 {
 	size_t i;
 
@@ -53,7 +53,7 @@ static void io_clock_wait_fn(struct io_timer *timer)
 	wake_up_process(wait->task);
 }
 
-void bch_io_clock_schedule_timeout(struct io_clock *clock, unsigned long until)
+void bch2_io_clock_schedule_timeout(struct io_clock *clock, unsigned long until)
 {
 	struct io_clock_wait wait;
 
@@ -62,17 +62,17 @@ void bch_io_clock_schedule_timeout(struct io_clock *clock, unsigned long until)
 	wait.timer.fn		= io_clock_wait_fn;
 	wait.task		= current;
 	wait.expired		= 0;
-	bch_io_timer_add(clock, &wait.timer);
+	bch2_io_timer_add(clock, &wait.timer);
 
 	schedule();
 
-	bch_io_timer_del(clock, &wait.timer);
+	bch2_io_timer_del(clock, &wait.timer);
 }
 
 /*
  * _only_ to be used from a kthread
  */
-void bch_kthread_io_clock_wait(struct io_clock *clock,
+void bch2_kthread_io_clock_wait(struct io_clock *clock,
 			       unsigned long until)
 {
 	struct io_clock_wait wait;
@@ -82,7 +82,7 @@ void bch_kthread_io_clock_wait(struct io_clock *clock,
 	wait.timer.fn		= io_clock_wait_fn;
 	wait.task		= current;
 	wait.expired		= 0;
-	bch_io_timer_add(clock, &wait.timer);
+	bch2_io_timer_add(clock, &wait.timer);
 
 	while (1) {
 		set_current_state(TASK_INTERRUPTIBLE);
@@ -97,7 +97,7 @@ void bch_kthread_io_clock_wait(struct io_clock *clock,
 	}
 
 	__set_current_state(TASK_RUNNING);
-	bch_io_timer_del(clock, &wait.timer);
+	bch2_io_timer_del(clock, &wait.timer);
 }
 
 static struct io_timer *get_expired_timer(struct io_clock *clock,
@@ -116,7 +116,7 @@ static struct io_timer *get_expired_timer(struct io_clock *clock,
 	return ret;
 }
 
-void bch_increment_clock(struct bch_fs *c, unsigned sectors, int rw)
+void bch2_increment_clock(struct bch_fs *c, unsigned sectors, int rw)
 {
 	struct io_clock *clock = &c->io_clock[rw];
 	struct io_timer *timer;
@@ -139,13 +139,13 @@ void bch_increment_clock(struct bch_fs *c, unsigned sectors, int rw)
 		timer->fn(timer);
 }
 
-void bch_io_clock_exit(struct io_clock *clock)
+void bch2_io_clock_exit(struct io_clock *clock)
 {
 	free_heap(&clock->timers);
 	free_percpu(clock->pcpu_buf);
 }
 
-int bch_io_clock_init(struct io_clock *clock)
+int bch2_io_clock_init(struct io_clock *clock)
 {
 	atomic_long_set(&clock->now, 0);
 	spin_lock_init(&clock->timer_lock);

@@ -22,7 +22,7 @@ struct migrate_write {
 	struct bch_write_bio	wbio;
 };
 
-void bch_migrate_write_init(struct bch_fs *,
+void bch2_migrate_write_init(struct bch_fs *,
 			    struct migrate_write *,
 			    struct write_point *,
 			    struct bkey_s_c,
@@ -71,17 +71,17 @@ struct moving_io {
 	struct bio_vec		bi_inline_vecs[0];
 };
 
-int bch_data_move(struct bch_fs *,
+int bch2_data_move(struct bch_fs *,
 		  struct moving_context *,
 		  struct write_point *,
 		  struct bkey_s_c,
 		  const struct bch_extent_ptr *);
 
-int bch_move_ctxt_wait(struct moving_context *);
-void bch_move_ctxt_wait_for_io(struct moving_context *);
+int bch2_move_ctxt_wait(struct moving_context *);
+void bch2_move_ctxt_wait_for_io(struct moving_context *);
 
-void bch_move_ctxt_exit(struct moving_context *);
-void bch_move_ctxt_init(struct moving_context *, struct bch_ratelimit *,
+void bch2_move_ctxt_exit(struct moving_context *);
+void bch2_move_ctxt_init(struct moving_context *, struct bch_ratelimit *,
 			unsigned);
 
 #endif /* _BCACHE_MOVE_H */

@@ -20,7 +20,7 @@ static inline sector_t bucket_remainder(const struct bch_dev *ca, sector_t s)
 	return s & (ca->mi.bucket_size - 1);
 }
 
-static inline struct bch_dev *__bch_next_dev(struct bch_fs *c, unsigned *iter)
+static inline struct bch_dev *__bch2_next_dev(struct bch_fs *c, unsigned *iter)
 {
 	struct bch_dev *ca = NULL;
 
@@ -33,17 +33,17 @@ static inline struct bch_dev *__bch_next_dev(struct bch_fs *c, unsigned *iter)
 }
 
 #define __for_each_member_device(ca, c, iter)				\
-	for ((iter) = 0; ((ca) = __bch_next_dev((c), &(iter))); (iter)++)
+	for ((iter) = 0; ((ca) = __bch2_next_dev((c), &(iter))); (iter)++)
 
 #define for_each_member_device_rcu(ca, c, iter)				\
 	__for_each_member_device(ca, c, iter)
 
-static inline struct bch_dev *bch_get_next_dev(struct bch_fs *c, unsigned *iter)
+static inline struct bch_dev *bch2_get_next_dev(struct bch_fs *c, unsigned *iter)
 {
 	struct bch_dev *ca;
 
 	rcu_read_lock();
-	if ((ca = __bch_next_dev(c, iter)))
+	if ((ca = __bch2_next_dev(c, iter)))
 		percpu_ref_get(&ca->ref);
 	rcu_read_unlock();
 
@@ -55,17 +55,17 @@ static inline struct bch_dev *bch_get_next_dev(struct bch_fs *c, unsigned *iter)
  */
 #define for_each_member_device(ca, c, iter)				\
 	for ((iter) = 0;						\
-	     (ca = bch_get_next_dev(c, &(iter)));			\
+	     (ca = bch2_get_next_dev(c, &(iter)));			\
 	     percpu_ref_put(&ca->ref), (iter)++)
 
-static inline struct bch_dev *bch_get_next_online_dev(struct bch_fs *c,
+static inline struct bch_dev *bch2_get_next_online_dev(struct bch_fs *c,
 						      unsigned *iter,
 						      int state_mask)
 {
 	struct bch_dev *ca;
 
 	rcu_read_lock();
-	while ((ca = __bch_next_dev(c, iter)) &&
+	while ((ca = __bch2_next_dev(c, iter)) &&
 	       (!((1 << ca->mi.state) & state_mask) ||
 		!percpu_ref_tryget(&ca->io_ref)))
 		(*iter)++;
@@ -76,7 +76,7 @@ static inline struct bch_dev *bch_get_next_online_dev(struct bch_fs *c,
 
 #define __for_each_online_member(ca, c, iter, state_mask)		\
 	for ((iter) = 0;						\
-	     (ca = bch_get_next_online_dev(c, &(iter), state_mask));	\
+	     (ca = bch2_get_next_online_dev(c, &(iter), state_mask));	\
 	     percpu_ref_put(&ca->io_ref), (iter)++)
 
 #define for_each_online_member(ca, c, iter)				\
@@ -89,42 +89,42 @@ static inline struct bch_dev *bch_get_next_online_dev(struct bch_fs *c,
 	__for_each_online_member(ca, c, iter,				\
 		(1 << BCH_MEMBER_STATE_RW)|(1 << BCH_MEMBER_STATE_RO))
 
-struct bch_fs *bch_bdev_to_fs(struct block_device *);
-struct bch_fs *bch_uuid_to_fs(uuid_le);
-int bch_congested(struct bch_fs *, int);
+struct bch_fs *bch2_bdev_to_fs(struct block_device *);
+struct bch_fs *bch2_uuid_to_fs(uuid_le);
+int bch2_congested(struct bch_fs *, int);
 
-void bch_dev_release(struct kobject *);
+void bch2_dev_release(struct kobject *);
 
-bool bch_dev_state_allowed(struct bch_fs *, struct bch_dev *,
+bool bch2_dev_state_allowed(struct bch_fs *, struct bch_dev *,
 			   enum bch_member_state, int);
-int __bch_dev_set_state(struct bch_fs *, struct bch_dev *,
+int __bch2_dev_set_state(struct bch_fs *, struct bch_dev *,
 			enum bch_member_state, int);
-int bch_dev_set_state(struct bch_fs *, struct bch_dev *,
+int bch2_dev_set_state(struct bch_fs *, struct bch_dev *,
 		      enum bch_member_state, int);
 
-int bch_dev_fail(struct bch_dev *, int);
-int bch_dev_remove(struct bch_fs *, struct bch_dev *, int);
-int bch_dev_add(struct bch_fs *, const char *);
-int bch_dev_online(struct bch_fs *, const char *);
-int bch_dev_offline(struct bch_fs *, struct bch_dev *, int);
-int bch_dev_evacuate(struct bch_fs *, struct bch_dev *);
+int bch2_dev_fail(struct bch_dev *, int);
+int bch2_dev_remove(struct bch_fs *, struct bch_dev *, int);
+int bch2_dev_add(struct bch_fs *, const char *);
+int bch2_dev_online(struct bch_fs *, const char *);
+int bch2_dev_offline(struct bch_fs *, struct bch_dev *, int);
+int bch2_dev_evacuate(struct bch_fs *, struct bch_dev *);
 
-bool bch_fs_emergency_read_only(struct bch_fs *);
-void bch_fs_read_only(struct bch_fs *);
-const char *bch_fs_read_write(struct bch_fs *);
+bool bch2_fs_emergency_read_only(struct bch_fs *);
+void bch2_fs_read_only(struct bch_fs *);
+const char *bch2_fs_read_write(struct bch_fs *);
 
-void bch_fs_release(struct kobject *);
-void bch_fs_stop(struct bch_fs *);
+void bch2_fs_release(struct kobject *);
+void bch2_fs_stop(struct bch_fs *);
 
-const char *bch_fs_start(struct bch_fs *);
-const char *bch_fs_open(char * const *, unsigned, struct bch_opts,
+const char *bch2_fs_start(struct bch_fs *);
+const char *bch2_fs_open(char * const *, unsigned, struct bch_opts,
 			struct bch_fs **);
-const char *bch_fs_open_incremental(const char *path);
+const char *bch2_fs_open_incremental(const char *path);
 
-extern struct kobj_type bch_fs_ktype;
-extern struct kobj_type bch_fs_internal_ktype;
-extern struct kobj_type bch_fs_time_stats_ktype;
-extern struct kobj_type bch_fs_opts_dir_ktype;
-extern struct kobj_type bch_dev_ktype;
+extern struct kobj_type bch2_fs_ktype;
+extern struct kobj_type bch2_fs_internal_ktype;
+extern struct kobj_type bch2_fs_time_stats_ktype;
+extern struct kobj_type bch2_fs_opts_dir_ktype;
+extern struct kobj_type bch2_dev_ktype;
 
 #endif /* _BCACHE_SUPER_H */

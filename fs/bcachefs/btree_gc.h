@@ -5,15 +5,15 @@
 
 enum bkey_type;
 
-void bch_coalesce(struct bch_fs *);
-void bch_gc(struct bch_fs *);
-void bch_gc_thread_stop(struct bch_fs *);
-int bch_gc_thread_start(struct bch_fs *);
-int bch_initial_gc(struct bch_fs *, struct list_head *);
-u8 bch_btree_key_recalc_oldest_gen(struct bch_fs *, struct bkey_s_c);
-u8 bch_btree_mark_key_initial(struct bch_fs *, enum bkey_type,
+void bch2_coalesce(struct bch_fs *);
+void bch2_gc(struct bch_fs *);
+void bch2_gc_thread_stop(struct bch_fs *);
+int bch2_gc_thread_start(struct bch_fs *);
+int bch2_initial_gc(struct bch_fs *, struct list_head *);
+u8 bch2_btree_key_recalc_oldest_gen(struct bch_fs *, struct bkey_s_c);
+u8 bch2_btree_mark_key_initial(struct bch_fs *, enum bkey_type,
 				struct bkey_s_c);
-void bch_mark_dev_metadata(struct bch_fs *, struct bch_dev *);
+void bch2_mark_dev_metadata(struct bch_fs *, struct bch_dev *);
 
 /*
  * For concurrent mark and sweep (with other index updates), we define a total
@@ -28,7 +28,7 @@ void bch_mark_dev_metadata(struct bch_fs *, struct bch_dev *);
  * between the updater adding/removing the reference and updating the GC marks;
  * without that, we would at best double count sometimes.
  *
- * That part is important - whenever calling bch_mark_pointers(), a lock _must_
+ * That part is important - whenever calling bch2_mark_pointers(), a lock _must_
  * be held that prevents GC from passing the position the updater is at.
  *
  * (What about the start of gc, when we're clearing all the marks? GC clears the

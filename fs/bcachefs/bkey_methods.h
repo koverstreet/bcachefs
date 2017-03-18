@@ -62,20 +62,20 @@ struct bkey_ops {
 	bool		is_extents;
 };
 
-const char *bkey_invalid(struct bch_fs *, enum bkey_type, struct bkey_s_c);
-const char *btree_bkey_invalid(struct bch_fs *, struct btree *,
-			       struct bkey_s_c);
+const char *bch2_bkey_invalid(struct bch_fs *, enum bkey_type, struct bkey_s_c);
+const char *bch2_btree_bkey_invalid(struct bch_fs *, struct btree *,
+				    struct bkey_s_c);
 
-void bkey_debugcheck(struct bch_fs *, struct btree *, struct bkey_s_c);
-void bch_val_to_text(struct bch_fs *, enum bkey_type,
-		     char *, size_t, struct bkey_s_c);
-void bch_bkey_val_to_text(struct bch_fs *, enum bkey_type,
-			  char *, size_t, struct bkey_s_c);
+void bch2_bkey_debugcheck(struct bch_fs *, struct btree *, struct bkey_s_c);
+void bch2_val_to_text(struct bch_fs *, enum bkey_type,
+		      char *, size_t, struct bkey_s_c);
+void bch2_bkey_val_to_text(struct bch_fs *, enum bkey_type,
+			   char *, size_t, struct bkey_s_c);
 
-void bch_bkey_swab(enum bkey_type, const struct bkey_format *,
-		   struct bkey_packed *);
+void bch2_bkey_swab(enum bkey_type, const struct bkey_format *,
+		    struct bkey_packed *);
 
-extern const struct bkey_ops *bch_bkey_ops[];
+extern const struct bkey_ops *bch2_bkey_ops[];
 
 #undef DEF_BTREE_ID
 

@@ -1,5 +1,5 @@
 
-#include "bcache.h"
+#include "bcachefs.h"
 #include "bkey_methods.h"
 #include "btree_types.h"
 #include "dirent.h"
@@ -8,19 +8,19 @@
 #include "inode.h"
 #include "xattr.h"
 
-const struct bkey_ops *bch_bkey_ops[] = {
-	[BKEY_TYPE_EXTENTS]	= &bch_bkey_extent_ops,
-	[BKEY_TYPE_INODES]	= &bch_bkey_inode_ops,
-	[BKEY_TYPE_DIRENTS]	= &bch_bkey_dirent_ops,
-	[BKEY_TYPE_XATTRS]	= &bch_bkey_xattr_ops,
-	[BKEY_TYPE_BTREE]	= &bch_bkey_btree_ops,
+const struct bkey_ops *bch2_bkey_ops[] = {
+	[BKEY_TYPE_EXTENTS]	= &bch2_bkey_extent_ops,
+	[BKEY_TYPE_INODES]	= &bch2_bkey_inode_ops,
+	[BKEY_TYPE_DIRENTS]	= &bch2_bkey_dirent_ops,
+	[BKEY_TYPE_XATTRS]	= &bch2_bkey_xattr_ops,
+	[BKEY_TYPE_BTREE]	= &bch2_bkey_btree_ops,
 };
 
 /* Returns string indicating reason for being invalid, or NULL if valid: */
-const char *bkey_invalid(struct bch_fs *c, enum bkey_type type,
+const char *bch2_bkey_invalid(struct bch_fs *c, enum bkey_type type,
 			 struct bkey_s_c k)
 {
-	const struct bkey_ops *ops = bch_bkey_ops[type];
+	const struct bkey_ops *ops = bch2_bkey_ops[type];
 
 	if (k.k->u64s < BKEY_U64s)
 		return "u64s too small";
@@ -52,8 +52,8 @@ const char *bkey_invalid(struct bch_fs *c, enum bkey_type type,
 	}
 }
 
-const char *btree_bkey_invalid(struct bch_fs *c, struct btree *b,
-			       struct bkey_s_c k)
+const char *bch2_btree_bkey_invalid(struct bch_fs *c, struct btree *b,
+				    struct bkey_s_c k)
 {
 	if (bkey_cmp(bkey_start_pos(k.k), b->data->min_key) < 0)
 		return "key before start of btree node";
@@ -64,23 +64,23 @@ const char *btree_bkey_invalid(struct bch_fs *c, struct btree *b,
 	if (k.k->p.snapshot)
 		return "nonzero snapshot";
 
-	return bkey_invalid(c, btree_node_type(b), k);
+	return bch2_bkey_invalid(c, btree_node_type(b), k);
 }
 
-void bkey_debugcheck(struct bch_fs *c, struct btree *b, struct bkey_s_c k)
+void bch2_bkey_debugcheck(struct bch_fs *c, struct btree *b, struct bkey_s_c k)
 {
 	enum bkey_type type = btree_node_type(b);
-	const struct bkey_ops *ops = bch_bkey_ops[type];
+	const struct bkey_ops *ops = bch2_bkey_ops[type];
 	const char *invalid;
 
 	BUG_ON(!k.k->u64s);
 
-	invalid = btree_bkey_invalid(c, b, k);
+	invalid = bch2_btree_bkey_invalid(c, b, k);
 	if (invalid) {
 		char buf[160];
 
-		bch_bkey_val_to_text(c, type, buf, sizeof(buf), k);
-		bch_fs_bug(c, "invalid bkey %s: %s", buf, invalid);
+		bch2_bkey_val_to_text(c, type, buf, sizeof(buf), k);
+		bch2_fs_bug(c, "invalid bkey %s: %s", buf, invalid);
 		return;
 	}
 
@@ -89,23 +89,23 @@ void bkey_debugcheck(struct bch_fs *c, struct btree *b, struct bkey_s_c k)
 		ops->key_debugcheck(c, b, k);
 }
 
-void bch_val_to_text(struct bch_fs *c, enum bkey_type type,
+void bch2_val_to_text(struct bch_fs *c, enum bkey_type type,
 		     char *buf, size_t size, struct bkey_s_c k)
 {
-	const struct bkey_ops *ops = bch_bkey_ops[type];
+	const struct bkey_ops *ops = bch2_bkey_ops[type];
 
 	if (k.k->type >= KEY_TYPE_GENERIC_NR &&
 	    ops->val_to_text)
 		ops->val_to_text(c, buf, size, k);
 }
 
-void bch_bkey_val_to_text(struct bch_fs *c, enum bkey_type type,
+void bch2_bkey_val_to_text(struct bch_fs *c, enum bkey_type type,
 			  char *buf, size_t size, struct bkey_s_c k)
 {
-	const struct bkey_ops *ops = bch_bkey_ops[type];
+	const struct bkey_ops *ops = bch2_bkey_ops[type];
 	char *out = buf, *end = buf + size;
 
-	out += bch_bkey_to_text(out, end - out, k.k);
+	out += bch2_bkey_to_text(out, end - out, k.k);
 
 	if (k.k->type >= KEY_TYPE_GENERIC_NR &&
 	    ops->val_to_text) {
@@ -114,13 +114,13 @@ void bch_bkey_val_to_text(struct bch_fs *c, enum bkey_type type,
 	}
 }
 
-void bch_bkey_swab(enum bkey_type type,
+void bch2_bkey_swab(enum bkey_type type,
 		   const struct bkey_format *f,
 		   struct bkey_packed *k)
 {
-	const struct bkey_ops *ops = bch_bkey_ops[type];
+	const struct bkey_ops *ops = bch2_bkey_ops[type];
 
-	bch_bkey_swab_key(f, k);
+	bch2_bkey_swab_key(f, k);
 
 	if (ops->swab)
 		ops->swab(f, k);

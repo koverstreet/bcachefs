@@ -1,11 +1,11 @@
 /*
- * Assorted bcache debug code
+ * Assorted bcachefs debug code
  *
  * Copyright 2010, 2011 Kent Overstreet <kent.overstreet@gmail.com>
  * Copyright 2012 Google, Inc.
  */
 
-#include "bcache.h"
+#include "bcachefs.h"
 #include "bkey_methods.h"
 #include "btree_cache.h"
 #include "btree_io.h"
@@ -30,7 +30,7 @@ static struct dentry *bch_debug;
 
 #ifdef CONFIG_BCACHEFS_DEBUG
 
-void __bch_btree_verify(struct bch_fs *c, struct btree *b)
+void __bch2_btree_verify(struct bch_fs *c, struct btree *b)
 {
 	struct btree *v = c->verify_data;
 	struct btree_node *n_ondisk, *n_sorted, *n_inmemory;
@@ -52,9 +52,9 @@ void __bch_btree_verify(struct bch_fs *c, struct btree *b)
 	v->written	= 0;
 	v->level	= b->level;
 	v->btree_id	= b->btree_id;
-	bch_btree_keys_init(v, &c->expensive_debug_checks);
+	bch2_btree_keys_init(v, &c->expensive_debug_checks);
 
-	pick = bch_btree_pick_ptr(c, b);
+	pick = bch2_btree_pick_ptr(c, b);
 	if (IS_ERR_OR_NULL(pick.ca))
 		return;
 
@@ -63,7 +63,7 @@ void __bch_btree_verify(struct bch_fs *c, struct btree *b)
 	bio->bi_iter.bi_sector	= pick.ptr.offset;
 	bio->bi_iter.bi_size	= btree_bytes(c);
 	bio_set_op_attrs(bio, REQ_OP_READ, REQ_META|READ_SYNC);
-	bch_bio_map(bio, n_sorted);
+	bch2_bio_map(bio, n_sorted);
 
 	submit_bio_wait(bio);
 
@@ -71,7 +71,7 @@ void __bch_btree_verify(struct bch_fs *c, struct btree *b)
 
 	memcpy(n_ondisk, n_sorted, btree_bytes(c));
 
-	bch_btree_node_read_done(c, v, pick.ca, &pick.ptr);
+	bch2_btree_node_read_done(c, v, pick.ca, &pick.ptr);
 	n_sorted = c->verify_data->data;
 
 	percpu_ref_put(&pick.ca->io_ref);
@@ -90,10 +90,10 @@ void __bch_btree_verify(struct bch_fs *c, struct btree *b)
 		console_lock();
 
 		printk(KERN_ERR "*** in memory:\n");
-		bch_dump_bset(b, inmemory, 0);
+		bch2_dump_bset(b, inmemory, 0);
 
 		printk(KERN_ERR "*** read back in:\n");
-		bch_dump_bset(v, sorted, 0);
+		bch2_dump_bset(v, sorted, 0);
 
 		while (offset < b->written) {
 			if (!offset ) {
@@ -110,7 +110,7 @@ void __bch_btree_verify(struct bch_fs *c, struct btree *b)
 			}
 
 			printk(KERN_ERR "*** on disk block %u:\n", offset);
-			bch_dump_bset(b, i, offset);
+			bch2_dump_bset(b, i, offset);
 
 			offset += sectors;
 		}
@@ -170,7 +170,7 @@ static int flush_buf(struct dump_iter *i)
 	return 0;
 }
 
-static int bch_dump_open(struct inode *inode, struct file *file)
+static int bch2_dump_open(struct inode *inode, struct file *file)
 {
 	struct btree_debug *bd = inode->i_private;
 	struct dump_iter *i;
@@ -187,14 +187,14 @@ static int bch_dump_open(struct inode *inode, struct file *file)
 	return 0;
 }
 
-static int bch_dump_release(struct inode *inode, struct file *file)
+static int bch2_dump_release(struct inode *inode, struct file *file)
 {
 	kfree(file->private_data);
 	return 0;
 }
 
-static ssize_t bch_read_btree(struct file *file, char __user *buf,
-			      size_t size, loff_t *ppos)
+static ssize_t bch2_read_btree(struct file *file, char __user *buf,
+			       size_t size, loff_t *ppos)
 {
 	struct dump_iter *i = file->private_data;
 	struct btree_iter iter;
@@ -212,18 +212,18 @@ static ssize_t bch_read_btree(struct file *file, char __user *buf,
 	if (!i->size)
 		return i->ret;
 
-	bch_btree_iter_init(&iter, i->c, i->id, i->from);
+	bch2_btree_iter_init(&iter, i->c, i->id, i->from);
 
-	while ((k = bch_btree_iter_peek(&iter)).k &&
+	while ((k = bch2_btree_iter_peek(&iter)).k &&
 	       !(err = btree_iter_err(k))) {
-		bch_bkey_val_to_text(i->c, bkey_type(0, i->id),
+		bch2_bkey_val_to_text(i->c, bkey_type(0, i->id),
 				     i->buf, sizeof(i->buf), k);
 		i->bytes = strlen(i->buf);
 		BUG_ON(i->bytes >= PAGE_SIZE);
 		i->buf[i->bytes] = '\n';
 		i->bytes++;
 
-		bch_btree_iter_advance_pos(&iter);
+		bch2_btree_iter_advance_pos(&iter);
 		i->from = iter.pos;
 
 		err = flush_buf(i);
@@ -233,20 +233,20 @@ static ssize_t bch_read_btree(struct file *file, char __user *buf,
 		if (!i->size)
 			break;
 	}
-	bch_btree_iter_unlock(&iter);
+	bch2_btree_iter_unlock(&iter);
 
 	return err < 0 ? err : i->ret;
 }
 
 static const struct file_operations btree_debug_ops = {
 	.owner		= THIS_MODULE,
-	.open		= bch_dump_open,
-	.release	= bch_dump_release,
-	.read		= bch_read_btree,
+	.open		= bch2_dump_open,
+	.release	= bch2_dump_release,
+	.read		= bch2_read_btree,
 };
 
-static ssize_t bch_read_btree_formats(struct file *file, char __user *buf,
-				      size_t size, loff_t *ppos)
+static ssize_t bch2_read_btree_formats(struct file *file, char __user *buf,
+				       size_t size, loff_t *ppos)
 {
 	struct dump_iter *i = file->private_data;
 	struct btree_iter iter;
@@ -265,7 +265,7 @@ static ssize_t bch_read_btree_formats(struct file *file, char __user *buf,
 		return i->ret;
 
 	for_each_btree_node(&iter, i->c, i->id, i->from, 0, b) {
-		i->bytes = bch_print_btree_node(i->c, b, i->buf,
+		i->bytes = bch2_print_btree_node(i->c, b, i->buf,
 						sizeof(i->buf));
 		err = flush_buf(i);
 		if (err)
@@ -282,20 +282,20 @@ static ssize_t bch_read_btree_formats(struct file *file, char __user *buf,
 		if (!i->size)
 			break;
 	}
-	bch_btree_iter_unlock(&iter);
+	bch2_btree_iter_unlock(&iter);
 
 	return err < 0 ? err : i->ret;
 }
 
 static const struct file_operations btree_format_debug_ops = {
 	.owner		= THIS_MODULE,
-	.open		= bch_dump_open,
-	.release	= bch_dump_release,
-	.read		= bch_read_btree_formats,
+	.open		= bch2_dump_open,
+	.release	= bch2_dump_release,
+	.read		= bch2_read_btree_formats,
 };
 
-static ssize_t bch_read_bfloat_failed(struct file *file, char __user *buf,
-				      size_t size, loff_t *ppos)
+static ssize_t bch2_read_bfloat_failed(struct file *file, char __user *buf,
+				       size_t size, loff_t *ppos)
 {
 	struct dump_iter *i = file->private_data;
 	struct btree_iter iter;
@@ -314,16 +314,16 @@ static ssize_t bch_read_bfloat_failed(struct file *file, char __user *buf,
 	if (!i->size)
 		return i->ret;
 
-	bch_btree_iter_init(&iter, i->c, i->id, i->from);
+	bch2_btree_iter_init(&iter, i->c, i->id, i->from);
 
-	while ((k = bch_btree_iter_peek(&iter)).k &&
+	while ((k = bch2_btree_iter_peek(&iter)).k &&
 	       !(err = btree_iter_err(k))) {
 		struct btree *b = iter.nodes[0];
 		struct btree_node_iter *node_iter = &iter.node_iters[0];
-		struct bkey_packed *_k = bch_btree_node_iter_peek(node_iter, b);
+		struct bkey_packed *_k = bch2_btree_node_iter_peek(node_iter, b);
 
 		if (iter.nodes[0] != prev_node) {
-			i->bytes = bch_print_btree_node(i->c, b, i->buf,
+			i->bytes = bch2_print_btree_node(i->c, b, i->buf,
 							sizeof(i->buf));
 			err = flush_buf(i);
 			if (err)
@@ -331,13 +331,13 @@ static ssize_t bch_read_bfloat_failed(struct file *file, char __user *buf,
 		}
 		prev_node = iter.nodes[0];
 
-		i->bytes = bch_bkey_print_bfloat(b, _k, i->buf, sizeof(i->buf));
+		i->bytes = bch2_bkey_print_bfloat(b, _k, i->buf, sizeof(i->buf));
 
 		err = flush_buf(i);
 		if (err)
 			break;
 
-		bch_btree_iter_advance_pos(&iter);
+		bch2_btree_iter_advance_pos(&iter);
 		i->from = iter.pos;
 
 		err = flush_buf(i);
@@ -347,25 +347,25 @@ static ssize_t bch_read_bfloat_failed(struct file *file, char __user *buf,
 		if (!i->size)
 			break;
 	}
-	bch_btree_iter_unlock(&iter);
+	bch2_btree_iter_unlock(&iter);
 
 	return err < 0 ? err : i->ret;
 }
 
 static const struct file_operations bfloat_failed_debug_ops = {
 	.owner		= THIS_MODULE,
-	.open		= bch_dump_open,
-	.release	= bch_dump_release,
-	.read		= bch_read_bfloat_failed,
+	.open		= bch2_dump_open,
+	.release	= bch2_dump_release,
+	.read		= bch2_read_bfloat_failed,
 };
 
-void bch_fs_debug_exit(struct bch_fs *c)
+void bch2_fs_debug_exit(struct bch_fs *c)
 {
 	if (!IS_ERR_OR_NULL(c->debug))
 		debugfs_remove_recursive(c->debug);
 }
 
-void bch_fs_debug_init(struct bch_fs *c)
+void bch2_fs_debug_init(struct bch_fs *c)
 {
 	struct btree_debug *bd;
 	char name[100];
@@ -382,18 +382,18 @@ void bch_fs_debug_init(struct bch_fs *c)
 	     bd < c->btree_debug + ARRAY_SIZE(c->btree_debug);
 	     bd++) {
 		bd->id = bd - c->btree_debug;
-		bd->btree = debugfs_create_file(bch_btree_ids[bd->id],
+		bd->btree = debugfs_create_file(bch2_btree_ids[bd->id],
 						0400, c->debug, bd,
 						&btree_debug_ops);
 
 		snprintf(name, sizeof(name), "%s-formats",
-			 bch_btree_ids[bd->id]);
+			 bch2_btree_ids[bd->id]);
 
 		bd->btree_format = debugfs_create_file(name, 0400, c->debug, bd,
 						       &btree_format_debug_ops);
 
 		snprintf(name, sizeof(name), "%s-bfloat-failed",
-			 bch_btree_ids[bd->id]);
+			 bch2_btree_ids[bd->id]);
 
 		bd->failed = debugfs_create_file(name, 0400, c->debug, bd,
 						 &bfloat_failed_debug_ops);
@@ -402,16 +402,16 @@ void bch_fs_debug_init(struct bch_fs *c)
 
 #endif
 
-void bch_debug_exit(void)
+void bch2_debug_exit(void)
 {
 	if (!IS_ERR_OR_NULL(bch_debug))
 		debugfs_remove_recursive(bch_debug);
 }
 
-int __init bch_debug_init(void)
+int __init bch2_debug_init(void)
 {
 	int ret = 0;
 
-	bch_debug = debugfs_create_dir("bcache", NULL);
+	bch_debug = debugfs_create_dir("bcachefs", NULL);
 	return ret;
 }

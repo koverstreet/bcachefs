@@ -6,13 +6,13 @@
 #include <linux/string.h>
 #include "bcachefs_format.h"
 
-extern const char * const bch_error_actions[];
-extern const char * const bch_csum_types[];
-extern const char * const bch_compression_types[];
-extern const char * const bch_str_hash_types[];
-extern const char * const bch_cache_replacement_policies[];
-extern const char * const bch_cache_modes[];
-extern const char * const bch_dev_state[];
+extern const char * const bch2_error_actions[];
+extern const char * const bch2_csum_types[];
+extern const char * const bch2_compression_types[];
+extern const char * const bch2_str_hash_types[];
+extern const char * const bch2_cache_replacement_policies[];
+extern const char * const bch2_cache_modes[];
+extern const char * const bch2_dev_state[];
 
 /*
  * Mount options; we also store defaults in the superblock.
@@ -22,7 +22,7 @@ extern const char * const bch_dev_state[];
  * updates the superblock.
  *
  * We store options as signed integers, where -1 means undefined. This means we
- * can pass the mount options to bch_fs_alloc() as a whole struct, and then only
+ * can pass the mount options to bch2_fs_alloc() as a whole struct, and then only
  * apply the options from that struct that are defined.
  */
 
@@ -50,7 +50,7 @@ enum opt_type {
 
 #define BCH_VISIBLE_OPTS()						\
 	BCH_OPT(errors,			0644,	BCH_SB_ERROR_ACTION,	\
-		s8,  OPT_STR(bch_error_actions))			\
+		s8,  OPT_STR(bch2_error_actions))			\
 	BCH_OPT(metadata_replicas,	0444,	BCH_SB_META_REPLICAS_WANT,\
 		s8,  OPT_UINT(1, BCH_REPLICAS_MAX))			\
 	BCH_OPT(data_replicas,		0444,	BCH_SB_DATA_REPLICAS_WANT,\
@@ -60,13 +60,13 @@ enum opt_type {
 	BCH_OPT(data_replicas_required,	0444,	BCH_SB_DATA_REPLICAS_REQ,\
 		s8,  OPT_UINT(1, BCH_REPLICAS_MAX))			\
 	BCH_OPT(metadata_checksum,	0644,	BCH_SB_META_CSUM_TYPE,	\
-		s8,  OPT_STR(bch_csum_types))				\
+		s8,  OPT_STR(bch2_csum_types))				\
 	BCH_OPT(data_checksum,		0644,	BCH_SB_DATA_CSUM_TYPE,	\
-		s8,  OPT_STR(bch_csum_types))				\
+		s8,  OPT_STR(bch2_csum_types))				\
 	BCH_OPT(compression,		0644,	BCH_SB_COMPRESSION_TYPE,\
-		s8,  OPT_STR(bch_compression_types))			\
+		s8,  OPT_STR(bch2_compression_types))			\
 	BCH_OPT(str_hash,		0644,	BCH_SB_STR_HASH_TYPE,	\
-		s8,  OPT_STR(bch_str_hash_types))			\
+		s8,  OPT_STR(bch2_str_hash_types))			\
 	BCH_OPT(inodes_32bit,		0644,	BCH_SB_INODE_32BIT,	\
 		s8,  OPT_BOOL())					\
 	BCH_OPT(gc_reserve_percent,	0444,	BCH_SB_GC_RESERVE,	\
@@ -135,9 +135,9 @@ struct bch_option {
 
 };
 
-extern const struct bch_option bch_opt_table[];
+extern const struct bch_option bch2_opt_table[];
 
-static inline struct bch_opts bch_opts_empty(void)
+static inline struct bch_opts bch2_opts_empty(void)
 {
 	struct bch_opts ret;
 
@@ -145,7 +145,7 @@ static inline struct bch_opts bch_opts_empty(void)
 	return ret;
 }
 
-static inline void bch_opts_apply(struct bch_opts *dst, struct bch_opts src)
+static inline void bch2_opts_apply(struct bch_opts *dst, struct bch_opts src)
 {
 #define BCH_OPT(_name, ...)			\
 	if (src._name >= 0)						\
@@ -157,12 +157,12 @@ static inline void bch_opts_apply(struct bch_opts *dst, struct bch_opts src)
 
 #define opt_defined(_opt)		((_opt) >= 0)
 
-void bch_opt_set(struct bch_opts *, enum bch_opt_id, u64);
-struct bch_opts bch_sb_opts(struct bch_sb *);
+void bch2_opt_set(struct bch_opts *, enum bch_opt_id, u64);
+struct bch_opts bch2_sb_opts(struct bch_sb *);
 
-int bch_parse_mount_opts(struct bch_opts *, char *);
-enum bch_opt_id bch_parse_sysfs_opt(const char *, const char *, u64 *);
+int bch2_parse_mount_opts(struct bch_opts *, char *);
+enum bch_opt_id bch2_parse_sysfs_opt(const char *, const char *, u64 *);
 
-ssize_t bch_opt_show(struct bch_opts *, const char *, char *, size_t);
+ssize_t bch2_opt_show(struct bch_opts *, const char *, char *, size_t);
 
 #endif /* _BCACHE_OPTS_H */

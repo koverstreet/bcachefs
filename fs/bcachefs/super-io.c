@@ -1,5 +1,5 @@
 
-#include "bcache.h"
+#include "bcachefs.h"
 #include "checksum.h"
 #include "error.h"
 #include "io.h"
@@ -11,12 +11,12 @@
 #include <linux/backing-dev.h>
 #include <linux/sort.h>
 
-static inline void __bch_sb_layout_size_assert(void)
+static inline void __bch2_sb_layout_size_assert(void)
 {
 	BUILD_BUG_ON(sizeof(struct bch_sb_layout) != 512);
 }
 
-struct bch_sb_field *bch_sb_field_get(struct bch_sb *sb,
+struct bch_sb_field *bch2_sb_field_get(struct bch_sb *sb,
 				      enum bch_sb_field_type type)
 {
 	struct bch_sb_field *f;
@@ -29,7 +29,7 @@ struct bch_sb_field *bch_sb_field_get(struct bch_sb *sb,
 	return NULL;
 }
 
-void bch_free_super(struct bcache_superblock *sb)
+void bch2_free_super(struct bcache_superblock *sb)
 {
 	if (sb->bio)
 		bio_put(sb->bio);
@@ -40,7 +40,7 @@ void bch_free_super(struct bcache_superblock *sb)
 	memset(sb, 0, sizeof(*sb));
 }
 
-static int __bch_super_realloc(struct bcache_superblock *sb, unsigned order)
+static int __bch2_super_realloc(struct bcache_superblock *sb, unsigned order)
 {
 	struct bch_sb *new_sb;
 	struct bio *bio;
@@ -48,7 +48,7 @@ static int __bch_super_realloc(struct bcache_superblock *sb, unsigned order)
 	if (sb->page_order >= order && sb->sb)
 		return 0;
 
-	if (dynamic_fault("bcache:add:super_realloc"))
+	if (dynamic_fault("bcachefs:add:super_realloc"))
 		return -ENOMEM;
 
 	bio = bio_kmalloc(GFP_KERNEL, 1 << order);
@@ -74,7 +74,7 @@ static int __bch_super_realloc(struct bcache_superblock *sb, unsigned order)
 	return 0;
 }
 
-static int bch_sb_realloc(struct bcache_superblock *sb, unsigned u64s)
+static int bch2_sb_realloc(struct bcache_superblock *sb, unsigned u64s)
 {
 	u64 new_bytes = __vstruct_bytes(struct bch_sb, u64s);
 	u64 max_bytes = 512 << sb->sb->layout.sb_max_size_bits;
@@ -87,10 +87,10 @@ static int bch_sb_realloc(struct bcache_superblock *sb, unsigned u64s)
 		return -ENOSPC;
 	}
 
-	return __bch_super_realloc(sb, get_order(new_bytes));
+	return __bch2_super_realloc(sb, get_order(new_bytes));
 }
 
-static int bch_fs_sb_realloc(struct bch_fs *c, unsigned u64s)
+static int bch2_fs_sb_realloc(struct bch_fs *c, unsigned u64s)
 {
 	u64 bytes = __vstruct_bytes(struct bch_sb, u64s);
 	struct bch_sb *sb;
@@ -113,7 +113,7 @@ static int bch_fs_sb_realloc(struct bch_fs *c, unsigned u64s)
 	return 0;
 }
 
-static struct bch_sb_field *__bch_sb_field_resize(struct bch_sb *sb,
+static struct bch_sb_field *__bch2_sb_field_resize(struct bch_sb *sb,
 						  struct bch_sb_field *f,
 						  unsigned u64s)
 {
@@ -142,27 +142,27 @@ static struct bch_sb_field *__bch_sb_field_resize(struct bch_sb *sb,
 	return f;
 }
 
-struct bch_sb_field *bch_sb_field_resize(struct bcache_superblock *sb,
+struct bch_sb_field *bch2_sb_field_resize(struct bcache_superblock *sb,
 					 enum bch_sb_field_type type,
 					 unsigned u64s)
 {
-	struct bch_sb_field *f = bch_sb_field_get(sb->sb, type);
+	struct bch_sb_field *f = bch2_sb_field_get(sb->sb, type);
 	ssize_t old_u64s = f ? le32_to_cpu(f->u64s) : 0;
 	ssize_t d = -old_u64s + u64s;
 
-	if (bch_sb_realloc(sb, le32_to_cpu(sb->sb->u64s) + d))
+	if (bch2_sb_realloc(sb, le32_to_cpu(sb->sb->u64s) + d))
 		return NULL;
 
-	f = __bch_sb_field_resize(sb->sb, f, u64s);
+	f = __bch2_sb_field_resize(sb->sb, f, u64s);
 	f->type = type;
 	return f;
 }
 
-struct bch_sb_field *bch_fs_sb_field_resize(struct bch_fs *c,
+struct bch_sb_field *bch2_fs_sb_field_resize(struct bch_fs *c,
 					    enum bch_sb_field_type type,
 					    unsigned u64s)
 {
-	struct bch_sb_field *f = bch_sb_field_get(c->disk_sb, type);
+	struct bch_sb_field *f = bch2_sb_field_get(c->disk_sb, type);
 	ssize_t old_u64s = f ? le32_to_cpu(f->u64s) : 0;
 	ssize_t d = -old_u64s + u64s;
 	struct bch_dev *ca;
@@ -170,7 +170,7 @@ struct bch_sb_field *bch_fs_sb_field_resize(struct bch_fs *c,
 
 	lockdep_assert_held(&c->sb_lock);
 
-	if (bch_fs_sb_realloc(c, le32_to_cpu(c->disk_sb->u64s) + d))
+	if (bch2_fs_sb_realloc(c, le32_to_cpu(c->disk_sb->u64s) + d))
 		return NULL;
 
 	/* XXX: we're not checking that offline device have enough space */
@@ -178,13 +178,13 @@ struct bch_sb_field *bch_fs_sb_field_resize(struct bch_fs *c,
 	for_each_online_member(ca, c, i) {
 		struct bcache_superblock *sb = &ca->disk_sb;
 
-		if (bch_sb_realloc(sb, le32_to_cpu(sb->sb->u64s) + d)) {
+		if (bch2_sb_realloc(sb, le32_to_cpu(sb->sb->u64s) + d)) {
 			percpu_ref_put(&ca->ref);
 			return NULL;
 		}
 	}
 
-	f = __bch_sb_field_resize(c->disk_sb, f, u64s);
+	f = __bch2_sb_field_resize(c->disk_sb, f, u64s);
 	f->type = type;
 	return f;
 }
@@ -195,7 +195,7 @@ static const char *validate_sb_layout(struct bch_sb_layout *layout)
 	unsigned i;
 
 	if (uuid_le_cmp(layout->magic, BCACHE_MAGIC))
-		return "Not a bcache superblock layout";
+		return "Not a bcachefs superblock layout";
 
 	if (layout->layout_type != 0)
 		return "Invalid superblock layout type";
@@ -228,7 +228,7 @@ static int u64_cmp(const void *_l, const void *_r)
 	return l < r ? -1 : l > r ? 1 : 0;
 }
 
-const char *bch_validate_journal_layout(struct bch_sb *sb,
+const char *bch2_validate_journal_layout(struct bch_sb *sb,
 					struct bch_member_cpu mi)
 {
 	struct bch_sb_field_journal *journal;
@@ -237,11 +237,11 @@ const char *bch_validate_journal_layout(struct bch_sb *sb,
 	unsigned i;
 	u64 *b;
 
-	journal = bch_sb_get_journal(sb);
+	journal = bch2_sb_get_journal(sb);
 	if (!journal)
 		return NULL;
 
-	nr = bch_nr_journal_buckets(journal);
+	nr = bch2_nr_journal_buckets(journal);
 	if (!nr)
 		return NULL;
 
@@ -277,12 +277,12 @@ err:
 	return err;
 }
 
-static const char *bch_sb_validate_members(struct bch_sb *sb)
+static const char *bch2_sb_validate_members(struct bch_sb *sb)
 {
 	struct bch_sb_field_members *mi;
 	unsigned i;
 
-	mi = bch_sb_get_members(sb);
+	mi = bch2_sb_get_members(sb);
 	if (!mi)
 		return "Invalid superblock: member info area missing";
 
@@ -291,7 +291,7 @@ static const char *bch_sb_validate_members(struct bch_sb *sb)
 		return "Invalid superblock: bad member info";
 
 	for (i = 0; i < sb->nr_devices; i++) {
-		if (bch_is_zero(mi->members[i].uuid.b, sizeof(uuid_le)))
+		if (bch2_is_zero(mi->members[i].uuid.b, sizeof(uuid_le)))
 			continue;
 
 		if (le16_to_cpu(mi->members[i].bucket_size) <
@@ -302,7 +302,7 @@ static const char *bch_sb_validate_members(struct bch_sb *sb)
 	return NULL;
 }
 
-const char *bch_validate_cache_super(struct bcache_superblock *disk_sb)
+const char *bch2_validate_cache_super(struct bcache_superblock *disk_sb)
 {
 	struct bch_sb *sb = disk_sb->sb;
 	struct bch_sb_field *f;
@@ -328,10 +328,10 @@ const char *bch_validate_cache_super(struct bcache_superblock *disk_sb)
 	    block_size > PAGE_SECTORS)
 		return "Bad block size";
 
-	if (bch_is_zero(sb->user_uuid.b, sizeof(uuid_le)))
+	if (bch2_is_zero(sb->user_uuid.b, sizeof(uuid_le)))
 		return "Bad user UUID";
 
-	if (bch_is_zero(sb->uuid.b, sizeof(uuid_le)))
+	if (bch2_is_zero(sb->uuid.b, sizeof(uuid_le)))
 		return "Bad internal UUID";
 
 	if (!sb->nr_devices ||
@@ -404,12 +404,12 @@ const char *bch_validate_cache_super(struct bcache_superblock *disk_sb)
 			return "Invalid superblock: unknown optional field type";
 	}
 
-	err = bch_sb_validate_members(sb);
+	err = bch2_sb_validate_members(sb);
 	if (err)
 		return err;
 
-	sb_mi = bch_sb_get_members(sb);
-	mi = bch_mi_to_cpu(sb_mi->members + sb->dev_idx);
+	sb_mi = bch2_sb_get_members(sb);
+	mi = bch2_mi_to_cpu(sb_mi->members + sb->dev_idx);
 
 	if (mi.nbuckets > LONG_MAX)
 		return "Too many buckets";
@@ -426,7 +426,7 @@ const char *bch_validate_cache_super(struct bcache_superblock *disk_sb)
 	    mi.bucket_size * mi.nbuckets)
 		return "Invalid superblock: device too small";
 
-	err = bch_validate_journal_layout(sb, mi);
+	err = bch2_validate_journal_layout(sb, mi);
 	if (err)
 		return err;
 
@@ -435,7 +435,7 @@ const char *bch_validate_cache_super(struct bcache_superblock *disk_sb)
 
 /* device open: */
 
-static const char *bch_blkdev_open(const char *path, fmode_t mode,
+static const char *bch2_blkdev_open(const char *path, fmode_t mode,
 				   void *holder, struct block_device **ret)
 {
 	struct block_device *bdev;
@@ -456,10 +456,10 @@ static const char *bch_blkdev_open(const char *path, fmode_t mode,
 	return NULL;
 }
 
-static void bch_sb_update(struct bch_fs *c)
+static void bch2_sb_update(struct bch_fs *c)
 {
 	struct bch_sb *src = c->disk_sb;
-	struct bch_sb_field_members *mi = bch_sb_get_members(src);
+	struct bch_sb_field_members *mi = bch2_sb_get_members(src);
 	struct bch_dev *ca;
 	unsigned i;
 
@@ -480,7 +480,7 @@ static void bch_sb_update(struct bch_fs *c)
 	c->sb.time_precision	= le32_to_cpu(src->time_precision);
 
 	for_each_member_device(ca, c, i)
-		ca->mi = bch_mi_to_cpu(mi->members + i);
+		ca->mi = bch2_mi_to_cpu(mi->members + i);
 }
 
 /* doesn't copy member info */
@@ -509,45 +509,45 @@ static void __copy_super(struct bch_sb *dst, struct bch_sb *src)
 		if (src_f->type == BCH_SB_FIELD_journal)
 			continue;
 
-		dst_f = bch_sb_field_get(dst, src_f->type);
-		dst_f = __bch_sb_field_resize(dst, dst_f,
+		dst_f = bch2_sb_field_get(dst, src_f->type);
+		dst_f = __bch2_sb_field_resize(dst, dst_f,
 				le32_to_cpu(src_f->u64s));
 
 		memcpy(dst_f, src_f, vstruct_bytes(src_f));
 	}
 }
 
-int bch_sb_to_fs(struct bch_fs *c, struct bch_sb *src)
+int bch2_sb_to_fs(struct bch_fs *c, struct bch_sb *src)
 {
 	struct bch_sb_field_journal *journal_buckets =
-		bch_sb_get_journal(src);
+		bch2_sb_get_journal(src);
 	unsigned journal_u64s = journal_buckets
 		? le32_to_cpu(journal_buckets->field.u64s)
 		: 0;
 
 	lockdep_assert_held(&c->sb_lock);
 
-	if (bch_fs_sb_realloc(c, le32_to_cpu(src->u64s) - journal_u64s))
+	if (bch2_fs_sb_realloc(c, le32_to_cpu(src->u64s) - journal_u64s))
 		return -ENOMEM;
 
 	__copy_super(c->disk_sb, src);
-	bch_sb_update(c);
+	bch2_sb_update(c);
 
 	return 0;
 }
 
-int bch_sb_from_fs(struct bch_fs *c, struct bch_dev *ca)
+int bch2_sb_from_fs(struct bch_fs *c, struct bch_dev *ca)
 {
 	struct bch_sb *src = c->disk_sb, *dst = ca->disk_sb.sb;
 	struct bch_sb_field_journal *journal_buckets =
-		bch_sb_get_journal(dst);
+		bch2_sb_get_journal(dst);
 	unsigned journal_u64s = journal_buckets
 		? le32_to_cpu(journal_buckets->field.u64s)
 		: 0;
 	unsigned u64s = le32_to_cpu(src->u64s) + journal_u64s;
 	int ret;
 
-	ret = bch_sb_realloc(&ca->disk_sb, u64s);
+	ret = bch2_sb_realloc(&ca->disk_sb, u64s);
 	if (ret)
 		return ret;
 
@@ -569,13 +569,13 @@ reread:
 	sb->bio->bi_iter.bi_sector = offset;
 	sb->bio->bi_iter.bi_size = PAGE_SIZE << sb->page_order;
 	bio_set_op_attrs(sb->bio, REQ_OP_READ, REQ_SYNC|REQ_META);
-	bch_bio_map(sb->bio, sb->sb);
+	bch2_bio_map(sb->bio, sb->sb);
 
 	if (submit_bio_wait(sb->bio))
 		return "IO error";
 
 	if (uuid_le_cmp(sb->sb->magic, BCACHE_MAGIC))
-		return "Not a bcache superblock";
+		return "Not a bcachefs superblock";
 
 	if (le64_to_cpu(sb->sb->version) != BCACHE_SB_VERSION_CDEV_V4)
 		return "Unsupported superblock version";
@@ -587,7 +587,7 @@ reread:
 
 	order = get_order(bytes);
 	if (order > sb->page_order) {
-		if (__bch_super_realloc(sb, order))
+		if (__bch2_super_realloc(sb, order))
 			return "cannot allocate memory";
 		goto reread;
 	}
@@ -599,13 +599,13 @@ reread:
 	csum = csum_vstruct(NULL, BCH_SB_CSUM_TYPE(sb->sb),
 			    (struct nonce) { 0 }, sb->sb);
 
-	if (bch_crc_cmp(csum, sb->sb->csum))
+	if (bch2_crc_cmp(csum, sb->sb->csum))
 		return "bad checksum reading superblock";
 
 	return NULL;
 }
 
-const char *bch_read_super(struct bcache_superblock *sb,
+const char *bch2_read_super(struct bcache_superblock *sb,
 			   struct bch_opts opts,
 			   const char *path)
 {
@@ -623,16 +623,16 @@ const char *bch_read_super(struct bcache_superblock *sb,
 	if (!(opt_defined(opts.nochanges) && opts.nochanges))
 		sb->mode |= FMODE_WRITE;
 
-	err = bch_blkdev_open(path, sb->mode, sb, &sb->bdev);
+	err = bch2_blkdev_open(path, sb->mode, sb, &sb->bdev);
 	if (err)
 		return err;
 
 	err = "cannot allocate memory";
-	if (__bch_super_realloc(sb, 0))
+	if (__bch2_super_realloc(sb, 0))
 		goto err;
 
 	err = "dynamic fault";
-	if (bch_fs_init_fault("read_super"))
+	if (bch2_fs_init_fault("read_super"))
 		goto err;
 
 	err = read_one_super(sb, offset);
@@ -659,7 +659,7 @@ const char *bch_read_super(struct bcache_superblock *sb,
 	 * use sb buffer to read layout, since sb buffer is page aligned but
 	 * layout won't be:
 	 */
-	bch_bio_map(sb->bio, sb->sb);
+	bch2_bio_map(sb->bio, sb->sb);
 
 	err = "IO error";
 	if (submit_bio_wait(sb->bio))
@@ -695,7 +695,7 @@ got_super:
 
 	return NULL;
 err:
-	bch_free_super(sb);
+	bch2_free_super(sb);
 	return err;
 }
 
@@ -707,7 +707,7 @@ static void write_super_endio(struct bio *bio)
 
 	/* XXX: return errors directly */
 
-	bch_dev_fatal_io_err_on(bio->bi_error, ca, "superblock write");
+	bch2_dev_fatal_io_err_on(bio->bi_error, ca, "superblock write");
 
 	closure_put(&ca->fs->sb_write);
 	percpu_ref_put(&ca->io_ref);
@@ -739,13 +739,13 @@ static bool write_one_super(struct bch_fs *c, struct bch_dev *ca, unsigned idx)
 	bio->bi_end_io		= write_super_endio;
 	bio->bi_private		= ca;
 	bio_set_op_attrs(bio, REQ_OP_WRITE, REQ_SYNC|REQ_META);
-	bch_bio_map(bio, sb);
+	bch2_bio_map(bio, sb);
 
 	closure_bio_submit(bio, &c->sb_write);
 	return true;
 }
 
-void bch_write_super(struct bch_fs *c)
+void bch2_write_super(struct bch_fs *c)
 {
 	struct closure *cl = &c->sb_write;
 	struct bch_dev *ca;
@@ -759,7 +759,7 @@ void bch_write_super(struct bch_fs *c)
 	le64_add_cpu(&c->disk_sb->seq, 1);
 
 	for_each_online_member(ca, c, i)
-		bch_sb_from_fs(c, ca);
+		bch2_sb_from_fs(c, ca);
 
 	if (c->opts.nochanges)
 		goto out;
@@ -775,10 +775,10 @@ void bch_write_super(struct bch_fs *c)
 	} while (wrote);
 out:
 	/* Make new options visible after they're persistent: */
-	bch_sb_update(c);
+	bch2_sb_update(c);
 }
 
-void bch_check_mark_super_slowpath(struct bch_fs *c, const struct bkey_i *k,
+void bch2_check_mark_super_slowpath(struct bch_fs *c, const struct bkey_i *k,
 				   bool meta)
 {
 	struct bch_member *mi;
@@ -789,12 +789,12 @@ void bch_check_mark_super_slowpath(struct bch_fs *c, const struct bkey_i *k,
 	mutex_lock(&c->sb_lock);
 
 	/* recheck, might have raced */
-	if (bch_check_super_marked(c, k, meta)) {
+	if (bch2_check_super_marked(c, k, meta)) {
 		mutex_unlock(&c->sb_lock);
 		return;
 	}
 
-	mi = bch_sb_get_members(c->disk_sb)->members;
+	mi = bch2_sb_get_members(c->disk_sb)->members;
 
 	extent_for_each_ptr(e, ptr)
 		if (!ptr->cached) {
@@ -812,6 +812,6 @@ void bch_check_mark_super_slowpath(struct bch_fs *c, const struct bkey_i *k,
 	 ? SET_BCH_SB_META_REPLICAS_HAVE
 	 : SET_BCH_SB_DATA_REPLICAS_HAVE)(c->disk_sb, nr_replicas);
 
-	bch_write_super(c);
+	bch2_write_super(c);
 	mutex_unlock(&c->sb_lock);
 }

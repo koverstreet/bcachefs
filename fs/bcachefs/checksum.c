@@ -1,5 +1,4 @@
-
-#include "bcache.h"
+#include "bcachefs.h"
 #include "checksum.h"
 #include "super.h"
 #include "super-io.h"
@@ -125,7 +124,7 @@ static const u64 crc_table[256] = {
 	0x9AFCE626CE85B507ULL,
 };
 
-u64 bch_crc64_update(u64 crc, const void *_data, size_t len)
+u64 bch2_crc64_update(u64 crc, const void *_data, size_t len)
 {
 	const unsigned char *data = _data;
 
@@ -137,7 +136,7 @@ u64 bch_crc64_update(u64 crc, const void *_data, size_t len)
 	return crc;
 }
 
-static u64 bch_checksum_init(unsigned type)
+static u64 bch2_checksum_init(unsigned type)
 {
 	switch (type) {
 	case BCH_CSUM_NONE:
@@ -151,7 +150,7 @@ static u64 bch_checksum_init(unsigned type)
 	}
 }
 
-static u64 bch_checksum_final(unsigned type, u64 crc)
+static u64 bch2_checksum_final(unsigned type, u64 crc)
 {
 	switch (type) {
 	case BCH_CSUM_NONE:
@@ -165,7 +164,7 @@ static u64 bch_checksum_final(unsigned type, u64 crc)
 	}
 }
 
-static u64 bch_checksum_update(unsigned type, u64 crc, const void *data, size_t len)
+static u64 bch2_checksum_update(unsigned type, u64 crc, const void *data, size_t len)
 {
 	switch (type) {
 	case BCH_CSUM_NONE:
@@ -173,7 +172,7 @@ static u64 bch_checksum_update(unsigned type, u64 crc, const void *data, size_t 
 	case BCH_CSUM_CRC32C:
 		return crc32c(crc, data, len);
 	case BCH_CSUM_CRC64:
-		return bch_crc64_update(crc, data, len);
+		return bch2_crc64_update(crc, data, len);
 	default:
 		BUG();
 	}
@@ -200,7 +199,7 @@ static inline void do_encrypt(struct crypto_blkcipher *tfm,
 	do_encrypt_sg(tfm, nonce, &sg, len);
 }
 
-int bch_chacha_encrypt_key(struct bch_key *key, struct nonce nonce,
+int bch2_chacha_encrypt_key(struct bch_key *key, struct nonce nonce,
 			   void *buf, size_t len)
 {
 	struct crypto_blkcipher *chacha20 =
@@ -236,17 +235,17 @@ static void gen_poly_key(struct bch_fs *c, struct shash_desc *desc,
 	crypto_shash_update(desc, key, sizeof(key));
 }
 
-struct bch_csum bch_checksum(struct bch_fs *c, unsigned type,
-			     struct nonce nonce, const void *data, size_t len)
+struct bch_csum bch2_checksum(struct bch_fs *c, unsigned type,
+			      struct nonce nonce, const void *data, size_t len)
 {
 	switch (type) {
 	case BCH_CSUM_NONE:
 	case BCH_CSUM_CRC32C:
 	case BCH_CSUM_CRC64: {
-		u64 crc = bch_checksum_init(type);
+		u64 crc = bch2_checksum_init(type);
 
-		crc = bch_checksum_update(type, crc, data, len);
-		crc = bch_checksum_final(type, crc);
+		crc = bch2_checksum_update(type, crc, data, len);
+		crc = bch2_checksum_final(type, crc);
 
 		return (struct bch_csum) { .lo = crc };
 	}
@@ -270,17 +269,17 @@ struct bch_csum bch_checksum(struct bch_fs *c, unsigned type,
 	}
 }
 
-void bch_encrypt(struct bch_fs *c, unsigned type,
-		 struct nonce nonce, void *data, size_t len)
+void bch2_encrypt(struct bch_fs *c, unsigned type,
+		  struct nonce nonce, void *data, size_t len)
 {
-	if (!bch_csum_type_is_encryption(type))
+	if (!bch2_csum_type_is_encryption(type))
 		return;
 
 	do_encrypt(c->chacha20, nonce, data, len);
 }
 
-struct bch_csum bch_checksum_bio(struct bch_fs *c, unsigned type,
-				 struct nonce nonce, struct bio *bio)
+struct bch_csum bch2_checksum_bio(struct bch_fs *c, unsigned type,
+				  struct nonce nonce, struct bio *bio)
 {
 	struct bio_vec bv;
 	struct bvec_iter iter;
@@ -290,16 +289,16 @@ struct bch_csum bch_checksum_bio(struct bch_fs *c, unsigned type,
 		return (struct bch_csum) { 0 };
 	case BCH_CSUM_CRC32C:
 	case BCH_CSUM_CRC64: {
-		u64 crc = bch_checksum_init(type);
+		u64 crc = bch2_checksum_init(type);
 
 		bio_for_each_contig_segment(bv, bio, iter) {
 			void *p = kmap_atomic(bv.bv_page) + bv.bv_offset;
-			crc = bch_checksum_update(type,
+			crc = bch2_checksum_update(type,
 				crc, p, bv.bv_len);
 			kunmap_atomic(p);
 		}
 
-		crc = bch_checksum_final(type, crc);
+		crc = bch2_checksum_final(type, crc);
 		return (struct bch_csum) { .lo = crc };
 	}
 
@@ -328,15 +327,15 @@ struct bch_csum bch_checksum_bio(struct bch_fs *c, unsigned type,
 	}
 }
 
-void bch_encrypt_bio(struct bch_fs *c, unsigned type,
-		     struct nonce nonce, struct bio *bio)
+void bch2_encrypt_bio(struct bch_fs *c, unsigned type,
+		      struct nonce nonce, struct bio *bio)
 {
 	struct bio_vec bv;
 	struct bvec_iter iter;
 	struct scatterlist sgl[16], *sg = sgl;
 	size_t bytes = 0;
 
-	if (!bch_csum_type_is_encryption(type))
+	if (!bch2_csum_type_is_encryption(type))
 		return;
 
 	sg_init_table(sgl, ARRAY_SIZE(sgl));
@@ -363,7 +362,7 @@ void bch_encrypt_bio(struct bch_fs *c, unsigned type,
 }
 
 #ifdef __KERNEL__
-int bch_request_key(struct bch_sb *sb, struct bch_key *key)
+int bch2_request_key(struct bch_sb *sb, struct bch_key *key)
 {
 	char key_description[60];
 	struct key *keyring_key;
@@ -371,7 +370,7 @@ int bch_request_key(struct bch_sb *sb, struct bch_key *key)
 	int ret;
 
 	snprintf(key_description, sizeof(key_description),
-		 "bcache:%pUb", &sb->user_uuid);
+		 "bcachefs:%pUb", &sb->user_uuid);
 
 	keyring_key = request_key(&key_type_logon, key_description, NULL);
 	if (IS_ERR(keyring_key))
@@ -394,14 +393,14 @@ int bch_request_key(struct bch_sb *sb, struct bch_key *key)
 #include <keyutils.h>
 #include <uuid/uuid.h>
 
-int bch_request_key(struct bch_sb *sb, struct bch_key *key)
+int bch2_request_key(struct bch_sb *sb, struct bch_key *key)
 {
 	key_serial_t key_id;
 	char key_description[60];
 	char uuid[40];
 
 	uuid_unparse_lower(sb->user_uuid.b, uuid);
-	sprintf(key_description, "bcache:%s", uuid);
+	sprintf(key_description, "bcachefs:%s", uuid);
 
 	key_id = request_key("user", key_description, NULL,
 			     KEY_SPEC_USER_KEYRING);
@@ -415,7 +414,7 @@ int bch_request_key(struct bch_sb *sb, struct bch_key *key)
 }
 #endif
 
-static int bch_decrypt_sb_key(struct bch_fs *c,
+static int bch2_decrypt_sb_key(struct bch_fs *c,
 			      struct bch_sb_field_crypt *crypt,
 			      struct bch_key *key)
 {
@@ -424,22 +423,22 @@ static int bch_decrypt_sb_key(struct bch_fs *c,
 	int ret = 0;
 
 	/* is key encrypted? */
-	if (!bch_key_is_encrypted(&sb_key))
+	if (!bch2_key_is_encrypted(&sb_key))
 		goto out;
 
-	ret = bch_request_key(c->disk_sb, &user_key);
+	ret = bch2_request_key(c->disk_sb, &user_key);
 	if (ret) {
 		bch_err(c, "error requesting encryption key");
 		goto err;
 	}
 
 	/* decrypt real key: */
-	ret = bch_chacha_encrypt_key(&user_key, bch_sb_key_nonce(c),
+	ret = bch2_chacha_encrypt_key(&user_key, bch2_sb_key_nonce(c),
 			     &sb_key, sizeof(sb_key));
 	if (ret)
 		goto err;
 
-	if (bch_key_is_encrypted(&sb_key)) {
+	if (bch2_key_is_encrypted(&sb_key)) {
 		bch_err(c, "incorrect encryption key");
 		ret = -EINVAL;
 		goto err;
@@ -452,7 +451,7 @@ err:
 	return ret;
 }
 
-static int bch_alloc_ciphers(struct bch_fs *c)
+static int bch2_alloc_ciphers(struct bch_fs *c)
 {
 	if (!c->chacha20)
 		c->chacha20 = crypto_alloc_blkcipher("chacha20", 0,
@@ -468,7 +467,7 @@ static int bch_alloc_ciphers(struct bch_fs *c)
 	return 0;
 }
 
-int bch_disable_encryption(struct bch_fs *c)
+int bch2_disable_encryption(struct bch_fs *c)
 {
 	struct bch_sb_field_crypt *crypt;
 	struct bch_key key;
@@ -476,16 +475,16 @@ int bch_disable_encryption(struct bch_fs *c)
 
 	mutex_lock(&c->sb_lock);
 
-	crypt = bch_sb_get_crypt(c->disk_sb);
+	crypt = bch2_sb_get_crypt(c->disk_sb);
 	if (!crypt)
 		goto out;
 
 	/* is key encrypted? */
 	ret = 0;
-	if (bch_key_is_encrypted(&crypt->key))
+	if (bch2_key_is_encrypted(&crypt->key))
 		goto out;
 
-	ret = bch_decrypt_sb_key(c, crypt, &key);
+	ret = bch2_decrypt_sb_key(c, crypt, &key);
 	if (ret)
 		goto out;
 
@@ -493,14 +492,14 @@ int bch_disable_encryption(struct bch_fs *c)
 	crypt->key.key		= key;
 
 	SET_BCH_SB_ENCRYPTION_TYPE(c->disk_sb, 0);
-	bch_write_super(c);
+	bch2_write_super(c);
 out:
 	mutex_unlock(&c->sb_lock);
 
 	return ret;
 }
 
-int bch_enable_encryption(struct bch_fs *c, bool keyed)
+int bch2_enable_encryption(struct bch_fs *c, bool keyed)
 {
 	struct bch_encrypted_key key;
 	struct bch_key user_key;
@@ -510,10 +509,10 @@ int bch_enable_encryption(struct bch_fs *c, bool keyed)
 	mutex_lock(&c->sb_lock);
 
 	/* Do we already have an encryption key? */
-	if (bch_sb_get_crypt(c->disk_sb))
+	if (bch2_sb_get_crypt(c->disk_sb))
 		goto err;
 
-	ret = bch_alloc_ciphers(c);
+	ret = bch2_alloc_ciphers(c);
 	if (ret)
 		goto err;
 
@@ -521,14 +520,14 @@ int bch_enable_encryption(struct bch_fs *c, bool keyed)
 	get_random_bytes(&key.key, sizeof(key.key));
 
 	if (keyed) {
-		ret = bch_request_key(c->disk_sb, &user_key);
+		ret = bch2_request_key(c->disk_sb, &user_key);
 		if (ret) {
 			bch_err(c, "error requesting encryption key");
 			goto err;
 		}
 
-		ret = bch_chacha_encrypt_key(&user_key, bch_sb_key_nonce(c),
-					     &key, sizeof(key));
+		ret = bch2_chacha_encrypt_key(&user_key, bch2_sb_key_nonce(c),
+					      &key, sizeof(key));
 		if (ret)
 			goto err;
 	}
@@ -538,7 +537,7 @@ int bch_enable_encryption(struct bch_fs *c, bool keyed)
 	if (ret)
 		goto err;
 
-	crypt = bch_fs_sb_resize_crypt(c, sizeof(*crypt) / sizeof(u64));
+	crypt = bch2_fs_sb_resize_crypt(c, sizeof(*crypt) / sizeof(u64));
 	if (!crypt) {
 		ret = -ENOMEM; /* XXX this technically could be -ENOSPC */
 		goto err;
@@ -548,7 +547,7 @@ int bch_enable_encryption(struct bch_fs *c, bool keyed)
 
 	/* write superblock */
 	SET_BCH_SB_ENCRYPTION_TYPE(c->disk_sb, 1);
-	bch_write_super(c);
+	bch2_write_super(c);
 err:
 	mutex_unlock(&c->sb_lock);
 	memzero_explicit(&user_key, sizeof(user_key));
@@ -556,7 +555,7 @@ err:
 	return ret;
 }
 
-void bch_fs_encryption_exit(struct bch_fs *c)
+void bch2_fs_encryption_exit(struct bch_fs *c)
 {
 	if (!IS_ERR_OR_NULL(c->poly1305))
 		crypto_free_shash(c->poly1305);
@@ -566,7 +565,7 @@ void bch_fs_encryption_exit(struct bch_fs *c)
 		crypto_free_shash(c->sha256);
 }
 
-int bch_fs_encryption_init(struct bch_fs *c)
+int bch2_fs_encryption_init(struct bch_fs *c)
 {
 	struct bch_sb_field_crypt *crypt;
 	struct bch_key key;
@@ -576,15 +575,15 @@ int bch_fs_encryption_init(struct bch_fs *c)
 	if (IS_ERR(c->sha256))
 		return PTR_ERR(c->sha256);
 
-	crypt = bch_sb_get_crypt(c->disk_sb);
+	crypt = bch2_sb_get_crypt(c->disk_sb);
 	if (!crypt)
 		return 0;
 
-	ret = bch_alloc_ciphers(c);
+	ret = bch2_alloc_ciphers(c);
 	if (ret)
 		return ret;
 
-	ret = bch_decrypt_sb_key(c, crypt, &key);
+	ret = bch2_decrypt_sb_key(c, crypt, &key);
 	if (ret)
 		goto err;
 

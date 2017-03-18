@@ -2,7 +2,7 @@
  * Code for moving data off a device.
  */
 
-#include "bcache.h"
+#include "bcachefs.h"
 #include "btree_update.h"
 #include "buckets.h"
 #include "extents.h"
@@ -22,7 +22,7 @@ static int issue_migration_move(struct bch_dev *ca,
 	const struct bch_extent_ptr *ptr;
 	int ret;
 
-	if (bch_disk_reservation_get(c, &res, k.k->size, 0))
+	if (bch2_disk_reservation_get(c, &res, k.k->size, 0))
 		return -ENOSPC;
 
 	extent_for_each_ptr(bkey_s_c_to_extent(k), ptr)
@@ -33,9 +33,9 @@ static int issue_migration_move(struct bch_dev *ca,
 found:
 	/* XXX: we need to be doing something with the disk reservation */
 
-	ret = bch_data_move(c, ctxt, &c->migration_write_point, k, ptr);
+	ret = bch2_data_move(c, ctxt, &c->migration_write_point, k, ptr);
 	if (ret)
-		bch_disk_reservation_put(c, &res);
+		bch2_disk_reservation_put(c, &res);
 	return ret;
 }
 
@@ -55,7 +55,7 @@ found:
  * land in the same device even if there are others available.
  */
 
-int bch_move_data_off_device(struct bch_dev *ca)
+int bch2_move_data_off_device(struct bch_dev *ca)
 {
 	struct moving_context ctxt;
 	struct bch_fs *c = ca->fs;
@@ -69,7 +69,7 @@ int bch_move_data_off_device(struct bch_dev *ca)
 	if (!ca->mi.has_data)
 		return 0;
 
-	bch_move_ctxt_init(&ctxt, NULL, SECTORS_IN_FLIGHT_PER_DEVICE);
+	bch2_move_ctxt_init(&ctxt, NULL, SECTORS_IN_FLIGHT_PER_DEVICE);
 	ctxt.avoid = ca;
 
 	/*
@@ -97,25 +97,25 @@ int bch_move_data_off_device(struct bch_dev *ca)
 		atomic_set(&ctxt.error_count, 0);
 		atomic_set(&ctxt.error_flags, 0);
 
-		bch_btree_iter_init(&iter, c, BTREE_ID_EXTENTS, POS_MIN);
+		bch2_btree_iter_init(&iter, c, BTREE_ID_EXTENTS, POS_MIN);
 
-		while (!bch_move_ctxt_wait(&ctxt) &&
-		       (k = bch_btree_iter_peek(&iter)).k &&
+		while (!bch2_move_ctxt_wait(&ctxt) &&
+		       (k = bch2_btree_iter_peek(&iter)).k &&
 		       !(ret = btree_iter_err(k))) {
 			if (!bkey_extent_is_data(k.k) ||
-			    !bch_extent_has_device(bkey_s_c_to_extent(k),
+			    !bch2_extent_has_device(bkey_s_c_to_extent(k),
 						   ca->dev_idx))
 				goto next;
 
 			ret = issue_migration_move(ca, &ctxt, k);
 			if (ret == -ENOMEM) {
-				bch_btree_iter_unlock(&iter);
+				bch2_btree_iter_unlock(&iter);
 
 				/*
 				 * memory allocation failure, wait for some IO
 				 * to finish
 				 */
-				bch_move_ctxt_wait_for_io(&ctxt);
+				bch2_move_ctxt_wait_for_io(&ctxt);
 				continue;
 			}
 			if (ret == -ENOSPC)
@@ -124,12 +124,12 @@ int bch_move_data_off_device(struct bch_dev *ca)
 
 			seen_key_count++;
 next:
-			bch_btree_iter_advance_pos(&iter);
-			bch_btree_iter_cond_resched(&iter);
+			bch2_btree_iter_advance_pos(&iter);
+			bch2_btree_iter_cond_resched(&iter);
 
 		}
-		bch_btree_iter_unlock(&iter);
-		bch_move_ctxt_exit(&ctxt);
+		bch2_btree_iter_unlock(&iter);
+		bch2_move_ctxt_exit(&ctxt);
 
 		if (ret)
 			return ret;
@@ -142,10 +142,10 @@ next:
 	}
 
 	mutex_lock(&c->sb_lock);
-	mi = bch_sb_get_members(c->disk_sb);
+	mi = bch2_sb_get_members(c->disk_sb);
 	SET_BCH_MEMBER_HAS_DATA(&mi->members[ca->dev_idx], false);
 
-	bch_write_super(c);
+	bch2_write_super(c);
 	mutex_unlock(&c->sb_lock);
 
 	return 0;
@@ -155,7 +155,7 @@ next:
  * This walks the btree, and for any node on the relevant device it moves the
  * node elsewhere.
  */
-static int bch_move_btree_off(struct bch_dev *ca, enum btree_id id)
+static int bch2_move_btree_off(struct bch_dev *ca, enum btree_id id)
 {
 	struct bch_fs *c = ca->fs;
 	struct btree_iter iter;
@@ -170,29 +170,29 @@ static int bch_move_btree_off(struct bch_dev *ca, enum btree_id id)
 	for_each_btree_node(&iter, c, id, POS_MIN, 0, b) {
 		struct bkey_s_c_extent e = bkey_i_to_s_c_extent(&b->key);
 retry:
-		if (!bch_extent_has_device(e, ca->dev_idx))
+		if (!bch2_extent_has_device(e, ca->dev_idx))
 			continue;
 
-		ret = bch_btree_node_rewrite(&iter, b, &cl);
+		ret = bch2_btree_node_rewrite(&iter, b, &cl);
 		if (ret == -EINTR || ret == -ENOSPC) {
 			/*
 			 * Drop locks to upgrade locks or wait on
 			 * reserve: after retaking, recheck in case we
 			 * raced.
 			 */
-			bch_btree_iter_unlock(&iter);
+			bch2_btree_iter_unlock(&iter);
 			closure_sync(&cl);
-			b = bch_btree_iter_peek_node(&iter);
+			b = bch2_btree_iter_peek_node(&iter);
 			goto retry;
 		}
 		if (ret) {
-			bch_btree_iter_unlock(&iter);
+			bch2_btree_iter_unlock(&iter);
 			return ret;
 		}
 
-		bch_btree_iter_set_locks_want(&iter, 0);
+		bch2_btree_iter_set_locks_want(&iter, 0);
 	}
-	ret = bch_btree_iter_unlock(&iter);
+	ret = bch2_btree_iter_unlock(&iter);
 	if (ret)
 		return ret; /* btree IO error */
 
@@ -200,9 +200,9 @@ retry:
 		for_each_btree_node(&iter, c, id, POS_MIN, 0, b) {
 			struct bkey_s_c_extent e = bkey_i_to_s_c_extent(&b->key);
 
-			BUG_ON(bch_extent_has_device(e, ca->dev_idx));
+			BUG_ON(bch2_extent_has_device(e, ca->dev_idx));
 		}
-		bch_btree_iter_unlock(&iter);
+		bch2_btree_iter_unlock(&iter);
 	}
 
 	return 0;
@@ -252,7 +252,7 @@ retry:
  *   is written.
  */
 
-int bch_move_metadata_off_device(struct bch_dev *ca)
+int bch2_move_metadata_off_device(struct bch_dev *ca)
 {
 	struct bch_fs *c = ca->fs;
 	struct bch_sb_field_members *mi;
@@ -267,7 +267,7 @@ int bch_move_metadata_off_device(struct bch_dev *ca)
 	/* 1st, Move the btree nodes off the device */
 
 	for (i = 0; i < BTREE_ID_NR; i++) {
-		ret = bch_move_btree_off(ca, i);
+		ret = bch2_move_btree_off(ca, i);
 		if (ret)
 			return ret;
 	}
@@ -276,15 +276,15 @@ int bch_move_metadata_off_device(struct bch_dev *ca)
 
 	/* 2nd. Move the journal off the device */
 
-	ret = bch_journal_move(ca);
+	ret = bch2_journal_move(ca);
 	if (ret)
 		return ret;
 
 	mutex_lock(&c->sb_lock);
-	mi = bch_sb_get_members(c->disk_sb);
+	mi = bch2_sb_get_members(c->disk_sb);
 	SET_BCH_MEMBER_HAS_METADATA(&mi->members[ca->dev_idx], false);
 
-	bch_write_super(c);
+	bch2_write_super(c);
 	mutex_unlock(&c->sb_lock);
 
 	return 0;
@@ -295,7 +295,7 @@ int bch_move_metadata_off_device(struct bch_dev *ca)
  * migrate the data off the device.
  */
 
-static int bch_flag_key_bad(struct btree_iter *iter,
+static int bch2_flag_key_bad(struct btree_iter *iter,
 			    struct bch_dev *ca,
 			    struct bkey_s_c_extent orig)
 {
@@ -309,16 +309,16 @@ static int bch_flag_key_bad(struct btree_iter *iter,
 
 	extent_for_each_ptr_backwards(e, ptr)
 		if (ptr->dev == ca->dev_idx)
-			bch_extent_drop_ptr(e, ptr);
+			bch2_extent_drop_ptr(e, ptr);
 
 	/*
-	 * If the new extent no longer has any pointers, bch_extent_normalize()
+	 * If the new extent no longer has any pointers, bch2_extent_normalize()
 	 * will do the appropriate thing with it (turning it into a
 	 * KEY_TYPE_ERROR key, or just a discard if it was a cached extent)
 	 */
-	bch_extent_normalize(c, e.s);
+	bch2_extent_normalize(c, e.s);
 
-	return bch_btree_insert_at(c, NULL, NULL, NULL,
+	return bch2_btree_insert_at(c, NULL, NULL, NULL,
 				   BTREE_INSERT_ATOMIC,
 				   BTREE_INSERT_ENTRY(iter, &tmp.key));
 }
@@ -334,25 +334,25 @@ static int bch_flag_key_bad(struct btree_iter *iter,
  * that we've already tried to move the data MAX_DATA_OFF_ITER times and
  * are not likely to succeed if we try again.
  */
-int bch_flag_data_bad(struct bch_dev *ca)
+int bch2_flag_data_bad(struct bch_dev *ca)
 {
 	int ret = 0;
 	struct bkey_s_c k;
 	struct bkey_s_c_extent e;
 	struct btree_iter iter;
 
-	bch_btree_iter_init(&iter, ca->fs, BTREE_ID_EXTENTS, POS_MIN);
+	bch2_btree_iter_init(&iter, ca->fs, BTREE_ID_EXTENTS, POS_MIN);
 
-	while ((k = bch_btree_iter_peek(&iter)).k &&
+	while ((k = bch2_btree_iter_peek(&iter)).k &&
 	       !(ret = btree_iter_err(k))) {
 		if (!bkey_extent_is_data(k.k))
 			goto advance;
 
 		e = bkey_s_c_to_extent(k);
-		if (!bch_extent_has_device(e, ca->dev_idx))
+		if (!bch2_extent_has_device(e, ca->dev_idx))
 			goto advance;
 
-		ret = bch_flag_key_bad(&iter, ca, e);
+		ret = bch2_flag_key_bad(&iter, ca, e);
 
 		/*
 		 * don't want to leave ret == -EINTR, since if we raced and
@@ -386,10 +386,10 @@ int bch_flag_data_bad(struct bch_dev *ca)
 		 */
 		continue;
 advance:
-		bch_btree_iter_advance_pos(&iter);
+		bch2_btree_iter_advance_pos(&iter);
 	}
 
-	bch_btree_iter_unlock(&iter);
+	bch2_btree_iter_unlock(&iter);
 
 	return ret;
 }

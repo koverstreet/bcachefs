@@ -176,7 +176,7 @@
  */
 
 #undef pr_fmt
-#define pr_fmt(fmt) "bcache: %s() " fmt "\n", __func__
+#define pr_fmt(fmt) "bcachefs: %s() " fmt "\n", __func__
 
 #include <linux/bug.h>
 #include <linux/bio.h>
@@ -203,25 +203,25 @@
 
 #include <linux/dynamic_fault.h>
 
-#define bch_fs_init_fault(name)						\
-	dynamic_fault("bcache:bch_fs_init:" name)
-#define bch_meta_read_fault(name)					\
-	 dynamic_fault("bcache:meta:read:" name)
-#define bch_meta_write_fault(name)					\
-	 dynamic_fault("bcache:meta:write:" name)
+#define bch2_fs_init_fault(name)						\
+	dynamic_fault("bcachefs:bch_fs_init:" name)
+#define bch2_meta_read_fault(name)					\
+	 dynamic_fault("bcachefs:meta:read:" name)
+#define bch2_meta_write_fault(name)					\
+	 dynamic_fault("bcachefs:meta:write:" name)
 
-#ifndef bch_fmt
-#define bch_fmt(_c, fmt)	"bcache (%s): " fmt "\n", ((_c)->name)
+#ifndef bch2_fmt
+#define bch2_fmt(_c, fmt)	"bcachefs (%s): " fmt "\n", ((_c)->name)
 #endif
 
 #define bch_info(c, fmt, ...) \
-	printk(KERN_INFO bch_fmt(c, fmt), ##__VA_ARGS__)
+	printk(KERN_INFO bch2_fmt(c, fmt), ##__VA_ARGS__)
 #define bch_notice(c, fmt, ...) \
-	printk(KERN_NOTICE bch_fmt(c, fmt), ##__VA_ARGS__)
+	printk(KERN_NOTICE bch2_fmt(c, fmt), ##__VA_ARGS__)
 #define bch_warn(c, fmt, ...) \
-	printk(KERN_WARNING bch_fmt(c, fmt), ##__VA_ARGS__)
+	printk(KERN_WARNING bch2_fmt(c, fmt), ##__VA_ARGS__)
 #define bch_err(c, fmt, ...) \
-	printk(KERN_ERR bch_fmt(c, fmt), ##__VA_ARGS__)
+	printk(KERN_ERR bch2_fmt(c, fmt), ##__VA_ARGS__)
 
 #define bch_verbose(c, fmt, ...)					\
 do {									\
@@ -269,8 +269,7 @@ do {									\
 
 /* name, frequency_units, duration_units */
 #define BCH_TIME_STATS()						\
-	BCH_TIME_STAT(mca_alloc,		sec, us)		\
-	BCH_TIME_STAT(mca_scan,			sec, ms)		\
+	BCH_TIME_STAT(btree_node_mem_alloc,	sec, us)		\
 	BCH_TIME_STAT(btree_gc,			sec, ms)		\
 	BCH_TIME_STAT(btree_coalesce,		sec, ms)		\
 	BCH_TIME_STAT(btree_split,		sec, us)		\
@@ -350,7 +349,7 @@ struct bch_dev {
 	u8			dev_idx;
 	/*
 	 * Cached version of this device's member info from superblock
-	 * Committed by bch_write_super() -> bch_fs_mi_update()
+	 * Committed by bch2_write_super() -> bch_fs_mi_update()
 	 */
 	struct bch_member_cpu	mi;
 	uuid_le			uuid;
@@ -505,7 +504,7 @@ struct bch_fs {
 
 	struct bch_opts		opts;
 
-	/* Updated by bch_sb_update():*/
+	/* Updated by bch2_sb_update():*/
 	struct {
 		uuid_le		uuid;
 		uuid_le		user_uuid;
@@ -772,7 +771,7 @@ struct bch_fs {
 #undef BCH_TIME_STAT
 };
 
-static inline bool bch_fs_running(struct bch_fs *c)
+static inline bool bch2_fs_running(struct bch_fs *c)
 {
 	return c->state == BCH_FS_RO || c->state == BCH_FS_RW;
 }

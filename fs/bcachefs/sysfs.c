@@ -5,7 +5,7 @@
  * Copyright 2012 Google, Inc.
  */
 
-#include "bcache.h"
+#include "bcachefs.h"
 #include "alloc.h"
 #include "compress.h"
 #include "sysfs.h"
@@ -127,7 +127,7 @@ static struct attribute sysfs_state_rw = {
 	.mode = S_IRUGO
 };
 
-static int bch_bset_print_stats(struct bch_fs *c, char *buf)
+static int bch2_bset_print_stats(struct bch_fs *c, char *buf)
 {
 	struct bset_stats stats;
 	size_t nodes = 0;
@@ -140,7 +140,7 @@ static int bch_bset_print_stats(struct bch_fs *c, char *buf)
 
 	rcu_read_lock();
 	for_each_cached_btree(b, c, tbl, iter, pos) {
-		bch_btree_keys_stats(b, &stats);
+		bch2_btree_keys_stats(b, &stats);
 		nodes++;
 	}
 	rcu_read_unlock();
@@ -170,7 +170,7 @@ static int bch_bset_print_stats(struct bch_fs *c, char *buf)
 			stats.failed_overflow);
 }
 
-static unsigned bch_root_usage(struct bch_fs *c)
+static unsigned bch2_root_usage(struct bch_fs *c)
 {
 	unsigned bytes = 0;
 	struct bkey_packed *k;
@@ -194,7 +194,7 @@ lock_root:
 	return (bytes * 100) / btree_bytes(c);
 }
 
-static size_t bch_btree_cache_size(struct bch_fs *c)
+static size_t bch2_btree_cache_size(struct bch_fs *c)
 {
 	size_t ret = 0;
 	struct btree *b;
@@ -207,20 +207,20 @@ static size_t bch_btree_cache_size(struct bch_fs *c)
 	return ret;
 }
 
-static unsigned bch_fs_available_percent(struct bch_fs *c)
+static unsigned bch2_fs_available_percent(struct bch_fs *c)
 {
 	return div64_u64((u64) sectors_available(c) * 100,
 			 c->capacity ?: 1);
 }
 
 #if 0
-static unsigned bch_btree_used(struct bch_fs *c)
+static unsigned bch2_btree_used(struct bch_fs *c)
 {
 	return div64_u64(c->gc_stats.key_bytes * 100,
 			 (c->gc_stats.nodes ?: 1) * btree_bytes(c));
 }
 
-static unsigned bch_average_key_size(struct bch_fs *c)
+static unsigned bch2_average_key_size(struct bch_fs *c)
 {
 	return c->gc_stats.nkeys
 		? div64_u64(c->gc_stats.data, c->gc_stats.nkeys)
@@ -230,7 +230,7 @@ static unsigned bch_average_key_size(struct bch_fs *c)
 
 static ssize_t show_fs_alloc_debug(struct bch_fs *c, char *buf)
 {
-	struct bch_fs_usage stats = bch_fs_usage_read(c);
+	struct bch_fs_usage stats = bch2_fs_usage_read(c);
 
 	return scnprintf(buf, PAGE_SIZE,
 			 "capacity:\t\t%llu\n"
@@ -255,7 +255,7 @@ static ssize_t show_fs_alloc_debug(struct bch_fs *c, char *buf)
 			 stats.online_reserved);
 }
 
-static ssize_t bch_compression_stats(struct bch_fs *c, char *buf)
+static ssize_t bch2_compression_stats(struct bch_fs *c, char *buf)
 {
 	struct btree_iter iter;
 	struct bkey_s_c k;
@@ -286,7 +286,7 @@ static ssize_t bch_compression_stats(struct bch_fs *c, char *buf)
 				break;
 			}
 		}
-	bch_btree_iter_unlock(&iter);
+	bch2_btree_iter_unlock(&iter);
 
 	return snprintf(buf, PAGE_SIZE,
 			"uncompressed data:\n"
@@ -303,7 +303,7 @@ static ssize_t bch_compression_stats(struct bch_fs *c, char *buf)
 			compressed_sectors_uncompressed << 9);
 }
 
-SHOW(bch_fs)
+SHOW(bch2_fs)
 {
 	struct bch_fs *c = container_of(kobj, struct bch_fs, kobj);
 
@@ -318,16 +318,16 @@ SHOW(bch_fs)
 	sysfs_hprint(btree_node_size,		c->sb.btree_node_size << 9);
 	sysfs_print(btree_node_size_bytes,	c->sb.btree_node_size << 9);
 
-	sysfs_hprint(btree_cache_size,		bch_btree_cache_size(c));
-	sysfs_print(cache_available_percent,	bch_fs_available_percent(c));
+	sysfs_hprint(btree_cache_size,		bch2_btree_cache_size(c));
+	sysfs_print(cache_available_percent,	bch2_fs_available_percent(c));
 
 	sysfs_print(btree_gc_running,		c->gc_pos.phase != GC_PHASE_DONE);
 
 #if 0
 	/* XXX: reimplement */
-	sysfs_print(btree_used_percent,	bch_btree_used(c));
+	sysfs_print(btree_used_percent,	bch2_btree_used(c));
 	sysfs_print(btree_nodes,	c->gc_stats.nodes);
-	sysfs_hprint(average_key_size,	bch_average_key_size(c));
+	sysfs_hprint(average_key_size,	bch2_average_key_size(c));
 #endif
 
 	sysfs_print(cache_read_races,
@@ -353,32 +353,32 @@ SHOW(bch_fs)
 	/* Debugging: */
 
 	if (attr == &sysfs_journal_debug)
-		return bch_journal_print_debug(&c->journal, buf);
+		return bch2_journal_print_debug(&c->journal, buf);
 
 #define BCH_DEBUG_PARAM(name, description) sysfs_print(name, c->name);
 	BCH_DEBUG_PARAMS()
 #undef BCH_DEBUG_PARAM
 
-	if (!bch_fs_running(c))
+	if (!bch2_fs_running(c))
 		return -EPERM;
 
 	if (attr == &sysfs_bset_tree_stats)
-		return bch_bset_print_stats(c, buf);
+		return bch2_bset_print_stats(c, buf);
 	if (attr == &sysfs_alloc_debug)
 		return show_fs_alloc_debug(c, buf);
 
 	sysfs_print(tree_depth, c->btree_roots[BTREE_ID_EXTENTS].b->level);
-	sysfs_print(root_usage_percent,		bch_root_usage(c));
+	sysfs_print(root_usage_percent,		bch2_root_usage(c));
 
 	if (attr == &sysfs_compression_stats)
-		return bch_compression_stats(c, buf);
+		return bch2_compression_stats(c, buf);
 
 	sysfs_printf(internal_uuid, "%pU", c->sb.uuid.b);
 
 	return 0;
 }
 
-STORE(__bch_fs)
+STORE(__bch2_fs)
 {
 	struct bch_fs *c = container_of(kobj, struct bch_fs, kobj);
 
@@ -404,7 +404,7 @@ STORE(__bch_fs)
 		ssize_t ret = strtoul_safe(buf, c->tiering_enabled)
 			?: (ssize_t) size;
 
-		bch_tiering_start(c); /* issue wakeups */
+		bch2_tiering_start(c); /* issue wakeups */
 		return ret;
 	}
 
@@ -423,22 +423,22 @@ STORE(__bch_fs)
 	BCH_DEBUG_PARAMS()
 #undef BCH_DEBUG_PARAM
 
-	if (!bch_fs_running(c))
+	if (!bch2_fs_running(c))
 		return -EPERM;
 
 	if (attr == &sysfs_journal_flush) {
-		bch_journal_meta_async(&c->journal, NULL);
+		bch2_journal_meta_async(&c->journal, NULL);
 
 		return size;
 	}
 
 	if (attr == &sysfs_trigger_btree_coalesce)
-		bch_coalesce(c);
+		bch2_coalesce(c);
 
 	/* Debugging: */
 
 	if (attr == &sysfs_trigger_gc)
-		bch_gc(c);
+		bch2_gc(c);
 
 	if (attr == &sysfs_prune_cache) {
 		struct shrink_control sc;
@@ -451,18 +451,18 @@ STORE(__bch_fs)
 	return size;
 }
 
-STORE(bch_fs)
+STORE(bch2_fs)
 {
 	struct bch_fs *c = container_of(kobj, struct bch_fs, kobj);
 
 	mutex_lock(&c->state_lock);
-	size = __bch_fs_store(kobj, attr, buf, size);
+	size = __bch2_fs_store(kobj, attr, buf, size);
 	mutex_unlock(&c->state_lock);
 
 	return size;
 }
 
-static struct attribute *bch_fs_files[] = {
+static struct attribute *bch2_fs_files[] = {
 	&sysfs_journal_write_delay_ms,
 	&sysfs_journal_reclaim_delay_ms,
 	&sysfs_journal_entry_size_max,
@@ -488,27 +488,27 @@ static struct attribute *bch_fs_files[] = {
 	&sysfs_journal_flush,
 	NULL
 };
-KTYPE(bch_fs);
+KTYPE(bch2_fs);
 
 /* internal dir - just a wrapper */
 
-SHOW(bch_fs_internal)
+SHOW(bch2_fs_internal)
 {
 	struct bch_fs *c = container_of(kobj, struct bch_fs, internal);
-	return bch_fs_show(&c->kobj, attr, buf);
+	return bch2_fs_show(&c->kobj, attr, buf);
 }
 
-STORE(bch_fs_internal)
+STORE(bch2_fs_internal)
 {
 	struct bch_fs *c = container_of(kobj, struct bch_fs, internal);
-	return bch_fs_store(&c->kobj, attr, buf, size);
+	return bch2_fs_store(&c->kobj, attr, buf, size);
 }
 
-static void bch_fs_internal_release(struct kobject *k)
+static void bch2_fs_internal_release(struct kobject *k)
 {
 }
 
-static struct attribute *bch_fs_internal_files[] = {
+static struct attribute *bch2_fs_internal_files[] = {
 	&sysfs_journal_debug,
 
 	&sysfs_alloc_debug,
@@ -537,34 +537,34 @@ static struct attribute *bch_fs_internal_files[] = {
 
 	NULL
 };
-KTYPE(bch_fs_internal);
+KTYPE(bch2_fs_internal);
 
 /* options */
 
-SHOW(bch_fs_opts_dir)
+SHOW(bch2_fs_opts_dir)
 {
 	struct bch_fs *c = container_of(kobj, struct bch_fs, opts_dir);
 
-	return bch_opt_show(&c->opts, attr->name, buf, PAGE_SIZE);
+	return bch2_opt_show(&c->opts, attr->name, buf, PAGE_SIZE);
 }
 
-STORE(bch_fs_opts_dir)
+STORE(bch2_fs_opts_dir)
 {
 	struct bch_fs *c = container_of(kobj, struct bch_fs, opts_dir);
 	const struct bch_option *opt;
 	enum bch_opt_id id;
 	u64 v;
 
-	id = bch_parse_sysfs_opt(attr->name, buf, &v);
+	id = bch2_parse_sysfs_opt(attr->name, buf, &v);
 	if (id < 0)
 		return id;
 
-	opt = &bch_opt_table[id];
+	opt = &bch2_opt_table[id];
 
 	mutex_lock(&c->sb_lock);
 
 	if (id == Opt_compression) {
-		int ret = bch_check_set_has_compressed_data(c, v);
+		int ret = bch2_check_set_has_compressed_data(c, v);
 		if (ret) {
 			mutex_unlock(&c->sb_lock);
 			return ret;
@@ -573,21 +573,21 @@ STORE(bch_fs_opts_dir)
 
 	if (opt->set_sb != SET_NO_SB_OPT) {
 		opt->set_sb(c->disk_sb, v);
-		bch_write_super(c);
+		bch2_write_super(c);
 	}
 
-	bch_opt_set(&c->opts, id, v);
+	bch2_opt_set(&c->opts, id, v);
 
 	mutex_unlock(&c->sb_lock);
 
 	return size;
 }
 
-static void bch_fs_opts_dir_release(struct kobject *k)
+static void bch2_fs_opts_dir_release(struct kobject *k)
 {
 }
 
-static struct attribute *bch_fs_opts_dir_files[] = {
+static struct attribute *bch2_fs_opts_dir_files[] = {
 #define BCH_OPT(_name, ...)						\
 	&sysfs_opt_##_name,
 
@@ -596,11 +596,11 @@ static struct attribute *bch_fs_opts_dir_files[] = {
 
 	NULL
 };
-KTYPE(bch_fs_opts_dir);
+KTYPE(bch2_fs_opts_dir);
 
 /* time stats */
 
-SHOW(bch_fs_time_stats)
+SHOW(bch2_fs_time_stats)
 {
 	struct bch_fs *c = container_of(kobj, struct bch_fs, time_stats);
 
@@ -613,7 +613,7 @@ SHOW(bch_fs_time_stats)
 	return 0;
 }
 
-STORE(bch_fs_time_stats)
+STORE(bch2_fs_time_stats)
 {
 	struct bch_fs *c = container_of(kobj, struct bch_fs, time_stats);
 
@@ -625,11 +625,11 @@ STORE(bch_fs_time_stats)
 	return size;
 }
 
-static void bch_fs_time_stats_release(struct kobject *k)
+static void bch2_fs_time_stats_release(struct kobject *k)
 {
 }
 
-static struct attribute *bch_fs_time_stats_files[] = {
+static struct attribute *bch2_fs_time_stats_files[] = {
 #define BCH_TIME_STAT(name, frequency_units, duration_units)		\
 	sysfs_time_stats_attribute_list(name, frequency_units, duration_units)
 	BCH_TIME_STATS()
@@ -637,7 +637,7 @@ static struct attribute *bch_fs_time_stats_files[] = {
 
 	NULL
 };
-KTYPE(bch_fs_time_stats);
+KTYPE(bch2_fs_time_stats);
 
 typedef unsigned (bucket_map_fn)(struct bch_dev *, struct bucket *, void *);
 
@@ -725,7 +725,7 @@ static ssize_t show_reserve_stats(struct bch_dev *ca, char *buf)
 static ssize_t show_dev_alloc_debug(struct bch_dev *ca, char *buf)
 {
 	struct bch_fs *c = ca->fs;
-	struct bch_dev_usage stats = bch_dev_usage_read(ca);
+	struct bch_dev_usage stats = bch2_dev_usage_read(ca);
 
 	return scnprintf(buf, PAGE_SIZE,
 		"free_inc:               %zu/%zu\n"
@@ -765,11 +765,11 @@ static u64 sectors_written(struct bch_dev *ca)
 	return ret;
 }
 
-SHOW(bch_dev)
+SHOW(bch2_dev)
 {
 	struct bch_dev *ca = container_of(kobj, struct bch_dev, kobj);
 	struct bch_fs *c = ca->fs;
-	struct bch_dev_usage stats = bch_dev_usage_read(ca);
+	struct bch_dev_usage stats = bch2_dev_usage_read(ca);
 
 	sysfs_printf(uuid,		"%pU\n", ca->uuid.b);
 
@@ -803,16 +803,16 @@ SHOW(bch_dev)
 	sysfs_pd_controller_show(copy_gc, &ca->moving_gc_pd);
 
 	if (attr == &sysfs_cache_replacement_policy)
-		return bch_snprint_string_list(buf, PAGE_SIZE,
-					       bch_cache_replacement_policies,
-					       ca->mi.replacement);
+		return bch2_snprint_string_list(buf, PAGE_SIZE,
+						bch2_cache_replacement_policies,
+						ca->mi.replacement);
 
 	sysfs_print(tier,		ca->mi.tier);
 
 	if (attr == &sysfs_state_rw)
-		return bch_snprint_string_list(buf, PAGE_SIZE,
-					       bch_dev_state,
-					       ca->mi.state);
+		return bch2_snprint_string_list(buf, PAGE_SIZE,
+						bch2_dev_state,
+						ca->mi.state);
 
 	if (attr == &sysfs_read_priority_stats)
 		return show_quantiles(ca, buf, bucket_priority_fn, (void *) 0);
@@ -830,7 +830,7 @@ SHOW(bch_dev)
 	return 0;
 }
 
-STORE(bch_dev)
+STORE(bch2_dev)
 {
 	struct bch_dev *ca = container_of(kobj, struct bch_dev, kobj);
 	struct bch_fs *c = ca->fs;
@@ -842,27 +842,27 @@ STORE(bch_dev)
 		bool v = strtoul_or_return(buf);
 
 		mutex_lock(&c->sb_lock);
-		mi = &bch_sb_get_members(c->disk_sb)->members[ca->dev_idx];
+		mi = &bch2_sb_get_members(c->disk_sb)->members[ca->dev_idx];
 
 		if (v != BCH_MEMBER_DISCARD(mi)) {
 			SET_BCH_MEMBER_DISCARD(mi, v);
-			bch_write_super(c);
+			bch2_write_super(c);
 		}
 		mutex_unlock(&c->sb_lock);
 	}
 
 	if (attr == &sysfs_cache_replacement_policy) {
-		ssize_t v = bch_read_string_list(buf, bch_cache_replacement_policies);
+		ssize_t v = bch2_read_string_list(buf, bch2_cache_replacement_policies);
 
 		if (v < 0)
 			return v;
 
 		mutex_lock(&c->sb_lock);
-		mi = &bch_sb_get_members(c->disk_sb)->members[ca->dev_idx];
+		mi = &bch2_sb_get_members(c->disk_sb)->members[ca->dev_idx];
 
 		if ((unsigned) v != BCH_MEMBER_REPLACEMENT(mi)) {
 			SET_BCH_MEMBER_REPLACEMENT(mi, v);
-			bch_write_super(c);
+			bch2_write_super(c);
 		}
 		mutex_unlock(&c->sb_lock);
 	}
@@ -880,22 +880,22 @@ STORE(bch_dev)
 			return size;
 		}
 
-		mi = &bch_sb_get_members(c->disk_sb)->members[ca->dev_idx];
+		mi = &bch2_sb_get_members(c->disk_sb)->members[ca->dev_idx];
 		SET_BCH_MEMBER_TIER(mi, v);
-		bch_write_super(c);
+		bch2_write_super(c);
 
-		bch_dev_group_remove(&c->tiers[prev_tier].devs, ca);
-		bch_dev_group_add(&c->tiers[ca->mi.tier].devs, ca);
+		bch2_dev_group_remove(&c->tiers[prev_tier].devs, ca);
+		bch2_dev_group_add(&c->tiers[ca->mi.tier].devs, ca);
 		mutex_unlock(&c->sb_lock);
 
-		bch_recalc_capacity(c);
-		bch_tiering_start(c);
+		bch2_recalc_capacity(c);
+		bch2_tiering_start(c);
 	}
 
 	return size;
 }
 
-static struct attribute *bch_dev_files[] = {
+static struct attribute *bch2_dev_files[] = {
 	&sysfs_uuid,
 	&sysfs_bucket_size,
 	&sysfs_bucket_size_bytes,
@@ -932,4 +932,4 @@ static struct attribute *bch_dev_files[] = {
 	sysfs_pd_controller_files(copy_gc),
 	NULL
 };
-KTYPE(bch_dev);
+KTYPE(bch2_dev);

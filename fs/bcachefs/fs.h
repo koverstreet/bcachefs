@@ -47,18 +47,18 @@ struct bch_inode_unpacked;
 typedef int (*inode_set_fn)(struct bch_inode_info *,
 			    struct bch_inode_unpacked *, void *);
 
-int __must_check __bch_write_inode(struct bch_fs *, struct bch_inode_info *,
-				   inode_set_fn, void *);
-int __must_check bch_write_inode(struct bch_fs *,
-				 struct bch_inode_info *);
+int __must_check __bch2_write_inode(struct bch_fs *, struct bch_inode_info *,
+				    inode_set_fn, void *);
+int __must_check bch2_write_inode(struct bch_fs *,
+				  struct bch_inode_info *);
 
-void bch_vfs_exit(void);
-int bch_vfs_init(void);
+void bch2_vfs_exit(void);
+int bch2_vfs_init(void);
 
 #else
 
-static inline void bch_vfs_exit(void) {}
-static inline int bch_vfs_init(void) { return 0; }
+static inline void bch2_vfs_exit(void) {}
+static inline int bch2_vfs_init(void) { return 0; }
 
 #endif
 

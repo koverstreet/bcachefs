@@ -1,5 +1,5 @@
 
-#include "bcache.h"
+#include "bcachefs.h"
 #include "bkey_methods.h"
 #include "btree_update.h"
 #include "extents.h"
@@ -10,7 +10,7 @@
 
 #include <linux/dcache.h>
 
-unsigned bch_dirent_name_bytes(struct bkey_s_c_dirent d)
+unsigned bch2_dirent_name_bytes(struct bkey_s_c_dirent d)
 {
 	unsigned len = bkey_val_bytes(d.k) - sizeof(struct bch_dirent);
 
@@ -20,35 +20,35 @@ unsigned bch_dirent_name_bytes(struct bkey_s_c_dirent d)
 	return len;
 }
 
-static u64 bch_dirent_hash(const struct bch_hash_info *info,
-			   const struct qstr *name)
+static u64 bch2_dirent_hash(const struct bch_hash_info *info,
+			    const struct qstr *name)
 {
 	struct bch_str_hash_ctx ctx;
 
-	bch_str_hash_init(&ctx, info);
-	bch_str_hash_update(&ctx, info, name->name, name->len);
+	bch2_str_hash_init(&ctx, info);
+	bch2_str_hash_update(&ctx, info, name->name, name->len);
 
 	/* [0,2) reserved for dots */
-	return max_t(u64, bch_str_hash_end(&ctx, info), 2);
+	return max_t(u64, bch2_str_hash_end(&ctx, info), 2);
 }
 
 static u64 dirent_hash_key(const struct bch_hash_info *info, const void *key)
 {
-	return bch_dirent_hash(info, key);
+	return bch2_dirent_hash(info, key);
 }
 
 static u64 dirent_hash_bkey(const struct bch_hash_info *info, struct bkey_s_c k)
 {
 	struct bkey_s_c_dirent d = bkey_s_c_to_dirent(k);
-	struct qstr name = QSTR_INIT(d.v->d_name, bch_dirent_name_bytes(d));
+	struct qstr name = QSTR_INIT(d.v->d_name, bch2_dirent_name_bytes(d));
 
-	return bch_dirent_hash(info, &name);
+	return bch2_dirent_hash(info, &name);
 }
 
 static bool dirent_cmp_key(struct bkey_s_c _l, const void *_r)
 {
 	struct bkey_s_c_dirent l = bkey_s_c_to_dirent(_l);
-	int len = bch_dirent_name_bytes(l);
+	int len = bch2_dirent_name_bytes(l);
 	const struct qstr *r = _r;
 
 	return len - r->len ?: memcmp(l.v->d_name, r->name, len);
@@ -58,8 +58,8 @@ static bool dirent_cmp_bkey(struct bkey_s_c _l, struct bkey_s_c _r)
 {
 	struct bkey_s_c_dirent l = bkey_s_c_to_dirent(_l);
 	struct bkey_s_c_dirent r = bkey_s_c_to_dirent(_r);
-	int l_len = bch_dirent_name_bytes(l);
-	int r_len = bch_dirent_name_bytes(r);
+	int l_len = bch2_dirent_name_bytes(l);
+	int r_len = bch2_dirent_name_bytes(r);
 
 	return l_len - r_len ?: memcmp(l.v->d_name, r.v->d_name, l_len);
 }
@@ -74,8 +74,8 @@ static const struct bch_hash_desc dirent_hash_desc = {
 	.cmp_bkey	= dirent_cmp_bkey,
 };
 
-static const char *bch_dirent_invalid(const struct bch_fs *c,
-				      struct bkey_s_c k)
+static const char *bch2_dirent_invalid(const struct bch_fs *c,
+				       struct bkey_s_c k)
 {
 	switch (k.k->type) {
 	case BCH_DIRENT:
@@ -93,8 +93,8 @@ static const char *bch_dirent_invalid(const struct bch_fs *c,
 	}
 }
 
-static void bch_dirent_to_text(struct bch_fs *c, char *buf,
-			       size_t size, struct bkey_s_c k)
+static void bch2_dirent_to_text(struct bch_fs *c, char *buf,
+				size_t size, struct bkey_s_c k)
 {
 	struct bkey_s_c_dirent d;
 
@@ -104,7 +104,7 @@ static void bch_dirent_to_text(struct bch_fs *c, char *buf,
 
 		if (size) {
 			unsigned n = min_t(unsigned, size,
-					   bch_dirent_name_bytes(d));
+					   bch2_dirent_name_bytes(d));
 			memcpy(buf, d.v->d_name, n);
 			buf[size - 1] = '\0';
 			buf += n;
@@ -119,9 +119,9 @@ static void bch_dirent_to_text(struct bch_fs *c, char *buf,
 	}
 }
 
-const struct bkey_ops bch_bkey_dirent_ops = {
-	.key_invalid	= bch_dirent_invalid,
-	.val_to_text	= bch_dirent_to_text,
+const struct bkey_ops bch2_bkey_dirent_ops = {
+	.key_invalid	= bch2_dirent_invalid,
+	.val_to_text	= bch2_dirent_to_text,
 };
 
 static struct bkey_i_dirent *dirent_create_key(u8 type,
@@ -146,15 +146,15 @@ static struct bkey_i_dirent *dirent_create_key(u8 type,
 	       bkey_val_bytes(&dirent->k) -
 	       (sizeof(struct bch_dirent) + name->len));
 
-	EBUG_ON(bch_dirent_name_bytes(dirent_i_to_s_c(dirent)) != name->len);
+	EBUG_ON(bch2_dirent_name_bytes(dirent_i_to_s_c(dirent)) != name->len);
 
 	return dirent;
 }
 
-int bch_dirent_create(struct bch_fs *c, u64 dir_inum,
-		      const struct bch_hash_info *hash_info,
-		      u8 type, const struct qstr *name, u64 dst_inum,
-		      u64 *journal_seq, int flags)
+int bch2_dirent_create(struct bch_fs *c, u64 dir_inum,
+		       const struct bch_hash_info *hash_info,
+		       u8 type, const struct qstr *name, u64 dst_inum,
+		       u64 *journal_seq, int flags)
 {
 	struct bkey_i_dirent *dirent;
 	int ret;
@@ -163,7 +163,7 @@ int bch_dirent_create(struct bch_fs *c, u64 dir_inum,
 	if (!dirent)
 		return -ENOMEM;
 
-	ret = bch_hash_set(dirent_hash_desc, hash_info, c, dir_inum,
+	ret = bch2_hash_set(dirent_hash_desc, hash_info, c, dir_inum,
 			   journal_seq, &dirent->k_i, flags);
 	kfree(dirent);
 
@@ -177,16 +177,16 @@ static void dirent_copy_target(struct bkey_i_dirent *dst,
 	dst->v.d_type = src.v->d_type;
 }
 
-static struct bpos bch_dirent_pos(struct bch_inode_info *ei,
-				  const struct qstr *name)
+static struct bpos bch2_dirent_pos(struct bch_inode_info *ei,
+				   const struct qstr *name)
 {
-	return POS(ei->vfs_inode.i_ino, bch_dirent_hash(&ei->str_hash, name));
+	return POS(ei->vfs_inode.i_ino, bch2_dirent_hash(&ei->str_hash, name));
 }
 
-int bch_dirent_rename(struct bch_fs *c,
-		      struct inode *src_dir, const struct qstr *src_name,
-		      struct inode *dst_dir, const struct qstr *dst_name,
-		      u64 *journal_seq, enum bch_rename_mode mode)
+int bch2_dirent_rename(struct bch_fs *c,
+		       struct inode *src_dir, const struct qstr *src_name,
+		       struct inode *dst_dir, const struct qstr *dst_name,
+		       u64 *journal_seq, enum bch_rename_mode mode)
 {
 	struct bch_inode_info *src_ei = to_bch_ei(src_dir);
 	struct bch_inode_info *dst_ei = to_bch_ei(dst_dir);
@@ -194,17 +194,17 @@ int bch_dirent_rename(struct bch_fs *c,
 	struct bkey_s_c old_src, old_dst;
 	struct bkey delete;
 	struct bkey_i_dirent *new_src = NULL, *new_dst = NULL;
-	struct bpos src_pos = bch_dirent_pos(src_ei, src_name);
-	struct bpos dst_pos = bch_dirent_pos(dst_ei, dst_name);
+	struct bpos src_pos = bch2_dirent_pos(src_ei, src_name);
+	struct bpos dst_pos = bch2_dirent_pos(dst_ei, dst_name);
 	bool need_whiteout;
 	int ret = -ENOMEM;
 
-	bch_btree_iter_init_intent(&src_iter, c, BTREE_ID_DIRENTS, src_pos);
-	bch_btree_iter_init_intent(&dst_iter, c, BTREE_ID_DIRENTS, dst_pos);
-	bch_btree_iter_link(&src_iter, &dst_iter);
+	bch2_btree_iter_init_intent(&src_iter, c, BTREE_ID_DIRENTS, src_pos);
+	bch2_btree_iter_init_intent(&dst_iter, c, BTREE_ID_DIRENTS, dst_pos);
+	bch2_btree_iter_link(&src_iter, &dst_iter);
 
-	bch_btree_iter_init(&whiteout_iter, c, BTREE_ID_DIRENTS, src_pos);
-	bch_btree_iter_link(&src_iter, &whiteout_iter);
+	bch2_btree_iter_init(&whiteout_iter, c, BTREE_ID_DIRENTS, src_pos);
+	bch2_btree_iter_link(&src_iter, &whiteout_iter);
 
 	if (mode == BCH_RENAME_EXCHANGE) {
 		new_src = dirent_create_key(0, src_name, 0);
@@ -223,13 +223,13 @@ retry:
 	 * from the original hashed position (like we do when creating dirents,
 	 * in bch_hash_set) -  we never move existing dirents to different slot:
 	 */
-	old_src = bch_hash_lookup_at(dirent_hash_desc,
+	old_src = bch2_hash_lookup_at(dirent_hash_desc,
 				     &src_ei->str_hash,
 				     &src_iter, src_name);
 	if ((ret = btree_iter_err(old_src)))
 		goto err;
 
-	ret = bch_hash_needs_whiteout(dirent_hash_desc,
+	ret = bch2_hash_needs_whiteout(dirent_hash_desc,
 				&src_ei->str_hash,
 				&whiteout_iter, &src_iter);
 	if (ret < 0)
@@ -242,8 +242,8 @@ retry:
 	 * to do that check for us for correctness:
 	 */
 	old_dst = mode == BCH_RENAME
-		? bch_hash_hole_at(dirent_hash_desc, &dst_iter)
-		: bch_hash_lookup_at(dirent_hash_desc,
+		? bch2_hash_hole_at(dirent_hash_desc, &dst_iter)
+		: bch2_hash_lookup_at(dirent_hash_desc,
 				     &dst_ei->str_hash,
 				     &dst_iter, dst_name);
 	if ((ret = btree_iter_err(old_dst)))
@@ -265,13 +265,13 @@ retry:
 			 * were going to delete:
 			 *
 			 * Note: this is a correctness issue, in this
-			 * situation bch_hash_needs_whiteout() could
+			 * situation bch2_hash_needs_whiteout() could
 			 * return false when the whiteout would have
 			 * been needed if we inserted at the pos
 			 * __dirent_find_hole() found
 			 */
 			new_dst->k.p = src_iter.pos;
-			ret = bch_btree_insert_at(c, NULL, NULL,
+			ret = bch2_btree_insert_at(c, NULL, NULL,
 					journal_seq,
 					BTREE_INSERT_ATOMIC,
 					BTREE_INSERT_ENTRY(&src_iter,
@@ -307,7 +307,7 @@ retry:
 
 	new_src->k.p = src_iter.pos;
 	new_dst->k.p = dst_iter.pos;
-	ret = bch_btree_insert_at(c, NULL, NULL, journal_seq,
+	ret = bch2_btree_insert_at(c, NULL, NULL, journal_seq,
 			BTREE_INSERT_ATOMIC,
 			BTREE_INSERT_ENTRY(&src_iter, &new_src->k_i),
 			BTREE_INSERT_ENTRY(&dst_iter, &new_dst->k_i));
@@ -315,9 +315,9 @@ err:
 	if (ret == -EINTR)
 		goto retry;
 
-	bch_btree_iter_unlock(&whiteout_iter);
-	bch_btree_iter_unlock(&dst_iter);
-	bch_btree_iter_unlock(&src_iter);
+	bch2_btree_iter_unlock(&whiteout_iter);
+	bch2_btree_iter_unlock(&dst_iter);
+	bch2_btree_iter_unlock(&src_iter);
 
 	if (new_src != (void *) &delete)
 		kfree(new_src);
@@ -325,37 +325,37 @@ err:
 	return ret;
 }
 
-int bch_dirent_delete(struct bch_fs *c, u64 dir_inum,
-		      const struct bch_hash_info *hash_info,
-		      const struct qstr *name,
-		      u64 *journal_seq)
+int bch2_dirent_delete(struct bch_fs *c, u64 dir_inum,
+		       const struct bch_hash_info *hash_info,
+		       const struct qstr *name,
+		       u64 *journal_seq)
 {
-	return bch_hash_delete(dirent_hash_desc, hash_info,
+	return bch2_hash_delete(dirent_hash_desc, hash_info,
 			       c, dir_inum, journal_seq, name);
 }
 
-u64 bch_dirent_lookup(struct bch_fs *c, u64 dir_inum,
-		      const struct bch_hash_info *hash_info,
-		      const struct qstr *name)
+u64 bch2_dirent_lookup(struct bch_fs *c, u64 dir_inum,
+		       const struct bch_hash_info *hash_info,
+		       const struct qstr *name)
 {
 	struct btree_iter iter;
 	struct bkey_s_c k;
 	u64 inum;
 
-	k = bch_hash_lookup(dirent_hash_desc, hash_info, c,
+	k = bch2_hash_lookup(dirent_hash_desc, hash_info, c,
 			    dir_inum, &iter, name);
 	if (IS_ERR(k.k)) {
-		bch_btree_iter_unlock(&iter);
+		bch2_btree_iter_unlock(&iter);
 		return 0;
 	}
 
 	inum = le64_to_cpu(bkey_s_c_to_dirent(k).v->d_inum);
-	bch_btree_iter_unlock(&iter);
+	bch2_btree_iter_unlock(&iter);
 
 	return inum;
 }
 
-int bch_empty_dir(struct bch_fs *c, u64 dir_inum)
+int bch2_empty_dir(struct bch_fs *c, u64 dir_inum)
 {
 	struct btree_iter iter;
 	struct bkey_s_c k;
@@ -370,13 +370,13 @@ int bch_empty_dir(struct bch_fs *c, u64 dir_inum)
 			break;
 		}
 	}
-	bch_btree_iter_unlock(&iter);
+	bch2_btree_iter_unlock(&iter);
 
 	return ret;
 }
 
-int bch_readdir(struct bch_fs *c, struct file *file,
-		struct dir_context *ctx)
+int bch2_readdir(struct bch_fs *c, struct file *file,
+		 struct dir_context *ctx)
 {
 	struct inode *inode = file_inode(file);
 	struct btree_iter iter;
@@ -406,7 +406,7 @@ int bch_readdir(struct bch_fs *c, struct file *file,
 		if (k.k->p.inode > inode->i_ino)
 			break;
 
-		len = bch_dirent_name_bytes(dirent);
+		len = bch2_dirent_name_bytes(dirent);
 
 		pr_debug("emitting %s", dirent.v->d_name);
 
@@ -421,7 +421,7 @@ int bch_readdir(struct bch_fs *c, struct file *file,
 
 		ctx->pos = k.k->p.offset + 1;
 	}
-	bch_btree_iter_unlock(&iter);
+	bch2_btree_iter_unlock(&iter);
 
 	return 0;
 }

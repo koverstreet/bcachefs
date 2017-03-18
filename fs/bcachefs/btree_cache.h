@@ -1,29 +1,29 @@
 #ifndef _BCACHE_BTREE_CACHE_H
 #define _BCACHE_BTREE_CACHE_H
 
-#include "bcache.h"
+#include "bcachefs.h"
 #include "btree_types.h"
 
 struct btree_iter;
 
-extern const char * const bch_btree_ids[];
+extern const char * const bch2_btree_ids[];
 
-void bch_recalc_btree_reserve(struct bch_fs *);
+void bch2_recalc_btree_reserve(struct bch_fs *);
 
-void mca_hash_remove(struct bch_fs *, struct btree *);
-int mca_hash_insert(struct bch_fs *, struct btree *,
-		    unsigned, enum btree_id);
+void bch2_btree_node_hash_remove(struct bch_fs *, struct btree *);
+int bch2_btree_node_hash_insert(struct bch_fs *, struct btree *,
+				unsigned, enum btree_id);
 
-void mca_cannibalize_unlock(struct bch_fs *);
-int mca_cannibalize_lock(struct bch_fs *, struct closure *);
+void bch2_btree_node_cannibalize_unlock(struct bch_fs *);
+int bch2_btree_node_cannibalize_lock(struct bch_fs *, struct closure *);
 
-struct btree *mca_alloc(struct bch_fs *);
+struct btree *bch2_btree_node_mem_alloc(struct bch_fs *);
 
-struct btree *bch_btree_node_get(struct btree_iter *, const struct bkey_i *,
-				 unsigned, enum six_lock_type);
+struct btree *bch2_btree_node_get(struct btree_iter *, const struct bkey_i *,
+				  unsigned, enum six_lock_type);
 
-void bch_fs_btree_exit(struct bch_fs *);
-int bch_fs_btree_init(struct bch_fs *);
+void bch2_fs_btree_exit(struct bch_fs *);
+int bch2_fs_btree_init(struct bch_fs *);
 
 #define for_each_cached_btree(_b, _c, _tbl, _iter, _pos)		\
 	for ((_tbl) = rht_dereference_rcu((_c)->btree_cache_table.tbl,	\
@@ -65,7 +65,7 @@ static inline unsigned btree_blocks(struct bch_fs *c)
 
 #define btree_node_root(_c, _b)	((_c)->btree_roots[(_b)->btree_id].b)
 
-int bch_print_btree_node(struct bch_fs *, struct btree *,
+int bch2_print_btree_node(struct bch_fs *, struct btree *,
 			 char *, size_t);
 
 #endif /* _BCACHE_BTREE_CACHE_H */

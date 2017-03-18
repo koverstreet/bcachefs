@@ -7,8 +7,8 @@
 #include "util.h"
 #include "vstructs.h"
 
-void bch_to_binary(char *, const u64 *, unsigned);
-int bch_bkey_to_text(char *, size_t, const struct bkey *);
+void bch2_to_binary(char *, const u64 *, unsigned);
+int bch2_bkey_to_text(char *, size_t, const struct bkey *);
 
 #define BKEY_PADDED(key)	__BKEY_PADDED(key, BKEY_EXTENT_VAL_U64s_MAX)
 
@@ -112,38 +112,45 @@ struct bkey_format_state {
 	u64 field_max[BKEY_NR_FIELDS];
 };
 
-void bch_bkey_format_init(struct bkey_format_state *);
-void bch_bkey_format_add_key(struct bkey_format_state *, const struct bkey *);
-void bch_bkey_format_add_pos(struct bkey_format_state *, struct bpos);
-struct bkey_format bch_bkey_format_done(struct bkey_format_state *);
-const char *bch_bkey_format_validate(struct bkey_format *);
+void bch2_bkey_format_init(struct bkey_format_state *);
+void bch2_bkey_format_add_key(struct bkey_format_state *, const struct bkey *);
+void bch2_bkey_format_add_pos(struct bkey_format_state *, struct bpos);
+struct bkey_format bch2_bkey_format_done(struct bkey_format_state *);
+const char *bch2_bkey_format_validate(struct bkey_format *);
 
 __pure
-unsigned bkey_greatest_differing_bit(const struct btree *,
-				     const struct bkey_packed *,
-				     const struct bkey_packed *);
+unsigned bch2_bkey_greatest_differing_bit(const struct btree *,
+					  const struct bkey_packed *,
+					  const struct bkey_packed *);
 __pure
-unsigned bkey_ffs(const struct btree *, const struct bkey_packed *);
+unsigned bch2_bkey_ffs(const struct btree *, const struct bkey_packed *);
 
 __pure
-int __bkey_cmp_packed_format_checked(const struct bkey_packed *,
+int __bch2_bkey_cmp_packed_format_checked(const struct bkey_packed *,
 				     const struct bkey_packed *,
 				     const struct btree *);
 
 __pure
-int __bkey_cmp_left_packed_format_checked(const struct btree *,
+int __bch2_bkey_cmp_left_packed_format_checked(const struct btree *,
 					  const struct bkey_packed *,
 					  const struct bpos *);
 
 __pure
-int __bkey_cmp_packed(const struct bkey_packed *,
-		      const struct bkey_packed *,
-		      const struct btree *);
+int __bch2_bkey_cmp_packed(const struct bkey_packed *,
+			   const struct bkey_packed *,
+			   const struct btree *);
 
 __pure
-int bkey_cmp_left_packed(const struct btree *,
-			 const struct bkey_packed *,
-			 const struct bpos *);
+int __bch2_bkey_cmp_left_packed(const struct btree *,
+				const struct bkey_packed *,
+				const struct bpos *);
+
+static inline __pure
+int bkey_cmp_left_packed(const struct btree *b,
+			 const struct bkey_packed *l, const struct bpos *r)
+{
+	return __bch2_bkey_cmp_left_packed(b, l, r);
+}
 
 /*
  * we prefer to pass bpos by ref, but it's often enough terribly convenient to
@@ -181,7 +188,7 @@ static inline int bkey_cmp_left_packed_byval(const struct btree *b,
 				  &((struct bkey *) (_l))->p);		\
 		break;							\
 	case BKEY_PACKED_BOTH:						\
-		_cmp = __bkey_cmp_packed((void *) (_l),			\
+		_cmp = __bch2_bkey_cmp_packed((void *) (_l),		\
 					 (void *) (_r), (_b));		\
 		break;							\
 	}								\
@@ -208,8 +215,8 @@ static inline struct bpos bpos_min(struct bpos l, struct bpos r)
 	return bkey_cmp(l, r) < 0 ? l : r;
 }
 
-void bch_bpos_swab(struct bpos *);
-void bch_bkey_swab_key(const struct bkey_format *, struct bkey_packed *);
+void bch2_bpos_swab(struct bpos *);
+void bch2_bkey_swab_key(const struct bkey_format *, struct bkey_packed *);
 
 static __always_inline int bversion_cmp(struct bversion l, struct bversion r)
 {
@@ -328,22 +335,22 @@ static inline void set_bkeyp_val_u64s(const struct bkey_format *format,
 #define bkeyp_val(_format, _k)						\
 	 ((struct bch_val *) ((_k)->_data + bkeyp_key_u64s(_format, _k)))
 
-extern const struct bkey_format bch_bkey_format_current;
+extern const struct bkey_format bch2_bkey_format_current;
 
-bool bch_bkey_transform(const struct bkey_format *,
-			struct bkey_packed *,
-			const struct bkey_format *,
-			const struct bkey_packed *);
+bool bch2_bkey_transform(const struct bkey_format *,
+			 struct bkey_packed *,
+			 const struct bkey_format *,
+			 const struct bkey_packed *);
 
-struct bkey __bkey_unpack_key(const struct bkey_format *,
-			      const struct bkey_packed *);
+struct bkey __bch2_bkey_unpack_key(const struct bkey_format *,
+				   const struct bkey_packed *);
 
 #ifndef HAVE_BCACHE_COMPILED_UNPACK
 struct bpos __bkey_unpack_pos(const struct bkey_format *,
 			      const struct bkey_packed *);
 #endif
 
-bool bkey_pack_key(struct bkey_packed *, const struct bkey *,
+bool bch2_bkey_pack_key(struct bkey_packed *, const struct bkey *,
 		   const struct bkey_format *);
 
 enum bkey_pack_pos_ret {
@@ -352,18 +359,18 @@ enum bkey_pack_pos_ret {
 	BKEY_PACK_POS_FAIL,
 };
 
-enum bkey_pack_pos_ret bkey_pack_pos_lossy(struct bkey_packed *, struct bpos,
+enum bkey_pack_pos_ret bch2_bkey_pack_pos_lossy(struct bkey_packed *, struct bpos,
 					   const struct btree *);
 
 static inline bool bkey_pack_pos(struct bkey_packed *out, struct bpos in,
 				 const struct btree *b)
 {
-	return bkey_pack_pos_lossy(out, in, b) == BKEY_PACK_POS_EXACT;
+	return bch2_bkey_pack_pos_lossy(out, in, b) == BKEY_PACK_POS_EXACT;
 }
 
-void bkey_unpack(const struct btree *, struct bkey_i *,
+void bch2_bkey_unpack(const struct btree *, struct bkey_i *,
 		 const struct bkey_packed *);
-bool bkey_pack(struct bkey_packed *, const struct bkey_i *,
+bool bch2_bkey_pack(struct bkey_packed *, const struct bkey_i *,
 	       const struct bkey_format *);
 
 static inline u64 bkey_field_max(const struct bkey_format *f,
@@ -377,11 +384,11 @@ static inline u64 bkey_field_max(const struct bkey_format *f,
 #ifdef CONFIG_X86_64
 #define HAVE_BCACHE_COMPILED_UNPACK	1
 
-int bch_compile_bkey_format(const struct bkey_format *, void *);
+int bch2_compile_bkey_format(const struct bkey_format *, void *);
 
 #else
 
-static inline int bch_compile_bkey_format(const struct bkey_format *format,
+static inline int bch2_compile_bkey_format(const struct bkey_format *format,
 					  void *out) { return 0; }
 
 #endif
@@ -558,12 +565,12 @@ static inline struct bkey_i_##name *bkey_##name##_init(struct bkey_i *_k)\
 
 BKEY_VAL_ACCESSORS(cookie,		KEY_TYPE_COOKIE);
 
-static inline void __bch_extent_assert(u8 type, u8 nr)
+static inline void __bch2_extent_assert(u8 type, u8 nr)
 {
 	EBUG_ON(type != BCH_EXTENT && type != BCH_EXTENT_CACHED);
 }
 
-__BKEY_VAL_ACCESSORS(extent,		BCH_EXTENT, __bch_extent_assert);
+__BKEY_VAL_ACCESSORS(extent,		BCH_EXTENT, __bch2_extent_assert);
 BKEY_VAL_ACCESSORS(reservation,		BCH_RESERVATION);
 
 BKEY_VAL_ACCESSORS(inode,		BCH_INODE_FS);
@@ -598,9 +605,9 @@ BKEY_VAL_ACCESSORS(xattr,		BCH_XATTR);
 #define prev_word(p)		nth_word(p, -1)
 
 #ifdef CONFIG_BCACHEFS_DEBUG
-void bkey_pack_test(void);
+void bch2_bkey_pack_test(void);
 #else
-static inline void bkey_pack_test(void) {}
+static inline void bch2_bkey_pack_test(void) {}
 #endif
 
 #endif /* _BCACHE_BKEY_H */

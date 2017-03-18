@@ -57,7 +57,7 @@ struct bch_read_bio {
 };
 
 static inline struct bch_read_bio *
-bch_rbio_parent(struct bch_read_bio *rbio)
+bch2_rbio_parent(struct bch_read_bio *rbio)
 {
 	return rbio->split ? rbio->parent : rbio;
 }

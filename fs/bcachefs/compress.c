@@ -1,4 +1,4 @@
-#include "bcache.h"
+#include "bcachefs.h"
 #include "compress.h"
 #include "extents.h"
 #include "io.h"
@@ -195,7 +195,7 @@ err:
 	return ret;
 }
 
-int bch_bio_uncompress_inplace(struct bch_fs *c, struct bio *bio,
+int bch2_bio_uncompress_inplace(struct bch_fs *c, struct bio *bio,
 			       unsigned live_data_sectors,
 			       struct bch_extent_crc128 crc)
 {
@@ -242,12 +242,12 @@ use_mempool:
 	 * deadlock:
 	 */
 
-	bch_bio_free_pages_pool(c, bio);
-	bch_bio_alloc_pages_pool(c, bio, live_data_sectors << 9);
+	bch2_bio_free_pages_pool(c, bio);
+	bch2_bio_alloc_pages_pool(c, bio, live_data_sectors << 9);
 	goto copy_data;
 }
 
-int bch_bio_uncompress(struct bch_fs *c, struct bio *src,
+int bch2_bio_uncompress(struct bch_fs *c, struct bio *src,
 		       struct bio *dst, struct bvec_iter dst_iter,
 		       struct bch_extent_crc128 crc)
 {
@@ -391,7 +391,7 @@ err:
 	return ret;
 }
 
-void bch_bio_compress(struct bch_fs *c,
+void bch2_bio_compress(struct bch_fs *c,
 		      struct bio *dst, size_t *dst_len,
 		      struct bio *src, size_t *src_len,
 		      unsigned *compression_type)
@@ -423,30 +423,30 @@ out:
 }
 
 /* doesn't write superblock: */
-int bch_check_set_has_compressed_data(struct bch_fs *c,
+int bch2_check_set_has_compressed_data(struct bch_fs *c,
 				      unsigned compression_type)
 {
 	switch (compression_type) {
 	case BCH_COMPRESSION_NONE:
 		return 0;
 	case BCH_COMPRESSION_LZ4:
-		if (bch_sb_test_feature(c->disk_sb, BCH_FEATURE_LZ4))
+		if (bch2_sb_test_feature(c->disk_sb, BCH_FEATURE_LZ4))
 			return 0;
 
-		bch_sb_set_feature(c->disk_sb, BCH_FEATURE_LZ4);
+		bch2_sb_set_feature(c->disk_sb, BCH_FEATURE_LZ4);
 		break;
 	case BCH_COMPRESSION_GZIP:
-		if (bch_sb_test_feature(c->disk_sb, BCH_FEATURE_GZIP))
+		if (bch2_sb_test_feature(c->disk_sb, BCH_FEATURE_GZIP))
 			return 0;
 
-		bch_sb_set_feature(c->disk_sb, BCH_FEATURE_GZIP);
+		bch2_sb_set_feature(c->disk_sb, BCH_FEATURE_GZIP);
 		break;
 	}
 
-	return bch_fs_compress_init(c);
+	return bch2_fs_compress_init(c);
 }
 
-void bch_fs_compress_exit(struct bch_fs *c)
+void bch2_fs_compress_exit(struct bch_fs *c)
 {
 	vfree(c->zlib_workspace);
 	mempool_exit(&c->lz4_workspace_pool);
@@ -458,13 +458,13 @@ void bch_fs_compress_exit(struct bch_fs *c)
 	max_t(size_t, zlib_inflate_workspacesize(),			\
 	      zlib_deflate_workspacesize(MAX_WBITS, DEF_MEM_LEVEL))
 
-int bch_fs_compress_init(struct bch_fs *c)
+int bch2_fs_compress_init(struct bch_fs *c)
 {
 	unsigned order = get_order(BCH_ENCODED_EXTENT_MAX << 9);
 	int ret;
 
-	if (!bch_sb_test_feature(c->disk_sb, BCH_FEATURE_LZ4) &&
-	    !bch_sb_test_feature(c->disk_sb, BCH_FEATURE_GZIP))
+	if (!bch2_sb_test_feature(c->disk_sb, BCH_FEATURE_LZ4) &&
+	    !bch2_sb_test_feature(c->disk_sb, BCH_FEATURE_GZIP))
 		return 0;
 
 	if (!mempool_initialized(&c->compression_bounce[READ])) {
@@ -482,7 +482,7 @@ int bch_fs_compress_init(struct bch_fs *c)
 	}
 
 	if (!mempool_initialized(&c->lz4_workspace_pool) &&
-	    bch_sb_test_feature(c->disk_sb, BCH_FEATURE_LZ4)) {
+	    bch2_sb_test_feature(c->disk_sb, BCH_FEATURE_LZ4)) {
 		ret = mempool_init_kmalloc_pool(&c->lz4_workspace_pool,
 						1, LZ4_MEM_COMPRESS);
 		if (ret)
@@ -490,7 +490,7 @@ int bch_fs_compress_init(struct bch_fs *c)
 	}
 
 	if (!c->zlib_workspace &&
-	    bch_sb_test_feature(c->disk_sb, BCH_FEATURE_GZIP)) {
+	    bch2_sb_test_feature(c->disk_sb, BCH_FEATURE_GZIP)) {
 		c->zlib_workspace = vmalloc(COMPRESSION_WORKSPACE_SIZE);
 		if (!c->zlib_workspace)
 			return -ENOMEM;

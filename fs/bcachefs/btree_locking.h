@@ -96,7 +96,7 @@ static inline void btree_node_unlock(struct btree_iter *iter, unsigned level)
 	mark_btree_node_unlocked(iter, level);
 }
 
-bool __bch_btree_node_lock(struct btree *, struct bpos, unsigned,
+bool __bch2_btree_node_lock(struct btree *, struct bpos, unsigned,
 			   struct btree_iter *, enum six_lock_type);
 
 static inline bool btree_node_lock(struct btree *b, struct bpos pos,
@@ -105,15 +105,12 @@ static inline bool btree_node_lock(struct btree *b, struct bpos pos,
 				   enum six_lock_type type)
 {
 	return likely(six_trylock_type(&b->lock, type)) ||
-		__bch_btree_node_lock(b, pos, level, iter, type);
+		__bch2_btree_node_lock(b, pos, level, iter, type);
 }
 
-bool btree_node_relock(struct btree_iter *, unsigned);
+bool bch2_btree_node_relock(struct btree_iter *, unsigned);
 
-void btree_node_unlock_write(struct btree *, struct btree_iter *);
-void btree_node_lock_write(struct btree *, struct btree_iter *);
-
-void __btree_node_unlock_write(struct btree *, struct btree_iter *);
-void __btree_node_lock_write(struct btree *, struct btree_iter *);
+void bch2_btree_node_unlock_write(struct btree *, struct btree_iter *);
+void bch2_btree_node_lock_write(struct btree *, struct btree_iter *);
 
 #endif /* _BCACHE_BTREE_LOCKING_H */

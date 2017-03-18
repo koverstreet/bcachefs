@@ -8,7 +8,7 @@ struct btree_iter {
 	u8			level;
 
 	/*
-	 * Used in bch_btree_iter_traverse(), to indicate whether we're
+	 * Used in bch2_btree_iter_traverse(), to indicate whether we're
 	 * searching for @pos or the first key strictly greater than @pos
 	 */
 	u8			is_extents;
@@ -23,7 +23,7 @@ struct btree_iter {
 	enum btree_id		btree_id:8;
 
 	/*
-	 * indicates we need to call bch_btree_iter_traverse() to revalidate
+	 * indicates we need to call bch2_btree_iter_traverse() to revalidate
 	 * iterator:
 	 */
 	u8			at_end_of_leaf;
@@ -44,7 +44,7 @@ struct btree_iter {
 	 * btree_iter_next_node() knows that it's finished with a depth first
 	 * traversal. Just unlocking a node (with btree_node_unlock()) is fine,
 	 * and if you really don't want that node used again (e.g. btree_split()
-	 * freed it) decrementing lock_seq will cause btree_node_relock() to
+	 * freed it) decrementing lock_seq will cause bch2_btree_node_relock() to
 	 * always fail (but since freeing a btree node takes a write lock on the
 	 * node, which increments the node's lock seq, that's not actually
 	 * necessary in that example).
@@ -55,8 +55,8 @@ struct btree_iter {
 	struct btree_node_iter	node_iters[BTREE_MAX_DEPTH];
 
 	/*
-	 * Current unpacked key - so that bch_btree_iter_next()/
-	 * bch_btree_iter_next_with_holes() can correctly advance pos.
+	 * Current unpacked key - so that bch2_btree_iter_next()/
+	 * bch2_btree_iter_next_with_holes() can correctly advance pos.
 	 */
 	struct bkey		k;
 
@@ -115,27 +115,27 @@ __next_linked_btree_node(struct btree_iter *iter, struct btree *b,
  * @_b is assumed to be locked by @_iter
  *
  * Filters out iterators that don't have a valid btree_node iterator for @_b -
- * i.e. iterators for which btree_node_relock() would not succeed.
+ * i.e. iterators for which bch2_btree_node_relock() would not succeed.
  */
 #define for_each_linked_btree_node(_iter, _b, _linked)			\
 	for ((_linked) = (_iter);					\
 	     ((_linked) = __next_linked_btree_node(_iter, _b, _linked));)
 
 #ifdef CONFIG_BCACHEFS_DEBUG
-void bch_btree_iter_verify(struct btree_iter *, struct btree *);
+void bch2_btree_iter_verify(struct btree_iter *, struct btree *);
 #else
-static inline void bch_btree_iter_verify(struct btree_iter *iter,
+static inline void bch2_btree_iter_verify(struct btree_iter *iter,
 					 struct btree *b) {}
 #endif
 
-void bch_btree_node_iter_fix(struct btree_iter *, struct btree *,
+void bch2_btree_node_iter_fix(struct btree_iter *, struct btree *,
 			     struct btree_node_iter *, struct bset_tree *,
 			     struct bkey_packed *, unsigned, unsigned);
 
-int bch_btree_iter_unlock(struct btree_iter *);
-bool __bch_btree_iter_set_locks_want(struct btree_iter *, unsigned);
+int bch2_btree_iter_unlock(struct btree_iter *);
+bool __bch2_btree_iter_set_locks_want(struct btree_iter *, unsigned);
 
-static inline bool bch_btree_iter_set_locks_want(struct btree_iter *iter,
+static inline bool bch2_btree_iter_set_locks_want(struct btree_iter *iter,
 						 unsigned new_locks_want)
 {
 	new_locks_want = min(new_locks_want, BTREE_MAX_DEPTH);
@@ -144,48 +144,48 @@ static inline bool bch_btree_iter_set_locks_want(struct btree_iter *iter,
 	    iter->nodes_intent_locked == (1 << new_locks_want) - 1)
 		return true;
 
-	return __bch_btree_iter_set_locks_want(iter, new_locks_want);
+	return __bch2_btree_iter_set_locks_want(iter, new_locks_want);
 }
 
-bool bch_btree_iter_node_replace(struct btree_iter *, struct btree *);
-void bch_btree_iter_node_drop_linked(struct btree_iter *, struct btree *);
-void bch_btree_iter_node_drop(struct btree_iter *, struct btree *);
+bool bch2_btree_iter_node_replace(struct btree_iter *, struct btree *);
+void bch2_btree_iter_node_drop_linked(struct btree_iter *, struct btree *);
+void bch2_btree_iter_node_drop(struct btree_iter *, struct btree *);
 
-void bch_btree_iter_reinit_node(struct btree_iter *, struct btree *);
+void bch2_btree_iter_reinit_node(struct btree_iter *, struct btree *);
 
-int __must_check bch_btree_iter_traverse(struct btree_iter *);
+int __must_check bch2_btree_iter_traverse(struct btree_iter *);
 
-struct btree *bch_btree_iter_peek_node(struct btree_iter *);
-struct btree *bch_btree_iter_next_node(struct btree_iter *, unsigned);
+struct btree *bch2_btree_iter_peek_node(struct btree_iter *);
+struct btree *bch2_btree_iter_next_node(struct btree_iter *, unsigned);
 
-struct bkey_s_c bch_btree_iter_peek(struct btree_iter *);
-struct bkey_s_c bch_btree_iter_peek_with_holes(struct btree_iter *);
-void bch_btree_iter_set_pos_same_leaf(struct btree_iter *, struct bpos);
-void bch_btree_iter_set_pos(struct btree_iter *, struct bpos);
-void bch_btree_iter_advance_pos(struct btree_iter *);
-void bch_btree_iter_rewind(struct btree_iter *, struct bpos);
+struct bkey_s_c bch2_btree_iter_peek(struct btree_iter *);
+struct bkey_s_c bch2_btree_iter_peek_with_holes(struct btree_iter *);
+void bch2_btree_iter_set_pos_same_leaf(struct btree_iter *, struct bpos);
+void bch2_btree_iter_set_pos(struct btree_iter *, struct bpos);
+void bch2_btree_iter_advance_pos(struct btree_iter *);
+void bch2_btree_iter_rewind(struct btree_iter *, struct bpos);
 
-void __bch_btree_iter_init(struct btree_iter *, struct bch_fs *,
+void __bch2_btree_iter_init(struct btree_iter *, struct bch_fs *,
 			   enum btree_id, struct bpos, unsigned , unsigned);
 
-static inline void bch_btree_iter_init(struct btree_iter *iter,
+static inline void bch2_btree_iter_init(struct btree_iter *iter,
 				       struct bch_fs *c,
 				       enum btree_id btree_id,
 				       struct bpos pos)
 {
-	__bch_btree_iter_init(iter, c, btree_id, pos, 0, 0);
+	__bch2_btree_iter_init(iter, c, btree_id, pos, 0, 0);
 }
 
-static inline void bch_btree_iter_init_intent(struct btree_iter *iter,
+static inline void bch2_btree_iter_init_intent(struct btree_iter *iter,
 					      struct bch_fs *c,
 					      enum btree_id btree_id,
 					      struct bpos pos)
 {
-	__bch_btree_iter_init(iter, c, btree_id, pos, 1, 0);
+	__bch2_btree_iter_init(iter, c, btree_id, pos, 1, 0);
 }
 
-void bch_btree_iter_link(struct btree_iter *, struct btree_iter *);
-void bch_btree_iter_copy(struct btree_iter *, struct btree_iter *);
+void bch2_btree_iter_link(struct btree_iter *, struct btree_iter *);
+void bch2_btree_iter_copy(struct btree_iter *, struct btree_iter *);
 
 static inline struct bpos btree_type_successor(enum btree_id id,
 					       struct bpos pos)
@@ -217,22 +217,22 @@ static inline int btree_iter_cmp(const struct btree_iter *l,
 
 #define __for_each_btree_node(_iter, _c, _btree_id, _start, _depth,	\
 			      _b, _locks_want)				\
-	for (__bch_btree_iter_init((_iter), (_c), (_btree_id),		\
+	for (__bch2_btree_iter_init((_iter), (_c), (_btree_id),		\
 				   _start, _locks_want, _depth),	\
 	     (_iter)->is_extents = false,				\
-	     _b = bch_btree_iter_peek_node(_iter);			\
+	     _b = bch2_btree_iter_peek_node(_iter);			\
 	     (_b);							\
-	     (_b) = bch_btree_iter_next_node(_iter, _depth))
+	     (_b) = bch2_btree_iter_next_node(_iter, _depth))
 
 #define for_each_btree_node(_iter, _c, _btree_id, _start, _depth, _b)	\
 	__for_each_btree_node(_iter, _c, _btree_id, _start, _depth, _b, 0)
 
 #define __for_each_btree_key(_iter, _c, _btree_id,  _start,		\
 			     _k, _locks_want)				\
-	for (__bch_btree_iter_init((_iter), (_c), (_btree_id),		\
+	for (__bch2_btree_iter_init((_iter), (_c), (_btree_id),		\
 				   _start, _locks_want, 0);		\
-	     !IS_ERR_OR_NULL(((_k) = bch_btree_iter_peek(_iter)).k);	\
-	     bch_btree_iter_advance_pos(_iter))
+	     !IS_ERR_OR_NULL(((_k) = bch2_btree_iter_peek(_iter)).k);	\
+	     bch2_btree_iter_advance_pos(_iter))
 
 #define for_each_btree_key(_iter, _c, _btree_id,  _start, _k)		\
 	__for_each_btree_key(_iter, _c, _btree_id, _start, _k, 0)
@@ -242,10 +242,10 @@ static inline int btree_iter_cmp(const struct btree_iter *l,
 
 #define __for_each_btree_key_with_holes(_iter, _c, _btree_id,		\
 					_start, _k, _locks_want)	\
-	for (__bch_btree_iter_init((_iter), (_c), (_btree_id),		\
+	for (__bch2_btree_iter_init((_iter), (_c), (_btree_id),		\
 				   _start, _locks_want, 0);		\
-	     !IS_ERR_OR_NULL(((_k) = bch_btree_iter_peek_with_holes(_iter)).k);\
-	     bch_btree_iter_advance_pos(_iter))
+	     !IS_ERR_OR_NULL(((_k) = bch2_btree_iter_peek_with_holes(_iter)).k);\
+	     bch2_btree_iter_advance_pos(_iter))
 
 #define for_each_btree_key_with_holes(_iter, _c, _btree_id, _start, _k)	\
 	__for_each_btree_key_with_holes(_iter, _c, _btree_id, _start, _k, 0)
@@ -263,19 +263,19 @@ static inline int btree_iter_err(struct bkey_s_c k)
  * Unlocks before scheduling
  * Note: does not revalidate iterator
  */
-static inline void bch_btree_iter_cond_resched(struct btree_iter *iter)
+static inline void bch2_btree_iter_cond_resched(struct btree_iter *iter)
 {
 	struct btree_iter *linked;
 
 	if (need_resched()) {
 		for_each_linked_btree_iter(iter, linked)
-			bch_btree_iter_unlock(linked);
-		bch_btree_iter_unlock(iter);
+			bch2_btree_iter_unlock(linked);
+		bch2_btree_iter_unlock(iter);
 		schedule();
 	} else if (race_fault()) {
 		for_each_linked_btree_iter(iter, linked)
-			bch_btree_iter_unlock(linked);
-		bch_btree_iter_unlock(iter);
+			bch2_btree_iter_unlock(linked);
+		bch2_btree_iter_unlock(iter);
 	}
 }
 

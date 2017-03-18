@@ -244,36 +244,36 @@ do {									\
 #define ANYSINT_MAX(t)							\
 	((((t) 1 << (sizeof(t) * 8 - 2)) - (t) 1) * (t) 2 + (t) 1)
 
-int bch_strtoint_h(const char *, int *);
-int bch_strtouint_h(const char *, unsigned int *);
-int bch_strtoll_h(const char *, long long *);
-int bch_strtoull_h(const char *, unsigned long long *);
+int bch2_strtoint_h(const char *, int *);
+int bch2_strtouint_h(const char *, unsigned int *);
+int bch2_strtoll_h(const char *, long long *);
+int bch2_strtoull_h(const char *, unsigned long long *);
 
-static inline int bch_strtol_h(const char *cp, long *res)
+static inline int bch2_strtol_h(const char *cp, long *res)
 {
 #if BITS_PER_LONG == 32
-	return bch_strtoint_h(cp, (int *) res);
+	return bch2_strtoint_h(cp, (int *) res);
 #else
-	return bch_strtoll_h(cp, (long long *) res);
+	return bch2_strtoll_h(cp, (long long *) res);
 #endif
 }
 
-static inline int bch_strtoul_h(const char *cp, long *res)
+static inline int bch2_strtoul_h(const char *cp, long *res)
 {
 #if BITS_PER_LONG == 32
-	return bch_strtouint_h(cp, (unsigned int *) res);
+	return bch2_strtouint_h(cp, (unsigned int *) res);
 #else
-	return bch_strtoull_h(cp, (unsigned long long *) res);
+	return bch2_strtoull_h(cp, (unsigned long long *) res);
 #endif
 }
 
 #define strtoi_h(cp, res)						\
-	( type_is(*res, int)		? bch_strtoint_h(cp, (void *) res)\
-	: type_is(*res, long)		? bch_strtol_h(cp, (void *) res)\
-	: type_is(*res, long long)	? bch_strtoll_h(cp, (void *) res)\
-	: type_is(*res, unsigned)	? bch_strtouint_h(cp, (void *) res)\
-	: type_is(*res, unsigned long)	? bch_strtoul_h(cp, (void *) res)\
-	: type_is(*res, unsigned long long) ? bch_strtoull_h(cp, (void *) res)\
+	( type_is(*res, int)		? bch2_strtoint_h(cp, (void *) res)\
+	: type_is(*res, long)		? bch2_strtol_h(cp, (void *) res)\
+	: type_is(*res, long long)	? bch2_strtoll_h(cp, (void *) res)\
+	: type_is(*res, unsigned)	? bch2_strtouint_h(cp, (void *) res)\
+	: type_is(*res, unsigned long)	? bch2_strtoul_h(cp, (void *) res)\
+	: type_is(*res, unsigned long long) ? bch2_strtoull_h(cp, (void *) res)\
 	: -EINVAL)
 
 #define strtoul_safe(cp, var)						\
@@ -316,14 +316,14 @@ static inline int bch_strtoul_h(const char *cp, long *res)
 		 : type_is(var, char *)		? "%s\n"		\
 		 : "%i\n", var)
 
-ssize_t bch_hprint(char *buf, s64 v);
+ssize_t bch2_hprint(char *buf, s64 v);
 
-bool bch_is_zero(const void *, size_t);
+bool bch2_is_zero(const void *, size_t);
 
-ssize_t bch_snprint_string_list(char *buf, size_t size, const char * const list[],
+ssize_t bch2_snprint_string_list(char *buf, size_t size, const char * const list[],
 			    size_t selected);
 
-ssize_t bch_read_string_list(const char *buf, const char * const list[]);
+ssize_t bch2_read_string_list(const char *buf, const char * const list[]);
 
 struct time_stats {
 	spinlock_t	lock;
@@ -339,9 +339,9 @@ struct time_stats {
 	u64		last;
 };
 
-void bch_time_stats_clear(struct time_stats *stats);
-void __bch_time_stats_update(struct time_stats *stats, u64 time);
-void bch_time_stats_update(struct time_stats *stats, u64 time);
+void bch2_time_stats_clear(struct time_stats *stats);
+void __bch2_time_stats_update(struct time_stats *stats, u64 time);
+void bch2_time_stats_update(struct time_stats *stats, u64 time);
 
 static inline unsigned local_clock_us(void)
 {
@@ -382,7 +382,7 @@ do {									\
 #define sysfs_clear_time_stats(stats, name)				\
 do {									\
 	if (attr == &sysfs_ ## name ## _clear)				\
-		bch_time_stats_clear(stats);				\
+		bch2_time_stats_clear(stats);				\
 } while (0)
 
 #define sysfs_time_stats_attribute(name,				\
@@ -422,19 +422,19 @@ struct bch_ratelimit {
 	/*
 	 * Rate at which we want to do work, in units per nanosecond
 	 * The units here correspond to the units passed to
-	 * bch_ratelimit_increment()
+	 * bch2_ratelimit_increment()
 	 */
 	unsigned		rate;
 };
 
-static inline void bch_ratelimit_reset(struct bch_ratelimit *d)
+static inline void bch2_ratelimit_reset(struct bch_ratelimit *d)
 {
 	d->next = local_clock();
 }
 
-u64 bch_ratelimit_delay(struct bch_ratelimit *);
-void bch_ratelimit_increment(struct bch_ratelimit *, u64);
-int bch_ratelimit_wait_freezable_stoppable(struct bch_ratelimit *);
+u64 bch2_ratelimit_delay(struct bch_ratelimit *);
+void bch2_ratelimit_increment(struct bch_ratelimit *, u64);
+int bch2_ratelimit_wait_freezable_stoppable(struct bch_ratelimit *);
 
 struct bch_pd_controller {
 	struct bch_ratelimit	rate;
@@ -453,14 +453,14 @@ struct bch_pd_controller {
 	s64			last_change;
 	s64			last_target;
 
-	/* If true, the rate will not increase if bch_ratelimit_delay()
+	/* If true, the rate will not increase if bch2_ratelimit_delay()
 	 * is not being called often enough. */
 	bool			backpressure;
 };
 
-void bch_pd_controller_update(struct bch_pd_controller *, s64, s64, int);
-void bch_pd_controller_init(struct bch_pd_controller *);
-size_t bch_pd_controller_print_debug(struct bch_pd_controller *, char *);
+void bch2_pd_controller_update(struct bch_pd_controller *, s64, s64, int);
+void bch2_pd_controller_init(struct bch_pd_controller *);
+size_t bch2_pd_controller_print_debug(struct bch_pd_controller *, char *);
 
 #define sysfs_pd_controller_attribute(name)				\
 	rw_attribute(name##_rate);					\
@@ -484,7 +484,7 @@ do {									\
 	sysfs_print(name##_rate_p_term_inverse,	(var)->p_term_inverse);	\
 									\
 	if (attr == &sysfs_##name##_rate_debug)				\
-		return bch_pd_controller_print_debug(var, buf);		\
+		return bch2_pd_controller_print_debug(var, buf);		\
 } while (0)
 
 #define sysfs_pd_controller_store(name, var)				\
@@ -600,7 +600,7 @@ static inline unsigned fract_exp_two(unsigned x, unsigned fract_bits)
 	return x;
 }
 
-void bch_bio_map(struct bio *bio, void *base);
+void bch2_bio_map(struct bio *bio, void *base);
 
 static inline sector_t bdev_sectors(struct block_device *bdev)
 {
@@ -633,7 +633,7 @@ do {									\
 	_ret;								\
 })
 
-size_t bch_rand_range(size_t);
+size_t bch2_rand_range(size_t);
 
 void memcpy_to_bio(struct bio *, struct bvec_iter, void *);
 void memcpy_from_bio(void *, struct bio *, struct bvec_iter);

@@ -9,8 +9,8 @@
 #define to_rbio(_bio)			\
 	container_of((_bio), struct bch_read_bio, bio)
 
-void bch_bio_free_pages_pool(struct bch_fs *, struct bio *);
-void bch_bio_alloc_pages_pool(struct bch_fs *, struct bio *, size_t);
+void bch2_bio_free_pages_pool(struct bch_fs *, struct bio *);
+void bch2_bio_alloc_pages_pool(struct bch_fs *, struct bio *, size_t);
 
 enum bch_write_flags {
 	BCH_WRITE_ALLOC_NOWAIT		= (1 << 0),
@@ -39,27 +39,27 @@ static inline struct write_point *foreground_write_point(struct bch_fs *c,
 		hash_long(v, ilog2(ARRAY_SIZE(c->write_points)));
 }
 
-void bch_write_op_init(struct bch_write_op *, struct bch_fs *,
-		       struct bch_write_bio *,
-		       struct disk_reservation, struct write_point *,
-		       struct bpos, u64 *, unsigned);
-void bch_write(struct closure *);
+void bch2_write_op_init(struct bch_write_op *, struct bch_fs *,
+			struct bch_write_bio *,
+			struct disk_reservation, struct write_point *,
+			struct bpos, u64 *, unsigned);
+void bch2_write(struct closure *);
 
 struct cache_promote_op;
 
 struct extent_pick_ptr;
 
-void bch_read_extent_iter(struct bch_fs *, struct bch_read_bio *,
-			  struct bvec_iter, struct bkey_s_c k,
-			  struct extent_pick_ptr *, unsigned);
+void bch2_read_extent_iter(struct bch_fs *, struct bch_read_bio *,
+			   struct bvec_iter, struct bkey_s_c k,
+			   struct extent_pick_ptr *, unsigned);
 
-static inline void bch_read_extent(struct bch_fs *c,
-				   struct bch_read_bio *orig,
-				   struct bkey_s_c k,
-				   struct extent_pick_ptr *pick,
-				   unsigned flags)
+static inline void bch2_read_extent(struct bch_fs *c,
+				    struct bch_read_bio *orig,
+				    struct bkey_s_c k,
+				    struct extent_pick_ptr *pick,
+				    unsigned flags)
 {
-	bch_read_extent_iter(c, orig, orig->bio.bi_iter,
+	bch2_read_extent_iter(c, orig, orig->bio.bi_iter,
 			     k, pick, flags);
 }
 
@@ -72,16 +72,16 @@ enum bch_read_flags {
 	BCH_READ_USER_MAPPED		= 1 << 5,
 };
 
-void bch_read(struct bch_fs *, struct bch_read_bio *, u64);
+void bch2_read(struct bch_fs *, struct bch_read_bio *, u64);
 
-void bch_submit_wbio_replicas(struct bch_write_bio *, struct bch_fs *,
-			      const struct bkey_i *);
+void bch2_submit_wbio_replicas(struct bch_write_bio *, struct bch_fs *,
+			       const struct bkey_i *);
 
-int bch_discard(struct bch_fs *, struct bpos, struct bpos,
-		struct bversion, struct disk_reservation *,
-		struct extent_insert_hook *, u64 *);
+int bch2_discard(struct bch_fs *, struct bpos, struct bpos,
+		 struct bversion, struct disk_reservation *,
+		 struct extent_insert_hook *, u64 *);
 
-void bch_read_retry_work(struct work_struct *);
-void bch_wake_delayed_writes(unsigned long data);
+void bch2_read_retry_work(struct work_struct *);
+void bch2_wake_delayed_writes(unsigned long data);
 
 #endif /* _BCACHE_IO_H */

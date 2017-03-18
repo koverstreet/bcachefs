@@ -1,7 +1,6 @@
 #ifndef _BCACHE_BTREE_TYPES_H
 #define _BCACHE_BTREE_TYPES_H
 
-#include <linux/bcache.h>
 #include <linux/list.h>
 #include <linux/rhashtable.h>
 #include <linux/semaphore.h>
@@ -94,10 +93,10 @@ struct btree {
 	u8			unpack_fn_len;
 
 	/*
-	 * XXX: add a delete sequence number, so when btree_node_relock() fails
-	 * because the lock sequence number has changed - i.e. the contents were
-	 * modified - we can still relock the node if it's still the one we
-	 * want, without redoing the traversal
+	 * XXX: add a delete sequence number, so when bch2_btree_node_relock()
+	 * fails because the lock sequence number has changed - i.e. the
+	 * contents were modified - we can still relock the node if it's still
+	 * the one we want, without redoing the traversal
 	 */
 
 	/*
@@ -240,7 +239,7 @@ static inline enum bkey_type btree_node_type(struct btree *b)
 
 static inline const struct bkey_ops *btree_node_ops(struct btree *b)
 {
-	return bch_bkey_ops[btree_node_type(b)];
+	return bch2_bkey_ops[btree_node_type(b)];
 }
 
 static inline bool btree_node_has_ptrs(struct btree *b)

@@ -391,7 +391,7 @@ struct bch_csum {
 #define BCH_CSUM_CHACHA20_POLY1305_128	4U
 #define BCH_CSUM_NR			5U
 
-static inline _Bool bch_csum_type_is_encryption(unsigned type)
+static inline _Bool bch2_csum_type_is_encryption(unsigned type)
 {
 	switch (type) {
 	case BCH_CSUM_CHACHA20_POLY1305_80:
@@ -805,7 +805,7 @@ enum cache_replacement {
 };
 
 struct bch_sb_layout {
-	uuid_le			magic;	/* bcache superblock UUID */
+	uuid_le			magic;	/* bcachefs superblock UUID */
 	__u8			layout_type;
 	__u8			sb_max_size_bits; /* base 2 of 512 byte sectors */
 	__u8			nr_superblocks;
@@ -893,7 +893,7 @@ struct bch_sb_field_replication {
 /*
  * @offset	- sector where this sb was written
  * @version	- on disk format version
- * @magic	- identifies as a bcache superblock (BCACHE_MAGIC)
+ * @magic	- identifies as a bcachefs superblock (BCACHE_MAGIC)
  * @seq		- incremented each time superblock is written
  * @uuid	- used for generating various magic numbers and identifying
  *                member devices, never changes
@@ -1035,7 +1035,7 @@ struct backingdev_sb {
 	__le64			offset;	/* sector where this sb was written */
 	__le64			version; /* of on disk format */
 
-	uuid_le			magic;	/* bcache superblock UUID */
+	uuid_le			magic;	/* bcachefs superblock UUID */
 
 	uuid_le			disk_uuid;
 
@@ -1116,7 +1116,7 @@ static inline _Bool SB_IS_BDEV(const struct bch_sb *sb)
 #define PSET_MAGIC		__cpu_to_le64(0x6750e15f87337f91ULL)
 #define BSET_MAGIC		__cpu_to_le64(0x90135c78b99e07f5ULL)
 
-static inline __le64 __bch_sb_magic(struct bch_sb *sb)
+static inline __le64 __bch2_sb_magic(struct bch_sb *sb)
 {
 	__le64 ret;
 	memcpy(&ret, &sb->uuid, sizeof(ret));
@@ -1125,17 +1125,17 @@ static inline __le64 __bch_sb_magic(struct bch_sb *sb)
 
 static inline __u64 __jset_magic(struct bch_sb *sb)
 {
-	return __le64_to_cpu(__bch_sb_magic(sb) ^ JSET_MAGIC);
+	return __le64_to_cpu(__bch2_sb_magic(sb) ^ JSET_MAGIC);
 }
 
 static inline __u64 __pset_magic(struct bch_sb *sb)
 {
-	return __le64_to_cpu(__bch_sb_magic(sb) ^ PSET_MAGIC);
+	return __le64_to_cpu(__bch2_sb_magic(sb) ^ PSET_MAGIC);
 }
 
 static inline __u64 __bset_magic(struct bch_sb *sb)
 {
-	return __le64_to_cpu(__bch_sb_magic(sb) ^ BSET_MAGIC);
+	return __le64_to_cpu(__bch2_sb_magic(sb) ^ BSET_MAGIC);
 }
 
 /* Journal */

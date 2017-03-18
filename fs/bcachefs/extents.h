@@ -1,7 +1,7 @@
 #ifndef _BCACHE_EXTENTS_H
 #define _BCACHE_EXTENTS_H
 
-#include "bcache.h"
+#include "bcachefs.h"
 #include "bkey.h"
 
 struct btree_node_iter;
@@ -9,16 +9,16 @@ struct btree_insert;
 struct btree_insert_entry;
 struct extent_insert_hook;
 
-struct btree_nr_keys bch_key_sort_fix_overlapping(struct bset *,
+struct btree_nr_keys bch2_key_sort_fix_overlapping(struct bset *,
 						  struct btree *,
 						  struct btree_node_iter *);
-struct btree_nr_keys bch_extent_sort_fix_overlapping(struct bch_fs *c,
+struct btree_nr_keys bch2_extent_sort_fix_overlapping(struct bch_fs *c,
 						     struct bset *,
 						     struct btree *,
 						     struct btree_node_iter *);
 
-extern const struct bkey_ops bch_bkey_btree_ops;
-extern const struct bkey_ops bch_bkey_extent_ops;
+extern const struct bkey_ops bch2_bkey_btree_ops;
+extern const struct bkey_ops bch2_bkey_extent_ops;
 
 struct bch_fs;
 struct journal_res;
@@ -30,28 +30,28 @@ struct extent_pick_ptr {
 };
 
 struct extent_pick_ptr
-bch_btree_pick_ptr(struct bch_fs *, const struct btree *);
+bch2_btree_pick_ptr(struct bch_fs *, const struct btree *);
 
-void bch_extent_pick_ptr_avoiding(struct bch_fs *, struct bkey_s_c,
+void bch2_extent_pick_ptr_avoiding(struct bch_fs *, struct bkey_s_c,
 				  struct bch_dev *, struct extent_pick_ptr *);
 
 static inline void
-bch_extent_pick_ptr(struct bch_fs *c, struct bkey_s_c k,
+bch2_extent_pick_ptr(struct bch_fs *c, struct bkey_s_c k,
 		    struct extent_pick_ptr *ret)
 {
-	bch_extent_pick_ptr_avoiding(c, k, NULL, ret);
+	bch2_extent_pick_ptr_avoiding(c, k, NULL, ret);
 }
 
 enum btree_insert_ret
-bch_insert_fixup_extent(struct btree_insert *,
+bch2_insert_fixup_extent(struct btree_insert *,
 			struct btree_insert_entry *);
 
-bool bch_extent_normalize(struct bch_fs *, struct bkey_s);
-void bch_extent_mark_replicas_cached(struct bch_fs *,
+bool bch2_extent_normalize(struct bch_fs *, struct bkey_s);
+void bch2_extent_mark_replicas_cached(struct bch_fs *,
 				     struct bkey_s_extent, unsigned);
 
-unsigned bch_extent_nr_ptrs(struct bkey_s_c_extent);
-unsigned bch_extent_nr_dirty_ptrs(struct bkey_s_c);
+unsigned bch2_extent_nr_ptrs(struct bkey_s_c_extent);
+unsigned bch2_extent_nr_dirty_ptrs(struct bkey_s_c);
 
 static inline bool bkey_extent_is_data(const struct bkey *k)
 {
@@ -324,7 +324,7 @@ out:									\
 	     (_ptr);							\
 	     (_ptr) = extent_ptr_prev(_e, _ptr))
 
-void bch_extent_crc_append(struct bkey_i_extent *, unsigned, unsigned,
+void bch2_extent_crc_append(struct bkey_i_extent *, unsigned, unsigned,
 			   unsigned, unsigned, struct bch_csum, unsigned);
 
 static inline void __extent_entry_push(struct bkey_i_extent *e)
@@ -543,17 +543,17 @@ static inline unsigned extent_current_nonce(struct bkey_s_c_extent e)
 	const union bch_extent_crc *crc;
 
 	extent_for_each_crc(e, crc)
-		if (bch_csum_type_is_encryption(crc_csum_type(crc)))
+		if (bch2_csum_type_is_encryption(crc_csum_type(crc)))
 			return crc_offset(crc) + crc_nonce(crc);
 
 	return 0;
 }
 
-void bch_extent_narrow_crcs(struct bkey_s_extent);
-void bch_extent_drop_redundant_crcs(struct bkey_s_extent);
+void bch2_extent_narrow_crcs(struct bkey_s_extent);
+void bch2_extent_drop_redundant_crcs(struct bkey_s_extent);
 
 /* Doesn't cleanup redundant crcs */
-static inline void __bch_extent_drop_ptr(struct bkey_s_extent e,
+static inline void __bch2_extent_drop_ptr(struct bkey_s_extent e,
 					 struct bch_extent_ptr *ptr)
 {
 	EBUG_ON(ptr < &e.v->start->ptr ||
@@ -564,18 +564,18 @@ static inline void __bch_extent_drop_ptr(struct bkey_s_extent e,
 	e.k->u64s -= sizeof(*ptr) / sizeof(u64);
 }
 
-static inline void bch_extent_drop_ptr(struct bkey_s_extent e,
+static inline void bch2_extent_drop_ptr(struct bkey_s_extent e,
 				       struct bch_extent_ptr *ptr)
 {
-	__bch_extent_drop_ptr(e, ptr);
-	bch_extent_drop_redundant_crcs(e);
+	__bch2_extent_drop_ptr(e, ptr);
+	bch2_extent_drop_redundant_crcs(e);
 }
 
 const struct bch_extent_ptr *
-bch_extent_has_device(struct bkey_s_c_extent, unsigned);
+bch2_extent_has_device(struct bkey_s_c_extent, unsigned);
 
-bool bch_cut_front(struct bpos, struct bkey_i *);
-bool bch_cut_back(struct bpos, struct bkey *);
-void bch_key_resize(struct bkey *, unsigned);
+bool bch2_cut_front(struct bpos, struct bkey_i *);
+bool bch2_cut_back(struct bpos, struct bkey *);
+void bch2_key_resize(struct bkey *, unsigned);
 
 #endif /* _BCACHE_EXTENTS_H */

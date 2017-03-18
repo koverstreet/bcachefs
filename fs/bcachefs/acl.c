@@ -1,4 +1,4 @@
-#include "bcache.h"
+#include "bcachefs.h"
 
 #include <linux/init.h>
 #include <linux/sched.h>
@@ -11,7 +11,7 @@
 /*
  * Convert from filesystem to in-memory representation.
  */
-static struct posix_acl *bch_acl_from_disk(const void *value, size_t size)
+static struct posix_acl *bch2_acl_from_disk(const void *value, size_t size)
 {
 	const char *end = (char *)value + size;
 	int n, count;
@@ -25,7 +25,7 @@ static struct posix_acl *bch_acl_from_disk(const void *value, size_t size)
 	    cpu_to_le32(BCH_ACL_VERSION))
 		return ERR_PTR(-EINVAL);
 	value = (char *)value + sizeof(bch_acl_header);
-	count = bch_acl_count(size);
+	count = bch2_acl_count(size);
 	if (count < 0)
 		return ERR_PTR(-EINVAL);
 	if (count == 0)
@@ -82,13 +82,13 @@ fail:
 /*
  * Convert from in-memory to filesystem representation.
  */
-static void *bch_acl_to_disk(const struct posix_acl *acl, size_t *size)
+static void *bch2_acl_to_disk(const struct posix_acl *acl, size_t *size)
 {
 	bch_acl_header *ext_acl;
 	char *e;
 	size_t n;
 
-	*size = bch_acl_size(acl->a_count);
+	*size = bch2_acl_size(acl->a_count);
 	ext_acl = kmalloc(sizeof(bch_acl_header) + acl->a_count *
 			sizeof(bch_acl_entry), GFP_KERNEL);
 	if (!ext_acl)
@@ -131,7 +131,7 @@ fail:
 	return ERR_PTR(-EINVAL);
 }
 
-struct posix_acl *bch_get_acl(struct inode *inode, int type)
+struct posix_acl *bch2_get_acl(struct inode *inode, int type)
 {
 	struct bch_fs *c = inode->i_sb->s_fs_info;
 	int name_index;
@@ -149,16 +149,16 @@ struct posix_acl *bch_get_acl(struct inode *inode, int type)
 	default:
 		BUG();
 	}
-	ret = bch_xattr_get(c, inode, "", NULL, 0, name_index);
+	ret = bch2_xattr_get(c, inode, "", NULL, 0, name_index);
 	if (ret > 0) {
 		value = kmalloc(ret, GFP_KERNEL);
 		if (!value)
 			return ERR_PTR(-ENOMEM);
-		ret = bch_xattr_get(c, inode, "", value,
+		ret = bch2_xattr_get(c, inode, "", value,
 				    ret, name_index);
 	}
 	if (ret > 0)
-		acl = bch_acl_from_disk(value, ret);
+		acl = bch2_acl_from_disk(value, ret);
 	else if (ret == -ENODATA || ret == -ENOSYS)
 		acl = NULL;
 	else
@@ -171,7 +171,7 @@ struct posix_acl *bch_get_acl(struct inode *inode, int type)
 	return acl;
 }
 
-int bch_set_acl(struct inode *inode, struct posix_acl *acl, int type)
+int bch2_set_acl(struct inode *inode, struct posix_acl *acl, int type)
 {
 	struct bch_fs *c = inode->i_sb->s_fs_info;
 	int name_index;
@@ -206,12 +206,12 @@ int bch_set_acl(struct inode *inode, struct posix_acl *acl, int type)
 	}
 
 	if (acl) {
-		value = bch_acl_to_disk(acl, &size);
+		value = bch2_acl_to_disk(acl, &size);
 		if (IS_ERR(value))
 			return (int)PTR_ERR(value);
 	}
 
-	ret = bch_xattr_set(c, inode, "", value, size, 0, name_index);
+	ret = bch2_xattr_set(c, inode, "", value, size, 0, name_index);
 
 	kfree(value);
 
