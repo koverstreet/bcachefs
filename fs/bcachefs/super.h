@@ -125,7 +125,6 @@ const char *bch_fs_open(char * const *, unsigned, struct bch_opts,
 const char *bch_fs_open_incremental(const char *path);
 
 extern struct workqueue_struct *bcache_io_wq;
-extern struct crypto_shash *bch_sha256;
 
 extern struct kobj_type bch_fs_ktype;
 extern struct kobj_type bch_fs_internal_ktype;

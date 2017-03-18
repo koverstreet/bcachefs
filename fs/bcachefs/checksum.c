@@ -562,6 +562,8 @@ void bch_fs_encryption_exit(struct bch_fs *c)
 		crypto_free_shash(c->poly1305);
 	if (!IS_ERR_OR_NULL(c->chacha20))
 		crypto_free_blkcipher(c->chacha20);
+	if (!IS_ERR_OR_NULL(c->sha256))
+		crypto_free_shash(c->sha256);
 }
 
 int bch_fs_encryption_init(struct bch_fs *c)
@@ -569,6 +571,10 @@ int bch_fs_encryption_init(struct bch_fs *c)
 	struct bch_sb_field_crypt *crypt;
 	struct bch_key key;
 	int ret;
+
+	c->sha256 = crypto_alloc_shash("sha256", 0, 0);
+	if (IS_ERR(c->sha256))
+		return PTR_ERR(c->sha256);
 
 	crypt = bch_sb_get_crypt(c->disk_sb);
 	if (!crypt)

@@ -19,7 +19,8 @@ struct bch_hash_info {
 };
 
 static inline struct bch_hash_info
-bch_hash_info_init(const struct bch_inode_unpacked *bi)
+bch_hash_info_init(struct bch_fs *c,
+		   const struct bch_inode_unpacked *bi)
 {
 	/* XXX ick */
 	struct bch_hash_info info = {
@@ -33,10 +34,10 @@ bch_hash_info_init(const struct bch_inode_unpacked *bi)
 		info.crc_key = bi->i_hash_seed;
 		break;
 	case BCH_STR_HASH_SIPHASH: {
-		SHASH_DESC_ON_STACK(desc, bch_sha256);
-		u8 digest[crypto_shash_digestsize(bch_sha256)];
+		SHASH_DESC_ON_STACK(desc, c->sha256);
+		u8 digest[crypto_shash_digestsize(c->sha256)];
 
-		desc->tfm = bch_sha256;
+		desc->tfm = c->sha256;
 		desc->flags = 0;
 
 		crypto_shash_digest(desc, (void *) &bi->i_hash_seed,

@@ -39,7 +39,7 @@ static int remove_dirent(struct bch_fs *c, struct btree_iter *iter,
 	if (ret)
 		goto err;
 
-	dir_hash_info = bch_hash_info_init(&dir_inode);
+	dir_hash_info = bch_hash_info_init(c, &dir_inode);
 
 	ret = bch_dirent_delete(c, dir_inum, &dir_hash_info, &name, NULL);
 err:
@@ -52,7 +52,7 @@ static int reattach_inode(struct bch_fs *c,
 			  u64 inum)
 {
 	struct bch_hash_info lostfound_hash_info =
-		bch_hash_info_init(lostfound_inode);
+		bch_hash_info_init(c, lostfound_inode);
 	struct bkey_inode_buf packed;
 	char name_buf[20];
 	struct qstr name;
@@ -308,7 +308,7 @@ static int check_lostfound(struct bch_fs *c,
 {
 	struct qstr lostfound = QSTR("lost+found");
 	struct bch_hash_info root_hash_info =
-		bch_hash_info_init(root_inode);
+		bch_hash_info_init(c, root_inode);
 	struct bkey_inode_buf packed;
 	u64 inum;
 	int ret;

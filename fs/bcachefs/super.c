@@ -67,7 +67,6 @@ static DEFINE_MUTEX(bch_fs_list_lock);
 
 static DECLARE_WAIT_QUEUE_HEAD(bch_read_only_wait);
 struct workqueue_struct *bcache_io_wq;
-struct crypto_shash *bch_sha256;
 
 static void bch_dev_free(struct bch_dev *);
 static int bch_dev_alloc(struct bch_fs *, unsigned);
@@ -1999,8 +1998,6 @@ static void bcache_exit(void)
 		kset_unregister(bcache_kset);
 	if (bcache_io_wq)
 		destroy_workqueue(bcache_io_wq);
-	if (!IS_ERR_OR_NULL(bch_sha256))
-		crypto_free_shash(bch_sha256);
 	unregister_reboot_notifier(&reboot);
 }
 
@@ -2015,10 +2012,6 @@ static int __init bcache_init(void)
 
 	register_reboot_notifier(&reboot);
 	bkey_pack_test();
-
-	bch_sha256 = crypto_alloc_shash("sha256", 0, 0);
-	if (IS_ERR(bch_sha256))
-		goto err;
 
 	if (!(bcache_io_wq = create_freezable_workqueue("bcache_io")) ||
 	    !(bcache_kset = kset_create_and_add("bcache", NULL, fs_kobj)) ||

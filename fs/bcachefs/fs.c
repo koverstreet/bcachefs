@@ -1051,7 +1051,7 @@ static void bch_vfs_inode_init(struct bch_fs *c,
 	inode->i_ctime	= bch_time_to_timespec(c, bi->i_ctime);
 	bch_inode_flags_to_vfs(inode);
 
-	ei->str_hash = bch_hash_info_init(bi);
+	ei->str_hash = bch_hash_info_init(c, bi);
 
 	inode->i_mapping->a_ops = &bch_address_space_operations;
 
