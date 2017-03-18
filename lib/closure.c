@@ -6,12 +6,11 @@
  * Copyright 2012 Google, Inc.
  */
 
+#include <linux/closure.h>
 #include <linux/debugfs.h>
-#include <linux/module.h>
+#include <linux/export.h>
 #include <linux/seq_file.h>
 #include <linux/sched/debug.h>
-
-#include "closure.h"
 
 static inline void closure_put_after_sub(struct closure *cl, int flags)
 {
@@ -127,7 +126,7 @@ void __sched __closure_sync(struct closure *cl)
 }
 EXPORT_SYMBOL(__closure_sync);
 
-#ifdef CONFIG_BCACHE_CLOSURES_DEBUG
+#ifdef CONFIG_DEBUG_CLOSURES
 
 static LIST_HEAD(closure_list);
 static DEFINE_SPINLOCK(closure_list_lock);
@@ -158,8 +157,6 @@ void closure_debug_destroy(struct closure *cl)
 }
 EXPORT_SYMBOL(closure_debug_destroy);
 
-static struct dentry *closure_debug;
-
 static int debug_seq_show(struct seq_file *f, void *data)
 {
 	struct closure *cl;
@@ -182,7 +179,7 @@ static int debug_seq_show(struct seq_file *f, void *data)
 			seq_printf(f, " W %pS\n",
 				   (void *) cl->waiting_on);
 
-		seq_printf(f, "\n");
+		seq_puts(f, "\n");
 	}
 
 	spin_unlock_irq(&closure_list_lock);
@@ -201,18 +198,11 @@ static const struct file_operations debug_ops = {
 	.release	= single_release
 };
 
-void  __init closure_debug_init(void)
+static int __init closure_debug_init(void)
 {
-	if (!IS_ERR_OR_NULL(bcache_debug))
-		/*
-		 * it is unnecessary to check return value of
-		 * debugfs_create_file(), we should not care
-		 * about this.
-		 */
-		closure_debug = debugfs_create_file(
-			"closures", 0400, bcache_debug, NULL, &debug_ops);
+	debugfs_create_file("closures", 0400, NULL, NULL, &debug_ops);
+	return 0;
 }
-#endif
+late_initcall(closure_debug_init)
 
-MODULE_AUTHOR("Kent Overstreet <koverstreet@google.com>");
-MODULE_LICENSE("GPL");
+#endif
