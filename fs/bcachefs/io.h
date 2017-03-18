@@ -69,16 +69,13 @@ enum bch_read_flags {
 	BCH_READ_PROMOTE		= 1 << 2,
 	BCH_READ_IS_LAST		= 1 << 3,
 	BCH_READ_MAY_REUSE_BIO		= 1 << 4,
-	BCH_READ_ACCOUNT_TIMES		= 1 << 5,
-	BCH_READ_USER_MAPPED		= 1 << 6,
+	BCH_READ_USER_MAPPED		= 1 << 5,
 };
 
 void bch_read(struct bch_fs *, struct bch_read_bio *, u64);
 
-void bch_generic_make_request(struct bio *, struct bch_fs *);
-void bch_bio_submit_work(struct work_struct *);
 void bch_submit_wbio_replicas(struct bch_write_bio *, struct bch_fs *,
-			      const struct bkey_i *, bool);
+			      const struct bkey_i *);
 
 int bch_discard(struct bch_fs *, struct bpos, struct bpos,
 		struct bversion, struct disk_reservation *,

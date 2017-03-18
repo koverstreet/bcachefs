@@ -6,38 +6,6 @@
 
 #include <linux/tracepoint.h>
 
-DECLARE_EVENT_CLASS(bcache_request,
-	TP_PROTO(struct bcache_device *d, struct bio *bio),
-	TP_ARGS(d, bio),
-
-	TP_STRUCT__entry(
-		__field(dev_t,		dev			)
-		__field(unsigned int,	orig_major		)
-		__field(unsigned int,	orig_minor		)
-		__field(sector_t,	sector			)
-		__field(sector_t,	orig_sector		)
-		__field(unsigned int,	nr_sector		)
-		__array(char,		rwbs,	6		)
-	),
-
-	TP_fast_assign(
-		__entry->dev		= bio->bi_bdev->bd_dev;
-		__entry->orig_major	= d->disk->major;
-		__entry->orig_minor	= d->disk->first_minor;
-		__entry->sector		= bio->bi_iter.bi_sector;
-		__entry->orig_sector	= bio->bi_iter.bi_sector - 16;
-		__entry->nr_sector	= bio->bi_iter.bi_size >> 9;
-		blk_fill_rwbs(__entry->rwbs, bio_op(bio), bio->bi_opf,
-			      bio->bi_iter.bi_size);
-	),
-
-	TP_printk("%d,%d %s %llu + %u (from %d,%d @ %llu)",
-		  MAJOR(__entry->dev), MINOR(__entry->dev),
-		  __entry->rwbs, (unsigned long long)__entry->sector,
-		  __entry->nr_sector, __entry->orig_major, __entry->orig_minor,
-		  (unsigned long long)__entry->orig_sector)
-);
-
 DECLARE_EVENT_CLASS(bpos,
 	TP_PROTO(struct bpos p),
 	TP_ARGS(p),
@@ -75,16 +43,36 @@ DECLARE_EVENT_CLASS(bkey,
 		  __entry->offset, __entry->size)
 );
 
-/* request.c */
+DECLARE_EVENT_CLASS(bch_dev,
+	TP_PROTO(struct bch_dev *ca),
+	TP_ARGS(ca),
 
-DEFINE_EVENT(bcache_request, bcache_request_start,
-	TP_PROTO(struct bcache_device *d, struct bio *bio),
-	TP_ARGS(d, bio)
+	TP_STRUCT__entry(
+		__array(char,		uuid,	16	)
+		__field(unsigned,	tier		)
+	),
+
+	TP_fast_assign(
+		memcpy(__entry->uuid, ca->uuid.b, 16);
+		__entry->tier = ca->mi.tier;
+	),
+
+	TP_printk("%pU tier %u", __entry->uuid, __entry->tier)
 );
 
-DEFINE_EVENT(bcache_request, bcache_request_end,
-	TP_PROTO(struct bcache_device *d, struct bio *bio),
-	TP_ARGS(d, bio)
+DECLARE_EVENT_CLASS(bch_fs,
+	TP_PROTO(struct bch_fs *c),
+	TP_ARGS(c),
+
+	TP_STRUCT__entry(
+		__array(char,		uuid,	16 )
+	),
+
+	TP_fast_assign(
+		memcpy(__entry->uuid, c->sb.user_uuid.b, 16);
+	),
+
+	TP_printk("%pU", __entry->uuid)
 );
 
 DECLARE_EVENT_CLASS(bcache_bio,
@@ -111,25 +99,24 @@ DECLARE_EVENT_CLASS(bcache_bio,
 		  (unsigned long long)__entry->sector, __entry->nr_sector)
 );
 
-DEFINE_EVENT(bcache_bio, bcache_bypass_sequential,
-	TP_PROTO(struct bio *bio),
-	TP_ARGS(bio)
+DECLARE_EVENT_CLASS(page_alloc_fail,
+	TP_PROTO(struct bch_fs *c, u64 size),
+	TP_ARGS(c, size),
+
+	TP_STRUCT__entry(
+		__array(char,		uuid,	16	)
+		__field(u64,		size		)
+	),
+
+	TP_fast_assign(
+		memcpy(__entry->uuid, c->sb.user_uuid.b, 16);
+		__entry->size = size;
+	),
+
+	TP_printk("%pU size %llu", __entry->uuid, __entry->size)
 );
 
-DEFINE_EVENT(bcache_bio, bcache_bypass_congested,
-	TP_PROTO(struct bio *bio),
-	TP_ARGS(bio)
-);
-
-DEFINE_EVENT(bcache_bio, bcache_promote,
-	TP_PROTO(struct bio *bio),
-	TP_ARGS(bio)
-);
-
-DEFINE_EVENT(bkey, bcache_promote_collision,
-	TP_PROTO(const struct bkey *k),
-	TP_ARGS(k)
-);
+/* io.c: */
 
 DEFINE_EVENT(bcache_bio, bcache_read_split,
 	TP_PROTO(struct bio *bio),
@@ -141,65 +128,14 @@ DEFINE_EVENT(bcache_bio, bcache_read_bounce,
 	TP_ARGS(bio)
 );
 
-TRACE_EVENT(bcache_read,
-	TP_PROTO(struct bio *bio, bool hit, bool bypass),
-	TP_ARGS(bio, hit, bypass),
-
-	TP_STRUCT__entry(
-		__field(dev_t,		dev			)
-		__field(sector_t,	sector			)
-		__field(unsigned int,	nr_sector		)
-		__array(char,		rwbs,	6		)
-		__field(bool,		cache_hit		)
-		__field(bool,		bypass			)
-	),
-
-	TP_fast_assign(
-		__entry->dev		= bio->bi_bdev->bd_dev;
-		__entry->sector		= bio->bi_iter.bi_sector;
-		__entry->nr_sector	= bio->bi_iter.bi_size >> 9;
-		blk_fill_rwbs(__entry->rwbs, bio_op(bio), bio->bi_opf,
-			      bio->bi_iter.bi_size);
-		__entry->cache_hit = hit;
-		__entry->bypass = bypass;
-	),
-
-	TP_printk("%d,%d  %s %llu + %u hit %u bypass %u",
-		  MAJOR(__entry->dev), MINOR(__entry->dev),
-		  __entry->rwbs, (unsigned long long)__entry->sector,
-		  __entry->nr_sector, __entry->cache_hit, __entry->bypass)
+DEFINE_EVENT(bcache_bio, bcache_read_retry,
+	TP_PROTO(struct bio *bio),
+	TP_ARGS(bio)
 );
 
-TRACE_EVENT(bcache_write,
-	TP_PROTO(struct bch_fs *c, u64 inode, struct bio *bio,
-		bool writeback, bool bypass),
-	TP_ARGS(c, inode, bio, writeback, bypass),
-
-	TP_STRUCT__entry(
-		__array(char,		uuid,	16		)
-		__field(u64,		inode			)
-		__field(sector_t,	sector			)
-		__field(unsigned int,	nr_sector		)
-		__array(char,		rwbs,	6		)
-		__field(bool,		writeback		)
-		__field(bool,		bypass			)
-	),
-
-	TP_fast_assign(
-		memcpy(__entry->uuid, c->sb.user_uuid.b, 16);
-		__entry->inode		= inode;
-		__entry->sector		= bio->bi_iter.bi_sector;
-		__entry->nr_sector	= bio->bi_iter.bi_size >> 9;
-		blk_fill_rwbs(__entry->rwbs, bio_op(bio), bio->bi_opf,
-			      bio->bi_iter.bi_size);
-		__entry->writeback	= writeback;
-		__entry->bypass		= bypass;
-	),
-
-	TP_printk("%pU inode %llu  %s %llu + %u hit %u bypass %u",
-		  __entry->uuid, __entry->inode,
-		  __entry->rwbs, (unsigned long long)__entry->sector,
-		  __entry->nr_sector, __entry->writeback, __entry->bypass)
+DEFINE_EVENT(bcache_bio, bcache_promote,
+	TP_PROTO(struct bio *bio),
+	TP_ARGS(bio)
 );
 
 TRACE_EVENT(bcache_write_throttle,
@@ -231,113 +167,14 @@ TRACE_EVENT(bcache_write_throttle,
 		  __entry->nr_sector, __entry->delay)
 );
 
-DEFINE_EVENT(bcache_bio, bcache_read_retry,
-	TP_PROTO(struct bio *bio),
-	TP_ARGS(bio)
-);
-
-DECLARE_EVENT_CLASS(page_alloc_fail,
-	TP_PROTO(struct bch_fs *c, u64 size),
-	TP_ARGS(c, size),
-
-	TP_STRUCT__entry(
-		__array(char,		uuid,	16	)
-		__field(u64,		size		)
-	),
-
-	TP_fast_assign(
-		memcpy(__entry->uuid, c->sb.user_uuid.b, 16);
-		__entry->size = size;
-	),
-
-	TP_printk("%pU size %llu", __entry->uuid, __entry->size)
-);
-
 /* Journal */
 
-DECLARE_EVENT_CLASS(cache_set,
-	TP_PROTO(struct bch_fs *c),
-	TP_ARGS(c),
-
-	TP_STRUCT__entry(
-		__array(char,		uuid,	16 )
-	),
-
-	TP_fast_assign(
-		memcpy(__entry->uuid, c->sb.user_uuid.b, 16);
-	),
-
-	TP_printk("%pU", __entry->uuid)
-);
-
-DEFINE_EVENT(bkey, bcache_journal_replay_key,
-	TP_PROTO(const struct bkey *k),
-	TP_ARGS(k)
-);
-
-TRACE_EVENT(bcache_journal_next_bucket,
-	TP_PROTO(struct bch_dev *ca, unsigned cur_idx, unsigned last_idx),
-	TP_ARGS(ca, cur_idx, last_idx),
-
-	TP_STRUCT__entry(
-		__array(char,		uuid,	16	)
-		__field(unsigned,	cur_idx		)
-		__field(unsigned,	last_idx	)
-	),
-
-	TP_fast_assign(
-		memcpy(__entry->uuid, ca->uuid.b, 16);
-		__entry->cur_idx	= cur_idx;
-		__entry->last_idx	= last_idx;
-	),
-
-	TP_printk("%pU cur %u last %u", __entry->uuid,
-		  __entry->cur_idx, __entry->last_idx)
-);
-
-TRACE_EVENT(bcache_journal_write_oldest,
-	TP_PROTO(struct bch_fs *c, u64 seq),
-	TP_ARGS(c, seq),
-
-	TP_STRUCT__entry(
-		__array(char,		uuid,	16	)
-		__field(u64,		seq		)
-	),
-
-	TP_fast_assign(
-		memcpy(__entry->uuid, c->sb.user_uuid.b, 16);
-		__entry->seq		= seq;
-	),
-
-	TP_printk("%pU seq %llu", __entry->uuid, __entry->seq)
-);
-
-TRACE_EVENT(bcache_journal_write_oldest_done,
-	TP_PROTO(struct bch_fs *c, u64 seq, unsigned written),
-	TP_ARGS(c, seq, written),
-
-	TP_STRUCT__entry(
-		__array(char,		uuid,	16	)
-		__field(u64,		seq		)
-		__field(unsigned,	written		)
-	),
-
-	TP_fast_assign(
-		memcpy(__entry->uuid, c->sb.user_uuid.b, 16);
-		__entry->seq		= seq;
-		__entry->written	= written;
-	),
-
-	TP_printk("%pU seq %llu written %u", __entry->uuid, __entry->seq,
-		  __entry->written)
-);
-
-DEFINE_EVENT(cache_set, bcache_journal_full,
+DEFINE_EVENT(bch_fs, bcache_journal_full,
 	TP_PROTO(struct bch_fs *c),
 	TP_ARGS(c)
 );
 
-DEFINE_EVENT(cache_set, bcache_journal_entry_full,
+DEFINE_EVENT(bch_fs, bcache_journal_entry_full,
 	TP_PROTO(struct bch_fs *c),
 	TP_ARGS(c)
 );
@@ -347,56 +184,7 @@ DEFINE_EVENT(bcache_bio, bcache_journal_write,
 	TP_ARGS(bio)
 );
 
-/* Device state changes */
-
-DEFINE_EVENT(cache_set, fs_read_only,
-	TP_PROTO(struct bch_fs *c),
-	TP_ARGS(c)
-);
-
-DEFINE_EVENT(cache_set, fs_read_only_done,
-	TP_PROTO(struct bch_fs *c),
-	TP_ARGS(c)
-);
-
-DECLARE_EVENT_CLASS(cache,
-	TP_PROTO(struct bch_dev *ca),
-	TP_ARGS(ca),
-
-	TP_STRUCT__entry(
-		__array(char,		uuid,	16	)
-		__field(unsigned,	tier		)
-	),
-
-	TP_fast_assign(
-		memcpy(__entry->uuid, ca->uuid.b, 16);
-		__entry->tier = ca->mi.tier;
-	),
-
-	TP_printk("%pU tier %u", __entry->uuid, __entry->tier)
-);
-
-DEFINE_EVENT(cache, bcache_cache_read_only,
-	TP_PROTO(struct bch_dev *ca),
-	TP_ARGS(ca)
-);
-
-DEFINE_EVENT(cache, bcache_cache_read_only_done,
-	TP_PROTO(struct bch_dev *ca),
-	TP_ARGS(ca)
-);
-
-DEFINE_EVENT(cache, bcache_cache_read_write,
-	TP_PROTO(struct bch_dev *ca),
-	TP_ARGS(ca)
-);
-
-DEFINE_EVENT(cache, bcache_cache_read_write_done,
-	TP_PROTO(struct bch_dev *ca),
-	TP_ARGS(ca)
-);
-
-/* Searching */
+/* bset.c: */
 
 DEFINE_EVENT(bpos, bkey_pack_pos_fail,
 	TP_PROTO(struct bpos p),
@@ -460,23 +248,6 @@ TRACE_EVENT(bcache_btree_write,
 DEFINE_EVENT(btree_node, bcache_btree_node_alloc,
 	TP_PROTO(struct bch_fs *c, struct btree *b),
 	TP_ARGS(c, b)
-);
-
-TRACE_EVENT(bcache_btree_node_alloc_fail,
-	TP_PROTO(struct bch_fs *c, enum btree_id id),
-	TP_ARGS(c, id),
-
-	TP_STRUCT__entry(
-		__array(char,		uuid,	16		)
-		__field(enum btree_id,	id			)
-	),
-
-	TP_fast_assign(
-		memcpy(__entry->uuid, c->sb.user_uuid.b, 16);
-		__entry->id = id;
-	),
-
-	TP_printk("%pU id %u", __entry->uuid, __entry->id)
 );
 
 DEFINE_EVENT(btree_node, bcache_btree_node_free,
@@ -557,9 +328,29 @@ DEFINE_EVENT(mca_cannibalize_lock, bcache_mca_cannibalize,
 	TP_ARGS(c)
 );
 
-DEFINE_EVENT(cache_set, bcache_mca_cannibalize_unlock,
+DEFINE_EVENT(bch_fs, bcache_mca_cannibalize_unlock,
 	TP_PROTO(struct bch_fs *c),
 	TP_ARGS(c)
+);
+
+TRACE_EVENT(bcache_btree_reserve_get_fail,
+	TP_PROTO(struct bch_fs *c, size_t required, struct closure *cl),
+	TP_ARGS(c, required, cl),
+
+	TP_STRUCT__entry(
+		__array(char,			uuid,	16	)
+		__field(size_t,			required	)
+		__field(struct closure *,	cl		)
+	),
+
+	TP_fast_assign(
+		memcpy(__entry->uuid, c->sb.user_uuid.b, 16);
+		__entry->required = required;
+		__entry->cl = cl;
+	),
+
+	TP_printk("%pU required %zu by %p", __entry->uuid,
+		  __entry->required, __entry->cl)
 );
 
 TRACE_EVENT(bcache_btree_insert_key,
@@ -723,73 +514,39 @@ DEFINE_EVENT(btree_node, bcache_btree_gc_rewrite_node_fail,
 	TP_ARGS(c, b)
 );
 
-DEFINE_EVENT(cache_set, bcache_gc_start,
+DEFINE_EVENT(bch_fs, bcache_gc_start,
 	TP_PROTO(struct bch_fs *c),
 	TP_ARGS(c)
 );
 
-DEFINE_EVENT(cache_set, bcache_gc_end,
+DEFINE_EVENT(bch_fs, bcache_gc_end,
 	TP_PROTO(struct bch_fs *c),
 	TP_ARGS(c)
 );
 
-DEFINE_EVENT(cache_set, bcache_gc_coalesce_start,
+DEFINE_EVENT(bch_fs, bcache_gc_coalesce_start,
 	TP_PROTO(struct bch_fs *c),
 	TP_ARGS(c)
 );
 
-DEFINE_EVENT(cache_set, bcache_gc_coalesce_end,
+DEFINE_EVENT(bch_fs, bcache_gc_coalesce_end,
 	TP_PROTO(struct bch_fs *c),
 	TP_ARGS(c)
 );
 
-DEFINE_EVENT(cache, bcache_sectors_saturated,
+DEFINE_EVENT(bch_dev, bcache_sectors_saturated,
 	TP_PROTO(struct bch_dev *ca),
 	TP_ARGS(ca)
 );
 
-DEFINE_EVENT(cache_set, bcache_gc_sectors_saturated,
+DEFINE_EVENT(bch_fs, bcache_gc_sectors_saturated,
 	TP_PROTO(struct bch_fs *c),
 	TP_ARGS(c)
 );
 
-DEFINE_EVENT(cache_set, bcache_gc_cannot_inc_gens,
+DEFINE_EVENT(bch_fs, bcache_gc_cannot_inc_gens,
 	TP_PROTO(struct bch_fs *c),
 	TP_ARGS(c)
-);
-
-DEFINE_EVENT(cache_set, bcache_gc_periodic,
-	TP_PROTO(struct bch_fs *c),
-	TP_ARGS(c)
-);
-
-TRACE_EVENT(bcache_mark_bucket,
-	TP_PROTO(struct bch_dev *ca, const struct bkey *k,
-		 const struct bch_extent_ptr *ptr,
-		 int sectors, bool dirty),
-	TP_ARGS(ca, k, ptr, sectors, dirty),
-
-	TP_STRUCT__entry(
-		__array(char,		uuid,		16	)
-		__field(u32,		inode			)
-		__field(u64,		offset			)
-		__field(u32,		sectors			)
-		__field(u64,		bucket			)
-		__field(bool,		dirty			)
-	),
-
-	TP_fast_assign(
-		memcpy(__entry->uuid, ca->uuid.b, 16);
-		__entry->inode		= k->p.inode;
-		__entry->offset		= k->p.offset;
-		__entry->sectors	= sectors;
-		__entry->bucket		= PTR_BUCKET_NR(ca, ptr);
-		__entry->dirty		= dirty;
-	),
-
-	TP_printk("%pU %u:%llu sectors %i bucket %llu dirty %i",
-		  __entry->uuid, __entry->inode, __entry->offset,
-		  __entry->sectors, __entry->bucket, __entry->dirty)
 );
 
 /* Allocator */
@@ -814,32 +571,12 @@ TRACE_EVENT(bcache_alloc_batch,
 		__entry->uuid, __entry->free, __entry->total)
 );
 
-TRACE_EVENT(bcache_btree_reserve_get_fail,
-	TP_PROTO(struct bch_fs *c, size_t required, struct closure *cl),
-	TP_ARGS(c, required, cl),
-
-	TP_STRUCT__entry(
-		__array(char,			uuid,	16	)
-		__field(size_t,			required	)
-		__field(struct closure *,	cl		)
-	),
-
-	TP_fast_assign(
-		memcpy(__entry->uuid, c->sb.user_uuid.b, 16);
-		__entry->required = required;
-		__entry->cl = cl;
-	),
-
-	TP_printk("%pU required %zu by %p", __entry->uuid,
-		  __entry->required, __entry->cl)
-);
-
-DEFINE_EVENT(cache, bcache_prio_write_start,
+DEFINE_EVENT(bch_dev, bcache_prio_write_start,
 	TP_PROTO(struct bch_dev *ca),
 	TP_ARGS(ca)
 );
 
-DEFINE_EVENT(cache, bcache_prio_write_end,
+DEFINE_EVENT(bch_dev, bcache_prio_write_end,
 	TP_PROTO(struct bch_dev *ca),
 	TP_ARGS(ca)
 );
@@ -865,12 +602,12 @@ TRACE_EVENT(bcache_invalidate,
 		  MINOR(__entry->dev), __entry->offset)
 );
 
-DEFINE_EVENT(cache_set, bcache_rescale_prios,
+DEFINE_EVENT(bch_fs, bcache_rescale_prios,
 	TP_PROTO(struct bch_fs *c),
 	TP_ARGS(c)
 );
 
-DECLARE_EVENT_CLASS(cache_bucket_alloc,
+DECLARE_EVENT_CLASS(bucket_alloc,
 	TP_PROTO(struct bch_dev *ca, enum alloc_reserve reserve),
 	TP_ARGS(ca, reserve),
 
@@ -887,12 +624,12 @@ DECLARE_EVENT_CLASS(cache_bucket_alloc,
 	TP_printk("%pU reserve %d", __entry->uuid, __entry->reserve)
 );
 
-DEFINE_EVENT(cache_bucket_alloc, bcache_bucket_alloc,
+DEFINE_EVENT(bucket_alloc, bcache_bucket_alloc,
 	TP_PROTO(struct bch_dev *ca, enum alloc_reserve reserve),
 	TP_ARGS(ca, reserve)
 );
 
-DEFINE_EVENT(cache_bucket_alloc, bcache_bucket_alloc_fail,
+DEFINE_EVENT(bucket_alloc, bcache_bucket_alloc_fail,
 	TP_PROTO(struct bch_dev *ca, enum alloc_reserve reserve),
 	TP_ARGS(ca, reserve)
 );
@@ -946,37 +683,6 @@ DEFINE_EVENT(open_bucket_alloc, bcache_open_bucket_alloc_fail,
 	TP_ARGS(c, cl)
 );
 
-/* Keylists */
-
-TRACE_EVENT(bcache_keyscan,
-	TP_PROTO(unsigned nr_found,
-		 unsigned start_inode, u64 start_offset,
-		 unsigned end_inode, u64 end_offset),
-	TP_ARGS(nr_found,
-		start_inode, start_offset,
-		end_inode, end_offset),
-
-	TP_STRUCT__entry(
-		__field(__u32,	nr_found			)
-		__field(__u32,	start_inode			)
-		__field(__u64,	start_offset			)
-		__field(__u32,	end_inode			)
-		__field(__u64,	end_offset			)
-	),
-
-	TP_fast_assign(
-		__entry->nr_found	= nr_found;
-		__entry->start_inode	= start_inode;
-		__entry->start_offset	= start_offset;
-		__entry->end_inode	= end_inode;
-		__entry->end_offset	= end_offset;
-	),
-
-	TP_printk("found %u keys from %u:%llu to %u:%llu", __entry->nr_found,
-		  __entry->start_inode, __entry->start_offset,
-		  __entry->end_inode, __entry->end_offset)
-);
-
 /* Moving IO */
 
 DECLARE_EVENT_CLASS(moving_io,
@@ -1014,11 +720,6 @@ DEFINE_EVENT(moving_io, bcache_move_write,
 	TP_ARGS(k)
 );
 
-DEFINE_EVENT(moving_io, bcache_move_write_done,
-	TP_PROTO(struct bkey *k),
-	TP_ARGS(k)
-);
-
 DEFINE_EVENT(moving_io, bcache_copy_collision,
 	TP_PROTO(struct bkey *k),
 	TP_ARGS(k)
@@ -1031,7 +732,7 @@ DEFINE_EVENT(page_alloc_fail, bcache_moving_gc_alloc_fail,
 	TP_ARGS(c, size)
 );
 
-DEFINE_EVENT(cache, bcache_moving_gc_start,
+DEFINE_EVENT(bch_dev, bcache_moving_gc_start,
 	TP_PROTO(struct bch_dev *ca),
 	TP_ARGS(ca)
 );
@@ -1060,16 +761,6 @@ TRACE_EVENT(bcache_moving_gc_end,
 		__entry->buckets_moved)
 );
 
-DEFINE_EVENT(cache, bcache_moving_gc_reserve_empty,
-	TP_PROTO(struct bch_dev *ca),
-	TP_ARGS(ca)
-);
-
-DEFINE_EVENT(cache, bcache_moving_gc_no_work,
-	TP_PROTO(struct bch_dev *ca),
-	TP_ARGS(ca)
-);
-
 DEFINE_EVENT(bkey, bcache_gc_copy,
 	TP_PROTO(const struct bkey *k),
 	TP_ARGS(k)
@@ -1077,22 +768,12 @@ DEFINE_EVENT(bkey, bcache_gc_copy,
 
 /* Tiering */
 
-DEFINE_EVENT(cache_set, bcache_tiering_refill_start,
-	TP_PROTO(struct bch_fs *c),
-	TP_ARGS(c)
-);
-
-DEFINE_EVENT(cache_set, bcache_tiering_refill_end,
-	TP_PROTO(struct bch_fs *c),
-	TP_ARGS(c)
-);
-
 DEFINE_EVENT(page_alloc_fail, bcache_tiering_alloc_fail,
 	TP_PROTO(struct bch_fs *c, u64 size),
 	TP_ARGS(c, size)
 );
 
-DEFINE_EVENT(cache_set, bcache_tiering_start,
+DEFINE_EVENT(bch_fs, bcache_tiering_start,
 	TP_PROTO(struct bch_fs *c),
 	TP_ARGS(c)
 );
@@ -1121,49 +802,6 @@ TRACE_EVENT(bcache_tiering_end,
 DEFINE_EVENT(bkey, bcache_tiering_copy,
 	TP_PROTO(const struct bkey *k),
 	TP_ARGS(k)
-);
-
-/* Background writeback */
-
-DEFINE_EVENT(bkey, bcache_writeback,
-	TP_PROTO(const struct bkey *k),
-	TP_ARGS(k)
-);
-
-DEFINE_EVENT(bkey, bcache_writeback_collision,
-	TP_PROTO(const struct bkey *k),
-	TP_ARGS(k)
-);
-
-TRACE_EVENT(bcache_writeback_error,
-	TP_PROTO(struct bkey *k, bool write, int error),
-	TP_ARGS(k, write, error),
-
-	TP_STRUCT__entry(
-		__field(u32,	size				)
-		__field(u32,	inode				)
-		__field(u64,	offset				)
-		__field(bool,	write				)
-		__field(int,	error				)
-	),
-
-	TP_fast_assign(
-		__entry->inode	= k->p.inode;
-		__entry->offset	= k->p.offset;
-		__entry->size	= k->size;
-		__entry->write	= write;
-		__entry->error	= error;
-	),
-
-	TP_printk("%u:%llu len %u %s error %d", __entry->inode,
-		  __entry->offset, __entry->size,
-		  __entry->write ? "write" : "read",
-		  __entry->error)
-);
-
-DEFINE_EVENT(page_alloc_fail, bcache_writeback_alloc_fail,
-	TP_PROTO(struct bch_fs *c, u64 size),
-	TP_ARGS(c, size)
 );
 
 #endif /* _TRACE_BCACHE_H */

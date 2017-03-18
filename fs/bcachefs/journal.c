@@ -1482,8 +1482,6 @@ int bch_journal_replay(struct bch_fs *c, struct list_head *list)
 			 */
 			BUG_ON(bch_disk_reservation_get(c, &disk_res, 0, 0));
 
-			trace_bcache_journal_replay_key(&k->k);
-
 			ret = bch_btree_insert(c, entry->btree_id, k,
 					       &disk_res, NULL, NULL,
 					       BTREE_INSERT_NOFAIL|
@@ -2085,8 +2083,6 @@ static int journal_write_alloc(struct journal *j, unsigned sectors)
 				  .dev = ca->dev_idx,
 		});
 		replicas++;
-
-		trace_bcache_journal_next_bucket(ca, ja->cur_idx, ja->last_idx);
 	}
 	spin_unlock(&j->devs.lock);
 
@@ -2280,7 +2276,7 @@ static void journal_write(struct closure *cl)
 		bch_bio_map(bio, jset);
 
 		trace_bcache_journal_write(bio);
-		closure_bio_submit_punt(bio, cl, c);
+		closure_bio_submit(bio, cl);
 
 		ca->journal.bucket_seq[ca->journal.cur_idx] = le64_to_cpu(w->data->seq);
 	}
@@ -2296,7 +2292,7 @@ static void journal_write(struct closure *cl)
 			bio->bi_end_io		= journal_write_endio;
 			bio->bi_private		= ca;
 			bio_set_op_attrs(bio, REQ_OP_WRITE, WRITE_FLUSH);
-			closure_bio_submit_punt(bio, cl, c);
+			closure_bio_submit(bio, cl);
 		}
 
 no_io:

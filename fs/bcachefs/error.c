@@ -1,7 +1,6 @@
 #include "bcache.h"
 #include "error.h"
 #include "io.h"
-#include "notify.h"
 #include "super.h"
 
 void bch_inconsistent_error(struct bch_fs *c)
@@ -12,12 +11,6 @@ void bch_inconsistent_error(struct bch_fs *c)
 	case BCH_ON_ERROR_CONTINUE:
 		break;
 	case BCH_ON_ERROR_RO:
-		if (!test_bit(BCH_FS_INITIAL_GC_DONE, &c->flags)) {
-			/* XXX do something better here? */
-			bch_fs_stop_async(c);
-			return;
-		}
-
 		if (bch_fs_emergency_read_only(c))
 			bch_err(c, "emergency read only");
 		break;
@@ -33,108 +26,26 @@ void bch_fatal_error(struct bch_fs *c)
 		bch_err(c, "emergency read only");
 }
 
-/* Nonfatal IO errors, IO error/latency accounting: */
-
-/* Just does IO error accounting: */
-void bch_account_io_completion(struct bch_dev *ca)
-{
-	/*
-	 * The halflife of an error is:
-	 * log2(1/2)/log2(127/128) * refresh ~= 88 * refresh
-	 */
-
-	if (ca->fs->error_decay) {
-		unsigned count = atomic_inc_return(&ca->io_count);
-
-		while (count > ca->fs->error_decay) {
-			unsigned errors;
-			unsigned old = count;
-			unsigned new = count - ca->fs->error_decay;
-
-			/*
-			 * First we subtract refresh from count; each time we
-			 * succesfully do so, we rescale the errors once:
-			 */
-
-			count = atomic_cmpxchg(&ca->io_count, old, new);
-
-			if (count == old) {
-				count = new;
-
-				errors = atomic_read(&ca->io_errors);
-				do {
-					old = errors;
-					new = ((uint64_t) errors * 127) / 128;
-					errors = atomic_cmpxchg(&ca->io_errors,
-								old, new);
-				} while (old != errors);
-			}
-		}
-	}
-}
-
-/* IO error accounting and latency accounting: */
-void bch_account_io_completion_time(struct bch_dev *ca,
-				    unsigned submit_time_us, int op)
-{
-	struct bch_fs *c;
-	unsigned threshold;
-
-	if (!ca)
-		return;
-
-	c = ca->fs;
-	threshold = op_is_write(op)
-		? c->congested_write_threshold_us
-		: c->congested_read_threshold_us;
-
-	if (threshold && submit_time_us) {
-		unsigned t = local_clock_us();
-
-		int us = t - submit_time_us;
-		int congested = atomic_read(&c->congested);
-
-		if (us > (int) threshold) {
-			int ms = us / 1024;
-			c->congested_last_us = t;
-
-			ms = min(ms, CONGESTED_MAX + congested);
-			atomic_sub(ms, &c->congested);
-		} else if (congested < 0)
-			atomic_inc(&c->congested);
-	}
-
-	bch_account_io_completion(ca);
-}
-
 void bch_nonfatal_io_error_work(struct work_struct *work)
 {
 	struct bch_dev *ca = container_of(work, struct bch_dev, io_error_work);
 	struct bch_fs *c = ca->fs;
-	unsigned errors = atomic_read(&ca->io_errors);
 	bool dev;
 
-	if (errors < c->error_limit) {
-		bch_notify_dev_error(ca, false);
-	} else {
-		bch_notify_dev_error(ca, true);
-
-		mutex_lock(&c->state_lock);
-		dev = bch_dev_state_allowed(c, ca, BCH_MEMBER_STATE_RO,
-					    BCH_FORCE_IF_DEGRADED);
-		if (dev
-		    ? __bch_dev_set_state(c, ca, BCH_MEMBER_STATE_RO,
-					  BCH_FORCE_IF_DEGRADED)
-		    : bch_fs_emergency_read_only(c))
-			bch_err(ca,
-				"too many IO errors, setting %s RO",
-				dev ? "device" : "filesystem");
-		mutex_unlock(&c->state_lock);
-	}
+	mutex_lock(&c->state_lock);
+	dev = bch_dev_state_allowed(c, ca, BCH_MEMBER_STATE_RO,
+				    BCH_FORCE_IF_DEGRADED);
+	if (dev
+	    ? __bch_dev_set_state(c, ca, BCH_MEMBER_STATE_RO,
+				  BCH_FORCE_IF_DEGRADED)
+	    : bch_fs_emergency_read_only(c))
+		bch_err(ca,
+			"too many IO errors, setting %s RO",
+			dev ? "device" : "filesystem");
+	mutex_unlock(&c->state_lock);
 }
 
 void bch_nonfatal_io_error(struct bch_dev *ca)
 {
-	atomic_add(1 << IO_ERROR_SHIFT, &ca->io_errors);
 	queue_work(system_long_wq, &ca->io_error_work);
 }

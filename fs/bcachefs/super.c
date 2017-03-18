@@ -7,7 +7,6 @@
  */
 
 #include "bcache.h"
-#include "blockdev.h"
 #include "alloc.h"
 #include "btree_cache.h"
 #include "btree_gc.h"
@@ -28,12 +27,9 @@
 #include "move.h"
 #include "migrate.h"
 #include "movinggc.h"
-#include "notify.h"
-#include "stats.h"
 #include "super.h"
 #include "super-io.h"
 #include "tier.h"
-#include "writeback.h"
 
 #include <linux/backing-dev.h>
 #include <linux/blkdev.h>
@@ -45,7 +41,6 @@
 #include <linux/module.h>
 #include <linux/percpu.h>
 #include <linux/random.h>
-#include <linux/reboot.h>
 #include <linux/sysfs.h>
 #include <crypto/hash.h>
 
@@ -66,7 +61,6 @@ static LIST_HEAD(bch_fs_list);
 static DEFINE_MUTEX(bch_fs_list_lock);
 
 static DECLARE_WAIT_QUEUE_HEAD(bch_read_only_wait);
-struct workqueue_struct *bcache_io_wq;
 
 static void bch_dev_free(struct bch_dev *);
 static int bch_dev_alloc(struct bch_fs *, unsigned);
@@ -221,8 +215,6 @@ void bch_fs_read_only(struct bch_fs *c)
 	if (test_bit(BCH_FS_ERROR, &c->flags))
 		goto out;
 
-	trace_fs_read_only(c);
-
 	/*
 	 * Block new foreground-end write operations from starting - any new
 	 * writes will return -EROFS:
@@ -270,8 +262,6 @@ void bch_fs_read_only(struct bch_fs *c)
 	}
 
 	c->state = BCH_FS_RO;
-	bch_notify_fs_read_only(c);
-	trace_fs_read_only_done(c);
 out:
 	mutex_unlock(&c->state_lock);
 }
@@ -358,7 +348,6 @@ static void bch_fs_free(struct bch_fs *c)
 	bch_io_clock_exit(&c->io_clock[WRITE]);
 	bch_io_clock_exit(&c->io_clock[READ]);
 	bch_fs_compress_exit(c);
-	bch_fs_blockdev_exit(c);
 	bdi_destroy(&c->bdi);
 	lg_lock_free(&c->usage_lock);
 	free_percpu(c->usage_percpu);
@@ -390,7 +379,6 @@ static void bch_fs_exit(struct bch_fs *c)
 	del_timer_sync(&c->foreground_write_wakeup);
 	cancel_delayed_work_sync(&c->pd_controllers_update);
 	cancel_work_sync(&c->read_only_work);
-	cancel_work_sync(&c->bio_submit_work);
 	cancel_work_sync(&c->read_retry_work);
 
 	for (i = 0; i < c->sb.nr_devices; i++)
@@ -422,8 +410,6 @@ static void bch_fs_offline(struct bch_fs *c)
 	bch_fs_debug_exit(c);
 	bch_fs_chardev_exit(c);
 
-	bch_cache_accounting_destroy(&c->accounting);
-
 	kobject_put(&c->time_stats);
 	kobject_put(&c->opts_dir);
 	kobject_put(&c->internal);
@@ -431,63 +417,11 @@ static void bch_fs_offline(struct bch_fs *c)
 	__bch_fs_read_only(c);
 }
 
-/*
- * should be __bch_fs_stop4 - block devices are closed, now we can finally
- * free it
- */
 void bch_fs_release(struct kobject *kobj)
 {
 	struct bch_fs *c = container_of(kobj, struct bch_fs, kobj);
 
-	bch_notify_fs_stopped(c);
 	bch_fs_free(c);
-}
-
-/*
- * All activity on the filesystem should have stopped now - close devices:
- */
-static void __bch_fs_stop3(struct closure *cl)
-{
-	struct bch_fs *c = container_of(cl, struct bch_fs, cl);
-
-	bch_fs_exit(c);
-}
-
-/*
- * Openers (i.e. block devices) should have exited, shutdown all userspace
- * interfaces and wait for &c->cl to hit 0
- */
-static void __bch_fs_stop2(struct closure *cl)
-{
-	struct bch_fs *c = container_of(cl, struct bch_fs, caching);
-
-	bch_fs_offline(c);
-
-	closure_return(cl);
-}
-
-/*
- * First phase of the shutdown process that's kicked off by bch_fs_stop_async();
- * we haven't waited for anything to stop yet, we're just punting to process
- * context to shut down block devices:
- */
-static void __bch_fs_stop1(struct closure *cl)
-{
-	struct bch_fs *c = container_of(cl, struct bch_fs, caching);
-
-	bch_blockdevs_stop(c);
-
-	continue_at(cl, __bch_fs_stop2, system_wq);
-}
-
-void bch_fs_stop_async(struct bch_fs *c)
-{
-	mutex_lock(&c->state_lock);
-	if (c->state != BCH_FS_STOPPING) {
-		c->state = BCH_FS_STOPPING;
-		closure_queue(&c->caching);
-	}
-	mutex_unlock(&c->state_lock);
 }
 
 void bch_fs_stop(struct bch_fs *c)
@@ -497,24 +431,11 @@ void bch_fs_stop(struct bch_fs *c)
 	c->state = BCH_FS_STOPPING;
 	mutex_unlock(&c->state_lock);
 
-	bch_blockdevs_stop(c);
-
-	closure_sync(&c->caching);
-	closure_debug_destroy(&c->caching);
-
 	bch_fs_offline(c);
 
-	closure_put(&c->cl);
 	closure_sync(&c->cl);
 
 	bch_fs_exit(c);
-}
-
-/* Stop, detaching from backing devices: */
-void bch_fs_detach(struct bch_fs *c)
-{
-	if (!test_and_set_bit(BCH_FS_DETACHING, &c->flags))
-		bch_fs_stop_async(c);
 }
 
 #define alloc_bucket_pages(gfp, ca)			\
@@ -536,7 +457,6 @@ static struct bch_fs *bch_fs_alloc(struct bch_sb *sb, struct bch_opts opts)
 
 	mutex_init(&c->state_lock);
 	mutex_init(&c->sb_lock);
-	INIT_RADIX_TREE(&c->devices, GFP_KERNEL);
 	mutex_init(&c->btree_cache_lock);
 	mutex_init(&c->bucket_lock);
 	mutex_init(&c->btree_root_lock);
@@ -553,7 +473,6 @@ static struct bch_fs *bch_fs_alloc(struct bch_sb *sb, struct bch_opts opts)
 	bch_fs_tiering_init(c);
 
 	INIT_LIST_HEAD(&c->list);
-	INIT_LIST_HEAD(&c->cached_devs);
 	INIT_LIST_HEAD(&c->btree_cache);
 	INIT_LIST_HEAD(&c->btree_cache_freeable);
 	INIT_LIST_HEAD(&c->btree_cache_freed);
@@ -563,8 +482,6 @@ static struct bch_fs *bch_fs_alloc(struct bch_sb *sb, struct bch_opts opts)
 	mutex_init(&c->btree_interior_update_lock);
 
 	mutex_init(&c->bio_bounce_pages_lock);
-	INIT_WORK(&c->bio_submit_work, bch_bio_submit_work);
-	spin_lock_init(&c->bio_submit_lock);
 	bio_list_init(&c->read_retry_list);
 	spin_lock_init(&c->read_retry_lock);
 	INIT_WORK(&c->read_retry_work, bch_read_retry_work);
@@ -577,11 +494,7 @@ static struct bch_fs *bch_fs_alloc(struct bch_sb *sb, struct bch_opts opts)
 	c->prio_clock[WRITE].hand = 1;
 	c->prio_clock[WRITE].min_prio = 0;
 
-	c->congested_read_threshold_us	= 2000;
-	c->congested_write_threshold_us	= 20000;
-	c->error_limit	= 16 << IO_ERROR_SHIFT;
 	init_waitqueue_head(&c->writeback_wait);
-
 	c->writeback_pages_max = (256 << 10) / PAGE_SIZE;
 
 	c->copy_gc_enabled = 1;
@@ -594,8 +507,6 @@ static struct bch_fs *bch_fs_alloc(struct bch_sb *sb, struct bch_opts opts)
 	c->journal.delay_time	= &c->journal_delay_time;
 	c->journal.blocked_time	= &c->journal_blocked_time;
 	c->journal.flush_seq_time = &c->journal_flush_seq_time;
-
-	mutex_init(&c->uevent_lock);
 
 	mutex_lock(&c->sb_lock);
 
@@ -648,7 +559,6 @@ static struct bch_fs *bch_fs_alloc(struct bch_sb *sb, struct bch_opts opts)
 	    mempool_init_page_pool(&c->btree_bounce_pool, 1,
 				   ilog2(btree_pages(c))) ||
 	    bdi_setup_and_register(&c->bdi, "bcache") ||
-	    bch_fs_blockdev_init(c) ||
 	    bch_io_clock_init(&c->io_clock[READ]) ||
 	    bch_io_clock_init(&c->io_clock[WRITE]) ||
 	    bch_fs_journal_init(&c->journal, journal_entry_bytes) ||
@@ -679,14 +589,6 @@ static struct bch_fs *bch_fs_alloc(struct bch_sb *sb, struct bch_opts opts)
 	kobject_init(&c->internal, &bch_fs_internal_ktype);
 	kobject_init(&c->opts_dir, &bch_fs_opts_dir_ktype);
 	kobject_init(&c->time_stats, &bch_fs_time_stats_ktype);
-
-	bch_cache_accounting_init(&c->accounting, &c->cl);
-
-	closure_init(&c->caching, &c->cl);
-	set_closure_fn(&c->caching, __bch_fs_stop1, system_wq);
-
-	closure_get(&c->cl);
-	continue_at_noreturn(&c->cl, __bch_fs_stop3, system_wq);
 	return c;
 err:
 	bch_fs_free(c);
@@ -717,8 +619,7 @@ static const char *__bch_fs_online(struct bch_fs *c)
 	if (kobject_add(&c->kobj, NULL, "%pU", c->sb.user_uuid.b) ||
 	    kobject_add(&c->internal, &c->kobj, "internal") ||
 	    kobject_add(&c->opts_dir, &c->kobj, "options") ||
-	    kobject_add(&c->time_stats, &c->kobj, "time_stats") ||
-	    bch_cache_accounting_add_kobjs(&c->accounting, &c->kobj))
+	    kobject_add(&c->time_stats, &c->kobj, "time_stats"))
 		return "error creating sysfs objects";
 
 	mutex_lock(&c->state_lock);
@@ -727,12 +628,6 @@ static const char *__bch_fs_online(struct bch_fs *c)
 	__for_each_member_device(ca, c, i)
 		if (bch_dev_sysfs_online(ca))
 			goto err;
-
-	err = "can't bring up blockdev volumes";
-	if (bch_blockdev_volumes_start(c))
-		goto err;
-
-	bch_attach_backing_devs(c);
 
 	list_add(&c->list, &bch_fs_list);
 	err = NULL;
@@ -1394,8 +1289,6 @@ static const char *__bch_dev_read_write(struct bch_fs *c, struct bch_dev *ca)
 
 	BUG_ON(ca->mi.state != BCH_MEMBER_STATE_RW);
 
-	trace_bcache_cache_read_write(ca);
-
 	if (bch_dev_allocator_start(ca))
 		return "error starting allocator thread";
 
@@ -1404,9 +1297,6 @@ static const char *__bch_dev_read_write(struct bch_fs *c, struct bch_dev *ca)
 
 	if (bch_tiering_start(c))
 		return "error starting tiering thread";
-
-	bch_notify_dev_read_write(ca);
-	trace_bcache_cache_read_write_done(ca);
 
 	return NULL;
 }
@@ -1621,7 +1511,6 @@ have_slot:
 			goto err;
 	}
 
-	bch_notify_dev_added(ca);
 	mutex_unlock(&c->state_lock);
 	return 0;
 err_unlock:
@@ -1895,13 +1784,10 @@ const char *bch_fs_open_incremental(const char *path)
 	if (err)
 		return err;
 
-	if (__SB_IS_BDEV(le64_to_cpu(sb.sb->version))) {
-		mutex_lock(&bch_fs_list_lock);
-		err = bch_backing_dev_register(&sb);
-		mutex_unlock(&bch_fs_list_lock);
-	} else {
+	if (!__SB_IS_BDEV(le64_to_cpu(sb.sb->version)))
 		err = __bch_fs_open_incremental(&sb, opts);
-	}
+	else
+		err = "not a bcachefs superblock";
 
 	bch_free_super(&sb);
 
@@ -1910,114 +1796,21 @@ const char *bch_fs_open_incremental(const char *path)
 
 /* Global interfaces/init */
 
-#define kobj_attribute_write(n, fn)					\
-	static struct kobj_attribute ksysfs_##n = __ATTR(n, S_IWUSR, NULL, fn)
-
-#define kobj_attribute_rw(n, show, store)				\
-	static struct kobj_attribute ksysfs_##n =			\
-		__ATTR(n, S_IWUSR|S_IRUSR, show, store)
-
-static ssize_t register_bcache(struct kobject *, struct kobj_attribute *,
-			       const char *, size_t);
-
-kobj_attribute_write(register,		register_bcache);
-kobj_attribute_write(register_quiet,	register_bcache);
-
-static ssize_t register_bcache(struct kobject *k, struct kobj_attribute *attr,
-			       const char *buffer, size_t size)
-{
-	ssize_t ret = -EINVAL;
-	const char *err = "cannot allocate memory";
-	char *path = NULL;
-
-	if (!try_module_get(THIS_MODULE))
-		return -EBUSY;
-
-	if (!(path = kstrndup(skip_spaces(buffer), size, GFP_KERNEL)))
-		goto err;
-
-	err = bch_fs_open_incremental(strim(path));
-	if (err)
-		goto err;
-
-	ret = size;
-out:
-	kfree(path);
-	module_put(THIS_MODULE);
-	return ret;
-err:
-	pr_err("error opening %s: %s", path, err);
-	goto out;
-}
-
-static int bcache_reboot(struct notifier_block *n, unsigned long code, void *x)
-{
-	if (code == SYS_DOWN ||
-	    code == SYS_HALT ||
-	    code == SYS_POWER_OFF) {
-		struct bch_fs *c;
-
-		mutex_lock(&bch_fs_list_lock);
-
-		if (!list_empty(&bch_fs_list))
-			pr_info("Setting all devices read only:");
-
-		list_for_each_entry(c, &bch_fs_list, list)
-			bch_fs_read_only_async(c);
-
-		list_for_each_entry(c, &bch_fs_list, list)
-			bch_fs_read_only(c);
-
-		mutex_unlock(&bch_fs_list_lock);
-	}
-
-	return NOTIFY_DONE;
-}
-
-static struct notifier_block reboot = {
-	.notifier_call	= bcache_reboot,
-	.priority	= INT_MAX, /* before any real devices */
-};
-
-static ssize_t reboot_test(struct kobject *k, struct kobj_attribute *attr,
-			   const char *buffer, size_t size)
-{
-	bcache_reboot(NULL, SYS_DOWN, NULL);
-	return size;
-}
-
-kobj_attribute_write(reboot,		reboot_test);
-
 static void bcache_exit(void)
 {
 	bch_debug_exit();
 	bch_vfs_exit();
-	bch_blockdev_exit();
 	bch_chardev_exit();
 	if (bcache_kset)
 		kset_unregister(bcache_kset);
-	if (bcache_io_wq)
-		destroy_workqueue(bcache_io_wq);
-	unregister_reboot_notifier(&reboot);
 }
 
 static int __init bcache_init(void)
 {
-	static const struct attribute *files[] = {
-		&ksysfs_register.attr,
-		&ksysfs_register_quiet.attr,
-		&ksysfs_reboot.attr,
-		NULL
-	};
-
-	register_reboot_notifier(&reboot);
 	bkey_pack_test();
 
-	if (!(bcache_io_wq = create_freezable_workqueue("bcache_io")) ||
-	    !(bcache_kset = kset_create_and_add("bcache", NULL, fs_kobj)) ||
-	    sysfs_create_files(&bcache_kset->kobj, files) ||
+	if (!(bcache_kset = kset_create_and_add("bcache", NULL, fs_kobj)) ||
 	    bch_chardev_init() ||
-	    bch_blockdev_init() ||
 	    bch_vfs_init() ||
 	    bch_debug_init())
 		goto err;

@@ -109,22 +109,17 @@ int bch_dev_online(struct bch_fs *, const char *);
 int bch_dev_offline(struct bch_fs *, struct bch_dev *, int);
 int bch_dev_evacuate(struct bch_fs *, struct bch_dev *);
 
-void bch_fs_detach(struct bch_fs *);
-
 bool bch_fs_emergency_read_only(struct bch_fs *);
 void bch_fs_read_only(struct bch_fs *);
 const char *bch_fs_read_write(struct bch_fs *);
 
 void bch_fs_release(struct kobject *);
-void bch_fs_stop_async(struct bch_fs *);
 void bch_fs_stop(struct bch_fs *);
 
 const char *bch_fs_start(struct bch_fs *);
 const char *bch_fs_open(char * const *, unsigned, struct bch_opts,
 			struct bch_fs **);
 const char *bch_fs_open_incremental(const char *path);
-
-extern struct workqueue_struct *bcache_io_wq;
 
 extern struct kobj_type bch_fs_ktype;
 extern struct kobj_type bch_fs_internal_ktype;

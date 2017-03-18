@@ -7,7 +7,6 @@
 
 #include "bcache.h"
 #include "alloc.h"
-#include "blockdev.h"
 #include "compress.h"
 #include "sysfs.h"
 #include "btree_cache.h"
@@ -20,23 +19,15 @@
 #include "keylist.h"
 #include "move.h"
 #include "opts.h"
-#include "request.h"
 #include "super-io.h"
 #include "tier.h"
-#include "writeback.h"
 
 #include <linux/blkdev.h>
 #include <linux/sort.h>
 
-write_attribute(attach);
-write_attribute(detach);
-write_attribute(unregister);
-write_attribute(stop);
-write_attribute(clear_stats);
 write_attribute(trigger_btree_coalesce);
 write_attribute(trigger_gc);
 write_attribute(prune_cache);
-write_attribute(blockdev_volume_create);
 
 read_attribute(uuid);
 read_attribute(minor);
@@ -85,37 +76,13 @@ read_attribute(has_metadata);
 read_attribute(bset_tree_stats);
 read_attribute(alloc_debug);
 
-read_attribute(state);
 read_attribute(cache_read_races);
-read_attribute(writeback_keys_done);
-read_attribute(writeback_keys_failed);
-read_attribute(io_errors);
-rw_attribute(io_error_limit);
-rw_attribute(io_error_halflife);
-read_attribute(congested);
-rw_attribute(congested_read_threshold_us);
-rw_attribute(congested_write_threshold_us);
-
-rw_attribute(sequential_cutoff);
-rw_attribute(cache_mode);
-rw_attribute(writeback_metadata);
-rw_attribute(writeback_running);
-rw_attribute(writeback_percent);
-sysfs_pd_controller_attribute(writeback);
-
-read_attribute(stripe_size);
-read_attribute(partial_stripes_expensive);
 
 rw_attribute(journal_write_delay_ms);
 rw_attribute(journal_reclaim_delay_ms);
 read_attribute(journal_entry_size_max);
 
 rw_attribute(discard);
-rw_attribute(running);
-rw_attribute(label);
-rw_attribute(readahead);
-rw_attribute(verify);
-rw_attribute(bypass_torture_test);
 rw_attribute(cache_replacement_policy);
 
 rw_attribute(foreground_write_ratelimit_enabled);
@@ -133,7 +100,6 @@ rw_attribute(pd_controllers_update_seconds);
 
 rw_attribute(foreground_target_percent);
 
-rw_attribute(size);
 read_attribute(meta_replicas_have);
 read_attribute(data_replicas_have);
 
@@ -160,286 +126,6 @@ static struct attribute sysfs_state_rw = {
 	.name = "state",
 	.mode = S_IRUGO
 };
-
-SHOW(bch_cached_dev)
-{
-	struct cached_dev *dc = container_of(kobj, struct cached_dev,
-					     disk.kobj);
-	const char *states[] = { "no cache", "clean", "dirty", "inconsistent" };
-
-#define var(stat)		(dc->stat)
-
-	if (attr == &sysfs_cache_mode)
-		return bch_snprint_string_list(buf, PAGE_SIZE,
-					       bch_cache_modes + 1,
-					       BDEV_CACHE_MODE(dc->disk_sb.sb));
-
-	var_printf(verify,		"%i");
-	var_printf(bypass_torture_test,	"%i");
-	var_printf(writeback_metadata,	"%i");
-	var_printf(writeback_running,	"%i");
-	var_print(writeback_percent);
-	sysfs_pd_controller_show(writeback, &dc->writeback_pd);
-
-	sysfs_hprint(dirty_data,
-		     bcache_dev_sectors_dirty(&dc->disk) << 9);
-	sysfs_print(dirty_bytes,
-		    bcache_dev_sectors_dirty(&dc->disk) << 9);
-
-	sysfs_hprint(stripe_size,	dc->disk.stripe_size << 9);
-	var_printf(partial_stripes_expensive,	"%u");
-
-	var_hprint(sequential_cutoff);
-	var_hprint(readahead);
-
-	sysfs_print(running,		atomic_read(&dc->running));
-	sysfs_print(state,		states[BDEV_STATE(dc->disk_sb.sb)]);
-
-	if (attr == &sysfs_label) {
-		memcpy(buf, dc->disk_sb.sb->label, BCH_SB_LABEL_SIZE);
-		buf[BCH_SB_LABEL_SIZE + 1] = '\0';
-		strcat(buf, "\n");
-		return strlen(buf);
-	}
-
-#undef var
-	return 0;
-}
-
-STORE(bch_cached_dev)
-{
-	struct cached_dev *dc = container_of(kobj, struct cached_dev,
-					     disk.kobj);
-	struct kobj_uevent_env *env;
-
-#define d_strtoul(var)		sysfs_strtoul(var, dc->var)
-#define d_strtoul_nonzero(var)	sysfs_strtoul_clamp(var, dc->var, 1, INT_MAX)
-#define d_strtoi_h(var)		sysfs_hatoi(var, dc->var)
-
-	d_strtoul(verify);
-	d_strtoul(bypass_torture_test);
-	d_strtoul(writeback_metadata);
-	d_strtoul(writeback_running);
-	sysfs_strtoul_clamp(writeback_percent, dc->writeback_percent, 0, 40);
-	sysfs_pd_controller_store(writeback, &dc->writeback_pd);
-
-	d_strtoi_h(sequential_cutoff);
-	d_strtoi_h(readahead);
-
-	if (attr == &sysfs_writeback_running)
-		bch_writeback_queue(dc);
-
-	if (attr == &sysfs_writeback_percent)
-		schedule_delayed_work(&dc->writeback_pd_update,
-				      dc->writeback_pd_update_seconds * HZ);
-
-	if (attr == &sysfs_clear_stats)
-		bch_cache_accounting_clear(&dc->accounting);
-
-	if (attr == &sysfs_running &&
-	    strtoul_or_return(buf))
-		bch_cached_dev_run(dc);
-
-	if (attr == &sysfs_cache_mode) {
-		ssize_t v = bch_read_string_list(buf, bch_cache_modes + 1);
-
-		if (v < 0)
-			return v;
-
-		if ((unsigned) v != BDEV_CACHE_MODE(dc->disk_sb.sb)) {
-			SET_BDEV_CACHE_MODE(dc->disk_sb.sb, v);
-			bch_write_bdev_super(dc, NULL);
-		}
-	}
-
-	if (attr == &sysfs_label) {
-		u64 journal_seq = 0;
-		int ret = 0;
-
-		if (size > BCH_SB_LABEL_SIZE)
-			return -EINVAL;
-
-		mutex_lock(&dc->disk.inode_lock);
-
-		memcpy(dc->disk_sb.sb->label, buf, size);
-		if (size < BCH_SB_LABEL_SIZE)
-			dc->disk_sb.sb->label[size] = '\0';
-		if (size && dc->disk_sb.sb->label[size - 1] == '\n')
-			dc->disk_sb.sb->label[size - 1] = '\0';
-
-		memcpy(dc->disk.inode.v.i_label,
-		       dc->disk_sb.sb->label, BCH_SB_LABEL_SIZE);
-
-		bch_write_bdev_super(dc, NULL);
-
-		if (dc->disk.c)
-			ret = bch_btree_update(dc->disk.c, BTREE_ID_INODES,
-					       &dc->disk.inode.k_i,
-					       &journal_seq);
-
-		mutex_unlock(&dc->disk.inode_lock);
-
-		if (ret)
-			return ret;
-
-		if (dc->disk.c)
-			ret = bch_journal_flush_seq(&dc->disk.c->journal,
-						    journal_seq);
-		if (ret)
-			return ret;
-
-		env = kzalloc(sizeof(struct kobj_uevent_env), GFP_KERNEL);
-		if (!env)
-			return -ENOMEM;
-		add_uevent_var(env, "DRIVER=bcache");
-		add_uevent_var(env, "CACHED_UUID=%pU", dc->disk_sb.sb->disk_uuid.b),
-		add_uevent_var(env, "CACHED_LABEL=%s", buf);
-		kobject_uevent_env(
-			&disk_to_dev(dc->disk.disk)->kobj, KOBJ_CHANGE, env->envp);
-		kfree(env);
-	}
-
-	if (attr == &sysfs_attach) {
-		struct bch_fs *c;
-		uuid_le uuid;
-		int ret;
-
-		if (uuid_parse(buf, &uuid))
-			return -EINVAL;
-
-		c = bch_uuid_to_fs(uuid);
-		if (!c) {
-			pr_err("Can't attach %s: cache set not found", buf);
-			return -ENOENT;
-		}
-
-		dc->disk_sb.sb->set_uuid = uuid;
-
-		ret = bch_cached_dev_attach(dc, c);
-		closure_put(&c->cl);
-		if (ret)
-			return ret;
-	}
-
-	if (attr == &sysfs_detach && dc->disk.c)
-		bch_cached_dev_detach(dc);
-
-	if (attr == &sysfs_stop)
-		bch_blockdev_stop(&dc->disk);
-
-	return size;
-}
-
-static struct attribute *bch_cached_dev_files[] = {
-	&sysfs_attach,
-	&sysfs_detach,
-	&sysfs_stop,
-	&sysfs_cache_mode,
-	&sysfs_writeback_metadata,
-	&sysfs_writeback_running,
-	&sysfs_writeback_percent,
-	sysfs_pd_controller_files(writeback),
-	&sysfs_dirty_data,
-	&sysfs_dirty_bytes,
-	&sysfs_stripe_size,
-	&sysfs_partial_stripes_expensive,
-	&sysfs_sequential_cutoff,
-	&sysfs_clear_stats,
-	&sysfs_running,
-	&sysfs_state,
-	&sysfs_label,
-	&sysfs_readahead,
-#ifdef CONFIG_BCACHEFS_DEBUG
-	&sysfs_verify,
-	&sysfs_bypass_torture_test,
-#endif
-	NULL
-};
-KTYPE(bch_cached_dev);
-
-SHOW(bch_blockdev_volume)
-{
-	struct bcache_device *d = container_of(kobj, struct bcache_device,
-					       kobj);
-
-	sysfs_hprint(size,	le64_to_cpu(d->inode.v.i_size));
-
-	if (attr == &sysfs_label) {
-		memcpy(buf, d->inode.v.i_label, BCH_SB_LABEL_SIZE);
-		buf[BCH_SB_LABEL_SIZE + 1] = '\0';
-		strcat(buf, "\n");
-		return strlen(buf);
-	}
-
-	return 0;
-}
-
-STORE(bch_blockdev_volume)
-{
-	struct bcache_device *d = container_of(kobj, struct bcache_device,
-					       kobj);
-
-	if (attr == &sysfs_size) {
-		u64 journal_seq = 0;
-		u64 v = strtoi_h_or_return(buf);
-		int ret;
-
-		mutex_lock(&d->inode_lock);
-
-		if (v < le64_to_cpu(d->inode.v.i_size) ){
-			ret = bch_inode_truncate(d->c, d->inode.k.p.inode,
-						 v >> 9, NULL, NULL);
-			if (ret) {
-				mutex_unlock(&d->inode_lock);
-				return ret;
-			}
-		}
-		d->inode.v.i_size = cpu_to_le64(v);
-		ret = bch_btree_update(d->c, BTREE_ID_INODES,
-				       &d->inode.k_i, &journal_seq);
-
-		mutex_unlock(&d->inode_lock);
-
-		if (ret)
-			return ret;
-
-		ret = bch_journal_flush_seq(&d->c->journal, journal_seq);
-		if (ret)
-			return ret;
-
-		set_capacity(d->disk, v >> 9);
-	}
-
-	if (attr == &sysfs_label) {
-		u64 journal_seq = 0;
-		int ret;
-
-		mutex_lock(&d->inode_lock);
-
-		memcpy(d->inode.v.i_label, buf, BCH_SB_LABEL_SIZE);
-		ret = bch_btree_update(d->c, BTREE_ID_INODES,
-				       &d->inode.k_i, &journal_seq);
-
-		mutex_unlock(&d->inode_lock);
-
-		return ret ?: bch_journal_flush_seq(&d->c->journal, journal_seq);
-	}
-
-	if (attr == &sysfs_unregister) {
-		set_bit(BCACHE_DEV_DETACHING, &d->flags);
-		bch_blockdev_stop(d);
-	}
-
-	return size;
-}
-
-static struct attribute *bch_blockdev_volume_files[] = {
-	&sysfs_unregister,
-	&sysfs_label,
-	&sysfs_size,
-	NULL
-};
-KTYPE(bch_blockdev_volume);
 
 static int bch_bset_print_stats(struct bch_fs *c, char *buf)
 {
@@ -647,22 +333,6 @@ SHOW(bch_fs)
 	sysfs_print(cache_read_races,
 		    atomic_long_read(&c->cache_read_races));
 
-	sysfs_print(writeback_keys_done,
-		    atomic_long_read(&c->writeback_keys_done));
-	sysfs_print(writeback_keys_failed,
-		    atomic_long_read(&c->writeback_keys_failed));
-
-	/* See count_io_errors for why 88 */
-	sysfs_print(io_error_halflife,	c->error_decay * 88);
-	sysfs_print(io_error_limit,	c->error_limit >> IO_ERROR_SHIFT);
-
-	sysfs_hprint(congested,
-		     ((uint64_t) bch_get_congested(c)) << 9);
-	sysfs_print(congested_read_threshold_us,
-		    c->congested_read_threshold_us);
-	sysfs_print(congested_write_threshold_us,
-		    c->congested_write_threshold_us);
-
 	sysfs_printf(foreground_write_ratelimit_enabled, "%i",
 		     c->foreground_write_ratelimit_enabled);
 	sysfs_printf(copy_gc_enabled, "%i", c->copy_gc_enabled);
@@ -711,40 +381,6 @@ SHOW(bch_fs)
 STORE(__bch_fs)
 {
 	struct bch_fs *c = container_of(kobj, struct bch_fs, kobj);
-
-	if (attr == &sysfs_unregister) {
-		bch_fs_detach(c);
-		return size;
-	}
-
-	if (attr == &sysfs_stop) {
-		bch_fs_stop_async(c);
-		return size;
-	}
-
-	if (attr == &sysfs_clear_stats) {
-		atomic_long_set(&c->writeback_keys_done,	0);
-		atomic_long_set(&c->writeback_keys_failed,	0);
-		bch_cache_accounting_clear(&c->accounting);
-
-		return size;
-	}
-
-	sysfs_strtoul(congested_read_threshold_us,
-		      c->congested_read_threshold_us);
-	sysfs_strtoul(congested_write_threshold_us,
-		      c->congested_write_threshold_us);
-
-	if (attr == &sysfs_io_error_limit) {
-		c->error_limit = strtoul_or_return(buf) << IO_ERROR_SHIFT;
-		return size;
-	}
-
-	/* See count_io_errors() for why 88 */
-	if (attr == &sysfs_io_error_halflife) {
-		c->error_decay = strtoul_or_return(buf) / 88;
-		return size;
-	}
 
 	sysfs_strtoul(journal_write_delay_ms, c->journal.write_delay_ms);
 	sysfs_strtoul(journal_reclaim_delay_ms, c->journal.reclaim_delay_ms);
@@ -796,14 +432,6 @@ STORE(__bch_fs)
 		return size;
 	}
 
-	if (attr == &sysfs_blockdev_volume_create) {
-		u64 v = strtoi_h_or_return(buf);
-		int r = bch_blockdev_volume_create(c, v);
-
-		if (r)
-			return r;
-	}
-
 	if (attr == &sysfs_trigger_btree_coalesce)
 		bch_coalesce(c);
 
@@ -835,12 +463,9 @@ STORE(bch_fs)
 }
 
 static struct attribute *bch_fs_files[] = {
-	&sysfs_unregister,
-	&sysfs_stop,
 	&sysfs_journal_write_delay_ms,
 	&sysfs_journal_reclaim_delay_ms,
 	&sysfs_journal_entry_size_max,
-	&sysfs_blockdev_volume_create,
 
 	&sysfs_block_size,
 	&sysfs_block_size_bytes,
@@ -853,13 +478,6 @@ static struct attribute *bch_fs_files[] = {
 	&sysfs_compression_stats,
 
 	&sysfs_average_key_size,
-
-	&sysfs_io_error_limit,
-	&sysfs_io_error_halflife,
-	&sysfs_congested,
-	&sysfs_congested_read_threshold_us,
-	&sysfs_congested_write_threshold_us,
-	&sysfs_clear_stats,
 
 	&sysfs_meta_replicas_have,
 	&sysfs_data_replicas_have,
@@ -902,8 +520,6 @@ static struct attribute *bch_fs_internal_files[] = {
 
 	&sysfs_bset_tree_stats,
 	&sysfs_cache_read_races,
-	&sysfs_writeback_keys_done,
-	&sysfs_writeback_keys_failed,
 
 	&sysfs_trigger_btree_coalesce,
 	&sysfs_trigger_gc,
@@ -1171,9 +787,6 @@ SHOW(bch_dev)
 		     (atomic64_read(&ca->meta_sectors_written) +
 		      atomic64_read(&ca->btree_sectors_written)) << 9);
 
-	sysfs_print(io_errors,
-		    atomic_read(&ca->io_errors) >> IO_ERROR_SHIFT);
-
 	sysfs_hprint(dirty_data,	stats.sectors[S_DIRTY] << 9);
 	sysfs_print(dirty_bytes,	stats.sectors[S_DIRTY] << 9);
 	sysfs_print(dirty_buckets,	stats.buckets_dirty);
@@ -1279,18 +892,6 @@ STORE(bch_dev)
 		bch_tiering_start(c);
 	}
 
-	if (attr == &sysfs_clear_stats) {
-		int cpu;
-
-		for_each_possible_cpu(cpu)
-			*per_cpu_ptr(ca->sectors_written, cpu) = 0;
-
-		atomic64_set(&ca->btree_sectors_written, 0);
-		atomic64_set(&ca->meta_sectors_written, 0);
-		atomic_set(&ca->io_count, 0);
-		atomic_set(&ca->io_errors, 0);
-	}
-
 	return size;
 }
 
@@ -1323,8 +924,6 @@ static struct attribute *bch_dev_files[] = {
 	&sysfs_written,
 	&sysfs_btree_written,
 	&sysfs_metadata_written,
-	&sysfs_io_errors,
-	&sysfs_clear_stats,
 	&sysfs_cache_replacement_policy,
 	&sysfs_tier,
 	&sysfs_state_rw,

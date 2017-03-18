@@ -20,8 +20,6 @@
 #include "journal.h"
 #include "keylist.h"
 #include "move.h"
-#include "notify.h"
-#include "stats.h"
 #include "super-io.h"
 
 #include <linux/blkdev.h>
@@ -34,34 +32,6 @@ static inline void __bio_inc_remaining(struct bio *bio)
 	bio_set_flag(bio, BIO_CHAIN);
 	smp_mb__before_atomic();
 	atomic_inc(&bio->__bi_remaining);
-}
-
-void bch_generic_make_request(struct bio *bio, struct bch_fs *c)
-{
-	if (current->bio_list) {
-		spin_lock(&c->bio_submit_lock);
-		bio_list_add(&c->bio_submit_list, bio);
-		spin_unlock(&c->bio_submit_lock);
-		queue_work(bcache_io_wq, &c->bio_submit_work);
-	} else {
-		generic_make_request(bio);
-	}
-}
-
-void bch_bio_submit_work(struct work_struct *work)
-{
-	struct bch_fs *c = container_of(work, struct bch_fs,
-					   bio_submit_work);
-	struct bio_list bl;
-	struct bio *bio;
-
-	spin_lock(&c->bio_submit_lock);
-	bl = c->bio_submit_list;
-	bio_list_init(&c->bio_submit_list);
-	spin_unlock(&c->bio_submit_lock);
-
-	while ((bio = bio_list_pop(&bl)))
-		generic_make_request(bio);
 }
 
 /* Allocate, free from mempool: */
@@ -116,8 +86,7 @@ void bch_bio_alloc_pages_pool(struct bch_fs *c, struct bio *bio,
 /* Bios with headers */
 
 static void bch_submit_wbio(struct bch_fs *c, struct bch_write_bio *wbio,
-			    struct bch_dev *ca, const struct bch_extent_ptr *ptr,
-			    bool punt)
+			    struct bch_dev *ca, const struct bch_extent_ptr *ptr)
 {
 	wbio->ca		= ca;
 	wbio->submit_time_us	= local_clock_us();
@@ -126,14 +95,12 @@ static void bch_submit_wbio(struct bch_fs *c, struct bch_write_bio *wbio,
 
 	if (!ca)
 		bcache_io_error(c, &wbio->bio, "device has been removed");
-	else if (punt)
-		bch_generic_make_request(&wbio->bio, c);
 	else
 		generic_make_request(&wbio->bio);
 }
 
 void bch_submit_wbio_replicas(struct bch_write_bio *wbio, struct bch_fs *c,
-			      const struct bkey_i *k, bool punt)
+			      const struct bkey_i *k)
 {
 	struct bkey_s_c_extent e = bkey_i_to_s_c_extent(k);
 	const struct bch_extent_ptr *ptr;
@@ -148,7 +115,7 @@ void bch_submit_wbio_replicas(struct bch_write_bio *wbio, struct bch_fs *c,
 	extent_for_each_ptr(e, ptr) {
 		ca = c->devs[ptr->dev];
 		if (!percpu_ref_tryget(&ca->io_ref)) {
-			bch_submit_wbio(c, wbio, NULL, ptr, punt);
+			bch_submit_wbio(c, wbio, NULL, ptr);
 			break;
 		}
 
@@ -172,7 +139,7 @@ void bch_submit_wbio_replicas(struct bch_write_bio *wbio, struct bch_fs *c,
 		if (!journal_flushes_device(ca))
 			n->bio.bi_opf |= REQ_FUA;
 
-		bch_submit_wbio(c, n, ca, ptr, punt);
+		bch_submit_wbio(c, n, ca, ptr);
 	}
 }
 
@@ -358,8 +325,6 @@ static void bch_write_endio(struct bio *bio)
 		set_closure_fn(cl, bch_write_io_error, index_update_wq(op));
 	}
 
-	bch_account_io_completion_time(ca, wbio->submit_time_us,
-				       REQ_OP_WRITE);
 	if (ca)
 		percpu_ref_put(&ca->io_ref);
 
@@ -574,7 +539,7 @@ static int bch_write_extent(struct bch_write_op *op,
 
 	bch_check_mark_super(c, key_to_write, false);
 
-	bch_submit_wbio_replicas(to_wbio(bio), c, key_to_write, false);
+	bch_submit_wbio_replicas(to_wbio(bio), c, key_to_write);
 	return ret;
 }
 
@@ -756,10 +721,6 @@ void bch_write(struct closure *cl)
 	struct bch_fs *c = op->c;
 	u64 inode = op->pos.inode;
 
-	trace_bcache_write(c, inode, bio,
-			   !(op->flags & BCH_WRITE_CACHED),
-			   op->flags & BCH_WRITE_DISCARD);
-
 	if (c->opts.nochanges ||
 	    !percpu_ref_tryget(&c->writes)) {
 		__bcache_io_error(c, "read only");
@@ -775,11 +736,6 @@ void bch_write(struct closure *cl)
 
 	if (!(op->flags & BCH_WRITE_DISCARD))
 		bch_increment_clock(c, bio_sectors(bio), WRITE);
-
-	if (!(op->flags & BCH_WRITE_DISCARD))
-		bch_mark_foreground_write(c, bio_sectors(bio));
-	else
-		bch_mark_discard(c, bio_sectors(bio));
 
 	/* Don't call bch_next_delay() if rate is >= 1 GB/sec */
 
@@ -1065,6 +1021,8 @@ static void __bch_read_endio(struct work_struct *work)
 
 		BUG_ON(!rbio->split || !rbio->bounce);
 
+		trace_bcache_promote(&rbio->bio);
+
 		/* we now own pages: */
 		swap(promote->write.wbio.bio.bi_vcnt, rbio->bio.bi_vcnt);
 		rbio->promote = NULL;
@@ -1084,10 +1042,6 @@ static void bch_read_endio(struct bio *bio)
 	struct bch_read_bio *rbio =
 		container_of(bio, struct bch_read_bio, bio);
 	struct bch_fs *c = rbio->c;
-
-	if (rbio->flags & BCH_READ_ACCOUNT_TIMES)
-		bch_account_io_completion_time(rbio->ca, rbio->submit_time_us,
-					       REQ_OP_READ);
 
 	if (bch_dev_nonfatal_io_err_on(bio->bi_error, rbio->ca, "data read")) {
 		/* XXX: retry IO errors when we have another replica */

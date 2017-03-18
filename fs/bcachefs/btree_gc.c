@@ -19,7 +19,6 @@
 #include "keylist.h"
 #include "move.h"
 #include "super-io.h"
-#include "writeback.h"
 
 #include <linux/slab.h>
 #include <linux/bitops.h>
@@ -463,7 +462,6 @@ void bch_gc(struct bch_fs *c)
 
 	bch_mark_metadata(c);
 	bch_mark_pending_btree_node_frees(c);
-	bch_writeback_recalc_oldest_gens(c);
 
 	for_each_member_device(ca, c, i)
 		atomic_long_set(&ca->saturated_count, 0);

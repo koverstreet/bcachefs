@@ -17,7 +17,6 @@
 #include "inode.h"
 #include "journal.h"
 #include "super-io.h"
-#include "writeback.h"
 #include "xattr.h"
 
 #include <trace/events/bcachefs.h>
@@ -950,10 +949,6 @@ static void bch_add_sectors(struct extent_insert_state *s,
 
 	bch_mark_key(c, k, sectors, false, gc_pos_btree_node(b),
 		     &s->stats, s->trans->journal_res.seq);
-
-	if (bkey_extent_is_data(k.k) &&
-	    !bkey_extent_is_cached(k.k))
-		bcache_dev_sectors_dirty_add(c, k.k->p.inode, offset, sectors);
 }
 
 static void bch_subtract_sectors(struct extent_insert_state *s,
@@ -986,118 +981,6 @@ static void bch_drop_subtract(struct extent_insert_state *s, struct bkey_s k)
 				     bkey_start_offset(k.k), k.k->size);
 	k.k->size = 0;
 	__set_bkey_deleted(k.k);
-}
-
-/*
- * Note: If this returns true because only some pointers matched,
- * we can lose some caching that had happened in the interim.
- * Because cache promotion only promotes the part of the extent
- * actually read, and not the whole extent, and due to the key
- * splitting done in bch_extent_insert_fixup, preserving such
- * caching is difficult.
- */
-static bool bch_extent_cmpxchg_cmp(struct bkey_s_c l, struct bkey_s_c r)
-{
-	struct bkey_s_c_extent le, re;
-	const struct bch_extent_ptr *lp, *rp;
-	s64 offset;
-
-	BUG_ON(!l.k->size || !r.k->size);
-
-	if (l.k->type != r.k->type ||
-	    bversion_cmp(l.k->version, r.k->version))
-		return false;
-
-	switch (l.k->type) {
-	case KEY_TYPE_COOKIE:
-		return !memcmp(bkey_s_c_to_cookie(l).v,
-			       bkey_s_c_to_cookie(r).v,
-			       sizeof(struct bch_cookie));
-
-	case BCH_EXTENT:
-	case BCH_EXTENT_CACHED:
-		le = bkey_s_c_to_extent(l);
-		re = bkey_s_c_to_extent(r);
-
-		/*
-		 * bkey_cmpxchg() handles partial matches - when either l or r
-		 * has been trimmed - so we need just to handle l or r not
-		 * starting at the same place when checking for a match here.
-		 *
-		 * If the starts of the keys are different, we just apply that
-		 * offset to the device pointer offsets when checking those -
-		 * matching how bch_cut_front() adjusts device pointer offsets
-		 * when adjusting the start of a key:
-		 */
-		offset = bkey_start_offset(l.k) - bkey_start_offset(r.k);
-
-		/*
-		 * XXX: perhaps we only raced with copygc or tiering replacing
-		 * one of the pointers: it should suffice to find _any_ matching
-		 * pointer
-		 */
-
-		if (bkey_val_u64s(le.k) != bkey_val_u64s(re.k))
-			return false;
-
-		extent_for_each_ptr(le, lp) {
-			const union bch_extent_entry *entry =
-				vstruct_idx(re.v, (u64 *) lp - le.v->_data);
-
-			if (!extent_entry_is_ptr(entry))
-				return false;
-
-			rp = &entry->ptr;
-
-			if (lp->offset	!= rp->offset + offset ||
-			    lp->dev	!= rp->dev ||
-			    lp->gen	!= rp->gen)
-				return false;
-		}
-
-		return true;
-	default:
-		return false;
-	}
-
-}
-
-/*
- * Returns true on success, false on failure (and false means @new no longer
- * overlaps with @k)
- *
- * If returned true, we may have inserted up to one key in @b.
- * If returned false, we may have inserted up to two keys in @b.
- *
- * On return, there is room in @res for at least one more key of the same size
- * as @new.
- */
-enum extent_insert_hook_ret bch_extent_cmpxchg(struct extent_insert_hook *hook,
-					       struct bpos committed_pos,
-					       struct bpos next_pos,
-					       struct bkey_s_c k,
-					       const struct bkey_i *new)
-{
-	struct bch_replace_info *replace = container_of(hook,
-					struct bch_replace_info, hook);
-	struct bkey_i *old = &replace->key;
-
-	EBUG_ON(bkey_cmp(committed_pos, bkey_start_pos(&new->k)) < 0);
-
-	/* must have something to compare against */
-	EBUG_ON(!bkey_val_u64s(&old->k));
-
-	/* new must be a subset of old */
-	EBUG_ON(bkey_cmp(new->k.p, old->k.p) > 0 ||
-		bkey_cmp(bkey_start_pos(&new->k), bkey_start_pos(&old->k)) < 0);
-
-	if (k.k && bch_extent_cmpxchg_cmp(k, bkey_i_to_s_c(old))) {
-		replace->successes++;
-		return BTREE_HOOK_DO_INSERT;
-	} else {
-		replace->failures++;
-		return BTREE_HOOK_NO_INSERT;
-	}
 }
 
 static bool bch_extent_merge_inline(struct bch_fs *,

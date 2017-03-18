@@ -610,13 +610,7 @@ static inline sector_t bdev_sectors(struct block_device *bdev)
 #define closure_bio_submit(bio, cl)					\
 do {									\
 	closure_get(cl);						\
-	generic_make_request(bio);					\
-} while (0)
-
-#define closure_bio_submit_punt(bio, cl, c)				\
-do {									\
-	closure_get(cl);						\
-	bch_generic_make_request(bio, c);				\
+	submit_bio(bio);						\
 } while (0)
 
 #define kthread_wait_freezable(cond)					\

@@ -5,7 +5,6 @@
 
 struct bio;
 struct btree;
-struct cached_dev;
 struct bch_fs;
 
 #define BCH_DEBUG_PARAM(name, description) extern bool bch_##name;
@@ -27,7 +26,6 @@ BCH_DEBUG_PARAMS_DEBUG()
 #undef BCH_DEBUG_PARAM
 
 void __bch_btree_verify(struct bch_fs *, struct btree *);
-void bch_data_verify(struct cached_dev *, struct bio *);
 
 #define bypass_torture_test(d)		((d)->bypass_torture_test)
 
@@ -39,7 +37,6 @@ BCH_DEBUG_PARAMS_DEBUG()
 #undef BCH_DEBUG_PARAM
 
 static inline void __bch_btree_verify(struct bch_fs *c, struct btree *b) {}
-static inline void bch_data_verify(struct cached_dev *dc, struct bio *bio) {}
 
 #define bypass_torture_test(d)		0
 

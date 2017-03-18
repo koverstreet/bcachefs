@@ -42,10 +42,6 @@ bch_extent_pick_ptr(struct bch_fs *c, struct bkey_s_c k,
 	bch_extent_pick_ptr_avoiding(c, k, NULL, ret);
 }
 
-enum extent_insert_hook_ret
-bch_extent_cmpxchg(struct extent_insert_hook *, struct bpos, struct bpos,
-		   struct bkey_s_c, const struct bkey_i *);
-
 enum btree_insert_ret
 bch_insert_fixup_extent(struct btree_insert *,
 			struct btree_insert_entry *);

@@ -1177,21 +1177,13 @@ err:
 	goto out;
 }
 
-static void btree_node_read_endio(struct bio *bio)
-{
-	closure_put(bio->bi_private);
-}
-
 void bch_btree_node_read(struct bch_fs *c, struct btree *b)
 {
 	uint64_t start_time = local_clock();
-	struct closure cl;
 	struct bio *bio;
 	struct extent_pick_ptr pick;
 
 	trace_bcache_btree_read(c, b);
-
-	closure_init_stack(&cl);
 
 	pick = bch_btree_pick_ptr(c, b);
 	if (bch_fs_fatal_err_on(!pick.ca, c,
@@ -1204,15 +1196,10 @@ void bch_btree_node_read(struct bch_fs *c, struct btree *b)
 	bio->bi_bdev		= pick.ca->disk_sb.bdev;
 	bio->bi_iter.bi_sector	= pick.ptr.offset;
 	bio->bi_iter.bi_size	= btree_bytes(c);
-	bio->bi_end_io		= btree_node_read_endio;
-	bio->bi_private		= &cl;
 	bio_set_op_attrs(bio, REQ_OP_READ, REQ_META|READ_SYNC);
-
 	bch_bio_map(bio, b->data);
 
-	closure_get(&cl);
-	bch_generic_make_request(bio, c);
-	closure_sync(&cl);
+	submit_bio_wait(bio);
 
 	if (bch_dev_fatal_io_err_on(bio->bi_error,
 				  pick.ca, "IO error reading bucket %zu",
@@ -1562,7 +1549,7 @@ void __bch_btree_node_write(struct bch_fs *c, struct btree *b,
 
 	b->written += sectors_to_write;
 
-	bch_submit_wbio_replicas(wbio, c, &k.key, true);
+	bch_submit_wbio_replicas(wbio, c, &k.key);
 }
 
 /*

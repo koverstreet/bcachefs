@@ -282,15 +282,12 @@ do {									\
 	BCH_TIME_STAT(journal_flush_seq,	us, us)
 
 #include "alloc_types.h"
-#include "blockdev_types.h"
 #include "buckets_types.h"
 #include "clock_types.h"
 #include "io_types.h"
 #include "journal_types.h"
 #include "keylist_types.h"
-#include "keybuf_types.h"
 #include "move_types.h"
-#include "stats_types.h"
 #include "super_types.h"
 
 /* 256k, in sectors */
@@ -435,10 +432,6 @@ struct bch_dev {
 	struct work_struct	io_error_work;
 
 	/* The rest of this all shows up in sysfs */
-#define IO_ERROR_SHIFT		20
-	atomic_t		io_errors;
-	atomic_t		io_count;
-
 	atomic64_t		meta_sectors_written;
 	atomic64_t		btree_sectors_written;
 	u64 __percpu		*sectors_written;
@@ -454,7 +447,6 @@ struct bch_dev {
  */
 enum {
 	BCH_FS_INITIAL_GC_DONE,
-	BCH_FS_DETACHING,
 	BCH_FS_EMERGENCY_RO,
 	BCH_FS_WRITE_DISABLE_COMPLETE,
 	BCH_FS_GC_STOPPING,
@@ -723,11 +715,6 @@ struct bch_fs {
 
 	atomic64_t		key_version;
 
-	/* For punting bio submissions to workqueue, io.c */
-	struct bio_list		bio_submit_list;
-	struct work_struct	bio_submit_work;
-	spinlock_t		bio_submit_lock;
-
 	struct bio_list		read_retry_list;
 	struct work_struct	read_retry_work;
 	spinlock_t		read_retry_lock;
@@ -737,10 +724,6 @@ struct bch_fs {
 	atomic_t		writeback_pages;
 	unsigned		writeback_pages_max;
 	atomic_long_t		nr_inodes;
-
-	/* NOTIFICATIONS */
-	struct mutex		uevent_lock;
-	struct kobj_uevent_env	uevent_env;
 
 	/* DEBUG JUNK */
 	struct dentry		*debug;
@@ -765,28 +748,8 @@ struct bch_fs {
 
 	unsigned		bucket_journal_seq;
 
-	/* CACHING OTHER BLOCK DEVICES */
-	mempool_t		search;
-	struct radix_tree_root	devices;
-	struct list_head	cached_devs;
-	u64			cached_dev_sectors;
-	struct closure		caching;
-
-#define CONGESTED_MAX		1024
-	unsigned		congested_last_us;
-	atomic_t		congested;
-
 	/* The rest of this all shows up in sysfs */
-	unsigned		congested_read_threshold_us;
-	unsigned		congested_write_threshold_us;
-
-	struct cache_accounting accounting;
 	atomic_long_t		cache_read_races;
-	atomic_long_t		writeback_keys_done;
-	atomic_long_t		writeback_keys_failed;
-
-	unsigned		error_limit;
-	unsigned		error_decay;
 
 	unsigned		foreground_write_ratelimit_enabled:1;
 	unsigned		copy_gc_enabled:1;

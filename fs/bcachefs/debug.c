@@ -30,13 +30,6 @@ static struct dentry *bch_debug;
 
 #ifdef CONFIG_BCACHEFS_DEBUG
 
-static void btree_verify_endio(struct bio *bio)
-{
-	struct closure *cl = bio->bi_private;
-
-	closure_put(cl);
-}
-
 void __bch_btree_verify(struct bch_fs *c, struct btree *b)
 {
 	struct btree *v = c->verify_data;
@@ -44,12 +37,9 @@ void __bch_btree_verify(struct bch_fs *c, struct btree *b)
 	struct bset *sorted, *inmemory;
 	struct extent_pick_ptr pick;
 	struct bio *bio;
-	struct closure cl;
 
 	if (c->opts.nochanges)
 		return;
-
-	closure_init_stack(&cl);
 
 	btree_node_io_lock(b);
 	mutex_lock(&c->verify_lock);
@@ -73,13 +63,9 @@ void __bch_btree_verify(struct bch_fs *c, struct btree *b)
 	bio->bi_iter.bi_sector	= pick.ptr.offset;
 	bio->bi_iter.bi_size	= btree_bytes(c);
 	bio_set_op_attrs(bio, REQ_OP_READ, REQ_META|READ_SYNC);
-	bio->bi_private		= &cl;
-	bio->bi_end_io		= btree_verify_endio;
 	bch_bio_map(bio, n_sorted);
 
-	closure_get(&cl);
-	bch_generic_make_request(bio, c);
-	closure_sync(&cl);
+	submit_bio_wait(bio);
 
 	bio_put(bio);
 
@@ -144,42 +130,6 @@ void __bch_btree_verify(struct bch_fs *c, struct btree *b)
 
 	mutex_unlock(&c->verify_lock);
 	btree_node_io_unlock(b);
-}
-
-void bch_data_verify(struct cached_dev *dc, struct bio *bio)
-{
-	char name[BDEVNAME_SIZE];
-	struct bio *check;
-	struct bio_vec bv;
-	struct bvec_iter iter;
-
-	check = bio_clone(bio, GFP_NOIO);
-	if (!check)
-		return;
-	bio_set_op_attrs(check, REQ_OP_READ, READ_SYNC);
-
-	if (bio_alloc_pages(check, GFP_NOIO))
-		goto out_put;
-
-	submit_bio_wait(check);
-
-	bio_for_each_segment(bv, bio, iter) {
-		void *p1 = kmap_atomic(bv.bv_page);
-		void *p2 = page_address(check->bi_io_vec[iter.bi_idx].bv_page);
-
-		if (memcmp(p1 + bv.bv_offset,
-			   p2 + bv.bv_offset,
-			   bv.bv_len))
-			panic("verify failed at dev %s sector %llu\n",
-			      bdevname(dc->disk_sb.bdev, name),
-			      (uint64_t) bio->bi_iter.bi_sector);
-
-		kunmap_atomic(p1);
-	}
-
-	bio_free_pages(check);
-out_put:
-	bio_put(check);
 }
 
 #endif

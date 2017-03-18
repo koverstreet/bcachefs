@@ -191,9 +191,6 @@ do {									\
  * don't (necessarily) want to shut down the fs:
  */
 
-void bch_account_io_completion(struct bch_dev *);
-void bch_account_io_completion_time(struct bch_dev *, unsigned, int);
-
 void bch_nonfatal_io_error_work(struct work_struct *);
 
 /* Does the error handling without logging a message */

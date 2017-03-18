@@ -1,6 +1,5 @@
 
 #include "bcache.h"
-#include "blockdev.h"
 #include "checksum.h"
 #include "error.h"
 #include "io.h"
@@ -710,8 +709,6 @@ static void write_super_endio(struct bio *bio)
 
 	bch_dev_fatal_io_err_on(bio->bi_error, ca, "superblock write");
 
-	bch_account_io_completion(ca);
-
 	closure_put(&ca->fs->sb_write);
 	percpu_ref_put(&ca->io_ref);
 }
@@ -744,7 +741,7 @@ static bool write_one_super(struct bch_fs *c, struct bch_dev *ca, unsigned idx)
 	bio_set_op_attrs(bio, REQ_OP_WRITE, REQ_SYNC|REQ_META);
 	bch_bio_map(bio, sb);
 
-	closure_bio_submit_punt(bio, &c->sb_write, c);
+	closure_bio_submit(bio, &c->sb_write);
 	return true;
 }
 
