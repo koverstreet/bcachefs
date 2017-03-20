@@ -17,6 +17,7 @@
 #include <trace/events/bcachefs.h>
 #include <linux/freezer.h>
 #include <linux/kthread.h>
+#include <linux/math64.h>
 #include <linux/wait.h>
 
 /* Moving GC - IO loop */

@@ -7,6 +7,7 @@
 #include "debug.h"
 #include "extents.h"
 
+#include <linux/prefetch.h>
 #include <trace/events/bcachefs.h>
 
 #define DEF_BTREE_ID(kwd, val, name) name,

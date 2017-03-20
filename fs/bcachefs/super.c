@@ -29,6 +29,7 @@
 #include "movinggc.h"
 #include "super.h"
 #include "super-io.h"
+#include "sysfs.h"
 #include "tier.h"
 
 #include <linux/backing-dev.h>
@@ -49,12 +50,33 @@
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Kent Overstreet <kent.overstreet@gmail.com>");
 
-static const uuid_le invalid_uuid = {
-	.b = {
-		0xa0, 0x3e, 0xf8, 0xed, 0x3e, 0xe1, 0xb8, 0x78,
-		0xc8, 0x50, 0xfc, 0x5e, 0xcb, 0x16, 0xcd, 0x99
-	}
-};
+#define KTYPE(type)							\
+struct kobj_type type ## _ktype = {					\
+	.release	= type ## _release,				\
+	.sysfs_ops	= &type ## _sysfs_ops,				\
+	.default_attrs	= type ## _files				\
+}
+
+static void bch2_fs_release(struct kobject *);
+static void bch2_dev_release(struct kobject *);
+
+static void bch2_fs_internal_release(struct kobject *k)
+{
+}
+
+static void bch2_fs_opts_dir_release(struct kobject *k)
+{
+}
+
+static void bch2_fs_time_stats_release(struct kobject *k)
+{
+}
+
+static KTYPE(bch2_fs);
+static KTYPE(bch2_fs_internal);
+static KTYPE(bch2_fs_opts_dir);
+static KTYPE(bch2_fs_time_stats);
+static KTYPE(bch2_dev);
 
 static struct kset *bcachefs_kset;
 static LIST_HEAD(bch_fs_list);
@@ -417,7 +439,7 @@ static void bch2_fs_offline(struct bch_fs *c)
 	__bch2_fs_read_only(c);
 }
 
-void bch2_fs_release(struct kobject *kobj)
+static void bch2_fs_release(struct kobject *kobj)
 {
 	struct bch_fs *c = container_of(kobj, struct bch_fs, kobj);
 
@@ -913,7 +935,7 @@ static const char *bch2_dev_in_fs(struct bch_sb *fs, struct bch_sb *sb)
 
 /* Device startup/shutdown: */
 
-void bch2_dev_release(struct kobject *kobj)
+static void bch2_dev_release(struct kobject *kobj)
 {
 	struct bch_dev *ca = container_of(kobj, struct bch_dev, kobj);
 

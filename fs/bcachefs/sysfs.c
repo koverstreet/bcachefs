@@ -25,6 +25,101 @@
 #include <linux/blkdev.h>
 #include <linux/sort.h>
 
+#include "util.h"
+
+#define SYSFS_OPS(type)							\
+struct sysfs_ops type ## _sysfs_ops = {					\
+	.show	= type ## _show,					\
+	.store	= type ## _store					\
+}
+
+#define SHOW(fn)							\
+static ssize_t fn ## _show(struct kobject *kobj, struct attribute *attr,\
+			   char *buf)					\
+
+#define STORE(fn)							\
+static ssize_t fn ## _store(struct kobject *kobj, struct attribute *attr,\
+			    const char *buf, size_t size)		\
+
+#define __sysfs_attribute(_name, _mode)					\
+	static struct attribute sysfs_##_name =				\
+		{ .name = #_name, .mode = _mode }
+
+#define write_attribute(n)	__sysfs_attribute(n, S_IWUSR)
+#define read_attribute(n)	__sysfs_attribute(n, S_IRUGO)
+#define rw_attribute(n)		__sysfs_attribute(n, S_IRUGO|S_IWUSR)
+
+#define sysfs_printf(file, fmt, ...)					\
+do {									\
+	if (attr == &sysfs_ ## file)					\
+		return snprintf(buf, PAGE_SIZE, fmt "\n", __VA_ARGS__);	\
+} while (0)
+
+#define sysfs_print(file, var)						\
+do {									\
+	if (attr == &sysfs_ ## file)					\
+		return snprint(buf, PAGE_SIZE, var);			\
+} while (0)
+
+#define sysfs_hprint(file, val)						\
+do {									\
+	if (attr == &sysfs_ ## file) {					\
+		ssize_t ret = bch2_hprint(buf, val);			\
+		strcat(buf, "\n");					\
+		return ret + 1;						\
+	}								\
+} while (0)
+
+#define var_printf(_var, fmt)	sysfs_printf(_var, fmt, var(_var))
+#define var_print(_var)		sysfs_print(_var, var(_var))
+#define var_hprint(_var)	sysfs_hprint(_var, var(_var))
+
+#define sysfs_strtoul(file, var)					\
+do {									\
+	if (attr == &sysfs_ ## file)					\
+		return strtoul_safe(buf, var) ?: (ssize_t) size;	\
+} while (0)
+
+#define sysfs_strtoul_clamp(file, var, min, max)			\
+do {									\
+	if (attr == &sysfs_ ## file)					\
+		return strtoul_safe_clamp(buf, var, min, max)		\
+			?: (ssize_t) size;				\
+} while (0)
+
+#define strtoul_or_return(cp)						\
+({									\
+	unsigned long _v;						\
+	int _r = kstrtoul(cp, 10, &_v);					\
+	if (_r)								\
+		return _r;						\
+	_v;								\
+})
+
+#define strtoul_restrict_or_return(cp, min, max)			\
+({									\
+	unsigned long __v = 0;						\
+	int _r = strtoul_safe_restrict(cp, __v, min, max);		\
+	if (_r)								\
+		return _r;						\
+	__v;								\
+})
+
+#define strtoi_h_or_return(cp)						\
+({									\
+	u64 _v;								\
+	int _r = strtoi_h(cp, &_v);					\
+	if (_r)								\
+		return _r;						\
+	_v;								\
+})
+
+#define sysfs_hatoi(file, var)						\
+do {									\
+	if (attr == &sysfs_ ## file)					\
+		return strtoi_h(buf, &var) ?: (ssize_t) size;		\
+} while (0)
+
 write_attribute(trigger_btree_coalesce);
 write_attribute(trigger_gc);
 write_attribute(prune_cache);
@@ -461,8 +556,9 @@ STORE(bch2_fs)
 
 	return size;
 }
+SYSFS_OPS(bch2_fs);
 
-static struct attribute *bch2_fs_files[] = {
+struct attribute *bch2_fs_files[] = {
 	&sysfs_journal_write_delay_ms,
 	&sysfs_journal_reclaim_delay_ms,
 	&sysfs_journal_entry_size_max,
@@ -488,7 +584,6 @@ static struct attribute *bch2_fs_files[] = {
 	&sysfs_journal_flush,
 	NULL
 };
-KTYPE(bch2_fs);
 
 /* internal dir - just a wrapper */
 
@@ -503,12 +598,9 @@ STORE(bch2_fs_internal)
 	struct bch_fs *c = container_of(kobj, struct bch_fs, internal);
 	return bch2_fs_store(&c->kobj, attr, buf, size);
 }
+SYSFS_OPS(bch2_fs_internal);
 
-static void bch2_fs_internal_release(struct kobject *k)
-{
-}
-
-static struct attribute *bch2_fs_internal_files[] = {
+struct attribute *bch2_fs_internal_files[] = {
 	&sysfs_journal_debug,
 
 	&sysfs_alloc_debug,
@@ -537,7 +629,6 @@ static struct attribute *bch2_fs_internal_files[] = {
 
 	NULL
 };
-KTYPE(bch2_fs_internal);
 
 /* options */
 
@@ -582,12 +673,9 @@ STORE(bch2_fs_opts_dir)
 
 	return size;
 }
+SYSFS_OPS(bch2_fs_opts_dir);
 
-static void bch2_fs_opts_dir_release(struct kobject *k)
-{
-}
-
-static struct attribute *bch2_fs_opts_dir_files[] = {
+struct attribute *bch2_fs_opts_dir_files[] = {
 #define BCH_OPT(_name, ...)						\
 	&sysfs_opt_##_name,
 
@@ -596,7 +684,6 @@ static struct attribute *bch2_fs_opts_dir_files[] = {
 
 	NULL
 };
-KTYPE(bch2_fs_opts_dir);
 
 /* time stats */
 
@@ -624,12 +711,9 @@ STORE(bch2_fs_time_stats)
 
 	return size;
 }
+SYSFS_OPS(bch2_fs_time_stats);
 
-static void bch2_fs_time_stats_release(struct kobject *k)
-{
-}
-
-static struct attribute *bch2_fs_time_stats_files[] = {
+struct attribute *bch2_fs_time_stats_files[] = {
 #define BCH_TIME_STAT(name, frequency_units, duration_units)		\
 	sysfs_time_stats_attribute_list(name, frequency_units, duration_units)
 	BCH_TIME_STATS()
@@ -637,7 +721,6 @@ static struct attribute *bch2_fs_time_stats_files[] = {
 
 	NULL
 };
-KTYPE(bch2_fs_time_stats);
 
 typedef unsigned (bucket_map_fn)(struct bch_dev *, struct bucket *, void *);
 
@@ -894,8 +977,9 @@ STORE(bch2_dev)
 
 	return size;
 }
+SYSFS_OPS(bch2_dev);
 
-static struct attribute *bch2_dev_files[] = {
+struct attribute *bch2_dev_files[] = {
 	&sysfs_uuid,
 	&sysfs_bucket_size,
 	&sysfs_bucket_size_bytes,
@@ -932,4 +1016,3 @@ static struct attribute *bch2_dev_files[] = {
 	sysfs_pd_controller_files(copy_gc),
 	NULL
 };
-KTYPE(bch2_dev);

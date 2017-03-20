@@ -7,6 +7,7 @@
 #include "debug.h"
 #include "extents.h"
 
+#include <linux/prefetch.h>
 #include <trace/events/bcachefs.h>
 
 #define BTREE_ITER_NOT_END	((struct btree *) 1)

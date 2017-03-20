@@ -3,6 +3,7 @@
 
 #include <linux/freezer.h>
 #include <linux/kthread.h>
+#include <linux/preempt.h>
 
 static inline bool io_timer_cmp(struct io_timer *l, struct io_timer *r)
 {

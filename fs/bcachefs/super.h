@@ -93,8 +93,6 @@ struct bch_fs *bch2_bdev_to_fs(struct block_device *);
 struct bch_fs *bch2_uuid_to_fs(uuid_le);
 int bch2_congested(struct bch_fs *, int);
 
-void bch2_dev_release(struct kobject *);
-
 bool bch2_dev_state_allowed(struct bch_fs *, struct bch_dev *,
 			   enum bch_member_state, int);
 int __bch2_dev_set_state(struct bch_fs *, struct bch_dev *,
@@ -113,18 +111,11 @@ bool bch2_fs_emergency_read_only(struct bch_fs *);
 void bch2_fs_read_only(struct bch_fs *);
 const char *bch2_fs_read_write(struct bch_fs *);
 
-void bch2_fs_release(struct kobject *);
 void bch2_fs_stop(struct bch_fs *);
 
 const char *bch2_fs_start(struct bch_fs *);
 const char *bch2_fs_open(char * const *, unsigned, struct bch_opts,
 			struct bch_fs **);
 const char *bch2_fs_open_incremental(const char *path);
-
-extern struct kobj_type bch2_fs_ktype;
-extern struct kobj_type bch2_fs_internal_ktype;
-extern struct kobj_type bch2_fs_time_stats_ktype;
-extern struct kobj_type bch2_fs_opts_dir_ktype;
-extern struct kobj_type bch2_dev_ktype;
 
 #endif /* _BCACHE_SUPER_H */

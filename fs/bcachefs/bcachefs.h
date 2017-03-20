@@ -210,8 +210,10 @@
 #define bch2_meta_write_fault(name)					\
 	 dynamic_fault("bcachefs:meta:write:" name)
 
-#ifndef bch2_fmt
+#ifdef __KERNEL__
 #define bch2_fmt(_c, fmt)	"bcachefs (%s): " fmt "\n", ((_c)->name)
+#else
+#define bch2_fmt(_c, fmt)	fmt "\n"
 #endif
 
 #define bch_info(c, fmt, ...) \

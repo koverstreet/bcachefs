@@ -1,103 +1,39 @@
 #ifndef _BCACHE_SYSFS_H_
 #define _BCACHE_SYSFS_H_
 
-#include "util.h"
+#include <linux/sysfs.h>
 
-#define KTYPE(type)							\
-struct kobj_type type ## _ktype = {					\
-	.release	= type ## _release,				\
-	.sysfs_ops	= &((const struct sysfs_ops) {			\
-		.show	= type ## _show,				\
-		.store	= type ## _store				\
-	}),								\
-	.default_attrs	= type ## _files				\
-}
+#ifndef NO_BCACHE_SYSFS
 
-#define SHOW(fn)							\
-static ssize_t fn ## _show(struct kobject *kobj, struct attribute *attr,\
-			   char *buf)					\
+struct attribute;
+struct sysfs_ops;
 
-#define STORE(fn)							\
-static ssize_t fn ## _store(struct kobject *kobj, struct attribute *attr,\
-			    const char *buf, size_t size)		\
+extern struct attribute *bch2_fs_files[];
+extern struct attribute *bch2_fs_internal_files[];
+extern struct attribute *bch2_fs_opts_dir_files[];
+extern struct attribute *bch2_fs_time_stats_files[];
+extern struct attribute *bch2_dev_files[];
 
-#define __sysfs_attribute(_name, _mode)					\
-	static struct attribute sysfs_##_name =				\
-		{ .name = #_name, .mode = _mode }
+extern struct sysfs_ops bch2_fs_sysfs_ops;
+extern struct sysfs_ops bch2_fs_internal_sysfs_ops;
+extern struct sysfs_ops bch2_fs_opts_dir_sysfs_ops;
+extern struct sysfs_ops bch2_fs_time_stats_sysfs_ops;
+extern struct sysfs_ops bch2_dev_sysfs_ops;
 
-#define write_attribute(n)	__sysfs_attribute(n, S_IWUSR)
-#define read_attribute(n)	__sysfs_attribute(n, S_IRUGO)
-#define rw_attribute(n)		__sysfs_attribute(n, S_IRUGO|S_IWUSR)
+#else
 
-#define sysfs_printf(file, fmt, ...)					\
-do {									\
-	if (attr == &sysfs_ ## file)					\
-		return snprintf(buf, PAGE_SIZE, fmt "\n", __VA_ARGS__);	\
-} while (0)
+static struct attribute *bch2_fs_files[] = {};
+static struct attribute *bch2_fs_internal_files[] = {};
+static struct attribute *bch2_fs_opts_dir_files[] = {};
+static struct attribute *bch2_fs_time_stats_files[] = {};
+static struct attribute *bch2_dev_files[] = {};
 
-#define sysfs_print(file, var)						\
-do {									\
-	if (attr == &sysfs_ ## file)					\
-		return snprint(buf, PAGE_SIZE, var);			\
-} while (0)
+static const struct sysfs_ops bch2_fs_sysfs_ops;
+static const struct sysfs_ops bch2_fs_internal_sysfs_ops;
+static const struct sysfs_ops bch2_fs_opts_dir_sysfs_ops;
+static const struct sysfs_ops bch2_fs_time_stats_sysfs_ops;
+static const struct sysfs_ops bch2_dev_sysfs_ops;
 
-#define sysfs_hprint(file, val)						\
-do {									\
-	if (attr == &sysfs_ ## file) {					\
-		ssize_t ret = bch2_hprint(buf, val);			\
-		strcat(buf, "\n");					\
-		return ret + 1;						\
-	}								\
-} while (0)
-
-#define var_printf(_var, fmt)	sysfs_printf(_var, fmt, var(_var))
-#define var_print(_var)		sysfs_print(_var, var(_var))
-#define var_hprint(_var)	sysfs_hprint(_var, var(_var))
-
-#define sysfs_strtoul(file, var)					\
-do {									\
-	if (attr == &sysfs_ ## file)					\
-		return strtoul_safe(buf, var) ?: (ssize_t) size;	\
-} while (0)
-
-#define sysfs_strtoul_clamp(file, var, min, max)			\
-do {									\
-	if (attr == &sysfs_ ## file)					\
-		return strtoul_safe_clamp(buf, var, min, max)		\
-			?: (ssize_t) size;				\
-} while (0)
-
-#define strtoul_or_return(cp)						\
-({									\
-	unsigned long _v;						\
-	int _r = kstrtoul(cp, 10, &_v);					\
-	if (_r)								\
-		return _r;						\
-	_v;								\
-})
-
-#define strtoul_restrict_or_return(cp, min, max)			\
-({									\
-	unsigned long __v = 0;						\
-	int _r = strtoul_safe_restrict(cp, __v, min, max);		\
-	if (_r)								\
-		return _r;						\
-	__v;								\
-})
-
-#define strtoi_h_or_return(cp)						\
-({									\
-	u64 _v;								\
-	int _r = strtoi_h(cp, &_v);					\
-	if (_r)								\
-		return _r;						\
-	_v;								\
-})
-
-#define sysfs_hatoi(file, var)						\
-do {									\
-	if (attr == &sysfs_ ## file)					\
-		return strtoi_h(buf, &var) ?: (ssize_t) size;		\
-} while (0)
+#endif
 
 #endif  /* _BCACHE_SYSFS_H_ */

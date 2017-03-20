@@ -1,6 +1,7 @@
 #ifndef _BCACHE_IO_H
 #define _BCACHE_IO_H
 
+#include <linux/hash.h>
 #include "io_types.h"
 
 #define to_wbio(_bio)			\

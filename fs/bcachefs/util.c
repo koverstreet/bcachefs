@@ -9,13 +9,14 @@
 #include <linux/blkdev.h>
 #include <linux/ctype.h>
 #include <linux/debugfs.h>
-#include <linux/module.h>
-#include <linux/random.h>
-#include <linux/seq_file.h>
-#include <linux/types.h>
-
 #include <linux/freezer.h>
 #include <linux/kthread.h>
+#include <linux/log2.h>
+#include <linux/math64.h>
+#include <linux/random.h>
+#include <linux/seq_file.h>
+#include <linux/string.h>
+#include <linux/types.h>
 
 #include "util.h"
 

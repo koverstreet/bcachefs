@@ -5,6 +5,7 @@
 
 struct bch_dev;
 struct bch_fs;
+struct work_struct;
 
 /*
  * XXX: separate out errors that indicate on disk data is inconsistent, and flag
@@ -98,28 +99,65 @@ enum {
 
 /* XXX: mark in superblock that filesystem contains errors, if we ignore: */
 
-#ifndef __fsck_err
-#define __fsck_err(c, _can_fix, _can_ignore, _nofix_msg, msg, ...)	\
+enum fsck_err_opts {
+	FSCK_ERR_NO,
+	FSCK_ERR_YES,
+	FSCK_ERR_ASK,
+};
+
+#ifdef __KERNEL__
+#define __fsck_err_should_fix(c, msg, ...)				\
+({									\
+	bool _fix = (c)->opts.fix_errors;				\
+	bch_err(c, msg ", %sfixing", ##__VA_ARGS__, _fix ? "" : "not ");\
+	_fix;								\
+})
+#else
+#include "tools-util.h"
+
+#define __fsck_err_should_fix(c, msg, ...)				\
 ({									\
 	bool _fix = false;						\
-									\
-	if (_can_fix && (c)->opts.fix_errors) {				\
+	switch ((c)->opts.fix_errors) {					\
+	case FSCK_ERR_ASK:						\
+		printf(msg ": fix?", ##__VA_ARGS__);			\
+		_fix = ask_yn();					\
+		break;							\
+	case FSCK_ERR_YES:						\
 		bch_err(c, msg ", fixing", ##__VA_ARGS__);		\
-		set_bit(BCH_FS_FSCK_FIXED_ERRORS, &(c)->flags);	\
 		_fix = true;						\
-	} else if (_can_ignore &&					\
-		   (c)->opts.errors == BCH_ON_ERROR_CONTINUE) {		\
-		bch_err(c, msg " (ignoring)", ##__VA_ARGS__);		\
+		break;							\
+	case FSCK_ERR_NO:						\
+		bch_err(c, msg, ##__VA_ARGS__);				\
+		_fix = false;						\
+		break;							\
+	}								\
+	_fix;								\
+})
+#endif
+
+#define __fsck_err(c, _can_fix, _can_ignore, _nofix_msg, msg, ...)	\
+({									\
+	bool _fix;							\
+									\
+	if (_can_fix) {							\
+		_fix = __fsck_err_should_fix(c, msg, ##__VA_ARGS__);	\
 	} else {							\
 		bch_err(c, msg " ("_nofix_msg")", ##__VA_ARGS__);	\
+		_fix = false;						\
+	}								\
+									\
+	if (_fix)							\
+		set_bit(BCH_FS_FSCK_FIXED_ERRORS, &(c)->flags);		\
+									\
+	if (!_fix && !_can_ignore) {					\
+		bch_err(c, "Unable to continue, halting");		\
 		ret = BCH_FSCK_ERRORS_NOT_FIXED;			\
 		goto fsck_err;						\
 	}								\
 									\
-	BUG_ON(!_fix && !_can_ignore);					\
 	_fix;								\
 })
-#endif
 
 #define __fsck_err_on(cond, c, _can_fix, _can_ignore, _nofix_msg, ...)	\
 	((cond) ? __fsck_err(c, _can_fix, _can_ignore,			\

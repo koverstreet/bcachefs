@@ -4,6 +4,7 @@
 #include "str_hash.h"
 
 #include <linux/seqlock.h>
+#include <linux/stat.h>
 
 struct bch_inode_info {
 	struct inode		vfs_inode;

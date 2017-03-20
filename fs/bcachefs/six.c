@@ -1,4 +1,7 @@
 
+#include <linux/log2.h>
+#include <linux/preempt.h>
+#include <linux/rcupdate.h>
 #include <linux/sched.h>
 #include <linux/sched/rt.h>
 

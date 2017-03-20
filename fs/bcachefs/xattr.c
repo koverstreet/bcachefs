@@ -7,6 +7,7 @@
 #include "str_hash.h"
 #include "xattr.h"
 
+#include <linux/dcache.h>
 #include <linux/posix_acl_xattr.h>
 #include <linux/xattr.h>
 

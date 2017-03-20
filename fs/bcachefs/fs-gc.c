@@ -9,6 +9,7 @@
 #include "keylist.h"
 #include "super.h"
 
+#include <linux/dcache.h> /* struct qstr */
 #include <linux/generic-radix-tree.h>
 
 #define QSTR(n) { { { .len = strlen(n) } }, .name = n }
