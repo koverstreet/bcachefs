@@ -362,12 +362,14 @@ void bch2_mark_metadata_bucket(struct bch_dev *ca, struct bucket *g,
 	BUG_ON(!type);
 
 	old = bucket_data_cmpxchg(ca, g, new, ({
+		BUG_ON(new.cached_sectors ||
+		       new.dirty_sectors);
+		BUG_ON(new.data_type &&
+		       new.data_type != type);
 		new.data_type = type;
 		new.had_metadata = 1;
 	}));
 
-	BUG_ON(old.cached_sectors);
-	BUG_ON(old.dirty_sectors);
 	BUG_ON(!may_make_unavailable &&
 	       bucket_became_unavailable(ca->fs, old, new));
 }
@@ -431,6 +433,8 @@ static void bch2_mark_pointer(struct bch_fs *c,
 	unsigned saturated;
 	struct bch_dev *ca = c->devs[ptr->dev];
 	struct bucket *g = ca->buckets + PTR_BUCKET_NR(ca, ptr);
+	unsigned data_type = type == S_META
+		? BUCKET_BTREE : BUCKET_DATA;
 	unsigned old_sectors, new_sectors;
 	int disk_sectors, compressed_sectors;
 
@@ -468,6 +472,10 @@ static void bch2_mark_pointer(struct bch_fs *c,
 			return;
 		}
 
+		BUG_ON((new.cached_sectors ||
+			new.dirty_sectors) &&
+		       new.data_type != data_type);
+
 		EBUG_ON(type != S_CACHED &&
 			!may_make_unavailable &&
 			is_available_bucket(new) &&
@@ -494,8 +502,7 @@ static void bch2_mark_pointer(struct bch_fs *c,
 				new.journal_seq = journal_seq;
 			}
 		} else {
-			new.data_type = type == S_META
-				? BUCKET_BTREE : BUCKET_DATA;
+			new.data_type = data_type;
 		}
 
 		new.had_metadata |= is_meta_bucket(new);
