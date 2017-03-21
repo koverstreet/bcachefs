@@ -475,7 +475,7 @@ static int bch2_write_extent(struct bch_write_op *op,
 			nonce = extent_nonce(op->version,
 					     crc_nonce,
 					     src_len >> 9,
-					     compression_type),
+					     fragment_compression_type),
 
 			bch2_encrypt_bio(c, csum_type, nonce, bio);
 
