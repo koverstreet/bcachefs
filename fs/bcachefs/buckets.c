@@ -353,27 +353,6 @@ void bch2_mark_alloc_bucket(struct bch_dev *ca, struct bucket *g,
 	}));
 }
 
-void bch2_mark_metadata_bucket(struct bch_dev *ca, struct bucket *g,
-			      enum bucket_data_type type,
-			      bool may_make_unavailable)
-{
-	struct bucket_mark old, new;
-
-	BUG_ON(!type);
-
-	old = bucket_data_cmpxchg(ca, g, new, ({
-		BUG_ON(new.cached_sectors ||
-		       new.dirty_sectors);
-		BUG_ON(new.data_type &&
-		       new.data_type != type);
-		new.data_type = type;
-		new.had_metadata = 1;
-	}));
-
-	BUG_ON(!may_make_unavailable &&
-	       bucket_became_unavailable(ca->fs, old, new));
-}
-
 #define saturated_add(ca, dst, src, max)			\
 do {								\
 	BUG_ON((int) (dst) + (src) < 0);			\
@@ -386,6 +365,32 @@ do {								\
 		trace_sectors_saturated(ca);		\
 	}							\
 } while (0)
+
+void bch2_mark_metadata_bucket(struct bch_dev *ca, struct bucket *g,
+			       enum bucket_data_type type,
+			       bool may_make_unavailable)
+{
+	struct bucket_mark old, new;
+
+	BUG_ON(!type);
+
+	old = bucket_data_cmpxchg(ca, g, new, ({
+		saturated_add(ca, new.dirty_sectors, ca->mi.bucket_size,
+			      GC_MAX_SECTORS_USED);
+		new.data_type = type;
+		new.had_metadata = 1;
+	}));
+
+	if (old.data_type != type &&
+	    (old.data_type ||
+	     old.cached_sectors ||
+	     old.dirty_sectors))
+		bch_err(ca->fs, "bucket %zu has multiple types of data (%u, %u)",
+			g - ca->buckets, old.data_type, new.data_type);
+
+	BUG_ON(!may_make_unavailable &&
+	       bucket_became_unavailable(ca->fs, old, new));
+}
 
 #if 0
 /* Reverting this until the copygc + compression issue is fixed: */
@@ -472,10 +477,6 @@ static void bch2_mark_pointer(struct bch_fs *c,
 			return;
 		}
 
-		BUG_ON((new.cached_sectors ||
-			new.dirty_sectors) &&
-		       new.data_type != data_type);
-
 		EBUG_ON(type != S_CACHED &&
 			!may_make_unavailable &&
 			is_available_bucket(new) &&
@@ -507,6 +508,13 @@ static void bch2_mark_pointer(struct bch_fs *c,
 
 		new.had_metadata |= is_meta_bucket(new);
 	}));
+
+	if (old.data_type != data_type &&
+	    (old.data_type ||
+	     old.cached_sectors ||
+	     old.dirty_sectors))
+		bch_err(ca->fs, "bucket %zu has multiple types of data (%u, %u)",
+			g - ca->buckets, old.data_type, new.data_type);
 
 	BUG_ON(!may_make_unavailable &&
 	       bucket_became_unavailable(c, old, new));
