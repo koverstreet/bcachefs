@@ -134,18 +134,22 @@ static int check_extents(struct bch_fs *c)
 			"extent type %u for missing inode %llu",
 			k.k->type, k.k->p.inode);
 
-		unfixable_fsck_err_on(w.first_this_inode && w.have_inode &&
+		unfixable_fsck_err_on(w.have_inode &&
+			!S_ISREG(w.inode.i_mode) && !S_ISLNK(w.inode.i_mode), c,
+			"extent type %u for non regular file, inode %llu mode %o",
+			k.k->type, k.k->p.inode, w.inode.i_mode);
+
+		unfixable_fsck_err_on(w.first_this_inode &&
+			w.have_inode &&
+			!(w.inode.i_flags & BCH_INODE_I_SECTORS_DIRTY) &&
 			w.inode.i_sectors !=
 			(i_sectors = bch2_count_inode_sectors(c, w.cur_inum)),
 			c, "i_sectors wrong: got %llu, should be %llu",
 			w.inode.i_sectors, i_sectors);
 
 		unfixable_fsck_err_on(w.have_inode &&
-			!S_ISREG(w.inode.i_mode) && !S_ISLNK(w.inode.i_mode), c,
-			"extent type %u for non regular file, inode %llu mode %o",
-			k.k->type, k.k->p.inode, w.inode.i_mode);
-
-		unfixable_fsck_err_on(k.k->type != BCH_RESERVATION &&
+			!(w.inode.i_flags & BCH_INODE_I_SIZE_DIRTY) &&
+			k.k->type != BCH_RESERVATION &&
 			k.k->p.offset > round_up(w.inode.i_size, PAGE_SIZE) >> 9, c,
 			"extent type %u offset %llu past end of inode %llu, i_size %llu",
 			k.k->type, k.k->p.offset, k.k->p.inode, w.inode.i_size);
