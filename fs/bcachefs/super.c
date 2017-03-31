@@ -727,7 +727,8 @@ static const char *__bch2_fs_start(struct bch_fs *c)
 		bch_verbose(c, "starting mark and sweep:");
 
 		err = "error in recovery";
-		if (bch2_initial_gc(c, &journal))
+		ret = bch2_initial_gc(c, &journal);
+		if (ret)
 			goto err;
 
 		if (c->opts.noreplay)
@@ -777,7 +778,9 @@ static const char *__bch2_fs_start(struct bch_fs *c)
 
 		bch_notice(c, "initializing new filesystem");
 
-		bch2_initial_gc(c, NULL);
+		ret = bch2_initial_gc(c, &journal);
+		if (ret)
+			goto err;
 
 		err = "unable to allocate journal buckets";
 		for_each_rw_member(ca, c, i)

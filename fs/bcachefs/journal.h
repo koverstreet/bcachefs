@@ -336,7 +336,7 @@ static inline bool journal_flushes_device(struct bch_dev *ca)
 }
 
 void bch2_journal_start(struct bch_fs *);
-void bch2_journal_mark(struct bch_fs *, struct list_head *);
+int bch2_journal_mark(struct bch_fs *, struct list_head *);
 void bch2_journal_entries_free(struct list_head *);
 int bch2_journal_read(struct bch_fs *, struct list_head *);
 int bch2_journal_replay(struct bch_fs *, struct list_head *);

@@ -602,12 +602,6 @@ bch2_btree_pick_ptr(struct bch_fs *c, const struct btree *b)
 				PTR_BUCKET_NR(ca, ptr)))
 			break;
 
-		if (bch2_dev_inconsistent_on(ptr_stale(ca, ptr), ca,
-				"stale btree node pointer at btree %u level %u/%u bucket %zu",
-				b->btree_id, b->level, root ? root->level : -1,
-				PTR_BUCKET_NR(ca, ptr)))
-			continue;
-
 		if (ca->mi.state == BCH_MEMBER_STATE_FAILED)
 			continue;
 

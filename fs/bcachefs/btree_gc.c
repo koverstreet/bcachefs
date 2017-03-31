@@ -98,7 +98,7 @@ u8 bch2_btree_key_recalc_oldest_gen(struct bch_fs *c, struct bkey_s_c k)
 			struct bch_dev *ca = c->devs[ptr->dev];
 			size_t b = PTR_BUCKET_NR(ca, ptr);
 
-			if (__gen_after(ca->oldest_gens[b], ptr->gen))
+			if (gen_after(ca->oldest_gens[b], ptr->gen))
 				ca->oldest_gens[b] = ptr->gen;
 
 			max_stale = max(max_stale, ptr_stale(ca, ptr));
@@ -126,14 +126,40 @@ static u8 bch2_btree_mark_key(struct bch_fs *c, enum bkey_type type,
 	}
 }
 
-u8 bch2_btree_mark_key_initial(struct bch_fs *c, enum bkey_type type,
-			       struct bkey_s_c k)
+int bch2_btree_mark_key_initial(struct bch_fs *c, enum bkey_type type,
+				struct bkey_s_c k)
 {
+	int ret;
+
+	switch (k.k->type) {
+	case BCH_EXTENT:
+	case BCH_EXTENT_CACHED: {
+		struct bkey_s_c_extent e = bkey_s_c_to_extent(k);
+		const struct bch_extent_ptr *ptr;
+
+		extent_for_each_ptr(e, ptr) {
+			struct bch_dev *ca = c->devs[ptr->dev];
+			struct bucket *g = PTR_BUCKET(ca, ptr);
+
+			unfixable_fsck_err_on(gen_cmp(ptr->gen, g->mark.gen) > 0, c,
+					      "%s ptr gen in the future: %u > %u",
+					      type == BKEY_TYPE_BTREE
+					      ? "btree" : "data",
+					      ptr->gen, g->mark.gen);
+
+		}
+		break;
+	}
+	}
+
 	atomic64_set(&c->key_version,
 		     max_t(u64, k.k->version.lo,
 			   atomic64_read(&c->key_version)));
 
-	return bch2_btree_mark_key(c, type, k);
+	bch2_btree_mark_key(c, type, k);
+	return 0;
+fsck_err:
+	return ret;
 }
 
 static bool btree_gc_mark_node(struct bch_fs *c, struct btree *b)
@@ -890,16 +916,22 @@ int bch2_gc_thread_start(struct bch_fs *c)
 
 /* Initial GC computes bucket marks during startup */
 
-static void bch2_initial_gc_btree(struct bch_fs *c, enum btree_id id)
+static int bch2_initial_gc_btree(struct bch_fs *c, enum btree_id id)
 {
 	struct btree_iter iter;
 	struct btree *b;
 	struct range_checks r;
+	int ret = 0;
 
 	btree_node_range_checks_init(&r, 0);
 
 	if (!c->btree_roots[id].b)
-		return;
+		return 0;
+
+	ret = bch2_btree_mark_key_initial(c, BKEY_TYPE_BTREE,
+			   bkey_i_to_s_c(&c->btree_roots[id].b->key));
+	if (ret)
+		return ret;
 
 	/*
 	 * We have to hit every btree node before starting journal replay, in
@@ -915,28 +947,37 @@ static void bch2_initial_gc_btree(struct bch_fs *c, enum btree_id id)
 
 			for_each_btree_node_key_unpack(b, k, &node_iter,
 						       btree_node_is_extents(b),
-						       &unpacked)
-				bch2_btree_mark_key_initial(c, btree_node_type(b), k);
+						       &unpacked) {
+				ret = bch2_btree_mark_key_initial(c,
+							btree_node_type(b), k);
+				if (ret)
+					goto err;
+			}
 		}
 
 		bch2_btree_iter_cond_resched(&iter);
 	}
-
+err:
 	bch2_btree_iter_unlock(&iter);
-
-	bch2_btree_mark_key(c, BKEY_TYPE_BTREE,
-			   bkey_i_to_s_c(&c->btree_roots[id].b->key));
+	return ret;
 }
 
 int bch2_initial_gc(struct bch_fs *c, struct list_head *journal)
 {
 	enum btree_id id;
+	int ret;
 
-	for (id = 0; id < BTREE_ID_NR; id++)
-		bch2_initial_gc_btree(c, id);
+	for (id = 0; id < BTREE_ID_NR; id++) {
+		ret = bch2_initial_gc_btree(c, id);
+		if (ret)
+			return ret;
+	}
 
-	if (journal)
-		bch2_journal_mark(c, journal);
+	if (journal) {
+		ret = bch2_journal_mark(c, journal);
+		if (ret)
+			return ret;
+	}
 
 	bch2_mark_metadata(c);
 

@@ -73,20 +73,16 @@ static inline struct bucket *PTR_BUCKET(const struct bch_dev *ca,
 	return ca->buckets + PTR_BUCKET_NR(ca, ptr);
 }
 
-static inline u8 __gen_after(u8 a, u8 b)
+static inline int gen_cmp(u8 a, u8 b)
 {
-	u8 r = a - b;
-
-	return r > 128U ? 0 : r;
+	return (s8) (a - b);
 }
 
-static inline u8 gen_after(u8 a, u8 b)
+static inline int gen_after(u8 a, u8 b)
 {
-	u8 r = a - b;
+	int r = gen_cmp(a, b);
 
-	BUG_ON(r > 128U);
-
-	return r;
+	return r > 0 ? r : 0;
 }
 
 /**
