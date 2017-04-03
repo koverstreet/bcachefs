@@ -1305,7 +1305,7 @@ static void btree_node_write_endio(struct bio *bio)
 			closure_put(cl);
 	}
 
-	if (ca)
+	if (wbio->have_io_ref)
 		percpu_ref_put(&ca->io_ref);
 }
 

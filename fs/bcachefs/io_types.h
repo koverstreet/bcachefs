@@ -73,7 +73,8 @@ struct bch_write_bio {
 	unsigned		submit_time_us;
 	unsigned		split:1,
 				bounce:1,
-				put_bio:1;
+				put_bio:1,
+				have_io_ref:1;
 
 	/* Only for btree writes: */
 	unsigned		used_mempool:1;

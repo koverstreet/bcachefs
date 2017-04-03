@@ -85,22 +85,6 @@ void bch2_bio_alloc_pages_pool(struct bch_fs *c, struct bio *bio,
 
 /* Bios with headers */
 
-static void bch2_submit_wbio(struct bch_fs *c, struct bch_write_bio *wbio,
-			    struct bch_dev *ca, const struct bch_extent_ptr *ptr)
-{
-	wbio->ca		= ca;
-	wbio->submit_time_us	= local_clock_us();
-	wbio->bio.bi_iter.bi_sector = ptr->offset;
-	wbio->bio.bi_bdev	= ca ? ca->disk_sb.bdev : NULL;
-
-	if (unlikely(!ca)) {
-		bcache_io_error(c, &wbio->bio, "device has been removed");
-		bio_endio(&wbio->bio);
-	} else {
-		generic_make_request(&wbio->bio);
-	}
-}
-
 void bch2_submit_wbio_replicas(struct bch_write_bio *wbio, struct bch_fs *c,
 			       const struct bkey_i *k)
 {
@@ -116,10 +100,6 @@ void bch2_submit_wbio_replicas(struct bch_write_bio *wbio, struct bch_fs *c,
 
 	extent_for_each_ptr(e, ptr) {
 		ca = c->devs[ptr->dev];
-		if (!percpu_ref_tryget(&ca->io_ref)) {
-			bch2_submit_wbio(c, wbio, NULL, ptr);
-			break;
-		}
 
 		if (ptr + 1 < &extent_entry_last(e)->ptr) {
 			n = to_wbio(bio_clone_fast(&wbio->bio, GFP_NOIO,
@@ -132,6 +112,7 @@ void bch2_submit_wbio_replicas(struct bch_write_bio *wbio, struct bch_fs *c,
 			n->bounce		= false;
 			n->split		= true;
 			n->put_bio		= true;
+			n->have_io_ref		= true;
 			n->bio.bi_opf		= wbio->bio.bi_opf;
 			__bio_inc_remaining(n->orig);
 		} else {
@@ -141,7 +122,18 @@ void bch2_submit_wbio_replicas(struct bch_write_bio *wbio, struct bch_fs *c,
 		if (!journal_flushes_device(ca))
 			n->bio.bi_opf |= REQ_FUA;
 
-		bch2_submit_wbio(c, n, ca, ptr);
+		n->ca			= ca;
+		n->submit_time_us	= local_clock_us();
+		n->bio.bi_iter.bi_sector = ptr->offset;
+
+		if (likely(percpu_ref_tryget(&ca->io_ref))) {
+			n->bio.bi_bdev	= ca->disk_sb.bdev;
+			generic_make_request(&n->bio);
+		} else {
+			n->have_io_ref		= false;
+			bcache_io_error(c, &n->bio, "device has been removed");
+			bio_endio(&n->bio);
+		}
 	}
 }
 
@@ -327,7 +319,7 @@ static void bch2_write_endio(struct bio *bio)
 		set_closure_fn(cl, bch2_write_io_error, index_update_wq(op));
 	}
 
-	if (ca)
+	if (wbio->have_io_ref)
 		percpu_ref_put(&ca->io_ref);
 
 	if (bio->bi_error && orig)
