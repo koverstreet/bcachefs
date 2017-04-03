@@ -256,18 +256,21 @@ static struct nonce prio_nonce(struct prio_set *p)
 	}};
 }
 
-static int bch2_prio_write(struct bch_dev *ca)
+int bch2_prio_write(struct bch_dev *ca)
 {
 	struct bch_fs *c = ca->fs;
 	struct journal *j = &c->journal;
 	struct journal_res res = { 0 };
 	bool need_new_journal_entry;
-	int i, ret;
+	int i, ret = 0;
 
 	if (c->opts.nochanges)
 		return 0;
 
+	mutex_lock(&ca->prio_write_lock);
 	trace_prio_write_start(ca);
+
+	ca->need_prio_write = false;
 
 	atomic64_add(ca->mi.bucket_size * prio_buckets(ca),
 		     &ca->meta_sectors_written);
@@ -322,7 +325,7 @@ static int bch2_prio_write(struct bch_dev *ca)
 		if (bch2_dev_fatal_io_err_on(ret, ca,
 					  "prio write to bucket %zu", r) ||
 		    bch2_meta_write_fault("prio"))
-			return ret;
+			goto err;
 	}
 
 	spin_lock(&j->lock);
@@ -340,7 +343,7 @@ static int bch2_prio_write(struct bch_dev *ca)
 
 		ret = bch2_journal_res_get(j, &res, u64s, u64s);
 		if (ret)
-			return ret;
+			goto err;
 
 		need_new_journal_entry = j->buf[res.idx].nr_prio_buckets <
 			ca->dev_idx + 1;
@@ -348,7 +351,7 @@ static int bch2_prio_write(struct bch_dev *ca)
 
 		ret = bch2_journal_flush_seq(j, res.seq);
 		if (ret)
-			return ret;
+			goto err;
 	} while (need_new_journal_entry);
 
 	/*
@@ -369,7 +372,9 @@ static int bch2_prio_write(struct bch_dev *ca)
 	spin_unlock(&ca->prio_buckets_lock);
 
 	trace_prio_write_end(ca);
-	return 0;
+err:
+	mutex_unlock(&ca->prio_write_lock);
+	return ret;
 }
 
 int bch2_prio_read(struct bch_dev *ca)

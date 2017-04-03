@@ -379,6 +379,8 @@ struct bch_dev {
 	spinlock_t		prio_buckets_lock;
 	struct bio		*bio_prio;
 	bool			prio_read_done;
+	bool			need_prio_write;
+	struct mutex		prio_write_lock;
 
 	/*
 	 * free: Buckets that are ready to be used
@@ -456,6 +458,7 @@ enum {
 	BCH_FS_BDEV_MOUNTED,
 	BCH_FS_ERROR,
 	BCH_FS_FSCK_FIXED_ERRORS,
+	BCH_FS_FIXED_GENS,
 };
 
 struct btree_debug {

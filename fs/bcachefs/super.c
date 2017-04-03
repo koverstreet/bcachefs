@@ -768,6 +768,15 @@ static const char *__bch2_fs_start(struct bch_fs *c)
 		if (ret)
 			goto err;
 
+		for_each_rw_member(ca, c, i)
+			if (ca->need_prio_write) {
+				ret = bch2_prio_write(ca);
+				if (ret) {
+					percpu_ref_put(&ca->io_ref);
+					goto err;
+				}
+			}
+
 		bch_verbose(c, "fsck done");
 	} else {
 		struct bch_inode_unpacked inode;
@@ -1092,6 +1101,7 @@ static int bch2_dev_alloc(struct bch_fs *c, unsigned dev_idx)
 	spin_lock_init(&ca->freelist_lock);
 	spin_lock_init(&ca->prio_buckets_lock);
 	mutex_init(&ca->heap_lock);
+	mutex_init(&ca->prio_write_lock);
 	bch2_dev_moving_gc_init(ca);
 
 	INIT_WORK(&ca->io_error_work, bch2_nonfatal_io_error_work);

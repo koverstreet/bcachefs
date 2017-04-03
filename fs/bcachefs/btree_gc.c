@@ -129,7 +129,7 @@ static u8 bch2_btree_mark_key(struct bch_fs *c, enum bkey_type type,
 int bch2_btree_mark_key_initial(struct bch_fs *c, enum bkey_type type,
 				struct bkey_s_c k)
 {
-	int ret;
+	int ret = 0;
 
 	switch (k.k->type) {
 	case BCH_EXTENT:
@@ -140,12 +140,17 @@ int bch2_btree_mark_key_initial(struct bch_fs *c, enum bkey_type type,
 		extent_for_each_ptr(e, ptr) {
 			struct bch_dev *ca = c->devs[ptr->dev];
 			struct bucket *g = PTR_BUCKET(ca, ptr);
+			struct bucket_mark new;
 
-			unfixable_fsck_err_on(gen_cmp(ptr->gen, g->mark.gen) > 0, c,
-					      "%s ptr gen in the future: %u > %u",
-					      type == BKEY_TYPE_BTREE
-					      ? "btree" : "data",
-					      ptr->gen, g->mark.gen);
+			if (fsck_err_on(gen_cmp(ptr->gen, g->mark.gen) > 0, c,
+					"%s ptr gen in the future: %u > %u",
+					type == BKEY_TYPE_BTREE
+					? "btree" : "data",
+					ptr->gen, g->mark.gen)) {
+				bucket_cmpxchg(g, new, new.gen = ptr->gen);
+				set_bit(BCH_FS_FIXED_GENS, &c->flags);
+				ca->need_prio_write = true;
+			}
 
 		}
 		break;
@@ -157,7 +162,6 @@ int bch2_btree_mark_key_initial(struct bch_fs *c, enum bkey_type type,
 			   atomic64_read(&c->key_version)));
 
 	bch2_btree_mark_key(c, type, k);
-	return 0;
 fsck_err:
 	return ret;
 }
@@ -382,49 +386,13 @@ static void bch2_mark_pending_btree_node_frees(struct bch_fs *c)
 	mutex_unlock(&c->btree_interior_update_lock);
 }
 
-/**
- * bch_gc - recompute bucket marks and oldest_gen, rewrite btree nodes
- */
-void bch2_gc(struct bch_fs *c)
+void bch2_gc_start(struct bch_fs *c)
 {
 	struct bch_dev *ca;
 	struct bucket *g;
 	struct bucket_mark new;
-	u64 start_time = local_clock();
 	unsigned i;
 	int cpu;
-
-	/*
-	 * Walk _all_ references to buckets, and recompute them:
-	 *
-	 * Order matters here:
-	 *  - Concurrent GC relies on the fact that we have a total ordering for
-	 *    everything that GC walks - see  gc_will_visit_node(),
-	 *    gc_will_visit_root()
-	 *
-	 *  - also, references move around in the course of index updates and
-	 *    various other crap: everything needs to agree on the ordering
-	 *    references are allowed to move around in - e.g., we're allowed to
-	 *    start with a reference owned by an open_bucket (the allocator) and
-	 *    move it to the btree, but not the reverse.
-	 *
-	 *    This is necessary to ensure that gc doesn't miss references that
-	 *    move around - if references move backwards in the ordering GC
-	 *    uses, GC could skip past them
-	 */
-
-	if (test_bit(BCH_FS_GC_FAILURE, &c->flags))
-		return;
-
-	trace_gc_start(c);
-
-	/*
-	 * Do this before taking gc_lock - bch2_disk_reservation_get() blocks on
-	 * gc_lock if sectors_available goes to 0:
-	 */
-	bch2_recalc_sectors_available(c);
-
-	down_write(&c->gc_lock);
 
 	lg_global_lock(&c->usage_lock);
 
@@ -466,6 +434,50 @@ void bch2_gc(struct bch_fs *c)
 			}));
 			ca->oldest_gens[g - ca->buckets] = new.gen;
 		}
+}
+
+/**
+ * bch_gc - recompute bucket marks and oldest_gen, rewrite btree nodes
+ */
+void bch2_gc(struct bch_fs *c)
+{
+	struct bch_dev *ca;
+	u64 start_time = local_clock();
+	unsigned i;
+
+	/*
+	 * Walk _all_ references to buckets, and recompute them:
+	 *
+	 * Order matters here:
+	 *  - Concurrent GC relies on the fact that we have a total ordering for
+	 *    everything that GC walks - see  gc_will_visit_node(),
+	 *    gc_will_visit_root()
+	 *
+	 *  - also, references move around in the course of index updates and
+	 *    various other crap: everything needs to agree on the ordering
+	 *    references are allowed to move around in - e.g., we're allowed to
+	 *    start with a reference owned by an open_bucket (the allocator) and
+	 *    move it to the btree, but not the reverse.
+	 *
+	 *    This is necessary to ensure that gc doesn't miss references that
+	 *    move around - if references move backwards in the ordering GC
+	 *    uses, GC could skip past them
+	 */
+
+	if (test_bit(BCH_FS_GC_FAILURE, &c->flags))
+		return;
+
+	trace_gc_start(c);
+
+	/*
+	 * Do this before taking gc_lock - bch2_disk_reservation_get() blocks on
+	 * gc_lock if sectors_available goes to 0:
+	 */
+	bch2_recalc_sectors_available(c);
+
+	down_write(&c->gc_lock);
+
+	bch2_gc_start(c);
 
 	/* Walk allocator's references: */
 	bch2_mark_allocator_buckets(c);
@@ -964,8 +976,11 @@ err:
 
 int bch2_initial_gc(struct bch_fs *c, struct list_head *journal)
 {
+	unsigned iter = 0;
 	enum btree_id id;
 	int ret;
+again:
+	bch2_gc_start(c);
 
 	for (id = 0; id < BTREE_ID_NR; id++) {
 		ret = bch2_initial_gc_btree(c, id);
@@ -980,6 +995,17 @@ int bch2_initial_gc(struct bch_fs *c, struct list_head *journal)
 	}
 
 	bch2_mark_metadata(c);
+
+	if (test_bit(BCH_FS_FIXED_GENS, &c->flags)) {
+		if (iter++ > 2) {
+			bch_info(c, "Unable to fix bucket gens, looping");
+			return -EINVAL;
+		}
+
+		bch_info(c, "Fixed gens, restarting initial mark and sweep:");
+		clear_bit(BCH_FS_FIXED_GENS, &c->flags);
+		goto again;
+	}
 
 	/*
 	 * Skip past versions that might have possibly been used (as nonces),

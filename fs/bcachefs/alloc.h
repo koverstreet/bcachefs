@@ -24,6 +24,7 @@ void bch2_dev_group_remove(struct dev_group *, struct bch_dev *);
 void bch2_dev_group_add(struct dev_group *, struct bch_dev *);
 
 int bch2_prio_read(struct bch_dev *);
+int bch2_prio_write(struct bch_dev *);
 
 size_t bch2_bucket_alloc(struct bch_dev *, enum alloc_reserve);
 
