@@ -378,6 +378,7 @@ struct bch_dev {
 	u64			*prio_last_buckets;
 	spinlock_t		prio_buckets_lock;
 	struct bio		*bio_prio;
+	bool			prio_read_done;
 
 	/*
 	 * free: Buckets that are ready to be used

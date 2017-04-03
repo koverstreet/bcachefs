@@ -1554,6 +1554,7 @@ int bch2_dev_online(struct bch_fs *c, const char *path)
 	struct bch_dev *ca;
 	unsigned dev_idx;
 	const char *err;
+	int ret;
 
 	mutex_lock(&c->state_lock);
 
@@ -1576,6 +1577,12 @@ int bch2_dev_online(struct bch_fs *c, const char *path)
 	mutex_unlock(&c->sb_lock);
 
 	ca = c->devs[dev_idx];
+	ret = bch2_prio_read(ca);
+	if (ret) {
+		err = "error reading priorities";
+		goto err;
+	}
+
 	if (ca->mi.state == BCH_MEMBER_STATE_RW) {
 		err = __bch2_dev_read_write(c, ca);
 		if (err)

@@ -384,6 +384,11 @@ int bch2_prio_read(struct bch_dev *ca)
 	size_t b;
 	int ret = 0;
 
+	if (ca->prio_read_done)
+		return 0;
+
+	ca->prio_read_done = true;
+
 	spin_lock(&c->journal.lock);
 	bucket = le64_to_cpu(c->journal.prio_buckets[ca->dev_idx]);
 	spin_unlock(&c->journal.lock);
