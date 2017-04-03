@@ -1187,7 +1187,7 @@ void bch2_btree_node_read(struct bch_fs *c, struct btree *b)
 
 	pick = bch2_btree_pick_ptr(c, b);
 	if (bch2_fs_fatal_err_on(!pick.ca, c,
-				"no cache device for btree node")) {
+			"btree node read error: no device to read from")) {
 		set_btree_node_read_error(b);
 		return;
 	}

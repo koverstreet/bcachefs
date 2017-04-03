@@ -93,10 +93,12 @@ static void bch2_submit_wbio(struct bch_fs *c, struct bch_write_bio *wbio,
 	wbio->bio.bi_iter.bi_sector = ptr->offset;
 	wbio->bio.bi_bdev	= ca ? ca->disk_sb.bdev : NULL;
 
-	if (!ca)
+	if (unlikely(!ca)) {
 		bcache_io_error(c, &wbio->bio, "device has been removed");
-	else
+		bio_endio(&wbio->bio);
+	} else {
 		generic_make_request(&wbio->bio);
+	}
 }
 
 void bch2_submit_wbio_replicas(struct bch_write_bio *wbio, struct bch_fs *c,
