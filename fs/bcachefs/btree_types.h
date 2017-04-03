@@ -92,6 +92,8 @@ struct btree {
 	u8			page_order;
 	u8			unpack_fn_len;
 
+	atomic_t		nr_replicas_failed;
+
 	/*
 	 * XXX: add a delete sequence number, so when bch2_btree_node_relock()
 	 * fails because the lock sequence number has changed - i.e. the

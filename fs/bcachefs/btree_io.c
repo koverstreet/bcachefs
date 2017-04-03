@@ -1291,6 +1291,11 @@ void bch2_btree_complete_write(struct bch_fs *c, struct btree *b,
 static void btree_node_write_done(struct bch_fs *c, struct btree *b)
 {
 	struct btree_write *w = btree_prev_write(b);
+	int failed = atomic_read(&b->nr_replicas_failed);
+
+	if (failed &&
+	    ((int) bch2_extent_nr_ptrs(bkey_i_to_s_c_extent(&b->key)) - failed < 1))
+		set_btree_node_write_error(b);
 
 	/*
 	 * Before calling bch2_btree_complete_write() - if the write errored, we
@@ -1313,9 +1318,9 @@ static void btree_node_write_endio(struct bio *bio)
 	struct closure *cl	= !wbio->split ? wbio->cl : NULL;
 	struct bch_dev *ca	= wbio->ca;
 
-	if (bch2_dev_fatal_io_err_on(bio->bi_error, ca, "btree write") ||
+	if (bch2_dev_nonfatal_io_err_on(bio->bi_error, ca, "btree write") ||
 	    bch2_meta_write_fault("btree"))
-		set_btree_node_write_error(b);
+		atomic_inc(&b->nr_replicas_failed);
 
 	if (wbio->have_io_ref)
 		percpu_ref_put(&ca->io_ref);
@@ -1412,6 +1417,8 @@ void __bch2_btree_node_write(struct bch_fs *c, struct btree *b,
 	BUG_ON(bset_written(b, btree_bset_last(b)));
 	BUG_ON(le64_to_cpu(b->data->magic) != bset_magic(c));
 	BUG_ON(memcmp(&b->data->format, &b->format, sizeof(b->format)));
+
+	atomic_set(&b->nr_replicas_failed, 0);
 
 	if (lock_type_held == SIX_LOCK_intent) {
 		six_lock_write(&b->lock);
