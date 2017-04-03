@@ -458,7 +458,10 @@ static void bch2_mark_pointer(struct bch_fs *c,
 
 	if (gc_will_visit) {
 		if (journal_seq)
-			bucket_cmpxchg(g, new, new.journal_seq = journal_seq);
+			bucket_cmpxchg(g, new, ({
+				new.journal_seq_valid = 1;
+				new.journal_seq = journal_seq;
+			}));
 
 		goto out;
 	}
