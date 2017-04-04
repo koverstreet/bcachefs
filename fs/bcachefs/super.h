@@ -32,6 +32,11 @@ static inline struct bch_dev *__bch2_next_dev(struct bch_fs *c, unsigned *iter)
 	return ca;
 }
 
+static inline bool bch2_dev_is_online(struct bch_dev *ca)
+{
+	return !percpu_ref_is_zero(&ca->io_ref);
+}
+
 #define __for_each_member_device(ca, c, iter)				\
 	for ((iter) = 0; ((ca) = __bch2_next_dev((c), &(iter))); (iter)++)
 
