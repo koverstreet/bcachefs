@@ -22,7 +22,7 @@ struct bkey_inode_buf {
 #define BCH_INODE_FIELD(_name, _bits)		+ 8 + _bits / 8
 	u8		_pad[0 + BCH_INODE_FIELDS()];
 #undef  BCH_INODE_FIELD
-} __packed;
+};
 
 void bch2_inode_pack(struct bkey_inode_buf *, const struct bch_inode_unpacked *);
 int bch2_inode_unpack(struct bkey_s_c_inode, struct bch_inode_unpacked *);

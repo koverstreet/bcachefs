@@ -85,7 +85,7 @@ ssize_t bch2_hprint(char *buf, s64 v)
 	int u, t = 0;
 
 	for (u = 0; v >= 1024 || v <= -1024; u++) {
-		t = v & ~(~0 << 10);
+		t = v & ~(~0U << 10);
 		v >>= 10;
 	}
 

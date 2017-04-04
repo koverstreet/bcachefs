@@ -13,7 +13,7 @@ enum bkey_type {
 /* Type of a key in btree @id at level @level: */
 static inline enum bkey_type bkey_type(unsigned level, enum btree_id id)
 {
-	return level ? BKEY_TYPE_BTREE : id;
+	return level ? BKEY_TYPE_BTREE : (enum bkey_type) id;
 }
 
 static inline bool btree_type_has_ptrs(enum bkey_type type)

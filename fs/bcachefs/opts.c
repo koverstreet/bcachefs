@@ -72,7 +72,7 @@ const struct bch_option bch2_opt_table[] = {
 #undef BCH_OPT
 };
 
-static enum bch_opt_id bch2_opt_lookup(const char *name)
+static int bch2_opt_lookup(const char *name)
 {
 	const struct bch_option *i;
 
@@ -209,7 +209,7 @@ int bch2_parse_mount_opts(struct bch_opts *opts, char *options)
 enum bch_opt_id bch2_parse_sysfs_opt(const char *name, const char *val,
 				    u64 *res)
 {
-	enum bch_opt_id id = bch2_opt_lookup(name);
+	int id = bch2_opt_lookup(name);
 	int ret;
 
 	if (id < 0)
@@ -225,7 +225,7 @@ enum bch_opt_id bch2_parse_sysfs_opt(const char *name, const char *val,
 ssize_t bch2_opt_show(struct bch_opts *opts, const char *name,
 		     char *buf, size_t size)
 {
-	enum bch_opt_id id = bch2_opt_lookup(name);
+	int id = bch2_opt_lookup(name);
 	const struct bch_option *opt;
 	u64 v;
 

@@ -617,7 +617,7 @@ struct bch_inode {
 	__le32			i_flags;
 	__le16			i_mode;
 	__u8			fields[0];
-} __attribute__((packed));
+} __attribute__((packed, aligned(8)));
 BKEY_VAL_TYPE(inode,		BCH_INODE_FS);
 
 #define BCH_INODE_FIELDS()				\
@@ -714,7 +714,7 @@ struct bch_dirent {
 	__u8			d_type;
 
 	__u8			d_name[];
-} __attribute__((packed));
+} __attribute__((packed, aligned(8)));
 BKEY_VAL_TYPE(dirent,		BCH_DIRENT);
 
 /* Xattrs */
@@ -736,7 +736,7 @@ struct bch_xattr {
 	__u8			x_name_len;
 	__le16			x_val_len;
 	__u8			x_name[];
-} __attribute__((packed));
+} __attribute__((packed, aligned(8)));
 BKEY_VAL_TYPE(xattr,		BCH_XATTR);
 
 /* Superblock */
@@ -811,7 +811,7 @@ struct bch_sb_layout {
 	__u8			nr_superblocks;
 	__u8			pad[5];
 	__u64			sb_offset[61];
-} __attribute__((packed));
+} __attribute__((packed, aligned(8)));
 
 #define BCH_SB_LAYOUT_SECTOR	7
 
@@ -1211,7 +1211,7 @@ struct jset {
 		struct jset_entry start[0];
 		__u64		_data[0];
 	};
-} __attribute__((packed));
+} __attribute__((packed, aligned(8)));
 
 LE32_BITMASK(JSET_CSUM_TYPE,	struct jset, flags, 0, 4);
 LE32_BITMASK(JSET_BIG_ENDIAN,	struct jset, flags, 4, 5);
@@ -1237,7 +1237,7 @@ struct prio_set {
 		__le16		write_prio;
 		__u8		gen;
 	} __attribute__((packed)) data[];
-} __attribute__((packed));
+} __attribute__((packed, aligned(8)));
 
 LE32_BITMASK(PSET_CSUM_TYPE,	struct prio_set, flags, 0, 4);
 
@@ -1295,7 +1295,7 @@ struct bset {
 		struct bkey_packed start[0];
 		__u64		_data[0];
 	};
-} __attribute__((packed));
+} __attribute__((packed, aligned(8)));
 
 LE32_BITMASK(BSET_CSUM_TYPE,	struct bset, flags, 0, 4);
 
@@ -1325,7 +1325,7 @@ struct btree_node {
 
 	};
 	};
-} __attribute__((packed));
+} __attribute__((packed, aligned(8)));
 
 LE64_BITMASK(BTREE_NODE_ID,	struct btree_node, flags, 0, 4);
 LE64_BITMASK(BTREE_NODE_LEVEL,	struct btree_node, flags, 4, 8);
@@ -1342,7 +1342,7 @@ struct btree_node_entry {
 
 	};
 	};
-} __attribute__((packed));
+} __attribute__((packed, aligned(8)));
 
 #ifdef __cplusplus
 }

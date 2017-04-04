@@ -1122,21 +1122,31 @@ void bch2_journal_buf_put_slowpath(struct journal *j, bool need_write_just_set)
 #endif
 }
 
-static void __bch2_journal_next_entry(struct journal *j)
+static struct journal_entry_pin_list *
+__journal_entry_new(struct journal *j, int count)
 {
-	struct journal_entry_pin_list pin_list, *p;
-	struct journal_buf *buf;
+	struct journal_entry_pin_list *p = fifo_push_ref(&j->pin);
 
 	/*
 	 * The fifo_push() needs to happen at the same time as j->seq is
 	 * incremented for last_seq() to be calculated correctly
 	 */
 	atomic64_inc(&j->seq);
-	BUG_ON(!fifo_push(&j->pin, pin_list));
-	p = &fifo_peek_back(&j->pin);
+
+	BUG_ON(journal_pin_seq(j, p) != atomic64_read(&j->seq));
 
 	INIT_LIST_HEAD(&p->list);
-	atomic_set(&p->count, 1);
+	atomic_set(&p->count, count);
+
+	return p;
+}
+
+static void __bch2_journal_next_entry(struct journal *j)
+{
+	struct journal_entry_pin_list *p;
+	struct journal_buf *buf;
+
+	p = __journal_entry_new(j, 1);
 
 	if (test_bit(JOURNAL_REPLAY_DONE, &j->flags)) {
 		smp_wmb();
@@ -1149,8 +1159,6 @@ static void __bch2_journal_next_entry(struct journal *j)
 	memset(buf->data, 0, sizeof(*buf->data));
 	buf->data->seq	= cpu_to_le64(atomic64_read(&j->seq));
 	buf->data->u64s	= 0;
-
-	BUG_ON(journal_pin_seq(j, p) != atomic64_read(&j->seq));
 }
 
 static inline size_t journal_entry_u64s_reserve(struct journal_buf *buf)
@@ -1423,16 +1431,8 @@ void bch2_journal_start(struct bch_fs *c)
 
 	set_bit(JOURNAL_STARTED, &j->flags);
 
-	while (atomic64_read(&j->seq) < new_seq) {
-		struct journal_entry_pin_list pin_list, *p;
-
-		BUG_ON(!fifo_push(&j->pin, pin_list));
-		p = &fifo_peek_back(&j->pin);
-
-		INIT_LIST_HEAD(&p->list);
-		atomic_set(&p->count, 0);
-		atomic64_inc(&j->seq);
-	}
+	while (atomic64_read(&j->seq) < new_seq)
+		__journal_entry_new(j, 0);
 
 	/*
 	 * journal_buf_switch() only inits the next journal entry when it

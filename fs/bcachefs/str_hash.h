@@ -25,7 +25,7 @@ bch2_hash_info_init(struct bch_fs *c,
 	/* XXX ick */
 	struct bch_hash_info info = {
 		.type = (bi->i_flags >> INODE_STR_HASH_OFFSET) &
-			~(~0 << INODE_STR_HASH_BITS)
+			~(~0U << INODE_STR_HASH_BITS)
 	};
 
 	switch (info.type) {
