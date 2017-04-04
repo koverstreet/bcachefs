@@ -170,8 +170,7 @@ redo_peek:
 
 		/* The node might have already been rewritten: */
 
-		if (b->data->keys.seq == n.seq &&
-		    !bkey_cmp(b->key.k.p, n.pos)) {
+		if (b->data->keys.seq == n.seq) {
 			ret = bch2_btree_node_rewrite(&iter, b, &cl);
 			if (ret) {
 				bch2_btree_iter_unlock(&iter);
@@ -255,6 +254,10 @@ bch2_journal_seq_blacklisted_new(struct journal *j, u64 seq)
 
 	lockdep_assert_held(&j->blacklist_lock);
 
+	/*
+	 * When we start the journal, bch2_journal_start() will skip over @seq:
+	 */
+
 	bl = kzalloc(sizeof(*bl), GFP_KERNEL);
 	if (!bl)
 		return NULL;
@@ -287,16 +290,6 @@ int bch2_journal_seq_should_ignore(struct bch_fs *c, u64 seq, struct btree *b)
 	BUG_ON(b->level);
 	BUG_ON(seq > journal_seq && test_bit(BCH_FS_INITIAL_GC_DONE, &c->flags));
 
-	if (seq <= journal_seq) {
-		if (list_empty_careful(&j->seq_blacklist))
-			return 0;
-
-		mutex_lock(&j->blacklist_lock);
-		ret = journal_seq_blacklist_find(j, seq) != NULL;
-		mutex_unlock(&j->blacklist_lock);
-		return ret;
-	}
-
 	/*
 	 * Decrease this back to j->seq + 2 when we next rev the on disk format:
 	 * increasing it temporarily to work around bug in old kernels
@@ -305,22 +298,27 @@ int bch2_journal_seq_should_ignore(struct bch_fs *c, u64 seq, struct btree *b)
 			 "bset journal seq too far in the future: %llu > %llu",
 			 seq, journal_seq);
 
-	bch_verbose(c, "btree node %u:%llu:%llu has future journal sequence number %llu, blacklisting",
-		    b->btree_id, b->key.k.p.inode, b->key.k.p.offset, seq);
-
-	/*
-	 * When we start the journal, bch2_journal_start() will skip over @seq:
-	 */
+	if (seq <= journal_seq &&
+	    list_empty_careful(&j->seq_blacklist))
+		return 0;
 
 	mutex_lock(&j->blacklist_lock);
 
-	for (i = journal_seq + 1; i <= seq; i++) {
-		bl = journal_seq_blacklist_find(j, i) ?:
-			bch2_journal_seq_blacklisted_new(j, i);
-
-		if (!bl) {
-			ret = -ENOMEM;
+	if (seq <= journal_seq) {
+		bl = journal_seq_blacklist_find(j, seq);
+		if (!bl)
 			goto out;
+	} else {
+		bch_verbose(c, "btree node %u:%llu:%llu has future journal sequence number %llu, blacklisting",
+			    b->btree_id, b->key.k.p.inode, b->key.k.p.offset, seq);
+
+		for (i = journal_seq + 1; i <= seq; i++) {
+			bl = journal_seq_blacklist_find(j, i) ?:
+				bch2_journal_seq_blacklisted_new(j, i);
+			if (!bl) {
+				ret = -ENOMEM;
+				goto out;
+			}
 		}
 	}
 
