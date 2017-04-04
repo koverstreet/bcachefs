@@ -1494,8 +1494,11 @@ int bch2_journal_replay(struct bch_fs *c, struct list_head *list)
 					       BTREE_INSERT_JOURNAL_REPLAY);
 			bch2_disk_reservation_put(c, &disk_res);
 
-			if (ret)
+			if (ret) {
+				bch_err(c, "journal replay: error %d while replaying key",
+					ret);
 				goto err;
+			}
 
 			cond_resched();
 			keys++;
@@ -1517,8 +1520,10 @@ int bch2_journal_replay(struct bch_fs *c, struct list_head *list)
 		 * entry on disk, if we crash before writing the next journal entry:
 		 */
 		ret = bch2_journal_meta(&c->journal);
-		if (ret)
+		if (ret) {
+			bch_err(c, "journal replay: error %d flushing journal", ret);
 			goto err;
+		}
 	}
 
 	bch_info(c, "journal replay done, %i keys in %i entries, seq %llu",
@@ -1526,11 +1531,7 @@ int bch2_journal_replay(struct bch_fs *c, struct list_head *list)
 
 	bch2_journal_set_replay_done(&c->journal);
 err:
-	if (ret)
-		bch_err(c, "journal replay error: %d", ret);
-
 	bch2_journal_entries_free(list);
-
 	return ret;
 }
 
@@ -2372,7 +2373,7 @@ retry:
 	switch (journal_buf_switch(j, false)) {
 	case JOURNAL_ENTRY_ERROR:
 		spin_unlock(&j->lock);
-		return -EIO;
+		return -EROFS;
 	case JOURNAL_ENTRY_INUSE:
 		/* haven't finished writing out the previous one: */
 		spin_unlock(&j->lock);
