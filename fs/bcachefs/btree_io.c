@@ -1288,6 +1288,9 @@ static void btree_node_write_endio(struct bio *bio)
 	    bch2_meta_write_fault("btree"))
 		set_btree_node_write_error(b);
 
+	if (wbio->have_io_ref)
+		percpu_ref_put(&ca->io_ref);
+
 	if (wbio->bounce)
 		btree_bounce_free(c,
 			wbio->order,
@@ -1304,9 +1307,6 @@ static void btree_node_write_endio(struct bio *bio)
 		if (cl)
 			closure_put(cl);
 	}
-
-	if (wbio->have_io_ref)
-		percpu_ref_put(&ca->io_ref);
 }
 
 void __bch2_btree_node_write(struct bch_fs *c, struct btree *b,
