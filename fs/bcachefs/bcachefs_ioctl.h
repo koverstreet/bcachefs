@@ -17,7 +17,7 @@ extern "C" {
 	(BCH_FORCE_IF_DATA_DEGRADED|		\
 	 BCH_FORCE_IF_METADATA_DEGRADED)
 
-#define BCH_BY_UUID			(1 << 4)
+#define BCH_BY_INDEX			(1 << 4)
 
 /* global control dev: */
 

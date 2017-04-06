@@ -12,6 +12,51 @@
 #include <linux/uaccess.h>
 #include <linux/slab.h>
 
+/* returns with ref on ca->ref */
+static struct bch_dev *bch2_device_lookup(struct bch_fs *c, u64 dev,
+					  unsigned flags)
+{
+	struct bch_dev *ca;
+
+	if (flags & BCH_BY_INDEX) {
+		if (dev >= c->sb.nr_devices)
+			return ERR_PTR(-EINVAL);
+
+		rcu_read_lock();
+		ca = c->devs[dev];
+		if (ca)
+			percpu_ref_get(&ca->ref);
+		rcu_read_unlock();
+
+		if (!ca)
+			return ERR_PTR(-EINVAL);
+	} else {
+		struct block_device *bdev;
+		char *path;
+		unsigned i;
+
+		path = strndup_user((const char __user *)
+				    (unsigned long) dev, PATH_MAX);
+		if (!path)
+			return ERR_PTR(-ENOMEM);
+
+		bdev = lookup_bdev(strim(path));
+		kfree(path);
+		if (IS_ERR(bdev))
+			return ERR_CAST(bdev);
+
+		for_each_member_device(ca, c, i)
+			if (ca->disk_sb.bdev == bdev)
+				goto found;
+
+		ca = NULL;
+found:
+		bdput(bdev);
+	}
+
+	return ca;
+}
+
 static long bch2_ioctl_assemble(struct bch_ioctl_assemble __user *user_arg)
 {
 	struct bch_ioctl_assemble arg;
@@ -110,13 +155,8 @@ static long bch2_ioctl_query_uuid(struct bch_fs *c,
 			    sizeof(c->sb.user_uuid));
 }
 
-static long bch2_ioctl_start(struct bch_fs *c, struct bch_ioctl_start __user *user_arg)
+static long bch2_ioctl_start(struct bch_fs *c, struct bch_ioctl_start arg)
 {
-	struct bch_ioctl_start arg;
-
-	if (copy_from_user(&arg, user_arg, sizeof(arg)))
-		return -EFAULT;
-
 	if (arg.flags || arg.pad)
 		return -EINVAL;
 
@@ -129,59 +169,10 @@ static long bch2_ioctl_stop(struct bch_fs *c)
 	return 0;
 }
 
-/* returns with ref on ca->ref */
-static struct bch_dev *bch2_device_lookup(struct bch_fs *c,
-					 const char __user *dev)
+static long bch2_ioctl_disk_add(struct bch_fs *c, struct bch_ioctl_disk arg)
 {
-	struct block_device *bdev;
-	struct bch_dev *ca;
-	char *path;
-	unsigned i;
-
-	path = strndup_user(dev, PATH_MAX);
-	if (!path)
-		return ERR_PTR(-ENOMEM);
-
-	bdev = lookup_bdev(strim(path));
-	kfree(path);
-	if (IS_ERR(bdev))
-		return ERR_CAST(bdev);
-
-	for_each_member_device(ca, c, i)
-		if (ca->disk_sb.bdev == bdev)
-			goto found;
-
-	ca = NULL;
-found:
-	bdput(bdev);
-	return ca;
-}
-
-#if 0
-static struct bch_member *bch2_uuid_lookup(struct bch_fs *c, uuid_le uuid)
-{
-	struct bch_sb_field_members *mi = bch2_sb_get_members(c->disk_sb);
-	unsigned i;
-
-	lockdep_assert_held(&c->sb_lock);
-
-	for (i = 0; i < c->disk_sb->nr_devices; i++)
-		if (!memcmp(&mi->members[i].uuid, &uuid, sizeof(uuid)))
-			return &mi->members[i];
-
-	return NULL;
-}
-#endif
-
-static long bch2_ioctl_disk_add(struct bch_fs *c,
-			struct bch_ioctl_disk __user *user_arg)
-{
-	struct bch_ioctl_disk arg;
 	char *path;
 	int ret;
-
-	if (copy_from_user(&arg, user_arg, sizeof(arg)))
-		return -EFAULT;
 
 	if (arg.flags || arg.pad)
 		return -EINVAL;
@@ -196,31 +187,28 @@ static long bch2_ioctl_disk_add(struct bch_fs *c,
 	return ret;
 }
 
-static long bch2_ioctl_disk_remove(struct bch_fs *c,
-			struct bch_ioctl_disk __user *user_arg)
+static long bch2_ioctl_disk_remove(struct bch_fs *c, struct bch_ioctl_disk arg)
 {
-	struct bch_ioctl_disk arg;
 	struct bch_dev *ca;
 
-	if (copy_from_user(&arg, user_arg, sizeof(arg)))
-		return -EFAULT;
+	if ((arg.flags & ~(BCH_FORCE_IF_DATA_LOST|
+			   BCH_FORCE_IF_METADATA_LOST|
+			   BCH_FORCE_IF_DEGRADED|
+			   BCH_BY_INDEX)) ||
+	    arg.pad)
+		return -EINVAL;
 
-	ca = bch2_device_lookup(c, (const char __user *)(unsigned long) arg.dev);
+	ca = bch2_device_lookup(c, arg.dev, arg.flags);
 	if (IS_ERR(ca))
 		return PTR_ERR(ca);
 
 	return bch2_dev_remove(c, ca, arg.flags);
 }
 
-static long bch2_ioctl_disk_online(struct bch_fs *c,
-			struct bch_ioctl_disk __user *user_arg)
+static long bch2_ioctl_disk_online(struct bch_fs *c, struct bch_ioctl_disk arg)
 {
-	struct bch_ioctl_disk arg;
 	char *path;
 	int ret;
-
-	if (copy_from_user(&arg, user_arg, sizeof(arg)))
-		return -EFAULT;
 
 	if (arg.flags || arg.pad)
 		return -EINVAL;
@@ -234,20 +222,19 @@ static long bch2_ioctl_disk_online(struct bch_fs *c,
 	return ret;
 }
 
-static long bch2_ioctl_disk_offline(struct bch_fs *c,
-			struct bch_ioctl_disk __user *user_arg)
+static long bch2_ioctl_disk_offline(struct bch_fs *c, struct bch_ioctl_disk arg)
 {
-	struct bch_ioctl_disk arg;
 	struct bch_dev *ca;
 	int ret;
 
-	if (copy_from_user(&arg, user_arg, sizeof(arg)))
-		return -EFAULT;
-
-	if (arg.pad)
+	if ((arg.flags & ~(BCH_FORCE_IF_DATA_LOST|
+			   BCH_FORCE_IF_METADATA_LOST|
+			   BCH_FORCE_IF_DEGRADED|
+			   BCH_BY_INDEX)) ||
+	    arg.pad)
 		return -EINVAL;
 
-	ca = bch2_device_lookup(c, (const char __user *)(unsigned long) arg.dev);
+	ca = bch2_device_lookup(c, arg.dev, arg.flags);
 	if (IS_ERR(ca))
 		return PTR_ERR(ca);
 
@@ -257,16 +244,19 @@ static long bch2_ioctl_disk_offline(struct bch_fs *c,
 }
 
 static long bch2_ioctl_disk_set_state(struct bch_fs *c,
-			struct bch_ioctl_disk_set_state __user *user_arg)
+			struct bch_ioctl_disk_set_state arg)
 {
-	struct bch_ioctl_disk_set_state arg;
 	struct bch_dev *ca;
 	int ret;
 
-	if (copy_from_user(&arg, user_arg, sizeof(arg)))
-		return -EFAULT;
+	if ((arg.flags & ~(BCH_FORCE_IF_DATA_LOST|
+			   BCH_FORCE_IF_METADATA_LOST|
+			   BCH_FORCE_IF_DEGRADED|
+			   BCH_BY_INDEX)) ||
+	    arg.pad[0] || arg.pad[1] || arg.pad[2])
+		return -EINVAL;
 
-	ca = bch2_device_lookup(c, (const char __user *)(unsigned long) arg.dev);
+	ca = bch2_device_lookup(c, arg.dev, arg.flags);
 	if (IS_ERR(ca))
 		return PTR_ERR(ca);
 
@@ -277,16 +267,16 @@ static long bch2_ioctl_disk_set_state(struct bch_fs *c,
 }
 
 static long bch2_ioctl_disk_evacuate(struct bch_fs *c,
-			struct bch_ioctl_disk __user *user_arg)
+				     struct bch_ioctl_disk arg)
 {
-	struct bch_ioctl_disk arg;
 	struct bch_dev *ca;
 	int ret;
 
-	if (copy_from_user(&arg, user_arg, sizeof(arg)))
-		return -EFAULT;
+	if ((arg.flags & ~BCH_BY_INDEX) ||
+	    arg.pad)
+		return -EINVAL;
 
-	ca = bch2_device_lookup(c, (const char __user *)(unsigned long) arg.dev);
+	ca = bch2_device_lookup(c, arg.dev, arg.flags);
 	if (IS_ERR(ca))
 		return PTR_ERR(ca);
 
@@ -295,6 +285,15 @@ static long bch2_ioctl_disk_evacuate(struct bch_fs *c,
 	percpu_ref_put(&ca->ref);
 	return ret;
 }
+
+#define BCH_IOCTL(_name, _argtype)					\
+do {									\
+	_argtype i;							\
+									\
+	if (copy_from_user(&i, arg, sizeof(i)))				\
+		return -EFAULT;						\
+	return bch2_ioctl_##_name(c, i);				\
+} while (0)
 
 long bch2_fs_ioctl(struct bch_fs *c, unsigned cmd, void __user *arg)
 {
@@ -310,22 +309,22 @@ long bch2_fs_ioctl(struct bch_fs *c, unsigned cmd, void __user *arg)
 	/* ioctls that do require admin cap: */
 	switch (cmd) {
 	case BCH_IOCTL_START:
-		return bch2_ioctl_start(c, arg);
+		BCH_IOCTL(start, struct bch_ioctl_start);
 	case BCH_IOCTL_STOP:
 		return bch2_ioctl_stop(c);
 
 	case BCH_IOCTL_DISK_ADD:
-		return bch2_ioctl_disk_add(c, arg);
+		BCH_IOCTL(disk_add, struct bch_ioctl_disk);
 	case BCH_IOCTL_DISK_REMOVE:
-		return bch2_ioctl_disk_remove(c, arg);
+		BCH_IOCTL(disk_remove, struct bch_ioctl_disk);
 	case BCH_IOCTL_DISK_ONLINE:
-		return bch2_ioctl_disk_online(c, arg);
+		BCH_IOCTL(disk_online, struct bch_ioctl_disk);
 	case BCH_IOCTL_DISK_OFFLINE:
-		return bch2_ioctl_disk_offline(c, arg);
+		BCH_IOCTL(disk_offline, struct bch_ioctl_disk);
 	case BCH_IOCTL_DISK_SET_STATE:
-		return bch2_ioctl_disk_set_state(c, arg);
+		BCH_IOCTL(disk_set_state, struct bch_ioctl_disk_set_state);
 	case BCH_IOCTL_DISK_EVACUATE:
-		return bch2_ioctl_disk_evacuate(c, arg);
+		BCH_IOCTL(disk_evacuate, struct bch_ioctl_disk);
 
 	default:
 		return -ENOTTY;
