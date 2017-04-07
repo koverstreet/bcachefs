@@ -1399,10 +1399,12 @@ static int vfe_enable_output(struct vfe_line *line)
 
 	switch (output->state) {
 	case VFE_OUTPUT_SINGLE:
-		vfe_output_frame_drop(vfe, output, 1);
+		/* Skip 4 bad frames from sensor */
+		vfe_output_frame_drop(vfe, output, 1 << 4);
 		break;
 	case VFE_OUTPUT_CONTINUOUS:
-		vfe_output_frame_drop(vfe, output, 3);
+		/* Skip 4 bad frames from sensor */
+		vfe_output_frame_drop(vfe, output, 3 << 4);
 		break;
 	default:
 		vfe_output_frame_drop(vfe, output, 0);
