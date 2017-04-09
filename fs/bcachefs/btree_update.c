@@ -799,10 +799,11 @@ void bch2_btree_journal_key(struct btree_insert *trans,
 		test_bit(JOURNAL_REPLAY_DONE, &j->flags));
 
 	if (!journal_pin_active(&w->journal))
-		bch2_journal_pin_add(j, &w->journal,
-				    btree_node_write_idx(b) == 0
-				    ? btree_node_flush0
-				    : btree_node_flush1);
+		bch2_journal_pin_add(j, &trans->journal_res,
+				     &w->journal,
+				     btree_node_write_idx(b) == 0
+				     ? btree_node_flush0
+				     : btree_node_flush1);
 
 	if (trans->journal_res.ref) {
 		u64 seq = trans->journal_res.seq;

@@ -121,15 +121,15 @@ struct journal_replay {
 	struct jset		j;
 };
 
-#define JOURNAL_PIN	((32 * 1024) - 1)
+#define JOURNAL_PIN	(32 * 1024)
 
 static inline bool journal_pin_active(struct journal_entry_pin *pin)
 {
 	return pin->pin_list != NULL;
 }
 
-void bch2_journal_pin_add(struct journal *, struct journal_entry_pin *,
-			 journal_pin_flush_fn);
+void bch2_journal_pin_add(struct journal *, struct journal_res *,
+			  struct journal_entry_pin *, journal_pin_flush_fn);
 void bch2_journal_pin_drop(struct journal *, struct journal_entry_pin *);
 void bch2_journal_pin_add_if_older(struct journal *,
 				  struct journal_entry_pin *,
@@ -343,12 +343,8 @@ int bch2_journal_replay(struct bch_fs *, struct list_head *);
 
 static inline void bch2_journal_set_replay_done(struct journal *j)
 {
-	spin_lock(&j->lock);
 	BUG_ON(!test_bit(JOURNAL_STARTED, &j->flags));
-
 	set_bit(JOURNAL_REPLAY_DONE, &j->flags);
-	j->cur_pin_list = &fifo_peek_back(&j->pin);
-	spin_unlock(&j->lock);
 }
 
 ssize_t bch2_journal_print_debug(struct journal *, char *);
