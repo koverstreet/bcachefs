@@ -49,7 +49,7 @@ static struct bch_dev *bch2_device_lookup(struct bch_fs *c, u64 dev,
 			if (ca->disk_sb.bdev == bdev)
 				goto found;
 
-		ca = NULL;
+		ca = ERR_PTR(-ENOENT);
 found:
 		bdput(bdev);
 	}
