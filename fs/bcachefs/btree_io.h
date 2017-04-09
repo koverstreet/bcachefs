@@ -27,7 +27,8 @@ static inline void btree_node_wait_on_io(struct btree *b)
 
 static inline bool btree_node_may_write(struct btree *b)
 {
-	return list_empty_careful(&b->write_blocked);
+	return list_empty_careful(&b->write_blocked) &&
+		list_empty_careful(&b->reachable);
 }
 
 enum compact_mode {
@@ -80,6 +81,8 @@ void bch2_btree_node_write(struct bch_fs *, struct btree *,
 #define bch2_btree_node_write_dirty(_c, _b, _cl, cond)			\
 do {									\
 	while ((_b)->written && btree_node_dirty(_b) &&	(cond)) {	\
+		set_btree_node_need_write(_b);				\
+									\
 		if (!btree_node_may_write(_b))				\
 			break;						\
 									\

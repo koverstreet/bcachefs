@@ -64,7 +64,7 @@ struct pending_btree_node_free {
  */
 struct btree_interior_update {
 	struct closure			cl;
-	struct bch_fs		*c;
+	struct bch_fs			*c;
 
 	struct list_head		list;
 
@@ -86,6 +86,7 @@ struct btree_interior_update {
 	 */
 	struct btree			*b;
 	struct list_head		write_blocked_list;
+	struct list_head		reachable_list;
 
 	/*
 	 * BTREE_INTERIOR_UPDATING_AS: btree node we updated was freed, so now

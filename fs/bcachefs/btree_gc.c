@@ -605,10 +605,12 @@ static void bch2_coalesce_nodes(struct btree *old_nodes[GC_MERGE_NODES],
 		bch2_btree_interior_update_will_free_node(c, as, old_nodes[i]);
 
 	/* Repack everything with @new_format and sort down to one bset */
-	for (i = 0; i < nr_old_nodes; i++)
+	for (i = 0; i < nr_old_nodes; i++) {
 		new_nodes[i] =
 			__bch2_btree_node_alloc_replacement(c, old_nodes[i],
 							    new_format, res);
+		list_add(&new_nodes[i]->reachable, &as->reachable_list);
+	}
 
 	/*
 	 * Conceptually we concatenate the nodes together and slice them
@@ -645,6 +647,7 @@ static void bch2_coalesce_nodes(struct btree *old_nodes[GC_MERGE_NODES],
 
 			set_btree_bset_end(n1, n1->set);
 
+			list_del_init(&n2->reachable);
 			six_unlock_write(&n2->lock);
 			bch2_btree_node_free_never_inserted(c, n2);
 			six_unlock_intent(&n2->lock);

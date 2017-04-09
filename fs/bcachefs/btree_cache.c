@@ -91,6 +91,7 @@ static struct btree *mca_bucket_alloc(struct bch_fs *c, gfp_t gfp)
 	six_lock_init(&b->lock);
 	INIT_LIST_HEAD(&b->list);
 	INIT_LIST_HEAD(&b->write_blocked);
+	INIT_LIST_HEAD(&b->reachable);
 
 	mca_data_alloc(c, b, gfp);
 	return b->data ? b : NULL;

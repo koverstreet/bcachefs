@@ -110,6 +110,14 @@ struct btree {
 	 */
 	struct list_head	write_blocked;
 
+	/*
+	 * Also for asynchronous splits/interior node updates:
+	 * If a btree node isn't reachable yet, we don't want to kick off
+	 * another write - because that write also won't yet be reachable and
+	 * marking it as completed before it's reachable would be incorrect:
+	 */
+	struct list_head	reachable;
+
 	struct open_bucket	*ob;
 
 	/* lru list */
@@ -136,6 +144,7 @@ enum btree_flags {
 	BTREE_NODE_read_error,
 	BTREE_NODE_write_error,
 	BTREE_NODE_dirty,
+	BTREE_NODE_need_write,
 	BTREE_NODE_noevict,
 	BTREE_NODE_write_idx,
 	BTREE_NODE_accessed,
@@ -146,6 +155,7 @@ enum btree_flags {
 BTREE_FLAG(read_error);
 BTREE_FLAG(write_error);
 BTREE_FLAG(dirty);
+BTREE_FLAG(need_write);
 BTREE_FLAG(noevict);
 BTREE_FLAG(write_idx);
 BTREE_FLAG(accessed);
