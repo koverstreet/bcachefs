@@ -161,15 +161,14 @@ static void __btree_node_free(struct bch_fs *c, struct btree *b,
 {
 	trace_btree_node_free(c, b);
 
+	BUG_ON(btree_node_dirty(b));
 	BUG_ON(b == btree_node_root(c, b));
 	BUG_ON(b->ob);
 	BUG_ON(!list_empty(&b->write_blocked));
 
-	six_lock_write(&b->lock);
+	clear_btree_node_noevict(b);
 
-	if (btree_node_dirty(b))
-		bch2_btree_complete_write(c, b, btree_current_write(b));
-	clear_btree_node_dirty(b);
+	six_lock_write(&b->lock);
 
 	bch2_btree_node_hash_remove(c, b);
 
@@ -191,6 +190,8 @@ void bch2_btree_node_free_never_inserted(struct bch_fs *c, struct btree *b)
 	struct open_bucket *ob = b->ob;
 
 	b->ob = NULL;
+
+	clear_btree_node_dirty(b);
 
 	__btree_node_free(c, b, NULL);
 
@@ -890,7 +891,8 @@ bch2_btree_interior_update_alloc(struct bch_fs *c)
 
 static void btree_interior_update_free(struct closure *cl)
 {
-	struct btree_interior_update *as = container_of(cl, struct btree_interior_update, cl);
+	struct btree_interior_update *as =
+		container_of(cl, struct btree_interior_update, cl);
 
 	mempool_free(as, &as->c->btree_interior_update_pool);
 }
@@ -910,9 +912,6 @@ static void btree_interior_update_nodes_reachable(struct closure *cl)
 		bch2_btree_node_free_ondisk(c, &as->pending[i]);
 	as->nr_pending = 0;
 
-	mutex_unlock(&c->btree_interior_update_lock);
-
-	mutex_lock(&c->btree_interior_update_lock);
 	list_del(&as->list);
 	mutex_unlock(&c->btree_interior_update_lock);
 
@@ -1039,6 +1038,15 @@ static void btree_interior_update_updated_btree(struct bch_fs *c,
 		    system_freezable_wq);
 }
 
+static void btree_interior_update_reparent(struct btree_interior_update *as,
+					   struct btree_interior_update *child)
+{
+	child->b = NULL;
+	child->mode = BTREE_INTERIOR_UPDATING_AS;
+	child->parent_as = as;
+	closure_get(&as->cl);
+}
+
 static void btree_interior_update_updated_root(struct bch_fs *c,
 					       struct btree_interior_update *as,
 					       enum btree_id btree_id)
@@ -1053,22 +1061,14 @@ static void btree_interior_update_updated_root(struct bch_fs *c,
 	 * Old root might not be persistent yet - if so, redirect its
 	 * btree_interior_update operation to point to us:
 	 */
-	if (r->as) {
-		BUG_ON(r->as->mode != BTREE_INTERIOR_UPDATING_ROOT);
-
-		r->as->b = NULL;
-		r->as->mode = BTREE_INTERIOR_UPDATING_AS;
-		r->as->parent_as = as;
-		closure_get(&as->cl);
-	}
+	if (r->as)
+		btree_interior_update_reparent(as, r->as);
 
 	as->mode = BTREE_INTERIOR_UPDATING_ROOT;
 	as->b = r->b;
 	r->as = as;
 
 	mutex_unlock(&c->btree_interior_update_lock);
-
-	bch2_journal_wait_on_seq(&c->journal, as->journal_seq, &as->cl);
 
 	continue_at(&as->cl, btree_interior_update_nodes_written,
 		    system_freezable_wq);
@@ -1092,8 +1092,10 @@ void bch2_btree_interior_update_will_free_node(struct bch_fs *c,
 					      struct btree_interior_update *as,
 					      struct btree *b)
 {
+	struct closure *cl, *cl_n;
 	struct btree_interior_update *p, *n;
 	struct pending_btree_node_free *d;
+	struct btree_write *w;
 	struct bset_tree *t;
 
 	/*
@@ -1107,40 +1109,7 @@ void bch2_btree_interior_update_will_free_node(struct bch_fs *c,
 	for_each_bset(b, t)
 		as->journal_seq = max(as->journal_seq, bset(b, t)->journal_seq);
 
-	/*
-	 * Does this node have unwritten data that has a pin on the journal?
-	 *
-	 * If so, transfer that pin to the btree_interior_update operation -
-	 * note that if we're freeing multiple nodes, we only need to keep the
-	 * oldest pin of any of the nodes we're freeing. We'll release the pin
-	 * when the new nodes are persistent and reachable on disk:
-	 */
-	bch2_journal_pin_add_if_older(&c->journal,
-				     &b->writes[0].journal,
-				     &as->journal, interior_update_flush);
-	bch2_journal_pin_add_if_older(&c->journal,
-				     &b->writes[1].journal,
-				     &as->journal, interior_update_flush);
-
 	mutex_lock(&c->btree_interior_update_lock);
-
-	/*
-	 * Does this node have any btree_interior_update operations preventing
-	 * it from being written?
-	 *
-	 * If so, redirect them to point to this btree_interior_update: we can
-	 * write out our new nodes, but we won't make them visible until those
-	 * operations complete
-	 */
-	list_for_each_entry_safe(p, n, &b->write_blocked, write_blocked_list) {
-		BUG_ON(p->mode != BTREE_INTERIOR_UPDATING_NODE);
-
-		p->mode = BTREE_INTERIOR_UPDATING_AS;
-		list_del(&p->write_blocked_list);
-		p->b = NULL;
-		p->parent_as = as;
-		closure_get(&as->cl);
-	}
 
 	/* Add this node to the list of nodes being freed: */
 	BUG_ON(as->nr_pending >= ARRAY_SIZE(as->pending));
@@ -1151,6 +1120,38 @@ void bch2_btree_interior_update_will_free_node(struct bch_fs *c,
 	d->btree_id		= b->btree_id;
 	d->level		= b->level;
 	bkey_copy(&d->key, &b->key);
+
+	/*
+	 * Does this node have any btree_interior_update operations preventing
+	 * it from being written?
+	 *
+	 * If so, redirect them to point to this btree_interior_update: we can
+	 * write out our new nodes, but we won't make them visible until those
+	 * operations complete
+	 */
+	list_for_each_entry_safe(p, n, &b->write_blocked, write_blocked_list) {
+		list_del(&p->write_blocked_list);
+		btree_interior_update_reparent(as, p);
+	}
+
+	clear_btree_node_dirty(b);
+	w = btree_current_write(b);
+
+	llist_for_each_entry_safe(cl, cl_n, llist_del_all(&w->wait.list), list)
+		llist_add(&cl->list, &as->wait.list);
+
+	/*
+	 * Does this node have unwritten data that has a pin on the journal?
+	 *
+	 * If so, transfer that pin to the btree_interior_update operation -
+	 * note that if we're freeing multiple nodes, we only need to keep the
+	 * oldest pin of any of the nodes we're freeing. We'll release the pin
+	 * when the new nodes are persistent and reachable on disk:
+	 */
+	bch2_journal_pin_add_if_older(&c->journal, &w->journal,
+				      &as->journal, interior_update_flush);
+	bch2_journal_pin_drop(&c->journal, &w->journal);
+
 
 	mutex_unlock(&c->btree_interior_update_lock);
 }
