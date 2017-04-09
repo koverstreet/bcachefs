@@ -614,7 +614,7 @@ int bch2_btree_root_alloc(struct bch_fs *c, enum btree_id id,
 
 	b = __btree_root_alloc(c, 0, id, reserve);
 
-	bch2_btree_node_write(c, b, writes, SIX_LOCK_intent, -1);
+	bch2_btree_node_write(c, b, writes, SIX_LOCK_intent);
 
 	bch2_btree_set_root_initial(c, b, reserve);
 	bch2_btree_open_bucket_put(c, b);
@@ -750,39 +750,27 @@ overwrite:
 }
 
 static void __btree_node_flush(struct journal *j, struct journal_entry_pin *pin,
-			       unsigned i)
+			       unsigned i, u64 seq)
 {
 	struct bch_fs *c = container_of(j, struct bch_fs, journal);
 	struct btree_write *w = container_of(pin, struct btree_write, journal);
 	struct btree *b = container_of(w, struct btree, writes[i]);
 
 	six_lock_read(&b->lock);
-	/*
-	 * Reusing a btree node can race with the journal reclaim code calling
-	 * the journal pin flush fn, and there's no good fix for this: we don't
-	 * really want journal_pin_drop() to block until the flush fn is no
-	 * longer running, because journal_pin_drop() is called from the btree
-	 * node write endio function, and we can't wait on the flush fn to
-	 * finish running in mca_reap() - where we make reused btree nodes ready
-	 * to use again - because there, we're holding the lock this function
-	 * needs - deadlock.
-	 *
-	 * So, the b->level check is a hack so we don't try to write nodes we
-	 * shouldn't:
-	 */
-	if (!b->level)
-		bch2_btree_node_write(c, b, NULL, SIX_LOCK_read, i);
+	bch2_btree_node_write_dirty(c, b, NULL,
+			(btree_current_write(b) == w &&
+			 w->journal.pin_list == journal_seq_pin(j, seq)));
 	six_unlock_read(&b->lock);
 }
 
-static void btree_node_flush0(struct journal *j, struct journal_entry_pin *pin)
+static void btree_node_flush0(struct journal *j, struct journal_entry_pin *pin, u64 seq)
 {
-	return __btree_node_flush(j, pin, 0);
+	return __btree_node_flush(j, pin, 0, seq);
 }
 
-static void btree_node_flush1(struct journal *j, struct journal_entry_pin *pin)
+static void btree_node_flush1(struct journal *j, struct journal_entry_pin *pin, u64 seq)
 {
-	return __btree_node_flush(j, pin, 1);
+	return __btree_node_flush(j, pin, 1, seq);
 }
 
 void bch2_btree_journal_key(struct btree_insert *trans,
@@ -973,9 +961,9 @@ retry:
 		closure_wait(&btree_current_write(b)->wait, cl);
 
 		list_del(&as->write_blocked_list);
+		mutex_unlock(&c->btree_interior_update_lock);
 
-		if (list_empty(&b->write_blocked))
-			bch2_btree_node_write(c, b, NULL, SIX_LOCK_read, -1);
+		bch2_btree_node_write_dirty(c, b, NULL, true);
 		six_unlock_read(&b->lock);
 		break;
 
@@ -992,6 +980,7 @@ retry:
 		 * and then we have to wait on that btree_interior_update to finish:
 		 */
 		closure_wait(&as->parent_as->wait, cl);
+		mutex_unlock(&c->btree_interior_update_lock);
 		break;
 
 	case BTREE_INTERIOR_UPDATING_ROOT:
@@ -1018,8 +1007,9 @@ retry:
 		 * can reuse the old nodes it'll have to do a journal commit:
 		 */
 		six_unlock_read(&b->lock);
+		mutex_unlock(&c->btree_interior_update_lock);
+		break;
 	}
-	mutex_unlock(&c->btree_interior_update_lock);
 
 	continue_at(cl, btree_interior_update_nodes_reachable, system_wq);
 }
@@ -1084,7 +1074,8 @@ static void btree_interior_update_updated_root(struct bch_fs *c,
 		    system_freezable_wq);
 }
 
-static void interior_update_flush(struct journal *j, struct journal_entry_pin *pin)
+static void interior_update_flush(struct journal *j,
+			struct journal_entry_pin *pin, u64 seq)
 {
 	struct btree_interior_update *as =
 		container_of(pin, struct btree_interior_update, journal);
@@ -1442,7 +1433,7 @@ static void btree_split(struct btree *b, struct btree_iter *iter,
 		six_unlock_write(&n2->lock);
 		six_unlock_write(&n1->lock);
 
-		bch2_btree_node_write(c, n2, &as->cl, SIX_LOCK_intent, -1);
+		bch2_btree_node_write(c, n2, &as->cl, SIX_LOCK_intent);
 
 		/*
 		 * Note that on recursive parent_keys == insert_keys, so we
@@ -1462,7 +1453,7 @@ static void btree_split(struct btree *b, struct btree_iter *iter,
 
 			btree_split_insert_keys(iter, n3, &as->parent_keys,
 						reserve);
-			bch2_btree_node_write(c, n3, &as->cl, SIX_LOCK_intent, -1);
+			bch2_btree_node_write(c, n3, &as->cl, SIX_LOCK_intent);
 		}
 	} else {
 		trace_btree_node_compact(c, b, b->nr.live_u64s);
@@ -1473,7 +1464,7 @@ static void btree_split(struct btree *b, struct btree_iter *iter,
 		bch2_keylist_add(&as->parent_keys, &n1->key);
 	}
 
-	bch2_btree_node_write(c, n1, &as->cl, SIX_LOCK_intent, -1);
+	bch2_btree_node_write(c, n1, &as->cl, SIX_LOCK_intent);
 
 	/* New nodes all written, now make them visible: */
 
@@ -1774,7 +1765,7 @@ retry:
 	bch2_keylist_add(&as->parent_keys, &delete);
 	bch2_keylist_add(&as->parent_keys, &n->key);
 
-	bch2_btree_node_write(c, n, &as->cl, SIX_LOCK_intent, -1);
+	bch2_btree_node_write(c, n, &as->cl, SIX_LOCK_intent);
 
 	bch2_btree_insert_node(parent, iter, &as->parent_keys, reserve, as);
 
@@ -2324,7 +2315,7 @@ int bch2_btree_node_rewrite(struct btree_iter *iter, struct btree *b,
 
 	trace_btree_gc_rewrite_node(c, b);
 
-	bch2_btree_node_write(c, n, &as->cl, SIX_LOCK_intent, -1);
+	bch2_btree_node_write(c, n, &as->cl, SIX_LOCK_intent);
 
 	if (parent) {
 		bch2_btree_insert_node(parent, iter,

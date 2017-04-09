@@ -19,6 +19,17 @@ static inline void btree_node_io_lock(struct btree *b)
 			    TASK_UNINTERRUPTIBLE);
 }
 
+static inline void btree_node_wait_on_io(struct btree *b)
+{
+	wait_on_bit_io(&b->flags, BTREE_NODE_write_in_flight,
+		       TASK_UNINTERRUPTIBLE);
+}
+
+static inline bool btree_node_may_write(struct btree *b)
+{
+	return list_empty_careful(&b->write_blocked);
+}
+
 enum compact_mode {
 	COMPACT_LAZY,
 	COMPACT_WRITTEN,
@@ -60,11 +71,28 @@ void bch2_btree_complete_write(struct bch_fs *, struct btree *,
 			      struct btree_write *);
 
 void __bch2_btree_node_write(struct bch_fs *, struct btree *,
-			    struct closure *, enum six_lock_type, int);
+			    struct closure *, enum six_lock_type);
 bool bch2_btree_post_write_cleanup(struct bch_fs *, struct btree *);
 
 void bch2_btree_node_write(struct bch_fs *, struct btree *,
-			  struct closure *, enum six_lock_type, int);
+			  struct closure *, enum six_lock_type);
+
+#define bch2_btree_node_write_dirty(_c, _b, _cl, cond)			\
+do {									\
+	while ((_b)->written && btree_node_dirty(_b) &&	(cond)) {	\
+		if (!btree_node_may_write(_b))				\
+			break;						\
+									\
+		if (!btree_node_write_in_flight(_b)) {			\
+			bch2_btree_node_write(_c, _b, _cl, SIX_LOCK_read);\
+			break;						\
+		}							\
+									\
+		six_unlock_read(&(_b)->lock);				\
+		btree_node_wait_on_io(_b);				\
+		six_lock_read(&(_b)->lock);				\
+	}								\
+} while (0)
 
 void bch2_btree_flush(struct bch_fs *);
 void bch2_btree_node_flush_journal_entries(struct bch_fs *, struct btree *,

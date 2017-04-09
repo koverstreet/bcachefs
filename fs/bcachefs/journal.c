@@ -53,12 +53,6 @@ static inline u64 journal_pin_seq(struct journal *j,
 	return last_seq(j) + fifo_entry_idx(&j->pin, pin_list);
 }
 
-static inline struct journal_entry_pin_list *
-journal_seq_pin(struct journal *j, u64 seq)
-{
-	return &j->pin.data[(size_t) seq & j->pin.mask];
-}
-
 static inline struct jset_entry *__jset_entry_type_next(struct jset *jset,
 					struct jset_entry *entry, unsigned type)
 {
@@ -144,7 +138,7 @@ static inline void bch2_journal_add_prios(struct journal *j,
 }
 
 static void journal_seq_blacklist_flush(struct journal *j,
-					struct journal_entry_pin *pin)
+				struct journal_entry_pin *pin, u64 seq)
 {
 	struct bch_fs *c =
 		container_of(j, struct bch_fs, journal);
@@ -1831,7 +1825,7 @@ void bch2_journal_pin_add_if_older(struct journal *j,
 }
 
 static struct journal_entry_pin *
-journal_get_next_pin(struct journal *j, u64 seq_to_flush)
+journal_get_next_pin(struct journal *j, u64 seq_to_flush, u64 *seq)
 {
 	struct journal_entry_pin_list *pin_list;
 	struct journal_entry_pin *ret = NULL;
@@ -1854,6 +1848,7 @@ journal_get_next_pin(struct journal *j, u64 seq_to_flush)
 		if (ret) {
 			/* must be list_del_init(), see bch2_journal_pin_drop() */
 			list_del_init(&ret->list);
+			*seq = journal_pin_seq(j, pin_list);
 			break;
 		}
 	}
@@ -1878,9 +1873,10 @@ static bool journal_has_pins(struct journal *j)
 void bch2_journal_flush_pins(struct journal *j)
 {
 	struct journal_entry_pin *pin;
+	u64 seq;
 
-	while ((pin = journal_get_next_pin(j, U64_MAX)))
-		pin->flush(j, pin);
+	while ((pin = journal_get_next_pin(j, U64_MAX, &seq)))
+		pin->flush(j, pin, seq);
 
 	wait_event(j->wait, !journal_has_pins(j) || bch2_journal_error(j));
 }
@@ -1923,7 +1919,7 @@ static void journal_reclaim_work(struct work_struct *work)
 	struct journal *j = &c->journal;
 	struct bch_dev *ca;
 	struct journal_entry_pin *pin;
-	u64 seq_to_flush = 0;
+	u64 seq, seq_to_flush = 0;
 	unsigned iter, bucket_to_flush;
 	unsigned long next_flush;
 	bool reclaim_lock_held = false, need_flush;
@@ -1997,9 +1993,9 @@ static void journal_reclaim_work(struct work_struct *work)
 
 	while ((pin = journal_get_next_pin(j, need_flush
 					   ? U64_MAX
-					   : seq_to_flush))) {
+					   : seq_to_flush, &seq))) {
 		__set_current_state(TASK_RUNNING);
-		pin->flush(j, pin);
+		pin->flush(j, pin, seq);
 		need_flush = false;
 
 		j->last_flushed = jiffies;

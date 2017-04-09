@@ -1311,8 +1311,7 @@ static void btree_node_write_endio(struct bio *bio)
 
 void __bch2_btree_node_write(struct bch_fs *c, struct btree *b,
 			    struct closure *parent,
-			    enum six_lock_type lock_type_held,
-			    int idx_to_write)
+			    enum six_lock_type lock_type_held)
 {
 	struct bio *bio;
 	struct bch_write_bio *wbio;
@@ -1344,14 +1343,8 @@ void __bch2_btree_node_write(struct bch_fs *c, struct btree *b,
 		if (!(old & (1 << BTREE_NODE_dirty)))
 			return;
 
-		if (idx_to_write >= 0 &&
-		    idx_to_write != !!(old & (1 << BTREE_NODE_write_idx)))
-			return;
-
 		if (old & (1 << BTREE_NODE_write_in_flight)) {
-			wait_on_bit_io(&b->flags,
-				       BTREE_NODE_write_in_flight,
-				       TASK_UNINTERRUPTIBLE);
+			btree_node_wait_on_io(b);
 			continue;
 		}
 
@@ -1614,35 +1607,27 @@ bool bch2_btree_post_write_cleanup(struct bch_fs *c, struct btree *b)
  */
 void bch2_btree_node_write(struct bch_fs *c, struct btree *b,
 			  struct closure *parent,
-			  enum six_lock_type lock_type_held,
-			  int idx_to_write)
+			  enum six_lock_type lock_type_held)
 {
 	BUG_ON(lock_type_held == SIX_LOCK_write);
 
 	if (lock_type_held == SIX_LOCK_intent ||
 	    six_trylock_convert(&b->lock, SIX_LOCK_read,
 				SIX_LOCK_intent)) {
-		__bch2_btree_node_write(c, b, parent, SIX_LOCK_intent, idx_to_write);
+		__bch2_btree_node_write(c, b, parent, SIX_LOCK_intent);
 
-		six_lock_write(&b->lock);
-		bch2_btree_post_write_cleanup(c, b);
-		six_unlock_write(&b->lock);
+		/* don't cycle lock unnecessarily: */
+		if (btree_node_just_written(b)) {
+			six_lock_write(&b->lock);
+			bch2_btree_post_write_cleanup(c, b);
+			six_unlock_write(&b->lock);
+		}
 
 		if (lock_type_held == SIX_LOCK_read)
 			six_lock_downgrade(&b->lock);
 	} else {
-		__bch2_btree_node_write(c, b, parent, SIX_LOCK_read, idx_to_write);
+		__bch2_btree_node_write(c, b, parent, SIX_LOCK_read);
 	}
-}
-
-static void bch2_btree_node_write_dirty(struct bch_fs *c, struct btree *b,
-				       struct closure *parent)
-{
-	six_lock_read(&b->lock);
-	BUG_ON(b->level);
-
-	bch2_btree_node_write(c, b, parent, SIX_LOCK_read, -1);
-	six_unlock_read(&b->lock);
 }
 
 /*
@@ -1654,7 +1639,7 @@ void bch2_btree_flush(struct bch_fs *c)
 	struct btree *b;
 	struct bucket_table *tbl;
 	struct rhash_head *pos;
-	bool dropped_lock;
+	bool saw_dirty;
 	unsigned i;
 
 	closure_init_stack(&cl);
@@ -1662,26 +1647,27 @@ void bch2_btree_flush(struct bch_fs *c)
 	rcu_read_lock();
 
 	do {
-		dropped_lock = false;
+		saw_dirty = false;
 		i = 0;
 restart:
 		tbl = rht_dereference_rcu(c->btree_cache_table.tbl,
 					  &c->btree_cache_table);
 
 		for (; i < tbl->size; i++)
-			rht_for_each_entry_rcu(b, pos, tbl, i, hash)
-				/*
-				 * XXX - locking for b->level, when called from
-				 * bch2_journal_move()
-				 */
-				if (!b->level && btree_node_dirty(b)) {
+			rht_for_each_entry_rcu(b, pos, tbl, i, hash) {
+				saw_dirty |= btree_node_dirty(b);
+
+				if (btree_node_dirty(b) &&
+				    btree_node_may_write(b)) {
 					rcu_read_unlock();
-					bch2_btree_node_write_dirty(c, b, &cl);
-					dropped_lock = true;
+					six_lock_read(&b->lock);
+					bch2_btree_node_write_dirty(c, b, &cl, 1);
+					six_unlock_read(&b->lock);
 					rcu_read_lock();
 					goto restart;
 				}
-	} while (dropped_lock);
+			}
+	} while (saw_dirty);
 
 	rcu_read_unlock();
 

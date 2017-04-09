@@ -685,7 +685,7 @@ static void bch2_coalesce_nodes(struct btree *old_nodes[GC_MERGE_NODES],
 		bch2_btree_build_aux_trees(n);
 		six_unlock_write(&n->lock);
 
-		bch2_btree_node_write(c, n, &as->cl, SIX_LOCK_intent, -1);
+		bch2_btree_node_write(c, n, &as->cl, SIX_LOCK_intent);
 	}
 
 	/*

@@ -39,7 +39,8 @@ struct journal_entry_pin_list {
 
 struct journal;
 struct journal_entry_pin;
-typedef void (*journal_pin_flush_fn)(struct journal *j, struct journal_entry_pin *);
+typedef void (*journal_pin_flush_fn)(struct journal *j,
+				struct journal_entry_pin *, u64);
 
 struct journal_entry_pin {
 	struct list_head		list;

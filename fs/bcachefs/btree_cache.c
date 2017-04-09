@@ -87,6 +87,7 @@ static struct btree *mca_bucket_alloc(struct bch_fs *c, gfp_t gfp)
 	if (!b)
 		return NULL;
 
+	bkey_extent_init(&b->key);
 	six_lock_init(&b->lock);
 	INIT_LIST_HEAD(&b->list);
 	INIT_LIST_HEAD(&b->write_blocked);
@@ -141,8 +142,10 @@ static inline struct btree *mca_find(struct bch_fs *c,
  * this version is for btree nodes that have already been freed (we're not
  * reaping a real btree node)
  */
-static int mca_reap_notrace(struct bch_fs *c, struct btree *b, bool flush)
+static int __btree_node_reclaim(struct bch_fs *c, struct btree *b, bool flush)
 {
+	int ret = 0;
+
 	lockdep_assert_held(&c->btree_cache_lock);
 
 	if (!six_trylock_intent(&b->lock))
@@ -155,45 +158,48 @@ static int mca_reap_notrace(struct bch_fs *c, struct btree *b, bool flush)
 	    btree_node_noevict(b))
 		goto out_unlock;
 
-	if (!list_empty(&b->write_blocked))
+	if (!btree_node_may_write(b))
 		goto out_unlock;
 
-	if (!flush &&
-	    (btree_node_dirty(b) ||
-	     btree_node_write_in_flight(b)))
-		goto out_unlock;
+	if (btree_node_dirty(b) ||
+	    btree_node_write_in_flight(b)) {
+		if (!flush)
+			goto out_unlock;
 
-	/*
-	 * Using the underscore version because we don't want to compact bsets
-	 * after the write, since this node is about to be evicted - unless
-	 * btree verify mode is enabled, since it runs out of the post write
-	 * cleanup:
-	 */
-	if (btree_node_dirty(b)) {
+		/*
+		 * Using the underscore version because we don't want to compact
+		 * bsets after the write, since this node is about to be evicted
+		 * - unless btree verify mode is enabled, since it runs out of
+		 * the post write cleanup:
+		 */
 		if (verify_btree_ondisk(c))
-			bch2_btree_node_write(c, b, NULL, SIX_LOCK_intent, -1);
+			bch2_btree_node_write(c, b, NULL, SIX_LOCK_intent);
 		else
-			__bch2_btree_node_write(c, b, NULL, SIX_LOCK_read, -1);
+			__bch2_btree_node_write(c, b, NULL, SIX_LOCK_read);
+
+		/* wait for any in flight btree write */
+		btree_node_wait_on_io(b);
 	}
-
-	/* wait for any in flight btree write */
-	wait_on_bit_io(&b->flags, BTREE_NODE_write_in_flight,
-		       TASK_UNINTERRUPTIBLE);
-
-	return 0;
+out:
+	if (PTR_HASH(&b->key))
+		trace_btree_node_reap(c, b, ret);
+	return ret;
 out_unlock:
 	six_unlock_write(&b->lock);
 out_unlock_intent:
 	six_unlock_intent(&b->lock);
-	return -ENOMEM;
+	ret = -ENOMEM;
+	goto out;
 }
 
-static int mca_reap(struct bch_fs *c, struct btree *b, bool flush)
+static int btree_node_reclaim(struct bch_fs *c, struct btree *b)
 {
-	int ret = mca_reap_notrace(c, b, flush);
+	return __btree_node_reclaim(c, b, false);
+}
 
-	trace_btree_node_reap(c, b, ret);
-	return ret;
+static int btree_node_write_and_reclaim(struct bch_fs *c, struct btree *b)
+{
+	return __btree_node_reclaim(c, b, true);
 }
 
 static unsigned long bch2_mca_scan(struct shrinker *shrink,
@@ -239,7 +245,7 @@ static unsigned long bch2_mca_scan(struct shrinker *shrink,
 			break;
 
 		if (++i > 3 &&
-		    !mca_reap_notrace(c, b, false)) {
+		    !btree_node_reclaim(c, b)) {
 			mca_data_free(c, b);
 			six_unlock_write(&b->lock);
 			six_unlock_intent(&b->lock);
@@ -258,7 +264,7 @@ restart:
 		}
 
 		if (!btree_node_accessed(b) &&
-		    !mca_reap(c, b, false)) {
+		    !btree_node_reclaim(c, b)) {
 			/* can't call bch2_btree_node_hash_remove under btree_cache_lock  */
 			freed++;
 			if (&t->list != &c->btree_cache)
@@ -445,12 +451,12 @@ static struct btree *mca_cannibalize(struct bch_fs *c)
 	struct btree *b;
 
 	list_for_each_entry_reverse(b, &c->btree_cache, list)
-		if (!mca_reap(c, b, false))
+		if (!btree_node_reclaim(c, b))
 			return b;
 
 	while (1) {
 		list_for_each_entry_reverse(b, &c->btree_cache, list)
-			if (!mca_reap(c, b, true))
+			if (!btree_node_write_and_reclaim(c, b))
 				return b;
 
 		/*
@@ -474,7 +480,7 @@ struct btree *bch2_btree_node_mem_alloc(struct bch_fs *c)
 	 * the list. Check if there's any freed nodes there:
 	 */
 	list_for_each_entry(b, &c->btree_cache_freeable, list)
-		if (!mca_reap_notrace(c, b, false))
+		if (!btree_node_reclaim(c, b))
 			goto out_unlock;
 
 	/*
@@ -482,7 +488,7 @@ struct btree *bch2_btree_node_mem_alloc(struct bch_fs *c)
 	 * disk node. Check the freed list before allocating a new one:
 	 */
 	list_for_each_entry(b, &c->btree_cache_freed, list)
-		if (!mca_reap_notrace(c, b, false)) {
+		if (!btree_node_reclaim(c, b)) {
 			mca_data_alloc(c, b, __GFP_NOWARN|GFP_NOIO);
 			if (b->data)
 				goto out_unlock;
