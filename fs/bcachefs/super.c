@@ -460,9 +460,6 @@ void bch2_fs_stop(struct bch_fs *c)
 	bch2_fs_exit(c);
 }
 
-#define alloc_bucket_pages(gfp, ca)			\
-	((void *) __get_free_pages(__GFP_ZERO|gfp, ilog2(bucket_pages(ca))))
-
 static struct bch_fs *bch2_fs_alloc(struct bch_sb *sb, struct bch_opts opts)
 {
 	struct bch_sb_field_members *mi;
@@ -974,7 +971,7 @@ static void bch2_dev_free(struct bch_dev *ca)
 	free_percpu(ca->sectors_written);
 	bioset_exit(&ca->replica_set);
 	free_percpu(ca->usage_percpu);
-	free_pages((unsigned long) ca->disk_buckets, ilog2(bucket_pages(ca)));
+	kvpfree(ca->disk_buckets, bucket_bytes(ca));
 	kfree(ca->prio_buckets);
 	kfree(ca->bio_prio);
 	vfree(ca->buckets);
@@ -1144,7 +1141,7 @@ static int bch2_dev_alloc(struct bch_fs *c, unsigned dev_idx)
 					  ca->mi.nbuckets)) ||
 	    !(ca->prio_buckets	= kzalloc(sizeof(u64) * prio_buckets(ca) *
 					  2, GFP_KERNEL)) ||
-	    !(ca->disk_buckets	= alloc_bucket_pages(GFP_KERNEL, ca)) ||
+	    !(ca->disk_buckets	= kvpmalloc(bucket_bytes(ca), GFP_KERNEL)) ||
 	    !(ca->usage_percpu = alloc_percpu(struct bch_dev_usage)) ||
 	    !(ca->bio_prio = bio_kmalloc(GFP_NOIO, bucket_pages(ca))) ||
 	    bioset_init(&ca->replica_set, 4,

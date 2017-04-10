@@ -9,6 +9,7 @@
 #include <linux/freezer.h>
 #include <linux/kernel.h>
 #include <linux/llist.h>
+#include <linux/log2.h>
 #include <linux/ratelimit.h>
 #include <linux/slab.h>
 #include <linux/vmalloc.h>
@@ -78,16 +79,22 @@ do {									\
 	(__builtin_types_compatible_p(typeof(_val), _type) ||		\
 	 __builtin_types_compatible_p(typeof(_val), const _type))
 
-static inline void *kvmalloc(size_t bytes, gfp_t gfp)
+static inline void kvpfree(void *p, size_t size)
 {
-	if (bytes <= PAGE_SIZE ||
-	    !(gfp & GFP_KERNEL))
-		return kmalloc(bytes, gfp);
+	if (size < PAGE_SIZE)
+		kfree(p);
+	else if (is_vmalloc_addr(p))
+		vfree(p);
+	else
+		free_pages((unsigned long) p, get_order(size));
 
-	return ((bytes <= KMALLOC_MAX_SIZE)
-		? kmalloc(bytes, gfp|__GFP_NOWARN)
-		: NULL) ?:
-		vmalloc(bytes);
+}
+
+static inline void *kvpmalloc(size_t size, gfp_t gfp_mask)
+{
+	return size < PAGE_SIZE ? kmalloc(size, gfp_mask)
+		:  (void *) __get_free_pages(gfp_mask, get_order(size))
+		?: __vmalloc(size, gfp_mask, PAGE_KERNEL);
 }
 
 #define DECLARE_HEAP(type, name)					\
@@ -98,17 +105,15 @@ static inline void *kvmalloc(size_t bytes, gfp_t gfp)
 
 #define init_heap(heap, _size, gfp)					\
 ({									\
-	size_t _bytes;							\
 	(heap)->used = 0;						\
 	(heap)->size = (_size);						\
-	_bytes = (heap)->size * sizeof(*(heap)->data);			\
-	(heap)->data = kvmalloc(_bytes, (gfp));				\
-	(heap)->data;							\
+	(heap)->data = kvpmalloc((heap)->size * sizeof((heap)->data[0]),\
+				 (gfp));				\
 })
 
 #define free_heap(heap)							\
 do {									\
-	kvfree((heap)->data);						\
+	kvpfree((heap)->data, (heap)->size * sizeof((heap)->data[0]));	\
 	(heap)->data = NULL;						\
 } while (0)
 

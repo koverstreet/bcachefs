@@ -406,7 +406,8 @@ static int journal_entry_add(struct bch_fs *c, struct journal_list *jlist,
 		if (le64_to_cpu(i->j.seq) >= le64_to_cpu(j->last_seq))
 			break;
 		list_del(&i->list);
-		kfree(i);
+		kvpfree(i, offsetof(struct journal_replay, j) +
+			vstruct_bytes(&i->j));
 	}
 
 	list_for_each_entry_reverse(i, jlist->head, list) {
@@ -429,7 +430,7 @@ static int journal_entry_add(struct bch_fs *c, struct journal_list *jlist,
 
 	where = jlist->head;
 add:
-	i = kvmalloc(offsetof(struct journal_replay, j) + bytes, GFP_KERNEL);
+	i = kvpmalloc(offsetof(struct journal_replay, j) + bytes, GFP_KERNEL);
 	if (!i) {
 		ret = -ENOMEM;
 		goto out;
@@ -647,11 +648,11 @@ static int journal_read_buf_realloc(struct journal_read_buf *b,
 	void *n;
 
 	new_size = roundup_pow_of_two(new_size);
-	n = (void *) __get_free_pages(GFP_KERNEL, get_order(new_size));
+	n = kvpmalloc(new_size, GFP_KERNEL);
 	if (!n)
 		return -ENOMEM;
 
-	free_pages((unsigned long) b->data, get_order(b->size));
+	kvpfree(b->data, b->size);
 	b->data = n;
 	b->size = new_size;
 	return 0;
@@ -894,7 +895,7 @@ search_done:
 		    !read_bucket(i))
 			break;
 out:
-	free_pages((unsigned long) buf.data, get_order(buf.size));
+	kvpfree(buf.data, buf.size);
 	percpu_ref_put(&ca->io_ref);
 	closure_return(cl);
 err:
@@ -912,7 +913,8 @@ void bch2_journal_entries_free(struct list_head *list)
 		struct journal_replay *i =
 			list_first_entry(list, struct journal_replay, list);
 		list_del(&i->list);
-		kvfree(i);
+		kvpfree(i, offsetof(struct journal_replay, j) +
+			vstruct_bytes(&i->j));
 	}
 }
 
@@ -2792,17 +2794,14 @@ int bch2_dev_journal_init(struct bch_dev *ca, struct bch_sb *sb)
 
 void bch2_fs_journal_exit(struct journal *j)
 {
-	unsigned order = get_order(j->entry_size_max);
-
-	free_pages((unsigned long) j->buf[1].data, order);
-	free_pages((unsigned long) j->buf[0].data, order);
+	kvpfree(j->buf[1].data, j->entry_size_max);
+	kvpfree(j->buf[0].data, j->entry_size_max);
 	free_fifo(&j->pin);
 }
 
 int bch2_fs_journal_init(struct journal *j, unsigned entry_size_max)
 {
 	static struct lock_class_key res_key;
-	unsigned order = get_order(entry_size_max);
 
 	spin_lock_init(&j->lock);
 	spin_lock_init(&j->pin_lock);
@@ -2827,8 +2826,8 @@ int bch2_fs_journal_init(struct journal *j, unsigned entry_size_max)
 		 { .cur_entry_offset = JOURNAL_ENTRY_CLOSED_VAL }).v);
 
 	if (!(init_fifo(&j->pin, JOURNAL_PIN, GFP_KERNEL)) ||
-	    !(j->buf[0].data = (void *) __get_free_pages(GFP_KERNEL, order)) ||
-	    !(j->buf[1].data = (void *) __get_free_pages(GFP_KERNEL, order)))
+	    !(j->buf[0].data = kvpmalloc(entry_size_max, GFP_KERNEL)) ||
+	    !(j->buf[1].data = kvpmalloc(entry_size_max, GFP_KERNEL)))
 		return -ENOMEM;
 
 	j->pin.front = j->pin.back = 1;

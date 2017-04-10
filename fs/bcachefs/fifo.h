@@ -1,45 +1,30 @@
 #ifndef _BCACHE_FIFO_H
 #define _BCACHE_FIFO_H
 
+#include "util.h"
+
 #define DECLARE_FIFO(type, name)					\
 	struct {							\
 		size_t front, back, size, mask;				\
 		type *data;						\
 	} name
 
+#define fifo_buf_size(fifo)						\
+	(roundup_pow_of_two((fifo)->size) * sizeof((fifo)->data[0]))
+
 #define init_fifo(fifo, _size, _gfp)					\
 ({									\
-	bool _ret = true;						\
-	gfp_t gfp_flags = (_gfp);					\
-									\
-	if (gfp_flags & GFP_KERNEL)					\
-		gfp_flags |= __GFP_NOWARN;				\
-									\
-	(fifo)->size	= (_size);					\
 	(fifo)->front	= (fifo)->back = 0;				\
-	(fifo)->data	= NULL;						\
-									\
-	if ((fifo)->size) {						\
-		size_t _allocated_size, _bytes;				\
-									\
-		_allocated_size = roundup_pow_of_two((fifo)->size);	\
-		_bytes = _allocated_size * sizeof(*(fifo)->data);	\
-									\
-		(fifo)->mask = _allocated_size - 1;			\
-									\
-		if (_bytes < KMALLOC_MAX_SIZE)				\
-			(fifo)->data = kmalloc(_bytes, gfp_flags);	\
-		if ((!(fifo)->data) && (gfp_flags & GFP_KERNEL))	\
-			(fifo)->data = vmalloc(_bytes);			\
-		if ((!(fifo)->data))					\
-			_ret = false;					\
-	}								\
-	_ret;								\
+	(fifo)->size	= (_size);					\
+	(fifo)->mask	= (fifo)->size					\
+		? roundup_pow_of_two((fifo)->size) - 1			\
+		: 0;							\
+	(fifo)->data	= kvpmalloc(fifo_buf_size(fifo), (_gfp));	\
 })
 
 #define free_fifo(fifo)							\
 do {									\
-	kvfree((fifo)->data);						\
+	kvpfree((fifo)->data, fifo_buf_size(fifo));			\
 	(fifo)->data = NULL;						\
 } while (0)
 
