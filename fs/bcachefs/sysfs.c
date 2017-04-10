@@ -143,6 +143,7 @@ read_attribute(written);
 read_attribute(btree_written);
 read_attribute(metadata_written);
 read_attribute(journal_debug);
+read_attribute(journal_pins);
 
 read_attribute(internal_uuid);
 
@@ -343,6 +344,9 @@ SHOW(bch2_fs)
 	if (attr == &sysfs_journal_debug)
 		return bch2_journal_print_debug(&c->journal, buf);
 
+	if (attr == &sysfs_journal_pins)
+		return bch2_journal_print_pins(&c->journal, buf);
+
 	if (attr == &sysfs_compression_stats)
 		return bch2_compression_stats(c, buf);
 
@@ -472,6 +476,7 @@ SYSFS_OPS(bch2_fs_internal);
 struct attribute *bch2_fs_internal_files[] = {
 	&sysfs_alloc_debug,
 	&sysfs_journal_debug,
+	&sysfs_journal_pins,
 
 	&sysfs_read_realloc_races,
 

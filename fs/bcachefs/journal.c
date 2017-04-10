@@ -1020,6 +1020,7 @@ int bch2_journal_read(struct bch_fs *c, struct list_head *list)
 
 	fifo_for_each_entry_ptr(p, &j->pin, iter) {
 		INIT_LIST_HEAD(&p->list);
+		INIT_LIST_HEAD(&p->flushed);
 		atomic_set(&p->count, 0);
 	}
 
@@ -1149,6 +1150,7 @@ static void __journal_entry_new(struct journal *j, int count)
 	       &fifo_peek_back(&j->pin));
 
 	INIT_LIST_HEAD(&p->list);
+	INIT_LIST_HEAD(&p->flushed);
 	atomic_set(&p->count, count);
 }
 
@@ -1861,7 +1863,7 @@ journal_get_next_pin(struct journal *j, u64 seq_to_flush, u64 *seq)
 				struct journal_entry_pin, list);
 		if (ret) {
 			/* must be list_del_init(), see bch2_journal_pin_drop() */
-			list_del_init(&ret->list);
+			list_move(&ret->list, &pin_list->flushed);
 			*seq = journal_pin_seq(j, pin_list);
 			break;
 		}
@@ -2712,6 +2714,39 @@ ssize_t bch2_journal_print_debug(struct journal *j, char *buf)
 
 	spin_unlock(&j->lock);
 	rcu_read_unlock();
+
+	return ret;
+}
+
+ssize_t bch2_journal_print_pins(struct journal *j, char *buf)
+{
+	struct journal_entry_pin_list *pin_list;
+	struct journal_entry_pin *pin;
+	ssize_t ret = 0;
+	unsigned i;
+
+	spin_lock_irq(&j->pin_lock);
+	fifo_for_each_entry_ptr(pin_list, &j->pin, i) {
+		ret += scnprintf(buf + ret, PAGE_SIZE - ret,
+				 "%llu: count %u\n",
+				 journal_pin_seq(j, pin_list),
+				 atomic_read(&pin_list->count));
+
+		list_for_each_entry(pin, &pin_list->list, list)
+			ret += scnprintf(buf + ret, PAGE_SIZE - ret,
+					 "\t%p %pf\n",
+					 pin, pin->flush);
+
+		if (!list_empty(&pin_list->flushed))
+			ret += scnprintf(buf + ret, PAGE_SIZE - ret,
+					 "flushed:\n");
+
+		list_for_each_entry(pin, &pin_list->flushed, list)
+			ret += scnprintf(buf + ret, PAGE_SIZE - ret,
+					 "\t%p %pf\n",
+					 pin, pin->flush);
+	}
+	spin_unlock_irq(&j->pin_lock);
 
 	return ret;
 }
