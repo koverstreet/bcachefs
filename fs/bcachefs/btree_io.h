@@ -94,8 +94,6 @@ do {									\
 	}								\
 } while (0)
 
-void bch2_btree_flush(struct bch_fs *);
-void bch2_btree_node_flush_journal_entries(struct bch_fs *, struct btree *,
-					  struct closure *);
+void bch2_btree_verify_flushed(struct bch_fs *);
 
 #endif /* _BCACHE_BTREE_IO_H */

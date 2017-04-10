@@ -1630,82 +1630,19 @@ void bch2_btree_node_write(struct bch_fs *c, struct btree *b,
 	}
 }
 
-/*
- * Write all dirty btree nodes to disk, including roots
- */
-void bch2_btree_flush(struct bch_fs *c)
+void bch2_btree_verify_flushed(struct bch_fs *c)
 {
-	struct closure cl;
-	struct btree *b;
 	struct bucket_table *tbl;
 	struct rhash_head *pos;
-	bool saw_dirty;
+	struct btree *b;
 	unsigned i;
 
-	closure_init_stack(&cl);
-
 	rcu_read_lock();
+	tbl = rht_dereference_rcu(c->btree_cache_table.tbl,
+				  &c->btree_cache_table);
 
-	do {
-		saw_dirty = false;
-		i = 0;
-restart:
-		tbl = rht_dereference_rcu(c->btree_cache_table.tbl,
-					  &c->btree_cache_table);
-
-		for (; i < tbl->size; i++)
-			rht_for_each_entry_rcu(b, pos, tbl, i, hash) {
-				saw_dirty |= btree_node_dirty(b);
-
-				if (btree_node_dirty(b) &&
-				    btree_node_may_write(b)) {
-					rcu_read_unlock();
-					six_lock_read(&b->lock);
-					bch2_btree_node_write_dirty(c, b, &cl, 1);
-					six_unlock_read(&b->lock);
-					rcu_read_lock();
-					goto restart;
-				}
-			}
-	} while (saw_dirty);
-
+	for (i = 0; i < tbl->size; i++)
+		rht_for_each_entry_rcu(b, pos, tbl, i, hash)
+			BUG_ON(btree_node_dirty(b));
 	rcu_read_unlock();
-
-	closure_sync(&cl);
-}
-
-/**
- * bch_btree_node_flush_journal - flush any journal entries that contain keys
- * from this node
- *
- * The bset's journal sequence number is used for preserving ordering of index
- * updates across unclean shutdowns - it's used to ignore bsets newer than the
- * most recent journal entry.
- *
- * But when rewriting btree nodes we compact all the bsets in a btree node - and
- * if we compacted a bset that should be ignored with bsets we do need, that
- * would be bad. So to avoid that, prior to making the new node visible ensure
- * that the journal has been flushed so that all the bsets we compacted should
- * be visible.
- */
-void bch2_btree_node_flush_journal_entries(struct bch_fs *c,
-					  struct btree *b,
-					  struct closure *cl)
-{
-	int i = b->nsets;
-
-	/*
-	 * Journal sequence numbers in the different bsets will always be in
-	 * ascending order, we only need to flush the highest - except that the
-	 * most recent bset might not have a journal sequence number yet, so we
-	 * need to loop:
-	 */
-	while (i--) {
-		u64 seq = le64_to_cpu(bset(b, &b->set[i])->journal_seq);
-
-		if (seq) {
-			bch2_journal_flush_seq_async(&c->journal, seq, cl);
-			break;
-		}
-	}
 }

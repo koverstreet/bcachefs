@@ -141,7 +141,7 @@ void bch2_journal_pin_add_if_older(struct journal *,
 				  struct journal_entry_pin *,
 				  struct journal_entry_pin *,
 				  journal_pin_flush_fn);
-void bch2_journal_flush_pins(struct journal *);
+void bch2_journal_flush_pins(struct journal *, u64);
 
 struct closure;
 struct bch_fs;
