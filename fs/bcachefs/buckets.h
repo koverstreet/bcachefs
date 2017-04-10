@@ -199,21 +199,6 @@ static inline u64 bch2_fs_sectors_used(struct bch_fs *c)
 	return min(c->capacity, __bch2_fs_sectors_used(c));
 }
 
-/* XXX: kill? */
-static inline u64 sectors_available(struct bch_fs *c)
-{
-	struct bch_dev *ca;
-	unsigned i;
-	u64 ret = 0;
-
-	rcu_read_lock();
-	for_each_member_device_rcu(ca, c, i)
-		ret += dev_buckets_available(ca) << ca->bucket_bits;
-	rcu_read_unlock();
-
-	return ret;
-}
-
 static inline bool is_available_bucket(struct bucket_mark mark)
 {
 	return (!mark.owned_by_allocator &&

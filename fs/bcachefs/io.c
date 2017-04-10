@@ -1046,7 +1046,7 @@ static void bch2_read_endio(struct bio *bio)
 	if (rbio->ptr.cached &&
 	    (((rbio->flags & BCH_READ_RETRY_IF_STALE) && race_fault()) ||
 	     ptr_stale(rbio->ca, &rbio->ptr))) {
-		atomic_long_inc(&c->cache_read_races);
+		atomic_long_inc(&c->read_realloc_races);
 
 		if (rbio->flags & BCH_READ_RETRY_IF_STALE)
 			bch2_rbio_retry(c, rbio);

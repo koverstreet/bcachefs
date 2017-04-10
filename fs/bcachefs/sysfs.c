@@ -120,6 +120,7 @@ do {									\
 		return strtoi_h(buf, &var) ?: (ssize_t) size;		\
 } while (0)
 
+write_attribute(trigger_journal_flush);
 write_attribute(trigger_btree_coalesce);
 write_attribute(trigger_gc);
 write_attribute(prune_cache);
@@ -127,35 +128,24 @@ write_attribute(prune_cache);
 read_attribute(uuid);
 read_attribute(minor);
 read_attribute(bucket_size);
-read_attribute(bucket_size_bytes);
 read_attribute(block_size);
-read_attribute(block_size_bytes);
 read_attribute(btree_node_size);
-read_attribute(btree_node_size_bytes);
 read_attribute(first_bucket);
 read_attribute(nbuckets);
-read_attribute(tree_depth);
-read_attribute(root_usage_percent);
 read_attribute(read_priority_stats);
 read_attribute(write_priority_stats);
 read_attribute(fragmentation_stats);
 read_attribute(oldest_gen_stats);
 read_attribute(reserve_stats);
 read_attribute(btree_cache_size);
-read_attribute(cache_available_percent);
 read_attribute(compression_stats);
 read_attribute(written);
 read_attribute(btree_written);
 read_attribute(metadata_written);
 read_attribute(journal_debug);
-write_attribute(journal_flush);
+
 read_attribute(internal_uuid);
 
-read_attribute(btree_gc_running);
-
-read_attribute(btree_nodes);
-read_attribute(btree_used_percent);
-read_attribute(average_key_size);
 read_attribute(available_buckets);
 read_attribute(free_buckets);
 read_attribute(dirty_data);
@@ -168,10 +158,9 @@ read_attribute(meta_buckets);
 read_attribute(alloc_buckets);
 read_attribute(has_data);
 read_attribute(has_metadata);
-read_attribute(bset_tree_stats);
 read_attribute(alloc_debug);
 
-read_attribute(cache_read_races);
+read_attribute(read_realloc_races);
 
 rw_attribute(journal_write_delay_ms);
 rw_attribute(journal_reclaim_delay_ms);
@@ -221,73 +210,6 @@ static struct attribute sysfs_state_rw = {
 	.mode = S_IRUGO
 };
 
-static int bch2_bset_print_stats(struct bch_fs *c, char *buf)
-{
-	struct bset_stats stats;
-	size_t nodes = 0;
-	struct btree *b;
-	struct bucket_table *tbl;
-	struct rhash_head *pos;
-	unsigned iter;
-
-	memset(&stats, 0, sizeof(stats));
-
-	rcu_read_lock();
-	for_each_cached_btree(b, c, tbl, iter, pos) {
-		bch2_btree_keys_stats(b, &stats);
-		nodes++;
-	}
-	rcu_read_unlock();
-
-	return snprintf(buf, PAGE_SIZE,
-			"btree nodes:		%zu\n"
-			"written sets:		%zu\n"
-			"written key bytes:	%zu\n"
-			"unwritten sets:		%zu\n"
-			"unwritten key bytes:	%zu\n"
-			"no table sets:		%zu\n"
-			"no table key bytes:	%zu\n"
-			"floats:			%zu\n"
-			"failed unpacked:	%zu\n"
-			"failed prev:		%zu\n"
-			"failed overflow:	%zu\n",
-			nodes,
-			stats.sets[BSET_RO_AUX_TREE].nr,
-			stats.sets[BSET_RO_AUX_TREE].bytes,
-			stats.sets[BSET_RW_AUX_TREE].nr,
-			stats.sets[BSET_RW_AUX_TREE].bytes,
-			stats.sets[BSET_NO_AUX_TREE].nr,
-			stats.sets[BSET_NO_AUX_TREE].bytes,
-			stats.floats,
-			stats.failed_unpacked,
-			stats.failed_prev,
-			stats.failed_overflow);
-}
-
-static unsigned bch2_root_usage(struct bch_fs *c)
-{
-	unsigned bytes = 0;
-	struct bkey_packed *k;
-	struct btree *b;
-	struct btree_node_iter iter;
-
-	goto lock_root;
-
-	do {
-		six_unlock_read(&b->lock);
-lock_root:
-		b = c->btree_roots[BTREE_ID_EXTENTS].b;
-		six_lock_read(&b->lock);
-	} while (b != c->btree_roots[BTREE_ID_EXTENTS].b);
-
-	for_each_btree_node_key(b, k, &iter, btree_node_is_extents(b))
-		bytes += bkey_bytes(k);
-
-	six_unlock_read(&b->lock);
-
-	return (bytes * 100) / btree_bytes(c);
-}
-
 static size_t bch2_btree_cache_size(struct bch_fs *c)
 {
 	size_t ret = 0;
@@ -300,27 +222,6 @@ static size_t bch2_btree_cache_size(struct bch_fs *c)
 	mutex_unlock(&c->btree_cache_lock);
 	return ret;
 }
-
-static unsigned bch2_fs_available_percent(struct bch_fs *c)
-{
-	return div64_u64((u64) sectors_available(c) * 100,
-			 c->capacity ?: 1);
-}
-
-#if 0
-static unsigned bch2_btree_used(struct bch_fs *c)
-{
-	return div64_u64(c->gc_stats.key_bytes * 100,
-			 (c->gc_stats.nodes ?: 1) * btree_bytes(c));
-}
-
-static unsigned bch2_average_key_size(struct bch_fs *c)
-{
-	return c->gc_stats.nkeys
-		? div64_u64(c->gc_stats.data, c->gc_stats.nkeys)
-		: 0;
-}
-#endif
 
 static ssize_t show_fs_alloc_debug(struct bch_fs *c, char *buf)
 {
@@ -357,6 +258,9 @@ static ssize_t bch2_compression_stats(struct bch_fs *c, char *buf)
 	    nr_compressed_extents = 0,
 	    compressed_sectors_compressed = 0,
 	    compressed_sectors_uncompressed = 0;
+
+	if (!bch2_fs_running(c))
+		return -EPERM;
 
 	for_each_btree_key(&iter, c, BTREE_ID_EXTENTS, POS_MIN, k)
 		if (k.k->type == BCH_EXTENT) {
@@ -402,29 +306,17 @@ SHOW(bch2_fs)
 	struct bch_fs *c = container_of(kobj, struct bch_fs, kobj);
 
 	sysfs_print(minor,			c->minor);
+	sysfs_printf(internal_uuid, "%pU",	c->sb.uuid.b);
 
 	sysfs_print(journal_write_delay_ms,	c->journal.write_delay_ms);
 	sysfs_print(journal_reclaim_delay_ms,	c->journal.reclaim_delay_ms);
 
-	sysfs_hprint(block_size,		block_bytes(c));
-	sysfs_print(block_size_bytes,		block_bytes(c));
-	sysfs_hprint(btree_node_size,		c->sb.btree_node_size << 9);
-	sysfs_print(btree_node_size_bytes,	c->sb.btree_node_size << 9);
-
+	sysfs_print(block_size,			block_bytes(c));
+	sysfs_print(btree_node_size,		btree_bytes(c));
 	sysfs_hprint(btree_cache_size,		bch2_btree_cache_size(c));
-	sysfs_print(cache_available_percent,	bch2_fs_available_percent(c));
 
-	sysfs_print(btree_gc_running,		c->gc_pos.phase != GC_PHASE_DONE);
-
-#if 0
-	/* XXX: reimplement */
-	sysfs_print(btree_used_percent,	bch2_btree_used(c));
-	sysfs_print(btree_nodes,	c->gc_stats.nodes);
-	sysfs_hprint(average_key_size,	bch2_average_key_size(c));
-#endif
-
-	sysfs_print(cache_read_races,
-		    atomic_long_read(&c->cache_read_races));
+	sysfs_print(read_realloc_races,
+		    atomic_long_read(&c->read_realloc_races));
 
 	sysfs_printf(foreground_write_ratelimit_enabled, "%i",
 		     c->foreground_write_ratelimit_enabled);
@@ -445,28 +337,18 @@ SHOW(bch2_fs)
 
 	/* Debugging: */
 
-	if (attr == &sysfs_journal_debug)
-		return bch2_journal_print_debug(&c->journal, buf);
-
-#define BCH_DEBUG_PARAM(name, description) sysfs_print(name, c->name);
-	BCH_DEBUG_PARAMS()
-#undef BCH_DEBUG_PARAM
-
-	if (!bch2_fs_running(c))
-		return -EPERM;
-
-	if (attr == &sysfs_bset_tree_stats)
-		return bch2_bset_print_stats(c, buf);
 	if (attr == &sysfs_alloc_debug)
 		return show_fs_alloc_debug(c, buf);
 
-	sysfs_print(tree_depth, c->btree_roots[BTREE_ID_EXTENTS].b->level);
-	sysfs_print(root_usage_percent,		bch2_root_usage(c));
+	if (attr == &sysfs_journal_debug)
+		return bch2_journal_print_debug(&c->journal, buf);
 
 	if (attr == &sysfs_compression_stats)
 		return bch2_compression_stats(c, buf);
 
-	sysfs_printf(internal_uuid, "%pU", c->sb.uuid.b);
+#define BCH_DEBUG_PARAM(name, description) sysfs_print(name, c->name);
+	BCH_DEBUG_PARAMS()
+#undef BCH_DEBUG_PARAM
 
 	return 0;
 }
@@ -519,16 +401,13 @@ STORE(__bch2_fs)
 	if (!bch2_fs_running(c))
 		return -EPERM;
 
-	if (attr == &sysfs_journal_flush) {
-		bch2_journal_meta_async(&c->journal, NULL);
+	/* Debugging: */
 
-		return size;
-	}
+	if (attr == &sysfs_trigger_journal_flush)
+		bch2_journal_meta_async(&c->journal, NULL);
 
 	if (attr == &sysfs_trigger_btree_coalesce)
 		bch2_coalesce(c);
-
-	/* Debugging: */
 
 	if (attr == &sysfs_trigger_gc)
 		bch2_gc(c);
@@ -557,28 +436,21 @@ STORE(bch2_fs)
 SYSFS_OPS(bch2_fs);
 
 struct attribute *bch2_fs_files[] = {
-	&sysfs_journal_write_delay_ms,
-	&sysfs_journal_reclaim_delay_ms,
-
+	&sysfs_minor,
 	&sysfs_block_size,
-	&sysfs_block_size_bytes,
 	&sysfs_btree_node_size,
-	&sysfs_btree_node_size_bytes,
-	&sysfs_tree_depth,
-	&sysfs_root_usage_percent,
 	&sysfs_btree_cache_size,
-	&sysfs_cache_available_percent,
-	&sysfs_compression_stats,
-
-	&sysfs_average_key_size,
 
 	&sysfs_meta_replicas_have,
 	&sysfs_data_replicas_have,
 
+	&sysfs_journal_write_delay_ms,
+	&sysfs_journal_reclaim_delay_ms,
+
 	&sysfs_foreground_target_percent,
 	&sysfs_tiering_percent,
 
-	&sysfs_journal_flush,
+	&sysfs_compression_stats,
 	NULL
 };
 
@@ -598,21 +470,16 @@ STORE(bch2_fs_internal)
 SYSFS_OPS(bch2_fs_internal);
 
 struct attribute *bch2_fs_internal_files[] = {
+	&sysfs_alloc_debug,
 	&sysfs_journal_debug,
 
-	&sysfs_alloc_debug,
+	&sysfs_read_realloc_races,
 
-	&sysfs_btree_gc_running,
-
-	&sysfs_btree_nodes,
-	&sysfs_btree_used_percent,
-
-	&sysfs_bset_tree_stats,
-	&sysfs_cache_read_races,
-
+	&sysfs_trigger_journal_flush,
 	&sysfs_trigger_btree_coalesce,
 	&sysfs_trigger_gc,
 	&sysfs_prune_cache,
+
 	&sysfs_foreground_write_ratelimit_enabled,
 	&sysfs_copy_gc_enabled,
 	&sysfs_tiering_enabled,
@@ -853,10 +720,8 @@ SHOW(bch2_dev)
 
 	sysfs_printf(uuid,		"%pU\n", ca->uuid.b);
 
-	sysfs_hprint(bucket_size,	bucket_bytes(ca));
-	sysfs_print(bucket_size_bytes,	bucket_bytes(ca));
-	sysfs_hprint(block_size,	block_bytes(c));
-	sysfs_print(block_size_bytes,	block_bytes(c));
+	sysfs_print(bucket_size,	bucket_bytes(ca));
+	sysfs_print(block_size,		block_bytes(c));
 	sysfs_print(first_bucket,	ca->mi.first_bucket);
 	sysfs_print(nbuckets,		ca->mi.nbuckets);
 	sysfs_print(discard,		ca->mi.discard);
@@ -979,35 +844,46 @@ SYSFS_OPS(bch2_dev);
 struct attribute *bch2_dev_files[] = {
 	&sysfs_uuid,
 	&sysfs_bucket_size,
-	&sysfs_bucket_size_bytes,
 	&sysfs_block_size,
-	&sysfs_block_size_bytes,
 	&sysfs_first_bucket,
 	&sysfs_nbuckets,
+
+	/* settings: */
+	&sysfs_discard,
+	&sysfs_cache_replacement_policy,
+	&sysfs_tier,
+	&sysfs_state_rw,
+
+	&sysfs_has_data,
+	&sysfs_has_metadata,
+
+	/* io stats: */
+	&sysfs_written,
+	&sysfs_btree_written,
+	&sysfs_metadata_written,
+
+	/* alloc info - data: */
+	&sysfs_dirty_data,
+	&sysfs_dirty_bytes,
+	&sysfs_cached_data,
+	&sysfs_cached_bytes,
+
+	/* alloc info - buckets: */
+	&sysfs_available_buckets,
+	&sysfs_free_buckets,
+	&sysfs_dirty_buckets,
+	&sysfs_cached_buckets,
+	&sysfs_meta_buckets,
+	&sysfs_alloc_buckets,
+
+	/* alloc info - other stats: */
 	&sysfs_read_priority_stats,
 	&sysfs_write_priority_stats,
 	&sysfs_fragmentation_stats,
 	&sysfs_oldest_gen_stats,
 	&sysfs_reserve_stats,
-	&sysfs_available_buckets,
-	&sysfs_free_buckets,
-	&sysfs_dirty_data,
-	&sysfs_dirty_bytes,
-	&sysfs_dirty_buckets,
-	&sysfs_cached_data,
-	&sysfs_cached_bytes,
-	&sysfs_cached_buckets,
-	&sysfs_meta_buckets,
-	&sysfs_alloc_buckets,
-	&sysfs_has_data,
-	&sysfs_has_metadata,
-	&sysfs_discard,
-	&sysfs_written,
-	&sysfs_btree_written,
-	&sysfs_metadata_written,
-	&sysfs_cache_replacement_policy,
-	&sysfs_tier,
-	&sysfs_state_rw,
+
+	/* debug: */
 	&sysfs_alloc_debug,
 
 	sysfs_pd_controller_files(copy_gc),

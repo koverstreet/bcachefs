@@ -754,7 +754,7 @@ struct bch_fs {
 	unsigned		bucket_journal_seq;
 
 	/* The rest of this all shows up in sysfs */
-	atomic_long_t		cache_read_races;
+	atomic_long_t		read_realloc_races;
 
 	unsigned		foreground_write_ratelimit_enabled:1;
 	unsigned		copy_gc_enabled:1;
