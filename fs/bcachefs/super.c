@@ -464,7 +464,7 @@ static struct bch_fs *bch2_fs_alloc(struct bch_sb *sb, struct bch_opts opts)
 {
 	struct bch_sb_field_members *mi;
 	struct bch_fs *c;
-	unsigned i, iter_size, journal_entry_bytes;
+	unsigned i, iter_size;
 
 	c = kzalloc(sizeof(struct bch_fs), GFP_KERNEL);
 	if (!c)
@@ -552,8 +552,6 @@ static struct bch_fs *bch2_fs_alloc(struct bch_sb *sb, struct bch_opts opts)
 	iter_size = (btree_blocks(c) + 1) * 2 *
 		sizeof(struct btree_node_iter_set);
 
-	journal_entry_bytes = 512U << BCH_SB_JOURNAL_ENTRY_SIZE(sb);
-
 	if (!(c->wq = alloc_workqueue("bcachefs",
 				WQ_FREEZABLE|WQ_MEM_RECLAIM|WQ_HIGHPRI, 1)) ||
 	    !(c->copygc_wq = alloc_workqueue("bcache_copygc",
@@ -580,7 +578,7 @@ static struct bch_fs *bch2_fs_alloc(struct bch_sb *sb, struct bch_opts opts)
 	    bdi_setup_and_register(&c->bdi, "bcachefs") ||
 	    bch2_io_clock_init(&c->io_clock[READ]) ||
 	    bch2_io_clock_init(&c->io_clock[WRITE]) ||
-	    bch2_fs_journal_init(&c->journal, journal_entry_bytes) ||
+	    bch2_fs_journal_init(&c->journal) ||
 	    bch2_fs_btree_init(c) ||
 	    bch2_fs_encryption_init(c) ||
 	    bch2_fs_compress_init(c) ||

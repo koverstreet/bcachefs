@@ -175,7 +175,6 @@ read_attribute(cache_read_races);
 
 rw_attribute(journal_write_delay_ms);
 rw_attribute(journal_reclaim_delay_ms);
-read_attribute(journal_entry_size_max);
 
 rw_attribute(discard);
 rw_attribute(cache_replacement_policy);
@@ -406,7 +405,6 @@ SHOW(bch2_fs)
 
 	sysfs_print(journal_write_delay_ms,	c->journal.write_delay_ms);
 	sysfs_print(journal_reclaim_delay_ms,	c->journal.reclaim_delay_ms);
-	sysfs_hprint(journal_entry_size_max,	c->journal.entry_size_max);
 
 	sysfs_hprint(block_size,		block_bytes(c));
 	sysfs_print(block_size_bytes,		block_bytes(c));
@@ -561,7 +559,6 @@ SYSFS_OPS(bch2_fs);
 struct attribute *bch2_fs_files[] = {
 	&sysfs_journal_write_delay_ms,
 	&sysfs_journal_reclaim_delay_ms,
-	&sysfs_journal_entry_size_max,
 
 	&sysfs_block_size,
 	&sysfs_block_size_bytes,

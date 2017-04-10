@@ -647,6 +647,10 @@ static int journal_read_buf_realloc(struct journal_read_buf *b,
 {
 	void *n;
 
+	/* the bios are sized for this many pages, max: */
+	if (new_size > JOURNAL_ENTRY_SIZE_MAX)
+		return -ENOMEM;
+
 	new_size = roundup_pow_of_two(new_size);
 	n = kvpmalloc(new_size, GFP_KERNEL);
 	if (!n)
@@ -1182,6 +1186,8 @@ static enum {
 	union journal_res_state old, new;
 	u64 v = atomic64_read(&j->reservations.counter);
 
+	lockdep_assert_held(&j->lock);
+
 	do {
 		old.v = new.v = v;
 		if (old.cur_entry_offset == JOURNAL_ENTRY_CLOSED_VAL)
@@ -1295,7 +1301,7 @@ static int journal_entry_sectors(struct journal *j)
 	struct bch_fs *c = container_of(j, struct bch_fs, journal);
 	struct bch_dev *ca;
 	struct bkey_s_extent e = bkey_i_to_s_extent(&j->key);
-	unsigned sectors_available = j->entry_size_max >> 9;
+	unsigned sectors_available = UINT_MAX;
 	unsigned i, nr_online = 0, nr_devs = 0;
 
 	lockdep_assert_held(&j->lock);
@@ -1362,6 +1368,10 @@ static int journal_entry_open(struct journal *j)
 	sectors = journal_entry_sectors(j);
 	if (sectors <= 0)
 		return sectors;
+
+	buf->disk_sectors	= sectors;
+
+	sectors = min_t(unsigned, sectors, buf->size >> 9);
 
 	j->cur_buf_sectors	= sectors;
 	buf->nr_prio_buckets	= j->nr_prio_buckets;
@@ -2197,16 +2207,38 @@ static void journal_write_done(struct closure *cl)
 	mod_delayed_work(system_freezable_wq, &j->reclaim_work, 0);
 }
 
+static void journal_buf_realloc(struct journal *j, struct journal_buf *buf)
+{
+	/* we aren't holding j->lock: */
+	unsigned new_size = READ_ONCE(j->buf_size_want);
+	void *new_buf;
+
+	if (buf->size >= new_size)
+		return;
+
+	new_buf = kvpmalloc(new_size, GFP_NOIO|__GFP_NOWARN);
+	if (!new_buf)
+		return;
+
+	memcpy(new_buf, buf->data, buf->size);
+	kvpfree(buf->data, buf->size);
+	buf->data	= new_buf;
+	buf->size	= new_size;
+}
+
 static void journal_write(struct closure *cl)
 {
 	struct journal *j = container_of(cl, struct journal, io);
 	struct bch_fs *c = container_of(j, struct bch_fs, journal);
 	struct bch_dev *ca;
 	struct journal_buf *w = journal_prev_buf(j);
-	struct jset *jset = w->data;
+	struct jset *jset;
 	struct bio *bio;
 	struct bch_extent_ptr *ptr;
 	unsigned i, sectors, bytes;
+
+	journal_buf_realloc(j, w);
+	jset = w->data;
 
 	j->write_start_time = local_clock();
 
@@ -2347,6 +2379,7 @@ static int __journal_res_get(struct journal *j, struct journal_res *res,
 			      unsigned u64s_min, unsigned u64s_max)
 {
 	struct bch_fs *c = container_of(j, struct bch_fs, journal);
+	struct journal_buf *buf;
 	int ret;
 retry:
 	ret = journal_res_get_fast(j, res, u64s_min, u64s_max);
@@ -2366,7 +2399,18 @@ retry:
 	}
 
 	/*
-	 * Ok, no more room in the current journal entry - try to start a new
+	 * If we couldn't get a reservation because the current buf filled up,
+	 * and we had room for a bigger entry on disk, signal that we want to
+	 * realloc the journal bufs:
+	 */
+	buf = journal_cur_buf(j);
+	if (journal_entry_is_open(j) &&
+	    buf->size >> 9 < buf->disk_sectors &&
+	    buf->size < JOURNAL_ENTRY_SIZE_MAX)
+		j->buf_size_want = max(j->buf_size_want, buf->size << 1);
+
+	/*
+	 * Close the current journal entry if necessary, then try to start a new
 	 * one:
 	 */
 	switch (journal_buf_switch(j, false)) {
@@ -2766,11 +2810,7 @@ int bch2_dev_journal_init(struct bch_dev *ca, struct bch_sb *sb)
 	struct journal_device *ja = &ca->journal;
 	struct bch_sb_field_journal *journal_buckets =
 		bch2_sb_get_journal(sb);
-	unsigned i, journal_entry_pages;
-
-	journal_entry_pages =
-		DIV_ROUND_UP(1U << BCH_SB_JOURNAL_ENTRY_SIZE(sb),
-			     PAGE_SECTORS);
+	unsigned i;
 
 	ja->nr = bch2_nr_journal_buckets(journal_buckets);
 
@@ -2778,7 +2818,8 @@ int bch2_dev_journal_init(struct bch_dev *ca, struct bch_sb *sb)
 	if (!ja->bucket_seq)
 		return -ENOMEM;
 
-	ca->journal.bio = bio_kmalloc(GFP_KERNEL, journal_entry_pages);
+	ca->journal.bio = bio_kmalloc(GFP_KERNEL,
+			DIV_ROUND_UP(JOURNAL_ENTRY_SIZE_MAX, PAGE_SIZE));
 	if (!ca->journal.bio)
 		return -ENOMEM;
 
@@ -2794,12 +2835,12 @@ int bch2_dev_journal_init(struct bch_dev *ca, struct bch_sb *sb)
 
 void bch2_fs_journal_exit(struct journal *j)
 {
-	kvpfree(j->buf[1].data, j->entry_size_max);
-	kvpfree(j->buf[0].data, j->entry_size_max);
+	kvpfree(j->buf[1].data, j->buf[1].size);
+	kvpfree(j->buf[0].data, j->buf[0].size);
 	free_fifo(&j->pin);
 }
 
-int bch2_fs_journal_init(struct journal *j, unsigned entry_size_max)
+int bch2_fs_journal_init(struct journal *j)
 {
 	static struct lock_class_key res_key;
 
@@ -2815,7 +2856,8 @@ int bch2_fs_journal_init(struct journal *j, unsigned entry_size_max)
 
 	lockdep_init_map(&j->res_map, "journal res", &res_key, 0);
 
-	j->entry_size_max	= entry_size_max;
+	j->buf[0].size		= JOURNAL_ENTRY_SIZE_MIN;
+	j->buf[1].size		= JOURNAL_ENTRY_SIZE_MIN;
 	j->write_delay_ms	= 100;
 	j->reclaim_delay_ms	= 100;
 
@@ -2826,8 +2868,8 @@ int bch2_fs_journal_init(struct journal *j, unsigned entry_size_max)
 		 { .cur_entry_offset = JOURNAL_ENTRY_CLOSED_VAL }).v);
 
 	if (!(init_fifo(&j->pin, JOURNAL_PIN, GFP_KERNEL)) ||
-	    !(j->buf[0].data = kvpmalloc(entry_size_max, GFP_KERNEL)) ||
-	    !(j->buf[1].data = kvpmalloc(entry_size_max, GFP_KERNEL)))
+	    !(j->buf[0].data = kvpmalloc(j->buf[0].size, GFP_KERNEL)) ||
+	    !(j->buf[1].data = kvpmalloc(j->buf[1].size, GFP_KERNEL)))
 		return -ENOMEM;
 
 	j->pin.front = j->pin.back = 1;

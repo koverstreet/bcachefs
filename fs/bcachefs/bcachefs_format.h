@@ -971,7 +971,7 @@ LE64_BITMASK(BCH_SB_INODE_32BIT,	struct bch_sb, flags[1],  8,  9);
 
 LE64_BITMASK(BCH_SB_128_BIT_MACS,	struct bch_sb, flags[1],  9, 10);
 LE64_BITMASK(BCH_SB_ENCRYPTION_TYPE,	struct bch_sb, flags[1], 10, 14);
-LE64_BITMASK(BCH_SB_JOURNAL_ENTRY_SIZE,	struct bch_sb, flags[1], 14, 20);
+/* 14-20 unused, was JOURNAL_ENTRY_SIZE */
 
 LE64_BITMASK(BCH_SB_META_REPLICAS_REQ,	struct bch_sb, flags[1], 20, 24);
 LE64_BITMASK(BCH_SB_DATA_REPLICAS_REQ,	struct bch_sb, flags[1], 24, 28);

@@ -377,13 +377,6 @@ const char *bch2_validate_cache_super(struct bcache_superblock *disk_sb)
 	if (BCH_SB_GC_RESERVE(sb) < 5)
 		return "gc reserve percentage too small";
 
-	if (1U << BCH_SB_JOURNAL_ENTRY_SIZE(sb) < block_size)
-		return "max journal entry size too small";
-
-	/* 4 mb max: */
-	if (512U << BCH_SB_JOURNAL_ENTRY_SIZE(sb) > JOURNAL_ENTRY_SIZE_MAX)
-		return "max journal entry size too big";
-
 	if (!sb->time_precision ||
 	    le32_to_cpu(sb->time_precision) > NSEC_PER_SEC)
 		return "invalid time precision";
