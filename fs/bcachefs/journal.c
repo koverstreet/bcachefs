@@ -2174,9 +2174,18 @@ static void journal_write_done(struct closure *cl)
 	struct journal *j = container_of(cl, struct journal, io);
 	struct journal_buf *w = journal_prev_buf(j);
 
+	__bch2_time_stats_update(j->write_time, j->write_start_time);
+
 	j->last_seq_ondisk = le64_to_cpu(w->data->last_seq);
 
-	__bch2_time_stats_update(j->write_time, j->write_start_time);
+	/*
+	 * Updating last_seq_ondisk may let journal_reclaim_work() discard more
+	 * buckets:
+	 *
+	 * Must come before signaling write completion, for
+	 * bch2_fs_journal_stop():
+	 */
+	mod_delayed_work(system_freezable_wq, &j->reclaim_work, 0);
 
 	BUG_ON(!j->reservations.prev_buf_unwritten);
 	atomic64_sub(((union journal_res_state) { .prev_buf_unwritten = 1 }).v,
@@ -2199,12 +2208,6 @@ static void journal_write_done(struct closure *cl)
 
 	closure_wake_up(&w->wait);
 	wake_up(&j->wait);
-
-	/*
-	 * Updating last_seq_ondisk may let journal_reclaim_work() discard more
-	 * buckets:
-	 */
-	mod_delayed_work(system_freezable_wq, &j->reclaim_work, 0);
 }
 
 static void journal_buf_realloc(struct journal *j, struct journal_buf *buf)
@@ -2345,8 +2348,12 @@ static void journal_write_work(struct work_struct *work)
 	struct journal *j = container_of(to_delayed_work(work),
 					 struct journal, write_work);
 	spin_lock(&j->lock);
-	set_bit(JOURNAL_NEED_WRITE, &j->flags);
+	if (!journal_entry_is_open(j)) {
+		spin_unlock(&j->lock);
+		return;
+	}
 
+	set_bit(JOURNAL_NEED_WRITE, &j->flags);
 	if (journal_buf_switch(j, false) != JOURNAL_UNLOCKED)
 		spin_unlock(&j->lock);
 }
@@ -2505,6 +2512,8 @@ void bch2_journal_wait_on_seq(struct journal *j, u64 seq, struct closure *parent
 
 void bch2_journal_flush_seq_async(struct journal *j, u64 seq, struct closure *parent)
 {
+	struct journal_buf *buf;
+
 	spin_lock(&j->lock);
 
 	BUG_ON(seq > atomic64_read(&j->seq));
@@ -2517,8 +2526,9 @@ void bch2_journal_flush_seq_async(struct journal *j, u64 seq, struct closure *pa
 	if (seq == atomic64_read(&j->seq)) {
 		bool set_need_write = false;
 
-		if (parent &&
-		    !closure_wait(&journal_cur_buf(j)->wait, parent))
+		buf = journal_cur_buf(j);
+
+		if (parent && !closure_wait(&buf->wait, parent))
 			BUG();
 
 		if (!test_and_set_bit(JOURNAL_NEED_WRITE, &j->flags)) {
@@ -2529,7 +2539,7 @@ void bch2_journal_flush_seq_async(struct journal *j, u64 seq, struct closure *pa
 		switch (journal_buf_switch(j, set_need_write)) {
 		case JOURNAL_ENTRY_ERROR:
 			if (parent)
-				closure_wake_up(&journal_cur_buf(j)->wait);
+				closure_wake_up(&buf->wait);
 			break;
 		case JOURNAL_ENTRY_CLOSED:
 			/*
@@ -2545,7 +2555,9 @@ void bch2_journal_flush_seq_async(struct journal *j, u64 seq, struct closure *pa
 	} else if (parent &&
 		   seq + 1 == atomic64_read(&j->seq) &&
 		   j->reservations.prev_buf_unwritten) {
-		if (!closure_wait(&journal_prev_buf(j)->wait, parent))
+		buf = journal_prev_buf(j);
+
+		if (!closure_wait(&buf->wait, parent))
 			BUG();
 
 		smp_mb();
@@ -2553,7 +2565,7 @@ void bch2_journal_flush_seq_async(struct journal *j, u64 seq, struct closure *pa
 		/* check if raced with write completion (or failure) */
 		if (!j->reservations.prev_buf_unwritten ||
 		    bch2_journal_error(j))
-			closure_wake_up(&journal_prev_buf(j)->wait);
+			closure_wake_up(&buf->wait);
 	}
 
 	spin_unlock(&j->lock);
