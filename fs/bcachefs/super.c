@@ -979,8 +979,8 @@ static void bch2_dev_free(struct bch_dev *ca)
 	kvpfree(ca->disk_buckets, bucket_bytes(ca));
 	kfree(ca->prio_buckets);
 	kfree(ca->bio_prio);
-	vfree(ca->buckets);
-	vfree(ca->oldest_gens);
+	kvpfree(ca->buckets,	 ca->mi.nbuckets * sizeof(struct bucket));
+	kvpfree(ca->oldest_gens, ca->mi.nbuckets * sizeof(u8));
 	free_heap(&ca->heap);
 	free_fifo(&ca->free_inc);
 
@@ -1140,10 +1140,12 @@ static int bch2_dev_alloc(struct bch_fs *c, unsigned dev_idx)
 	    !init_fifo(&ca->free[RESERVE_NONE], reserve_none, GFP_KERNEL) ||
 	    !init_fifo(&ca->free_inc,	free_inc_reserve, GFP_KERNEL) ||
 	    !init_heap(&ca->heap,	heap_size, GFP_KERNEL) ||
-	    !(ca->oldest_gens	= vzalloc(sizeof(u8) *
-					  ca->mi.nbuckets)) ||
-	    !(ca->buckets	= vzalloc(sizeof(struct bucket) *
-					  ca->mi.nbuckets)) ||
+	    !(ca->oldest_gens	= kvpmalloc(ca->mi.nbuckets *
+					    sizeof(u8),
+					    GFP_KERNEL|__GFP_ZERO)) ||
+	    !(ca->buckets	= kvpmalloc(ca->mi.nbuckets *
+					    sizeof(struct bucket),
+					    GFP_KERNEL|__GFP_ZERO)) ||
 	    !(ca->prio_buckets	= kzalloc(sizeof(u64) * prio_buckets(ca) *
 					  2, GFP_KERNEL)) ||
 	    !(ca->disk_buckets	= kvpmalloc(bucket_bytes(ca), GFP_KERNEL)) ||
