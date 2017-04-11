@@ -37,10 +37,10 @@ static struct bch_dev *bch2_device_lookup(struct bch_fs *c, u64 dev,
 
 		path = strndup_user((const char __user *)
 				    (unsigned long) dev, PATH_MAX);
-		if (!path)
-			return ERR_PTR(-ENOMEM);
+		if (IS_ERR(path))
+			return ERR_CAST(path);
 
-		bdev = lookup_bdev(strim(path));
+		bdev = lookup_bdev(path);
 		kfree(path);
 		if (IS_ERR(bdev))
 			return ERR_CAST(bdev);
