@@ -527,62 +527,34 @@ fsck_err:
 #define JOURNAL_ENTRY_NONE	6
 #define JOURNAL_ENTRY_BAD	7
 
-static int journal_entry_validate(struct bch_fs *c,
-				  struct jset *j, u64 sector,
-				  unsigned bucket_sectors_left,
-				  unsigned sectors_read)
+#define journal_entry_err(c, msg, ...)					\
+({									\
+	if (write == READ) {						\
+		mustfix_fsck_err(c, msg, ##__VA_ARGS__);		\
+	} else {							\
+		bch_err(c, "detected corrupt metadata before write:\n"	\
+	                msg, ##__VA_ARGS__);				\
+		ret = BCH_FSCK_ERRORS_NOT_FIXED;			\
+		goto fsck_err;						\
+	}								\
+	true;								\
+})
+
+#define journal_entry_err_on(cond, c, msg, ...)				\
+	((cond) ? journal_entry_err(c, msg, ##__VA_ARGS__) : false)
+
+static int __journal_entry_validate(struct bch_fs *c, struct jset *j,
+				    int write)
 {
 	struct jset_entry *entry;
-	size_t bytes = vstruct_bytes(j);
-	struct bch_csum csum;
 	int ret = 0;
-
-	if (le64_to_cpu(j->magic) != jset_magic(c))
-		return JOURNAL_ENTRY_NONE;
-
-	if (le32_to_cpu(j->version) != BCACHE_JSET_VERSION) {
-		bch_err(c, "unknown journal entry version %u",
-			le32_to_cpu(j->version));
-		return BCH_FSCK_UNKNOWN_VERSION;
-	}
-
-	if (mustfix_fsck_err_on(bytes > bucket_sectors_left << 9, c,
-			"journal entry too big (%zu bytes), sector %lluu",
-			bytes, sector)) {
-		/* XXX: note we might have missing journal entries */
-		return JOURNAL_ENTRY_BAD;
-	}
-
-	if (bytes > sectors_read << 9)
-		return JOURNAL_ENTRY_REREAD;
-
-	if (fsck_err_on(!bch2_checksum_type_valid(c, JSET_CSUM_TYPE(j)), c,
-			"journal entry with unknown csum type %llu sector %lluu",
-			JSET_CSUM_TYPE(j), sector))
-		return JOURNAL_ENTRY_BAD;
-
-	csum = csum_vstruct(c, JSET_CSUM_TYPE(j), journal_nonce(j), j);
-	if (mustfix_fsck_err_on(bch2_crc_cmp(csum, j->csum), c,
-			"journal checksum bad, sector %llu", sector)) {
-		/* XXX: retry IO, when we start retrying checksum errors */
-		/* XXX: note we might have missing journal entries */
-		return JOURNAL_ENTRY_BAD;
-	}
-
-	bch2_encrypt(c, JSET_CSUM_TYPE(j), journal_nonce(j),
-		    j->encrypted_start,
-		    vstruct_end(j) - (void *) j->encrypted_start);
-
-	if (mustfix_fsck_err_on(le64_to_cpu(j->last_seq) > le64_to_cpu(j->seq), c,
-			"invalid journal entry: last_seq > seq"))
-		j->last_seq = j->seq;
 
 	vstruct_for_each(j, entry) {
 		struct bkey_i *k;
 
-		if (mustfix_fsck_err_on(vstruct_next(entry) >
-					vstruct_last(j), c,
-				"journal entry extents past end of jset")) {
+		if (journal_entry_err_on(vstruct_next(entry) >
+					 vstruct_last(j), c,
+				"journal entry extends past end of jset")) {
 			j->u64s = cpu_to_le64((u64 *) entry - j->_data);
 			break;
 		}
@@ -602,7 +574,7 @@ static int journal_entry_validate(struct bch_fs *c,
 		case JOURNAL_ENTRY_BTREE_ROOT:
 			k = entry->start;
 
-			if (mustfix_fsck_err_on(!entry->u64s ||
+			if (journal_entry_err_on(!entry->u64s ||
 					le16_to_cpu(entry->u64s) != k->k.u64s, c,
 					"invalid btree root journal entry: wrong number of keys")) {
 				journal_entry_null_range(entry,
@@ -620,7 +592,7 @@ static int journal_entry_validate(struct bch_fs *c,
 			break;
 
 		case JOURNAL_ENTRY_JOURNAL_SEQ_BLACKLISTED:
-			if (mustfix_fsck_err_on(le16_to_cpu(entry->u64s) != 1, c,
+			if (journal_entry_err_on(le16_to_cpu(entry->u64s) != 1, c,
 				"invalid journal seq blacklist entry: bad size")) {
 				journal_entry_null_range(entry,
 						vstruct_next(entry));
@@ -628,13 +600,68 @@ static int journal_entry_validate(struct bch_fs *c,
 
 			break;
 		default:
-			mustfix_fsck_err(c, "invalid journal entry type %llu",
+			journal_entry_err(c, "invalid journal entry type %llu",
 				 JOURNAL_ENTRY_TYPE(entry));
 			journal_entry_null_range(entry, vstruct_next(entry));
 			break;
 		}
 	}
 
+fsck_err:
+	return ret;
+}
+
+static int journal_entry_validate(struct bch_fs *c,
+				  struct jset *j, u64 sector,
+				  unsigned bucket_sectors_left,
+				  unsigned sectors_read,
+				  int write)
+{
+	size_t bytes = vstruct_bytes(j);
+	struct bch_csum csum;
+	int ret = 0;
+
+	if (le64_to_cpu(j->magic) != jset_magic(c))
+		return JOURNAL_ENTRY_NONE;
+
+	if (le32_to_cpu(j->version) != BCACHE_JSET_VERSION) {
+		bch_err(c, "unknown journal entry version %u",
+			le32_to_cpu(j->version));
+		return BCH_FSCK_UNKNOWN_VERSION;
+	}
+
+	if (journal_entry_err_on(bytes > bucket_sectors_left << 9, c,
+			"journal entry too big (%zu bytes), sector %lluu",
+			bytes, sector)) {
+		/* XXX: note we might have missing journal entries */
+		return JOURNAL_ENTRY_BAD;
+	}
+
+	if (bytes > sectors_read << 9)
+		return JOURNAL_ENTRY_REREAD;
+
+	if (fsck_err_on(!bch2_checksum_type_valid(c, JSET_CSUM_TYPE(j)), c,
+			"journal entry with unknown csum type %llu sector %lluu",
+			JSET_CSUM_TYPE(j), sector))
+		return JOURNAL_ENTRY_BAD;
+
+	csum = csum_vstruct(c, JSET_CSUM_TYPE(j), journal_nonce(j), j);
+	if (journal_entry_err_on(bch2_crc_cmp(csum, j->csum), c,
+			"journal checksum bad, sector %llu", sector)) {
+		/* XXX: retry IO, when we start retrying checksum errors */
+		/* XXX: note we might have missing journal entries */
+		return JOURNAL_ENTRY_BAD;
+	}
+
+	bch2_encrypt(c, JSET_CSUM_TYPE(j), journal_nonce(j),
+		    j->encrypted_start,
+		    vstruct_end(j) - (void *) j->encrypted_start);
+
+	if (journal_entry_err_on(le64_to_cpu(j->last_seq) > le64_to_cpu(j->seq), c,
+			"invalid journal entry: last_seq > seq"))
+		j->last_seq = j->seq;
+
+	return __journal_entry_validate(c, j, write);
 fsck_err:
 	return ret;
 }
@@ -705,7 +732,8 @@ reread:			sectors_read = min_t(unsigned,
 		}
 
 		ret = journal_entry_validate(c, j, offset,
-					end - offset, sectors_read);
+					end - offset, sectors_read,
+					READ);
 		switch (ret) {
 		case BCH_FSCK_OK:
 			break;
@@ -2274,12 +2302,20 @@ static void journal_write(struct closure *cl)
 	SET_JSET_BIG_ENDIAN(jset, CPU_BIG_ENDIAN);
 	SET_JSET_CSUM_TYPE(jset, bch2_meta_checksum_type(c));
 
+	if (bch2_csum_type_is_encryption(JSET_CSUM_TYPE(jset)) &&
+	    __journal_entry_validate(c, jset, WRITE))
+		goto err;
+
 	bch2_encrypt(c, JSET_CSUM_TYPE(jset), journal_nonce(jset),
 		    jset->encrypted_start,
 		    vstruct_end(jset) - (void *) jset->encrypted_start);
 
 	jset->csum = csum_vstruct(c, JSET_CSUM_TYPE(jset),
 				  journal_nonce(jset), jset);
+
+	if (!bch2_csum_type_is_encryption(JSET_CSUM_TYPE(jset)) &&
+	    __journal_entry_validate(c, jset, WRITE))
+		goto err;
 
 	sectors = vstruct_sectors(jset, c->block_bits);
 	BUG_ON(sectors > j->prev_buf_sectors);
@@ -2348,6 +2384,9 @@ no_io:
 	extent_for_each_ptr(bkey_i_to_s_extent(&j->key), ptr)
 		ptr->offset += sectors;
 
+	closure_return_with_destructor(cl, journal_write_done);
+err:
+	bch2_fatal_error(c);
 	closure_return_with_destructor(cl, journal_write_done);
 }
 
