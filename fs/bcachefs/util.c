@@ -417,3 +417,17 @@ void memcpy_from_bio(void *dst, struct bio *src, struct bvec_iter src_iter)
 		dst += bv.bv_len;
 	}
 }
+
+size_t bch_scnmemcpy(char *buf, size_t size, const char *src, size_t len)
+{
+	size_t n;
+
+	if (!size)
+		return 0;
+
+	n = min(size - 1, len);
+	memcpy(buf, src, n);
+	buf[n] = '\0';
+
+	return n;
+}

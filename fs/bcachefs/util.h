@@ -750,4 +750,6 @@ static inline struct bio_vec next_contig_bvec(struct bio *bio,
 #define bio_for_each_contig_segment(bv, bio, iter)			\
 	__bio_for_each_contig_segment(bv, bio, iter, (bio)->bi_iter)
 
+size_t bch_scnmemcpy(char *, size_t, const char *, size_t);
+
 #endif /* _BCACHE_UTIL_H */

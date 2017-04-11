@@ -109,7 +109,7 @@ void bch2_bkey_val_to_text(struct bch_fs *c, enum bkey_type type,
 
 	if (k.k->type >= KEY_TYPE_GENERIC_NR &&
 	    ops->val_to_text) {
-		out += scnprintf(out, end - out, " -> ");
+		out += scnprintf(out, end - out, ": ");
 		ops->val_to_text(c, out, end - out, k);
 	}
 }

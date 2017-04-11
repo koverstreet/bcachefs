@@ -77,12 +77,19 @@ static const struct bch_hash_desc dirent_hash_desc = {
 static const char *bch2_dirent_invalid(const struct bch_fs *c,
 				       struct bkey_s_c k)
 {
+	struct bkey_s_c_dirent d;
+
 	switch (k.k->type) {
 	case BCH_DIRENT:
-		return bkey_val_bytes(k.k) < sizeof(struct bch_dirent)
-			? "value too small"
-			: NULL;
+		if (bkey_val_bytes(k.k) < sizeof(struct bch_dirent))
+			return "value too small";
 
+		d = bkey_s_c_to_dirent(k);
+
+		if (!bch2_dirent_name_bytes(d))
+			return "empty name";
+
+		return NULL;
 	case BCH_DIRENT_WHITEOUT:
 		return bkey_val_bytes(k.k) != 0
 			? "value size should be zero"
@@ -97,21 +104,15 @@ static void bch2_dirent_to_text(struct bch_fs *c, char *buf,
 				size_t size, struct bkey_s_c k)
 {
 	struct bkey_s_c_dirent d;
+	size_t n = 0;
 
 	switch (k.k->type) {
 	case BCH_DIRENT:
 		d = bkey_s_c_to_dirent(k);
 
-		if (size) {
-			unsigned n = min_t(unsigned, size,
-					   bch2_dirent_name_bytes(d));
-			memcpy(buf, d.v->d_name, n);
-			buf[size - 1] = '\0';
-			buf += n;
-			size -= n;
-		}
-
-		scnprintf(buf, size, " -> %llu", d.v->d_inum);
+		n += bch_scnmemcpy(buf + n, size - n, d.v->d_name,
+				   bch2_dirent_name_bytes(d));
+		n += scnprintf(buf + n, size - n, " -> %llu", d.v->d_inum);
 		break;
 	case BCH_DIRENT_WHITEOUT:
 		scnprintf(buf, size, "whiteout");

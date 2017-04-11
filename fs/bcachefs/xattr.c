@@ -11,6 +11,8 @@
 #include <linux/posix_acl_xattr.h>
 #include <linux/xattr.h>
 
+static const struct xattr_handler *bch2_xattr_type_to_handler(unsigned);
+
 struct xattr_search_key {
 	u8		type;
 	struct qstr	name;
@@ -79,12 +81,23 @@ static const struct bch_hash_desc xattr_hash_desc = {
 static const char *bch2_xattr_invalid(const struct bch_fs *c,
 				     struct bkey_s_c k)
 {
+	const struct xattr_handler *handler;
+	struct bkey_s_c_xattr xattr;
+
 	switch (k.k->type) {
 	case BCH_XATTR:
-		return bkey_val_bytes(k.k) < sizeof(struct bch_xattr)
-			? "value too small"
-			: NULL;
+		if (bkey_val_bytes(k.k) < sizeof(struct bch_xattr))
+			return "value too small";
 
+		xattr = bkey_s_c_to_xattr(k);
+		if (!xattr.v->x_name)
+			return "empty name";
+
+		handler = bch2_xattr_type_to_handler(xattr.v->x_type);
+		if (!handler)
+			return "invalid type";
+
+		return NULL;
 	case BCH_XATTR_WHITEOUT:
 		return bkey_val_bytes(k.k) != 0
 			? "value size should be zero"
@@ -98,34 +111,29 @@ static const char *bch2_xattr_invalid(const struct bch_fs *c,
 static void bch2_xattr_to_text(struct bch_fs *c, char *buf,
 			      size_t size, struct bkey_s_c k)
 {
+	const struct xattr_handler *handler;
 	struct bkey_s_c_xattr xattr;
-	int n;
+	size_t n = 0;
 
 	switch (k.k->type) {
 	case BCH_XATTR:
 		xattr = bkey_s_c_to_xattr(k);
 
-		if (size) {
-			n = min_t(unsigned, size, xattr.v->x_name_len);
-			memcpy(buf, xattr.v->x_name, n);
-			buf[size - 1] = '\0';
-			buf += n;
-			size -= n;
-		}
+		handler = bch2_xattr_type_to_handler(xattr.v->x_type);
+		if (handler && handler->prefix)
+			n += scnprintf(buf + n, size - n, "%s", handler->prefix);
+		else if (handler)
+			n += scnprintf(buf + n, size - n, "(type %u)",
+				       xattr.v->x_type);
+		else
+			n += scnprintf(buf + n, size - n, "(unknown type %u)",
+				       xattr.v->x_type);
 
-		n = scnprintf(buf, size, " -> ");
-		buf += n;
-		size -= n;
-
-		if (size) {
-			n = min_t(unsigned, size,
-				  le16_to_cpu(xattr.v->x_val_len));
-			memcpy(buf, xattr_val(xattr.v), n);
-			buf[size - 1] = '\0';
-			buf += n;
-			size -= n;
-		}
-
+		n += bch_scnmemcpy(buf + n, size - n, xattr.v->x_name,
+				   xattr.v->x_name_len);
+		n += scnprintf(buf + n, size - n, ":");
+		n += bch_scnmemcpy(buf + n, size - n, xattr_val(xattr.v),
+				   le16_to_cpu(xattr.v->x_val_len));
 		break;
 	case BCH_XATTR_WHITEOUT:
 		scnprintf(buf, size, "whiteout");
@@ -224,8 +232,6 @@ int bch2_xattr_set(struct bch_fs *c, struct inode *inode,
 			       name, value, size, flags, type,
 			       &ei->journal_seq);
 }
-
-static const struct xattr_handler *bch2_xattr_type_to_handler(unsigned);
 
 static size_t bch2_xattr_emit(struct dentry *dentry,
 			     const struct bch_xattr *xattr,
