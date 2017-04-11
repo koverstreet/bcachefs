@@ -4,7 +4,7 @@
 #include "dirent.h"
 #include "error.h"
 #include "fs.h"
-#include "fs-gc.h"
+#include "fsck.h"
 #include "inode.h"
 #include "keylist.h"
 #include "super.h"
@@ -640,7 +640,7 @@ static int bch2_gc_do_inode(struct bch_fs *c,
 
 	ret = bch2_inode_unpack(inode, &u);
 	if (bch2_fs_inconsistent_on(ret, c,
-			 "error unpacking inode %llu in fs-gc",
+			 "error unpacking inode %llu in fsck",
 			 inode.k->p.inode))
 		return ret;
 

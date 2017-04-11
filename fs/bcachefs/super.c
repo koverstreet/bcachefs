@@ -19,7 +19,7 @@
 #include "debug.h"
 #include "error.h"
 #include "fs.h"
-#include "fs-gc.h"
+#include "fsck.h"
 #include "inode.h"
 #include "io.h"
 #include "journal.h"
