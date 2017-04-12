@@ -1942,8 +1942,8 @@ int __bch2_btree_insert_at(struct btree_insert *trans)
 	int ret;
 
 	trans_for_each_entry(trans, i) {
-		EBUG_ON(i->iter->level);
-		EBUG_ON(bkey_cmp(bkey_start_pos(&i->k->k), i->iter->pos));
+		BUG_ON(i->iter->level);
+		BUG_ON(bkey_cmp(bkey_start_pos(&i->k->k), i->iter->pos));
 	}
 
 	sort(trans->entries, trans->nr, sizeof(trans->entries[0]),
@@ -2104,6 +2104,19 @@ err:
 	goto out;
 }
 
+int bch2_btree_delete_at(struct btree_iter *iter, unsigned flags)
+{
+	struct bkey_i k;
+
+	bkey_init(&k.k);
+	k.k.p = iter->pos;
+
+	return bch2_btree_insert_at(iter->c, NULL, NULL, NULL,
+				    BTREE_INSERT_NOFAIL|
+				    BTREE_INSERT_USE_RESERVE|flags,
+				    BTREE_INSERT_ENTRY(iter, &k));
+}
+
 int bch2_btree_insert_list_at(struct btree_iter *iter,
 			     struct keylist *keys,
 			     struct disk_reservation *disk_res,
@@ -2130,45 +2143,6 @@ int bch2_btree_insert_list_at(struct btree_iter *iter,
 	}
 
 	return 0;
-}
-
-/**
- * bch_btree_insert_check_key - insert dummy key into btree
- *
- * We insert a random key on a cache miss, then compare exchange on it
- * once the cache promotion or backing device read completes. This
- * ensures that if this key is written to after the read, the read will
- * lose and not overwrite the key with stale data.
- *
- * Return values:
- * -EAGAIN: @iter->cl was put on a waitlist waiting for btree node allocation
- * -EINTR: btree node was changed while upgrading to write lock
- */
-int bch2_btree_insert_check_key(struct btree_iter *iter,
-			       struct bkey_i *check_key)
-{
-	struct bpos saved_pos = iter->pos;
-	struct bkey_i_cookie *cookie;
-	BKEY_PADDED(key) tmp;
-	int ret;
-
-	BUG_ON(bkey_cmp(iter->pos, bkey_start_pos(&check_key->k)));
-
-	check_key->k.type = KEY_TYPE_COOKIE;
-	set_bkey_val_bytes(&check_key->k, sizeof(struct bch_cookie));
-
-	cookie = bkey_i_to_cookie(check_key);
-	get_random_bytes(&cookie->v, sizeof(cookie->v));
-
-	bkey_copy(&tmp.key, check_key);
-
-	ret = bch2_btree_insert_at(iter->c, NULL, NULL, NULL,
-				  BTREE_INSERT_ATOMIC,
-				  BTREE_INSERT_ENTRY(iter, &tmp.key));
-
-	bch2_btree_iter_rewind(iter, saved_pos);
-
-	return ret;
 }
 
 /**

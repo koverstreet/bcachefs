@@ -11,6 +11,14 @@
 #include <linux/posix_acl_xattr.h>
 #include <linux/xattr.h>
 
+static unsigned xattr_val_u64s(unsigned name_len, unsigned val_len)
+{
+	return DIV_ROUND_UP(sizeof(struct bch_xattr) +
+			    name_len + val_len, sizeof(u64));
+}
+
+#define xattr_val(_xattr)	((_xattr)->x_name + (_xattr)->x_name_len)
+
 static const struct xattr_handler *bch2_xattr_type_to_handler(unsigned);
 
 struct xattr_search_key {
@@ -32,8 +40,6 @@ static u64 bch2_xattr_hash(const struct bch_hash_info *info,
 
 	return bch2_str_hash_end(&ctx, info);
 }
-
-#define xattr_val(_xattr)	((_xattr)->x_name + (_xattr)->x_name_len)
 
 static u64 xattr_hash_key(const struct bch_hash_info *info, const void *key)
 {
@@ -68,7 +74,7 @@ static bool xattr_cmp_bkey(struct bkey_s_c _l, struct bkey_s_c _r)
 		memcmp(l.v->x_name, r.v->x_name, r.v->x_name_len);
 }
 
-static const struct bch_hash_desc xattr_hash_desc = {
+const struct bch_hash_desc bch2_xattr_hash_desc = {
 	.btree_id	= BTREE_ID_XATTRS,
 	.key_type	= BCH_XATTR,
 	.whiteout_type	= BCH_XATTR_WHITEOUT,
@@ -83,6 +89,7 @@ static const char *bch2_xattr_invalid(const struct bch_fs *c,
 {
 	const struct xattr_handler *handler;
 	struct bkey_s_c_xattr xattr;
+	unsigned u64s;
 
 	switch (k.k->type) {
 	case BCH_XATTR:
@@ -90,12 +97,21 @@ static const char *bch2_xattr_invalid(const struct bch_fs *c,
 			return "value too small";
 
 		xattr = bkey_s_c_to_xattr(k);
-		if (!xattr.v->x_name)
-			return "empty name";
+		u64s = xattr_val_u64s(xattr.v->x_name_len,
+				      le16_to_cpu(xattr.v->x_val_len));
+
+		if (bkey_val_u64s(k.k) < u64s)
+			return "value too small";
+
+		if (bkey_val_u64s(k.k) > u64s)
+			return "value too big";
 
 		handler = bch2_xattr_type_to_handler(xattr.v->x_type);
 		if (!handler)
 			return "invalid type";
+
+		if (memchr(xattr.v->x_name, '\0', xattr.v->x_name_len))
+			return "xattr name has invalid characters";
 
 		return NULL;
 	case BCH_XATTR_WHITEOUT:
@@ -155,7 +171,7 @@ int bch2_xattr_get(struct bch_fs *c, struct inode *inode,
 	struct bkey_s_c_xattr xattr;
 	int ret;
 
-	k = bch2_hash_lookup(xattr_hash_desc, &ei->str_hash, c,
+	k = bch2_hash_lookup(bch2_xattr_hash_desc, &ei->str_hash, c,
 			    ei->vfs_inode.i_ino, &iter,
 			    &X_SEARCH(type, name, strlen(name)));
 	if (IS_ERR(k.k))
@@ -183,15 +199,13 @@ int __bch2_xattr_set(struct bch_fs *c, u64 inum,
 	int ret;
 
 	if (!value) {
-		ret = bch2_hash_delete(xattr_hash_desc, hash_info,
+		ret = bch2_hash_delete(bch2_xattr_hash_desc, hash_info,
 				      c, inum,
 				      journal_seq, &search);
 	} else {
 		struct bkey_i_xattr *xattr;
 		unsigned u64s = BKEY_U64s +
-			DIV_ROUND_UP(sizeof(struct bch_xattr) +
-				     search.name.len + size,
-				     sizeof(u64));
+			xattr_val_u64s(search.name.len, size);
 
 		if (u64s > U8_MAX)
 			return -ERANGE;
@@ -208,7 +222,7 @@ int __bch2_xattr_set(struct bch_fs *c, u64 inum,
 		memcpy(xattr->v.x_name, search.name.name, search.name.len);
 		memcpy(xattr_val(&xattr->v), value, size);
 
-		ret = bch2_hash_set(xattr_hash_desc, hash_info, c,
+		ret = bch2_hash_set(bch2_xattr_hash_desc, hash_info, c,
 				inum, journal_seq,
 				&xattr->k_i,
 				(flags & XATTR_CREATE ? BCH_HASH_SET_MUST_CREATE : 0)|

@@ -2,7 +2,9 @@
 #define _BCACHE_STR_HASH_H
 
 #include "btree_iter.h"
+#include "btree_update.h"
 #include "checksum.h"
+#include "error.h"
 #include "inode.h"
 #include "siphash.h"
 #include "super.h"
@@ -341,6 +343,36 @@ err:
 	return ret;
 }
 
+static inline int bch2_hash_delete_at(const struct bch_hash_desc desc,
+				      const struct bch_hash_info *info,
+				      struct btree_iter *iter,
+				      u64 *journal_seq)
+{
+	struct btree_iter whiteout_iter;
+	struct bkey_i delete;
+	int ret = -ENOENT;
+
+	bch2_btree_iter_init(&whiteout_iter, iter->c, desc.btree_id,
+			     iter->pos);
+	bch2_btree_iter_link(iter, &whiteout_iter);
+
+	ret = bch2_hash_needs_whiteout(desc, info, &whiteout_iter, iter);
+	if (ret < 0)
+		goto err;
+
+	bkey_init(&delete.k);
+	delete.k.p = iter->pos;
+	delete.k.type = ret ? desc.whiteout_type : KEY_TYPE_DELETED;
+
+	ret = bch2_btree_insert_at(iter->c, NULL, NULL, journal_seq,
+				  BTREE_INSERT_NOFAIL|
+				  BTREE_INSERT_ATOMIC,
+				  BTREE_INSERT_ENTRY(iter, &delete));
+err:
+	bch2_btree_iter_unlink(&whiteout_iter);
+	return ret;
+}
+
 static inline int bch2_hash_delete(const struct bch_hash_desc desc,
 				  const struct bch_hash_info *info,
 				  struct bch_fs *c, u64 inode,
@@ -348,7 +380,6 @@ static inline int bch2_hash_delete(const struct bch_hash_desc desc,
 {
 	struct btree_iter iter, whiteout_iter;
 	struct bkey_s_c k;
-	struct bkey_i delete;
 	int ret = -ENOENT;
 
 	bch2_btree_iter_init_intent(&iter, c, desc.btree_id,
@@ -361,18 +392,7 @@ retry:
 	if ((ret = btree_iter_err(k)))
 		goto err;
 
-	ret = bch2_hash_needs_whiteout(desc, info, &whiteout_iter, &iter);
-	if (ret < 0)
-		goto err;
-
-	bkey_init(&delete.k);
-	delete.k.p = k.k->p;
-	delete.k.type = ret ? desc.whiteout_type : KEY_TYPE_DELETED;
-
-	ret = bch2_btree_insert_at(c, NULL, NULL, journal_seq,
-				  BTREE_INSERT_NOFAIL|
-				  BTREE_INSERT_ATOMIC,
-				  BTREE_INSERT_ENTRY(&iter, &delete));
+	ret = bch2_hash_delete_at(desc, info, &iter, journal_seq);
 err:
 	if (ret == -EINTR)
 		goto retry;

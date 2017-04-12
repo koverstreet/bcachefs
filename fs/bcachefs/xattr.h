@@ -1,6 +1,9 @@
 #ifndef _BCACHE_XATTR_H
 #define _BCACHE_XATTR_H
 
+#include "str_hash.h"
+
+extern const struct bch_hash_desc bch2_xattr_hash_desc;
 extern const struct bkey_ops bch2_bkey_xattr_ops;
 
 struct dentry;

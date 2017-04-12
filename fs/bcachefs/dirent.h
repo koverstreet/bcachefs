@@ -1,6 +1,9 @@
 #ifndef _BCACHE_DIRENT_H
 #define _BCACHE_DIRENT_H
 
+#include "str_hash.h"
+
+extern const struct bch_hash_desc bch2_dirent_hash_desc;
 extern const struct bkey_ops bch2_bkey_dirent_ops;
 
 struct qstr;

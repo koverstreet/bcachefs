@@ -874,20 +874,25 @@ static void bset_encrypt(struct bch_fs *c, struct bset *i, struct nonce nonce)
 
 #define btree_node_error(c, b, ptr, msg, ...)				\
 do {									\
-	bch_err(c, "%s at btree %u level %u/%u\n"			\
-		"sector %llu node offset %u bset u64s %u: " msg,	\
-		write == WRITE						\
-		? "corrupt metadata in btree node write"		\
-		: "btree node error",					\
-		(b)->btree_id, (b)->level,				\
-		(c)->btree_roots[(b)->btree_id].level,			\
-		(u64) ptr->offset, (b)->written,			\
-		le16_to_cpu((i)->u64s), ##__VA_ARGS__);			\
-									\
 	if (write == READ &&						\
 	    !test_bit(BCH_FS_INITIAL_GC_DONE, &c->flags)) {		\
-		mustfix_fsck_err(c, "in btree node read");		\
+		mustfix_fsck_err(c,					\
+			 "btree node read error at btree %u level %u/%u\n"\
+			"sector %llu node offset %u bset u64s %u: " msg,\
+			(b)->btree_id, (b)->level,			\
+			(c)->btree_roots[(b)->btree_id].level,		\
+			(u64) ptr->offset, (b)->written,		\
+			le16_to_cpu((i)->u64s), ##__VA_ARGS__);		\
 	} else {							\
+		bch_err(c, "%s at btree %u level %u/%u\n"		\
+			"sector %llu node offset %u bset u64s %u: " msg,\
+			write == WRITE					\
+			? "corrupt metadata in btree node write"	\
+			: "btree node error",				\
+			(b)->btree_id, (b)->level,			\
+			(c)->btree_roots[(b)->btree_id].level,		\
+			(u64) ptr->offset, (b)->written,		\
+			le16_to_cpu((i)->u64s), ##__VA_ARGS__);		\
 		ret = BCH_FSCK_ERRORS_NOT_FIXED;			\
 		goto fsck_err;						\
 	}								\

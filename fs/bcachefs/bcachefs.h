@@ -458,6 +458,7 @@ enum {
 	BCH_FS_BDEV_MOUNTED,
 	BCH_FS_ERROR,
 	BCH_FS_FSCK_FIXED_ERRORS,
+	BCH_FS_FSCK_DONE,
 	BCH_FS_FIXED_GENS,
 };
 
@@ -723,6 +724,11 @@ struct bch_fs {
 	struct bio_list		read_retry_list;
 	struct work_struct	read_retry_work;
 	spinlock_t		read_retry_lock;
+
+	/* ERRORS */
+	struct list_head	fsck_errors;
+	struct mutex		fsck_error_lock;
+	bool			fsck_alloc_err;
 
 	/* FILESYSTEM */
 	wait_queue_head_t	writeback_wait;

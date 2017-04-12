@@ -513,6 +513,9 @@ static struct bch_fs *bch2_fs_alloc(struct bch_sb *sb, struct bch_opts opts)
 	INIT_WORK(&c->read_retry_work, bch2_read_retry_work);
 	mutex_init(&c->zlib_workspace_lock);
 
+	INIT_LIST_HEAD(&c->fsck_errors);
+	mutex_init(&c->fsck_error_lock);
+
 	seqcount_init(&c->gc_pos_lock);
 
 	c->prio_clock[READ].hand = 1;
@@ -875,12 +878,12 @@ err:
 	switch (ret) {
 	case BCH_FSCK_ERRORS_NOT_FIXED:
 		bch_err(c, "filesystem contains errors: please report this to the developers");
-		pr_cont("mount with -o fix_errors to repair");
+		pr_cont("mount with -o fix_errors to repair\n");
 		err = "fsck error";
 		break;
 	case BCH_FSCK_REPAIR_UNIMPLEMENTED:
 		bch_err(c, "filesystem contains errors: please report this to the developers");
-		pr_cont("repair unimplemented: inform the developers so that it can be added");
+		pr_cont("repair unimplemented: inform the developers so that it can be added\n");
 		err = "fsck error";
 		break;
 	case BCH_FSCK_REPAIR_IMPOSSIBLE:

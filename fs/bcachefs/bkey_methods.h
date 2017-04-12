@@ -67,10 +67,10 @@ const char *bch2_btree_bkey_invalid(struct bch_fs *, struct btree *,
 				    struct bkey_s_c);
 
 void bch2_bkey_debugcheck(struct bch_fs *, struct btree *, struct bkey_s_c);
-void bch2_val_to_text(struct bch_fs *, enum bkey_type,
-		      char *, size_t, struct bkey_s_c);
-void bch2_bkey_val_to_text(struct bch_fs *, enum bkey_type,
-			   char *, size_t, struct bkey_s_c);
+char *bch2_val_to_text(struct bch_fs *, enum bkey_type,
+		       char *, size_t, struct bkey_s_c);
+char *bch2_bkey_val_to_text(struct bch_fs *, enum bkey_type,
+			    char *, size_t, struct bkey_s_c);
 
 void bch2_bkey_swab(enum bkey_type, const struct bkey_format *,
 		    struct bkey_packed *);

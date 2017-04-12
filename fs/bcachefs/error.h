@@ -95,62 +95,38 @@ enum {
 	BCH_FSCK_UNKNOWN_VERSION	= 4,
 };
 
-/* These macros return true if error should be fixed: */
-
-/* XXX: mark in superblock that filesystem contains errors, if we ignore: */
-
 enum fsck_err_opts {
 	FSCK_ERR_NO,
 	FSCK_ERR_YES,
 	FSCK_ERR_ASK,
 };
 
-#ifdef __KERNEL__
-#define __fsck_err_should_fix(c, msg, ...)				\
-({									\
-	bool _fix = (c)->opts.fix_errors;				\
-	bch_err(c, msg ", %sfixing", ##__VA_ARGS__, _fix ? "" : "not ");\
-	_fix;								\
-})
-#else
-#include "tools-util.h"
+enum fsck_err_ret {
+	FSCK_ERR_IGNORE	= 0,
+	FSCK_ERR_FIX	= 1,
+	FSCK_ERR_EXIT	= 2,
+};
 
-#define __fsck_err_should_fix(c, msg, ...)				\
-({									\
-	bool _fix = false;						\
-	switch ((c)->opts.fix_errors) {					\
-	case FSCK_ERR_ASK:						\
-		printf(msg ": fix?", ##__VA_ARGS__);			\
-		_fix = ask_yn();					\
-		break;							\
-	case FSCK_ERR_YES:						\
-		bch_err(c, msg ", fixing", ##__VA_ARGS__);		\
-		_fix = true;						\
-		break;							\
-	case FSCK_ERR_NO:						\
-		bch_err(c, msg, ##__VA_ARGS__);				\
-		_fix = false;						\
-		break;							\
-	}								\
-	_fix;								\
-})
-#endif
+struct fsck_err_state {
+	struct list_head	list;
+	const char		*fmt;
+	u64			nr;
+	char			buf[512];
+};
 
-#define __fsck_err(c, _can_fix, _can_ignore, _nofix_msg, msg, ...)	\
+#define FSCK_CAN_FIX		(1 << 0)
+#define FSCK_CAN_IGNORE		(1 << 1)
+#define FSCK_NEED_FSCK		(1 << 2)
+
+enum fsck_err_ret bch2_fsck_err(struct bch_fs *,
+				unsigned, const char *, ...);
+void bch2_flush_fsck_errs(struct bch_fs *);
+
+#define __fsck_err(c, _flags, msg, ...)					\
 ({									\
-	bool _fix;							\
+	int _fix = bch2_fsck_err(c, _flags, msg, ##__VA_ARGS__);\
 									\
-	if (_can_fix) {							\
-		_fix = __fsck_err_should_fix(c, msg, ##__VA_ARGS__);	\
-	} else {							\
-		bch_err(c, msg " ("_nofix_msg")", ##__VA_ARGS__);	\
-		_fix = false;						\
-	}								\
-									\
-	if (_fix)							\
-		set_bit(BCH_FS_FSCK_FIXED_ERRORS, &(c)->flags);		\
-									\
-	if (!_fix && !_can_ignore) {					\
+	if (_fix == FSCK_ERR_EXIT) {					\
 		bch_err(c, "Unable to continue, halting");		\
 		ret = BCH_FSCK_ERRORS_NOT_FIXED;			\
 		goto fsck_err;						\
@@ -159,24 +135,27 @@ enum fsck_err_opts {
 	_fix;								\
 })
 
-#define __fsck_err_on(cond, c, _can_fix, _can_ignore, _nofix_msg, ...)	\
-	((cond) ? __fsck_err(c, _can_fix, _can_ignore,			\
-			     _nofix_msg, ##__VA_ARGS__) : false)
+/* These macros return true if error should be fixed: */
+
+/* XXX: mark in superblock that filesystem contains errors, if we ignore: */
+
+#define __fsck_err_on(cond, c, _flags, ...)				\
+	((cond) ? __fsck_err(c, _flags,	##__VA_ARGS__) : false)
 
 #define unfixable_fsck_err_on(cond, c, ...)				\
-	__fsck_err_on(cond, c, false, true, "repair unimplemented", ##__VA_ARGS__)
+	__fsck_err_on(cond, c, FSCK_CAN_IGNORE, ##__VA_ARGS__)
 
 #define need_fsck_err_on(cond, c, ...)					\
-	__fsck_err_on(cond, c, false, true, "run fsck to correct", ##__VA_ARGS__)
+	__fsck_err_on(cond, c, FSCK_CAN_IGNORE|FSCK_NEED_FSCK, ##__VA_ARGS__)
 
 #define mustfix_fsck_err(c, ...)					\
-	__fsck_err(c, true, false, "not fixing", ##__VA_ARGS__)
+	__fsck_err(c, FSCK_CAN_FIX, ##__VA_ARGS__)
 
 #define mustfix_fsck_err_on(cond, c, ...)				\
-	__fsck_err_on(cond, c, true, false, "not fixing", ##__VA_ARGS__)
+	__fsck_err_on(cond, c, FSCK_CAN_FIX, ##__VA_ARGS__)
 
 #define fsck_err_on(cond, c, ...)					\
-	__fsck_err_on(cond, c, true, true, "not fixing", ##__VA_ARGS__)
+	__fsck_err_on(cond, c, FSCK_CAN_FIX|FSCK_CAN_IGNORE, ##__VA_ARGS__)
 
 /*
  * Fatal errors: these don't indicate a bug, but we can't continue running in RW

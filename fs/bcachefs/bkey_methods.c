@@ -89,18 +89,20 @@ void bch2_bkey_debugcheck(struct bch_fs *c, struct btree *b, struct bkey_s_c k)
 		ops->key_debugcheck(c, b, k);
 }
 
-void bch2_val_to_text(struct bch_fs *c, enum bkey_type type,
-		     char *buf, size_t size, struct bkey_s_c k)
+char *bch2_val_to_text(struct bch_fs *c, enum bkey_type type,
+		       char *buf, size_t size, struct bkey_s_c k)
 {
 	const struct bkey_ops *ops = bch2_bkey_ops[type];
 
 	if (k.k->type >= KEY_TYPE_GENERIC_NR &&
 	    ops->val_to_text)
 		ops->val_to_text(c, buf, size, k);
+
+	return buf;
 }
 
-void bch2_bkey_val_to_text(struct bch_fs *c, enum bkey_type type,
-			  char *buf, size_t size, struct bkey_s_c k)
+char *bch2_bkey_val_to_text(struct bch_fs *c, enum bkey_type type,
+			    char *buf, size_t size, struct bkey_s_c k)
 {
 	const struct bkey_ops *ops = bch2_bkey_ops[type];
 	char *out = buf, *end = buf + size;
@@ -112,6 +114,8 @@ void bch2_bkey_val_to_text(struct bch_fs *c, enum bkey_type type,
 		out += scnprintf(out, end - out, ": ");
 		ops->val_to_text(c, out, end - out, k);
 	}
+
+	return buf;
 }
 
 void bch2_bkey_swab(enum bkey_type type,

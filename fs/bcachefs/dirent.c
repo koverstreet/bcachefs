@@ -20,6 +20,11 @@ unsigned bch2_dirent_name_bytes(struct bkey_s_c_dirent d)
 	return len;
 }
 
+static unsigned dirent_val_u64s(unsigned len)
+{
+	return DIV_ROUND_UP(sizeof(struct bch_dirent) + len, sizeof(u64));
+}
+
 static u64 bch2_dirent_hash(const struct bch_hash_info *info,
 			    const struct qstr *name)
 {
@@ -64,7 +69,7 @@ static bool dirent_cmp_bkey(struct bkey_s_c _l, struct bkey_s_c _r)
 	return l_len - r_len ?: memcmp(l.v->d_name, r.v->d_name, l_len);
 }
 
-static const struct bch_hash_desc dirent_hash_desc = {
+const struct bch_hash_desc bch2_dirent_hash_desc = {
 	.btree_id	= BTREE_ID_DIRENTS,
 	.key_type	= BCH_DIRENT,
 	.whiteout_type	= BCH_DIRENT_WHITEOUT,
@@ -78,6 +83,7 @@ static const char *bch2_dirent_invalid(const struct bch_fs *c,
 				       struct bkey_s_c k)
 {
 	struct bkey_s_c_dirent d;
+	unsigned len;
 
 	switch (k.k->type) {
 	case BCH_DIRENT:
@@ -85,9 +91,19 @@ static const char *bch2_dirent_invalid(const struct bch_fs *c,
 			return "value too small";
 
 		d = bkey_s_c_to_dirent(k);
+		len = bch2_dirent_name_bytes(d);
 
-		if (!bch2_dirent_name_bytes(d))
+		if (!len)
 			return "empty name";
+
+		if (bkey_val_u64s(k.k) > dirent_val_u64s(len))
+			return "value too big";
+
+		if (len > NAME_MAX)
+			return "dirent name too big";
+
+		if (memchr(d.v->d_name, '/', len))
+			return "dirent name has invalid characters";
 
 		return NULL;
 	case BCH_DIRENT_WHITEOUT:
@@ -129,9 +145,7 @@ static struct bkey_i_dirent *dirent_create_key(u8 type,
 				const struct qstr *name, u64 dst)
 {
 	struct bkey_i_dirent *dirent;
-	unsigned u64s = BKEY_U64s +
-		DIV_ROUND_UP(sizeof(struct bch_dirent) + name->len,
-			     sizeof(u64));
+	unsigned u64s = BKEY_U64s + dirent_val_u64s(name->len);
 
 	dirent = kmalloc(u64s * sizeof(u64), GFP_NOFS);
 	if (!dirent)
@@ -164,7 +178,7 @@ int bch2_dirent_create(struct bch_fs *c, u64 dir_inum,
 	if (!dirent)
 		return -ENOMEM;
 
-	ret = bch2_hash_set(dirent_hash_desc, hash_info, c, dir_inum,
+	ret = bch2_hash_set(bch2_dirent_hash_desc, hash_info, c, dir_inum,
 			   journal_seq, &dirent->k_i, flags);
 	kfree(dirent);
 
@@ -224,13 +238,13 @@ retry:
 	 * from the original hashed position (like we do when creating dirents,
 	 * in bch_hash_set) -  we never move existing dirents to different slot:
 	 */
-	old_src = bch2_hash_lookup_at(dirent_hash_desc,
+	old_src = bch2_hash_lookup_at(bch2_dirent_hash_desc,
 				     &src_ei->str_hash,
 				     &src_iter, src_name);
 	if ((ret = btree_iter_err(old_src)))
 		goto err;
 
-	ret = bch2_hash_needs_whiteout(dirent_hash_desc,
+	ret = bch2_hash_needs_whiteout(bch2_dirent_hash_desc,
 				&src_ei->str_hash,
 				&whiteout_iter, &src_iter);
 	if (ret < 0)
@@ -243,8 +257,8 @@ retry:
 	 * to do that check for us for correctness:
 	 */
 	old_dst = mode == BCH_RENAME
-		? bch2_hash_hole_at(dirent_hash_desc, &dst_iter)
-		: bch2_hash_lookup_at(dirent_hash_desc,
+		? bch2_hash_hole_at(bch2_dirent_hash_desc, &dst_iter)
+		: bch2_hash_lookup_at(bch2_dirent_hash_desc,
 				     &dst_ei->str_hash,
 				     &dst_iter, dst_name);
 	if ((ret = btree_iter_err(old_dst)))
@@ -331,7 +345,7 @@ int bch2_dirent_delete(struct bch_fs *c, u64 dir_inum,
 		       const struct qstr *name,
 		       u64 *journal_seq)
 {
-	return bch2_hash_delete(dirent_hash_desc, hash_info,
+	return bch2_hash_delete(bch2_dirent_hash_desc, hash_info,
 			       c, dir_inum, journal_seq, name);
 }
 
@@ -343,7 +357,7 @@ u64 bch2_dirent_lookup(struct bch_fs *c, u64 dir_inum,
 	struct bkey_s_c k;
 	u64 inum;
 
-	k = bch2_hash_lookup(dirent_hash_desc, hash_info, c,
+	k = bch2_hash_lookup(bch2_dirent_hash_desc, hash_info, c,
 			    dir_inum, &iter, name);
 	if (IS_ERR(k.k)) {
 		bch2_btree_iter_unlock(&iter);

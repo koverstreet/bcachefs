@@ -1109,6 +1109,26 @@ void __bch2_btree_iter_init(struct btree_iter *iter, struct bch_fs *c,
 	prefetch(c->btree_roots[btree_id].b);
 }
 
+void bch2_btree_iter_unlink(struct btree_iter *iter)
+{
+	struct btree_iter *linked;
+
+	__bch2_btree_iter_unlock(iter);
+
+	if (!btree_iter_linked(iter))
+		return;
+
+	for_each_linked_btree_iter(iter, linked) {
+
+		if (linked->next == iter) {
+			linked->next = iter->next;
+			return;
+		}
+	}
+
+	BUG();
+}
+
 void bch2_btree_iter_link(struct btree_iter *iter, struct btree_iter *new)
 {
 	BUG_ON(btree_iter_linked(new));
@@ -1128,7 +1148,7 @@ void bch2_btree_iter_link(struct btree_iter *iter, struct btree_iter *new)
 
 void bch2_btree_iter_copy(struct btree_iter *dst, struct btree_iter *src)
 {
-	bch2_btree_iter_unlock(dst);
+	__bch2_btree_iter_unlock(dst);
 	memcpy(dst, src, offsetof(struct btree_iter, next));
 	dst->nodes_locked = dst->nodes_intent_locked = 0;
 }
