@@ -512,7 +512,7 @@ STORE(bch2_fs_opts_dir)
 {
 	struct bch_fs *c = container_of(kobj, struct bch_fs, opts_dir);
 	const struct bch_option *opt;
-	enum bch_opt_id id;
+	int id;
 	u64 v;
 
 	id = bch2_parse_sysfs_opt(attr->name, buf, &v);
