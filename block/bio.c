@@ -1832,6 +1832,9 @@ static inline bool bio_remaining_done(struct bio *bio)
 void bio_endio(struct bio *bio)
 {
 again:
+	if (WARN_ONCE(bio->bi_next, "driver left bi_next not NULL"))
+		bio->bi_next = NULL;
+
 	if (!bio_remaining_done(bio))
 		return;
 
