@@ -910,8 +910,8 @@ static int bio_checksum_uncompress(struct bch_fs *c,
 		bch2_encrypt_bio(c, rbio->crc.csum_type,
 				nonce, src);
 
-		bio_copy_data_iter(dst, dst_iter,
-				   src, src->bi_iter);
+		bio_copy_data_iter(dst, &dst_iter,
+				   src, &src->bi_iter);
 	} else {
 		bch2_encrypt_bio(c, rbio->crc.csum_type, nonce, src);
 	}
