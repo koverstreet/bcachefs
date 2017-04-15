@@ -265,8 +265,8 @@ static inline int bch2_hash_needs_whiteout(const struct bch_hash_desc desc,
 	}
 }
 
-#define BCH_HASH_SET_MUST_CREATE	1
-#define BCH_HASH_SET_MUST_REPLACE	2
+#define BCH_HASH_SET_MUST_CREATE	(1 << 4)
+#define BCH_HASH_SET_MUST_REPLACE	(1 << 5)
 
 static inline int bch2_hash_set(const struct bch_hash_desc desc,
 			       const struct bch_hash_info *info,
@@ -328,7 +328,7 @@ retry:
 
 	insert->k.p = iter.pos;
 	ret = bch2_btree_insert_at(c, NULL, NULL, journal_seq,
-				  BTREE_INSERT_ATOMIC,
+				  BTREE_INSERT_ATOMIC|flags,
 				  BTREE_INSERT_ENTRY(&iter, insert));
 err:
 	if (ret == -EINTR)

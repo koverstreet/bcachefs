@@ -72,13 +72,24 @@ static int reattach_inode(struct bch_fs *c,
 	bch2_inode_pack(&packed, lostfound_inode);
 
 	ret = bch2_btree_insert(c, BTREE_ID_INODES, &packed.inode.k_i,
-			       NULL, NULL, NULL, 0);
-	if (ret)
+			       NULL, NULL, NULL,
+			       BTREE_INSERT_NOFAIL);
+	if (ret) {
+		bch_err(c, "error %i reattaching inode %llu while updating lost+found",
+			ret, inum);
 		return ret;
+	}
 
-	return bch2_dirent_create(c, lostfound_inode->inum,
+	ret = bch2_dirent_create(c, lostfound_inode->inum,
 				 &lostfound_hash_info,
-				 DT_DIR, &name, inum, NULL, 0);
+				 DT_DIR, &name, inum, NULL,
+				 BTREE_INSERT_NOFAIL);
+	if (ret) {
+		bch_err(c, "error %i reattaching inode %llu while creating new dirent",
+			ret, inum);
+		return ret;
+	}
+	return ret;
 }
 
 struct inode_walker {
@@ -154,8 +165,9 @@ static int hash_redo_key(const struct bch_hash_desc desc,
 
 	bch2_btree_iter_unlock(k_iter);
 
-	bch2_hash_set(desc, &h->info, c, k_iter->pos.inode, NULL,
-		      tmp, BCH_HASH_SET_MUST_CREATE);
+	bch2_hash_set(desc, &h->info, c, k_iter->pos.inode, NULL, tmp,
+		      BTREE_INSERT_NOFAIL|
+		      BCH_HASH_SET_MUST_CREATE);
 err:
 	kfree(tmp);
 	return ret;
@@ -487,7 +499,7 @@ create_root:
 	bch2_inode_pack(&packed, root_inode);
 
 	return bch2_btree_insert(c, BTREE_ID_INODES, &packed.inode.k_i,
-				NULL, NULL, NULL, 0);
+				 NULL, NULL, NULL, BTREE_INSERT_NOFAIL);
 }
 
 /* Get lost+found, create if it doesn't exist: */
@@ -529,7 +541,7 @@ create_lostfound:
 	bch2_inode_pack(&packed, root_inode);
 
 	ret = bch2_btree_insert(c, BTREE_ID_INODES, &packed.inode.k_i,
-			       NULL, NULL, NULL, 0);
+				NULL, NULL, NULL, BTREE_INSERT_NOFAIL);
 	if (ret)
 		return ret;
 
@@ -544,7 +556,8 @@ create_lostfound:
 	lostfound_inode->inum = packed.inode.k.p.inode;
 
 	ret = bch2_dirent_create(c, BCACHE_ROOT_INO, &root_hash_info, DT_DIR,
-				&lostfound, lostfound_inode->inum, NULL, 0);
+				 &lostfound, lostfound_inode->inum, NULL,
+				 BTREE_INSERT_NOFAIL);
 	if (ret)
 		return ret;
 
@@ -571,8 +584,9 @@ static inline int inode_bitmap_set(struct inode_bitmap *b, size_t nr)
 
 		new_size = roundup_pow_of_two(new_size);
 		n = krealloc(b->bits, new_size / 8, GFP_KERNEL|__GFP_ZERO);
-		if (!n)
+		if (!n) {
 			return -ENOMEM;
+		}
 
 		b->bits = n;
 		b->size = new_size;
@@ -632,12 +646,15 @@ restart_dfs:
 	had_unreachable = false;
 
 	ret = inode_bitmap_set(&dirs_done, BCACHE_ROOT_INO);
-	if (ret)
+	if (ret) {
+		bch_err(c, "memory allocation failure in inode_bitmap_set()");
 		goto err;
+	}
 
 	ret = path_down(&path, BCACHE_ROOT_INO);
-	if (ret)
+	if (ret) {
 		return ret;
+	}
 
 	while (path.nr) {
 next:
@@ -673,19 +690,24 @@ next:
 			}
 
 			ret = inode_bitmap_set(&dirs_done, d_inum);
-			if (ret)
+			if (ret) {
+				bch_err(c, "memory allocation failure in inode_bitmap_set()");
 				goto err;
+			}
 
 			ret = path_down(&path, d_inum);
-			if (ret)
+			if (ret) {
 				goto err;
+			}
 
 			bch2_btree_iter_unlock(&iter);
 			goto next;
 		}
 		ret = bch2_btree_iter_unlock(&iter);
-		if (ret)
+		if (ret) {
+			bch_err(c, "btree error %i in fsck", ret);
 			goto err;
+		}
 up:
 		path.nr--;
 	}
@@ -701,8 +723,9 @@ up:
 			bch2_btree_iter_unlock(&iter);
 
 			ret = reattach_inode(c, lostfound_inode, k.k->p.inode);
-			if (ret)
+			if (ret) {
 				goto err;
+			}
 
 			had_unreachable = true;
 		}
