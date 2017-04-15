@@ -54,4 +54,10 @@ static inline u64 timespec_to_bch2_time(struct bch_fs *c, struct timespec ts)
 	return div_s64(ns, c->sb.time_precision);
 }
 
+#ifdef CONFIG_BCACHEFS_DEBUG
+void bch2_inode_pack_test(void);
+#else
+static inline void bch2_inode_pack_test(void) {}
+#endif
+
 #endif

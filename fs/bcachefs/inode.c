@@ -25,14 +25,12 @@ static const u8 bits_table[8] = {
 	13 * 8 - 8,
 };
 
-static int inode_encode_field(u8 *out, u8 *end, const u64 in[2])
+static int inode_encode_field(u8 *out, u8 *end, u64 hi, u64 lo)
 {
-	unsigned bytes, bits, shift;
-
-	if (likely(!in[1]))
-		bits = fls64(in[0]);
-	else
-		bits = fls64(in[1]) + 64;
+	__be64 in[2] = { cpu_to_be64(hi), cpu_to_be64(lo), };
+	unsigned shift, bytes, bits = likely(!hi)
+		? fls64(lo)
+		: fls64(hi) + 64;
 
 	for (shift = 1; shift <= 8; shift++)
 		if (bits < bits_table[shift - 1])
@@ -44,17 +42,7 @@ got_shift:
 
 	BUG_ON(out + bytes > end);
 
-	if (likely(bytes <= 8)) {
-		u64 b = cpu_to_be64(in[0]);
-
-		memcpy(out, (void *) &b + 8 - bytes, bytes);
-	} else {
-		u64 b = cpu_to_be64(in[1]);
-
-		memcpy(out, (void *) &b + 16 - bytes, bytes);
-		put_unaligned_be64(in[0], out + bytes - 8);
-	}
-
+	memcpy(out, (u8 *) in + 16 - bytes, bytes);
 	*out |= (1 << 8) >> shift;
 
 	return bytes;
@@ -63,7 +51,9 @@ got_shift:
 static int inode_decode_field(const u8 *in, const u8 *end,
 			      u64 out[2], unsigned *out_bits)
 {
-	unsigned bytes, bits, shift;
+	__be64 be[2] = { 0, 0 };
+	unsigned bytes, shift;
+	u8 *p;
 
 	if (in >= end)
 		return -1;
@@ -77,29 +67,18 @@ static int inode_decode_field(const u8 *in, const u8 *end,
 	 */
 	shift	= 8 - __fls(*in); /* 1 <= shift <= 8 */
 	bytes	= byte_table[shift - 1];
-	bits	= bytes * 8 - shift;
 
 	if (in + bytes > end)
 		return -1;
 
-	/*
-	 * we're assuming it's safe to deref up to 7 bytes < in; this will work
-	 * because keys always start quite a bit more than 7 bytes after the
-	 * start of the btree node header:
-	 */
-	if (likely(bytes <= 8)) {
-		out[0] = get_unaligned_be64(in + bytes - 8);
-		out[0] <<= 64 - bits;
-		out[0] >>= 64 - bits;
-		out[1] = 0;
-	} else {
-		out[0] = get_unaligned_be64(in + bytes - 8);
-		out[1] = get_unaligned_be64(in + bytes - 16);
-		out[1] <<= 128 - bits;
-		out[1] >>= 128 - bits;
-	}
+	p = (u8 *) be + 16 - bytes;
+	memcpy(p, in, bytes);
+	*p ^= (1 << 8) >> shift;
 
-	*out_bits = out[1] ? 64 + fls64(out[1]) : fls64(out[0]);
+	out[0] = be64_to_cpu(be[0]);
+	out[1] = be64_to_cpu(be[1]);
+	*out_bits = out[0] ? 64 + fls64(out[0]) : fls64(out[1]);
+
 	return bytes;
 }
 
@@ -109,7 +88,6 @@ void bch2_inode_pack(struct bkey_inode_buf *packed,
 	u8 *out = packed->inode.v.fields;
 	u8 *end = (void *) &packed[1];
 	u8 *last_nonzero_field = out;
-	u64 field[2];
 	unsigned nr_fields = 0, last_nonzero_fieldnr = 0;
 
 	bkey_inode_init(&packed->inode.k_i);
@@ -119,12 +97,10 @@ void bch2_inode_pack(struct bkey_inode_buf *packed,
 	packed->inode.v.i_mode		= cpu_to_le16(inode->i_mode);
 
 #define BCH_INODE_FIELD(_name, _bits)					\
-	field[0] = inode->_name;					\
-	field[1] = 0;							\
-	out += inode_encode_field(out, end, field);			\
+	out += inode_encode_field(out, end, 0, inode->_name);		\
 	nr_fields++;							\
 									\
-	if (field[0] | field[1]) {					\
+	if (inode->_name) {						\
 		last_nonzero_field = out;				\
 		last_nonzero_fieldnr = nr_fields;			\
 	}
@@ -187,7 +163,7 @@ int bch2_inode_unpack(struct bkey_s_c_inode inode,
 	if (field_bits > sizeof(unpacked->_name) * 8)			\
 		return -1;						\
 									\
-	unpacked->_name = field[0];					\
+	unpacked->_name = field[1];					\
 	in += ret;
 
 	BCH_INODE_FIELDS()
@@ -449,3 +425,32 @@ int bch2_cached_dev_inode_find_by_uuid(struct bch_fs *c, uuid_le *uuid,
 	bch2_btree_iter_unlock(&iter);
 	return -ENOENT;
 }
+
+#ifdef CONFIG_BCACHEFS_DEBUG
+void bch2_inode_pack_test(void)
+{
+	struct bch_inode_unpacked *u, test_inodes[] = {
+		{
+			.i_atime	= U64_MAX,
+			.i_ctime	= U64_MAX,
+			.i_mtime	= U64_MAX,
+			.i_otime	= U64_MAX,
+			.i_size		= U64_MAX,
+			.i_sectors	= U64_MAX,
+			.i_uid		= U32_MAX,
+			.i_gid		= U32_MAX,
+			.i_nlink	= U32_MAX,
+			.i_generation	= U32_MAX,
+			.i_dev		= U32_MAX,
+		},
+	};
+
+	for (u = test_inodes;
+	     u < test_inodes + ARRAY_SIZE(test_inodes);
+	     u++) {
+		struct bkey_inode_buf p;
+
+		bch2_inode_pack(&p, u);
+	}
+}
+#endif
