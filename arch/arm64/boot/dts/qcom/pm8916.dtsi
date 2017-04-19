@@ -154,6 +154,7 @@
 				status = "ok";
 				regulator-min-microvolt = <1050000>;
 				regulator-max-microvolt = <1350000>;
+				regulator-always-on;
 			};
 
 			s3@1a00 {
