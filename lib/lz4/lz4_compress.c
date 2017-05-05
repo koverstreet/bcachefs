@@ -40,6 +40,78 @@
 #include <asm/unaligned.h>
 #include "lz4defs.h"
 
+#define LZ4_HASH_VALUE(p, _table)				\
+	__HASH_VALUE(p, MEMORY_USAGE - ilog2(sizeof(_table[0])))
+
+struct lz4_hash_table {
+	const u8	*(*add)(const struct lz4_hash_table, const u8 *);
+	void		*ctx;
+	const u8	*base;
+};
+
+#if __SIZEOF_POINTER__ == 4
+static inline const u8 *hash_table_add32(const struct lz4_hash_table hash,
+					 const u8 *ip)
+{
+	const u8 **table = hash.ctx;
+
+	swap(table[LZ4_HASH_VALUE(ip, table)], ip);
+	return ip;
+}
+#else
+static inline const u8 *hash_table_add32(const struct lz4_hash_table hash,
+					 const u8 *ip)
+{
+	u32 *table = hash.ctx;
+	size_t offset = ip - hash.base;
+
+	swap(table[LZ4_HASH_VALUE(ip, table)], offset);
+	return hash.base + offset;
+}
+#endif
+
+static inline const u8 *hash_table_add16(const struct lz4_hash_table hash,
+					 const u8 *ip)
+{
+	u16 *table = hash.ctx;
+	size_t offset = ip - hash.base;
+
+	swap(table[LZ4_HASH_VALUE(ip, table)], offset);
+	return hash.base + offset;
+}
+
+static inline const u8 *find_match(const struct lz4_hash_table hash,
+				   const u8 **ip, const u8 *anchor,
+				   const u8 *start, const u8 *mflimit)
+{
+	int findmatchattempts = (1U << SKIPSTRENGTH) + 3;
+
+	while (*ip <= mflimit) {
+		const u8 *ref = hash.add(hash, *ip);
+
+		if (ref >= *ip - MAX_DISTANCE && A32(ref) == A32(*ip)) {
+			/* found match: */
+			while (*ip > anchor &&
+			       ref > start &&
+			       unlikely((*ip)[-1] == ref[-1])) {
+				(*ip)--;
+				ref--;
+			}
+
+			return ref;
+		}
+
+		*ip += findmatchattempts++ >> SKIPSTRENGTH;
+	}
+
+	return NULL;
+}
+
+static inline int length_len(unsigned length)
+{
+	return length / 255 + 1;
+}
+
 /*
  * LZ4_compressCtx :
  * -----------------
@@ -49,393 +121,106 @@
  * return : the number of bytes written in buffer 'dest', or 0 if the
  * compression fails
  */
-static inline int lz4_compressctx(void *ctx,
-		const char *source,
-		char *dest,
-		int isize,
-		int maxoutputsize)
+static inline int lz4_compressctx(const struct lz4_hash_table hash,
+				  const u8 *src, size_t src_len,
+				  u8 *dst, size_t *dst_len)
 {
-	HTYPE *hashtable = (HTYPE *)ctx;
-	const u8 *ip = (u8 *)source;
-#if LZ4_ARCH64
-	const BYTE * const base = ip;
-#else
-	const int base = 0;
-#endif
-	const u8 *anchor = ip;
-	const u8 *const iend = ip + isize;
+	const u8 *ip = src, *anchor = ip, *ref;
+	const u8 *const iend = ip + src_len;
 	const u8 *const mflimit = iend - MFLIMIT;
-	#define MATCHLIMIT (iend - LASTLITERALS)
-
-	u8 *op = (u8 *) dest;
-	u8 *const oend = op + maxoutputsize;
-	int length;
-	const int skipstrength = SKIPSTRENGTH;
-	u32 forwardh;
-	int lastrun;
+	const u8 *const matchlimit = iend - LASTLITERALS;
+	u8 *op = dst, *token;
+	u8 *const oend = op + *dst_len;
+	size_t literal_len, match_len, match_offset;
 
 	/* Init */
-	if (isize < MINLENGTH)
-		goto _last_literals;
+	memset(hash.ctx, 0, LZ4_MEM_COMPRESS);
+	hash.add(hash, ip);
 
-	memset((void *)hashtable, 0, LZ4_MEM_COMPRESS);
-
-	/* First Byte */
-	hashtable[LZ4_HASH_VALUE(ip)] = ip - base;
+	/* Always start with a literal: */
 	ip++;
-	forwardh = LZ4_HASH_VALUE(ip);
 
-	/* Main Loop */
-	for (;;) {
-		int findmatchattempts = (1U << skipstrength) + 3;
-		const u8 *forwardip = ip;
-		const u8 *ref;
-		u8 *token;
+	while ((ref = find_match(hash, &ip, anchor, src, mflimit))) {
+		/*
+		 * We found a match; @ip now points to the match and @ref points
+		 * to the prior part of the input we matched with. Everything up
+		 * to @anchor has been encoded; the range from @anchor to @ip
+		 * didn't match and now has to be encoded as a literal:
+		 */
+		literal_len = ip - anchor;
+		match_offset = ip - ref;
 
-		/* Find a match */
-		do {
-			u32 h = forwardh;
-			int step = findmatchattempts++ >> skipstrength;
-			ip = forwardip;
-			forwardip = ip + step;
+		/* MINMATCH bytes already matched from find_match(): */
+		ip += MINMATCH;
+		ref += MINMATCH;
+		match_len = common_length(ip, ref, matchlimit);
+		ip += match_len;
 
-			if (unlikely(forwardip > mflimit))
-				goto _last_literals;
-
-			forwardh = LZ4_HASH_VALUE(forwardip);
-			ref = base + hashtable[h];
-			hashtable[h] = ip - base;
-		} while ((ref < ip - MAX_DISTANCE) || (A32(ref) != A32(ip)));
-
-		/* Catch up */
-		while ((ip > anchor) && (ref > (u8 *)source) &&
-			unlikely(ip[-1] == ref[-1])) {
-			ip--;
-			ref--;
-		}
-
-		/* Encode Literal length */
-		length = (int)(ip - anchor);
-		token = op++;
 		/* check output limit */
-		if (unlikely(op + length + (2 + 1 + LASTLITERALS) +
-			(length >> 8) > oend))
-			return 0;
-
-		if (length >= (int)RUN_MASK) {
-			int len;
-			*token = (RUN_MASK << ML_BITS);
-			len = length - RUN_MASK;
-			for (; len > 254 ; len -= 255)
-				*op++ = 255;
-			*op++ = (u8)len;
-		} else
-			*token = (length << ML_BITS);
-
-		/* Copy Literals */
-		LZ4_BLINDCOPY(anchor, op, length);
-_next_match:
-		/* Encode Offset */
-		LZ4_WRITE_LITTLEENDIAN_16(op, (u16)(ip - ref));
-
-		/* Start Counting */
-		ip += MINMATCH;
-		/* MinMatch verified */
-		ref += MINMATCH;
-		anchor = ip;
-		while (likely(ip < MATCHLIMIT - (STEPSIZE - 1))) {
-			#if LZ4_ARCH64
-			u64 diff = A64(ref) ^ A64(ip);
-			#else
-			u32 diff = A32(ref) ^ A32(ip);
-			#endif
-			if (!diff) {
-				ip += STEPSIZE;
-				ref += STEPSIZE;
-				continue;
-			}
-			ip += LZ4_NBCOMMONBYTES(diff);
-			goto _endcount;
-		}
-		#if LZ4_ARCH64
-		if ((ip < (MATCHLIMIT - 3)) && (A32(ref) == A32(ip))) {
-			ip += 4;
-			ref += 4;
-		}
-		#endif
-		if ((ip < (MATCHLIMIT - 1)) && (A16(ref) == A16(ip))) {
-			ip += 2;
-			ref += 2;
-		}
-		if ((ip < MATCHLIMIT) && (*ref == *ip))
-			ip++;
-_endcount:
-		/* Encode MatchLength */
-		length = (int)(ip - anchor);
-		/* Check output limit */
-		if (unlikely(op + (1 + LASTLITERALS) + (length >> 8) > oend))
-			return 0;
-		if (length >= (int)ML_MASK) {
-			*token += ML_MASK;
-			length -= ML_MASK;
-			for (; length > 509 ; length -= 510) {
-				*op++ = 255;
-				*op++ = 255;
-			}
-			if (length > 254) {
-				length -= 255;
-				*op++ = 255;
-			}
-			*op++ = (u8)length;
-		} else
-			*token += length;
-
-		/* Test end of chunk */
-		if (ip > mflimit) {
-			anchor = ip;
+		if (unlikely(op +
+			     1 + /* token */
+			     2 + /* match ofset */
+			     literal_len +
+			     length_len(literal_len) +
+			     length_len(match_len) +
+			     LASTLITERALS > oend))
 			break;
-		}
 
-		/* Fill table */
-		hashtable[LZ4_HASH_VALUE(ip-2)] = ip - 2 - base;
-
-		/* Test next position */
-		ref = base + hashtable[LZ4_HASH_VALUE(ip)];
-		hashtable[LZ4_HASH_VALUE(ip)] = ip - base;
-		if ((ref > ip - (MAX_DISTANCE + 1)) && (A32(ref) == A32(ip))) {
-			token = op++;
-			*token = 0;
-			goto _next_match;
-		}
-
-		/* Prepare next loop */
-		anchor = ip++;
-		forwardh = LZ4_HASH_VALUE(ip);
-	}
-
-_last_literals:
-	/* Encode Last Literals */
-	lastrun = (int)(iend - anchor);
-	if (((char *)op - dest) + lastrun + 1
-		+ ((lastrun + 255 - RUN_MASK) / 255) > (u32)maxoutputsize)
-		return 0;
-
-	if (lastrun >= (int)RUN_MASK) {
-		*op++ = (RUN_MASK << ML_BITS);
-		lastrun -= RUN_MASK;
-		for (; lastrun > 254 ; lastrun -= 255)
-			*op++ = 255;
-		*op++ = (u8)lastrun;
-	} else
-		*op++ = (lastrun << ML_BITS);
-	memcpy(op, anchor, iend - anchor);
-	op += iend - anchor;
-
-	/* End */
-	return (int)(((char *)op) - dest);
-}
-
-static inline int lz4_compress64kctx(void *ctx,
-		const char *source,
-		char *dest,
-		int isize,
-		int maxoutputsize)
-{
-	u16 *hashtable = (u16 *)ctx;
-	const u8 *ip = (u8 *) source;
-	const u8 *anchor = ip;
-	const u8 *const base = ip;
-	const u8 *const iend = ip + isize;
-	const u8 *const mflimit = iend - MFLIMIT;
-	#define MATCHLIMIT (iend - LASTLITERALS)
-
-	u8 *op = (u8 *) dest;
-	u8 *const oend = op + maxoutputsize;
-	int len, length;
-	const int skipstrength = SKIPSTRENGTH;
-	u32 forwardh;
-	int lastrun;
-
-	/* Init */
-	if (isize < MINLENGTH)
-		goto _last_literals;
-
-	memset((void *)hashtable, 0, LZ4_MEM_COMPRESS);
-
-	/* First Byte */
-	ip++;
-	forwardh = LZ4_HASH64K_VALUE(ip);
-
-	/* Main Loop */
-	for (;;) {
-		int findmatchattempts = (1U << skipstrength) + 3;
-		const u8 *forwardip = ip;
-		const u8 *ref;
-		u8 *token;
-
-		/* Find a match */
-		do {
-			u32 h = forwardh;
-			int step = findmatchattempts++ >> skipstrength;
-			ip = forwardip;
-			forwardip = ip + step;
-
-			if (forwardip > mflimit)
-				goto _last_literals;
-
-			forwardh = LZ4_HASH64K_VALUE(forwardip);
-			ref = base + hashtable[h];
-			hashtable[h] = (u16)(ip - base);
-		} while (A32(ref) != A32(ip));
-
-		/* Catch up */
-		while ((ip > anchor) && (ref > (u8 *)source)
-			&& (ip[-1] == ref[-1])) {
-			ip--;
-			ref--;
-		}
-
-		/* Encode Literal length */
-		length = (int)(ip - anchor);
 		token = op++;
-		/* Check output limit */
-		if (unlikely(op + length + (2 + 1 + LASTLITERALS)
-			+ (length >> 8) > oend))
-			return 0;
-		if (length >= (int)RUN_MASK) {
-			*token = (RUN_MASK << ML_BITS);
-			len = length - RUN_MASK;
-			for (; len > 254 ; len -= 255)
-				*op++ = 255;
-			*op++ = (u8)len;
-		} else
-			*token = (length << ML_BITS);
+		*token = encode_length(&op, literal_len) << ML_BITS;
+		MEMCPY_ADVANCE_CHUNKED(op, anchor, literal_len);
+		PUT_LE16_ADVANCE(op, match_offset);
+		*token += encode_length(&op, match_len);
 
-		/* Copy Literals */
-		LZ4_BLINDCOPY(anchor, op, length);
-
-_next_match:
-		/* Encode Offset */
-		LZ4_WRITE_LITTLEENDIAN_16(op, (u16)(ip - ref));
-
-		/* Start Counting */
-		ip += MINMATCH;
-		/* MinMatch verified */
-		ref += MINMATCH;
 		anchor = ip;
-
-		while (ip < MATCHLIMIT - (STEPSIZE - 1)) {
-			#if LZ4_ARCH64
-			u64 diff = A64(ref) ^ A64(ip);
-			#else
-			u32 diff = A32(ref) ^ A32(ip);
-			#endif
-
-			if (!diff) {
-				ip += STEPSIZE;
-				ref += STEPSIZE;
-				continue;
-			}
-			ip += LZ4_NBCOMMONBYTES(diff);
-			goto _endcount;
-		}
-		#if LZ4_ARCH64
-		if ((ip < (MATCHLIMIT - 3)) && (A32(ref) == A32(ip))) {
-			ip += 4;
-			ref += 4;
-		}
-		#endif
-		if ((ip < (MATCHLIMIT - 1)) && (A16(ref) == A16(ip))) {
-			ip += 2;
-			ref += 2;
-		}
-		if ((ip < MATCHLIMIT) && (*ref == *ip))
-			ip++;
-_endcount:
-
-		/* Encode MatchLength */
-		len = (int)(ip - anchor);
-		/* Check output limit */
-		if (unlikely(op + (1 + LASTLITERALS) + (len >> 8) > oend))
-			return 0;
-		if (len >= (int)ML_MASK) {
-			*token += ML_MASK;
-			len -= ML_MASK;
-			for (; len > 509 ; len -= 510) {
-				*op++ = 255;
-				*op++ = 255;
-			}
-			if (len > 254) {
-				len -= 255;
-				*op++ = 255;
-			}
-			*op++ = (u8)len;
-		} else
-			*token += len;
-
-		/* Test end of chunk */
-		if (ip > mflimit) {
-			anchor = ip;
-			break;
-		}
-
-		/* Fill table */
-		hashtable[LZ4_HASH64K_VALUE(ip-2)] = (u16)(ip - 2 - base);
-
-		/* Test next position */
-		ref = base + hashtable[LZ4_HASH64K_VALUE(ip)];
-		hashtable[LZ4_HASH64K_VALUE(ip)] = (u16)(ip - base);
-		if (A32(ref) == A32(ip)) {
-			token = op++;
-			*token = 0;
-			goto _next_match;
-		}
-
-		/* Prepare next loop */
-		anchor = ip++;
-		forwardh = LZ4_HASH64K_VALUE(ip);
 	}
 
-_last_literals:
-	/* Encode Last Literals */
-	lastrun = (int)(iend - anchor);
-	if (op + lastrun + 1 + (lastrun - RUN_MASK + 255) / 255 > oend)
-		return 0;
-	if (lastrun >= (int)RUN_MASK) {
-		*op++ = (RUN_MASK << ML_BITS);
-		lastrun -= RUN_MASK;
-		for (; lastrun > 254 ; lastrun -= 255)
-			*op++ = 255;
-		*op++ = (u8)lastrun;
-	} else
-		*op++ = (lastrun << ML_BITS);
-	memcpy(op, anchor, iend - anchor);
-	op += iend - anchor;
+	/* Encode remaining input as literal: */
+	literal_len = iend - anchor;
+	if (unlikely(op +
+		     1 +
+		     literal_len +
+		     length_len(literal_len) > oend)) {
+		/* Return how much would be able to fit: */
+		ssize_t remaining = oend - op;
+		ssize_t encoded = anchor - src;
+
+		remaining -= length_len(remaining) + 1;
+
+		return -max(encoded + remaining, 1L);
+	}
+
+	token = op++;
+	*token = encode_length(&op, literal_len) << ML_BITS;
+	MEMCPY_ADVANCE(op, anchor, literal_len);
+
 	/* End */
-	return (int)(((char *)op) - dest);
+	BUG_ON(op > oend);
+	*dst_len = op - dst;
+	return 0;
 }
 
+__attribute__((flatten))
 int lz4_compress(const unsigned char *src, size_t src_len,
-			unsigned char *dst, size_t *dst_len, void *wrkmem)
+		 unsigned char *dst, size_t *dst_len, void *wrkmem)
 {
-	int ret = -1;
-	int out_len = 0;
+	if (src_len < LZ4_64KLIMIT) {
+		const struct lz4_hash_table hash = {
+			.add	= hash_table_add16,
+			.ctx	= wrkmem,
+			.base	= src,
+		};
 
-	if (src_len < LZ4_64KLIMIT)
-		out_len = lz4_compress64kctx(wrkmem, src, dst, src_len,
-				lz4_compressbound(src_len));
-	else
-		out_len = lz4_compressctx(wrkmem, src, dst, src_len,
-				lz4_compressbound(src_len));
+		return lz4_compressctx(hash, src, src_len, dst, dst_len);
+	} else {
+		const struct lz4_hash_table hash = {
+			.add	= hash_table_add32,
+			.ctx	= wrkmem,
+			.base	= src,
+		};
 
-	if (out_len < 0)
-		goto exit;
-
-	*dst_len = out_len;
-
-	return 0;
-exit:
-	return ret;
+		return lz4_compressctx(hash, src, src_len, dst, dst_len);
+	}
 }
 EXPORT_SYMBOL(lz4_compress);
 
