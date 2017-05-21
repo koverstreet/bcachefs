@@ -157,6 +157,19 @@ unsigned bch2_extent_nr_dirty_ptrs(struct bkey_s_c k)
 	return nr_ptrs;
 }
 
+unsigned bch2_extent_nr_good_ptrs(struct bch_fs *c, struct bkey_s_c_extent e)
+{
+	const struct bch_extent_ptr *ptr;
+	unsigned nr_ptrs = 0;
+
+	extent_for_each_ptr(e, ptr)
+		nr_ptrs += (!ptr->cached &&
+			    bch_dev_bkey_exists(c, ptr->dev)->mi.state !=
+			    BCH_MEMBER_STATE_FAILED);
+
+	return nr_ptrs;
+}
+
 unsigned bch2_extent_is_compressed(struct bkey_s_c k)
 {
 	struct bkey_s_c_extent e;
@@ -435,7 +448,8 @@ static const char *extent_ptr_invalid(const struct bch_fs *c,
 	const struct bch_extent_ptr *ptr2;
 	struct bch_dev *ca;
 
-	if (ptr->dev >= c->sb.nr_devices)
+	if (ptr->dev >= c->sb.nr_devices ||
+	    !c->devs[ptr->dev])
 		return "pointer to invalid device";
 
 	ca = bch_dev_bkey_exists(c, ptr->dev);
@@ -490,7 +504,9 @@ static size_t extent_print_ptrs(struct bch_fs *c, char *buf,
 			break;
 		case BCH_EXTENT_ENTRY_ptr:
 			ptr = entry_to_ptr(entry);
-			ca = bch_dev_bkey_exists(c, ptr->dev);
+			ca = ptr->dev < c->sb.nr_devices && c->devs[ptr->dev]
+				? bch_dev_bkey_exists(c, ptr->dev)
+				: NULL;
 
 			p("ptr: %u:%llu gen %u%s", ptr->dev,
 			  (u64) ptr->offset, ptr->gen,
@@ -1974,14 +1990,9 @@ void bch2_extent_mark_replicas_cached(struct bch_fs *c,
 				      struct bkey_s_extent e)
 {
 	struct bch_extent_ptr *ptr;
-	unsigned tier = 0, nr_cached = 0, nr_good = 0;
+	unsigned tier = 0, nr_cached = 0;
+	unsigned nr_good = bch2_extent_nr_good_ptrs(c, e.c);
 	bool have_higher_tier;
-
-	extent_for_each_ptr(e, ptr)
-		if (!ptr->cached &&
-		    bch_dev_bkey_exists(c, ptr->dev)->mi.state !=
-		    BCH_MEMBER_STATE_FAILED)
-			nr_good++;
 
 	if (nr_good <= c->opts.data_replicas)
 		return;

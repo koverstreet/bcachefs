@@ -1437,35 +1437,57 @@ static void bch2_btree_node_write_error(struct bch_fs *c,
 	struct closure *cl	= wbio->cl;
 	__BKEY_PADDED(k, BKEY_BTREE_PTR_VAL_U64s_MAX) tmp;
 	struct bkey_i_extent *new_key;
+	struct bkey_s_extent e;
+	struct bch_extent_ptr *ptr;
+	struct btree_iter iter;
+	int ret;
 
-	six_lock_read(&b->lock);
-	bkey_copy(&tmp.k, &b->key);
-	six_unlock_read(&b->lock);
+	__bch2_btree_iter_init(&iter, c, b->btree_id, b->key.k.p,
+			       BTREE_MAX_DEPTH,
+			       b->level, 0);
+retry:
+	ret = bch2_btree_iter_traverse(&iter);
+	if (ret)
+		goto err;
 
-	if (!bkey_extent_is_data(&tmp.k.k) || !PTR_HASH(&tmp.k)) {
-		/* Node has been freed: */
+	/* has node been freed? */
+	if (iter.nodes[b->level] != b) {
+		/* node has been freed: */
+		if (!btree_node_dying(b))
+			panic("foo4\n");
 		goto out;
 	}
 
+	if (!btree_node_hashed(b))
+		panic("foo5\n");
+
+	bkey_copy(&tmp.k, &b->key);
+
 	new_key = bkey_i_to_extent(&tmp.k);
+	e = extent_i_to_s(new_key);
+	extent_for_each_ptr_backwards(e, ptr)
+		if (bch2_dev_list_has_dev(wbio->failed, ptr->dev))
+			bch2_extent_drop_ptr(e, ptr);
 
-	while (wbio->replicas_failed) {
-		unsigned idx = __fls(wbio->replicas_failed);
+	if (!bch2_extent_nr_ptrs(e.c))
+		goto err;
 
-		bch2_extent_drop_ptr_idx(extent_i_to_s(new_key), idx);
-		wbio->replicas_failed ^= 1 << idx;
-	}
-
-	if (!bch2_extent_nr_ptrs(extent_i_to_s_c(new_key)) ||
-	    bch2_btree_node_update_key(c, b, new_key)) {
-		set_btree_node_noevict(b);
-		bch2_fs_fatal_error(c, "fatal error writing btree node");
-	}
+	ret = bch2_btree_node_update_key(c, &iter, b, new_key);
+	if (ret == -EINTR)
+		goto retry;
+	if (ret)
+		goto err;
 out:
+	bch2_btree_iter_unlock(&iter);
 	bio_put(&wbio->bio);
 	btree_node_write_done(c, b);
 	if (cl)
 		closure_put(cl);
+	return;
+err:
+	set_btree_node_noevict(b);
+	bch2_fs_fatal_error(c, "fatal error writing btree node");
+	goto out;
 }
 
 void bch2_btree_write_error_work(struct work_struct *work)
@@ -1495,12 +1517,17 @@ static void btree_node_write_endio(struct bio *bio)
 	struct closure *cl		= !wbio->split ? wbio->cl : NULL;
 	struct bch_fs *c		= wbio->c;
 	struct bch_dev *ca		= wbio->ca;
+	unsigned long flags;
 
 	bch2_latency_acct(ca, wbio->submit_time_us, WRITE);
 
-	if (bch2_dev_io_err_on(bio->bi_status, ca, "btree write") ||
-	    bch2_meta_write_fault("btree"))
-		set_bit(wbio->ptr_idx, (unsigned long *) &orig->replicas_failed);
+	if (bio->bi_status == BLK_STS_REMOVED ||
+	    bch2_dev_io_err_on(bio->bi_status, ca, "btree write") ||
+	    bch2_meta_write_fault("btree")) {
+		spin_lock_irqsave(&c->btree_write_error_lock, flags);
+		bch2_dev_list_add_dev(&orig->failed, ca->dev_idx);
+		spin_unlock_irqrestore(&c->btree_write_error_lock, flags);
+	}
 
 	if (wbio->have_io_ref)
 		percpu_ref_put(&ca->io_ref);
@@ -1516,12 +1543,11 @@ static void btree_node_write_endio(struct bio *bio)
 		wbio->used_mempool,
 		wbio->data);
 
-	if (wbio->replicas_failed) {
-		unsigned long flags;
-
+	if (wbio->failed.nr) {
 		spin_lock_irqsave(&c->btree_write_error_lock, flags);
 		bio_list_add(&c->btree_write_error_list, &wbio->bio);
 		spin_unlock_irqrestore(&c->btree_write_error_lock, flags);
+
 		queue_work(c->wq, &c->btree_write_error_work);
 		return;
 	}
@@ -1732,6 +1758,7 @@ void __bch2_btree_node_write(struct bch_fs *c, struct btree *b,
 
 	wbio = wbio_init(bio_alloc_bioset(GFP_NOIO, 1 << order, &c->bio_write));
 	wbio->cl		= parent;
+	wbio->failed.nr		= 0;
 	wbio->order		= order;
 	wbio->used_mempool	= used_mempool;
 	wbio->data		= data;

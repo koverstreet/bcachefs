@@ -159,7 +159,8 @@ int bch2_btree_mark_key_initial(struct bch_fs *c, enum bkey_type type,
 		if (test_bit(BCH_FS_REBUILD_REPLICAS, &c->flags) ||
 		    (!c->opts.nofsck &&
 		     fsck_err_on(!bch2_sb_has_replicas(c, e, data_type), c,
-				 "superblock not marked as containing replicas"))) {
+				 "superblock not marked as containing replicas (type %u)",
+				 data_type))) {
 			ret = bch2_check_mark_super(c, e, data_type);
 			if (ret)
 				return ret;

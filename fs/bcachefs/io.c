@@ -140,7 +140,6 @@ void bch2_submit_wbio_replicas(struct bch_write_bio *wbio, struct bch_fs *c,
 	const struct bch_extent_ptr *ptr;
 	struct bch_write_bio *n;
 	struct bch_dev *ca;
-	unsigned ptr_idx = 0;
 
 	BUG_ON(c->opts.nochanges);
 
@@ -169,7 +168,6 @@ void bch2_submit_wbio_replicas(struct bch_write_bio *wbio, struct bch_fs *c,
 
 		n->c			= c;
 		n->ca			= ca;
-		n->ptr_idx		= ptr_idx++;
 		n->submit_time_us	= local_clock_us();
 		n->bio.bi_iter.bi_sector = ptr->offset;
 
@@ -185,7 +183,7 @@ void bch2_submit_wbio_replicas(struct bch_write_bio *wbio, struct bch_fs *c,
 			submit_bio(&n->bio);
 		} else {
 			n->have_io_ref		= false;
-			bcache_io_error(c, &n->bio, "device has been removed");
+			n->bio.bi_status	= BLK_STS_REMOVED;
 			bio_endio(&n->bio);
 		}
 	}
