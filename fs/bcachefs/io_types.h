@@ -72,8 +72,7 @@ struct bch_write_bio {
 	struct closure		*cl;
 	};
 
-	u8			ptr_idx;
-	u8			replicas_failed;
+	struct bch_devs_list	failed;
 	u8			order;
 
 	unsigned		split:1,

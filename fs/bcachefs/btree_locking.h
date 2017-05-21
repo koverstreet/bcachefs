@@ -111,6 +111,7 @@ static inline bool btree_node_lock(struct btree *b, struct bpos pos,
 }
 
 bool bch2_btree_node_relock(struct btree_iter *, unsigned);
+bool bch2_btree_iter_relock(struct btree_iter *);
 
 void bch2_btree_node_unlock_write(struct btree *, struct btree_iter *);
 void bch2_btree_node_lock_write(struct btree *, struct btree_iter *);

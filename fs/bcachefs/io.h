@@ -21,6 +21,8 @@ void bch2_latency_acct(struct bch_dev *, unsigned, int);
 void bch2_submit_wbio_replicas(struct bch_write_bio *, struct bch_fs *,
 			       enum bch_data_type, const struct bkey_i *);
 
+#define BLK_STS_REMOVED		((__force blk_status_t)128)
+
 enum bch_write_flags {
 	BCH_WRITE_ALLOC_NOWAIT		= (1 << 0),
 	BCH_WRITE_CACHED		= (1 << 1),
