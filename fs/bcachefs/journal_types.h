@@ -34,6 +34,7 @@ struct journal_entry_pin_list {
 	struct list_head		list;
 	struct list_head		flushed;
 	atomic_t			count;
+	struct bch_devs_list		devs;
 };
 
 struct journal;

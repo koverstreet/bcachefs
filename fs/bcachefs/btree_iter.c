@@ -108,6 +108,17 @@ success:
 	return true;
 }
 
+bool bch2_btree_iter_relock(struct btree_iter *iter)
+{
+	unsigned l;
+
+	for (l = iter->level; l < iter->locks_want && iter->nodes[l]; l++)
+		if (!bch2_btree_node_relock(iter, l))
+			return false;
+
+	return true;
+}
+
 /* Slowpath: */
 bool __bch2_btree_node_lock(struct btree *b, struct bpos pos,
 			   unsigned level,
@@ -214,7 +225,6 @@ bool __bch2_btree_iter_set_locks_want(struct btree_iter *iter,
 				     unsigned new_locks_want)
 {
 	struct btree_iter *linked;
-	unsigned l;
 
 	/* Drop locks we don't want anymore: */
 	if (new_locks_want < iter->locks_want)
@@ -228,12 +238,9 @@ bool __bch2_btree_iter_set_locks_want(struct btree_iter *iter,
 	iter->locks_want = new_locks_want;
 	btree_iter_drop_extra_locks(iter);
 
-	for (l = iter->level; l < iter->locks_want && iter->nodes[l]; l++)
-		if (!bch2_btree_node_relock(iter, l))
-			goto fail;
+	if (bch2_btree_iter_relock(iter))
+		return true;
 
-	return true;
-fail:
 	/*
 	 * Just an optimization: ancestor nodes must be locked before child
 	 * nodes, so set locks_want on iterators that might lock ancestors

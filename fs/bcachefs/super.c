@@ -992,6 +992,9 @@ static void __bch2_dev_offline(struct bch_dev *ca)
 
 	lockdep_assert_held(&c->state_lock);
 
+	if (percpu_ref_is_zero(&ca->io_ref))
+		return;
+
 	__bch2_dev_read_only(c, ca);
 
 	reinit_completion(&ca->io_ref_completion);
@@ -1169,6 +1172,8 @@ static int __bch2_dev_online(struct bch_fs *c, struct bch_sb_handle *sb)
 		return -EINVAL;
 	}
 
+	BUG_ON(!percpu_ref_is_zero(&ca->io_ref));
+
 	ret = bch2_dev_journal_init(ca, sb->sb);
 	if (ret)
 		return ret;
@@ -1195,7 +1200,7 @@ static int __bch2_dev_online(struct bch_fs *c, struct bch_sb_handle *sb)
 	if (bch2_dev_sysfs_online(ca))
 		pr_warn("error creating sysfs objects");
 
-	bch2_mark_dev_superblock(c, ca, 0);
+	bch2_mark_dev_superblock(c, ca, BCH_BUCKET_MARK_MAY_MAKE_UNAVAILABLE);
 
 	if (ca->mi.state == BCH_MEMBER_STATE_RW)
 		bch2_dev_allocator_add(c, ca);
@@ -1398,19 +1403,49 @@ int bch2_dev_remove(struct bch_fs *c, struct bch_dev *ca, int flags)
 	 *
 	 * flag_data_bad() does not check btree pointers
 	 */
-	ret = bch2_flag_data_bad(ca);
+	ret = bch2_dev_data_drop(c, ca->dev_idx, flags);
 	if (ret) {
-		bch_err(ca, "Remove failed");
+		bch_err(ca, "Remove failed: error %i dropping data", ret);
+		goto err;
+	}
+
+	ret = bch2_journal_flush_device(&c->journal, ca->dev_idx);
+	if (ret) {
+		bch_err(ca, "Remove failed: error %i flushing journal", ret);
 		goto err;
 	}
 
 	data = bch2_dev_has_data(c, ca);
 	if (data) {
-		bch_err(ca, "Remove failed, still has data (%x)", data);
+		char data_has_str[100];
+		bch2_scnprint_flag_list(data_has_str,
+					sizeof(data_has_str),
+					bch2_data_types,
+					data);
+		bch_err(ca, "Remove failed, still has data (%s)", data_has_str);
+		ret = -EBUSY;
 		goto err;
 	}
 
-	bch2_journal_meta(&c->journal);
+	ret = bch2_btree_delete_range(c, BTREE_ID_ALLOC,
+				      POS(ca->dev_idx, 0),
+				      POS(ca->dev_idx + 1, 0),
+				      ZERO_VERSION,
+				      NULL, NULL, NULL);
+	if (ret) {
+		bch_err(ca, "Remove failed, error deleting alloc info");
+		goto err;
+	}
+
+	/*
+	 * must flush all existing journal entries, they might have
+	 * (overwritten) keys that point to the device we're removing:
+	 */
+	ret = bch2_journal_flush_all_pins(&c->journal);
+	if (ret) {
+		bch_err(ca, "Remove failed, journal error");
+		goto err;
+	}
 
 	__bch2_dev_offline(ca);
 
@@ -1605,7 +1640,6 @@ int bch2_dev_offline(struct bch_fs *c, struct bch_dev *ca, int flags)
 		return -EINVAL;
 	}
 
-	__bch2_dev_read_only(c, ca);
 	__bch2_dev_offline(ca);
 
 	mutex_unlock(&c->state_lock);
@@ -1615,37 +1649,31 @@ int bch2_dev_offline(struct bch_fs *c, struct bch_dev *ca, int flags)
 int bch2_dev_evacuate(struct bch_fs *c, struct bch_dev *ca)
 {
 	unsigned data;
-	int ret;
+	int ret = 0;
 
 	mutex_lock(&c->state_lock);
 
 	if (ca->mi.state == BCH_MEMBER_STATE_RW) {
 		bch_err(ca, "Cannot migrate data off RW device");
-		mutex_unlock(&c->state_lock);
-		return -EINVAL;
+		ret = -EINVAL;
+		goto err;
 	}
 
-	mutex_unlock(&c->state_lock);
-
-	ret = bch2_move_data_off_device(ca);
+	ret = bch2_dev_data_migrate(c, ca, 0);
 	if (ret) {
 		bch_err(ca, "Error migrating data: %i", ret);
-		return ret;
-	}
-
-	ret = bch2_move_metadata_off_device(ca);
-	if (ret) {
-		bch_err(ca, "Error migrating metadata: %i", ret);
-		return ret;
+		goto err;
 	}
 
 	data = bch2_dev_has_data(c, ca);
 	if (data) {
 		bch_err(ca, "Migrate error: data still present (%x)", data);
-		return -EINVAL;
+		ret = -EINVAL;
+		goto err;
 	}
-
-	return 0;
+err:
+	mutex_unlock(&c->state_lock);
+	return ret;
 }
 
 /* Filesystem open: */

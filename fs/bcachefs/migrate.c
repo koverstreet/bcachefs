@@ -27,23 +27,9 @@ static bool migrate_pred(void *arg, struct bkey_s_c_extent e)
 
 #define MAX_DATA_OFF_ITER	10
 
-/*
- * This moves only the data off, leaving the meta-data (if any) in place.
- * It walks the key space, and for any key with a valid pointer to the
- * relevant device, it copies it elsewhere, updating the key to point to
- * the copy.
- * The meta-data is moved off by bch_move_meta_data_off_device.
- *
- * Note: If the number of data replicas desired is > 1, ideally, any
- * new copies would not be made in the same device that already have a
- * copy (if there are enough devices).
- * This is _not_ currently implemented.  The multiple replicas can
- * land in the same device even if there are others available.
- */
-
-int bch2_move_data_off_device(struct bch_dev *ca)
+static int bch2_dev_usrdata_migrate(struct bch_fs *c, struct bch_dev *ca,
+				    int flags)
 {
-	struct bch_fs *c = ca->fs;
 	struct btree_iter iter;
 	struct bkey_s_c k;
 	u64 keys_moved, sectors_moved;
@@ -113,10 +99,6 @@ int bch2_move_data_off_device(struct bch_dev *ca)
 	return ret;
 }
 
-/*
- * This walks the btree, and for any node on the relevant device it moves the
- * node elsewhere.
- */
 static int bch2_move_btree_off(struct bch_fs *c, struct bch_dev *ca,
 			       enum btree_id id)
 {
@@ -200,9 +182,9 @@ static int bch2_move_btree_off(struct bch_fs *c, struct bch_dev *ca,
  *   is written.
  */
 
-int bch2_move_metadata_off_device(struct bch_dev *ca)
+static int bch2_dev_metadata_migrate(struct bch_fs *c, struct bch_dev *ca,
+				     int flags)
 {
-	struct bch_fs *c = ca->fs;
 	unsigned i;
 	int ret = 0;
 
@@ -240,37 +222,31 @@ err:
 	return ret;
 }
 
-/*
- * Flagging data bad when forcibly removing a device after failing to
- * migrate the data off the device.
- */
-
-static int bch2_flag_key_bad(struct btree_iter *iter,
-			    struct bch_dev *ca,
-			    struct bkey_s_c_extent orig)
+int bch2_dev_data_migrate(struct bch_fs *c, struct bch_dev *ca, int flags)
 {
-	BKEY_PADDED(key) tmp;
-	struct bkey_s_extent e;
-	struct bch_extent_ptr *ptr;
-	struct bch_fs *c = ca->fs;
+	return bch2_dev_usrdata_migrate(c, ca, flags) ?:
+		bch2_dev_metadata_migrate(c, ca, flags);
+}
 
-	bkey_reassemble(&tmp.key, orig.s_c);
-	e = bkey_i_to_s_extent(&tmp.key);
+static int drop_dev_ptrs(struct bch_fs *c, struct bkey_s_extent e,
+			 unsigned dev_idx, int flags, bool metadata)
+{
+	struct bch_extent_ptr *ptr;
+	unsigned replicas = metadata ? c->opts.metadata_replicas : c->opts.data_replicas;
+	unsigned lost = metadata ? BCH_FORCE_IF_METADATA_LOST : BCH_FORCE_IF_DATA_LOST;
+	unsigned degraded = metadata ? BCH_FORCE_IF_METADATA_DEGRADED : BCH_FORCE_IF_DATA_DEGRADED;
+	unsigned nr_good;
 
 	extent_for_each_ptr_backwards(e, ptr)
-		if (ptr->dev == ca->dev_idx)
+		if (ptr->dev == dev_idx)
 			bch2_extent_drop_ptr(e, ptr);
 
-	/*
-	 * If the new extent no longer has any pointers, bch2_extent_normalize()
-	 * will do the appropriate thing with it (turning it into a
-	 * KEY_TYPE_ERROR key, or just a discard if it was a cached extent)
-	 */
-	bch2_extent_normalize(c, e.s);
+	nr_good = bch2_extent_nr_good_ptrs(c, e.c);
+	if ((!nr_good && !(flags & lost)) ||
+	    (nr_good < replicas && !(flags & degraded)))
+		return -EINVAL;
 
-	return bch2_btree_insert_at(c, NULL, NULL, NULL,
-				   BTREE_INSERT_ATOMIC,
-				   BTREE_INSERT_ENTRY(iter, &tmp.key));
+	return 0;
 }
 
 /*
@@ -284,11 +260,11 @@ static int bch2_flag_key_bad(struct btree_iter *iter,
  * that we've already tried to move the data MAX_DATA_OFF_ITER times and
  * are not likely to succeed if we try again.
  */
-int bch2_flag_data_bad(struct bch_dev *ca)
+static int bch2_dev_usrdata_drop(struct bch_fs *c, unsigned dev_idx, int flags)
 {
-	struct bch_fs *c = ca->fs;
 	struct bkey_s_c k;
-	struct bkey_s_c_extent e;
+	struct bkey_s_extent e;
+	BKEY_PADDED(key) tmp;
 	struct btree_iter iter;
 	int ret = 0;
 
@@ -303,11 +279,33 @@ int bch2_flag_data_bad(struct bch_dev *ca)
 		if (!bkey_extent_is_data(k.k))
 			goto advance;
 
-		e = bkey_s_c_to_extent(k);
-		if (!bch2_extent_has_device(e, ca->dev_idx))
+		if (!bch2_extent_has_device(bkey_s_c_to_extent(k), dev_idx))
 			goto advance;
 
-		ret = bch2_flag_key_bad(&iter, ca, e);
+		bkey_reassemble(&tmp.key, k);
+		e = bkey_i_to_s_extent(&tmp.key);
+
+		ret = drop_dev_ptrs(c, e, dev_idx, flags, false);
+		if (ret)
+			break;
+
+		/*
+		 * If the new extent no longer has any pointers, bch2_extent_normalize()
+		 * will do the appropriate thing with it (turning it into a
+		 * KEY_TYPE_ERROR key, or just a discard if it was a cached extent)
+		 */
+		bch2_extent_normalize(c, e.s);
+
+		if (bkey_extent_is_data(e.k) &&
+		    (ret = bch2_check_mark_super(c, e.c, BCH_DATA_USER)))
+			break;
+
+		iter.pos = bkey_start_pos(&tmp.key.k);
+
+		ret = bch2_btree_insert_at(c, NULL, NULL, NULL,
+					   BTREE_INSERT_ATOMIC|
+					   BTREE_INSERT_NOFAIL,
+					   BTREE_INSERT_ENTRY(&iter, &tmp.key));
 
 		/*
 		 * don't want to leave ret == -EINTR, since if we raced and
@@ -319,26 +317,6 @@ int bch2_flag_data_bad(struct bch_dev *ca)
 		if (ret)
 			break;
 
-		/*
-		 * If the replica we're dropping was dirty and there is an
-		 * additional cached replica, the cached replica will now be
-		 * considered dirty - upon inserting the new version of the key,
-		 * the bucket accounting will be updated to reflect the fact
-		 * that the cached data is now dirty and everything works out as
-		 * if by magic without us having to do anything.
-		 *
-		 * The one thing we need to be concerned with here is there's a
-		 * race between when we drop any stale pointers from the key
-		 * we're about to insert, and when the key actually gets
-		 * inserted and the cached data is marked as dirty - we could
-		 * end up trying to insert a key with a pointer that should be
-		 * dirty, but points to stale data.
-		 *
-		 * If that happens the insert code just bails out and doesn't do
-		 * the insert - however, it doesn't return an error. Hence we
-		 * need to always recheck the current key before advancing to
-		 * the next:
-		 */
 		continue;
 advance:
 		if (bkey_extent_is_data(k.k)) {
@@ -356,4 +334,81 @@ advance:
 	mutex_unlock(&c->replicas_gc_lock);
 
 	return ret;
+}
+
+static int bch2_dev_metadata_drop(struct bch_fs *c, unsigned dev_idx, int flags)
+{
+	struct btree_iter iter;
+	struct closure cl;
+	struct btree *b;
+	unsigned id;
+	int ret;
+
+	/* don't handle this yet: */
+	if (flags & BCH_FORCE_IF_METADATA_LOST)
+		return -EINVAL;
+
+	closure_init_stack(&cl);
+
+	mutex_lock(&c->replicas_gc_lock);
+	bch2_replicas_gc_start(c, 1 << BCH_DATA_BTREE);
+
+	for (id = 0; id < BTREE_ID_NR; id++) {
+		for_each_btree_node(&iter, c, id, POS_MIN, BTREE_ITER_PREFETCH, b) {
+			__BKEY_PADDED(k, BKEY_BTREE_PTR_VAL_U64s_MAX) tmp;
+			struct bkey_i_extent *new_key;
+retry:
+			if (!bch2_extent_has_device(bkey_i_to_s_c_extent(&b->key),
+						    dev_idx)) {
+				bch2_btree_iter_set_locks_want(&iter, 0);
+
+				ret = bch2_check_mark_super(c, bkey_i_to_s_c_extent(&b->key),
+							    BCH_DATA_BTREE);
+				if (ret)
+					goto err;
+			} else {
+				bkey_copy(&tmp.k, &b->key);
+				new_key = bkey_i_to_extent(&tmp.k);
+
+				ret = drop_dev_ptrs(c, extent_i_to_s(new_key),
+						    dev_idx, flags, true);
+				if (ret)
+					goto err;
+
+				if (!bch2_btree_iter_set_locks_want(&iter, U8_MAX)) {
+					b = bch2_btree_iter_peek_node(&iter);
+					goto retry;
+				}
+
+				ret = bch2_btree_node_update_key(c, &iter, b, new_key);
+				if (ret == -EINTR) {
+					b = bch2_btree_iter_peek_node(&iter);
+					goto retry;
+				}
+				if (ret)
+					goto err;
+			}
+		}
+		bch2_btree_iter_unlock(&iter);
+
+		/* btree root */
+		mutex_lock(&c->btree_root_lock);
+		mutex_unlock(&c->btree_root_lock);
+	}
+
+	ret = 0;
+out:
+	bch2_replicas_gc_end(c, ret);
+	mutex_unlock(&c->replicas_gc_lock);
+
+	return ret;
+err:
+	bch2_btree_iter_unlock(&iter);
+	goto out;
+}
+
+int bch2_dev_data_drop(struct bch_fs *c, unsigned dev_idx, int flags)
+{
+	return bch2_dev_usrdata_drop(c, dev_idx, flags) ?:
+		bch2_dev_metadata_drop(c, dev_idx, flags);
 }

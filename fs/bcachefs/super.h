@@ -59,6 +59,14 @@ static inline void bch2_dev_list_drop_dev(struct bch_devs_list *devs,
 		}
 }
 
+static inline void bch2_dev_list_add_dev(struct bch_devs_list *devs,
+					 unsigned dev)
+{
+	BUG_ON(bch2_dev_list_has_dev(*devs, dev));
+	BUG_ON(devs->nr >= BCH_REPLICAS_MAX);
+	devs->devs[devs->nr++] = dev;
+}
+
 static inline struct bch_dev *__bch2_next_dev(struct bch_fs *c, unsigned *iter,
 					      struct bch_devs_mask *mask)
 {
