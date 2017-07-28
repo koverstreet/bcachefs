@@ -503,6 +503,90 @@
 			status = "okay";
 		};
 
+		camera_vdddo_1v8: fixedregulator@0 {
+			compatible = "regulator-fixed";
+			regulator-name = "camera_vdddo";
+			regulator-min-microvolt = <1800000>;
+			regulator-max-microvolt = <1800000>;
+			regulator-always-on;
+		};
+
+		camera_vdda_2v8: fixedregulator@1 {
+			compatible = "regulator-fixed";
+			regulator-name = "camera_vdda";
+			regulator-min-microvolt = <2800000>;
+			regulator-max-microvolt = <2800000>;
+			regulator-always-on;
+		};
+
+		camera_vddd_1v5: fixedregulator@2 {
+			compatible = "regulator-fixed";
+			regulator-name = "camera_vddd";
+			regulator-min-microvolt = <1500000>;
+			regulator-max-microvolt = <1500000>;
+			regulator-always-on;
+		};
+
+		cci@1b0c000 {
+			status = "ok";
+
+			camera_rear@76 {
+				compatible = "ovti,ov5645";
+				reg = <0x76>;
+
+				enable-gpios = <&msmgpio 34 GPIO_ACTIVE_HIGH>;
+				reset-gpios = <&msmgpio 35 GPIO_ACTIVE_LOW>;
+				pinctrl-names = "default";
+				pinctrl-0 = <&camera_rear_default>;
+
+				clocks = <&gcc GCC_CAMSS_MCLK0_CLK>;
+				clock-names = "xclk";
+				clock-frequency = <23880000>;
+
+				vdddo-supply = <&camera_vdddo_1v8>;
+				vdda-supply = <&camera_vdda_2v8>;
+				vddd-supply = <&camera_vddd_1v5>;
+
+				status = "disabled";
+
+				port {
+					ov5645_ep: endpoint {
+						clock-lanes = <1>;
+						data-lanes = <0 2>;
+						remote-endpoint = <&csiphy0_ep>;
+					};
+				};
+			};
+
+			camera_front@74 {
+				compatible = "ovti,ov5645";
+				reg = <0x74>;
+
+				enable-gpios = <&msmgpio 33 GPIO_ACTIVE_HIGH>;
+				reset-gpios = <&msmgpio 28 GPIO_ACTIVE_LOW>;
+				pinctrl-names = "default";
+				pinctrl-0 = <&camera_front_default>;
+
+				clocks = <&gcc GCC_CAMSS_MCLK1_CLK>;
+				clock-names = "xclk";
+				clock-frequency = <23880000>;
+
+				vdddo-supply = <&camera_vdddo_1v8>;
+				vdda-supply = <&camera_vdda_2v8>;
+				vddd-supply = <&camera_vddd_1v5>;
+
+				status = "disabled";
+
+				port {
+					ov5645_2_ep: endpoint {
+						clock-lanes = <1>;
+						data-lanes = <0 2>;
+						remote-endpoint = <&csiphy1_ep>;
+					};
+				};
+			};
+		};
+
 		camss@1b00000 {
 			status = "ok";
 			ports {
@@ -510,9 +594,21 @@
 				#size-cells = <0>;
 				port@0 {
 					reg = <0>;
+					csiphy0_ep: endpoint {
+						clock-lanes = <1>;
+						data-lanes = <0 2>;
+						remote-endpoint = <&ov5645_ep>;
+						status = "disabled";
+					};
 				};
 				port@1 {
 					reg = <1>;
+					csiphy1_ep: endpoint {
+						clock-lanes = <1>;
+						data-lanes = <0 2>;
+						remote-endpoint = <&ov5645_2_ep>;
+						status = "disabled";
+					};
 				};
 			};
 		};
