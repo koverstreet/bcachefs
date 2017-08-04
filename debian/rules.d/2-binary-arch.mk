@@ -94,8 +94,9 @@ define install_control =
 endef
 
 # Install the finished build
-install-%: pkgdir = $(CURDIR)/debian/$(bin_pkg_name)-$*
-install-%: pkgdir_ex = $(CURDIR)/debian/$(extra_pkg_name)-$*
+install-%: pkgdir_bin = $(CURDIR)/debian/$(bin_pkg_name)-$*
+install-%: pkgdir = $(CURDIR)/debian/$(mods_pkg_name)-$*
+install-%: pkgdir_ex = $(CURDIR)/debian/$(mods_extra_pkg_name)-$*
 install-%: bindoc = $(pkgdir)/usr/share/doc/$(bin_pkg_name)-$*
 install-%: dbgpkgdir = $(CURDIR)/debian/$(bin_pkg_name)-$*-dbgsym
 install-%: signingv = $(CURDIR)/debian/$(bin_pkg_name)-signing/$(release)-$(revision)
@@ -122,6 +123,7 @@ install-%: checks-%
 	dh_testdir
 	dh_testroot
 	dh_prep -p$(bin_pkg_name)-$*
+	dh_prep -p$(mods_pkg_name)-$*
 	dh_prep -p$(hdrs_pkg_name)-$*
 ifneq ($(skipdbg),true)
 	dh_prep -p$(bin_pkg_name)-$*-dbgsym
@@ -132,25 +134,26 @@ endif
 	# generate a zImage automatically out of the box
 ifeq ($(compress_file),)
 	install -m600 -D $(builddir)/build-$*/$(kernfile) \
-		$(pkgdir)/boot/$(instfile)-$(abi_release)-$*
+		$(pkgdir_bin)/boot/$(instfile)-$(abi_release)-$*
 else
-	install -d $(pkgdir)/boot
+	install -d $(pkgdir_bin)/boot
 	gzip -c9v $(builddir)/build-$*/$(kernfile) > \
-		$(pkgdir)/boot/$(instfile)-$(abi_release)-$*
-	chmod 600 $(pkgdir)/boot/$(instfile)-$(abi_release)-$*
+		$(pkgdir_bin)/boot/$(instfile)-$(abi_release)-$*
+	chmod 600 $(pkgdir_bin)/boot/$(instfile)-$(abi_release)-$*
 endif
 
 ifeq ($(uefi_signed),true)
 	install -d $(signingv)
 	# Check to see if this supports handoff, if not do not sign it.
 	# Check the identification area magic and version >= 0x020b
-	handoff=`dd if="$(pkgdir)/boot/$(instfile)-$(abi_release)-$*" bs=1 skip=514 count=6 2>/dev/null | od -s | gawk '($$1 == 0 && $$2 == 25672 && $$3 == 21362 && $$4 >= 523) { print "GOOD" }'`; \
+	handoff=`dd if="$(pkgdir_bin)/boot/$(instfile)-$(abi_release)-$*" bs=1 skip=514 count=6 2>/dev/null | od -s | gawk '($$1 == 0 && $$2 == 25672 && $$3 == 21362 && $$4 >= 523) { print "GOOD" }'`; \
 	if [ "$$handoff" = "GOOD" ]; then \
-		cp -p $(pkgdir)/boot/$(instfile)-$(abi_release)-$* \
+		cp -p $(pkgdir_bin)/boot/$(instfile)-$(abi_release)-$* \
 			$(signingv)/$(instfile)-$(abi_release)-$*.efi; \
 	fi
 endif
 
+	install -d $(pkgdir)/boot
 	install -m644 $(builddir)/build-$*/.config \
 		$(pkgdir)/boot/config-$(abi_release)-$*
 	install -m644 $(abidir)/$* \
@@ -242,11 +245,11 @@ endif
 
 	echo "interest linux-update-$(abi_release)-$*" >"$(DROOT)/$(bin_pkg_name)-$*.triggers"
 	$(call install_control,$(bin_pkg_name)-$*,image,postinst postrm preinst prerm)
-
+	$(call install_control,$(mods_pkg_name)-$*,extra,postinst postrm)
 ifeq ($(do_extras_package),true)
 	# Install the postinit/postrm scripts in the extras package.
 	if [ -f $(DEBIAN)/control.d/$(target_flavour).inclusion-list ] ; then	\
-		$(call install_control,$(extra_pkg_name)-$*,extra,postinst postrm); \
+		$(call install_control,$(mods_extra_pkg_name)-$*,extra,postinst postrm); \
 	fi
 endif
 
@@ -447,8 +450,9 @@ endif
 endif
 
 binary-%: pkgimg = $(bin_pkg_name)-$*
+binary-%: pkgimg_mods = $(mods_pkg_name)-$*
+binary-%: pkgimg_ex = $(mods_extra_pkg_name)-$*
 binary-%: pkgdir_ex = $(CURDIR)/debian/$(extra_pkg_name)-$*
-binary-%: pkgimg_ex = $(extra_pkg_name)-$*
 binary-%: pkghdr = $(hdrs_pkg_name)-$*
 binary-%: dbgpkg = $(bin_pkg_name)-$*-dbgsym
 binary-%: dbgpkgdir = $(CURDIR)/debian/$(bin_pkg_name)-$*-dbgsym
@@ -470,6 +474,16 @@ binary-%: install-%
 	$(lockme) dh_gencontrol -p$(pkgimg) -- -Vlinux:rprovides='$(rprovides)'
 	dh_md5sums -p$(pkgimg)
 	dh_builddeb -p$(pkgimg)
+
+	dh_installchangelogs -p$(pkgimg_mods)
+	dh_installdocs -p$(pkgimg_mods)
+	dh_compress -p$(pkgimg_mods)
+	dh_fixperms -p$(pkgimg_mods) -X/boot/
+	dh_installdeb -p$(pkgimg_mods)
+	dh_shlibdeps -p$(pkgimg_mods) $(shlibdeps_opts)
+	$(lockme) dh_gencontrol -p$(pkgimg_mods)
+	dh_md5sums -p$(pkgimg_mods)
+	dh_builddeb -p$(pkgimg_mods)
 
 ifeq ($(do_extras_package),true)
   ifeq ($(ship_extras_package),false)
@@ -725,9 +739,9 @@ binary-debs: signingv = $(CURDIR)/debian/$(bin_pkg_name)-signing/$(release)-$(re
 binary-debs: signing_tar = $(src_pkg_name)_$(release)-$(revision)_$(arch).tar.gz
 binary-debs: binary-perarch $(addprefix binary-,$(flavours))
 	@echo Debug: $@
-ifeq ($(uefi_signed),true)
+ifeq ($(any_signed),true)
 	install -d $(signingv)/control
-	{ echo "tarball"; echo "signed-only"; } >$(signingv)/control/options
+	{ echo "tarball"; } >$(signingv)/control/options
 	cd $(signing) && tar czvf ../../../$(signing_tar) .
 	dpkg-distaddfile $(signing_tar) raw-signing -
 endif

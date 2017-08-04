@@ -21,21 +21,37 @@
 #
 # XXX: Leave the blank line before the first package!!
 
-Package: linux-image-PKGVER-ABINUM-FLAVOUR
+Package: linux-image=SIGN-ME-PKG=-PKGVER-ABINUM-FLAVOUR
 Build-Profiles: <!stage1>
 Architecture: ARCH
 Section: kernel
 Priority: optional
 Provides: linux-image, fuse-module, aufs-dkms, =PROVIDES=${linux:rprovides}
-Depends: ${misc:Depends}, ${shlibs:Depends}, kmod, linux-base
+Depends: ${misc:Depends}, ${shlibs:Depends}, kmod, linux-base, linux-modules-PKGVER-ABINUM-FLAVOUR
 Recommends: BOOTLOADER, initramfs-tools | linux-initramfs-tool
 Breaks: flash-kernel (<< 3.0~rc.4ubuntu64) [arm64]
+Conflicts: linux-image=SIGN-PEER-PKG=-PKGVER-ABINUM-FLAVOUR
 Suggests: fdutils, SRCPKGNAME-doc-PKGVER | SRCPKGNAME-source-PKGVER, SRCPKGNAME-tools, linux-headers-PKGVER-ABINUM-FLAVOUR
 Description: Linux kernel image for version PKGVER on DESC
- This package contains the Linux kernel image for version PKGVER on
+ This package contains the=SIGN-ME-TXT= Linux kernel image for version PKGVER on
  DESC.
  .
- Also includes the corresponding System.map file, the modules built by the
+ Supports SUPPORTED processors.
+ .
+ TARGET
+ .
+ You likely do not want to install this package directly. Instead, install
+ the linux-FLAVOUR meta-package, which will ensure that upgrades work
+ correctly, and that supporting packages are also installed.
+
+Package: linux-modules-PKGVER-ABINUM-FLAVOUR
+Build-Profiles: <!stage1>
+Architecture: ARCH
+Section: kernel
+Priority: optional
+Depends: ${misc:Depends}, ${shlibs:Depends}
+Description: Linux kernel extra modules for version PKGVER on DESC
+ Contains the corresponding System.map file, the modules built by the
  packager, and scripts that try to ensure that the system is not left in an
  unbootable state after an update.
  .
@@ -47,12 +63,12 @@ Description: Linux kernel image for version PKGVER on DESC
  the linux-FLAVOUR meta-package, which will ensure that upgrades work
  correctly, and that supporting packages are also installed.
 
-Package: linux-image-extra-PKGVER-ABINUM-FLAVOUR
+Package: linux-modules-extra-PKGVER-ABINUM-FLAVOUR
 Build-Profiles: <!stage1>
 Architecture: ARCH
 Section: kernel
 Priority: optional
-Depends: ${misc:Depends}, ${shlibs:Depends}, linux-image-PKGVER-ABINUM-FLAVOUR, crda | wireless-crda
+Depends: ${misc:Depends}, ${shlibs:Depends}, linux-image-PKGVER-ABINUM-FLAVOUR | linux-image-unsigned-PKGVER-ABINUM-FLAVOUR, crda | wireless-crda
 Description: Linux kernel extra modules for version PKGVER on DESC
  This package contains the Linux kernel extra modules for version PKGVER on
  DESC.
@@ -83,7 +99,7 @@ Description: Linux kernel headers for version PKGVER on DESC
  This is for sites that want the latest kernel headers.  Please read
  /usr/share/doc/linux-headers-PKGVER-ABINUM/debian.README.gz for details.
 
-Package: linux-image-PKGVER-ABINUM-FLAVOUR-dbgsym
+Package: linux-image=SIGN-ME-PKG=-PKGVER-ABINUM-FLAVOUR-dbgsym
 Build-Profiles: <!stage1>
 Architecture: ARCH
 Section: devel
@@ -91,7 +107,7 @@ Priority: optional
 Depends: ${misc:Depends}
 Provides: linux-debug
 Description: Linux kernel debug image for version PKGVER on DESC
- This package provides a kernel debug image for version PKGVER on
+ This package provides the=SIGN-ME-TXT= kernel debug image for version PKGVER on
  DESC.
  .
  This is for sites that wish to debug the kernel.

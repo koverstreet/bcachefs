@@ -130,8 +130,10 @@ stampdir	:= $(CURDIR)/debian/stamps
 # are places that you'll find linux-image hard coded, but I guess thats OK since the
 # assumption that the binary package always starts with linux-image will never change.
 #
-bin_pkg_name=linux-image-$(abi_release)
-extra_pkg_name=linux-image-extra-$(abi_release)
+bin_pkg_name_signed=linux-image-$(abi_release)
+bin_pkg_name_unsigned=linux-image-unsigned-$(abi_release)
+mods_pkg_name=linux-modules-$(abi_release)
+mods_extra_pkg_name=linux-modules-extra-$(abi_release)
 hdrs_pkg_name=linux-headers-$(abi_release)
 indep_hdrs_pkg_name=$(src_pkg_name)-headers-$(abi_release)
 
