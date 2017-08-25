@@ -636,6 +636,11 @@ static int journal_entry_validate(struct bch_fs *c,
 			JSET_CSUM_TYPE(jset), sector))
 		return JOURNAL_ENTRY_BAD;
 
+	/*
+	 * XXX: handle checksum error better when only the most recent journal
+	 * entry has an invalid checksum:
+	 */
+
 	csum = csum_vstruct(c, JSET_CSUM_TYPE(jset), journal_nonce(jset), jset);
 	if (journal_entry_err_on(bch2_crc_cmp(csum, jset->csum), c,
 			"journal checksum bad, sector %llu", sector)) {

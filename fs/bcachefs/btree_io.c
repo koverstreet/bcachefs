@@ -1183,6 +1183,10 @@ int bch2_btree_node_read_done(struct bch_fs *c, struct btree *b, bool have_retry
 			nonce = btree_nonce(i, b->written << 9);
 			csum = csum_vstruct(c, BSET_CSUM_TYPE(i), nonce, b->data);
 
+			/*
+			 * XXX: handle checksum error better when it's a bset
+			 * we don't actually need:
+			 */
 			btree_err_on(bch2_crc_cmp(csum, b->data->csum),
 				     BTREE_ERR_WANT_RETRY, c, b, i,
 				     "invalid checksum");
