@@ -45,7 +45,6 @@ struct aa_task_ctx {
 	u64 token;
 };
 
-struct aa_task_ctx *aa_alloc_task_context(gfp_t flags);
 void aa_free_task_context(struct aa_task_ctx *ctx);
 void aa_dup_task_context(struct aa_task_ctx *new,
 			 const struct aa_task_ctx *old);
