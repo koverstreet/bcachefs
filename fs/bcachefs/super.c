@@ -1105,7 +1105,6 @@ static int bch2_dev_alloc(struct bch_fs *c, unsigned dev_idx)
 
 	ca->mi = bch2_mi_to_cpu(member);
 	ca->uuid = member->uuid;
-	ca->bucket_bits = ilog2(ca->mi.bucket_size);
 	scnprintf(ca->name, sizeof(ca->name), "dev-%u", dev_idx);
 
 	/* XXX: tune these */
