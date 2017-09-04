@@ -408,9 +408,7 @@ const char *bch2_sb_validate(struct bcache_superblock *disk_sb)
 	if (mi.nbuckets - mi.first_bucket < 1 << 10)
 		return "Not enough buckets";
 
-	if (!is_power_of_2(mi.bucket_size) ||
-	    mi.bucket_size < PAGE_SECTORS ||
-	    mi.bucket_size < block_size)
+	if (mi.bucket_size < block_size)
 		return "Bad bucket size";
 
 	if (get_capacity(disk_sb->bdev->bd_disk) <
