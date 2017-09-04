@@ -314,7 +314,8 @@ bool bch2_invalidate_bucket(struct bch_dev *ca, struct bucket *g,
 	}));
 
 	if (!old->owned_by_allocator && old->cached_sectors)
-		trace_invalidate(ca, g - ca->buckets, old->cached_sectors);
+		trace_invalidate(ca, bucket_to_sector(ca, g - ca->buckets),
+				 old->cached_sectors);
 	return true;
 }
 
@@ -522,7 +523,7 @@ static void bch2_mark_pointer(struct bch_fs *c,
 	if (saturated &&
 	    atomic_long_add_return(saturated,
 				   &ca->saturated_count) >=
-	    ca->free_inc.size << ca->bucket_bits) {
+	    bucket_to_sector(ca, ca->free_inc.size)) {
 		if (c->gc_thread) {
 			trace_gc_sectors_saturated(c);
 			wake_up_process(c->gc_thread);

@@ -1310,7 +1310,7 @@ static void btree_split(struct btree_update *as, struct btree *b,
 		btree_split_insert_keys(as, n1, iter, keys);
 
 	if (vstruct_blocks(n1->data, c->block_bits) > BTREE_SPLIT_THRESHOLD(c)) {
-		trace_btree_node_split(c, b, b->nr.live_u64s);
+		trace_btree_split(c, b);
 
 		n2 = __btree_split_node(as, n1, iter);
 
@@ -1340,7 +1340,7 @@ static void btree_split(struct btree_update *as, struct btree *b,
 			bch2_btree_node_write(c, n3, &as->cl, SIX_LOCK_intent);
 		}
 	} else {
-		trace_btree_node_compact(c, b, b->nr.live_u64s);
+		trace_btree_compact(c, b);
 
 		bch2_btree_build_aux_trees(n1);
 		six_unlock_write(&n1->lock);

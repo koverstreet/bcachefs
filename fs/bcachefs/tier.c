@@ -146,10 +146,12 @@ static int bch2_tiering_thread(void *arg)
 				for_each_member_device_rcu(ca, c, i,
 						&faster_tier->devs) {
 					tier_capacity +=
-						(ca->mi.nbuckets -
-						 ca->mi.first_bucket) << ca->bucket_bits;
+						bucket_to_sector(ca,
+							ca->mi.nbuckets -
+							ca->mi.first_bucket);
 					available_sectors +=
-						dev_buckets_available(ca) << ca->bucket_bits;
+						bucket_to_sector(ca,
+							dev_buckets_available(ca));
 				}
 				rcu_read_unlock();
 			}

@@ -789,11 +789,6 @@ static inline bool bch2_fs_running(struct bch_fs *c)
 	return c->state == BCH_FS_RO || c->state == BCH_FS_RW;
 }
 
-static inline unsigned bucket_pages(const struct bch_dev *ca)
-{
-	return ca->mi.bucket_size / PAGE_SECTORS;
-}
-
 static inline unsigned bucket_bytes(const struct bch_dev *ca)
 {
 	return ca->mi.bucket_size << 9;

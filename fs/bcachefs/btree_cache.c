@@ -180,8 +180,8 @@ static int __btree_node_reclaim(struct bch_fs *c, struct btree *b, bool flush)
 		btree_node_wait_on_io(b);
 	}
 out:
-	if (PTR_HASH(&b->key))
-		trace_btree_node_reap(c, b, ret);
+	if (PTR_HASH(&b->key) && !ret)
+		trace_btree_node_reap(c, b);
 	return ret;
 out_unlock:
 	six_unlock_write(&b->lock);
