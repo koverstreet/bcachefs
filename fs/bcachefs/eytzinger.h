@@ -259,29 +259,31 @@ static inline unsigned inorder_to_eytzinger0(unsigned i, unsigned size)
 	return __inorder_to_eytzinger0(i, size, eytzinger0_extra(size));
 }
 
-#define eytzinger0_find(base, _nr, _size, _cmp, _search)		\
-({									\
-	void *_base = base;						\
-	size_t _i = 0;							\
-	int _res;							\
-									\
-	while (_i < (_nr) &&						\
-	       (_res = _cmp(_search, _base + _i * (_size), _size)))	\
-		_i = eytzinger0_child(_i, _res > 0);			\
-									\
-	if (IS_ENABLED(CONFIG_BCACHEFS_DEBUG)) {			\
-		bool found1 = _i < _nr, found2 = false;			\
-		unsigned _j;						\
-									\
-		for (_j = 0; _j < _nr; _j++)				\
-			if (!_cmp(_base + _j * (_size), _search, _size))\
-				found2 = true;				\
-									\
-		BUG_ON(found1 != found2);				\
-	}								\
-									\
-	_i;								\
-})
+typedef int (*eytzinger_cmp_fn)(const void *l, const void *r, size_t size);
+
+static inline size_t eytzinger0_find(void *base, size_t nr, size_t size,
+				     eytzinger_cmp_fn cmp, void *search)
+{
+	size_t i = 0;
+	int res;
+
+	while (i < nr &&
+	       (res = cmp(search, base + i * size, size)))
+		i = eytzinger0_child(i, res > 0);
+
+	if (IS_ENABLED(CONFIG_BCACHEFS_DEBUG)) {
+		bool found1 = i < nr, found2 = false;
+		size_t j;
+
+		for (j = 0; j < nr; j++)
+			if (!cmp(base + j * size, search, size))
+				found2 = true;
+
+		BUG_ON(found1 != found2);
+	}
+
+	return i;
+}
 
 void eytzinger0_sort(void *, size_t, size_t,
 		    int (*cmp_func)(const void *, const void *, size_t),

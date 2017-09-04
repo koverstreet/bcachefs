@@ -197,24 +197,22 @@ DECLARE_EVENT_CLASS(btree_node,
 
 	TP_STRUCT__entry(
 		__array(char,		uuid,		16	)
-		__field(u64,		bucket			)
 		__field(u8,		level			)
 		__field(u8,		id			)
-		__field(u32,		inode			)
+		__field(u64,		inode			)
 		__field(u64,		offset			)
 	),
 
 	TP_fast_assign(
 		memcpy(__entry->uuid, c->sb.user_uuid.b, 16);
-		__entry->bucket		= PTR_BUCKET_NR_TRACE(c, &b->key, 0);
 		__entry->level		= b->level;
 		__entry->id		= b->btree_id;
 		__entry->inode		= b->key.k.p.inode;
 		__entry->offset		= b->key.k.p.offset;
 	),
 
-	TP_printk("%pU bucket %llu(%u) id %u: %u:%llu",
-		  __entry->uuid, __entry->bucket, __entry->level, __entry->id,
+	TP_printk("%pU  %u id %u %llu:%llu",
+		  __entry->uuid, __entry->level, __entry->id,
 		  __entry->inode, __entry->offset)
 );
 
@@ -253,21 +251,9 @@ DEFINE_EVENT(btree_node, btree_node_free,
 	TP_ARGS(c, b)
 );
 
-TRACE_EVENT(btree_node_reap,
-	TP_PROTO(struct bch_fs *c, struct btree *b, int ret),
-	TP_ARGS(c, b, ret),
-
-	TP_STRUCT__entry(
-		__field(u64,			bucket		)
-		__field(int,			ret		)
-	),
-
-	TP_fast_assign(
-		__entry->bucket	= PTR_BUCKET_NR_TRACE(c, &b->key, 0);
-		__entry->ret = ret;
-	),
-
-	TP_printk("bucket %llu ret %d", __entry->bucket, __entry->ret)
+DEFINE_EVENT(btree_node, btree_node_reap,
+	TP_PROTO(struct bch_fs *c, struct btree *b),
+	TP_ARGS(c, b)
 );
 
 DECLARE_EVENT_CLASS(btree_node_cannibalize_lock,
@@ -330,68 +316,31 @@ TRACE_EVENT(btree_insert_key,
 	TP_ARGS(c, b, k),
 
 	TP_STRUCT__entry(
-		__field(u64,		b_bucket		)
-		__field(u64,		b_offset		)
-		__field(u64,		offset			)
-		__field(u32,		b_inode			)
-		__field(u32,		inode			)
-		__field(u32,		size			)
-		__field(u8,		level			)
 		__field(u8,		id			)
+		__field(u64,		inode			)
+		__field(u64,		offset			)
+		__field(u32,		size			)
 	),
 
 	TP_fast_assign(
-		__entry->b_bucket	= PTR_BUCKET_NR_TRACE(c, &b->key, 0);
-		__entry->level		= b->level;
 		__entry->id		= b->btree_id;
-		__entry->b_inode	= b->key.k.p.inode;
-		__entry->b_offset	= b->key.k.p.offset;
 		__entry->inode		= k->k.p.inode;
 		__entry->offset		= k->k.p.offset;
 		__entry->size		= k->k.size;
 	),
 
-	TP_printk("bucket %llu(%u) id %u: %u:%llu %u:%llu len %u",
-		  __entry->b_bucket, __entry->level, __entry->id,
-		  __entry->b_inode, __entry->b_offset,
+	TP_printk("btree %u: %llu:%llu len %u", __entry->id,
 		  __entry->inode, __entry->offset, __entry->size)
 );
 
-DECLARE_EVENT_CLASS(btree_split,
-	TP_PROTO(struct bch_fs *c, struct btree *b, unsigned keys),
-	TP_ARGS(c, b, keys),
-
-	TP_STRUCT__entry(
-		__field(u64,		bucket			)
-		__field(u8,		level			)
-		__field(u8,		id			)
-		__field(u32,		inode			)
-		__field(u64,		offset			)
-		__field(u32,		keys			)
-	),
-
-	TP_fast_assign(
-		__entry->bucket	= PTR_BUCKET_NR_TRACE(c, &b->key, 0);
-		__entry->level	= b->level;
-		__entry->id	= b->btree_id;
-		__entry->inode	= b->key.k.p.inode;
-		__entry->offset	= b->key.k.p.offset;
-		__entry->keys	= keys;
-	),
-
-	TP_printk("bucket %llu(%u) id %u: %u:%llu keys %u",
-		  __entry->bucket, __entry->level, __entry->id,
-		  __entry->inode, __entry->offset, __entry->keys)
+DEFINE_EVENT(btree_node, btree_split,
+	TP_PROTO(struct bch_fs *c, struct btree *b),
+	TP_ARGS(c, b)
 );
 
-DEFINE_EVENT(btree_split, btree_node_split,
-	TP_PROTO(struct bch_fs *c, struct btree *b, unsigned keys),
-	TP_ARGS(c, b, keys)
-);
-
-DEFINE_EVENT(btree_split, btree_node_compact,
-	TP_PROTO(struct bch_fs *c, struct btree *b, unsigned keys),
-	TP_ARGS(c, b, keys)
+DEFINE_EVENT(btree_node, btree_compact,
+	TP_PROTO(struct bch_fs *c, struct btree *b),
+	TP_ARGS(c, b)
 );
 
 DEFINE_EVENT(btree_node, btree_set_root,
@@ -401,31 +350,9 @@ DEFINE_EVENT(btree_node, btree_set_root,
 
 /* Garbage collection */
 
-TRACE_EVENT(btree_gc_coalesce,
-	TP_PROTO(struct bch_fs *c, struct btree *b, unsigned nodes),
-	TP_ARGS(c, b, nodes),
-
-	TP_STRUCT__entry(
-		__field(u64,		bucket			)
-		__field(u8,		level			)
-		__field(u8,		id			)
-		__field(u32,		inode			)
-		__field(u64,		offset			)
-		__field(unsigned,	nodes			)
-	),
-
-	TP_fast_assign(
-		__entry->bucket		= PTR_BUCKET_NR_TRACE(c, &b->key, 0);
-		__entry->level		= b->level;
-		__entry->id		= b->btree_id;
-		__entry->inode		= b->key.k.p.inode;
-		__entry->offset		= b->key.k.p.offset;
-		__entry->nodes		= nodes;
-	),
-
-	TP_printk("bucket %llu(%u) id %u: %u:%llu nodes %u",
-		  __entry->bucket, __entry->level, __entry->id,
-		  __entry->inode, __entry->offset, __entry->nodes)
+DEFINE_EVENT(btree_node, btree_gc_coalesce,
+	TP_PROTO(struct bch_fs *c, struct btree *b),
+	TP_ARGS(c, b)
 );
 
 TRACE_EVENT(btree_gc_coalesce_fail,
@@ -523,8 +450,8 @@ DEFINE_EVENT(bch_dev, prio_write_end,
 );
 
 TRACE_EVENT(invalidate,
-	TP_PROTO(struct bch_dev *ca, size_t bucket, unsigned sectors),
-	TP_ARGS(ca, bucket, sectors),
+	TP_PROTO(struct bch_dev *ca, u64 offset, unsigned sectors),
+	TP_ARGS(ca, offset, sectors),
 
 	TP_STRUCT__entry(
 		__field(unsigned,	sectors			)
@@ -534,7 +461,7 @@ TRACE_EVENT(invalidate,
 
 	TP_fast_assign(
 		__entry->dev		= ca->disk_sb.bdev->bd_dev;
-		__entry->offset		= bucket << ca->bucket_bits;
+		__entry->offset		= offset,
 		__entry->sectors	= sectors;
 	),
 

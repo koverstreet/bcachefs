@@ -1548,7 +1548,7 @@ static int bch2_set_nr_journal_buckets(struct bch_fs *c, struct bch_dev *ca,
 	 */
 
 	if (bch2_disk_reservation_get(c, &disk_res,
-			(nr - ja->nr) << ca->bucket_bits, 0))
+			bucket_to_sector(ca, nr - ja->nr), 0))
 		return -ENOSPC;
 
 	mutex_lock(&c->sb_lock);

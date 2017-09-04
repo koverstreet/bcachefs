@@ -435,13 +435,13 @@ static const char *extent_ptr_invalid(const struct bch_fs *c,
 		if (ptr != ptr2 && ptr->dev == ptr2->dev)
 			return "multiple pointers to same device";
 
-	if (ptr->offset + size_ondisk > ca->mi.bucket_size * ca->mi.nbuckets)
+	if (ptr->offset + size_ondisk > bucket_to_sector(ca, ca->mi.nbuckets))
 		return "offset past end of device";
 
-	if (ptr->offset < ca->mi.bucket_size * ca->mi.first_bucket)
+	if (ptr->offset < bucket_to_sector(ca, ca->mi.first_bucket))
 		return "offset before first bucket";
 
-	if ((ptr->offset & (ca->mi.bucket_size - 1)) +
+	if (bucket_remainder(ca, ptr->offset) +
 	    size_ondisk > ca->mi.bucket_size)
 		return "spans multiple buckets";
 
@@ -2126,7 +2126,7 @@ static enum merge_result bch2_extent_merge(struct bch_fs *c,
 
 		extent_for_each_entry(el, en_l) {
 			struct bch_extent_ptr *lp, *rp;
-			unsigned bucket_size;
+			struct bch_dev *ca;
 
 			en_r = vstruct_idx(er.v, (u64 *) en_l - el.v->_data);
 
@@ -2144,10 +2144,9 @@ static enum merge_result bch2_extent_merge(struct bch_fs *c,
 				return BCH_MERGE_NOMERGE;
 
 			/* We don't allow extents to straddle buckets: */
-			bucket_size = c->devs[lp->dev]->mi.bucket_size;
+			ca = c->devs[lp->dev];
 
-			if ((lp->offset & ~((u64) bucket_size - 1)) !=
-			    (rp->offset & ~((u64) bucket_size - 1)))
+			if (PTR_BUCKET_NR(ca, lp) != PTR_BUCKET_NR(ca, rp))
 				return BCH_MERGE_NOMERGE;
 		}
 

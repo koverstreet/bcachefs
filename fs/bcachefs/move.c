@@ -17,13 +17,13 @@ static struct bch_extent_ptr *bkey_find_ptr(struct bch_fs *c,
 					    struct bch_extent_ptr ptr)
 {
 	struct bch_extent_ptr *ptr2;
-	unsigned bucket_bits = c->devs[ptr.dev]->bucket_bits;
+	struct bch_dev *ca = c->devs[ptr.dev];
 
 	extent_for_each_ptr(e, ptr2)
 		if (ptr2->dev == ptr.dev &&
 		    ptr2->gen == ptr.gen &&
-		    (ptr2->offset >> bucket_bits) ==
-		    (ptr.offset >> bucket_bits))
+		    PTR_BUCKET_NR(ca, ptr2) ==
+		    PTR_BUCKET_NR(ca, &ptr))
 			return ptr2;
 
 	return NULL;
