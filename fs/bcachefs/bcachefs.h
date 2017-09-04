@@ -401,7 +401,6 @@ struct bch_dev {
 	u8			*oldest_gens;
 	struct bucket		*buckets;
 	unsigned long		*bucket_dirty;
-	unsigned short		bucket_bits;	/* ilog2(bucket_size) */
 
 	/* last calculated minimum prio */
 	u16			min_prio[2];

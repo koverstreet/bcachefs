@@ -5,19 +5,24 @@
 
 #include "bcachefs_ioctl.h"
 
+#include <linux/math64.h>
+
 static inline size_t sector_to_bucket(const struct bch_dev *ca, sector_t s)
 {
-	return s >> ca->bucket_bits;
+	return div_u64(s, ca->mi.bucket_size);
 }
 
 static inline sector_t bucket_to_sector(const struct bch_dev *ca, size_t b)
 {
-	return ((sector_t) b) << ca->bucket_bits;
+	return ((sector_t) b) * ca->mi.bucket_size;
 }
 
 static inline sector_t bucket_remainder(const struct bch_dev *ca, sector_t s)
 {
-	return s & (ca->mi.bucket_size - 1);
+	u32 remainder;
+
+	div_u64_rem(s, ca->mi.bucket_size, &remainder);
+	return remainder;
 }
 
 static inline bool bch2_dev_is_online(struct bch_dev *ca)
