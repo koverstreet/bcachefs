@@ -45,28 +45,6 @@ static inline size_t PTR_BUCKET_NR(const struct bch_dev *ca,
 	return sector_to_bucket(ca, ptr->offset);
 }
 
-/*
- * Returns 0 if no pointers or device offline - only for tracepoints!
- */
-static inline size_t PTR_BUCKET_NR_TRACE(const struct bch_fs *c,
-					 const struct bkey_i *k,
-					 unsigned ptr)
-{
-	size_t bucket = 0;
-#if 0
-	if (bkey_extent_is_data(&k->k)) {
-		const struct bch_extent_ptr *ptr;
-
-		extent_for_each_ptr(bkey_i_to_s_c_extent(k), ptr) {
-			const struct bch_dev *ca = c->devs[ptr->dev];
-			bucket = PTR_BUCKET_NR(ca, ptr);
-			break;
-		}
-	}
-#endif
-	return bucket;
-}
-
 static inline struct bucket *PTR_BUCKET(const struct bch_dev *ca,
 					const struct bch_extent_ptr *ptr)
 {

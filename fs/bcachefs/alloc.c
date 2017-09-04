@@ -105,21 +105,22 @@ static void pd_controllers_update(struct work_struct *work)
 
 		for_each_member_device_rcu(ca, c, iter, &c->tiers[i].devs) {
 			struct bch_dev_usage stats = bch2_dev_usage_read(ca);
-			unsigned bucket_bits = ca->bucket_bits + 9;
 
-			u64 size = (ca->mi.nbuckets -
-				    ca->mi.first_bucket) << bucket_bits;
-			u64 dirty = stats.buckets[S_DIRTY] << bucket_bits;
-			u64 free = __dev_buckets_free(ca, stats) << bucket_bits;
+			u64 size = bucket_to_sector(ca, ca->mi.nbuckets -
+					ca->mi.first_bucket) << 9;
+			u64 dirty = bucket_to_sector(ca,
+					stats.buckets[S_DIRTY]) << 9;
+			u64 free = bucket_to_sector(ca,
+					__dev_buckets_free(ca, stats)) << 9;
 			/*
 			 * Bytes of internal fragmentation, which can be
 			 * reclaimed by copy GC
 			 */
-			s64 fragmented = ((stats.buckets[S_DIRTY] +
-					   stats.buckets_cached) <<
-					  bucket_bits) -
-				((stats.sectors[S_DIRTY] +
-				  stats.sectors_cached) << 9);
+			s64 fragmented = (bucket_to_sector(ca,
+						stats.buckets[S_DIRTY] +
+						stats.buckets_cached) -
+					  (stats.sectors[S_DIRTY] +
+					   stats.sectors_cached)) << 9;
 
 			fragmented = max(0LL, fragmented);
 
@@ -1305,13 +1306,12 @@ static unsigned ob_ptr_sectors_free(struct bch_fs *c,
 {
 	struct bch_dev *ca = c->devs[ptr->dev];
 	unsigned i = ptr - ob->ptrs;
-	unsigned bucket_size = ca->mi.bucket_size;
-	unsigned used = (ptr->offset & (bucket_size - 1)) +
+	unsigned used = bucket_remainder(ca, ptr->offset) +
 		ob->ptr_offset[i];
 
-	BUG_ON(used > bucket_size);
+	BUG_ON(used > ca->mi.bucket_size);
 
-	return bucket_size - used;
+	return ca->mi.bucket_size - used;
 }
 
 static unsigned open_bucket_sectors_free(struct bch_fs *c,
@@ -1657,11 +1657,10 @@ void bch2_recalc_capacity(struct bch_fs *c)
 			reserve += 1;	/* tiering write point */
 		reserve += 1;		/* btree write point */
 
-		reserved_sectors += reserve << ca->bucket_bits;
+		reserved_sectors += bucket_to_sector(ca, reserve);
 
-		capacity += (ca->mi.nbuckets -
-			     ca->mi.first_bucket) <<
-			ca->bucket_bits;
+		capacity += bucket_to_sector(ca, ca->mi.nbuckets -
+					     ca->mi.first_bucket);
 	}
 set_capacity:
 	total_capacity = capacity;

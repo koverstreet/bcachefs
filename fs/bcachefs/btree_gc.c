@@ -311,12 +311,12 @@ static void bch2_mark_allocator_buckets(struct bch_fs *c)
 static void mark_metadata_sectors(struct bch_dev *ca, u64 start, u64 end,
 				  enum bucket_data_type type)
 {
-	u64 b = start >> ca->bucket_bits;
+	u64 b = sector_to_bucket(ca, start);
 
 	do {
 		bch2_mark_metadata_bucket(ca, ca->buckets + b, type, true);
 		b++;
-	} while (b < end >> ca->bucket_bits);
+	} while (b < sector_to_bucket(ca, end));
 }
 
 static void bch2_dev_mark_superblocks(struct bch_dev *ca)
@@ -611,7 +611,7 @@ static void bch2_coalesce_nodes(struct bch_fs *c, struct btree_iter *iter,
 		return;
 	}
 
-	trace_btree_gc_coalesce(c, parent, nr_old_nodes);
+	trace_btree_gc_coalesce(c, old_nodes[0]);
 
 	for (i = 0; i < nr_old_nodes; i++)
 		bch2_btree_interior_update_will_free_node(as, old_nodes[i]);
