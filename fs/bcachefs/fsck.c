@@ -546,14 +546,11 @@ create_lostfound:
 		return ret;
 
 	bch2_inode_init(c, lostfound_inode, 0, 0, S_IFDIR|S_IRWXU|S_IRUGO|S_IXUGO, 0);
-	bch2_inode_pack(&packed, lostfound_inode);
 
-	ret = bch2_inode_create(c, &packed.inode.k_i, BLOCKDEV_INODE_MAX, 0,
+	ret = bch2_inode_create(c, lostfound_inode, BLOCKDEV_INODE_MAX, 0,
 			       &c->unused_inode_hint);
 	if (ret)
 		return ret;
-
-	lostfound_inode->inum = packed.inode.k.p.inode;
 
 	ret = bch2_dirent_create(c, BCACHE_ROOT_INO, &root_hash_info, DT_DIR,
 				 &lostfound, lostfound_inode->inum, NULL,

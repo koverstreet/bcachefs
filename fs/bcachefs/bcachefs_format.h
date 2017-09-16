@@ -586,6 +586,7 @@ BKEY_VAL_TYPE(reservation,	BCH_RESERVATION);
 enum bch_inode_types {
 	BCH_INODE_FS		= 128,
 	BCH_INODE_BLOCKDEV	= 129,
+	BCH_INODE_GENERATION	= 130,
 };
 
 struct bch_inode {
@@ -597,6 +598,15 @@ struct bch_inode {
 	__u8			fields[0];
 } __attribute__((packed, aligned(8)));
 BKEY_VAL_TYPE(inode,		BCH_INODE_FS);
+
+struct bch_inode_generation {
+	struct bch_val		v;
+
+	__le32			i_generation;
+	__le32			pad;
+} __attribute__((packed, aligned(8)));
+BKEY_VAL_TYPE(inode_generation,	BCH_INODE_GENERATION);
+
 
 #define BCH_INODE_FIELDS()				\
 	BCH_INODE_FIELD(i_atime,	64)		\
