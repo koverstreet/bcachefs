@@ -207,6 +207,11 @@ static const char *bch2_inode_invalid(const struct bch_fs *c,
 			return "blockdev inode in fs range";
 
 		return NULL;
+	case BCH_INODE_GENERATION:
+		if (bkey_val_bytes(k.k) != sizeof(struct bch_inode_generation))
+			return "incorrect value size";
+
+		return NULL;
 	default:
 		return "invalid type";
 	}
@@ -259,9 +264,10 @@ void bch2_inode_init(struct bch_fs *c, struct bch_inode_unpacked *inode_u,
 	inode_u->i_otime	= now;
 }
 
-int bch2_inode_create(struct bch_fs *c, struct bkey_i *inode,
+int bch2_inode_create(struct bch_fs *c, struct bch_inode_unpacked *inode_u,
 		      u64 min, u64 max, u64 *hint)
 {
+	struct bkey_inode_buf inode_p;
 	struct btree_iter iter;
 	bool searched_from_start = false;
 	int ret;
@@ -283,6 +289,7 @@ again:
 
 	while (1) {
 		struct bkey_s_c k = bch2_btree_iter_peek_with_holes(&iter);
+		u32 i_generation = 0;
 
 		ret = btree_iter_err(k);
 		if (ret) {
@@ -290,31 +297,51 @@ again:
 			return ret;
 		}
 
-		if (k.k->type < BCH_INODE_FS) {
-			inode->k.p = k.k->p;
+		switch (k.k->type) {
+		case BCH_INODE_BLOCKDEV:
+		case BCH_INODE_FS:
+			/* slot used */
+			if (iter.pos.inode == max)
+				goto out;
 
-			pr_debug("inserting inode %llu (size %u)",
-				 inode->k.p.inode, inode->k.u64s);
+			bch2_btree_iter_advance_pos(&iter);
+			break;
+
+		case BCH_INODE_GENERATION: {
+			struct bkey_s_c_inode_generation g =
+				bkey_s_c_to_inode_generation(k);
+			i_generation = le32_to_cpu(g.v->i_generation);
+			/* fallthrough: */
+		}
+		default:
+			inode_u->i_generation = i_generation;
+
+			bch2_inode_pack(&inode_p, inode_u);
+			inode_p.inode.k.p = k.k->p;
 
 			ret = bch2_btree_insert_at(c, NULL, NULL, NULL,
 					BTREE_INSERT_ATOMIC,
-					BTREE_INSERT_ENTRY(&iter, inode));
+					BTREE_INSERT_ENTRY(&iter,
+							   &inode_p.inode.k_i));
+
+			if (ret != -EINTR) {
+				bch2_btree_iter_unlock(&iter);
+
+				if (!ret) {
+					inode_u->inum =
+						inode_p.inode.k.p.inode;
+					*hint = inode_p.inode.k.p.inode + 1;
+				}
+
+				return ret;
+			}
 
 			if (ret == -EINTR)
 				continue;
 
-			bch2_btree_iter_unlock(&iter);
-			if (!ret)
-				*hint = k.k->p.inode + 1;
-
-			return ret;
-		} else {
-			if (iter.pos.inode == max)
-				break;
-			/* slot used */
-			bch2_btree_iter_advance_pos(&iter);
 		}
 	}
+out:
 	bch2_btree_iter_unlock(&iter);
 
 	if (!searched_from_start) {
@@ -339,7 +366,8 @@ int bch2_inode_truncate(struct bch_fs *c, u64 inode_nr, u64 new_size,
 
 int bch2_inode_rm(struct bch_fs *c, u64 inode_nr)
 {
-	struct bkey_i delete;
+	struct btree_iter iter;
+	struct bkey_i_inode_generation delete;
 	int ret;
 
 	ret = bch2_inode_truncate(c, inode_nr, 0, NULL, NULL);
@@ -368,11 +396,51 @@ int bch2_inode_rm(struct bch_fs *c, u64 inode_nr)
 	if (ret < 0)
 		return ret;
 
-	bkey_init(&delete.k);
-	delete.k.p.inode = inode_nr;
+	bch2_btree_iter_init(&iter, c, BTREE_ID_INODES, POS(inode_nr, 0),
+			     BTREE_ITER_INTENT);
+	do {
+		struct bkey_s_c k = bch2_btree_iter_peek_with_holes(&iter);
+		u32 i_generation = 0;
 
-	return bch2_btree_insert(c, BTREE_ID_INODES, &delete, NULL,
-				NULL, NULL, BTREE_INSERT_NOFAIL);
+		ret = btree_iter_err(k);
+		if (ret) {
+			bch2_btree_iter_unlock(&iter);
+			return ret;
+		}
+
+		switch (k.k->type) {
+		case BCH_INODE_FS: {
+			struct bch_inode_unpacked inode_u;
+
+			if (!bch2_inode_unpack(bkey_s_c_to_inode(k), &inode_u))
+				i_generation = cpu_to_le32(inode_u.i_generation) + 1;
+			break;
+		}
+		case BCH_INODE_GENERATION: {
+			struct bkey_s_c_inode_generation g =
+				bkey_s_c_to_inode_generation(k);
+			i_generation = le32_to_cpu(g.v->i_generation);
+			break;
+		}
+		}
+
+		if (!i_generation) {
+			bkey_init(&delete.k);
+			delete.k.p.inode = inode_nr;
+		} else {
+			bkey_inode_generation_init(&delete.k_i);
+			delete.k.p.inode = inode_nr;
+			delete.v.i_generation = cpu_to_le32(i_generation);
+		}
+
+		ret = bch2_btree_insert_at(c, NULL, NULL, NULL,
+				BTREE_INSERT_ATOMIC|
+				BTREE_INSERT_NOFAIL,
+				BTREE_INSERT_ENTRY(&iter, &delete.k_i));
+	} while (ret == -EINTR);
+
+	bch2_btree_iter_unlock(&iter);
+	return ret;
 }
 
 int bch2_inode_find_by_inum(struct bch_fs *c, u64 inode_nr,
