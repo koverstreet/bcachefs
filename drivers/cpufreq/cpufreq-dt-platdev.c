@@ -118,6 +118,8 @@ static const struct of_device_id blacklist[] __initconst = {
 
 	{ .compatible = "nvidia,tegra124", },
 
+	{ .compatible = "qcom,apq8016", },
+
 	{ .compatible = "st,stih407", },
 	{ .compatible = "st,stih410", },
 
