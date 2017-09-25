@@ -329,75 +329,103 @@ choice
 		bool "Unix Discretionary Access Controls"
 
 endchoice
+endmenu
+
+menu "Default Security Module or Modules"
+	visible if SECURITY_STACKING
+
+	config SECURITY_SELINUX_STACKED
+		bool "SELinux" if SECURITY_SELINUX && !SECURITY_SMACK_STACKED
+		help
+		  Add the SELinux security module to the stack.
+		  Please be sure your user space code is accomodating of
+		  this security module.
+		  Ensure that your network configuration is compatible
+		  with your combination of security modules.
+
+		  Incompatible with Smack being stacked.
+
+		  If you are unsure how to answer this question, answer N
+
+	config SECURITY_SMACK_STACKED
+		bool "Simplified Mandatory Access Control" if SECURITY_SMACK
+		help
+		  Add the Smack security module to the stack.
+		  Please be sure your user space code is accomodating of
+		  this security module.
+		  Ensure that your network configuration is compatible
+		  with your combination of security modules.
+
+		  Incompatible with SeLinux being stacked.
+
+		  If you are unsure how to answer this question, answer
+
+	config SECURITY_TOMOYO_STACKED
+		bool "TOMOYO support is enabled by default" if SECURITY_TOMOYO
+		default n
+		help
+		  This option instructs the system to use the TOMOYO checks.
+		  If not selected the module will not be invoked.
+		  Stacked security modules may interact in unexpected ways.
+
+		  If you are unsure how to answer this question, answer N.
+
+	config SECURITY_APPARMOR_STACKED
+		bool "AppArmor" if SECURITY_APPARMOR
+		help
+		  This option instructs the system to use the AppArmor checks.
+
+		  If you are unsure how to answer this question, answer N.
+
+	config SECURITY_DAC_STACKED
+		bool "Unix Discretionary Access Controls" if !SECURITY_SELINUX_STACKED && !SECURITY_SMACK_STACKED && !SECURITY_TOMOYO_STACKED && !SECURITY_APPARMOR_STACKED
+		default y if !SECURITY_SELINUX_STACKED && !SECURITY_SMACK_STACKED && !SECURITY_TOMOYO_STACKED && !SECURITY_APPARMOR_STACKED
+		help
+		  This option instructs the system to not use security modules
+		  by default. This choice can be over ridden by specifying
+		  the desired module using the security= parameter.
+
+		  This option is incompatible with selecting selinux, smack,
+		  tomoyo, or apparmor.
+
+	config DEFAULT_SECURITY_SELINUX
+	       bool
+	       default y if SECURITY_SELINUX_STACKED
+
+	config DEFAULT_SECURITY_SMACK
+	       bool
+	       default y if SECURITY_SMACK_STACKED
+
+	config DEFAULT_SECURITY_TOMOYO
+	       bool
+	       default y if SECURITY_TOMOYO_STACKED
+
+	config DEFAULT_SECURITY_APPARMOR
+	       bool
+	       default y if SECURITY_APPARMOR_STACKED
+
+	config DEFAULT_SECURITY_DAC
+	       bool
+	       default y if SECURITY_DAC_STACKED
+
+endmenu
 
 config DEFAULT_SECURITY
 	string
+	default "selinux,smack,tomoyo,apparmor" if DEFAULT_SECURITY_SELINUX && DEFAULT_SECURITY_SMACK && DEFAULT_SECURITY_TOMOYO && DEFAULT_SECURITY_APPARMOR
+	default "selinux,smack,tomoyo" if DEFAULT_SECURITY_SELINUX && DEFAULT_SECURITY_SMACK && DEFAULT_SECURITY_TOMOYO
+	default "selinux,smack,apparmor" if DEFAULT_SECURITY_SELINUX && DEFAULT_SECURITY_SMACK && DEFAULT_SECURITY_APPARMOR
+	default "selinux,tomoyo,apparmor" if DEFAULT_SECURITY_SELINUX && DEFAULT_SECURITY_TOMOYO && DEFAULT_SECURITY_APPARMOR
+	default "smack,tomoyo,apparmor" if DEFAULT_SECURITY_SMACK && DEFAULT_SECURITY_TOMOYO && DEFAULT_SECURITY_APPARMOR
+	default "selinux,smack" if DEFAULT_SECURITY_SELINUX && DEFAULT_SECURITY_SMACK
+	default "selinux,tomoyo" if DEFAULT_SECURITY_SELINUX && DEFAULT_SECURITY_TOMOYO
+	default "selinux,apparmor" if DEFAULT_SECURITY_SELINUX && DEFAULT_SECURITY_APPARMOR
+	default "smack,tomoyo" if DEFAULT_SECURITY_SMACK && DEFAULT_SECURITY_TOMOYO
+	default "smack,apparmor" if DEFAULT_SECURITY_SMACK && DEFAULT_SECURITY_APPARMOR
+	default "tomoyo,apparmor" if DEFAULT_SECURITY_TOMOYO && DEFAULT_SECURITY_APPARMOR
 	default "selinux" if DEFAULT_SECURITY_SELINUX
 	default "smack" if DEFAULT_SECURITY_SMACK
 	default "tomoyo" if DEFAULT_SECURITY_TOMOYO
 	default "apparmor" if DEFAULT_SECURITY_APPARMOR
 	default "" if DEFAULT_SECURITY_DAC
-
-endmenu
-
-menu "Security Module Stack"
-	visible if SECURITY_STACKING
-
-choice
-	prompt "Stacked 'extreme' security module"
-	default SECURITY_SELINUX_STACKED if SECURITY_SELINUX
-	default SECURITY_SMACK_STACKED if SECURITY_SMACK
-	default SECURITY_APPARMOR_STACKED if SECURITY_APPARMOR
-
-	help
-	  Enable an extreme security module. These modules cannot
-	  be used at the same time.
-
-	config SECURITY_SELINUX_STACKED
-		bool "SELinux" if SECURITY_SELINUX=y
-	help
-	  This option instructs the system to use the SELinux checks.
-	  At this time the Smack security module is incompatible with this
-	  module.
-	  At this time the AppArmor security module is incompatible with this
-	  module.
-
-	config SECURITY_SMACK_STACKED
-		bool "Simplified Mandatory Access Control" if SECURITY_SMACK=y
-	help
-	  This option instructs the system to use the Smack checks.
-	  At this time the SELinux security module is incompatible with this
-	  module.
-	  At this time the AppArmor security module is incompatible with this
-	  module.
-
-	config SECURITY_APPARMOR_STACKED
-		bool "AppArmor" if SECURITY_APPARMOR=y
-	help
-	  This option instructs the system to use the AppArmor checks.
-	  At this time the SELinux security module is incompatible with this
-	  module.
-	  At this time the Smack security module is incompatible with this
-	  module.
-
-	config SECURITY_NOTHING_STACKED
-		bool "Use no 'extreme' security module"
-	help
-	  Use none of the SELinux, Smack or AppArmor security module.
-
-endchoice
-
-config SECURITY_TOMOYO_STACKED
-	bool "TOMOYO support is enabled by default"
-	depends on SECURITY_TOMOYO && SECURITY_STACKING
-	default n
-	help
-	  This option instructs the system to use the TOMOYO checks.
-	  If not selected the module will not be invoked.
-	  Stacked security modules may interact in unexpected ways.
-
-	  If you are unsure how to answer this question, answer N.
-
-endmenu
-
 endmenu
