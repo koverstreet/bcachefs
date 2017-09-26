@@ -1969,6 +1969,19 @@ struct security_hook_list {
 } __randomize_layout;
 
 /*
+ * The maximum number of major security modules.
+ * Used to avoid excessive memory management while
+ * mapping global and module specific secids.
+ *
+ * Currently SELinux, Smack, AppArmor, TOMOYO
+ * Oh, but Casey needs to come up with the right way
+ * to identify a "major" module, so use the total number
+ * of modules (including minor) for now.
+ * Minor: Capability, Yama, LoadPin
+ */
+#define	LSM_MAX_MAJOR	8
+
+/*
  * Security blob size or offset data.
  */
 struct lsm_blob_sizes {

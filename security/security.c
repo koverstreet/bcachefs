@@ -36,6 +36,7 @@
 
 /* Maximum number of letters for an LSM name string */
 #define SECURITY_NAME_MAX	10
+#define SECURITY_CHOSEN_NAMES_MAX (SECURITY_NAME_MAX * LSM_MAX_MAJOR)
 #define MODULE_STACK		"(stacking)"
 
 struct security_hook_heads security_hook_heads __lsm_ro_after_init;
@@ -48,7 +49,7 @@ char *lsm_names;
 static struct lsm_blob_sizes blob_sizes;
 
 /* Boot-time LSM user choice */
-static __initdata char chosen_lsm[SECURITY_NAME_MAX + 1] =
+static __initdata char chosen_lsms[SECURITY_CHOSEN_NAMES_MAX + 1] =
 #ifdef CONFIG_SECURITY_STACKING
 	MODULE_STACK;
 #else
@@ -131,7 +132,9 @@ int __init security_init(void)
 /* Save user chosen LSM */
 static int __init choose_lsm(char *str)
 {
-	strncpy(chosen_lsm, str, SECURITY_NAME_MAX);
+	strncpy(chosen_lsms, str, SECURITY_CHOSEN_NAMES_MAX);
+	pr_info("LSM: command line set '%s' security module(s).\n",
+		chosen_lsms);
 	return 1;
 }
 __setup("security=", choose_lsm);
@@ -189,26 +192,43 @@ static int lsm_append(char *new, char **result)
  *
  * Otherwise, return false.
  */
+#ifdef CONFIG_SECURITY_STACKING
+static bool __init cmp_lsms(const char *lsm)
+{
+	const char *str = chosen_lsms;
+	const char *split;
+	int len = strlen(lsm);
+
+	if (len > SECURITY_NAME_MAX) {
+		pr_info("LSM: security module name '%s' exceeds limit\n", lsm);
+		return false;
+	}
+	for (split = strchr(str, ','); split; split = strchr(str, ',')) {
+		if ((len == split - str) && !strncmp(lsm, str, split - str))
+			return true;
+		str = split + 1;
+	}
+	if ((len == strlen(str)) && !strncmp(lsm, str, strlen(str)))
+		return true;
+	return false;
+}
+#endif
+
 bool __init security_module_enable(const char *lsm, const bool stacked)
 {
 #ifdef CONFIG_SECURITY_STACKING
 	/*
 	 * Module defined on the command line security=XXXX
 	 */
-	if (strcmp(chosen_lsm, MODULE_STACK)) {
-		if (!strcmp(lsm, chosen_lsm)) {
-			pr_info("Command line sets the %s security module.\n",
-				lsm);
-			return true;
-		}
-		return false;
-	}
+	if (strcmp(chosen_lsms, MODULE_STACK))
+		return cmp_lsms(lsm);
+
 	/*
 	 * Module configured as stacked.
 	 */
 	return stacked;
 #else
-	if (strcmp(lsm, chosen_lsm) == 0)
+	if (strcmp(lsm, chosen_lsms) == 0)
 		return true;
 	return false;
 #endif
