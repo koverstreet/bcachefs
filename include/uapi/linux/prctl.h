@@ -207,4 +207,8 @@ struct prctl_mm_map {
 # define PR_SVE_VL_LEN_MASK		0xffff
 # define PR_SVE_VL_INHERIT		(1 << 17) /* inherit across exec */
 
+/* Control the LSM specific peer information */
+#define	PR_GET_DISPLAY_LSM	52
+#define	PR_SET_DISPLAY_LSM	53
+
 #endif /* _LINUX_PRCTL_H */
