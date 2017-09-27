@@ -66,7 +66,11 @@ static __initdata char chosen_lsms[SECURITY_CHOSEN_NAMES_MAX + 1] =
 #else
 	CONFIG_DEFAULT_SECURITY;
 #endif
-static __initdata char chosen_display_lsm[SECURITY_NAME_MAX + 1];
+static __initdata char chosen_display_lsm[SECURITY_NAME_MAX + 1]
+#ifdef CONFIG_SECURITY_STACKING
+	= CONFIG_SECURITY_DEFAULT_DISPLAY_NAME
+#endif
+;
 static char default_display_lsm[SECURITY_NAME_MAX + 1];
 
 static void __init do_security_initcalls(void)
