@@ -66,6 +66,8 @@ static __initdata char chosen_lsms[SECURITY_CHOSEN_NAMES_MAX + 1] =
 #else
 	CONFIG_DEFAULT_SECURITY;
 #endif
+static __initdata char chosen_display_lsm[SECURITY_NAME_MAX + 1];
+static char default_display_lsm[SECURITY_NAME_MAX + 1];
 
 static void __init do_security_initcalls(void)
 {
@@ -150,6 +152,15 @@ static int __init choose_lsm(char *str)
 }
 __setup("security=", choose_lsm);
 
+static int __init choose_display_lsm(char *str)
+{
+	strncpy(chosen_display_lsm, str, SECURITY_NAME_MAX);
+	pr_info("LSM: command line set default display lsm %s'\n",
+		chosen_display_lsm);
+	return 1;
+}
+__setup("security.display=", choose_display_lsm);
+
 static bool match_last_lsm(const char *list, const char *lsm)
 {
 	const char *last;
@@ -231,16 +242,35 @@ bool __init security_module_enable(const char *lsm, const bool stacked)
 	/*
 	 * Module defined on the command line security=XXXX
 	 */
-	if (strcmp(chosen_lsms, MODULE_STACK))
-		return cmp_lsms(lsm);
-
+	if (strcmp(chosen_lsms, MODULE_STACK)) {
+		if (cmp_lsms(lsm)) {
+			/* set to first LSM registered and then override */
+			if (!*default_display_lsm)
+				strcpy(default_display_lsm, lsm);
+			else if (*chosen_display_lsm && !strcmp(chosen_display_lsm, lsm)) {
+				strcpy(default_display_lsm, lsm);
+				pr_info("LSM: default display lsm '%s'\n", default_display_lsm);
+			}
+			return true;
+		}
+		return false;
+	}
 	/*
 	 * Module configured as stacked.
 	 */
+	if (stacked && !*default_display_lsm)
+		strcpy(default_display_lsm, lsm);
+	else if (stacked && *chosen_display_lsm && !strcmp(chosen_display_lsm, lsm)) {
+		strcpy(default_display_lsm, lsm);
+		pr_info("LSM: default display lsm '%s'\n", default_display_lsm);
+	}
+
 	return stacked;
 #else
-	if (strcmp(lsm, chosen_lsms) == 0)
+	if (strcmp(lsm, chosen_lsms) == 0) {
+		strcpy(default_display_lsm, lsm);
 		return true;
+	}
 	return false;
 #endif
 }
@@ -477,6 +507,8 @@ int lsm_task_alloc(struct task_struct *task)
 #ifdef CONFIG_SECURITY_STACKING
 	if (current->security)
 		strcpy(task->security, lsm_of_task(current));
+	else
+		strcpy(task->security, default_display_lsm);
 #endif
 	return 0;
 }
