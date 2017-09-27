@@ -461,6 +461,12 @@ int lsm_task_alloc(struct task_struct *task)
 	task->security = kzalloc(blob_sizes.lbs_task, GFP_KERNEL);
 	if (task->security == NULL)
 		return -ENOMEM;
+
+	/* inherit current display lsm */
+#ifdef CONFIG_SECURITY_STACKING
+	if (current->security)
+		strcpy(task->security, lsm_of_task(current));
+#endif
 	return 0;
 }
 
