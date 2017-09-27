@@ -245,6 +245,11 @@ bool __init security_module_enable(const char *lsm, const bool stacked)
 #endif
 }
 
+/*
+ * Keep the order of major modules for mapping secids.
+ */
+static int lsm_next_major;
+
 /**
  * security_add_hooks - Add a modules hooks to the hook lists.
  * @hooks: the hooks to add
@@ -257,8 +262,14 @@ void __init security_add_hooks(struct security_hook_list *hooks, int count,
 				char *lsm)
 {
 	int i;
+	int lsm_index = lsm_next_major++;
+
+#ifdef CONFIG_SECURITY_LSM_DEBUG
+	pr_info("LSM: Security module %s gets index %d\n", lsm, lsm_index);
+#endif
 	for (i = 0; i < count; i++) {
 		hooks[i].lsm = lsm;
+		hooks[i].lsm_index = lsm_index;
 		list_add_tail_rcu(&hooks[i].list, hooks[i].head);
 	}
 	if (lsm_append(lsm, &lsm_names) < 0)
