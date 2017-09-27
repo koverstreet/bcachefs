@@ -1662,6 +1662,7 @@ static int lsm_task_prctl(int option, unsigned long arg2, unsigned long arg3,
 	char buffer[SECURITY_NAME_MAX + 1];
 	__user char *optval = (__user char *)arg2;
 	__user int *optlen = (__user int *)arg3;
+	struct security_hook_list *hp;
 	int dlen;
 	int len;
 
@@ -1687,17 +1688,22 @@ static int lsm_task_prctl(int option, unsigned long arg2, unsigned long arg3,
 		if (copy_from_user(buffer, optval, len))
 			return -EFAULT;
 		buffer[len] = '\0';
-		/*
-		 * Trust the caller to know what lsm name(s) are available.
-		 */
+		/* verify the requested LSM is registered */
+		list_for_each_entry(hp, &security_hook_heads.getprocattr, list) {
+			if (!strcmp(buffer, hp->lsm)) {
+				strcpy(lsm, hp->lsm);
+				goto out;
+			}
+		}
 		if (!strncmp(buffer, nolsm, NOLSMLEN))
 			lsm[0] = '\0';
 		else
-			strcpy(lsm, buffer);
+			return -ENOENT;
 		break;
 	default:
 		return -ENOSYS;
 	}
+out:
 	return 0;
 }
 #endif
