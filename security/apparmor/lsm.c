@@ -720,13 +720,7 @@ static int apparmor_task_kill(struct task_struct *target, struct siginfo *info,
  */
 static int apparmor_sk_alloc_security(struct sock *sk, int family, gfp_t flags)
 {
-	struct aa_sk_ctx *ctx;
-
-	ctx = kzalloc(sizeof(*ctx), flags);
-	if (!ctx)
-		return -ENOMEM;
-
-	SK_CTX(sk) = ctx;
+	/* allocated and cleared by LSM */
 
 	return 0;
 }
@@ -738,11 +732,13 @@ static void apparmor_sk_free_security(struct sock *sk)
 {
 	struct aa_sk_ctx *ctx = SK_CTX(sk);
 
-	SK_CTX(sk) = NULL;
 	aa_put_label(ctx->label);
+	ctx->label = NULL;
 	aa_put_label(ctx->peer);
+	ctx->peer = NULL;
 	path_put(&ctx->path);
-	kfree(ctx);
+	ctx->path.dentry = NULL;
+	ctx->path.mnt = NULL;
 }
 
 /**
@@ -1123,6 +1119,7 @@ static void apparmor_sock_graft(struct sock *sk, struct socket *parent)
 struct lsm_blob_sizes apparmor_blob_sizes = {
 	.lbs_cred = sizeof(struct aa_task_ctx),
 	.lbs_file = sizeof(struct aa_file_ctx),
+	.lbs_sock = sizeof(struct aa_sk_ctx),
 };
 
 static struct security_hook_list apparmor_hooks[] __lsm_ro_after_init = {
