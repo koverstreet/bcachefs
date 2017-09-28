@@ -2614,6 +2614,13 @@ static const struct pid_entry attr_dir_stuff[] = {
 	ATTR(NULL, "fscreate",		0666),
 	ATTR(NULL, "keycreate",		0666),
 	ATTR(NULL, "sockcreate",	0666),
+	ATTR(NULL, "display_lsm",	0666),
+
+#ifdef CONFIG_SECURITY_SELINUX
+	DIR("selinux",			0555,
+	    proc_selinux_attr_dir_inode_ops, proc_selinux_attr_dir_ops),
+#endif
+
 #ifdef CONFIG_SECURITY_SMACK
 	DIR("smack",			0555,
 	    proc_smack_attr_dir_inode_ops, proc_smack_attr_dir_ops),

@@ -1687,6 +1687,33 @@ int security_task_kill(struct task_struct *p, struct siginfo *info,
 static char *nolsm = "-default";
 #define NOLSMLEN	9
 
+static bool is_registered_lsm(const char *str, size_t size)
+{
+	struct security_hook_list *hp;
+
+	list_for_each_entry(hp, &security_hook_heads.getprocattr, list) {
+		if (size == strlen(hp->lsm) && !strncmp(str, hp->lsm, size))
+			return true;
+	}
+
+	return false;
+}
+
+static bool set_lsm_of_current(const char *str, size_t size)
+{
+	char *lsm = lsm_of_task(current);
+
+	if (is_registered_lsm(str, size)) {
+		strncpy(lsm, str, size);
+		lsm[size] = '\0';
+	} else if (size == NOLSMLEN && !strncmp(str, nolsm, size)) {
+		lsm[0] = '\0';
+	} else {
+		return false;
+	}
+	return true;
+}
+
 static int lsm_task_prctl(int option, unsigned long arg2, unsigned long arg3,
 				unsigned long arg4, unsigned long arg5)
 {
@@ -1694,7 +1721,6 @@ static int lsm_task_prctl(int option, unsigned long arg2, unsigned long arg3,
 	char buffer[SECURITY_NAME_MAX + 1];
 	__user char *optval = (__user char *)arg2;
 	__user int *optlen = (__user int *)arg3;
-	struct security_hook_list *hp;
 	int dlen;
 	int len;
 
@@ -1721,21 +1747,12 @@ static int lsm_task_prctl(int option, unsigned long arg2, unsigned long arg3,
 			return -EFAULT;
 		buffer[len] = '\0';
 		/* verify the requested LSM is registered */
-		list_for_each_entry(hp, &security_hook_heads.getprocattr, list) {
-			if (!strcmp(buffer, hp->lsm)) {
-				strcpy(lsm, hp->lsm);
-				goto out;
-			}
-		}
-		if (!strncmp(buffer, nolsm, NOLSMLEN))
-			lsm[0] = '\0';
-		else
+		if (!set_lsm_of_current(buffer, len))
 			return -ENOENT;
 		break;
 	default:
 		return -ENOSYS;
 	}
-out:
 	return 0;
 }
 #endif
@@ -1930,6 +1947,53 @@ int security_getprocattr(struct task_struct *p, const char *lsm, char *name,
 	char *speclsm = lsm_of_task(p);
 #endif
 	struct security_hook_list *hp;
+	char *vp;
+	char *cp = NULL;
+	int trc;
+	int rc;
+
+	/*
+	 * "context" requires work here in addition to what
+	 * the modules provide.
+	 */
+	if (strcmp(name, "context") == 0) {
+		*value = NULL;
+		rc = -EINVAL;
+		list_for_each_entry(hp,
+				&security_hook_heads.getprocattr, list) {
+			if (lsm != NULL && strcmp(lsm, hp->lsm))
+				continue;
+			trc = hp->hook.getprocattr(p, "context", &vp);
+			if (trc == -ENOENT)
+				continue;
+			if (trc <= 0) {
+				kfree(*value);
+				return trc;
+			}
+			rc = trc;
+			if (*value == NULL) {
+				*value = vp;
+			} else {
+				cp = kasprintf(GFP_KERNEL, "%s,%s", *value, vp);
+				if (cp == NULL) {
+					kfree(*value);
+					kfree(vp);
+					return -ENOMEM;
+				}
+				kfree(*value);
+				kfree(vp);
+				*value = cp;
+			}
+		}
+		if (rc > 0)
+			return strlen(*value);
+		return rc;
+	} else if (strcmp(name, "display_lsm") == 0) {
+		*value = kstrdup(current->security, GFP_KERNEL);
+		if (*value == NULL)
+			return -ENOMEM;
+		return strlen(*value);
+	}
 
 	list_for_each_entry(hp, &security_hook_heads.getprocattr, list) {
 		if (lsm != NULL && strcmp(lsm, hp->lsm))
@@ -2031,6 +2095,12 @@ free_out:
 		if (rc >= 0)
 			return size;
 		return rc;
+	} else if (strcmp(name, "display_lsm") == 0) {
+#ifdef CONFIG_SECURITY_STACKING
+		if (set_lsm_of_current(value, size))
+			return size;
+#endif
+		return -EINVAL;
 	}
 
 	list_for_each_entry(hp, &security_hook_heads.setprocattr, list) {
