@@ -55,7 +55,7 @@ char *lsm_names;
  */
 static struct lsm_blob_sizes blob_sizes = {
 #ifdef CONFIG_SECURITY_STACKING
-	.lbs_task = SECURITY_NAME_MAX + 2,
+	.lbs_task = SECURITY_NAME_MAX + 6,
 #endif
 };
 
