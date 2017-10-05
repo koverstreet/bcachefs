@@ -1,5 +1,5 @@
-#ifndef _BCACHE_BSET_H
-#define _BCACHE_BSET_H
+#ifndef _BCACHEFS_BSET_H
+#define _BCACHEFS_BSET_H
 
 #include <linux/kernel.h>
 #include <linux/types.h>
@@ -183,7 +183,7 @@ bkey_unpack_key_format_checked(const struct btree *b,
 {
 	struct bkey dst;
 
-#ifdef HAVE_BCACHE_COMPILED_UNPACK
+#ifdef HAVE_BCACHEFS_COMPILED_UNPACK
 	{
 		compiled_unpack_fn unpack_fn = b->aux_data;
 		unpack_fn(&dst, src);
@@ -221,7 +221,7 @@ static inline struct bpos
 bkey_unpack_pos_format_checked(const struct btree *b,
 			       const struct bkey_packed *src)
 {
-#ifdef HAVE_BCACHE_COMPILED_UNPACK
+#ifdef HAVE_BCACHEFS_COMPILED_UNPACK
 	return bkey_unpack_key_format_checked(b, src).p;
 #else
 	return __bkey_unpack_pos(&b->format, src);
@@ -618,4 +618,4 @@ static inline void bch2_verify_btree_nr_keys(struct btree *b)
 		__bch2_verify_btree_nr_keys(b);
 }
 
-#endif
+#endif /* _BCACHEFS_BSET_H */

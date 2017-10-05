@@ -1,7 +1,7 @@
-#ifndef _BCACHE_CHARDEV_H
-#define _BCACHE_CHARDEV_H
+#ifndef _BCACHEFS_CHARDEV_H
+#define _BCACHEFS_CHARDEV_H
 
-#ifndef NO_BCACHE_CHARDEV
+#ifndef NO_BCACHEFS_FS
 
 long bch2_fs_ioctl(struct bch_fs *, unsigned, void __user *);
 
@@ -25,6 +25,6 @@ static inline int bch2_fs_chardev_init(struct bch_fs *c) { return 0; }
 static inline void bch2_chardev_exit(void) {}
 static inline int __init bch2_chardev_init(void) { return 0; }
 
-#endif
+#endif /* NO_BCACHEFS_FS */
 
-#endif /* _BCACHE_CHARDEV_H */
+#endif /* _BCACHEFS_CHARDEV_H */

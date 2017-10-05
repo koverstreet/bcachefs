@@ -1,10 +1,7 @@
-/*
-  File: fs/bch/acl.h
+#ifndef _BCACHEFS_ACL_H
+#define _BCACHEFS_ACL_H
 
-  (C) 2001 Andreas Gruenbacher, <a.gruenbacher@computer.org>
-*/
-
-#include <linux/posix_acl_xattr.h>
+#ifndef NO_BCACHEFS_FS
 
 #define BCH_ACL_VERSION	0x0001
 
@@ -52,5 +49,11 @@ static inline int bch2_acl_count(size_t size)
 	}
 }
 
+struct posix_acl;
+
 extern struct posix_acl *bch2_get_acl(struct inode *, int);
 extern int bch2_set_acl(struct inode *, struct posix_acl *, int);
+
+#endif /* NO_BCACHEFS_FS */
+
+#endif /* _BCACHEFS_ACL_H */

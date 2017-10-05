@@ -1,5 +1,5 @@
-#ifndef _BCACHE_FS_IO_H
-#define _BCACHE_FS_IO_H
+#ifndef _BCACHEFS_FS_IO_H
+#define _BCACHEFS_FS_IO_H
 
 #include "buckets.h"
 #include <linux/uio.h>
@@ -91,4 +91,4 @@ struct dio_read {
 
 extern struct bio_set *bch2_dio_read_bioset;
 
-#endif /* _BCACHE_FS_IO_H */
+#endif /* _BCACHEFS_FS_IO_H */

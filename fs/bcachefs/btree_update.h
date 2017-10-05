@@ -1,5 +1,5 @@
-#ifndef _BCACHE_BTREE_UPDATE_H
-#define _BCACHE_BTREE_UPDATE_H
+#ifndef _BCACHEFS_BTREE_UPDATE_H
+#define _BCACHEFS_BTREE_UPDATE_H
 
 #include "btree_iter.h"
 #include "journal.h"
@@ -133,5 +133,4 @@ int bch2_btree_node_rewrite(struct bch_fs *c, struct btree_iter *,
 int bch2_btree_node_update_key(struct bch_fs *, struct btree *,
 			       struct bkey_i_extent *);
 
-#endif /* _BCACHE_BTREE_UPDATE_H */
-
+#endif /* _BCACHEFS_BTREE_UPDATE_H */

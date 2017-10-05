@@ -1,5 +1,5 @@
-#ifndef _BCACHE_STR_HASH_H
-#define _BCACHE_STR_HASH_H
+#ifndef _BCACHEFS_STR_HASH_H
+#define _BCACHEFS_STR_HASH_H
 
 #include "btree_iter.h"
 #include "btree_update.h"
@@ -404,4 +404,4 @@ err:
 	return ret;
 }
 
-#endif /* _BCACHE_STR_HASH_H */
+#endif /* _BCACHEFS_STR_HASH_H */

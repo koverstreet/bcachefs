@@ -1,5 +1,5 @@
-#ifndef _BCACHE_MOVINGGC_H
-#define _BCACHE_MOVINGGC_H
+#ifndef _BCACHEFS_MOVINGGC_H
+#define _BCACHEFS_MOVINGGC_H
 
 /*
  * We can't use the entire copygc reserve in one iteration of copygc: we may
@@ -27,4 +27,4 @@ void bch2_moving_gc_stop(struct bch_dev *);
 int bch2_moving_gc_start(struct bch_dev *);
 void bch2_dev_moving_gc_init(struct bch_dev *);
 
-#endif
+#endif /* _BCACHEFS_MOVINGGC_H */

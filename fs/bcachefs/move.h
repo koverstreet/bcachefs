@@ -1,9 +1,8 @@
-#ifndef _BCACHE_MOVE_H
-#define _BCACHE_MOVE_H
+#ifndef _BCACHEFS_MOVE_H
+#define _BCACHEFS_MOVE_H
 
 #include "buckets.h"
 #include "io_types.h"
-#include "move_types.h"
 
 enum moving_flag_bitnos {
 	MOVING_FLAG_BITNO_READ = 0,
@@ -83,4 +82,4 @@ void bch2_move_ctxt_exit(struct moving_context *);
 void bch2_move_ctxt_init(struct moving_context *, struct bch_ratelimit *,
 			unsigned);
 
-#endif /* _BCACHE_MOVE_H */
+#endif /* _BCACHEFS_MOVE_H */

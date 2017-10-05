@@ -1,5 +1,5 @@
-#ifndef _BCACHE_ALLOC_H
-#define _BCACHE_ALLOC_H
+#ifndef _BCACHEFS_ALLOC_H
+#define _BCACHEFS_ALLOC_H
 
 #include "bcachefs.h"
 #include "alloc_types.h"
@@ -70,4 +70,4 @@ void bch2_fs_allocator_init(struct bch_fs *);
 
 extern const struct bkey_ops bch2_bkey_alloc_ops;
 
-#endif /* _BCACHE_ALLOC_H */
+#endif /* _BCACHEFS_ALLOC_H */

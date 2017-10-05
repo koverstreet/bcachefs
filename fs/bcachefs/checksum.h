@@ -1,5 +1,5 @@
-#ifndef _BCACHE_CHECKSUM_H
-#define _BCACHE_CHECKSUM_H
+#ifndef _BCACHEFS_CHECKSUM_H
+#define _BCACHEFS_CHECKSUM_H
 
 #include "bcachefs.h"
 #include "super-io.h"
@@ -160,4 +160,4 @@ static inline struct nonce bch2_sb_key_nonce(struct bch_fs *c)
 	}};
 }
 
-#endif /* _BCACHE_CHECKSUM_H */
+#endif /* _BCACHEFS_CHECKSUM_H */

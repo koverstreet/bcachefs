@@ -1,5 +1,5 @@
-#ifndef _BCACHE_INODE_H
-#define _BCACHE_INODE_H
+#ifndef _BCACHEFS_INODE_H
+#define _BCACHEFS_INODE_H
 
 #include <linux/math64.h>
 
@@ -61,4 +61,4 @@ void bch2_inode_pack_test(void);
 static inline void bch2_inode_pack_test(void) {}
 #endif
 
-#endif
+#endif /* _BCACHEFS_INODE_H */

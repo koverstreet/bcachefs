@@ -251,7 +251,7 @@ static int check_extents(struct bch_fs *c)
 	int ret = 0;
 
 	for_each_btree_key(&iter, c, BTREE_ID_EXTENTS,
-			   POS(BCACHE_ROOT_INO, 0), 0, k) {
+			   POS(BCACHEFS_ROOT_INO, 0), 0, k) {
 		if (k.k->type == KEY_TYPE_DISCARD)
 			continue;
 
@@ -310,7 +310,7 @@ static int check_dirents(struct bch_fs *c)
 	hash_check_init(bch2_dirent_hash_desc, &h, c);
 
 	for_each_btree_key(&iter, c, BTREE_ID_DIRENTS,
-			   POS(BCACHE_ROOT_INO, 0), 0, k) {
+			   POS(BCACHEFS_ROOT_INO, 0), 0, k) {
 		struct bkey_s_c_dirent d;
 		struct bch_inode_unpacked target;
 		bool have_target;
@@ -444,7 +444,7 @@ static int check_xattrs(struct bch_fs *c)
 	hash_check_init(bch2_xattr_hash_desc, &h, c);
 
 	for_each_btree_key(&iter, c, BTREE_ID_XATTRS,
-			   POS(BCACHE_ROOT_INO, 0), 0, k) {
+			   POS(BCACHEFS_ROOT_INO, 0), 0, k) {
 		ret = walk_inode(c, &w, k.k->p.inode);
 		if (ret)
 			break;
@@ -478,7 +478,7 @@ static int check_root(struct bch_fs *c, struct bch_inode_unpacked *root_inode)
 	struct bkey_inode_buf packed;
 	int ret;
 
-	ret = bch2_inode_find_by_inum(c, BCACHE_ROOT_INO, root_inode);
+	ret = bch2_inode_find_by_inum(c, BCACHEFS_ROOT_INO, root_inode);
 	if (ret && ret != -ENOENT)
 		return ret;
 
@@ -494,7 +494,7 @@ fsck_err:
 	return ret;
 create_root:
 	bch2_inode_init(c, root_inode, 0, 0, S_IFDIR|S_IRWXU|S_IRUGO|S_IXUGO, 0);
-	root_inode->inum = BCACHE_ROOT_INO;
+	root_inode->inum = BCACHEFS_ROOT_INO;
 
 	bch2_inode_pack(&packed, root_inode);
 
@@ -514,7 +514,7 @@ static int check_lostfound(struct bch_fs *c,
 	u64 inum;
 	int ret;
 
-	inum = bch2_dirent_lookup(c, BCACHE_ROOT_INO, &root_hash_info,
+	inum = bch2_dirent_lookup(c, BCACHEFS_ROOT_INO, &root_hash_info,
 				 &lostfound);
 	if (!inum) {
 		bch_notice(c, "creating lost+found");
@@ -552,7 +552,7 @@ create_lostfound:
 	if (ret)
 		return ret;
 
-	ret = bch2_dirent_create(c, BCACHE_ROOT_INO, &root_hash_info, DT_DIR,
+	ret = bch2_dirent_create(c, BCACHEFS_ROOT_INO, &root_hash_info, DT_DIR,
 				 &lostfound, lostfound_inode->inum, NULL,
 				 BTREE_INSERT_NOFAIL);
 	if (ret)
@@ -642,13 +642,13 @@ static int check_directory_structure(struct bch_fs *c,
 restart_dfs:
 	had_unreachable = false;
 
-	ret = inode_bitmap_set(&dirs_done, BCACHE_ROOT_INO);
+	ret = inode_bitmap_set(&dirs_done, BCACHEFS_ROOT_INO);
 	if (ret) {
 		bch_err(c, "memory allocation failure in inode_bitmap_set()");
 		goto err;
 	}
 
-	ret = path_down(&path, BCACHE_ROOT_INO);
+	ret = path_down(&path, BCACHEFS_ROOT_INO);
 	if (ret) {
 		return ret;
 	}
@@ -789,7 +789,7 @@ static int bch2_gc_walk_dirents(struct bch_fs *c, nlink_table *links,
 	u64 d_inum;
 	int ret;
 
-	inc_link(c, links, range_start, range_end, BCACHE_ROOT_INO, false);
+	inc_link(c, links, range_start, range_end, BCACHEFS_ROOT_INO, false);
 
 	for_each_btree_key(&iter, c, BTREE_ID_DIRENTS, POS_MIN, 0, k) {
 		switch (k.k->type) {

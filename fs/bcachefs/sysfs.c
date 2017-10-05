@@ -5,6 +5,8 @@
  * Copyright 2012 Google, Inc.
  */
 
+#ifndef NO_BCACHEFS_SYSFS
+
 #include "bcachefs.h"
 #include "alloc.h"
 #include "compress.h"
@@ -938,3 +940,5 @@ struct attribute *bch2_dev_files[] = {
 	sysfs_pd_controller_files(copy_gc),
 	NULL
 };
+
+#endif  /* _BCACHEFS_SYSFS_H_ */

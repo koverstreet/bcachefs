@@ -284,7 +284,6 @@ do {									\
 #include "clock_types.h"
 #include "journal_types.h"
 #include "keylist_types.h"
-#include "move_types.h"
 #include "super_types.h"
 
 /* 256k, in sectors */

@@ -1,5 +1,5 @@
-#ifndef _BCACHE_BTREE_UPDATE_INTERIOR_H
-#define _BCACHE_BTREE_UPDATE_INTERIOR_H
+#ifndef _BCACHEFS_BTREE_UPDATE_INTERIOR_H
+#define _BCACHEFS_BTREE_UPDATE_INTERIOR_H
 
 #include "btree_cache.h"
 #include "btree_update.h"
@@ -309,4 +309,4 @@ static inline bool journal_res_insert_fits(struct btree_insert *trans,
 	return u64s <= trans->journal_res.u64s;
 }
 
-#endif /* _BCACHE_BTREE_UPDATE_INTERIOR_H */
+#endif /* _BCACHEFS_BTREE_UPDATE_INTERIOR_H */
