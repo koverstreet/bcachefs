@@ -1,5 +1,5 @@
-#ifndef _BCACHE_ERROR_H
-#define _BCACHE_ERROR_H
+#ifndef _BCACHEFS_ERROR_H
+#define _BCACHEFS_ERROR_H
 
 #include <linux/printk.h>
 
@@ -220,4 +220,4 @@ do {									\
 	(bio)->bi_status = BLK_STS_IOERR;					\
 } while (0)
 
-#endif /* _BCACHE_ERROR_H */
+#endif /* _BCACHEFS_ERROR_H */

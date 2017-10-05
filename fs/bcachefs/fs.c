@@ -1,3 +1,4 @@
+#ifndef NO_BCACHEFS_FS
 
 #include "bcachefs.h"
 #include "acl.h"
@@ -21,6 +22,7 @@
 #include <linux/exportfs.h>
 #include <linux/module.h>
 #include <linux/mount.h>
+#include <linux/posix_acl.h>
 #include <linux/random.h>
 #include <linux/statfs.h>
 #include <linux/xattr.h>
@@ -1024,7 +1026,7 @@ static struct inode *bch2_nfs_get_inode(struct super_block *sb,
 {
 	struct inode *inode;
 
-	if (ino < BCACHE_ROOT_INO)
+	if (ino < BCACHEFS_ROOT_INO)
 		return ERR_PTR(-ESTALE);
 
 	inode = bch2_vfs_inode_get(sb, ino);
@@ -1190,7 +1192,7 @@ static int bch2_statfs(struct dentry *dentry, struct kstatfs *buf)
 	struct bch_fs *c = sb->s_fs_info;
 	u64 fsid;
 
-	buf->f_type	= BCACHE_STATFS_MAGIC;
+	buf->f_type	= BCACHEFS_STATFS_MAGIC;
 	buf->f_bsize	= sb->s_blocksize;
 	buf->f_blocks	= c->capacity >> PAGE_SECTOR_SHIFT;
 	buf->f_bfree	= (c->capacity - bch2_fs_sectors_used(c)) >> PAGE_SECTOR_SHIFT;
@@ -1408,7 +1410,7 @@ static struct dentry *bch2_mount(struct file_system_type *fs_type,
 	sb->s_op		= &bch_super_operations;
 	sb->s_export_op		= &bch_export_ops;
 	sb->s_xattr		= bch2_xattr_handlers;
-	sb->s_magic		= BCACHE_STATFS_MAGIC;
+	sb->s_magic		= BCACHEFS_STATFS_MAGIC;
 	sb->s_time_gran		= c->sb.time_precision;
 	c->vfs_sb		= sb;
 	strlcpy(sb->s_id, c->name, sizeof(sb->s_id));
@@ -1436,7 +1438,7 @@ static struct dentry *bch2_mount(struct file_system_type *fs_type,
 	else
 		sb->s_flags	|= opts.posix_acl ? MS_POSIXACL : 0;
 
-	inode = bch2_vfs_inode_get(sb, BCACHE_ROOT_INO);
+	inode = bch2_vfs_inode_get(sb, BCACHEFS_ROOT_INO);
 	if (IS_ERR(inode)) {
 		ret = PTR_ERR(inode);
 		goto err_put_super;
@@ -1526,3 +1528,5 @@ err:
 	bch2_vfs_exit();
 	return ret;
 }
+
+#endif /* NO_BCACHEFS_FS */

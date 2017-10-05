@@ -1,5 +1,5 @@
-#ifndef _BCACHE_SUPER_H
-#define _BCACHE_SUPER_H
+#ifndef _BCACHEFS_SUPER_H
+#define _BCACHEFS_SUPER_H
 
 #include "extents.h"
 
@@ -149,4 +149,4 @@ const char *bch2_fs_open(char * const *, unsigned, struct bch_opts,
 			struct bch_fs **);
 const char *bch2_fs_open_incremental(const char *path);
 
-#endif /* _BCACHE_SUPER_H */
+#endif /* _BCACHEFS_SUPER_H */

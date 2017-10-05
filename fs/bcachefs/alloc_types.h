@@ -1,5 +1,5 @@
-#ifndef _BCACHE_ALLOC_TYPES_H
-#define _BCACHE_ALLOC_TYPES_H
+#ifndef _BCACHEFS_ALLOC_TYPES_H
+#define _BCACHEFS_ALLOC_TYPES_H
 
 #include <linux/mutex.h>
 
@@ -85,4 +85,4 @@ struct alloc_heap_entry {
 
 typedef HEAP(struct alloc_heap_entry) alloc_heap;
 
-#endif /* _BCACHE_ALLOC_TYPES_H */
+#endif /* _BCACHEFS_ALLOC_TYPES_H */

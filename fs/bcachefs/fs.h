@@ -1,5 +1,5 @@
-#ifndef _BCACHE_FS_H
-#define _BCACHE_FS_H
+#ifndef _BCACHEFS_FS_H
+#define _BCACHEFS_FS_H
 
 #include "str_hash.h"
 
@@ -44,7 +44,7 @@ static inline unsigned nlink_bias(umode_t mode)
 
 struct bch_inode_unpacked;
 
-#ifndef NO_BCACHE_FS
+#ifndef NO_BCACHEFS_FS
 
 /* returns 0 if we want to do the update, or error is passed up */
 typedef int (*inode_set_fn)(struct bch_inode_info *,
@@ -63,6 +63,6 @@ int bch2_vfs_init(void);
 static inline void bch2_vfs_exit(void) {}
 static inline int bch2_vfs_init(void) { return 0; }
 
-#endif
+#endif /* NO_BCACHEFS_FS */
 
-#endif /* _BCACHE_FS_H */
+#endif /* _BCACHEFS_FS_H */

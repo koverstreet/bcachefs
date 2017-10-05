@@ -1,5 +1,5 @@
-#ifndef _BCACHE_KEYLIST_TYPES_H
-#define _BCACHE_KEYLIST_TYPES_H
+#ifndef _BCACHEFS_KEYLIST_TYPES_H
+#define _BCACHEFS_KEYLIST_TYPES_H
 
 struct keylist {
 	union {
@@ -12,4 +12,4 @@ struct keylist {
 	};
 };
 
-#endif /* _BCACHE_KEYLIST_TYPES_H */
+#endif /* _BCACHEFS_KEYLIST_TYPES_H */

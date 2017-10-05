@@ -1,5 +1,5 @@
-#ifndef _BCACHE_IO_TYPES_H
-#define _BCACHE_IO_TYPES_H
+#ifndef _BCACHEFS_IO_TYPES_H
+#define _BCACHEFS_IO_TYPES_H
 
 #include "btree_types.h"
 #include "buckets_types.h"
@@ -148,4 +148,4 @@ struct bch_write_op {
 	struct bch_write_bio	wbio;
 };
 
-#endif /* _BCACHE_IO_TYPES_H */
+#endif /* _BCACHEFS_IO_TYPES_H */

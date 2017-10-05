@@ -1,5 +1,5 @@
-#ifndef _BCACHE_UTIL_H
-#define _BCACHE_UTIL_H
+#ifndef _BCACHEFS_UTIL_H
+#define _BCACHEFS_UTIL_H
 
 #include <linux/bio.h>
 #include <linux/blkdev.h>
@@ -790,4 +790,4 @@ void sort_cmp_size(void *base, size_t num, size_t size,
 	  int (*cmp_func)(const void *, const void *, size_t),
 	  void (*swap_func)(void *, void *, size_t));
 
-#endif /* _BCACHE_UTIL_H */
+#endif /* _BCACHEFS_UTIL_H */

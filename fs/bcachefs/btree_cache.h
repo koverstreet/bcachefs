@@ -1,5 +1,5 @@
-#ifndef _BCACHE_BTREE_CACHE_H
-#define _BCACHE_BTREE_CACHE_H
+#ifndef _BCACHEFS_BTREE_CACHE_H
+#define _BCACHEFS_BTREE_CACHE_H
 
 #include "bcachefs.h"
 #include "btree_types.h"
@@ -86,4 +86,4 @@ static inline unsigned btree_blocks(struct bch_fs *c)
 int bch2_print_btree_node(struct bch_fs *, struct btree *,
 			 char *, size_t);
 
-#endif /* _BCACHE_BTREE_CACHE_H */
+#endif /* _BCACHEFS_BTREE_CACHE_H */

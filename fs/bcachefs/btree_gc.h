@@ -1,5 +1,5 @@
-#ifndef _BCACHE_GC_H
-#define _BCACHE_GC_H
+#ifndef _BCACHEFS_BTREE_GC_H
+#define _BCACHEFS_BTREE_GC_H
 
 #include "btree_types.h"
 
@@ -101,4 +101,4 @@ static inline bool gc_will_visit(struct bch_fs *c, struct gc_pos pos)
 	return ret;
 }
 
-#endif
+#endif /* _BCACHEFS_BTREE_GC_H */

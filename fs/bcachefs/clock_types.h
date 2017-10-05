@@ -1,5 +1,5 @@
-#ifndef _BCACHE_CLOCK_TYPES_H
-#define _BCACHE_CLOCK_TYPES_H
+#ifndef _BCACHEFS_CLOCK_TYPES_H
+#define _BCACHEFS_CLOCK_TYPES_H
 
 #include "util.h"
 
@@ -32,5 +32,4 @@ struct io_clock {
 	io_timer_heap		timers;
 };
 
-#endif /* _BCACHE_CLOCK_TYPES_H */
-
+#endif /* _BCACHEFS_CLOCK_TYPES_H */

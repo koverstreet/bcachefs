@@ -1,5 +1,5 @@
-#ifndef _BCACHE_BTREE_TYPES_H
-#define _BCACHE_BTREE_TYPES_H
+#ifndef _BCACHEFS_BTREE_TYPES_H
+#define _BCACHEFS_BTREE_TYPES_H
 
 #include <linux/list.h>
 #include <linux/rhashtable.h>
@@ -321,4 +321,4 @@ typedef struct btree_nr_keys (*sort_fix_overlapping_fn)(struct bset *,
 							struct btree *,
 							struct btree_node_iter *);
 
-#endif /* _BCACHE_BTREE_TYPES_H */
+#endif /* _BCACHEFS_BTREE_TYPES_H */

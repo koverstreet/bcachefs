@@ -1,5 +1,5 @@
-#ifndef _BCACHE_BKEY_METHODS_H
-#define _BCACHE_BKEY_METHODS_H
+#ifndef _BCACHEFS_BKEY_METHODS_H
+#define _BCACHEFS_BKEY_METHODS_H
 
 #include "bkey.h"
 
@@ -9,6 +9,8 @@ enum bkey_type {
 	DEFINE_BCH_BTREE_IDS()
 	BKEY_TYPE_BTREE,
 };
+
+#undef DEF_BTREE_ID
 
 /* Type of a key in btree @id at level @level: */
 static inline enum bkey_type bkey_type(unsigned level, enum btree_id id)
@@ -77,6 +79,4 @@ void bch2_bkey_swab(enum bkey_type, const struct bkey_format *,
 
 extern const struct bkey_ops *bch2_bkey_ops[];
 
-#undef DEF_BTREE_ID
-
-#endif /* _BCACHE_BKEY_METHODS_H */
+#endif /* _BCACHEFS_BKEY_METHODS_H */

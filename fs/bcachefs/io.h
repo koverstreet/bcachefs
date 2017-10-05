@@ -1,5 +1,5 @@
-#ifndef _BCACHE_IO_H
-#define _BCACHE_IO_H
+#ifndef _BCACHEFS_IO_H
+#define _BCACHEFS_IO_H
 
 #include <linux/hash.h>
 #include "io_types.h"
@@ -105,4 +105,4 @@ static inline struct bch_read_bio *rbio_init(struct bio *bio)
 	return rbio;
 }
 
-#endif /* _BCACHE_IO_H */
+#endif /* _BCACHEFS_IO_H */

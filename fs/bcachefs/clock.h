@@ -1,5 +1,5 @@
-#ifndef _BCACHE_CLOCK_H
-#define _BCACHE_CLOCK_H
+#ifndef _BCACHEFS_CLOCK_H
+#define _BCACHEFS_CLOCK_H
 
 void bch2_io_timer_add(struct io_clock *, struct io_timer *);
 void bch2_io_timer_del(struct io_clock *, struct io_timer *);
@@ -20,4 +20,4 @@ void bch2_io_clock_schedule_timeout(struct io_clock *, unsigned long);
 void bch2_io_clock_exit(struct io_clock *);
 int bch2_io_clock_init(struct io_clock *);
 
-#endif /* _BCACHE_CLOCK_H */
+#endif /* _BCACHEFS_CLOCK_H */

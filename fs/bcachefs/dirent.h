@@ -1,5 +1,5 @@
-#ifndef _BCACHE_DIRENT_H
-#define _BCACHE_DIRENT_H
+#ifndef _BCACHEFS_DIRENT_H
+#define _BCACHEFS_DIRENT_H
 
 #include "str_hash.h"
 
@@ -35,5 +35,4 @@ u64 bch2_dirent_lookup(struct bch_fs *, u64, const struct bch_hash_info *,
 int bch2_empty_dir(struct bch_fs *, u64);
 int bch2_readdir(struct bch_fs *, struct file *, struct dir_context *);
 
-#endif /* _BCACHE_DIRENT_H */
-
+#endif /* _BCACHEFS_DIRENT_H */

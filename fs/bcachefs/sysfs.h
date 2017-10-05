@@ -1,9 +1,9 @@
-#ifndef _BCACHE_SYSFS_H_
-#define _BCACHE_SYSFS_H_
+#ifndef _BCACHEFS_SYSFS_H_
+#define _BCACHEFS_SYSFS_H_
 
 #include <linux/sysfs.h>
 
-#ifndef NO_BCACHE_SYSFS
+#ifndef NO_BCACHEFS_SYSFS
 
 struct attribute;
 struct sysfs_ops;
@@ -34,6 +34,6 @@ static const struct sysfs_ops bch2_fs_opts_dir_sysfs_ops;
 static const struct sysfs_ops bch2_fs_time_stats_sysfs_ops;
 static const struct sysfs_ops bch2_dev_sysfs_ops;
 
-#endif
+#endif /* NO_BCACHEFS_SYSFS */
 
-#endif  /* _BCACHE_SYSFS_H_ */
+#endif  /* _BCACHEFS_SYSFS_H_ */
