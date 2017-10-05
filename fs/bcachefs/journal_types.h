@@ -1,5 +1,5 @@
-#ifndef _BCACHE_JOURNAL_TYPES_H
-#define _BCACHE_JOURNAL_TYPES_H
+#ifndef _BCACHEFS_JOURNAL_TYPES_H
+#define _BCACHEFS_JOURNAL_TYPES_H
 
 #include <linux/cache.h>
 #include <linux/workqueue.h>
@@ -235,4 +235,4 @@ struct journal_device {
 	struct closure		read;
 };
 
-#endif /* _BCACHE_JOURNAL_TYPES_H */
+#endif /* _BCACHEFS_JOURNAL_TYPES_H */

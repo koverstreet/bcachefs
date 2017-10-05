@@ -1,5 +1,5 @@
-#ifndef _BCACHE_BKEY_H
-#define _BCACHE_BKEY_H
+#ifndef _BCACHEFS_BKEY_H
+#define _BCACHEFS_BKEY_H
 
 #include <linux/bug.h>
 #include "bcachefs_format.h"
@@ -345,7 +345,7 @@ bool bch2_bkey_transform(const struct bkey_format *,
 struct bkey __bch2_bkey_unpack_key(const struct bkey_format *,
 				   const struct bkey_packed *);
 
-#ifndef HAVE_BCACHE_COMPILED_UNPACK
+#ifndef HAVE_BCACHEFS_COMPILED_UNPACK
 struct bpos __bkey_unpack_pos(const struct bkey_format *,
 			      const struct bkey_packed *);
 #endif
@@ -382,7 +382,7 @@ static inline u64 bkey_field_max(const struct bkey_format *f,
 }
 
 #ifdef CONFIG_X86_64
-#define HAVE_BCACHE_COMPILED_UNPACK	1
+#define HAVE_BCACHEFS_COMPILED_UNPACK	1
 
 int bch2_compile_bkey_format(const struct bkey_format *, void *);
 
@@ -613,4 +613,4 @@ void bch2_bkey_pack_test(void);
 static inline void bch2_bkey_pack_test(void) {}
 #endif
 
-#endif /* _BCACHE_BKEY_H */
+#endif /* _BCACHEFS_BKEY_H */

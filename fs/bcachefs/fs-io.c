@@ -1,3 +1,4 @@
+#ifndef NO_BCACHEFS_FS
 
 #include "bcachefs.h"
 #include "btree_update.h"
@@ -2567,3 +2568,5 @@ loff_t bch2_llseek(struct file *file, loff_t offset, int whence)
 
 	return -EINVAL;
 }
+
+#endif /* NO_BCACHEFS_FS */

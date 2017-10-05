@@ -1,5 +1,5 @@
-#ifndef _BCACHE_DEBUG_H
-#define _BCACHE_DEBUG_H
+#ifndef _BCACHEFS_DEBUG_H
+#define _BCACHEFS_DEBUG_H
 
 #include "bcachefs.h"
 
@@ -59,4 +59,4 @@ static inline void bch2_fs_debug_init(struct bch_fs *c) {}
 void bch2_debug_exit(void);
 int bch2_debug_init(void);
 
-#endif
+#endif /* _BCACHEFS_DEBUG_H */

@@ -1,6 +1,5 @@
-
-#ifndef _BCACHE_SIX_H
-#define _BCACHE_SIX_H
+#ifndef _BCACHEFS_SIX_H
+#define _BCACHEFS_SIX_H
 
 #include <linux/lockdep.h>
 #include <linux/osq_lock.h>
@@ -133,4 +132,4 @@ __SIX_LOCK(read)
 __SIX_LOCK(intent)
 __SIX_LOCK(write)
 
-#endif /* _BCACHE_SIX_H */
+#endif /* _BCACHEFS_SIX_H */

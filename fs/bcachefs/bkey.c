@@ -287,7 +287,7 @@ struct bkey __bch2_bkey_unpack_key(const struct bkey_format *format,
 	return out;
 }
 
-#ifndef HAVE_BCACHE_COMPILED_UNPACK
+#ifndef HAVE_BCACHEFS_COMPILED_UNPACK
 struct bpos __bkey_unpack_pos(const struct bkey_format *format,
 				     const struct bkey_packed *in)
 {

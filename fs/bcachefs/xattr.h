@@ -1,5 +1,5 @@
-#ifndef _BCACHE_XATTR_H
-#define _BCACHE_XATTR_H
+#ifndef _BCACHEFS_XATTR_H
+#define _BCACHEFS_XATTR_H
 
 #include "str_hash.h"
 
@@ -20,4 +20,4 @@ ssize_t bch2_xattr_list(struct dentry *, char *, size_t);
 
 extern const struct xattr_handler *bch2_xattr_handlers[];
 
-#endif /* _BCACHE_XATTR_H */
+#endif /* _BCACHEFS_XATTR_H */

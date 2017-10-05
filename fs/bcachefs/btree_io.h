@@ -1,5 +1,5 @@
-#ifndef _BCACHE_BTREE_IO_H
-#define _BCACHE_BTREE_IO_H
+#ifndef _BCACHEFS_BTREE_IO_H
+#define _BCACHEFS_BTREE_IO_H
 
 #include "extents.h"
 
@@ -109,4 +109,4 @@ do {									\
 
 void bch2_btree_verify_flushed(struct bch_fs *);
 
-#endif /* _BCACHE_BTREE_IO_H */
+#endif /* _BCACHEFS_BTREE_IO_H */

@@ -581,7 +581,7 @@ BKEY_VAL_TYPE(reservation,	BCH_RESERVATION);
 
 #define BLOCKDEV_INODE_MAX	4096
 
-#define BCACHE_ROOT_INO		4096
+#define BCACHEFS_ROOT_INO	4096
 
 enum bch_inode_types {
 	BCH_INODE_FS		= 128,
@@ -1058,7 +1058,7 @@ enum bch_compression_opts {
 	UUID_LE(0xf67385c6, 0x1a4e, 0xca45,				\
 		0x82, 0x65, 0xf5, 0x7f, 0x48, 0xba, 0x6d, 0x81)
 
-#define BCACHE_STATFS_MAGIC		0xca451a4e
+#define BCACHEFS_STATFS_MAGIC		0xca451a4e
 
 #define JSET_MAGIC		__cpu_to_le64(0x245235c1a3625032ULL)
 #define BSET_MAGIC		__cpu_to_le64(0x90135c78b99e07f5ULL)

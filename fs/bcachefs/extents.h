@@ -1,5 +1,5 @@
-#ifndef _BCACHE_EXTENTS_H
-#define _BCACHE_EXTENTS_H
+#ifndef _BCACHEFS_EXTENTS_H
+#define _BCACHEFS_EXTENTS_H
 
 #include "bcachefs.h"
 #include "bkey.h"
@@ -565,4 +565,4 @@ bool bch2_cut_front(struct bpos, struct bkey_i *);
 bool bch2_cut_back(struct bpos, struct bkey *);
 void bch2_key_resize(struct bkey *, unsigned);
 
-#endif /* _BCACHE_EXTENTS_H */
+#endif /* _BCACHEFS_EXTENTS_H */

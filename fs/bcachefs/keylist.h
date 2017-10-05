@@ -1,5 +1,5 @@
-#ifndef _BCACHE_KEYLIST_H
-#define _BCACHE_KEYLIST_H
+#ifndef _BCACHEFS_KEYLIST_H
+#define _BCACHEFS_KEYLIST_H
 
 #include "keylist_types.h"
 
@@ -65,4 +65,4 @@ void bch2_verify_keylist_sorted(struct keylist *);
 static inline void bch2_verify_keylist_sorted(struct keylist *l) {}
 #endif
 
-#endif /* _BCACHE_KEYLIST_H */
+#endif /* _BCACHEFS_KEYLIST_H */

@@ -1,3 +1,5 @@
+#ifndef NO_BCACHEFS_CHARDEV
+
 #include "bcachefs.h"
 #include "bcachefs_ioctl.h"
 #include "super.h"
@@ -404,3 +406,5 @@ int __init bch2_chardev_init(void)
 
 	return 0;
 }
+
+#endif /* NO_BCACHEFS_CHARDEV */

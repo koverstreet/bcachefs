@@ -1,5 +1,5 @@
-#ifndef _BCACHE_FIFO_H
-#define _BCACHE_FIFO_H
+#ifndef _BCACHEFS_FIFO_H
+#define _BCACHEFS_FIFO_H
 
 #include "util.h"
 
@@ -111,5 +111,4 @@ do {									\
 	      (_ptr = &(_fifo)->data[(_iter) & (_fifo)->mask], true));	\
 	     _iter++)
 
-#endif /* _BCACHE_FIFO_H */
-
+#endif /* _BCACHEFS_FIFO_H */

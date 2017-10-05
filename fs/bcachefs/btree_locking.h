@@ -1,5 +1,5 @@
-#ifndef _BCACHE_BTREE_LOCKING_H
-#define _BCACHE_BTREE_LOCKING_H
+#ifndef _BCACHEFS_BTREE_LOCKING_H
+#define _BCACHEFS_BTREE_LOCKING_H
 
 /*
  * Only for internal btree use:
@@ -115,4 +115,4 @@ bool bch2_btree_node_relock(struct btree_iter *, unsigned);
 void bch2_btree_node_unlock_write(struct btree *, struct btree_iter *);
 void bch2_btree_node_lock_write(struct btree *, struct btree_iter *);
 
-#endif /* _BCACHE_BTREE_LOCKING_H */
+#endif /* _BCACHEFS_BTREE_LOCKING_H */

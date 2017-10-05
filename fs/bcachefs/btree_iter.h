@@ -1,5 +1,5 @@
-#ifndef _BCACHE_BTREE_ITER_H
-#define _BCACHE_BTREE_ITER_H
+#ifndef _BCACHEFS_BTREE_ITER_H
+#define _BCACHEFS_BTREE_ITER_H
 
 #include "btree_types.h"
 
@@ -263,4 +263,4 @@ static inline void bch2_btree_iter_cond_resched(struct btree_iter *iter)
 	}
 }
 
-#endif /* _BCACHE_BTREE_ITER_H */
+#endif /* _BCACHEFS_BTREE_ITER_H */

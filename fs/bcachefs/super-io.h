@@ -1,5 +1,5 @@
-#ifndef _BCACHE_SUPER_IO_H
-#define _BCACHE_SUPER_IO_H
+#ifndef _BCACHEFS_SUPER_IO_H
+#define _BCACHEFS_SUPER_IO_H
 
 #include "extents.h"
 #include "eytzinger.h"
@@ -161,4 +161,4 @@ unsigned bch2_dev_has_data(struct bch_fs *, struct bch_dev *);
 int bch2_replicas_gc_end(struct bch_fs *, int);
 int bch2_replicas_gc_start(struct bch_fs *, unsigned);
 
-#endif /* _BCACHE_SUPER_IO_H */
+#endif /* _BCACHEFS_SUPER_IO_H */
