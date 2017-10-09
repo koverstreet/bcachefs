@@ -700,11 +700,11 @@ reread:			sectors_read = min_t(unsigned,
 		case JOURNAL_ENTRY_NONE:
 			if (!saw_bad)
 				return 0;
-			sectors = c->sb.block_size;
+			sectors = c->opts.block_size;
 			goto next_block;
 		case JOURNAL_ENTRY_BAD:
 			saw_bad = true;
-			sectors = c->sb.block_size;
+			sectors = c->opts.block_size;
 			goto next_block;
 		default:
 			return ret;
@@ -1193,7 +1193,7 @@ static enum {
 	j->prev_buf_sectors =
 		vstruct_blocks_plus(buf->data, c->block_bits,
 				    journal_entry_u64s_reserve(buf)) *
-		c->sb.block_size;
+		c->opts.block_size;
 
 	BUG_ON(j->prev_buf_sectors > j->cur_buf_sectors);
 

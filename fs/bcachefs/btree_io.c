@@ -916,7 +916,7 @@ static int validate_bset(struct bch_fs *c, struct btree *b,
 		return 0;
 	}
 
-	if (b->written + sectors > c->sb.btree_node_size) {
+	if (b->written + sectors > c->opts.btree_node_size) {
 		btree_node_error(c, b, "bset past end of btree node");
 		i->u64s = 0;
 		return 0;
@@ -1034,7 +1034,7 @@ int bch2_btree_node_read_done(struct bch_fs *c, struct btree *b)
 	if (bch2_meta_read_fault("btree"))
 		goto err;
 
-	while (b->written < c->sb.btree_node_size) {
+	while (b->written < c->opts.btree_node_size) {
 		unsigned sectors, whiteout_u64s = 0;
 
 		if (!b->written) {
@@ -1528,7 +1528,7 @@ void __bch2_btree_node_write(struct bch_fs *c, struct btree *b,
 	BUG_ON(!list_empty(&b->write_blocked));
 	BUG_ON((b->will_make_reachable != NULL) != !b->written);
 
-	BUG_ON(b->written >= c->sb.btree_node_size);
+	BUG_ON(b->written >= c->opts.btree_node_size);
 	BUG_ON(bset_written(b, btree_bset_last(b)));
 	BUG_ON(le64_to_cpu(b->data->magic) != bset_magic(c));
 	BUG_ON(memcmp(&b->data->format, &b->format, sizeof(b->format)));
@@ -1612,7 +1612,7 @@ void __bch2_btree_node_write(struct bch_fs *c, struct btree *b,
 	memset(data + bytes_to_write, 0,
 	       (sectors_to_write << 9) - bytes_to_write);
 
-	BUG_ON(b->written + sectors_to_write > c->sb.btree_node_size);
+	BUG_ON(b->written + sectors_to_write > c->opts.btree_node_size);
 	BUG_ON(BSET_BIG_ENDIAN(i) != CPU_BIG_ENDIAN);
 	BUG_ON(i->seq != b->data->keys.seq);
 

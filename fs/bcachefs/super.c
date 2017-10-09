@@ -544,14 +544,15 @@ static struct bch_fs *bch2_fs_alloc(struct bch_sb *sb, struct bch_opts opts)
 		goto err;
 	}
 
-	c->block_bits		= ilog2(c->sb.block_size);
-
 	mutex_unlock(&c->sb_lock);
 
 	scnprintf(c->name, sizeof(c->name), "%pU", &c->sb.user_uuid);
 
-	bch2_opts_apply(&c->opts, bch2_sb_opts(sb));
+	c->opts = bch2_opts_default;
+	bch2_opts_apply(&c->opts, bch2_opts_from_sb(sb));
 	bch2_opts_apply(&c->opts, opts);
+
+	c->block_bits		= ilog2(c->opts.block_size);
 
 	c->opts.nochanges	|= c->opts.noreplay;
 	c->opts.read_only	|= c->opts.nochanges;
@@ -583,7 +584,7 @@ static struct bch_fs *bch2_fs_alloc(struct bch_sb *sb, struct bch_opts opts)
 			BIOSET_NEED_BVECS) ||
 	    mempool_init_page_pool(&c->bio_bounce_pages,
 				   max_t(unsigned,
-					 c->sb.btree_node_size,
+					 c->opts.btree_node_size,
 					 c->sb.encoded_extent_max) /
 				   PAGE_SECTORS, 0) ||
 	    !(c->usage_percpu = alloc_percpu(struct bch_fs_usage)) ||
@@ -645,7 +646,8 @@ static const char *__bch2_fs_online(struct bch_fs *c)
 	if (kobject_add(&c->kobj, NULL, "%pU", c->sb.user_uuid.b) ||
 	    kobject_add(&c->internal, &c->kobj, "internal") ||
 	    kobject_add(&c->opts_dir, &c->kobj, "options") ||
-	    kobject_add(&c->time_stats, &c->kobj, "time_stats"))
+	    kobject_add(&c->time_stats, &c->kobj, "time_stats") ||
+	    bch2_opts_create_sysfs_files(&c->opts_dir))
 		return "error creating sysfs objects";
 
 	mutex_lock(&c->state_lock);
@@ -917,7 +919,7 @@ static const char *bch2_dev_may_add(struct bch_sb *sb, struct bch_fs *c)
 	if (!sb_mi)
 		return "Invalid superblock: member info area missing";
 
-	if (le16_to_cpu(sb->block_size) != c->sb.block_size)
+	if (le16_to_cpu(sb->block_size) != c->opts.block_size)
 		return "mismatched block size";
 
 	if (le16_to_cpu(sb_mi->members[sb->dev_idx].bucket_size) <
@@ -1124,7 +1126,7 @@ static int bch2_dev_alloc(struct bch_fs *c, unsigned dev_idx)
 
 	btree_node_reserve_buckets =
 		DIV_ROUND_UP(BTREE_NODE_RESERVE,
-			     ca->mi.bucket_size / c->sb.btree_node_size);
+			     ca->mi.bucket_size / c->opts.btree_node_size);
 
 	if (percpu_ref_init(&ca->ref, bch2_dev_ref_release,
 			    0, GFP_KERNEL) ||

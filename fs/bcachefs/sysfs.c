@@ -194,14 +194,6 @@ read_attribute(data_replicas_have);
 	BCH_DEBUG_PARAMS()
 #undef BCH_DEBUG_PARAM
 
-#define BCH_OPT(_name, _mode, ...)					\
-	static struct attribute sysfs_opt_##_name = {			\
-		.name = #_name,	.mode = _mode,				\
-	};
-
-	BCH_VISIBLE_OPTS()
-#undef BCH_OPT
-
 #define BCH_TIME_STAT(name, frequency_units, duration_units)		\
 	sysfs_time_stats_attribute(name, frequency_units, duration_units);
 	BCH_TIME_STATS()
@@ -528,8 +520,13 @@ SHOW(bch2_fs_opts_dir)
 {
 	char *out = buf, *end = buf + PAGE_SIZE;
 	struct bch_fs *c = container_of(kobj, struct bch_fs, opts_dir);
+	const struct bch_option *opt = container_of(attr, struct bch_option, attr);
+	int id = opt - bch2_opt_table;
+	u64 v = bch2_opt_get_by_id(&c->opts, id);
 
-	out += bch2_opt_show(&c->opts, attr->name, out, end - out);
+	out += opt->type == BCH_OPT_STR
+		? bch2_scnprint_string_list(out, end - out, opt->choices, v)
+		: scnprintf(out, end - out, "%lli", v);
 	out += scnprintf(out, end - out, "\n");
 
 	return out - buf;
@@ -538,15 +535,13 @@ SHOW(bch2_fs_opts_dir)
 STORE(bch2_fs_opts_dir)
 {
 	struct bch_fs *c = container_of(kobj, struct bch_fs, opts_dir);
-	const struct bch_option *opt;
-	int id;
+	const struct bch_option *opt = container_of(attr, struct bch_option, attr);
+	int ret, id = opt - bch2_opt_table;
 	u64 v;
 
-	id = bch2_parse_sysfs_opt(attr->name, buf, &v);
-	if (id < 0)
-		return id;
-
-	opt = &bch2_opt_table[id];
+	ret = bch2_opt_parse(opt, buf, &v);
+	if (ret < 0)
+		return ret;
 
 	mutex_lock(&c->sb_lock);
 
@@ -563,7 +558,7 @@ STORE(bch2_fs_opts_dir)
 		bch2_write_super(c);
 	}
 
-	bch2_opt_set(&c->opts, id, v);
+	bch2_opt_set_by_id(&c->opts, id, v);
 
 	mutex_unlock(&c->sb_lock);
 
@@ -571,15 +566,26 @@ STORE(bch2_fs_opts_dir)
 }
 SYSFS_OPS(bch2_fs_opts_dir);
 
-struct attribute *bch2_fs_opts_dir_files[] = {
-#define BCH_OPT(_name, ...)						\
-	&sysfs_opt_##_name,
+struct attribute *bch2_fs_opts_dir_files[] = { NULL };
 
-	BCH_VISIBLE_OPTS()
-#undef BCH_OPT
+int bch2_opts_create_sysfs_files(struct kobject *kobj)
+{
+	const struct bch_option *i;
+	int ret;
 
-	NULL
-};
+	for (i = bch2_opt_table;
+	     i < bch2_opt_table + bch2_opts_nr;
+	     i++) {
+		if (i->mode == OPT_INTERNAL)
+			continue;
+
+		ret = sysfs_create_file(kobj, &i->attr);
+		if (ret)
+			return ret;
+	}
+
+	return 0;
+}
 
 /* time stats */
 
