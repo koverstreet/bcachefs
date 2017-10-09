@@ -318,8 +318,10 @@ const char *bch2_sb_validate(struct bcache_superblock *disk_sb)
 	    le64_to_cpu(sb->version) > BCH_SB_VERSION_MAX)
 		return"Unsupported superblock version";
 
-	if (le64_to_cpu(sb->version) < BCH_SB_VERSION_EXTENT_MAX)
+	if (le64_to_cpu(sb->version) < BCH_SB_VERSION_EXTENT_MAX) {
 		SET_BCH_SB_ENCODED_EXTENT_MAX_BITS(sb, 7);
+		SET_BCH_SB_POSIX_ACL(sb, 1);
+	}
 
 	block_size = le16_to_cpu(sb->block_size);
 
@@ -462,11 +464,8 @@ static void bch2_sb_update(struct bch_fs *c)
 
 	c->sb.uuid		= src->uuid;
 	c->sb.user_uuid		= src->user_uuid;
-	c->sb.block_size	= le16_to_cpu(src->block_size);
-	c->sb.btree_node_size	= BCH_SB_BTREE_NODE_SIZE(src);
 	c->sb.nr_devices	= src->nr_devices;
 	c->sb.clean		= BCH_SB_CLEAN(src);
-	c->sb.str_hash_type	= BCH_SB_STR_HASH_TYPE(src);
 	c->sb.encryption_type	= BCH_SB_ENCRYPTION_TYPE(src);
 	c->sb.encoded_extent_max= 1 << BCH_SB_ENCODED_EXTENT_MAX_BITS(src);
 	c->sb.time_base_lo	= le64_to_cpu(src->time_base_lo);
@@ -609,7 +608,7 @@ const char *bch2_read_super(struct bcache_superblock *sb,
 			   struct bch_opts opts,
 			   const char *path)
 {
-	u64 offset = opt_defined(opts.sb) ? opts.sb : BCH_SB_SECTOR;
+	u64 offset = opt_get(opts, sb);
 	struct bch_sb_layout layout;
 	const char *err;
 	unsigned i;
@@ -617,10 +616,10 @@ const char *bch2_read_super(struct bcache_superblock *sb,
 	memset(sb, 0, sizeof(*sb));
 	sb->mode = FMODE_READ;
 
-	if (!(opt_defined(opts.noexcl) && opts.noexcl))
+	if (!opt_get(opts, noexcl))
 		sb->mode |= FMODE_EXCL;
 
-	if (!(opt_defined(opts.nochanges) && opts.nochanges))
+	if (!opt_get(opts, nochanges))
 		sb->mode |= FMODE_WRITE;
 
 	err = bch2_blkdev_open(path, sb->mode, sb, &sb->bdev);

@@ -251,7 +251,7 @@ void bch2_inode_init(struct bch_fs *c, struct bch_inode_unpacked *inode_u,
 	memset(inode_u, 0, sizeof(*inode_u));
 
 	/* ick */
-	inode_u->i_flags |= c->sb.str_hash_type << INODE_STR_HASH_OFFSET;
+	inode_u->i_flags |= c->opts.str_hash << INODE_STR_HASH_OFFSET;
 	get_random_bytes(&inode_u->i_hash_seed, sizeof(inode_u->i_hash_seed));
 
 	inode_u->i_mode		= mode;

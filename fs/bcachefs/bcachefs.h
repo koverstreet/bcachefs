@@ -518,14 +518,11 @@ struct bch_fs {
 		uuid_le		uuid;
 		uuid_le		user_uuid;
 
-		u16		block_size;
-		u16		btree_node_size;
 		u16		encoded_extent_max;
 
 		u8		nr_devices;
 		u8		clean;
 
-		u8		str_hash_type;
 		u8		encryption_type;
 
 		u64		time_base_lo;
@@ -795,7 +792,7 @@ static inline unsigned bucket_bytes(const struct bch_dev *ca)
 
 static inline unsigned block_bytes(const struct bch_fs *c)
 {
-	return c->sb.block_size << 9;
+	return c->opts.block_size << 9;
 }
 
 #endif /* _BCACHEFS_H */

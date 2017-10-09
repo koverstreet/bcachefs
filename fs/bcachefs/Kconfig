@@ -20,11 +20,16 @@ config BCACHEFS_FS
 	The bcachefs filesystem - a modern, copy on write filesystem, with
 	support for multiple devices, compression, checksumming, etc.
 
+config BCACHEFS_POSIX_ACL
+	bool "bcachefs POSIX ACL support"
+	depends on BCACHEFS_FS
+	select FS_POSIX_ACL
+
 config BCACHEFS_DEBUG
 	bool "bcachefs debugging"
 	depends on BCACHEFS_FS
 	---help---
-	Don't select this option unless you're a developer
+	Enables many extra debugging checks and assertions.
 
-	Enables extra debugging tools, allows expensive runtime checks to be
-	turned on.
+	The resulting code will be significantly slower than normal; you
+	probably shouldn't select this option unless you're a developer.
