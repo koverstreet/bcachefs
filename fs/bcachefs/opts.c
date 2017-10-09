@@ -66,42 +66,24 @@ const char * const bch2_dev_state[] = {
 	NULL
 };
 
-const struct bch_option bch2_opt_table[] = {
-#define OPT_BOOL()		.type = BCH_OPT_BOOL
-#define OPT_UINT(_min, _max)	.type = BCH_OPT_UINT, .min = _min, .max = _max
-#define OPT_STR(_choices)	.type = BCH_OPT_STR, .choices = _choices
-
-#define BCH_OPT(_name, _mode, _sb_opt, _bits, _type)			\
-	[Opt_##_name] = {						\
-		.name	= #_name,					\
-		.set_sb	= SET_##_sb_opt,				\
-		_type							\
-	},
-	BCH_VISIBLE_OPTS()
-#undef BCH_OPT
-};
-
-static int bch2_opt_lookup(const char *name)
+void bch2_opts_apply(struct bch_opts *dst, struct bch_opts src)
 {
-	const struct bch_option *i;
+#define BCH_OPT(_name, ...)						\
+	if (opt_defined(src, _name))					\
+		opt_set(*dst, _name, src._name);
 
-	for (i = bch2_opt_table;
-	     i < bch2_opt_table + ARRAY_SIZE(bch2_opt_table);
-	     i++)
-		if (!strcmp(name, i->name))
-			return i - bch2_opt_table;
-
-	return -1;
+	BCH_OPTS()
+#undef BCH_OPT
 }
 
-static u64 bch2_opt_get(struct bch_opts *opts, enum bch_opt_id id)
+u64 bch2_opt_get_by_id(const struct bch_opts *opts, enum bch_opt_id id)
 {
 	switch (id) {
 #define BCH_OPT(_name, ...)						\
 	case Opt_##_name:						\
 		return opts->_name;					\
 
-	BCH_VISIBLE_OPTS()
+	BCH_OPTS()
 #undef BCH_OPT
 
 	default:
@@ -109,15 +91,15 @@ static u64 bch2_opt_get(struct bch_opts *opts, enum bch_opt_id id)
 	}
 }
 
-void bch2_opt_set(struct bch_opts *opts, enum bch_opt_id id, u64 v)
+void bch2_opt_set_by_id(struct bch_opts *opts, enum bch_opt_id id, u64 v)
 {
 	switch (id) {
 #define BCH_OPT(_name, ...)						\
 	case Opt_##_name:						\
-		opts->_name = v;					\
+		opt_set(*opts, _name, v);				\
 		break;
 
-	BCH_VISIBLE_OPTS()
+	BCH_OPTS()
 #undef BCH_OPT
 
 	default:
@@ -129,13 +111,13 @@ void bch2_opt_set(struct bch_opts *opts, enum bch_opt_id id, u64 v)
  * Initial options from superblock - here we don't want any options undefined,
  * any options the superblock doesn't specify are set to 0:
  */
-struct bch_opts bch2_sb_opts(struct bch_sb *sb)
+struct bch_opts bch2_opts_from_sb(struct bch_sb *sb)
 {
 	struct bch_opts opts = bch2_opts_empty();
 
-#define BCH_OPT(_name, _mode, _sb_opt, ...)				\
+#define BCH_OPT(_name, _bits, _mode, _type, _sb_opt, _default)		\
 	if (_sb_opt != NO_SB_OPT)					\
-		opts._name = _sb_opt(sb);
+		opt_set(opts, _name, _sb_opt(sb));
 
 	BCH_OPTS()
 #undef BCH_OPT
@@ -143,9 +125,41 @@ struct bch_opts bch2_sb_opts(struct bch_sb *sb)
 	return opts;
 }
 
-static int parse_one_opt(enum bch_opt_id id, const char *val, u64 *res)
+const struct bch_option bch2_opt_table[] = {
+#define OPT_BOOL()		.type = BCH_OPT_BOOL
+#define OPT_UINT(_min, _max)	.type = BCH_OPT_UINT, .min = _min, .max = _max
+#define OPT_STR(_choices)	.type = BCH_OPT_STR, .choices = _choices
+
+#define BCH_OPT(_name, _bits, _mode, _type, _sb_opt, _default)		\
+	[Opt_##_name] = {						\
+		.attr	= {						\
+			.name	= #_name,				\
+			.mode = _mode == OPT_RUNTIME ? 0644 : 0444,	\
+		},							\
+		.mode	= _mode,					\
+		.set_sb	= SET_##_sb_opt,				\
+		_type							\
+	},
+
+	BCH_OPTS()
+#undef BCH_OPT
+};
+
+static int bch2_opt_lookup(const char *name)
 {
-	const struct bch_option *opt = &bch2_opt_table[id];
+	const struct bch_option *i;
+
+	for (i = bch2_opt_table;
+	     i < bch2_opt_table + ARRAY_SIZE(bch2_opt_table);
+	     i++)
+		if (!strcmp(name, i->attr.name))
+			return i - bch2_opt_table;
+
+	return -1;
+}
+
+int bch2_opt_parse(const struct bch_option *opt, const char *val, u64 *res)
+{
 	ssize_t ret;
 
 	switch (opt->type) {
@@ -190,11 +204,11 @@ int bch2_parse_mount_opts(struct bch_opts *opts, char *options)
 		if (val) {
 			id = bch2_opt_lookup(name);
 			if (id < 0)
-				continue;
+				goto bad_opt;
 
-			ret = parse_one_opt(id, val, &v);
+			ret = bch2_opt_parse(&bch2_opt_table[id], val, &v);
 			if (ret < 0)
-				return ret;
+				goto bad_val;
 		} else {
 			id = bch2_opt_lookup(name);
 			v = 1;
@@ -205,47 +219,31 @@ int bch2_parse_mount_opts(struct bch_opts *opts, char *options)
 				v = 0;
 			}
 
-			if (id < 0 ||
-			    bch2_opt_table[id].type != BCH_OPT_BOOL)
-				continue;
+			if (id < 0)
+				goto bad_opt;
+
+			if (bch2_opt_table[id].type != BCH_OPT_BOOL)
+				goto no_val;
 		}
 
-		bch2_opt_set(opts, id, v);
+		if (bch2_opt_table[id].mode < OPT_MOUNT)
+			goto bad_opt;
+
+		if (id == Opt_acl &&
+		    !IS_ENABLED(CONFIG_BCACHEFS_POSIX_ACL))
+			goto bad_opt;
+
+		bch2_opt_set_by_id(opts, id, v);
 	}
 
 	return 0;
-}
-
-enum bch_opt_id bch2_parse_sysfs_opt(const char *name, const char *val,
-				    u64 *res)
-{
-	int id = bch2_opt_lookup(name);
-	int ret;
-
-	if (id < 0)
-		return -EINVAL;
-
-	ret = parse_one_opt(id, val, res);
-	if (ret < 0)
-		return ret;
-
-	return id;
-}
-
-ssize_t bch2_opt_show(struct bch_opts *opts, const char *name,
-		      char *buf, size_t size)
-{
-	int id = bch2_opt_lookup(name);
-	const struct bch_option *opt;
-	u64 v;
-
-	if (id < 0)
-		return -EINVAL;
-
-	v = bch2_opt_get(opts, id);
-	opt = &bch2_opt_table[id];
-
-	return opt->type == BCH_OPT_STR
-		? bch2_scnprint_string_list(buf, size, opt->choices, v)
-		: scnprintf(buf, size, "%lli", v);
+bad_opt:
+	pr_err("Bad mount option %s", name);
+	return -1;
+bad_val:
+	pr_err("Invalid value %s for mount option %s", val, name);
+	return -1;
+no_val:
+	pr_err("Mount option %s requires a value", name);
+	return -1;
 }

@@ -575,7 +575,7 @@ static const char *bch2_btree_ptr_invalid(const struct bch_fs *c,
 
 		extent_for_each_ptr_crc(e, ptr, crc) {
 			reason = extent_ptr_invalid(c, e, ptr,
-						    c->sb.btree_node_size,
+						    c->opts.btree_node_size,
 						    true);
 			if (reason)
 				return reason;

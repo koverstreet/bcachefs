@@ -263,7 +263,7 @@ static inline size_t bch_btree_keys_u64s_remaining(struct bch_fs *c,
 	unsigned used = bset_byte_offset(b, vstruct_end(i)) / sizeof(u64) +
 		b->whiteout_u64s +
 		b->uncompacted_whiteout_u64s;
-	unsigned total = c->sb.btree_node_size << 6;
+	unsigned total = c->opts.btree_node_size << 6;
 
 	EBUG_ON(used > total);
 

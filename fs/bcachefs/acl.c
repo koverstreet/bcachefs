@@ -1,4 +1,4 @@
-#ifndef NO_BCACHEFS_FS
+#ifdef CONFIG_BCACHEFS_POSIX_ACL
 
 #include "bcachefs.h"
 
@@ -227,4 +227,4 @@ int bch2_set_acl(struct inode *inode, struct posix_acl *acl, int type)
 	return ret;
 }
 
-#endif /* NO_BCACHEFS_FS */
+#endif /* CONFIG_BCACHEFS_POSIX_ACL */

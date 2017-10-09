@@ -51,7 +51,7 @@ static inline bool btree_node_hashed(struct btree *b)
 
 static inline size_t btree_bytes(struct bch_fs *c)
 {
-	return c->sb.btree_node_size << 9;
+	return c->opts.btree_node_size << 9;
 }
 
 static inline size_t btree_max_u64s(struct bch_fs *c)
@@ -71,7 +71,7 @@ static inline size_t btree_pages(struct bch_fs *c)
 
 static inline unsigned btree_blocks(struct bch_fs *c)
 {
-	return c->sb.btree_node_size >> c->block_bits;
+	return c->opts.btree_node_size >> c->block_bits;
 }
 
 #define BTREE_SPLIT_THRESHOLD(c)		(btree_blocks(c) * 3 / 4)

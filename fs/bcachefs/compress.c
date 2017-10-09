@@ -423,7 +423,7 @@ void bch2_bio_compress(struct bch_fs *c,
 
 	/* If it's only one block, don't bother trying to compress: */
 	if (*compression_type != BCH_COMPRESSION_NONE &&
-	    bio_sectors(src) > c->sb.block_size &&
+	    bio_sectors(src) > c->opts.block_size &&
 	    !__bio_compress(c, dst, dst_len, src, src_len, compression_type))
 		goto out;
 

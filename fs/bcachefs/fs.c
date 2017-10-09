@@ -219,11 +219,13 @@ static struct inode *bch2_vfs_inode_create(struct bch_fs *c,
 
 	inode_init_owner(inode, parent, mode);
 
+#ifdef CONFIG_BCACHEFS_POSIX_ACL
 	ret = posix_acl_create(parent, &inode->i_mode, &default_acl, &acl);
 	if (ret) {
 		make_bad_inode(inode);
 		goto err;
 	}
+#endif
 
 	ei = to_bch_ei(inode);
 
@@ -957,8 +959,10 @@ static const struct inode_operations bch_file_inode_operations = {
 	.setattr	= bch2_setattr,
 	.fiemap		= bch2_fiemap,
 	.listxattr	= bch2_xattr_list,
+#ifdef CONFIG_BCACHEFS_POSIX_ACL
 	.get_acl	= bch2_get_acl,
 	.set_acl	= bch2_set_acl,
+#endif
 };
 
 static const struct inode_operations bch_dir_inode_operations = {
@@ -974,8 +978,10 @@ static const struct inode_operations bch_dir_inode_operations = {
 	.setattr	= bch2_setattr,
 	.tmpfile	= bch2_tmpfile,
 	.listxattr	= bch2_xattr_list,
+#ifdef CONFIG_BCACHEFS_POSIX_ACL
 	.get_acl	= bch2_get_acl,
 	.set_acl	= bch2_set_acl,
+#endif
 };
 
 static const struct file_operations bch_dir_file_operations = {
@@ -993,15 +999,19 @@ static const struct inode_operations bch_symlink_inode_operations = {
 	.get_link	= page_get_link,
 	.setattr	= bch2_setattr,
 	.listxattr	= bch2_xattr_list,
+#ifdef CONFIG_BCACHEFS_POSIX_ACL
 	.get_acl	= bch2_get_acl,
 	.set_acl	= bch2_set_acl,
+#endif
 };
 
 static const struct inode_operations bch_special_inode_operations = {
 	.setattr	= bch2_setattr,
 	.listxattr	= bch2_xattr_list,
+#ifdef CONFIG_BCACHEFS_POSIX_ACL
 	.get_acl	= bch2_get_acl,
 	.set_acl	= bch2_set_acl,
+#endif
 };
 
 static const struct address_space_operations bch_address_space_operations = {
@@ -1305,14 +1315,13 @@ static int bch2_remount(struct super_block *sb, int *flags, char *data)
 	struct bch_opts opts = bch2_opts_empty();
 	int ret;
 
-	opts.read_only = (*flags & MS_RDONLY) != 0;
+	opt_set(opts, read_only, (*flags & MS_RDONLY) != 0);
 
 	ret = bch2_parse_mount_opts(&opts, data);
 	if (ret)
 		return ret;
 
-	if (opts.read_only >= 0 &&
-	    opts.read_only != c->opts.read_only) {
+	if (opts.read_only != c->opts.read_only) {
 		const char *err = NULL;
 
 		mutex_lock(&c->state_lock);
@@ -1342,6 +1351,38 @@ static int bch2_remount(struct super_block *sb, int *flags, char *data)
 	return ret;
 }
 
+static int bch2_show_options(struct seq_file *seq, struct dentry *root)
+{
+	struct bch_fs *c = root->d_sb->s_fs_info;
+	enum bch_opt_id i;
+
+	for (i = 0; i < bch2_opts_nr; i++) {
+		const struct bch_option *opt = &bch2_opt_table[i];
+		u64 v = bch2_opt_get_by_id(&c->opts, i);
+
+		if (opt->mode < OPT_MOUNT)
+			continue;
+
+		if (v == bch2_opt_get_by_id(&bch2_opts_default, i))
+			continue;
+
+		switch (opt->type) {
+		case BCH_OPT_BOOL:
+			seq_printf(seq, ",%s%s", v ? "" : "no", opt->attr.name);
+			break;
+		case BCH_OPT_UINT:
+			seq_printf(seq, ",%s=%llu", opt->attr.name, v);
+			break;
+		case BCH_OPT_STR:
+			seq_printf(seq, ",%s=%s", opt->attr.name, opt->choices[v]);
+			break;
+		}
+	}
+
+	return 0;
+
+}
+
 static const struct super_operations bch_super_operations = {
 	.alloc_inode	= bch2_alloc_inode,
 	.destroy_inode	= bch2_destroy_inode,
@@ -1349,6 +1390,7 @@ static const struct super_operations bch_super_operations = {
 	.evict_inode	= bch2_evict_inode,
 	.sync_fs	= bch2_sync_fs,
 	.statfs		= bch2_statfs,
+	.show_options	= bch2_show_options,
 	.remount_fs	= bch2_remount,
 #if 0
 	.put_super	= bch2_put_super,
@@ -1379,7 +1421,7 @@ static struct dentry *bch2_mount(struct file_system_type *fs_type,
 	unsigned i;
 	int ret;
 
-	opts.read_only = (flags & MS_RDONLY) != 0;
+	opt_set(opts, read_only, (flags & MS_RDONLY) != 0);
 
 	ret = bch2_parse_mount_opts(&opts, data);
 	if (ret)
@@ -1437,10 +1479,10 @@ static struct dentry *bch2_mount(struct file_system_type *fs_type,
 		break;
 	}
 
-	if (opts.posix_acl < 0)
+#ifdef CONFIG_BCACHEFS_POSIX_ACL
+	if (c->opts.acl)
 		sb->s_flags	|= MS_POSIXACL;
-	else
-		sb->s_flags	|= opts.posix_acl ? MS_POSIXACL : 0;
+#endif
 
 	inode = bch2_vfs_inode_get(sb, BCACHEFS_ROOT_INO);
 	if (IS_ERR(inode)) {
