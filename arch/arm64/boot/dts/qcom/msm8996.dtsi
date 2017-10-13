@@ -998,6 +998,26 @@
 						"bus_slave";
 			};
 		};
+
+		cci: cci@a0c000 {
+			compatible = "qcom,cci-v1.4.0";
+			#address-cells = <1>;
+			#size-cells = <0>;
+			reg = <0xa0c000 0x1000>;
+			interrupts = <GIC_SPI 295 IRQ_TYPE_EDGE_RISING>;
+			power-domains = <&mmcc CAMSS_GDSC>;
+			clocks = <&mmcc CAMSS_TOP_AHB_CLK>,
+					<&mmcc CAMSS_CCI_AHB_CLK>,
+					<&mmcc CAMSS_CCI_CLK>,
+					<&mmcc CAMSS_AHB_CLK>;
+			clock-names = "camss_top_ahb",
+					"cci_ahb",
+					"cci",
+					"camss_ahb";
+			pinctrl-names = "default";
+			pinctrl-0 = <&cci0_default>;
+			status = "disabled";
+		};
 	};
 
 	adsp-pil {

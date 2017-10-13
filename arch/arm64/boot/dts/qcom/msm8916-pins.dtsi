@@ -733,4 +733,18 @@
 			bias-pull-up;
 		};
 	};
+
+	cci_lines {
+		cci0_default: cci0_default {
+			pinmux {
+				function = "cci_i2c";
+				pins = "gpio29", "gpio30";
+			};
+			pinconf {
+				pins = "gpio29", "gpio30";
+				drive-strength = <16>;
+				bias-disable;
+			};
+		};
+	};
 };

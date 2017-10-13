@@ -1428,6 +1428,25 @@
 			qcom,vdd-apc-step-down-limit = <1>;
 			qcom,cpr-cpus = <&CPU0 &CPU1 &CPU2 &CPU3>;
 		};
+
+		cci: cci@1b0c000 {
+			compatible = "qcom,cci-v1.0.8";
+			#address-cells = <1>;
+			#size-cells = <0>;
+			reg = <0x1b0c000 0x1000>;
+			interrupts = <GIC_SPI 50 IRQ_TYPE_EDGE_RISING>;
+			clocks = <&gcc GCC_CAMSS_TOP_AHB_CLK>,
+				<&gcc GCC_CAMSS_CCI_AHB_CLK>,
+				<&gcc GCC_CAMSS_CCI_CLK>,
+				<&gcc GCC_CAMSS_AHB_CLK>;
+			clock-names = "camss_top_ahb",
+				"cci_ahb",
+				"cci",
+				"camss_ahb";
+			pinctrl-names = "default";
+			pinctrl-0 = <&cci0_default>;
+			status = "disabled";
+		};
 	};
 
 	smd {
