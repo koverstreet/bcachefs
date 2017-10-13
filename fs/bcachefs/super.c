@@ -39,6 +39,7 @@
 #include <linux/blkdev.h>
 #include <linux/debugfs.h>
 #include <linux/device.h>
+#include <linux/fs.h>
 #include <linux/genhd.h>
 #include <linux/idr.h>
 #include <linux/kthread.h>
@@ -433,6 +434,8 @@ static void bch2_fs_free(struct bch_fs *c)
 		destroy_workqueue(c->copygc_wq);
 	if (c->wq)
 		destroy_workqueue(c->wq);
+	if (c->dev)
+		free_anon_bdev(c->dev);
 
 	free_pages((unsigned long) c->disk_sb, c->disk_sb_order);
 	kvpfree(c, sizeof(*c));
@@ -591,7 +594,8 @@ static struct bch_fs *bch2_fs_alloc(struct bch_sb *sb, struct bch_opts opts)
 		(btree_blocks(c) + 1) * 2 *
 		sizeof(struct btree_node_iter_set);
 
-	if (!(c->wq = alloc_workqueue("bcachefs",
+	if (get_anon_bdev(&c->dev) ||
+	    !(c->wq = alloc_workqueue("bcachefs",
 				WQ_FREEZABLE|WQ_MEM_RECLAIM|WQ_HIGHPRI, 1)) ||
 	    !(c->copygc_wq = alloc_workqueue("bcache_copygc",
 				WQ_FREEZABLE|WQ_MEM_RECLAIM|WQ_HIGHPRI, 1)) ||

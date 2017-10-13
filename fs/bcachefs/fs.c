@@ -1319,11 +1319,9 @@ static struct dentry *bch2_mount(struct file_system_type *fs_type,
 				 int flags, const char *dev_name, void *data)
 {
 	struct bch_fs *c;
-	struct bch_dev *ca;
 	struct super_block *sb;
 	struct inode *vinode;
 	struct bch_opts opts = bch2_opts_empty();
-	unsigned i;
 	int ret;
 
 	opt_set(opts, read_only, (flags & MS_RDONLY) != 0);
@@ -1368,6 +1366,7 @@ static struct dentry *bch2_mount(struct file_system_type *fs_type,
 	sb->s_magic		= BCACHEFS_STATFS_MAGIC;
 	sb->s_time_gran		= c->sb.time_precision;
 	c->vfs_sb		= sb;
+	sb->s_dev		= c->dev;
 	strlcpy(sb->s_id, c->name, sizeof(sb->s_id));
 
 	ret = super_setup_bdi(sb);
@@ -1377,16 +1376,6 @@ static struct dentry *bch2_mount(struct file_system_type *fs_type,
 	sb->s_bdi->congested_fn		= bch2_congested;
 	sb->s_bdi->congested_data	= c;
 	sb->s_bdi->ra_pages		= VM_MAX_READAHEAD * 1024 / PAGE_SIZE;
-
-	for_each_online_member(ca, c, i) {
-		struct block_device *bdev = ca->disk_sb.bdev;
-
-		/* XXX: create an anonymous device for multi device filesystems */
-		sb->s_bdev	= bdev;
-		sb->s_dev	= bdev->bd_dev;
-		percpu_ref_put(&ca->io_ref);
-		break;
-	}
 
 #ifdef CONFIG_BCACHEFS_POSIX_ACL
 	if (c->opts.acl)

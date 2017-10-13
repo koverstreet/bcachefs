@@ -479,6 +479,7 @@ struct bch_fs {
 	unsigned long		flags;
 
 	int			minor;
+	dev_t			dev;
 	struct device		*chardev;
 	struct super_block	*vfs_sb;
 	char			name[40];
