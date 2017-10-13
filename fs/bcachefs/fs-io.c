@@ -12,6 +12,7 @@
 #include "journal.h"
 #include "io.h"
 #include "keylist.h"
+#include "quota.h"
 
 #include <linux/aio.h>
 #include <linux/backing-dev.h>
@@ -129,6 +130,7 @@ static int __must_check bch2_write_inode_size(struct bch_fs *c,
 static void __i_sectors_acct(struct bch_fs *c, struct bch_inode_info *inode, int sectors)
 {
 	inode->v.i_blocks += sectors;
+	bch2_quota_acct(c, inode->ei_qid, Q_SPC, sectors, BCH_QUOTA_WARN);
 }
 
 static void i_sectors_acct(struct bch_fs *c, struct bch_inode_info *inode, int sectors)

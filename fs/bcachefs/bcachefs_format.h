@@ -606,11 +606,13 @@ BKEY_VAL_TYPE(inode_generation,	BCH_INODE_GENERATION);
 	BCH_INODE_FIELD(bi_generation,			32)	\
 	BCH_INODE_FIELD(bi_dev,				32)	\
 	BCH_INODE_FIELD(bi_data_checksum,		8)	\
-	BCH_INODE_FIELD(bi_compression,			8)
+	BCH_INODE_FIELD(bi_compression,			8)	\
+	BCH_INODE_FIELD(bi_project,			32)
 
 #define BCH_INODE_FIELDS_INHERIT()				\
 	BCH_INODE_FIELD(bi_data_checksum)			\
-	BCH_INODE_FIELD(bi_compression)
+	BCH_INODE_FIELD(bi_compression)				\
+	BCH_INODE_FIELD(bi_project)
 
 enum {
 	/*
@@ -737,6 +739,36 @@ struct bch_alloc {
 } __attribute__((packed, aligned(8)));
 BKEY_VAL_TYPE(alloc,	BCH_ALLOC);
 
+/* Quotas: */
+
+enum {
+	BCH_QUOTA		= 128,
+};
+
+enum quota_types {
+	QTYP_USR		= 0,
+	QTYP_GRP		= 1,
+	QTYP_PRJ		= 2,
+	QTYP_NR			= 3,
+};
+
+enum quota_counters {
+	Q_SPC			= 0,
+	Q_INO			= 1,
+	Q_COUNTERS		= 2,
+};
+
+struct bch_quota_counter {
+	__le64			hardlimit;
+	__le64			softlimit;
+};
+
+struct bch_quota {
+	struct bch_val		v;
+	struct bch_quota_counter c[Q_COUNTERS];
+} __attribute__((packed, aligned(8)));
+BKEY_VAL_TYPE(quota,	BCH_QUOTA);
+
 /* Optional/variable size superblock sections: */
 
 struct bch_sb_field {
@@ -749,7 +781,8 @@ struct bch_sb_field {
 	x(journal,	0)	\
 	x(members,	1)	\
 	x(crypt,	2)	\
-	x(replicas,	3)
+	x(replicas,	3)	\
+	x(quota,	4)
 
 enum bch_sb_field_type {
 #define x(f, nr)	BCH_SB_FIELD_##f = nr,
@@ -883,6 +916,23 @@ struct bch_sb_field_replicas {
 	struct bch_replicas_entry entries[0];
 };
 
+/* BCH_SB_FIELD_quota: */
+
+struct bch_sb_quota_counter {
+	__le32				timelimit;
+	__le32				warnlimit;
+};
+
+struct bch_sb_quota_type {
+	__le64				flags;
+	struct bch_sb_quota_counter	c[Q_COUNTERS];
+};
+
+struct bch_sb_field_quota {
+	struct bch_sb_field		field;
+	struct bch_sb_quota_type	q[QTYP_NR];
+} __attribute__((packed, aligned(8)));
+
 /* Superblock: */
 
 /*
@@ -986,6 +1036,11 @@ LE64_BITMASK(BCH_SB_META_REPLICAS_WANT,	struct bch_sb, flags[0], 48, 52);
 LE64_BITMASK(BCH_SB_DATA_REPLICAS_WANT,	struct bch_sb, flags[0], 52, 56);
 
 LE64_BITMASK(BCH_SB_POSIX_ACL,		struct bch_sb, flags[0], 56, 57);
+LE64_BITMASK(BCH_SB_USRQUOTA,		struct bch_sb, flags[0], 57, 58);
+LE64_BITMASK(BCH_SB_GRPQUOTA,		struct bch_sb, flags[0], 58, 59);
+LE64_BITMASK(BCH_SB_PRJQUOTA,		struct bch_sb, flags[0], 59, 60);
+
+/* 60-64 unused */
 
 LE64_BITMASK(BCH_SB_STR_HASH_TYPE,	struct bch_sb, flags[1],  0,  4);
 LE64_BITMASK(BCH_SB_COMPRESSION_TYPE,	struct bch_sb, flags[1],  4,  8);
@@ -1181,7 +1236,8 @@ LE32_BITMASK(JSET_BIG_ENDIAN,	struct jset, flags, 4, 5);
 	DEF_BTREE_ID(INODES,	1, "inodes")			\
 	DEF_BTREE_ID(DIRENTS,	2, "dirents")			\
 	DEF_BTREE_ID(XATTRS,	3, "xattrs")			\
-	DEF_BTREE_ID(ALLOC,	4, "alloc")
+	DEF_BTREE_ID(ALLOC,	4, "alloc")			\
+	DEF_BTREE_ID(QUOTAS,	5, "quotas")
 
 #define DEF_BTREE_ID(kwd, val, name) BTREE_ID_##kwd = val,
 

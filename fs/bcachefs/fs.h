@@ -3,6 +3,7 @@
 
 #include "opts.h"
 #include "str_hash.h"
+#include "quota_types.h"
 
 #include <linux/seqlock.h>
 #include <linux/stat.h>
@@ -13,6 +14,7 @@ struct bch_inode_info {
 	struct mutex		ei_update_lock;
 	u64			ei_journal_seq;
 	unsigned long		ei_last_dirtied;
+	struct bch_qid		ei_qid;
 
 	struct bch_hash_info	ei_str_hash;
 

@@ -1577,3 +1577,16 @@ out:
 
 	return ret;
 }
+
+/* Quotas: */
+
+static const char *bch2_sb_validate_quota(struct bch_sb *sb,
+					  struct bch_sb_field *f)
+{
+	struct bch_sb_field_quota *q = field_to_type(f, quota);
+
+	if (vstruct_bytes(&q->field) != sizeof(*q))
+		return "invalid field quota: wrong size";
+
+	return NULL;
+}
