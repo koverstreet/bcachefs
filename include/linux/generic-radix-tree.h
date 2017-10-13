@@ -100,11 +100,11 @@ struct genradix_iter {
 	size_t			pos;
 };
 
-static inline void genradix_iter_init(struct genradix_iter *iter)
-{
-	iter->offset	= 0;
-	iter->pos	= 0;
-}
+#define genradix_iter_init(_radix, _idx)			\
+	((struct genradix_iter) {				\
+		.pos	= (_idx),				\
+		.offset	= __genradix_idx_to_offset((_radix), (_idx)),\
+	})
 
 void *__genradix_iter_peek(struct genradix_iter *, struct __genradix *, size_t);
 

@@ -7,6 +7,7 @@
 #include "error.h"
 #include "extents.h"
 #include "inode.h"
+#include "quota.h"
 #include "xattr.h"
 
 const struct bkey_ops *bch2_bkey_ops[] = {
@@ -15,6 +16,7 @@ const struct bkey_ops *bch2_bkey_ops[] = {
 	[BKEY_TYPE_DIRENTS]	= &bch2_bkey_dirent_ops,
 	[BKEY_TYPE_XATTRS]	= &bch2_bkey_xattr_ops,
 	[BKEY_TYPE_ALLOC]	= &bch2_bkey_alloc_ops,
+	[BKEY_TYPE_QUOTAS]	= &bch2_bkey_quota_ops,
 	[BKEY_TYPE_BTREE]	= &bch2_bkey_btree_ops,
 };
 

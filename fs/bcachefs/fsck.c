@@ -1033,7 +1033,7 @@ static int bch2_gc_walk_inodes(struct bch_fs *c,
 	u64 nlinks_pos;
 
 	bch2_btree_iter_init(&iter, c, BTREE_ID_INODES, POS(range_start, 0), 0);
-	genradix_iter_init(&nlinks_iter);
+	nlinks_iter = genradix_iter_init(links, 0);
 
 	while ((k = bch2_btree_iter_peek(&iter)).k &&
 	       !btree_iter_err(k)) {

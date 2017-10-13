@@ -281,6 +281,7 @@ do {									\
 #include "clock_types.h"
 #include "journal_types.h"
 #include "keylist_types.h"
+#include "quota_types.h"
 #include "super_types.h"
 
 /*
@@ -669,6 +670,9 @@ struct bch_fs {
 	atomic_t		writeback_pages;
 	unsigned		writeback_pages_max;
 	atomic_long_t		nr_inodes;
+
+	/* QUOTAS */
+	struct bch_memquota_type quotas[QTYP_NR];
 
 	/* DEBUG JUNK */
 	struct dentry		*debug;
