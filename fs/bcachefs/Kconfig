@@ -20,6 +20,11 @@ config BCACHEFS_FS
 	The bcachefs filesystem - a modern, copy on write filesystem, with
 	support for multiple devices, compression, checksumming, etc.
 
+config BCACHEFS_QUOTA
+	bool "bcachefs quota support"
+	depends on BCACHEFS_FS
+	select QUOTACTL
+
 config BCACHEFS_POSIX_ACL
 	bool "bcachefs POSIX ACL support"
 	depends on BCACHEFS_FS

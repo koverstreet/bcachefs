@@ -35,6 +35,7 @@ bcachefs-y		:=	\
 	move.o			\
 	movinggc.o		\
 	opts.o			\
+	quota.o			\
 	siphash.o		\
 	six.o			\
 	super.o			\

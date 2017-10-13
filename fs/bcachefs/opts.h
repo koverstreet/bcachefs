@@ -112,6 +112,15 @@ enum opt_type {
 	BCH_OPT(acl,			u8,	OPT_MOUNT,		\
 		OPT_BOOL(),						\
 		BCH_SB_POSIX_ACL,		true)			\
+	BCH_OPT(usrquota,		u8,	OPT_MOUNT,		\
+		OPT_BOOL(),						\
+		BCH_SB_USRQUOTA,		false)			\
+	BCH_OPT(grpquota,		u8,	OPT_MOUNT,		\
+		OPT_BOOL(),						\
+		BCH_SB_GRPQUOTA,		false)			\
+	BCH_OPT(prjquota,		u8,	OPT_MOUNT,		\
+		OPT_BOOL(),						\
+		BCH_SB_PRJQUOTA,		false)			\
 	BCH_OPT(degraded,		u8,	OPT_MOUNT,		\
 		OPT_BOOL(),						\
 		NO_SB_OPT,			false)			\

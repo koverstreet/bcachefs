@@ -167,6 +167,27 @@ int bch2_opt_lookup(const char *name)
 	return -1;
 }
 
+struct synonym {
+	const char	*s1, *s2;
+};
+
+static const struct synonym bch_opt_synonyms[] = {
+	{ "quota",	"usrquota" },
+};
+
+static int bch2_mount_opt_lookup(const char *name)
+{
+	const struct synonym *i;
+
+	for (i = bch_opt_synonyms;
+	     i < bch_opt_synonyms + ARRAY_SIZE(bch_opt_synonyms);
+	     i++)
+		if (!strcmp(name, i->s1))
+			name = i->s2;
+
+	return bch2_opt_lookup(name);
+}
+
 int bch2_opt_parse(const struct bch_option *opt, const char *val, u64 *res)
 {
 	ssize_t ret;
@@ -211,7 +232,7 @@ int bch2_parse_mount_opts(struct bch_opts *opts, char *options)
 		val	= opt;
 
 		if (val) {
-			id = bch2_opt_lookup(name);
+			id = bch2_mount_opt_lookup(name);
 			if (id < 0)
 				goto bad_opt;
 
@@ -219,12 +240,12 @@ int bch2_parse_mount_opts(struct bch_opts *opts, char *options)
 			if (ret < 0)
 				goto bad_val;
 		} else {
-			id = bch2_opt_lookup(name);
+			id = bch2_mount_opt_lookup(name);
 			v = 1;
 
 			if (id < 0 &&
 			    !strncmp("no", name, 2)) {
-				id = bch2_opt_lookup(name + 2);
+				id = bch2_mount_opt_lookup(name + 2);
 				v = 0;
 			}
 
@@ -240,6 +261,11 @@ int bch2_parse_mount_opts(struct bch_opts *opts, char *options)
 
 		if (id == Opt_acl &&
 		    !IS_ENABLED(CONFIG_BCACHEFS_POSIX_ACL))
+			goto bad_opt;
+
+		if ((id == Opt_usrquota ||
+		     id == Opt_grpquota) &&
+		    !IS_ENABLED(CONFIG_BCACHEFS_QUOTA))
 			goto bad_opt;
 
 		bch2_opt_set_by_id(opts, id, v);

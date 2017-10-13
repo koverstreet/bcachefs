@@ -4,6 +4,7 @@
 #include "chardev.h"
 #include "fs.h"
 #include "fs-ioctl.h"
+#include "quota.h"
 
 #include <linux/compat.h>
 #include <linux/mount.h>
@@ -154,8 +155,30 @@ static int bch2_ioc_fsgetxattr(struct bch_inode_info *inode,
 	struct fsxattr fa = { 0 };
 
 	fa.fsx_xflags = map_flags(bch_flags_to_xflags, inode->ei_inode.bi_flags);
+	fa.fsx_projid = inode->ei_qid.q[QTYP_PRJ];
 
 	return copy_to_user(arg, &fa, sizeof(fa));
+}
+
+static int bch2_set_projid(struct bch_fs *c,
+			   struct bch_inode_info *inode,
+			   u32 projid)
+{
+	struct bch_qid qid = inode->ei_qid;
+	int ret;
+
+	if (projid == inode->ei_qid.q[QTYP_PRJ])
+		return 0;
+
+	qid.q[QTYP_PRJ] = projid;
+
+	ret = bch2_quota_transfer(c, 1 << QTYP_PRJ, qid, inode->ei_qid,
+				  inode->v.i_blocks);
+	if (ret)
+		return ret;
+
+	inode->ei_qid.q[QTYP_PRJ] = projid;
+	return 0;
 }
 
 static int bch2_ioc_fssetxattr(struct bch_fs *c,
@@ -185,9 +208,14 @@ static int bch2_ioc_fssetxattr(struct bch_fs *c,
 	}
 
 	mutex_lock(&inode->ei_update_lock);
+	ret = bch2_set_projid(c, inode, fa.fsx_projid);
+	if (ret)
+		goto err_unlock;
+
 	ret = __bch2_write_inode(c, inode, bch2_inode_flags_set, &flags);
 	if (!ret)
 		bch2_inode_flags_to_vfs(inode);
+err_unlock:
 	mutex_unlock(&inode->ei_update_lock);
 err:
 	inode_unlock(&inode->v);

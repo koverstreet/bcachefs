@@ -586,6 +586,8 @@ BKEY_VAL_ACCESSORS(xattr,		BCH_XATTR);
 
 BKEY_VAL_ACCESSORS(alloc,		BCH_ALLOC);
 
+BKEY_VAL_ACCESSORS(quota,		BCH_QUOTA);
+
 /* byte order helpers */
 
 #if !defined(__LITTLE_ENDIAN) && !defined(__BIG_ENDIAN)

@@ -29,6 +29,7 @@
 #include "move.h"
 #include "migrate.h"
 #include "movinggc.h"
+#include "quota.h"
 #include "super.h"
 #include "super-io.h"
 #include "sysfs.h"
@@ -367,6 +368,7 @@ err:
 
 static void bch2_fs_free(struct bch_fs *c)
 {
+	bch2_fs_quota_exit(c);
 	bch2_fs_fsio_exit(c);
 	bch2_fs_encryption_exit(c);
 	bch2_fs_btree_cache_exit(c);
@@ -493,6 +495,7 @@ static struct bch_fs *bch2_fs_alloc(struct bch_sb *sb, struct bch_opts opts)
 
 	bch2_fs_allocator_init(c);
 	bch2_fs_tiering_init(c);
+	bch2_fs_quota_init(c);
 
 	INIT_LIST_HEAD(&c->list);
 
@@ -775,6 +778,14 @@ static const char *__bch2_fs_start(struct bch_fs *c)
 		if (ret)
 			goto err;
 		bch_verbose(c, "fsck done");
+
+		if (c->opts.usrquota || c->opts.grpquota) {
+			bch_verbose(c, "reading quotas:");
+			ret = bch2_fs_quota_read(c);
+			if (ret)
+				goto err;
+			bch_verbose(c, "quotas done");
+		}
 	} else {
 		struct bch_inode_unpacked inode;
 		struct bkey_inode_buf packed_inode;
@@ -827,6 +838,12 @@ static const char *__bch2_fs_start(struct bch_fs *c)
 				     &packed_inode.inode.k_i,
 				     NULL, NULL, NULL, 0))
 			goto err;
+
+		if (c->opts.usrquota || c->opts.grpquota) {
+			ret = bch2_fs_quota_read(c);
+			if (ret)
+				goto err;
+		}
 
 		err = "error writing first journal entry";
 		if (bch2_journal_meta(&c->journal))
