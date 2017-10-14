@@ -2,6 +2,7 @@
 #include "bcachefs.h"
 #include "bkey_methods.h"
 #include "btree_update.h"
+#include "error.h"
 #include "extents.h"
 #include "inode.h"
 #include "io.h"
@@ -386,7 +387,7 @@ int bch2_inode_rm(struct bch_fs *c, u64 inode_nr)
 	 * but there could be whiteouts (from hash collisions) that we should
 	 * delete:
 	 *
-	 * XXX: the dirent could ideally would delete whitouts when they're no
+	 * XXX: the dirent could ideally would delete whiteouts when they're no
 	 * longer needed
 	 */
 	ret = bch2_btree_delete_range(c, BTREE_ID_DIRENTS,
@@ -407,6 +408,10 @@ int bch2_inode_rm(struct bch_fs *c, u64 inode_nr)
 			bch2_btree_iter_unlock(&iter);
 			return ret;
 		}
+
+		bch2_fs_inconsistent_on(k.k->type != BCH_INODE_FS, c,
+					"inode %llu not found when deleting",
+					inode_nr);
 
 		switch (k.k->type) {
 		case BCH_INODE_FS: {
