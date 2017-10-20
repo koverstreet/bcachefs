@@ -1,0 +1,26 @@
+#!/bin/sh
+set -e
+
+version=@abiname@@localversion@
+image_path=/boot/@image-stem@-$version
+
+if [ "$1" != configure ]; then
+    exit 0
+fi
+
+depmod $version
+
+if [ -f /lib/modules/$version/.fresh-install ]; then
+    change=install
+else
+    change=upgrade
+fi
+linux-update-symlinks $change $version $image_path
+rm -f /lib/modules/$version/.fresh-install
+
+if [ -d /etc/kernel/postinst.d ]; then
+    DEB_MAINT_PARAMS="$*" run-parts --report --exit-on-error --arg=$version \
+	      --arg=$image_path /etc/kernel/postinst.d
+fi
+
+exit 0

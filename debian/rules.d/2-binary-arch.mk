@@ -81,6 +81,18 @@ define install_zfs =
 		$(kmake) -C $(builddir)/build-$* SUBDIRS=`pwd` modules_install $(zfsopts)
 endef
 
+define install_control =
+	for which in $(3);							\
+	do									\
+		template="$(DROOT)/templates/$(2).$$which.in";			\
+		script="$(DROOT)/$(1).$$which";					\
+		sed -e 's/@abiname@/$(abi_release)/g'				\
+		    -e 's/@localversion@/-$*/g'					\
+		    -e 's/@image-stem@/$(instfile)/g'				\
+			<"$$template" >"$$script";				\
+	done
+endef
+
 # Install the finished build
 install-%: pkgdir = $(CURDIR)/debian/$(bin_pkg_name)-$*
 install-%: pkgdir_ex = $(CURDIR)/debian/$(extra_pkg_name)-$*
@@ -228,24 +240,12 @@ endif
 		$(pkgdir)/lib/modules/$(abi_release)-$*/initrd/; \
 	fi
 
-	# Now the image scripts
-	install -d $(pkgdir)/DEBIAN
-	for script in postinst postrm preinst prerm; do				\
-	  sed -e 's/=V/$(abi_release)-$*/g' -e 's/=K/$(instfile)/g'		\
-	      -e 's/=L/$(loader)/g'         -e 's@=B@$(build_arch)@g'		\
-	       $(DROOT)/control-scripts/$$script > $(pkgdir)/DEBIAN/$$script;	\
-	  chmod 755 $(pkgdir)/DEBIAN/$$script;					\
-	done
+	$(call install_control,$(bin_pkg_name)-$*,image,postinst postrm preinst prerm)
+
 ifeq ($(do_extras_package),true)
 	# Install the postinit/postrm scripts in the extras package.
 	if [ -f $(DEBIAN)/control.d/$(target_flavour).inclusion-list ] ; then	\
-		install -d $(pkgdir_ex)/DEBIAN;					\
-		for script in postinst postrm ; do				\
-			sed -e 's/=V/$(abi_release)-$*/g' -e 's/=K/$(instfile)/g'		\
-			    -e 's/=L/$(loader)/g'         -e 's@=B@$(build_arch)@g'		\
-			    debian/control-scripts/extra-post > $(pkgdir_ex)/DEBIAN/$$script; \
-			chmod 755 $(pkgdir_ex)/DEBIAN/$$script;			\
-		done;								\
+		$(call install_control,$(extra_pkg_name)-$*,extra,postinst postrm); \
 	fi
 endif
 
@@ -264,16 +264,7 @@ ifneq ($(skipsub),true)
 		/sbin/depmod -b debian/$(bin_pkg_name)-$$sub		\
 			-ea -F debian/$(bin_pkg_name)-$$sub/boot/System.map-$(abi_release)-$* \
 			$(abi_release)-$*;					\
-		install -d debian/$(bin_pkg_name)-$$sub/DEBIAN;	\
-		for script in postinst postrm preinst prerm; do			\
-			sed -e 's/=V/$(abi_release)-$*/g'			\
-			    -e 's/=K/$(instfile)/g'				\
-			    -e 's/=L/$(loader)/g'				\
-			    -e 's@=B@$(build_arch)@g'				\
-				$(DROOT)/control-scripts/$$script >		\
-				debian/$(bin_pkg_name)-$$sub/DEBIAN/$$script;\
-			chmod 755  debian/$(bin_pkg_name)-$$sub/DEBIAN/$$script;\
-		done;								\
+		$(call install_control,$(bin_pkg_name)--$$sub,image,postinst postrm preinst prerm); \
 	done
 endif
 
@@ -340,13 +331,7 @@ endif
 		$(hdrdir)/Module.symvers
 
 	# Now the header scripts
-	install -d $(CURDIR)/debian/$(basepkg)-$*/DEBIAN
-	for script in postinst; do						\
-	  sed -e 's/=V/$(abi_release)-$*/g' -e 's/=K/$(instfile)/g'	\
-		$(DROOT)/control-scripts/headers-$$script > 			\
-			$(CURDIR)/debian/$(basepkg)-$*/DEBIAN/$$script;		\
-	  chmod 755 $(CURDIR)/debian/$(basepkg)-$*/DEBIAN/$$script;		\
-	done
+	$(call install_control,$(hdrs_pkg_name)-$*,headers,postinst)
 
 	# At the end of the package prep, call the tests
 	DPKG_ARCH="$(arch)" KERN_ARCH="$(build_arch)" FLAVOUR="$*"	\

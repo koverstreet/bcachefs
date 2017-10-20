@@ -27,7 +27,7 @@ Architecture: ARCH
 Section: kernel
 Priority: optional
 Provides: linux-image, fuse-module, aufs-dkms, =PROVIDES=${linux:rprovides}
-Depends: ${misc:Depends}, ${shlibs:Depends}, kmod
+Depends: ${misc:Depends}, ${shlibs:Depends}, kmod, linux-base
 Recommends: BOOTLOADER, initramfs-tools | linux-initramfs-tool
 Breaks: flash-kernel (<< 3.0~rc.4ubuntu64) [arm64]
 Suggests: fdutils, SRCPKGNAME-doc-PKGVER | SRCPKGNAME-source-PKGVER, SRCPKGNAME-tools, linux-headers-PKGVER-ABINUM-FLAVOUR
