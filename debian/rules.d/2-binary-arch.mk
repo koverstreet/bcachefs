@@ -240,6 +240,7 @@ endif
 		$(pkgdir)/lib/modules/$(abi_release)-$*/initrd/; \
 	fi
 
+	echo "interest linux-update-$(abi_release)-$*" >"$(DROOT)/$(bin_pkg_name)-$*.triggers"
 	$(call install_control,$(bin_pkg_name)-$*,image,postinst postrm preinst prerm)
 
 ifeq ($(do_extras_package),true)
