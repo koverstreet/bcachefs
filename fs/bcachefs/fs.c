@@ -177,8 +177,6 @@ static struct inode *bch2_vfs_inode_get(struct bch_fs *c, u64 inum)
 	struct bch_inode_info *inode;
 	int ret;
 
-	pr_debug("inum %llu", inum);
-
 	inode = to_bch_ei(iget_locked(c->vfs_sb, inum));
 	if (unlikely(!inode))
 		return ERR_PTR(-ENOMEM);
@@ -1066,30 +1064,26 @@ static void bch2_vfs_inode_init(struct bch_fs *c,
 				struct bch_inode_info *inode,
 				struct bch_inode_unpacked *bi)
 {
-	pr_debug("init inode %llu with mode %o",
-		 bi->bi_inum, bi->bi_mode);
-
-	inode->ei_flags	= bi->bi_flags;
-	inode->ei_size	= bi->bi_size;
-
-	inode->v.i_mode	= bi->bi_mode;
+	inode->v.i_mode		= bi->bi_mode;
 	i_uid_write(&inode->v, bi->bi_uid);
 	i_gid_write(&inode->v, bi->bi_gid);
-
-	atomic64_set(&inode->ei_sectors, bi->bi_sectors);
-	inode->v.i_blocks = bi->bi_sectors;
-
-	inode->v.i_ino	= bi->bi_inum;
+	inode->v.i_blocks	= bi->bi_sectors;
+	inode->v.i_ino		= bi->bi_inum;
 	set_nlink(&inode->v, bi->bi_nlink + nlink_bias(inode->v.i_mode));
-	inode->v.i_rdev	= bi->bi_dev;
-	inode->v.i_generation = bi->bi_generation;
-	inode->v.i_size	= bi->bi_size;
+	inode->v.i_rdev		= bi->bi_dev;
+	inode->v.i_generation	= bi->bi_generation;
+	inode->v.i_size		= bi->bi_size;
 	inode->v.i_atime	= bch2_time_to_timespec(c, bi->bi_atime);
 	inode->v.i_mtime	= bch2_time_to_timespec(c, bi->bi_mtime);
 	inode->v.i_ctime	= bch2_time_to_timespec(c, bi->bi_ctime);
-	bch2_inode_flags_to_vfs(inode);
 
-	inode->ei_str_hash = bch2_hash_info_init(c, bi);
+	inode->ei_journal_seq	= 0;
+	inode->ei_size		= bi->bi_size;
+	inode->ei_flags		= bi->bi_flags;
+	atomic64_set(&inode->ei_sectors, bi->bi_sectors);
+	inode->ei_str_hash	= bch2_hash_info_init(c, bi);
+
+	bch2_inode_flags_to_vfs(inode);
 
 	inode->v.i_mapping->a_ops = &bch_address_space_operations;
 
@@ -1120,8 +1114,6 @@ static struct inode *bch2_alloc_inode(struct super_block *sb)
 	inode = kmem_cache_alloc(bch2_inode_cache, GFP_NOFS);
 	if (!inode)
 		return NULL;
-
-	pr_debug("allocated %p", &inode->v);
 
 	inode_init_once(&inode->v);
 	mutex_init(&inode->ei_update_lock);
