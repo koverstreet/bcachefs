@@ -402,18 +402,12 @@ int bch2_readdir(struct bch_fs *c, struct file *file,
 	if (!dir_emit_dots(file, ctx))
 		return 0;
 
-	pr_debug("listing for %lu from %llu", inode->v.i_ino, ctx->pos);
-
 	for_each_btree_key(&iter, c, BTREE_ID_DIRENTS,
 			   POS(inode->v.i_ino, ctx->pos), 0, k) {
 		if (k.k->type != BCH_DIRENT)
 			continue;
 
 		dirent = bkey_s_c_to_dirent(k);
-
-		pr_debug("saw %llu:%llu (%s) -> %llu",
-			 k.k->p.inode, k.k->p.offset,
-			 dirent.v->d_name, dirent.v->d_inum);
 
 		if (bkey_cmp(k.k->p, POS(inode->v.i_ino, ctx->pos)) < 0)
 			continue;
@@ -422,8 +416,6 @@ int bch2_readdir(struct bch_fs *c, struct file *file,
 			break;
 
 		len = bch2_dirent_name_bytes(dirent);
-
-		pr_debug("emitting %s", dirent.v->d_name);
 
 		/*
 		 * XXX: dir_emit() can fault and block, while we're holding
