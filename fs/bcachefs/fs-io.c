@@ -198,27 +198,6 @@ static int bch2_quota_reservation_add(struct bch_fs *c,
 
 #endif
 
-/* i_size updates: */
-
-static int inode_set_size(struct bch_inode_info *inode,
-			  struct bch_inode_unpacked *bi,
-			  void *p)
-{
-	loff_t *new_i_size = p;
-
-	lockdep_assert_held(&inode->ei_update_lock);
-
-	bi->bi_size = *new_i_size;
-	return 0;
-}
-
-static int __must_check bch2_write_inode_size(struct bch_fs *c,
-					      struct bch_inode_info *inode,
-					      loff_t new_size)
-{
-	return __bch2_write_inode(c, inode, inode_set_size, &new_size);
-}
-
 static void __i_sectors_acct(struct bch_fs *c, struct bch_inode_info *inode,
 			     struct quota_res *quota_res, int sectors)
 {
@@ -2251,26 +2230,18 @@ static long bch2_fallocate(struct bch_inode_info *inode, int mode,
 	inode_dio_wait(&inode->v);
 	pagecache_block_get(&mapping->add_lock);
 
-	if (!(mode & FALLOC_FL_KEEP_SIZE) && end > inode->v.i_size) {
-		ret = inode_newsize_ok(&inode->v, end);
-		if (ret)
-			goto err;
-	}
+	if (!(mode & FALLOC_FL_KEEP_SIZE) &&
+	    end > inode->v.i_size &&
+	    (ret = inode_newsize_ok(&inode->v, end)))
+		goto err_put_pagecache;
+
+	if ((mode & FALLOC_FL_ZERO_RANGE) &&
+	    (ret = __bch2_truncate_page(inode,
+					offset >> PAGE_SHIFT,
+					offset, end)))
+		goto err_put_pagecache;
 
 	if (mode & FALLOC_FL_ZERO_RANGE) {
-		ret = __bch2_truncate_page(inode,
-					   offset >> PAGE_SHIFT,
-					   offset, end);
-
-		if (!ret &&
-		    offset >> PAGE_SHIFT != end >> PAGE_SHIFT)
-			ret = __bch2_truncate_page(inode,
-						   end >> PAGE_SHIFT,
-						   offset, end);
-
-		if (unlikely(ret))
-			goto err;
-
 		truncate_pagecache_range(&inode->v, offset, end - 1);
 
 		block_start	= round_up(offset, PAGE_SIZE);
@@ -2285,7 +2256,18 @@ static long bch2_fallocate(struct bch_inode_info *inode, int mode,
 
 	ret = i_sectors_dirty_start(c, &i_sectors_hook);
 	if (unlikely(ret))
-		goto err;
+		goto err_put_pagecache;
+
+	/*
+	 * If we're zeroing out, but we're not supposed to be changing i_size -
+	 * if we're zeroing out up to the end of the file, we'll be dropping the
+	 * writes that were going to cause the current i_size to be written -
+	 * thus, we're now responsible for writing the current i_size:
+	 */
+	if ((mode & FALLOC_FL_KEEP_SIZE) &&
+	    (mode & FALLOC_FL_ZERO_RANGE) &&
+	    end >= inode->v.i_size)
+		i_sectors_hook.new_i_size = inode->v.i_size;
 
 	while (bkey_cmp(iter.pos, end_pos) < 0) {
 		struct disk_reservation disk_res = { 0 };
@@ -2303,11 +2285,10 @@ static long bch2_fallocate(struct bch_inode_info *inode, int mode,
 			continue;
 		}
 
-		if (bkey_extent_is_data(k.k)) {
-			if (!(mode & FALLOC_FL_ZERO_RANGE)) {
-				bch2_btree_iter_next_slot(&iter);
-				continue;
-			}
+		if (bkey_extent_is_data(k.k) &&
+		    !(mode & FALLOC_FL_ZERO_RANGE)) {
+			bch2_btree_iter_next_slot(&iter);
+			continue;
 		}
 
 		bkey_reservation_init(&reservation.k_i);
@@ -2326,7 +2307,7 @@ static long bch2_fallocate(struct bch_inode_info *inode, int mode,
 					&i_sectors_hook.quota_res,
 					sectors, true);
 			if (unlikely(ret))
-				goto err_put_sectors_dirty;
+				goto btree_iter_err;
 		}
 
 		if (reservation.v.nr_replicas < replicas ||
@@ -2334,7 +2315,7 @@ static long bch2_fallocate(struct bch_inode_info *inode, int mode,
 			ret = bch2_disk_reservation_get(c, &disk_res, sectors,
 							replicas, 0);
 			if (unlikely(ret))
-				goto err_put_sectors_dirty;
+				goto btree_iter_err;
 
 			reservation.v.nr_replicas = disk_res.nr_replicas;
 		}
@@ -2346,48 +2327,30 @@ static long bch2_fallocate(struct bch_inode_info *inode, int mode,
 					  BTREE_INSERT_ENTRY(&iter, &reservation.k_i));
 		bch2_disk_reservation_put(c, &disk_res);
 btree_iter_err:
-		if (ret < 0 && ret != -EINTR)
-			goto err_put_sectors_dirty;
-
-	}
-	bch2_btree_iter_unlock(&iter);
-
-	ret = i_sectors_dirty_finish(c, &i_sectors_hook) ?: ret;
-
-	if (!(mode & FALLOC_FL_KEEP_SIZE) &&
-	    end > inode->v.i_size) {
-		i_size_write(&inode->v, end);
-
-		mutex_lock(&inode->ei_update_lock);
-		ret = bch2_write_inode_size(c, inode, inode->v.i_size);
-		mutex_unlock(&inode->ei_update_lock);
-	}
-
-	/* blech */
-	if ((mode & FALLOC_FL_KEEP_SIZE) &&
-	    (mode & FALLOC_FL_ZERO_RANGE) &&
-	    inode->ei_inode.bi_size != inode->v.i_size) {
-		/* sync appends.. */
-		ret = filemap_write_and_wait_range(mapping,
-					inode->ei_inode.bi_size, S64_MAX);
-		if (ret)
+		if (ret == -EINTR)
+			ret = 0;
+		if (ret) {
+			end = iter.pos.offset << 9;
+			bch2_btree_iter_unlock(&iter);
 			goto err;
-
-		if (inode->ei_inode.bi_size != inode->v.i_size) {
-			mutex_lock(&inode->ei_update_lock);
-			ret = bch2_write_inode_size(c, inode, inode->v.i_size);
-			mutex_unlock(&inode->ei_update_lock);
 		}
+
 	}
-
-	pagecache_block_put(&mapping->add_lock);
-	inode_unlock(&inode->v);
-
-	return 0;
-err_put_sectors_dirty:
-	ret = i_sectors_dirty_finish(c, &i_sectors_hook) ?: ret;
-err:
 	bch2_btree_iter_unlock(&iter);
+
+	if ((mode & FALLOC_FL_ZERO_RANGE) &&
+	    (offset >> PAGE_SHIFT != end >> PAGE_SHIFT) &&
+	    (ret = __bch2_truncate_page(inode,
+					end >> PAGE_SHIFT,
+					offset, end)))
+		goto err_put_pagecache;
+err:
+	if (!(mode & FALLOC_FL_KEEP_SIZE))
+		i_sectors_hook.new_i_size = end;
+	i_sectors_hook.appending = true;
+
+	ret = i_sectors_dirty_finish(c, &i_sectors_hook) ?: ret;
+err_put_pagecache:
 	pagecache_block_put(&mapping->add_lock);
 	inode_unlock(&inode->v);
 	return ret;
