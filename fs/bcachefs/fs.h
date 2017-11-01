@@ -12,15 +12,9 @@ struct bch_inode_info {
 
 	struct mutex		ei_update_lock;
 	u64			ei_journal_seq;
-
-	atomic_long_t		ei_size_dirty_count;
-
-	atomic_long_t		ei_sectors_dirty_count;
-	atomic64_t		ei_sectors;
+	unsigned long		ei_last_dirtied;
 
 	struct bch_hash_info	ei_str_hash;
-
-	unsigned long		ei_last_dirtied;
 
 	/* copy of inode in btree: */
 	struct bch_inode_unpacked ei_inode;

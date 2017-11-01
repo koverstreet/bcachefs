@@ -910,7 +910,6 @@ static void bch2_vfs_inode_init(struct bch_fs *c,
 	inode->v.i_ctime	= bch2_time_to_timespec(c, bi->bi_ctime);
 
 	inode->ei_journal_seq	= 0;
-	atomic64_set(&inode->ei_sectors, bi->bi_sectors);
 	inode->ei_str_hash	= bch2_hash_info_init(c, bi);
 	inode->ei_inode		= *bi;
 
@@ -949,8 +948,6 @@ static struct inode *bch2_alloc_inode(struct super_block *sb)
 	inode_init_once(&inode->v);
 	mutex_init(&inode->ei_update_lock);
 	inode->ei_journal_seq = 0;
-	atomic_long_set(&inode->ei_size_dirty_count, 0);
-	atomic_long_set(&inode->ei_sectors_dirty_count, 0);
 
 	return &inode->v;
 }
@@ -994,12 +991,6 @@ static void bch2_evict_inode(struct inode *vinode)
 	struct bch_inode_info *inode = to_bch_ei(vinode);
 
 	truncate_inode_pages_final(&inode->v.i_data);
-
-	if (!bch2_journal_error(&c->journal) && !is_bad_inode(&inode->v)) {
-		/* XXX - we want to check this stuff iff there weren't IO errors: */
-		BUG_ON(atomic_long_read(&inode->ei_sectors_dirty_count));
-		BUG_ON(atomic64_read(&inode->ei_sectors) != inode->v.i_blocks);
-	}
 
 	clear_inode(&inode->v);
 
