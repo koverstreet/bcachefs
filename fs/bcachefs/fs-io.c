@@ -2246,6 +2246,18 @@ static long bch2_fallocate(struct bch_inode_info *inode, int mode,
 
 		block_start	= round_up(offset, PAGE_SIZE);
 		block_end	= round_down(end, PAGE_SIZE);
+#if 0
+		truncate_pagecache_range(&inode->v, offset, end - 1);
+		do {
+			ret = invalidate_inode_pages2_range(mapping,
+							    block_start >> PAGE_SHIFT,
+							    block_end >> PAGE_SHIFT);
+		} while (ret == -EBUSY);
+		if (unlikely(ret))
+			goto err_put_pagecache;
+		if (block_start < block_end)
+			truncate_pagecache_range(&inode->v, block_start, block_end - 1);
+#endif
 	} else {
 		block_start	= round_down(offset, PAGE_SIZE);
 		block_end	= round_up(end, PAGE_SIZE);
