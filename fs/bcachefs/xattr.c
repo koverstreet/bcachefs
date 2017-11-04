@@ -171,9 +171,9 @@ int bch2_xattr_get(struct bch_fs *c, struct inode *inode,
 	struct bkey_s_c_xattr xattr;
 	int ret;
 
-	k = bch2_hash_lookup(bch2_xattr_hash_desc, &ei->str_hash, c,
-			    ei->vfs_inode.i_ino, &iter,
-			    &X_SEARCH(type, name, strlen(name)));
+	k = bch2_hash_lookup(bch2_xattr_hash_desc, &ei->ei_str_hash, c,
+			     ei->v.i_ino, &iter,
+			     &X_SEARCH(type, name, strlen(name)));
 	if (IS_ERR(k.k))
 		return bch2_btree_iter_unlock(&iter) ?: -ENODATA;
 
@@ -242,9 +242,9 @@ int bch2_xattr_set(struct bch_fs *c, struct inode *inode,
 {
 	struct bch_inode_info *ei = to_bch_ei(inode);
 
-	return __bch2_xattr_set(c, inode->i_ino, &ei->str_hash,
-			       name, value, size, flags, type,
-			       &ei->journal_seq);
+	return __bch2_xattr_set(c, inode->i_ino, &ei->ei_str_hash,
+				name, value, size, flags, type,
+				&ei->ei_journal_seq);
 }
 
 static size_t bch2_xattr_emit(struct dentry *dentry,

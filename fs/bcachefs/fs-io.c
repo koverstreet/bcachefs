@@ -68,11 +68,11 @@ static int inode_set_size(struct bch_inode_info *ei,
 {
 	loff_t *new_i_size = p;
 
-	lockdep_assert_held(&ei->update_lock);
+	lockdep_assert_held(&ei->ei_update_lock);
 
 	bi->bi_size = *new_i_size;
 
-	if (atomic_long_read(&ei->i_size_dirty_count))
+	if (atomic_long_read(&ei->ei_size_dirty_count))
 		bi->bi_flags |= BCH_INODE_I_SIZE_DIRTY;
 	else
 		bi->bi_flags &= ~BCH_INODE_I_SIZE_DIRTY;
@@ -89,14 +89,14 @@ static int __must_check bch2_write_inode_size(struct bch_fs *c,
 
 static inline void i_size_dirty_put(struct bch_inode_info *ei)
 {
-	atomic_long_dec_bug(&ei->i_size_dirty_count);
+	atomic_long_dec_bug(&ei->ei_size_dirty_count);
 }
 
 static inline void i_size_dirty_get(struct bch_inode_info *ei)
 {
-	lockdep_assert_held(&ei->vfs_inode.i_rwsem);
+	lockdep_assert_held(&ei->v.i_rwsem);
 
-	atomic_long_inc(&ei->i_size_dirty_count);
+	atomic_long_inc(&ei->ei_size_dirty_count);
 }
 
 /* i_sectors accounting: */
@@ -114,8 +114,8 @@ i_sectors_hook_fn(struct extent_insert_hook *hook,
 	int sign = bkey_extent_is_allocation(&insert->k) -
 		(k.k && bkey_extent_is_allocation(k.k));
 
-	EBUG_ON(!(h->ei->i_flags & BCH_INODE_I_SECTORS_DIRTY));
-	EBUG_ON(!atomic_long_read(&h->ei->i_sectors_dirty_count));
+	EBUG_ON(!(h->ei->ei_flags & BCH_INODE_I_SECTORS_DIRTY));
+	EBUG_ON(!atomic_long_read(&h->ei->ei_sectors_dirty_count));
 
 	h->sectors += sectors * sign;
 
@@ -137,7 +137,7 @@ static int inode_clear_i_sectors_dirty(struct bch_inode_info *ei,
 {
 	BUG_ON(!(bi->bi_flags & BCH_INODE_I_SECTORS_DIRTY));
 
-	bi->bi_sectors	= atomic64_read(&ei->i_sectors);
+	bi->bi_sectors	= atomic64_read(&ei->ei_sectors);
 	bi->bi_flags	&= ~BCH_INODE_I_SECTORS_DIRTY;
 	return 0;
 }
@@ -145,29 +145,29 @@ static int inode_clear_i_sectors_dirty(struct bch_inode_info *ei,
 static void i_sectors_dirty_put(struct bch_inode_info *ei,
 				struct i_sectors_hook *h)
 {
-	struct inode *inode = &ei->vfs_inode;
+	struct inode *inode = &ei->v;
 
 	if (h->sectors) {
 		spin_lock(&inode->i_lock);
 		inode->i_blocks += h->sectors;
 		spin_unlock(&inode->i_lock);
 
-		atomic64_add(h->sectors, &ei->i_sectors);
-		EBUG_ON(atomic64_read(&ei->i_sectors) < 0);
+		atomic64_add(h->sectors, &ei->ei_sectors);
+		EBUG_ON(atomic64_read(&ei->ei_sectors) < 0);
 	}
 
-	EBUG_ON(atomic_long_read(&ei->i_sectors_dirty_count) <= 0);
+	EBUG_ON(atomic_long_read(&ei->ei_sectors_dirty_count) <= 0);
 
-	mutex_lock(&ei->update_lock);
+	mutex_lock(&ei->ei_update_lock);
 
-	if (atomic_long_dec_and_test(&ei->i_sectors_dirty_count)) {
-		struct bch_fs *c = ei->vfs_inode.i_sb->s_fs_info;
+	if (atomic_long_dec_and_test(&ei->ei_sectors_dirty_count)) {
+		struct bch_fs *c = ei->v.i_sb->s_fs_info;
 		int ret = __bch2_write_inode(c, ei, inode_clear_i_sectors_dirty, NULL);
 
 		ret = ret;
 	}
 
-	mutex_unlock(&ei->update_lock);
+	mutex_unlock(&ei->ei_update_lock);
 }
 
 static int __must_check i_sectors_dirty_get(struct bch_inode_info *ei,
@@ -181,21 +181,21 @@ static int __must_check i_sectors_dirty_get(struct bch_inode_info *ei,
 	h->ei		= ei;
 #endif
 
-	if (atomic_long_inc_not_zero(&ei->i_sectors_dirty_count))
+	if (atomic_long_inc_not_zero(&ei->ei_sectors_dirty_count))
 		return 0;
 
-	mutex_lock(&ei->update_lock);
+	mutex_lock(&ei->ei_update_lock);
 
-	if (!(ei->i_flags & BCH_INODE_I_SECTORS_DIRTY)) {
-		struct bch_fs *c = ei->vfs_inode.i_sb->s_fs_info;
+	if (!(ei->ei_flags & BCH_INODE_I_SECTORS_DIRTY)) {
+		struct bch_fs *c = ei->v.i_sb->s_fs_info;
 
 		ret = __bch2_write_inode(c, ei, inode_set_i_sectors_dirty, NULL);
 	}
 
 	if (!ret)
-		atomic_long_inc(&ei->i_sectors_dirty_count);
+		atomic_long_inc(&ei->ei_sectors_dirty_count);
 
-	mutex_unlock(&ei->update_lock);
+	mutex_unlock(&ei->ei_update_lock);
 
 	return ret;
 }
@@ -220,7 +220,7 @@ bchfs_extent_update_hook(struct extent_insert_hook *hook,
 	struct bchfs_extent_trans_hook *h = container_of(hook,
 				struct bchfs_extent_trans_hook, hook);
 	struct bch_inode_info *ei = h->op->ei;
-	struct inode *inode = &ei->vfs_inode;
+	struct inode *inode = &ei->v;
 	int sign = bkey_extent_is_allocation(&insert->k) -
 		(k.k && bkey_extent_is_allocation(k.k));
 	s64 sectors = (s64) (next_pos.offset - committed_pos.offset) * sign;
@@ -230,8 +230,8 @@ bchfs_extent_update_hook(struct extent_insert_hook *hook,
 	BUG_ON((next_pos.offset << 9) > round_up(offset, PAGE_SIZE));
 
 	/* XXX: ei->i_size locking */
-	if (offset > ei->i_size) {
-		BUG_ON(ei->i_flags & BCH_INODE_I_SIZE_DIRTY);
+	if (offset > ei->ei_size) {
+		BUG_ON(ei->ei_flags & BCH_INODE_I_SIZE_DIRTY);
 
 		if (!h->need_inode_update) {
 			h->need_inode_update = true;
@@ -241,7 +241,7 @@ bchfs_extent_update_hook(struct extent_insert_hook *hook,
 		h->inode_u.bi_size = offset;
 		do_pack = true;
 
-		ei->i_size = offset;
+		ei->ei_size = offset;
 
 		if (h->op->is_dio)
 			i_size_write(inode, offset);
@@ -256,7 +256,7 @@ bchfs_extent_update_hook(struct extent_insert_hook *hook,
 		h->inode_u.bi_sectors += sectors;
 		do_pack = true;
 
-		atomic64_add(sectors, &ei->i_sectors);
+		atomic64_add(sectors, &ei->ei_sectors);
 
 		h->op->sectors_added += sectors;
 
@@ -283,7 +283,7 @@ static int bchfs_write_index_update(struct bch_write_op *wop)
 	struct bkey_i *k = bch2_keylist_front(keys);
 	int ret;
 
-	BUG_ON(k->k.p.inode != op->ei->vfs_inode.i_ino);
+	BUG_ON(k->k.p.inode != op->ei->v.i_ino);
 
 	bch2_btree_iter_init(&extent_iter, wop->c, BTREE_ID_EXTENTS,
 			     bkey_start_pos(&bch2_keylist_front(keys)->k),
@@ -303,7 +303,7 @@ static int bchfs_write_index_update(struct bch_write_op *wop)
 
 		/* XXX: ei->i_size locking */
 		k = bch2_keylist_front(keys);
-		if (min(k->k.p.offset << 9, op->new_i_size) > op->ei->i_size)
+		if (min(k->k.p.offset << 9, op->new_i_size) > op->ei->ei_size)
 			hook.need_inode_update = true;
 
 		if (hook.need_inode_update) {
@@ -921,7 +921,7 @@ static void bch2_writepage_io_done(struct closure *cl)
 	 * before calling end_page_writeback:
 	 */
 	if (io->op.sectors_added) {
-		struct inode *inode = &io->op.ei->vfs_inode;
+		struct inode *inode = &io->op.ei->v;
 
 		spin_lock(&inode->i_lock);
 		inode->i_blocks += io->op.sectors_added;
@@ -957,7 +957,7 @@ static void bch2_writepage_io_alloc(struct bch_fs *c,
 				    struct bch_inode_info *ei,
 				    struct page *page)
 {
-	u64 inum = ei->vfs_inode.i_ino;
+	u64 inum = ei->v.i_ino;
 	unsigned nr_replicas = page_state(page)->nr_replicas;
 
 	EBUG_ON(!nr_replicas);
@@ -978,9 +978,9 @@ alloc_io:
 				  (struct disk_reservation) {
 					.nr_replicas = c->opts.data_replicas,
 				  },
-				  foreground_write_point(c, ei->last_dirtied),
+				  foreground_write_point(c, ei->ei_last_dirtied),
 				  POS(inum, 0),
-				  &ei->journal_seq,
+				  &ei->ei_journal_seq,
 				  BCH_WRITE_THROTTLE);
 		w->io->op.op.index_update_fn = bchfs_write_index_update;
 	}
@@ -1355,7 +1355,7 @@ int bch2_write_end(struct file *filp, struct address_space *mapping,
 		if (!PageDirty(page))
 			set_page_dirty(page);
 
-		ei->last_dirtied = (unsigned long) current;
+		ei->ei_last_dirtied = (unsigned long) current;
 	} else {
 		bch2_put_page_reservation(c, page);
 	}
@@ -1554,7 +1554,7 @@ static void bch2_do_direct_IO_write(struct dio_write *dio)
 	bch2_write_op_init(&dio->iop.op, dio->c, dio->res,
 			  foreground_write_point(dio->c, (unsigned long) current),
 			  POS(inode->i_ino, (dio->offset + dio->written) >> 9),
-			  &ei->journal_seq,
+			  &ei->ei_journal_seq,
 			  flags|BCH_WRITE_THROTTLE);
 	dio->iop.op.index_update_fn = bchfs_write_index_update;
 
@@ -1874,7 +1874,7 @@ int bch2_fsync(struct file *file, loff_t start, loff_t end, int datasync)
 	if (c->opts.journal_flush_disabled)
 		return 0;
 
-	return bch2_journal_flush_seq(&c->journal, ei->journal_seq);
+	return bch2_journal_flush_seq(&c->journal, ei->ei_journal_seq);
 }
 
 static int __bch2_truncate_page(struct address_space *mapping,
@@ -1982,15 +1982,15 @@ int bch2_truncate(struct inode *inode, struct iattr *iattr)
 
 	/* sync appends.. */
 	/* XXX what protects ei->i_size? */
-	if (iattr->ia_size > ei->i_size)
-		ret = filemap_write_and_wait_range(mapping, ei->i_size, S64_MAX);
+	if (iattr->ia_size > ei->ei_size)
+		ret = filemap_write_and_wait_range(mapping, ei->ei_size, S64_MAX);
 	if (ret)
 		goto err_put_pagecache;
 
-	mutex_lock(&ei->update_lock);
+	mutex_lock(&ei->ei_update_lock);
 	i_size_dirty_get(ei);
 	ret = bch2_write_inode_size(c, ei, inode->i_size);
-	mutex_unlock(&ei->update_lock);
+	mutex_unlock(&ei->ei_update_lock);
 
 	if (unlikely(ret))
 		goto err;
@@ -2018,7 +2018,7 @@ int bch2_truncate(struct inode *inode, struct iattr *iattr)
 		ret = bch2_inode_truncate(c, inode->i_ino,
 					 round_up(iattr->ia_size, PAGE_SIZE) >> 9,
 					 &i_sectors_hook.hook,
-					 &ei->journal_seq);
+					 &ei->ei_journal_seq);
 
 		i_sectors_dirty_put(ei, &i_sectors_hook);
 
@@ -2026,20 +2026,20 @@ int bch2_truncate(struct inode *inode, struct iattr *iattr)
 			goto err;
 	}
 
-	mutex_lock(&ei->update_lock);
+	mutex_lock(&ei->ei_update_lock);
 	setattr_copy(inode, iattr);
 	inode->i_mtime = inode->i_ctime = current_time(inode);
 out:
 	/* clear I_SIZE_DIRTY: */
 	i_size_dirty_put(ei);
 	ret = bch2_write_inode_size(c, ei, inode->i_size);
-	mutex_unlock(&ei->update_lock);
+	mutex_unlock(&ei->ei_update_lock);
 
 err_put_pagecache:
 	pagecache_block_put(&mapping->add_lock);
 	return ret;
 err:
-	mutex_lock(&ei->update_lock);
+	mutex_lock(&ei->ei_update_lock);
 	goto out;
 }
 
@@ -2092,7 +2092,7 @@ static long bch2_fpunch(struct inode *inode, loff_t offset, loff_t len)
 				ZERO_VERSION,
 				&disk_res,
 				&i_sectors_hook.hook,
-				&ei->journal_seq);
+				&ei->ei_journal_seq);
 
 		i_sectors_dirty_put(ei, &i_sectors_hook);
 		bch2_disk_reservation_put(c, &disk_res);
@@ -2186,7 +2186,7 @@ static long bch2_fcollapse(struct inode *inode, loff_t offset, loff_t len)
 		BUG_ON(ret);
 
 		ret = bch2_btree_insert_at(c, &disk_res, &i_sectors_hook.hook,
-					  &ei->journal_seq,
+					  &ei->ei_journal_seq,
 					  BTREE_INSERT_ATOMIC|
 					  BTREE_INSERT_NOFAIL,
 					  BTREE_INSERT_ENTRY(&dst, &copy.k));
@@ -2204,16 +2204,16 @@ btree_iter_err:
 	ret = bch2_inode_truncate(c, inode->i_ino,
 				 round_up(new_size, PAGE_SIZE) >> 9,
 				 &i_sectors_hook.hook,
-				 &ei->journal_seq);
+				 &ei->ei_journal_seq);
 	if (ret)
 		goto err_unwind;
 
 	i_sectors_dirty_put(ei, &i_sectors_hook);
 
-	mutex_lock(&ei->update_lock);
+	mutex_lock(&ei->ei_update_lock);
 	i_size_write(inode, new_size);
 	ret = bch2_write_inode_size(c, ei, inode->i_size);
-	mutex_unlock(&ei->update_lock);
+	mutex_unlock(&ei->ei_update_lock);
 
 	pagecache_block_put(&mapping->add_lock);
 	inode_unlock(inode);
@@ -2338,7 +2338,7 @@ static long bch2_fallocate(struct inode *inode, int mode,
 		}
 
 		ret = bch2_btree_insert_at(c, &disk_res, &i_sectors_hook.hook,
-					  &ei->journal_seq,
+					  &ei->ei_journal_seq,
 					  BTREE_INSERT_ATOMIC|
 					  BTREE_INSERT_NOFAIL,
 					  BTREE_INSERT_ENTRY(&iter, &reservation.k_i));
@@ -2356,24 +2356,24 @@ btree_iter_err:
 	    new_size > inode->i_size) {
 		i_size_write(inode, new_size);
 
-		mutex_lock(&ei->update_lock);
+		mutex_lock(&ei->ei_update_lock);
 		ret = bch2_write_inode_size(c, ei, inode->i_size);
-		mutex_unlock(&ei->update_lock);
+		mutex_unlock(&ei->ei_update_lock);
 	}
 
 	/* blech */
 	if ((mode & FALLOC_FL_KEEP_SIZE) &&
 	    (mode & FALLOC_FL_ZERO_RANGE) &&
-	    ei->i_size != inode->i_size) {
+	    ei->ei_size != inode->i_size) {
 		/* sync appends.. */
-		ret = filemap_write_and_wait_range(mapping, ei->i_size, S64_MAX);
+		ret = filemap_write_and_wait_range(mapping, ei->ei_size, S64_MAX);
 		if (ret)
 			goto err;
 
-		if (ei->i_size != inode->i_size) {
-			mutex_lock(&ei->update_lock);
+		if (ei->ei_size != inode->i_size) {
+			mutex_lock(&ei->ei_update_lock);
 			ret = bch2_write_inode_size(c, ei, inode->i_size);
-			mutex_unlock(&ei->update_lock);
+			mutex_unlock(&ei->ei_update_lock);
 		}
 	}
 
