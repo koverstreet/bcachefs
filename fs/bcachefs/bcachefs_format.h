@@ -576,9 +576,9 @@ enum bch_inode_types {
 struct bch_inode {
 	struct bch_val		v;
 
-	__le64			i_hash_seed;
-	__le32			i_flags;
-	__le16			i_mode;
+	__le64			bi_hash_seed;
+	__le32			bi_flags;
+	__le16			bi_mode;
 	__u8			fields[0];
 } __attribute__((packed, aligned(8)));
 BKEY_VAL_TYPE(inode,		BCH_INODE_FS);
@@ -586,24 +586,23 @@ BKEY_VAL_TYPE(inode,		BCH_INODE_FS);
 struct bch_inode_generation {
 	struct bch_val		v;
 
-	__le32			i_generation;
+	__le32			bi_generation;
 	__le32			pad;
 } __attribute__((packed, aligned(8)));
 BKEY_VAL_TYPE(inode_generation,	BCH_INODE_GENERATION);
 
-
 #define BCH_INODE_FIELDS()				\
-	BCH_INODE_FIELD(i_atime,	64)		\
-	BCH_INODE_FIELD(i_ctime,	64)		\
-	BCH_INODE_FIELD(i_mtime,	64)		\
-	BCH_INODE_FIELD(i_otime,	64)		\
-	BCH_INODE_FIELD(i_size,		64)		\
-	BCH_INODE_FIELD(i_sectors,	64)		\
-	BCH_INODE_FIELD(i_uid,		32)		\
-	BCH_INODE_FIELD(i_gid,		32)		\
-	BCH_INODE_FIELD(i_nlink,	32)		\
-	BCH_INODE_FIELD(i_generation,	32)		\
-	BCH_INODE_FIELD(i_dev,		32)
+	BCH_INODE_FIELD(bi_atime,	64)		\
+	BCH_INODE_FIELD(bi_ctime,	64)		\
+	BCH_INODE_FIELD(bi_mtime,	64)		\
+	BCH_INODE_FIELD(bi_otime,	64)		\
+	BCH_INODE_FIELD(bi_size,	64)		\
+	BCH_INODE_FIELD(bi_sectors,	64)		\
+	BCH_INODE_FIELD(bi_uid,		32)		\
+	BCH_INODE_FIELD(bi_gid,		32)		\
+	BCH_INODE_FIELD(bi_nlink,	32)		\
+	BCH_INODE_FIELD(bi_generation,	32)		\
+	BCH_INODE_FIELD(bi_dev,		32)
 
 enum {
 	/*
@@ -634,8 +633,8 @@ enum {
 #define BCH_INODE_I_SECTORS_DIRTY (1 << __BCH_INODE_I_SECTORS_DIRTY)
 #define BCH_INODE_HAS_XATTRS	(1 << __BCH_INODE_HAS_XATTRS)
 
-LE32_BITMASK(INODE_STR_HASH,	struct bch_inode, i_flags, 20, 24);
-LE32_BITMASK(INODE_NR_FIELDS,	struct bch_inode, i_flags, 24, 32);
+LE32_BITMASK(INODE_STR_HASH,	struct bch_inode, bi_flags, 20, 24);
+LE32_BITMASK(INODE_NR_FIELDS,	struct bch_inode, bi_flags, 24, 32);
 
 struct bch_inode_blockdev {
 	struct bch_val		v;
