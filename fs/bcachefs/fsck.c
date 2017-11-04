@@ -67,7 +67,7 @@ static int reattach_inode(struct bch_fs *c,
 	snprintf(name_buf, sizeof(name_buf), "%llu", inum);
 	name = (struct qstr) QSTR(name_buf);
 
-	lostfound_inode->i_nlink++;
+	lostfound_inode->bi_nlink++;
 
 	bch2_inode_pack(&packed, lostfound_inode);
 
@@ -80,7 +80,7 @@ static int reattach_inode(struct bch_fs *c,
 		return ret;
 	}
 
-	ret = bch2_dirent_create(c, lostfound_inode->inum,
+	ret = bch2_dirent_create(c, lostfound_inode->bi_inum,
 				 &lostfound_hash_info,
 				 DT_DIR, &name, inum, NULL,
 				 BTREE_INSERT_NOFAIL);
@@ -263,9 +263,9 @@ static int check_extents(struct bch_fs *c)
 			"extent type %u for missing inode %llu",
 			k.k->type, k.k->p.inode) ||
 		    fsck_err_on(w.have_inode &&
-			!S_ISREG(w.inode.i_mode) && !S_ISLNK(w.inode.i_mode), c,
+			!S_ISREG(w.inode.bi_mode) && !S_ISLNK(w.inode.bi_mode), c,
 			"extent type %u for non regular file, inode %llu mode %o",
-			k.k->type, k.k->p.inode, w.inode.i_mode)) {
+			k.k->type, k.k->p.inode, w.inode.bi_mode)) {
 			ret = bch2_btree_delete_at(&iter, 0);
 			if (ret)
 				goto err;
@@ -274,18 +274,18 @@ static int check_extents(struct bch_fs *c)
 
 		unfixable_fsck_err_on(w.first_this_inode &&
 			w.have_inode &&
-			!(w.inode.i_flags & BCH_INODE_I_SECTORS_DIRTY) &&
-			w.inode.i_sectors !=
+			!(w.inode.bi_flags & BCH_INODE_I_SECTORS_DIRTY) &&
+			w.inode.bi_sectors !=
 			(i_sectors = bch2_count_inode_sectors(c, w.cur_inum)),
 			c, "i_sectors wrong: got %llu, should be %llu",
-			w.inode.i_sectors, i_sectors);
+			w.inode.bi_sectors, i_sectors);
 
 		unfixable_fsck_err_on(w.have_inode &&
-			!(w.inode.i_flags & BCH_INODE_I_SIZE_DIRTY) &&
+			!(w.inode.bi_flags & BCH_INODE_I_SIZE_DIRTY) &&
 			k.k->type != BCH_RESERVATION &&
-			k.k->p.offset > round_up(w.inode.i_size, PAGE_SIZE) >> 9, c,
+			k.k->p.offset > round_up(w.inode.bi_size, PAGE_SIZE) >> 9, c,
 			"extent type %u offset %llu past end of inode %llu, i_size %llu",
-			k.k->type, k.k->p.offset, k.k->p.inode, w.inode.i_size);
+			k.k->type, k.k->p.offset, k.k->p.inode, w.inode.bi_size);
 	}
 err:
 fsck_err:
@@ -324,9 +324,9 @@ static int check_dirents(struct bch_fs *c)
 				"dirent in nonexisting directory:\n%s",
 				bch2_bkey_val_to_text(c, BTREE_ID_DIRENTS,
 						      buf, sizeof(buf), k)) ||
-		    fsck_err_on(!S_ISDIR(w.inode.i_mode), c,
+		    fsck_err_on(!S_ISDIR(w.inode.bi_mode), c,
 				"dirent in non directory inode type %u:\n%s",
-				mode_to_type(w.inode.i_mode),
+				mode_to_type(w.inode.bi_mode),
 				bch2_bkey_val_to_text(c, BTREE_ID_DIRENTS,
 						      buf, sizeof(buf), k))) {
 			ret = bch2_btree_delete_at(&iter, 0);
@@ -397,9 +397,9 @@ static int check_dirents(struct bch_fs *c)
 
 		if (fsck_err_on(have_target &&
 				d.v->d_type !=
-				mode_to_type(le16_to_cpu(target.i_mode)), c,
+				mode_to_type(le16_to_cpu(target.bi_mode)), c,
 				"incorrect d_type: should be %u:\n%s",
-				mode_to_type(le16_to_cpu(target.i_mode)),
+				mode_to_type(le16_to_cpu(target.bi_mode)),
 				bch2_bkey_val_to_text(c, BTREE_ID_DIRENTS,
 						      buf, sizeof(buf), k))) {
 			struct bkey_i_dirent *n;
@@ -411,7 +411,7 @@ static int check_dirents(struct bch_fs *c)
 			}
 
 			bkey_reassemble(&n->k_i, d.s_c);
-			n->v.d_type = mode_to_type(le16_to_cpu(target.i_mode));
+			n->v.d_type = mode_to_type(le16_to_cpu(target.bi_mode));
 
 			ret = bch2_btree_insert_at(c, NULL, NULL, NULL,
 					BTREE_INSERT_NOFAIL,
@@ -485,7 +485,7 @@ static int check_root(struct bch_fs *c, struct bch_inode_unpacked *root_inode)
 	if (fsck_err_on(ret, c, "root directory missing"))
 		goto create_root;
 
-	if (fsck_err_on(!S_ISDIR(root_inode->i_mode), c,
+	if (fsck_err_on(!S_ISDIR(root_inode->bi_mode), c,
 			"root inode not a directory"))
 		goto create_root;
 
@@ -494,7 +494,7 @@ fsck_err:
 	return ret;
 create_root:
 	bch2_inode_init(c, root_inode, 0, 0, S_IFDIR|S_IRWXU|S_IRUGO|S_IXUGO, 0);
-	root_inode->inum = BCACHEFS_ROOT_INO;
+	root_inode->bi_inum = BCACHEFS_ROOT_INO;
 
 	bch2_inode_pack(&packed, root_inode);
 
@@ -528,7 +528,7 @@ static int check_lostfound(struct bch_fs *c,
 	if (fsck_err_on(ret, c, "lost+found missing"))
 		goto create_lostfound;
 
-	if (fsck_err_on(!S_ISDIR(lostfound_inode->i_mode), c,
+	if (fsck_err_on(!S_ISDIR(lostfound_inode->bi_mode), c,
 			"lost+found inode not a directory"))
 		goto create_lostfound;
 
@@ -536,7 +536,7 @@ static int check_lostfound(struct bch_fs *c,
 fsck_err:
 	return ret;
 create_lostfound:
-	root_inode->i_nlink++;
+	root_inode->bi_nlink++;
 
 	bch2_inode_pack(&packed, root_inode);
 
@@ -553,7 +553,7 @@ create_lostfound:
 		return ret;
 
 	ret = bch2_dirent_create(c, BCACHEFS_ROOT_INO, &root_hash_info, DT_DIR,
-				 &lostfound, lostfound_inode->inum, NULL,
+				 &lostfound, lostfound_inode->bi_inum, NULL,
 				 BTREE_INSERT_NOFAIL);
 	if (ret)
 		return ret;
@@ -711,7 +711,7 @@ up:
 
 	for_each_btree_key(&iter, c, BTREE_ID_INODES, POS_MIN, 0, k) {
 		if (k.k->type != BCH_INODE_FS ||
-		    !S_ISDIR(le16_to_cpu(bkey_s_c_to_inode(k).v->i_mode)))
+		    !S_ISDIR(le16_to_cpu(bkey_s_c_to_inode(k).v->bi_mode)))
 			continue;
 
 		if (fsck_err_on(!inode_bitmap_test(&dirs_done, k.k->p.inode), c,
@@ -849,15 +849,15 @@ static int bch2_gc_do_inode(struct bch_fs *c,
 			 inode.k->p.inode))
 		return ret;
 
-	i_nlink = u.i_nlink + nlink_bias(u.i_mode);
+	i_nlink = u.bi_nlink + nlink_bias(u.bi_mode);
 
 	fsck_err_on(i_nlink < link.count, c,
 		    "inode %llu i_link too small (%u < %u, type %i)",
 		    inode.k->p.inode, i_nlink,
-		    link.count, mode_to_type(u.i_mode));
+		    link.count, mode_to_type(u.bi_mode));
 
 	/* These should have been caught/fixed by earlier passes: */
-	if (S_ISDIR(u.i_mode)) {
+	if (S_ISDIR(u.bi_mode)) {
 		need_fsck_err_on(link.count > 1, c,
 			"directory %llu with multiple hardlinks: %u",
 			inode.k->p.inode, link.count);
@@ -877,7 +877,7 @@ static int bch2_gc_do_inode(struct bch_fs *c,
 			    "but found orphaned inode %llu",
 			    inode.k->p.inode);
 
-		if (fsck_err_on(S_ISDIR(u.i_mode) &&
+		if (fsck_err_on(S_ISDIR(u.bi_mode) &&
 				bch2_empty_dir(c, inode.k->p.inode), c,
 				"non empty directory with link count 0, "
 				"inode nlink %u, dir links found %u",
@@ -897,7 +897,7 @@ static int bch2_gc_do_inode(struct bch_fs *c,
 		return ret;
 	}
 
-	if (u.i_flags & BCH_INODE_I_SIZE_DIRTY) {
+	if (u.bi_flags & BCH_INODE_I_SIZE_DIRTY) {
 		fsck_err_on(c->sb.clean, c,
 			    "filesystem marked clean, "
 			    "but inode %llu has i_size dirty",
@@ -911,7 +911,7 @@ static int bch2_gc_do_inode(struct bch_fs *c,
 		 */
 
 		ret = bch2_inode_truncate(c, inode.k->p.inode,
-				round_up(u.i_size, PAGE_SIZE) >> 9,
+				round_up(u.bi_size, PAGE_SIZE) >> 9,
 				NULL, NULL);
 		if (ret) {
 			bch_err(c, "error in fs gc: error %i "
@@ -923,13 +923,13 @@ static int bch2_gc_do_inode(struct bch_fs *c,
 		 * We truncated without our normal sector accounting hook, just
 		 * make sure we recalculate it:
 		 */
-		u.i_flags |= BCH_INODE_I_SECTORS_DIRTY;
+		u.bi_flags |= BCH_INODE_I_SECTORS_DIRTY;
 
-		u.i_flags &= ~BCH_INODE_I_SIZE_DIRTY;
+		u.bi_flags &= ~BCH_INODE_I_SIZE_DIRTY;
 		do_update = true;
 	}
 
-	if (u.i_flags & BCH_INODE_I_SECTORS_DIRTY) {
+	if (u.bi_flags & BCH_INODE_I_SECTORS_DIRTY) {
 		s64 sectors;
 
 		fsck_err_on(c->sb.clean, c,
@@ -948,8 +948,8 @@ static int bch2_gc_do_inode(struct bch_fs *c,
 			return sectors;
 		}
 
-		u.i_sectors = sectors;
-		u.i_flags &= ~BCH_INODE_I_SECTORS_DIRTY;
+		u.bi_sectors = sectors;
+		u.bi_flags &= ~BCH_INODE_I_SECTORS_DIRTY;
 		do_update = true;
 	}
 
@@ -958,12 +958,12 @@ static int bch2_gc_do_inode(struct bch_fs *c,
 			    "filesystem marked clean, "
 			    "but inode %llu has wrong i_nlink "
 			    "(type %u i_nlink %u, should be %u)",
-			    inode.k->p.inode, mode_to_type(u.i_mode),
+			    inode.k->p.inode, mode_to_type(u.bi_mode),
 			    i_nlink, real_i_nlink);
 
 		bch_verbose(c, "setting inode %llu nlinks from %u to %u",
 			    inode.k->p.inode, i_nlink, real_i_nlink);
-		u.i_nlink = real_i_nlink - nlink_bias(u.i_mode);;
+		u.bi_nlink = real_i_nlink - nlink_bias(u.bi_mode);
 		do_update = true;
 	}
 

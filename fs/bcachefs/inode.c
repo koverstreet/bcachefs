@@ -92,10 +92,10 @@ void bch2_inode_pack(struct bkey_inode_buf *packed,
 	unsigned nr_fields = 0, last_nonzero_fieldnr = 0;
 
 	bkey_inode_init(&packed->inode.k_i);
-	packed->inode.k.p.inode		= inode->inum;
-	packed->inode.v.i_hash_seed	= inode->i_hash_seed;
-	packed->inode.v.i_flags		= cpu_to_le32(inode->i_flags);
-	packed->inode.v.i_mode		= cpu_to_le16(inode->i_mode);
+	packed->inode.k.p.inode		= inode->bi_inum;
+	packed->inode.v.bi_hash_seed	= inode->bi_hash_seed;
+	packed->inode.v.bi_flags	= cpu_to_le32(inode->bi_flags);
+	packed->inode.v.bi_mode		= cpu_to_le16(inode->bi_mode);
 
 #define BCH_INODE_FIELD(_name, _bits)					\
 	out += inode_encode_field(out, end, 0, inode->_name);		\
@@ -125,9 +125,9 @@ void bch2_inode_pack(struct bkey_inode_buf *packed,
 		int ret = bch2_inode_unpack(inode_i_to_s_c(&packed->inode),
 					   &unpacked);
 		BUG_ON(ret);
-		BUG_ON(unpacked.inum		!= inode->inum);
-		BUG_ON(unpacked.i_hash_seed	!= inode->i_hash_seed);
-		BUG_ON(unpacked.i_mode		!= inode->i_mode);
+		BUG_ON(unpacked.bi_inum		!= inode->bi_inum);
+		BUG_ON(unpacked.bi_hash_seed	!= inode->bi_hash_seed);
+		BUG_ON(unpacked.bi_mode		!= inode->bi_mode);
 
 #define BCH_INODE_FIELD(_name, _bits)	BUG_ON(unpacked._name != inode->_name);
 		BCH_INODE_FIELDS()
@@ -144,10 +144,10 @@ int bch2_inode_unpack(struct bkey_s_c_inode inode,
 	unsigned fieldnr = 0, field_bits;
 	int ret;
 
-	unpacked->inum		= inode.k->p.inode;
-	unpacked->i_hash_seed	= inode.v->i_hash_seed;
-	unpacked->i_flags	= le32_to_cpu(inode.v->i_flags);
-	unpacked->i_mode	= le16_to_cpu(inode.v->i_mode);
+	unpacked->bi_inum	= inode.k->p.inode;
+	unpacked->bi_hash_seed	= inode.v->bi_hash_seed;
+	unpacked->bi_flags	= le32_to_cpu(inode.v->bi_flags);
+	unpacked->bi_mode	= le16_to_cpu(inode.v->bi_mode);
 
 #define BCH_INODE_FIELD(_name, _bits)					\
 	if (fieldnr++ == INODE_NR_FIELDS(inode.v)) {			\
@@ -232,7 +232,7 @@ static void bch2_inode_to_text(struct bch_fs *c, char *buf,
 			break;
 		}
 
-		scnprintf(buf, size, "i_size %llu", unpacked.i_size);
+		scnprintf(buf, size, "i_size %llu", unpacked.bi_size);
 		break;
 	}
 }
@@ -252,17 +252,17 @@ void bch2_inode_init(struct bch_fs *c, struct bch_inode_unpacked *inode_u,
 	memset(inode_u, 0, sizeof(*inode_u));
 
 	/* ick */
-	inode_u->i_flags |= c->opts.str_hash << INODE_STR_HASH_OFFSET;
-	get_random_bytes(&inode_u->i_hash_seed, sizeof(inode_u->i_hash_seed));
+	inode_u->bi_flags |= c->opts.str_hash << INODE_STR_HASH_OFFSET;
+	get_random_bytes(&inode_u->bi_hash_seed, sizeof(inode_u->bi_hash_seed));
 
-	inode_u->i_mode		= mode;
-	inode_u->i_uid		= uid;
-	inode_u->i_gid		= gid;
-	inode_u->i_dev		= rdev;
-	inode_u->i_atime	= now;
-	inode_u->i_mtime	= now;
-	inode_u->i_ctime	= now;
-	inode_u->i_otime	= now;
+	inode_u->bi_mode	= mode;
+	inode_u->bi_uid		= uid;
+	inode_u->bi_gid		= gid;
+	inode_u->bi_dev		= rdev;
+	inode_u->bi_atime	= now;
+	inode_u->bi_mtime	= now;
+	inode_u->bi_ctime	= now;
+	inode_u->bi_otime	= now;
 }
 
 int bch2_inode_create(struct bch_fs *c, struct bch_inode_unpacked *inode_u,
@@ -290,7 +290,7 @@ again:
 
 	while (1) {
 		struct bkey_s_c k = bch2_btree_iter_peek_with_holes(&iter);
-		u32 i_generation = 0;
+		u32 bi_generation = 0;
 
 		ret = btree_iter_err(k);
 		if (ret) {
@@ -311,11 +311,11 @@ again:
 		case BCH_INODE_GENERATION: {
 			struct bkey_s_c_inode_generation g =
 				bkey_s_c_to_inode_generation(k);
-			i_generation = le32_to_cpu(g.v->i_generation);
+			bi_generation = le32_to_cpu(g.v->bi_generation);
 			/* fallthrough: */
 		}
 		default:
-			inode_u->i_generation = i_generation;
+			inode_u->bi_generation = bi_generation;
 
 			bch2_inode_pack(&inode_p, inode_u);
 			inode_p.inode.k.p = k.k->p;
@@ -329,7 +329,7 @@ again:
 				bch2_btree_iter_unlock(&iter);
 
 				if (!ret) {
-					inode_u->inum =
+					inode_u->bi_inum =
 						inode_p.inode.k.p.inode;
 					*hint = inode_p.inode.k.p.inode + 1;
 				}
@@ -401,7 +401,7 @@ int bch2_inode_rm(struct bch_fs *c, u64 inode_nr)
 			     BTREE_ITER_INTENT);
 	do {
 		struct bkey_s_c k = bch2_btree_iter_peek_with_holes(&iter);
-		u32 i_generation = 0;
+		u32 bi_generation = 0;
 
 		ret = btree_iter_err(k);
 		if (ret) {
@@ -418,24 +418,24 @@ int bch2_inode_rm(struct bch_fs *c, u64 inode_nr)
 			struct bch_inode_unpacked inode_u;
 
 			if (!bch2_inode_unpack(bkey_s_c_to_inode(k), &inode_u))
-				i_generation = cpu_to_le32(inode_u.i_generation) + 1;
+				bi_generation = cpu_to_le32(inode_u.bi_generation) + 1;
 			break;
 		}
 		case BCH_INODE_GENERATION: {
 			struct bkey_s_c_inode_generation g =
 				bkey_s_c_to_inode_generation(k);
-			i_generation = le32_to_cpu(g.v->i_generation);
+			bi_generation = le32_to_cpu(g.v->bi_generation);
 			break;
 		}
 		}
 
-		if (!i_generation) {
+		if (!bi_generation) {
 			bkey_init(&delete.k);
 			delete.k.p.inode = inode_nr;
 		} else {
 			bkey_inode_generation_init(&delete.k_i);
 			delete.k.p.inode = inode_nr;
-			delete.v.i_generation = cpu_to_le32(i_generation);
+			delete.v.bi_generation = cpu_to_le32(bi_generation);
 		}
 
 		ret = bch2_btree_insert_at(c, NULL, NULL, NULL,
@@ -511,17 +511,17 @@ void bch2_inode_pack_test(void)
 {
 	struct bch_inode_unpacked *u, test_inodes[] = {
 		{
-			.i_atime	= U64_MAX,
-			.i_ctime	= U64_MAX,
-			.i_mtime	= U64_MAX,
-			.i_otime	= U64_MAX,
-			.i_size		= U64_MAX,
-			.i_sectors	= U64_MAX,
-			.i_uid		= U32_MAX,
-			.i_gid		= U32_MAX,
-			.i_nlink	= U32_MAX,
-			.i_generation	= U32_MAX,
-			.i_dev		= U32_MAX,
+			.bi_atime	= U64_MAX,
+			.bi_ctime	= U64_MAX,
+			.bi_mtime	= U64_MAX,
+			.bi_otime	= U64_MAX,
+			.bi_size	= U64_MAX,
+			.bi_sectors	= U64_MAX,
+			.bi_uid		= U32_MAX,
+			.bi_gid		= U32_MAX,
+			.bi_nlink	= U32_MAX,
+			.bi_generation	= U32_MAX,
+			.bi_dev		= U32_MAX,
 		},
 	};
 

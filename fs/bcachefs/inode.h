@@ -6,10 +6,10 @@
 extern const struct bkey_ops bch2_bkey_inode_ops;
 
 struct bch_inode_unpacked {
-	u64			inum;
-	__le64			i_hash_seed;
-	u32			i_flags;
-	u16			i_mode;
+	u64			bi_inum;
+	__le64			bi_hash_seed;
+	u32			bi_flags;
+	u16			bi_mode;
 
 #define BCH_INODE_FIELD(_name, _bits)	u##_bits _name;
 	BCH_INODE_FIELDS()
@@ -22,7 +22,7 @@ struct bkey_inode_buf {
 #define BCH_INODE_FIELD(_name, _bits)		+ 8 + _bits / 8
 	u8		_pad[0 + BCH_INODE_FIELDS()];
 #undef  BCH_INODE_FIELD
-};
+} __attribute__((packed, aligned(8)));
 
 void bch2_inode_pack(struct bkey_inode_buf *, const struct bch_inode_unpacked *);
 int bch2_inode_unpack(struct bkey_s_c_inode, struct bch_inode_unpacked *);

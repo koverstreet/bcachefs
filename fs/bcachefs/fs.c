@@ -114,14 +114,14 @@ int __must_check __bch2_write_inode(struct bch_fs *c,
 
 		BUG_ON(i_nlink < nlink_bias(inode->i_mode));
 
-		inode_u.i_mode	= inode->i_mode;
-		inode_u.i_uid	= i_uid_read(inode);
-		inode_u.i_gid	= i_gid_read(inode);
-		inode_u.i_nlink	= i_nlink - nlink_bias(inode->i_mode);
-		inode_u.i_dev	= inode->i_rdev;
-		inode_u.i_atime	= timespec_to_bch2_time(c, inode->i_atime);
-		inode_u.i_mtime	= timespec_to_bch2_time(c, inode->i_mtime);
-		inode_u.i_ctime	= timespec_to_bch2_time(c, inode->i_ctime);
+		inode_u.bi_mode	= inode->i_mode;
+		inode_u.bi_uid	= i_uid_read(inode);
+		inode_u.bi_gid	= i_gid_read(inode);
+		inode_u.bi_nlink= i_nlink - nlink_bias(inode->i_mode);
+		inode_u.bi_dev	= inode->i_rdev;
+		inode_u.bi_atime= timespec_to_bch2_time(c, inode->i_atime);
+		inode_u.bi_mtime= timespec_to_bch2_time(c, inode->i_mtime);
+		inode_u.bi_ctime= timespec_to_bch2_time(c, inode->i_ctime);
 
 		bch2_inode_pack(&inode_p, &inode_u);
 
@@ -132,8 +132,8 @@ int __must_check __bch2_write_inode(struct bch_fs *c,
 	} while (ret == -EINTR);
 
 	if (!ret) {
-		ei->i_size	= inode_u.i_size;
-		ei->i_flags	= inode_u.i_flags;
+		ei->i_size	= inode_u.bi_size;
+		ei->i_flags	= inode_u.bi_flags;
 	}
 out:
 	bch2_btree_iter_unlock(&iter);
@@ -803,7 +803,7 @@ static int bch2_inode_user_flags_set(struct bch_inode_info *ei,
 	 * We're relying on btree locking here for exclusion with other ioctl
 	 * calls - use the flags in the btree (@bi), not ei->i_flags:
 	 */
-	unsigned bch_flags = bi->i_flags;
+	unsigned bch_flags = bi->bi_flags;
 	unsigned oldflags = bch2_inode_flags_to_user_flags(bch_flags);
 	unsigned newflags = *((unsigned *) p);
 	unsigned i;
@@ -825,7 +825,7 @@ static int bch2_inode_user_flags_set(struct bch_inode_info *ei,
 	if (oldflags != newflags)
 		return -EOPNOTSUPP;
 
-	bi->i_flags = bch_flags;
+	bi->bi_flags = bch_flags;
 	ei->vfs_inode.i_ctime = current_time(&ei->vfs_inode);
 
 	return 0;
@@ -1077,26 +1077,26 @@ static void bch2_vfs_inode_init(struct bch_fs *c,
 	struct inode *inode = &ei->vfs_inode;
 
 	pr_debug("init inode %llu with mode %o",
-		 bi->inum, bi->i_mode);
+		 bi->bi_inum, bi->bi_mode);
 
-	ei->i_flags	= bi->i_flags;
-	ei->i_size	= bi->i_size;
+	ei->i_flags	= bi->bi_flags;
+	ei->i_size	= bi->bi_size;
 
-	inode->i_mode	= bi->i_mode;
-	i_uid_write(inode, bi->i_uid);
-	i_gid_write(inode, bi->i_gid);
+	inode->i_mode	= bi->bi_mode;
+	i_uid_write(inode, bi->bi_uid);
+	i_gid_write(inode, bi->bi_gid);
 
-	atomic64_set(&ei->i_sectors, bi->i_sectors);
-	inode->i_blocks = bi->i_sectors;
+	atomic64_set(&ei->i_sectors, bi->bi_sectors);
+	inode->i_blocks = bi->bi_sectors;
 
-	inode->i_ino	= bi->inum;
-	set_nlink(inode, bi->i_nlink + nlink_bias(inode->i_mode));
-	inode->i_rdev	= bi->i_dev;
-	inode->i_generation = bi->i_generation;
-	inode->i_size	= bi->i_size;
-	inode->i_atime	= bch2_time_to_timespec(c, bi->i_atime);
-	inode->i_mtime	= bch2_time_to_timespec(c, bi->i_mtime);
-	inode->i_ctime	= bch2_time_to_timespec(c, bi->i_ctime);
+	inode->i_ino	= bi->bi_inum;
+	set_nlink(inode, bi->bi_nlink + nlink_bias(inode->i_mode));
+	inode->i_rdev	= bi->bi_dev;
+	inode->i_generation = bi->bi_generation;
+	inode->i_size	= bi->bi_size;
+	inode->i_atime	= bch2_time_to_timespec(c, bi->bi_atime);
+	inode->i_mtime	= bch2_time_to_timespec(c, bi->bi_mtime);
+	inode->i_ctime	= bch2_time_to_timespec(c, bi->bi_ctime);
 	bch2_inode_flags_to_vfs(inode);
 
 	ei->str_hash = bch2_hash_info_init(c, bi);

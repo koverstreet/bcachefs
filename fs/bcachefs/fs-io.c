@@ -70,12 +70,12 @@ static int inode_set_size(struct bch_inode_info *ei,
 
 	lockdep_assert_held(&ei->update_lock);
 
-	bi->i_size = *new_i_size;
+	bi->bi_size = *new_i_size;
 
 	if (atomic_long_read(&ei->i_size_dirty_count))
-		bi->i_flags |= BCH_INODE_I_SIZE_DIRTY;
+		bi->bi_flags |= BCH_INODE_I_SIZE_DIRTY;
 	else
-		bi->i_flags &= ~BCH_INODE_I_SIZE_DIRTY;
+		bi->bi_flags &= ~BCH_INODE_I_SIZE_DIRTY;
 
 	return 0;
 }
@@ -125,9 +125,9 @@ i_sectors_hook_fn(struct extent_insert_hook *hook,
 static int inode_set_i_sectors_dirty(struct bch_inode_info *ei,
 				    struct bch_inode_unpacked *bi, void *p)
 {
-	BUG_ON(bi->i_flags & BCH_INODE_I_SECTORS_DIRTY);
+	BUG_ON(bi->bi_flags & BCH_INODE_I_SECTORS_DIRTY);
 
-	bi->i_flags |= BCH_INODE_I_SECTORS_DIRTY;
+	bi->bi_flags |= BCH_INODE_I_SECTORS_DIRTY;
 	return 0;
 }
 
@@ -135,10 +135,10 @@ static int inode_clear_i_sectors_dirty(struct bch_inode_info *ei,
 				       struct bch_inode_unpacked *bi,
 				       void *p)
 {
-	BUG_ON(!(bi->i_flags & BCH_INODE_I_SECTORS_DIRTY));
+	BUG_ON(!(bi->bi_flags & BCH_INODE_I_SECTORS_DIRTY));
 
-	bi->i_sectors	= atomic64_read(&ei->i_sectors);
-	bi->i_flags	&= ~BCH_INODE_I_SECTORS_DIRTY;
+	bi->bi_sectors	= atomic64_read(&ei->i_sectors);
+	bi->bi_flags	&= ~BCH_INODE_I_SECTORS_DIRTY;
 	return 0;
 }
 
@@ -238,7 +238,7 @@ bchfs_extent_update_hook(struct extent_insert_hook *hook,
 			return BTREE_HOOK_RESTART_TRANS;
 		}
 
-		h->inode_u.i_size = offset;
+		h->inode_u.bi_size = offset;
 		do_pack = true;
 
 		ei->i_size = offset;
@@ -253,7 +253,7 @@ bchfs_extent_update_hook(struct extent_insert_hook *hook,
 			return BTREE_HOOK_RESTART_TRANS;
 		}
 
-		h->inode_u.i_sectors += sectors;
+		h->inode_u.bi_sectors += sectors;
 		do_pack = true;
 
 		atomic64_add(sectors, &ei->i_sectors);
