@@ -7,30 +7,35 @@
 #include <linux/stat.h>
 
 struct bch_inode_info {
-	struct inode		vfs_inode;
+	struct inode		v;
 
-	struct mutex		update_lock;
-	u64			journal_seq;
+	struct mutex		ei_update_lock;
+	u64			ei_journal_seq;
 
-	atomic_long_t		i_size_dirty_count;
+	atomic_long_t		ei_size_dirty_count;
 
 	/*
 	 * these are updated whenever we update the inode in the btree - for
 	 * e.g. fsync
 	 */
-	u64			i_size;
-	u32			i_flags;
+	u64			ei_size;
+	u32			ei_flags;
 
-	atomic_long_t		i_sectors_dirty_count;
-	atomic64_t		i_sectors;
+	atomic_long_t		ei_sectors_dirty_count;
+	atomic64_t		ei_sectors;
 
-	struct bch_hash_info	str_hash;
+	struct bch_hash_info	ei_str_hash;
 
-	unsigned long		last_dirtied;
+	unsigned long		ei_last_dirtied;
 };
 
 #define to_bch_ei(_inode)					\
-	container_of(_inode, struct bch_inode_info, vfs_inode)
+	container_of_or_null(_inode, struct bch_inode_info, v)
+
+static inline struct bch_inode_info *file_bch_inode(struct file *file)
+{
+	return to_bch_ei(file_inode(file));
+}
 
 static inline u8 mode_to_type(umode_t mode)
 {
