@@ -195,7 +195,7 @@ static void dirent_copy_target(struct bkey_i_dirent *dst,
 static struct bpos bch2_dirent_pos(struct bch_inode_info *ei,
 				   const struct qstr *name)
 {
-	return POS(ei->vfs_inode.i_ino, bch2_dirent_hash(&ei->str_hash, name));
+	return POS(ei->v.i_ino, bch2_dirent_hash(&ei->ei_str_hash, name));
 }
 
 int bch2_dirent_rename(struct bch_fs *c,
@@ -241,13 +241,13 @@ retry:
 	 * in bch_hash_set) -  we never move existing dirents to different slot:
 	 */
 	old_src = bch2_hash_lookup_at(bch2_dirent_hash_desc,
-				     &src_ei->str_hash,
+				     &src_ei->ei_str_hash,
 				     &src_iter, src_name);
 	if ((ret = btree_iter_err(old_src)))
 		goto err;
 
 	ret = bch2_hash_needs_whiteout(bch2_dirent_hash_desc,
-				&src_ei->str_hash,
+				&src_ei->ei_str_hash,
 				&whiteout_iter, &src_iter);
 	if (ret < 0)
 		goto err;
@@ -261,7 +261,7 @@ retry:
 	old_dst = mode == BCH_RENAME
 		? bch2_hash_hole_at(bch2_dirent_hash_desc, &dst_iter)
 		: bch2_hash_lookup_at(bch2_dirent_hash_desc,
-				     &dst_ei->str_hash,
+				     &dst_ei->ei_str_hash,
 				     &dst_iter, dst_name);
 	if ((ret = btree_iter_err(old_dst)))
 		goto err;
