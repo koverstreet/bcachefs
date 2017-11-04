@@ -26,14 +26,14 @@ bch2_hash_info_init(struct bch_fs *c,
 {
 	/* XXX ick */
 	struct bch_hash_info info = {
-		.type = (bi->i_flags >> INODE_STR_HASH_OFFSET) &
+		.type = (bi->bi_flags >> INODE_STR_HASH_OFFSET) &
 			~(~0U << INODE_STR_HASH_BITS)
 	};
 
 	switch (info.type) {
 	case BCH_STR_HASH_CRC32C:
 	case BCH_STR_HASH_CRC64:
-		info.crc_key = bi->i_hash_seed;
+		info.crc_key = bi->bi_hash_seed;
 		break;
 	case BCH_STR_HASH_SIPHASH: {
 		SHASH_DESC_ON_STACK(desc, c->sha256);
@@ -42,8 +42,8 @@ bch2_hash_info_init(struct bch_fs *c,
 		desc->tfm = c->sha256;
 		desc->flags = 0;
 
-		crypto_shash_digest(desc, (void *) &bi->i_hash_seed,
-				    sizeof(bi->i_hash_seed), digest);
+		crypto_shash_digest(desc, (void *) &bi->bi_hash_seed,
+				    sizeof(bi->bi_hash_seed), digest);
 		memcpy(&info.siphash_key, digest, sizeof(info.siphash_key));
 		break;
 	}
