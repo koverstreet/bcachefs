@@ -733,6 +733,8 @@ static const char *__bch2_fs_start(struct bch_fs *c)
 		if (ret)
 			goto err;
 
+		set_bit(BCH_FS_ALLOC_READ_DONE, &c->flags);
+
 		bch_verbose(c, "starting mark and sweep:");
 		err = "error in recovery";
 		ret = bch2_initial_gc(c, &journal);
@@ -786,6 +788,8 @@ static const char *__bch2_fs_start(struct bch_fs *c)
 		struct bkey_inode_buf packed_inode;
 
 		bch_notice(c, "initializing new filesystem");
+
+		set_bit(BCH_FS_ALLOC_READ_DONE, &c->flags);
 
 		ret = bch2_initial_gc(c, &journal);
 		if (ret)
