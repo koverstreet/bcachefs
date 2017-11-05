@@ -199,12 +199,10 @@ static struct bpos bch2_dirent_pos(struct bch_inode_info *ei,
 }
 
 int bch2_dirent_rename(struct bch_fs *c,
-		       struct inode *src_dir, const struct qstr *src_name,
-		       struct inode *dst_dir, const struct qstr *dst_name,
-		       u64 *journal_seq, enum bch_rename_mode mode)
+		struct bch_inode_info *src_ei, const struct qstr *src_name,
+		struct bch_inode_info *dst_ei, const struct qstr *dst_name,
+		u64 *journal_seq, enum bch_rename_mode mode)
 {
-	struct bch_inode_info *src_ei = to_bch_ei(src_dir);
-	struct bch_inode_info *dst_ei = to_bch_ei(dst_dir);
 	struct btree_iter src_iter, dst_iter, whiteout_iter;
 	struct bkey_s_c old_src, old_dst;
 	struct bkey delete;
@@ -395,7 +393,7 @@ int bch2_empty_dir(struct bch_fs *c, u64 dir_inum)
 int bch2_readdir(struct bch_fs *c, struct file *file,
 		 struct dir_context *ctx)
 {
-	struct inode *inode = file_inode(file);
+	struct bch_inode_info *ei = file_bch_inode(file);
 	struct btree_iter iter;
 	struct bkey_s_c k;
 	struct bkey_s_c_dirent dirent;
@@ -404,10 +402,10 @@ int bch2_readdir(struct bch_fs *c, struct file *file,
 	if (!dir_emit_dots(file, ctx))
 		return 0;
 
-	pr_debug("listing for %lu from %llu", inode->i_ino, ctx->pos);
+	pr_debug("listing for %lu from %llu", ei->v.i_ino, ctx->pos);
 
 	for_each_btree_key(&iter, c, BTREE_ID_DIRENTS,
-			   POS(inode->i_ino, ctx->pos), 0, k) {
+			   POS(ei->v.i_ino, ctx->pos), 0, k) {
 		if (k.k->type != BCH_DIRENT)
 			continue;
 
@@ -417,10 +415,10 @@ int bch2_readdir(struct bch_fs *c, struct file *file,
 			 k.k->p.inode, k.k->p.offset,
 			 dirent.v->d_name, dirent.v->d_inum);
 
-		if (bkey_cmp(k.k->p, POS(inode->i_ino, ctx->pos)) < 0)
+		if (bkey_cmp(k.k->p, POS(ei->v.i_ino, ctx->pos)) < 0)
 			continue;
 
-		if (k.k->p.inode > inode->i_ino)
+		if (k.k->p.inode > ei->v.i_ino)
 			break;
 
 		len = bch2_dirent_name_bytes(dirent);
