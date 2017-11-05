@@ -162,10 +162,9 @@ const struct bkey_ops bch2_bkey_xattr_ops = {
 	.val_to_text	= bch2_xattr_to_text,
 };
 
-int bch2_xattr_get(struct bch_fs *c, struct inode *inode,
+int bch2_xattr_get(struct bch_fs *c, struct bch_inode_info *ei,
 		  const char *name, void *buffer, size_t size, int type)
 {
-	struct bch_inode_info *ei = to_bch_ei(inode);
 	struct btree_iter iter;
 	struct bkey_s_c k;
 	struct bkey_s_c_xattr xattr;
@@ -236,13 +235,11 @@ int __bch2_xattr_set(struct bch_fs *c, u64 inum,
 	return ret;
 }
 
-int bch2_xattr_set(struct bch_fs *c, struct inode *inode,
-		  const char *name, const void *value, size_t size,
-		  int flags, int type)
+int bch2_xattr_set(struct bch_fs *c, struct bch_inode_info *ei,
+		   const char *name, const void *value, size_t size,
+		   int flags, int type)
 {
-	struct bch_inode_info *ei = to_bch_ei(inode);
-
-	return __bch2_xattr_set(c, inode->i_ino, &ei->ei_str_hash,
+	return __bch2_xattr_set(c, ei->v.i_ino, &ei->ei_str_hash,
 				name, value, size, flags, type,
 				&ei->ei_journal_seq);
 }
@@ -313,23 +310,25 @@ ssize_t bch2_xattr_list(struct dentry *dentry, char *buffer, size_t buffer_size)
 }
 
 static int bch2_xattr_get_handler(const struct xattr_handler *handler,
-				 struct dentry *dentry, struct inode *inode,
-				 const char *name, void *buffer, size_t size)
+				  struct dentry *dentry, struct inode *vinode,
+				  const char *name, void *buffer, size_t size)
 {
-	struct bch_fs *c = inode->i_sb->s_fs_info;
+	struct bch_inode_info *ei = to_bch_ei(vinode);
+	struct bch_fs *c = ei->v.i_sb->s_fs_info;
 
-	return bch2_xattr_get(c, inode, name, buffer, size, handler->flags);
+	return bch2_xattr_get(c, ei, name, buffer, size, handler->flags);
 }
 
 static int bch2_xattr_set_handler(const struct xattr_handler *handler,
-				 struct dentry *dentry, struct inode *inode,
-				 const char *name, const void *value,
-				 size_t size, int flags)
+				  struct dentry *dentry, struct inode *vinode,
+				  const char *name, const void *value,
+				  size_t size, int flags)
 {
-	struct bch_fs *c = inode->i_sb->s_fs_info;
+	struct bch_inode_info *ei = to_bch_ei(vinode);
+	struct bch_fs *c = ei->v.i_sb->s_fs_info;
 
-	return bch2_xattr_set(c, inode, name, value, size, flags,
-			     handler->flags);
+	return bch2_xattr_set(c, ei, name, value, size, flags,
+			      handler->flags);
 }
 
 static const struct xattr_handler bch_xattr_user_handler = {

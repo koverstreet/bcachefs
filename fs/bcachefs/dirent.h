@@ -11,6 +11,7 @@ struct file;
 struct dir_context;
 struct bch_fs;
 struct bch_hash_info;
+struct bch_inode_info;
 
 unsigned bch2_dirent_name_bytes(struct bkey_s_c_dirent);
 int bch2_dirent_create(struct bch_fs *c, u64, const struct bch_hash_info *,
@@ -25,8 +26,8 @@ enum bch_rename_mode {
 };
 
 int bch2_dirent_rename(struct bch_fs *,
-		       struct inode *, const struct qstr *,
-		       struct inode *, const struct qstr *,
+		       struct bch_inode_info *, const struct qstr *,
+		       struct bch_inode_info *, const struct qstr *,
 		       u64 *, enum bch_rename_mode);
 
 u64 bch2_dirent_lookup(struct bch_fs *, u64, const struct bch_hash_info *,
