@@ -1315,6 +1315,8 @@ static int bch2_remount(struct super_block *sb, int *flags, char *data)
 	    opts.read_only != c->opts.read_only) {
 		const char *err = NULL;
 
+		mutex_lock(&c->state_lock);
+
 		if (opts.read_only) {
 			bch2_fs_read_only(c);
 
@@ -1330,6 +1332,8 @@ static int bch2_remount(struct super_block *sb, int *flags, char *data)
 		}
 
 		c->opts.read_only = opts.read_only;
+
+		mutex_unlock(&c->state_lock);
 	}
 
 	if (opts.errors >= 0)
