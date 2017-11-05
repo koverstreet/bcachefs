@@ -22,8 +22,10 @@ bcachefs-y		:=	\
 	dirent.o		\
 	error.o			\
 	extents.o		\
-	fs.o fsck.o		\
+	fs.o			\
+	fs-ioctl.o		\
 	fs-io.o			\
+	fsck.o			\
 	inode.o			\
 	io.o			\
 	journal.o		\
