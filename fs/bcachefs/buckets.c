@@ -469,6 +469,7 @@ static void bch2_mark_pointer(struct bch_fs *c,
 		 * checked the gen
 		 */
 		if (gen_after(new.gen, ptr->gen)) {
+			BUG_ON(!test_bit(BCH_FS_ALLOC_READ_DONE, &c->flags));
 			EBUG_ON(!ptr->cached &&
 				test_bit(JOURNAL_REPLAY_DONE, &c->journal.flags));
 			return;
