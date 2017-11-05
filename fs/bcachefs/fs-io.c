@@ -2029,7 +2029,7 @@ int bch2_truncate(struct inode *inode, struct iattr *iattr)
 	mutex_lock(&ei->update_lock);
 	setattr_copy(inode, iattr);
 	inode->i_mtime = inode->i_ctime = current_time(inode);
-err:
+out:
 	/* clear I_SIZE_DIRTY: */
 	i_size_dirty_put(ei);
 	ret = bch2_write_inode_size(c, ei, inode->i_size);
@@ -2038,6 +2038,9 @@ err:
 err_put_pagecache:
 	pagecache_block_put(&mapping->add_lock);
 	return ret;
+err:
+	mutex_lock(&ei->update_lock);
+	goto out;
 }
 
 static long bch2_fpunch(struct inode *inode, loff_t offset, loff_t len)

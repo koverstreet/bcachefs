@@ -235,13 +235,12 @@ static void bch2_writes_disabled(struct percpu_ref *writes)
 
 void bch2_fs_read_only(struct bch_fs *c)
 {
-	mutex_lock(&c->state_lock);
 	if (c->state != BCH_FS_STARTING &&
 	    c->state != BCH_FS_RW)
-		goto out;
+		return;
 
 	if (test_bit(BCH_FS_ERROR, &c->flags))
-		goto out;
+		return;
 
 	/*
 	 * Block new foreground-end write operations from starting - any new
@@ -290,8 +289,6 @@ void bch2_fs_read_only(struct bch_fs *c)
 	}
 
 	c->state = BCH_FS_RO;
-out:
-	mutex_unlock(&c->state_lock);
 }
 
 static void bch2_fs_read_only_work(struct work_struct *work)
@@ -299,7 +296,9 @@ static void bch2_fs_read_only_work(struct work_struct *work)
 	struct bch_fs *c =
 		container_of(work, struct bch_fs, read_only_work);
 
+	mutex_lock(&c->state_lock);
 	bch2_fs_read_only(c);
+	mutex_unlock(&c->state_lock);
 }
 
 static void bch2_fs_read_only_async(struct bch_fs *c)
@@ -324,10 +323,9 @@ const char *bch2_fs_read_write(struct bch_fs *c)
 	const char *err = NULL;
 	unsigned i;
 
-	mutex_lock(&c->state_lock);
 	if (c->state != BCH_FS_STARTING &&
 	    c->state != BCH_FS_RO)
-		goto out;
+		return NULL;
 
 	for_each_rw_member(ca, c, i)
 		bch2_dev_allocator_add(c, ca);
@@ -361,13 +359,10 @@ const char *bch2_fs_read_write(struct bch_fs *c)
 		percpu_ref_reinit(&c->writes);
 
 	c->state = BCH_FS_RW;
-	err = NULL;
-out:
-	mutex_unlock(&c->state_lock);
-	return err;
+	return NULL;
 err:
 	__bch2_fs_read_only(c);
-	goto out;
+	return err;
 }
 
 /* Filesystem startup/shutdown: */
@@ -444,7 +439,9 @@ static void bch2_fs_offline(struct bch_fs *c)
 	kobject_put(&c->opts_dir);
 	kobject_put(&c->internal);
 
+	mutex_lock(&c->state_lock);
 	__bch2_fs_read_only(c);
+	mutex_unlock(&c->state_lock);
 }
 
 static void bch2_fs_release(struct kobject *kobj)
@@ -690,6 +687,8 @@ static const char *__bch2_fs_start(struct bch_fs *c)
 
 	closure_init_stack(&cl);
 
+	mutex_lock(&c->state_lock);
+
 	BUG_ON(c->state != BCH_FS_STARTING);
 
 	mutex_lock(&c->sb_lock);
@@ -868,6 +867,7 @@ recovery_done:
 
 	err = NULL;
 out:
+	mutex_unlock(&c->state_lock);
 	bch2_journal_entries_free(&journal);
 	return err;
 err:
