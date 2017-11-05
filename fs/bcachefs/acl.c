@@ -137,8 +137,8 @@ fail:
 
 struct posix_acl *bch2_get_acl(struct inode *vinode, int type)
 {
-	struct bch_inode_info *ei = to_bch_ei(vinode);
-	struct bch_fs *c = ei->v.i_sb->s_fs_info;
+	struct bch_inode_info *inode = to_bch_ei(vinode);
+	struct bch_fs *c = inode->v.i_sb->s_fs_info;
 	int name_index;
 	char *value = NULL;
 	struct posix_acl *acl;
@@ -154,12 +154,12 @@ struct posix_acl *bch2_get_acl(struct inode *vinode, int type)
 	default:
 		BUG();
 	}
-	ret = bch2_xattr_get(c, ei, "", NULL, 0, name_index);
+	ret = bch2_xattr_get(c, inode, "", NULL, 0, name_index);
 	if (ret > 0) {
 		value = kmalloc(ret, GFP_KERNEL);
 		if (!value)
 			return ERR_PTR(-ENOMEM);
-		ret = bch2_xattr_get(c, ei, "", value,
+		ret = bch2_xattr_get(c, inode, "", value,
 				    ret, name_index);
 	}
 	if (ret > 0)
@@ -171,15 +171,15 @@ struct posix_acl *bch2_get_acl(struct inode *vinode, int type)
 	kfree(value);
 
 	if (!IS_ERR(acl))
-		set_cached_acl(&ei->v, type, acl);
+		set_cached_acl(&inode->v, type, acl);
 
 	return acl;
 }
 
 int bch2_set_acl(struct inode *vinode, struct posix_acl *acl, int type)
 {
-	struct bch_inode_info *ei = to_bch_ei(vinode);
-	struct bch_fs *c = ei->v.i_sb->s_fs_info;
+	struct bch_inode_info *inode = to_bch_ei(vinode);
+	struct bch_fs *c = inode->v.i_sb->s_fs_info;
 	int name_index;
 	void *value = NULL;
 	size_t size = 0;
@@ -189,12 +189,12 @@ int bch2_set_acl(struct inode *vinode, struct posix_acl *acl, int type)
 	case ACL_TYPE_ACCESS:
 		name_index = BCH_XATTR_INDEX_POSIX_ACL_ACCESS;
 		if (acl) {
-			ret = posix_acl_equiv_mode(acl, &ei->v.i_mode);
+			ret = posix_acl_equiv_mode(acl, &inode->v.i_mode);
 			if (ret < 0)
 				return ret;
 			else {
-				ei->v.i_ctime = current_time(&ei->v);
-				mark_inode_dirty(&ei->v);
+				inode->v.i_ctime = current_time(&inode->v);
+				mark_inode_dirty(&inode->v);
 				if (ret == 0)
 					acl = NULL;
 			}
@@ -203,7 +203,7 @@ int bch2_set_acl(struct inode *vinode, struct posix_acl *acl, int type)
 
 	case ACL_TYPE_DEFAULT:
 		name_index = BCH_XATTR_INDEX_POSIX_ACL_DEFAULT;
-		if (!S_ISDIR(ei->v.i_mode))
+		if (!S_ISDIR(inode->v.i_mode))
 			return acl ? -EACCES : 0;
 		break;
 
@@ -217,7 +217,7 @@ int bch2_set_acl(struct inode *vinode, struct posix_acl *acl, int type)
 			return (int)PTR_ERR(value);
 	}
 
-	ret = bch2_xattr_set(c, ei, "", value, size, 0, name_index);
+	ret = bch2_xattr_set(c, inode, "", value, size, 0, name_index);
 
 	kfree(value);
 
@@ -225,7 +225,7 @@ int bch2_set_acl(struct inode *vinode, struct posix_acl *acl, int type)
 		ret = -E2BIG;
 
 	if (!ret)
-		set_cached_acl(&ei->v, type, acl);
+		set_cached_acl(&inode->v, type, acl);
 
 	return ret;
 }
