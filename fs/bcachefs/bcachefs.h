@@ -445,6 +445,7 @@ struct bch_dev {
  * won't automatically reattach).
  */
 enum {
+	BCH_FS_ALLOC_READ_DONE,
 	BCH_FS_INITIAL_GC_DONE,
 	BCH_FS_EMERGENCY_RO,
 	BCH_FS_WRITE_DISABLE_COMPLETE,

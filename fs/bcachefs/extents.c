@@ -610,6 +610,9 @@ static void btree_ptr_debugcheck(struct bch_fs *c, struct btree *b,
 		g = PTR_BUCKET(ca, ptr);
 		replicas++;
 
+		if (!test_bit(BCH_FS_ALLOC_READ_DONE, &c->flags))
+			continue;
+
 		err = "stale";
 		if (ptr_stale(ca, ptr))
 			goto err;
