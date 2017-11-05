@@ -38,55 +38,55 @@ int bch2_migrate_page(struct address_space *, struct page *,
 struct i_sectors_hook {
 	struct extent_insert_hook	hook;
 	s64				sectors;
-	struct bch_inode_info		*ei;
+	struct bch_inode_info		*inode;
 };
 
 struct bchfs_write_op {
-	struct bch_inode_info	*ei;
-	s64			sectors_added;
-	bool			is_dio;
-	u64			new_i_size;
+	struct bch_inode_info		*inode;
+	s64				sectors_added;
+	bool				is_dio;
+	u64				new_i_size;
 
 	/* must be last: */
-	struct bch_write_op	op;
+	struct bch_write_op		op;
 };
 
 struct bch_writepage_io {
-	struct closure		cl;
+	struct closure			cl;
 
 	/* must be last: */
-	struct bchfs_write_op	op;
+	struct bchfs_write_op		op;
 };
 
 extern struct bio_set *bch2_writepage_bioset;
 
 struct dio_write {
-	struct closure		cl;
-	struct kiocb		*req;
-	struct bch_fs		*c;
-	long			written;
-	long			error;
-	loff_t			offset;
+	struct closure			cl;
+	struct kiocb			*req;
+	struct bch_fs			*c;
+	long				written;
+	long				error;
+	loff_t				offset;
 
-	struct disk_reservation	res;
+	struct disk_reservation		res;
 
-	struct iovec		*iovec;
-	struct iovec		inline_vecs[UIO_FASTIOV];
-	struct iov_iter		iter;
+	struct iovec			*iovec;
+	struct iovec			inline_vecs[UIO_FASTIOV];
+	struct iov_iter			iter;
 
-	struct mm_struct	*mm;
+	struct mm_struct		*mm;
 
 	/* must be last: */
-	struct bchfs_write_op	iop;
+	struct bchfs_write_op		iop;
 };
 
 extern struct bio_set *bch2_dio_write_bioset;
 
 struct dio_read {
-	struct closure		cl;
-	struct kiocb		*req;
-	long			ret;
-	struct bch_read_bio	rbio;
+	struct closure			cl;
+	struct kiocb			*req;
+	long				ret;
+	struct bch_read_bio		rbio;
 };
 
 extern struct bio_set *bch2_dio_read_bioset;

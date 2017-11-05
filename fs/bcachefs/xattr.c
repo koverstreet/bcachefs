@@ -162,7 +162,7 @@ const struct bkey_ops bch2_bkey_xattr_ops = {
 	.val_to_text	= bch2_xattr_to_text,
 };
 
-int bch2_xattr_get(struct bch_fs *c, struct bch_inode_info *ei,
+int bch2_xattr_get(struct bch_fs *c, struct bch_inode_info *inode,
 		  const char *name, void *buffer, size_t size, int type)
 {
 	struct btree_iter iter;
@@ -170,8 +170,8 @@ int bch2_xattr_get(struct bch_fs *c, struct bch_inode_info *ei,
 	struct bkey_s_c_xattr xattr;
 	int ret;
 
-	k = bch2_hash_lookup(bch2_xattr_hash_desc, &ei->ei_str_hash, c,
-			     ei->v.i_ino, &iter,
+	k = bch2_hash_lookup(bch2_xattr_hash_desc, &inode->ei_str_hash, c,
+			     inode->v.i_ino, &iter,
 			     &X_SEARCH(type, name, strlen(name)));
 	if (IS_ERR(k.k))
 		return bch2_btree_iter_unlock(&iter) ?: -ENODATA;
@@ -235,13 +235,13 @@ int __bch2_xattr_set(struct bch_fs *c, u64 inum,
 	return ret;
 }
 
-int bch2_xattr_set(struct bch_fs *c, struct bch_inode_info *ei,
+int bch2_xattr_set(struct bch_fs *c, struct bch_inode_info *inode,
 		   const char *name, const void *value, size_t size,
 		   int flags, int type)
 {
-	return __bch2_xattr_set(c, ei->v.i_ino, &ei->ei_str_hash,
+	return __bch2_xattr_set(c, inode->v.i_ino, &inode->ei_str_hash,
 				name, value, size, flags, type,
-				&ei->ei_journal_seq);
+				&inode->ei_journal_seq);
 }
 
 static size_t bch2_xattr_emit(struct dentry *dentry,
@@ -313,10 +313,10 @@ static int bch2_xattr_get_handler(const struct xattr_handler *handler,
 				  struct dentry *dentry, struct inode *vinode,
 				  const char *name, void *buffer, size_t size)
 {
-	struct bch_inode_info *ei = to_bch_ei(vinode);
-	struct bch_fs *c = ei->v.i_sb->s_fs_info;
+	struct bch_inode_info *inode = to_bch_ei(vinode);
+	struct bch_fs *c = inode->v.i_sb->s_fs_info;
 
-	return bch2_xattr_get(c, ei, name, buffer, size, handler->flags);
+	return bch2_xattr_get(c, inode, name, buffer, size, handler->flags);
 }
 
 static int bch2_xattr_set_handler(const struct xattr_handler *handler,
@@ -324,10 +324,10 @@ static int bch2_xattr_set_handler(const struct xattr_handler *handler,
 				  const char *name, const void *value,
 				  size_t size, int flags)
 {
-	struct bch_inode_info *ei = to_bch_ei(vinode);
-	struct bch_fs *c = ei->v.i_sb->s_fs_info;
+	struct bch_inode_info *inode = to_bch_ei(vinode);
+	struct bch_fs *c = inode->v.i_sb->s_fs_info;
 
-	return bch2_xattr_set(c, ei, name, value, size, flags,
+	return bch2_xattr_set(c, inode, name, value, size, flags,
 			      handler->flags);
 }
 
