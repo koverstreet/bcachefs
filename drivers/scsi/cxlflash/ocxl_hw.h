@@ -24,4 +24,6 @@ struct ocxl_hw_afu {
 	int fn_actag_enabled;		/* Function acTag number enabled */
 	int afu_actag_base;		/* AFU acTag base */
 	int afu_actag_enabled;		/* AFU acTag number enabled */
+
+	int max_pasid;			/* Maximum number of contexts */
 };
