@@ -113,6 +113,30 @@ static int write_invalidate_inode_pages_range(struct address_space *mapping,
 	return ret;
 }
 
+static int bch2_inode_sync_appends(struct bch_fs *c, struct bch_inode_info *inode,
+				   bool trunc)
+{
+	u64 ei_size;
+	int ret;
+
+	lockdep_assert_held(&inode->v.i_rwsem);
+	inode_dio_wait(&inode->v);
+
+	mutex_lock(&inode->ei_update_lock);
+	ei_size = inode->ei_inode.bi_size;
+	mutex_unlock(&inode->ei_update_lock);
+
+	ret = filemap_write_and_wait_range(inode->v.i_mapping, ei_size, S64_MAX);
+
+	if (!ret && trunc) {
+		mutex_lock(&inode->ei_update_lock);
+		BUG_ON(inode->v.i_size != inode->ei_inode.bi_size);
+		mutex_unlock(&inode->ei_update_lock);
+	}
+
+	return ret;
+}
+
 /* quotas */
 
 #ifdef CONFIG_BCACHEFS_QUOTA
@@ -353,7 +377,10 @@ bchfs_extent_update_hook(struct extent_insert_hook *hook,
 			return BTREE_INSERT_NEED_TRAVERSE;
 		}
 
-		BUG_ON(h->inode_u.bi_flags & BCH_INODE_I_SIZE_DIRTY);
+		if (h->inode_u.bi_flags & BCH_INODE_I_SIZE_DIRTY) {
+			/* truncate in progress: */
+			goto i_size_done;
+		}
 
 		h->inode_u.bi_size = offset;
 		do_pack = true;
@@ -363,7 +390,7 @@ bchfs_extent_update_hook(struct extent_insert_hook *hook,
 		if (h->op->is_dio)
 			i_size_write(&inode->v, offset);
 	}
-
+i_size_done:
 	if (sectors) {
 		if (!h->need_inode_update) {
 			h->need_inode_update = true;
@@ -1965,24 +1992,21 @@ int bch2_truncate(struct bch_inode_info *inode, struct iattr *iattr)
 		i_sectors_hook_init(inode, BCH_INODE_I_SIZE_DIRTY);
 	int ret = 0;
 
+	lockdep_assert_held(&inode->v.i_rwsem);
 	inode_dio_wait(&inode->v);
 	pagecache_block_get(&mapping->add_lock);
-
-	truncate_setsize(&inode->v, iattr->ia_size);
-
-	/* sync appends.. */
-	/* XXX what protects inode->i_size? */
-	if (iattr->ia_size > inode->ei_inode.bi_size)
-		ret = filemap_write_and_wait_range(mapping,
-						   inode->ei_inode.bi_size, S64_MAX);
-	if (ret)
-		goto err_put_pagecache;
 
 	i_sectors_hook.new_i_size = iattr->ia_size;
 
 	ret = i_sectors_dirty_start(c, &i_sectors_hook);
 	if (unlikely(ret))
-		goto err;
+		goto err_put_pagecache;
+
+	truncate_setsize(&inode->v, iattr->ia_size);
+
+	ret = bch2_inode_sync_appends(c, inode, true);
+	if (unlikely(ret))
+		goto err_put_pagecache;
 
 	/*
 	 * There might be persistent reservations (from fallocate())
