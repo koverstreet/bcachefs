@@ -18,4 +18,7 @@ struct ocxl_hw_afu {
 	struct device *dev;		/* Generic device */
 
 	struct ocxl_fn_config fcfg;	/* DVSEC config of the function */
+
+	int fn_actag_base;		/* Function acTag base */
+	int fn_actag_enabled;		/* Function acTag number enabled */
 };
