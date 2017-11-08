@@ -417,9 +417,9 @@ int bch2_request_key(struct bch_sb *sb, struct bch_key *key)
 }
 #endif
 
-static int bch2_decrypt_sb_key(struct bch_fs *c,
-			      struct bch_sb_field_crypt *crypt,
-			      struct bch_key *key)
+int bch2_decrypt_sb_key(struct bch_fs *c,
+			struct bch_sb_field_crypt *crypt,
+			struct bch_key *key)
 {
 	struct bch_encrypted_key sb_key = crypt->key;
 	struct bch_key user_key;
