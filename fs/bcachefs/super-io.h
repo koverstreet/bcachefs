@@ -9,8 +9,8 @@
 #include <asm/byteorder.h>
 
 struct bch_sb_field *bch2_sb_field_get(struct bch_sb *, enum bch_sb_field_type);
-struct bch_sb_field *bch2_sb_field_resize(struct bcache_superblock *,
-					 enum bch_sb_field_type, unsigned);
+struct bch_sb_field *bch2_sb_field_resize(struct bch_sb_handle *,
+					  enum bch_sb_field_type, unsigned);
 struct bch_sb_field *bch2_fs_sb_field_resize(struct bch_fs *,
 					 enum bch_sb_field_type, unsigned);
 
@@ -26,7 +26,7 @@ bch2_sb_get_##_name(struct bch_sb *sb)					\
 }									\
 									\
 static inline struct bch_sb_field_##_name *				\
-bch2_sb_resize_##_name(struct bcache_superblock *sb, unsigned u64s)	\
+bch2_sb_resize_##_name(struct bch_sb_handle *sb, unsigned u64s)	\
 {									\
 	return field_to_type(bch2_sb_field_resize(sb,			\
 				BCH_SB_FIELD_##_name, u64s), _name);	\
@@ -112,15 +112,15 @@ static inline struct bch_member_cpu bch2_mi_to_cpu(struct bch_member *mi)
 int bch2_sb_to_fs(struct bch_fs *, struct bch_sb *);
 int bch2_sb_from_fs(struct bch_fs *, struct bch_dev *);
 
-void bch2_free_super(struct bcache_superblock *);
-int bch2_super_realloc(struct bcache_superblock *, unsigned);
+void bch2_free_super(struct bch_sb_handle *);
+int bch2_super_realloc(struct bch_sb_handle *, unsigned);
 
 const char *bch2_sb_validate_journal(struct bch_sb *,
 					 struct bch_member_cpu);
-const char *bch2_sb_validate(struct bcache_superblock *);
+const char *bch2_sb_validate(struct bch_sb_handle *);
 
-const char *bch2_read_super(struct bcache_superblock *,
-			   struct bch_opts, const char *);
+const char *bch2_read_super(const char *, struct bch_opts,
+			    struct bch_sb_handle *);
 void bch2_write_super(struct bch_fs *);
 
 /* replicas: */

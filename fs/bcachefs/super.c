@@ -1173,7 +1173,7 @@ err:
 	return -ENOMEM;
 }
 
-static int __bch2_dev_online(struct bch_fs *c, struct bcache_superblock *sb)
+static int __bch2_dev_online(struct bch_fs *c, struct bch_sb_handle *sb)
 {
 	struct bch_dev *ca;
 	int ret;
@@ -1459,7 +1459,7 @@ err:
 /* Add new device to running filesystem: */
 int bch2_dev_add(struct bch_fs *c, const char *path)
 {
-	struct bcache_superblock sb;
+	struct bch_sb_handle sb;
 	const char *err;
 	struct bch_dev *ca = NULL;
 	struct bch_sb_field_members *mi, *dev_mi;
@@ -1467,7 +1467,7 @@ int bch2_dev_add(struct bch_fs *c, const char *path)
 	unsigned dev_idx, nr_devices, u64s;
 	int ret = -EINVAL;
 
-	err = bch2_read_super(&sb, bch2_opts_empty(), path);
+	err = bch2_read_super(path, bch2_opts_empty(), &sb);
 	if (err)
 		return -EINVAL;
 
@@ -1569,14 +1569,14 @@ err:
 /* Hot add existing device to running filesystem: */
 int bch2_dev_online(struct bch_fs *c, const char *path)
 {
-	struct bcache_superblock sb = { 0 };
+	struct bch_sb_handle sb = { 0 };
 	struct bch_dev *ca;
 	unsigned dev_idx;
 	const char *err;
 
 	mutex_lock(&c->state_lock);
 
-	err = bch2_read_super(&sb, bch2_opts_empty(), path);
+	err = bch2_read_super(path, bch2_opts_empty(), &sb);
 	if (err)
 		goto err;
 
@@ -1670,7 +1670,7 @@ const char *bch2_fs_open(char * const *devices, unsigned nr_devices,
 {
 	const char *err;
 	struct bch_fs *c = NULL;
-	struct bcache_superblock *sb;
+	struct bch_sb_handle *sb;
 	unsigned i, best_sb = 0;
 
 	if (!nr_devices)
@@ -1685,7 +1685,7 @@ const char *bch2_fs_open(char * const *devices, unsigned nr_devices,
 		goto err;
 
 	for (i = 0; i < nr_devices; i++) {
-		err = bch2_read_super(&sb[i], opts, devices[i]);
+		err = bch2_read_super(devices[i], opts, &sb[i]);
 		if (err)
 			goto err;
 
@@ -1754,7 +1754,7 @@ err:
 	goto out;
 }
 
-static const char *__bch2_fs_open_incremental(struct bcache_superblock *sb,
+static const char *__bch2_fs_open_incremental(struct bch_sb_handle *sb,
 					      struct bch_opts opts)
 {
 	const char *err;
@@ -1818,11 +1818,11 @@ err:
 
 const char *bch2_fs_open_incremental(const char *path)
 {
-	struct bcache_superblock sb;
+	struct bch_sb_handle sb;
 	struct bch_opts opts = bch2_opts_empty();
 	const char *err;
 
-	err = bch2_read_super(&sb, opts, path);
+	err = bch2_read_super(path, opts, &sb);
 	if (err)
 		return err;
 

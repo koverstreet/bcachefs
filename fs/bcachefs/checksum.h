@@ -40,6 +40,9 @@ struct bch_csum bch2_checksum_bio(struct bch_fs *, unsigned,
 void bch2_encrypt_bio(struct bch_fs *, unsigned,
 		    struct nonce, struct bio *);
 
+int bch2_decrypt_sb_key(struct bch_fs *, struct bch_sb_field_crypt *,
+			struct bch_key *);
+
 int bch2_disable_encryption(struct bch_fs *);
 int bch2_enable_encryption(struct bch_fs *, bool);
 
