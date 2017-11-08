@@ -1,7 +1,7 @@
 #ifndef _BCACHEFS_SUPER_TYPES_H
 #define _BCACHEFS_SUPER_TYPES_H
 
-struct bcache_superblock {
+struct bch_sb_handle {
 	struct bch_sb		*sb;
 	struct block_device	*bdev;
 	struct bio		*bio;

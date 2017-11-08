@@ -367,7 +367,7 @@ struct bch_dev {
 	uuid_le			uuid;
 	char			name[BDEVNAME_SIZE];
 
-	struct bcache_superblock disk_sb;
+	struct bch_sb_handle	disk_sb;
 	int			sb_write_error;
 
 	struct bch_devs_mask	self;
