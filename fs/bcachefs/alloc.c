@@ -1147,6 +1147,8 @@ static enum bucket_alloc_ret __bch2_bucket_alloc_set(struct bch_fs *c,
 				  ca->mi.bucket_size);
 		bch2_wp_rescale(c, ca, wp);
 
+		__clear_bit(ca->dev_idx, devs->d);
+
 		/*
 		 * open_bucket_add_buckets expects new pointers at the head of
 		 * the list:
