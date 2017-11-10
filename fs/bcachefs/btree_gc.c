@@ -986,8 +986,7 @@ static int bch2_initial_gc_btree(struct bch_fs *c, enum btree_id id)
 		bch2_btree_iter_cond_resched(&iter);
 	}
 err:
-	bch2_btree_iter_unlock(&iter);
-	return ret;
+	return bch2_btree_iter_unlock(&iter) ?: ret;
 }
 
 int bch2_initial_gc(struct bch_fs *c, struct list_head *journal)
