@@ -687,6 +687,9 @@ void intel_engine_cleanup_common(struct intel_engine_cs *engine)
 	intel_engine_cleanup_cmd_parser(engine);
 	i915_gem_batch_pool_fini(&engine->batch_pool);
 
+	if (engine->default_state)
+		i915_gem_object_put(engine->default_state);
+
 	if (INTEL_INFO(engine->i915)->has_logical_ring_preemption)
 		engine->context_unpin(engine, engine->i915->preempt_context);
 	engine->context_unpin(engine, engine->i915->kernel_context);
@@ -1665,6 +1668,20 @@ bool intel_engine_can_store_dword(struct intel_engine_cs *engine)
 	default:
 		return true;
 	}
+}
+
+unsigned int intel_engines_has_context_isolation(struct drm_i915_private *i915)
+{
+	struct intel_engine_cs *engine;
+	enum intel_engine_id id;
+	unsigned int which;
+
+	which = 0;
+	for_each_engine(engine, i915, id)
+		if (engine->default_state)
+			which |= BIT(engine->uabi_class);
+
+	return which;
 }
 
 static void print_request(struct drm_printer *m,

@@ -307,6 +307,7 @@ struct intel_engine_cs {
 	struct intel_ring *buffer;
 	struct intel_timeline *timeline;
 
+	struct drm_i915_gem_object *default_state;
 	struct intel_render_state *render_state;
 
 	atomic_t irq_count;
@@ -888,6 +889,7 @@ bool intel_engine_has_kernel_context(const struct intel_engine_cs *engine);
 
 void intel_engines_mark_idle(struct drm_i915_private *i915);
 void intel_engines_reset_default_submission(struct drm_i915_private *i915);
+unsigned int intel_engines_has_context_isolation(struct drm_i915_private *i915);
 
 bool intel_engine_can_store_dword(struct intel_engine_cs *engine);
 
