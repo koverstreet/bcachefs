@@ -620,7 +620,8 @@ static void btree_ptr_debugcheck(struct bch_fs *c, struct btree *b,
 		do {
 			seq = read_seqcount_begin(&c->gc_pos_lock);
 			bad = gc_pos_cmp(c->gc_pos, gc_pos_btree_node(b)) > 0 &&
-				g->mark.data_type != BUCKET_BTREE;
+				(g->mark.data_type != BUCKET_BTREE ||
+				 g->mark.dirty_sectors < c->opts.btree_node_size);
 		} while (read_seqcount_retry(&c->gc_pos_lock, seq));
 
 		err = "inconsistent";
