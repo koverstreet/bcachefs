@@ -626,25 +626,25 @@ const char *bch2_bkey_format_validate(struct bkey_format *f)
 	unsigned i, bits = KEY_PACKED_BITS_START;
 
 	if (f->nr_fields != BKEY_NR_FIELDS)
-		return "invalid format: incorrect number of fields";
+		return "incorrect number of fields";
 
 	for (i = 0; i < f->nr_fields; i++) {
 		u64 field_offset = le64_to_cpu(f->field_offset[i]);
 
 		if (f->bits_per_field[i] > 64)
-			return "invalid format: field too large";
+			return "field too large";
 
 		if (field_offset &&
 		    (f->bits_per_field[i] == 64 ||
 		    (field_offset + ((1ULL << f->bits_per_field[i]) - 1) <
 		     field_offset)))
-			return "invalid format: offset + bits overflow";
+			return "offset + bits overflow";
 
 		bits += f->bits_per_field[i];
 	}
 
 	if (f->key_u64s != DIV_ROUND_UP(bits, 64))
-		return "invalid format: incorrect key_u64s";
+		return "incorrect key_u64s";
 
 	return NULL;
 }
