@@ -499,42 +499,6 @@ out:
 	return out - buf;
 }
 
-void bch2_get_read_device(struct bch_fs *c,
-			  const struct bkey *k,
-			  const struct bch_extent_ptr *ptr,
-			  const union bch_extent_crc *crc,
-			  struct bch_devs_mask *avoid,
-			  struct extent_pick_ptr *pick)
-{
-	struct bch_dev *ca = c->devs[ptr->dev];
-
-	if (ptr->cached && ptr_stale(ca, ptr))
-		return;
-
-	if (ca->mi.state == BCH_MEMBER_STATE_FAILED)
-		return;
-
-	if (avoid && test_bit(ca->dev_idx, avoid->d))
-		return;
-
-	if (pick->ca && pick->ca->mi.tier < ca->mi.tier)
-		return;
-
-	if (!percpu_ref_tryget(&ca->io_ref))
-		return;
-
-	if (pick->ca)
-		percpu_ref_put(&pick->ca->io_ref);
-
-	*pick = (struct extent_pick_ptr) {
-		.ptr	= *ptr,
-		.ca	= ca,
-	};
-
-	if (k->size)
-		pick->crc = crc_to_128(k, crc);
-}
-
 static void extent_pick_read_device(struct bch_fs *c,
 				    struct bkey_s_c_extent e,
 				    struct bch_devs_mask *avoid,
@@ -543,8 +507,35 @@ static void extent_pick_read_device(struct bch_fs *c,
 	const union bch_extent_crc *crc;
 	const struct bch_extent_ptr *ptr;
 
-	extent_for_each_ptr_crc(e, ptr, crc)
-		bch2_get_read_device(c, e.k, ptr, crc, avoid, pick);
+	extent_for_each_ptr_crc(e, ptr, crc) {
+		struct bch_dev *ca = c->devs[ptr->dev];
+
+		if (ptr->cached && ptr_stale(ca, ptr))
+			continue;
+
+		if (ca->mi.state == BCH_MEMBER_STATE_FAILED)
+			continue;
+
+		if (avoid && test_bit(ca->dev_idx, avoid->d))
+			continue;
+
+		if (pick->ca && pick->ca->mi.tier < ca->mi.tier)
+			continue;
+
+		if (!percpu_ref_tryget(&ca->io_ref))
+			continue;
+
+		if (pick->ca)
+			percpu_ref_put(&pick->ca->io_ref);
+
+		*pick = (struct extent_pick_ptr) {
+			.ptr	= *ptr,
+			.ca	= ca,
+		};
+
+		if (e.k->size)
+			pick->crc = crc_to_128(e.k, crc);
+	}
 }
 
 /* Btree ptrs */
@@ -667,12 +658,13 @@ static void bch2_btree_ptr_to_text(struct bch_fs *c, char *buf,
 }
 
 struct extent_pick_ptr
-bch2_btree_pick_ptr(struct bch_fs *c, const struct btree *b)
+bch2_btree_pick_ptr(struct bch_fs *c, const struct btree *b,
+		    struct bch_devs_mask *avoid)
 {
 	struct extent_pick_ptr pick = { .ca = NULL };
 
 	extent_pick_read_device(c, bkey_i_to_s_c_extent(&b->key),
-				NULL, &pick);
+				avoid, &pick);
 
 	return pick;
 }

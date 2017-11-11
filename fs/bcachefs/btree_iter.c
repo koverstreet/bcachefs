@@ -928,7 +928,7 @@ struct btree *bch2_btree_iter_peek_node(struct btree_iter *iter)
 
 	ret = bch2_btree_iter_traverse(iter);
 	if (ret)
-		return NULL;
+		return ERR_PTR(ret);
 
 	b = iter->nodes[iter->level];
 

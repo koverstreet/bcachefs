@@ -54,7 +54,7 @@ void __bch2_btree_verify(struct bch_fs *c, struct btree *b)
 	v->btree_id	= b->btree_id;
 	bch2_btree_keys_init(v, &c->expensive_debug_checks);
 
-	pick = bch2_btree_pick_ptr(c, b);
+	pick = bch2_btree_pick_ptr(c, b, NULL);
 	if (IS_ERR_OR_NULL(pick.ca))
 		return;
 
@@ -68,14 +68,14 @@ void __bch2_btree_verify(struct bch_fs *c, struct btree *b)
 	submit_bio_wait(bio);
 
 	bio_put(bio);
+	percpu_ref_put(&pick.ca->io_ref);
 
 	memcpy(n_ondisk, n_sorted, btree_bytes(c));
 
-	bch2_btree_node_read_done(c, v);
+	if (bch2_btree_node_read_done(c, v, false))
+		goto out;
+
 	n_sorted = c->verify_data->data;
-
-	percpu_ref_put(&pick.ca->io_ref);
-
 	sorted = &n_sorted->keys;
 	inmemory = &n_inmemory->keys;
 
@@ -127,7 +127,7 @@ void __bch2_btree_verify(struct bch_fs *c, struct btree *b)
 		console_unlock();
 		panic("verify failed at %u\n", j);
 	}
-
+out:
 	mutex_unlock(&c->verify_lock);
 	btree_node_io_unlock(b);
 }
