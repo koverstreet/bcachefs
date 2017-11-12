@@ -216,9 +216,6 @@ static unsigned long bch2_mca_scan(struct shrinker *shrink,
 	if (btree_shrinker_disabled(c))
 		return SHRINK_STOP;
 
-	if (c->btree_cache_alloc_lock)
-		return SHRINK_STOP;
-
 	/* Return -1 if we can't do anything right now */
 	if (sc->gfp_mask & __GFP_IO)
 		mutex_lock(&c->btree_cache_lock);
@@ -300,9 +297,6 @@ static unsigned long bch2_mca_count(struct shrinker *shrink,
 					   btree_cache_shrink);
 
 	if (btree_shrinker_disabled(c))
-		return 0;
-
-	if (c->btree_cache_alloc_lock)
 		return 0;
 
 	return mca_can_free(c) * btree_pages(c);
