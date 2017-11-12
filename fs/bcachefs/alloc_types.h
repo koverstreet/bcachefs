@@ -52,6 +52,8 @@ struct open_bucket {
 	struct mutex		lock;
 	atomic_t		pin;
 	bool			has_full_ptrs;
+	u8			new_ob;
+
 	/*
 	 * recalculated every time we allocate from this open_bucket based on
 	 * how many pointers we're actually going to use:

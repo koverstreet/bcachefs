@@ -1153,6 +1153,7 @@ static enum bucket_alloc_ret __bch2_bucket_alloc_set(struct bch_fs *c,
 		 * open_bucket_add_buckets expects new pointers at the head of
 		 * the list:
 		 */
+		BUG_ON(ob->nr_ptrs >= BCH_REPLICAS_MAX);
 		memmove(&ob->ptrs[1],
 			&ob->ptrs[0],
 			ob->nr_ptrs * sizeof(ob->ptrs[0]));
@@ -1239,12 +1240,15 @@ static int bch2_bucket_alloc_set(struct bch_fs *c, struct write_point *wp,
  * reference _after_ doing the index update that makes its allocation reachable.
  */
 
-static void __bch2_open_bucket_put(struct bch_fs *c, struct open_bucket *ob)
+void bch2_open_bucket_put(struct bch_fs *c, struct open_bucket *ob)
 {
 	const struct bch_extent_ptr *ptr;
+	u8 new_ob;
 
-	lockdep_assert_held(&c->open_buckets_lock);
+	if (!atomic_dec_and_test(&ob->pin))
+		return;
 
+	spin_lock(&c->open_buckets_lock);
 	open_bucket_for_each_ptr(ob, ptr) {
 		struct bch_dev *ca = c->devs[ptr->dev];
 
@@ -1252,19 +1256,17 @@ static void __bch2_open_bucket_put(struct bch_fs *c, struct open_bucket *ob)
 	}
 
 	ob->nr_ptrs = 0;
+	new_ob = ob->new_ob;
+	ob->new_ob = 0;
 
 	list_move(&ob->list, &c->open_buckets_free);
 	c->open_buckets_nr_free++;
-	closure_wake_up(&c->open_buckets_wait);
-}
+	spin_unlock(&c->open_buckets_lock);
 
-void bch2_open_bucket_put(struct bch_fs *c, struct open_bucket *b)
-{
-	if (atomic_dec_and_test(&b->pin)) {
-		spin_lock(&c->open_buckets_lock);
-		__bch2_open_bucket_put(c, b);
-		spin_unlock(&c->open_buckets_lock);
-	}
+	closure_wake_up(&c->open_buckets_wait);
+
+	if (new_ob)
+		bch2_open_bucket_put(c, c->open_buckets + new_ob);
 }
 
 static struct open_bucket *bch2_open_bucket_get(struct bch_fs *c,
@@ -1284,6 +1286,9 @@ static struct open_bucket *bch2_open_bucket_get(struct bch_fs *c,
 
 		atomic_set(&ret->pin, 1); /* XXX */
 		ret->has_full_ptrs	= false;
+
+		BUG_ON(ret->new_ob);
+		BUG_ON(ret->nr_ptrs);
 
 		c->open_buckets_nr_free--;
 		trace_open_bucket_alloc(c, cl);
@@ -1333,17 +1338,34 @@ static void open_bucket_copy_unused_ptrs(struct bch_fs *c,
 					 struct open_bucket *new,
 					 struct open_bucket *old)
 {
-	unsigned i;
+	bool moved_ptr = false;
+	int i;
 
-	for (i = 0; i < old->nr_ptrs; i++)
+	for (i = old->nr_ptrs - 1; i >= 0; --i)
 		if (ob_ptr_sectors_free(c, old, &old->ptrs[i])) {
-			struct bch_extent_ptr tmp = old->ptrs[i];
+			BUG_ON(new->nr_ptrs >= BCH_REPLICAS_MAX);
 
-			tmp.offset += old->ptr_offset[i];
-			new->ptrs[new->nr_ptrs] = tmp;
-			new->ptr_offset[new->nr_ptrs] = 0;
+			new->ptrs[new->nr_ptrs]		= old->ptrs[i];
+			new->ptr_offset[new->nr_ptrs]	= old->ptr_offset[i];
 			new->nr_ptrs++;
+
+			old->nr_ptrs--;
+			memmove(&old->ptrs[i],
+				&old->ptrs[i + 1],
+				(old->nr_ptrs - i) * sizeof(old->ptrs[0]));
+			memmove(&old->ptr_offset[i],
+				&old->ptr_offset[i + 1],
+				(old->nr_ptrs - i) * sizeof(old->ptr_offset[0]));
+
+			moved_ptr = true;
 		}
+
+	if (moved_ptr) {
+		BUG_ON(old->new_ob);
+
+		atomic_inc(&new->pin);
+		old->new_ob = new - c->open_buckets;
+	}
 }
 
 static void verify_not_stale(struct bch_fs *c, const struct open_bucket *ob)
