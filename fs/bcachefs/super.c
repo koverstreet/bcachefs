@@ -387,6 +387,7 @@ static void bch2_fs_free(struct bch_fs *c)
 	mempool_exit(&c->btree_reserve_pool);
 	mempool_exit(&c->fill_iter);
 	percpu_ref_exit(&c->writes);
+	kfree(c->replicas);
 
 	if (c->copygc_wq)
 		destroy_workqueue(c->copygc_wq);
