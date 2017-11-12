@@ -1198,8 +1198,13 @@ int bch2_btree_node_read_done(struct bch_fs *c, struct btree *b, bool have_retry
 			goto err;
 		}
 
-		if (ret)
-			continue;
+		if (ret) {
+			btree_err_on(!b->written,
+				     BTREE_ERR_FIXABLE, c, b, i,
+				     "first btree node bset has blacklisted journal seq");
+			if (b->written)
+				continue;
+		}
 
 		__bch2_btree_node_iter_push(iter, b,
 					   i->start,
