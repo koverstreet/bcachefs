@@ -1497,6 +1497,8 @@ int bch2_journal_replay(struct bch_fs *c, struct list_head *list)
 
 	j->replay_pin_list = NULL;
 
+	bch2_journal_set_replay_done(j);
+
 	if (did_replay) {
 		bch2_journal_flush_pins(&c->journal, U64_MAX);
 
@@ -1512,8 +1514,6 @@ int bch2_journal_replay(struct bch_fs *c, struct list_head *list)
 			goto err;
 		}
 	}
-
-	bch2_journal_set_replay_done(j);
 err:
 	bch2_journal_entries_free(list);
 	return ret;
@@ -1834,6 +1834,14 @@ void bch2_journal_flush_pins(struct journal *j, u64 seq_to_flush)
 
 	while ((pin = journal_get_next_pin(j, seq_to_flush, &pin_seq)))
 		pin->flush(j, pin, pin_seq);
+
+	/*
+	 * If journal replay hasn't completed, the unreplayed journal entries
+	 * hold refs on their corresponding sequence numbers and thus this would
+	 * deadlock:
+	 */
+	if (!test_bit(JOURNAL_REPLAY_DONE, &j->flags))
+		return;
 
 	wait_event(j->wait,
 		   journal_flush_done(j, seq_to_flush) ||
