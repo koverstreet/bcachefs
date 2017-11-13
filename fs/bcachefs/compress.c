@@ -25,7 +25,7 @@ static struct bbuf __bounce_alloc(struct bch_fs *c, unsigned size, int rw)
 {
 	void *b;
 
-	BUG_ON(size > c->sb.encoded_extent_max);
+	BUG_ON(size > c->sb.encoded_extent_max << 9);
 
 	b = kmalloc(size, GFP_NOIO|__GFP_NOWARN);
 	if (b)
