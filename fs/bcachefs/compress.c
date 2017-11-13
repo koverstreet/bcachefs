@@ -446,20 +446,22 @@ int bch2_check_set_has_compressed_data(struct bch_fs *c,
 				      unsigned compression_type)
 {
 	switch (compression_type) {
-	case BCH_COMPRESSION_NONE:
+	case BCH_COMPRESSION_OPT_NONE:
 		return 0;
-	case BCH_COMPRESSION_LZ4:
+	case BCH_COMPRESSION_OPT_LZ4:
 		if (bch2_sb_test_feature(c->disk_sb, BCH_FEATURE_LZ4))
 			return 0;
 
 		bch2_sb_set_feature(c->disk_sb, BCH_FEATURE_LZ4);
 		break;
-	case BCH_COMPRESSION_GZIP:
+	case BCH_COMPRESSION_OPT_GZIP:
 		if (bch2_sb_test_feature(c->disk_sb, BCH_FEATURE_GZIP))
 			return 0;
 
 		bch2_sb_set_feature(c->disk_sb, BCH_FEATURE_GZIP);
 		break;
+	default:
+		BUG();
 	}
 
 	return bch2_fs_compress_init(c);
