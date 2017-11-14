@@ -164,8 +164,8 @@ static int __bio_uncompress(struct bch_fs *c, struct bio *src,
 		}
 		break;
 	case BCH_COMPRESSION_LZ4:
-		ret = LZ4_decompress_safe(src_data.b, dst_data,
-					  src_len, dst_len);
+		ret = LZ4_decompress_safe_partial(src_data.b, dst_data,
+						  src_len, dst_len, dst_len);
 		if (ret != dst_len) {
 			ret = -EIO;
 			goto err;
@@ -269,7 +269,8 @@ int bch2_bio_uncompress(struct bch_fs *c, struct bio *src,
 	size_t dst_len = crc_uncompressed_size(NULL, &crc) << 9;
 	int ret = -ENOMEM;
 
-	if (crc_uncompressed_size(NULL, &crc) < c->sb.encoded_extent_max)
+	if (crc_uncompressed_size(NULL, &crc) > c->sb.encoded_extent_max ||
+	    crc_compressed_size(NULL, &crc)   > c->sb.encoded_extent_max)
 		return -EIO;
 
 	dst_data = dst_len == dst_iter.bi_size
@@ -294,7 +295,7 @@ static int __bio_compress(struct bch_fs *c,
 {
 	struct bbuf src_data = { NULL }, dst_data = { NULL };
 	unsigned pad;
-	int ret;
+	int ret = 0;
 
 	dst_data = bio_map_or_bounce(c, dst, WRITE);
 	src_data = bio_map_or_bounce(c, src, READ);
@@ -307,23 +308,28 @@ static int __bio_compress(struct bch_fs *c,
 		void *workspace;
 		int len = src->bi_iter.bi_size;
 
-		ret = 0;
-
 		workspace = mempool_alloc(&c->lz4_workspace_pool, GFP_NOIO);
 
-		while (len > block_bytes(c) &&
-		       (!(ret = LZ4_compress_destSize(
+		while (1) {
+			if (len <= block_bytes(c)) {
+				ret = 0;
+				break;
+			}
+
+			ret = LZ4_compress_destSize(
 					src_data.b,	dst_data.b,
 					&len,		dst->bi_iter.bi_size,
-					workspace)) ||
-			(len & (block_bytes(c) - 1)))) {
-			/*
-			 * On error, the compressed data was bigger than
-			 * dst_len - round down to nearest block and try again:
-			 */
+					workspace);
+			if (ret >= len) {
+				/* uncompressible: */
+				ret = 0;
+				break;
+			}
+
+			if (!(len & (block_bytes(c) - 1)))
+				break;
 			len = round_down(len, block_bytes(c));
 		}
-
 		mempool_free(workspace, &c->lz4_workspace_pool);
 
 		if (!ret)
@@ -331,6 +337,7 @@ static int __bio_compress(struct bch_fs *c,
 
 		*src_len = len;
 		*dst_len = ret;
+		ret = 0;
 		break;
 	}
 	case BCH_COMPRESSION_GZIP: {
