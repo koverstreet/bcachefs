@@ -1118,6 +1118,7 @@ static enum bucket_alloc_ret __bch2_bucket_alloc_set(struct bch_fs *c,
 {
 	enum bucket_alloc_ret ret = NO_DEVICES;
 	struct dev_alloc_list devs_sorted;
+	u64 buckets_free;
 	unsigned i;
 
 	BUG_ON(nr_replicas > ARRAY_SIZE(ob->ptrs));
@@ -1142,9 +1143,13 @@ static enum bucket_alloc_ret __bch2_bucket_alloc_set(struct bch_fs *c,
 			continue;
 		}
 
-		wp->next_alloc[ca->dev_idx] +=
-			div64_u64(U64_MAX, dev_buckets_free(ca) *
-				  ca->mi.bucket_size);
+		buckets_free = U64_MAX, dev_buckets_free(ca);
+		if (buckets_free)
+			wp->next_alloc[ca->dev_idx] +=
+				div64_u64(U64_MAX, buckets_free *
+					  ca->mi.bucket_size);
+		else
+			wp->next_alloc[ca->dev_idx] = U64_MAX;
 		bch2_wp_rescale(c, ca, wp);
 
 		__clear_bit(ca->dev_idx, devs->d);
