@@ -407,8 +407,11 @@ void bch2_mark_metadata_bucket(struct bch_dev *ca, struct bucket *g,
 
 static int __disk_sectors(const union bch_extent_crc *crc, unsigned sectors)
 {
-	return sectors * crc_compressed_size(NULL, crc) /
-		crc_uncompressed_size(NULL, crc);
+	if (!sectors)
+		return 0;
+
+	return max(1U, DIV_ROUND_UP(sectors * crc_compressed_size(NULL, crc),
+				    crc_uncompressed_size(NULL, crc)));
 }
 
 /*
