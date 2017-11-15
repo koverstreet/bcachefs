@@ -466,6 +466,7 @@ struct hnae3_roce_private_info {
 	void __iomem *roce_io_base;
 	int base_vector;
 	int num_vectors;
+	bool is_reset;
 };
 
 struct hnae3_unic_private_info {
