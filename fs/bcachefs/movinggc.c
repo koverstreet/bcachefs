@@ -94,7 +94,8 @@ static enum data_cmd copygc_pred(struct bch_fs *c, void *arg,
 	if (!__copygc_pred(ca, e))
 		return DATA_SKIP;
 
-	data_opts->btree_insert_flags	= BTREE_INSERT_USE_RESERVE,
+	data_opts->target		= dev_to_target(ca->dev_idx);
+	data_opts->btree_insert_flags	= BTREE_INSERT_USE_RESERVE;
 	data_opts->rewrite_dev		= ca->dev_idx;
 	return DATA_REWRITE;
 }
@@ -178,7 +179,6 @@ static void bch2_copygc(struct bch_fs *c, struct bch_dev *ca)
 			bucket_offset_cmp, NULL);
 
 	ret = bch2_move_data(c, &ca->copygc_pd.rate,
-			     &ca->self,
 			     writepoint_ptr(&ca->copygc_write_point),
 			     POS_MIN, POS_MAX,
 			     copygc_pred, ca,

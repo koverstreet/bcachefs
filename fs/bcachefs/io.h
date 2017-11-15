@@ -61,24 +61,25 @@ static inline struct workqueue_struct *index_update_wq(struct bch_write_op *op)
 
 int bch2_write_index_default(struct bch_write_op *);
 
-static inline void bch2_write_op_init(struct bch_write_op *op, struct bch_fs *c)
+static inline void bch2_write_op_init(struct bch_write_op *op, struct bch_fs *c,
+				      struct bch_io_opts opts)
 {
 	op->c			= c;
 	op->io_wq		= index_update_wq(op);
 	op->flags		= 0;
 	op->written		= 0;
 	op->error		= 0;
-	op->csum_type		= bch2_data_checksum_type(c, c->opts.data_checksum);
-	op->compression_type	=
-		bch2_compression_opt_to_type[c->opts.compression];
+	op->csum_type		= bch2_data_checksum_type(c, opts.data_checksum);
+	op->compression_type	= bch2_compression_opt_to_type[opts.compression];
 	op->nr_replicas		= 0;
 	op->nr_replicas_required = c->opts.data_replicas_required;
 	op->alloc_reserve	= RESERVE_NONE;
 	op->open_buckets_nr	= 0;
 	op->devs_have.nr	= 0;
+	op->target		= 0;
+	op->opts		= opts;
 	op->pos			= POS_MAX;
 	op->version		= ZERO_VERSION;
-	op->devs		= NULL;
 	op->write_point		= (struct write_point_specifier) { 0 };
 	op->res			= (struct disk_reservation) { 0 };
 	op->journal_seq		= 0;

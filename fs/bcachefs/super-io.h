@@ -129,7 +129,6 @@ static inline struct bch_member_cpu bch2_mi_to_cpu(struct bch_member *mi)
 		.bucket_size	= le16_to_cpu(mi->bucket_size),
 		.group		= BCH_MEMBER_GROUP(mi),
 		.state		= BCH_MEMBER_STATE(mi),
-		.tier		= BCH_MEMBER_TIER(mi),
 		.replacement	= BCH_MEMBER_REPLACEMENT(mi),
 		.discard	= BCH_MEMBER_DISCARD(mi),
 		.data_allowed	= BCH_MEMBER_DATA_ALLOWED(mi),
@@ -232,6 +231,8 @@ static inline bool dev_in_target(struct bch_dev *ca, unsigned target)
 	struct target t = target_decode(target);
 
 	switch (t.type) {
+	case TARGET_NULL:
+		return false;
 	case TARGET_DEV:
 		return ca->dev_idx == t.dev;
 	case TARGET_GROUP:

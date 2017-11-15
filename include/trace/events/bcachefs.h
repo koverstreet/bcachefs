@@ -49,15 +49,13 @@ DECLARE_EVENT_CLASS(bch_dev,
 
 	TP_STRUCT__entry(
 		__array(char,		uuid,	16	)
-		__field(unsigned,	tier		)
 	),
 
 	TP_fast_assign(
 		memcpy(__entry->uuid, ca->uuid.b, 16);
-		__entry->tier = ca->mi.tier;
 	),
 
-	TP_printk("%pU tier %u", __entry->uuid, __entry->tier)
+	TP_printk("%pU", __entry->uuid)
 );
 
 DECLARE_EVENT_CLASS(bch_fs,
