@@ -840,6 +840,7 @@ static struct promote_op *promote_alloc(struct bch_fs *c,
 		 * Adjust bio to correspond to _live_ portion of @k -
 		 * which might be less than what we're actually reading:
 		 */
+		bio->bi_iter.bi_size = sectors << 9;
 		bio_advance(bio, pick->crc.offset << 9);
 		BUG_ON(bio_sectors(bio) < k.k->size);
 		bio->bi_iter.bi_size = k.k->size << 9;
