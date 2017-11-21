@@ -974,7 +974,8 @@ alloc_io:
 				(struct disk_reservation) {
 					.nr_replicas = c->opts.data_replicas,
 				},
-				foreground_write_point(c, inode->ei_last_dirtied),
+				c->fastest_devs,
+				inode->ei_last_dirtied,
 				POS(inum, 0),
 				&inode->ei_journal_seq,
 				BCH_WRITE_THROTTLE);
@@ -1545,10 +1546,11 @@ static void bch2_do_direct_IO_write(struct dio_write *dio)
 	dio->iop.is_dio		= true;
 	dio->iop.new_i_size	= U64_MAX;
 	bch2_write_op_init(&dio->iop.op, dio->c, dio->res,
-			foreground_write_point(dio->c, (unsigned long) current),
-			POS(inode->v.i_ino, (dio->offset + dio->written) >> 9),
-			&inode->ei_journal_seq,
-			flags|BCH_WRITE_THROTTLE);
+			   dio->c->fastest_devs,
+			   (unsigned long) dio->task,
+			   POS(inode->v.i_ino, (dio->offset + dio->written) >> 9),
+			   &inode->ei_journal_seq,
+			   flags|BCH_WRITE_THROTTLE);
 	dio->iop.op.index_update_fn = bchfs_write_index_update;
 
 	dio->res.sectors -= bio_sectors(bio);
@@ -1568,13 +1570,13 @@ static void bch2_dio_write_loop_async(struct closure *cl)
 	bch2_dio_write_done(dio);
 
 	if (dio->iter.count && !dio->error) {
-		use_mm(dio->mm);
+		use_mm(dio->task->mm);
 		pagecache_block_get(&mapping->add_lock);
 
 		bch2_do_direct_IO_write(dio);
 
 		pagecache_block_put(&mapping->add_lock);
-		unuse_mm(dio->mm);
+		unuse_mm(dio->task->mm);
 
 		continue_at(&dio->cl, bch2_dio_write_loop_async, NULL);
 	} else {
@@ -1617,7 +1619,7 @@ static int bch2_direct_IO_write(struct bch_fs *c,
 	dio->offset	= offset;
 	dio->iovec	= NULL;
 	dio->iter	= *iter;
-	dio->mm		= current->mm;
+	dio->task	= current;
 	closure_init(&dio->cl, NULL);
 
 	if (offset + iter->count > inode->v.i_size)

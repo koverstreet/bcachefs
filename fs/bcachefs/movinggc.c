@@ -14,6 +14,7 @@
 #include "keylist.h"
 #include "move.h"
 #include "movinggc.h"
+#include "super-io.h"
 
 #include <trace/events/bcachefs.h>
 #include <linux/freezer.h>
@@ -72,7 +73,7 @@ static int issue_moving_gc_move(struct bch_dev *ca,
 	if (!ptr) /* We raced - bucket's been reused */
 		return 0;
 
-	ret = bch2_data_move(c, ctxt, &ca->copygc_write_point, k, ptr);
+	ret = bch2_data_move(c, ctxt, &ca->self, k, ptr);
 	if (!ret)
 		trace_gc_copy(k.k);
 	else

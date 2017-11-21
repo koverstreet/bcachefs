@@ -20,12 +20,9 @@ struct migrate_write {
 	struct bch_write_op	op;
 };
 
-void bch2_migrate_write_init(struct bch_fs *,
-			    struct migrate_write *,
-			    struct write_point *,
-			    struct bkey_s_c,
-			    const struct bch_extent_ptr *,
-			    unsigned);
+void bch2_migrate_write_init(struct bch_fs *, struct migrate_write *,
+			     struct bch_devs_mask *, struct bkey_s_c,
+			     const struct bch_extent_ptr *, unsigned);
 
 #define SECTORS_IN_FLIGHT_PER_DEVICE	2048
 
@@ -69,11 +66,9 @@ struct moving_io {
 	struct bio_vec		bi_inline_vecs[0];
 };
 
-int bch2_data_move(struct bch_fs *,
-		  struct moving_context *,
-		  struct write_point *,
-		  struct bkey_s_c,
-		  const struct bch_extent_ptr *);
+int bch2_data_move(struct bch_fs *, struct moving_context *,
+		   struct bch_devs_mask *, struct bkey_s_c,
+		   const struct bch_extent_ptr *);
 
 int bch2_move_ctxt_wait(struct moving_context *);
 void bch2_move_ctxt_wait_for_io(struct moving_context *);
