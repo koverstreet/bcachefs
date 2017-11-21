@@ -74,7 +74,7 @@ struct dio_write {
 	struct iovec			inline_vecs[UIO_FASTIOV];
 	struct iov_iter			iter;
 
-	struct mm_struct		*mm;
+	struct task_struct		*task;
 
 	/* must be last: */
 	struct bchfs_write_op		iop;

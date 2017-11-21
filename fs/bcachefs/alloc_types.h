@@ -2,6 +2,7 @@
 #define _BCACHEFS_ALLOC_TYPES_H
 
 #include <linux/mutex.h>
+#include <linux/spinlock.h>
 
 #include "clock_types.h"
 
@@ -44,39 +45,34 @@ enum alloc_reserve {
 
 /* Enough for 16 cache devices, 2 tiers and some left over for pipelining */
 #define OPEN_BUCKETS_COUNT	256
+#define WRITE_POINT_COUNT	32
 
-#define WRITE_POINT_COUNT	16
+struct open_bucket_ptr {
+	struct bch_extent_ptr	ptr;
+	unsigned		sectors_free;
+};
 
 struct open_bucket {
-	struct list_head	list;
-	struct mutex		lock;
+	spinlock_t		lock;
 	atomic_t		pin;
-	bool			has_full_ptrs;
+	u8			freelist;
 	u8			new_ob;
+	u8			nr_ptrs;
 
-	/*
-	 * recalculated every time we allocate from this open_bucket based on
-	 * how many pointers we're actually going to use:
-	 */
-	unsigned		sectors_free;
-	unsigned		nr_ptrs;
-	struct bch_extent_ptr	ptrs[BCH_REPLICAS_MAX];
-	unsigned		ptr_offset[BCH_REPLICAS_MAX];
+	struct open_bucket_ptr	ptrs[BCH_REPLICAS_MAX * 2];
 };
 
 struct write_point {
-	struct open_bucket	*b;
+	struct hlist_node	node;
+	struct mutex		lock;
+	u64			last_used;
+	unsigned long		write_point;
 	enum bch_data_type	type;
 
-	/*
-	 * If not NULL, cache group for tiering, promotion and moving GC -
-	 * always allocates a single replica
-	 *
-	 * Otherwise do a normal replicated bucket allocation that could come
-	 * from any device in tier 0 (foreground write)
-	 */
-	struct bch_devs_mask	*group;
+	/* calculated based on how many pointers we're actually going to use: */
+	unsigned		sectors_free;
 
+	struct open_bucket	*ob;
 	u64			next_alloc[BCH_SB_MEMBERS_MAX];
 };
 

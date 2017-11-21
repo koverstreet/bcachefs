@@ -28,20 +28,28 @@ long bch2_bucket_alloc(struct bch_fs *, struct bch_dev *, enum alloc_reserve);
 
 void bch2_open_bucket_put(struct bch_fs *, struct open_bucket *);
 
-struct open_bucket *bch2_alloc_sectors_start(struct bch_fs *,
-					    struct write_point *,
-					    unsigned, unsigned,
-					    enum alloc_reserve,
-					    struct closure *);
+struct write_point *bch2_alloc_sectors_start(struct bch_fs *,
+					     enum bch_data_type,
+					     struct bch_devs_mask *,
+					     unsigned long,
+					     unsigned, unsigned,
+					     enum alloc_reserve,
+					     unsigned,
+					     struct closure *);
 
 void bch2_alloc_sectors_append_ptrs(struct bch_fs *, struct bkey_i_extent *,
 				   unsigned, struct open_bucket *, unsigned);
-void bch2_alloc_sectors_done(struct bch_fs *, struct write_point *,
-			    struct open_bucket *);
+void bch2_alloc_sectors_done(struct bch_fs *, struct write_point *);
 
-struct open_bucket *bch2_alloc_sectors(struct bch_fs *, struct write_point *,
-				      struct bkey_i_extent *, unsigned, unsigned,
-				      enum alloc_reserve, struct closure *);
+struct open_bucket *bch2_alloc_sectors(struct bch_fs *,
+				       enum bch_data_type,
+				       struct bch_devs_mask *,
+				       unsigned long,
+				       struct bkey_i_extent *,
+				       unsigned, unsigned,
+				       enum alloc_reserve,
+				       unsigned,
+				       struct closure *);
 
 static inline void bch2_wake_allocator(struct bch_dev *ca)
 {

@@ -116,9 +116,10 @@ struct bch_write_op {
 	struct bch_extent_crc128 crc;
 	unsigned		size;
 
-	struct disk_reservation	res;
+	struct bch_devs_mask	*devs;
+	unsigned long		write_point;
 
-	struct write_point	*wp;
+	struct disk_reservation	res;
 
 	union {
 	u8			open_buckets[16];

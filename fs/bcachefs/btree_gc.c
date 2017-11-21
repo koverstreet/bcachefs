@@ -278,8 +278,11 @@ static void bch2_mark_allocator_buckets(struct bch_fs *c)
 {
 	struct bch_dev *ca;
 	struct open_bucket *ob;
+	const struct open_bucket_ptr *ptr;
 	size_t i, j, iter;
 	unsigned ci;
+
+	down_write(&c->alloc_gc_lock);
 
 	for_each_member_device(ca, c, ci) {
 		spin_lock(&ca->freelist_lock);
@@ -291,21 +294,26 @@ static void bch2_mark_allocator_buckets(struct bch_fs *c)
 			fifo_for_each_entry(i, &ca->free[j], iter)
 				bch2_mark_alloc_bucket(ca, &ca->buckets[i], true);
 
+		for (ptr = ca->open_buckets_partial;
+		     ptr < ca->open_buckets_partial + ca->open_buckets_partial_nr;
+		     ptr++)
+			bch2_mark_alloc_bucket(ca, PTR_BUCKET(ca, &ptr->ptr), true);
+
 		spin_unlock(&ca->freelist_lock);
 	}
 
 	for (ob = c->open_buckets;
 	     ob < c->open_buckets + ARRAY_SIZE(c->open_buckets);
 	     ob++) {
-		const struct bch_extent_ptr *ptr;
-
-		mutex_lock(&ob->lock);
+		spin_lock(&ob->lock);
 		open_bucket_for_each_ptr(ob, ptr) {
-			ca = c->devs[ptr->dev];
-			bch2_mark_alloc_bucket(ca, PTR_BUCKET(ca, ptr), true);
+			ca = c->devs[ptr->ptr.dev];
+			bch2_mark_alloc_bucket(ca, PTR_BUCKET(ca, &ptr->ptr), true);
 		}
-		mutex_unlock(&ob->lock);
+		spin_unlock(&ob->lock);
 	}
+
+	up_write(&c->alloc_gc_lock);
 }
 
 static void mark_metadata_sectors(struct bch_dev *ca, u64 start, u64 end,

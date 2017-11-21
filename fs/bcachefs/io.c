@@ -352,7 +352,7 @@ static void init_append_extent(struct bch_write_op *op,
 	bch2_keylist_push(&op->insert_keys);
 }
 
-static int bch2_write_extent(struct bch_write_op *op, struct open_bucket *ob)
+static int bch2_write_extent(struct bch_write_op *op, struct write_point *wp)
 {
 	struct bch_fs *c = op->c;
 	struct bio *orig = &op->wbio.bio;
@@ -373,7 +373,7 @@ static int bch2_write_extent(struct bch_write_op *op, struct open_bucket *ob)
 	/* Need to decompress data? */
 	if ((op->flags & BCH_WRITE_DATA_COMPRESSED) &&
 	    (crc_uncompressed_size(NULL, &op->crc) != op->size ||
-	     crc_compressed_size(NULL, &op->crc) > ob->sectors_free)) {
+	     crc_compressed_size(NULL, &op->crc) > wp->sectors_free)) {
 		int ret;
 
 		ret = bch2_bio_uncompress_inplace(c, orig, op->size, op->crc);
@@ -391,7 +391,7 @@ static int bch2_write_extent(struct bch_write_op *op, struct open_bucket *ob)
 				   op->crc.nonce,
 				   op->crc.csum,
 				   op->crc.csum_type,
-				   ob);
+				   wp->ob);
 
 		bio			= orig;
 		wbio			= wbio_init(bio);
@@ -400,7 +400,7 @@ static int bch2_write_extent(struct bch_write_op *op, struct open_bucket *ob)
 		   compression_type != BCH_COMPRESSION_NONE) {
 		/* all units here in bytes */
 		unsigned total_output = 0, output_available =
-			min(ob->sectors_free << 9, orig->bi_iter.bi_size);
+			min(wp->sectors_free << 9, orig->bi_iter.bi_size);
 		unsigned crc_nonce = bch2_csum_type_is_encryption(csum_type)
 			? op->nonce : 0;
 		struct bch_csum csum;
@@ -443,7 +443,7 @@ static int bch2_write_extent(struct bch_write_op *op, struct open_bucket *ob)
 			init_append_extent(op,
 					   dst_len >> 9, src_len >> 9,
 					   fragment_compression_type,
-					   crc_nonce, csum, csum_type, ob);
+					   crc_nonce, csum, csum_type, wp->ob);
 
 			total_output += dst_len;
 			bio_advance(bio, dst_len);
@@ -470,14 +470,14 @@ static int bch2_write_extent(struct bch_write_op *op, struct open_bucket *ob)
 
 		more = orig->bi_iter.bi_size != 0;
 	} else {
-		bio = bio_next_split(orig, ob->sectors_free, GFP_NOIO,
+		bio = bio_next_split(orig, wp->sectors_free, GFP_NOIO,
 				     &c->bio_write);
 		wbio			= wbio_init(bio);
 		wbio->put_bio		= bio != orig;
 
 		init_append_extent(op, bio_sectors(bio), bio_sectors(bio),
 				   compression_type, 0,
-				   (struct bch_csum) { 0 }, csum_type, ob);
+				   (struct bch_csum) { 0 }, csum_type, wp->ob);
 
 		more = bio != orig;
 	}
@@ -507,7 +507,8 @@ static void __bch2_write(struct closure *cl)
 	struct bch_write_op *op = container_of(cl, struct bch_write_op, cl);
 	struct bch_fs *c = op->c;
 	unsigned open_bucket_nr = 0;
-	struct open_bucket *b;
+	struct write_point *wp;
+	struct open_bucket *ob;
 	int ret;
 
 	do {
@@ -525,16 +526,19 @@ static void __bch2_write(struct closure *cl)
 			return;
 		}
 
-		b = bch2_alloc_sectors_start(c, op->wp,
+		wp = bch2_alloc_sectors_start(c, BCH_DATA_USER,
+			op->devs,
+			op->write_point,
 			op->nr_replicas,
 			c->opts.data_replicas_required,
 			op->alloc_reserve,
+			op->flags,
 			(op->flags & BCH_WRITE_ALLOC_NOWAIT) ? NULL : cl);
-		EBUG_ON(!b);
+		EBUG_ON(!wp);
 
-		if (unlikely(IS_ERR(b))) {
-			if (unlikely(PTR_ERR(b) != -EAGAIN)) {
-				ret = PTR_ERR(b);
+		if (unlikely(IS_ERR(wp))) {
+			if (unlikely(PTR_ERR(wp) != -EAGAIN)) {
+				ret = PTR_ERR(wp);
 				goto err;
 			}
 
@@ -571,13 +575,15 @@ static void __bch2_write(struct closure *cl)
 			continue;
 		}
 
-		BUG_ON(b - c->open_buckets == 0 ||
-		       b - c->open_buckets > U8_MAX);
-		op->open_buckets[open_bucket_nr++] = b - c->open_buckets;
+		ob = wp->ob;
 
-		ret = bch2_write_extent(op, b);
+		BUG_ON(ob - c->open_buckets == 0 ||
+		       ob - c->open_buckets > U8_MAX);
+		op->open_buckets[open_bucket_nr++] = ob - c->open_buckets;
 
-		bch2_alloc_sectors_done(c, op->wp, b);
+		ret = bch2_write_extent(op, wp);
+
+		bch2_alloc_sectors_done(c, wp);
 
 		if (ret < 0)
 			goto err;
@@ -718,7 +724,9 @@ void bch2_write(struct closure *cl)
 
 void bch2_write_op_init(struct bch_write_op *op, struct bch_fs *c,
 			struct disk_reservation res,
-			struct write_point *wp, struct bpos pos,
+			struct bch_devs_mask *devs,
+			unsigned long write_point,
+			struct bpos pos,
 			u64 *journal_seq, unsigned flags)
 {
 	EBUG_ON(res.sectors && !res.nr_replicas);
@@ -737,7 +745,8 @@ void bch2_write_op_init(struct bch_write_op *op, struct bch_fs *c,
 	op->pos		= pos;
 	op->version	= ZERO_VERSION;
 	op->res		= res;
-	op->wp		= wp;
+	op->devs	= devs;
+	op->write_point	= write_point;
 
 	if (journal_seq) {
 		op->journal_seq_p = journal_seq;
@@ -851,7 +860,8 @@ static struct promote_op *promote_alloc(struct bch_fs *c,
 		 */
 		op->write.op.pos.offset = iter.bi_sector;
 	}
-	bch2_migrate_write_init(c, &op->write, &c->promote_write_point,
+	bch2_migrate_write_init(c, &op->write,
+				c->fastest_devs,
 				k, NULL,
 				BCH_WRITE_ALLOC_NOWAIT|
 				BCH_WRITE_CACHED);
