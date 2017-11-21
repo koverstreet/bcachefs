@@ -139,7 +139,7 @@ out:
 
 void bch2_migrate_write_init(struct bch_fs *c,
 			     struct migrate_write *m,
-			     struct write_point *wp,
+			     struct bch_devs_mask *devs,
 			     struct bkey_s_c k,
 			     const struct bch_extent_ptr *move_ptr,
 			     unsigned flags)
@@ -155,8 +155,10 @@ void bch2_migrate_write_init(struct bch_fs *c,
 	    (move_ptr && move_ptr->cached))
 		flags |= BCH_WRITE_CACHED;
 
-	bch2_write_op_init(&m->op, c, (struct disk_reservation) { 0 }, wp,
-			  bkey_start_pos(k.k), NULL, flags);
+	bch2_write_op_init(&m->op, c, (struct disk_reservation) { 0 },
+			   devs, (unsigned long) current,
+			   bkey_start_pos(k.k), NULL,
+			   flags|BCH_WRITE_ONLY_SPECIFIED_DEVS);
 
 	if (m->move)
 		m->op.alloc_reserve = RESERVE_MOVINGGC;
@@ -249,7 +251,7 @@ static void read_moving_endio(struct bio *bio)
 
 int bch2_data_move(struct bch_fs *c,
 		   struct moving_context *ctxt,
-		   struct write_point *wp,
+		   struct bch_devs_mask *devs,
 		   struct bkey_s_c k,
 		   const struct bch_extent_ptr *move_ptr)
 {
@@ -280,7 +282,7 @@ int bch2_data_move(struct bch_fs *c,
 
 	migrate_bio_init(io, &io->write.op.wbio.bio, k.k->size);
 
-	bch2_migrate_write_init(c, &io->write, wp, k, move_ptr, 0);
+	bch2_migrate_write_init(c, &io->write, devs, k, move_ptr, 0);
 
 	trace_move_read(&io->write.key.k);
 

@@ -1096,8 +1096,6 @@ static int bch2_dev_alloc(struct bch_fs *c, unsigned dev_idx)
 	ca->dev_idx = dev_idx;
 	__set_bit(ca->dev_idx, ca->self.d);
 
-	ca->copygc_write_point.type = BCH_DATA_USER;
-
 	spin_lock_init(&ca->freelist_lock);
 	bch2_dev_moving_gc_init(ca);
 
@@ -1157,8 +1155,6 @@ static int bch2_dev_alloc(struct bch_fs *c, unsigned dev_idx)
 	total_reserve = ca->free_inc.size;
 	for (i = 0; i < RESERVE_NR; i++)
 		total_reserve += ca->free[i].size;
-
-	ca->copygc_write_point.group = &ca->self;
 
 	ca->fs = c;
 	rcu_assign_pointer(c->devs[ca->dev_idx], ca);

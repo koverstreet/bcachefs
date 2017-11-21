@@ -15,6 +15,7 @@
 
 static int issue_migration_move(struct bch_dev *ca,
 				struct moving_context *ctxt,
+				struct bch_devs_mask *devs,
 				struct bkey_s_c k)
 {
 	struct bch_fs *c = ca->fs;
@@ -33,7 +34,7 @@ static int issue_migration_move(struct bch_dev *ca,
 found:
 	/* XXX: we need to be doing something with the disk reservation */
 
-	ret = bch2_data_move(c, ctxt, &c->migration_write_point, k, ptr);
+	ret = bch2_data_move(c, ctxt, devs, k, ptr);
 	if (ret)
 		bch2_disk_reservation_put(c, &res);
 	return ret;
@@ -110,7 +111,7 @@ int bch2_move_data_off_device(struct bch_dev *ca)
 						   ca->dev_idx))
 				goto next;
 
-			ret = issue_migration_move(ca, &ctxt, k);
+			ret = issue_migration_move(ca, &ctxt, NULL, k);
 			if (ret == -ENOMEM) {
 				bch2_btree_iter_unlock(&iter);
 

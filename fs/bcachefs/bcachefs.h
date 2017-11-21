@@ -392,6 +392,9 @@ struct bch_dev {
 	unsigned		nr_invalidated;
 	bool			alloc_thread_started;
 
+	struct open_bucket_ptr	open_buckets_partial[BCH_REPLICAS_MAX * WRITE_POINT_COUNT];
+	unsigned		open_buckets_partial_nr;
+
 	size_t			fifo_last_bucket;
 
 	/* Allocation stuff: */
@@ -425,8 +428,6 @@ struct bch_dev {
 	struct task_struct	*moving_gc_read;
 
 	struct bch_pd_controller moving_gc_pd;
-
-	struct write_point	copygc_write_point;
 
 	struct journal_device	journal;
 
@@ -472,7 +473,6 @@ struct bch_tier {
 	struct bch_pd_controller pd;
 
 	struct bch_devs_mask	devs;
-	struct write_point	wp;
 };
 
 enum bch_fs_state {
@@ -571,6 +571,7 @@ struct bch_fs {
 	struct workqueue_struct	*copygc_wq;
 
 	/* ALLOCATION */
+	struct rw_semaphore	alloc_gc_lock;
 	struct bch_pd_controller foreground_write_pd;
 	struct delayed_work	pd_controllers_update;
 	unsigned		pd_controllers_update_seconds;
@@ -587,6 +588,7 @@ struct bch_fs {
 	struct bch_devs_mask	rw_devs[BCH_DATA_NR];
 	struct bch_tier		tiers[BCH_TIER_MAX];
 	/* NULL if we only have devices in one tier: */
+	struct bch_devs_mask	*fastest_devs;
 	struct bch_tier		*fastest_tier;
 
 	u64			capacity; /* sectors */
@@ -619,17 +621,17 @@ struct bch_fs {
 	struct io_clock		io_clock[2];
 
 	/* SECTOR ALLOCATOR */
-	struct list_head	open_buckets_open;
-	struct list_head	open_buckets_free;
-	unsigned		open_buckets_nr_free;
-	struct closure_waitlist	open_buckets_wait;
 	spinlock_t		open_buckets_lock;
+	u8			open_buckets_freelist;
+	u8			open_buckets_nr_free;
+	struct closure_waitlist	open_buckets_wait;
 	struct open_bucket	open_buckets[OPEN_BUCKETS_COUNT];
 
 	struct write_point	btree_write_point;
 
 	struct write_point	write_points[WRITE_POINT_COUNT];
-	struct write_point	promote_write_point;
+	struct hlist_head	write_points_hash[WRITE_POINT_COUNT];
+	struct mutex		write_points_hash_lock;
 
 	/*
 	 * This write point is used for migrating data off a device

@@ -22,11 +22,12 @@ enum bch_write_flags {
 	BCH_WRITE_FLUSH			= (1 << 2),
 	BCH_WRITE_DATA_COMPRESSED	= (1 << 3),
 	BCH_WRITE_THROTTLE		= (1 << 4),
+	BCH_WRITE_ONLY_SPECIFIED_DEVS	= (1 << 5),
 
 	/* Internal: */
-	BCH_WRITE_JOURNAL_SEQ_PTR	= (1 << 5),
-	BCH_WRITE_DONE			= (1 << 6),
-	BCH_WRITE_LOOPED		= (1 << 7),
+	BCH_WRITE_JOURNAL_SEQ_PTR	= (1 << 6),
+	BCH_WRITE_DONE			= (1 << 7),
+	BCH_WRITE_LOOPED		= (1 << 8),
 };
 
 static inline u64 *op_journal_seq(struct bch_write_op *op)
@@ -35,15 +36,10 @@ static inline u64 *op_journal_seq(struct bch_write_op *op)
 		? op->journal_seq_p : &op->journal_seq;
 }
 
-static inline struct write_point *foreground_write_point(struct bch_fs *c,
-							 unsigned long v)
-{
-	return c->write_points +
-		hash_long(v, ilog2(ARRAY_SIZE(c->write_points)));
-}
-
 void bch2_write_op_init(struct bch_write_op *, struct bch_fs *,
-			struct disk_reservation, struct write_point *,
+			struct disk_reservation,
+			struct bch_devs_mask *,
+			unsigned long,
 			struct bpos, u64 *, unsigned);
 void bch2_write(struct closure *);
 

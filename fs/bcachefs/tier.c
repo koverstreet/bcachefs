@@ -54,7 +54,7 @@ static int issue_tiering_move(struct bch_fs *c,
 {
 	int ret;
 
-	ret = bch2_data_move(c, ctxt, &tier->wp, k, NULL);
+	ret = bch2_data_move(c, ctxt, &tier->devs, k, NULL);
 	if (!ret)
 		trace_tiering_copy(k.k);
 	else
@@ -241,6 +241,5 @@ void bch2_fs_tiering_init(struct bch_fs *c)
 	for (i = 0; i < ARRAY_SIZE(c->tiers); i++) {
 		c->tiers[i].idx = i;
 		bch2_pd_controller_init(&c->tiers[i].pd);
-		c->tiers[i].wp.group = &c->tiers[i].devs;
 	}
 }
