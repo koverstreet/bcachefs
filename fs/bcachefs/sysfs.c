@@ -209,11 +209,11 @@ static size_t bch2_btree_cache_size(struct bch_fs *c)
 	size_t ret = 0;
 	struct btree *b;
 
-	mutex_lock(&c->btree_cache_lock);
-	list_for_each_entry(b, &c->btree_cache, list)
+	mutex_lock(&c->btree_cache.lock);
+	list_for_each_entry(b, &c->btree_cache.live, list)
 		ret += btree_bytes(c);
 
-	mutex_unlock(&c->btree_cache_lock);
+	mutex_unlock(&c->btree_cache.lock);
 	return ret;
 }
 
@@ -436,7 +436,7 @@ STORE(__bch2_fs)
 
 		sc.gfp_mask = GFP_KERNEL;
 		sc.nr_to_scan = strtoul_or_return(buf);
-		c->btree_cache_shrink.scan_objects(&c->btree_cache_shrink, &sc);
+		c->btree_cache.shrink.scan_objects(&c->btree_cache.shrink, &sc);
 	}
 
 	return size;

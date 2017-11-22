@@ -1364,17 +1364,17 @@ int bch2_btree_root_read(struct bch_fs *c, enum btree_id id,
 	closure_init_stack(&cl);
 
 	do {
-		ret = bch2_btree_node_cannibalize_lock(c, &cl);
+		ret = bch2_btree_cache_cannibalize_lock(c, &cl);
 		closure_sync(&cl);
 	} while (ret);
 
 	b = bch2_btree_node_mem_alloc(c);
-	bch2_btree_node_cannibalize_unlock(c);
+	bch2_btree_cache_cannibalize_unlock(c);
 
 	BUG_ON(IS_ERR(b));
 
 	bkey_copy(&b->key, k);
-	BUG_ON(bch2_btree_node_hash_insert(c, b, level, id));
+	BUG_ON(bch2_btree_node_hash_insert(&c->btree_cache, b, level, id));
 
 	bch2_btree_node_read(c, b, true);
 	six_unlock_write(&b->lock);
@@ -1844,8 +1844,8 @@ void bch2_btree_verify_flushed(struct bch_fs *c)
 	unsigned i;
 
 	rcu_read_lock();
-	tbl = rht_dereference_rcu(c->btree_cache_table.tbl,
-				  &c->btree_cache_table);
+	tbl = rht_dereference_rcu(c->btree_cache.table.tbl,
+				  &c->btree_cache.table);
 
 	for (i = 0; i < tbl->size; i++)
 		rht_for_each_entry_rcu(b, pos, tbl, i, hash)
