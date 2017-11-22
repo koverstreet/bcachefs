@@ -544,40 +544,7 @@ struct bch_fs {
 	struct btree_root	btree_roots[BTREE_ID_NR];
 	struct mutex		btree_root_lock;
 
-	bool			btree_cache_table_init_done;
-	struct rhashtable	btree_cache_table;
-
-	/*
-	 * We never free a struct btree, except on shutdown - we just put it on
-	 * the btree_cache_freed list and reuse it later. This simplifies the
-	 * code, and it doesn't cost us much memory as the memory usage is
-	 * dominated by buffers that hold the actual btree node data and those
-	 * can be freed - and the number of struct btrees allocated is
-	 * effectively bounded.
-	 *
-	 * btree_cache_freeable effectively is a small cache - we use it because
-	 * high order page allocations can be rather expensive, and it's quite
-	 * common to delete and allocate btree nodes in quick succession. It
-	 * should never grow past ~2-3 nodes in practice.
-	 */
-	struct mutex		btree_cache_lock;
-	struct list_head	btree_cache;
-	struct list_head	btree_cache_freeable;
-	struct list_head	btree_cache_freed;
-
-	/* Number of elements in btree_cache + btree_cache_freeable lists */
-	unsigned		btree_cache_used;
-	unsigned		btree_cache_reserve;
-	struct shrinker		btree_cache_shrink;
-
-	/*
-	 * If we need to allocate memory for a new btree node and that
-	 * allocation fails, we can cannibalize another node in the btree cache
-	 * to satisfy the allocation - lock to guarantee only one thread does
-	 * this at a time:
-	 */
-	struct closure_waitlist	mca_wait;
-	struct task_struct	*btree_cache_alloc_lock;
+	struct btree_cache	btree_cache;
 
 	mempool_t		btree_reserve_pool;
 

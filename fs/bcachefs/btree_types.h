@@ -130,6 +130,42 @@ struct btree {
 #endif
 };
 
+struct btree_cache {
+	struct rhashtable	table;
+	bool			table_init_done;
+	/*
+	 * We never free a struct btree, except on shutdown - we just put it on
+	 * the btree_cache_freed list and reuse it later. This simplifies the
+	 * code, and it doesn't cost us much memory as the memory usage is
+	 * dominated by buffers that hold the actual btree node data and those
+	 * can be freed - and the number of struct btrees allocated is
+	 * effectively bounded.
+	 *
+	 * btree_cache_freeable effectively is a small cache - we use it because
+	 * high order page allocations can be rather expensive, and it's quite
+	 * common to delete and allocate btree nodes in quick succession. It
+	 * should never grow past ~2-3 nodes in practice.
+	 */
+	struct mutex		lock;
+	struct list_head	live;
+	struct list_head	freeable;
+	struct list_head	freed;
+
+	/* Number of elements in live + freeable lists */
+	unsigned		used;
+	unsigned		reserve;
+	struct shrinker		shrink;
+
+	/*
+	 * If we need to allocate memory for a new btree node and that
+	 * allocation fails, we can cannibalize another node in the btree cache
+	 * to satisfy the allocation - lock to guarantee only one thread does
+	 * this at a time:
+	 */
+	struct task_struct	*alloc_lock;
+	struct closure_waitlist	alloc_wait;
+};
+
 #define BTREE_FLAG(flag)						\
 static inline bool btree_node_ ## flag(struct btree *b)			\
 {	return test_bit(BTREE_NODE_ ## flag, &b->flags); }		\
