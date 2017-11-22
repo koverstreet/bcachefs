@@ -769,7 +769,7 @@ retry_all:
 		closure_init_stack(&cl);
 
 		do {
-			ret = bch2_btree_node_cannibalize_lock(c, &cl);
+			ret = bch2_btree_cache_cannibalize_lock(c, &cl);
 			closure_sync(&cl);
 		} while (ret);
 	}
@@ -817,7 +817,7 @@ retry:
 
 	ret = btree_iter_linked(iter) ? -EINTR : 0;
 out:
-	bch2_btree_node_cannibalize_unlock(c);
+	bch2_btree_cache_cannibalize_unlock(c);
 	return ret;
 io_error:
 	BUG_ON(ret != -EIO);

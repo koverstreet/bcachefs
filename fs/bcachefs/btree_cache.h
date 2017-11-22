@@ -11,13 +11,13 @@ extern const char * const bch2_btree_ids[];
 
 void bch2_recalc_btree_reserve(struct bch_fs *);
 
-void bch2_btree_node_hash_remove(struct bch_fs *, struct btree *);
-int __bch2_btree_node_hash_insert(struct bch_fs *, struct btree *);
-int bch2_btree_node_hash_insert(struct bch_fs *, struct btree *,
+void bch2_btree_node_hash_remove(struct btree_cache *, struct btree *);
+int __bch2_btree_node_hash_insert(struct btree_cache *, struct btree *);
+int bch2_btree_node_hash_insert(struct btree_cache *, struct btree *,
 				unsigned, enum btree_id);
 
-void bch2_btree_node_cannibalize_unlock(struct bch_fs *);
-int bch2_btree_node_cannibalize_lock(struct bch_fs *, struct closure *);
+void bch2_btree_cache_cannibalize_unlock(struct bch_fs *);
+int bch2_btree_cache_cannibalize_lock(struct bch_fs *, struct closure *);
 
 struct btree *bch2_btree_node_mem_alloc(struct bch_fs *);
 
@@ -32,8 +32,9 @@ struct btree *bch2_btree_node_get_sibling(struct bch_fs *, struct btree_iter *,
 void bch2_btree_node_prefetch(struct bch_fs *, const struct bkey_i *,
 			      unsigned, enum btree_id);
 
-void bch2_fs_btree_exit(struct bch_fs *);
-int bch2_fs_btree_init(struct bch_fs *);
+void bch2_fs_btree_cache_exit(struct bch_fs *);
+int bch2_fs_btree_cache_init(struct bch_fs *);
+void bch2_fs_btree_cache_init_early(struct btree_cache *);
 
 #define PTR_HASH(_k)	(bkey_i_to_extent_c(_k)->v._data[0])
 

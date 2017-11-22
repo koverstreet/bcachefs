@@ -237,11 +237,11 @@ static void __btree_node_free(struct bch_fs *c, struct btree *b,
 
 	six_lock_write(&b->lock);
 
-	bch2_btree_node_hash_remove(c, b);
+	bch2_btree_node_hash_remove(&c->btree_cache, b);
 
-	mutex_lock(&c->btree_cache_lock);
-	list_move(&b->list, &c->btree_cache_freeable);
-	mutex_unlock(&c->btree_cache_lock);
+	mutex_lock(&c->btree_cache.lock);
+	list_move(&b->list, &c->btree_cache.freeable);
+	mutex_unlock(&c->btree_cache.lock);
 
 	/*
 	 * By using six_unlock_write() directly instead of
@@ -374,7 +374,7 @@ static struct btree *bch2_btree_node_alloc(struct btree_update *as, unsigned lev
 
 	b = as->reserve->b[--as->reserve->nr];
 
-	BUG_ON(bch2_btree_node_hash_insert(c, b, level, as->btree_id));
+	BUG_ON(bch2_btree_node_hash_insert(&c->btree_cache, b, level, as->btree_id));
 
 	set_btree_node_accessed(b);
 	set_btree_node_dirty(b);
@@ -515,7 +515,7 @@ static struct btree_reserve *bch2_btree_reserve_get(struct bch_fs *c,
 	 * Protects reaping from the btree node cache and using the btree node
 	 * open bucket reserve:
 	 */
-	ret = bch2_btree_node_cannibalize_lock(c, cl);
+	ret = bch2_btree_cache_cannibalize_lock(c, cl);
 	if (ret) {
 		bch2_disk_reservation_put(c, &disk_res);
 		return ERR_PTR(ret);
@@ -543,11 +543,11 @@ static struct btree_reserve *bch2_btree_reserve_get(struct bch_fs *c,
 		reserve->b[reserve->nr++] = b;
 	}
 
-	bch2_btree_node_cannibalize_unlock(c);
+	bch2_btree_cache_cannibalize_unlock(c);
 	return reserve;
 err_free:
 	bch2_btree_reserve_put(c, reserve);
-	bch2_btree_node_cannibalize_unlock(c);
+	bch2_btree_cache_cannibalize_unlock(c);
 	trace_btree_reserve_get_fail(c, nr_nodes, cl);
 	return ERR_PTR(ret);
 }
@@ -1015,9 +1015,9 @@ bch2_btree_update_start(struct bch_fs *c, enum btree_id id,
 static void __bch2_btree_set_root_inmem(struct bch_fs *c, struct btree *b)
 {
 	/* Root nodes cannot be reaped */
-	mutex_lock(&c->btree_cache_lock);
+	mutex_lock(&c->btree_cache.lock);
 	list_del_init(&b->list);
-	mutex_unlock(&c->btree_cache_lock);
+	mutex_unlock(&c->btree_cache.lock);
 
 	mutex_lock(&c->btree_root_lock);
 	btree_node_root(c, b) = b;
@@ -1802,7 +1802,7 @@ retry:
 	    PTR_HASH(&new_key->k_i) != PTR_HASH(&b->key)) {
 		/* bch2_btree_reserve_get will unlock */
 		do {
-			ret = bch2_btree_node_cannibalize_lock(c, &cl);
+			ret = bch2_btree_cache_cannibalize_lock(c, &cl);
 			closure_sync(&cl);
 		} while (ret == -EAGAIN);
 
@@ -1873,23 +1873,24 @@ retry:
 	if (parent) {
 		if (new_hash) {
 			bkey_copy(&new_hash->key, &new_key->k_i);
-			BUG_ON(bch2_btree_node_hash_insert(c, new_hash,
-							b->level, b->btree_id));
+			ret = bch2_btree_node_hash_insert(&c->btree_cache,
+					new_hash, b->level, b->btree_id);
+			BUG_ON(ret);
 		}
 
 		bch2_btree_insert_node(as, parent, &iter,
 				       &keylist_single(&new_key->k_i));
 
 		if (new_hash) {
-			mutex_lock(&c->btree_cache_lock);
-			bch2_btree_node_hash_remove(c, new_hash);
+			mutex_lock(&c->btree_cache.lock);
+			bch2_btree_node_hash_remove(&c->btree_cache, new_hash);
 
-			bch2_btree_node_hash_remove(c, b);
+			bch2_btree_node_hash_remove(&c->btree_cache, b);
 
 			bkey_copy(&b->key, &new_key->k_i);
-			ret = __bch2_btree_node_hash_insert(c, b);
+			ret = __bch2_btree_node_hash_insert(&c->btree_cache, b);
 			BUG_ON(ret);
-			mutex_unlock(&c->btree_cache_lock);
+			mutex_unlock(&c->btree_cache.lock);
 		} else {
 			bkey_copy(&b->key, &new_key->k_i);
 		}
@@ -1918,9 +1919,9 @@ retry:
 	bch2_btree_update_done(as);
 out:
 	if (new_hash) {
-		mutex_lock(&c->btree_cache_lock);
-		list_move(&new_hash->list, &c->btree_cache_freeable);
-		mutex_unlock(&c->btree_cache_lock);
+		mutex_lock(&c->btree_cache.lock);
+		list_move(&new_hash->list, &c->btree_cache.freeable);
+		mutex_unlock(&c->btree_cache.lock);
 
 		six_unlock_write(&new_hash->lock);
 		six_unlock_intent(&new_hash->lock);
