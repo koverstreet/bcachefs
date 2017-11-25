@@ -324,6 +324,26 @@ static struct nonce extent_nonce(struct bversion version,
 	}};
 }
 
+static void __init_append_extent(struct bch_write_op *op,
+				 struct bch_extent_crc_unpacked crc,
+				 struct open_bucket *ob)
+{
+	struct bkey_i_extent *e = bkey_extent_init(op->insert_keys.top);
+
+	op->pos.offset += crc.uncompressed_size;
+	e->k.p = op->pos;
+	e->k.size = crc.uncompressed_size;
+	e->k.version = op->version;
+	bkey_extent_set_cached(&e->k, op->flags & BCH_WRITE_CACHED);
+
+	bch2_extent_crc_append(e, crc);
+	bch2_alloc_sectors_append_ptrs(op->c, e, op->nr_replicas,
+				       ob, crc.compressed_size);
+
+	bkey_extent_set_cached(&e->k, (op->flags & BCH_WRITE_CACHED));
+	bch2_keylist_push(&op->insert_keys);
+}
+
 static void init_append_extent(struct bch_write_op *op,
 			       unsigned compressed_size,
 			       unsigned uncompressed_size,
@@ -332,24 +352,16 @@ static void init_append_extent(struct bch_write_op *op,
 			       struct bch_csum csum, unsigned csum_type,
 			       struct open_bucket *ob)
 {
-	struct bkey_i_extent *e = bkey_extent_init(op->insert_keys.top);
+	struct bch_extent_crc_unpacked crc = {
+		.csum_type		= csum_type,
+		.compression_type	= compression_type,
+		.compressed_size	= compressed_size,
+		.uncompressed_size	= uncompressed_size,
+		.nonce			= nonce,
+		.csum			= csum,
+	};
 
-	op->pos.offset += uncompressed_size;
-	e->k.p = op->pos;
-	e->k.size = uncompressed_size;
-	e->k.version = op->version;
-	bkey_extent_set_cached(&e->k, op->flags & BCH_WRITE_CACHED);
-
-	bch2_extent_crc_append(e, compressed_size,
-			      uncompressed_size,
-			      compression_type,
-			      nonce, csum, csum_type);
-
-	bch2_alloc_sectors_append_ptrs(op->c, e, op->nr_replicas,
-				      ob, compressed_size);
-
-	bkey_extent_set_cached(&e->k, (op->flags & BCH_WRITE_CACHED));
-	bch2_keylist_push(&op->insert_keys);
+	__init_append_extent(op, crc, ob);
 }
 
 static int bch2_write_extent(struct bch_write_op *op, struct write_point *wp)
@@ -372,8 +384,8 @@ static int bch2_write_extent(struct bch_write_op *op, struct write_point *wp)
 
 	/* Need to decompress data? */
 	if ((op->flags & BCH_WRITE_DATA_COMPRESSED) &&
-	    (crc_uncompressed_size(NULL, &op->crc) != op->size ||
-	     crc_compressed_size(NULL, &op->crc) > wp->sectors_free)) {
+	    (op->crc.uncompressed_size != op->size ||
+	     op->crc.compressed_size > wp->sectors_free)) {
 		int ret;
 
 		ret = bch2_bio_uncompress_inplace(c, orig, op->size, op->crc);
@@ -384,14 +396,9 @@ static int bch2_write_extent(struct bch_write_op *op, struct write_point *wp)
 	}
 
 	if (op->flags & BCH_WRITE_DATA_COMPRESSED) {
-		init_append_extent(op,
-				   crc_compressed_size(NULL, &op->crc),
-				   crc_uncompressed_size(NULL, &op->crc),
-				   op->crc.compression_type,
-				   op->crc.nonce,
-				   op->crc.csum,
-				   op->crc.csum_type,
-				   wp->ob);
+		__init_append_extent(op,
+				     op->crc,
+				     wp->ob);
 
 		bio			= orig;
 		wbio			= wbio_init(bio);
@@ -827,8 +834,7 @@ static struct promote_op *promote_alloc(struct bch_fs *c,
 	 * biovec needs to be big enough to hold decompressed data, if
 	 * bch2_write_extent() has to decompress/recompress it:
 	 */
-	unsigned sectors = max_t(unsigned, k.k->size,
-		      crc_uncompressed_size(NULL, &pick->crc));
+	unsigned sectors = pick->crc.uncompressed_size;
 	unsigned pages = DIV_ROUND_UP(sectors, PAGE_SECTORS);
 
 	op = kmalloc(sizeof(*op) + sizeof(struct bio_vec) * pages, GFP_NOIO);
@@ -990,7 +996,7 @@ static int bch2_rbio_checksum_uncompress(struct bio *dst,
 	struct bvec_iter dst_iter = rbio->bvec_iter;
 	struct nonce nonce = extent_nonce(rbio->version,
 				rbio->pick.crc.nonce,
-				crc_uncompressed_size(NULL, &rbio->pick.crc),
+				rbio->pick.crc.uncompressed_size,
 				rbio->pick.crc.compression_type);
 	struct bch_csum csum;
 	int ret = 0;
@@ -1002,7 +1008,7 @@ static int bch2_rbio_checksum_uncompress(struct bio *dst,
 	 * in order to promote
 	 */
 	if (rbio->bounce) {
-		src->bi_iter.bi_size	= crc_compressed_size(NULL, &rbio->pick.crc) << 9;
+		src->bi_iter.bi_size	= rbio->pick.crc.compressed_size << 9;
 		src->bi_iter.bi_idx	= 0;
 		src->bi_iter.bi_bvec_done = 0;
 	} else {
@@ -1142,7 +1148,7 @@ int __bch2_read_extent(struct bch_fs *c, struct bch_read_bio *orig,
 	 */
 	if (pick->crc.compression_type != BCH_COMPRESSION_NONE ||
 	    (pick->crc.csum_type != BCH_CSUM_NONE &&
-	     (bvec_iter_sectors(iter) != crc_uncompressed_size(NULL, &pick->crc) ||
+	     (bvec_iter_sectors(iter) != pick->crc.uncompressed_size ||
 	      (bch2_csum_type_is_encryption(pick->crc.csum_type) &&
 	       (flags & BCH_READ_USER_MAPPED)) ||
 	      (flags & BCH_READ_MUST_BOUNCE)))) {
@@ -1159,7 +1165,7 @@ int __bch2_read_extent(struct bch_fs *c, struct bch_read_bio *orig,
 
 	if (bounce) {
 		unsigned sectors = read_full
-			? (crc_compressed_size(NULL, &pick->crc) ?: k.k->size)
+			? pick->crc.compressed_size
 			: bvec_iter_sectors(iter);
 
 		rbio = rbio_init(bio_alloc_bioset(GFP_NOIO,
@@ -1208,7 +1214,7 @@ int __bch2_read_extent(struct bch_fs *c, struct bch_read_bio *orig,
 	 * bounced (which isn't necessarily the original key size, if we bounced
 	 * only for promoting)
 	 */
-	rbio->pick.crc._compressed_size = bio_sectors(&rbio->bio) - 1;
+	rbio->pick.crc.compressed_size = bio_sectors(&rbio->bio);
 	rbio->version		= k.k->version;
 	rbio->promote		= promote_op;
 	rbio->inode		= k.k->p.inode;

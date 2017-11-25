@@ -3,7 +3,7 @@
 
 #include "bcachefs.h"
 #include "bkey.h"
-#include "io_types.h"
+#include "extents_types.h"
 
 struct bch_fs;
 struct journal_res;
@@ -43,6 +43,7 @@ void bch2_extent_mark_replicas_cached(struct bch_fs *,
 
 unsigned bch2_extent_nr_ptrs(struct bkey_s_c_extent);
 unsigned bch2_extent_nr_dirty_ptrs(struct bkey_s_c);
+unsigned bch2_extent_is_compressed(struct bkey_s_c);
 
 static inline bool bkey_extent_is_data(const struct bkey *k)
 {
@@ -170,6 +171,8 @@ union bch_extent_crc {
 		(struct bch_extent_ptr *) (_entry));			\
 })
 
+/* checksum entries: */
+
 enum bch_extent_crc_type {
 	BCH_EXTENT_CRC_NONE,
 	BCH_EXTENT_CRC32,
@@ -208,6 +211,52 @@ __extent_crc_type(const union bch_extent_crc *crc)
 	: __extent_crc_type((union bch_extent_crc *) _crc);		\
 })
 
+static inline struct bch_extent_crc_unpacked
+bch2_extent_crc_unpack(const struct bkey *k, const union bch_extent_crc *crc)
+{
+	switch (extent_crc_type(crc)) {
+	case BCH_EXTENT_CRC_NONE:
+		return (struct bch_extent_crc_unpacked) {
+			.compressed_size	= k->size,
+			.uncompressed_size	= k->size,
+		};
+	case BCH_EXTENT_CRC32:
+		return (struct bch_extent_crc_unpacked) {
+			.csum_type		= crc->crc32.csum_type,
+			.compression_type	= crc->crc32.compression_type,
+			.compressed_size	= crc->crc32._compressed_size + 1,
+			.uncompressed_size	= crc->crc32._uncompressed_size + 1,
+			.offset			= crc->crc32.offset,
+			.csum.lo		= crc->crc32.csum,
+		};
+	case BCH_EXTENT_CRC64:
+		return (struct bch_extent_crc_unpacked) {
+			.csum_type		= crc->crc64.csum_type,
+			.compression_type	= crc->crc64.compression_type,
+			.compressed_size	= crc->crc64._compressed_size + 1,
+			.uncompressed_size	= crc->crc64._uncompressed_size + 1,
+			.offset			= crc->crc64.offset,
+			.nonce			= crc->crc64.nonce,
+			.csum.lo		= crc->crc64.csum_lo,
+			.csum.hi		= crc->crc64.csum_hi,
+		};
+	case BCH_EXTENT_CRC128:
+		return (struct bch_extent_crc_unpacked) {
+			.csum_type		= crc->crc128.csum_type,
+			.compression_type	= crc->crc128.compression_type,
+			.compressed_size	= crc->crc128._compressed_size + 1,
+			.uncompressed_size	= crc->crc128._uncompressed_size + 1,
+			.offset			= crc->crc128.offset,
+			.nonce			= crc->crc128.nonce,
+			.csum			= crc->crc128.csum,
+		};
+	default:
+		BUG();
+	}
+}
+
+/* Extent entry iteration: */
+
 #define extent_entry_next(_entry)					\
 	((typeof(_entry)) ((void *) (_entry) + extent_entry_bytes(_entry)))
 
@@ -226,7 +275,7 @@ __extent_crc_type(const union bch_extent_crc *crc)
 
 /* Iterate over crcs only: */
 
-#define extent_crc_next(_e, _p)						\
+#define __extent_crc_next(_e, _p)					\
 ({									\
 	typeof(&(_e).v->start[0]) _entry = _p;				\
 									\
@@ -237,25 +286,41 @@ __extent_crc_type(const union bch_extent_crc *crc)
 	entry_to_crc(_entry < extent_entry_last(_e) ? _entry : NULL);	\
 })
 
-#define extent_for_each_crc(_e, _crc)					\
-	for ((_crc) = extent_crc_next(_e, (_e).v->start);		\
+#define __extent_for_each_crc(_e, _crc)					\
+	for ((_crc) = __extent_crc_next(_e, (_e).v->start);		\
 	     (_crc);							\
-	     (_crc) = extent_crc_next(_e, extent_entry_next(to_entry(_crc))))
+	     (_crc) = __extent_crc_next(_e, extent_entry_next(to_entry(_crc))))
+
+#define extent_crc_next(_e, _crc, _iter)				\
+({									\
+	extent_for_each_entry_from(_e, _iter, _iter)			\
+		if (extent_entry_is_crc(_iter)) {			\
+			(_crc) = bch2_extent_crc_unpack((_e).k, entry_to_crc(_iter));\
+			break;						\
+		}							\
+									\
+	(_iter) < extent_entry_last(_e);				\
+})
+
+#define extent_for_each_crc(_e, _crc, _iter)				\
+	for ((_crc) = bch2_extent_crc_unpack((_e).k, NULL),		\
+	     (_iter) = (_e).v->start;					\
+	     extent_crc_next(_e, _crc, _iter);				\
+	     (_iter) = extent_entry_next(_iter))
 
 /* Iterate over pointers, with crcs: */
 
-#define extent_ptr_crc_next_filter(_e, _crc, _ptr, _filter)		\
+#define extent_ptr_crc_next(_e, _ptr, _crc)				\
 ({									\
 	__label__ out;							\
 	typeof(&(_e).v->start[0]) _entry;				\
 									\
 	extent_for_each_entry_from(_e, _entry, to_entry(_ptr))		\
 		if (extent_entry_is_crc(_entry)) {			\
-			(_crc) = entry_to_crc(_entry);			\
+			(_crc) = bch2_extent_crc_unpack((_e).k, entry_to_crc(_entry));\
 		} else {						\
 			_ptr = entry_to_ptr(_entry);			\
-			if (_filter)					\
-				goto out;				\
+			goto out;					\
 		}							\
 									\
 	_ptr = NULL;							\
@@ -263,34 +328,25 @@ out:									\
 	_ptr;								\
 })
 
-#define extent_for_each_ptr_crc_filter(_e, _ptr, _crc, _filter)		\
-	for ((_crc) = NULL,						\
-	     (_ptr) = &(_e).v->start->ptr;				\
-	     ((_ptr) = extent_ptr_crc_next_filter(_e, _crc, _ptr, _filter));\
-	     (_ptr)++)
-
 #define extent_for_each_ptr_crc(_e, _ptr, _crc)				\
-	extent_for_each_ptr_crc_filter(_e, _ptr, _crc, true)
+	for ((_crc) = bch2_extent_crc_unpack((_e).k, NULL),		\
+	     (_ptr) = &(_e).v->start->ptr;				\
+	     ((_ptr) = extent_ptr_crc_next(_e, _ptr, _crc));		\
+	     (_ptr)++)
 
 /* Iterate over pointers only, and from a given position: */
 
-#define extent_ptr_next_filter(_e, _ptr, _filter)			\
+#define extent_ptr_next(_e, _ptr)					\
 ({									\
-	typeof(__entry_to_crc(&(_e).v->start[0])) _crc;			\
+	struct bch_extent_crc_unpacked _crc;				\
 									\
-	extent_ptr_crc_next_filter(_e, _crc, _ptr, _filter);		\
+	extent_ptr_crc_next(_e, _ptr, _crc);				\
 })
 
-#define extent_ptr_next(_e, _ptr)					\
-	extent_ptr_next_filter(_e, _ptr, true)
-
-#define extent_for_each_ptr_filter(_e, _ptr, _filter)			\
-	for ((_ptr) = &(_e).v->start->ptr;				\
-	     ((_ptr) = extent_ptr_next_filter(_e, _ptr, _filter));	\
-	     (_ptr)++)
-
 #define extent_for_each_ptr(_e, _ptr)					\
-	extent_for_each_ptr_filter(_e, _ptr, true)
+	for ((_ptr) = &(_e).v->start->ptr;				\
+	     ((_ptr) = extent_ptr_next(_e, _ptr));			\
+	     (_ptr)++)
 
 #define extent_ptr_prev(_e, _ptr)					\
 ({									\
@@ -315,8 +371,8 @@ out:									\
 	     (_ptr);							\
 	     (_ptr) = extent_ptr_prev(_e, _ptr))
 
-void bch2_extent_crc_append(struct bkey_i_extent *, unsigned, unsigned,
-			   unsigned, unsigned, struct bch_csum, unsigned);
+void bch2_extent_crc_append(struct bkey_i_extent *,
+			    struct bch_extent_crc_unpacked);
 
 static inline void __extent_entry_push(struct bkey_i_extent *e)
 {
@@ -336,206 +392,14 @@ static inline void extent_ptr_append(struct bkey_i_extent *e,
 	__extent_entry_push(e);
 }
 
-static inline struct bch_extent_crc128 crc_to_128(const struct bkey *k,
-						  const union bch_extent_crc *crc)
-{
-	EBUG_ON(!k->size);
-
-	switch (extent_crc_type(crc)) {
-	case BCH_EXTENT_CRC_NONE:
-		return (struct bch_extent_crc128) {
-			._compressed_size	= k->size - 1,
-			._uncompressed_size	= k->size - 1,
-		};
-	case BCH_EXTENT_CRC32:
-		return (struct bch_extent_crc128) {
-			.type			= 1 << BCH_EXTENT_ENTRY_crc128,
-			._compressed_size	= crc->crc32._compressed_size,
-			._uncompressed_size	= crc->crc32._uncompressed_size,
-			.offset			= crc->crc32.offset,
-			.csum_type		= crc->crc32.csum_type,
-			.compression_type	= crc->crc32.compression_type,
-			.csum.lo		= crc->crc32.csum,
-		};
-	case BCH_EXTENT_CRC64:
-		return (struct bch_extent_crc128) {
-			.type			= 1 << BCH_EXTENT_ENTRY_crc128,
-			._compressed_size	= crc->crc64._compressed_size,
-			._uncompressed_size	= crc->crc64._uncompressed_size,
-			.offset			= crc->crc64.offset,
-			.nonce			= crc->crc64.nonce,
-			.csum_type		= crc->crc64.csum_type,
-			.compression_type	= crc->crc64.compression_type,
-			.csum.lo		= crc->crc64.csum_lo,
-			.csum.hi		= crc->crc64.csum_hi,
-		};
-	case BCH_EXTENT_CRC128:
-		return crc->crc128;
-	default:
-		BUG();
-	}
-}
-
-#define crc_compressed_size(_k, _crc)					\
-({									\
-	unsigned _size = 0;						\
-									\
-	switch (extent_crc_type(_crc)) {				\
-	case BCH_EXTENT_CRC_NONE:					\
-		_size = ((const struct bkey *) (_k))->size;		\
-		break;							\
-	case BCH_EXTENT_CRC32:						\
-		_size = ((struct bch_extent_crc32 *) _crc)		\
-			->_compressed_size + 1;				\
-		break;							\
-	case BCH_EXTENT_CRC64:						\
-		_size = ((struct bch_extent_crc64 *) _crc)		\
-			->_compressed_size + 1;				\
-		break;							\
-	case BCH_EXTENT_CRC128:						\
-		_size = ((struct bch_extent_crc128 *) _crc)		\
-			->_compressed_size + 1;				\
-		break;							\
-	}								\
-	_size;								\
-})
-
-#define crc_uncompressed_size(_k, _crc)					\
-({									\
-	unsigned _size = 0;						\
-									\
-	switch (extent_crc_type(_crc)) {				\
-	case BCH_EXTENT_CRC_NONE:					\
-		_size = ((const struct bkey *) (_k))->size;		\
-		break;							\
-	case BCH_EXTENT_CRC32:						\
-		_size = ((struct bch_extent_crc32 *) _crc)		\
-			->_uncompressed_size + 1;			\
-		break;							\
-	case BCH_EXTENT_CRC64:						\
-		_size = ((struct bch_extent_crc64 *) _crc)		\
-			->_uncompressed_size + 1;			\
-		break;							\
-	case BCH_EXTENT_CRC128:						\
-		_size = ((struct bch_extent_crc128 *) _crc)		\
-			->_uncompressed_size + 1;			\
-		break;							\
-	}								\
-	_size;								\
-})
-
-static inline unsigned crc_offset(const union bch_extent_crc *crc)
-{
-	switch (extent_crc_type(crc)) {
-	case BCH_EXTENT_CRC_NONE:
-		return 0;
-	case BCH_EXTENT_CRC32:
-		return crc->crc32.offset;
-	case BCH_EXTENT_CRC64:
-		return crc->crc64.offset;
-	case BCH_EXTENT_CRC128:
-		return crc->crc128.offset;
-	default:
-		BUG();
-	}
-}
-
-static inline unsigned crc_nonce(const union bch_extent_crc *crc)
-{
-	switch (extent_crc_type(crc)) {
-	case BCH_EXTENT_CRC_NONE:
-	case BCH_EXTENT_CRC32:
-		return 0;
-	case BCH_EXTENT_CRC64:
-		return crc->crc64.nonce;
-	case BCH_EXTENT_CRC128:
-		return crc->crc128.nonce;
-	default:
-		BUG();
-	}
-}
-
-static inline unsigned crc_csum_type(const union bch_extent_crc *crc)
-{
-	switch (extent_crc_type(crc)) {
-	case BCH_EXTENT_CRC_NONE:
-		return 0;
-	case BCH_EXTENT_CRC32:
-		return crc->crc32.csum_type;
-	case BCH_EXTENT_CRC64:
-		return crc->crc64.csum_type;
-	case BCH_EXTENT_CRC128:
-		return crc->crc128.csum_type;
-	default:
-		BUG();
-	}
-}
-
-static inline unsigned crc_compression_type(const union bch_extent_crc *crc)
-{
-	switch (extent_crc_type(crc)) {
-	case BCH_EXTENT_CRC_NONE:
-		return 0;
-	case BCH_EXTENT_CRC32:
-		return crc->crc32.compression_type;
-	case BCH_EXTENT_CRC64:
-		return crc->crc64.compression_type;
-	case BCH_EXTENT_CRC128:
-		return crc->crc128.compression_type;
-	default:
-		BUG();
-	}
-}
-
-static inline struct bch_csum crc_csum(const union bch_extent_crc *crc)
-{
-	switch (extent_crc_type(crc)) {
-	case BCH_EXTENT_CRC_NONE:
-		return (struct bch_csum) { 0 };
-	case BCH_EXTENT_CRC32:
-		return (struct bch_csum) { .lo = crc->crc32.csum };
-	case BCH_EXTENT_CRC64:
-		return (struct bch_csum) {
-			.lo = crc->crc64.csum_lo,
-			.hi = crc->crc64.csum_hi,
-		};
-	case BCH_EXTENT_CRC128:
-		return crc->crc128.csum;
-	default:
-		BUG();
-	}
-}
-
-static inline unsigned bkey_extent_is_compressed(struct bkey_s_c k)
-{
-	struct bkey_s_c_extent e;
-	const struct bch_extent_ptr *ptr;
-	const union bch_extent_crc *crc;
-	unsigned ret = 0;
-
-	switch (k.k->type) {
-	case BCH_EXTENT:
-	case BCH_EXTENT_CACHED:
-		e = bkey_s_c_to_extent(k);
-
-		extent_for_each_ptr_crc(e, ptr, crc)
-			if (!ptr->cached &&
-			    crc_compression_type(crc) != BCH_COMPRESSION_NONE &&
-			    crc_compressed_size(e.k, crc) < k.k->size)
-				ret = max_t(unsigned, ret,
-					    crc_compressed_size(e.k, crc));
-	}
-
-	return ret;
-}
-
 static inline unsigned extent_current_nonce(struct bkey_s_c_extent e)
 {
-	const union bch_extent_crc *crc;
+	struct bch_extent_crc_unpacked crc;
+	const union bch_extent_entry *i;
 
-	extent_for_each_crc(e, crc)
-		if (bch2_csum_type_is_encryption(crc_csum_type(crc)))
-			return crc_offset(crc) + crc_nonce(crc);
+	extent_for_each_crc(e, crc, i)
+		if (bch2_csum_type_is_encryption(crc.csum_type))
+			return crc.offset + crc.nonce;
 
 	return 0;
 }

@@ -405,13 +405,13 @@ void bch2_mark_metadata_bucket(struct bch_dev *ca, struct bucket *g,
 
 /* Reverting this until the copygc + compression issue is fixed: */
 
-static int __disk_sectors(const union bch_extent_crc *crc, unsigned sectors)
+static int __disk_sectors(struct bch_extent_crc_unpacked crc, unsigned sectors)
 {
 	if (!sectors)
 		return 0;
 
-	return max(1U, DIV_ROUND_UP(sectors * crc_compressed_size(NULL, crc),
-				    crc_uncompressed_size(NULL, crc)));
+	return max(1U, DIV_ROUND_UP(sectors * crc.compressed_size,
+				    crc.uncompressed_size));
 }
 
 /*
@@ -421,8 +421,8 @@ static int __disk_sectors(const union bch_extent_crc *crc, unsigned sectors)
  */
 static void bch2_mark_pointer(struct bch_fs *c,
 			     struct bkey_s_c_extent e,
-			     const union bch_extent_crc *crc,
 			     const struct bch_extent_ptr *ptr,
+			     struct bch_extent_crc_unpacked crc,
 			     s64 sectors, enum s_alloc type,
 			     struct bch_fs_usage *stats,
 			     u64 journal_seq, unsigned flags)
@@ -435,7 +435,7 @@ static void bch2_mark_pointer(struct bch_fs *c,
 		? BUCKET_BTREE : BUCKET_DATA;
 	u64 v;
 
-	if (crc_compression_type(crc)) {
+	if (crc.compression_type) {
 		unsigned old_sectors, new_sectors;
 
 		if (sectors > 0) {
@@ -541,7 +541,7 @@ static void bch2_mark_extent(struct bch_fs *c, struct bkey_s_c_extent e,
 			    u64 journal_seq, unsigned flags)
 {
 	const struct bch_extent_ptr *ptr;
-	const union bch_extent_crc *crc;
+	struct bch_extent_crc_unpacked crc;
 	enum s_alloc type = metadata ? S_META : S_DIRTY;
 	unsigned replicas = 0;
 
@@ -549,7 +549,7 @@ static void bch2_mark_extent(struct bch_fs *c, struct bkey_s_c_extent e,
 	BUG_ON(!sectors);
 
 	extent_for_each_ptr_crc(e, ptr, crc) {
-		bch2_mark_pointer(c, e, crc, ptr, sectors, type,
+		bch2_mark_pointer(c, e, ptr, crc, sectors, type,
 				  stats, journal_seq, flags);
 		replicas += !ptr->cached;
 	}

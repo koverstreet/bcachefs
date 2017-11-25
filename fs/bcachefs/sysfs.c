@@ -272,18 +272,18 @@ static ssize_t bch2_compression_stats(struct bch_fs *c, char *buf)
 		if (k.k->type == BCH_EXTENT) {
 			struct bkey_s_c_extent e = bkey_s_c_to_extent(k);
 			const struct bch_extent_ptr *ptr;
-			const union bch_extent_crc *crc;
+			struct bch_extent_crc_unpacked crc;
 
 			extent_for_each_ptr_crc(e, ptr, crc) {
-				if (crc_compression_type(crc) == BCH_COMPRESSION_NONE) {
+				if (crc.compression_type == BCH_COMPRESSION_NONE) {
 					nr_uncompressed_extents++;
 					uncompressed_sectors += e.k->size;
 				} else {
 					nr_compressed_extents++;
 					compressed_sectors_compressed +=
-						crc_compressed_size(e.k, crc);
+						crc.compressed_size;
 					compressed_sectors_uncompressed +=
-						crc_uncompressed_size(e.k, crc);
+						crc.uncompressed_size;
 				}
 
 				/* only looking at the first ptr */

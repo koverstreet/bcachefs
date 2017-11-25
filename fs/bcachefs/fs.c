@@ -654,17 +654,17 @@ static int bch2_fill_extent(struct fiemap_extent_info *info,
 	if (bkey_extent_is_data(&k->k)) {
 		struct bkey_s_c_extent e = bkey_i_to_s_c_extent(k);
 		const struct bch_extent_ptr *ptr;
-		const union bch_extent_crc *crc;
+		struct bch_extent_crc_unpacked crc;
 		int ret;
 
 		extent_for_each_ptr_crc(e, ptr, crc) {
 			int flags2 = 0;
 			u64 offset = ptr->offset;
 
-			if (crc_compression_type(crc))
+			if (crc.compression_type)
 				flags2 |= FIEMAP_EXTENT_ENCODED;
 			else
-				offset += crc_offset(crc);
+				offset += crc.offset;
 
 			if ((offset & (PAGE_SECTORS - 1)) ||
 			    (e.k->size & (PAGE_SECTORS - 1)))
