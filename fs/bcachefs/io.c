@@ -866,6 +866,7 @@ static struct promote_op *promote_alloc(struct bch_fs *c,
 		 */
 		op->write.op.pos.offset = iter.bi_sector;
 	}
+
 	bch2_migrate_write_init(c, &op->write,
 				c->fastest_devs,
 				k, NULL,
@@ -883,9 +884,6 @@ static bool should_promote(struct bch_fs *c,
 	if (!(flags & BCH_READ_MAY_PROMOTE))
 		return false;
 
-	if (flags & BCH_READ_IN_RETRY)
-		return false;
-
 	if (percpu_ref_is_dying(&c->writes))
 		return false;
 
@@ -899,6 +897,13 @@ static bool should_promote(struct bch_fs *c,
 #define READ_RETRY		2
 #define READ_ERR		3
 
+enum rbio_context {
+	RBIO_CONTEXT_NULL,
+	RBIO_CONTEXT_HIGHPRI,
+	RBIO_CONTEXT_UNBOUND,
+	RBIO_CONTEXT_FS,
+};
+
 static inline struct bch_read_bio *
 bch2_rbio_parent(struct bch_read_bio *rbio)
 {
@@ -907,14 +912,14 @@ bch2_rbio_parent(struct bch_read_bio *rbio)
 
 __always_inline
 static void bch2_rbio_punt(struct bch_read_bio *rbio, work_func_t fn,
+			   enum rbio_context context,
 			   struct workqueue_struct *wq)
 {
-
-	if (!wq || rbio->process_context) {
+	if (context <= rbio->context) {
 		fn(&rbio->work);
 	} else {
 		rbio->work.func		= fn;
-		rbio->process_context	= true;
+		rbio->context		= context;
 		queue_work(wq, &rbio->work);
 	}
 }
@@ -952,7 +957,7 @@ static void bch2_rbio_retry(struct work_struct *work)
 	struct bch_fs *c		= rbio->c;
 	struct bvec_iter iter		= rbio->bvec_iter;
 	unsigned flags			= rbio->flags;
-	u64 inode			= rbio->inode;
+	u64 inode			= rbio->pos.inode;
 	struct bch_devs_mask avoid;
 
 	trace_read_retry(&rbio->bio);
@@ -969,6 +974,7 @@ static void bch2_rbio_retry(struct work_struct *work)
 
 	flags |= BCH_READ_MUST_CLONE;
 	flags |= BCH_READ_IN_RETRY;
+	flags &= ~BCH_READ_MAY_PROMOTE;
 
 	__bch2_read(c, rbio, iter, inode, &avoid, flags);
 }
@@ -984,46 +990,144 @@ static void bch2_rbio_error(struct bch_read_bio *rbio, int retry, int error)
 		bch2_rbio_parent(rbio)->bio.bi_status = error;
 		bch2_rbio_done(rbio);
 	} else {
-		bch2_rbio_punt(rbio, bch2_rbio_retry, rbio->c->wq);
+		bch2_rbio_punt(rbio, bch2_rbio_retry,
+			       RBIO_CONTEXT_FS, rbio->c->wq);
 	}
 }
 
-static int bch2_rbio_checksum_uncompress(struct bio *dst,
-					 struct bch_read_bio *rbio)
+static void bch2_rbio_narrow_crcs(struct bch_read_bio *rbio)
 {
 	struct bch_fs *c = rbio->c;
+	struct btree_iter iter;
+	struct bkey_s_c k;
+	struct bkey_s_extent e;
+	BKEY_PADDED(k) new;
+	struct bch_csum csum;
+	struct nonce nonce; /* encrypted csums can't be narrowed */
+	struct bvec_iter saved_iter = rbio->bio.bi_iter;
+	int ret;
+
+	bch2_btree_iter_init(&iter, c, BTREE_ID_EXTENTS, rbio->pos,
+			     BTREE_ITER_INTENT);
+retry:
+	k = bch2_btree_iter_peek(&iter);
+	if (IS_ERR_OR_NULL(k.k))
+		goto out;
+
+	if (!bkey_extent_is_data(k.k))
+		goto out;
+
+	bkey_reassemble(&new.k, k);
+	e = bkey_i_to_s_extent(&new.k);
+
+	if (!bch2_extent_matches_ptr(c, e,
+				     rbio->pick.ptr,
+				     rbio->pos.offset -
+				     rbio->pick.crc.offset))
+		goto out;
+
+	/*
+	 * The data we read in is for rbio->pos.offset - rbio->pick.crc.offset,
+	 * but the data currently starts at bkey_start_offset(e.k):
+	 */
+	rbio->bio.bi_iter = saved_iter;
+	bio_advance(&rbio->bio,
+		    (bkey_start_offset(e.k) -
+		     (rbio->pos.offset - rbio->pick.crc.offset)) << 9);
+
+	BUG_ON(rbio->bio.bi_iter.bi_size < e.k->size << 9);
+	rbio->bio.bi_iter.bi_size = e.k->size << 9;
+
+	csum = bch2_checksum_bio(c, rbio->pick.crc.csum_type,
+				 nonce, &rbio->bio);
+
+	if (!bch2_extent_narrow_crcs(e, rbio->pick.crc.csum_type, csum))
+		goto out;
+
+	ret = bch2_btree_insert_at(c, NULL, NULL, NULL,
+				   BTREE_INSERT_ATOMIC|
+				   BTREE_INSERT_NOFAIL,
+				   BTREE_INSERT_ENTRY(&iter, &new.k));
+	if (ret == -EINTR)
+		goto retry;
+out:
+	bch2_btree_iter_unlock(&iter);
+	rbio->bio.bi_iter = saved_iter;
+}
+
+static bool should_narrow_crcs(struct bkey_s_c_extent e,
+			       struct extent_pick_ptr *pick,
+			       unsigned flags)
+{
+	struct bch_extent_crc_unpacked crc;
+	const union bch_extent_entry *i;
+
+	if (!pick->crc.csum_type)
+		return false;
+
+	if (bch2_csum_type_is_encryption(pick->crc.csum_type))
+		return false;
+
+	if (flags & BCH_READ_IN_RETRY)
+		return false;
+
+	extent_for_each_crc(e, crc, i)
+		if (!crc.compression_type &&
+		    crc.csum_type &&
+		    e.k->size != crc.uncompressed_size)
+			return true;
+
+	return false;
+}
+
+/* Inner part that may run in process context */
+static void __bch2_read_endio(struct work_struct *work)
+{
+	struct bch_read_bio *rbio =
+		container_of(work, struct bch_read_bio, work);
+	struct bch_fs *c = rbio->c;
 	struct bio *src = &rbio->bio;
+	struct bio *dst = &bch2_rbio_parent(rbio)->bio;
 	struct bvec_iter dst_iter = rbio->bvec_iter;
 	struct nonce nonce = extent_nonce(rbio->version,
 				rbio->pick.crc.nonce,
 				rbio->pick.crc.uncompressed_size,
 				rbio->pick.crc.compression_type);
+	unsigned csum_type = rbio->pick.crc.csum_type;
 	struct bch_csum csum;
 	int ret = 0;
 
-	/*
-	 * reset iterator for checksumming and copying bounced data: here we've
-	 * set rbio->compressed_size to the amount of data we actually read,
-	 * which was not necessarily the full extent if we were only bouncing
-	 * in order to promote
-	 */
+	/* Reset iterator for checksumming and copying bounced data: */
 	if (rbio->bounce) {
-		src->bi_iter.bi_size	= rbio->pick.crc.compressed_size << 9;
-		src->bi_iter.bi_idx	= 0;
-		src->bi_iter.bi_bvec_done = 0;
+		rbio->bio.bi_iter.bi_size	= rbio->read_full
+			? rbio->pick.crc.compressed_size << 9
+			: rbio->bvec_iter.bi_size;
+		rbio->bio.bi_iter.bi_idx	= 0;
+		rbio->bio.bi_iter.bi_bvec_done	= 0;
 	} else {
-		src->bi_iter = rbio->bvec_iter;
+		rbio->bio.bi_iter		= rbio->bvec_iter;
 	}
 
-	csum = bch2_checksum_bio(c, rbio->pick.crc.csum_type, nonce, src);
+	csum = bch2_checksum_bio(c, csum_type, nonce, src);
 	if (bch2_dev_io_err_on(bch2_crc_cmp(rbio->pick.crc.csum, csum),
 			       rbio->pick.ca,
 			"data checksum error, inode %llu offset %llu: expected %0llx%0llx got %0llx%0llx (type %u)",
-			rbio->inode, (u64) rbio->bvec_iter.bi_sector << 9,
+			rbio->pos.inode, (u64) rbio->bvec_iter.bi_sector,
 			rbio->pick.crc.csum.hi, rbio->pick.crc.csum.lo,
-			csum.hi, csum.lo,
-			rbio->pick.crc.csum_type))
+			csum.hi, csum.lo, csum_type))
 		ret = -EIO;
+
+	if (unlikely(rbio->narrow_crcs) && !ret)
+		bch2_rbio_narrow_crcs(rbio);
+
+	/*
+	 * If we read in all live data, adjust crc.offset to point to the start
+	 * of the data we actually want - do this after calling
+	 * bch2_rbio_narrow_crcs();
+	 */
+	if (rbio->read_full)
+		rbio->pick.crc.offset +=
+			rbio->bvec_iter.bi_sector - rbio->pos.offset;
 
 	/*
 	 * If there was a checksum error, still copy the data back - unless it
@@ -1031,13 +1135,13 @@ static int bch2_rbio_checksum_uncompress(struct bio *dst,
 	 */
 	if (rbio->pick.crc.compression_type != BCH_COMPRESSION_NONE) {
 		if (!ret) {
-			bch2_encrypt_bio(c, rbio->pick.crc.csum_type, nonce, src);
+			bch2_encrypt_bio(c, csum_type, nonce, src);
 			ret = bch2_bio_uncompress(c, src, dst,
-						 dst_iter, rbio->pick.crc);
+						  dst_iter, rbio->pick.crc);
 			if (ret)
 				__bcache_io_error(c, "decompression error");
 		}
-	} else if (rbio->bounce) {
+	} else {
 		bio_advance(src, rbio->pick.crc.offset << 9);
 
 		/* don't need to decrypt the entire bio: */
@@ -1046,26 +1150,12 @@ static int bch2_rbio_checksum_uncompress(struct bio *dst,
 
 		nonce = nonce_add(nonce, rbio->pick.crc.offset << 9);
 
-		bch2_encrypt_bio(c, rbio->pick.crc.csum_type,
-				nonce, src);
+		bch2_encrypt_bio(c, csum_type, nonce, src);
 
-		bio_copy_data_iter(dst, &dst_iter,
-				   src, &src->bi_iter);
-	} else {
-		bch2_encrypt_bio(c, rbio->pick.crc.csum_type, nonce, src);
+		if (rbio->bounce)
+			bio_copy_data_iter(dst, &dst_iter, src, &src->bi_iter);
 	}
 
-	return ret;
-}
-
-/* Inner part that may run in process context */
-static void __bch2_read_endio(struct work_struct *work)
-{
-	struct bch_read_bio *rbio =
-		container_of(work, struct bch_read_bio, work);
-	int ret;
-
-	ret = bch2_rbio_checksum_uncompress(&bch2_rbio_parent(rbio)->bio, rbio);
 	if (ret) {
 		/*
 		 * Checksum error: if the bio wasn't bounced, we may have been
@@ -1081,11 +1171,13 @@ static void __bch2_read_endio(struct work_struct *work)
 		return;
 	}
 
+	if (unlikely(rbio->flags & BCH_READ_IN_RETRY))
+		return;
+
 	if (rbio->promote)
 		promote_start(rbio->promote, rbio);
 
-	if (likely(!(rbio->flags & BCH_READ_IN_RETRY)))
-		bch2_rbio_done(rbio);
+	bch2_rbio_done(rbio);
 }
 
 static void bch2_read_endio(struct bio *bio)
@@ -1094,6 +1186,7 @@ static void bch2_read_endio(struct bio *bio)
 		container_of(bio, struct bch_read_bio, bio);
 	struct bch_fs *c = rbio->c;
 	struct workqueue_struct *wq = NULL;
+	enum rbio_context context = RBIO_CONTEXT_NULL;
 
 	percpu_ref_put(&rbio->pick.ca->io_ref);
 
@@ -1117,13 +1210,15 @@ static void bch2_read_endio(struct bio *bio)
 		return;
 	}
 
-	if (rbio->pick.crc.compression_type ||
-	    bch2_csum_type_is_encryption(rbio->pick.crc.csum_type))
-		wq = system_unbound_wq;
+	if (rbio->narrow_crcs)
+		context = RBIO_CONTEXT_FS,	wq = c->wq;
+	else if (rbio->pick.crc.compression_type ||
+		 bch2_csum_type_is_encryption(rbio->pick.crc.csum_type))
+		context = RBIO_CONTEXT_UNBOUND,	wq = system_unbound_wq;
 	else if (rbio->pick.crc.csum_type)
-		wq = system_highpri_wq;
+		context = RBIO_CONTEXT_HIGHPRI,	wq = system_highpri_wq;
 
-	bch2_rbio_punt(rbio, __bch2_read_endio, wq);
+	bch2_rbio_punt(rbio, __bch2_read_endio, context, wq);
 }
 
 int __bch2_read_extent(struct bch_fs *c, struct bch_read_bio *orig,
@@ -1132,8 +1227,7 @@ int __bch2_read_extent(struct bch_fs *c, struct bch_read_bio *orig,
 {
 	struct bch_read_bio *rbio;
 	struct promote_op *promote_op = NULL;
-	unsigned skip = iter.bi_sector - bkey_start_offset(k.k);
-	bool bounce = false, split, read_full = false;
+	bool bounce = false, split, read_full = false, narrow_crcs;
 	int ret = 0;
 
 	bch2_increment_clock(c, bio_sectors(&orig->bio), READ);
@@ -1142,10 +1236,10 @@ int __bch2_read_extent(struct bch_fs *c, struct bch_read_bio *orig,
 	EBUG_ON(bkey_start_offset(k.k) > iter.bi_sector ||
 		k.k->p.offset < bvec_iter_end_sector(iter));
 
-	/*
-	 * note: if compression_type and crc_type both == none, then
-	 * compressed/uncompressed size is zero
-	 */
+	narrow_crcs = should_narrow_crcs(bkey_s_c_to_extent(k), pick, flags);
+	if (narrow_crcs)
+		flags |= BCH_READ_MUST_BOUNCE;
+
 	if (pick->crc.compression_type != BCH_COMPRESSION_NONE ||
 	    (pick->crc.csum_type != BCH_CSUM_NONE &&
 	     (bvec_iter_sectors(iter) != pick->crc.uncompressed_size ||
@@ -1194,6 +1288,10 @@ int __bch2_read_extent(struct bch_fs *c, struct bch_read_bio *orig,
 		BUG_ON(bio_flagged(&rbio->bio, BIO_CHAIN));
 	}
 
+	BUG_ON((pick->crc.csum_type ||
+		pick->crc.compression_type) &&
+	       bio_sectors(&rbio->bio) != pick->crc.compressed_size);
+
 	rbio->c			= c;
 
 	if (split)
@@ -1203,21 +1301,16 @@ int __bch2_read_extent(struct bch_fs *c, struct bch_read_bio *orig,
 
 	rbio->bvec_iter		= iter;
 	rbio->flags		= flags;
+	rbio->read_full		= read_full,
 	rbio->bounce		= bounce;
 	rbio->split		= split;
-	rbio->process_context	= false;
+	rbio->narrow_crcs	= narrow_crcs;
+	rbio->context		= 0;
 	rbio->retry		= 0;
 	rbio->pick		= *pick;
-	/*
-	 * crc.compressed_size will be 0 if there wasn't any checksum
-	 * information, also we need to stash the original size of the bio if we
-	 * bounced (which isn't necessarily the original key size, if we bounced
-	 * only for promoting)
-	 */
-	rbio->pick.crc.compressed_size = bio_sectors(&rbio->bio);
 	rbio->version		= k.k->version;
 	rbio->promote		= promote_op;
-	rbio->inode		= k.k->p.inode;
+	rbio->pos		= bkey_start_pos(k.k);
 	INIT_WORK(&rbio->work, NULL);
 
 	bio_set_dev(&rbio->bio, pick->ca->disk_sb.bdev);
@@ -1225,10 +1318,9 @@ int __bch2_read_extent(struct bch_fs *c, struct bch_read_bio *orig,
 	rbio->bio.bi_iter.bi_sector = pick->ptr.offset;
 	rbio->bio.bi_end_io	= bch2_read_endio;
 
-	if (read_full)
-		rbio->pick.crc.offset += skip;
-	else
-		rbio->bio.bi_iter.bi_sector += skip;
+	if (!read_full)
+		rbio->bio.bi_iter.bi_sector +=
+			rbio->bvec_iter.bi_sector - rbio->pos.offset;
 
 	rbio->submit_time_us = local_clock_us();
 
@@ -1243,7 +1335,7 @@ int __bch2_read_extent(struct bch_fs *c, struct bch_read_bio *orig,
 	} else {
 		submit_bio_wait(&rbio->bio);
 
-		rbio->process_context = true;
+		rbio->context = RBIO_CONTEXT_FS;
 		bch2_read_endio(&rbio->bio);
 
 		ret = rbio->retry;
