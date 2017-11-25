@@ -271,31 +271,36 @@ void bch2_extent_crc_narrow_pointers(struct bkey_s_extent e,
  *
  * note: doesn't work with encryption
  */
-void bch2_extent_narrow_crcs(struct bkey_s_extent e)
+bool bch2_extent_narrow_crcs(struct bkey_s_extent e,
+			     unsigned csum_type,
+			     struct bch_csum csum)
 {
 	struct bch_extent_crc_unpacked u;
 	union bch_extent_crc *crc;
 	union bch_extent_entry *i;
-	bool have_wide = false, have_narrow = false;
-	struct bch_csum csum = { 0 };
-	unsigned csum_type = 0;
+	bool did_work = false;
 
-	extent_for_each_crc(e, u, i) {
-		if (u.compression_type ||
-		    bch2_csum_type_is_encryption(u.csum_type))
-			continue;
+	if (!csum_type) {
+		/* Find a csum that covers only existing live data: */
+		extent_for_each_crc(e, u, i) {
+			if (u.compression_type)
+				continue;
 
-		if (u.uncompressed_size != e.k->size) {
-			have_wide = true;
-		} else {
-			have_narrow = true;
-			csum = u.csum;
-			csum_type = u.csum_type;
+			if (bch2_csum_type_is_encryption(u.csum_type))
+				continue;
+
+			if (u.uncompressed_size == e.k->size) {
+				csum = u.csum;
+				csum_type = u.csum_type;
+			}
 		}
 	}
 
-	if (!have_wide || !have_narrow)
-		return;
+	if (!csum_type)
+		return false;
+
+	if (bch2_csum_type_is_encryption(csum_type))
+		return false;
 
 	extent_for_each_entry(e, i) {
 		if (!extent_entry_is_crc(i))
@@ -305,6 +310,9 @@ void bch2_extent_narrow_crcs(struct bkey_s_extent e)
 		u = bch2_extent_crc_unpack(e.k, crc);
 
 		if (u.compression_type)
+			continue;
+
+		if (bch2_csum_type_is_encryption(u.csum_type))
 			continue;
 
 		if (u.uncompressed_size != e.k->size) {
@@ -346,8 +354,14 @@ void bch2_extent_narrow_crcs(struct bkey_s_extent e)
 				crc->crc128.csum		= csum;
 				break;
 			}
+
+			did_work = true;
 		}
 	}
+
+	if (did_work)
+		bch2_extent_drop_redundant_crcs(e);
+	return did_work;
 }
 
 void bch2_extent_drop_redundant_crcs(struct bkey_s_extent e)

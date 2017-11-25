@@ -412,7 +412,7 @@ static inline unsigned extent_current_nonce(struct bkey_s_c_extent e)
 	return 0;
 }
 
-void bch2_extent_narrow_crcs(struct bkey_s_extent);
+bool bch2_extent_narrow_crcs(struct bkey_s_extent, unsigned, struct bch_csum);
 void bch2_extent_drop_redundant_crcs(struct bkey_s_extent);
 
 void __bch2_extent_drop_ptr(struct bkey_s_extent, struct bch_extent_ptr *);
