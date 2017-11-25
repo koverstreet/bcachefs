@@ -145,11 +145,11 @@ static inline void zlib_set_workspace(z_stream *strm, void *workspace)
 }
 
 static int __bio_uncompress(struct bch_fs *c, struct bio *src,
-			    void *dst_data, struct bch_extent_crc128 crc)
+			    void *dst_data, struct bch_extent_crc_unpacked crc)
 {
 	struct bbuf src_data = { NULL };
 	size_t src_len = src->bi_iter.bi_size;
-	size_t dst_len = crc_uncompressed_size(NULL, &crc) << 9;
+	size_t dst_len = crc.uncompressed_size << 9;
 	int ret;
 
 	src_data = bio_map_or_bounce(c, src, READ);
@@ -212,17 +212,17 @@ err:
 }
 
 int bch2_bio_uncompress_inplace(struct bch_fs *c, struct bio *bio,
-			       unsigned live_data_sectors,
-			       struct bch_extent_crc128 crc)
+				unsigned live_data_sectors,
+				struct bch_extent_crc_unpacked crc)
 {
 	struct bbuf dst_data = { NULL };
-	size_t dst_len = crc_uncompressed_size(NULL, &crc) << 9;
+	size_t dst_len = crc.uncompressed_size << 9;
 	int ret = -ENOMEM;
 
 	BUG_ON(DIV_ROUND_UP(live_data_sectors, PAGE_SECTORS) > bio->bi_max_vecs);
 
-	if (crc_uncompressed_size(NULL, &crc) > c->sb.encoded_extent_max ||
-	    crc_compressed_size(NULL, &crc)   > c->sb.encoded_extent_max)
+	if (crc.uncompressed_size	> c->sb.encoded_extent_max ||
+	    crc.compressed_size		> c->sb.encoded_extent_max)
 		return -EIO;
 
 	dst_data = __bounce_alloc(c, dst_len, WRITE);
@@ -263,14 +263,14 @@ use_mempool:
 
 int bch2_bio_uncompress(struct bch_fs *c, struct bio *src,
 		       struct bio *dst, struct bvec_iter dst_iter,
-		       struct bch_extent_crc128 crc)
+		       struct bch_extent_crc_unpacked crc)
 {
 	struct bbuf dst_data = { NULL };
-	size_t dst_len = crc_uncompressed_size(NULL, &crc) << 9;
+	size_t dst_len = crc.uncompressed_size << 9;
 	int ret = -ENOMEM;
 
-	if (crc_uncompressed_size(NULL, &crc) > c->sb.encoded_extent_max ||
-	    crc_compressed_size(NULL, &crc)   > c->sb.encoded_extent_max)
+	if (crc.uncompressed_size	> c->sb.encoded_extent_max ||
+	    crc.compressed_size		> c->sb.encoded_extent_max)
 		return -EIO;
 
 	dst_data = dst_len == dst_iter.bi_size

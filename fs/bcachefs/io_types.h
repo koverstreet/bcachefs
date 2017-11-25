@@ -3,17 +3,12 @@
 
 #include "btree_types.h"
 #include "buckets_types.h"
+#include "extents_types.h"
 #include "keylist_types.h"
 #include "super_types.h"
 
 #include <linux/llist.h>
 #include <linux/workqueue.h>
-
-struct extent_pick_ptr {
-	struct bch_extent_crc128	crc;
-	struct bch_extent_ptr		ptr;
-	struct bch_dev			*ca;
-};
 
 struct bch_read_bio {
 	struct bch_fs		*c;
@@ -113,7 +108,7 @@ struct bch_write_op {
 	struct bversion		version;
 
 	/* For BCH_WRITE_DATA_COMPRESSED: */
-	struct bch_extent_crc128 crc;
+	struct bch_extent_crc_unpacked crc;
 	unsigned		size;
 
 	struct bch_devs_mask	*devs;

@@ -2,6 +2,8 @@
 #define _BCACHEFS_FS_IO_H
 
 #include "buckets.h"
+#include "io_types.h"
+
 #include <linux/uio.h>
 
 int bch2_set_page_dirty(struct page *);

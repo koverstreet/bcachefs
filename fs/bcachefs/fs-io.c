@@ -749,7 +749,7 @@ static void bchfs_read(struct bch_fs *c, struct btree_iter *iter,
 			bch2_add_page_sectors(bio, k);
 
 		if (!bkey_extent_is_allocation(k.k) ||
-		    bkey_extent_is_compressed(k))
+		    bch2_extent_is_compressed(k))
 			bch2_mark_pages_unalloc(bio);
 
 		if (pick.ca) {
@@ -2318,7 +2318,7 @@ static long bch2_fallocate(struct bch_inode_info *inode, int mode,
 		reservation.v.nr_replicas = bch2_extent_nr_dirty_ptrs(k);
 
 		if (reservation.v.nr_replicas < replicas ||
-		    bkey_extent_is_compressed(k)) {
+		    bch2_extent_is_compressed(k)) {
 			ret = bch2_disk_reservation_get(c, &disk_res,
 						       sectors, 0);
 			if (ret)
