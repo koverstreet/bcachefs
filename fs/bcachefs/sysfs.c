@@ -163,6 +163,8 @@ read_attribute(has_data);
 read_attribute(alloc_debug);
 
 read_attribute(read_realloc_races);
+read_attribute(extent_migrate_done);
+read_attribute(extent_migrate_raced);
 
 rw_attribute(journal_write_delay_ms);
 rw_attribute(journal_reclaim_delay_ms);
@@ -323,6 +325,10 @@ SHOW(bch2_fs)
 
 	sysfs_print(read_realloc_races,
 		    atomic_long_read(&c->read_realloc_races));
+	sysfs_print(extent_migrate_done,
+		    atomic_long_read(&c->extent_migrate_done));
+	sysfs_print(extent_migrate_raced,
+		    atomic_long_read(&c->extent_migrate_raced));
 
 	sysfs_printf(btree_gc_periodic, "%u",	(int) c->btree_gc_periodic);
 
@@ -494,6 +500,8 @@ struct attribute *bch2_fs_internal_files[] = {
 	&sysfs_journal_pins,
 
 	&sysfs_read_realloc_races,
+	&sysfs_extent_migrate_done,
+	&sysfs_extent_migrate_raced,
 
 	&sysfs_trigger_journal_flush,
 	&sysfs_trigger_btree_coalesce,
