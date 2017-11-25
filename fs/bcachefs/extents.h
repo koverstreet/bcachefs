@@ -41,9 +41,17 @@ bool bch2_extent_normalize(struct bch_fs *, struct bkey_s);
 void bch2_extent_mark_replicas_cached(struct bch_fs *,
 				     struct bkey_s_extent, unsigned);
 
+const struct bch_extent_ptr *
+bch2_extent_has_device(struct bkey_s_c_extent, unsigned);
+
 unsigned bch2_extent_nr_ptrs(struct bkey_s_c_extent);
 unsigned bch2_extent_nr_dirty_ptrs(struct bkey_s_c);
 unsigned bch2_extent_is_compressed(struct bkey_s_c);
+
+struct bch_extent_ptr *bch2_extent_matches_ptr(struct bch_fs *,
+					       struct bkey_s_extent,
+					       struct bch_extent_ptr,
+					       u64);
 
 static inline bool bkey_extent_is_data(const struct bkey *k)
 {
@@ -410,15 +418,6 @@ void bch2_extent_drop_redundant_crcs(struct bkey_s_extent);
 void __bch2_extent_drop_ptr(struct bkey_s_extent, struct bch_extent_ptr *);
 void bch2_extent_drop_ptr(struct bkey_s_extent, struct bch_extent_ptr *);
 void bch2_extent_drop_ptr_idx(struct bkey_s_extent, unsigned);
-
-const struct bch_extent_ptr *
-bch2_extent_has_device(struct bkey_s_c_extent, unsigned);
-struct bch_extent_ptr *
-bch2_extent_find_ptr(struct bch_fs *, struct bkey_s_extent,
-		     struct bch_extent_ptr);
-struct bch_extent_ptr *
-bch2_extent_find_matching_ptr(struct bch_fs *, struct bkey_s_extent,
-			      struct bkey_s_c_extent);
 
 bool bch2_cut_front(struct bpos, struct bkey_i *);
 bool bch2_cut_back(struct bpos, struct bkey *);

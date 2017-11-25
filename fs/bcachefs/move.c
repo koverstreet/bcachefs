@@ -12,35 +12,23 @@
 
 #include <trace/events/bcachefs.h>
 
-static struct bch_extent_ptr *bkey_find_ptr(struct bch_fs *c,
-					    struct bkey_s_extent e,
-					    struct bch_extent_ptr ptr)
-{
-	struct bch_extent_ptr *ptr2;
-	struct bch_dev *ca = c->devs[ptr.dev];
-
-	extent_for_each_ptr(e, ptr2)
-		if (ptr2->dev == ptr.dev &&
-		    ptr2->gen == ptr.gen &&
-		    PTR_BUCKET_NR(ca, ptr2) ==
-		    PTR_BUCKET_NR(ca, &ptr))
-			return ptr2;
-
-	return NULL;
-}
-
 static struct bch_extent_ptr *bch2_migrate_matching_ptr(struct migrate_write *m,
 							struct bkey_s_extent e)
 {
 	const struct bch_extent_ptr *ptr;
-	struct bch_extent_ptr *ret;
+	struct bch_extent_crc_unpacked crc;
+	struct bch_extent_ptr *ret = NULL;
 
-	if (m->move)
-		ret = bkey_find_ptr(m->op.c, e, m->move_ptr);
-	else
-		extent_for_each_ptr(bkey_i_to_s_c_extent(&m->key), ptr)
-			if ((ret = bkey_find_ptr(m->op.c, e, *ptr)))
-				break;
+	extent_for_each_ptr_crc(bkey_i_to_s_c_extent(&m->key), ptr, crc) {
+		if (m->move && memcmp(ptr, &m->move_ptr, sizeof(*ptr)))
+			continue;
+
+		ret = bch2_extent_matches_ptr(m->op.c, e, *ptr,
+					      bkey_start_offset(&m->key.k) -
+					      crc.offset);
+		if (ret)
+			break;
+	}
 
 	return ret;
 }
@@ -101,7 +89,7 @@ static int bch2_migrate_index_update(struct bch_write_op *op)
 
 			if (m->move) {
 				nr_new_dirty -= !ptr->cached;
-				__bch2_extent_drop_ptr(e, ptr);
+				bch2_extent_drop_ptr(e, ptr);
 			}
 
 			BUG_ON(nr_new_dirty < 0);
@@ -112,7 +100,6 @@ static int bch2_migrate_index_update(struct bch_write_op *op)
 			e.k->u64s += bkey_val_u64s(insert.k);
 
 			bch2_extent_narrow_crcs(e);
-			bch2_extent_drop_redundant_crcs(e);
 			bch2_extent_normalize(c, e.s);
 			bch2_extent_mark_replicas_cached(c, e, nr_new_dirty);
 
