@@ -86,6 +86,9 @@ static int bch2_migrate_index_update(struct bch_write_op *op)
 					goto nomatch;
 
 		ptr = bch2_migrate_matching_ptr(m, e);
+		if (!ptr)
+			atomic_long_inc(&c->extent_migrate_raced);
+
 		if (ptr) {
 			int nr_new_dirty = bch2_extent_nr_dirty_ptrs(insert.s_c);
 			unsigned insert_flags =
@@ -119,6 +122,9 @@ static int bch2_migrate_index_update(struct bch_write_op *op)
 					BTREE_INSERT_ENTRY(&iter, &new.k));
 			if (ret && ret != -EINTR)
 				break;
+
+			if (!ret)
+				atomic_long_inc(&c->extent_migrate_done);
 		} else {
 nomatch:
 			bch2_btree_iter_advance_pos(&iter);

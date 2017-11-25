@@ -726,6 +726,8 @@ struct bch_fs {
 
 	/* The rest of this all shows up in sysfs */
 	atomic_long_t		read_realloc_races;
+	atomic_long_t		extent_migrate_done;
+	atomic_long_t		extent_migrate_raced;
 
 	unsigned		btree_gc_periodic:1;
 	unsigned		foreground_write_ratelimit_enabled:1;
