@@ -177,6 +177,24 @@ unsigned bch2_extent_is_compressed(struct bkey_s_c k)
 	return ret;
 }
 
+struct bch_extent_ptr *bch2_extent_matches_ptr(struct bch_fs *c,
+					       struct bkey_s_extent e,
+					       struct bch_extent_ptr m,
+					       u64 offset)
+{
+	struct bch_extent_ptr *ptr;
+	struct bch_extent_crc_unpacked crc;
+
+	extent_for_each_ptr_crc(e, ptr, crc)
+		if (ptr->dev	== m.dev &&
+		    ptr->gen	== m.gen &&
+		    (s64) ptr->offset + crc.offset - bkey_start_offset(e.k) ==
+		    (s64) m.offset  - offset)
+			return ptr;
+
+	return NULL;
+}
+
 /* Doesn't cleanup redundant crcs */
 void __bch2_extent_drop_ptr(struct bkey_s_extent e, struct bch_extent_ptr *ptr)
 {
