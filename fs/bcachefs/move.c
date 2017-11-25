@@ -99,7 +99,7 @@ static int bch2_migrate_index_update(struct bch_write_op *op)
 				    bkey_val_u64s(insert.k));
 			e.k->u64s += bkey_val_u64s(insert.k);
 
-			bch2_extent_narrow_crcs(e);
+			bch2_extent_narrow_crcs(e, 0, (struct bch_csum) { 0 });
 			bch2_extent_normalize(c, e.s);
 			bch2_extent_mark_replicas_cached(c, e, nr_new_dirty);
 

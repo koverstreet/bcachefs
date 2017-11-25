@@ -37,27 +37,22 @@ struct bch_read_bio {
 	u8			flags;
 	union {
 	struct {
-	u8			bounce:1,
+	u8			read_full:1,
+				bounce:1,
 				split:1,
-				process_context:1,
-				retry:2;
+				narrow_crcs:1,
+				retry:2,
+				context:2;
 	};
 	u8			_state;
 	};
 
 	struct extent_pick_ptr	pick;
+	/* start position we read from: */
+	struct bpos		pos;
 	struct bversion		version;
 
 	struct promote_op	*promote;
-
-	/*
-	 * If we have to retry the read (IO error, checksum failure, read stale
-	 * data (raced with allocator), we retry the portion of the parent bio
-	 * that failed (i.e. this bio's portion, bvec_iter).
-	 *
-	 * But we need to stash the inode somewhere:
-	 */
-	u64			inode;
 
 	struct work_struct	work;
 
