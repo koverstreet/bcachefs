@@ -1307,6 +1307,8 @@ static void btree_node_read_endio(struct bio *bio)
 	struct btree_read_bio *rb =
 		container_of(bio, struct btree_read_bio, bio);
 
+	bch2_latency_acct(rb->pick.ca, rb->start_time >> 10, READ);
+
 	INIT_WORK(&rb->work, btree_node_read_work);
 	schedule_work(&rb->work);
 }
@@ -1470,6 +1472,8 @@ static void btree_node_write_endio(struct bio *bio)
 	struct closure *cl		= !wbio->split ? wbio->cl : NULL;
 	struct bch_fs *c		= wbio->c;
 	struct bch_dev *ca		= wbio->ca;
+
+	bch2_latency_acct(ca, wbio->submit_time_us, WRITE);
 
 	if (bch2_dev_io_err_on(bio->bi_status, ca, "btree write") ||
 	    bch2_meta_write_fault("btree"))
