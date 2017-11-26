@@ -452,7 +452,7 @@ size_t bch2_rand_range(size_t max)
 	size_t rand;
 
 	do {
-		get_random_bytes(&rand, sizeof(rand));
+		rand = get_random_long();
 		rand &= roundup_pow_of_two(max) - 1;
 	} while (rand >= max);
 

@@ -29,6 +29,29 @@
 
 /* Allocate, free from mempool: */
 
+void bch2_latency_acct(struct bch_dev *ca, unsigned submit_time_us, int rw)
+{
+	u64 now = local_clock();
+	unsigned io_latency = (now >> 10) - submit_time_us;
+	atomic_t *latency = &ca->latency[rw];
+	unsigned old, new, v = atomic_read(latency);
+
+	do {
+		old = v;
+
+		/*
+		 * If the io latency was reasonably close to the current
+		 * latency, skip doing the update and atomic operation - most of
+		 * the time:
+		 */
+		if (abs((int) (old - io_latency)) < (old >> 1) &&
+		    now & ~(~0 << 5))
+			break;
+
+		new = ewma_add((u64) old, io_latency, 6);
+	} while ((v = atomic_cmpxchg(latency, old, new)) != old);
+}
+
 void bch2_bio_free_pages_pool(struct bch_fs *c, struct bio *bio)
 {
 	struct bio_vec *bv;
@@ -288,6 +311,8 @@ static void bch2_write_endio(struct bio *bio)
 	struct bch_write_bio *parent	= wbio->split ? wbio->parent : NULL;
 	struct bch_fs *c		= wbio->c;
 	struct bch_dev *ca		= wbio->ca;
+
+	bch2_latency_acct(ca, wbio->submit_time_us, WRITE);
 
 	if (bch2_dev_io_err_on(bio->bi_status, ca, "data write")) {
 		set_bit(ca->dev_idx, op->failed.d);
@@ -1187,6 +1212,8 @@ static void bch2_read_endio(struct bio *bio)
 	struct bch_fs *c = rbio->c;
 	struct workqueue_struct *wq = NULL;
 	enum rbio_context context = RBIO_CONTEXT_NULL;
+
+	bch2_latency_acct(rbio->pick.ca, rbio->submit_time_us, READ);
 
 	percpu_ref_put(&rbio->pick.ca->io_ref);
 
