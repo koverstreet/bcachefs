@@ -10,6 +10,7 @@ struct btree_iter;
 
 struct btree_read_bio {
 	struct bch_fs		*c;
+	unsigned		submit_time_us;
 	u64			start_time;
 	struct extent_pick_ptr	pick;
 	struct work_struct	work;

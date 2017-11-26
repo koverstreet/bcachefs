@@ -19,6 +19,7 @@
 #include "inode.h"
 #include "journal.h"
 #include "super-io.h"
+#include "util.h"
 #include "xattr.h"
 
 #include <trace/events/bcachefs.h>
@@ -565,6 +566,17 @@ out:
 	return out - buf;
 }
 
+static inline bool dev_latency_better(struct bch_dev *dev1,
+				      struct bch_dev *dev2)
+{
+	unsigned l1 = atomic_read(&dev1->latency[READ]);
+	unsigned l2 = atomic_read(&dev2->latency[READ]);
+
+	/* Pick at random, biased in favor of the faster device: */
+
+	return bch2_rand_range(l1 + l2) > l1;
+}
+
 static void extent_pick_read_device(struct bch_fs *c,
 				    struct bkey_s_c_extent e,
 				    struct bch_devs_mask *avoid,
@@ -582,12 +594,18 @@ static void extent_pick_read_device(struct bch_fs *c,
 		if (ca->mi.state == BCH_MEMBER_STATE_FAILED)
 			continue;
 
-		if (avoid && test_bit(ca->dev_idx, avoid->d))
-			continue;
+		if (avoid) {
+			if (test_bit(ca->dev_idx, avoid->d))
+				continue;
 
-		if (pick->ca && pick->ca->mi.tier < ca->mi.tier)
-			continue;
+			if (pick->ca &&
+			    test_bit(pick->ca->dev_idx, avoid->d))
+				goto use;
+		}
 
+		if (pick->ca && !dev_latency_better(ca, pick->ca))
+			continue;
+use:
 		if (!percpu_ref_tryget(&ca->io_ref))
 			continue;
 
