@@ -24,7 +24,8 @@ void bch2_wp_rescale(struct bch_fs *, struct bch_dev *,
 int bch2_alloc_read(struct bch_fs *, struct list_head *);
 int bch2_alloc_replay_key(struct bch_fs *, struct bpos);
 
-long bch2_bucket_alloc(struct bch_fs *, struct bch_dev *, enum alloc_reserve);
+int bch2_bucket_alloc(struct bch_fs *, struct bch_dev *, enum alloc_reserve, bool,
+		      struct open_bucket_ptr *);
 
 void bch2_open_bucket_put(struct bch_fs *, struct open_bucket *);
 

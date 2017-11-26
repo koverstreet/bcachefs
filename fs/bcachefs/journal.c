@@ -1571,9 +1571,11 @@ static int bch2_set_nr_journal_buckets(struct bch_fs *c, struct bch_dev *ca,
 	swap(new_bucket_seq,	ja->bucket_seq);
 
 	while (ja->nr < nr) {
+		struct open_bucket_ptr ptr;
+		size_t b;
+
 		/* must happen under journal lock, to avoid racing with gc: */
-		long b = bch2_bucket_alloc(c, ca, RESERVE_ALLOC);
-		if (b < 0) {
+		if (bch2_bucket_alloc(c, ca, RESERVE_ALLOC, false, &ptr) < 0) {
 			if (!closure_wait(&c->freelist_wait, &cl)) {
 				spin_unlock(&j->lock);
 				closure_sync(&cl);
@@ -1581,6 +1583,8 @@ static int bch2_set_nr_journal_buckets(struct bch_fs *c, struct bch_dev *ca,
 			}
 			continue;
 		}
+
+		b = sector_to_bucket(ca, ptr.ptr.offset);
 
 		bch2_mark_metadata_bucket(ca, &ca->buckets[b],
 					 BUCKET_JOURNAL, false);
