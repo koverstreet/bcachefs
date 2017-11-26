@@ -1009,12 +1009,21 @@ out:
  *
  * Returns index of bucket on success, 0 on failure
  * */
-long bch2_bucket_alloc(struct bch_fs *c, struct bch_dev *ca,
-		       enum alloc_reserve reserve)
+int bch2_bucket_alloc(struct bch_fs *c, struct bch_dev *ca,
+		      enum alloc_reserve reserve,
+		      bool may_alloc_partial,
+		      struct open_bucket_ptr *ret)
 {
 	size_t r;
 
 	spin_lock(&ca->freelist_lock);
+	if (may_alloc_partial &&
+	    ca->open_buckets_partial_nr) {
+		*ret = ca->open_buckets_partial[--ca->open_buckets_partial_nr];
+		spin_unlock(&ca->freelist_lock);
+		return 0;
+	}
+
 	if (likely(fifo_pop(&ca->free[RESERVE_NONE], r)))
 		goto out;
 
@@ -1054,11 +1063,18 @@ out:
 
 	bch2_wake_allocator(ca);
 out2:
+	*ret = (struct open_bucket_ptr) {
+		.ptr.gen	= ca->buckets[r].mark.gen,
+		.ptr.offset	= bucket_to_sector(ca, r),
+		.ptr.dev	= ca->dev_idx,
+		.sectors_free	= ca->mi.bucket_size,
+	};
+
 	ca->buckets[r].prio[READ]	= c->prio_clock[READ].hand;
 	ca->buckets[r].prio[WRITE]	= c->prio_clock[WRITE].hand;
 
 	trace_bucket_alloc(ca, reserve);
-	return r;
+	return 0;
 }
 
 enum bucket_alloc_ret {
@@ -1139,22 +1155,11 @@ static enum bucket_alloc_ret __bch2_bucket_alloc_set(struct bch_fs *c,
 		if (!ca)
 			continue;
 
-		if (wp->type == BCH_DATA_USER &&
-		    ca->open_buckets_partial_nr) {
-			ptr = ca->open_buckets_partial[--ca->open_buckets_partial_nr];
-		} else {
-			long bucket = bch2_bucket_alloc(c, ca, reserve);
-			if (bucket < 0) {
-				ret = FREELIST_EMPTY;
-				continue;
-			}
-
-			ptr = (struct open_bucket_ptr) {
-				.ptr.gen	= ca->buckets[bucket].mark.gen,
-				.ptr.offset	= bucket_to_sector(ca, bucket),
-				.ptr.dev	= ca->dev_idx,
-				.sectors_free	= ca->mi.bucket_size,
-			};
+		if (bch2_bucket_alloc(c, ca, reserve,
+				      wp->type == BCH_DATA_USER,
+				      &ptr)) {
+			ret = FREELIST_EMPTY;
+			continue;
 		}
 
 		/*
