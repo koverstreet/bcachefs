@@ -32,7 +32,7 @@ void bch2_open_bucket_put(struct bch_fs *, struct open_bucket *);
 struct write_point *bch2_alloc_sectors_start(struct bch_fs *,
 					     enum bch_data_type,
 					     struct bch_devs_mask *,
-					     unsigned long,
+					     struct write_point_specifier,
 					     unsigned, unsigned,
 					     enum alloc_reserve,
 					     unsigned,
@@ -45,7 +45,7 @@ void bch2_alloc_sectors_done(struct bch_fs *, struct write_point *);
 struct open_bucket *bch2_alloc_sectors(struct bch_fs *,
 				       enum bch_data_type,
 				       struct bch_devs_mask *,
-				       unsigned long,
+				       struct write_point_specifier,
 				       struct bkey_i_extent *,
 				       unsigned, unsigned,
 				       enum alloc_reserve,
@@ -67,6 +67,16 @@ static inline void bch2_wake_allocator(struct bch_dev *ca)
 	     (_ptr) < (_ob)->ptrs + (_ob)->nr_ptrs;			\
 	     (_ptr)++)
 
+static inline struct write_point_specifier writepoint_hashed(unsigned long v)
+{
+	return (struct write_point_specifier) { .v = v | 1 };
+}
+
+static inline struct write_point_specifier writepoint_ptr(struct write_point *wp)
+{
+	return (struct write_point_specifier) { .v = (unsigned long) wp };
+}
+
 void bch2_recalc_capacity(struct bch_fs *);
 
 void bch2_dev_allocator_remove(struct bch_fs *, struct bch_dev *);
@@ -74,6 +84,13 @@ void bch2_dev_allocator_add(struct bch_fs *, struct bch_dev *);
 
 void bch2_dev_allocator_stop(struct bch_dev *);
 int bch2_dev_allocator_start(struct bch_dev *);
+
+static inline void writepoint_init(struct write_point *wp,
+				   enum bch_data_type type)
+{
+	mutex_init(&wp->lock);
+	wp->type = type;
+}
 
 void bch2_fs_allocator_init(struct bch_fs *);
 

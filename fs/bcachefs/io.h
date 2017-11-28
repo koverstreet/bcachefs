@@ -2,6 +2,7 @@
 #define _BCACHEFS_IO_H
 
 #include <linux/hash.h>
+#include "alloc.h"
 #include "io_types.h"
 
 #define to_wbio(_bio)			\
@@ -41,7 +42,7 @@ static inline u64 *op_journal_seq(struct bch_write_op *op)
 void bch2_write_op_init(struct bch_write_op *, struct bch_fs *,
 			struct disk_reservation,
 			struct bch_devs_mask *,
-			unsigned long,
+			struct write_point_specifier,
 			struct bpos, u64 *, unsigned);
 void bch2_write(struct closure *);
 

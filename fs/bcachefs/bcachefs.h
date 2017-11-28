@@ -429,6 +429,8 @@ struct bch_dev {
 
 	struct bch_pd_controller moving_gc_pd;
 
+	struct write_point	copygc_write_point;
+
 	struct journal_device	journal;
 
 	struct work_struct	io_error_work;
@@ -475,6 +477,7 @@ struct bch_tier {
 	struct bch_pd_controller pd;
 
 	struct bch_devs_mask	devs;
+	struct write_point	wp;
 };
 
 enum bch_fs_state {
