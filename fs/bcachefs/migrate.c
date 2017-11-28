@@ -34,7 +34,9 @@ static int issue_migration_move(struct bch_dev *ca,
 found:
 	/* XXX: we need to be doing something with the disk reservation */
 
-	ret = bch2_data_move(c, ctxt, devs, k, ptr);
+	ret = bch2_data_move(c, ctxt, devs,
+			     writepoint_hashed((unsigned long) current),
+			     k, ptr);
 	if (ret)
 		bch2_disk_reservation_put(c, &res);
 	return ret;

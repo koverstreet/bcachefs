@@ -21,7 +21,9 @@ struct migrate_write {
 };
 
 void bch2_migrate_write_init(struct bch_fs *, struct migrate_write *,
-			     struct bch_devs_mask *, struct bkey_s_c,
+			     struct bch_devs_mask *,
+			     struct write_point_specifier,
+			     struct bkey_s_c,
 			     const struct bch_extent_ptr *, unsigned);
 
 #define SECTORS_IN_FLIGHT_PER_DEVICE	2048
@@ -67,7 +69,9 @@ struct moving_io {
 };
 
 int bch2_data_move(struct bch_fs *, struct moving_context *,
-		   struct bch_devs_mask *, struct bkey_s_c,
+		   struct bch_devs_mask *,
+		   struct write_point_specifier,
+		   struct bkey_s_c,
 		   const struct bch_extent_ptr *);
 
 int bch2_move_ctxt_wait(struct moving_context *);

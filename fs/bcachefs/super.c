@@ -1096,6 +1096,8 @@ static int bch2_dev_alloc(struct bch_fs *c, unsigned dev_idx)
 	ca->dev_idx = dev_idx;
 	__set_bit(ca->dev_idx, ca->self.d);
 
+	writepoint_init(&ca->copygc_write_point, BCH_DATA_USER);
+
 	spin_lock_init(&ca->freelist_lock);
 	bch2_dev_moving_gc_init(ca);
 

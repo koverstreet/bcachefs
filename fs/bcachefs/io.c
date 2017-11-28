@@ -757,7 +757,7 @@ void bch2_write(struct closure *cl)
 void bch2_write_op_init(struct bch_write_op *op, struct bch_fs *c,
 			struct disk_reservation res,
 			struct bch_devs_mask *devs,
-			unsigned long write_point,
+			struct write_point_specifier write_point,
 			struct bpos pos,
 			u64 *journal_seq, unsigned flags)
 {
@@ -894,6 +894,7 @@ static struct promote_op *promote_alloc(struct bch_fs *c,
 
 	bch2_migrate_write_init(c, &op->write,
 				c->fastest_devs,
+				writepoint_hashed((unsigned long) current),
 				k, NULL,
 				BCH_WRITE_ALLOC_NOWAIT|
 				BCH_WRITE_CACHED);

@@ -1489,16 +1489,13 @@ static struct write_point *writepoint_find(struct bch_fs *c,
 	struct write_point *wp, *oldest = NULL;
 	struct hlist_head *head;
 
-	switch (data_type) {
-	case BCH_DATA_BTREE:
-		wp = &c->btree_write_point;
+	if (!(write_point & 1UL)) {
+		wp = (struct write_point *) write_point;
 		mutex_lock(&wp->lock);
 		return wp;
-	case BCH_DATA_USER:
-		break;
-	default:
-		BUG();
 	}
+
+	/* XXX: hash in the devices to allocate from with write_point */
 
 	head = writepoint_hash(c, write_point);
 	wp = __writepoint_find(head, write_point);
@@ -1534,14 +1531,14 @@ out:
  * Get us an open_bucket we can allocate from, return with it locked:
  */
 struct write_point *bch2_alloc_sectors_start(struct bch_fs *c,
-					     enum bch_data_type data_type,
-					     struct bch_devs_mask *devs,
-					     unsigned long write_point,
-					     unsigned nr_replicas,
-					     unsigned nr_replicas_required,
-					     enum alloc_reserve reserve,
-					     unsigned flags,
-					     struct closure *cl)
+				enum bch_data_type data_type,
+				struct bch_devs_mask *devs,
+				struct write_point_specifier write_point,
+				unsigned nr_replicas,
+				unsigned nr_replicas_required,
+				enum alloc_reserve reserve,
+				unsigned flags,
+				struct closure *cl)
 {
 	struct open_bucket *ob;
 	struct write_point *wp;
@@ -1553,12 +1550,22 @@ struct write_point *bch2_alloc_sectors_start(struct bch_fs *c,
 
 	BUG_ON(!nr_replicas);
 
-	wp = writepoint_find(c, data_type, write_point);
+	wp = writepoint_find(c, data_type, write_point.v);
 	BUG_ON(wp->type != data_type);
 
 	wp->last_used = sched_clock();
 
 	ob = wp->ob;
+
+	if (!ob) {
+		ob = bch2_open_bucket_get(c, open_buckets_reserved, cl);
+		if (IS_ERR(ob)) {
+			ret = PTR_ERR(ob);
+			goto err;
+		}
+
+		wp->ob = ob;
+	}
 
 	/* does ob have ptrs we don't need? */
 	open_bucket_for_each_ptr(ob, ptr) {
@@ -1709,15 +1716,15 @@ void bch2_alloc_sectors_done(struct bch_fs *c, struct write_point *wp)
  * @cl - closure to wait for a bucket
  */
 struct open_bucket *bch2_alloc_sectors(struct bch_fs *c,
-				       enum bch_data_type data_type,
-				       struct bch_devs_mask *devs,
-				       unsigned long write_point,
-				       struct bkey_i_extent *e,
-				       unsigned nr_replicas,
-				       unsigned nr_replicas_required,
-				       enum alloc_reserve reserve,
-				       unsigned flags,
-				       struct closure *cl)
+				enum bch_data_type data_type,
+				struct bch_devs_mask *devs,
+				struct write_point_specifier write_point,
+				struct bkey_i_extent *e,
+				unsigned nr_replicas,
+				unsigned nr_replicas_required,
+				enum alloc_reserve reserve,
+				unsigned flags,
+				struct closure *cl)
 {
 	struct write_point *wp;
 	struct open_bucket *ob;
@@ -1926,6 +1933,9 @@ void bch2_dev_allocator_remove(struct bch_fs *c, struct bch_dev *ca)
 	/* Next, close write points that point to this device... */
 	for (i = 0; i < ARRAY_SIZE(c->write_points); i++)
 		bch2_stop_write_point(c, ca, &c->write_points[i]);
+
+	bch2_stop_write_point(c, ca, &ca->copygc_write_point);
+	bch2_stop_write_point(c, ca, &c->tiers[ca->mi.tier].wp);
 	bch2_stop_write_point(c, ca, &c->btree_write_point);
 
 	mutex_lock(&c->btree_reserve_cache_lock);
@@ -2021,6 +2031,7 @@ void bch2_fs_allocator_init(struct bch_fs *c)
 {
 	struct open_bucket *ob;
 	struct write_point *wp;
+	unsigned i;
 
 	mutex_init(&c->write_points_hash_lock);
 	init_rwsem(&c->alloc_gc_lock);
@@ -2040,22 +2051,18 @@ void bch2_fs_allocator_init(struct bch_fs *c)
 		c->open_buckets_freelist = ob - c->open_buckets;
 	}
 
-	mutex_init(&c->btree_write_point.lock);
-	c->btree_write_point.type	= BCH_DATA_BTREE;
-	c->btree_write_point.ob		= bch2_open_bucket_get(c, 0, NULL);
-	BUG_ON(IS_ERR(c->btree_write_point.ob));
+	writepoint_init(&c->btree_write_point, BCH_DATA_BTREE);
+
+	for (i = 0; i < ARRAY_SIZE(c->tiers); i++)
+		writepoint_init(&c->tiers[i].wp, BCH_DATA_USER);
 
 	for (wp = c->write_points;
 	     wp < c->write_points + ARRAY_SIZE(c->write_points); wp++) {
-		mutex_init(&wp->lock);
-		wp->type	= BCH_DATA_USER;
-		wp->ob		= bch2_open_bucket_get(c, 0, NULL);
-		wp->last_used	= sched_clock();
+		writepoint_init(wp, BCH_DATA_USER);
 
+		wp->last_used	= sched_clock();
 		wp->write_point	= (unsigned long) wp;
 		hlist_add_head_rcu(&wp->node, writepoint_hash(c, wp->write_point));
-
-		BUG_ON(IS_ERR(wp->ob));
 	}
 
 	c->pd_controllers_update_seconds = 5;
