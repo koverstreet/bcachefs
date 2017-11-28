@@ -1,4 +1,5 @@
 #include "bcachefs.h"
+#include "checksum.h"
 #include "compress.h"
 #include "extents.h"
 #include "io.h"
@@ -212,52 +213,46 @@ err:
 }
 
 int bch2_bio_uncompress_inplace(struct bch_fs *c, struct bio *bio,
-				struct bch_extent_crc_unpacked crc)
+				struct bch_extent_crc_unpacked *crc)
 {
-	struct bbuf dst_data = { NULL };
-	size_t dst_len = crc.uncompressed_size << 9;
-	int ret = -ENOMEM;
+	struct bbuf data = { NULL };
+	size_t dst_len = crc->uncompressed_size << 9;
 
-	BUG_ON(DIV_ROUND_UP(crc.live_size, PAGE_SECTORS) > bio->bi_max_vecs);
+	/* bio must own its pages: */
+	BUG_ON(!bio->bi_vcnt);
+	BUG_ON(DIV_ROUND_UP(crc->live_size, PAGE_SECTORS) > bio->bi_max_vecs);
 
-	if (crc.uncompressed_size	> c->sb.encoded_extent_max ||
-	    crc.compressed_size		> c->sb.encoded_extent_max)
+	if (crc->uncompressed_size	> c->sb.encoded_extent_max ||
+	    crc->compressed_size	> c->sb.encoded_extent_max) {
+		bch_err(c, "error rewriting existing data: extent too big");
 		return -EIO;
-
-	dst_data = __bounce_alloc(c, dst_len, WRITE);
-
-	ret = __bio_uncompress(c, bio, dst_data.b, crc);
-	if (ret)
-		goto err;
-
-	while (bio->bi_vcnt < DIV_ROUND_UP(crc.live_size, PAGE_SECTORS)) {
-		struct bio_vec *bv = &bio->bi_io_vec[bio->bi_vcnt];
-
-		bv->bv_page = alloc_page(GFP_NOIO);
-		if (!bv->bv_page)
-			goto use_mempool;
-
-		bv->bv_len = PAGE_SIZE;
-		bv->bv_offset = 0;
-		bio->bi_vcnt++;
 	}
 
-	bio->bi_iter.bi_size = crc.live_size << 9;
-copy_data:
-	memcpy_to_bio(bio, bio->bi_iter, dst_data.b + (crc.offset << 9));
-err:
-	bio_unmap_or_unbounce(c, dst_data);
-	return ret;
-use_mempool:
-	/*
-	 * We already allocated from mempool, we can't allocate from it again
-	 * without freeing the pages we already allocated or else we could
-	 * deadlock:
-	 */
+	data = __bounce_alloc(c, dst_len, WRITE);
 
-	bch2_bio_free_pages_pool(c, bio);
-	bch2_bio_alloc_pages_pool(c, bio, crc.live_size << 9);
-	goto copy_data;
+	if (__bio_uncompress(c, bio, data.b, *crc)) {
+		bch_err(c, "error rewriting existing data: decompression error");
+		bio_unmap_or_unbounce(c, data);
+		return -EIO;
+	}
+
+	/*
+	 * might have to free existing pages and retry allocation from mempool -
+	 * do this _after_ decompressing:
+	 */
+	bch2_bio_alloc_more_pages_pool(c, bio, crc->live_size << 9);
+
+	memcpy_to_bio(bio, bio->bi_iter, data.b + (crc->offset << 9));
+
+	crc->csum_type		= 0;
+	crc->compression_type	= 0;
+	crc->compressed_size	= crc->live_size;
+	crc->uncompressed_size	= crc->live_size;
+	crc->offset		= 0;
+	crc->csum		= (struct bch_csum) { 0, 0 };
+
+	bio_unmap_or_unbounce(c, data);
+	return 0;
 }
 
 int bch2_bio_uncompress(struct bch_fs *c, struct bio *src,
@@ -287,21 +282,25 @@ err:
 	return ret;
 }
 
-static int __bio_compress(struct bch_fs *c,
-			  struct bio *dst, size_t *dst_len,
-			  struct bio *src, size_t *src_len,
-			  unsigned *compression_type)
+static unsigned __bio_compress(struct bch_fs *c,
+			       struct bio *dst, size_t *dst_len,
+			       struct bio *src, size_t *src_len,
+			       unsigned compression_type)
 {
 	struct bbuf src_data = { NULL }, dst_data = { NULL };
 	unsigned pad;
 	int ret = 0;
 
+	/* If it's only one block, don't bother trying to compress: */
+	if (bio_sectors(src) <= c->opts.block_size)
+		goto err;
+
 	dst_data = bio_map_or_bounce(c, dst, WRITE);
 	src_data = bio_map_or_bounce(c, src, READ);
 
-	switch (*compression_type) {
+	switch (compression_type) {
 	case BCH_COMPRESSION_LZ4_OLD:
-		*compression_type = BCH_COMPRESSION_LZ4;
+		compression_type = BCH_COMPRESSION_LZ4;
 
 	case BCH_COMPRESSION_LZ4: {
 		void *workspace;
@@ -402,19 +401,24 @@ zlib_err:
 
 	if (dst_data.type != BB_NONE)
 		memcpy_to_bio(dst, dst->bi_iter, dst_data.b);
+
+	BUG_ON(!*dst_len || *dst_len > dst->bi_iter.bi_size);
+	BUG_ON(!*src_len || *src_len > src->bi_iter.bi_size);
+	BUG_ON(*dst_len & (block_bytes(c) - 1));
+	BUG_ON(*src_len & (block_bytes(c) - 1));
 out:
 	bio_unmap_or_unbounce(c, src_data);
 	bio_unmap_or_unbounce(c, dst_data);
-	return ret;
+	return compression_type;
 err:
-	ret = -1;
+	compression_type = 0;
 	goto out;
 }
 
-void bch2_bio_compress(struct bch_fs *c,
-		       struct bio *dst, size_t *dst_len,
-		       struct bio *src, size_t *src_len,
-		       unsigned *compression_type)
+unsigned bch2_bio_compress(struct bch_fs *c,
+			   struct bio *dst, size_t *dst_len,
+			   struct bio *src, size_t *src_len,
+			   unsigned compression_type)
 {
 	unsigned orig_dst = dst->bi_iter.bi_size;
 	unsigned orig_src = src->bi_iter.bi_size;
@@ -422,29 +426,15 @@ void bch2_bio_compress(struct bch_fs *c,
 	/* Don't consume more than BCH_ENCODED_EXTENT_MAX from @src: */
 	src->bi_iter.bi_size = min_t(unsigned, src->bi_iter.bi_size,
 				     c->sb.encoded_extent_max << 9);
-
 	/* Don't generate a bigger output than input: */
-	dst->bi_iter.bi_size =
-		min(dst->bi_iter.bi_size, src->bi_iter.bi_size);
+	dst->bi_iter.bi_size = min(dst->bi_iter.bi_size, src->bi_iter.bi_size);
 
-	/* If it's only one block, don't bother trying to compress: */
-	if (*compression_type != BCH_COMPRESSION_NONE &&
-	    bio_sectors(src) > c->opts.block_size &&
-	    !__bio_compress(c, dst, dst_len, src, src_len, compression_type))
-		goto out;
+	compression_type =
+		__bio_compress(c, dst, dst_len, src, src_len, compression_type);
 
-	/* If compressing failed (didn't get smaller), just copy: */
-	*compression_type = BCH_COMPRESSION_NONE;
-	*dst_len = *src_len = min(dst->bi_iter.bi_size, src->bi_iter.bi_size);
-	bio_copy_data(dst, src);
-out:
 	dst->bi_iter.bi_size = orig_dst;
 	src->bi_iter.bi_size = orig_src;
-
-	BUG_ON(!*dst_len || *dst_len > dst->bi_iter.bi_size);
-	BUG_ON(!*src_len || *src_len > src->bi_iter.bi_size);
-	BUG_ON(*dst_len & (block_bytes(c) - 1));
-	BUG_ON(*src_len & (block_bytes(c) - 1));
+	return compression_type;
 }
 
 /* doesn't write superblock: */

@@ -37,8 +37,8 @@ struct write_point *bch2_alloc_sectors_start(struct bch_fs *,
 					     unsigned,
 					     struct closure *);
 
-void bch2_alloc_sectors_append_ptrs(struct bch_fs *, struct bkey_i_extent *,
-				   unsigned, struct open_bucket *, unsigned);
+void bch2_alloc_sectors_append_ptrs(struct bch_fs *, struct write_point *,
+				    struct bkey_i_extent *, unsigned, unsigned);
 void bch2_alloc_sectors_done(struct bch_fs *, struct write_point *);
 
 struct open_bucket *bch2_alloc_sectors(struct bch_fs *,

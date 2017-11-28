@@ -554,8 +554,8 @@ DEFINE_EVENT(open_bucket_alloc, open_bucket_alloc_fail,
 /* Moving IO */
 
 DECLARE_EVENT_CLASS(moving_io,
-	TP_PROTO(struct bkey *k),
-	TP_ARGS(k),
+	TP_PROTO(struct bpos pos, unsigned sectors),
+	TP_ARGS(pos, sectors),
 
 	TP_STRUCT__entry(
 		__field(__u32,		inode			)
@@ -564,9 +564,9 @@ DECLARE_EVENT_CLASS(moving_io,
 	),
 
 	TP_fast_assign(
-		__entry->inode		= k->p.inode;
-		__entry->offset		= k->p.offset;
-		__entry->sectors	= k->size;
+		__entry->inode		= pos.inode;
+		__entry->offset		= pos.offset;
+		__entry->sectors	= sectors;
 	),
 
 	TP_printk("%u:%llu sectors %u",
@@ -574,23 +574,23 @@ DECLARE_EVENT_CLASS(moving_io,
 );
 
 DEFINE_EVENT(moving_io, move_read,
-	TP_PROTO(struct bkey *k),
-	TP_ARGS(k)
+	TP_PROTO(struct bpos pos, unsigned sectors),
+	TP_ARGS(pos, sectors)
 );
 
 DEFINE_EVENT(moving_io, move_read_done,
-	TP_PROTO(struct bkey *k),
-	TP_ARGS(k)
+	TP_PROTO(struct bpos pos, unsigned sectors),
+	TP_ARGS(pos, sectors)
 );
 
 DEFINE_EVENT(moving_io, move_write,
-	TP_PROTO(struct bkey *k),
-	TP_ARGS(k)
+	TP_PROTO(struct bpos pos, unsigned sectors),
+	TP_ARGS(pos, sectors)
 );
 
-DEFINE_EVENT(moving_io, copy_collision,
-	TP_PROTO(struct bkey *k),
-	TP_ARGS(k)
+DEFINE_EVENT(moving_io, move_collision,
+	TP_PROTO(struct bpos pos, unsigned sectors),
+	TP_ARGS(pos, sectors)
 );
 
 /* Copy GC */

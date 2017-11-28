@@ -12,27 +12,6 @@
 
 #include <trace/events/bcachefs.h>
 
-static struct bch_extent_ptr *bch2_migrate_matching_ptr(struct migrate_write *m,
-							struct bkey_s_extent e)
-{
-	const struct bch_extent_ptr *ptr;
-	struct bch_extent_crc_unpacked crc;
-	struct bch_extent_ptr *ret = NULL;
-
-	extent_for_each_ptr_crc(bkey_i_to_s_c_extent(&m->key), ptr, crc) {
-		if (m->move && memcmp(ptr, &m->move_ptr, sizeof(*ptr)))
-			continue;
-
-		ret = bch2_extent_matches_ptr(m->op.c, e, *ptr,
-					      bkey_start_offset(&m->key.k) -
-					      crc.offset);
-		if (ret)
-			break;
-	}
-
-	return ret;
-}
-
 static int bch2_migrate_index_update(struct bch_write_op *op)
 {
 	struct bch_fs *c = op->c;
@@ -50,11 +29,12 @@ static int bch2_migrate_index_update(struct bch_write_op *op)
 		struct bkey_s_extent insert =
 			bkey_i_to_s_extent(bch2_keylist_front(keys));
 		struct bkey_s_c k = bch2_btree_iter_peek_with_holes(&iter);
-		struct bch_extent_ptr *ptr;
+		struct bch_extent_ptr *ptr, *existing_ptr;
 		struct bkey_s_extent e;
+		struct bkey_i_extent *e_i;
 		BKEY_PADDED(k) new;
 
-		if (!k.k) {
+		if (btree_iter_err(k)) {
 			ret = bch2_btree_iter_unlock(&iter);
 			break;
 		}
@@ -66,19 +46,10 @@ static int bch2_migrate_index_update(struct bch_write_op *op)
 		bch2_cut_front(iter.pos, &new.k);
 		bch2_cut_back(insert.k->p, &new.k.k);
 		e = bkey_i_to_s_extent(&new.k);
+		e_i = bkey_i_to_extent(&new.k);
 
-		/* hack - promotes can race: */
-		if (m->promote)
-			extent_for_each_ptr(insert, ptr)
-				if (bch2_extent_has_device(e.c, ptr->dev))
-					goto nomatch;
-
-		ptr = bch2_migrate_matching_ptr(m, e);
-		if (!ptr)
-			atomic_long_inc(&c->extent_migrate_raced);
-
-		if (ptr) {
-			int nr_new_dirty = bch2_extent_nr_dirty_ptrs(insert.s_c);
+		if (bch2_extent_matches_ptr(c, bkey_s_c_to_extent(k),
+					    m->ptr, m->offset)) {
 			unsigned insert_flags =
 				BTREE_INSERT_ATOMIC|
 				BTREE_INSERT_NOFAIL;
@@ -87,33 +58,44 @@ static int bch2_migrate_index_update(struct bch_write_op *op)
 			if (m->move)
 				insert_flags |= BTREE_INSERT_USE_RESERVE;
 
-			if (m->move) {
-				nr_new_dirty -= !ptr->cached;
-				bch2_extent_drop_ptr(e, ptr);
-			}
+			extent_for_each_ptr(insert, ptr) {
+				existing_ptr = (struct bch_extent_ptr *)
+					bch2_extent_has_device(e.c, ptr->dev);
 
-			BUG_ON(nr_new_dirty < 0);
+				BUG_ON(existing_ptr && !m->move && !m->promote);
+
+				if (!existing_ptr != !m->move)
+					goto nomatch;
+
+				if (existing_ptr)
+					bch2_extent_drop_ptr(e, existing_ptr);
+			}
 
 			memcpy_u64s(extent_entry_last(e),
 				    insert.v,
 				    bkey_val_u64s(insert.k));
 			e.k->u64s += bkey_val_u64s(insert.k);
 
-			bch2_extent_narrow_crcs(e, 0, (struct bch_csum) { 0 });
+			bch2_extent_narrow_crcs(e_i,
+					(struct bch_extent_crc_unpacked) { 0 });
 			bch2_extent_normalize(c, e.s);
-			bch2_extent_mark_replicas_cached(c, e, nr_new_dirty);
+			bch2_extent_mark_replicas_cached(c, e);
 
 			ret = bch2_btree_insert_at(c, &op->res,
 					NULL, op_journal_seq(op),
 					insert_flags,
 					BTREE_INSERT_ENTRY(&iter, &new.k));
-			if (ret && ret != -EINTR)
-				break;
-
 			if (!ret)
 				atomic_long_inc(&c->extent_migrate_done);
+			if (ret == -EINTR)
+				ret = 0;
+			if (ret)
+				break;
 		} else {
 nomatch:
+			atomic_long_inc(&c->extent_migrate_raced);
+			trace_move_collision(k.k->p, k.k->p.offset - iter.pos.offset);
+
 			bch2_btree_iter_advance_pos(&iter);
 		}
 
@@ -130,90 +112,66 @@ out:
 	return ret;
 }
 
-void bch2_migrate_write_init(struct bch_fs *c,
-			     struct migrate_write *m,
-			     struct bch_devs_mask *devs,
-			     struct write_point_specifier wp,
-			     struct bkey_s_c k,
-			     const struct bch_extent_ptr *move_ptr,
-			     unsigned flags)
+void bch2_migrate_write_init(struct migrate_write *m,
+			     struct bch_read_bio *rbio)
 {
-	bkey_reassemble(&m->key, k);
+	/* write bio must own pages: */
+	BUG_ON(!m->op.wbio.bio.bi_vcnt);
 
-	m->promote = false;
-	m->move = move_ptr != NULL;
-	if (move_ptr)
-		m->move_ptr = *move_ptr;
+	m->ptr		= rbio->pick.ptr;
+	m->offset	= rbio->pos.offset - rbio->pick.crc.offset;
 
-	if (bkey_extent_is_cached(k.k) ||
-	    (move_ptr && move_ptr->cached))
-		flags |= BCH_WRITE_CACHED;
+	m->op.pos	= rbio->pos;
+	m->op.version	= rbio->version;
+	m->op.crc	= rbio->pick.crc;
 
-	bch2_write_op_init(&m->op, c, (struct disk_reservation) { 0 },
-			   devs, wp, bkey_start_pos(k.k), NULL,
-			   flags|BCH_WRITE_ONLY_SPECIFIED_DEVS);
+	if (bch2_csum_type_is_encryption(m->op.crc.csum_type)) {
+		m->op.nonce	= m->op.crc.nonce + m->op.crc.offset;
+		m->op.csum_type = m->op.crc.csum_type;
+	}
 
 	if (m->move)
 		m->op.alloc_reserve = RESERVE_MOVINGGC;
 
-	m->op.nonce		= extent_current_nonce(bkey_s_c_to_extent(k));
+	m->op.flags |= BCH_WRITE_ONLY_SPECIFIED_DEVS|
+		BCH_WRITE_PAGES_STABLE|
+		BCH_WRITE_PAGES_OWNED|
+		BCH_WRITE_DATA_ENCODED;
+
+	m->op.wbio.bio.bi_iter.bi_size = m->op.crc.compressed_size << 9;
 	m->op.nr_replicas	= 1;
 	m->op.index_update_fn	= bch2_migrate_index_update;
 }
 
-static void migrate_bio_init(struct moving_io *io, struct bio *bio,
-			     unsigned sectors)
+static void move_free(struct closure *cl)
 {
-	bio_init(bio, io->bi_inline_vecs,
-		 DIV_ROUND_UP(sectors, PAGE_SECTORS));
-	bio_set_prio(bio, IOPRIO_PRIO_VALUE(IOPRIO_CLASS_IDLE, 0));
-
-	bio->bi_iter.bi_size	= sectors << 9;
-	bio->bi_private		= &io->cl;
-	bch2_bio_map(bio, NULL);
-}
-
-static void moving_io_free(struct moving_io *io)
-{
+	struct moving_io *io = container_of(cl, struct moving_io, cl);
 	struct moving_context *ctxt = io->ctxt;
 	struct bio_vec *bv;
 	int i;
 
-	atomic_sub(io->write.key.k.size, &ctxt->sectors_in_flight);
-	wake_up(&ctxt->wait);
-
 	bio_for_each_segment_all(bv, &io->write.op.wbio.bio, i)
 		if (bv->bv_page)
 			__free_page(bv->bv_page);
+
+	atomic_sub(io->sectors, &ctxt->sectors_in_flight);
+	wake_up(&ctxt->wait);
+
 	kfree(io);
 }
 
-static void moving_error(struct moving_context *ctxt, unsigned flag)
-{
-	atomic_inc(&ctxt->error_count);
-	//atomic_or(flag, &ctxt->error_flags);
-}
-
-static void moving_write_done(struct closure *cl)
+static void move_write(struct closure *cl)
 {
 	struct moving_io *io = container_of(cl, struct moving_io, cl);
 
-	if (io->write.op.error)
-		moving_error(io->ctxt, MOVING_FLAG_WRITE);
+	if (likely(!io->rbio.bio.bi_status)) {
+		trace_move_write(io->rbio.pos, io->sectors);
 
-	//if (io->replace.failures)
-	//	trace_copy_collision(q, &io->key.k);
+		bch2_migrate_write_init(&io->write, &io->rbio);
+		closure_call(&io->write.op.cl, bch2_write, NULL, cl);
+	}
 
-	moving_io_free(io);
-}
-
-static void write_moving(struct closure *cl)
-{
-	struct moving_io *io = container_of(cl, struct moving_io, cl);
-	struct bch_write_op *op = &io->write.op;
-
-	closure_call(&op->cl, bch2_write, NULL, &io->cl);
-	closure_return_with_destructor(&io->cl, moving_write_done);
+	closure_return_with_destructor(cl, move_free);
 }
 
 static inline struct moving_io *next_pending_write(struct moving_context *ctxt)
@@ -224,16 +182,12 @@ static inline struct moving_io *next_pending_write(struct moving_context *ctxt)
 	return io && io->read_completed ? io : NULL;
 }
 
-static void read_moving_endio(struct bio *bio)
+static void move_read_endio(struct bio *bio)
 {
-	struct closure *cl = bio->bi_private;
-	struct moving_io *io = container_of(cl, struct moving_io, cl);
+	struct moving_io *io = container_of(bio, struct moving_io, rbio.bio);
 	struct moving_context *ctxt = io->ctxt;
 
-	trace_move_read_done(&io->write.key.k);
-
-	if (bio->bi_status)
-		moving_error(io->ctxt, MOVING_FLAG_READ);
+	trace_move_read_done(io->rbio.pos, io->sectors);
 
 	io->read_completed = true;
 	if (next_pending_write(ctxt))
@@ -246,54 +200,70 @@ int bch2_data_move(struct bch_fs *c,
 		   struct moving_context *ctxt,
 		   struct bch_devs_mask *devs,
 		   struct write_point_specifier wp,
-		   struct bkey_s_c k,
-		   const struct bch_extent_ptr *move_ptr)
+		   struct bkey_s_c k, bool move)
 {
 	struct extent_pick_ptr pick;
 	struct moving_io *io;
+	const struct bch_extent_ptr *ptr;
+	struct bch_extent_crc_unpacked crc;
+	unsigned sectors = k.k->size, pages;
 
 	bch2_extent_pick_ptr(c, k, &ctxt->avoid, &pick);
 	if (IS_ERR_OR_NULL(pick.ca))
 		return pick.ca ? PTR_ERR(pick.ca) : 0;
 
-	io = kzalloc(sizeof(struct moving_io) + sizeof(struct bio_vec) *
-		     DIV_ROUND_UP(k.k->size, PAGE_SECTORS), GFP_KERNEL);
+	/* write path might have to decompress data: */
+	extent_for_each_ptr_crc(bkey_s_c_to_extent(k), ptr, crc)
+		sectors = max_t(unsigned, sectors, crc.uncompressed_size);
+
+	pages = DIV_ROUND_UP(sectors, PAGE_SECTORS);
+	io = kzalloc(sizeof(struct moving_io) +
+		     sizeof(struct bio_vec) * pages, GFP_KERNEL);
 	if (!io)
 		return -ENOMEM;
 
-	io->ctxt = ctxt;
+	io->ctxt	= ctxt;
+	io->sectors	= k.k->size;
 
-	migrate_bio_init(io, &io->rbio.bio, k.k->size);
+	bio_init(&io->write.op.wbio.bio, io->bi_inline_vecs, pages);
+	bio_set_prio(&io->write.op.wbio.bio,
+		     IOPRIO_PRIO_VALUE(IOPRIO_CLASS_IDLE, 0));
+	io->write.op.wbio.bio.bi_iter.bi_size = sectors << 9;
 
-	bio_set_op_attrs(&io->rbio.bio, REQ_OP_READ, 0);
-	io->rbio.bio.bi_iter.bi_sector	= bkey_start_offset(k.k);
-	io->rbio.bio.bi_end_io		= read_moving_endio;
-
-	if (bch2_bio_alloc_pages(&io->rbio.bio, GFP_KERNEL)) {
+	bch2_bio_map(&io->write.op.wbio.bio, NULL);
+	if (bch2_bio_alloc_pages(&io->write.op.wbio.bio, GFP_KERNEL)) {
 		kfree(io);
 		return -ENOMEM;
 	}
 
-	migrate_bio_init(io, &io->write.op.wbio.bio, k.k->size);
+	bio_init(&io->rbio.bio, io->bi_inline_vecs, pages);
+	bio_set_prio(&io->rbio.bio, IOPRIO_PRIO_VALUE(IOPRIO_CLASS_IDLE, 0));
+	io->rbio.bio.bi_iter.bi_size = sectors << 9;
 
-	bch2_migrate_write_init(c, &io->write, devs, wp, k, move_ptr, 0);
+	bio_set_op_attrs(&io->rbio.bio, REQ_OP_READ, 0);
+	io->rbio.bio.bi_iter.bi_sector	= bkey_start_offset(k.k);
+	io->rbio.bio.bi_end_io		= move_read_endio;
 
-	trace_move_read(&io->write.key.k);
+	__bch2_write_op_init(&io->write.op, c);
+	io->write.move		= move;
+	io->write.op.devs	= devs;
+	io->write.op.write_point = wp;
 
 	ctxt->keys_moved++;
 	ctxt->sectors_moved += k.k->size;
 	if (ctxt->rate)
-		bch2_ratelimit_increment(ctxt->rate, k.k->size);
+		bch2_ratelimit_increment(ctxt->rate, io->sectors);
+	trace_move_read(k.k->p, k.k->size);
 
-	atomic_add(k.k->size, &ctxt->sectors_in_flight);
+	atomic_add(io->sectors, &ctxt->sectors_in_flight);
 	list_add_tail(&io->list, &ctxt->reads);
 
 	/*
-	 * dropped by read_moving_endio() - guards against use after free of
+	 * dropped by move_read_endio() - guards against use after free of
 	 * ctxt when doing wakeup
 	 */
 	closure_get(&io->ctxt->cl);
-	bch2_read_extent(c, &io->rbio, k, &pick, 0);
+	bch2_read_extent(c, &io->rbio, k, &pick, BCH_READ_NODECODE);
 	return 0;
 }
 
@@ -303,14 +273,7 @@ static void do_pending_writes(struct moving_context *ctxt)
 
 	while ((io = next_pending_write(ctxt))) {
 		list_del(&io->list);
-
-		if (io->rbio.bio.bi_status) {
-			moving_io_free(io);
-			continue;
-		}
-
-		trace_move_write(&io->write.key.k);
-		closure_call(&io->cl, write_moving, NULL, &ctxt->cl);
+		closure_call(&io->cl, move_write, NULL, &ctxt->cl);
 	}
 }
 
