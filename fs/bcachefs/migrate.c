@@ -36,7 +36,7 @@ found:
 
 	ret = bch2_data_move(c, ctxt, devs,
 			     writepoint_hashed((unsigned long) current),
-			     k, ptr);
+			     k, true);
 	if (ret)
 		bch2_disk_reservation_put(c, &res);
 	return ret;
@@ -99,8 +99,6 @@ int bch2_move_data_off_device(struct bch_dev *ca)
 		struct bkey_s_c k;
 
 		seen_key_count = 0;
-		atomic_set(&ctxt.error_count, 0);
-		atomic_set(&ctxt.error_flags, 0);
 
 		bch2_btree_iter_init(&iter, c, BTREE_ID_EXTENTS, POS_MIN,
 				     BTREE_ITER_PREFETCH);

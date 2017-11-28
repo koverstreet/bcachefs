@@ -1644,10 +1644,11 @@ err:
  * Append pointers to the space we just allocated to @k, and mark @sectors space
  * as allocated out of @ob
  */
-void bch2_alloc_sectors_append_ptrs(struct bch_fs *c, struct bkey_i_extent *e,
-				    unsigned nr_replicas, struct open_bucket *ob,
+void bch2_alloc_sectors_append_ptrs(struct bch_fs *c, struct write_point *wp,
+				    struct bkey_i_extent *e, unsigned nr_replicas,
 				    unsigned sectors)
 {
+	struct open_bucket *ob = wp->ob;
 	struct bch_extent_ptr tmp;
 	struct open_bucket_ptr *ptr;
 
@@ -1670,6 +1671,8 @@ void bch2_alloc_sectors_append_ptrs(struct bch_fs *c, struct bkey_i_extent *e,
 		BUG_ON(sectors > ptr->sectors_free);
 		ptr->sectors_free -= sectors;
 	}
+
+	wp->sectors_free -= sectors;
 }
 
 /*
@@ -1732,7 +1735,7 @@ struct open_bucket *bch2_alloc_sectors(struct bch_fs *c,
 	if (e->k.size > wp->sectors_free)
 		bch2_key_resize(&e->k, wp->sectors_free);
 
-	bch2_alloc_sectors_append_ptrs(c, e, nr_replicas, ob, e->k.size);
+	bch2_alloc_sectors_append_ptrs(c, wp, e, nr_replicas, e->k.size);
 
 	bch2_alloc_sectors_done(c, wp);
 

@@ -552,7 +552,7 @@ BKEY_VAL_TYPE(reservation,	BCH_RESERVATION);
 /* Maximum possible size of an entire extent value: */
 /* There's a hack in the keylist code that needs to be fixed.. */
 #define BKEY_EXTENT_VAL_U64s_MAX				\
-	(BKEY_EXTENT_PTR_U64s_MAX * BCH_REPLICAS_MAX)
+	(BKEY_EXTENT_PTR_U64s_MAX * (BCH_REPLICAS_MAX + 1))
 
 /* * Maximum possible size of an entire extent, key + value: */
 #define BKEY_EXTENT_U64s_MAX		(BKEY_U64s + BKEY_EXTENT_VAL_U64s_MAX)

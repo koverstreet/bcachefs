@@ -2,6 +2,7 @@
 #define _BCACHEFS_CHECKSUM_H
 
 #include "bcachefs.h"
+#include "extents_types.h"
 #include "super-io.h"
 
 #include <crypto/chacha20.h>
@@ -36,7 +37,14 @@ void bch2_encrypt(struct bch_fs *, unsigned, struct nonce,
 		 void *data, size_t);
 
 struct bch_csum bch2_checksum_bio(struct bch_fs *, unsigned,
-				 struct nonce, struct bio *);
+				  struct nonce, struct bio *);
+
+int bch2_rechecksum_bio(struct bch_fs *, struct bio *, struct bversion,
+			struct bch_extent_crc_unpacked,
+			struct bch_extent_crc_unpacked *,
+			struct bch_extent_crc_unpacked *,
+			unsigned, unsigned, unsigned);
+
 void bch2_encrypt_bio(struct bch_fs *, unsigned,
 		    struct nonce, struct bio *);
 
@@ -133,6 +141,19 @@ static inline struct nonce nonce_add(struct nonce nonce, unsigned offset)
 
 	le32_add_cpu(&nonce.d[0], offset / CHACHA20_BLOCK_SIZE);
 	return nonce;
+}
+
+static inline struct nonce extent_nonce(struct bversion version,
+					struct bch_extent_crc_unpacked crc)
+{
+	return (struct nonce) {{
+		[0] = cpu_to_le32((crc.nonce		<< 12) |
+				  (crc.uncompressed_size << 22)),
+		[1] = cpu_to_le32(version.lo),
+		[2] = cpu_to_le32(version.lo >> 32),
+		[3] = cpu_to_le32(version.hi|
+				  (crc.compression_type << 24))^BCH_NONCE_EXTENT,
+	}};
 }
 
 static inline bool bch2_key_is_encrypted(struct bch_encrypted_key *key)

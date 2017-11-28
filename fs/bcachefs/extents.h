@@ -38,8 +38,7 @@ bch2_insert_fixup_extent(struct btree_insert *,
 			struct btree_insert_entry *);
 
 bool bch2_extent_normalize(struct bch_fs *, struct bkey_s);
-void bch2_extent_mark_replicas_cached(struct bch_fs *,
-				     struct bkey_s_extent, unsigned);
+void bch2_extent_mark_replicas_cached(struct bch_fs *, struct bkey_s_extent);
 
 const struct bch_extent_ptr *
 bch2_extent_has_device(struct bkey_s_c_extent, unsigned);
@@ -48,10 +47,8 @@ unsigned bch2_extent_nr_ptrs(struct bkey_s_c_extent);
 unsigned bch2_extent_nr_dirty_ptrs(struct bkey_s_c);
 unsigned bch2_extent_is_compressed(struct bkey_s_c);
 
-struct bch_extent_ptr *bch2_extent_matches_ptr(struct bch_fs *,
-					       struct bkey_s_extent,
-					       struct bch_extent_ptr,
-					       u64);
+bool bch2_extent_matches_ptr(struct bch_fs *, struct bkey_s_c_extent,
+			     struct bch_extent_ptr, u64);
 
 static inline bool bkey_extent_is_data(const struct bkey *k)
 {
@@ -398,19 +395,9 @@ static inline void extent_ptr_append(struct bkey_i_extent *e,
 	__extent_entry_push(e);
 }
 
-static inline unsigned extent_current_nonce(struct bkey_s_c_extent e)
-{
-	struct bch_extent_crc_unpacked crc;
-	const union bch_extent_entry *i;
-
-	extent_for_each_crc(e, crc, i)
-		if (bch2_csum_type_is_encryption(crc.csum_type))
-			return crc.offset + crc.nonce;
-
-	return 0;
-}
-
-bool bch2_extent_narrow_crcs(struct bkey_s_extent, unsigned, struct bch_csum);
+bool bch2_can_narrow_extent_crcs(struct bkey_s_c_extent,
+				 struct bch_extent_crc_unpacked);
+bool bch2_extent_narrow_crcs(struct bkey_i_extent *, struct bch_extent_crc_unpacked);
 void bch2_extent_drop_redundant_crcs(struct bkey_s_extent);
 
 void __bch2_extent_drop_ptr(struct bkey_s_extent, struct bch_extent_ptr *);
