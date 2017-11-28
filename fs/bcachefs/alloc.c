@@ -1602,8 +1602,8 @@ alloc_done:
 	 * still needs to find them; instead, we must allocate a new open bucket
 	 * and copy any pointers to non-full buckets into the new open bucket.
 	 */
-	BUG_ON(ob->nr_ptrs - nr_ptrs_empty - nr_replicas > nr_ptrs_dislike);
-	nr_ptrs_dislike = ob->nr_ptrs - nr_ptrs_empty - nr_replicas;
+	BUG_ON((int) ob->nr_ptrs - nr_ptrs_empty - nr_replicas > nr_ptrs_dislike);
+	nr_ptrs_dislike = max_t(int, 0, ob->nr_ptrs - nr_ptrs_empty - nr_replicas);
 
 	if (nr_ptrs_empty || nr_ptrs_dislike) {
 		ob = bch2_open_bucket_get(c, open_buckets_reserved, cl);
