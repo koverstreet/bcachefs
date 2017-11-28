@@ -171,19 +171,17 @@ unsigned bch2_extent_is_compressed(struct bkey_s_c k)
 		extent_for_each_ptr_crc(e, ptr, crc)
 			if (!ptr->cached &&
 			    crc.compression_type != BCH_COMPRESSION_NONE &&
-			    crc.compressed_size < k.k->size)
+			    crc.compressed_size < crc.live_size)
 				ret = max_t(unsigned, ret, crc.compressed_size);
 	}
 
 	return ret;
 }
 
-struct bch_extent_ptr *bch2_extent_matches_ptr(struct bch_fs *c,
-					       struct bkey_s_extent e,
-					       struct bch_extent_ptr m,
-					       u64 offset)
+bool bch2_extent_matches_ptr(struct bch_fs *c, struct bkey_s_c_extent e,
+			     struct bch_extent_ptr m, u64 offset)
 {
-	struct bch_extent_ptr *ptr;
+	const struct bch_extent_ptr *ptr;
 	struct bch_extent_crc_unpacked crc;
 
 	extent_for_each_ptr_crc(e, ptr, crc)
@@ -227,26 +225,30 @@ found:
 	bch2_extent_drop_ptr(e, ptr);
 }
 
-/* returns true if equal */
-static bool crc_cmp(union bch_extent_crc *l, union bch_extent_crc *r)
+static inline bool can_narrow_crc(struct bch_extent_crc_unpacked u,
+				  struct bch_extent_crc_unpacked n)
 {
-	return extent_crc_type(l) == extent_crc_type(r) &&
-		!memcmp(l, r, extent_entry_bytes(to_entry(l)));
+	return !u.compression_type &&
+		u.csum_type &&
+		u.uncompressed_size > u.live_size &&
+		!bch2_csum_type_is_encryption(u.csum_type) &&
+		!bch2_csum_type_is_encryption(n.csum_type);
 }
 
-/* Increment pointers after @crc by crc's offset until the next crc entry: */
-void bch2_extent_crc_narrow_pointers(struct bkey_s_extent e,
-				     union bch_extent_entry *from,
-				     struct bch_extent_crc_unpacked crc)
+bool bch2_can_narrow_extent_crcs(struct bkey_s_c_extent e,
+				 struct bch_extent_crc_unpacked n)
 {
-	union bch_extent_entry *entry;
+	struct bch_extent_crc_unpacked crc;
+	const union bch_extent_entry *i;
 
-	extent_for_each_entry_from(e, entry, extent_entry_next(from)) {
-		if (!extent_entry_is_ptr(entry))
-			return;
+	if (!n.csum_type)
+		return false;
 
-		entry->ptr.offset += crc.offset;
-	}
+	extent_for_each_crc(e, crc, i)
+		if (can_narrow_crc(crc, n))
+			return true;
+
+	return false;
 }
 
 /*
@@ -257,119 +259,50 @@ void bch2_extent_crc_narrow_pointers(struct bkey_s_extent e,
  * not compressed, we can modify them to point to only the data that is
  * currently live (so that readers won't have to bounce) while we've got the
  * checksum we need:
- *
- * XXX: to guard against data being corrupted while in memory, instead of
- * recomputing the checksum here, it would be better in the read path to instead
- * of computing the checksum of the entire extent:
- *
- * | extent                              |
- *
- * compute the checksums of the live and dead data separately
- * | dead data || live data || dead data |
- *
- * and then verify that crc_dead1 + crc_live + crc_dead2 == orig_crc, and then
- * use crc_live here (that we verified was correct earlier)
- *
- * note: doesn't work with encryption
  */
-bool bch2_extent_narrow_crcs(struct bkey_s_extent e,
-			     unsigned csum_type,
-			     struct bch_csum csum)
+bool bch2_extent_narrow_crcs(struct bkey_i_extent *e,
+			     struct bch_extent_crc_unpacked n)
 {
 	struct bch_extent_crc_unpacked u;
-	union bch_extent_crc *crc;
+	struct bch_extent_ptr *ptr;
 	union bch_extent_entry *i;
-	bool did_work = false;
 
-	if (!csum_type) {
-		/* Find a csum that covers only existing live data: */
-		extent_for_each_crc(e, u, i) {
-			if (u.compression_type)
-				continue;
-
-			if (bch2_csum_type_is_encryption(u.csum_type))
-				continue;
-
-			if (u.uncompressed_size == e.k->size) {
-				csum = u.csum;
-				csum_type = u.csum_type;
-			}
-		}
-	}
-
-	if (!csum_type)
-		return false;
-
-	if (bch2_csum_type_is_encryption(csum_type))
-		return false;
-
-	extent_for_each_entry(e, i) {
-		if (!extent_entry_is_crc(i))
-			continue;
-
-		crc = entry_to_crc(i);
-		u = bch2_extent_crc_unpack(e.k, crc);
-
-		if (u.compression_type)
-			continue;
-
-		if (bch2_csum_type_is_encryption(u.csum_type))
-			continue;
-
-		if (u.uncompressed_size != e.k->size) {
-			switch (extent_crc_type(crc)) {
-			case BCH_EXTENT_CRC_NONE:
-				BUG();
-			case BCH_EXTENT_CRC32:
-				if (bch_crc_bytes[csum_type] > 4)
-					continue;
-
-				bch2_extent_crc_narrow_pointers(e, i, u);
-				crc->crc32._compressed_size	= e.k->size - 1;
-				crc->crc32._uncompressed_size	= e.k->size - 1;
-				crc->crc32.offset		= 0;
-				crc->crc32.csum_type		= csum_type;
-				crc->crc32.csum			= csum.lo;
-				break;
-			case BCH_EXTENT_CRC64:
-				if (bch_crc_bytes[csum_type] > 10)
-					continue;
-
-				bch2_extent_crc_narrow_pointers(e, i, u);
-				crc->crc64._compressed_size	= e.k->size - 1;
-				crc->crc64._uncompressed_size	= e.k->size - 1;
-				crc->crc64.offset		= 0;
-				crc->crc64.csum_type		= csum_type;
-				crc->crc64.csum_lo		= csum.lo;
-				crc->crc64.csum_hi		= csum.hi;
-				break;
-			case BCH_EXTENT_CRC128:
-				if (bch_crc_bytes[csum_type] > 16)
-					continue;
-
-				bch2_extent_crc_narrow_pointers(e, i, u);
-				crc->crc128._compressed_size	= e.k->size - 1;
-				crc->crc128._uncompressed_size	= e.k->size - 1;
-				crc->crc128.offset		= 0;
-				crc->crc128.csum_type		= csum_type;
-				crc->crc128.csum		= csum;
+	/* Find a checksum entry that covers only live data: */
+	if (!n.csum_type)
+		extent_for_each_crc(extent_i_to_s(e), u, i)
+			if (!u.compression_type &&
+			    u.csum_type &&
+			    u.live_size == u.uncompressed_size) {
+				n = u;
 				break;
 			}
 
-			did_work = true;
-		}
-	}
+	if (!bch2_can_narrow_extent_crcs(extent_i_to_s_c(e), n))
+		return false;
 
-	if (did_work)
-		bch2_extent_drop_redundant_crcs(e);
-	return did_work;
+	BUG_ON(n.compression_type);
+	BUG_ON(n.offset);
+	BUG_ON(n.live_size != e->k.size);
+
+	bch2_extent_crc_append(e, n);
+restart_narrow_pointers:
+	extent_for_each_ptr_crc(extent_i_to_s(e), ptr, u)
+		if (can_narrow_crc(u, n)) {
+			ptr->offset += u.offset;
+			extent_ptr_append(e, *ptr);
+			__bch2_extent_drop_ptr(extent_i_to_s(e), ptr);
+			goto restart_narrow_pointers;
+		}
+
+	bch2_extent_drop_redundant_crcs(extent_i_to_s(e));
+	return true;
 }
 
 void bch2_extent_drop_redundant_crcs(struct bkey_s_extent e)
 {
 	union bch_extent_entry *entry = e.v->start;
 	union bch_extent_crc *crc, *prev = NULL;
-	struct bch_extent_crc_unpacked u;
+	struct bch_extent_crc_unpacked u, prev_u;
 
 	while (entry != extent_entry_last(e)) {
 		union bch_extent_entry *next = extent_entry_next(entry);
@@ -391,7 +324,7 @@ void bch2_extent_drop_redundant_crcs(struct bkey_s_extent e)
 			goto drop;
 		}
 
-		if (prev && crc_cmp(crc, prev)) {
+		if (prev && !memcmp(&u, &prev_u, sizeof(u))) {
 			/* identical to previous crc entry: */
 			goto drop;
 		}
@@ -400,11 +333,19 @@ void bch2_extent_drop_redundant_crcs(struct bkey_s_extent e)
 		    !u.csum_type &&
 		    !u.compression_type) {
 			/* null crc entry: */
-			bch2_extent_crc_narrow_pointers(e, entry, u);
+			union bch_extent_entry *e2;
+
+			extent_for_each_entry_from(e, e2, extent_entry_next(entry)) {
+				if (!extent_entry_is_ptr(e2))
+					return;
+
+				e2->ptr.offset += u.offset;
+			}
 			goto drop;
 		}
 
 		prev = crc;
+		prev_u = u;
 next:
 		entry = next;
 		continue;
@@ -537,10 +478,11 @@ static size_t extent_print_ptrs(struct bch_fs *c, char *buf,
 		case BCH_EXTENT_ENTRY_crc128:
 			crc = bch2_extent_crc_unpack(e.k, entry_to_crc(entry));
 
-			p("crc: c_size %u size %u offset %u csum %u compress %u",
+			p("crc: c_size %u size %u offset %u nonce %u csum %u compress %u",
 			  crc.compressed_size,
 			  crc.uncompressed_size,
-			  crc.offset, crc.csum_type,
+			  crc.offset, crc.nonce,
+			  crc.csum_type,
 			  crc.compression_type);
 			break;
 		case BCH_EXTENT_ENTRY_ptr:
@@ -1758,6 +1700,7 @@ static const char *bch2_extent_invalid(const struct bch_fs *c,
 		const struct bch_extent_ptr *ptr;
 		unsigned size_ondisk = e.k->size;
 		const char *reason;
+		unsigned nonce = UINT_MAX;
 
 		extent_for_each_entry(e, entry) {
 			if (__extent_entry_type(entry) >= BCH_EXTENT_ENTRY_MAX)
@@ -1777,6 +1720,13 @@ static const char *bch2_extent_invalid(const struct bch_fs *c,
 
 				if (crc.compression_type >= BCH_COMPRESSION_NR)
 					return "invalid compression type";
+
+				if (bch2_csum_type_is_encryption(crc.csum_type)) {
+					if (nonce == UINT_MAX)
+						nonce = crc.offset + crc.nonce;
+					else if (nonce != crc.offset + crc.nonce)
+						return "incorrect nonce";
+				}
 			} else {
 				ptr = entry_to_ptr(entry);
 
@@ -1951,16 +1901,19 @@ static unsigned PTR_TIER(struct bch_fs *c,
 static void bch2_extent_crc_init(union bch_extent_crc *crc,
 				 struct bch_extent_crc_unpacked new)
 {
+#define common_fields(_crc)						\
+		.csum_type		= _crc.csum_type,		\
+		.compression_type	= _crc.compression_type,	\
+		._compressed_size	= _crc.compressed_size - 1,	\
+		._uncompressed_size	= _crc.uncompressed_size - 1,	\
+		.offset			= _crc.offset
+
 	if (bch_crc_bytes[new.csum_type]	<= 4 &&
 	    new.uncompressed_size		<= CRC32_SIZE_MAX &&
 	    new.nonce				<= CRC32_NONCE_MAX) {
 		crc->crc32 = (struct bch_extent_crc32) {
 			.type = 1 << BCH_EXTENT_ENTRY_crc32,
-			.csum_type		= new.csum_type,
-			.compression_type	= new.compression_type,
-			._compressed_size	= new.compressed_size - 1,
-			._uncompressed_size	= new.uncompressed_size - 1,
-			.offset			= new.offset,
+			common_fields(new),
 			.csum			= *((__le32 *) &new.csum.lo),
 		};
 		return;
@@ -1971,11 +1924,7 @@ static void bch2_extent_crc_init(union bch_extent_crc *crc,
 	    new.nonce				<= CRC64_NONCE_MAX) {
 		crc->crc64 = (struct bch_extent_crc64) {
 			.type = 1 << BCH_EXTENT_ENTRY_crc64,
-			.csum_type		= new.csum_type,
-			.compression_type	= new.compression_type,
-			._compressed_size	= new.compressed_size - 1,
-			._uncompressed_size	= new.uncompressed_size - 1,
-			.offset			= new.offset,
+			common_fields(new),
 			.nonce			= new.nonce,
 			.csum_lo		= new.csum.lo,
 			.csum_hi		= *((__le16 *) &new.csum.hi),
@@ -1988,17 +1937,13 @@ static void bch2_extent_crc_init(union bch_extent_crc *crc,
 	    new.nonce				<= CRC128_NONCE_MAX) {
 		crc->crc128 = (struct bch_extent_crc128) {
 			.type = 1 << BCH_EXTENT_ENTRY_crc128,
-			.csum_type		= new.csum_type,
-			.compression_type	= new.compression_type,
-			._compressed_size	= new.compressed_size - 1,
-			._uncompressed_size	= new.uncompressed_size - 1,
-			.offset			= new.offset,
+			common_fields(new),
 			.nonce			= new.nonce,
 			.csum			= new.csum,
 		};
 		return;
 	}
-
+#undef common_fields
 	BUG();
 }
 
@@ -2010,6 +1955,7 @@ void bch2_extent_crc_append(struct bkey_i_extent *e,
 
 	BUG_ON(new.compressed_size > new.uncompressed_size);
 	BUG_ON(new.offset);
+	BUG_ON(new.uncompressed_size != new.live_size);
 	BUG_ON(new.uncompressed_size != e->k.size);
 	BUG_ON(!new.compressed_size || !new.uncompressed_size);
 
@@ -2020,13 +1966,7 @@ void bch2_extent_crc_append(struct bkey_i_extent *e,
 	extent_for_each_crc(extent_i_to_s(e), crc, i)
 		;
 
-	if (crc.csum_type		== new.csum_type &&
-	    crc.compression_type	== new.compression_type &&
-	    crc.compressed_size		== new.compressed_size &&
-	    crc.uncompressed_size	== new.uncompressed_size &&
-	    crc.offset			== new.offset &&
-	    crc.nonce			== new.nonce &&
-	    !bch2_crc_cmp(crc.csum, new.csum))
+	if (!memcmp(&crc, &new, sizeof(crc)))
 		return;
 
 	bch2_extent_crc_init((void *) extent_entry_last(extent_i_to_s(e)), new);
@@ -2081,15 +2021,21 @@ bool bch2_extent_normalize(struct bch_fs *c, struct bkey_s k)
 }
 
 void bch2_extent_mark_replicas_cached(struct bch_fs *c,
-				      struct bkey_s_extent e,
-				      unsigned nr_cached)
+				      struct bkey_s_extent e)
 {
 	struct bch_extent_ptr *ptr;
+	unsigned tier = 0, nr_cached = 0, nr_good = 0;
 	bool have_higher_tier;
-	unsigned tier = 0;
 
-	if (!nr_cached)
+	extent_for_each_ptr(e, ptr)
+		if (!ptr->cached &&
+		    c->devs[ptr->dev]->mi.state != BCH_MEMBER_STATE_FAILED)
+			nr_good++;
+
+	if (nr_good <= c->opts.data_replicas)
 		return;
+
+	nr_cached = nr_good - c->opts.data_replicas;
 
 	do {
 		have_higher_tier = false;

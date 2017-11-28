@@ -262,7 +262,7 @@ struct bch_csum bch2_checksum(struct bch_fs *c, unsigned type,
 		crc = bch2_checksum_update(type, crc, data, len);
 		crc = bch2_checksum_final(type, crc);
 
-		return (struct bch_csum) { .lo = crc };
+		return (struct bch_csum) { .lo = cpu_to_le64(crc) };
 	}
 
 	case BCH_CSUM_CHACHA20_POLY1305_80:
@@ -293,11 +293,11 @@ void bch2_encrypt(struct bch_fs *c, unsigned type,
 	do_encrypt(c->chacha20, nonce, data, len);
 }
 
-struct bch_csum bch2_checksum_bio(struct bch_fs *c, unsigned type,
-				  struct nonce nonce, struct bio *bio)
+static struct bch_csum __bch2_checksum_bio(struct bch_fs *c, unsigned type,
+					   struct nonce nonce, struct bio *bio,
+					   struct bvec_iter *iter)
 {
 	struct bio_vec bv;
-	struct bvec_iter iter;
 
 	switch (type) {
 	case BCH_CSUM_NONE:
@@ -308,15 +308,21 @@ struct bch_csum bch2_checksum_bio(struct bch_fs *c, unsigned type,
 	case BCH_CSUM_CRC64: {
 		u64 crc = bch2_checksum_init(type);
 
-		bio_for_each_contig_segment(bv, bio, iter) {
+#ifdef CONFIG_HIGHMEM
+		__bio_for_each_segment(bv, bio, *iter, *iter) {
 			void *p = kmap_atomic(bv.bv_page) + bv.bv_offset;
 			crc = bch2_checksum_update(type,
 				crc, p, bv.bv_len);
 			kunmap_atomic(p);
 		}
-
+#else
+		__bio_for_each_contig_segment(bv, bio, *iter, *iter)
+			crc = bch2_checksum_update(type, crc,
+				page_address(bv.bv_page) + bv.bv_offset,
+				bv.bv_len);
+#endif
 		crc = bch2_checksum_final(type, crc);
-		return (struct bch_csum) { .lo = crc };
+		return (struct bch_csum) { .lo = cpu_to_le64(crc) };
 	}
 
 	case BCH_CSUM_CHACHA20_POLY1305_80:
@@ -327,13 +333,19 @@ struct bch_csum bch2_checksum_bio(struct bch_fs *c, unsigned type,
 
 		gen_poly_key(c, desc, nonce);
 
-		bio_for_each_contig_segment(bv, bio, iter) {
+#ifdef CONFIG_HIGHMEM
+		__bio_for_each_segment(bv, bio, *iter, *iter) {
 			void *p = kmap_atomic(bv.bv_page) + bv.bv_offset;
 
 			crypto_shash_update(desc, p, bv.bv_len);
 			kunmap_atomic(p);
 		}
-
+#else
+		__bio_for_each_contig_segment(bv, bio, *iter, *iter)
+			crypto_shash_update(desc,
+				page_address(bv.bv_page) + bv.bv_offset,
+				bv.bv_len);
+#endif
 		crypto_shash_final(desc, digest);
 
 		memcpy(&ret, digest, bch_crc_bytes[type]);
@@ -342,6 +354,14 @@ struct bch_csum bch2_checksum_bio(struct bch_fs *c, unsigned type,
 	default:
 		BUG();
 	}
+}
+
+struct bch_csum bch2_checksum_bio(struct bch_fs *c, unsigned type,
+				  struct nonce nonce, struct bio *bio)
+{
+	struct bvec_iter iter = bio->bi_iter;
+
+	return __bch2_checksum_bio(c, type, nonce, bio, &iter);
 }
 
 void bch2_encrypt_bio(struct bch_fs *c, unsigned type,
@@ -357,12 +377,12 @@ void bch2_encrypt_bio(struct bch_fs *c, unsigned type,
 
 	sg_init_table(sgl, ARRAY_SIZE(sgl));
 
-	bio_for_each_contig_segment(bv, bio, iter) {
+	bio_for_each_segment(bv, bio, iter) {
 		if (sg == sgl + ARRAY_SIZE(sgl)) {
 			sg_mark_end(sg - 1);
 			do_encrypt_sg(c->chacha20, nonce, sgl, bytes);
 
-			le32_add_cpu(nonce.d, bytes / CHACHA20_BLOCK_SIZE);
+			nonce = nonce_add(nonce, bytes);
 			bytes = 0;
 
 			sg_init_table(sgl, ARRAY_SIZE(sgl));
@@ -371,11 +391,113 @@ void bch2_encrypt_bio(struct bch_fs *c, unsigned type,
 
 		sg_set_page(sg++, bv.bv_page, bv.bv_len, bv.bv_offset);
 		bytes += bv.bv_len;
-
 	}
 
 	sg_mark_end(sg - 1);
 	do_encrypt_sg(c->chacha20, nonce, sgl, bytes);
+}
+
+static inline bool bch2_checksum_mergeable(unsigned type)
+{
+
+	switch (type) {
+	case BCH_CSUM_NONE:
+	case BCH_CSUM_CRC32C:
+	case BCH_CSUM_CRC64:
+		return true;
+	default:
+		return false;
+	}
+}
+
+static struct bch_csum bch2_checksum_merge(unsigned type,
+					   struct bch_csum a,
+					   struct bch_csum b, size_t b_len)
+{
+	BUG_ON(!bch2_checksum_mergeable(type));
+
+	while (b_len) {
+		unsigned b = min(b_len, PAGE_SIZE);
+
+		a.lo = bch2_checksum_update(type, a.lo,
+				page_address(ZERO_PAGE(0)), b);
+		b_len -= b;
+	}
+
+	a.lo ^= b.lo;
+	a.hi ^= b.hi;
+	return a;
+}
+
+int bch2_rechecksum_bio(struct bch_fs *c, struct bio *bio,
+			struct bversion version,
+			struct bch_extent_crc_unpacked crc_old,
+			struct bch_extent_crc_unpacked *crc_a,
+			struct bch_extent_crc_unpacked *crc_b,
+			unsigned len_a, unsigned len_b,
+			unsigned new_csum_type)
+{
+	struct bvec_iter iter = bio->bi_iter;
+	struct nonce nonce = extent_nonce(version, crc_old);
+	struct bch_csum merged = { 0 };
+	struct crc_split {
+		struct bch_extent_crc_unpacked	*crc;
+		unsigned			len;
+		unsigned			csum_type;
+		struct bch_csum			csum;
+	} splits[3] = {
+		{ crc_a, len_a, new_csum_type },
+		{ crc_b, len_b, new_csum_type },
+		{ NULL,	 bio_sectors(bio) - len_a - len_b, new_csum_type },
+	}, *i;
+	bool mergeable = crc_old.csum_type == new_csum_type &&
+		bch2_checksum_mergeable(new_csum_type);
+	unsigned crc_nonce = crc_old.nonce;
+
+	BUG_ON(len_a + len_b > bio_sectors(bio));
+	BUG_ON(crc_old.uncompressed_size != bio_sectors(bio));
+	BUG_ON(crc_old.compression_type);
+	BUG_ON(bch2_csum_type_is_encryption(crc_old.csum_type) ||
+	       bch2_csum_type_is_encryption(new_csum_type));
+
+	for (i = splits; i < splits + ARRAY_SIZE(splits); i++) {
+		iter.bi_size = i->len << 9;
+		if (mergeable || i->crc)
+			i->csum = __bch2_checksum_bio(c, i->csum_type,
+						      nonce, bio, &iter);
+		else
+			bio_advance_iter(bio, &iter, i->len << 9);
+		nonce = nonce_add(nonce, i->len << 9);
+	}
+
+	if (mergeable)
+		for (i = splits; i < splits + ARRAY_SIZE(splits); i++)
+			merged = bch2_checksum_merge(new_csum_type, merged,
+						     i->csum, i->len << 9);
+	else
+		merged = bch2_checksum_bio(c, crc_old.csum_type,
+				extent_nonce(version, crc_old), bio);
+
+	if (bch2_crc_cmp(merged, crc_old.csum))
+		return -EIO;
+
+	for (i = splits; i < splits + ARRAY_SIZE(splits); i++) {
+		if (i->crc)
+			*i->crc = (struct bch_extent_crc_unpacked) {
+				.csum_type		= i->csum_type,
+				.compressed_size	= i->len,
+				.uncompressed_size	= i->len,
+				.offset			= 0,
+				.live_size		= i->len,
+				.nonce			= crc_nonce,
+				.csum			= i->csum,
+			};
+
+		if (bch2_csum_type_is_encryption(new_csum_type))
+			crc_nonce += i->len;
+	}
+
+	return 0;
 }
 
 #ifdef __KERNEL__

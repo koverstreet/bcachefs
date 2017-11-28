@@ -1,6 +1,7 @@
 #ifndef _BCACHEFS_IO_TYPES_H
 #define _BCACHEFS_IO_TYPES_H
 
+#include "alloc_types.h"
 #include "btree_types.h"
 #include "buckets_types.h"
 #include "extents_types.h"
@@ -37,8 +38,7 @@ struct bch_read_bio {
 	u8			flags;
 	union {
 	struct {
-	u8			read_full:1,
-				bounce:1,
+	u8			bounce:1,
 				split:1,
 				narrow_crcs:1,
 				retry:2,
@@ -48,7 +48,7 @@ struct bch_read_bio {
 	};
 
 	struct extent_pick_ptr	pick;
-	/* start position we read from: */
+	/* start pos of data we read (may not be pos of data we want) */
 	struct bpos		pos;
 	struct bversion		version;
 
@@ -97,12 +97,12 @@ struct bch_write_op {
 	unsigned		compression_type:4;
 	unsigned		nr_replicas:4;
 	unsigned		alloc_reserve:4;
-	unsigned		nonce:14;
+	u16			nonce;
 
 	struct bpos		pos;
 	struct bversion		version;
 
-	/* For BCH_WRITE_DATA_COMPRESSED: */
+	/* For BCH_WRITE_DATA_ENCODED: */
 	struct bch_extent_crc_unpacked crc;
 
 	struct bch_devs_mask	*devs;
