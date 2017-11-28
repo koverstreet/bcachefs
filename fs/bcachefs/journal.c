@@ -464,7 +464,8 @@ static int journal_validate_key(struct bch_fs *c, struct jset *j,
 	if (invalid) {
 		bch2_bkey_val_to_text(c, key_type, buf, sizeof(buf),
 				     bkey_i_to_s_c(k));
-		mustfix_fsck_err(c, "invalid %s in journal: %s", type, buf);
+		mustfix_fsck_err(c, "invalid %s in journal: %s\n%s",
+				 type, invalid, buf);
 
 		le16_add_cpu(&entry->u64s, -k->k.u64s);
 		memmove(k, bkey_next(k), next - (void *) bkey_next(k));
