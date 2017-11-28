@@ -107,7 +107,7 @@ struct bch_write_op {
 	unsigned		size;
 
 	struct bch_devs_mask	*devs;
-	unsigned long		write_point;
+	struct write_point_specifier write_point;
 
 	struct disk_reservation	res;
 

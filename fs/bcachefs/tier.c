@@ -54,7 +54,9 @@ static int issue_tiering_move(struct bch_fs *c,
 {
 	int ret;
 
-	ret = bch2_data_move(c, ctxt, &tier->devs, k, NULL);
+	ret = bch2_data_move(c, ctxt, &tier->devs,
+			     writepoint_ptr(&tier->wp),
+			     k, NULL);
 	if (!ret)
 		trace_tiering_copy(k.k);
 	else

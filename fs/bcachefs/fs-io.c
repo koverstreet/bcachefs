@@ -975,7 +975,7 @@ alloc_io:
 					.nr_replicas = c->opts.data_replicas,
 				},
 				c->fastest_devs,
-				inode->ei_last_dirtied,
+				writepoint_hashed(inode->ei_last_dirtied),
 				POS(inum, 0),
 				&inode->ei_journal_seq,
 				BCH_WRITE_THROTTLE);
@@ -1547,7 +1547,7 @@ static void bch2_do_direct_IO_write(struct dio_write *dio)
 	dio->iop.new_i_size	= U64_MAX;
 	bch2_write_op_init(&dio->iop.op, dio->c, dio->res,
 			   dio->c->fastest_devs,
-			   (unsigned long) dio->task,
+			   writepoint_hashed((unsigned long) dio->task),
 			   POS(inode->v.i_ino, (dio->offset + dio->written) >> 9),
 			   &inode->ei_journal_seq,
 			   flags|BCH_WRITE_THROTTLE);

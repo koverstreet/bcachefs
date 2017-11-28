@@ -76,6 +76,10 @@ struct write_point {
 	u64			next_alloc[BCH_SB_MEMBERS_MAX];
 };
 
+struct write_point_specifier {
+	unsigned long		v;
+};
+
 struct alloc_heap_entry {
 	size_t			bucket;
 	unsigned long		key;
