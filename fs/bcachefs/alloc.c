@@ -1875,7 +1875,7 @@ static void bch2_stop_write_point(struct bch_fs *c, struct bch_dev *ca,
 	closure_init_stack(&cl);
 retry:
 	mutex_lock(&wp->lock);
-	if (!open_bucket_has_device(wp->ob, ca)) {
+	if (!wp->ob || !open_bucket_has_device(wp->ob, ca)) {
 		mutex_unlock(&wp->lock);
 		return;
 	}
