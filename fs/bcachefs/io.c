@@ -834,8 +834,6 @@ static void promote_start(struct promote_op *op, struct bch_read_bio *rbio)
 
 	/* we now own pages: */
 	swap(bio->bi_vcnt, rbio->bio.bi_vcnt);
-	memcpy(bio->bi_io_vec, rbio->bio.bi_io_vec,
-	       sizeof(struct bio_vec) * bio->bi_vcnt);
 	rbio->promote = NULL;
 
 	closure_init(cl, NULL);
@@ -847,50 +845,25 @@ static void promote_start(struct promote_op *op, struct bch_read_bio *rbio)
  * XXX: multiple promotes can race with each other, wastefully. Keep a list of
  * outstanding promotes?
  */
-static struct promote_op *promote_alloc(struct bch_fs *c,
-					struct bvec_iter iter,
-					struct bkey_s_c k,
-					struct extent_pick_ptr *pick,
-					bool read_full)
+static struct promote_op *promote_alloc(struct bch_read_bio *rbio,
+					struct bkey_s_c k)
 {
+	struct bch_fs *c = rbio->c;
 	struct promote_op *op;
 	struct bio *bio;
-	/*
-	 * biovec needs to be big enough to hold decompressed data, if
-	 * bch2_write_extent() has to decompress/recompress it:
-	 */
-	unsigned sectors = pick->crc.uncompressed_size;
-	unsigned pages = DIV_ROUND_UP(sectors, PAGE_SECTORS);
 
-	op = kmalloc(sizeof(*op) + sizeof(struct bio_vec) * pages, GFP_NOIO);
+	op = kmalloc(sizeof(*op) + sizeof(struct bio_vec) * rbio->bio.bi_vcnt,
+		     GFP_NOIO);
 	if (!op)
 		return NULL;
 
 	bio = &op->write.op.wbio.bio;
-	bio_init(bio, bio->bi_inline_vecs, pages);
+	bio_init(bio, bio->bi_inline_vecs, rbio->bio.bi_vcnt);
 
-	bio->bi_iter = iter;
+	bio->bi_iter.bi_size = rbio->bio.bi_iter.bi_size;
 
-	if (pick->crc.compression_type) {
-		op->write.op.flags     |= BCH_WRITE_DATA_COMPRESSED;
-		op->write.op.crc	= pick->crc;
-		op->write.op.size	= k.k->size;
-	} else if (read_full) {
-		/*
-		 * Adjust bio to correspond to _live_ portion of @k -
-		 * which might be less than what we're actually reading:
-		 */
-		bio->bi_iter.bi_size = sectors << 9;
-		bio_advance(bio, pick->crc.offset << 9);
-		BUG_ON(bio_sectors(bio) < k.k->size);
-		bio->bi_iter.bi_size = k.k->size << 9;
-	} else {
-		/*
-		 * Set insert pos to correspond to what we're actually
-		 * reading:
-		 */
-		op->write.op.pos.offset = iter.bi_sector;
-	}
+	memcpy(bio->bi_io_vec, rbio->bio.bi_io_vec,
+	       sizeof(struct bio_vec) * rbio->bio.bi_vcnt);
 
 	bch2_migrate_write_init(c, &op->write,
 				c->fastest_devs,
@@ -899,6 +872,27 @@ static struct promote_op *promote_alloc(struct bch_fs *c,
 				BCH_WRITE_ALLOC_NOWAIT|
 				BCH_WRITE_CACHED);
 	op->write.promote = true;
+
+	if (rbio->pick.crc.compression_type) {
+		op->write.op.flags     |= BCH_WRITE_DATA_COMPRESSED;
+		op->write.op.crc	= rbio->pick.crc;
+		op->write.op.size	= k.k->size;
+	} else if (rbio->read_full) {
+		/*
+		 * Adjust bio to correspond to _live_ portion of @k -
+		 * which might be less than what we're actually reading:
+		 */
+		bio_advance(bio, rbio->pick.crc.offset << 9);
+
+		BUG_ON(bio_sectors(bio) < k.k->size);
+		bio->bi_iter.bi_size = k.k->size << 9;
+	} else {
+		/*
+		 * Set insert pos to correspond to what we're actually
+		 * reading:
+		 */
+		op->write.op.pos.offset = bio->bi_iter.bi_sector;
+	}
 
 	return op;
 }
@@ -1254,8 +1248,7 @@ int __bch2_read_extent(struct bch_fs *c, struct bch_read_bio *orig,
 		       struct extent_pick_ptr *pick, unsigned flags)
 {
 	struct bch_read_bio *rbio;
-	struct promote_op *promote_op = NULL;
-	bool bounce = false, split, read_full = false, narrow_crcs;
+	bool bounce = false, split, read_full = false, narrow_crcs, promote;
 	int ret = 0;
 
 	bch2_increment_clock(c, bio_sectors(&orig->bio), READ);
@@ -1278,11 +1271,9 @@ int __bch2_read_extent(struct bch_fs *c, struct bch_read_bio *orig,
 		bounce = true;
 	}
 
-	if (should_promote(c, pick, flags))
-		promote_op = promote_alloc(c, iter, k, pick, read_full);
-
+	promote = should_promote(c, pick, flags);
 	/* could also set read_full */
-	if (promote_op)
+	if (promote)
 		bounce = true;
 
 	if (bounce) {
@@ -1337,8 +1328,8 @@ int __bch2_read_extent(struct bch_fs *c, struct bch_read_bio *orig,
 	rbio->retry		= 0;
 	rbio->pick		= *pick;
 	rbio->version		= k.k->version;
-	rbio->promote		= promote_op;
 	rbio->pos		= bkey_start_pos(k.k);
+	rbio->promote		= promote ? promote_alloc(rbio, k) : NULL;
 	INIT_WORK(&rbio->work, NULL);
 
 	bio_set_dev(&rbio->bio, pick->ca->disk_sb.bdev);
