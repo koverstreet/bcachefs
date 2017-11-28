@@ -49,15 +49,16 @@ int bch2_enable_encryption(struct bch_fs *, bool);
 void bch2_fs_encryption_exit(struct bch_fs *);
 int bch2_fs_encryption_init(struct bch_fs *);
 
-static inline enum bch_csum_type bch2_csum_opt_to_type(enum bch_csum_opts type)
+static inline enum bch_csum_type bch2_csum_opt_to_type(enum bch_csum_opts type,
+						       bool data)
 {
 	switch (type) {
 	case BCH_CSUM_OPT_NONE:
 	     return BCH_CSUM_NONE;
 	case BCH_CSUM_OPT_CRC32C:
-	     return BCH_CSUM_CRC32C;
+	     return data ? BCH_CSUM_CRC32C : BCH_CSUM_CRC32C_NONZERO;
 	case BCH_CSUM_OPT_CRC64:
-	     return BCH_CSUM_CRC64;
+	     return data ? BCH_CSUM_CRC64 : BCH_CSUM_CRC64_NONZERO;
 	default:
 	     BUG();
 	}
@@ -70,7 +71,7 @@ static inline enum bch_csum_type bch2_data_checksum_type(struct bch_fs *c)
 			? BCH_CSUM_CHACHA20_POLY1305_128
 			: BCH_CSUM_CHACHA20_POLY1305_80;
 
-	return bch2_csum_opt_to_type(c->opts.data_checksum);
+	return bch2_csum_opt_to_type(c->opts.data_checksum, true);
 }
 
 static inline enum bch_csum_type bch2_meta_checksum_type(struct bch_fs *c)
@@ -78,7 +79,7 @@ static inline enum bch_csum_type bch2_meta_checksum_type(struct bch_fs *c)
 	if (c->sb.encryption_type)
 		return BCH_CSUM_CHACHA20_POLY1305_128;
 
-	return bch2_csum_opt_to_type(c->opts.metadata_checksum);
+	return bch2_csum_opt_to_type(c->opts.metadata_checksum, false);
 }
 
 static inline enum bch_compression_type

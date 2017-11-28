@@ -141,10 +141,14 @@ static u64 bch2_checksum_init(unsigned type)
 	switch (type) {
 	case BCH_CSUM_NONE:
 		return 0;
-	case BCH_CSUM_CRC32C:
+	case BCH_CSUM_CRC32C_NONZERO:
 		return U32_MAX;
-	case BCH_CSUM_CRC64:
+	case BCH_CSUM_CRC64_NONZERO:
 		return U64_MAX;
+	case BCH_CSUM_CRC32C:
+		return 0;
+	case BCH_CSUM_CRC64:
+		return 0;
 	default:
 		BUG();
 	}
@@ -155,10 +159,14 @@ static u64 bch2_checksum_final(unsigned type, u64 crc)
 	switch (type) {
 	case BCH_CSUM_NONE:
 		return 0;
-	case BCH_CSUM_CRC32C:
+	case BCH_CSUM_CRC32C_NONZERO:
 		return crc ^ U32_MAX;
-	case BCH_CSUM_CRC64:
+	case BCH_CSUM_CRC64_NONZERO:
 		return crc ^ U64_MAX;
+	case BCH_CSUM_CRC32C:
+		return crc;
+	case BCH_CSUM_CRC64:
+		return crc;
 	default:
 		BUG();
 	}
@@ -169,8 +177,10 @@ static u64 bch2_checksum_update(unsigned type, u64 crc, const void *data, size_t
 	switch (type) {
 	case BCH_CSUM_NONE:
 		return 0;
+	case BCH_CSUM_CRC32C_NONZERO:
 	case BCH_CSUM_CRC32C:
 		return crc32c(crc, data, len);
+	case BCH_CSUM_CRC64_NONZERO:
 	case BCH_CSUM_CRC64:
 		return bch2_crc64_update(crc, data, len);
 	default:
@@ -243,6 +253,8 @@ struct bch_csum bch2_checksum(struct bch_fs *c, unsigned type,
 {
 	switch (type) {
 	case BCH_CSUM_NONE:
+	case BCH_CSUM_CRC32C_NONZERO:
+	case BCH_CSUM_CRC64_NONZERO:
 	case BCH_CSUM_CRC32C:
 	case BCH_CSUM_CRC64: {
 		u64 crc = bch2_checksum_init(type);
@@ -290,6 +302,8 @@ struct bch_csum bch2_checksum_bio(struct bch_fs *c, unsigned type,
 	switch (type) {
 	case BCH_CSUM_NONE:
 		return (struct bch_csum) { 0 };
+	case BCH_CSUM_CRC32C_NONZERO:
+	case BCH_CSUM_CRC64_NONZERO:
 	case BCH_CSUM_CRC32C:
 	case BCH_CSUM_CRC64: {
 		u64 crc = bch2_checksum_init(type);

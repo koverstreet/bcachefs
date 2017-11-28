@@ -344,11 +344,13 @@ struct bch_csum {
 
 enum bch_csum_type {
 	BCH_CSUM_NONE			= 0,
-	BCH_CSUM_CRC32C			= 1,
-	BCH_CSUM_CRC64			= 2,
+	BCH_CSUM_CRC32C_NONZERO		= 1,
+	BCH_CSUM_CRC64_NONZERO		= 2,
 	BCH_CSUM_CHACHA20_POLY1305_80	= 3,
 	BCH_CSUM_CHACHA20_POLY1305_128	= 4,
-	BCH_CSUM_NR			= 5,
+	BCH_CSUM_CRC32C			= 5,
+	BCH_CSUM_CRC64			= 6,
+	BCH_CSUM_NR			= 7,
 };
 
 static inline _Bool bch2_csum_type_is_encryption(enum bch_csum_type type)
