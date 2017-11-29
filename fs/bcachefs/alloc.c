@@ -1355,14 +1355,20 @@ static unsigned open_bucket_sectors_free(struct bch_fs *c,
 	return sectors_free != UINT_MAX ? sectors_free : 0;
 }
 
-static void open_bucket_move_ptrs(struct bch_fs *c,
-				  struct open_bucket *dst,
-				  struct open_bucket *src,
-				  struct bch_devs_mask *devs,
-				  unsigned nr_ptrs_dislike)
+static int open_bucket_move_ptrs(struct bch_fs *c,
+				 struct write_point *wp,
+				 struct bch_devs_mask *devs,
+				 unsigned nr_ptrs_dislike,
+				 struct closure *cl)
 {
+	struct open_bucket *src = wp->ob, *dst;
 	bool moved_ptr = false;
 	int i;
+
+	dst = bch2_open_bucket_get(c, wp->type == BCH_DATA_BTREE
+				   ? 0 : BTREE_NODE_RESERVE, cl);
+	if (IS_ERR(dst))
+		return PTR_ERR(dst);
 
 	down_read(&c->alloc_gc_lock);
 
@@ -1412,6 +1418,10 @@ static void open_bucket_move_ptrs(struct bch_fs *c,
 	spin_unlock(&dst->lock);
 	spin_unlock(&src->lock);
 	up_read(&c->alloc_gc_lock);
+
+	bch2_open_bucket_put(c, src);
+	wp->ob = dst;
+	return 0;
 }
 
 static void verify_not_stale(struct bch_fs *c, const struct open_bucket *ob)
@@ -1483,7 +1493,6 @@ static struct hlist_head *writepoint_hash(struct bch_fs *c,
 }
 
 static struct write_point *writepoint_find(struct bch_fs *c,
-					   enum bch_data_type data_type,
 					   unsigned long write_point)
 {
 	struct write_point *wp, *oldest = NULL;
@@ -1531,7 +1540,6 @@ out:
  * Get us an open_bucket we can allocate from, return with it locked:
  */
 struct write_point *bch2_alloc_sectors_start(struct bch_fs *c,
-				enum bch_data_type data_type,
 				struct bch_devs_mask *devs,
 				struct write_point_specifier write_point,
 				unsigned nr_replicas,
@@ -1543,22 +1551,20 @@ struct write_point *bch2_alloc_sectors_start(struct bch_fs *c,
 	struct open_bucket *ob;
 	struct write_point *wp;
 	struct open_bucket_ptr *ptr;
-	unsigned open_buckets_reserved = data_type == BCH_DATA_BTREE
-		? 0 : BTREE_NODE_RESERVE;
 	unsigned nr_ptrs_empty = 0, nr_ptrs_dislike = 0;
 	int ret;
 
 	BUG_ON(!nr_replicas);
 
-	wp = writepoint_find(c, data_type, write_point.v);
-	BUG_ON(wp->type != data_type);
+	wp = writepoint_find(c, write_point.v);
 
 	wp->last_used = sched_clock();
 
 	ob = wp->ob;
 
 	if (!ob) {
-		ob = bch2_open_bucket_get(c, open_buckets_reserved, cl);
+		ob = bch2_open_bucket_get(c, wp->type == BCH_DATA_BTREE
+					  ? 0 : BTREE_NODE_RESERVE, cl);
 		if (IS_ERR(ob)) {
 			ret = PTR_ERR(ob);
 			goto err;
@@ -1613,17 +1619,12 @@ alloc_done:
 	nr_ptrs_dislike = max_t(int, 0, ob->nr_ptrs - nr_ptrs_empty - nr_replicas);
 
 	if (nr_ptrs_empty || nr_ptrs_dislike) {
-		ob = bch2_open_bucket_get(c, open_buckets_reserved, cl);
-		if (IS_ERR(ob)) {
-			ret = PTR_ERR(ob);
-			goto err;
-		}
-
 		/* Remove pointers we don't want to use: */
+		ret = open_bucket_move_ptrs(c, wp, devs, nr_ptrs_dislike, cl);
+		if (ret)
+			goto err;
 
-		open_bucket_move_ptrs(c, ob, wp->ob, devs, nr_ptrs_dislike);
-		bch2_open_bucket_put(c, wp->ob);
-		wp->ob = ob;
+		ob = wp->ob;
 	}
 
 	BUG_ON(ob->nr_ptrs < nr_replicas_required);
@@ -1677,23 +1678,15 @@ void bch2_alloc_sectors_append_ptrs(struct bch_fs *c, struct bkey_i_extent *e,
  */
 void bch2_alloc_sectors_done(struct bch_fs *c, struct write_point *wp)
 {
-	struct open_bucket *ob = wp->ob, *new_ob = NULL;
 	struct open_bucket_ptr *ptr;
-	bool empty = false;
 
-	open_bucket_for_each_ptr(ob, ptr)
-		empty |= !ptr->sectors_free;
+	atomic_inc(&wp->ob->pin);
 
-	if (empty)
-		new_ob = bch2_open_bucket_get(c, 0, NULL);
-
-	if (!IS_ERR_OR_NULL(new_ob)) {
-		/* writepoint's ref becomes our ref: */
-		wp->ob = new_ob;
-		open_bucket_move_ptrs(c, new_ob, ob, 0, 0);
-	} else {
-		atomic_inc(&ob->pin);
-	}
+	open_bucket_for_each_ptr(wp->ob, ptr)
+		if (!ptr->sectors_free) {
+			open_bucket_move_ptrs(c, wp, NULL, 0, NULL);
+			break;
+		}
 
 	mutex_unlock(&wp->lock);
 }
@@ -1716,7 +1709,6 @@ void bch2_alloc_sectors_done(struct bch_fs *c, struct write_point *wp)
  * @cl - closure to wait for a bucket
  */
 struct open_bucket *bch2_alloc_sectors(struct bch_fs *c,
-				enum bch_data_type data_type,
 				struct bch_devs_mask *devs,
 				struct write_point_specifier write_point,
 				struct bkey_i_extent *e,
@@ -1729,7 +1721,7 @@ struct open_bucket *bch2_alloc_sectors(struct bch_fs *c,
 	struct write_point *wp;
 	struct open_bucket *ob;
 
-	wp = bch2_alloc_sectors_start(c, data_type, devs, write_point,
+	wp = bch2_alloc_sectors_start(c, devs, write_point,
 				      nr_replicas, nr_replicas_required,
 				      reserve, flags, cl);
 	if (IS_ERR_OR_NULL(wp))
@@ -1869,10 +1861,11 @@ static bool open_bucket_has_device(struct open_bucket *ob,
 static void bch2_stop_write_point(struct bch_fs *c, struct bch_dev *ca,
 				  struct write_point *wp)
 {
-	struct open_bucket *ob;
+	struct bch_devs_mask not_self;
 	struct closure cl;
 
 	closure_init_stack(&cl);
+	bitmap_complement(not_self.d, ca->self.d, BCH_SB_MEMBERS_MAX);
 retry:
 	mutex_lock(&wp->lock);
 	if (!wp->ob || !open_bucket_has_device(wp->ob, ca)) {
@@ -1880,18 +1873,13 @@ retry:
 		return;
 	}
 
-	ob = bch2_open_bucket_get(c, 0, &cl);
-	if (IS_ERR(ob)) {
+	if (open_bucket_move_ptrs(c, wp, &not_self, wp->ob->nr_ptrs, &cl)) {
 		mutex_unlock(&wp->lock);
 		closure_sync(&cl);
 		goto retry;
-
 	}
 
-	open_bucket_move_ptrs(c, ob, wp->ob, &ca->self, ob->nr_ptrs);
-	bch2_open_bucket_put(c, wp->ob);
-	wp->ob = ob;
-
+	BUG_ON(open_bucket_has_device(wp->ob, ca));
 	mutex_unlock(&wp->lock);
 }
 

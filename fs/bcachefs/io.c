@@ -552,7 +552,7 @@ static void __bch2_write(struct closure *cl)
 					BKEY_EXTENT_U64s_MAX))
 			continue_at(cl, bch2_write_index, index_update_wq(op));
 
-		wp = bch2_alloc_sectors_start(c, BCH_DATA_USER,
+		wp = bch2_alloc_sectors_start(c,
 			op->devs,
 			op->write_point,
 			op->nr_replicas,
