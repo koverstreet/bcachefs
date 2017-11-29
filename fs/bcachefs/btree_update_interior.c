@@ -339,7 +339,7 @@ retry:
 	bkey_extent_init(&tmp.k);
 	tmp.k.k.size = c->opts.btree_node_size,
 
-	ob = bch2_alloc_sectors(c, BCH_DATA_BTREE, NULL,
+	ob = bch2_alloc_sectors(c, NULL,
 				writepoint_ptr(&c->btree_write_point),
 				bkey_i_to_extent(&tmp.k),
 				res->nr_replicas,

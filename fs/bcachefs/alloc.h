@@ -30,7 +30,6 @@ int bch2_bucket_alloc(struct bch_fs *, struct bch_dev *, enum alloc_reserve, boo
 void bch2_open_bucket_put(struct bch_fs *, struct open_bucket *);
 
 struct write_point *bch2_alloc_sectors_start(struct bch_fs *,
-					     enum bch_data_type,
 					     struct bch_devs_mask *,
 					     struct write_point_specifier,
 					     unsigned, unsigned,
@@ -43,7 +42,6 @@ void bch2_alloc_sectors_append_ptrs(struct bch_fs *, struct bkey_i_extent *,
 void bch2_alloc_sectors_done(struct bch_fs *, struct write_point *);
 
 struct open_bucket *bch2_alloc_sectors(struct bch_fs *,
-				       enum bch_data_type,
 				       struct bch_devs_mask *,
 				       struct write_point_specifier,
 				       struct bkey_i_extent *,
