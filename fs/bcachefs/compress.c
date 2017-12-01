@@ -212,14 +212,13 @@ err:
 }
 
 int bch2_bio_uncompress_inplace(struct bch_fs *c, struct bio *bio,
-				unsigned live_data_sectors,
 				struct bch_extent_crc_unpacked crc)
 {
 	struct bbuf dst_data = { NULL };
 	size_t dst_len = crc.uncompressed_size << 9;
 	int ret = -ENOMEM;
 
-	BUG_ON(DIV_ROUND_UP(live_data_sectors, PAGE_SECTORS) > bio->bi_max_vecs);
+	BUG_ON(DIV_ROUND_UP(crc.live_size, PAGE_SECTORS) > bio->bi_max_vecs);
 
 	if (crc.uncompressed_size	> c->sb.encoded_extent_max ||
 	    crc.compressed_size		> c->sb.encoded_extent_max)
@@ -231,7 +230,7 @@ int bch2_bio_uncompress_inplace(struct bch_fs *c, struct bio *bio,
 	if (ret)
 		goto err;
 
-	while (bio->bi_vcnt < DIV_ROUND_UP(live_data_sectors, PAGE_SECTORS)) {
+	while (bio->bi_vcnt < DIV_ROUND_UP(crc.live_size, PAGE_SECTORS)) {
 		struct bio_vec *bv = &bio->bi_io_vec[bio->bi_vcnt];
 
 		bv->bv_page = alloc_page(GFP_NOIO);
@@ -243,7 +242,7 @@ int bch2_bio_uncompress_inplace(struct bch_fs *c, struct bio *bio,
 		bio->bi_vcnt++;
 	}
 
-	bio->bi_iter.bi_size = live_data_sectors << 9;
+	bio->bi_iter.bi_size = crc.live_size << 9;
 copy_data:
 	memcpy_to_bio(bio, bio->bi_iter, dst_data.b + (crc.offset << 9));
 err:
@@ -257,7 +256,7 @@ use_mempool:
 	 */
 
 	bch2_bio_free_pages_pool(c, bio);
-	bch2_bio_alloc_pages_pool(c, bio, live_data_sectors << 9);
+	bch2_bio_alloc_pages_pool(c, bio, crc.live_size << 9);
 	goto copy_data;
 }
 

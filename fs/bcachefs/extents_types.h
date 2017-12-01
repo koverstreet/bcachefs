@@ -4,12 +4,16 @@
 #include "bcachefs_format.h"
 
 struct bch_extent_crc_unpacked {
-	__u64			csum_type:4,
-				compression_type:4,
-				compressed_size:14,
-				uncompressed_size:14,
-				offset:14,
-				nonce:14;
+	u8			csum_type;
+	u8			compression_type;
+
+	u16			compressed_size;
+	u16			uncompressed_size;
+
+	u16			offset;
+	u16			live_size;
+
+	u16			nonce;
 
 	struct bch_csum		csum;
 };

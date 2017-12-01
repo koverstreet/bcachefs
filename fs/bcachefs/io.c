@@ -409,11 +409,11 @@ static int bch2_write_extent(struct bch_write_op *op, struct write_point *wp)
 
 	/* Need to decompress data? */
 	if ((op->flags & BCH_WRITE_DATA_COMPRESSED) &&
-	    (op->crc.uncompressed_size != op->size ||
+	    (op->crc.uncompressed_size != op->crc.live_size ||
 	     op->crc.compressed_size > wp->sectors_free)) {
 		int ret;
 
-		ret = bch2_bio_uncompress_inplace(c, orig, op->size, op->crc);
+		ret = bch2_bio_uncompress_inplace(c, orig, op->crc);
 		if (ret)
 			return ret;
 
@@ -876,7 +876,6 @@ static struct promote_op *promote_alloc(struct bch_read_bio *rbio,
 	if (rbio->pick.crc.compression_type) {
 		op->write.op.flags     |= BCH_WRITE_DATA_COMPRESSED;
 		op->write.op.crc	= rbio->pick.crc;
-		op->write.op.size	= k.k->size;
 	} else if (rbio->read_full) {
 		/*
 		 * Adjust bio to correspond to _live_ portion of @k -
@@ -1307,9 +1306,7 @@ int __bch2_read_extent(struct bch_fs *c, struct bch_read_bio *orig,
 		BUG_ON(bio_flagged(&rbio->bio, BIO_CHAIN));
 	}
 
-	BUG_ON((pick->crc.csum_type ||
-		pick->crc.compression_type) &&
-	       bio_sectors(&rbio->bio) != pick->crc.compressed_size);
+	BUG_ON(bio_sectors(&rbio->bio) != pick->crc.compressed_size);
 
 	rbio->c			= c;
 

@@ -222,45 +222,43 @@ __extent_crc_type(const union bch_extent_crc *crc)
 static inline struct bch_extent_crc_unpacked
 bch2_extent_crc_unpack(const struct bkey *k, const union bch_extent_crc *crc)
 {
+#define common_fields(_crc)						\
+		.csum_type		= _crc.csum_type,		\
+		.compression_type	= _crc.compression_type,	\
+		.compressed_size	= _crc._compressed_size + 1,	\
+		.uncompressed_size	= _crc._uncompressed_size + 1,	\
+		.offset			= _crc.offset,			\
+		.live_size		= k->size
+
 	switch (extent_crc_type(crc)) {
 	case BCH_EXTENT_CRC_NONE:
 		return (struct bch_extent_crc_unpacked) {
 			.compressed_size	= k->size,
 			.uncompressed_size	= k->size,
+			.live_size		= k->size,
 		};
 	case BCH_EXTENT_CRC32:
 		return (struct bch_extent_crc_unpacked) {
-			.csum_type		= crc->crc32.csum_type,
-			.compression_type	= crc->crc32.compression_type,
-			.compressed_size	= crc->crc32._compressed_size + 1,
-			.uncompressed_size	= crc->crc32._uncompressed_size + 1,
-			.offset			= crc->crc32.offset,
+			common_fields(crc->crc32),
 			.csum.lo		= crc->crc32.csum,
 		};
 	case BCH_EXTENT_CRC64:
 		return (struct bch_extent_crc_unpacked) {
-			.csum_type		= crc->crc64.csum_type,
-			.compression_type	= crc->crc64.compression_type,
-			.compressed_size	= crc->crc64._compressed_size + 1,
-			.uncompressed_size	= crc->crc64._uncompressed_size + 1,
-			.offset			= crc->crc64.offset,
+			common_fields(crc->crc64),
 			.nonce			= crc->crc64.nonce,
 			.csum.lo		= crc->crc64.csum_lo,
 			.csum.hi		= crc->crc64.csum_hi,
 		};
 	case BCH_EXTENT_CRC128:
 		return (struct bch_extent_crc_unpacked) {
-			.csum_type		= crc->crc128.csum_type,
-			.compression_type	= crc->crc128.compression_type,
-			.compressed_size	= crc->crc128._compressed_size + 1,
-			.uncompressed_size	= crc->crc128._uncompressed_size + 1,
-			.offset			= crc->crc128.offset,
+			common_fields(crc->crc128),
 			.nonce			= crc->crc128.nonce,
 			.csum			= crc->crc128.csum,
 		};
 	default:
 		BUG();
 	}
+#undef common_fields
 }
 
 /* Extent entry iteration: */
