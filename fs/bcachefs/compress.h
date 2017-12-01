@@ -4,7 +4,7 @@
 #include "extents_types.h"
 
 int bch2_bio_uncompress_inplace(struct bch_fs *, struct bio *,
-			       unsigned, struct bch_extent_crc_unpacked);
+			       struct bch_extent_crc_unpacked);
 int bch2_bio_uncompress(struct bch_fs *, struct bio *, struct bio *,
 		       struct bvec_iter, struct bch_extent_crc_unpacked);
 void bch2_bio_compress(struct bch_fs *, struct bio *, size_t *,
