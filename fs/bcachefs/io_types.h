@@ -104,7 +104,6 @@ struct bch_write_op {
 
 	/* For BCH_WRITE_DATA_COMPRESSED: */
 	struct bch_extent_crc_unpacked crc;
-	unsigned		size;
 
 	struct bch_devs_mask	*devs;
 	struct write_point_specifier write_point;
