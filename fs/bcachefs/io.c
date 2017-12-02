@@ -491,14 +491,10 @@ static enum prep_encoded_ret {
 
 	BUG_ON(bio_sectors(bio) != op->crc.compressed_size);
 
-	if (bch2_write_decrypt(op))
-		return PREP_ENCODED_CHECKSUM_ERR;
-
 	/* Can we just write the entire extent as is? */
 	if (op->crc.uncompressed_size == op->crc.live_size &&
 	    op->crc.compressed_size <= wp->sectors_free &&
-	    op->crc.compression_type == op->compression_type &&
-	    !bch2_csum_type_is_encryption(op->csum_type)) {
+	    op->crc.compression_type == op->compression_type) {
 		if (op->csum_type != op->crc.csum_type &&
 		    bch2_write_rechecksum(c, op, op->csum_type))
 			return PREP_ENCODED_CHECKSUM_ERR;
@@ -513,6 +509,9 @@ static enum prep_encoded_ret {
 	if (op->crc.compression_type) {
 		struct bch_csum csum;
 
+		if (bch2_write_decrypt(op))
+			return PREP_ENCODED_CHECKSUM_ERR;
+
 		/* Last point we can still verify checksum: */
 		csum = bch2_checksum_bio(c, op->crc.csum_type,
 					 extent_nonce(op->version, op->crc),
@@ -525,12 +524,26 @@ static enum prep_encoded_ret {
 	}
 
 	/*
+	 * No longer have compressed data after this point - data might be
+	 * encrypted:
+	 */
+
+	/*
 	 * If the data is checksummed and we're only writing a subset,
 	 * rechecksum and adjust bio to point to currently live data:
 	 */
 	if ((op->crc.live_size != op->crc.uncompressed_size ||
 	     op->crc.csum_type != op->csum_type) &&
 	    bch2_write_rechecksum(c, op, op->csum_type))
+		return PREP_ENCODED_CHECKSUM_ERR;
+
+	/*
+	 * If we want to compress the data, it has to be decrypted:
+	 */
+	if ((op->compression_type ||
+	     bch2_csum_type_is_encryption(op->crc.csum_type) !=
+	     bch2_csum_type_is_encryption(op->csum_type)) &&
+	    bch2_write_decrypt(op))
 		return PREP_ENCODED_CHECKSUM_ERR;
 
 	return PREP_ENCODED_OK;
