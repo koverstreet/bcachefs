@@ -457,7 +457,7 @@ int bch2_rechecksum_bio(struct bch_fs *c, struct bio *bio,
 	BUG_ON(len_a + len_b > bio_sectors(bio));
 	BUG_ON(crc_old.uncompressed_size != bio_sectors(bio));
 	BUG_ON(crc_old.compression_type);
-	BUG_ON(bch2_csum_type_is_encryption(crc_old.csum_type) ||
+	BUG_ON(bch2_csum_type_is_encryption(crc_old.csum_type) !=
 	       bch2_csum_type_is_encryption(new_csum_type));
 
 	for (i = splits; i < splits + ARRAY_SIZE(splits); i++) {

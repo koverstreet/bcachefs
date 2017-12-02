@@ -231,8 +231,8 @@ static inline bool can_narrow_crc(struct bch_extent_crc_unpacked u,
 	return !u.compression_type &&
 		u.csum_type &&
 		u.uncompressed_size > u.live_size &&
-		!bch2_csum_type_is_encryption(u.csum_type) &&
-		!bch2_csum_type_is_encryption(n.csum_type);
+		bch2_csum_type_is_encryption(u.csum_type) ==
+		bch2_csum_type_is_encryption(n.csum_type);
 }
 
 bool bch2_can_narrow_extent_crcs(struct bkey_s_c_extent e,

@@ -146,14 +146,16 @@ static inline struct nonce nonce_add(struct nonce nonce, unsigned offset)
 static inline struct nonce extent_nonce(struct bversion version,
 					struct bch_extent_crc_unpacked crc)
 {
-	return (struct nonce) {{
-		[0] = cpu_to_le32((crc.nonce		<< 12) |
-				  (crc.uncompressed_size << 22)),
+	unsigned size = crc.compression_type ? crc.uncompressed_size : 0;
+	struct nonce nonce = (struct nonce) {{
+		[0] = cpu_to_le32(size << 22),
 		[1] = cpu_to_le32(version.lo),
 		[2] = cpu_to_le32(version.lo >> 32),
 		[3] = cpu_to_le32(version.hi|
 				  (crc.compression_type << 24))^BCH_NONCE_EXTENT,
 	}};
+
+	return nonce_add(nonce, crc.nonce << 9);
 }
 
 static inline bool bch2_key_is_encrypted(struct bch_encrypted_key *key)

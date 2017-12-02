@@ -736,11 +736,13 @@ BKEY_VAL_TYPE(alloc,	BCH_ALLOC);
 /*
  * Version 8:	BCH_SB_ENCODED_EXTENT_MAX_BITS
  *		BCH_MEMBER_DATA_ALLOWED
+ * Version 9:	incompatible extent nonce change
  */
 
 #define BCH_SB_VERSION_MIN		7
 #define BCH_SB_VERSION_EXTENT_MAX	8
-#define BCH_SB_VERSION_MAX		8
+#define BCH_SB_VERSION_EXTENT_NONCE_V1	9
+#define BCH_SB_VERSION_MAX		9
 
 #define BCH_SB_SECTOR			8
 #define BCH_SB_LABEL_SIZE		32

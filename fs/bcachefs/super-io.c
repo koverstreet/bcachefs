@@ -425,6 +425,11 @@ const char *bch2_sb_validate(struct bch_sb_handle *disk_sb)
 	if (err)
 		return err;
 
+	if (le64_to_cpu(sb->version) < BCH_SB_VERSION_EXTENT_NONCE_V1 &&
+	    bch2_sb_get_crypt(sb) &&
+	    BCH_SB_INITIALIZED(sb))
+		return "Incompatible extent nonces";
+
 	sb->version = cpu_to_le64(BCH_SB_VERSION_MAX);
 
 	return NULL;
