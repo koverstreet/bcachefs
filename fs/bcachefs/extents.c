@@ -1288,6 +1288,9 @@ extent_insert_advance_pos(struct extent_insert_state *s, struct bkey_s_c k)
 	struct bpos next_pos = bpos_min(s->insert->k->k.p,
 					k.k ? k.k->p : b->key.k.p);
 
+	if (race_fault())
+		return BTREE_HOOK_RESTART_TRANS;
+
 	/* hole? */
 	if (k.k && bkey_cmp(s->committed, bkey_start_pos(k.k)) < 0) {
 		bool have_uncommitted = bkey_cmp(s->committed,

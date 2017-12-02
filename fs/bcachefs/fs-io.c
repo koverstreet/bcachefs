@@ -352,12 +352,16 @@ static int bchfs_write_index_update(struct bch_write_op *wop)
 					BTREE_INSERT_NOFAIL|BTREE_INSERT_ATOMIC,
 					BTREE_INSERT_ENTRY(&extent_iter, k));
 		}
+
+		BUG_ON(bkey_cmp(extent_iter.pos, bkey_start_pos(&k->k)));
+		BUG_ON(!ret != !k->k.size);
 err:
 		if (ret == -EINTR)
 			continue;
 		if (ret)
 			break;
 
+		BUG_ON(bkey_cmp(extent_iter.pos, k->k.p) < 0);
 		bch2_keylist_pop_front(keys);
 	} while (!bch2_keylist_empty(keys));
 

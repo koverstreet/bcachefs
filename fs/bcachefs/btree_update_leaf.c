@@ -355,6 +355,11 @@ retry:
 
 	multi_lock_write(c, trans);
 
+	if (race_fault()) {
+		ret = -EINTR;
+		goto unlock;
+	}
+
 	u64s = 0;
 	trans_for_each_entry(trans, i) {
 		/* Multiple inserts might go to same leaf: */
