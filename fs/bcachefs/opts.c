@@ -76,16 +76,27 @@ void bch2_opts_apply(struct bch_opts *dst, struct bch_opts src)
 #undef BCH_OPT
 }
 
+bool bch2_opt_defined_by_id(const struct bch_opts *opts, enum bch_opt_id id)
+{
+	switch (id) {
+#define BCH_OPT(_name, ...)						\
+	case Opt_##_name:						\
+		return opt_defined(*opts, _name);
+	BCH_OPTS()
+#undef BCH_OPT
+	default:
+		BUG();
+	}
+}
+
 u64 bch2_opt_get_by_id(const struct bch_opts *opts, enum bch_opt_id id)
 {
 	switch (id) {
 #define BCH_OPT(_name, ...)						\
 	case Opt_##_name:						\
-		return opts->_name;					\
-
+		return opts->_name;
 	BCH_OPTS()
 #undef BCH_OPT
-
 	default:
 		BUG();
 	}
@@ -98,10 +109,8 @@ void bch2_opt_set_by_id(struct bch_opts *opts, enum bch_opt_id id, u64 v)
 	case Opt_##_name:						\
 		opt_set(*opts, _name, v);				\
 		break;
-
 	BCH_OPTS()
 #undef BCH_OPT
-
 	default:
 		BUG();
 	}
@@ -118,7 +127,6 @@ struct bch_opts bch2_opts_from_sb(struct bch_sb *sb)
 #define BCH_OPT(_name, _bits, _mode, _type, _sb_opt, _default)		\
 	if (_sb_opt != NO_SB_OPT)					\
 		opt_set(opts, _name, _sb_opt(sb));
-
 	BCH_OPTS()
 #undef BCH_OPT
 
@@ -145,7 +153,7 @@ const struct bch_option bch2_opt_table[] = {
 #undef BCH_OPT
 };
 
-static int bch2_opt_lookup(const char *name)
+int bch2_opt_lookup(const char *name)
 {
 	const struct bch_option *i;
 
@@ -246,4 +254,53 @@ bad_val:
 no_val:
 	pr_err("Mount option %s requires a value", name);
 	return -1;
+}
+
+/* io opts: */
+
+struct bch_io_opts bch2_opts_to_inode_opts(struct bch_opts src)
+{
+	struct bch_io_opts ret = { 0 };
+#define BCH_INODE_OPT(_name, _bits)					\
+	if (opt_defined(src, _name))					\
+		opt_set(ret, _name, src._name);
+	BCH_INODE_OPTS()
+#undef BCH_INODE_OPT
+	return ret;
+}
+
+struct bch_opts bch2_inode_opts_to_opts(struct bch_io_opts src)
+{
+	struct bch_opts ret = { 0 };
+#define BCH_INODE_OPT(_name, _bits)					\
+	if (opt_defined(src, _name))					\
+		opt_set(ret, _name, src._name);
+	BCH_INODE_OPTS()
+#undef BCH_INODE_OPT
+	return ret;
+}
+
+void bch2_io_opts_apply(struct bch_io_opts *dst, struct bch_io_opts src)
+{
+#define BCH_INODE_OPT(_name, _bits)					\
+	if (opt_defined(src, _name))					\
+		opt_set(*dst, _name, src._name);
+	BCH_INODE_OPTS()
+#undef BCH_INODE_OPT
+}
+
+bool bch2_opt_is_inode_opt(enum bch_opt_id id)
+{
+	static const enum bch_opt_id inode_opt_list[] = {
+#define BCH_INODE_OPT(_name, _bits)	Opt_##_name,
+	BCH_INODE_OPTS()
+#undef BCH_INODE_OPT
+	};
+	unsigned i;
+
+	for (i = 0; i < ARRAY_SIZE(inode_opt_list); i++)
+		if (inode_opt_list[i] == id)
+			return true;
+
+	return false;
 }

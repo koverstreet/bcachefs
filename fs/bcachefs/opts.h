@@ -181,10 +181,7 @@ do {									\
 
 static inline struct bch_opts bch2_opts_empty(void)
 {
-	struct bch_opts opts;
-
-	memset(&opts, 0, sizeof(opts));
-	return opts;
+	return (struct bch_opts) { 0 };
 }
 
 void bch2_opts_apply(struct bch_opts *, struct bch_opts);
@@ -215,12 +212,35 @@ struct bch_option {
 
 extern const struct bch_option bch2_opt_table[];
 
+bool bch2_opt_defined_by_id(const struct bch_opts *, enum bch_opt_id);
 u64 bch2_opt_get_by_id(const struct bch_opts *, enum bch_opt_id);
 void bch2_opt_set_by_id(struct bch_opts *, enum bch_opt_id, u64);
 
 struct bch_opts bch2_opts_from_sb(struct bch_sb *);
 
+int bch2_opt_lookup(const char *);
 int bch2_opt_parse(const struct bch_option *, const char *, u64 *);
 int bch2_parse_mount_opts(struct bch_opts *, char *);
+
+/* inode opts: */
+
+#define BCH_INODE_OPTS()					\
+	BCH_INODE_OPT(data_checksum,			8)	\
+	BCH_INODE_OPT(compression,			8)
+
+struct bch_io_opts {
+#define BCH_INODE_OPT(_name, _bits)	unsigned _name##_defined:1;
+	BCH_INODE_OPTS()
+#undef BCH_INODE_OPT
+
+#define BCH_INODE_OPT(_name, _bits)	u##_bits _name;
+	BCH_INODE_OPTS()
+#undef BCH_INODE_OPT
+};
+
+struct bch_io_opts bch2_opts_to_inode_opts(struct bch_opts);
+struct bch_opts bch2_inode_opts_to_opts(struct bch_io_opts);
+void bch2_io_opts_apply(struct bch_io_opts *, struct bch_io_opts);
+bool bch2_opt_is_inode_opt(enum bch_opt_id);
 
 #endif /* _BCACHEFS_OPTS_H */

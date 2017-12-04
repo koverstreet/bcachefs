@@ -2,6 +2,7 @@
 #include "bcachefs.h"
 #include "bkey_methods.h"
 #include "btree_update.h"
+#include "compress.h"
 #include "extents.h"
 #include "fs.h"
 #include "str_hash.h"
@@ -358,14 +359,111 @@ static const struct xattr_handler bch_xattr_security_handler = {
 	.flags	= BCH_XATTR_INDEX_SECURITY,
 };
 
-static const struct xattr_handler *bch_xattr_handler_map[] = {
-	[BCH_XATTR_INDEX_USER]			= &bch_xattr_user_handler,
-	[BCH_XATTR_INDEX_POSIX_ACL_ACCESS]	=
-		&posix_acl_access_xattr_handler,
-	[BCH_XATTR_INDEX_POSIX_ACL_DEFAULT]	=
-		&posix_acl_default_xattr_handler,
-	[BCH_XATTR_INDEX_TRUSTED]		= &bch_xattr_trusted_handler,
-	[BCH_XATTR_INDEX_SECURITY]		= &bch_xattr_security_handler,
+static int bch2_xattr_bcachefs_get(const struct xattr_handler *handler,
+				   struct dentry *dentry, struct inode *vinode,
+				   const char *name, void *buffer, size_t size)
+{
+	struct bch_inode_info *inode = to_bch_ei(vinode);
+	struct bch_opts opts =
+		bch2_inode_opts_to_opts(bch2_inode_opts_get(&inode->ei_inode));
+	const struct bch_option *opt;
+	int ret, id;
+	u64 v;
+
+	id = bch2_opt_lookup(name);
+	if (id < 0 || !bch2_opt_is_inode_opt(id))
+		return -EINVAL;
+
+	opt = bch2_opt_table + id;
+
+	if (!bch2_opt_defined_by_id(&opts, id))
+		return -ENODATA;
+
+	v = bch2_opt_get_by_id(&opts, id);
+
+	if (opt->type == BCH_OPT_STR)
+		ret = snprintf(buffer, size, "%s", opt->choices[v]);
+	else
+		ret = snprintf(buffer, size, "%llu", v);
+
+	return ret <= size || !buffer ? ret : -ERANGE;
+}
+
+struct inode_opt_set {
+	int			id;
+	u64			v;
+	bool			defined;
+};
+
+static int inode_opt_set_fn(struct bch_inode_info *inode,
+			    struct bch_inode_unpacked *bi,
+			    void *p)
+{
+	struct inode_opt_set *s = p;
+
+	if (s->defined)
+		bch2_inode_opt_set(bi, s->id, s->v);
+	else
+		bch2_inode_opt_clear(bi, s->id);
+	return 0;
+}
+
+static int bch2_xattr_bcachefs_set(const struct xattr_handler *handler,
+				   struct dentry *dentry, struct inode *vinode,
+				   const char *name, const void *value,
+				   size_t size, int flags)
+{
+	struct bch_inode_info *inode = to_bch_ei(vinode);
+	struct bch_fs *c = inode->v.i_sb->s_fs_info;
+	const struct bch_option *opt;
+	char *buf;
+	struct inode_opt_set s;
+	int ret;
+
+	s.id = bch2_opt_lookup(name);
+	if (s.id < 0 || !bch2_opt_is_inode_opt(s.id))
+		return -EINVAL;
+
+	opt = bch2_opt_table + s.id;
+
+	if (value) {
+		buf = kmalloc(size + 1, GFP_KERNEL);
+		if (!buf)
+			return -ENOMEM;
+		memcpy(buf, value, size);
+		buf[size] = '\0';
+
+		ret = bch2_opt_parse(opt, buf, &s.v);
+		kfree(buf);
+
+		if (ret < 0)
+			return ret;
+
+		if (s.id == Opt_compression) {
+			mutex_lock(&c->sb_lock);
+			ret = bch2_check_set_has_compressed_data(c, s.v);
+			mutex_unlock(&c->sb_lock);
+
+			if (ret)
+				return ret;
+		}
+
+		s.defined = true;
+	} else {
+		s.defined = false;
+	}
+
+	mutex_lock(&inode->ei_update_lock);
+	ret = __bch2_write_inode(c, inode, inode_opt_set_fn, &s);
+	mutex_unlock(&inode->ei_update_lock);
+
+	return ret;
+}
+
+static const struct xattr_handler bch_xattr_bcachefs_handler = {
+	.prefix	= "bcachefs.",
+	.get	= bch2_xattr_bcachefs_get,
+	.set	= bch2_xattr_bcachefs_set,
 };
 
 const struct xattr_handler *bch2_xattr_handlers[] = {
@@ -374,7 +472,18 @@ const struct xattr_handler *bch2_xattr_handlers[] = {
 	&posix_acl_default_xattr_handler,
 	&bch_xattr_trusted_handler,
 	&bch_xattr_security_handler,
+	&bch_xattr_bcachefs_handler,
 	NULL
+};
+
+static const struct xattr_handler *bch_xattr_handler_map[] = {
+	[BCH_XATTR_INDEX_USER]			= &bch_xattr_user_handler,
+	[BCH_XATTR_INDEX_POSIX_ACL_ACCESS]	=
+		&posix_acl_access_xattr_handler,
+	[BCH_XATTR_INDEX_POSIX_ACL_DEFAULT]	=
+		&posix_acl_default_xattr_handler,
+	[BCH_XATTR_INDEX_TRUSTED]		= &bch_xattr_trusted_handler,
+	[BCH_XATTR_INDEX_SECURITY]		= &bch_xattr_security_handler,
 };
 
 static const struct xattr_handler *bch2_xattr_type_to_handler(unsigned type)

@@ -72,14 +72,15 @@ static inline enum bch_csum_type bch2_csum_opt_to_type(enum bch_csum_opts type,
 	}
 }
 
-static inline enum bch_csum_type bch2_data_checksum_type(struct bch_fs *c)
+static inline enum bch_csum_type bch2_data_checksum_type(struct bch_fs *c,
+							 unsigned opt)
 {
 	if (c->sb.encryption_type)
 		return c->opts.wide_macs
 			? BCH_CSUM_CHACHA20_POLY1305_128
 			: BCH_CSUM_CHACHA20_POLY1305_80;
 
-	return bch2_csum_opt_to_type(c->opts.data_checksum, true);
+	return bch2_csum_opt_to_type(opt, true);
 }
 
 static inline enum bch_csum_type bch2_meta_checksum_type(struct bch_fs *c)

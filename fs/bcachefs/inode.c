@@ -221,6 +221,7 @@ static const char *bch2_inode_invalid(const struct bch_fs *c,
 static void bch2_inode_to_text(struct bch_fs *c, char *buf,
 			       size_t size, struct bkey_s_c k)
 {
+	char *out = buf, *end = out + size;
 	struct bkey_s_c_inode inode;
 	struct bch_inode_unpacked unpacked;
 
@@ -228,11 +229,14 @@ static void bch2_inode_to_text(struct bch_fs *c, char *buf,
 	case BCH_INODE_FS:
 		inode = bkey_s_c_to_inode(k);
 		if (bch2_inode_unpack(inode, &unpacked)) {
-			scnprintf(buf, size, "(unpack error)");
+			out += scnprintf(out, end - out, "(unpack error)");
 			break;
 		}
 
-		scnprintf(buf, size, "i_size %llu", unpacked.bi_size);
+#define BCH_INODE_FIELD(_name, _bits)						\
+		out += scnprintf(out, end - out, #_name ": %llu ", (u64) unpacked._name);
+		BCH_INODE_FIELDS()
+#undef  BCH_INODE_FIELD
 		break;
 	}
 }
@@ -243,7 +247,8 @@ const struct bkey_ops bch2_bkey_inode_ops = {
 };
 
 void bch2_inode_init(struct bch_fs *c, struct bch_inode_unpacked *inode_u,
-		     uid_t uid, gid_t gid, umode_t mode, dev_t rdev)
+		     uid_t uid, gid_t gid, umode_t mode, dev_t rdev,
+		     struct bch_inode_unpacked *parent)
 {
 	s64 now = timespec_to_bch2_time(c,
 		timespec_trunc(current_kernel_time(),
@@ -263,6 +268,12 @@ void bch2_inode_init(struct bch_fs *c, struct bch_inode_unpacked *inode_u,
 	inode_u->bi_mtime	= now;
 	inode_u->bi_ctime	= now;
 	inode_u->bi_otime	= now;
+
+	if (parent) {
+#define BCH_INODE_FIELD(_name)	inode_u->_name = parent->_name;
+		BCH_INODE_FIELDS_INHERIT()
+#undef BCH_INODE_FIELD
+	}
 }
 
 int bch2_inode_create(struct bch_fs *c, struct bch_inode_unpacked *inode_u,

@@ -2347,6 +2347,30 @@ static bool bch2_extent_merge_inline(struct bch_fs *c,
 	}
 }
 
+int bch2_check_range_allocated(struct bch_fs *c, struct bpos pos, u64 size)
+{
+	struct btree_iter iter;
+	struct bpos end = pos;
+	struct bkey_s_c k;
+	int ret = 0;
+
+	end.offset += size;
+
+	for_each_btree_key(&iter, c, BTREE_ID_EXTENTS, pos,
+			     BTREE_ITER_WITH_HOLES, k) {
+		if (bkey_cmp(bkey_start_pos(k.k), end) >= 0)
+			break;
+
+		if (!bch2_extent_is_fully_allocated(k)) {
+			ret = -ENOSPC;
+			break;
+		}
+	}
+	bch2_btree_iter_unlock(&iter);
+
+	return ret;
+}
+
 const struct bkey_ops bch2_bkey_extent_ops = {
 	.key_invalid	= bch2_extent_invalid,
 	.key_debugcheck	= bch2_extent_debugcheck,
