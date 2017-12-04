@@ -252,11 +252,7 @@ void bch2_fs_read_only(struct bch_fs *c)
 	 */
 	percpu_ref_kill(&c->writes);
 
-	del_timer(&c->foreground_write_wakeup);
 	cancel_delayed_work(&c->pd_controllers_update);
-
-	c->foreground_write_pd.rate.rate = UINT_MAX;
-	bch2_wake_delayed_writes(&c->foreground_write_wakeup);
 
 	/*
 	 * If we're not doing an emergency shutdown, we want to wait on
@@ -403,7 +399,6 @@ static void bch2_fs_exit(struct bch_fs *c)
 {
 	unsigned i;
 
-	del_timer_sync(&c->foreground_write_wakeup);
 	cancel_delayed_work_sync(&c->pd_controllers_update);
 	cancel_work_sync(&c->read_only_work);
 
@@ -526,8 +521,6 @@ static struct bch_fs *bch2_fs_alloc(struct bch_sb *sb, struct bch_opts opts)
 	c->copy_gc_enabled = 1;
 	c->tiering_enabled = 1;
 	c->tiering_percent = 10;
-
-	c->foreground_target_percent = 20;
 
 	c->journal.write_time	= &c->journal_write_time;
 	c->journal.delay_time	= &c->journal_delay_time;

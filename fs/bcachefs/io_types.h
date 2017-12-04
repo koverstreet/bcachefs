@@ -110,13 +110,7 @@ struct bch_write_op {
 
 	struct disk_reservation	res;
 
-	union {
 	u8			open_buckets[16];
-	struct {
-	struct bch_write_op	*next;
-	unsigned long		expires;
-	};
-	};
 
 	/*
 	 * If caller wants to flush but hasn't passed us a journal_seq ptr, we
