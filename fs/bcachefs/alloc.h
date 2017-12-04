@@ -8,7 +8,7 @@ struct bkey;
 struct bucket;
 struct bch_dev;
 struct bch_fs;
-struct dev_group;
+struct bch_devs_List;
 
 struct dev_alloc_list {
 	unsigned	nr;
@@ -32,6 +32,7 @@ void bch2_open_bucket_put(struct bch_fs *, struct open_bucket *);
 struct write_point *bch2_alloc_sectors_start(struct bch_fs *,
 					     struct bch_devs_mask *,
 					     struct write_point_specifier,
+					     struct bch_devs_list *,
 					     unsigned, unsigned,
 					     enum alloc_reserve,
 					     unsigned,

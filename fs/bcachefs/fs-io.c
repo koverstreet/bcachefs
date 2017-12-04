@@ -763,7 +763,8 @@ static void bchfs_read(struct bch_fs *c, struct btree_iter *iter,
 				trace_read_split(&rbio->bio);
 			}
 
-			bch2_read_extent(c, rbio, k, &pick, flags);
+			bch2_read_extent(c, rbio, bkey_s_c_to_extent(k),
+					 &pick, flags);
 		} else {
 			zero_fill_bio(bio);
 

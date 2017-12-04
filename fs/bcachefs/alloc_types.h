@@ -69,6 +69,11 @@ struct write_point {
 	unsigned long		write_point;
 	enum bch_data_type	type;
 
+	/*
+	 * number of pointers in @ob we can't use, because we already had
+	 * pointers to those devices:
+	 */
+	u8			nr_ptrs_have;
 	/* calculated based on how many pointers we're actually going to use: */
 	unsigned		sectors_free;
 

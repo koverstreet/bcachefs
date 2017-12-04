@@ -47,6 +47,8 @@ struct bch_read_bio {
 	u8			_state;
 	};
 
+	struct bch_devs_list	devs_have;
+
 	struct extent_pick_ptr	pick;
 	/* start pos of data we read (may not be pos of data we want) */
 	struct bpos		pos;
@@ -88,15 +90,18 @@ struct bch_write_op {
 	struct bch_fs		*c;
 	struct workqueue_struct	*io_wq;
 
-	unsigned		written; /* sectors */
-
-	short			error;
-
 	u16			flags;
+	u16			written; /* sectors */
+	s8			error;
+
 	unsigned		csum_type:4;
 	unsigned		compression_type:4;
 	unsigned		nr_replicas:4;
+	unsigned		nr_replicas_required:4;
 	unsigned		alloc_reserve:4;
+
+	struct bch_devs_list	devs_have;
+	u16			target;
 	u16			nonce;
 
 	struct bpos		pos;

@@ -769,8 +769,9 @@ static void __bch2_write(struct closure *cl)
 		wp = bch2_alloc_sectors_start(c,
 			op->devs,
 			op->write_point,
+			&op->devs_have,
 			op->nr_replicas,
-			c->opts.data_replicas_required,
+			op->nr_replicas_required,
 			op->alloc_reserve,
 			op->flags,
 			(op->flags & BCH_WRITE_ALLOC_NOWAIT) ? NULL : cl);
@@ -873,12 +874,12 @@ err:
 void bch2_write(struct closure *cl)
 {
 	struct bch_write_op *op = container_of(cl, struct bch_write_op, cl);
-	struct bio *bio = &op->wbio.bio;
 	struct bch_fs *c = op->c;
 
 	BUG_ON(!op->nr_replicas);
 	BUG_ON(!op->write_point.v);
 	BUG_ON(!bkey_cmp(op->pos, POS_MAX));
+	BUG_ON(bio_sectors(&op->wbio.bio) > U16_MAX);
 
 	memset(op->open_buckets, 0, sizeof(op->open_buckets));
 	memset(&op->failed, 0, sizeof(op->failed));
@@ -897,7 +898,7 @@ void bch2_write(struct closure *cl)
 		return;
 	}
 
-	bch2_increment_clock(c, bio_sectors(bio), WRITE);
+	bch2_increment_clock(c, bio_sectors(&op->wbio.bio), WRITE);
 
 	continue_at_nobarrier(cl, __bch2_write, NULL);
 }
@@ -940,7 +941,6 @@ static void promote_start(struct promote_op *op, struct bch_read_bio *rbio)
 
 	__bch2_write_op_init(&op->write.op, c);
 
-	op->write.promote	= true;
 	op->write.op.devs	= c->fastest_devs;
 	op->write.op.write_point = writepoint_hashed((unsigned long) current);
 	op->write.op.flags	|= BCH_WRITE_ALLOC_NOWAIT;
@@ -1322,18 +1322,18 @@ static void bch2_read_endio(struct bio *bio)
 }
 
 int __bch2_read_extent(struct bch_fs *c, struct bch_read_bio *orig,
-		       struct bvec_iter iter, struct bkey_s_c k,
+		       struct bvec_iter iter, struct bkey_s_c_extent e,
 		       struct extent_pick_ptr *pick, unsigned flags)
 {
 	struct bch_read_bio *rbio;
 	bool split = false, bounce = false, read_full = false;
 	bool promote = false, narrow_crcs = false;
-	struct bpos pos = bkey_start_pos(k.k);
+	struct bpos pos = bkey_start_pos(e.k);
 	int ret = 0;
 
 	PTR_BUCKET(pick->ca, &pick->ptr)->prio[READ] = c->prio_clock[READ].hand;
 
-	narrow_crcs = should_narrow_crcs(bkey_s_c_to_extent(k), pick, flags);
+	narrow_crcs = should_narrow_crcs(e, pick, flags);
 
 	if (flags & BCH_READ_NODECODE) {
 		BUG_ON(iter.bi_size < pick->crc.compressed_size << 9);
@@ -1344,8 +1344,8 @@ int __bch2_read_extent(struct bch_fs *c, struct bch_read_bio *orig,
 	if (narrow_crcs && (flags & BCH_READ_USER_MAPPED))
 		flags |= BCH_READ_MUST_BOUNCE;
 
-	EBUG_ON(bkey_start_offset(k.k) > iter.bi_sector ||
-		k.k->p.offset < bvec_iter_end_sector(iter));
+	EBUG_ON(bkey_start_offset(e.k) > iter.bi_sector ||
+		e.k->p.offset < bvec_iter_end_sector(iter));
 
 	if (pick->crc.compression_type != BCH_COMPRESSION_NONE ||
 	    (pick->crc.csum_type != BCH_CSUM_NONE &&
@@ -1424,9 +1424,10 @@ noclone:
 	rbio->narrow_crcs	= narrow_crcs;
 	rbio->retry		= 0;
 	rbio->context		= 0;
+	rbio->devs_have		= bch2_extent_devs(e);
 	rbio->pick		= *pick;
 	rbio->pos		= pos;
-	rbio->version		= k.k->version;
+	rbio->version		= e.k->version;
 	rbio->promote		= promote ? promote_alloc(rbio) : NULL;
 	INIT_WORK(&rbio->work, NULL);
 
@@ -1506,7 +1507,8 @@ retry:
 
 	}
 
-	ret = __bch2_read_extent(c, rbio, bvec_iter, k, &pick, flags);
+	ret = __bch2_read_extent(c, rbio, bvec_iter, bkey_s_c_to_extent(k),
+				 &pick, flags);
 	switch (ret) {
 	case READ_RETRY_AVOID:
 		__set_bit(pick.ca->dev_idx, avoid->d);
@@ -1575,7 +1577,8 @@ retry:
 			}
 
 			ret = __bch2_read_extent(c, rbio, fragment,
-						 k, &pick, flags);
+						 bkey_s_c_to_extent(k),
+						 &pick, flags);
 			switch (ret) {
 			case READ_RETRY_AVOID:
 				__set_bit(pick.ca->dev_idx, avoid->d);
