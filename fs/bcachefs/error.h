@@ -16,23 +16,24 @@ struct work_struct;
 
 /*
  * Very fatal logic/inconsistency errors: these indicate that we've majorly
- * screwed up at runtime, i.e. it's not likely that it was just caused by the
- * data on disk being inconsistent. These BUG():
- *
- * XXX: audit and convert to inconsistent() checks
+ * screwed up at runtime, and we _must_ at least go RO
  */
+void __bch2_fs_bug(struct bch_fs *);
 
 #define bch2_fs_bug(c, ...)						\
 do {									\
 	bch_err(c, __VA_ARGS__);					\
-	BUG();								\
+	__bch2_fs_bug(c);						\
 } while (0)
 
 #define bch2_fs_bug_on(cond, c, ...)					\
-do {									\
-	if (cond)							\
+({									\
+	int _ret = !!(cond);						\
+									\
+	if (_ret)							\
 		bch2_fs_bug(c, __VA_ARGS__);				\
-} while (0)
+	_ret;								\
+})
 
 /*
  * Inconsistency errors: The on disk data is inconsistent. If these occur during

@@ -3,6 +3,22 @@
 #include "io.h"
 #include "super.h"
 
+void __bch2_fs_bug(struct bch_fs *c)
+{
+	set_bit(BCH_FS_ERROR, &c->flags);
+
+	switch (c->opts.errors) {
+	case BCH_ON_ERROR_CONTINUE:
+	case BCH_ON_ERROR_RO:
+		if (bch2_fs_emergency_read_only(c))
+			bch_err(c, "emergency read only");
+		break;
+	case BCH_ON_ERROR_PANIC:
+		panic(bch2_fmt(c, "panic after error"));
+		break;
+	}
+}
+
 void bch2_inconsistent_error(struct bch_fs *c)
 {
 	set_bit(BCH_FS_ERROR, &c->flags);
