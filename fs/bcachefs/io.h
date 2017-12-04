@@ -55,14 +55,16 @@ static inline void __bch2_write_op_init(struct bch_write_op *op, struct bch_fs *
 {
 	op->c		= c;
 	op->io_wq	= index_update_wq(op);
+	op->flags	= 0;
 	op->written	= 0;
 	op->error	= 0;
-	op->flags	= 0;
 	op->csum_type	= bch2_data_checksum_type(c);
 	op->compression_type =
 		bch2_compression_opt_to_type(c->opts.compression);
 	op->nr_replicas	= 0;
+	op->nr_replicas_required = c->opts.data_replicas_required;
 	op->alloc_reserve = RESERVE_NONE;
+	op->devs_have	= (struct bch_devs_list) { 0 };
 	op->pos		= POS_MAX;
 	op->version	= ZERO_VERSION;
 	op->res		= (struct disk_reservation) { 0 };
@@ -108,7 +110,8 @@ struct cache_promote_op;
 struct extent_pick_ptr;
 
 int __bch2_read_extent(struct bch_fs *, struct bch_read_bio *, struct bvec_iter,
-		       struct bkey_s_c k, struct extent_pick_ptr *, unsigned);
+		       struct bkey_s_c_extent e, struct extent_pick_ptr *,
+		       unsigned);
 void __bch2_read(struct bch_fs *, struct bch_read_bio *, struct bvec_iter,
 		 u64, struct bch_devs_mask *, unsigned);
 
@@ -126,12 +129,12 @@ enum bch_read_flags {
 
 static inline void bch2_read_extent(struct bch_fs *c,
 				    struct bch_read_bio *rbio,
-				    struct bkey_s_c k,
+				    struct bkey_s_c_extent e,
 				    struct extent_pick_ptr *pick,
 				    unsigned flags)
 {
 	rbio->_state = 0;
-	__bch2_read_extent(c, rbio, rbio->bio.bi_iter, k, pick, flags);
+	__bch2_read_extent(c, rbio, rbio->bio.bi_iter, e, pick, flags);
 }
 
 static inline void bch2_read(struct bch_fs *c, struct bch_read_bio *rbio,
