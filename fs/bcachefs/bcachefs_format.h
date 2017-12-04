@@ -782,7 +782,8 @@ struct bch_sb_field {
 	x(members,	1)	\
 	x(crypt,	2)	\
 	x(replicas,	3)	\
-	x(quota,	4)
+	x(quota,	4)	\
+	x(disk_groups,	5)
 
 enum bch_sb_field_type {
 #define x(f, nr)	BCH_SB_FIELD_##f = nr,
@@ -815,8 +816,9 @@ LE64_BITMASK(BCH_MEMBER_STATE,		struct bch_member, flags[0],  0,  4)
 LE64_BITMASK(BCH_MEMBER_TIER,		struct bch_member, flags[0],  4,  8)
 /* 8-10 unused, was HAS_(META)DATA */
 LE64_BITMASK(BCH_MEMBER_REPLACEMENT,	struct bch_member, flags[0], 10, 14)
-LE64_BITMASK(BCH_MEMBER_DISCARD,	struct bch_member, flags[0], 14, 15);
-LE64_BITMASK(BCH_MEMBER_DATA_ALLOWED,	struct bch_member, flags[0], 15, 20);
+LE64_BITMASK(BCH_MEMBER_DISCARD,	struct bch_member, flags[0], 14, 15)
+LE64_BITMASK(BCH_MEMBER_DATA_ALLOWED,	struct bch_member, flags[0], 15, 20)
+LE64_BITMASK(BCH_MEMBER_GROUP,		struct bch_member, flags[0], 20, 28)
 
 #if 0
 LE64_BITMASK(BCH_MEMBER_NR_READ_ERRORS,	struct bch_member, flags[1], 0,  20);
@@ -933,6 +935,23 @@ struct bch_sb_field_quota {
 	struct bch_sb_quota_type	q[QTYP_NR];
 } __attribute__((packed, aligned(8)));
 
+/* BCH_SB_FIELD_disk_groups: */
+
+#define BCH_SB_LABEL_SIZE		32
+
+struct bch_disk_group {
+	__u8			label[BCH_SB_LABEL_SIZE];
+	__le64			flags[2];
+};
+
+LE64_BITMASK(BCH_GROUP_DELETED,		struct bch_disk_group, flags[0], 0, 1)
+LE64_BITMASK(BCH_GROUP_DATA_ALLOWED,	struct bch_disk_group, flags[0], 1, 6)
+
+struct bch_sb_field_disk_groups {
+	struct bch_sb_field	field;
+	struct bch_disk_group	entries[0];
+};
+
 /* Superblock: */
 
 /*
@@ -947,7 +966,6 @@ struct bch_sb_field_quota {
 #define BCH_SB_VERSION_MAX		9
 
 #define BCH_SB_SECTOR			8
-#define BCH_SB_LABEL_SIZE		32
 #define BCH_SB_MEMBERS_MAX		64 /* XXX kill */
 
 struct bch_sb_layout {
@@ -1068,20 +1086,6 @@ enum bch_sb_features {
 /* options: */
 
 #define BCH_REPLICAS_MAX		4U
-
-#if 0
-#define BCH_ERROR_ACTIONS()					\
-	x(BCH_ON_ERROR_CONTINUE,	0, "continue")		\
-	x(BCH_ON_ERROR_RO,		1, "remount-ro")	\
-	x(BCH_ON_ERROR_PANIC,		2, "panic")		\
-	x(BCH_NR_ERROR_ACTIONS,		3, NULL)
-
-enum bch_error_actions {
-#define x(_opt, _nr, _str)	_opt = _nr,
-	BCH_ERROR_ACTIONS()
-#undef x
-};
-#endif
 
 enum bch_error_actions {
 	BCH_ON_ERROR_CONTINUE		= 0,

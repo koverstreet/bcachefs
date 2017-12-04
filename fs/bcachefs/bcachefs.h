@@ -496,6 +496,8 @@ struct bch_fs {
 	struct bch_replicas_cpu __rcu *replicas_gc;
 	struct mutex		replicas_gc_lock;
 
+	struct bch_disk_groups_cpu __rcu *disk_groups;
+
 	struct bch_opts		opts;
 
 	/* Updated by bch2_sb_update():*/

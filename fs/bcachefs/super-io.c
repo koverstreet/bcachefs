@@ -13,6 +13,7 @@
 static int bch2_sb_replicas_to_cpu_replicas(struct bch_fs *);
 static int bch2_cpu_replicas_to_sb_replicas(struct bch_fs *,
 					    struct bch_replicas_cpu *);
+static int bch2_sb_disk_groups_to_cpu(struct bch_fs *);
 
 /* superblock fields (optional/variable size sections: */
 
@@ -43,6 +44,7 @@ static const struct bch_sb_field_ops bch2_sb_field_ops[] = {
 
 static const char *bch2_sb_field_validate(struct bch_sb *sb,
 					  struct bch_sb_field *f)
+
 {
 	unsigned type = le32_to_cpu(f->type);
 
@@ -297,7 +299,7 @@ const char *bch2_sb_validate(struct bch_sb_handle *disk_sb)
 	if (!sb->nr_devices ||
 	    sb->nr_devices <= sb->dev_idx ||
 	    sb->nr_devices > BCH_SB_MEMBERS_MAX)
-		return "Bad cache device number in set";
+		return "Bad number of member devices";
 
 	if (!BCH_SB_META_REPLICAS_WANT(sb) ||
 	    BCH_SB_META_REPLICAS_WANT(sb) >= BCH_REPLICAS_MAX)
@@ -455,6 +457,10 @@ int bch2_sb_to_fs(struct bch_fs *c, struct bch_sb *src)
 	__copy_super(c->disk_sb, src);
 
 	ret = bch2_sb_replicas_to_cpu_replicas(c);
+	if (ret)
+		return ret;
+
+	ret = bch2_sb_disk_groups_to_cpu(c);
 	if (ret)
 		return ret;
 
@@ -1556,4 +1562,130 @@ static const char *bch2_sb_validate_quota(struct bch_sb *sb,
 		return "invalid field quota: wrong size";
 
 	return NULL;
+}
+
+/* Disk groups: */
+
+#if 0
+static size_t trim_nulls(const char *str, size_t len)
+{
+	while (len && !str[len - 1])
+		--len;
+	return len;
+}
+#endif
+
+static const char *bch2_sb_validate_disk_groups(struct bch_sb *sb,
+						struct bch_sb_field *f)
+{
+	struct bch_sb_field_disk_groups *groups =
+		field_to_type(f, disk_groups);
+	struct bch_sb_field_members *mi;
+	struct bch_member *m;
+	struct bch_disk_group *g;
+	unsigned nr_groups;
+
+	mi		= bch2_sb_get_members(sb);
+	groups		= bch2_sb_get_disk_groups(sb);
+	nr_groups	= disk_groups_nr(groups);
+
+	for (m = mi->members;
+	     m < mi->members + sb->nr_devices;
+	     m++) {
+		if (!BCH_MEMBER_GROUP(m))
+			continue;
+
+		if (BCH_MEMBER_GROUP(m) >= nr_groups)
+			return "disk has invalid group";
+
+		g = &groups->entries[BCH_MEMBER_GROUP(m)];
+		if (BCH_GROUP_DELETED(g))
+			return "disk has invalid group";
+	}
+#if 0
+	if (!groups)
+		return NULL;
+
+	char **labels;
+	labels = kcalloc(nr_groups, sizeof(char *), GFP_KERNEL);
+	if (!labels)
+		return "cannot allocate memory";
+
+	for (g = groups->groups;
+	     g < groups->groups + nr_groups;
+	     g++) {
+
+	}
+#endif
+	return NULL;
+}
+
+static int bch2_sb_disk_groups_to_cpu(struct bch_fs *c)
+{
+	struct bch_sb_field_members *mi;
+	struct bch_sb_field_disk_groups *groups;
+	struct bch_disk_groups_cpu *cpu_g, *old_g;
+	unsigned i, nr_groups;
+
+	lockdep_assert_held(&c->sb_lock);
+
+	mi		= bch2_sb_get_members(c->disk_sb);
+	groups		= bch2_sb_get_disk_groups(c->disk_sb);
+	nr_groups	= disk_groups_nr(groups);
+
+	if (!groups)
+		return 0;
+
+	cpu_g = kzalloc(sizeof(*cpu_g) +
+			sizeof(cpu_g->entries[0]) * nr_groups, GFP_KERNEL);
+	if (!cpu_g)
+		return -ENOMEM;
+
+	cpu_g->nr = nr_groups;
+
+	for (i = 0; i < nr_groups; i++) {
+		struct bch_disk_group *src	= &groups->entries[i];
+		struct bch_disk_group_cpu *dst	= &cpu_g->entries[i];
+
+		dst->deleted = BCH_GROUP_DELETED(src);
+	}
+
+	for (i = 0; i < c->disk_sb->nr_devices; i++) {
+		struct bch_member *m = mi->members + i;
+		struct bch_disk_group_cpu *dst =
+			&cpu_g->entries[BCH_MEMBER_GROUP(m)];
+
+		if (!bch2_member_exists(m))
+			continue;
+
+		__set_bit(i, dst->devs.d);
+	}
+
+	old_g = c->disk_groups;
+	rcu_assign_pointer(c->disk_groups, cpu_g);
+	if (old_g)
+		kfree_rcu(old_g, rcu);
+
+	return 0;
+}
+
+const struct bch_devs_mask *bch2_target_to_mask(struct bch_fs *c, unsigned target)
+{
+	struct target t = target_decode(target);
+
+	switch (t.type) {
+	case TARGET_DEV:
+		BUG_ON(t.dev >= c->sb.nr_devices && !c->devs[t.dev]);
+		return &c->devs[t.dev]->self;
+	case TARGET_GROUP: {
+		struct bch_disk_groups_cpu *g =
+			rcu_dereference(c->disk_groups);
+
+		/* XXX: what to do here? */
+		BUG_ON(t.group >= g->nr || g->entries[t.group].deleted);
+		return &g->entries[t.group].devs;
+	}
+	default:
+		BUG();
+	}
 }

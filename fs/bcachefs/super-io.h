@@ -127,6 +127,7 @@ static inline struct bch_member_cpu bch2_mi_to_cpu(struct bch_member *mi)
 		.nbuckets	= le64_to_cpu(mi->nbuckets),
 		.first_bucket	= le16_to_cpu(mi->first_bucket),
 		.bucket_size	= le16_to_cpu(mi->bucket_size),
+		.group		= BCH_MEMBER_GROUP(mi),
 		.state		= BCH_MEMBER_STATE(mi),
 		.tier		= BCH_MEMBER_TIER(mi),
 		.replacement	= BCH_MEMBER_REPLACEMENT(mi),
@@ -176,5 +177,66 @@ replicas_entry_next(struct bch_replicas_entry *i)
 	for (_i = (_r)->entries;					\
 	     (void *) (_i) < vstruct_end(&(_r)->field) && (_i)->data_type;\
 	     (_i) = replicas_entry_next(_i))
+
+/* disk groups: */
+
+static inline unsigned disk_groups_nr(struct bch_sb_field_disk_groups *groups)
+{
+	return groups
+		? (vstruct_end(&groups->field) -
+		   (void *) &groups->entries[0]) / sizeof(struct bch_disk_group)
+		: 0;
+}
+
+struct target {
+	enum {
+		TARGET_NULL,
+		TARGET_DEV,
+		TARGET_GROUP,
+	}			type;
+	union {
+		unsigned	dev;
+		unsigned	group;
+	};
+};
+
+static inline u16 dev_to_target(unsigned dev)
+{
+	return 1 + dev;
+}
+
+static inline u16 group_to_target(unsigned group)
+{
+	return 1 + U8_MAX + group;
+}
+
+static inline struct target target_decode(unsigned target)
+{
+	if (!target)
+		return (struct target) { .type = TARGET_NULL };
+
+	--target;
+	if (target <= U8_MAX)
+		return (struct target) { .type = TARGET_DEV, .dev = target };
+
+	target -= U8_MAX;
+	return (struct target) { .type = TARGET_GROUP, .group = target };
+}
+
+static inline bool dev_in_target(struct bch_dev *ca, unsigned target)
+{
+	struct target t = target_decode(target);
+
+	switch (t.type) {
+	case TARGET_DEV:
+		return ca->dev_idx == t.dev;
+	case TARGET_GROUP:
+		return ca->mi.group && ca->mi.group == t.group;
+	default:
+		BUG();
+	}
+}
+
+const struct bch_devs_mask *bch2_target_to_mask(struct bch_fs *, unsigned);
 
 #endif /* _BCACHEFS_SUPER_IO_H */
