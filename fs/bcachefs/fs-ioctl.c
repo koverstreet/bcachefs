@@ -75,7 +75,7 @@ do {									\
 /* Set VFS inode flags from bcachefs inode: */
 void bch2_inode_flags_to_vfs(struct bch_inode_info *inode)
 {
-	set_flags(bch_flags_to_vfs, inode->ei_flags, inode->v.i_flags);
+	set_flags(bch_flags_to_vfs, inode->ei_inode.bi_flags, inode->v.i_flags);
 }
 
 static int bch2_inode_flags_set(struct bch_inode_info *inode,
@@ -105,7 +105,7 @@ static int bch2_inode_flags_set(struct bch_inode_info *inode,
 
 static int bch2_ioc_getflags(struct bch_inode_info *inode, int __user *arg)
 {
-	unsigned flags = map_flags(bch_flags_to_uflags, inode->ei_flags);
+	unsigned flags = map_flags(bch_flags_to_uflags, inode->ei_inode.bi_flags);
 
 	return put_user(flags, arg);
 }
@@ -153,7 +153,7 @@ static int bch2_ioc_fsgetxattr(struct bch_inode_info *inode,
 {
 	struct fsxattr fa = { 0 };
 
-	fa.fsx_xflags = map_flags(bch_flags_to_xflags, inode->ei_flags);
+	fa.fsx_xflags = map_flags(bch_flags_to_xflags, inode->ei_inode.bi_flags);
 
 	return copy_to_user(arg, &fa, sizeof(fa));
 }

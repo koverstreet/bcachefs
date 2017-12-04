@@ -6,6 +6,7 @@
 #include "buckets_types.h"
 #include "extents_types.h"
 #include "keylist_types.h"
+#include "opts.h"
 #include "super_types.h"
 
 #include <linux/llist.h>
@@ -56,6 +57,8 @@ struct bch_read_bio {
 
 	struct promote_op	*promote;
 
+	struct bch_io_opts	opts;
+
 	struct work_struct	work;
 
 	struct bio		bio;
@@ -90,8 +93,8 @@ struct bch_write_op {
 	struct bch_fs		*c;
 	struct workqueue_struct	*io_wq;
 
+	unsigned		written; /* sectors */
 	u16			flags;
-	u16			written; /* sectors */
 	s8			error;
 
 	unsigned		csum_type:4;

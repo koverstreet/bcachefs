@@ -204,6 +204,8 @@ static void bch2_write_done(struct closure *cl)
 	bch2_disk_reservation_put(op->c, &op->res);
 	percpu_ref_put(&op->c->writes);
 	bch2_keylist_free(&op->insert_keys, op->inline_keys);
+	op->flags &= ~(BCH_WRITE_DONE|BCH_WRITE_LOOPED);
+
 	closure_return(cl);
 }
 
@@ -928,7 +930,10 @@ static void promote_start(struct promote_op *op, struct bch_read_bio *rbio)
 	swap(bio->bi_vcnt, rbio->bio.bi_vcnt);
 	rbio->promote = NULL;
 
-	__bch2_write_op_init(&op->write.op, c);
+	bch2_write_op_init(&op->write.op, c);
+	op->write.op.csum_type = bch2_data_checksum_type(c, rbio->opts.data_checksum);
+	op->write.op.compression_type =
+		bch2_compression_opt_to_type(rbio->opts.compression);
 
 	op->write.move_dev	= -1;
 	op->write.op.devs	= c->fastest_devs;
@@ -1372,7 +1377,8 @@ int __bch2_read_extent(struct bch_fs *c, struct bch_read_bio *orig,
 
 		rbio = rbio_init(bio_alloc_bioset(GFP_NOIO,
 					DIV_ROUND_UP(sectors, PAGE_SECTORS),
-					&c->bio_read_split));
+					&c->bio_read_split),
+				 orig->opts);
 
 		bch2_bio_alloc_pages_pool(c, &rbio->bio, sectors << 9);
 		split = true;
@@ -1386,7 +1392,8 @@ int __bch2_read_extent(struct bch_fs *c, struct bch_read_bio *orig,
 		 * lose the error)
 		 */
 		rbio = rbio_init(bio_clone_fast(&orig->bio, GFP_NOIO,
-						&c->bio_read_split));
+						&c->bio_read_split),
+				 orig->opts);
 		rbio->bio.bi_iter = iter;
 		split = true;
 	} else {
