@@ -574,14 +574,9 @@ struct bch_fs {
 
 	/* ALLOCATION */
 	struct rw_semaphore	alloc_gc_lock;
-	struct bch_pd_controller foreground_write_pd;
 	struct delayed_work	pd_controllers_update;
 	unsigned		pd_controllers_update_seconds;
-	spinlock_t		foreground_write_pd_lock;
-	struct bch_write_op	*write_wait_head;
-	struct bch_write_op	*write_wait_tail;
 
-	struct timer_list	foreground_write_wakeup;
 
 	/*
 	 * These contain all r/w devices - i.e. devices we can currently
@@ -732,16 +727,9 @@ struct bch_fs {
 	atomic_long_t		extent_migrate_raced;
 
 	unsigned		btree_gc_periodic:1;
-	unsigned		foreground_write_ratelimit_enabled:1;
 	unsigned		copy_gc_enabled:1;
 	unsigned		tiering_enabled:1;
 	unsigned		tiering_percent;
-
-	/*
-	 * foreground writes will be throttled when the number of free
-	 * buckets is below this percentage
-	 */
-	unsigned		foreground_target_percent;
 
 #define BCH_DEBUG_PARAM(name, description) bool name;
 	BCH_DEBUG_PARAMS_ALL()

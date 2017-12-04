@@ -172,7 +172,6 @@ rw_attribute(journal_reclaim_delay_ms);
 rw_attribute(discard);
 rw_attribute(cache_replacement_policy);
 
-rw_attribute(foreground_write_ratelimit_enabled);
 rw_attribute(copy_gc_enabled);
 sysfs_pd_controller_attribute(copy_gc);
 
@@ -181,11 +180,8 @@ rw_attribute(tiering_enabled);
 rw_attribute(tiering_percent);
 sysfs_pd_controller_attribute(tiering);
 
-sysfs_pd_controller_attribute(foreground_write);
 
 rw_attribute(pd_controllers_update_seconds);
-
-rw_attribute(foreground_target_percent);
 
 read_attribute(meta_replicas_have);
 read_attribute(data_replicas_have);
@@ -332,14 +328,10 @@ SHOW(bch2_fs)
 
 	sysfs_printf(btree_gc_periodic, "%u",	(int) c->btree_gc_periodic);
 
-	sysfs_printf(foreground_write_ratelimit_enabled, "%i",
-		     c->foreground_write_ratelimit_enabled);
 	sysfs_printf(copy_gc_enabled, "%i", c->copy_gc_enabled);
-	sysfs_pd_controller_show(foreground_write, &c->foreground_write_pd);
 
 	sysfs_print(pd_controllers_update_seconds,
 		    c->pd_controllers_update_seconds);
-	sysfs_print(foreground_target_percent, c->foreground_target_percent);
 
 	sysfs_printf(tiering_enabled,		"%i", c->tiering_enabled);
 	sysfs_print(tiering_percent,		c->tiering_percent);
@@ -377,9 +369,6 @@ STORE(__bch2_fs)
 	sysfs_strtoul(journal_write_delay_ms, c->journal.write_delay_ms);
 	sysfs_strtoul(journal_reclaim_delay_ms, c->journal.reclaim_delay_ms);
 
-	sysfs_strtoul(foreground_write_ratelimit_enabled,
-		      c->foreground_write_ratelimit_enabled);
-
 	if (attr == &sysfs_btree_gc_periodic) {
 		ssize_t ret = strtoul_safe(buf, c->btree_gc_periodic)
 			?: (ssize_t) size;
@@ -408,11 +397,8 @@ STORE(__bch2_fs)
 		return ret;
 	}
 
-	sysfs_pd_controller_store(foreground_write, &c->foreground_write_pd);
-
 	sysfs_strtoul(pd_controllers_update_seconds,
 		      c->pd_controllers_update_seconds);
-	sysfs_strtoul(foreground_target_percent, c->foreground_target_percent);
 
 	sysfs_strtoul(tiering_percent,		c->tiering_percent);
 	sysfs_pd_controller_store(tiering,	&c->tiers[1].pd); /* XXX */
@@ -472,7 +458,6 @@ struct attribute *bch2_fs_files[] = {
 	&sysfs_journal_write_delay_ms,
 	&sysfs_journal_reclaim_delay_ms,
 
-	&sysfs_foreground_target_percent,
 	&sysfs_tiering_percent,
 
 	&sysfs_compression_stats,
@@ -508,11 +493,9 @@ struct attribute *bch2_fs_internal_files[] = {
 	&sysfs_trigger_gc,
 	&sysfs_prune_cache,
 
-	&sysfs_foreground_write_ratelimit_enabled,
 	&sysfs_copy_gc_enabled,
 	&sysfs_tiering_enabled,
 	sysfs_pd_controller_files(tiering),
-	sysfs_pd_controller_files(foreground_write),
 	&sysfs_internal_uuid,
 
 #define BCH_DEBUG_PARAM(name, description) &sysfs_##name,

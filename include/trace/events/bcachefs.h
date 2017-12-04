@@ -137,34 +137,6 @@ DEFINE_EVENT(bio, promote,
 	TP_ARGS(bio)
 );
 
-TRACE_EVENT(write_throttle,
-	TP_PROTO(struct bch_fs *c, u64 inode, struct bio *bio, u64 delay),
-	TP_ARGS(c, inode, bio, delay),
-
-	TP_STRUCT__entry(
-		__array(char,		uuid,	16		)
-		__field(u64,		inode			)
-		__field(sector_t,	sector			)
-		__field(unsigned int,	nr_sector		)
-		__array(char,		rwbs,	6		)
-		__field(u64,		delay			)
-	),
-
-	TP_fast_assign(
-		memcpy(__entry->uuid, c->sb.user_uuid.b, 16);
-		__entry->inode		= inode;
-		__entry->sector		= bio->bi_iter.bi_sector;
-		__entry->nr_sector	= bio->bi_iter.bi_size >> 9;
-		blk_fill_rwbs(__entry->rwbs, bio->bi_opf, bio->bi_iter.bi_size);
-		__entry->delay		= delay;
-	),
-
-	TP_printk("%pU inode %llu  %s %llu + %u delay %llu",
-		  __entry->uuid, __entry->inode,
-		  __entry->rwbs, (unsigned long long)__entry->sector,
-		  __entry->nr_sector, __entry->delay)
-);
-
 /* Journal */
 
 DEFINE_EVENT(bch_fs, journal_full,
