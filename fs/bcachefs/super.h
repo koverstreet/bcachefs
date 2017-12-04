@@ -194,6 +194,8 @@ int bch2_dev_add(struct bch_fs *, const char *);
 int bch2_dev_online(struct bch_fs *, const char *);
 int bch2_dev_offline(struct bch_fs *, struct bch_dev *, int);
 int bch2_dev_resize(struct bch_fs *, struct bch_dev *, u64);
+struct bch_dev *bch2_dev_lookup(struct bch_fs *, const char *);
+int bch2_dev_group_set(struct bch_fs *, struct bch_dev *, const char *);
 
 bool bch2_fs_emergency_read_only(struct bch_fs *);
 void bch2_fs_read_only(struct bch_fs *);

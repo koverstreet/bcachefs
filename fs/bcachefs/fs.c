@@ -1266,6 +1266,7 @@ static int bch2_show_options(struct seq_file *seq, struct dentry *root)
 {
 	struct bch_fs *c = root->d_sb->s_fs_info;
 	enum bch_opt_id i;
+	char buf[512];
 
 	for (i = 0; i < bch2_opts_nr; i++) {
 		const struct bch_option *opt = &bch2_opt_table[i];
@@ -1277,17 +1278,10 @@ static int bch2_show_options(struct seq_file *seq, struct dentry *root)
 		if (v == bch2_opt_get_by_id(&bch2_opts_default, i))
 			continue;
 
-		switch (opt->type) {
-		case BCH_OPT_BOOL:
-			seq_printf(seq, ",%s%s", v ? "" : "no", opt->attr.name);
-			break;
-		case BCH_OPT_UINT:
-			seq_printf(seq, ",%s=%llu", opt->attr.name, v);
-			break;
-		case BCH_OPT_STR:
-			seq_printf(seq, ",%s=%s", opt->attr.name, opt->choices[v]);
-			break;
-		}
+		bch2_opt_to_text(c, buf, sizeof(buf), opt, v,
+				 OPT_SHOW_MOUNT_STYLE);
+		seq_putc(seq, ',');
+		seq_puts(seq, buf);
 	}
 
 	return 0;

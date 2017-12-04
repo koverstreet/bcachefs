@@ -1,7 +1,9 @@
 
 #include <linux/kernel.h>
 
+#include "bcachefs.h"
 #include "opts.h"
+#include "super-io.h"
 #include "util.h"
 
 const char * const bch2_error_actions[] = {
@@ -139,6 +141,9 @@ const struct bch_option bch2_opt_table[] = {
 #define OPT_BOOL()		.type = BCH_OPT_BOOL
 #define OPT_UINT(_min, _max)	.type = BCH_OPT_UINT, .min = _min, .max = _max
 #define OPT_STR(_choices)	.type = BCH_OPT_STR, .choices = _choices
+#define OPT_FN(_fn)		.type = BCH_OPT_FN,			\
+				.parse = _fn##_parse,			\
+				.print = _fn##_print
 
 #define BCH_OPT(_name, _bits, _mode, _type, _sb_opt, _default)		\
 	[Opt_##_name] = {						\
@@ -189,7 +194,8 @@ static int bch2_mount_opt_lookup(const char *name)
 	return bch2_opt_lookup(name);
 }
 
-int bch2_opt_parse(const struct bch_option *opt, const char *val, u64 *res)
+int bch2_opt_parse(struct bch_fs *c, const struct bch_option *opt,
+		   const char *val, u64 *res)
 {
 	ssize_t ret;
 
@@ -217,9 +223,48 @@ int bch2_opt_parse(const struct bch_option *opt, const char *val, u64 *res)
 
 		*res = ret;
 		break;
+	case BCH_OPT_FN:
+		if (!c)
+			return -EINVAL;
+
+		return opt->parse(c, val, res);
 	}
 
 	return 0;
+}
+
+int bch2_opt_to_text(struct bch_fs *c, char *buf, size_t len,
+		     const struct bch_option *opt, u64 v,
+		     unsigned flags)
+{
+	char *out = buf, *end = buf + len;
+
+	if (flags & OPT_SHOW_MOUNT_STYLE) {
+		if (opt->type == BCH_OPT_BOOL)
+			return scnprintf(out, end - out, "%s%s",
+					 v ? "" : "no",
+					 opt->attr.name);
+
+		out += scnprintf(out, end - out, "%s=", opt->attr.name);
+	}
+
+	switch (opt->type) {
+	case BCH_OPT_BOOL:
+	case BCH_OPT_UINT:
+		out += scnprintf(out, end - out, "%lli", v);
+		break;
+	case BCH_OPT_STR:
+		out += (flags & OPT_SHOW_FULL_LIST)
+			? bch2_scnprint_string_list(out, end - out, opt->choices, v)
+			: scnprintf(out, end - out, opt->choices[v]);
+		break;
+	case BCH_OPT_FN:
+		return opt->print(c, out, end - out, v);
+	default:
+		BUG();
+	}
+
+	return out - buf;
 }
 
 int bch2_parse_mount_opts(struct bch_opts *opts, char *options)
@@ -237,7 +282,7 @@ int bch2_parse_mount_opts(struct bch_opts *opts, char *options)
 			if (id < 0)
 				goto bad_opt;
 
-			ret = bch2_opt_parse(&bch2_opt_table[id], val, &v);
+			ret = bch2_opt_parse(NULL, &bch2_opt_table[id], val, &v);
 			if (ret < 0)
 				goto bad_val;
 		} else {

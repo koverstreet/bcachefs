@@ -168,6 +168,7 @@ rw_attribute(writeback_pages_max);
 
 rw_attribute(discard);
 rw_attribute(cache_replacement_policy);
+rw_attribute(group);
 
 rw_attribute(copy_gc_enabled);
 sysfs_pd_controller_attribute(copy_gc);
@@ -525,9 +526,7 @@ SHOW(bch2_fs_opts_dir)
 	int id = opt - bch2_opt_table;
 	u64 v = bch2_opt_get_by_id(&c->opts, id);
 
-	out += opt->type == BCH_OPT_STR
-		? bch2_scnprint_string_list(out, end - out, opt->choices, v)
-		: scnprintf(out, end - out, "%lli", v);
+	out += bch2_opt_to_text(c, out, end - out, opt, v, OPT_SHOW_FULL_LIST);
 	out += scnprintf(out, end - out, "\n");
 
 	return out - buf;
@@ -540,7 +539,7 @@ STORE(bch2_fs_opts_dir)
 	int ret, id = opt - bch2_opt_table;
 	u64 v;
 
-	ret = bch2_opt_parse(opt, buf, &v);
+	ret = bch2_opt_parse(c, opt, buf, &v);
 	if (ret < 0)
 		return ret;
 
@@ -812,6 +811,26 @@ SHOW(bch2_dev)
 	sysfs_print(nbuckets,		ca->mi.nbuckets);
 	sysfs_print(discard,		ca->mi.discard);
 
+	if (attr == &sysfs_group) {
+		struct bch_sb_field_disk_groups *groups;
+		struct bch_disk_group *g;
+		unsigned len;
+
+		if (!ca->mi.group)
+			return scnprintf(out, end - out, "none\n");
+
+		mutex_lock(&c->sb_lock);
+		groups = bch2_sb_get_disk_groups(c->disk_sb);
+
+		g = &groups->entries[ca->mi.group - 1];
+		len = strnlen(g->label, sizeof(g->label));
+		memcpy(buf, g->label, len);
+		mutex_unlock(&c->sb_lock);
+
+		buf[len++] = '\n';
+		return len;
+	}
+
 	if (attr == &sysfs_has_data) {
 		out += bch2_scnprint_flag_list(out, end - out,
 					       bch2_data_types,
@@ -893,6 +912,12 @@ STORE(bch2_dev)
 		mutex_unlock(&c->sb_lock);
 	}
 
+	if (attr == &sysfs_group) {
+		int ret = bch2_dev_group_set(c, ca, buf);
+		if (ret)
+			return ret;
+	}
+
 	if (attr == &sysfs_wake_allocator)
 		bch2_wake_allocator(ca);
 
@@ -911,6 +936,7 @@ struct attribute *bch2_dev_files[] = {
 	&sysfs_discard,
 	&sysfs_cache_replacement_policy,
 	&sysfs_state_rw,
+	&sysfs_group,
 
 	&sysfs_has_data,
 	&sysfs_iostats,

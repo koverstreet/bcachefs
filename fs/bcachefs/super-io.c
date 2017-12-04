@@ -1736,18 +1736,140 @@ const struct bch_devs_mask *bch2_target_to_mask(struct bch_fs *c, unsigned targe
 	struct target t = target_decode(target);
 
 	switch (t.type) {
-	case TARGET_DEV:
-		BUG_ON(t.dev >= c->sb.nr_devices && !c->devs[t.dev]);
-		return &c->devs[t.dev]->self;
+	case TARGET_DEV: {
+		struct bch_dev *ca = t.dev < c->sb.nr_devices
+			? rcu_dereference(c->devs[t.dev])
+			: NULL;
+		return ca ? &ca->self : NULL;
+	}
 	case TARGET_GROUP: {
-		struct bch_disk_groups_cpu *g =
-			rcu_dereference(c->disk_groups);
+		struct bch_disk_groups_cpu *g = rcu_dereference(c->disk_groups);
 
-		/* XXX: what to do here? */
-		BUG_ON(t.group >= g->nr || g->entries[t.group].deleted);
-		return &g->entries[t.group].devs;
+		return t.group < g->nr && !g->entries[t.group].deleted
+			? &g->entries[t.group].devs
+			: NULL;
 	}
 	default:
 		BUG();
 	}
+}
+
+int __bch2_disk_group_find(struct bch_sb_field_disk_groups *groups,
+			   const char *name)
+{
+	unsigned i, nr_groups = disk_groups_nr(groups);
+	unsigned len = strlen(name);
+
+	for (i = 0; i < nr_groups; i++) {
+		struct bch_disk_group *g = groups->entries + i;
+
+		if (BCH_GROUP_DELETED(g))
+			continue;
+
+		if (strnlen(g->label, sizeof(g->label)) == len &&
+		    !memcmp(name, g->label, len))
+			return i;
+	}
+
+	return -1;
+}
+
+static int bch2_disk_group_find(struct bch_fs *c, const char *name)
+{
+	int ret;
+
+	mutex_lock(&c->sb_lock);
+	ret = __bch2_disk_group_find(bch2_sb_get_disk_groups(c->disk_sb), name);
+	mutex_unlock(&c->sb_lock);
+
+	return ret;
+}
+
+int bch2_opt_target_parse(struct bch_fs *c, const char *buf, u64 *v)
+{
+	struct bch_dev *ca;
+	int g;
+
+	if (!strlen(buf) || !strcmp(buf, "none")) {
+		*v = 0;
+		return 0;
+	}
+
+	/* Is it a device? */
+	ca = bch2_dev_lookup(c, buf);
+	if (!IS_ERR(ca)) {
+		*v = dev_to_target(ca->dev_idx);
+		percpu_ref_put(&ca->ref);
+		return 0;
+	}
+
+	g = bch2_disk_group_find(c, buf);
+	if (g >= 0) {
+		*v = group_to_target(g);
+		return 0;
+	}
+
+	return -EINVAL;
+}
+
+int bch2_opt_target_print(struct bch_fs *c, char *buf, size_t len, u64 v)
+{
+	struct target t = target_decode(v);
+	int ret;
+
+	switch (t.type) {
+	case TARGET_NULL:
+		return scnprintf(buf, len, "none");
+	case TARGET_DEV: {
+		struct bch_dev *ca;
+
+		rcu_read_lock();
+		ca = t.dev < c->sb.nr_devices
+			? rcu_dereference(c->devs[t.dev])
+			: NULL;
+
+		if (ca && percpu_ref_tryget(&ca->io_ref)) {
+			char b[BDEVNAME_SIZE];
+
+			ret = scnprintf(buf, len, "/dev/%s",
+					bdevname(ca->disk_sb.bdev, b));
+			percpu_ref_put(&ca->io_ref);
+		} else if (ca) {
+			ret = scnprintf(buf, len, "offline device %u", t.dev);
+		} else {
+			ret = scnprintf(buf, len, "invalid device %u", t.dev);
+		}
+
+		rcu_read_unlock();
+		break;
+	}
+	case TARGET_GROUP: {
+		struct bch_sb_field_disk_groups *groups;
+		struct bch_disk_group *g;
+
+		mutex_lock(&c->sb_lock);
+		groups = bch2_sb_get_disk_groups(c->disk_sb);
+
+		g = t.group < disk_groups_nr(groups)
+			? groups->entries + t.group
+			: NULL;
+
+		if (g && !BCH_GROUP_DELETED(g)) {
+			ret = len ? min(len - 1, strnlen(g->label, sizeof(g->label))) : 0;
+
+			memcpy(buf, g->label, ret);
+			if (len)
+				buf[ret] = '\0';
+		} else {
+			ret = scnprintf(buf, len, "invalid group %u", t.group);
+		}
+
+		mutex_unlock(&c->sb_lock);
+		break;
+	}
+	default:
+		BUG();
+	}
+
+	return ret;
 }
