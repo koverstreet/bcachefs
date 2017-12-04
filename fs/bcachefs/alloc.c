@@ -92,8 +92,6 @@ static void pd_controllers_update(struct work_struct *work)
 	u64 faster_tiers_size	= 0;
 	u64 faster_tiers_dirty	= 0;
 
-	u64 fastest_tier_size	= 0;
-	u64 fastest_tier_free	= 0;
 	u64 copygc_can_free	= 0;
 
 	rcu_read_lock();
@@ -131,12 +129,6 @@ static void pd_controllers_update(struct work_struct *work)
 			faster_tiers_size		+= size;
 			faster_tiers_dirty		+= dirty;
 
-			if (!c->fastest_tier ||
-			    c->fastest_tier == &c->tiers[i]) {
-				fastest_tier_size	+= size;
-				fastest_tier_free	+= free;
-			}
-
 			copygc_can_free			+= fragmented;
 		}
 	}
@@ -156,14 +148,6 @@ static void pd_controllers_update(struct work_struct *work)
 	 */
 	if (c->fastest_tier)
 		copygc_can_free = U64_MAX;
-
-	bch2_pd_controller_update(&c->foreground_write_pd,
-				 min(copygc_can_free,
-				     div_u64(fastest_tier_size *
-					     c->foreground_target_percent,
-					     100)),
-				 fastest_tier_free,
-				 -1);
 
 	schedule_delayed_work(&c->pd_controllers_update,
 			      c->pd_controllers_update_seconds * HZ);
@@ -2055,17 +2039,4 @@ void bch2_fs_allocator_init(struct bch_fs *c)
 
 	c->pd_controllers_update_seconds = 5;
 	INIT_DELAYED_WORK(&c->pd_controllers_update, pd_controllers_update);
-
-	spin_lock_init(&c->foreground_write_pd_lock);
-	bch2_pd_controller_init(&c->foreground_write_pd);
-	/*
-	 * We do not want the write rate to have an effect on the computed
-	 * rate, for two reasons:
-	 *
-	 * We do not call bch2_ratelimit_delay() at all if the write rate
-	 * exceeds 1GB/s. In this case, the PD controller will think we are
-	 * not "keeping up" and not change the rate.
-	 */
-	c->foreground_write_pd.backpressure = 0;
-	timer_setup(&c->foreground_write_wakeup, bch2_wake_delayed_writes, 0);
 }

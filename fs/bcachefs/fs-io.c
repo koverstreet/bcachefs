@@ -982,7 +982,7 @@ alloc_io:
 				writepoint_hashed(inode->ei_last_dirtied),
 				POS(inum, 0),
 				&inode->ei_journal_seq,
-				BCH_WRITE_THROTTLE);
+				0);
 		w->io->op.op.index_update_fn = bchfs_write_index_update;
 	}
 
@@ -1554,7 +1554,7 @@ static void bch2_do_direct_IO_write(struct dio_write *dio)
 			   writepoint_hashed((unsigned long) dio->task),
 			   POS(inode->v.i_ino, (dio->offset + dio->written) >> 9),
 			   &inode->ei_journal_seq,
-			   flags|BCH_WRITE_THROTTLE);
+			   flags);
 	dio->iop.op.index_update_fn = bchfs_write_index_update;
 
 	dio->res.sectors -= bio_sectors(bio);

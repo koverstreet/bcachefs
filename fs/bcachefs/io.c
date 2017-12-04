@@ -854,31 +854,6 @@ err:
 		    : bch2_write_done, index_update_wq(op));
 }
 
-void bch2_wake_delayed_writes(struct timer_list *timer)
-{
-	struct bch_fs *c =
-		container_of(timer, struct bch_fs, foreground_write_wakeup);
-	struct bch_write_op *op;
-	unsigned long flags;
-
-	spin_lock_irqsave(&c->foreground_write_pd_lock, flags);
-
-	while ((op = c->write_wait_head)) {
-		if (time_after(op->expires, jiffies)) {
-			mod_timer(&c->foreground_write_wakeup, op->expires);
-			break;
-		}
-
-		c->write_wait_head = op->next;
-		if (!c->write_wait_head)
-			c->write_wait_tail = NULL;
-
-		closure_put(&op->cl);
-	}
-
-	spin_unlock_irqrestore(&c->foreground_write_pd_lock, flags);
-}
-
 /**
  * bch_write - handle a write to a cache device or flash only volume
  *
@@ -900,7 +875,6 @@ void bch2_write(struct closure *cl)
 	struct bch_write_op *op = container_of(cl, struct bch_write_op, cl);
 	struct bio *bio = &op->wbio.bio;
 	struct bch_fs *c = op->c;
-	u64 inode = op->pos.inode;
 
 	BUG_ON(!op->nr_replicas);
 	BUG_ON(!op->write_point.v);
@@ -924,47 +898,6 @@ void bch2_write(struct closure *cl)
 	}
 
 	bch2_increment_clock(c, bio_sectors(bio), WRITE);
-
-	/* Don't call bch2_next_delay() if rate is >= 1 GB/sec */
-
-	if ((op->flags & BCH_WRITE_THROTTLE) &&
-	    c->foreground_write_ratelimit_enabled &&
-	    c->foreground_write_pd.rate.rate < (1 << 30)) {
-		unsigned long flags;
-		u64 delay;
-
-		spin_lock_irqsave(&c->foreground_write_pd_lock, flags);
-		bch2_ratelimit_increment(&c->foreground_write_pd.rate,
-					 bio->bi_iter.bi_size);
-
-		delay = bch2_ratelimit_delay(&c->foreground_write_pd.rate);
-
-		if (delay >= HZ / 100) {
-			trace_write_throttle(c, inode, bio, delay);
-
-			closure_get(&op->cl); /* list takes a ref */
-
-			op->expires = jiffies + delay;
-			op->next = NULL;
-
-			if (c->write_wait_tail)
-				c->write_wait_tail->next = op;
-			else
-				c->write_wait_head = op;
-			c->write_wait_tail = op;
-
-			if (!timer_pending(&c->foreground_write_wakeup))
-				mod_timer(&c->foreground_write_wakeup,
-					  op->expires);
-
-			spin_unlock_irqrestore(&c->foreground_write_pd_lock,
-					       flags);
-			continue_at(cl, __bch2_write, index_update_wq(op));
-			return;
-		}
-
-		spin_unlock_irqrestore(&c->foreground_write_pd_lock, flags);
-	}
 
 	continue_at_nobarrier(cl, __bch2_write, NULL);
 }
