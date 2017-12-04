@@ -1723,3 +1723,65 @@ const struct bch_devs_mask *bch2_target_to_mask(struct bch_fs *c, unsigned targe
 		BUG();
 	}
 }
+
+int bch2_opt_target_parse(struct bch_fs *c, const char *buf, u64 *v)
+{
+	struct bch_sb_field_disk_groups *groups;
+	struct bch_dev *ca;
+	unsigned i;
+
+	if (!strlen(buf) || !strcmp(buf, "none")) {
+		*v = 0;
+		return 0;
+	}
+
+	mutex_lock(&c->sb_lock);
+	groups = bch2_sb_get_disk_groups(c->disk_sb);
+	if (groups) {
+		unsigned nr_groups = disk_groups_nr(groups);
+
+		for (i = 0; i < nr_groups; i++) {
+			struct bch_disk_group *g = groups->entries + i;
+			unsigned len = strnlen(g->label, sizeof(g->label));
+
+			if (len == strlen(buf) && !memcmp(buf, g->label, len)) {
+				*v = group_to_target(i);
+				mutex_unlock(&c->sb_lock);
+				return 0;
+			}
+		}
+	}
+	mutex_unlock(&c->sb_lock);
+
+	for_each_online_member(ca, c, i) {
+		char devname[BDEVNAME_SIZE];
+		char path[BDEVNAME_SIZE + 16];
+
+		scnprintf(path, sizeof(path), "/dev/%s",
+			  bdevname(ca->disk_sb.bdev, devname));
+
+		if (!strcmp(path, buf)) {
+			*v = dev_to_target(i);
+			percpu_ref_put(&ca->io_ref);
+			return 0;
+		}
+	}
+
+	return -EINVAL;
+}
+
+int bch2_opt_target_print(struct bch_fs *c, char *buf, size_t len, u64 v)
+{
+	struct target t = target_decode(v);
+
+	switch (t.type) {
+	case TARGET_NULL:
+		return scnprintf(buf, len, "none");
+	case TARGET_DEV:
+		return scnprintf(buf, len, "dev: %u", t.dev);
+	case TARGET_GROUP:
+		return scnprintf(buf, len, "group: %u", t.group);
+	default:
+		BUG();
+	}
+}

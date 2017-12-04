@@ -524,9 +524,7 @@ SHOW(bch2_fs_opts_dir)
 	int id = opt - bch2_opt_table;
 	u64 v = bch2_opt_get_by_id(&c->opts, id);
 
-	out += opt->type == BCH_OPT_STR
-		? bch2_scnprint_string_list(out, end - out, opt->choices, v)
-		: scnprintf(out, end - out, "%lli", v);
+	out += bch2_opt_to_text(c, out, end - out, opt, v, OPT_SHOW_FULL_LIST);
 	out += scnprintf(out, end - out, "\n");
 
 	return out - buf;
@@ -539,7 +537,7 @@ STORE(bch2_fs_opts_dir)
 	int ret, id = opt - bch2_opt_table;
 	u64 v;
 
-	ret = bch2_opt_parse(opt, buf, &v);
+	ret = bch2_opt_parse(c, opt, buf, &v);
 	if (ret < 0)
 		return ret;
 

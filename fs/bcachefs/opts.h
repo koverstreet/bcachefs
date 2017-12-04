@@ -42,6 +42,7 @@ enum opt_type {
 	BCH_OPT_BOOL,
 	BCH_OPT_UINT,
 	BCH_OPT_STR,
+	BCH_OPT_FN,
 };
 
 /**
@@ -101,13 +102,13 @@ enum opt_type {
 		OPT_STR(bch2_str_hash_types),				\
 		BCH_SB_STR_HASH_TYPE,		BCH_STR_HASH_SIPHASH)	\
 	BCH_OPT(foreground_target,	u16,	OPT_RUNTIME,		\
-		OPT_UINT(0, U16_MAX),					\
+		OPT_FN(bch2_opt_target),				\
 		BCH_SB_FOREGROUND_TARGET,	0)			\
 	BCH_OPT(background_target,	u16,	OPT_RUNTIME,		\
-		OPT_UINT(0, U16_MAX),					\
+		OPT_FN(bch2_opt_target),				\
 		BCH_SB_BACKGROUND_TARGET,	0)			\
 	BCH_OPT(promote_target,		u16,	OPT_RUNTIME,		\
-		OPT_UINT(0, U16_MAX),					\
+		OPT_FN(bch2_opt_target),				\
 		BCH_SB_PROMOTE_TARGET,	0)				\
 	BCH_OPT(inodes_32bit,		u8,	OPT_RUNTIME,		\
 		OPT_BOOL(),						\
@@ -217,6 +218,8 @@ enum bch_opt_id {
 	bch2_opts_nr
 };
 
+struct bch_fs;
+
 struct bch_option {
 	struct attribute	attr;
 	void			(*set_sb)(struct bch_sb *, u64);
@@ -229,6 +232,10 @@ struct bch_option {
 	};
 	struct {
 		const char * const *choices;
+	};
+	struct {
+		int (*parse)(struct bch_fs *, const char *, u64 *);
+		int (*print)(struct bch_fs *, char *, size_t, u64);
 	};
 	};
 
@@ -243,7 +250,14 @@ void bch2_opt_set_by_id(struct bch_opts *, enum bch_opt_id, u64);
 struct bch_opts bch2_opts_from_sb(struct bch_sb *);
 
 int bch2_opt_lookup(const char *);
-int bch2_opt_parse(const struct bch_option *, const char *, u64 *);
+int bch2_opt_parse(struct bch_fs *, const struct bch_option *, const char *, u64 *);
+
+#define OPT_SHOW_FULL_LIST	(1 << 0)
+#define OPT_SHOW_MOUNT_STYLE	(1 << 1)
+
+int bch2_opt_to_text(struct bch_fs *, char *, size_t,
+		     const struct bch_option *, u64, unsigned);
+
 int bch2_parse_mount_opts(struct bch_opts *, char *);
 
 /* inode opts: */
