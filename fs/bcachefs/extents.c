@@ -1954,9 +1954,7 @@ void bch2_extent_crc_append(struct bkey_i_extent *e,
 	const union bch_extent_entry *i;
 
 	BUG_ON(new.compressed_size > new.uncompressed_size);
-	BUG_ON(new.offset);
-	BUG_ON(new.uncompressed_size != new.live_size);
-	BUG_ON(new.uncompressed_size != e->k.size);
+	BUG_ON(new.live_size != e->k.size);
 	BUG_ON(!new.compressed_size || !new.uncompressed_size);
 
 	/*

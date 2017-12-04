@@ -12,7 +12,6 @@ struct migrate_write {
 	struct bch_extent_ptr	ptr;
 	u64			offset;
 
-	bool			promote;
 	bool			move;
 	struct bch_write_op	op;
 };

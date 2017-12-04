@@ -35,6 +35,18 @@ static inline unsigned dev_mask_nr(struct bch_devs_mask *devs)
 	return bitmap_weight(devs->d, BCH_SB_MEMBERS_MAX);
 }
 
+static inline bool bch2_dev_list_has_dev(struct bch_devs_list devs,
+					 unsigned dev)
+{
+	unsigned i;
+
+	for (i = 0; i < devs.nr; i++)
+		if (devs.devs[i] == dev)
+			return true;
+
+	return false;
+}
+
 static inline struct bch_dev *__bch2_next_dev(struct bch_fs *c, unsigned *iter,
 					      struct bch_devs_mask *mask)
 {

@@ -1112,12 +1112,12 @@ void bch2_wp_rescale(struct bch_fs *c, struct bch_dev *ca,
 
 static enum bucket_alloc_ret __bch2_bucket_alloc_set(struct bch_fs *c,
 					struct write_point *wp,
-					struct open_bucket *ob,
 					unsigned nr_replicas,
 					enum alloc_reserve reserve,
 					struct bch_devs_mask *devs)
 {
 	enum bucket_alloc_ret ret = NO_DEVICES;
+	struct open_bucket *ob = wp->ob;
 	struct dev_alloc_list devs_sorted;
 	u64 buckets_free;
 	unsigned i;
@@ -1146,16 +1146,8 @@ static enum bucket_alloc_ret __bch2_bucket_alloc_set(struct bch_fs *c,
 			continue;
 		}
 
-		/*
-		 * open_bucket_add_buckets expects new pointers at the head of
-		 * the list:
-		 */
 		BUG_ON(ob->nr_ptrs >= ARRAY_SIZE(ob->ptrs));
-		memmove(&ob->ptrs[1],
-			&ob->ptrs[0],
-			ob->nr_ptrs * sizeof(ob->ptrs[0]));
-		ob->nr_ptrs++;
-		ob->ptrs[0] = ptr;
+		ob->ptrs[ob->nr_ptrs++] = ptr;
 
 		buckets_free = U64_MAX, dev_buckets_free(ca);
 		if (buckets_free)
@@ -1181,7 +1173,7 @@ static enum bucket_alloc_ret __bch2_bucket_alloc_set(struct bch_fs *c,
 }
 
 static int bch2_bucket_alloc_set(struct bch_fs *c, struct write_point *wp,
-				struct open_bucket *ob, unsigned nr_replicas,
+				unsigned nr_replicas,
 				enum alloc_reserve reserve,
 				struct bch_devs_mask *devs,
 				struct closure *cl)
@@ -1189,7 +1181,7 @@ static int bch2_bucket_alloc_set(struct bch_fs *c, struct write_point *wp,
 	bool waiting = false;
 
 	while (1) {
-		switch (__bch2_bucket_alloc_set(c, wp, ob, nr_replicas,
+		switch (__bch2_bucket_alloc_set(c, wp, nr_replicas,
 						reserve, devs)) {
 		case ALLOC_SUCCESS:
 			if (waiting)
@@ -1326,20 +1318,7 @@ static struct open_bucket *bch2_open_bucket_get(struct bch_fs *c,
 	return ret;
 }
 
-static unsigned open_bucket_sectors_free(struct bch_fs *c,
-					 struct open_bucket *ob,
-					 unsigned nr_replicas)
-{
-	unsigned sectors_free = UINT_MAX;
-	struct open_bucket_ptr *ptr;
-
-	open_bucket_for_each_ptr(ob, ptr)
-		sectors_free = min(sectors_free, ptr->sectors_free);
-
-	return sectors_free != UINT_MAX ? sectors_free : 0;
-}
-
-static int open_bucket_move_ptrs(struct bch_fs *c,
+static int open_bucket_drop_ptrs(struct bch_fs *c,
 				 struct write_point *wp,
 				 struct bch_devs_mask *devs,
 				 unsigned nr_ptrs_dislike,
@@ -1424,29 +1403,32 @@ static void verify_not_stale(struct bch_fs *c, const struct open_bucket *ob)
 /* Sector allocator */
 
 static int open_bucket_add_buckets(struct bch_fs *c,
-				   struct write_point *wp,
 				   struct bch_devs_mask *_devs,
-				   struct open_bucket *ob,
+				   struct write_point *wp,
+				   struct bch_devs_list *devs_have,
 				   unsigned nr_replicas,
 				   enum alloc_reserve reserve,
 				   struct closure *cl)
 {
 	struct bch_devs_mask devs = c->rw_devs[wp->type];
 	struct open_bucket_ptr *ptr;
+	unsigned i;
 
-	if (ob->nr_ptrs >= nr_replicas)
+	if (wp->ob->nr_ptrs >= nr_replicas)
 		return 0;
+
+	/* Don't allocate from devices we already have pointers to: */
+	for (i = 0; i < devs_have->nr; i++)
+		__clear_bit(devs_have->devs[i], devs.d);
+
+	open_bucket_for_each_ptr(wp->ob, ptr)
+		if (ptr->sectors_free)
+			__clear_bit(ptr->ptr.dev, devs.d);
 
 	if (_devs)
 		bitmap_and(devs.d, devs.d, _devs->d, BCH_SB_MEMBERS_MAX);
 
-	/* Don't allocate from devices we already have pointers to: */
-	open_bucket_for_each_ptr(ob, ptr)
-		if (ptr->sectors_free)
-			__clear_bit(ptr->ptr.dev, devs.d);
-
-	return bch2_bucket_alloc_set(c, wp, ob, nr_replicas,
-				     reserve, &devs, cl);
+	return bch2_bucket_alloc_set(c, wp, nr_replicas, reserve, &devs, cl);
 }
 
 static struct write_point *__writepoint_find(struct hlist_head *head,
@@ -1526,6 +1508,7 @@ out:
 struct write_point *bch2_alloc_sectors_start(struct bch_fs *c,
 				struct bch_devs_mask *devs,
 				struct write_point_specifier write_point,
+				struct bch_devs_list *devs_have,
 				unsigned nr_replicas,
 				unsigned nr_replicas_required,
 				enum alloc_reserve reserve,
@@ -1535,10 +1518,10 @@ struct write_point *bch2_alloc_sectors_start(struct bch_fs *c,
 	struct open_bucket *ob;
 	struct write_point *wp;
 	struct open_bucket_ptr *ptr;
-	unsigned nr_ptrs_empty = 0, nr_ptrs_dislike = 0;
+	unsigned nr_ptrs_empty = 0, nr_ptrs_dislike = 0, nr_ptrs_have = 0;
 	int ret;
 
-	BUG_ON(!nr_replicas);
+	BUG_ON(!nr_replicas || !nr_replicas_required);
 
 	wp = writepoint_find(c, write_point.v);
 	ob = wp->ob;
@@ -1558,34 +1541,20 @@ struct write_point *bch2_alloc_sectors_start(struct bch_fs *c,
 	open_bucket_for_each_ptr(ob, ptr) {
 		if (!ptr->sectors_free)
 			nr_ptrs_empty++;
+		else if (bch2_dev_list_has_dev(*devs_have, ptr->ptr.dev))
+			nr_ptrs_have++;
 		else if (devs && !test_bit(ptr->ptr.dev, devs->d))
 			nr_ptrs_dislike++;
 	}
 
-	ret = open_bucket_add_buckets(c, wp, devs, ob,
-				nr_replicas + nr_ptrs_empty + nr_ptrs_dislike,
+	ret = open_bucket_add_buckets(c, devs, wp, devs_have,
+				nr_replicas + nr_ptrs_empty + nr_ptrs_have + nr_ptrs_dislike,
 				reserve, cl);
 	if (ret && ret != -EROFS)
 		goto err;
 
-	if (flags & BCH_WRITE_ONLY_SPECIFIED_DEVS)
-		goto alloc_done;
-
-	/*
-	 * XXX:
-	 * Should this allocation be _forced_ to used the specified device (e.g.
-	 * internal migration), or should we fall back to allocating from all
-	 * devices?
-	 */
-	ret = open_bucket_add_buckets(c, wp, NULL, ob,
-				nr_replicas + nr_ptrs_empty,
-				reserve, cl);
-	if (ret && ret != -EROFS)
-		goto err;
-alloc_done:
-	if (ob->nr_ptrs - nr_ptrs_empty -
-	    ((flags & BCH_WRITE_ONLY_SPECIFIED_DEVS) ? nr_ptrs_dislike : 0)
-	    < nr_replicas_required) {
+	if (ob->nr_ptrs <
+	    nr_ptrs_empty + nr_ptrs_have + nr_ptrs_dislike + nr_replicas_required) {
 		ret = -EROFS;
 		goto err;
 	}
@@ -1596,23 +1565,53 @@ alloc_done:
 	 * still needs to find them; instead, we must allocate a new open bucket
 	 * and copy any pointers to non-full buckets into the new open bucket.
 	 */
-	BUG_ON((int) ob->nr_ptrs - nr_ptrs_empty - nr_replicas > nr_ptrs_dislike);
-	nr_ptrs_dislike = max_t(int, 0, ob->nr_ptrs - nr_ptrs_empty - nr_replicas);
+	if ((int) ob->nr_ptrs - nr_ptrs_empty - nr_ptrs_dislike < nr_replicas)
+		nr_ptrs_dislike = clamp_t(int, ob->nr_ptrs - nr_ptrs_empty - nr_replicas,
+					  0, nr_ptrs_dislike);
 
 	if (nr_ptrs_empty || nr_ptrs_dislike) {
 		/* Remove pointers we don't want to use: */
-		ret = open_bucket_move_ptrs(c, wp, devs, nr_ptrs_dislike, cl);
+		ret = open_bucket_drop_ptrs(c, wp, devs, nr_ptrs_dislike, cl);
 		if (ret)
 			goto err;
 
 		ob = wp->ob;
 	}
 
-	BUG_ON(ob->nr_ptrs < nr_replicas_required);
+	/*
+	 * Move pointers to devices we already have to end of open bucket
+	 * pointer list:
+	 */
+	if (nr_ptrs_have) {
+		/*
+		 * Removing pointers we don't want to use might have changed
+		 * nr_ptrs_have:
+		 */
+		nr_ptrs_have = 0;
+		ptr = ob->ptrs;
 
-	wp->sectors_free = open_bucket_sectors_free(c, ob, nr_replicas);
+		while (ptr < ob->ptrs + ob->nr_ptrs - nr_ptrs_have)
+			if (bch2_dev_list_has_dev(*devs_have, ptr->ptr.dev)) {
+				nr_ptrs_have++;
+				swap(*ptr, ob->ptrs[ob->nr_ptrs - nr_ptrs_have]);
+			} else {
+				ptr++;
+			}
 
-	BUG_ON(!wp->sectors_free);
+		wp->nr_ptrs_have = nr_ptrs_have;
+	}
+
+	BUG_ON(ob->nr_ptrs - nr_ptrs_have < nr_replicas_required);
+
+	wp->sectors_free = UINT_MAX;
+
+	for (ptr = ob->ptrs;
+	     ptr < ob->ptrs + min_t(int, ob->nr_ptrs - nr_ptrs_have, nr_replicas);
+	     ptr++)
+		wp->sectors_free = min(wp->sectors_free, ptr->sectors_free);
+
+	BUG_ON(!wp->sectors_free || wp->sectors_free == UINT_MAX);
+
 	verify_not_stale(c, ob);
 
 	return wp;
@@ -1632,14 +1631,14 @@ void bch2_alloc_sectors_append_ptrs(struct bch_fs *c, struct write_point *wp,
 	struct open_bucket *ob = wp->ob;
 	struct bch_extent_ptr tmp;
 	struct open_bucket_ptr *ptr;
+	unsigned nr_ptrs = min_t(u8, ob->nr_ptrs - wp->nr_ptrs_have, nr_replicas);
 
 	/*
 	 * We're keeping any existing pointer k has, and appending new pointers:
 	 * __bch2_write() will only write to the pointers we add here:
 	 */
 
-	for (ptr = ob->ptrs;
-	     ptr < ob->ptrs + min_t(u8, ob->nr_ptrs, nr_replicas); ptr++) {
+	for (ptr = ob->ptrs; ptr < ob->ptrs + nr_ptrs; ptr++) {
 		struct bch_dev *ca = c->devs[ptr->ptr.dev];
 
 		EBUG_ON(bch2_extent_has_device(extent_i_to_s_c(e), ptr->ptr.dev));
@@ -1668,7 +1667,7 @@ void bch2_alloc_sectors_done(struct bch_fs *c, struct write_point *wp)
 
 	open_bucket_for_each_ptr(wp->ob, ptr)
 		if (!ptr->sectors_free) {
-			open_bucket_move_ptrs(c, wp, NULL, 0, NULL);
+			open_bucket_drop_ptrs(c, wp, NULL, 0, NULL);
 			break;
 		}
 
@@ -1704,8 +1703,9 @@ struct open_bucket *bch2_alloc_sectors(struct bch_fs *c,
 {
 	struct write_point *wp;
 	struct open_bucket *ob;
+	struct bch_devs_list devs_have = bch2_extent_devs(extent_i_to_s_c(e));
 
-	wp = bch2_alloc_sectors_start(c, devs, write_point,
+	wp = bch2_alloc_sectors_start(c, devs, write_point, &devs_have,
 				      nr_replicas, nr_replicas_required,
 				      reserve, flags, cl);
 	if (IS_ERR_OR_NULL(wp))
@@ -1857,7 +1857,7 @@ retry:
 		return;
 	}
 
-	if (open_bucket_move_ptrs(c, wp, &not_self, wp->ob->nr_ptrs, &cl)) {
+	if (open_bucket_drop_ptrs(c, wp, &not_self, wp->ob->nr_ptrs, &cl)) {
 		mutex_unlock(&wp->lock);
 		closure_sync(&cl);
 		goto retry;

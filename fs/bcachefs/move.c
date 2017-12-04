@@ -26,13 +26,9 @@ static int bch2_migrate_index_update(struct bch_write_op *op)
 			     BTREE_ITER_INTENT);
 
 	while (1) {
-		struct bkey_s_extent insert =
-			bkey_i_to_s_extent(bch2_keylist_front(keys));
 		struct bkey_s_c k = bch2_btree_iter_peek_with_holes(&iter);
-		struct bch_extent_ptr *ptr, *existing_ptr;
-		struct bkey_s_extent e;
-		struct bkey_i_extent *e_i;
-		BKEY_PADDED(k) new;
+		struct bkey_i_extent *new, *insert;
+		BKEY_PADDED(k) _new, _insert;
 
 		if (btree_iter_err(k)) {
 			ret = bch2_btree_iter_unlock(&iter);
@@ -42,49 +38,62 @@ static int bch2_migrate_index_update(struct bch_write_op *op)
 		if (!bkey_extent_is_data(k.k))
 			goto nomatch;
 
-		bkey_reassemble(&new.k, k);
-		bch2_cut_front(iter.pos, &new.k);
-		bch2_cut_back(insert.k->p, &new.k.k);
-		e = bkey_i_to_s_extent(&new.k);
-		e_i = bkey_i_to_extent(&new.k);
+		bkey_copy(&_insert.k, bch2_keylist_front(keys));
+		insert = bkey_i_to_extent(&_insert.k);
 
-		if (bch2_extent_matches_ptr(c, bkey_s_c_to_extent(k),
+		bkey_reassemble(&_new.k, k);
+		new = bkey_i_to_extent(&_new.k);
+
+		bch2_cut_front(iter.pos, &new->k_i);
+		bch2_cut_back(insert->k.p, &new->k);
+		bch2_cut_back(new->k.p, &insert->k);
+
+		if (!bversion_cmp(insert->k.version, new->k.version) &&
+		    bch2_extent_matches_ptr(c, extent_i_to_s_c(new),
 					    m->ptr, m->offset)) {
+			const struct bch_extent_ptr *ptr;
+			struct bch_extent_ptr *existing_ptr;
+			struct bch_extent_crc_unpacked crc;
 			unsigned insert_flags =
 				BTREE_INSERT_ATOMIC|
 				BTREE_INSERT_NOFAIL;
+			bool did_work = false;
 
 			/* copygc uses btree node reserve: */
 			if (m->move)
 				insert_flags |= BTREE_INSERT_USE_RESERVE;
 
-			extent_for_each_ptr(insert, ptr) {
+			extent_for_each_ptr_crc(extent_i_to_s_c(insert), ptr, crc) {
 				existing_ptr = (struct bch_extent_ptr *)
-					bch2_extent_has_device(e.c, ptr->dev);
+					bch2_extent_has_device(extent_i_to_s_c(new),
+							       ptr->dev);
 
-				BUG_ON(existing_ptr && !m->move && !m->promote);
+				if (existing_ptr) {
+					/* raced with another move op? */
+					if (!m->move)
+						continue;
 
-				if (!existing_ptr != !m->move)
-					goto nomatch;
+					bch2_extent_drop_ptr(extent_i_to_s(new),
+							     existing_ptr);
+				}
 
-				if (existing_ptr)
-					bch2_extent_drop_ptr(e, existing_ptr);
+				bch2_extent_crc_append(new, crc);
+				extent_ptr_append(new, *ptr);
+				did_work = true;
 			}
 
-			memcpy_u64s(extent_entry_last(e),
-				    insert.v,
-				    bkey_val_u64s(insert.k));
-			e.k->u64s += bkey_val_u64s(insert.k);
+			if (!did_work)
+				goto nomatch;
 
-			bch2_extent_narrow_crcs(e_i,
+			bch2_extent_narrow_crcs(new,
 					(struct bch_extent_crc_unpacked) { 0 });
-			bch2_extent_normalize(c, e.s);
-			bch2_extent_mark_replicas_cached(c, e);
+			bch2_extent_normalize(c, extent_i_to_s(new).s);
+			bch2_extent_mark_replicas_cached(c, extent_i_to_s(new));
 
 			ret = bch2_btree_insert_at(c, &op->res,
 					NULL, op_journal_seq(op),
 					insert_flags,
-					BTREE_INSERT_ENTRY(&iter, &new.k));
+					BTREE_INSERT_ENTRY(&iter, &new->k_i));
 			if (!ret)
 				atomic_long_inc(&c->extent_migrate_done);
 			if (ret == -EINTR)
@@ -95,7 +104,6 @@ static int bch2_migrate_index_update(struct bch_write_op *op)
 nomatch:
 			atomic_long_inc(&c->extent_migrate_raced);
 			trace_move_collision(k.k->p, k.k->p.offset - iter.pos.offset);
-
 			bch2_btree_iter_advance_pos(&iter);
 		}
 
@@ -121,6 +129,8 @@ void bch2_migrate_write_init(struct migrate_write *m,
 	m->ptr		= rbio->pick.ptr;
 	m->offset	= rbio->pos.offset - rbio->pick.crc.offset;
 
+	if (!m->move)
+		m->op.devs_have	= rbio->devs_have;
 	m->op.pos	= rbio->pos;
 	m->op.version	= rbio->version;
 	m->op.crc	= rbio->pick.crc;
@@ -140,6 +150,7 @@ void bch2_migrate_write_init(struct migrate_write *m,
 
 	m->op.wbio.bio.bi_iter.bi_size = m->op.crc.compressed_size << 9;
 	m->op.nr_replicas	= 1;
+	m->op.nr_replicas_required = 1;
 	m->op.index_update_fn	= bch2_migrate_index_update;
 }
 
@@ -263,7 +274,8 @@ int bch2_data_move(struct bch_fs *c,
 	 * ctxt when doing wakeup
 	 */
 	closure_get(&io->ctxt->cl);
-	bch2_read_extent(c, &io->rbio, k, &pick, BCH_READ_NODECODE);
+	bch2_read_extent(c, &io->rbio, bkey_s_c_to_extent(k),
+			 &pick, BCH_READ_NODECODE);
 	return 0;
 }
 

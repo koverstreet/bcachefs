@@ -318,30 +318,6 @@ struct gc_pos {
 	unsigned		level;
 };
 
-struct bch_member_cpu {
-	u64			nbuckets;	/* device size */
-	u16			first_bucket;   /* index of first bucket used */
-	u16			bucket_size;	/* sectors */
-	u8			state;
-	u8			tier;
-	u8			replacement;
-	u8			discard;
-	u8			data_allowed;
-	u8			valid;
-};
-
-struct bch_replicas_cpu_entry {
-	u8			data_type;
-	u8			devs[BCH_SB_MEMBERS_MAX / 8];
-};
-
-struct bch_replicas_cpu {
-	struct rcu_head		rcu;
-	unsigned		nr;
-	unsigned		entry_size;
-	struct bch_replicas_cpu_entry entries[];
-};
-
 struct io_count {
 	u64			sectors[2][BCH_DATA_NR];
 };
