@@ -22,6 +22,7 @@ struct bch_member_cpu {
 	u64			nbuckets;	/* device size */
 	u16			first_bucket;   /* index of first bucket used */
 	u16			bucket_size;	/* sectors */
+	u16			group;
 	u8			state;
 	u8			tier;
 	u8			replacement;
@@ -40,6 +41,17 @@ struct bch_replicas_cpu {
 	unsigned		nr;
 	unsigned		entry_size;
 	struct bch_replicas_cpu_entry entries[];
+};
+
+struct bch_disk_group_cpu {
+	struct bch_devs_mask		devs;
+	bool				deleted;
+};
+
+struct bch_disk_groups_cpu {
+	struct rcu_head			rcu;
+	unsigned			nr;
+	struct bch_disk_group_cpu	entries[];
 };
 
 #endif /* _BCACHEFS_SUPER_TYPES_H */

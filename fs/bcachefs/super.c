@@ -426,6 +426,7 @@ static void bch2_fs_free(struct bch_fs *c)
 	mempool_exit(&c->fill_iter);
 	percpu_ref_exit(&c->writes);
 	kfree(rcu_dereference_protected(c->replicas, 1));
+	kfree(rcu_dereference_protected(c->disk_groups, 1));
 
 	if (c->copygc_wq)
 		destroy_workqueue(c->copygc_wq);
@@ -1169,6 +1170,12 @@ static int __bch2_dev_online(struct bch_fs *c, struct bch_sb_handle *sb)
 
 	BUG_ON(!percpu_ref_is_zero(&ca->io_ref));
 
+	if (get_capacity(sb->bdev->bd_disk) <
+	    ca->mi.bucket_size * ca->mi.nbuckets) {
+		bch_err(c, "device too small");
+		return -EINVAL;
+	}
+
 	ret = bch2_dev_journal_init(ca, sb->sb);
 	if (ret)
 		return ret;
@@ -1495,10 +1502,7 @@ int bch2_dev_add(struct bch_fs *c, const char *path)
 	mutex_lock(&c->state_lock);
 	mutex_lock(&c->sb_lock);
 
-	/*
-	 * Preserve the old cache member information (esp. tier)
-	 * before we start bashing the disk stuff.
-	 */
+	/* Grab member info for new disk: */
 	dev_mi = bch2_sb_get_members(sb.sb);
 	saved_mi = dev_mi->members[sb.sb->dev_idx];
 	saved_mi.last_mount = cpu_to_le64(ktime_get_seconds());

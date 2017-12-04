@@ -139,6 +139,34 @@ bool bch2_extent_drop_device(struct bkey_s_extent e, unsigned dev)
 	return dropped;
 }
 
+const struct bch_extent_ptr *
+bch2_extent_has_group(struct bch_fs *c, struct bkey_s_c_extent e, unsigned group)
+{
+	const struct bch_extent_ptr *ptr;
+
+	extent_for_each_ptr(e, ptr) {
+		struct bch_dev *ca = c->devs[ptr->dev];
+
+		if (ca->mi.group &&
+		    ca->mi.group == group)
+			return ptr;
+	}
+
+	return NULL;
+}
+
+const struct bch_extent_ptr *
+bch2_extent_has_target(struct bch_fs *c, struct bkey_s_c_extent e, unsigned target)
+{
+	const struct bch_extent_ptr *ptr;
+
+	extent_for_each_ptr(e, ptr)
+		if (dev_in_target(c->devs[ptr->dev], target))
+			return ptr;
+
+	return NULL;
+}
+
 unsigned bch2_extent_nr_ptrs(struct bkey_s_c_extent e)
 {
 	const struct bch_extent_ptr *ptr;
