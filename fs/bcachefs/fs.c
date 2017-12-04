@@ -12,6 +12,7 @@
 #include "fs-ioctl.h"
 #include "fsck.h"
 #include "inode.h"
+#include "io.h"
 #include "journal.h"
 #include "keylist.h"
 #include "super.h"
@@ -130,10 +131,8 @@ int __must_check __bch2_write_inode(struct bch_fs *c,
 				BTREE_INSERT_ENTRY(&iter, &inode_p.inode.k_i));
 	} while (ret == -EINTR);
 
-	if (!ret) {
-		inode->ei_size	= inode_u.bi_size;
-		inode->ei_flags	= inode_u.bi_flags;
-	}
+	if (!ret)
+		inode->ei_inode = inode_u;
 out:
 	bch2_btree_iter_unlock(&iter);
 
@@ -223,7 +222,9 @@ static struct bch_inode_info *bch2_vfs_inode_create(struct bch_fs *c,
 	bch2_inode_init(c, &inode_u,
 			i_uid_read(&inode->v),
 			i_gid_read(&inode->v),
-			inode->v.i_mode, rdev);
+			inode->v.i_mode, rdev,
+			&dir->ei_inode);
+
 	ret = bch2_inode_create(c, &inode_u,
 				BLOCKDEV_INODE_MAX, 0,
 				&c->unused_inode_hint);
@@ -909,10 +910,9 @@ static void bch2_vfs_inode_init(struct bch_fs *c,
 	inode->v.i_ctime	= bch2_time_to_timespec(c, bi->bi_ctime);
 
 	inode->ei_journal_seq	= 0;
-	inode->ei_size		= bi->bi_size;
-	inode->ei_flags		= bi->bi_flags;
 	atomic64_set(&inode->ei_sectors, bi->bi_sectors);
 	inode->ei_str_hash	= bch2_hash_info_init(c, bi);
+	inode->ei_inode		= *bi;
 
 	bch2_inode_flags_to_vfs(inode);
 

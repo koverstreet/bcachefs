@@ -42,6 +42,12 @@ static inline u64 *op_journal_seq(struct bch_write_op *op)
 		? op->journal_seq_p : &op->journal_seq;
 }
 
+static inline void op_journal_seq_set(struct bch_write_op *op, u64 *journal_seq)
+{
+	op->journal_seq_p = journal_seq;
+	op->flags |= BCH_WRITE_JOURNAL_SEQ_PTR;
+}
+
 static inline struct workqueue_struct *index_update_wq(struct bch_write_op *op)
 {
 	return op->alloc_reserve == RESERVE_MOVINGGC
@@ -51,14 +57,14 @@ static inline struct workqueue_struct *index_update_wq(struct bch_write_op *op)
 
 int bch2_write_index_default(struct bch_write_op *);
 
-static inline void __bch2_write_op_init(struct bch_write_op *op, struct bch_fs *c)
+static inline void bch2_write_op_init(struct bch_write_op *op, struct bch_fs *c)
 {
 	op->c			= c;
 	op->io_wq		= index_update_wq(op);
 	op->flags		= 0;
 	op->written		= 0;
 	op->error		= 0;
-	op->csum_type		= bch2_data_checksum_type(c);
+	op->csum_type		= bch2_data_checksum_type(c, c->opts.data_checksum);
 	op->compression_type	=
 		bch2_compression_opt_to_type(c->opts.compression);
 	op->nr_replicas		= 0;
@@ -73,27 +79,6 @@ static inline void __bch2_write_op_init(struct bch_write_op *op, struct bch_fs *
 	op->res			= (struct disk_reservation) { 0 };
 	op->journal_seq		= 0;
 	op->index_update_fn	= bch2_write_index_default;
-}
-
-static inline void bch2_write_op_init(struct bch_write_op *op, struct bch_fs *c,
-				      struct disk_reservation res,
-				      struct bch_devs_mask *devs,
-				      struct write_point_specifier write_point,
-				      struct bpos pos,
-				      u64 *journal_seq, unsigned flags)
-{
-	__bch2_write_op_init(op, c);
-	op->flags	= flags;
-	op->nr_replicas	= res.nr_replicas;
-	op->pos		= pos;
-	op->res		= res;
-	op->devs	= devs;
-	op->write_point	= write_point;
-
-	if (journal_seq) {
-		op->journal_seq_p = journal_seq;
-		op->flags |= BCH_WRITE_JOURNAL_SEQ_PTR;
-	}
 }
 
 void bch2_write(struct closure *);
@@ -134,25 +119,26 @@ static inline void bch2_read_extent(struct bch_fs *c,
 				    struct extent_pick_ptr *pick,
 				    unsigned flags)
 {
-	rbio->_state = 0;
 	__bch2_read_extent(c, rbio, rbio->bio.bi_iter, e, pick, flags);
 }
 
 static inline void bch2_read(struct bch_fs *c, struct bch_read_bio *rbio,
 			     u64 inode)
 {
-	rbio->_state = 0;
+	BUG_ON(rbio->_state);
 	__bch2_read(c, rbio, rbio->bio.bi_iter, inode, NULL,
 		    BCH_READ_RETRY_IF_STALE|
 		    BCH_READ_MAY_PROMOTE|
 		    BCH_READ_USER_MAPPED);
 }
 
-static inline struct bch_read_bio *rbio_init(struct bio *bio)
+static inline struct bch_read_bio *rbio_init(struct bio *bio,
+					     struct bch_io_opts opts)
 {
 	struct bch_read_bio *rbio = to_rbio(bio);
 
-	rbio->_state = 0;
+	rbio->_state	= 0;
+	rbio->opts	= opts;
 	return rbio;
 }
 

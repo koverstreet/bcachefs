@@ -493,7 +493,8 @@ static int check_root(struct bch_fs *c, struct bch_inode_unpacked *root_inode)
 fsck_err:
 	return ret;
 create_root:
-	bch2_inode_init(c, root_inode, 0, 0, S_IFDIR|S_IRWXU|S_IRUGO|S_IXUGO, 0);
+	bch2_inode_init(c, root_inode, 0, 0, S_IFDIR|S_IRWXU|S_IRUGO|S_IXUGO,
+			0, NULL);
 	root_inode->bi_inum = BCACHEFS_ROOT_INO;
 
 	bch2_inode_pack(&packed, root_inode);
@@ -545,7 +546,8 @@ create_lostfound:
 	if (ret)
 		return ret;
 
-	bch2_inode_init(c, lostfound_inode, 0, 0, S_IFDIR|S_IRWXU|S_IRUGO|S_IXUGO, 0);
+	bch2_inode_init(c, lostfound_inode, 0, 0, S_IFDIR|S_IRWXU|S_IRUGO|S_IXUGO,
+			0, root_inode);
 
 	ret = bch2_inode_create(c, lostfound_inode, BLOCKDEV_INODE_MAX, 0,
 			       &c->unused_inode_hint);

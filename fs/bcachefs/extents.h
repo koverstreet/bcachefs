@@ -425,4 +425,6 @@ bool bch2_cut_front(struct bpos, struct bkey_i *);
 bool bch2_cut_back(struct bpos, struct bkey *);
 void bch2_key_resize(struct bkey *, unsigned);
 
+int bch2_check_range_allocated(struct bch_fs *, struct bpos, u64);
+
 #endif /* _BCACHEFS_EXTENTS_H */

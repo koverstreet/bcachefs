@@ -821,7 +821,7 @@ static const char *__bch2_fs_start(struct bch_fs *c)
 		closure_sync(&cl);
 
 		bch2_inode_init(c, &inode, 0, 0,
-			       S_IFDIR|S_IRWXU|S_IRUGO|S_IXUGO, 0);
+			       S_IFDIR|S_IRWXU|S_IRUGO|S_IXUGO, 0, NULL);
 		inode.bi_inum = BCACHEFS_ROOT_INO;
 
 		bch2_inode_pack(&packed_inode, &inode);

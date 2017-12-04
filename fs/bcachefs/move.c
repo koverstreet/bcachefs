@@ -3,6 +3,7 @@
 #include "btree_gc.h"
 #include "btree_update.h"
 #include "buckets.h"
+#include "inode.h"
 #include "io.h"
 #include "move.h"
 #include "super-io.h"
@@ -240,6 +241,7 @@ static int bch2_move_extent(struct bch_fs *c,
 			  struct write_point_specifier wp,
 			  int btree_insert_flags,
 			  int move_device,
+			  struct bch_io_opts opts,
 			  struct bkey_s_c k)
 {
 	struct extent_pick_ptr pick;
@@ -276,6 +278,7 @@ static int bch2_move_extent(struct bch_fs *c,
 		goto err;
 	}
 
+	io->rbio.opts = opts;
 	bio_init(&io->rbio.bio, io->bi_inline_vecs, pages);
 	bio_set_prio(&io->rbio.bio, IOPRIO_PRIO_VALUE(IOPRIO_CLASS_IDLE, 0));
 	io->rbio.bio.bi_iter.bi_size = sectors << 9;
@@ -284,9 +287,13 @@ static int bch2_move_extent(struct bch_fs *c,
 	io->rbio.bio.bi_iter.bi_sector	= bkey_start_offset(k.k);
 	io->rbio.bio.bi_end_io		= move_read_endio;
 
-	__bch2_write_op_init(&io->write.op, c);
 	io->write.btree_insert_flags = btree_insert_flags;
 	io->write.move_dev	= move_device;
+
+	bch2_write_op_init(&io->write.op, c);
+	io->write.op.csum_type = bch2_data_checksum_type(c, opts.data_checksum);
+	io->write.op.compression_type =
+		bch2_compression_opt_to_type(opts.compression);
 	io->write.op.devs	= devs;
 	io->write.op.write_point = wp;
 
@@ -371,9 +378,11 @@ int bch2_move_data(struct bch_fs *c,
 {
 	bool kthread = (current->flags & PF_KTHREAD) != 0;
 	struct moving_context ctxt;
+	struct bch_io_opts opts = bch2_opts_to_inode_opts(c->opts);
 	struct btree_iter iter;
 	BKEY_PADDED(k) tmp;
 	struct bkey_s_c k;
+	u64 cur_inum = U64_MAX;
 	int ret = 0;
 
 	bch2_move_ctxt_init(&ctxt);
@@ -396,7 +405,7 @@ int bch2_move_data(struct bch_fs *c,
 		    (bch2_btree_iter_unlock(&iter),
 		     (ret = bch2_ratelimit_wait_freezable_stoppable(rate))))
 			break;
-
+peek:
 		k = bch2_btree_iter_peek(&iter);
 		if (!k.k)
 			break;
@@ -404,8 +413,23 @@ int bch2_move_data(struct bch_fs *c,
 		if (ret)
 			break;
 
-		if (!bkey_extent_is_data(k.k) ||
-		    !pred(arg, bkey_s_c_to_extent(k)))
+		if (!bkey_extent_is_data(k.k))
+			goto next;
+
+		if (cur_inum != k.k->p.inode) {
+			struct bch_inode_unpacked inode;
+
+			/* don't hold btree locks while looking up inode: */
+			bch2_btree_iter_unlock(&iter);
+
+			opts = bch2_opts_to_inode_opts(c->opts);
+			if (!bch2_inode_find_by_inum(c, k.k->p.inode, &inode))
+				bch2_io_opts_apply(&opts, bch2_inode_opts_get(&inode));
+			cur_inum = k.k->p.inode;
+			goto peek;
+		}
+
+		if (!pred(arg, bkey_s_c_to_extent(k)))
 			goto next;
 
 		/* unlock before doing IO: */
@@ -415,7 +439,7 @@ int bch2_move_data(struct bch_fs *c,
 
 		if (bch2_move_extent(c, &ctxt, devs, wp,
 				     btree_insert_flags,
-				     move_device, k)) {
+				     move_device, opts, k)) {
 			/* memory allocation failure, wait for some IO to finish */
 			bch2_move_ctxt_wait_for_io(&ctxt);
 			continue;
