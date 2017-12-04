@@ -40,27 +40,15 @@ static struct bch_dev *bch2_device_lookup(struct bch_fs *c, u64 dev,
 		if (!ca)
 			return ERR_PTR(-EINVAL);
 	} else {
-		struct block_device *bdev;
 		char *path;
-		unsigned i;
 
 		path = strndup_user((const char __user *)
 				    (unsigned long) dev, PATH_MAX);
 		if (IS_ERR(path))
 			return ERR_CAST(path);
 
-		bdev = lookup_bdev(path);
+		ca = bch2_dev_lookup(c, path);
 		kfree(path);
-		if (IS_ERR(bdev))
-			return ERR_CAST(bdev);
-
-		for_each_member_device(ca, c, i)
-			if (ca->disk_sb.bdev == bdev)
-				goto found;
-
-		ca = ERR_PTR(-ENOENT);
-found:
-		bdput(bdev);
 	}
 
 	return ca;

@@ -1702,6 +1702,95 @@ err:
 	return ret;
 }
 
+/* return with ref on ca->ref: */
+struct bch_dev *bch2_dev_lookup(struct bch_fs *c, const char *path)
+{
+
+	struct block_device *bdev = lookup_bdev(path);
+	struct bch_dev *ca;
+	unsigned i;
+
+	if (IS_ERR(bdev))
+		return ERR_CAST(bdev);
+
+	for_each_member_device(ca, c, i)
+		if (ca->disk_sb.bdev == bdev)
+			goto found;
+
+	ca = ERR_PTR(-ENOENT);
+found:
+	bdput(bdev);
+	return ca;
+}
+
+int bch2_dev_group_set(struct bch_fs *c, struct bch_dev *ca, const char *label)
+{
+	struct bch_sb_field_disk_groups *groups;
+	struct bch_disk_group *g;
+	struct bch_member *mi;
+	unsigned i, v, nr_groups;
+	int ret;
+
+	if (strlen(label) > BCH_SB_LABEL_SIZE)
+		return -EINVAL;
+
+	mutex_lock(&c->sb_lock);
+	groups		= bch2_sb_get_disk_groups(c->disk_sb);
+	nr_groups	= disk_groups_nr(groups);
+
+	if (!strcmp(label, "none")) {
+		v = 0;
+		goto write_sb;
+	}
+
+	ret = __bch2_disk_group_find(groups, label);
+	if (ret >= 0) {
+		v = ret + 1;
+		goto write_sb;
+	}
+
+	/* not found - create a new disk group: */
+
+	for (i = 0;
+	     i < nr_groups && !BCH_GROUP_DELETED(&groups->entries[i]);
+	     i++)
+		;
+
+	if (i == nr_groups) {
+		unsigned u64s =
+			(sizeof(struct bch_sb_field_disk_groups) +
+			 sizeof(struct bch_disk_group) * (nr_groups + 1)) /
+			sizeof(u64);
+
+		groups = bch2_fs_sb_resize_disk_groups(c, u64s);
+		if (!groups) {
+			mutex_unlock(&c->sb_lock);
+			return -ENOSPC;
+		}
+
+		nr_groups = disk_groups_nr(groups);
+	}
+
+	BUG_ON(i >= nr_groups);
+
+	g = &groups->entries[i];
+	v = i + 1;
+
+	memcpy(g->label, label, strlen(label));
+	if (strlen(label) < sizeof(g->label))
+		g->label[strlen(label)] = '\0';
+	SET_BCH_GROUP_DELETED(g, 0);
+	SET_BCH_GROUP_DATA_ALLOWED(g, ~0);
+write_sb:
+	mi = &bch2_sb_get_members(c->disk_sb)->members[ca->dev_idx];
+	SET_BCH_MEMBER_GROUP(mi, v);
+
+	bch2_write_super(c);
+	mutex_unlock(&c->sb_lock);
+
+	return 0;
+}
+
 /* Filesystem open: */
 
 struct bch_fs *bch2_fs_open(char * const *devices, unsigned nr_devices,

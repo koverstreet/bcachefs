@@ -251,4 +251,9 @@ static inline bool dev_in_target(struct bch_dev *ca, unsigned target)
 
 const struct bch_devs_mask *bch2_target_to_mask(struct bch_fs *, unsigned);
 
+int __bch2_disk_group_find(struct bch_sb_field_disk_groups *, const char *);
+
+int bch2_opt_target_parse(struct bch_fs *, const char *, u64 *);
+int bch2_opt_target_print(struct bch_fs *, char *, size_t, u64);
+
 #endif /* _BCACHEFS_SUPER_IO_H */
