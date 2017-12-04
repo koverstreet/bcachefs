@@ -1470,15 +1470,9 @@ static struct write_point *__writepoint_find(struct hlist_head *head,
 {
 	struct write_point *wp;
 
-	hlist_for_each_entry_rcu(wp, head, node) {
-		if (wp->write_point == write_point)
-			continue;
-
-		mutex_lock(&wp->lock);
+	hlist_for_each_entry_rcu(wp, head, node)
 		if (wp->write_point == write_point)
 			return wp;
-		mutex_unlock(&wp->lock);
-	}
 
 	return NULL;
 }
@@ -1495,7 +1489,7 @@ static struct hlist_head *writepoint_hash(struct bch_fs *c,
 static struct write_point *writepoint_find(struct bch_fs *c,
 					   unsigned long write_point)
 {
-	struct write_point *wp, *oldest = NULL;
+	struct write_point *wp, *oldest;
 	struct hlist_head *head;
 
 	if (!(write_point & 1UL)) {
@@ -1504,32 +1498,38 @@ static struct write_point *writepoint_find(struct bch_fs *c,
 		return wp;
 	}
 
-	/* XXX: hash in the devices to allocate from with write_point */
-
 	head = writepoint_hash(c, write_point);
+restart_find:
 	wp = __writepoint_find(head, write_point);
-	if (wp)
-		goto out;
+	if (wp) {
+lock_wp:
+		mutex_lock(&wp->lock);
+		if (wp->write_point == write_point)
+			goto out;
+		mutex_unlock(&wp->lock);
+		goto restart_find;
+	}
 
-	mutex_lock(&c->write_points_hash_lock);
-	wp = __writepoint_find(head, write_point);
-	if (wp)
-		goto out_unlock;
-
+	oldest = NULL;
 	for (wp = c->write_points;
 	     wp < c->write_points + ARRAY_SIZE(c->write_points);
 	     wp++)
 		if (!oldest || time_before64(wp->last_used, oldest->last_used))
 			oldest = wp;
 
-	wp = oldest;
-	BUG_ON(!wp);
+	mutex_lock(&oldest->lock);
+	mutex_lock(&c->write_points_hash_lock);
+	wp = __writepoint_find(head, write_point);
+	if (wp && wp != oldest) {
+		mutex_unlock(&c->write_points_hash_lock);
+		mutex_unlock(&oldest->lock);
+		goto lock_wp;
+	}
 
-	mutex_lock(&wp->lock);
+	wp = oldest;
 	hlist_del_rcu(&wp->node);
 	wp->write_point = write_point;
 	hlist_add_head_rcu(&wp->node, head);
-out_unlock:
 	mutex_unlock(&c->write_points_hash_lock);
 out:
 	wp->last_used = sched_clock();
@@ -1557,9 +1557,6 @@ struct write_point *bch2_alloc_sectors_start(struct bch_fs *c,
 	BUG_ON(!nr_replicas);
 
 	wp = writepoint_find(c, write_point.v);
-
-	wp->last_used = sched_clock();
-
 	ob = wp->ob;
 
 	if (!ob) {
