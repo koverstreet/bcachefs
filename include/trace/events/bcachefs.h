@@ -474,53 +474,9 @@ DEFINE_EVENT(bucket_alloc, bucket_alloc_fail,
 	TP_ARGS(ca, reserve)
 );
 
-TRACE_EVENT(freelist_empty_fail,
-	TP_PROTO(struct bch_fs *c, enum alloc_reserve reserve,
-		 struct closure *cl),
-	TP_ARGS(c, reserve, cl),
-
-	TP_STRUCT__entry(
-		__array(char,			uuid,	16	)
-		__field(enum alloc_reserve,	reserve		)
-		__field(struct closure *,	cl		)
-	),
-
-	TP_fast_assign(
-		memcpy(__entry->uuid, c->sb.user_uuid.b, 16);
-		__entry->reserve = reserve;
-		__entry->cl = cl;
-	),
-
-	TP_printk("%pU reserve %d cl %p", __entry->uuid, __entry->reserve,
-		  __entry->cl)
-);
-
-DECLARE_EVENT_CLASS(open_bucket_alloc,
-	TP_PROTO(struct bch_fs *c, struct closure *cl),
-	TP_ARGS(c, cl),
-
-	TP_STRUCT__entry(
-		__array(char,			uuid,	16	)
-		__field(struct closure *,	cl		)
-	),
-
-	TP_fast_assign(
-		memcpy(__entry->uuid, c->sb.user_uuid.b, 16);
-		__entry->cl = cl;
-	),
-
-	TP_printk("%pU cl %p",
-		  __entry->uuid, __entry->cl)
-);
-
-DEFINE_EVENT(open_bucket_alloc, open_bucket_alloc,
-	TP_PROTO(struct bch_fs *c, struct closure *cl),
-	TP_ARGS(c, cl)
-);
-
-DEFINE_EVENT(open_bucket_alloc, open_bucket_alloc_fail,
-	TP_PROTO(struct bch_fs *c, struct closure *cl),
-	TP_ARGS(c, cl)
+DEFINE_EVENT(bucket_alloc, open_bucket_alloc_fail,
+	TP_PROTO(struct bch_dev *ca, enum alloc_reserve reserve),
+	TP_ARGS(ca, reserve)
 );
 
 /* Moving IO */

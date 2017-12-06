@@ -47,19 +47,14 @@ enum alloc_reserve {
 #define OPEN_BUCKETS_COUNT	256
 #define WRITE_POINT_COUNT	32
 
-struct open_bucket_ptr {
-	struct bch_extent_ptr	ptr;
-	unsigned		sectors_free;
-};
-
 struct open_bucket {
 	spinlock_t		lock;
 	atomic_t		pin;
 	u8			freelist;
-	u8			new_ob;
-	u8			nr_ptrs;
-
-	struct open_bucket_ptr	ptrs[BCH_REPLICAS_MAX * 2];
+	bool			valid;
+	bool			on_partial_list;
+	unsigned		sectors_free;
+	struct bch_extent_ptr	ptr;
 };
 
 struct write_point {
@@ -69,15 +64,16 @@ struct write_point {
 	unsigned long		write_point;
 	enum bch_data_type	type;
 
+	u8			nr_ptrs;
 	/*
 	 * number of pointers in @ob we can't use, because we already had
 	 * pointers to those devices:
 	 */
-	u8			nr_ptrs_have;
+	u8			nr_ptrs_can_use;
 	/* calculated based on how many pointers we're actually going to use: */
 	unsigned		sectors_free;
 
-	struct open_bucket	*ob;
+	struct open_bucket	*ptrs[BCH_REPLICAS_MAX * 2];
 	u64			next_alloc[BCH_SB_MEMBERS_MAX];
 };
 

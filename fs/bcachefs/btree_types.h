@@ -55,6 +55,16 @@ struct btree_write {
 	struct closure_waitlist		wait;
 };
 
+struct btree_ob_ref {
+	u8			nr;
+	u8			refs[BCH_REPLICAS_MAX];
+};
+
+struct btree_alloc {
+	struct btree_ob_ref	ob;
+	BKEY_PADDED(k);
+};
+
 struct btree {
 	/* Hottest entries first */
 	struct rhash_head	hash;
@@ -118,7 +128,7 @@ struct btree {
 	 */
 	struct btree_update	*will_make_reachable;
 
-	struct open_bucket	*ob;
+	struct btree_ob_ref	ob;
 
 	/* lru list */
 	struct list_head	list;

@@ -53,25 +53,26 @@ int bch2_write_index_default(struct bch_write_op *);
 
 static inline void __bch2_write_op_init(struct bch_write_op *op, struct bch_fs *c)
 {
-	op->c		= c;
-	op->io_wq	= index_update_wq(op);
-	op->flags	= 0;
-	op->written	= 0;
-	op->error	= 0;
-	op->csum_type	= bch2_data_checksum_type(c);
-	op->compression_type =
+	op->c			= c;
+	op->io_wq		= index_update_wq(op);
+	op->flags		= 0;
+	op->written		= 0;
+	op->error		= 0;
+	op->csum_type		= bch2_data_checksum_type(c);
+	op->compression_type	=
 		bch2_compression_opt_to_type(c->opts.compression);
-	op->nr_replicas	= 0;
+	op->nr_replicas		= 0;
 	op->nr_replicas_required = c->opts.data_replicas_required;
-	op->alloc_reserve = RESERVE_NONE;
-	op->devs_have	= (struct bch_devs_list) { 0 };
-	op->pos		= POS_MAX;
-	op->version	= ZERO_VERSION;
-	op->res		= (struct disk_reservation) { 0 };
-	op->devs	= NULL;
-	op->write_point	= (struct write_point_specifier) { 0 };
-	op->journal_seq = 0;
-	op->index_update_fn = bch2_write_index_default;
+	op->alloc_reserve	= RESERVE_NONE;
+	op->open_buckets_nr	= 0;
+	op->devs_have.nr	= 0;
+	op->pos			= POS_MAX;
+	op->version		= ZERO_VERSION;
+	op->devs		= NULL;
+	op->write_point		= (struct write_point_specifier) { 0 };
+	op->res			= (struct disk_reservation) { 0 };
+	op->journal_seq		= 0;
+	op->index_update_fn	= bch2_write_index_default;
 }
 
 static inline void bch2_write_op_init(struct bch_write_op *op, struct bch_fs *c,

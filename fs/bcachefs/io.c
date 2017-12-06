@@ -244,7 +244,6 @@ static void bch2_write_index(struct closure *cl)
 	struct bch_write_op *op = container_of(cl, struct bch_write_op, cl);
 	struct bch_fs *c = op->c;
 	struct keylist *keys = &op->insert_keys;
-	unsigned i;
 
 	op->flags |= BCH_WRITE_LOOPED;
 
@@ -262,13 +261,7 @@ static void bch2_write_index(struct closure *cl)
 		}
 	}
 
-	for (i = 0; i < ARRAY_SIZE(op->open_buckets); i++)
-		if (op->open_buckets[i]) {
-			bch2_open_bucket_put(c,
-					     c->open_buckets +
-					     op->open_buckets[i]);
-			op->open_buckets[i] = 0;
-		}
+	bch2_open_bucket_put_refs(c, &op->open_buckets_nr, op->open_buckets);
 
 	if (!(op->flags & BCH_WRITE_DONE)) {
 		continue_at(cl, __bch2_write, op->io_wq);
@@ -367,8 +360,7 @@ static void init_append_extent(struct bch_write_op *op,
 	bkey_extent_set_cached(&e->k, op->flags & BCH_WRITE_CACHED);
 
 	bch2_extent_crc_append(e, crc);
-	bch2_alloc_sectors_append_ptrs(op->c, wp, e, op->nr_replicas,
-				       crc.compressed_size);
+	bch2_alloc_sectors_append_ptrs(op->c, wp, e, crc.compressed_size);
 
 	bkey_extent_set_cached(&e->k, (op->flags & BCH_WRITE_CACHED));
 	bch2_keylist_push(&op->insert_keys);
@@ -746,13 +738,12 @@ static void __bch2_write(struct closure *cl)
 {
 	struct bch_write_op *op = container_of(cl, struct bch_write_op, cl);
 	struct bch_fs *c = op->c;
-	unsigned open_bucket_nr = 0;
 	struct write_point *wp;
-	struct open_bucket *ob;
 	int ret;
 
 	do {
-		if (open_bucket_nr == ARRAY_SIZE(op->open_buckets)) {
+		if (op->open_buckets_nr + op->nr_replicas >
+		    ARRAY_SIZE(op->open_buckets)) {
 			continue_at(cl, bch2_write_index, index_update_wq(op));
 			return;
 		}
@@ -816,14 +807,13 @@ static void __bch2_write(struct closure *cl)
 			continue;
 		}
 
-		ob = wp->ob;
-
-		BUG_ON(ob - c->open_buckets == 0 ||
-		       ob - c->open_buckets > U8_MAX);
-		op->open_buckets[open_bucket_nr++] = ob - c->open_buckets;
-
 		ret = bch2_write_extent(op, wp);
 
+		BUG_ON(op->open_buckets_nr + wp->nr_ptrs_can_use >
+		       ARRAY_SIZE(op->open_buckets));
+		bch2_open_bucket_get(c, wp,
+				     &op->open_buckets_nr,
+				     op->open_buckets);
 		bch2_alloc_sectors_done(c, wp);
 
 		if (ret < 0)
@@ -881,7 +871,6 @@ void bch2_write(struct closure *cl)
 	BUG_ON(!bkey_cmp(op->pos, POS_MAX));
 	BUG_ON(bio_sectors(&op->wbio.bio) > U16_MAX);
 
-	memset(op->open_buckets, 0, sizeof(op->open_buckets));
 	memset(&op->failed, 0, sizeof(op->failed));
 
 	bch2_keylist_init(&op->insert_keys,

@@ -1570,27 +1570,24 @@ static int bch2_set_nr_journal_buckets(struct bch_fs *c, struct bch_dev *ca,
 	memcpy(new_bucket_seq,	ja->bucket_seq,	ja->nr * sizeof(u64));
 	swap(new_buckets,	ja->buckets);
 	swap(new_bucket_seq,	ja->bucket_seq);
+	spin_unlock(&j->lock);
 
 	while (ja->nr < nr) {
-		struct open_bucket_ptr ptr;
-		size_t b;
+		struct open_bucket *ob;
+		size_t bucket;
+		int ob_idx;
 
-		/* must happen under journal lock, to avoid racing with gc: */
-		if (bch2_bucket_alloc(c, ca, RESERVE_ALLOC, false, &ptr) < 0) {
-			if (!closure_wait(&c->freelist_wait, &cl)) {
-				spin_unlock(&j->lock);
+		ob_idx = bch2_bucket_alloc(c, ca, RESERVE_ALLOC, false, &cl);
+		if (ob_idx < 0) {
+			if (!closure_wait(&c->freelist_wait, &cl))
 				closure_sync(&cl);
-				spin_lock(&j->lock);
-			}
 			continue;
 		}
 
-		b = sector_to_bucket(ca, ptr.ptr.offset);
+		ob = c->open_buckets + ob_idx;
+		bucket = sector_to_bucket(ca, ob->ptr.offset);
 
-		bch2_mark_metadata_bucket(ca, &ca->buckets[b],
-					 BUCKET_JOURNAL, false);
-		bch2_mark_alloc_bucket(ca, &ca->buckets[b], false);
-
+		spin_lock(&j->lock);
 		memmove(ja->buckets + ja->last_idx + 1,
 			ja->buckets + ja->last_idx,
 			(ja->nr - ja->last_idx) * sizeof(u64));
@@ -1601,8 +1598,8 @@ static int bch2_set_nr_journal_buckets(struct bch_fs *c, struct bch_dev *ca,
 			journal_buckets->buckets + ja->last_idx,
 			(ja->nr - ja->last_idx) * sizeof(u64));
 
-		ja->buckets[ja->last_idx] = b;
-		journal_buckets->buckets[ja->last_idx] = cpu_to_le64(b);
+		ja->buckets[ja->last_idx] = bucket;
+		journal_buckets->buckets[ja->last_idx] = cpu_to_le64(bucket);
 
 		if (ja->last_idx < ja->nr) {
 			if (ja->cur_idx >= ja->last_idx)
@@ -1611,8 +1608,12 @@ static int bch2_set_nr_journal_buckets(struct bch_fs *c, struct bch_dev *ca,
 		}
 		ja->nr++;
 
+		bch2_mark_metadata_bucket(ca, &ca->buckets[bucket],
+					  BUCKET_JOURNAL, false);
+		spin_unlock(&j->lock);
+
+		bch2_open_bucket_put(c, ob);
 	}
-	spin_unlock(&j->lock);
 
 	BUG_ON(bch2_sb_validate_journal(ca->disk_sb.sb, ca->mi));
 
