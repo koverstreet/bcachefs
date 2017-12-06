@@ -365,7 +365,7 @@ struct bch_dev {
 	unsigned		nr_invalidated;
 	bool			alloc_thread_started;
 
-	struct open_bucket_ptr	open_buckets_partial[BCH_REPLICAS_MAX * WRITE_POINT_COUNT];
+	u8			open_buckets_partial[OPEN_BUCKETS_COUNT];
 	unsigned		open_buckets_partial_nr;
 
 	size_t			fifo_last_bucket;
@@ -533,10 +533,7 @@ struct bch_fs {
 	 * when allocating btree reserves fail halfway through) - instead, we
 	 * can stick them here:
 	 */
-	struct btree_alloc {
-		struct open_bucket	*ob;
-		BKEY_PADDED(k);
-	}			btree_reserve_cache[BTREE_NODE_RESERVE * 2];
+	struct btree_alloc	btree_reserve_cache[BTREE_NODE_RESERVE * 2];
 	unsigned		btree_reserve_cache_nr;
 	struct mutex		btree_reserve_cache_lock;
 
@@ -549,7 +546,6 @@ struct bch_fs {
 	struct workqueue_struct	*copygc_wq;
 
 	/* ALLOCATION */
-	struct rw_semaphore	alloc_gc_lock;
 	struct delayed_work	pd_controllers_update;
 	unsigned		pd_controllers_update_seconds;
 
@@ -593,8 +589,8 @@ struct bch_fs {
 
 	struct io_clock		io_clock[2];
 
-	/* SECTOR ALLOCATOR */
-	spinlock_t		open_buckets_lock;
+	/* ALLOCATOR */
+	spinlock_t		freelist_lock;
 	u8			open_buckets_freelist;
 	u8			open_buckets_nr_free;
 	struct closure_waitlist	open_buckets_wait;
@@ -605,15 +601,6 @@ struct bch_fs {
 	struct write_point	write_points[WRITE_POINT_COUNT];
 	struct hlist_head	write_points_hash[WRITE_POINT_COUNT];
 	struct mutex		write_points_hash_lock;
-
-	/*
-	 * This write point is used for migrating data off a device
-	 * and can point to any other device.
-	 * We can't use the normal write points because those will
-	 * gang up n replicas, and for migration we want only one new
-	 * replica.
-	 */
-	struct write_point	migration_write_point;
 
 	/* GARBAGE COLLECTION */
 	struct task_struct	*gc_thread;
