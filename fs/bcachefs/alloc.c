@@ -76,7 +76,7 @@
 #include <linux/sort.h>
 #include <trace/events/bcachefs.h>
 
-static void bch2_recalc_min_prio(struct bch_dev *, int);
+static void bch2_recalc_min_prio(struct bch_fs *, struct bch_dev *, int);
 
 /* Ratelimiting/PD controllers */
 
@@ -279,6 +279,8 @@ int bch2_alloc_read(struct bch_fs *c, struct list_head *journal_replay_list)
 	struct journal_replay *r;
 	struct btree_iter iter;
 	struct bkey_s_c k;
+	struct bch_dev *ca;
+	unsigned i;
 	int ret;
 
 	if (!c->btree_roots[BTREE_ID_ALLOC].b)
@@ -300,6 +302,11 @@ int bch2_alloc_read(struct bch_fs *c, struct list_head *journal_replay_list)
 		for_each_jset_key(k, n, entry, &r->j)
 			if (entry->btree_id == BTREE_ID_ALLOC)
 				bch2_alloc_read_key(c, bkey_i_to_s_c(k));
+	}
+
+	for_each_member_device(ca, c, i) {
+		bch2_recalc_min_prio(c, ca, READ);
+		bch2_recalc_min_prio(c, ca, WRITE);
 	}
 
 	return 0;
@@ -435,9 +442,10 @@ static int wait_buckets_available(struct bch_fs *c, struct bch_dev *ca)
 	return ret;
 }
 
-static void verify_not_on_freelist(struct bch_dev *ca, size_t bucket)
+static void verify_not_on_freelist(struct bch_fs *c, struct bch_dev *ca,
+				   size_t bucket)
 {
-	if (expensive_debug_checks(ca->fs)) {
+	if (expensive_debug_checks(c)) {
 		size_t iter;
 		long i;
 		unsigned j;
@@ -452,9 +460,8 @@ static void verify_not_on_freelist(struct bch_dev *ca, size_t bucket)
 
 /* Bucket heap / gen */
 
-void bch2_recalc_min_prio(struct bch_dev *ca, int rw)
+void bch2_recalc_min_prio(struct bch_fs *c, struct bch_dev *ca, int rw)
 {
-	struct bch_fs *c = ca->fs;
 	struct prio_clock *clock = &c->prio_clock[rw];
 	struct bucket *g;
 	u16 max_delta = 1;
@@ -462,14 +469,14 @@ void bch2_recalc_min_prio(struct bch_dev *ca, int rw)
 
 	lockdep_assert_held(&c->bucket_lock);
 
-	/* Determine min prio for this particular cache */
+	/* Determine min prio for this particular device */
 	for_each_bucket(g, ca)
 		max_delta = max(max_delta, (u16) (clock->hand - g->prio[rw]));
 
 	ca->min_prio[rw] = clock->hand - max_delta;
 
 	/*
-	 * This may possibly increase the min prio for the whole cache, check
+	 * This may possibly increase the min prio for the whole device, check
 	 * that as well.
 	 */
 	max_delta = 1;
@@ -495,7 +502,7 @@ static void bch2_rescale_prios(struct bch_fs *c, int rw)
 			g->prio[rw] = clock->hand -
 				(clock->hand - g->prio[rw]) / 2;
 
-		bch2_recalc_min_prio(ca, rw);
+		bch2_recalc_min_prio(c, ca, rw);
 	}
 }
 
@@ -572,9 +579,9 @@ static bool bch2_can_invalidate_bucket(struct bch_dev *ca, struct bucket *g,
 	return can_inc_bucket_gen(ca, g);
 }
 
-static void bch2_invalidate_one_bucket(struct bch_dev *ca, struct bucket *g)
+static void bch2_invalidate_one_bucket(struct bch_fs *c, struct bch_dev *ca,
+				       struct bucket *g)
 {
-	struct bch_fs *c = ca->fs;
 	struct bucket_mark m;
 
 	spin_lock(&ca->freelist_lock);
@@ -583,7 +590,7 @@ static void bch2_invalidate_one_bucket(struct bch_dev *ca, struct bucket *g)
 		return;
 	}
 
-	verify_not_on_freelist(ca, g - ca->buckets);
+	verify_not_on_freelist(c, ca, g - ca->buckets);
 	BUG_ON(!fifo_push(&ca->free_inc, g - ca->buckets));
 	spin_unlock(&ca->freelist_lock);
 
@@ -625,9 +632,8 @@ static void bch2_invalidate_one_bucket(struct bch_dev *ca, struct bucket *g)
  *   number wraparound.
  */
 
-static unsigned long bucket_sort_key(struct bch_dev *ca,
-				     struct bucket *g,
-				     struct bucket_mark m)
+static unsigned long bucket_sort_key(struct bch_fs *c, struct bch_dev *ca,
+				     struct bucket *g, struct bucket_mark m)
 {
 	/*
 	 * Time since last read, scaled to [0, 8) where larger value indicates
@@ -635,14 +641,14 @@ static unsigned long bucket_sort_key(struct bch_dev *ca,
 	 */
 	unsigned long hotness =
 		(g->prio[READ]			- ca->min_prio[READ]) * 7 /
-		(ca->fs->prio_clock[READ].hand	- ca->min_prio[READ]);
+		(c->prio_clock[READ].hand	- ca->min_prio[READ]);
 
 	/* How much we want to keep the data in this bucket: */
 	unsigned long data_wantness =
 		(hotness + 1) * bucket_sectors_used(m);
 
 	unsigned long needs_journal_commit =
-		    bucket_needs_journal_commit(m, ca->fs->journal.last_seq_ondisk);
+		    bucket_needs_journal_commit(m, c->journal.last_seq_ondisk);
 
 	return  (data_wantness << 9) |
 		(needs_journal_commit << 8) |
@@ -656,16 +662,16 @@ static inline int bucket_alloc_cmp(alloc_heap *h,
 	return (l.key > r.key) - (l.key < r.key);
 }
 
-static void invalidate_buckets_lru(struct bch_dev *ca)
+static void invalidate_buckets_lru(struct bch_fs *c, struct bch_dev *ca)
 {
 	struct alloc_heap_entry e;
 	struct bucket *g;
 
 	ca->alloc_heap.used = 0;
 
-	mutex_lock(&ca->fs->bucket_lock);
-	bch2_recalc_min_prio(ca, READ);
-	bch2_recalc_min_prio(ca, WRITE);
+	mutex_lock(&c->bucket_lock);
+	bch2_recalc_min_prio(c, ca, READ);
+	bch2_recalc_min_prio(c, ca, WRITE);
 
 	/*
 	 * Find buckets with lowest read priority, by building a maxheap sorted
@@ -680,7 +686,7 @@ static void invalidate_buckets_lru(struct bch_dev *ca)
 
 		e = (struct alloc_heap_entry) {
 			.bucket = g - ca->buckets,
-			.key	= bucket_sort_key(ca, g, m)
+			.key	= bucket_sort_key(c, ca, g, m)
 		};
 
 		heap_add_or_replace(&ca->alloc_heap, e, -bucket_alloc_cmp);
@@ -694,12 +700,12 @@ static void invalidate_buckets_lru(struct bch_dev *ca)
 	 */
 	while (!fifo_full(&ca->free_inc) &&
 	       heap_pop(&ca->alloc_heap, e, bucket_alloc_cmp))
-		bch2_invalidate_one_bucket(ca, &ca->buckets[e.bucket]);
+		bch2_invalidate_one_bucket(c, ca, &ca->buckets[e.bucket]);
 
-	mutex_unlock(&ca->fs->bucket_lock);
+	mutex_unlock(&c->bucket_lock);
 }
 
-static void invalidate_buckets_fifo(struct bch_dev *ca)
+static void invalidate_buckets_fifo(struct bch_fs *c, struct bch_dev *ca)
 {
 	struct bucket_mark m;
 	struct bucket *g;
@@ -714,14 +720,14 @@ static void invalidate_buckets_fifo(struct bch_dev *ca)
 		m = READ_ONCE(g->mark);
 
 		if (bch2_can_invalidate_bucket(ca, g, m))
-			bch2_invalidate_one_bucket(ca, g);
+			bch2_invalidate_one_bucket(c, ca, g);
 
 		if (++checked >= ca->mi.nbuckets)
 			return;
 	}
 }
 
-static void invalidate_buckets_random(struct bch_dev *ca)
+static void invalidate_buckets_random(struct bch_fs *c, struct bch_dev *ca)
 {
 	struct bucket_mark m;
 	struct bucket *g;
@@ -736,27 +742,27 @@ static void invalidate_buckets_random(struct bch_dev *ca)
 		m = READ_ONCE(g->mark);
 
 		if (bch2_can_invalidate_bucket(ca, g, m))
-			bch2_invalidate_one_bucket(ca, g);
+			bch2_invalidate_one_bucket(c, ca, g);
 
 		if (++checked >= ca->mi.nbuckets / 2)
 			return;
 	}
 }
 
-static void invalidate_buckets(struct bch_dev *ca)
+static void invalidate_buckets(struct bch_fs *c, struct bch_dev *ca)
 {
 	ca->inc_gen_needs_gc			= 0;
 	ca->inc_gen_really_needs_gc		= 0;
 
 	switch (ca->mi.replacement) {
 	case CACHE_REPLACEMENT_LRU:
-		invalidate_buckets_lru(ca);
+		invalidate_buckets_lru(c, ca);
 		break;
 	case CACHE_REPLACEMENT_FIFO:
-		invalidate_buckets_fifo(ca);
+		invalidate_buckets_fifo(c, ca);
 		break;
 	case CACHE_REPLACEMENT_RANDOM:
-		invalidate_buckets_random(ca);
+		invalidate_buckets_random(c, ca);
 		break;
 	}
 }
@@ -796,7 +802,8 @@ static int bch2_invalidate_free_inc(struct bch_fs *c, struct bch_dev *ca,
  * Given an invalidated, ready to use bucket: issue a discard to it if enabled,
  * then add it to the freelist, waiting until there's room if necessary:
  */
-static void discard_invalidated_bucket(struct bch_dev *ca, long bucket)
+static void discard_invalidated_bucket(struct bch_fs *c, struct bch_dev *ca,
+				       long bucket)
 {
 	if (ca->mi.discard &&
 	    blk_queue_discard(bdev_get_queue(ca->disk_sb.bdev)))
@@ -818,7 +825,7 @@ static void discard_invalidated_bucket(struct bch_dev *ca, long bucket)
 		for (i = 0; i < RESERVE_NR; i++)
 			if (fifo_push(&ca->free[i], bucket)) {
 				fifo_pop(&ca->free_inc, bucket);
-				closure_wake_up(&ca->fs->freelist_wait);
+				closure_wake_up(&c->freelist_wait);
 				pushed = true;
 				break;
 			}
@@ -861,7 +868,7 @@ static int bch2_allocator_thread(void *arg)
 				BUG_ON(fifo_empty(&ca->free_inc));
 
 				bucket = fifo_peek(&ca->free_inc);
-				discard_invalidated_bucket(ca, bucket);
+				discard_invalidated_bucket(c, ca, bucket);
 				if (kthread_should_stop())
 					return 0;
 				--ca->nr_invalidated;
@@ -908,7 +915,7 @@ static int bch2_allocator_thread(void *arg)
 			 * another cache tier
 			 */
 
-			invalidate_buckets(ca);
+			invalidate_buckets(c, ca);
 			trace_alloc_batch(ca, fifo_used(&ca->free_inc),
 					  ca->free_inc.size);
 
@@ -1035,14 +1042,14 @@ int bch2_bucket_alloc(struct bch_fs *c, struct bch_dev *ca,
 	if (unlikely(!ca->alloc_thread_started) &&
 	    (reserve == RESERVE_ALLOC) &&
 	    (r = bch2_bucket_alloc_startup(c, ca)) >= 0) {
-		verify_not_on_freelist(ca, r);
+		verify_not_on_freelist(c, ca, r);
 		goto out2;
 	}
 
 	trace_bucket_alloc_fail(ca, reserve);
 	return -1;
 out:
-	verify_not_on_freelist(ca, r);
+	verify_not_on_freelist(c, ca, r);
 	spin_unlock(&ca->freelist_lock);
 
 	bch2_wake_allocator(ca);
