@@ -24,10 +24,47 @@ void bch2_wp_rescale(struct bch_fs *, struct bch_dev *,
 int bch2_alloc_read(struct bch_fs *, struct list_head *);
 int bch2_alloc_replay_key(struct bch_fs *, struct bpos);
 
-int bch2_bucket_alloc(struct bch_fs *, struct bch_dev *, enum alloc_reserve, bool,
-		      struct open_bucket_ptr *);
+enum bucket_alloc_ret {
+	ALLOC_SUCCESS		= 0,
+	OPEN_BUCKETS_EMPTY	= -1,
+	FREELIST_EMPTY		= -2,	/* Allocator thread not keeping up */
+	NO_DEVICES		= -3,	/* -EROFS */
+};
 
-void bch2_open_bucket_put(struct bch_fs *, struct open_bucket *);
+int bch2_bucket_alloc(struct bch_fs *, struct bch_dev *, enum alloc_reserve, bool,
+		      struct closure *);
+
+void __bch2_open_bucket_put(struct bch_fs *, struct open_bucket *);
+
+static inline void bch2_open_bucket_put(struct bch_fs *c, struct open_bucket *ob)
+{
+	if (atomic_dec_and_test(&ob->pin))
+		__bch2_open_bucket_put(c, ob);
+}
+
+static inline void bch2_open_bucket_put_refs(struct bch_fs *c, u8 *nr, u8 *refs)
+{
+	unsigned i;
+
+	for (i = 0; i < *nr; i++)
+		bch2_open_bucket_put(c, c->open_buckets + refs[i]);
+
+	*nr = 0;
+}
+
+static inline void bch2_open_bucket_get(struct bch_fs *c,
+					struct write_point *wp,
+					u8 *nr, u8 *refs)
+{
+	unsigned i;
+
+	for (i = 0; i < wp->nr_ptrs_can_use; i++) {
+		struct open_bucket *ob = wp->ptrs[i];
+
+		atomic_inc(&ob->pin);
+		refs[(*nr)++] = ob - c->open_buckets;
+	}
+}
 
 struct write_point *bch2_alloc_sectors_start(struct bch_fs *,
 					     struct bch_devs_mask *,
@@ -39,17 +76,8 @@ struct write_point *bch2_alloc_sectors_start(struct bch_fs *,
 					     struct closure *);
 
 void bch2_alloc_sectors_append_ptrs(struct bch_fs *, struct write_point *,
-				    struct bkey_i_extent *, unsigned, unsigned);
+				    struct bkey_i_extent *, unsigned);
 void bch2_alloc_sectors_done(struct bch_fs *, struct write_point *);
-
-struct open_bucket *bch2_alloc_sectors(struct bch_fs *,
-				       struct bch_devs_mask *,
-				       struct write_point_specifier,
-				       struct bkey_i_extent *,
-				       unsigned, unsigned,
-				       enum alloc_reserve,
-				       unsigned,
-				       struct closure *);
 
 static inline void bch2_wake_allocator(struct bch_dev *ca)
 {
@@ -61,10 +89,10 @@ static inline void bch2_wake_allocator(struct bch_dev *ca)
 	rcu_read_unlock();
 }
 
-#define open_bucket_for_each_ptr(_ob, _ptr)				\
-	for ((_ptr) = (_ob)->ptrs;					\
-	     (_ptr) < (_ob)->ptrs + (_ob)->nr_ptrs;			\
-	     (_ptr)++)
+#define writepoint_for_each_ptr(_wp, _ob, _i)				\
+	for ((_i) = 0;							\
+	     (_i) < (_wp)->nr_ptrs && ((_ob) = (_wp)->ptrs[_i], true);	\
+	     (_i)++)
 
 static inline struct write_point_specifier writepoint_hashed(unsigned long v)
 {
