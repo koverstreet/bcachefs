@@ -659,6 +659,11 @@ struct bch_fs {
 
 	atomic64_t		key_version;
 
+	/* VFS IO PATH - fs-io.c */
+	struct bio_set		writepage_bioset;
+	struct bio_set		dio_write_bioset;
+	struct bio_set		dio_read_bioset;
+
 	struct bio_list		btree_write_error_list;
 	struct work_struct	btree_write_error_work;
 	spinlock_t		btree_write_error_lock;
