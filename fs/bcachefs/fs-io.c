@@ -101,7 +101,7 @@ static inline void i_size_dirty_get(struct bch_inode_info *inode)
 
 /* i_sectors accounting: */
 
-static enum extent_insert_hook_ret
+static enum btree_insert_ret
 i_sectors_hook_fn(struct extent_insert_hook *hook,
 		  struct bpos committed_pos,
 		  struct bpos next_pos,
@@ -119,7 +119,7 @@ i_sectors_hook_fn(struct extent_insert_hook *hook,
 
 	h->sectors += sectors * sign;
 
-	return BTREE_HOOK_DO_INSERT;
+	return BTREE_INSERT_OK;
 }
 
 static int inode_set_i_sectors_dirty(struct bch_inode_info *inode,
@@ -208,7 +208,7 @@ struct bchfs_extent_trans_hook {
 	bool				need_inode_update;
 };
 
-static enum extent_insert_hook_ret
+static enum btree_insert_ret
 bchfs_extent_update_hook(struct extent_insert_hook *hook,
 			 struct bpos committed_pos,
 			 struct bpos next_pos,
@@ -232,7 +232,7 @@ bchfs_extent_update_hook(struct extent_insert_hook *hook,
 
 		if (!h->need_inode_update) {
 			h->need_inode_update = true;
-			return BTREE_HOOK_RESTART_TRANS;
+			return BTREE_INSERT_NEED_TRAVERSE;
 		}
 
 		h->inode_u.bi_size = offset;
@@ -247,7 +247,7 @@ bchfs_extent_update_hook(struct extent_insert_hook *hook,
 	if (sectors) {
 		if (!h->need_inode_update) {
 			h->need_inode_update = true;
-			return BTREE_HOOK_RESTART_TRANS;
+			return BTREE_INSERT_NEED_TRAVERSE;
 		}
 
 		h->inode_u.bi_sectors += sectors;
@@ -267,7 +267,7 @@ bchfs_extent_update_hook(struct extent_insert_hook *hook,
 	if (do_pack)
 		bch2_inode_pack(&h->inode_p, &h->inode_u);
 
-	return BTREE_HOOK_DO_INSERT;
+	return BTREE_INSERT_OK;
 }
 
 static int bchfs_write_index_update(struct bch_write_op *wop)
