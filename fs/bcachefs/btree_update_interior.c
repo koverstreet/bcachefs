@@ -868,10 +868,7 @@ static void __btree_interior_update_drop_new_node(struct btree *b)
 
 	BUG();
 found:
-	as->nr_new_nodes--;
-	memmove(&as->new_nodes[i],
-		&as->new_nodes[i + 1],
-		sizeof(struct btree *) * (as->nr_new_nodes - i));
+	array_remove_item(as->new_nodes, as->nr_new_nodes, i);
 	b->will_make_reachable = NULL;
 }
 
