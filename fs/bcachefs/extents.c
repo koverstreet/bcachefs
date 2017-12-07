@@ -1176,29 +1176,24 @@ done:
 	s->trans->did_work		= true;
 }
 
-static enum extent_insert_hook_ret
+static enum btree_insert_ret
 __extent_insert_advance_pos(struct extent_insert_state *s,
 			    struct bpos next_pos,
 			    struct bkey_s_c k)
 {
 	struct extent_insert_hook *hook = s->trans->hook;
-	enum extent_insert_hook_ret ret;
+	enum btree_insert_ret ret;
 
 	if (hook)
 		ret = hook->fn(hook, s->committed, next_pos, k, s->insert->k);
 	else
-		ret = BTREE_HOOK_DO_INSERT;
+		ret = BTREE_INSERT_OK;
 
 	EBUG_ON(bkey_deleted(&s->insert->k->k) || !s->insert->k->k.size);
 
-	switch (ret) {
-	case BTREE_HOOK_DO_INSERT:
-		break;
-	case BTREE_HOOK_RESTART_TRANS:
-		return ret;
-	}
+	if (ret == BTREE_INSERT_OK)
+		s->committed = next_pos;
 
-	s->committed = next_pos;
 	return ret;
 }
 
@@ -1206,30 +1201,28 @@ __extent_insert_advance_pos(struct extent_insert_state *s,
  * Update iter->pos, marking how much of @insert we've processed, and call hook
  * fn:
  */
-static enum extent_insert_hook_ret
+static enum btree_insert_ret
 extent_insert_advance_pos(struct extent_insert_state *s, struct bkey_s_c k)
 {
 	struct btree *b = s->insert->iter->nodes[0];
 	struct bpos next_pos = bpos_min(s->insert->k->k.p,
 					k.k ? k.k->p : b->key.k.p);
+	enum btree_insert_ret ret;
 
 	if (race_fault())
-		return BTREE_HOOK_RESTART_TRANS;
+		return BTREE_INSERT_NEED_TRAVERSE;
 
 	/* hole? */
 	if (k.k && bkey_cmp(s->committed, bkey_start_pos(k.k)) < 0) {
-		switch (__extent_insert_advance_pos(s, bkey_start_pos(k.k),
-						    bkey_s_c_null)) {
-		case BTREE_HOOK_DO_INSERT:
-			break;
-		case BTREE_HOOK_RESTART_TRANS:
-			return BTREE_HOOK_RESTART_TRANS;
-		}
+		ret = __extent_insert_advance_pos(s, bkey_start_pos(k.k),
+						    bkey_s_c_null);
+		if (ret != BTREE_INSERT_OK)
+			return ret;
 	}
 
 	/* avoid redundant calls to hook fn: */
 	if (!bkey_cmp(s->committed, next_pos))
-		return BTREE_HOOK_DO_INSERT;
+		return BTREE_INSERT_OK;
 
 	return __extent_insert_advance_pos(s, next_pos, k);
 }
@@ -1275,6 +1268,7 @@ extent_squash(struct extent_insert_state *s, struct bkey_i *insert,
 	struct btree_iter *iter = s->insert->iter;
 	struct btree *b = iter->nodes[0];
 	struct btree_node_iter *node_iter = &iter->node_iters[0];
+	enum btree_insert_ret ret;
 
 	switch (overlap) {
 	case BCH_EXTENT_OVERLAP_FRONT:
@@ -1320,9 +1314,9 @@ extent_squash(struct extent_insert_state *s, struct bkey_i *insert,
 			k.k->p = orig_pos;
 			extent_save(b, node_iter, _k, k.k);
 
-			if (extent_insert_advance_pos(s, k.s_c) ==
-			    BTREE_HOOK_RESTART_TRANS)
-				return BTREE_INSERT_NEED_TRAVERSE;
+			ret = extent_insert_advance_pos(s, k.s_c);
+			if (ret != BTREE_INSERT_OK)
+				return ret;
 
 			extent_insert_committed(s);
 			/*
@@ -1418,13 +1412,9 @@ bch2_delete_fixup_extent(struct extent_insert_state *s)
 		if (ret != BTREE_INSERT_OK)
 			goto stop;
 
-		switch (extent_insert_advance_pos(s, k.s_c)) {
-		case BTREE_HOOK_DO_INSERT:
-			break;
-		case BTREE_HOOK_RESTART_TRANS:
-			ret = BTREE_INSERT_NEED_TRAVERSE;
+		ret = extent_insert_advance_pos(s, k.s_c);
+		if (ret)
 			goto stop;
-		}
 
 		s->do_journal = true;
 
@@ -1465,10 +1455,9 @@ next:
 		bch2_btree_iter_set_pos_same_leaf(iter, s->committed);
 	}
 
-	if (bkey_cmp(s->committed, insert->k.p) < 0 &&
-	    ret == BTREE_INSERT_OK &&
-	    extent_insert_advance_pos(s, bkey_s_c_null) == BTREE_HOOK_RESTART_TRANS)
-		ret = BTREE_INSERT_NEED_TRAVERSE;
+	if (ret == BTREE_INSERT_OK &&
+	    bkey_cmp(s->committed, insert->k.p) < 0)
+		ret = extent_insert_advance_pos(s, bkey_s_c_null);
 stop:
 	extent_insert_committed(s);
 
@@ -1591,13 +1580,9 @@ bch2_insert_fixup_extent(struct btree_insert *trans,
 		/*
 		 * Only call advance pos & call hook for nonzero size extents:
 		 */
-		switch (extent_insert_advance_pos(&s, k.s_c)) {
-		case BTREE_HOOK_DO_INSERT:
-			break;
-		case BTREE_HOOK_RESTART_TRANS:
-			ret = BTREE_INSERT_NEED_TRAVERSE;
+		ret = extent_insert_advance_pos(&s, k.s_c);
+		if (ret != BTREE_INSERT_OK)
 			goto stop;
-		}
 
 		if (k.k->size &&
 		    (k.k->needs_whiteout || bset_written(b, bset(b, t))))
@@ -1615,10 +1600,9 @@ squash:
 			goto stop;
 	}
 
-	if (bkey_cmp(s.committed, insert->k->k.p) < 0 &&
-	    ret == BTREE_INSERT_OK &&
-	    extent_insert_advance_pos(&s, bkey_s_c_null) == BTREE_HOOK_RESTART_TRANS)
-		ret = BTREE_INSERT_NEED_TRAVERSE;
+	if (ret == BTREE_INSERT_OK &&
+	    bkey_cmp(s.committed, insert->k->k.p) < 0)
+		ret = extent_insert_advance_pos(&s, bkey_s_c_null);
 stop:
 	extent_insert_committed(&s);
 	/*
