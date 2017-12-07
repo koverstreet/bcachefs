@@ -317,17 +317,6 @@ struct btree_root {
 struct btree_iter;
 struct btree_node_iter;
 
-enum extent_insert_hook_ret {
-	BTREE_HOOK_DO_INSERT,
-	BTREE_HOOK_RESTART_TRANS,
-};
-
-struct extent_insert_hook {
-	enum extent_insert_hook_ret
-	(*fn)(struct extent_insert_hook *, struct bpos, struct bpos,
-	      struct bkey_s_c, const struct bkey_i *);
-};
-
 enum btree_insert_ret {
 	BTREE_INSERT_OK,
 	/* extent spanned multiple leaf nodes: have to traverse to next node: */
@@ -339,6 +328,12 @@ enum btree_insert_ret {
 	BTREE_INSERT_JOURNAL_RES_FULL,
 	BTREE_INSERT_ENOSPC,
 	BTREE_INSERT_NEED_GC_LOCK,
+};
+
+struct extent_insert_hook {
+	enum btree_insert_ret
+	(*fn)(struct extent_insert_hook *, struct bpos, struct bpos,
+	      struct bkey_s_c, const struct bkey_i *);
 };
 
 enum btree_gc_coalesce_fail_reason {
