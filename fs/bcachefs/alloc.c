@@ -1166,11 +1166,7 @@ struct dev_alloc_list bch2_wp_alloc_list(struct bch_fs *c,
 				break;
 		}
 
-		memmove(&ret.devs[j + 1],
-			&ret.devs[j],
-			sizeof(ret.devs[0]) * (ret.nr - j));
-		ret.nr++;
-		ret.devs[j] = i;
+		array_insert_item(ret.devs, ret.nr, j, i);
 	}
 
 	return ret;
@@ -1320,11 +1316,7 @@ static void writepoint_drop_ptrs(struct bch_fs *c,
 			closure_wake_up(&c->open_buckets_wait);
 			closure_wake_up(&c->freelist_wait);
 
-			wp->nr_ptrs--;
-			memmove(&wp->ptrs[i],
-				&wp->ptrs[i + 1],
-				(wp->nr_ptrs - i) * sizeof(wp->ptrs[0]));
-
+			array_remove_item(wp->ptrs, wp->nr_ptrs, i);
 			--nr_ptrs_dislike;
 		}
 	}
@@ -1569,10 +1561,7 @@ void bch2_alloc_sectors_done(struct bch_fs *c, struct write_point *wp)
 		struct open_bucket *ob = wp->ptrs[i];
 
 		if (!ob->sectors_free) {
-			wp->nr_ptrs--;
-			memmove(&wp->ptrs[i],
-				&wp->ptrs[i + 1],
-				(wp->nr_ptrs - i) * sizeof(wp->ptrs[0]));
+			array_remove_item(wp->ptrs, wp->nr_ptrs, i);
 			bch2_open_bucket_put(c, ob);
 		}
 	}
