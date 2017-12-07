@@ -146,9 +146,7 @@ static inline void sort_iter_advance(struct sort_iter *iter, sort_cmp_fn cmp)
 	BUG_ON(iter->data->k > iter->data->end);
 
 	if (iter->data->k == iter->data->end)
-		memmove(&iter->data[0],
-			&iter->data[1],
-			sizeof(iter->data[0]) * --iter->used);
+		array_remove_item(iter->data, iter->used, 0);
 	else
 		sort_iter_sift(iter, cmp);
 }

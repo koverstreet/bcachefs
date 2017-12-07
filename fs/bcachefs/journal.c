@@ -1588,17 +1588,12 @@ static int bch2_set_nr_journal_buckets(struct bch_fs *c, struct bch_dev *ca,
 		bucket = sector_to_bucket(ca, ob->ptr.offset);
 
 		spin_lock(&j->lock);
-		memmove(ja->buckets + ja->last_idx + 1,
-			ja->buckets + ja->last_idx,
-			(ja->nr - ja->last_idx) * sizeof(u64));
-		memmove(ja->bucket_seq + ja->last_idx + 1,
-			ja->bucket_seq + ja->last_idx,
-			(ja->nr - ja->last_idx) * sizeof(u64));
-		memmove(journal_buckets->buckets + ja->last_idx + 1,
-			journal_buckets->buckets + ja->last_idx,
-			(ja->nr - ja->last_idx) * sizeof(u64));
+		__array_insert_item(ja->buckets,		ja->nr, ja->last_idx);
+		__array_insert_item(ja->bucket_seq,		ja->nr, ja->last_idx);
+		__array_insert_item(journal_buckets->buckets,	ja->nr, ja->last_idx);
 
 		ja->buckets[ja->last_idx] = bucket;
+		ja->bucket_seq[ja->last_idx] = 0;
 		journal_buckets->buckets[ja->last_idx] = cpu_to_le64(bucket);
 
 		if (ja->last_idx < ja->nr) {

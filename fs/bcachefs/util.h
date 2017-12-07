@@ -790,4 +790,28 @@ void sort_cmp_size(void *base, size_t num, size_t size,
 	  int (*cmp_func)(const void *, const void *, size_t),
 	  void (*swap_func)(void *, void *, size_t));
 
+/* just the memmove, doesn't update @_nr */
+#define __array_insert_item(_array, _nr, _pos)				\
+	memmove(&(_array)[(_pos) + 1],					\
+		&(_array)[(_pos)],					\
+		sizeof((_array)[0]) * ((_nr) - (_pos)))
+
+#define array_insert_item(_array, _nr, _pos, _new_item)			\
+do {									\
+	__array_insert_item(_array, _nr, _pos);				\
+	(_nr)++;							\
+	(_array)[(_pos)] = (_new_item);					\
+} while (0)
+
+#define array_remove_items(_array, _nr, _pos, _nr_to_remove)		\
+do {									\
+	(_nr) -= (_nr_to_remove);					\
+	memmove(&(_array)[(_pos)],					\
+		&(_array)[(_pos) + (_nr_to_remove)],			\
+		sizeof((_array)[0]) * ((_nr) - (_pos)));		\
+} while (0)
+
+#define array_remove_item(_array, _nr, _pos)				\
+	array_remove_items(_array, _nr, _pos, 1)
+
 #endif /* _BCACHEFS_UTIL_H */
