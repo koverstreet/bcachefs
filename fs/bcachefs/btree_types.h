@@ -319,7 +319,6 @@ struct btree_node_iter;
 
 enum extent_insert_hook_ret {
 	BTREE_HOOK_DO_INSERT,
-	BTREE_HOOK_NO_INSERT,
 	BTREE_HOOK_RESTART_TRANS,
 };
 

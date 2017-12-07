@@ -1183,18 +1183,7 @@ __extent_insert_advance_pos(struct extent_insert_state *s,
 {
 	struct extent_insert_hook *hook = s->trans->hook;
 	enum extent_insert_hook_ret ret;
-#if 0
-	/*
-	 * Currently disabled for encryption - broken with fcollapse. Will have
-	 * to reenable when versions are exposed for send/receive - versions
-	 * will have to be monotonic then:
-	 */
-	if (k.k && k.k->size &&
-	    !bversion_zero(s->insert->k->k.version) &&
-	    bversion_cmp(k.k->version, s->insert->k->k.version) > 0) {
-		ret = BTREE_HOOK_NO_INSERT;
-	} else
-#endif
+
 	if (hook)
 		ret = hook->fn(hook, s->committed, next_pos, k, s->insert->k);
 	else
@@ -1204,12 +1193,6 @@ __extent_insert_advance_pos(struct extent_insert_state *s,
 
 	switch (ret) {
 	case BTREE_HOOK_DO_INSERT:
-		break;
-	case BTREE_HOOK_NO_INSERT:
-		extent_insert_committed(s);
-		bch2_cut_subtract_front(s, next_pos, bkey_i_to_s(s->insert->k));
-
-		bch2_btree_iter_set_pos_same_leaf(s->insert->iter, next_pos);
 		break;
 	case BTREE_HOOK_RESTART_TRANS:
 		return ret;
@@ -1235,21 +1218,9 @@ extent_insert_advance_pos(struct extent_insert_state *s, struct bkey_s_c k)
 
 	/* hole? */
 	if (k.k && bkey_cmp(s->committed, bkey_start_pos(k.k)) < 0) {
-		bool have_uncommitted = bkey_cmp(s->committed,
-				bkey_start_pos(&s->insert->k->k)) > 0;
-
 		switch (__extent_insert_advance_pos(s, bkey_start_pos(k.k),
 						    bkey_s_c_null)) {
 		case BTREE_HOOK_DO_INSERT:
-			break;
-		case BTREE_HOOK_NO_INSERT:
-			/*
-			 * we had to split @insert and insert the committed
-			 * part - need to bail out and recheck journal
-			 * reservation/btree node before we advance pos past @k:
-			 */
-			if (have_uncommitted)
-				return BTREE_HOOK_NO_INSERT;
 			break;
 		case BTREE_HOOK_RESTART_TRANS:
 			return BTREE_HOOK_RESTART_TRANS;
@@ -1450,8 +1421,6 @@ bch2_delete_fixup_extent(struct extent_insert_state *s)
 		switch (extent_insert_advance_pos(s, k.s_c)) {
 		case BTREE_HOOK_DO_INSERT:
 			break;
-		case BTREE_HOOK_NO_INSERT:
-			continue;
 		case BTREE_HOOK_RESTART_TRANS:
 			ret = BTREE_INSERT_NEED_TRAVERSE;
 			goto stop;
@@ -1621,14 +1590,10 @@ bch2_insert_fixup_extent(struct btree_insert *trans,
 
 		/*
 		 * Only call advance pos & call hook for nonzero size extents:
-		 * If hook returned BTREE_HOOK_NO_INSERT, @insert->k no longer
-		 * overlaps with @k:
 		 */
 		switch (extent_insert_advance_pos(&s, k.s_c)) {
 		case BTREE_HOOK_DO_INSERT:
 			break;
-		case BTREE_HOOK_NO_INSERT:
-			continue;
 		case BTREE_HOOK_RESTART_TRANS:
 			ret = BTREE_INSERT_NEED_TRAVERSE;
 			goto stop;
