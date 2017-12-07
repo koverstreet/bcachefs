@@ -26,9 +26,67 @@
 #include <trace/events/bcachefs.h>
 #include <trace/events/writeback.h>
 
-struct bio_set *bch2_writepage_bioset;
-struct bio_set *bch2_dio_read_bioset;
-struct bio_set *bch2_dio_write_bioset;
+struct i_sectors_hook {
+	struct extent_insert_hook	hook;
+	s64				sectors;
+	struct bch_inode_info		*inode;
+};
+
+struct bchfs_write_op {
+	struct bch_inode_info		*inode;
+	s64				sectors_added;
+	bool				is_dio;
+	bool				unalloc;
+	u64				new_i_size;
+
+	/* must be last: */
+	struct bch_write_op		op;
+};
+
+static inline void bch2_fswrite_op_init(struct bchfs_write_op *op,
+					struct bch_inode_info *inode,
+					bool is_dio)
+{
+	op->inode		= inode;
+	op->sectors_added	= 0;
+	op->is_dio		= is_dio;
+	op->unalloc		= false;
+	op->new_i_size		= U64_MAX;
+}
+
+struct bch_writepage_io {
+	struct closure			cl;
+
+	/* must be last: */
+	struct bchfs_write_op		op;
+};
+
+struct dio_write {
+	struct closure			cl;
+	struct kiocb			*req;
+	struct bch_fs			*c;
+	long				written;
+	long				error;
+	loff_t				offset;
+
+	struct disk_reservation		res;
+
+	struct iovec			*iovec;
+	struct iovec			inline_vecs[UIO_FASTIOV];
+	struct iov_iter			iter;
+
+	struct task_struct		*task;
+
+	/* must be last: */
+	struct bchfs_write_op		iop;
+};
+
+struct dio_read {
+	struct closure			cl;
+	struct kiocb			*req;
+	long				ret;
+	struct bch_read_bio		rbio;
+};
 
 /* pagecache_block must be held */
 static int write_invalidate_inode_pages_range(struct address_space *mapping,
@@ -223,6 +281,10 @@ bchfs_extent_update_hook(struct extent_insert_hook *hook,
 	s64 sectors = (s64) (next_pos.offset - committed_pos.offset) * sign;
 	u64 offset = min(next_pos.offset << 9, h->op->new_i_size);
 	bool do_pack = false;
+
+	if (h->op->unalloc &&
+	    !bch2_extent_is_fully_allocated(k))
+		return BTREE_INSERT_ENOSPC;
 
 	BUG_ON((next_pos.offset << 9) > round_up(offset, PAGE_SIZE));
 
@@ -752,8 +814,7 @@ static void bchfs_read(struct bch_fs *c, struct btree_iter *iter,
 		if (bkey_extent_is_allocation(k.k))
 			bch2_add_page_sectors(bio, k);
 
-		if (!bkey_extent_is_allocation(k.k) ||
-		    bch2_extent_is_compressed(k))
+		if (!bch2_extent_is_fully_allocated(k))
 			bch2_mark_pages_unalloc(bio);
 
 		if (pick.ca) {
@@ -968,13 +1029,11 @@ static void bch2_writepage_io_alloc(struct bch_fs *c,
 alloc_io:
 		w->io = container_of(bio_alloc_bioset(GFP_NOFS,
 						      BIO_MAX_PAGES,
-						      bch2_writepage_bioset),
+						      &c->writepage_bioset),
 				     struct bch_writepage_io, op.op.wbio.bio);
 
 		closure_init(&w->io->cl, NULL);
-		w->io->op.inode		= inode;
-		w->io->op.sectors_added	= 0;
-		w->io->op.is_dio	= false;
+		bch2_fswrite_op_init(&w->io->op, inode, false);
 		bch2_write_op_init(&w->io->op.op, c,
 				(struct disk_reservation) {
 					.nr_replicas = c->opts.data_replicas,
@@ -1414,7 +1473,7 @@ static int bch2_direct_IO_read(struct bch_fs *c, struct kiocb *req,
 
 	bio = bio_alloc_bioset(GFP_KERNEL,
 			       iov_iter_npages(iter, BIO_MAX_PAGES),
-			       bch2_dio_read_bioset);
+			       &c->dio_read_bioset);
 
 	bio->bi_end_io = bch2_direct_IO_read_endio;
 
@@ -1546,10 +1605,7 @@ static void bch2_do_direct_IO_write(struct dio_write *dio)
 		return;
 	}
 
-	dio->iop.inode		= inode;
 	dio->iop.sectors_added	= 0;
-	dio->iop.is_dio		= true;
-	dio->iop.new_i_size	= U64_MAX;
 	bch2_write_op_init(&dio->iop.op, dio->c, dio->res,
 			   dio->c->fastest_devs,
 			   writepoint_hashed((unsigned long) dio->task),
@@ -1558,8 +1614,10 @@ static void bch2_do_direct_IO_write(struct dio_write *dio)
 			   flags);
 	dio->iop.op.index_update_fn = bchfs_write_index_update;
 
-	dio->res.sectors -= bio_sectors(bio);
-	dio->iop.op.res.sectors = bio_sectors(bio);
+	if (!dio->iop.unalloc) {
+		dio->res.sectors -= bio_sectors(bio);
+		dio->iop.op.res.sectors = bio_sectors(bio);
+	}
 
 	task_io_account_write(bio->bi_iter.bi_size);
 
@@ -1594,6 +1652,31 @@ static void bch2_dio_write_loop_async(struct closure *cl)
 	}
 }
 
+static int bch2_check_range_allocated(struct bch_fs *c, struct bpos pos,
+				      u64 size)
+{
+	struct btree_iter iter;
+	struct bpos end = pos;
+	struct bkey_s_c k;
+	int ret = 0;
+
+	end.offset += size;
+
+	for_each_btree_key(&iter, c, BTREE_ID_EXTENTS, pos,
+			     BTREE_ITER_WITH_HOLES, k) {
+		if (bkey_cmp(bkey_start_pos(k.k), end) >= 0)
+			break;
+
+		if (!bch2_extent_is_fully_allocated(k)) {
+			ret = -ENOSPC;
+			break;
+		}
+	}
+	bch2_btree_iter_unlock(&iter);
+
+	return ret;
+}
+
 static int bch2_direct_IO_write(struct bch_fs *c,
 				struct kiocb *req, struct file *file,
 				struct bch_inode_info *inode,
@@ -1615,17 +1698,18 @@ static int bch2_direct_IO_write(struct bch_fs *c,
 
 	bio = bio_alloc_bioset(GFP_KERNEL,
 			       iov_iter_npages(iter, BIO_MAX_PAGES),
-			       bch2_dio_write_bioset);
+			       &c->dio_write_bioset);
 	dio = container_of(bio, struct dio_write, iop.op.wbio.bio);
-	dio->req	= req;
-	dio->c		= c;
-	dio->written	= 0;
-	dio->error	= 0;
-	dio->offset	= offset;
-	dio->iovec	= NULL;
-	dio->iter	= *iter;
-	dio->task	= current;
 	closure_init(&dio->cl, NULL);
+	dio->req		= req;
+	dio->c			= c;
+	dio->written		= 0;
+	dio->error		= 0;
+	dio->offset		= offset;
+	dio->iovec		= NULL;
+	dio->iter		= *iter;
+	dio->task		= current;
+	bch2_fswrite_op_init(&dio->iop, inode, true);
 
 	if (offset + iter->count > inode->v.i_size)
 		sync = true;
@@ -1640,9 +1724,15 @@ static int bch2_direct_IO_write(struct bch_fs *c,
 	 */
 	ret = bch2_disk_reservation_get(c, &dio->res, iter->count >> 9, 0);
 	if (unlikely(ret)) {
-		closure_debug_destroy(&dio->cl);
-		bio_put(bio);
-		return ret;
+		if (bch2_check_range_allocated(c, POS(inode->v.i_ino,
+						      offset >> 9),
+					       iter->count >> 9)) {
+			closure_debug_destroy(&dio->cl);
+			bio_put(bio);
+			return ret;
+		}
+
+		dio->iop.unalloc = true;
 	}
 
 	inode_dio_begin(&inode->v);
@@ -2566,6 +2656,29 @@ loff_t bch2_llseek(struct file *file, loff_t offset, int whence)
 	}
 
 	return -EINVAL;
+}
+
+void bch2_fs_fsio_exit(struct bch_fs *c)
+{
+	bioset_exit(&c->dio_write_bioset);
+	bioset_exit(&c->dio_read_bioset);
+	bioset_exit(&c->writepage_bioset);
+}
+
+int bch2_fs_fsio_init(struct bch_fs *c)
+{
+	if (bioset_init(&c->writepage_bioset,
+			4, offsetof(struct bch_writepage_io, op.op.wbio.bio),
+			BIOSET_NEED_BVECS) ||
+	    bioset_init(&c->dio_read_bioset,
+			4, offsetof(struct dio_read, rbio.bio),
+			BIOSET_NEED_BVECS) ||
+	    bioset_init(&c->dio_write_bioset,
+			4, offsetof(struct dio_write, iop.op.wbio.bio),
+			BIOSET_NEED_BVECS))
+		return -ENOMEM;
+
+	return 0;
 }
 
 #endif /* NO_BCACHEFS_FS */

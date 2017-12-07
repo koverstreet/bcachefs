@@ -73,6 +73,12 @@ static inline bool bkey_extent_is_allocation(const struct bkey *k)
 	}
 }
 
+static inline bool bch2_extent_is_fully_allocated(struct bkey_s_c k)
+{
+	return bkey_extent_is_allocation(k.k) &&
+		!bch2_extent_is_compressed(k);
+}
+
 static inline bool bkey_extent_is_cached(const struct bkey *k)
 {
 	return k->type == BCH_EXTENT_CACHED;
