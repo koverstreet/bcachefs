@@ -98,23 +98,6 @@ DECLARE_EVENT_CLASS(bio,
 		  (unsigned long long)__entry->sector, __entry->nr_sector)
 );
 
-DECLARE_EVENT_CLASS(page_alloc_fail,
-	TP_PROTO(struct bch_fs *c, u64 size),
-	TP_ARGS(c, size),
-
-	TP_STRUCT__entry(
-		__array(char,		uuid,	16	)
-		__field(u64,		size		)
-	),
-
-	TP_fast_assign(
-		memcpy(__entry->uuid, c->sb.user_uuid.b, 16);
-		__entry->size = size;
-	),
-
-	TP_printk("%pU size %llu", __entry->uuid, __entry->size)
-);
-
 /* io.c: */
 
 DEFINE_EVENT(bio, read_split,
@@ -411,16 +394,6 @@ TRACE_EVENT(alloc_batch,
 		__entry->uuid, __entry->free, __entry->total)
 );
 
-DEFINE_EVENT(bch_dev, prio_write_start,
-	TP_PROTO(struct bch_dev *ca),
-	TP_ARGS(ca)
-);
-
-DEFINE_EVENT(bch_dev, prio_write_end,
-	TP_PROTO(struct bch_dev *ca),
-	TP_ARGS(ca)
-);
-
 TRACE_EVENT(invalidate,
 	TP_PROTO(struct bch_dev *ca, u64 offset, unsigned sectors),
 	TP_ARGS(ca, offset, sectors),
@@ -481,102 +454,24 @@ DEFINE_EVENT(bucket_alloc, open_bucket_alloc_fail,
 
 /* Moving IO */
 
-DECLARE_EVENT_CLASS(moving_io,
-	TP_PROTO(struct bpos pos, unsigned sectors),
-	TP_ARGS(pos, sectors),
-
-	TP_STRUCT__entry(
-		__field(__u32,		inode			)
-		__field(__u64,		offset			)
-		__field(__u32,		sectors			)
-	),
-
-	TP_fast_assign(
-		__entry->inode		= pos.inode;
-		__entry->offset		= pos.offset;
-		__entry->sectors	= sectors;
-	),
-
-	TP_printk("%u:%llu sectors %u",
-		  __entry->inode, __entry->offset, __entry->sectors)
-);
-
-DEFINE_EVENT(moving_io, move_read,
-	TP_PROTO(struct bpos pos, unsigned sectors),
-	TP_ARGS(pos, sectors)
-);
-
-DEFINE_EVENT(moving_io, move_read_done,
-	TP_PROTO(struct bpos pos, unsigned sectors),
-	TP_ARGS(pos, sectors)
-);
-
-DEFINE_EVENT(moving_io, move_write,
-	TP_PROTO(struct bpos pos, unsigned sectors),
-	TP_ARGS(pos, sectors)
-);
-
-DEFINE_EVENT(moving_io, move_collision,
-	TP_PROTO(struct bpos pos, unsigned sectors),
-	TP_ARGS(pos, sectors)
-);
-
-/* Copy GC */
-
-DEFINE_EVENT(page_alloc_fail, moving_gc_alloc_fail,
-	TP_PROTO(struct bch_fs *c, u64 size),
-	TP_ARGS(c, size)
-);
-
-DEFINE_EVENT(bch_dev, moving_gc_start,
-	TP_PROTO(struct bch_dev *ca),
-	TP_ARGS(ca)
-);
-
-TRACE_EVENT(moving_gc_end,
-	TP_PROTO(struct bch_dev *ca, u64 sectors_moved, u64 keys_moved,
-		u64 buckets_moved),
-	TP_ARGS(ca, sectors_moved, keys_moved, buckets_moved),
-
-	TP_STRUCT__entry(
-		__array(char,		uuid,	16	)
-		__field(u64,		sectors_moved	)
-		__field(u64,		keys_moved	)
-		__field(u64,		buckets_moved	)
-	),
-
-	TP_fast_assign(
-		memcpy(__entry->uuid, ca->uuid.b, 16);
-		__entry->sectors_moved = sectors_moved;
-		__entry->keys_moved = keys_moved;
-		__entry->buckets_moved = buckets_moved;
-	),
-
-	TP_printk("%pU sectors_moved %llu keys_moved %llu buckets_moved %llu",
-		__entry->uuid, __entry->sectors_moved, __entry->keys_moved,
-		__entry->buckets_moved)
-);
-
-DEFINE_EVENT(bkey, gc_copy,
+DEFINE_EVENT(bkey, move_extent,
 	TP_PROTO(const struct bkey *k),
 	TP_ARGS(k)
 );
 
-/* Tiering */
-
-DEFINE_EVENT(page_alloc_fail, tiering_alloc_fail,
-	TP_PROTO(struct bch_fs *c, u64 size),
-	TP_ARGS(c, size)
+DEFINE_EVENT(bkey, move_alloc_fail,
+	TP_PROTO(const struct bkey *k),
+	TP_ARGS(k)
 );
 
-DEFINE_EVENT(bch_fs, tiering_start,
-	TP_PROTO(struct bch_fs *c),
-	TP_ARGS(c)
+DEFINE_EVENT(bkey, move_race,
+	TP_PROTO(const struct bkey *k),
+	TP_ARGS(k)
 );
 
-TRACE_EVENT(tiering_end,
+TRACE_EVENT(move_data,
 	TP_PROTO(struct bch_fs *c, u64 sectors_moved,
-		u64 keys_moved),
+		 u64 keys_moved),
 	TP_ARGS(c, sectors_moved, keys_moved),
 
 	TP_STRUCT__entry(
@@ -595,9 +490,34 @@ TRACE_EVENT(tiering_end,
 		__entry->uuid, __entry->sectors_moved, __entry->keys_moved)
 );
 
-DEFINE_EVENT(bkey, tiering_copy,
-	TP_PROTO(const struct bkey *k),
-	TP_ARGS(k)
+TRACE_EVENT(copygc,
+	TP_PROTO(struct bch_dev *ca,
+		 u64 sectors_moved, u64 sectors_not_moved,
+		 u64 buckets_moved, u64 buckets_not_moved),
+	TP_ARGS(ca,
+		sectors_moved, sectors_not_moved,
+		buckets_moved, buckets_not_moved),
+
+	TP_STRUCT__entry(
+		__array(char,		uuid,	16		)
+		__field(u64,		sectors_moved		)
+		__field(u64,		sectors_not_moved	)
+		__field(u64,		buckets_moved		)
+		__field(u64,		buckets_not_moved	)
+	),
+
+	TP_fast_assign(
+		memcpy(__entry->uuid, ca->uuid.b, 16);
+		__entry->sectors_moved		= sectors_moved;
+		__entry->sectors_not_moved	= sectors_not_moved;
+		__entry->buckets_moved		= buckets_moved;
+		__entry->buckets_not_moved = buckets_moved;
+	),
+
+	TP_printk("%pU sectors moved %llu remain %llu buckets moved %llu remain %llu",
+		__entry->uuid,
+		__entry->sectors_moved, __entry->sectors_not_moved,
+		__entry->buckets_moved, __entry->buckets_not_moved)
 );
 
 #endif /* _TRACE_BCACHE_H */

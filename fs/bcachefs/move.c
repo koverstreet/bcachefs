@@ -9,8 +9,38 @@
 #include "keylist.h"
 
 #include <linux/ioprio.h>
+#include <linux/kthread.h>
 
 #include <trace/events/bcachefs.h>
+
+struct moving_io {
+	struct list_head	list;
+	struct closure		cl;
+	bool			read_completed;
+	unsigned		sectors;
+
+	struct bch_read_bio	rbio;
+
+	struct migrate_write	write;
+	/* Must be last since it is variable size */
+	struct bio_vec		bi_inline_vecs[0];
+};
+
+struct moving_context {
+	/* Closure for waiting on all reads and writes to complete */
+	struct closure		cl;
+
+	/* Key and sector moves issued, updated from submission context */
+	u64			keys_moved;
+	u64			sectors_moved;
+	atomic64_t		sectors_raced;
+
+	struct list_head	reads;
+
+	atomic_t		sectors_in_flight;
+
+	wait_queue_head_t	wait;
+};
 
 static int bch2_migrate_index_update(struct bch_write_op *op)
 {
@@ -107,8 +137,11 @@ next:
 		bch2_cut_front(iter.pos, bch2_keylist_front(keys));
 		continue;
 nomatch:
+		if (m->ctxt)
+			atomic64_add(k.k->p.offset - iter.pos.offset,
+				     &m->ctxt->sectors_raced);
 		atomic_long_inc(&c->extent_migrate_raced);
-		trace_move_collision(k.k->p, k.k->p.offset - iter.pos.offset);
+		trace_move_race(&new->k);
 		bch2_btree_iter_advance_pos(&iter);
 		goto next;
 	}
@@ -155,7 +188,7 @@ void bch2_migrate_write_init(struct migrate_write *m,
 static void move_free(struct closure *cl)
 {
 	struct moving_io *io = container_of(cl, struct moving_io, cl);
-	struct moving_context *ctxt = io->ctxt;
+	struct moving_context *ctxt = io->write.ctxt;
 	struct bio_vec *bv;
 	int i;
 
@@ -174,8 +207,6 @@ static void move_write(struct closure *cl)
 	struct moving_io *io = container_of(cl, struct moving_io, cl);
 
 	if (likely(!io->rbio.bio.bi_status)) {
-		trace_move_write(io->rbio.pos, io->sectors);
-
 		bch2_migrate_write_init(&io->write, &io->rbio);
 		closure_call(&io->write.op.cl, bch2_write, NULL, cl);
 	}
@@ -194,9 +225,7 @@ static inline struct moving_io *next_pending_write(struct moving_context *ctxt)
 static void move_read_endio(struct bio *bio)
 {
 	struct moving_io *io = container_of(bio, struct moving_io, rbio.bio);
-	struct moving_context *ctxt = io->ctxt;
-
-	trace_move_read_done(io->rbio.pos, io->sectors);
+	struct moving_context *ctxt = io->write.ctxt;
 
 	io->read_completed = true;
 	if (next_pending_write(ctxt))
@@ -205,13 +234,13 @@ static void move_read_endio(struct bio *bio)
 	closure_put(&ctxt->cl);
 }
 
-int bch2_data_move(struct bch_fs *c,
-		   struct moving_context *ctxt,
-		   struct bch_devs_mask *devs,
-		   struct write_point_specifier wp,
-		   int btree_insert_flags,
-		   int move_device,
-		   struct bkey_s_c k)
+static int bch2_move_extent(struct bch_fs *c,
+			  struct moving_context *ctxt,
+			  struct bch_devs_mask *devs,
+			  struct write_point_specifier wp,
+			  int btree_insert_flags,
+			  int move_device,
+			  struct bkey_s_c k)
 {
 	struct extent_pick_ptr pick;
 	struct moving_io *io;
@@ -219,7 +248,7 @@ int bch2_data_move(struct bch_fs *c,
 	struct bch_extent_crc_unpacked crc;
 	unsigned sectors = k.k->size, pages;
 
-	bch2_extent_pick_ptr(c, k, &ctxt->avoid, &pick);
+	bch2_extent_pick_ptr(c, k, NULL, &pick);
 	if (IS_ERR_OR_NULL(pick.ca))
 		return pick.ca ? PTR_ERR(pick.ca) : 0;
 
@@ -231,9 +260,9 @@ int bch2_data_move(struct bch_fs *c,
 	io = kzalloc(sizeof(struct moving_io) +
 		     sizeof(struct bio_vec) * pages, GFP_KERNEL);
 	if (!io)
-		return -ENOMEM;
+		goto err;
 
-	io->ctxt	= ctxt;
+	io->write.ctxt	= ctxt;
 	io->sectors	= k.k->size;
 
 	bio_init(&io->write.op.wbio.bio, io->bi_inline_vecs, pages);
@@ -244,7 +273,7 @@ int bch2_data_move(struct bch_fs *c,
 	bch2_bio_map(&io->write.op.wbio.bio, NULL);
 	if (bch2_bio_alloc_pages(&io->write.op.wbio.bio, GFP_KERNEL)) {
 		kfree(io);
-		return -ENOMEM;
+		goto err;
 	}
 
 	bio_init(&io->rbio.bio, io->bi_inline_vecs, pages);
@@ -263,9 +292,8 @@ int bch2_data_move(struct bch_fs *c,
 
 	ctxt->keys_moved++;
 	ctxt->sectors_moved += k.k->size;
-	if (ctxt->rate)
-		bch2_ratelimit_increment(ctxt->rate, io->sectors);
-	trace_move_read(k.k->p, k.k->size);
+
+	trace_move_extent(k.k);
 
 	atomic_add(io->sectors, &ctxt->sectors_in_flight);
 	list_add_tail(&io->list, &ctxt->reads);
@@ -274,10 +302,13 @@ int bch2_data_move(struct bch_fs *c,
 	 * dropped by move_read_endio() - guards against use after free of
 	 * ctxt when doing wakeup
 	 */
-	closure_get(&io->ctxt->cl);
+	closure_get(&ctxt->cl);
 	bch2_read_extent(c, &io->rbio, bkey_s_c_to_extent(k),
 			 &pick, BCH_READ_NODECODE);
 	return 0;
+err:
+	trace_move_alloc_fail(k.k);
+	return -ENOMEM;
 }
 
 static void do_pending_writes(struct moving_context *ctxt)
@@ -300,18 +331,7 @@ do {								\
 		     next_pending_write(_ctxt) || (_cond));	\
 } while (1)
 
-int bch2_move_ctxt_wait(struct moving_context *ctxt)
-{
-	move_ctxt_wait_event(ctxt,
-			     atomic_read(&ctxt->sectors_in_flight) <
-			     ctxt->max_sectors_in_flight);
-
-	return ctxt->rate
-		? bch2_ratelimit_wait_freezable_stoppable(ctxt->rate)
-		: 0;
-}
-
-void bch2_move_ctxt_wait_for_io(struct moving_context *ctxt)
+static void bch2_move_ctxt_wait_for_io(struct moving_context *ctxt)
 {
 	unsigned sectors_pending = atomic_read(&ctxt->sectors_in_flight);
 
@@ -320,7 +340,7 @@ void bch2_move_ctxt_wait_for_io(struct moving_context *ctxt)
 		atomic_read(&ctxt->sectors_in_flight) != sectors_pending);
 }
 
-void bch2_move_ctxt_exit(struct moving_context *ctxt)
+static void bch2_move_ctxt_exit(struct moving_context *ctxt)
 {
 	move_ctxt_wait_event(ctxt, !atomic_read(&ctxt->sectors_in_flight));
 	closure_sync(&ctxt->cl);
@@ -329,16 +349,92 @@ void bch2_move_ctxt_exit(struct moving_context *ctxt)
 	EBUG_ON(atomic_read(&ctxt->sectors_in_flight));
 }
 
-void bch2_move_ctxt_init(struct moving_context *ctxt,
-			struct bch_ratelimit *rate,
-			unsigned max_sectors_in_flight)
+static void bch2_move_ctxt_init(struct moving_context *ctxt)
 {
 	memset(ctxt, 0, sizeof(*ctxt));
 	closure_init_stack(&ctxt->cl);
 
-	ctxt->rate = rate;
-	ctxt->max_sectors_in_flight = max_sectors_in_flight;
-
 	INIT_LIST_HEAD(&ctxt->reads);
 	init_waitqueue_head(&ctxt->wait);
+}
+
+int bch2_move_data(struct bch_fs *c,
+		   struct bch_ratelimit *rate,
+		   unsigned sectors_in_flight,
+		   struct bch_devs_mask *devs,
+		   struct write_point_specifier wp,
+		   int btree_insert_flags,
+		   int move_device,
+		   move_pred_fn pred, void *arg,
+		   u64 *keys_moved,
+		   u64 *sectors_moved)
+{
+	bool kthread = (current->flags & PF_KTHREAD) != 0;
+	struct moving_context ctxt;
+	struct btree_iter iter;
+	BKEY_PADDED(k) tmp;
+	struct bkey_s_c k;
+	int ret = 0;
+
+	bch2_move_ctxt_init(&ctxt);
+	bch2_btree_iter_init(&iter, c, BTREE_ID_EXTENTS, POS_MIN,
+			     BTREE_ITER_PREFETCH);
+
+	if (rate)
+		bch2_ratelimit_reset(rate);
+
+	while (!kthread || !(ret = kthread_should_stop())) {
+		if (atomic_read(&ctxt.sectors_in_flight) >= sectors_in_flight) {
+			bch2_btree_iter_unlock(&iter);
+			move_ctxt_wait_event(&ctxt,
+					     atomic_read(&ctxt.sectors_in_flight) <
+					     sectors_in_flight);
+		}
+
+		if (rate &&
+		    bch2_ratelimit_delay(rate) &&
+		    (bch2_btree_iter_unlock(&iter),
+		     (ret = bch2_ratelimit_wait_freezable_stoppable(rate))))
+			break;
+
+		k = bch2_btree_iter_peek(&iter);
+		if (!k.k)
+			break;
+		ret = btree_iter_err(k);
+		if (ret)
+			break;
+
+		if (!bkey_extent_is_data(k.k) ||
+		    !pred(arg, bkey_s_c_to_extent(k)))
+			goto next;
+
+		/* unlock before doing IO: */
+		bkey_reassemble(&tmp.k, k);
+		k = bkey_i_to_s_c(&tmp.k);
+		bch2_btree_iter_unlock(&iter);
+
+		if (bch2_move_extent(c, &ctxt, devs, wp,
+				     btree_insert_flags,
+				     move_device, k)) {
+			/* memory allocation failure, wait for some IO to finish */
+			bch2_move_ctxt_wait_for_io(&ctxt);
+			continue;
+		}
+
+		if (rate)
+			bch2_ratelimit_increment(rate, k.k->size);
+next:
+		bch2_btree_iter_advance_pos(&iter);
+		bch2_btree_iter_cond_resched(&iter);
+	}
+
+	bch2_btree_iter_unlock(&iter);
+	bch2_move_ctxt_exit(&ctxt);
+
+	trace_move_data(c, ctxt.sectors_moved, ctxt.keys_moved);
+
+	*keys_moved	= ctxt.keys_moved;
+	*sectors_moved	= ctxt.sectors_moved;
+
+	return ret;
 }
