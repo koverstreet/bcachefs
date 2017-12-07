@@ -13,33 +13,16 @@
 #include "move.h"
 #include "super-io.h"
 
-static int issue_migration_move(struct bch_dev *ca,
-				struct moving_context *ctxt,
-				struct bch_devs_mask *devs,
-				struct bkey_s_c k)
+static bool migrate_pred(void *arg, struct bkey_s_c_extent e)
 {
-	struct bch_fs *c = ca->fs;
-	struct disk_reservation res;
+	struct bch_dev *ca = arg;
 	const struct bch_extent_ptr *ptr;
-	int ret;
 
-	if (bch2_disk_reservation_get(c, &res, k.k->size, 0))
-		return -ENOSPC;
-
-	extent_for_each_ptr(bkey_s_c_to_extent(k), ptr)
+	extent_for_each_ptr(e, ptr)
 		if (ptr->dev == ca->dev_idx)
-			goto found;
+			return true;
 
-	BUG();
-found:
-	/* XXX: we need to be doing something with the disk reservation */
-
-	ret = bch2_data_move(c, ctxt, devs,
-			     writepoint_hashed((unsigned long) current),
-			     0, ca->dev_idx, k);
-	if (ret)
-		bch2_disk_reservation_put(c, &res);
-	return ret;
+	return false;
 }
 
 #define MAX_DATA_OFF_ITER	10
@@ -60,22 +43,17 @@ found:
 
 int bch2_move_data_off_device(struct bch_dev *ca)
 {
-	struct moving_context ctxt;
 	struct bch_fs *c = ca->fs;
+	struct btree_iter iter;
+	struct bkey_s_c k;
+	u64 keys_moved, sectors_moved;
 	unsigned pass = 0;
-	u64 seen_key_count;
 	int ret = 0;
 
 	BUG_ON(ca->mi.state == BCH_MEMBER_STATE_RW);
 
 	if (!(bch2_dev_has_data(c, ca) & (1 << BCH_DATA_USER)))
 		return 0;
-
-	mutex_lock(&c->replicas_gc_lock);
-	bch2_replicas_gc_start(c, 1 << BCH_DATA_USER);
-
-	bch2_move_ctxt_init(&ctxt, NULL, SECTORS_IN_FLIGHT_PER_DEVICE);
-	__set_bit(ca->dev_idx, ctxt.avoid.d);
 
 	/*
 	 * In theory, only one pass should be necessary as we've
@@ -93,67 +71,43 @@ int bch2_move_data_off_device(struct bch_dev *ca)
 	 * Thus this scans the tree one more time than strictly necessary,
 	 * but that can be viewed as a verification pass.
 	 */
-
 	do {
-		struct btree_iter iter;
-		struct bkey_s_c k;
-
-		seen_key_count = 0;
-
-		bch2_btree_iter_init(&iter, c, BTREE_ID_EXTENTS, POS_MIN,
-				     BTREE_ITER_PREFETCH);
-
-		while (!bch2_move_ctxt_wait(&ctxt) &&
-		       (k = bch2_btree_iter_peek(&iter)).k &&
-		       !(ret = btree_iter_err(k))) {
-			if (!bkey_extent_is_data(k.k) ||
-			    !bch2_extent_has_device(bkey_s_c_to_extent(k),
-						   ca->dev_idx))
-				goto next;
-
-			ret = issue_migration_move(ca, &ctxt, NULL, k);
-			if (ret == -ENOMEM) {
-				bch2_btree_iter_unlock(&iter);
-
-				/*
-				 * memory allocation failure, wait for some IO
-				 * to finish
-				 */
-				bch2_move_ctxt_wait_for_io(&ctxt);
-				continue;
-			}
-			if (ret == -ENOSPC)
-				break;
-			BUG_ON(ret);
-
-			seen_key_count++;
-			continue;
-next:
-			if (bkey_extent_is_data(k.k)) {
-				ret = bch2_check_mark_super(c, bkey_s_c_to_extent(k),
-							    BCH_DATA_USER);
-				if (ret)
-					break;
-			}
-			bch2_btree_iter_advance_pos(&iter);
-			bch2_btree_iter_cond_resched(&iter);
-
+		ret = bch2_move_data(c, NULL,
+				     SECTORS_IN_FLIGHT_PER_DEVICE,
+				     NULL,
+				     writepoint_hashed((unsigned long) current),
+				     0,
+				     ca->dev_idx,
+				     migrate_pred, ca,
+				     &keys_moved,
+				     &sectors_moved);
+		if (ret) {
+			bch_err(c, "error migrating data: %i", ret);
+			return ret;
 		}
-		bch2_btree_iter_unlock(&iter);
-		bch2_move_ctxt_exit(&ctxt);
+	} while (keys_moved && pass++ < MAX_DATA_OFF_ITER);
 
-		if (ret)
-			goto err;
-	} while (seen_key_count && pass++ < MAX_DATA_OFF_ITER);
-
-	if (seen_key_count) {
-		pr_err("Unable to migrate all data in %d iterations.",
-		       MAX_DATA_OFF_ITER);
-		ret = -1;
-		goto err;
+	if (keys_moved) {
+		bch_err(c, "unable to migrate all data in %d iterations",
+			MAX_DATA_OFF_ITER);
+		return -1;
 	}
 
-err:
+	mutex_lock(&c->replicas_gc_lock);
+	bch2_replicas_gc_start(c, 1 << BCH_DATA_USER);
+
+	for_each_btree_key(&iter, c, BTREE_ID_EXTENTS, POS_MIN, BTREE_ITER_PREFETCH, k) {
+		if (!bkey_extent_is_data(k.k))
+			continue;
+
+		ret = bch2_check_mark_super(c, bkey_s_c_to_extent(k),
+					    BCH_DATA_USER);
+		if (ret) {
+			bch_err(c, "error migrating data %i from check_mark_super()", ret);
+			break;
+		}
+	}
+
 	bch2_replicas_gc_end(c, ret);
 	mutex_unlock(&c->replicas_gc_lock);
 	return ret;
@@ -167,13 +121,10 @@ static int bch2_move_btree_off(struct bch_fs *c, struct bch_dev *ca,
 			       enum btree_id id)
 {
 	struct btree_iter iter;
-	struct closure cl;
 	struct btree *b;
 	int ret;
 
 	BUG_ON(ca->mi.state == BCH_MEMBER_STATE_RW);
-
-	closure_init_stack(&cl);
 
 	for_each_btree_node(&iter, c, id, POS_MIN, BTREE_ITER_PREFETCH, b) {
 		struct bkey_s_c_extent e = bkey_i_to_s_c_extent(&b->key);

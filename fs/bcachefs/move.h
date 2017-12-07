@@ -8,6 +8,8 @@ struct bch_read_bio;
 struct moving_context;
 
 struct migrate_write {
+	struct moving_context	*ctxt;
+
 	/* what we read: */
 	struct bch_extent_ptr	ptr;
 	u64			offset;
@@ -19,55 +21,14 @@ struct migrate_write {
 
 void bch2_migrate_write_init(struct migrate_write *, struct bch_read_bio *);
 
-struct moving_io {
-	struct list_head	list;
-	struct closure		cl;
-	struct moving_context	*ctxt;
-	bool			read_completed;
-	unsigned		sectors;
-
-	struct bch_read_bio	rbio;
-
-	struct migrate_write	write;
-	/* Must be last since it is variable size */
-	struct bio_vec		bi_inline_vecs[0];
-};
-
-int bch2_data_move(struct bch_fs *, struct moving_context *,
-		   struct bch_devs_mask *,
-		   struct write_point_specifier,
-		   int, int, struct bkey_s_c);
-
 #define SECTORS_IN_FLIGHT_PER_DEVICE	2048
 
-struct moving_context {
-	/* Closure for waiting on all reads and writes to complete */
-	struct closure		cl;
+typedef bool (*move_pred_fn)(void *, struct bkey_s_c_extent);
 
-	/* Key and sector moves issued, updated from submission context */
-	u64			keys_moved;
-	u64			sectors_moved;
-
-	/* Rate-limiter counting submitted reads */
-	struct bch_ratelimit	*rate;
-
-	/* Try to avoid reading the following device */
-	struct bch_devs_mask	avoid;
-
-	struct list_head	reads;
-
-	/* Configuration */
-	unsigned		max_sectors_in_flight;
-	atomic_t		sectors_in_flight;
-
-	wait_queue_head_t	wait;
-};
-
-int bch2_move_ctxt_wait(struct moving_context *);
-void bch2_move_ctxt_wait_for_io(struct moving_context *);
-
-void bch2_move_ctxt_exit(struct moving_context *);
-void bch2_move_ctxt_init(struct moving_context *, struct bch_ratelimit *,
-			unsigned);
+int bch2_move_data(struct bch_fs *, struct bch_ratelimit *,
+		   unsigned, struct bch_devs_mask *,
+		   struct write_point_specifier,
+		   int, int, move_pred_fn, void *,
+		   u64 *, u64 *);
 
 #endif /* _BCACHEFS_MOVE_H */
