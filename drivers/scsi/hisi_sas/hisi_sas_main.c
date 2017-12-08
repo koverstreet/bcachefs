@@ -1797,6 +1797,7 @@ int hisi_sas_alloc(struct hisi_hba *hisi_hba, struct Scsi_Host *shost)
 		cq->hisi_hba = hisi_hba;
 
 		/* Delivery queue structure */
+		spin_lock_init(&dq->lock);
 		dq->id = i;
 		dq->hisi_hba = hisi_hba;
 
