@@ -306,6 +306,47 @@ static inline void bch2_btree_node_iter_next_check(struct btree_node_iter *iter,
 
 /* Auxiliary search trees */
 
+#define BSET_NO_AUX_TREE_VAL	(U16_MAX)
+#define BSET_RW_AUX_TREE_VAL	(U16_MAX - 1)
+
+static inline enum bset_aux_tree_type bset_aux_tree_type(const struct bset_tree *t)
+{
+	switch (t->extra) {
+	case BSET_NO_AUX_TREE_VAL:
+		EBUG_ON(t->size);
+		return BSET_NO_AUX_TREE;
+	case BSET_RW_AUX_TREE_VAL:
+		EBUG_ON(!t->size);
+		return BSET_RW_AUX_TREE;
+	default:
+		EBUG_ON(!t->size);
+		return BSET_RO_AUX_TREE;
+	}
+}
+
+static inline bool bset_has_ro_aux_tree(struct bset_tree *t)
+{
+	return bset_aux_tree_type(t) == BSET_RO_AUX_TREE;
+}
+
+static inline bool bset_has_rw_aux_tree(struct bset_tree *t)
+{
+	return bset_aux_tree_type(t) == BSET_RW_AUX_TREE;
+}
+
+void bch2_bset_set_no_aux_tree(struct btree *b, struct bset_tree *t)
+{
+	BUG_ON(t < b->set);
+
+	for (; t < b->set + ARRAY_SIZE(b->set); t++) {
+		t->size = 0;
+		t->extra = BSET_NO_AUX_TREE_VAL;
+		t->aux_data_offset = U16_MAX;
+	}
+}
+
+/* RO auxiliary search trees */
+
 #define BFLOAT_FAILED_UNPACKED	(U8_MAX - 0)
 #define BFLOAT_FAILED_PREV	(U8_MAX - 1)
 #define BFLOAT_FAILED_OVERFLOW	(U8_MAX - 2)
@@ -581,12 +622,17 @@ static struct bkey_packed *tree_to_prev_bkey(const struct btree *b,
 	return (void *) (tree_to_bkey(b, t, j)->_data - prev_u64s);
 }
 
-static struct rw_aux_tree *rw_aux_tree(const struct btree *b,
-				       const struct bset_tree *t)
+static struct rw_aux_tree *rw_aux_tree_base(const struct btree *b,
+					    const struct bset_tree *t)
 {
-	EBUG_ON(bset_aux_tree_type(t) != BSET_RW_AUX_TREE);
-
-	return __aux_tree_base(b, t);
+	switch (bset_aux_tree_type(t)) {
+	case BSET_NO_AUX_TREE:
+		return NULL;
+	case BSET_RW_AUX_TREE:
+		return __aux_tree_base(b, t);
+	default:
+		BUG();
+	}
 }
 
 /*
@@ -594,51 +640,48 @@ static struct rw_aux_tree *rw_aux_tree(const struct btree *b,
  * maintain a full search tree, we just keep a simple lookup table in t->prev.
  */
 static struct bkey_packed *rw_aux_to_bkey(const struct btree *b,
-					  struct bset_tree *t,
+					  struct rw_aux_tree *table,
 					  unsigned j)
 {
-	return __btree_node_offset_to_key(b, rw_aux_tree(b, t)[j].offset);
+	return __btree_node_offset_to_key(b, table[j].offset);
 }
 
-static void rw_aux_tree_set(const struct btree *b, struct bset_tree *t,
-			    unsigned j, struct bkey_packed *k)
+static struct rw_aux_tree rw_aux_tree_entry(const struct btree *b,
+					    struct bkey_packed *k)
 {
-	EBUG_ON(k >= btree_bkey_last(b, t));
-
-	rw_aux_tree(b, t)[j] = (struct rw_aux_tree) {
+	return (struct rw_aux_tree) {
 		.offset	= __btree_node_key_to_offset(b, k),
 		.k	= bkey_unpack_pos(b, k),
 	};
 }
 
 static void bch2_bset_verify_rw_aux_tree(struct btree *b,
-					struct bset_tree *t)
+					 struct bset_tree *t)
 {
 	struct bkey_packed *k = btree_bkey_first(b, t);
+	struct rw_aux_tree *table;
 	unsigned j = 0;
 
 	if (!btree_keys_expensive_checks(b))
 		return;
 
-	BUG_ON(bset_has_ro_aux_tree(t));
-
-	if (!bset_has_rw_aux_tree(t))
+	table = rw_aux_tree_base(b, t);
+	if (!table)
 		return;
 
 	BUG_ON(t->size < 1);
-	BUG_ON(rw_aux_to_bkey(b, t, j) != k);
+	BUG_ON(rw_aux_to_bkey(b, table, j) != k);
 
 	goto start;
 	while (1) {
-		if (rw_aux_to_bkey(b, t, j) == k) {
-			BUG_ON(bkey_cmp(rw_aux_tree(b, t)[j].k,
+		if (rw_aux_to_bkey(b, table, j) == k) {
+			BUG_ON(bkey_cmp(table[j].k,
 					bkey_unpack_pos(b, k)));
 start:
 			if (++j == t->size)
 				break;
 
-			BUG_ON(rw_aux_tree(b, t)[j].offset <=
-			       rw_aux_tree(b, t)[j - 1].offset);
+			BUG_ON(table[j].offset <= table[j - 1].offset);
 		}
 
 		k = bkey_next(k);
@@ -651,24 +694,20 @@ static unsigned rw_aux_tree_bsearch(struct btree *b,
 				    struct bset_tree *t,
 				    unsigned offset)
 {
+	struct rw_aux_tree *table = rw_aux_tree_base(b, t);
 	unsigned l = 0, r = t->size;
-
-	EBUG_ON(bset_aux_tree_type(t) != BSET_RW_AUX_TREE);
 
 	while (l < r) {
 		unsigned m = (l + r) >> 1;
 
-		if (rw_aux_tree(b, t)[m].offset < offset)
+		if (table[m].offset < offset)
 			l = m + 1;
 		else
 			r = m;
 	}
 
-	EBUG_ON(l < t->size &&
-		rw_aux_tree(b, t)[l].offset < offset);
-	EBUG_ON(l &&
-		rw_aux_tree(b, t)[l - 1].offset >= offset);
-
+	EBUG_ON(l < t->size && table[l].offset < offset);
+	EBUG_ON(l && table[l - 1].offset >= offset);
 	EBUG_ON(l > r);
 	EBUG_ON(l > t->size);
 
@@ -879,12 +918,14 @@ static unsigned bset_rw_tree_capacity(struct btree *b, struct bset_tree *t)
 
 static void __build_rw_aux_tree(struct btree *b, struct bset_tree *t)
 {
+	struct rw_aux_tree *table;
 	struct bkey_packed *k;
 
 	t->size = 1;
 	t->extra = BSET_RW_AUX_TREE_VAL;
-	rw_aux_tree(b, t)[0].offset =
-		__btree_node_key_to_offset(b, btree_bkey_first(b, t));
+
+	table = rw_aux_tree_base(b, t);
+	table[0].offset = __btree_node_key_to_offset(b, btree_bkey_first(b, t));
 
 	for (k = btree_bkey_first(b, t);
 	     k != btree_bkey_last(b, t);
@@ -892,9 +933,9 @@ static void __build_rw_aux_tree(struct btree *b, struct bset_tree *t)
 		if (t->size == bset_rw_tree_capacity(b, t))
 			break;
 
-		if ((void *) k - (void *) rw_aux_to_bkey(b, t, t->size - 1) >
+		if ((void *) k - (void *) rw_aux_to_bkey(b, table, t->size - 1) >
 		    L1_CACHE_BYTES)
-			rw_aux_tree_set(b, t, t->size++, k);
+			table[t->size++] = rw_aux_tree_entry(b, k);
 	}
 }
 
@@ -1042,7 +1083,7 @@ static struct bkey_packed *__bkey_prev(struct btree *b, struct bset_tree *t,
 	case BSET_RW_AUX_TREE:
 		offset = __btree_node_key_to_offset(b, k);
 		j = rw_aux_tree_bsearch(b, t, offset);
-		p = j ? rw_aux_to_bkey(b, t, j - 1)
+		p = j ? rw_aux_to_bkey(b, rw_aux_tree_base(b, t), j - 1)
 		      : btree_bkey_first(b, t);
 		break;
 	}
@@ -1092,12 +1133,12 @@ static void rw_aux_tree_fix_invalidated_key(struct btree *b,
 					    struct bset_tree *t,
 					    struct bkey_packed *k)
 {
+	struct rw_aux_tree *table = rw_aux_tree_base(b, t);
 	unsigned offset = __btree_node_key_to_offset(b, k);
 	unsigned j = rw_aux_tree_bsearch(b, t, offset);
 
-	if (j < t->size &&
-	    rw_aux_tree(b, t)[j].offset == offset)
-		rw_aux_tree_set(b, t, j, k);
+	if (j < t->size && table[j].offset == offset)
+		table[j] = rw_aux_tree_entry(b, k);
 
 	bch2_bset_verify_rw_aux_tree(b, t);
 }
@@ -1182,61 +1223,60 @@ static void bch2_bset_fix_lookup_table(struct btree *b,
 {
 	int shift = new_u64s - clobber_u64s;
 	unsigned l, j, where = __btree_node_key_to_offset(b, _where);
+	struct rw_aux_tree *table = rw_aux_tree_base(b, t);
 
-	EBUG_ON(bset_has_ro_aux_tree(t));
-
-	if (!bset_has_rw_aux_tree(t))
+	if (!table)
 		return;
 
 	l = rw_aux_tree_bsearch(b, t, where);
 
 	/* l is first >= than @where */
 
-	EBUG_ON(l < t->size && rw_aux_tree(b, t)[l].offset < where);
-	EBUG_ON(l && rw_aux_tree(b, t)[l - 1].offset >= where);
+	EBUG_ON(l < t->size && table[l].offset < where);
+	EBUG_ON(l && table[l - 1].offset >= where);
 
 	if (!l) /* never delete first entry */
 		l++;
 	else if (l < t->size &&
 		 where < t->end_offset &&
-		 rw_aux_tree(b, t)[l].offset == where)
-		rw_aux_tree_set(b, t, l++, _where);
+		 table[l].offset == where)
+		table[l++] = rw_aux_tree_entry(b, _where);
 
 	/* l now > where */
 
 	for (j = l;
 	     j < t->size &&
-	     rw_aux_tree(b, t)[j].offset < where + clobber_u64s;
+	     table[j].offset < where + clobber_u64s;
 	     j++)
 		;
 
 	if (j < t->size &&
-	    rw_aux_tree(b, t)[j].offset + shift ==
-	    rw_aux_tree(b, t)[l - 1].offset)
+	    table[j].offset + shift ==
+	    table[l - 1].offset)
 		j++;
 
-	memmove(&rw_aux_tree(b, t)[l],
-		&rw_aux_tree(b, t)[j],
-		(void *) &rw_aux_tree(b, t)[t->size] -
-		(void *) &rw_aux_tree(b, t)[j]);
+	memmove(&table[l],
+		&table[j],
+		(void *) &table[t->size] -
+		(void *) &table[j]);
 	t->size -= j - l;
 
 	for (j = l; j < t->size; j++)
-	       rw_aux_tree(b, t)[j].offset += shift;
+	       table[j].offset += shift;
 
 	EBUG_ON(l < t->size &&
-		rw_aux_tree(b, t)[l].offset ==
-		rw_aux_tree(b, t)[l - 1].offset);
+		table[l].offset ==
+		table[l - 1].offset);
 
 	if (t->size < bset_rw_tree_capacity(b, t) &&
 	    (l < t->size
-	     ? rw_aux_tree(b, t)[l].offset
+	     ? table[l].offset
 	     : t->end_offset) -
-	    rw_aux_tree(b, t)[l - 1].offset >
+	    table[l - 1].offset >
 	    L1_CACHE_BYTES / sizeof(u64)) {
-		struct bkey_packed *start = rw_aux_to_bkey(b, t, l - 1);
+		struct bkey_packed *start = rw_aux_to_bkey(b, table, l - 1);
 		struct bkey_packed *end = l < t->size
-			? rw_aux_to_bkey(b, t, l)
+			? rw_aux_to_bkey(b, table, l)
 			: btree_bkey_last(b, t);
 		struct bkey_packed *k = start;
 
@@ -1246,12 +1286,12 @@ static void bch2_bset_fix_lookup_table(struct btree *b,
 				break;
 
 			if ((void *) k - (void *) start >= L1_CACHE_BYTES) {
-				memmove(&rw_aux_tree(b, t)[l + 1],
-					&rw_aux_tree(b, t)[l],
-					(void *) &rw_aux_tree(b, t)[t->size] -
-					(void *) &rw_aux_tree(b, t)[l]);
+				memmove(&table[l + 1],
+					&table[l],
+					(void *) &table[t->size] -
+					(void *) &table[l]);
 				t->size++;
-				rw_aux_tree_set(b, t, l, k);
+				table[l] = rw_aux_tree_entry(b, k);
 				break;
 			}
 		}
@@ -1328,18 +1368,19 @@ static struct bkey_packed *bset_search_write_set(const struct btree *b,
 				struct bpos search,
 				const struct bkey_packed *packed_search)
 {
+	struct rw_aux_tree *table = rw_aux_tree_base(b, t);
 	unsigned l = 0, r = t->size;
 
 	while (l + 1 != r) {
 		unsigned m = (l + r) >> 1;
 
-		if (bkey_cmp(rw_aux_tree(b, t)[m].k, search) < 0)
+		if (bkey_cmp(table[m].k, search) < 0)
 			l = m;
 		else
 			r = m;
 	}
 
-	return rw_aux_to_bkey(b, t, l);
+	return rw_aux_to_bkey(b, table, l);
 }
 
 noinline

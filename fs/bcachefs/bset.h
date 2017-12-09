@@ -168,24 +168,6 @@ enum bset_aux_tree_type {
 
 #define BSET_TREE_NR_TYPES	3
 
-#define BSET_NO_AUX_TREE_VAL	(U16_MAX)
-#define BSET_RW_AUX_TREE_VAL	(U16_MAX - 1)
-
-static inline enum bset_aux_tree_type bset_aux_tree_type(const struct bset_tree *t)
-{
-	switch (t->extra) {
-	case BSET_NO_AUX_TREE_VAL:
-		EBUG_ON(t->size);
-		return BSET_NO_AUX_TREE;
-	case BSET_RW_AUX_TREE_VAL:
-		EBUG_ON(!t->size);
-		return BSET_RW_AUX_TREE;
-	default:
-		EBUG_ON(!t->size);
-		return BSET_RO_AUX_TREE;
-	}
-}
-
 typedef void (*compiled_unpack_fn)(struct bkey *, const struct bkey_packed *);
 
 static inline void
@@ -289,44 +271,6 @@ static inline struct bkey_s __bkey_disassemble(struct btree *b,
 #define for_each_bset(_b, _t)					\
 	for (_t = (_b)->set; _t < (_b)->set + (_b)->nsets; _t++)
 
-static inline bool bset_has_ro_aux_tree(struct bset_tree *t)
-{
-	return bset_aux_tree_type(t) == BSET_RO_AUX_TREE;
-}
-
-static inline bool bset_has_rw_aux_tree(struct bset_tree *t)
-{
-	return bset_aux_tree_type(t) == BSET_RW_AUX_TREE;
-}
-
-static inline void bch2_bset_set_no_aux_tree(struct btree *b,
-					    struct bset_tree *t)
-{
-	BUG_ON(t < b->set);
-
-	for (; t < b->set + ARRAY_SIZE(b->set); t++) {
-		t->size = 0;
-		t->extra = BSET_NO_AUX_TREE_VAL;
-		t->aux_data_offset = U16_MAX;
-	}
-}
-
-static inline void btree_node_set_format(struct btree *b,
-					 struct bkey_format f)
-{
-	int len;
-
-	b->format	= f;
-	b->nr_key_bits	= bkey_format_key_bits(&f);
-
-	len = bch2_compile_bkey_format(&b->format, b->aux_data);
-	BUG_ON(len < 0 || len > U8_MAX);
-
-	b->unpack_fn_len = len;
-
-	bch2_bset_set_no_aux_tree(b, b->set);
-}
-
 static inline struct bset *bset_next_set(struct btree *b,
 					 unsigned block_bytes)
 {
@@ -344,9 +288,26 @@ void bch2_btree_keys_init(struct btree *, bool *);
 void bch2_bset_init_first(struct btree *, struct bset *);
 void bch2_bset_init_next(struct btree *, struct bset *);
 void bch2_bset_build_aux_tree(struct btree *, struct bset_tree *, bool);
-void bch2_bset_fix_invalidated_key(struct btree *, struct bset_tree *,
-				  struct bkey_packed *);
+void bch2_bset_set_no_aux_tree(struct btree *, struct bset_tree *);
 
+static inline void btree_node_set_format(struct btree *b,
+					 struct bkey_format f)
+{
+	int len;
+
+	b->format	= f;
+	b->nr_key_bits	= bkey_format_key_bits(&f);
+
+	len = bch2_compile_bkey_format(&b->format, b->aux_data);
+	BUG_ON(len < 0 || len > U8_MAX);
+
+	b->unpack_fn_len = len;
+
+	bch2_bset_set_no_aux_tree(b, b->set);
+}
+
+void bch2_bset_fix_invalidated_key(struct btree *, struct bset_tree *,
+				   struct bkey_packed *);
 void bch2_bset_insert(struct btree *, struct btree_node_iter *,
 		     struct bkey_packed *, struct bkey_i *, unsigned);
 void bch2_bset_delete(struct btree *, struct bkey_packed *, unsigned);
