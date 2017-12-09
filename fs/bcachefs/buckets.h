@@ -155,11 +155,18 @@ static inline struct fs_usage_sum __fs_usage_sum(struct bch_fs_usage stats)
 	return sum;
 }
 
+#define RESERVE_FACTOR	6
+
+static u64 reserve_factor(u64 r)
+{
+	return r + (round_up(r, (1 << RESERVE_FACTOR)) >> RESERVE_FACTOR);
+}
+
 static inline u64 __bch2_fs_sectors_used(struct bch_fs *c)
 {
 	struct fs_usage_sum sum = __fs_usage_sum(__bch2_fs_usage_read(c));
 
-	return sum.data + sum.reserved + (sum.reserved >> 7);
+	return sum.data + reserve_factor(sum.reserved);
 }
 
 static inline u64 bch2_fs_sectors_used(struct bch_fs *c)
@@ -206,8 +213,14 @@ void bch2_mark_key(struct bch_fs *, struct bkey_s_c, s64, bool,
 
 void bch2_recalc_sectors_available(struct bch_fs *);
 
-void bch2_disk_reservation_put(struct bch_fs *,
-			      struct disk_reservation *);
+void __bch2_disk_reservation_put(struct bch_fs *, struct disk_reservation *);
+
+static inline void bch2_disk_reservation_put(struct bch_fs *c,
+					     struct disk_reservation *res)
+{
+	if (res->sectors)
+		__bch2_disk_reservation_put(c, res);
+}
 
 #define BCH_DISK_RESERVATION_NOFAIL		(1 << 0)
 #define BCH_DISK_RESERVATION_METADATA		(1 << 1)
