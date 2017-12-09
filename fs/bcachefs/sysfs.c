@@ -161,6 +161,7 @@ read_attribute(meta_buckets);
 read_attribute(alloc_buckets);
 read_attribute(has_data);
 read_attribute(alloc_debug);
+write_attribute(wake_allocator);
 
 read_attribute(read_realloc_races);
 read_attribute(extent_migrate_done);
@@ -890,6 +891,9 @@ STORE(bch2_dev)
 		bch2_tiering_start(c);
 	}
 
+	if (attr == &sysfs_wake_allocator)
+		bch2_wake_allocator(ca);
+
 	return size;
 }
 SYSFS_OPS(bch2_dev);
@@ -933,6 +937,7 @@ struct attribute *bch2_dev_files[] = {
 
 	/* debug: */
 	&sysfs_alloc_debug,
+	&sysfs_wake_allocator,
 
 	sysfs_pd_controller_files(copy_gc),
 	NULL

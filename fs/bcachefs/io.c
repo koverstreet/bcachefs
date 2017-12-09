@@ -1169,7 +1169,8 @@ retry:
 
 	ret = bch2_btree_insert_at(c, NULL, NULL, NULL,
 				   BTREE_INSERT_ATOMIC|
-				   BTREE_INSERT_NOFAIL,
+				   BTREE_INSERT_NOFAIL|
+				   BTREE_INSERT_NOWAIT,
 				   BTREE_INSERT_ENTRY(&iter, &e->k_i));
 	if (ret == -EINTR)
 		goto retry;
