@@ -27,9 +27,8 @@ struct moving_io {
 
 	struct bch_read_bio	rbio;
 
+	/* Must be last: */
 	struct migrate_write	write;
-	/* Must be last since it is variable size */
-	struct bio_vec		bi_inline_vecs[0];
 };
 
 struct moving_context {
@@ -290,7 +289,7 @@ static void move_free(struct closure *cl)
 
 	wake_up(&ctxt->wait);
 
-	kfree(io);
+	bio_put(&io->write.op.wbio.bio);
 }
 
 static void move_write_done(struct closure *cl)
@@ -377,6 +376,7 @@ static int bch2_move_extent(struct bch_fs *c,
 {
 	struct extent_pick_ptr pick;
 	struct moving_io *io;
+	struct bio *bio;
 	const struct bch_extent_ptr *ptr;
 	struct bch_extent_crc_unpacked crc;
 	unsigned sectors = e.k->size, pages;
@@ -399,17 +399,20 @@ static int bch2_move_extent(struct bch_fs *c,
 		sectors = max_t(unsigned, sectors, crc.uncompressed_size);
 
 	pages = DIV_ROUND_UP(sectors, PAGE_SECTORS);
-	io = kzalloc(sizeof(struct moving_io) +
-		     sizeof(struct bio_vec) * pages, GFP_KERNEL);
-	if (!io)
-		goto err;
+
+	bio = bio_alloc_bioset(GFP_KERNEL, pages, &c->move_bio);
+	if (!bio) {
+		BUG();
+	}
+
+	io = container_of(bio, struct moving_io, write.op.wbio.bio);
+	memset(io, 0, offsetof(struct moving_io, write.op.wbio.bio));
 
 	io->write.ctxt		= ctxt;
 	io->read_dev		= pick.ca->dev_idx;
 	io->read_sectors	= pick.crc.uncompressed_size;
 	io->write_sectors	= e.k->size;
 
-	bio_init(&io->write.op.wbio.bio, io->bi_inline_vecs, pages);
 	bio_set_prio(&io->write.op.wbio.bio,
 		     IOPRIO_PRIO_VALUE(IOPRIO_CLASS_IDLE, 0));
 	io->write.op.wbio.bio.bi_iter.bi_size = sectors << 9;
@@ -419,7 +422,7 @@ static int bch2_move_extent(struct bch_fs *c,
 		goto err_free;
 
 	io->rbio.opts = io_opts;
-	bio_init(&io->rbio.bio, io->bi_inline_vecs, pages);
+	bio_init(&io->rbio.bio, bio->bi_inline_vecs, 0);
 	bio_set_prio(&io->rbio.bio, IOPRIO_PRIO_VALUE(IOPRIO_CLASS_IDLE, 0));
 	io->rbio.bio.bi_iter.bi_size = sectors << 9;
 
@@ -766,4 +769,16 @@ int bch2_data_job(struct bch_fs *c,
 	}
 
 	return ret;
+}
+
+void bch2_fs_move_exit(struct bch_fs *c)
+{
+	bioset_exit(&c->move_bio);
+}
+
+int bch2_fs_move_init(struct bch_fs *c)
+{
+	return bioset_init(&c->move_bio, 1,
+			offsetof(struct moving_io, write.op.wbio.bio),
+			BIOSET_NEED_BVECS);
 }

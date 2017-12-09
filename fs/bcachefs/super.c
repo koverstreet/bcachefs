@@ -407,6 +407,7 @@ static void bch2_fs_free(struct bch_fs *c)
 {
 	bch2_fs_quota_exit(c);
 	bch2_fs_fsio_exit(c);
+	bch2_fs_move_exit(c);
 	bch2_fs_encryption_exit(c);
 	bch2_fs_btree_cache_exit(c);
 	bch2_fs_journal_exit(&c->journal);
@@ -624,6 +625,7 @@ static struct bch_fs *bch2_fs_alloc(struct bch_sb *sb, struct bch_opts opts)
 	    bch2_fs_btree_cache_init(c) ||
 	    bch2_fs_encryption_init(c) ||
 	    bch2_fs_compress_init(c) ||
+	    bch2_fs_move_init(c) ||
 	    bch2_fs_fsio_init(c))
 		goto err;
 

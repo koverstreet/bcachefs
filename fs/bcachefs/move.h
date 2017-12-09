@@ -68,4 +68,7 @@ int bch2_data_job(struct bch_fs *,
 		  struct bch_move_stats *,
 		  struct bch_ioctl_data);
 
+void bch2_fs_move_exit(struct bch_fs *);
+int bch2_fs_move_init(struct bch_fs *);
+
 #endif /* _BCACHEFS_MOVE_H */
