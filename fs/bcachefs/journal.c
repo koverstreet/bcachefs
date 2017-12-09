@@ -1628,6 +1628,8 @@ err:
 	if (!ret)
 		bch2_dev_allocator_add(c, ca);
 
+	closure_sync(&cl);
+
 	return ret;
 }
 
