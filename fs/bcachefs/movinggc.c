@@ -124,6 +124,8 @@ static void bch2_copygc(struct bch_fs *c, struct bch_dev *ca)
 	u64 buckets_to_move, buckets_not_moved = 0;
 	size_t b;
 	int ret;
+	unsigned min_used = UINT_MAX;
+	u64 unused = 0, alloc = 0, nondata = 0, full = 0;
 
 	memset(&move_stats, 0, sizeof(move_stats));
 	closure_wait_event(&c->freelist_wait, have_copygc_reserve(ca));
@@ -148,11 +150,27 @@ static void bch2_copygc(struct bch_fs *c, struct bch_dev *ca)
 		struct bucket_mark m = READ_ONCE(buckets->b[b].mark);
 		struct copygc_heap_entry e;
 
-		if (m.owned_by_allocator ||
-		    m.data_type != BCH_DATA_USER ||
-		    !bucket_sectors_used(m) ||
-		    bucket_sectors_used(m) >= ca->mi.bucket_size)
+		if (bucket_unused(m)) {
+			unused++;
 			continue;
+		}
+
+		if (m.owned_by_allocator) {
+			alloc++;
+			continue;
+		}
+
+		if (m.data_type != BCH_DATA_USER) {
+			nondata++;
+			continue;
+		}
+
+		if (bucket_sectors_used(m) >= ca->mi.bucket_size) {
+			full++;
+			continue;
+		}
+
+		min_used = min(min_used, bucket_sectors_used(m));
 
 		e = (struct copygc_heap_entry) {
 			.offset = bucket_to_sector(ca, b),
@@ -172,6 +190,11 @@ static void bch2_copygc(struct bch_fs *c, struct bch_dev *ca)
 	}
 
 	buckets_to_move = h->used;
+
+	pr_debug("unused %llu alloc %llu nodata %llu full %llu min used %u/%u",
+		unused, alloc, nondata, full, min_used, ca->mi.bucket_size);
+	pr_debug("buckets to move %llu sectors to move %llu",
+		 buckets_to_move, sectors_to_move);
 
 	if (!buckets_to_move)
 		return;
@@ -198,6 +221,10 @@ static void bch2_copygc(struct bch_fs *c, struct bch_dev *ca)
 		}
 	}
 	up_read(&ca->bucket_lock);
+
+	pr_debug("%llu/%llu sectors, %llu/%llu buckets not moved",
+		 sectors_not_moved, sectors_to_move,
+		 buckets_not_moved, buckets_to_move);
 
 	if (sectors_not_moved && !ret)
 		bch_warn(c, "copygc finished but %llu/%llu sectors, %llu/%llu buckets not moved",

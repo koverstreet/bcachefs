@@ -1,6 +1,7 @@
 #ifndef NO_BCACHEFS_FS
 
 #include "bcachefs.h"
+#include "bset.h"
 #include "btree_update.h"
 #include "buckets.h"
 #include "clock.h"
@@ -2365,6 +2366,14 @@ err:
 err_put_pagecache:
 	pagecache_block_put(&mapping->add_lock);
 	inode_unlock(&inode->v);
+#if 0
+	BUG();
+	pr_info("falloc ret %i i_size %llu", ret, inode->v.i_size);
+
+	BUG_ON(bch2_check_range_allocated(c,
+				POS(inode->v.i_ino, 0),
+				inode->v.i_size >> 9));
+#endif
 	return ret;
 }
 

@@ -735,10 +735,43 @@ static ssize_t show_reserve_stats(struct bch_dev *ca, char *buf)
 
 static ssize_t show_dev_alloc_debug(struct bch_dev *ca, char *buf)
 {
+	char *out = buf, *end = buf + PAGE_SIZE;
 	struct bch_fs *c = ca->fs;
 	struct bch_dev_usage stats = bch2_dev_usage_read(c, ca);
+	struct bucket_array *buckets;
+	struct bucket *g;
 
-	return scnprintf(buf, PAGE_SIZE,
+	u64 sectors_cached = 0, nr_cached = 0;
+	u64 sectors[8], nr[8];
+	unsigned i;
+
+	memset(sectors, 0, sizeof(sectors));
+	memset(nr, 0, sizeof(nr));
+
+	down_read(&ca->bucket_lock);
+	buckets = bucket_array(ca);
+
+	for_each_bucket(g, buckets) {
+		sectors_cached += g->mark.cached_sectors;
+
+		if (g->mark.dirty_sectors ||
+		    g->mark.data_type) {
+			nr[g->mark.data_type]++;
+			sectors[g->mark.data_type] += g->mark.dirty_sectors;
+		}
+	}
+	up_read(&ca->bucket_lock);
+
+	for (i = 0; i < 8; i++)
+		out += scnprintf(out, end - out,
+				 "type %u: nr %8llu sectors %12llu\n",
+				 i, nr[i], sectors[i]);
+
+	out += scnprintf(out, end - out,
+			 "cached: nr %8llu sectors %12llu\n",
+			 nr_cached, sectors_cached);
+
+	out += scnprintf(out, end - out,
 		"free_inc:               %zu/%zu\n"
 		"free[RESERVE_BTREE]:    %zu/%zu\n"
 		"free[RESERVE_MOVINGGC]: %zu/%zu\n"
@@ -781,6 +814,7 @@ static ssize_t show_dev_alloc_debug(struct bch_dev *ca, char *buf)
 		c->freelist_wait.list.first		? "waiting" : "empty",
 		c->open_buckets_nr_free, OPEN_BUCKETS_COUNT, BTREE_NODE_RESERVE,
 		c->open_buckets_wait.list.first		? "waiting" : "empty");
+	return out - buf;
 }
 
 static const char * const bch2_rw[] = {

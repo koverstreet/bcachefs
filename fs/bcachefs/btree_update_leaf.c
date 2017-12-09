@@ -303,11 +303,19 @@ int __bch2_btree_insert_at(struct btree_insert *trans)
 	int ret;
 
 	trans_for_each_entry(trans, i) {
+		const char *invalid;
+		char buf[300];
+
 		BUG_ON(i->iter->level);
 		BUG_ON(bkey_cmp(bkey_start_pos(&i->k->k), i->iter->pos));
-		BUG_ON(debug_check_bkeys(c) &&
-		       bch2_bkey_invalid(c, i->iter->btree_id,
-					 bkey_i_to_s_c(i->k)));
+
+		if (debug_check_bkeys(c) &&
+		    (invalid = bch2_bkey_invalid(c, i->iter->btree_id,
+						 bkey_i_to_s_c(i->k)))) {
+			bch2_bkey_val_to_text(c, i->iter->btree_id,
+					      buf, sizeof(buf), bkey_i_to_s_c(i->k));
+			panic("invalid bkey %s\n%s\n", buf, invalid);
+		}
 	}
 
 	bubble_sort(trans->entries, trans->nr, btree_trans_cmp);

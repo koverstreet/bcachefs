@@ -568,6 +568,11 @@ next_nondata:
 
 	EBUG_ON(atomic_read(&ctxt.write_sectors));
 
+	pr_debug("keys %llu sectors %llu raced %llu",
+		 (u64) atomic64_read(&stats->keys_moved),
+		 (u64) atomic64_read(&stats->sectors_moved),
+		 (u64) atomic64_read(&stats->sectors_raced));
+
 	trace_move_data(c,
 			atomic64_read(&stats->sectors_moved),
 			atomic64_read(&stats->keys_moved));
