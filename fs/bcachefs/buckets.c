@@ -101,9 +101,27 @@ static void bch2_fs_stats_verify(struct bch_fs *c)
 		      stats.online_reserved);
 }
 
+static void bch2_disk_reservations_verify(struct bch_fs *c, int flags)
+{
+	if (!(flags & BCH_DISK_RESERVATION_NOFAIL)) {
+		u64 used = __bch2_fs_sectors_used(c);
+		u64 cached = 0;
+		u64 avail = atomic64_read(&c->sectors_available);
+		int cpu;
+
+		for_each_possible_cpu(cpu)
+			cached += per_cpu_ptr(c->usage_percpu, cpu)->available_cache;
+
+		if (used + avail + cached > c->capacity)
+			panic("used %llu avail %llu cached %llu capacity %llu\n",
+			      used, avail, cached, c->capacity);
+	}
+}
+
 #else
 
 static void bch2_fs_stats_verify(struct bch_fs *c) {}
+static void bch2_disk_reservations_verify(struct bch_fs *c, int flags) {}
 
 #endif
 
@@ -518,7 +536,7 @@ static void bch2_mark_pointer(struct bch_fs *c,
 	    (old.data_type ||
 	     old.cached_sectors ||
 	     old.dirty_sectors))
-		bch_err(ca->fs, "bucket %zu has multiple types of data (%u, %u)",
+		bch_err(c, "bucket %zu has multiple types of data (%u, %u)",
 			g - ca->buckets, old.data_type, new.data_type);
 
 	BUG_ON(!(flags & BCH_BUCKET_MARK_MAY_MAKE_UNAVAILABLE) &&
@@ -635,48 +653,46 @@ void bch2_mark_key(struct bch_fs *c, struct bkey_s_c k,
 
 static u64 __recalc_sectors_available(struct bch_fs *c)
 {
-	return c->capacity - bch2_fs_sectors_used(c);
+	u64 avail;
+	int cpu;
+
+	for_each_possible_cpu(cpu)
+		per_cpu_ptr(c->usage_percpu, cpu)->available_cache = 0;
+
+	avail = c->capacity - bch2_fs_sectors_used(c);
+
+	avail <<= RESERVE_FACTOR;
+	avail /= (1 << RESERVE_FACTOR) + 1;
+	return avail;
 }
 
 /* Used by gc when it's starting: */
 void bch2_recalc_sectors_available(struct bch_fs *c)
 {
-	int cpu;
-
 	lg_global_lock(&c->usage_lock);
-
-	for_each_possible_cpu(cpu)
-		per_cpu_ptr(c->usage_percpu, cpu)->available_cache = 0;
-
-	atomic64_set(&c->sectors_available,
-		     __recalc_sectors_available(c));
-
+	atomic64_set(&c->sectors_available, __recalc_sectors_available(c));
 	lg_global_unlock(&c->usage_lock);
 }
 
-void bch2_disk_reservation_put(struct bch_fs *c,
-			      struct disk_reservation *res)
+void __bch2_disk_reservation_put(struct bch_fs *c, struct disk_reservation *res)
 {
-	if (res->sectors) {
-		lg_local_lock(&c->usage_lock);
-		this_cpu_sub(c->usage_percpu->online_reserved,
-			     res->sectors);
+	lg_local_lock(&c->usage_lock);
+	this_cpu_sub(c->usage_percpu->online_reserved,
+		     res->sectors);
 
-		bch2_fs_stats_verify(c);
-		lg_local_unlock(&c->usage_lock);
+	bch2_fs_stats_verify(c);
+	lg_local_unlock(&c->usage_lock);
 
-		res->sectors = 0;
-	}
+	res->sectors = 0;
 }
 
 #define SECTORS_CACHE	1024
 
-int bch2_disk_reservation_add(struct bch_fs *c,
-			     struct disk_reservation *res,
-			     unsigned sectors, int flags)
+int bch2_disk_reservation_add(struct bch_fs *c, struct disk_reservation *res,
+			      unsigned sectors, int flags)
 {
 	struct bch_fs_usage *stats;
-	u64 old, new, v;
+	u64 old, v, get;
 	s64 sectors_available;
 	int ret;
 
@@ -685,27 +701,29 @@ int bch2_disk_reservation_add(struct bch_fs *c,
 	lg_local_lock(&c->usage_lock);
 	stats = this_cpu_ptr(c->usage_percpu);
 
-	if (sectors >= stats->available_cache)
+	if (sectors <= stats->available_cache)
 		goto out;
 
 	v = atomic64_read(&c->sectors_available);
 	do {
 		old = v;
-		if (old < sectors) {
+		get = min((u64) sectors + SECTORS_CACHE, old);
+
+		if (get < sectors) {
 			lg_local_unlock(&c->usage_lock);
 			goto recalculate;
 		}
-
-		new = max_t(s64, 0, old - sectors - SECTORS_CACHE);
 	} while ((v = atomic64_cmpxchg(&c->sectors_available,
-				       old, new)) != old);
+				       old, old - get)) != old);
 
-	stats->available_cache	+= old - new;
+	stats->available_cache	+= get;
+
 out:
 	stats->available_cache	-= sectors;
 	stats->online_reserved	+= sectors;
 	res->sectors		+= sectors;
 
+	bch2_disk_reservations_verify(c, flags);
 	bch2_fs_stats_verify(c);
 	lg_local_unlock(&c->usage_lock);
 	return 0;
@@ -738,6 +756,8 @@ recalculate:
 		stats->online_reserved	+= sectors;
 		res->sectors		+= sectors;
 		ret = 0;
+
+		bch2_disk_reservations_verify(c, flags);
 	} else {
 		atomic64_set(&c->sectors_available, sectors_available);
 		ret = -ENOSPC;
