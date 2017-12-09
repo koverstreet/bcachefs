@@ -1012,7 +1012,6 @@ enum rbio_context {
 	RBIO_CONTEXT_NULL,
 	RBIO_CONTEXT_HIGHPRI,
 	RBIO_CONTEXT_UNBOUND,
-	RBIO_CONTEXT_FS,
 };
 
 static inline struct bch_read_bio *
@@ -1110,7 +1109,7 @@ static void bch2_rbio_error(struct bch_read_bio *rbio, int retry, int error)
 		bch2_rbio_done(rbio);
 	} else {
 		bch2_rbio_punt(rbio, bch2_rbio_retry,
-			       RBIO_CONTEXT_FS, rbio->c->wq);
+			       RBIO_CONTEXT_UNBOUND, system_unbound_wq);
 	}
 }
 
@@ -1312,10 +1311,9 @@ static void bch2_read_endio(struct bio *bio)
 		return;
 	}
 
-	if (rbio->narrow_crcs)
-		context = RBIO_CONTEXT_FS,	wq = c->wq;
-	else if (rbio->pick.crc.compression_type ||
-		 bch2_csum_type_is_encryption(rbio->pick.crc.csum_type))
+	if (rbio->narrow_crcs ||
+	    rbio->pick.crc.compression_type ||
+	    bch2_csum_type_is_encryption(rbio->pick.crc.csum_type))
 		context = RBIO_CONTEXT_UNBOUND,	wq = system_unbound_wq;
 	else if (rbio->pick.crc.csum_type)
 		context = RBIO_CONTEXT_HIGHPRI,	wq = system_highpri_wq;
@@ -1449,7 +1447,7 @@ noclone:
 	} else {
 		submit_bio_wait(&rbio->bio);
 
-		rbio->context = RBIO_CONTEXT_FS;
+		rbio->context = RBIO_CONTEXT_UNBOUND;
 		bch2_read_endio(&rbio->bio);
 
 		ret = rbio->retry;
