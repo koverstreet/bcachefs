@@ -1707,12 +1707,9 @@ static bool bch2_dev_has_open_write_point(struct bch_fs *c, struct bch_dev *ca)
 /* device goes ro: */
 void bch2_dev_allocator_remove(struct bch_fs *c, struct bch_dev *ca)
 {
-	struct closure cl;
 	unsigned i;
 
 	BUG_ON(ca->alloc_thread);
-
-	closure_init_stack(&cl);
 
 	/* First, remove device from allocation groups: */
 
@@ -1756,16 +1753,8 @@ void bch2_dev_allocator_remove(struct bch_fs *c, struct bch_dev *ca)
 
 	/* Now wait for any in flight writes: */
 
-	while (1) {
-		closure_wait(&c->open_buckets_wait, &cl);
-
-		if (!bch2_dev_has_open_write_point(c, ca)) {
-			closure_wake_up(&c->open_buckets_wait);
-			break;
-		}
-
-		closure_sync(&cl);
-	}
+	closure_wait_event(&c->open_buckets_wait,
+			   !bch2_dev_has_open_write_point(c, ca));
 }
 
 /* device goes rw: */

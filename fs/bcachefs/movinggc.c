@@ -184,22 +184,8 @@ static void bch2_moving_gc(struct bch_dev *ca)
 	u64 sectors_to_move = 0;
 	size_t buckets_to_move, buckets_unused = 0;
 	struct bucket_heap_entry e, *i;
-	int reserve_sectors;
 
-	if (!have_copygc_reserve(ca)) {
-		struct closure cl;
-
-		closure_init_stack(&cl);
-		while (1) {
-			closure_wait(&c->freelist_wait, &cl);
-			if (have_copygc_reserve(ca))
-				break;
-			closure_sync(&cl);
-		}
-		closure_wake_up(&c->freelist_wait);
-	}
-
-	reserve_sectors = COPYGC_SECTORS_PER_ITER(ca);
+	closure_wait_event(&c->freelist_wait, have_copygc_reserve(ca));
 
 	trace_moving_gc_start(ca);
 
