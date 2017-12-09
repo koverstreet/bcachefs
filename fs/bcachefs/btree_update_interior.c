@@ -1520,6 +1520,7 @@ int bch2_btree_split_leaf(struct bch_fs *c, struct btree_iter *iter,
 	bch2_btree_iter_set_locks_want(iter, 1);
 out:
 	up_read(&c->gc_lock);
+	closure_sync(&cl);
 	return ret;
 }
 
@@ -1929,6 +1930,7 @@ out:
 	}
 	bch2_btree_iter_unlock(&iter);
 	up_read(&c->gc_lock);
+	closure_sync(&cl);
 	return ret;
 err:
 	if (as)
@@ -1966,13 +1968,13 @@ int bch2_btree_root_alloc(struct bch_fs *c, enum btree_id id,
 					     BTREE_INSERT_USE_RESERVE|
 					     BTREE_INSERT_USE_ALLOC_RESERVE,
 					     &cl);
+		closure_sync(&cl);
+
 		if (!IS_ERR(as))
 			break;
 
 		if (PTR_ERR(as) == -ENOSPC)
 			return PTR_ERR(as);
-
-		closure_sync(&cl);
 	}
 
 	b = __btree_root_alloc(as, 0);
