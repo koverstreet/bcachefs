@@ -1255,11 +1255,7 @@ static void bch2_bset_fix_lookup_table(struct btree *b,
 	    table[l - 1].offset)
 		j++;
 
-	memmove(&table[l],
-		&table[j],
-		(void *) &table[t->size] -
-		(void *) &table[j]);
-	t->size -= j - l;
+	array_remove_items(table, t->size, l, j - l);
 
 	for (j = l; j < t->size; j++)
 	       table[j].offset += shift;
@@ -1286,12 +1282,8 @@ static void bch2_bset_fix_lookup_table(struct btree *b,
 				break;
 
 			if ((void *) k - (void *) start >= L1_CACHE_BYTES) {
-				memmove(&table[l + 1],
-					&table[l],
-					(void *) &table[t->size] -
-					(void *) &table[l]);
-				t->size++;
-				table[l] = rw_aux_tree_entry(b, k);
+				array_insert_item(table, t->size,
+						  l, rw_aux_tree_entry(b, k));
 				break;
 			}
 		}
