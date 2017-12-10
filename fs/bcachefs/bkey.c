@@ -4,6 +4,14 @@
 #include "bset.h"
 #include "util.h"
 
+#undef EBUG_ON
+
+#ifdef DEBUG_BKEYS
+#define EBUG_ON(cond)		BUG_ON(cond)
+#else
+#define EBUG_ON(cond)
+#endif
+
 const struct bkey_format bch2_bkey_format_current = BKEY_FORMAT_CURRENT;
 
 struct bkey __bch2_bkey_unpack_key(const struct bkey_format *,
