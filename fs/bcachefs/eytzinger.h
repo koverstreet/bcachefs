@@ -271,17 +271,6 @@ static inline size_t eytzinger0_find(void *base, size_t nr, size_t size,
 	       (res = cmp(search, base + i * size, size)))
 		i = eytzinger0_child(i, res > 0);
 
-	if (IS_ENABLED(CONFIG_BCACHEFS_DEBUG)) {
-		bool found1 = i < nr, found2 = false;
-		size_t j;
-
-		for (j = 0; j < nr; j++)
-			if (!cmp(base + j * size, search, size))
-				found2 = true;
-
-		BUG_ON(found1 != found2);
-	}
-
 	return i;
 }
 
