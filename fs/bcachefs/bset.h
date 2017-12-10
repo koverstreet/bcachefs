@@ -146,6 +146,17 @@
  * first key in that range of bytes again.
  */
 
+extern bool bch2_expensive_debug_checks;
+
+static inline bool btree_keys_expensive_checks(const struct btree *b)
+{
+#ifdef CONFIG_BCACHEFS_DEBUG
+	return bch2_expensive_debug_checks || *b->expensive_debug_checks;
+#else
+	return false;
+#endif
+}
+
 struct btree_node_iter;
 struct btree_node_iter_set;
 
@@ -188,7 +199,7 @@ bkey_unpack_key_format_checked(const struct btree *b,
 		compiled_unpack_fn unpack_fn = b->aux_data;
 		unpack_fn(&dst, src);
 
-		if (IS_ENABLED(CONFIG_BCACHEFS_DEBUG)) {
+		if (btree_keys_expensive_checks(b)) {
 			struct bkey dst2 = __bch2_bkey_unpack_key(&b->format, src);
 
 			/*
@@ -259,17 +270,6 @@ static inline struct bkey_s __bkey_disassemble(struct btree *b,
 
 #define for_each_bset(_b, _t)					\
 	for (_t = (_b)->set; _t < (_b)->set + (_b)->nsets; _t++)
-
-extern bool bch2_expensive_debug_checks;
-
-static inline bool btree_keys_expensive_checks(struct btree *b)
-{
-#ifdef CONFIG_BCACHEFS_DEBUG
-	return bch2_expensive_debug_checks || *b->expensive_debug_checks;
-#else
-	return false;
-#endif
-}
 
 static inline bool bset_has_ro_aux_tree(struct bset_tree *t)
 {
