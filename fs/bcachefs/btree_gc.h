@@ -13,7 +13,7 @@ int bch2_initial_gc(struct bch_fs *, struct list_head *);
 u8 bch2_btree_key_recalc_oldest_gen(struct bch_fs *, struct bkey_s_c);
 int bch2_btree_mark_key_initial(struct bch_fs *, enum bkey_type,
 				struct bkey_s_c);
-void bch2_mark_dev_metadata(struct bch_fs *, struct bch_dev *);
+void bch2_mark_dev_superblock(struct bch_fs *, struct bch_dev *, unsigned);
 
 /*
  * For concurrent mark and sweep (with other index updates), we define a total
@@ -85,6 +85,14 @@ static inline struct gc_pos gc_pos_btree_root(enum btree_id id)
 		.phase	= (int) id,
 		.pos	= POS_MAX,
 		.level	= U8_MAX,
+	};
+}
+
+static inline struct gc_pos gc_pos_alloc(struct bch_fs *c, struct open_bucket *ob)
+{
+	return (struct gc_pos) {
+		.phase	= GC_PHASE_ALLOC,
+		.pos	= POS(ob ? ob - c->open_buckets : 0, 0),
 	};
 }
 

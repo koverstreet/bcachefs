@@ -261,7 +261,7 @@ static int bch2_moving_gc_thread(void *arg)
 		 * don't start copygc until less than half the gc reserve is
 		 * available:
 		 */
-		available = dev_buckets_available(ca);
+		available = dev_buckets_available(c, ca);
 		want = div64_u64((ca->mi.nbuckets - ca->mi.first_bucket) *
 				 c->opts.gc_reserve_percent, 200);
 		if (available > want) {
