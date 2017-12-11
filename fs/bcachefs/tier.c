@@ -153,7 +153,7 @@ static int bch2_tiering_thread(void *arg)
 							ca->mi.first_bucket);
 					available_sectors +=
 						bucket_to_sector(ca,
-							dev_buckets_available(ca));
+							dev_buckets_available(c, ca));
 				}
 				rcu_read_unlock();
 			}

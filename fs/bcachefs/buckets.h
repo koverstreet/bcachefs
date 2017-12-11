@@ -95,37 +95,39 @@ static inline bool bucket_unused(struct bucket_mark mark)
 /* Per device stats: */
 
 struct bch_dev_usage __bch2_dev_usage_read(struct bch_dev *);
-struct bch_dev_usage bch2_dev_usage_read(struct bch_dev *);
+struct bch_dev_usage bch2_dev_usage_read(struct bch_fs *, struct bch_dev *);
 
 static inline u64 __dev_buckets_available(struct bch_dev *ca,
 					  struct bch_dev_usage stats)
 {
-	return max_t(s64, 0,
-		     ca->mi.nbuckets - ca->mi.first_bucket -
-		     stats.buckets[S_META] -
-		     stats.buckets[S_DIRTY] -
-		     stats.buckets_alloc);
+	u64 total = ca->mi.nbuckets - ca->mi.first_bucket;
+
+	if (WARN_ONCE(stats.buckets_unavailable > total,
+		      "buckets_unavailable overflow\n"))
+		return 0;
+
+	return total - stats.buckets_unavailable;
 }
 
 /*
  * Number of reclaimable buckets - only for use by the allocator thread:
  */
-static inline u64 dev_buckets_available(struct bch_dev *ca)
+static inline u64 dev_buckets_available(struct bch_fs *c, struct bch_dev *ca)
 {
-	return __dev_buckets_available(ca, bch2_dev_usage_read(ca));
+	return __dev_buckets_available(ca, bch2_dev_usage_read(c, ca));
 }
 
 static inline u64 __dev_buckets_free(struct bch_dev *ca,
-				       struct bch_dev_usage stats)
+				     struct bch_dev_usage stats)
 {
 	return __dev_buckets_available(ca, stats) +
 		fifo_used(&ca->free[RESERVE_NONE]) +
 		fifo_used(&ca->free_inc);
 }
 
-static inline u64 dev_buckets_free(struct bch_dev *ca)
+static inline u64 dev_buckets_free(struct bch_fs *c, struct bch_dev *ca)
 {
-	return __dev_buckets_free(ca, bch2_dev_usage_read(ca));
+	return __dev_buckets_free(ca, bch2_dev_usage_read(c, ca));
 }
 
 /* Cache set stats: */
@@ -133,7 +135,7 @@ static inline u64 dev_buckets_free(struct bch_dev *ca)
 struct bch_fs_usage __bch2_fs_usage_read(struct bch_fs *);
 struct bch_fs_usage bch2_fs_usage_read(struct bch_fs *);
 void bch2_fs_usage_apply(struct bch_fs *, struct bch_fs_usage *,
-			struct disk_reservation *, struct gc_pos);
+			 struct disk_reservation *, struct gc_pos);
 
 struct fs_usage_sum {
 	u64	data;
@@ -191,25 +193,24 @@ static inline bool bucket_needs_journal_commit(struct bucket_mark m,
 
 void bch2_bucket_seq_cleanup(struct bch_fs *);
 
-bool bch2_invalidate_bucket(struct bch_dev *, struct bucket *,
-			    struct bucket_mark *);
-bool bch2_mark_alloc_bucket_startup(struct bch_dev *, struct bucket *);
-void bch2_mark_free_bucket(struct bch_dev *, struct bucket *);
-void bch2_mark_alloc_bucket(struct bch_dev *, struct bucket *, bool);
-void bch2_mark_metadata_bucket(struct bch_dev *, struct bucket *,
-			       enum bucket_data_type, bool);
+bool bch2_invalidate_bucket(struct bch_fs *, struct bch_dev *,
+			    struct bucket *, struct bucket_mark *);
+bool bch2_mark_alloc_bucket_startup(struct bch_fs *, struct bch_dev *,
+				    struct bucket *);
+void bch2_mark_alloc_bucket(struct bch_fs *, struct bch_dev *,
+			    struct bucket *, bool,
+			    struct gc_pos, unsigned);
+void bch2_mark_metadata_bucket(struct bch_fs *, struct bch_dev *,
+			       struct bucket *, enum bucket_data_type,
+			       struct gc_pos, unsigned);
 
 #define BCH_BUCKET_MARK_NOATOMIC		(1 << 0)
-#define BCH_BUCKET_MARK_GC_WILL_VISIT		(1 << 1)
-#define BCH_BUCKET_MARK_MAY_MAKE_UNAVAILABLE	(1 << 2)
+#define BCH_BUCKET_MARK_MAY_MAKE_UNAVAILABLE	(1 << 1)
+#define BCH_BUCKET_MARK_GC_WILL_VISIT		(1 << 2)
+#define BCH_BUCKET_MARK_GC_LOCK_HELD		(1 << 3)
 
-void __bch2_mark_key(struct bch_fs *, struct bkey_s_c, s64, bool,
-		     struct bch_fs_usage *, u64, unsigned);
-
-void bch2_gc_mark_key(struct bch_fs *, struct bkey_s_c,
-		      s64, bool, unsigned);
-void bch2_mark_key(struct bch_fs *, struct bkey_s_c, s64, bool,
-		  struct gc_pos, struct bch_fs_usage *, u64);
+void bch2_mark_key(struct bch_fs *, struct bkey_s_c, s64, bool, struct gc_pos,
+		   struct bch_fs_usage *, u64, unsigned);
 
 void bch2_recalc_sectors_available(struct bch_fs *);
 

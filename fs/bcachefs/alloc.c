@@ -56,6 +56,7 @@
 #include "bcachefs.h"
 #include "alloc.h"
 #include "btree_update.h"
+#include "btree_gc.h"
 #include "buckets.h"
 #include "checksum.h"
 #include "clock.h"
@@ -103,7 +104,7 @@ static void pd_controllers_update(struct work_struct *work)
 				-1);
 
 		for_each_member_device_rcu(ca, c, iter, &c->tiers[i].devs) {
-			struct bch_dev_usage stats = bch2_dev_usage_read(ca);
+			struct bch_dev_usage stats = bch2_dev_usage_read(c, ca);
 
 			u64 size = bucket_to_sector(ca, ca->mi.nbuckets -
 					ca->mi.first_bucket) << 9;
@@ -427,7 +428,7 @@ static int wait_buckets_available(struct bch_fs *c, struct bch_dev *ca)
 		if (gc_count != c->gc_count)
 			ca->inc_gen_really_needs_gc = 0;
 
-		if ((ssize_t) (dev_buckets_available(ca) -
+		if ((ssize_t) (dev_buckets_available(c, ca) -
 			       ca->inc_gen_really_needs_gc) >=
 		    (ssize_t) fifo_free(&ca->free_inc))
 			break;
@@ -585,7 +586,7 @@ static void bch2_invalidate_one_bucket(struct bch_fs *c, struct bch_dev *ca,
 	struct bucket_mark m;
 
 	spin_lock(&c->freelist_lock);
-	if (!bch2_invalidate_bucket(ca, g, &m)) {
+	if (!bch2_invalidate_bucket(c, ca, g, &m)) {
 		spin_unlock(&c->freelist_lock);
 		return;
 	}
@@ -977,7 +978,8 @@ void __bch2_open_bucket_put(struct bch_fs *c, struct open_bucket *ob)
 	struct bch_dev *ca = c->devs[ob->ptr.dev];
 
 	spin_lock(&ob->lock);
-	bch2_mark_alloc_bucket(ca, PTR_BUCKET(ca, &ob->ptr), false);
+	bch2_mark_alloc_bucket(c, ca, PTR_BUCKET(ca, &ob->ptr), false,
+			       gc_pos_alloc(c, ob), 0);
 	ob->valid = false;
 	spin_unlock(&ob->lock);
 
@@ -1033,7 +1035,7 @@ static long bch2_bucket_alloc_startup(struct bch_fs *c, struct bch_dev *ca)
 	for_each_bucket(g, ca)
 		if (!g->mark.touched_this_mount &&
 		    is_available_bucket(g->mark) &&
-		    bch2_mark_alloc_bucket_startup(ca, g)) {
+		    bch2_mark_alloc_bucket_startup(c, ca, g)) {
 			r = g - ca->buckets;
 			set_bit(r, ca->bucket_dirty);
 			break;
@@ -1222,7 +1224,7 @@ static enum bucket_alloc_ret __bch2_bucket_alloc_set(struct bch_fs *c,
 		BUG_ON(wp->nr_ptrs >= ARRAY_SIZE(wp->ptrs));
 		wp->ptrs[wp->nr_ptrs++] = c->open_buckets + ob;
 
-		buckets_free = U64_MAX, dev_buckets_free(ca);
+		buckets_free = U64_MAX, dev_buckets_free(c, ca);
 		if (buckets_free)
 			wp->next_alloc[ca->dev_idx] +=
 				div64_u64(U64_MAX, buckets_free *

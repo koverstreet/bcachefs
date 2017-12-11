@@ -1213,10 +1213,7 @@ static int __bch2_dev_online(struct bch_fs *c, struct bch_sb_handle *sb)
 	if (bch2_dev_sysfs_online(ca))
 		pr_warn("error creating sysfs objects");
 
-	lg_local_lock(&c->usage_lock);
-	if (!gc_will_visit(c, gc_phase(GC_PHASE_SB_METADATA)))
-		bch2_mark_dev_metadata(c, ca);
-	lg_local_unlock(&c->usage_lock);
+	bch2_mark_dev_superblock(c, ca, 0);
 
 	if (ca->mi.state == BCH_MEMBER_STATE_RW)
 		bch2_dev_allocator_add(c, ca);
