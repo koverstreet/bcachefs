@@ -385,8 +385,8 @@ STORE(__bch2_fs)
 			?: (ssize_t) size;
 
 		for_each_member_device(ca, c, i)
-			if (ca->moving_gc_read)
-				wake_up_process(ca->moving_gc_read);
+			if (ca->copygc_thread)
+				wake_up_process(ca->copygc_thread);
 		return ret;
 	}
 
@@ -801,7 +801,7 @@ SHOW(bch2_dev)
 		return out - buf;
 	}
 
-	sysfs_pd_controller_show(copy_gc, &ca->moving_gc_pd);
+	sysfs_pd_controller_show(copy_gc, &ca->copygc_pd);
 
 	if (attr == &sysfs_cache_replacement_policy) {
 		out += bch2_scnprint_string_list(out, end - out,
@@ -845,7 +845,7 @@ STORE(bch2_dev)
 	struct bch_fs *c = ca->fs;
 	struct bch_member *mi;
 
-	sysfs_pd_controller_store(copy_gc, &ca->moving_gc_pd);
+	sysfs_pd_controller_store(copy_gc, &ca->copygc_pd);
 
 	if (attr == &sysfs_discard) {
 		bool v = strtoul_or_return(buf);

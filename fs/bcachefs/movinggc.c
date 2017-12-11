@@ -24,7 +24,28 @@
 #include <linux/sort.h>
 #include <linux/wait.h>
 
-/* Moving GC - IO loop */
+/*
+ * We can't use the entire copygc reserve in one iteration of copygc: we may
+ * need the buckets we're freeing up to go back into the copygc reserve to make
+ * forward progress, but if the copygc reserve is full they'll be available for
+ * any allocation - and it's possible that in a given iteration, we free up most
+ * of the buckets we're going to free before we allocate most of the buckets
+ * we're going to allocate.
+ *
+ * If we only use half of the reserve per iteration, then in steady state we'll
+ * always have room in the reserve for the buckets we're going to need in the
+ * next iteration:
+ */
+#define COPYGC_BUCKETS_PER_ITER(ca)					\
+	((ca)->free[RESERVE_MOVINGGC].size / 2)
+
+/*
+ * Max sectors to move per iteration: Have to take into account internal
+ * fragmentation from the multiple write points for each generation:
+ */
+#define COPYGC_SECTORS_PER_ITER(ca)					\
+	((ca)->mi.bucket_size *	COPYGC_BUCKETS_PER_ITER(ca))
+
 
 static int bucket_idx_cmp(const void *_l, const void *_r, size_t size)
 {
@@ -96,8 +117,8 @@ static void read_moving(struct bch_dev *ca, size_t buckets_to_move,
 	size_t buckets_not_moved = 0;
 	struct bucket_heap_entry *i;
 
-	bch2_ratelimit_reset(&ca->moving_gc_pd.rate);
-	bch2_move_ctxt_init(&ctxt, &ca->moving_gc_pd.rate,
+	bch2_ratelimit_reset(&ca->copygc_pd.rate);
+	bch2_move_ctxt_init(&ctxt, &ca->copygc_pd.rate,
 				SECTORS_IN_FLIGHT_PER_DEVICE);
 	bch2_btree_iter_init(&iter, c, BTREE_ID_EXTENTS, POS_MIN,
 			     BTREE_ITER_PREFETCH);
@@ -178,9 +199,8 @@ static inline int sectors_used_cmp(bucket_heap *heap,
 	return bucket_sectors_used(l.mark) - bucket_sectors_used(r.mark);
 }
 
-static void bch2_moving_gc(struct bch_dev *ca)
+static void bch2_copygc(struct bch_fs *c, struct bch_dev *ca)
 {
-	struct bch_fs *c = ca->fs;
 	struct bucket *g;
 	u64 sectors_to_move = 0;
 	size_t buckets_to_move, buckets_unused = 0;
@@ -243,7 +263,7 @@ static void bch2_moving_gc(struct bch_dev *ca)
 	read_moving(ca, buckets_to_move, sectors_to_move);
 }
 
-static int bch2_moving_gc_thread(void *arg)
+static int bch2_copygc_thread(void *arg)
 {
 	struct bch_dev *ca = arg;
 	struct bch_fs *c = ca->fs;
@@ -272,46 +292,46 @@ static int bch2_moving_gc_thread(void *arg)
 			continue;
 		}
 
-		bch2_moving_gc(ca);
+		bch2_copygc(c, ca);
 	}
 
 	return 0;
 }
 
-void bch2_moving_gc_stop(struct bch_dev *ca)
+void bch2_copygc_stop(struct bch_dev *ca)
 {
-	ca->moving_gc_pd.rate.rate = UINT_MAX;
-	bch2_ratelimit_reset(&ca->moving_gc_pd.rate);
+	ca->copygc_pd.rate.rate = UINT_MAX;
+	bch2_ratelimit_reset(&ca->copygc_pd.rate);
 
-	if (ca->moving_gc_read)
-		kthread_stop(ca->moving_gc_read);
-	ca->moving_gc_read = NULL;
+	if (ca->copygc_thread)
+		kthread_stop(ca->copygc_thread);
+	ca->copygc_thread = NULL;
 }
 
-int bch2_moving_gc_start(struct bch_dev *ca)
+int bch2_copygc_start(struct bch_fs *c, struct bch_dev *ca)
 {
 	struct task_struct *t;
 
-	BUG_ON(ca->moving_gc_read);
+	BUG_ON(ca->copygc_thread);
 
-	if (ca->fs->opts.nochanges)
+	if (c->opts.nochanges)
 		return 0;
 
-	if (bch2_fs_init_fault("moving_gc_start"))
+	if (bch2_fs_init_fault("copygc_start"))
 		return -ENOMEM;
 
-	t = kthread_create(bch2_moving_gc_thread, ca, "bch_copygc_read");
+	t = kthread_create(bch2_copygc_thread, ca, "bch_copygc");
 	if (IS_ERR(t))
 		return PTR_ERR(t);
 
-	ca->moving_gc_read = t;
-	wake_up_process(ca->moving_gc_read);
+	ca->copygc_thread = t;
+	wake_up_process(ca->copygc_thread);
 
 	return 0;
 }
 
-void bch2_dev_moving_gc_init(struct bch_dev *ca)
+void bch2_dev_copygc_init(struct bch_dev *ca)
 {
-	bch2_pd_controller_init(&ca->moving_gc_pd);
-	ca->moving_gc_pd.d_term = 0;
+	bch2_pd_controller_init(&ca->copygc_pd);
+	ca->copygc_pd.d_term = 0;
 }

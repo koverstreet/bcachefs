@@ -204,7 +204,7 @@ static void __bch2_fs_read_only(struct bch_fs *c)
 	bch2_tiering_stop(c);
 
 	for_each_member_device(ca, c, i)
-		bch2_moving_gc_stop(ca);
+		bch2_copygc_stop(ca);
 
 	bch2_gc_thread_stop(c);
 
@@ -339,9 +339,9 @@ const char *bch2_fs_read_write(struct bch_fs *c)
 	if (bch2_gc_thread_start(c))
 		goto err;
 
-	err = "error starting moving GC thread";
+	err = "error starting copygc thread";
 	for_each_rw_member(ca, c, i)
-		if (bch2_moving_gc_start(ca)) {
+		if (bch2_copygc_start(c, ca)) {
 			percpu_ref_put(&ca->io_ref);
 			goto err;
 		}
@@ -1095,7 +1095,7 @@ static int bch2_dev_alloc(struct bch_fs *c, unsigned dev_idx)
 	writepoint_init(&ca->copygc_write_point, BCH_DATA_USER);
 
 	spin_lock_init(&ca->freelist_lock);
-	bch2_dev_moving_gc_init(ca);
+	bch2_dev_copygc_init(ca);
 
 	INIT_WORK(&ca->io_error_work, bch2_io_error_work);
 
@@ -1310,7 +1310,7 @@ static bool bch2_fs_may_start(struct bch_fs *c)
 
 static void __bch2_dev_read_only(struct bch_fs *c, struct bch_dev *ca)
 {
-	bch2_moving_gc_stop(ca);
+	bch2_copygc_stop(ca);
 
 	/*
 	 * This stops new data writes (e.g. to existing open data
@@ -1333,8 +1333,8 @@ static const char *__bch2_dev_read_write(struct bch_fs *c, struct bch_dev *ca)
 	if (bch2_dev_allocator_start(ca))
 		return "error starting allocator thread";
 
-	if (bch2_moving_gc_start(ca))
-		return "error starting moving GC thread";
+	if (bch2_copygc_start(c, ca))
+		return "error starting copygc thread";
 
 	if (bch2_tiering_start(c))
 		return "error starting tiering thread";
