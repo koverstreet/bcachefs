@@ -487,7 +487,8 @@ static enum prep_encoded_ret {
 	if (op->crc.uncompressed_size == op->crc.live_size &&
 	    op->crc.compressed_size <= wp->sectors_free &&
 	    op->crc.compression_type == op->compression_type) {
-		if (op->csum_type != op->crc.csum_type &&
+		if (!op->crc.compression_type &&
+		    op->csum_type != op->crc.csum_type &&
 		    bch2_write_rechecksum(c, op, op->csum_type))
 			return PREP_ENCODED_CHECKSUM_ERR;
 
