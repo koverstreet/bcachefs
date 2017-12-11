@@ -662,3 +662,37 @@ void *mempool_alloc_vp(gfp_t gfp_mask, void *pool_data)
 
 	return vpmalloc(size, gfp_mask);
 }
+
+#if 0
+void eytzinger1_test(void)
+{
+	unsigned inorder, eytz, size;
+
+	pr_info("1 based eytzinger test:");
+
+	for (size = 2;
+	     size < 65536;
+	     size++) {
+		unsigned extra = eytzinger1_extra(size);
+
+		if (!(size % 4096))
+			pr_info("tree size %u", size);
+
+		BUG_ON(eytzinger1_prev(0, size) != eytzinger1_last(size));
+		BUG_ON(eytzinger1_next(0, size) != eytzinger1_first(size));
+
+		BUG_ON(eytzinger1_prev(eytzinger1_first(size), size)	!= 0);
+		BUG_ON(eytzinger1_next(eytzinger1_last(size), size)	!= 0);
+
+		inorder = 1;
+		eytzinger1_for_each(eytz, size) {
+			BUG_ON(__inorder_to_eytzinger1(inorder, size, extra) != eytz);
+			BUG_ON(__eytzinger1_to_inorder(eytz, size, extra) != inorder);
+			BUG_ON(eytz != eytzinger1_last(size) &&
+			       eytzinger1_prev(eytzinger1_next(eytz, size), size) != eytz);
+
+			inorder++;
+		}
+	}
+}
+#endif
