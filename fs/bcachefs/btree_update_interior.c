@@ -1487,6 +1487,13 @@ int bch2_btree_split_leaf(struct bch_fs *c, struct btree_iter *iter,
 	struct closure cl;
 	int ret = 0;
 
+	/*
+	 * We already have a disk reservation and open buckets pinned; this
+	 * allocation must not block:
+	 */
+	if (iter->btree_id == BTREE_ID_EXTENTS)
+		btree_reserve_flags |= BTREE_INSERT_USE_RESERVE;
+
 	closure_init_stack(&cl);
 
 	/* Hack, because gc and splitting nodes doesn't mix yet: */
