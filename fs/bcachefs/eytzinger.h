@@ -80,7 +80,7 @@ static inline unsigned eytzinger1_prev(unsigned i, unsigned size)
 	EBUG_ON(i >= size);
 
 	if (eytzinger1_left_child(i) < size) {
-		i = eytzinger1_left_child(i);
+		i = eytzinger1_left_child(i) + 1;
 
 		i <<= __fls(size) - __fls(i);
 		i -= 1;
@@ -162,38 +162,6 @@ static inline unsigned inorder_to_eytzinger1(unsigned i, unsigned size)
 	for ((_i) = eytzinger1_first((_size));		\
 	     (_i) != 0;					\
 	     (_i) = eytzinger1_next((_i), (_size)))
-
-#if 0
-void eytzinger0_test(void)
-{
-	unsigned i, j, size;
-
-	for (size = 2;
-	     size < 65536000;
-	     size++) {
-		if (!(size % 4096))
-			printk(KERN_INFO "tree size %u\n", size);
-
-		assert(eytzinger1_prev(0, size) == eytzinger1_last(size));
-		assert(eytzinger1_next(0, size) == eytzinger1_first(size));
-
-		assert(eytzinger1_prev(eytzinger1_first(size), size) == 0);
-		assert(eytzinger1_next(eytzinger1_last(size), size) == 0);
-
-		eytzinger1_for_each(j, size) {
-			assert(from_inorder(i, size) == j);
-			assert(to_inorder(j, size) == i);
-
-			if (j != eytzinger1_last(size)) {
-				unsigned next = eytzinger1_next(j, size);
-
-				assert(eytzinger1_prev(next, size) == j);
-			}
-		}
-	}
-
-}
-#endif
 
 /* Zero based indexing version: */
 
