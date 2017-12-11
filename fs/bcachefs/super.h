@@ -47,6 +47,18 @@ static inline bool bch2_dev_list_has_dev(struct bch_devs_list devs,
 	return false;
 }
 
+static inline void bch2_dev_list_drop_dev(struct bch_devs_list *devs,
+					  unsigned dev)
+{
+	unsigned i;
+
+	for (i = 0; i < devs->nr; i++)
+		if (devs->devs[i] == dev) {
+			array_remove_item(devs->devs, devs->nr, i);
+			return;
+		}
+}
+
 static inline struct bch_dev *__bch2_next_dev(struct bch_fs *c, unsigned *iter,
 					      struct bch_devs_mask *mask)
 {

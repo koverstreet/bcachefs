@@ -925,11 +925,13 @@ static void promote_start(struct promote_op *op, struct bch_read_bio *rbio)
 	trace_promote(&rbio->bio);
 
 	/* we now own pages: */
+	BUG_ON(rbio->bio.bi_vcnt > bio->bi_max_vecs);
 	swap(bio->bi_vcnt, rbio->bio.bi_vcnt);
 	rbio->promote = NULL;
 
 	__bch2_write_op_init(&op->write.op, c);
 
+	op->write.move_dev	= -1;
 	op->write.op.devs	= c->fastest_devs;
 	op->write.op.write_point = writepoint_hashed((unsigned long) current);
 	op->write.op.flags	|= BCH_WRITE_ALLOC_NOWAIT;
@@ -964,8 +966,6 @@ static struct promote_op *promote_alloc(struct bch_read_bio *rbio)
 
 	bio = &op->write.op.wbio.bio;
 	bio_init(bio, bio->bi_inline_vecs, pages);
-
-	bio->bi_iter.bi_size = rbio->bio.bi_iter.bi_size;
 
 	memcpy(bio->bi_io_vec, rbio->bio.bi_io_vec,
 	       sizeof(struct bio_vec) * rbio->bio.bi_vcnt);

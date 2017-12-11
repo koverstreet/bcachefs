@@ -36,7 +36,7 @@ found:
 
 	ret = bch2_data_move(c, ctxt, devs,
 			     writepoint_hashed((unsigned long) current),
-			     k, true);
+			     0, ca->dev_idx, k);
 	if (ret)
 		bch2_disk_reservation_put(c, &res);
 	return ret;

@@ -27,86 +27,77 @@ static int bch2_migrate_index_update(struct bch_write_op *op)
 
 	while (1) {
 		struct bkey_s_c k = bch2_btree_iter_peek_with_holes(&iter);
-		struct bkey_i_extent *new, *insert;
+		struct bkey_i_extent *insert, *new =
+			bkey_i_to_extent(bch2_keylist_front(keys));
 		BKEY_PADDED(k) _new, _insert;
+		struct bch_extent_ptr *ptr;
+		struct bch_extent_crc_unpacked crc;
+		bool did_work = false;
 
 		if (btree_iter_err(k)) {
 			ret = bch2_btree_iter_unlock(&iter);
 			break;
 		}
 
-		if (!bkey_extent_is_data(k.k))
+		if (bversion_cmp(k.k->version, new->k.version) ||
+		    !bkey_extent_is_data(k.k) ||
+		    !bch2_extent_matches_ptr(c, bkey_s_c_to_extent(k),
+					     m->ptr, m->offset))
 			goto nomatch;
 
-		bkey_copy(&_insert.k, bch2_keylist_front(keys));
+		bkey_reassemble(&_insert.k, k);
 		insert = bkey_i_to_extent(&_insert.k);
 
-		bkey_reassemble(&_new.k, k);
+		bkey_copy(&_new.k, bch2_keylist_front(keys));
 		new = bkey_i_to_extent(&_new.k);
 
-		bch2_cut_front(iter.pos, &new->k_i);
-		bch2_cut_back(insert->k.p, &new->k);
+		bch2_cut_front(iter.pos, &insert->k_i);
 		bch2_cut_back(new->k.p, &insert->k);
+		bch2_cut_back(insert->k.p, &new->k);
 
-		if (!bversion_cmp(insert->k.version, new->k.version) &&
-		    bch2_extent_matches_ptr(c, extent_i_to_s_c(new),
-					    m->ptr, m->offset)) {
-			const struct bch_extent_ptr *ptr;
-			struct bch_extent_ptr *existing_ptr;
-			struct bch_extent_crc_unpacked crc;
-			unsigned insert_flags =
-				BTREE_INSERT_ATOMIC|
-				BTREE_INSERT_NOFAIL;
-			bool did_work = false;
+		if (m->move_dev >= 0 &&
+		    (ptr = (struct bch_extent_ptr *)
+		     bch2_extent_has_device(extent_i_to_s_c(insert),
+					    m->move_dev)))
+			bch2_extent_drop_ptr(extent_i_to_s(insert), ptr);
 
-			/* copygc uses btree node reserve: */
-			if (m->move)
-				insert_flags |= BTREE_INSERT_USE_RESERVE;
 
-			extent_for_each_ptr_crc(extent_i_to_s_c(insert), ptr, crc) {
-				existing_ptr = (struct bch_extent_ptr *)
-					bch2_extent_has_device(extent_i_to_s_c(new),
-							       ptr->dev);
-
-				if (existing_ptr) {
-					/* raced with another move op? */
-					if (!m->move)
-						continue;
-
-					bch2_extent_drop_ptr(extent_i_to_s(new),
-							     existing_ptr);
-				}
-
-				bch2_extent_crc_append(new, crc);
-				extent_ptr_append(new, *ptr);
-				did_work = true;
+		extent_for_each_ptr_crc(extent_i_to_s(new), ptr, crc) {
+			if (bch2_extent_has_device(extent_i_to_s_c(insert), ptr->dev)) {
+				/*
+				 * raced with another move op? extent already
+				 * has a pointer to the device we just wrote
+				 * data to
+				 */
+				continue;
 			}
 
-			if (!did_work)
-				goto nomatch;
-
-			bch2_extent_narrow_crcs(new,
-					(struct bch_extent_crc_unpacked) { 0 });
-			bch2_extent_normalize(c, extent_i_to_s(new).s);
-			bch2_extent_mark_replicas_cached(c, extent_i_to_s(new));
-
-			ret = bch2_btree_insert_at(c, &op->res,
-					NULL, op_journal_seq(op),
-					insert_flags,
-					BTREE_INSERT_ENTRY(&iter, &new->k_i));
-			if (!ret)
-				atomic_long_inc(&c->extent_migrate_done);
-			if (ret == -EINTR)
-				ret = 0;
-			if (ret)
-				break;
-		} else {
-nomatch:
-			atomic_long_inc(&c->extent_migrate_raced);
-			trace_move_collision(k.k->p, k.k->p.offset - iter.pos.offset);
-			bch2_btree_iter_advance_pos(&iter);
+			bch2_extent_crc_append(insert, crc);
+			extent_ptr_append(insert, *ptr);
+			did_work = true;
 		}
 
+		if (!did_work)
+			goto nomatch;
+
+		bch2_extent_narrow_crcs(insert,
+				(struct bch_extent_crc_unpacked) { 0 });
+		bch2_extent_normalize(c, extent_i_to_s(insert).s);
+		bch2_extent_mark_replicas_cached(c, extent_i_to_s(insert));
+
+		ret = bch2_btree_insert_at(c, &op->res,
+				NULL, op_journal_seq(op),
+				BTREE_INSERT_ATOMIC|
+				BTREE_INSERT_NOFAIL|
+				m->btree_insert_flags,
+				BTREE_INSERT_ENTRY(&iter, &insert->k_i));
+		if (!ret)
+			atomic_long_inc(&c->extent_migrate_done);
+		if (ret == -EINTR)
+			ret = 0;
+		if (ret)
+			break;
+next:
 		while (bkey_cmp(iter.pos, bch2_keylist_front(keys)->k.p) >= 0) {
 			bch2_keylist_pop_front(keys);
 			if (bch2_keylist_empty(keys))
@@ -114,6 +105,12 @@ nomatch:
 		}
 
 		bch2_cut_front(iter.pos, bch2_keylist_front(keys));
+		continue;
+nomatch:
+		atomic_long_inc(&c->extent_migrate_raced);
+		trace_move_collision(k.k->p, k.k->p.offset - iter.pos.offset);
+		bch2_btree_iter_advance_pos(&iter);
+		goto next;
 	}
 out:
 	bch2_btree_iter_unlock(&iter);
@@ -128,9 +125,7 @@ void bch2_migrate_write_init(struct migrate_write *m,
 
 	m->ptr		= rbio->pick.ptr;
 	m->offset	= rbio->pos.offset - rbio->pick.crc.offset;
-
-	if (!m->move)
-		m->op.devs_have	= rbio->devs_have;
+	m->op.devs_have	= rbio->devs_have;
 	m->op.pos	= rbio->pos;
 	m->op.version	= rbio->version;
 	m->op.crc	= rbio->pick.crc;
@@ -140,7 +135,10 @@ void bch2_migrate_write_init(struct migrate_write *m,
 		m->op.csum_type = m->op.crc.csum_type;
 	}
 
-	if (m->move)
+	if (m->move_dev >= 0)
+		bch2_dev_list_drop_dev(&m->op.devs_have, m->move_dev);
+
+	if (m->btree_insert_flags & BTREE_INSERT_USE_RESERVE)
 		m->op.alloc_reserve = RESERVE_MOVINGGC;
 
 	m->op.flags |= BCH_WRITE_ONLY_SPECIFIED_DEVS|
@@ -211,7 +209,9 @@ int bch2_data_move(struct bch_fs *c,
 		   struct moving_context *ctxt,
 		   struct bch_devs_mask *devs,
 		   struct write_point_specifier wp,
-		   struct bkey_s_c k, bool move)
+		   int btree_insert_flags,
+		   int move_device,
+		   struct bkey_s_c k)
 {
 	struct extent_pick_ptr pick;
 	struct moving_io *io;
@@ -256,7 +256,8 @@ int bch2_data_move(struct bch_fs *c,
 	io->rbio.bio.bi_end_io		= move_read_endio;
 
 	__bch2_write_op_init(&io->write.op, c);
-	io->write.move		= move;
+	io->write.btree_insert_flags = btree_insert_flags;
+	io->write.move_dev	= move_device;
 	io->write.op.devs	= devs;
 	io->write.op.write_point = wp;
 
