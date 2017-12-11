@@ -337,7 +337,7 @@ void bch2_extent_drop_redundant_crcs(struct bkey_s_extent e)
 
 			extent_for_each_entry_from(e, e2, extent_entry_next(entry)) {
 				if (!extent_entry_is_ptr(e2))
-					return;
+					break;
 
 				e2->ptr.offset += u.offset;
 			}
