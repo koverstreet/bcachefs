@@ -182,27 +182,29 @@ static inline unsigned eytzinger0_right_child(unsigned i)
 	return eytzinger0_child(i, 1);
 }
 
-#if 0
 static inline unsigned eytzinger0_first(unsigned size)
 {
+	return eytzinger1_first(size + 1) - 1;
 }
 
 static inline unsigned eytzinger0_last(unsigned size)
 {
+	return eytzinger1_last(size + 1) - 1;
 }
 
 static inline unsigned eytzinger0_next(unsigned i, unsigned size)
 {
+	return eytzinger1_next(i + 1, size + 1) - 1;
 }
 
 static inline unsigned eytzinger0_prev(unsigned i, unsigned size)
 {
+	return eytzinger1_prev(i + 1, size + 1) - 1;
 }
-#endif
 
 static inline unsigned eytzinger0_extra(unsigned size)
 {
-	return (size + 1 - rounddown_pow_of_two(size)) << 1;
+	return eytzinger1_extra(size + 1);
 }
 
 static inline unsigned __eytzinger0_to_inorder(unsigned i, unsigned size,
@@ -227,10 +229,41 @@ static inline unsigned inorder_to_eytzinger0(unsigned i, unsigned size)
 	return __inorder_to_eytzinger0(i, size, eytzinger0_extra(size));
 }
 
+#define eytzinger0_for_each(_i, _size)			\
+	for ((_i) = eytzinger0_first((_size));		\
+	     (_i) != -1;				\
+	     (_i) = eytzinger0_next((_i), (_size)))
+
 typedef int (*eytzinger_cmp_fn)(const void *l, const void *r, size_t size);
 
+/* return greatest node <= @search, or -1 if not found */
+static inline ssize_t eytzinger0_find_le(void *base, size_t nr, size_t size,
+					 eytzinger_cmp_fn cmp, const void *search)
+{
+	unsigned i, n = 0;
+
+	if (!nr)
+		return -1;
+
+	do {
+		i = n;
+		n = eytzinger0_child(i, cmp(search, base + i * size, size) >= 0);
+	} while (n < nr);
+
+	if (n & 1) {
+		/* @i was greater than @search, return previous node: */
+
+		if (i == eytzinger0_first(nr))
+			return -1;
+
+		return eytzinger0_prev(i, nr);
+	} else {
+		return i;
+	}
+}
+
 static inline size_t eytzinger0_find(void *base, size_t nr, size_t size,
-				     eytzinger_cmp_fn cmp, void *search)
+				     eytzinger_cmp_fn cmp, const void *search)
 {
 	size_t i = 0;
 	int res;
