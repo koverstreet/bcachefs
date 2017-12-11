@@ -396,13 +396,11 @@ struct bch_dev {
 	bool			allocator_invalidating_data;
 
 	alloc_heap		alloc_heap;
-	bucket_heap		copygc_heap;
 
-	/* Moving GC: */
+	/* Copying GC: */
 	struct task_struct	*copygc_thread;
-
+	copygc_heap		copygc_heap;
 	struct bch_pd_controller copygc_pd;
-
 	struct write_point	copygc_write_point;
 
 	struct journal_device	journal;
