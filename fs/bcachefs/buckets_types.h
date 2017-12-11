@@ -59,6 +59,7 @@ struct bch_dev_usage {
 	u64			buckets[S_ALLOC_NR];
 	u64			buckets_cached;
 	u64			buckets_alloc;
+	u64			buckets_unavailable;
 
 	/* _compressed_ sectors: */
 	u64			sectors[S_ALLOC_NR];

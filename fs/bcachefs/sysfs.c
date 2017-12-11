@@ -702,17 +702,23 @@ static ssize_t show_reserve_stats(struct bch_dev *ca, char *buf)
 static ssize_t show_dev_alloc_debug(struct bch_dev *ca, char *buf)
 {
 	struct bch_fs *c = ca->fs;
-	struct bch_dev_usage stats = bch2_dev_usage_read(ca);
+	struct bch_dev_usage stats = bch2_dev_usage_read(c, ca);
 
 	return scnprintf(buf, PAGE_SIZE,
 		"free_inc:               %zu/%zu\n"
 		"free[RESERVE_BTREE]:    %zu/%zu\n"
 		"free[RESERVE_MOVINGGC]: %zu/%zu\n"
 		"free[RESERVE_NONE]:     %zu/%zu\n"
-		"alloc:                  %llu/%llu\n"
-		"meta:                   %llu/%llu\n"
-		"dirty:                  %llu/%llu\n"
-		"available:              %llu/%llu\n"
+		"buckets:\n"
+		"    capacity:           %llu\n"
+		"    alloc:              %llu\n"
+		"    meta:               %llu\n"
+		"    dirty:              %llu\n"
+		"    available:          %llu\n"
+		"sectors:\n"
+		"    meta:               %llu\n"
+		"    dirty:              %llu\n"
+		"    cached:             %llu\n"
 		"freelist_wait:          %s\n"
 		"open buckets:           %u/%u (reserved %u)\n"
 		"open_buckets_wait:      %s\n",
@@ -720,10 +726,14 @@ static ssize_t show_dev_alloc_debug(struct bch_dev *ca, char *buf)
 		fifo_used(&ca->free[RESERVE_BTREE]),	ca->free[RESERVE_BTREE].size,
 		fifo_used(&ca->free[RESERVE_MOVINGGC]),	ca->free[RESERVE_MOVINGGC].size,
 		fifo_used(&ca->free[RESERVE_NONE]),	ca->free[RESERVE_NONE].size,
-		stats.buckets_alloc,			ca->mi.nbuckets - ca->mi.first_bucket,
-		stats.buckets[S_META],			ca->mi.nbuckets - ca->mi.first_bucket,
-		stats.buckets[S_DIRTY],			ca->mi.nbuckets - ca->mi.first_bucket,
-		__dev_buckets_available(ca, stats),	ca->mi.nbuckets - ca->mi.first_bucket,
+		ca->mi.nbuckets - ca->mi.first_bucket,
+		stats.buckets_alloc,
+		stats.buckets[S_META],
+		stats.buckets[S_DIRTY],
+		__dev_buckets_available(ca, stats),
+		stats.sectors[S_META],
+		stats.sectors[S_DIRTY],
+		stats.sectors_cached,
 		c->freelist_wait.list.first		? "waiting" : "empty",
 		c->open_buckets_nr_free, OPEN_BUCKETS_COUNT, BTREE_NODE_RESERVE,
 		c->open_buckets_wait.list.first		? "waiting" : "empty");
@@ -761,7 +771,7 @@ SHOW(bch2_dev)
 {
 	struct bch_dev *ca = container_of(kobj, struct bch_dev, kobj);
 	struct bch_fs *c = ca->fs;
-	struct bch_dev_usage stats = bch2_dev_usage_read(ca);
+	struct bch_dev_usage stats = bch2_dev_usage_read(c, ca);
 	char *out = buf, *end = buf + PAGE_SIZE;
 
 	sysfs_printf(uuid,		"%pU\n", ca->uuid.b);
@@ -780,8 +790,8 @@ SHOW(bch2_dev)
 	sysfs_print(cached_buckets,	stats.buckets_cached);
 	sysfs_print(meta_buckets,	stats.buckets[S_META]);
 	sysfs_print(alloc_buckets,	stats.buckets_alloc);
-	sysfs_print(available_buckets,	dev_buckets_available(ca));
-	sysfs_print(free_buckets,	dev_buckets_free(ca));
+	sysfs_print(available_buckets,	__dev_buckets_available(ca, stats));
+	sysfs_print(free_buckets,	__dev_buckets_free(ca, stats));
 
 	if (attr == &sysfs_has_data) {
 		out += bch2_scnprint_flag_list(out, end - out,

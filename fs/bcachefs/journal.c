@@ -1602,10 +1602,11 @@ static int bch2_set_nr_journal_buckets(struct bch_fs *c, struct bch_dev *ca,
 			ja->last_idx++;
 		}
 		ja->nr++;
-
-		bch2_mark_metadata_bucket(ca, &ca->buckets[bucket],
-					  BUCKET_JOURNAL, false);
 		spin_unlock(&j->lock);
+
+		bch2_mark_metadata_bucket(c, ca, &ca->buckets[bucket],
+					  BUCKET_JOURNAL,
+					  gc_phase(GC_PHASE_SB), 0);
 
 		bch2_open_bucket_put(c, ob);
 	}

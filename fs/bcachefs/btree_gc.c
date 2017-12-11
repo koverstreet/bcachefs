@@ -111,19 +111,35 @@ u8 bch2_btree_key_recalc_oldest_gen(struct bch_fs *c, struct bkey_s_c k)
 /*
  * For runtime mark and sweep:
  */
-static u8 bch2_btree_mark_key(struct bch_fs *c, enum bkey_type type,
-			      struct bkey_s_c k, unsigned flags)
+static u8 bch2_gc_mark_key(struct bch_fs *c, enum bkey_type type,
+			   struct bkey_s_c k, unsigned flags)
 {
+	struct gc_pos pos = { 0 };
+	struct bch_fs_usage *stats;
+	u8 ret = 0;
+
+	preempt_disable();
+	stats = this_cpu_ptr(c->usage_percpu);
 	switch (type) {
 	case BKEY_TYPE_BTREE:
-		bch2_gc_mark_key(c, k, c->opts.btree_node_size, true, flags);
-		return 0;
+		bch2_mark_key(c, k, c->opts.btree_node_size, true, pos, stats,
+			      0, flags|
+			      BCH_BUCKET_MARK_MAY_MAKE_UNAVAILABLE|
+			      BCH_BUCKET_MARK_GC_LOCK_HELD);
+		break;
 	case BKEY_TYPE_EXTENTS:
-		bch2_gc_mark_key(c, k, k.k->size, false, flags);
-		return bch2_btree_key_recalc_oldest_gen(c, k);
+		bch2_mark_key(c, k, k.k->size, false, pos, stats,
+			      0, flags|
+			      BCH_BUCKET_MARK_MAY_MAKE_UNAVAILABLE|
+			      BCH_BUCKET_MARK_GC_LOCK_HELD);
+		ret = bch2_btree_key_recalc_oldest_gen(c, k);
+		break;
 	default:
 		BUG();
 	}
+	preempt_enable();
+
+	return ret;
 }
 
 int bch2_btree_mark_key_initial(struct bch_fs *c, enum bkey_type type,
@@ -182,7 +198,7 @@ int bch2_btree_mark_key_initial(struct bch_fs *c, enum bkey_type type,
 		     max_t(u64, k.k->version.lo,
 			   atomic64_read(&c->key_version)));
 
-	bch2_btree_mark_key(c, type, k, BCH_BUCKET_MARK_NOATOMIC);
+	bch2_gc_mark_key(c, type, k, BCH_BUCKET_MARK_NOATOMIC);
 fsck_err:
 	return ret;
 }
@@ -200,7 +216,7 @@ static unsigned btree_gc_mark_node(struct bch_fs *c, struct btree *b)
 					       btree_node_is_extents(b),
 					       &unpacked) {
 			bch2_bkey_debugcheck(c, b, k);
-			stale = max(stale, bch2_btree_mark_key(c, type, k, 0));
+			stale = max(stale, bch2_gc_mark_key(c, type, k, 0));
 		}
 
 	return stale;
@@ -267,11 +283,99 @@ static int bch2_gc_btree(struct bch_fs *c, enum btree_id btree_id)
 	mutex_lock(&c->btree_root_lock);
 
 	b = c->btree_roots[btree_id].b;
-	bch2_btree_mark_key(c, BKEY_TYPE_BTREE, bkey_i_to_s_c(&b->key), 0);
+	bch2_gc_mark_key(c, BKEY_TYPE_BTREE, bkey_i_to_s_c(&b->key), 0);
 	gc_pos_set(c, gc_pos_btree_root(b->btree_id));
 
 	mutex_unlock(&c->btree_root_lock);
 	return 0;
+}
+
+static void mark_metadata_sectors(struct bch_fs *c, struct bch_dev *ca,
+				  u64 start, u64 end,
+				  enum bucket_data_type type,
+				  unsigned flags)
+{
+	u64 b = sector_to_bucket(ca, start);
+
+	do {
+		bch2_mark_metadata_bucket(c, ca, ca->buckets + b, type,
+					  gc_phase(GC_PHASE_SB), flags);
+		b++;
+	} while (b < sector_to_bucket(ca, end));
+}
+
+void bch2_mark_dev_superblock(struct bch_fs *c, struct bch_dev *ca,
+			      unsigned flags)
+{
+	struct bch_sb_layout *layout = &ca->disk_sb.sb->layout;
+	unsigned i;
+	u64 b;
+
+	lockdep_assert_held(&c->sb_lock);
+
+	for (i = 0; i < layout->nr_superblocks; i++) {
+		if (layout->sb_offset[i] == BCH_SB_SECTOR)
+			mark_metadata_sectors(c, ca, 0, BCH_SB_SECTOR,
+					      BUCKET_SB, flags);
+
+		mark_metadata_sectors(c, ca,
+				      layout->sb_offset[i],
+				      layout->sb_offset[i] +
+				      (1 << layout->sb_max_size_bits),
+				      BUCKET_SB, flags);
+	}
+
+	spin_lock(&c->journal.lock);
+
+	for (i = 0; i < ca->journal.nr; i++) {
+		b = ca->journal.buckets[i];
+		bch2_mark_metadata_bucket(c, ca, ca->buckets + b,
+					  BUCKET_JOURNAL,
+					  gc_phase(GC_PHASE_SB), flags);
+	}
+
+	spin_unlock(&c->journal.lock);
+}
+
+static void bch2_mark_superblocks(struct bch_fs *c)
+{
+	struct bch_dev *ca;
+	unsigned i;
+
+	mutex_lock(&c->sb_lock);
+	gc_pos_set(c, gc_phase(GC_PHASE_SB));
+
+	for_each_online_member(ca, c, i)
+		bch2_mark_dev_superblock(c, ca,
+					 BCH_BUCKET_MARK_MAY_MAKE_UNAVAILABLE|
+					 BCH_BUCKET_MARK_GC_LOCK_HELD);
+	mutex_unlock(&c->sb_lock);
+}
+
+/* Also see bch2_pending_btree_node_free_insert_done() */
+static void bch2_mark_pending_btree_node_frees(struct bch_fs *c)
+{
+	struct gc_pos pos = { 0 };
+	struct bch_fs_usage stats = { 0 };
+	struct btree_update *as;
+	struct pending_btree_node_free *d;
+
+	mutex_lock(&c->btree_interior_update_lock);
+	gc_pos_set(c, gc_phase(GC_PHASE_PENDING_DELETE));
+
+	for_each_pending_btree_node_free(c, as, d)
+		if (d->index_update_done)
+			bch2_mark_key(c, bkey_i_to_s_c(&d->key),
+				      c->opts.btree_node_size, true, pos,
+				      &stats, 0,
+				      BCH_BUCKET_MARK_MAY_MAKE_UNAVAILABLE|
+				      BCH_BUCKET_MARK_GC_LOCK_HELD);
+	/*
+	 * Don't apply stats - pending deletes aren't tracked in
+	 * bch_alloc_stats:
+	 */
+
+	mutex_unlock(&c->btree_interior_update_lock);
 }
 
 static void bch2_mark_allocator_buckets(struct bch_fs *c)
@@ -282,15 +386,23 @@ static void bch2_mark_allocator_buckets(struct bch_fs *c)
 	unsigned ci;
 
 	spin_lock(&c->freelist_lock);
+	gc_pos_set(c, gc_pos_alloc(c, NULL));
 
 	for_each_member_device(ca, c, ci) {
-
 		fifo_for_each_entry(i, &ca->free_inc, iter)
-			bch2_mark_alloc_bucket(ca, &ca->buckets[i], true);
+			bch2_mark_alloc_bucket(c, ca, &ca->buckets[i], true,
+					       gc_pos_alloc(c, NULL),
+					       BCH_BUCKET_MARK_MAY_MAKE_UNAVAILABLE|
+					       BCH_BUCKET_MARK_GC_LOCK_HELD);
+
+
 
 		for (j = 0; j < RESERVE_NR; j++)
 			fifo_for_each_entry(i, &ca->free[j], iter)
-				bch2_mark_alloc_bucket(ca, &ca->buckets[i], true);
+				bch2_mark_alloc_bucket(c, ca, &ca->buckets[i], true,
+						       gc_pos_alloc(c, NULL),
+						       BCH_BUCKET_MARK_MAY_MAKE_UNAVAILABLE|
+						       BCH_BUCKET_MARK_GC_LOCK_HELD);
 	}
 
 	spin_unlock(&c->freelist_lock);
@@ -300,100 +412,15 @@ static void bch2_mark_allocator_buckets(struct bch_fs *c)
 	     ob++) {
 		spin_lock(&ob->lock);
 		if (ob->valid) {
+			gc_pos_set(c, gc_pos_alloc(c, ob));
 			ca = c->devs[ob->ptr.dev];
-			bch2_mark_alloc_bucket(ca, PTR_BUCKET(ca, &ob->ptr), true);
+			bch2_mark_alloc_bucket(c, ca, PTR_BUCKET(ca, &ob->ptr), true,
+					       gc_pos_alloc(c, ob),
+					       BCH_BUCKET_MARK_MAY_MAKE_UNAVAILABLE|
+					       BCH_BUCKET_MARK_GC_LOCK_HELD);
 		}
 		spin_unlock(&ob->lock);
 	}
-}
-
-static void mark_metadata_sectors(struct bch_dev *ca, u64 start, u64 end,
-				  enum bucket_data_type type)
-{
-	u64 b = sector_to_bucket(ca, start);
-
-	do {
-		bch2_mark_metadata_bucket(ca, ca->buckets + b, type, true);
-		b++;
-	} while (b < sector_to_bucket(ca, end));
-}
-
-static void bch2_dev_mark_superblocks(struct bch_dev *ca)
-{
-	struct bch_sb_layout *layout = &ca->disk_sb.sb->layout;
-	unsigned i;
-
-	for (i = 0; i < layout->nr_superblocks; i++) {
-		if (layout->sb_offset[i] == BCH_SB_SECTOR)
-			mark_metadata_sectors(ca, 0, BCH_SB_SECTOR,
-					      BUCKET_SB);
-
-		mark_metadata_sectors(ca,
-				      layout->sb_offset[i],
-				      layout->sb_offset[i] +
-				      (1 << layout->sb_max_size_bits),
-				      BUCKET_SB);
-	}
-}
-
-/*
- * Mark non btree metadata - prios, journal
- */
-void bch2_mark_dev_metadata(struct bch_fs *c, struct bch_dev *ca)
-{
-	unsigned i;
-	u64 b;
-
-	lockdep_assert_held(&c->sb_lock);
-
-	bch2_dev_mark_superblocks(ca);
-
-	spin_lock(&c->journal.lock);
-
-	for (i = 0; i < ca->journal.nr; i++) {
-		b = ca->journal.buckets[i];
-		bch2_mark_metadata_bucket(ca, ca->buckets + b,
-					 BUCKET_JOURNAL, true);
-	}
-
-	spin_unlock(&c->journal.lock);
-}
-
-static void bch2_mark_metadata(struct bch_fs *c)
-{
-	struct bch_dev *ca;
-	unsigned i;
-
-	mutex_lock(&c->sb_lock);
-	gc_pos_set(c, gc_phase(GC_PHASE_SB_METADATA));
-
-	for_each_online_member(ca, c, i)
-		bch2_mark_dev_metadata(c, ca);
-	mutex_unlock(&c->sb_lock);
-}
-
-/* Also see bch2_pending_btree_node_free_insert_done() */
-static void bch2_mark_pending_btree_node_frees(struct bch_fs *c)
-{
-	struct bch_fs_usage stats = { 0 };
-	struct btree_update *as;
-	struct pending_btree_node_free *d;
-
-	mutex_lock(&c->btree_interior_update_lock);
-	gc_pos_set(c, gc_phase(GC_PHASE_PENDING_DELETE));
-
-	for_each_pending_btree_node_free(c, as, d)
-		if (d->index_update_done)
-			__bch2_mark_key(c, bkey_i_to_s_c(&d->key),
-					c->opts.btree_node_size, true,
-					&stats, 0,
-					BCH_BUCKET_MARK_MAY_MAKE_UNAVAILABLE);
-	/*
-	 * Don't apply stats - pending deletes aren't tracked in
-	 * bch_alloc_stats:
-	 */
-
-	mutex_unlock(&c->btree_interior_update_lock);
 }
 
 void bch2_gc_start(struct bch_fs *c)
@@ -486,9 +513,6 @@ void bch2_gc(struct bch_fs *c)
 
 	bch2_gc_start(c);
 
-	/* Walk allocator's references: */
-	bch2_mark_allocator_buckets(c);
-
 	/* Walk btree: */
 	while (c->gc_pos.phase < (int) BTREE_ID_NR) {
 		int ret = c->btree_roots[c->gc_pos.phase].b
@@ -504,8 +528,9 @@ void bch2_gc(struct bch_fs *c)
 		gc_pos_set(c, gc_phase(c->gc_pos.phase + 1));
 	}
 
-	bch2_mark_metadata(c);
+	bch2_mark_superblocks(c);
 	bch2_mark_pending_btree_node_frees(c);
+	bch2_mark_allocator_buckets(c);
 
 	for_each_member_device(ca, c, i)
 		atomic_long_set(&ca->saturated_count, 0);
@@ -1014,8 +1039,6 @@ again:
 	if (ret)
 	return ret;
 
-	bch2_mark_metadata(c);
-
 	if (test_bit(BCH_FS_FIXED_GENS, &c->flags)) {
 		if (iter++ > 2) {
 			bch_info(c, "Unable to fix bucket gens, looping");
@@ -1033,6 +1056,8 @@ again:
 	 */
 	if (c->sb.encryption_type)
 		atomic64_add(1 << 16, &c->key_version);
+
+	bch2_mark_superblocks(c);
 
 	gc_pos_set(c, gc_phase(GC_PHASE_DONE));
 	set_bit(BCH_FS_INITIAL_GC_DONE, &c->flags);

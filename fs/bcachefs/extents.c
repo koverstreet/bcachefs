@@ -1013,7 +1013,7 @@ static void bch2_add_sectors(struct extent_insert_state *s,
 		return;
 
 	bch2_mark_key(c, k, sectors, false, gc_pos_btree_node(b),
-		     &s->stats, s->trans->journal_res.seq);
+		      &s->stats, s->trans->journal_res.seq, 0);
 }
 
 static void bch2_subtract_sectors(struct extent_insert_state *s,
