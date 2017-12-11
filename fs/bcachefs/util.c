@@ -695,4 +695,96 @@ void eytzinger1_test(void)
 		}
 	}
 }
+
+void eytzinger0_test(void)
+{
+
+	unsigned inorder, eytz, size;
+
+	pr_info("0 based eytzinger test:");
+
+	for (size = 1;
+	     size < 65536;
+	     size++) {
+		unsigned extra = eytzinger0_extra(size);
+
+		if (!(size % 4096))
+			pr_info("tree size %u", size);
+
+		BUG_ON(eytzinger0_prev(-1, size) != eytzinger0_last(size));
+		BUG_ON(eytzinger0_next(-1, size) != eytzinger0_first(size));
+
+		BUG_ON(eytzinger0_prev(eytzinger0_first(size), size)	!= -1);
+		BUG_ON(eytzinger0_next(eytzinger0_last(size), size)	!= -1);
+
+		inorder = 0;
+		eytzinger0_for_each(eytz, size) {
+			BUG_ON(__inorder_to_eytzinger0(inorder, size, extra) != eytz);
+			BUG_ON(__eytzinger0_to_inorder(eytz, size, extra) != inorder);
+			BUG_ON(eytz != eytzinger0_last(size) &&
+			       eytzinger0_prev(eytzinger0_next(eytz, size), size) != eytz);
+
+			inorder++;
+		}
+	}
+}
+
+static inline int cmp_u16(const void *_l, const void *_r, size_t size)
+{
+	const u16 *l = _l, *r = _r;
+
+	return (*l > *r) - (*r - *l);
+}
+
+static void eytzinger0_find_test_val(u16 *test_array, unsigned nr, u16 search)
+{
+	int i, c1 = -1, c2 = -1;
+	ssize_t r;
+
+	r = eytzinger0_find_le(test_array, nr,
+			       sizeof(test_array[0]),
+			       cmp_u16, &search);
+	if (r >= 0)
+		c1 = test_array[r];
+
+	for (i = 0; i < nr; i++)
+		if (test_array[i] <= search && test_array[i] > c2)
+			c2 = test_array[i];
+
+	if (c1 != c2) {
+		eytzinger0_for_each(i, nr)
+			pr_info("[%3u] = %12u", i, test_array[i]);
+		pr_info("find_le(%2u) -> [%2zi] = %2i should be %2i",
+			i, r, c1, c2);
+	}
+}
+
+void eytzinger0_find_test(void)
+{
+	unsigned i, nr, allocated = 1 << 12;
+	u16 *test_array = kmalloc_array(allocated, sizeof(test_array[0]), GFP_KERNEL);
+
+	for (nr = 1; nr < allocated; nr++) {
+		pr_info("testing %u elems", nr);
+
+		get_random_bytes(test_array, nr * sizeof(test_array[0]));
+		eytzinger0_sort(test_array, nr, sizeof(test_array[0]), cmp_u16, NULL);
+
+		/* verify array is sorted correctly: */
+		eytzinger0_for_each(i, nr)
+			BUG_ON(i != eytzinger0_last(nr) &&
+			       test_array[i] > test_array[eytzinger0_next(i, nr)]);
+
+		for (i = 0; i < U16_MAX; i += 1 << 12)
+			eytzinger0_find_test_val(test_array, nr, i);
+
+		for (i = 0; i < nr; i++) {
+			eytzinger0_find_test_val(test_array, nr, test_array[i] - 1);
+			eytzinger0_find_test_val(test_array, nr, test_array[i]);
+			eytzinger0_find_test_val(test_array, nr, test_array[i] + 1);
+		}
+	}
+
+	kfree(test_array);
+}
 #endif
