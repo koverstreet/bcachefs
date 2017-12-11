@@ -6,6 +6,7 @@
 
 #include "bcachefs.h"
 #include "btree_iter.h"
+#include "btree_update.h"
 #include "buckets.h"
 #include "clock.h"
 #include "extents.h"
@@ -75,7 +76,7 @@ static int issue_moving_gc_move(struct bch_dev *ca,
 
 	ret = bch2_data_move(c, ctxt, &ca->self,
 			     writepoint_ptr(&ca->copygc_write_point),
-			     k, true);
+			     BTREE_INSERT_USE_RESERVE, ca->dev_idx, k);
 	if (!ret)
 		trace_gc_copy(k.k);
 	else

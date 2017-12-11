@@ -12,7 +12,8 @@ struct migrate_write {
 	struct bch_extent_ptr	ptr;
 	u64			offset;
 
-	bool			move;
+	int			move_dev;
+	int			btree_insert_flags;
 	struct bch_write_op	op;
 };
 
@@ -35,7 +36,7 @@ struct moving_io {
 int bch2_data_move(struct bch_fs *, struct moving_context *,
 		   struct bch_devs_mask *,
 		   struct write_point_specifier,
-		   struct bkey_s_c, bool);
+		   int, int, struct bkey_s_c);
 
 #define SECTORS_IN_FLIGHT_PER_DEVICE	2048
 
