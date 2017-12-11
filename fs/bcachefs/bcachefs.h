@@ -346,7 +346,7 @@ struct bch_dev {
 
 	struct bch_devs_mask	self;
 
-	/* biosets used in cloned bios for replicas and moving_gc */
+	/* biosets used in cloned bios for writing multiple replicas */
 	struct bio_set		replica_set;
 
 	struct task_struct	*alloc_thread;
@@ -399,9 +399,9 @@ struct bch_dev {
 	bucket_heap		copygc_heap;
 
 	/* Moving GC: */
-	struct task_struct	*moving_gc_read;
+	struct task_struct	*copygc_thread;
 
-	struct bch_pd_controller moving_gc_pd;
+	struct bch_pd_controller copygc_pd;
 
 	struct write_point	copygc_write_point;
 
