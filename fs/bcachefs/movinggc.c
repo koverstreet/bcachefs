@@ -47,36 +47,32 @@
 	((ca)->mi.bucket_size *	COPYGC_BUCKETS_PER_ITER(ca))
 
 
-static int bucket_idx_cmp(const void *_l, const void *_r, size_t size)
+static int bucket_offset_cmp(const void *_l, const void *_r, size_t size)
 {
-	const struct bucket_heap_entry *l = _l;
-	const struct bucket_heap_entry *r = _r;
+	const struct copygc_heap_entry *l = _l;
+	const struct copygc_heap_entry *r = _r;
 
-	if (l->bucket < r->bucket)
-		return -1;
-	if (l->bucket > r->bucket)
-		return 1;
-	return 0;
+	return (l->offset > r->offset) - (l->offset < r->offset);
 }
 
 static const struct bch_extent_ptr *moving_pred(struct bch_dev *ca,
 						struct bkey_s_c k)
 {
-	bucket_heap *h = &ca->copygc_heap;
+	copygc_heap *h = &ca->copygc_heap;
 	const struct bch_extent_ptr *ptr;
 
 	if (bkey_extent_is_data(k.k) &&
 	    (ptr = bch2_extent_has_device(bkey_s_c_to_extent(k),
 					  ca->dev_idx))) {
-		struct bucket_heap_entry search = {
-			.bucket = PTR_BUCKET_NR(ca, ptr)
-		};
+		struct copygc_heap_entry search = { .offset = ptr->offset };
 
-		size_t i = eytzinger0_find(h->data, h->used,
-					   sizeof(h->data[0]),
-					   bucket_idx_cmp, &search);
+		size_t i = eytzinger0_find_le(h->data, h->used,
+					      sizeof(h->data[0]),
+					      bucket_offset_cmp, &search);
 
-		if (i < h->used)
+		if (i >= 0 &&
+		    ptr->offset < h->data[i].offset + ca->mi.bucket_size &&
+		    ptr->gen == h->data[i].mark.gen)
 			return ptr;
 	}
 
@@ -109,13 +105,13 @@ static void read_moving(struct bch_dev *ca, size_t buckets_to_move,
 			u64 sectors_to_move)
 {
 	struct bch_fs *c = ca->fs;
-	bucket_heap *h = &ca->copygc_heap;
+	copygc_heap *h = &ca->copygc_heap;
 	struct moving_context ctxt;
 	struct btree_iter iter;
 	struct bkey_s_c k;
 	u64 sectors_not_moved = 0;
 	size_t buckets_not_moved = 0;
-	struct bucket_heap_entry *i;
+	struct copygc_heap_entry *i;
 
 	bch2_ratelimit_reset(&ca->copygc_pd.rate);
 	bch2_move_ctxt_init(&ctxt, &ca->copygc_pd.rate,
@@ -160,7 +156,8 @@ next:
 
 	/* don't check this if we bailed out early: */
 	for (i = h->data; i < h->data + h->used; i++) {
-		struct bucket_mark m = READ_ONCE(ca->buckets[i->bucket].mark);
+		size_t bucket = sector_to_bucket(ca, i->offset);
+		struct bucket_mark m = READ_ONCE(ca->buckets[bucket].mark);
 
 		if (i->mark.gen == m.gen && bucket_sectors_used(m)) {
 			sectors_not_moved += bucket_sectors_used(m);
@@ -192,9 +189,9 @@ static bool have_copygc_reserve(struct bch_dev *ca)
 	return ret;
 }
 
-static inline int sectors_used_cmp(bucket_heap *heap,
-				   struct bucket_heap_entry l,
-				   struct bucket_heap_entry r)
+static inline int sectors_used_cmp(copygc_heap *heap,
+				   struct copygc_heap_entry l,
+				   struct copygc_heap_entry r)
 {
 	return bucket_sectors_used(l.mark) - bucket_sectors_used(r.mark);
 }
@@ -204,7 +201,7 @@ static void bch2_copygc(struct bch_fs *c, struct bch_dev *ca)
 	struct bucket *g;
 	u64 sectors_to_move = 0;
 	size_t buckets_to_move, buckets_unused = 0;
-	struct bucket_heap_entry e, *i;
+	struct copygc_heap_entry e, *i;
 
 	closure_wait_event(&c->freelist_wait, have_copygc_reserve(ca));
 
@@ -225,7 +222,7 @@ static void bch2_copygc(struct bch_fs *c, struct bch_dev *ca)
 	ca->copygc_heap.used = 0;
 	for_each_bucket(g, ca) {
 		struct bucket_mark m = READ_ONCE(g->mark);
-		struct bucket_heap_entry e = { g - ca->buckets, m };
+		struct copygc_heap_entry e;
 
 		if (bucket_unused(m)) {
 			buckets_unused++;
@@ -239,6 +236,10 @@ static void bch2_copygc(struct bch_fs *c, struct bch_dev *ca)
 		if (bucket_sectors_used(m) >= ca->mi.bucket_size)
 			continue;
 
+		e = (struct copygc_heap_entry) {
+			.offset = bucket_to_sector(ca, g - ca->buckets),
+			.mark	= m
+		};
 		heap_add_or_replace(&ca->copygc_heap, e, -sectors_used_cmp);
 	}
 	up_read(&c->gc_lock);
@@ -255,10 +256,13 @@ static void bch2_copygc(struct bch_fs *c, struct bch_dev *ca)
 
 	buckets_to_move = ca->copygc_heap.used;
 
+	if (!buckets_to_move)
+		return;
+
 	eytzinger0_sort(ca->copygc_heap.data,
 			ca->copygc_heap.used,
 			sizeof(ca->copygc_heap.data[0]),
-			bucket_idx_cmp, NULL);
+			bucket_offset_cmp, NULL);
 
 	read_moving(ca, buckets_to_move, sectors_to_move);
 }

@@ -80,13 +80,6 @@ struct bch_fs_usage {
 	u64			available_cache;
 };
 
-struct bucket_heap_entry {
-	size_t			bucket;
-	struct bucket_mark	mark;
-};
-
-typedef HEAP(struct bucket_heap_entry) bucket_heap;
-
 /*
  * A reservation for space on disk:
  */
@@ -95,5 +88,12 @@ struct disk_reservation {
 	u32		gen;
 	unsigned	nr_replicas;
 };
+
+struct copygc_heap_entry {
+	u64			offset;
+	struct bucket_mark	mark;
+};
+
+typedef HEAP(struct copygc_heap_entry) copygc_heap;
 
 #endif /* _BUCKETS_TYPES_H */
