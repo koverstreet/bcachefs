@@ -124,7 +124,7 @@ static void pd_controllers_update(struct work_struct *work)
 
 			fragmented = max(0LL, fragmented);
 
-			bch2_pd_controller_update(&ca->moving_gc_pd,
+			bch2_pd_controller_update(&ca->copygc_pd,
 						 free, fragmented, -1);
 
 			faster_tiers_size		+= size;
