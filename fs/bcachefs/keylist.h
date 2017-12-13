@@ -7,8 +7,7 @@ int bch2_keylist_realloc(struct keylist *, u64 *, size_t, size_t);
 void bch2_keylist_add_in_order(struct keylist *, struct bkey_i *);
 void bch2_keylist_pop_front(struct keylist *);
 
-static inline void bch2_keylist_init(struct keylist *l, u64 *inline_keys,
-				    size_t nr_inline_u64s)
+static inline void bch2_keylist_init(struct keylist *l, u64 *inline_keys)
 {
 	l->top_p = l->keys_p = inline_keys;
 }
@@ -17,7 +16,7 @@ static inline void bch2_keylist_free(struct keylist *l, u64 *inline_keys)
 {
 	if (l->keys_p != inline_keys)
 		kfree(l->keys_p);
-	memset(l, 0, sizeof(*l));
+	bch2_keylist_init(l, inline_keys);
 }
 
 static inline void bch2_keylist_push(struct keylist *l)

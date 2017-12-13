@@ -1008,8 +1008,7 @@ bch2_btree_update_start(struct bch_fs *c, enum btree_id id,
 	as->reserve	= reserve;
 	INIT_LIST_HEAD(&as->write_blocked_list);
 
-	bch2_keylist_init(&as->parent_keys, as->inline_keys,
-			 ARRAY_SIZE(as->inline_keys));
+	bch2_keylist_init(&as->parent_keys, as->inline_keys);
 
 	mutex_lock(&c->btree_interior_update_lock);
 	list_add(&as->list, &c->btree_interior_update_list);

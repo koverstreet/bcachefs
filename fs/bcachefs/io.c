@@ -874,9 +874,7 @@ void bch2_write(struct closure *cl)
 
 	memset(&op->failed, 0, sizeof(op->failed));
 
-	bch2_keylist_init(&op->insert_keys,
-			  op->inline_keys,
-			  ARRAY_SIZE(op->inline_keys));
+	bch2_keylist_init(&op->insert_keys, op->inline_keys);
 	wbio_init(&op->wbio.bio)->put_bio = false;
 
 	if (c->opts.nochanges ||
