@@ -24,6 +24,7 @@
 #include <linux/bitops.h>
 #include <linux/freezer.h>
 #include <linux/kthread.h>
+#include <linux/preempt.h>
 #include <linux/rcupdate.h>
 #include <trace/events/bcachefs.h>
 
