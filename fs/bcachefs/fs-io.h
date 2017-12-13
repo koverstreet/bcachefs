@@ -1,6 +1,8 @@
 #ifndef _BCACHEFS_FS_IO_H
 #define _BCACHEFS_FS_IO_H
 
+#ifndef NO_BCACHEFS_FS
+
 #include "buckets.h"
 #include "io_types.h"
 
@@ -37,7 +39,6 @@ int bch2_releasepage(struct page *, gfp_t);
 int bch2_migrate_page(struct address_space *, struct page *,
 		      struct page *, enum migrate_mode);
 
-#ifndef NO_BCACHEFS_FS
 void bch2_fs_fsio_exit(struct bch_fs *);
 int bch2_fs_fsio_init(struct bch_fs *);
 #else
