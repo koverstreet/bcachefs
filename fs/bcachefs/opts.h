@@ -94,6 +94,9 @@ enum opt_type {
 	BCH_OPT(compression,		u8,	OPT_RUNTIME,		\
 		OPT_STR(bch2_compression_types),			\
 		BCH_SB_COMPRESSION_TYPE,	BCH_COMPRESSION_OPT_NONE)\
+	BCH_OPT(background_compression,	u8,	OPT_RUNTIME,		\
+		OPT_STR(bch2_compression_types),			\
+		BCH_SB_BACKGROUND_COMPRESSION_TYPE,BCH_COMPRESSION_OPT_NONE)\
 	BCH_OPT(str_hash,		u8,	OPT_RUNTIME,		\
 		OPT_STR(bch2_str_hash_types),				\
 		BCH_SB_STR_HASH_TYPE,		BCH_STR_HASH_SIPHASH)	\
@@ -238,7 +241,9 @@ int bch2_parse_mount_opts(struct bch_opts *, char *);
 
 #define BCH_INODE_OPTS()					\
 	BCH_INODE_OPT(data_checksum,			8)	\
-	BCH_INODE_OPT(compression,			8)
+	BCH_INODE_OPT(compression,			8)	\
+	BCH_INODE_OPT(background_compression,		8)	\
+	BCH_INODE_OPT(data_replicas,			8)
 
 struct bch_io_opts {
 #define BCH_INODE_OPT(_name, _bits)	unsigned _name##_defined:1;

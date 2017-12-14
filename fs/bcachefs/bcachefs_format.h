@@ -608,12 +608,16 @@ BKEY_VAL_TYPE(inode_generation,	BCH_INODE_GENERATION);
 	BCH_INODE_FIELD(bi_dev,				32)	\
 	BCH_INODE_FIELD(bi_data_checksum,		8)	\
 	BCH_INODE_FIELD(bi_compression,			8)	\
-	BCH_INODE_FIELD(bi_project,			32)
+	BCH_INODE_FIELD(bi_project,			32)	\
+	BCH_INODE_FIELD(bi_background_compression,	8)	\
+	BCH_INODE_FIELD(bi_data_replicas,		8)
 
 #define BCH_INODE_FIELDS_INHERIT()				\
 	BCH_INODE_FIELD(bi_data_checksum)			\
 	BCH_INODE_FIELD(bi_compression)				\
-	BCH_INODE_FIELD(bi_project)
+	BCH_INODE_FIELD(bi_project)				\
+	BCH_INODE_FIELD(bi_background_compression)		\
+	BCH_INODE_FIELD(bi_data_replicas)
 
 enum {
 	/*
@@ -1077,6 +1081,8 @@ LE64_BITMASK(BCH_SB_ENCODED_EXTENT_MAX_BITS,
 
 LE64_BITMASK(BCH_SB_META_REPLICAS_REQ,	struct bch_sb, flags[1], 20, 24);
 LE64_BITMASK(BCH_SB_DATA_REPLICAS_REQ,	struct bch_sb, flags[1], 24, 28);
+LE64_BITMASK(BCH_SB_BACKGROUND_COMPRESSION_TYPE,
+					struct bch_sb, flags[1], 28, 32);
 
 /* Features: */
 enum bch_sb_features {
