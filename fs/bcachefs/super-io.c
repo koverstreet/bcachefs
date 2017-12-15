@@ -354,7 +354,16 @@ const char *bch2_sb_validate(struct bch_sb_handle *disk_sb)
 
 	if (!BCH_SB_DATA_REPLICAS_REQ(sb) ||
 	    BCH_SB_DATA_REPLICAS_REQ(sb) >= BCH_REPLICAS_MAX)
-		return "Invalid number of metadata replicas";
+		return "Invalid number of data replicas";
+
+	if (BCH_SB_META_CSUM_TYPE(sb) >= BCH_CSUM_OPT_NR)
+		return "Invalid metadata checksum type";
+
+	if (BCH_SB_DATA_CSUM_TYPE(sb) >= BCH_CSUM_OPT_NR)
+		return "Invalid metadata checksum type";
+
+	if (BCH_SB_COMPRESSION_TYPE(sb) >= BCH_COMPRESSION_OPT_NR)
+		return "Invalid compression type";
 
 	if (!BCH_SB_BTREE_NODE_SIZE(sb))
 		return "Btree node size not set";
