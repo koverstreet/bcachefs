@@ -198,6 +198,12 @@ static const char *bch2_inode_invalid(const struct bch_fs *c,
 		if (bch2_inode_unpack(inode, &unpacked))
 			return "invalid variable length fields";
 
+		if (unpacked.bi_data_checksum >= BCH_CSUM_OPT_NR + 1)
+			return "invalid data checksum type";
+
+		if (unpacked.bi_compression >= BCH_COMPRESSION_OPT_NR + 1)
+			return "invalid data checksum type";
+
 		return NULL;
 	}
 	case BCH_INODE_BLOCKDEV:
