@@ -74,9 +74,9 @@ static inline void __bch2_inode_opt_set(struct bch_inode_unpacked *inode,
 					enum bch_opt_id id, u64 v)
 {
 	switch (id) {
-#define BCH_INODE_OPT(_name, ...)						\
+#define BCH_INODE_OPT(_name, ...)					\
 	case Opt_##_name:						\
-		inode->bi_##_name = v + 1;				\
+		inode->bi_##_name = v;					\
 		break;
 	BCH_INODE_OPTS()
 #undef BCH_INODE_OPT
