@@ -131,6 +131,26 @@ static inline struct bch_dev *bch2_get_next_online_dev(struct bch_fs *c,
 	__for_each_online_member(ca, c, iter,				\
 		(1 << BCH_MEMBER_STATE_RW)|(1 << BCH_MEMBER_STATE_RO))
 
+/*
+ * If a key exists that references a device, the device won't be going away and
+ * we can omit rcu_read_lock():
+ */
+static inline struct bch_dev *bch_dev_bkey_exists(const struct bch_fs *c, unsigned idx)
+{
+	EBUG_ON(idx >= c->sb.nr_devices || !c->devs[idx]);
+
+	return rcu_dereference_check(c->devs[idx], 1);
+}
+
+static inline struct bch_dev *bch_dev_locked(struct bch_fs *c, unsigned idx)
+{
+	EBUG_ON(idx >= c->sb.nr_devices || !c->devs[idx]);
+
+	return rcu_dereference_protected(c->devs[idx],
+					 lockdep_is_held(&c->sb_lock) ||
+					 lockdep_is_held(&c->state_lock));
+}
+
 /* XXX kill, move to struct bch_fs */
 static inline struct bch_devs_mask bch2_online_devs(struct bch_fs *c)
 {

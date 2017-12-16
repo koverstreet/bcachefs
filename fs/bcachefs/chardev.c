@@ -2,6 +2,7 @@
 
 #include "bcachefs.h"
 #include "bcachefs_ioctl.h"
+#include "chardev.h"
 #include "super.h"
 #include "super-io.h"
 
@@ -25,7 +26,7 @@ static struct bch_dev *bch2_device_lookup(struct bch_fs *c, u64 dev,
 			return ERR_PTR(-EINVAL);
 
 		rcu_read_lock();
-		ca = c->devs[dev];
+		ca = rcu_dereference(c->devs[dev]);
 		if (ca)
 			percpu_ref_get(&ca->ref);
 		rcu_read_unlock();
@@ -80,7 +81,7 @@ static long bch2_ioctl_assemble(struct bch_ioctl_assemble __user *user_arg)
 
 	devs = kcalloc(arg.nr_devs, sizeof(char *), GFP_KERNEL);
 
-	if (copy_from_user(user_devs, arg.devs,
+	if (copy_from_user(user_devs, user_arg->devs,
 			   sizeof(u64) * arg.nr_devs))
 		goto err;
 

@@ -435,7 +435,7 @@ int bch2_inode_rm(struct bch_fs *c, u64 inode_nr)
 			struct bch_inode_unpacked inode_u;
 
 			if (!bch2_inode_unpack(bkey_s_c_to_inode(k), &inode_u))
-				bi_generation = cpu_to_le32(inode_u.bi_generation) + 1;
+				bi_generation = inode_u.bi_generation + 1;
 			break;
 		}
 		case BCH_INODE_GENERATION: {

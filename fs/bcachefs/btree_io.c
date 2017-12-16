@@ -556,7 +556,7 @@ static void btree_node_sort(struct bch_fs *c, struct btree *b,
 	struct bset_tree *t;
 	struct bset *start_bset = bset(b, &b->set[start_idx]);
 	bool used_mempool = false;
-	u64 start_time;
+	u64 start_time, seq = 0;
 	unsigned i, u64s = 0, order, shift = end_idx - start_idx - 1;
 	bool sorting_entire_node = start_idx == 0 &&
 		end_idx == b->nsets;
@@ -595,12 +595,9 @@ static void btree_node_sort(struct bch_fs *c, struct btree *b,
 		bch2_time_stats_update(&c->btree_sort_time, start_time);
 
 	/* Make sure we preserve bset journal_seq: */
-	for (t = b->set + start_idx + 1;
-	     t < b->set + end_idx;
-	     t++)
-		start_bset->journal_seq =
-			max(start_bset->journal_seq,
-			    bset(b, t)->journal_seq);
+	for (t = b->set + start_idx; t < b->set + end_idx; t++)
+		seq = max(seq, le64_to_cpu(bset(b, t)->journal_seq));
+	start_bset->journal_seq = cpu_to_le64(seq);
 
 	if (sorting_entire_node) {
 		unsigned u64s = le16_to_cpu(out->keys.u64s);
@@ -1025,7 +1022,7 @@ static int validate_bset(struct bch_fs *c, struct btree *b,
 
 	if (!BSET_SEPARATE_WHITEOUTS(i)) {
 		seen_non_whiteout = true;
-		whiteout_u64s = 0;
+		*whiteout_u64s = 0;
 	}
 
 	for (k = i->start;

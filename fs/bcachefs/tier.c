@@ -6,7 +6,6 @@
 #include "clock.h"
 #include "extents.h"
 #include "io.h"
-#include "keylist.h"
 #include "move.h"
 #include "super-io.h"
 #include "tier.h"
@@ -28,7 +27,7 @@ static bool tiering_pred(void *arg, struct bkey_s_c_extent e)
 		return false;
 
 	extent_for_each_ptr(e, ptr)
-		if (c->devs[ptr->dev]->mi.tier >= tier->idx)
+		if (bch_dev_bkey_exists(c, ptr->dev)->mi.tier >= tier->idx)
 			replicas++;
 
 	return replicas < c->opts.data_replicas;

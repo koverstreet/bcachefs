@@ -377,7 +377,8 @@ static inline u64 bkey_field_max(const struct bkey_format *f,
 				 enum bch_bkey_fields nr)
 {
 	return f->bits_per_field[nr] < 64
-		? f->field_offset[nr] + ~(~0ULL << f->bits_per_field[nr])
+		? (le64_to_cpu(f->field_offset[nr]) +
+		   ~(~0ULL << f->bits_per_field[nr]))
 		: U64_MAX;
 }
 

@@ -243,14 +243,14 @@ bch2_extent_crc_unpack(const struct bkey *k, const union bch_extent_crc *crc)
 	case BCH_EXTENT_CRC32:
 		return (struct bch_extent_crc_unpacked) {
 			common_fields(crc->crc32),
-			.csum.lo		= crc->crc32.csum,
+			.csum.lo		= (__force __le64) crc->crc32.csum,
 		};
 	case BCH_EXTENT_CRC64:
 		return (struct bch_extent_crc_unpacked) {
 			common_fields(crc->crc64),
 			.nonce			= crc->crc64.nonce,
-			.csum.lo		= crc->crc64.csum_lo,
-			.csum.hi		= crc->crc64.csum_hi,
+			.csum.lo		= (__force __le64) crc->crc64.csum_lo,
+			.csum.hi		= (__force __le64) crc->crc64.csum_hi,
 		};
 	case BCH_EXTENT_CRC128:
 		return (struct bch_extent_crc_unpacked) {

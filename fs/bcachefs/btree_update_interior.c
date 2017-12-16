@@ -925,7 +925,8 @@ void bch2_btree_interior_update_will_free_node(struct btree_update *as,
 	 * in with keys that aren't in the journal anymore:
 	 */
 	for_each_bset(b, t)
-		as->journal_seq = max(as->journal_seq, bset(b, t)->journal_seq);
+		as->journal_seq = max(as->journal_seq,
+				      le64_to_cpu(bset(b, t)->journal_seq));
 
 	mutex_lock(&c->btree_interior_update_lock);
 

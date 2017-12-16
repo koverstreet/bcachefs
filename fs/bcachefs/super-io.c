@@ -157,7 +157,7 @@ struct bch_sb_field *bch2_sb_field_resize(struct bch_sb_handle *sb,
 		return NULL;
 
 	f = __bch2_sb_field_resize(sb->sb, f, u64s);
-	f->type = type;
+	f->type = cpu_to_le32(type);
 	return f;
 }
 
@@ -188,7 +188,7 @@ struct bch_sb_field *bch2_fs_sb_field_resize(struct bch_fs *c,
 	}
 
 	f = __bch2_sb_field_resize(c->disk_sb, f, u64s);
-	f->type = type;
+	f->type = cpu_to_le32(type);
 	return f;
 }
 
@@ -516,7 +516,7 @@ static void __copy_super(struct bch_sb *dst, struct bch_sb *src)
 		if (src_f->type == BCH_SB_FIELD_journal)
 			continue;
 
-		dst_f = bch2_sb_field_get(dst, src_f->type);
+		dst_f = bch2_sb_field_get(dst, le32_to_cpu(src_f->type));
 		dst_f = __bch2_sb_field_resize(dst, dst_f,
 				le32_to_cpu(src_f->u64s));
 
@@ -610,7 +610,7 @@ reread:
 
 	/* XXX: verify MACs */
 	csum = csum_vstruct(NULL, BCH_SB_CSUM_TYPE(sb->sb),
-			    (struct nonce) { 0 }, sb->sb);
+			    null_nonce(), sb->sb);
 
 	if (bch2_crc_cmp(csum, sb->sb->csum))
 		return "bad checksum reading superblock";
@@ -697,9 +697,9 @@ const char *bch2_read_super(const char *path,
 got_super:
 	pr_debug("read sb version %llu, flags %llu, seq %llu, journal size %u",
 		 le64_to_cpu(ret->sb->version),
-		 le64_to_cpu(ret->sb->flags),
+		 le64_to_cpu(ret->sb->flags[0]),
 		 le64_to_cpu(ret->sb->seq),
-		 le16_to_cpu(ret->sb->u64s));
+		 le32_to_cpu(ret->sb->u64s));
 
 	err = "Superblock block size smaller than device block size";
 	if (le16_to_cpu(ret->sb->block_size) << 9 <
@@ -736,7 +736,7 @@ static void write_one_super(struct bch_fs *c, struct bch_dev *ca, unsigned idx)
 
 	SET_BCH_SB_CSUM_TYPE(sb, c->opts.metadata_checksum);
 	sb->csum = csum_vstruct(c, BCH_SB_CSUM_TYPE(sb),
-				(struct nonce) { 0 }, sb);
+				null_nonce(), sb);
 
 	bio_reset(bio);
 	bio_set_dev(bio, ca->disk_sb.bdev);
@@ -935,14 +935,12 @@ static int bch2_sb_replicas_to_cpu_replicas(struct bch_fs *c)
 	struct bch_sb_field_replicas *sb_r;
 	struct bch_replicas_cpu *cpu_r, *old_r;
 
-	lockdep_assert_held(&c->sb_lock);
-
 	sb_r	= bch2_sb_get_replicas(c->disk_sb);
 	cpu_r	= __bch2_sb_replicas_to_cpu_replicas(sb_r);
 	if (!cpu_r)
 		return -ENOMEM;
 
-	old_r = c->replicas;
+	old_r = rcu_dereference_check(c->replicas, lockdep_is_held(&c->sb_lock));
 	rcu_assign_pointer(c->replicas, cpu_r);
 	if (old_r)
 		kfree_rcu(old_r, rcu);

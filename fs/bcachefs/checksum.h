@@ -144,6 +144,14 @@ static inline struct nonce nonce_add(struct nonce nonce, unsigned offset)
 	return nonce;
 }
 
+static inline struct nonce null_nonce(void)
+{
+	struct nonce ret;
+
+	memset(&ret, 0, sizeof(ret));
+	return ret;
+}
+
 static inline struct nonce extent_nonce(struct bversion version,
 					struct bch_extent_crc_unpacked crc)
 {
