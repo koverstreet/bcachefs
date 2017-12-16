@@ -202,7 +202,8 @@ static void bch2_write_done(struct closure *cl)
 	if (!op->error && (op->flags & BCH_WRITE_FLUSH))
 		op->error = bch2_journal_error(&op->c->journal);
 
-	bch2_disk_reservation_put(op->c, &op->res);
+	if (!(op->flags & BCH_WRITE_NOPUT_RESERVATION))
+		bch2_disk_reservation_put(op->c, &op->res);
 	percpu_ref_put(&op->c->writes);
 	bch2_keylist_free(&op->insert_keys, op->inline_keys);
 	op->flags &= ~(BCH_WRITE_DONE|BCH_WRITE_LOOPED);
@@ -884,7 +885,8 @@ void bch2_write(struct closure *cl)
 	    !percpu_ref_tryget(&c->writes)) {
 		__bcache_io_error(c, "read only");
 		op->error = -EROFS;
-		bch2_disk_reservation_put(c, &op->res);
+		if (!(op->flags & BCH_WRITE_NOPUT_RESERVATION))
+			bch2_disk_reservation_put(c, &op->res);
 		closure_return(cl);
 		return;
 	}

@@ -59,8 +59,6 @@ struct dio_write {
 	struct bch_fs			*c;
 	loff_t				offset;
 
-	struct disk_reservation		res;
-
 	struct iovec			*iovec;
 	struct iovec			inline_vecs[UIO_FASTIOV];
 	struct iov_iter			iter;
@@ -1534,7 +1532,7 @@ static long __bch2_dio_write_complete(struct dio_write *dio)
 	struct bch_inode_info *inode = file_bch_inode(file);
 	long ret = dio->iop.op.error ?: ((long) dio->iop.op.written << 9);
 
-	bch2_disk_reservation_put(dio->c, &dio->res);
+	bch2_disk_reservation_put(dio->c, &dio->iop.op.res);
 
 	__pagecache_block_put(&mapping->add_lock);
 	inode_dio_end(&inode->v);
@@ -1580,12 +1578,6 @@ static void bch2_do_direct_IO_write(struct dio_write *dio)
 	}
 
 	dio->iop.op.pos = POS(inode->v.i_ino, (dio->offset >> 9) + dio->iop.op.written);
-	dio->iop.op.res = dio->res;
-
-	if (!dio->iop.unalloc) {
-		dio->res.sectors -= bio_sectors(bio);
-		dio->iop.op.res.sectors = bio_sectors(bio);
-	}
 
 	task_io_account_write(bio->bi_iter.bi_size);
 
@@ -1652,6 +1644,7 @@ static int bch2_direct_IO_write(struct bch_fs *c,
 	dio->task		= current;
 	bch2_fswrite_op_init(&dio->iop, c, inode, io_opts(c, inode), true);
 	dio->iop.op.write_point	= writepoint_hashed((unsigned long) dio->task);
+	dio->iop.op.flags |= BCH_WRITE_NOPUT_RESERVATION;
 
 	if ((dio->req->ki_flags & IOCB_DSYNC) &&
 	    !c->opts.journal_flush_disabled)
@@ -1668,7 +1661,7 @@ static int bch2_direct_IO_write(struct bch_fs *c,
 	 * Have to then guard against racing with truncate (deleting data that
 	 * we would have been overwriting)
 	 */
-	ret = bch2_disk_reservation_get(c, &dio->res, iter->count >> 9, 0);
+	ret = bch2_disk_reservation_get(c, &dio->iop.op.res, iter->count >> 9, 0);
 	if (unlikely(ret)) {
 		if (bch2_check_range_allocated(c, POS(inode->v.i_ino,
 						      offset >> 9),
@@ -1681,7 +1674,7 @@ static int bch2_direct_IO_write(struct bch_fs *c,
 		dio->iop.unalloc = true;
 	}
 
-	dio->iop.op.nr_replicas	= dio->res.nr_replicas;
+	dio->iop.op.nr_replicas	= dio->iop.op.res.nr_replicas;
 
 	inode_dio_begin(&inode->v);
 	__pagecache_block_get(&mapping->add_lock);
