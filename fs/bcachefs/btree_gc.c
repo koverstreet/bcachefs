@@ -96,7 +96,7 @@ u8 bch2_btree_key_recalc_oldest_gen(struct bch_fs *c, struct bkey_s_c k)
 		struct bkey_s_c_extent e = bkey_s_c_to_extent(k);
 
 		extent_for_each_ptr(e, ptr) {
-			struct bch_dev *ca = c->devs[ptr->dev];
+			struct bch_dev *ca = bch_dev_bkey_exists(c, ptr->dev);
 			size_t b = PTR_BUCKET_NR(ca, ptr);
 
 			if (gen_after(ca->oldest_gens[b], ptr->gen))
@@ -166,7 +166,7 @@ int bch2_btree_mark_key_initial(struct bch_fs *c, enum bkey_type type,
 		}
 
 		extent_for_each_ptr(e, ptr) {
-			struct bch_dev *ca = c->devs[ptr->dev];
+			struct bch_dev *ca = bch_dev_bkey_exists(c, ptr->dev);
 			struct bucket *g = PTR_BUCKET(ca, ptr);
 
 			if (mustfix_fsck_err_on(!g->mark.gen_valid, c,
@@ -315,14 +315,14 @@ void bch2_mark_dev_superblock(struct bch_fs *c, struct bch_dev *ca,
 	lockdep_assert_held(&c->sb_lock);
 
 	for (i = 0; i < layout->nr_superblocks; i++) {
-		if (layout->sb_offset[i] == BCH_SB_SECTOR)
+		u64 offset = le64_to_cpu(layout->sb_offset[i]);
+
+		if (offset == BCH_SB_SECTOR)
 			mark_metadata_sectors(c, ca, 0, BCH_SB_SECTOR,
 					      BUCKET_SB, flags);
 
-		mark_metadata_sectors(c, ca,
-				      layout->sb_offset[i],
-				      layout->sb_offset[i] +
-				      (1 << layout->sb_max_size_bits),
+		mark_metadata_sectors(c, ca, offset,
+				      offset + (1 << layout->sb_max_size_bits),
 				      BUCKET_SB, flags);
 	}
 
@@ -414,7 +414,7 @@ static void bch2_mark_allocator_buckets(struct bch_fs *c)
 		spin_lock(&ob->lock);
 		if (ob->valid) {
 			gc_pos_set(c, gc_pos_alloc(c, ob));
-			ca = c->devs[ob->ptr.dev];
+			ca = bch_dev_bkey_exists(c, ob->ptr.dev);
 			bch2_mark_alloc_bucket(c, ca, PTR_BUCKET(ca, &ob->ptr), true,
 					       gc_pos_alloc(c, ob),
 					       BCH_BUCKET_MARK_MAY_MAKE_UNAVAILABLE|
@@ -424,7 +424,7 @@ static void bch2_mark_allocator_buckets(struct bch_fs *c)
 	}
 }
 
-void bch2_gc_start(struct bch_fs *c)
+static void bch2_gc_start(struct bch_fs *c)
 {
 	struct bch_dev *ca;
 	struct bucket *g;

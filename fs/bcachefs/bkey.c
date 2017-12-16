@@ -336,7 +336,8 @@ bool bch2_bkey_pack_key(struct bkey_packed *out, const struct bkey *in,
 	 * Extents - we have to guarantee that if an extent is packed, a trimmed
 	 * version will also pack:
 	 */
-	if (bkey_start_offset(in) < format->field_offset[BKEY_FIELD_OFFSET])
+	if (bkey_start_offset(in) <
+	    le64_to_cpu(format->field_offset[BKEY_FIELD_OFFSET]))
 		return false;
 
 	pack_state_finish(&state, out);
@@ -800,7 +801,7 @@ static u8 *compile_bkey_field(const struct bkey_format *format, u8 *out,
 			      bool *eax_zeroed)
 {
 	unsigned bits = format->bits_per_field[field];
-	u64 offset = format->field_offset[field];
+	u64 offset = le64_to_cpu(format->field_offset[field]);
 	unsigned i, byte, bit_offset, align, shl, shr;
 
 	if (!bits && !offset) {

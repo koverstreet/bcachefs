@@ -204,7 +204,7 @@ static int hash_check_key(const struct bch_hash_desc desc,
 			"hash table key at wrong offset: %llu, "
 			"hashed to %llu chain starts at %llu\n%s",
 			k.k->p.offset, hashed, h->chain.pos.offset,
-			bch2_bkey_val_to_text(c, desc.btree_id,
+			bch2_bkey_val_to_text(c, bkey_type(0, desc.btree_id),
 					      buf, sizeof(buf), k))) {
 		ret = hash_redo_key(desc, h, c, k_iter, k, hashed);
 		if (ret) {
@@ -224,7 +224,7 @@ static int hash_check_key(const struct bch_hash_desc desc,
 		if (fsck_err_on(k2.k->type == desc.key_type &&
 				!desc.cmp_bkey(k, k2), c,
 				"duplicate hash table keys:\n%s",
-				bch2_bkey_val_to_text(c, desc.btree_id,
+				bch2_bkey_val_to_text(c, bkey_type(0, desc.btree_id),
 						      buf, sizeof(buf), k))) {
 			ret = bch2_hash_delete_at(desc, &h->info, &h->iter, NULL);
 			if (ret)
@@ -397,9 +397,9 @@ static int check_dirents(struct bch_fs *c)
 
 		if (fsck_err_on(have_target &&
 				d.v->d_type !=
-				mode_to_type(le16_to_cpu(target.bi_mode)), c,
+				mode_to_type(target.bi_mode), c,
 				"incorrect d_type: should be %u:\n%s",
-				mode_to_type(le16_to_cpu(target.bi_mode)),
+				mode_to_type(target.bi_mode),
 				bch2_bkey_val_to_text(c, BTREE_ID_DIRENTS,
 						      buf, sizeof(buf), k))) {
 			struct bkey_i_dirent *n;
@@ -411,7 +411,7 @@ static int check_dirents(struct bch_fs *c)
 			}
 
 			bkey_reassemble(&n->k_i, d.s_c);
-			n->v.d_type = mode_to_type(le16_to_cpu(target.bi_mode));
+			n->v.d_type = mode_to_type(target.bi_mode);
 
 			ret = bch2_btree_insert_at(c, NULL, NULL, NULL,
 					BTREE_INSERT_NOFAIL,

@@ -75,8 +75,8 @@ bool bch2_btree_node_relock(struct btree_iter *iter, unsigned level)
 {
 	struct btree_iter *linked;
 	struct btree *b = iter->nodes[level];
-	enum btree_node_locked_type want = btree_lock_want(iter, level);
-	enum btree_node_locked_type have = btree_node_locked_type(iter, level);
+	int want = btree_lock_want(iter, level);
+	int have = btree_node_locked_type(iter, level);
 
 	if (want == have)
 		return true;
