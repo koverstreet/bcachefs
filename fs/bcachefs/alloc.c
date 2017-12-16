@@ -257,7 +257,7 @@ static void bch2_alloc_read_key(struct bch_fs *c, struct bkey_s_c k)
 		return;
 
 	a = bkey_s_c_to_alloc(k);
-	ca = c->devs[a.k->p.inode];
+	ca = bch_dev_bkey_exists(c, a.k->p.inode);
 
 	if (a.k->p.offset >= ca->mi.nbuckets)
 		return;
@@ -368,7 +368,7 @@ int bch2_alloc_replay_key(struct bch_fs *c, struct bpos pos)
 	if (pos.inode >= c->sb.nr_devices || !c->devs[pos.inode])
 		return 0;
 
-	ca = c->devs[pos.inode];
+	ca = bch_dev_bkey_exists(c, pos.inode);
 
 	if (pos.offset >= ca->mi.nbuckets)
 		return 0;
@@ -461,7 +461,7 @@ static void verify_not_on_freelist(struct bch_fs *c, struct bch_dev *ca,
 
 /* Bucket heap / gen */
 
-void bch2_recalc_min_prio(struct bch_fs *c, struct bch_dev *ca, int rw)
+static void bch2_recalc_min_prio(struct bch_fs *c, struct bch_dev *ca, int rw)
 {
 	struct prio_clock *clock = &c->prio_clock[rw];
 	struct bucket *g;
@@ -975,7 +975,7 @@ static int bch2_allocator_thread(void *arg)
 
 void __bch2_open_bucket_put(struct bch_fs *c, struct open_bucket *ob)
 {
-	struct bch_dev *ca = c->devs[ob->ptr.dev];
+	struct bch_dev *ca = bch_dev_bkey_exists(c, ob->ptr.dev);
 
 	spin_lock(&ob->lock);
 	bch2_mark_alloc_bucket(c, ca, PTR_BUCKET(ca, &ob->ptr), false,
@@ -1303,7 +1303,7 @@ static void writepoint_drop_ptrs(struct bch_fs *c,
 
 	for (i = wp->nr_ptrs - 1; i >= 0; --i) {
 		struct open_bucket *ob = wp->ptrs[i];
-		struct bch_dev *ca = c->devs[ob->ptr.dev];
+		struct bch_dev *ca = bch_dev_bkey_exists(c, ob->ptr.dev);
 
 		if (nr_ptrs_dislike && !test_bit(ob->ptr.dev, devs->d)) {
 			BUG_ON(ca->open_buckets_partial_nr >=
@@ -1331,7 +1331,7 @@ static void verify_not_stale(struct bch_fs *c, const struct write_point *wp)
 	unsigned i;
 
 	writepoint_for_each_ptr(wp, ob, i) {
-		struct bch_dev *ca = c->devs[ob->ptr.dev];
+		struct bch_dev *ca = bch_dev_bkey_exists(c, ob->ptr.dev);
 
 		BUG_ON(ptr_stale(ca, &ob->ptr));
 	}
@@ -1537,7 +1537,7 @@ void bch2_alloc_sectors_append_ptrs(struct bch_fs *c, struct write_point *wp,
 
 	for (i = 0; i < wp->nr_ptrs_can_use; i++) {
 		struct open_bucket *ob = wp->ptrs[i];
-		struct bch_dev *ca = c->devs[ob->ptr.dev];
+		struct bch_dev *ca = bch_dev_bkey_exists(c, ob->ptr.dev);
 		struct bch_extent_ptr tmp = ob->ptr;
 
 		EBUG_ON(bch2_extent_has_device(extent_i_to_s_c(e), ob->ptr.dev));

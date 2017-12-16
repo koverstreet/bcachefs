@@ -739,7 +739,7 @@ static ssize_t show_dev_alloc_debug(struct bch_dev *ca, char *buf)
 		c->open_buckets_wait.list.first		? "waiting" : "empty");
 }
 
-const char * const bch2_rw[] = {
+static const char * const bch2_rw[] = {
 	"read",
 	"write",
 	NULL

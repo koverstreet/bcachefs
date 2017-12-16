@@ -385,7 +385,7 @@ static void bch2_fs_free(struct bch_fs *c)
 	mempool_exit(&c->btree_reserve_pool);
 	mempool_exit(&c->fill_iter);
 	percpu_ref_exit(&c->writes);
-	kfree(c->replicas);
+	kfree(rcu_dereference_protected(c->replicas, 1));
 
 	if (c->copygc_wq)
 		destroy_workqueue(c->copygc_wq);
@@ -406,7 +406,7 @@ static void bch2_fs_exit(struct bch_fs *c)
 
 	for (i = 0; i < c->sb.nr_devices; i++)
 		if (c->devs[i])
-			bch2_dev_free(c->devs[i]);
+			bch2_dev_free(rcu_dereference_protected(c->devs[i], 1));
 
 	closure_debug_destroy(&c->cl);
 	kobject_put(&c->kobj);
@@ -986,13 +986,6 @@ static void bch2_dev_free(struct bch_dev *ca)
 	kobject_put(&ca->kobj);
 }
 
-static void bch2_dev_io_ref_release(struct percpu_ref *ref)
-{
-	struct bch_dev *ca = container_of(ref, struct bch_dev, io_ref);
-
-	complete(&ca->offline_complete);
-}
-
 static void __bch2_dev_offline(struct bch_dev *ca)
 {
 	struct bch_fs *c = ca->fs;
@@ -1001,9 +994,9 @@ static void __bch2_dev_offline(struct bch_dev *ca)
 
 	__bch2_dev_read_only(c, ca);
 
-	reinit_completion(&ca->offline_complete);
+	reinit_completion(&ca->io_ref_completion);
 	percpu_ref_kill(&ca->io_ref);
-	wait_for_completion(&ca->offline_complete);
+	wait_for_completion(&ca->io_ref_completion);
 
 	if (ca->kobj.state_in_sysfs) {
 		struct kobject *block =
@@ -1017,27 +1010,18 @@ static void __bch2_dev_offline(struct bch_dev *ca)
 	bch2_dev_journal_exit(ca);
 }
 
-static void bch2_dev_ref_release(struct percpu_ref *ref)
+static void bch2_dev_ref_complete(struct percpu_ref *ref)
 {
 	struct bch_dev *ca = container_of(ref, struct bch_dev, ref);
 
-	complete(&ca->stop_complete);
+	complete(&ca->ref_completion);
 }
 
-static void bch2_dev_stop(struct bch_dev *ca)
+static void bch2_dev_io_ref_complete(struct percpu_ref *ref)
 {
-	struct bch_fs *c = ca->fs;
+	struct bch_dev *ca = container_of(ref, struct bch_dev, io_ref);
 
-	lockdep_assert_held(&c->state_lock);
-
-	BUG_ON(rcu_access_pointer(c->devs[ca->dev_idx]) != ca);
-	rcu_assign_pointer(c->devs[ca->dev_idx], NULL);
-
-	synchronize_rcu();
-
-	reinit_completion(&ca->stop_complete);
-	percpu_ref_kill(&ca->ref);
-	wait_for_completion(&ca->stop_complete);
+	complete(&ca->io_ref_completion);
 }
 
 static int bch2_dev_sysfs_online(struct bch_dev *ca)
@@ -1086,8 +1070,8 @@ static int bch2_dev_alloc(struct bch_fs *c, unsigned dev_idx)
 		return -ENOMEM;
 
 	kobject_init(&ca->kobj, &bch2_dev_ktype);
-	init_completion(&ca->stop_complete);
-	init_completion(&ca->offline_complete);
+	init_completion(&ca->ref_completion);
+	init_completion(&ca->io_ref_completion);
 
 	ca->dev_idx = dev_idx;
 	__set_bit(ca->dev_idx, ca->self.d);
@@ -1123,9 +1107,9 @@ static int bch2_dev_alloc(struct bch_fs *c, unsigned dev_idx)
 		DIV_ROUND_UP(BTREE_NODE_RESERVE,
 			     ca->mi.bucket_size / c->opts.btree_node_size);
 
-	if (percpu_ref_init(&ca->ref, bch2_dev_ref_release,
+	if (percpu_ref_init(&ca->ref, bch2_dev_ref_complete,
 			    0, GFP_KERNEL) ||
-	    percpu_ref_init(&ca->io_ref, bch2_dev_io_ref_release,
+	    percpu_ref_init(&ca->io_ref, bch2_dev_io_ref_complete,
 			    PERCPU_REF_INIT_DEAD, GFP_KERNEL) ||
 	    !init_fifo(&ca->free[RESERVE_BTREE], btree_node_reserve_buckets,
 		       GFP_KERNEL) ||
@@ -1171,8 +1155,6 @@ static int __bch2_dev_online(struct bch_fs *c, struct bch_sb_handle *sb)
 	struct bch_dev *ca;
 	int ret;
 
-	lockdep_assert_held(&c->sb_lock);
-
 	if (le64_to_cpu(sb->sb->seq) >
 	    le64_to_cpu(c->disk_sb->seq))
 		bch2_sb_to_fs(c, sb->sb);
@@ -1180,7 +1162,7 @@ static int __bch2_dev_online(struct bch_fs *c, struct bch_sb_handle *sb)
 	BUG_ON(sb->sb->dev_idx >= c->sb.nr_devices ||
 	       !c->devs[sb->sb->dev_idx]);
 
-	ca = c->devs[sb->sb->dev_idx];
+	ca = bch_dev_locked(c, sb->sb->dev_idx);
 	if (ca->disk_sb.bdev) {
 		bch_err(c, "already have device online in slot %u",
 			sb->sb->dev_idx);
@@ -1284,6 +1266,7 @@ static bool bch2_fs_may_start(struct bch_fs *c)
 {
 	struct replicas_status s;
 	struct bch_sb_field_members *mi;
+	struct bch_dev *ca;
 	unsigned i, flags = c->opts.degraded
 		? BCH_FORCE_IF_DEGRADED
 		: 0;
@@ -1292,14 +1275,19 @@ static bool bch2_fs_may_start(struct bch_fs *c)
 		mutex_lock(&c->sb_lock);
 		mi = bch2_sb_get_members(c->disk_sb);
 
-		for (i = 0; i < c->disk_sb->nr_devices; i++)
-			if (bch2_dev_exists(c->disk_sb, mi, i) &&
-			    !bch2_dev_is_online(c->devs[i]) &&
-			    (c->devs[i]->mi.state == BCH_MEMBER_STATE_RW ||
-			     c->devs[i]->mi.state == BCH_MEMBER_STATE_RO)) {
+		for (i = 0; i < c->disk_sb->nr_devices; i++) {
+			if (!bch2_dev_exists(c->disk_sb, mi, i))
+				continue;
+
+			ca = bch_dev_locked(c, i);
+
+			if (!bch2_dev_is_online(ca) &&
+			    (ca->mi.state == BCH_MEMBER_STATE_RW ||
+			     ca->mi.state == BCH_MEMBER_STATE_RO)) {
 				mutex_unlock(&c->sb_lock);
 				return false;
 			}
+		}
 		mutex_unlock(&c->sb_lock);
 	}
 
@@ -1425,7 +1413,14 @@ int bch2_dev_remove(struct bch_fs *c, struct bch_dev *ca, int flags)
 	bch2_journal_meta(&c->journal);
 
 	__bch2_dev_offline(ca);
-	bch2_dev_stop(ca);
+
+	mutex_lock(&c->sb_lock);
+	rcu_assign_pointer(c->devs[ca->dev_idx], NULL);
+	mutex_unlock(&c->sb_lock);
+
+	percpu_ref_kill(&ca->ref);
+	wait_for_completion(&ca->ref_completion);
+
 	bch2_dev_free(ca);
 
 	/*
@@ -1533,7 +1528,7 @@ have_slot:
 	bch2_write_super(c);
 	mutex_unlock(&c->sb_lock);
 
-	ca = c->devs[dev_idx];
+	ca = bch_dev_locked(c, dev_idx);
 	if (ca->mi.state == BCH_MEMBER_STATE_RW) {
 		err = "journal alloc failed";
 		if (bch2_dev_journal_alloc(ca))
@@ -1559,7 +1554,7 @@ err:
 /* Hot add existing device to running filesystem: */
 int bch2_dev_online(struct bch_fs *c, const char *path)
 {
-	struct bch_sb_handle sb = { 0 };
+	struct bch_sb_handle sb = { NULL };
 	struct bch_dev *ca;
 	unsigned dev_idx;
 	const char *err;
@@ -1584,7 +1579,7 @@ int bch2_dev_online(struct bch_fs *c, const char *path)
 	}
 	mutex_unlock(&c->sb_lock);
 
-	ca = c->devs[dev_idx];
+	ca = bch_dev_locked(c, dev_idx);
 	if (ca->mi.state == BCH_MEMBER_STATE_RW) {
 		err = __bch2_dev_read_write(c, ca);
 		if (err)

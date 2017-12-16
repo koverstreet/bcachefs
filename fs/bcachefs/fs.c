@@ -145,7 +145,7 @@ int __must_check bch2_write_inode(struct bch_fs *c,
 	return __bch2_write_inode(c, inode, NULL, NULL);
 }
 
-int bch2_inc_nlink(struct bch_fs *c, struct bch_inode_info *inode)
+static int bch2_inc_nlink(struct bch_fs *c, struct bch_inode_info *inode)
 {
 	int ret;
 
@@ -157,7 +157,7 @@ int bch2_inc_nlink(struct bch_fs *c, struct bch_inode_info *inode)
 	return ret;
 }
 
-int bch2_dec_nlink(struct bch_fs *c, struct bch_inode_info *inode)
+static int bch2_dec_nlink(struct bch_fs *c, struct bch_inode_info *inode)
 {
 	int ret = 0;
 

@@ -800,7 +800,7 @@ struct bch_sb_layout {
 	__u8			sb_max_size_bits; /* base 2 of 512 byte sectors */
 	__u8			nr_superblocks;
 	__u8			pad[5];
-	__u64			sb_offset[61];
+	__le64			sb_offset[61];
 } __attribute__((packed, aligned(8)));
 
 #define BCH_SB_LAYOUT_SECTOR	7
@@ -1093,6 +1093,11 @@ struct jset_entry {
 		struct bkey_i	start[0];
 		__u64		_data[0];
 	};
+};
+
+struct jset_entry_blacklist {
+	struct jset_entry	entry;
+	__le64			seq;
 };
 
 #define JSET_KEYS_U64s	(sizeof(struct jset_entry) / sizeof(__u64))

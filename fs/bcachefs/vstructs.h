@@ -9,10 +9,10 @@
  */
 #define __vstruct_u64s(_s)						\
 ({									\
-	( type_is((_s)->u64s, u64) ? le64_to_cpu((_s)->u64s)		\
-	: type_is((_s)->u64s, u32) ? le32_to_cpu((_s)->u64s)		\
-	: type_is((_s)->u64s, u16) ? le16_to_cpu((_s)->u64s)		\
-	: ((_s)->u64s));						\
+	( type_is((_s)->u64s, u64) ? le64_to_cpu((__force __le64) (_s)->u64s)		\
+	: type_is((_s)->u64s, u32) ? le32_to_cpu((__force __le32) (_s)->u64s)		\
+	: type_is((_s)->u64s, u16) ? le16_to_cpu((__force __le16) (_s)->u64s)		\
+	: ((__force u8) ((_s)->u64s)));						\
 })
 
 #define __vstruct_bytes(_type, _u64s)					\

@@ -174,8 +174,10 @@ do {									\
 
 #define bch2_usage_read_raw(_stats)					\
 ({									\
-	typeof(*this_cpu_ptr(_stats)) _acc = { 0 };			\
+	typeof(*this_cpu_ptr(_stats)) _acc;				\
 	int cpu;							\
+									\
+	memset(&_acc, 0, sizeof(_acc));					\
 									\
 	for_each_possible_cpu(cpu)					\
 		bch2_usage_add(&_acc, per_cpu_ptr((_stats), cpu));	\
@@ -479,7 +481,7 @@ static void bch2_mark_pointer(struct bch_fs *c,
 {
 	struct bucket_mark old, new;
 	unsigned saturated;
-	struct bch_dev *ca = c->devs[ptr->dev];
+	struct bch_dev *ca = bch_dev_bkey_exists(c, ptr->dev);
 	struct bucket *g = ca->buckets + PTR_BUCKET_NR(ca, ptr);
 	unsigned data_type = type == S_META
 		? BUCKET_BTREE : BUCKET_DATA;

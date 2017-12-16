@@ -20,6 +20,7 @@
 #include "journal.h"
 #include "keylist.h"
 #include "move.h"
+#include "super.h"
 #include "super-io.h"
 
 #include <linux/blkdev.h>
@@ -147,7 +148,7 @@ void bch2_submit_wbio_replicas(struct bch_write_bio *wbio, struct bch_fs *c,
 		BUG_ON(ptr->dev >= BCH_SB_MEMBERS_MAX ||
 		       !c->devs[ptr->dev]);
 
-		ca = c->devs[ptr->dev];
+		ca = bch_dev_bkey_exists(c, ptr->dev);
 
 		if (ptr + 1 < &extent_entry_last(e)->ptr) {
 			n = to_wbio(bio_clone_fast(&wbio->bio, GFP_NOIO,
@@ -1090,7 +1091,8 @@ static void bch2_rbio_retry(struct work_struct *work)
 		__bch2_read(c, rbio, iter, inode, &avoid, flags);
 }
 
-static void bch2_rbio_error(struct bch_read_bio *rbio, int retry, int error)
+static void bch2_rbio_error(struct bch_read_bio *rbio, int retry,
+			    blk_status_t error)
 {
 	rbio->retry = retry;
 
@@ -1253,7 +1255,7 @@ csum_err:
 	 */
 	if (!rbio->bounce && (rbio->flags & BCH_READ_USER_MAPPED)) {
 		rbio->flags |= BCH_READ_MUST_BOUNCE;
-		bch2_rbio_error(rbio, READ_RETRY, -EIO);
+		bch2_rbio_error(rbio, READ_RETRY, BLK_STS_IOERR);
 		return;
 	}
 
@@ -1262,13 +1264,13 @@ csum_err:
 		rbio->pos.inode, (u64) rbio->bvec_iter.bi_sector,
 		rbio->pick.crc.csum.hi, rbio->pick.crc.csum.lo,
 		csum.hi, csum.lo, crc.csum_type);
-	bch2_rbio_error(rbio, READ_RETRY_AVOID, -EIO);
+	bch2_rbio_error(rbio, READ_RETRY_AVOID, BLK_STS_IOERR);
 	return;
 decompression_err:
 	__bcache_io_error(c, "decompression error, inode %llu offset %llu",
 			  rbio->pos.inode,
 			  (u64) rbio->bvec_iter.bi_sector);
-	bch2_rbio_error(rbio, READ_ERR, -EIO);
+	bch2_rbio_error(rbio, READ_ERR, BLK_STS_IOERR);
 	return;
 }
 

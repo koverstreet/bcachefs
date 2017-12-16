@@ -326,9 +326,9 @@ struct io_count {
 struct bch_dev {
 	struct kobject		kobj;
 	struct percpu_ref	ref;
+	struct completion	ref_completion;
 	struct percpu_ref	io_ref;
-	struct completion	stop_complete;
-	struct completion	offline_complete;
+	struct completion	io_ref_completion;
 
 	struct bch_fs		*fs;
 

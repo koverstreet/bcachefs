@@ -508,7 +508,7 @@ static int __journal_entry_validate(struct bch_fs *c, struct jset *j,
 		if (journal_entry_err_on(vstruct_next(entry) >
 					 vstruct_last(j), c,
 				"journal entry extends past end of jset")) {
-			j->u64s = cpu_to_le64((u64 *) entry - j->_data);
+			j->u64s = cpu_to_le32((u64 *) entry - j->_data);
 			break;
 		}
 
@@ -917,7 +917,9 @@ static int journal_seq_blacklist_read(struct journal *j,
 
 	for_each_jset_entry_type(entry, &i->j,
 			JOURNAL_ENTRY_JOURNAL_SEQ_BLACKLISTED) {
-		seq = le64_to_cpu(entry->_data[0]);
+		struct jset_entry_blacklist *bl_entry =
+			container_of(entry, struct jset_entry_blacklist, entry);
+		seq = le64_to_cpu(bl_entry->seq);
 
 		bch_verbose(c, "blacklisting existing journal seq %llu", seq);
 
@@ -1091,7 +1093,7 @@ void bch2_journal_buf_put_slowpath(struct journal *j, bool need_write_just_set)
 {
 	struct journal_buf *w = journal_prev_buf(j);
 
-	atomic_dec_bug(&journal_seq_pin(j, w->data->seq)->count);
+	atomic_dec_bug(&journal_seq_pin(j, le64_to_cpu(w->data->seq))->count);
 
 	if (!need_write_just_set &&
 	    test_bit(JOURNAL_NEED_WRITE, &j->flags))
@@ -2003,7 +2005,7 @@ static int journal_write_alloc(struct journal *j, unsigned sectors)
 	 * i.e. whichever device was limiting the current journal entry size.
 	 */
 	extent_for_each_ptr_backwards(e, ptr) {
-		ca = c->devs[ptr->dev];
+		   ca = bch_dev_bkey_exists(c, ptr->dev);
 
 		if (ca->mi.state != BCH_MEMBER_STATE_RW ||
 		    ca->journal.sectors_free <= sectors)
@@ -2287,7 +2289,7 @@ static void journal_write(struct closure *cl)
 		goto no_io;
 
 	extent_for_each_ptr(bkey_i_to_s_extent(&j->key), ptr) {
-		ca = c->devs[ptr->dev];
+		ca = bch_dev_bkey_exists(c, ptr->dev);
 		if (!percpu_ref_tryget(&ca->io_ref)) {
 			/* XXX: fix this */
 			bch_err(c, "missing device for journal write\n");
