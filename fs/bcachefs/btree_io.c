@@ -955,6 +955,7 @@ static int validate_bset(struct bch_fs *c, struct btree *b,
 {
 	struct bkey_packed *k, *prev = NULL;
 	struct bpos prev_pos = POS_MIN;
+	enum bkey_type type = btree_node_type(b);
 	bool seen_non_whiteout = false;
 	const char *err;
 	int ret = 0;
@@ -1056,16 +1057,17 @@ static int validate_bset(struct bch_fs *c, struct btree *b,
 		}
 
 		if (BSET_BIG_ENDIAN(i) != CPU_BIG_ENDIAN)
-			bch2_bkey_swab(btree_node_type(b), &b->format, k);
+			bch2_bkey_swab(type, &b->format, k);
 
 		u = bkey_disassemble(b, k, &tmp);
 
-		invalid = bch2_btree_bkey_invalid(c, b, u);
+		invalid = __bch2_bkey_invalid(c, type, u) ?:
+			bch2_bkey_in_btree_node(b, u) ?:
+			(write ? bch2_bkey_val_invalid(c, type, u) : NULL);
 		if (invalid) {
 			char buf[160];
 
-			bch2_bkey_val_to_text(c, btree_node_type(b),
-					      buf, sizeof(buf), u);
+			bch2_bkey_val_to_text(c, type, buf, sizeof(buf), u);
 			btree_err(BTREE_ERR_FIXABLE, c, b, i,
 				  "invalid bkey %s: %s", buf, invalid);
 
@@ -1111,6 +1113,8 @@ int bch2_btree_node_read_done(struct bch_fs *c, struct btree *b, bool have_retry
 	struct btree_node_entry *bne;
 	struct btree_node_iter *iter;
 	struct btree_node *sorted;
+	struct bkey_packed *k;
+	struct bset *i;
 	bool used_mempool;
 	unsigned u64s;
 	int ret, retry_read = 0, write = READ;
@@ -1134,7 +1138,6 @@ int bch2_btree_node_read_done(struct bch_fs *c, struct btree *b, bool have_retry
 		unsigned sectors, whiteout_u64s = 0;
 		struct nonce nonce;
 		struct bch_csum csum;
-		struct bset *i;
 
 		if (!b->written) {
 			i = &b->data->keys;
@@ -1234,6 +1237,31 @@ int bch2_btree_node_read_done(struct bch_fs *c, struct btree *b, bool have_retry
 	BUG_ON(b->nr.live_u64s != u64s);
 
 	btree_bounce_free(c, btree_page_order(c), used_mempool, sorted);
+
+	i = &b->data->keys;
+	for (k = i->start; k != vstruct_last(i);) {
+		enum bkey_type type = btree_node_type(b);
+		struct bkey tmp;
+		struct bkey_s_c u = bkey_disassemble(b, k, &tmp);
+		const char *invalid = bch2_bkey_val_invalid(c, type, u);
+
+		if (invalid) {
+			char buf[160];
+
+			bch2_bkey_val_to_text(c, type, buf, sizeof(buf), u);
+			btree_err(BTREE_ERR_FIXABLE, c, b, i,
+				  "invalid bkey %s: %s", buf, invalid);
+
+			btree_keys_account_key_drop(&b->nr, 0, k);
+
+			i->u64s = cpu_to_le16(le16_to_cpu(i->u64s) - k->u64s);
+			memmove_u64s_down(k, bkey_next(k),
+					  (u64 *) vstruct_end(i) - (u64 *) k);
+			continue;
+		}
+
+		k = bkey_next(k);
+	}
 
 	bch2_bset_build_aux_tree(b, b->set, false);
 
@@ -1431,7 +1459,7 @@ static void bch2_btree_node_write_error(struct bch_fs *c,
 	if (!bch2_extent_nr_ptrs(extent_i_to_s_c(new_key)) ||
 	    bch2_btree_node_update_key(c, b, new_key)) {
 		set_btree_node_noevict(b);
-		bch2_fatal_error(c);
+		bch2_fs_fatal_error(c, "fatal error writing btree node");
 	}
 out:
 	bio_put(&wbio->bio);
