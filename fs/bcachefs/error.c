@@ -95,11 +95,17 @@ print:
 	vscnprintf(buf, sizeof(_buf), fmt, args);
 	va_end(args);
 
+	if (c->opts.fix_errors == FSCK_OPT_EXIT) {
+		bch_err(c, "%s, exiting", buf);
+		mutex_unlock(&c->fsck_error_lock);
+		return FSCK_ERR_EXIT;
+	}
+
 	if (flags & FSCK_CAN_FIX) {
-		if (c->opts.fix_errors == FSCK_ERR_ASK) {
+		if (c->opts.fix_errors == FSCK_OPT_ASK) {
 			printk(KERN_ERR "%s: fix?", buf);
 			fix = ask_yn();
-		} else if (c->opts.fix_errors == FSCK_ERR_YES ||
+		} else if (c->opts.fix_errors == FSCK_OPT_YES ||
 			   (c->opts.nochanges &&
 			    !(flags & FSCK_CAN_IGNORE))) {
 			if (print)
