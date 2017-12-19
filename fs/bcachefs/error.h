@@ -96,9 +96,10 @@ enum {
 };
 
 enum fsck_err_opts {
-	FSCK_ERR_NO,
-	FSCK_ERR_YES,
-	FSCK_ERR_ASK,
+	FSCK_OPT_EXIT,
+	FSCK_OPT_YES,
+	FSCK_OPT_NO,
+	FSCK_OPT_ASK,
 };
 
 enum fsck_err_ret {
