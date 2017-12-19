@@ -305,10 +305,12 @@ int bch2_alloc_read(struct bch_fs *c, struct list_head *journal_replay_list)
 				bch2_alloc_read_key(c, bkey_i_to_s_c(k));
 	}
 
+	mutex_lock(&c->bucket_lock);
 	for_each_member_device(ca, c, i) {
 		bch2_recalc_min_prio(c, ca, READ);
 		bch2_recalc_min_prio(c, ca, WRITE);
 	}
+	mutex_unlock(&c->bucket_lock);
 
 	return 0;
 }
