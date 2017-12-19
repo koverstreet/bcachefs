@@ -18,27 +18,10 @@ const struct bkey_ops *bch2_bkey_ops[] = {
 	[BKEY_TYPE_BTREE]	= &bch2_bkey_btree_ops,
 };
 
-/* Returns string indicating reason for being invalid, or NULL if valid: */
-const char *bch2_bkey_invalid(struct bch_fs *c, enum bkey_type type,
-			 struct bkey_s_c k)
+const char *bch2_bkey_val_invalid(struct bch_fs *c, enum bkey_type type,
+				  struct bkey_s_c k)
 {
 	const struct bkey_ops *ops = bch2_bkey_ops[type];
-
-	if (k.k->u64s < BKEY_U64s)
-		return "u64s too small";
-
-	if (!ops->is_extents) {
-		if (k.k->size)
-			return "nonzero size field";
-	} else {
-		if ((k.k->size == 0) != bkey_deleted(k.k))
-			return "bad size field";
-	}
-
-	if (ops->is_extents &&
-	    !k.k->size &&
-	    !bkey_deleted(k.k))
-		return "zero size field";
 
 	switch (k.k->type) {
 	case KEY_TYPE_DELETED:
@@ -63,8 +46,41 @@ const char *bch2_bkey_invalid(struct bch_fs *c, enum bkey_type type,
 	}
 }
 
-const char *bch2_btree_bkey_invalid(struct bch_fs *c, struct btree *b,
-				    struct bkey_s_c k)
+const char *__bch2_bkey_invalid(struct bch_fs *c, enum bkey_type type,
+			      struct bkey_s_c k)
+{
+	const struct bkey_ops *ops = bch2_bkey_ops[type];
+
+	if (k.k->u64s < BKEY_U64s)
+		return "u64s too small";
+
+	if (!ops->is_extents) {
+		if (k.k->size)
+			return "nonzero size field";
+	} else {
+		if ((k.k->size == 0) != bkey_deleted(k.k))
+			return "bad size field";
+	}
+
+	if (ops->is_extents &&
+	    !k.k->size &&
+	    !bkey_deleted(k.k))
+		return "zero size field";
+
+	if (k.k->p.snapshot)
+		return "nonzero snapshot";
+
+	return NULL;
+}
+
+const char *bch2_bkey_invalid(struct bch_fs *c, enum bkey_type type,
+			      struct bkey_s_c k)
+{
+	return __bch2_bkey_invalid(c, type, k) ?:
+		bch2_bkey_val_invalid(c, type, k);
+}
+
+const char *bch2_bkey_in_btree_node(struct btree *b, struct bkey_s_c k)
 {
 	if (bkey_cmp(bkey_start_pos(k.k), b->data->min_key) < 0)
 		return "key before start of btree node";
@@ -72,10 +88,7 @@ const char *bch2_btree_bkey_invalid(struct bch_fs *c, struct btree *b,
 	if (bkey_cmp(k.k->p, b->data->max_key) > 0)
 		return "key past end of btree node";
 
-	if (k.k->p.snapshot)
-		return "nonzero snapshot";
-
-	return bch2_bkey_invalid(c, btree_node_type(b), k);
+	return NULL;
 }
 
 void bch2_bkey_debugcheck(struct bch_fs *c, struct btree *b, struct bkey_s_c k)
@@ -86,7 +99,8 @@ void bch2_bkey_debugcheck(struct bch_fs *c, struct btree *b, struct bkey_s_c k)
 
 	BUG_ON(!k.k->u64s);
 
-	invalid = bch2_btree_bkey_invalid(c, b, k);
+	invalid = bch2_bkey_invalid(c, type, k) ?:
+		bch2_bkey_in_btree_node(b, k);
 	if (invalid) {
 		char buf[160];
 
@@ -100,33 +114,62 @@ void bch2_bkey_debugcheck(struct bch_fs *c, struct btree *b, struct bkey_s_c k)
 		ops->key_debugcheck(c, b, k);
 }
 
-char *bch2_val_to_text(struct bch_fs *c, enum bkey_type type,
-		       char *buf, size_t size, struct bkey_s_c k)
+#define p(...)	(out += scnprintf(out, end - out, __VA_ARGS__))
+
+int bch2_bkey_to_text(char *buf, size_t size, const struct bkey *k)
 {
-	const struct bkey_ops *ops = bch2_bkey_ops[type];
+	char *out = buf, *end = buf + size;
 
-	if (k.k->type >= KEY_TYPE_GENERIC_NR &&
-	    ops->val_to_text)
-		ops->val_to_text(c, buf, size, k);
+	p("u64s %u type %u ", k->u64s, k->type);
 
-	return buf;
+	if (bkey_cmp(k->p, POS_MAX))
+		p("%llu:%llu", k->p.inode, k->p.offset);
+	else
+		p("POS_MAX");
+
+	p(" snap %u len %u ver %llu", k->p.snapshot, k->size, k->version.lo);
+
+	return out - buf;
 }
 
-char *bch2_bkey_val_to_text(struct bch_fs *c, enum bkey_type type,
-			    char *buf, size_t size, struct bkey_s_c k)
+int bch2_val_to_text(struct bch_fs *c, enum bkey_type type,
+		     char *buf, size_t size, struct bkey_s_c k)
 {
 	const struct bkey_ops *ops = bch2_bkey_ops[type];
 	char *out = buf, *end = buf + size;
 
-	out += bch2_bkey_to_text(out, end - out, k.k);
-
-	if (k.k->type >= KEY_TYPE_GENERIC_NR &&
-	    ops->val_to_text) {
-		out += scnprintf(out, end - out, ": ");
-		ops->val_to_text(c, out, end - out, k);
+	switch (k.k->type) {
+	case KEY_TYPE_DELETED:
+		p(" deleted");
+		break;
+	case KEY_TYPE_DISCARD:
+		p(" discard");
+		break;
+	case KEY_TYPE_ERROR:
+		p(" error");
+		break;
+	case KEY_TYPE_COOKIE:
+		p(" cookie");
+		break;
+	default:
+		if (k.k->type >= KEY_TYPE_GENERIC_NR && ops->val_to_text)
+			ops->val_to_text(c, buf, size, k);
+		break;
 	}
 
-	return buf;
+	return out - buf;
+}
+
+int bch2_bkey_val_to_text(struct bch_fs *c, enum bkey_type type,
+			  char *buf, size_t size, struct bkey_s_c k)
+{
+	char *out = buf, *end = buf + size;
+
+	out += bch2_bkey_to_text(out, end - out, k.k);
+	out += scnprintf(out, end - out, ": ");
+	out += bch2_val_to_text(c, type, out, end - out, k);
+
+	return out - buf;
 }
 
 void bch2_bkey_swab(enum bkey_type type,
