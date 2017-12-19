@@ -212,7 +212,7 @@ static void __bch2_fs_read_only(struct bch_fs *c)
 	 * Flush journal before stopping allocators, because flushing journal
 	 * blacklist entries involves allocating new btree nodes:
 	 */
-	bch2_journal_flush_pins(&c->journal, U64_MAX);
+	bch2_journal_flush_all_pins(&c->journal);
 
 	if (!bch2_journal_error(&c->journal))
 		bch2_btree_verify_flushed(c);

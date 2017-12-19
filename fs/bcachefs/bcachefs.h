@@ -519,6 +519,7 @@ struct bch_fs {
 	struct bio_set		btree_read_bio;
 
 	struct btree_root	btree_roots[BTREE_ID_NR];
+	bool			btree_roots_dirty;
 	struct mutex		btree_root_lock;
 
 	struct btree_cache	btree_cache;
