@@ -21,7 +21,7 @@
 static void btree_node_will_make_reachable(struct btree_update *,
 					   struct btree *);
 static void btree_update_drop_new_node(struct bch_fs *, struct btree *);
-static void bch2_btree_set_root_ondisk(struct bch_fs *, struct btree *);
+static void bch2_btree_set_root_ondisk(struct bch_fs *, struct btree *, int);
 
 /* Debug code: */
 
@@ -686,7 +686,7 @@ retry:
 		BUG_ON(c->btree_roots[b->btree_id].as != as);
 		c->btree_roots[b->btree_id].as = NULL;
 
-		bch2_btree_set_root_ondisk(c, b);
+		bch2_btree_set_root_ondisk(c, b, WRITE);
 
 		/*
 		 * We don't have to wait anything anything here (before
@@ -1055,7 +1055,7 @@ static void bch2_btree_set_root_inmem(struct btree_update *as, struct btree *b)
 			    gc_pos_btree_root(b->btree_id));
 }
 
-static void bch2_btree_set_root_ondisk(struct bch_fs *c, struct btree *b)
+static void bch2_btree_set_root_ondisk(struct bch_fs *c, struct btree *b, int rw)
 {
 	struct btree_root *r = &c->btree_roots[b->btree_id];
 
@@ -1065,6 +1065,8 @@ static void bch2_btree_set_root_ondisk(struct bch_fs *c, struct btree *b)
 	bkey_copy(&r->key, &b->key);
 	r->level = b->level;
 	r->alive = true;
+	if (rw == WRITE)
+		c->btree_roots_dirty = true;
 
 	mutex_unlock(&c->btree_root_lock);
 }
@@ -1963,7 +1965,7 @@ void bch2_btree_set_root_for_read(struct bch_fs *c, struct btree *b)
 	BUG_ON(btree_node_root(c, b));
 
 	__bch2_btree_set_root_inmem(c, b);
-	bch2_btree_set_root_ondisk(c, b);
+	bch2_btree_set_root_ondisk(c, b, READ);
 }
 
 int bch2_btree_root_alloc(struct bch_fs *c, enum btree_id id,
@@ -1999,7 +2001,7 @@ int bch2_btree_root_alloc(struct bch_fs *c, enum btree_id id,
 	BUG_ON(btree_node_root(c, b));
 
 	bch2_btree_set_root_inmem(as, b);
-	bch2_btree_set_root_ondisk(c, b);
+	bch2_btree_set_root_ondisk(c, b, WRITE);
 
 	bch2_btree_open_bucket_put(c, b);
 	six_unlock_intent(&b->lock);
