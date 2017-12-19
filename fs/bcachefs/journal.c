@@ -1854,6 +1854,21 @@ void bch2_journal_flush_pins(struct journal *j, u64 seq_to_flush)
 		   bch2_journal_error(j));
 }
 
+int bch2_journal_flush_all_pins(struct journal *j)
+{
+	struct bch_fs *c = container_of(j, struct bch_fs, journal);
+	bool flush;
+
+	bch2_journal_flush_pins(j, U64_MAX);
+
+	spin_lock(&j->lock);
+	flush = last_seq(j) != j->last_seq_ondisk ||
+		c->btree_roots_dirty;
+	spin_unlock(&j->lock);
+
+	return flush ? bch2_journal_meta(j) : 0;
+}
+
 static bool should_discard_bucket(struct journal *j, struct journal_device *ja)
 {
 	bool ret;
@@ -2236,6 +2251,7 @@ static void journal_write(struct closure *cl)
 		if (r->alive)
 			bch2_journal_add_btree_root(w, i, &r->key, r->level);
 	}
+	c->btree_roots_dirty = false;
 	mutex_unlock(&c->btree_root_lock);
 
 	journal_write_compact(jset);
@@ -2867,9 +2883,7 @@ void bch2_fs_journal_stop(struct journal *j)
 	 * journal entries, then force a brand new empty journal entry to be
 	 * written:
 	 */
-	bch2_journal_flush_pins(j, U64_MAX);
-	bch2_journal_flush_async(j, NULL);
-	bch2_journal_meta(j);
+	bch2_journal_flush_all_pins(j);
 
 	cancel_delayed_work_sync(&j->write_work);
 	cancel_delayed_work_sync(&j->reclaim_work);
