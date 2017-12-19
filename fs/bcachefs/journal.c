@@ -496,8 +496,8 @@ fsck_err:
 #define journal_entry_err_on(cond, c, msg, ...)				\
 	((cond) ? journal_entry_err(c, msg, ##__VA_ARGS__) : false)
 
-static int __journal_entry_validate(struct bch_fs *c, struct jset *j,
-				    int write)
+static int journal_entry_validate_entries(struct bch_fs *c, struct jset *j,
+					  int write)
 {
 	struct jset_entry *entry;
 	int ret = 0;
@@ -614,7 +614,7 @@ static int journal_entry_validate(struct bch_fs *c,
 			"invalid journal entry: last_seq > seq"))
 		j->last_seq = j->seq;
 
-	return __journal_entry_validate(c, j, write);
+	return 0;
 fsck_err:
 	return ret;
 }
@@ -984,6 +984,12 @@ int bch2_journal_read(struct bch_fs *c, struct list_head *list)
 
 	fsck_err_on(c->sb.clean && journal_has_keys(list), c,
 		    "filesystem marked clean but journal has keys to replay");
+
+	list_for_each_entry(i, list, list) {
+		ret = journal_entry_validate_entries(c, &i->j, READ);
+		if (ret)
+			goto fsck_err;
+	}
 
 	i = list_last_entry(list, struct journal_replay, list);
 
@@ -2265,7 +2271,7 @@ static void journal_write(struct closure *cl)
 	SET_JSET_CSUM_TYPE(jset, bch2_meta_checksum_type(c));
 
 	if (bch2_csum_type_is_encryption(JSET_CSUM_TYPE(jset)) &&
-	    __journal_entry_validate(c, jset, WRITE))
+	    journal_entry_validate_entries(c, jset, WRITE))
 		goto err;
 
 	bch2_encrypt(c, JSET_CSUM_TYPE(jset), journal_nonce(jset),
@@ -2276,7 +2282,7 @@ static void journal_write(struct closure *cl)
 				  journal_nonce(jset), jset);
 
 	if (!bch2_csum_type_is_encryption(JSET_CSUM_TYPE(jset)) &&
-	    __journal_entry_validate(c, jset, WRITE))
+	    journal_entry_validate_entries(c, jset, WRITE))
 		goto err;
 
 	sectors = vstruct_sectors(jset, c->block_bits);
