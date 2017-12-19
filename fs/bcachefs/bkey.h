@@ -8,7 +8,6 @@
 #include "vstructs.h"
 
 void bch2_to_binary(char *, const u64 *, unsigned);
-int bch2_bkey_to_text(char *, size_t, const struct bkey *);
 
 #define BKEY_PADDED(key)	__BKEY_PADDED(key, BKEY_EXTENT_VAL_U64s_MAX)
 
