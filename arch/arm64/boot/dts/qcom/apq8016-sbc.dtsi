@@ -530,9 +530,9 @@
 		cci@1b0c000 {
 			status = "ok";
 
-			camera_rear@76 {
+			camera_rear@3b {
 				compatible = "ovti,ov5645";
-				reg = <0x76>;
+				reg = <0x3b>;
 
 				enable-gpios = <&msmgpio 34 GPIO_ACTIVE_HIGH>;
 				reset-gpios = <&msmgpio 35 GPIO_ACTIVE_LOW>;
@@ -558,9 +558,9 @@
 				};
 			};
 
-			camera_front@74 {
+			camera_front@3a {
 				compatible = "ovti,ov5645";
-				reg = <0x74>;
+				reg = <0x3a>;
 
 				enable-gpios = <&msmgpio 33 GPIO_ACTIVE_HIGH>;
 				reset-gpios = <&msmgpio 28 GPIO_ACTIVE_LOW>;
