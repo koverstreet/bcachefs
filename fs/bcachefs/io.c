@@ -1439,6 +1439,8 @@ noclone:
 		bch2_read_endio(&rbio->bio);
 
 		ret = rbio->retry;
+		if (rbio->split)
+			rbio = bch2_rbio_free(rbio);
 		if (!ret)
 			bch2_rbio_done(rbio);
 	}
@@ -1572,6 +1574,7 @@ retry:
 			case READ_RETRY:
 				goto retry;
 			case READ_ERR:
+				rbio->bio.bi_status = BLK_STS_IOERR;
 				bio_endio(&rbio->bio);
 				return;
 			};

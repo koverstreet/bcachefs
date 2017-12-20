@@ -139,6 +139,7 @@ static inline struct bch_read_bio *rbio_init(struct bio *bio,
 	struct bch_read_bio *rbio = to_rbio(bio);
 
 	rbio->_state	= 0;
+	rbio->promote	= NULL;
 	rbio->opts	= opts;
 	return rbio;
 }
