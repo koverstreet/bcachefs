@@ -246,8 +246,36 @@ static void bch2_write_index(struct closure *cl)
 	struct bch_write_op *op = container_of(cl, struct bch_write_op, cl);
 	struct bch_fs *c = op->c;
 	struct keylist *keys = &op->insert_keys;
+	struct bkey_s_extent e;
+	struct bch_extent_ptr *ptr;
+	struct bkey_i *src, *dst = keys->keys, *n;
+	int ret;
 
 	op->flags |= BCH_WRITE_LOOPED;
+
+	for (src = keys->keys; src != keys->top; src = n) {
+		n = bkey_next(src);
+		bkey_copy(dst, src);
+
+		e = bkey_i_to_s_extent(dst);
+		extent_for_each_ptr_backwards(e, ptr)
+			if (test_bit(ptr->dev, op->failed.d))
+				bch2_extent_drop_ptr(e, ptr);
+
+		ret = bch2_extent_nr_ptrs(e.c)
+			? bch2_check_mark_super(c, e.c, BCH_DATA_USER)
+			: -EIO;
+		if (ret) {
+			keys->top = keys->keys;
+			op->error = ret;
+			op->flags |= BCH_WRITE_DONE;
+			goto err;
+		}
+
+		dst = bkey_next(dst);
+	}
+
+	keys->top = dst;
 
 	if (!bch2_keylist_empty(keys)) {
 		u64 sectors_start = keylist_sectors(keys);
@@ -262,7 +290,7 @@ static void bch2_write_index(struct closure *cl)
 			op->error = ret;
 		}
 	}
-
+err:
 	bch2_open_bucket_put_refs(c, &op->open_buckets_nr, op->open_buckets);
 
 	if (!(op->flags & BCH_WRITE_DONE)) {
@@ -280,43 +308,6 @@ static void bch2_write_index(struct closure *cl)
 	}
 }
 
-static void bch2_write_io_error(struct closure *cl)
-{
-	struct bch_write_op *op = container_of(cl, struct bch_write_op, cl);
-	struct keylist *keys = &op->insert_keys;
-	struct bch_fs *c = op->c;
-	struct bch_extent_ptr *ptr;
-	struct bkey_i *k;
-	int ret;
-
-	for_each_keylist_key(keys, k) {
-		struct bkey_i *n = bkey_next(k);
-		struct bkey_s_extent e = bkey_i_to_s_extent(k);
-
-		extent_for_each_ptr_backwards(e, ptr)
-			if (test_bit(ptr->dev, op->failed.d))
-				bch2_extent_drop_ptr(e, ptr);
-
-		memmove(bkey_next(k), n, (void *) keys->top - (void *) n);
-		keys->top_p -= (u64 *) n - (u64 *) bkey_next(k);
-
-		ret = bch2_extent_nr_ptrs(e.c)
-			? bch2_check_mark_super(c, e.c, BCH_DATA_USER)
-			: -EIO;
-		if (ret) {
-			keys->top = keys->keys;
-			op->error = ret;
-			op->flags |= BCH_WRITE_DONE;
-			break;
-		}
-	}
-
-	memset(&op->failed, 0, sizeof(op->failed));
-
-	bch2_write_index(cl);
-	return;
-}
-
 static void bch2_write_endio(struct bio *bio)
 {
 	struct closure *cl		= bio->bi_private;
@@ -328,10 +319,8 @@ static void bch2_write_endio(struct bio *bio)
 
 	bch2_latency_acct(ca, wbio->submit_time_us, WRITE);
 
-	if (bch2_dev_io_err_on(bio->bi_status, ca, "data write")) {
+	if (bch2_dev_io_err_on(bio->bi_status, ca, "data write"))
 		set_bit(ca->dev_idx, op->failed.d);
-		set_closure_fn(cl, bch2_write_io_error, index_update_wq(op));
-	}
 
 	if (wbio->have_io_ref)
 		percpu_ref_put(&ca->io_ref);
@@ -709,11 +698,6 @@ do_write:
 	/* might have done a realloc... */
 
 	key_to_write = (void *) (op->insert_keys.keys_p + key_to_write_offset);
-
-	ret = bch2_check_mark_super(c, bkey_i_to_s_c_extent(key_to_write),
-				    BCH_DATA_USER);
-	if (ret)
-		goto err;
 
 	dst->bi_end_io	= bch2_write_endio;
 	dst->bi_private	= &op->cl;
