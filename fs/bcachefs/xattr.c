@@ -359,6 +359,8 @@ static const struct xattr_handler bch_xattr_security_handler = {
 	.flags	= BCH_XATTR_INDEX_SECURITY,
 };
 
+#ifndef NO_BCACHEFS_FS
+
 static int bch2_xattr_bcachefs_get(const struct xattr_handler *handler,
 				   struct dentry *dentry, struct inode *vinode,
 				   const char *name, void *buffer, size_t size)
@@ -466,13 +468,17 @@ static const struct xattr_handler bch_xattr_bcachefs_handler = {
 	.set	= bch2_xattr_bcachefs_set,
 };
 
+#endif /* NO_BCACHEFS_FS */
+
 const struct xattr_handler *bch2_xattr_handlers[] = {
 	&bch_xattr_user_handler,
 	&posix_acl_access_xattr_handler,
 	&posix_acl_default_xattr_handler,
 	&bch_xattr_trusted_handler,
 	&bch_xattr_security_handler,
+#ifndef NO_BCACHEFS_FS
 	&bch_xattr_bcachefs_handler,
+#endif
 	NULL
 };
 

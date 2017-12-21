@@ -709,6 +709,14 @@ struct bch_fs {
 #undef BCH_TIME_STAT
 };
 
+static inline void bch2_set_ra_pages(struct bch_fs *c, unsigned ra_pages)
+{
+#ifndef NO_BCACHEFS_FS
+	if (c->vfs_sb)
+		c->vfs_sb->s_bdi->ra_pages = ra_pages;
+#endif
+}
+
 static inline bool bch2_fs_running(struct bch_fs *c)
 {
 	return c->state == BCH_FS_RO || c->state == BCH_FS_RW;

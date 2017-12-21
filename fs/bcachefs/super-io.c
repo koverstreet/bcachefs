@@ -1117,17 +1117,6 @@ int bch2_replicas_gc_start(struct bch_fs *c, unsigned typemask)
 
 /* Replicas tracking - superblock: */
 
-static inline struct bch_replicas_entry *
-replicas_entry_next(struct bch_replicas_entry *i)
-{
-	return (void *) i + offsetof(struct bch_replicas_entry, devs) + i->nr;
-}
-
-#define for_each_replicas_entry(_r, _i)					\
-	for (_i = (_r)->entries;					\
-	     (void *) (_i) < vstruct_end(&(_r)->field) && (_i)->data_type;\
-	     (_i) = replicas_entry_next(_i))
-
 static void bch2_sb_replicas_nr_entries(struct bch_sb_field_replicas *r,
 					unsigned *nr,
 					unsigned *bytes,
