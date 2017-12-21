@@ -395,9 +395,10 @@ add:
 	i->devs.nr = 0;
 	memcpy(&i->j, j, bytes);
 found:
-	if (!fsck_err_on(bch2_dev_list_has_dev(i->devs, ca->dev_idx),
-			 c, "duplicate journal entries on same device"))
+	if (!bch2_dev_list_has_dev(i->devs, ca->dev_idx))
 		bch2_dev_list_add_dev(&i->devs, ca->dev_idx);
+	else
+		fsck_err_on(1, c, "duplicate journal entries on same device");
 	ret = JOURNAL_ENTRY_ADD_OK;
 out:
 fsck_err:
