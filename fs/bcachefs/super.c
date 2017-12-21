@@ -720,8 +720,12 @@ static const char *__bch2_fs_start(struct bch_fs *c)
 				continue;
 
 			err = "error reading btree root";
-			if (bch2_btree_root_read(c, i, k, level))
-				goto err;
+			if (bch2_btree_root_read(c, i, k, level)) {
+				if (i != BTREE_ID_ALLOC)
+					goto err;
+
+				mustfix_fsck_err(c, "error reading btree root");
+			}
 		}
 
 		err = "error reading allocation information";
@@ -868,6 +872,7 @@ out:
 	bch2_journal_entries_free(&journal);
 	return err;
 err:
+fsck_err:
 	closure_sync(&cl);
 
 	switch (ret) {
