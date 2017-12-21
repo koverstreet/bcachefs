@@ -7,6 +7,10 @@
 #include "util.h"
 #include "vstructs.h"
 
+#ifdef CONFIG_X86_64
+#define HAVE_BCACHEFS_COMPILED_UNPACK	1
+#endif
+
 void bch2_to_binary(char *, const u64 *, unsigned);
 
 #define BKEY_PADDED(key)	__BKEY_PADDED(key, BKEY_EXTENT_VAL_U64s_MAX)
@@ -381,8 +385,7 @@ static inline u64 bkey_field_max(const struct bkey_format *f,
 		: U64_MAX;
 }
 
-#ifdef CONFIG_X86_64
-#define HAVE_BCACHEFS_COMPILED_UNPACK	1
+#ifdef HAVE_BCACHEFS_COMPILED_UNPACK
 
 int bch2_compile_bkey_format(const struct bkey_format *, void *);
 
