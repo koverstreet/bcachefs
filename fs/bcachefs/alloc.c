@@ -1591,8 +1591,7 @@ void bch2_recalc_capacity(struct bch_fs *c)
 		ra_pages += bdi->ra_pages;
 	}
 
-	if (c->vfs_sb)
-		c->vfs_sb->s_bdi->ra_pages = ra_pages;
+	bch2_set_ra_pages(c, ra_pages);
 
 	/* Find fastest, slowest tiers with devices: */
 
