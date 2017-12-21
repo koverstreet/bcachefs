@@ -1402,17 +1402,24 @@ int bch2_btree_root_read(struct bch_fs *c, enum btree_id id,
 	BUG_ON(bch2_btree_node_hash_insert(&c->btree_cache, b, level, id));
 
 	bch2_btree_node_read(c, b, true);
-	six_unlock_write(&b->lock);
 
 	if (btree_node_read_error(b)) {
-		six_unlock_intent(&b->lock);
-		return -EIO;
+		bch2_btree_node_hash_remove(&c->btree_cache, b);
+
+		mutex_lock(&c->btree_cache.lock);
+		list_move(&b->list, &c->btree_cache.freeable);
+		mutex_unlock(&c->btree_cache.lock);
+
+		ret = -EIO;
+		goto err;
 	}
 
 	bch2_btree_set_root_for_read(c, b);
+err:
+	six_unlock_write(&b->lock);
 	six_unlock_intent(&b->lock);
 
-	return 0;
+	return ret;
 }
 
 void bch2_btree_complete_write(struct bch_fs *c, struct btree *b,
