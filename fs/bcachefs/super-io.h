@@ -127,6 +127,8 @@ void bch2_write_super(struct bch_fs *);
 
 bool bch2_sb_has_replicas(struct bch_fs *, struct bkey_s_c_extent,
 			  enum bch_data_type);
+bool bch2_sb_has_replicas_devlist(struct bch_fs *, struct bch_devs_list *,
+				  enum bch_data_type);
 int bch2_check_mark_super(struct bch_fs *, struct bkey_s_c_extent,
 			  enum bch_data_type);
 int bch2_check_mark_super_devlist(struct bch_fs *, struct bch_devs_list *,
