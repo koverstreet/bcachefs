@@ -350,13 +350,10 @@ static long bch2_ioctl_usage(struct bch_fs *c,
 			percpu_ref_put(&ca->io_ref);
 		}
 
-		for (j = 0; j < S_ALLOC_NR; j++) {
-			dst.buckets[s_alloc_to_data_type(j)] = src.buckets[j];
-			dst.sectors[s_alloc_to_data_type(j)] = src.sectors[j];
+		for (j = 0; j < BCH_DATA_NR; j++) {
+			dst.buckets[j] = src.buckets[j];
+			dst.sectors[j] = src.sectors[j];
 		}
-
-		dst.buckets[BCH_DATA_CACHED] = src.buckets_cached;
-		dst.sectors[BCH_DATA_CACHED] = src.sectors_cached;
 
 		ret = copy_to_user(&user_arg->devs[i], &dst, sizeof(dst));
 		if (ret)
