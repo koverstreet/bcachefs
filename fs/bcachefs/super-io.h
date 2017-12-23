@@ -134,6 +134,9 @@ int bch2_check_mark_super(struct bch_fs *, struct bkey_s_c_extent,
 int bch2_check_mark_super_devlist(struct bch_fs *, struct bch_devs_list *,
 				  enum bch_data_type);
 
+int bch2_cpu_replicas_to_text(struct bch_replicas_cpu *, char *, size_t);
+int bch2_sb_replicas_to_text(struct bch_sb_field_replicas *, char *, size_t);
+
 struct replicas_status {
 	struct {
 		unsigned	nr_online;
