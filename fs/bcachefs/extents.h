@@ -413,6 +413,18 @@ static inline struct bch_devs_list bch2_extent_devs(struct bkey_s_c_extent e)
 	return ret;
 }
 
+static inline struct bch_devs_list bch2_extent_dirty_devs(struct bkey_s_c_extent e)
+{
+	struct bch_devs_list ret = (struct bch_devs_list) { 0 };
+	const struct bch_extent_ptr *ptr;
+
+	extent_for_each_ptr(e, ptr)
+		if (!ptr->cached)
+			ret.devs[ret.nr++] = ptr->dev;
+
+	return ret;
+}
+
 bool bch2_can_narrow_extent_crcs(struct bkey_s_c_extent,
 				 struct bch_extent_crc_unpacked);
 bool bch2_extent_narrow_crcs(struct bkey_i_extent *, struct bch_extent_crc_unpacked);
