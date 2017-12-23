@@ -45,6 +45,7 @@ struct bch_ioctl_incremental {
 #define BCH_IOCTL_DISK_SET_STATE _IOW(0xbc,	8,  struct bch_ioctl_disk_set_state)
 #define BCH_IOCTL_DISK_EVACUATE	_IOW(0xbc,	9,  struct bch_ioctl_disk)
 #define BCH_IOCTL_DATA		_IOW(0xbc,	10, struct bch_ioctl_data)
+#define BCH_IOCTL_USAGE		_IOWR(0xbc,	11, struct bch_ioctl_usage)
 
 struct bch_ioctl_query_uuid {
 	uuid_le			uuid;
@@ -91,6 +92,35 @@ struct bch_ioctl_data {
 
 	__u64			end_inode;
 	__u64			end_offset;
+};
+
+struct bch_ioctl_dev_usage {
+	__u8			state;
+	__u8			alive;
+	__u8			pad[6];
+	__u32			dev;
+
+	__u32			bucket_size;
+	__u64			nr_buckets;
+
+	__u64			buckets[BCH_DATA_NR];
+	__u64			sectors[BCH_DATA_NR];
+};
+
+struct bch_ioctl_fs_usage {
+	__u64			capacity;
+	__u64			used;
+	__u64			online_reserved;
+	__u64			persistent_reserved[BCH_REPLICAS_MAX];
+	__u64			sectors[BCH_DATA_NR][BCH_REPLICAS_MAX];
+};
+
+struct bch_ioctl_usage {
+	__u16			nr_devices;
+	__u16			pad[3];
+
+	struct bch_ioctl_fs_usage fs;
+	struct bch_ioctl_dev_usage devs[0];
 };
 
 #endif /* _BCACHEFS_IOCTL_H */
