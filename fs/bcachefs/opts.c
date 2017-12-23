@@ -38,6 +38,7 @@ const char * const bch2_data_types[] = {
 	"journal",
 	"btree",
 	"data",
+	"cached",
 	NULL
 };
 

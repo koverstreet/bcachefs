@@ -224,6 +224,45 @@ bch2_fs_usage_read(struct bch_fs *c)
 				     c->usage_percpu);
 }
 
+struct fs_usage_sum {
+	u64	data;
+	u64	reserved;
+};
+
+static inline struct fs_usage_sum __fs_usage_sum(struct bch_fs_usage stats)
+{
+	struct fs_usage_sum sum = { 0 };
+	unsigned i;
+
+	for (i = 0; i < BCH_REPLICAS_MAX; i++) {
+		sum.data += (stats.s[i].data[S_META] +
+			     stats.s[i].data[S_DIRTY]) * (i + 1);
+		sum.reserved += stats.s[i].persistent_reserved * (i + 1);
+	}
+
+	sum.reserved += stats.online_reserved;
+	return sum;
+}
+
+#define RESERVE_FACTOR	6
+
+static u64 reserve_factor(u64 r)
+{
+	return r + (round_up(r, (1 << RESERVE_FACTOR)) >> RESERVE_FACTOR);
+}
+
+u64 __bch2_fs_sectors_used(struct bch_fs *c, struct bch_fs_usage stats)
+{
+	struct fs_usage_sum sum = __fs_usage_sum(stats);
+
+	return sum.data + reserve_factor(sum.reserved);
+}
+
+u64 bch2_fs_sectors_used(struct bch_fs *c, struct bch_fs_usage stats)
+{
+	return min(c->capacity, __bch2_fs_sectors_used(c, stats));
+}
+
 static inline int is_meta_bucket(struct bucket_mark m)
 {
 	return m.data_type != BUCKET_DATA;
@@ -675,7 +714,7 @@ static u64 __recalc_sectors_available(struct bch_fs *c)
 	for_each_possible_cpu(cpu)
 		per_cpu_ptr(c->usage_percpu, cpu)->available_cache = 0;
 
-	avail = c->capacity - bch2_fs_sectors_used(c);
+	avail = c->capacity - bch2_fs_sectors_used(c, bch2_fs_usage_read(c));
 
 	avail <<= RESERVE_FACTOR;
 	avail /= (1 << RESERVE_FACTOR) + 1;
