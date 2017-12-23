@@ -348,8 +348,10 @@ bool bch2_invalidate_bucket(struct bch_fs *c, struct bch_dev *ca,
 
 	lg_local_lock(&c->usage_lock);
 	*old = bucket_data_cmpxchg(c, ca, g, new, ({
-		if (!is_available_bucket(new))
+		if (!is_available_bucket(new)) {
+			lg_local_unlock(&c->usage_lock);
 			return false;
+		}
 
 		new.owned_by_allocator	= 1;
 		new.touched_this_mount	= 1;
@@ -374,8 +376,10 @@ bool bch2_mark_alloc_bucket_startup(struct bch_fs *c, struct bch_dev *ca,
 	lg_local_lock(&c->usage_lock);
 	old = bucket_data_cmpxchg(c, ca, g, new, ({
 		if (new.touched_this_mount ||
-		    !is_available_bucket(new))
+		    !is_available_bucket(new)) {
+			lg_local_unlock(&c->usage_lock);
 			return false;
+		}
 
 		new.owned_by_allocator	= 1;
 		new.touched_this_mount	= 1;
