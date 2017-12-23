@@ -155,7 +155,6 @@ u64 bch2_fs_sectors_used(struct bch_fs *, struct bch_fs_usage);
 static inline bool is_available_bucket(struct bucket_mark mark)
 {
 	return (!mark.owned_by_allocator &&
-		mark.data_type == BUCKET_DATA &&
 		!mark.dirty_sectors &&
 		!mark.nouse);
 }
@@ -177,8 +176,8 @@ void bch2_mark_alloc_bucket(struct bch_fs *, struct bch_dev *,
 			    struct bucket *, bool,
 			    struct gc_pos, unsigned);
 void bch2_mark_metadata_bucket(struct bch_fs *, struct bch_dev *,
-			       struct bucket *, enum bucket_data_type,
-			       struct gc_pos, unsigned);
+			       struct bucket *, enum bch_data_type,
+			       unsigned, struct gc_pos, unsigned);
 
 #define BCH_BUCKET_MARK_NOATOMIC		(1 << 0)
 #define BCH_BUCKET_MARK_MAY_MAKE_UNAVAILABLE	(1 << 1)

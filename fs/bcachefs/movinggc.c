@@ -125,7 +125,7 @@ static void bch2_copygc(struct bch_fs *c, struct bch_dev *ca)
 		struct copygc_heap_entry e;
 
 		if (m.owned_by_allocator ||
-		    m.data_type != BUCKET_DATA ||
+		    m.data_type != BCH_DATA_USER ||
 		    !bucket_sectors_used(m) ||
 		    bucket_sectors_used(m) >= ca->mi.bucket_size)
 			continue;
