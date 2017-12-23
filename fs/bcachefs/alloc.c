@@ -109,7 +109,7 @@ static void pd_controllers_update(struct work_struct *work)
 			u64 size = bucket_to_sector(ca, ca->mi.nbuckets -
 					ca->mi.first_bucket) << 9;
 			u64 dirty = bucket_to_sector(ca,
-					stats.buckets[S_DIRTY]) << 9;
+					stats.buckets[BCH_DATA_USER]) << 9;
 			u64 free = bucket_to_sector(ca,
 					__dev_buckets_free(ca, stats)) << 9;
 			/*
@@ -117,10 +117,10 @@ static void pd_controllers_update(struct work_struct *work)
 			 * reclaimed by copy GC
 			 */
 			s64 fragmented = (bucket_to_sector(ca,
-						stats.buckets[S_DIRTY] +
-						stats.buckets_cached) -
-					  (stats.sectors[S_DIRTY] +
-					   stats.sectors_cached)) << 9;
+						stats.buckets[BCH_DATA_USER] +
+						stats.buckets[BCH_DATA_CACHED]) -
+					  (stats.sectors[BCH_DATA_USER] +
+					   stats.sectors[BCH_DATA_CACHED])) << 9;
 
 			fragmented = max(0LL, fragmented);
 

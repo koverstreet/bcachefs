@@ -293,16 +293,21 @@ static int bch2_gc_btree(struct bch_fs *c, enum btree_id btree_id)
 
 static void mark_metadata_sectors(struct bch_fs *c, struct bch_dev *ca,
 				  u64 start, u64 end,
-				  enum bucket_data_type type,
+				  enum bch_data_type type,
 				  unsigned flags)
 {
 	u64 b = sector_to_bucket(ca, start);
 
 	do {
-		bch2_mark_metadata_bucket(c, ca, ca->buckets + b, type,
+		unsigned sectors =
+			min_t(u64, bucket_to_sector(ca, b + 1), end) - start;
+
+		bch2_mark_metadata_bucket(c, ca, ca->buckets + b,
+					  type, sectors,
 					  gc_phase(GC_PHASE_SB), flags);
 		b++;
-	} while (b < sector_to_bucket(ca, end));
+		start += sectors;
+	} while (start < end);
 }
 
 void bch2_mark_dev_superblock(struct bch_fs *c, struct bch_dev *ca,
@@ -319,11 +324,11 @@ void bch2_mark_dev_superblock(struct bch_fs *c, struct bch_dev *ca,
 
 		if (offset == BCH_SB_SECTOR)
 			mark_metadata_sectors(c, ca, 0, BCH_SB_SECTOR,
-					      BUCKET_SB, flags);
+					      BCH_DATA_SB, flags);
 
 		mark_metadata_sectors(c, ca, offset,
 				      offset + (1 << layout->sb_max_size_bits),
-				      BUCKET_SB, flags);
+				      BCH_DATA_SB, flags);
 	}
 
 	spin_lock(&c->journal.lock);
@@ -331,7 +336,8 @@ void bch2_mark_dev_superblock(struct bch_fs *c, struct bch_dev *ca,
 	for (i = 0; i < ca->journal.nr; i++) {
 		b = ca->journal.buckets[i];
 		bch2_mark_metadata_bucket(c, ca, ca->buckets + b,
-					  BUCKET_JOURNAL,
+					  BCH_DATA_JOURNAL,
+					  ca->mi.bucket_size,
 					  gc_phase(GC_PHASE_SB), flags);
 	}
 

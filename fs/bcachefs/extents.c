@@ -654,7 +654,7 @@ static void btree_ptr_debugcheck(struct bch_fs *c, struct btree *b,
 		do {
 			seq = read_seqcount_begin(&c->gc_pos_lock);
 			bad = gc_pos_cmp(c->gc_pos, gc_pos_btree_node(b)) > 0 &&
-				(g->mark.data_type != BUCKET_BTREE ||
+				(g->mark.data_type != BCH_DATA_BTREE ||
 				 g->mark.dirty_sectors < c->opts.btree_node_size);
 		} while (read_seqcount_retry(&c->gc_pos_lock, seq));
 
@@ -1731,6 +1731,7 @@ static void bch2_extent_debugcheck_extent(struct bch_fs *c, struct btree *b,
 	const struct bch_extent_ptr *ptr;
 	struct bch_dev *ca;
 	struct bucket *g;
+	struct bucket_mark mark;
 	unsigned seq, stale;
 	char buf[160];
 	bool bad;
@@ -1764,8 +1765,6 @@ static void bch2_extent_debugcheck_extent(struct bch_fs *c, struct btree *b,
 		stale = 0;
 
 		do {
-			struct bucket_mark mark;
-
 			seq = read_seqcount_begin(&c->gc_pos_lock);
 			mark = READ_ONCE(g->mark);
 
@@ -1784,12 +1783,11 @@ static void bch2_extent_debugcheck_extent(struct bch_fs *c, struct btree *b,
 			if (stale)
 				break;
 
-			bad = (mark.data_type != BUCKET_DATA ||
-			       (gc_pos_cmp(c->gc_pos, gc_pos_btree_node(b)) > 0 &&
-				!mark.owned_by_allocator &&
-				!(ptr->cached
-				  ? mark.cached_sectors
-				  : mark.dirty_sectors)));
+			bad = gc_pos_cmp(c->gc_pos, gc_pos_btree_node(b)) > 0 &&
+				(mark.data_type != BCH_DATA_USER ||
+				 !(ptr->cached
+				   ? mark.cached_sectors
+				   : mark.dirty_sectors));
 		} while (read_seqcount_retry(&c->gc_pos_lock, seq));
 
 		if (bad)
@@ -1821,10 +1819,10 @@ bad_ptr:
 	bch2_bkey_val_to_text(c, btree_node_type(b), buf,
 			     sizeof(buf), e.s_c);
 	bch2_fs_bug(c, "extent pointer bad gc mark: %s:\nbucket %zu "
-		   "gen %i last_gc %i mark 0x%08x",
-		   buf, PTR_BUCKET_NR(ca, ptr), PTR_BUCKET(ca, ptr)->mark.gen,
+		   "gen %i last_gc %i type %u",
+		   buf, PTR_BUCKET_NR(ca, ptr), mark.gen,
 		   ca->oldest_gens[PTR_BUCKET_NR(ca, ptr)],
-		   (unsigned) g->mark.counter);
+		   mark.data_type);
 	return;
 }
 

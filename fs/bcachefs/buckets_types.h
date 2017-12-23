@@ -3,14 +3,6 @@
 
 #include "util.h"
 
-/* kill, switch to bch_data_type */
-enum bucket_data_type {
-	BUCKET_DATA	= 0,
-	BUCKET_BTREE,
-	BUCKET_JOURNAL,
-	BUCKET_SB,
-};
-
 struct bucket_mark {
 	union {
 	struct {
@@ -48,22 +40,20 @@ struct bucket {
 	};
 };
 
-/* kill, switch to bucket_data_type */
-enum s_alloc {
-	S_META,
-	S_DIRTY,
-	S_ALLOC_NR,
-};
-
 struct bch_dev_usage {
-	u64			buckets[S_ALLOC_NR];
-	u64			buckets_cached;
+	u64			buckets[BCH_DATA_NR];
 	u64			buckets_alloc;
 	u64			buckets_unavailable;
 
 	/* _compressed_ sectors: */
-	u64			sectors[S_ALLOC_NR];
-	u64			sectors_cached;
+	u64			sectors[BCH_DATA_NR];
+};
+
+/* kill, switch to bch_data_type? */
+enum s_alloc {
+	S_META,
+	S_DIRTY,
+	S_ALLOC_NR,
 };
 
 struct bch_fs_usage {

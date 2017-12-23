@@ -1631,7 +1631,8 @@ static int bch2_set_nr_journal_buckets(struct bch_fs *c, struct bch_dev *ca,
 		spin_unlock(&j->lock);
 
 		bch2_mark_metadata_bucket(c, ca, &ca->buckets[bucket],
-					  BUCKET_JOURNAL,
+					  BCH_DATA_JOURNAL,
+					  ca->mi.bucket_size,
 					  gc_phase(GC_PHASE_SB), 0);
 
 		bch2_open_bucket_put(c, ob);
