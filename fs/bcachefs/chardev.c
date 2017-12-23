@@ -2,6 +2,7 @@
 
 #include "bcachefs.h"
 #include "bcachefs_ioctl.h"
+#include "buckets.h"
 #include "chardev.h"
 #include "super.h"
 #include "super-io.h"
@@ -289,6 +290,82 @@ static long bch2_ioctl_disk_evacuate(struct bch_fs *c,
 	return ret;
 }
 
+static long bch2_ioctl_usage(struct bch_fs *c,
+			     struct bch_ioctl_usage __user *user_arg)
+{
+	struct bch_ioctl_usage arg;
+	struct bch_dev *ca;
+	unsigned i, j;
+	int ret;
+
+	if (copy_from_user(&arg, user_arg, sizeof(arg)))
+		return -EFAULT;
+
+	for (i = 0; i < arg.nr_devices; i++) {
+		struct bch_ioctl_dev_usage dst = { .alive = 0 };
+
+		ret = copy_to_user(&user_arg->devs[i], &dst, sizeof(dst));
+		if (ret)
+			return ret;
+	}
+
+	{
+		struct bch_fs_usage src = bch2_fs_usage_read(c);
+		struct bch_ioctl_fs_usage dst = {
+			.capacity		= c->capacity,
+			.used			= bch2_fs_sectors_used(c, src),
+			.online_reserved	= src.online_reserved,
+		};
+
+		for (i = 0; i < BCH_REPLICAS_MAX; i++) {
+			dst.persistent_reserved[i] =
+				src.s[i].persistent_reserved;
+
+			for (j = 0; j < S_ALLOC_NR; j++)
+				dst.sectors[s_alloc_to_data_type(j)][i] =
+					src.s[i].data[j];
+		}
+
+		ret = copy_to_user(&user_arg->fs, &dst, sizeof(dst));
+		if (ret)
+			return ret;
+	}
+
+	for_each_member_device(ca, c, i) {
+		struct bch_dev_usage src = bch2_dev_usage_read(c, ca);
+		struct bch_ioctl_dev_usage dst = {
+			.alive		= 1,
+			.state		= ca->mi.state,
+			.bucket_size	= ca->mi.bucket_size,
+			.nr_buckets	= ca->mi.nbuckets - ca->mi.first_bucket,
+		};
+
+		if (ca->dev_idx >= arg.nr_devices) {
+			percpu_ref_put(&ca->ref);
+			return -ENOSPC;
+		}
+
+		if (percpu_ref_tryget(&ca->io_ref)) {
+			dst.dev = huge_encode_dev(ca->disk_sb.bdev->bd_dev);
+			percpu_ref_put(&ca->io_ref);
+		}
+
+		for (j = 0; j < S_ALLOC_NR; j++) {
+			dst.buckets[s_alloc_to_data_type(j)] = src.buckets[j];
+			dst.sectors[s_alloc_to_data_type(j)] = src.sectors[j];
+		}
+
+		dst.buckets[BCH_DATA_CACHED] = src.buckets_cached;
+		dst.sectors[BCH_DATA_CACHED] = src.sectors_cached;
+
+		ret = copy_to_user(&user_arg->devs[i], &dst, sizeof(dst));
+		if (ret)
+			return ret;
+	}
+
+	return 0;
+}
+
 #define BCH_IOCTL(_name, _argtype)					\
 do {									\
 	_argtype i;							\
@@ -304,6 +381,8 @@ long bch2_fs_ioctl(struct bch_fs *c, unsigned cmd, void __user *arg)
 	switch (cmd) {
 	case BCH_IOCTL_QUERY_UUID:
 		return bch2_ioctl_query_uuid(c, arg);
+	case BCH_IOCTL_USAGE:
+		return bch2_ioctl_usage(c, arg);
 	}
 
 	if (!capable(CAP_SYS_ADMIN))

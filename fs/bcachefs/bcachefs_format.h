@@ -883,7 +883,8 @@ enum bch_data_type {
 	BCH_DATA_JOURNAL	= 2,
 	BCH_DATA_BTREE		= 3,
 	BCH_DATA_USER		= 4,
-	BCH_DATA_NR		= 5,
+	BCH_DATA_CACHED		= 5,
+	BCH_DATA_NR		= 6,
 };
 
 struct bch_replicas_entry {
