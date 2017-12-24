@@ -2022,10 +2022,11 @@ static void journal_reclaim_work(struct work_struct *work)
 /**
  * journal_next_bucket - move on to the next journal bucket if possible
  */
-static int journal_write_alloc(struct journal *j, unsigned sectors)
+static int journal_write_alloc(struct journal *j, struct journal_buf *w,
+			       unsigned sectors)
 {
 	struct bch_fs *c = container_of(j, struct bch_fs, journal);
-	struct bkey_s_extent e = bkey_i_to_s_extent(&j->key);
+	struct bkey_s_extent e;
 	struct bch_extent_ptr *ptr;
 	struct journal_device *ja;
 	struct bch_dev *ca;
@@ -2034,6 +2035,7 @@ static int journal_write_alloc(struct journal *j, unsigned sectors)
 		READ_ONCE(c->opts.metadata_replicas);
 
 	spin_lock(&j->lock);
+	e = bkey_i_to_s_extent(&j->key);
 
 	/*
 	 * Drop any pointers to devices that have been removed, are no longer
@@ -2099,6 +2101,8 @@ static int journal_write_alloc(struct journal *j, unsigned sectors)
 	rcu_read_unlock();
 
 	j->prev_buf_sectors = 0;
+
+	bkey_copy(&w->key, &j->key);
 	spin_unlock(&j->lock);
 
 	if (replicas < c->opts.metadata_replicas_required)
@@ -2174,12 +2178,25 @@ static void journal_buf_realloc(struct journal *j, struct journal_buf *buf)
 static void journal_write_done(struct closure *cl)
 {
 	struct journal *j = container_of(cl, struct journal, io);
+	struct bch_fs *c = container_of(j, struct bch_fs, journal);
 	struct journal_buf *w = journal_prev_buf(j);
+	struct bkey_s_c_extent e = bkey_i_to_s_c_extent(&w->key);
 
+	if (!bch2_extent_nr_ptrs(e)) {
+		bch_err(c, "unable to write journal to sufficient devices");
+		goto err;
+	}
+
+	if (bch2_check_mark_super(c, e, BCH_DATA_JOURNAL))
+		goto err;
+out:
 	__bch2_time_stats_update(j->write_time, j->write_start_time);
 
 	spin_lock(&j->lock);
 	j->last_seq_ondisk = le64_to_cpu(w->data->last_seq);
+
+	journal_seq_pin(j, le64_to_cpu(w->data->seq))->devs =
+			bch2_extent_devs(bkey_i_to_s_c_extent(&w->key));
 
 	/*
 	 * Updating last_seq_ondisk may let journal_reclaim_work() discard more
@@ -2203,31 +2220,6 @@ static void journal_write_done(struct closure *cl)
 	if (test_bit(JOURNAL_NEED_WRITE, &j->flags))
 		mod_delayed_work(system_freezable_wq, &j->write_work, 0);
 	spin_unlock(&j->lock);
-}
-
-static void journal_write_error(struct closure *cl)
-{
-	struct journal *j = container_of(cl, struct journal, io);
-	struct bch_fs *c = container_of(j, struct bch_fs, journal);
-	struct bkey_s_extent e = bkey_i_to_s_extent(&j->key);
-
-	while (j->replicas_failed) {
-		unsigned idx = __fls(j->replicas_failed);
-
-		bch2_extent_drop_ptr_idx(e, idx);
-		j->replicas_failed ^= 1 << idx;
-	}
-
-	if (!bch2_extent_nr_ptrs(e.c)) {
-		bch_err(c, "unable to write journal to sufficient devices");
-		goto err;
-	}
-
-	if (bch2_check_mark_super(c, e.c, BCH_DATA_JOURNAL))
-		goto err;
-
-out:
-	journal_write_done(cl);
 	return;
 err:
 	bch2_fatal_error(c);
@@ -2242,12 +2234,12 @@ static void journal_write_endio(struct bio *bio)
 
 	if (bch2_dev_io_err_on(bio->bi_status, ca, "journal write") ||
 	    bch2_meta_write_fault("journal")) {
-		/* Was this a flush or an actual journal write? */
-		if (ca->journal.ptr_idx != U8_MAX) {
-			set_bit(ca->journal.ptr_idx, &j->replicas_failed);
-			set_closure_fn(&j->io, journal_write_error,
-				       system_highpri_wq);
-		}
+		struct journal_buf *w = journal_prev_buf(j);
+		unsigned long flags;
+
+		spin_lock_irqsave(&j->err_lock, flags);
+		bch2_extent_drop_device(bkey_i_to_s_extent(&w->key), ca->dev_idx);
+		spin_unlock_irqrestore(&j->err_lock, flags);
 	}
 
 	closure_put(&j->io);
@@ -2263,7 +2255,7 @@ static void journal_write(struct closure *cl)
 	struct jset *jset;
 	struct bio *bio;
 	struct bch_extent_ptr *ptr;
-	unsigned i, sectors, bytes, ptr_idx = 0;
+	unsigned i, sectors, bytes;
 
 	journal_buf_realloc(j, w);
 	jset = w->data;
@@ -2310,20 +2302,13 @@ static void journal_write(struct closure *cl)
 	bytes = vstruct_bytes(w->data);
 	memset((void *) w->data + bytes, 0, (sectors << 9) - bytes);
 
-	if (journal_write_alloc(j, sectors)) {
+	if (journal_write_alloc(j, w, sectors)) {
 		bch2_journal_halt(j);
 		bch_err(c, "Unable to allocate journal write");
 		bch2_fatal_error(c);
 		continue_at(cl, journal_write_done, system_highpri_wq);
 		return;
 	}
-
-	if (bch2_check_mark_super(c, bkey_i_to_s_c_extent(&j->key),
-				  BCH_DATA_JOURNAL))
-		goto err;
-
-	journal_seq_pin(j, le64_to_cpu(jset->seq))->devs =
-			bch2_extent_devs(bkey_i_to_s_c_extent(&j->key));
 
 	/*
 	 * XXX: we really should just disable the entire journal in nochanges
@@ -2332,7 +2317,7 @@ static void journal_write(struct closure *cl)
 	if (c->opts.nochanges)
 		goto no_io;
 
-	extent_for_each_ptr(bkey_i_to_s_extent(&j->key), ptr) {
+	extent_for_each_ptr(bkey_i_to_s_extent(&w->key), ptr) {
 		ca = bch_dev_bkey_exists(c, ptr->dev);
 		if (!percpu_ref_tryget(&ca->io_ref)) {
 			/* XXX: fix this */
@@ -2343,7 +2328,6 @@ static void journal_write(struct closure *cl)
 		this_cpu_add(ca->io_done->sectors[WRITE][BCH_DATA_JOURNAL],
 			     sectors);
 
-		ca->journal.ptr_idx	= ptr_idx++;
 		bio = ca->journal.bio;
 		bio_reset(bio);
 		bio_set_dev(bio, ca->disk_sb.bdev);
@@ -2363,10 +2347,9 @@ static void journal_write(struct closure *cl)
 
 	for_each_rw_member(ca, c, i)
 		if (journal_flushes_device(ca) &&
-		    !bch2_extent_has_device(bkey_i_to_s_c_extent(&j->key), i)) {
+		    !bch2_extent_has_device(bkey_i_to_s_c_extent(&w->key), i)) {
 			percpu_ref_get(&ca->io_ref);
 
-			ca->journal.ptr_idx = U8_MAX;
 			bio = ca->journal.bio;
 			bio_reset(bio);
 			bio_set_dev(bio, ca->disk_sb.bdev);
@@ -2377,7 +2360,7 @@ static void journal_write(struct closure *cl)
 		}
 
 no_io:
-	extent_for_each_ptr(bkey_i_to_s_extent(&j->key), ptr)
+	extent_for_each_ptr(bkey_i_to_s_extent(&w->key), ptr)
 		ptr->offset += sectors;
 
 	continue_at(cl, journal_write_done, system_highpri_wq);
@@ -2782,6 +2765,135 @@ int bch2_journal_flush_device(struct journal *j, unsigned dev_idx)
 	return ret;
 }
 
+/* startup/shutdown: */
+
+static bool bch2_journal_writing_to_device(struct journal *j, unsigned dev_idx)
+{
+	union journal_res_state state;
+	struct journal_buf *w;
+	bool ret;
+
+	spin_lock(&j->lock);
+	state = READ_ONCE(j->reservations);
+	w = j->buf + !state.idx;
+
+	ret = state.prev_buf_unwritten &&
+		bch2_extent_has_device(bkey_i_to_s_c_extent(&w->key), dev_idx);
+	spin_unlock(&j->lock);
+
+	return ret;
+}
+
+void bch2_dev_journal_stop(struct journal *j, struct bch_dev *ca)
+{
+	spin_lock(&j->lock);
+	bch2_extent_drop_device(bkey_i_to_s_extent(&j->key), ca->dev_idx);
+	spin_unlock(&j->lock);
+
+	wait_event(j->wait, !bch2_journal_writing_to_device(j, ca->dev_idx));
+}
+
+void bch2_fs_journal_stop(struct journal *j)
+{
+	if (!test_bit(JOURNAL_STARTED, &j->flags))
+		return;
+
+	/*
+	 * Empty out the journal by first flushing everything pinning existing
+	 * journal entries, then force a brand new empty journal entry to be
+	 * written:
+	 */
+	bch2_journal_flush_all_pins(j);
+
+	cancel_delayed_work_sync(&j->write_work);
+	cancel_delayed_work_sync(&j->reclaim_work);
+}
+
+void bch2_dev_journal_exit(struct bch_dev *ca)
+{
+	kfree(ca->journal.bio);
+	kfree(ca->journal.buckets);
+	kfree(ca->journal.bucket_seq);
+
+	ca->journal.bio		= NULL;
+	ca->journal.buckets	= NULL;
+	ca->journal.bucket_seq	= NULL;
+}
+
+int bch2_dev_journal_init(struct bch_dev *ca, struct bch_sb *sb)
+{
+	struct journal_device *ja = &ca->journal;
+	struct bch_sb_field_journal *journal_buckets =
+		bch2_sb_get_journal(sb);
+	unsigned i;
+
+	ja->nr = bch2_nr_journal_buckets(journal_buckets);
+
+	ja->bucket_seq = kcalloc(ja->nr, sizeof(u64), GFP_KERNEL);
+	if (!ja->bucket_seq)
+		return -ENOMEM;
+
+	ca->journal.bio = bio_kmalloc(GFP_KERNEL,
+			DIV_ROUND_UP(JOURNAL_ENTRY_SIZE_MAX, PAGE_SIZE));
+	if (!ca->journal.bio)
+		return -ENOMEM;
+
+	ja->buckets = kcalloc(ja->nr, sizeof(u64), GFP_KERNEL);
+	if (!ja->buckets)
+		return -ENOMEM;
+
+	for (i = 0; i < ja->nr; i++)
+		ja->buckets[i] = le64_to_cpu(journal_buckets->buckets[i]);
+
+	return 0;
+}
+
+void bch2_fs_journal_exit(struct journal *j)
+{
+	kvpfree(j->buf[1].data, j->buf[1].size);
+	kvpfree(j->buf[0].data, j->buf[0].size);
+	free_fifo(&j->pin);
+}
+
+int bch2_fs_journal_init(struct journal *j)
+{
+	static struct lock_class_key res_key;
+
+	spin_lock_init(&j->lock);
+	spin_lock_init(&j->pin_lock);
+	spin_lock_init(&j->err_lock);
+	init_waitqueue_head(&j->wait);
+	INIT_DELAYED_WORK(&j->write_work, journal_write_work);
+	INIT_DELAYED_WORK(&j->reclaim_work, journal_reclaim_work);
+	mutex_init(&j->blacklist_lock);
+	INIT_LIST_HEAD(&j->seq_blacklist);
+	mutex_init(&j->reclaim_lock);
+
+	lockdep_init_map(&j->res_map, "journal res", &res_key, 0);
+
+	j->buf[0].size		= JOURNAL_ENTRY_SIZE_MIN;
+	j->buf[1].size		= JOURNAL_ENTRY_SIZE_MIN;
+	j->write_delay_ms	= 100;
+	j->reclaim_delay_ms	= 100;
+
+	bkey_extent_init(&j->key);
+
+	atomic64_set(&j->reservations.counter,
+		((union journal_res_state)
+		 { .cur_entry_offset = JOURNAL_ENTRY_CLOSED_VAL }).v);
+
+	if (!(init_fifo(&j->pin, JOURNAL_PIN, GFP_KERNEL)) ||
+	    !(j->buf[0].data = kvpmalloc(j->buf[0].size, GFP_KERNEL)) ||
+	    !(j->buf[1].data = kvpmalloc(j->buf[1].size, GFP_KERNEL)))
+		return -ENOMEM;
+
+	j->pin.front = j->pin.back = 1;
+
+	return 0;
+}
+
+/* debug: */
+
 ssize_t bch2_journal_print_debug(struct journal *j, char *buf)
 {
 	struct bch_fs *c = container_of(j, struct bch_fs, journal);
@@ -2871,170 +2983,4 @@ ssize_t bch2_journal_print_pins(struct journal *j, char *buf)
 	spin_unlock_irq(&j->pin_lock);
 
 	return ret;
-}
-
-static bool bch2_journal_writing_to_device(struct bch_dev *ca)
-{
-	struct journal *j = &ca->fs->journal;
-	bool ret;
-
-	spin_lock(&j->lock);
-	ret = bch2_extent_has_device(bkey_i_to_s_c_extent(&j->key),
-				    ca->dev_idx);
-	spin_unlock(&j->lock);
-
-	return ret;
-}
-
-/*
- * This asumes that ca has already been marked read-only so that
- * journal_next_bucket won't pick buckets out of ca any more.
- * Hence, if the journal is not currently pointing to ca, there
- * will be no new writes to journal entries in ca after all the
- * pending ones have been flushed to disk.
- *
- * If the journal is being written to ca, write a new record, and
- * journal_next_bucket will notice that the device is no longer
- * writeable and pick a new set of devices to write to.
- */
-
-int bch2_journal_move(struct bch_dev *ca)
-{
-	struct journal_device *ja = &ca->journal;
-	struct journal *j = &ca->fs->journal;
-	u64 seq_to_flush = 0;
-	unsigned i;
-	int ret;
-
-	if (bch2_journal_writing_to_device(ca)) {
-		/*
-		 * bch_journal_meta will write a record and we'll wait
-		 * for the write to complete.
-		 * Actually writing the journal (journal_write_locked)
-		 * will call journal_next_bucket which notices that the
-		 * device is no longer writeable, and picks a new one.
-		 */
-		bch2_journal_meta(j);
-		BUG_ON(bch2_journal_writing_to_device(ca));
-	}
-
-	for (i = 0; i < ja->nr; i++)
-		seq_to_flush = max(seq_to_flush, ja->bucket_seq[i]);
-
-	bch2_journal_flush_pins(j, seq_to_flush);
-
-	/*
-	 * Force a meta-data journal entry to be written so that
-	 * we have newer journal entries in devices other than ca,
-	 * and wait for the meta data write to complete.
-	 */
-	bch2_journal_meta(j);
-
-	/*
-	 * Verify that we no longer need any of the journal entries in
-	 * the device
-	 */
-	spin_lock(&j->lock);
-	ret = j->last_seq_ondisk > seq_to_flush ? 0 : -EIO;
-	spin_unlock(&j->lock);
-
-	return ret;
-}
-
-void bch2_fs_journal_stop(struct journal *j)
-{
-	if (!test_bit(JOURNAL_STARTED, &j->flags))
-		return;
-
-	/*
-	 * Empty out the journal by first flushing everything pinning existing
-	 * journal entries, then force a brand new empty journal entry to be
-	 * written:
-	 */
-	bch2_journal_flush_all_pins(j);
-
-	cancel_delayed_work_sync(&j->write_work);
-	cancel_delayed_work_sync(&j->reclaim_work);
-}
-
-void bch2_dev_journal_exit(struct bch_dev *ca)
-{
-	kfree(ca->journal.bio);
-	kfree(ca->journal.buckets);
-	kfree(ca->journal.bucket_seq);
-
-	ca->journal.bio		= NULL;
-	ca->journal.buckets	= NULL;
-	ca->journal.bucket_seq	= NULL;
-}
-
-int bch2_dev_journal_init(struct bch_dev *ca, struct bch_sb *sb)
-{
-	struct journal_device *ja = &ca->journal;
-	struct bch_sb_field_journal *journal_buckets =
-		bch2_sb_get_journal(sb);
-	unsigned i;
-
-	ja->nr = bch2_nr_journal_buckets(journal_buckets);
-
-	ja->bucket_seq = kcalloc(ja->nr, sizeof(u64), GFP_KERNEL);
-	if (!ja->bucket_seq)
-		return -ENOMEM;
-
-	ca->journal.bio = bio_kmalloc(GFP_KERNEL,
-			DIV_ROUND_UP(JOURNAL_ENTRY_SIZE_MAX, PAGE_SIZE));
-	if (!ca->journal.bio)
-		return -ENOMEM;
-
-	ja->buckets = kcalloc(ja->nr, sizeof(u64), GFP_KERNEL);
-	if (!ja->buckets)
-		return -ENOMEM;
-
-	for (i = 0; i < ja->nr; i++)
-		ja->buckets[i] = le64_to_cpu(journal_buckets->buckets[i]);
-
-	return 0;
-}
-
-void bch2_fs_journal_exit(struct journal *j)
-{
-	kvpfree(j->buf[1].data, j->buf[1].size);
-	kvpfree(j->buf[0].data, j->buf[0].size);
-	free_fifo(&j->pin);
-}
-
-int bch2_fs_journal_init(struct journal *j)
-{
-	static struct lock_class_key res_key;
-
-	spin_lock_init(&j->lock);
-	spin_lock_init(&j->pin_lock);
-	init_waitqueue_head(&j->wait);
-	INIT_DELAYED_WORK(&j->write_work, journal_write_work);
-	INIT_DELAYED_WORK(&j->reclaim_work, journal_reclaim_work);
-	mutex_init(&j->blacklist_lock);
-	INIT_LIST_HEAD(&j->seq_blacklist);
-	mutex_init(&j->reclaim_lock);
-
-	lockdep_init_map(&j->res_map, "journal res", &res_key, 0);
-
-	j->buf[0].size		= JOURNAL_ENTRY_SIZE_MIN;
-	j->buf[1].size		= JOURNAL_ENTRY_SIZE_MIN;
-	j->write_delay_ms	= 100;
-	j->reclaim_delay_ms	= 100;
-
-	bkey_extent_init(&j->key);
-
-	atomic64_set(&j->reservations.counter,
-		((union journal_res_state)
-		 { .cur_entry_offset = JOURNAL_ENTRY_CLOSED_VAL }).v);
-
-	if (!(init_fifo(&j->pin, JOURNAL_PIN, GFP_KERNEL)) ||
-	    !(j->buf[0].data = kvpmalloc(j->buf[0].size, GFP_KERNEL)) ||
-	    !(j->buf[1].data = kvpmalloc(j->buf[1].size, GFP_KERNEL)))
-		return -ENOMEM;
-
-	j->pin.front = j->pin.back = 1;
-
-	return 0;
 }

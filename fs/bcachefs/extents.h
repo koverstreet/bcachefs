@@ -42,6 +42,7 @@ void bch2_extent_mark_replicas_cached(struct bch_fs *, struct bkey_s_extent);
 
 const struct bch_extent_ptr *
 bch2_extent_has_device(struct bkey_s_c_extent, unsigned);
+bool bch2_extent_drop_device(struct bkey_s_extent, unsigned);
 
 unsigned bch2_extent_nr_ptrs(struct bkey_s_c_extent);
 unsigned bch2_extent_nr_dirty_ptrs(struct bkey_s_c);
@@ -432,7 +433,6 @@ void bch2_extent_drop_redundant_crcs(struct bkey_s_extent);
 
 void __bch2_extent_drop_ptr(struct bkey_s_extent, struct bch_extent_ptr *);
 void bch2_extent_drop_ptr(struct bkey_s_extent, struct bch_extent_ptr *);
-void bch2_extent_drop_ptr_idx(struct bkey_s_extent, unsigned);
 
 bool bch2_cut_front(struct bpos, struct bkey_i *);
 bool bch2_cut_back(struct bpos, struct bkey *);

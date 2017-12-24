@@ -17,6 +17,8 @@ struct journal_res;
 struct journal_buf {
 	struct jset		*data;
 
+	BKEY_PADDED(key);
+
 	struct closure_waitlist	wait;
 
 	unsigned		size;
@@ -141,7 +143,6 @@ struct journal {
 
 	struct closure		io;
 	struct delayed_work	write_work;
-	unsigned long		replicas_failed;
 
 	/* Sequence number of most recent journal entry (last entry in @pin) */
 	atomic64_t		seq;
@@ -179,6 +180,7 @@ struct journal {
 
 	BKEY_PADDED(key);
 	struct write_point	wp;
+	spinlock_t		err_lock;
 
 	struct delayed_work	reclaim_work;
 	unsigned long		last_flushed;
@@ -230,7 +232,6 @@ struct journal_device {
 
 	/* Bio for journal reads/writes to this device */
 	struct bio		*bio;
-	u8			ptr_idx;
 
 	/* for bch_journal_read_device */
 	struct closure		read;
