@@ -88,7 +88,7 @@ static DECLARE_WAIT_QUEUE_HEAD(bch_read_only_wait);
 
 static void bch2_dev_free(struct bch_dev *);
 static int bch2_dev_alloc(struct bch_fs *, unsigned);
-static int bch2_dev_sysfs_online(struct bch_dev *);
+static int bch2_dev_sysfs_online(struct bch_fs *, struct bch_dev *);
 static void __bch2_dev_read_only(struct bch_fs *, struct bch_dev *);
 
 struct bch_fs *bch2_bdev_to_fs(struct block_device *bdev)
@@ -649,7 +649,7 @@ static const char *__bch2_fs_online(struct bch_fs *c)
 
 	err = "error creating sysfs objects";
 	__for_each_member_device(ca, c, i, NULL)
-		if (bch2_dev_sysfs_online(ca))
+		if (bch2_dev_sysfs_online(c, ca))
 			goto err;
 
 	list_add(&c->list, &bch_fs_list);
@@ -991,9 +991,8 @@ static void bch2_dev_free(struct bch_dev *ca)
 	kobject_put(&ca->kobj);
 }
 
-static void __bch2_dev_offline(struct bch_dev *ca)
+static void __bch2_dev_offline(struct bch_fs *c, struct bch_dev *ca)
 {
-	struct bch_fs *c = ca->fs;
 
 	lockdep_assert_held(&c->state_lock);
 
@@ -1032,9 +1031,8 @@ static void bch2_dev_io_ref_complete(struct percpu_ref *ref)
 	complete(&ca->io_ref_completion);
 }
 
-static int bch2_dev_sysfs_online(struct bch_dev *ca)
+static int bch2_dev_sysfs_online(struct bch_fs *c, struct bch_dev *ca)
 {
-	struct bch_fs *c = ca->fs;
 	int ret;
 
 	if (!c->kobj.state_in_sysfs)
@@ -1149,7 +1147,7 @@ static int bch2_dev_alloc(struct bch_fs *c, unsigned dev_idx)
 	ca->fs = c;
 	rcu_assign_pointer(c->devs[ca->dev_idx], ca);
 
-	if (bch2_dev_sysfs_online(ca))
+	if (bch2_dev_sysfs_online(c, ca))
 		pr_warn("error creating sysfs objects");
 
 	return 0;
@@ -1201,9 +1199,6 @@ static int __bch2_dev_online(struct bch_fs *c, struct bch_sb_handle *sb)
 	if (c->sb.nr_devices == 1)
 		bdevname(ca->disk_sb.bdev, c->name);
 	bdevname(ca->disk_sb.bdev, ca->name);
-
-	if (bch2_dev_sysfs_online(ca))
-		pr_warn("error creating sysfs objects");
 
 	bch2_mark_dev_superblock(c, ca, BCH_BUCKET_MARK_MAY_MAKE_UNAVAILABLE);
 
@@ -1311,12 +1306,11 @@ static void __bch2_dev_read_only(struct bch_fs *c, struct bch_dev *ca)
 	bch2_copygc_stop(ca);
 
 	/*
-	 * This stops new data writes (e.g. to existing open data
-	 * buckets) and then waits for all existing writes to
-	 * complete.
+	 * The allocator thread itself allocates btree nodes, so stop it first:
 	 */
 	bch2_dev_allocator_stop(ca);
 	bch2_dev_allocator_remove(c, ca);
+	bch2_dev_journal_stop(&c->journal, ca);
 }
 
 static const char *__bch2_dev_read_write(struct bch_fs *c, struct bch_dev *ca)
@@ -1393,15 +1387,12 @@ int bch2_dev_remove(struct bch_fs *c, struct bch_dev *ca, int flags)
 
 	percpu_ref_put(&ca->ref); /* XXX */
 
-	if (ca->mi.state == BCH_MEMBER_STATE_RW) {
-		bch_err(ca, "Cannot remove RW device");
-		goto err;
-	}
-
 	if (!bch2_dev_state_allowed(c, ca, BCH_MEMBER_STATE_FAILED, flags)) {
 		bch_err(ca, "Cannot remove without losing data");
 		goto err;
 	}
+
+	__bch2_dev_read_only(c, ca);
 
 	/*
 	 * XXX: verify that dev_idx is really not in use anymore, anywhere
@@ -1452,7 +1443,7 @@ int bch2_dev_remove(struct bch_fs *c, struct bch_dev *ca, int flags)
 		goto err;
 	}
 
-	__bch2_dev_offline(ca);
+	__bch2_dev_offline(c, ca);
 
 	mutex_lock(&c->sb_lock);
 	rcu_assign_pointer(c->devs[ca->dev_idx], NULL);
@@ -1477,6 +1468,8 @@ int bch2_dev_remove(struct bch_fs *c, struct bch_dev *ca, int flags)
 	mutex_unlock(&c->state_lock);
 	return 0;
 err:
+	if (ca->mi.state == BCH_MEMBER_STATE_RW)
+		__bch2_dev_read_write(c, ca);
 	mutex_unlock(&c->state_lock);
 	return ret;
 }
@@ -1645,7 +1638,7 @@ int bch2_dev_offline(struct bch_fs *c, struct bch_dev *ca, int flags)
 		return -EINVAL;
 	}
 
-	__bch2_dev_offline(ca);
+	__bch2_dev_offline(c, ca);
 
 	mutex_unlock(&c->state_lock);
 	return 0;

@@ -398,8 +398,7 @@ static inline unsigned bch2_nr_journal_buckets(struct bch_sb_field_journal *j)
 		: 0;
 }
 
-int bch2_journal_move(struct bch_dev *);
-
+void bch2_dev_journal_stop(struct journal *, struct bch_dev *);
 void bch2_fs_journal_stop(struct journal *);
 void bch2_dev_journal_exit(struct bch_dev *);
 int bch2_dev_journal_init(struct bch_dev *, struct bch_sb *);
