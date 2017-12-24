@@ -32,11 +32,12 @@ enum bch_write_flags {
 	BCH_WRITE_PAGES_OWNED		= (1 << 5),
 	BCH_WRITE_ONLY_SPECIFIED_DEVS	= (1 << 6),
 	BCH_WRITE_NOPUT_RESERVATION	= (1 << 7),
+	BCH_WRITE_NOMARK_REPLICAS	= (1 << 8),
 
 	/* Internal: */
-	BCH_WRITE_JOURNAL_SEQ_PTR	= (1 << 8),
-	BCH_WRITE_DONE			= (1 << 9),
-	BCH_WRITE_LOOPED		= (1 << 10),
+	BCH_WRITE_JOURNAL_SEQ_PTR	= (1 << 9),
+	BCH_WRITE_DONE			= (1 << 10),
+	BCH_WRITE_LOOPED		= (1 << 11),
 };
 
 static inline u64 *op_journal_seq(struct bch_write_op *op)
