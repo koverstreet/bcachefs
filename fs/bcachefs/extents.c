@@ -123,6 +123,22 @@ bch2_extent_has_device(struct bkey_s_c_extent e, unsigned dev)
 	return NULL;
 }
 
+bool bch2_extent_drop_device(struct bkey_s_extent e, unsigned dev)
+{
+	struct bch_extent_ptr *ptr;
+	bool dropped = false;
+
+	extent_for_each_ptr_backwards(e, ptr)
+		if (ptr->dev == dev) {
+			__bch2_extent_drop_ptr(e, ptr);
+			dropped = true;
+		}
+
+	if (dropped)
+		bch2_extent_drop_redundant_crcs(e);
+	return dropped;
+}
+
 unsigned bch2_extent_nr_ptrs(struct bkey_s_c_extent e)
 {
 	const struct bch_extent_ptr *ptr;
@@ -223,20 +239,6 @@ void bch2_extent_drop_ptr(struct bkey_s_extent e, struct bch_extent_ptr *ptr)
 {
 	__bch2_extent_drop_ptr(e, ptr);
 	bch2_extent_drop_redundant_crcs(e);
-}
-
-void bch2_extent_drop_ptr_idx(struct bkey_s_extent e, unsigned idx)
-{
-	struct bch_extent_ptr *ptr;
-	unsigned i = 0;
-
-	extent_for_each_ptr(e, ptr)
-		if (i++ == idx)
-			goto found;
-
-	BUG();
-found:
-	bch2_extent_drop_ptr(e, ptr);
 }
 
 static inline bool can_narrow_crc(struct bch_extent_crc_unpacked u,

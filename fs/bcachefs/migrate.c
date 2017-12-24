@@ -196,26 +196,13 @@ static int bch2_dev_metadata_migrate(struct bch_fs *c, struct bch_dev *ca,
 		return 0;
 
 	mutex_lock(&c->replicas_gc_lock);
-	bch2_replicas_gc_start(c,
-			       (1 << BCH_DATA_JOURNAL)|
-			       (1 << BCH_DATA_BTREE));
-
-	/* 1st, Move the btree nodes off the device */
+	bch2_replicas_gc_start(c, 1 << BCH_DATA_BTREE);
 
 	for (i = 0; i < BTREE_ID_NR; i++) {
 		ret = bch2_move_btree_off(c, ca, i);
 		if (ret)
 			goto err;
 	}
-
-	/* There are no prios/gens to move -- they are already in the device. */
-
-	/* 2nd. Move the journal off the device */
-
-	ret = bch2_journal_move(ca);
-	if (ret)
-		goto err;
-
 err:
 	bch2_replicas_gc_end(c, ret);
 	mutex_unlock(&c->replicas_gc_lock);
@@ -231,15 +218,12 @@ int bch2_dev_data_migrate(struct bch_fs *c, struct bch_dev *ca, int flags)
 static int drop_dev_ptrs(struct bch_fs *c, struct bkey_s_extent e,
 			 unsigned dev_idx, int flags, bool metadata)
 {
-	struct bch_extent_ptr *ptr;
 	unsigned replicas = metadata ? c->opts.metadata_replicas : c->opts.data_replicas;
 	unsigned lost = metadata ? BCH_FORCE_IF_METADATA_LOST : BCH_FORCE_IF_DATA_LOST;
 	unsigned degraded = metadata ? BCH_FORCE_IF_METADATA_DEGRADED : BCH_FORCE_IF_DATA_DEGRADED;
 	unsigned nr_good;
 
-	extent_for_each_ptr_backwards(e, ptr)
-		if (ptr->dev == dev_idx)
-			bch2_extent_drop_ptr(e, ptr);
+	bch2_extent_drop_device(e, dev_idx);
 
 	nr_good = bch2_extent_nr_good_ptrs(c, e.c);
 	if ((!nr_good && !(flags & lost)) ||
