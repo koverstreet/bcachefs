@@ -262,14 +262,15 @@ static void bch2_write_index(struct closure *cl)
 			if (test_bit(ptr->dev, op->failed.d))
 				bch2_extent_drop_ptr(e, ptr);
 
-		ret = bch2_extent_nr_ptrs(e.c)
-			? bch2_check_mark_super(c, e.c, BCH_DATA_USER)
-			: -EIO;
-		if (ret) {
-			keys->top = keys->keys;
-			op->error = ret;
-			op->flags |= BCH_WRITE_DONE;
+		if (!bch2_extent_nr_ptrs(e.c)) {
+			ret = -EIO;
 			goto err;
+		}
+
+		if (!(op->flags & BCH_WRITE_NOMARK_REPLICAS)) {
+			ret = bch2_check_mark_super(c, e.c, BCH_DATA_USER);
+			if (ret)
+				goto err;
 		}
 
 		dst = bkey_next(dst);
@@ -290,7 +291,7 @@ static void bch2_write_index(struct closure *cl)
 			op->error = ret;
 		}
 	}
-err:
+out:
 	bch2_open_bucket_put_refs(c, &op->open_buckets_nr, op->open_buckets);
 
 	if (!(op->flags & BCH_WRITE_DONE)) {
@@ -306,6 +307,12 @@ err:
 	} else {
 		continue_at_nobarrier(cl, bch2_write_done, NULL);
 	}
+	return;
+err:
+	keys->top = keys->keys;
+	op->error = ret;
+	op->flags |= BCH_WRITE_DONE;
+	goto out;
 }
 
 static void bch2_write_endio(struct bio *bio)
@@ -353,7 +360,6 @@ static void init_append_extent(struct bch_write_op *op,
 	bch2_extent_crc_append(e, crc);
 	bch2_alloc_sectors_append_ptrs(op->c, wp, e, crc.compressed_size);
 
-	bkey_extent_set_cached(&e->k, (op->flags & BCH_WRITE_CACHED));
 	bch2_keylist_push(&op->insert_keys);
 }
 

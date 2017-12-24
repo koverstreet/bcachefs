@@ -116,6 +116,11 @@ static int bch2_migrate_index_update(struct bch_write_op *op)
 		bch2_extent_normalize(c, extent_i_to_s(insert).s);
 		bch2_extent_mark_replicas_cached(c, extent_i_to_s(insert));
 
+		ret = bch2_check_mark_super(c, extent_i_to_s_c(insert),
+					    BCH_DATA_USER);
+		if (ret)
+			break;
+
 		ret = bch2_btree_insert_at(c, &op->res,
 				NULL, op_journal_seq(op),
 				BTREE_INSERT_ATOMIC|
@@ -178,7 +183,8 @@ void bch2_migrate_write_init(struct migrate_write *m,
 	m->op.flags |= BCH_WRITE_ONLY_SPECIFIED_DEVS|
 		BCH_WRITE_PAGES_STABLE|
 		BCH_WRITE_PAGES_OWNED|
-		BCH_WRITE_DATA_ENCODED;
+		BCH_WRITE_DATA_ENCODED|
+		BCH_WRITE_NOMARK_REPLICAS;
 
 	m->op.wbio.bio.bi_iter.bi_size = m->op.crc.compressed_size << 9;
 	m->op.nr_replicas	= 1;
