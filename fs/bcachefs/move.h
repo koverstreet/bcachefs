@@ -27,6 +27,7 @@ void bch2_migrate_write_init(struct migrate_write *, struct bch_read_bio *);
 typedef bool (*move_pred_fn)(void *, struct bkey_s_c_extent);
 
 struct bch_move_stats {
+	enum bch_data_type	data_type;
 	struct btree_iter	iter;
 
 	atomic64_t		keys_moved;
@@ -38,7 +39,12 @@ struct bch_move_stats {
 int bch2_move_data(struct bch_fs *, struct bch_ratelimit *,
 		   unsigned, struct bch_devs_mask *,
 		   struct write_point_specifier,
-		   int, int, move_pred_fn, void *,
+		   int, int, struct bpos, struct bpos,
+		   move_pred_fn, void *,
 		   struct bch_move_stats *);
+
+int bch2_data_job(struct bch_fs *,
+		  struct bch_move_stats *,
+		  struct bch_ioctl_data);
 
 #endif /* _BCACHEFS_MOVE_H */

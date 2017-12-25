@@ -1650,47 +1650,6 @@ int bch2_dev_offline(struct bch_fs *c, struct bch_dev *ca, int flags)
 	return 0;
 }
 
-int bch2_dev_evacuate(struct bch_fs *c, struct bch_dev *ca)
-{
-	unsigned data;
-	int ret = 0;
-
-	mutex_lock(&c->state_lock);
-
-	if (ca->mi.state == BCH_MEMBER_STATE_RW &&
-	    bch2_dev_is_online(ca)) {
-		bch_err(ca, "Cannot migrate data off RW device");
-		ret = -EINVAL;
-		goto err;
-	}
-
-	ret = bch2_dev_data_migrate(c, ca, 0);
-	if (ret) {
-		bch_err(ca, "Error migrating data: %i", ret);
-		goto err;
-	}
-
-	ret = bch2_journal_flush_device(&c->journal, ca->dev_idx);
-	if (ret) {
-		bch_err(ca, "Migrate failed: error %i flushing journal", ret);
-		goto err;
-	}
-
-	data = bch2_dev_has_data(c, ca);
-	if (data) {
-		char buf[100];
-
-		bch2_scnprint_flag_list(buf, sizeof(buf),
-					bch2_data_types, data);
-		bch_err(ca, "Migrate failed, still has data (%s)", buf);
-		ret = -EINVAL;
-		goto err;
-	}
-err:
-	mutex_unlock(&c->state_lock);
-	return ret;
-}
-
 int bch2_dev_resize(struct bch_fs *c, struct bch_dev *ca, u64 nbuckets)
 {
 	struct bch_member *mi;

@@ -106,6 +106,7 @@ static void bch2_copygc(struct bch_fs *c, struct bch_dev *ca)
 	size_t b;
 	int ret;
 
+	memset(&move_stats, 0, sizeof(move_stats));
 	closure_wait_event(&c->freelist_wait, have_copygc_reserve(ca));
 
 	/*
@@ -166,6 +167,7 @@ static void bch2_copygc(struct bch_fs *c, struct bch_dev *ca)
 			     writepoint_ptr(&ca->copygc_write_point),
 			     BTREE_INSERT_USE_RESERVE,
 			     ca->dev_idx,
+			     POS_MIN, POS_MAX,
 			     copygc_pred, ca,
 			     &move_stats);
 
