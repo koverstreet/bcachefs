@@ -87,7 +87,6 @@ static int bch2_migrate_index_update(struct bch_write_op *op)
 					    m->move_dev)))
 			bch2_extent_drop_ptr(extent_i_to_s(insert), ptr);
 
-
 		extent_for_each_ptr_crc(extent_i_to_s(new), ptr, crc) {
 			if (bch2_extent_has_device(extent_i_to_s_c(insert), ptr->dev)) {
 				/*
@@ -194,6 +193,8 @@ static void move_free(struct closure *cl)
 	struct bio_vec *bv;
 	int i;
 
+	bch2_disk_reservation_put(io->write.op.c, &io->write.op.res);
+
 	bio_for_each_segment_all(bv, &io->write.op.wbio.bio, i)
 		if (bv->bv_page)
 			__free_page(bv->bv_page);
@@ -243,20 +244,21 @@ static int bch2_move_extent(struct bch_fs *c,
 			  int btree_insert_flags,
 			  int move_device,
 			  struct bch_io_opts opts,
-			  struct bkey_s_c k)
+			  struct bkey_s_c_extent e)
 {
 	struct extent_pick_ptr pick;
 	struct moving_io *io;
 	const struct bch_extent_ptr *ptr;
 	struct bch_extent_crc_unpacked crc;
-	unsigned sectors = k.k->size, pages;
+	unsigned sectors = e.k->size, pages, nr_good;
+	int ret = -ENOMEM;
 
-	bch2_extent_pick_ptr(c, k, NULL, &pick);
+	bch2_extent_pick_ptr(c, e.s_c, NULL, &pick);
 	if (IS_ERR_OR_NULL(pick.ca))
 		return pick.ca ? PTR_ERR(pick.ca) : 0;
 
 	/* write path might have to decompress data: */
-	extent_for_each_ptr_crc(bkey_s_c_to_extent(k), ptr, crc)
+	extent_for_each_ptr_crc(e, ptr, crc)
 		sectors = max_t(unsigned, sectors, crc.uncompressed_size);
 
 	pages = DIV_ROUND_UP(sectors, PAGE_SECTORS);
@@ -266,7 +268,7 @@ static int bch2_move_extent(struct bch_fs *c,
 		goto err;
 
 	io->write.ctxt	= ctxt;
-	io->sectors	= k.k->size;
+	io->sectors	= e.k->size;
 
 	bio_init(&io->write.op.wbio.bio, io->bi_inline_vecs, pages);
 	bio_set_prio(&io->write.op.wbio.bio,
@@ -274,10 +276,8 @@ static int bch2_move_extent(struct bch_fs *c,
 	io->write.op.wbio.bio.bi_iter.bi_size = sectors << 9;
 
 	bch2_bio_map(&io->write.op.wbio.bio, NULL);
-	if (bch2_bio_alloc_pages(&io->write.op.wbio.bio, GFP_KERNEL)) {
-		kfree(io);
-		goto err;
-	}
+	if (bch2_bio_alloc_pages(&io->write.op.wbio.bio, GFP_KERNEL))
+		goto err_free;
 
 	io->rbio.opts = opts;
 	bio_init(&io->rbio.bio, io->bi_inline_vecs, pages);
@@ -285,7 +285,7 @@ static int bch2_move_extent(struct bch_fs *c,
 	io->rbio.bio.bi_iter.bi_size = sectors << 9;
 
 	bio_set_op_attrs(&io->rbio.bio, REQ_OP_READ, 0);
-	io->rbio.bio.bi_iter.bi_sector	= bkey_start_offset(k.k);
+	io->rbio.bio.bi_iter.bi_sector	= bkey_start_offset(e.k);
 	io->rbio.bio.bi_end_io		= move_read_endio;
 
 	io->write.btree_insert_flags = btree_insert_flags;
@@ -298,10 +298,22 @@ static int bch2_move_extent(struct bch_fs *c,
 	io->write.op.devs	= devs;
 	io->write.op.write_point = wp;
 
-	atomic64_inc(&ctxt->stats->keys_moved);
-	atomic64_add(k.k->size, &ctxt->stats->sectors_moved);
+	if (move_device < 0 &&
+	    ((nr_good = bch2_extent_nr_good_ptrs(c, e)) <
+	     c->opts.data_replicas)) {
+		io->write.op.nr_replicas = c->opts.data_replicas - nr_good;
 
-	trace_move_extent(k.k);
+		ret = bch2_disk_reservation_get(c, &io->write.op.res,
+						e.k->size,
+						io->write.op.nr_replicas, 0);
+		if (ret)
+			goto err_free_pages;
+	}
+
+	atomic64_inc(&ctxt->stats->keys_moved);
+	atomic64_add(e.k->size, &ctxt->stats->sectors_moved);
+
+	trace_move_extent(e.k);
 
 	atomic_add(io->sectors, &ctxt->sectors_in_flight);
 	list_add_tail(&io->list, &ctxt->reads);
@@ -311,12 +323,16 @@ static int bch2_move_extent(struct bch_fs *c,
 	 * ctxt when doing wakeup
 	 */
 	closure_get(&ctxt->cl);
-	bch2_read_extent(c, &io->rbio, bkey_s_c_to_extent(k),
-			 &pick, BCH_READ_NODECODE);
+	bch2_read_extent(c, &io->rbio, e, &pick, BCH_READ_NODECODE);
 	return 0;
+err_free_pages:
+	bio_free_pages(&io->write.op.wbio.bio);
+err_free:
+	kfree(io);
 err:
-	trace_move_alloc_fail(k.k);
-	return -ENOMEM;
+	percpu_ref_put(&pick.ca->io_ref);
+	trace_move_alloc_fail(e.k);
+	return ret;
 }
 
 static void do_pending_writes(struct moving_context *ctxt)
@@ -355,6 +371,8 @@ int bch2_move_data(struct bch_fs *c,
 		   struct write_point_specifier wp,
 		   int btree_insert_flags,
 		   int move_device,
+		   struct bpos start,
+		   struct bpos end,
 		   move_pred_fn pred, void *arg,
 		   struct bch_move_stats *stats)
 {
@@ -363,14 +381,16 @@ int bch2_move_data(struct bch_fs *c,
 	struct bch_io_opts opts = bch2_opts_to_inode_opts(c->opts);
 	BKEY_PADDED(k) tmp;
 	struct bkey_s_c k;
+	struct bkey_s_c_extent e;
 	u64 cur_inum = U64_MAX;
 	int ret = 0;
 
-	memset(stats, 0, sizeof(*stats));
 	closure_init_stack(&ctxt.cl);
 	INIT_LIST_HEAD(&ctxt.reads);
 	init_waitqueue_head(&ctxt.wait);
-	bch2_btree_iter_init(&stats->iter, c, BTREE_ID_EXTENTS, POS_MIN,
+
+	stats->data_type = BCH_DATA_USER;
+	bch2_btree_iter_init(&stats->iter, c, BTREE_ID_EXTENTS, start,
 			     BTREE_ITER_PREFETCH);
 
 	if (rate)
@@ -396,9 +416,13 @@ peek:
 		ret = btree_iter_err(k);
 		if (ret)
 			break;
+		if (bkey_cmp(bkey_start_pos(k.k), end) >= 0)
+			break;
 
 		if (!bkey_extent_is_data(k.k))
 			goto next_nondata;
+
+		e = bkey_s_c_to_extent(k);
 
 		if (cur_inum != k.k->p.inode) {
 			struct bch_inode_unpacked inode;
@@ -413,7 +437,7 @@ peek:
 			goto peek;
 		}
 
-		if (!pred(arg, bkey_s_c_to_extent(k)))
+		if (!pred(arg, e))
 			goto next;
 
 		/* unlock before doing IO: */
@@ -423,7 +447,8 @@ peek:
 
 		if (bch2_move_extent(c, &ctxt, devs, wp,
 				     btree_insert_flags,
-				     move_device, opts, k)) {
+				     move_device, opts,
+				     bkey_s_c_to_extent(k))) {
 			/* memory allocation failure, wait for some IO to finish */
 			bch2_move_ctxt_wait_for_io(&ctxt);
 			continue;
@@ -450,6 +475,160 @@ next_nondata:
 	trace_move_data(c,
 			atomic64_read(&stats->sectors_moved),
 			atomic64_read(&stats->keys_moved));
+
+	return ret;
+}
+
+static int bch2_gc_data_replicas(struct bch_fs *c)
+{
+	struct btree_iter iter;
+	struct bkey_s_c k;
+	int ret;
+
+	mutex_lock(&c->replicas_gc_lock);
+	bch2_replicas_gc_start(c, 1 << BCH_DATA_USER);
+
+	for_each_btree_key(&iter, c, BTREE_ID_EXTENTS, POS_MIN,
+			   BTREE_ITER_PREFETCH, k) {
+		ret = bch2_check_mark_super(c, BCH_DATA_USER, bch2_bkey_devs(k));
+		if (ret)
+			break;
+	}
+	ret = bch2_btree_iter_unlock(&iter) ?: ret;
+
+	bch2_replicas_gc_end(c, ret);
+	mutex_unlock(&c->replicas_gc_lock);
+
+	return ret;
+}
+
+static int bch2_gc_btree_replicas(struct bch_fs *c)
+{
+	struct btree_iter iter;
+	struct btree *b;
+	unsigned id;
+	int ret = 0;
+
+	mutex_lock(&c->replicas_gc_lock);
+	bch2_replicas_gc_start(c, 1 << BCH_DATA_BTREE);
+
+	for (id = 0; id < BTREE_ID_NR; id++) {
+		for_each_btree_node(&iter, c, id, POS_MIN, BTREE_ITER_PREFETCH, b) {
+			ret = bch2_check_mark_super(c, BCH_DATA_BTREE,
+					bch2_bkey_devs(bkey_i_to_s_c(&b->key)));
+
+			bch2_btree_iter_cond_resched(&iter);
+		}
+
+		ret = bch2_btree_iter_unlock(&iter) ?: ret;
+	}
+
+	bch2_replicas_gc_end(c, ret);
+	mutex_unlock(&c->replicas_gc_lock);
+
+	return ret;
+}
+
+static int bch2_move_btree(struct bch_fs *c,
+			   move_pred_fn pred,
+			   void *arg,
+			   struct bch_move_stats *stats)
+{
+	struct btree *b;
+	unsigned id;
+	int ret = 0;
+
+	stats->data_type = BCH_DATA_BTREE;
+
+	for (id = 0; id < BTREE_ID_NR; id++) {
+		for_each_btree_node(&stats->iter, c, id, POS_MIN, BTREE_ITER_PREFETCH, b) {
+			if (pred(arg, bkey_i_to_s_c_extent(&b->key)))
+				ret = bch2_btree_node_rewrite(c, &stats->iter,
+						b->data->keys.seq, 0) ?: ret;
+
+			bch2_btree_iter_cond_resched(&stats->iter);
+		}
+
+		ret = bch2_btree_iter_unlock(&stats->iter) ?: ret;
+	}
+
+	return ret;
+}
+
+#if 0
+static bool scrub_data_pred(void *arg, struct bkey_s_c_extent e)
+{
+}
+#endif
+
+static bool rereplicate_metadata_pred(void *arg, struct bkey_s_c_extent e)
+{
+	struct bch_fs *c = arg;
+	unsigned nr_good = bch2_extent_nr_good_ptrs(c, e);
+
+	return nr_good && nr_good < c->opts.metadata_replicas;
+}
+
+static bool rereplicate_data_pred(void *arg, struct bkey_s_c_extent e)
+{
+	struct bch_fs *c = arg;
+	unsigned nr_good = bch2_extent_nr_good_ptrs(c, e);
+
+	return nr_good && nr_good < c->opts.data_replicas;
+}
+
+static bool migrate_pred(void *arg, struct bkey_s_c_extent e)
+{
+	struct bch_ioctl_data *op = arg;
+
+	return bch2_extent_has_device(e, op->migrate.dev);
+}
+
+int bch2_data_job(struct bch_fs *c,
+		  struct bch_move_stats *stats,
+		  struct bch_ioctl_data op)
+{
+	int ret = 0;
+
+	switch (op.op) {
+	case BCH_DATA_OP_REREPLICATE:
+		stats->data_type = BCH_DATA_JOURNAL;
+		ret = bch2_journal_flush_device(&c->journal, -1);
+
+		ret = bch2_move_btree(c, rereplicate_metadata_pred, c, stats) ?: ret;
+		ret = bch2_gc_btree_replicas(c) ?: ret;
+
+		ret = bch2_move_data(c, NULL, SECTORS_IN_FLIGHT_PER_DEVICE,
+				     NULL,
+				     writepoint_hashed((unsigned long) current),
+				     0, -1,
+				     op.start,
+				     op.end,
+				     rereplicate_data_pred, c, stats) ?: ret;
+		ret = bch2_gc_data_replicas(c) ?: ret;
+		break;
+	case BCH_DATA_OP_MIGRATE:
+		if (op.migrate.dev >= c->sb.nr_devices)
+			return -EINVAL;
+
+		stats->data_type = BCH_DATA_JOURNAL;
+		ret = bch2_journal_flush_device(&c->journal, op.migrate.dev);
+
+		ret = bch2_move_btree(c, migrate_pred, &op, stats) ?: ret;
+		ret = bch2_gc_btree_replicas(c) ?: ret;
+
+		ret = bch2_move_data(c, NULL, SECTORS_IN_FLIGHT_PER_DEVICE,
+				     NULL,
+				     writepoint_hashed((unsigned long) current),
+				     0, -1,
+				     op.start,
+				     op.end,
+				     migrate_pred, &op, stats) ?: ret;
+		ret = bch2_gc_data_replicas(c) ?: ret;
+		break;
+	default:
+		ret = -EINVAL;
+	}
 
 	return ret;
 }

@@ -40,12 +40,15 @@ static int bch2_dev_usrdata_migrate(struct bch_fs *c, struct bch_dev *ca,
 	 * operations
 	 */
 	do {
+		memset(&stats, 0, sizeof(stats));
+
 		ret = bch2_move_data(c, NULL,
 				     SECTORS_IN_FLIGHT_PER_DEVICE,
 				     NULL,
 				     writepoint_hashed((unsigned long) current),
 				     0,
 				     ca->dev_idx,
+				     POS_MIN, POS_MAX,
 				     migrate_pred, ca,
 				     &stats);
 		if (ret) {

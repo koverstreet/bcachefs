@@ -1,20 +1,25 @@
 #ifndef NO_BCACHEFS_CHARDEV
 
 #include "bcachefs.h"
+#include "alloc.h"
 #include "bcachefs_ioctl.h"
 #include "buckets.h"
 #include "chardev.h"
+#include "move.h"
 #include "super.h"
 #include "super-io.h"
 
-#include <linux/module.h>
-#include <linux/fs.h>
-#include <linux/major.h>
+#include <linux/anon_inodes.h>
 #include <linux/cdev.h>
 #include <linux/device.h>
+#include <linux/file.h>
+#include <linux/fs.h>
 #include <linux/ioctl.h>
-#include <linux/uaccess.h>
+#include <linux/kthread.h>
+#include <linux/major.h>
+#include <linux/sched/task.h>
 #include <linux/slab.h>
+#include <linux/uaccess.h>
 
 /* returns with ref on ca->ref */
 static struct bch_dev *bch2_device_lookup(struct bch_fs *c, u64 dev,
@@ -266,23 +271,108 @@ static long bch2_ioctl_disk_set_state(struct bch_fs *c,
 	return ret;
 }
 
-static long bch2_ioctl_disk_evacuate(struct bch_fs *c,
-				     struct bch_ioctl_disk arg)
-{
-	struct bch_dev *ca;
-	int ret;
+struct bch_data_ctx {
+	struct bch_fs			*c;
+	struct bch_ioctl_data		arg;
+	struct bch_move_stats		stats;
 
-	if ((arg.flags & ~BCH_BY_INDEX) ||
-	    arg.pad)
+	int				ret;
+
+	struct task_struct		*thread;
+};
+
+static int bch2_data_thread(void *arg)
+{
+	struct bch_data_ctx *ctx = arg;
+
+	ctx->ret = bch2_data_job(ctx->c, &ctx->stats, ctx->arg);
+
+	ctx->stats.data_type = U8_MAX;
+	return 0;
+}
+
+static int bch2_data_job_release(struct inode *inode, struct file *file)
+{
+	struct bch_data_ctx *ctx = file->private_data;
+
+	kthread_stop(ctx->thread);
+	put_task_struct(ctx->thread);
+	kfree(ctx);
+	return 0;
+}
+
+static ssize_t bch2_data_job_read(struct file *file, char __user *buf,
+				  size_t len, loff_t *ppos)
+{
+	struct bch_data_ctx *ctx = file->private_data;
+	struct bch_fs *c = ctx->c;
+	struct bch_ioctl_data_progress p = {
+		.data_type	= ctx->stats.data_type,
+		.btree_id	= ctx->stats.iter.btree_id,
+		.pos		= ctx->stats.iter.pos,
+		.sectors_done	= atomic64_read(&ctx->stats.sectors_seen),
+		.sectors_total	= bch2_fs_sectors_used(c, bch2_fs_usage_read(c)),
+	};
+
+	if (len != sizeof(p))
 		return -EINVAL;
 
-	ca = bch2_device_lookup(c, arg.dev, arg.flags);
-	if (IS_ERR(ca))
-		return PTR_ERR(ca);
+	return copy_to_user(buf, &p, sizeof(p)) ?: sizeof(p);
+}
 
-	ret = bch2_dev_evacuate(c, ca);
+static const struct file_operations bcachefs_data_ops = {
+	.release	= bch2_data_job_release,
+	.read		= bch2_data_job_read,
+	.llseek		= no_llseek,
+};
 
-	percpu_ref_put(&ca->ref);
+static long bch2_ioctl_data(struct bch_fs *c,
+			    struct bch_ioctl_data arg)
+{
+	struct bch_data_ctx *ctx = NULL;
+	struct file *file = NULL;
+	unsigned flags = O_RDONLY|O_CLOEXEC|O_NONBLOCK;
+	int ret, fd = -1;
+
+	if (arg.op >= BCH_DATA_OP_NR || arg.flags)
+		return -EINVAL;
+
+	ctx = kzalloc(sizeof(*ctx), GFP_KERNEL);
+	if (!ctx)
+		return -ENOMEM;
+
+	ctx->c = c;
+	ctx->arg = arg;
+
+	ctx->thread = kthread_create(bch2_data_thread, ctx, "[bcachefs]");
+	if (IS_ERR(ctx->thread)) {
+		ret = PTR_ERR(ctx->thread);
+		goto err;
+	}
+
+	ret = get_unused_fd_flags(flags);
+	if (ret < 0)
+		goto err;
+	fd = ret;
+
+	file = anon_inode_getfile("[bcachefs]", &bcachefs_data_ops, ctx, flags);
+	if (IS_ERR(file)) {
+		ret = PTR_ERR(file);
+		goto err;
+	}
+
+	fd_install(fd, file);
+
+	get_task_struct(ctx->thread);
+	wake_up_process(ctx->thread);
+
+	return fd;
+err:
+	if (fd >= 0)
+		put_unused_fd(fd);
+	if (!IS_ERR_OR_NULL(ctx->thread))
+		kthread_stop(ctx->thread);
+	kfree(ctx);
 	return ret;
 }
 
@@ -474,8 +564,8 @@ long bch2_fs_ioctl(struct bch_fs *c, unsigned cmd, void __user *arg)
 		BCH_IOCTL(disk_offline, struct bch_ioctl_disk);
 	case BCH_IOCTL_DISK_SET_STATE:
 		BCH_IOCTL(disk_set_state, struct bch_ioctl_disk_set_state);
-	case BCH_IOCTL_DISK_EVACUATE:
-		BCH_IOCTL(disk_evacuate, struct bch_ioctl_disk);
+	case BCH_IOCTL_DATA:
+		BCH_IOCTL(data, struct bch_ioctl_data);
 	case BCH_IOCTL_READ_SUPER:
 		BCH_IOCTL(read_super, struct bch_ioctl_read_super);
 	case BCH_IOCTL_DISK_GET_IDX:

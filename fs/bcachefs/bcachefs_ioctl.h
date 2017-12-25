@@ -46,7 +46,6 @@ struct bch_ioctl_incremental {
 #define BCH_IOCTL_DISK_ONLINE	_IOW(0xbc,	6,  struct bch_ioctl_disk)
 #define BCH_IOCTL_DISK_OFFLINE	_IOW(0xbc,	7,  struct bch_ioctl_disk)
 #define BCH_IOCTL_DISK_SET_STATE _IOW(0xbc,	8,  struct bch_ioctl_disk_set_state)
-#define BCH_IOCTL_DISK_EVACUATE	_IOW(0xbc,	9,  struct bch_ioctl_disk)
 #define BCH_IOCTL_DATA		_IOW(0xbc,	10, struct bch_ioctl_data)
 #define BCH_IOCTL_USAGE		_IOWR(0xbc,	11, struct bch_ioctl_usage)
 #define BCH_IOCTL_READ_SUPER	_IOW(0xbc,	12, struct bch_ioctl_read_super)
@@ -75,30 +74,37 @@ struct bch_ioctl_disk_set_state {
 	__u64			dev;
 };
 
-#define BCH_REWRITE_INCREASE_REPLICAS	(1 << 0)
-#define BCH_REWRITE_DECREASE_REPLICAS	(1 << 1)
-
-#define BCH_REWRITE_RECOMPRESS		(1 << 0)
-#define BCH_REWRITE_DECREASE_REPLICAS	(1 << 1)
-
 enum bch_data_ops {
-	BCH_DATA_SCRUB,
-};
-
-struct bch_data_op {
-	__u8			type;
+	BCH_DATA_OP_SCRUB	= 0,
+	BCH_DATA_OP_REREPLICATE	= 1,
+	BCH_DATA_OP_MIGRATE	= 2,
+	BCH_DATA_OP_NR		= 3,
 };
 
 struct bch_ioctl_data {
+	__u32			op;
 	__u32			flags;
-	__u32			pad;
 
-	__u64			start_inode;
-	__u64			start_offset;
+	struct bpos		start;
+	struct bpos		end;
 
-	__u64			end_inode;
-	__u64			end_offset;
-};
+	union {
+	struct {
+		__u32		dev;
+		__u32		pad;
+	}			migrate;
+	};
+} __attribute__((packed, aligned(8)));
+
+struct bch_ioctl_data_progress {
+	__u8			data_type;
+	__u8			btree_id;
+	__u8			pad[2];
+	struct bpos		pos;
+
+	__u64			sectors_done;
+	__u64			sectors_total;
+} __attribute__((packed, aligned(8)));
 
 struct bch_ioctl_dev_usage {
 	__u8			state;

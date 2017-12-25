@@ -44,6 +44,7 @@ static int bch2_tiering_thread(void *arg)
 	unsigned long last;
 	unsigned i, nr_devices;
 
+	memset(&move_stats, 0, sizeof(move_stats));
 	set_freezable();
 
 	while (!kthread_should_stop()) {
@@ -91,6 +92,7 @@ static int bch2_tiering_thread(void *arg)
 			       writepoint_ptr(&tier->wp),
 			       0,
 			       -1,
+			       POS_MIN, POS_MAX,
 			       tiering_pred, tier,
 			       &move_stats);
 	}
