@@ -167,6 +167,7 @@ int bch2_btree_mark_key_initial(struct bch_fs *c, enum bkey_type type,
 
 		extent_for_each_ptr(e, ptr) {
 			struct bch_dev *ca = bch_dev_bkey_exists(c, ptr->dev);
+			size_t b = PTR_BUCKET_NR(ca, ptr);
 			struct bucket *g = PTR_BUCKET(ca, ptr);
 
 			if (mustfix_fsck_err_on(!g->mark.gen_valid, c,
@@ -176,7 +177,7 @@ int bch2_btree_mark_key_initial(struct bch_fs *c, enum bkey_type type,
 					ptr->gen)) {
 				g->_mark.gen = ptr->gen;
 				g->_mark.gen_valid = 1;
-				set_bit(g - ca->buckets, ca->bucket_dirty);
+				set_bit(b, ca->buckets_dirty);
 			}
 
 			if (mustfix_fsck_err_on(gen_cmp(ptr->gen, g->mark.gen) > 0, c,
@@ -185,7 +186,7 @@ int bch2_btree_mark_key_initial(struct bch_fs *c, enum bkey_type type,
 					ptr->gen, g->mark.gen)) {
 				g->_mark.gen = ptr->gen;
 				g->_mark.gen_valid = 1;
-				set_bit(g - ca->buckets, ca->bucket_dirty);
+				set_bit(b, ca->buckets_dirty);
 				set_bit(BCH_FS_FIXED_GENS, &c->flags);
 			}
 
@@ -193,7 +194,6 @@ int bch2_btree_mark_key_initial(struct bch_fs *c, enum bkey_type type,
 		break;
 	}
 	}
-
 
 	atomic64_set(&c->key_version,
 		     max_t(u64, k.k->version.lo,
@@ -302,8 +302,7 @@ static void mark_metadata_sectors(struct bch_fs *c, struct bch_dev *ca,
 		unsigned sectors =
 			min_t(u64, bucket_to_sector(ca, b + 1), end) - start;
 
-		bch2_mark_metadata_bucket(c, ca, ca->buckets + b,
-					  type, sectors,
+		bch2_mark_metadata_bucket(c, ca, b, type, sectors,
 					  gc_phase(GC_PHASE_SB), flags);
 		b++;
 		start += sectors;
@@ -335,8 +334,7 @@ void bch2_mark_dev_superblock(struct bch_fs *c, struct bch_dev *ca,
 
 	for (i = 0; i < ca->journal.nr; i++) {
 		b = ca->journal.buckets[i];
-		bch2_mark_metadata_bucket(c, ca, ca->buckets + b,
-					  BCH_DATA_JOURNAL,
+		bch2_mark_metadata_bucket(c, ca, b, BCH_DATA_JOURNAL,
 					  ca->mi.bucket_size,
 					  gc_phase(GC_PHASE_SB), flags);
 	}
@@ -397,7 +395,7 @@ static void bch2_mark_allocator_buckets(struct bch_fs *c)
 
 	for_each_member_device(ca, c, ci) {
 		fifo_for_each_entry(i, &ca->free_inc, iter)
-			bch2_mark_alloc_bucket(c, ca, &ca->buckets[i], true,
+			bch2_mark_alloc_bucket(c, ca, i, true,
 					       gc_pos_alloc(c, NULL),
 					       BCH_BUCKET_MARK_MAY_MAKE_UNAVAILABLE|
 					       BCH_BUCKET_MARK_GC_LOCK_HELD);
@@ -406,7 +404,7 @@ static void bch2_mark_allocator_buckets(struct bch_fs *c)
 
 		for (j = 0; j < RESERVE_NR; j++)
 			fifo_for_each_entry(i, &ca->free[j], iter)
-				bch2_mark_alloc_bucket(c, ca, &ca->buckets[i], true,
+				bch2_mark_alloc_bucket(c, ca, i, true,
 						       gc_pos_alloc(c, NULL),
 						       BCH_BUCKET_MARK_MAY_MAKE_UNAVAILABLE|
 						       BCH_BUCKET_MARK_GC_LOCK_HELD);
@@ -421,7 +419,7 @@ static void bch2_mark_allocator_buckets(struct bch_fs *c)
 		if (ob->valid) {
 			gc_pos_set(c, gc_pos_alloc(c, ob));
 			ca = bch_dev_bkey_exists(c, ob->ptr.dev);
-			bch2_mark_alloc_bucket(c, ca, PTR_BUCKET(ca, &ob->ptr), true,
+			bch2_mark_alloc_bucket(c, ca, PTR_BUCKET_NR(ca, &ob->ptr), true,
 					       gc_pos_alloc(c, ob),
 					       BCH_BUCKET_MARK_MAY_MAKE_UNAVAILABLE|
 					       BCH_BUCKET_MARK_GC_LOCK_HELD);
@@ -433,9 +431,10 @@ static void bch2_mark_allocator_buckets(struct bch_fs *c)
 static void bch2_gc_start(struct bch_fs *c)
 {
 	struct bch_dev *ca;
-	struct bucket *g;
+	struct bucket_array *buckets;
 	struct bucket_mark new;
 	unsigned i;
+	size_t b;
 	int cpu;
 
 	lg_global_lock(&c->usage_lock);
@@ -467,16 +466,21 @@ static void bch2_gc_start(struct bch_fs *c)
 	lg_global_unlock(&c->usage_lock);
 
 	/* Clear bucket marks: */
-	for_each_member_device(ca, c, i)
-		for_each_bucket(g, ca) {
-			bucket_cmpxchg(g, new, ({
+	for_each_member_device(ca, c, i) {
+		down_read(&ca->bucket_lock);
+		buckets = bucket_array(ca);
+
+		for (b = buckets->first_bucket; b < buckets->nbuckets; b++) {
+			bucket_cmpxchg(buckets->b + b, new, ({
 				new.owned_by_allocator	= 0;
 				new.data_type		= 0;
 				new.cached_sectors	= 0;
 				new.dirty_sectors	= 0;
 			}));
-			ca->oldest_gens[g - ca->buckets] = new.gen;
+			ca->oldest_gens[b] = new.gen;
 		}
+		up_read(&ca->bucket_lock);
+	}
 }
 
 /**
@@ -1020,7 +1024,7 @@ err:
 	return bch2_btree_iter_unlock(&iter) ?: ret;
 }
 
-int bch2_initial_gc(struct bch_fs *c, struct list_head *journal)
+static int __bch2_initial_gc(struct bch_fs *c, struct list_head *journal)
 {
 	unsigned iter = 0;
 	enum btree_id id;
@@ -1044,7 +1048,7 @@ again:
 
 	ret = bch2_journal_mark(c, journal);
 	if (ret)
-	return ret;
+		return ret;
 
 	if (test_bit(BCH_FS_FIXED_GENS, &c->flags)) {
 		if (iter++ > 2) {
@@ -1070,4 +1074,15 @@ again:
 	set_bit(BCH_FS_INITIAL_GC_DONE, &c->flags);
 
 	return 0;
+}
+
+int bch2_initial_gc(struct bch_fs *c, struct list_head *journal)
+{
+	int ret;
+
+	down_write(&c->gc_lock);
+	ret = __bch2_initial_gc(c, journal);
+	up_write(&c->gc_lock);
+
+	return ret;
 }

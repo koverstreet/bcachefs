@@ -99,10 +99,11 @@ static void bch2_copygc(struct bch_fs *c, struct bch_dev *ca)
 {
 	copygc_heap *h = &ca->copygc_heap;
 	struct copygc_heap_entry e, *i;
-	struct bucket *g;
+	struct bucket_array *buckets;
 	u64 keys_moved, sectors_moved;
 	u64 sectors_to_move = 0, sectors_not_moved = 0;
 	u64 buckets_to_move, buckets_not_moved = 0;
+	size_t b;
 	int ret;
 
 	closure_wait_event(&c->freelist_wait, have_copygc_reserve(ca));
@@ -113,15 +114,18 @@ static void bch2_copygc(struct bch_fs *c, struct bch_dev *ca)
 	 * and repeatedly replacing the maximum element until all
 	 * buckets have been visited.
 	 */
+	h->used = 0;
 
 	/*
 	 * We need bucket marks to be up to date - gc can't be recalculating
 	 * them:
 	 */
 	down_read(&c->gc_lock);
-	h->used = 0;
-	for_each_bucket(g, ca) {
-		struct bucket_mark m = READ_ONCE(g->mark);
+	down_read(&ca->bucket_lock);
+	buckets = bucket_array(ca);
+
+	for (b = buckets->first_bucket; b < buckets->nbuckets; b++) {
+		struct bucket_mark m = READ_ONCE(buckets->b[b].mark);
 		struct copygc_heap_entry e;
 
 		if (m.owned_by_allocator ||
@@ -131,11 +135,12 @@ static void bch2_copygc(struct bch_fs *c, struct bch_dev *ca)
 			continue;
 
 		e = (struct copygc_heap_entry) {
-			.offset = bucket_to_sector(ca, g - ca->buckets),
+			.offset = bucket_to_sector(ca, b),
 			.mark	= m
 		};
 		heap_add_or_replace(h, e, -sectors_used_cmp);
 	}
+	up_read(&ca->bucket_lock);
 	up_read(&c->gc_lock);
 
 	for (i = h->data; i < h->data + h->used; i++)
@@ -165,15 +170,18 @@ static void bch2_copygc(struct bch_fs *c, struct bch_dev *ca)
 			     &keys_moved,
 			     &sectors_moved);
 
+	down_read(&ca->bucket_lock);
+	buckets = bucket_array(ca);
 	for (i = h->data; i < h->data + h->used; i++) {
-		size_t bucket = sector_to_bucket(ca, i->offset);
-		struct bucket_mark m = READ_ONCE(ca->buckets[bucket].mark);
+		size_t b = sector_to_bucket(ca, i->offset);
+		struct bucket_mark m = READ_ONCE(buckets->b[b].mark);
 
 		if (i->mark.gen == m.gen && bucket_sectors_used(m)) {
 			sectors_not_moved += bucket_sectors_used(m);
 			buckets_not_moved++;
 		}
 	}
+	up_read(&ca->bucket_lock);
 
 	if (sectors_not_moved && !ret)
 		bch_warn(c, "copygc finished but %llu/%llu sectors, %llu/%llu buckets not moved",

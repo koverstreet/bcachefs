@@ -10,9 +10,9 @@
 #include "buckets_types.h"
 #include "super.h"
 
-#define for_each_bucket(b, ca)					\
-	for (b = (ca)->buckets + (ca)->mi.first_bucket;		\
-	     b < (ca)->buckets + (ca)->mi.nbuckets; b++)
+#define for_each_bucket(_b, _buckets)				\
+	for (_b = (_buckets)->b + (_buckets)->first_bucket;	\
+	     _b < (_buckets)->b + (_buckets)->nbuckets; _b++)
 
 #define bucket_cmpxchg(g, new, expr)				\
 ({								\
@@ -28,15 +28,36 @@
 	_old;							\
 })
 
+static inline struct bucket_array *bucket_array(struct bch_dev *ca)
+{
+	return rcu_dereference_check(ca->buckets,
+				     lockdep_is_held(&ca->fs->usage_lock) ||
+				     lockdep_is_held(&ca->fs->gc_lock) ||
+				     lockdep_is_held(&ca->bucket_lock));
+}
+
+static inline struct bucket *bucket(struct bch_dev *ca, size_t b)
+{
+	struct bucket_array *buckets = bucket_array(ca);
+
+	BUG_ON(b < buckets->first_bucket || b >= buckets->nbuckets);
+	return buckets->b + b;
+}
+
+static inline void bucket_io_clock_reset(struct bch_fs *c, struct bch_dev *ca,
+					 size_t b, int rw)
+{
+	bucket(ca, b)->prio[rw] = c->prio_clock[rw].hand;
+}
+
 /*
  * bucket_gc_gen() returns the difference between the bucket's current gen and
  * the oldest gen of any pointer into that bucket in the btree.
  */
 
-static inline u8 bucket_gc_gen(struct bch_dev *ca, struct bucket *g)
+static inline u8 bucket_gc_gen(struct bch_dev *ca, size_t b)
 {
-	unsigned long r = g - ca->buckets;
-	return g->mark.gen - ca->oldest_gens[r];
+	return bucket(ca, b)->mark.gen - ca->oldest_gens[b];
 }
 
 static inline size_t PTR_BUCKET_NR(const struct bch_dev *ca,
@@ -45,10 +66,22 @@ static inline size_t PTR_BUCKET_NR(const struct bch_dev *ca,
 	return sector_to_bucket(ca, ptr->offset);
 }
 
-static inline struct bucket *PTR_BUCKET(const struct bch_dev *ca,
+static inline struct bucket *PTR_BUCKET(struct bch_dev *ca,
 					const struct bch_extent_ptr *ptr)
 {
-	return ca->buckets + PTR_BUCKET_NR(ca, ptr);
+	return bucket(ca, PTR_BUCKET_NR(ca, ptr));
+}
+
+static inline struct bucket_mark ptr_bucket_mark(struct bch_dev *ca,
+						 const struct bch_extent_ptr *ptr)
+{
+	struct bucket_mark m;
+
+	rcu_read_lock();
+	m = READ_ONCE(bucket(ca, PTR_BUCKET_NR(ca, ptr))->mark);
+	rcu_read_unlock();
+
+	return m;
 }
 
 static inline int gen_cmp(u8 a, u8 b)
@@ -67,10 +100,10 @@ static inline int gen_after(u8 a, u8 b)
  * ptr_stale() - check if a pointer points into a bucket that has been
  * invalidated.
  */
-static inline u8 ptr_stale(const struct bch_dev *ca,
+static inline u8 ptr_stale(struct bch_dev *ca,
 			   const struct bch_extent_ptr *ptr)
 {
-	return gen_after(PTR_BUCKET(ca, ptr)->mark.gen, ptr->gen);
+	return gen_after(ptr_bucket_mark(ca, ptr).gen, ptr->gen);
 }
 
 /* bucket gc marks */
@@ -159,6 +192,11 @@ static inline bool is_available_bucket(struct bucket_mark mark)
 		!mark.nouse);
 }
 
+static inline bool is_startup_available_bucket(struct bucket_mark mark)
+{
+	return !mark.touched_this_mount && is_available_bucket(mark);
+}
+
 static inline bool bucket_needs_journal_commit(struct bucket_mark m,
 					       u16 last_seq_ondisk)
 {
@@ -169,15 +207,14 @@ static inline bool bucket_needs_journal_commit(struct bucket_mark m,
 void bch2_bucket_seq_cleanup(struct bch_fs *);
 
 bool bch2_invalidate_bucket(struct bch_fs *, struct bch_dev *,
-			    struct bucket *, struct bucket_mark *);
+			    size_t, struct bucket_mark *);
 bool bch2_mark_alloc_bucket_startup(struct bch_fs *, struct bch_dev *,
-				    struct bucket *);
+				    size_t);
 void bch2_mark_alloc_bucket(struct bch_fs *, struct bch_dev *,
-			    struct bucket *, bool,
-			    struct gc_pos, unsigned);
+			    size_t, bool, struct gc_pos, unsigned);
 void bch2_mark_metadata_bucket(struct bch_fs *, struct bch_dev *,
-			       struct bucket *, enum bch_data_type,
-			       unsigned, struct gc_pos, unsigned);
+			       size_t, enum bch_data_type, unsigned,
+			       struct gc_pos, unsigned);
 
 #define BCH_BUCKET_MARK_NOATOMIC		(1 << 0)
 #define BCH_BUCKET_MARK_MAY_MAKE_UNAVAILABLE	(1 << 1)
@@ -209,5 +246,8 @@ int bch2_disk_reservation_add(struct bch_fs *,
 int bch2_disk_reservation_get(struct bch_fs *,
 			     struct disk_reservation *,
 			     unsigned, int);
+
+void bch2_dev_buckets_free(struct bch_dev *);
+int bch2_dev_buckets_alloc(struct bch_dev *);
 
 #endif /* _BUCKETS_H */
