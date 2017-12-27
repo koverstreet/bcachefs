@@ -6,11 +6,7 @@
 
 #include "clock_types.h"
 
-/*
- * There's two of these clocks, one for reads and one for writes:
- *
- * All fields protected by bucket_lock
- */
+/* There's two of these clocks, one for reads and one for writes: */
 struct prio_clock {
 	/*
 	 * "now" in (read/write) IO time - incremented whenever we do X amount
@@ -31,6 +27,7 @@ struct prio_clock {
 	int			rw;
 
 	struct io_timer		rescale;
+	struct mutex		lock;
 };
 
 /* There is one reserve for each type of btree, one for prios and gens
