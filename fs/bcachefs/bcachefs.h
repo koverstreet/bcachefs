@@ -349,6 +349,22 @@ struct bch_dev {
 	/* biosets used in cloned bios for writing multiple replicas */
 	struct bio_set		replica_set;
 
+	/*
+	 * Buckets:
+	 * Per-bucket arrays are protected by c->usage_lock, bucket_lock and
+	 * gc_lock, for device resize - holding any is sufficient for access:
+	 * Or rcu_read_lock(), but only for ptr_stale():
+	 */
+	struct bucket_array __rcu *buckets;
+	unsigned long		*buckets_dirty;
+	/* most out of date gen in the btree */
+	u8			*oldest_gens;
+	struct rw_semaphore	bucket_lock;
+
+	struct bch_dev_usage __percpu *usage_percpu;
+	struct bch_dev_usage	usage_cached;
+
+	/* Allocator: */
 	struct task_struct	*alloc_thread;
 
 	/*
@@ -360,8 +376,8 @@ struct bch_dev {
 	 * gens/prios, they'll be moved to the free list (and possibly discarded
 	 * in the process)
 	 */
-	DECLARE_FIFO(long, free)[RESERVE_NR];
-	DECLARE_FIFO(long, free_inc);
+	alloc_fifo		free[RESERVE_NR];
+	alloc_fifo		free_inc;
 	spinlock_t		freelist_lock;
 	unsigned		nr_invalidated;
 	bool			alloc_thread_started;
@@ -371,23 +387,8 @@ struct bch_dev {
 
 	size_t			fifo_last_bucket;
 
-	/* Allocation stuff: */
-
-	/* most out of date gen in the btree */
-	u8			*oldest_gens;
-	struct bucket		*buckets;
-	unsigned long		*bucket_dirty;
-
 	/* last calculated minimum prio */
 	u16			min_prio[2];
-
-	/*
-	 * Bucket book keeping. The first element is updated by GC, the
-	 * second contains a saved copy of the stats from the beginning
-	 * of GC.
-	 */
-	struct bch_dev_usage __percpu *usage_percpu;
-	struct bch_dev_usage	usage_cached;
 
 	atomic_long_t		saturated_count;
 	size_t			inc_gen_needs_gc;

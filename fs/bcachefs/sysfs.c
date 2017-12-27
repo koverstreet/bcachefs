@@ -606,26 +606,28 @@ struct attribute *bch2_fs_time_stats_files[] = {
 	NULL
 };
 
-typedef unsigned (bucket_map_fn)(struct bch_dev *, struct bucket *, void *);
+typedef unsigned (bucket_map_fn)(struct bch_dev *, size_t, void *);
 
-static unsigned bucket_priority_fn(struct bch_dev *ca, struct bucket *g,
+static unsigned bucket_priority_fn(struct bch_dev *ca, size_t b,
 				   void *private)
 {
+	struct bucket *g = bucket(ca, b);
 	int rw = (private ? 1 : 0);
 
 	return ca->fs->prio_clock[rw].hand - g->prio[rw];
 }
 
-static unsigned bucket_sectors_used_fn(struct bch_dev *ca, struct bucket *g,
+static unsigned bucket_sectors_used_fn(struct bch_dev *ca, size_t b,
 				       void *private)
 {
+	struct bucket *g = bucket(ca, b);
 	return bucket_sectors_used(g->mark);
 }
 
-static unsigned bucket_oldest_gen_fn(struct bch_dev *ca, struct bucket *g,
+static unsigned bucket_oldest_gen_fn(struct bch_dev *ca, size_t b,
 				     void *private)
 {
-	return bucket_gc_gen(ca, g);
+	return bucket_gc_gen(ca, b);
 }
 
 static ssize_t show_quantiles(struct bch_dev *ca, char *buf,
@@ -634,19 +636,25 @@ static ssize_t show_quantiles(struct bch_dev *ca, char *buf,
 	int cmp(const void *l, const void *r)
 	{	return *((unsigned *) r) - *((unsigned *) l); }
 
-	size_t n = ca->mi.nbuckets, i;
+	size_t i, n;
 	/* Compute 31 quantiles */
 	unsigned q[31], *p;
 	ssize_t ret = 0;
 
-	p = vzalloc(ca->mi.nbuckets * sizeof(unsigned));
-	if (!p)
+	down_read(&ca->bucket_lock);
+	n = ca->mi.nbuckets;
+
+	p = vzalloc(n * sizeof(unsigned));
+	if (!p) {
+		up_read(&ca->bucket_lock);
 		return -ENOMEM;
+	}
 
 	for (i = ca->mi.first_bucket; i < n; i++)
-		p[i] = fn(ca, &ca->buckets[i], private);
+		p[i] = fn(ca, n, private);
 
 	sort(p, n, sizeof(unsigned), cmp, NULL);
+	up_read(&ca->bucket_lock);
 
 	while (n &&
 	       !p[n - 1])
