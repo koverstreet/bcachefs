@@ -575,8 +575,6 @@ struct bch_fs {
 	struct bch_fs_usage	usage_cached;
 	struct lglock		usage_lock;
 
-	struct mutex		bucket_lock;
-
 	struct closure_waitlist	freelist_wait;
 
 	/*
