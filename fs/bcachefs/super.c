@@ -1651,7 +1651,8 @@ int bch2_dev_evacuate(struct bch_fs *c, struct bch_dev *ca)
 
 	mutex_lock(&c->state_lock);
 
-	if (ca->mi.state == BCH_MEMBER_STATE_RW) {
+	if (ca->mi.state == BCH_MEMBER_STATE_RW &&
+	    bch2_dev_is_online(ca)) {
 		bch_err(ca, "Cannot migrate data off RW device");
 		ret = -EINVAL;
 		goto err;
