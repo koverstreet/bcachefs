@@ -42,7 +42,7 @@ struct bucket {
 
 struct bucket_array {
 	struct rcu_head		rcu;
-	size_t			first_bucket;
+	u16			first_bucket;
 	size_t			nbuckets;
 	struct bucket		b[];
 };
