@@ -363,6 +363,46 @@ static long bch2_ioctl_usage(struct bch_fs *c,
 	return 0;
 }
 
+static long bch2_ioctl_read_super(struct bch_fs *c,
+				  struct bch_ioctl_read_super arg)
+{
+	struct bch_dev *ca = NULL;
+	struct bch_sb *sb;
+	int ret = 0;
+
+	if ((arg.flags & ~(BCH_BY_INDEX|BCH_READ_DEV)) ||
+	    arg.pad)
+		return -EINVAL;
+
+	mutex_lock(&c->sb_lock);
+
+	if (arg.flags & BCH_READ_DEV) {
+		ca = bch2_device_lookup(c, arg.dev, arg.flags);
+
+		if (IS_ERR(ca)) {
+			ret = PTR_ERR(ca);
+			goto err;
+		}
+
+		sb = ca->disk_sb.sb;
+	} else {
+		sb = c->disk_sb;
+	}
+
+	if (vstruct_bytes(sb) > arg.size) {
+		ret = -ERANGE;
+		goto err;
+	}
+
+	ret = copy_to_user((void __user *)(unsigned long)arg.sb,
+			   sb, vstruct_bytes(sb));
+err:
+	if (ca)
+		percpu_ref_put(&ca->ref);
+	mutex_unlock(&c->sb_lock);
+	return ret;
+}
+
 #define BCH_IOCTL(_name, _argtype)					\
 do {									\
 	_argtype i;							\
@@ -404,6 +444,8 @@ long bch2_fs_ioctl(struct bch_fs *c, unsigned cmd, void __user *arg)
 		BCH_IOCTL(disk_set_state, struct bch_ioctl_disk_set_state);
 	case BCH_IOCTL_DISK_EVACUATE:
 		BCH_IOCTL(disk_evacuate, struct bch_ioctl_disk);
+	case BCH_IOCTL_READ_SUPER:
+		BCH_IOCTL(read_super, struct bch_ioctl_read_super);
 
 	default:
 		return -ENOTTY;
