@@ -305,12 +305,15 @@ int bch2_alloc_read(struct bch_fs *c, struct list_head *journal_replay_list)
 				bch2_alloc_read_key(c, bkey_i_to_s_c(k));
 	}
 
-	mutex_lock(&c->bucket_lock);
-	for_each_member_device(ca, c, i) {
+	mutex_lock(&c->prio_clock[READ].lock);
+	for_each_member_device(ca, c, i)
 		bch2_recalc_min_prio(c, ca, READ);
+	mutex_unlock(&c->prio_clock[READ].lock);
+
+	mutex_lock(&c->prio_clock[WRITE].lock);
+	for_each_member_device(ca, c, i)
 		bch2_recalc_min_prio(c, ca, WRITE);
-	}
-	mutex_unlock(&c->bucket_lock);
+	mutex_unlock(&c->prio_clock[WRITE].lock);
 
 	return 0;
 }
@@ -470,7 +473,7 @@ static void bch2_recalc_min_prio(struct bch_fs *c, struct bch_dev *ca, int rw)
 	u16 max_delta = 1;
 	unsigned i;
 
-	lockdep_assert_held(&c->bucket_lock);
+	lockdep_assert_held(&c->prio_clock[rw].lock);
 
 	/* Determine min prio for this particular device */
 	for_each_bucket(g, ca)
@@ -517,7 +520,7 @@ static void bch2_inc_clock_hand(struct io_timer *timer)
 				struct bch_fs, prio_clock[clock->rw]);
 	u64 capacity;
 
-	mutex_lock(&c->bucket_lock);
+	mutex_lock(&clock->lock);
 
 	clock->hand++;
 
@@ -525,7 +528,7 @@ static void bch2_inc_clock_hand(struct io_timer *timer)
 	if (clock->hand == (u16) (clock->min_prio - 1))
 		bch2_rescale_prios(c, clock->rw);
 
-	mutex_unlock(&c->bucket_lock);
+	mutex_unlock(&clock->lock);
 
 	capacity = READ_ONCE(c->capacity);
 
@@ -548,11 +551,12 @@ static void bch2_inc_clock_hand(struct io_timer *timer)
 static void bch2_prio_timer_init(struct bch_fs *c, int rw)
 {
 	struct prio_clock *clock = &c->prio_clock[rw];
-	struct io_timer *timer = &clock->rescale;
 
-	clock->rw	= rw;
-	timer->fn	= bch2_inc_clock_hand;
-	timer->expire	= c->capacity >> 10;
+	clock->hand		= 1;
+	clock->rw		= rw;
+	clock->rescale.fn	= bch2_inc_clock_hand;
+	clock->rescale.expire	= c->capacity >> 10;
+	mutex_init(&clock->lock);
 }
 
 /*
@@ -672,9 +676,8 @@ static void invalidate_buckets_lru(struct bch_fs *c, struct bch_dev *ca)
 
 	ca->alloc_heap.used = 0;
 
-	mutex_lock(&c->bucket_lock);
+	mutex_lock(&c->prio_clock[READ].lock);
 	bch2_recalc_min_prio(c, ca, READ);
-	bch2_recalc_min_prio(c, ca, WRITE);
 
 	/*
 	 * Find buckets with lowest read priority, by building a maxheap sorted
@@ -705,7 +708,7 @@ static void invalidate_buckets_lru(struct bch_fs *c, struct bch_dev *ca)
 	       heap_pop(&ca->alloc_heap, e, bucket_alloc_cmp))
 		bch2_invalidate_one_bucket(c, ca, &ca->buckets[e.bucket]);
 
-	mutex_unlock(&c->bucket_lock);
+	mutex_unlock(&c->prio_clock[READ].lock);
 }
 
 static void invalidate_buckets_fifo(struct bch_fs *c, struct bch_dev *ca)

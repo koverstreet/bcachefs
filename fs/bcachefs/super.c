@@ -480,7 +480,6 @@ static struct bch_fs *bch2_fs_alloc(struct bch_sb *sb, struct bch_opts opts)
 	mutex_init(&c->state_lock);
 	mutex_init(&c->sb_lock);
 	mutex_init(&c->replicas_gc_lock);
-	mutex_init(&c->bucket_lock);
 	mutex_init(&c->btree_root_lock);
 	INIT_WORK(&c->read_only_work, bch2_fs_read_only_work);
 
@@ -511,11 +510,6 @@ static struct bch_fs *bch2_fs_alloc(struct bch_sb *sb, struct bch_opts opts)
 	mutex_init(&c->fsck_error_lock);
 
 	seqcount_init(&c->gc_pos_lock);
-
-	c->prio_clock[READ].hand = 1;
-	c->prio_clock[READ].min_prio = 0;
-	c->prio_clock[WRITE].hand = 1;
-	c->prio_clock[WRITE].min_prio = 0;
 
 	init_waitqueue_head(&c->writeback_wait);
 	c->writeback_pages_max = (256 << 10) / PAGE_SIZE;
