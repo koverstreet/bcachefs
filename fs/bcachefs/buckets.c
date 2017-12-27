@@ -67,6 +67,7 @@
 #include "btree_gc.h"
 #include "buckets.h"
 #include "error.h"
+#include "movinggc.h"
 
 #include <linux/preempt.h>
 #include <trace/events/bcachefs.h>
@@ -824,37 +825,157 @@ int bch2_disk_reservation_get(struct bch_fs *c,
 	return bch2_disk_reservation_add(c, res, sectors, flags);
 }
 
-void bch2_dev_buckets_free(struct bch_dev *ca)
+/* Startup/shutdown: */
+
+static void buckets_free_rcu(struct rcu_head *rcu)
 {
-	free_percpu(ca->usage_percpu);
-	kvpfree(ca->buckets_dirty, BITS_TO_LONGS(ca->mi.nbuckets) * sizeof(unsigned long));
-	kvpfree(ca->oldest_gens, ca->mi.nbuckets * sizeof(u8));
-	kvpfree(ca->buckets,	 ca->mi.nbuckets * sizeof(struct bucket));
+	struct bucket_array *buckets =
+		container_of(rcu, struct bucket_array, rcu);
+
+	kvpfree(buckets,
+		sizeof(struct bucket_array) +
+		buckets->nbuckets * sizeof(struct bucket));
 }
 
-int bch2_dev_buckets_alloc(struct bch_dev *ca)
+int bch2_dev_buckets_resize(struct bch_fs *c, struct bch_dev *ca, u64 nbuckets)
 {
-	struct bucket_array *buckets;
+	struct bucket_array *buckets = NULL, *old_buckets;
+	unsigned long *buckets_dirty = NULL;
+	u8 *oldest_gens = NULL;
+	alloc_fifo	free[RESERVE_NR];
+	alloc_fifo	free_inc;
+	alloc_heap	alloc_heap;
+	copygc_heap	copygc_heap;
 
-	buckets	= kvpmalloc(sizeof(struct bucket_array) +
-			    ca->mi.nbuckets *
-			    sizeof(struct bucket),
-			    GFP_KERNEL|__GFP_ZERO);
-	if (!buckets)
-		return -ENOMEM;
+	size_t btree_reserve	= DIV_ROUND_UP(BTREE_NODE_RESERVE,
+			     ca->mi.bucket_size / c->opts.btree_node_size);
+	/* XXX: these should be tunable */
+	size_t reserve_none	= max_t(size_t, 4, ca->mi.nbuckets >> 9);
+	size_t copygc_reserve	= max_t(size_t, 16, ca->mi.nbuckets >> 7);
+	size_t free_inc_reserve = copygc_reserve / 2;
+	bool resize = ca->buckets != NULL,
+	     start_copygc = ca->copygc_thread != NULL;
+	int ret = -ENOMEM;
+	unsigned i;
 
-	buckets->first_bucket	= ca->mi.first_bucket;
-	buckets->nbuckets	= ca->mi.nbuckets;
-	rcu_assign_pointer(ca->buckets, buckets);
+	memset(&free,		0, sizeof(free));
+	memset(&free_inc,	0, sizeof(free_inc));
+	memset(&alloc_heap,	0, sizeof(alloc_heap));
+	memset(&copygc_heap,	0, sizeof(copygc_heap));
 
-	if (!(ca->oldest_gens	= kvpmalloc(ca->mi.nbuckets *
-					    sizeof(u8),
+	if (!(buckets		= kvpmalloc(sizeof(struct bucket_array) +
+					    nbuckets * sizeof(struct bucket),
 					    GFP_KERNEL|__GFP_ZERO)) ||
-	    !(ca->buckets_dirty	= kvpmalloc(BITS_TO_LONGS(ca->mi.nbuckets) *
+	    !(oldest_gens	= kvpmalloc(nbuckets * sizeof(u8),
+					    GFP_KERNEL|__GFP_ZERO)) ||
+	    !(buckets_dirty	= kvpmalloc(BITS_TO_LONGS(nbuckets) *
 					    sizeof(unsigned long),
 					    GFP_KERNEL|__GFP_ZERO)) ||
-	    !(ca->usage_percpu = alloc_percpu(struct bch_dev_usage)))
+	    !init_fifo(&free[RESERVE_BTREE], btree_reserve, GFP_KERNEL) ||
+	    !init_fifo(&free[RESERVE_MOVINGGC],
+		       copygc_reserve, GFP_KERNEL) ||
+	    !init_fifo(&free[RESERVE_NONE], reserve_none, GFP_KERNEL) ||
+	    !init_fifo(&free_inc,	free_inc_reserve, GFP_KERNEL) ||
+	    !init_heap(&alloc_heap,	free_inc_reserve, GFP_KERNEL) ||
+	    !init_heap(&copygc_heap,	copygc_reserve, GFP_KERNEL))
+		goto err;
+
+	buckets->first_bucket	= ca->mi.first_bucket;
+	buckets->nbuckets	= nbuckets;
+
+	bch2_copygc_stop(ca);
+
+	down_write(&c->gc_lock);
+	down_write(&ca->bucket_lock);
+	lg_global_lock(&c->usage_lock);
+
+	old_buckets = bucket_array(ca);
+
+	if (resize) {
+		size_t n = min(buckets->nbuckets, old_buckets->nbuckets);
+
+		memcpy(buckets->b,
+		       old_buckets->b,
+		       n * sizeof(struct bucket));
+		memcpy(oldest_gens,
+		       ca->oldest_gens,
+		       n * sizeof(u8));
+		memcpy(buckets_dirty,
+		       ca->buckets_dirty,
+		       BITS_TO_LONGS(n) * sizeof(unsigned long));
+	}
+
+	rcu_assign_pointer(ca->buckets, buckets);
+	buckets = old_buckets;
+
+	swap(ca->oldest_gens, oldest_gens);
+	swap(ca->buckets_dirty, buckets_dirty);
+
+	lg_global_unlock(&c->usage_lock);
+
+	spin_lock(&c->freelist_lock);
+	for (i = 0; i < RESERVE_NR; i++) {
+		fifo_move(&free[i], &ca->free[i]);
+		swap(ca->free[i], free[i]);
+	}
+	fifo_move(&free_inc, &ca->free_inc);
+	swap(ca->free_inc, free_inc);
+	spin_unlock(&c->freelist_lock);
+
+	/* with gc lock held, alloc_heap can't be in use: */
+	swap(ca->alloc_heap, alloc_heap);
+
+	/* and we shut down copygc: */
+	swap(ca->copygc_heap, copygc_heap);
+
+	nbuckets = ca->mi.nbuckets;
+
+	up_write(&ca->bucket_lock);
+	up_write(&c->gc_lock);
+
+	if (start_copygc &&
+	    bch2_copygc_start(c, ca))
+		bch_err(ca, "error restarting copygc thread");
+
+	ret = 0;
+err:
+	free_heap(&copygc_heap);
+	free_heap(&alloc_heap);
+	free_fifo(&free_inc);
+	for (i = 0; i < RESERVE_NR; i++)
+		free_fifo(&free[i]);
+	kvpfree(buckets_dirty,
+		BITS_TO_LONGS(nbuckets) * sizeof(unsigned long));
+	kvpfree(oldest_gens,
+		nbuckets * sizeof(u8));
+	if (buckets)
+		call_rcu(&old_buckets->rcu, buckets_free_rcu);
+
+	return ret;
+}
+
+void bch2_dev_buckets_free(struct bch_dev *ca)
+{
+	unsigned i;
+
+	free_heap(&ca->copygc_heap);
+	free_heap(&ca->alloc_heap);
+	free_fifo(&ca->free_inc);
+	for (i = 0; i < RESERVE_NR; i++)
+		free_fifo(&ca->free[i]);
+	kvpfree(ca->buckets_dirty,
+		BITS_TO_LONGS(ca->mi.nbuckets) * sizeof(unsigned long));
+	kvpfree(ca->oldest_gens, ca->mi.nbuckets * sizeof(u8));
+	kvpfree(ca->buckets,	 sizeof(struct bucket_array) +
+		ca->mi.nbuckets * sizeof(struct bucket));
+
+	free_percpu(ca->usage_percpu);
+}
+
+int bch2_dev_buckets_alloc(struct bch_fs *c, struct bch_dev *ca)
+{
+	if (!(ca->usage_percpu = alloc_percpu(struct bch_dev_usage)))
 		return -ENOMEM;
 
-	return 0;
+	return bch2_dev_buckets_resize(c, ca, ca->mi.nbuckets);;
 }
