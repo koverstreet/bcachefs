@@ -15,6 +15,8 @@
 
 #define BCH_BY_INDEX			(1 << 4)
 
+#define BCH_READ_DEV			(1 << 5)
+
 /* global control dev: */
 
 #define BCH_IOCTL_ASSEMBLE	_IOW(0xbc, 1, struct bch_ioctl_assemble)
@@ -46,6 +48,7 @@ struct bch_ioctl_incremental {
 #define BCH_IOCTL_DISK_EVACUATE	_IOW(0xbc,	9,  struct bch_ioctl_disk)
 #define BCH_IOCTL_DATA		_IOW(0xbc,	10, struct bch_ioctl_data)
 #define BCH_IOCTL_USAGE		_IOWR(0xbc,	11, struct bch_ioctl_usage)
+#define BCH_IOCTL_READ_SUPER	_IOW(0xbc,	12, struct bch_ioctl_read_super)
 
 struct bch_ioctl_query_uuid {
 	uuid_le			uuid;
@@ -121,6 +124,14 @@ struct bch_ioctl_usage {
 
 	struct bch_ioctl_fs_usage fs;
 	struct bch_ioctl_dev_usage devs[0];
+};
+
+struct bch_ioctl_read_super {
+	__u32			flags;
+	__u32			pad;
+	__u64			dev;
+	__u64			size;
+	__u64			sb;
 };
 
 #endif /* _BCACHEFS_IOCTL_H */
