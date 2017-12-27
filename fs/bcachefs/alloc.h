@@ -5,7 +5,6 @@
 #include "alloc_types.h"
 
 struct bkey;
-struct bucket;
 struct bch_dev;
 struct bch_fs;
 struct bch_devs_List;

@@ -969,10 +969,7 @@ static void bch2_dev_free(struct bch_dev *ca)
 
 	free_percpu(ca->io_done);
 	bioset_exit(&ca->replica_set);
-	free_percpu(ca->usage_percpu);
-	kvpfree(ca->bucket_dirty, BITS_TO_LONGS(ca->mi.nbuckets) * sizeof(unsigned long));
-	kvpfree(ca->buckets,	 ca->mi.nbuckets * sizeof(struct bucket));
-	kvpfree(ca->oldest_gens, ca->mi.nbuckets * sizeof(u8));
+	bch2_dev_buckets_free(ca);
 	free_heap(&ca->copygc_heap);
 	free_heap(&ca->alloc_heap);
 	free_fifo(&ca->free_inc);
@@ -1076,6 +1073,8 @@ static int bch2_dev_alloc(struct bch_fs *c, unsigned dev_idx)
 	ca->dev_idx = dev_idx;
 	__set_bit(ca->dev_idx, ca->self.d);
 
+	init_rwsem(&ca->bucket_lock);
+
 	writepoint_init(&ca->copygc_write_point, BCH_DATA_USER);
 
 	spin_lock_init(&ca->freelist_lock);
@@ -1111,6 +1110,7 @@ static int bch2_dev_alloc(struct bch_fs *c, unsigned dev_idx)
 			    0, GFP_KERNEL) ||
 	    percpu_ref_init(&ca->io_ref, bch2_dev_io_ref_complete,
 			    PERCPU_REF_INIT_DEAD, GFP_KERNEL) ||
+	    bch2_dev_buckets_alloc(ca) ||
 	    !init_fifo(&ca->free[RESERVE_BTREE], btree_node_reserve_buckets,
 		       GFP_KERNEL) ||
 	    !init_fifo(&ca->free[RESERVE_MOVINGGC],
@@ -1119,16 +1119,6 @@ static int bch2_dev_alloc(struct bch_fs *c, unsigned dev_idx)
 	    !init_fifo(&ca->free_inc,	free_inc_reserve, GFP_KERNEL) ||
 	    !init_heap(&ca->alloc_heap,	free_inc_reserve, GFP_KERNEL) ||
 	    !init_heap(&ca->copygc_heap,heap_size, GFP_KERNEL) ||
-	    !(ca->oldest_gens	= kvpmalloc(ca->mi.nbuckets *
-					    sizeof(u8),
-					    GFP_KERNEL|__GFP_ZERO)) ||
-	    !(ca->buckets	= kvpmalloc(ca->mi.nbuckets *
-					    sizeof(struct bucket),
-					    GFP_KERNEL|__GFP_ZERO)) ||
-	    !(ca->bucket_dirty	= kvpmalloc(BITS_TO_LONGS(ca->mi.nbuckets) *
-					    sizeof(unsigned long),
-					    GFP_KERNEL|__GFP_ZERO)) ||
-	    !(ca->usage_percpu = alloc_percpu(struct bch_dev_usage)) ||
 	    bioset_init(&ca->replica_set, 4,
 			offsetof(struct bch_write_bio, bio), 0) ||
 	    !(ca->io_done	= alloc_percpu(*ca->io_done)))

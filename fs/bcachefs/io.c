@@ -1316,7 +1316,10 @@ int __bch2_read_extent(struct bch_fs *c, struct bch_read_bio *orig,
 	struct bpos pos = bkey_start_pos(e.k);
 	int ret = 0;
 
-	PTR_BUCKET(pick->ca, &pick->ptr)->prio[READ] = c->prio_clock[READ].hand;
+	lg_local_lock(&c->usage_lock);
+	bucket_io_clock_reset(c, pick->ca,
+			PTR_BUCKET_NR(pick->ca, &pick->ptr), READ);
+	lg_local_unlock(&c->usage_lock);
 
 	narrow_crcs = should_narrow_crcs(e, pick, flags);
 

@@ -40,6 +40,13 @@ struct bucket {
 	};
 };
 
+struct bucket_array {
+	struct rcu_head		rcu;
+	size_t			first_bucket;
+	size_t			nbuckets;
+	struct bucket		b[];
+};
+
 struct bch_dev_usage {
 	u64			buckets[BCH_DATA_NR];
 	u64			buckets_alloc;

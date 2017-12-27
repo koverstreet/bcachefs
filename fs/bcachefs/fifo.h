@@ -3,11 +3,13 @@
 
 #include "util.h"
 
-#define DECLARE_FIFO(type, name)					\
-	struct {							\
-		size_t front, back, size, mask;				\
-		type *data;						\
-	} name
+#define FIFO(type)							\
+struct {								\
+	size_t front, back, size, mask;					\
+	type *data;							\
+}
+
+#define DECLARE_FIFO(type, name)	FIFO(type) name
 
 #define fifo_buf_size(fifo)						\
 	(roundup_pow_of_two((fifo)->size) * sizeof((fifo)->data[0]))
