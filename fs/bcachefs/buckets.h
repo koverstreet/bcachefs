@@ -247,7 +247,8 @@ int bch2_disk_reservation_get(struct bch_fs *,
 			     struct disk_reservation *,
 			     unsigned, int);
 
+int bch2_dev_buckets_resize(struct bch_fs *, struct bch_dev *, u64);
 void bch2_dev_buckets_free(struct bch_dev *);
-int bch2_dev_buckets_alloc(struct bch_dev *);
+int bch2_dev_buckets_alloc(struct bch_fs *, struct bch_dev *);
 
 #endif /* _BUCKETS_H */

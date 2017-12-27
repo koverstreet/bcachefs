@@ -419,6 +419,26 @@ static long bch2_ioctl_disk_get_idx(struct bch_fs *c,
 	return -ENOENT;
 }
 
+static long bch2_ioctl_disk_resize(struct bch_fs *c,
+				   struct bch_ioctl_disk_resize arg)
+{
+	struct bch_dev *ca;
+	int ret;
+
+	if ((arg.flags & ~BCH_BY_INDEX) ||
+	    arg.pad)
+		return -EINVAL;
+
+	ca = bch2_device_lookup(c, arg.dev, arg.flags);
+	if (IS_ERR(ca))
+		return PTR_ERR(ca);
+
+	ret = bch2_dev_resize(c, ca, arg.nbuckets);
+
+	percpu_ref_put(&ca->ref);
+	return ret;
+}
+
 #define BCH_IOCTL(_name, _argtype)					\
 do {									\
 	_argtype i;							\
@@ -464,6 +484,8 @@ long bch2_fs_ioctl(struct bch_fs *c, unsigned cmd, void __user *arg)
 		BCH_IOCTL(read_super, struct bch_ioctl_read_super);
 	case BCH_IOCTL_DISK_GET_IDX:
 		BCH_IOCTL(disk_get_idx, struct bch_ioctl_disk_get_idx);
+	case BCH_IOCTL_DISK_RESIZE:
+		BCH_IOCTL(disk_resize, struct bch_ioctl_disk_resize);
 
 	default:
 		return -ENOTTY;
