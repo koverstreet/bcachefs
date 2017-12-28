@@ -2881,7 +2881,7 @@ static void qla2x00_async_gidpn_sp_done(void *s, int res)
 	u8 *id = fcport->ct_desc.ct_sns->p.rsp.rsp.gid_pn.port_id;
 	struct event_arg ea;
 
-	fcport->flags &= ~FCF_ASYNC_SENT;
+	fcport->flags &= ~(FCF_ASYNC_SENT | FCF_ASYNC_ACTIVE);
 
 	memset(&ea, 0, sizeof(ea));
 	ea.fcport = fcport;
@@ -2990,6 +2990,7 @@ int qla24xx_post_gidpn_work(struct scsi_qla_host *vha, fc_port_t *fcport)
 		return QLA_FUNCTION_FAILED;
 
 	e->u.fcport.fcport = fcport;
+	fcport->flags |= FCF_ASYNC_ACTIVE;
 	return qla2x00_post_work(vha, e);
 }
 
@@ -3002,6 +3003,7 @@ int qla24xx_post_gpsc_work(struct scsi_qla_host *vha, fc_port_t *fcport)
 		return QLA_FUNCTION_FAILED;
 
 	e->u.fcport.fcport = fcport;
+	fcport->flags |= FCF_ASYNC_ACTIVE;
 	return qla2x00_post_work(vha, e);
 }
 
@@ -3020,7 +3022,7 @@ static void qla24xx_async_gpsc_sp_done(void *s, int res)
 	    "Async done-%s res %x, WWPN %8phC \n",
 	    sp->name, res, fcport->port_name);
 
-	fcport->flags &= ~FCF_ASYNC_SENT;
+	fcport->flags &= ~(FCF_ASYNC_SENT | FCF_ASYNC_ACTIVE);
 
 	if (res == (DID_ERROR << 16)) {
 		/* entry status error */
