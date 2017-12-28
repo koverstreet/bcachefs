@@ -49,6 +49,7 @@ struct bch_ioctl_incremental {
 #define BCH_IOCTL_DATA		_IOW(0xbc,	10, struct bch_ioctl_data)
 #define BCH_IOCTL_USAGE		_IOWR(0xbc,	11, struct bch_ioctl_usage)
 #define BCH_IOCTL_READ_SUPER	_IOW(0xbc,	12, struct bch_ioctl_read_super)
+#define BCH_IOCTL_DISK_GET_IDX	_IOW(0xbc,	13,  struct bch_ioctl_disk_get_idx)
 
 struct bch_ioctl_query_uuid {
 	uuid_le			uuid;
@@ -132,6 +133,10 @@ struct bch_ioctl_read_super {
 	__u64			dev;
 	__u64			size;
 	__u64			sb;
+};
+
+struct bch_ioctl_disk_get_idx {
+	__u64			dev;
 };
 
 #endif /* _BCACHEFS_IOCTL_H */
