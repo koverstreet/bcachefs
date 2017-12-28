@@ -403,6 +403,22 @@ err:
 	return ret;
 }
 
+static long bch2_ioctl_disk_get_idx(struct bch_fs *c,
+				    struct bch_ioctl_disk_get_idx arg)
+{
+	dev_t dev = huge_decode_dev(arg.dev);
+	struct bch_dev *ca;
+	unsigned i;
+
+	for_each_online_member(ca, c, i)
+		if (ca->disk_sb.bdev->bd_dev == dev) {
+			percpu_ref_put(&ca->io_ref);
+			return i;
+		}
+
+	return -ENOENT;
+}
+
 #define BCH_IOCTL(_name, _argtype)					\
 do {									\
 	_argtype i;							\
@@ -446,6 +462,8 @@ long bch2_fs_ioctl(struct bch_fs *c, unsigned cmd, void __user *arg)
 		BCH_IOCTL(disk_evacuate, struct bch_ioctl_disk);
 	case BCH_IOCTL_READ_SUPER:
 		BCH_IOCTL(read_super, struct bch_ioctl_read_super);
+	case BCH_IOCTL_DISK_GET_IDX:
+		BCH_IOCTL(disk_get_idx, struct bch_ioctl_disk_get_idx);
 
 	default:
 		return -ENOTTY;
