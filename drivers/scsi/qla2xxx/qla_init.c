@@ -400,7 +400,7 @@ static void qla24xx_handle_gnl_done_event(scsi_qla_host_t *vha,
 			ql_dbg(ql_dbg_disc, vha, 0x20e3,
 			    "%s %d %8phC post del sess\n",
 			    __func__, __LINE__, fcport->port_name);
-			qlt_schedule_sess_for_deletion(fcport, 1);
+			qlt_schedule_sess_for_deletion(fcport);
 			return;
 		}
 
@@ -471,7 +471,7 @@ static void qla24xx_handle_gnl_done_event(scsi_qla_host_t *vha,
 					    __func__, __LINE__,
 					    conflict_fcport->port_name);
 					qlt_schedule_sess_for_deletion
-						(conflict_fcport, 1);
+						(conflict_fcport);
 				}
 
 				if (fcport->loop_id == loop_id) {
@@ -1584,7 +1584,7 @@ qla24xx_handle_plogi_done_event(struct scsi_qla_host *vha, struct event_arg *ea)
 			set_bit(lid, vha->hw->loop_id_map);
 			ea->fcport->loop_id = lid;
 			ea->fcport->keep_nport_handle = 0;
-			qlt_schedule_sess_for_deletion(ea->fcport, false);
+			qlt_schedule_sess_for_deletion(ea->fcport);
 		}
 		break;
 	}

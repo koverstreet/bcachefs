@@ -1204,8 +1204,7 @@ static void qla24xx_chk_fcp_state(struct fc_port *sess)
 }
 
 /* ha->tgt.sess_lock supposed to be held on entry */
-void qlt_schedule_sess_for_deletion(struct fc_port *sess,
-	bool immediate)
+void qlt_schedule_sess_for_deletion(struct fc_port *sess)
 {
 	struct qla_tgt *tgt = sess->tgt;
 
@@ -1245,7 +1244,7 @@ void qlt_schedule_sess_for_deletion_lock(struct fc_port *sess)
 	unsigned long flags;
 	struct qla_hw_data *ha = sess->vha->hw;
 	spin_lock_irqsave(&ha->tgt.sess_lock, flags);
-	qlt_schedule_sess_for_deletion(sess, 1);
+	qlt_schedule_sess_for_deletion(sess);
 	spin_unlock_irqrestore(&ha->tgt.sess_lock, flags);
 }
 
@@ -1257,7 +1256,7 @@ static void qlt_clear_tgt_db(struct qla_tgt *tgt)
 
 	list_for_each_entry(sess, &vha->vp_fcports, list) {
 		if (sess->se_sess)
-			qlt_schedule_sess_for_deletion(sess, 1);
+			qlt_schedule_sess_for_deletion(sess);
 	}
 
 	/* At this point tgt could be already dead */
@@ -1432,7 +1431,7 @@ qlt_fc_port_deleted(struct scsi_qla_host *vha, fc_port_t *fcport, int max_gen)
 	ql_dbg(ql_dbg_tgt_mgt, vha, 0xf008, "qla_tgt_fc_port_deleted %p", sess);
 
 	sess->local = 1;
-	qlt_schedule_sess_for_deletion(sess, false);
+	qlt_schedule_sess_for_deletion(sess);
 	spin_unlock_irqrestore(&vha->hw->tgt.sess_lock, flags);
 }
 
@@ -4609,7 +4608,7 @@ qlt_find_sess_invalidate_other(scsi_qla_host_t *vha, uint64_t wwn,
 				 * might have cleared it when requested this session
 				 * deletion, so don't touch it
 				 */
-				qlt_schedule_sess_for_deletion(other_sess, true);
+				qlt_schedule_sess_for_deletion(other_sess);
 			} else {
 				/*
 				 * Another wwn used to have our s_id/loop_id
@@ -4622,8 +4621,7 @@ qlt_find_sess_invalidate_other(scsi_qla_host_t *vha, uint64_t wwn,
 				other_sess->keep_nport_handle = 1;
 				if (other_sess->disc_state != DSC_DELETED)
 					*conflict_sess = other_sess;
-				qlt_schedule_sess_for_deletion(other_sess,
-				    true);
+				qlt_schedule_sess_for_deletion(other_sess);
 			}
 			continue;
 		}
@@ -4637,7 +4635,7 @@ qlt_find_sess_invalidate_other(scsi_qla_host_t *vha, uint64_t wwn,
 
 			/* Same loop_id but different s_id
 			 * Ok to kill and logout */
-			qlt_schedule_sess_for_deletion(other_sess, true);
+			qlt_schedule_sess_for_deletion(other_sess);
 		}
 	}
 
