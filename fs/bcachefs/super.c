@@ -393,7 +393,7 @@ static void bch2_fs_free(struct bch_fs *c)
 		destroy_workqueue(c->wq);
 
 	free_pages((unsigned long) c->disk_sb, c->disk_sb_order);
-	kfree(c);
+	kvpfree(c, sizeof(*c));
 	module_put(THIS_MODULE);
 }
 
@@ -469,7 +469,7 @@ static struct bch_fs *bch2_fs_alloc(struct bch_sb *sb, struct bch_opts opts)
 	struct bch_fs *c;
 	unsigned i, iter_size;
 
-	c = kzalloc(sizeof(struct bch_fs), GFP_KERNEL);
+	c = kvpmalloc(sizeof(struct bch_fs), GFP_KERNEL|__GFP_ZERO);
 	if (!c)
 		return NULL;
 
