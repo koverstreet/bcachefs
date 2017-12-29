@@ -651,7 +651,7 @@ static ssize_t show_quantiles(struct bch_dev *ca, char *buf,
 	}
 
 	for (i = ca->mi.first_bucket; i < n; i++)
-		p[i] = fn(ca, n, private);
+		p[i] = fn(ca, i, private);
 
 	sort(p, n, sizeof(unsigned), cmp, NULL);
 	up_read(&ca->bucket_lock);
@@ -671,7 +671,6 @@ static ssize_t show_quantiles(struct bch_dev *ca, char *buf,
 	buf[ret - 1] = '\n';
 
 	return ret;
-
 }
 
 static ssize_t show_reserve_stats(struct bch_dev *ca, char *buf)
