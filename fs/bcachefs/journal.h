@@ -338,6 +338,7 @@ static inline int bch2_journal_res_get(struct journal *j, struct journal_res *re
 
 	EBUG_ON(res->ref);
 	EBUG_ON(u64s_max < u64s_min);
+	EBUG_ON(!test_bit(JOURNAL_STARTED, &j->flags));
 
 	if (journal_res_get_fast(j, res, u64s_min, u64s_max))
 		goto out;
