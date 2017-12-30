@@ -737,22 +737,35 @@ struct bch_alloc {
 } __attribute__((packed, aligned(8)));
 BKEY_VAL_TYPE(alloc,	BCH_ALLOC);
 
-/* Superblock */
+/* Optional/variable size superblock sections: */
 
-/*
- * Version 8:	BCH_SB_ENCODED_EXTENT_MAX_BITS
- *		BCH_MEMBER_DATA_ALLOWED
- * Version 9:	incompatible extent nonce change
- */
+struct bch_sb_field {
+	__u64			_data[0];
+	__le32			u64s;
+	__le32			type;
+};
 
-#define BCH_SB_VERSION_MIN		7
-#define BCH_SB_VERSION_EXTENT_MAX	8
-#define BCH_SB_VERSION_EXTENT_NONCE_V1	9
-#define BCH_SB_VERSION_MAX		9
+#define BCH_SB_FIELDS()		\
+	x(journal,	0)	\
+	x(members,	1)	\
+	x(crypt,	2)	\
+	x(replicas,	3)
 
-#define BCH_SB_SECTOR			8
-#define BCH_SB_LABEL_SIZE		32
-#define BCH_SB_MEMBERS_MAX		64 /* XXX kill */
+enum bch_sb_field_type {
+#define x(f, nr)	BCH_SB_FIELD_##f = nr,
+	BCH_SB_FIELDS()
+#undef x
+	BCH_SB_FIELD_NR
+};
+
+/* BCH_SB_FIELD_journal: */
+
+struct bch_sb_field_journal {
+	struct bch_sb_field	field;
+	__le64			buckets[0];
+};
+
+/* BCH_SB_FIELD_members: */
 
 struct bch_member {
 	uuid_le			uuid;
@@ -794,42 +807,12 @@ enum cache_replacement {
 	CACHE_REPLACEMENT_NR		= 3,
 };
 
-struct bch_sb_layout {
-	uuid_le			magic;	/* bcachefs superblock UUID */
-	__u8			layout_type;
-	__u8			sb_max_size_bits; /* base 2 of 512 byte sectors */
-	__u8			nr_superblocks;
-	__u8			pad[5];
-	__le64			sb_offset[61];
-} __attribute__((packed, aligned(8)));
-
-#define BCH_SB_LAYOUT_SECTOR	7
-
-struct bch_sb_field {
-	__u64			_data[0];
-	__le32			u64s;
-	__le32			type;
-};
-
-enum bch_sb_field_type {
-	BCH_SB_FIELD_journal	= 0,
-	BCH_SB_FIELD_members	= 1,
-	BCH_SB_FIELD_crypt	= 2,
-	BCH_SB_FIELD_replicas	= 3,
-	BCH_SB_FIELD_NR		= 4,
-};
-
-struct bch_sb_field_journal {
-	struct bch_sb_field	field;
-	__le64			buckets[0];
-};
-
 struct bch_sb_field_members {
 	struct bch_sb_field	field;
 	struct bch_member	members[0];
 };
 
-/* Crypto: */
+/* BCH_SB_FIELD_crypt: */
 
 struct nonce {
 	__le32			d[4];
@@ -877,6 +860,8 @@ LE64_BITMASK(BCH_KDF_SCRYPT_N,	struct bch_sb_field_crypt, kdf_flags,  0, 16);
 LE64_BITMASK(BCH_KDF_SCRYPT_R,	struct bch_sb_field_crypt, kdf_flags, 16, 32);
 LE64_BITMASK(BCH_KDF_SCRYPT_P,	struct bch_sb_field_crypt, kdf_flags, 32, 48);
 
+/* BCH_SB_FIELD_replicas: */
+
 enum bch_data_type {
 	BCH_DATA_NONE		= 0,
 	BCH_DATA_SB		= 1,
@@ -897,6 +882,34 @@ struct bch_sb_field_replicas {
 	struct bch_sb_field	field;
 	struct bch_replicas_entry entries[0];
 };
+
+/* Superblock: */
+
+/*
+ * Version 8:	BCH_SB_ENCODED_EXTENT_MAX_BITS
+ *		BCH_MEMBER_DATA_ALLOWED
+ * Version 9:	incompatible extent nonce change
+ */
+
+#define BCH_SB_VERSION_MIN		7
+#define BCH_SB_VERSION_EXTENT_MAX	8
+#define BCH_SB_VERSION_EXTENT_NONCE_V1	9
+#define BCH_SB_VERSION_MAX		9
+
+#define BCH_SB_SECTOR			8
+#define BCH_SB_LABEL_SIZE		32
+#define BCH_SB_MEMBERS_MAX		64 /* XXX kill */
+
+struct bch_sb_layout {
+	uuid_le			magic;	/* bcachefs superblock UUID */
+	__u8			layout_type;
+	__u8			sb_max_size_bits; /* base 2 of 512 byte sectors */
+	__u8			nr_superblocks;
+	__u8			pad[5];
+	__le64			sb_offset[61];
+} __attribute__((packed, aligned(8)));
+
+#define BCH_SB_LAYOUT_SECTOR	7
 
 /*
  * @offset	- sector where this sb was written
