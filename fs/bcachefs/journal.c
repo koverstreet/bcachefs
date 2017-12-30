@@ -1883,6 +1883,9 @@ int bch2_journal_flush_all_pins(struct journal *j)
 	struct bch_fs *c = container_of(j, struct bch_fs, journal);
 	bool flush;
 
+	if (!test_bit(JOURNAL_STARTED, &j->flags))
+		return 0;
+
 	bch2_journal_flush_pins(j, U64_MAX);
 
 	spin_lock(&j->lock);
