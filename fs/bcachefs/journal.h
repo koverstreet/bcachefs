@@ -392,13 +392,6 @@ ssize_t bch2_journal_print_pins(struct journal *, char *);
 
 int bch2_dev_journal_alloc(struct bch_dev *);
 
-static inline unsigned bch2_nr_journal_buckets(struct bch_sb_field_journal *j)
-{
-	return j
-		? (__le64 *) vstruct_end(&j->field) - j->buckets
-		: 0;
-}
-
 void bch2_dev_journal_stop(struct journal *, struct bch_dev *);
 void bch2_fs_journal_stop(struct journal *);
 void bch2_dev_journal_exit(struct bch_dev *);

@@ -17,7 +17,7 @@ struct bch_sb_field *bch2_fs_sb_field_resize(struct bch_fs *,
 #define field_to_type(_f, _name)					\
 	container_of_or_null(_f, struct bch_sb_field_##_name, field)
 
-#define BCH_SB_FIELD_TYPE(_name)					\
+#define x(_name, _nr)							\
 static inline struct bch_sb_field_##_name *				\
 bch2_sb_get_##_name(struct bch_sb *sb)					\
 {									\
@@ -39,18 +39,10 @@ bch2_fs_sb_resize_##_name(struct bch_fs *c, unsigned u64s)		\
 				BCH_SB_FIELD_##_name, u64s), _name);	\
 }
 
-BCH_SB_FIELD_TYPE(journal);
-BCH_SB_FIELD_TYPE(members);
-BCH_SB_FIELD_TYPE(crypt);
-BCH_SB_FIELD_TYPE(replicas);
+BCH_SB_FIELDS()
+#undef x
 
-static inline bool bch2_dev_exists(struct bch_sb *sb,
-				   struct bch_sb_field_members *mi,
-				   unsigned dev)
-{
-	return dev < sb->nr_devices &&
-		!bch2_is_zero(mi->members[dev].uuid.b, sizeof(uuid_le));
-}
+extern const char * const bch2_sb_fields[];
 
 static inline bool bch2_sb_test_feature(struct bch_sb *sb,
 					enum bch_sb_features f)
@@ -94,6 +86,42 @@ static inline __u64 bset_magic(struct bch_fs *c)
 	return __le64_to_cpu(bch2_sb_magic(c) ^ BSET_MAGIC);
 }
 
+int bch2_sb_to_fs(struct bch_fs *, struct bch_sb *);
+int bch2_sb_from_fs(struct bch_fs *, struct bch_dev *);
+
+void bch2_free_super(struct bch_sb_handle *);
+int bch2_super_realloc(struct bch_sb_handle *, unsigned);
+
+const char *bch2_sb_validate(struct bch_sb_handle *);
+
+const char *bch2_read_super(const char *, struct bch_opts,
+			    struct bch_sb_handle *);
+void bch2_write_super(struct bch_fs *);
+
+/* BCH_SB_FIELD_journal: */
+
+static inline unsigned bch2_nr_journal_buckets(struct bch_sb_field_journal *j)
+{
+	return j
+		? (__le64 *) vstruct_end(&j->field) - j->buckets
+		: 0;
+}
+
+/* BCH_SB_FIELD_members: */
+
+static inline bool bch2_member_exists(struct bch_member *m)
+{
+	return !bch2_is_zero(m->uuid.b, sizeof(uuid_le));
+}
+
+static inline bool bch2_dev_exists(struct bch_sb *sb,
+				   struct bch_sb_field_members *mi,
+				   unsigned dev)
+{
+	return dev < sb->nr_devices &&
+		bch2_member_exists(&mi->members[dev]);
+}
+
 static inline struct bch_member_cpu bch2_mi_to_cpu(struct bch_member *mi)
 {
 	return (struct bch_member_cpu) {
@@ -109,21 +137,7 @@ static inline struct bch_member_cpu bch2_mi_to_cpu(struct bch_member *mi)
 	};
 }
 
-int bch2_sb_to_fs(struct bch_fs *, struct bch_sb *);
-int bch2_sb_from_fs(struct bch_fs *, struct bch_dev *);
-
-void bch2_free_super(struct bch_sb_handle *);
-int bch2_super_realloc(struct bch_sb_handle *, unsigned);
-
-const char *bch2_sb_validate_journal(struct bch_sb *,
-					 struct bch_member_cpu);
-const char *bch2_sb_validate(struct bch_sb_handle *);
-
-const char *bch2_read_super(const char *, struct bch_opts,
-			    struct bch_sb_handle *);
-void bch2_write_super(struct bch_fs *);
-
-/* replicas: */
+/* BCH_SB_FIELD_replicas: */
 
 bool bch2_sb_has_replicas(struct bch_fs *, struct bkey_s_c_extent,
 			  enum bch_data_type);
