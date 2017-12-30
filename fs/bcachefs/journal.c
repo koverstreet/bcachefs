@@ -1637,8 +1637,6 @@ static int bch2_set_nr_journal_buckets(struct bch_fs *c, struct bch_dev *ca,
 		bch2_open_bucket_put(c, ob);
 	}
 
-	BUG_ON(bch2_sb_validate_journal(ca->disk_sb.sb, ca->mi));
-
 	bch2_write_super(c);
 
 	ret = 0;

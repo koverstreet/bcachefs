@@ -3,7 +3,6 @@
 #include "checksum.h"
 #include "error.h"
 #include "io.h"
-#include "journal.h"
 #include "super-io.h"
 #include "super.h"
 #include "vstructs.h"
@@ -14,11 +13,42 @@
 static int bch2_sb_replicas_to_cpu_replicas(struct bch_fs *);
 static int bch2_cpu_replicas_to_sb_replicas(struct bch_fs *,
 					    struct bch_replicas_cpu *);
-static const char *bch2_sb_validate_replicas(struct bch_sb *);
 
-static inline void __bch2_sb_layout_size_assert(void)
+/* superblock fields (optional/variable size sections: */
+
+const char * const bch2_sb_fields[] = {
+#define x(name, nr)	#name,
+	BCH_SB_FIELDS()
+#undef x
+	NULL
+};
+
+#define x(f, nr)					\
+static const char *bch2_sb_validate_##f(struct bch_sb *, struct bch_sb_field *);
+	BCH_SB_FIELDS()
+#undef x
+
+struct bch_sb_field_ops {
+	const char *	(*validate)(struct bch_sb *, struct bch_sb_field *);
+};
+
+static const struct bch_sb_field_ops bch2_sb_field_ops[] = {
+#define x(f, nr)					\
+	[BCH_SB_FIELD_##f] = {				\
+		.validate = bch2_sb_validate_##f,	\
+	},
+	BCH_SB_FIELDS()
+#undef x
+};
+
+static const char *bch2_sb_field_validate(struct bch_sb *sb,
+					  struct bch_sb_field *f)
 {
-	BUILD_BUG_ON(sizeof(struct bch_sb_layout) != 512);
+	unsigned type = le32_to_cpu(f->type);
+
+	return type < BCH_SB_FIELD_NR
+		? bch2_sb_field_ops[type].validate(sb, f)
+		: NULL;
 }
 
 struct bch_sb_field *bch2_sb_field_get(struct bch_sb *sb,
@@ -33,6 +63,37 @@ struct bch_sb_field *bch2_sb_field_get(struct bch_sb *sb,
 			return f;
 	return NULL;
 }
+
+static struct bch_sb_field *__bch2_sb_field_resize(struct bch_sb *sb,
+						  struct bch_sb_field *f,
+						  unsigned u64s)
+{
+	unsigned old_u64s = f ? le32_to_cpu(f->u64s) : 0;
+
+	if (!f) {
+		f = vstruct_last(sb);
+		memset(f, 0, sizeof(u64) * u64s);
+		f->u64s = cpu_to_le32(u64s);
+		f->type = 0;
+	} else {
+		void *src, *dst;
+
+		src = vstruct_end(f);
+		f->u64s = cpu_to_le32(u64s);
+		dst = vstruct_end(f);
+
+		memmove(dst, src, vstruct_end(sb) - src);
+
+		if (dst > src)
+			memset(src, 0, dst - src);
+	}
+
+	le32_add_cpu(&sb->u64s, u64s - old_u64s);
+
+	return f;
+}
+
+/* Superblock realloc/free: */
 
 void bch2_free_super(struct bch_sb_handle *sb)
 {
@@ -118,35 +179,6 @@ static int bch2_fs_sb_realloc(struct bch_fs *c, unsigned u64s)
 	return 0;
 }
 
-static struct bch_sb_field *__bch2_sb_field_resize(struct bch_sb *sb,
-						  struct bch_sb_field *f,
-						  unsigned u64s)
-{
-	unsigned old_u64s = f ? le32_to_cpu(f->u64s) : 0;
-
-	if (!f) {
-		f = vstruct_last(sb);
-		memset(f, 0, sizeof(u64) * u64s);
-		f->u64s = cpu_to_le32(u64s);
-		f->type = 0;
-	} else {
-		void *src, *dst;
-
-		src = vstruct_end(f);
-		f->u64s = cpu_to_le32(u64s);
-		dst = vstruct_end(f);
-
-		memmove(dst, src, vstruct_end(sb) - src);
-
-		if (dst > src)
-			memset(src, 0, dst - src);
-	}
-
-	le32_add_cpu(&sb->u64s, u64s - old_u64s);
-
-	return f;
-}
-
 struct bch_sb_field *bch2_sb_field_resize(struct bch_sb_handle *sb,
 					  enum bch_sb_field_type type,
 					  unsigned u64s)
@@ -194,6 +226,13 @@ struct bch_sb_field *bch2_fs_sb_field_resize(struct bch_fs *c,
 	return f;
 }
 
+/* Superblock validate: */
+
+static inline void __bch2_sb_layout_size_assert(void)
+{
+	BUILD_BUG_ON(sizeof(struct bch_sb_layout) != 512);
+}
+
 static const char *validate_sb_layout(struct bch_sb_layout *layout)
 {
 	u64 offset, prev_offset, max_sectors;
@@ -226,93 +265,11 @@ static const char *validate_sb_layout(struct bch_sb_layout *layout)
 	return NULL;
 }
 
-static int u64_cmp(const void *_l, const void *_r)
-{
-	u64 l = *((const u64 *) _l), r = *((const u64 *) _r);
-
-	return l < r ? -1 : l > r ? 1 : 0;
-}
-
-const char *bch2_sb_validate_journal(struct bch_sb *sb,
-				     struct bch_member_cpu mi)
-{
-	struct bch_sb_field_journal *journal;
-	const char *err;
-	unsigned nr;
-	unsigned i;
-	u64 *b;
-
-	journal = bch2_sb_get_journal(sb);
-	if (!journal)
-		return NULL;
-
-	nr = bch2_nr_journal_buckets(journal);
-	if (!nr)
-		return NULL;
-
-	b = kmalloc_array(sizeof(u64), nr, GFP_KERNEL);
-	if (!b)
-		return "cannot allocate memory";
-
-	for (i = 0; i < nr; i++)
-		b[i] = le64_to_cpu(journal->buckets[i]);
-
-	sort(b, nr, sizeof(u64), u64_cmp, NULL);
-
-	err = "journal bucket at sector 0";
-	if (!b[0])
-		goto err;
-
-	err = "journal bucket before first bucket";
-	if (b[0] < mi.first_bucket)
-		goto err;
-
-	err = "journal bucket past end of device";
-	if (b[nr - 1] >= mi.nbuckets)
-		goto err;
-
-	err = "duplicate journal buckets";
-	for (i = 0; i + 1 < nr; i++)
-		if (b[i] == b[i + 1])
-			goto err;
-
-	err = NULL;
-err:
-	kfree(b);
-	return err;
-}
-
-static const char *bch2_sb_validate_members(struct bch_sb *sb)
-{
-	struct bch_sb_field_members *mi;
-	unsigned i;
-
-	mi = bch2_sb_get_members(sb);
-	if (!mi)
-		return "Invalid superblock: member info area missing";
-
-	if ((void *) (mi->members + sb->nr_devices) >
-	    vstruct_end(&mi->field))
-		return "Invalid superblock: bad member info";
-
-	for (i = 0; i < sb->nr_devices; i++) {
-		if (!bch2_dev_exists(sb, mi, i))
-			continue;
-
-		if (le16_to_cpu(mi->members[i].bucket_size) <
-		    BCH_SB_BTREE_NODE_SIZE(sb))
-			return "bucket size smaller than btree node size";
-	}
-
-	return NULL;
-}
-
 const char *bch2_sb_validate(struct bch_sb_handle *disk_sb)
 {
 	struct bch_sb *sb = disk_sb->sb;
 	struct bch_sb_field *f;
-	struct bch_sb_field_members *sb_mi;
-	struct bch_member_cpu mi;
+	struct bch_sb_field_members *mi;
 	const char *err;
 	u16 block_size;
 
@@ -394,47 +351,25 @@ const char *bch2_sb_validate(struct bch_sb_handle *disk_sb)
 
 		if (vstruct_next(f) > vstruct_last(sb))
 			return "Invalid superblock: invalid optional field";
-
-		if (le32_to_cpu(f->type) >= BCH_SB_FIELD_NR)
-			return "Invalid superblock: unknown optional field type";
 	}
 
-	err = bch2_sb_validate_members(sb);
+	/* members must be validated first: */
+	mi = bch2_sb_get_members(sb);
+	if (!mi)
+		return "Invalid superblock: member info area missing";
+
+	err = bch2_sb_field_validate(sb, &mi->field);
 	if (err)
 		return err;
 
-	sb_mi = bch2_sb_get_members(sb);
-	mi = bch2_mi_to_cpu(sb_mi->members + sb->dev_idx);
+	vstruct_for_each(sb, f) {
+		if (le32_to_cpu(f->type) == BCH_SB_FIELD_members)
+			continue;
 
-	if (le64_to_cpu(sb->version) < BCH_SB_VERSION_EXTENT_MAX) {
-		struct bch_member *m;
-
-		for (m = sb_mi->members;
-		     m < sb_mi->members + sb->nr_devices;
-		     m++)
-			SET_BCH_MEMBER_DATA_ALLOWED(m, ~0);
+		err = bch2_sb_field_validate(sb, f);
+		if (err)
+			return err;
 	}
-
-	if (mi.nbuckets > LONG_MAX)
-		return "Too many buckets";
-
-	if (mi.nbuckets - mi.first_bucket < 1 << 10)
-		return "Not enough buckets";
-
-	if (mi.bucket_size < block_size)
-		return "Bad bucket size";
-
-	if (get_capacity(disk_sb->bdev->bd_disk) <
-	    mi.bucket_size * mi.nbuckets)
-		return "Invalid superblock: device too small";
-
-	err = bch2_sb_validate_journal(sb, mi);
-	if (err)
-		return err;
-
-	err = bch2_sb_validate_replicas(sb);
-	if (err)
-		return err;
 
 	if (le64_to_cpu(sb->version) < BCH_SB_VERSION_EXTENT_NONCE_V1 &&
 	    bch2_sb_get_crypt(sb) &&
@@ -537,8 +472,9 @@ int bch2_sb_to_fs(struct bch_fs *c, struct bch_sb *src)
 
 	lockdep_assert_held(&c->sb_lock);
 
-	if (bch2_fs_sb_realloc(c, le32_to_cpu(src->u64s) - journal_u64s))
-		return -ENOMEM;
+	ret = bch2_fs_sb_realloc(c, le32_to_cpu(src->u64s) - journal_u64s);
+	if (ret)
+		return ret;
 
 	__copy_super(c->disk_sb, src);
 
@@ -566,7 +502,6 @@ int bch2_sb_from_fs(struct bch_fs *c, struct bch_dev *ca)
 		return ret;
 
 	__copy_super(dst, src);
-
 	return 0;
 }
 
@@ -840,6 +775,126 @@ out:
 	/* Make new options visible after they're persistent: */
 	bch2_sb_update(c);
 }
+
+/* BCH_SB_FIELD_journal: */
+
+static int u64_cmp(const void *_l, const void *_r)
+{
+	u64 l = *((const u64 *) _l), r = *((const u64 *) _r);
+
+	return l < r ? -1 : l > r ? 1 : 0;
+}
+
+static const char *bch2_sb_validate_journal(struct bch_sb *sb,
+					    struct bch_sb_field *f)
+{
+	struct bch_sb_field_journal *journal = field_to_type(f, journal);
+	struct bch_member *m = bch2_sb_get_members(sb)->members + sb->dev_idx;
+	const char *err;
+	unsigned nr;
+	unsigned i;
+	u64 *b;
+
+	journal = bch2_sb_get_journal(sb);
+	if (!journal)
+		return NULL;
+
+	nr = bch2_nr_journal_buckets(journal);
+	if (!nr)
+		return NULL;
+
+	b = kmalloc_array(sizeof(u64), nr, GFP_KERNEL);
+	if (!b)
+		return "cannot allocate memory";
+
+	for (i = 0; i < nr; i++)
+		b[i] = le64_to_cpu(journal->buckets[i]);
+
+	sort(b, nr, sizeof(u64), u64_cmp, NULL);
+
+	err = "journal bucket at sector 0";
+	if (!b[0])
+		goto err;
+
+	err = "journal bucket before first bucket";
+	if (m && b[0] < le16_to_cpu(m->first_bucket))
+		goto err;
+
+	err = "journal bucket past end of device";
+	if (m && b[nr - 1] >= le64_to_cpu(m->nbuckets))
+		goto err;
+
+	err = "duplicate journal buckets";
+	for (i = 0; i + 1 < nr; i++)
+		if (b[i] == b[i + 1])
+			goto err;
+
+	err = NULL;
+err:
+	kfree(b);
+	return err;
+}
+
+/* BCH_SB_FIELD_members: */
+
+static const char *bch2_sb_validate_members(struct bch_sb *sb,
+					    struct bch_sb_field *f)
+{
+	struct bch_sb_field_members *mi = field_to_type(f, members);
+	struct bch_member *m;
+
+	if ((void *) (mi->members + sb->nr_devices) >
+	    vstruct_end(&mi->field))
+		return "Invalid superblock: bad member info";
+
+	for (m = mi->members;
+	     m < mi->members + sb->nr_devices;
+	     m++) {
+		if (!bch2_member_exists(m))
+			continue;
+
+		if (le64_to_cpu(m->nbuckets) > LONG_MAX)
+			return "Too many buckets";
+
+		if (le64_to_cpu(m->nbuckets) -
+		    le16_to_cpu(m->first_bucket) < 1 << 10)
+			return "Not enough buckets";
+
+		if (le16_to_cpu(m->bucket_size) <
+		    le16_to_cpu(sb->block_size))
+			return "bucket size smaller than block size";
+
+		if (le16_to_cpu(m->bucket_size) <
+		    BCH_SB_BTREE_NODE_SIZE(sb))
+			return "bucket size smaller than btree node size";
+	}
+
+	if (le64_to_cpu(sb->version) < BCH_SB_VERSION_EXTENT_MAX)
+		for (m = mi->members;
+		     m < mi->members + sb->nr_devices;
+		     m++)
+			SET_BCH_MEMBER_DATA_ALLOWED(m, ~0);
+
+	return NULL;
+}
+
+/* BCH_SB_FIELD_crypt: */
+
+static const char *bch2_sb_validate_crypt(struct bch_sb *sb,
+					  struct bch_sb_field *f)
+{
+	struct bch_sb_field_crypt *crypt = field_to_type(f, crypt);
+
+	if (vstruct_bytes(&crypt->field) != sizeof(*crypt))
+		return "invalid field crypt: wrong size";
+
+	if (BCH_CRYPT_KDF_TYPE(crypt))
+		return "invalid field crypt: bad kdf type";
+
+	return NULL;
+}
+
+/* BCH_SB_FIELD_replicas: */
 
 /* Replicas tracking - in memory: */
 
@@ -1292,19 +1347,15 @@ static int bch2_cpu_replicas_to_sb_replicas(struct bch_fs *c,
 	return 0;
 }
 
-static const char *bch2_sb_validate_replicas(struct bch_sb *sb)
+static const char *bch2_sb_validate_replicas(struct bch_sb *sb,
+					     struct bch_sb_field *f)
 {
-	struct bch_sb_field_members *mi;
-	struct bch_sb_field_replicas *sb_r;
+	struct bch_sb_field_replicas *sb_r = field_to_type(f, replicas);
+	struct bch_sb_field_members *mi = bch2_sb_get_members(sb);
 	struct bch_replicas_cpu *cpu_r = NULL;
 	struct bch_replicas_entry *e;
 	const char *err;
 	unsigned i;
-
-	mi	= bch2_sb_get_members(sb);
-	sb_r	= bch2_sb_get_replicas(sb);
-	if (!sb_r)
-		return NULL;
 
 	for_each_replicas_entry(sb_r, e) {
 		err = "invalid replicas entry: invalid data type";

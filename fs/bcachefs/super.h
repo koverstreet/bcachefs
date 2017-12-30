@@ -27,7 +27,7 @@ static inline sector_t bucket_remainder(const struct bch_dev *ca, sector_t s)
 
 static inline bool bch2_dev_is_online(struct bch_dev *ca)
 {
-	return !percpu_ref_is_zero(&ca->io_ref);
+	return ca->disk_sb.bdev != NULL;
 }
 
 static inline unsigned dev_mask_nr(struct bch_devs_mask *devs)

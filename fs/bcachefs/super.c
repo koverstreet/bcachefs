@@ -1115,9 +1115,16 @@ static int __bch2_dev_online(struct bch_fs *c, struct bch_sb_handle *sb)
 	       !c->devs[sb->sb->dev_idx]);
 
 	ca = bch_dev_locked(c, sb->sb->dev_idx);
-	if (ca->disk_sb.bdev) {
-		bch_err(c, "already have device online in slot %u",
+
+	if (bch2_dev_is_online(ca)) {
+		bch_err(ca, "already have device online in slot %u",
 			sb->sb->dev_idx);
+		return -EINVAL;
+	}
+
+	if (get_capacity(sb->bdev->bd_disk) <
+	    ca->mi.bucket_size * ca->mi.nbuckets) {
+		bch_err(ca, "cannot online: device too small");
 		return -EINVAL;
 	}
 
