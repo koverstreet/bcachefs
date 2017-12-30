@@ -36,8 +36,6 @@ static int bch2_dev_usrdata_migrate(struct bch_fs *c, struct bch_dev *ca,
 	unsigned pass = 0;
 	int ret = 0;
 
-	BUG_ON(ca->mi.state == BCH_MEMBER_STATE_RW);
-
 	if (!(bch2_dev_has_data(c, ca) & (1 << BCH_DATA_USER)))
 		return 0;
 
@@ -105,8 +103,6 @@ static int bch2_move_btree_off(struct bch_fs *c, struct bch_dev *ca,
 	struct btree_iter iter;
 	struct btree *b;
 	int ret;
-
-	BUG_ON(ca->mi.state == BCH_MEMBER_STATE_RW);
 
 	for_each_btree_node(&iter, c, id, POS_MIN, BTREE_ITER_PREFETCH, b) {
 		struct bkey_s_c_extent e = bkey_i_to_s_c_extent(&b->key);
@@ -188,8 +184,6 @@ static int bch2_dev_metadata_migrate(struct bch_fs *c, struct bch_dev *ca,
 	unsigned i;
 	int ret = 0;
 
-	BUG_ON(ca->mi.state == BCH_MEMBER_STATE_RW);
-
 	if (!(bch2_dev_has_data(c, ca) &
 	      ((1 << BCH_DATA_JOURNAL)|
 	       (1 << BCH_DATA_BTREE))))
@@ -211,6 +205,9 @@ err:
 
 int bch2_dev_data_migrate(struct bch_fs *c, struct bch_dev *ca, int flags)
 {
+	BUG_ON(ca->mi.state == BCH_MEMBER_STATE_RW &&
+	       bch2_dev_is_online(ca));
+
 	return bch2_dev_usrdata_migrate(c, ca, flags) ?:
 		bch2_dev_metadata_migrate(c, ca, flags);
 }
