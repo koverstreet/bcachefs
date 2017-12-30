@@ -1107,6 +1107,8 @@ static int __bch2_dev_online(struct bch_fs *c, struct bch_sb_handle *sb)
 	struct bch_dev *ca;
 	int ret;
 
+	lockdep_assert_held(&c->state_lock);
+
 	if (le64_to_cpu(sb->sb->seq) >
 	    le64_to_cpu(c->disk_sb->seq))
 		bch2_sb_to_fs(c, sb->sb);
@@ -1153,7 +1155,9 @@ static int __bch2_dev_online(struct bch_fs *c, struct bch_sb_handle *sb)
 		bdevname(ca->disk_sb.bdev, c->name);
 	bdevname(ca->disk_sb.bdev, ca->name);
 
+	mutex_lock(&c->sb_lock);
 	bch2_mark_dev_superblock(c, ca, BCH_BUCKET_MARK_MAY_MAKE_UNAVAILABLE);
+	mutex_unlock(&c->sb_lock);
 
 	if (ca->mi.state == BCH_MEMBER_STATE_RW)
 		bch2_dev_allocator_add(c, ca);
@@ -1479,12 +1483,12 @@ have_slot:
 		sizeof(struct bch_member) * nr_devices) / sizeof(u64);
 	err = "no space in superblock for member info";
 
-	mi = bch2_fs_sb_resize_members(c, u64s);
-	if (!mi)
-		goto err_unlock;
-
 	dev_mi = bch2_sb_resize_members(&sb, u64s);
 	if (!dev_mi)
+		goto err_unlock;
+
+	mi = bch2_fs_sb_resize_members(c, u64s);
+	if (!mi)
 		goto err_unlock;
 
 	memcpy(dev_mi, mi, u64s * sizeof(u64));
@@ -1499,20 +1503,20 @@ have_slot:
 	c->disk_sb->nr_devices	= nr_devices;
 	c->sb.nr_devices	= nr_devices;
 
+	bch2_write_super(c);
+	mutex_unlock(&c->sb_lock);
+
 	if (bch2_dev_alloc(c, dev_idx)) {
 		err = "cannot allocate memory";
 		ret = -ENOMEM;
-		goto err_unlock;
+		goto err;
 	}
 
 	if (__bch2_dev_online(c, &sb)) {
 		err = "bch2_dev_online() error";
 		ret = -ENOMEM;
-		goto err_unlock;
+		goto err;
 	}
-
-	bch2_write_super(c);
-	mutex_unlock(&c->sb_lock);
 
 	ca = bch_dev_locked(c, dev_idx);
 	if (ca->mi.state == BCH_MEMBER_STATE_RW) {
@@ -1557,13 +1561,10 @@ int bch2_dev_online(struct bch_fs *c, const char *path)
 	if (err)
 		goto err;
 
-	mutex_lock(&c->sb_lock);
 	if (__bch2_dev_online(c, &sb)) {
 		err = "__bch2_dev_online() error";
-		mutex_unlock(&c->sb_lock);
 		goto err;
 	}
-	mutex_unlock(&c->sb_lock);
 
 	ca = bch_dev_locked(c, dev_idx);
 	if (ca->mi.state == BCH_MEMBER_STATE_RW) {
@@ -1716,13 +1717,13 @@ const char *bch2_fs_open(char * const *devices, unsigned nr_devices,
 		goto err;
 
 	err = "bch2_dev_online() error";
-	mutex_lock(&c->sb_lock);
+	mutex_lock(&c->state_lock);
 	for (i = 0; i < nr_devices; i++)
 		if (__bch2_dev_online(c, &sb[i])) {
-			mutex_unlock(&c->sb_lock);
+			mutex_unlock(&c->state_lock);
 			goto err;
 		}
-	mutex_unlock(&c->sb_lock);
+	mutex_unlock(&c->state_lock);
 
 	err = "insufficient devices";
 	if (!bch2_fs_may_start(c))
