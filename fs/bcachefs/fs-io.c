@@ -1286,7 +1286,8 @@ static int bch2_read_single_page(struct page *page,
 	int ret;
 	DECLARE_COMPLETION_ONSTACK(done);
 
-	rbio = to_rbio(bio_alloc_bioset(GFP_NOFS, 1, &c->bio_read));
+	rbio = rbio_init(bio_alloc_bioset(GFP_NOFS, 1, &c->bio_read),
+			 io_opts(c, inode));
 	rbio->bio.bi_private = &done;
 	rbio->bio.bi_end_io = bch2_read_single_page_end_io;
 
