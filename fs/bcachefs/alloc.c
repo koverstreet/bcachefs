@@ -901,9 +901,10 @@ static int bch2_allocator_thread(void *arg)
 
 				bucket = fifo_peek(&ca->free_inc);
 				discard_invalidated_bucket(c, ca, bucket);
+				--ca->nr_invalidated;
+
 				if (kthread_should_stop())
 					return 0;
-				--ca->nr_invalidated;
 			}
 
 			if (fifo_empty(&ca->free_inc))
