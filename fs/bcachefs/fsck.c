@@ -266,26 +266,60 @@ static int check_extents(struct bch_fs *c)
 			!S_ISREG(w.inode.bi_mode) && !S_ISLNK(w.inode.bi_mode), c,
 			"extent type %u for non regular file, inode %llu mode %o",
 			k.k->type, k.k->p.inode, w.inode.bi_mode)) {
-			ret = bch2_btree_delete_at(&iter, 0);
+			bch2_btree_iter_unlock(&iter);
+
+			ret = bch2_inode_truncate(c, k.k->p.inode, 0, NULL, NULL);
 			if (ret)
 				goto err;
 			continue;
 		}
 
-		unfixable_fsck_err_on(w.first_this_inode &&
+		if (fsck_err_on(w.first_this_inode &&
 			w.have_inode &&
 			!(w.inode.bi_flags & BCH_INODE_I_SECTORS_DIRTY) &&
 			w.inode.bi_sectors !=
 			(i_sectors = bch2_count_inode_sectors(c, w.cur_inum)),
 			c, "i_sectors wrong: got %llu, should be %llu",
-			w.inode.bi_sectors, i_sectors);
+			w.inode.bi_sectors, i_sectors)) {
+			struct bkey_inode_buf p;
 
-		unfixable_fsck_err_on(w.have_inode &&
+			w.inode.bi_sectors = i_sectors;
+
+			bch2_btree_iter_unlock(&iter);
+
+			bch2_inode_pack(&p, &w.inode);
+
+			ret = bch2_btree_insert(c, BTREE_ID_INODES,
+						&p.inode.k_i,
+						NULL,
+						NULL,
+						NULL,
+						BTREE_INSERT_NOFAIL);
+			if (ret) {
+				bch_err(c, "error in fs gc: error %i "
+					"updating inode", ret);
+				goto err;
+			}
+
+			/* revalidate iterator: */
+			k = bch2_btree_iter_peek(&iter);
+		}
+
+		if (fsck_err_on(w.have_inode &&
 			!(w.inode.bi_flags & BCH_INODE_I_SIZE_DIRTY) &&
 			k.k->type != BCH_RESERVATION &&
 			k.k->p.offset > round_up(w.inode.bi_size, PAGE_SIZE) >> 9, c,
 			"extent type %u offset %llu past end of inode %llu, i_size %llu",
-			k.k->type, k.k->p.offset, k.k->p.inode, w.inode.bi_size);
+			k.k->type, k.k->p.offset, k.k->p.inode, w.inode.bi_size)) {
+			bch2_btree_iter_unlock(&iter);
+
+			ret = bch2_inode_truncate(c, k.k->p.inode,
+					round_up(w.inode.bi_size, PAGE_SIZE) >> 9,
+					NULL, NULL);
+			if (ret)
+				goto err;
+			continue;
+		}
 	}
 err:
 fsck_err:
