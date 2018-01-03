@@ -1579,10 +1579,8 @@ unsigned bch2_dev_has_data(struct bch_fs *c, struct bch_dev *ca)
 		goto out;
 
 	for_each_cpu_replicas_entry(r, e)
-		if (replicas_test_dev(e, ca->dev_idx)) {
+		if (replicas_test_dev(e, ca->dev_idx))
 			ret |= 1 << e->data_type;
-			break;
-		}
 out:
 	rcu_read_unlock();
 
