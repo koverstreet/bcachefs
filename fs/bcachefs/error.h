@@ -143,9 +143,6 @@ void bch2_flush_fsck_errs(struct bch_fs *);
 #define __fsck_err_on(cond, c, _flags, ...)				\
 	((cond) ? __fsck_err(c, _flags,	##__VA_ARGS__) : false)
 
-#define unfixable_fsck_err_on(cond, c, ...)				\
-	__fsck_err_on(cond, c, FSCK_CAN_IGNORE, ##__VA_ARGS__)
-
 #define need_fsck_err_on(cond, c, ...)					\
 	__fsck_err_on(cond, c, FSCK_CAN_IGNORE|FSCK_NEED_FSCK, ##__VA_ARGS__)
 
