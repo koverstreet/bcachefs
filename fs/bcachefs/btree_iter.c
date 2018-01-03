@@ -202,21 +202,20 @@ bool __bch2_btree_node_lock(struct btree *b, struct bpos pos,
 
 /* Btree iterator locking: */
 
-
 static void btree_iter_drop_extra_locks(struct btree_iter *iter)
 {
 	unsigned l;
 
 	while (iter->nodes_locked &&
 	       (l = __fls(iter->nodes_locked)) > iter->locks_want) {
-		if (!btree_node_locked(iter, l))
-			panic("l %u nodes_locked %u\n", l, iter->nodes_locked);
-
 		if (l > iter->level) {
 			btree_node_unlock(iter, l);
-		} else if (btree_node_intent_locked(iter, l)) {
-			six_lock_downgrade(&iter->nodes[l]->lock);
-			iter->nodes_intent_locked ^= 1 << l;
+		} else {
+			if (btree_node_intent_locked(iter, l)) {
+				six_lock_downgrade(&iter->nodes[l]->lock);
+				iter->nodes_intent_locked ^= 1 << l;
+			}
+			break;
 		}
 	}
 }
