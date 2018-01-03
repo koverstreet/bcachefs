@@ -184,9 +184,7 @@ static int bch2_dev_metadata_migrate(struct bch_fs *c, struct bch_dev *ca,
 	unsigned i;
 	int ret = 0;
 
-	if (!(bch2_dev_has_data(c, ca) &
-	      ((1 << BCH_DATA_JOURNAL)|
-	       (1 << BCH_DATA_BTREE))))
+	if (!(bch2_dev_has_data(c, ca) & (1 << BCH_DATA_BTREE)))
 		return 0;
 
 	mutex_lock(&c->replicas_gc_lock);
