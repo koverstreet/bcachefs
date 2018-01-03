@@ -1065,12 +1065,8 @@ static long bch2_bucket_alloc_startup(struct bch_fs *c, struct bch_dev *ca)
 		return -1;
 	}
 
-	spin_unlock(&c->freelist_lock);
-
-	down_read(&ca->bucket_lock);
+	rcu_read_lock();
 	buckets = bucket_array(ca);
-
-	spin_lock(&c->freelist_lock);
 
 	for (b = ca->mi.first_bucket; b < ca->mi.nbuckets; b++)
 		if (is_startup_available_bucket(buckets->b[b].mark) &&
@@ -1080,7 +1076,7 @@ static long bch2_bucket_alloc_startup(struct bch_fs *c, struct bch_dev *ca)
 		}
 	b = -1;
 success:
-	up_read(&ca->bucket_lock);
+	rcu_read_unlock();
 	up_read(&c->gc_lock);
 	return b;
 }
