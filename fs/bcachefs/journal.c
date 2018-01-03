@@ -961,6 +961,7 @@ int bch2_journal_read(struct bch_fs *c, struct list_head *list)
 	struct bch_dev *ca;
 	u64 cur_seq, end_seq;
 	unsigned iter, keys = 0, entries = 0;
+	size_t nr;
 	int ret = 0;
 
 	closure_init_stack(&jlist.cl);
@@ -1008,9 +1009,16 @@ int bch2_journal_read(struct bch_fs *c, struct list_head *list)
 
 	i = list_last_entry(list, struct journal_replay, list);
 
-	unfixable_fsck_err_on(le64_to_cpu(i->j.seq) -
-			le64_to_cpu(i->j.last_seq) + 1 > j->pin.size, c,
-			"too many journal entries open for refcount fifo");
+	nr = le64_to_cpu(i->j.seq) - le64_to_cpu(i->j.last_seq) + 1;
+
+	if (nr > j->pin.size) {
+		free_fifo(&j->pin);
+		init_fifo(&j->pin, roundup_pow_of_two(nr), GFP_KERNEL);
+		if (!j->pin.data) {
+			bch_err(c, "error reallocating journal fifo (%zu open entries)", nr);
+			return -ENOMEM;
+		}
+	}
 
 	atomic64_set(&j->seq, le64_to_cpu(i->j.seq));
 	j->last_seq_ondisk = le64_to_cpu(i->j.last_seq);
