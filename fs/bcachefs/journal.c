@@ -2368,7 +2368,7 @@ static void journal_write(struct closure *cl)
 		}
 
 no_io:
-	extent_for_each_ptr(bkey_i_to_s_extent(&w->key), ptr)
+	extent_for_each_ptr(bkey_i_to_s_extent(&j->key), ptr)
 		ptr->offset += sectors;
 
 	continue_at(cl, journal_write_done, system_highpri_wq);
