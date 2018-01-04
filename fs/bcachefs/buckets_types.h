@@ -15,8 +15,7 @@ struct bucket_mark {
 				gen_valid:1,
 				owned_by_allocator:1,
 				nouse:1,
-				journal_seq_valid:1,
-				touched_this_mount:1;
+				journal_seq_valid:1;
 		u16		dirty_sectors;
 		u16		cached_sectors;
 

@@ -330,9 +330,6 @@ const char *bch2_sb_validate(struct bch_sb_handle *disk_sb)
 	if (!is_power_of_2(BCH_SB_BTREE_NODE_SIZE(sb)))
 		return "Btree node size not a power of two";
 
-	if (BCH_SB_BTREE_NODE_SIZE(sb) > BTREE_NODE_SIZE_MAX)
-		return "Btree node size too large";
-
 	if (BCH_SB_GC_RESERVE(sb) < 5)
 		return "gc reserve percentage too small";
 

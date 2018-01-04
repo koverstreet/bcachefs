@@ -55,6 +55,8 @@
 
 #include "bcachefs.h"
 #include "alloc.h"
+#include "btree_cache.h"
+#include "btree_io.h"
 #include "btree_update.h"
 #include "btree_gc.h"
 #include "buckets.h"
@@ -401,7 +403,7 @@ int bch2_alloc_replay_key(struct bch_fs *c, struct bpos pos)
 	return ret;
 }
 
-static int bch2_alloc_write(struct bch_fs *c, struct bch_dev *ca, u64 *journal_seq)
+static int bch2_alloc_write(struct bch_fs *c, struct bch_dev *ca)
 {
 	struct btree_iter iter;
 	unsigned long bucket;
@@ -412,7 +414,7 @@ static int bch2_alloc_write(struct bch_fs *c, struct bch_dev *ca, u64 *journal_s
 
 	down_read(&ca->bucket_lock);
 	for_each_set_bit(bucket, ca->buckets_dirty, ca->mi.nbuckets) {
-		ret = __bch2_alloc_write_key(c, ca, bucket, &iter, journal_seq);
+		ret = __bch2_alloc_write_key(c, ca, bucket, &iter, NULL);
 		if (ret)
 			break;
 
@@ -692,7 +694,7 @@ static inline int bucket_alloc_cmp(alloc_heap *h,
 	return (l.key > r.key) - (l.key < r.key);
 }
 
-static void invalidate_buckets_lru(struct bch_fs *c, struct bch_dev *ca)
+static void find_reclaimable_buckets_lru(struct bch_fs *c, struct bch_dev *ca)
 {
 	struct bucket_array *buckets;
 	struct alloc_heap_entry e;
@@ -740,7 +742,7 @@ static void invalidate_buckets_lru(struct bch_fs *c, struct bch_dev *ca)
 		bch2_invalidate_one_bucket(c, ca, e.bucket);
 }
 
-static void invalidate_buckets_fifo(struct bch_fs *c, struct bch_dev *ca)
+static void find_reclaimable_buckets_fifo(struct bch_fs *c, struct bch_dev *ca)
 {
 	struct bucket_array *buckets = bucket_array(ca);
 	struct bucket_mark m;
@@ -762,7 +764,7 @@ static void invalidate_buckets_fifo(struct bch_fs *c, struct bch_dev *ca)
 	}
 }
 
-static void invalidate_buckets_random(struct bch_fs *c, struct bch_dev *ca)
+static void find_reclaimable_buckets_random(struct bch_fs *c, struct bch_dev *ca)
 {
 	struct bucket_array *buckets = bucket_array(ca);
 	struct bucket_mark m;
@@ -782,21 +784,21 @@ static void invalidate_buckets_random(struct bch_fs *c, struct bch_dev *ca)
 	}
 }
 
-static void invalidate_buckets(struct bch_fs *c, struct bch_dev *ca)
+static void find_reclaimable_buckets(struct bch_fs *c, struct bch_dev *ca)
 {
 	ca->inc_gen_needs_gc			= 0;
 	ca->inc_gen_really_needs_gc		= 0;
 
 	switch (ca->mi.replacement) {
-		case CACHE_REPLACEMENT_LRU:
-			invalidate_buckets_lru(c, ca);
-			break;
-		case CACHE_REPLACEMENT_FIFO:
-			invalidate_buckets_fifo(c, ca);
-			break;
-		case CACHE_REPLACEMENT_RANDOM:
-			invalidate_buckets_random(c, ca);
-			break;
+	case CACHE_REPLACEMENT_LRU:
+		find_reclaimable_buckets_lru(c, ca);
+		break;
+	case CACHE_REPLACEMENT_FIFO:
+		find_reclaimable_buckets_fifo(c, ca);
+		break;
+	case CACHE_REPLACEMENT_RANDOM:
+		find_reclaimable_buckets_random(c, ca);
+		break;
 	}
 }
 
@@ -807,79 +809,119 @@ static int size_t_cmp(const void *_l, const void *_r)
 	return (*l > *r) - (*l < *r);
 }
 
+static void sort_free_inc(struct bch_fs *c, struct bch_dev *ca)
+{
+	BUG_ON(ca->free_inc.front);
+
+	spin_lock(&c->freelist_lock);
+	sort(ca->free_inc.data,
+	     ca->free_inc.back,
+	     sizeof(ca->free_inc.data[0]),
+	     size_t_cmp, NULL);
+	spin_unlock(&c->freelist_lock);
+}
+
 static int bch2_invalidate_free_inc(struct bch_fs *c, struct bch_dev *ca,
-				    u64 *journal_seq)
+				    u64 *journal_seq, size_t nr)
 {
 	struct btree_iter iter;
-	unsigned nr_invalidated = 0;
-	size_t b, i;
 	int ret = 0;
 
 	bch2_btree_iter_init(&iter, c, BTREE_ID_ALLOC, POS(ca->dev_idx, 0),
 			     BTREE_ITER_INTENT);
 
-	fifo_for_each_entry(b, &ca->free_inc, i) {
+	/*
+	 * XXX: if ca->nr_invalidated != 0, just return if we'd block doing the
+	 * btree update or journal_res_get
+	 */
+	while (ca->nr_invalidated < min(nr, fifo_used(&ca->free_inc))) {
+		size_t b = fifo_idx_entry(&ca->free_inc, ca->nr_invalidated);
+
 		ret = __bch2_alloc_write_key(c, ca, b, &iter, journal_seq);
 		if (ret)
 			break;
 
-		nr_invalidated++;
+		ca->nr_invalidated++;
 	}
 
 	bch2_btree_iter_unlock(&iter);
-	return nr_invalidated ?: ret;
+	return ret;
 }
 
-/*
- * Given an invalidated, ready to use bucket: issue a discard to it if enabled,
- * then add it to the freelist, waiting until there's room if necessary:
- */
-static void discard_invalidated_bucket(struct bch_fs *c, struct bch_dev *ca,
-				       long bucket)
+static bool __push_invalidated_bucket(struct bch_fs *c, struct bch_dev *ca, size_t bucket)
 {
-	if (ca->mi.discard &&
-	    blk_queue_discard(bdev_get_queue(ca->disk_sb.bdev)))
-		blkdev_issue_discard(ca->disk_sb.bdev,
-				     bucket_to_sector(ca, bucket),
-				     ca->mi.bucket_size, GFP_NOIO, 0);
+	unsigned i;
+
+	/*
+	 * Don't remove from free_inc until after it's added to
+	 * freelist, so gc can find it:
+	 */
+	spin_lock(&c->freelist_lock);
+	for (i = 0; i < RESERVE_NR; i++)
+		if (fifo_push(&ca->free[i], bucket)) {
+			fifo_pop(&ca->free_inc, bucket);
+			--ca->nr_invalidated;
+			closure_wake_up(&c->freelist_wait);
+			spin_unlock(&c->freelist_lock);
+			return true;
+		}
+	spin_unlock(&c->freelist_lock);
+
+	return false;
+}
+
+static int push_invalidated_bucket(struct bch_fs *c, struct bch_dev *ca, size_t bucket)
+{
+	int ret = 0;
 
 	while (1) {
-		bool pushed = false;
-		unsigned i;
-
 		set_current_state(TASK_INTERRUPTIBLE);
 
-		/*
-		 * Don't remove from free_inc until after it's added to
-		 * freelist, so gc can find it:
-		 */
-		spin_lock(&c->freelist_lock);
-		for (i = 0; i < RESERVE_NR; i++)
-			if (fifo_push(&ca->free[i], bucket)) {
-				fifo_pop(&ca->free_inc, bucket);
-				closure_wake_up(&c->freelist_wait);
-				pushed = true;
-				break;
-			}
-		spin_unlock(&c->freelist_lock);
-
-		if (pushed)
+		if (__push_invalidated_bucket(c, ca, bucket))
 			break;
 
-		if (kthread_should_stop())
+		if ((current->flags & PF_KTHREAD) &&
+		    kthread_should_stop()) {
+			ret = -1;
 			break;
+		}
 
 		schedule();
 		try_to_freeze();
 	}
 
 	__set_current_state(TASK_RUNNING);
+	return ret;
+}
+
+/*
+ * Given an invalidated, ready to use bucket: issue a discard to it if enabled,
+ * then add it to the freelist, waiting until there's room if necessary:
+ */
+static int discard_invalidated_buckets(struct bch_fs *c, struct bch_dev *ca)
+{
+	while (ca->nr_invalidated) {
+		size_t bucket = fifo_peek(&ca->free_inc);
+
+		BUG_ON(fifo_empty(&ca->free_inc) || !ca->nr_invalidated);
+
+		if (ca->mi.discard &&
+		    blk_queue_discard(bdev_get_queue(ca->disk_sb.bdev)))
+			blkdev_issue_discard(ca->disk_sb.bdev,
+					     bucket_to_sector(ca, bucket),
+					     ca->mi.bucket_size, GFP_NOIO, 0);
+
+		if (push_invalidated_bucket(c, ca, bucket))
+			return -1;
+	}
+
+	return 0;
 }
 
 /**
  * bch_allocator_thread - move buckets from free_inc to reserves
  *
- * The free_inc FIFO is populated by invalidate_buckets(), and
+ * The free_inc FIFO is populated by find_reclaimable_buckets(), and
  * the reserves are depleted by bucket allocation. When we run out
  * of free_inc, try to invalidate some buckets and write out
  * prios and gens.
@@ -889,44 +931,36 @@ static int bch2_allocator_thread(void *arg)
 	struct bch_dev *ca = arg;
 	struct bch_fs *c = ca->fs;
 	u64 journal_seq;
-	size_t bucket;
 	int ret;
 
 	set_freezable();
 
 	while (1) {
 		while (1) {
-			while (ca->nr_invalidated) {
-				BUG_ON(fifo_empty(&ca->free_inc));
-
-				bucket = fifo_peek(&ca->free_inc);
-				discard_invalidated_bucket(c, ca, bucket);
-				--ca->nr_invalidated;
-
-				if (kthread_should_stop())
-					return 0;
-			}
+			ret = discard_invalidated_buckets(c, ca);
+			if (ret)
+				return 0;
 
 			if (fifo_empty(&ca->free_inc))
 				break;
 
 			journal_seq = 0;
-			ret = bch2_invalidate_free_inc(c, ca, &journal_seq);
-			if (ret < 0)
+			ret = bch2_invalidate_free_inc(c, ca, &journal_seq, SIZE_MAX);
+			if (ret)
 				return 0;
 
-			ca->nr_invalidated = ret;
-
-			if (ca->nr_invalidated == fifo_used(&ca->free_inc)) {
-				ca->alloc_thread_started = true;
-				bch2_alloc_write(c, ca, &journal_seq);
-			}
-
 			if (ca->allocator_invalidating_data)
-				bch2_journal_flush_seq(&c->journal, journal_seq);
+				ret = bch2_journal_flush_seq(&c->journal, journal_seq);
 			else if (ca->allocator_journal_seq_flush)
-				bch2_journal_flush_seq(&c->journal,
+				ret = bch2_journal_flush_seq(&c->journal,
 						       ca->allocator_journal_seq_flush);
+
+			/*
+			 * journal error - buckets haven't actually been
+			 * invalidated, can't discard them:
+			 */
+			if (ret)
+				return 0;
 		}
 
 		/* Reset front/back so we can easily sort fifo entries later: */
@@ -948,7 +982,7 @@ static int bch2_allocator_thread(void *arg)
 			 * another cache tier
 			 */
 
-			invalidate_buckets(c, ca);
+			find_reclaimable_buckets(c, ca);
 			trace_alloc_batch(ca, fifo_used(&ca->free_inc),
 					  ca->free_inc.size);
 
@@ -971,14 +1005,7 @@ static int bch2_allocator_thread(void *arg)
 		}
 		up_read(&c->gc_lock);
 
-		BUG_ON(ca->free_inc.front);
-
-		spin_lock(&c->freelist_lock);
-		sort(ca->free_inc.data,
-		     ca->free_inc.back,
-		     sizeof(ca->free_inc.data[0]),
-		     size_t_cmp, NULL);
-		spin_unlock(&c->freelist_lock);
+		sort_free_inc(c, ca);
 
 		/*
 		 * free_inc is now full of newly-invalidated buckets: next,
@@ -1038,47 +1065,27 @@ static struct open_bucket *bch2_open_bucket_alloc(struct bch_fs *c)
 	return ob;
 }
 
-/*
- * XXX: allocation on startup is still sketchy. There is insufficient
- * synchronization for bch2_bucket_alloc_startup() to work correctly after
- * bch2_alloc_write() has been called, and we aren't currently doing anything
- * to guarantee that this won't happen.
- *
- * Even aside from that, it's really difficult to avoid situations where on
- * startup we write out a pointer to a freshly allocated bucket before the
- * corresponding gen - when we're still digging ourself out of the "i need to
- * allocate to write bucket gens, but i need to write bucket gens to allocate"
- * hole.
- *
- * Fortunately, bch2_btree_mark_key_initial() will detect and repair this
- * easily enough...
- */
-static long bch2_bucket_alloc_startup(struct bch_fs *c, struct bch_dev *ca)
+/* _only_ for allocating the journal and btree roots on a brand new fs: */
+int bch2_bucket_alloc_startup(struct bch_fs *c, struct bch_dev *ca)
 {
 	struct bucket_array *buckets;
 	ssize_t b;
-
-	if (!down_read_trylock(&c->gc_lock))
-		return -1;
-
-	if (test_bit(BCH_FS_GC_FAILURE, &c->flags)) {
-		up_read(&c->gc_lock);
-		return -1;
-	}
 
 	rcu_read_lock();
 	buckets = bucket_array(ca);
 
 	for (b = ca->mi.first_bucket; b < ca->mi.nbuckets; b++)
-		if (is_startup_available_bucket(buckets->b[b].mark) &&
-		    bch2_mark_alloc_bucket_startup(c, ca, b)) {
+		if (is_available_bucket(buckets->b[b].mark)) {
+			bch2_mark_alloc_bucket(c, ca, b, true,
+					gc_pos_alloc(c, NULL),
+					BCH_BUCKET_MARK_MAY_MAKE_UNAVAILABLE|
+					BCH_BUCKET_MARK_GC_LOCK_HELD);
 			set_bit(b, ca->buckets_dirty);
 			goto success;
 		}
 	b = -1;
 success:
 	rcu_read_unlock();
-	up_read(&c->gc_lock);
 	return b;
 }
 
@@ -1147,8 +1154,7 @@ int bch2_bucket_alloc(struct bch_fs *c, struct bch_dev *ca,
 		break;
 	}
 
-	if (unlikely(!ca->alloc_thread_started) &&
-	    (reserve == RESERVE_ALLOC) &&
+	if (unlikely(test_bit(BCH_FS_BRAND_NEW_FS, &c->flags)) &&
 	    (bucket = bch2_bucket_alloc_startup(c, ca)) >= 0)
 		goto out;
 
@@ -1852,6 +1858,170 @@ int bch2_dev_allocator_start(struct bch_dev *ca)
 	get_task_struct(p);
 	ca->alloc_thread = p;
 	wake_up_process(p);
+	return 0;
+}
+
+static int __bch2_fs_allocator_start(struct bch_fs *c)
+{
+	struct bch_dev *ca;
+	size_t bu, i, devs_have_enough = 0;
+	unsigned dev_iter;
+	u64 journal_seq = 0;
+	bool invalidating_data = false;
+	int ret = 0;
+
+	if (test_bit(BCH_FS_GC_FAILURE, &c->flags))
+		return -1;
+
+	/* Scan for buckets that are already invalidated: */
+	for_each_rw_member(ca, c, dev_iter) {
+		struct btree_iter iter;
+		struct bucket_mark m;
+		struct bkey_s_c k;
+
+		for_each_btree_key(&iter, c, BTREE_ID_ALLOC, POS(ca->dev_idx, 0), 0, k) {
+			if (k.k->type != BCH_ALLOC)
+				continue;
+
+			bu = k.k->p.offset;
+			m = READ_ONCE(bucket(ca, bu)->mark);
+
+			if (!is_available_bucket(m) || m.cached_sectors)
+				continue;
+
+			bch2_mark_alloc_bucket(c, ca, bu, true,
+					gc_pos_alloc(c, NULL),
+					BCH_BUCKET_MARK_MAY_MAKE_UNAVAILABLE|
+					BCH_BUCKET_MARK_GC_LOCK_HELD);
+
+			fifo_push(&ca->free_inc, bu);
+			ca->nr_invalidated++;
+
+			if (fifo_full(&ca->free_inc))
+				break;
+		}
+		bch2_btree_iter_unlock(&iter);
+	}
+
+	/* did we find enough buckets? */
+	for_each_rw_member(ca, c, dev_iter)
+		devs_have_enough += (fifo_used(&ca->free_inc) >=
+				     ca->free[RESERVE_BTREE].size);
+
+	if (devs_have_enough >= c->opts.metadata_replicas)
+		return 0;
+
+	/* clear out free_inc - find_reclaimable_buckets() assumes it's empty */
+	for_each_rw_member(ca, c, dev_iter)
+		discard_invalidated_buckets(c, ca);
+
+	for_each_rw_member(ca, c, dev_iter) {
+		BUG_ON(!fifo_empty(&ca->free_inc));
+		ca->free_inc.front = ca->free_inc.back	= 0;
+
+		find_reclaimable_buckets(c, ca);
+		sort_free_inc(c, ca);
+
+		invalidating_data |= ca->allocator_invalidating_data;
+
+		fifo_for_each_entry(bu, &ca->free_inc, i)
+			if (!fifo_push(&ca->free[RESERVE_BTREE], bu))
+				break;
+	}
+
+	/*
+	 * We're moving buckets to freelists _before_ they've been marked as
+	 * invalidated on disk - we have to so that we can allocate new btree
+	 * nodes to mark them as invalidated on disk.
+	 *
+	 * However, we can't _write_ to any of these buckets yet - they might
+	 * have cached data in them, which is live until they're marked as
+	 * invalidated on disk:
+	 */
+	if (invalidating_data)
+		set_bit(BCH_FS_HOLD_BTREE_WRITES, &c->flags);
+
+	/*
+	 * XXX: it's possible for this to deadlock waiting on journal reclaim,
+	 * since we're holding btree writes. What then?
+	 */
+
+	for_each_rw_member(ca, c, dev_iter) {
+		ret = bch2_invalidate_free_inc(c, ca, &journal_seq,
+					       ca->free[RESERVE_BTREE].size);
+		if (ret) {
+			percpu_ref_put(&ca->io_ref);
+			return ret;
+		}
+	}
+
+	if (invalidating_data) {
+		ret = bch2_journal_flush_seq(&c->journal, journal_seq);
+		if (ret)
+			return ret;
+	}
+
+	for_each_rw_member(ca, c, dev_iter)
+		while (ca->nr_invalidated) {
+			BUG_ON(!fifo_pop(&ca->free_inc, bu));
+			blkdev_issue_discard(ca->disk_sb.bdev,
+					     bucket_to_sector(ca, bu),
+					     ca->mi.bucket_size, GFP_NOIO, 0);
+			ca->nr_invalidated--;
+		}
+
+	/* now flush dirty btree nodes: */
+	if (invalidating_data) {
+		struct bucket_table *tbl;
+		struct rhash_head *pos;
+		struct btree *b;
+
+		clear_bit(BCH_FS_HOLD_BTREE_WRITES, &c->flags);
+again:
+		rcu_read_lock();
+		for_each_cached_btree(b, c, tbl, i, pos)
+			if (btree_node_dirty(b) && (!b->written || b->level)) {
+				rcu_read_unlock();
+				six_lock_read(&b->lock);
+				bch2_btree_node_write(c, b, NULL, SIX_LOCK_read);
+				six_unlock_read(&b->lock);
+				goto again;
+			}
+		rcu_read_unlock();
+	}
+
+	return 0;
+}
+
+int bch2_fs_allocator_start(struct bch_fs *c)
+{
+	struct bch_dev *ca;
+	unsigned i;
+	int ret;
+
+	down_read(&c->gc_lock);
+	ret = __bch2_fs_allocator_start(c);
+	up_read(&c->gc_lock);
+
+	if (ret)
+		return ret;
+
+	for_each_rw_member(ca, c, i) {
+		ret = bch2_dev_allocator_start(ca);
+		if (ret) {
+			percpu_ref_put(&ca->io_ref);
+			return ret;
+		}
+	}
+
+	for_each_rw_member(ca, c, i) {
+		ret = bch2_alloc_write(c, ca);
+		if (ret) {
+			percpu_ref_put(&ca->io_ref);
+			return ret;
+		}
+	}
+
 	return 0;
 }
 
