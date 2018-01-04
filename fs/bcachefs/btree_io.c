@@ -1602,6 +1602,9 @@ void __bch2_btree_node_write(struct bch_fs *c, struct btree *b,
 	unsigned long old, new;
 	void *data;
 
+	if (test_bit(BCH_FS_HOLD_BTREE_WRITES, &c->flags))
+		return;
+
 	/*
 	 * We may only have a read lock on the btree node - the dirty bit is our
 	 * "lock" against racing with other threads that may be trying to start
@@ -1905,11 +1908,7 @@ void bch2_btree_verify_flushed(struct bch_fs *c)
 	unsigned i;
 
 	rcu_read_lock();
-	tbl = rht_dereference_rcu(c->btree_cache.table.tbl,
-				  &c->btree_cache.table);
-
-	for (i = 0; i < tbl->size; i++)
-		rht_for_each_entry_rcu(b, pos, tbl, i, hash)
-			BUG_ON(btree_node_dirty(b));
+	for_each_cached_btree(b, c, tbl, i, pos)
+		BUG_ON(btree_node_dirty(b));
 	rcu_read_unlock();
 }

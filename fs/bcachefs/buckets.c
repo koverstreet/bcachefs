@@ -382,7 +382,6 @@ bool bch2_invalidate_bucket(struct bch_fs *c, struct bch_dev *ca,
 		}
 
 		new.owned_by_allocator	= 1;
-		new.touched_this_mount	= 1;
 		new.data_type		= 0;
 		new.cached_sectors	= 0;
 		new.dirty_sectors	= 0;
@@ -393,29 +392,6 @@ bool bch2_invalidate_bucket(struct bch_fs *c, struct bch_dev *ca,
 	if (!old->owned_by_allocator && old->cached_sectors)
 		trace_invalidate(ca, bucket_to_sector(ca, b),
 				 old->cached_sectors);
-	return true;
-}
-
-bool bch2_mark_alloc_bucket_startup(struct bch_fs *c, struct bch_dev *ca,
-				    size_t b)
-{
-	struct bucket *g;
-	struct bucket_mark new, old;
-
-	lg_local_lock(&c->usage_lock);
-	g = bucket(ca, b);
-
-	old = bucket_data_cmpxchg(c, ca, g, new, ({
-		if (!is_startup_available_bucket(new)) {
-			lg_local_unlock(&c->usage_lock);
-			return false;
-		}
-
-		new.owned_by_allocator	= 1;
-		new.touched_this_mount	= 1;
-	}));
-	lg_local_unlock(&c->usage_lock);
-
 	return true;
 }
 
@@ -436,7 +412,6 @@ void bch2_mark_alloc_bucket(struct bch_fs *c, struct bch_dev *ca,
 	}
 
 	old = bucket_data_cmpxchg(c, ca, g, new, ({
-		new.touched_this_mount	= 1;
 		new.owned_by_allocator	= owned_by_allocator;
 	}));
 	lg_local_unlock(&c->usage_lock);
@@ -481,7 +456,6 @@ void bch2_mark_metadata_bucket(struct bch_fs *c, struct bch_dev *ca,
 		saturated_add(ca, new.dirty_sectors, sectors,
 			      GC_MAX_SECTORS_USED);
 		new.data_type		= type;
-		new.touched_this_mount	= 1;
 	}));
 	lg_local_unlock(&c->usage_lock);
 
@@ -539,7 +513,6 @@ static void bch2_mark_pointer(struct bch_fs *c,
 	if (flags & BCH_BUCKET_MARK_GC_WILL_VISIT) {
 		if (journal_seq)
 			bucket_cmpxchg(g, new, ({
-				new.touched_this_mount	= 1;
 				new.journal_seq_valid	= 1;
 				new.journal_seq		= journal_seq;
 			}));
@@ -587,8 +560,6 @@ static void bch2_mark_pointer(struct bch_fs *c,
 		} else {
 			new.data_type = data_type;
 		}
-
-		new.touched_this_mount	= 1;
 
 		if (flags & BCH_BUCKET_MARK_NOATOMIC) {
 			g->_mark = new;

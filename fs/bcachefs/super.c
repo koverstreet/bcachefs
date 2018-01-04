@@ -755,12 +755,9 @@ static const char *__bch2_fs_start(struct bch_fs *c)
 		 */
 		bch2_journal_start(c);
 
-		err = "error starting allocator thread";
-		for_each_rw_member(ca, c, i)
-			if (bch2_dev_allocator_start(ca)) {
-				percpu_ref_put(&ca->io_ref);
-				goto err;
-			}
+		err = "error starting allocator";
+		if (bch2_fs_allocator_start(c))
+			goto err;
 
 		bch_verbose(c, "starting journal replay:");
 		err = "journal replay failed";
@@ -785,6 +782,7 @@ static const char *__bch2_fs_start(struct bch_fs *c)
 		bch_notice(c, "initializing new filesystem");
 
 		set_bit(BCH_FS_ALLOC_READ_DONE, &c->flags);
+		set_bit(BCH_FS_BRAND_NEW_FS, &c->flags);
 
 		ret = bch2_initial_gc(c, &journal);
 		if (ret)
@@ -792,7 +790,7 @@ static const char *__bch2_fs_start(struct bch_fs *c)
 
 		err = "unable to allocate journal buckets";
 		for_each_rw_member(ca, c, i)
-			if (bch2_dev_journal_alloc(ca)) {
+			if (bch2_dev_journal_alloc(c, ca)) {
 				percpu_ref_put(&ca->io_ref);
 				goto err;
 			}
@@ -802,6 +800,8 @@ static const char *__bch2_fs_start(struct bch_fs *c)
 			if (bch2_btree_root_alloc(c, i, &cl))
 				goto err;
 
+		clear_bit(BCH_FS_BRAND_NEW_FS, &c->flags);
+
 		/*
 		 * journal_res_get() will crash if called before this has
 		 * set up the journal.pin FIFO and journal.cur pointer:
@@ -809,12 +809,9 @@ static const char *__bch2_fs_start(struct bch_fs *c)
 		bch2_journal_start(c);
 		bch2_journal_set_replay_done(&c->journal);
 
-		err = "error starting allocator thread";
-		for_each_rw_member(ca, c, i)
-			if (bch2_dev_allocator_start(ca)) {
-				percpu_ref_put(&ca->io_ref);
-				goto err;
-			}
+		err = "error starting allocator";
+		if (bch2_fs_allocator_start(c))
+			goto err;
 
 		/* Wait for new btree roots to be written: */
 		closure_sync(&cl);
@@ -1521,12 +1518,12 @@ have_slot:
 
 	ca = bch_dev_locked(c, dev_idx);
 	if (ca->mi.state == BCH_MEMBER_STATE_RW) {
-		err = "journal alloc failed";
-		if (bch2_dev_journal_alloc(ca))
-			goto err;
-
 		err = __bch2_dev_read_write(c, ca);
 		if (err)
+			goto err;
+
+		err = "journal alloc failed";
+		if (bch2_dev_journal_alloc(c, ca))
 			goto err;
 	}
 

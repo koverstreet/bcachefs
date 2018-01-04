@@ -1662,7 +1662,7 @@ err:
 	return ret;
 }
 
-int bch2_dev_journal_alloc(struct bch_dev *ca)
+int bch2_dev_journal_alloc(struct bch_fs *c, struct bch_dev *ca)
 {
 	unsigned nr;
 
@@ -1678,7 +1678,7 @@ int bch2_dev_journal_alloc(struct bch_dev *ca)
 		     min(1 << 10,
 			 (1 << 20) / ca->mi.bucket_size));
 
-	return bch2_set_nr_journal_buckets(ca->fs, ca, nr);
+	return bch2_set_nr_journal_buckets(c, ca, nr);
 }
 
 /* Journalling */
