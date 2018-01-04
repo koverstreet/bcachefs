@@ -1,6 +1,7 @@
 #ifndef _BCACHEFS_MOVE_H
 #define _BCACHEFS_MOVE_H
 
+#include "btree_iter.h"
 #include "buckets.h"
 #include "io_types.h"
 
@@ -25,10 +26,19 @@ void bch2_migrate_write_init(struct migrate_write *, struct bch_read_bio *);
 
 typedef bool (*move_pred_fn)(void *, struct bkey_s_c_extent);
 
+struct bch_move_stats {
+	struct btree_iter	iter;
+
+	atomic64_t		keys_moved;
+	atomic64_t		sectors_moved;
+	atomic64_t		sectors_seen;
+	atomic64_t		sectors_raced;
+};
+
 int bch2_move_data(struct bch_fs *, struct bch_ratelimit *,
 		   unsigned, struct bch_devs_mask *,
 		   struct write_point_specifier,
 		   int, int, move_pred_fn, void *,
-		   u64 *, u64 *);
+		   struct bch_move_stats *);
 
 #endif /* _BCACHEFS_MOVE_H */
