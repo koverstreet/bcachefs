@@ -116,8 +116,8 @@ static int bch2_migrate_index_update(struct bch_write_op *op)
 		bch2_extent_normalize(c, extent_i_to_s(insert).s);
 		bch2_extent_mark_replicas_cached(c, extent_i_to_s(insert));
 
-		ret = bch2_check_mark_super(c, extent_i_to_s_c(insert),
-					    BCH_DATA_USER);
+		ret = bch2_check_mark_super(c, BCH_DATA_USER,
+				bch2_extent_devs(extent_i_to_s_c(insert)));
 		if (ret)
 			break;
 

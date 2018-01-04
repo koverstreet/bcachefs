@@ -426,6 +426,17 @@ static inline struct bch_devs_list bch2_extent_dirty_devs(struct bkey_s_c_extent
 	return ret;
 }
 
+static inline struct bch_devs_list bch2_bkey_devs(struct bkey_s_c k)
+{
+	switch (k.k->type) {
+	case BCH_EXTENT:
+	case BCH_EXTENT_CACHED:
+		return bch2_extent_devs(bkey_s_c_to_extent(k));
+	default:
+		return (struct bch_devs_list) { .nr = 0 };
+	}
+}
+
 bool bch2_can_narrow_extent_crcs(struct bkey_s_c_extent,
 				 struct bch_extent_crc_unpacked);
 bool bch2_extent_narrow_crcs(struct bkey_i_extent *, struct bch_extent_crc_unpacked);
