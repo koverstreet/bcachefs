@@ -214,7 +214,8 @@ static void __bch2_fs_read_only(struct bch_fs *c)
 	 */
 	bch2_journal_flush_all_pins(&c->journal);
 
-	if (!bch2_journal_error(&c->journal))
+	if (!bch2_journal_error(&c->journal) &&
+	    !test_bit(BCH_FS_ERROR, &c->flags))
 		bch2_btree_verify_flushed(c);
 
 	for_each_member_device(ca, c, i)
