@@ -1099,12 +1099,19 @@ err:
 	return ret;
 }
 
-static inline int __bch2_check_mark_super(struct bch_fs *c,
-				struct bch_replicas_cpu_entry search,
-				unsigned max_dev)
+int bch2_check_mark_super(struct bch_fs *c,
+			  enum bch_data_type data_type,
+			  struct bch_devs_list devs)
 {
+	struct bch_replicas_cpu_entry search;
 	struct bch_replicas_cpu *r, *gc_r;
+	unsigned max_dev;
 	bool marked;
+
+	if (!devs.nr)
+		return 0;
+
+	devlist_to_replicas(devs, data_type, &search, &max_dev);
 
 	rcu_read_lock();
 	r = rcu_dereference(c->replicas);
@@ -1115,32 +1122,6 @@ static inline int __bch2_check_mark_super(struct bch_fs *c,
 
 	return likely(marked) ? 0
 		: bch2_check_mark_super_slowpath(c, search, max_dev);
-}
-
-int bch2_check_mark_super(struct bch_fs *c, struct bkey_s_c_extent e,
-			  enum bch_data_type data_type)
-{
-	struct bch_replicas_cpu_entry search;
-	unsigned max_dev;
-
-	if (!bkey_to_replicas(e, data_type, &search, &max_dev))
-		return 0;
-
-	return __bch2_check_mark_super(c, search, max_dev);
-}
-
-int bch2_check_mark_super_devlist(struct bch_fs *c,
-				  struct bch_devs_list *devs,
-				  enum bch_data_type data_type)
-{
-	struct bch_replicas_cpu_entry search;
-	unsigned max_dev;
-
-	if (!devs->nr)
-		return 0;
-
-	devlist_to_replicas(*devs, data_type, &search, &max_dev);
-	return __bch2_check_mark_super(c, search, max_dev);
 }
 
 int bch2_replicas_gc_end(struct bch_fs *c, int err)
@@ -1426,11 +1407,18 @@ int bch2_sb_replicas_to_text(struct bch_sb_field_replicas *r, char *buf, size_t 
 
 /* Query replicas: */
 
-static bool __bch2_sb_has_replicas(struct bch_fs *c,
-				   struct bch_replicas_cpu_entry search,
-				   unsigned max_dev)
+bool bch2_sb_has_replicas(struct bch_fs *c,
+			  enum bch_data_type data_type,
+			  struct bch_devs_list devs)
 {
+	struct bch_replicas_cpu_entry search;
+	unsigned max_dev;
 	bool ret;
+
+	if (!devs.nr)
+		return true;
+
+	devlist_to_replicas(devs, data_type, &search, &max_dev);
 
 	rcu_read_lock();
 	ret = replicas_has_entry(rcu_dereference(c->replicas),
@@ -1438,31 +1426,6 @@ static bool __bch2_sb_has_replicas(struct bch_fs *c,
 	rcu_read_unlock();
 
 	return ret;
-}
-
-bool bch2_sb_has_replicas(struct bch_fs *c, struct bkey_s_c_extent e,
-			  enum bch_data_type data_type)
-{
-	struct bch_replicas_cpu_entry search;
-	unsigned max_dev;
-
-	if (!bkey_to_replicas(e, data_type, &search, &max_dev))
-		return true;
-
-	return __bch2_sb_has_replicas(c, search, max_dev);
-}
-
-bool bch2_sb_has_replicas_devlist(struct bch_fs *c, struct bch_devs_list *devs,
-				  enum bch_data_type data_type)
-{
-	struct bch_replicas_cpu_entry search;
-	unsigned max_dev;
-
-	if (!devs->nr)
-		return true;
-
-	devlist_to_replicas(*devs, data_type, &search, &max_dev);
-	return __bch2_sb_has_replicas(c, search, max_dev);
 }
 
 struct replicas_status __bch2_replicas_status(struct bch_fs *c,

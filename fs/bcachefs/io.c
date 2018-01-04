@@ -268,7 +268,8 @@ static void bch2_write_index(struct closure *cl)
 		}
 
 		if (!(op->flags & BCH_WRITE_NOMARK_REPLICAS)) {
-			ret = bch2_check_mark_super(c, e.c, BCH_DATA_USER);
+			ret = bch2_check_mark_super(c, BCH_DATA_USER,
+						    bch2_extent_devs(e.c));
 			if (ret)
 				goto err;
 		}

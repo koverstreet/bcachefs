@@ -65,11 +65,7 @@ static int bch2_dev_usrdata_migrate(struct bch_fs *c, struct bch_dev *ca,
 	bch2_replicas_gc_start(c, 1 << BCH_DATA_USER);
 
 	for_each_btree_key(&iter, c, BTREE_ID_EXTENTS, POS_MIN, BTREE_ITER_PREFETCH, k) {
-		if (!bkey_extent_is_data(k.k))
-			continue;
-
-		ret = bch2_check_mark_super(c, bkey_s_c_to_extent(k),
-					    BCH_DATA_USER);
+		ret = bch2_check_mark_super(c, BCH_DATA_USER, bch2_bkey_devs(k));
 		if (ret) {
 			bch_err(c, "error migrating data %i from check_mark_super()", ret);
 			break;
@@ -161,11 +157,15 @@ static int bch2_dev_usrdata_drop(struct bch_fs *c, unsigned dev_idx, int flags)
 
 	while ((k = bch2_btree_iter_peek(&iter)).k &&
 	       !(ret = btree_iter_err(k))) {
-		if (!bkey_extent_is_data(k.k))
-			goto advance;
-
-		if (!bch2_extent_has_device(bkey_s_c_to_extent(k), dev_idx))
-			goto advance;
+		if (!bkey_extent_is_data(k.k) ||
+		    !bch2_extent_has_device(bkey_s_c_to_extent(k), dev_idx)) {
+			ret = bch2_check_mark_super(c, BCH_DATA_USER,
+						    bch2_bkey_devs(k));
+			if (ret)
+				break;
+			bch2_btree_iter_advance_pos(&iter);
+			continue;
+		}
 
 		bkey_reassemble(&tmp.key, k);
 		e = bkey_i_to_s_extent(&tmp.key);
@@ -181,8 +181,9 @@ static int bch2_dev_usrdata_drop(struct bch_fs *c, unsigned dev_idx, int flags)
 		 */
 		bch2_extent_normalize(c, e.s);
 
-		if (bkey_extent_is_data(e.k) &&
-		    (ret = bch2_check_mark_super(c, e.c, BCH_DATA_USER)))
+		ret = bch2_check_mark_super(c, BCH_DATA_USER,
+				bch2_bkey_devs(bkey_i_to_s_c(&tmp.key)));
+		if (ret)
 			break;
 
 		iter.pos = bkey_start_pos(&tmp.key.k);
@@ -201,16 +202,6 @@ static int bch2_dev_usrdata_drop(struct bch_fs *c, unsigned dev_idx, int flags)
 			ret = 0;
 		if (ret)
 			break;
-
-		continue;
-advance:
-		if (bkey_extent_is_data(k.k)) {
-			ret = bch2_check_mark_super(c, bkey_s_c_to_extent(k),
-						    BCH_DATA_USER);
-			if (ret)
-				break;
-		}
-		bch2_btree_iter_advance_pos(&iter);
 	}
 
 	bch2_btree_iter_unlock(&iter);
@@ -247,8 +238,8 @@ retry:
 						    dev_idx)) {
 				bch2_btree_iter_set_locks_want(&iter, 0);
 
-				ret = bch2_check_mark_super(c, bkey_i_to_s_c_extent(&b->key),
-							    BCH_DATA_BTREE);
+				ret = bch2_check_mark_super(c, BCH_DATA_BTREE,
+						bch2_bkey_devs(bkey_i_to_s_c(&b->key)));
 				if (ret)
 					goto err;
 			} else {

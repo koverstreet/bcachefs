@@ -996,12 +996,12 @@ int bch2_journal_read(struct bch_fs *c, struct list_head *list)
 			goto fsck_err;
 
 		if (test_bit(BCH_FS_REBUILD_REPLICAS, &c->flags) ||
-		    fsck_err_on(!bch2_sb_has_replicas_devlist(c, &i->devs,
-							      BCH_DATA_JOURNAL), c,
+		    fsck_err_on(!bch2_sb_has_replicas(c, BCH_DATA_JOURNAL,
+						      i->devs), c,
 				"superblock not marked as containing replicas (type %u)",
 				BCH_DATA_JOURNAL)) {
-			ret = bch2_check_mark_super_devlist(c, &i->devs,
-							    BCH_DATA_JOURNAL);
+			ret = bch2_check_mark_super(c, BCH_DATA_JOURNAL,
+						    i->devs);
 			if (ret)
 				return ret;
 		}
@@ -2197,14 +2197,15 @@ static void journal_write_done(struct closure *cl)
 	struct journal *j = container_of(cl, struct journal, io);
 	struct bch_fs *c = container_of(j, struct bch_fs, journal);
 	struct journal_buf *w = journal_prev_buf(j);
-	struct bkey_s_c_extent e = bkey_i_to_s_c_extent(&w->key);
+	struct bch_devs_list devs =
+		bch2_extent_devs(bkey_i_to_s_c_extent(&w->key));
 
-	if (!bch2_extent_nr_ptrs(e)) {
+	if (!devs.nr) {
 		bch_err(c, "unable to write journal to sufficient devices");
 		goto err;
 	}
 
-	if (bch2_check_mark_super(c, e, BCH_DATA_JOURNAL))
+	if (bch2_check_mark_super(c, BCH_DATA_JOURNAL, devs))
 		goto err;
 out:
 	__bch2_time_stats_update(j->write_time, j->write_start_time);
@@ -2212,8 +2213,7 @@ out:
 	spin_lock(&j->lock);
 	j->last_seq_ondisk = le64_to_cpu(w->data->last_seq);
 
-	journal_seq_pin(j, le64_to_cpu(w->data->seq))->devs =
-			bch2_extent_devs(bkey_i_to_s_c_extent(&w->key));
+	journal_seq_pin(j, le64_to_cpu(w->data->seq))->devs = devs;
 
 	/*
 	 * Updating last_seq_ondisk may let journal_reclaim_work() discard more
@@ -2771,7 +2771,7 @@ int bch2_journal_flush_device(struct journal *j, unsigned dev_idx)
 		seq++;
 
 		spin_unlock(&j->lock);
-		ret = bch2_check_mark_super_devlist(c, &devs, BCH_DATA_JOURNAL);
+		ret = bch2_check_mark_super(c, BCH_DATA_JOURNAL, devs);
 		spin_lock(&j->lock);
 	}
 	spin_unlock(&j->lock);
