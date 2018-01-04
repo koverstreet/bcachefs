@@ -100,7 +100,7 @@ static void bch2_copygc(struct bch_fs *c, struct bch_dev *ca)
 	copygc_heap *h = &ca->copygc_heap;
 	struct copygc_heap_entry e, *i;
 	struct bucket_array *buckets;
-	u64 keys_moved, sectors_moved;
+	struct bch_move_stats move_stats;
 	u64 sectors_to_move = 0, sectors_not_moved = 0;
 	u64 buckets_to_move, buckets_not_moved = 0;
 	size_t b;
@@ -167,8 +167,7 @@ static void bch2_copygc(struct bch_fs *c, struct bch_dev *ca)
 			     BTREE_INSERT_USE_RESERVE,
 			     ca->dev_idx,
 			     copygc_pred, ca,
-			     &keys_moved,
-			     &sectors_moved);
+			     &move_stats);
 
 	down_read(&ca->bucket_lock);
 	buckets = bucket_array(ca);
@@ -189,7 +188,7 @@ static void bch2_copygc(struct bch_fs *c, struct bch_dev *ca)
 			 buckets_not_moved, buckets_to_move);
 
 	trace_copygc(ca,
-		     sectors_moved, sectors_not_moved,
+		     atomic64_read(&move_stats.sectors_moved), sectors_not_moved,
 		     buckets_to_move, buckets_not_moved);
 }
 

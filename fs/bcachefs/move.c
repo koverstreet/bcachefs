@@ -31,15 +31,10 @@ struct moving_context {
 	/* Closure for waiting on all reads and writes to complete */
 	struct closure		cl;
 
-	/* Key and sector moves issued, updated from submission context */
-	u64			keys_moved;
-	u64			sectors_moved;
-	atomic64_t		sectors_raced;
+	struct bch_move_stats	*stats;
 
 	struct list_head	reads;
-
 	atomic_t		sectors_in_flight;
-
 	wait_queue_head_t	wait;
 };
 
@@ -145,7 +140,7 @@ next:
 nomatch:
 		if (m->ctxt)
 			atomic64_add(k.k->p.offset - iter.pos.offset,
-				     &m->ctxt->sectors_raced);
+				     &m->ctxt->stats->sectors_raced);
 		atomic_long_inc(&c->extent_migrate_raced);
 		trace_move_race(&new->k);
 		bch2_btree_iter_advance_pos(&iter);
@@ -303,8 +298,8 @@ static int bch2_move_extent(struct bch_fs *c,
 	io->write.op.devs	= devs;
 	io->write.op.write_point = wp;
 
-	ctxt->keys_moved++;
-	ctxt->sectors_moved += k.k->size;
+	atomic64_inc(&ctxt->stats->keys_moved);
+	atomic64_add(k.k->size, &ctxt->stats->sectors_moved);
 
 	trace_move_extent(k.k);
 
@@ -353,24 +348,6 @@ static void bch2_move_ctxt_wait_for_io(struct moving_context *ctxt)
 		atomic_read(&ctxt->sectors_in_flight) != sectors_pending);
 }
 
-static void bch2_move_ctxt_exit(struct moving_context *ctxt)
-{
-	move_ctxt_wait_event(ctxt, !atomic_read(&ctxt->sectors_in_flight));
-	closure_sync(&ctxt->cl);
-
-	EBUG_ON(!list_empty(&ctxt->reads));
-	EBUG_ON(atomic_read(&ctxt->sectors_in_flight));
-}
-
-static void bch2_move_ctxt_init(struct moving_context *ctxt)
-{
-	memset(ctxt, 0, sizeof(*ctxt));
-	closure_init_stack(&ctxt->cl);
-
-	INIT_LIST_HEAD(&ctxt->reads);
-	init_waitqueue_head(&ctxt->wait);
-}
-
 int bch2_move_data(struct bch_fs *c,
 		   struct bch_ratelimit *rate,
 		   unsigned sectors_in_flight,
@@ -379,20 +356,21 @@ int bch2_move_data(struct bch_fs *c,
 		   int btree_insert_flags,
 		   int move_device,
 		   move_pred_fn pred, void *arg,
-		   u64 *keys_moved,
-		   u64 *sectors_moved)
+		   struct bch_move_stats *stats)
 {
 	bool kthread = (current->flags & PF_KTHREAD) != 0;
-	struct moving_context ctxt;
+	struct moving_context ctxt = { .stats = stats };
 	struct bch_io_opts opts = bch2_opts_to_inode_opts(c->opts);
-	struct btree_iter iter;
 	BKEY_PADDED(k) tmp;
 	struct bkey_s_c k;
 	u64 cur_inum = U64_MAX;
 	int ret = 0;
 
-	bch2_move_ctxt_init(&ctxt);
-	bch2_btree_iter_init(&iter, c, BTREE_ID_EXTENTS, POS_MIN,
+	memset(stats, 0, sizeof(*stats));
+	closure_init_stack(&ctxt.cl);
+	INIT_LIST_HEAD(&ctxt.reads);
+	init_waitqueue_head(&ctxt.wait);
+	bch2_btree_iter_init(&stats->iter, c, BTREE_ID_EXTENTS, POS_MIN,
 			     BTREE_ITER_PREFETCH);
 
 	if (rate)
@@ -400,7 +378,7 @@ int bch2_move_data(struct bch_fs *c,
 
 	while (!kthread || !(ret = kthread_should_stop())) {
 		if (atomic_read(&ctxt.sectors_in_flight) >= sectors_in_flight) {
-			bch2_btree_iter_unlock(&iter);
+			bch2_btree_iter_unlock(&stats->iter);
 			move_ctxt_wait_event(&ctxt,
 					     atomic_read(&ctxt.sectors_in_flight) <
 					     sectors_in_flight);
@@ -408,11 +386,11 @@ int bch2_move_data(struct bch_fs *c,
 
 		if (rate &&
 		    bch2_ratelimit_delay(rate) &&
-		    (bch2_btree_iter_unlock(&iter),
+		    (bch2_btree_iter_unlock(&stats->iter),
 		     (ret = bch2_ratelimit_wait_freezable_stoppable(rate))))
 			break;
 peek:
-		k = bch2_btree_iter_peek(&iter);
+		k = bch2_btree_iter_peek(&stats->iter);
 		if (!k.k)
 			break;
 		ret = btree_iter_err(k);
@@ -420,13 +398,13 @@ peek:
 			break;
 
 		if (!bkey_extent_is_data(k.k))
-			goto next;
+			goto next_nondata;
 
 		if (cur_inum != k.k->p.inode) {
 			struct bch_inode_unpacked inode;
 
 			/* don't hold btree locks while looking up inode: */
-			bch2_btree_iter_unlock(&iter);
+			bch2_btree_iter_unlock(&stats->iter);
 
 			opts = bch2_opts_to_inode_opts(c->opts);
 			if (!bch2_inode_find_by_inum(c, k.k->p.inode, &inode))
@@ -441,7 +419,7 @@ peek:
 		/* unlock before doing IO: */
 		bkey_reassemble(&tmp.k, k);
 		k = bkey_i_to_s_c(&tmp.k);
-		bch2_btree_iter_unlock(&iter);
+		bch2_btree_iter_unlock(&stats->iter);
 
 		if (bch2_move_extent(c, &ctxt, devs, wp,
 				     btree_insert_flags,
@@ -454,17 +432,24 @@ peek:
 		if (rate)
 			bch2_ratelimit_increment(rate, k.k->size);
 next:
-		bch2_btree_iter_advance_pos(&iter);
-		bch2_btree_iter_cond_resched(&iter);
+		atomic64_add(k.k->size * bch2_extent_nr_dirty_ptrs(k),
+			     &stats->sectors_seen);
+next_nondata:
+		bch2_btree_iter_advance_pos(&stats->iter);
+		bch2_btree_iter_cond_resched(&stats->iter);
 	}
 
-	bch2_btree_iter_unlock(&iter);
-	bch2_move_ctxt_exit(&ctxt);
+	bch2_btree_iter_unlock(&stats->iter);
 
-	trace_move_data(c, ctxt.sectors_moved, ctxt.keys_moved);
+	move_ctxt_wait_event(&ctxt, !atomic_read(&ctxt.sectors_in_flight));
+	closure_sync(&ctxt.cl);
 
-	*keys_moved	= ctxt.keys_moved;
-	*sectors_moved	= ctxt.sectors_moved;
+	EBUG_ON(!list_empty(&ctxt.reads));
+	EBUG_ON(atomic_read(&ctxt.sectors_in_flight));
+
+	trace_move_data(c,
+			atomic64_read(&stats->sectors_moved),
+			atomic64_read(&stats->keys_moved));
 
 	return ret;
 }
