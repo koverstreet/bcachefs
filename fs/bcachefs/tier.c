@@ -39,7 +39,8 @@ static int bch2_tiering_thread(void *arg)
 	struct bch_fs *c = container_of(tier, struct bch_fs, tiers[tier->idx]);
 	struct io_clock *clock = &c->io_clock[WRITE];
 	struct bch_dev *ca;
-	u64 tier_capacity, available_sectors, keys_moved, sectors_moved;
+	struct bch_move_stats move_stats;
+	u64 tier_capacity, available_sectors;
 	unsigned long last;
 	unsigned i, nr_devices;
 
@@ -91,8 +92,7 @@ static int bch2_tiering_thread(void *arg)
 			       0,
 			       -1,
 			       tiering_pred, tier,
-			       &keys_moved,
-			       &sectors_moved);
+			       &move_stats);
 	}
 
 	return 0;

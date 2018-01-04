@@ -27,7 +27,7 @@ static int bch2_dev_usrdata_migrate(struct bch_fs *c, struct bch_dev *ca,
 {
 	struct btree_iter iter;
 	struct bkey_s_c k;
-	u64 keys_moved, sectors_moved;
+	struct bch_move_stats stats;
 	unsigned pass = 0;
 	int ret = 0;
 
@@ -47,15 +47,14 @@ static int bch2_dev_usrdata_migrate(struct bch_fs *c, struct bch_dev *ca,
 				     0,
 				     ca->dev_idx,
 				     migrate_pred, ca,
-				     &keys_moved,
-				     &sectors_moved);
+				     &stats);
 		if (ret) {
 			bch_err(c, "error migrating data: %i", ret);
 			return ret;
 		}
-	} while (keys_moved && pass++ < MAX_DATA_OFF_ITER);
+	} while (atomic64_read(&stats.keys_moved) && pass++ < MAX_DATA_OFF_ITER);
 
-	if (keys_moved) {
+	if (atomic64_read(&stats.keys_moved)) {
 		bch_err(c, "unable to migrate all data in %d iterations",
 			MAX_DATA_OFF_ITER);
 		return -1;
