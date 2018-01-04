@@ -45,8 +45,8 @@ static inline bool btree_node_hashed(struct btree *b)
 }
 
 #define for_each_cached_btree(_b, _c, _tbl, _iter, _pos)		\
-	for ((_tbl) = rht_dereference_rcu((_c)->btree_cache_table.tbl,	\
-					  &(_c)->btree_cache_table),	\
+	for ((_tbl) = rht_dereference_rcu((_c)->btree_cache.table.tbl,	\
+					  &(_c)->btree_cache.table),	\
 	     _iter = 0;	_iter < (_tbl)->size; _iter++)			\
 		rht_for_each_entry_rcu((_b), (_pos), _tbl, _iter, hash)
 

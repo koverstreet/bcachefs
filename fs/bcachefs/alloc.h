@@ -118,6 +118,7 @@ static inline void writepoint_init(struct write_point *wp,
 	wp->type = type;
 }
 
+int bch2_fs_allocator_start(struct bch_fs *);
 void bch2_fs_allocator_init(struct bch_fs *);
 
 extern const struct bkey_ops bch2_bkey_alloc_ops;
