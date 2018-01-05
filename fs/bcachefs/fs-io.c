@@ -56,14 +56,13 @@ struct bch_writepage_io {
 struct dio_write {
 	struct closure			cl;
 	struct kiocb			*req;
-	struct bch_fs			*c;
-	loff_t				offset;
-
-	struct iovec			*iovec;
-	struct iovec			inline_vecs[UIO_FASTIOV];
-	struct iov_iter			iter;
-
 	struct task_struct		*task;
+	unsigned			loop:1,
+					sync:1,
+					free_iov:1;
+
+	struct iov_iter			iter;
+	struct iovec			inline_vecs[2];
 
 	/* must be last: */
 	struct bchfs_write_op		iop;
@@ -1440,13 +1439,15 @@ static void bch2_direct_IO_read_split_endio(struct bio *bio)
 	bio_check_pages_dirty(bio);	/* transfers ownership */
 }
 
-static int bch2_direct_IO_read(struct bch_fs *c, struct kiocb *req,
-			       struct file *file, struct bch_inode_info *inode,
-			       struct iov_iter *iter, loff_t offset)
+static int bch2_direct_IO_read(struct kiocb *req, struct iov_iter *iter)
 {
+	struct file *file = req->ki_filp;
+	struct bch_inode_info *inode = file_bch_inode(file);
+	struct bch_fs *c = inode->v.i_sb->s_fs_info;
 	struct bch_io_opts opts = io_opts(c, inode);
 	struct dio_read *dio;
 	struct bio *bio;
+	loff_t offset = req->ki_pos;
 	bool sync = is_sync_kiocb(req);
 	ssize_t ret;
 
@@ -1526,103 +1527,127 @@ start:
 	}
 }
 
-static long __bch2_dio_write_complete(struct dio_write *dio)
+static void bch2_dio_write_loop_async(struct closure *);
+
+static long bch2_dio_write_loop(struct dio_write *dio)
 {
-	struct file *file = dio->req->ki_filp;
+	struct kiocb *req = dio->req;
+	struct file *file = req->ki_filp;
 	struct address_space *mapping = file->f_mapping;
 	struct bch_inode_info *inode = file_bch_inode(file);
-	long ret = dio->iop.op.error ?: ((long) dio->iop.op.written << 9);
-
-	bch2_disk_reservation_put(dio->c, &dio->iop.op.res);
-
-	__pagecache_block_put(&mapping->add_lock);
-	inode_dio_end(&inode->v);
-
-	if (dio->iovec && dio->iovec != dio->inline_vecs)
-		kfree(dio->iovec);
-
-	bio_put(&dio->iop.op.wbio.bio);
-	return ret;
-}
-
-static void bch2_dio_write_complete(struct closure *cl)
-{
-	struct dio_write *dio = container_of(cl, struct dio_write, cl);
-	struct kiocb *req = dio->req;
-
-	req->ki_complete(req, __bch2_dio_write_complete(dio), 0);
-}
-
-static void bch2_dio_write_done(struct dio_write *dio)
-{
+	struct bio *bio = &dio->iop.op.wbio.bio;
 	struct bio_vec *bv;
+	bool sync;
+	long ret;
 	int i;
 
-	bio_for_each_segment_all(bv, &dio->iop.op.wbio.bio, i)
-		put_page(bv->bv_page);
+	if (dio->loop)
+		goto loop;
 
-	if (dio->iter.count)
-		bio_reset(&dio->iop.op.wbio.bio);
-}
+	inode_dio_begin(&inode->v);
+	__pagecache_block_get(&mapping->add_lock);
 
-static void bch2_do_direct_IO_write(struct dio_write *dio)
-{
-	struct file *file = dio->req->ki_filp;
-	struct bch_inode_info *inode = file_bch_inode(file);
-	struct bio *bio = &dio->iop.op.wbio.bio;
-	int ret;
+	/* Write and invalidate pagecache range that we're writing to: */
+	ret = write_invalidate_inode_pages_range(mapping, req->ki_pos,
+				req->ki_pos + iov_iter_count(&dio->iter) - 1);
+	if (unlikely(ret))
+		goto err;
 
-	ret = bio_iov_iter_get_pages(bio, &dio->iter);
-	if (ret < 0) {
-		dio->iop.op.error = ret;
-		return;
+	while (1) {
+		BUG_ON(current->pagecache_lock);
+		current->pagecache_lock = &mapping->add_lock;
+		if (current != dio->task)
+			use_mm(dio->task->mm);
+
+		ret = bio_iov_iter_get_pages(bio, &dio->iter);
+
+		if (current != dio->task)
+			unuse_mm(dio->task->mm);
+		current->pagecache_lock = NULL;
+
+		if (unlikely(ret < 0))
+			goto err;
+
+		dio->iop.op.pos = POS(inode->v.i_ino,
+				(req->ki_pos >> 9) + dio->iop.op.written);
+
+		task_io_account_write(bio->bi_iter.bi_size);
+
+		closure_call(&dio->iop.op.cl, bch2_write, NULL, &dio->cl);
+
+		if (!dio->sync && !dio->loop && dio->iter.count) {
+			struct iovec *iov = dio->inline_vecs;
+
+			if (dio->iter.nr_segs > ARRAY_SIZE(dio->inline_vecs)) {
+				iov = kmalloc(dio->iter.nr_segs * sizeof(*iov),
+					      GFP_KERNEL);
+				if (unlikely(!iov)) {
+					dio->iop.op.error = -ENOMEM;
+					goto err_wait_io;
+				}
+
+				dio->free_iov = true;
+			}
+
+			memcpy(iov, dio->iter.iov, dio->iter.nr_segs * sizeof(*iov));
+			dio->iter.iov = iov;
+		}
+err_wait_io:
+		dio->loop = true;
+
+		if (!dio->sync) {
+			continue_at(&dio->cl, bch2_dio_write_loop_async, NULL);
+			return -EIOCBQUEUED;
+		}
+
+		closure_sync(&dio->cl);
+loop:
+		bio_for_each_segment_all(bv, bio, i)
+			put_page(bv->bv_page);
+		if (!dio->iter.count || dio->iop.op.error)
+			break;
+		bio_reset(bio);
 	}
 
-	dio->iop.op.pos = POS(inode->v.i_ino, (dio->offset >> 9) + dio->iop.op.written);
+	ret = dio->iop.op.error ?: ((long) dio->iop.op.written << 9);
+err:
+	__pagecache_block_put(&mapping->add_lock);
+	inode_dio_end(&inode->v);
+	bch2_disk_reservation_put(dio->iop.op.c, &dio->iop.op.res);
 
-	task_io_account_write(bio->bi_iter.bi_size);
+	if (dio->free_iov)
+		kfree(dio->iter.iov);
 
-	closure_call(&dio->iop.op.cl, bch2_write, NULL, &dio->cl);
+	closure_debug_destroy(&dio->cl);
+
+	sync = dio->sync;
+	bio_put(bio);
+
+	if (!sync) {
+		req->ki_complete(req, ret, 0);
+		ret = -EIOCBQUEUED;
+	}
+	return ret;
 }
 
 static void bch2_dio_write_loop_async(struct closure *cl)
 {
-	struct dio_write *dio =
-		container_of(cl, struct dio_write, cl);
-	struct address_space *mapping = dio->req->ki_filp->f_mapping;
+	struct dio_write *dio = container_of(cl, struct dio_write, cl);
 
-	bch2_dio_write_done(dio);
-
-	if (dio->iter.count && !dio->iop.op.error) {
-		use_mm(dio->task->mm);
-		pagecache_block_get(&mapping->add_lock);
-
-		bch2_do_direct_IO_write(dio);
-
-		pagecache_block_put(&mapping->add_lock);
-		unuse_mm(dio->task->mm);
-
-		continue_at(&dio->cl, bch2_dio_write_loop_async, NULL);
-	} else {
-#if 0
-		closure_return_with_destructor(cl, bch2_dio_write_complete);
-#else
-		closure_debug_destroy(cl);
-		bch2_dio_write_complete(cl);
-#endif
-	}
+	bch2_dio_write_loop(dio);
 }
 
-static int bch2_direct_IO_write(struct bch_fs *c,
-				struct kiocb *req, struct file *file,
-				struct bch_inode_info *inode,
-				struct iov_iter *iter, loff_t offset)
+static int bch2_direct_IO_write(struct kiocb *req,
+				struct iov_iter *iter,
+				bool swap)
 {
-	struct address_space *mapping = file->f_mapping;
+	struct file *file = req->ki_filp;
+	struct bch_inode_info *inode = file_bch_inode(file);
+	struct bch_fs *c = inode->v.i_sb->s_fs_info;
 	struct dio_write *dio;
 	struct bio *bio;
+	loff_t offset = req->ki_pos;
 	ssize_t ret;
-	bool sync = is_sync_kiocb(req);
 
 	lockdep_assert_held(&inode->v.i_rwsem);
 
@@ -1638,95 +1663,49 @@ static int bch2_direct_IO_write(struct bch_fs *c,
 	dio = container_of(bio, struct dio_write, iop.op.wbio.bio);
 	closure_init(&dio->cl, NULL);
 	dio->req		= req;
-	dio->c			= c;
-	dio->offset		= offset;
-	dio->iovec		= NULL;
-	dio->iter		= *iter;
 	dio->task		= current;
+	dio->loop		= false;
+	dio->sync		= is_sync_kiocb(req) ||
+		offset + iter->count > inode->v.i_size;
+	dio->free_iov		= false;
+	dio->iter		= *iter;
 	bch2_fswrite_op_init(&dio->iop, c, inode, io_opts(c, inode), true);
 	dio->iop.op.write_point	= writepoint_hashed((unsigned long) dio->task);
 	dio->iop.op.flags |= BCH_WRITE_NOPUT_RESERVATION;
 
-	if ((dio->req->ki_flags & IOCB_DSYNC) &&
+	if ((req->ki_flags & IOCB_DSYNC) &&
 	    !c->opts.journal_flush_disabled)
 		dio->iop.op.flags |= BCH_WRITE_FLUSH;
 
-	if (offset + iter->count > inode->v.i_size)
-		sync = true;
-
-	/*
-	 * XXX: we shouldn't return -ENOSPC if we're overwriting existing data -
-	 * if getting a reservation fails we should check if we are doing an
-	 * overwrite.
-	 *
-	 * Have to then guard against racing with truncate (deleting data that
-	 * we would have been overwriting)
-	 */
 	ret = bch2_disk_reservation_get(c, &dio->iop.op.res, iter->count >> 9, 0);
 	if (unlikely(ret)) {
 		if (bch2_check_range_allocated(c, POS(inode->v.i_ino,
 						      offset >> 9),
-					       iter->count >> 9)) {
-			closure_debug_destroy(&dio->cl);
-			bio_put(bio);
-			return ret;
-		}
+					       iter->count >> 9))
+			goto err;
 
 		dio->iop.unalloc = true;
 	}
 
 	dio->iop.op.nr_replicas	= dio->iop.op.res.nr_replicas;
 
-	inode_dio_begin(&inode->v);
-	__pagecache_block_get(&mapping->add_lock);
-
-	if (sync) {
-		do {
-			bch2_do_direct_IO_write(dio);
-
-			closure_sync(&dio->cl);
-			bch2_dio_write_done(dio);
-		} while (dio->iter.count && !dio->iop.op.error);
-
-		closure_debug_destroy(&dio->cl);
-		return __bch2_dio_write_complete(dio);
-	} else {
-		bch2_do_direct_IO_write(dio);
-
-		if (dio->iter.count && !dio->iop.op.error) {
-			if (dio->iter.nr_segs > ARRAY_SIZE(dio->inline_vecs)) {
-				dio->iovec = kmalloc(dio->iter.nr_segs *
-						     sizeof(struct iovec),
-						     GFP_KERNEL);
-				if (!dio->iovec)
-					dio->iop.op.error = -ENOMEM;
-			} else {
-				dio->iovec = dio->inline_vecs;
-			}
-
-			memcpy(dio->iovec,
-			       dio->iter.iov,
-			       dio->iter.nr_segs * sizeof(struct iovec));
-			dio->iter.iov = dio->iovec;
-		}
-
-		continue_at(&dio->cl, bch2_dio_write_loop_async, NULL);
-		return -EIOCBQUEUED;
-	}
+	return bch2_dio_write_loop(dio);
+err:
+	bch2_disk_reservation_put(c, &dio->iop.op.res);
+	closure_debug_destroy(&dio->cl);
+	bio_put(bio);
+	return ret;
 }
 
 ssize_t bch2_direct_IO(struct kiocb *req, struct iov_iter *iter)
 {
-	struct file *file = req->ki_filp;
-	struct bch_inode_info *inode = file_bch_inode(file);
-	struct bch_fs *c = inode->v.i_sb->s_fs_info;
 	struct blk_plug plug;
 	ssize_t ret;
 
 	blk_start_plug(&plug);
-	ret = ((iov_iter_rw(iter) == WRITE)
-		? bch2_direct_IO_write
-		: bch2_direct_IO_read)(c, req, file, inode, iter, req->ki_pos);
+	ret = iov_iter_rw(iter) == WRITE
+		? bch2_direct_IO_write(req, iter, false)
+		: bch2_direct_IO_read(req, iter);
 	blk_finish_plug(&plug);
 
 	return ret;
@@ -1735,26 +1714,7 @@ ssize_t bch2_direct_IO(struct kiocb *req, struct iov_iter *iter)
 static ssize_t
 bch2_direct_write(struct kiocb *iocb, struct iov_iter *iter)
 {
-	struct file *file = iocb->ki_filp;
-	struct bch_inode_info *inode = file_bch_inode(file);
-	struct bch_fs *c = inode->v.i_sb->s_fs_info;
-	struct address_space *mapping = file->f_mapping;
-	loff_t pos = iocb->ki_pos;
-	ssize_t	ret;
-
-	pagecache_block_get(&mapping->add_lock);
-
-	/* Write and invalidate pagecache range that we're writing to: */
-	ret = write_invalidate_inode_pages_range(file->f_mapping, pos,
-					pos + iov_iter_count(iter) - 1);
-	if (unlikely(ret))
-		goto err;
-
-	ret = bch2_direct_IO_write(c, iocb, file, inode, iter, pos);
-err:
-	pagecache_block_put(&mapping->add_lock);
-
-	return ret;
+	return bch2_direct_IO_write(iocb, iter, true);
 }
 
 static ssize_t __bch2_write_iter(struct kiocb *iocb, struct iov_iter *from)
