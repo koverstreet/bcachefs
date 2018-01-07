@@ -1223,6 +1223,8 @@ static enum {
 
 	buf = &j->buf[old.idx];
 	buf->data->u64s		= cpu_to_le32(old.cur_entry_offset);
+
+	/* XXX: why set this here, and not in journal_write()? */
 	buf->data->last_seq	= cpu_to_le64(last_seq(j));
 
 	j->prev_buf_sectors =
@@ -1732,6 +1734,7 @@ static inline void __journal_pin_add(struct journal *j,
 		list_add(&pin->list, &pin_list->list);
 	else
 		INIT_LIST_HEAD(&pin->list);
+	wake_up(&j->wait);
 }
 
 static void journal_pin_add_entry(struct journal *j,
@@ -1878,10 +1881,16 @@ void bch2_journal_flush_pins(struct journal *j, u64 seq_to_flush)
 	 */
 	if (!test_bit(JOURNAL_REPLAY_DONE, &j->flags))
 		return;
-
+again:
+	/* flushing a journal pin might cause a new one to be added: */
 	wait_event(j->wait,
+		   (pin = journal_get_next_pin(j, seq_to_flush, &pin_seq)) ||
 		   journal_flush_done(j, seq_to_flush) ||
 		   bch2_journal_error(j));
+	if (pin) {
+		pin->flush(j, pin, pin_seq);
+		goto again;
+	}
 }
 
 int bch2_journal_flush_all_pins(struct journal *j)
