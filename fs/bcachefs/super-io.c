@@ -380,27 +380,6 @@ const char *bch2_sb_validate(struct bch_sb_handle *disk_sb)
 
 /* device open: */
 
-static const char *bch2_blkdev_open(const char *path, fmode_t mode,
-				   void *holder, struct block_device **ret)
-{
-	struct block_device *bdev;
-
-	*ret = NULL;
-	bdev = blkdev_get_by_path(path, mode, holder);
-	if (bdev == ERR_PTR(-EBUSY))
-		return "device busy";
-
-	if (IS_ERR(bdev))
-		return "failed to open device";
-
-	if (mode & FMODE_WRITE)
-		bdev_get_queue(bdev)->backing_dev_info->capabilities
-			|= BDI_CAP_STABLE_WRITES;
-
-	*ret = bdev;
-	return NULL;
-}
-
 static void bch2_sb_update(struct bch_fs *c)
 {
 	struct bch_sb *src = c->disk_sb;
@@ -552,44 +531,45 @@ reread:
 	return NULL;
 }
 
-const char *bch2_read_super(const char *path,
-			    struct bch_opts opts,
-			    struct bch_sb_handle *ret)
+int bch2_read_super(const char *path, struct bch_opts opts,
+		    struct bch_sb_handle *sb)
 {
 	u64 offset = opt_get(opts, sb);
 	struct bch_sb_layout layout;
 	const char *err;
-	unsigned i;
+	__le64 *i;
+	int ret;
 
-	memset(ret, 0, sizeof(*ret));
-	ret->mode = FMODE_READ;
+	memset(sb, 0, sizeof(*sb));
+	sb->mode = FMODE_READ;
 
 	if (!opt_get(opts, noexcl))
-		ret->mode |= FMODE_EXCL;
+		sb->mode |= FMODE_EXCL;
 
 	if (!opt_get(opts, nochanges))
-		ret->mode |= FMODE_WRITE;
+		sb->mode |= FMODE_WRITE;
 
-	err = bch2_blkdev_open(path, ret->mode, ret, &ret->bdev);
-	if (err)
-		return err;
+	sb->bdev = blkdev_get_by_path(path, sb->mode, sb);
+	if (IS_ERR(sb->bdev))
+		return PTR_ERR(sb->bdev);
 
 	err = "cannot allocate memory";
-	if (__bch2_super_realloc(ret, 0))
+	ret = __bch2_super_realloc(sb, 0);
+	if (ret)
 		goto err;
 
+	ret = -EFAULT;
 	err = "dynamic fault";
 	if (bch2_fs_init_fault("read_super"))
 		goto err;
 
-	err = read_one_super(ret, offset);
+	ret = -EINVAL;
+	err = read_one_super(sb, offset);
 	if (!err)
 		goto got_super;
 
-	if (offset != BCH_SB_SECTOR) {
-		pr_err("error reading superblock: %s", err);
+	if (opt_defined(opts, sb))
 		goto err;
-	}
 
 	pr_err("error reading default superblock: %s", err);
 
@@ -597,53 +577,57 @@ const char *bch2_read_super(const char *path,
 	 * Error reading primary superblock - read location of backup
 	 * superblocks:
 	 */
-	bio_reset(ret->bio);
-	bio_set_dev(ret->bio, ret->bdev);
-	ret->bio->bi_iter.bi_sector = BCH_SB_LAYOUT_SECTOR;
-	ret->bio->bi_iter.bi_size = sizeof(struct bch_sb_layout);
-	bio_set_op_attrs(ret->bio, REQ_OP_READ, REQ_SYNC|REQ_META);
+	bio_reset(sb->bio);
+	bio_set_dev(sb->bio, sb->bdev);
+	sb->bio->bi_iter.bi_sector = BCH_SB_LAYOUT_SECTOR;
+	sb->bio->bi_iter.bi_size = sizeof(struct bch_sb_layout);
+	bio_set_op_attrs(sb->bio, REQ_OP_READ, REQ_SYNC|REQ_META);
 	/*
 	 * use sb buffer to read layout, since sb buffer is page aligned but
 	 * layout won't be:
 	 */
-	bch2_bio_map(ret->bio, ret->sb);
+	bch2_bio_map(sb->bio, sb->sb);
 
 	err = "IO error";
-	if (submit_bio_wait(ret->bio))
+	if (submit_bio_wait(sb->bio))
 		goto err;
 
-	memcpy(&layout, ret->sb, sizeof(layout));
+	memcpy(&layout, sb->sb, sizeof(layout));
 	err = validate_sb_layout(&layout);
 	if (err)
 		goto err;
 
-	for (i = 0; i < layout.nr_superblocks; i++) {
-		u64 offset = le64_to_cpu(layout.sb_offset[i]);
+	for (i = layout.sb_offset;
+	     i < layout.sb_offset + layout.nr_superblocks; i++) {
+		offset = le64_to_cpu(*i);
 
-		if (offset == BCH_SB_SECTOR)
+		if (offset == opt_get(opts, sb))
 			continue;
 
-		err = read_one_super(ret, offset);
+		err = read_one_super(sb, offset);
 		if (!err)
 			goto got_super;
 	}
-	goto err;
-got_super:
-	pr_debug("read sb version %llu, flags %llu, seq %llu, journal size %u",
-		 le64_to_cpu(ret->sb->version),
-		 le64_to_cpu(ret->sb->flags[0]),
-		 le64_to_cpu(ret->sb->seq),
-		 le32_to_cpu(ret->sb->u64s));
 
+	ret = -EINVAL;
+	goto err;
+
+got_super:
 	err = "Superblock block size smaller than device block size";
-	if (le16_to_cpu(ret->sb->block_size) << 9 <
-	    bdev_logical_block_size(ret->bdev))
+	ret = -EINVAL;
+	if (le16_to_cpu(sb->sb->block_size) << 9 <
+	    bdev_logical_block_size(sb->bdev))
 		goto err;
 
-	return NULL;
+	if (sb->mode & FMODE_WRITE)
+		bdev_get_queue(sb->bdev)->backing_dev_info->capabilities
+			|= BDI_CAP_STABLE_WRITES;
+
+	return 0;
 err:
-	bch2_free_super(ret);
-	return err;
+	bch2_free_super(sb);
+	pr_err("error reading superblock: %s", err);
+	return ret;
 }
 
 /* write superblock: */
