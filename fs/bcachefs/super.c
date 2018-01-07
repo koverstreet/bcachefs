@@ -1438,11 +1438,11 @@ int bch2_dev_add(struct bch_fs *c, const char *path)
 	struct bch_sb_field_members *mi, *dev_mi;
 	struct bch_member saved_mi;
 	unsigned dev_idx, nr_devices, u64s;
-	int ret = -EINVAL;
+	int ret;
 
-	err = bch2_read_super(path, bch2_opts_empty(), &sb);
-	if (err)
-		return -EINVAL;
+	ret = bch2_read_super(path, bch2_opts_empty(), &sb);
+	if (ret)
+		return ret;
 
 	err = bch2_sb_validate(&sb);
 	if (err)
@@ -1546,12 +1546,15 @@ int bch2_dev_online(struct bch_fs *c, const char *path)
 	struct bch_dev *ca;
 	unsigned dev_idx;
 	const char *err;
+	int ret;
 
 	mutex_lock(&c->state_lock);
 
-	err = bch2_read_super(path, bch2_opts_empty(), &sb);
-	if (err)
-		goto err;
+	ret = bch2_read_super(path, bch2_opts_empty(), &sb);
+	if (ret) {
+		mutex_unlock(&c->state_lock);
+		return ret;
+	}
 
 	dev_idx = sb.sb->dev_idx;
 
@@ -1685,33 +1688,33 @@ err:
 
 /* Filesystem open: */
 
-const char *bch2_fs_open(char * const *devices, unsigned nr_devices,
-			 struct bch_opts opts, struct bch_fs **ret)
+struct bch_fs *bch2_fs_open(char * const *devices, unsigned nr_devices,
+			    struct bch_opts opts)
 {
-	const char *err;
+	struct bch_sb_handle *sb = NULL;
 	struct bch_fs *c = NULL;
-	struct bch_sb_handle *sb;
 	unsigned i, best_sb = 0;
+	const char *err;
+	int ret = -ENOMEM;
 
 	if (!nr_devices)
-		return "need at least one device";
+		return ERR_PTR(-EINVAL);
 
 	if (!try_module_get(THIS_MODULE))
-		return "module unloading";
+		return ERR_PTR(-ENODEV);
 
-	err = "cannot allocate memory";
 	sb = kcalloc(nr_devices, sizeof(*sb), GFP_KERNEL);
 	if (!sb)
 		goto err;
 
 	for (i = 0; i < nr_devices; i++) {
-		err = bch2_read_super(devices[i], opts, &sb[i]);
-		if (err)
+		ret = bch2_read_super(devices[i], opts, &sb[i]);
+		if (ret)
 			goto err;
 
 		err = bch2_sb_validate(&sb[i]);
 		if (err)
-			goto err;
+			goto err_print;
 	}
 
 	for (i = 1; i < nr_devices; i++)
@@ -1722,10 +1725,10 @@ const char *bch2_fs_open(char * const *devices, unsigned nr_devices,
 	for (i = 0; i < nr_devices; i++) {
 		err = bch2_dev_in_fs(sb[best_sb].sb, sb[i].sb);
 		if (err)
-			goto err;
+			goto err_print;
 	}
 
-	err = "cannot allocate memory";
+	ret = -ENOMEM;
 	c = bch2_fs_alloc(sb[best_sb].sb, opts);
 	if (!c)
 		goto err;
@@ -1735,43 +1738,40 @@ const char *bch2_fs_open(char * const *devices, unsigned nr_devices,
 	for (i = 0; i < nr_devices; i++)
 		if (__bch2_dev_online(c, &sb[i])) {
 			mutex_unlock(&c->state_lock);
-			goto err;
+			goto err_print;
 		}
 	mutex_unlock(&c->state_lock);
 
 	err = "insufficient devices";
 	if (!bch2_fs_may_start(c))
-		goto err;
+		goto err_print;
 
 	if (!c->opts.nostart) {
 		err = __bch2_fs_start(c);
 		if (err)
-			goto err;
+			goto err_print;
 	}
 
 	err = bch2_fs_online(c);
 	if (err)
-		goto err;
+		goto err_print;
 
-	if (ret)
-		*ret = c;
-	else
-		closure_put(&c->cl);
-
-	err = NULL;
-out:
 	kfree(sb);
 	module_put(THIS_MODULE);
-	if (err)
-		c = NULL;
-	return err;
+	return c;
+err_print:
+	pr_err("bch_fs_open err opening %s: %s",
+	       devices[0], err);
+	ret = -EINVAL;
 err:
 	if (c)
 		bch2_fs_stop(c);
 
 	for (i = 0; i < nr_devices; i++)
 		bch2_free_super(&sb[i]);
-	goto out;
+	kfree(sb);
+	module_put(THIS_MODULE);
+	return ERR_PTR(ret);
 }
 
 static const char *__bch2_fs_open_incremental(struct bch_sb_handle *sb,
@@ -1842,9 +1842,8 @@ const char *bch2_fs_open_incremental(const char *path)
 	struct bch_opts opts = bch2_opts_empty();
 	const char *err;
 
-	err = bch2_read_super(path, opts, &sb);
-	if (err)
-		return err;
+	if (bch2_read_super(path, opts, &sb))
+		return "error reading superblock";
 
 	err = __bch2_fs_open_incremental(&sb, opts);
 	bch2_free_super(&sb);

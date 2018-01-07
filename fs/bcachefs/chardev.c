@@ -64,7 +64,7 @@ found:
 static long bch2_ioctl_assemble(struct bch_ioctl_assemble __user *user_arg)
 {
 	struct bch_ioctl_assemble arg;
-	const char *err;
+	struct bch_fs *c;
 	u64 *user_devs = NULL;
 	char **devs = NULL;
 	unsigned i;
@@ -96,14 +96,10 @@ static long bch2_ioctl_assemble(struct bch_ioctl_assemble __user *user_arg)
 		}
 	}
 
-	err = bch2_fs_open(devs, arg.nr_devs, bch2_opts_empty(), NULL);
-	if (err) {
-		pr_err("Could not open filesystem: %s", err);
-		ret = -EINVAL;
-		goto err;
-	}
-
-	ret = 0;
+	c = bch2_fs_open(devs, arg.nr_devs, bch2_opts_empty());
+	ret = PTR_ERR_OR_ZERO(c);
+	if (!ret)
+		closure_put(&c->cl);
 err:
 	if (devs)
 		for (i = 0; i < arg.nr_devs; i++)

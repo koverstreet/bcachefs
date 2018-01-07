@@ -1036,17 +1036,83 @@ static int bch2_sync_fs(struct super_block *sb, int wait)
 	return bch2_journal_flush(&c->journal);
 }
 
+static struct bch_fs *bch2_path_to_fs(const char *dev)
+{
+	struct bch_fs *c;
+	struct block_device *bdev = lookup_bdev(dev);
+
+	if (IS_ERR(bdev))
+		return ERR_CAST(bdev);
+
+	c = bch2_bdev_to_fs(bdev);
+	bdput(bdev);
+	return c ?: ERR_PTR(-ENOENT);
+}
+
+static struct bch_fs *__bch2_open_as_blockdevs(const char *dev_name, char * const *devs,
+					       unsigned nr_devs, struct bch_opts opts)
+{
+	struct bch_fs *c, *c1, *c2;
+	size_t i;
+
+	if (!nr_devs)
+		return ERR_PTR(-EINVAL);
+
+	c = bch2_fs_open(devs, nr_devs, opts);
+
+	if (IS_ERR(c) && PTR_ERR(c) == -EBUSY) {
+		/*
+		 * Already open?
+		 * Look up each block device, make sure they all belong to a
+		 * filesystem and they all belong to the _same_ filesystem
+		 */
+
+		c1 = bch2_path_to_fs(devs[0]);
+		if (!c1)
+			return c;
+
+		for (i = 1; i < nr_devs; i++) {
+			c2 = bch2_path_to_fs(devs[i]);
+			if (!IS_ERR(c2))
+				closure_put(&c2->cl);
+
+			if (c1 != c2) {
+				closure_put(&c1->cl);
+				return c;
+			}
+		}
+
+		c = c1;
+	}
+
+	if (IS_ERR(c))
+		return c;
+
+	mutex_lock(&c->state_lock);
+
+	if (!bch2_fs_running(c)) {
+		mutex_unlock(&c->state_lock);
+		closure_put(&c->cl);
+		pr_err("err mounting %s: incomplete filesystem", dev_name);
+		return ERR_PTR(-EINVAL);
+	}
+
+	mutex_unlock(&c->state_lock);
+
+	set_bit(BCH_FS_BDEV_MOUNTED, &c->flags);
+	return c;
+}
+
 static struct bch_fs *bch2_open_as_blockdevs(const char *_dev_name,
 					     struct bch_opts opts)
 {
-	size_t nr_devs = 0, i = 0;
-	char *dev_name, *s, **devs;
-	struct bch_fs *c = NULL;
-	const char *err = "cannot allocate memory";
+	char *dev_name = NULL, **devs = NULL, *s;
+	struct bch_fs *c = ERR_PTR(-ENOMEM);
+	size_t i, nr_devs = 0;
 
 	dev_name = kstrdup(_dev_name, GFP_KERNEL);
 	if (!dev_name)
-		return NULL;
+		goto err;
 
 	for (s = dev_name; s; s = strchr(s + 1, ':'))
 		nr_devs++;
@@ -1060,57 +1126,10 @@ static struct bch_fs *bch2_open_as_blockdevs(const char *_dev_name,
 	     (s = strchr(s, ':')) && (*s++ = '\0'))
 		devs[i++] = s;
 
-	err = bch2_fs_open(devs, nr_devs, opts, &c);
-	if (err) {
-		/*
-		 * Already open?
-		 * Look up each block device, make sure they all belong to a
-		 * filesystem and they all belong to the _same_ filesystem
-		 */
-
-		for (i = 0; i < nr_devs; i++) {
-			struct block_device *bdev = lookup_bdev(devs[i]);
-			struct bch_fs *c2;
-
-			if (IS_ERR(bdev))
-				goto err;
-
-			c2 = bch2_bdev_to_fs(bdev);
-			bdput(bdev);
-
-			if (!c)
-				c = c2;
-			else if (c2)
-				closure_put(&c2->cl);
-
-			if (!c)
-				goto err;
-			if (c != c2) {
-				closure_put(&c->cl);
-				goto err;
-			}
-		}
-
-		mutex_lock(&c->state_lock);
-
-		if (!bch2_fs_running(c)) {
-			mutex_unlock(&c->state_lock);
-			closure_put(&c->cl);
-			err = "incomplete filesystem";
-			c = NULL;
-			goto err;
-		}
-
-		mutex_unlock(&c->state_lock);
-	}
-
-	set_bit(BCH_FS_BDEV_MOUNTED, &c->flags);
+	c = __bch2_open_as_blockdevs(_dev_name, devs, nr_devs, opts);
 err:
 	kfree(devs);
 	kfree(dev_name);
-
-	if (!c)
-		pr_err("bch_fs_open err %s", err);
 	return c;
 }
 
@@ -1233,8 +1252,8 @@ static struct dentry *bch2_mount(struct file_system_type *fs_type,
 		return ERR_PTR(ret);
 
 	c = bch2_open_as_blockdevs(dev_name, opts);
-	if (!c)
-		return ERR_PTR(-ENOENT);
+	if (IS_ERR(c))
+		return ERR_CAST(c);
 
 	sb = sget(fs_type, bch2_test_super, bch2_set_super, flags|MS_NOSEC, c);
 	if (IS_ERR(sb)) {
