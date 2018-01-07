@@ -1009,8 +1009,7 @@ static int bch2_statfs(struct dentry *dentry, struct kstatfs *buf)
 	buf->f_type	= BCACHEFS_STATFS_MAGIC;
 	buf->f_bsize	= sb->s_blocksize;
 	buf->f_blocks	= c->capacity >> PAGE_SECTOR_SHIFT;
-	buf->f_bfree	= (c->capacity -
-			   bch2_fs_sectors_used(c, bch2_fs_usage_read(c))) >>
+	buf->f_bfree	= bch2_fs_sectors_free(c, bch2_fs_usage_read(c)) >>
 			   PAGE_SECTOR_SHIFT;
 	buf->f_bavail	= buf->f_bfree;
 	buf->f_files	= atomic_long_read(&c->nr_inodes);

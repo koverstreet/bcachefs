@@ -258,6 +258,11 @@ static u64 reserve_factor(u64 r)
 	return r + (round_up(r, (1 << RESERVE_FACTOR)) >> RESERVE_FACTOR);
 }
 
+static u64 avail_factor(u64 r)
+{
+	return (r << RESERVE_FACTOR) / (1 << RESERVE_FACTOR) + 1;
+}
+
 u64 __bch2_fs_sectors_used(struct bch_fs *c, struct bch_fs_usage stats)
 {
 	struct fs_usage_sum sum = __fs_usage_sum(stats);
@@ -268,6 +273,11 @@ u64 __bch2_fs_sectors_used(struct bch_fs *c, struct bch_fs_usage stats)
 u64 bch2_fs_sectors_used(struct bch_fs *c, struct bch_fs_usage stats)
 {
 	return min(c->capacity, __bch2_fs_sectors_used(c, stats));
+}
+
+u64 bch2_fs_sectors_free(struct bch_fs *c, struct bch_fs_usage stats)
+{
+	return avail_factor(c->capacity - bch2_fs_sectors_used(c, stats));
 }
 
 static inline int is_unavailable_bucket(struct bucket_mark m)
@@ -665,17 +675,12 @@ void bch2_mark_key(struct bch_fs *c, struct bkey_s_c k,
 
 static u64 __recalc_sectors_available(struct bch_fs *c)
 {
-	u64 avail;
 	int cpu;
 
 	for_each_possible_cpu(cpu)
 		per_cpu_ptr(c->usage_percpu, cpu)->available_cache = 0;
 
-	avail = c->capacity - bch2_fs_sectors_used(c, bch2_fs_usage_read(c));
-
-	avail <<= RESERVE_FACTOR;
-	avail /= (1 << RESERVE_FACTOR) + 1;
-	return avail;
+	return bch2_fs_sectors_free(c, bch2_fs_usage_read(c));
 }
 
 /* Used by gc when it's starting: */
@@ -810,7 +815,7 @@ static void buckets_free_rcu(struct rcu_head *rcu)
 
 int bch2_dev_buckets_resize(struct bch_fs *c, struct bch_dev *ca, u64 nbuckets)
 {
-	struct bucket_array *buckets = NULL, *old_buckets;
+	struct bucket_array *buckets = NULL, *old_buckets = NULL;
 	unsigned long *buckets_dirty = NULL;
 	u8 *oldest_gens = NULL;
 	alloc_fifo	free[RESERVE_NR];
