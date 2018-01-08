@@ -531,10 +531,10 @@ reread:
 	return NULL;
 }
 
-int bch2_read_super(const char *path, struct bch_opts opts,
+int bch2_read_super(const char *path, struct bch_opts *opts,
 		    struct bch_sb_handle *sb)
 {
-	u64 offset = opt_get(opts, sb);
+	u64 offset = opt_get(*opts, sb);
 	struct bch_sb_layout layout;
 	const char *err;
 	__le64 *i;
@@ -543,13 +543,23 @@ int bch2_read_super(const char *path, struct bch_opts opts,
 	memset(sb, 0, sizeof(*sb));
 	sb->mode = FMODE_READ;
 
-	if (!opt_get(opts, noexcl))
+	if (!opt_get(*opts, noexcl))
 		sb->mode |= FMODE_EXCL;
 
-	if (!opt_get(opts, nochanges))
+	if (!opt_get(*opts, nochanges))
 		sb->mode |= FMODE_WRITE;
 
 	sb->bdev = blkdev_get_by_path(path, sb->mode, sb);
+	if (IS_ERR(sb->bdev) &&
+	    PTR_ERR(sb->bdev) == -EACCES &&
+	    opt_get(*opts, read_only)) {
+		sb->mode &= ~FMODE_WRITE;
+
+		sb->bdev = blkdev_get_by_path(path, sb->mode, sb);
+		if (!IS_ERR(sb->bdev))
+			opt_set(*opts, nochanges, true);
+	}
+
 	if (IS_ERR(sb->bdev))
 		return PTR_ERR(sb->bdev);
 
@@ -568,7 +578,7 @@ int bch2_read_super(const char *path, struct bch_opts opts,
 	if (!err)
 		goto got_super;
 
-	if (opt_defined(opts, sb))
+	if (opt_defined(*opts, sb))
 		goto err;
 
 	pr_err("error reading default superblock: %s", err);
@@ -601,7 +611,7 @@ int bch2_read_super(const char *path, struct bch_opts opts,
 	     i < layout.sb_offset + layout.nr_superblocks; i++) {
 		offset = le64_to_cpu(*i);
 
-		if (offset == opt_get(opts, sb))
+		if (offset == opt_get(*opts, sb))
 			continue;
 
 		err = read_one_super(sb, offset);
