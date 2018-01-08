@@ -171,7 +171,7 @@ static const struct bch_opts bch2_opts_default = {
 #define opt_defined(_opts, _name)	((_opts)._name##_defined)
 
 #define opt_get(_opts, _name)						\
-	(opt_defined(_opts, _name) ? _opts._name : bch2_opts_default._name)
+	(opt_defined(_opts, _name) ? (_opts)._name : bch2_opts_default._name)
 
 #define opt_set(_opts, _name, _v)					\
 do {									\
