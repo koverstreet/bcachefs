@@ -1432,6 +1432,7 @@ err:
 /* Add new device to running filesystem: */
 int bch2_dev_add(struct bch_fs *c, const char *path)
 {
+	struct bch_opts opts = bch2_opts_empty();
 	struct bch_sb_handle sb;
 	const char *err;
 	struct bch_dev *ca = NULL;
@@ -1440,7 +1441,7 @@ int bch2_dev_add(struct bch_fs *c, const char *path)
 	unsigned dev_idx, nr_devices, u64s;
 	int ret;
 
-	ret = bch2_read_super(path, bch2_opts_empty(), &sb);
+	ret = bch2_read_super(path, &opts, &sb);
 	if (ret)
 		return ret;
 
@@ -1542,6 +1543,7 @@ err:
 /* Hot add existing device to running filesystem: */
 int bch2_dev_online(struct bch_fs *c, const char *path)
 {
+	struct bch_opts opts = bch2_opts_empty();
 	struct bch_sb_handle sb = { NULL };
 	struct bch_dev *ca;
 	unsigned dev_idx;
@@ -1550,7 +1552,7 @@ int bch2_dev_online(struct bch_fs *c, const char *path)
 
 	mutex_lock(&c->state_lock);
 
-	ret = bch2_read_super(path, bch2_opts_empty(), &sb);
+	ret = bch2_read_super(path, &opts, &sb);
 	if (ret) {
 		mutex_unlock(&c->state_lock);
 		return ret;
@@ -1708,7 +1710,7 @@ struct bch_fs *bch2_fs_open(char * const *devices, unsigned nr_devices,
 		goto err;
 
 	for (i = 0; i < nr_devices; i++) {
-		ret = bch2_read_super(devices[i], opts, &sb[i]);
+		ret = bch2_read_super(devices[i], &opts, &sb[i]);
 		if (ret)
 			goto err;
 
@@ -1842,7 +1844,7 @@ const char *bch2_fs_open_incremental(const char *path)
 	struct bch_opts opts = bch2_opts_empty();
 	const char *err;
 
-	if (bch2_read_super(path, opts, &sb))
+	if (bch2_read_super(path, &opts, &sb))
 		return "error reading superblock";
 
 	err = __bch2_fs_open_incremental(&sb, opts);

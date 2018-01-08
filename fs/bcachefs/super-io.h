@@ -94,7 +94,7 @@ int bch2_super_realloc(struct bch_sb_handle *, unsigned);
 
 const char *bch2_sb_validate(struct bch_sb_handle *);
 
-int bch2_read_super(const char *, struct bch_opts, struct bch_sb_handle *);
+int bch2_read_super(const char *, struct bch_opts *, struct bch_sb_handle *);
 void bch2_write_super(struct bch_fs *);
 
 /* BCH_SB_FIELD_journal: */
