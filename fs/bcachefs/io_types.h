@@ -67,10 +67,7 @@ struct bch_read_bio {
 struct bch_write_bio {
 	struct bch_fs		*c;
 	struct bch_dev		*ca;
-	union {
 	struct bch_write_bio	*parent;
-	struct closure		*cl;
-	};
 
 	struct bch_devs_list	failed;
 	u8			order;
@@ -82,7 +79,6 @@ struct bch_write_bio {
 				used_mempool:1;
 
 	unsigned		submit_time_us;
-	void			*data;
 
 	struct bio		bio;
 };

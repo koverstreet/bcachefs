@@ -58,7 +58,7 @@ void __bch2_btree_verify(struct bch_fs *c, struct btree *b)
 	if (IS_ERR_OR_NULL(pick.ca))
 		return;
 
-	bio = bio_alloc_bioset(GFP_NOIO, btree_pages(c), &c->btree_read_bio);
+	bio = bio_alloc_bioset(GFP_NOIO, btree_pages(c), &c->btree_bio);
 	bio_set_dev(bio, pick.ca->disk_sb.bdev);
 	bio->bi_opf		= REQ_OP_READ|REQ_META;
 	bio->bi_iter.bi_sector	= pick.ptr.offset;

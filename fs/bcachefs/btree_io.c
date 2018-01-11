@@ -1352,7 +1352,7 @@ void bch2_btree_node_read(struct bch_fs *c, struct btree *b,
 		return;
 	}
 
-	bio = bio_alloc_bioset(GFP_NOIO, btree_pages(c), &c->btree_read_bio);
+	bio = bio_alloc_bioset(GFP_NOIO, btree_pages(c), &c->btree_bio);
 	rb = container_of(bio, struct btree_read_bio, bio);
 	rb->c			= c;
 	rb->start_time		= local_clock();
@@ -1438,9 +1438,9 @@ static void btree_node_write_done(struct bch_fs *c, struct btree *b)
 }
 
 static void bch2_btree_node_write_error(struct bch_fs *c,
-					struct bch_write_bio *wbio)
+					struct btree_write_bio *wbio)
 {
-	struct btree *b		= wbio->bio.bi_private;
+	struct btree *b		= wbio->wbio.bio.bi_private;
 	struct closure *cl	= wbio->cl;
 	__BKEY_PADDED(k, BKEY_BTREE_PTR_VAL_U64s_MAX) tmp;
 	struct bkey_i_extent *new_key;
@@ -1473,7 +1473,7 @@ retry:
 	new_key = bkey_i_to_extent(&tmp.k);
 	e = extent_i_to_s(new_key);
 	extent_for_each_ptr_backwards(e, ptr)
-		if (bch2_dev_list_has_dev(wbio->failed, ptr->dev))
+		if (bch2_dev_list_has_dev(wbio->wbio.failed, ptr->dev))
 			bch2_extent_drop_ptr(e, ptr);
 
 	if (!bch2_extent_nr_ptrs(e.c))
@@ -1486,7 +1486,7 @@ retry:
 		goto err;
 out:
 	bch2_btree_iter_unlock(&iter);
-	bio_put(&wbio->bio);
+	bio_put(&wbio->wbio.bio);
 	btree_node_write_done(c, b);
 	if (cl)
 		closure_put(cl);
@@ -1511,17 +1511,46 @@ void bch2_btree_write_error_work(struct work_struct *work)
 		if (!bio)
 			break;
 
-		bch2_btree_node_write_error(c, to_wbio(bio));
+		bch2_btree_node_write_error(c,
+			container_of(bio, struct btree_write_bio, wbio.bio));
 	}
+}
+
+static void btree_node_write_work(struct work_struct *work)
+{
+	struct btree_write_bio *wbio =
+		container_of(work, struct btree_write_bio, work);
+	struct closure *cl	= wbio->cl;
+	struct bch_fs *c	= wbio->wbio.c;
+	struct btree *b		= wbio->wbio.bio.bi_private;
+
+	btree_bounce_free(c,
+		wbio->wbio.order,
+		wbio->wbio.used_mempool,
+		wbio->data);
+
+	if (wbio->wbio.failed.nr) {
+		unsigned long flags;
+
+		spin_lock_irqsave(&c->btree_write_error_lock, flags);
+		bio_list_add(&c->btree_write_error_list, &wbio->wbio.bio);
+		spin_unlock_irqrestore(&c->btree_write_error_lock, flags);
+
+		queue_work(c->wq, &c->btree_write_error_work);
+		return;
+	}
+
+	bio_put(&wbio->wbio.bio);
+	btree_node_write_done(c, b);
+	if (cl)
+		closure_put(cl);
 }
 
 static void btree_node_write_endio(struct bio *bio)
 {
-	struct btree *b			= bio->bi_private;
 	struct bch_write_bio *wbio	= to_wbio(bio);
 	struct bch_write_bio *parent	= wbio->split ? wbio->parent : NULL;
 	struct bch_write_bio *orig	= parent ?: wbio;
-	struct closure *cl		= !wbio->split ? wbio->cl : NULL;
 	struct bch_fs *c		= wbio->c;
 	struct bch_dev *ca		= wbio->ca;
 	unsigned long flags;
@@ -1542,27 +1571,13 @@ static void btree_node_write_endio(struct bio *bio)
 	if (parent) {
 		bio_put(bio);
 		bio_endio(&parent->bio);
-		return;
+	} else {
+		struct btree_write_bio *wb =
+			container_of(orig, struct btree_write_bio, wbio);
+
+		INIT_WORK(&wb->work, btree_node_write_work);
+		schedule_work(&wb->work);
 	}
-
-	btree_bounce_free(c,
-		wbio->order,
-		wbio->used_mempool,
-		wbio->data);
-
-	if (wbio->failed.nr) {
-		spin_lock_irqsave(&c->btree_write_error_lock, flags);
-		bio_list_add(&c->btree_write_error_list, &wbio->bio);
-		spin_unlock_irqrestore(&c->btree_write_error_lock, flags);
-
-		queue_work(c->wq, &c->btree_write_error_work);
-		return;
-	}
-
-	bio_put(bio);
-	btree_node_write_done(c, b);
-	if (cl)
-		closure_put(cl);
 }
 
 static int validate_bset_for_write(struct bch_fs *c, struct btree *b,
@@ -1586,7 +1601,7 @@ void __bch2_btree_node_write(struct bch_fs *c, struct btree *b,
 			    struct closure *parent,
 			    enum six_lock_type lock_type_held)
 {
-	struct bch_write_bio *wbio;
+	struct btree_write_bio *wbio;
 	struct bset_tree *t;
 	struct bset *i;
 	struct btree_node *bn = NULL;
@@ -1766,21 +1781,22 @@ void __bch2_btree_node_write(struct bch_fs *c, struct btree *b,
 
 	trace_btree_write(b, bytes_to_write, sectors_to_write);
 
-	wbio = wbio_init(bio_alloc_bioset(GFP_NOIO, 1 << order, &c->bio_write));
-	wbio->cl		= parent;
-	wbio->failed.nr		= 0;
-	wbio->order		= order;
-	wbio->used_mempool	= used_mempool;
-	wbio->data		= data;
-	wbio->bio.bi_opf	= REQ_OP_WRITE|REQ_META|REQ_FUA;
-	wbio->bio.bi_iter.bi_size = sectors_to_write << 9;
-	wbio->bio.bi_end_io	= btree_node_write_endio;
-	wbio->bio.bi_private	= b;
+	wbio = container_of(bio_alloc_bioset(GFP_NOIO, 1 << order, &c->btree_bio),
+			    struct btree_write_bio, wbio.bio);
+	wbio_init(&wbio->wbio.bio);
+	wbio->data			= data;
+	wbio->cl			= parent;
+	wbio->wbio.order		= order;
+	wbio->wbio.used_mempool		= used_mempool;
+	wbio->wbio.bio.bi_opf		= REQ_OP_WRITE|REQ_META|REQ_FUA;
+	wbio->wbio.bio.bi_iter.bi_size	= sectors_to_write << 9;
+	wbio->wbio.bio.bi_end_io	= btree_node_write_endio;
+	wbio->wbio.bio.bi_private	= b;
 
 	if (parent)
 		closure_get(parent);
 
-	bch2_bio_map(&wbio->bio, data);
+	bch2_bio_map(&wbio->wbio.bio, data);
 
 	/*
 	 * If we're appending to a leaf node, we don't technically need FUA -
@@ -1805,7 +1821,7 @@ void __bch2_btree_node_write(struct bch_fs *c, struct btree *b,
 
 	b->written += sectors_to_write;
 
-	bch2_submit_wbio_replicas(wbio, c, BCH_DATA_BTREE, &k.key);
+	bch2_submit_wbio_replicas(&wbio->wbio, c, BCH_DATA_BTREE, &k.key);
 	return;
 err:
 	set_btree_node_noevict(b);
