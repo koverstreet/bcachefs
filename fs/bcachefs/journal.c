@@ -1469,6 +1469,8 @@ void bch2_journal_start(struct bch_fs *c)
 	journal_pin_new_entry(j, 1);
 	bch2_journal_buf_init(j);
 
+	spin_unlock(&j->lock);
+
 	/*
 	 * Adding entries to the next journal entry before allocating space on
 	 * disk for the next journal entry - this is ok, because these entries
@@ -1486,8 +1488,6 @@ void bch2_journal_start(struct bch_fs *c)
 					      journal_seq_blacklist_flush);
 			bl->written = true;
 		}
-
-	spin_unlock(&j->lock);
 
 	queue_delayed_work(system_freezable_wq, &j->reclaim_work, 0);
 }
