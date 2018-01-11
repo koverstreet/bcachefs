@@ -197,6 +197,7 @@ enum btree_flags {
 	BTREE_NODE_write_in_flight,
 	BTREE_NODE_just_written,
 	BTREE_NODE_dying,
+	BTREE_NODE_fake,
 };
 
 BTREE_FLAG(read_in_flight);
@@ -209,6 +210,7 @@ BTREE_FLAG(accessed);
 BTREE_FLAG(write_in_flight);
 BTREE_FLAG(just_written);
 BTREE_FLAG(dying);
+BTREE_FLAG(fake);
 
 static inline struct btree_write *btree_current_write(struct btree *b)
 {

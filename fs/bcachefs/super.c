@@ -676,12 +676,9 @@ static const char *__bch2_fs_start(struct bch_fs *c)
 	struct bch_dev *ca;
 	LIST_HEAD(journal);
 	struct jset *j;
-	struct closure cl;
 	time64_t now;
 	unsigned i;
 	int ret = -EINVAL;
-
-	closure_init_stack(&cl);
 
 	mutex_lock(&c->state_lock);
 
@@ -710,13 +707,13 @@ static const char *__bch2_fs_start(struct bch_fs *c)
 			unsigned level;
 			struct bkey_i *k;
 
-			err = "missing btree root";
 			k = bch2_journal_find_btree_root(c, j, i, &level);
-			if (!k && i < BTREE_ID_ALLOC)
-				goto err;
-
 			if (!k)
 				continue;
+
+			err = "invalid btree root pointer";
+			if (IS_ERR(k))
+				goto err;
 
 			err = "error reading btree root";
 			if (bch2_btree_root_read(c, i, k, level)) {
@@ -726,6 +723,10 @@ static const char *__bch2_fs_start(struct bch_fs *c)
 				mustfix_fsck_err(c, "error reading btree root");
 			}
 		}
+
+		for (i = 0; i < BTREE_ID_NR; i++)
+			if (!c->btree_roots[i].b)
+				bch2_btree_root_alloc(c, i);
 
 		err = "error reading allocation information";
 		ret = bch2_alloc_read(c, &journal);
@@ -743,14 +744,6 @@ static const char *__bch2_fs_start(struct bch_fs *c)
 
 		if (c->opts.noreplay)
 			goto recovery_done;
-
-		err = "cannot allocate new btree root";
-		for (i = 0; i < BTREE_ID_NR; i++)
-			if (!c->btree_roots[i].b &&
-			    bch2_btree_root_alloc(c, i, &cl))
-				goto err;
-
-		closure_sync(&cl);
 
 		/*
 		 * bch2_journal_start() can't happen sooner, or btree_gc_finish()
@@ -807,12 +800,10 @@ static const char *__bch2_fs_start(struct bch_fs *c)
 				goto err;
 			}
 
-		err = "cannot allocate new btree root";
-		for (i = 0; i < BTREE_ID_NR; i++)
-			if (bch2_btree_root_alloc(c, i, &cl))
-				goto err;
-
 		clear_bit(BCH_FS_BRAND_NEW_FS, &c->flags);
+
+		for (i = 0; i < BTREE_ID_NR; i++)
+			bch2_btree_root_alloc(c, i);
 
 		/*
 		 * journal_res_get() will crash if called before this has
@@ -824,9 +815,6 @@ static const char *__bch2_fs_start(struct bch_fs *c)
 		err = "error starting allocator";
 		if (bch2_fs_allocator_start(c))
 			goto err;
-
-		/* Wait for new btree roots to be written: */
-		closure_sync(&cl);
 
 		bch2_inode_init(c, &inode, 0, 0,
 			       S_IFDIR|S_IRWXU|S_IRUGO|S_IXUGO, 0, NULL);
@@ -883,8 +871,6 @@ out:
 	return err;
 err:
 fsck_err:
-	closure_sync(&cl);
-
 	switch (ret) {
 	case BCH_FSCK_ERRORS_NOT_FIXED:
 		bch_err(c, "filesystem contains errors: please report this to the developers");
