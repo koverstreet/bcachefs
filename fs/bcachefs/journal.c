@@ -1140,18 +1140,19 @@ void bch2_journal_buf_put_slowpath(struct journal *j, bool need_write_just_set)
 #endif
 }
 
-static void __journal_entry_new(struct journal *j, int count)
+static void journal_pin_new_entry(struct journal *j, int count)
 {
-	struct journal_entry_pin_list *p = fifo_push_ref(&j->pin);
+	struct journal_entry_pin_list *p;
 
 	/*
 	 * The fifo_push() needs to happen at the same time as j->seq is
 	 * incremented for last_seq() to be calculated correctly
 	 */
+	p = fifo_push_ref(&j->pin);
 	atomic64_inc(&j->seq);
 
-	BUG_ON(journal_seq_pin(j, atomic64_read(&j->seq)) !=
-	       &fifo_peek_back(&j->pin));
+	EBUG_ON(journal_seq_pin(j, atomic64_read(&j->seq)) !=
+		&fifo_peek_back(&j->pin));
 
 	INIT_LIST_HEAD(&p->list);
 	INIT_LIST_HEAD(&p->flushed);
@@ -1159,13 +1160,10 @@ static void __journal_entry_new(struct journal *j, int count)
 	p->devs.nr = 0;
 }
 
-static void __bch2_journal_next_entry(struct journal *j)
+static void bch2_journal_buf_init(struct journal *j)
 {
-	struct journal_buf *buf;
+	struct journal_buf *buf = journal_cur_buf(j);
 
-	__journal_entry_new(j, 1);
-
-	buf = journal_cur_buf(j);
 	memset(buf->has_inode, 0, sizeof(buf->has_inode));
 
 	memset(buf->data, 0, sizeof(*buf->data));
@@ -1217,24 +1215,24 @@ static enum {
 	} while ((v = atomic64_cmpxchg(&j->reservations.counter,
 				       old.v, new.v)) != old.v);
 
-	journal_reclaim_fast(j);
-
 	clear_bit(JOURNAL_NEED_WRITE, &j->flags);
 
 	buf = &j->buf[old.idx];
 	buf->data->u64s		= cpu_to_le32(old.cur_entry_offset);
 
-	/* XXX: why set this here, and not in journal_write()? */
-	buf->data->last_seq	= cpu_to_le64(last_seq(j));
-
 	j->prev_buf_sectors =
 		vstruct_blocks_plus(buf->data, c->block_bits,
 				    journal_entry_u64s_reserve(buf)) *
 		c->opts.block_size;
-
 	BUG_ON(j->prev_buf_sectors > j->cur_buf_sectors);
 
-	__bch2_journal_next_entry(j);
+	journal_reclaim_fast(j);
+	/* XXX: why set this here, and not in journal_write()? */
+	buf->data->last_seq	= cpu_to_le64(last_seq(j));
+
+	journal_pin_new_entry(j, 1);
+
+	bch2_journal_buf_init(j);
 
 	cancel_delayed_work(&j->write_work);
 	spin_unlock(&j->lock);
@@ -1363,12 +1361,20 @@ static int journal_entry_sectors(struct journal *j)
 /*
  * should _only_ called from journal_res_get() - when we actually want a
  * journal reservation - journal entry is open means journal is dirty:
+ *
+ * returns:
+ * 1:		success
+ * 0:		journal currently full (must wait)
+ * -EROFS:	insufficient rw devices
+ * -EIO:	journal error
  */
 static int journal_entry_open(struct journal *j)
 {
 	struct journal_buf *buf = journal_cur_buf(j);
+	union journal_res_state old, new;
 	ssize_t u64s;
-	int ret = 0, sectors;
+	int sectors;
+	u64 v;
 
 	lockdep_assert_held(&j->lock);
 	BUG_ON(journal_entry_is_open(j));
@@ -1398,41 +1404,36 @@ static int journal_entry_open(struct journal *j)
 
 	BUG_ON(u64s >= JOURNAL_ENTRY_CLOSED_VAL);
 
-	if (u64s > le32_to_cpu(buf->data->u64s)) {
-		union journal_res_state old, new;
-		u64 v = atomic64_read(&j->reservations.counter);
+	if (u64s <= le32_to_cpu(buf->data->u64s))
+		return 0;
 
-		/*
-		 * Must be set before marking the journal entry as open:
-		 */
-		j->cur_entry_u64s = u64s;
+	/*
+	 * Must be set before marking the journal entry as open:
+	 */
+	j->cur_entry_u64s = u64s;
 
-		do {
-			old.v = new.v = v;
+	v = atomic64_read(&j->reservations.counter);
+	do {
+		old.v = new.v = v;
 
-			if (old.cur_entry_offset == JOURNAL_ENTRY_ERROR_VAL)
-				return false;
+		if (old.cur_entry_offset == JOURNAL_ENTRY_ERROR_VAL)
+			return -EIO;
 
-			/* Handle any already added entries */
-			new.cur_entry_offset = le32_to_cpu(buf->data->u64s);
-		} while ((v = atomic64_cmpxchg(&j->reservations.counter,
-					       old.v, new.v)) != old.v);
-		ret = 1;
+		/* Handle any already added entries */
+		new.cur_entry_offset = le32_to_cpu(buf->data->u64s);
+	} while ((v = atomic64_cmpxchg(&j->reservations.counter,
+				       old.v, new.v)) != old.v);
 
-		wake_up(&j->wait);
+	if (j->res_get_blocked_start)
+		__bch2_time_stats_update(j->blocked_time,
+					j->res_get_blocked_start);
+	j->res_get_blocked_start = 0;
 
-		if (j->res_get_blocked_start) {
-			__bch2_time_stats_update(j->blocked_time,
-						j->res_get_blocked_start);
-			j->res_get_blocked_start = 0;
-		}
-
-		mod_delayed_work(system_freezable_wq,
-				 &j->write_work,
-				 msecs_to_jiffies(j->write_delay_ms));
-	}
-
-	return ret;
+	mod_delayed_work(system_freezable_wq,
+			 &j->write_work,
+			 msecs_to_jiffies(j->write_delay_ms));
+	wake_up(&j->wait);
+	return 1;
 }
 
 void bch2_journal_start(struct bch_fs *c)
@@ -1449,14 +1450,15 @@ void bch2_journal_start(struct bch_fs *c)
 	set_bit(JOURNAL_STARTED, &j->flags);
 
 	while (atomic64_read(&j->seq) < new_seq)
-		__journal_entry_new(j, 0);
+		journal_pin_new_entry(j, 0);
 
 	/*
 	 * journal_buf_switch() only inits the next journal entry when it
 	 * closes an open journal entry - the very first journal entry gets
 	 * initialized here:
 	 */
-	__bch2_journal_next_entry(j);
+	journal_pin_new_entry(j, 1);
+	bch2_journal_buf_init(j);
 
 	/*
 	 * Adding entries to the next journal entry before allocating space on
@@ -1487,7 +1489,7 @@ int bch2_journal_replay(struct bch_fs *c, struct list_head *list)
 	struct bkey_i *k, *_n;
 	struct jset_entry *entry;
 	struct journal_replay *i, *n;
-	int ret = 0, did_replay = 0;
+	int ret = 0;
 
 	list_for_each_entry_safe(i, n, list, list) {
 		j->replay_pin_list =
@@ -1525,7 +1527,6 @@ int bch2_journal_replay(struct bch_fs *c, struct list_head *list)
 			}
 
 			cond_resched();
-			did_replay = true;
 		}
 
 		if (atomic_dec_and_test(&j->replay_pin_list->count))
@@ -1535,22 +1536,7 @@ int bch2_journal_replay(struct bch_fs *c, struct list_head *list)
 	j->replay_pin_list = NULL;
 
 	bch2_journal_set_replay_done(j);
-
-	if (did_replay) {
-		bch2_journal_flush_pins(&c->journal, U64_MAX);
-
-		/*
-		 * Write a new journal entry _before_ we start journalling new data -
-		 * otherwise, we could end up with btree node bsets with journal seqs
-		 * arbitrarily far in the future vs. the most recently written journal
-		 * entry on disk, if we crash before writing the next journal entry:
-		 */
-		ret = bch2_journal_meta(j);
-		if (ret) {
-			bch_err(c, "journal replay: error %d flushing journal", ret);
-			goto err;
-		}
-	}
+	ret = bch2_journal_flush_all_pins(j);
 err:
 	bch2_journal_entries_free(list);
 	return ret;
@@ -1742,9 +1728,9 @@ static void journal_pin_add_entry(struct journal *j,
 				  struct journal_entry_pin *pin,
 				  journal_pin_flush_fn flush_fn)
 {
-	spin_lock_irq(&j->pin_lock);
+	spin_lock(&j->lock);
 	__journal_pin_add(j, pin_list, pin, flush_fn);
-	spin_unlock_irq(&j->pin_lock);
+	spin_unlock(&j->lock);
 }
 
 void bch2_journal_pin_add(struct journal *j,
@@ -1756,9 +1742,9 @@ void bch2_journal_pin_add(struct journal *j,
 		? journal_seq_pin(j, res->seq)
 		: j->replay_pin_list;
 
-	spin_lock_irq(&j->pin_lock);
+	spin_lock(&j->lock);
 	__journal_pin_add(j, pin_list, pin, flush_fn);
-	spin_unlock_irq(&j->pin_lock);
+	spin_unlock(&j->lock);
 }
 
 static inline bool __journal_pin_drop(struct journal *j,
@@ -1778,13 +1764,12 @@ static inline bool __journal_pin_drop(struct journal *j,
 void bch2_journal_pin_drop(struct journal *j,
 			  struct journal_entry_pin *pin)
 {
-	unsigned long flags;
 	bool wakeup = false;
 
-	spin_lock_irqsave(&j->pin_lock, flags);
+	spin_lock(&j->lock);
 	if (journal_pin_active(pin))
 		wakeup = __journal_pin_drop(j, pin);
-	spin_unlock_irqrestore(&j->pin_lock, flags);
+	spin_unlock(&j->lock);
 
 	/*
 	 * Unpinning a journal entry make make journal_next_bucket() succeed, if
@@ -1801,7 +1786,7 @@ void bch2_journal_pin_add_if_older(struct journal *j,
 				  struct journal_entry_pin *pin,
 				  journal_pin_flush_fn flush_fn)
 {
-	spin_lock_irq(&j->pin_lock);
+	spin_lock(&j->lock);
 
 	if (journal_pin_active(src_pin) &&
 	    (!journal_pin_active(pin) ||
@@ -1812,24 +1797,19 @@ void bch2_journal_pin_add_if_older(struct journal *j,
 		__journal_pin_add(j, src_pin->pin_list, pin, flush_fn);
 	}
 
-	spin_unlock_irq(&j->pin_lock);
+	spin_unlock(&j->lock);
 }
 
 static struct journal_entry_pin *
-journal_get_next_pin(struct journal *j, u64 seq_to_flush, u64 *seq)
+__journal_get_next_pin(struct journal *j, u64 seq_to_flush, u64 *seq)
 {
 	struct journal_entry_pin_list *pin_list;
-	struct journal_entry_pin *ret = NULL;
+	struct journal_entry_pin *ret;
 	unsigned iter;
 
-	/* so we don't iterate over empty fifo entries below: */
-	if (!atomic_read(&fifo_peek_front(&j->pin).count)) {
-		spin_lock(&j->lock);
-		journal_reclaim_fast(j);
-		spin_unlock(&j->lock);
-	}
+	/* no need to iterate over empty fifo entries: */
+	journal_reclaim_fast(j);
 
-	spin_lock_irq(&j->pin_lock);
 	fifo_for_each_entry_ptr(pin_list, &j->pin, iter) {
 		if (journal_pin_seq(j, pin_list) > seq_to_flush)
 			break;
@@ -1840,75 +1820,80 @@ journal_get_next_pin(struct journal *j, u64 seq_to_flush, u64 *seq)
 			/* must be list_del_init(), see bch2_journal_pin_drop() */
 			list_move(&ret->list, &pin_list->flushed);
 			*seq = journal_pin_seq(j, pin_list);
-			break;
+			return ret;
 		}
 	}
-	spin_unlock_irq(&j->pin_lock);
 
-	return ret;
+	return NULL;
 }
 
-static bool journal_flush_done(struct journal *j, u64 seq_to_flush)
+static struct journal_entry_pin *
+journal_get_next_pin(struct journal *j, u64 seq_to_flush, u64 *seq)
 {
-	bool ret;
+	struct journal_entry_pin *ret;
 
 	spin_lock(&j->lock);
-	journal_reclaim_fast(j);
-
-	ret = (fifo_used(&j->pin) == 1 &&
-	       atomic_read(&fifo_peek_front(&j->pin).count) == 1) ||
-		last_seq(j) > seq_to_flush;
+	ret = __journal_get_next_pin(j, seq_to_flush, seq);
 	spin_unlock(&j->lock);
 
 	return ret;
 }
 
-void bch2_journal_flush_pins(struct journal *j, u64 seq_to_flush)
+static int journal_flush_done(struct journal *j, u64 seq_to_flush,
+			      struct journal_entry_pin **pin,
+			      u64 *pin_seq)
 {
-	struct journal_entry_pin *pin;
-	u64 pin_seq;
+	int ret;
 
-	if (!test_bit(JOURNAL_STARTED, &j->flags))
-		return;
+	*pin = NULL;
 
-	while ((pin = journal_get_next_pin(j, seq_to_flush, &pin_seq)))
-		pin->flush(j, pin, pin_seq);
+	ret = bch2_journal_error(j);
+	if (ret)
+		return ret;
 
+	spin_lock(&j->lock);
 	/*
 	 * If journal replay hasn't completed, the unreplayed journal entries
-	 * hold refs on their corresponding sequence numbers and thus this would
-	 * deadlock:
+	 * hold refs on their corresponding sequence numbers
 	 */
-	if (!test_bit(JOURNAL_REPLAY_DONE, &j->flags))
-		return;
-again:
-	/* flushing a journal pin might cause a new one to be added: */
-	wait_event(j->wait,
-		   (pin = journal_get_next_pin(j, seq_to_flush, &pin_seq)) ||
-		   journal_flush_done(j, seq_to_flush) ||
-		   bch2_journal_error(j));
-	if (pin) {
-		pin->flush(j, pin, pin_seq);
-		goto again;
-	}
+	ret = (*pin = __journal_get_next_pin(j, seq_to_flush, pin_seq)) ||
+		!test_bit(JOURNAL_REPLAY_DONE, &j->flags) ||
+		last_seq(j) > seq_to_flush ||
+		(fifo_used(&j->pin) == 1 &&
+		 atomic_read(&fifo_peek_front(&j->pin).count) == 1);
+	spin_unlock(&j->lock);
+
+	return ret;
 }
 
-int bch2_journal_flush_all_pins(struct journal *j)
+int bch2_journal_flush_pins(struct journal *j, u64 seq_to_flush)
 {
 	struct bch_fs *c = container_of(j, struct bch_fs, journal);
+	struct journal_entry_pin *pin;
+	u64 pin_seq;
 	bool flush;
 
 	if (!test_bit(JOURNAL_STARTED, &j->flags))
 		return 0;
-
-	bch2_journal_flush_pins(j, U64_MAX);
+again:
+	wait_event(j->wait, journal_flush_done(j, seq_to_flush, &pin, &pin_seq));
+	if (pin) {
+		/* flushing a journal pin might cause a new one to be added: */
+		pin->flush(j, pin, pin_seq);
+		goto again;
+	}
 
 	spin_lock(&j->lock);
 	flush = last_seq(j) != j->last_seq_ondisk ||
-		c->btree_roots_dirty;
+		(seq_to_flush == U64_MAX && c->btree_roots_dirty);
 	spin_unlock(&j->lock);
 
 	return flush ? bch2_journal_meta(j) : 0;
+}
+
+int bch2_journal_flush_all_pins(struct journal *j)
+{
+	return bch2_journal_flush_pins(j, U64_MAX);
 }
 
 static bool should_discard_bucket(struct journal *j, struct journal_device *ja)
@@ -2757,7 +2742,9 @@ int bch2_journal_flush_device(struct journal *j, unsigned dev_idx)
 			seq = journal_pin_seq(j, p);
 	spin_unlock(&j->lock);
 
-	bch2_journal_flush_pins(j, seq);
+	ret = bch2_journal_flush_pins(j, seq);
+	if (ret)
+		return ret;
 
 	mutex_lock(&c->replicas_gc_lock);
 	bch2_replicas_gc_start(c, 1 << BCH_DATA_JOURNAL);
@@ -2877,7 +2864,6 @@ int bch2_fs_journal_init(struct journal *j)
 	static struct lock_class_key res_key;
 
 	spin_lock_init(&j->lock);
-	spin_lock_init(&j->pin_lock);
 	spin_lock_init(&j->err_lock);
 	init_waitqueue_head(&j->wait);
 	INIT_DELAYED_WORK(&j->write_work, journal_write_work);
@@ -2976,7 +2962,7 @@ ssize_t bch2_journal_print_pins(struct journal *j, char *buf)
 	ssize_t ret = 0;
 	unsigned i;
 
-	spin_lock_irq(&j->pin_lock);
+	spin_lock(&j->lock);
 	fifo_for_each_entry_ptr(pin_list, &j->pin, i) {
 		ret += scnprintf(buf + ret, PAGE_SIZE - ret,
 				 "%llu: count %u\n",
@@ -2997,7 +2983,7 @@ ssize_t bch2_journal_print_pins(struct journal *j, char *buf)
 					 "\t%p %pf\n",
 					 pin, pin->flush);
 	}
-	spin_unlock_irq(&j->pin_lock);
+	spin_unlock(&j->lock);
 
 	return ret;
 }
