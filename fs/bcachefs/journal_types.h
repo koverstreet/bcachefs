@@ -169,12 +169,6 @@ struct journal {
 	DECLARE_FIFO(struct journal_entry_pin_list, pin);
 	struct journal_entry_pin_list *replay_pin_list;
 
-	/*
-	 * Protects the pin lists - the fifo itself is still protected by
-	 * j->lock though:
-	 */
-	spinlock_t		pin_lock;
-
 	struct mutex		blacklist_lock;
 	struct list_head	seq_blacklist;
 
