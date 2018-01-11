@@ -2,6 +2,7 @@
 #define _BCACHEFS_BTREE_IO_H
 
 #include "extents.h"
+#include "io_types.h"
 
 struct bch_fs;
 struct btree_write;
@@ -15,6 +16,13 @@ struct btree_read_bio {
 	struct extent_pick_ptr	pick;
 	struct work_struct	work;
 	struct bio		bio;
+};
+
+struct btree_write_bio {
+	struct closure		*cl;
+	void			*data;
+	struct work_struct	work;
+	struct bch_write_bio	wbio;
 };
 
 static inline void btree_node_io_unlock(struct btree *b)
