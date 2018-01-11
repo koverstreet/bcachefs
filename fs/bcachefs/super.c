@@ -383,7 +383,7 @@ static void bch2_fs_free(struct bch_fs *c)
 	bioset_exit(&c->bio_write);
 	bioset_exit(&c->bio_read_split);
 	bioset_exit(&c->bio_read);
-	bioset_exit(&c->btree_read_bio);
+	bioset_exit(&c->btree_bio);
 	mempool_exit(&c->btree_interior_update_pool);
 	mempool_exit(&c->btree_reserve_pool);
 	mempool_exit(&c->fill_iter);
@@ -565,8 +565,9 @@ static struct bch_fs *bch2_fs_alloc(struct bch_sb *sb, struct bch_opts opts)
 	    mempool_init_kmalloc_pool(&c->btree_interior_update_pool, 1,
 				      sizeof(struct btree_update)) ||
 	    mempool_init_kmalloc_pool(&c->fill_iter, 1, iter_size) ||
-	    bioset_init(&c->btree_read_bio, 1,
-			offsetof(struct btree_read_bio, bio),
+	    bioset_init(&c->btree_bio, 1,
+			max(offsetof(struct btree_read_bio, bio),
+			    offsetof(struct btree_write_bio, wbio.bio)),
 			BIOSET_NEED_BVECS) ||
 	    bioset_init(&c->bio_read, 1, offsetof(struct bch_read_bio, bio),
 			BIOSET_NEED_BVECS) ||
