@@ -285,7 +285,8 @@ static int bch2_gc_btree(struct bch_fs *c, enum btree_id btree_id)
 	mutex_lock(&c->btree_root_lock);
 
 	b = c->btree_roots[btree_id].b;
-	bch2_gc_mark_key(c, BKEY_TYPE_BTREE, bkey_i_to_s_c(&b->key), 0);
+	if (!btree_node_fake(b))
+		bch2_gc_mark_key(c, BKEY_TYPE_BTREE, bkey_i_to_s_c(&b->key), 0);
 	gc_pos_set(c, gc_pos_btree_root(b->btree_id));
 
 	mutex_unlock(&c->btree_root_lock);
@@ -992,8 +993,10 @@ static int bch2_initial_gc_btree(struct bch_fs *c, enum btree_id id)
 	if (!c->btree_roots[id].b)
 		return 0;
 
-	ret = bch2_btree_mark_key_initial(c, BKEY_TYPE_BTREE,
-			   bkey_i_to_s_c(&c->btree_roots[id].b->key));
+	b = c->btree_roots[id].b;
+	if (!btree_node_fake(b))
+		ret = bch2_btree_mark_key_initial(c, BKEY_TYPE_BTREE,
+						  bkey_i_to_s_c(&b->key));
 	if (ret)
 		return ret;
 

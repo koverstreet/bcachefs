@@ -1550,9 +1550,6 @@ void bch2_btree_node_iter_init(struct btree_node_iter *iter,
 
 	__bch2_btree_node_iter_init(iter, is_extents);
 
-	//if (bkey_cmp(search, b->curr_max_key) > 0)
-	//	return;
-
 	switch (bch2_bkey_pack_pos_lossy(&p, search, b)) {
 	case BKEY_PACK_POS_EXACT:
 		packed_search = &p;

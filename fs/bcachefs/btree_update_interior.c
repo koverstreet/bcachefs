@@ -915,6 +915,10 @@ void bch2_btree_interior_update_will_free_node(struct btree_update *as,
 	struct bset_tree *t;
 
 	set_btree_node_dying(b);
+
+	if (btree_node_fake(b))
+		return;
+
 	btree_interior_update_add_node_reference(as, b);
 
 	/*
@@ -1052,7 +1056,7 @@ static void bch2_btree_set_root_inmem(struct btree_update *as, struct btree *b)
 		      gc_pos_btree_root(b->btree_id),
 		      &stats, 0, 0);
 
-	if (old)
+	if (old && !btree_node_fake(old))
 		bch2_btree_node_free_index(as, NULL,
 					   bkey_i_to_s_c(&old->key),
 					   &stats);
@@ -1422,7 +1426,7 @@ bch2_btree_insert_keys_interior(struct btree_update *as, struct btree *b,
 
 	bch2_btree_node_lock_for_insert(c, b, iter);
 
-	if (bch_keylist_u64s(keys) > bch_btree_keys_u64s_remaining(c, b)) {
+	if (!bch2_btree_node_insert_fits(c, b, bch_keylist_u64s(keys))) {
 		bch2_btree_node_unlock_write(b, iter);
 		return -1;
 	}
@@ -1994,45 +1998,43 @@ void bch2_btree_set_root_for_read(struct bch_fs *c, struct btree *b)
 	bch2_btree_set_root_ondisk(c, b, READ);
 }
 
-int bch2_btree_root_alloc(struct bch_fs *c, enum btree_id id,
-			  struct closure *writes)
+void bch2_btree_root_alloc(struct bch_fs *c, enum btree_id id)
 {
-	struct btree_update *as;
 	struct closure cl;
 	struct btree *b;
+	int ret;
 
-	memset(&as, 0, sizeof(as));
 	closure_init_stack(&cl);
 
-	while (1) {
-		/* XXX haven't calculated capacity yet :/ */
-		as = bch2_btree_update_start(c, id, 1,
-					     BTREE_INSERT_USE_RESERVE|
-					     BTREE_INSERT_USE_ALLOC_RESERVE,
-					     &cl);
+	do {
+		ret = bch2_btree_cache_cannibalize_lock(c, &cl);
 		closure_sync(&cl);
+	} while (ret);
 
-		if (!IS_ERR(as))
-			break;
+	b = bch2_btree_node_mem_alloc(c);
+	bch2_btree_cache_cannibalize_unlock(c);
 
-		if (PTR_ERR(as) == -ENOSPC)
-			return PTR_ERR(as);
-	}
+	set_btree_node_fake(b);
+	b->level	= 0;
+	b->btree_id	= id;
 
-	b = __btree_root_alloc(as, 0);
+	bkey_extent_init(&b->key);
+	b->key.k.p = POS_MAX;
+	bkey_i_to_extent(&b->key)->v._data[0] = U64_MAX - id;
 
-	bch2_btree_node_write(c, b, writes, SIX_LOCK_intent);
-	btree_update_drop_new_node(c, b);
+	bch2_bset_init_first(b, &b->data->keys);
+	bch2_btree_build_aux_trees(b);
 
-	BUG_ON(btree_node_root(c, b));
+	b->data->min_key = POS_MIN;
+	b->data->max_key = POS_MAX;
+	b->data->format = bch2_btree_calc_format(b);
+	btree_node_set_format(b, b->data->format);
 
-	bch2_btree_set_root_inmem(as, b);
-	bch2_btree_set_root_ondisk(c, b, WRITE);
+	ret = bch2_btree_node_hash_insert(&c->btree_cache, b, b->level, b->btree_id);
+	BUG_ON(ret);
 
-	bch2_btree_open_bucket_put(c, b);
+	__bch2_btree_set_root_inmem(c, b);
+
+	six_unlock_write(&b->lock);
 	six_unlock_intent(&b->lock);
-
-	bch2_btree_update_free(as);
-
-	return 0;
 }

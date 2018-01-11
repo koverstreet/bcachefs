@@ -292,9 +292,6 @@ int bch2_alloc_read(struct bch_fs *c, struct list_head *journal_replay_list)
 	unsigned i;
 	int ret;
 
-	if (!c->btree_roots[BTREE_ID_ALLOC].b)
-		return 0;
-
 	for_each_btree_key(&iter, c, BTREE_ID_ALLOC, POS_MIN, 0, k) {
 		bch2_alloc_read_key(c, k);
 		bch2_btree_iter_cond_resched(&iter);
@@ -539,7 +536,8 @@ static void bch2_prio_timer_init(struct bch_fs *c, int rw)
 static void verify_not_on_freelist(struct bch_fs *c, struct bch_dev *ca,
 				   size_t bucket)
 {
-	if (expensive_debug_checks(c)) {
+	if (expensive_debug_checks(c) &&
+	    test_bit(BCH_FS_ALLOCATOR_STARTED, &c->flags)) {
 		size_t iter;
 		long i;
 		unsigned j;
@@ -1969,6 +1967,8 @@ static int __bch2_fs_allocator_start(struct bch_fs *c)
 					     ca->mi.bucket_size, GFP_NOIO, 0);
 			ca->nr_invalidated--;
 		}
+
+	set_bit(BCH_FS_ALLOCATOR_STARTED, &c->flags);
 
 	/* now flush dirty btree nodes: */
 	if (invalidating_data) {
