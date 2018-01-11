@@ -150,7 +150,7 @@ int bch2_foreground_maybe_merge(struct bch_fs *, struct btree_iter *,
 				enum btree_node_sibling);
 
 void bch2_btree_set_root_for_read(struct bch_fs *, struct btree *);
-int bch2_btree_root_alloc(struct bch_fs *, enum btree_id, struct closure *);
+void bch2_btree_root_alloc(struct bch_fs *, enum btree_id);
 
 static inline unsigned btree_update_reserve_required(struct bch_fs *c,
 						     struct btree *b)
@@ -280,6 +280,9 @@ static inline size_t bch_btree_keys_u64s_remaining(struct bch_fs *c,
 static inline bool bch2_btree_node_insert_fits(struct bch_fs *c,
 					      struct btree *b, unsigned u64s)
 {
+	if (unlikely(btree_node_fake(b)))
+		return false;
+
 	if (btree_node_is_extents(b)) {
 		/* The insert key might split an existing key
 		 * (bch2_insert_fixup_extent() -> BCH_EXTENT_OVERLAP_MIDDLE case:

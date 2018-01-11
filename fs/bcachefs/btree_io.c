@@ -1649,6 +1649,7 @@ void __bch2_btree_node_write(struct bch_fs *c, struct btree *b,
 		new ^=  (1 << BTREE_NODE_write_idx);
 	} while (cmpxchg_acquire(&b->flags, old, new) != old);
 
+	BUG_ON(btree_node_fake(b));
 	BUG_ON(!list_empty(&b->write_blocked));
 	BUG_ON((b->will_make_reachable != NULL) != !b->written);
 
