@@ -626,7 +626,9 @@ struct btree *bch2_btree_node_get(struct bch_fs *c, struct btree_iter *iter,
 	struct btree *b;
 	struct bset_tree *t;
 
-	BUG_ON(level >= BTREE_MAX_DEPTH);
+	/* btree_node_fill() requires parent to be locked: */
+	EBUG_ON(!btree_node_locked(iter, level + 1));
+	EBUG_ON(level >= BTREE_MAX_DEPTH);
 retry:
 	rcu_read_lock();
 	b = btree_cache_find(bc, k);
@@ -763,6 +765,12 @@ struct btree *bch2_btree_node_get_sibling(struct bch_fs *c,
 
 	if (IS_ERR(ret) && PTR_ERR(ret) == -EINTR) {
 		btree_node_unlock(iter, level);
+
+		if (!bch2_btree_node_relock(iter, level + 1)) {
+			bch2_btree_iter_set_locks_want(iter, level + 2);
+			return ERR_PTR(-EINTR);
+		}
+
 		ret = bch2_btree_node_get(c, iter, &tmp.k, level, SIX_LOCK_intent);
 	}
 
