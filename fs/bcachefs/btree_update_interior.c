@@ -601,8 +601,12 @@ static void btree_update_nodes_reachable(struct closure *cl)
 		b->will_make_reachable = NULL;
 		mutex_unlock(&c->btree_interior_update_lock);
 
+		/*
+		 * b->will_make_reachable prevented it from being written, so
+		 * write it now if it needs to be written:
+		 */
 		six_lock_read(&b->lock);
-		bch2_btree_node_write_dirty(c, b, NULL, btree_node_need_write(b));
+		bch2_btree_node_write_cond(c, b, btree_node_need_write(b));
 		six_unlock_read(&b->lock);
 		mutex_lock(&c->btree_interior_update_lock);
 	}
@@ -651,8 +655,11 @@ retry:
 		list_del(&as->write_blocked_list);
 		mutex_unlock(&c->btree_interior_update_lock);
 
-		bch2_btree_node_write_dirty(c, b, NULL,
-					    btree_node_need_write(b));
+		/*
+		 * b->write_blocked prevented it from being written, so
+		 * write it now if it needs to be written:
+		 */
+		bch2_btree_node_write_cond(c, b, btree_node_need_write(b));
 		six_unlock_read(&b->lock);
 		break;
 
@@ -952,6 +959,12 @@ void bch2_btree_interior_update_will_free_node(struct btree_update *as,
 	clear_btree_node_need_write(b);
 	w = btree_current_write(b);
 
+	/*
+	 * Does this node have any btree_update operations waiting on this node
+	 * to be written?
+	 *
+	 * If so, wake them up when this btree_update operation is reachable:
+	 */
 	llist_for_each_entry_safe(cl, cl_n, llist_del_all(&w->wait.list), list)
 		llist_add(&cl->list, &as->wait.list);
 
@@ -972,6 +985,15 @@ void bch2_btree_interior_update_will_free_node(struct btree_update *as,
 				      &as->journal, interior_update_flush);
 	bch2_journal_pin_drop(&c->journal, &w->journal);
 
+	/*
+	 * Is this a node that isn't reachable on disk yet?
+	 *
+	 * Nodes that aren't reachable yet have writes blocked until they're
+	 * reachable - now that we've cancelled any pending writes and moved
+	 * things waiting on that write to wait on this update, we can drop this
+	 * node from the list of nodes that the other update is making
+	 * reachable, prior to freeing it:
+	 */
 	if (b->will_make_reachable)
 		__btree_interior_update_drop_new_node(b);
 
