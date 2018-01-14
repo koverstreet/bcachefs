@@ -126,7 +126,7 @@ struct btree {
 	 * another write - because that write also won't yet be reachable and
 	 * marking it as completed before it's reachable would be incorrect:
 	 */
-	struct btree_update	*will_make_reachable;
+	unsigned long		will_make_reachable;
 
 	struct btree_ob_ref	ob;
 

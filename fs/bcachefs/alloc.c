@@ -1983,7 +1983,7 @@ again:
 			if (btree_node_dirty(b) && (!b->written || b->level)) {
 				rcu_read_unlock();
 				six_lock_read(&b->lock);
-				bch2_btree_node_write(c, b, NULL, SIX_LOCK_read);
+				bch2_btree_node_write(c, b, SIX_LOCK_read);
 				six_unlock_read(&b->lock);
 				goto again;
 			}
