@@ -178,9 +178,9 @@ static int __btree_node_reclaim(struct bch_fs *c, struct btree *b, bool flush)
 		 * the post write cleanup:
 		 */
 		if (verify_btree_ondisk(c))
-			bch2_btree_node_write(c, b, NULL, SIX_LOCK_intent);
+			bch2_btree_node_write(c, b, SIX_LOCK_intent);
 		else
-			__bch2_btree_node_write(c, b, NULL, SIX_LOCK_read);
+			__bch2_btree_node_write(c, b, SIX_LOCK_read);
 
 		/* wait for any in flight btree write */
 		btree_node_wait_on_io(b);
