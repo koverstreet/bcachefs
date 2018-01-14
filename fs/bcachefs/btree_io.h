@@ -19,7 +19,6 @@ struct btree_read_bio {
 };
 
 struct btree_write_bio {
-	struct closure		*cl;
 	void			*data;
 	struct work_struct	work;
 	struct bch_write_bio	wbio;
@@ -91,11 +90,11 @@ void bch2_btree_complete_write(struct bch_fs *, struct btree *,
 void bch2_btree_write_error_work(struct work_struct *);
 
 void __bch2_btree_node_write(struct bch_fs *, struct btree *,
-			    struct closure *, enum six_lock_type);
+			    enum six_lock_type);
 bool bch2_btree_post_write_cleanup(struct bch_fs *, struct btree *);
 
 void bch2_btree_node_write(struct bch_fs *, struct btree *,
-			  struct closure *, enum six_lock_type);
+			  enum six_lock_type);
 
 /*
  * btree_node_dirty() can be cleared with only a read lock,
@@ -125,7 +124,7 @@ do {									\
 		}							\
 									\
 		if (!btree_node_write_in_flight(_b)) {			\
-			bch2_btree_node_write(_c, _b, NULL, SIX_LOCK_read);\
+			bch2_btree_node_write(_c, _b, SIX_LOCK_read);	\
 			break;						\
 		}							\
 									\

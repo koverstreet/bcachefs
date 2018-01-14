@@ -1425,6 +1425,19 @@ err:
 void bch2_btree_complete_write(struct bch_fs *c, struct btree *b,
 			      struct btree_write *w)
 {
+	unsigned long old, new, v = READ_ONCE(b->will_make_reachable);
+
+	do {
+		old = new = v;
+		if (!(old & 1))
+			break;
+
+		new &= ~1UL;
+	} while ((v = cmpxchg(&b->will_make_reachable, old, new)) != old);
+
+	if (old & 1)
+		closure_put(&((struct btree_update *) new)->cl);
+
 	bch2_journal_pin_drop(&c->journal, &w->journal);
 	closure_wake_up(&w->wait);
 }
@@ -1441,7 +1454,6 @@ static void bch2_btree_node_write_error(struct bch_fs *c,
 					struct btree_write_bio *wbio)
 {
 	struct btree *b		= wbio->wbio.bio.bi_private;
-	struct closure *cl	= wbio->cl;
 	__BKEY_PADDED(k, BKEY_BTREE_PTR_VAL_U64s_MAX) tmp;
 	struct bkey_i_extent *new_key;
 	struct bkey_s_extent e;
@@ -1488,8 +1500,6 @@ out:
 	bch2_btree_iter_unlock(&iter);
 	bio_put(&wbio->wbio.bio);
 	btree_node_write_done(c, b);
-	if (cl)
-		closure_put(cl);
 	return;
 err:
 	set_btree_node_noevict(b);
@@ -1520,7 +1530,6 @@ static void btree_node_write_work(struct work_struct *work)
 {
 	struct btree_write_bio *wbio =
 		container_of(work, struct btree_write_bio, work);
-	struct closure *cl	= wbio->cl;
 	struct bch_fs *c	= wbio->wbio.c;
 	struct btree *b		= wbio->wbio.bio.bi_private;
 
@@ -1542,8 +1551,6 @@ static void btree_node_write_work(struct work_struct *work)
 
 	bio_put(&wbio->wbio.bio);
 	btree_node_write_done(c, b);
-	if (cl)
-		closure_put(cl);
 }
 
 static void btree_node_write_endio(struct bio *bio)
@@ -1598,7 +1605,6 @@ static int validate_bset_for_write(struct bch_fs *c, struct btree *b,
 }
 
 void __bch2_btree_node_write(struct bch_fs *c, struct btree *b,
-			    struct closure *parent,
 			    enum six_lock_type lock_type_held)
 {
 	struct btree_write_bio *wbio;
@@ -1651,7 +1657,7 @@ void __bch2_btree_node_write(struct bch_fs *c, struct btree *b,
 
 	BUG_ON(btree_node_fake(b));
 	BUG_ON(!list_empty(&b->write_blocked));
-	BUG_ON((b->will_make_reachable != NULL) != !b->written);
+	BUG_ON((b->will_make_reachable != 0) != !b->written);
 
 	BUG_ON(b->written >= c->opts.btree_node_size);
 	BUG_ON(bset_written(b, btree_bset_last(b)));
@@ -1786,16 +1792,12 @@ void __bch2_btree_node_write(struct bch_fs *c, struct btree *b,
 			    struct btree_write_bio, wbio.bio);
 	wbio_init(&wbio->wbio.bio);
 	wbio->data			= data;
-	wbio->cl			= parent;
 	wbio->wbio.order		= order;
 	wbio->wbio.used_mempool		= used_mempool;
 	wbio->wbio.bio.bi_opf		= REQ_OP_WRITE|REQ_META|REQ_FUA;
 	wbio->wbio.bio.bi_iter.bi_size	= sectors_to_write << 9;
 	wbio->wbio.bio.bi_end_io	= btree_node_write_endio;
 	wbio->wbio.bio.bi_private	= b;
-
-	if (parent)
-		closure_get(parent);
 
 	bch2_bio_map(&wbio->wbio.bio, data);
 
@@ -1893,7 +1895,6 @@ bool bch2_btree_post_write_cleanup(struct bch_fs *c, struct btree *b)
  * Use this one if the node is intent locked:
  */
 void bch2_btree_node_write(struct bch_fs *c, struct btree *b,
-			  struct closure *parent,
 			  enum six_lock_type lock_type_held)
 {
 	BUG_ON(lock_type_held == SIX_LOCK_write);
@@ -1901,7 +1902,7 @@ void bch2_btree_node_write(struct bch_fs *c, struct btree *b,
 	if (lock_type_held == SIX_LOCK_intent ||
 	    six_trylock_convert(&b->lock, SIX_LOCK_read,
 				SIX_LOCK_intent)) {
-		__bch2_btree_node_write(c, b, parent, SIX_LOCK_intent);
+		__bch2_btree_node_write(c, b, SIX_LOCK_intent);
 
 		/* don't cycle lock unnecessarily: */
 		if (btree_node_just_written(b)) {
@@ -1913,7 +1914,7 @@ void bch2_btree_node_write(struct bch_fs *c, struct btree *b,
 		if (lock_type_held == SIX_LOCK_read)
 			six_lock_downgrade(&b->lock);
 	} else {
-		__bch2_btree_node_write(c, b, parent, SIX_LOCK_read);
+		__bch2_btree_node_write(c, b, SIX_LOCK_read);
 	}
 }
 

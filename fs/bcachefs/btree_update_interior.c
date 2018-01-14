@@ -270,6 +270,17 @@ void bch2_btree_node_free_never_inserted(struct bch_fs *c, struct btree *b)
 void bch2_btree_node_free_inmem(struct bch_fs *c, struct btree *b,
 				struct btree_iter *iter)
 {
+	/*
+	 * Is this a node that isn't reachable on disk yet?
+	 *
+	 * Nodes that aren't reachable yet have writes blocked until they're
+	 * reachable - now that we've cancelled any pending writes and moved
+	 * things waiting on that write to wait on this update, we can drop this
+	 * node from the list of nodes that the other update is making
+	 * reachable, prior to freeing it:
+	 */
+	btree_update_drop_new_node(c, b);
+
 	bch2_btree_iter_node_drop_linked(iter, b);
 
 	__btree_node_free(c, b, iter);
@@ -597,8 +608,9 @@ static void btree_update_nodes_reachable(struct closure *cl)
 	while (as->nr_new_nodes) {
 		struct btree *b = as->new_nodes[--as->nr_new_nodes];
 
-		BUG_ON(b->will_make_reachable != as);
-		b->will_make_reachable = NULL;
+		BUG_ON(b->will_make_reachable &&
+		       (struct btree_update *) b->will_make_reachable != as);
+		b->will_make_reachable = 0;
 		mutex_unlock(&c->btree_interior_update_lock);
 
 		/*
@@ -858,17 +870,25 @@ static void btree_node_will_make_reachable(struct btree_update *as,
 	BUG_ON(b->will_make_reachable);
 
 	as->new_nodes[as->nr_new_nodes++] = b;
-	b->will_make_reachable = as;
+	b->will_make_reachable = 1UL|(unsigned long) as;
+
+	closure_get(&as->cl);
 	mutex_unlock(&c->btree_interior_update_lock);
 }
 
-static void __btree_interior_update_drop_new_node(struct btree *b)
+static void btree_update_drop_new_node(struct bch_fs *c, struct btree *b)
 {
-	struct btree_update *as = b->will_make_reachable;
+	struct btree_update *as;
+	unsigned long v;
 	unsigned i;
 
-	BUG_ON(!as);
+	if (!b->will_make_reachable)
+		return;
 
+	mutex_lock(&c->btree_interior_update_lock);
+	v = xchg(&b->will_make_reachable, 0);
+
+	as = (struct btree_update *) (v & ~1UL);
 	for (i = 0; i < as->nr_new_nodes; i++)
 		if (as->new_nodes[i] == b)
 			goto found;
@@ -876,14 +896,10 @@ static void __btree_interior_update_drop_new_node(struct btree *b)
 	BUG();
 found:
 	array_remove_item(as->new_nodes, as->nr_new_nodes, i);
-	b->will_make_reachable = NULL;
-}
-
-static void btree_update_drop_new_node(struct bch_fs *c, struct btree *b)
-{
-	mutex_lock(&c->btree_interior_update_lock);
-	__btree_interior_update_drop_new_node(b);
 	mutex_unlock(&c->btree_interior_update_lock);
+
+	if (v & 1)
+		closure_put(&as->cl);
 }
 
 static void btree_interior_update_add_node_reference(struct btree_update *as,
@@ -984,18 +1000,6 @@ void bch2_btree_interior_update_will_free_node(struct btree_update *as,
 	bch2_journal_pin_add_if_older(&c->journal, &w->journal,
 				      &as->journal, interior_update_flush);
 	bch2_journal_pin_drop(&c->journal, &w->journal);
-
-	/*
-	 * Is this a node that isn't reachable on disk yet?
-	 *
-	 * Nodes that aren't reachable yet have writes blocked until they're
-	 * reachable - now that we've cancelled any pending writes and moved
-	 * things waiting on that write to wait on this update, we can drop this
-	 * node from the list of nodes that the other update is making
-	 * reachable, prior to freeing it:
-	 */
-	if (b->will_make_reachable)
-		__btree_interior_update_drop_new_node(b);
 
 	mutex_unlock(&c->btree_interior_update_lock);
 }
@@ -1360,7 +1364,7 @@ static void btree_split(struct btree_update *as, struct btree *b,
 		six_unlock_write(&n2->lock);
 		six_unlock_write(&n1->lock);
 
-		bch2_btree_node_write(c, n2, &as->cl, SIX_LOCK_intent);
+		bch2_btree_node_write(c, n2, SIX_LOCK_intent);
 
 		/*
 		 * Note that on recursive parent_keys == keys, so we
@@ -1378,7 +1382,8 @@ static void btree_split(struct btree_update *as, struct btree *b,
 			n3->sib_u64s[1] = U16_MAX;
 
 			btree_split_insert_keys(as, n3, iter, &as->parent_keys);
-			bch2_btree_node_write(c, n3, &as->cl, SIX_LOCK_intent);
+
+			bch2_btree_node_write(c, n3, SIX_LOCK_intent);
 		}
 	} else {
 		trace_btree_compact(c, b);
@@ -1389,7 +1394,7 @@ static void btree_split(struct btree_update *as, struct btree *b,
 		bch2_keylist_add(&as->parent_keys, &n1->key);
 	}
 
-	bch2_btree_node_write(c, n1, &as->cl, SIX_LOCK_intent);
+	bch2_btree_node_write(c, n1, SIX_LOCK_intent);
 
 	/* New nodes all written, now make them visible: */
 
@@ -1690,7 +1695,7 @@ retry:
 	bch2_keylist_add(&as->parent_keys, &delete);
 	bch2_keylist_add(&as->parent_keys, &n->key);
 
-	bch2_btree_node_write(c, n, &as->cl, SIX_LOCK_intent);
+	bch2_btree_node_write(c, n, SIX_LOCK_intent);
 
 	bch2_btree_insert_node(as, parent, iter, &as->parent_keys);
 
@@ -1748,7 +1753,7 @@ static int __btree_node_rewrite(struct bch_fs *c, struct btree_iter *iter,
 
 	trace_btree_gc_rewrite_node(c, b);
 
-	bch2_btree_node_write(c, n, &as->cl, SIX_LOCK_intent);
+	bch2_btree_node_write(c, n, SIX_LOCK_intent);
 
 	if (parent) {
 		bch2_btree_insert_node(as, parent, iter,

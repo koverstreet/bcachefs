@@ -734,7 +734,7 @@ static void bch2_coalesce_nodes(struct bch_fs *c, struct btree_iter *iter,
 		bch2_btree_build_aux_trees(n);
 		six_unlock_write(&n->lock);
 
-		bch2_btree_node_write(c, n, &as->cl, SIX_LOCK_intent);
+		bch2_btree_node_write(c, n, SIX_LOCK_intent);
 	}
 
 	/*
