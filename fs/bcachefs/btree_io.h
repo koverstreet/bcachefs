@@ -97,16 +97,35 @@ bool bch2_btree_post_write_cleanup(struct bch_fs *, struct btree *);
 void bch2_btree_node_write(struct bch_fs *, struct btree *,
 			  struct closure *, enum six_lock_type);
 
-#define bch2_btree_node_write_dirty(_c, _b, _cl, cond)			\
+/*
+ * btree_node_dirty() can be cleared with only a read lock,
+ * and for bch2_btree_node_write_cond() we want to set need_write iff it's
+ * still dirty:
+ */
+static inline void set_btree_node_need_write_if_dirty(struct btree *b)
+{
+	unsigned long old, new, v = READ_ONCE(b->flags);
+
+	do {
+		old = new = v;
+
+		if (!(old & (1 << BTREE_NODE_dirty)))
+			return;
+
+		new |= (1 << BTREE_NODE_need_write);
+	} while ((v = cmpxchg(&b->flags, old, new)) != old);
+}
+
+#define bch2_btree_node_write_cond(_c, _b, cond)			\
 do {									\
 	while ((_b)->written && btree_node_dirty(_b) &&	(cond)) {	\
-		set_btree_node_need_write(_b);				\
-									\
-		if (!btree_node_may_write(_b))				\
+		if (!btree_node_may_write(_b)) {			\
+			set_btree_node_need_write_if_dirty(_b);		\
 			break;						\
+		}							\
 									\
 		if (!btree_node_write_in_flight(_b)) {			\
-			bch2_btree_node_write(_c, _b, _cl, SIX_LOCK_read);\
+			bch2_btree_node_write(_c, _b, NULL, SIX_LOCK_read);\
 			break;						\
 		}							\
 									\
