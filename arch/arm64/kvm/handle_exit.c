@@ -25,6 +25,7 @@
 #include <kvm/arm_psci.h>
 
 #include <asm/esr.h>
+#include <asm/exception.h>
 #include <asm/kvm_asm.h>
 #include <asm/kvm_coproc.h>
 #include <asm/kvm_emulate.h>
@@ -259,7 +260,6 @@ int handle_exit(struct kvm_vcpu *vcpu, struct kvm_run *run,
 			*vcpu_pc(vcpu) -= adj;
 		}
 
-		kvm_inject_vabt(vcpu);
 		return 1;
 	}
 
@@ -296,6 +296,18 @@ int handle_exit(struct kvm_vcpu *vcpu, struct kvm_run *run,
 void handle_exit_early(struct kvm_vcpu *vcpu, struct kvm_run *run,
 		       int exception_index)
 {
+	if (ARM_SERROR_PENDING(exception_index)) {
+		if (this_cpu_has_cap(ARM64_HAS_RAS_EXTN)) {
+			u64 disr = kvm_vcpu_get_disr(vcpu);
+
+			kvm_handle_guest_serror(vcpu, disr_to_esr(disr));
+		} else {
+			kvm_inject_vabt(vcpu);
+		}
+
+		return;
+	}
+
 	exception_index = ARM_EXCEPTION_CODE(exception_index);
 
 	if (exception_index == ARM_EXCEPTION_EL1_SERROR)
