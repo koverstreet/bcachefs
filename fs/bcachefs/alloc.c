@@ -1859,6 +1859,27 @@ int bch2_dev_allocator_start(struct bch_dev *ca)
 	return 0;
 }
 
+static void allocator_start_issue_discards(struct bch_fs *c)
+{
+	struct bch_dev *ca;
+	unsigned i, dev_iter;
+	size_t bu;
+
+	for_each_rw_member(ca, c, dev_iter) {
+		unsigned done = 0;
+
+		fifo_for_each_entry(bu, &ca->free_inc, i) {
+			if (done == ca->nr_invalidated)
+				break;
+
+			blkdev_issue_discard(ca->disk_sb.bdev,
+					     bucket_to_sector(ca, bu),
+					     ca->mi.bucket_size, GFP_NOIO, 0);
+			done++;
+		}
+	}
+}
+
 static int __bch2_fs_allocator_start(struct bch_fs *c)
 {
 	struct bch_dev *ca;
@@ -1938,6 +1959,8 @@ static int __bch2_fs_allocator_start(struct bch_fs *c)
 	 */
 	if (invalidating_data)
 		set_bit(BCH_FS_HOLD_BTREE_WRITES, &c->flags);
+	else
+		allocator_start_issue_discards(c);
 
 	/*
 	 * XXX: it's possible for this to deadlock waiting on journal reclaim,
@@ -1959,12 +1982,12 @@ static int __bch2_fs_allocator_start(struct bch_fs *c)
 			return ret;
 	}
 
+	if (invalidating_data)
+		allocator_start_issue_discards(c);
+
 	for_each_rw_member(ca, c, dev_iter)
 		while (ca->nr_invalidated) {
 			BUG_ON(!fifo_pop(&ca->free_inc, bu));
-			blkdev_issue_discard(ca->disk_sb.bdev,
-					     bucket_to_sector(ca, bu),
-					     ca->mi.bucket_size, GFP_NOIO, 0);
 			ca->nr_invalidated--;
 		}
 
