@@ -30,11 +30,18 @@
 #include <asm/kvm_emulate.h>
 #include <asm/kvm_mmu.h>
 #include <asm/debug-monitors.h>
+#include <asm/traps.h>
 
 #define CREATE_TRACE_POINTS
 #include "trace.h"
 
 typedef int (*exit_handle_fn)(struct kvm_vcpu *, struct kvm_run *);
+
+static void kvm_handle_guest_serror(struct kvm_vcpu *vcpu, u32 esr)
+{
+	if (!arm64_is_ras_serror(esr) || arm64_is_fatal_ras_serror(NULL, esr))
+		kvm_inject_vabt(vcpu);
+}
 
 static int handle_hvc(struct kvm_vcpu *vcpu, struct kvm_run *run)
 {
@@ -262,7 +269,6 @@ int handle_exit(struct kvm_vcpu *vcpu, struct kvm_run *run,
 	case ARM_EXCEPTION_IRQ:
 		return 1;
 	case ARM_EXCEPTION_EL1_SERROR:
-		kvm_inject_vabt(vcpu);
 		/* We may still need to return for single-step */
 		if (!(*vcpu_cpsr(vcpu) & DBG_SPSR_SS)
 			&& kvm_arm_handle_step_debug(vcpu, run))
@@ -284,4 +290,14 @@ int handle_exit(struct kvm_vcpu *vcpu, struct kvm_run *run,
 		run->exit_reason = KVM_EXIT_INTERNAL_ERROR;
 		return 0;
 	}
+}
+
+/* For exit types that need handling before we can be preempted */
+void handle_exit_early(struct kvm_vcpu *vcpu, struct kvm_run *run,
+		       int exception_index)
+{
+	exception_index = ARM_EXCEPTION_CODE(exception_index);
+
+	if (exception_index == ARM_EXCEPTION_EL1_SERROR)
+		kvm_handle_guest_serror(vcpu, kvm_vcpu_get_hsr(vcpu));
 }
