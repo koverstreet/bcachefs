@@ -36,8 +36,19 @@ extern const struct quotactl_ops bch2_quotactl_operations;
 
 #else
 
-#define bch2_quota_acct(_c, _uid, _gid, _counter, _v) (0)
-#define bch2_quota_transfer(_c, _type, _src, _dst, _v) (0)
+static inline int bch2_quota_acct(struct bch_fs *c, struct bch_qid qid,
+				  enum quota_counters counter, s64 v,
+				  enum quota_acct_mode mode)
+{
+	return 0;
+}
+
+static inline int bch2_quota_transfer(struct bch_fs *c, unsigned qtypes,
+				      struct bch_qid dst,
+				      struct bch_qid src, u64 space)
+{
+	return 0;
+}
 
 static inline void bch2_fs_quota_exit(struct bch_fs *c) {}
 static inline void bch2_fs_quota_init(struct bch_fs *c) {}
