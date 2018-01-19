@@ -576,6 +576,95 @@ int bch2_set_page_dirty(struct page *page)
 	return __set_page_dirty_nobuffers(page);
 }
 
+int bch2_page_mkwrite(struct vm_fault *vmf)
+{
+	struct page *page = vmf->page;
+	struct file *file = vmf->vma->vm_file;
+	struct bch_inode_info *inode = file_bch_inode(file);
+	struct address_space *mapping = inode->v.i_mapping;
+	struct bch_fs *c = inode->v.i_sb->s_fs_info;
+	int ret = VM_FAULT_LOCKED;
+
+	sb_start_pagefault(inode->v.i_sb);
+	file_update_time(file);
+
+	/*
+	 * Not strictly necessary, but helps avoid dio writes livelocking in
+	 * write_invalidate_inode_pages_range() - can drop this if/when we get
+	 * a write_invalidate_inode_pages_range() that works without dropping
+	 * page lock before invalidating page
+	 */
+	if (current->pagecache_lock != &mapping->add_lock)
+		pagecache_add_get(&mapping->add_lock);
+
+	lock_page(page);
+	if (page->mapping != mapping ||
+	    page_offset(page) > i_size_read(&inode->v)) {
+		unlock_page(page);
+		ret = VM_FAULT_NOPAGE;
+		goto out;
+	}
+
+	if (bch2_get_page_reservation(c, page, true)) {
+		unlock_page(page);
+		ret = VM_FAULT_SIGBUS;
+		goto out;
+	}
+
+	if (!PageDirty(page))
+		set_page_dirty(page);
+	wait_for_stable_page(page);
+out:
+	if (current->pagecache_lock != &mapping->add_lock)
+		pagecache_add_put(&mapping->add_lock);
+	sb_end_pagefault(inode->v.i_sb);
+	return ret;
+}
+
+void bch2_invalidatepage(struct page *page, unsigned int offset,
+			 unsigned int length)
+{
+	EBUG_ON(!PageLocked(page));
+	EBUG_ON(PageWriteback(page));
+
+	if (offset || length < PAGE_SIZE)
+		return;
+
+	bch2_clear_page_bits(page);
+}
+
+int bch2_releasepage(struct page *page, gfp_t gfp_mask)
+{
+	EBUG_ON(!PageLocked(page));
+	EBUG_ON(PageWriteback(page));
+
+	if (PageDirty(page))
+		return 0;
+
+	bch2_clear_page_bits(page);
+	return 1;
+}
+
+#ifdef CONFIG_MIGRATION
+int bch2_migrate_page(struct address_space *mapping, struct page *newpage,
+		      struct page *page, enum migrate_mode mode)
+{
+	int ret;
+
+	ret = migrate_page_move_mapping(mapping, newpage, page, NULL, mode, 0);
+	if (ret != MIGRATEPAGE_SUCCESS)
+		return ret;
+
+	if (PagePrivate(page)) {
+		*page_state(newpage) = *page_state(page);
+		ClearPagePrivate(page);
+	}
+
+	migrate_page_copy(newpage, page);
+	return MIGRATEPAGE_SUCCESS;
+}
+#endif
+
 /* readpages/writepages: */
 
 static bool bio_can_add_page_contig(struct bio *bio, struct page *page)
@@ -611,6 +700,8 @@ static int bio_add_page_contig(struct bio *bio, struct page *page)
 	__bio_add_page(bio, page);
 	return 0;
 }
+
+/* readpage(s): */
 
 static void bch2_readpages_end_io(struct bio *bio)
 {
@@ -921,6 +1012,40 @@ int bch2_readpage(struct file *file, struct page *page)
 	__bchfs_readpage(c, rbio, inode->v.i_ino, page);
 	return 0;
 }
+
+static void bch2_read_single_page_end_io(struct bio *bio)
+{
+	complete(bio->bi_private);
+}
+
+static int bch2_read_single_page(struct page *page,
+				 struct address_space *mapping)
+{
+	struct bch_inode_info *inode = to_bch_ei(mapping->host);
+	struct bch_fs *c = inode->v.i_sb->s_fs_info;
+	struct bch_read_bio *rbio;
+	int ret;
+	DECLARE_COMPLETION_ONSTACK(done);
+
+	rbio = rbio_init(bio_alloc_bioset(GFP_NOFS, 1, &c->bio_read),
+			 io_opts(c, inode));
+	rbio->bio.bi_private = &done;
+	rbio->bio.bi_end_io = bch2_read_single_page_end_io;
+
+	__bchfs_readpage(c, rbio, inode->v.i_ino, page);
+	wait_for_completion(&done);
+
+	ret = blk_status_to_errno(rbio->bio.bi_status);
+	bio_put(&rbio->bio);
+
+	if (ret < 0)
+		return ret;
+
+	SetPageUptodate(page);
+	return 0;
+}
+
+/* writepages: */
 
 struct bch_writepage_state {
 	struct bch_writepage_io	*io;
@@ -1273,37 +1398,7 @@ int bch2_writepage(struct page *page, struct writeback_control *wbc)
 	return ret;
 }
 
-static void bch2_read_single_page_end_io(struct bio *bio)
-{
-	complete(bio->bi_private);
-}
-
-static int bch2_read_single_page(struct page *page,
-				 struct address_space *mapping)
-{
-	struct bch_inode_info *inode = to_bch_ei(mapping->host);
-	struct bch_fs *c = inode->v.i_sb->s_fs_info;
-	struct bch_read_bio *rbio;
-	int ret;
-	DECLARE_COMPLETION_ONSTACK(done);
-
-	rbio = rbio_init(bio_alloc_bioset(GFP_NOFS, 1, &c->bio_read),
-			 io_opts(c, inode));
-	rbio->bio.bi_private = &done;
-	rbio->bio.bi_end_io = bch2_read_single_page_end_io;
-
-	__bchfs_readpage(c, rbio, inode->v.i_ino, page);
-	wait_for_completion(&done);
-
-	ret = blk_status_to_errno(rbio->bio.bi_status);
-	bio_put(&rbio->bio);
-
-	if (ret < 0)
-		return ret;
-
-	SetPageUptodate(page);
-	return 0;
-}
+/* buffered writes: */
 
 int bch2_write_begin(struct file *file, struct address_space *mapping,
 		     loff_t pos, unsigned len, unsigned flags,
@@ -1415,7 +1510,7 @@ int bch2_write_end(struct file *filp, struct address_space *mapping,
 	return copied;
 }
 
-/* O_DIRECT */
+/* O_DIRECT reads */
 
 static void bch2_dio_read_complete(struct closure *cl)
 {
@@ -1528,6 +1623,8 @@ start:
 		return -EIOCBQUEUED;
 	}
 }
+
+/* O_DIRECT writes */
 
 static void bch2_dio_write_loop_async(struct closure *);
 
@@ -1764,94 +1861,7 @@ ssize_t bch2_write_iter(struct kiocb *iocb, struct iov_iter *from)
 	return ret;
 }
 
-int bch2_page_mkwrite(struct vm_fault *vmf)
-{
-	struct page *page = vmf->page;
-	struct file *file = vmf->vma->vm_file;
-	struct bch_inode_info *inode = file_bch_inode(file);
-	struct address_space *mapping = inode->v.i_mapping;
-	struct bch_fs *c = inode->v.i_sb->s_fs_info;
-	int ret = VM_FAULT_LOCKED;
-
-	sb_start_pagefault(inode->v.i_sb);
-	file_update_time(file);
-
-	/*
-	 * Not strictly necessary, but helps avoid dio writes livelocking in
-	 * write_invalidate_inode_pages_range() - can drop this if/when we get
-	 * a write_invalidate_inode_pages_range() that works without dropping
-	 * page lock before invalidating page
-	 */
-	if (current->pagecache_lock != &mapping->add_lock)
-		pagecache_add_get(&mapping->add_lock);
-
-	lock_page(page);
-	if (page->mapping != mapping ||
-	    page_offset(page) > i_size_read(&inode->v)) {
-		unlock_page(page);
-		ret = VM_FAULT_NOPAGE;
-		goto out;
-	}
-
-	if (bch2_get_page_reservation(c, page, true)) {
-		unlock_page(page);
-		ret = VM_FAULT_SIGBUS;
-		goto out;
-	}
-
-	if (!PageDirty(page))
-		set_page_dirty(page);
-	wait_for_stable_page(page);
-out:
-	if (current->pagecache_lock != &mapping->add_lock)
-		pagecache_add_put(&mapping->add_lock);
-	sb_end_pagefault(inode->v.i_sb);
-	return ret;
-}
-
-void bch2_invalidatepage(struct page *page, unsigned int offset,
-			 unsigned int length)
-{
-	EBUG_ON(!PageLocked(page));
-	EBUG_ON(PageWriteback(page));
-
-	if (offset || length < PAGE_SIZE)
-		return;
-
-	bch2_clear_page_bits(page);
-}
-
-int bch2_releasepage(struct page *page, gfp_t gfp_mask)
-{
-	EBUG_ON(!PageLocked(page));
-	EBUG_ON(PageWriteback(page));
-
-	if (PageDirty(page))
-		return 0;
-
-	bch2_clear_page_bits(page);
-	return 1;
-}
-
-#ifdef CONFIG_MIGRATION
-int bch2_migrate_page(struct address_space *mapping, struct page *newpage,
-		      struct page *page, enum migrate_mode mode)
-{
-	int ret;
-
-	ret = migrate_page_move_mapping(mapping, newpage, page, NULL, mode, 0);
-	if (ret != MIGRATEPAGE_SUCCESS)
-		return ret;
-
-	if (PagePrivate(page)) {
-		*page_state(newpage) = *page_state(page);
-		ClearPagePrivate(page);
-	}
-
-	migrate_page_copy(newpage, page);
-	return MIGRATEPAGE_SUCCESS;
-}
-#endif
+/* fsync: */
 
 int bch2_fsync(struct file *file, loff_t start, loff_t end, int datasync)
 {
@@ -1868,6 +1878,8 @@ int bch2_fsync(struct file *file, loff_t start, loff_t end, int datasync)
 
 	return bch2_journal_flush_seq(&c->journal, inode->ei_journal_seq);
 }
+
+/* truncate: */
 
 static int __bch2_truncate_page(struct bch_inode_info *inode,
 				pgoff_t index, loff_t start, loff_t end)
@@ -2021,6 +2033,8 @@ err_put_pagecache:
 	pagecache_block_put(&mapping->add_lock);
 	return ret;
 }
+
+/* fallocate: */
 
 static long bch2_fpunch(struct bch_inode_info *inode, loff_t offset, loff_t len)
 {
@@ -2383,6 +2397,8 @@ long bch2_fallocate_dispatch(struct file *file, int mode,
 
 	return -EOPNOTSUPP;
 }
+
+/* fseek: */
 
 static bool page_is_data(struct page *page)
 {
