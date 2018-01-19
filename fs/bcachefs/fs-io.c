@@ -49,6 +49,7 @@ struct bchfs_write_op {
 
 struct bch_writepage_io {
 	struct closure			cl;
+	u64				new_sectors;
 
 	/* must be last: */
 	struct bchfs_write_op		op;
@@ -1069,43 +1070,32 @@ static void bch2_writepage_io_done(struct closure *cl)
 	atomic_sub(bio->bi_vcnt, &c->writeback_pages);
 	wake_up(&c->writeback_wait);
 
-	bio_for_each_segment_all(bvec, bio, i) {
-		struct page *page = bvec->bv_page;
-
-		if (io->op.op.error) {
-			SetPageError(page);
-			if (page->mapping)
-				set_bit(AS_EIO, &page->mapping->flags);
-		}
-
-		if (io->op.op.written >= PAGE_SECTORS) {
-			struct bch_page_state old, new;
-
-			old = page_state_cmpxchg(page_state(page), new, {
-				new.sectors = PAGE_SECTORS;
-				new.dirty_sectors = 0;
-			});
-
-			io->op.sectors_added -= old.dirty_sectors;
-			io->op.op.written -= PAGE_SECTORS;
-		}
+	if (io->op.op.error) {
+		bio_for_each_segment_all(bvec, bio, i)
+			SetPageError(bvec->bv_page);
+		set_bit(AS_EIO, &io->op.inode->v.i_mapping->flags);
 	}
 
 	/*
 	 * racing with fallocate can cause us to add fewer sectors than
 	 * expected - but we shouldn't add more sectors than expected:
-	 *
+	 */
+	BUG_ON(io->op.sectors_added > (s64) io->new_sectors);
+
+	/*
 	 * (error (due to going RO) halfway through a page can screw that up
 	 * slightly)
+	 * XXX wtf?
+	   BUG_ON(io->op.sectors_added - io->new_sectors >= (s64) PAGE_SECTORS);
 	 */
-	BUG_ON(io->op.sectors_added >= (s64) PAGE_SECTORS);
 
 	/*
 	 * PageWriteback is effectively our ref on the inode - fixup i_blocks
 	 * before calling end_page_writeback:
 	 */
-	if (io->op.sectors_added)
-		i_sectors_acct(c, io->op.inode, io->op.sectors_added);
+	if (io->op.sectors_added != io->new_sectors)
+		i_sectors_acct(c, io->op.inode,
+			       io->op.sectors_added - (s64) io->new_sectors);
 
 	bio_for_each_segment_all(bvec, bio, i)
 		end_page_writeback(bvec->bv_page);
@@ -1142,11 +1132,11 @@ static void bch2_writepage_io_alloc(struct bch_fs *c,
 					      BIO_MAX_PAGES,
 					      &c->writepage_bioset),
 			     struct bch_writepage_io, op.op.wbio.bio);
-	op = &w->io->op.op;
 
 	closure_init(&w->io->cl, NULL);
-
+	w->io->new_sectors	= 0;
 	bch2_fswrite_op_init(&w->io->op, c, inode, w->opts, false);
+	op			= &w->io->op.op;
 	op->nr_replicas		= nr_replicas;
 	op->res.nr_replicas	= nr_replicas;
 	op->write_point		= writepoint_hashed(inode->ei_last_dirtied);
@@ -1194,8 +1184,12 @@ do_io:
 
 		if (new.reserved)
 			new.nr_replicas = new.reservation_replicas;
-		new.compressed |= w->opts.compression != 0;
 		new.reserved = 0;
+
+		new.compressed |= w->opts.compression != 0;
+
+		new.sectors += new.dirty_sectors;
+		new.dirty_sectors = 0;
 	});
 
 	if (w->io &&
@@ -1205,6 +1199,8 @@ do_io:
 
 	if (!w->io)
 		bch2_writepage_io_alloc(c, w, inode, page, new.nr_replicas);
+
+	w->io->new_sectors += new.sectors - old.sectors;
 
 	BUG_ON(inode != w->io->op.inode);
 	BUG_ON(bio_add_page_contig(&w->io->op.op.wbio.bio, page));
