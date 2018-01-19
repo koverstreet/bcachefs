@@ -173,7 +173,8 @@ static int bch2_set_projid(struct bch_fs *c,
 	qid.q[QTYP_PRJ] = projid;
 
 	ret = bch2_quota_transfer(c, 1 << QTYP_PRJ, qid, inode->ei_qid,
-				  inode->v.i_blocks);
+				  inode->v.i_blocks +
+				  inode->ei_quota_reserved);
 	if (ret)
 		return ret;
 
