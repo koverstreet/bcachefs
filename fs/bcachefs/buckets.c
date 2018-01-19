@@ -713,8 +713,6 @@ int bch2_disk_reservation_add(struct bch_fs *c, struct disk_reservation *res,
 	s64 sectors_available;
 	int ret;
 
-	sectors *= res->nr_replicas;
-
 	lg_local_lock(&c->usage_lock);
 	stats = this_cpu_ptr(c->usage_percpu);
 
