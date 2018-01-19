@@ -749,14 +749,14 @@ static int bch2_set_quota(struct super_block *sb, struct kqid qid,
 	}
 
 	if (qdq->d_fieldmask & QC_SPC_SOFT)
-		new_quota.v.c[Q_SPC].softlimit = cpu_to_le64(qdq->d_spc_softlimit);
+		new_quota.v.c[Q_SPC].softlimit = cpu_to_le64(qdq->d_spc_softlimit >> 9);
 	if (qdq->d_fieldmask & QC_SPC_HARD)
-		new_quota.v.c[Q_SPC].hardlimit = cpu_to_le64(qdq->d_spc_hardlimit);
+		new_quota.v.c[Q_SPC].hardlimit = cpu_to_le64(qdq->d_spc_hardlimit >> 9);
 
 	if (qdq->d_fieldmask & QC_INO_SOFT)
-		new_quota.v.c[Q_INO].softlimit = cpu_to_le64(qdq->d_spc_softlimit);
+		new_quota.v.c[Q_INO].softlimit = cpu_to_le64(qdq->d_ino_softlimit);
 	if (qdq->d_fieldmask & QC_INO_HARD)
-		new_quota.v.c[Q_INO].hardlimit = cpu_to_le64(qdq->d_spc_hardlimit);
+		new_quota.v.c[Q_INO].hardlimit = cpu_to_le64(qdq->d_ino_hardlimit);
 
 	ret = bch2_btree_insert_at(c, NULL, NULL, NULL, 0,
 				   BTREE_INSERT_ENTRY(&iter, &new_quota.k_i));

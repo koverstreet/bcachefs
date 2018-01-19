@@ -217,10 +217,8 @@ static struct bch_inode_info *bch2_vfs_inode_create(struct bch_fs *c,
 
 #ifdef CONFIG_BCACHEFS_POSIX_ACL
 	ret = posix_acl_create(&dir->v, &inode->v.i_mode, &default_acl, &acl);
-	if (ret) {
-		make_bad_inode(&inode->v);
+	if (ret)
 		goto err_make_bad;
-	}
 #endif
 
 	bch2_inode_init(c, &inode_u,
@@ -232,20 +230,17 @@ static struct bch_inode_info *bch2_vfs_inode_create(struct bch_fs *c,
 	inode_u.bi_project = dir->ei_qid.q[QTYP_PRJ];
 
 	ret = bch2_quota_acct(c, bch_qid(&inode_u), Q_INO, 1, BCH_QUOTA_PREALLOC);
-	if (ret) {
-		make_bad_inode(&inode->v);
+	if (ret)
 		goto err_make_bad;
-	}
 
 	ret = bch2_inode_create(c, &inode_u,
 				BLOCKDEV_INODE_MAX, 0,
 				&c->unused_inode_hint);
-	if (unlikely(ret)) {
-		bch2_quota_acct(c, bch_qid(&inode_u), Q_INO, -1, BCH_QUOTA_WARN);
-		goto err_make_bad;
-	}
+	if (unlikely(ret))
+		goto err_acct_quota;
 
 	bch2_vfs_inode_init(c, inode, &inode_u);
+	atomic_long_inc(&c->nr_inodes);
 
 	if (default_acl) {
 		ret = bch2_set_acl(&inode->v, default_acl, ACL_TYPE_DEFAULT);
@@ -260,11 +255,12 @@ static struct bch_inode_info *bch2_vfs_inode_create(struct bch_fs *c,
 	}
 
 	insert_inode_hash(&inode->v);
-	atomic_long_inc(&c->nr_inodes);
 out:
 	posix_acl_release(default_acl);
 	posix_acl_release(acl);
 	return inode;
+err_acct_quota:
+	bch2_quota_acct(c, bch_qid(&inode_u), Q_INO, -1, BCH_QUOTA_WARN);
 err_make_bad:
 	/*
 	 * indicate to bch_evict_inode that the inode was never actually
@@ -643,7 +639,8 @@ static int bch2_setattr_nonsize(struct bch_inode_info *inode, struct iattr *iatt
 
 	if (qtypes) {
 		ret = bch2_quota_transfer(c, qtypes, qid, inode->ei_qid,
-					  inode->v.i_blocks);
+					  inode->v.i_blocks +
+					  inode->ei_quota_reserved);
 		if (ret)
 			goto out_unlock;
 	}
@@ -953,6 +950,7 @@ static void bch2_vfs_inode_init(struct bch_fs *c,
 	inode->v.i_ctime	= bch2_time_to_timespec(c, bi->bi_ctime);
 
 	inode->ei_journal_seq	= 0;
+	inode->ei_quota_reserved = 0;
 	inode->ei_qid		= bch_qid(bi);
 	inode->ei_str_hash	= bch2_hash_info_init(c, bi);
 	inode->ei_inode		= *bi;
@@ -1037,6 +1035,8 @@ static void bch2_evict_inode(struct inode *vinode)
 	truncate_inode_pages_final(&inode->v.i_data);
 
 	clear_inode(&inode->v);
+
+	BUG_ON(!is_bad_inode(&inode->v) && inode->ei_quota_reserved);
 
 	if (!inode->v.i_nlink && !is_bad_inode(&inode->v)) {
 		bch2_quota_acct(c, inode->ei_qid, Q_SPC, -((s64) inode->v.i_blocks),
