@@ -1264,7 +1264,8 @@ extent_insert_check_split_compressed(struct extent_insert_state *s,
 
 		switch (bch2_disk_reservation_add(c,
 				s->trans->disk_res,
-				sectors, flags)) {
+				sectors * bch2_extent_nr_dirty_ptrs(k),
+				flags)) {
 		case 0:
 			break;
 		case -ENOSPC:

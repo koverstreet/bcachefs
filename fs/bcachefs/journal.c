@@ -1514,20 +1514,18 @@ int bch2_journal_replay(struct bch_fs *c, struct list_head *list)
 				 */
 				ret = bch2_alloc_replay_key(c, k->k.p);
 			} else {
-				struct disk_reservation disk_res;
-
 				/*
 				 * We might cause compressed extents to be
 				 * split, so we need to pass in a
 				 * disk_reservation:
 				 */
-				BUG_ON(bch2_disk_reservation_get(c, &disk_res, 0, 0, 0));
+				struct disk_reservation disk_res =
+					bch2_disk_reservation_init(c, 0);
 
 				ret = bch2_btree_insert(c, entry->btree_id, k,
 							&disk_res, NULL, NULL,
 							BTREE_INSERT_NOFAIL|
 							BTREE_INSERT_JOURNAL_REPLAY);
-				bch2_disk_reservation_put(c, &disk_res);
 			}
 
 			if (ret) {

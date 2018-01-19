@@ -237,19 +237,28 @@ int bch2_disk_reservation_add(struct bch_fs *,
 			     struct disk_reservation *,
 			     unsigned, int);
 
+static inline struct disk_reservation
+bch2_disk_reservation_init(struct bch_fs *c, unsigned nr_replicas)
+{
+	return (struct disk_reservation) {
+		.sectors	= 0,
+#if 0
+		/* not used yet: */
+		.gen		= c->capacity_gen,
+#endif
+		.nr_replicas	= nr_replicas,
+	};
+}
+
 static inline int bch2_disk_reservation_get(struct bch_fs *c,
 					    struct disk_reservation *res,
 					    unsigned sectors,
 					    unsigned nr_replicas,
 					    int flags)
 {
-	*res = (struct disk_reservation) {
-		.sectors	= 0,
-		.gen		= c->capacity_gen,
-		.nr_replicas	= nr_replicas,
-	};
+	*res = bch2_disk_reservation_init(c, nr_replicas);
 
-	return bch2_disk_reservation_add(c, res, sectors, flags);
+	return bch2_disk_reservation_add(c, res, sectors * nr_replicas, flags);
 }
 
 int bch2_dev_buckets_resize(struct bch_fs *, struct bch_dev *, u64);
