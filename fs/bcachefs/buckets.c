@@ -788,19 +788,6 @@ recalculate:
 	return ret;
 }
 
-int bch2_disk_reservation_get(struct bch_fs *c,
-			     struct disk_reservation *res,
-			     unsigned sectors, int flags)
-{
-	res->sectors = 0;
-	res->gen = c->capacity_gen;
-	res->nr_replicas = (flags & BCH_DISK_RESERVATION_METADATA)
-		? c->opts.metadata_replicas
-		: c->opts.data_replicas;
-
-	return bch2_disk_reservation_add(c, res, sectors, flags);
-}
-
 /* Startup/shutdown: */
 
 static void buckets_free_rcu(struct rcu_head *rcu)

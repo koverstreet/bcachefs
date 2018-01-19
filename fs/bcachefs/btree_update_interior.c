@@ -514,8 +514,7 @@ static struct btree_reserve *bch2_btree_reserve_get(struct bch_fs *c,
 	struct btree *b;
 	struct disk_reservation disk_res = { 0, 0 };
 	unsigned sectors = nr_nodes * c->opts.btree_node_size;
-	int ret, disk_res_flags = BCH_DISK_RESERVATION_GC_LOCK_HELD|
-		BCH_DISK_RESERVATION_METADATA;
+	int ret, disk_res_flags = BCH_DISK_RESERVATION_GC_LOCK_HELD;
 
 	if (flags & BTREE_INSERT_NOFAIL)
 		disk_res_flags |= BCH_DISK_RESERVATION_NOFAIL;
@@ -528,7 +527,9 @@ static struct btree_reserve *bch2_btree_reserve_get(struct bch_fs *c,
 	if (ret)
 		return ERR_PTR(ret);
 
-	if (bch2_disk_reservation_get(c, &disk_res, sectors, disk_res_flags))
+	if (bch2_disk_reservation_get(c, &disk_res, sectors,
+				      c->opts.metadata_replicas,
+				      disk_res_flags))
 		return ERR_PTR(-ENOSPC);
 
 	BUG_ON(nr_nodes > BTREE_RESERVE_MAX);

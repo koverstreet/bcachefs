@@ -230,16 +230,27 @@ static inline void bch2_disk_reservation_put(struct bch_fs *c,
 }
 
 #define BCH_DISK_RESERVATION_NOFAIL		(1 << 0)
-#define BCH_DISK_RESERVATION_METADATA		(1 << 1)
-#define BCH_DISK_RESERVATION_GC_LOCK_HELD	(1 << 2)
-#define BCH_DISK_RESERVATION_BTREE_LOCKS_HELD	(1 << 3)
+#define BCH_DISK_RESERVATION_GC_LOCK_HELD	(1 << 1)
+#define BCH_DISK_RESERVATION_BTREE_LOCKS_HELD	(1 << 2)
 
 int bch2_disk_reservation_add(struct bch_fs *,
 			     struct disk_reservation *,
 			     unsigned, int);
-int bch2_disk_reservation_get(struct bch_fs *,
-			     struct disk_reservation *,
-			     unsigned, int);
+
+static inline int bch2_disk_reservation_get(struct bch_fs *c,
+					    struct disk_reservation *res,
+					    unsigned sectors,
+					    unsigned nr_replicas,
+					    int flags)
+{
+	*res = (struct disk_reservation) {
+		.sectors	= 0,
+		.gen		= c->capacity_gen,
+		.nr_replicas	= nr_replicas,
+	};
+
+	return bch2_disk_reservation_add(c, res, sectors, flags);
+}
 
 int bch2_dev_buckets_resize(struct bch_fs *, struct bch_dev *, u64);
 void bch2_dev_buckets_free(struct bch_dev *);
