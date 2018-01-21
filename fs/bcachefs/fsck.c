@@ -204,8 +204,8 @@ static int hash_check_key(const struct bch_hash_desc desc,
 			"hash table key at wrong offset: %llu, "
 			"hashed to %llu chain starts at %llu\n%s",
 			k.k->p.offset, hashed, h->chain.pos.offset,
-			bch2_bkey_val_to_text(c, bkey_type(0, desc.btree_id),
-					      buf, sizeof(buf), k))) {
+			(bch2_bkey_val_to_text(c, bkey_type(0, desc.btree_id),
+					       buf, sizeof(buf), k), buf))) {
 		ret = hash_redo_key(desc, h, c, k_iter, k, hashed);
 		if (ret) {
 			bch_err(c, "hash_redo_key err %i", ret);
@@ -224,8 +224,8 @@ static int hash_check_key(const struct bch_hash_desc desc,
 		if (fsck_err_on(k2.k->type == desc.key_type &&
 				!desc.cmp_bkey(k, k2), c,
 				"duplicate hash table keys:\n%s",
-				bch2_bkey_val_to_text(c, bkey_type(0, desc.btree_id),
-						      buf, sizeof(buf), k))) {
+				(bch2_bkey_val_to_text(c, bkey_type(0, desc.btree_id),
+						       buf, sizeof(buf), k), buf))) {
 			ret = bch2_hash_delete_at(desc, &h->info, &h->iter, NULL);
 			if (ret)
 				return ret;
@@ -356,13 +356,13 @@ static int check_dirents(struct bch_fs *c)
 
 		if (fsck_err_on(!w.have_inode, c,
 				"dirent in nonexisting directory:\n%s",
-				bch2_bkey_val_to_text(c, BTREE_ID_DIRENTS,
-						      buf, sizeof(buf), k)) ||
+				(bch2_bkey_val_to_text(c, BTREE_ID_DIRENTS,
+						       buf, sizeof(buf), k), buf)) ||
 		    fsck_err_on(!S_ISDIR(w.inode.bi_mode), c,
 				"dirent in non directory inode type %u:\n%s",
 				mode_to_type(w.inode.bi_mode),
-				bch2_bkey_val_to_text(c, BTREE_ID_DIRENTS,
-						      buf, sizeof(buf), k))) {
+				(bch2_bkey_val_to_text(c, BTREE_ID_DIRENTS,
+						       buf, sizeof(buf), k), buf))) {
 			ret = bch2_btree_delete_at(&iter, 0);
 			if (ret)
 				goto err;
@@ -404,8 +404,8 @@ static int check_dirents(struct bch_fs *c)
 
 		if (fsck_err_on(d_inum == d.k->p.inode, c,
 				"dirent points to own directory:\n%s",
-				bch2_bkey_val_to_text(c, BTREE_ID_DIRENTS,
-						      buf, sizeof(buf), k))) {
+				(bch2_bkey_val_to_text(c, BTREE_ID_DIRENTS,
+						       buf, sizeof(buf), k), buf))) {
 			ret = remove_dirent(c, &iter, d);
 			if (ret)
 				goto err;
@@ -421,8 +421,8 @@ static int check_dirents(struct bch_fs *c)
 
 		if (fsck_err_on(!have_target, c,
 				"dirent points to missing inode:\n%s",
-				bch2_bkey_val_to_text(c, BTREE_ID_DIRENTS,
-						      buf, sizeof(buf), k))) {
+				(bch2_bkey_val_to_text(c, BTREE_ID_DIRENTS,
+						       buf, sizeof(buf), k), buf))) {
 			ret = remove_dirent(c, &iter, d);
 			if (ret)
 				goto err;
@@ -434,8 +434,8 @@ static int check_dirents(struct bch_fs *c)
 				mode_to_type(target.bi_mode), c,
 				"incorrect d_type: should be %u:\n%s",
 				mode_to_type(target.bi_mode),
-				bch2_bkey_val_to_text(c, BTREE_ID_DIRENTS,
-						      buf, sizeof(buf), k))) {
+				(bch2_bkey_val_to_text(c, BTREE_ID_DIRENTS,
+						       buf, sizeof(buf), k), buf))) {
 			struct bkey_i_dirent *n;
 
 			n = kmalloc(bkey_bytes(d.k), GFP_KERNEL);
