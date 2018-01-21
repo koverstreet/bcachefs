@@ -40,14 +40,23 @@ static const unsigned bch_flags_to_xflags[] = {
 	//[__BCH_INODE_PROJINHERIT] = FS_XFLAG_PROJINHERIT;
 };
 
-#define map_flags(_map, _in)						\
-({									\
-	unsigned _i, _out = 0;						\
+#define set_flags(_map, _in, _out)					\
+do {									\
+	unsigned _i;							\
 									\
 	for (_i = 0; _i < ARRAY_SIZE(_map); _i++)			\
 		if ((_in) & (1 << _i))					\
 			(_out) |= _map[_i];				\
-	(_out);								\
+		else							\
+			(_out) &= ~_map[_i];				\
+} while (0)
+
+#define map_flags(_map, _in)						\
+({									\
+	unsigned _out = 0;						\
+									\
+	set_flags(_map, _in, _out);					\
+	_out;								\
 })
 
 #define map_flags_rev(_map, _in)					\
@@ -62,22 +71,23 @@ static const unsigned bch_flags_to_xflags[] = {
 	(_out);								\
 })
 
-#define set_flags(_map, _in, _out)					\
-do {									\
-	unsigned _i;							\
+#define map_defined(_map)						\
+({									\
+	unsigned _in = ~0;						\
 									\
-	for (_i = 0; _i < ARRAY_SIZE(_map); _i++)			\
-		if ((_in) & (1 << _i))					\
-			(_out) |= _map[_i];				\
-		else							\
-			(_out) &= ~_map[_i];				\
-} while (0)
+	map_flags_rev(_map, _in);					\
+})
 
 /* Set VFS inode flags from bcachefs inode: */
 void bch2_inode_flags_to_vfs(struct bch_inode_info *inode)
 {
 	set_flags(bch_flags_to_vfs, inode->ei_inode.bi_flags, inode->v.i_flags);
 }
+
+struct flags_set {
+	unsigned		mask;
+	unsigned		flags;
+};
 
 static int bch2_inode_flags_set(struct bch_inode_info *inode,
 				struct bch_inode_unpacked *bi,
@@ -87,8 +97,9 @@ static int bch2_inode_flags_set(struct bch_inode_info *inode,
 	 * We're relying on btree locking here for exclusion with other ioctl
 	 * calls - use the flags in the btree (@bi), not inode->i_flags:
 	 */
-	unsigned newflags = *((unsigned *) p);
-	unsigned oldflags = bi->bi_flags;
+	struct flags_set *s = p;
+	unsigned newflags = s->flags;
+	unsigned oldflags = bi->bi_flags & s->mask;
 
 	if (((newflags ^ oldflags) & (BCH_INODE_APPEND|BCH_INODE_IMMUTABLE)) &&
 	    !capable(CAP_LINUX_IMMUTABLE))
@@ -99,7 +110,8 @@ static int bch2_inode_flags_set(struct bch_inode_info *inode,
 	    (newflags & (BCH_INODE_NODUMP|BCH_INODE_NOATIME)) != newflags)
 		return -EINVAL;
 
-	bi->bi_flags = newflags;
+	bi->bi_flags &= ~s->mask;
+	bi->bi_flags |= newflags;
 	inode->v.i_ctime = current_time(&inode->v);
 	return 0;
 }
@@ -116,13 +128,14 @@ static int bch2_ioc_setflags(struct bch_fs *c,
 			     struct bch_inode_info *inode,
 			     void __user *arg)
 {
-	unsigned flags, uflags;
+	struct flags_set s = { .mask = map_defined(bch_flags_to_uflags) };
+	unsigned uflags;
 	int ret;
 
 	if (get_user(uflags, (int __user *) arg))
 		return -EFAULT;
 
-	flags = map_flags_rev(bch_flags_to_uflags, uflags);
+	s.flags = map_flags_rev(bch_flags_to_uflags, uflags);
 	if (uflags)
 		return -EOPNOTSUPP;
 
@@ -137,7 +150,7 @@ static int bch2_ioc_setflags(struct bch_fs *c,
 	}
 
 	mutex_lock(&inode->ei_update_lock);
-	ret = __bch2_write_inode(c, inode, bch2_inode_flags_set, &flags);
+	ret = __bch2_write_inode(c, inode, bch2_inode_flags_set, &s);
 
 	if (!ret)
 		bch2_inode_flags_to_vfs(inode);
@@ -187,14 +200,14 @@ static int bch2_ioc_fssetxattr(struct bch_fs *c,
 			       struct bch_inode_info *inode,
 			       struct fsxattr __user *arg)
 {
+	struct flags_set s = { .mask = map_defined(bch_flags_to_xflags) };
 	struct fsxattr fa;
-	unsigned flags;
 	int ret;
 
 	if (copy_from_user(&fa, arg, sizeof(fa)))
 		return -EFAULT;
 
-	flags = map_flags_rev(bch_flags_to_xflags, fa.fsx_xflags);
+	s.flags = map_flags_rev(bch_flags_to_xflags, fa.fsx_xflags);
 	if (fa.fsx_xflags)
 		return -EOPNOTSUPP;
 
@@ -213,7 +226,7 @@ static int bch2_ioc_fssetxattr(struct bch_fs *c,
 	if (ret)
 		goto err_unlock;
 
-	ret = __bch2_write_inode(c, inode, bch2_inode_flags_set, &flags);
+	ret = __bch2_write_inode(c, inode, bch2_inode_flags_set, &s);
 	if (!ret)
 		bch2_inode_flags_to_vfs(inode);
 err_unlock:
