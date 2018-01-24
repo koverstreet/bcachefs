@@ -370,6 +370,8 @@ static inline int bch2_journal_error(struct journal *j)
 		? -EIO : 0;
 }
 
+struct bch_dev;
+
 static inline bool journal_flushes_device(struct bch_dev *ca)
 {
 	return true;
