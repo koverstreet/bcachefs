@@ -176,6 +176,12 @@
 		#address-cells = <1>;
 		#size-cells = <0>;
 
+		lpg {
+			compatible = "qcom,pm8941-lpg";
+
+			status = "disabled";
+		};
+
 		pm8941_wled: wled@d800 {
 			compatible = "qcom,pm8941-wled";
 			reg = <0xd800>;
