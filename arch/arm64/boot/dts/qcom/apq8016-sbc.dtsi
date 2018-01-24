@@ -497,6 +497,14 @@
 						"GPIO-F"; /* LS_EXP_GPIO_F, LSEC pin 28 */
 				};
 			};
+			pm8916@1 {
+				pwm@bc00 {
+					status = "okay";
+
+					pinctrl-names = "default";
+					pinctrl-0 = <&ls_exp_gpio_f>;
+				};
+			};
 		};
 
 		wcnss@a21b000 {

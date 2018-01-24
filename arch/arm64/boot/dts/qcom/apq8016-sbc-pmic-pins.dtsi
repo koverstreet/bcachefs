@@ -32,16 +32,15 @@
 };
 
 &pm8916_mpps {
-
-	pinctrl-names = "default";
-	pinctrl-0 = <&ls_exp_gpio_f>;
-
 	ls_exp_gpio_f: pm8916_mpp4 {
 		pinconf {
 			pins = "mpp4";
 			function = "digital";
 			output-low;
 			power-source = <PM8916_MPP_L5>;	// 1.8V
+
+			/* PWM signal is available on DTEST 1 */
+			qcom,dtest = <1>;
 		};
 	};
 
