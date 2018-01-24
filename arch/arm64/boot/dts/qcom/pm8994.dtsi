@@ -67,5 +67,11 @@
 		reg = <0x1 SPMI_USID>;
 		#address-cells = <1>;
 		#size-cells = <0>;
+
+		lpg {
+			compatible = "qcom,pm8994-lpg";
+
+			status = "disabled";
+		};
 	};
 };
