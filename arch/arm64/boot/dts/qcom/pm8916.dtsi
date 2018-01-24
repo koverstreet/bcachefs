@@ -97,6 +97,14 @@
 		#address-cells = <1>;
 		#size-cells = <0>;
 
+		pm8916_pwm: pwm@bc00 {
+			compatible = "qcom,pm8916-pwm";
+
+			#pwm-cells = <2>;
+
+			status = "disabled";
+		};
+
                 wcd_codec: codec@f000 {
                        compatible = "qcom,pm8916-wcd-analog-codec";
 	               reg = <0xf000 0x200>;
