@@ -327,3 +327,49 @@
 		};
 	};
 };
+
+&spmi_bus {
+	pmic@3 {
+		lpg@b100 {
+			qcom,power-source = <1>;
+
+			qcom,dtest = <0 0>,
+				     <0 0>,
+				     <0 0>,
+				     <4 1>;
+
+			pinctrl-names = "default";
+			pinctrl-0 = <&pmi8994_mpp2_userled4>;
+
+			status = "okay";
+
+			user0 {
+				led-sources = <2>;
+
+				label = "db820c:green:user0";
+				default-state = "on";
+				linux,default-trigger = "heartbeat";
+			};
+
+			user1 {
+				led-sources = <1>;
+
+				label = "db820c:green:user1";
+			};
+
+			user2 {
+				led-sources = <3>;
+
+				label = "db820c:green:user2";
+			};
+
+			user3 {
+				led-sources = <4>;
+
+				label = "db820c:green:user3";
+
+				qcom,dtest = <4 1>;
+			};
+		};
+	};
+};
