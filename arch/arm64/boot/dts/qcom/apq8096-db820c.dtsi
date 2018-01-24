@@ -329,6 +329,34 @@
 };
 
 &spmi_bus {
+	pmic@1 {
+		lpg {
+			status = "okay";
+
+			qcom,dtest = <1 2>,
+				     <2 2>,
+				     <0 0>,
+				     <0 0>,
+				     <0 0>,
+				     <0 0>;
+
+			pinctrl-names = "default";
+			pinctrl-0 = <&pm8994_mpp2_wifi_led>, <&pm8994_mpp4_bt_led>;
+
+			wifi-led {
+				led-sources = <1>;
+				linux,default-trigger = "phy0tx";
+				default-state = "off";
+			};
+
+			bt-led {
+				led-sources = <2>;
+				linux,default-trigger = "hci0-power";
+				default-state = "off";
+			};
+		};
+	};
+
 	pmic@3 {
 		lpg@b100 {
 			qcom,power-source = <1>;

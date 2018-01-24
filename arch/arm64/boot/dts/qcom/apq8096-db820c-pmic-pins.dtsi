@@ -51,6 +51,24 @@
 	};
 };
 
+&pm8994_mpps {
+	pm8994_mpp2_wifi_led: mpp2-wifi-led-active {
+		pins = "mpp2";
+		function = "sink";
+
+		output-low;
+		qcom,dtest = <1>;
+	};
+
+	pm8994_mpp4_bt_led: mpp4-wifi-led-active {
+		pins = "mpp4";
+		function = "sink";
+
+		output-low;
+		qcom,dtest = <2>;
+	};
+};
+
 &pmi8994_mpps {
 	pmi8994_mpp2_userled4: mpp2-userled4 {
 		pins = "mpp2";
