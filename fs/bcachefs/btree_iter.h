@@ -1,8 +1,10 @@
 #ifndef _BCACHEFS_BTREE_ITER_H
 #define _BCACHEFS_BTREE_ITER_H
 
-#include "btree_types.h"
+#include <linux/dynamic_fault.h>
 
+#include "btree_types.h"
+#include "bset.h"
 
 #define BTREE_ITER_UPTODATE		(1 << 0)
 #define BTREE_ITER_WITH_HOLES		(1 << 1)

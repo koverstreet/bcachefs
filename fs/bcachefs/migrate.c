@@ -265,10 +265,6 @@ retry:
 			}
 		}
 		bch2_btree_iter_unlock(&iter);
-
-		/* btree root */
-		mutex_lock(&c->btree_root_lock);
-		mutex_unlock(&c->btree_root_lock);
 	}
 
 	ret = 0;

@@ -1926,7 +1926,11 @@ void bch2_btree_verify_flushed(struct bch_fs *c)
 	unsigned i;
 
 	rcu_read_lock();
-	for_each_cached_btree(b, c, tbl, i, pos)
-		BUG_ON(btree_node_dirty(b));
+	for_each_cached_btree(b, c, tbl, i, pos) {
+		unsigned long flags = READ_ONCE(b->flags);
+
+		BUG_ON((flags & (1 << BTREE_NODE_dirty)) ||
+		       (flags & (1 << BTREE_NODE_write_in_flight)));
+	}
 	rcu_read_unlock();
 }
