@@ -2380,19 +2380,34 @@ err:
 	continue_at(cl, journal_write_done, system_highpri_wq);
 }
 
-static void journal_write_work(struct work_struct *work)
+/*
+ * returns true if there's nothing to flush and no journal write still in flight
+ */
+static bool journal_flush_write(struct journal *j)
 {
-	struct journal *j = container_of(to_delayed_work(work),
-					 struct journal, write_work);
+	bool ret;
+
 	spin_lock(&j->lock);
+	ret = !j->reservations.prev_buf_unwritten;
+
 	if (!journal_entry_is_open(j)) {
 		spin_unlock(&j->lock);
-		return;
+		return ret;
 	}
 
 	set_bit(JOURNAL_NEED_WRITE, &j->flags);
-	if (journal_buf_switch(j, false) != JOURNAL_UNLOCKED)
+	if (journal_buf_switch(j, false) == JOURNAL_UNLOCKED)
+		ret = false;
+	else
 		spin_unlock(&j->lock);
+	return ret;
+}
+
+static void journal_write_work(struct work_struct *work)
+{
+	struct journal *j = container_of(work, struct journal, write_work.work);
+
+	journal_flush_write(j);
 }
 
 /*
@@ -2807,15 +2822,7 @@ void bch2_dev_journal_stop(struct journal *j, struct bch_dev *ca)
 
 void bch2_fs_journal_stop(struct journal *j)
 {
-	if (!test_bit(JOURNAL_STARTED, &j->flags))
-		return;
-
-	/*
-	 * Empty out the journal by first flushing everything pinning existing
-	 * journal entries, then force a brand new empty journal entry to be
-	 * written:
-	 */
-	bch2_journal_flush_all_pins(j);
+	wait_event(j->wait, journal_flush_write(j));
 
 	cancel_delayed_work_sync(&j->write_work);
 	cancel_delayed_work_sync(&j->reclaim_work);

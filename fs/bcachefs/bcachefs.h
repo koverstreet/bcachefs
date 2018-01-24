@@ -548,6 +548,7 @@ struct bch_fs {
 	mempool_t		btree_interior_update_pool;
 	struct list_head	btree_interior_update_list;
 	struct mutex		btree_interior_update_lock;
+	struct closure_waitlist	btree_interior_update_wait;
 
 	struct workqueue_struct	*wq;
 	/* copygc needs its own workqueue for index updates.. */

@@ -589,11 +589,13 @@ static void bch2_btree_update_free(struct btree_update *as)
 
 	mutex_lock(&c->btree_interior_update_lock);
 	list_del(&as->list);
-	mutex_unlock(&c->btree_interior_update_lock);
 
 	closure_debug_destroy(&as->cl);
 	mempool_free(as, &c->btree_interior_update_pool);
 	percpu_ref_put(&c->writes);
+
+	closure_wake_up(&c->btree_interior_update_wait);
+	mutex_unlock(&c->btree_interior_update_lock);
 }
 
 static void btree_update_nodes_reachable(struct closure *cl)

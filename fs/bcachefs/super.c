@@ -197,6 +197,29 @@ int bch2_congested(void *data, int bdi_bits)
  * - allocator depends on the journal (when it rewrites prios and gens)
  */
 
+static void bch_fs_mark_clean(struct bch_fs *c)
+{
+	if (!bch2_journal_error(&c->journal) &&
+	    !test_bit(BCH_FS_ERROR, &c->flags) &&
+	    !test_bit(BCH_FS_EMERGENCY_RO, &c->flags)) {
+		mutex_lock(&c->sb_lock);
+		SET_BCH_SB_CLEAN(c->disk_sb, true);
+		bch2_write_super(c);
+		mutex_unlock(&c->sb_lock);
+	}
+}
+
+static bool btree_interior_updates_done(struct bch_fs *c)
+{
+	bool ret;
+
+	mutex_lock(&c->btree_interior_update_lock);
+	ret = list_empty(&c->btree_interior_update_list);
+	mutex_unlock(&c->btree_interior_update_lock);
+
+	return ret;
+}
+
 static void __bch2_fs_read_only(struct bch_fs *c)
 {
 	struct bch_dev *ca;
@@ -213,17 +236,31 @@ static void __bch2_fs_read_only(struct bch_fs *c)
 	 * Flush journal before stopping allocators, because flushing journal
 	 * blacklist entries involves allocating new btree nodes:
 	 */
-	bch2_journal_flush_all_pins(&c->journal);
+	bch2_journal_flush_pins(&c->journal, U64_MAX - 1);
 
 	for_each_member_device(ca, c, i)
 		bch2_dev_allocator_stop(ca);
 
-	bch2_fs_journal_stop(&c->journal);
+	bch2_journal_flush_all_pins(&c->journal);
 
-	if (!bch2_journal_error(&c->journal) &&
-	    !test_bit(BCH_FS_ERROR, &c->flags))
+	/*
+	 * We need to explicitly wait on btree interior updates to complete
+	 * before stopping the journal, flushing all journal pins isn't
+	 * sufficient, because in the BTREE_INTERIOR_UPDATING_ROOT case btree
+	 * interior updates have to drop their journal pin before they're
+	 * fully complete:
+	 */
+	closure_wait_event(&c->btree_interior_update_wait,
+			   btree_interior_updates_done(c));
+
+	if (!test_bit(BCH_FS_EMERGENCY_RO, &c->flags))
 		bch2_btree_verify_flushed(c);
 
+	bch2_fs_journal_stop(&c->journal);
+
+	/*
+	 * After stopping journal:
+	 */
 	for_each_member_device(ca, c, i)
 		bch2_dev_allocator_remove(c, ca);
 }
@@ -274,19 +311,12 @@ void bch2_fs_read_only(struct bch_fs *c)
 
 	__bch2_fs_read_only(c);
 
+	bch_fs_mark_clean(c);
+
 	wait_event(bch_read_only_wait,
 		   test_bit(BCH_FS_WRITE_DISABLE_COMPLETE, &c->flags));
 
 	clear_bit(BCH_FS_WRITE_DISABLE_COMPLETE, &c->flags);
-
-	if (!bch2_journal_error(&c->journal) &&
-	    !test_bit(BCH_FS_ERROR, &c->flags)) {
-		mutex_lock(&c->sb_lock);
-		SET_BCH_SB_CLEAN(c->disk_sb, true);
-		bch2_write_super(c);
-		mutex_unlock(&c->sb_lock);
-	}
-
 	c->state = BCH_FS_RO;
 }
 
@@ -400,29 +430,22 @@ static void bch2_fs_free(struct bch_fs *c)
 	module_put(THIS_MODULE);
 }
 
-static void bch2_fs_exit(struct bch_fs *c)
+static void bch2_fs_release(struct kobject *kobj)
 {
-	unsigned i;
+	struct bch_fs *c = container_of(kobj, struct bch_fs, kobj);
 
-	cancel_delayed_work_sync(&c->pd_controllers_update);
-	cancel_work_sync(&c->read_only_work);
-
-	for (i = 0; i < c->sb.nr_devices; i++)
-		if (c->devs[i])
-			bch2_dev_free(rcu_dereference_protected(c->devs[i], 1));
-
-	closure_debug_destroy(&c->cl);
-	kobject_put(&c->kobj);
+	bch2_fs_free(c);
 }
 
-static void bch2_fs_offline(struct bch_fs *c)
+void bch2_fs_stop(struct bch_fs *c)
 {
 	struct bch_dev *ca;
 	unsigned i;
 
-	mutex_lock(&bch_fs_list_lock);
-	list_del(&c->list);
-	mutex_unlock(&bch_fs_list_lock);
+	mutex_lock(&c->state_lock);
+	BUG_ON(c->state == BCH_FS_STOPPING);
+	c->state = BCH_FS_STOPPING;
+	mutex_unlock(&c->state_lock);
 
 	for_each_member_device(ca, c, i)
 		if (ca->kobj.state_in_sysfs &&
@@ -440,30 +463,31 @@ static void bch2_fs_offline(struct bch_fs *c)
 	kobject_put(&c->opts_dir);
 	kobject_put(&c->internal);
 
+	mutex_lock(&bch_fs_list_lock);
+	list_del(&c->list);
+	mutex_unlock(&bch_fs_list_lock);
+
+	closure_sync(&c->cl);
+	closure_debug_destroy(&c->cl);
+
 	mutex_lock(&c->state_lock);
 	__bch2_fs_read_only(c);
 	mutex_unlock(&c->state_lock);
-}
 
-static void bch2_fs_release(struct kobject *kobj)
-{
-	struct bch_fs *c = container_of(kobj, struct bch_fs, kobj);
+	bch_fs_mark_clean(c);
 
-	bch2_fs_free(c);
-}
+	for_each_member_device(ca, c, i)
+		cancel_work_sync(&ca->io_error_work);
 
-void bch2_fs_stop(struct bch_fs *c)
-{
-	mutex_lock(&c->state_lock);
-	BUG_ON(c->state == BCH_FS_STOPPING);
-	c->state = BCH_FS_STOPPING;
-	mutex_unlock(&c->state_lock);
+	cancel_work_sync(&c->btree_write_error_work);
+	cancel_delayed_work_sync(&c->pd_controllers_update);
+	cancel_work_sync(&c->read_only_work);
 
-	bch2_fs_offline(c);
+	for (i = 0; i < c->sb.nr_devices; i++)
+		if (c->devs[i])
+			bch2_dev_free(rcu_dereference_protected(c->devs[i], 1));
 
-	closure_sync(&c->cl);
-
-	bch2_fs_exit(c);
+	kobject_put(&c->kobj);
 }
 
 static struct bch_fs *bch2_fs_alloc(struct bch_sb *sb, struct bch_opts opts)
