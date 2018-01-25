@@ -57,10 +57,20 @@ static void btree_node_data_free(struct bch_fs *c, struct btree *b)
 	list_move(&b->list, &bc->freed);
 }
 
+static int bch2_btree_cache_cmp_fn(struct rhashtable_compare_arg *arg,
+				   const void *obj)
+{
+	const struct btree *b = obj;
+	const u64 *v = arg->key;
+
+	return PTR_HASH(&b->key) == *v ? 0 : 1;
+}
+
 static const struct rhashtable_params bch_btree_cache_params = {
 	.head_offset	= offsetof(struct btree, hash),
 	.key_offset	= offsetof(struct btree, key.v),
 	.key_len	= sizeof(struct bch_extent_ptr),
+	.obj_cmpfn	= bch2_btree_cache_cmp_fn,
 };
 
 static void btree_node_data_alloc(struct bch_fs *c, struct btree *b, gfp_t gfp)
