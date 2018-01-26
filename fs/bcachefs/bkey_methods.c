@@ -72,6 +72,10 @@ const char *__bch2_bkey_invalid(struct bch_fs *c, enum bkey_type type,
 	if (k.k->p.snapshot)
 		return "nonzero snapshot";
 
+	if (type != BKEY_TYPE_BTREE &&
+	    !bkey_cmp(k.k->p, POS_MAX))
+		return "POS_MAX key";
+
 	return NULL;
 }
 
