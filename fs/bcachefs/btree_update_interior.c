@@ -885,13 +885,15 @@ static void btree_update_drop_new_node(struct bch_fs *c, struct btree *b)
 	unsigned long v;
 	unsigned i;
 
-	if (!b->will_make_reachable)
-		return;
-
 	mutex_lock(&c->btree_interior_update_lock);
 	v = xchg(&b->will_make_reachable, 0);
-
 	as = (struct btree_update *) (v & ~1UL);
+
+	if (!as) {
+		mutex_unlock(&c->btree_interior_update_lock);
+		return;
+	}
+
 	for (i = 0; i < as->nr_new_nodes; i++)
 		if (as->new_nodes[i] == b)
 			goto found;
