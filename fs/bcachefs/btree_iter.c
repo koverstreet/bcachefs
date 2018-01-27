@@ -510,11 +510,15 @@ static inline void __btree_iter_advance(struct btree_iter *iter)
  */
 static void btree_iter_verify_new_node(struct btree_iter *iter, struct btree *b)
 {
+	struct btree *parent;
 	bool parent_locked;
 	struct bkey_packed *k;
 
-	if (!IS_ENABLED(CONFIG_BCACHEFS_DEBUG) ||
-	    !iter->nodes[b->level + 1])
+	if (!IS_ENABLED(CONFIG_BCACHEFS_DEBUG))
+		return;
+
+	parent = btree_node_parent(iter, b);
+	if (!parent)
 		return;
 
 	parent_locked = btree_node_locked(iter, b->level + 1);
@@ -523,11 +527,10 @@ static void btree_iter_verify_new_node(struct btree_iter *iter, struct btree *b)
 		return;
 
 	k = bch2_btree_node_iter_peek_all(&iter->node_iters[b->level + 1],
-					 iter->nodes[b->level + 1]);
+					  parent);
 	if (!k ||
 	    bkey_deleted(k) ||
-	    bkey_cmp_left_packed(iter->nodes[b->level + 1],
-				 k, &b->key.k.p)) {
+	    bkey_cmp_left_packed(parent, k, &b->key.k.p)) {
 		char buf[100];
 		struct bkey uk = bkey_unpack_key(b, k);
 
@@ -902,7 +905,8 @@ int __must_check __bch2_btree_iter_traverse(struct btree_iter *iter)
 	 * btree_iter_lock_root() comes next and that it can't fail
 	 */
 	while (iter->level > depth_want) {
-		int ret = iter->nodes[iter->level]
+		int ret = iter->level < BTREE_MAX_DEPTH &&
+			iter->nodes[iter->level]
 			? btree_iter_down(iter)
 			: btree_iter_lock_root(iter, depth_want);
 		if (unlikely(ret)) {

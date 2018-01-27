@@ -393,6 +393,7 @@ static struct btree *bch2_btree_node_alloc(struct btree_update *as, unsigned lev
 	struct bch_fs *c = as->c;
 	struct btree *b;
 
+	BUG_ON(level >= BTREE_MAX_DEPTH);
 	BUG_ON(!as->reserve->nr);
 
 	b = as->reserve->b[--as->reserve->nr];
@@ -1344,7 +1345,7 @@ static void btree_split(struct btree_update *as, struct btree *b,
 			struct btree_iter *iter, struct keylist *keys)
 {
 	struct bch_fs *c = as->c;
-	struct btree *parent = iter->nodes[b->level + 1];
+	struct btree *parent = btree_node_parent(iter, b);
 	struct btree *n1, *n2 = NULL, *n3 = NULL;
 	u64 start_time = local_clock();
 
@@ -1600,7 +1601,7 @@ retry:
 
 	b = iter->nodes[iter->level];
 
-	parent = iter->nodes[b->level + 1];
+	parent = btree_node_parent(iter, b);
 	if (!parent)
 		return 0;
 
@@ -1737,7 +1738,7 @@ static int __btree_node_rewrite(struct bch_fs *c, struct btree_iter *iter,
 				struct btree *b, unsigned flags,
 				struct closure *cl)
 {
-	struct btree *n, *parent = iter->nodes[b->level + 1];
+	struct btree *n, *parent = btree_node_parent(iter, b);
 	struct btree_update *as;
 
 	as = bch2_btree_update_start(c, iter->btree_id,
@@ -1869,7 +1870,7 @@ static void __bch2_btree_node_update_key(struct bch_fs *c,
 
 	btree_interior_update_add_node_reference(as, b);
 
-	parent = iter->nodes[b->level + 1];
+	parent = btree_node_parent(iter, b);
 	if (parent) {
 		if (new_hash) {
 			bkey_copy(&new_hash->key, &new_key->k_i);
