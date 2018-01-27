@@ -1333,7 +1333,7 @@ static void btree_node_read_endio(struct bio *bio)
 	bch2_latency_acct(rb->pick.ca, rb->start_time >> 10, READ);
 
 	INIT_WORK(&rb->work, btree_node_read_work);
-	schedule_work(&rb->work);
+	queue_work(system_unbound_wq, &rb->work);
 }
 
 void bch2_btree_node_read(struct bch_fs *c, struct btree *b,
@@ -1583,7 +1583,7 @@ static void btree_node_write_endio(struct bio *bio)
 			container_of(orig, struct btree_write_bio, wbio);
 
 		INIT_WORK(&wb->work, btree_node_write_work);
-		schedule_work(&wb->work);
+		queue_work(system_unbound_wq, &wb->work);
 	}
 }
 
