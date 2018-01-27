@@ -45,6 +45,7 @@ bcachefs-y		:=	\
 	super.o			\
 	super-io.o		\
 	sysfs.o			\
+	tests.o			\
 	trace.o			\
 	util.o			\
 	xattr.o
