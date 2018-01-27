@@ -41,3 +41,9 @@ config BCACHEFS_DEBUG
 
 	The resulting code will be significantly slower than normal; you
 	probably shouldn't select this option unless you're a developer.
+
+config BCACHEFS_TESTS
+	bool "bcachefs unit and performance tests"
+	depends on BCACHEFS_FS
+	---help---
+	Include some unit and performance tests for the core btree code
