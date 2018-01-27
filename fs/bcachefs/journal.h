@@ -158,6 +158,8 @@ journal_seq_pin(struct journal *j, u64 seq)
 	return &j->pin.data[seq & j->pin.mask];
 }
 
+u64 bch2_journal_pin_seq(struct journal *, struct journal_entry_pin *);
+
 void bch2_journal_pin_add(struct journal *, struct journal_res *,
 			  struct journal_entry_pin *, journal_pin_flush_fn);
 void bch2_journal_pin_drop(struct journal *, struct journal_entry_pin *);
