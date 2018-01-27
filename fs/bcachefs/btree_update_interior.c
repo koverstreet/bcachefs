@@ -611,8 +611,7 @@ static void btree_update_nodes_reachable(struct closure *cl)
 	while (as->nr_new_nodes) {
 		struct btree *b = as->new_nodes[--as->nr_new_nodes];
 
-		BUG_ON(b->will_make_reachable &&
-		       (struct btree_update *) b->will_make_reachable != as);
+		BUG_ON(b->will_make_reachable != (unsigned long) as);
 		b->will_make_reachable = 0;
 		mutex_unlock(&c->btree_interior_update_lock);
 
@@ -674,7 +673,7 @@ retry:
 		 * b->write_blocked prevented it from being written, so
 		 * write it now if it needs to be written:
 		 */
-		bch2_btree_node_write_cond(c, b, btree_node_need_write(b));
+		bch2_btree_node_write_cond(c, b, true);
 		six_unlock_read(&b->lock);
 		break;
 
