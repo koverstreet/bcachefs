@@ -73,6 +73,14 @@ struct btree_iter {
 	struct btree_iter	*next;
 };
 
+static inline struct btree *btree_node_parent(struct btree_iter *iter,
+					      struct btree *b)
+{
+	unsigned level = b->level + 1;
+
+	return level < BTREE_MAX_DEPTH ? iter->nodes[level] : NULL;
+}
+
 static inline bool btree_iter_linked(const struct btree_iter *iter)
 {
 	return iter->next != iter;
