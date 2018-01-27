@@ -650,6 +650,8 @@ static void btree_update_nodes_written(struct closure *cl)
 	 */
 retry:
 	mutex_lock(&c->btree_interior_update_lock);
+	as->nodes_written = true;
+
 	switch (as->mode) {
 	case BTREE_INTERIOR_NO_UPDATE:
 		BUG();
@@ -1048,7 +1050,7 @@ bch2_btree_update_start(struct bch_fs *c, enum btree_id id,
 	bch2_keylist_init(&as->parent_keys, as->inline_keys);
 
 	mutex_lock(&c->btree_interior_update_lock);
-	list_add(&as->list, &c->btree_interior_update_list);
+	list_add_tail(&as->list, &c->btree_interior_update_list);
 	mutex_unlock(&c->btree_interior_update_lock);
 
 	return as;
@@ -1517,7 +1519,7 @@ void bch2_btree_insert_node(struct btree_update *as, struct btree *b,
 {
 	BUG_ON(!b->level);
 
-	if ((as->flags & BTREE_INTERIOR_UPDATE_MUST_REWRITE) ||
+	if (as->must_rewrite ||
 	    bch2_btree_insert_keys_interior(as, b, iter, keys))
 		btree_split(as, b, iter, keys);
 }
@@ -1838,7 +1840,6 @@ static void __bch2_btree_node_update_key(struct bch_fs *c,
 					 struct bkey_i_extent *new_key)
 {
 	struct btree *parent;
-	bool must_rewrite_parent = false;
 	int ret;
 
 	/*
@@ -1863,10 +1864,7 @@ static void __bch2_btree_node_update_key(struct bch_fs *c,
 	 */
 
 	if (b->will_make_reachable)
-		must_rewrite_parent = true;
-
-	if (must_rewrite_parent)
-		as->flags |= BTREE_INTERIOR_UPDATE_MUST_REWRITE;
+		as->must_rewrite = true;
 
 	btree_interior_update_add_node_reference(as, b);
 
@@ -2069,4 +2067,22 @@ void bch2_btree_root_alloc(struct bch_fs *c, enum btree_id id)
 
 	six_unlock_write(&b->lock);
 	six_unlock_intent(&b->lock);
+}
+
+ssize_t bch2_btree_updates_print(struct bch_fs *c, char *buf)
+{
+	char *out = buf, *end = buf + PAGE_SIZE;
+	struct btree_update *as;
+
+	mutex_lock(&c->btree_interior_update_lock);
+	list_for_each_entry(as, &c->btree_interior_update_list, list)
+		out += scnprintf(out, end - out, "%p m %u w %u r %u j %llu\n",
+				 as,
+				 as->mode,
+				 as->nodes_written,
+				 atomic_read(&as->cl.remaining) & CLOSURE_REMAINING_MASK,
+				 bch2_journal_pin_seq(&c->journal, &as->journal));
+	mutex_unlock(&c->btree_interior_update_lock);
+
+	return out - buf;
 }

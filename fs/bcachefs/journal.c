@@ -54,6 +54,18 @@ static inline u64 journal_pin_seq(struct journal *j,
 	return fifo_entry_idx_abs(&j->pin, pin_list);
 }
 
+u64 bch2_journal_pin_seq(struct journal *j, struct journal_entry_pin *pin)
+{
+	u64 ret = 0;
+
+	spin_lock(&j->lock);
+	if (journal_pin_active(pin))
+		ret = journal_pin_seq(j, pin->pin_list);
+	spin_unlock(&j->lock);
+
+	return ret;
+}
+
 static inline void bch2_journal_add_entry_noreservation(struct journal_buf *buf,
 				 unsigned type, enum btree_id id,
 				 unsigned level,

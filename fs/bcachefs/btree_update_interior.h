@@ -61,9 +61,12 @@ struct btree_update {
 		BTREE_INTERIOR_UPDATING_ROOT,
 		BTREE_INTERIOR_UPDATING_AS,
 	} mode;
+
+	unsigned			must_rewrite:1;
+	unsigned			nodes_written:1;
+
 	enum btree_id			btree_id;
 
-	unsigned			flags;
 	struct btree_reserve		*reserve;
 
 	/*
@@ -119,8 +122,6 @@ struct btree_update {
 	 */
 	u64				inline_keys[BKEY_BTREE_PTR_U64s_MAX * 3];
 };
-
-#define BTREE_INTERIOR_UPDATE_MUST_REWRITE	(1 << 0)
 
 #define for_each_pending_btree_node_free(c, as, p)			\
 	list_for_each_entry(as, &c->btree_interior_update_list, list)	\
@@ -311,5 +312,7 @@ static inline bool journal_res_insert_fits(struct btree_insert *trans,
 
 	return u64s <= trans->journal_res.u64s;
 }
+
+ssize_t bch2_btree_updates_print(struct bch_fs *, char *);
 
 #endif /* _BCACHEFS_BTREE_UPDATE_INTERIOR_H */
