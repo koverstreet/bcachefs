@@ -27,6 +27,7 @@
 #include "rebalance.h"
 #include "replicas.h"
 #include "super-io.h"
+#include "tests.h"
 
 #include <linux/blkdev.h>
 #include <linux/sort.h>
@@ -191,6 +192,10 @@ rw_attribute(pd_controllers_update_seconds);
 
 read_attribute(meta_replicas_have);
 read_attribute(data_replicas_have);
+
+#ifdef CONFIG_BCACHEFS_TESTS
+write_attribute(perf_test);
+#endif /* CONFIG_BCACHEFS_TESTS */
 
 #define BCH_DEBUG_PARAM(name, description)				\
 	rw_attribute(name);
@@ -446,7 +451,25 @@ STORE(__bch2_fs)
 		sc.nr_to_scan = strtoul_or_return(buf);
 		c->btree_cache.shrink.scan_objects(&c->btree_cache.shrink, &sc);
 	}
+#ifdef CONFIG_BCACHEFS_TESTS
+	if (attr == &sysfs_perf_test) {
+		char *tmp = kstrdup(buf, GFP_KERNEL), *p = tmp;
+		char *test		= strsep(&p, " \t\n");
+		char *nr_str		= strsep(&p, " \t\n");
+		char *threads_str	= strsep(&p, " \t\n");
+		unsigned threads;
+		u64 nr;
+		int ret = -EINVAL;
 
+		if (threads_str &&
+		    !(ret = kstrtouint(threads_str, 10, &threads)) &&
+		    !(ret = bch2_strtoull_h(nr_str, &nr)))
+			bch2_btree_perf_test(c, test, nr, threads);
+		else
+			size = ret;
+		kfree(tmp);
+	}
+#endif
 	return size;
 }
 
@@ -477,6 +500,10 @@ struct attribute *bch2_fs_files[] = {
 	&sysfs_promote_whole_extents,
 
 	&sysfs_compression_stats,
+
+#ifdef CONFIG_BCACHEFS_TESTS
+	&sysfs_perf_test,
+#endif
 	NULL
 };
 
