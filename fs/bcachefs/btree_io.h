@@ -135,5 +135,6 @@ do {									\
 } while (0)
 
 void bch2_btree_verify_flushed(struct bch_fs *);
+ssize_t bch2_dirty_btree_nodes_print(struct bch_fs *, char *);
 
 #endif /* _BCACHEFS_BTREE_IO_H */

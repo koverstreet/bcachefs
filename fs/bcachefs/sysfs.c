@@ -12,8 +12,10 @@
 #include "compress.h"
 #include "sysfs.h"
 #include "btree_cache.h"
+#include "btree_io.h"
 #include "btree_iter.h"
 #include "btree_update.h"
+#include "btree_update_interior.h"
 #include "btree_gc.h"
 #include "buckets.h"
 #include "inode.h"
@@ -146,6 +148,8 @@ read_attribute(btree_cache_size);
 read_attribute(compression_stats);
 read_attribute(journal_debug);
 read_attribute(journal_pins);
+read_attribute(btree_updates);
+read_attribute(dirty_btree_nodes);
 
 read_attribute(internal_uuid);
 
@@ -343,6 +347,12 @@ SHOW(bch2_fs)
 	if (attr == &sysfs_journal_pins)
 		return bch2_journal_print_pins(&c->journal, buf);
 
+	if (attr == &sysfs_btree_updates)
+		return bch2_btree_updates_print(c, buf);
+
+	if (attr == &sysfs_dirty_btree_nodes)
+		return bch2_dirty_btree_nodes_print(c, buf);
+
 	if (attr == &sysfs_compression_stats)
 		return bch2_compression_stats(c, buf);
 
@@ -474,6 +484,8 @@ struct attribute *bch2_fs_internal_files[] = {
 	&sysfs_alloc_debug,
 	&sysfs_journal_debug,
 	&sysfs_journal_pins,
+	&sysfs_btree_updates,
+	&sysfs_dirty_btree_nodes,
 
 	&sysfs_read_realloc_races,
 	&sysfs_extent_migrate_done,
