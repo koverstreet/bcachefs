@@ -1906,8 +1906,7 @@ void bch2_btree_node_write(struct bch_fs *c, struct btree *b,
 	BUG_ON(lock_type_held == SIX_LOCK_write);
 
 	if (lock_type_held == SIX_LOCK_intent ||
-	    six_trylock_convert(&b->lock, SIX_LOCK_read,
-				SIX_LOCK_intent)) {
+	    six_lock_tryupgrade(&b->lock)) {
 		__bch2_btree_node_write(c, b, SIX_LOCK_intent);
 
 		/* don't cycle lock unnecessarily: */
