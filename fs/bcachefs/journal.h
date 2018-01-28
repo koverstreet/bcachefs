@@ -354,6 +354,9 @@ out:
 	return 0;
 }
 
+u64 bch2_journal_last_unwritten_seq(struct journal *);
+int bch2_journal_open_seq_async(struct journal *, u64, struct closure *);
+
 void bch2_journal_wait_on_seq(struct journal *, u64, struct closure *);
 void bch2_journal_flush_seq_async(struct journal *, u64, struct closure *);
 void bch2_journal_flush_async(struct journal *, struct closure *);
