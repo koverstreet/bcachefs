@@ -1715,6 +1715,7 @@ static inline void __journal_pin_add(struct journal *j,
 				     journal_pin_flush_fn flush_fn)
 {
 	BUG_ON(journal_pin_active(pin));
+	BUG_ON(!atomic_read(&pin_list->count));
 
 	atomic_inc(&pin_list->count);
 	pin->pin_list	= pin_list;
@@ -1724,6 +1725,11 @@ static inline void __journal_pin_add(struct journal *j,
 		list_add(&pin->list, &pin_list->list);
 	else
 		INIT_LIST_HEAD(&pin->list);
+
+	/*
+	 * If the journal is currently full,  we might want to call flush_fn
+	 * immediately:
+	 */
 	wake_up(&j->wait);
 }
 
@@ -1751,38 +1757,32 @@ void bch2_journal_pin_add(struct journal *j,
 	spin_unlock(&j->lock);
 }
 
-static inline bool __journal_pin_drop(struct journal *j,
+static inline void __journal_pin_drop(struct journal *j,
 				      struct journal_entry_pin *pin)
 {
 	struct journal_entry_pin_list *pin_list = pin->pin_list;
 
+	if (!journal_pin_active(pin))
+		return;
+
 	pin->pin_list = NULL;
+	list_del_init(&pin->list);
 
-	/* journal_reclaim_work() might have already taken us off the list */
-	if (!list_empty_careful(&pin->list))
-		list_del_init(&pin->list);
-
-	return atomic_dec_and_test(&pin_list->count);
+	/*
+	 * Unpinning a journal entry make make journal_next_bucket() succeed, if
+	 * writing a new last_seq will now make another bucket available:
+	 */
+	if (atomic_dec_and_test(&pin_list->count) &&
+	    pin_list == &fifo_peek_front(&j->pin))
+		journal_reclaim_fast(j);
 }
 
 void bch2_journal_pin_drop(struct journal *j,
 			  struct journal_entry_pin *pin)
 {
-	bool wakeup = false;
-
 	spin_lock(&j->lock);
-	if (journal_pin_active(pin))
-		wakeup = __journal_pin_drop(j, pin);
+	__journal_pin_drop(j, pin);
 	spin_unlock(&j->lock);
-
-	/*
-	 * Unpinning a journal entry make make journal_next_bucket() succeed, if
-	 * writing a new last_seq will now make another bucket available:
-	 *
-	 * Nested irqsave is expensive, don't do the wakeup with lock held:
-	 */
-	if (wakeup)
-		wake_up(&j->wait);
 }
 
 void bch2_journal_pin_add_if_older(struct journal *j,
@@ -1796,8 +1796,7 @@ void bch2_journal_pin_add_if_older(struct journal *j,
 	    (!journal_pin_active(pin) ||
 	     journal_pin_seq(j, src_pin->pin_list) <
 	     journal_pin_seq(j, pin->pin_list))) {
-		if (journal_pin_active(pin))
-			__journal_pin_drop(j, pin);
+		__journal_pin_drop(j, pin);
 		__journal_pin_add(j, src_pin->pin_list, pin, flush_fn);
 	}
 
