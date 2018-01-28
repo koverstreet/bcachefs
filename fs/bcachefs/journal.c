@@ -31,6 +31,12 @@ static void journal_pin_add_entry(struct journal *,
 				  struct journal_entry_pin *,
 				  journal_pin_flush_fn);
 
+static inline void journal_wake(struct journal *j)
+{
+	wake_up(&j->wait);
+	closure_wake_up(&j->async_wait);
+}
+
 static inline struct journal_buf *journal_cur_buf(struct journal *j)
 {
 	return j->buf + j->reservations.idx;
@@ -1281,7 +1287,7 @@ void bch2_journal_halt(struct journal *j)
 	} while ((v = atomic64_cmpxchg(&j->reservations.counter,
 				       old.v, new.v)) != old.v);
 
-	wake_up(&j->wait);
+	journal_wake(j);
 	closure_wake_up(&journal_cur_buf(j)->wait);
 	closure_wake_up(&journal_prev_buf(j)->wait);
 }
@@ -1450,7 +1456,7 @@ static int journal_entry_open(struct journal *j)
 	mod_delayed_work(system_freezable_wq,
 			 &j->write_work,
 			 msecs_to_jiffies(j->write_delay_ms));
-	wake_up(&j->wait);
+	journal_wake(j);
 	return 1;
 }
 
@@ -1546,7 +1552,7 @@ int bch2_journal_replay(struct bch_fs *c, struct list_head *list)
 		}
 
 		if (atomic_dec_and_test(&j->replay_pin_list->count))
-			wake_up(&j->wait);
+			journal_wake(j);
 	}
 
 	j->replay_pin_list = NULL;
@@ -1713,7 +1719,7 @@ static void journal_reclaim_fast(struct journal *j)
 	}
 
 	if (popped)
-		wake_up(&j->wait);
+		journal_wake(j);
 }
 
 /*
@@ -1742,7 +1748,7 @@ static inline void __journal_pin_add(struct journal *j,
 	 * If the journal is currently full,  we might want to call flush_fn
 	 * immediately:
 	 */
-	wake_up(&j->wait);
+	journal_wake(j);
 }
 
 static void journal_pin_add_entry(struct journal *j,
@@ -1992,7 +1998,7 @@ static void journal_reclaim_work(struct work_struct *work)
 			ja->last_idx = (ja->last_idx + 1) % ja->nr;
 			spin_unlock(&j->lock);
 
-			wake_up(&j->wait);
+			journal_wake(j);
 		}
 
 		/*
@@ -2232,7 +2238,7 @@ out:
 		     &j->reservations.counter);
 
 	closure_wake_up(&w->wait);
-	wake_up(&j->wait);
+	journal_wake(j);
 
 	if (test_bit(JOURNAL_NEED_WRITE, &j->flags))
 		mod_delayed_work(system_freezable_wq, &j->write_work, 0);
@@ -2537,6 +2543,43 @@ int bch2_journal_res_get_slowpath(struct journal *j, struct journal_res *res,
 		   (ret = __journal_res_get(j, res, u64s_min,
 					    u64s_max)));
 	return ret < 0 ? ret : 0;
+}
+
+u64 bch2_journal_last_unwritten_seq(struct journal *j)
+{
+	u64 seq;
+
+	spin_lock(&j->lock);
+	seq = atomic64_read(&j->seq);
+	if (j->reservations.prev_buf_unwritten)
+		seq--;
+	spin_unlock(&j->lock);
+
+	return seq;
+}
+
+int bch2_journal_open_seq_async(struct journal *j, u64 seq, struct closure *parent)
+{
+	int ret;
+
+	spin_lock(&j->lock);
+	BUG_ON(seq > atomic64_read(&j->seq));
+
+	if (seq < atomic64_read(&j->seq) ||
+	    journal_entry_is_open(j)) {
+		spin_unlock(&j->lock);
+		return 1;
+	}
+
+	ret = journal_entry_open(j);
+	if (!ret)
+		closure_wait(&j->async_wait, parent);
+	spin_unlock(&j->lock);
+
+	if (!ret)
+		journal_reclaim_work(&j->reclaim_work.work);
+
+	return ret;
 }
 
 void bch2_journal_wait_on_seq(struct journal *j, u64 seq, struct closure *parent)

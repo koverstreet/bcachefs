@@ -601,8 +601,7 @@ static void bch2_btree_update_free(struct btree_update *as)
 
 static void btree_update_nodes_reachable(struct closure *cl)
 {
-	struct btree_update *as =
-		container_of(cl, struct btree_update, cl);
+	struct btree_update *as = container_of(cl, struct btree_update, cl);
 	struct bch_fs *c = as->c;
 
 	bch2_journal_pin_drop(&c->journal, &as->journal);
@@ -636,10 +635,28 @@ static void btree_update_nodes_reachable(struct closure *cl)
 	bch2_btree_update_free(as);
 }
 
+static void btree_update_wait_on_journal(struct closure *cl)
+{
+	struct btree_update *as = container_of(cl, struct btree_update, cl);
+	struct bch_fs *c = as->c;
+	int ret;
+
+	ret = bch2_journal_open_seq_async(&c->journal, as->journal_seq, cl);
+	if (ret < 0)
+		goto err;
+	if (!ret) {
+		continue_at(cl, btree_update_wait_on_journal, system_wq);
+		return;
+	}
+
+	bch2_journal_flush_seq_async(&c->journal, as->journal_seq, cl);
+err:
+	continue_at(cl, btree_update_nodes_reachable, system_wq);
+}
+
 static void btree_update_nodes_written(struct closure *cl)
 {
-	struct btree_update *as =
-		container_of(cl, struct btree_update, cl);
+	struct btree_update *as = container_of(cl, struct btree_update, cl);
 	struct bch_fs *c = as->c;
 	struct btree *b;
 
@@ -736,13 +753,10 @@ retry:
 		 */
 		bch2_journal_pin_drop(&c->journal, &as->journal);
 
-		/*
-		 * And, do a journal write to write the pointer to the new root,
-		 * then wait for it to complete before freeing the nodes we
-		 * replaced:
-		 */
-		bch2_journal_meta_async(&c->journal, cl);
-		break;
+		as->journal_seq = bch2_journal_last_unwritten_seq(&c->journal);
+
+		btree_update_wait_on_journal(cl);
+		return;
 	}
 
 	continue_at(cl, btree_update_nodes_reachable, system_wq);
