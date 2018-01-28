@@ -1664,8 +1664,14 @@ void __bch2_btree_node_write(struct bch_fs *c, struct btree *b,
 	BUG_ON(le64_to_cpu(b->data->magic) != bset_magic(c));
 	BUG_ON(memcmp(&b->data->format, &b->format, sizeof(b->format)));
 
-	if (lock_type_held == SIX_LOCK_intent) {
-		six_lock_write(&b->lock);
+	/*
+	 * We can't block on six_lock_write() here; another thread might be
+	 * trying to get a journal reservation with read locks held, and getting
+	 * a journal reservation might be blocked on flushing the journal and
+	 * doing btree writes:
+	 */
+	if (lock_type_held == SIX_LOCK_intent &&
+	    six_trylock_write(&b->lock)) {
 		__bch2_compact_whiteouts(c, b, COMPACT_WRITTEN);
 		six_unlock_write(&b->lock);
 	} else {
@@ -1905,8 +1911,8 @@ void bch2_btree_node_write(struct bch_fs *c, struct btree *b,
 		__bch2_btree_node_write(c, b, SIX_LOCK_intent);
 
 		/* don't cycle lock unnecessarily: */
-		if (btree_node_just_written(b)) {
-			six_lock_write(&b->lock);
+		if (btree_node_just_written(b) &&
+		    six_trylock_write(&b->lock)) {
 			bch2_btree_post_write_cleanup(c, b);
 			six_unlock_write(&b->lock);
 		}
