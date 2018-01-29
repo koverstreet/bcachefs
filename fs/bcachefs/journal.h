@@ -197,8 +197,11 @@ static inline void bch2_journal_set_has_inode(struct journal *j,
 					      u64 inum)
 {
 	struct journal_buf *buf = &j->buf[res->idx];
+	unsigned long bit = hash_64(inum, ilog2(sizeof(buf->has_inode) * 8));
 
-	set_bit(hash_64(inum, ilog2(sizeof(buf->has_inode) * 8)), buf->has_inode);
+	/* avoid atomic op if possible */
+	if (unlikely(!test_bit(bit, buf->has_inode)))
+		set_bit(bit, buf->has_inode);
 }
 
 /*
@@ -236,7 +239,7 @@ static inline void bch2_journal_add_entry(struct journal *j, struct journal_res 
 	unsigned actual = jset_u64s(u64s);
 
 	EBUG_ON(!res->ref);
-	BUG_ON(actual > res->u64s);
+	EBUG_ON(actual > res->u64s);
 
 	bch2_journal_add_entry_at(buf, res->offset, type,
 				  id, level, data, u64s);
