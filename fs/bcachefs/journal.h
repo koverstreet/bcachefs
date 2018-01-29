@@ -155,7 +155,7 @@ static inline bool journal_pin_active(struct journal_entry_pin *pin)
 static inline struct journal_entry_pin_list *
 journal_seq_pin(struct journal *j, u64 seq)
 {
-	return &j->pin.data[(size_t) seq & j->pin.mask];
+	return &j->pin.data[seq & j->pin.mask];
 }
 
 void bch2_journal_pin_add(struct journal *, struct journal_res *,

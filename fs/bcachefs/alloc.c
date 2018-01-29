@@ -1862,8 +1862,8 @@ int bch2_dev_allocator_start(struct bch_dev *ca)
 static void allocator_start_issue_discards(struct bch_fs *c)
 {
 	struct bch_dev *ca;
-	unsigned i, dev_iter;
-	size_t bu;
+	unsigned dev_iter;
+	size_t i, bu;
 
 	for_each_rw_member(ca, c, dev_iter) {
 		unsigned done = 0;
