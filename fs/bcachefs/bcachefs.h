@@ -520,6 +520,8 @@ struct bch_fs {
 
 	unsigned short		block_bits;	/* ilog2(block_size) */
 
+	u16			btree_foreground_merge_threshold;
+
 	struct closure		sb_write;
 	struct mutex		sb_lock;
 
