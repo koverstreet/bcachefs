@@ -138,21 +138,14 @@ void bch2_btree_journal_key(struct btree_insert *trans,
 	EBUG_ON(trans->journal_res.ref !=
 		!(trans->flags & BTREE_INSERT_JOURNAL_REPLAY));
 
-	if (!journal_pin_active(&w->journal))
-		bch2_journal_pin_add(j, &trans->journal_res,
-				     &w->journal,
-				     btree_node_write_idx(b) == 0
-				     ? btree_node_flush0
-				     : btree_node_flush1);
-
-	if (trans->journal_res.ref) {
+	if (likely(trans->journal_res.ref)) {
 		u64 seq = trans->journal_res.seq;
 		bool needs_whiteout = insert->k.needs_whiteout;
 
 		/* ick */
 		insert->k.needs_whiteout = false;
 		bch2_journal_add_keys(j, &trans->journal_res,
-				      b->btree_id, insert);
+				      iter->btree_id, insert);
 		insert->k.needs_whiteout = needs_whiteout;
 
 		bch2_journal_set_has_inode(j, &trans->journal_res,
@@ -163,7 +156,14 @@ void bch2_btree_journal_key(struct btree_insert *trans,
 		btree_bset_last(b)->journal_seq = cpu_to_le64(seq);
 	}
 
-	if (!btree_node_dirty(b))
+	if (unlikely(!journal_pin_active(&w->journal)))
+		bch2_journal_pin_add(j, &trans->journal_res,
+				     &w->journal,
+				     btree_node_write_idx(b) == 0
+				     ? btree_node_flush0
+				     : btree_node_flush1);
+
+	if (unlikely(!btree_node_dirty(b)))
 		set_btree_node_dirty(b);
 }
 
@@ -173,8 +173,8 @@ bch2_insert_fixup_key(struct btree_insert *trans,
 {
 	struct btree_iter *iter = insert->iter;
 
-	BUG_ON(iter->level);
-	BUG_ON(insert->k->k.u64s >
+	EBUG_ON(iter->level);
+	EBUG_ON(insert->k->k.u64s >
 	       bch_btree_keys_u64s_remaining(trans->c, iter->nodes[0]));
 
 	if (bch2_btree_bset_insert_key(iter, iter->nodes[0],
@@ -196,7 +196,7 @@ static int inline foreground_maybe_merge(struct bch_fs *c,
 		return 0;
 
 	b = iter->nodes[iter->level];
-	if (b->sib_u64s[sib] > BTREE_FOREGROUND_MERGE_THRESHOLD(c))
+	if (b->sib_u64s[sib] > c->btree_foreground_merge_threshold)
 		return 0;
 
 	return bch2_foreground_maybe_merge(c, iter, sib);
@@ -288,12 +288,15 @@ static void multi_unlock_write(struct btree_insert *trans)
 			bch2_btree_node_unlock_write(i->iter->nodes[0], i->iter);
 }
 
-static int btree_trans_entry_cmp(const void *_l, const void *_r)
+static inline void btree_trans_sort(struct btree_insert *trans)
 {
-	const struct btree_insert_entry *l = _l;
-	const struct btree_insert_entry *r = _r;
+	int i, end = trans->nr;
 
-	return btree_iter_cmp(l->iter, r->iter);
+	while (--end > 0)
+		for (i = 0; i < end; i++)
+			if (btree_iter_cmp(trans->entries[i].iter,
+					   trans->entries[i + 1].iter) > 0)
+				swap(trans->entries[i], trans->entries[i + 1]);
 }
 
 /* Normal update interface: */
@@ -326,8 +329,7 @@ int __bch2_btree_insert_at(struct btree_insert *trans)
 					 bkey_i_to_s_c(i->k)));
 	}
 
-	sort(trans->entries, trans->nr, sizeof(trans->entries[0]),
-	     btree_trans_entry_cmp, NULL);
+	btree_trans_sort(trans);
 
 	if (unlikely(!percpu_ref_tryget(&c->writes)))
 		return -EROFS;
