@@ -746,7 +746,7 @@ struct btree *bch2_btree_node_get_sibling(struct bch_fs *c,
 	struct btree *ret;
 	unsigned level = b->level;
 
-	parent = iter->nodes[level + 1];
+	parent = btree_iter_node(iter, level + 1);
 	if (!parent)
 		return NULL;
 
@@ -755,7 +755,7 @@ struct btree *bch2_btree_node_get_sibling(struct bch_fs *c,
 		return ERR_PTR(-EINTR);
 	}
 
-	node_iter = iter->node_iters[parent->level];
+	node_iter = iter->l[parent->level].iter;
 
 	k = bch2_btree_node_iter_peek_all(&node_iter, parent);
 	BUG_ON(bkey_cmp_left_packed(parent, k, &b->key.k.p));

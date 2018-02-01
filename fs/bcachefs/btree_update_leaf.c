@@ -130,7 +130,7 @@ void bch2_btree_journal_key(struct btree_insert *trans,
 {
 	struct bch_fs *c = trans->c;
 	struct journal *j = &c->journal;
-	struct btree *b = iter->nodes[0];
+	struct btree *b = iter->l[0].b;
 	struct btree_write *w = btree_current_write(b);
 
 	EBUG_ON(iter->level || b->level);
@@ -171,13 +171,13 @@ bch2_insert_fixup_key(struct btree_insert *trans,
 		     struct btree_insert_entry *insert)
 {
 	struct btree_iter *iter = insert->iter;
+	struct btree_iter_level *l = &iter->l[0];
 
 	EBUG_ON(iter->level);
 	EBUG_ON(insert->k->k.u64s >
-	       bch_btree_keys_u64s_remaining(trans->c, iter->nodes[0]));
+		bch_btree_keys_u64s_remaining(trans->c, l->b));
 
-	if (bch2_btree_bset_insert_key(iter, iter->nodes[0],
-				       &iter->node_iters[0],
+	if (bch2_btree_bset_insert_key(iter, l->b, &l->iter,
 				       insert->k))
 		bch2_btree_journal_key(trans, iter, insert->k);
 
@@ -185,32 +185,16 @@ bch2_insert_fixup_key(struct btree_insert *trans,
 	return BTREE_INSERT_OK;
 }
 
-static int inline foreground_maybe_merge(struct bch_fs *c,
-					 struct btree_iter *iter,
-					 enum btree_node_sibling sib)
-{
-	struct btree *b;
-
-	if (!btree_node_locked(iter, iter->level))
-		return 0;
-
-	b = iter->nodes[iter->level];
-	if (b->sib_u64s[sib] > c->btree_foreground_merge_threshold)
-		return 0;
-
-	return bch2_foreground_maybe_merge(c, iter, sib);
-}
-
 /**
  * btree_insert_key - insert a key one key into a leaf node
  */
 static enum btree_insert_ret
-btree_insert_key(struct btree_insert *trans,
-		 struct btree_insert_entry *insert)
+btree_insert_key_leaf(struct btree_insert *trans,
+		      struct btree_insert_entry *insert)
 {
 	struct bch_fs *c = trans->c;
 	struct btree_iter *iter = insert->iter;
-	struct btree *b = iter->nodes[0];
+	struct btree *b = iter->l[0].b;
 	enum btree_insert_ret ret;
 	int old_u64s = le16_to_cpu(btree_bset_last(b)->u64s);
 	int old_live_u64s = b->nr.live_u64s;
@@ -246,7 +230,7 @@ static bool same_leaf_as_prev(struct btree_insert *trans,
 	 * point to the same leaf node they'll always be adjacent now:
 	 */
 	return i != trans->entries &&
-		i[0].iter->nodes[0] == i[-1].iter->nodes[0];
+		i[0].iter->l[0].b == i[-1].iter->l[0].b;
 }
 
 #define trans_for_each_entry(trans, i)					\
@@ -275,7 +259,8 @@ static void multi_lock_write(struct bch_fs *c, struct btree_insert *trans)
 
 	trans_for_each_entry(trans, i)
 		if (!same_leaf_as_prev(trans, i))
-			bch2_btree_node_lock_for_insert(c, i->iter->nodes[0], i->iter);
+			bch2_btree_node_lock_for_insert(c, i->iter->l[0].b,
+							i->iter);
 }
 
 static void multi_unlock_write(struct btree_insert *trans)
@@ -284,7 +269,7 @@ static void multi_unlock_write(struct btree_insert *trans)
 
 	trans_for_each_entry(trans, i)
 		if (!same_leaf_as_prev(trans, i))
-			bch2_btree_node_unlock_write(i->iter->nodes[0], i->iter);
+			bch2_btree_node_unlock_write(i->iter->l[0].b, i->iter);
 }
 
 static inline void btree_trans_sort(struct btree_insert *trans)
@@ -376,7 +361,7 @@ retry:
 		if (!i->done) {
 			u64s += i->k->k.u64s + i->extra_res;
 			if (!bch2_btree_node_insert_fits(c,
-					i->iter->nodes[0], u64s)) {
+					i->iter->l[0].b, u64s)) {
 				split = i->iter;
 				goto unlock;
 			}
@@ -391,7 +376,7 @@ retry:
 		if (i->done)
 			continue;
 
-		switch (btree_insert_key(trans, i)) {
+		switch (btree_insert_key_leaf(trans, i)) {
 		case BTREE_INSERT_OK:
 			i->done = true;
 			break;
@@ -437,10 +422,8 @@ unlock:
 			goto out;
 
 	trans_for_each_entry(trans, i)
-		if (!same_leaf_as_prev(trans, i)) {
-			foreground_maybe_merge(c, i->iter, btree_prev_sib);
-			foreground_maybe_merge(c, i->iter, btree_next_sib);
-		}
+		if (!same_leaf_as_prev(trans, i))
+			bch2_foreground_maybe_merge(c, i->iter, 0);
 out:
 	/* make sure we didn't lose an error: */
 	if (!ret && IS_ENABLED(CONFIG_BCACHEFS_DEBUG))

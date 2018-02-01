@@ -827,13 +827,13 @@ void bch2_btree_build_aux_trees(struct btree *b)
  * Returns true if we sorted (i.e. invalidated iterators
  */
 void bch2_btree_init_next(struct bch_fs *c, struct btree *b,
-			 struct btree_iter *iter)
+			  struct btree_iter *iter)
 {
 	struct btree_node_entry *bne;
 	bool did_sort;
 
 	EBUG_ON(!(b->lock.state.seq & 1));
-	EBUG_ON(iter && iter->nodes[b->level] != b);
+	EBUG_ON(iter && iter->l[b->level].b != b);
 
 	did_sort = btree_node_compact(c, b, iter);
 
@@ -1467,15 +1467,13 @@ retry:
 		goto err;
 
 	/* has node been freed? */
-	if (iter.nodes[b->level] != b) {
+	if (iter.l[b->level].b != b) {
 		/* node has been freed: */
-		if (!btree_node_dying(b))
-			panic("foo4\n");
+		BUG_ON(!btree_node_dying(b));
 		goto out;
 	}
 
-	if (!btree_node_hashed(b))
-		panic("foo5\n");
+	BUG_ON(!btree_node_hashed(b));
 
 	bkey_copy(&tmp.k, &b->key);
 

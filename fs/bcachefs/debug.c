@@ -318,20 +318,21 @@ static ssize_t bch2_read_bfloat_failed(struct file *file, char __user *buf,
 
 	while ((k = bch2_btree_iter_peek(&iter)).k &&
 	       !(err = btree_iter_err(k))) {
-		struct btree *b = iter.nodes[0];
-		struct btree_node_iter *node_iter = &iter.node_iters[0];
-		struct bkey_packed *_k = bch2_btree_node_iter_peek(node_iter, b);
+		struct btree_iter_level *l = &iter.l[0];
+		struct bkey_packed *_k =
+			bch2_btree_node_iter_peek(&l->iter, l->b);
 
-		if (iter.nodes[0] != prev_node) {
-			i->bytes = bch2_print_btree_node(i->c, b, i->buf,
+		if (l->b != prev_node) {
+			i->bytes = bch2_print_btree_node(i->c, l->b, i->buf,
 							sizeof(i->buf));
 			err = flush_buf(i);
 			if (err)
 				break;
 		}
-		prev_node = iter.nodes[0];
+		prev_node = l->b;
 
-		i->bytes = bch2_bkey_print_bfloat(b, _k, i->buf, sizeof(i->buf));
+		i->bytes = bch2_bkey_print_bfloat(l->b, _k, i->buf,
+						  sizeof(i->buf));
 
 		err = flush_buf(i);
 		if (err)

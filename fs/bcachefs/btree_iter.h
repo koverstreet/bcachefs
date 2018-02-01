@@ -39,22 +39,12 @@ struct btree_iter {
 				nodes_locked:4,
 				nodes_intent_locked:4;
 
-	u32			lock_seq[BTREE_MAX_DEPTH];
+	struct btree_iter_level {
+		struct btree	*b;
+		struct btree_node_iter iter;
+	}			l[BTREE_MAX_DEPTH];
 
-	/*
-	 * NOTE: Never set iter->nodes to NULL except in btree_iter_lock_root().
-	 *
-	 * This is because iter->nodes[iter->level] == NULL is how
-	 * btree_iter_next_node() knows that it's finished with a depth first
-	 * traversal. Just unlocking a node (with btree_node_unlock()) is fine,
-	 * and if you really don't want that node used again (e.g. btree_split()
-	 * freed it) decrementing lock_seq will cause bch2_btree_node_relock() to
-	 * always fail (but since freeing a btree node takes a write lock on the
-	 * node, which increments the node's lock seq, that's not actually
-	 * necessary in that example).
-	 */
-	struct btree		*nodes[BTREE_MAX_DEPTH];
-	struct btree_node_iter	node_iters[BTREE_MAX_DEPTH];
+	u32			lock_seq[BTREE_MAX_DEPTH];
 
 	/*
 	 * Current unpacked key - so that bch2_btree_iter_next()/
@@ -73,12 +63,16 @@ struct btree_iter {
 	struct btree_iter	*next;
 };
 
+static inline struct btree *btree_iter_node(struct btree_iter *iter,
+					    unsigned level)
+{
+	return level < BTREE_MAX_DEPTH ? iter->l[level].b : NULL;
+}
+
 static inline struct btree *btree_node_parent(struct btree_iter *iter,
 					      struct btree *b)
 {
-	unsigned level = b->level + 1;
-
-	return level < BTREE_MAX_DEPTH ? iter->nodes[level] : NULL;
+	return btree_iter_node(iter, b->level + 1);
 }
 
 static inline bool btree_iter_linked(const struct btree_iter *iter)
@@ -112,7 +106,7 @@ __next_linked_btree_node(struct btree_iter *iter, struct btree *b,
 		 * sequence number is incremented by taking and releasing write
 		 * locks and is even when unlocked:
 		 */
-	} while (linked->nodes[b->level] != b ||
+	} while (linked->l[b->level].b != b ||
 		 linked->lock_seq[b->level] >> 1 != b->lock.state.seq >> 1);
 
 	return linked;
