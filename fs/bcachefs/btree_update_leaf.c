@@ -544,38 +544,6 @@ out:	ret2 = bch2_btree_iter_unlock(&iter);
 	return ret ?: ret2;
 }
 
-/**
- * bch_btree_update - like bch2_btree_insert(), but asserts that we're
- * overwriting an existing key
- */
-int bch2_btree_update(struct bch_fs *c, enum btree_id id,
-		     struct bkey_i *k, u64 *journal_seq)
-{
-	struct btree_iter iter;
-	struct bkey_s_c u;
-	int ret;
-
-	EBUG_ON(id == BTREE_ID_EXTENTS);
-
-	bch2_btree_iter_init(&iter, c, id, k->k.p,
-			     BTREE_ITER_INTENT);
-
-	u = bch2_btree_iter_peek_with_holes(&iter);
-	ret = btree_iter_err(u);
-	if (ret)
-		return ret;
-
-	if (bkey_deleted(u.k)) {
-		bch2_btree_iter_unlock(&iter);
-		return -ENOENT;
-	}
-
-	ret = bch2_btree_insert_at(c, NULL, NULL, journal_seq, 0,
-				  BTREE_INSERT_ENTRY(&iter, k));
-	bch2_btree_iter_unlock(&iter);
-	return ret;
-}
-
 /*
  * bch_btree_delete_range - delete everything within a given range
  *

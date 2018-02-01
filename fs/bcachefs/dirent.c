@@ -213,12 +213,13 @@ int bch2_dirent_rename(struct bch_fs *c,
 	int ret = -ENOMEM;
 
 	bch2_btree_iter_init(&src_iter, c, BTREE_ID_DIRENTS, src_pos,
-			     BTREE_ITER_INTENT);
+			     BTREE_ITER_SLOTS|BTREE_ITER_INTENT);
 	bch2_btree_iter_init(&dst_iter, c, BTREE_ID_DIRENTS, dst_pos,
-			     BTREE_ITER_INTENT);
+			     BTREE_ITER_SLOTS|BTREE_ITER_INTENT);
 	bch2_btree_iter_link(&src_iter, &dst_iter);
 
-	bch2_btree_iter_init(&whiteout_iter, c, BTREE_ID_DIRENTS, src_pos, 0);
+	bch2_btree_iter_init(&whiteout_iter, c, BTREE_ID_DIRENTS, src_pos,
+			     BTREE_ITER_SLOTS);
 	bch2_btree_iter_link(&src_iter, &whiteout_iter);
 
 	if (mode == BCH_RENAME_EXCHANGE) {

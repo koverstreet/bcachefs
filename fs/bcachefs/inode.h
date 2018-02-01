@@ -40,8 +40,6 @@ int bch2_inode_rm(struct bch_fs *, u64);
 
 int bch2_inode_find_by_inum(struct bch_fs *, u64,
 			   struct bch_inode_unpacked *);
-int bch2_cached_dev_inode_find_by_uuid(struct bch_fs *, uuid_le *,
-				      struct bkey_i_inode_blockdev *);
 
 static inline struct timespec bch2_time_to_timespec(struct bch_fs *c, u64 time)
 {

@@ -347,6 +347,9 @@ void bch2_fs_btree_cache_exit(struct bch_fs *c)
 	while (!list_empty(&bc->live)) {
 		b = list_first_entry(&bc->live, struct btree, list);
 
+		BUG_ON(btree_node_read_in_flight(b) ||
+		       btree_node_write_in_flight(b));
+
 		if (btree_node_dirty(b))
 			bch2_btree_complete_write(c, b, btree_current_write(b));
 		clear_btree_node_dirty(b);

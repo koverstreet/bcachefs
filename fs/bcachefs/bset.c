@@ -264,9 +264,9 @@ void bch2_verify_key_order(struct btree *b,
 
 #else
 
-static void bch2_btree_node_iter_next_check(struct btree_node_iter *iter,
-					   struct btree *b,
-					   struct bkey_packed *k) {}
+static inline void bch2_btree_node_iter_next_check(struct btree_node_iter *iter,
+						   struct btree *b,
+						   struct bkey_packed *k) {}
 
 #endif
 
@@ -1654,8 +1654,9 @@ void bch2_btree_node_iter_sort(struct btree_node_iter *iter,
 void bch2_btree_node_iter_advance(struct btree_node_iter *iter,
 				  struct btree *b)
 {
+#ifdef CONFIG_BCACHEFS_DEBUG
 	struct bkey_packed *k = bch2_btree_node_iter_peek_all(iter, b);
-
+#endif
 	iter->data->k += __bch2_btree_node_iter_peek_all(iter, b)->u64s;
 
 	EBUG_ON(iter->data->k > iter->data->end);
@@ -1667,7 +1668,9 @@ void bch2_btree_node_iter_advance(struct btree_node_iter *iter,
 
 	btree_node_iter_sift(iter, b, 0);
 
+#ifdef CONFIG_BCACHEFS_DEBUG
 	bch2_btree_node_iter_next_check(iter, b, k);
+#endif
 }
 
 /*
