@@ -493,14 +493,14 @@ static inline void __bch2_btree_node_iter_push(struct btree_node_iter *iter,
 
 static inline struct bkey_packed *
 __bch2_btree_node_iter_peek_all(struct btree_node_iter *iter,
-			       struct btree *b)
+				struct btree *b)
 {
 	return __btree_node_offset_to_key(b, iter->data->k);
 }
 
 static inline struct bkey_packed *
 bch2_btree_node_iter_peek_all(struct btree_node_iter *iter,
-			     struct btree *b)
+			      struct btree *b)
 {
 	return bch2_btree_node_iter_end(iter)
 		? NULL

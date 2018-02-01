@@ -2,6 +2,7 @@
 #define _BCACHEFS_BTREE_UPDATE_INTERIOR_H
 
 #include "btree_cache.h"
+#include "btree_locking.h"
 #include "btree_update.h"
 
 struct btree_reserve {
@@ -147,8 +148,34 @@ void bch2_btree_interior_update_will_free_node(struct btree_update *,
 void bch2_btree_insert_node(struct btree_update *, struct btree *,
 			    struct btree_iter *, struct keylist *);
 int bch2_btree_split_leaf(struct bch_fs *, struct btree_iter *, unsigned);
-int bch2_foreground_maybe_merge(struct bch_fs *, struct btree_iter *,
-				enum btree_node_sibling);
+
+int __bch2_foreground_maybe_merge(struct bch_fs *, struct btree_iter *,
+				  unsigned, enum btree_node_sibling);
+
+static inline int bch2_foreground_maybe_merge_sibling(struct bch_fs *c,
+					struct btree_iter *iter,
+					unsigned level,
+					enum btree_node_sibling sib)
+{
+	struct btree *b;
+
+	if (!bch2_btree_node_relock(iter, level))
+		return 0;
+
+	b = iter->l[level].b;
+	if (b->sib_u64s[sib] > c->btree_foreground_merge_threshold)
+		return 0;
+
+	return __bch2_foreground_maybe_merge(c, iter, level, sib);
+}
+
+static inline void bch2_foreground_maybe_merge(struct bch_fs *c,
+					       struct btree_iter *iter,
+					       unsigned level)
+{
+	bch2_foreground_maybe_merge_sibling(c, iter, level, btree_prev_sib);
+	bch2_foreground_maybe_merge_sibling(c, iter, level, btree_next_sib);
+}
 
 void bch2_btree_set_root_for_read(struct bch_fs *, struct btree *);
 void bch2_btree_root_alloc(struct bch_fs *, enum btree_id);

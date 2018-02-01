@@ -589,7 +589,7 @@ static void recalc_packed_keys(struct btree *b)
 static void bch2_coalesce_nodes(struct bch_fs *c, struct btree_iter *iter,
 				struct btree *old_nodes[GC_MERGE_NODES])
 {
-	struct btree *parent = iter->nodes[old_nodes[0]->level + 1];
+	struct btree *parent = btree_node_parent(iter, old_nodes[0]);
 	unsigned i, nr_old_nodes, nr_new_nodes, u64s = 0;
 	unsigned blocks = btree_blocks(c) * 2 / 3;
 	struct btree *new_nodes[GC_MERGE_NODES];
@@ -775,7 +775,7 @@ next:
 
 	BUG_ON(!bch2_keylist_empty(&keylist));
 
-	BUG_ON(iter->nodes[old_nodes[0]->level] != old_nodes[0]);
+	BUG_ON(iter->l[old_nodes[0]->level].b != old_nodes[0]);
 
 	BUG_ON(!bch2_btree_iter_node_replace(iter, new_nodes[0]));
 
@@ -868,7 +868,7 @@ static int bch2_coalesce_btree(struct bch_fs *c, enum btree_id btree_id)
 		 * and the nodes in our sliding window might not have the same
 		 * parent anymore - blow away the sliding window:
 		 */
-		if (iter.nodes[iter.level + 1] &&
+		if (btree_iter_node(&iter, iter.level + 1) &&
 		    !btree_node_intent_locked(&iter, iter.level + 1))
 			memset(merge + 1, 0,
 			       (GC_MERGE_NODES - 1) * sizeof(merge[0]));

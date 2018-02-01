@@ -1480,7 +1480,7 @@ bch2_btree_insert_keys_interior(struct btree_update *as, struct btree *b,
 	}
 
 	/* Don't screw up @iter's position: */
-	node_iter = iter->node_iters[b->level];
+	node_iter = iter->l[b->level].iter;
 
 	/*
 	 * btree_split(), btree_gc_coalesce() will insert keys before
@@ -1501,9 +1501,8 @@ bch2_btree_insert_keys_interior(struct btree_update *as, struct btree *b,
 	btree_update_updated_node(as, b);
 
 	for_each_linked_btree_node(iter, b, linked)
-		bch2_btree_node_iter_peek(&linked->node_iters[b->level],
-					 b);
-	bch2_btree_node_iter_peek(&iter->node_iters[b->level], b);
+		bch2_btree_node_iter_peek(&linked->l[b->level].iter, b);
+	bch2_btree_node_iter_peek(&iter->l[b->level].iter, b);
 
 	bch2_btree_iter_verify(iter, b);
 
@@ -1541,7 +1540,7 @@ void bch2_btree_insert_node(struct btree_update *as, struct btree *b,
 int bch2_btree_split_leaf(struct bch_fs *c, struct btree_iter *iter,
 			  unsigned btree_reserve_flags)
 {
-	struct btree *b = iter->nodes[0];
+	struct btree *b = iter->l[0].b;
 	struct btree_update *as;
 	struct closure cl;
 	int ret = 0;
@@ -1597,9 +1596,10 @@ out:
 	return ret;
 }
 
-int bch2_foreground_maybe_merge(struct bch_fs *c,
-				struct btree_iter *iter,
-				enum btree_node_sibling sib)
+int __bch2_foreground_maybe_merge(struct bch_fs *c,
+				  struct btree_iter *iter,
+				  unsigned level,
+				  enum btree_node_sibling sib)
 {
 	struct btree_update *as;
 	struct bkey_format_state new_s;
@@ -1612,10 +1612,10 @@ int bch2_foreground_maybe_merge(struct bch_fs *c,
 
 	closure_init_stack(&cl);
 retry:
-	if (!bch2_btree_node_relock(iter, iter->level))
+	if (!bch2_btree_node_relock(iter, level))
 		return 0;
 
-	b = iter->nodes[iter->level];
+	b = iter->l[level].b;
 
 	parent = btree_node_parent(iter, b);
 	if (!parent)
