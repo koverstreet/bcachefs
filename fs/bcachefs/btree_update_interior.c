@@ -1457,27 +1457,14 @@ static void btree_split(struct btree_update *as, struct btree *b,
 	bch2_time_stats_update(&c->btree_split_time, start_time);
 }
 
-static int
+static void
 bch2_btree_insert_keys_interior(struct btree_update *as, struct btree *b,
 				struct btree_iter *iter, struct keylist *keys)
 {
-	struct bch_fs *c = as->c;
 	struct btree_iter *linked;
 	struct btree_node_iter node_iter;
 	struct bkey_i *insert = bch2_keylist_front(keys);
 	struct bkey_packed *k;
-
-	BUG_ON(!btree_node_intent_locked(iter, btree_node_root(c, b)->level));
-	BUG_ON(!b->level);
-	BUG_ON(!as || as->b);
-	bch2_verify_keylist_sorted(keys);
-
-	bch2_btree_node_lock_for_insert(c, b, iter);
-
-	if (!bch2_btree_node_insert_fits(c, b, bch_keylist_u64s(keys))) {
-		bch2_btree_node_unlock_write(b, iter);
-		return -1;
-	}
 
 	/* Don't screw up @iter's position: */
 	node_iter = iter->l[b->level].iter;
@@ -1505,14 +1492,6 @@ bch2_btree_insert_keys_interior(struct btree_update *as, struct btree *b,
 	bch2_btree_node_iter_peek(&iter->l[b->level].iter, b);
 
 	bch2_btree_iter_verify(iter, b);
-
-	if (bch2_maybe_compact_whiteouts(c, b))
-		bch2_btree_iter_reinit_node(iter, b);
-
-	bch2_btree_node_unlock_write(b, iter);
-
-	btree_node_interior_verify(b);
-	return 0;
 }
 
 /**
@@ -1530,11 +1509,48 @@ bch2_btree_insert_keys_interior(struct btree_update *as, struct btree *b,
 void bch2_btree_insert_node(struct btree_update *as, struct btree *b,
 			    struct btree_iter *iter, struct keylist *keys)
 {
-	BUG_ON(!b->level);
+	struct bch_fs *c = as->c;
+	int old_u64s = le16_to_cpu(btree_bset_last(b)->u64s);
+	int old_live_u64s = b->nr.live_u64s;
+	int live_u64s_added, u64s_added;
 
-	if (as->must_rewrite ||
-	    bch2_btree_insert_keys_interior(as, b, iter, keys))
-		btree_split(as, b, iter, keys);
+	BUG_ON(!btree_node_intent_locked(iter, btree_node_root(c, b)->level));
+	BUG_ON(!b->level);
+	BUG_ON(!as || as->b);
+	bch2_verify_keylist_sorted(keys);
+
+	if (as->must_rewrite)
+		goto split;
+
+	bch2_btree_node_lock_for_insert(c, b, iter);
+
+	if (!bch2_btree_node_insert_fits(c, b, bch_keylist_u64s(keys))) {
+		bch2_btree_node_unlock_write(b, iter);
+		goto split;
+	}
+
+	bch2_btree_insert_keys_interior(as, b, iter, keys);
+
+	live_u64s_added = (int) b->nr.live_u64s - old_live_u64s;
+	u64s_added = (int) le16_to_cpu(btree_bset_last(b)->u64s) - old_u64s;
+
+	if (b->sib_u64s[0] != U16_MAX && live_u64s_added < 0)
+		b->sib_u64s[0] = max(0, (int) b->sib_u64s[0] + live_u64s_added);
+	if (b->sib_u64s[1] != U16_MAX && live_u64s_added < 0)
+		b->sib_u64s[1] = max(0, (int) b->sib_u64s[1] + live_u64s_added);
+
+	if (u64s_added > live_u64s_added &&
+	    bch2_maybe_compact_whiteouts(c, b))
+		bch2_btree_iter_reinit_node(iter, b);
+
+	bch2_btree_node_unlock_write(b, iter);
+
+	btree_node_interior_verify(b);
+
+	bch2_foreground_maybe_merge(c, iter, b->level);
+	return;
+split:
+	btree_split(as, b, iter, keys);
 }
 
 int bch2_btree_split_leaf(struct bch_fs *c, struct btree_iter *iter,
