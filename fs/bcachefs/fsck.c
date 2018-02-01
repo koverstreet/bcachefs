@@ -231,7 +231,7 @@ static int hash_check_key(const struct bch_hash_desc desc,
 				return ret;
 			return 1;
 		}
-		bch2_btree_iter_advance_pos(&h->iter);
+		bch2_btree_iter_next(&h->iter);
 	}
 fsck_err:
 	return ret;
@@ -1081,7 +1081,7 @@ peek_nlinks:	link = genradix_iter_peek(&nlinks_iter, links);
 		if (nlinks_pos == iter.pos.inode)
 			genradix_iter_advance(&nlinks_iter, links);
 
-		bch2_btree_iter_advance_pos(&iter);
+		bch2_btree_iter_next(&iter);
 		bch2_btree_iter_cond_resched(&iter);
 	}
 fsck_err:

@@ -303,10 +303,10 @@ int bch2_inode_create(struct bch_fs *c, struct bch_inode_unpacked *inode_u,
 		searched_from_start = true;
 again:
 	bch2_btree_iter_init(&iter, c, BTREE_ID_INODES, POS(*hint, 0),
-			     BTREE_ITER_INTENT);
+			     BTREE_ITER_SLOTS|BTREE_ITER_INTENT);
 
 	while (1) {
-		struct bkey_s_c k = bch2_btree_iter_peek_with_holes(&iter);
+		struct bkey_s_c k = bch2_btree_iter_peek_slot(&iter);
 		u32 bi_generation = 0;
 
 		ret = btree_iter_err(k);
@@ -322,7 +322,7 @@ again:
 			if (iter.pos.inode == max)
 				goto out;
 
-			bch2_btree_iter_advance_pos(&iter);
+			bch2_btree_iter_next_slot(&iter);
 			break;
 
 		case BCH_INODE_GENERATION: {
@@ -415,9 +415,9 @@ int bch2_inode_rm(struct bch_fs *c, u64 inode_nr)
 		return ret;
 
 	bch2_btree_iter_init(&iter, c, BTREE_ID_INODES, POS(inode_nr, 0),
-			     BTREE_ITER_INTENT);
+			     BTREE_ITER_SLOTS|BTREE_ITER_INTENT);
 	do {
-		struct bkey_s_c k = bch2_btree_iter_peek_with_holes(&iter);
+		struct bkey_s_c k = bch2_btree_iter_peek_slot(&iter);
 		u32 bi_generation = 0;
 
 		ret = btree_iter_err(k);
@@ -474,7 +474,7 @@ int bch2_inode_find_by_inum(struct bch_fs *c, u64 inode_nr,
 
 	for_each_btree_key(&iter, c, BTREE_ID_INODES,
 			   POS(inode_nr, 0),
-			   BTREE_ITER_WITH_HOLES, k) {
+			   BTREE_ITER_SLOTS, k) {
 		switch (k.k->type) {
 		case BCH_INODE_FS:
 			ret = bch2_inode_unpack(bkey_s_c_to_inode(k), inode);
@@ -489,38 +489,6 @@ int bch2_inode_find_by_inum(struct bch_fs *c, u64 inode_nr,
 	}
 
 	return bch2_btree_iter_unlock(&iter) ?: ret;
-}
-
-int bch2_cached_dev_inode_find_by_uuid(struct bch_fs *c, uuid_le *uuid,
-				       struct bkey_i_inode_blockdev *ret)
-{
-	struct btree_iter iter;
-	struct bkey_s_c k;
-
-	for_each_btree_key(&iter, c, BTREE_ID_INODES, POS(0, 0), 0, k) {
-		if (k.k->p.inode >= BLOCKDEV_INODE_MAX)
-			break;
-
-		if (k.k->type == BCH_INODE_BLOCKDEV) {
-			struct bkey_s_c_inode_blockdev inode =
-				bkey_s_c_to_inode_blockdev(k);
-
-			pr_debug("found inode %llu: %pU (u64s %u)",
-				 inode.k->p.inode, inode.v->i_uuid.b,
-				 inode.k->u64s);
-
-			if (CACHED_DEV(inode.v) &&
-			    !memcmp(uuid, &inode.v->i_uuid, 16)) {
-				bkey_reassemble(&ret->k_i, k);
-				bch2_btree_iter_unlock(&iter);
-				return 0;
-			}
-		}
-
-		bch2_btree_iter_cond_resched(&iter);
-	}
-	bch2_btree_iter_unlock(&iter);
-	return -ENOENT;
 }
 
 #ifdef CONFIG_BCACHEFS_DEBUG

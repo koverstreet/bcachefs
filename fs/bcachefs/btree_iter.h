@@ -7,7 +7,7 @@
 #include "bset.h"
 
 #define BTREE_ITER_UPTODATE		(1 << 0)
-#define BTREE_ITER_WITH_HOLES		(1 << 1)
+#define BTREE_ITER_SLOTS		(1 << 1)
 #define BTREE_ITER_INTENT		(1 << 2)
 #define BTREE_ITER_PREFETCH		(1 << 3)
 /*
@@ -48,7 +48,7 @@ struct btree_iter {
 
 	/*
 	 * Current unpacked key - so that bch2_btree_iter_next()/
-	 * bch2_btree_iter_next_with_holes() can correctly advance pos.
+	 * bch2_btree_iter_next_slot() can correctly advance pos.
 	 */
 	struct bkey		k;
 
@@ -163,10 +163,13 @@ struct btree *bch2_btree_iter_peek_node(struct btree_iter *);
 struct btree *bch2_btree_iter_next_node(struct btree_iter *, unsigned);
 
 struct bkey_s_c bch2_btree_iter_peek(struct btree_iter *);
-struct bkey_s_c bch2_btree_iter_peek_with_holes(struct btree_iter *);
+struct bkey_s_c bch2_btree_iter_next(struct btree_iter *);
+
+struct bkey_s_c bch2_btree_iter_peek_slot(struct btree_iter *);
+struct bkey_s_c bch2_btree_iter_next_slot(struct btree_iter *);
+
 void bch2_btree_iter_set_pos_same_leaf(struct btree_iter *, struct bpos);
 void bch2_btree_iter_set_pos(struct btree_iter *, struct bpos);
-void bch2_btree_iter_advance_pos(struct btree_iter *);
 void bch2_btree_iter_rewind(struct btree_iter *, struct bpos);
 
 void __bch2_btree_iter_init(struct btree_iter *, struct bch_fs *,
@@ -179,8 +182,8 @@ static inline void bch2_btree_iter_init(struct btree_iter *iter,
 {
 	__bch2_btree_iter_init(iter, c, btree_id, pos,
 			       flags & BTREE_ITER_INTENT ? 1 : 0, 0,
-			       btree_id == BTREE_ID_EXTENTS
-			       ?  BTREE_ITER_IS_EXTENTS : 0);
+			       (btree_id == BTREE_ID_EXTENTS
+				?  BTREE_ITER_IS_EXTENTS : 0)|flags);
 }
 
 void bch2_btree_iter_link(struct btree_iter *, struct btree_iter *);
@@ -229,16 +232,30 @@ static inline int btree_iter_cmp(const struct btree_iter *l,
 static inline struct bkey_s_c __bch2_btree_iter_peek(struct btree_iter *iter,
 						     unsigned flags)
 {
-	return flags & BTREE_ITER_WITH_HOLES
-		? bch2_btree_iter_peek_with_holes(iter)
+	return flags & BTREE_ITER_SLOTS
+		? bch2_btree_iter_peek_slot(iter)
 		: bch2_btree_iter_peek(iter);
+}
+
+static inline struct bkey_s_c __bch2_btree_iter_next(struct btree_iter *iter,
+						     unsigned flags)
+{
+	return flags & BTREE_ITER_SLOTS
+		? bch2_btree_iter_next_slot(iter)
+		: bch2_btree_iter_next(iter);
 }
 
 #define for_each_btree_key(_iter, _c, _btree_id,  _start, _flags, _k)	\
 	for (bch2_btree_iter_init((_iter), (_c), (_btree_id),		\
-				  (_start), (_flags));			\
-	     !IS_ERR_OR_NULL(((_k) = __bch2_btree_iter_peek(_iter, _flags)).k);\
-	     bch2_btree_iter_advance_pos(_iter))
+				  (_start), (_flags)),			\
+	     (_k) = __bch2_btree_iter_peek(_iter, _flags);		\
+	     !IS_ERR_OR_NULL((_k).k);					\
+	     (_k) = __bch2_btree_iter_next(_iter, _flags))
+
+#define for_each_btree_key_continue(_iter, _flags, _k)			\
+	for ((_k) = __bch2_btree_iter_peek(_iter, _flags);		\
+	     !IS_ERR_OR_NULL((_k).k);					\
+	     (_k) = __bch2_btree_iter_next(_iter, _flags))
 
 static inline int btree_iter_err(struct bkey_s_c k)
 {
@@ -251,16 +268,10 @@ static inline int btree_iter_err(struct bkey_s_c k)
  */
 static inline void bch2_btree_iter_cond_resched(struct btree_iter *iter)
 {
-	struct btree_iter *linked;
-
 	if (need_resched()) {
-		for_each_linked_btree_iter(iter, linked)
-			bch2_btree_iter_unlock(linked);
 		bch2_btree_iter_unlock(iter);
 		schedule();
 	} else if (race_fault()) {
-		for_each_linked_btree_iter(iter, linked)
-			bch2_btree_iter_unlock(linked);
 		bch2_btree_iter_unlock(iter);
 	}
 }

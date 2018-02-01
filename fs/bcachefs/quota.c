@@ -735,8 +735,8 @@ static int bch2_set_quota(struct super_block *sb, struct kqid qid,
 	new_quota.k.p = POS(qid.type, from_kqid(&init_user_ns, qid));
 
 	bch2_btree_iter_init(&iter, c, BTREE_ID_QUOTAS, new_quota.k.p,
-			     BTREE_ITER_WITH_HOLES|BTREE_ITER_INTENT);
-	k = bch2_btree_iter_peek_with_holes(&iter);
+			     BTREE_ITER_SLOTS|BTREE_ITER_INTENT);
+	k = bch2_btree_iter_peek_slot(&iter);
 
 	ret = btree_iter_err(k);
 	if (unlikely(ret))

@@ -120,8 +120,6 @@ int bch2_btree_insert_list_at(struct btree_iter *, struct keylist *,
 int bch2_btree_insert(struct bch_fs *, enum btree_id, struct bkey_i *,
 		     struct disk_reservation *,
 		     struct extent_insert_hook *, u64 *, int flags);
-int bch2_btree_update(struct bch_fs *, enum btree_id,
-		     struct bkey_i *, u64 *);
 
 int bch2_btree_delete_range(struct bch_fs *, enum btree_id,
 			   struct bpos, struct bpos, struct bversion,

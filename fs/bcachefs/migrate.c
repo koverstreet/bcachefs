@@ -162,7 +162,7 @@ static int bch2_dev_usrdata_drop(struct bch_fs *c, unsigned dev_idx, int flags)
 						    bch2_bkey_devs(k));
 			if (ret)
 				break;
-			bch2_btree_iter_advance_pos(&iter);
+			bch2_btree_iter_next(&iter);
 			continue;
 		}
 

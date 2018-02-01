@@ -1464,9 +1464,9 @@ static void bch2_read_nodecode_retry(struct bch_fs *c, struct bch_read_bio *rbio
 
 	bch2_btree_iter_init(&iter, c, BTREE_ID_EXTENTS,
 			     POS(inode, bvec_iter.bi_sector),
-			     BTREE_ITER_WITH_HOLES);
+			     BTREE_ITER_SLOTS);
 retry:
-	k = bch2_btree_iter_peek_with_holes(&iter);
+	k = bch2_btree_iter_peek_slot(&iter);
 	if (btree_iter_err(k)) {
 		bch2_btree_iter_unlock(&iter);
 		goto err;
@@ -1537,7 +1537,7 @@ void __bch2_read(struct bch_fs *c, struct bch_read_bio *rbio,
 retry:
 	for_each_btree_key(&iter, c, BTREE_ID_EXTENTS,
 			   POS(inode, bvec_iter.bi_sector),
-			   BTREE_ITER_WITH_HOLES, k) {
+			   BTREE_ITER_SLOTS, k) {
 		BKEY_PADDED(k) tmp;
 		struct extent_pick_ptr pick;
 		struct bvec_iter fragment;

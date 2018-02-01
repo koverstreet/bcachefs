@@ -2370,7 +2370,7 @@ int bch2_check_range_allocated(struct bch_fs *c, struct bpos pos, u64 size)
 	end.offset += size;
 
 	for_each_btree_key(&iter, c, BTREE_ID_EXTENTS, pos,
-			     BTREE_ITER_WITH_HOLES, k) {
+			     BTREE_ITER_SLOTS, k) {
 		if (bkey_cmp(bkey_start_pos(k.k), end) >= 0)
 			break;
 

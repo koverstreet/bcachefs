@@ -85,10 +85,10 @@ int __must_check __bch2_write_inode(struct bch_fs *c,
 	lockdep_assert_held(&inode->ei_update_lock);
 
 	bch2_btree_iter_init(&iter, c, BTREE_ID_INODES, POS(inum, 0),
-			     BTREE_ITER_INTENT);
+			     BTREE_ITER_SLOTS|BTREE_ITER_INTENT);
 
 	do {
-		struct bkey_s_c k = bch2_btree_iter_peek_with_holes(&iter);
+		struct bkey_s_c k = bch2_btree_iter_peek_slot(&iter);
 
 		if ((ret = btree_iter_err(k)))
 			goto out;

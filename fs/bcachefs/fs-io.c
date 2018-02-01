@@ -400,7 +400,7 @@ static int bchfs_write_index_update(struct bch_write_op *wop)
 			     BTREE_ITER_INTENT);
 	bch2_btree_iter_init(&inode_iter, wop->c, BTREE_ID_INODES,
 			     POS(extent_iter.pos.inode, 0),
-			     BTREE_ITER_INTENT);
+			     BTREE_ITER_SLOTS|BTREE_ITER_INTENT);
 
 	hook.op			= op;
 	hook.hook.fn		= bchfs_extent_update_hook;
@@ -423,7 +423,7 @@ static int bchfs_write_index_update(struct bch_write_op *wop)
 			if (!btree_iter_linked(&inode_iter))
 				bch2_btree_iter_link(&extent_iter, &inode_iter);
 
-			inode = bch2_btree_iter_peek_with_holes(&inode_iter);
+			inode = bch2_btree_iter_peek_slot(&inode_iter);
 			if ((ret = btree_iter_err(inode)))
 				goto err;
 
@@ -994,7 +994,7 @@ static void bchfs_read(struct bch_fs *c, struct btree_iter *iter,
 
 		bch2_btree_iter_set_pos(iter, POS(inum, bio->bi_iter.bi_sector));
 
-		k = bch2_btree_iter_peek_with_holes(iter);
+		k = bch2_btree_iter_peek_slot(iter);
 		BUG_ON(!k.k);
 
 		if (IS_ERR(k.k)) {
@@ -1067,7 +1067,8 @@ int bch2_readpages(struct file *file, struct address_space *mapping,
 		.mapping = mapping, .nr_pages = nr_pages
 	};
 
-	bch2_btree_iter_init(&iter, c, BTREE_ID_EXTENTS, POS_MIN, 0);
+	bch2_btree_iter_init(&iter, c, BTREE_ID_EXTENTS, POS_MIN,
+			     BTREE_ITER_SLOTS);
 
 	INIT_LIST_HEAD(&readpages_iter.pages);
 	list_add(&readpages_iter.pages, pages);
@@ -1107,7 +1108,8 @@ static void __bchfs_readpage(struct bch_fs *c, struct bch_read_bio *rbio,
 	bio_set_op_attrs(&rbio->bio, REQ_OP_READ, REQ_SYNC);
 	bio_add_page_contig(&rbio->bio, page);
 
-	bch2_btree_iter_init(&iter, c, BTREE_ID_EXTENTS, POS_MIN, 0);
+	bch2_btree_iter_init(&iter, c, BTREE_ID_EXTENTS, POS_MIN,
+			     BTREE_ITER_SLOTS);
 	bchfs_read(c, &iter, rbio, inum, NULL);
 }
 
@@ -2235,9 +2237,10 @@ static long bch2_fcollapse(struct bch_inode_info *inode,
 
 	bch2_btree_iter_init(&dst, c, BTREE_ID_EXTENTS,
 			     POS(inode->v.i_ino, offset >> 9),
-			     BTREE_ITER_INTENT);
+			     BTREE_ITER_SLOTS|BTREE_ITER_INTENT);
 	/* position will be set from dst iter's position: */
-	bch2_btree_iter_init(&src, c, BTREE_ID_EXTENTS, POS_MIN, 0);
+	bch2_btree_iter_init(&src, c, BTREE_ID_EXTENTS, POS_MIN,
+			     BTREE_ITER_SLOTS);
 	bch2_btree_iter_link(&src, &dst);
 
 	/*
@@ -2279,7 +2282,7 @@ static long bch2_fcollapse(struct bch_inode_info *inode,
 		if (ret)
 			goto btree_iter_err;
 
-		k = bch2_btree_iter_peek_with_holes(&src);
+		k = bch2_btree_iter_peek_slot(&src);
 		if ((ret = btree_iter_err(k)))
 			goto btree_iter_err;
 
@@ -2355,7 +2358,7 @@ static long bch2_fallocate(struct bch_inode_info *inode, int mode,
 	int ret;
 
 	bch2_btree_iter_init(&iter, c, BTREE_ID_EXTENTS, POS_MIN,
-			     BTREE_ITER_INTENT);
+			     BTREE_ITER_SLOTS|BTREE_ITER_INTENT);
 
 	inode_lock(&inode->v);
 	inode_dio_wait(&inode->v);
@@ -2402,20 +2405,20 @@ static long bch2_fallocate(struct bch_inode_info *inode, int mode,
 		struct bkey_i_reservation reservation;
 		struct bkey_s_c k;
 
-		k = bch2_btree_iter_peek_with_holes(&iter);
+		k = bch2_btree_iter_peek_slot(&iter);
 		if ((ret = btree_iter_err(k)))
 			goto btree_iter_err;
 
 		/* already reserved */
 		if (k.k->type == BCH_RESERVATION &&
 		    bkey_s_c_to_reservation(k).v->nr_replicas >= replicas) {
-			bch2_btree_iter_advance_pos(&iter);
+			bch2_btree_iter_next_slot(&iter);
 			continue;
 		}
 
 		if (bkey_extent_is_data(k.k)) {
 			if (!(mode & FALLOC_FL_ZERO_RANGE)) {
-				bch2_btree_iter_advance_pos(&iter);
+				bch2_btree_iter_next_slot(&iter);
 				continue;
 			}
 		}
@@ -2644,7 +2647,7 @@ static loff_t bch2_seek_hole(struct file *file, u64 offset)
 
 	for_each_btree_key(&iter, c, BTREE_ID_EXTENTS,
 			   POS(inode->v.i_ino, offset >> 9),
-			   BTREE_ITER_WITH_HOLES, k) {
+			   BTREE_ITER_SLOTS, k) {
 		if (k.k->p.inode != inode->v.i_ino) {
 			next_hole = bch2_next_pagecache_hole(&inode->v,
 					offset, MAX_LFS_FILESIZE);

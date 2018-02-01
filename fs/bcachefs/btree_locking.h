@@ -91,7 +91,7 @@ static inline void btree_node_unlock(struct btree_iter *iter, unsigned level)
 {
 	int lock_type = btree_node_locked_type(iter, level);
 
-	EBUG_ON(!level && iter->flags & BTREE_ITER_UPTODATE);
+	EBUG_ON(!level && (iter->flags & BTREE_ITER_UPTODATE));
 	EBUG_ON(level >= BTREE_MAX_DEPTH);
 
 	if (lock_type != BTREE_NODE_UNLOCKED)

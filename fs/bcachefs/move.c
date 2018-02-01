@@ -49,10 +49,10 @@ static int bch2_migrate_index_update(struct bch_write_op *op)
 
 	bch2_btree_iter_init(&iter, c, BTREE_ID_EXTENTS,
 			     bkey_start_pos(&bch2_keylist_front(keys)->k),
-			     BTREE_ITER_INTENT);
+			     BTREE_ITER_SLOTS|BTREE_ITER_INTENT);
 
 	while (1) {
-		struct bkey_s_c k = bch2_btree_iter_peek_with_holes(&iter);
+		struct bkey_s_c k = bch2_btree_iter_peek_slot(&iter);
 		struct bkey_i_extent *insert, *new =
 			bkey_i_to_extent(bch2_keylist_front(keys));
 		BKEY_PADDED(k) _new, _insert;
@@ -143,7 +143,7 @@ nomatch:
 				     &m->ctxt->stats->sectors_raced);
 		atomic_long_inc(&c->extent_migrate_raced);
 		trace_move_race(&new->k);
-		bch2_btree_iter_advance_pos(&iter);
+		bch2_btree_iter_next_slot(&iter);
 		goto next;
 	}
 out:
@@ -435,7 +435,7 @@ next:
 		atomic64_add(k.k->size * bch2_extent_nr_dirty_ptrs(k),
 			     &stats->sectors_seen);
 next_nondata:
-		bch2_btree_iter_advance_pos(&stats->iter);
+		bch2_btree_iter_next(&stats->iter);
 		bch2_btree_iter_cond_resched(&stats->iter);
 	}
 
