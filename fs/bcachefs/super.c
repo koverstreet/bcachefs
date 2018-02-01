@@ -259,6 +259,13 @@ static void __bch2_fs_read_only(struct bch_fs *c)
 	bch2_fs_journal_stop(&c->journal);
 
 	/*
+	 * the journal kicks off btree writes via reclaim - wait for in flight
+	 * writes after stopping journal:
+	 */
+	if (test_bit(BCH_FS_EMERGENCY_RO, &c->flags))
+		bch2_btree_flush_all_writes(c);
+
+	/*
 	 * After stopping journal:
 	 */
 	for_each_member_device(ca, c, i)
@@ -475,6 +482,9 @@ void bch2_fs_stop(struct bch_fs *c)
 	mutex_unlock(&c->state_lock);
 
 	bch_fs_mark_clean(c);
+
+	/* btree prefetch might have kicked off reads in the background: */
+	bch2_btree_flush_all_reads(c);
 
 	for_each_member_device(ca, c, i)
 		cancel_work_sync(&ca->io_error_work);

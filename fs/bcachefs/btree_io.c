@@ -1918,6 +1918,34 @@ void bch2_btree_node_write(struct bch_fs *c, struct btree *b,
 	}
 }
 
+static void __bch2_btree_flush_all(struct bch_fs *c, unsigned flag)
+{
+	struct bucket_table *tbl;
+	struct rhash_head *pos;
+	struct btree *b;
+	unsigned i;
+restart:
+	rcu_read_lock();
+	for_each_cached_btree(b, c, tbl, i, pos)
+		if (test_bit(flag, &b->flags)) {
+			rcu_read_unlock();
+			wait_on_bit_io(&b->flags, flag, TASK_UNINTERRUPTIBLE);
+			goto restart;
+
+		}
+	rcu_read_unlock();
+}
+
+void bch2_btree_flush_all_reads(struct bch_fs *c)
+{
+	__bch2_btree_flush_all(c, BTREE_NODE_read_in_flight);
+}
+
+void bch2_btree_flush_all_writes(struct bch_fs *c)
+{
+	__bch2_btree_flush_all(c, BTREE_NODE_write_in_flight);
+}
+
 void bch2_btree_verify_flushed(struct bch_fs *c)
 {
 	struct bucket_table *tbl;
