@@ -787,9 +787,13 @@ struct btree *bch2_btree_node_get_sibling(struct bch_fs *c,
 		ret = bch2_btree_node_get(c, iter, &tmp.k, level, SIX_LOCK_intent);
 	}
 
-	if (!IS_ERR(ret) && !bch2_btree_node_relock(iter, level)) {
-		six_unlock_intent(&ret->lock);
-		ret = ERR_PTR(-EINTR);
+	if (!bch2_btree_node_relock(iter, level)) {
+		btree_iter_set_dirty(iter, BTREE_ITER_NEED_RELOCK);
+
+		if (!IS_ERR(ret)) {
+			six_unlock_intent(&ret->lock);
+			ret = ERR_PTR(-EINTR);
+		}
 	}
 
 	return ret;

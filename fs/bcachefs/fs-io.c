@@ -407,10 +407,6 @@ static int bchfs_write_index_update(struct bch_write_op *wop)
 	hook.need_inode_update	= false;
 
 	do {
-		ret = bch2_btree_iter_traverse(&extent_iter);
-		if (ret)
-			goto err;
-
 		/* XXX: inode->i_size locking */
 		k = bch2_keylist_front(keys);
 		if (min(k->k.p.offset << 9, op->new_i_size) >
@@ -2277,10 +2273,6 @@ static long bch2_fcollapse(struct bch_inode_info *inode,
 
 		bch2_btree_iter_set_pos(&src,
 			POS(dst.pos.inode, dst.pos.offset + (len >> 9)));
-
-		ret = bch2_btree_iter_traverse(&dst);
-		if (ret)
-			goto btree_iter_err;
 
 		k = bch2_btree_iter_peek_slot(&src);
 		if ((ret = btree_iter_err(k)))

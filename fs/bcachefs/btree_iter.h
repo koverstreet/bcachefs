@@ -6,20 +6,27 @@
 #include "btree_types.h"
 #include "bset.h"
 
-#define BTREE_ITER_UPTODATE		(1 << 0)
-#define BTREE_ITER_SLOTS		(1 << 1)
-#define BTREE_ITER_INTENT		(1 << 2)
-#define BTREE_ITER_PREFETCH		(1 << 3)
+#define BTREE_ITER_SLOTS		(1 << 0)
+#define BTREE_ITER_INTENT		(1 << 1)
+#define BTREE_ITER_PREFETCH		(1 << 2)
 /*
  * Used in bch2_btree_iter_traverse(), to indicate whether we're searching for
  * @pos or the first key strictly greater than @pos
  */
-#define BTREE_ITER_IS_EXTENTS		(1 << 4)
+#define BTREE_ITER_IS_EXTENTS		(1 << 3)
 /*
  * indicates we need to call bch2_btree_iter_traverse() to revalidate iterator:
  */
-#define BTREE_ITER_AT_END_OF_LEAF	(1 << 5)
-#define BTREE_ITER_ERROR		(1 << 6)
+#define BTREE_ITER_AT_END_OF_LEAF	(1 << 4)
+#define BTREE_ITER_ERROR		(1 << 5)
+
+enum btree_iter_uptodate {
+	BTREE_ITER_UPTODATE		= 0,
+	BTREE_ITER_NEED_PEEK		= 1,
+	BTREE_ITER_NEED_RELOCK		= 2,
+	BTREE_ITER_NEED_TRAVERSE	= 3,
+	BTREE_ITER_END			= 4,
+};
 
 /*
  * @pos			- iterator's current position
@@ -33,7 +40,8 @@ struct btree_iter {
 	struct bpos		pos;
 
 	u8			flags;
-	enum btree_id		btree_id:8;
+	unsigned		uptodate:4;
+	enum btree_id		btree_id:4;
 	unsigned		level:4,
 				locks_want:4,
 				nodes_locked:4,
@@ -62,6 +70,12 @@ struct btree_iter {
 	/* Must come last: */
 	struct btree_iter	*next;
 };
+
+static inline void btree_iter_set_dirty(struct btree_iter *iter,
+					enum btree_iter_uptodate u)
+{
+	iter->uptodate = max_t(unsigned, iter->uptodate, u);
+}
 
 static inline struct btree *btree_iter_node(struct btree_iter *iter,
 					    unsigned level)
@@ -170,7 +184,6 @@ struct bkey_s_c bch2_btree_iter_next_slot(struct btree_iter *);
 
 void bch2_btree_iter_set_pos_same_leaf(struct btree_iter *, struct bpos);
 void bch2_btree_iter_set_pos(struct btree_iter *, struct bpos);
-void bch2_btree_iter_rewind(struct btree_iter *, struct bpos);
 
 void __bch2_btree_iter_init(struct btree_iter *, struct bch_fs *,
 			   enum btree_id, struct bpos,
