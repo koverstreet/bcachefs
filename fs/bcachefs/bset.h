@@ -353,15 +353,6 @@ static inline int bkey_cmp_p_or_unp(const struct btree *b,
 }
 
 /* Returns true if @k is after iterator position @pos */
-static inline bool btree_iter_pos_cmp(struct bpos pos, const struct bkey *k,
-				      bool strictly_greater)
-{
-	int cmp = bkey_cmp(k->p, pos);
-
-	return cmp > 0 ||
-		(cmp == 0 && !strictly_greater && !bkey_deleted(k));
-}
-
 static inline bool btree_iter_pos_cmp_packed(const struct btree *b,
 					     struct bpos *pos,
 					     const struct bkey_packed *k,
