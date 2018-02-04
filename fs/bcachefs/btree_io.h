@@ -57,21 +57,23 @@ enum compact_mode {
 
 bool __bch2_compact_whiteouts(struct bch_fs *, struct btree *, enum compact_mode);
 
+static inline unsigned should_compact_bset_lazy(struct btree *b, struct bset_tree *t)
+{
+	unsigned bset_u64s = le16_to_cpu(bset(b, t)->u64s);
+	unsigned dead_u64s = bset_u64s - b->nr.bset_u64s[t - b->set];
+
+	return dead_u64s > 128 && dead_u64s * 3 > bset_u64s;
+}
+
 static inline bool bch2_maybe_compact_whiteouts(struct bch_fs *c, struct btree *b)
 {
 	struct bset_tree *t;
 
-	for_each_bset(b, t) {
-		unsigned live_u64s = b->nr.bset_u64s[t - b->set];
-		unsigned bset_u64s = le16_to_cpu(bset(b, t)->u64s);
-
-		if (live_u64s * 4 < bset_u64s * 3)
-			goto compact;
-	}
+	for_each_bset(b, t)
+		if (should_compact_bset_lazy(b, t))
+			return __bch2_compact_whiteouts(c, b, COMPACT_LAZY);
 
 	return false;
-compact:
-	return __bch2_compact_whiteouts(c, b, COMPACT_LAZY);
 }
 
 void bch2_btree_sort_into(struct bch_fs *, struct btree *, struct btree *);
