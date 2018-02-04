@@ -97,6 +97,7 @@ endef
 install-%: pkgdir_bin = $(CURDIR)/debian/$(bin_pkg_name)-$*
 install-%: pkgdir = $(CURDIR)/debian/$(mods_pkg_name)-$*
 install-%: pkgdir_ex = $(CURDIR)/debian/$(mods_extra_pkg_name)-$*
+install-%: pkgdir_bldinfo = $(CURDIR)/debian/$(bldinfo_pkg_name)-$*
 install-%: bindoc = $(pkgdir)/usr/share/doc/$(bin_pkg_name)-$*
 install-%: dbgpkgdir = $(CURDIR)/debian/$(bin_pkg_name)-$*-dbgsym
 install-%: signingv = $(CURDIR)/debian/$(bin_pkg_name)-signing/$(release)-$(revision)
@@ -161,10 +162,6 @@ endif
 	install -d $(pkgdir)/boot
 	install -m644 $(builddir)/build-$*/.config \
 		$(pkgdir)/boot/config-$(abi_release)-$*
-	install -m644 $(abidir)/$* \
-		$(pkgdir)/boot/abi-$(abi_release)-$*
-	install -m644 $(abidir)/$*.retpoline \
-		$(pkgdir)/boot/retpoline-$(abi_release)-$*
 	install -m600 $(builddir)/build-$*/System.map \
 		$(pkgdir)/boot/System.map-$(abi_release)-$*
 	if [ "$(filter true,$(do_dtbs))" ]; then \
@@ -422,6 +419,17 @@ endif
 		echo "# RETPOLINE NOT ENABLED" >$(abidir)/$*.retpoline; \
 	fi
 
+	# Build the buildinfo package content.
+	install -d $(pkgdir_bldinfo)/usr/lib/linux/$(abi_release)-$*
+	install -m644 $(builddir)/build-$*/.config \
+		$(pkgdir_bldinfo)/usr/lib/linux/$(abi_release)-$*/config
+	install -m644 $(abidir)/$* \
+		$(pkgdir_bldinfo)/usr/lib/linux/$(abi_release)-$*/abi
+	install -m644 $(abidir)/$*.modules \
+		$(pkgdir_bldinfo)/usr/lib/linux/$(abi_release)-$*/modules
+	install -m644 $(abidir)/$*.retpoline \
+		$(pkgdir_bldinfo)/usr/lib/linux/$(abi_release)-$*/retpoline
+
 headers_tmp := $(CURDIR)/debian/tmp-headers
 headers_dir := $(CURDIR)/debian/linux-libc-dev
 
@@ -493,6 +501,7 @@ binary-%: pkgimg = $(bin_pkg_name)-$*
 binary-%: pkgimg_mods = $(mods_pkg_name)-$*
 binary-%: pkgimg_ex = $(mods_extra_pkg_name)-$*
 binary-%: pkgdir_ex = $(CURDIR)/debian/$(extra_pkg_name)-$*
+binary-%: pkgbldinfo = $(bldinfo_pkg_name)-$*
 binary-%: pkghdr = $(hdrs_pkg_name)-$*
 binary-%: dbgpkg = $(bin_pkg_name)-$*-dbgsym
 binary-%: dbgpkgdir = $(CURDIR)/debian/$(bin_pkg_name)-$*-dbgsym
@@ -523,6 +532,7 @@ ifeq ($(do_extras_package),true)
   endif
 endif
 
+	$(call dh_all,$(pkgbldinfo))
 	$(call dh_all,$(pkghdr))
 
 ifneq ($(skipsub),true)

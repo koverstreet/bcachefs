@@ -9,7 +9,7 @@ any_signed=$2
 
 if [ "$is_sub" = "" ]; then
 	flavour=$(basename $vars | sed 's/.*\.//')
-	stub=${DEBIAN}/control.d/flavour-control.stub
+	stub="${DEBIAN}/control.d/flavour-control.stub debian/control.d/flavour-buildinfo.stub"
 	if [ "$any_signed" = 'true' ]; then
 		sign_me_pkg="-unsigned"
 		sign_me_txt=" unsigned"
