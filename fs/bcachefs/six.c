@@ -318,7 +318,7 @@ static void __six_lock_type(struct six_lock *lock, enum six_lock_type type)
 {
 	six_acquire(&lock->dep_map, 0);
 
-	if (!__six_trylock_type(lock, type))
+	if (!do_six_trylock_type(lock, type))
 		__six_lock_type_slowpath(lock, type);
 
 	lock_acquired(&lock->dep_map, _RET_IP_);
