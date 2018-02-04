@@ -39,9 +39,8 @@ bool bch2_btree_bset_insert_key(struct btree_iter *iter,
 		t = bch2_bkey_to_bset(b, k);
 
 		if (bset_unwritten(b, bset(b, t)) &&
-		    bkey_val_u64s(&insert->k) == bkeyp_val_u64s(f, k)) {
-			BUG_ON(bkey_whiteout(k) != bkey_whiteout(&insert->k));
-
+		    bkey_val_u64s(&insert->k) == bkeyp_val_u64s(f, k) &&
+		    !bkey_whiteout(&insert->k)) {
 			k->type = insert->k.type;
 			memcpy_u64s(bkeyp_val(f, k), &insert->v,
 				    bkey_val_u64s(&insert->k));
