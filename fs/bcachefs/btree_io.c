@@ -266,19 +266,16 @@ static unsigned should_compact_bset(struct btree *b, struct bset_tree *t,
 				    bool compacting,
 				    enum compact_mode mode)
 {
-	unsigned live_u64s = b->nr.bset_u64s[t - b->set];
 	unsigned bset_u64s = le16_to_cpu(bset(b, t)->u64s);
-
-	if (live_u64s == bset_u64s)
-		return 0;
+	unsigned dead_u64s = bset_u64s - b->nr.bset_u64s[t - b->set];
 
 	if (mode == COMPACT_LAZY) {
-		if (live_u64s * 4 < bset_u64s * 3 ||
+		if (should_compact_bset_lazy(b, t) ||
 		    (compacting && bset_unwritten(b, bset(b, t))))
-			return bset_u64s - live_u64s;
+			return dead_u64s;
 	} else {
 		if (bset_written(b, bset(b, t)))
-			return bset_u64s - live_u64s;
+			return dead_u64s;
 	}
 
 	return 0;
@@ -426,7 +423,7 @@ static bool bch2_drop_whiteouts(struct btree *b)
 		struct bset *i = bset(b, t);
 		struct bkey_packed *k, *n, *out, *start, *end;
 
-		if (!should_compact_bset(b, t, true, true))
+		if (!should_compact_bset(b, t, true, COMPACT_WRITTEN))
 			continue;
 
 		start	= btree_bkey_first(b, t);

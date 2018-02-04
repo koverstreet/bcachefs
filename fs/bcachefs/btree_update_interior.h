@@ -221,16 +221,17 @@ static inline struct btree_node_entry *want_new_bset(struct bch_fs *c,
 	struct bset *i = btree_bset_last(b);
 	unsigned offset = max_t(unsigned, b->written << 9,
 				bset_byte_offset(b, vstruct_end(i)));
-	ssize_t n = (ssize_t) btree_bytes(c) - (ssize_t)
+	ssize_t remaining_space = (ssize_t) btree_bytes(c) - (ssize_t)
 		(offset + sizeof(struct btree_node_entry) +
 		 b->whiteout_u64s * sizeof(u64) +
 		 b->uncompacted_whiteout_u64s * sizeof(u64));
 
 	EBUG_ON(offset > btree_bytes(c));
 
-	if ((unlikely(bset_written(b, i)) && n > 0) ||
+	if ((unlikely(bset_written(b, i)) &&
+	     remaining_space > block_bytes(c)) ||
 	    (unlikely(vstruct_bytes(i) > btree_write_set_buffer(b)) &&
-	     n > btree_write_set_buffer(b)))
+	     remaining_space > btree_write_set_buffer(b)))
 		return (void *) b->data + offset;
 
 	return NULL;
