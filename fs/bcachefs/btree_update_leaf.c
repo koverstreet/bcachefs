@@ -200,7 +200,7 @@ btree_insert_key_leaf(struct btree_insert *trans,
 	int old_live_u64s = b->nr.live_u64s;
 	int live_u64s_added, u64s_added;
 
-	iter->flags &= ~BTREE_ITER_UPTODATE;
+	btree_iter_set_dirty(iter, BTREE_ITER_NEED_PEEK);
 
 	ret = !btree_node_is_extents(b)
 		? bch2_insert_fixup_key(trans, insert)
@@ -319,9 +319,16 @@ int __bch2_btree_insert_at(struct btree_insert *trans)
 		return -EROFS;
 retry_locks:
 	ret = -EINTR;
-	trans_for_each_entry(trans, i)
+	trans_for_each_entry(trans, i) {
 		if (!bch2_btree_iter_set_locks_want(i->iter, 1))
 			goto err;
+
+		if (i->iter->uptodate == BTREE_ITER_NEED_TRAVERSE) {
+			ret = bch2_btree_iter_traverse(i->iter);
+			if (ret)
+				goto err;
+		}
+	}
 retry:
 	trans->did_work = false;
 	u64s = 0;
@@ -413,17 +420,19 @@ unlock:
 	if (ret)
 		goto err;
 
-	/*
-	 * hack: iterators are inconsistent when they hit end of leaf, until
-	 * traversed again
-	 */
 	trans_for_each_entry(trans, i)
 		if (i->iter->flags & BTREE_ITER_AT_END_OF_LEAF)
 			goto out;
 
-	trans_for_each_entry(trans, i)
-		if (!same_leaf_as_prev(trans, i))
+	trans_for_each_entry(trans, i) {
+		/*
+		 * iterators are inconsistent when they hit end of leaf, until
+		 * traversed again
+		 */
+		if (i->iter->uptodate < BTREE_ITER_NEED_TRAVERSE &&
+		    !same_leaf_as_prev(trans, i))
 			bch2_foreground_maybe_merge(c, i->iter, 0);
+	}
 out:
 	/* make sure we didn't lose an error: */
 	if (!ret && IS_ENABLED(CONFIG_BCACHEFS_DEBUG))
@@ -497,12 +506,7 @@ int bch2_btree_insert_list_at(struct btree_iter *iter,
 	bch2_verify_keylist_sorted(keys);
 
 	while (!bch2_keylist_empty(keys)) {
-		/* need to traverse between each insert */
-		int ret = bch2_btree_iter_traverse(iter);
-		if (ret)
-			return ret;
-
-		ret = bch2_btree_insert_at(iter->c, disk_res, hook,
+		int ret = bch2_btree_insert_at(iter->c, disk_res, hook,
 				journal_seq, flags,
 				BTREE_INSERT_ENTRY(iter, bch2_keylist_front(keys)));
 		if (ret)
@@ -528,20 +532,15 @@ int bch2_btree_insert(struct bch_fs *c, enum btree_id id,
 		     u64 *journal_seq, int flags)
 {
 	struct btree_iter iter;
-	int ret, ret2;
+	int ret;
 
 	bch2_btree_iter_init(&iter, c, id, bkey_start_pos(&k->k),
 			     BTREE_ITER_INTENT);
-
-	ret = bch2_btree_iter_traverse(&iter);
-	if (unlikely(ret))
-		goto out;
-
 	ret = bch2_btree_insert_at(c, disk_res, hook, journal_seq, flags,
 				  BTREE_INSERT_ENTRY(&iter, k));
-out:	ret2 = bch2_btree_iter_unlock(&iter);
+	bch2_btree_iter_unlock(&iter);
 
-	return ret ?: ret2;
+	return ret;
 }
 
 /*

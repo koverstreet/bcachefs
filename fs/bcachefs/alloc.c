@@ -343,7 +343,7 @@ static int __bch2_alloc_write_key(struct bch_fs *c, struct bch_dev *ca,
 	bch2_btree_iter_set_pos(iter, POS(ca->dev_idx, b));
 
 	do {
-		ret = bch2_btree_iter_traverse(iter);
+		ret = btree_iter_err(bch2_btree_iter_peek_slot(iter));
 		if (ret)
 			break;
 
@@ -393,7 +393,7 @@ int bch2_alloc_replay_key(struct bch_fs *c, struct bpos pos)
 		return 0;
 
 	bch2_btree_iter_init(&iter, c, BTREE_ID_ALLOC, POS_MIN,
-			     BTREE_ITER_INTENT);
+			     BTREE_ITER_SLOTS|BTREE_ITER_INTENT);
 
 	ret = __bch2_alloc_write_key(c, ca, pos.offset, &iter, NULL);
 	bch2_btree_iter_unlock(&iter);
@@ -407,7 +407,7 @@ static int bch2_alloc_write(struct bch_fs *c, struct bch_dev *ca)
 	int ret = 0;
 
 	bch2_btree_iter_init(&iter, c, BTREE_ID_ALLOC, POS_MIN,
-			     BTREE_ITER_INTENT);
+			     BTREE_ITER_SLOTS|BTREE_ITER_INTENT);
 
 	down_read(&ca->bucket_lock);
 	for_each_set_bit(bucket, ca->buckets_dirty, ca->mi.nbuckets) {
@@ -826,7 +826,7 @@ static int bch2_invalidate_free_inc(struct bch_fs *c, struct bch_dev *ca,
 	int ret = 0;
 
 	bch2_btree_iter_init(&iter, c, BTREE_ID_ALLOC, POS(ca->dev_idx, 0),
-			     BTREE_ITER_INTENT);
+			     BTREE_ITER_SLOTS|BTREE_ITER_INTENT);
 
 	/*
 	 * XXX: if ca->nr_invalidated != 0, just return if we'd block doing the
