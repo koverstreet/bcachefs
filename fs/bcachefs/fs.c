@@ -658,6 +658,41 @@ out_unlock:
 	return ret;
 }
 
+static int bch2_getattr(const struct path *path, struct kstat *stat,
+			u32 request_mask, unsigned query_flags)
+{
+	struct bch_inode_info *inode = to_bch_ei(d_inode(path->dentry));
+	struct bch_fs *c = inode->v.i_sb->s_fs_info;
+
+	stat->dev	= inode->v.i_sb->s_dev;
+	stat->ino	= inode->v.i_ino;
+	stat->mode	= inode->v.i_mode;
+	stat->nlink	= inode->v.i_nlink;
+	stat->uid	= inode->v.i_uid;
+	stat->gid	= inode->v.i_gid;
+	stat->rdev	= inode->v.i_rdev;
+	stat->size	= i_size_read(&inode->v);
+	stat->atime	= inode->v.i_atime;
+	stat->mtime	= inode->v.i_mtime;
+	stat->ctime	= inode->v.i_ctime;
+	stat->blksize	= block_bytes(c);
+	stat->blocks	= inode->v.i_blocks;
+
+	if (request_mask & STATX_BTIME) {
+		stat->result_mask |= STATX_BTIME;
+		stat->btime = bch2_time_to_timespec(c, inode->ei_inode.bi_otime);
+	}
+
+	if (inode->ei_inode.bi_flags & BCH_INODE_IMMUTABLE)
+		stat->attributes |= STATX_ATTR_IMMUTABLE;
+	if (inode->ei_inode.bi_flags & BCH_INODE_APPEND)
+		stat->attributes |= STATX_ATTR_APPEND;
+	if (inode->ei_inode.bi_flags & BCH_INODE_NODUMP)
+		stat->attributes |= STATX_ATTR_NODUMP;
+
+	return 0;
+}
+
 static int bch2_setattr(struct dentry *dentry, struct iattr *iattr)
 {
 	struct bch_inode_info *inode = to_bch_ei(dentry->d_inode);
@@ -817,6 +852,7 @@ static const struct file_operations bch_file_operations = {
 };
 
 static const struct inode_operations bch_file_inode_operations = {
+	.getattr	= bch2_getattr,
 	.setattr	= bch2_setattr,
 	.fiemap		= bch2_fiemap,
 	.listxattr	= bch2_xattr_list,
@@ -836,6 +872,7 @@ static const struct inode_operations bch_dir_inode_operations = {
 	.rmdir		= bch2_rmdir,
 	.mknod		= bch2_mknod,
 	.rename		= bch2_rename2,
+	.getattr	= bch2_getattr,
 	.setattr	= bch2_setattr,
 	.tmpfile	= bch2_tmpfile,
 	.listxattr	= bch2_xattr_list,
@@ -858,6 +895,7 @@ static const struct file_operations bch_dir_file_operations = {
 
 static const struct inode_operations bch_symlink_inode_operations = {
 	.get_link	= page_get_link,
+	.getattr	= bch2_getattr,
 	.setattr	= bch2_setattr,
 	.listxattr	= bch2_xattr_list,
 #ifdef CONFIG_BCACHEFS_POSIX_ACL
@@ -867,6 +905,7 @@ static const struct inode_operations bch_symlink_inode_operations = {
 };
 
 static const struct inode_operations bch_special_inode_operations = {
+	.getattr	= bch2_getattr,
 	.setattr	= bch2_setattr,
 	.listxattr	= bch2_xattr_list,
 #ifdef CONFIG_BCACHEFS_POSIX_ACL
