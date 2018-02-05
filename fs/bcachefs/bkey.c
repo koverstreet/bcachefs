@@ -1040,8 +1040,8 @@ int __bch2_bkey_cmp_packed_format_checked(const struct bkey_packed *l,
 			      high_word(f, r),
 			      b->nr_key_bits);
 
-	EBUG_ON(ret != bkey_cmp(bkey_unpack_key_format_checked(b, l).p,
-				bkey_unpack_key_format_checked(b, r).p));
+	EBUG_ON(ret != bkey_cmp(bkey_unpack_pos(b, l),
+				bkey_unpack_pos(b, r)));
 	return ret;
 }
 

@@ -479,21 +479,19 @@ void bch2_btree_node_iter_fix(struct btree_iter *iter,
 		bch2_btree_iter_verify(iter, b);
 }
 
-/* peek_all() doesn't skip deleted keys */
-static inline struct bkey_s_c __btree_iter_peek_all(struct btree_iter *iter,
-						    struct btree_iter_level *l,
-						    struct bkey *u)
+static inline struct bkey_s_c __btree_iter_unpack(struct btree_iter *iter,
+						  struct btree_iter_level *l,
+						  struct bkey *u,
+						  struct bkey_packed *k)
 {
-	struct bkey_packed *k =
-		bch2_btree_node_iter_peek_all(&l->iter, l->b);
 	struct bkey_s_c ret;
 
-	if (!k) {
+	if (unlikely(!k)) {
 		/*
 		 * signal to bch2_btree_iter_peek_slot() that we're currently at
 		 * a hole
 		 */
-		iter->k.type = KEY_TYPE_DELETED;
+		u->type = KEY_TYPE_DELETED;
 		return bkey_s_c_null;
 	}
 
@@ -505,23 +503,20 @@ static inline struct bkey_s_c __btree_iter_peek_all(struct btree_iter *iter,
 	return ret;
 }
 
+/* peek_all() doesn't skip deleted keys */
+static inline struct bkey_s_c __btree_iter_peek_all(struct btree_iter *iter,
+						    struct btree_iter_level *l,
+						    struct bkey *u)
+{
+	return __btree_iter_unpack(iter, l, u,
+			bch2_btree_node_iter_peek_all(&l->iter, l->b));
+}
+
 static inline struct bkey_s_c __btree_iter_peek(struct btree_iter *iter,
 						struct btree_iter_level *l)
 {
-	struct bkey_packed *k = bch2_btree_node_iter_peek(&l->iter, l->b);
-	struct bkey_s_c ret;
-
-	if (!k) {
-		iter->k.type = KEY_TYPE_DELETED;
-		return bkey_s_c_null;
-	}
-
-	ret = bkey_disassemble(l->b, k, &iter->k);
-
-	if (debug_check_bkeys(iter->c))
-		bch2_bkey_debugcheck(iter->c, l->b, ret);
-
-	return ret;
+	return __btree_iter_unpack(iter, l, &iter->k,
+			bch2_btree_node_iter_peek(&l->iter, l->b));
 }
 
 static inline void __btree_iter_advance(struct btree_iter_level *l)
@@ -1146,9 +1141,27 @@ struct bkey_s_c bch2_btree_iter_peek(struct btree_iter *iter)
 	return k;
 }
 
+static noinline
+struct bkey_s_c bch2_btree_iter_peek_next_leaf(struct btree_iter *iter)
+{
+	struct btree_iter_level *l = &iter->l[0];
+
+	iter->pos = l->b->key.k.p;
+	if (!bkey_cmp(iter->pos, POS_MAX)) {
+		iter->uptodate = BTREE_ITER_END;
+		return bkey_s_c_null;
+	}
+
+	iter->pos = btree_type_successor(iter->btree_id, iter->pos);
+	iter->uptodate = BTREE_ITER_NEED_TRAVERSE;
+
+	return bch2_btree_iter_peek(iter);
+}
+
 struct bkey_s_c bch2_btree_iter_next(struct btree_iter *iter)
 {
 	struct btree_iter_level *l = &iter->l[0];
+	struct bkey_packed *p;
 	struct bkey_s_c k;
 
 	EBUG_ON(!!(iter->flags & BTREE_ITER_IS_EXTENTS) !=
@@ -1161,25 +1174,18 @@ struct bkey_s_c bch2_btree_iter_next(struct btree_iter *iter)
 			return k;
 	}
 
-	__btree_iter_advance(l);
-	k = __btree_iter_peek(iter, l);
-	if (likely(k.k)) {
-		EBUG_ON(bkey_cmp(bkey_start_pos(k.k), iter->pos) < 0);
-		iter->pos = bkey_start_pos(k.k);
-		return k;
-	}
+	do {
+		__btree_iter_advance(l);
+		p = bch2_btree_node_iter_peek_all(&l->iter, l->b);
+		if (unlikely(!p))
+			return bch2_btree_iter_peek_next_leaf(iter);
+	} while (bkey_deleted(p));
 
-	/* got to the end of the leaf, iterator needs to be traversed: */
-	iter->pos = l->b->key.k.p;
-	if (!bkey_cmp(iter->pos, POS_MAX)) {
-		iter->uptodate = BTREE_ITER_END;
-		return bkey_s_c_null;
-	}
+	k = __btree_iter_unpack(iter, l, &iter->k, p);
 
-	iter->pos = btree_type_successor(iter->btree_id, iter->pos);
-	iter->uptodate = BTREE_ITER_NEED_TRAVERSE;
-
-	return bch2_btree_iter_peek(iter);
+	EBUG_ON(bkey_cmp(bkey_start_pos(k.k), iter->pos) < 0);
+	iter->pos = bkey_start_pos(k.k);
+	return k;
 }
 
 static inline struct bkey_s_c

@@ -188,16 +188,15 @@ static inline enum bset_aux_tree_type bset_aux_tree_type(const struct bset_tree 
 
 typedef void (*compiled_unpack_fn)(struct bkey *, const struct bkey_packed *);
 
-static inline struct bkey
-bkey_unpack_key_format_checked(const struct btree *b,
+static inline void
+__bkey_unpack_key_format_checked(const struct btree *b,
+			       struct bkey *dst,
 			       const struct bkey_packed *src)
 {
-	struct bkey dst;
-
 #ifdef HAVE_BCACHEFS_COMPILED_UNPACK
 	{
 		compiled_unpack_fn unpack_fn = b->aux_data;
-		unpack_fn(&dst, src);
+		unpack_fn(dst, src);
 
 		if (btree_keys_expensive_checks(b)) {
 			struct bkey dst2 = __bch2_bkey_unpack_key(&b->format, src);
@@ -206,15 +205,34 @@ bkey_unpack_key_format_checked(const struct btree *b,
 			 * hack around a harmless race when compacting whiteouts
 			 * for a write:
 			 */
-			dst2.needs_whiteout = dst.needs_whiteout;
+			dst2.needs_whiteout = dst->needs_whiteout;
 
-			BUG_ON(memcmp(&dst, &dst2, sizeof(dst)));
+			BUG_ON(memcmp(dst, &dst2, sizeof(*dst)));
 		}
 	}
 #else
-	dst = __bch2_bkey_unpack_key(&b->format, src);
+	*dst = __bch2_bkey_unpack_key(&b->format, src);
 #endif
+}
+
+static inline struct bkey
+bkey_unpack_key_format_checked(const struct btree *b,
+			       const struct bkey_packed *src)
+{
+	struct bkey dst;
+
+	__bkey_unpack_key_format_checked(b, &dst, src);
 	return dst;
+}
+
+static inline void __bkey_unpack_key(const struct btree *b,
+				     struct bkey *dst,
+				     const struct bkey_packed *src)
+{
+	if (likely(bkey_packed(src)))
+		__bkey_unpack_key_format_checked(b, dst, src);
+	else
+		*dst = *packed_to_bkey_c(src);
 }
 
 /**
@@ -253,7 +271,7 @@ static inline struct bkey_s_c bkey_disassemble(struct btree *b,
 					       const struct bkey_packed *k,
 					       struct bkey *u)
 {
-	*u = bkey_unpack_key(b, k);
+	__bkey_unpack_key(b, u, k);
 
 	return (struct bkey_s_c) { u, bkeyp_val(&b->format, k), };
 }
@@ -263,7 +281,7 @@ static inline struct bkey_s __bkey_disassemble(struct btree *b,
 					       struct bkey_packed *k,
 					       struct bkey *u)
 {
-	*u = bkey_unpack_key(b, k);
+	__bkey_unpack_key(b, u, k);
 
 	return (struct bkey_s) { .k = u, .v = bkeyp_val(&b->format, k), };
 }
