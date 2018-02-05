@@ -185,6 +185,24 @@ int bch2_set_acl(struct inode *vinode, struct posix_acl *acl, int type)
 	size_t size = 0;
 	int ret;
 
+	if (type == ACL_TYPE_ACCESS && acl) {
+		umode_t mode = inode->v.i_mode;
+
+		ret = posix_acl_update_mode(&inode->v, &mode, &acl);
+		if (ret)
+			return ret;
+
+		mutex_lock(&inode->ei_update_lock);
+		inode->v.i_mode = mode;
+		inode->v.i_ctime = current_time(&inode->v);
+
+		ret = bch2_write_inode(c, inode);
+		mutex_unlock(&inode->ei_update_lock);
+
+		if (ret)
+			return ret;
+	}
+
 	switch (type) {
 	case ACL_TYPE_ACCESS:
 		name_index = BCH_XATTR_INDEX_POSIX_ACL_ACCESS;
