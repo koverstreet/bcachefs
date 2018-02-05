@@ -1077,6 +1077,11 @@ static int bch2_check_mark_super_slowpath(struct bch_fs *c,
 
 	/* allocations done, now commit: */
 
+	if (new_r)
+		bch2_write_super(c);
+
+	/* don't update in memory replicas until changes are persistent */
+
 	if (new_gc) {
 		rcu_assign_pointer(c->replicas_gc, new_gc);
 		kfree_rcu(old_gc, rcu);
@@ -1085,7 +1090,6 @@ static int bch2_check_mark_super_slowpath(struct bch_fs *c,
 	if (new_r) {
 		rcu_assign_pointer(c->replicas, new_r);
 		kfree_rcu(old_r, rcu);
-		bch2_write_super(c);
 	}
 
 	mutex_unlock(&c->sb_lock);
