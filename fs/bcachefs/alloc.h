@@ -118,6 +118,7 @@ static inline void writepoint_init(struct write_point *wp,
 	wp->type = type;
 }
 
+int bch2_alloc_write(struct bch_fs *);
 int bch2_fs_allocator_start(struct bch_fs *);
 void bch2_fs_allocator_init(struct bch_fs *);
 
