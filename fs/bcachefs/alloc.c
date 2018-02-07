@@ -400,26 +400,36 @@ int bch2_alloc_replay_key(struct bch_fs *c, struct bpos pos)
 	return ret;
 }
 
-static int bch2_alloc_write(struct bch_fs *c, struct bch_dev *ca)
+int bch2_alloc_write(struct bch_fs *c)
 {
-	struct btree_iter iter;
-	unsigned long bucket;
+	struct bch_dev *ca;
+	unsigned i;
 	int ret = 0;
 
-	bch2_btree_iter_init(&iter, c, BTREE_ID_ALLOC, POS_MIN,
-			     BTREE_ITER_SLOTS|BTREE_ITER_INTENT);
+	for_each_rw_member(ca, c, i) {
+		struct btree_iter iter;
+		unsigned long bucket;
 
-	down_read(&ca->bucket_lock);
-	for_each_set_bit(bucket, ca->buckets_dirty, ca->mi.nbuckets) {
-		ret = __bch2_alloc_write_key(c, ca, bucket, &iter, NULL);
-		if (ret)
+		bch2_btree_iter_init(&iter, c, BTREE_ID_ALLOC, POS_MIN,
+				     BTREE_ITER_SLOTS|BTREE_ITER_INTENT);
+
+		down_read(&ca->bucket_lock);
+		for_each_set_bit(bucket, ca->buckets_dirty, ca->mi.nbuckets) {
+			ret = __bch2_alloc_write_key(c, ca, bucket, &iter, NULL);
+			if (ret)
+				break;
+
+			clear_bit(bucket, ca->buckets_dirty);
+		}
+		up_read(&ca->bucket_lock);
+		bch2_btree_iter_unlock(&iter);
+
+		if (ret) {
+			percpu_ref_put(&ca->io_ref);
 			break;
-
-		clear_bit(bucket, ca->buckets_dirty);
+		}
 	}
-	up_read(&ca->bucket_lock);
 
-	bch2_btree_iter_unlock(&iter);
 	return ret;
 }
 
@@ -2037,15 +2047,7 @@ int bch2_fs_allocator_start(struct bch_fs *c)
 		}
 	}
 
-	for_each_rw_member(ca, c, i) {
-		ret = bch2_alloc_write(c, ca);
-		if (ret) {
-			percpu_ref_put(&ca->io_ref);
-			return ret;
-		}
-	}
-
-	return 0;
+	return bch2_alloc_write(c);
 }
 
 void bch2_fs_allocator_init(struct bch_fs *c)
