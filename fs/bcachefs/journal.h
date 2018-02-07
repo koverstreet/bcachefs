@@ -283,7 +283,7 @@ static inline void bch2_journal_buf_put(struct journal *j, unsigned idx,
  * then proceed to add their keys as well.
  */
 static inline void bch2_journal_res_put(struct journal *j,
-				       struct journal_res *res)
+					struct journal_res *res)
 {
 	if (!res->ref)
 		return;
@@ -301,28 +301,34 @@ static inline void bch2_journal_res_put(struct journal *j,
 }
 
 int bch2_journal_res_get_slowpath(struct journal *, struct journal_res *,
-				 unsigned, unsigned);
+				  unsigned);
 
 static inline int journal_res_get_fast(struct journal *j,
 				       struct journal_res *res,
-				       unsigned u64s_min,
-				       unsigned u64s_max)
+				       unsigned u64s)
 {
 	union journal_res_state old, new;
 	u64 v = atomic64_read(&j->reservations.counter);
+	unsigned end_offset, u64s_padded;
 
 	do {
 		old.v = new.v = v;
+
+		end_offset = (offsetof(struct jset, start) / sizeof(u64) +
+			      old.cur_entry_offset + u64s);
+		u64s_padded = u64s +
+			round_up(end_offset, INTERNODE_CACHE_BYTES / sizeof(u64)) -
+			end_offset;
 
 		/*
 		 * Check if there is still room in the current journal
 		 * entry:
 		 */
-		if (old.cur_entry_offset + u64s_min > j->cur_entry_u64s)
+		if (old.cur_entry_offset + u64s > j->cur_entry_u64s)
 			return 0;
 
 		res->offset	= old.cur_entry_offset;
-		res->u64s	= min(u64s_max, j->cur_entry_u64s -
+		res->u64s	= min(u64s_padded, j->cur_entry_u64s -
 				      old.cur_entry_offset);
 
 		journal_state_inc(&new);
@@ -337,18 +343,17 @@ static inline int journal_res_get_fast(struct journal *j,
 }
 
 static inline int bch2_journal_res_get(struct journal *j, struct journal_res *res,
-				      unsigned u64s_min, unsigned u64s_max)
+				       unsigned u64s)
 {
 	int ret;
 
 	EBUG_ON(res->ref);
-	EBUG_ON(u64s_max < u64s_min);
 	EBUG_ON(!test_bit(JOURNAL_STARTED, &j->flags));
 
-	if (journal_res_get_fast(j, res, u64s_min, u64s_max))
+	if (journal_res_get_fast(j, res, u64s))
 		goto out;
 
-	ret = bch2_journal_res_get_slowpath(j, res, u64s_min, u64s_max);
+	ret = bch2_journal_res_get_slowpath(j, res, u64s);
 	if (ret)
 		return ret;
 out:

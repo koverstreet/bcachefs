@@ -336,9 +336,7 @@ retry:
 	memset(&trans->journal_res, 0, sizeof(trans->journal_res));
 
 	ret = !(trans->flags & BTREE_INSERT_JOURNAL_REPLAY)
-		? bch2_journal_res_get(&c->journal,
-				      &trans->journal_res,
-				      u64s, u64s)
+		? bch2_journal_res_get(&c->journal, &trans->journal_res, u64s)
 		: 0;
 	if (ret)
 		goto err;

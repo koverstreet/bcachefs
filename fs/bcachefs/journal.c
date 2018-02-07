@@ -2466,13 +2466,13 @@ u64 bch2_inode_journal_seq(struct journal *j, u64 inode)
 }
 
 static int __journal_res_get(struct journal *j, struct journal_res *res,
-			      unsigned u64s_min, unsigned u64s_max)
+			     unsigned u64s)
 {
 	struct bch_fs *c = container_of(j, struct bch_fs, journal);
 	struct journal_buf *buf;
 	int ret;
 retry:
-	ret = journal_res_get_fast(j, res, u64s_min, u64s_max);
+	ret = journal_res_get_fast(j, res, u64s);
 	if (ret)
 		return ret;
 
@@ -2482,7 +2482,7 @@ retry:
 	 * that just did journal_entry_open() and call journal_entry_close()
 	 * unnecessarily
 	 */
-	ret = journal_res_get_fast(j, res, u64s_min, u64s_max);
+	ret = journal_res_get_fast(j, res, u64s);
 	if (ret) {
 		spin_unlock(&j->lock);
 		return 1;
@@ -2553,13 +2553,11 @@ blocked:
  * btree node write locks.
  */
 int bch2_journal_res_get_slowpath(struct journal *j, struct journal_res *res,
-				 unsigned u64s_min, unsigned u64s_max)
+				  unsigned u64s)
 {
 	int ret;
 
-	wait_event(j->wait,
-		   (ret = __journal_res_get(j, res, u64s_min,
-					    u64s_max)));
+	wait_event(j->wait, (ret = __journal_res_get(j, res, u64s)));
 	return ret < 0 ? ret : 0;
 }
 
@@ -2750,12 +2748,9 @@ int bch2_journal_flush_seq(struct journal *j, u64 seq)
 
 void bch2_journal_meta_async(struct journal *j, struct closure *parent)
 {
-	struct journal_res res;
-	unsigned u64s = jset_u64s(0);
+	struct journal_res res = { 0 };
 
-	memset(&res, 0, sizeof(res));
-
-	bch2_journal_res_get(j, &res, u64s, u64s);
+	bch2_journal_res_get(j, &res, jset_u64s(0));
 	bch2_journal_res_put(j, &res);
 
 	bch2_journal_flush_seq_async(j, res.seq, parent);
@@ -2763,13 +2758,10 @@ void bch2_journal_meta_async(struct journal *j, struct closure *parent)
 
 int bch2_journal_meta(struct journal *j)
 {
-	struct journal_res res;
-	unsigned u64s = jset_u64s(0);
+	struct journal_res res = { 0 };
 	int ret;
 
-	memset(&res, 0, sizeof(res));
-
-	ret = bch2_journal_res_get(j, &res, u64s, u64s);
+	ret = bch2_journal_res_get(j, &res, jset_u64s(0));
 	if (ret)
 		return ret;
 
