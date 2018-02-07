@@ -397,6 +397,8 @@ static void btree_flush_write(struct cache_set *c)
 	 */
 	struct btree *b, *best;
 	unsigned i;
+
+	atomic_long_inc(&c->flush_write);
 retry:
 	best = NULL;
 
@@ -417,6 +419,7 @@ retry:
 		if (!btree_current_write(b)->journal) {
 			mutex_unlock(&b->write_lock);
 			/* We raced */
+			atomic_long_inc(&c->retry_flush_write);
 			goto retry;
 		}
 
@@ -495,6 +498,8 @@ static void journal_reclaim(struct cache_set *c)
 	uint64_t last_seq;
 	unsigned iter, n = 0;
 	atomic_t p;
+
+	atomic_long_inc(&c->reclaim);
 
 	while (!atomic_read(&fifo_front(&c->journal.pin)))
 		fifo_pop(&c->journal.pin, p);
