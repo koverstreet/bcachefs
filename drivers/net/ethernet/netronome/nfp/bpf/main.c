@@ -34,6 +34,7 @@
 #include <net/pkt_cls.h>
 
 #include "../nfpcore/nfp_cpp.h"
+#include "../nfpcore/nfp_nsp.h"
 #include "../nfp_app.h"
 #include "../nfp_main.h"
 #include "../nfp_net.h"
@@ -85,7 +86,18 @@ static const char *nfp_bpf_extra_cap(struct nfp_app *app, struct nfp_net *nn)
 static int
 nfp_bpf_vnic_alloc(struct nfp_app *app, struct nfp_net *nn, unsigned int id)
 {
+	struct nfp_pf *pf = app->pf;
 	int err;
+
+	if (!pf->eth_tbl) {
+		nfp_err(pf->cpp, "No ETH table\n");
+		return -EINVAL;
+	}
+	if (pf->max_data_vnics != pf->eth_tbl->count) {
+		nfp_err(pf->cpp, "ETH entries don't match vNICs (%d vs %d)\n",
+			pf->max_data_vnics, pf->eth_tbl->count);
+		return -EINVAL;
+	}
 
 	nn->app_priv = kzalloc(sizeof(struct nfp_bpf_vnic), GFP_KERNEL);
 	if (!nn->app_priv)
