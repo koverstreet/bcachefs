@@ -488,9 +488,12 @@ long bch2_fs_ioctl(struct bch_fs *c, unsigned cmd, void __user *arg)
 	}
 }
 
+static DEFINE_IDR(bch_chardev_minor);
+
 static long bch2_chardev_ioctl(struct file *filp, unsigned cmd, unsigned long v)
 {
-	struct bch_fs *c = filp->private_data;
+	unsigned minor = iminor(file_inode(filp));
+	struct bch_fs *c = minor < U8_MAX ? idr_find(&bch_chardev_minor, minor) : NULL;
 	void __user *arg = (void __user *) v;
 
 	return c
@@ -507,7 +510,6 @@ static const struct file_operations bch_chardev_fops = {
 static int bch_chardev_major;
 static struct class *bch_chardev_class;
 static struct device *bch_chardev;
-static DEFINE_IDR(bch_chardev_minor);
 
 void bch2_fs_chardev_exit(struct bch_fs *c)
 {
@@ -524,7 +526,7 @@ int bch2_fs_chardev_init(struct bch_fs *c)
 		return c->minor;
 
 	c->chardev = device_create(bch_chardev_class, NULL,
-				   MKDEV(bch_chardev_major, c->minor), NULL,
+				   MKDEV(bch_chardev_major, c->minor), c,
 				   "bcachefs%u-ctl", c->minor);
 	if (IS_ERR(c->chardev))
 		return PTR_ERR(c->chardev);
@@ -536,7 +538,7 @@ void bch2_chardev_exit(void)
 {
 	if (!IS_ERR_OR_NULL(bch_chardev_class))
 		device_destroy(bch_chardev_class,
-			       MKDEV(bch_chardev_major, 255));
+			       MKDEV(bch_chardev_major, U8_MAX));
 	if (!IS_ERR_OR_NULL(bch_chardev_class))
 		class_destroy(bch_chardev_class);
 	if (bch_chardev_major > 0)
@@ -554,7 +556,7 @@ int __init bch2_chardev_init(void)
 		return PTR_ERR(bch_chardev_class);
 
 	bch_chardev = device_create(bch_chardev_class, NULL,
-				    MKDEV(bch_chardev_major, 255),
+				    MKDEV(bch_chardev_major, U8_MAX),
 				    NULL, "bcachefs-ctl");
 	if (IS_ERR(bch_chardev))
 		return PTR_ERR(bch_chardev);
