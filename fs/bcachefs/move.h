@@ -8,23 +8,47 @@
 struct bch_read_bio;
 struct moving_context;
 
+enum data_cmd {
+	DATA_SKIP,
+	DATA_SCRUB,
+	DATA_ADD_REPLICAS,
+	DATA_REWRITE,
+	DATA_PROMOTE,
+};
+
+struct data_opts {
+	unsigned	rewrite_dev;
+	int		btree_insert_flags;
+};
+
 struct migrate_write {
+	enum data_cmd		data_cmd;
+	struct data_opts	data_opts;
+
+	unsigned		nr_ptrs_reserved;
+
 	struct moving_context	*ctxt;
 
 	/* what we read: */
 	struct bch_extent_ptr	ptr;
 	u64			offset;
 
-	int			move_dev;
-	int			btree_insert_flags;
 	struct bch_write_op	op;
 };
 
-void bch2_migrate_write_init(struct migrate_write *, struct bch_read_bio *);
+void bch2_migrate_read_done(struct migrate_write *, struct bch_read_bio *);
+int bch2_migrate_write_init(struct bch_fs *, struct migrate_write *,
+			    struct bch_devs_mask *,
+			    struct write_point_specifier,
+			    struct bch_io_opts,
+			    enum data_cmd, struct data_opts,
+			    struct bkey_s_c);
 
 #define SECTORS_IN_FLIGHT_PER_DEVICE	2048
 
-typedef bool (*move_pred_fn)(void *, struct bkey_s_c_extent);
+typedef enum data_cmd (*move_pred_fn)(struct bch_fs *, void *,
+				enum bkey_type, struct bkey_s_c_extent,
+				struct bch_io_opts *, struct data_opts *);
 
 struct bch_move_stats {
 	enum bch_data_type	data_type;
@@ -39,7 +63,7 @@ struct bch_move_stats {
 int bch2_move_data(struct bch_fs *, struct bch_ratelimit *,
 		   unsigned, struct bch_devs_mask *,
 		   struct write_point_specifier,
-		   int, int, struct bpos, struct bpos,
+		   struct bpos, struct bpos,
 		   move_pred_fn, void *,
 		   struct bch_move_stats *);
 

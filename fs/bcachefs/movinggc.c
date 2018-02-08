@@ -61,9 +61,9 @@ static int bucket_offset_cmp(const void *_l, const void *_r, size_t size)
 	return (l->offset > r->offset) - (l->offset < r->offset);
 }
 
-static bool copygc_pred(void *arg, struct bkey_s_c_extent e)
+static bool __copygc_pred(struct bch_dev *ca,
+			  struct bkey_s_c_extent e)
 {
-	struct bch_dev *ca = arg;
 	copygc_heap *h = &ca->copygc_heap;
 	const struct bch_extent_ptr *ptr =
 		bch2_extent_has_device(e, ca->dev_idx);
@@ -81,6 +81,22 @@ static bool copygc_pred(void *arg, struct bkey_s_c_extent e)
 	}
 
 	return false;
+}
+
+static enum data_cmd copygc_pred(struct bch_fs *c, void *arg,
+				 enum bkey_type type,
+				 struct bkey_s_c_extent e,
+				 struct bch_io_opts *io_opts,
+				 struct data_opts *data_opts)
+{
+	struct bch_dev *ca = arg;
+
+	if (!__copygc_pred(ca, e))
+		return DATA_SKIP;
+
+	data_opts->btree_insert_flags	= BTREE_INSERT_USE_RESERVE,
+	data_opts->rewrite_dev		= ca->dev_idx;
+	return DATA_REWRITE;
 }
 
 static bool have_copygc_reserve(struct bch_dev *ca)
@@ -165,8 +181,6 @@ static void bch2_copygc(struct bch_fs *c, struct bch_dev *ca)
 			     SECTORS_IN_FLIGHT_PER_DEVICE,
 			     &ca->self,
 			     writepoint_ptr(&ca->copygc_write_point),
-			     BTREE_INSERT_USE_RESERVE,
-			     ca->dev_idx,
 			     POS_MIN, POS_MAX,
 			     copygc_pred, ca,
 			     &move_stats);

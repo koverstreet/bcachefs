@@ -2013,17 +2013,18 @@ bool bch2_extent_normalize(struct bch_fs *c, struct bkey_s k)
 }
 
 void bch2_extent_mark_replicas_cached(struct bch_fs *c,
-				      struct bkey_s_extent e)
+				      struct bkey_s_extent e,
+				      unsigned nr_desired_replicas)
 {
 	struct bch_extent_ptr *ptr;
 	unsigned tier = 0, nr_cached = 0;
 	unsigned nr_good = bch2_extent_nr_good_ptrs(c, e.c);
 	bool have_higher_tier;
 
-	if (nr_good <= c->opts.data_replicas)
+	if (nr_good <= nr_desired_replicas)
 		return;
 
-	nr_cached = nr_good - c->opts.data_replicas;
+	nr_cached = nr_good - nr_desired_replicas;
 
 	do {
 		have_higher_tier = false;

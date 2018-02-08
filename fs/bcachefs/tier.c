@@ -14,10 +14,9 @@
 #include <linux/kthread.h>
 #include <trace/events/bcachefs.h>
 
-static bool tiering_pred(void *arg, struct bkey_s_c_extent e)
+static bool __tiering_pred(struct bch_fs *c, struct bch_tier *tier,
+			   struct bkey_s_c_extent e)
 {
-	struct bch_tier *tier = arg;
-	struct bch_fs *c = container_of(tier, struct bch_fs, tiers[tier->idx]);
 	const struct bch_extent_ptr *ptr;
 	unsigned replicas = 0;
 
@@ -31,6 +30,21 @@ static bool tiering_pred(void *arg, struct bkey_s_c_extent e)
 			replicas++;
 
 	return replicas < c->opts.data_replicas;
+}
+
+static enum data_cmd tiering_pred(struct bch_fs *c, void *arg,
+				  enum bkey_type type,
+				  struct bkey_s_c_extent e,
+				  struct bch_io_opts *io_opts,
+				  struct data_opts *data_opts)
+{
+	struct bch_tier *tier = arg;
+
+	if (!__tiering_pred(c, tier, e))
+		return DATA_SKIP;
+
+	data_opts->btree_insert_flags = 0;
+	return DATA_ADD_REPLICAS;
 }
 
 static int bch2_tiering_thread(void *arg)
@@ -90,8 +104,6 @@ static int bch2_tiering_thread(void *arg)
 			       SECTORS_IN_FLIGHT_PER_DEVICE * nr_devices,
 			       &tier->devs,
 			       writepoint_ptr(&tier->wp),
-			       0,
-			       -1,
 			       POS_MIN, POS_MAX,
 			       tiering_pred, tier,
 			       &move_stats);
