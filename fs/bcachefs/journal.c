@@ -54,6 +54,13 @@ static inline u64 journal_last_seq(struct journal *j)
 	return j->pin.front;
 }
 
+static inline u64 journal_cur_seq(struct journal *j)
+{
+	BUG_ON(j->pin.back - 1 != atomic64_read(&j->seq));
+
+	return j->pin.back - 1;
+}
+
 static inline u64 journal_pin_seq(struct journal *j,
 				  struct journal_entry_pin_list *pin_list)
 {
@@ -264,7 +271,9 @@ int bch2_journal_seq_should_ignore(struct bch_fs *c, u64 seq, struct btree *b)
 	if (!seq)
 		return 0;
 
-	journal_seq = atomic64_read(&j->seq);
+	spin_lock(&j->lock);
+	journal_seq = journal_cur_seq(j);
+	spin_unlock(&j->lock);
 
 	/* Interier updates aren't journalled: */
 	BUG_ON(b->level);
@@ -990,6 +999,7 @@ int bch2_journal_read(struct bch_fs *c, struct list_head *list)
 	u64 cur_seq, end_seq, seq;
 	unsigned iter, keys = 0, entries = 0;
 	size_t nr;
+	bool degraded = false;
 	int ret = 0;
 
 	closure_init_stack(&jlist.cl);
@@ -997,12 +1007,19 @@ int bch2_journal_read(struct bch_fs *c, struct list_head *list)
 	jlist.head = list;
 	jlist.ret = 0;
 
-	for_each_readable_member(ca, c, iter) {
-		percpu_ref_get(&ca->io_ref);
-		closure_call(&ca->journal.read,
-			     bch2_journal_read_device,
-			     system_unbound_wq,
-			     &jlist.cl);
+	for_each_member_device(ca, c, iter) {
+		if (!(bch2_dev_has_data(c, ca) & (1 << BCH_DATA_JOURNAL)))
+			continue;
+
+		if ((ca->mi.state == BCH_MEMBER_STATE_RW ||
+		     ca->mi.state == BCH_MEMBER_STATE_RO) &&
+		    percpu_ref_tryget(&ca->io_ref))
+			closure_call(&ca->journal.read,
+				     bch2_journal_read_device,
+				     system_unbound_wq,
+				     &jlist.cl);
+		else
+			degraded = true;
 	}
 
 	closure_sync(&jlist.cl);
@@ -1023,11 +1040,17 @@ int bch2_journal_read(struct bch_fs *c, struct list_head *list)
 		if (ret)
 			goto fsck_err;
 
-		if (test_bit(BCH_FS_REBUILD_REPLICAS, &c->flags) ||
-		    fsck_err_on(!bch2_sb_has_replicas(c, BCH_DATA_JOURNAL,
-						      i->devs), c,
-				"superblock not marked as containing replicas (type %u)",
-				BCH_DATA_JOURNAL)) {
+		/*
+		 * If we're mounting in degraded mode - if we didn't read all
+		 * the devices - this is wrong:
+		 */
+
+		if (!degraded &&
+		    (test_bit(BCH_FS_REBUILD_REPLICAS, &c->flags) ||
+		     fsck_err_on(!bch2_sb_has_replicas(c, BCH_DATA_JOURNAL,
+						       i->devs), c,
+				 "superblock not marked as containing replicas (type %u)",
+				 BCH_DATA_JOURNAL))) {
 			ret = bch2_check_mark_super(c, BCH_DATA_JOURNAL,
 						    i->devs);
 			if (ret)
@@ -1112,7 +1135,7 @@ int bch2_journal_read(struct bch_fs *c, struct list_head *list)
 	}
 
 	bch_info(c, "journal read done, %i keys in %i entries, seq %llu",
-		 keys, entries, (u64) atomic64_read(&j->seq));
+		 keys, entries, journal_cur_seq(j));
 fsck_err:
 	return ret;
 }
@@ -1175,9 +1198,6 @@ static void journal_pin_new_entry(struct journal *j, int count)
 	atomic64_inc(&j->seq);
 	p = fifo_push_ref(&j->pin);
 
-	EBUG_ON(journal_seq_pin(j, atomic64_read(&j->seq)) !=
-		&fifo_peek_back(&j->pin));
-
 	INIT_LIST_HEAD(&p->list);
 	INIT_LIST_HEAD(&p->flushed);
 	atomic_set(&p->count, count);
@@ -1191,7 +1211,7 @@ static void bch2_journal_buf_init(struct journal *j)
 	memset(buf->has_inode, 0, sizeof(buf->has_inode));
 
 	memset(buf->data, 0, sizeof(*buf->data));
-	buf->data->seq	= cpu_to_le64(atomic64_read(&j->seq));
+	buf->data->seq	= cpu_to_le64(journal_cur_seq(j));
 	buf->data->u64s	= 0;
 }
 
@@ -1473,7 +1493,7 @@ void bch2_journal_start(struct bch_fs *c)
 
 	set_bit(JOURNAL_STARTED, &j->flags);
 
-	while (atomic64_read(&j->seq) < new_seq)
+	while (journal_cur_seq(j) < new_seq)
 		journal_pin_new_entry(j, 0);
 
 	/*
@@ -2016,9 +2036,11 @@ static void journal_reclaim_work(struct work_struct *work)
 		mutex_unlock(&j->reclaim_lock);
 
 	/* Also flush if the pin fifo is more than half full */
+	spin_lock(&j->lock);
 	seq_to_flush = max_t(s64, seq_to_flush,
-			     (s64) atomic64_read(&j->seq) -
+			     (s64) journal_cur_seq(j) -
 			     (j->pin.size >> 1));
+	spin_unlock(&j->lock);
 
 	/*
 	 * If it's been longer than j->reclaim_delay_ms since we last flushed,
@@ -2111,7 +2133,7 @@ static int journal_write_alloc(struct journal *j, struct journal_buf *w,
 
 		ja->sectors_free = ca->mi.bucket_size - sectors;
 		ja->cur_idx = (ja->cur_idx + 1) % ja->nr;
-		ja->bucket_seq[ja->cur_idx] = atomic64_read(&j->seq);
+		ja->bucket_seq[ja->cur_idx] = le64_to_cpu(w->data->seq);
 
 		extent_ptr_append(bkey_i_to_extent(&j->key),
 			(struct bch_extent_ptr) {
@@ -2439,9 +2461,9 @@ u64 bch2_inode_journal_seq(struct journal *j, u64 inode)
 
 	spin_lock(&j->lock);
 	if (test_bit(h, journal_cur_buf(j)->has_inode))
-		seq = atomic64_read(&j->seq);
+		seq = journal_cur_seq(j);
 	else if (test_bit(h, journal_prev_buf(j)->has_inode))
-		seq = atomic64_read(&j->seq) - 1;
+		seq = journal_cur_seq(j) - 1;
 	spin_unlock(&j->lock);
 
 	return seq;
@@ -2550,7 +2572,7 @@ u64 bch2_journal_last_unwritten_seq(struct journal *j)
 	u64 seq;
 
 	spin_lock(&j->lock);
-	seq = atomic64_read(&j->seq);
+	seq = journal_cur_seq(j);
 	if (j->reservations.prev_buf_unwritten)
 		seq--;
 	spin_unlock(&j->lock);
@@ -2563,9 +2585,9 @@ int bch2_journal_open_seq_async(struct journal *j, u64 seq, struct closure *pare
 	int ret;
 
 	spin_lock(&j->lock);
-	BUG_ON(seq > atomic64_read(&j->seq));
+	BUG_ON(seq > journal_cur_seq(j));
 
-	if (seq < atomic64_read(&j->seq) ||
+	if (seq < journal_cur_seq(j) ||
 	    journal_entry_is_open(j)) {
 		spin_unlock(&j->lock);
 		return 1;
@@ -2586,17 +2608,17 @@ void bch2_journal_wait_on_seq(struct journal *j, u64 seq, struct closure *parent
 {
 	spin_lock(&j->lock);
 
-	BUG_ON(seq > atomic64_read(&j->seq));
+	BUG_ON(seq > journal_cur_seq(j));
 
 	if (bch2_journal_error(j)) {
 		spin_unlock(&j->lock);
 		return;
 	}
 
-	if (seq == atomic64_read(&j->seq)) {
+	if (seq == journal_cur_seq(j)) {
 		if (!closure_wait(&journal_cur_buf(j)->wait, parent))
 			BUG();
-	} else if (seq + 1 == atomic64_read(&j->seq) &&
+	} else if (seq + 1 == journal_cur_seq(j) &&
 		   j->reservations.prev_buf_unwritten) {
 		if (!closure_wait(&journal_prev_buf(j)->wait, parent))
 			BUG();
@@ -2618,14 +2640,14 @@ void bch2_journal_flush_seq_async(struct journal *j, u64 seq, struct closure *pa
 
 	spin_lock(&j->lock);
 
-	BUG_ON(seq > atomic64_read(&j->seq));
+	BUG_ON(seq > journal_cur_seq(j));
 
 	if (bch2_journal_error(j)) {
 		spin_unlock(&j->lock);
 		return;
 	}
 
-	if (seq == atomic64_read(&j->seq)) {
+	if (seq == journal_cur_seq(j)) {
 		bool set_need_write = false;
 
 		buf = journal_cur_buf(j);
@@ -2646,7 +2668,7 @@ void bch2_journal_flush_seq_async(struct journal *j, u64 seq, struct closure *pa
 		case JOURNAL_ENTRY_CLOSED:
 			/*
 			 * Journal entry hasn't been opened yet, but caller
-			 * claims it has something (seq == j->seq):
+			 * claims it has something
 			 */
 			BUG();
 		case JOURNAL_ENTRY_INUSE:
@@ -2655,7 +2677,7 @@ void bch2_journal_flush_seq_async(struct journal *j, u64 seq, struct closure *pa
 			return;
 		}
 	} else if (parent &&
-		   seq + 1 == atomic64_read(&j->seq) &&
+		   seq + 1 == journal_cur_seq(j) &&
 		   j->reservations.prev_buf_unwritten) {
 		buf = journal_prev_buf(j);
 
@@ -2679,9 +2701,9 @@ static int journal_seq_flushed(struct journal *j, u64 seq)
 	int ret = 1;
 
 	spin_lock(&j->lock);
-	BUG_ON(seq > atomic64_read(&j->seq));
+	BUG_ON(seq > journal_cur_seq(j));
 
-	if (seq == atomic64_read(&j->seq)) {
+	if (seq == journal_cur_seq(j)) {
 		bool set_need_write = false;
 
 		ret = 0;
@@ -2700,7 +2722,7 @@ static int journal_seq_flushed(struct journal *j, u64 seq)
 		case JOURNAL_ENTRY_CLOSED:
 			/*
 			 * Journal entry hasn't been opened yet, but caller
-			 * claims it has something (seq == j->seq):
+			 * claims it has something
 			 */
 			BUG();
 		case JOURNAL_ENTRY_INUSE:
@@ -2708,7 +2730,7 @@ static int journal_seq_flushed(struct journal *j, u64 seq)
 		case JOURNAL_UNLOCKED:
 			return 0;
 		}
-	} else if (seq + 1 == atomic64_read(&j->seq) &&
+	} else if (seq + 1 == journal_cur_seq(j) &&
 		   j->reservations.prev_buf_unwritten) {
 		ret = bch2_journal_error(j);
 	}
@@ -2765,7 +2787,7 @@ void bch2_journal_flush_async(struct journal *j, struct closure *parent)
 	u64 seq, journal_seq;
 
 	spin_lock(&j->lock);
-	journal_seq = atomic64_read(&j->seq);
+	journal_seq = journal_cur_seq(j);
 
 	if (journal_entry_is_open(j)) {
 		seq = journal_seq;
@@ -2785,7 +2807,7 @@ int bch2_journal_flush(struct journal *j)
 	u64 seq, journal_seq;
 
 	spin_lock(&j->lock);
-	journal_seq = atomic64_read(&j->seq);
+	journal_seq = journal_cur_seq(j);
 
 	if (journal_entry_is_open(j)) {
 		seq = journal_seq;
@@ -2800,7 +2822,7 @@ int bch2_journal_flush(struct journal *j)
 	return bch2_journal_flush_seq(j, seq);
 }
 
-int bch2_journal_flush_device(struct journal *j, unsigned dev_idx)
+int bch2_journal_flush_device(struct journal *j, int dev_idx)
 {
 	struct bch_fs *c = container_of(j, struct bch_fs, journal);
 	struct journal_entry_pin_list *p;
@@ -2810,7 +2832,9 @@ int bch2_journal_flush_device(struct journal *j, unsigned dev_idx)
 
 	spin_lock(&j->lock);
 	fifo_for_each_entry_ptr(p, &j->pin, iter)
-		if (bch2_dev_list_has_dev(p->devs, dev_idx))
+		if (dev_idx >= 0
+		    ? bch2_dev_list_has_dev(p->devs, dev_idx)
+		    : p->devs.nr < c->opts.metadata_replicas)
 			seq = iter;
 	spin_unlock(&j->lock);
 
@@ -2824,7 +2848,7 @@ int bch2_journal_flush_device(struct journal *j, unsigned dev_idx)
 	seq = 0;
 
 	spin_lock(&j->lock);
-	while (!ret && seq < atomic64_read(&j->seq)) {
+	while (!ret && seq < j->pin.back) {
 		seq = max(seq, journal_last_seq(j));
 		devs = journal_seq_pin(j, seq)->devs;
 		seq++;
@@ -2985,7 +3009,7 @@ ssize_t bch2_journal_print_debug(struct journal *j, char *buf)
 			 "dirty:\t\t\t%i\n"
 			 "replay done:\t\t%i\n",
 			 fifo_used(&j->pin),
-			 (u64) atomic64_read(&j->seq),
+			 journal_cur_seq(j),
 			 journal_last_seq(j),
 			 j->last_seq_ondisk,
 			 journal_state_count(*s, s->idx),
