@@ -164,6 +164,7 @@ static int nfp_bpf_setup_tc_block_cb(enum tc_setup_type type,
 		return err;
 
 	bv->tc_prog = cls_bpf->prog;
+	nn->port->tc_offload_cnt = !!bv->tc_prog;
 	return 0;
 }
 
@@ -201,11 +202,6 @@ static int nfp_bpf_setup_tc(struct nfp_app *app, struct net_device *netdev,
 	}
 }
 
-static bool nfp_bpf_tc_busy(struct nfp_app *app, struct nfp_net *nn)
-{
-	return nn->dp.ctrl & NFP_NET_CFG_CTRL_BPF;
-}
-
 const struct nfp_app_type app_bpf = {
 	.id		= NFP_APP_BPF_NIC,
 	.name		= "ebpf",
@@ -216,7 +212,6 @@ const struct nfp_app_type app_bpf = {
 	.vnic_free	= nfp_bpf_vnic_free,
 
 	.setup_tc	= nfp_bpf_setup_tc,
-	.tc_busy	= nfp_bpf_tc_busy,
 	.xdp_offload	= nfp_bpf_xdp_offload,
 
 	.bpf_verifier_prep	= nfp_bpf_verifier_prep,
