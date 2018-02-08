@@ -368,7 +368,7 @@ void bch2_journal_meta_async(struct journal *, struct closure *);
 int bch2_journal_flush_seq(struct journal *, u64);
 int bch2_journal_flush(struct journal *);
 int bch2_journal_meta(struct journal *);
-int bch2_journal_flush_device(struct journal *, unsigned);
+int bch2_journal_flush_device(struct journal *, int);
 
 void bch2_journal_halt(struct journal *);
 
