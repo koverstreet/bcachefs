@@ -209,17 +209,6 @@ static void bch2_write_done(struct closure *cl)
 	closure_return(cl);
 }
 
-static u64 keylist_sectors(struct keylist *keys)
-{
-	struct bkey_i *k;
-	u64 ret = 0;
-
-	for_each_keylist_key(keys, k)
-		ret += k->k.size;
-
-	return ret;
-}
-
 int bch2_write_index_default(struct bch_write_op *op)
 {
 	struct keylist *keys = &op->insert_keys;
@@ -921,18 +910,7 @@ static void promote_start(struct promote_op *op, struct bch_read_bio *rbio)
 	swap(bio->bi_vcnt, rbio->bio.bi_vcnt);
 	rbio->promote = NULL;
 
-	bch2_write_op_init(&op->write.op, c);
-	op->write.op.csum_type = bch2_data_checksum_type(c, rbio->opts.data_checksum);
-	op->write.op.compression_type =
-		bch2_compression_opt_to_type(rbio->opts.compression);
-
-	op->write.move_dev	= -1;
-	op->write.op.devs	= c->fastest_devs;
-	op->write.op.write_point = writepoint_hashed((unsigned long) current);
-	op->write.op.flags	|= BCH_WRITE_ALLOC_NOWAIT;
-	op->write.op.flags	|= BCH_WRITE_CACHED;
-
-	bch2_migrate_write_init(&op->write, rbio);
+	bch2_migrate_read_done(&op->write, rbio);
 
 	closure_init(cl, NULL);
 	closure_call(&op->write.op.cl, bch2_write, c->wq, cl);
@@ -943,13 +921,16 @@ static void promote_start(struct promote_op *op, struct bch_read_bio *rbio)
  * XXX: multiple promotes can race with each other, wastefully. Keep a list of
  * outstanding promotes?
  */
-static struct promote_op *promote_alloc(struct bch_read_bio *rbio)
+static struct promote_op *promote_alloc(struct bch_read_bio *rbio,
+					struct bkey_s_c k)
 {
+	struct bch_fs *c = rbio->c;
 	struct promote_op *op;
 	struct bio *bio;
 	/* data might have to be decompressed in the write path: */
 	unsigned pages = DIV_ROUND_UP(rbio->pick.crc.uncompressed_size,
 				      PAGE_SECTORS);
+	int ret;
 
 	BUG_ON(!rbio->bounce);
 	BUG_ON(pages < rbio->bio.bi_vcnt);
@@ -964,6 +945,14 @@ static struct promote_op *promote_alloc(struct bch_read_bio *rbio)
 
 	memcpy(bio->bi_io_vec, rbio->bio.bi_io_vec,
 	       sizeof(struct bio_vec) * rbio->bio.bi_vcnt);
+
+	ret = bch2_migrate_write_init(c, &op->write, c->fastest_devs,
+				      writepoint_hashed((unsigned long) current),
+				      rbio->opts,
+				      DATA_PROMOTE,
+				      (struct data_opts) { 0 },
+				      k);
+	BUG_ON(ret);
 
 	return op;
 }
@@ -1418,7 +1407,7 @@ noclone:
 	rbio->pick		= *pick;
 	rbio->pos		= pos;
 	rbio->version		= e.k->version;
-	rbio->promote		= promote ? promote_alloc(rbio) : NULL;
+	rbio->promote		= promote ? promote_alloc(rbio, e.s_c) : NULL;
 	INIT_WORK(&rbio->work, NULL);
 
 	bio_set_dev(&rbio->bio, pick->ca->disk_sb.bdev);

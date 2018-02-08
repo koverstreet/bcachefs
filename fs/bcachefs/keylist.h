@@ -58,6 +58,17 @@ static inline struct bkey_i *bch2_keylist_front(struct keylist *l)
 #define keylist_single(k)					\
 	((struct keylist) { .keys = k, .top = bkey_next(k) })
 
+static inline u64 keylist_sectors(struct keylist *keys)
+{
+	struct bkey_i *k;
+	u64 ret = 0;
+
+	for_each_keylist_key(keys, k)
+		ret += k->k.size;
+
+	return ret;
+}
+
 #ifdef CONFIG_BCACHEFS_DEBUG
 void bch2_verify_keylist_sorted(struct keylist *);
 #else
