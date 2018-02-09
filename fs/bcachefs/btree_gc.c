@@ -148,14 +148,13 @@ int bch2_btree_mark_key_initial(struct bch_fs *c, enum bkey_type type,
 {
 	enum bch_data_type data_type = type == BKEY_TYPE_BTREE
 		? BCH_DATA_BTREE : BCH_DATA_USER;
-	struct bch_devs_list devs = bch2_bkey_devs(k);
 	int ret = 0;
 
 	if (test_bit(BCH_FS_REBUILD_REPLICAS, &c->flags) ||
-	    fsck_err_on(!bch2_sb_has_replicas(c, data_type, devs), c,
+	    fsck_err_on(!bch2_bkey_replicas_marked(c, data_type, k), c,
 			"superblock not marked as containing replicas (type %u)",
 			data_type)) {
-		ret = bch2_check_mark_super(c, data_type, devs);
+		ret = bch2_mark_bkey_replicas(c, data_type, k);
 		if (ret)
 			return ret;
 	}
