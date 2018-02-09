@@ -2948,7 +2948,11 @@ void bch2_fs_journal_exit(struct journal *j)
 
 int bch2_fs_journal_init(struct journal *j)
 {
+	struct bch_fs *c = container_of(j, struct bch_fs, journal);
 	static struct lock_class_key res_key;
+	int ret = 0;
+
+	pr_verbose_init(c->opts, "");
 
 	spin_lock_init(&j->lock);
 	spin_lock_init(&j->err_lock);
@@ -2974,12 +2978,15 @@ int bch2_fs_journal_init(struct journal *j)
 
 	if (!(init_fifo(&j->pin, JOURNAL_PIN, GFP_KERNEL)) ||
 	    !(j->buf[0].data = kvpmalloc(j->buf[0].size, GFP_KERNEL)) ||
-	    !(j->buf[1].data = kvpmalloc(j->buf[1].size, GFP_KERNEL)))
-		return -ENOMEM;
+	    !(j->buf[1].data = kvpmalloc(j->buf[1].size, GFP_KERNEL))) {
+		ret = -ENOMEM;
+		goto out;
+	}
 
 	j->pin.front = j->pin.back = 1;
-
-	return 0;
+out:
+	pr_verbose_init(c->opts, "ret %i", ret);
+	return ret;
 }
 
 /* debug: */

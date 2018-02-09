@@ -2691,6 +2691,10 @@ void bch2_fs_fsio_exit(struct bch_fs *c)
 
 int bch2_fs_fsio_init(struct bch_fs *c)
 {
+	int ret = 0;
+
+	pr_verbose_init(c->opts, "");
+
 	if (bioset_init(&c->writepage_bioset,
 			4, offsetof(struct bch_writepage_io, op.op.wbio.bio),
 			BIOSET_NEED_BVECS) ||
@@ -2700,9 +2704,10 @@ int bch2_fs_fsio_init(struct bch_fs *c)
 	    bioset_init(&c->dio_write_bioset,
 			4, offsetof(struct dio_write, iop.op.wbio.bio),
 			BIOSET_NEED_BVECS))
-		return -ENOMEM;
+		ret = -ENOMEM;
 
-	return 0;
+	pr_verbose_init(c->opts, "ret %i", ret);
+	return ret;
 }
 
 #endif /* NO_BCACHEFS_FS */

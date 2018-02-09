@@ -219,12 +219,16 @@ int bch2_chacha_encrypt_key(struct bch_key *key, struct nonce nonce,
 		crypto_alloc_skcipher("chacha20", 0, 0);
 	int ret;
 
-	if (!chacha20)
+	if (!chacha20) {
+		pr_err("error requesting chacha20 module: %li", PTR_ERR(chacha20));
 		return PTR_ERR(chacha20);
+	}
 
 	ret = crypto_skcipher_setkey(chacha20, (void *) key, sizeof(*key));
-	if (ret)
+	if (ret) {
+		pr_err("crypto_skcipher_setkey() error: %i", ret);
 		goto err;
+	}
 
 	do_encrypt(chacha20, nonce, buf, len);
 err:
@@ -567,7 +571,7 @@ int bch2_decrypt_sb_key(struct bch_fs *c,
 
 	ret = bch2_request_key(c->disk_sb, &user_key);
 	if (ret) {
-		bch_err(c, "error requesting encryption key");
+		bch_err(c, "error requesting encryption key: %i", ret);
 		goto err;
 	}
 
@@ -594,13 +598,19 @@ static int bch2_alloc_ciphers(struct bch_fs *c)
 {
 	if (!c->chacha20)
 		c->chacha20 = crypto_alloc_skcipher("chacha20", 0, 0);
-	if (IS_ERR(c->chacha20))
+	if (IS_ERR(c->chacha20)) {
+		bch_err(c, "error requesting chacha20 module: %li",
+			PTR_ERR(c->chacha20));
 		return PTR_ERR(c->chacha20);
+	}
 
 	if (!c->poly1305)
 		c->poly1305 = crypto_alloc_shash("poly1305", 0, 0);
-	if (IS_ERR(c->poly1305))
+	if (IS_ERR(c->poly1305)) {
+		bch_err(c, "error requesting poly1305 module: %li",
+			PTR_ERR(c->poly1305));
 		return PTR_ERR(c->poly1305);
+	}
 
 	return 0;
 }
@@ -660,7 +670,7 @@ int bch2_enable_encryption(struct bch_fs *c, bool keyed)
 	if (keyed) {
 		ret = bch2_request_key(c->disk_sb, &user_key);
 		if (ret) {
-			bch_err(c, "error requesting encryption key");
+			bch_err(c, "error requesting encryption key: %i", ret);
 			goto err;
 		}
 
@@ -707,27 +717,35 @@ int bch2_fs_encryption_init(struct bch_fs *c)
 {
 	struct bch_sb_field_crypt *crypt;
 	struct bch_key key;
-	int ret;
+	int ret = 0;
+
+	pr_verbose_init(c->opts, "");
 
 	c->sha256 = crypto_alloc_shash("sha256", 0, 0);
-	if (IS_ERR(c->sha256))
-		return PTR_ERR(c->sha256);
+	if (IS_ERR(c->sha256)) {
+		bch_err(c, "error requesting sha256 module");
+		ret = PTR_ERR(c->sha256);
+		goto out;
+	}
 
 	crypt = bch2_sb_get_crypt(c->disk_sb);
 	if (!crypt)
-		return 0;
+		goto out;
 
 	ret = bch2_alloc_ciphers(c);
 	if (ret)
-		return ret;
+		goto out;
 
 	ret = bch2_decrypt_sb_key(c, crypt, &key);
 	if (ret)
-		goto err;
+		goto out;
 
 	ret = crypto_skcipher_setkey(c->chacha20,
 			(void *) &key.key, sizeof(key.key));
-err:
+	if (ret)
+		goto out;
+out:
 	memzero_explicit(&key, sizeof(key));
+	pr_verbose_init(c->opts, "ret %i", ret);
 	return ret;
 }

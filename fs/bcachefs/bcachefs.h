@@ -231,6 +231,12 @@ do {									\
 		bch_info(c, fmt, ##__VA_ARGS__);			\
 } while (0)
 
+#define pr_verbose_init(opts, fmt, ...)					\
+do {									\
+	if (opt_get(opts, verbose_init))				\
+		pr_info(fmt, ##__VA_ARGS__);				\
+} while (0)
+
 /* Parameters that are useful for debugging, but should always be compiled in: */
 #define BCH_DEBUG_PARAMS_ALWAYS()					\
 	BCH_DEBUG_PARAM(key_merging_disabled,				\

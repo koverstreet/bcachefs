@@ -373,19 +373,23 @@ int bch2_fs_btree_cache_init(struct bch_fs *c)
 {
 	struct btree_cache *bc = &c->btree_cache;
 	unsigned i;
-	int ret;
+	int ret = 0;
+
+	pr_verbose_init(c->opts, "");
 
 	ret = rhashtable_init(&bc->table, &bch_btree_cache_params);
 	if (ret)
-		return ret;
+		goto out;
 
 	bc->table_init_done = true;
 
 	bch2_recalc_btree_reserve(c);
 
 	for (i = 0; i < bc->reserve; i++)
-		if (!btree_node_mem_alloc(c, GFP_KERNEL))
-			return -ENOMEM;
+		if (!btree_node_mem_alloc(c, GFP_KERNEL)) {
+			ret = -ENOMEM;
+			goto out;
+		}
 
 	list_splice_init(&bc->live, &bc->freeable);
 
@@ -393,12 +397,16 @@ int bch2_fs_btree_cache_init(struct bch_fs *c)
 	mutex_init(&c->verify_lock);
 
 	c->verify_ondisk = kvpmalloc(btree_bytes(c), GFP_KERNEL);
-	if (!c->verify_ondisk)
-		return -ENOMEM;
+	if (!c->verify_ondisk) {
+		ret = -ENOMEM;
+		goto out;
+	}
 
 	c->verify_data = btree_node_mem_alloc(c, GFP_KERNEL);
-	if (!c->verify_data)
-		return -ENOMEM;
+	if (!c->verify_data) {
+		ret = -ENOMEM;
+		goto out;
+	}
 
 	list_del_init(&c->verify_data->list);
 #endif
@@ -408,8 +416,9 @@ int bch2_fs_btree_cache_init(struct bch_fs *c)
 	bc->shrink.seeks		= 4;
 	bc->shrink.batch		= btree_pages(c) * 2;
 	register_shrinker(&bc->shrink);
-
-	return 0;
+out:
+	pr_verbose_init(c->opts, "ret %i", ret);
+	return ret;
 }
 
 void bch2_fs_btree_cache_init_early(struct btree_cache *bc)
