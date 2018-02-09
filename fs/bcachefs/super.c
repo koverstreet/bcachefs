@@ -1262,7 +1262,7 @@ bool bch2_dev_state_allowed(struct bch_fs *c, struct bch_dev *ca,
 
 		s = __bch2_replicas_status(c, new_online_devs);
 
-		return bch2_have_enough_devs(c, s, flags);
+		return bch2_have_enough_devs(s, flags);
 	default:
 		BUG();
 	}
@@ -1299,7 +1299,7 @@ static bool bch2_fs_may_start(struct bch_fs *c)
 
 	s = bch2_replicas_status(c);
 
-	return bch2_have_enough_devs(c, s, flags);
+	return bch2_have_enough_devs(s, flags);
 }
 
 static void __bch2_dev_read_only(struct bch_fs *c, struct bch_dev *ca)

@@ -40,7 +40,7 @@ static int bch2_dev_usrdata_drop(struct bch_fs *c, unsigned dev_idx, int flags)
 	int ret = 0;
 
 	mutex_lock(&c->replicas_gc_lock);
-	bch2_replicas_gc_start(c, 1 << BCH_DATA_USER);
+	bch2_replicas_gc_start(c, (1 << BCH_DATA_USER)|(1 << BCH_DATA_CACHED));
 
 	bch2_btree_iter_init(&iter, c, BTREE_ID_EXTENTS,
 			     POS_MIN, BTREE_ITER_PREFETCH);
@@ -49,8 +49,7 @@ static int bch2_dev_usrdata_drop(struct bch_fs *c, unsigned dev_idx, int flags)
 	       !(ret = btree_iter_err(k))) {
 		if (!bkey_extent_is_data(k.k) ||
 		    !bch2_extent_has_device(bkey_s_c_to_extent(k), dev_idx)) {
-			ret = bch2_check_mark_super(c, BCH_DATA_USER,
-						    bch2_bkey_devs(k));
+			ret = bch2_mark_bkey_replicas(c, BCH_DATA_USER, k);
 			if (ret)
 				break;
 			bch2_btree_iter_next(&iter);
@@ -71,8 +70,8 @@ static int bch2_dev_usrdata_drop(struct bch_fs *c, unsigned dev_idx, int flags)
 		 */
 		bch2_extent_normalize(c, e.s);
 
-		ret = bch2_check_mark_super(c, BCH_DATA_USER,
-				bch2_bkey_devs(bkey_i_to_s_c(&tmp.key)));
+		ret = bch2_mark_bkey_replicas(c, BCH_DATA_USER,
+					      bkey_i_to_s_c(&tmp.key));
 		if (ret)
 			break;
 
@@ -128,8 +127,8 @@ retry:
 						    dev_idx)) {
 				bch2_btree_iter_set_locks_want(&iter, 0);
 
-				ret = bch2_check_mark_super(c, BCH_DATA_BTREE,
-						bch2_bkey_devs(bkey_i_to_s_c(&b->key)));
+				ret = bch2_mark_bkey_replicas(c, BCH_DATA_BTREE,
+							      bkey_i_to_s_c(&b->key));
 				if (ret)
 					goto err;
 			} else {

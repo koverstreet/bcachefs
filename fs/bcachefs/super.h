@@ -67,6 +67,11 @@ static inline void bch2_dev_list_add_dev(struct bch_devs_list *devs,
 	devs->devs[devs->nr++] = dev;
 }
 
+static inline struct bch_devs_list bch2_dev_list_single(unsigned dev)
+{
+	return (struct bch_devs_list) { .nr = 1, .devs[0] = dev };
+}
+
 static inline struct bch_dev *__bch2_next_dev(struct bch_fs *c, unsigned *iter,
 					      const struct bch_devs_mask *mask)
 {

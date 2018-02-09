@@ -1047,12 +1047,11 @@ int bch2_journal_read(struct bch_fs *c, struct list_head *list)
 
 		if (!degraded &&
 		    (test_bit(BCH_FS_REBUILD_REPLICAS, &c->flags) ||
-		     fsck_err_on(!bch2_sb_has_replicas(c, BCH_DATA_JOURNAL,
+		     fsck_err_on(!bch2_replicas_marked(c, BCH_DATA_JOURNAL,
 						       i->devs), c,
 				 "superblock not marked as containing replicas (type %u)",
 				 BCH_DATA_JOURNAL))) {
-			ret = bch2_check_mark_super(c, BCH_DATA_JOURNAL,
-						    i->devs);
+			ret = bch2_mark_replicas(c, BCH_DATA_JOURNAL, i->devs);
 			if (ret)
 				return ret;
 		}
@@ -2233,7 +2232,7 @@ static void journal_write_done(struct closure *cl)
 		goto err;
 	}
 
-	if (bch2_check_mark_super(c, BCH_DATA_JOURNAL, devs))
+	if (bch2_mark_replicas(c, BCH_DATA_JOURNAL, devs))
 		goto err;
 out:
 	__bch2_time_stats_update(j->write_time, j->write_start_time);
@@ -2854,7 +2853,7 @@ int bch2_journal_flush_device(struct journal *j, int dev_idx)
 		seq++;
 
 		spin_unlock(&j->lock);
-		ret = bch2_check_mark_super(c, BCH_DATA_JOURNAL, devs);
+		ret = bch2_mark_replicas(c, BCH_DATA_JOURNAL, devs);
 		spin_lock(&j->lock);
 	}
 	spin_unlock(&j->lock);

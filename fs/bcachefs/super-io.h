@@ -139,10 +139,14 @@ static inline struct bch_member_cpu bch2_mi_to_cpu(struct bch_member *mi)
 
 /* BCH_SB_FIELD_replicas: */
 
-bool bch2_sb_has_replicas(struct bch_fs *, enum bch_data_type,
+bool bch2_replicas_marked(struct bch_fs *, enum bch_data_type,
 			  struct bch_devs_list);
-int bch2_check_mark_super(struct bch_fs *, enum bch_data_type,
-			  struct bch_devs_list);
+bool bch2_bkey_replicas_marked(struct bch_fs *, enum bch_data_type,
+			       struct bkey_s_c);
+int bch2_mark_replicas(struct bch_fs *, enum bch_data_type,
+		       struct bch_devs_list);
+int bch2_mark_bkey_replicas(struct bch_fs *, enum bch_data_type,
+			    struct bkey_s_c);
 
 int bch2_cpu_replicas_to_text(struct bch_replicas_cpu *, char *, size_t);
 int bch2_sb_replicas_to_text(struct bch_sb_field_replicas *, char *, size_t);
@@ -157,7 +161,7 @@ struct replicas_status {
 struct replicas_status __bch2_replicas_status(struct bch_fs *,
 					      struct bch_devs_mask);
 struct replicas_status bch2_replicas_status(struct bch_fs *);
-bool bch2_have_enough_devs(struct bch_fs *, struct replicas_status, unsigned);
+bool bch2_have_enough_devs(struct replicas_status, unsigned);
 
 unsigned bch2_replicas_online(struct bch_fs *, bool);
 unsigned bch2_dev_has_data(struct bch_fs *, struct bch_dev *);
