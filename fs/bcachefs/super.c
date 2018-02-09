@@ -814,7 +814,7 @@ static const char *__bch2_fs_start(struct bch_fs *c)
 			goto err;
 		bch_verbose(c, "fsck done");
 
-		if (c->opts.usrquota || c->opts.grpquota) {
+		if (enabled_qtypes(c)) {
 			bch_verbose(c, "reading quotas:");
 			ret = bch2_fs_quota_read(c);
 			if (ret)
@@ -869,7 +869,7 @@ static const char *__bch2_fs_start(struct bch_fs *c)
 				     NULL, NULL, NULL, 0))
 			goto err;
 
-		if (c->opts.usrquota || c->opts.grpquota) {
+		if (enabled_qtypes(c)) {
 			ret = bch2_fs_quota_read(c);
 			if (ret)
 				goto err;

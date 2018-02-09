@@ -74,13 +74,6 @@ static inline unsigned __next_qtype(unsigned i, unsigned qtypes)
 	      _i < QTYP_NR);						\
 	     _i++)
 
-static inline unsigned enabled_qtypes(struct bch_fs *c)
-{
-	return ((c->opts.usrquota << QTYP_USR)|
-		(c->opts.grpquota << QTYP_GRP)|
-		(c->opts.prjquota << QTYP_PRJ));
-}
-
 static bool ignore_hardlimit(struct bch_memquota_type *q)
 {
 	if (capable(CAP_SYS_RESOURCE))
@@ -478,7 +471,7 @@ static int bch2_quota_enable(struct super_block	*sb, unsigned uflags)
 	if ((uflags & FS_QUOTA_GDQ_ENFD) && !c->opts.grpquota)
 		return -EINVAL;
 
-	if (uflags & FS_QUOTA_PDQ_ENFD)
+	if (uflags & FS_QUOTA_PDQ_ENFD && !c->opts.prjquota)
 		return -EINVAL;
 
 	mutex_lock(&c->sb_lock);
@@ -487,10 +480,9 @@ static int bch2_quota_enable(struct super_block	*sb, unsigned uflags)
 
 	if (uflags & FS_QUOTA_GDQ_ENFD)
 		SET_BCH_SB_GRPQUOTA(c->disk_sb, true);
-#if 0
+
 	if (uflags & FS_QUOTA_PDQ_ENFD)
 		SET_BCH_SB_PRJQUOTA(c->disk_sb, true);
-#endif
 
 	bch2_write_super(c);
 	mutex_unlock(&c->sb_lock);

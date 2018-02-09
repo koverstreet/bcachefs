@@ -20,6 +20,13 @@ static inline struct bch_qid bch_qid(struct bch_inode_unpacked *u)
 	};
 }
 
+static inline unsigned enabled_qtypes(struct bch_fs *c)
+{
+	return ((c->opts.usrquota << QTYP_USR)|
+		(c->opts.grpquota << QTYP_GRP)|
+		(c->opts.prjquota << QTYP_PRJ));
+}
+
 #ifdef CONFIG_BCACHEFS_QUOTA
 
 int bch2_quota_acct(struct bch_fs *, struct bch_qid, enum quota_counters,
