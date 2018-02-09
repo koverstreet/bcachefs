@@ -1240,7 +1240,8 @@ bool bch2_dev_state_allowed(struct bch_fs *c, struct bch_dev *ca,
 
 		/* do we have enough devices to write to?  */
 		for_each_member_device(ca2, c, i)
-			nr_rw += ca2->mi.state == BCH_MEMBER_STATE_RW;
+			if (ca2 != ca)
+				nr_rw += ca2->mi.state == BCH_MEMBER_STATE_RW;
 
 		required = max(!(flags & BCH_FORCE_IF_METADATA_DEGRADED)
 			       ? c->opts.metadata_replicas
@@ -1249,7 +1250,7 @@ bool bch2_dev_state_allowed(struct bch_fs *c, struct bch_dev *ca,
 			       ? c->opts.data_replicas
 			       : c->opts.data_replicas_required);
 
-		return nr_rw - 1 <= required;
+		return nr_rw >= required;
 	case BCH_MEMBER_STATE_FAILED:
 	case BCH_MEMBER_STATE_SPARE:
 		if (ca->mi.state != BCH_MEMBER_STATE_RW &&
@@ -1346,12 +1347,8 @@ int __bch2_dev_set_state(struct bch_fs *c, struct bch_dev *ca,
 	if (!bch2_dev_state_allowed(c, ca, new_state, flags))
 		return -EINVAL;
 
-	if (new_state == BCH_MEMBER_STATE_RW) {
-		if (__bch2_dev_read_write(c, ca))
-			return -ENOMEM;
-	} else {
+	if (new_state != BCH_MEMBER_STATE_RW)
 		__bch2_dev_read_only(c, ca);
-	}
 
 	bch_notice(ca, "%s", bch2_dev_state[new_state]);
 
@@ -1360,6 +1357,9 @@ int __bch2_dev_set_state(struct bch_fs *c, struct bch_dev *ca,
 	SET_BCH_MEMBER_STATE(&mi->members[ca->dev_idx], new_state);
 	bch2_write_super(c);
 	mutex_unlock(&c->sb_lock);
+
+	if (new_state == BCH_MEMBER_STATE_RW)
+		return __bch2_dev_read_write(c, ca) ? -ENOMEM : 0;
 
 	return 0;
 }
