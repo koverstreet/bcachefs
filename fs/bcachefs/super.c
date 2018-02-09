@@ -507,9 +507,11 @@ static struct bch_fs *bch2_fs_alloc(struct bch_sb *sb, struct bch_opts opts)
 	struct bch_fs *c;
 	unsigned i, iter_size;
 
+	pr_verbose_init(opts, "");
+
 	c = kvpmalloc(sizeof(struct bch_fs), GFP_KERNEL|__GFP_ZERO);
 	if (!c)
-		return NULL;
+		goto out;
 
 	__module_get(THIS_MODULE);
 
@@ -646,10 +648,13 @@ static struct bch_fs *bch2_fs_alloc(struct bch_sb *sb, struct bch_opts opts)
 	kobject_init(&c->internal, &bch2_fs_internal_ktype);
 	kobject_init(&c->opts_dir, &bch2_fs_opts_dir_ktype);
 	kobject_init(&c->time_stats, &bch2_fs_time_stats_ktype);
+out:
+	pr_verbose_init(opts, "ret %i", c ? 0 : -ENOMEM);
 	return c;
 err:
 	bch2_fs_free(c);
-	return NULL;
+	c = NULL;
+	goto out;
 }
 
 static const char *__bch2_fs_online(struct bch_fs *c)
@@ -1084,14 +1089,17 @@ static int bch2_dev_sysfs_online(struct bch_fs *c, struct bch_dev *ca)
 static int bch2_dev_alloc(struct bch_fs *c, unsigned dev_idx)
 {
 	struct bch_member *member;
-	struct bch_dev *ca;
+	struct bch_dev *ca = NULL;
+	int ret = 0;
+
+	pr_verbose_init(c->opts, "");
 
 	if (bch2_fs_init_fault("dev_alloc"))
-		return -ENOMEM;
+		goto err;
 
 	ca = kzalloc(sizeof(*ca), GFP_KERNEL);
 	if (!ca)
-		return -ENOMEM;
+		goto err;
 
 	kobject_init(&ca->kobj, &bch2_dev_ktype);
 	init_completion(&ca->ref_completion);
@@ -1133,11 +1141,14 @@ static int bch2_dev_alloc(struct bch_fs *c, unsigned dev_idx)
 
 	if (bch2_dev_sysfs_online(c, ca))
 		pr_warn("error creating sysfs objects");
-
-	return 0;
+out:
+	pr_verbose_init(c->opts, "ret %i", ret);
+	return ret;
 err:
-	bch2_dev_free(ca);
-	return -ENOMEM;
+	if (ca)
+		bch2_dev_free(ca);
+	ret = -ENOMEM;
+	goto out;
 }
 
 static int __bch2_dev_online(struct bch_fs *c, struct bch_sb_handle *sb)
@@ -1701,11 +1712,17 @@ struct bch_fs *bch2_fs_open(char * const *devices, unsigned nr_devices,
 	const char *err;
 	int ret = -ENOMEM;
 
-	if (!nr_devices)
-		return ERR_PTR(-EINVAL);
+	pr_verbose_init(opts, "");
 
-	if (!try_module_get(THIS_MODULE))
-		return ERR_PTR(-ENODEV);
+	if (!nr_devices) {
+		c = ERR_PTR(-EINVAL);
+		goto out2;
+	}
+
+	if (!try_module_get(THIS_MODULE)) {
+		c = ERR_PTR(-ENODEV);
+		goto out2;
+	}
 
 	sb = kcalloc(nr_devices, sizeof(*sb), GFP_KERNEL);
 	if (!sb)
@@ -1760,8 +1777,11 @@ struct bch_fs *bch2_fs_open(char * const *devices, unsigned nr_devices,
 	if (err)
 		goto err_print;
 
+out:
 	kfree(sb);
 	module_put(THIS_MODULE);
+out2:
+	pr_verbose_init(opts, "ret %i", PTR_ERR_OR_ZERO(c));
 	return c;
 err_print:
 	pr_err("bch_fs_open err opening %s: %s",
@@ -1770,12 +1790,10 @@ err_print:
 err:
 	if (c)
 		bch2_fs_stop(c);
-
 	for (i = 0; i < nr_devices; i++)
 		bch2_free_super(&sb[i]);
-	kfree(sb);
-	module_put(THIS_MODULE);
-	return ERR_PTR(ret);
+	c = ERR_PTR(ret);
+	goto out;
 }
 
 static const char *__bch2_fs_open_incremental(struct bch_sb_handle *sb,

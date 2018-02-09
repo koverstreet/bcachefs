@@ -441,18 +441,22 @@ unsigned bch2_bio_compress(struct bch_fs *c,
 int bch2_check_set_has_compressed_data(struct bch_fs *c,
 				      unsigned compression_type)
 {
+	int ret = 0;
+
+	pr_verbose_init(c->opts, "");
+
 	switch (compression_type) {
 	case BCH_COMPRESSION_OPT_NONE:
-		return 0;
+		goto out;
 	case BCH_COMPRESSION_OPT_LZ4:
 		if (bch2_sb_test_feature(c->disk_sb, BCH_FEATURE_LZ4))
-			return 0;
+			goto out;
 
 		bch2_sb_set_feature(c->disk_sb, BCH_FEATURE_LZ4);
 		break;
 	case BCH_COMPRESSION_OPT_GZIP:
 		if (bch2_sb_test_feature(c->disk_sb, BCH_FEATURE_GZIP))
-			return 0;
+			goto out;
 
 		bch2_sb_set_feature(c->disk_sb, BCH_FEATURE_GZIP);
 		break;
@@ -460,7 +464,10 @@ int bch2_check_set_has_compressed_data(struct bch_fs *c,
 		BUG();
 	}
 
-	return bch2_fs_compress_init(c);
+	ret = bch2_fs_compress_init(c);
+out:
+	pr_verbose_init(c->opts, "ret %i", ret);
+	return ret;
 }
 
 void bch2_fs_compress_exit(struct bch_fs *c)
@@ -478,24 +485,26 @@ void bch2_fs_compress_exit(struct bch_fs *c)
 int bch2_fs_compress_init(struct bch_fs *c)
 {
 	unsigned order = get_order(c->sb.encoded_extent_max << 9);
-	int ret;
+	int ret = 0;
+
+	pr_verbose_init(c->opts, "");
 
 	if (!bch2_sb_test_feature(c->disk_sb, BCH_FEATURE_LZ4) &&
 	    !bch2_sb_test_feature(c->disk_sb, BCH_FEATURE_GZIP))
-		return 0;
+		goto out;
 
 	if (!mempool_initialized(&c->compression_bounce[READ])) {
 		ret = mempool_init_page_pool(&c->compression_bounce[READ],
 					     1, order);
 		if (ret)
-			return ret;
+			goto out;
 	}
 
 	if (!mempool_initialized(&c->compression_bounce[WRITE])) {
 		ret = mempool_init_page_pool(&c->compression_bounce[WRITE],
 					     1, order);
 		if (ret)
-			return ret;
+			goto out;
 	}
 
 	if (!mempool_initialized(&c->lz4_workspace_pool) &&
@@ -503,15 +512,18 @@ int bch2_fs_compress_init(struct bch_fs *c)
 		ret = mempool_init_kmalloc_pool(&c->lz4_workspace_pool,
 						1, LZ4_MEM_COMPRESS);
 		if (ret)
-			return ret;
+			goto out;
 	}
 
 	if (!c->zlib_workspace &&
 	    bch2_sb_test_feature(c->disk_sb, BCH_FEATURE_GZIP)) {
 		c->zlib_workspace = vmalloc(COMPRESSION_WORKSPACE_SIZE);
-		if (!c->zlib_workspace)
-			return -ENOMEM;
+		if (!c->zlib_workspace) {
+			ret = -ENOMEM;
+			goto out;
+		}
 	}
-
-	return 0;
+out:
+	pr_verbose_init(c->opts, "ret %i", ret);
+	return ret;
 }

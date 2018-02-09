@@ -546,6 +546,8 @@ int bch2_read_super(const char *path, struct bch_opts *opts,
 	__le64 *i;
 	int ret;
 
+	pr_verbose_init(*opts, "");
+
 	memset(sb, 0, sizeof(*sb));
 	sb->mode = FMODE_READ;
 
@@ -566,8 +568,10 @@ int bch2_read_super(const char *path, struct bch_opts *opts,
 			opt_set(*opts, nochanges, true);
 	}
 
-	if (IS_ERR(sb->bdev))
-		return PTR_ERR(sb->bdev);
+	if (IS_ERR(sb->bdev)) {
+		ret = PTR_ERR(sb->bdev);
+		goto out;
+	}
 
 	err = "cannot allocate memory";
 	ret = __bch2_super_realloc(sb, 0);
@@ -638,12 +642,14 @@ got_super:
 	if (sb->mode & FMODE_WRITE)
 		bdev_get_queue(sb->bdev)->backing_dev_info->capabilities
 			|= BDI_CAP_STABLE_WRITES;
-
-	return 0;
+	ret = 0;
+out:
+	pr_verbose_init(*opts, "ret %i", ret);
+	return ret;
 err:
 	bch2_free_super(sb);
 	pr_err("error reading superblock: %s", err);
-	return ret;
+	goto out;
 }
 
 /* write superblock: */

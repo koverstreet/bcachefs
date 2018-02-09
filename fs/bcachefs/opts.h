@@ -127,6 +127,9 @@ enum opt_type {
 	BCH_OPT(verbose_recovery,	u8,	OPT_MOUNT,		\
 		OPT_BOOL(),						\
 		NO_SB_OPT,			false)			\
+	BCH_OPT(verbose_init,		u8,	OPT_MOUNT,		\
+		OPT_BOOL(),						\
+		NO_SB_OPT,			false)			\
 	BCH_OPT(journal_flush_disabled, u8,	OPT_RUNTIME,		\
 		OPT_BOOL(),						\
 		NO_SB_OPT,			false)			\
