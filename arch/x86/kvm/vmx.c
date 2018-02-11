@@ -11478,7 +11478,12 @@ static int nested_vmx_run(struct kvm_vcpu *vcpu, bool launch)
 	/* Hide L1D cache contents from the nested guest.  */
 	vmx->vcpu.arch.l1tf_flush_l1d = true;
 
-	if (vmcs12->guest_activity_state == GUEST_ACTIVITY_HLT)
+	/*
+	 * If we're entering a halted L2 vcpu and the L2 vcpu won't be woken
+	 * by event injection, halt vcpu.
+	 */
+	if ((vmcs12->guest_activity_state == GUEST_ACTIVITY_HLT) &&
+	    !(vmcs12->vm_entry_intr_info_field & INTR_INFO_VALID_MASK))
 		return kvm_vcpu_halt(vcpu);
 
 	vmx->nested.nested_run_pending = 1;
