@@ -272,15 +272,10 @@ static void multi_unlock_write(struct btree_insert *trans)
 			bch2_btree_node_unlock_write(i->iter->l[0].b, i->iter);
 }
 
-static inline void btree_trans_sort(struct btree_insert *trans)
+static inline int btree_trans_cmp(struct btree_insert_entry l,
+				  struct btree_insert_entry r)
 {
-	int i, end = trans->nr;
-
-	while (--end > 0)
-		for (i = 0; i < end; i++)
-			if (btree_iter_cmp(trans->entries[i].iter,
-					   trans->entries[i + 1].iter) > 0)
-				swap(trans->entries[i], trans->entries[i + 1]);
+	return btree_iter_cmp(l.iter, r.iter);
 }
 
 /* Normal update interface: */
@@ -313,7 +308,7 @@ int __bch2_btree_insert_at(struct btree_insert *trans)
 					 bkey_i_to_s_c(i->k)));
 	}
 
-	btree_trans_sort(trans);
+	bubble_sort(trans->entries, trans->nr, btree_trans_cmp);
 
 	if (unlikely(!percpu_ref_tryget(&c->writes)))
 		return -EROFS;
