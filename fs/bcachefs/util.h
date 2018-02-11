@@ -818,4 +818,19 @@ do {									\
 #define array_remove_item(_array, _nr, _pos)				\
 	array_remove_items(_array, _nr, _pos, 1)
 
+#define bubble_sort(_base, _nr, _cmp)					\
+do {									\
+	ssize_t _i, _end;						\
+	bool _swapped = true;						\
+									\
+	for (_end = (ssize_t) (_nr) - 1; _end > 0 && _swapped; --_end) {\
+		_swapped = false;					\
+		for (_i = 0; _i < _end; _i++)				\
+			if (_cmp((_base)[_i], (_base)[_i + 1]) > 0) {	\
+				swap((_base)[_i], (_base)[_i + 1]);	\
+				_swapped = true;			\
+			}						\
+	}								\
+} while (0)
+
 #endif /* _BCACHEFS_UTIL_H */
