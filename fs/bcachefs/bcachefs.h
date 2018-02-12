@@ -233,7 +233,7 @@ do {									\
 
 #define pr_verbose_init(opts, fmt, ...)					\
 do {									\
-	if (opt_defined(opts, verbose_init))				\
+	if (opt_get(opts, verbose_init))				\
 		pr_info(fmt, ##__VA_ARGS__);				\
 } while (0)
 
