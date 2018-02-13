@@ -422,7 +422,6 @@ static inline enum bch_extent_overlap bch2_extent_overlap(const struct bkey *k,
 
 struct btree_node_iter {
 	u8		is_extents;
-	u16		used;
 
 	struct btree_node_iter_set {
 		u16	k, end;
@@ -432,8 +431,8 @@ struct btree_node_iter {
 static inline void __bch2_btree_node_iter_init(struct btree_node_iter *iter,
 					      bool is_extents)
 {
-	iter->used = 0;
 	iter->is_extents = is_extents;
+	memset(iter->data, 0, sizeof(iter->data));
 }
 
 void bch2_btree_node_iter_push(struct btree_node_iter *, struct btree *,
@@ -448,16 +447,25 @@ struct bkey_packed *bch2_btree_node_iter_bset_pos(struct btree_node_iter *,
 						 struct bset_tree *);
 
 void bch2_btree_node_iter_sort(struct btree_node_iter *, struct btree *);
+void bch2_btree_node_iter_set_drop(struct btree_node_iter *,
+				   struct btree_node_iter_set *);
 void bch2_btree_node_iter_advance(struct btree_node_iter *, struct btree *);
 
-#define btree_node_iter_for_each(_iter, _set)			\
-	for (_set = (_iter)->data;				\
-	     _set < (_iter)->data + (_iter)->used;		\
+#define btree_node_iter_for_each(_iter, _set)				\
+	for (_set = (_iter)->data;					\
+	     _set < (_iter)->data + ARRAY_SIZE((_iter)->data) &&	\
+	     (_set)->k != (_set)->end;					\
 	     _set++)
+
+static inline bool __btree_node_iter_set_end(struct btree_node_iter *iter,
+					     unsigned i)
+{
+	return iter->data[i].k == iter->data[i].end;
+}
 
 static inline bool bch2_btree_node_iter_end(struct btree_node_iter *iter)
 {
-	return !iter->used;
+	return __btree_node_iter_set_end(iter, 0);
 }
 
 static inline int __btree_node_iter_cmp(bool is_extents,
@@ -493,11 +501,18 @@ static inline void __bch2_btree_node_iter_push(struct btree_node_iter *iter,
 			      const struct bkey_packed *k,
 			      const struct bkey_packed *end)
 {
-	if (k != end)
-		iter->data[iter->used++] = (struct btree_node_iter_set) {
+	if (k != end) {
+		struct btree_node_iter_set *pos;
+
+		btree_node_iter_for_each(iter, pos)
+			;
+
+		BUG_ON(pos >= iter->data + ARRAY_SIZE(iter->data));
+		*pos = (struct btree_node_iter_set) {
 			__btree_node_key_to_offset(b, k),
 			__btree_node_key_to_offset(b, end)
 		};
+	}
 }
 
 static inline struct bkey_packed *

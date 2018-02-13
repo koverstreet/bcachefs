@@ -18,6 +18,43 @@
 
 #include <trace/events/bcachefs.h>
 
+/* btree_node_iter_large: */
+
+#define btree_node_iter_cmp_heap(h, _l, _r)				\
+	__btree_node_iter_cmp((iter)->is_extents, b,			\
+			       __btree_node_offset_to_key(b, (_l).k),	\
+			       __btree_node_offset_to_key(b, (_r).k))
+
+void bch2_btree_node_iter_large_push(struct btree_node_iter_large *iter,
+				     struct btree *b,
+				     const struct bkey_packed *k,
+				     const struct bkey_packed *end)
+{
+	if (k != end) {
+		struct btree_node_iter_set n =
+			((struct btree_node_iter_set) {
+				 __btree_node_key_to_offset(b, k),
+				 __btree_node_key_to_offset(b, end)
+			 });
+
+		__heap_add(iter, n, btree_node_iter_cmp_heap);
+	}
+}
+
+void bch2_btree_node_iter_large_advance(struct btree_node_iter_large *iter,
+					struct btree *b)
+{
+	iter->data->k += __btree_node_offset_to_key(b, iter->data->k)->u64s;
+
+	EBUG_ON(!iter->used);
+	EBUG_ON(iter->data->k > iter->data->end);
+
+	if (iter->data->k == iter->data->end)
+		heap_del(iter, 0, btree_node_iter_cmp_heap);
+	else
+		heap_sift_down(iter, 0, btree_node_iter_cmp_heap);
+}
+
 static void verify_no_dups(struct btree *b,
 			   struct bkey_packed *start,
 			   struct bkey_packed *end)
@@ -1108,7 +1145,7 @@ fsck_err:
 int bch2_btree_node_read_done(struct bch_fs *c, struct btree *b, bool have_retry)
 {
 	struct btree_node_entry *bne;
-	struct btree_node_iter *iter;
+	struct btree_node_iter_large *iter;
 	struct btree_node *sorted;
 	struct bkey_packed *k;
 	struct bset *i;
@@ -1117,7 +1154,7 @@ int bch2_btree_node_read_done(struct bch_fs *c, struct btree *b, bool have_retry
 	int ret, retry_read = 0, write = READ;
 
 	iter = mempool_alloc(&c->fill_iter, GFP_NOIO);
-	__bch2_btree_node_iter_init(iter, btree_node_is_extents(b));
+	__bch2_btree_node_iter_large_init(iter, btree_node_is_extents(b));
 
 	if (bch2_meta_read_fault("btree"))
 		btree_err(BTREE_ERR_MUST_RETRY, c, b, NULL,
@@ -1202,11 +1239,11 @@ int bch2_btree_node_read_done(struct bch_fs *c, struct btree *b, bool have_retry
 				continue;
 		}
 
-		__bch2_btree_node_iter_push(iter, b,
+		bch2_btree_node_iter_large_push(iter, b,
 					   i->start,
 					   vstruct_idx(i, whiteout_u64s));
 
-		__bch2_btree_node_iter_push(iter, b,
+		bch2_btree_node_iter_large_push(iter, b,
 					   vstruct_idx(i, whiteout_u64s),
 					   vstruct_last(i));
 	}
