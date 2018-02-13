@@ -586,7 +586,8 @@ static struct bch_fs *bch2_fs_alloc(struct bch_sb *sb, struct bch_opts opts)
 	if (bch2_fs_init_fault("fs_alloc"))
 		goto err;
 
-	iter_size = (btree_blocks(c) + 1) * 2 *
+	iter_size = sizeof(struct btree_node_iter_large) +
+		(btree_blocks(c) + 1) * 2 *
 		sizeof(struct btree_node_iter_set);
 
 	if (!(c->wq = alloc_workqueue("bcachefs",

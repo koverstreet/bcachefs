@@ -8,6 +8,7 @@
 struct bch_fs;
 struct journal_res;
 struct btree_node_iter;
+struct btree_node_iter_large;
 struct btree_insert;
 struct btree_insert_entry;
 struct extent_insert_hook;
@@ -16,11 +17,11 @@ union bch_extent_crc;
 
 struct btree_nr_keys bch2_key_sort_fix_overlapping(struct bset *,
 						  struct btree *,
-						  struct btree_node_iter *);
+						  struct btree_node_iter_large *);
 struct btree_nr_keys bch2_extent_sort_fix_overlapping(struct bch_fs *c,
 						     struct bset *,
 						     struct btree *,
-						     struct btree_node_iter *);
+						     struct btree_node_iter_large *);
 
 extern const struct bkey_ops bch2_bkey_btree_ops;
 extern const struct bkey_ops bch2_bkey_extent_ops;

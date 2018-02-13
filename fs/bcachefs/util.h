@@ -181,15 +181,19 @@ do {									\
 	}								\
 } while (0)
 
-#define heap_add(h, new, cmp)						\
+#define __heap_add(h, d, cmp)						\
+do {									\
+	size_t _i = (h)->used++;					\
+	(h)->data[_i] = d;						\
+									\
+	heap_sift_up(h, _i, cmp);					\
+} while (0)
+
+#define heap_add(h, d, cmp)						\
 ({									\
 	bool _r = !heap_full(h);					\
-	if (_r) {							\
-		size_t _i = (h)->used++;				\
-		(h)->data[_i] = new;					\
-									\
-		heap_sift_up(h, _i, cmp);				\
-	}								\
+	if (_r)								\
+		__heap_add(h, d, cmp);					\
 	_r;								\
 })
 

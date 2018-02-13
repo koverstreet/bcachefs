@@ -1,6 +1,7 @@
 #ifndef _BCACHEFS_BTREE_IO_H
 #define _BCACHEFS_BTREE_IO_H
 
+#include "bset.h"
 #include "extents.h"
 #include "io_types.h"
 
@@ -140,5 +141,56 @@ void bch2_btree_flush_all_reads(struct bch_fs *);
 void bch2_btree_flush_all_writes(struct bch_fs *);
 void bch2_btree_verify_flushed(struct bch_fs *);
 ssize_t bch2_dirty_btree_nodes_print(struct bch_fs *, char *);
+
+/* Sorting */
+
+struct btree_node_iter_large {
+	u8		is_extents;
+	u16		used;
+
+	struct btree_node_iter_set data[MAX_BSETS];
+};
+
+static inline void
+__bch2_btree_node_iter_large_init(struct btree_node_iter_large *iter,
+				  bool is_extents)
+{
+	iter->used = 0;
+	iter->is_extents = is_extents;
+}
+
+void bch2_btree_node_iter_large_advance(struct btree_node_iter_large *,
+					struct btree *);
+
+void bch2_btree_node_iter_large_push(struct btree_node_iter_large *,
+				     struct btree *,
+				     const struct bkey_packed *,
+				     const struct bkey_packed *);
+
+static inline bool bch2_btree_node_iter_large_end(struct btree_node_iter_large *iter)
+{
+	return !iter->used;
+}
+
+static inline struct bkey_packed *
+bch2_btree_node_iter_large_peek_all(struct btree_node_iter_large *iter,
+				    struct btree *b)
+{
+	return bch2_btree_node_iter_large_end(iter)
+		? NULL
+		: __btree_node_offset_to_key(b, iter->data->k);
+}
+
+static inline struct bkey_packed *
+bch2_btree_node_iter_large_next_all(struct btree_node_iter_large *iter,
+				    struct btree *b)
+{
+	struct bkey_packed *ret = bch2_btree_node_iter_large_peek_all(iter, b);
+
+	if (ret)
+		bch2_btree_node_iter_large_advance(iter, b);
+
+	return ret;
+}
 
 #endif /* _BCACHEFS_BTREE_IO_H */

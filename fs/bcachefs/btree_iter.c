@@ -382,7 +382,7 @@ found:
 	} else if (set->k < offset + clobber_u64s) {
 		set->k = offset + new_u64s;
 		if (set->k == set->end)
-			*set = node_iter->data[--node_iter->used];
+			bch2_btree_node_iter_set_drop(node_iter, set);
 	} else {
 		set->k = (int) set->k + shift;
 		goto iter_current_key_not_modified;
