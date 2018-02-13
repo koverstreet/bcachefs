@@ -279,6 +279,8 @@ int bch2_btree_iter_unlock(struct btree_iter *iter)
 		__bch2_btree_iter_unlock(linked);
 	__bch2_btree_iter_unlock(iter);
 
+	bch2_verify_no_btree_locks_held();
+
 	return iter->flags & BTREE_ITER_ERROR ? -EIO : 0;
 }
 

@@ -97,4 +97,6 @@ static inline unsigned btree_blocks(struct bch_fs *c)
 int bch2_print_btree_node(struct bch_fs *, struct btree *,
 			 char *, size_t);
 
+void bch2_verify_no_btree_locks_held(void);
+
 #endif /* _BCACHEFS_BTREE_CACHE_H */

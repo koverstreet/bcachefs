@@ -55,6 +55,13 @@ struct six_lock_vals {
 	},								\
 }
 
+static inline bool six_lock_held(union six_lock_state state, enum six_lock_type type)
+{
+	const struct six_lock_vals l[] = LOCK_VALS;
+
+	return (state.v & l[type].held_mask) != 0;
+}
+
 static inline void six_set_owner(struct six_lock *lock, enum six_lock_type type,
 				 union six_lock_state old)
 {
@@ -371,9 +378,9 @@ static void __six_unlock_type(struct six_lock *lock, enum six_lock_type type)
 	const struct six_lock_vals l[] = LOCK_VALS;
 	union six_lock_state state;
 
-	EBUG_ON(!(lock->state.v & l[type].held_mask));
+	EBUG_ON(!six_lock_held(lock->state, type));
 	EBUG_ON(type == SIX_LOCK_write &&
-		!(lock->state.v & __SIX_LOCK_HELD_intent));
+		!six_lock_held(lock->state, SIX_LOCK_intent));
 
 	six_clear_owner(lock, type);
 
@@ -454,7 +461,7 @@ bool six_lock_tryupgrade(struct six_lock *lock)
 	do {
 		new.v = old.v = v;
 
-		EBUG_ON(!(old.v & l[SIX_LOCK_read].held_mask));
+		EBUG_ON(!six_lock_held(old, SIX_LOCK_read));
 
 		new.v += l[SIX_LOCK_read].unlock_val;
 
@@ -495,8 +502,10 @@ bool six_trylock_convert(struct six_lock *lock,
 void six_lock_increment(struct six_lock *lock, enum six_lock_type type)
 {
 	const struct six_lock_vals l[] = LOCK_VALS;
+	u64 v;
 
 	EBUG_ON(type == SIX_LOCK_write);
+
 	six_acquire(&lock->dep_map, 0);
 
 	/* XXX: assert already locked, and that we don't overflow: */

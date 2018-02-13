@@ -93,6 +93,8 @@ err:
 	list_move(&b->list, &bc->freed);
 }
 
+static struct lock_class_key btree_lock_key;
+
 static struct btree *btree_node_mem_alloc(struct bch_fs *c, gfp_t gfp)
 {
 	struct btree *b = kzalloc(sizeof(struct btree), gfp);
@@ -100,12 +102,23 @@ static struct btree *btree_node_mem_alloc(struct bch_fs *c, gfp_t gfp)
 		return NULL;
 
 	bkey_extent_init(&b->key);
-	six_lock_init(&b->lock);
+	__six_lock_init(&b->lock, "b->lock", &btree_lock_key);
 	INIT_LIST_HEAD(&b->list);
 	INIT_LIST_HEAD(&b->write_blocked);
 
 	btree_node_data_alloc(c, b, gfp);
 	return b->data ? b : NULL;
+}
+
+void bch2_verify_no_btree_locks_held(void)
+{
+	struct task_struct *curr = current;
+	struct held_lock *i;
+
+	for (i = curr->held_locks;
+	     i < curr->held_locks + curr->lockdep_depth;
+	     i++)
+		BUG_ON(i->instance->key == &btree_lock_key);
 }
 
 /* Btree in memory cache - hash table */
@@ -155,7 +168,7 @@ static inline struct btree *btree_cache_find(struct btree_cache *bc,
  * this version is for btree nodes that have already been freed (we're not
  * reaping a real btree node)
  */
-static int __btree_node_reclaim(struct bch_fs *c, struct btree *b, bool flush)
+static int btree_node_reclaim(struct bch_fs *c, struct btree *b, bool flush)
 {
 	struct btree_cache *bc = &c->btree_cache;
 	int ret = 0;
@@ -209,16 +222,6 @@ out_unlock_intent:
 	goto out;
 }
 
-static int btree_node_reclaim(struct bch_fs *c, struct btree *b)
-{
-	return __btree_node_reclaim(c, b, false);
-}
-
-static int btree_node_write_and_reclaim(struct bch_fs *c, struct btree *b)
-{
-	return __btree_node_reclaim(c, b, true);
-}
-
 static unsigned long bch2_btree_cache_scan(struct shrinker *shrink,
 					   struct shrink_control *sc)
 {
@@ -260,7 +263,7 @@ static unsigned long bch2_btree_cache_scan(struct shrinker *shrink,
 			break;
 
 		if (++i > 3 &&
-		    !btree_node_reclaim(c, b)) {
+		    !btree_node_reclaim(c, b, false)) {
 			btree_node_data_free(c, b);
 			six_unlock_write(&b->lock);
 			six_unlock_intent(&b->lock);
@@ -279,7 +282,7 @@ restart:
 		}
 
 		if (!btree_node_accessed(b) &&
-		    !btree_node_reclaim(c, b)) {
+		    !btree_node_reclaim(c, b, false)) {
 			/* can't call bch2_btree_node_hash_remove under lock  */
 			freed++;
 			if (&t->list != &bc->live)
@@ -486,12 +489,12 @@ static struct btree *btree_node_cannibalize(struct bch_fs *c)
 	struct btree *b;
 
 	list_for_each_entry_reverse(b, &bc->live, list)
-		if (!btree_node_reclaim(c, b))
+		if (!btree_node_reclaim(c, b, false))
 			return b;
 
 	while (1) {
 		list_for_each_entry_reverse(b, &bc->live, list)
-			if (!btree_node_write_and_reclaim(c, b))
+			if (!btree_node_reclaim(c, b, true))
 				return b;
 
 		/*
@@ -516,7 +519,7 @@ struct btree *bch2_btree_node_mem_alloc(struct bch_fs *c)
 	 * the list. Check if there's any freed nodes there:
 	 */
 	list_for_each_entry(b, &bc->freeable, list)
-		if (!btree_node_reclaim(c, b))
+		if (!btree_node_reclaim(c, b, false))
 			goto out_unlock;
 
 	/*
@@ -524,7 +527,7 @@ struct btree *bch2_btree_node_mem_alloc(struct bch_fs *c)
 	 * disk node. Check the freed list before allocating a new one:
 	 */
 	list_for_each_entry(b, &bc->freed, list)
-		if (!btree_node_reclaim(c, b)) {
+		if (!btree_node_reclaim(c, b, false)) {
 			btree_node_data_alloc(c, b, __GFP_NOWARN|GFP_NOIO);
 			if (b->data)
 				goto out_unlock;
