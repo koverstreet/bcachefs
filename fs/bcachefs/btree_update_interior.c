@@ -430,6 +430,7 @@ struct btree *__bch2_btree_node_alloc_replacement(struct btree_update *as,
 	n->data->min_key	= b->data->min_key;
 	n->data->max_key	= b->data->max_key;
 	n->data->format		= format;
+	SET_BTREE_NODE_SEQ(n->data, BTREE_NODE_SEQ(b->data) + 1);
 
 	btree_node_set_format(n, format);
 
@@ -1227,6 +1228,7 @@ static struct btree *__btree_split_node(struct btree_update *as,
 
 	n2->data->max_key	= n1->data->max_key;
 	n2->data->format	= n1->format;
+	SET_BTREE_NODE_SEQ(n2->data, BTREE_NODE_SEQ(n1->data));
 	n2->key.k.p = n1->key.k.p;
 
 	btree_node_set_format(n2, n2->data->format);
