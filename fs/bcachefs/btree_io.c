@@ -1135,6 +1135,7 @@ int bch2_btree_node_read_done(struct bch_fs *c, struct btree *b, bool have_retry
 		unsigned sectors, whiteout_u64s = 0;
 		struct nonce nonce;
 		struct bch_csum csum;
+		bool first = !b->written;
 
 		if (!b->written) {
 			i = &b->data->keys;
@@ -1194,10 +1195,10 @@ int bch2_btree_node_read_done(struct bch_fs *c, struct btree *b, bool have_retry
 		}
 
 		if (ret) {
-			btree_err_on(!b->written,
+			btree_err_on(first,
 				     BTREE_ERR_FIXABLE, c, b, i,
 				     "first btree node bset has blacklisted journal seq");
-			if (b->written)
+			if (!first)
 				continue;
 		}
 

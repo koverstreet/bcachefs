@@ -1321,8 +1321,10 @@ struct btree_node {
 	};
 } __attribute__((packed, aligned(8)));
 
-LE64_BITMASK(BTREE_NODE_ID,	struct btree_node, flags, 0, 4);
-LE64_BITMASK(BTREE_NODE_LEVEL,	struct btree_node, flags, 4, 8);
+LE64_BITMASK(BTREE_NODE_ID,	struct btree_node, flags,  0,  4);
+LE64_BITMASK(BTREE_NODE_LEVEL,	struct btree_node, flags,  4,  8);
+/* 8-32 unused */
+LE64_BITMASK(BTREE_NODE_SEQ,	struct btree_node, flags, 32, 64);
 
 struct btree_node_entry {
 	struct bch_csum		csum;
