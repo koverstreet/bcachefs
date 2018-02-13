@@ -68,7 +68,7 @@ struct btree_iter {
 	 */
 
 	/* Must come last: */
-	struct btree_iter	*next;
+	int			_next;
 };
 
 static inline void btree_iter_set_dirty(struct btree_iter *iter,
@@ -91,23 +91,35 @@ static inline struct btree *btree_node_parent(struct btree_iter *iter,
 
 static inline bool btree_iter_linked(const struct btree_iter *iter)
 {
-	return iter->next != iter;
+	return iter->_next != 0;
+}
+
+static inline struct btree_iter *btree_iter_next_linked(struct btree_iter *iter)
+{
+	return (struct btree_iter *) ((unsigned long *) iter + iter->_next);
+}
+
+static inline void btree_iter_set_next_linked(struct btree_iter *iter, const struct btree_iter *next)
+{
+	iter->_next = (unsigned long *) next - (unsigned long *) iter;
+
+	BUG_ON(btree_iter_next_linked(iter) != next);
 }
 
 /**
  * for_each_linked_btree_iter - iterate over all iterators linked with @_iter
  */
 #define for_each_linked_btree_iter(_iter, _linked)			\
-	for ((_linked) = (_iter)->next;					\
+	for ((_linked) = btree_iter_next_linked(_iter);			\
 	     (_linked) != (_iter);					\
-	     (_linked) = (_linked)->next)
+	     (_linked) = btree_iter_next_linked(_linked))
 
 static inline struct btree_iter *
 __next_linked_btree_node(struct btree_iter *iter, struct btree *b,
 			 struct btree_iter *linked)
 {
 	do {
-		linked = linked->next;
+		linked = btree_iter_next_linked(linked);
 
 		if (linked == iter)
 			return NULL;

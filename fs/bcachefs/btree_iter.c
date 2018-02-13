@@ -805,10 +805,52 @@ static void btree_iter_up(struct btree_iter *iter)
 
 int __must_check __bch2_btree_iter_traverse(struct btree_iter *);
 
+static struct btree_iter *btree_iters_sort(struct btree_iter *iter)
+{
+	struct btree_iter *src, dst, *i;
+
+	if (!btree_iter_linked(iter))
+		return iter;
+
+	/*
+	 * Linked iters are normally a circular singly linked list - break cycle
+	 * while we sort them:
+	 */
+	src = btree_iter_next_linked(iter);
+	iter->_next = 0;
+	dst._next = 0;
+
+	while (src) {
+		iter = src;
+		src = src->_next ? btree_iter_next_linked(src) : NULL;
+
+		i = &dst;
+		while (i->_next &&
+		       btree_iter_cmp(iter, btree_iter_next_linked(i)) > 0)
+			i = btree_iter_next_linked(i);
+
+		if (i->_next)
+			btree_iter_set_next_linked(iter, btree_iter_next_linked(i));
+		else
+			iter->_next = 0;
+		btree_iter_set_next_linked(i, iter);
+	}
+
+	/* Make list circular again: */
+	for (i = &dst; i->_next; i = btree_iter_next_linked(i))
+		;
+	btree_iter_set_next_linked(i, btree_iter_next_linked(&dst));
+
+	return btree_iter_next_linked(&dst);
+}
+
 static int btree_iter_traverse_error(struct btree_iter *iter, int ret)
 {
 	struct bch_fs *c = iter->c;
-	struct btree_iter *linked, *sorted_iters, **i;
+	struct btree_iter *sorted_iters;
+
+	/* Do traversals in correct order: */
+	sorted_iters = btree_iters_sort(iter);
 retry_all:
 	bch2_btree_iter_unlock(iter);
 
@@ -826,34 +868,6 @@ retry_all:
 		} while (ret);
 	}
 
-	/*
-	 * Linked iters are normally a circular singly linked list - break cycle
-	 * while we sort them:
-	 */
-	linked = iter->next;
-	iter->next = NULL;
-	sorted_iters = NULL;
-
-	while (linked) {
-		iter = linked;
-		linked = linked->next;
-
-		i = &sorted_iters;
-		while (*i && btree_iter_cmp(iter, *i) > 0)
-			i = &(*i)->next;
-
-		iter->next = *i;
-		*i = iter;
-	}
-
-	/* Make list circular again: */
-	iter = sorted_iters;
-	while (iter->next)
-		iter = iter->next;
-	iter->next = sorted_iters;
-
-	/* Now, redo traversals in correct order: */
-
 	iter = sorted_iters;
 	do {
 retry:
@@ -864,7 +878,7 @@ retry:
 			goto retry_all;
 		}
 
-		iter = iter->next;
+		iter = btree_iter_next_linked(iter);
 	} while (iter != sorted_iters);
 
 	ret = btree_iter_linked(iter) ? -EINTR : 0;
@@ -1328,7 +1342,7 @@ void __bch2_btree_iter_init(struct btree_iter *iter, struct bch_fs *c,
 	for (i = 0; i < ARRAY_SIZE(iter->l); i++)
 		iter->l[i].b		= NULL;
 	iter->l[iter->level].b		= BTREE_ITER_NOT_END;
-	iter->next			= iter;
+	iter->_next			= 0;
 
 	prefetch(c->btree_roots[btree_id].b);
 }
@@ -1343,9 +1357,9 @@ void bch2_btree_iter_unlink(struct btree_iter *iter)
 		return;
 
 	for_each_linked_btree_iter(iter, linked) {
-
-		if (linked->next == iter) {
-			linked->next = iter->next;
+		if (btree_iter_next_linked(linked) == iter) {
+			btree_iter_set_next_linked(linked, btree_iter_next_linked(iter));
+			iter->_next = 0;
 			return;
 		}
 	}
@@ -1357,8 +1371,8 @@ void bch2_btree_iter_link(struct btree_iter *iter, struct btree_iter *new)
 {
 	BUG_ON(btree_iter_linked(new));
 
-	new->next = iter->next;
-	iter->next = new;
+	btree_iter_set_next_linked(new, btree_iter_next_linked(iter));
+	btree_iter_set_next_linked(iter, new);
 
 	if (IS_ENABLED(CONFIG_BCACHEFS_DEBUG)) {
 		unsigned nr_iters = 1;
@@ -1373,7 +1387,7 @@ void bch2_btree_iter_link(struct btree_iter *iter, struct btree_iter *new)
 void bch2_btree_iter_copy(struct btree_iter *dst, struct btree_iter *src)
 {
 	__bch2_btree_iter_unlock(dst);
-	memcpy(dst, src, offsetof(struct btree_iter, next));
+	memcpy(dst, src, offsetof(struct btree_iter, _next));
 	dst->nodes_locked = dst->nodes_intent_locked = 0;
 	dst->uptodate = BTREE_ITER_NEED_RELOCK;
 }
