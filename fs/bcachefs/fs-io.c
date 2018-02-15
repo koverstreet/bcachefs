@@ -452,14 +452,18 @@ static int bchfs_write_index_update(struct bch_write_op *wop)
 
 			ret = bch2_btree_insert_at(wop->c, &wop->res,
 					&hook.hook, op_journal_seq(wop),
-					BTREE_INSERT_NOFAIL|BTREE_INSERT_ATOMIC,
+					BTREE_INSERT_NOFAIL|
+					BTREE_INSERT_ATOMIC|
+					BTREE_INSERT_USE_RESERVE,
 					BTREE_INSERT_ENTRY(&extent_iter, k),
 					BTREE_INSERT_ENTRY_EXTRA_RES(&inode_iter,
 							&hook.inode_p.inode.k_i, 2));
 		} else {
 			ret = bch2_btree_insert_at(wop->c, &wop->res,
 					&hook.hook, op_journal_seq(wop),
-					BTREE_INSERT_NOFAIL|BTREE_INSERT_ATOMIC,
+					BTREE_INSERT_NOFAIL|
+					BTREE_INSERT_ATOMIC|
+					BTREE_INSERT_USE_RESERVE,
 					BTREE_INSERT_ENTRY(&extent_iter, k));
 		}
 
