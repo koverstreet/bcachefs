@@ -1193,9 +1193,6 @@ static void bch2_writepage_io_done(struct closure *cl)
 	struct bio_vec *bvec;
 	unsigned i;
 
-	atomic_sub(bio->bi_vcnt, &c->writeback_pages);
-	wake_up(&c->writeback_wait);
-
 	if (io->op.op.error) {
 		bio_for_each_segment_all(bvec, bio, i)
 			SetPageError(bvec->bv_page);
@@ -1232,11 +1229,8 @@ static void bch2_writepage_io_done(struct closure *cl)
 static void bch2_writepage_do_io(struct bch_writepage_state *w)
 {
 	struct bch_writepage_io *io = w->io;
-	struct bio *bio = &io->op.op.wbio.bio;
 
 	w->io = NULL;
-	atomic_add(bio->bi_vcnt, &io->op.op.c->writeback_pages);
-
 	closure_call(&io->op.op.cl, bch2_write, NULL, &io->cl);
 	continue_at(&io->cl, bch2_writepage_io_done, NULL);
 }
@@ -1270,11 +1264,13 @@ static void bch2_writepage_io_alloc(struct bch_fs *c,
 	op->wbio.bio.bi_iter.bi_sector = offset;
 }
 
-static int __bch2_writepage(struct bch_fs *c, struct page *page,
+static int __bch2_writepage(struct page *page,
 			    struct writeback_control *wbc,
-			    struct bch_writepage_state *w)
+			    void *data)
 {
 	struct bch_inode_info *inode = to_bch_ei(page->mapping->host);
+	struct bch_fs *c = inode->v.i_sb->s_fs_info;
+	struct bch_writepage_state *w = data;
 	struct bch_page_state new, old;
 	unsigned offset;
 	loff_t i_size = i_size_read(&inode->v);
@@ -1318,6 +1314,10 @@ do_io:
 		new.dirty_sectors = 0;
 	});
 
+	BUG_ON(PageWriteback(page));
+	set_page_writeback(page);
+	unlock_page(page);
+
 	if (w->io &&
 	    (w->io->op.op.res.nr_replicas != new.nr_replicas ||
 	     !bio_can_add_page_contig(&w->io->op.op.wbio.bio, page)))
@@ -1334,15 +1334,10 @@ do_io:
 	if (old.reserved)
 		w->io->op.op.res.sectors += old.reservation_replicas * PAGE_SECTORS;
 
-	/* while page is locked: */
 	w->io->op.new_i_size = i_size;
 
 	if (wbc->sync_mode == WB_SYNC_ALL)
 		w->io->op.op.wbio.bio.bi_opf |= REQ_SYNC;
-
-	BUG_ON(PageWriteback(page));
-	set_page_writeback(page);
-	unlock_page(page);
 
 	return 0;
 }
@@ -1352,147 +1347,14 @@ int bch2_writepages(struct address_space *mapping, struct writeback_control *wbc
 	struct bch_fs *c = mapping->host->i_sb->s_fs_info;
 	struct bch_writepage_state w =
 		bch_writepage_state_init(c, to_bch_ei(mapping->host));
-	struct pagecache_iter iter;
-	struct page *page;
-	int ret = 0;
-	int done = 0;
-	pgoff_t uninitialized_var(writeback_index);
-	pgoff_t index;
-	pgoff_t end;		/* Inclusive */
-	pgoff_t done_index;
-	int cycled;
-	int range_whole = 0;
-	int tag;
+	struct blk_plug plug;
+	int ret;
 
-	if (wbc->range_cyclic) {
-		writeback_index = mapping->writeback_index; /* prev offset */
-		index = writeback_index;
-		if (index == 0)
-			cycled = 1;
-		else
-			cycled = 0;
-		end = -1;
-	} else {
-		index = wbc->range_start >> PAGE_SHIFT;
-		end = wbc->range_end >> PAGE_SHIFT;
-		if (wbc->range_start == 0 && wbc->range_end == LLONG_MAX)
-			range_whole = 1;
-		cycled = 1; /* ignore range_cyclic tests */
-	}
-	if (wbc->sync_mode == WB_SYNC_ALL || wbc->tagged_writepages)
-		tag = PAGECACHE_TAG_TOWRITE;
-	else
-		tag = PAGECACHE_TAG_DIRTY;
-retry:
-	if (wbc->sync_mode == WB_SYNC_ALL || wbc->tagged_writepages)
-		tag_pages_for_writeback(mapping, index, end);
-
-	done_index = index;
-get_pages:
-	for_each_pagecache_tag(&iter, mapping, tag, index, end, page) {
-		done_index = page->index;
-
-		if (w.io &&
-		    !bio_can_add_page_contig(&w.io->op.op.wbio.bio, page))
-			bch2_writepage_do_io(&w);
-
-		if (!w.io &&
-		    atomic_read(&c->writeback_pages) >=
-		    c->writeback_pages_max) {
-			/* don't sleep with pages pinned: */
-			pagecache_iter_release(&iter);
-
-			__wait_event(c->writeback_wait,
-				     atomic_read(&c->writeback_pages) <
-				     c->writeback_pages_max);
-			goto get_pages;
-		}
-
-		lock_page(page);
-
-		/*
-		 * Page truncated or invalidated. We can freely skip it
-		 * then, even for data integrity operations: the page
-		 * has disappeared concurrently, so there could be no
-		 * real expectation of this data interity operation
-		 * even if there is now a new, dirty page at the same
-		 * pagecache address.
-		 */
-		if (unlikely(page->mapping != mapping)) {
-continue_unlock:
-			unlock_page(page);
-			continue;
-		}
-
-		if (!PageDirty(page)) {
-			/* someone wrote it for us */
-			goto continue_unlock;
-		}
-
-		if (PageWriteback(page)) {
-			if (wbc->sync_mode != WB_SYNC_NONE)
-				wait_on_page_writeback(page);
-			else
-				goto continue_unlock;
-		}
-
-		BUG_ON(PageWriteback(page));
-		if (!clear_page_dirty_for_io(page))
-			goto continue_unlock;
-
-		trace_wbc_writepage(wbc, inode_to_bdi(mapping->host));
-		ret = __bch2_writepage(c, page, wbc, &w);
-		if (unlikely(ret)) {
-			if (ret == AOP_WRITEPAGE_ACTIVATE) {
-				unlock_page(page);
-				ret = 0;
-			} else {
-				/*
-				 * done_index is set past this page,
-				 * so media errors will not choke
-				 * background writeout for the entire
-				 * file. This has consequences for
-				 * range_cyclic semantics (ie. it may
-				 * not be suitable for data integrity
-				 * writeout).
-				 */
-				done_index = page->index + 1;
-				done = 1;
-				break;
-			}
-		}
-
-		/*
-		 * We stop writing back only if we are not doing
-		 * integrity sync. In case of integrity sync we have to
-		 * keep going until we have written all the pages
-		 * we tagged for writeback prior to entering this loop.
-		 */
-		if (--wbc->nr_to_write <= 0 &&
-		    wbc->sync_mode == WB_SYNC_NONE) {
-			done = 1;
-			break;
-		}
-	}
-	pagecache_iter_release(&iter);
-
+	blk_start_plug(&plug);
+	ret = write_cache_pages(mapping, wbc, __bch2_writepage, &w);
 	if (w.io)
 		bch2_writepage_do_io(&w);
-
-	if (!cycled && !done) {
-		/*
-		 * range_cyclic:
-		 * We hit the last page and there is more work to be done: wrap
-		 * back to the start of the file
-		 */
-		cycled = 1;
-		index = 0;
-		end = writeback_index - 1;
-		goto retry;
-	}
-	if (wbc->range_cyclic || (range_whole && wbc->nr_to_write > 0))
-		mapping->writeback_index = done_index;
-
+	blk_finish_plug(&plug);
 	return ret;
 }
 
@@ -1503,7 +1365,7 @@ int bch2_writepage(struct page *page, struct writeback_control *wbc)
 		bch_writepage_state_init(c, to_bch_ei(page->mapping->host));
 	int ret;
 
-	ret = __bch2_writepage(c, page, wbc, &w);
+	ret = __bch2_writepage(page, wbc, &w);
 	if (w.io)
 		bch2_writepage_do_io(&w);
 

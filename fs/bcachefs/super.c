@@ -551,9 +551,6 @@ static struct bch_fs *bch2_fs_alloc(struct bch_sb *sb, struct bch_opts opts)
 
 	seqcount_init(&c->gc_pos_lock);
 
-	init_waitqueue_head(&c->writeback_wait);
-	c->writeback_pages_max = (256 << 10) / PAGE_SIZE;
-
 	c->copy_gc_enabled = 1;
 	c->rebalance_enabled = 1;
 	c->rebalance_percent = 10;
