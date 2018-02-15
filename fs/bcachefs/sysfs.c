@@ -164,8 +164,6 @@ read_attribute(extent_migrate_raced);
 rw_attribute(journal_write_delay_ms);
 rw_attribute(journal_reclaim_delay_ms);
 
-rw_attribute(writeback_pages_max);
-
 rw_attribute(discard);
 rw_attribute(cache_replacement_policy);
 rw_attribute(group);
@@ -311,8 +309,6 @@ SHOW(bch2_fs)
 	sysfs_print(journal_write_delay_ms,	c->journal.write_delay_ms);
 	sysfs_print(journal_reclaim_delay_ms,	c->journal.reclaim_delay_ms);
 
-	sysfs_print(writeback_pages_max,	c->writeback_pages_max);
-
 	sysfs_print(block_size,			block_bytes(c));
 	sysfs_print(btree_node_size,		btree_bytes(c));
 	sysfs_hprint(btree_cache_size,		bch2_btree_cache_size(c));
@@ -372,9 +368,6 @@ STORE(__bch2_fs)
 
 	sysfs_strtoul(journal_write_delay_ms, c->journal.write_delay_ms);
 	sysfs_strtoul(journal_reclaim_delay_ms, c->journal.reclaim_delay_ms);
-
-	if (attr == &sysfs_writeback_pages_max)
-		c->writeback_pages_max = strtoul_restrict_or_return(buf, 1, UINT_MAX);
 
 	if (attr == &sysfs_btree_gc_periodic) {
 		ssize_t ret = strtoul_safe(buf, c->btree_gc_periodic)
@@ -464,8 +457,6 @@ struct attribute *bch2_fs_files[] = {
 
 	&sysfs_journal_write_delay_ms,
 	&sysfs_journal_reclaim_delay_ms,
-
-	&sysfs_writeback_pages_max,
 
 	&sysfs_rebalance_percent,
 

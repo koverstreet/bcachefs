@@ -671,9 +671,6 @@ struct bch_fs {
 	bool			fsck_alloc_err;
 
 	/* FILESYSTEM */
-	wait_queue_head_t	writeback_wait;
-	atomic_t		writeback_pages;
-	unsigned		writeback_pages_max;
 	atomic_long_t		nr_inodes;
 
 	/* QUOTAS */
