@@ -172,8 +172,7 @@ void bch2_btree_node_iter_verify(struct btree_node_iter *iter,
 		k = __btree_node_offset_to_key(b, set->k);
 		t = bch2_bkey_to_bset(b, k);
 
-		BUG_ON(__btree_node_offset_to_key(b, set->end) !=
-		       btree_bkey_last(b, t));
+		BUG_ON(set->end != t->end_offset);
 	}
 
 	/* Verify iterator is sorted: */
@@ -187,7 +186,30 @@ void bch2_btree_node_iter_verify(struct btree_node_iter *iter,
 	 * Check if there are bsets that should have been readded to the
 	 * iterator:
 	 */
-	cur = __btree_node_offset_to_key(b, iter->data[0].k);
+	cur = bch2_btree_node_iter_peek_all(iter, b);
+	for_each_bset(b, t) {
+		if (bch2_bkey_to_bset(b, cur) == t)
+			continue;
+
+		k = bch2_btree_node_iter_bset_pos(iter, b, t);
+		k = bch2_bkey_prev_all(b, t, k);
+
+		//BUG_ON(k && __btree_node_iter_cmp(b, k, cur) > 0);
+
+		if (k && __btree_node_iter_cmp(b, k, cur) > 0) {
+			char buf1[100], buf2[100];
+			struct bkey uk;
+
+			uk = bkey_unpack_key(b, cur);
+			bch2_bkey_to_text(buf1, sizeof(buf1), &uk);
+
+			uk = bkey_unpack_key(b, k);
+			bch2_bkey_to_text(buf2, sizeof(buf2), &uk);
+
+			panic("iter at %s but %s not in iter\n", buf1, buf2);
+		}
+	}
+#if 0
 	for_each_bset(b, t) {
 		k  = bch2_btree_node_iter_bset_pos(iter, b, t);
 		if (k == btree_bkey_last(b, t) &&
@@ -205,6 +227,7 @@ void bch2_btree_node_iter_verify(struct btree_node_iter *iter,
 			panic("iter at %s but %s not in iter\n", buf1, buf2);
 		}
 	}
+#endif
 }
 
 void bch2_verify_key_order(struct btree *b,
@@ -225,6 +248,7 @@ void bch2_verify_key_order(struct btree *b,
 
 	if (btree_node_is_extents(b)) {
 		struct btree_node_iter iter = *_iter, iter2;
+		bool forward;
 
 		k = bch2_btree_node_iter_bset_pos(&iter, b, t);
 
@@ -235,12 +259,16 @@ void bch2_verify_key_order(struct btree *b,
 				BUG_ON(!k);
 				bch2_btree_node_iter_advance(&iter, b);
 			}
+
+			forward = true;
 		} else {
 			/* iterator is after @where */
 			do {
 				k = bch2_btree_node_iter_prev_all(&iter, b);
 				BUG_ON(!k);
 			} while (k != where);
+
+			forward = false;
 		}
 
 		/*
@@ -251,9 +279,13 @@ void bch2_verify_key_order(struct btree *b,
 		k = bch2_btree_node_iter_prev(&iter2, b);
 
 		if (k && (uk = bkey_unpack_key(b, k),
-			  bkey_cmp(uk.p, bkey_start_pos(&uw)) > 0))
-			panic("%llu len %u > %llu len %u\n",
+			  bkey_cmp(uk.p, bkey_start_pos(&uw)) > 0)) {
+			bch2_dump_btree_node(b);
+			panic("forward %u block %zu key %zu\n"
+			      "%llu len %u > %llu len %u\n",
+			      forward, t - b->set, k->_data - bset(b, t)->_data,
 			      uk.p.offset, uk.size, uw.p.offset, uw.size);
+		}
 
 		iter2 = iter;
 		bch2_btree_node_iter_advance(&iter2, b);
@@ -1686,11 +1718,9 @@ struct bkey_packed *bch2_btree_node_iter_prev_all(struct btree_node_iter *iter,
 {
 	struct bkey_packed *k, *prev = NULL;
 	struct btree_node_iter_set *set;
-	struct bset_tree *t;
-	struct bset_tree *prev_t;
-	unsigned end, used;
+	struct bset_tree *t, *prev_t;
 
-	bch2_btree_node_iter_verify(iter, b);
+	//bch2_btree_node_iter_verify(iter, b);
 
 	for_each_bset(b, t) {
 		k = bch2_bkey_prev_all(b, t,
@@ -1710,24 +1740,19 @@ struct bkey_packed *bch2_btree_node_iter_prev_all(struct btree_node_iter *iter,
 	 * prev we picked ends up in slot 0 - sort won't necessarily put it
 	 * there because of duplicate deleted keys:
 	 */
-	end = __btree_node_key_to_offset(b, btree_bkey_last(b, prev_t));
 	btree_node_iter_for_each(iter, set)
-		if (set->end == end) {
-			memmove(&iter->data[1],
-				&iter->data[0],
-				(void *) set - (void *) &iter->data[0]);
-			goto out;
-		}
+		if (set->end == prev_t->end_offset)
+			goto found;
 
-	used = __btree_node_iter_used(iter);
-	BUG_ON(used >= ARRAY_SIZE(iter->data));
-
+	BUG_ON(set >= iter->data + ARRAY_SIZE(iter->data));
+	//set = iter->data + ARRAY_SIZE(iter->data) - 1;
+found:
 	memmove(&iter->data[1],
 		&iter->data[0],
-		(void *) &iter->data[used] - (void *) &iter->data[0]);
-out:
+		(void *) set - (void *) &iter->data[0]);
+
 	iter->data[0].k = __btree_node_key_to_offset(b, prev);
-	iter->data[0].end = end;
+	iter->data[0].end = prev_t->end_offset;
 	return prev;
 }
 

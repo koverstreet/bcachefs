@@ -1217,8 +1217,10 @@ static void extent_insert_committed(struct extent_insert_state *s)
 
 	bch2_btree_journal_key(s->trans, iter, &split.k);
 
-	if (!s->deleting)
+	if (!s->deleting) {
+		iter->pos = s->committed;
 		extent_bset_insert(c, iter, &split.k);
+	}
 done:
 	bch2_btree_iter_set_pos_same_leaf(iter, s->committed);
 

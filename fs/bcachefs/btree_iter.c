@@ -299,7 +299,7 @@ static void __bch2_btree_iter_verify(struct btree_iter *iter,
 	 * For interior nodes, the iterator will have skipped past
 	 * deleted keys:
 	 */
-	k = b->level
+	k = b->level || iter->flags & BTREE_ITER_IS_EXTENTS
 		? bch2_btree_node_iter_prev(&tmp, b)
 		: bch2_btree_node_iter_prev_all(&tmp, b);
 	if (k && btree_iter_pos_cmp_packed(b, &iter->pos, k,
@@ -473,11 +473,11 @@ void bch2_btree_node_iter_fix(struct btree_iter *iter,
 					  &linked->l[b->level].iter, t,
 					  where, clobber_u64s, new_u64s);
 
-	bch2_verify_key_order(b, node_iter, where);
-
 	/* interior node iterators are... special... */
 	if (!b->level)
 		bch2_btree_iter_verify(iter, b);
+
+	bch2_verify_key_order(b, node_iter, where);
 }
 
 static inline struct bkey_s_c __btree_iter_unpack(struct btree_iter *iter,
