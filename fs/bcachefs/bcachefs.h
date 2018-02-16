@@ -194,6 +194,7 @@
 #include <linux/shrinker.h>
 #include <linux/types.h>
 #include <linux/workqueue.h>
+#include <linux/zstd.h>
 
 #include "bcachefs_format.h"
 #include "bset.h"
@@ -652,10 +653,10 @@ struct bch_fs {
 	struct mutex		bio_bounce_pages_lock;
 	mempool_t		bio_bounce_pages;
 
-	mempool_t		lz4_workspace_pool;
-	void			*zlib_workspace;
-	struct mutex		zlib_workspace_lock;
 	mempool_t		compression_bounce[2];
+	mempool_t		compress_workspace[BCH_COMPRESSION_NR];
+	mempool_t		decompress_workspace;
+	ZSTD_parameters		zstd_params;
 
 	struct crypto_shash	*sha256;
 	struct crypto_skcipher	*chacha20;

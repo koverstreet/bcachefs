@@ -8,6 +8,7 @@
 #include "lz4.h"
 #include <linux/lz4.h>
 #include <linux/zlib.h>
+#include <linux/zstd.h>
 
 /* Bounce buffer: */
 struct bbuf {
@@ -151,6 +152,7 @@ static int __bio_uncompress(struct bch_fs *c, struct bio *src,
 	struct bbuf src_data = { NULL };
 	size_t src_len = src->bi_iter.bi_size;
 	size_t dst_len = crc.uncompressed_size << 9;
+	void *workspace;
 	int ret;
 
 	src_data = bio_map_or_bounce(c, src, READ);
@@ -159,57 +161,64 @@ static int __bio_uncompress(struct bch_fs *c, struct bio *src,
 	case BCH_COMPRESSION_LZ4_OLD:
 		ret = bch2_lz4_decompress(src_data.b, &src_len,
 				     dst_data, dst_len);
-		if (ret) {
-			ret = -EIO;
+		if (ret)
 			goto err;
-		}
 		break;
 	case BCH_COMPRESSION_LZ4:
 		ret = LZ4_decompress_safe_partial(src_data.b, dst_data,
 						  src_len, dst_len, dst_len);
-		if (ret != dst_len) {
-			ret = -EIO;
+		if (ret != dst_len)
 			goto err;
-		}
 		break;
 	case BCH_COMPRESSION_GZIP: {
-		void *workspace;
-		z_stream strm;
+		z_stream strm = {
+			.next_in	= src_data.b,
+			.avail_in	= src_len,
+			.next_out	= dst_data,
+			.avail_out	= dst_len,
+		};
 
-		workspace = kmalloc(zlib_inflate_workspacesize(),
-				    GFP_NOIO|__GFP_NOWARN);
-		if (!workspace) {
-			mutex_lock(&c->zlib_workspace_lock);
-			workspace = c->zlib_workspace;
-		}
+		workspace = mempool_alloc(&c->decompress_workspace, GFP_NOIO);
 
-		strm.next_in	= src_data.b;
-		strm.avail_in	= src_len;
-		strm.next_out	= dst_data;
-		strm.avail_out	= dst_len;
 		zlib_set_workspace(&strm, workspace);
 		zlib_inflateInit2(&strm, -MAX_WBITS);
-
 		ret = zlib_inflate(&strm, Z_FINISH);
 
-		if (workspace == c->zlib_workspace)
-			mutex_unlock(&c->zlib_workspace_lock);
-		else
-			kfree(workspace);
+		mempool_free(workspace, &c->decompress_workspace);
 
-		if (ret != Z_STREAM_END) {
-			ret = -EIO;
+		if (ret != Z_STREAM_END)
 			goto err;
-		}
+		break;
+	}
+	case BCH_COMPRESSION_ZSTD: {
+		ZSTD_DCtx *ctx;
+		size_t len;
+
+		workspace = mempool_alloc(&c->decompress_workspace, GFP_NOIO);
+		ctx = ZSTD_initDCtx(workspace, ZSTD_DCtxWorkspaceBound());
+
+		src_len = le32_to_cpup(src_data.b);
+
+		len = ZSTD_decompressDCtx(ctx,
+				dst_data,	dst_len,
+				src_data.b + 4, src_len);
+
+		mempool_free(workspace, &c->decompress_workspace);
+
+		if (len != dst_len)
+			goto err;
 		break;
 	}
 	default:
 		BUG();
 	}
 	ret = 0;
-err:
+out:
 	bio_unmap_or_unbounce(c, src_data);
 	return ret;
+err:
+	ret = -EIO;
+	goto out;
 }
 
 int bch2_bio_uncompress_inplace(struct bch_fs *c, struct bio *bio,
@@ -282,113 +291,129 @@ err:
 	return ret;
 }
 
+static int attempt_compress(struct bch_fs *c,
+			    void *workspace,
+			    void *dst, size_t dst_len,
+			    void *src, size_t src_len,
+			    unsigned compression_type)
+{
+	switch (compression_type) {
+	case BCH_COMPRESSION_LZ4: {
+		int len = src_len;
+		int ret = LZ4_compress_destSize(
+				src,		dst,
+				&len,		dst_len,
+				workspace);
+
+		if (len < src_len)
+			return -len;
+
+		return ret;
+	}
+	case BCH_COMPRESSION_GZIP: {
+		z_stream strm = {
+			.next_in	= src,
+			.avail_in	= src_len,
+			.next_out	= dst,
+			.avail_out	= dst_len,
+		};
+
+		zlib_set_workspace(&strm, workspace);
+		zlib_deflateInit2(&strm, Z_DEFAULT_COMPRESSION,
+				  Z_DEFLATED, -MAX_WBITS, DEF_MEM_LEVEL,
+				  Z_DEFAULT_STRATEGY);
+
+		if (zlib_deflate(&strm, Z_FINISH) != Z_STREAM_END)
+			return 0;
+
+		if (zlib_deflateEnd(&strm) != Z_OK)
+			return 0;
+
+		return strm.total_out;
+	}
+	case BCH_COMPRESSION_ZSTD: {
+		ZSTD_CCtx *ctx = ZSTD_initCCtx(workspace,
+			ZSTD_CCtxWorkspaceBound(c->zstd_params.cParams));
+
+		size_t len = ZSTD_compressCCtx(ctx,
+				dst + 4,	dst_len - 4,
+				src,		src_len,
+				c->zstd_params);
+		if (ZSTD_isError(len))
+			return 0;
+
+		*((__le32 *) dst) = cpu_to_le32(len);
+		return len + 4;
+	}
+	default:
+		BUG();
+	}
+}
+
 static unsigned __bio_compress(struct bch_fs *c,
 			       struct bio *dst, size_t *dst_len,
 			       struct bio *src, size_t *src_len,
 			       unsigned compression_type)
 {
 	struct bbuf src_data = { NULL }, dst_data = { NULL };
+	void *workspace;
 	unsigned pad;
 	int ret = 0;
 
 	/* If it's only one block, don't bother trying to compress: */
 	if (bio_sectors(src) <= c->opts.block_size)
-		goto err;
+		return 0;
 
 	dst_data = bio_map_or_bounce(c, dst, WRITE);
 	src_data = bio_map_or_bounce(c, src, READ);
 
-	switch (compression_type) {
-	case BCH_COMPRESSION_LZ4_OLD:
-		compression_type = BCH_COMPRESSION_LZ4;
+	workspace = mempool_alloc(&c->compress_workspace[compression_type], GFP_NOIO);
 
-	case BCH_COMPRESSION_LZ4: {
-		void *workspace;
-		int len = src->bi_iter.bi_size;
+	*src_len = src->bi_iter.bi_size;
+	*dst_len = dst->bi_iter.bi_size;
 
-		workspace = mempool_alloc(&c->lz4_workspace_pool, GFP_NOIO);
-
-		while (1) {
-			if (len <= block_bytes(c)) {
-				ret = 0;
-				break;
-			}
-
-			ret = LZ4_compress_destSize(
-					src_data.b,	dst_data.b,
-					&len,		dst->bi_iter.bi_size,
-					workspace);
-			if (ret >= len) {
-				/* uncompressible: */
-				ret = 0;
-				break;
-			}
-
-			if (!(len & (block_bytes(c) - 1)))
-				break;
-			len = round_down(len, block_bytes(c));
-		}
-		mempool_free(workspace, &c->lz4_workspace_pool);
-
-		if (!ret)
-			goto err;
-
-		*src_len = len;
-		*dst_len = ret;
-		ret = 0;
-		break;
-	}
-	case BCH_COMPRESSION_GZIP: {
-		void *workspace;
-		z_stream strm;
-
-		workspace = kmalloc(zlib_deflate_workspacesize(MAX_WBITS,
-							       DEF_MEM_LEVEL),
-				    GFP_NOIO|__GFP_NOWARN);
-		if (!workspace) {
-			mutex_lock(&c->zlib_workspace_lock);
-			workspace = c->zlib_workspace;
+	/*
+	 * XXX: this algorithm sucks when the compression code doesn't tell us
+	 * how much would fit, like LZ4 does:
+	 */
+	while (1) {
+		if (*src_len <= block_bytes(c)) {
+			ret = -1;
+			break;
 		}
 
-		strm.next_in	= src_data.b;
-		strm.avail_in	= min(src->bi_iter.bi_size,
-				      dst->bi_iter.bi_size);
-		strm.next_out	= dst_data.b;
-		strm.avail_out	= dst->bi_iter.bi_size;
-		zlib_set_workspace(&strm, workspace);
-		zlib_deflateInit2(&strm, Z_DEFAULT_COMPRESSION,
-				  Z_DEFLATED, -MAX_WBITS, DEF_MEM_LEVEL,
-				  Z_DEFAULT_STRATEGY);
-
-		ret = zlib_deflate(&strm, Z_FINISH);
-		if (ret != Z_STREAM_END) {
-			ret = -EIO;
-			goto zlib_err;
+		ret = attempt_compress(c, workspace,
+				       dst_data.b,	*dst_len,
+				       src_data.b,	*src_len,
+				       compression_type);
+		if (ret > 0) {
+			*dst_len = ret;
+			ret = 0;
+			break;
 		}
 
-		ret = zlib_deflateEnd(&strm);
-		if (ret != Z_OK) {
-			ret = -EIO;
-			goto zlib_err;
+		/* Didn't fit: should we retry with a smaller amount?  */
+		if (*src_len <= *dst_len) {
+			ret = -1;
+			break;
 		}
 
-		ret = 0;
-zlib_err:
-		if (workspace == c->zlib_workspace)
-			mutex_unlock(&c->zlib_workspace_lock);
+		/*
+		 * If ret is negative, it's a hint as to how much data would fit
+		 */
+		BUG_ON(-ret >= *src_len);
+
+		if (ret < 0)
+			*src_len = -ret;
 		else
-			kfree(workspace);
-
-		if (ret)
-			goto err;
-
-		*dst_len = strm.total_out;
-		*src_len = strm.total_in;
-		break;
+			*src_len -= (*src_len - *dst_len) / 2;
+		*src_len = round_down(*src_len, block_bytes(c));
 	}
-	default:
-		BUG();
-	}
+
+	mempool_free(workspace, &c->compress_workspace[compression_type]);
+
+	if (ret)
+		goto err;
 
 	/* Didn't get smaller: */
 	if (round_up(*dst_len, block_bytes(c)) >= *src_len)
@@ -429,6 +454,9 @@ unsigned bch2_bio_compress(struct bch_fs *c,
 	/* Don't generate a bigger output than input: */
 	dst->bi_iter.bi_size = min(dst->bi_iter.bi_size, src->bi_iter.bi_size);
 
+	if (compression_type == BCH_COMPRESSION_LZ4_OLD)
+		compression_type = BCH_COMPRESSION_LZ4;
+
 	compression_type =
 		__bio_compress(c, dst, dst_len, src, src_len, compression_type);
 
@@ -437,33 +465,35 @@ unsigned bch2_bio_compress(struct bch_fs *c,
 	return compression_type;
 }
 
+#define BCH_FEATURE_NONE	0
+
+static const unsigned bch2_compression_opt_to_feature[] = {
+#define x(t) [BCH_COMPRESSION_OPT_##t] = BCH_FEATURE_##t,
+	BCH_COMPRESSION_TYPES()
+#undef x
+};
+
+#undef BCH_FEATURE_NONE
+
 /* doesn't write superblock: */
 int bch2_check_set_has_compressed_data(struct bch_fs *c,
 				      unsigned compression_type)
 {
+	unsigned f;
 	int ret = 0;
 
 	pr_verbose_init(c->opts, "");
 
-	switch (compression_type) {
-	case BCH_COMPRESSION_OPT_NONE:
+	BUG_ON(compression_type >= ARRAY_SIZE(bch2_compression_opt_to_feature));
+
+	if (!compression_type)
 		goto out;
-	case BCH_COMPRESSION_OPT_LZ4:
-		if (bch2_sb_test_feature(c->disk_sb, BCH_FEATURE_LZ4))
-			goto out;
 
-		bch2_sb_set_feature(c->disk_sb, BCH_FEATURE_LZ4);
-		break;
-	case BCH_COMPRESSION_OPT_GZIP:
-		if (bch2_sb_test_feature(c->disk_sb, BCH_FEATURE_GZIP))
-			goto out;
+	f = bch2_compression_opt_to_feature[compression_type];
+	if (bch2_sb_test_feature(c->disk_sb, f))
+		goto out;
 
-		bch2_sb_set_feature(c->disk_sb, BCH_FEATURE_GZIP);
-		break;
-	default:
-		BUG();
-	}
-
+	bch2_sb_set_feature(c->disk_sb, f);
 	ret = bch2_fs_compress_init(c);
 out:
 	pr_verbose_init(c->opts, "ret %i", ret);
@@ -472,26 +502,70 @@ out:
 
 void bch2_fs_compress_exit(struct bch_fs *c)
 {
-	vfree(c->zlib_workspace);
-	mempool_exit(&c->lz4_workspace_pool);
+	unsigned i;
+
+	mempool_exit(&c->decompress_workspace);
+	for (i = 0; i < ARRAY_SIZE(c->compress_workspace); i++)
+		mempool_exit(&c->compress_workspace[i]);
 	mempool_exit(&c->compression_bounce[WRITE]);
 	mempool_exit(&c->compression_bounce[READ]);
 }
 
-#define COMPRESSION_WORKSPACE_SIZE					\
-	max_t(size_t, zlib_inflate_workspacesize(),			\
-	      zlib_deflate_workspacesize(MAX_WBITS, DEF_MEM_LEVEL))
+static void *mempool_kvpmalloc(gfp_t gfp_mask, void *pool_data)
+{
+	size_t size = (size_t)pool_data;
+	return kvpmalloc(size, gfp_mask);
+}
+
+void mempool_kvpfree(void *element, void *pool_data)
+{
+	size_t size = (size_t)pool_data;
+	kvpfree(element, size);
+}
+
+static int mempool_init_kvpmalloc_pool(mempool_t *pool, int min_nr, size_t size)
+{
+	return !mempool_initialized(pool)
+		? mempool_init(pool, min_nr, mempool_kvpmalloc,
+			       mempool_kvpfree, (void *) size)
+		: 0;
+}
 
 int bch2_fs_compress_init(struct bch_fs *c)
 {
-	unsigned order = get_order(c->sb.encoded_extent_max << 9);
+	size_t max_extent = c->sb.encoded_extent_max << 9;
+	size_t order = get_order(max_extent);
+	size_t decompress_workspace_size = 0;
+	bool decompress_workspace_needed;
+	ZSTD_parameters params = ZSTD_getParams(0, max_extent, 0);
+	struct {
+		unsigned	feature;
+		unsigned	type;
+		size_t		compress_workspace;
+		size_t		decompress_workspace;
+	} compression_types[] = {
+		{ BCH_FEATURE_LZ4, BCH_COMPRESSION_LZ4, LZ4_MEM_COMPRESS, 0 },
+		{ BCH_FEATURE_GZIP, BCH_COMPRESSION_GZIP,
+			zlib_deflate_workspacesize(MAX_WBITS, DEF_MEM_LEVEL),
+			zlib_inflate_workspacesize(), },
+		{ BCH_FEATURE_ZSTD, BCH_COMPRESSION_ZSTD,
+			ZSTD_CCtxWorkspaceBound(params.cParams),
+			ZSTD_DCtxWorkspaceBound() },
+	}, *i;
 	int ret = 0;
 
 	pr_verbose_init(c->opts, "");
 
-	if (!bch2_sb_test_feature(c->disk_sb, BCH_FEATURE_LZ4) &&
-	    !bch2_sb_test_feature(c->disk_sb, BCH_FEATURE_GZIP))
-		goto out;
+	c->zstd_params = params;
+
+	for (i = compression_types;
+	     i < compression_types + ARRAY_SIZE(compression_types);
+	     i++)
+		if (bch2_sb_test_feature(c->disk_sb, i->feature))
+			goto have_compressed;
+
+	goto out;
+have_compressed:
 
 	if (!mempool_initialized(&c->compression_bounce[READ])) {
 		ret = mempool_init_page_pool(&c->compression_bounce[READ],
@@ -507,22 +581,30 @@ int bch2_fs_compress_init(struct bch_fs *c)
 			goto out;
 	}
 
-	if (!mempool_initialized(&c->lz4_workspace_pool) &&
-	    bch2_sb_test_feature(c->disk_sb, BCH_FEATURE_LZ4)) {
-		ret = mempool_init_kmalloc_pool(&c->lz4_workspace_pool,
-						1, LZ4_MEM_COMPRESS);
+	for (i = compression_types;
+	     i < compression_types + ARRAY_SIZE(compression_types);
+	     i++) {
+		decompress_workspace_size =
+			max(decompress_workspace_size, i->decompress_workspace);
+
+		if (!bch2_sb_test_feature(c->disk_sb, i->feature))
+			continue;
+
+		if (i->decompress_workspace)
+			decompress_workspace_needed = true;
+
+		ret = mempool_init_kvpmalloc_pool(
+				&c->compress_workspace[i->type],
+				1, i->compress_workspace);
 		if (ret)
 			goto out;
 	}
 
-	if (!c->zlib_workspace &&
-	    bch2_sb_test_feature(c->disk_sb, BCH_FEATURE_GZIP)) {
-		c->zlib_workspace = vmalloc(COMPRESSION_WORKSPACE_SIZE);
-		if (!c->zlib_workspace) {
-			ret = -ENOMEM;
-			goto out;
-		}
-	}
+	ret = mempool_init_kmalloc_pool(
+			&c->decompress_workspace,
+			1, decompress_workspace_size);
+	if (ret)
+		goto out;
 out:
 	pr_verbose_init(c->opts, "ret %i", ret);
 	return ret;

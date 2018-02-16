@@ -222,7 +222,7 @@ int bch2_migrate_write_init(struct bch_fs *c, struct migrate_write *m,
 	bch2_write_op_init(&m->op, c);
 	m->op.csum_type = bch2_data_checksum_type(c, io_opts.data_checksum);
 	m->op.compression_type =
-		bch2_compression_opt_to_type(io_opts.compression);
+		bch2_compression_opt_to_type[io_opts.compression];
 	m->op.devs	= devs;
 	m->op.write_point = wp;
 

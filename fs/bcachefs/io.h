@@ -70,7 +70,7 @@ static inline void bch2_write_op_init(struct bch_write_op *op, struct bch_fs *c)
 	op->error		= 0;
 	op->csum_type		= bch2_data_checksum_type(c, c->opts.data_checksum);
 	op->compression_type	=
-		bch2_compression_opt_to_type(c->opts.compression);
+		bch2_compression_opt_to_type[c->opts.compression];
 	op->nr_replicas		= 0;
 	op->nr_replicas_required = c->opts.data_replicas_required;
 	op->alloc_reserve	= RESERVE_NONE;
