@@ -22,6 +22,7 @@ const char * const bch2_compression_types[] = {
 	"none",
 	"lz4",
 	"gzip",
+	"zstd",
 	NULL
 };
 

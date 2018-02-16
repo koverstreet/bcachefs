@@ -91,20 +91,11 @@ static inline enum bch_csum_type bch2_meta_checksum_type(struct bch_fs *c)
 	return bch2_csum_opt_to_type(c->opts.metadata_checksum, false);
 }
 
-static inline enum bch_compression_type
-bch2_compression_opt_to_type(enum bch_compression_opts type)
-{
-	switch (type) {
-	case BCH_COMPRESSION_OPT_NONE:
-		return BCH_COMPRESSION_NONE;
-	case BCH_COMPRESSION_OPT_LZ4:
-		return BCH_COMPRESSION_LZ4;
-	case BCH_COMPRESSION_OPT_GZIP:
-		return BCH_COMPRESSION_GZIP;
-	default:
-	     BUG();
-	}
-}
+static const unsigned bch2_compression_opt_to_type[] = {
+#define x(t) [BCH_COMPRESSION_OPT_##t] = BCH_COMPRESSION_##t,
+	BCH_COMPRESSION_TYPES()
+#undef x
+};
 
 static inline bool bch2_checksum_type_valid(const struct bch_fs *c,
 					   unsigned type)

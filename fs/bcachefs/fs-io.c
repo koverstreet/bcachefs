@@ -506,7 +506,7 @@ static inline void bch2_fswrite_op_init(struct bchfs_write_op *op,
 
 	bch2_write_op_init(&op->op, c);
 	op->op.csum_type	= bch2_data_checksum_type(c, opts.data_checksum);
-	op->op.compression_type	= bch2_compression_opt_to_type(opts.compression);
+	op->op.compression_type	= bch2_compression_opt_to_type[opts.compression];
 	op->op.devs		= c->fastest_devs;
 	op->op.index_update_fn	= bchfs_write_index_update;
 	op_journal_seq_set(&op->op, &inode->ei_journal_seq);
