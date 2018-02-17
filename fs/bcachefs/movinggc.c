@@ -178,7 +178,6 @@ static void bch2_copygc(struct bch_fs *c, struct bch_dev *ca)
 			bucket_offset_cmp, NULL);
 
 	ret = bch2_move_data(c, &ca->copygc_pd.rate,
-			     SECTORS_IN_FLIGHT_PER_DEVICE,
 			     &ca->self,
 			     writepoint_ptr(&ca->copygc_write_point),
 			     POS_MIN, POS_MAX,
