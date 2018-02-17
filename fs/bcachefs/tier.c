@@ -101,7 +101,6 @@ static int bch2_tiering_thread(void *arg)
 		}
 
 		bch2_move_data(c, &tier->pd.rate,
-			       SECTORS_IN_FLIGHT_PER_DEVICE * nr_devices,
 			       &tier->devs,
 			       writepoint_ptr(&tier->wp),
 			       POS_MIN, POS_MAX,
