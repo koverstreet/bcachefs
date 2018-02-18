@@ -1894,7 +1894,7 @@ static int bch2_direct_IO_write(struct kiocb *req,
 		goto err;
 
 	ret = bch2_disk_reservation_get(c, &dio->iop.op.res, iter->count >> 9,
-					c->opts.data_replicas, 0);
+					dio->iop.op.opts.data_replicas, 0);
 	if (unlikely(ret)) {
 		if (bch2_check_range_allocated(c, POS(inode->v.i_ino,
 						      offset >> 9),
@@ -2351,7 +2351,7 @@ static long bch2_fallocate(struct bch_inode_info *inode, int mode,
 	loff_t block_start, block_end;
 	loff_t end = offset + len;
 	unsigned sectors;
-	unsigned replicas = READ_ONCE(c->opts.data_replicas);
+	unsigned replicas = io_opts(c, inode).data_replicas;
 	int ret;
 
 	bch2_btree_iter_init(&iter, c, BTREE_ID_EXTENTS, POS_MIN,

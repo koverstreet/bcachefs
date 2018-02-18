@@ -441,7 +441,8 @@ static int bch2_xattr_bcachefs_set(const struct xattr_handler *handler,
 		if (ret < 0)
 			return ret;
 
-		if (s.id == Opt_compression) {
+		if (s.id == Opt_compression ||
+		    s.id == Opt_background_compression) {
 			mutex_lock(&c->sb_lock);
 			ret = bch2_check_set_has_compressed_data(c, s.v);
 			mutex_unlock(&c->sb_lock);

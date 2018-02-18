@@ -477,7 +477,7 @@ static const unsigned bch2_compression_opt_to_feature[] = {
 
 /* doesn't write superblock: */
 int bch2_check_set_has_compressed_data(struct bch_fs *c,
-				      unsigned compression_type)
+				       unsigned compression_type)
 {
 	unsigned f;
 	int ret = 0;

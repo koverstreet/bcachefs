@@ -548,7 +548,8 @@ STORE(bch2_fs_opts_dir)
 
 	mutex_lock(&c->sb_lock);
 
-	if (id == Opt_compression) {
+	if (id == Opt_compression ||
+	    id == Opt_background_compression) {
 		int ret = bch2_check_set_has_compressed_data(c, v);
 		if (ret) {
 			mutex_unlock(&c->sb_lock);
