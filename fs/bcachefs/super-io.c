@@ -400,6 +400,7 @@ static void bch2_sb_update(struct bch_fs *c)
 	c->sb.time_base_lo	= le64_to_cpu(src->time_base_lo);
 	c->sb.time_base_hi	= le32_to_cpu(src->time_base_hi);
 	c->sb.time_precision	= le32_to_cpu(src->time_precision);
+	c->sb.features		= le64_to_cpu(src->features[0]);
 
 	for_each_member_device(ca, c, i)
 		ca->mi = bch2_mi_to_cpu(mi->members + i);

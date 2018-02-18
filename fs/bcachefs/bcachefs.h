@@ -522,6 +522,7 @@ struct bch_fs {
 		u64		time_base_lo;
 		u32		time_base_hi;
 		u32		time_precision;
+		u64		features;
 	}			sb;
 
 	struct bch_sb		*disk_sb;

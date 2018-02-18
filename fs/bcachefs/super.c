@@ -626,7 +626,6 @@ static struct bch_fs *bch2_fs_alloc(struct bch_sb *sb, struct bch_opts opts)
 	    bch2_fs_btree_cache_init(c) ||
 	    bch2_fs_encryption_init(c) ||
 	    bch2_fs_compress_init(c) ||
-	    bch2_check_set_has_compressed_data(c, c->opts.compression) ||
 	    bch2_fs_fsio_init(c))
 		goto err;
 

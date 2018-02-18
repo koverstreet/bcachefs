@@ -360,6 +360,9 @@ static unsigned __bio_compress(struct bch_fs *c,
 	unsigned pad;
 	int ret = 0;
 
+	BUG_ON(compression_type >= BCH_COMPRESSION_NR);
+	BUG_ON(!mempool_initialized(&c->compress_workspace[compression_type]));
+
 	/* If it's only one block, don't bother trying to compress: */
 	if (bio_sectors(src) <= c->opts.block_size)
 		return 0;
@@ -465,6 +468,8 @@ unsigned bch2_bio_compress(struct bch_fs *c,
 	return compression_type;
 }
 
+static int __bch2_fs_compress_init(struct bch_fs *, u64);
+
 #define BCH_FEATURE_NONE	0
 
 static const unsigned bch2_compression_opt_to_feature[] = {
@@ -475,29 +480,42 @@ static const unsigned bch2_compression_opt_to_feature[] = {
 
 #undef BCH_FEATURE_NONE
 
-/* doesn't write superblock: */
-int bch2_check_set_has_compressed_data(struct bch_fs *c,
-				      unsigned compression_type)
+int __bch2_check_set_has_compressed_data(struct bch_fs *c, u64 f)
 {
-	unsigned f;
 	int ret = 0;
 
-	pr_verbose_init(c->opts, "");
+	if ((c->sb.features & f) == f)
+		return 0;
 
+	mutex_lock(&c->sb_lock);
+
+	if ((c->sb.features & f) == f) {
+		mutex_unlock(&c->sb_lock);
+		return 0;
+	}
+
+	ret = __bch2_fs_compress_init(c, c->sb.features|f);
+	if (ret) {
+		mutex_unlock(&c->sb_lock);
+		return ret;
+	}
+
+	c->disk_sb->features[0] |= cpu_to_le64(f);
+	bch2_write_super(c);
+	mutex_unlock(&c->sb_lock);
+
+	return 0;
+}
+
+int bch2_check_set_has_compressed_data(struct bch_fs *c,
+				       unsigned compression_type)
+{
 	BUG_ON(compression_type >= ARRAY_SIZE(bch2_compression_opt_to_feature));
 
-	if (!compression_type)
-		goto out;
-
-	f = bch2_compression_opt_to_feature[compression_type];
-	if (bch2_sb_test_feature(c->disk_sb, f))
-		goto out;
-
-	bch2_sb_set_feature(c->disk_sb, f);
-	ret = bch2_fs_compress_init(c);
-out:
-	pr_verbose_init(c->opts, "ret %i", ret);
-	return ret;
+	return compression_type
+		? __bch2_check_set_has_compressed_data(c,
+				1ULL << bch2_compression_opt_to_feature[compression_type])
+		: 0;
 }
 
 void bch2_fs_compress_exit(struct bch_fs *c)
@@ -531,7 +549,7 @@ static int mempool_init_kvpmalloc_pool(mempool_t *pool, int min_nr, size_t size)
 		: 0;
 }
 
-int bch2_fs_compress_init(struct bch_fs *c)
+static int __bch2_fs_compress_init(struct bch_fs *c, u64 features)
 {
 	size_t max_extent = c->sb.encoded_extent_max << 9;
 	size_t order = get_order(max_extent);
@@ -561,7 +579,7 @@ int bch2_fs_compress_init(struct bch_fs *c)
 	for (i = compression_types;
 	     i < compression_types + ARRAY_SIZE(compression_types);
 	     i++)
-		if (bch2_sb_test_feature(c->disk_sb, i->feature))
+		if (features & (1 << i->feature))
 			goto have_compressed;
 
 	goto out;
@@ -587,7 +605,7 @@ have_compressed:
 		decompress_workspace_size =
 			max(decompress_workspace_size, i->decompress_workspace);
 
-		if (!bch2_sb_test_feature(c->disk_sb, i->feature))
+		if (!(features & (1 << i->feature)))
 			continue;
 
 		if (i->decompress_workspace)
@@ -608,4 +626,18 @@ have_compressed:
 out:
 	pr_verbose_init(c->opts, "ret %i", ret);
 	return ret;
+}
+
+int bch2_fs_compress_init(struct bch_fs *c)
+{
+	u64 f = c->sb.features;
+
+	if (c->opts.compression)
+		f |= 1ULL << bch2_compression_opt_to_feature[c->opts.compression];
+
+	if (c->opts.background_compression)
+		f |= 1ULL << bch2_compression_opt_to_feature[c->opts.background_compression];
+
+	return __bch2_fs_compress_init(c, f);
+
 }
