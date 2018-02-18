@@ -2350,7 +2350,7 @@ static long bch2_fallocate(struct bch_inode_info *inode, int mode,
 	loff_t block_start, block_end;
 	loff_t end = offset + len;
 	unsigned sectors;
-	unsigned replicas = READ_ONCE(c->opts.data_replicas);
+	unsigned replicas = io_opts(c, inode).data_replicas;
 	int ret;
 
 	bch2_btree_iter_init(&iter, c, BTREE_ID_EXTENTS, POS_MIN,

@@ -546,9 +546,8 @@ STORE(bch2_fs_opts_dir)
 	if (ret < 0)
 		return ret;
 
-	mutex_lock(&c->sb_lock);
-
-	if (id == Opt_compression) {
+	if (id == Opt_compression ||
+	    id == Opt_background_compression) {
 		int ret = bch2_check_set_has_compressed_data(c, v);
 		if (ret) {
 			mutex_unlock(&c->sb_lock);
@@ -557,13 +556,13 @@ STORE(bch2_fs_opts_dir)
 	}
 
 	if (opt->set_sb != SET_NO_SB_OPT) {
+		mutex_lock(&c->sb_lock);
 		opt->set_sb(c->disk_sb, v);
 		bch2_write_super(c);
+		mutex_unlock(&c->sb_lock);
 	}
 
 	bch2_opt_set_by_id(&c->opts, id, v);
-
-	mutex_unlock(&c->sb_lock);
 
 	return size;
 }
