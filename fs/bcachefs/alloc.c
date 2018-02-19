@@ -89,68 +89,28 @@ static void pd_controllers_update(struct work_struct *work)
 					   struct bch_fs,
 					   pd_controllers_update);
 	struct bch_dev *ca;
-	unsigned i, iter;
+	unsigned i;
 
-	/* All units are in bytes */
-	u64 faster_tiers_size	= 0;
-	u64 faster_tiers_dirty	= 0;
+	for_each_member_device(ca, c, i) {
+		struct bch_dev_usage stats = bch2_dev_usage_read(c, ca);
 
-	u64 copygc_can_free	= 0;
+		u64 free = bucket_to_sector(ca,
+				__dev_buckets_free(ca, stats)) << 9;
+		/*
+		 * Bytes of internal fragmentation, which can be
+		 * reclaimed by copy GC
+		 */
+		s64 fragmented = (bucket_to_sector(ca,
+					stats.buckets[BCH_DATA_USER] +
+					stats.buckets[BCH_DATA_CACHED]) -
+				  (stats.sectors[BCH_DATA_USER] +
+				   stats.sectors[BCH_DATA_CACHED])) << 9;
 
-	rcu_read_lock();
-	for (i = 0; i < ARRAY_SIZE(c->tiers); i++) {
-		bch2_pd_controller_update(&c->tiers[i].pd,
-				div_u64(faster_tiers_size *
-					c->tiering_percent, 100),
-				faster_tiers_dirty,
-				-1);
+		fragmented = max(0LL, fragmented);
 
-		for_each_member_device_rcu(ca, c, iter, &c->tiers[i].devs) {
-			struct bch_dev_usage stats = bch2_dev_usage_read(c, ca);
-
-			u64 size = bucket_to_sector(ca, ca->mi.nbuckets -
-					ca->mi.first_bucket) << 9;
-			u64 dirty = bucket_to_sector(ca,
-					stats.buckets[BCH_DATA_USER]) << 9;
-			u64 free = bucket_to_sector(ca,
-					__dev_buckets_free(ca, stats)) << 9;
-			/*
-			 * Bytes of internal fragmentation, which can be
-			 * reclaimed by copy GC
-			 */
-			s64 fragmented = (bucket_to_sector(ca,
-						stats.buckets[BCH_DATA_USER] +
-						stats.buckets[BCH_DATA_CACHED]) -
-					  (stats.sectors[BCH_DATA_USER] +
-					   stats.sectors[BCH_DATA_CACHED])) << 9;
-
-			fragmented = max(0LL, fragmented);
-
-			bch2_pd_controller_update(&ca->copygc_pd,
-						 free, fragmented, -1);
-
-			faster_tiers_size		+= size;
-			faster_tiers_dirty		+= dirty;
-
-			copygc_can_free			+= fragmented;
-		}
+		bch2_pd_controller_update(&ca->copygc_pd,
+					 free, fragmented, -1);
 	}
-
-	rcu_read_unlock();
-
-	/*
-	 * Throttle foreground writes if tier 0 is running out of free buckets,
-	 * and either tiering or copygc can free up space.
-	 *
-	 * Target will be small if there isn't any work to do - we don't want to
-	 * throttle foreground writes if we currently have all the free space
-	 * we're ever going to have.
-	 *
-	 * Otherwise, if there's work to do, try to keep 20% of tier0 available
-	 * for foreground writes.
-	 */
-	if (c->fastest_tier)
-		copygc_can_free = U64_MAX;
 
 	schedule_delayed_work(&c->pd_controllers_update,
 			      c->pd_controllers_update_seconds * HZ);
@@ -1201,22 +1161,14 @@ out:
 	return ob - c->open_buckets;
 }
 
-static int __dev_alloc_cmp(struct bch_fs *c,
-			   struct write_point *wp,
+static int __dev_alloc_cmp(struct write_point *wp,
 			   unsigned l, unsigned r)
 {
-	struct bch_dev *ca_l = rcu_dereference(c->devs[l]);
-	struct bch_dev *ca_r = rcu_dereference(c->devs[r]);
-
-	if (ca_l && ca_r && ca_l->mi.tier != ca_r->mi.tier)
-		return ((ca_l->mi.tier > ca_r->mi.tier) -
-			(ca_l->mi.tier < ca_r->mi.tier));
-
 	return ((wp->next_alloc[l] > wp->next_alloc[r]) -
 		(wp->next_alloc[l] < wp->next_alloc[r]));
 }
 
-#define dev_alloc_cmp(l, r) __dev_alloc_cmp(c, wp, l, r)
+#define dev_alloc_cmp(l, r) __dev_alloc_cmp(wp, l, r)
 
 struct dev_alloc_list bch2_wp_alloc_list(struct bch_fs *c,
 					 struct write_point *wp,
@@ -1355,7 +1307,7 @@ static int bch2_bucket_alloc_set(struct bch_fs *c, struct write_point *wp,
 
 static void writepoint_drop_ptrs(struct bch_fs *c,
 				 struct write_point *wp,
-				 struct bch_devs_mask *devs,
+				 u16 target, bool in_target,
 				 unsigned nr_ptrs_dislike)
 {
 	int i;
@@ -1367,7 +1319,8 @@ static void writepoint_drop_ptrs(struct bch_fs *c,
 		struct open_bucket *ob = wp->ptrs[i];
 		struct bch_dev *ca = bch_dev_bkey_exists(c, ob->ptr.dev);
 
-		if (nr_ptrs_dislike && !test_bit(ob->ptr.dev, devs->d)) {
+		if (nr_ptrs_dislike &&
+		    dev_in_target(ca, target) == in_target) {
 			BUG_ON(ca->open_buckets_partial_nr >=
 			       ARRAY_SIZE(ca->open_buckets_partial));
 
@@ -1401,7 +1354,7 @@ static void verify_not_stale(struct bch_fs *c, const struct write_point *wp)
 }
 
 static int open_bucket_add_buckets(struct bch_fs *c,
-				   struct bch_devs_mask *_devs,
+				   u16 target,
 				   struct write_point *wp,
 				   struct bch_devs_list *devs_have,
 				   unsigned nr_replicas,
@@ -1422,8 +1375,15 @@ static int open_bucket_add_buckets(struct bch_fs *c,
 	writepoint_for_each_ptr(wp, ob, i)
 		__clear_bit(ob->ptr.dev, devs.d);
 
-	if (_devs)
-		bitmap_and(devs.d, devs.d, _devs->d, BCH_SB_MEMBERS_MAX);
+	if (target) {
+		const struct bch_devs_mask *t;
+
+		rcu_read_lock();
+		t = bch2_target_to_mask(c, target);
+		if (t)
+			bitmap_and(devs.d, devs.d, t->d, BCH_SB_MEMBERS_MAX);
+		rcu_read_unlock();
+	}
 
 	return bch2_bucket_alloc_set(c, wp, nr_replicas, reserve, &devs, cl);
 }
@@ -1503,7 +1463,7 @@ out:
  * Get us an open_bucket we can allocate from, return with it locked:
  */
 struct write_point *bch2_alloc_sectors_start(struct bch_fs *c,
-				struct bch_devs_mask *devs,
+				unsigned target,
 				struct write_point_specifier write_point,
 				struct bch_devs_list *devs_have,
 				unsigned nr_replicas,
@@ -1525,17 +1485,27 @@ struct write_point *bch2_alloc_sectors_start(struct bch_fs *c,
 	writepoint_for_each_ptr(wp, ob, i)
 		if (bch2_dev_list_has_dev(*devs_have, ob->ptr.dev))
 			nr_ptrs_have++;
-		else if (devs && !test_bit(ob->ptr.dev, devs->d))
+		else if (!dev_in_target(c->devs[ob->ptr.dev], target))
 			nr_ptrs_dislike++;
 
-	ret = open_bucket_add_buckets(c, devs, wp, devs_have,
+	ret = open_bucket_add_buckets(c, target, wp, devs_have,
 				nr_replicas + nr_ptrs_have + nr_ptrs_dislike,
 				reserve, cl);
 	if (ret && ret != -EROFS)
 		goto err;
 
-	if (wp->nr_ptrs <
-	    nr_ptrs_have + nr_ptrs_dislike + nr_replicas_required) {
+	if (flags & BCH_WRITE_ONLY_SPECIFIED_DEVS)
+		goto alloc_done;
+
+	ret = open_bucket_add_buckets(c, target, wp, devs_have,
+				nr_replicas + nr_ptrs_have,
+				reserve, cl);
+	if (ret && ret != -EROFS)
+		goto err;
+alloc_done:
+	if (wp->nr_ptrs - nr_ptrs_have -
+	    ((flags & BCH_WRITE_ONLY_SPECIFIED_DEVS) ? nr_ptrs_dislike : 0)
+	    < nr_replicas_required) {
 		ret = -EROFS;
 		goto err;
 	}
@@ -1545,7 +1515,7 @@ struct write_point *bch2_alloc_sectors_start(struct bch_fs *c,
 					  0, nr_ptrs_dislike);
 
 	/* Remove pointers we don't want to use: */
-	writepoint_drop_ptrs(c, wp, devs, nr_ptrs_dislike);
+	writepoint_drop_ptrs(c, wp, target, false, nr_ptrs_dislike);
 
 	/*
 	 * Move pointers to devices we already have to end of open bucket
@@ -1637,7 +1607,6 @@ void bch2_alloc_sectors_done(struct bch_fs *c, struct write_point *wp)
 
 void bch2_recalc_capacity(struct bch_fs *c)
 {
-	struct bch_tier *fastest_tier = NULL, *slowest_tier = NULL, *tier;
 	struct bch_dev *ca;
 	u64 total_capacity, capacity = 0, reserved_sectors = 0;
 	unsigned long ra_pages = 0;
@@ -1653,28 +1622,7 @@ void bch2_recalc_capacity(struct bch_fs *c)
 
 	bch2_set_ra_pages(c, ra_pages);
 
-	/* Find fastest, slowest tiers with devices: */
-
-	for (tier = c->tiers;
-	     tier < c->tiers + ARRAY_SIZE(c->tiers); tier++) {
-		if (!dev_mask_nr(&tier->devs))
-			continue;
-		if (!fastest_tier)
-			fastest_tier = tier;
-		slowest_tier = tier;
-	}
-
-	c->fastest_tier = fastest_tier != slowest_tier ? fastest_tier : NULL;
-	c->fastest_devs = fastest_tier != slowest_tier ? &fastest_tier->devs : NULL;
-
-	if (!fastest_tier)
-		goto set_capacity;
-
-	/*
-	 * Capacity of the filesystem is the capacity of all the devices in the
-	 * slowest (highest) tier - we don't include lower tier devices.
-	 */
-	for_each_member_device_rcu(ca, c, i, &slowest_tier->devs) {
+	for_each_rw_member(ca, c, i) {
 		size_t reserve = 0;
 
 		/*
@@ -1700,16 +1648,14 @@ void bch2_recalc_capacity(struct bch_fs *c)
 
 		reserve += ARRAY_SIZE(c->write_points);
 
-		if (ca->mi.tier)
-			reserve += 1;	/* tiering write point */
-		reserve += 1;		/* btree write point */
+		reserve += 1;	/* btree write point */
 
 		reserved_sectors += bucket_to_sector(ca, reserve);
 
 		capacity += bucket_to_sector(ca, ca->mi.nbuckets -
 					     ca->mi.first_bucket);
 	}
-set_capacity:
+
 	total_capacity = capacity;
 
 	capacity *= (100 - c->opts.gc_reserve_percent);
@@ -1745,7 +1691,8 @@ static void bch2_stop_write_point(struct bch_fs *c, struct bch_dev *ca,
 	bitmap_complement(not_self.d, ca->self.d, BCH_SB_MEMBERS_MAX);
 
 	mutex_lock(&wp->lock);
-	writepoint_drop_ptrs(c, wp, &not_self, wp->nr_ptrs);
+	writepoint_drop_ptrs(c, wp, dev_to_target(ca->dev_idx),
+			     true, wp->nr_ptrs);
 	mutex_unlock(&wp->lock);
 }
 
@@ -1776,7 +1723,6 @@ void bch2_dev_allocator_remove(struct bch_fs *c, struct bch_dev *ca)
 
 	/* First, remove device from allocation groups: */
 
-	clear_bit(ca->dev_idx, c->tiers[ca->mi.tier].devs.d);
 	for (i = 0; i < ARRAY_SIZE(c->rw_devs); i++)
 		clear_bit(ca->dev_idx, c->rw_devs[i].d);
 
@@ -1790,7 +1736,7 @@ void bch2_dev_allocator_remove(struct bch_fs *c, struct bch_dev *ca)
 		bch2_stop_write_point(c, ca, &c->write_points[i]);
 
 	bch2_stop_write_point(c, ca, &ca->copygc_write_point);
-	bch2_stop_write_point(c, ca, &c->tiers[ca->mi.tier].wp);
+	bch2_stop_write_point(c, ca, &c->rebalance_write_point);
 	bch2_stop_write_point(c, ca, &c->btree_write_point);
 
 	mutex_lock(&c->btree_reserve_cache_lock);
@@ -1828,7 +1774,6 @@ void bch2_dev_allocator_add(struct bch_fs *c, struct bch_dev *ca)
 	for (i = 0; i < ARRAY_SIZE(c->rw_devs); i++)
 		if (ca->mi.data_allowed & (1 << i))
 			set_bit(ca->dev_idx, c->rw_devs[i].d);
-	set_bit(ca->dev_idx, c->tiers[ca->mi.tier].devs.d);
 }
 
 /* stop allocator thread: */
@@ -2059,7 +2004,6 @@ void bch2_fs_allocator_init(struct bch_fs *c)
 {
 	struct open_bucket *ob;
 	struct write_point *wp;
-	unsigned i;
 
 	mutex_init(&c->write_points_hash_lock);
 	spin_lock_init(&c->freelist_lock);
@@ -2079,9 +2023,7 @@ void bch2_fs_allocator_init(struct bch_fs *c)
 	}
 
 	writepoint_init(&c->btree_write_point, BCH_DATA_BTREE);
-
-	for (i = 0; i < ARRAY_SIZE(c->tiers); i++)
-		writepoint_init(&c->tiers[i].wp, BCH_DATA_USER);
+	writepoint_init(&c->rebalance_write_point, BCH_DATA_USER);
 
 	for (wp = c->write_points;
 	     wp < c->write_points + ARRAY_SIZE(c->write_points); wp++) {

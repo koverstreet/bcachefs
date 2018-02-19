@@ -1601,24 +1601,22 @@ static const char *bch2_sb_validate_quota(struct bch_sb *sb,
 
 /* Disk groups: */
 
-#if 0
-static size_t trim_nulls(const char *str, size_t len)
+static int strcmp_void(const void *l, const void *r)
 {
-	while (len && !str[len - 1])
-		--len;
-	return len;
+	return strcmp(l, r);
 }
-#endif
 
 static const char *bch2_sb_validate_disk_groups(struct bch_sb *sb,
 						struct bch_sb_field *f)
 {
 	struct bch_sb_field_disk_groups *groups =
 		field_to_type(f, disk_groups);
+	struct bch_disk_group *g;
 	struct bch_sb_field_members *mi;
 	struct bch_member *m;
-	struct bch_disk_group *g;
-	unsigned nr_groups;
+	unsigned i, nr_groups, nr_live = 0, len;
+	char **labels, *l;
+	const char *err = NULL;
 
 	mi		= bch2_sb_get_members(sb);
 	groups		= bch2_sb_get_disk_groups(sb);
@@ -1627,32 +1625,57 @@ static const char *bch2_sb_validate_disk_groups(struct bch_sb *sb,
 	for (m = mi->members;
 	     m < mi->members + sb->nr_devices;
 	     m++) {
+		unsigned g;
+
 		if (!BCH_MEMBER_GROUP(m))
 			continue;
 
-		if (BCH_MEMBER_GROUP(m) >= nr_groups)
-			return "disk has invalid group";
+		g = BCH_MEMBER_GROUP(m) - 1;
 
-		g = &groups->entries[BCH_MEMBER_GROUP(m)];
-		if (BCH_GROUP_DELETED(g))
+		if (g >= nr_groups ||
+		    BCH_GROUP_DELETED(&groups->entries[g]))
 			return "disk has invalid group";
 	}
-#if 0
-	if (!groups)
+
+	if (!nr_groups)
 		return NULL;
 
-	char **labels;
 	labels = kcalloc(nr_groups, sizeof(char *), GFP_KERNEL);
 	if (!labels)
 		return "cannot allocate memory";
 
-	for (g = groups->groups;
-	     g < groups->groups + nr_groups;
+	for (g = groups->entries;
+	     g < groups->entries + nr_groups;
 	     g++) {
+		if (BCH_GROUP_DELETED(g))
+			continue;
 
+		len = strnlen(g->label, sizeof(g->label));
+
+		labels[nr_live++] = l = kmalloc(len + 1, GFP_KERNEL);
+		if (!l) {
+			err = "cannot allocate memory";
+			goto err;
+		}
+
+		memcpy(l, g->label, len);
+		l[len] = '\0';
 	}
-#endif
-	return NULL;
+
+	sort(labels, nr_live, sizeof(labels[0]), strcmp_void, NULL);
+
+	for (i = 0; i + 1 < nr_live; i++)
+		if (!strcmp(labels[i], labels[i + 1])) {
+			err = "duplicate group labels";
+			goto err;
+		}
+
+	err = NULL;
+err:
+	for (i = 0; i < nr_live; i++)
+		kfree(labels[i]);
+	kfree(labels);
+	return err;
 }
 
 static int bch2_sb_disk_groups_to_cpu(struct bch_fs *c)
@@ -1693,7 +1716,11 @@ static int bch2_sb_disk_groups_to_cpu(struct bch_fs *c)
 		if (!bch2_member_exists(m))
 			continue;
 
-		__set_bit(i, dst->devs.d);
+		dst = BCH_MEMBER_GROUP(m)
+			? &cpu_g->entries[BCH_MEMBER_GROUP(m) - 1]
+			: NULL;
+		if (dst)
+			__set_bit(i, dst->devs.d);
 	}
 
 	old_g = c->disk_groups;

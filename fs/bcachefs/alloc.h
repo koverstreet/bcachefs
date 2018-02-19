@@ -66,7 +66,7 @@ static inline void bch2_open_bucket_get(struct bch_fs *c,
 }
 
 struct write_point *bch2_alloc_sectors_start(struct bch_fs *,
-					     struct bch_devs_mask *,
+					     unsigned,
 					     struct write_point_specifier,
 					     struct bch_devs_list *,
 					     unsigned, unsigned,

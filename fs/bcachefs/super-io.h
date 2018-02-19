@@ -129,7 +129,6 @@ static inline struct bch_member_cpu bch2_mi_to_cpu(struct bch_member *mi)
 		.bucket_size	= le16_to_cpu(mi->bucket_size),
 		.group		= BCH_MEMBER_GROUP(mi),
 		.state		= BCH_MEMBER_STATE(mi),
-		.tier		= BCH_MEMBER_TIER(mi),
 		.replacement	= BCH_MEMBER_REPLACEMENT(mi),
 		.discard	= BCH_MEMBER_DISCARD(mi),
 		.data_allowed	= BCH_MEMBER_DATA_ALLOWED(mi),
@@ -204,27 +203,34 @@ struct target {
 	};
 };
 
+#define TARGET_DEV_START	1
+#define TARGET_GROUP_START	(256 + TARGET_DEV_START)
+
 static inline u16 dev_to_target(unsigned dev)
 {
-	return 1 + dev;
+	return TARGET_DEV_START + dev;
 }
 
 static inline u16 group_to_target(unsigned group)
 {
-	return 1 + U8_MAX + group;
+	return TARGET_GROUP_START + group;
 }
 
 static inline struct target target_decode(unsigned target)
 {
-	if (!target)
-		return (struct target) { .type = TARGET_NULL };
+	if (target >= TARGET_GROUP_START)
+		return (struct target) {
+			.type	= TARGET_GROUP,
+			.group	= target - TARGET_GROUP_START
+		};
 
-	--target;
-	if (target <= U8_MAX)
-		return (struct target) { .type = TARGET_DEV, .dev = target };
+	if (target >= TARGET_DEV_START)
+		return (struct target) {
+			.type	= TARGET_DEV,
+			.group	= target - TARGET_DEV_START
+		};
 
-	target -= U8_MAX;
-	return (struct target) { .type = TARGET_GROUP, .group = target };
+	return (struct target) { .type = TARGET_NULL };
 }
 
 static inline bool dev_in_target(struct bch_dev *ca, unsigned target)
@@ -232,6 +238,8 @@ static inline bool dev_in_target(struct bch_dev *ca, unsigned target)
 	struct target t = target_decode(target);
 
 	switch (t.type) {
+	case TARGET_NULL:
+		return false;
 	case TARGET_DEV:
 		return ca->dev_idx == t.dev;
 	case TARGET_GROUP:

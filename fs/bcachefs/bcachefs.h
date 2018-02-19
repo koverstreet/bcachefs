@@ -408,6 +408,8 @@ struct bch_dev {
 	struct bch_pd_controller copygc_pd;
 	struct write_point	copygc_write_point;
 
+	atomic64_t		rebalance_work;
+
 	struct journal_device	journal;
 
 	struct work_struct	io_error_work;
@@ -456,15 +458,6 @@ struct btree_debug {
 	struct dentry		*btree;
 	struct dentry		*btree_format;
 	struct dentry		*failed;
-};
-
-struct bch_tier {
-	unsigned		idx;
-	struct task_struct	*migrate;
-	struct bch_pd_controller pd;
-
-	struct bch_devs_mask	devs;
-	struct write_point	wp;
 };
 
 enum bch_fs_state {
@@ -570,16 +563,13 @@ struct bch_fs {
 	struct delayed_work	pd_controllers_update;
 	unsigned		pd_controllers_update_seconds;
 
+	/* REBALANCE */
+	struct task_struct	*rebalance_thread;
+	struct bch_pd_controller rebalance_pd;
 
-	/*
-	 * These contain all r/w devices - i.e. devices we can currently
-	 * allocate from:
-	 */
+	atomic64_t		rebalance_work_unknown_dev;
+
 	struct bch_devs_mask	rw_devs[BCH_DATA_NR];
-	struct bch_tier		tiers[BCH_TIER_MAX];
-	/* NULL if we only have devices in one tier: */
-	struct bch_devs_mask	*fastest_devs;
-	struct bch_tier		*fastest_tier;
 
 	u64			capacity; /* sectors */
 
@@ -616,6 +606,7 @@ struct bch_fs {
 	struct open_bucket	open_buckets[OPEN_BUCKETS_COUNT];
 
 	struct write_point	btree_write_point;
+	struct write_point	rebalance_write_point;
 
 	struct write_point	write_points[WRITE_POINT_COUNT];
 	struct hlist_head	write_points_hash[WRITE_POINT_COUNT];
@@ -718,8 +709,8 @@ struct bch_fs {
 
 	unsigned		btree_gc_periodic:1;
 	unsigned		copy_gc_enabled:1;
-	unsigned		tiering_enabled:1;
-	unsigned		tiering_percent;
+	unsigned		rebalance_enabled:1;
+	unsigned		rebalance_percent;
 
 #define BCH_DEBUG_PARAM(name, description) bool name;
 	BCH_DEBUG_PARAMS_ALL()

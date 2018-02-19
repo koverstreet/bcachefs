@@ -6,6 +6,7 @@
 #include "extents.h"
 #include "fs.h"
 #include "str_hash.h"
+#include "tier.h"
 #include "xattr.h"
 
 #include <linux/dcache.h>
@@ -456,6 +457,11 @@ static int bch2_xattr_bcachefs_set(const struct xattr_handler *handler,
 	mutex_lock(&inode->ei_update_lock);
 	ret = __bch2_write_inode(c, inode, inode_opt_set_fn, &s);
 	mutex_unlock(&inode->ei_update_lock);
+
+	if (value &&
+	    (s.id == Opt_background_compression ||
+	     s.id == Opt_background_target))
+		bch2_rebalance_add_work(c, inode->v.i_blocks);
 
 	return ret;
 }
