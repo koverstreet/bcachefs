@@ -39,7 +39,7 @@ bch2_insert_fixup_extent(struct btree_insert *,
 
 bool bch2_extent_normalize(struct bch_fs *, struct bkey_s);
 void bch2_extent_mark_replicas_cached(struct bch_fs *, struct bkey_s_extent,
-				      unsigned);
+				      unsigned, unsigned);
 
 const struct bch_extent_ptr *
 bch2_extent_has_device(struct bkey_s_c_extent, unsigned);

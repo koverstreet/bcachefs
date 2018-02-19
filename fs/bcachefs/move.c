@@ -125,7 +125,8 @@ static int bch2_migrate_index_update(struct bch_write_op *op)
 				(struct bch_extent_crc_unpacked) { 0 });
 		bch2_extent_normalize(c, extent_i_to_s(insert).s);
 		bch2_extent_mark_replicas_cached(c, extent_i_to_s(insert),
-						 c->opts.data_replicas);
+						 op->opts.background_target,
+						 op->opts.data_replicas);
 
 		/*
 		 * It's possible we race, and for whatever reason the extent now
@@ -215,7 +216,6 @@ void bch2_migrate_read_done(struct migrate_write *m, struct bch_read_bio *rbio)
 }
 
 int bch2_migrate_write_init(struct bch_fs *c, struct migrate_write *m,
-			    struct bch_devs_mask *devs,
 			    struct write_point_specifier wp,
 			    struct bch_io_opts io_opts,
 			    enum data_cmd data_cmd,
@@ -228,12 +228,11 @@ int bch2_migrate_write_init(struct bch_fs *c, struct migrate_write *m,
 	m->data_opts	= data_opts;
 	m->nr_ptrs_reserved = bch2_extent_nr_dirty_ptrs(k);
 
-	bch2_write_op_init(&m->op, c);
-	m->op.csum_type = bch2_data_checksum_type(c, io_opts.data_checksum);
+	bch2_write_op_init(&m->op, c, io_opts);
 	m->op.compression_type =
 		bch2_compression_opt_to_type[io_opts.background_compression ?:
 					     io_opts.compression];
-	m->op.devs	= devs;
+	m->op.target	= data_opts.target,
 	m->op.write_point = wp;
 
 	if (m->data_opts.btree_insert_flags & BTREE_INSERT_USE_RESERVE)
@@ -251,8 +250,8 @@ int bch2_migrate_write_init(struct bch_fs *c, struct migrate_write *m,
 
 	switch (data_cmd) {
 	case DATA_ADD_REPLICAS:
-		if (m->nr_ptrs_reserved < c->opts.data_replicas) {
-			m->op.nr_replicas = c->opts.data_replicas - m->nr_ptrs_reserved;
+		if (m->nr_ptrs_reserved < io_opts.data_replicas) {
+			m->op.nr_replicas = io_opts.data_replicas - m->nr_ptrs_reserved;
 
 			ret = bch2_disk_reservation_get(c, &m->op.res,
 							k.k->size,
@@ -260,7 +259,7 @@ int bch2_migrate_write_init(struct bch_fs *c, struct migrate_write *m,
 			if (ret)
 				return ret;
 
-			m->nr_ptrs_reserved = c->opts.data_replicas;
+			m->nr_ptrs_reserved = io_opts.data_replicas;
 		}
 		break;
 	case DATA_REWRITE:
@@ -371,7 +370,6 @@ static void bch2_move_ctxt_wait_for_io(struct moving_context *ctxt)
 
 static int bch2_move_extent(struct bch_fs *c,
 			    struct moving_context *ctxt,
-			    struct bch_devs_mask *devs,
 			    struct write_point_specifier wp,
 			    struct bch_io_opts io_opts,
 			    struct bkey_s_c_extent e,
@@ -430,8 +428,8 @@ static int bch2_move_extent(struct bch_fs *c,
 	io->rbio.bio.bi_iter.bi_sector	= bkey_start_offset(e.k);
 	io->rbio.bio.bi_end_io		= move_read_endio;
 
-	ret = bch2_migrate_write_init(c, &io->write, devs, wp,
-				      io_opts, data_cmd, data_opts, e.s_c);
+	ret = bch2_migrate_write_init(c, &io->write, wp, io_opts,
+				      data_cmd, data_opts, e.s_c);
 	if (ret)
 		goto err_free_pages;
 
@@ -462,7 +460,6 @@ err:
 
 int bch2_move_data(struct bch_fs *c,
 		   struct bch_ratelimit *rate,
-		   struct bch_devs_mask *devs,
 		   struct write_point_specifier wp,
 		   struct bpos start,
 		   struct bpos end,
@@ -544,7 +541,7 @@ peek:
 		k = bkey_i_to_s_c(&tmp.k);
 		bch2_btree_iter_unlock(&stats->iter);
 
-		ret2 = bch2_move_extent(c, &ctxt, devs, wp, io_opts,
+		ret2 = bch2_move_extent(c, &ctxt, wp, io_opts,
 					bkey_s_c_to_extent(k),
 					data_cmd, data_opts);
 		if (ret2) {
@@ -695,11 +692,12 @@ static enum data_cmd rereplicate_pred(struct bch_fs *c, void *arg,
 	unsigned nr_good = bch2_extent_nr_good_ptrs(c, e);
 	unsigned replicas = type == BKEY_TYPE_BTREE
 		? c->opts.metadata_replicas
-		: c->opts.data_replicas;
+		: io_opts->data_replicas;
 
 	if (!nr_good || nr_good >= replicas)
 		return DATA_SKIP;
 
+	data_opts->target		= 0;
 	data_opts->btree_insert_flags = 0;
 	return DATA_ADD_REPLICAS;
 }
@@ -715,6 +713,7 @@ static enum data_cmd migrate_pred(struct bch_fs *c, void *arg,
 	if (!bch2_extent_has_device(e, op->migrate.dev))
 		return DATA_SKIP;
 
+	data_opts->target		= 0;
 	data_opts->btree_insert_flags	= 0;
 	data_opts->rewrite_dev		= op->migrate.dev;
 	return DATA_REWRITE;
@@ -735,7 +734,6 @@ int bch2_data_job(struct bch_fs *c,
 		ret = bch2_gc_btree_replicas(c) ?: ret;
 
 		ret = bch2_move_data(c, NULL,
-				     NULL,
 				     writepoint_hashed((unsigned long) current),
 				     op.start,
 				     op.end,
@@ -753,7 +751,6 @@ int bch2_data_job(struct bch_fs *c,
 		ret = bch2_gc_btree_replicas(c) ?: ret;
 
 		ret = bch2_move_data(c, NULL,
-				     NULL,
 				     writepoint_hashed((unsigned long) current),
 				     op.start,
 				     op.end,

@@ -103,13 +103,14 @@ struct bch_write_op {
 	u16			target;
 	u16			nonce;
 
+	struct bch_io_opts	opts;
+
 	struct bpos		pos;
 	struct bversion		version;
 
 	/* For BCH_WRITE_DATA_ENCODED: */
 	struct bch_extent_crc_unpacked crc;
 
-	struct bch_devs_mask	*devs;
 	struct write_point_specifier write_point;
 
 	struct disk_reservation	res;

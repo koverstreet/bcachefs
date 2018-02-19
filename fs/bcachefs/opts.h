@@ -100,6 +100,15 @@ enum opt_type {
 	BCH_OPT(str_hash,		u8,	OPT_RUNTIME,		\
 		OPT_STR(bch2_str_hash_types),				\
 		BCH_SB_STR_HASH_TYPE,		BCH_STR_HASH_SIPHASH)	\
+	BCH_OPT(foreground_target,	u16,	OPT_RUNTIME,		\
+		OPT_UINT(0, U16_MAX),					\
+		BCH_SB_FOREGROUND_TARGET,	0)			\
+	BCH_OPT(background_target,	u16,	OPT_RUNTIME,		\
+		OPT_UINT(0, U16_MAX),					\
+		BCH_SB_BACKGROUND_TARGET,	0)			\
+	BCH_OPT(promote_target,		u16,	OPT_RUNTIME,		\
+		OPT_UINT(0, U16_MAX),					\
+		BCH_SB_PROMOTE_TARGET,	0)				\
 	BCH_OPT(inodes_32bit,		u8,	OPT_RUNTIME,		\
 		OPT_BOOL(),						\
 		BCH_SB_INODE_32BIT,		false)			\
@@ -243,7 +252,10 @@ int bch2_parse_mount_opts(struct bch_opts *, char *);
 	BCH_INODE_OPT(data_checksum,			8)	\
 	BCH_INODE_OPT(compression,			8)	\
 	BCH_INODE_OPT(background_compression,		8)	\
-	BCH_INODE_OPT(data_replicas,			8)
+	BCH_INODE_OPT(data_replicas,			8)	\
+	BCH_INODE_OPT(promote_target,			16)	\
+	BCH_INODE_OPT(foreground_target,		16)	\
+	BCH_INODE_OPT(background_target,		16)
 
 struct bch_io_opts {
 #define BCH_INODE_OPT(_name, _bits)	unsigned _name##_defined:1;

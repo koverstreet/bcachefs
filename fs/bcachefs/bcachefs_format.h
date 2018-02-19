@@ -610,14 +610,20 @@ BKEY_VAL_TYPE(inode_generation,	BCH_INODE_GENERATION);
 	BCH_INODE_FIELD(bi_compression,			8)	\
 	BCH_INODE_FIELD(bi_project,			32)	\
 	BCH_INODE_FIELD(bi_background_compression,	8)	\
-	BCH_INODE_FIELD(bi_data_replicas,		8)
+	BCH_INODE_FIELD(bi_data_replicas,		8)	\
+	BCH_INODE_FIELD(bi_promote_target,		16)	\
+	BCH_INODE_FIELD(bi_foreground_target,		16)	\
+	BCH_INODE_FIELD(bi_background_target,		16)
 
 #define BCH_INODE_FIELDS_INHERIT()				\
 	BCH_INODE_FIELD(bi_data_checksum)			\
 	BCH_INODE_FIELD(bi_compression)				\
 	BCH_INODE_FIELD(bi_project)				\
 	BCH_INODE_FIELD(bi_background_compression)		\
-	BCH_INODE_FIELD(bi_data_replicas)
+	BCH_INODE_FIELD(bi_data_replicas)			\
+	BCH_INODE_FIELD(bi_promote_target)			\
+	BCH_INODE_FIELD(bi_foreground_target)			\
+	BCH_INODE_FIELD(bi_background_target)
 
 enum {
 	/*
@@ -818,12 +824,13 @@ struct bch_member {
 };
 
 LE64_BITMASK(BCH_MEMBER_STATE,		struct bch_member, flags[0],  0,  4)
-LE64_BITMASK(BCH_MEMBER_TIER,		struct bch_member, flags[0],  4,  8)
-/* 8-10 unused, was HAS_(META)DATA */
+/* 4-10 unused, was TIER, HAS_(META)DATA */
 LE64_BITMASK(BCH_MEMBER_REPLACEMENT,	struct bch_member, flags[0], 10, 14)
 LE64_BITMASK(BCH_MEMBER_DISCARD,	struct bch_member, flags[0], 14, 15)
 LE64_BITMASK(BCH_MEMBER_DATA_ALLOWED,	struct bch_member, flags[0], 15, 20)
 LE64_BITMASK(BCH_MEMBER_GROUP,		struct bch_member, flags[0], 20, 28)
+
+#define BCH_TIER_MAX			4U
 
 #if 0
 LE64_BITMASK(BCH_MEMBER_NR_READ_ERRORS,	struct bch_member, flags[1], 0,  20);
@@ -837,8 +844,6 @@ enum bch_member_state {
 	BCH_MEMBER_STATE_SPARE		= 3,
 	BCH_MEMBER_STATE_NR		= 4,
 };
-
-#define BCH_TIER_MAX			4U
 
 enum cache_replacement {
 	CACHE_REPLACEMENT_LRU		= 0,
@@ -1083,6 +1088,10 @@ LE64_BITMASK(BCH_SB_META_REPLICAS_REQ,	struct bch_sb, flags[1], 20, 24);
 LE64_BITMASK(BCH_SB_DATA_REPLICAS_REQ,	struct bch_sb, flags[1], 24, 28);
 LE64_BITMASK(BCH_SB_BACKGROUND_COMPRESSION_TYPE,
 					struct bch_sb, flags[1], 28, 32);
+
+LE64_BITMASK(BCH_SB_PROMOTE_TARGET,	struct bch_sb, flags[1], 28, 40);
+LE64_BITMASK(BCH_SB_FOREGROUND_TARGET,	struct bch_sb, flags[1], 40, 52);
+LE64_BITMASK(BCH_SB_BACKGROUND_TARGET,	struct bch_sb, flags[1], 52, 64);
 
 /* Features: */
 enum bch_sb_features {

@@ -1766,7 +1766,6 @@ static void bch2_extent_debugcheck_extent(struct bch_fs *c, struct btree *b,
 	unsigned seq, stale;
 	char buf[160];
 	bool bad;
-	unsigned ptrs_per_tier[BCH_TIER_MAX];
 	unsigned replicas = 0;
 
 	/*
@@ -1778,12 +1777,9 @@ static void bch2_extent_debugcheck_extent(struct bch_fs *c, struct btree *b,
 	 * going to get overwritten during replay)
 	 */
 
-	memset(ptrs_per_tier, 0, sizeof(ptrs_per_tier));
-
 	extent_for_each_ptr(e, ptr) {
 		ca = bch_dev_bkey_exists(c, ptr->dev);
 		replicas++;
-		ptrs_per_tier[ca->mi.tier]++;
 
 		/*
 		 * If journal replay hasn't finished, we might be seeing keys
@@ -1884,12 +1880,6 @@ static void bch2_extent_to_text(struct bch_fs *c, char *buf,
 	if (invalid)
 		p(" invalid: %s", invalid);
 #undef p
-}
-
-static unsigned PTR_TIER(struct bch_fs *c,
-			 const struct bch_extent_ptr *ptr)
-{
-	return bch_dev_bkey_exists(c, ptr->dev)->mi.tier;
 }
 
 static void bch2_extent_crc_init(union bch_extent_crc *crc,
@@ -2014,45 +2004,31 @@ bool bch2_extent_normalize(struct bch_fs *c, struct bkey_s k)
 
 void bch2_extent_mark_replicas_cached(struct bch_fs *c,
 				      struct bkey_s_extent e,
-				      unsigned nr_desired_replicas)
+				      unsigned nr_desired_replicas,
+				      unsigned target)
 {
 	struct bch_extent_ptr *ptr;
-	unsigned tier = 0, nr_cached = 0;
-	unsigned nr_good = bch2_extent_nr_good_ptrs(c, e.c);
-	bool have_higher_tier;
+	unsigned nr_cached = 0, nr_good = bch2_extent_nr_good_ptrs(c, e.c);
 
 	if (nr_good <= nr_desired_replicas)
 		return;
 
 	nr_cached = nr_good - nr_desired_replicas;
 
-	do {
-		have_higher_tier = false;
-
-		extent_for_each_ptr(e, ptr) {
-			if (!ptr->cached &&
-			    PTR_TIER(c, ptr) == tier) {
-				ptr->cached = true;
-				nr_cached--;
-				if (!nr_cached)
-					return;
-			}
-
-			if (PTR_TIER(c, ptr) > tier)
-				have_higher_tier = true;
+	extent_for_each_ptr(e, ptr)
+		if (!ptr->cached &&
+		    !dev_in_target(c->devs[ptr->dev], target)) {
+			ptr->cached = true;
+			nr_cached--;
+			if (!nr_cached)
+				return;
 		}
-
-		tier++;
-	} while (have_higher_tier);
 }
 
 /*
- * This picks a non-stale pointer, preferabbly from a device other than
- * avoid.  Avoid can be NULL, meaning pick any.  If there are no non-stale
- * pointers to other devices, it will still pick a pointer from avoid.
- * Note that it prefers lowered-numbered pointers to higher-numbered pointers
- * as the pointers are sorted by tier, hence preferring pointers to tier 0
- * rather than pointers to tier 1.
+ * This picks a non-stale pointer, preferably from a device other than @avoid.
+ * Avoid can be NULL, meaning pick any. If there are no non-stale pointers to
+ * other devices, it will still pick a pointer from avoid.
  */
 void bch2_extent_pick_ptr(struct bch_fs *c, struct bkey_s_c k,
 			  struct bch_devs_mask *avoid,

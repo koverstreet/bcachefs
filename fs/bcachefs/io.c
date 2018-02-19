@@ -22,6 +22,7 @@
 #include "move.h"
 #include "super.h"
 #include "super-io.h"
+#include "tier.h"
 
 #include <linux/blkdev.h>
 #include <linux/random.h>
@@ -220,9 +221,9 @@ int bch2_write_index_default(struct bch_write_op *op)
 			     BTREE_ITER_INTENT);
 
 	ret = bch2_btree_insert_list_at(&iter, keys, &op->res,
-				       NULL, op_journal_seq(op),
-				       BTREE_INSERT_NOFAIL|
-				       BTREE_INSERT_USE_RESERVE);
+					NULL, op_journal_seq(op),
+					BTREE_INSERT_NOFAIL|
+					BTREE_INSERT_USE_RESERVE);
 	bch2_btree_iter_unlock(&iter);
 
 	return ret;
@@ -238,7 +239,7 @@ static void bch2_write_index(struct closure *cl)
 	struct keylist *keys = &op->insert_keys;
 	struct bkey_s_extent e;
 	struct bch_extent_ptr *ptr;
-	struct bkey_i *src, *dst = keys->keys, *n;
+	struct bkey_i *src, *dst = keys->keys, *n, *k;
 	int ret;
 
 	op->flags |= BCH_WRITE_LOOPED;
@@ -267,6 +268,14 @@ static void bch2_write_index(struct closure *cl)
 	}
 
 	keys->top = dst;
+
+	/*
+	 * probably not the ideal place to hook this in, but I don't
+	 * particularly want to plumb io_opts all the way through the btree
+	 * update stack right now
+	 */
+	for_each_keylist_key(keys, k)
+		bch2_rebalance_add_key(c, bkey_i_to_s_c(k), &op->opts);
 
 	if (!bch2_keylist_empty(keys)) {
 		u64 sectors_start = keylist_sectors(keys);
@@ -741,7 +750,7 @@ static void __bch2_write(struct closure *cl)
 		}
 
 		wp = bch2_alloc_sectors_start(c,
-			op->devs,
+			op->target,
 			op->write_point,
 			&op->devs_have,
 			op->nr_replicas,
@@ -947,29 +956,32 @@ static struct promote_op *promote_alloc(struct bch_read_bio *rbio,
 	memcpy(bio->bi_io_vec, rbio->bio.bi_io_vec,
 	       sizeof(struct bio_vec) * rbio->bio.bi_vcnt);
 
-	ret = bch2_migrate_write_init(c, &op->write, c->fastest_devs,
-				      writepoint_hashed((unsigned long) current),
-				      rbio->opts,
-				      DATA_PROMOTE,
-				      (struct data_opts) { 0 },
-				      k);
+	ret = bch2_migrate_write_init(c, &op->write,
+			writepoint_hashed((unsigned long) current),
+			rbio->opts,
+			DATA_PROMOTE,
+			(struct data_opts) {
+				.target = rbio->opts.promote_target
+			},
+			k);
 	BUG_ON(ret);
 
 	return op;
 }
 
-/* only promote if we're not reading from the fastest tier: */
-static bool should_promote(struct bch_fs *c,
-			   struct extent_pick_ptr *pick, unsigned flags)
+static bool should_promote(struct bch_fs *c, struct bkey_s_c_extent e,
+			   unsigned flags, u16 target)
 {
+	if (!target)
+		return false;
+
 	if (!(flags & BCH_READ_MAY_PROMOTE))
 		return false;
 
 	if (percpu_ref_is_dying(&c->writes))
 		return false;
 
-	return c->fastest_tier &&
-		c->fastest_tier < c->tiers + pick->ca->mi.tier;
+	return bch2_extent_has_target(c, e, target);
 }
 
 /* Read */
@@ -1335,7 +1347,7 @@ int __bch2_read_extent(struct bch_fs *c, struct bch_read_bio *orig,
 		bounce = true;
 	}
 
-	promote = should_promote(c, pick, flags);
+	promote = should_promote(c, e, flags, orig->opts.promote_target);
 	/* could also set read_full */
 	if (promote)
 		bounce = true;

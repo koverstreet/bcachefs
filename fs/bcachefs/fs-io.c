@@ -504,10 +504,8 @@ static inline void bch2_fswrite_op_init(struct bchfs_write_op *op,
 	op->unalloc		= false;
 	op->new_i_size		= U64_MAX;
 
-	bch2_write_op_init(&op->op, c);
-	op->op.csum_type	= bch2_data_checksum_type(c, opts.data_checksum);
-	op->op.compression_type	= bch2_compression_opt_to_type[opts.compression];
-	op->op.devs		= c->fastest_devs;
+	bch2_write_op_init(&op->op, c, opts);
+	op->op.target		= opts.foreground_target;
 	op->op.index_update_fn	= bchfs_write_index_update;
 	op_journal_seq_set(&op->op, &inode->ei_journal_seq);
 }
@@ -615,8 +613,14 @@ static int bch2_get_page_reservation(struct bch_fs *c, struct bch_inode_info *in
 				     struct page *page, bool check_enospc)
 {
 	struct bch_page_state *s = page_state(page), new, old;
+
+	/* XXX: this should not be open coded */
+	unsigned nr_replicas = inode->ei_inode.bi_data_replicas
+		? inode->ei_inode.bi_data_replicas - 1
+		: c->opts.data_replicas;
+
 	struct disk_reservation disk_res = bch2_disk_reservation_init(c,
-						READ_ONCE(c->opts.data_replicas));
+						nr_replicas);
 	struct quota_res quota_res = { 0 };
 	int ret = 0;
 
@@ -1893,7 +1897,7 @@ static int bch2_direct_IO_write(struct kiocb *req,
 		goto err;
 
 	ret = bch2_disk_reservation_get(c, &dio->iop.op.res, iter->count >> 9,
-					c->opts.data_replicas, 0);
+					dio->iop.op.opts.data_replicas, 0);
 	if (unlikely(ret)) {
 		if (bch2_check_range_allocated(c, POS(inode->v.i_ino,
 						      offset >> 9),
