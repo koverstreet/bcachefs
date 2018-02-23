@@ -2,7 +2,6 @@ aesni-intel.ko .altinstr_replacement callq  *%r11
 aesni-intel.ko .altinstr_replacement callq  *%r11
 aesni-intel.ko aesni_xts_crypt8 callq  *%r11
 aesni-intel.ko aesni_xts_crypt8 callq  *%r11
-amdgpu.ko core_link_enable_stream callq  *%rax
 camellia-aesni-avx-x86_64.ko .altinstr_replacement callq  *%r9
 camellia-aesni-avx-x86_64.ko camellia_xts_crypt_16way callq  *%r9
 camellia-aesni-avx2.ko .altinstr_replacement callq  *%r9
@@ -16,7 +15,6 @@ kvm.ko fastop callq  *%rsi
 kvm.ko x86_emulate_insn callq  *%rax
 kvm.ko x86_emulate_insn callq  *%rax
 kvm.ko x86_emulate_insn callq  *%rax
-mlx4_ib.ko set_guid_rec jmpq   *%rdx
 pci-hyperv.ko hv_irq_unmask callq  *%r12
 vmlinux .altinstr_replacement callq  *%rbx
 vmlinux .altinstr_replacement jmpq   *%r10
@@ -85,7 +83,6 @@ vmlinux apic_intr_mode_init callq  *%rax
 vmlinux apic_intr_mode_init callq  *%rax
 vmlinux apic_intr_mode_init callq  *%rax
 vmlinux arch_probe_nr_irqs callq  *%rax
-vmlinux bpf_prog_load jmpq   *%rsp
 vmlinux bunzip2 callq  *%r13
 vmlinux bunzip2 callq  *%rax
 vmlinux bunzip2 callq  *%rax
