@@ -546,8 +546,13 @@ static void __bch2_write_index(struct bch_write_op *op)
 	 * particularly want to plumb io_opts all the way through the btree
 	 * update stack right now
 	 */
-	for_each_keylist_key(keys, k)
+	for_each_keylist_key(keys, k) {
 		bch2_rebalance_add_key(c, bkey_i_to_s_c(k), &op->opts);
+
+		if (bch2_bkey_is_incompressible(bkey_i_to_s_c(k)))
+			bch2_check_set_feature(op->c, BCH_FEATURE_incompressible);
+
+	}
 
 	if (!bch2_keylist_empty(keys)) {
 		u64 sectors_start = keylist_sectors(keys);
@@ -784,8 +789,9 @@ static enum prep_encoded_ret {
 	/* Can we just write the entire extent as is? */
 	if (op->crc.uncompressed_size == op->crc.live_size &&
 	    op->crc.compressed_size <= wp->sectors_free &&
-	    op->crc.compression_type == op->compression_type) {
-		if (!op->crc.compression_type &&
+	    (op->crc.compression_type == op->compression_type ||
+	     op->incompressible)) {
+		if (!crc_is_compressed(op->crc) &&
 		    op->csum_type != op->crc.csum_type &&
 		    bch2_write_rechecksum(c, op, op->csum_type))
 			return PREP_ENCODED_CHECKSUM_ERR;
@@ -797,7 +803,7 @@ static enum prep_encoded_ret {
 	 * If the data is compressed and we couldn't write the entire extent as
 	 * is, we have to decompress it:
 	 */
-	if (op->crc.compression_type) {
+	if (crc_is_compressed(op->crc)) {
 		struct bch_csum csum;
 
 		if (bch2_write_decrypt(op))
@@ -864,6 +870,7 @@ static int bch2_write_extent(struct bch_write_op *op, struct write_point *wp,
 		ret = -EIO;
 		goto err;
 	case PREP_ENCODED_CHECKSUM_ERR:
+		BUG();
 		goto csum_err;
 	case PREP_ENCODED_DO_WRITE:
 		/* XXX look for bug here */
@@ -908,11 +915,13 @@ static int bch2_write_extent(struct bch_write_op *op, struct write_point *wp,
 		       bch2_csum_type_is_encryption(op->crc.csum_type));
 		BUG_ON(op->compression_type && !bounce);
 
-		crc.compression_type = op->compression_type
-			?  bch2_bio_compress(c, dst, &dst_len, src, &src_len,
-					     op->compression_type)
+		crc.compression_type = op->incompressible
+			? BCH_COMPRESSION_TYPE_incompressible
+			: op->compression_type
+			? bch2_bio_compress(c, dst, &dst_len, src, &src_len,
+					    op->compression_type)
 			: 0;
-		if (!crc.compression_type) {
+		if (!crc_is_compressed(crc)) {
 			dst_len = min(dst->bi_iter.bi_size, src->bi_iter.bi_size);
 			dst_len = min_t(unsigned, dst_len, wp->sectors_free << 9);
 
@@ -941,7 +950,7 @@ static int bch2_write_extent(struct bch_write_op *op, struct write_point *wp,
 		}
 
 		if ((op->flags & BCH_WRITE_DATA_ENCODED) &&
-		    !crc.compression_type &&
+		    !crc_is_compressed(crc) &&
 		    bch2_csum_type_is_encryption(op->crc.csum_type) ==
 		    bch2_csum_type_is_encryption(op->csum_type)) {
 			/*
@@ -1338,6 +1347,7 @@ static void promote_start(struct promote_op *op, struct bch_read_bio *rbio)
 
 static struct promote_op *__promote_alloc(struct bch_fs *c,
 					  enum btree_id btree_id,
+					  struct bkey_s_c k,
 					  struct bpos pos,
 					  struct extent_ptr_decoded *pick,
 					  struct bch_io_opts opts,
@@ -1394,8 +1404,7 @@ static struct promote_op *__promote_alloc(struct bch_fs *c,
 			(struct data_opts) {
 				.target = opts.promote_target
 			},
-			btree_id,
-			bkey_s_c_null);
+			btree_id, k);
 	BUG_ON(ret);
 
 	return op;
@@ -1437,7 +1446,7 @@ static struct promote_op *promote_alloc(struct bch_fs *c,
 				  k.k->type == KEY_TYPE_reflink_v
 				  ? BTREE_ID_REFLINK
 				  : BTREE_ID_EXTENTS,
-				  pos, pick, opts, sectors, rbio);
+				  k, pos, pick, opts, sectors, rbio);
 	if (!promote)
 		return NULL;
 
@@ -1701,7 +1710,7 @@ static void bch2_rbio_narrow_crcs(struct bch_read_bio *rbio)
 	u64 data_offset = rbio->pos.offset - rbio->pick.crc.offset;
 	int ret;
 
-	if (rbio->pick.crc.compression_type)
+	if (crc_is_compressed(rbio->pick.crc))
 		return;
 
 	bkey_on_stack_init(&new);
@@ -1786,7 +1795,7 @@ static void __bch2_read_endio(struct work_struct *work)
 	crc.offset     += rbio->offset_into_extent;
 	crc.live_size	= bvec_iter_sectors(rbio->bvec_iter);
 
-	if (crc.compression_type != BCH_COMPRESSION_TYPE_none) {
+	if (crc_is_compressed(crc)) {
 		bch2_encrypt_bio(c, crc.csum_type, nonce, src);
 		if (bch2_bio_uncompress(c, src, dst, dst_iter, crc))
 			goto decompression_err;
@@ -1883,7 +1892,7 @@ static void bch2_read_endio(struct bio *bio)
 	}
 
 	if (rbio->narrow_crcs ||
-	    rbio->pick.crc.compression_type ||
+	    crc_is_compressed(rbio->pick.crc) ||
 	    bch2_csum_type_is_encryption(rbio->pick.crc.csum_type))
 		context = RBIO_CONTEXT_UNBOUND,	wq = system_unbound_wq;
 	else if (rbio->pick.crc.csum_type)
@@ -1994,7 +2003,7 @@ int __bch2_read_extent(struct bch_fs *c, struct bch_read_bio *orig,
 
 	EBUG_ON(offset_into_extent + bvec_iter_sectors(iter) > k.k->size);
 
-	if (pick.crc.compression_type != BCH_COMPRESSION_TYPE_none ||
+	if (crc_is_compressed(pick.crc) ||
 	    (pick.crc.csum_type != BCH_CSUM_NONE &&
 	     (bvec_iter_sectors(iter) != pick.crc.uncompressed_size ||
 	      (bch2_csum_type_is_encryption(pick.crc.csum_type) &&
@@ -2009,7 +2018,7 @@ int __bch2_read_extent(struct bch_fs *c, struct bch_read_bio *orig,
 					&rbio, &bounce, &read_full);
 
 	if (!read_full) {
-		EBUG_ON(pick.crc.compression_type);
+		EBUG_ON(crc_is_compressed(pick.crc));
 		EBUG_ON(pick.crc.csum_type &&
 			(bvec_iter_sectors(iter) != pick.crc.uncompressed_size ||
 			 bvec_iter_sectors(iter) != pick.crc.live_size ||
