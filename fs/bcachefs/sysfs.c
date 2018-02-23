@@ -904,7 +904,15 @@ STORE(bch2_dev)
 	}
 
 	if (attr == &sysfs_group) {
-		int ret = bch2_dev_group_set(c, ca, buf);
+		char *tmp;
+		int ret;
+
+		tmp = kstrdup(buf, GFP_KERNEL);
+		if (!tmp)
+			return -ENOMEM;
+
+		ret = bch2_dev_group_set(c, ca, strim(tmp));
+		kfree(tmp);
 		if (ret)
 			return ret;
 	}
