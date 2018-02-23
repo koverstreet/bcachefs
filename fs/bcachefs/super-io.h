@@ -243,7 +243,7 @@ static inline bool dev_in_target(struct bch_dev *ca, unsigned target)
 	case TARGET_DEV:
 		return ca->dev_idx == t.dev;
 	case TARGET_GROUP:
-		return ca->mi.group && ca->mi.group == t.group;
+		return ca->mi.group && ca->mi.group - 1 == t.group;
 	default:
 		BUG();
 	}
