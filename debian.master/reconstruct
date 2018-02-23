@@ -1,5 +1,7 @@
 # Recreate any symlinks created since the orig.
 # Remove any files deleted from the orig.
+rm -f 'arch/arm/include/asm/kvm_psci.h'
+rm -f 'arch/arm64/include/asm/kvm_psci.h'
 chmod +x 'scripts/kmsg-doc'
 chmod +x 'spl/autogen.sh'
 chmod +x 'spl/cmd/splslab/splslab.py'
