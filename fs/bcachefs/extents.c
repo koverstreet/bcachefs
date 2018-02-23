@@ -148,7 +148,7 @@ bch2_extent_has_group(struct bch_fs *c, struct bkey_s_c_extent e, unsigned group
 		struct bch_dev *ca = c->devs[ptr->dev];
 
 		if (ca->mi.group &&
-		    ca->mi.group == group)
+		    ca->mi.group - 1 == group)
 			return ptr;
 	}
 
