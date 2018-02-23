@@ -272,6 +272,12 @@ bch2_extent_crc_unpack(const struct bkey *k, const union bch_extent_crc *crc)
 #undef common_fields
 }
 
+static inline bool crc_is_compressed(struct bch_extent_crc_unpacked crc)
+{
+	return (crc.compression_type != BCH_COMPRESSION_NONE &&
+		crc.compression_type != BCH_COMPRESSION_INCOMPRESSIBLE);
+}
+
 /* Extent entry iteration: */
 
 #define extent_entry_next(_entry)					\

@@ -370,7 +370,8 @@ enum bch_compression_type {
 	BCH_COMPRESSION_GZIP		= 2,
 	BCH_COMPRESSION_LZ4		= 3,
 	BCH_COMPRESSION_ZSTD		= 4,
-	BCH_COMPRESSION_NR		= 5,
+	BCH_COMPRESSION_INCOMPRESSIBLE	= 5,
+	BCH_COMPRESSION_NR		= 6,
 };
 
 enum bch_extent_entry_type {

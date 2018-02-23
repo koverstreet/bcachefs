@@ -480,8 +480,9 @@ static enum prep_encoded_ret {
 	/* Can we just write the entire extent as is? */
 	if (op->crc.uncompressed_size == op->crc.live_size &&
 	    op->crc.compressed_size <= wp->sectors_free &&
-	    op->crc.compression_type == op->compression_type) {
-		if (!op->crc.compression_type &&
+	    (op->crc.compression_type == op->compression_type ||
+	     op->crc.compression_type == BCH_COMPRESSION_INCOMPRESSIBLE)) {
+		if (!crc_is_compressed(op->crc) &&
 		    op->csum_type != op->crc.csum_type &&
 		    bch2_write_rechecksum(c, op, op->csum_type))
 			return PREP_ENCODED_CHECKSUM_ERR;
@@ -493,7 +494,7 @@ static enum prep_encoded_ret {
 	 * If the data is compressed and we couldn't write the entire extent as
 	 * is, we have to decompress it:
 	 */
-	if (op->crc.compression_type) {
+	if (crc_is_compressed(op->crc)) {
 		struct bch_csum csum;
 
 		if (bch2_write_decrypt(op))
@@ -594,7 +595,7 @@ static int bch2_write_extent(struct bch_write_op *op, struct write_point *wp)
 			?  bch2_bio_compress(c, dst, &dst_len, src, &src_len,
 					     op->compression_type)
 			: 0;
-		if (!crc.compression_type) {
+		if (!crc_is_compressed(crc)) {
 			dst_len = min(dst->bi_iter.bi_size, src->bi_iter.bi_size);
 			dst_len = min_t(unsigned, dst_len, wp->sectors_free << 9);
 
@@ -623,7 +624,7 @@ static int bch2_write_extent(struct bch_write_op *op, struct write_point *wp)
 		}
 
 		if ((op->flags & BCH_WRITE_DATA_ENCODED) &&
-		    !crc.compression_type &&
+		    !crc_is_compressed(crc) &&
 		    bch2_csum_type_is_encryption(op->crc.csum_type) ==
 		    bch2_csum_type_is_encryption(op->csum_type)) {
 			/*
@@ -1099,7 +1100,7 @@ static void bch2_rbio_narrow_crcs(struct bch_read_bio *rbio)
 	unsigned offset;
 	int ret;
 
-	if (rbio->pick.crc.compression_type)
+	if (crc_is_compressed(rbio->pick.crc))
 		return;
 
 	bch2_btree_iter_init(&iter, c, BTREE_ID_EXTENTS, rbio->pos,
@@ -1195,7 +1196,7 @@ static void __bch2_read_endio(struct work_struct *work)
 	crc.offset     += rbio->bvec_iter.bi_sector - rbio->pos.offset;
 	crc.live_size	= bvec_iter_sectors(rbio->bvec_iter);
 
-	if (crc.compression_type != BCH_COMPRESSION_NONE) {
+	if (crc_is_compressed(crc)) {
 		bch2_encrypt_bio(c, crc.csum_type, nonce, src);
 		if (bch2_bio_uncompress(c, src, dst, dst_iter, crc))
 			goto decompression_err;
@@ -1287,7 +1288,7 @@ static void bch2_read_endio(struct bio *bio)
 	}
 
 	if (rbio->narrow_crcs ||
-	    rbio->pick.crc.compression_type ||
+	    crc_is_compressed(rbio->pick.crc) ||
 	    bch2_csum_type_is_encryption(rbio->pick.crc.csum_type))
 		context = RBIO_CONTEXT_UNBOUND,	wq = system_unbound_wq;
 	else if (rbio->pick.crc.csum_type)

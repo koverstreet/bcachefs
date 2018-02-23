@@ -228,7 +228,6 @@ unsigned bch2_extent_is_compressed(struct bkey_s_c k)
 
 		extent_for_each_ptr_crc(e, ptr, crc)
 			if (!ptr->cached &&
-			    crc.compression_type != BCH_COMPRESSION_NONE &&
 			    crc.compressed_size < crc.live_size)
 				ret = max_t(unsigned, ret, crc.compressed_size);
 	}
@@ -272,7 +271,7 @@ void bch2_extent_drop_ptr(struct bkey_s_extent e, struct bch_extent_ptr *ptr)
 static inline bool can_narrow_crc(struct bch_extent_crc_unpacked u,
 				  struct bch_extent_crc_unpacked n)
 {
-	return !u.compression_type &&
+	return !crc_is_compressed(u) &&
 		u.csum_type &&
 		u.uncompressed_size > u.live_size &&
 		bch2_csum_type_is_encryption(u.csum_type) ==
@@ -314,7 +313,7 @@ bool bch2_extent_narrow_crcs(struct bkey_i_extent *e,
 	/* Find a checksum entry that covers only live data: */
 	if (!n.csum_type)
 		extent_for_each_crc(extent_i_to_s(e), u, i)
-			if (!u.compression_type &&
+			if (!crc_is_compressed(u) &&
 			    u.csum_type &&
 			    u.live_size == u.uncompressed_size) {
 				n = u;
@@ -324,7 +323,7 @@ bool bch2_extent_narrow_crcs(struct bkey_i_extent *e,
 	if (!bch2_can_narrow_extent_crcs(extent_i_to_s_c(e), n))
 		return false;
 
-	BUG_ON(n.compression_type);
+	BUG_ON(crc_is_compressed(n));
 	BUG_ON(n.offset);
 	BUG_ON(n.live_size != e->k.size);
 

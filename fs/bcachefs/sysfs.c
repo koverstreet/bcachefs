@@ -267,7 +267,8 @@ static ssize_t bch2_compression_stats(struct bch_fs *c, char *buf)
 			struct bch_extent_crc_unpacked crc;
 
 			extent_for_each_ptr_crc(e, ptr, crc) {
-				if (crc.compression_type == BCH_COMPRESSION_NONE) {
+				if (crc.compression_type == BCH_COMPRESSION_NONE ||
+				    crc.compression_type == BCH_COMPRESSION_INCOMPRESSIBLE) {
 					nr_uncompressed_extents++;
 					uncompressed_sectors += e.k->size;
 				} else {

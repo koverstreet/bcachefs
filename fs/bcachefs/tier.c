@@ -23,13 +23,15 @@ static inline bool rebalance_ptr_pred(struct bch_fs *c,
 	struct bch_dev *ca = bch_dev_bkey_exists(c, ptr->dev);
 
 	if (io_opts->background_target &&
-	    !dev_in_target(ca, io_opts->background_target) &&
-	    !ptr->cached)
+	    !ptr->cached &&
+	    !dev_in_target(ca, io_opts->background_target))
 		return true;
 
 	if (io_opts->background_compression &&
+	    crc.compression_type != BCH_COMPRESSION_INCOMPRESSIBLE &&
 	    crc.compression_type !=
-	    bch2_compression_opt_to_type[io_opts->background_compression])
+	    bch2_compression_opt_to_type[io_opts->background_compression] &&
+	    crc.compressed_size > c->opts.block_size)
 		return true;
 
 	return false;
