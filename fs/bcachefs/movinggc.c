@@ -106,8 +106,8 @@ static bool have_copygc_reserve(struct bch_dev *ca)
 	bool ret;
 
 	spin_lock(&ca->freelist_lock);
-	ret = fifo_used(&ca->free[RESERVE_MOVINGGC]) >=
-		COPYGC_BUCKETS_PER_ITER(ca);
+	ret = fifo_full(&ca->free[RESERVE_MOVINGGC]) ||
+		ca->allocator_blocked;
 	spin_unlock(&ca->freelist_lock);
 
 	return ret;

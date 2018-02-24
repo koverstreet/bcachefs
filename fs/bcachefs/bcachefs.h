@@ -399,6 +399,7 @@ struct bch_dev {
 	size_t			inc_gen_really_needs_gc;
 	u64			allocator_journal_seq_flush;
 	bool			allocator_invalidating_data;
+	bool			allocator_blocked;
 
 	alloc_heap		alloc_heap;
 
