@@ -966,11 +966,24 @@ static int bch2_allocator_thread(void *arg)
 			if (fifo_full(&ca->free_inc))
 				break;
 
+			if (!fifo_empty(&ca->free_inc) &&
+			    !fifo_full(&ca->free[RESERVE_MOVINGGC]))
+				break;
+
+			/*
+			 * copygc may be waiting until either its reserve fills
+			 * up, or we can't make forward progress:
+			 */
+			ca->allocator_blocked = true;
+			closure_wake_up(&c->freelist_wait);
+
 			if (wait_buckets_available(c, ca)) {
 				up_read(&c->gc_lock);
 				return 0;
 			}
 		}
+
+		ca->allocator_blocked = false;
 		up_read(&c->gc_lock);
 
 		sort_free_inc(c, ca);
