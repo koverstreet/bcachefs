@@ -3518,6 +3518,8 @@ EXPORT_SYMBOL drivers/ssb/ssb 0x00000000	ssb_device_enable
 EXPORT_SYMBOL drivers/ssb/ssb 0x00000000	ssb_device_is_enabled
 EXPORT_SYMBOL drivers/ssb/ssb 0x00000000	ssb_dma_translation
 EXPORT_SYMBOL drivers/ssb/ssb 0x00000000	ssb_driver_unregister
+EXPORT_SYMBOL drivers/ssb/ssb 0x00000000	ssb_pcicore_dev_irqvecs_enable
+EXPORT_SYMBOL drivers/ssb/ssb 0x00000000	ssb_pcihost_register
 EXPORT_SYMBOL drivers/ssb/ssb 0x00000000	ssb_pmu_set_ldo_paref
 EXPORT_SYMBOL drivers/ssb/ssb 0x00000000	ssb_pmu_set_ldo_voltage
 EXPORT_SYMBOL drivers/ssb/ssb 0x00000000	ssb_set_devtypedata
@@ -11891,7 +11893,6 @@ EXPORT_SYMBOL_GPL crypto/mcryptd 0x00000000	mcryptd_free_ahash
 EXPORT_SYMBOL_GPL crypto/poly1305_generic 0x00000000	crypto_poly1305_final
 EXPORT_SYMBOL_GPL crypto/poly1305_generic 0x00000000	crypto_poly1305_init
 EXPORT_SYMBOL_GPL crypto/poly1305_generic 0x00000000	crypto_poly1305_setdesckey
-EXPORT_SYMBOL_GPL crypto/poly1305_generic 0x00000000	crypto_poly1305_setkey
 EXPORT_SYMBOL_GPL crypto/poly1305_generic 0x00000000	crypto_poly1305_update
 EXPORT_SYMBOL_GPL crypto/serpent_generic 0x00000000	__serpent_decrypt
 EXPORT_SYMBOL_GPL crypto/serpent_generic 0x00000000	__serpent_encrypt
@@ -17763,7 +17764,6 @@ EXPORT_SYMBOL_GPL vmlinux 0x00000000	__hwspin_unlock
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	__i2c_board_list
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	__i2c_board_lock
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	__i2c_first_dynamic_bus_num
-EXPORT_SYMBOL_GPL vmlinux 0x00000000	__ibp_barrier
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	__inet_inherit_port
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	__inet_lookup_established
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	__inet_lookup_listener
@@ -18799,6 +18799,7 @@ EXPORT_SYMBOL_GPL vmlinux 0x00000000	crypto_grab_spawn
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	crypto_has_ahash
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	crypto_has_alg
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	crypto_has_skcipher2
+EXPORT_SYMBOL_GPL vmlinux 0x00000000	crypto_hash_alg_has_setkey
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	crypto_hash_walk_done
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	crypto_hash_walk_first
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	crypto_il_tab
