@@ -23,7 +23,7 @@ def add_entry(entry):
         combo = sorted(combo)
 
         if len(combo) == 0:
-            if entry.get('title', "").startswith('UBUNTU'):
+            if entry.get('subject', "").startswith('UBUNTU'):
                 combo = '__packaging__'
             else:
                 combo = '__mainline__'
