@@ -2967,7 +2967,7 @@ int bch2_fs_journal_init(struct journal *j)
 
 	j->buf[0].size		= JOURNAL_ENTRY_SIZE_MIN;
 	j->buf[1].size		= JOURNAL_ENTRY_SIZE_MIN;
-	j->write_delay_ms	= 100;
+	j->write_delay_ms	= 1000;
 	j->reclaim_delay_ms	= 100;
 
 	bkey_extent_init(&j->key);
