@@ -947,7 +947,7 @@ enum btree_validate_ret {
 
 #define btree_err(type, c, b, i, msg, ...)				\
 ({									\
-	char buf[200], *out = buf, *end = out + sizeof(buf);		\
+	char _buf[200], *out = _buf, *end = out + sizeof(_buf);		\
 									\
 	out += btree_err_msg(c, b, i, b->written, write, out, end - out);\
 	out += scnprintf(out, end - out, ": " msg, ##__VA_ARGS__);	\
@@ -955,9 +955,9 @@ enum btree_validate_ret {
 	if (type == BTREE_ERR_FIXABLE &&				\
 	    write == READ &&						\
 	    !test_bit(BCH_FS_INITIAL_GC_DONE, &c->flags)) {		\
-		mustfix_fsck_err(c, "%s", buf);				\
+		mustfix_fsck_err(c, "%s", _buf);			\
 	} else {							\
-		bch_err(c, "%s", buf);					\
+		bch_err(c, "%s", _buf);					\
 									\
 		switch (type) {						\
 		case BTREE_ERR_FIXABLE:					\
