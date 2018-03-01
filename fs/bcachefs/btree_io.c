@@ -947,7 +947,7 @@ enum btree_validate_ret {
 
 #define btree_err(type, c, b, i, msg, ...)				\
 ({									\
-	char _buf[200], *out = _buf, *end = out + sizeof(_buf);		\
+	char _buf[300], *out = _buf, *end = out + sizeof(_buf);		\
 									\
 	out += btree_err_msg(c, b, i, b->written, write, out, end - out);\
 	out += scnprintf(out, end - out, ": " msg, ##__VA_ARGS__);	\
@@ -1103,7 +1103,7 @@ static int validate_bset(struct bch_fs *c, struct btree *b,
 
 			bch2_bkey_val_to_text(c, type, buf, sizeof(buf), u);
 			btree_err(BTREE_ERR_FIXABLE, c, b, i,
-				  "invalid bkey %s: %s", buf, invalid);
+				  "invalid bkey:\n%s\n%s", buf, invalid);
 
 			i->u64s = cpu_to_le16(le16_to_cpu(i->u64s) - k->u64s);
 			memmove_u64s_down(k, bkey_next(k),
