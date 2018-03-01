@@ -1192,7 +1192,6 @@ int bch2_btree_node_read_done(struct bch_fs *c, struct btree *b, bool have_retry
 
 			sectors = vstruct_sectors(b->data, c->block_bits);
 
-			set_btree_bset(b, b->set, &b->data->keys);
 			btree_node_set_format(b, b->data->format);
 		} else {
 			bne = write_block(b);
@@ -1257,6 +1256,8 @@ int bch2_btree_node_read_done(struct bch_fs *c, struct btree *b, bool have_retry
 
 	sorted = btree_bounce_alloc(c, btree_page_order(c), &used_mempool);
 	sorted->keys.u64s = 0;
+
+	set_btree_bset(b, b->set, &b->data->keys);
 
 	b->nr = btree_node_is_extents(b)
 		? bch2_extent_sort_fix_overlapping(c, &sorted->keys, b, iter)
