@@ -10,4 +10,5 @@ awk -F'	' '
 	/^.\//				{ file=$1; sub(":.*", "", file); sub("^.*/", "", file); }
 	/^[0-9a-f][0-9a-f]* <.*>:/	{ tag=$1; sub(".*<", "", tag); sub(">.*", "", tag); tag=file " " tag; }
 	$3 ~ /(call|jmp)q?  *\*%/	{ print(tag " " $3); }
-'
+' | \
+	grep -v " \*%cs:0x"		# elide 32bit code-segment absolute offsets.
