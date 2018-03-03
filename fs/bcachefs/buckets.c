@@ -285,6 +285,17 @@ static inline int is_unavailable_bucket(struct bucket_mark m)
 	return !is_available_bucket(m);
 }
 
+static inline int is_fragmented_bucket(struct bucket_mark m,
+				       struct bch_dev *ca)
+{
+	if (!m.owned_by_allocator &&
+	    m.data_type == BCH_DATA_USER &&
+	    bucket_sectors_used(m))
+		return max_t(int, 0, (int) ca->mi.bucket_size -
+			     bucket_sectors_used(m));
+	return 0;
+}
+
 static inline enum bch_data_type bucket_type(struct bucket_mark m)
 {
 	return m.cached_sectors && !m.dirty_sectors
@@ -361,6 +372,8 @@ static void bch2_dev_usage_update(struct bch_fs *c, struct bch_dev *ca,
 	dev_usage->sectors[new.data_type] += new.dirty_sectors;
 	dev_usage->sectors[BCH_DATA_CACHED] +=
 		(int) new.cached_sectors - (int) old.cached_sectors;
+	dev_usage->sectors_fragmented +=
+		is_fragmented_bucket(new, ca) - is_fragmented_bucket(old, ca);
 
 	if (!is_available_bucket(old) && is_available_bucket(new))
 		bch2_wake_allocator(ca);
