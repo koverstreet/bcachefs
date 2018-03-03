@@ -53,6 +53,7 @@ struct bch_dev_usage {
 
 	/* _compressed_ sectors: */
 	u64			sectors[BCH_DATA_NR];
+	u64			sectors_fragmented;
 };
 
 /* kill, switch to bch_data_type? */

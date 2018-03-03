@@ -213,8 +213,9 @@ static int bch2_copygc_thread(void *arg)
 	struct bch_dev *ca = arg;
 	struct bch_fs *c = ca->fs;
 	struct io_clock *clock = &c->io_clock[WRITE];
+	struct bch_dev_usage usage;
 	unsigned long last;
-	u64 available, want, next;
+	u64 available, fragmented, reserve, next;
 
 	set_freezable();
 
@@ -223,16 +224,32 @@ static int bch2_copygc_thread(void *arg)
 			break;
 
 		last = atomic_long_read(&clock->now);
+
+		reserve = div64_u64((ca->mi.nbuckets - ca->mi.first_bucket) *
+				 ca->mi.bucket_size *
+				 c->opts.gc_reserve_percent, 200);
+
+		usage = bch2_dev_usage_read(c, ca);
+
 		/*
 		 * don't start copygc until less than half the gc reserve is
 		 * available:
 		 */
-		available = dev_buckets_available(c, ca);
-		want = div64_u64((ca->mi.nbuckets - ca->mi.first_bucket) *
-				 c->opts.gc_reserve_percent, 200);
-		if (available > want) {
-			next = last + (available - want) *
-				ca->mi.bucket_size;
+		available = __dev_buckets_available(ca, usage) *
+			ca->mi.bucket_size;
+		if (available > reserve) {
+			next = last + available - reserve;
+			bch2_kthread_io_clock_wait(clock, next);
+			continue;
+		}
+
+		/*
+		 * don't start copygc until there's more than half the copygc
+		 * reserve of fragmented space:
+		 */
+		fragmented = usage.sectors_fragmented;
+		if (fragmented < reserve) {
+			next = last + reserve - fragmented;
 			bch2_kthread_io_clock_wait(clock, next);
 			continue;
 		}
