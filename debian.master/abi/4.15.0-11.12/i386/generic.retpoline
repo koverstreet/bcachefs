@@ -1,3 +1,4 @@
+hpwdt.ko asminline_call call   *0xc(%ebp)
 kvm-intel.ko vmx_handle_external_intr call   *%eax
 kvm.ko em_loop call   *%edx
 kvm.ko fastop call   *%esi
@@ -161,6 +162,7 @@ vmlinux io_apic_init_mappings call   *%edi
 vmlinux kernel_init_freeable call   *%edx
 vmlinux lapic_cal_handler call   *%edx
 vmlinux load_uefi_certs call   *%esi
+vmlinux machine_real_restart jmp    *0x1c(%edx)
 vmlinux mcheck_intel_therm_init call   *%edx
 vmlinux mem_init call   *%ebx
 vmlinux mem_init call   *%ebx
