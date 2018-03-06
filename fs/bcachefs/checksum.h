@@ -109,14 +109,6 @@ static inline bool bch2_checksum_type_valid(const struct bch_fs *c,
 	return true;
 }
 
-static const unsigned bch_crc_bytes[] = {
-	[BCH_CSUM_NONE]				= 0,
-	[BCH_CSUM_CRC32C]			= 4,
-	[BCH_CSUM_CRC64]			= 8,
-	[BCH_CSUM_CHACHA20_POLY1305_80]		= 10,
-	[BCH_CSUM_CHACHA20_POLY1305_128]	= 16,
-};
-
 /* returns true if not equal */
 static inline bool bch2_crc_cmp(struct bch_csum l, struct bch_csum r)
 {
