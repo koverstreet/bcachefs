@@ -121,11 +121,11 @@ CONFIG_64BIT                                    policy<{'amd64': 'y', 'arm64': '
 
 # Menu: Boot options
 CONFIG_CMDLINE                                  policy<{'arm64': '"console=ttyAMA0"', 'armhf': '""'}>
+CONFIG_CMDLINE_FORCE                            policy<{'arm64': 'n'}>
+CONFIG_EFI                                      policy<{'amd64': 'y', 'arm64': 'y', 'armhf': 'y', 'i386': 'y'}>
+CONFIG_DMI                                      policy<{'amd64': 'y', 'arm64': 'y', 'armhf': 'y', 'i386': 'y'}>
 CONFIG_KEXEC                                    policy<{'amd64': 'y', 'arm64': 'y', 'armhf': 'y', 'i386': 'y', 'ppc64el': 'y', 's390x': 'y'}>
 CONFIG_CRASH_DUMP                               policy<{'amd64': 'y', 'arm64': 'y', 'armhf': 'y', 'i386': 'y', 'ppc64el': 'y', 's390x': 'y'}>
-CONFIG_EFI                                      policy<{'amd64': 'y', 'arm64': 'y', 'armhf': 'n', 'i386': 'y'}>
-CONFIG_DMI                                      policy<{'amd64': 'y', 'arm64': 'y', 'i386': 'y'}>
-CONFIG_CMDLINE_FORCE                            policy<{'arm64': 'n'}>
 #
 CONFIG_CRASH_DUMP                               mark<ENFORCED> note<LP:1363180>
 CONFIG_EFI                                      flag<REVIEW>
@@ -481,8 +481,8 @@ CONFIG_X509_CERTIFICATE_PARSER                  note<module signing>
 CONFIG_MODULE_SIG_KEY                           policy<{'amd64': '"certs/signing_key.pem"', 'arm64': '"certs/signing_key.pem"', 'armhf': '"certs/signing_key.pem"', 'i386': '"certs/signing_key.pem"', 'ppc64el': '"certs/signing_key.pem"', 's390x': '"certs/signing_key.pem"'}>
 CONFIG_SYSTEM_BLACKLIST_KEYRING                 policy<{'amd64': 'y', 'arm64': 'y', 'armhf': 'y', 'i386': 'y', 'ppc64el': 'y', 's390x': 'y'}>
 CONFIG_SYSTEM_BLACKLIST_HASH_LIST               policy<{'amd64': '""', 'arm64': '""', 'armhf': '""', 'i386': '""', 'ppc64el': '""', 's390x': '""'}>
-CONFIG_EFI_SIGNATURE_LIST_PARSER                policy<{'amd64': 'y', 'arm64': 'y', 'i386': 'y'}>
-CONFIG_LOAD_UEFI_KEYS                           policy<{'amd64': 'y', 'arm64': 'y', 'i386': 'y'}>
+CONFIG_EFI_SIGNATURE_LIST_PARSER                policy<{'amd64': 'y', 'arm64': 'y', 'armhf': 'y', 'i386': 'y'}>
+CONFIG_LOAD_UEFI_KEYS                           policy<{'amd64': 'y', 'arm64': 'y', 'armhf': 'y', 'i386': 'y'}>
 #
 CONFIG_EFI_SIGNATURE_LIST_PARSER                mark<ENFORCED>
 CONFIG_LOAD_UEFI_KEYS                           mark<ENFORCED>
@@ -1952,7 +1952,7 @@ CONFIG_FB_IMSTT                                 policy<{'amd64': 'y', 'arm64': '
 CONFIG_FB_VGA16                                 policy<{'amd64': 'm', 'i386': 'm', 'ppc64el': 'm'}>
 CONFIG_FB_UVESA                                 policy<{'amd64': 'm', 'arm64': 'm', 'armhf': 'm', 'i386': 'm', 'ppc64el': 'm'}>
 CONFIG_FB_VESA                                  policy<{'amd64': 'y', 'i386': 'y'}>
-CONFIG_FB_EFI                                   policy<{'amd64': 'y', 'arm64': 'y', 'i386': 'y'}>
+CONFIG_FB_EFI                                   policy<{'amd64': 'y', 'arm64': 'y', 'armhf': 'y', 'i386': 'y'}>
 CONFIG_FB_N411                                  policy<{'amd64': 'm', 'i386': 'm'}>
 CONFIG_FB_HGA                                   policy<{'amd64': 'm', 'i386': 'm'}>
 CONFIG_FB_OPENCORES                             policy<{'amd64': 'm', 'arm64': 'm', 'armhf': 'm', 'i386': 'm', 'ppc64el': 'm'}>
@@ -6221,7 +6221,7 @@ CONFIG_RTC_DRV_DS2404                           policy<{'amd64': 'm', 'arm64': '
 CONFIG_RTC_DRV_DA9052                           policy<{'amd64': 'm', 'arm64': 'm', 'armhf': 'm', 'i386': 'm', 'ppc64el': 'm'}>
 CONFIG_RTC_DRV_DA9055                           policy<{'amd64': 'm', 'arm64': 'm', 'armhf': 'm', 'i386': 'm', 'ppc64el': 'm'}>
 CONFIG_RTC_DRV_DA9063                           policy<{'amd64': 'm', 'arm64': 'm', 'armhf': 'm', 'i386': 'm', 'ppc64el': 'm'}>
-CONFIG_RTC_DRV_EFI                              policy<{'arm64': 'y'}>
+CONFIG_RTC_DRV_EFI                              policy<{'arm64': 'y', 'armhf': 'y'}>
 CONFIG_RTC_DRV_STK17TA8                         policy<{'amd64': 'm', 'arm64': 'm', 'armhf': 'm', 'i386': 'm', 'ppc64el': 'm'}>
 CONFIG_RTC_DRV_M48T86                           policy<{'amd64': 'm', 'arm64': 'm', 'armhf': 'm', 'i386': 'm', 'ppc64el': 'm'}>
 CONFIG_RTC_DRV_M48T35                           policy<{'amd64': 'm', 'arm64': 'm', 'armhf': 'm', 'i386': 'm', 'ppc64el': 'm'}>
@@ -9092,7 +9092,7 @@ CONFIG_TMPFS_POSIX_ACL                          policy<{'amd64': 'y', 'arm64': '
 CONFIG_TMPFS_XATTR                              policy<{'amd64': 'y', 'arm64': 'y', 'armhf': 'y', 'i386': 'y', 'ppc64el': 'y', 's390x': 'y'}>
 CONFIG_HUGETLBFS                                policy<{'amd64': 'y', 'arm64': 'y', 'armhf-generic-lpae': 'y', 'i386': 'y', 'ppc64el': 'y', 's390x': 'y'}>
 CONFIG_CONFIGFS_FS                              policy<{'amd64': 'y', 'arm64': 'y', 'armhf': 'y', 'i386': 'y', 'ppc64el': 'y', 's390x': 'y'}>
-CONFIG_EFIVAR_FS                                policy<{'amd64': 'y', 'arm64': 'y', 'i386': 'y'}>
+CONFIG_EFIVAR_FS                                policy<{'amd64': 'y', 'arm64': 'y', 'armhf': 'y', 'i386': 'y'}>
 #
 CONFIG_CONFIGFS_FS                              flag<REVIEW>
 CONFIG_EFIVAR_FS                                note<needed for variable EFI update>
@@ -9146,8 +9146,8 @@ CONFIG_EDD_OFF                                  policy<{'amd64': 'y', 'i386': 'y
 CONFIG_FIRMWARE_MEMMAP                          policy<{'amd64': 'y', 'arm64': 'y', 'armhf': 'y', 'i386': 'y'}>
 CONFIG_DELL_RBU                                 policy<{'amd64': 'm', 'i386': 'm'}>
 CONFIG_DCDBAS                                   policy<{'amd64': 'm', 'i386': 'm'}>
-CONFIG_DMIID                                    policy<{'amd64': 'y', 'arm64': 'y', 'i386': 'y'}>
-CONFIG_DMI_SYSFS                                policy<{'amd64': 'm', 'arm64': 'm', 'i386': 'm'}>
+CONFIG_DMIID                                    policy<{'amd64': 'y', 'arm64': 'y', 'armhf': 'y', 'i386': 'y'}>
+CONFIG_DMI_SYSFS                                policy<{'amd64': 'm', 'arm64': 'm', 'armhf': 'm', 'i386': 'm'}>
 CONFIG_ISCSI_IBFT_FIND                          policy<{'amd64': 'y', 'i386': 'y'}>
 CONFIG_ISCSI_IBFT                               policy<{'amd64': 'm', 'i386': 'm'}>
 CONFIG_RASPBERRYPI_FIRMWARE                     policy<{'arm64': 'y'}>
@@ -9156,17 +9156,17 @@ CONFIG_FW_CFG_SYSFS_CMDLINE                     policy<{'amd64': 'n', 'arm64': '
 CONFIG_QCOM_SCM_DOWNLOAD_MODE_DEFAULT           policy<{'arm64': 'n', 'armhf': 'n'}>
 
 # Menu: Firmware Drivers >> EFI (Extensible Firmware Interface) Support
-CONFIG_EFI_VARS                                 policy<{'amd64': 'y', 'arm64': 'y', 'i386': 'y'}>
-CONFIG_EFI_VARS_PSTORE                          policy<{'amd64': 'm', 'arm64': 'm', 'i386': 'm'}>
-CONFIG_EFI_VARS_PSTORE_DEFAULT_DISABLE          policy<{'amd64': 'n', 'arm64': 'n', 'i386': 'n'}>
+CONFIG_EFI_VARS                                 policy<{'amd64': 'y', 'arm64': 'y', 'armhf': 'y', 'i386': 'y'}>
+CONFIG_EFI_VARS_PSTORE                          policy<{'amd64': 'm', 'arm64': 'm', 'armhf': 'm', 'i386': 'm'}>
+CONFIG_EFI_VARS_PSTORE_DEFAULT_DISABLE          policy<{'amd64': 'n', 'arm64': 'n', 'armhf': 'n', 'i386': 'n'}>
 CONFIG_EFI_RUNTIME_MAP                          policy<{'amd64': 'y', 'i386': 'y'}>
 CONFIG_EFI_FAKE_MEMMAP                          policy<{'amd64': 'n', 'i386': 'n'}>
-CONFIG_EFI_BOOTLOADER_CONTROL                   policy<{'amd64': 'm', 'arm64': 'm', 'i386': 'm'}>
-CONFIG_EFI_CAPSULE_LOADER                       policy<{'amd64': 'm', 'arm64': 'm', 'i386': 'y'}>
+CONFIG_EFI_BOOTLOADER_CONTROL                   policy<{'amd64': 'm', 'arm64': 'm', 'armhf': 'm', 'i386': 'm'}>
+CONFIG_EFI_CAPSULE_LOADER                       policy<{'amd64': 'm', 'arm64': 'm', 'armhf': 'm', 'i386': 'y'}>
 CONFIG_EFI_CAPSULE_QUIRK_QUARK_CSH              policy<{'i386': 'y'}>
-CONFIG_EFI_TEST                                 policy<{'amd64': 'm', 'arm64': 'm', 'i386': 'm'}>
+CONFIG_EFI_TEST                                 policy<{'amd64': 'm', 'arm64': 'm', 'armhf': 'm', 'i386': 'm'}>
 CONFIG_APPLE_PROPERTIES                         policy<{'amd64': 'y', 'i386': 'y'}>
-CONFIG_RESET_ATTACK_MITIGATION                  policy<{'amd64': 'y', 'arm64': 'y', 'i386': 'y'}>
+CONFIG_RESET_ATTACK_MITIGATION                  policy<{'amd64': 'y', 'arm64': 'y', 'armhf': 'y', 'i386': 'y'}>
 #
 CONFIG_EFI_VARS                                 mark<ENFORCED> note<EFI boot requirement (d-i) LP:#837332>
 
@@ -11248,7 +11248,7 @@ CONFIG_X86_SMAP                                 policy<{'amd64': 'y', 'i386': 'y
 CONFIG_X86_INTEL_UMIP                           policy<{'amd64': 'y', 'i386': 'y'}>
 CONFIG_X86_INTEL_MPX                            policy<{'amd64': 'y'}>
 CONFIG_X86_INTEL_MEMORY_PROTECTION_KEYS         policy<{'amd64': 'y'}>
-CONFIG_EFI_STUB                                 policy<{'amd64': 'y', 'arm64': 'y', 'i386': 'y'}>
+CONFIG_EFI_STUB                                 policy<{'amd64': 'y', 'arm64': 'y', 'armhf': 'y', 'i386': 'y'}>
 CONFIG_EFI_MIXED                                policy<{'amd64': 'y'}>
 CONFIG_KEXEC_VERIFY_SIG                         policy<{'amd64': 'y'}>
 CONFIG_KEXEC_BZIMAGE_VERIFY_SIG                 policy<{'amd64': 'y'}>
@@ -11503,9 +11503,9 @@ CONFIG_HARDENED_USERCOPY                        policy<{'amd64': 'y', 'arm64': '
 CONFIG_HARDENED_USERCOPY_PAGESPAN               policy<{'amd64': 'n', 'arm64': 'n', 'armhf': 'n', 'i386': 'n', 'ppc64el': 'n', 's390x': 'n'}>
 CONFIG_FORTIFY_SOURCE                           policy<{'amd64': 'y', 'arm64': 'y', 'i386': 'y', 'ppc64el': 'y', 's390x': 'y'}>
 CONFIG_STATIC_USERMODEHELPER                    policy<{'amd64': 'n', 'arm64': 'n', 'armhf': 'n', 'i386': 'n', 'ppc64el': 'n', 's390x': 'n'}>
-CONFIG_LOCK_DOWN_KERNEL                         policy<{'amd64': 'y', 'arm64': 'n', 'armhf': 'n', 'i386': 'y', 'ppc64el': 'n', 's390x': 'n'}>
-CONFIG_ALLOW_LOCKDOWN_LIFT_BY_SYSRQ             policy<{'amd64': 'y', 'i386': 'y'}>
-CONFIG_LOCK_DOWN_IN_EFI_SECURE_BOOT             policy<{'amd64': 'y', 'arm64': 'n', 'i386': 'y'}>
+CONFIG_LOCK_DOWN_KERNEL                         policy<{'amd64': 'y', 'arm64': 'y', 'armhf': 'y', 'i386': 'y', 'ppc64el': 'n', 's390x': 'n'}>
+CONFIG_ALLOW_LOCKDOWN_LIFT_BY_SYSRQ             policy<{'amd64': 'y', 'arm64': 'n', 'armhf': 'n', 'i386': 'y'}>
+CONFIG_LOCK_DOWN_IN_EFI_SECURE_BOOT             policy<{'amd64': 'y', 'arm64': 'y', 'armhf': 'y', 'i386': 'y'}>
 #
 CONFIG_LOCK_DOWN_IN_EFI_SECURE_BOOT             mark<ENFORCED>
 CONFIG_ALLOW_LOCKDOWN_LIFT_BY_SYSRQ             mark<ENFORCED>
