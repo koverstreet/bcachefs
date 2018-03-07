@@ -174,7 +174,6 @@ static const char * const smbus_pnp_ids[] = {
 	"LEN004a", /* W541 */
 	"LEN0073", /* X1 Carbon 5 */
 	"LEN200f", /* T450s */
-	"LEN2018", /* T460p */
 	"LEN0092", /* X1 Carbon 6 */
 	"LEN0096", /* X280 */
 	NULL
