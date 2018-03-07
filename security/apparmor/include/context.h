@@ -87,6 +87,11 @@ static inline struct aa_label *aa_get_newest_cred_label(const struct cred *cred)
 	return aa_get_newest_label(aa_cred_raw_label(cred));
 }
 
+static inline struct aa_file_ctx *apparmor_file(const struct file *file)
+{
+	return file->f_security;
+}
+
 /**
  * __aa_task_raw_label - retrieve another task's label
  * @task: task to query  (NOT NULL)

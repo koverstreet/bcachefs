@@ -32,7 +32,7 @@ struct path;
 				 AA_MAY_CHMOD | AA_MAY_CHOWN | AA_MAY_LOCK | \
 				 AA_EXEC_MMAP | AA_MAY_LINK)
 
-#define file_ctx(X) ((struct aa_file_ctx *)(X)->f_security)
+#define file_ctx(X) apparmor_file(X)
 
 /* struct aa_file_ctx - the AppArmor context the file was opened in
  * @lock: lock to update the ctx
