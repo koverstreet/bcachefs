@@ -50,8 +50,6 @@ void aa_free_task_context(struct aa_task_ctx *ctx)
 		aa_put_label(ctx->label);
 		aa_put_label(ctx->previous);
 		aa_put_label(ctx->onexec);
-
-		kzfree(ctx);
 	}
 }
 

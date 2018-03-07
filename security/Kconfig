@@ -45,6 +45,17 @@ config SECURITY_WRITABLE_HOOKS
 	bool
 	default n
 
+config SECURITY_LSM_DEBUG
+	bool "Enable debugging of the LSM infrastructure"
+	depends on SECURITY
+	help
+	  This allows you to choose debug messages related to
+	  security modules configured into your kernel. These
+	  messages may be helpful in determining how a security
+	  module is using security blobs.
+
+	  If you are unsure how to answer this question, answer N.
+
 config SECURITYFS
 	bool "Enable the securityfs filesystem"
 	help

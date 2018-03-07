@@ -18,11 +18,12 @@
 #include <linux/cred.h>
 #include <linux/slab.h>
 #include <linux/sched.h>
+#include <linux/lsm_hooks.h>
 
 #include "label.h"
 #include "policy_ns.h"
 
-#define cred_ctx(X) ((X)->security)
+#define cred_ctx(X) apparmor_cred(X)
 #define current_ctx() cred_ctx(current_cred())
 
 /**
@@ -54,6 +55,10 @@ int aa_set_current_hat(struct aa_label *label, u64 token);
 int aa_restore_previous_label(u64 cookie);
 struct aa_label *aa_get_task_label(struct task_struct *task);
 
+static inline struct aa_task_ctx *apparmor_cred(const struct cred *cred)
+{
+	return cred->security;
+}
 
 /**
  * aa_cred_raw_label - obtain cred's label
@@ -65,7 +70,7 @@ struct aa_label *aa_get_task_label(struct task_struct *task);
  */
 static inline struct aa_label *aa_cred_raw_label(const struct cred *cred)
 {
-	struct aa_task_ctx *ctx = cred_ctx(cred);
+	struct aa_task_ctx *ctx = apparmor_cred(cred);
 
 	AA_BUG(!ctx || !ctx->label);
 	return ctx->label;

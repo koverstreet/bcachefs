@@ -58,22 +58,6 @@ DEFINE_PER_CPU(struct aa_buffers, aa_buffers);
 static void apparmor_cred_free(struct cred *cred)
 {
 	aa_free_task_context(cred_ctx(cred));
-	cred_ctx(cred) = NULL;
-}
-
-/*
- * allocate the apparmor part of blank credentials
- */
-static int apparmor_cred_alloc_blank(struct cred *cred, gfp_t gfp)
-{
-	/* freed by apparmor_cred_free */
-	struct aa_task_ctx *ctx = aa_alloc_task_context(gfp);
-
-	if (!ctx)
-		return -ENOMEM;
-
-	cred_ctx(cred) = ctx;
-	return 0;
 }
 
 /*
@@ -82,14 +66,7 @@ static int apparmor_cred_alloc_blank(struct cred *cred, gfp_t gfp)
 static int apparmor_cred_prepare(struct cred *new, const struct cred *old,
 				 gfp_t gfp)
 {
-	/* freed by apparmor_cred_free */
-	struct aa_task_ctx *ctx = aa_alloc_task_context(gfp);
-
-	if (!ctx)
-		return -ENOMEM;
-
-	aa_dup_task_context(ctx, cred_ctx(old));
-	cred_ctx(new) = ctx;
+	aa_dup_task_context(cred_ctx(new), cred_ctx(old));
 	return 0;
 }
 
@@ -1143,6 +1120,10 @@ static void apparmor_sock_graft(struct sock *sk, struct socket *parent)
 		ctx->label = aa_get_current_label();
 }
 
+struct lsm_blob_sizes apparmor_blob_sizes = {
+	.lbs_cred = sizeof(struct aa_task_ctx),
+};
+
 static struct security_hook_list apparmor_hooks[] __lsm_ro_after_init = {
 	LSM_HOOK_INIT(ptrace_access_check, apparmor_ptrace_access_check),
 	LSM_HOOK_INIT(ptrace_traceme, apparmor_ptrace_traceme),
@@ -1204,7 +1185,6 @@ static struct security_hook_list apparmor_hooks[] __lsm_ro_after_init = {
 		      apparmor_socket_getpeersec_dgram),
 	LSM_HOOK_INIT(sock_graft, apparmor_sock_graft),
 
-	LSM_HOOK_INIT(cred_alloc_blank, apparmor_cred_alloc_blank),
 	LSM_HOOK_INIT(cred_free, apparmor_cred_free),
 	LSM_HOOK_INIT(cred_prepare, apparmor_cred_prepare),
 	LSM_HOOK_INIT(cred_transfer, apparmor_cred_transfer),
@@ -1460,12 +1440,10 @@ static int __init set_init_ctx(void)
 	struct cred *cred = (struct cred *)current->real_cred;
 	struct aa_task_ctx *ctx;
 
-	ctx = aa_alloc_task_context(GFP_KERNEL);
-	if (!ctx)
-		return -ENOMEM;
+	lsm_early_cred(cred);
+	ctx = apparmor_cred(cred);
 
 	ctx->label = aa_get_label(ns_unconfined(root_ns));
-	cred_ctx(cred) = ctx;
 
 	return 0;
 }
@@ -1549,7 +1527,17 @@ static inline int apparmor_init_sysctl(void)
 
 static int __init apparmor_init(void)
 {
+	static int finish;
 	int error;
+
+	if (!finish) {
+		if (apparmor_enabled && security_module_enable("apparmor"))
+			security_add_blobs(&apparmor_blob_sizes);
+		else
+			apparmor_enabled = false;
+		finish = 1;
+		return 0;
+	}
 
 	if (!apparmor_enabled || !security_module_enable("apparmor")) {
 		aa_info_message("AppArmor disabled by boot time parameter");
