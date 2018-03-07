@@ -28,7 +28,9 @@
 #include <linux/personality.h>
 #include <linux/backing-dev.h>
 #include <linux/string.h>
+#include <linux/msg.h>
 #include <net/flow.h>
+#include <net/sock.h>
 
 #define MAX_LSM_EVM_XATTR	2
 
@@ -39,6 +41,7 @@ struct security_hook_heads security_hook_heads __lsm_ro_after_init;
 static ATOMIC_NOTIFIER_HEAD(lsm_notifier_chain);
 
 static struct kmem_cache *lsm_file_cache;
+static struct kmem_cache *lsm_inode_cache;
 
 char *lsm_names;
 static struct lsm_blob_sizes blob_sizes;
@@ -92,6 +95,10 @@ int __init security_init(void)
 		lsm_file_cache = kmem_cache_create("lsm_file_cache",
 						   blob_sizes.lbs_file, 0,
 						   SLAB_PANIC, NULL);
+	if (blob_sizes.lbs_inode)
+		lsm_inode_cache = kmem_cache_create("lsm_inode_cache",
+						    blob_sizes.lbs_inode, 0,
+						    SLAB_PANIC, NULL);
 	/*
 	 * The second call to a module specific init function
 	 * adds hooks to the hook lists and does any other early
@@ -102,8 +109,16 @@ int __init security_init(void)
 #ifdef CONFIG_SECURITY_LSM_DEBUG
 	pr_info("LSM: cred blob size       = %d\n", blob_sizes.lbs_cred);
 	pr_info("LSM: file blob size       = %d\n", blob_sizes.lbs_file);
+	pr_info("LSM: inode blob size      = %d\n", blob_sizes.lbs_inode);
+	pr_info("LSM: ipc blob size        = %d\n", blob_sizes.lbs_ipc);
+#ifdef CONFIG_KEYS
+	pr_info("LSM: key blob size        = %d\n", blob_sizes.lbs_key);
+#endif /* CONFIG_KEYS */
+	pr_info("LSM: msg_msg blob size    = %d\n", blob_sizes.lbs_msg_msg);
+	pr_info("LSM: sock blob size       = %d\n", blob_sizes.lbs_sock);
+	pr_info("LSM: superblock blob size = %d\n", blob_sizes.lbs_superblock);
 	pr_info("LSM: task blob size       = %d\n", blob_sizes.lbs_task);
-#endif
+#endif /* CONFIG_SECURITY_LSM_DEBUG */
 
 	return 0;
 }
@@ -278,7 +293,19 @@ void __init security_add_blobs(struct lsm_blob_sizes *needed)
 {
 	lsm_set_size(&needed->lbs_cred, &blob_sizes.lbs_cred);
 	lsm_set_size(&needed->lbs_file, &blob_sizes.lbs_file);
+	lsm_set_size(&needed->lbs_ipc, &blob_sizes.lbs_ipc);
+	lsm_set_size(&needed->lbs_key, &blob_sizes.lbs_key);
+	lsm_set_size(&needed->lbs_msg_msg, &blob_sizes.lbs_msg_msg);
+	lsm_set_size(&needed->lbs_sock, &blob_sizes.lbs_sock);
+	lsm_set_size(&needed->lbs_superblock, &blob_sizes.lbs_superblock);
 	lsm_set_size(&needed->lbs_task, &blob_sizes.lbs_task);
+	/*
+	 * The inode blob gets an rcu_head in addition to
+	 * what the modules might need.
+	 */
+	if (needed->lbs_inode && blob_sizes.lbs_inode == 0)
+		blob_sizes.lbs_inode = sizeof(struct rcu_head);
+	lsm_set_size(&needed->lbs_inode, &blob_sizes.lbs_inode);
 }
 
 /**
@@ -319,6 +346,154 @@ int lsm_task_alloc(struct task_struct *task)
 
 	task->security = kzalloc(blob_sizes.lbs_task, GFP_KERNEL);
 	if (task->security == NULL)
+		return -ENOMEM;
+	return 0;
+}
+
+/**
+ * lsm_inode_alloc - allocate a composite inode blob
+ * @inode: the inode that needs a blob
+ *
+ * Allocate the inode blob for all the modules
+ *
+ * Returns 0, or -ENOMEM if memory can't be allocated.
+ */
+int lsm_inode_alloc(struct inode *inode)
+{
+	if (!lsm_inode_cache) {
+		inode->i_security = NULL;
+		return 0;
+	}
+
+	inode->i_security = kmem_cache_zalloc(lsm_inode_cache, GFP_KERNEL);
+	if (inode->i_security == NULL)
+		return -ENOMEM;
+	return 0;
+}
+
+/**
+ * lsm_early_inode - during initialization allocate a composite inode blob
+ * @inode: the inode that needs a blob
+ *
+ * Allocate the inode blob for all the modules if it's not already there
+ */
+void lsm_early_inode(struct inode *inode)
+{
+	int rc;
+
+	if (inode == NULL)
+		panic("%s: NULL inode.\n", __func__);
+	if (inode->i_security != NULL)
+		return;
+	rc = lsm_inode_alloc(inode);
+	if (rc)
+		panic("%s: Early inode alloc failed.\n", __func__);
+}
+
+/**
+ * lsm_ipc_alloc - allocate a composite ipc blob
+ * @kip: the ipc that needs a blob
+ *
+ * Allocate the ipc blob for all the modules
+ *
+ * Returns 0, or -ENOMEM if memory can't be allocated.
+ */
+int lsm_ipc_alloc(struct kern_ipc_perm *kip)
+{
+	if (blob_sizes.lbs_ipc == 0) {
+		kip->security = NULL;
+		return 0;
+	}
+
+	kip->security = kzalloc(blob_sizes.lbs_ipc, GFP_KERNEL);
+	if (kip->security == NULL)
+		return -ENOMEM;
+	return 0;
+}
+
+#ifdef CONFIG_KEYS
+/**
+ * lsm_key_alloc - allocate a composite key blob
+ * @key: the key that needs a blob
+ *
+ * Allocate the key blob for all the modules
+ *
+ * Returns 0, or -ENOMEM if memory can't be allocated.
+ */
+int lsm_key_alloc(struct key *key)
+{
+	if (blob_sizes.lbs_key == 0) {
+		key->security = NULL;
+		return 0;
+	}
+
+	key->security = kzalloc(blob_sizes.lbs_key, GFP_KERNEL);
+	if (key->security == NULL)
+		return -ENOMEM;
+	return 0;
+}
+#endif /* CONFIG_KEYS */
+
+/**
+ * lsm_msg_msg_alloc - allocate a composite msg_msg blob
+ * @mp: the msg_msg that needs a blob
+ *
+ * Allocate the ipc blob for all the modules
+ *
+ * Returns 0, or -ENOMEM if memory can't be allocated.
+ */
+int lsm_msg_msg_alloc(struct msg_msg *mp)
+{
+	if (blob_sizes.lbs_msg_msg == 0) {
+		mp->security = NULL;
+		return 0;
+	}
+
+	mp->security = kzalloc(blob_sizes.lbs_msg_msg, GFP_KERNEL);
+	if (mp->security == NULL)
+		return -ENOMEM;
+	return 0;
+}
+
+/**
+ * lsm_sock_alloc - allocate a composite sock blob
+ * @sock: the sock that needs a blob
+ * @priority: allocation mode
+ *
+ * Allocate the sock blob for all the modules
+ *
+ * Returns 0, or -ENOMEM if memory can't be allocated.
+ */
+int lsm_sock_alloc(struct sock *sock, gfp_t priority)
+{
+	if (blob_sizes.lbs_sock == 0) {
+		sock->sk_security = NULL;
+		return 0;
+	}
+
+	sock->sk_security = kzalloc(blob_sizes.lbs_sock, priority);
+	if (sock->sk_security == NULL)
+		return -ENOMEM;
+	return 0;
+}
+
+/**
+ * lsm_superblock_alloc - allocate a composite superblock blob
+ * @sb: the superblock that needs a blob
+ *
+ * Allocate the superblock blob for all the modules
+ *
+ * Returns 0, or -ENOMEM if memory can't be allocated.
+ */
+int lsm_superblock_alloc(struct super_block *sb)
+{
+	if (blob_sizes.lbs_superblock == 0) {
+		sb->s_security = NULL;
+		return 0;
+	}
+
+	sb->s_security = kzalloc(blob_sizes.lbs_superblock, GFP_KERNEL);
+	if (sb->s_security == NULL)
 		return -ENOMEM;
 	return 0;
 }
@@ -490,12 +665,21 @@ void security_bprm_committed_creds(struct linux_binprm *bprm)
 
 int security_sb_alloc(struct super_block *sb)
 {
-	return call_int_hook(sb_alloc_security, 0, sb);
+	int rc = lsm_superblock_alloc(sb);
+
+	if (unlikely(rc))
+		return rc;
+	rc = call_int_hook(sb_alloc_security, 0, sb);
+	if (unlikely(rc))
+		security_sb_free(sb);
+	return rc;
 }
 
 void security_sb_free(struct super_block *sb)
 {
 	call_void_hook(sb_free_security, sb);
+	kfree(sb->s_security);
+	sb->s_security = NULL;
 }
 
 int security_sb_copy_data(char *orig, char *copy)
@@ -569,14 +753,40 @@ EXPORT_SYMBOL(security_sb_parse_opts_str);
 
 int security_inode_alloc(struct inode *inode)
 {
-	inode->i_security = NULL;
-	return call_int_hook(inode_alloc_security, 0, inode);
+	int rc = lsm_inode_alloc(inode);
+
+	if (unlikely(rc))
+		return rc;
+	rc = call_int_hook(inode_alloc_security, 0, inode);
+	if (unlikely(rc))
+		security_inode_free(inode);
+	return rc;
+}
+
+static void inode_free_by_rcu(struct rcu_head *head)
+{
+	/*
+	 * The rcu head is at the start of the inode blob
+	 */
+	kmem_cache_free(lsm_inode_cache, head);
 }
 
 void security_inode_free(struct inode *inode)
 {
 	integrity_inode_free(inode);
 	call_void_hook(inode_free_security, inode);
+	/*
+	 * The inode may still be referenced in a path walk and
+	 * a call to security_inode_permission() can be made
+	 * after inode_free_security() is called. Ideally, the VFS
+	 * wouldn't do this, but fixing that is a much harder
+	 * job. For now, simply free the i_security via RCU, and
+	 * leave the current inode->i_security pointer intact.
+	 * The inode will be freed after the RCU grace period too.
+	 */
+	if (inode->i_security)
+		call_rcu((struct rcu_head *)inode->i_security,
+				inode_free_by_rcu);
 }
 
 int security_dentry_init_security(struct dentry *dentry, int mode,
@@ -1017,7 +1227,7 @@ int security_file_alloc(struct file *file)
 {
 	int rc = lsm_file_alloc(file);
 
-	if (rc)
+	if (unlikely(rc))
 		return rc;
 	rc = call_int_hook(file_alloc_security, 0, file);
 	if (unlikely(rc))
@@ -1141,7 +1351,7 @@ int security_task_alloc(struct task_struct *task, unsigned long clone_flags)
 {
 	int rc = lsm_task_alloc(task);
 
-	if (rc)
+	if (unlikely(rc))
 		return rc;
 	rc = call_int_hook(task_alloc, 0, task, clone_flags);
 	if (unlikely(rc))
@@ -1161,7 +1371,7 @@ int security_cred_alloc_blank(struct cred *cred, gfp_t gfp)
 {
 	int rc = lsm_cred_alloc(cred, gfp);
 
-	if (rc)
+	if (unlikely(rc))
 		return rc;
 
 	rc = call_int_hook(cred_alloc_blank, 0, cred, gfp);
@@ -1182,7 +1392,7 @@ int security_prepare_creds(struct cred *new, const struct cred *old, gfp_t gfp)
 {
 	int rc = lsm_cred_alloc(new, gfp);
 
-	if (rc)
+	if (unlikely(rc))
 		return rc;
 
 	rc = call_int_hook(cred_prepare, 0, new, old, gfp);
@@ -1346,22 +1556,42 @@ void security_ipc_getsecid(struct kern_ipc_perm *ipcp, u32 *secid)
 
 int security_msg_msg_alloc(struct msg_msg *msg)
 {
-	return call_int_hook(msg_msg_alloc_security, 0, msg);
+	int rc = lsm_msg_msg_alloc(msg);
+
+	if (unlikely(rc))
+		return rc;
+	rc = call_int_hook(msg_msg_alloc_security, 0, msg);
+	if (unlikely(rc))
+		security_msg_msg_free(msg);
+	return rc;
 }
 
 void security_msg_msg_free(struct msg_msg *msg)
 {
 	call_void_hook(msg_msg_free_security, msg);
+	kfree(msg->security);
+	msg->security = NULL;
 }
 
 int security_msg_queue_alloc(struct msg_queue *msq)
 {
-	return call_int_hook(msg_queue_alloc_security, 0, msq);
+	int rc = lsm_ipc_alloc(&msq->q_perm);
+
+	if (unlikely(rc))
+		return rc;
+	rc = call_int_hook(msg_queue_alloc_security, 0, msq);
+	if (unlikely(rc))
+		security_msg_queue_free(msq);
+	return rc;
 }
 
 void security_msg_queue_free(struct msg_queue *msq)
 {
+	struct kern_ipc_perm *kip = &msq->q_perm;
+
 	call_void_hook(msg_queue_free_security, msq);
+	kfree(kip->security);
+	kip->security = NULL;
 }
 
 int security_msg_queue_associate(struct msg_queue *msq, int msqflg)
@@ -1388,12 +1618,23 @@ int security_msg_queue_msgrcv(struct msg_queue *msq, struct msg_msg *msg,
 
 int security_shm_alloc(struct shmid_kernel *shp)
 {
-	return call_int_hook(shm_alloc_security, 0, shp);
+	int rc = lsm_ipc_alloc(&shp->shm_perm);
+
+	if (unlikely(rc))
+		return rc;
+	rc = call_int_hook(shm_alloc_security, 0, shp);
+	if (unlikely(rc))
+		security_shm_free(shp);
+	return rc;
 }
 
 void security_shm_free(struct shmid_kernel *shp)
 {
+	struct kern_ipc_perm *kip = &shp->shm_perm;
+
 	call_void_hook(shm_free_security, shp);
+	kfree(kip->security);
+	kip->security = NULL;
 }
 
 int security_shm_associate(struct shmid_kernel *shp, int shmflg)
@@ -1413,12 +1654,23 @@ int security_shm_shmat(struct shmid_kernel *shp, char __user *shmaddr, int shmfl
 
 int security_sem_alloc(struct sem_array *sma)
 {
-	return call_int_hook(sem_alloc_security, 0, sma);
+	int rc = lsm_ipc_alloc(&sma->sem_perm);
+
+	if (unlikely(rc))
+		return rc;
+	rc = call_int_hook(sem_alloc_security, 0, sma);
+	if (unlikely(rc))
+		security_sem_free(sma);
+	return rc;
 }
 
 void security_sem_free(struct sem_array *sma)
 {
+	struct kern_ipc_perm *kip = &sma->sem_perm;
+
 	call_void_hook(sem_free_security, sma);
+	kfree(kip->security);
+	kip->security = NULL;
 }
 
 int security_sem_associate(struct sem_array *sma, int semflg)
@@ -1630,12 +1882,21 @@ EXPORT_SYMBOL(security_socket_getpeersec_dgram);
 
 int security_sk_alloc(struct sock *sk, int family, gfp_t priority)
 {
-	return call_int_hook(sk_alloc_security, 0, sk, family, priority);
+	int rc = lsm_sock_alloc(sk, priority);
+
+	if (unlikely(rc))
+		return rc;
+	rc = call_int_hook(sk_alloc_security, 0, sk, family, priority);
+	if (unlikely(rc))
+		security_sk_free(sk);
+	return rc;
 }
 
 void security_sk_free(struct sock *sk)
 {
 	call_void_hook(sk_free_security, sk);
+	kfree(sk->sk_security);
+	sk->sk_security = NULL;
 }
 
 void security_sk_clone(const struct sock *sk, struct sock *newsk)
@@ -1865,12 +2126,21 @@ EXPORT_SYMBOL(security_skb_classify_flow);
 int security_key_alloc(struct key *key, const struct cred *cred,
 		       unsigned long flags)
 {
-	return call_int_hook(key_alloc, 0, key, cred, flags);
+	int rc = lsm_key_alloc(key);
+
+	if (unlikely(rc))
+		return rc;
+	rc = call_int_hook(key_alloc, 0, key, cred, flags);
+	if (unlikely(rc))
+		security_key_free(key);
+	return rc;
 }
 
 void security_key_free(struct key *key)
 {
 	call_void_hook(key_free, key);
+	kfree(key->security);
+	key->security = NULL;
 }
 
 int security_key_permission(key_ref_t key_ref,

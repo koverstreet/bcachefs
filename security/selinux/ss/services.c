@@ -52,6 +52,7 @@
 #include <linux/selinux.h>
 #include <linux/flex_array.h>
 #include <linux/vmalloc.h>
+#include <linux/lsm_hooks.h>
 #include <net/netlabel.h>
 
 #include "flask.h"
@@ -2664,7 +2665,7 @@ int security_fs_use(struct super_block *sb)
 {
 	int rc = 0;
 	struct ocontext *c;
-	struct superblock_security_struct *sbsec = sb->s_security;
+	struct superblock_security_struct *sbsec = selinux_superblock(sb);
 	const char *fstype = sb->s_type->name;
 
 	read_lock(&policy_rwlock);

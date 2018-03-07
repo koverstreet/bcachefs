@@ -366,12 +366,69 @@ static inline struct smack_known **smack_file(const struct file *file)
 	return file->f_security;
 }
 
+static inline struct inode_smack *smack_inode(const struct inode *inode)
+{
+#ifdef CONFIG_SECURITY_STACKING
+	return inode->i_security + smack_blob_sizes.lbs_inode;
+#else
+	return inode->i_security;
+#endif
+}
+
+static inline struct socket_smack *smack_sock(const struct sock *sock)
+{
+#ifdef CONFIG_SECURITY_STACKING
+	return sock->sk_security + smack_blob_sizes.lbs_sock;
+#else
+	return sock->sk_security;
+#endif
+}
+
+static inline struct superblock_smack *smack_superblock(
+					const struct super_block *superblock)
+{
+#ifdef CONFIG_SECURITY_STACKING
+	return superblock->s_security + smack_blob_sizes.lbs_superblock;
+#else
+	return superblock->s_security;
+#endif
+}
+
+static inline struct smack_known **smack_msg_msg(const struct msg_msg *msg)
+{
+#ifdef CONFIG_SECURITY_STACKING
+	return msg->security + smack_blob_sizes.lbs_msg_msg;
+#else
+	return msg->security;
+#endif
+}
+
+static inline struct smack_known **smack_ipc(const struct kern_ipc_perm *ipc)
+{
+#ifdef CONFIG_SECURITY_STACKING
+	return ipc->security + smack_blob_sizes.lbs_ipc;
+#else
+	return ipc->security;
+#endif
+}
+
+#ifdef CONFIG_KEYS
+static inline struct smack_known **smack_key(const struct key *key)
+{
+#ifdef CONFIG_SECURITY_STACKING
+	return key->security + smack_blob_sizes.lbs_key;
+#else
+	return key->security;
+#endif
+}
+#endif /* CONFIG_KEYS */
+
 /*
  * Is the directory transmuting?
  */
 static inline int smk_inode_transmutable(const struct inode *isp)
 {
-	struct inode_smack *sip = isp->i_security;
+	struct inode_smack *sip = smack_inode(isp);
 	return (sip->smk_flags & SMK_INODE_TRANSMUTE) != 0;
 }
 
@@ -380,7 +437,7 @@ static inline int smk_inode_transmutable(const struct inode *isp)
  */
 static inline struct smack_known *smk_of_inode(const struct inode *isp)
 {
-	struct inode_smack *sip = isp->i_security;
+	struct inode_smack *sip = smack_inode(isp);
 	return sip->smk_inode;
 }
 

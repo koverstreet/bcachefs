@@ -59,10 +59,7 @@ enum label_initialized {
 
 struct inode_security_struct {
 	struct inode *inode;	/* back pointer to inode object */
-	union {
-		struct list_head list;	/* list of inode_security_struct */
-		struct rcu_head rcu;	/* for freeing the inode_security_struct */
-	};
+	struct list_head list;	/* list of inode_security_struct */
 	u32 task_sid;		/* SID of creating task */
 	u32 sid;		/* SID of this object */
 	u16 sclass;		/* security class of this object */
@@ -168,6 +165,66 @@ static inline struct task_security_struct *selinux_cred(const struct cred *cred)
 static inline struct file_security_struct *selinux_file(const struct file *file)
 {
 	return file->f_security;
+}
+
+static inline struct inode_security_struct *selinux_inode(
+						const struct inode *inode)
+{
+#ifdef CONFIG_SECURITY_STACKING
+	return inode->i_security + selinux_blob_sizes.lbs_inode;
+#else
+	return inode->i_security;
+#endif
+}
+
+static inline struct superblock_security_struct *selinux_superblock(
+					const struct super_block *superblock)
+{
+#ifdef CONFIG_SECURITY_STACKING
+	return superblock->s_security + selinux_blob_sizes.lbs_superblock;
+#else
+	return superblock->s_security;
+#endif
+}
+
+static inline struct msg_security_struct *selinux_msg_msg(
+						const struct msg_msg *msg_msg)
+{
+#ifdef CONFIG_SECURITY_STACKING
+	return msg_msg->security + selinux_blob_sizes.lbs_msg_msg;
+#else
+	return msg_msg->security;
+#endif
+}
+
+static inline struct ipc_security_struct *selinux_ipc(
+						const struct kern_ipc_perm *ipc)
+{
+#ifdef CONFIG_SECURITY_STACKING
+	return ipc->security + selinux_blob_sizes.lbs_ipc;
+#else
+	return ipc->security;
+#endif
+}
+
+#ifdef CONFIG_KEYS
+static inline struct key_security_struct *selinux_key(const struct key *key)
+{
+#ifdef CONFIG_SECURITY_STACKING
+	return key->security + selinux_blob_sizes.lbs_key;
+#else
+	return key->security;
+#endif
+}
+#endif /* CONFIG_KEYS */
+
+static inline struct sk_security_struct *selinux_sock(const struct sock *sock)
+{
+#ifdef CONFIG_SECURITY_STACKING
+	return sock->sk_security + selinux_blob_sizes.lbs_sock;
+#else
+	return sock->sk_security;
+#endif
 }
 
 #endif /* _SELINUX_OBJSEC_H_ */
