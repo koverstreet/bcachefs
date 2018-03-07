@@ -483,6 +483,8 @@ DECLINLINE(void) vbfsCopyFsObjInfoFromIprt(PSHFLFSOBJINFO pDst, PCRTFSOBJINFO pS
     pDst->ChangeTime        = pSrc->ChangeTime;
     pDst->BirthTime         = pSrc->BirthTime;
     pDst->Attr.fMode        = pSrc->Attr.fMode;
+    /* Clear bits which we don't pass through for security reasons. */
+    pDst->Attr.fMode       &= ~(RTFS_UNIX_ISUID | RTFS_UNIX_ISGID | RTFS_UNIX_ISTXT);
     RT_ZERO(pDst->Attr.u);
     switch (pSrc->Attr.enmAdditional)
     {

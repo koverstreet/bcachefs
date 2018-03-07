@@ -786,6 +786,21 @@ RTDECL(PRTTIME) RTTimeFromString(PRTTIME pTime, const char *pszString);
 RTDECL(bool) RTTimeIsLeapYear(int32_t i32Year);
 
 /**
+ * Compares two normalized time structures.
+ *
+ * @retval  0 if equal.
+ * @retval  -1 if @a pLeft is earlier than @a pRight.
+ * @retval  1 if @a pRight is earlier than @a pLeft.
+ *
+ * @param   pLeft       The left side time.  NULL is accepted.
+ * @param   pRight      The right side time.  NULL is accepted.
+ *
+ * @note    A NULL time is considered smaller than anything else.  If both are
+ *          NULL, they are considered equal.
+ */
+RTDECL(int) RTTimeCompare(PCRTTIME pLeft, PCRTTIME pRight);
+
+/**
  * Gets the current nanosecond timestamp.
  *
  * @returns nanosecond timestamp.

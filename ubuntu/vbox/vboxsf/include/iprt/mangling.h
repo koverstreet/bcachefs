@@ -2223,6 +2223,7 @@
 # define RTThreadWait                                   RT_MANGLER(RTThreadWait)
 # define RTThreadWaitNoResume                           RT_MANGLER(RTThreadWaitNoResume)
 # define RTThreadYield                                  RT_MANGLER(RTThreadYield)
+# define RTTimeCompare                                  RT_MANGLER(RTTimeCompare)
 # define RTTimeDbgBad                                   RT_MANGLER(RTTimeDbgBad)
 # define RTTimeDbgExpired                               RT_MANGLER(RTTimeDbgExpired)
 # define RTTimeDbgRaces                                 RT_MANGLER(RTTimeDbgRaces)

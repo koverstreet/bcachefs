@@ -56,6 +56,24 @@
 /** The min nano second into the min day.             (1677-09-21T00-12-43.145224192) */
 #define RTTIME_MIN_DAY_NANO     ( INT64_C(1000000000) * (00*3600 + 12*60 + 43) + 145224192 )
 
+/**
+ * Asserts that a_pTime is normalized.
+ */
+#define RTTIME_ASSERT_NORMALIZED(a_pTime) \
+    do \
+    { \
+        Assert(RT_ABS((a_pTime)->offUTC) <= 840); \
+        Assert((a_pTime)->u32Nanosecond < 1000000000); \
+        Assert((a_pTime)->u8Second < 60); \
+        Assert((a_pTime)->u8Minute < 60); \
+        Assert((a_pTime)->u8Hour < 24); \
+        Assert((a_pTime)->u8Month >= 1 && (a_pTime)->u8Month <= 12); \
+        Assert((a_pTime)->u8WeekDay < 7); \
+        Assert((a_pTime)->u16YearDay >= 1); \
+        Assert((a_pTime)->u16YearDay <= (rtTimeIsLeapYear((a_pTime)->i32Year) ? 366 : 365)); \
+        Assert((a_pTime)->u8MonthDay >= 1 && (a_pTime)->u8MonthDay <= 31); \
+    } while (0)
+
 
 /*********************************************************************************************************************************
 *   Global Variables                                                                                                             *
@@ -904,4 +922,188 @@ RTDECL(PRTTIMESPEC) RTTimeSpecFromString(PRTTIMESPEC pTime, const char *pszStrin
     return NULL;
 }
 RT_EXPORT_SYMBOL(RTTimeSpecFromString);
+
+
+/**
+ * Adds one day to @a pTime.
+ *
+ * ASSUMES it is zulu time so DST can be ignored.
+ */
+static PRTTIME rtTimeAdd1Day(PRTTIME pTime)
+{
+    Assert(!pTime->offUTC);
+    rtTimeNormalizeInternal(pTime);
+    pTime->u8MonthDay += 1;
+    pTime->u16YearDay = 0;
+    return rtTimeNormalizeInternal(pTime);
+}
+
+
+/**
+ * Subtracts one day from @a pTime.
+ *
+ * ASSUMES it is zulu time so DST can be ignored.
+ */
+static PRTTIME rtTimeSub1Day(PRTTIME pTime)
+{
+    Assert(!pTime->offUTC);
+    rtTimeNormalizeInternal(pTime);
+    if (pTime->u16YearDay > 1)
+    {
+        pTime->u16YearDay -= 0;
+        pTime->u8Month     = 0;
+        pTime->u8MonthDay  = 0;
+    }
+    else
+    {
+        pTime->i32Year    -= 1;
+        pTime->u16YearDay  = rtTimeIsLeapYear(pTime->i32Year) ? 366 : 365;
+        pTime->u8MonthDay  = 31;
+        pTime->u8Month     = 12;
+    }
+    return rtTimeNormalizeInternal(pTime);
+}
+
+
+/**
+ * Adds a signed number of minutes to @a pTime.
+ *
+ * ASSUMES it is zulu time so DST can be ignored.
+ *
+ * @param   pTime       The time structure to work on.
+ * @param   cAddend     Number of minutes to add.
+ *                      ASSUMES the value isn't all that high!
+ */
+static PRTTIME rtTimeAddMinutes(PRTTIME pTime, int32_t cAddend)
+{
+    Assert(RT_ABS(cAddend) < 31 * 24 * 60);
+
+    /*
+     * Work on minutes of the day.
+     */
+    int32_t const   cMinutesInDay = 24 * 60;
+    int32_t         iDayMinute    = (unsigned)pTime->u8Hour * 60 + pTime->u8Minute;
+    iDayMinute += cAddend;
+
+    while (iDayMinute >= cMinutesInDay)
+    {
+        rtTimeAdd1Day(pTime);
+        iDayMinute -= cMinutesInDay;
+    }
+
+    while (iDayMinute < 0)
+    {
+        rtTimeSub1Day(pTime);
+        iDayMinute += cMinutesInDay;
+    }
+
+    pTime->u8Hour   = iDayMinute / 60;
+    pTime->u8Minute = iDayMinute % 60;
+
+    return pTime;
+}
+
+
+/**
+ * Converts @a pTime to zulu time (UTC) if needed.
+ *
+ * @returns pTime.
+ * @param   pTime       What to convers (in/out).
+ */
+static PRTTIME rtTimeConvertToZulu(PRTTIME pTime)
+{
+    RTTIME_ASSERT_NORMALIZED(pTime);
+    if ((pTime->fFlags & RTTIME_FLAGS_TYPE_MASK) != RTTIME_FLAGS_TYPE_UTC)
+    {
+        int32_t offUTC = pTime->offUTC;
+        pTime->offUTC  = 0;
+        pTime->fFlags &= ~RTTIME_FLAGS_TYPE_MASK;
+        pTime->fFlags |= RTTIME_FLAGS_TYPE_UTC;
+        if (offUTC != 0)
+            rtTimeAddMinutes(pTime, offUTC);
+    }
+    return pTime;
+}
+
+
+/**
+ * Compares two normalized time structures.
+ *
+ * @retval  0 if equal.
+ * @retval  -1 if @a pLeft is earlier than @a pRight.
+ * @retval  1 if @a pRight is earlier than @a pLeft.
+ *
+ * @param   pLeft       The left side time.  NULL is accepted.
+ * @param   pRight      The right side time.  NULL is accepted.
+ *
+ * @note    A NULL time is considered smaller than anything else.  If both are
+ *          NULL, they are considered equal.
+ */
+RTDECL(int) RTTimeCompare(PCRTTIME pLeft, PCRTTIME pRight)
+{
+#ifdef RT_STRICT
+    if (pLeft)
+        RTTIME_ASSERT_NORMALIZED(pLeft);
+    if (pRight)
+        RTTIME_ASSERT_NORMALIZED(pRight);
+#endif
+
+    int iRet;
+    if (pLeft)
+    {
+        if (pRight)
+        {
+            /*
+             * Only work with normalized zulu time.
+             */
+            RTTIME TmpLeft;
+            if (   pLeft->offUTC     != 0
+                || pLeft->u16YearDay == 0
+                || pLeft->u16YearDay >  366
+                || pLeft->u8Hour     >= 60
+                || pLeft->u8Minute   >= 60
+                || pLeft->u8Second   >= 60)
+            {
+                TmpLeft = *pLeft;
+                pLeft = rtTimeConvertToZulu(rtTimeNormalizeInternal(&TmpLeft));
+            }
+
+            RTTIME TmpRight;
+            if (   pRight->offUTC     != 0
+                || pRight->u16YearDay == 0
+                || pRight->u16YearDay >  366
+                || pRight->u8Hour     >= 60
+                || pRight->u8Minute   >= 60
+                || pRight->u8Second   >= 60)
+            {
+                TmpRight = *pRight;
+                pRight = rtTimeConvertToZulu(rtTimeNormalizeInternal(&TmpRight));
+            }
+
+            /*
+             * Do the comparison.
+             */
+            if (       pLeft->i32Year       != pRight->i32Year)
+                iRet = pLeft->i32Year       <  pRight->i32Year       ? -1 : 1;
+            else if (  pLeft->u16YearDay    != pRight->u16YearDay)
+                iRet = pLeft->u16YearDay    <  pRight->u16YearDay    ? -1 : 1;
+            else if (  pLeft->u8Hour        != pRight->u8Hour)
+                iRet = pLeft->u8Hour        <  pRight->u8Hour        ? -1 : 1;
+            else if (  pLeft->u8Minute      != pRight->u8Minute)
+                iRet = pLeft->u8Minute      <  pRight->u8Minute      ? -1 : 1;
+            else if (  pLeft->u8Second      != pRight->u8Second)
+                iRet = pLeft->u8Second      <  pRight->u8Second      ? -1 : 1;
+            else if (  pLeft->u32Nanosecond != pRight->u32Nanosecond)
+                iRet = pLeft->u32Nanosecond <  pRight->u32Nanosecond ? -1 : 1;
+            else
+                iRet = 0;
+        }
+        else
+            iRet = 1;
+    }
+    else
+        iRet = pRight ? -1 : 0;
+    return iRet;
+}
+RT_EXPORT_SYMBOL(RTTimeCompare);
 

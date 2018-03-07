@@ -1863,6 +1863,9 @@
 #define VERR_SUPDRV_NOT_BUDDING_VM_PROCESS_1        (-3748)
 /** The process trying to open VBoxDrv is not a budding VM process (2). */
 #define VERR_SUPDRV_NOT_BUDDING_VM_PROCESS_2        (-3749)
+
+/** Raw-mode is unavailable courtesy of Hyper-V. */
+#define VERR_SUPDRV_NO_RAW_MODE_HYPER_V_ROOT        (-7000)
 /** @} */
 
 

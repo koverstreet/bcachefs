@@ -616,7 +616,7 @@ typedef const X86CPUIDFEATEDX *PCX86CPUIDFEATEDX;
 /** EDX Bit 27 - IBRS & IBPB - Supports the STIBP flag in IA32_SPEC_CTRL. */
 #define X86_CPUID_STEXT_FEATURE_EDX_STIBP             RT_BIT_32(27)
 
-/** EDX Bit 29 - ARCHCAP - Supports the IA32_ARCH_CAP MSR. */
+/** EDX Bit 29 - ARCHCAP - Supports the IA32_ARCH_CAPABILITIES MSR. */
 #define X86_CPUID_STEXT_FEATURE_EDX_ARCHCAP           RT_BIT_32(29)
 
 /** @} */
@@ -897,6 +897,8 @@ typedef const X86CPUIDFEATEDX *PCX86CPUIDFEATEDX;
 #define X86_CR4_VMXE                        RT_BIT_32(13)
 /** Bit 14 - SMXE - Safer Mode Extensions Enabled. */
 #define X86_CR4_SMXE                        RT_BIT_32(14)
+/** Bit 16 - FSGSBASE - Read/write FSGSBASE instructions Enable. */
+#define X86_CR4_FSGSBASE                    RT_BIT_32(16)
 /** Bit 17 - PCIDE - Process-Context Identifiers Enabled. */
 #define X86_CR4_PCIDE                       RT_BIT_32(17)
 /** Bit 18 - OSXSAVE - Operating System Support for XSAVE and processor
@@ -1202,7 +1204,7 @@ AssertCompile(X86_DR7_ANY_RW_IO(UINT32_C(0x00040000)) == 0);
 
 /** Architecture capabilities (bugfixes).
  * @note May move  */
-#define MSR_IA32_ARCH_CAP                   UINT32_C(0x10a)
+#define MSR_IA32_ARCH_CAPABILITIES          UINT32_C(0x10a)
 /** CPU is no subject to spectre problems. */
 #define MSR_IA32_ARCH_CAP_F_SPECTRE_FIX     RT_BIT_32(0)
 /** CPU has better IBRS and you can leave it on all the time. */
@@ -2583,6 +2585,20 @@ typedef const X86PML4 *PCX86PML4;
 /** @} */
 
 /** @} */
+
+/**
+ * Intel PCID invalidation types.
+ */
+/** Individual address invalidation. */
+#define X86_INVPCID_TYPE_INDV_ADDR                  0
+/** Single-context invalidation. */
+#define X86_INVPCID_TYPE_SINGLE_CONTEXT             1
+/** All-context including globals invalidation. */
+#define X86_INVPCID_TYPE_ALL_CONTEXT_INCL_GLOBAL    2
+/** All-context excluding globals invalidation. */
+#define X86_INVPCID_TYPE_ALL_CONTEXT_EXCL_GLOBAL    3
+/** The maximum valid invalidation type value.   */
+#define X86_INVPCID_TYPE_MAX_VALID                  X86_INVPCID_TYPE_ALL_CONTEXT_EXCL_GLOBAL
 
 /**
  * 32-bit protected mode FSTENV image.
