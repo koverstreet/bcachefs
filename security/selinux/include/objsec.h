@@ -159,12 +159,20 @@ extern struct lsm_blob_sizes selinux_blob_sizes;
 
 static inline struct task_security_struct *selinux_cred(const struct cred *cred)
 {
+#ifdef CONFIG_SECURITY_STACKING
+	return cred->security + selinux_blob_sizes.lbs_cred;
+#else
 	return cred->security;
+#endif
 }
 
 static inline struct file_security_struct *selinux_file(const struct file *file)
 {
+#ifdef CONFIG_SECURITY_STACKING
+	return file->f_security + selinux_blob_sizes.lbs_file;
+#else
 	return file->f_security;
+#endif
 }
 
 static inline struct inode_security_struct *selinux_inode(
