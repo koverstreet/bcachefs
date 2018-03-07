@@ -2415,6 +2415,7 @@ static const struct pci_device_id sas_v3_pci_table[] = {
 	{ PCI_VDEVICE(HUAWEI, 0xa230), hip08 },
 	{}
 };
+MODULE_DEVICE_TABLE(pci, sas_v3_pci_table);
 
 static const struct pci_error_handlers hisi_sas_err_handler = {
 	.error_detected	= hisi_sas_error_detected_v3_hw,
