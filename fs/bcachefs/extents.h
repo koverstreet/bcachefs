@@ -53,13 +53,13 @@ struct btree_nr_keys bch2_extent_sort_fix_overlapping(struct bch_fs *c,
 						     struct btree *,
 						     struct btree_node_iter_large *);
 
-struct extent_pick_ptr
-bch2_btree_pick_ptr(struct bch_fs *, const struct btree *,
-		    struct bch_devs_mask *avoid);
+int bch2_btree_pick_ptr(struct bch_fs *, const struct btree *,
+			struct bch_devs_mask *avoid,
+			struct extent_pick_ptr *);
 
-void bch2_extent_pick_ptr(struct bch_fs *, struct bkey_s_c,
-			  struct bch_devs_mask *,
-			  struct extent_pick_ptr *);
+int bch2_extent_pick_ptr(struct bch_fs *, struct bkey_s_c,
+			 struct bch_devs_mask *,
+			 struct extent_pick_ptr *);
 
 enum btree_insert_ret
 bch2_insert_fixup_extent(struct btree_insert *,

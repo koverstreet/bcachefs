@@ -27,7 +27,26 @@ static inline sector_t bucket_remainder(const struct bch_dev *ca, sector_t s)
 
 static inline bool bch2_dev_is_online(struct bch_dev *ca)
 {
-	return ca->disk_sb.bdev != NULL;
+	return !percpu_ref_is_zero(&ca->io_ref);
+}
+
+static inline bool bch2_dev_is_readable(struct bch_dev *ca)
+{
+	return bch2_dev_is_online(ca) &&
+		ca->mi.state != BCH_MEMBER_STATE_FAILED;
+}
+
+static inline bool bch2_dev_get_ioref(struct bch_dev *ca, int rw)
+{
+	if (!percpu_ref_tryget(&ca->io_ref))
+		return false;
+
+	if (ca->mi.state == BCH_MEMBER_STATE_RW ||
+	    (ca->mi.state == BCH_MEMBER_STATE_RO && rw == READ))
+		return true;
+
+	percpu_ref_put(&ca->io_ref);
+	return false;
 }
 
 static inline unsigned dev_mask_nr(const struct bch_devs_mask *devs)

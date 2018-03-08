@@ -588,9 +588,12 @@ out:
 	return out - buf;
 }
 
-static inline bool dev_latency_better(struct bch_dev *dev1,
-				      struct bch_dev *dev2)
+static inline bool dev_latency_better(struct bch_fs *c,
+			      const struct bch_extent_ptr *ptr1,
+			      const struct bch_extent_ptr *ptr2)
 {
+	struct bch_dev *dev1 = bch_dev_bkey_exists(c, ptr1->dev);
+	struct bch_dev *dev2 = bch_dev_bkey_exists(c, ptr2->dev);
 	unsigned l1 = atomic_read(&dev1->latency[READ]);
 	unsigned l2 = atomic_read(&dev2->latency[READ]);
 
@@ -599,47 +602,37 @@ static inline bool dev_latency_better(struct bch_dev *dev1,
 	return bch2_rand_range(l1 + l2) > l1;
 }
 
-static void extent_pick_read_device(struct bch_fs *c,
-				    struct bkey_s_c_extent e,
-				    struct bch_devs_mask *avoid,
-				    struct extent_pick_ptr *pick)
+static int extent_pick_read_device(struct bch_fs *c,
+				   struct bkey_s_c_extent e,
+				   struct bch_devs_mask *avoid,
+				   struct extent_pick_ptr *pick)
 {
 	const struct bch_extent_ptr *ptr;
 	struct bch_extent_crc_unpacked crc;
+	struct bch_dev *ca;
+	int ret = 0;
 
 	extent_for_each_ptr_crc(e, ptr, crc) {
-		struct bch_dev *ca = bch_dev_bkey_exists(c, ptr->dev);
+		ca = bch_dev_bkey_exists(c, ptr->dev);
 
 		if (ptr->cached && ptr_stale(ca, ptr))
 			continue;
 
-		if (ca->mi.state == BCH_MEMBER_STATE_FAILED)
+		if (avoid && test_bit(ptr->dev, avoid->d))
 			continue;
 
-		if (avoid) {
-			if (test_bit(ca->dev_idx, avoid->d))
-				continue;
-
-			if (pick->ca &&
-			    test_bit(pick->ca->dev_idx, avoid->d))
-				goto use;
-		}
-
-		if (pick->ca && !dev_latency_better(ca, pick->ca))
+		if (ret && !dev_latency_better(c, ptr, &pick->ptr))
 			continue;
-use:
-		if (!percpu_ref_tryget(&ca->io_ref))
-			continue;
-
-		if (pick->ca)
-			percpu_ref_put(&pick->ca->io_ref);
 
 		*pick = (struct extent_pick_ptr) {
 			.ptr	= *ptr,
 			.crc	= crc,
-			.ca	= ca,
 		};
+
+		ret = 1;
 	}
+
+	return ret;
 }
 
 /* Btree ptrs */
@@ -759,16 +752,12 @@ void bch2_btree_ptr_to_text(struct bch_fs *c, char *buf,
 #undef p
 }
 
-struct extent_pick_ptr
-bch2_btree_pick_ptr(struct bch_fs *c, const struct btree *b,
-		    struct bch_devs_mask *avoid)
+int bch2_btree_pick_ptr(struct bch_fs *c, const struct btree *b,
+			struct bch_devs_mask *avoid,
+			struct extent_pick_ptr *pick)
 {
-	struct extent_pick_ptr pick = { .ca = NULL };
-
-	extent_pick_read_device(c, bkey_i_to_s_c_extent(&b->key),
-				avoid, &pick);
-
-	return pick;
+	return extent_pick_read_device(c, bkey_i_to_s_c_extent(&b->key),
+				       avoid, pick);
 }
 
 /* Extents */
@@ -2057,37 +2046,33 @@ void bch2_extent_mark_replicas_cached(struct bch_fs *c,
  * Avoid can be NULL, meaning pick any. If there are no non-stale pointers to
  * other devices, it will still pick a pointer from avoid.
  */
-void bch2_extent_pick_ptr(struct bch_fs *c, struct bkey_s_c k,
-			  struct bch_devs_mask *avoid,
-			  struct extent_pick_ptr *ret)
+int bch2_extent_pick_ptr(struct bch_fs *c, struct bkey_s_c k,
+			 struct bch_devs_mask *avoid,
+			 struct extent_pick_ptr *pick)
 {
-	struct bkey_s_c_extent e;
+	int ret;
 
 	switch (k.k->type) {
 	case KEY_TYPE_DELETED:
 	case KEY_TYPE_DISCARD:
 	case KEY_TYPE_COOKIE:
-		ret->ca = NULL;
-		return;
+		return 0;
 
 	case KEY_TYPE_ERROR:
-		ret->ca = ERR_PTR(-EIO);
-		return;
+		return -EIO;
 
 	case BCH_EXTENT:
 	case BCH_EXTENT_CACHED:
-		e = bkey_s_c_to_extent(k);
-		ret->ca = NULL;
+		ret = extent_pick_read_device(c, bkey_s_c_to_extent(k),
+					      avoid, pick);
 
-		extent_pick_read_device(c, bkey_s_c_to_extent(k), avoid, ret);
+		if (!ret && !bkey_extent_is_cached(k.k))
+			ret = -EIO;
 
-		if (!ret->ca && !bkey_extent_is_cached(e.k))
-			ret->ca = ERR_PTR(-EIO);
-		return;
+		return ret;
 
 	case BCH_RESERVATION:
-		ret->ca = NULL;
-		return;
+		return 0;
 
 	default:
 		BUG();

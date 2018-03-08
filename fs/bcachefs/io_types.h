@@ -36,16 +36,18 @@ struct bch_read_bio {
 	struct bvec_iter	bvec_iter;
 
 	unsigned		submit_time_us;
-	u8			flags;
+	u16			flags;
 	union {
 	struct {
-	u8			bounce:1,
+	u16			bounce:1,
 				split:1,
+				have_ioref:1,
 				narrow_crcs:1,
+				hole:1,
 				retry:2,
 				context:2;
 	};
-	u8			_state;
+	u16			_state;
 	};
 
 	struct bch_devs_list	devs_have;
@@ -66,16 +68,16 @@ struct bch_read_bio {
 
 struct bch_write_bio {
 	struct bch_fs		*c;
-	struct bch_dev		*ca;
 	struct bch_write_bio	*parent;
 
 	struct bch_devs_list	failed;
 	u8			order;
+	u8			dev;
 
 	unsigned		split:1,
 				bounce:1,
 				put_bio:1,
-				have_io_ref:1,
+				have_ioref:1,
 				used_mempool:1;
 
 	unsigned		submit_time_us;
