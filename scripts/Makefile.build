@@ -297,19 +297,27 @@ objtool_dep = $(objtool_obj)					\
 	      $(wildcard include/config/orc/unwinder.h		\
 			 include/config/stack/validation.h)
 
+ifdef CONFIG_RETPOLINE
+cmd_ubuntu_retpoline = $(CONFIG_SHELL) $(srctree)/debian/scripts/retpoline-extract-one $(@) $(<) "$(filter -m16 %code16gcc.h,$(a_flags))";
+else
+cmd_ubuntu_retpoline =
+endif
+
 define rule_cc_o_c
 	$(call echo-cmd,checksrc) $(cmd_checksrc)			  \
 	$(call cmd_and_fixdep,cc_o_c)					  \
 	$(cmd_checkdoc)							  \
 	$(call echo-cmd,objtool) $(cmd_objtool)				  \
 	$(cmd_modversions_c)						  \
+	$(call echo-cmd,ubuntu-retpoline) $(cmd_ubuntu_retpoline)	  \
 	$(call echo-cmd,record_mcount) $(cmd_record_mcount)
 endef
 
 define rule_as_o_S
 	$(call cmd_and_fixdep,as_o_S)					  \
 	$(call echo-cmd,objtool) $(cmd_objtool)				  \
-	$(cmd_modversions_S)
+	$(cmd_modversions_S)						  \
+	$(call echo-cmd,ubuntu-retpoline) $(cmd_ubuntu_retpoline)
 endef
 
 # List module undefined symbols (or empty line if not enabled)

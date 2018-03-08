@@ -2,13 +2,20 @@
 
 cd "$1" || exit 1
 
-{
-	echo "./vmlinux"
-	find . -name \*.ko
-} | xargs objdump --disassemble | \
-awk -F'	' '
-	/^.\//				{ file=$1; sub(":.*", "", file); sub("^.*/", "", file); }
-	/^[0-9a-f][0-9a-f]* <.*>:/	{ tag=$1; sub(".*<", "", tag); sub(">.*", "", tag); tag=file " " tag; }
-	$3 ~ /(call|jmp)q?  *\*(0x[a-f0-9]+\()?%/	{ print(tag " " $3); }
-' | \
-	grep -v " \*%cs:0x"		# elide 32bit code-segment absolute offsets.
+# Find all valid retpoline information, collate the detected and
+# safe information together.  Join the result to find the detected
+# but non-safe elements.  These are our concern.
+tmp="/tmp/retpoline-check.$$"
+find "." -path './drivers/firmware/efi/libstub' -prune -o \
+	 -path './arch/x86/boot' -prune -o \
+	 -path './arch/x86/purgatory' -prune -o \
+	 -name \*.ur-detected | xargs cat | \
+	sed -e "s@^$1@@" -e "s@ $2/@ @" -e "s@^/@@" | \
+	sort -k 1b,1 >"$tmp.ur-detected"
+find "." -name \*.ur-safe | xargs cat | \
+	sed -e "s@^$1@@" -e "s@^/@@" | \
+	sort -k 1b,1 >"$tmp.ur-safe"
+
+join -v 1 -j 1 "$tmp.ur-detected" "$tmp.ur-safe" | sed -s 's/[^ ]*  *//'
+
+rm -f "$tmp".*

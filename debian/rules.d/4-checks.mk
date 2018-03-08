@@ -21,13 +21,13 @@ retpoline-check-%: $(stampdir)/stamp-build-%
 	@echo Debug: $@
 	install -d $(abidir)
 	if grep -q CONFIG_RETPOLINE=y $(builddir)/build-$*/.config; then \
-		$(SHELL) $(DROOT)/scripts/retpoline-extract $(builddir)/build-$* | \
+		$(SHELL) $(DROOT)/scripts/retpoline-extract $(builddir)/build-$* $(CURDIR) | \
 			sort >$(abidir)/$*.retpoline; \
 	else \
 		echo "# RETPOLINE NOT ENABLED" >$(abidir)/$*.retpoline; \
 	fi
 	$(SHELL) $(DROOT)/scripts/retpoline-check "$*" \
-		"$(prev_abidir)" "$(abidir)" "$(skipretpoline)"
+		"$(prev_abidir)" "$(abidir)" "$(skipretpoline)" "$(builddir)/build-$*"
 
 checks-%: module-check-% abi-check-% retpoline-check-%
 	@echo Debug: $@
