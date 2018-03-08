@@ -21,7 +21,6 @@ struct bch_extent_crc_unpacked {
 struct extent_pick_ptr {
 	struct bch_extent_ptr		ptr;
 	struct bch_extent_crc_unpacked	crc;
-	struct bch_dev			*ca;
 };
 
 #endif /* _BCACHEFS_EXTENTS_TYPES_H */

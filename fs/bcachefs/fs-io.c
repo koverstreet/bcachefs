@@ -993,11 +993,9 @@ static void bchfs_read(struct bch_fs *c, struct btree_iter *iter,
 		BCH_READ_MAY_PROMOTE;
 
 	while (1) {
-		struct extent_pick_ptr pick;
 		BKEY_PADDED(k) tmp;
 		struct bkey_s_c k;
 		unsigned bytes;
-		bool is_last;
 
 		bch2_btree_iter_set_pos(iter, POS(inum, bio->bi_iter.bi_sector));
 
@@ -1016,45 +1014,37 @@ static void bchfs_read(struct bch_fs *c, struct btree_iter *iter,
 		bch2_btree_iter_unlock(iter);
 		k = bkey_i_to_s_c(&tmp.k);
 
-		bch2_extent_pick_ptr(c, k, NULL, &pick);
-		if (IS_ERR(pick.ca)) {
-			bcache_io_error(c, bio, "no device to read from");
-			bio_endio(bio);
-			return;
-		}
+		if (readpages_iter) {
+			bool want_full_extent = false;
 
-		if (readpages_iter)
+			if (bkey_extent_is_data(k.k)) {
+				struct bkey_s_c_extent e = bkey_s_c_to_extent(k);
+				const struct bch_extent_ptr *ptr;
+				struct bch_extent_crc_unpacked crc;
+
+				extent_for_each_ptr_crc(e, ptr, crc)
+					want_full_extent |= !!crc.csum_type |
+							     !!crc.compression_type;
+			}
+
 			readpage_bio_extend(readpages_iter,
 					    bio, k.k->p.offset,
-					    pick.ca &&
-					    (pick.crc.csum_type ||
-					     pick.crc.compression_type));
+					    want_full_extent);
+		}
 
 		bytes = (min_t(u64, k.k->p.offset, bio_end_sector(bio)) -
 			 bio->bi_iter.bi_sector) << 9;
-		is_last = bytes == bio->bi_iter.bi_size;
 		swap(bio->bi_iter.bi_size, bytes);
+
+		if (bytes == bio->bi_iter.bi_size)
+			flags |= BCH_READ_LAST_FRAGMENT;
 
 		if (bkey_extent_is_allocation(k.k))
 			bch2_add_page_sectors(bio, k);
 
-		if (pick.ca) {
-			if (!is_last) {
-				bio_inc_remaining(&rbio->bio);
-				flags |= BCH_READ_MUST_CLONE;
-				trace_read_split(&rbio->bio);
-			}
+		bch2_read_extent(c, rbio, k, flags);
 
-			bch2_read_extent(c, rbio, bkey_s_c_to_extent(k),
-					 &pick, flags);
-		} else {
-			zero_fill_bio(bio);
-
-			if (is_last)
-				bio_endio(bio);
-		}
-
-		if (is_last)
+		if (flags & BCH_READ_LAST_FRAGMENT)
 			return;
 
 		swap(bio->bi_iter.bi_size, bytes);

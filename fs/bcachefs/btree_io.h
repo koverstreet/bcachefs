@@ -12,8 +12,8 @@ struct btree_iter;
 
 struct btree_read_bio {
 	struct bch_fs		*c;
-	unsigned		submit_time_us;
 	u64			start_time;
+	unsigned		have_ioref:1;
 	struct extent_pick_ptr	pick;
 	struct work_struct	work;
 	struct bio		bio;

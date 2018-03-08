@@ -1323,37 +1323,48 @@ static void btree_node_read_work(struct work_struct *work)
 	struct btree_read_bio *rb =
 		container_of(work, struct btree_read_bio, work);
 	struct bch_fs *c	= rb->c;
+	struct bch_dev *ca	= bch_dev_bkey_exists(c, rb->pick.ptr.dev);
 	struct btree *b		= rb->bio.bi_private;
 	struct bio *bio		= &rb->bio;
 	struct bch_devs_mask avoid;
+	bool can_retry;
 
 	memset(&avoid, 0, sizeof(avoid));
 
 	goto start;
-	do {
+	while (1) {
 		bch_info(c, "retrying read");
+		ca = bch_dev_bkey_exists(c, rb->pick.ptr.dev);
+		rb->have_ioref		= bch2_dev_get_ioref(ca, READ);
 		bio_reset(bio);
-		bio_set_dev(bio, rb->pick.ca->disk_sb.bdev);
 		bio->bi_opf		= REQ_OP_READ|REQ_SYNC|REQ_META;
 		bio->bi_iter.bi_sector	= rb->pick.ptr.offset;
 		bio->bi_iter.bi_size	= btree_bytes(c);
-		submit_bio_wait(bio);
-start:
-		bch2_dev_io_err_on(bio->bi_status, rb->pick.ca, "btree read");
-		percpu_ref_put(&rb->pick.ca->io_ref);
 
-		__set_bit(rb->pick.ca->dev_idx, avoid.d);
-		rb->pick = bch2_btree_pick_ptr(c, b, &avoid);
+		if (rb->have_ioref) {
+			bio_set_dev(bio, ca->disk_sb.bdev);
+			submit_bio_wait(bio);
+		} else {
+			bio->bi_status = BLK_STS_REMOVED;
+		}
+start:
+		bch2_dev_io_err_on(bio->bi_status, ca, "btree read");
+		if (rb->have_ioref)
+			percpu_ref_put(&ca->io_ref);
+		rb->have_ioref = false;
+
+		__set_bit(rb->pick.ptr.dev, avoid.d);
+		can_retry = bch2_btree_pick_ptr(c, b, &avoid, &rb->pick) > 0;
 
 		if (!bio->bi_status &&
-		    !bch2_btree_node_read_done(c, b, !IS_ERR_OR_NULL(rb->pick.ca)))
-			goto out;
-	} while (!IS_ERR_OR_NULL(rb->pick.ca));
+		    !bch2_btree_node_read_done(c, b, can_retry))
+			break;
 
-	set_btree_node_read_error(b);
-out:
-	if (!IS_ERR_OR_NULL(rb->pick.ca))
-		percpu_ref_put(&rb->pick.ca->io_ref);
+		if (!can_retry) {
+			set_btree_node_read_error(b);
+			break;
+		}
+	}
 
 	bch2_time_stats_update(&c->btree_read_time, rb->start_time);
 	bio_put(&rb->bio);
@@ -1365,10 +1376,13 @@ static void btree_node_read_endio(struct bio *bio)
 {
 	struct btree_read_bio *rb =
 		container_of(bio, struct btree_read_bio, bio);
+	struct bch_fs *c	= rb->c;
 
-	bch2_latency_acct(rb->pick.ca, rb->start_time >> 10, READ);
+	if (rb->have_ioref) {
+		struct bch_dev *ca = bch_dev_bkey_exists(c, rb->pick.ptr.dev);
+		bch2_latency_acct(ca, rb->start_time >> 10, READ);
+	}
 
-	INIT_WORK(&rb->work, btree_node_read_work);
 	queue_work(system_unbound_wq, &rb->work);
 }
 
@@ -1377,41 +1391,58 @@ void bch2_btree_node_read(struct bch_fs *c, struct btree *b,
 {
 	struct extent_pick_ptr pick;
 	struct btree_read_bio *rb;
+	struct bch_dev *ca;
 	struct bio *bio;
+	int ret;
 
 	trace_btree_read(c, b);
 
-	pick = bch2_btree_pick_ptr(c, b, NULL);
-	if (bch2_fs_fatal_err_on(!pick.ca, c,
+	ret = bch2_btree_pick_ptr(c, b, NULL, &pick);
+	if (bch2_fs_fatal_err_on(ret <= 0, c,
 			"btree node read error: no device to read from")) {
 		set_btree_node_read_error(b);
 		return;
 	}
 
+	ca = bch_dev_bkey_exists(c, pick.ptr.dev);
+
 	bio = bio_alloc_bioset(GFP_NOIO, btree_pages(c), &c->btree_bio);
 	rb = container_of(bio, struct btree_read_bio, bio);
 	rb->c			= c;
 	rb->start_time		= local_clock();
+	rb->have_ioref		= bch2_dev_get_ioref(ca, READ);
 	rb->pick		= pick;
-	bio_set_dev(bio, pick.ca->disk_sb.bdev);
+	INIT_WORK(&rb->work, btree_node_read_work);
 	bio->bi_opf		= REQ_OP_READ|REQ_SYNC|REQ_META;
 	bio->bi_iter.bi_sector	= pick.ptr.offset;
 	bio->bi_iter.bi_size	= btree_bytes(c);
+	bio->bi_end_io		= btree_node_read_endio;
+	bio->bi_private		= b;
 	bch2_bio_map(bio, b->data);
-
-	this_cpu_add(pick.ca->io_done->sectors[READ][BCH_DATA_BTREE],
-		     bio_sectors(bio));
 
 	set_btree_node_read_in_flight(b);
 
-	if (sync) {
-		submit_bio_wait(bio);
-		bio->bi_private	= b;
-		btree_node_read_work(&rb->work);
+	if (rb->have_ioref) {
+		this_cpu_add(ca->io_done->sectors[READ][BCH_DATA_BTREE],
+			     bio_sectors(bio));
+		bio_set_dev(bio, ca->disk_sb.bdev);
+
+		if (sync) {
+			submit_bio_wait(bio);
+
+			bio->bi_private	= b;
+			btree_node_read_work(&rb->work);
+		} else {
+			submit_bio(bio);
+		}
 	} else {
-		bio->bi_end_io	= btree_node_read_endio;
-		bio->bi_private	= b;
-		submit_bio(bio);
+		bio->bi_status = BLK_STS_REMOVED;
+
+		if (sync)
+			btree_node_read_work(&rb->work);
+		else
+			queue_work(system_unbound_wq, &rb->work);
+
 	}
 }
 
@@ -1593,20 +1624,21 @@ static void btree_node_write_endio(struct bio *bio)
 	struct bch_write_bio *parent	= wbio->split ? wbio->parent : NULL;
 	struct bch_write_bio *orig	= parent ?: wbio;
 	struct bch_fs *c		= wbio->c;
-	struct bch_dev *ca		= wbio->ca;
+	struct bch_dev *ca		= bch_dev_bkey_exists(c, wbio->dev);
 	unsigned long flags;
 
-	bch2_latency_acct(ca, wbio->submit_time_us, WRITE);
+	if (wbio->have_ioref)
+		bch2_latency_acct(ca, wbio->submit_time_us, WRITE);
 
 	if (bio->bi_status == BLK_STS_REMOVED ||
 	    bch2_dev_io_err_on(bio->bi_status, ca, "btree write") ||
 	    bch2_meta_write_fault("btree")) {
 		spin_lock_irqsave(&c->btree_write_error_lock, flags);
-		bch2_dev_list_add_dev(&orig->failed, ca->dev_idx);
+		bch2_dev_list_add_dev(&orig->failed, wbio->dev);
 		spin_unlock_irqrestore(&c->btree_write_error_lock, flags);
 	}
 
-	if (wbio->have_io_ref)
+	if (wbio->have_ioref)
 		percpu_ref_put(&ca->io_ref);
 
 	if (parent) {
