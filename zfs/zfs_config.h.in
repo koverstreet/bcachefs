@@ -159,6 +159,9 @@
 /* iops->create() passes nameidata */
 #undef HAVE_CREATE_NAMEIDATA
 
+/* cred_t->user_ns exists */
+#undef HAVE_CRED_USER_NS
+
 /* current->bio_list exists */
 #undef HAVE_CURRENT_BIO_LIST
 
@@ -300,6 +303,9 @@
 /* kernel does stack verification */
 #undef HAVE_KERNEL_OBJTOOL
 
+/* kuid_has_mapping/kgid_has_mapping exist */
+#undef HAVE_KUID_HAS_MAPPING
+
 /* i_(uid|gid)_(read|write) exist */
 #undef HAVE_KUID_HELPERS
 
@@ -359,6 +365,9 @@
 
 /* sops->nr_cached_objects() exists */
 #undef HAVE_NR_CACHED_OBJECTS
+
+/* ns_capable exists */
+#undef HAVE_NS_CAPABLE
 
 /* open_bdev_exclusive() is available */
 #undef HAVE_OPEN_BDEV_EXCLUSIVE
