@@ -37,6 +37,7 @@ void __bch2_btree_verify(struct bch_fs *c, struct btree *b)
 	struct btree_node *n_ondisk, *n_sorted, *n_inmemory;
 	struct bset *sorted, *inmemory;
 	struct extent_pick_ptr pick;
+	struct bch_dev *ca;
 	struct bio *bio;
 
 	if (c->opts.nochanges)
@@ -55,11 +56,14 @@ void __bch2_btree_verify(struct bch_fs *c, struct btree *b)
 	v->btree_id	= b->btree_id;
 	bch2_btree_keys_init(v, &c->expensive_debug_checks);
 
-	pick = bch2_btree_pick_ptr(c, b, NULL);
-	if (IS_ERR_OR_NULL(pick.ca))
+	if (bch2_btree_pick_ptr(c, b, NULL, &pick) <= 0)
 		return;
 
-	bio = bio_alloc_bioset(pick.ca->disk_sb.bdev,
+	ca = bch_dev_bkey_exists(c, pick.ptr.dev);
+	if (!bch2_dev_get_ioref(ca, READ))
+		return;
+
+	bio = bio_alloc_bioset(ca->disk_sb.bdev,
 			       buf_pages(n_sorted, btree_bytes(c)),
 			       REQ_OP_READ|REQ_META,
 			       GFP_NOIO,
@@ -71,7 +75,7 @@ void __bch2_btree_verify(struct bch_fs *c, struct btree *b)
 	submit_bio_wait(bio);
 
 	bio_put(bio);
-	percpu_ref_put(&pick.ca->io_ref);
+	percpu_ref_put(&ca->io_ref);
 
 	memcpy(n_ondisk, n_sorted, btree_bytes(c));
 
