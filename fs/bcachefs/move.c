@@ -23,7 +23,6 @@ struct moving_io {
 	struct closure		cl;
 	bool			read_completed;
 
-	unsigned		read_dev;
 	unsigned		read_sectors;
 	unsigned		write_sectors;
 
@@ -43,7 +42,7 @@ struct moving_context {
 	struct list_head	reads;
 
 	/* in flight sectors: */
-	atomic_t		read_sectors[BCH_SB_MEMBERS_MAX];
+	atomic_t		read_sectors;
 	atomic_t		write_sectors;
 
 	wait_queue_head_t	wait;
@@ -307,7 +306,7 @@ static void move_write(struct closure *cl)
 {
 	struct moving_io *io = container_of(cl, struct moving_io, cl);
 
-	if (unlikely(io->rbio.bio.bi_status)) {
+	if (unlikely(io->rbio.bio.bi_status || io->rbio.hole)) {
 		closure_return_with_destructor(cl, move_free);
 		return;
 	}
@@ -332,7 +331,7 @@ static void move_read_endio(struct bio *bio)
 	struct moving_io *io = container_of(bio, struct moving_io, rbio.bio);
 	struct moving_context *ctxt = io->write.ctxt;
 
-	atomic_sub(io->read_sectors, &ctxt->read_sectors[io->read_dev]);
+	atomic_sub(io->read_sectors, &ctxt->read_sectors);
 	io->read_completed = true;
 
 	if (next_pending_write(ctxt))
@@ -378,7 +377,6 @@ static int bch2_move_extent(struct bch_fs *c,
 			    enum data_cmd data_cmd,
 			    struct data_opts data_opts)
 {
-	struct extent_pick_ptr pick;
 	struct moving_io *io;
 	const struct bch_extent_ptr *ptr;
 	struct bch_extent_crc_unpacked crc;
@@ -389,12 +387,8 @@ static int bch2_move_extent(struct bch_fs *c,
 		atomic_read(&ctxt->write_sectors) <
 		SECTORS_IN_FLIGHT_PER_DEVICE);
 
-	bch2_extent_pick_ptr(c, e.s_c, NULL, &pick);
-	if (IS_ERR_OR_NULL(pick.ca))
-		return pick.ca ? PTR_ERR(pick.ca) : 0;
-
 	move_ctxt_wait_event(ctxt,
-		atomic_read(&ctxt->read_sectors[pick.ca->dev_idx]) <
+		atomic_read(&ctxt->read_sectors) <
 		SECTORS_IN_FLIGHT_PER_DEVICE);
 
 	/* write path might have to decompress data: */
@@ -408,8 +402,7 @@ static int bch2_move_extent(struct bch_fs *c,
 		goto err;
 
 	io->write.ctxt		= ctxt;
-	io->read_dev		= pick.ca->dev_idx;
-	io->read_sectors	= pick.crc.uncompressed_size;
+	io->read_sectors	= e.k->size;
 	io->write_sectors	= e.k->size;
 
 	bio_init(&io->write.op.wbio.bio, NULL, io->bi_inline_vecs, pages, 0);
@@ -423,6 +416,7 @@ static int bch2_move_extent(struct bch_fs *c,
 
 	io->rbio.opts = io_opts;
 	bio_init(&io->rbio.bio, NULL, io->bi_inline_vecs, pages, 0);
+	io->rbio.bio.bi_vcnt = pages;
 	bio_set_prio(&io->rbio.bio, IOPRIO_PRIO_VALUE(IOPRIO_CLASS_IDLE, 0));
 	io->rbio.bio.bi_iter.bi_size = sectors << 9;
 
@@ -440,7 +434,7 @@ static int bch2_move_extent(struct bch_fs *c,
 
 	trace_move_extent(e.k);
 
-	atomic_add(io->read_sectors, &ctxt->read_sectors[io->read_dev]);
+	atomic_add(io->read_sectors, &ctxt->read_sectors);
 	list_add_tail(&io->list, &ctxt->reads);
 
 	/*
@@ -448,14 +442,15 @@ static int bch2_move_extent(struct bch_fs *c,
 	 * ctxt when doing wakeup
 	 */
 	closure_get(&ctxt->cl);
-	bch2_read_extent(c, &io->rbio, e, &pick, BCH_READ_NODECODE);
+	bch2_read_extent(c, &io->rbio, e.s_c,
+			 BCH_READ_NODECODE|
+			 BCH_READ_LAST_FRAGMENT);
 	return 0;
 err_free_pages:
 	bio_free_pages(&io->write.op.wbio.bio);
 err_free:
 	kfree(io);
 err:
-	percpu_ref_put(&pick.ca->io_ref);
 	trace_move_alloc_fail(e.k);
 	return ret;
 }
