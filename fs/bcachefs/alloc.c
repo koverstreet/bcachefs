@@ -1227,22 +1227,33 @@ static enum bucket_alloc_ret __bch2_bucket_alloc_set(struct bch_fs *c,
 {
 	enum bucket_alloc_ret ret = NO_DEVICES;
 	struct dev_alloc_list devs_sorted;
-	unsigned i;
+	struct bch_dev *ca;
+	unsigned i, nr_ptrs_effective = 0;
+	bool have_cache_dev = false;
 
 	BUG_ON(nr_replicas > ARRAY_SIZE(wp->ptrs));
 
-	if (wp->nr_ptrs >= nr_replicas)
+	for (i = wp->first_ptr; i < wp->nr_ptrs; i++) {
+		ca = bch_dev_bkey_exists(c, wp->ptrs[i]->ptr.dev);
+
+		nr_ptrs_effective += ca->mi.durability;
+		have_cache_dev |= !ca->mi.durability;
+	}
+
+	if (nr_ptrs_effective >= nr_replicas)
 		return ALLOC_SUCCESS;
 
 	rcu_read_lock();
 	devs_sorted = bch2_wp_alloc_list(c, wp, devs);
 
 	for (i = 0; i < devs_sorted.nr; i++) {
-		struct bch_dev *ca =
-			rcu_dereference(c->devs[devs_sorted.devs[i]]);
 		int ob;
 
+		ca = rcu_dereference(c->devs[devs_sorted.devs[i]]);
 		if (!ca)
+			continue;
+
+		if (have_cache_dev && !ca->mi.durability)
 			continue;
 
 		ob = bch2_bucket_alloc(c, ca, reserve,
@@ -1256,13 +1267,17 @@ static enum bucket_alloc_ret __bch2_bucket_alloc_set(struct bch_fs *c,
 
 		BUG_ON(ob <= 0 || ob > U8_MAX);
 		BUG_ON(wp->nr_ptrs >= ARRAY_SIZE(wp->ptrs));
+
 		wp->ptrs[wp->nr_ptrs++] = c->open_buckets + ob;
 
 		bch2_wp_rescale(c, ca, wp);
 
+		nr_ptrs_effective += ca->mi.durability;
+		have_cache_dev |= !ca->mi.durability;
+
 		__clear_bit(ca->dev_idx, devs->d);
 
-		if (wp->nr_ptrs == nr_replicas) {
+		if (nr_ptrs_effective >= nr_replicas) {
 			ret = ALLOC_SUCCESS;
 			break;
 		}
@@ -1318,37 +1333,46 @@ static int bch2_bucket_alloc_set(struct bch_fs *c, struct write_point *wp,
 
 /* Sector allocator */
 
+static void writepoint_drop_ptr(struct bch_fs *c,
+				struct write_point *wp,
+				unsigned i)
+{
+	struct open_bucket *ob = wp->ptrs[i];
+	struct bch_dev *ca = bch_dev_bkey_exists(c, ob->ptr.dev);
+
+	BUG_ON(ca->open_buckets_partial_nr >=
+	       ARRAY_SIZE(ca->open_buckets_partial));
+
+	if (wp->type == BCH_DATA_USER) {
+		spin_lock(&c->freelist_lock);
+		ob->on_partial_list = true;
+		ca->open_buckets_partial[ca->open_buckets_partial_nr++] =
+			ob - c->open_buckets;
+		spin_unlock(&c->freelist_lock);
+
+		closure_wake_up(&c->open_buckets_wait);
+		closure_wake_up(&c->freelist_wait);
+	} else {
+		bch2_open_bucket_put(c, ob);
+	}
+
+	array_remove_item(wp->ptrs, wp->nr_ptrs, i);
+
+	if (i < wp->first_ptr)
+		wp->first_ptr--;
+}
+
 static void writepoint_drop_ptrs(struct bch_fs *c,
 				 struct write_point *wp,
-				 u16 target, bool in_target,
-				 unsigned nr_ptrs_dislike)
+				 u16 target, bool in_target)
 {
 	int i;
 
-	if (!nr_ptrs_dislike)
-		return;
+	for (i = wp->first_ptr - 1; i >= 0; --i) {
+		struct bch_dev *ca = bch_dev_bkey_exists(c, wp->ptrs[i]->ptr.dev);
 
-	for (i = wp->nr_ptrs - 1; i >= 0; --i) {
-		struct open_bucket *ob = wp->ptrs[i];
-		struct bch_dev *ca = bch_dev_bkey_exists(c, ob->ptr.dev);
-
-		if (nr_ptrs_dislike &&
-		    dev_in_target(ca, target) == in_target) {
-			BUG_ON(ca->open_buckets_partial_nr >=
-			       ARRAY_SIZE(ca->open_buckets_partial));
-
-			spin_lock(&c->freelist_lock);
-			ob->on_partial_list = true;
-			ca->open_buckets_partial[ca->open_buckets_partial_nr++] =
-				ob - c->open_buckets;
-			spin_unlock(&c->freelist_lock);
-
-			closure_wake_up(&c->open_buckets_wait);
-			closure_wake_up(&c->freelist_wait);
-
-			array_remove_item(wp->ptrs, wp->nr_ptrs, i);
-			--nr_ptrs_dislike;
-		}
+		if (dev_in_target(ca, target) == in_target)
+			writepoint_drop_ptr(c, wp, i);
 	}
 }
 
@@ -1358,7 +1382,7 @@ static void verify_not_stale(struct bch_fs *c, const struct write_point *wp)
 	struct open_bucket *ob;
 	unsigned i;
 
-	writepoint_for_each_ptr(wp, ob, i) {
+	writepoint_for_each_ptr_all(wp, ob, i) {
 		struct bch_dev *ca = bch_dev_bkey_exists(c, ob->ptr.dev);
 
 		BUG_ON(ptr_stale(ca, &ob->ptr));
@@ -1378,14 +1402,11 @@ static int open_bucket_add_buckets(struct bch_fs *c,
 	struct open_bucket *ob;
 	unsigned i;
 
-	if (wp->nr_ptrs >= nr_replicas)
-		return 0;
-
 	/* Don't allocate from devices we already have pointers to: */
 	for (i = 0; i < devs_have->nr; i++)
 		__clear_bit(devs_have->devs[i], devs.d);
 
-	writepoint_for_each_ptr(wp, ob, i)
+	writepoint_for_each_ptr_all(wp, ob, i)
 		__clear_bit(ob->ptr.dev, devs.d);
 
 	if (target) {
@@ -1487,76 +1508,118 @@ struct write_point *bch2_alloc_sectors_start(struct bch_fs *c,
 {
 	struct write_point *wp;
 	struct open_bucket *ob;
-	unsigned i, nr_ptrs_dislike = 0, nr_ptrs_have = 0;
-	int ret;
+	struct bch_dev *ca;
+	unsigned nr_ptrs_have, nr_ptrs_effective;
+	int ret, i, cache_idx = -1;
 
 	BUG_ON(!nr_replicas || !nr_replicas_required);
 
 	wp = writepoint_find(c, write_point.v);
 
-	/* does ob have ptrs we don't need? */
+	wp->first_ptr = 0;
+
+	/* does writepoint have ptrs we can't use? */
 	writepoint_for_each_ptr(wp, ob, i)
-		if (bch2_dev_list_has_dev(*devs_have, ob->ptr.dev))
-			nr_ptrs_have++;
-		else if (!dev_in_target(c->devs[ob->ptr.dev], target))
-			nr_ptrs_dislike++;
+		if (bch2_dev_list_has_dev(*devs_have, ob->ptr.dev)) {
+			swap(wp->ptrs[i], wp->ptrs[wp->first_ptr]);
+			wp->first_ptr++;
+		}
 
-	ret = open_bucket_add_buckets(c, target, wp, devs_have,
-				nr_replicas + nr_ptrs_have + nr_ptrs_dislike,
-				reserve, cl);
-	if (ret && ret != -EROFS)
-		goto err;
+	nr_ptrs_have = wp->first_ptr;
 
-	if (flags & BCH_WRITE_ONLY_SPECIFIED_DEVS)
-		goto alloc_done;
+	/* does writepoint have ptrs we don't want to use? */
+	writepoint_for_each_ptr(wp, ob, i)
+		if (!dev_idx_in_target(c, ob->ptr.dev, target)) {
+			swap(wp->ptrs[i], wp->ptrs[wp->first_ptr]);
+			wp->first_ptr++;
+		}
 
-	ret = open_bucket_add_buckets(c, target, wp, devs_have,
-				nr_replicas + nr_ptrs_have,
-				reserve, cl);
-	if (ret && ret != -EROFS)
+	if (flags & BCH_WRITE_ONLY_SPECIFIED_DEVS) {
+		ret = open_bucket_add_buckets(c, target, wp, devs_have,
+					      nr_replicas, reserve, cl);
+	} else {
+		ret = open_bucket_add_buckets(c, target, wp, devs_have,
+					      nr_replicas, reserve, NULL);
+		if (!ret)
+			goto alloc_done;
+
+		wp->first_ptr = nr_ptrs_have;
+
+		ret = open_bucket_add_buckets(c, 0, wp, devs_have,
+					      nr_replicas, reserve, cl);
+	}
+
+	if (ret)
 		goto err;
 alloc_done:
-	if (wp->nr_ptrs - nr_ptrs_have -
-	    ((flags & BCH_WRITE_ONLY_SPECIFIED_DEVS) ? nr_ptrs_dislike : 0)
-	    < nr_replicas_required) {
-		ret = -EROFS;
-		goto err;
+	/* check for more than one cache: */
+	for (i = wp->nr_ptrs - 1; i >= wp->first_ptr; --i) {
+		ca = bch_dev_bkey_exists(c, wp->ptrs[i]->ptr.dev);
+
+		if (ca->mi.durability)
+			continue;
+
+		/*
+		 * if we ended up with more than one cache device, prefer the
+		 * one in the target we want:
+		 */
+		if (cache_idx >= 0) {
+			if (!dev_in_target(ca, target)) {
+				writepoint_drop_ptr(c, wp, i);
+			} else {
+				writepoint_drop_ptr(c, wp, cache_idx);
+				cache_idx = i;
+			}
+		} else {
+			cache_idx = i;
+		}
 	}
 
-	if ((int) wp->nr_ptrs - nr_ptrs_dislike < nr_replicas)
-		nr_ptrs_dislike = clamp_t(int, wp->nr_ptrs - nr_replicas,
-					  0, nr_ptrs_dislike);
+	/* we might have more effective replicas than required: */
+	nr_ptrs_effective = 0;
+	writepoint_for_each_ptr(wp, ob, i) {
+		ca = bch_dev_bkey_exists(c, ob->ptr.dev);
+		nr_ptrs_effective += ca->mi.durability;
+	}
+
+	if (nr_ptrs_effective > nr_replicas) {
+		writepoint_for_each_ptr(wp, ob, i) {
+			ca = bch_dev_bkey_exists(c, ob->ptr.dev);
+
+			if (ca->mi.durability &&
+			    ca->mi.durability <= nr_ptrs_effective - nr_replicas &&
+			    !dev_idx_in_target(c, ob->ptr.dev, target)) {
+				swap(wp->ptrs[i], wp->ptrs[wp->first_ptr]);
+				wp->first_ptr++;
+				nr_ptrs_effective -= ca->mi.durability;
+			}
+		}
+	}
+
+	if (nr_ptrs_effective > nr_replicas) {
+		writepoint_for_each_ptr(wp, ob, i) {
+			ca = bch_dev_bkey_exists(c, ob->ptr.dev);
+
+			if (ca->mi.durability &&
+			    ca->mi.durability <= nr_ptrs_effective - nr_replicas) {
+				swap(wp->ptrs[i], wp->ptrs[wp->first_ptr]);
+				wp->first_ptr++;
+				nr_ptrs_effective -= ca->mi.durability;
+			}
+		}
+	}
 
 	/* Remove pointers we don't want to use: */
-	writepoint_drop_ptrs(c, wp, target, false, nr_ptrs_dislike);
+	if (target)
+		writepoint_drop_ptrs(c, wp, target, false);
 
-	/*
-	 * Move pointers to devices we already have to end of open bucket
-	 * pointer list - note that removing pointers we don't want to use might
-	 * have changed nr_ptrs_have:
-	 */
-	if (nr_ptrs_have) {
-		i = nr_ptrs_have = 0;
-		while (i < wp->nr_ptrs - nr_ptrs_have)
-			if (bch2_dev_list_has_dev(*devs_have, wp->ptrs[i]->ptr.dev)) {
-				nr_ptrs_have++;
-				swap(wp->ptrs[i], wp->ptrs[wp->nr_ptrs - nr_ptrs_have]);
-			} else {
-				i++;
-			}
-	}
-
-	wp->nr_ptrs_can_use =
-		min_t(unsigned, nr_replicas, wp->nr_ptrs - nr_ptrs_have);
-
-	BUG_ON(wp->nr_ptrs_can_use < nr_replicas_required ||
-	       wp->nr_ptrs_can_use > wp->nr_ptrs);
+	BUG_ON(wp->first_ptr >= wp->nr_ptrs);
+	BUG_ON(nr_ptrs_effective < nr_replicas_required);
 
 	wp->sectors_free = UINT_MAX;
 
-	for (i = 0; i < wp->nr_ptrs_can_use; i++)
-		wp->sectors_free = min(wp->sectors_free,
-				       wp->ptrs[i]->sectors_free);
+	writepoint_for_each_ptr(wp, ob, i)
+		wp->sectors_free = min(wp->sectors_free, ob->sectors_free);
 
 	BUG_ON(!wp->sectors_free || wp->sectors_free == UINT_MAX);
 
@@ -1575,19 +1638,21 @@ err:
 void bch2_alloc_sectors_append_ptrs(struct bch_fs *c, struct write_point *wp,
 				    struct bkey_i_extent *e, unsigned sectors)
 {
+	struct open_bucket *ob;
 	unsigned i;
 
 	BUG_ON(sectors > wp->sectors_free);
 	wp->sectors_free -= sectors;
 
-	for (i = 0; i < wp->nr_ptrs_can_use; i++) {
-		struct open_bucket *ob = wp->ptrs[i];
+	writepoint_for_each_ptr(wp, ob, i) {
 		struct bch_dev *ca = bch_dev_bkey_exists(c, ob->ptr.dev);
 		struct bch_extent_ptr tmp = ob->ptr;
 
 		EBUG_ON(bch2_extent_has_device(extent_i_to_s_c(e), ob->ptr.dev));
 
-		tmp.cached = bkey_extent_is_cached(&e->k);
+		tmp.cached = bkey_extent_is_cached(&e->k) ||
+			(!ca->mi.durability && wp->type == BCH_DATA_USER);
+
 		tmp.offset += ca->mi.bucket_size - ob->sectors_free;
 		extent_ptr_append(e, tmp);
 
@@ -1704,8 +1769,8 @@ static void bch2_stop_write_point(struct bch_fs *c, struct bch_dev *ca,
 	bitmap_complement(not_self.d, ca->self.d, BCH_SB_MEMBERS_MAX);
 
 	mutex_lock(&wp->lock);
-	writepoint_drop_ptrs(c, wp, dev_to_target(ca->dev_idx),
-			     true, wp->nr_ptrs);
+	wp->first_ptr = wp->nr_ptrs;
+	writepoint_drop_ptrs(c, wp, dev_to_target(ca->dev_idx), true);
 	mutex_unlock(&wp->lock);
 }
 

@@ -689,7 +689,7 @@ static enum data_cmd rereplicate_pred(struct bch_fs *c, void *arg,
 				      struct bch_io_opts *io_opts,
 				      struct data_opts *data_opts)
 {
-	unsigned nr_good = bch2_extent_nr_good_ptrs(c, e);
+	unsigned nr_good = bch2_extent_durability(c, e);
 	unsigned replicas = type == BKEY_TYPE_BTREE
 		? c->opts.metadata_replicas
 		: io_opts->data_replicas;

@@ -138,6 +138,7 @@ read_attribute(block_size);
 read_attribute(btree_node_size);
 read_attribute(first_bucket);
 read_attribute(nbuckets);
+read_attribute(durability);
 read_attribute(iostats);
 read_attribute(read_priority_stats);
 read_attribute(write_priority_stats);
@@ -800,6 +801,7 @@ SHOW(bch2_dev)
 	sysfs_print(block_size,		block_bytes(c));
 	sysfs_print(first_bucket,	ca->mi.first_bucket);
 	sysfs_print(nbuckets,		ca->mi.nbuckets);
+	sysfs_print(durability,		ca->mi.durability);
 	sysfs_print(discard,		ca->mi.discard);
 
 	if (attr == &sysfs_group) {
@@ -930,6 +932,7 @@ struct attribute *bch2_dev_files[] = {
 	&sysfs_block_size,
 	&sysfs_first_bucket,
 	&sysfs_nbuckets,
+	&sysfs_durability,
 
 	/* settings: */
 	&sysfs_discard,

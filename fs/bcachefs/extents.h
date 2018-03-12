@@ -52,8 +52,11 @@ bch2_extent_has_target(struct bch_fs *, struct bkey_s_c_extent, unsigned);
 
 unsigned bch2_extent_nr_ptrs(struct bkey_s_c_extent);
 unsigned bch2_extent_nr_dirty_ptrs(struct bkey_s_c);
-unsigned bch2_extent_nr_good_ptrs(struct bch_fs *, struct bkey_s_c_extent);
 unsigned bch2_extent_is_compressed(struct bkey_s_c);
+
+unsigned bch2_extent_ptr_durability(struct bch_fs *,
+				    const struct bch_extent_ptr *);
+unsigned bch2_extent_durability(struct bch_fs *, struct bkey_s_c_extent);
 
 bool bch2_extent_matches_ptr(struct bch_fs *, struct bkey_s_c_extent,
 			     struct bch_extent_ptr, u64);

@@ -801,7 +801,7 @@ static void __bch2_write(struct closure *cl)
 
 		ret = bch2_write_extent(op, wp);
 
-		BUG_ON(op->open_buckets_nr + wp->nr_ptrs_can_use >
+		BUG_ON(op->open_buckets_nr + wp->nr_ptrs - wp->first_ptr >
 		       ARRAY_SIZE(op->open_buckets));
 		bch2_open_bucket_get(c, wp,
 				     &op->open_buckets_nr,

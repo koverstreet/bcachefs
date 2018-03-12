@@ -33,6 +33,17 @@ enum bucket_alloc_ret {
 int bch2_bucket_alloc(struct bch_fs *, struct bch_dev *, enum alloc_reserve, bool,
 		      struct closure *);
 
+#define __writepoint_for_each_ptr(_wp, _ob, _i, _start)			\
+	for ((_i) = (_start);						\
+	     (_i) < (_wp)->nr_ptrs && ((_ob) = (_wp)->ptrs[_i], true);	\
+	     (_i)++)
+
+#define writepoint_for_each_ptr_all(_wp, _ob, _i)			\
+	__writepoint_for_each_ptr(_wp, _ob, _i, 0)
+
+#define writepoint_for_each_ptr(_wp, _ob, _i)				\
+	__writepoint_for_each_ptr(_wp, _ob, _i, wp->first_ptr)
+
 void __bch2_open_bucket_put(struct bch_fs *, struct open_bucket *);
 
 static inline void bch2_open_bucket_put(struct bch_fs *c, struct open_bucket *ob)
@@ -55,11 +66,10 @@ static inline void bch2_open_bucket_get(struct bch_fs *c,
 					struct write_point *wp,
 					u8 *nr, u8 *refs)
 {
+	struct open_bucket *ob;
 	unsigned i;
 
-	for (i = 0; i < wp->nr_ptrs_can_use; i++) {
-		struct open_bucket *ob = wp->ptrs[i];
-
+	writepoint_for_each_ptr(wp, ob, i) {
 		atomic_inc(&ob->pin);
 		refs[(*nr)++] = ob - c->open_buckets;
 	}
@@ -87,11 +97,6 @@ static inline void bch2_wake_allocator(struct bch_dev *ca)
 		wake_up_process(p);
 	rcu_read_unlock();
 }
-
-#define writepoint_for_each_ptr(_wp, _ob, _i)				\
-	for ((_i) = 0;							\
-	     (_i) < (_wp)->nr_ptrs && ((_ob) = (_wp)->ptrs[_i], true);	\
-	     (_i)++)
 
 static inline struct write_point_specifier writepoint_hashed(unsigned long v)
 {

@@ -65,11 +65,8 @@ struct write_point {
 	enum bch_data_type	type;
 
 	u8			nr_ptrs;
-	/*
-	 * number of pointers in @ob we can't use, because we already had
-	 * pointers to those devices:
-	 */
-	u8			nr_ptrs_can_use;
+	u8			first_ptr;
+
 	/* calculated based on how many pointers we're actually going to use: */
 	unsigned		sectors_free;
 

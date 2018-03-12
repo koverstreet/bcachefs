@@ -27,6 +27,7 @@ struct bch_member_cpu {
 	u8			replacement;
 	u8			discard;
 	u8			data_allowed;
+	u8			durability;
 	u8			valid;
 };
 
