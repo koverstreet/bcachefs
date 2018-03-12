@@ -23,7 +23,7 @@ static int drop_dev_ptrs(struct bch_fs *c, struct bkey_s_extent e,
 
 	bch2_extent_drop_device(e, dev_idx);
 
-	nr_good = bch2_extent_nr_good_ptrs(c, e.c);
+	nr_good = bch2_extent_durability(c, e.c);
 	if ((!nr_good && !(flags & lost)) ||
 	    (nr_good < replicas && !(flags & degraded)))
 		return -EINVAL;

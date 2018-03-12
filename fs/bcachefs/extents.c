@@ -201,17 +201,31 @@ unsigned bch2_extent_nr_dirty_ptrs(struct bkey_s_c k)
 	return nr_ptrs;
 }
 
-unsigned bch2_extent_nr_good_ptrs(struct bch_fs *c, struct bkey_s_c_extent e)
+unsigned bch2_extent_ptr_durability(struct bch_fs *c,
+				    const struct bch_extent_ptr *ptr)
+{
+	struct bch_dev *ca;
+
+	if (ptr->cached)
+		return 0;
+
+	ca = bch_dev_bkey_exists(c, ptr->dev);
+
+	if (ca->mi.state == BCH_MEMBER_STATE_FAILED)
+		return 0;
+
+	return ca->mi.durability;
+}
+
+unsigned bch2_extent_durability(struct bch_fs *c, struct bkey_s_c_extent e)
 {
 	const struct bch_extent_ptr *ptr;
-	unsigned nr_ptrs = 0;
+	unsigned durability = 0;
 
 	extent_for_each_ptr(e, ptr)
-		nr_ptrs += (!ptr->cached &&
-			    bch_dev_bkey_exists(c, ptr->dev)->mi.state !=
-			    BCH_MEMBER_STATE_FAILED);
+		durability += bch2_extent_ptr_durability(c, ptr);
 
-	return nr_ptrs;
+	return durability;
 }
 
 unsigned bch2_extent_is_compressed(struct bkey_s_c k)
@@ -2008,21 +2022,29 @@ void bch2_extent_mark_replicas_cached(struct bch_fs *c,
 				      unsigned target)
 {
 	struct bch_extent_ptr *ptr;
-	unsigned nr_cached = 0, nr_good = bch2_extent_nr_good_ptrs(c, e.c);
+	int extra = bch2_extent_durability(c, e.c) - nr_desired_replicas;
 
-	if (nr_good <= nr_desired_replicas)
+	if (extra <= 0)
 		return;
 
-	nr_cached = nr_good - nr_desired_replicas;
+	extent_for_each_ptr(e, ptr) {
+		int n = bch2_extent_ptr_durability(c, ptr);
 
-	extent_for_each_ptr(e, ptr)
-		if (!ptr->cached &&
+		if (n && n <= extra &&
 		    !dev_in_target(c->devs[ptr->dev], target)) {
 			ptr->cached = true;
-			nr_cached--;
-			if (!nr_cached)
-				return;
+			extra -= n;
 		}
+	}
+
+	extent_for_each_ptr(e, ptr) {
+		int n = bch2_extent_ptr_durability(c, ptr);
+
+		if (n && n <= extra) {
+			ptr->cached = true;
+			extra -= n;
+		}
+	}
 }
 
 /*

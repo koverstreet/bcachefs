@@ -132,6 +132,9 @@ static inline struct bch_member_cpu bch2_mi_to_cpu(struct bch_member *mi)
 		.replacement	= BCH_MEMBER_REPLACEMENT(mi),
 		.discard	= BCH_MEMBER_DISCARD(mi),
 		.data_allowed	= BCH_MEMBER_DATA_ALLOWED(mi),
+		.durability	= BCH_MEMBER_DURABILITY(mi)
+			? BCH_MEMBER_DURABILITY(mi) - 1
+			: 1,
 		.valid		= !bch2_is_zero(mi->uuid.b, sizeof(uuid_le)),
 	};
 }
@@ -247,6 +250,17 @@ static inline bool dev_in_target(struct bch_dev *ca, unsigned target)
 	default:
 		BUG();
 	}
+}
+
+static inline bool dev_idx_in_target(struct bch_fs *c, unsigned dev, unsigned target)
+{
+	bool ret;
+
+	rcu_read_lock();
+	ret = dev_in_target(rcu_dereference(c->devs[dev]), target);
+	rcu_read_unlock();
+
+	return ret;
 }
 
 const struct bch_devs_mask *bch2_target_to_mask(struct bch_fs *, unsigned);
