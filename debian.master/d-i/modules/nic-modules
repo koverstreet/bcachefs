@@ -127,6 +127,7 @@ ne2k-pci ?
 ne3210 ?
 netconsole ?
 netiucv ?
+netsec ?
 netxen_nic ?
 ni5010 ?
 ni52 ?
