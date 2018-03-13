@@ -2111,6 +2111,9 @@ static int journal_write_alloc(struct journal *j, struct journal_buf *w,
 		if (!ca)
 			continue;
 
+		if (!ca->mi.durability)
+			continue;
+
 		ja = &ca->journal;
 		if (!ja->nr)
 			continue;
@@ -2140,7 +2143,8 @@ static int journal_write_alloc(struct journal *j, struct journal_buf *w,
 					ja->buckets[ja->cur_idx]),
 				  .dev = ca->dev_idx,
 		});
-		replicas++;
+
+		replicas += ca->mi.durability;
 	}
 	rcu_read_unlock();
 
