@@ -58,6 +58,7 @@ static long bch2_ioctl_assemble(struct bch_ioctl_assemble __user *user_arg)
 {
 	struct bch_ioctl_assemble arg;
 	struct bch_fs *c;
+	u64 *user_devs = NULL;
 	char **devs = NULL;
 	unsigned i;
 	int ret = -EFAULT;
@@ -68,31 +69,30 @@ static long bch2_ioctl_assemble(struct bch_ioctl_assemble __user *user_arg)
 	if (arg.flags || arg.pad)
 		return -EINVAL;
 
-	devs = kcalloc(arg.nr_devs, sizeof(char *), GFP_KERNEL);
-	if (!devs)
+	user_devs = kmalloc_array(arg.nr_devs, sizeof(u64), GFP_KERNEL);
+	if (!user_devs)
 		return -ENOMEM;
 
+	devs = kcalloc(arg.nr_devs, sizeof(char *), GFP_KERNEL);
+
+	if (copy_from_user(user_devs, user_arg->devs,
+			   sizeof(u64) * arg.nr_devs))
+		goto err;
+
 	for (i = 0; i < arg.nr_devs; i++) {
-		u64 user_dev;
-		char *s;
-
-		ret = get_user(user_dev, &user_arg->devs[i]);
-		if (ret) {
+		devs[i] = strndup_user((const char __user *)(unsigned long)
+				       user_devs[i],
+				       PATH_MAX);
+		if (!devs[i]) {
+			ret = -ENOMEM;
 			goto err;
 		}
-
-		s = strndup_user((const char __user *)(unsigned long)
-				 user_dev, PATH_MAX);
-		if (IS_ERR(s)) {
-			ret = PTR_ERR(s);
-			goto err;
-		}
-
-		devs[i] = s;
 	}
 
 	c = bch2_fs_open(devs, arg.nr_devs, bch2_opts_empty());
 	ret = PTR_ERR_OR_ZERO(c);
+	if (!ret)
+		closure_put(&c->cl);
 err:
 	if (devs)
 		for (i = 0; i < arg.nr_devs; i++)
@@ -114,8 +114,8 @@ static long bch2_ioctl_incremental(struct bch_ioctl_incremental __user *user_arg
 		return -EINVAL;
 
 	path = strndup_user((const char __user *)(unsigned long) arg.dev, PATH_MAX);
-	if (IS_ERR(path))
-		return PTR_ERR(path);
+	if (!path)
+		return -ENOMEM;
 
 	err = bch2_fs_open_incremental(path);
 	kfree(path);
@@ -171,8 +171,8 @@ static long bch2_ioctl_disk_add(struct bch_fs *c, struct bch_ioctl_disk arg)
 		return -EINVAL;
 
 	path = strndup_user((const char __user *)(unsigned long) arg.dev, PATH_MAX);
-	if (IS_ERR(path))
-		return PTR_ERR(path);
+	if (!path)
+		return -ENOMEM;
 
 	ret = bch2_dev_add(c, path);
 	kfree(path);
@@ -207,8 +207,8 @@ static long bch2_ioctl_disk_online(struct bch_fs *c, struct bch_ioctl_disk arg)
 		return -EINVAL;
 
 	path = strndup_user((const char __user *)(unsigned long) arg.dev, PATH_MAX);
-	if (IS_ERR(path))
-		return PTR_ERR(path);
+	if (!path)
+		return -ENOMEM;
 
 	ret = bch2_dev_online(c, path);
 	kfree(path);
