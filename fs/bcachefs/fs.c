@@ -1177,10 +1177,9 @@ static struct bch_fs *__bch2_open_as_blockdevs(const char *dev_name, char * cons
 
 	mutex_lock(&c->state_lock);
 
-	closure_put(&c->cl);
-
 	if (!bch2_fs_running(c)) {
 		mutex_unlock(&c->state_lock);
+		closure_put(&c->cl);
 		pr_err("err mounting %s: incomplete filesystem", dev_name);
 		return ERR_PTR(-EINVAL);
 	}
@@ -1420,7 +1419,11 @@ static void bch2_kill_sb(struct super_block *sb)
 	struct bch_fs *c = sb->s_fs_info;
 
 	generic_shutdown_super(sb);
-	bch2_fs_stop(c);
+
+	if (test_bit(BCH_FS_BDEV_MOUNTED, &c->flags))
+		bch2_fs_stop(c);
+	else
+		closure_put(&c->cl);
 }
 
 static struct file_system_type bcache_fs_type = {
