@@ -1534,11 +1534,6 @@ struct write_point *bch2_alloc_sectors_start(struct bch_fs *c,
 			wp->first_ptr++;
 		}
 
-	ret = open_bucket_add_buckets(c, target, wp, devs_have,
-				      nr_replicas, reserve, cl);
-	if (ret && ret != -EROFS)
-		goto err;
-
 	if (flags & BCH_WRITE_ONLY_SPECIFIED_DEVS) {
 		ret = open_bucket_add_buckets(c, target, wp, devs_have,
 					      nr_replicas, reserve, cl);
