@@ -67,8 +67,8 @@ static int bch2_migrate_index_update(struct bch_write_op *op)
 		BKEY_PADDED(k) _new, _insert;
 		struct bch_extent_ptr *ptr;
 		struct bch_extent_crc_unpacked crc;
-		unsigned nr_dirty;
 		bool did_work = false;
+		int nr;
 
 		if (btree_iter_err(k)) {
 			ret = bch2_btree_iter_unlock(&iter);
@@ -133,22 +133,21 @@ static int bch2_migrate_index_update(struct bch_write_op *op)
 		 * has fewer replicas than when we last looked at it - meaning
 		 * we need to get a disk reservation here:
 		 */
-		nr_dirty = bch2_extent_nr_dirty_ptrs(bkey_i_to_s_c(&insert->k_i));
-		if (m->nr_ptrs_reserved < nr_dirty) {
-			unsigned sectors = (nr_dirty - m->nr_ptrs_reserved) *
-					keylist_sectors(keys);
-
+		nr = bch2_extent_nr_dirty_ptrs(bkey_i_to_s_c(&insert->k_i)) -
+			(bch2_extent_nr_dirty_ptrs(k) + m->nr_ptrs_reserved);
+		if (nr > 0) {
 			/*
 			 * can't call bch2_disk_reservation_add() with btree
 			 * locks held, at least not without a song and dance
 			 */
 			bch2_btree_iter_unlock(&iter);
 
-			ret = bch2_disk_reservation_add(c, &op->res, sectors, 0);
+			ret = bch2_disk_reservation_add(c, &op->res,
+					keylist_sectors(keys) * nr, 0);
 			if (ret)
 				goto out;
 
-			m->nr_ptrs_reserved = nr_dirty;
+			m->nr_ptrs_reserved += nr;
 			goto next;
 		}
 
@@ -226,7 +225,7 @@ int bch2_migrate_write_init(struct bch_fs *c, struct migrate_write *m,
 
 	m->data_cmd	= data_cmd;
 	m->data_opts	= data_opts;
-	m->nr_ptrs_reserved = bch2_extent_nr_dirty_ptrs(k);
+	m->nr_ptrs_reserved = 0;
 
 	bch2_write_op_init(&m->op, c, io_opts);
 	m->op.compression_type =
@@ -249,19 +248,20 @@ int bch2_migrate_write_init(struct bch_fs *c, struct migrate_write *m,
 	m->op.index_update_fn	= bch2_migrate_index_update;
 
 	switch (data_cmd) {
-	case DATA_ADD_REPLICAS:
-		if (m->nr_ptrs_reserved < io_opts.data_replicas) {
-			m->op.nr_replicas = io_opts.data_replicas - m->nr_ptrs_reserved;
+	case DATA_ADD_REPLICAS: {
+		int nr = (int) io_opts.data_replicas -
+			bch2_extent_nr_dirty_ptrs(k);
+
+		if (nr > 0) {
+			m->op.nr_replicas = m->nr_ptrs_reserved = nr;
 
 			ret = bch2_disk_reservation_get(c, &m->op.res,
-							k.k->size,
-							m->op.nr_replicas, 0);
+					k.k->size, m->op.nr_replicas, 0);
 			if (ret)
 				return ret;
-
-			m->nr_ptrs_reserved = io_opts.data_replicas;
 		}
 		break;
+	}
 	case DATA_REWRITE:
 		break;
 	case DATA_PROMOTE:
