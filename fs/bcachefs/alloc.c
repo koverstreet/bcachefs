@@ -1253,7 +1253,9 @@ static enum bucket_alloc_ret __bch2_bucket_alloc_set(struct bch_fs *c,
 		if (!ca)
 			continue;
 
-		if (have_cache_dev && !ca->mi.durability)
+		if (!ca->mi.durability &&
+		    (have_cache_dev ||
+		     wp->type != BCH_DATA_USER))
 			continue;
 
 		ob = bch2_bucket_alloc(c, ca, reserve,
