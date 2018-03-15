@@ -552,8 +552,9 @@ static size_t extent_print_ptrs(struct bch_fs *c, char *buf,
 				? bch_dev_bkey_exists(c, ptr->dev)
 				: NULL;
 
-			p("ptr: %u:%llu gen %u%s", ptr->dev,
+			p("ptr: %u:%llu gen %u%s%s", ptr->dev,
 			  (u64) ptr->offset, ptr->gen,
+			  ptr->cached ? " cached" : "",
 			  ca && ptr_stale(ca, ptr)
 			  ? " stale" : "");
 			break;
@@ -2018,33 +2019,32 @@ bool bch2_extent_normalize(struct bch_fs *c, struct bkey_s k)
 
 void bch2_extent_mark_replicas_cached(struct bch_fs *c,
 				      struct bkey_s_extent e,
-				      unsigned nr_desired_replicas,
-				      unsigned target)
+				      unsigned target,
+				      unsigned nr_desired_replicas)
 {
 	struct bch_extent_ptr *ptr;
 	int extra = bch2_extent_durability(c, e.c) - nr_desired_replicas;
 
-	if (extra <= 0)
-		return;
+	if (target && extra > 0)
+		extent_for_each_ptr(e, ptr) {
+			int n = bch2_extent_ptr_durability(c, ptr);
 
-	extent_for_each_ptr(e, ptr) {
-		int n = bch2_extent_ptr_durability(c, ptr);
-
-		if (n && n <= extra &&
-		    !dev_in_target(c->devs[ptr->dev], target)) {
-			ptr->cached = true;
-			extra -= n;
+			if (n && n <= extra &&
+			    !dev_in_target(c->devs[ptr->dev], target)) {
+				ptr->cached = true;
+				extra -= n;
+			}
 		}
-	}
 
-	extent_for_each_ptr(e, ptr) {
-		int n = bch2_extent_ptr_durability(c, ptr);
+	if (extra > 0)
+		extent_for_each_ptr(e, ptr) {
+			int n = bch2_extent_ptr_durability(c, ptr);
 
-		if (n && n <= extra) {
-			ptr->cached = true;
-			extra -= n;
+			if (n && n <= extra) {
+				ptr->cached = true;
+				extra -= n;
+			}
 		}
-	}
 }
 
 /*
