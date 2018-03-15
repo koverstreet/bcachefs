@@ -122,6 +122,8 @@ ifeq ($(do_tools_common),true)
 	install -m644 $(CURDIR)/tools/power/x86/x86_energy_perf_policy/*.8 $(toolsman)/man8
 	install -m644 $(CURDIR)/tools/power/x86/turbostat/*.8 $(toolsman)/man8
 
+ifeq ($(do_cloud_tools),true)
+ifeq ($(do_tools_hyperv),true)
 	install -d $(cloudsbin)
 	install -m755 debian/tools/generic $(cloudsbin)/hv_kvp_daemon
 	install -m755 debian/tools/generic $(cloudsbin)/hv_vss_daemon
@@ -133,6 +135,8 @@ ifeq ($(do_tools_common),true)
 
 	install -d $(cloudman)/man8
 	install -m644 $(CURDIR)/tools/hv/*.8 $(cloudman)/man8
+endif
+endif
 
 ifeq ($(do_tools_acpidbg),true)
 	install -m755 debian/tools/generic $(toolsbin)/acpidbg
@@ -164,7 +168,8 @@ binary-indep: install-indep
 	dh_installdocs -i
 	dh_compress -i
 	dh_fixperms -i
-ifeq ($(do_tools_common),true)
+ifeq ($(do_cloud_tools),true)
+ifeq ($(do_tools_hyperv),true)
 	dh_installinit -p$(cloudpkg) -n --name hv-kvp-daemon
 	dh_installinit -p$(cloudpkg) -n --name hv-vss-daemon
 	dh_installinit -p$(cloudpkg) -n --name hv-fcopy-daemon
@@ -173,6 +178,7 @@ ifeq ($(do_tools_common),true)
 	dh_installinit -p$(cloudpkg) -o --name hv-vss-daemon
 	dh_installinit -p$(cloudpkg) -o --name hv-fcopy-daemon
 	dh_systemd_start -p$(cloudpkg)
+endif
 endif
 	dh_installdeb -i
 	$(lockme) dh_gencontrol -i
