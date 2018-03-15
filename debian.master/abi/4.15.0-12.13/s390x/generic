@@ -6419,6 +6419,7 @@ EXPORT_SYMBOL_GPL drivers/scsi/libiscsi_tcp 0x00000000	iscsi_tcp_segment_unmap
 EXPORT_SYMBOL_GPL drivers/scsi/libiscsi_tcp 0x00000000	iscsi_tcp_set_max_r2t
 EXPORT_SYMBOL_GPL drivers/scsi/libiscsi_tcp 0x00000000	iscsi_tcp_task_init
 EXPORT_SYMBOL_GPL drivers/scsi/libiscsi_tcp 0x00000000	iscsi_tcp_task_xmit
+EXPORT_SYMBOL_GPL drivers/scsi/libsas/libsas 0x00000000	dev_attr_phy_event_threshold
 EXPORT_SYMBOL_GPL drivers/scsi/libsas/libsas 0x00000000	sas_alloc_slow_task
 EXPORT_SYMBOL_GPL drivers/scsi/libsas/libsas 0x00000000	sas_alloc_task
 EXPORT_SYMBOL_GPL drivers/scsi/libsas/libsas 0x00000000	sas_bios_param
