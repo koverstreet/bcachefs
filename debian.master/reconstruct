@@ -2,6 +2,12 @@
 # Remove any files deleted from the orig.
 rm -f 'arch/arm/include/asm/kvm_psci.h'
 rm -f 'arch/arm64/include/asm/kvm_psci.h'
+rm -f 'drivers/infiniband/hw/hns/hns_roce_eq.c'
+rm -f 'drivers/infiniband/hw/hns/hns_roce_eq.h'
+rm -f 'drivers/net/ethernet/hisilicon/hns3/hns3pf/hns3_dcbnl.c'
+rm -f 'drivers/net/ethernet/hisilicon/hns3/hns3pf/hns3_enet.c'
+rm -f 'drivers/net/ethernet/hisilicon/hns3/hns3pf/hns3_enet.h'
+rm -f 'drivers/net/ethernet/hisilicon/hns3/hns3pf/hns3_ethtool.c'
 chmod +x 'scripts/kmsg-doc'
 chmod +x 'spl/autogen.sh'
 chmod +x 'spl/cmd/splslab/splslab.py'
