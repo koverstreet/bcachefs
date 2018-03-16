@@ -734,13 +734,13 @@ static void __bch2_write(struct closure *cl)
 	int ret;
 
 	do {
-		if (op->open_buckets_nr + op->nr_replicas >
+		/* +1 for possible cache device: */
+		if (op->open_buckets_nr + op->nr_replicas + 1 >
 		    ARRAY_SIZE(op->open_buckets)) {
 			continue_at(cl, bch2_write_index, index_update_wq(op));
 			return;
 		}
 
-		/* for the device pointers and 1 for the chksum */
 		if (bch2_keylist_realloc(&op->insert_keys,
 					op->inline_keys,
 					ARRAY_SIZE(op->inline_keys),
