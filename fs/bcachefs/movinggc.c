@@ -72,9 +72,9 @@ static bool __copygc_pred(struct bch_dev *ca,
 	if (ptr) {
 		struct copygc_heap_entry search = { .offset = ptr->offset };
 
-		size_t i = eytzinger0_find_le(h->data, h->used,
-					      sizeof(h->data[0]),
-					      bucket_offset_cmp, &search);
+		ssize_t i = eytzinger0_find_le(h->data, h->used,
+					       sizeof(h->data[0]),
+					       bucket_offset_cmp, &search);
 
 		return (i >= 0 &&
 			ptr->offset < h->data[i].offset + ca->mi.bucket_size &&
