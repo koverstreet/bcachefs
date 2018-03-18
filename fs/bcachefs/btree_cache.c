@@ -738,7 +738,6 @@ retry:
 		return ERR_PTR(-EIO);
 	}
 
-	EBUG_ON(!b->written);
 	EBUG_ON(b->btree_id != iter->btree_id ||
 		BTREE_NODE_LEVEL(b->data) != level ||
 		bkey_cmp(b->data->max_key, k->k.p));
