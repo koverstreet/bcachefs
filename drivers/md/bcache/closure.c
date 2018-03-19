@@ -49,7 +49,7 @@ void closure_sub(struct closure *cl, int v)
 }
 EXPORT_SYMBOL(closure_sub);
 
-/**
+/*
  * closure_put - decrement a closure's refcount
  */
 void closure_put(struct closure *cl)
@@ -58,7 +58,7 @@ void closure_put(struct closure *cl)
 }
 EXPORT_SYMBOL(closure_put);
 
-/**
+/*
  * closure_wake_up - wake up all closures on a wait list, without memory barrier
  */
 void __closure_wake_up(struct closure_waitlist *wait_list)
@@ -82,9 +82,9 @@ EXPORT_SYMBOL(__closure_wake_up);
 
 /**
  * closure_wait - add a closure to a waitlist
- *
- * @waitlist will own a ref on @cl, which will be released when
+ * @waitlist: will own a ref on @cl, which will be released when
  * closure_wake_up() is called on @waitlist.
+ * @cl: closure pointer.
  *
  */
 bool closure_wait(struct closure_waitlist *waitlist, struct closure *cl)
