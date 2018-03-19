@@ -1532,6 +1532,7 @@ hci_nokia
 hci_uart
 hci_vhci
 hclge
+hclgevf
 hd44780
 hdc100x
 hdlc

@@ -681,6 +681,7 @@ EXPORT_SYMBOL drivers/gpu/drm/drm_kms_helper 0x00000000	drm_helper_probe_detect
 EXPORT_SYMBOL drivers/gpu/drm/drm_kms_helper 0x00000000	drm_helper_probe_single_connector_modes
 EXPORT_SYMBOL drivers/gpu/drm/drm_kms_helper 0x00000000	drm_helper_resume_force_mode
 EXPORT_SYMBOL drivers/gpu/drm/drm_kms_helper 0x00000000	drm_kms_helper_hotplug_event
+EXPORT_SYMBOL drivers/gpu/drm/drm_kms_helper 0x00000000	drm_kms_helper_is_poll_worker
 EXPORT_SYMBOL drivers/gpu/drm/drm_kms_helper 0x00000000	drm_kms_helper_poll_disable
 EXPORT_SYMBOL drivers/gpu/drm/drm_kms_helper 0x00000000	drm_kms_helper_poll_enable
 EXPORT_SYMBOL drivers/gpu/drm/drm_kms_helper 0x00000000	drm_kms_helper_poll_fini
@@ -5237,6 +5238,7 @@ EXPORT_SYMBOL net/ipv6/xfrm6_tunnel 0x00000000	xfrm6_tunnel_spi_lookup
 EXPORT_SYMBOL net/kcm/kcm 0x00000000	kcm_proc_register
 EXPORT_SYMBOL net/kcm/kcm 0x00000000	kcm_proc_unregister
 EXPORT_SYMBOL net/l2tp/l2tp_core 0x00000000	l2tp_recv_common
+EXPORT_SYMBOL net/l2tp/l2tp_core 0x00000000	l2tp_tunnel_free
 EXPORT_SYMBOL net/l2tp/l2tp_ip 0x00000000	l2tp_ioctl
 EXPORT_SYMBOL net/lapb/lapb 0x00000000	lapb_connect_request
 EXPORT_SYMBOL net/lapb/lapb 0x00000000	lapb_data_received
@@ -6293,6 +6295,7 @@ EXPORT_SYMBOL vmlinux 0x00000000	__percpu_counter_sum
 EXPORT_SYMBOL vmlinux 0x00000000	__pgd_index_size
 EXPORT_SYMBOL vmlinux 0x00000000	__pgd_table_size
 EXPORT_SYMBOL vmlinux 0x00000000	__pgd_val_bits
+EXPORT_SYMBOL vmlinux 0x00000000	__phy_resume
 EXPORT_SYMBOL vmlinux 0x00000000	__pmd_cache_index
 EXPORT_SYMBOL vmlinux 0x00000000	__pmd_index_size
 EXPORT_SYMBOL vmlinux 0x00000000	__pmd_table_size
@@ -6996,6 +6999,7 @@ EXPORT_SYMBOL vmlinux 0x00000000	current_kernel_time64
 EXPORT_SYMBOL vmlinux 0x00000000	current_stack_pointer
 EXPORT_SYMBOL vmlinux 0x00000000	current_time
 EXPORT_SYMBOL vmlinux 0x00000000	current_umask
+EXPORT_SYMBOL vmlinux 0x00000000	current_work
 EXPORT_SYMBOL vmlinux 0x00000000	cxl_use_count
 EXPORT_SYMBOL vmlinux 0x00000000	d_add
 EXPORT_SYMBOL vmlinux 0x00000000	d_add_ci

@@ -695,6 +695,7 @@ EXPORT_SYMBOL drivers/gpu/drm/drm_kms_helper 0x00000000	drm_helper_probe_detect
 EXPORT_SYMBOL drivers/gpu/drm/drm_kms_helper 0x00000000	drm_helper_probe_single_connector_modes
 EXPORT_SYMBOL drivers/gpu/drm/drm_kms_helper 0x00000000	drm_helper_resume_force_mode
 EXPORT_SYMBOL drivers/gpu/drm/drm_kms_helper 0x00000000	drm_kms_helper_hotplug_event
+EXPORT_SYMBOL drivers/gpu/drm/drm_kms_helper 0x00000000	drm_kms_helper_is_poll_worker
 EXPORT_SYMBOL drivers/gpu/drm/drm_kms_helper 0x00000000	drm_kms_helper_poll_disable
 EXPORT_SYMBOL drivers/gpu/drm/drm_kms_helper 0x00000000	drm_kms_helper_poll_enable
 EXPORT_SYMBOL drivers/gpu/drm/drm_kms_helper 0x00000000	drm_kms_helper_poll_fini
@@ -5352,6 +5353,7 @@ EXPORT_SYMBOL net/ipv6/xfrm6_tunnel 0x00000000	xfrm6_tunnel_spi_lookup
 EXPORT_SYMBOL net/kcm/kcm 0x00000000	kcm_proc_register
 EXPORT_SYMBOL net/kcm/kcm 0x00000000	kcm_proc_unregister
 EXPORT_SYMBOL net/l2tp/l2tp_core 0x00000000	l2tp_recv_common
+EXPORT_SYMBOL net/l2tp/l2tp_core 0x00000000	l2tp_tunnel_free
 EXPORT_SYMBOL net/l2tp/l2tp_ip 0x00000000	l2tp_ioctl
 EXPORT_SYMBOL net/lapb/lapb 0x00000000	lapb_connect_request
 EXPORT_SYMBOL net/lapb/lapb 0x00000000	lapb_data_received
@@ -6797,6 +6799,7 @@ EXPORT_SYMBOL vmlinux 0x00000000	__per_cpu_offset
 EXPORT_SYMBOL vmlinux 0x00000000	__percpu_counter_compare
 EXPORT_SYMBOL vmlinux 0x00000000	__percpu_counter_init
 EXPORT_SYMBOL vmlinux 0x00000000	__percpu_counter_sum
+EXPORT_SYMBOL vmlinux 0x00000000	__phy_resume
 EXPORT_SYMBOL vmlinux 0x00000000	__posix_acl_chmod
 EXPORT_SYMBOL vmlinux 0x00000000	__posix_acl_create
 EXPORT_SYMBOL vmlinux 0x00000000	__preempt_count
@@ -7682,6 +7685,7 @@ EXPORT_SYMBOL vmlinux 0x00000000	current_kernel_time64
 EXPORT_SYMBOL vmlinux 0x00000000	current_task
 EXPORT_SYMBOL vmlinux 0x00000000	current_time
 EXPORT_SYMBOL vmlinux 0x00000000	current_umask
+EXPORT_SYMBOL vmlinux 0x00000000	current_work
 EXPORT_SYMBOL vmlinux 0x00000000	d_add
 EXPORT_SYMBOL vmlinux 0x00000000	d_add_ci
 EXPORT_SYMBOL vmlinux 0x00000000	d_alloc
@@ -17697,7 +17701,6 @@ EXPORT_SYMBOL_GPL vmlinux 0x00000000	__blocking_notifier_call_chain
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	__bpf_call_base
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	__class_create
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	__class_register
-EXPORT_SYMBOL_GPL vmlinux 0x00000000	__clear_rsb
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	__clk_determine_rate
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	__clk_get_flags
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	__clk_get_hw
@@ -17735,7 +17738,6 @@ EXPORT_SYMBOL_GPL vmlinux 0x00000000	__efivar_entry_get
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	__efivar_entry_iter
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	__fat_fs_error
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	__fib_lookup
-EXPORT_SYMBOL_GPL vmlinux 0x00000000	__fill_rsb
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	__fput_sync
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	__free_iova
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	__fscrypt_prepare_link
