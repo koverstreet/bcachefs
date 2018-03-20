@@ -32,7 +32,12 @@ fi
 
 echo "II: retpoline delta in this package..."
 rc=0
-diff -u "$prev" "$curr" || rc=1
+diff -u "$prev" "$curr" || true
+count=$( diff -u "$prev" "$curr" | grep '^+[^+]' | wc -l )
+if [ "$count" != 0 ]; then
+	rc=1
+	echo "WW: $count new retpoline sequences detected"
+fi
 
 echo "II: Done";
 if [ "$skipretpoline" = 'true' -a "$rc" -ne 0 ]; then
