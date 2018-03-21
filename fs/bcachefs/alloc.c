@@ -1530,11 +1530,12 @@ struct write_point *bch2_alloc_sectors_start(struct bch_fs *c,
 	nr_ptrs_have = wp->first_ptr;
 
 	/* does writepoint have ptrs we don't want to use? */
-	writepoint_for_each_ptr(wp, ob, i)
-		if (!dev_idx_in_target(c, ob->ptr.dev, target)) {
-			swap(wp->ptrs[i], wp->ptrs[wp->first_ptr]);
-			wp->first_ptr++;
-		}
+	if (target)
+		writepoint_for_each_ptr(wp, ob, i)
+			if (!dev_idx_in_target(c, ob->ptr.dev, target)) {
+				swap(wp->ptrs[i], wp->ptrs[wp->first_ptr]);
+				wp->first_ptr++;
+			}
 
 	if (flags & BCH_WRITE_ONLY_SPECIFIED_DEVS) {
 		ret = open_bucket_add_buckets(c, target, wp, devs_have,
@@ -1551,7 +1552,7 @@ struct write_point *bch2_alloc_sectors_start(struct bch_fs *c,
 					      nr_replicas, reserve, cl);
 	}
 
-	if (ret)
+	if (ret && ret != -EROFS)
 		goto err;
 alloc_done:
 	/* check for more than one cache: */
@@ -1583,6 +1584,13 @@ alloc_done:
 		ca = bch_dev_bkey_exists(c, ob->ptr.dev);
 		nr_ptrs_effective += ca->mi.durability;
 	}
+
+	if (ret == -EROFS &&
+	    nr_ptrs_effective >= nr_replicas_required)
+		ret = 0;
+
+	if (ret)
+		goto err;
 
 	if (nr_ptrs_effective > nr_replicas) {
 		writepoint_for_each_ptr(wp, ob, i) {
