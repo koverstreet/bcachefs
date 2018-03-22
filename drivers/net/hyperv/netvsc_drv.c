@@ -853,7 +853,7 @@ drop:
 	napi_gro_receive(&nvchan->napi, skb);
 	rcu_read_unlock();
 
-	return 0;
+	return NVSP_STAT_SUCCESS;
 }
 
 static void netvsc_get_drvinfo(struct net_device *net,
