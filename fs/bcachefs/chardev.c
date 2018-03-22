@@ -372,6 +372,9 @@ static long bch2_ioctl_usage(struct bch_fs *c,
 	unsigned i, j;
 	int ret;
 
+	if (!test_bit(BCH_FS_STARTED, &c->flags))
+		return -EINVAL;
+
 	if (copy_from_user(&arg, user_arg, sizeof(arg)))
 		return -EFAULT;
 
@@ -535,13 +538,22 @@ long bch2_fs_ioctl(struct bch_fs *c, unsigned cmd, void __user *arg)
 	if (!capable(CAP_SYS_ADMIN))
 		return -EPERM;
 
-	/* ioctls that do require admin cap: */
 	switch (cmd) {
 	case BCH_IOCTL_START:
 		BCH_IOCTL(start, struct bch_ioctl_start);
 	case BCH_IOCTL_STOP:
 		return bch2_ioctl_stop(c);
+	case BCH_IOCTL_READ_SUPER:
+		BCH_IOCTL(read_super, struct bch_ioctl_read_super);
+	case BCH_IOCTL_DISK_GET_IDX:
+		BCH_IOCTL(disk_get_idx, struct bch_ioctl_disk_get_idx);
+	}
 
+	if (!test_bit(BCH_FS_STARTED, &c->flags))
+		return -EINVAL;
+
+	/* ioctls that do require admin cap: */
+	switch (cmd) {
 	case BCH_IOCTL_DISK_ADD:
 		BCH_IOCTL(disk_add, struct bch_ioctl_disk);
 	case BCH_IOCTL_DISK_REMOVE:
@@ -554,10 +566,6 @@ long bch2_fs_ioctl(struct bch_fs *c, unsigned cmd, void __user *arg)
 		BCH_IOCTL(disk_set_state, struct bch_ioctl_disk_set_state);
 	case BCH_IOCTL_DATA:
 		BCH_IOCTL(data, struct bch_ioctl_data);
-	case BCH_IOCTL_READ_SUPER:
-		BCH_IOCTL(read_super, struct bch_ioctl_read_super);
-	case BCH_IOCTL_DISK_GET_IDX:
-		BCH_IOCTL(disk_get_idx, struct bch_ioctl_disk_get_idx);
 	case BCH_IOCTL_DISK_RESIZE:
 		BCH_IOCTL(disk_resize, struct bch_ioctl_disk_resize);
 

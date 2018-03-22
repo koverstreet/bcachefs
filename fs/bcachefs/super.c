@@ -501,11 +501,54 @@ void bch2_fs_stop(struct bch_fs *c)
 	kobject_put(&c->kobj);
 }
 
+static const char *bch2_fs_online(struct bch_fs *c)
+{
+	struct bch_dev *ca;
+	const char *err = NULL;
+	unsigned i;
+	int ret;
+
+	lockdep_assert_held(&bch_fs_list_lock);
+
+	if (!list_empty(&c->list))
+		return NULL;
+
+	if (__bch2_uuid_to_fs(c->sb.uuid))
+		return "filesystem UUID already open";
+
+	ret = bch2_fs_chardev_init(c);
+	if (ret)
+		return "error creating character device";
+
+	bch2_fs_debug_init(c);
+
+	if (kobject_add(&c->kobj, NULL, "%pU", c->sb.user_uuid.b) ||
+	    kobject_add(&c->internal, &c->kobj, "internal") ||
+	    kobject_add(&c->opts_dir, &c->kobj, "options") ||
+	    kobject_add(&c->time_stats, &c->kobj, "time_stats") ||
+	    bch2_opts_create_sysfs_files(&c->opts_dir))
+		return "error creating sysfs objects";
+
+	mutex_lock(&c->state_lock);
+
+	err = "error creating sysfs objects";
+	__for_each_member_device(ca, c, i, NULL)
+		if (bch2_dev_sysfs_online(c, ca))
+			goto err;
+
+	list_add(&c->list, &bch_fs_list);
+	err = NULL;
+err:
+	mutex_unlock(&c->state_lock);
+	return err;
+}
+
 static struct bch_fs *bch2_fs_alloc(struct bch_sb *sb, struct bch_opts opts)
 {
 	struct bch_sb_field_members *mi;
 	struct bch_fs *c;
 	unsigned i, iter_size;
+	const char *err;
 
 	pr_verbose_init(opts, "");
 
@@ -644,6 +687,14 @@ static struct bch_fs *bch2_fs_alloc(struct bch_sb *sb, struct bch_opts opts)
 	kobject_init(&c->internal, &bch2_fs_internal_ktype);
 	kobject_init(&c->opts_dir, &bch2_fs_opts_dir_ktype);
 	kobject_init(&c->time_stats, &bch2_fs_time_stats_ktype);
+
+	mutex_lock(&bch_fs_list_lock);
+	err = bch2_fs_online(c);
+	mutex_unlock(&bch_fs_list_lock);
+	if (err) {
+		bch_err(c, "bch2_fs_online() error: %s", err);
+		goto err;
+	}
 out:
 	pr_verbose_init(opts, "ret %i", c ? 0 : -ENOMEM);
 	return c;
@@ -653,60 +704,7 @@ err:
 	goto out;
 }
 
-static const char *__bch2_fs_online(struct bch_fs *c)
-{
-	struct bch_dev *ca;
-	const char *err = NULL;
-	unsigned i;
-	int ret;
-
-	lockdep_assert_held(&bch_fs_list_lock);
-
-	if (!list_empty(&c->list))
-		return NULL;
-
-	if (__bch2_uuid_to_fs(c->sb.uuid))
-		return "filesystem UUID already open";
-
-	ret = bch2_fs_chardev_init(c);
-	if (ret)
-		return "error creating character device";
-
-	bch2_fs_debug_init(c);
-
-	if (kobject_add(&c->kobj, NULL, "%pU", c->sb.user_uuid.b) ||
-	    kobject_add(&c->internal, &c->kobj, "internal") ||
-	    kobject_add(&c->opts_dir, &c->kobj, "options") ||
-	    kobject_add(&c->time_stats, &c->kobj, "time_stats") ||
-	    bch2_opts_create_sysfs_files(&c->opts_dir))
-		return "error creating sysfs objects";
-
-	mutex_lock(&c->state_lock);
-
-	err = "error creating sysfs objects";
-	__for_each_member_device(ca, c, i, NULL)
-		if (bch2_dev_sysfs_online(c, ca))
-			goto err;
-
-	list_add(&c->list, &bch_fs_list);
-	err = NULL;
-err:
-	mutex_unlock(&c->state_lock);
-	return err;
-}
-
-static const char *bch2_fs_online(struct bch_fs *c)
-{
-	const char *err;
-
-	mutex_lock(&bch_fs_list_lock);
-	err = __bch2_fs_online(c);
-	mutex_unlock(&bch_fs_list_lock);
-
-	return err;
-}
-
-static const char *__bch2_fs_start(struct bch_fs *c)
+const char *bch2_fs_start(struct bch_fs *c)
 {
 	const char *err = "cannot allocate memory";
 	struct bch_sb_field_members *mi;
@@ -901,6 +899,8 @@ recovery_done:
 	bch2_write_super(c);
 	mutex_unlock(&c->sb_lock);
 
+	set_bit(BCH_FS_STARTED, &c->flags);
+
 	err = NULL;
 out:
 	mutex_unlock(&c->state_lock);
@@ -937,11 +937,6 @@ fsck_err:
 	BUG_ON(!err);
 	set_bit(BCH_FS_ERROR, &c->flags);
 	goto out;
-}
-
-const char *bch2_fs_start(struct bch_fs *c)
-{
-	return __bch2_fs_start(c) ?: bch2_fs_online(c);
 }
 
 static const char *bch2_dev_may_add(struct bch_sb *sb, struct bch_fs *c)
@@ -1856,15 +1851,10 @@ struct bch_fs *bch2_fs_open(char * const *devices, unsigned nr_devices,
 		goto err_print;
 
 	if (!c->opts.nostart) {
-		err = __bch2_fs_start(c);
+		err = bch2_fs_start(c);
 		if (err)
 			goto err_print;
 	}
-
-	err = bch2_fs_online(c);
-	if (err)
-		goto err_print;
-
 out:
 	kfree(sb);
 	module_put(THIS_MODULE);
@@ -1922,14 +1912,10 @@ static const char *__bch2_fs_open_incremental(struct bch_sb_handle *sb,
 	mutex_unlock(&c->sb_lock);
 
 	if (!c->opts.nostart && bch2_fs_may_start(c)) {
-		err = __bch2_fs_start(c);
+		err = bch2_fs_start(c);
 		if (err)
 			goto err;
 	}
-
-	err = __bch2_fs_online(c);
-	if (err)
-		goto err;
 
 	closure_put(&c->cl);
 	mutex_unlock(&bch_fs_list_lock);
