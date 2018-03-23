@@ -211,27 +211,39 @@ rel()
 
 tmp="/tmp/retpoline-extract.$$"
 
+disassemble()
+{
+	local object="$1"
+	local src="$2"
+	local options="$3"
+	local selector="$4"
+
+	objdump $options --disassemble --no-show-raw-insn "$object" | \
+	awk -F' ' '
+		BEGIN				{ file="'"$object"'"; src="'"$src"'"; }
+		/Disassembly of section/        { segment=$4; sub(":", "", segment); }
+		/^[0-9a-f][0-9a-f]* <.*>:/      { tag=$0; sub(".*<", "", tag); sub(">.*", "", tag); }
+		$0 ~ /(call|jmp)q?  *\*.*%/ {
+			sub(":", "", $1);
+			if ('"$selector"') {
+				offset=$1
+				$1=tag
+				print(file "-" segment "-" offset " " src " " segment " " $0);
+			}
+		}
+	'
+}
+
 # Accumulate potentially vunerable indirect call/jmp sequences.  We do this
 # by examining the raw disassembly for affected forms, recording the location
 # of each.
 case "$bit16" in
-'')	;;
-*)	disassemble_as='--disassembler-options=i8086' ;;
-esac
-objdump $disassemble_as --disassemble --no-show-raw-insn "$object" | \
-awk -F' ' '
-	BEGIN				{ file="'"$object"'"; src="'"$src"'"; }
-	/Disassembly of section/        { segment=$4; sub(":", "", segment); }
-	/^[0-9a-f][0-9a-f]* <.*>:/      { tag=$0; sub(".*<", "", tag); sub(">.*", "", tag); }
-	$0 ~ /(call|jmp)q?  *\*.*%/ {
-		sub(":", "", $1);
-		if (segment != ".init.text") {
-			offset=$1
-			$1=tag
-			print(file "-" segment "-" offset " " src " " segment " " $0);
-		}
-	}
-' | sort -k 1b,1 >"$object.ur-detected"
+'')	disassemble "$object" "$src" '' 'segment != ".init.text"' ;;
+*)	disassemble "$object" "$src" '--disassembler-options=i8086' 'segment != ".init.text" && segment != ".text32" && segment != ".text64"'
+	disassemble "$object" "$src" '--disassembler-options=i386' 'segment == ".text32"'
+	disassemble "$object" "$src" '--disassembler-options=x86-64' 'segment == ".text64"'
+	;;
+esac | sort -k 1b,1 >"$object.ur-detected"
 [ ! -s "$object.ur-detected" ] && rm -f "$object.ur-detected"
 
 # Load up the symbol table and section mappings.
