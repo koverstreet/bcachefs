@@ -223,6 +223,9 @@ disassemble()
 		BEGIN				{ file="'"$object"'"; src="'"$src"'"; }
 		/Disassembly of section/        { segment=$4; sub(":", "", segment); }
 		/^[0-9a-f][0-9a-f]* <.*>:/      { tag=$0; sub(".*<", "", tag); sub(">.*", "", tag); }
+		$0 ~ /(call|jmp)q?  *\*0x[0-9a-f]*\(%rip\)/ {
+			next
+		}
 		$0 ~ /(call|jmp)q?  *\*.*%/ {
 			sub(":", "", $1);
 			if ('"$selector"') {
