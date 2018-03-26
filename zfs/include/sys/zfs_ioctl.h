@@ -328,6 +328,25 @@ typedef struct zinject_record {
 	uint32_t	zi_pad;
 } zinject_record_t;
 
+typedef struct zinject_record_V065 {
+	uint64_t	zi_objset;
+	uint64_t	zi_object;
+	uint64_t	zi_start;
+	uint64_t	zi_end;
+	uint64_t	zi_guid;
+	uint32_t	zi_level;
+	uint32_t	zi_error;
+	uint64_t	zi_type;
+	uint32_t	zi_freq;
+	uint32_t	zi_failfast;
+	char		zi_func[MAXNAMELEN];
+	uint32_t	zi_iotype;
+	int32_t		zi_duration;
+	uint64_t	zi_timer;
+	uint32_t	zi_cmd;
+	uint32_t	zi_pad;
+} zinject_record_V065_t;
+
 #define	ZINJECT_NULL		0x1
 #define	ZINJECT_FLUSH_ARC	0x2
 #define	ZINJECT_UNLOAD_SPA	0x4
@@ -419,6 +438,48 @@ typedef struct zfs_cmd {
 	uint64_t	zc_createtxg;
 	zfs_stat_t	zc_stat;
 } zfs_cmd_t;
+
+typedef struct zfs_cmd_V065 {
+	char		zc_name[MAXPATHLEN];	/* name of pool or dataset */
+	uint64_t	zc_nvlist_src;		/* really (char *) */
+	uint64_t	zc_nvlist_src_size;
+	uint64_t	zc_nvlist_dst;		/* really (char *) */
+	uint64_t	zc_nvlist_dst_size;
+	boolean_t	zc_nvlist_dst_filled;	/* put an nvlist in dst? */
+	int		zc_pad2;
+
+	/*
+	 * The following members are for legacy ioctls which haven't been
+	 * converted to the new method.
+	 */
+	uint64_t	zc_history;		/* really (char *) */
+	char		zc_value[MAXPATHLEN * 2];
+	char		zc_string[MAXNAMELEN];
+	uint64_t	zc_guid;
+	uint64_t	zc_nvlist_conf;		/* really (char *) */
+	uint64_t	zc_nvlist_conf_size;
+	uint64_t	zc_cookie;
+	uint64_t	zc_objset_type;
+	uint64_t	zc_perm_action;
+	uint64_t	zc_history_len;
+	uint64_t	zc_history_offset;
+	uint64_t	zc_obj;
+	uint64_t	zc_iflags;		/* internal to zfs(7fs) */
+	zfs_share_t	zc_share;
+	dmu_objset_stats_t zc_objset_stats;
+	struct drr_begin zc_begin_record;
+	zinject_record_V065_t zc_inject_record;
+	uint32_t	zc_defer_destroy;
+	uint32_t	zc_flags;
+	uint64_t	zc_action_handle;
+	int		zc_cleanup_fd;
+	uint8_t		zc_simple;
+	uint8_t		zc_pad[3];		/* alignment */
+	uint64_t	zc_sendobj;
+	uint64_t	zc_fromobj;
+	uint64_t	zc_createtxg;
+	zfs_stat_t	zc_stat;
+} zfs_cmd_V065_t;
 
 typedef struct zfs_useracct {
 	char zu_domain[256];
