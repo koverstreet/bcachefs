@@ -1552,11 +1552,6 @@ int __init ap_debug_init(void)
 	return 0;
 }
 
-void ap_debug_exit(void)
-{
-	debug_unregister(ap_dbf_info);
-}
-
 static void __init ap_perms_init(void)
 {
 	/* all resources useable if no kernel parameter string given */
