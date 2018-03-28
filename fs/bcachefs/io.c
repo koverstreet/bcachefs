@@ -981,7 +981,7 @@ static bool should_promote(struct bch_fs *c, struct bkey_s_c_extent e,
 	if (percpu_ref_is_dying(&c->writes))
 		return false;
 
-	return bch2_extent_has_target(c, e, target);
+	return bch2_extent_has_target(c, e, target) == NULL;
 }
 
 /* Read */
