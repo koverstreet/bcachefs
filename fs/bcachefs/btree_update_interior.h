@@ -343,4 +343,6 @@ static inline bool journal_res_insert_fits(struct btree_insert *trans,
 
 ssize_t bch2_btree_updates_print(struct bch_fs *, char *);
 
+size_t bch2_btree_interior_updates_nr_pending(struct bch_fs *);
+
 #endif /* _BCACHEFS_BTREE_UPDATE_INTERIOR_H */

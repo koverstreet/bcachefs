@@ -209,17 +209,6 @@ static void bch_fs_mark_clean(struct bch_fs *c)
 	}
 }
 
-static bool btree_interior_updates_done(struct bch_fs *c)
-{
-	bool ret;
-
-	mutex_lock(&c->btree_interior_update_lock);
-	ret = list_empty(&c->btree_interior_update_list);
-	mutex_unlock(&c->btree_interior_update_lock);
-
-	return ret;
-}
-
 static void __bch2_fs_read_only(struct bch_fs *c)
 {
 	struct bch_dev *ca;
@@ -251,7 +240,7 @@ static void __bch2_fs_read_only(struct bch_fs *c)
 	 * fully complete:
 	 */
 	closure_wait_event(&c->btree_interior_update_wait,
-			   btree_interior_updates_done(c));
+			   !bch2_btree_interior_updates_nr_pending(c));
 
 	if (!test_bit(BCH_FS_EMERGENCY_RO, &c->flags))
 		bch2_btree_verify_flushed(c);
