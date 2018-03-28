@@ -3,7 +3,7 @@
 
 #include "util.h"
 
-#define NR_IO_TIMERS		8
+#define NR_IO_TIMERS		(BCH_SB_MEMBERS_MAX * 3)
 
 /*
  * Clocks/timers in units of sectors of IO:
