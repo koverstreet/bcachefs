@@ -231,6 +231,20 @@ static inline int btree_iter_cmp(const struct btree_iter *l,
 	return __btree_iter_cmp(l->btree_id, l->pos, r);
 }
 
+/*
+ * Unlocks before scheduling
+ * Note: does not revalidate iterator
+ */
+static inline void bch2_btree_iter_cond_resched(struct btree_iter *iter)
+{
+	if (need_resched()) {
+		bch2_btree_iter_unlock(iter);
+		schedule();
+	} else if (race_fault()) {
+		bch2_btree_iter_unlock(iter);
+	}
+}
+
 #define __for_each_btree_node(_iter, _c, _btree_id, _start,		\
 			      _locks_want, _depth, _flags, _b)		\
 	for (__bch2_btree_iter_init((_iter), (_c), (_btree_id), _start,	\
@@ -253,6 +267,8 @@ static inline struct bkey_s_c __bch2_btree_iter_peek(struct btree_iter *iter,
 static inline struct bkey_s_c __bch2_btree_iter_next(struct btree_iter *iter,
 						     unsigned flags)
 {
+	bch2_btree_iter_cond_resched(iter);
+
 	return flags & BTREE_ITER_SLOTS
 		? bch2_btree_iter_next_slot(iter)
 		: bch2_btree_iter_next(iter);
@@ -273,20 +289,6 @@ static inline struct bkey_s_c __bch2_btree_iter_next(struct btree_iter *iter,
 static inline int btree_iter_err(struct bkey_s_c k)
 {
 	return PTR_ERR_OR_ZERO(k.k);
-}
-
-/*
- * Unlocks before scheduling
- * Note: does not revalidate iterator
- */
-static inline void bch2_btree_iter_cond_resched(struct btree_iter *iter)
-{
-	if (need_resched()) {
-		bch2_btree_iter_unlock(iter);
-		schedule();
-	} else if (race_fault()) {
-		bch2_btree_iter_unlock(iter);
-	}
 }
 
 #endif /* _BCACHEFS_BTREE_ITER_H */
