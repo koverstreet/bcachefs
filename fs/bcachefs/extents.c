@@ -160,9 +160,13 @@ bch2_extent_has_target(struct bch_fs *c, struct bkey_s_c_extent e, unsigned targ
 {
 	const struct bch_extent_ptr *ptr;
 
-	extent_for_each_ptr(e, ptr)
-		if (dev_in_target(c->devs[ptr->dev], target))
+	extent_for_each_ptr(e, ptr) {
+		struct bch_dev *ca = bch_dev_bkey_exists(c, ptr->dev);
+
+		if (dev_in_target(ca, target) &&
+		    (!ptr->cached || !ptr_stale(ca, ptr)))
 			return ptr;
+	}
 
 	return NULL;
 }
