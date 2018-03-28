@@ -390,10 +390,6 @@ mappedread(struct inode *ip, int nbytes, uio_t *uio)
 	int error = 0;
 	void *pb;
 
-	error = uio_prefaultpages(nbytes, UIO_READ, uio);
-	if (error)
-		return (error);
-
 	start = uio->uio_loffset;
 	off = start & (PAGE_SIZE-1);
 	for (start &= PAGE_MASK; len > 0; start += PAGE_SIZE) {
@@ -679,7 +675,7 @@ zfs_write(struct inode *ip, uio_t *uio, int ioflag, cred_t *cr)
 		xuio = (xuio_t *)uio;
 	else
 #endif
-		uio_prefaultpages(MIN(n, max_blksz), UIO_WRITE, uio);
+		uio_prefaultpages(MIN(n, max_blksz), uio);
 
 	/*
 	 * If in append mode, set the io offset pointer to eof.
@@ -925,7 +921,7 @@ zfs_write(struct inode *ip, uio_t *uio, int ioflag, cred_t *cr)
 		n -= nbytes;
 
 		if (!xuio && n > 0)
-			uio_prefaultpages(MIN(n, max_blksz), UIO_WRITE, uio);
+			uio_prefaultpages(MIN(n, max_blksz), uio);
 	}
 
 	zfs_inode_update(zp);

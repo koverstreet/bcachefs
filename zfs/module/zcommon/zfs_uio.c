@@ -148,51 +148,64 @@ uiomove(void *p, size_t n, enum uio_rw rw, struct uio *uio)
 }
 EXPORT_SYMBOL(uiomove);
 
+#define	fuword8(uptr, vptr)	get_user((*vptr), (uptr))
+
 /*
- * Fault in the user space pages specified by the uio structure.  Note that
- * when faulting in pages with UIO_READ they may have zeros written to them
- * which is OK because we know they'll be overwritten.
+ * Fault in the pages of the first n bytes specified by the uio structure.
+ * 1 byte in each page is touched and the uio struct is unmodified. Any
+ * error will terminate the process as this is only a best attempt to get
+ * the pages resident.
  */
-int
-uio_prefaultpages(ssize_t n, enum uio_rw rw, struct uio *uio)
+void
+uio_prefaultpages(ssize_t n, struct uio *uio)
 {
-	const struct iovec *iov = uio->uio_iov;
-	size_t skip = uio->uio_skip;
-	int iovcnt = uio->uio_iovcnt;
-	uio_seg_t seg = uio->uio_segflg;
-	char __user *p;
-	ulong_t cnt;
-	int error;
+	const struct iovec *iov;
+	ulong_t cnt, incr;
+	caddr_t p;
+	uint8_t tmp;
+	int iovcnt;
+	size_t skip;
 
-	/* No need to fault in kernel pages */
-	if (seg == UIO_SYSSPACE || seg == UIO_BVEC)
-		return (0);
-
-	ASSERT(seg == UIO_USERSPACE || seg == UIO_USERISPACE);
-
-	while ((n > 0) && (iovcnt > 0)) {
-		cnt = MIN(iov->iov_len - skip, n);
-		p = iov->iov_base + skip;
-
-		if (rw == UIO_READ)
-			error = -fault_in_pages_writeable(p, cnt);
-		else
-			error = -fault_in_pages_readable(p, cnt);
-
-		if (error)
-			return (error);
-
-		skip += cnt;
-		if (skip == iov->iov_len) {
-			skip = 0;
-			iov++;
-			iovcnt--;
-		}
-
-		n -= cnt;
+	/* no need to fault in kernel pages */
+	switch (uio->uio_segflg) {
+		case UIO_SYSSPACE:
+		case UIO_BVEC:
+			return;
+		case UIO_USERSPACE:
+		case UIO_USERISPACE:
+			break;
+		default:
+			ASSERT(0);
 	}
 
-	return (0);
+	iov = uio->uio_iov;
+	iovcnt = uio->uio_iovcnt;
+	skip = uio->uio_skip;
+
+	for (; n > 0 && iovcnt > 0; iov++, iovcnt--, skip = 0) {
+		cnt = MIN(iov->iov_len - skip, n);
+		/* empty iov */
+		if (cnt == 0)
+			continue;
+		n -= cnt;
+		/*
+		 * touch each page in this segment.
+		 */
+		p = iov->iov_base + skip;
+		while (cnt) {
+			if (fuword8((uint8_t *)p, &tmp))
+				return;
+			incr = MIN(cnt, PAGESIZE);
+			p += incr;
+			cnt -= incr;
+		}
+		/*
+		 * touch the last byte in case it straddles a page.
+		 */
+		p--;
+		if (fuword8((uint8_t *)p, &tmp))
+			return;
+	}
 }
 EXPORT_SYMBOL(uio_prefaultpages);
 
