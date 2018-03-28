@@ -58,6 +58,7 @@
 #include "btree_cache.h"
 #include "btree_io.h"
 #include "btree_update.h"
+#include "btree_update_interior.h"
 #include "btree_gc.h"
 #include "buckets.h"
 #include "checksum.h"
@@ -536,7 +537,7 @@ static int wait_buckets_available(struct bch_fs *c, struct bch_dev *ca)
 	while (1) {
 		set_current_state(TASK_INTERRUPTIBLE);
 		if (kthread_should_stop()) {
-			ret = -1;
+			ret = 1;
 			break;
 		}
 
@@ -694,6 +695,8 @@ static void find_reclaimable_buckets_lru(struct bch_fs *c, struct bch_dev *ca)
 		};
 
 		heap_add_or_replace(&ca->alloc_heap, e, -bucket_alloc_cmp);
+
+		cond_resched();
 	}
 
 	up_read(&ca->bucket_lock);
@@ -729,6 +732,8 @@ static void find_reclaimable_buckets_fifo(struct bch_fs *c, struct bch_dev *ca)
 
 		if (bch2_can_invalidate_bucket(ca, b, m))
 			bch2_invalidate_one_bucket(c, ca, b);
+
+		cond_resched();
 	}
 }
 
@@ -749,6 +754,8 @@ static void find_reclaimable_buckets_random(struct bch_fs *c, struct bch_dev *ca
 
 		if (bch2_can_invalidate_bucket(ca, b, m))
 			bch2_invalidate_one_bucket(c, ca, b);
+
+		cond_resched();
 	}
 }
 
@@ -850,7 +857,7 @@ static int push_invalidated_bucket(struct bch_fs *c, struct bch_dev *ca, size_t 
 
 		if ((current->flags & PF_KTHREAD) &&
 		    kthread_should_stop()) {
-			ret = -1;
+			ret = 1;
 			break;
 		}
 
@@ -880,7 +887,7 @@ static int discard_invalidated_buckets(struct bch_fs *c, struct bch_dev *ca)
 					     ca->mi.bucket_size, GFP_NOIO, 0);
 
 		if (push_invalidated_bucket(c, ca, bucket))
-			return -1;
+			return 1;
 	}
 
 	return 0;
@@ -905,17 +912,32 @@ static int bch2_allocator_thread(void *arg)
 
 	while (1) {
 		while (1) {
+			cond_resched();
+
+			pr_debug("discarding %zu invalidated buckets",
+				 ca->nr_invalidated);
+
 			ret = discard_invalidated_buckets(c, ca);
 			if (ret)
-				return 0;
+				goto stop;
 
 			if (fifo_empty(&ca->free_inc))
 				break;
 
+			pr_debug("invalidating %zu buckets",
+				 fifo_used(&ca->free_inc));
+
 			journal_seq = 0;
 			ret = bch2_invalidate_free_inc(c, ca, &journal_seq, SIZE_MAX);
-			if (ret)
-				return 0;
+			if (ret) {
+				bch_err(ca, "error invalidating buckets: %i", ret);
+				goto stop;
+			}
+
+			if (!ca->nr_invalidated) {
+				bch_err(ca, "allocator thread unable to make forward progress!");
+				goto stop;
+			}
 
 			if (ca->allocator_invalidating_data)
 				ret = bch2_journal_flush_seq(&c->journal, journal_seq);
@@ -927,9 +949,13 @@ static int bch2_allocator_thread(void *arg)
 			 * journal error - buckets haven't actually been
 			 * invalidated, can't discard them:
 			 */
-			if (ret)
-				return 0;
+			if (ret) {
+				bch_err(ca, "journal error: %i", ret);
+				goto stop;
+			}
 		}
+
+		pr_debug("free_inc now empty");
 
 		/* Reset front/back so we can easily sort fifo entries later: */
 		ca->free_inc.front = ca->free_inc.back	= 0;
@@ -937,12 +963,15 @@ static int bch2_allocator_thread(void *arg)
 		ca->allocator_invalidating_data		= false;
 
 		down_read(&c->gc_lock);
-		if (test_bit(BCH_FS_GC_FAILURE, &c->flags)) {
-			up_read(&c->gc_lock);
-			return 0;
-		}
-
 		while (1) {
+			size_t prev = fifo_used(&ca->free_inc);
+
+			if (test_bit(BCH_FS_GC_FAILURE, &c->flags)) {
+				up_read(&c->gc_lock);
+				bch_err(ca, "gc failure");
+				goto stop;
+			}
+
 			/*
 			 * Find some buckets that we can invalidate, either
 			 * they're completely unused, or only contain clean data
@@ -950,7 +979,14 @@ static int bch2_allocator_thread(void *arg)
 			 * another cache tier
 			 */
 
+			pr_debug("scanning for reclaimable buckets");
+
 			find_reclaimable_buckets(c, ca);
+
+			pr_debug("found %zu buckets (free_inc %zu/%zu)",
+				 fifo_used(&ca->free_inc) - prev,
+				 fifo_used(&ca->free_inc), ca->free_inc.size);
+
 			trace_alloc_batch(ca, fifo_used(&ca->free_inc),
 					  ca->free_inc.size);
 
@@ -977,14 +1013,19 @@ static int bch2_allocator_thread(void *arg)
 			ca->allocator_blocked = true;
 			closure_wake_up(&c->freelist_wait);
 
-			if (wait_buckets_available(c, ca)) {
+			ret = wait_buckets_available(c, ca);
+			if (ret) {
 				up_read(&c->gc_lock);
-				return 0;
+				goto stop;
 			}
 		}
 
 		ca->allocator_blocked = false;
 		up_read(&c->gc_lock);
+
+		pr_debug("free_inc now %zu/%zu",
+			 fifo_used(&ca->free_inc),
+			 ca->free_inc.size);
 
 		sort_free_inc(c, ca);
 
@@ -993,6 +1034,10 @@ static int bch2_allocator_thread(void *arg)
 		 * write out the new bucket gens:
 		 */
 	}
+
+stop:
+	pr_debug("alloc thread stopping (ret %i)", ret);
+	return 0;
 }
 
 /* Allocation */
@@ -1897,7 +1942,8 @@ int bch2_dev_allocator_start(struct bch_dev *ca)
 	if (ca->alloc_thread)
 		return 0;
 
-	p = kthread_create(bch2_allocator_thread, ca, "bcache_allocator");
+	p = kthread_create(bch2_allocator_thread, ca,
+			   "bch_alloc[%s]", ca->name);
 	if (IS_ERR(p))
 		return PTR_ERR(p);
 
@@ -1931,7 +1977,7 @@ static void allocator_start_issue_discards(struct bch_fs *c)
 static int __bch2_fs_allocator_start(struct bch_fs *c)
 {
 	struct bch_dev *ca;
-	size_t bu, i, devs_have_enough = 0;
+	size_t bu, i;
 	unsigned dev_iter;
 	u64 journal_seq = 0;
 	bool invalidating_data = false;
@@ -1972,15 +2018,18 @@ static int __bch2_fs_allocator_start(struct bch_fs *c)
 
 	/* did we find enough buckets? */
 	for_each_rw_member(ca, c, dev_iter)
-		devs_have_enough += (fifo_used(&ca->free_inc) >=
-				     ca->free[RESERVE_BTREE].size);
+		if (fifo_used(&ca->free_inc) < ca->free[RESERVE_BTREE].size)
+			goto not_enough;
 
-	if (devs_have_enough >= c->opts.metadata_replicas)
-		return 0;
+	return 0;
+not_enough:
+	pr_debug("did not find enough empty buckets; issuing discards");
 
 	/* clear out free_inc - find_reclaimable_buckets() assumes it's empty */
 	for_each_rw_member(ca, c, dev_iter)
 		discard_invalidated_buckets(c, ca);
+
+	pr_debug("scanning for reclaimable buckets");
 
 	for_each_rw_member(ca, c, dev_iter) {
 		BUG_ON(!fifo_empty(&ca->free_inc));
@@ -1996,6 +2045,8 @@ static int __bch2_fs_allocator_start(struct bch_fs *c)
 				break;
 	}
 
+	pr_debug("done scanning for reclaimable buckets");
+
 	/*
 	 * We're moving buckets to freelists _before_ they've been marked as
 	 * invalidated on disk - we have to so that we can allocate new btree
@@ -2005,10 +2056,13 @@ static int __bch2_fs_allocator_start(struct bch_fs *c)
 	 * have cached data in them, which is live until they're marked as
 	 * invalidated on disk:
 	 */
-	if (invalidating_data)
+	if (invalidating_data) {
+		pr_debug("invalidating existing data");
 		set_bit(BCH_FS_HOLD_BTREE_WRITES, &c->flags);
-	else
+	} else {
+		pr_debug("issuing discards");
 		allocator_start_issue_discards(c);
+	}
 
 	/*
 	 * XXX: it's possible for this to deadlock waiting on journal reclaim,
@@ -2025,13 +2079,15 @@ static int __bch2_fs_allocator_start(struct bch_fs *c)
 	}
 
 	if (invalidating_data) {
+		pr_debug("flushing journal");
+
 		ret = bch2_journal_flush_seq(&c->journal, journal_seq);
 		if (ret)
 			return ret;
-	}
 
-	if (invalidating_data)
+		pr_debug("issuing discards");
 		allocator_start_issue_discards(c);
+	}
 
 	for_each_rw_member(ca, c, dev_iter)
 		while (ca->nr_invalidated) {
@@ -2046,19 +2102,43 @@ static int __bch2_fs_allocator_start(struct bch_fs *c)
 		struct bucket_table *tbl;
 		struct rhash_head *pos;
 		struct btree *b;
+		bool flush_updates;
+		size_t nr_pending_updates;
 
 		clear_bit(BCH_FS_HOLD_BTREE_WRITES, &c->flags);
 again:
+		pr_debug("flushing dirty btree nodes");
+		cond_resched();
+
+		flush_updates = false;
+		nr_pending_updates = bch2_btree_interior_updates_nr_pending(c);
+
+
 		rcu_read_lock();
 		for_each_cached_btree(b, c, tbl, i, pos)
 			if (btree_node_dirty(b) && (!b->written || b->level)) {
-				rcu_read_unlock();
-				six_lock_read(&b->lock);
-				bch2_btree_node_write(c, b, SIX_LOCK_read);
-				six_unlock_read(&b->lock);
-				goto again;
+				if (btree_node_may_write(b)) {
+					rcu_read_unlock();
+					six_lock_read(&b->lock);
+					bch2_btree_node_write(c, b, SIX_LOCK_read);
+					six_unlock_read(&b->lock);
+					goto again;
+				} else {
+					flush_updates = true;
+				}
 			}
 		rcu_read_unlock();
+
+		/*
+		 * This is ugly, but it's needed to flush btree node writes
+		 * without spinning...
+		 */
+		if (flush_updates) {
+			closure_wait_event(&c->btree_interior_update_wait,
+				bch2_btree_interior_updates_nr_pending(c) <
+				nr_pending_updates);
+			goto again;
+		}
 	}
 
 	return 0;

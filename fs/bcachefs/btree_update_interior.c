@@ -2118,3 +2118,16 @@ ssize_t bch2_btree_updates_print(struct bch_fs *c, char *buf)
 
 	return out - buf;
 }
+
+size_t bch2_btree_interior_updates_nr_pending(struct bch_fs *c)
+{
+	size_t ret = 0;
+	struct list_head *i;
+
+	mutex_lock(&c->btree_interior_update_lock);
+	list_for_each(i, &c->btree_interior_update_list)
+		ret++;
+	mutex_unlock(&c->btree_interior_update_lock);
+
+	return ret;
+}

@@ -384,7 +384,7 @@ struct bch_dev {
 	alloc_fifo		free[RESERVE_NR];
 	alloc_fifo		free_inc;
 	spinlock_t		freelist_lock;
-	unsigned		nr_invalidated;
+	size_t			nr_invalidated;
 
 	u8			open_buckets_partial[OPEN_BUCKETS_COUNT];
 	unsigned		open_buckets_partial_nr;
