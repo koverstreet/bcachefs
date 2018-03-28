@@ -635,10 +635,12 @@ LIBOBJS
 DEBUG_ZFS
 DEBUG_STACKFLAGS
 DEBUG_CFLAGS
-CONFIG_QAT_FALSE
-CONFIG_QAT_TRUE
+WANT_MMAP_LIBAIO_FALSE
+WANT_MMAP_LIBAIO_TRUE
 WANT_DEVNAME2DEVID_FALSE
 WANT_DEVNAME2DEVID_TRUE
+CONFIG_QAT_FALSE
+CONFIG_QAT_TRUE
 CONFIG_KERNEL_FALSE
 CONFIG_KERNEL_TRUE
 CONFIG_USER_FALSE
@@ -647,6 +649,7 @@ RM
 ZONENAME
 NO_FORMAT_TRUNCATION
 FRAME_LARGER_THAN
+LIBAIO
 LIBUDEV
 LIBATTR
 LIBBLKID
@@ -26990,6 +26993,27 @@ fi
 
 
 
+	LIBAIO=
+
+	ac_fn_c_check_header_mongrel "$LINENO" "libaio.h" "ac_cv_header_libaio_h" "$ac_includes_default"
+if test "x$ac_cv_header_libaio_h" = xyes; then :
+
+	    user_libaio=yes
+	    LIBAIO="-laio"
+
+
+$as_echo "#define HAVE_LIBAIO 1" >>confdefs.h
+
+
+else
+
+	    user_libaio=no
+
+fi
+
+
+
+
 	{ $as_echo "$as_me:${as_lineno-$LINENO}: checking for -Wframe-larger-than=<size> support" >&5
 $as_echo_n "checking for -Wframe-larger-than=<size> support... " >&6; }
 
@@ -28012,6 +28036,27 @@ if test "$ac_res" != no; then :
 
 
 $as_echo "#define HAVE_LIBUDEV_UDEV_DEVICE_GET_IS_INITIALIZED 1" >>confdefs.h
+
+fi
+
+
+
+
+	LIBAIO=
+
+	ac_fn_c_check_header_mongrel "$LINENO" "libaio.h" "ac_cv_header_libaio_h" "$ac_includes_default"
+if test "x$ac_cv_header_libaio_h" = xyes; then :
+
+	    user_libaio=yes
+	    LIBAIO="-laio"
+
+
+$as_echo "#define HAVE_LIBAIO 1" >>confdefs.h
+
+
+else
+
+	    user_libaio=no
 
 fi
 
@@ -40914,6 +40959,15 @@ else
   CONFIG_KERNEL_FALSE=
 fi
 
+	 if test "$ZFS_CONFIG" = kernel -o "$ZFS_CONFIG" = all &&
+	    test "x$qatsrc" != x ; then
+  CONFIG_QAT_TRUE=
+  CONFIG_QAT_FALSE='#'
+else
+  CONFIG_QAT_TRUE='#'
+  CONFIG_QAT_FALSE=
+fi
+
 	 if test "x$user_libudev" = xyes ; then
   WANT_DEVNAME2DEVID_TRUE=
   WANT_DEVNAME2DEVID_FALSE='#'
@@ -40922,13 +40976,12 @@ else
   WANT_DEVNAME2DEVID_FALSE=
 fi
 
-	 if test "$ZFS_CONFIG" = kernel -o "$ZFS_CONFIG" = all &&
-	    test "x$qatsrc" != x ; then
-  CONFIG_QAT_TRUE=
-  CONFIG_QAT_FALSE='#'
+	 if test "x$user_libaio" = xyes ; then
+  WANT_MMAP_LIBAIO_TRUE=
+  WANT_MMAP_LIBAIO_FALSE='#'
 else
-  CONFIG_QAT_TRUE='#'
-  CONFIG_QAT_FALSE=
+  WANT_MMAP_LIBAIO_TRUE='#'
+  WANT_MMAP_LIBAIO_FALSE=
 fi
 
 
@@ -41136,12 +41189,16 @@ if test -z "${CONFIG_KERNEL_TRUE}" && test -z "${CONFIG_KERNEL_FALSE}"; then
   as_fn_error $? "conditional \"CONFIG_KERNEL\" was never defined.
 Usually this means the macro was only invoked conditionally." "$LINENO" 5
 fi
+if test -z "${CONFIG_QAT_TRUE}" && test -z "${CONFIG_QAT_FALSE}"; then
+  as_fn_error $? "conditional \"CONFIG_QAT\" was never defined.
+Usually this means the macro was only invoked conditionally." "$LINENO" 5
+fi
 if test -z "${WANT_DEVNAME2DEVID_TRUE}" && test -z "${WANT_DEVNAME2DEVID_FALSE}"; then
   as_fn_error $? "conditional \"WANT_DEVNAME2DEVID\" was never defined.
 Usually this means the macro was only invoked conditionally." "$LINENO" 5
 fi
-if test -z "${CONFIG_QAT_TRUE}" && test -z "${CONFIG_QAT_FALSE}"; then
-  as_fn_error $? "conditional \"CONFIG_QAT\" was never defined.
+if test -z "${WANT_MMAP_LIBAIO_TRUE}" && test -z "${WANT_MMAP_LIBAIO_FALSE}"; then
+  as_fn_error $? "conditional \"WANT_MMAP_LIBAIO\" was never defined.
 Usually this means the macro was only invoked conditionally." "$LINENO" 5
 fi
 
