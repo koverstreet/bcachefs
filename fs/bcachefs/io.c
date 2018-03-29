@@ -196,8 +196,6 @@ static void bch2_write_done(struct closure *cl)
 {
 	struct bch_write_op *op = container_of(cl, struct bch_write_op, cl);
 
-	BUG_ON(!(op->flags & BCH_WRITE_DONE));
-
 	if (!op->error && (op->flags & BCH_WRITE_FLUSH))
 		op->error = bch2_journal_error(&op->c->journal);
 
@@ -205,7 +203,6 @@ static void bch2_write_done(struct closure *cl)
 		bch2_disk_reservation_put(op->c, &op->res);
 	percpu_ref_put(&op->c->writes);
 	bch2_keylist_free(&op->insert_keys, op->inline_keys);
-	op->flags &= ~(BCH_WRITE_DONE|BCH_WRITE_LOOPED);
 
 	closure_return(cl);
 }
@@ -232,17 +229,14 @@ int bch2_write_index_default(struct bch_write_op *op)
 /**
  * bch_write_index - after a write, update index to point to new data
  */
-static void bch2_write_index(struct closure *cl)
+static void __bch2_write_index(struct bch_write_op *op)
 {
-	struct bch_write_op *op = container_of(cl, struct bch_write_op, cl);
 	struct bch_fs *c = op->c;
 	struct keylist *keys = &op->insert_keys;
 	struct bkey_s_extent e;
 	struct bch_extent_ptr *ptr;
 	struct bkey_i *src, *dst = keys->keys, *n, *k;
 	int ret;
-
-	op->flags |= BCH_WRITE_LOOPED;
 
 	for (src = keys->keys; src != keys->top; src = n) {
 		n = bkey_next(src);
@@ -292,11 +286,19 @@ static void bch2_write_index(struct closure *cl)
 	}
 out:
 	bch2_open_bucket_put_refs(c, &op->open_buckets_nr, op->open_buckets);
+	return;
+err:
+	keys->top = keys->keys;
+	op->error = ret;
+	goto out;
+}
 
-	if (!(op->flags & BCH_WRITE_DONE)) {
-		continue_at(cl, __bch2_write, op->io_wq);
-		return;
-	}
+static void bch2_write_index(struct closure *cl)
+{
+	struct bch_write_op *op = container_of(cl, struct bch_write_op, cl);
+	struct bch_fs *c = op->c;
+
+	__bch2_write_index(op);
 
 	if (!op->error && (op->flags & BCH_WRITE_FLUSH)) {
 		bch2_journal_flush_seq_async(&c->journal,
@@ -306,12 +308,6 @@ out:
 	} else {
 		continue_at_nobarrier(cl, bch2_write_done, NULL);
 	}
-	return;
-err:
-	keys->top = keys->keys;
-	op->error = ret;
-	op->flags |= BCH_WRITE_DONE;
-	goto out;
 }
 
 static void bch2_write_endio(struct bio *bio)
@@ -732,22 +728,18 @@ static void __bch2_write(struct closure *cl)
 	struct bch_fs *c = op->c;
 	struct write_point *wp;
 	int ret;
-
+again:
 	do {
 		/* +1 for possible cache device: */
 		if (op->open_buckets_nr + op->nr_replicas + 1 >
-		    ARRAY_SIZE(op->open_buckets)) {
-			continue_at(cl, bch2_write_index, index_update_wq(op));
-			return;
-		}
+		    ARRAY_SIZE(op->open_buckets))
+			goto flush_io;
 
 		if (bch2_keylist_realloc(&op->insert_keys,
 					op->inline_keys,
 					ARRAY_SIZE(op->inline_keys),
-					BKEY_EXTENT_U64s_MAX)) {
-			continue_at(cl, bch2_write_index, index_update_wq(op));
-			return;
-		}
+					BKEY_EXTENT_U64s_MAX))
+			goto flush_io;
 
 		wp = bch2_alloc_sectors_start(c,
 			op->target,
@@ -766,37 +758,7 @@ static void __bch2_write(struct closure *cl)
 				goto err;
 			}
 
-			/*
-			 * If we already have some keys, must insert them first
-			 * before allocating another open bucket. We only hit
-			 * this case if open_bucket_nr > 1.
-			 */
-			if (!bch2_keylist_empty(&op->insert_keys)) {
-				continue_at(cl, bch2_write_index,
-					    index_update_wq(op));
-				return;
-			}
-
-			/*
-			 * If we've looped, we're running out of a workqueue -
-			 * not the bch2_write() caller's context - and we don't
-			 * want to block the workqueue:
-			 */
-			if (op->flags & BCH_WRITE_LOOPED) {
-				continue_at(cl, __bch2_write, op->io_wq);
-				return;
-			}
-
-			/*
-			 * Otherwise, we do want to block the caller on alloc
-			 * failure instead of letting it queue up more and more
-			 * writes:
-			 * XXX: this technically needs a try_to_freeze() -
-			 * except that that's not safe because caller may have
-			 * issued other IO... hmm..
-			 */
-			closure_sync(cl);
-			continue;
+			goto flush_io;
 		}
 
 		ret = bch2_write_extent(op, wp);
@@ -812,29 +774,28 @@ static void __bch2_write(struct closure *cl)
 			goto err;
 	} while (ret);
 
-	op->flags |= BCH_WRITE_DONE;
 	continue_at(cl, bch2_write_index, index_update_wq(op));
 	return;
 err:
-	/*
-	 * Right now we can only error here if we went RO - the
-	 * allocation failed, but we already checked for -ENOSPC when we
-	 * got our reservation.
-	 *
-	 * XXX capacity might have changed, but we don't check for that
-	 * yet:
-	 */
 	op->error = ret;
-	op->flags |= BCH_WRITE_DONE;
 
-	/*
-	 * No reason not to insert keys for whatever data was successfully
-	 * written (especially for a cmpxchg operation that's moving data
-	 * around)
-	 */
 	continue_at(cl, !bch2_keylist_empty(&op->insert_keys)
 		    ? bch2_write_index
 		    : bch2_write_done, index_update_wq(op));
+	return;
+flush_io:
+	closure_sync(cl);
+
+	if (!bch2_keylist_empty(&op->insert_keys)) {
+		__bch2_write_index(op);
+
+		if (op->error) {
+			continue_at_nobarrier(cl, bch2_write_done, NULL);
+			return;
+		}
+	}
+
+	goto again;
 }
 
 /**
