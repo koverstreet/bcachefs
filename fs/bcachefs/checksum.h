@@ -117,6 +117,7 @@ static const unsigned bch_crc_bytes[] = {
 	[BCH_CSUM_CHACHA20_POLY1305_128]	= 16,
 };
 
+/* returns true if not equal */
 static inline bool bch2_crc_cmp(struct bch_csum l, struct bch_csum r)
 {
 	/*
