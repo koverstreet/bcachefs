@@ -660,13 +660,15 @@ static inline int bucket_alloc_cmp(alloc_heap *h,
 				   struct alloc_heap_entry l,
 				   struct alloc_heap_entry r)
 {
-	return (l.key > r.key) - (l.key < r.key);
+	return (l.key > r.key) - (l.key < r.key) ?:
+		(l.nr < r.nr)  - (l.nr  > r.nr) ?:
+		(l.bucket > r.bucket) - (l.bucket < r.bucket);
 }
 
 static void find_reclaimable_buckets_lru(struct bch_fs *c, struct bch_dev *ca)
 {
 	struct bucket_array *buckets;
-	struct alloc_heap_entry e;
+	struct alloc_heap_entry e = { 0 };
 	size_t b;
 
 	ca->alloc_heap.used = 0;
@@ -685,32 +687,45 @@ static void find_reclaimable_buckets_lru(struct bch_fs *c, struct bch_dev *ca)
 	 */
 	for (b = ca->mi.first_bucket; b < ca->mi.nbuckets; b++) {
 		struct bucket_mark m = READ_ONCE(buckets->b[b].mark);
+		unsigned long key = bucket_sort_key(c, ca, b, m);
 
 		if (!bch2_can_invalidate_bucket(ca, b, m))
 			continue;
 
-		e = (struct alloc_heap_entry) {
-			.bucket = b,
-			.key	= bucket_sort_key(c, ca, b, m)
-		};
+		if (e.nr && e.bucket + e.nr == b && e.key == key) {
+			e.nr++;
+		} else {
+			if (e.nr)
+				heap_add_or_replace(&ca->alloc_heap, e, -bucket_alloc_cmp);
 
-		heap_add_or_replace(&ca->alloc_heap, e, -bucket_alloc_cmp);
+			e = (struct alloc_heap_entry) {
+				.bucket = b,
+				.nr	= 1,
+				.key	= key,
+			};
+		}
 
 		cond_resched();
 	}
+
+	if (e.nr)
+		heap_add_or_replace(&ca->alloc_heap, e, -bucket_alloc_cmp);
 
 	up_read(&ca->bucket_lock);
 	mutex_unlock(&c->prio_clock[READ].lock);
 
 	heap_resort(&ca->alloc_heap, bucket_alloc_cmp);
 
-	/*
-	 * If we run out of buckets to invalidate, bch2_allocator_thread() will
-	 * kick stuff and retry us
-	 */
-	while (!fifo_full(&ca->free_inc) &&
-	       heap_pop(&ca->alloc_heap, e, bucket_alloc_cmp))
-		bch2_invalidate_one_bucket(c, ca, e.bucket);
+	while (heap_pop(&ca->alloc_heap, e, bucket_alloc_cmp)) {
+		for (b = e.bucket;
+		     b < e.bucket + e.nr;
+		     b++) {
+			if (fifo_full(&ca->free_inc))
+				return;
+
+			bch2_invalidate_one_bucket(c, ca, b);
+		}
+	}
 }
 
 static void find_reclaimable_buckets_fifo(struct bch_fs *c, struct bch_dev *ca)

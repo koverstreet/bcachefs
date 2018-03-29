@@ -80,6 +80,7 @@ struct write_point_specifier {
 
 struct alloc_heap_entry {
 	size_t			bucket;
+	size_t			nr;
 	unsigned long		key;
 };
 
