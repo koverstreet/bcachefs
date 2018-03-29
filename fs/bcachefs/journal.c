@@ -1639,7 +1639,8 @@ static int bch2_set_nr_journal_buckets(struct bch_fs *c, struct bch_dev *ca,
 		size_t bucket;
 		int ob_idx;
 
-		ob_idx = bch2_bucket_alloc(c, ca, RESERVE_ALLOC, false, &cl);
+		ob_idx = bch2_bucket_alloc(c, ca, RESERVE_ALLOC,
+					   BCH_DATA_JOURNAL, false, &cl);
 		if (ob_idx < 0) {
 			if (!closure_wait(&c->freelist_wait, &cl))
 				closure_sync(&cl);

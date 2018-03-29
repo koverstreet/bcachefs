@@ -30,8 +30,8 @@ enum bucket_alloc_ret {
 	NO_DEVICES		= -3,	/* -EROFS */
 };
 
-int bch2_bucket_alloc(struct bch_fs *, struct bch_dev *, enum alloc_reserve, bool,
-		      struct closure *);
+int bch2_bucket_alloc(struct bch_fs *, struct bch_dev *, enum alloc_reserve,
+		      enum bch_data_type, bool, struct closure *);
 
 #define __writepoint_for_each_ptr(_wp, _ob, _i, _start)			\
 	for ((_i) = (_start);						\

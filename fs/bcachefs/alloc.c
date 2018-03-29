@@ -660,13 +660,15 @@ static inline int bucket_alloc_cmp(alloc_heap *h,
 				   struct alloc_heap_entry l,
 				   struct alloc_heap_entry r)
 {
-	return (l.key > r.key) - (l.key < r.key);
+	return (l.key > r.key) - (l.key < r.key) ?:
+		(l.nr < r.nr)  - (l.nr  > r.nr) ?:
+		(l.bucket > r.bucket) - (l.bucket < r.bucket);
 }
 
 static void find_reclaimable_buckets_lru(struct bch_fs *c, struct bch_dev *ca)
 {
 	struct bucket_array *buckets;
-	struct alloc_heap_entry e;
+	struct alloc_heap_entry e = { 0 };
 	size_t b;
 
 	ca->alloc_heap.used = 0;
@@ -685,32 +687,45 @@ static void find_reclaimable_buckets_lru(struct bch_fs *c, struct bch_dev *ca)
 	 */
 	for (b = ca->mi.first_bucket; b < ca->mi.nbuckets; b++) {
 		struct bucket_mark m = READ_ONCE(buckets->b[b].mark);
+		unsigned long key = bucket_sort_key(c, ca, b, m);
 
 		if (!bch2_can_invalidate_bucket(ca, b, m))
 			continue;
 
-		e = (struct alloc_heap_entry) {
-			.bucket = b,
-			.key	= bucket_sort_key(c, ca, b, m)
-		};
+		if (e.nr && e.bucket + e.nr == b && e.key == key) {
+			e.nr++;
+		} else {
+			if (e.nr)
+				heap_add_or_replace(&ca->alloc_heap, e, -bucket_alloc_cmp);
 
-		heap_add_or_replace(&ca->alloc_heap, e, -bucket_alloc_cmp);
+			e = (struct alloc_heap_entry) {
+				.bucket = b,
+				.nr	= 1,
+				.key	= key,
+			};
+		}
 
 		cond_resched();
 	}
+
+	if (e.nr)
+		heap_add_or_replace(&ca->alloc_heap, e, -bucket_alloc_cmp);
 
 	up_read(&ca->bucket_lock);
 	mutex_unlock(&c->prio_clock[READ].lock);
 
 	heap_resort(&ca->alloc_heap, bucket_alloc_cmp);
 
-	/*
-	 * If we run out of buckets to invalidate, bch2_allocator_thread() will
-	 * kick stuff and retry us
-	 */
-	while (!fifo_full(&ca->free_inc) &&
-	       heap_pop(&ca->alloc_heap, e, bucket_alloc_cmp))
-		bch2_invalidate_one_bucket(c, ca, e.bucket);
+	while (heap_pop(&ca->alloc_heap, e, bucket_alloc_cmp)) {
+		for (b = e.bucket;
+		     b < e.bucket + e.nr;
+		     b++) {
+			if (fifo_full(&ca->free_inc))
+				return;
+
+			bch2_invalidate_one_bucket(c, ca, b);
+		}
+	}
 }
 
 static void find_reclaimable_buckets_fifo(struct bch_fs *c, struct bch_dev *ca)
@@ -1134,12 +1149,14 @@ static inline unsigned open_buckets_reserved(enum alloc_reserve reserve)
  * */
 int bch2_bucket_alloc(struct bch_fs *c, struct bch_dev *ca,
 		      enum alloc_reserve reserve,
+		      enum bch_data_type type,
 		      bool may_alloc_partial,
 		      struct closure *cl)
 {
 	struct bucket_array *buckets;
 	struct open_bucket *ob;
 	long bucket;
+	const char *popped = NULL;
 
 	spin_lock(&c->freelist_lock);
 	if (may_alloc_partial &&
@@ -1147,6 +1164,10 @@ int bch2_bucket_alloc(struct bch_fs *c, struct bch_dev *ca,
 		int ret = ca->open_buckets_partial[--ca->open_buckets_partial_nr];
 		c->open_buckets[ret].on_partial_list = false;
 		spin_unlock(&c->freelist_lock);
+
+		bucket = sector_to_bucket(ca, c->open_buckets[ret].ptr.offset);
+		popped = "partial";
+		pr_debug("%8s type %u bucket %lu", popped, type, bucket);
 		return ret;
 	}
 
@@ -1158,31 +1179,41 @@ int bch2_bucket_alloc(struct bch_fs *c, struct bch_dev *ca,
 		return OPEN_BUCKETS_EMPTY;
 	}
 
-	if (likely(fifo_pop(&ca->free[RESERVE_NONE], bucket)))
+	if (likely(fifo_pop(&ca->free[RESERVE_NONE], bucket))) {
+		popped = "none";
 		goto out;
+	}
 
 	switch (reserve) {
 	case RESERVE_ALLOC:
-		if (fifo_pop(&ca->free[RESERVE_BTREE], bucket))
+		if (fifo_pop(&ca->free[RESERVE_BTREE], bucket)) {
+			popped = "alloc";
 			goto out;
+		}
 		break;
 	case RESERVE_BTREE:
 		if (fifo_used(&ca->free[RESERVE_BTREE]) * 2 >=
 		    ca->free[RESERVE_BTREE].size &&
-		    fifo_pop(&ca->free[RESERVE_BTREE], bucket))
+		    fifo_pop(&ca->free[RESERVE_BTREE], bucket)) {
+			popped = "btree";
 			goto out;
+		}
 		break;
 	case RESERVE_MOVINGGC:
-		if (fifo_pop(&ca->free[RESERVE_MOVINGGC], bucket))
+		if (fifo_pop(&ca->free[RESERVE_MOVINGGC], bucket)) {
+			popped = "copygc";
 			goto out;
+		}
 		break;
 	default:
 		break;
 	}
 
 	if (unlikely(test_bit(BCH_FS_BRAND_NEW_FS, &c->flags)) &&
-	    (bucket = bch2_bucket_alloc_startup(c, ca)) >= 0)
+	    (bucket = bch2_bucket_alloc_startup(c, ca)) >= 0) {
+		popped = "startup";
 		goto out;
+	}
 
 	spin_unlock(&c->freelist_lock);
 
@@ -1196,6 +1227,8 @@ out:
 	spin_lock(&ob->lock);
 	lg_local_lock(&c->usage_lock);
 	buckets = bucket_array(ca);
+
+	pr_debug("%8s type %u bucket %lu", popped, type, bucket);
 
 	ob->valid	= true;
 	ob->sectors_free = ca->mi.bucket_size;
@@ -1303,7 +1336,7 @@ static enum bucket_alloc_ret __bch2_bucket_alloc_set(struct bch_fs *c,
 		     wp->type != BCH_DATA_USER))
 			continue;
 
-		ob = bch2_bucket_alloc(c, ca, reserve,
+		ob = bch2_bucket_alloc(c, ca, reserve, wp->type,
 				       wp->type == BCH_DATA_USER, cl);
 		if (ob < 0) {
 			ret = ob;
