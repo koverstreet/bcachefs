@@ -22962,21 +22962,31 @@ fi
 
 
 
-	{ $as_echo "$as_me:${as_lineno-$LINENO}: checking whether mount_nodev() is available" >&5
-$as_echo_n "checking whether mount_nodev() is available... " >&6; }
 
+        { $as_echo "$as_me:${as_lineno-$LINENO}: checking whether fst->mount() exists" >&5
+$as_echo_n "checking whether fst->mount() exists... " >&6; }
 
 
 cat confdefs.h - <<_ACEOF >conftest.c
 
 
-		#include <linux/fs.h>
+                #include <linux/fs.h>
+
+                static struct dentry *
+                mount(struct file_system_type *fs_type, int flags,
+                    const char *osname, void *data) {
+                        struct dentry *d = NULL;
+                        return (d);
+                }
+
+                static struct file_system_type fst __attribute__ ((unused)) = {
+                        .mount = mount,
+                };
 
 int
 main (void)
 {
 
-		mount_nodev(NULL, 0, NULL, NULL);
 
   ;
   return 0;
@@ -23006,64 +23016,25 @@ _ACEOF
   ac_status=$?
   $as_echo "$as_me:${as_lineno-$LINENO}: \$? = $ac_status" >&5
   test $ac_status = 0; }; }; then :
-  rc=0
+
+                { $as_echo "$as_me:${as_lineno-$LINENO}: result: yes" >&5
+$as_echo "yes" >&6; }
+
+$as_echo "#define HAVE_FST_MOUNT 1" >>confdefs.h
+
+
 else
   $as_echo "$as_me: failed program was:" >&5
 sed 's/^/| /' conftest.$ac_ext >&5
- rc=1
+
+                { $as_echo "$as_me:${as_lineno-$LINENO}: result: no" >&5
+$as_echo "no" >&6; }
+
 
 
 fi
 	rm -Rf build
 
-
-	if test $rc -ne 0; then :
-
-		{ $as_echo "$as_me:${as_lineno-$LINENO}: result: no" >&5
-$as_echo "no" >&6; }
-
-	else
-		if test "x$enable_linux_builtin" != xyes; then
-
-	grep -q -E '[[:space:]]mount_nodev[[:space:]]' \
-		$LINUX_OBJ/$LINUX_SYMBOLS 2>/dev/null
-	rc=$?
-	if test $rc -ne 0; then
-		export=0
-		for file in fs/super.c; do
-			grep -q -E "EXPORT_SYMBOL.*(mount_nodev)" \
-				"$LINUX/$file" 2>/dev/null
-			rc=$?
-			if test $rc -eq 0; then
-				export=1
-				break;
-			fi
-		done
-		if test $export -eq 0; then :
-			rc=1
-		else :
-			rc=0
-		fi
-	else :
-		rc=0
-	fi
-
-		fi
-		if test $rc -ne 0; then :
-
-		{ $as_echo "$as_me:${as_lineno-$LINENO}: result: no" >&5
-$as_echo "no" >&6; }
-
-		else :
-
-		{ $as_echo "$as_me:${as_lineno-$LINENO}: result: yes" >&5
-$as_echo "yes" >&6; }
-
-$as_echo "#define HAVE_MOUNT_NODEV 1" >>confdefs.h
-
-
-		fi
-	fi
 
 
 
@@ -37764,21 +37735,31 @@ fi
 
 
 
-	{ $as_echo "$as_me:${as_lineno-$LINENO}: checking whether mount_nodev() is available" >&5
-$as_echo_n "checking whether mount_nodev() is available... " >&6; }
 
+        { $as_echo "$as_me:${as_lineno-$LINENO}: checking whether fst->mount() exists" >&5
+$as_echo_n "checking whether fst->mount() exists... " >&6; }
 
 
 cat confdefs.h - <<_ACEOF >conftest.c
 
 
-		#include <linux/fs.h>
+                #include <linux/fs.h>
+
+                static struct dentry *
+                mount(struct file_system_type *fs_type, int flags,
+                    const char *osname, void *data) {
+                        struct dentry *d = NULL;
+                        return (d);
+                }
+
+                static struct file_system_type fst __attribute__ ((unused)) = {
+                        .mount = mount,
+                };
 
 int
 main (void)
 {
 
-		mount_nodev(NULL, 0, NULL, NULL);
 
   ;
   return 0;
@@ -37808,64 +37789,25 @@ _ACEOF
   ac_status=$?
   $as_echo "$as_me:${as_lineno-$LINENO}: \$? = $ac_status" >&5
   test $ac_status = 0; }; }; then :
-  rc=0
+
+                { $as_echo "$as_me:${as_lineno-$LINENO}: result: yes" >&5
+$as_echo "yes" >&6; }
+
+$as_echo "#define HAVE_FST_MOUNT 1" >>confdefs.h
+
+
 else
   $as_echo "$as_me: failed program was:" >&5
 sed 's/^/| /' conftest.$ac_ext >&5
- rc=1
+
+                { $as_echo "$as_me:${as_lineno-$LINENO}: result: no" >&5
+$as_echo "no" >&6; }
+
 
 
 fi
 	rm -Rf build
 
-
-	if test $rc -ne 0; then :
-
-		{ $as_echo "$as_me:${as_lineno-$LINENO}: result: no" >&5
-$as_echo "no" >&6; }
-
-	else
-		if test "x$enable_linux_builtin" != xyes; then
-
-	grep -q -E '[[:space:]]mount_nodev[[:space:]]' \
-		$LINUX_OBJ/$LINUX_SYMBOLS 2>/dev/null
-	rc=$?
-	if test $rc -ne 0; then
-		export=0
-		for file in fs/super.c; do
-			grep -q -E "EXPORT_SYMBOL.*(mount_nodev)" \
-				"$LINUX/$file" 2>/dev/null
-			rc=$?
-			if test $rc -eq 0; then
-				export=1
-				break;
-			fi
-		done
-		if test $export -eq 0; then :
-			rc=1
-		else :
-			rc=0
-		fi
-	else :
-		rc=0
-	fi
-
-		fi
-		if test $rc -ne 0; then :
-
-		{ $as_echo "$as_me:${as_lineno-$LINENO}: result: no" >&5
-$as_echo "no" >&6; }
-
-		else :
-
-		{ $as_echo "$as_me:${as_lineno-$LINENO}: result: yes" >&5
-$as_echo "yes" >&6; }
-
-$as_echo "#define HAVE_MOUNT_NODEV 1" >>confdefs.h
-
-
-		fi
-	fi
 
 
 

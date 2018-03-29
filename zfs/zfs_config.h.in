@@ -237,6 +237,9 @@
 /* sops->free_cached_objects() exists */
 #undef HAVE_FREE_CACHED_OBJECTS
 
+/* fst->mount() exists */
+#undef HAVE_FST_MOUNT
+
 /* fops->fsync() with range */
 #undef HAVE_FSYNC_RANGE
 
@@ -359,9 +362,6 @@
 
 /* Define to 1 if you have the `mlockall' function. */
 #undef HAVE_MLOCKALL
-
-/* mount_nodev() is available */
-#undef HAVE_MOUNT_NODEV
 
 /* new_sync_read() is available */
 #undef HAVE_NEW_SYNC_READ
