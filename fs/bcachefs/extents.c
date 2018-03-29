@@ -360,11 +360,25 @@ restart_narrow_pointers:
 	return true;
 }
 
+/* returns true if not equal */
+static inline bool bch2_crc_unpacked_cmp(struct bch_extent_crc_unpacked l,
+					 struct bch_extent_crc_unpacked r)
+{
+	return (l.csum_type		!= r.csum_type ||
+		l.compression_type	!= r.compression_type ||
+		l.compressed_size	!= r.compressed_size ||
+		l.uncompressed_size	!= r.uncompressed_size ||
+		l.offset		!= r.offset ||
+		l.live_size		!= r.live_size ||
+		l.nonce			!= r.nonce ||
+		bch2_crc_cmp(l.csum, r.csum));
+}
+
 void bch2_extent_drop_redundant_crcs(struct bkey_s_extent e)
 {
 	union bch_extent_entry *entry = e.v->start;
 	union bch_extent_crc *crc, *prev = NULL;
-	struct bch_extent_crc_unpacked u, prev_u;
+	struct bch_extent_crc_unpacked u, prev_u = { 0 };
 
 	while (entry != extent_entry_last(e)) {
 		union bch_extent_entry *next = extent_entry_next(entry);
@@ -386,7 +400,7 @@ void bch2_extent_drop_redundant_crcs(struct bkey_s_extent e)
 			goto drop;
 		}
 
-		if (prev && !memcmp(&u, &prev_u, sizeof(u))) {
+		if (prev && !bch2_crc_unpacked_cmp(u, prev_u)) {
 			/* identical to previous crc entry: */
 			goto drop;
 		}
@@ -1967,7 +1981,7 @@ void bch2_extent_crc_append(struct bkey_i_extent *e,
 	extent_for_each_crc(extent_i_to_s(e), crc, i)
 		;
 
-	if (!memcmp(&crc, &new, sizeof(crc)))
+	if (!bch2_crc_unpacked_cmp(crc, new))
 		return;
 
 	bch2_extent_crc_init((void *) extent_entry_last(extent_i_to_s(e)), new);
