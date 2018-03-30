@@ -41,11 +41,6 @@ abi_check()
 	then
 		failure "$arch/$flavour ABI retpoline file missing"
 	fi
-
-	if [ -f "$abidir/$flavour.retpoline" -a \
-	     ! -s "$abidir/$flavour.retpoline" ]; then
-		failure "$arch/$flavour ABI retpoline file empty -- must regenerate or ignore"
-	fi
 }
 
 for arch in $archs
