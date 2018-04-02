@@ -1,9 +1,12 @@
 # Recreate any symlinks created since the orig.
 # Remove any files deleted from the orig.
+rm -f 'Documentation/devicetree/bindings/display/panel/toppoly,td028ttec1.txt'
 rm -f 'arch/arm/include/asm/kvm_psci.h'
 rm -f 'arch/arm64/include/asm/kvm_psci.h'
+rm -f 'arch/x86/include/asm/pmc_core.h'
 rm -f 'drivers/infiniband/hw/hns/hns_roce_eq.c'
 rm -f 'drivers/infiniband/hw/hns/hns_roce_eq.h'
+rm -f 'drivers/net/ethernet/aquantia/atlantic/aq_nic_internal.h'
 rm -f 'drivers/net/ethernet/hisilicon/hns3/hns3pf/hns3_dcbnl.c'
 rm -f 'drivers/net/ethernet/hisilicon/hns3/hns3pf/hns3_enet.c'
 rm -f 'drivers/net/ethernet/hisilicon/hns3/hns3pf/hns3_enet.h'
