@@ -668,8 +668,11 @@ static int ks7010_upload_firmware(struct ks_sdio_card *card)
 
 	/* Firmware running ? */
 	ret = ks7010_sdio_readb(priv, GCR_A, &byte);
+	if (ret)
+		goto release_host_and_free;
 	if (byte == GCR_A_RUN) {
 		DPRINTK(0, "MAC firmware running ...\n");
+		ret = -EBUSY;
 		goto release_host_and_free;
 	}
 
