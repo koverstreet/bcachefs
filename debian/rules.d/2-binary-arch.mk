@@ -327,6 +327,8 @@ ifeq ($(build_arch),powerpc)
 	mkdir -p $(hdrdir)/arch/powerpc/lib
 	cp $(builddir)/build-$*/arch/powerpc/lib/*.o $(hdrdir)/arch/powerpc/lib
 endif
+	# Copy over the new retpoline extractor.
+	cp scripts/ubuntu-retpoline-extract-one $(hdrdir)/scripts
 	# Script to symlink everything up
 	$(SHELL) $(DROOT)/scripts/link-headers "$(hdrdir)" "$(indeppkg)" "$*"
 	# The build symlink

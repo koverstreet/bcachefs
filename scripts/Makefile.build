@@ -298,7 +298,7 @@ objtool_dep = $(objtool_obj)					\
 			 include/config/stack/validation.h)
 
 ifdef CONFIG_RETPOLINE
-cmd_ubuntu_retpoline = $(CONFIG_SHELL) $(srctree)/debian/scripts/retpoline-extract-one $(@) $(<) "$(filter -m16 %code16gcc.h,$(a_flags))";
+cmd_ubuntu_retpoline = $(CONFIG_SHELL) $(srctree)/scripts/ubuntu-retpoline-extract-one $(@) $(<) "$(filter -m16 %code16gcc.h,$(a_flags))";
 else
 cmd_ubuntu_retpoline =
 endif
