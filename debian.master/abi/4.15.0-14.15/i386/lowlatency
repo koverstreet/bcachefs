@@ -15079,6 +15079,7 @@ EXPORT_SYMBOL_GPL drivers/thunderbolt/thunderbolt 0x00000000	tb_unregister_proto
 EXPORT_SYMBOL_GPL drivers/thunderbolt/thunderbolt 0x00000000	tb_unregister_service_driver
 EXPORT_SYMBOL_GPL drivers/thunderbolt/thunderbolt 0x00000000	tb_xdomain_disable_paths
 EXPORT_SYMBOL_GPL drivers/thunderbolt/thunderbolt 0x00000000	tb_xdomain_enable_paths
+EXPORT_SYMBOL_GPL drivers/thunderbolt/thunderbolt 0x00000000	tb_xdomain_find_by_route
 EXPORT_SYMBOL_GPL drivers/thunderbolt/thunderbolt 0x00000000	tb_xdomain_find_by_uuid
 EXPORT_SYMBOL_GPL drivers/thunderbolt/thunderbolt 0x00000000	tb_xdomain_request
 EXPORT_SYMBOL_GPL drivers/thunderbolt/thunderbolt 0x00000000	tb_xdomain_response
@@ -19915,7 +19916,6 @@ EXPORT_SYMBOL_GPL vmlinux 0x00000000	intel_msic_irq_read
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	intel_msic_reg_read
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	intel_msic_reg_update
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	intel_msic_reg_write
-EXPORT_SYMBOL_GPL vmlinux 0x00000000	intel_pmc_slp_s0_counter_read
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	intel_pt_handle_vmx
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	intel_scu_devices_create
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	intel_scu_devices_destroy
@@ -20578,6 +20578,7 @@ EXPORT_SYMBOL_GPL vmlinux 0x00000000	param_ops_bool_enable_only
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	param_set_bool_enable_only
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	part_round_stats
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	pat_enabled
+EXPORT_SYMBOL_GPL vmlinux 0x00000000	pat_pfn_immune_to_uc_mtrr
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	path_noexec
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	pcap_adc_async
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	pcap_adc_sync
@@ -21845,6 +21846,7 @@ EXPORT_SYMBOL_GPL vmlinux 0x00000000	sysfs_create_files
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	sysfs_create_group
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	sysfs_create_groups
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	sysfs_create_link
+EXPORT_SYMBOL_GPL vmlinux 0x00000000	sysfs_create_link_nowarn
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	sysfs_create_mount_point
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	sysfs_merge_group
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	sysfs_notify
