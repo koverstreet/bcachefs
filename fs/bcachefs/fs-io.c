@@ -468,7 +468,10 @@ static int bchfs_write_index_update(struct bch_write_op *wop)
 		}
 
 		BUG_ON(bkey_cmp(extent_iter.pos, bkey_start_pos(&k->k)));
-		BUG_ON(!ret != !k->k.size);
+
+		if (WARN_ONCE(!ret != !k->k.size,
+			      "ret %i k->size %u", ret, k->k.size))
+			ret = k->k.size ? -EINTR : 0;
 err:
 		if (ret == -EINTR)
 			continue;
