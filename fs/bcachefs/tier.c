@@ -24,8 +24,12 @@ static inline bool rebalance_ptr_pred(struct bch_fs *c,
 
 	if (io_opts->background_target &&
 	    !dev_in_target(ca, io_opts->background_target) &&
-	    !ptr->cached)
+	    !ptr->cached) {
+		/*
+		 * XXX: check to make sure target has devices, space available:
+		 */
 		return true;
+	}
 
 	if (io_opts->background_compression &&
 	    crc.compression_type !=
