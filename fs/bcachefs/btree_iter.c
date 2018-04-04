@@ -1335,6 +1335,10 @@ void __bch2_btree_iter_init(struct btree_iter *iter, struct bch_fs *c,
 	iter->l[iter->level].b		= BTREE_ITER_NOT_END;
 	iter->next			= iter;
 
+	if (unlikely((flags & BTREE_ITER_IS_EXTENTS) &&
+		     !bkey_cmp(pos, POS_MAX)))
+		iter->uptodate = BTREE_ITER_END;
+
 	prefetch(c->btree_roots[btree_id].b);
 }
 
