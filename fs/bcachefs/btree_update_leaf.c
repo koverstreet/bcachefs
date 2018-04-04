@@ -443,8 +443,20 @@ split:
 	 * potentially blocks the allocator:
 	 */
 	ret = bch2_btree_split_leaf(c, split, trans->flags);
+
+	/*
+	 * This can happen when we insert part of an extent - with an update
+	 * with multiple keys, we don't want to redo the entire update - that's
+	 * just too confusing:
+	 */
+	if (!ret &&
+	    (trans->flags & BTREE_INSERT_ATOMIC) &&
+	    trans->did_work)
+		ret = -EINTR;
+
 	if (ret)
 		goto err;
+
 	/*
 	 * if the split didn't have to drop locks the insert will still be
 	 * atomic (in the BTREE_INSERT_ATOMIC sense, what the caller peeked()
