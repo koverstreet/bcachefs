@@ -52,7 +52,7 @@ static inline int sectors_used_cmp(copygc_heap *heap,
 				   struct copygc_heap_entry l,
 				   struct copygc_heap_entry r)
 {
-	return bucket_sectors_used(l.mark) - bucket_sectors_used(r.mark);
+	return (l.sectors > r.sectors) - (l.sectors < r.sectors);
 }
 
 static int bucket_offset_cmp(const void *_l, const void *_r, size_t size)
@@ -79,7 +79,7 @@ static bool __copygc_pred(struct bch_dev *ca,
 
 		return (i >= 0 &&
 			ptr->offset < h->data[i].offset + ca->mi.bucket_size &&
-			ptr->gen == h->data[i].mark.gen);
+			ptr->gen == h->data[i].gen);
 	}
 
 	return false;
@@ -155,8 +155,9 @@ static void bch2_copygc(struct bch_fs *c, struct bch_dev *ca)
 			continue;
 
 		e = (struct copygc_heap_entry) {
-			.offset = bucket_to_sector(ca, b),
-			.mark	= m
+			.gen		= m.gen,
+			.sectors	= bucket_sectors_used(m),
+			.offset		= bucket_to_sector(ca, b),
 		};
 		heap_add_or_replace(h, e, -sectors_used_cmp);
 	}
@@ -164,11 +165,11 @@ static void bch2_copygc(struct bch_fs *c, struct bch_dev *ca)
 	up_read(&c->gc_lock);
 
 	for (i = h->data; i < h->data + h->used; i++)
-		sectors_to_move += bucket_sectors_used(i->mark);
+		sectors_to_move += i->sectors;
 
 	while (sectors_to_move > COPYGC_SECTORS_PER_ITER(ca)) {
 		BUG_ON(!heap_pop(h, e, -sectors_used_cmp));
-		sectors_to_move -= bucket_sectors_used(e.mark);
+		sectors_to_move -= e.sectors;
 	}
 
 	buckets_to_move = h->used;
@@ -192,7 +193,7 @@ static void bch2_copygc(struct bch_fs *c, struct bch_dev *ca)
 		size_t b = sector_to_bucket(ca, i->offset);
 		struct bucket_mark m = READ_ONCE(buckets->b[b].mark);
 
-		if (i->mark.gen == m.gen && bucket_sectors_used(m)) {
+		if (i->gen == m.gen && bucket_sectors_used(m)) {
 			sectors_not_moved += bucket_sectors_used(m);
 			buckets_not_moved++;
 		}

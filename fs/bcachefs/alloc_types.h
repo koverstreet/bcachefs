@@ -8,7 +8,7 @@
 #include "fifo.h"
 
 /* There's two of these clocks, one for reads and one for writes: */
-struct prio_clock {
+struct bucket_clock {
 	/*
 	 * "now" in (read/write) IO time - incremented whenever we do X amount
 	 * of reads or writes.
@@ -23,7 +23,7 @@ struct prio_clock {
 	 * consistent.
 	 */
 	u16			hand;
-	u16			min_prio;
+	u16			max_last_io;
 
 	int			rw;
 

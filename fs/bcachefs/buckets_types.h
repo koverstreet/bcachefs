@@ -31,12 +31,12 @@ struct bucket_mark {
 };
 
 struct bucket {
-	u16				prio[2];
-
 	union {
 		struct bucket_mark	_mark;
 		const struct bucket_mark mark;
 	};
+
+	u16				io_time[2];
 };
 
 struct bucket_array {
@@ -85,8 +85,9 @@ struct disk_reservation {
 };
 
 struct copygc_heap_entry {
+	u8			gen;
+	u32			sectors;
 	u64			offset;
-	struct bucket_mark	mark;
 };
 
 typedef HEAP(struct copygc_heap_entry) copygc_heap;

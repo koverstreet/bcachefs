@@ -392,7 +392,7 @@ struct bch_dev {
 	size_t			fifo_last_bucket;
 
 	/* last calculated minimum prio */
-	u16			min_prio[2];
+	u16			max_last_bucket_io[2];
 
 	atomic_long_t		saturated_count;
 	size_t			inc_gen_needs_gc;
@@ -596,7 +596,7 @@ struct bch_fs {
 	 * those together consistently we keep track of the smallest nonzero
 	 * priority of any bucket.
 	 */
-	struct prio_clock	prio_clock[2];
+	struct bucket_clock	bucket_clock[2];
 
 	struct io_clock		io_clock[2];
 

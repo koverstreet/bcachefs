@@ -726,8 +726,8 @@ const char *bch2_fs_start(struct bch_fs *c)
 
 		j = &list_entry(journal.prev, struct journal_replay, list)->j;
 
-		c->prio_clock[READ].hand = le16_to_cpu(j->read_clock);
-		c->prio_clock[WRITE].hand = le16_to_cpu(j->write_clock);
+		c->bucket_clock[READ].hand = le16_to_cpu(j->read_clock);
+		c->bucket_clock[WRITE].hand = le16_to_cpu(j->write_clock);
 
 		for (i = 0; i < BTREE_ID_NR; i++) {
 			unsigned level;
