@@ -81,7 +81,7 @@
 #include <linux/sort.h>
 #include <trace/events/bcachefs.h>
 
-static void bch2_recalc_min_prio(struct bch_fs *, struct bch_dev *, int);
+static void bch2_recalc_oldest_io(struct bch_fs *, struct bch_dev *, int);
 
 /* Ratelimiting/PD controllers */
 
@@ -238,9 +238,9 @@ static void bch2_alloc_read_key(struct bch_fs *c, struct bkey_s_c k)
 
 	d = a.v->data;
 	if (a.v->fields & (1 << BCH_ALLOC_FIELD_READ_TIME))
-		g->prio[READ] = get_alloc_field(&d, 2);
+		g->io_time[READ] = get_alloc_field(&d, 2);
 	if (a.v->fields & (1 << BCH_ALLOC_FIELD_WRITE_TIME))
-		g->prio[WRITE] = get_alloc_field(&d, 2);
+		g->io_time[WRITE] = get_alloc_field(&d, 2);
 
 	lg_local_unlock(&c->usage_lock);
 }
@@ -272,21 +272,21 @@ int bch2_alloc_read(struct bch_fs *c, struct list_head *journal_replay_list)
 				bch2_alloc_read_key(c, bkey_i_to_s_c(k));
 	}
 
-	mutex_lock(&c->prio_clock[READ].lock);
+	mutex_lock(&c->bucket_clock[READ].lock);
 	for_each_member_device(ca, c, i) {
 		down_read(&ca->bucket_lock);
-		bch2_recalc_min_prio(c, ca, READ);
+		bch2_recalc_oldest_io(c, ca, READ);
 		up_read(&ca->bucket_lock);
 	}
-	mutex_unlock(&c->prio_clock[READ].lock);
+	mutex_unlock(&c->bucket_clock[READ].lock);
 
-	mutex_lock(&c->prio_clock[WRITE].lock);
+	mutex_lock(&c->bucket_clock[WRITE].lock);
 	for_each_member_device(ca, c, i) {
 		down_read(&ca->bucket_lock);
-		bch2_recalc_min_prio(c, ca, WRITE);
+		bch2_recalc_oldest_io(c, ca, WRITE);
 		up_read(&ca->bucket_lock);
 	}
-	mutex_unlock(&c->prio_clock[WRITE].lock);
+	mutex_unlock(&c->bucket_clock[WRITE].lock);
 
 	return 0;
 }
@@ -322,9 +322,9 @@ static int __bch2_alloc_write_key(struct bch_fs *c, struct bch_dev *ca,
 
 		d = a->v.data;
 		if (a->v.fields & (1 << BCH_ALLOC_FIELD_READ_TIME))
-			put_alloc_field(&d, 2, g->prio[READ]);
+			put_alloc_field(&d, 2, g->io_time[READ]);
 		if (a->v.fields & (1 << BCH_ALLOC_FIELD_WRITE_TIME))
-			put_alloc_field(&d, 2, g->prio[WRITE]);
+			put_alloc_field(&d, 2, g->io_time[WRITE]);
 		lg_local_unlock(&c->usage_lock);
 
 		ret = bch2_btree_insert_at(c, NULL, NULL, journal_seq,
@@ -397,38 +397,34 @@ int bch2_alloc_write(struct bch_fs *c)
 
 /* Bucket IO clocks: */
 
-static void bch2_recalc_min_prio(struct bch_fs *c, struct bch_dev *ca, int rw)
+static void bch2_recalc_oldest_io(struct bch_fs *c, struct bch_dev *ca, int rw)
 {
-	struct prio_clock *clock = &c->prio_clock[rw];
+	struct bucket_clock *clock = &c->bucket_clock[rw];
 	struct bucket_array *buckets = bucket_array(ca);
 	struct bucket *g;
-	u16 max_delta = 1;
+	u16 max_last_io = 0;
 	unsigned i;
 
-	lockdep_assert_held(&c->prio_clock[rw].lock);
+	lockdep_assert_held(&c->bucket_clock[rw].lock);
 
-	/* Determine min prio for this particular device */
+	/* Recalculate max_last_io for this device: */
 	for_each_bucket(g, buckets)
-		max_delta = max(max_delta, (u16) (clock->hand - g->prio[rw]));
+		max_last_io = max(max_last_io, bucket_last_io(c, g, rw));
 
-	ca->min_prio[rw] = clock->hand - max_delta;
+	ca->max_last_bucket_io[rw] = max_last_io;
 
-	/*
-	 * This may possibly increase the min prio for the whole device, check
-	 * that as well.
-	 */
-	max_delta = 1;
+	/* Recalculate global max_last_io: */
+	max_last_io = 0;
 
 	for_each_member_device(ca, c, i)
-		max_delta = max(max_delta,
-				(u16) (clock->hand - ca->min_prio[rw]));
+		max_last_io = max(max_last_io, ca->max_last_bucket_io[rw]);
 
-	clock->min_prio = clock->hand - max_delta;
+	clock->max_last_io = max_last_io;
 }
 
-static void bch2_rescale_prios(struct bch_fs *c, int rw)
+static void bch2_rescale_bucket_io_times(struct bch_fs *c, int rw)
 {
-	struct prio_clock *clock = &c->prio_clock[rw];
+	struct bucket_clock *clock = &c->bucket_clock[rw];
 	struct bucket_array *buckets;
 	struct bch_dev *ca;
 	struct bucket *g;
@@ -441,10 +437,10 @@ static void bch2_rescale_prios(struct bch_fs *c, int rw)
 		buckets = bucket_array(ca);
 
 		for_each_bucket(g, buckets)
-			g->prio[rw] = clock->hand -
-			(clock->hand - g->prio[rw]) / 2;
+			g->io_time[rw] = clock->hand -
+			bucket_last_io(c, g, rw) / 2;
 
-		bch2_recalc_min_prio(c, ca, rw);
+		bch2_recalc_oldest_io(c, ca, rw);
 
 		up_read(&ca->bucket_lock);
 	}
@@ -452,19 +448,26 @@ static void bch2_rescale_prios(struct bch_fs *c, int rw)
 
 static void bch2_inc_clock_hand(struct io_timer *timer)
 {
-	struct prio_clock *clock = container_of(timer,
-						struct prio_clock, rescale);
+	struct bucket_clock *clock = container_of(timer,
+						struct bucket_clock, rescale);
 	struct bch_fs *c = container_of(clock,
-					struct bch_fs, prio_clock[clock->rw]);
+					struct bch_fs, bucket_clock[clock->rw]);
+	struct bch_dev *ca;
 	u64 capacity;
+	unsigned i;
 
 	mutex_lock(&clock->lock);
 
-	clock->hand++;
-
 	/* if clock cannot be advanced more, rescale prio */
-	if (clock->hand == (u16) (clock->min_prio - 1))
-		bch2_rescale_prios(c, clock->rw);
+	if (clock->max_last_io >= U16_MAX - 2)
+		bch2_rescale_bucket_io_times(c, clock->rw);
+
+	BUG_ON(clock->max_last_io >= U16_MAX - 2);
+
+	for_each_member_device(ca, c, i)
+		ca->max_last_bucket_io[clock->rw]++;
+	clock->max_last_io++;
+	clock->hand++;
 
 	mutex_unlock(&clock->lock);
 
@@ -486,9 +489,9 @@ static void bch2_inc_clock_hand(struct io_timer *timer)
 	bch2_io_timer_add(&c->io_clock[clock->rw], timer);
 }
 
-static void bch2_prio_timer_init(struct bch_fs *c, int rw)
+static void bch2_bucket_clock_init(struct bch_fs *c, int rw)
 {
-	struct prio_clock *clock = &c->prio_clock[rw];
+	struct bucket_clock *clock = &c->bucket_clock[rw];
 
 	clock->hand		= 1;
 	clock->rw		= rw;
@@ -637,13 +640,14 @@ static void bch2_invalidate_one_bucket(struct bch_fs *c, struct bch_dev *ca,
 static unsigned long bucket_sort_key(struct bch_fs *c, struct bch_dev *ca,
 				     size_t b, struct bucket_mark m)
 {
+	unsigned last_io = bucket_last_io(c, bucket(ca, b), READ);
+	unsigned max_last_io = ca->max_last_bucket_io[READ];
+
 	/*
 	 * Time since last read, scaled to [0, 8) where larger value indicates
 	 * more recently read data:
 	 */
-	unsigned long hotness =
-		(bucket(ca, b)->prio[READ]	- ca->min_prio[READ]) * 7 /
-		(c->prio_clock[READ].hand	- ca->min_prio[READ]);
+	unsigned long hotness = (max_last_io - last_io) * 7 / max_last_io;
 
 	/* How much we want to keep the data in this bucket: */
 	unsigned long data_wantness =
@@ -674,12 +678,12 @@ static void find_reclaimable_buckets_lru(struct bch_fs *c, struct bch_dev *ca)
 
 	ca->alloc_heap.used = 0;
 
-	mutex_lock(&c->prio_clock[READ].lock);
+	mutex_lock(&c->bucket_clock[READ].lock);
 	down_read(&ca->bucket_lock);
 
 	buckets = bucket_array(ca);
 
-	bch2_recalc_min_prio(c, ca, READ);
+	bch2_recalc_oldest_io(c, ca, READ);
 
 	/*
 	 * Find buckets with lowest read priority, by building a maxheap sorted
@@ -713,7 +717,7 @@ static void find_reclaimable_buckets_lru(struct bch_fs *c, struct bch_dev *ca)
 		heap_add_or_replace(&ca->alloc_heap, e, -bucket_alloc_cmp);
 
 	up_read(&ca->bucket_lock);
-	mutex_unlock(&c->prio_clock[READ].lock);
+	mutex_unlock(&c->bucket_clock[READ].lock);
 
 	heap_resort(&ca->alloc_heap, bucket_alloc_cmp);
 
@@ -1818,14 +1822,14 @@ void bch2_recalc_capacity(struct bch_fs *c)
 
 	if (c->capacity) {
 		bch2_io_timer_add(&c->io_clock[READ],
-				 &c->prio_clock[READ].rescale);
+				 &c->bucket_clock[READ].rescale);
 		bch2_io_timer_add(&c->io_clock[WRITE],
-				 &c->prio_clock[WRITE].rescale);
+				 &c->bucket_clock[WRITE].rescale);
 	} else {
 		bch2_io_timer_del(&c->io_clock[READ],
-				 &c->prio_clock[READ].rescale);
+				 &c->bucket_clock[READ].rescale);
 		bch2_io_timer_del(&c->io_clock[WRITE],
-				 &c->prio_clock[WRITE].rescale);
+				 &c->bucket_clock[WRITE].rescale);
 	}
 
 	/* Wake up case someone was waiting for buckets */
@@ -2191,8 +2195,8 @@ void bch2_fs_allocator_init(struct bch_fs *c)
 
 	mutex_init(&c->write_points_hash_lock);
 	spin_lock_init(&c->freelist_lock);
-	bch2_prio_timer_init(c, READ);
-	bch2_prio_timer_init(c, WRITE);
+	bch2_bucket_clock_init(c, READ);
+	bch2_bucket_clock_init(c, WRITE);
 
 	/* open bucket 0 is a sentinal NULL: */
 	spin_lock_init(&c->open_buckets[0].lock);

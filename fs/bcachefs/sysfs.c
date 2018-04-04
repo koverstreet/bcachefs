@@ -142,10 +142,10 @@ read_attribute(first_bucket);
 read_attribute(nbuckets);
 read_attribute(durability);
 read_attribute(iostats);
-read_attribute(read_priority_stats);
-read_attribute(write_priority_stats);
-read_attribute(fragmentation_stats);
-read_attribute(oldest_gen_stats);
+read_attribute(last_read_quantiles);
+read_attribute(last_write_quantiles);
+read_attribute(fragmentation_quantiles);
+read_attribute(oldest_gen_quantiles);
 read_attribute(reserve_stats);
 read_attribute(btree_cache_size);
 read_attribute(compression_stats);
@@ -623,36 +623,41 @@ struct attribute *bch2_fs_time_stats_files[] = {
 	NULL
 };
 
-typedef unsigned (bucket_map_fn)(struct bch_dev *, size_t, void *);
+typedef unsigned (bucket_map_fn)(struct bch_fs *, struct bch_dev *,
+				 size_t, void *);
 
-static unsigned bucket_priority_fn(struct bch_dev *ca, size_t b,
-				   void *private)
+static unsigned bucket_last_io_fn(struct bch_fs *c, struct bch_dev *ca,
+				  size_t b, void *private)
 {
-	struct bucket *g = bucket(ca, b);
 	int rw = (private ? 1 : 0);
 
-	return ca->fs->prio_clock[rw].hand - g->prio[rw];
+	return bucket_last_io(c, bucket(ca, b), rw);
 }
 
-static unsigned bucket_sectors_used_fn(struct bch_dev *ca, size_t b,
-				       void *private)
+static unsigned bucket_sectors_used_fn(struct bch_fs *c, struct bch_dev *ca,
+				       size_t b, void *private)
 {
 	struct bucket *g = bucket(ca, b);
 	return bucket_sectors_used(g->mark);
 }
 
-static unsigned bucket_oldest_gen_fn(struct bch_dev *ca, size_t b,
-				     void *private)
+static unsigned bucket_oldest_gen_fn(struct bch_fs *c, struct bch_dev *ca,
+				     size_t b, void *private)
 {
 	return bucket_gc_gen(ca, b);
 }
 
-static ssize_t show_quantiles(struct bch_dev *ca, char *buf,
-			      bucket_map_fn *fn, void *private)
+static int unsigned_cmp(const void *_l, const void *_r)
 {
-	int cmp(const void *l, const void *r)
-	{	return *((unsigned *) r) - *((unsigned *) l); }
+	unsigned l = *((unsigned *) _l);
+	unsigned r = *((unsigned *) _r);
 
+	return (l > r) - (l < r);
+}
+
+static ssize_t show_quantiles(struct bch_fs *c, struct bch_dev *ca,
+			      char *buf, bucket_map_fn *fn, void *private)
+{
 	size_t i, n;
 	/* Compute 31 quantiles */
 	unsigned q[31], *p;
@@ -668,9 +673,9 @@ static ssize_t show_quantiles(struct bch_dev *ca, char *buf,
 	}
 
 	for (i = ca->mi.first_bucket; i < n; i++)
-		p[i] = fn(ca, i, private);
+		p[i] = fn(c, ca, i, private);
 
-	sort(p, n, sizeof(unsigned), cmp, NULL);
+	sort(p, n, sizeof(unsigned), unsigned_cmp, NULL);
 	up_read(&ca->bucket_lock);
 
 	while (n &&
@@ -854,14 +859,16 @@ SHOW(bch2_dev)
 
 	if (attr == &sysfs_iostats)
 		return show_dev_iostats(ca, buf);
-	if (attr == &sysfs_read_priority_stats)
-		return show_quantiles(ca, buf, bucket_priority_fn, (void *) 0);
-	if (attr == &sysfs_write_priority_stats)
-		return show_quantiles(ca, buf, bucket_priority_fn, (void *) 1);
-	if (attr == &sysfs_fragmentation_stats)
-		return show_quantiles(ca, buf, bucket_sectors_used_fn, NULL);
-	if (attr == &sysfs_oldest_gen_stats)
-		return show_quantiles(ca, buf, bucket_oldest_gen_fn, NULL);
+
+	if (attr == &sysfs_last_read_quantiles)
+		return show_quantiles(c, ca, buf, bucket_last_io_fn, (void *) 0);
+	if (attr == &sysfs_last_write_quantiles)
+		return show_quantiles(c, ca, buf, bucket_last_io_fn, (void *) 1);
+	if (attr == &sysfs_fragmentation_quantiles)
+		return show_quantiles(c, ca, buf, bucket_sectors_used_fn, NULL);
+	if (attr == &sysfs_oldest_gen_quantiles)
+		return show_quantiles(c, ca, buf, bucket_oldest_gen_fn, NULL);
+
 	if (attr == &sysfs_reserve_stats)
 		return show_reserve_stats(ca, buf);
 	if (attr == &sysfs_alloc_debug)
@@ -946,10 +953,10 @@ struct attribute *bch2_dev_files[] = {
 	&sysfs_iostats,
 
 	/* alloc info - other stats: */
-	&sysfs_read_priority_stats,
-	&sysfs_write_priority_stats,
-	&sysfs_fragmentation_stats,
-	&sysfs_oldest_gen_stats,
+	&sysfs_last_read_quantiles,
+	&sysfs_last_write_quantiles,
+	&sysfs_fragmentation_quantiles,
+	&sysfs_oldest_gen_quantiles,
 	&sysfs_reserve_stats,
 
 	/* debug: */

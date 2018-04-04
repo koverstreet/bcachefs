@@ -2322,8 +2322,8 @@ static void journal_write(struct closure *cl)
 
 	journal_write_compact(jset);
 
-	jset->read_clock	= cpu_to_le16(c->prio_clock[READ].hand);
-	jset->write_clock	= cpu_to_le16(c->prio_clock[WRITE].hand);
+	jset->read_clock	= cpu_to_le16(c->bucket_clock[READ].hand);
+	jset->write_clock	= cpu_to_le16(c->bucket_clock[WRITE].hand);
 	jset->magic		= cpu_to_le64(jset_magic(c));
 	jset->version		= cpu_to_le32(BCACHE_JSET_VERSION);
 

@@ -47,7 +47,12 @@ static inline struct bucket *bucket(struct bch_dev *ca, size_t b)
 static inline void bucket_io_clock_reset(struct bch_fs *c, struct bch_dev *ca,
 					 size_t b, int rw)
 {
-	bucket(ca, b)->prio[rw] = c->prio_clock[rw].hand;
+	bucket(ca, b)->io_time[rw] = c->bucket_clock[rw].hand;
+}
+
+static inline u16 bucket_last_io(struct bch_fs *c, struct bucket *g, int rw)
+{
+	return c->bucket_clock[rw].hand - g->io_time[rw];
 }
 
 /*
