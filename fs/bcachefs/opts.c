@@ -2,6 +2,7 @@
 #include <linux/kernel.h>
 
 #include "bcachefs.h"
+#include "disk_groups.h"
 #include "opts.h"
 #include "super-io.h"
 #include "util.h"

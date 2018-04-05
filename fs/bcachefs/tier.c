@@ -4,6 +4,7 @@
 #include "btree_iter.h"
 #include "buckets.h"
 #include "clock.h"
+#include "disk_groups.h"
 #include "extents.h"
 #include "io.h"
 #include "move.h"

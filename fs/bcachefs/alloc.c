@@ -64,6 +64,7 @@
 #include "checksum.h"
 #include "clock.h"
 #include "debug.h"
+#include "disk_groups.h"
 #include "error.h"
 #include "extents.h"
 #include "io.h"

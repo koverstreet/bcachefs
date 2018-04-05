@@ -19,6 +19,7 @@
 #include "io.h"
 #include "keylist.h"
 #include "journal.h"
+#include "replicas.h"
 #include "super-io.h"
 #include "vstructs.h"
 
