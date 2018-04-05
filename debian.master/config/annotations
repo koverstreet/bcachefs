@@ -4744,10 +4744,12 @@ CONFIG_NVDIMM_PFN                               policy<{'amd64': 'y', 'ppc64el':
 CONFIG_NVDIMM_DAX                               policy<{'amd64': 'y', 'ppc64el': 'y'}>
 
 # Menu: Device Drivers >> NVME Support
-CONFIG_BLK_DEV_NVME                             policy<{'amd64': 'y', 'arm64': 'y', 'armhf': 'y', 'i386': 'y', 'ppc64el': 'y', 's390x': 'y'}>
+CONFIG_BLK_DEV_NVME                             policy<{'amd64': 'm', 'arm64': 'm', 'armhf': 'm', 'i386': 'm', 'ppc64el': 'm', 's390x': 'm'}>
 CONFIG_NVME_MULTIPATH                           policy<{'amd64': 'y', 'arm64': 'y', 'armhf': 'y', 'i386': 'y', 'ppc64el': 'y', 's390x': 'y'}>
 CONFIG_NVME_RDMA                                policy<{'amd64': 'm', 'arm64': 'm', 'armhf': 'm', 'i386': 'm', 'ppc64el': 'm', 's390x': 'm'}>
 CONFIG_NVME_FC                                  policy<{'amd64': 'm', 'arm64': 'm', 'armhf': 'm', 'i386': 'm', 'ppc64el': 'm', 's390x': 'm'}>
+#
+CONFIG_BLK_DEV_NVME                             mark<ENFORCED> note<LP:#1759893>
 
 # Menu: Device Drivers >> NVME Support >> NVMe Target support
 CONFIG_NVME_TARGET                              policy<{'amd64': 'm', 'arm64': 'm', 'armhf': 'm', 'i386': 'm', 'ppc64el': 'm', 's390x': 'm'}>
