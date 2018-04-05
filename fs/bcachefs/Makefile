@@ -20,6 +20,7 @@ bcachefs-y		:=	\
 	compress.o		\
 	debug.o			\
 	dirent.o		\
+	disk_groups.o		\
 	error.o			\
 	extents.o		\
 	fs.o			\
@@ -36,6 +37,7 @@ bcachefs-y		:=	\
 	movinggc.o		\
 	opts.o			\
 	quota.o			\
+	replicas.o		\
 	siphash.o		\
 	six.o			\
 	super.o			\

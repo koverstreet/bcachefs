@@ -11,6 +11,7 @@
 #include "keylist.h"
 #include "migrate.h"
 #include "move.h"
+#include "replicas.h"
 #include "super-io.h"
 
 static int drop_dev_ptrs(struct bch_fs *c, struct bkey_s_extent e,

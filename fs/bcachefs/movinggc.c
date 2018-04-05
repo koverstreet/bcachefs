@@ -9,6 +9,7 @@
 #include "btree_update.h"
 #include "buckets.h"
 #include "clock.h"
+#include "disk_groups.h"
 #include "extents.h"
 #include "eytzinger.h"
 #include "io.h"

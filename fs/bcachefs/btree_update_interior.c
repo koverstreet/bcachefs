@@ -13,6 +13,7 @@
 #include "extents.h"
 #include "journal.h"
 #include "keylist.h"
+#include "replicas.h"
 #include "super-io.h"
 
 #include <linux/random.h>

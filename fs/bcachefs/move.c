@@ -6,6 +6,7 @@
 #include "inode.h"
 #include "io.h"
 #include "move.h"
+#include "replicas.h"
 #include "super-io.h"
 #include "keylist.h"
 

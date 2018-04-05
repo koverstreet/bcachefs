@@ -18,6 +18,7 @@
 #include "journal.h"
 #include "keylist.h"
 #include "move.h"
+#include "replicas.h"
 #include "super-io.h"
 
 #include <linux/slab.h>

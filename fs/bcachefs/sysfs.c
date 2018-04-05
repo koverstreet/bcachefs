@@ -18,11 +18,13 @@
 #include "btree_update_interior.h"
 #include "btree_gc.h"
 #include "buckets.h"
+#include "disk_groups.h"
 #include "inode.h"
 #include "journal.h"
 #include "keylist.h"
 #include "move.h"
 #include "opts.h"
+#include "replicas.h"
 #include "super-io.h"
 #include "tier.h"
 
