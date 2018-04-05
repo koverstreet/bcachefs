@@ -85,11 +85,13 @@ ibmvnic ?
 igb ?
 ps3_gelic ?
 hamachi ?
+hclge ?
 hermes ?
 hfi1 ?
 hns_dsaf ?
 hns_enet_drv ?
 hns_mdio ?
+hns3 ?
 hp ?
 hp100 ?
 hp-plus ?
