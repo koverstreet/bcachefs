@@ -158,3 +158,13 @@ Description: Linux kernel version specific cloud tools for version PKGVER-ABINUM
  =HUMAN=.
  You probably want to install linux-cloud-tools-PKGVER-ABINUM-<flavour>.
 
+Package: SRCPKGNAME-tools-host
+Build-Profiles: <!stage1>
+Architecture: all
+Multi-Arch: foreign
+Section: kernel
+Priority: optional
+Depends: ${misc:Depends}, python3
+Description: Linux kernel VM host tools
+ This package provides kernel tools useful for VM hosts.
+
