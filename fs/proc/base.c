@@ -2600,11 +2600,32 @@ static const struct inode_operations proc_##LSM##_attr_dir_inode_ops = { \
 	.setattr	= proc_setattr, \
 }
 
+#ifdef CONFIG_SECURITY_SELINUX
+static const struct pid_entry selinux_attr_dir_stuff[] = {
+	ATTR("selinux", "current",      0666),
+	ATTR("selinux", "prev",         0444),
+	ATTR("selinux", "exec",         0666),
+	ATTR("selinux", "fscreate",     0666),
+	ATTR("selinux", "keycreate",    0666),
+	ATTR("selinux", "sockcreate",   0666),
+};
+LSM_DIR_OPS(selinux);
+#endif
+
 #ifdef CONFIG_SECURITY_SMACK
 static const struct pid_entry smack_attr_dir_stuff[] = {
 	ATTR("smack", "current",	0666),
 };
 LSM_DIR_OPS(smack);
+#endif
+
+#ifdef CONFIG_SECURITY_APPARMOR
+static const struct pid_entry apparmor_attr_dir_stuff[] = {
+	ATTR("apparmor", "current",     0666),
+	ATTR("apparmor", "prev",        0444),
+	ATTR("apparmor", "exec",        0666),
+};
+LSM_DIR_OPS(apparmor);
 #endif
 
 static const struct pid_entry attr_dir_stuff[] = {
@@ -2624,6 +2645,11 @@ static const struct pid_entry attr_dir_stuff[] = {
 #ifdef CONFIG_SECURITY_SMACK
 	DIR("smack",			0555,
 	    proc_smack_attr_dir_inode_ops, proc_smack_attr_dir_ops),
+#endif
+
+#ifdef CONFIG_SECURITY_APPARMOR
+	DIR("apparmor",                 0555,
+	    proc_apparmor_attr_dir_inode_ops, proc_apparmor_attr_dir_ops),
 #endif
 };
 
