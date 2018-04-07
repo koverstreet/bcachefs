@@ -30,6 +30,8 @@ enum bucket_alloc_ret {
 	NO_DEVICES		= -3,	/* -EROFS */
 };
 
+long bch2_bucket_alloc_new_fs(struct bch_dev *);
+
 int bch2_bucket_alloc(struct bch_fs *, struct bch_dev *, enum alloc_reserve, bool,
 		      struct closure *);
 

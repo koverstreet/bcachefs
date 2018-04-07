@@ -318,7 +318,8 @@ void bch2_mark_dev_superblock(struct bch_fs *c, struct bch_dev *ca,
 	unsigned i;
 	u64 b;
 
-	lockdep_assert_held(&c->sb_lock);
+	if (c)
+		lockdep_assert_held(&c->sb_lock);
 
 	for (i = 0; i < layout->nr_superblocks; i++) {
 		u64 offset = le64_to_cpu(layout->sb_offset[i]);
@@ -332,7 +333,8 @@ void bch2_mark_dev_superblock(struct bch_fs *c, struct bch_dev *ca,
 				      BCH_DATA_SB, flags);
 	}
 
-	spin_lock(&c->journal.lock);
+	if (c)
+		spin_lock(&c->journal.lock);
 
 	for (i = 0; i < ca->journal.nr; i++) {
 		b = ca->journal.buckets[i];
@@ -341,7 +343,8 @@ void bch2_mark_dev_superblock(struct bch_fs *c, struct bch_dev *ca,
 					  gc_phase(GC_PHASE_SB), flags);
 	}
 
-	spin_unlock(&c->journal.lock);
+	if (c)
+		spin_unlock(&c->journal.lock);
 }
 
 static void bch2_mark_superblocks(struct bch_fs *c)
