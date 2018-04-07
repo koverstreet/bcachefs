@@ -1584,39 +1584,18 @@ err:
 	return ret;
 }
 
-/*
- * Allocate more journal space at runtime - not currently making use if it, but
- * the code works:
- */
-static int bch2_set_nr_journal_buckets(struct bch_fs *c, struct bch_dev *ca,
-				       unsigned nr)
+static int __bch2_set_nr_journal_buckets(struct bch_dev *ca, unsigned nr,
+					 bool new_fs, struct closure *cl)
 {
-	struct journal *j = &c->journal;
+	struct bch_fs *c = ca->fs;
 	struct journal_device *ja = &ca->journal;
 	struct bch_sb_field_journal *journal_buckets;
-	struct disk_reservation disk_res = { 0, 0 };
-	struct closure cl;
 	u64 *new_bucket_seq = NULL, *new_buckets = NULL;
 	int ret = 0;
-
-	closure_init_stack(&cl);
 
 	/* don't handle reducing nr of buckets yet: */
 	if (nr <= ja->nr)
 		return 0;
-
-	/*
-	 * note: journal buckets aren't really counted as _sectors_ used yet, so
-	 * we don't need the disk reservation to avoid the BUG_ON() in buckets.c
-	 * when space used goes up without a reservation - but we do need the
-	 * reservation to ensure we'll actually be able to allocate:
-	 */
-
-	if (bch2_disk_reservation_get(c, &disk_res,
-			bucket_to_sector(ca, nr - ja->nr), 1, 0))
-		return -ENOSPC;
-
-	mutex_lock(&c->sb_lock);
 
 	ret = -ENOMEM;
 	new_buckets	= kzalloc(nr * sizeof(u64), GFP_KERNEL);
@@ -1629,29 +1608,41 @@ static int bch2_set_nr_journal_buckets(struct bch_fs *c, struct bch_dev *ca,
 	if (!journal_buckets)
 		goto err;
 
-	spin_lock(&j->lock);
+	if (c)
+		spin_lock(&c->journal.lock);
+
 	memcpy(new_buckets,	ja->buckets,	ja->nr * sizeof(u64));
 	memcpy(new_bucket_seq,	ja->bucket_seq,	ja->nr * sizeof(u64));
 	swap(new_buckets,	ja->buckets);
 	swap(new_bucket_seq,	ja->bucket_seq);
-	spin_unlock(&j->lock);
+
+	if (c)
+		spin_unlock(&c->journal.lock);
 
 	while (ja->nr < nr) {
-		struct open_bucket *ob;
-		size_t bucket;
-		int ob_idx;
+		struct open_bucket *ob = NULL;
+		long bucket;
 
-		ob_idx = bch2_bucket_alloc(c, ca, RESERVE_ALLOC, false, &cl);
-		if (ob_idx < 0) {
-			if (!closure_wait(&c->freelist_wait, &cl))
-				closure_sync(&cl);
-			continue;
+		if (new_fs) {
+			bucket = bch2_bucket_alloc_new_fs(ca);
+			if (bucket < 0) {
+				ret = -ENOSPC;
+				goto err;
+			}
+		} else {
+			int ob_idx = bch2_bucket_alloc(c, ca, RESERVE_ALLOC, false, cl);
+			if (ob_idx < 0) {
+				ret = cl ? -EAGAIN : -ENOSPC;
+				goto err;
+			}
+
+			ob = c->open_buckets + ob_idx;
+			bucket = sector_to_bucket(ca, ob->ptr.offset);
 		}
 
-		ob = c->open_buckets + ob_idx;
-		bucket = sector_to_bucket(ca, ob->ptr.offset);
+		if (c)
+			spin_lock(&c->journal.lock);
 
-		spin_lock(&j->lock);
 		__array_insert_item(ja->buckets,		ja->nr, ja->last_idx);
 		__array_insert_item(ja->bucket_seq,		ja->nr, ja->last_idx);
 		__array_insert_item(journal_buckets->buckets,	ja->nr, ja->last_idx);
@@ -1666,34 +1657,77 @@ static int bch2_set_nr_journal_buckets(struct bch_fs *c, struct bch_dev *ca,
 			ja->last_idx++;
 		}
 		ja->nr++;
-		spin_unlock(&j->lock);
+
+		if (c)
+			spin_unlock(&c->journal.lock);
 
 		bch2_mark_metadata_bucket(c, ca, bucket, BCH_DATA_JOURNAL,
-					  ca->mi.bucket_size,
-					  gc_phase(GC_PHASE_SB), 0);
+				ca->mi.bucket_size,
+				gc_phase(GC_PHASE_SB),
+				new_fs
+				? BCH_BUCKET_MARK_MAY_MAKE_UNAVAILABLE
+				: 0);
 
-		bch2_open_bucket_put(c, ob);
+		if (!new_fs)
+			bch2_open_bucket_put(c, ob);
 	}
-
-	bch2_write_super(c);
 
 	ret = 0;
 err:
-	mutex_unlock(&c->sb_lock);
-
 	kfree(new_bucket_seq);
 	kfree(new_buckets);
-	bch2_disk_reservation_put(c, &disk_res);
-
-	if (!ret)
-		bch2_dev_allocator_add(c, ca);
-
-	closure_sync(&cl);
 
 	return ret;
 }
 
-int bch2_dev_journal_alloc(struct bch_fs *c, struct bch_dev *ca)
+/*
+ * Allocate more journal space at runtime - not currently making use if it, but
+ * the code works:
+ */
+int bch2_set_nr_journal_buckets(struct bch_fs *c, struct bch_dev *ca,
+				unsigned nr)
+{
+	struct journal_device *ja = &ca->journal;
+	struct closure cl;
+	unsigned current_nr;
+	int ret;
+
+	closure_init_stack(&cl);
+
+	do {
+		struct disk_reservation disk_res = { 0, 0 };
+
+		closure_sync(&cl);
+
+		mutex_lock(&c->sb_lock);
+		current_nr = ja->nr;
+
+		/*
+		 * note: journal buckets aren't really counted as _sectors_ used yet, so
+		 * we don't need the disk reservation to avoid the BUG_ON() in buckets.c
+		 * when space used goes up without a reservation - but we do need the
+		 * reservation to ensure we'll actually be able to allocate:
+		 */
+
+		if (bch2_disk_reservation_get(c, &disk_res,
+				bucket_to_sector(ca, nr - ja->nr), 1, 0)) {
+			mutex_unlock(&c->sb_lock);
+			return -ENOSPC;
+		}
+
+		ret = __bch2_set_nr_journal_buckets(ca, nr, false, &cl);
+
+		bch2_disk_reservation_put(c, &disk_res);
+
+		if (ja->nr != current_nr)
+			bch2_write_super(c);
+		mutex_unlock(&c->sb_lock);
+	} while (ret == -EAGAIN);
+
+	return ret;
+}
+
+int bch2_dev_journal_alloc(struct bch_dev *ca)
 {
 	unsigned nr;
 
@@ -1709,7 +1743,7 @@ int bch2_dev_journal_alloc(struct bch_fs *c, struct bch_dev *ca)
 		     min(1 << 10,
 			 (1 << 20) / ca->mi.bucket_size));
 
-	return bch2_set_nr_journal_buckets(c, ca, nr);
+	return __bch2_set_nr_journal_buckets(ca, nr, true, NULL);
 }
 
 /* Journalling */

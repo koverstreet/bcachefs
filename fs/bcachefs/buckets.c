@@ -309,7 +309,7 @@ static bool bucket_became_unavailable(struct bch_fs *c,
 {
 	return is_available_bucket(old) &&
 	       !is_available_bucket(new) &&
-	       c && c->gc_pos.phase == GC_PHASE_DONE;
+	       (!c || c->gc_pos.phase == GC_PHASE_DONE);
 }
 
 void bch2_fs_usage_apply(struct bch_fs *c,
@@ -351,12 +351,16 @@ static void bch2_dev_usage_update(struct bch_fs *c, struct bch_dev *ca,
 {
 	struct bch_dev_usage *dev_usage;
 
-	lockdep_assert_held(&c->usage_lock);
+	if (c)
+		lockdep_assert_held(&c->usage_lock);
 
-	bch2_fs_inconsistent_on(old.data_type && new.data_type &&
-			old.data_type != new.data_type, c,
+	if (old.data_type && new.data_type &&
+	    old.data_type != new.data_type) {
+		BUG_ON(!c);
+		bch2_fs_inconsistent(c,
 			"different types of data in same bucket: %u, %u",
 			old.data_type, new.data_type);
+	}
 
 	dev_usage = this_cpu_ptr(ca->usage_percpu);
 
@@ -466,21 +470,29 @@ void bch2_mark_metadata_bucket(struct bch_fs *c, struct bch_dev *ca,
 
 	BUG_ON(!type);
 
-	lg_local_lock(&c->usage_lock);
-	g = bucket(ca, b);
+	if (likely(c)) {
+		lg_local_lock(&c->usage_lock);
 
-	if (!(flags & BCH_BUCKET_MARK_GC_LOCK_HELD) &&
-	    gc_will_visit(c, pos)) {
-		lg_local_unlock(&c->usage_lock);
-		return;
+		if (!(flags & BCH_BUCKET_MARK_GC_LOCK_HELD) &&
+		    gc_will_visit(c, pos)) {
+			lg_local_unlock(&c->usage_lock);
+			return;
+		}
 	}
 
+	preempt_disable();
+
+	g = bucket(ca, b);
 	old = bucket_data_cmpxchg(c, ca, g, new, ({
 		saturated_add(ca, new.dirty_sectors, sectors,
 			      GC_MAX_SECTORS_USED);
 		new.data_type		= type;
 	}));
-	lg_local_unlock(&c->usage_lock);
+
+	preempt_enable();
+
+	if (likely(c))
+		lg_local_unlock(&c->usage_lock);
 
 	BUG_ON(!(flags & BCH_BUCKET_MARK_MAY_MAKE_UNAVAILABLE) &&
 	       bucket_became_unavailable(c, old, new));
@@ -859,9 +871,11 @@ int bch2_dev_buckets_resize(struct bch_fs *c, struct bch_dev *ca, u64 nbuckets)
 
 	bch2_copygc_stop(ca);
 
-	down_write(&c->gc_lock);
-	down_write(&ca->bucket_lock);
-	lg_global_lock(&c->usage_lock);
+	if (resize) {
+		down_write(&c->gc_lock);
+		down_write(&ca->bucket_lock);
+		lg_global_lock(&c->usage_lock);
+	}
 
 	old_buckets = bucket_array(ca);
 
@@ -885,7 +899,8 @@ int bch2_dev_buckets_resize(struct bch_fs *c, struct bch_dev *ca, u64 nbuckets)
 	swap(ca->oldest_gens, oldest_gens);
 	swap(ca->buckets_dirty, buckets_dirty);
 
-	lg_global_unlock(&c->usage_lock);
+	if (resize)
+		lg_global_unlock(&c->usage_lock);
 
 	spin_lock(&c->freelist_lock);
 	for (i = 0; i < RESERVE_NR; i++) {
@@ -904,8 +919,10 @@ int bch2_dev_buckets_resize(struct bch_fs *c, struct bch_dev *ca, u64 nbuckets)
 
 	nbuckets = ca->mi.nbuckets;
 
-	up_write(&ca->bucket_lock);
-	up_write(&c->gc_lock);
+	if (resize) {
+		up_write(&ca->bucket_lock);
+		up_write(&c->gc_lock);
+	}
 
 	if (start_copygc &&
 	    bch2_copygc_start(c, ca))

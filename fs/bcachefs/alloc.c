@@ -1111,8 +1111,8 @@ static struct open_bucket *bch2_open_bucket_alloc(struct bch_fs *c)
 	return ob;
 }
 
-/* _only_ for allocating the journal and btree roots on a brand new fs: */
-int bch2_bucket_alloc_startup(struct bch_fs *c, struct bch_dev *ca)
+/* _only_ for allocating the journal on a new device: */
+long bch2_bucket_alloc_new_fs(struct bch_dev *ca)
 {
 	struct bucket_array *buckets;
 	ssize_t b;
@@ -1121,14 +1121,8 @@ int bch2_bucket_alloc_startup(struct bch_fs *c, struct bch_dev *ca)
 	buckets = bucket_array(ca);
 
 	for (b = ca->mi.first_bucket; b < ca->mi.nbuckets; b++)
-		if (is_available_bucket(buckets->b[b].mark)) {
-			bch2_mark_alloc_bucket(c, ca, b, true,
-					gc_pos_alloc(c, NULL),
-					BCH_BUCKET_MARK_MAY_MAKE_UNAVAILABLE|
-					BCH_BUCKET_MARK_GC_LOCK_HELD);
-			set_bit(b, ca->buckets_dirty);
+		if (is_available_bucket(buckets->b[b].mark))
 			goto success;
-		}
 	b = -1;
 success:
 	rcu_read_unlock();
@@ -1200,9 +1194,8 @@ int bch2_bucket_alloc(struct bch_fs *c, struct bch_dev *ca,
 		break;
 	}
 
-	if (unlikely(test_bit(BCH_FS_BRAND_NEW_FS, &c->flags)) &&
-	    (bucket = bch2_bucket_alloc_startup(c, ca)) >= 0)
-		goto out;
+	if (cl)
+		closure_wait(&c->freelist_wait, cl);
 
 	spin_unlock(&c->freelist_lock);
 
@@ -1283,7 +1276,7 @@ void bch2_wp_rescale(struct bch_fs *c, struct bch_dev *ca,
 		*v = *v < scale ? 0 : *v - scale;
 }
 
-static enum bucket_alloc_ret __bch2_bucket_alloc_set(struct bch_fs *c,
+static enum bucket_alloc_ret bch2_bucket_alloc_set(struct bch_fs *c,
 					struct write_point *wp,
 					unsigned nr_replicas,
 					enum alloc_reserve reserve,
@@ -1349,52 +1342,22 @@ static enum bucket_alloc_ret __bch2_bucket_alloc_set(struct bch_fs *c,
 			break;
 		}
 	}
+	rcu_read_unlock();
 
 	EBUG_ON(reserve == RESERVE_MOVINGGC &&
 		ret != ALLOC_SUCCESS &&
 		ret != OPEN_BUCKETS_EMPTY);
-	rcu_read_unlock();
-	return ret;
-}
 
-static int bch2_bucket_alloc_set(struct bch_fs *c, struct write_point *wp,
-				unsigned nr_replicas,
-				enum alloc_reserve reserve,
-				struct bch_devs_mask *devs,
-				struct closure *cl)
-{
-	bool waiting = false;
-
-	while (1) {
-		switch (__bch2_bucket_alloc_set(c, wp, nr_replicas,
-						reserve, devs, cl)) {
-		case ALLOC_SUCCESS:
-			if (waiting)
-				closure_wake_up(&c->freelist_wait);
-
-			return 0;
-
-		case NO_DEVICES:
-			if (waiting)
-				closure_wake_up(&c->freelist_wait);
-			return -EROFS;
-
-		case FREELIST_EMPTY:
-			if (!cl)
-				return -ENOSPC;
-
-			if (waiting)
-				return -EAGAIN;
-
-			/* Retry allocation after adding ourself to waitlist: */
-			closure_wait(&c->freelist_wait, cl);
-			waiting = true;
-			break;
-		case OPEN_BUCKETS_EMPTY:
-			return cl ? -EAGAIN : -ENOSPC;
-		default:
-			BUG();
-		}
+	switch (ret) {
+	case ALLOC_SUCCESS:
+		return 0;
+	case NO_DEVICES:
+		return -EROFS;
+	case FREELIST_EMPTY:
+	case OPEN_BUCKETS_EMPTY:
+		return cl ? -EAGAIN : -ENOSPC;
+	default:
+		BUG();
 	}
 }
 
@@ -2038,8 +2001,10 @@ static int __bch2_fs_allocator_start(struct bch_fs *c)
 
 	/* did we find enough buckets? */
 	for_each_rw_member(ca, c, dev_iter)
-		if (fifo_used(&ca->free_inc) < ca->free[RESERVE_BTREE].size)
+		if (fifo_used(&ca->free_inc) < ca->free[RESERVE_BTREE].size) {
+			percpu_ref_put(&ca->io_ref);
 			goto not_enough;
+		}
 
 	return 0;
 not_enough:
