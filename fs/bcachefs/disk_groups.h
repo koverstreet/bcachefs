@@ -2,6 +2,8 @@
 #ifndef _BCACHEFS_DISK_GROUPS_H
 #define _BCACHEFS_DISK_GROUPS_H
 
+extern const struct bch_sb_field_ops bch_sb_field_ops_disk_groups;
+
 static inline unsigned disk_groups_nr(struct bch_sb_field_disk_groups *groups)
 {
 	return groups
@@ -85,6 +87,8 @@ int bch2_opt_target_parse(struct bch_fs *, const char *, u64 *);
 int bch2_opt_target_print(struct bch_fs *, char *, size_t, u64);
 
 int bch2_sb_disk_groups_to_cpu(struct bch_fs *);
+
+int bch2_disk_path_print(struct bch_fs *, char *, size_t, unsigned);
 
 int bch2_dev_group_set(struct bch_fs *, struct bch_dev *, const char *);
 
