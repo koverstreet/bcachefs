@@ -28,9 +28,6 @@
 
 #include <trace/events/bcachefs.h>
 
-static enum merge_result bch2_extent_merge(struct bch_fs *, struct btree *,
-					   struct bkey_i *, struct bkey_i *);
-
 static void sort_key_next(struct btree_node_iter_large *iter,
 			  struct btree *b,
 			  struct btree_node_iter_set *i)
@@ -460,13 +457,12 @@ static void bch2_extent_drop_stale(struct bch_fs *c, struct bkey_s_extent e)
 		bch2_extent_drop_redundant_crcs(e);
 }
 
-static bool bch2_ptr_normalize(struct bch_fs *c, struct btree *bk,
-			      struct bkey_s k)
+bool bch2_ptr_normalize(struct bch_fs *c, struct btree *b, struct bkey_s k)
 {
 	return bch2_extent_normalize(c, k);
 }
 
-static void bch2_ptr_swab(const struct bkey_format *f, struct bkey_packed *k)
+void bch2_ptr_swab(const struct bkey_format *f, struct bkey_packed *k)
 {
 	switch (k->type) {
 	case BCH_EXTENT:
@@ -649,8 +645,7 @@ use:
 
 /* Btree ptrs */
 
-static const char *bch2_btree_ptr_invalid(const struct bch_fs *c,
-					 struct bkey_s_c k)
+const char *bch2_btree_ptr_invalid(const struct bch_fs *c, struct bkey_s_c k)
 {
 	if (bkey_extent_is_cached(k.k))
 		return "cached";
@@ -692,8 +687,8 @@ static const char *bch2_btree_ptr_invalid(const struct bch_fs *c,
 	}
 }
 
-static void btree_ptr_debugcheck(struct bch_fs *c, struct btree *b,
-				 struct bkey_s_c k)
+void bch2_btree_ptr_debugcheck(struct bch_fs *c, struct btree *b,
+			       struct bkey_s_c k)
 {
 	struct bkey_s_c_extent e = bkey_s_c_to_extent(k);
 	const struct bch_extent_ptr *ptr;
@@ -748,8 +743,8 @@ err:
 		      mark.gen, (unsigned) mark.counter);
 }
 
-static void bch2_btree_ptr_to_text(struct bch_fs *c, char *buf,
-				  size_t size, struct bkey_s_c k)
+void bch2_btree_ptr_to_text(struct bch_fs *c, char *buf,
+			    size_t size, struct bkey_s_c k)
 {
 	char *out = buf, *end = buf + size;
 	const char *invalid;
@@ -776,13 +771,6 @@ bch2_btree_pick_ptr(struct bch_fs *c, const struct btree *b,
 
 	return pick;
 }
-
-const struct bkey_ops bch2_bkey_btree_ops = {
-	.key_invalid	= bch2_btree_ptr_invalid,
-	.key_debugcheck	= btree_ptr_debugcheck,
-	.val_to_text	= bch2_btree_ptr_to_text,
-	.swab		= bch2_ptr_swab,
-};
 
 /* Extents */
 
@@ -1717,8 +1705,7 @@ bch2_insert_fixup_extent(struct btree_insert *trans,
 	return ret;
 }
 
-static const char *bch2_extent_invalid(const struct bch_fs *c,
-				       struct bkey_s_c k)
+const char *bch2_extent_invalid(const struct bch_fs *c, struct bkey_s_c k)
 {
 	if (bkey_val_u64s(k.k) > BKEY_EXTENT_VAL_U64s_MAX)
 		return "value too big";
@@ -1885,8 +1872,7 @@ bad_ptr:
 	return;
 }
 
-static void bch2_extent_debugcheck(struct bch_fs *c, struct btree *b,
-				   struct bkey_s_c k)
+void bch2_extent_debugcheck(struct bch_fs *c, struct btree *b, struct bkey_s_c k)
 {
 	switch (k.k->type) {
 	case BCH_EXTENT:
@@ -1900,8 +1886,8 @@ static void bch2_extent_debugcheck(struct bch_fs *c, struct btree *b,
 	}
 }
 
-static void bch2_extent_to_text(struct bch_fs *c, char *buf,
-				size_t size, struct bkey_s_c k)
+void bch2_extent_to_text(struct bch_fs *c, char *buf,
+			 size_t size, struct bkey_s_c k)
 {
 	char *out = buf, *end = buf + size;
 	const char *invalid;
@@ -2109,9 +2095,8 @@ void bch2_extent_pick_ptr(struct bch_fs *c, struct bkey_s_c k,
 	}
 }
 
-static enum merge_result bch2_extent_merge(struct bch_fs *c,
-					   struct btree *bk,
-					   struct bkey_i *l, struct bkey_i *r)
+enum merge_result bch2_extent_merge(struct bch_fs *c, struct btree *b,
+				    struct bkey_i *l, struct bkey_i *r)
 {
 	struct bkey_s_extent el, er;
 	union bch_extent_entry *en_l, *en_r;
@@ -2430,13 +2415,3 @@ int bch2_check_range_allocated(struct bch_fs *c, struct bpos pos, u64 size)
 
 	return ret;
 }
-
-const struct bkey_ops bch2_bkey_extent_ops = {
-	.key_invalid	= bch2_extent_invalid,
-	.key_debugcheck	= bch2_extent_debugcheck,
-	.val_to_text	= bch2_extent_to_text,
-	.swab		= bch2_ptr_swab,
-	.key_normalize	= bch2_ptr_normalize,
-	.key_merge	= bch2_extent_merge,
-	.is_extents	= true,
-};
