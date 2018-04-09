@@ -16,6 +16,36 @@ struct extent_insert_hook;
 struct bch_devs_mask;
 union bch_extent_crc;
 
+const char *bch2_btree_ptr_invalid(const struct bch_fs *, struct bkey_s_c);
+void bch2_btree_ptr_debugcheck(struct bch_fs *, struct btree *,
+			       struct bkey_s_c);
+void bch2_btree_ptr_to_text(struct bch_fs *, char *, size_t, struct bkey_s_c);
+void bch2_ptr_swab(const struct bkey_format *, struct bkey_packed *);
+
+#define bch2_bkey_btree_ops (struct bkey_ops) {			\
+	.key_invalid	= bch2_btree_ptr_invalid,		\
+	.key_debugcheck	= bch2_btree_ptr_debugcheck,		\
+	.val_to_text	= bch2_btree_ptr_to_text,		\
+	.swab		= bch2_ptr_swab,			\
+}
+
+const char *bch2_extent_invalid(const struct bch_fs *, struct bkey_s_c);
+void bch2_extent_debugcheck(struct bch_fs *, struct btree *, struct bkey_s_c);
+void bch2_extent_to_text(struct bch_fs *, char *, size_t, struct bkey_s_c);
+bool bch2_ptr_normalize(struct bch_fs *, struct btree *, struct bkey_s);
+enum merge_result bch2_extent_merge(struct bch_fs *, struct btree *,
+				    struct bkey_i *, struct bkey_i *);
+
+#define bch2_bkey_extent_ops (struct bkey_ops) {		\
+	.key_invalid	= bch2_extent_invalid,			\
+	.key_debugcheck	= bch2_extent_debugcheck,		\
+	.val_to_text	= bch2_extent_to_text,			\
+	.swab		= bch2_ptr_swab,			\
+	.key_normalize	= bch2_ptr_normalize,			\
+	.key_merge	= bch2_extent_merge,			\
+	.is_extents	= true,					\
+}
+
 struct btree_nr_keys bch2_key_sort_fix_overlapping(struct bset *,
 						  struct btree *,
 						  struct btree_node_iter_large *);
@@ -23,9 +53,6 @@ struct btree_nr_keys bch2_extent_sort_fix_overlapping(struct bch_fs *c,
 						     struct bset *,
 						     struct btree *,
 						     struct btree_node_iter_large *);
-
-extern const struct bkey_ops bch2_bkey_btree_ops;
-extern const struct bkey_ops bch2_bkey_extent_ops;
 
 struct extent_pick_ptr
 bch2_btree_pick_ptr(struct bch_fs *, const struct btree *,
