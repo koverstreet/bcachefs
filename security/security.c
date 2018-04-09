@@ -441,53 +441,6 @@ static inline char *lsm_of_task(struct task_struct *task)
 }
 #endif
 
-#ifdef CONFIG_SECURITY_STACKING
-struct lsm_value {
-	char *lsm;
-	char *data;
-};
-
-/**
- * lsm_parse_context - break a compound "context" into module data
- * @cxt: the initial data, which will be modified
- * @vlist: an array to receive the results
- *
- * Returns the number of entries, or -EINVAL if the cxt is unworkable.
- */
-static int lsm_parse_context(char *cxt, struct lsm_value *vlist)
-{
-	char *lsm;
-	char *data;
-	char *cp;
-	int i;
-
-	lsm = cxt;
-	for (i = 0; i < LSM_MAX_MAJOR; i++) {
-		data = strstr(lsm, "='");
-		if (!data)
-			break;
-		*data = '\0';
-		data += 2;
-		cp = strchr(data, '\'');
-		if (!cp)
-			return -EINVAL;
-		*cp++ = '\0';
-		vlist[i].lsm = lsm;
-		vlist[i].data = data;
-		if (*cp == '\0') {
-			i++;
-			break;
-		}
-		if (*cp == ',')
-			cp++;
-		else
-			return -EINVAL;
-		lsm = cp;
-	}
-	return i;
-}
-#endif /* CONFIG_SECURITY_STACKING */
-
 /**
  * lsm_task_alloc - allocate a composite task blob
  * @task: the task that needs a blob
@@ -1951,48 +1904,9 @@ int security_getprocattr(struct task_struct *p, const char *lsm, char *name,
 	char *speclsm = lsm_of_task(p);
 #endif
 	struct security_hook_list *hp;
-	char *vp;
-	char *cp = NULL;
-	int trc;
 	int rc;
 
-	/*
-	 * "context" requires work here in addition to what
-	 * the modules provide.
-	 */
-	if (strcmp(name, "context") == 0) {
-		*value = NULL;
-		rc = -EINVAL;
-		list_for_each_entry(hp,
-				&security_hook_heads.getprocattr, list) {
-			if (lsm != NULL && strcmp(lsm, hp->lsm))
-				continue;
-			trc = hp->hook.getprocattr(p, "context", &vp);
-			if (trc == -ENOENT)
-				continue;
-			if (trc <= 0) {
-				kfree(*value);
-				return trc;
-			}
-			rc = trc;
-			if (*value == NULL) {
-				*value = vp;
-			} else {
-				cp = kasprintf(GFP_KERNEL, "%s,%s", *value, vp);
-				if (cp == NULL) {
-					kfree(*value);
-					kfree(vp);
-					return -ENOMEM;
-				}
-				kfree(*value);
-				kfree(vp);
-				*value = cp;
-			}
-		}
-		if (rc > 0)
-			return strlen(*value);
-		return rc;
-	} else if (strcmp(name, "display_lsm") == 0) {
+	if (strcmp(name, "display_lsm") == 0) {
 		*value = kstrdup(current->security, GFP_KERNEL);
 		if (*value == NULL)
 			return -ENOMEM;
@@ -2018,91 +1932,16 @@ int security_setprocattr(const char *lsm, const char *name, void *value,
 {
 #ifdef CONFIG_SECURITY_STACKING
 	char *speclsm = lsm_of_task(current);
-	struct lsm_value *lsm_value = NULL;
-	int count;
 #else
 	char *tvalue;
 #endif
 	struct security_hook_list *hp;
 	int rc;
-	char *temp;
-	char *cp;
 
 	if (!size)
 		return -EINVAL;
 
-	/*
-	 * If lsm is NULL look at all the modules to find one
-	 * that processes name. If lsm is not NULL only look at
-	 * that module.
-	 *
-	 * "context" is handled directly here.
-	 */
-	if (strcmp(name, "context") == 0) {
-		rc = -EINVAL;
-		temp = kmemdup(value, size + 1, GFP_KERNEL);
-		if (!temp)
-			return -ENOMEM;
-
-		temp[size] = '\0';
-		cp = strrchr(temp, '\'');
-		if (!cp)
-			goto free_out;
-
-		cp[1] = '\0';
-#ifdef CONFIG_SECURITY_STACKING
-		lsm_value = kzalloc(sizeof(*lsm_value) * LSM_MAX_MAJOR,
-					GFP_KERNEL);
-		if (!lsm_value) {
-			rc = -ENOMEM;
-			goto free_out;
-		}
-
-		count = lsm_parse_context(temp, lsm_value);
-		if (count <= 0)
-			goto free_out;
-
-		for (count--; count >= 0; count--) {
-			list_for_each_entry(hp,
-				&security_hook_heads.setprocattr, list) {
-
-				if (lsm && strcmp(lsm, hp->lsm))
-					continue;
-				if (!strcmp(hp->lsm, lsm_value[count].lsm)) {
-					rc = hp->hook.setprocattr("context",
-						lsm_value[count].data,
-						strlen(lsm_value[count].data));
-					break;
-				}
-			}
-			if (rc < 0 || (lsm && rc >0))
-				break;
-		}
-#else /* CONFIG_SECURITY_STACKING */
-		cp = strstr(temp, "='");
-		if (!cp)
-			goto free_out;
-		*cp = '\0';
-		tvalue = strchr(cp + 2, '\'');
-		if (!tvalue)
-			goto free_out;
-		list_for_each_entry(hp, &security_hook_heads.setprocattr,
-								list) {
-			if (lsm == NULL || !strcmp(lsm, hp->lsm)) {
-				rc = hp->hook.setprocattr(name, tvalue, size);
-				break;
-			}
-		}
-#endif /* CONFIG_SECURITY_STACKING */
-free_out:
-		kfree(temp);
-#ifdef CONFIG_SECURITY_STACKING
-		kfree(lsm_value);
-#endif
-		if (rc >= 0)
-			return size;
-		return rc;
-	} else if (strcmp(name, "display_lsm") == 0) {
+	if (strcmp(name, "display_lsm") == 0) {
 #ifdef CONFIG_SECURITY_STACKING
 		if (set_lsm_of_current(value, size))
 			return size;
