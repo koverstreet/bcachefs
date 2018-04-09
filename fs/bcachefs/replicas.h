@@ -46,6 +46,6 @@ replicas_entry_next(struct bch_replicas_entry *i)
 
 int bch2_sb_replicas_to_cpu_replicas(struct bch_fs *);
 
-const char *bch2_sb_validate_replicas(struct bch_sb *, struct bch_sb_field *);
+extern const struct bch_sb_field_ops bch_sb_field_ops_replicas;
 
 #endif /* _BCACHEFS_REPLICAS_H */

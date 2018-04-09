@@ -5,23 +5,13 @@
 #include "error.h"
 #include "io.h"
 #include "replicas.h"
+#include "quota.h"
 #include "super-io.h"
 #include "super.h"
 #include "vstructs.h"
 
 #include <linux/backing-dev.h>
 #include <linux/sort.h>
-
-/* superblock fields (optional/variable size sections: */
-
-static const char *bch2_sb_validate_journal(struct bch_sb *,
-					    struct bch_sb_field *);
-static const char *bch2_sb_validate_members(struct bch_sb *,
-					    struct bch_sb_field *);
-static const char *bch2_sb_validate_crypt(struct bch_sb *,
-					  struct bch_sb_field *);
-static const char *bch2_sb_validate_quota(struct bch_sb *,
-					  struct bch_sb_field *);
 
 const char * const bch2_sb_fields[] = {
 #define x(name, nr)	#name,
@@ -30,29 +20,8 @@ const char * const bch2_sb_fields[] = {
 	NULL
 };
 
-struct bch_sb_field_ops {
-	const char *	(*validate)(struct bch_sb *, struct bch_sb_field *);
-};
-
-static const struct bch_sb_field_ops bch2_sb_field_ops[] = {
-#define x(f, nr)					\
-	[BCH_SB_FIELD_##f] = {				\
-		.validate = bch2_sb_validate_##f,	\
-	},
-	BCH_SB_FIELDS()
-#undef x
-};
-
-static const char *bch2_sb_field_validate(struct bch_sb *sb,
-					  struct bch_sb_field *f)
-
-{
-	unsigned type = le32_to_cpu(f->type);
-
-	return type < BCH_SB_FIELD_NR
-		? bch2_sb_field_ops[type].validate(sb, f)
-		: NULL;
-}
+static const char *bch2_sb_field_validate(struct bch_sb *,
+					  struct bch_sb_field *);
 
 struct bch_sb_field *bch2_sb_field_get(struct bch_sb *sb,
 				      enum bch_sb_field_type type)
@@ -838,6 +807,10 @@ err:
 	return err;
 }
 
+static const struct bch_sb_field_ops bch_sb_field_ops_journal = {
+	.validate	= bch2_sb_validate_journal,
+};
+
 /* BCH_SB_FIELD_members: */
 
 static const char *bch2_sb_validate_members(struct bch_sb *sb,
@@ -881,6 +854,10 @@ static const char *bch2_sb_validate_members(struct bch_sb *sb,
 	return NULL;
 }
 
+static const struct bch_sb_field_ops bch_sb_field_ops_members = {
+	.validate	= bch2_sb_validate_members,
+};
+
 /* BCH_SB_FIELD_crypt: */
 
 static const char *bch2_sb_validate_crypt(struct bch_sb *sb,
@@ -897,15 +874,42 @@ static const char *bch2_sb_validate_crypt(struct bch_sb *sb,
 	return NULL;
 }
 
-/* Quotas: */
+static const struct bch_sb_field_ops bch_sb_field_ops_crypt = {
+	.validate	= bch2_sb_validate_crypt,
+};
 
-static const char *bch2_sb_validate_quota(struct bch_sb *sb,
+static const struct bch_sb_field_ops *bch2_sb_field_ops[] = {
+#define x(f, nr)					\
+	[BCH_SB_FIELD_##f] = &bch_sb_field_ops_##f,
+	BCH_SB_FIELDS()
+#undef x
+};
+
+static const char *bch2_sb_field_validate(struct bch_sb *sb,
 					  struct bch_sb_field *f)
 {
-	struct bch_sb_field_quota *q = field_to_type(f, quota);
+	unsigned type = le32_to_cpu(f->type);
 
-	if (vstruct_bytes(&q->field) != sizeof(*q))
-		return "invalid field quota: wrong size";
+	return type < BCH_SB_FIELD_NR
+		? bch2_sb_field_ops[type]->validate(sb, f)
+		: NULL;
+}
 
-	return NULL;
+size_t bch2_sb_field_to_text(char *buf, size_t size,
+			     struct bch_sb *sb, struct bch_sb_field *f)
+{
+	unsigned type = le32_to_cpu(f->type);
+	size_t (*to_text)(char *, size_t, struct bch_sb *,
+				   struct bch_sb_field *) =
+		type < BCH_SB_FIELD_NR
+		? bch2_sb_field_ops[type]->to_text
+		: NULL;
+
+	if (!to_text) {
+		if (size)
+			buf[0] = '\0';
+		return 0;
+	}
+
+	return to_text(buf, size, sb, f);
 }
