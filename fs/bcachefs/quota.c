@@ -5,6 +5,21 @@
 #include "quota.h"
 #include "super-io.h"
 
+static const char *bch2_sb_validate_quota(struct bch_sb *sb,
+					  struct bch_sb_field *f)
+{
+	struct bch_sb_field_quota *q = field_to_type(f, quota);
+
+	if (vstruct_bytes(&q->field) != sizeof(*q))
+		return "invalid field quota: wrong size";
+
+	return NULL;
+}
+
+const struct bch_sb_field_ops bch_sb_field_ops_quota = {
+	.validate	= bch2_sb_validate_quota,
+};
+
 const char *bch2_quota_invalid(const struct bch_fs *c, struct bkey_s_c k)
 {
 	struct bkey_s_c_quota dq;

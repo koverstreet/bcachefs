@@ -45,6 +45,12 @@ BCH_SB_FIELDS()
 
 extern const char * const bch2_sb_fields[];
 
+struct bch_sb_field_ops {
+	const char *	(*validate)(struct bch_sb *, struct bch_sb_field *);
+	size_t		(*to_text)(char *, size_t, struct bch_sb *,
+				   struct bch_sb_field *);
+};
+
 static inline bool bch2_sb_test_feature(struct bch_sb *sb,
 					enum bch_sb_features f)
 {

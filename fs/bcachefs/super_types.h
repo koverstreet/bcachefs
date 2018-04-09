@@ -45,8 +45,9 @@ struct bch_replicas_cpu {
 };
 
 struct bch_disk_group_cpu {
-	struct bch_devs_mask		devs;
 	bool				deleted;
+	u16				parent;
+	struct bch_devs_mask		devs;
 };
 
 struct bch_disk_groups_cpu {
