@@ -300,7 +300,7 @@ static inline enum bkey_type btree_node_type(struct btree *b)
 
 static inline const struct bkey_ops *btree_node_ops(struct btree *b)
 {
-	return bch2_bkey_ops[btree_node_type(b)];
+	return &bch2_bkey_ops[btree_node_type(b)];
 }
 
 static inline bool btree_node_has_ptrs(struct btree *b)

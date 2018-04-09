@@ -4,7 +4,13 @@
 
 #include "quota_types.h"
 
-extern const struct bkey_ops bch2_bkey_quota_ops;
+const char *bch2_quota_invalid(const struct bch_fs *, struct bkey_s_c);
+void bch2_quota_to_text(struct bch_fs *, char *, size_t, struct bkey_s_c);
+
+#define bch2_bkey_quota_ops (struct bkey_ops) {		\
+	.key_invalid	= bch2_quota_invalid,		\
+	.val_to_text	= bch2_quota_to_text,		\
+}
 
 enum quota_acct_mode {
 	BCH_QUOTA_PREALLOC,

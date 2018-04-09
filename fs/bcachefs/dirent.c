@@ -80,8 +80,7 @@ const struct bch_hash_desc bch2_dirent_hash_desc = {
 	.cmp_bkey	= dirent_cmp_bkey,
 };
 
-static const char *bch2_dirent_invalid(const struct bch_fs *c,
-				       struct bkey_s_c k)
+const char *bch2_dirent_invalid(const struct bch_fs *c, struct bkey_s_c k)
 {
 	struct bkey_s_c_dirent d;
 	unsigned len;
@@ -117,8 +116,8 @@ static const char *bch2_dirent_invalid(const struct bch_fs *c,
 	}
 }
 
-static void bch2_dirent_to_text(struct bch_fs *c, char *buf,
-				size_t size, struct bkey_s_c k)
+void bch2_dirent_to_text(struct bch_fs *c, char *buf,
+			 size_t size, struct bkey_s_c k)
 {
 	struct bkey_s_c_dirent d;
 	size_t n = 0;
@@ -136,11 +135,6 @@ static void bch2_dirent_to_text(struct bch_fs *c, char *buf,
 		break;
 	}
 }
-
-const struct bkey_ops bch2_bkey_dirent_ops = {
-	.key_invalid	= bch2_dirent_invalid,
-	.val_to_text	= bch2_dirent_to_text,
-};
 
 static struct bkey_i_dirent *dirent_create_key(u8 type,
 				const struct qstr *name, u64 dst)

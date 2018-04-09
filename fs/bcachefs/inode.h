@@ -6,7 +6,13 @@
 
 #include <linux/math64.h>
 
-extern const struct bkey_ops bch2_bkey_inode_ops;
+const char *bch2_inode_invalid(const struct bch_fs *, struct bkey_s_c);
+void bch2_inode_to_text(struct bch_fs *, char *, size_t, struct bkey_s_c);
+
+#define bch2_bkey_inode_ops (struct bkey_ops) {		\
+	.key_invalid	= bch2_inode_invalid,		\
+	.val_to_text	= bch2_inode_to_text,		\
+}
 
 struct bch_inode_unpacked {
 	u64			bi_inum;
