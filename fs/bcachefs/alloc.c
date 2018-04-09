@@ -132,8 +132,7 @@ static unsigned bch_alloc_val_u64s(const struct bch_alloc *a)
 	return DIV_ROUND_UP(bytes, sizeof(u64));
 }
 
-static const char *bch2_alloc_invalid(const struct bch_fs *c,
-				      struct bkey_s_c k)
+const char *bch2_alloc_invalid(const struct bch_fs *c, struct bkey_s_c k)
 {
 	if (k.k->p.inode >= c->sb.nr_devices ||
 	    !c->devs[k.k->p.inode])
@@ -154,8 +153,8 @@ static const char *bch2_alloc_invalid(const struct bch_fs *c,
 	return NULL;
 }
 
-static void bch2_alloc_to_text(struct bch_fs *c, char *buf,
-			       size_t size, struct bkey_s_c k)
+void bch2_alloc_to_text(struct bch_fs *c, char *buf,
+			size_t size, struct bkey_s_c k)
 {
 	buf[0] = '\0';
 
@@ -164,11 +163,6 @@ static void bch2_alloc_to_text(struct bch_fs *c, char *buf,
 		break;
 	}
 }
-
-const struct bkey_ops bch2_bkey_alloc_ops = {
-	.key_invalid	= bch2_alloc_invalid,
-	.val_to_text	= bch2_alloc_to_text,
-};
 
 static inline unsigned get_alloc_field(const u8 **p, unsigned bytes)
 {

@@ -81,6 +81,6 @@ int bch2_bkey_val_to_text(struct bch_fs *, enum bkey_type,
 void bch2_bkey_swab(enum bkey_type, const struct bkey_format *,
 		    struct bkey_packed *);
 
-extern const struct bkey_ops *bch2_bkey_ops[];
+extern const struct bkey_ops bch2_bkey_ops[];
 
 #endif /* _BCACHEFS_BKEY_METHODS_H */

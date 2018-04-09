@@ -4,7 +4,7 @@
 #include "quota.h"
 #include "super-io.h"
 
-static const char *bch2_quota_invalid(const struct bch_fs *c, struct bkey_s_c k)
+const char *bch2_quota_invalid(const struct bch_fs *c, struct bkey_s_c k)
 {
 	struct bkey_s_c_quota dq;
 
@@ -30,8 +30,8 @@ static const char * const bch2_quota_counters[] = {
 	"inodes",
 };
 
-static void bch2_quota_to_text(struct bch_fs *c, char *buf,
-			       size_t size, struct bkey_s_c k)
+void bch2_quota_to_text(struct bch_fs *c, char *buf,
+			size_t size, struct bkey_s_c k)
 {
 	char *out = buf, *end= buf + size;
 	struct bkey_s_c_quota dq;
@@ -49,11 +49,6 @@ static void bch2_quota_to_text(struct bch_fs *c, char *buf,
 		break;
 	}
 }
-
-const struct bkey_ops bch2_bkey_quota_ops = {
-	.key_invalid	= bch2_quota_invalid,
-	.val_to_text	= bch2_quota_to_text,
-};
 
 #ifdef CONFIG_BCACHEFS_QUOTA
 

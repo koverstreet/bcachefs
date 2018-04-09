@@ -175,8 +175,7 @@ int bch2_inode_unpack(struct bkey_s_c_inode inode,
 	return 0;
 }
 
-static const char *bch2_inode_invalid(const struct bch_fs *c,
-				      struct bkey_s_c k)
+const char *bch2_inode_invalid(const struct bch_fs *c, struct bkey_s_c k)
 {
 	if (k.k->p.offset)
 		return "nonzero offset";
@@ -224,8 +223,8 @@ static const char *bch2_inode_invalid(const struct bch_fs *c,
 	}
 }
 
-static void bch2_inode_to_text(struct bch_fs *c, char *buf,
-			       size_t size, struct bkey_s_c k)
+void bch2_inode_to_text(struct bch_fs *c, char *buf,
+			size_t size, struct bkey_s_c k)
 {
 	char *out = buf, *end = out + size;
 	struct bkey_s_c_inode inode;
@@ -246,11 +245,6 @@ static void bch2_inode_to_text(struct bch_fs *c, char *buf,
 		break;
 	}
 }
-
-const struct bkey_ops bch2_bkey_inode_ops = {
-	.key_invalid	= bch2_inode_invalid,
-	.val_to_text	= bch2_inode_to_text,
-};
 
 void bch2_inode_init(struct bch_fs *c, struct bch_inode_unpacked *inode_u,
 		     uid_t uid, gid_t gid, umode_t mode, dev_t rdev,

@@ -10,20 +10,20 @@
 #include "quota.h"
 #include "xattr.h"
 
-const struct bkey_ops *bch2_bkey_ops[] = {
-	[BKEY_TYPE_EXTENTS]	= &bch2_bkey_extent_ops,
-	[BKEY_TYPE_INODES]	= &bch2_bkey_inode_ops,
-	[BKEY_TYPE_DIRENTS]	= &bch2_bkey_dirent_ops,
-	[BKEY_TYPE_XATTRS]	= &bch2_bkey_xattr_ops,
-	[BKEY_TYPE_ALLOC]	= &bch2_bkey_alloc_ops,
-	[BKEY_TYPE_QUOTAS]	= &bch2_bkey_quota_ops,
-	[BKEY_TYPE_BTREE]	= &bch2_bkey_btree_ops,
+const struct bkey_ops bch2_bkey_ops[] = {
+	[BKEY_TYPE_EXTENTS]	= bch2_bkey_extent_ops,
+	[BKEY_TYPE_INODES]	= bch2_bkey_inode_ops,
+	[BKEY_TYPE_DIRENTS]	= bch2_bkey_dirent_ops,
+	[BKEY_TYPE_XATTRS]	= bch2_bkey_xattr_ops,
+	[BKEY_TYPE_ALLOC]	= bch2_bkey_alloc_ops,
+	[BKEY_TYPE_QUOTAS]	= bch2_bkey_quota_ops,
+	[BKEY_TYPE_BTREE]	= bch2_bkey_btree_ops,
 };
 
 const char *bch2_bkey_val_invalid(struct bch_fs *c, enum bkey_type type,
 				  struct bkey_s_c k)
 {
-	const struct bkey_ops *ops = bch2_bkey_ops[type];
+	const struct bkey_ops *ops = &bch2_bkey_ops[type];
 
 	switch (k.k->type) {
 	case KEY_TYPE_DELETED:
@@ -51,7 +51,7 @@ const char *bch2_bkey_val_invalid(struct bch_fs *c, enum bkey_type type,
 const char *__bch2_bkey_invalid(struct bch_fs *c, enum bkey_type type,
 			      struct bkey_s_c k)
 {
-	const struct bkey_ops *ops = bch2_bkey_ops[type];
+	const struct bkey_ops *ops = &bch2_bkey_ops[type];
 
 	if (k.k->u64s < BKEY_U64s)
 		return "u64s too small";
@@ -100,7 +100,7 @@ const char *bch2_bkey_in_btree_node(struct btree *b, struct bkey_s_c k)
 void bch2_bkey_debugcheck(struct bch_fs *c, struct btree *b, struct bkey_s_c k)
 {
 	enum bkey_type type = btree_node_type(b);
-	const struct bkey_ops *ops = bch2_bkey_ops[type];
+	const struct bkey_ops *ops = &bch2_bkey_ops[type];
 	const char *invalid;
 
 	BUG_ON(!k.k->u64s);
@@ -141,7 +141,7 @@ int bch2_bkey_to_text(char *buf, size_t size, const struct bkey *k)
 int bch2_val_to_text(struct bch_fs *c, enum bkey_type type,
 		     char *buf, size_t size, struct bkey_s_c k)
 {
-	const struct bkey_ops *ops = bch2_bkey_ops[type];
+	const struct bkey_ops *ops = &bch2_bkey_ops[type];
 	char *out = buf, *end = buf + size;
 
 	switch (k.k->type) {
@@ -182,7 +182,7 @@ void bch2_bkey_swab(enum bkey_type type,
 		   const struct bkey_format *f,
 		   struct bkey_packed *k)
 {
-	const struct bkey_ops *ops = bch2_bkey_ops[type];
+	const struct bkey_ops *ops = &bch2_bkey_ops[type];
 
 	bch2_bkey_swab_key(f, k);
 

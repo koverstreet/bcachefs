@@ -4,7 +4,14 @@
 #include "str_hash.h"
 
 extern const struct bch_hash_desc bch2_xattr_hash_desc;
-extern const struct bkey_ops bch2_bkey_xattr_ops;
+
+const char *bch2_xattr_invalid(const struct bch_fs *, struct bkey_s_c);
+void bch2_xattr_to_text(struct bch_fs *, char *, size_t, struct bkey_s_c);
+
+#define bch2_bkey_xattr_ops (struct bkey_ops) {		\
+	.key_invalid	= bch2_xattr_invalid,		\
+	.val_to_text	= bch2_xattr_to_text,		\
+}
 
 struct dentry;
 struct xattr_handler;

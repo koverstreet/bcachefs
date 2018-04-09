@@ -86,8 +86,7 @@ const struct bch_hash_desc bch2_xattr_hash_desc = {
 	.cmp_bkey	= xattr_cmp_bkey,
 };
 
-static const char *bch2_xattr_invalid(const struct bch_fs *c,
-				     struct bkey_s_c k)
+const char *bch2_xattr_invalid(const struct bch_fs *c, struct bkey_s_c k)
 {
 	const struct xattr_handler *handler;
 	struct bkey_s_c_xattr xattr;
@@ -126,8 +125,8 @@ static const char *bch2_xattr_invalid(const struct bch_fs *c,
 	}
 }
 
-static void bch2_xattr_to_text(struct bch_fs *c, char *buf,
-			      size_t size, struct bkey_s_c k)
+void bch2_xattr_to_text(struct bch_fs *c, char *buf,
+			size_t size, struct bkey_s_c k)
 {
 	const struct xattr_handler *handler;
 	struct bkey_s_c_xattr xattr;
@@ -158,11 +157,6 @@ static void bch2_xattr_to_text(struct bch_fs *c, char *buf,
 		break;
 	}
 }
-
-const struct bkey_ops bch2_bkey_xattr_ops = {
-	.key_invalid	= bch2_xattr_invalid,
-	.val_to_text	= bch2_xattr_to_text,
-};
 
 int bch2_xattr_get(struct bch_fs *c, struct bch_inode_info *inode,
 		  const char *name, void *buffer, size_t size, int type)
