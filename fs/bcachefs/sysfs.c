@@ -169,7 +169,7 @@ rw_attribute(journal_reclaim_delay_ms);
 
 rw_attribute(discard);
 rw_attribute(cache_replacement_policy);
-rw_attribute(group);
+rw_attribute(label);
 
 rw_attribute(copy_gc_enabled);
 sysfs_pd_controller_attribute(copy_gc);
@@ -811,24 +811,15 @@ SHOW(bch2_dev)
 	sysfs_print(durability,		ca->mi.durability);
 	sysfs_print(discard,		ca->mi.discard);
 
-	if (attr == &sysfs_group) {
-		struct bch_sb_field_disk_groups *groups;
-		struct bch_disk_group *g;
-		unsigned len;
+	if (attr == &sysfs_label) {
+		if (ca->mi.group)
+			out += bch2_disk_path_print(c, out, end - out,
+						    ca->mi.group - 1);
+		else
+			out += scnprintf(out, end - out, "none");
 
-		if (!ca->mi.group)
-			return scnprintf(out, end - out, "none\n");
-
-		mutex_lock(&c->sb_lock);
-		groups = bch2_sb_get_disk_groups(c->disk_sb);
-
-		g = &groups->entries[ca->mi.group - 1];
-		len = strnlen(g->label, sizeof(g->label));
-		memcpy(buf, g->label, len);
-		mutex_unlock(&c->sb_lock);
-
-		buf[len++] = '\n';
-		return len;
+		out += scnprintf(out, end - out, "\n");
+		return out - buf;
 	}
 
 	if (attr == &sysfs_has_data) {
@@ -914,7 +905,7 @@ STORE(bch2_dev)
 		mutex_unlock(&c->sb_lock);
 	}
 
-	if (attr == &sysfs_group) {
+	if (attr == &sysfs_label) {
 		char *tmp;
 		int ret;
 
@@ -947,7 +938,7 @@ struct attribute *bch2_dev_files[] = {
 	&sysfs_discard,
 	&sysfs_cache_replacement_policy,
 	&sysfs_state_rw,
-	&sysfs_group,
+	&sysfs_label,
 
 	&sysfs_has_data,
 	&sysfs_iostats,

@@ -955,8 +955,9 @@ struct bch_disk_group {
 	__le64			flags[2];
 };
 
-LE64_BITMASK(BCH_GROUP_DELETED,		struct bch_disk_group, flags[0], 0, 1)
-LE64_BITMASK(BCH_GROUP_DATA_ALLOWED,	struct bch_disk_group, flags[0], 1, 6)
+LE64_BITMASK(BCH_GROUP_DELETED,		struct bch_disk_group, flags[0], 0,  1)
+LE64_BITMASK(BCH_GROUP_DATA_ALLOWED,	struct bch_disk_group, flags[0], 1,  6)
+LE64_BITMASK(BCH_GROUP_PARENT,		struct bch_disk_group, flags[0], 6, 24)
 
 struct bch_sb_field_disk_groups {
 	struct bch_sb_field	field;
