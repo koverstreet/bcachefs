@@ -461,7 +461,7 @@ static int bch2_cpu_replicas_to_sb_replicas(struct bch_fs *c,
 	return 0;
 }
 
-const char *bch2_sb_validate_replicas(struct bch_sb *sb, struct bch_sb_field *f)
+static const char *bch2_sb_validate_replicas(struct bch_sb *sb, struct bch_sb_field *f)
 {
 	struct bch_sb_field_replicas *sb_r = field_to_type(f, replicas);
 	struct bch_sb_field_members *mi = bch2_sb_get_members(sb);
@@ -517,6 +517,10 @@ err:
 	kfree(cpu_r);
 	return err;
 }
+
+const struct bch_sb_field_ops bch_sb_field_ops_replicas = {
+	.validate	= bch2_sb_validate_replicas,
+};
 
 int bch2_sb_replicas_to_text(struct bch_sb_field_replicas *r, char *buf, size_t size)
 {

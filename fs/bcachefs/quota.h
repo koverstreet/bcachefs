@@ -2,7 +2,10 @@
 #ifndef _BCACHEFS_QUOTA_H
 #define _BCACHEFS_QUOTA_H
 
+#include "inode.h"
 #include "quota_types.h"
+
+extern const struct bch_sb_field_ops bch_sb_field_ops_quota;
 
 const char *bch2_quota_invalid(const struct bch_fs *, struct bkey_s_c);
 void bch2_quota_to_text(struct bch_fs *, char *, size_t, struct bkey_s_c);
