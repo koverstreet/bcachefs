@@ -571,7 +571,7 @@ int bch2_decrypt_sb_key(struct bch_fs *c,
 	if (!bch2_key_is_encrypted(&sb_key))
 		goto out;
 
-	ret = bch2_request_key(c->disk_sb, &user_key);
+	ret = bch2_request_key(c->disk_sb.sb, &user_key);
 	if (ret) {
 		bch_err(c, "error requesting encryption key: %i", ret);
 		goto err;
@@ -625,7 +625,7 @@ int bch2_disable_encryption(struct bch_fs *c)
 
 	mutex_lock(&c->sb_lock);
 
-	crypt = bch2_sb_get_crypt(c->disk_sb);
+	crypt = bch2_sb_get_crypt(c->disk_sb.sb);
 	if (!crypt)
 		goto out;
 
@@ -641,7 +641,7 @@ int bch2_disable_encryption(struct bch_fs *c)
 	crypt->key.magic	= BCH_KEY_MAGIC;
 	crypt->key.key		= key;
 
-	SET_BCH_SB_ENCRYPTION_TYPE(c->disk_sb, 0);
+	SET_BCH_SB_ENCRYPTION_TYPE(c->disk_sb.sb, 0);
 	bch2_write_super(c);
 out:
 	mutex_unlock(&c->sb_lock);
@@ -659,7 +659,7 @@ int bch2_enable_encryption(struct bch_fs *c, bool keyed)
 	mutex_lock(&c->sb_lock);
 
 	/* Do we already have an encryption key? */
-	if (bch2_sb_get_crypt(c->disk_sb))
+	if (bch2_sb_get_crypt(c->disk_sb.sb))
 		goto err;
 
 	ret = bch2_alloc_ciphers(c);
@@ -670,7 +670,7 @@ int bch2_enable_encryption(struct bch_fs *c, bool keyed)
 	get_random_bytes(&key.key, sizeof(key.key));
 
 	if (keyed) {
-		ret = bch2_request_key(c->disk_sb, &user_key);
+		ret = bch2_request_key(c->disk_sb.sb, &user_key);
 		if (ret) {
 			bch_err(c, "error requesting encryption key: %i", ret);
 			goto err;
@@ -687,7 +687,7 @@ int bch2_enable_encryption(struct bch_fs *c, bool keyed)
 	if (ret)
 		goto err;
 
-	crypt = bch2_fs_sb_resize_crypt(c, sizeof(*crypt) / sizeof(u64));
+	crypt = bch2_sb_resize_crypt(&c->disk_sb, sizeof(*crypt) / sizeof(u64));
 	if (!crypt) {
 		ret = -ENOMEM; /* XXX this technically could be -ENOSPC */
 		goto err;
@@ -696,7 +696,7 @@ int bch2_enable_encryption(struct bch_fs *c, bool keyed)
 	crypt->key = key;
 
 	/* write superblock */
-	SET_BCH_SB_ENCRYPTION_TYPE(c->disk_sb, 1);
+	SET_BCH_SB_ENCRYPTION_TYPE(c->disk_sb.sb, 1);
 	bch2_write_super(c);
 err:
 	mutex_unlock(&c->sb_lock);
@@ -730,7 +730,7 @@ int bch2_fs_encryption_init(struct bch_fs *c)
 		goto out;
 	}
 
-	crypt = bch2_sb_get_crypt(c->disk_sb);
+	crypt = bch2_sb_get_crypt(c->disk_sb.sb);
 	if (!crypt)
 		goto out;
 
