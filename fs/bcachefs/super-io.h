@@ -12,8 +12,6 @@
 struct bch_sb_field *bch2_sb_field_get(struct bch_sb *, enum bch_sb_field_type);
 struct bch_sb_field *bch2_sb_field_resize(struct bch_sb_handle *,
 					  enum bch_sb_field_type, unsigned);
-struct bch_sb_field *bch2_fs_sb_field_resize(struct bch_fs *,
-					 enum bch_sb_field_type, unsigned);
 
 #define field_to_type(_f, _name)					\
 	container_of_or_null(_f, struct bch_sb_field_##_name, field)
@@ -30,13 +28,6 @@ static inline struct bch_sb_field_##_name *				\
 bch2_sb_resize_##_name(struct bch_sb_handle *sb, unsigned u64s)	\
 {									\
 	return field_to_type(bch2_sb_field_resize(sb,			\
-				BCH_SB_FIELD_##_name, u64s), _name);	\
-}									\
-									\
-static inline struct bch_sb_field_##_name *				\
-bch2_fs_sb_resize_##_name(struct bch_fs *c, unsigned u64s)		\
-{									\
-	return field_to_type(bch2_fs_sb_field_resize(c,			\
 				BCH_SB_FIELD_##_name, u64s), _name);	\
 }
 
@@ -97,7 +88,7 @@ int bch2_sb_to_fs(struct bch_fs *, struct bch_sb *);
 int bch2_sb_from_fs(struct bch_fs *, struct bch_dev *);
 
 void bch2_free_super(struct bch_sb_handle *);
-int bch2_super_realloc(struct bch_sb_handle *, unsigned);
+int bch2_sb_realloc(struct bch_sb_handle *, unsigned);
 
 const char *bch2_sb_validate(struct bch_sb_handle *);
 

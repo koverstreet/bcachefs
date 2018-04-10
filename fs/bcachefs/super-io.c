@@ -37,14 +37,18 @@ struct bch_sb_field *bch2_sb_field_get(struct bch_sb *sb,
 	return NULL;
 }
 
-static struct bch_sb_field *__bch2_sb_field_resize(struct bch_sb *sb,
-						  struct bch_sb_field *f,
-						  unsigned u64s)
+static struct bch_sb_field *__bch2_sb_field_resize(struct bch_sb_handle *sb,
+						   struct bch_sb_field *f,
+						   unsigned u64s)
 {
 	unsigned old_u64s = f ? le32_to_cpu(f->u64s) : 0;
+	unsigned sb_u64s = le32_to_cpu(sb->sb->u64s) + u64s - old_u64s;
+
+	BUG_ON(get_order(__vstruct_bytes(struct bch_sb, sb_u64s)) >
+	       sb->page_order);
 
 	if (!f) {
-		f = vstruct_last(sb);
+		f = vstruct_last(sb->sb);
 		memset(f, 0, sizeof(u64) * u64s);
 		f->u64s = cpu_to_le32(u64s);
 		f->type = 0;
@@ -55,13 +59,13 @@ static struct bch_sb_field *__bch2_sb_field_resize(struct bch_sb *sb,
 		f->u64s = cpu_to_le32(u64s);
 		dst = vstruct_end(f);
 
-		memmove(dst, src, vstruct_end(sb) - src);
+		memmove(dst, src, vstruct_end(sb->sb) - src);
 
 		if (dst > src)
 			memset(src, 0, dst - src);
 	}
 
-	le32_add_cpu(&sb->u64s, u64s - old_u64s);
+	sb->sb->u64s = cpu_to_le32(sb_u64s);
 
 	return f;
 }
@@ -79,10 +83,22 @@ void bch2_free_super(struct bch_sb_handle *sb)
 	memset(sb, 0, sizeof(*sb));
 }
 
-static int __bch2_super_realloc(struct bch_sb_handle *sb, unsigned order)
+int bch2_sb_realloc(struct bch_sb_handle *sb, unsigned u64s)
 {
+	size_t new_bytes = __vstruct_bytes(struct bch_sb, u64s);
+	unsigned order = get_order(new_bytes);
 	struct bch_sb *new_sb;
 	struct bio *bio;
+
+	if (sb->have_layout) {
+		u64 max_bytes = 512 << sb->sb->layout.sb_max_size_bits;
+
+		if (new_bytes > max_bytes) {
+			pr_err("%pg: superblock too big: want %zu but have %llu",
+			       sb->bdev, new_bytes, max_bytes);
+			return -ENOSPC;
+		}
+	}
 
 	if (sb->page_order >= order && sb->sb)
 		return 0;
@@ -90,17 +106,21 @@ static int __bch2_super_realloc(struct bch_sb_handle *sb, unsigned order)
 	if (dynamic_fault("bcachefs:add:super_realloc"))
 		return -ENOMEM;
 
-	bio = bio_kmalloc(1 << order, GFP_KERNEL);
-	if (!bio)
-		return -ENOMEM;
+	if (sb->have_bio) {
+		unsigned nr_bvecs = 1 << order;
 
-	bio_init(bio, NULL, bio->bi_inline_vecs, 1 << order, 0);
+		bio = bio_kmalloc(nr_bvecs, GFP_KERNEL);
+		if (!bio)
+			return -ENOMEM;
 
-	if (sb->bio)
-		kfree(sb->bio);
-	sb->bio = bio;
+		bio_init(bio, NULL, bio->bi_inline_vecs, nr_bvecs, 0);
 
-	new_sb = (void *) __get_free_pages(GFP_KERNEL, order);
+		if (sb->bio)
+			kfree(sb->bio);
+		sb->bio = bio;
+	}
+
+	new_sb = (void *) __get_free_pages(GFP_KERNEL|__GFP_ZERO, order);
 	if (!new_sb)
 		return -ENOMEM;
 
@@ -115,43 +135,6 @@ static int __bch2_super_realloc(struct bch_sb_handle *sb, unsigned order)
 	return 0;
 }
 
-static int bch2_sb_realloc(struct bch_sb_handle *sb, unsigned u64s)
-{
-	u64 new_bytes = __vstruct_bytes(struct bch_sb, u64s);
-	u64 max_bytes = 512 << sb->sb->layout.sb_max_size_bits;
-
-	if (new_bytes > max_bytes) {
-		pr_err("%pg: superblock too big: want %llu but have %llu",
-		       sb->bdev, new_bytes, max_bytes);
-		return -ENOSPC;
-	}
-
-	return __bch2_super_realloc(sb, get_order(new_bytes));
-}
-
-static int bch2_fs_sb_realloc(struct bch_fs *c, unsigned u64s)
-{
-	u64 bytes = __vstruct_bytes(struct bch_sb, u64s);
-	struct bch_sb *sb;
-	unsigned order = get_order(bytes);
-
-	if (c->disk_sb && order <= c->disk_sb_order)
-		return 0;
-
-	sb = (void *) __get_free_pages(GFP_KERNEL|__GFP_ZERO, order);
-	if (!sb)
-		return -ENOMEM;
-
-	if (c->disk_sb)
-		memcpy(sb, c->disk_sb, PAGE_SIZE << c->disk_sb_order);
-
-	free_pages((unsigned long) c->disk_sb, c->disk_sb_order);
-
-	c->disk_sb = sb;
-	c->disk_sb_order = order;
-	return 0;
-}
-
 struct bch_sb_field *bch2_sb_field_resize(struct bch_sb_handle *sb,
 					  enum bch_sb_field_type type,
 					  unsigned u64s)
@@ -163,38 +146,26 @@ struct bch_sb_field *bch2_sb_field_resize(struct bch_sb_handle *sb,
 	if (bch2_sb_realloc(sb, le32_to_cpu(sb->sb->u64s) + d))
 		return NULL;
 
-	f = __bch2_sb_field_resize(sb->sb, f, u64s);
-	f->type = cpu_to_le32(type);
-	return f;
-}
+	if (sb->fs_sb) {
+		struct bch_fs *c = container_of(sb, struct bch_fs, disk_sb);
+		struct bch_dev *ca;
+		unsigned i;
 
-struct bch_sb_field *bch2_fs_sb_field_resize(struct bch_fs *c,
-					    enum bch_sb_field_type type,
-					    unsigned u64s)
-{
-	struct bch_sb_field *f = bch2_sb_field_get(c->disk_sb, type);
-	ssize_t old_u64s = f ? le32_to_cpu(f->u64s) : 0;
-	ssize_t d = -old_u64s + u64s;
-	struct bch_dev *ca;
-	unsigned i;
+		lockdep_assert_held(&c->sb_lock);
 
-	lockdep_assert_held(&c->sb_lock);
+		/* XXX: we're not checking that offline device have enough space */
 
-	if (bch2_fs_sb_realloc(c, le32_to_cpu(c->disk_sb->u64s) + d))
-		return NULL;
+		for_each_online_member(ca, c, i) {
+			struct bch_sb_handle *sb = &ca->disk_sb;
 
-	/* XXX: we're not checking that offline device have enough space */
-
-	for_each_online_member(ca, c, i) {
-		struct bch_sb_handle *sb = &ca->disk_sb;
-
-		if (bch2_sb_realloc(sb, le32_to_cpu(sb->sb->u64s) + d)) {
-			percpu_ref_put(&ca->ref);
-			return NULL;
+			if (bch2_sb_realloc(sb, le32_to_cpu(sb->sb->u64s) + d)) {
+				percpu_ref_put(&ca->ref);
+				return NULL;
+			}
 		}
 	}
 
-	f = __bch2_sb_field_resize(c->disk_sb, f, u64s);
+	f = __bch2_sb_field_resize(sb, f, u64s);
 	f->type = cpu_to_le32(type);
 	return f;
 }
@@ -356,7 +327,7 @@ const char *bch2_sb_validate(struct bch_sb_handle *disk_sb)
 
 static void bch2_sb_update(struct bch_fs *c)
 {
-	struct bch_sb *src = c->disk_sb;
+	struct bch_sb *src = c->disk_sb.sb;
 	struct bch_sb_field_members *mi = bch2_sb_get_members(src);
 	struct bch_dev *ca;
 	unsigned i;
@@ -379,9 +350,10 @@ static void bch2_sb_update(struct bch_fs *c)
 }
 
 /* doesn't copy member info */
-static void __copy_super(struct bch_sb *dst, struct bch_sb *src)
+static void __copy_super(struct bch_sb_handle *dst_handle, struct bch_sb *src)
 {
 	struct bch_sb_field *src_f, *dst_f;
+	struct bch_sb *dst = dst_handle->sb;
 
 	dst->version		= src->version;
 	dst->seq		= src->seq;
@@ -405,8 +377,8 @@ static void __copy_super(struct bch_sb *dst, struct bch_sb *src)
 			continue;
 
 		dst_f = bch2_sb_field_get(dst, le32_to_cpu(src_f->type));
-		dst_f = __bch2_sb_field_resize(dst, dst_f,
-				le32_to_cpu(src_f->u64s));
+		dst_f = __bch2_sb_field_resize(dst_handle, dst_f,
+					       le32_to_cpu(src_f->u64s));
 
 		memcpy(dst_f, src_f, vstruct_bytes(src_f));
 	}
@@ -423,11 +395,12 @@ int bch2_sb_to_fs(struct bch_fs *c, struct bch_sb *src)
 
 	lockdep_assert_held(&c->sb_lock);
 
-	ret = bch2_fs_sb_realloc(c, le32_to_cpu(src->u64s) - journal_u64s);
+	ret = bch2_sb_realloc(&c->disk_sb,
+			      le32_to_cpu(src->u64s) - journal_u64s);
 	if (ret)
 		return ret;
 
-	__copy_super(c->disk_sb, src);
+	__copy_super(&c->disk_sb, src);
 
 	ret = bch2_sb_replicas_to_cpu_replicas(c);
 	if (ret)
@@ -443,7 +416,7 @@ int bch2_sb_to_fs(struct bch_fs *c, struct bch_sb *src)
 
 int bch2_sb_from_fs(struct bch_fs *c, struct bch_dev *ca)
 {
-	struct bch_sb *src = c->disk_sb, *dst = ca->disk_sb.sb;
+	struct bch_sb *src = c->disk_sb.sb, *dst = ca->disk_sb.sb;
 	struct bch_sb_field_journal *journal_buckets =
 		bch2_sb_get_journal(dst);
 	unsigned journal_u64s = journal_buckets
@@ -456,7 +429,7 @@ int bch2_sb_from_fs(struct bch_fs *c, struct bch_dev *ca)
 	if (ret)
 		return ret;
 
-	__copy_super(dst, src);
+	__copy_super(&ca->disk_sb, src);
 	return 0;
 }
 
@@ -466,7 +439,6 @@ static const char *read_one_super(struct bch_sb_handle *sb, u64 offset)
 {
 	struct bch_csum csum;
 	size_t bytes;
-	unsigned order;
 reread:
 	bio_reset(sb->bio, sb->bdev, REQ_OP_READ|REQ_SYNC|REQ_META);
 	sb->bio->bi_iter.bi_sector = offset;
@@ -489,9 +461,8 @@ reread:
 	if (bytes > 512 << sb->sb->layout.sb_max_size_bits)
 		return "Bad superblock: too big";
 
-	order = get_order(bytes);
-	if (order > sb->page_order) {
-		if (__bch2_super_realloc(sb, order))
+	if (get_order(bytes) > sb->page_order) {
+		if (bch2_sb_realloc(sb, le32_to_cpu(sb->sb->u64s)))
 			return "cannot allocate memory";
 		goto reread;
 	}
@@ -521,7 +492,8 @@ int bch2_read_super(const char *path, struct bch_opts *opts,
 	pr_verbose_init(*opts, "");
 
 	memset(sb, 0, sizeof(*sb));
-	sb->mode = FMODE_READ;
+	sb->mode	= FMODE_READ;
+	sb->have_bio	= true;
 
 	if (!opt_get(*opts, noexcl))
 		sb->mode |= FMODE_EXCL;
@@ -546,7 +518,7 @@ int bch2_read_super(const char *path, struct bch_opts *opts,
 	}
 
 	err = "cannot allocate memory";
-	ret = __bch2_super_realloc(sb, 0);
+	ret = bch2_sb_realloc(sb, 0);
 	if (ret)
 		goto err;
 
@@ -610,6 +582,7 @@ got_super:
 		goto err;
 
 	ret = 0;
+	sb->have_layout = true;
 out:
 	pr_verbose_init(*opts, "ret %i", ret);
 	return ret;
@@ -675,7 +648,7 @@ void bch2_write_super(struct bch_fs *c)
 	closure_init_stack(cl);
 	memset(&sb_written, 0, sizeof(sb_written));
 
-	le64_add_cpu(&c->disk_sb->seq, 1);
+	le64_add_cpu(&c->disk_sb.sb->seq, 1);
 
 	for_each_online_member(ca, c, i)
 		bch2_sb_from_fs(c, ca);
