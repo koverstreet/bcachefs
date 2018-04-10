@@ -1008,8 +1008,7 @@ static void __bch2_dev_offline(struct bch_fs *c, struct bch_dev *ca)
 
 	reinit_completion(&ca->io_ref_completion);
 	percpu_ref_kill(&ca->io_ref);
-
-	BUG_ON(!wait_for_completion_timeout(&ca->io_ref_completion, HZ * 10));
+	wait_for_completion(&ca->io_ref_completion);
 
 	if (ca->kobj.state_in_sysfs) {
 		struct kobject *block =
