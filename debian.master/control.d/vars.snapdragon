@@ -1,5 +1,5 @@
 arch="arm64"
-supported="Generic Uboot"
+supported="Generic Snapdragon"
 target="Geared toward desktop,server and embedded systems."
 desc="=HUMAN= SMP"
 bootloader="flash-kernel [arm64]"
