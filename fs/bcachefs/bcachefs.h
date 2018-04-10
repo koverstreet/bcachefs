@@ -519,8 +519,7 @@ struct bch_fs {
 		u64		features;
 	}			sb;
 
-	struct bch_sb		*disk_sb;
-	unsigned		disk_sb_order;
+	struct bch_sb_handle	disk_sb;
 
 	unsigned short		block_bits;	/* ilog2(block_size) */
 

@@ -409,7 +409,7 @@ static void bch2_sb_quota_read(struct bch_fs *c)
 	struct bch_sb_field_quota *sb_quota;
 	unsigned i, j;
 
-	sb_quota = bch2_sb_get_quota(c->disk_sb);
+	sb_quota = bch2_sb_get_quota(c->disk_sb.sb);
 	if (!sb_quota)
 		return;
 
@@ -486,13 +486,13 @@ static int bch2_quota_enable(struct super_block	*sb, unsigned uflags)
 
 	mutex_lock(&c->sb_lock);
 	if (uflags & FS_QUOTA_UDQ_ENFD)
-		SET_BCH_SB_USRQUOTA(c->disk_sb, true);
+		SET_BCH_SB_USRQUOTA(c->disk_sb.sb, true);
 
 	if (uflags & FS_QUOTA_GDQ_ENFD)
-		SET_BCH_SB_GRPQUOTA(c->disk_sb, true);
+		SET_BCH_SB_GRPQUOTA(c->disk_sb.sb, true);
 
 	if (uflags & FS_QUOTA_PDQ_ENFD)
-		SET_BCH_SB_PRJQUOTA(c->disk_sb, true);
+		SET_BCH_SB_PRJQUOTA(c->disk_sb.sb, true);
 
 	bch2_write_super(c);
 	mutex_unlock(&c->sb_lock);
@@ -509,13 +509,13 @@ static int bch2_quota_disable(struct super_block *sb, unsigned uflags)
 
 	mutex_lock(&c->sb_lock);
 	if (uflags & FS_QUOTA_UDQ_ENFD)
-		SET_BCH_SB_USRQUOTA(c->disk_sb, false);
+		SET_BCH_SB_USRQUOTA(c->disk_sb.sb, false);
 
 	if (uflags & FS_QUOTA_GDQ_ENFD)
-		SET_BCH_SB_GRPQUOTA(c->disk_sb, false);
+		SET_BCH_SB_GRPQUOTA(c->disk_sb.sb, false);
 
 	if (uflags & FS_QUOTA_PDQ_ENFD)
-		SET_BCH_SB_PRJQUOTA(c->disk_sb, false);
+		SET_BCH_SB_PRJQUOTA(c->disk_sb.sb, false);
 
 	bch2_write_super(c);
 	mutex_unlock(&c->sb_lock);
@@ -626,9 +626,10 @@ static int bch2_quota_set_info(struct super_block *sb, int type,
 	q = &c->quotas[type];
 
 	mutex_lock(&c->sb_lock);
-	sb_quota = bch2_sb_get_quota(c->disk_sb);
+	sb_quota = bch2_sb_get_quota(c->disk_sb.sb);
 	if (!sb_quota) {
-		sb_quota = bch2_fs_sb_resize_quota(c, sizeof(*sb_quota) / sizeof(u64));
+		sb_quota = bch2_sb_resize_quota(&c->disk_sb,
+					sizeof(*sb_quota) / sizeof(u64));
 		if (!sb_quota)
 			return -ENOSPC;
 	}

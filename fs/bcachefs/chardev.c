@@ -463,7 +463,7 @@ static long bch2_ioctl_read_super(struct bch_fs *c,
 
 		sb = ca->disk_sb.sb;
 	} else {
-		sb = c->disk_sb;
+		sb = c->disk_sb.sb;
 	}
 
 	if (vstruct_bytes(sb) > arg.size) {
