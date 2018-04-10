@@ -549,7 +549,7 @@ STORE(bch2_fs_opts_dir)
 
 	if (opt->set_sb != SET_NO_SB_OPT) {
 		mutex_lock(&c->sb_lock);
-		opt->set_sb(c->disk_sb, v);
+		opt->set_sb(c->disk_sb.sb, v);
 		bch2_write_super(c);
 		mutex_unlock(&c->sb_lock);
 	}
@@ -813,11 +813,14 @@ SHOW(bch2_dev)
 	sysfs_print(discard,		ca->mi.discard);
 
 	if (attr == &sysfs_label) {
-		if (ca->mi.group)
-			out += bch2_disk_path_print(c, out, end - out,
+		if (ca->mi.group) {
+			mutex_lock(&c->sb_lock);
+			out += bch2_disk_path_print(&c->disk_sb, out, end - out,
 						    ca->mi.group - 1);
-		else
+			mutex_unlock(&c->sb_lock);
+		} else {
 			out += scnprintf(out, end - out, "none");
+		}
 
 		out += scnprintf(out, end - out, "\n");
 		return out - buf;
@@ -881,7 +884,7 @@ STORE(bch2_dev)
 		bool v = strtoul_or_return(buf);
 
 		mutex_lock(&c->sb_lock);
-		mi = &bch2_sb_get_members(c->disk_sb)->members[ca->dev_idx];
+		mi = &bch2_sb_get_members(c->disk_sb.sb)->members[ca->dev_idx];
 
 		if (v != BCH_MEMBER_DISCARD(mi)) {
 			SET_BCH_MEMBER_DISCARD(mi, v);
@@ -897,7 +900,7 @@ STORE(bch2_dev)
 			return v;
 
 		mutex_lock(&c->sb_lock);
-		mi = &bch2_sb_get_members(c->disk_sb)->members[ca->dev_idx];
+		mi = &bch2_sb_get_members(c->disk_sb.sb)->members[ca->dev_idx];
 
 		if ((unsigned) v != BCH_MEMBER_REPLACEMENT(mi)) {
 			SET_BCH_MEMBER_REPLACEMENT(mi, v);

@@ -407,7 +407,7 @@ int bch2_sb_replicas_to_cpu_replicas(struct bch_fs *c)
 	struct bch_sb_field_replicas *sb_r;
 	struct bch_replicas_cpu *cpu_r, *old_r;
 
-	sb_r	= bch2_sb_get_replicas(c->disk_sb);
+	sb_r	= bch2_sb_get_replicas(c->disk_sb.sb);
 	cpu_r	= __bch2_sb_replicas_to_cpu_replicas(sb_r);
 	if (!cpu_r)
 		return -ENOMEM;
@@ -436,7 +436,7 @@ static int bch2_cpu_replicas_to_sb_replicas(struct bch_fs *c,
 			bytes += hweight8(e->devs[i]);
 	}
 
-	sb_r = bch2_fs_sb_resize_replicas(c,
+	sb_r = bch2_sb_resize_replicas(&c->disk_sb,
 			DIV_ROUND_UP(sizeof(*sb_r) + bytes, sizeof(u64)));
 	if (!sb_r)
 		return -ENOSPC;
@@ -602,7 +602,7 @@ struct replicas_status __bch2_replicas_status(struct bch_fs *c,
 	for (i = 0; i < ARRAY_SIZE(ret.replicas); i++)
 		ret.replicas[i].nr_online = UINT_MAX;
 
-	mi = bch2_sb_get_members(c->disk_sb);
+	mi = bch2_sb_get_members(c->disk_sb.sb);
 	rcu_read_lock();
 
 	r = rcu_dereference(c->replicas);
@@ -618,7 +618,7 @@ struct replicas_status __bch2_replicas_status(struct bch_fs *c,
 			if (!replicas_test_dev(e, dev))
 				continue;
 
-			BUG_ON(!bch2_dev_exists(c->disk_sb, mi, dev));
+			BUG_ON(!bch2_dev_exists(c->disk_sb.sb, mi, dev));
 
 			if (test_bit(dev, online_devs.d))
 				nr_online++;
