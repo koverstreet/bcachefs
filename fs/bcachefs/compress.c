@@ -500,7 +500,7 @@ int __bch2_check_set_has_compressed_data(struct bch_fs *c, u64 f)
 		return ret;
 	}
 
-	c->disk_sb->features[0] |= cpu_to_le64(f);
+	c->disk_sb.sb->features[0] |= cpu_to_le64(f);
 	bch2_write_super(c);
 	mutex_unlock(&c->sb_lock);
 

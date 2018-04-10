@@ -1038,8 +1038,8 @@ static int __bch2_initial_gc(struct bch_fs *c, struct list_head *journal)
 	int ret;
 
 	mutex_lock(&c->sb_lock);
-	if (!bch2_sb_get_replicas(c->disk_sb)) {
-		if (BCH_SB_INITIALIZED(c->disk_sb))
+	if (!bch2_sb_get_replicas(c->disk_sb.sb)) {
+		if (BCH_SB_INITIALIZED(c->disk_sb.sb))
 			bch_info(c, "building replicas info");
 		set_bit(BCH_FS_REBUILD_REPLICAS, &c->flags);
 	}

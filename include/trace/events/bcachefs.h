@@ -319,7 +319,7 @@ TRACE_EVENT(btree_gc_coalesce_fail,
 
 	TP_fast_assign(
 		__entry->reason		= reason;
-		memcpy(__entry->uuid, c->disk_sb->user_uuid.b, 16);
+		memcpy(__entry->uuid, c->disk_sb.sb->user_uuid.b, 16);
 	),
 
 	TP_printk("%pU: %u", __entry->uuid, __entry->reason)

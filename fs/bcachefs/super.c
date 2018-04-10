@@ -124,7 +124,7 @@ static struct bch_fs *__bch2_uuid_to_fs(uuid_le uuid)
 	lockdep_assert_held(&bch_fs_list_lock);
 
 	list_for_each_entry(c, &bch_fs_list, list)
-		if (!memcmp(&c->disk_sb->uuid, &uuid, sizeof(uuid_le)))
+		if (!memcmp(&c->disk_sb.sb->uuid, &uuid, sizeof(uuid_le)))
 			return c;
 
 	return NULL;
@@ -205,7 +205,7 @@ static void bch_fs_mark_clean(struct bch_fs *c)
 	    !test_bit(BCH_FS_ERROR, &c->flags) &&
 	    !test_bit(BCH_FS_EMERGENCY_RO, &c->flags)) {
 		mutex_lock(&c->sb_lock);
-		SET_BCH_SB_CLEAN(c->disk_sb, true);
+		SET_BCH_SB_CLEAN(c->disk_sb.sb, true);
 		bch2_write_super(c);
 		mutex_unlock(&c->sb_lock);
 	}
@@ -424,7 +424,8 @@ static void bch2_fs_free(struct bch_fs *c)
 	if (c->wq)
 		destroy_workqueue(c->wq);
 
-	free_pages((unsigned long) c->disk_sb, c->disk_sb_order);
+	free_pages((unsigned long) c->disk_sb.sb,
+		   c->disk_sb.page_order);
 	kvpfree(c, sizeof(*c));
 	module_put(THIS_MODULE);
 }
@@ -550,6 +551,7 @@ static struct bch_fs *bch2_fs_alloc(struct bch_sb *sb, struct bch_opts opts)
 	__module_get(THIS_MODULE);
 
 	c->minor		= -1;
+	c->disk_sb.fs_sb	= true;
 
 	mutex_init(&c->state_lock);
 	mutex_init(&c->sb_lock);
@@ -661,9 +663,9 @@ static struct bch_fs *bch2_fs_alloc(struct bch_sb *sb, struct bch_opts opts)
 	    bch2_fs_fsio_init(c))
 		goto err;
 
-	mi = bch2_sb_get_members(c->disk_sb);
+	mi = bch2_sb_get_members(c->disk_sb.sb);
 	for (i = 0; i < c->sb.nr_devices; i++)
-		if (bch2_dev_exists(c->disk_sb, mi, i) &&
+		if (bch2_dev_exists(c->disk_sb.sb, mi, i) &&
 		    bch2_dev_alloc(c, i))
 			goto err;
 
@@ -719,7 +721,7 @@ const char *bch2_fs_start(struct bch_fs *c)
 		bch2_dev_allocator_add(c, ca);
 	bch2_recalc_capacity(c);
 
-	if (BCH_SB_INITIALIZED(c->disk_sb)) {
+	if (BCH_SB_INITIALIZED(c->disk_sb.sb)) {
 		ret = bch2_journal_read(c, &journal);
 		if (ret)
 			goto err;
@@ -875,14 +877,14 @@ recovery_done:
 	}
 
 	mutex_lock(&c->sb_lock);
-	mi = bch2_sb_get_members(c->disk_sb);
+	mi = bch2_sb_get_members(c->disk_sb.sb);
 	now = ktime_get_seconds();
 
 	for_each_member_device(ca, c, i)
 		mi->members[ca->dev_idx].last_mount = cpu_to_le64(now);
 
-	SET_BCH_SB_INITIALIZED(c->disk_sb, true);
-	SET_BCH_SB_CLEAN(c->disk_sb, false);
+	SET_BCH_SB_INITIALIZED(c->disk_sb.sb, true);
+	SET_BCH_SB_CLEAN(c->disk_sb.sb, false);
 
 	bch2_write_super(c);
 	mutex_unlock(&c->sb_lock);
@@ -939,7 +941,7 @@ static const char *bch2_dev_may_add(struct bch_sb *sb, struct bch_fs *c)
 		return "mismatched block size";
 
 	if (le16_to_cpu(sb_mi->members[sb->dev_idx].bucket_size) <
-	    BCH_SB_BTREE_NODE_SIZE(c->disk_sb))
+	    BCH_SB_BTREE_NODE_SIZE(c->disk_sb.sb))
 		return "new cache bucket size is too small";
 
 	return NULL;
@@ -1123,7 +1125,7 @@ static void bch2_dev_attach(struct bch_fs *c, struct bch_dev *ca,
 static int bch2_dev_alloc(struct bch_fs *c, unsigned dev_idx)
 {
 	struct bch_member *member =
-		bch2_sb_get_members(c->disk_sb)->members + dev_idx;
+		bch2_sb_get_members(c->disk_sb.sb)->members + dev_idx;
 	struct bch_dev *ca = NULL;
 	int ret = 0;
 
@@ -1202,7 +1204,7 @@ static int bch2_dev_attach_bdev(struct bch_fs *c, struct bch_sb_handle *sb)
 	lockdep_assert_held(&c->state_lock);
 
 	if (le64_to_cpu(sb->sb->seq) >
-	    le64_to_cpu(c->disk_sb->seq))
+	    le64_to_cpu(c->disk_sb.sb->seq))
 		bch2_sb_to_fs(c, sb->sb);
 
 	BUG_ON(sb->sb->dev_idx >= c->sb.nr_devices ||
@@ -1292,10 +1294,10 @@ static bool bch2_fs_may_start(struct bch_fs *c)
 
 	if (!c->opts.degraded) {
 		mutex_lock(&c->sb_lock);
-		mi = bch2_sb_get_members(c->disk_sb);
+		mi = bch2_sb_get_members(c->disk_sb.sb);
 
-		for (i = 0; i < c->disk_sb->nr_devices; i++) {
-			if (!bch2_dev_exists(c->disk_sb, mi, i))
+		for (i = 0; i < c->disk_sb.sb->nr_devices; i++) {
+			if (!bch2_dev_exists(c->disk_sb.sb, mi, i))
 				continue;
 
 			ca = bch_dev_locked(c, i);
@@ -1363,7 +1365,7 @@ int __bch2_dev_set_state(struct bch_fs *c, struct bch_dev *ca,
 	bch_notice(ca, "%s", bch2_dev_state[new_state]);
 
 	mutex_lock(&c->sb_lock);
-	mi = bch2_sb_get_members(c->disk_sb);
+	mi = bch2_sb_get_members(c->disk_sb.sb);
 	SET_BCH_MEMBER_STATE(&mi->members[ca->dev_idx], new_state);
 	bch2_write_super(c);
 	mutex_unlock(&c->sb_lock);
@@ -1473,7 +1475,7 @@ int bch2_dev_remove(struct bch_fs *c, struct bch_dev *ca, int flags)
 	 * this device must be gone:
 	 */
 	mutex_lock(&c->sb_lock);
-	mi = bch2_sb_get_members(c->disk_sb);
+	mi = bch2_sb_get_members(c->disk_sb.sb);
 	memset(&mi->members[dev_idx].uuid, 0, sizeof(mi->members[dev_idx].uuid));
 
 	bch2_write_super(c);
@@ -1551,9 +1553,9 @@ int bch2_dev_add(struct bch_fs *c, const char *path)
 	if (dynamic_fault("bcachefs:add:no_slot"))
 		goto no_slot;
 
-	mi = bch2_sb_get_members(c->disk_sb);
+	mi = bch2_sb_get_members(c->disk_sb.sb);
 	for (dev_idx = 0; dev_idx < BCH_SB_MEMBERS_MAX; dev_idx++)
-		if (!bch2_dev_exists(c->disk_sb, mi, dev_idx))
+		if (!bch2_dev_exists(c->disk_sb.sb, mi, dev_idx))
 			goto have_slot;
 no_slot:
 	err = "no slots available in superblock";
@@ -1568,7 +1570,7 @@ have_slot:
 	err = "no space in superblock for member info";
 	ret = -ENOSPC;
 
-	mi = bch2_fs_sb_resize_members(c, u64s);
+	mi = bch2_sb_resize_members(&c->disk_sb, u64s);
 	if (!mi)
 		goto err_unlock;
 
@@ -1576,7 +1578,7 @@ have_slot:
 
 	mi->members[dev_idx] = dev_mi;
 	mi->members[dev_idx].last_mount = cpu_to_le64(ktime_get_seconds());
-	c->disk_sb->nr_devices	= nr_devices;
+	c->disk_sb.sb->nr_devices	= nr_devices;
 
 	ca->disk_sb.sb->dev_idx	= dev_idx;
 	bch2_dev_attach(c, ca, dev_idx);
@@ -1627,7 +1629,7 @@ int bch2_dev_online(struct bch_fs *c, const char *path)
 
 	dev_idx = sb.sb->dev_idx;
 
-	err = bch2_dev_in_fs(c->disk_sb, sb.sb);
+	err = bch2_dev_in_fs(c->disk_sb.sb, sb.sb);
 	if (err)
 		goto err;
 
@@ -1702,7 +1704,7 @@ int bch2_dev_resize(struct bch_fs *c, struct bch_dev *ca, u64 nbuckets)
 	}
 
 	mutex_lock(&c->sb_lock);
-	mi = &bch2_sb_get_members(c->disk_sb)->members[ca->dev_idx];
+	mi = &bch2_sb_get_members(c->disk_sb.sb)->members[ca->dev_idx];
 	mi->nbuckets = cpu_to_le64(nbuckets);
 
 	bch2_write_super(c);
@@ -1841,7 +1843,7 @@ static const char *__bch2_fs_open_incremental(struct bch_sb_handle *sb,
 	if (c) {
 		closure_get(&c->cl);
 
-		err = bch2_dev_in_fs(c->disk_sb, sb->sb);
+		err = bch2_dev_in_fs(c->disk_sb.sb, sb->sb);
 		if (err)
 			goto err;
 	} else {
