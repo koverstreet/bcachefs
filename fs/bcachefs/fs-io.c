@@ -124,13 +124,13 @@ static void bch2_quota_reservation_put(struct bch_fs *c,
 	if (!res->sectors)
 		return;
 
-	mutex_lock(&inode->ei_update_lock);
+	mutex_lock(&inode->ei_quota_lock);
 	BUG_ON(res->sectors > inode->ei_quota_reserved);
 
 	bch2_quota_acct(c, inode->ei_qid, Q_SPC,
 			-((s64) res->sectors), BCH_QUOTA_PREALLOC);
 	inode->ei_quota_reserved -= res->sectors;
-	mutex_unlock(&inode->ei_update_lock);
+	mutex_unlock(&inode->ei_quota_lock);
 
 	res->sectors = 0;
 }
@@ -143,14 +143,14 @@ static int bch2_quota_reservation_add(struct bch_fs *c,
 {
 	int ret;
 
-	mutex_lock(&inode->ei_update_lock);
+	mutex_lock(&inode->ei_quota_lock);
 	ret = bch2_quota_acct(c, inode->ei_qid, Q_SPC, sectors,
 			      check_enospc ? BCH_QUOTA_PREALLOC : BCH_QUOTA_NOCHECK);
 	if (likely(!ret)) {
 		inode->ei_quota_reserved += sectors;
 		res->sectors += sectors;
 	}
-	mutex_unlock(&inode->ei_update_lock);
+	mutex_unlock(&inode->ei_quota_lock);
 
 	return ret;
 }
@@ -195,9 +195,10 @@ static int __must_check bch2_write_inode_size(struct bch_fs *c,
 	return __bch2_write_inode(c, inode, inode_set_size, &new_size);
 }
 
-static void __i_sectors_acct(struct bch_fs *c, struct bch_inode_info *inode,
-			     struct quota_res *quota_res, int sectors)
+static void i_sectors_acct(struct bch_fs *c, struct bch_inode_info *inode,
+			   struct quota_res *quota_res, int sectors)
 {
+	mutex_lock(&inode->ei_quota_lock);
 #ifdef CONFIG_BCACHEFS_QUOTA
 	if (quota_res && sectors > 0) {
 		BUG_ON(sectors > quota_res->sectors);
@@ -210,14 +211,7 @@ static void __i_sectors_acct(struct bch_fs *c, struct bch_inode_info *inode,
 	}
 #endif
 	inode->v.i_blocks += sectors;
-}
-
-static void i_sectors_acct(struct bch_fs *c, struct bch_inode_info *inode,
-			   struct quota_res *quota_res, int sectors)
-{
-	mutex_lock(&inode->ei_update_lock);
-	__i_sectors_acct(c, inode, quota_res, sectors);
-	mutex_unlock(&inode->ei_update_lock);
+	mutex_unlock(&inode->ei_quota_lock);
 }
 
 /* i_sectors accounting: */
@@ -265,7 +259,7 @@ static int i_sectors_dirty_finish(struct bch_fs *c, struct i_sectors_hook *h)
 	if (h->new_i_size != U64_MAX)
 		i_size_write(&h->inode->v, h->new_i_size);
 
-	__i_sectors_acct(c, h->inode, &h->quota_res, h->sectors);
+	i_sectors_acct(c, h->inode, &h->quota_res, h->sectors);
 
 	ret = __bch2_write_inode(c, h->inode, i_sectors_dirty_finish_fn, h);
 	mutex_unlock(&h->inode->ei_update_lock);
@@ -783,6 +777,7 @@ void bch2_invalidate_folio(struct folio *folio, size_t offset, size_t length)
 
 bool bch2_release_folio(struct folio *folio, gfp_t gfp_mask)
 {
+	/* XXX: this can't take locks that are held while we allocate memory */
 	EBUG_ON(!PageLocked(&folio->page));
 	EBUG_ON(folio_test_writeback(folio));
 
