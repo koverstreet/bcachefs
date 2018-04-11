@@ -15,6 +15,8 @@ struct bch_inode_info {
 	u64			ei_journal_seq;
 	u64			ei_quota_reserved;
 	unsigned long		ei_last_dirtied;
+
+	struct mutex		ei_quota_lock;
 	struct bch_qid		ei_qid;
 
 	struct bch_hash_info	ei_str_hash;
