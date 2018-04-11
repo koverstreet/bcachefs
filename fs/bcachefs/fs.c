@@ -1028,6 +1028,7 @@ static struct inode *bch2_alloc_inode(struct super_block *sb)
 
 	inode_init_once(&inode->v);
 	mutex_init(&inode->ei_update_lock);
+	mutex_init(&inode->ei_quota_lock);
 	inode->ei_journal_seq = 0;
 
 	return &inode->v;
