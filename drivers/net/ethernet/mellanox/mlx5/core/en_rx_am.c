@@ -188,7 +188,7 @@ static void mlx5e_am_exit_parking(struct mlx5e_rx_am *am)
 }
 
 #define IS_SIGNIFICANT_DIFF(val, ref) \
-	(((100 * abs((val) - (ref))) / (ref)) > 10) /* more than 10% difference */
+	(((100UL * abs((val) - (ref))) / (ref)) > 10) /* more than 10% difference */
 
 static int mlx5e_am_stats_compare(struct mlx5e_rx_am_stats *curr,
 				  struct mlx5e_rx_am_stats *prev)
