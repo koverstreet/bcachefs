@@ -5956,7 +5956,7 @@ CONFIG_PINCTRL_BAYTRAIL                         policy<{'amd64': 'y', 'i386': 'y
 CONFIG_PINCTRL_CHERRYVIEW                       policy<{'amd64': 'y', 'i386': 'm'}>
 CONFIG_PINCTRL_MERRIFIELD                       policy<{'i386': 'n'}>
 CONFIG_PINCTRL_BROXTON                          policy<{'amd64': 'm', 'i386': 'm'}>
-CONFIG_PINCTRL_CANNONLAKE                       policy<{'amd64': 'm', 'i386': 'm'}>
+CONFIG_PINCTRL_CANNONLAKE                       policy<{'amd64': 'y', 'i386': 'y'}>
 CONFIG_PINCTRL_CEDARFORK                        policy<{'amd64': 'm', 'i386': 'm'}>
 CONFIG_PINCTRL_DENVERTON                        policy<{'amd64': 'm', 'i386': 'm'}>
 CONFIG_PINCTRL_GEMINILAKE                       policy<{'amd64': 'm', 'i386': 'm'}>

@@ -3226,12 +3226,10 @@ phy-tusb1210
 physmap
 pi433
 pinctrl-broxton
-pinctrl-cannonlake
 pinctrl-cedarfork
 pinctrl-cherryview
 pinctrl-denverton
 pinctrl-geminilake
-pinctrl-intel
 pinctrl-lewisburg
 pinctrl-mcp23s08
 pinctrl-sunrisepoint
