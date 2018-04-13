@@ -749,7 +749,9 @@ static void btree_iter_prefetch(struct btree_iter *iter)
 	struct btree_node_iter node_iter = l->iter;
 	struct bkey_packed *k;
 	BKEY_PADDED(k) tmp;
-	unsigned nr = iter->level > 1 ? 1 : 8;
+	unsigned nr = test_bit(BCH_FS_STARTED, &iter->c->flags)
+		? (iter->level > 1 ? 0 :  2)
+		: (iter->level > 1 ? 1 : 16);
 	bool was_locked = btree_node_locked(iter, iter->level);
 
 	while (nr) {
