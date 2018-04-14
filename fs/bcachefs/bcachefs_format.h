@@ -1088,12 +1088,13 @@ LE64_BITMASK(BCH_SB_ENCODED_EXTENT_MAX_BITS,
 
 LE64_BITMASK(BCH_SB_META_REPLICAS_REQ,	struct bch_sb, flags[1], 20, 24);
 LE64_BITMASK(BCH_SB_DATA_REPLICAS_REQ,	struct bch_sb, flags[1], 24, 28);
-LE64_BITMASK(BCH_SB_BACKGROUND_COMPRESSION_TYPE,
-					struct bch_sb, flags[1], 28, 32);
 
 LE64_BITMASK(BCH_SB_PROMOTE_TARGET,	struct bch_sb, flags[1], 28, 40);
 LE64_BITMASK(BCH_SB_FOREGROUND_TARGET,	struct bch_sb, flags[1], 40, 52);
 LE64_BITMASK(BCH_SB_BACKGROUND_TARGET,	struct bch_sb, flags[1], 52, 64);
+
+LE64_BITMASK(BCH_SB_BACKGROUND_COMPRESSION_TYPE,
+					struct bch_sb, flags[2],  0,  4);
 
 /* Features: */
 enum bch_sb_features {
