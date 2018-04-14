@@ -531,9 +531,16 @@ STORE(bch2_fs_opts_dir)
 	struct bch_fs *c = container_of(kobj, struct bch_fs, opts_dir);
 	const struct bch_option *opt = container_of(attr, struct bch_option, attr);
 	int ret, id = opt - bch2_opt_table;
+	char *tmp;
 	u64 v;
 
-	ret = bch2_opt_parse(c, opt, buf, &v);
+	tmp = kstrdup(buf, GFP_KERNEL);
+	if (!tmp)
+		return -ENOMEM;
+
+	ret = bch2_opt_parse(c, opt, strim(tmp), &v);
+	kfree(tmp);
+
 	if (ret < 0)
 		return ret;
 
