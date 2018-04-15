@@ -595,8 +595,8 @@ static inline bool dev_latency_better(struct bch_fs *c,
 {
 	struct bch_dev *dev1 = bch_dev_bkey_exists(c, ptr1->dev);
 	struct bch_dev *dev2 = bch_dev_bkey_exists(c, ptr2->dev);
-	unsigned l1 = atomic_read(&dev1->latency[READ]);
-	unsigned l2 = atomic_read(&dev2->latency[READ]);
+	u64 l1 = atomic64_read(&dev1->cur_latency[READ]);
+	u64 l2 = atomic64_read(&dev2->cur_latency[READ]);
 
 	/* Pick at random, biased in favor of the faster device: */
 
