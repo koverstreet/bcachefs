@@ -420,7 +420,8 @@ struct bch_dev {
 	struct work_struct	io_error_work;
 
 	/* The rest of this all shows up in sysfs */
-	atomic_t		latency[2];
+	atomic64_t		cur_latency[2];
+	struct time_stats	io_latency[2];
 
 	struct io_count __percpu *io_done;
 };
