@@ -644,6 +644,7 @@ struct bch_fs {
 	struct bio_set		bio_write;
 	struct mutex		bio_bounce_pages_lock;
 	mempool_t		bio_bounce_pages;
+	struct rhashtable	promote_table;
 
 	mempool_t		compression_bounce[2];
 	mempool_t		compress_workspace[BCH_COMPRESSION_NR];
