@@ -1286,6 +1286,8 @@ static enum {
 		bch2_bucket_seq_cleanup(c);
 	}
 
+	c->bucket_journal_seq++;
+
 	/* ugh - might be called from __journal_res_get() under wait_event() */
 	__set_current_state(TASK_RUNNING);
 	bch2_journal_buf_put(j, old.idx, need_write_just_set);
