@@ -987,6 +987,9 @@ static void bch2_dev_free(struct bch_dev *ca)
 	bioset_exit(&ca->replica_set);
 	bch2_dev_buckets_free(ca);
 
+	bch2_time_stats_exit(&ca->io_latency[WRITE]);
+	bch2_time_stats_exit(&ca->io_latency[READ]);
+
 	percpu_ref_exit(&ca->io_ref);
 	percpu_ref_exit(&ca->ref);
 	kobject_put(&ca->kobj);
@@ -1082,6 +1085,9 @@ static struct bch_dev *__bch2_dev_alloc(struct bch_fs *c,
 	bch2_dev_copygc_init(ca);
 
 	INIT_WORK(&ca->io_error_work, bch2_io_error_work);
+
+	bch2_time_stats_init(&ca->io_latency[READ]);
+	bch2_time_stats_init(&ca->io_latency[WRITE]);
 
 	ca->mi = bch2_mi_to_cpu(member);
 	ca->uuid = member->uuid;

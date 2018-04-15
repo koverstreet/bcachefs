@@ -407,11 +407,6 @@ size_t bch2_time_stats_print(struct time_stats *, char *, size_t);
 void bch2_time_stats_exit(struct time_stats *);
 void bch2_time_stats_init(struct time_stats *);
 
-static inline unsigned local_clock_us(void)
-{
-	return local_clock() >> 10;
-}
-
 #define ewma_add(ewma, val, weight)					\
 ({									\
 	typeof(ewma) _ewma = (ewma);					\

@@ -30,14 +30,14 @@
 
 #include <trace/events/bcachefs.h>
 
-/* Allocate, free from mempool: */
-
-void bch2_latency_acct(struct bch_dev *ca, unsigned submit_time_us, int rw)
+void bch2_latency_acct(struct bch_dev *ca, u64 submit_time, int rw)
 {
+	atomic64_t *latency = &ca->cur_latency[rw];
 	u64 now = local_clock();
-	unsigned io_latency = (now >> 10) - submit_time_us;
-	atomic_t *latency = &ca->latency[rw];
-	unsigned old, new, v = atomic_read(latency);
+	u64 io_latency = time_after64(now, submit_time)
+		? now - submit_time
+		: 0;
+	u64 old, new, v = atomic64_read(latency);
 
 	do {
 		old = v;
@@ -51,9 +51,13 @@ void bch2_latency_acct(struct bch_dev *ca, unsigned submit_time_us, int rw)
 		    now & ~(~0 << 5))
 			break;
 
-		new = ewma_add((u64) old, io_latency, 6);
-	} while ((v = atomic_cmpxchg(latency, old, new)) != old);
+		new = ewma_add(old, io_latency, 6);
+	} while ((v = atomic64_cmpxchg(latency, old, new)) != old);
+
+	bch2_time_stats_update(&ca->io_latency[rw], submit_time);
 }
+
+/* Allocate, free from mempool: */
 
 void bch2_bio_free_pages_pool(struct bch_fs *c, struct bio *bio)
 {
@@ -171,7 +175,7 @@ void bch2_submit_wbio_replicas(struct bch_write_bio *wbio, struct bch_fs *c,
 		n->c			= c;
 		n->dev			= ptr->dev;
 		n->have_ioref		= bch2_dev_get_ioref(ca, WRITE);
-		n->submit_time_us	= local_clock_us();
+		n->submit_time		= local_clock();
 		n->bio.bi_iter.bi_sector = ptr->offset;
 
 		if (!journal_flushes_device(ca))
@@ -326,7 +330,7 @@ static void bch2_write_endio(struct bio *bio)
 		set_bit(wbio->dev, op->failed.d);
 
 	if (wbio->have_ioref) {
-		bch2_latency_acct(ca, wbio->submit_time_us, WRITE);
+		bch2_latency_acct(ca, wbio->submit_time, WRITE);
 		percpu_ref_put(&ca->io_ref);
 	}
 
@@ -1374,7 +1378,7 @@ static void bch2_read_endio(struct bio *bio)
 	enum rbio_context context = RBIO_CONTEXT_NULL;
 
 	if (rbio->have_ioref) {
-		bch2_latency_acct(ca, rbio->submit_time_us, READ);
+		bch2_latency_acct(ca, rbio->submit_time, READ);
 		percpu_ref_put(&ca->io_ref);
 	}
 
@@ -1525,12 +1529,12 @@ noclone:
 	BUG_ON(bio_sectors(&rbio->bio) != pick.crc.compressed_size);
 
 	rbio->c			= c;
+	rbio->submit_time	= local_clock();
 	if (split)
 		rbio->parent	= orig;
 	else
 		rbio->end_io	= orig->bio.bi_end_io;
 	rbio->bvec_iter		= iter;
-	rbio->submit_time_us	= local_clock_us();
 	rbio->flags		= flags;
 	rbio->bounce		= bounce;
 	rbio->split		= split;
