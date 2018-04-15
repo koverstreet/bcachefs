@@ -848,9 +848,25 @@ void bch2_write(struct closure *cl)
 
 struct promote_op {
 	struct closure		cl;
+
+	struct rhash_head	hash;
+	struct bpos		pos;
+
 	struct migrate_write	write;
 	struct bio_vec		bi_inline_vecs[0]; /* must be last */
 };
+
+static const struct rhashtable_params bch_promote_params = {
+	.head_offset	= offsetof(struct promote_op, hash),
+	.key_offset	= offsetof(struct promote_op, pos),
+	.key_len	= sizeof(struct bpos),
+};
+
+static void promote_free(struct bch_fs *c, struct promote_op *op)
+{
+	rhashtable_remove_fast(&c->promote_table, &op->hash, bch_promote_params);
+	kfree(op);
+}
 
 static void promote_done(struct closure *cl)
 {
@@ -860,7 +876,7 @@ static void promote_done(struct closure *cl)
 
 	percpu_ref_put(&c->writes);
 	bch2_bio_free_pages_pool(c, &op->write.op.wbio.bio);
-	kfree(op);
+	promote_free(c, op);
 }
 
 static void promote_start(struct promote_op *op, struct bch_read_bio *rbio)
@@ -911,6 +927,14 @@ static struct promote_op *promote_alloc(struct bch_read_bio *rbio,
 	if (!op)
 		return NULL;
 
+	op->pos = k.k->p;
+
+	if (rhashtable_lookup_insert_fast(&c->promote_table, &op->hash,
+					  bch_promote_params)) {
+		kfree(op);
+		return NULL;
+	}
+
 	bio = &op->write.op.wbio.bio;
 	bio_init(bio, bio->bi_inline_vecs, pages);
 
@@ -945,7 +969,14 @@ static bool should_promote(struct bch_fs *c, struct bkey_s_c k,
 	if (!bkey_extent_is_data(k.k))
 		return false;
 
-	return bch2_extent_has_target(c, bkey_s_c_to_extent(k), target) == NULL;
+	if (bch2_extent_has_target(c, bkey_s_c_to_extent(k), target))
+		return false;
+
+	if (rhashtable_lookup_fast(&c->promote_table, &k.k->p,
+				   bch_promote_params))
+		return false;
+
+	return true;
 }
 
 /* Read */
@@ -985,7 +1016,7 @@ static inline struct bch_read_bio *bch2_rbio_free(struct bch_read_bio *rbio)
 	BUG_ON(rbio->bounce && !rbio->split);
 
 	if (rbio->promote)
-		kfree(rbio->promote);
+		promote_free(rbio->c, rbio->promote);
 	rbio->promote = NULL;
 
 	if (rbio->bounce)
@@ -1426,9 +1457,10 @@ int __bch2_read_extent(struct bch_fs *c, struct bch_read_bio *orig,
 	}
 
 	promote = should_promote(c, k, flags, orig->opts.promote_target);
-	/* could also set read_full */
-	if (promote)
+	if (promote) {
+		read_full = true;
 		bounce = true;
+	}
 
 	if (!read_full) {
 		EBUG_ON(pick.crc.compression_type);
@@ -1639,6 +1671,8 @@ void bch2_read(struct bch_fs *c, struct bch_read_bio *rbio, u64 inode)
 
 void bch2_fs_io_exit(struct bch_fs *c)
 {
+	if (c->promote_table.tbl)
+		rhashtable_destroy(&c->promote_table);
 	mempool_exit(&c->bio_bounce_pages);
 	bioset_exit(&c->bio_write);
 	bioset_exit(&c->bio_read_split);
@@ -1657,7 +1691,8 @@ int bch2_fs_io_init(struct bch_fs *c)
 				   max_t(unsigned,
 					 c->opts.btree_node_size,
 					 c->sb.encoded_extent_max) /
-				   PAGE_SECTORS, 0))
+				   PAGE_SECTORS, 0) ||
+	    rhashtable_init(&c->promote_table, &bch_promote_params))
 		return -ENOMEM;
 
 	return 0;
