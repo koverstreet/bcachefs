@@ -442,6 +442,8 @@ int bch2_ratelimit_wait_freezable_stoppable(struct bch_ratelimit *d)
 	}
 }
 
+/* pd controller: */
+
 /*
  * Updates pd_controller. Attempts to scale inputed values to units per second.
  * @target: desired value
@@ -535,6 +537,8 @@ size_t bch2_pd_controller_print_debug(struct bch_pd_controller *pd, char *buf)
 		       rate, target, actual, proportional,
 		       derivative, change, next_io);
 }
+
+/* misc: */
 
 void bch2_bio_map(struct bio *bio, void *base)
 {

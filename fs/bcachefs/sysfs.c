@@ -141,11 +141,18 @@ read_attribute(btree_node_size);
 read_attribute(first_bucket);
 read_attribute(nbuckets);
 read_attribute(durability);
-read_attribute(iostats);
-read_attribute(last_read_quantiles);
-read_attribute(last_write_quantiles);
-read_attribute(fragmentation_quantiles);
-read_attribute(oldest_gen_quantiles);
+read_attribute(iodone);
+
+read_attribute(io_latency_read);
+read_attribute(io_latency_write);
+read_attribute(io_latency_stats_read);
+read_attribute(io_latency_stats_write);
+
+read_attribute(bucket_quantiles_last_read);
+read_attribute(bucket_quantiles_last_write);
+read_attribute(bucket_quantiles_fragmentation);
+read_attribute(bucket_quantiles_oldest_gen);
+
 read_attribute(reserve_stats);
 read_attribute(btree_cache_size);
 read_attribute(compression_stats);
@@ -774,7 +781,7 @@ static const char * const bch2_rw[] = {
 	NULL
 };
 
-static ssize_t show_dev_iostats(struct bch_dev *ca, char *buf)
+static ssize_t show_dev_iodone(struct bch_dev *ca, char *buf)
 {
 	char *out = buf, *end = buf + PAGE_SIZE;
 	int rw, i, cpu;
@@ -851,16 +858,24 @@ SHOW(bch2_dev)
 		return out - buf;
 	}
 
-	if (attr == &sysfs_iostats)
-		return show_dev_iostats(ca, buf);
+	if (attr == &sysfs_iodone)
+		return show_dev_iodone(ca, buf);
 
-	if (attr == &sysfs_last_read_quantiles)
+	sysfs_print(io_latency_read,		atomic64_read(&ca->cur_latency[READ]));
+	sysfs_print(io_latency_write,		atomic64_read(&ca->cur_latency[WRITE]));
+
+	if (attr == &sysfs_io_latency_stats_read)
+		return bch2_time_stats_print(&ca->io_latency[READ], buf, PAGE_SIZE);
+	if (attr == &sysfs_io_latency_stats_write)
+		return bch2_time_stats_print(&ca->io_latency[WRITE], buf, PAGE_SIZE);
+
+	if (attr == &sysfs_bucket_quantiles_last_read)
 		return show_quantiles(c, ca, buf, bucket_last_io_fn, (void *) 0);
-	if (attr == &sysfs_last_write_quantiles)
+	if (attr == &sysfs_bucket_quantiles_last_write)
 		return show_quantiles(c, ca, buf, bucket_last_io_fn, (void *) 1);
-	if (attr == &sysfs_fragmentation_quantiles)
+	if (attr == &sysfs_bucket_quantiles_fragmentation)
 		return show_quantiles(c, ca, buf, bucket_sectors_used_fn, NULL);
-	if (attr == &sysfs_oldest_gen_quantiles)
+	if (attr == &sysfs_bucket_quantiles_oldest_gen)
 		return show_quantiles(c, ca, buf, bucket_oldest_gen_fn, NULL);
 
 	if (attr == &sysfs_reserve_stats)
@@ -944,13 +959,19 @@ struct attribute *bch2_dev_files[] = {
 	&sysfs_label,
 
 	&sysfs_has_data,
-	&sysfs_iostats,
+	&sysfs_iodone,
+
+	&sysfs_io_latency_read,
+	&sysfs_io_latency_write,
+	&sysfs_io_latency_stats_read,
+	&sysfs_io_latency_stats_write,
 
 	/* alloc info - other stats: */
-	&sysfs_last_read_quantiles,
-	&sysfs_last_write_quantiles,
-	&sysfs_fragmentation_quantiles,
-	&sysfs_oldest_gen_quantiles,
+	&sysfs_bucket_quantiles_last_read,
+	&sysfs_bucket_quantiles_last_write,
+	&sysfs_bucket_quantiles_fragmentation,
+	&sysfs_bucket_quantiles_oldest_gen,
+
 	&sysfs_reserve_stats,
 
 	/* debug: */
