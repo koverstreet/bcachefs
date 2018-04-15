@@ -16,6 +16,7 @@
 struct bch_read_bio {
 	struct bch_fs		*c;
 	u64			start_time;
+	u64			submit_time;
 
 	/*
 	 * Reads will often have to be split, and if the extent being read from
@@ -37,7 +38,6 @@ struct bch_read_bio {
 	 */
 	struct bvec_iter	bvec_iter;
 
-	unsigned		submit_time_us;
 	u16			flags;
 	union {
 	struct {
@@ -72,6 +72,8 @@ struct bch_write_bio {
 	struct bch_fs		*c;
 	struct bch_write_bio	*parent;
 
+	u64			submit_time;
+
 	struct bch_devs_list	failed;
 	u8			order;
 	u8			dev;
@@ -81,8 +83,6 @@ struct bch_write_bio {
 				put_bio:1,
 				have_ioref:1,
 				used_mempool:1;
-
-	unsigned		submit_time_us;
 
 	struct bio		bio;
 };

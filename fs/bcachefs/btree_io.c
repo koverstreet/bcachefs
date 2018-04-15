@@ -1396,7 +1396,7 @@ static void btree_node_read_endio(struct bio *bio)
 
 	if (rb->have_ioref) {
 		struct bch_dev *ca = bch_dev_bkey_exists(c, rb->pick.ptr.dev);
-		bch2_latency_acct(ca, rb->start_time >> 10, READ);
+		bch2_latency_acct(ca, rb->start_time, READ);
 	}
 
 	queue_work(system_unbound_wq, &rb->work);
@@ -1647,7 +1647,7 @@ static void btree_node_write_endio(struct bio *bio)
 	unsigned long flags;
 
 	if (wbio->have_ioref)
-		bch2_latency_acct(ca, wbio->submit_time_us, WRITE);
+		bch2_latency_acct(ca, wbio->submit_time, WRITE);
 
 	if (bio->bi_status == BLK_STS_REMOVED ||
 	    bch2_dev_io_err_on(bio->bi_status, ca, "btree write") ||
