@@ -1651,3 +1651,29 @@ void bch2_read(struct bch_fs *c, struct bch_read_bio *rbio, u64 inode)
 	bcache_io_error(c, &rbio->bio, "btree IO error %i", ret);
 	bio_endio(&rbio->bio);
 }
+
+void bch2_fs_io_exit(struct bch_fs *c)
+{
+	mempool_exit(&c->bio_bounce_pages);
+	bioset_exit(&c->bio_write);
+	bioset_exit(&c->bio_read_split);
+	bioset_exit(&c->bio_read);
+}
+
+int bch2_fs_io_init(struct bch_fs *c)
+{
+	if (bioset_init(&c->bio_read, 1, offsetof(struct bch_read_bio, bio),
+			BIOSET_NEED_BVECS) ||
+	    bioset_init(&c->bio_read_split, 1, offsetof(struct bch_read_bio, bio),
+			BIOSET_NEED_BVECS) ||
+	    bioset_init(&c->bio_write, 1, offsetof(struct bch_write_bio, bio),
+			BIOSET_NEED_BVECS) ||
+	    mempool_init_page_pool(&c->bio_bounce_pages,
+				   max_t(unsigned,
+					 c->opts.btree_node_size,
+					 c->sb.encoded_extent_max) /
+				   PAGE_SECTORS, 0))
+		return -ENOMEM;
+
+	return 0;
+}

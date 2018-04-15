@@ -371,6 +371,7 @@ static void bch2_fs_free(struct bch_fs *c)
 	bch2_fs_quota_exit(c);
 	bch2_fs_fsio_exit(c);
 	bch2_fs_encryption_exit(c);
+	bch2_fs_io_exit(c);
 	bch2_fs_btree_cache_exit(c);
 	bch2_fs_journal_exit(&c->journal);
 	bch2_io_clock_exit(&c->io_clock[WRITE]);
@@ -379,10 +380,6 @@ static void bch2_fs_free(struct bch_fs *c)
 	percpu_free_rwsem(&c->usage_lock);
 	free_percpu(c->usage_percpu);
 	mempool_exit(&c->btree_bounce_pool);
-	mempool_exit(&c->bio_bounce_pages);
-	bioset_exit(&c->bio_write);
-	bioset_exit(&c->bio_read_split);
-	bioset_exit(&c->bio_read);
 	bioset_exit(&c->btree_bio);
 	mempool_exit(&c->btree_interior_update_pool);
 	mempool_exit(&c->btree_reserve_pool);
@@ -611,17 +608,6 @@ static struct bch_fs *bch2_fs_alloc(struct bch_sb *sb, struct bch_opts opts)
 			max(offsetof(struct btree_read_bio, bio),
 			    offsetof(struct btree_write_bio, wbio.bio)),
 			BIOSET_NEED_BVECS) ||
-	    bioset_init(&c->bio_read, 1, offsetof(struct bch_read_bio, bio),
-			BIOSET_NEED_BVECS) ||
-	    bioset_init(&c->bio_read_split, 1, offsetof(struct bch_read_bio, bio),
-			BIOSET_NEED_BVECS) ||
-	    bioset_init(&c->bio_write, 1, offsetof(struct bch_write_bio, bio),
-			BIOSET_NEED_BVECS) ||
-	    mempool_init_page_pool(&c->bio_bounce_pages,
-				   max_t(unsigned,
-					 c->opts.btree_node_size,
-					 c->sb.encoded_extent_max) /
-				   PAGE_SECTORS, 0) ||
 	    !(c->usage_percpu = alloc_percpu(struct bch_fs_usage)) ||
 	    percpu_init_rwsem(&c->usage_lock) ||
 	    mempool_init_vp_pool(&c->btree_bounce_pool, 1, btree_bytes(c)) ||
@@ -629,6 +615,7 @@ static struct bch_fs *bch2_fs_alloc(struct bch_sb *sb, struct bch_opts opts)
 	    bch2_io_clock_init(&c->io_clock[WRITE]) ||
 	    bch2_fs_journal_init(&c->journal) ||
 	    bch2_fs_btree_cache_init(c) ||
+	    bch2_fs_io_init(c) ||
 	    bch2_fs_encryption_init(c) ||
 	    bch2_fs_compress_init(c) ||
 	    bch2_fs_fsio_init(c))

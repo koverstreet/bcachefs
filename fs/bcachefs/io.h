@@ -135,4 +135,7 @@ static inline struct bch_read_bio *rbio_init(struct bio *bio,
 	return rbio;
 }
 
+void bch2_fs_io_exit(struct bch_fs *);
+int bch2_fs_io_init(struct bch_fs *);
+
 #endif /* _BCACHEFS_IO_H */
