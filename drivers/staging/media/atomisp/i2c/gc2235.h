@@ -33,6 +33,11 @@
 
 #include "../include/linux/atomisp_platform.h"
 
+/*
+ * FIXME: non-preview resolutions are currently broken
+ */
+#define ENABLE_NON_PREVIEW     0
+
 /* Defines for register writes and register array processing */
 #define I2C_MSG_LENGTH		0x2
 #define I2C_RETRY_COUNT		5
@@ -285,6 +290,7 @@ static struct gc2235_reg const gc2235_init_settings[] = {
 /*
  * Register settings for various resolution
  */
+#if ENABLE_NON_PREVIEW
 static struct gc2235_reg const gc2235_1296_736_30fps[] = {
 	{ GC2235_8BIT, 0x8b, 0xa0 },
 	{ GC2235_8BIT, 0x8c, 0x02 },
@@ -388,6 +394,7 @@ static struct gc2235_reg const gc2235_960_640_30fps[] = {
 	{ GC2235_8BIT, 0xfe, 0x00 }, /* switch to P0 */
 	{ GC2235_TOK_TERM, 0, 0 }
 };
+#endif
 
 static struct gc2235_reg const gc2235_1600_900_30fps[] = {
 	{ GC2235_8BIT, 0x8b, 0xa0 },
@@ -575,6 +582,7 @@ static struct gc2235_resolution gc2235_res_preview[] = {
 };
 #define N_RES_PREVIEW (ARRAY_SIZE(gc2235_res_preview))
 
+#if ENABLE_NON_PREVIEW
 static struct gc2235_resolution gc2235_res_still[] = {
 	{
 		.desc = "gc2235_1600_900_30fps",
