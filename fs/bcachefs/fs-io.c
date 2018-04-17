@@ -21,6 +21,7 @@
 #include <linux/migrate.h>
 #include <linux/mmu_context.h>
 #include <linux/pagevec.h>
+#include <linux/sched/signal.h>
 #include <linux/task_io_accounting_ops.h>
 #include <linux/uio.h>
 #include <linux/writeback.h>
@@ -1444,6 +1445,193 @@ int bch2_write_end(struct file *file, struct address_space *mapping,
 	return copied;
 }
 
+#define WRITE_BATCH_PAGES	32
+
+static int __bch2_buffered_write(struct bch_inode_info *inode,
+				 struct address_space *mapping,
+				 struct iov_iter *iter,
+				 loff_t pos, unsigned len)
+{
+	struct bch_fs *c = inode->v.i_sb->s_fs_info;
+	struct page *pages[WRITE_BATCH_PAGES];
+	unsigned long index = pos >> PAGE_SHIFT;
+	unsigned offset = pos & (PAGE_SIZE - 1);
+	unsigned nr_pages = DIV_ROUND_UP(offset + len, PAGE_SIZE);
+	unsigned i, copied = 0, nr_pages_copied = 0;
+	int ret = 0;
+
+	BUG_ON(!len);
+	BUG_ON(nr_pages > ARRAY_SIZE(pages));
+
+	for (i = 0; i < nr_pages; i++) {
+		pages[i] = grab_cache_page_write_begin(mapping, index + i);
+		if (!pages[i]) {
+			nr_pages = i;
+			ret = -ENOMEM;
+			goto out;
+		}
+	}
+
+	if (offset && !PageUptodate(pages[0])) {
+		ret = bch2_read_single_page(pages[0], mapping);
+		if (ret)
+			goto out;
+	}
+
+	if ((pos + len) & (PAGE_SIZE - 1) &&
+	    !PageUptodate(pages[nr_pages - 1])) {
+		if ((index + nr_pages - 1) << PAGE_SHIFT >= inode->v.i_size) {
+			zero_user(pages[nr_pages - 1], 0, PAGE_SIZE);
+		} else {
+			ret = bch2_read_single_page(pages[nr_pages - 1], mapping);
+			if (ret)
+				goto out;
+		}
+	}
+
+	for (i = 0; i < nr_pages; i++) {
+		ret = bch2_get_page_reservation(c, inode, pages[i], true);
+
+		if (ret && !PageUptodate(pages[i])) {
+			ret = bch2_read_single_page(pages[i], mapping);
+			if (ret)
+				goto out;
+
+			ret = bch2_get_page_reservation(c, inode, pages[i], true);
+		}
+
+		if (ret)
+			goto out;
+	}
+
+	if (mapping_writably_mapped(mapping))
+		for (i = 0; i < nr_pages; i++)
+			flush_dcache_page(pages[i]);
+
+	while (copied < len) {
+		struct page *page = pages[(offset + copied) >> PAGE_SHIFT];
+		unsigned pg_offset = (offset + copied) & (PAGE_SIZE - 1);
+		unsigned pg_bytes = min_t(unsigned, len - copied,
+					  PAGE_SIZE - pg_offset);
+		unsigned pg_copied = copy_page_from_iter_atomic(page,
+						pg_offset, pg_bytes, iter);
+
+		flush_dcache_page(page);
+		copied += pg_copied;
+
+		if (pg_copied != pg_bytes)
+			break;
+	}
+
+	if (!copied)
+		goto out;
+
+	nr_pages_copied = DIV_ROUND_UP(offset + copied, PAGE_SIZE);
+	inode->ei_last_dirtied = (unsigned long) current;
+
+	if (pos + copied > inode->v.i_size)
+		i_size_write(&inode->v, pos + copied);
+
+	if (copied < len &&
+	    ((offset + copied) & (PAGE_SIZE - 1))) {
+		struct page *page = pages[(offset + copied) >> PAGE_SHIFT];
+
+		if (!PageUptodate(page)) {
+			zero_user(page, 0, PAGE_SIZE);
+			copied -= (offset + copied) & (PAGE_SIZE - 1);
+		}
+	}
+out:
+	for (i = 0; i < nr_pages_copied; i++) {
+		if (!PageUptodate(pages[i]))
+			SetPageUptodate(pages[i]);
+		if (!PageDirty(pages[i]))
+			set_page_dirty(pages[i]);
+		unlock_page(pages[i]);
+		put_page(pages[i]);
+	}
+
+	for (i = nr_pages_copied; i < nr_pages; i++) {
+		if (!PageDirty(pages[i]))
+			bch2_put_page_reservation(c, inode, pages[i]);
+		unlock_page(pages[i]);
+		put_page(pages[i]);
+	}
+
+	return copied ?: ret;
+}
+
+static ssize_t bch2_buffered_write(struct kiocb *iocb, struct iov_iter *iter)
+{
+	struct file *file = iocb->ki_filp;
+	struct address_space *mapping = file->f_mapping;
+	struct bch_inode_info *inode = file_bch_inode(file);
+	loff_t pos = iocb->ki_pos;
+	ssize_t written = 0;
+	int ret = 0;
+
+	bch2_pagecache_add_get(&inode->ei_pagecache_lock);
+
+	do {
+		unsigned offset = pos & (PAGE_SIZE - 1);
+		unsigned bytes = min_t(unsigned long, iov_iter_count(iter),
+			      PAGE_SIZE * WRITE_BATCH_PAGES - offset);
+again:
+		/*
+		 * Bring in the user page that we will copy from _first_.
+		 * Otherwise there's a nasty deadlock on copying from the
+		 * same page as we're writing to, without it being marked
+		 * up-to-date.
+		 *
+		 * Not only is this an optimisation, but it is also required
+		 * to check that the address is actually valid, when atomic
+		 * usercopies are used, below.
+		 */
+		if (unlikely(fault_in_iov_iter_readable(iter, bytes))) {
+			bytes = min_t(unsigned long, iov_iter_count(iter),
+				      PAGE_SIZE - offset);
+
+			if (unlikely(fault_in_iov_iter_readable(iter, bytes))) {
+				ret = -EFAULT;
+				break;
+			}
+		}
+
+		if (unlikely(fatal_signal_pending(current))) {
+			ret = -EINTR;
+			break;
+		}
+
+		ret = __bch2_buffered_write(inode, mapping, iter, pos, bytes);
+		if (unlikely(ret < 0))
+			break;
+
+		cond_resched();
+
+		if (unlikely(ret == 0)) {
+			/*
+			 * If we were unable to copy any data at all, we must
+			 * fall back to a single segment length write.
+			 *
+			 * If we didn't fallback here, we could livelock
+			 * because not all segments in the iov can be copied at
+			 * once without a pagefault.
+			 */
+			bytes = min_t(unsigned long, PAGE_SIZE - offset,
+				      iov_iter_single_seg_count(iter));
+			goto again;
+		}
+		pos += ret;
+		written += ret;
+
+		balance_dirty_pages_ratelimited(mapping);
+	} while (iov_iter_count(iter));
+
+	bch2_pagecache_add_put(&inode->ei_pagecache_lock);
+
+	return written ? written : ret;
+}
+
 /* O_DIRECT reads */
 
 static void bch2_dio_read_complete(struct closure *cl)
@@ -1803,7 +1991,7 @@ static ssize_t __bch2_write_iter(struct kiocb *iocb, struct iov_iter *from)
 
 	ret = iocb->ki_flags & IOCB_DIRECT
 		? bch2_direct_write(iocb, from)
-		: generic_perform_write(iocb, from);
+		: bch2_buffered_write(iocb, from);
 
 	if (likely(ret > 0))
 		iocb->ki_pos += ret;
