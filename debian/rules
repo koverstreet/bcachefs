@@ -46,7 +46,7 @@ ifneq ($(DEB_HOST_ARCH),$(DEB_BUILD_ARCH))
 endif
 
 # Are any of the kernel signing options enabled.
-any_signed=$(sort $(filter-out false,$(uefi_signed)))
+any_signed=$(sort $(filter-out false,$(uefi_signed) $(opal_signed)))
 ifeq ($(any_signed),true)
 bin_pkg_name=$(bin_pkg_name_unsigned)
 else
