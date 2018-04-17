@@ -1009,7 +1009,24 @@ zil_lwb_write_start(zilog_t *zilog, lwb_t *lwb)
 	 * to clean up in the event of allocation failure or I/O failure.
 	 */
 	tx = dmu_tx_create(zilog->zl_os);
-	VERIFY(dmu_tx_assign(tx, TXG_WAIT) == 0);
+
+	/*
+	 * Since we are not going to create any new dirty data and we can even
+	 * help with clearing the existing dirty data, we should not be subject
+	 * to the dirty data based delays.
+	 * We (ab)use TXG_WAITED to bypass the delay mechanism.
+	 * One side effect from using TXG_WAITED is that dmu_tx_assign() can
+	 * fail if the pool is suspended.  Those are dramatic circumstances,
+	 * so we return NULL to signal that the normal ZIL processing is not
+	 * possible and txg_wait_synced() should be used to ensure that the data
+	 * is on disk.
+	 */
+	error = dmu_tx_assign(tx, TXG_WAITED);
+	if (error != 0) {
+		ASSERT3S(error, ==, EIO);
+		dmu_tx_abort(tx);
+		return (NULL);
+	}
 	dsl_dataset_dirty(dmu_objset_ds(zilog->zl_os), tx);
 	txg = dmu_tx_get_txg(tx);
 
@@ -1435,8 +1452,7 @@ zil_clean(zilog_t *zilog, uint64_t synced_txg)
 		return;
 	}
 	ASSERT3U(itxg->itxg_txg, <=, synced_txg);
-	ASSERT(itxg->itxg_txg != 0);
-	ASSERT(zilog->zl_clean_taskq != NULL);
+	ASSERT3U(itxg->itxg_txg, !=, 0);
 	clean_me = itxg->itxg_itxs;
 	itxg->itxg_itxs = NULL;
 	itxg->itxg_txg = 0;
@@ -1447,8 +1463,11 @@ zil_clean(zilog_t *zilog, uint64_t synced_txg)
 	 * free it in-line. This should be rare. Note, using TQ_SLEEP
 	 * created a bad performance problem.
 	 */
-	if (taskq_dispatch(zilog->zl_clean_taskq,
-	    (void (*)(void *))zil_itxg_clean, clean_me, TQ_NOSLEEP) == 0)
+	ASSERT3P(zilog->zl_dmu_pool, !=, NULL);
+	ASSERT3P(zilog->zl_dmu_pool->dp_zil_clean_taskq, !=, NULL);
+	taskqid_t id = taskq_dispatch(zilog->zl_dmu_pool->dp_zil_clean_taskq,
+	    (void (*)(void *))zil_itxg_clean, clean_me, TQ_NOSLEEP);
+	if (id == TASKQID_INVALID)
 		zil_itxg_clean(clean_me);
 }
 
@@ -1921,13 +1940,10 @@ zil_open(objset_t *os, zil_get_data_t *get_data)
 {
 	zilog_t *zilog = dmu_objset_zil(os);
 
-	ASSERT(zilog->zl_clean_taskq == NULL);
 	ASSERT(zilog->zl_get_data == NULL);
 	ASSERT(list_is_empty(&zilog->zl_lwb_list));
 
 	zilog->zl_get_data = get_data;
-	zilog->zl_clean_taskq = taskq_create("zil_clean", 1, defclsyspri,
-	    2, 2, TASKQ_PREPOPULATE);
 
 	return (zilog);
 }
@@ -1962,8 +1978,6 @@ zil_close(zilog_t *zilog)
 	if (txg < spa_freeze_txg(zilog->zl_spa))
 		VERIFY(!zilog_is_dirty(zilog));
 
-	taskq_destroy(zilog->zl_clean_taskq);
-	zilog->zl_clean_taskq = NULL;
 	zilog->zl_get_data = NULL;
 
 	/*
