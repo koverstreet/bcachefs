@@ -141,7 +141,7 @@ void hclgevf_mbx_handler(struct hclgevf_dev *hdev)
 	crq = &hdev->hw.cmq.crq;
 
 	flag = le16_to_cpu(crq->desc[crq->next_to_use].flag);
-	while (hnae_get_bit(flag, HCLGEVF_CMDQ_RX_OUTVLD_B)) {
+	while (hnae3_get_bit(flag, HCLGEVF_CMDQ_RX_OUTVLD_B)) {
 		desc = &crq->desc[crq->next_to_use];
 		req = (struct hclge_mbx_pf_to_vf_cmd *)desc->data;
 
