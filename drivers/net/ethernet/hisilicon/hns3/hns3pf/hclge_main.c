@@ -1109,12 +1109,12 @@ static int hclge_get_cfg(struct hclge_dev *hdev, struct hclge_cfg *hcfg)
 
 	ret = hclge_cmd_send(&hdev->hw, desc, HCLGE_PF_CFG_DESC_NUM);
 	if (ret) {
-		dev_err(&hdev->pdev->dev,
-			"get config failed %d.\n", ret);
+		dev_err(&hdev->pdev->dev, "get config failed %d.\n", ret);
 		return ret;
 	}
 
 	hclge_parse_cfg(hcfg, desc);
+
 	return 0;
 }
 
@@ -1131,13 +1131,10 @@ static int hclge_get_cap(struct hclge_dev *hdev)
 
 	/* get pf resource */
 	ret = hclge_query_pf_resource(hdev);
-	if (ret) {
-		dev_err(&hdev->pdev->dev,
-			"query pf resource error %d.\n", ret);
-		return ret;
-	}
+	if (ret)
+		dev_err(&hdev->pdev->dev, "query pf resource error %d.\n", ret);
 
-	return 0;
+	return ret;
 }
 
 static int hclge_configure(struct hclge_dev *hdev)
@@ -1266,13 +1263,10 @@ static int hclge_map_tqps_to_func(struct hclge_dev *hdev, u16 func_id,
 	req->tqp_vid = cpu_to_le16(tqp_vid);
 
 	ret = hclge_cmd_send(&hdev->hw, &desc, 1);
-	if (ret) {
-		dev_err(&hdev->pdev->dev, "TQP map failed %d.\n",
-			ret);
-		return ret;
-	}
+	if (ret)
+		dev_err(&hdev->pdev->dev, "TQP map failed %d.\n", ret);
 
-	return 0;
+	return ret;
 }
 
 static int  hclge_assign_tqp(struct hclge_vport *vport,
@@ -1331,12 +1325,10 @@ static int hclge_knic_setup(struct hclge_vport *vport, u16 num_tqps)
 		return -ENOMEM;
 
 	ret = hclge_assign_tqp(vport, kinfo->tqp, kinfo->num_tqps);
-	if (ret) {
+	if (ret)
 		dev_err(&hdev->pdev->dev, "fail to assign TQPs %d.\n", ret);
-		return -EINVAL;
-	}
 
-	return 0;
+	return ret;
 }
 
 static int hclge_map_tqp_to_vport(struct hclge_dev *hdev,
@@ -1488,13 +1480,11 @@ static int  hclge_cmd_alloc_tx_buff(struct hclge_dev *hdev,
 	}
 
 	ret = hclge_cmd_send(&hdev->hw, &desc, 1);
-	if (ret) {
+	if (ret)
 		dev_err(&hdev->pdev->dev, "tx buffer alloc cmd failed %d.\n",
 			ret);
-		return ret;
-	}
 
-	return 0;
+	return ret;
 }
 
 static int hclge_tx_buffer_alloc(struct hclge_dev *hdev,
@@ -1502,13 +1492,10 @@ static int hclge_tx_buffer_alloc(struct hclge_dev *hdev,
 {
 	int ret = hclge_cmd_alloc_tx_buff(hdev, buf_alloc);
 
-	if (ret) {
-		dev_err(&hdev->pdev->dev,
-			"tx buffer alloc failed %d\n", ret);
-		return ret;
-	}
+	if (ret)
+		dev_err(&hdev->pdev->dev, "tx buffer alloc failed %d\n", ret);
 
-	return 0;
+	return ret;
 }
 
 static int hclge_get_tc_num(struct hclge_dev *hdev)
@@ -1826,13 +1813,11 @@ static int hclge_rx_priv_buf_alloc(struct hclge_dev *hdev,
 			    (1 << HCLGE_TC0_PRI_BUF_EN_B));
 
 	ret = hclge_cmd_send(&hdev->hw, &desc, 1);
-	if (ret) {
+	if (ret)
 		dev_err(&hdev->pdev->dev,
 			"rx private buffer alloc cmd failed %d\n", ret);
-		return ret;
-	}
 
-	return 0;
+	return ret;
 }
 
 #define HCLGE_PRIV_ENABLE(a) ((a) > 0 ? 1 : 0)
@@ -1876,13 +1861,11 @@ static int hclge_rx_priv_wl_config(struct hclge_dev *hdev,
 
 	/* Send 2 descriptor at one time */
 	ret = hclge_cmd_send(&hdev->hw, desc, 2);
-	if (ret) {
+	if (ret)
 		dev_err(&hdev->pdev->dev,
 			"rx private waterline config cmd failed %d\n",
 			ret);
-		return ret;
-	}
-	return 0;
+	return ret;
 }
 
 static int hclge_common_thrd_config(struct hclge_dev *hdev,
@@ -1924,12 +1907,10 @@ static int hclge_common_thrd_config(struct hclge_dev *hdev,
 
 	/* Send 2 descriptors at one time */
 	ret = hclge_cmd_send(&hdev->hw, desc, 2);
-	if (ret) {
+	if (ret)
 		dev_err(&hdev->pdev->dev,
 			"common threshold config cmd failed %d\n", ret);
-		return ret;
-	}
-	return 0;
+	return ret;
 }
 
 static int hclge_common_wl_config(struct hclge_dev *hdev,
@@ -1954,13 +1935,10 @@ static int hclge_common_wl_config(struct hclge_dev *hdev,
 			    HCLGE_RX_PRIV_EN_B);
 
 	ret = hclge_cmd_send(&hdev->hw, &desc, 1);
-	if (ret) {
+	if (ret)
 		dev_err(&hdev->pdev->dev,
 			"common waterline config cmd failed %d\n", ret);
-		return ret;
-	}
-
-	return 0;
+	return ret;
 }
 
 int hclge_buffer_alloc(struct hclge_dev *hdev)
@@ -2207,13 +2185,11 @@ static int hclge_query_mac_an_speed_dup(struct hclge_dev *hdev, int *speed,
 				    HCLGE_QUERY_SPEED_S);
 
 	ret = hclge_parse_speed(speed_tmp, speed);
-	if (ret) {
+	if (ret)
 		dev_err(&hdev->pdev->dev,
 			"could not parse speed(=%d), %d\n", speed_tmp, ret);
-		return -EIO;
-	}
 
-	return 0;
+	return ret;
 }
 
 static int hclge_set_autoneg_en(struct hclge_dev *hdev, bool enable)
@@ -2230,13 +2206,11 @@ static int hclge_set_autoneg_en(struct hclge_dev *hdev, bool enable)
 	req->cfg_an_cmd_flag = cpu_to_le32(flag);
 
 	ret = hclge_cmd_send(&hdev->hw, &desc, 1);
-	if (ret) {
+	if (ret)
 		dev_err(&hdev->pdev->dev, "auto neg set cmd failed %d.\n",
 			ret);
-		return ret;
-	}
 
-	return 0;
+	return ret;
 }
 
 static int hclge_set_autoneg(struct hnae3_handle *handle, bool enable)
@@ -2342,13 +2316,11 @@ static int hclge_mac_init(struct hclge_dev *hdev)
 		mtu = ETH_DATA_LEN;
 
 	ret = hclge_set_mtu(handle, mtu);
-	if (ret) {
+	if (ret)
 		dev_err(&hdev->pdev->dev,
 			"set mtu failed ret=%d\n", ret);
-		return ret;
-	}
 
-	return 0;
+	return ret;
 }
 
 static void hclge_mbx_task_schedule(struct hclge_dev *hdev)
@@ -3118,13 +3090,11 @@ static int hclge_set_rss_tc_mode(struct hclge_dev *hdev, u16 *tc_valid,
 	}
 
 	ret = hclge_cmd_send(&hdev->hw, &desc, 1);
-	if (ret) {
+	if (ret)
 		dev_err(&hdev->pdev->dev,
 			"Configure rss tc mode fail, status = %d\n", ret);
-		return ret;
-	}
 
-	return 0;
+	return ret;
 }
 
 static int hclge_set_rss_input_tuple(struct hclge_dev *hdev)
@@ -3147,13 +3117,10 @@ static int hclge_set_rss_input_tuple(struct hclge_dev *hdev)
 	req->ipv6_sctp_en = hdev->vport[0].rss_tuple_sets.ipv6_sctp_en;
 	req->ipv6_fragment_en = hdev->vport[0].rss_tuple_sets.ipv6_fragment_en;
 	ret = hclge_cmd_send(&hdev->hw, &desc, 1);
-	if (ret) {
+	if (ret)
 		dev_err(&hdev->pdev->dev,
 			"Configure rss input fail, status = %d\n", ret);
-		return ret;
-	}
-
-	return 0;
+	return ret;
 }
 
 static int hclge_get_rss(struct hnae3_handle *handle, u32 *indir,
@@ -3601,12 +3568,11 @@ int hclge_cmd_set_promisc_mode(struct hclge_dev *hdev,
 		HCLGE_PROMISC_TX_EN_B | HCLGE_PROMISC_RX_EN_B;
 
 	ret = hclge_cmd_send(&hdev->hw, &desc, 1);
-	if (ret) {
+	if (ret)
 		dev_err(&hdev->pdev->dev,
 			"Set promisc mode fail, status is %d.\n", ret);
-		return ret;
-	}
-	return 0;
+
+	return ret;
 }
 
 void hclge_promisc_param_init(struct hclge_promisc_param *param, bool en_uc,
@@ -4009,14 +3975,12 @@ static int hclge_set_mta_filter_mode(struct hclge_dev *hdev,
 			HCLGE_CFG_MTA_MAC_SEL_S, mta_mac_sel);
 
 	ret = hclge_cmd_send(&hdev->hw, &desc, 1);
-	if (ret) {
+	if (ret)
 		dev_err(&hdev->pdev->dev,
 			"Config mat filter mode failed for cmd_send, ret =%d.\n",
 			ret);
-		return ret;
-	}
 
-	return 0;
+	return ret;
 }
 
 int hclge_cfg_func_mta_filter(struct hclge_dev *hdev,
@@ -4035,14 +3999,12 @@ int hclge_cfg_func_mta_filter(struct hclge_dev *hdev,
 	req->function_id = func_id;
 
 	ret = hclge_cmd_send(&hdev->hw, &desc, 1);
-	if (ret) {
+	if (ret)
 		dev_err(&hdev->pdev->dev,
 			"Config func_id enable failed for cmd_send, ret =%d.\n",
 			ret);
-		return ret;
-	}
 
-	return 0;
+	return ret;
 }
 
 static int hclge_set_mta_table_item(struct hclge_vport *vport,
@@ -4647,13 +4609,11 @@ static int hclge_set_vlan_filter_ctrl(struct hclge_dev *hdev, u8 vlan_type,
 	req->vlan_fe = filter_en;
 
 	ret = hclge_cmd_send(&hdev->hw, &desc, 1);
-	if (ret) {
+	if (ret)
 		dev_err(&hdev->pdev->dev, "set vlan filter fail, ret =%d.\n",
 			ret);
-		return ret;
-	}
 
-	return 0;
+	return ret;
 }
 
 #define HCLGE_FILTER_TYPE_VF		0
@@ -5044,14 +5004,12 @@ static int hclge_set_mac_mtu(struct hclge_dev *hdev, int new_mtu)
 	req->max_frm_size = cpu_to_le16(max_frm_size);
 
 	ret = hclge_cmd_send(&hdev->hw, &desc, 1);
-	if (ret) {
+	if (ret)
 		dev_err(&hdev->pdev->dev, "set mtu fail, ret =%d.\n", ret);
-		return ret;
-	}
+	else
+		hdev->mps = max_frm_size;
 
-	hdev->mps = max_frm_size;
-
-	return 0;
+	return ret;
 }
 
 static int hclge_set_mtu(struct hnae3_handle *handle, int new_mtu)
