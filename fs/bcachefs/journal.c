@@ -1174,8 +1174,8 @@ void bch2_journal_buf_put_slowpath(struct journal *j, bool need_write_just_set)
 
 	if (!need_write_just_set &&
 	    test_bit(JOURNAL_NEED_WRITE, &j->flags))
-		__bch2_time_stats_update(j->delay_time,
-					j->need_write_time);
+		bch2_time_stats_update(j->delay_time,
+				       j->need_write_time);
 #if 0
 	closure_call(&j->io, journal_write, NULL, NULL);
 #else
@@ -1470,8 +1470,8 @@ static int journal_entry_open(struct journal *j)
 				       old.v, new.v)) != old.v);
 
 	if (j->res_get_blocked_start)
-		__bch2_time_stats_update(j->blocked_time,
-					j->res_get_blocked_start);
+		bch2_time_stats_update(j->blocked_time,
+				       j->res_get_blocked_start);
 	j->res_get_blocked_start = 0;
 
 	mod_delayed_work(system_freezable_wq,
@@ -2275,7 +2275,7 @@ static void journal_write_done(struct closure *cl)
 	if (bch2_mark_replicas(c, BCH_DATA_JOURNAL, devs))
 		goto err;
 out:
-	__bch2_time_stats_update(j->write_time, j->write_start_time);
+	bch2_time_stats_update(j->write_time, j->write_start_time);
 
 	spin_lock(&j->lock);
 	j->last_seq_ondisk = le64_to_cpu(w->data->last_seq);
