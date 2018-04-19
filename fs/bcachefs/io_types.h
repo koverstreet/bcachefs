@@ -15,6 +15,7 @@
 
 struct bch_read_bio {
 	struct bch_fs		*c;
+	u64			start_time;
 
 	/*
 	 * Reads will often have to be split, and if the extent being read from
@@ -90,6 +91,7 @@ struct bch_write_op {
 	struct closure		cl;
 	struct bch_fs		*c;
 	struct workqueue_struct	*io_wq;
+	u64			start_time;
 
 	unsigned		written; /* sectors */
 	u16			flags;
