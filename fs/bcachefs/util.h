@@ -361,87 +361,46 @@ ssize_t bch2_read_string_list(const char *, const char * const[]);
 ssize_t bch2_scnprint_flag_list(char *, size_t, const char * const[], u64);
 u64 bch2_read_flag_list(char *, const char * const[]);
 
+#define NR_QUANTILES	15
+
+struct bch2_quantiles {
+	struct bch2_quantile_entry {
+		u64	m;
+		u64	step;
+	}		entries[NR_QUANTILES];
+};
+
+struct bch2_time_stat_buffer {
+	unsigned	nr;
+	struct bch2_time_stat_buffer_entry {
+		u64	start;
+		u64	end;
+	}		entries[32];
+};
+
 struct bch2_time_stats {
 	spinlock_t	lock;
 	u64		count;
-	/*
-	 * all fields are in nanoseconds, averages are ewmas stored left shifted
-	 * by 8
-	 */
-	u64		last_duration;
-	u64		max_duration;
+	/* all fields are in nanoseconds */
 	u64		average_duration;
 	u64		average_frequency;
-	u64		last;
+	u64		max_duration;
+	u64		last_event;
+	struct bch2_quantiles quantiles;
+
+	struct bch2_time_stat_buffer __percpu *buffer;
 };
 
-void bch2_time_stats_clear(struct bch2_time_stats *stats);
-void __bch2_time_stats_update(struct bch2_time_stats *stats, u64 time);
 void bch2_time_stats_update(struct bch2_time_stats *stats, u64 time);
+size_t bch2_time_stats_print(struct bch2_time_stats *, char *, size_t);
+
+void bch2_time_stats_exit(struct bch2_time_stats *);
+void bch2_time_stats_init(struct bch2_time_stats *);
 
 static inline unsigned local_clock_us(void)
 {
 	return local_clock() >> 10;
 }
-
-#define NSEC_PER_ns			1L
-#define NSEC_PER_us			NSEC_PER_USEC
-#define NSEC_PER_ms			NSEC_PER_MSEC
-#define NSEC_PER_sec			NSEC_PER_SEC
-
-#define __print_time_stat(stats, name, stat, units)			\
-	sysfs_print(name ## _ ## stat ## _ ## units,			\
-		    div_u64((stats)->stat >> 8, NSEC_PER_ ## units))
-
-#define sysfs_print_time_stats(stats, name,				\
-			       frequency_units,				\
-			       duration_units)				\
-do {									\
-	__print_time_stat(stats, name,					\
-			  average_frequency,	frequency_units);	\
-	__print_time_stat(stats, name,					\
-			  average_duration,	duration_units);	\
-	sysfs_print(name ## _ ##count, (stats)->count);			\
-	sysfs_print(name ## _ ##last_duration ## _ ## duration_units,	\
-			div_u64((stats)->last_duration,			\
-				NSEC_PER_ ## duration_units));		\
-	sysfs_print(name ## _ ##max_duration ## _ ## duration_units,	\
-			div_u64((stats)->max_duration,			\
-				NSEC_PER_ ## duration_units));		\
-									\
-	sysfs_print(name ## _last_ ## frequency_units, (stats)->last	\
-		    ? div_s64(local_clock() - (stats)->last,		\
-			      NSEC_PER_ ## frequency_units)		\
-		    : -1LL);						\
-} while (0)
-
-#define sysfs_clear_time_stats(stats, name)				\
-do {									\
-	if (attr == &sysfs_ ## name ## _clear)				\
-		bch2_time_stats_clear(stats);				\
-} while (0)
-
-#define sysfs_time_stats_attribute(name,				\
-				   frequency_units,			\
-				   duration_units)			\
-write_attribute(name ## _clear);					\
-read_attribute(name ## _count);						\
-read_attribute(name ## _average_frequency_ ## frequency_units);		\
-read_attribute(name ## _average_duration_ ## duration_units);		\
-read_attribute(name ## _last_duration_ ## duration_units);		\
-read_attribute(name ## _max_duration_ ## duration_units);		\
-read_attribute(name ## _last_ ## frequency_units)
-
-#define sysfs_time_stats_attribute_list(name,				\
-					frequency_units,		\
-					duration_units)			\
-&sysfs_ ## name ## _clear,						\
-&sysfs_ ## name ## _count,						\
-&sysfs_ ## name ## _average_frequency_ ## frequency_units,		\
-&sysfs_ ## name ## _average_duration_ ## duration_units,		\
-&sysfs_ ## name ## _last_duration_ ## duration_units,			\
-&sysfs_ ## name ## _max_duration_ ## duration_units,			\
-&sysfs_ ## name ## _last_ ## frequency_units,
 
 #define ewma_add(ewma, val, weight)					\
 ({									\
