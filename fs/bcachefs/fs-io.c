@@ -990,6 +990,9 @@ static void bchfs_read(struct bch_fs *c, struct btree_iter *iter,
 	int flags = BCH_READ_RETRY_IF_STALE|
 		BCH_READ_MAY_PROMOTE;
 
+	rbio->c = c;
+	rbio->start_time = local_clock();
+
 	while (1) {
 		BKEY_PADDED(k) tmp;
 		struct bkey_s_c k;

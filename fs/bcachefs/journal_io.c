@@ -1246,7 +1246,7 @@ static void journal_write_done(struct closure *cl)
 	if (bch2_mark_replicas(c, BCH_DATA_JOURNAL, devs))
 		goto err;
 out:
-	__bch2_time_stats_update(j->write_time, j->write_start_time);
+	bch2_time_stats_update(j->write_time, j->write_start_time);
 
 	spin_lock(&j->lock);
 	j->last_seq_ondisk = seq;

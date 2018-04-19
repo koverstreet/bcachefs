@@ -195,14 +195,17 @@ static void __bch2_write(struct closure *);
 static void bch2_write_done(struct closure *cl)
 {
 	struct bch_write_op *op = container_of(cl, struct bch_write_op, cl);
+	struct bch_fs *c = op->c;
 
 	if (!op->error && (op->flags & BCH_WRITE_FLUSH))
-		op->error = bch2_journal_error(&op->c->journal);
+		op->error = bch2_journal_error(&c->journal);
 
 	if (!(op->flags & BCH_WRITE_NOPUT_RESERVATION))
-		bch2_disk_reservation_put(op->c, &op->res);
-	percpu_ref_put(&op->c->writes);
+		bch2_disk_reservation_put(c, &op->res);
+	percpu_ref_put(&c->writes);
 	bch2_keylist_free(&op->insert_keys, op->inline_keys);
+
+	bch2_time_stats_update(&c->data_write_time, op->start_time);
 
 	closure_return(cl);
 }
@@ -824,6 +827,8 @@ void bch2_write(struct closure *cl)
 	BUG_ON(!bkey_cmp(op->pos, POS_MAX));
 	BUG_ON(bio_sectors(&op->wbio.bio) > U16_MAX);
 
+	op->start_time = local_clock();
+
 	memset(&op->failed, 0, sizeof(op->failed));
 
 	bch2_keylist_init(&op->insert_keys, op->inline_keys);
@@ -1032,6 +1037,12 @@ static inline struct bch_read_bio *bch2_rbio_free(struct bch_read_bio *rbio)
 	return rbio;
 }
 
+static void bch2_rbio_done(struct bch_read_bio *rbio)
+{
+	bch2_time_stats_update(&rbio->c->data_read_time, rbio->start_time);
+	bio_endio(&rbio->bio);
+}
+
 static void bch2_read_retry_nodecode(struct bch_fs *c, struct bch_read_bio *rbio,
 				     struct bvec_iter bvec_iter, u64 inode,
 				     struct bch_devs_mask *avoid, unsigned flags)
@@ -1077,7 +1088,7 @@ retry:
 err:
 	rbio->bio.bi_status = BLK_STS_IOERR;
 out:
-	bio_endio(&rbio->bio);
+	bch2_rbio_done(rbio);
 }
 
 static void bch2_read_retry(struct bch_fs *c, struct bch_read_bio *rbio,
@@ -1130,7 +1141,7 @@ retry:
 err:
 	rbio->bio.bi_status = BLK_STS_IOERR;
 out:
-	bio_endio(&rbio->bio);
+	bch2_rbio_done(rbio);
 }
 
 static void bch2_rbio_retry(struct work_struct *work)
@@ -1175,7 +1186,7 @@ static void bch2_rbio_error(struct bch_read_bio *rbio, int retry,
 		rbio = bch2_rbio_free(rbio);
 
 		rbio->bio.bi_status = error;
-		bio_endio(&rbio->bio);
+		bch2_rbio_done(rbio);
 	} else {
 		bch2_rbio_punt(rbio, bch2_rbio_retry,
 			       RBIO_CONTEXT_UNBOUND, system_unbound_wq);
@@ -1323,7 +1334,7 @@ static void __bch2_read_endio(struct work_struct *work)
 nodecode:
 	if (likely(!(rbio->flags & BCH_READ_IN_RETRY))) {
 		rbio = bch2_rbio_free(rbio);
-		bio_endio(&rbio->bio);
+		bch2_rbio_done(rbio);
 	}
 	return;
 csum_err:
@@ -1594,7 +1605,7 @@ no_device:
 		orig->bio.bi_status = BLK_STS_IOERR;
 
 		if (flags & BCH_READ_LAST_FRAGMENT)
-			bio_endio(&orig->bio);
+			bch2_rbio_done(orig);
 		return 0;
 	} else {
 		return READ_ERR;
@@ -1612,7 +1623,7 @@ hole:
 	zero_fill_bio_iter(&orig->bio, iter);
 
 	if (flags & BCH_READ_LAST_FRAGMENT)
-		bio_endio(&orig->bio);
+		bch2_rbio_done(orig);
 	return 0;
 }
 
@@ -1628,6 +1639,9 @@ void bch2_read(struct bch_fs *c, struct bch_read_bio *rbio, u64 inode)
 	BUG_ON(rbio->_state);
 	BUG_ON(flags & BCH_READ_NODECODE);
 	BUG_ON(flags & BCH_READ_IN_RETRY);
+
+	rbio->c = c;
+	rbio->start_time = local_clock();
 
 	for_each_btree_key(&iter, c, BTREE_ID_EXTENTS,
 			   POS(inode, rbio->bio.bi_iter.bi_sector),
@@ -1666,7 +1680,7 @@ void bch2_read(struct bch_fs *c, struct bch_read_bio *rbio, u64 inode)
 	ret = bch2_btree_iter_unlock(&iter);
 	BUG_ON(!ret);
 	bcache_io_error(c, &rbio->bio, "btree IO error %i", ret);
-	bio_endio(&rbio->bio);
+	bch2_rbio_done(rbio);
 }
 
 void bch2_fs_io_exit(struct bch_fs *c)
