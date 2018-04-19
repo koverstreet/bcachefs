@@ -398,6 +398,11 @@ err:
 
 static void bch2_fs_free(struct bch_fs *c)
 {
+#define BCH_TIME_STAT(name)				\
+	bch2_time_stats_exit(&c->name##_time);
+	BCH_TIME_STATS()
+#undef BCH_TIME_STAT
+
 	bch2_fs_quota_exit(c);
 	bch2_fs_fsio_exit(c);
 	bch2_fs_encryption_exit(c);
@@ -560,8 +565,8 @@ static struct bch_fs *bch2_fs_alloc(struct bch_sb *sb, struct bch_opts opts)
 
 	init_rwsem(&c->gc_lock);
 
-#define BCH_TIME_STAT(name, frequency_units, duration_units)		\
-	spin_lock_init(&c->name##_time.lock);
+#define BCH_TIME_STAT(name)				\
+	bch2_time_stats_init(&c->name##_time);
 	BCH_TIME_STATS()
 #undef BCH_TIME_STAT
 
