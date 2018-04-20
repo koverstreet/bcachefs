@@ -334,6 +334,7 @@ start:
 
 next_server:
 	_debug("next");
+	afs_end_cursor(&fc->ac);
 	afs_put_cb_interest(afs_v2net(vnode), fc->cbi);
 	fc->cbi = NULL;
 	fc->index++;
@@ -383,6 +384,7 @@ use_server:
 	afs_get_addrlist(alist);
 	read_unlock(&server->fs_lock);
 
+	memset(&fc->ac, 0, sizeof(fc->ac));
 
 	/* Probe the current fileserver if we haven't done so yet. */
 	if (!test_bit(AFS_SERVER_FL_PROBED, &server->flags)) {
@@ -397,11 +399,8 @@ use_server:
 	else
 		afs_put_addrlist(alist);
 
-	fc->ac.addr  = NULL;
 	fc->ac.start = READ_ONCE(alist->index);
 	fc->ac.index = fc->ac.start;
-	fc->ac.error = 0;
-	fc->ac.begun = false;
 	goto iterate_address;
 
 iterate_address:
@@ -410,16 +409,15 @@ iterate_address:
 	/* Iterate over the current server's address list to try and find an
 	 * address on which it will respond to us.
 	 */
-	if (afs_iterate_addresses(&fc->ac)) {
-		_leave(" = t");
-		return true;
-	}
+	if (!afs_iterate_addresses(&fc->ac))
+		goto next_server;
 
-	afs_end_cursor(&fc->ac);
-	goto next_server;
+	_leave(" = t");
+	return true;
 
 failed:
 	fc->flags |= AFS_FS_CURSOR_STOP;
+	afs_end_cursor(&fc->ac);
 	_leave(" = f [failed %d]", fc->ac.error);
 	return false;
 }
@@ -458,12 +456,10 @@ bool afs_select_current_fileserver(struct afs_fs_cursor *fc)
 			return false;
 		}
 
+		memset(&fc->ac, 0, sizeof(fc->ac));
 		fc->ac.alist = alist;
-		fc->ac.addr  = NULL;
 		fc->ac.start = READ_ONCE(alist->index);
 		fc->ac.index = fc->ac.start;
-		fc->ac.error = 0;
-		fc->ac.begun = false;
 		goto iterate_address;
 
 	case 0:
