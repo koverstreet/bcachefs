@@ -876,10 +876,12 @@ static int readpage_add_page(struct readpages_iter *iter, struct page *page)
 	int ret;
 
 	prefetchw(&page->flags);
-	page_state_init_for_read(page);
 
 	ret = add_to_page_cache_lru(page, iter->mapping,
 				    page->index, GFP_NOFS);
+	if (!ret)
+		page_state_init_for_read(page);
+
 	put_page(page);
 	return ret;
 }
