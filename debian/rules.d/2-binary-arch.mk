@@ -439,6 +439,26 @@ endif
 
 	rm -rf $(headers_tmp)
 
+define dh_all
+	dh_installchangelogs -p$(1)
+	dh_installdocs -p$(1)
+	dh_compress -p$(1)
+	dh_fixperms -p$(1) -X/boot/
+	dh_shlibdeps -p$(1) $(shlibdeps_opts)
+	dh_installdeb -p$(1)
+	dh_installdebconf -p$(1)
+	$(lockme) dh_gencontrol -p$(1) -- -Vlinux:rprovides='$(rprovides)'
+	dh_md5sums -p$(1)
+	dh_builddeb -p$(1)
+endef
+define newline
+
+
+endef
+define dh_all_inline
+        $(subst ${newline},; \${newline},$(call dh_all,$(1)))
+endef
+
 binary-arch-headers: install-arch-headers
 	@echo Debug: $@
 	dh_testdir
@@ -448,14 +468,7 @@ ifneq ($(DEBIAN),debian.master)
 	echo "non-master branch building linux-libc-dev, aborting"
 	exit 1
 endif
-	dh_installchangelogs -plinux-libc-dev
-	dh_installdocs -plinux-libc-dev
-	dh_compress -plinux-libc-dev
-	dh_fixperms -plinux-libc-dev
-	dh_installdeb -plinux-libc-dev
-	$(lockme) dh_gencontrol -plinux-libc-dev -- $(libc_dev_version)
-	dh_md5sums -plinux-libc-dev
-	dh_builddeb -plinux-libc-dev
+	$(call dh_all,linux-libc-dev)
 endif
 
 binary-%: pkgimg = $(bin_pkg_name)-$*
@@ -474,25 +487,8 @@ binary-%: install-%
 	dh_testdir
 	dh_testroot
 
-	dh_installchangelogs -p$(pkgimg)
-	dh_installdocs -p$(pkgimg)
-	dh_compress -p$(pkgimg)
-	dh_fixperms -p$(pkgimg) -X/boot/
-	dh_installdeb -p$(pkgimg)
-	dh_shlibdeps -p$(pkgimg) $(shlibdeps_opts)
-	$(lockme) dh_gencontrol -p$(pkgimg) -- -Vlinux:rprovides='$(rprovides)'
-	dh_md5sums -p$(pkgimg)
-	dh_builddeb -p$(pkgimg)
-
-	dh_installchangelogs -p$(pkgimg_mods)
-	dh_installdocs -p$(pkgimg_mods)
-	dh_compress -p$(pkgimg_mods)
-	dh_fixperms -p$(pkgimg_mods) -X/boot/
-	dh_installdeb -p$(pkgimg_mods)
-	dh_shlibdeps -p$(pkgimg_mods) $(shlibdeps_opts)
-	$(lockme) dh_gencontrol -p$(pkgimg_mods)
-	dh_md5sums -p$(pkgimg_mods)
-	dh_builddeb -p$(pkgimg_mods)
+	$(call dh_all,$(pkgimg))
+	$(call dh_all,$(pkgimg_mods))
 
 ifeq ($(do_extras_package),true)
   ifeq ($(ship_extras_package),false)
@@ -504,53 +500,22 @@ ifeq ($(do_extras_package),true)
 		| tee -a $(target_flavour).not-shipped.log;
   else
 	if [ -f $(DEBIAN)/control.d/$(target_flavour).inclusion-list ] ; then \
-		dh_installchangelogs -p$(pkgimg_ex); \
-		dh_installdocs -p$(pkgimg_ex); \
-		dh_compress -p$(pkgimg_ex); \
-		dh_fixperms -p$(pkgimg_ex) -X/boot/; \
-		dh_installdeb -p$(pkgimg_ex); \
-		dh_shlibdeps -p$(pkgimg_ex) $(shlibdeps_opts); \
-		$(lockme) dh_gencontrol -p$(pkgimg_ex); \
-		dh_md5sums -p$(pkgimg_ex); \
-		dh_builddeb -p$(pkgimg_ex); \
+		$(call dh_all_inline,$(pkgimg_ex)); \
 	fi
   endif
 endif
 
-	dh_installchangelogs -p$(pkghdr)
-	dh_installdocs -p$(pkghdr)
-	dh_compress -p$(pkghdr)
-	dh_fixperms -p$(pkghdr)
-	dh_shlibdeps -p$(pkghdr) $(shlibdeps_opts)
-	dh_installdeb -p$(pkghdr)
-	$(lockme) dh_gencontrol -p$(pkghdr)
-	dh_md5sums -p$(pkghdr)
-	dh_builddeb -p$(pkghdr)
+	$(call dh_all,$(pkghdr))
 
 ifneq ($(skipsub),true)
 	@set -e; for sub in $($(*)_sub); do		\
-		pkg=$(bin_pkg_name)-$$sub;	\
-		dh_installchangelogs -p$$pkg;		\
-		dh_installdocs -p$$pkg;			\
-		dh_compress -p$$pkg;			\
-		dh_fixperms -p$$pkg -X/boot/;		\
-		dh_shlibdeps -p$$pkg $(shlibdeps_opts);	\
-		dh_installdeb -p$$pkg;			\
-		$(lockme) dh_gencontrol -p$$pkg;			\
-		dh_md5sums -p$$pkg;			\
-		dh_builddeb -p$$pkg;			\
+		pkg=$(bin_pkg_name)-$$sub;		\
+		$(call dh_all_inline,$$pkg);		\
 	done
 endif
 
 ifneq ($(skipdbg),true)
-	dh_installchangelogs -p$(dbgpkg)
-	dh_installdocs -p$(dbgpkg)
-	dh_compress -p$(dbgpkg)
-	dh_fixperms -p$(dbgpkg)
-	dh_installdeb -p$(dbgpkg)
-	$(lockme) dh_gencontrol -p$(dbgpkg)
-	dh_md5sums -p$(dbgpkg)
-	dh_builddeb -p$(dbgpkg)
+	$(call dh_all,$(dbgpkg))
 
 	# Hokay...here's where we do a little twiddling...
 	# Renaming the debug package prevents it from getting into
@@ -575,26 +540,10 @@ ifneq ($(skipdbg),true)
 endif
 
 ifeq ($(do_linux_tools),true)
-	dh_installchangelogs -p$(pkgtools)
-	dh_installdocs -p$(pkgtools)
-	dh_compress -p$(pkgtools)
-	dh_fixperms -p$(pkgtools)
-	dh_shlibdeps -p$(pkgtools) $(shlibdeps_opts)
-	dh_installdeb -p$(pkgtools)
-	$(lockme) dh_gencontrol -p$(pkgtools)
-	dh_md5sums -p$(pkgtools)
-	dh_builddeb -p$(pkgtools)
+	$(call dh_all,$(pkgtools))
 endif
 ifeq ($(do_cloud_tools),true)
-	dh_installchangelogs -p$(pkgcloud)
-	dh_installdocs -p$(pkgcloud)
-	dh_compress -p$(pkgcloud)
-	dh_fixperms -p$(pkgcloud)
-	dh_shlibdeps -p$(pkgcloud) $(shlibdeps_opts)
-	dh_installdeb -p$(pkgcloud)
-	$(lockme) dh_gencontrol -p$(pkgcloud)
-	dh_md5sums -p$(pkgcloud)
-	dh_builddeb -p$(pkgcloud)
+	$(call dh_all,$(pkgcloud))
 endif
 
 ifneq ($(full_build),false)
@@ -719,28 +668,10 @@ binary-perarch: cloudpkg = $(cloud_pkg_name)
 binary-perarch: install-perarch
 	@echo Debug: $@
 ifeq ($(do_linux_tools),true)
-	dh_strip -p$(toolspkg)
-	dh_installchangelogs -p$(toolspkg)
-	dh_installdocs -p$(toolspkg)
-	dh_compress -p$(toolspkg)
-	dh_fixperms -p$(toolspkg)
-	dh_shlibdeps -p$(toolspkg) $(shlibdeps_opts)
-	dh_installdeb -p$(toolspkg)
-	$(lockme) dh_gencontrol -p$(toolspkg)
-	dh_md5sums -p$(toolspkg)
-	dh_builddeb -p$(toolspkg)
+	$(call dh_all,$(toolspkg))
 endif
 ifeq ($(do_cloud_tools),true)
-	dh_strip -p$(cloudpkg)
-	dh_installchangelogs -p$(cloudpkg)
-	dh_installdocs -p$(cloudpkg)
-	dh_compress -p$(cloudpkg)
-	dh_fixperms -p$(cloudpkg)
-	dh_shlibdeps -p$(cloudpkg) $(shlibdeps_opts)
-	dh_installdeb -p$(cloudpkg)
-	$(lockme) dh_gencontrol -p$(cloudpkg)
-	dh_md5sums -p$(cloudpkg)
-	dh_builddeb -p$(cloudpkg)
+	$(call dh_all,$(cloudpkg))
 endif
 
 binary-debs: signing = $(CURDIR)/debian/$(bin_pkg_name)-signing
