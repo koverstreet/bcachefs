@@ -6,7 +6,7 @@ repo_list=(
 	"http://ppa.launchpad.net/canonical-kernel-team/ppa/ubuntu/pool/main/l/linux"
 )
 
-package_prefixes linux-image linux-image-extra
+package_prefixes linux-image linux-modules linux-modules-extra
 
 getall armhf generic
 getall armhf generic-lpae
