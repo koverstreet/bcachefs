@@ -807,8 +807,11 @@ SendReceive2(const unsigned int xid, struct cifs_ses *ses,
 	int rc;
 
 	new_iov = kmalloc(sizeof(struct kvec) * (n_vec + 1), GFP_KERNEL);
-	if (!new_iov)
+	if (!new_iov) {
+		/* otherwise cifs_send_recv below sets resp_buf_type */
+		*resp_buf_type = CIFS_NO_BUFFER;
 		return -ENOMEM;
+	}
 
 	/* 1st iov is a RFC1001 length followed by the rest of the packet */
 	memcpy(new_iov + 1, iov, (sizeof(struct kvec) * n_vec));
