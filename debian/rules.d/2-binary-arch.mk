@@ -17,11 +17,14 @@ endif
 
 shlibdeps_opts = $(if $(CROSS_COMPILE),-- -l$(CROSS_COMPILE:%-=/usr/%)/lib)
 
+debian/scripts/fix-filenames: debian/scripts/fix-filenames.c
+	$(CC) -o $@ $^
+
 $(stampdir)/stamp-prepare-%: config-prepare-check-%
 	@echo Debug: $@
 	@touch $@
 $(stampdir)/stamp-prepare-tree-%: target_flavour = $*
-$(stampdir)/stamp-prepare-tree-%: $(commonconfdir)/config.common.$(family) $(archconfdir)/config.common.$(arch) $(archconfdir)/config.flavour.%
+$(stampdir)/stamp-prepare-tree-%: $(commonconfdir)/config.common.$(family) $(archconfdir)/config.common.$(arch) $(archconfdir)/config.flavour.% debian/scripts/fix-filenames
 	@echo Debug: $@
 	install -d $(builddir)/build-$*
 	touch $(builddir)/build-$*/ubuntu-build
@@ -96,6 +99,17 @@ define install_control =
 		    -e 's/@image-stem@/$(instfile)/g'				\
 			<"$$template" >"$$script";				\
 	done
+endef
+
+# Ensure the directory prefix is exactly 100 characters long so pathnames are the
+# exact same length in any binary files produced by the builds.  These will be
+# commonised later.
+dkms_20d=....................
+dkms_100d=$(dkms_20d)$(dkms_20d)$(dkms_20d)$(dkms_20d)$(dkms_20d)
+dkms_100c=$(shell echo '$(dkms_100d)' | sed -e 's/\./_/g')
+define dkms_dir_prefix =
+$(shell echo $(1)/$(dkms_100c) | \
+	sed -e 's/\($(dkms_100d)\).*/\1/' -e 's/^\(.*\)....$$/\1dkms/')
 endef
 
 # Install the finished build
