@@ -69,6 +69,7 @@
 #include <asm/livepatch.h>
 #include <asm/opal.h>
 #include <asm/cputhreads.h>
+#include <asm/security_features.h>
 
 #include "setup.h"
 
@@ -804,10 +805,47 @@ static int __init disable_hardlockup_detector(void)
 early_initcall(disable_hardlockup_detector);
 
 #ifdef CONFIG_PPC_BOOK3S_64
-static enum l1d_flush_type enabled_flush_types;
+static enum stf_barrier_type stf_enabled_flush_types;
+static bool no_stf_barrier;
+bool stf_barrier;
+
+static enum l1d_flush_type rfi_enabled_flush_types;
 static void *l1d_flush_fallback_area;
 static bool no_rfi_flush;
 bool rfi_flush;
+
+static int __init handle_no_stf_barrier(char *p)
+{
+	pr_info("stf-barrier: disabled on command line.");
+	no_stf_barrier = true;
+	return 0;
+}
+
+early_param("no_stf_barrier", handle_no_stf_barrier);
+
+/* This is the generic flag used by other architectures */
+static int __init handle_ssbd(char *p)
+{
+	if (!p || strncmp(p, "off", 3) == 0) {
+		handle_no_stf_barrier(NULL);
+		return 0;
+	} else if (strncmp(p, "auto", 5) == 0 || strncmp(p, "on", 2) == 0 )
+		/* Until firmware tells us, we have the barrier with auto */
+		return 0;
+	else
+		return 1;
+
+	return 0;
+}
+early_param("spec_store_bypass_disable", handle_ssbd);
+
+/* This is the generic flag used by other architectures */
+static int __init handle_no_ssbd(char *p)
+{
+	handle_no_stf_barrier(NULL);
+	return 0;
+}
+early_param("nospec_store_bypass_disable", handle_no_ssbd);
 
 static int __init handle_no_rfi_flush(char *p)
 {
@@ -837,15 +875,61 @@ static void do_nothing(void *unused)
 	 */
 }
 
-void rfi_flush_enable(bool enable)
+static void stf_barrier_enable(bool enable)
 {
 	if (enable) {
-		do_rfi_flush_fixups(enabled_flush_types);
+		do_stf_barrier_fixups(stf_enabled_flush_types);
+		on_each_cpu(do_nothing, NULL, 1);
+	} else
+		do_stf_barrier_fixups(STF_BARRIER_NONE);
+
+	stf_barrier = enable;
+}
+
+static void rfi_flush_enable(bool enable)
+{
+	if (enable) {
+		do_rfi_flush_fixups(rfi_enabled_flush_types);
 		on_each_cpu(do_nothing, NULL, 1);
 	} else
 		do_rfi_flush_fixups(L1D_FLUSH_NONE);
 
 	rfi_flush = enable;
+}
+
+void setup_stf_barrier(void)
+{
+	enum stf_barrier_type type;
+	bool enable, hv;
+
+	hv = cpu_has_feature(CPU_FTR_HVMODE);
+
+	/* Default to fallback in case fw-features are not available */
+	if (cpu_has_feature(CPU_FTR_ARCH_300))
+		type = STF_BARRIER_EIEIO;
+	else if (cpu_has_feature(CPU_FTR_ARCH_207S))
+		type = STF_BARRIER_SYNC_ORI;
+	else if (cpu_has_feature(CPU_FTR_ARCH_206))
+		type = STF_BARRIER_FALLBACK;
+	else
+		type = STF_BARRIER_NONE;
+
+	enable = security_ftr_enabled(SEC_FTR_FAVOUR_SECURITY) &&
+		(security_ftr_enabled(SEC_FTR_L1D_FLUSH_PR) ||
+		 (security_ftr_enabled(SEC_FTR_L1D_FLUSH_HV) && hv));
+
+	if (type == STF_BARRIER_FALLBACK) {
+		pr_info("stf-barrier: fallback barrier available\n");
+	} else if (type == STF_BARRIER_SYNC_ORI) {
+		pr_info("stf-barrier: hwsync barrier available\n");
+	} else if (type == STF_BARRIER_EIEIO) {
+		pr_info("stf-barrier: eieio barrier available\n");
+	}
+
+	stf_enabled_flush_types = type;
+
+	if (!no_stf_barrier)
+		stf_barrier_enable(enable);
 }
 
 static void init_fallback_flush(void)
@@ -898,13 +982,39 @@ void setup_rfi_flush(enum l1d_flush_type types, bool enable)
 	if (types & L1D_FLUSH_MTTRIG)
 		pr_info("rfi-flush: mttrig type flush available\n");
 
-	enabled_flush_types = types;
+	rfi_enabled_flush_types = types;
 
 	if (!no_rfi_flush)
 		rfi_flush_enable(enable);
 }
 
 #ifdef CONFIG_DEBUG_FS
+static int stf_barrier_set(void *data, u64 val)
+{
+	bool enable;
+
+	if (val == 1)
+		enable = true;
+	else if (val == 0)
+		enable = false;
+	else
+		return -EINVAL;
+
+	/* Only do anything if we're changing state */
+	if (enable != stf_barrier)
+		stf_barrier_enable(enable);
+
+	return 0;
+}
+
+static int stf_barrier_get(void *data, u64 *val)
+{
+	*val = stf_barrier ? 1 : 0;
+	return 0;
+}
+
+DEFINE_SIMPLE_ATTRIBUTE(fops_stf_barrier, stf_barrier_get, stf_barrier_set, "%llu\n");
+
 static int rfi_flush_set(void *data, u64 val)
 {
 	bool enable;
@@ -934,6 +1044,7 @@ DEFINE_SIMPLE_ATTRIBUTE(fops_rfi_flush, rfi_flush_get, rfi_flush_set, "%llu\n");
 static __init int rfi_flush_debugfs_init(void)
 {
 	debugfs_create_file("rfi_flush", 0600, powerpc_debugfs_root, NULL, &fops_rfi_flush);
+	debugfs_create_file("stf_barrier", 0600, powerpc_debugfs_root, NULL, &fops_stf_barrier);
 	return 0;
 }
 device_initcall(rfi_flush_debugfs_init);

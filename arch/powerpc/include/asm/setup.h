@@ -39,9 +39,17 @@ static inline void pseries_big_endian_exceptions(void) {}
 static inline void pseries_little_endian_exceptions(void) {}
 #endif /* CONFIG_PPC_PSERIES */
 
-void rfi_flush_enable(bool enable);
-
 /* These are bit flags */
+enum stf_barrier_type {
+	STF_BARRIER_NONE	= 0x1,
+	STF_BARRIER_FALLBACK	= 0x2,
+	STF_BARRIER_EIEIO	= 0x4,
+	STF_BARRIER_SYNC_ORI	= 0x8,
+};
+
+void setup_stf_barrier(void);
+void do_stf_barrier_fixups(enum stf_barrier_type types);
+
 enum l1d_flush_type {
 	L1D_FLUSH_NONE		= 0x1,
 	L1D_FLUSH_FALLBACK	= 0x2,
