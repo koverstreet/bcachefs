@@ -358,8 +358,7 @@ static irqreturn_t fsl_ssi_isr(int irq, void *dev_id)
 {
 	struct fsl_ssi_private *ssi_private = dev_id;
 	struct regmap *regs = ssi_private->regs;
-	__be32 sisr;
-	__be32 sisr2;
+	u32 sisr, sisr2;
 
 	/* We got an interrupt, so read the status register to see what we
 	   were interrupted for.  We mask it with the Interrupt Enable register
