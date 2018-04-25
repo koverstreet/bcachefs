@@ -4350,6 +4350,12 @@ void ath10k_wmi_event_pdev_tpc_config(struct ath10k *ar, struct sk_buff *skb)
 
 	num_tx_chain = __le32_to_cpu(ev->num_tx_chain);
 
+	if (num_tx_chain > WMI_TPC_TX_N_CHAIN) {
+		ath10k_warn(ar, "number of tx chain is %d greater than TPC configured tx chain %d\n",
+			    num_tx_chain, WMI_TPC_TX_N_CHAIN);
+		return;
+	}
+
 	/* Fill HT20 rate code */
 	for (i = 0; i < num_tx_chain; i++) {
 		for (j = 0; j < 8; j++) {
