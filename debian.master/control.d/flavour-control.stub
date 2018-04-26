@@ -27,7 +27,7 @@ Architecture: ARCH
 Section: kernel
 Priority: optional
 Provides: linux-image, fuse-module, aufs-dkms, =PROVIDES=${linux:rprovides}
-Depends: ${misc:Depends}, ${shlibs:Depends}, kmod, linux-base, linux-modules-PKGVER-ABINUM-FLAVOUR
+Depends: ${misc:Depends}, ${shlibs:Depends}, kmod, linux-base (>= 4.5ubuntu1~16.04.1), linux-modules-PKGVER-ABINUM-FLAVOUR
 Recommends: BOOTLOADER, initramfs-tools | linux-initramfs-tool
 Breaks: flash-kernel (<< 3.90ubuntu2) [arm64 armhf]
 Conflicts: linux-image=SIGN-PEER-PKG=-PKGVER-ABINUM-FLAVOUR
