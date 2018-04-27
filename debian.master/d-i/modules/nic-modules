@@ -88,6 +88,7 @@ hamachi ?
 hclge ?
 hermes ?
 hfi1 ?
+hinic ?
 hns_dsaf ?
 hns_enet_drv ?
 hns_mdio ?
