@@ -136,7 +136,7 @@ void do_stf_entry_barrier_fixups(enum stf_barrier_type types)
 		instrs[i++] = 0x60000000; /* branch patched below */
 		instrs[i++] = 0x7d4803a6; /* mtlr r10		*/
 	} else if (types & STF_BARRIER_EIEIO) {
-		instrs[i++] = 0x7c0006ac; /* eieio		*/
+		instrs[i++] = 0x7e0006ac; /* eieio + bit 6 hint */
 	} else if (types & STF_BARRIER_SYNC_ORI) {
 		instrs[i++] = 0x7c0004ac; /* hwsync		*/
 		instrs[i++] = 0xe94d0000; /* ld r10,0(r13)	*/
@@ -192,7 +192,7 @@ void do_stf_exit_barrier_fixups(enum stf_barrier_type types)
 		instrs[i++] = 0x63ff0000; /* ori 31,31,0 speculation barrier */
 		instrs[i++] = 0x7db242a6; /* mfsprg r13,2	*/
 	} else if (types & STF_BARRIER_EIEIO) {
-		instrs[i++] = 0x7c0006ac; /* eieio		*/
+		instrs[i++] = 0x7e0006ac; /* eieio + bit 6 hint */
 	}
 
 	for (i = 0; start < end; start++, i++) {
