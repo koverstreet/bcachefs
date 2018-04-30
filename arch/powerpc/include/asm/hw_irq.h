@@ -28,6 +28,14 @@
 #define PACA_IRQ_EE_EDGE	0x10 /* BookE only */
 #define PACA_IRQ_HMI		0x20
 
+/*
+ * flags for paca->irq_soft_mask
+ */
+#define IRQS_ENABLED        0
+#define IRQS_DISABLED       1 /* local_irq_disable() interrupts */
+#define IRQS_PMI_DISABLED   2
+#define IRQS_ALL_DISABLED   (IRQS_DISABLED | IRQS_PMI_DISABLED)
+
 #endif /* CONFIG_PPC64 */
 
 #ifndef __ASSEMBLY__
