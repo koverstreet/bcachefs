@@ -143,7 +143,8 @@ static inline u64 __dev_buckets_available(struct bch_dev *ca,
 	u64 total = ca->mi.nbuckets - ca->mi.first_bucket;
 
 	if (WARN_ONCE(stats.buckets_unavailable > total,
-		      "buckets_unavailable overflow\n"))
+		      "buckets_unavailable overflow (%llu > %llu)\n",
+		      stats.buckets_unavailable, total))
 		return 0;
 
 	return total - stats.buckets_unavailable;
