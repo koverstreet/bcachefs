@@ -871,102 +871,12 @@ static const struct rhashtable_params bch_promote_params = {
 	.key_len	= sizeof(struct bpos),
 };
 
-static void promote_free(struct bch_fs *c, struct promote_op *op)
+static inline bool should_promote(struct bch_fs *c, struct bkey_s_c k,
+				  struct bpos pos,
+				  struct bch_io_opts opts,
+				  unsigned flags)
 {
-	rhashtable_remove_fast(&c->promote_table, &op->hash, bch_promote_params);
-	kfree(op);
-}
-
-static void promote_done(struct closure *cl)
-{
-	struct promote_op *op =
-		container_of(cl, struct promote_op, cl);
-	struct bch_fs *c = op->write.op.c;
-
-	percpu_ref_put(&c->writes);
-	bch2_bio_free_pages_pool(c, &op->write.op.wbio.bio);
-	promote_free(c, op);
-}
-
-static void promote_start(struct promote_op *op, struct bch_read_bio *rbio)
-{
-	struct bch_fs *c = rbio->c;
-	struct closure *cl = &op->cl;
-	struct bio *bio = &op->write.op.wbio.bio;
-
-	BUG_ON(!rbio->split || !rbio->bounce);
-
-	if (!percpu_ref_tryget(&c->writes))
-		return;
-
-	trace_promote(&rbio->bio);
-
-	/* we now own pages: */
-	BUG_ON(rbio->bio.bi_vcnt > bio->bi_max_vecs);
-	swap(bio->bi_vcnt, rbio->bio.bi_vcnt);
-	rbio->promote = NULL;
-
-	bch2_migrate_read_done(&op->write, rbio);
-
-	closure_init(cl, NULL);
-	closure_call(&op->write.op.cl, bch2_write, c->wq, cl);
-	closure_return_with_destructor(cl, promote_done);
-}
-
-/*
- * XXX: multiple promotes can race with each other, wastefully. Keep a list of
- * outstanding promotes?
- */
-static struct promote_op *promote_alloc(struct bch_read_bio *rbio,
-					struct bkey_s_c k)
-{
-	struct bch_fs *c = rbio->c;
-	struct promote_op *op;
-	struct bio *bio;
-	/* data might have to be decompressed in the write path: */
-	unsigned pages = DIV_ROUND_UP(rbio->pick.crc.uncompressed_size,
-				      PAGE_SECTORS);
-	int ret;
-
-	BUG_ON(!rbio->bounce);
-	BUG_ON(pages < rbio->bio.bi_vcnt);
-
-	op = kzalloc(sizeof(*op) + sizeof(struct bio_vec) * pages,
-		     GFP_NOIO);
-	if (!op)
-		return NULL;
-
-	op->pos = k.k->p;
-
-	if (rhashtable_lookup_insert_fast(&c->promote_table, &op->hash,
-					  bch_promote_params)) {
-		kfree(op);
-		return NULL;
-	}
-
-	bio = &op->write.op.wbio.bio;
-	bio_init(bio, bio->bi_inline_vecs, pages);
-
-	memcpy(bio->bi_io_vec, rbio->bio.bi_io_vec,
-	       sizeof(struct bio_vec) * rbio->bio.bi_vcnt);
-
-	ret = bch2_migrate_write_init(c, &op->write,
-			writepoint_hashed((unsigned long) current),
-			rbio->opts,
-			DATA_PROMOTE,
-			(struct data_opts) {
-				.target = rbio->opts.promote_target
-			},
-			k);
-	BUG_ON(ret);
-
-	return op;
-}
-
-static bool should_promote(struct bch_fs *c, struct bkey_s_c k,
-			   unsigned flags, u16 target)
-{
-	if (!target)
+	if (!opts.promote_target)
 		return false;
 
 	if (!(flags & BCH_READ_MAY_PROMOTE))
@@ -978,14 +888,169 @@ static bool should_promote(struct bch_fs *c, struct bkey_s_c k,
 	if (!bkey_extent_is_data(k.k))
 		return false;
 
-	if (bch2_extent_has_target(c, bkey_s_c_to_extent(k), target))
+	if (bch2_extent_has_target(c, bkey_s_c_to_extent(k), opts.promote_target))
 		return false;
 
-	if (rhashtable_lookup_fast(&c->promote_table, &k.k->p,
+	if (rhashtable_lookup_fast(&c->promote_table, &pos,
 				   bch_promote_params))
 		return false;
 
 	return true;
+}
+
+static void promote_free(struct bch_fs *c, struct promote_op *op)
+{
+	int ret;
+
+	ret = rhashtable_remove_fast(&c->promote_table, &op->hash,
+				     bch_promote_params);
+	BUG_ON(ret);
+	percpu_ref_put(&c->writes);
+	kfree(op);
+}
+
+static void promote_done(struct closure *cl)
+{
+	struct promote_op *op =
+		container_of(cl, struct promote_op, cl);
+	struct bch_fs *c = op->write.op.c;
+
+	bch2_bio_free_pages_pool(c, &op->write.op.wbio.bio);
+	promote_free(c, op);
+}
+
+static void promote_start(struct promote_op *op, struct bch_read_bio *rbio)
+{
+	struct bch_fs *c = rbio->c;
+	struct closure *cl = &op->cl;
+	struct bio *bio = &op->write.op.wbio.bio;
+
+	trace_promote(&rbio->bio);
+
+	/* we now own pages: */
+	BUG_ON(!rbio->bounce);
+	BUG_ON(rbio->bio.bi_vcnt > bio->bi_max_vecs);
+
+	memcpy(bio->bi_io_vec, rbio->bio.bi_io_vec,
+	       sizeof(struct bio_vec) * rbio->bio.bi_vcnt);
+	swap(bio->bi_vcnt, rbio->bio.bi_vcnt);
+
+	bch2_migrate_read_done(&op->write, rbio);
+
+	closure_init(cl, NULL);
+	closure_call(&op->write.op.cl, bch2_write, c->wq, cl);
+	closure_return_with_destructor(cl, promote_done);
+}
+
+noinline
+static struct promote_op *__promote_alloc(struct bch_fs *c,
+					  struct bpos pos,
+					  struct extent_pick_ptr *pick,
+					  struct bch_io_opts opts,
+					  unsigned rbio_sectors,
+					  struct bch_read_bio **rbio)
+{
+	struct promote_op *op = NULL;
+	struct bio *bio;
+	unsigned rbio_pages = DIV_ROUND_UP(rbio_sectors, PAGE_SECTORS);
+	/* data might have to be decompressed in the write path: */
+	unsigned wbio_pages = DIV_ROUND_UP(pick->crc.uncompressed_size,
+					   PAGE_SECTORS);
+	int ret;
+
+	if (!percpu_ref_tryget(&c->writes))
+		return NULL;
+
+	op = kzalloc(sizeof(*op) + sizeof(struct bio_vec) * wbio_pages,
+		     GFP_NOIO);
+	if (!op)
+		goto err;
+
+	op->pos = pos;
+
+	/*
+	 * promotes require bouncing, but if the extent isn't
+	 * checksummed/compressed it might be too big for the mempool:
+	 */
+	if (rbio_sectors > c->sb.encoded_extent_max) {
+		*rbio = kzalloc(sizeof(struct bch_read_bio) +
+				sizeof(struct bio_vec) * rbio_pages,
+				GFP_NOIO);
+		if (!*rbio)
+			goto err;
+
+		rbio_init(&(*rbio)->bio, opts);
+		bio_init(&(*rbio)->bio, (*rbio)->bio.bi_inline_vecs,
+			 rbio_pages);
+
+		(*rbio)->bio.bi_iter.bi_size = rbio_sectors << 9;
+		bch2_bio_map(&(*rbio)->bio, NULL);
+
+		if (bch2_bio_alloc_pages(&(*rbio)->bio, GFP_NOIO))
+			goto err;
+
+		(*rbio)->bounce		= true;
+		(*rbio)->split		= true;
+		(*rbio)->kmalloc	= true;
+	}
+
+	if (rhashtable_lookup_insert_fast(&c->promote_table, &op->hash,
+					  bch_promote_params))
+		goto err;
+
+	bio = &op->write.op.wbio.bio;
+	bio_init(bio, bio->bi_inline_vecs, wbio_pages);
+
+	ret = bch2_migrate_write_init(c, &op->write,
+			writepoint_hashed((unsigned long) current),
+			opts,
+			DATA_PROMOTE,
+			(struct data_opts) {
+				.target = opts.promote_target
+			},
+			bkey_s_c_null);
+	BUG_ON(ret);
+
+	return op;
+err:
+	if (*rbio)
+		bio_free_pages(&(*rbio)->bio);
+	kfree(*rbio);
+	*rbio = NULL;
+	kfree(op);
+	percpu_ref_put(&c->writes);
+	return NULL;
+}
+
+static inline struct promote_op *promote_alloc(struct bch_fs *c,
+					       struct bvec_iter iter,
+					       struct bkey_s_c k,
+					       struct extent_pick_ptr *pick,
+					       struct bch_io_opts opts,
+					       unsigned flags,
+					       struct bch_read_bio **rbio,
+					       bool *bounce,
+					       bool *read_full)
+{
+	bool promote_full = *read_full || READ_ONCE(c->promote_whole_extents);
+	unsigned sectors = promote_full
+		? pick->crc.compressed_size
+		: bvec_iter_sectors(iter);
+	struct bpos pos = promote_full
+		? bkey_start_pos(k.k)
+		: POS(k.k->p.inode, iter.bi_sector);
+	struct promote_op *promote;
+
+	if (!should_promote(c, k, pos, opts, flags))
+		return NULL;
+
+	promote = __promote_alloc(c, pos, pick, opts, sectors, rbio);
+	if (!promote)
+		return NULL;
+
+	*bounce		= true;
+	*read_full	= promote_full;
+	return promote;
 }
 
 /* Read */
@@ -1034,7 +1099,11 @@ static inline struct bch_read_bio *bch2_rbio_free(struct bch_read_bio *rbio)
 	if (rbio->split) {
 		struct bch_read_bio *parent = rbio->parent;
 
-		bio_put(&rbio->bio);
+		if (rbio->kmalloc)
+			kfree(rbio);
+		else
+			bio_put(&rbio->bio);
+
 		rbio = parent;
 	}
 
@@ -1334,6 +1403,7 @@ static void __bch2_read_endio(struct work_struct *work)
 		 */
 		bch2_encrypt_bio(c, crc.csum_type, nonce, src);
 		promote_start(rbio->promote, rbio);
+		rbio->promote = NULL;
 	}
 nodecode:
 	if (likely(!(rbio->flags & BCH_READ_IN_RETRY))) {
@@ -1417,10 +1487,10 @@ int __bch2_read_extent(struct bch_fs *c, struct bch_read_bio *orig,
 		       struct bch_devs_mask *avoid, unsigned flags)
 {
 	struct extent_pick_ptr pick;
-	struct bch_read_bio *rbio;
+	struct bch_read_bio *rbio = NULL;
 	struct bch_dev *ca;
-	bool split = false, bounce = false, read_full = false;
-	bool promote = false, narrow_crcs = false;
+	struct promote_op *promote = NULL;
+	bool bounce = false, read_full = false, narrow_crcs = false;
 	struct bpos pos = bkey_start_pos(k.k);
 	int pick_ret;
 
@@ -1471,11 +1541,8 @@ int __bch2_read_extent(struct bch_fs *c, struct bch_read_bio *orig,
 		bounce = true;
 	}
 
-	promote = should_promote(c, k, flags, orig->opts.promote_target);
-	if (promote) {
-		read_full = true;
-		bounce = true;
-	}
+	promote = promote_alloc(c, iter, k, &pick, orig->opts, flags,
+				&rbio, &bounce, &read_full);
 
 	if (!read_full) {
 		EBUG_ON(pick.crc.compression_type);
@@ -1494,7 +1561,9 @@ int __bch2_read_extent(struct bch_fs *c, struct bch_read_bio *orig,
 		pos.offset			= iter.bi_sector;
 	}
 
-	if (bounce) {
+	if (rbio) {
+		/* promote already allocated bounce rbio */
+	} else if (bounce) {
 		unsigned sectors = pick.crc.compressed_size;
 
 		rbio = rbio_init(bio_alloc_bioset(GFP_NOIO,
@@ -1503,7 +1572,8 @@ int __bch2_read_extent(struct bch_fs *c, struct bch_read_bio *orig,
 				 orig->opts);
 
 		bch2_bio_alloc_pages_pool(c, &rbio->bio, sectors << 9);
-		split = true;
+		rbio->bounce	= true;
+		rbio->split	= true;
 	} else if (flags & BCH_READ_MUST_CLONE) {
 		/*
 		 * Have to clone if there were any splits, due to error
@@ -1517,12 +1587,11 @@ int __bch2_read_extent(struct bch_fs *c, struct bch_read_bio *orig,
 						&c->bio_read_split),
 				 orig->opts);
 		rbio->bio.bi_iter = iter;
-		split = true;
+		rbio->split	= true;
 	} else {
 noclone:
 		rbio = orig;
 		rbio->bio.bi_iter = iter;
-		split = false;
 		BUG_ON(bio_flagged(&rbio->bio, BIO_CHAIN));
 	}
 
@@ -1530,14 +1599,12 @@ noclone:
 
 	rbio->c			= c;
 	rbio->submit_time	= local_clock();
-	if (split)
+	if (rbio->split)
 		rbio->parent	= orig;
 	else
 		rbio->end_io	= orig->bio.bi_end_io;
 	rbio->bvec_iter		= iter;
 	rbio->flags		= flags;
-	rbio->bounce		= bounce;
-	rbio->split		= split;
 	rbio->have_ioref	= pick_ret > 0 && bch2_dev_get_ioref(ca, READ);
 	rbio->narrow_crcs	= narrow_crcs;
 	rbio->hole		= 0;
@@ -1547,14 +1614,14 @@ noclone:
 	rbio->pick		= pick;
 	rbio->pos		= pos;
 	rbio->version		= k.k->version;
-	rbio->promote		= promote ? promote_alloc(rbio, k) : NULL;
+	rbio->promote		= promote;
 	INIT_WORK(&rbio->work, NULL);
 
 	rbio->bio.bi_opf	= orig->bio.bi_opf;
 	rbio->bio.bi_iter.bi_sector = pick.ptr.offset;
 	rbio->bio.bi_end_io	= bch2_read_endio;
 
-	if (bounce)
+	if (rbio->bounce)
 		trace_read_bounce(&rbio->bio);
 
 	bch2_increment_clock(c, bio_sectors(&rbio->bio), READ);
