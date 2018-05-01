@@ -241,8 +241,9 @@ void bch2_quantiles_update(struct bch2_quantiles *q, u64 v)
 
 /* time stats: */
 
-static void __bch2_time_stats_update(struct bch2_time_stats *stats,
-				     u64 start, u64 end)
+#ifndef CONFIG_BCACHEFS_NO_LATENCY_ACCT
+static void bch2_time_stats_update_one(struct bch2_time_stats *stats,
+				       u64 start, u64 end)
 {
 	u64 duration, freq;
 
@@ -268,15 +269,13 @@ static void __bch2_time_stats_update(struct bch2_time_stats *stats,
 	bch2_quantiles_update(&stats->quantiles, duration);
 }
 
-#ifndef CONFIG_BCACHEFS_NO_LATENCY_ACCT
-void bch2_time_stats_update(struct bch2_time_stats *stats, u64 start)
+void __bch2_time_stats_update(struct bch2_time_stats *stats, u64 start, u64 end)
 {
-	u64 end = local_clock();
 	unsigned long flags;
 
 	if (!stats->buffer) {
 		spin_lock_irqsave(&stats->lock, flags);
-		__bch2_time_stats_update(stats, start, end);
+		bch2_time_stats_update_one(stats, start, end);
 
 		if (stats->average_frequency < 32 &&
 		    stats->count > 1024)
@@ -302,7 +301,7 @@ void bch2_time_stats_update(struct bch2_time_stats *stats, u64 start)
 			for (i = b->entries;
 			     i < b->entries + ARRAY_SIZE(b->entries);
 			     i++)
-				__bch2_time_stats_update(stats, i->start, i->end);
+				bch2_time_stats_update_one(stats, i->start, i->end);
 			spin_unlock_irqrestore(&stats->lock, flags);
 
 			b->nr = 0;

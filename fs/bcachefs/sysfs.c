@@ -148,6 +148,7 @@ read_attribute(io_latency_read);
 read_attribute(io_latency_write);
 read_attribute(io_latency_stats_read);
 read_attribute(io_latency_stats_write);
+read_attribute(congested);
 
 read_attribute(bucket_quantiles_last_read);
 read_attribute(bucket_quantiles_last_write);
@@ -875,6 +876,10 @@ SHOW(bch2_dev)
 	if (attr == &sysfs_io_latency_stats_write)
 		return bch2_time_stats_print(&ca->io_latency[WRITE], buf, PAGE_SIZE);
 
+	sysfs_printf(congested,			"%u%%",
+		     clamp(atomic_read(&ca->congested), 0, CONGESTED_MAX)
+		     * 100 / CONGESTED_MAX);
+
 	if (attr == &sysfs_bucket_quantiles_last_read)
 		return show_quantiles(c, ca, buf, bucket_last_io_fn, (void *) 0);
 	if (attr == &sysfs_bucket_quantiles_last_write)
@@ -971,6 +976,7 @@ struct attribute *bch2_dev_files[] = {
 	&sysfs_io_latency_write,
 	&sysfs_io_latency_stats_read,
 	&sysfs_io_latency_stats_write,
+	&sysfs_congested,
 
 	/* alloc info - other stats: */
 	&sysfs_bucket_quantiles_last_read,
