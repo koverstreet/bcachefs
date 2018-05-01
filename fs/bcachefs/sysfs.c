@@ -184,6 +184,7 @@ sysfs_pd_controller_attribute(copy_gc);
 rw_attribute(rebalance_enabled);
 rw_attribute(rebalance_percent);
 sysfs_pd_controller_attribute(rebalance);
+rw_attribute(promote_whole_extents);
 
 rw_attribute(pd_controllers_update_seconds);
 
@@ -340,8 +341,9 @@ SHOW(bch2_fs)
 
 	sysfs_printf(rebalance_enabled,		"%i", c->rebalance_enabled);
 	sysfs_print(rebalance_percent,		c->rebalance_percent);
-
 	sysfs_pd_controller_show(rebalance,	&c->rebalance_pd); /* XXX */
+
+	sysfs_print(promote_whole_extents,	c->promote_whole_extents);
 
 	sysfs_printf(meta_replicas_have, "%u",	bch2_replicas_online(c, true));
 	sysfs_printf(data_replicas_have, "%u",	bch2_replicas_online(c, false));
@@ -414,6 +416,8 @@ STORE(__bch2_fs)
 	sysfs_strtoul(rebalance_percent,	c->rebalance_percent);
 	sysfs_pd_controller_store(rebalance,	&c->rebalance_pd);
 
+	sysfs_strtoul(promote_whole_extents,	c->promote_whole_extents);
+
 	/* Debugging: */
 
 #define BCH_DEBUG_PARAM(name, description) sysfs_strtoul(name, c->name);
@@ -470,6 +474,7 @@ struct attribute *bch2_fs_files[] = {
 	&sysfs_journal_reclaim_delay_ms,
 
 	&sysfs_rebalance_percent,
+	&sysfs_promote_whole_extents,
 
 	&sysfs_compression_stats,
 	NULL

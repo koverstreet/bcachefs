@@ -711,6 +711,7 @@ struct bch_fs {
 	unsigned		copy_gc_enabled:1;
 	unsigned		rebalance_enabled:1;
 	unsigned		rebalance_percent;
+	bool			promote_whole_extents;
 
 #define BCH_DEBUG_PARAM(name, description) bool name;
 	BCH_DEBUG_PARAMS_ALL()
