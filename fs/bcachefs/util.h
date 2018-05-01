@@ -362,6 +362,9 @@ ssize_t bch2_scnprint_flag_list(char *, size_t, const char * const[], u64);
 u64 bch2_read_flag_list(char *, const char * const[]);
 
 #define NR_QUANTILES	15
+#define QUANTILE_IDX(i)	inorder_to_eytzinger0(i, NR_QUANTILES)
+#define QUANTILE_FIRST	eytzinger0_first(NR_QUANTILES)
+#define QUANTILE_LAST	eytzinger0_last(NR_QUANTILES)
 
 struct bch2_quantiles {
 	struct bch2_quantile_entry {
@@ -392,10 +395,15 @@ struct bch2_time_stats {
 };
 
 #ifndef CONFIG_BCACHEFS_NO_LATENCY_ACCT
-void bch2_time_stats_update(struct bch2_time_stats *stats, u64 time);
+void __bch2_time_stats_update(struct bch2_time_stats *stats, u64, u64);
 #else
-static inline void bch2_time_stats_update(struct bch2_time_stats *stats, u64 start) {}
+static inline void __bch2_time_stats_update(struct bch2_time_stats *stats, u64 start, u64 end) {}
 #endif
+
+static inline void bch2_time_stats_update(struct bch2_time_stats *stats, u64 start)
+{
+	__bch2_time_stats_update(stats, start, local_clock());
+}
 
 size_t bch2_time_stats_print(struct bch2_time_stats *, char *, size_t);
 
