@@ -15,6 +15,7 @@
 #include "compress.h"
 #include "clock.h"
 #include "debug.h"
+#include "disk_groups.h"
 #include "error.h"
 #include "extents.h"
 #include "io.h"
@@ -32,6 +33,64 @@
 #include <trace/events/bcachefs.h>
 
 #ifndef CONFIG_BCACHEFS_NO_LATENCY_ACCT
+
+static bool bch2_target_congested(struct bch_fs *c, u16 target)
+{
+	const struct bch_devs_mask *devs;
+	unsigned d, nr = 0, total = 0;
+	u64 now = local_clock(), last;
+	s64 congested;
+	struct bch_dev *ca;
+
+	if (!target)
+		return false;
+
+	rcu_read_lock();
+	devs = bch2_target_to_mask(c, target);
+	for_each_set_bit(d, devs->d, BCH_SB_MEMBERS_MAX) {
+		ca = rcu_dereference(c->devs[d]);
+		if (!ca)
+			continue;
+
+		congested = atomic_read(&ca->congested);
+		last = READ_ONCE(ca->congested_last);
+		if (time_after64(now, last))
+			congested -= (now - last) >> 12;
+
+		total += max(congested, 0LL);
+		nr++;
+	}
+	rcu_read_unlock();
+
+	return bch2_rand_range(nr * CONGESTED_MAX) < total;
+}
+
+static inline void bch2_congested_acct(struct bch_dev *ca, u64 io_latency,
+				       u64 now, int rw)
+{
+	u64 latency_capable =
+		ca->io_latency[rw].quantiles.entries[QUANTILE_IDX(1)].m;
+	/* ideally we'd be taking into account the device's variance here: */
+	u64 latency_threshold = latency_capable << (rw == READ ? 2 : 3);
+	s64 latency_over = io_latency - latency_threshold;
+
+	if (latency_threshold && latency_over > 0) {
+		/*
+		 * bump up congested by approximately latency_over * 4 /
+		 * latency_threshold - we don't need much accuracy here so don't
+		 * bother with the divide:
+		 */
+		if (atomic_read(&ca->congested) < CONGESTED_MAX)
+			atomic_add(latency_over >>
+				   max_t(int, ilog2(latency_threshold) - 2, 0),
+				   &ca->congested);
+
+		ca->congested_last = now;
+	} else if (atomic_read(&ca->congested) > 0) {
+		atomic_dec(&ca->congested);
+	}
+}
+
 void bch2_latency_acct(struct bch_dev *ca, u64 submit_time, int rw)
 {
 	atomic64_t *latency = &ca->cur_latency[rw];
@@ -53,11 +112,21 @@ void bch2_latency_acct(struct bch_dev *ca, u64 submit_time, int rw)
 		    now & ~(~0 << 5))
 			break;
 
-		new = ewma_add(old, io_latency, 6);
+		new = ewma_add(old, io_latency, 5);
 	} while ((v = atomic64_cmpxchg(latency, old, new)) != old);
 
-	bch2_time_stats_update(&ca->io_latency[rw], submit_time);
+	bch2_congested_acct(ca, io_latency, now, rw);
+
+	__bch2_time_stats_update(&ca->io_latency[rw], submit_time, now);
 }
+
+#else
+
+static bool bch2_target_congested(struct bch_fs *c, u16 target)
+{
+	return false;
+}
+
 #endif
 
 /* Allocate, free from mempool: */
@@ -867,6 +936,7 @@ void bch2_write(struct closure *cl)
 
 struct promote_op {
 	struct closure		cl;
+	u64			start_time;
 
 	struct rhash_head	hash;
 	struct bpos		pos;
@@ -901,6 +971,9 @@ static inline bool should_promote(struct bch_fs *c, struct bkey_s_c k,
 	if (bch2_extent_has_target(c, bkey_s_c_to_extent(k), opts.promote_target))
 		return false;
 
+	if (bch2_target_congested(c, opts.promote_target))
+		return false;
+
 	if (rhashtable_lookup_fast(&c->promote_table, &pos,
 				   bch_promote_params))
 		return false;
@@ -924,6 +997,8 @@ static void promote_done(struct closure *cl)
 	struct promote_op *op =
 		container_of(cl, struct promote_op, cl);
 	struct bch_fs *c = op->write.op.c;
+
+	bch2_time_stats_update(&c->data_promote_time, op->start_time);
 
 	bch2_bio_free_pages_pool(c, &op->write.op.wbio.bio);
 	promote_free(c, op);
@@ -976,6 +1051,7 @@ static struct promote_op *__promote_alloc(struct bch_fs *c,
 	if (!op)
 		goto err;
 
+	op->start_time = local_clock();
 	op->pos = pos;
 
 	/*
