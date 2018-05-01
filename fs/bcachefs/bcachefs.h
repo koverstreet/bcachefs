@@ -279,6 +279,7 @@ do {									\
 	BCH_TIME_STAT(btree_read)			\
 	BCH_TIME_STAT(data_write)			\
 	BCH_TIME_STAT(data_read)			\
+	BCH_TIME_STAT(data_promote)			\
 	BCH_TIME_STAT(journal_write)			\
 	BCH_TIME_STAT(journal_delay)			\
 	BCH_TIME_STAT(journal_blocked)			\
@@ -419,6 +420,10 @@ struct bch_dev {
 	/* The rest of this all shows up in sysfs */
 	atomic64_t		cur_latency[2];
 	struct time_stats	io_latency[2];
+
+#define CONGESTED_MAX		1024
+	atomic_t		congested;
+	u64			congested_last;
 
 	struct io_count __percpu *io_done;
 };
