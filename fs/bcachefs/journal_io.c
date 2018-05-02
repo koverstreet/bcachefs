@@ -294,6 +294,31 @@ fsck_err:
 	return ret;
 }
 
+static int journal_entry_validate_blacklist_v2(struct bch_fs *c,
+					       struct jset *jset,
+					       struct jset_entry *entry,
+					       int write)
+{
+	struct jset_entry_blacklist_v2 *bl_entry;
+	int ret = 0;
+
+	if (journal_entry_err_on(le16_to_cpu(entry->u64s) != 2, c,
+		"invalid journal seq blacklist entry: bad size")) {
+		journal_entry_null_range(entry, vstruct_next(entry));
+	}
+
+	bl_entry = container_of(entry, struct jset_entry_blacklist_v2, entry);
+
+	if (journal_entry_err_on(le64_to_cpu(bl_entry->start) >
+				 le64_to_cpu(bl_entry->end), c,
+		"invalid journal seq blacklist entry: start > end")) {
+		journal_entry_null_range(entry, vstruct_next(entry));
+	}
+
+fsck_err:
+	return ret;
+}
+
 struct jset_entry_ops {
 	int (*validate)(struct bch_fs *, struct jset *,
 			struct jset_entry *, int);
@@ -945,9 +970,13 @@ static void bch2_journal_add_btree_root(struct journal_buf *buf,
 				       enum btree_id id, struct bkey_i *k,
 				       unsigned level)
 {
-	bch2_journal_add_entry_noreservation(buf,
-			      BCH_JSET_ENTRY_btree_root, id, level,
-			      k, k->k.u64s);
+	struct jset_entry *entry;
+
+	entry = bch2_journal_add_entry_noreservation(buf, k->k.u64s);
+	entry->type	= BCH_JSET_ENTRY_btree_root;
+	entry->btree_id = id;
+	entry->level	= level;
+	memcpy_u64s(entry->_data, k, k->k.u64s);
 }
 
 static unsigned journal_dev_buckets_available(struct journal *j,
