@@ -13,6 +13,7 @@
 #include "buckets.h"
 #include "extents.h"
 #include "journal.h"
+#include "journal_reclaim.h"
 #include "keylist.h"
 #include "replicas.h"
 #include "super-io.h"

@@ -9,6 +9,7 @@
 #include "debug.h"
 #include "extents.h"
 #include "journal.h"
+#include "journal_reclaim.h"
 #include "keylist.h"
 
 #include <linux/sort.h>
