@@ -69,6 +69,7 @@
 #include "extents.h"
 #include "io.h"
 #include "journal.h"
+#include "journal_io.h"
 #include "super-io.h"
 
 #include <linux/blkdev.h>

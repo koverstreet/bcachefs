@@ -5,6 +5,7 @@
 #include "btree_update_interior.h"
 #include "error.h"
 #include "journal.h"
+#include "journal_io.h"
 #include "journal_reclaim.h"
 #include "journal_seq_blacklist.h"
 
