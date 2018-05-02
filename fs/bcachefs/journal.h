@@ -179,33 +179,18 @@ static inline unsigned jset_u64s(unsigned u64s)
 	return u64s + sizeof(struct jset_entry) / sizeof(u64);
 }
 
-static inline void bch2_journal_add_entry_at(struct journal_buf *buf,
-					    unsigned offset,
-					    unsigned type, enum btree_id id,
-					    unsigned level,
-					    const void *data, size_t u64s)
-{
-	struct jset_entry *entry = vstruct_idx(buf->data, offset);
-
-	memset(entry, 0, sizeof(*entry));
-	entry->u64s	= cpu_to_le16(u64s);
-	entry->btree_id = id;
-	entry->level	= level;
-	entry->type	= type;
-
-	memcpy_u64s(entry->_data, data, u64s);
-}
-
-static inline void bch2_journal_add_entry_noreservation(struct journal_buf *buf,
-				 unsigned type, enum btree_id id,
-				 unsigned level,
-				 const void *data, size_t u64s)
+static inline struct jset_entry *
+bch2_journal_add_entry_noreservation(struct journal_buf *buf, size_t u64s)
 {
 	struct jset *jset = buf->data;
+	struct jset_entry *entry = vstruct_idx(jset, le32_to_cpu(jset->u64s));
 
-	bch2_journal_add_entry_at(buf, le32_to_cpu(jset->u64s),
-				  type, id, level, data, u64s);
+	memset(entry, 0, sizeof(*entry));
+	entry->u64s = cpu_to_le16(u64s);
+
 	le32_add_cpu(&jset->u64s, jset_u64s(u64s));
+
+	return entry;
 }
 
 static inline void bch2_journal_add_entry(struct journal *j, struct journal_res *res,
@@ -214,15 +199,21 @@ static inline void bch2_journal_add_entry(struct journal *j, struct journal_res 
 					  const void *data, unsigned u64s)
 {
 	struct journal_buf *buf = &j->buf[res->idx];
+	struct jset_entry *entry = vstruct_idx(buf->data, res->offset);
 	unsigned actual = jset_u64s(u64s);
 
 	EBUG_ON(!res->ref);
 	EBUG_ON(actual > res->u64s);
 
-	bch2_journal_add_entry_at(buf, res->offset, type,
-				  id, level, data, u64s);
 	res->offset	+= actual;
 	res->u64s	-= actual;
+
+	memset(entry, 0, sizeof(*entry));
+	entry->u64s	= cpu_to_le16(u64s);
+	entry->type	= type;
+	entry->btree_id = id;
+	entry->level	= level;
+	memcpy_u64s(entry->_data, data, u64s);
 }
 
 static inline void bch2_journal_add_keys(struct journal *j, struct journal_res *res,
