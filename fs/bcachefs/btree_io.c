@@ -14,6 +14,7 @@
 #include "error.h"
 #include "extents.h"
 #include "io.h"
+#include "journal_reclaim.h"
 #include "journal_seq_blacklist.h"
 #include "super-io.h"
 

@@ -115,6 +115,12 @@
 
 struct bch_fs;
 
+static inline void journal_wake(struct journal *j)
+{
+	wake_up(&j->wait);
+	closure_wake_up(&j->async_wait);
+}
+
 static inline struct journal_buf *journal_cur_buf(struct journal *j)
 {
 	return j->buf + j->reservations.idx;
@@ -171,33 +177,6 @@ static inline struct jset_entry *__jset_entry_type_next(struct jset *jset,
 #define for_each_jset_key(k, _n, entry, jset)				\
 	for_each_jset_entry_type(entry, jset, JOURNAL_ENTRY_BTREE_KEYS)	\
 		vstruct_for_each_safe(entry, k, _n)
-
-#define JOURNAL_PIN	(32 * 1024)
-
-static inline bool journal_pin_active(struct journal_entry_pin *pin)
-{
-	return pin->pin_list != NULL;
-}
-
-static inline struct journal_entry_pin_list *
-journal_seq_pin(struct journal *j, u64 seq)
-{
-	BUG_ON(seq < j->pin.front || seq >= j->pin.back);
-
-	return &j->pin.data[seq & j->pin.mask];
-}
-
-u64 bch2_journal_pin_seq(struct journal *, struct journal_entry_pin *);
-
-void bch2_journal_pin_add(struct journal *, u64, struct journal_entry_pin *,
-			  journal_pin_flush_fn);
-void bch2_journal_pin_drop(struct journal *, struct journal_entry_pin *);
-void bch2_journal_pin_add_if_older(struct journal *,
-				  struct journal_entry_pin *,
-				  struct journal_entry_pin *,
-				  journal_pin_flush_fn);
-int bch2_journal_flush_pins(struct journal *, u64);
-int bch2_journal_flush_all_pins(struct journal *);
 
 struct bkey_i *bch2_journal_find_btree_root(struct bch_fs *, struct jset *,
 					   enum btree_id, unsigned *);
@@ -403,7 +382,6 @@ void bch2_journal_meta_async(struct journal *, struct closure *);
 int bch2_journal_flush_seq(struct journal *, u64);
 int bch2_journal_flush(struct journal *);
 int bch2_journal_meta(struct journal *);
-int bch2_journal_flush_device(struct journal *, int);
 
 void bch2_journal_halt(struct journal *);
 
