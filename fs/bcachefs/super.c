@@ -27,6 +27,7 @@
 #include "inode.h"
 #include "io.h"
 #include "journal.h"
+#include "journal_reclaim.h"
 #include "keylist.h"
 #include "move.h"
 #include "migrate.h"
@@ -1386,7 +1387,7 @@ int bch2_dev_remove(struct bch_fs *c, struct bch_dev *ca, int flags)
 		goto err;
 	}
 
-	ret = bch2_journal_flush_device(&c->journal, ca->dev_idx);
+	ret = bch2_journal_flush_device_pins(&c->journal, ca->dev_idx);
 	if (ret) {
 		bch_err(ca, "Remove failed: error %i flushing journal", ret);
 		goto err;
