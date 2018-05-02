@@ -277,7 +277,7 @@ int bch2_journal_seq_blacklist_read(struct journal *j,
 	u64 seq;
 
 	for_each_jset_entry_type(entry, &i->j,
-			JOURNAL_ENTRY_JOURNAL_SEQ_BLACKLISTED) {
+			BCH_JSET_ENTRY_blacklist) {
 		struct jset_entry_blacklist *bl_entry =
 			container_of(entry, struct jset_entry_blacklist, entry);
 		seq = le64_to_cpu(bl_entry->seq);
@@ -308,7 +308,7 @@ void bch2_journal_seq_blacklist_write(struct journal *j)
 	list_for_each_entry(bl, &j->seq_blacklist, list)
 		if (!bl->written) {
 			bch2_journal_add_entry_noreservation(journal_cur_buf(j),
-					JOURNAL_ENTRY_JOURNAL_SEQ_BLACKLISTED,
+					BCH_JSET_ENTRY_blacklist,
 					0, 0, &bl->seq, 1);
 
 			bch2_journal_pin_add(j,
