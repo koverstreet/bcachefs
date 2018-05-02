@@ -1194,29 +1194,40 @@ struct jset_entry {
 	};
 };
 
+#define JSET_KEYS_U64s	(sizeof(struct jset_entry) / sizeof(__u64))
+
+#define BCH_JSET_ENTRY_TYPES()			\
+	x(btree_keys,		0)		\
+	x(btree_root,		1)		\
+	x(prio_ptrs,		2)		\
+	x(blacklist,		3)
+
+enum {
+#define x(f, nr)	BCH_JSET_ENTRY_##f	= nr,
+	BCH_JSET_ENTRY_TYPES()
+#undef x
+	BCH_JSET_ENTRY_NR
+};
+
+/*
+ * Journal sequence numbers can be blacklisted: bsets record the max sequence
+ * number of all the journal entries they contain updates for, so that on
+ * recovery we can ignore those bsets that contain index updates newer that what
+ * made it into the journal.
+ *
+ * This means that we can't reuse that journal_seq - we have to skip it, and
+ * then record that we skipped it so that the next time we crash and recover we
+ * don't think there was a missing journal entry.
+ */
 struct jset_entry_blacklist {
 	struct jset_entry	entry;
 	__le64			seq;
 };
 
-#define JSET_KEYS_U64s	(sizeof(struct jset_entry) / sizeof(__u64))
-
-enum {
-	JOURNAL_ENTRY_BTREE_KEYS		= 0,
-	JOURNAL_ENTRY_BTREE_ROOT		= 1,
-	JOURNAL_ENTRY_PRIO_PTRS			= 2, /* Obsolete */
-
-	/*
-	 * Journal sequence numbers can be blacklisted: bsets record the max
-	 * sequence number of all the journal entries they contain updates for,
-	 * so that on recovery we can ignore those bsets that contain index
-	 * updates newer that what made it into the journal.
-	 *
-	 * This means that we can't reuse that journal_seq - we have to skip it,
-	 * and then record that we skipped it so that the next time we crash and
-	 * recover we don't think there was a missing journal entry.
-	 */
-	JOURNAL_ENTRY_JOURNAL_SEQ_BLACKLISTED	= 3,
+struct jset_entry_blacklist_v2 {
+	struct jset_entry	entry;
+	__le64			start;
+	__le64			end;
 };
 
 /*

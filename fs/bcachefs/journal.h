@@ -227,7 +227,7 @@ static inline void bch2_journal_add_entry(struct journal *j, struct journal_res 
 static inline void bch2_journal_add_keys(struct journal *j, struct journal_res *res,
 					enum btree_id id, const struct bkey_i *k)
 {
-	bch2_journal_add_entry(j, res, JOURNAL_ENTRY_BTREE_KEYS,
+	bch2_journal_add_entry(j, res, BCH_JSET_ENTRY_btree_keys,
 			       id, 0, k, k->k.u64s);
 }
 
@@ -269,7 +269,7 @@ static inline void bch2_journal_res_put(struct journal *j,
 
 	while (res->u64s)
 		bch2_journal_add_entry(j, res,
-				       JOURNAL_ENTRY_BTREE_KEYS,
+				       BCH_JSET_ENTRY_btree_keys,
 				       0, 0, NULL, 0);
 
 	bch2_journal_buf_put(j, res->idx, false);

@@ -30,7 +30,7 @@ struct bkey_i *bch2_journal_find_btree_root(struct bch_fs *c, struct jset *j,
 {
 	struct bkey_i *k;
 	struct jset_entry *entry =
-		bch2_journal_find_entry(j, JOURNAL_ENTRY_BTREE_ROOT, id);
+		bch2_journal_find_entry(j, BCH_JSET_ENTRY_btree_root, id);
 
 	if (!entry)
 		return NULL;
@@ -218,16 +218,115 @@ fsck_err:
 #define journal_entry_err_on(cond, c, msg, ...)				\
 	((cond) ? journal_entry_err(c, msg, ##__VA_ARGS__) : false)
 
-static int journal_entry_validate_entries(struct bch_fs *c, struct jset *jset,
-					  int write)
+static int journal_entry_validate_btree_keys(struct bch_fs *c,
+					     struct jset *jset,
+					     struct jset_entry *entry,
+					     int write)
+{
+	struct bkey_i *k;
+
+	vstruct_for_each(entry, k) {
+		int ret = journal_validate_key(c, jset, entry, k,
+				bkey_type(entry->level,
+					  entry->btree_id),
+				"key");
+		if (ret)
+			return ret;
+	}
+
+	return 0;
+}
+
+static int journal_entry_validate_btree_root(struct bch_fs *c,
+					     struct jset *jset,
+					     struct jset_entry *entry,
+					     int write)
+{
+	struct bkey_i *k = entry->start;
+	int ret = 0;
+
+	if (journal_entry_err_on(!entry->u64s ||
+				 le16_to_cpu(entry->u64s) != k->k.u64s, c,
+				 "invalid btree root journal entry: wrong number of keys")) {
+		void *next = vstruct_next(entry);
+		/*
+		 * we don't want to null out this jset_entry,
+		 * just the contents, so that later we can tell
+		 * we were _supposed_ to have a btree root
+		 */
+		entry->u64s = 0;
+		journal_entry_null_range(vstruct_next(entry), next);
+		return 0;
+	}
+
+	return journal_validate_key(c, jset, entry, k,
+				    BKEY_TYPE_BTREE, "btree root");
+fsck_err:
+	return ret;
+}
+
+static int journal_entry_validate_prio_ptrs(struct bch_fs *c,
+					    struct jset *jset,
+					    struct jset_entry *entry,
+					    int write)
+{
+	/* obsolete, don't care: */
+	return 0;
+}
+
+static int journal_entry_validate_blacklist(struct bch_fs *c,
+					    struct jset *jset,
+					    struct jset_entry *entry,
+					    int write)
+{
+	int ret = 0;
+
+	if (journal_entry_err_on(le16_to_cpu(entry->u64s) != 1, c,
+		"invalid journal seq blacklist entry: bad size")) {
+		journal_entry_null_range(entry, vstruct_next(entry));
+	}
+fsck_err:
+	return ret;
+}
+
+struct jset_entry_ops {
+	int (*validate)(struct bch_fs *, struct jset *,
+			struct jset_entry *, int);
+};
+
+const struct jset_entry_ops bch2_jset_entry_ops[] = {
+#define x(f, nr)						\
+	[BCH_JSET_ENTRY_##f]	= (struct jset_entry_ops) {	\
+		.validate	= journal_entry_validate_##f,	\
+	},
+	BCH_JSET_ENTRY_TYPES()
+#undef x
+};
+
+static int journal_entry_validate(struct bch_fs *c, struct jset *jset,
+				  struct jset_entry *entry, int write)
+{
+	int ret = 0;
+
+	if (entry->type >= BCH_JSET_ENTRY_NR) {
+		journal_entry_err(c, "invalid journal entry type %u",
+				  entry->type);
+		journal_entry_null_range(entry, vstruct_next(entry));
+		return 0;
+	}
+
+	ret = bch2_jset_entry_ops[entry->type].validate(c, jset, entry, write);
+fsck_err:
+	return ret;
+}
+
+static int jset_validate_entries(struct bch_fs *c, struct jset *jset,
+				 int write)
 {
 	struct jset_entry *entry;
 	int ret = 0;
 
 	vstruct_for_each(jset, entry) {
-		void *next = vstruct_next(entry);
-		struct bkey_i *k;
-
 		if (journal_entry_err_on(vstruct_next(entry) >
 					 vstruct_last(jset), c,
 				"journal entry extends past end of jset")) {
@@ -235,68 +334,19 @@ static int journal_entry_validate_entries(struct bch_fs *c, struct jset *jset,
 			break;
 		}
 
-		switch (entry->type) {
-		case JOURNAL_ENTRY_BTREE_KEYS:
-			vstruct_for_each(entry, k) {
-				ret = journal_validate_key(c, jset, entry, k,
-						bkey_type(entry->level,
-							  entry->btree_id),
-						"key");
-				if (ret)
-					goto fsck_err;
-			}
+		ret = journal_entry_validate(c, jset, entry, write);
+		if (ret)
 			break;
-
-		case JOURNAL_ENTRY_BTREE_ROOT:
-			k = entry->start;
-
-			if (journal_entry_err_on(!entry->u64s ||
-					le16_to_cpu(entry->u64s) != k->k.u64s, c,
-					"invalid btree root journal entry: wrong number of keys")) {
-				/*
-				 * we don't want to null out this jset_entry,
-				 * just the contents, so that later we can tell
-				 * we were _supposed_ to have a btree root
-				 */
-				entry->u64s = 0;
-				journal_entry_null_range(vstruct_next(entry), next);
-				continue;
-			}
-
-			ret = journal_validate_key(c, jset, entry, k,
-						   BKEY_TYPE_BTREE, "btree root");
-			if (ret)
-				goto fsck_err;
-			break;
-
-		case JOURNAL_ENTRY_PRIO_PTRS:
-			break;
-
-		case JOURNAL_ENTRY_JOURNAL_SEQ_BLACKLISTED:
-			if (journal_entry_err_on(le16_to_cpu(entry->u64s) != 1, c,
-				"invalid journal seq blacklist entry: bad size")) {
-				journal_entry_null_range(entry,
-						vstruct_next(entry));
-			}
-
-			break;
-		default:
-			journal_entry_err(c, "invalid journal entry type %u",
-					  entry->type);
-			journal_entry_null_range(entry, vstruct_next(entry));
-			break;
-		}
 	}
-
 fsck_err:
 	return ret;
 }
 
-static int journal_entry_validate(struct bch_fs *c,
-				  struct jset *jset, u64 sector,
-				  unsigned bucket_sectors_left,
-				  unsigned sectors_read,
-				  int write)
+static int jset_validate(struct bch_fs *c,
+			 struct jset *jset, u64 sector,
+			 unsigned bucket_sectors_left,
+			 unsigned sectors_read,
+			 int write)
 {
 	size_t bytes = vstruct_bytes(jset);
 	struct bch_csum csum;
@@ -312,8 +362,8 @@ static int journal_entry_validate(struct bch_fs *c,
 	}
 
 	if (journal_entry_err_on(bytes > bucket_sectors_left << 9, c,
-			"journal entry too big (%zu bytes), sector %lluu",
-			bytes, sector)) {
+				 "journal entry too big (%zu bytes), sector %lluu",
+				 bytes, sector)) {
 		/* XXX: note we might have missing journal entries */
 		return JOURNAL_ENTRY_BAD;
 	}
@@ -328,18 +378,18 @@ static int journal_entry_validate(struct bch_fs *c,
 
 	csum = csum_vstruct(c, JSET_CSUM_TYPE(jset), journal_nonce(jset), jset);
 	if (journal_entry_err_on(bch2_crc_cmp(csum, jset->csum), c,
-			"journal checksum bad, sector %llu", sector)) {
+				 "journal checksum bad, sector %llu", sector)) {
 		/* XXX: retry IO, when we start retrying checksum errors */
 		/* XXX: note we might have missing journal entries */
 		return JOURNAL_ENTRY_BAD;
 	}
 
 	bch2_encrypt(c, JSET_CSUM_TYPE(jset), journal_nonce(jset),
-		    jset->encrypted_start,
-		    vstruct_end(jset) - (void *) jset->encrypted_start);
+		     jset->encrypted_start,
+		     vstruct_end(jset) - (void *) jset->encrypted_start);
 
 	if (journal_entry_err_on(le64_to_cpu(jset->last_seq) > le64_to_cpu(jset->seq), c,
-			"invalid journal entry: last_seq > seq"))
+				 "invalid journal entry: last_seq > seq"))
 		jset->last_seq = jset->seq;
 
 	return 0;
@@ -412,9 +462,9 @@ reread:			sectors_read = min_t(unsigned,
 			j = buf->data;
 		}
 
-		ret = journal_entry_validate(c, j, offset,
-					end - offset, sectors_read,
-					READ);
+		ret = jset_validate(c, j, offset,
+				    end - offset, sectors_read,
+				    READ);
 		switch (ret) {
 		case BCH_FSCK_OK:
 			break;
@@ -697,7 +747,7 @@ int bch2_journal_read(struct bch_fs *c, struct list_head *list)
 		    "filesystem marked clean but journal has keys to replay");
 
 	list_for_each_entry(i, list, list) {
-		ret = journal_entry_validate_entries(c, &i->j, READ);
+		ret = jset_validate_entries(c, &i->j, READ);
 		if (ret)
 			goto fsck_err;
 
@@ -891,7 +941,7 @@ static void bch2_journal_add_btree_root(struct journal_buf *buf,
 				       unsigned level)
 {
 	bch2_journal_add_entry_noreservation(buf,
-			      JOURNAL_ENTRY_BTREE_ROOT, id, level,
+			      BCH_JSET_ENTRY_btree_root, id, level,
 			      k, k->k.u64s);
 }
 
@@ -1107,7 +1157,7 @@ static void journal_write_compact(struct jset *jset)
 		    i->btree_id == prev->btree_id &&
 		    i->level	== prev->level &&
 		    i->type	== prev->type &&
-		    i->type	== JOURNAL_ENTRY_BTREE_KEYS &&
+		    i->type	== BCH_JSET_ENTRY_btree_keys &&
 		    le16_to_cpu(prev->u64s) + u64s <= U16_MAX) {
 			memmove_u64s_down(vstruct_next(prev),
 					  i->_data,
@@ -1252,7 +1302,7 @@ void bch2_journal_write(struct closure *cl)
 	SET_JSET_CSUM_TYPE(jset, bch2_meta_checksum_type(c));
 
 	if (bch2_csum_type_is_encryption(JSET_CSUM_TYPE(jset)) &&
-	    journal_entry_validate_entries(c, jset, WRITE))
+	    jset_validate_entries(c, jset, WRITE))
 		goto err;
 
 	bch2_encrypt(c, JSET_CSUM_TYPE(jset), journal_nonce(jset),
@@ -1263,7 +1313,7 @@ void bch2_journal_write(struct closure *cl)
 				  journal_nonce(jset), jset);
 
 	if (!bch2_csum_type_is_encryption(JSET_CSUM_TYPE(jset)) &&
-	    journal_entry_validate_entries(c, jset, WRITE))
+	    jset_validate_entries(c, jset, WRITE))
 		goto err;
 
 	sectors = vstruct_sectors(jset, c->block_bits);

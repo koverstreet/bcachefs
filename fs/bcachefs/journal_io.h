@@ -34,7 +34,7 @@ static inline struct jset_entry *__jset_entry_type_next(struct jset *jset,
 	     entry = vstruct_next(entry))
 
 #define for_each_jset_key(k, _n, entry, jset)				\
-	for_each_jset_entry_type(entry, jset, JOURNAL_ENTRY_BTREE_KEYS)	\
+	for_each_jset_entry_type(entry, jset, BCH_JSET_ENTRY_btree_keys)	\
 		vstruct_for_each_safe(entry, k, _n)
 
 int bch2_journal_read(struct bch_fs *, struct list_head *);
