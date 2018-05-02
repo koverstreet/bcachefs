@@ -886,16 +886,16 @@ void bch2_fs_journal_stop(struct journal *j)
 void bch2_fs_journal_start(struct journal *j)
 {
 	struct journal_seq_blacklist *bl;
-	u64 new_seq = 0;
+	u64 blacklist = 0;
 
 	list_for_each_entry(bl, &j->seq_blacklist, list)
-		new_seq = max(new_seq, bl->seq);
+		blacklist = max(blacklist, bl->end);
 
 	spin_lock(&j->lock);
 
 	set_bit(JOURNAL_STARTED, &j->flags);
 
-	while (journal_cur_seq(j) < new_seq)
+	while (journal_cur_seq(j) < blacklist)
 		journal_pin_new_entry(j, 0);
 
 	/*
