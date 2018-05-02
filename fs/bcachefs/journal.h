@@ -113,6 +113,32 @@
 
 #include "journal_types.h"
 
+struct bch_fs;
+
+static inline struct journal_buf *journal_cur_buf(struct journal *j)
+{
+	return j->buf + j->reservations.idx;
+}
+
+static inline struct journal_buf *journal_prev_buf(struct journal *j)
+{
+	return j->buf + !j->reservations.idx;
+}
+
+/* Sequence number of oldest dirty journal entry */
+
+static inline u64 journal_last_seq(struct journal *j)
+{
+	return j->pin.front;
+}
+
+static inline u64 journal_cur_seq(struct journal *j)
+{
+	BUG_ON(j->pin.back - 1 != atomic64_read(&j->seq));
+
+	return j->pin.back - 1;
+}
+
 /*
  * Only used for holding the journal entries we read in btree_journal_read()
  * during cache_registration
@@ -156,13 +182,15 @@ static inline bool journal_pin_active(struct journal_entry_pin *pin)
 static inline struct journal_entry_pin_list *
 journal_seq_pin(struct journal *j, u64 seq)
 {
+	BUG_ON(seq < j->pin.front || seq >= j->pin.back);
+
 	return &j->pin.data[seq & j->pin.mask];
 }
 
 u64 bch2_journal_pin_seq(struct journal *, struct journal_entry_pin *);
 
-void bch2_journal_pin_add(struct journal *, struct journal_res *,
-			  struct journal_entry_pin *, journal_pin_flush_fn);
+void bch2_journal_pin_add(struct journal *, u64, struct journal_entry_pin *,
+			  journal_pin_flush_fn);
 void bch2_journal_pin_drop(struct journal *, struct journal_entry_pin *);
 void bch2_journal_pin_add_if_older(struct journal *,
 				  struct journal_entry_pin *,
@@ -171,14 +199,8 @@ void bch2_journal_pin_add_if_older(struct journal *,
 int bch2_journal_flush_pins(struct journal *, u64);
 int bch2_journal_flush_all_pins(struct journal *);
 
-struct closure;
-struct bch_fs;
-struct keylist;
-
 struct bkey_i *bch2_journal_find_btree_root(struct bch_fs *, struct jset *,
 					   enum btree_id, unsigned *);
-
-int bch2_journal_seq_should_ignore(struct bch_fs *, u64, struct btree *);
 
 u64 bch2_inode_journal_seq(struct journal *, u64);
 
@@ -229,6 +251,18 @@ static inline void bch2_journal_add_entry_at(struct journal_buf *buf,
 	entry->type	= type;
 
 	memcpy_u64s(entry->_data, data, u64s);
+}
+
+static inline void bch2_journal_add_entry_noreservation(struct journal_buf *buf,
+				 unsigned type, enum btree_id id,
+				 unsigned level,
+				 const void *data, size_t u64s)
+{
+	struct jset *jset = buf->data;
+
+	bch2_journal_add_entry_at(buf, le32_to_cpu(jset->u64s),
+				  type, id, level, data, u64s);
+	le32_add_cpu(&jset->u64s, jset_u64s(u64s));
 }
 
 static inline void bch2_journal_add_entry(struct journal *j, struct journal_res *res,

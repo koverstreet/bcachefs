@@ -14,7 +14,7 @@
 #include "error.h"
 #include "extents.h"
 #include "io.h"
-#include "journal.h"
+#include "journal_seq_blacklist.h"
 #include "super-io.h"
 
 #include <trace/events/bcachefs.h>
