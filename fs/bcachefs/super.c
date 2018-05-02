@@ -27,6 +27,7 @@
 #include "inode.h"
 #include "io.h"
 #include "journal.h"
+#include "journal_io.h"
 #include "journal_reclaim.h"
 #include "keylist.h"
 #include "move.h"
@@ -744,11 +745,11 @@ const char *bch2_fs_start(struct bch_fs *c)
 			goto recovery_done;
 
 		/*
-		 * bch2_journal_start() can't happen sooner, or btree_gc_finish()
+		 * bch2_fs_journal_start() can't happen sooner, or btree_gc_finish()
 		 * will give spurious errors about oldest_gen > bucket_gen -
 		 * this is a hack but oh well.
 		 */
-		bch2_journal_start(c);
+		bch2_fs_journal_start(&c->journal);
 
 		err = "error starting allocator";
 		if (bch2_fs_allocator_start(c))
@@ -804,7 +805,7 @@ const char *bch2_fs_start(struct bch_fs *c)
 		 * journal_res_get() will crash if called before this has
 		 * set up the journal.pin FIFO and journal.cur pointer:
 		 */
-		bch2_journal_start(c);
+		bch2_fs_journal_start(&c->journal);
 		bch2_journal_set_replay_done(&c->journal);
 
 		err = "error starting allocator";
