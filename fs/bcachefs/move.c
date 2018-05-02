@@ -5,6 +5,7 @@
 #include "buckets.h"
 #include "inode.h"
 #include "io.h"
+#include "journal_reclaim.h"
 #include "move.h"
 #include "replicas.h"
 #include "super-io.h"
@@ -724,7 +725,7 @@ int bch2_data_job(struct bch_fs *c,
 	switch (op.op) {
 	case BCH_DATA_OP_REREPLICATE:
 		stats->data_type = BCH_DATA_JOURNAL;
-		ret = bch2_journal_flush_device(&c->journal, -1);
+		ret = bch2_journal_flush_device_pins(&c->journal, -1);
 
 		ret = bch2_move_btree(c, rereplicate_pred, c, stats) ?: ret;
 		ret = bch2_gc_btree_replicas(c) ?: ret;
@@ -741,7 +742,7 @@ int bch2_data_job(struct bch_fs *c,
 			return -EINVAL;
 
 		stats->data_type = BCH_DATA_JOURNAL;
-		ret = bch2_journal_flush_device(&c->journal, op.migrate.dev);
+		ret = bch2_journal_flush_device_pins(&c->journal, op.migrate.dev);
 
 		ret = bch2_move_btree(c, migrate_pred, &op, stats) ?: ret;
 		ret = bch2_gc_btree_replicas(c) ?: ret;
