@@ -1206,7 +1206,8 @@ struct jset_entry {
 	x(btree_keys,		0)		\
 	x(btree_root,		1)		\
 	x(prio_ptrs,		2)		\
-	x(blacklist,		3)
+	x(blacklist,		3)		\
+	x(blacklist_v2,		4)
 
 enum {
 #define x(f, nr)	BCH_JSET_ENTRY_##f	= nr,

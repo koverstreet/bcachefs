@@ -148,7 +148,7 @@ bch2_journal_seq_blacklist_find(struct journal *j, u64 seq)
 	lockdep_assert_held(&j->blacklist_lock);
 
 	list_for_each_entry(bl, &j->seq_blacklist, list)
-		if (seq == bl->seq)
+		if (seq >= bl->start && seq <= bl->end)
 			return bl;
 
 	return NULL;
@@ -158,7 +158,7 @@ bch2_journal_seq_blacklist_find(struct journal *j, u64 seq)
  * Allocate a new, in memory blacklist entry:
  */
 static struct journal_seq_blacklist *
-bch2_journal_seq_blacklisted_new(struct journal *j, u64 seq)
+bch2_journal_seq_blacklisted_new(struct journal *j, u64 start, u64 end)
 {
 	struct journal_seq_blacklist *bl;
 
@@ -172,7 +172,9 @@ bch2_journal_seq_blacklisted_new(struct journal *j, u64 seq)
 	if (!bl)
 		return NULL;
 
-	bl->seq = seq;
+	bl->start	= start;
+	bl->end		= end;
+
 	list_add_tail(&bl->list, &j->seq_blacklist);
 	return bl;
 }
@@ -188,7 +190,7 @@ int bch2_journal_seq_should_ignore(struct bch_fs *c, u64 seq, struct btree *b)
 	struct journal *j = &c->journal;
 	struct journal_seq_blacklist *bl = NULL;
 	struct blacklisted_node *n;
-	u64 journal_seq, i;
+	u64 journal_seq;
 	int ret = 0;
 
 	if (!seq)
@@ -206,9 +208,9 @@ int bch2_journal_seq_should_ignore(struct bch_fs *c, u64 seq, struct btree *b)
 	 * Decrease this back to j->seq + 2 when we next rev the on disk format:
 	 * increasing it temporarily to work around bug in old kernels
 	 */
-	bch2_fs_inconsistent_on(seq > journal_seq + 4, c,
-			 "bset journal seq too far in the future: %llu > %llu",
-			 seq, journal_seq);
+	fsck_err_on(seq > journal_seq + 4, c,
+		    "bset journal seq too far in the future: %llu > %llu",
+		    seq, journal_seq);
 
 	if (seq <= journal_seq &&
 	    list_empty_careful(&j->seq_blacklist))
@@ -224,14 +226,17 @@ int bch2_journal_seq_should_ignore(struct bch_fs *c, u64 seq, struct btree *b)
 		bch_verbose(c, "btree node %u:%llu:%llu has future journal sequence number %llu, blacklisting",
 			    b->btree_id, b->key.k.p.inode, b->key.k.p.offset, seq);
 
-		for (i = journal_seq + 1; i <= seq; i++) {
-			bl = bch2_journal_seq_blacklist_find(j, i) ?:
-				bch2_journal_seq_blacklisted_new(j, i);
-			if (!bl) {
+		if (!j->new_blacklist) {
+			j->new_blacklist = bch2_journal_seq_blacklisted_new(j,
+						journal_seq + 1,
+						journal_seq + 1);
+			if (!j->new_blacklist) {
 				ret = -ENOMEM;
 				goto out;
 			}
 		}
+		bl = j->new_blacklist;
+		bl->end = max(bl->end, seq);
 	}
 
 	for (n = bl->entries; n < bl->entries + bl->nr_entries; n++)
@@ -260,8 +265,28 @@ int bch2_journal_seq_should_ignore(struct bch_fs *c, u64 seq, struct btree *b)
 found_entry:
 	ret = 1;
 out:
+fsck_err:
 	mutex_unlock(&j->blacklist_lock);
 	return ret;
+}
+
+static int __bch2_journal_seq_blacklist_read(struct journal *j,
+					     struct journal_replay *i,
+					     u64 start, u64 end)
+{
+	struct bch_fs *c = container_of(j, struct bch_fs, journal);
+	struct journal_seq_blacklist *bl;
+
+	bch_verbose(c, "blacklisting existing journal seq %llu-%llu",
+		    start, end);
+
+	bl = bch2_journal_seq_blacklisted_new(j, start, end);
+	if (!bl)
+		return -ENOMEM;
+
+	bch2_journal_pin_add(j, le64_to_cpu(i->j.seq), &bl->pin,
+			     journal_seq_blacklist_flush);
+	return 0;
 }
 
 /*
@@ -271,29 +296,36 @@ out:
 int bch2_journal_seq_blacklist_read(struct journal *j,
 				    struct journal_replay *i)
 {
-	struct bch_fs *c = container_of(j, struct bch_fs, journal);
 	struct jset_entry *entry;
-	struct journal_seq_blacklist *bl;
-	u64 seq;
+	int ret = 0;
 
-	for_each_jset_entry_type(entry, &i->j,
-			BCH_JSET_ENTRY_blacklist) {
-		struct jset_entry_blacklist *bl_entry =
-			container_of(entry, struct jset_entry_blacklist, entry);
-		seq = le64_to_cpu(bl_entry->seq);
+	vstruct_for_each(&i->j, entry) {
+		switch (entry->type) {
+		case BCH_JSET_ENTRY_blacklist: {
+			struct jset_entry_blacklist *bl_entry =
+				container_of(entry, struct jset_entry_blacklist, entry);
 
-		bch_verbose(c, "blacklisting existing journal seq %llu", seq);
+			ret = __bch2_journal_seq_blacklist_read(j, i,
+					le64_to_cpu(bl_entry->seq),
+					le64_to_cpu(bl_entry->seq));
+			break;
+		}
+		case BCH_JSET_ENTRY_blacklist_v2: {
+			struct jset_entry_blacklist_v2 *bl_entry =
+				container_of(entry, struct jset_entry_blacklist_v2, entry);
 
-		bl = bch2_journal_seq_blacklisted_new(j, seq);
-		if (!bl)
-			return -ENOMEM;
+			ret = __bch2_journal_seq_blacklist_read(j, i,
+					le64_to_cpu(bl_entry->start),
+					le64_to_cpu(bl_entry->end));
+			break;
+		}
+		}
 
-		bch2_journal_pin_add(j, le64_to_cpu(i->j.seq), &bl->pin,
-				     journal_seq_blacklist_flush);
-		bl->written = true;
+		if (ret)
+			break;
 	}
 
-	return 0;
+	return ret;
 }
 
 /*
@@ -303,18 +335,25 @@ int bch2_journal_seq_blacklist_read(struct journal *j,
  */
 void bch2_journal_seq_blacklist_write(struct journal *j)
 {
-	struct journal_seq_blacklist *bl;
+	struct journal_seq_blacklist *bl = j->new_blacklist;
+	struct jset_entry_blacklist_v2 *bl_entry;
+	struct jset_entry *entry;
 
-	list_for_each_entry(bl, &j->seq_blacklist, list)
-		if (!bl->written) {
-			bch2_journal_add_entry_noreservation(journal_cur_buf(j),
-					BCH_JSET_ENTRY_blacklist,
-					0, 0, &bl->seq, 1);
+	if (!bl)
+		return;
 
-			bch2_journal_pin_add(j,
-					     journal_cur_seq(j),
-					     &bl->pin,
-					     journal_seq_blacklist_flush);
-			bl->written = true;
-		}
+	entry = bch2_journal_add_entry_noreservation(journal_cur_buf(j),
+			(sizeof(*bl_entry) - sizeof(*entry)) / sizeof(u64));
+
+	bl_entry = container_of(entry, struct jset_entry_blacklist_v2, entry);
+	bl_entry->entry.type	= BCH_JSET_ENTRY_blacklist_v2;
+	bl_entry->start		= cpu_to_le64(bl->start);
+	bl_entry->end		= cpu_to_le64(bl->end);
+
+	bch2_journal_pin_add(j,
+			     journal_cur_seq(j),
+			     &bl->pin,
+			     journal_seq_blacklist_flush);
+
+	j->new_blacklist = NULL;
 }
