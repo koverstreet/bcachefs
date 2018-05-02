@@ -8,7 +8,7 @@
 
 /*
  * Journal entry pinning - machinery for holding a reference on a given journal
- * entry, marking it as dirty:
+ * entry, holding it open to ensure it gets replayed during recovery:
  */
 
 static inline u64 journal_pin_seq(struct journal *j,
