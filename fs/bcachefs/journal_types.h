@@ -171,7 +171,7 @@ struct journal {
 		u64 front, back, size, mask;
 		struct journal_entry_pin_list *data;
 	}			pin;
-	struct journal_entry_pin_list *replay_pin_list;
+	u64			replay_journal_seq;
 
 	struct mutex		blacklist_lock;
 	struct list_head	seq_blacklist;
