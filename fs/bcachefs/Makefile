@@ -30,6 +30,7 @@ bcachefs-y		:=	\
 	inode.o			\
 	io.o			\
 	journal.o		\
+	journal_seq_blacklist.o	\
 	keylist.o		\
 	lz4_decompress.o	\
 	migrate.o		\
