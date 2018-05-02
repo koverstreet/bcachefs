@@ -101,7 +101,6 @@ static int hns_roce_del_gid(struct ib_device *device, u8 port_num,
 {
 	struct hns_roce_dev *hr_dev = to_hr_dev(device);
 	struct ib_gid_attr zattr = { };
-	union ib_gid zgid = { {0} };
 	u8 port = port_num - 1;
 	unsigned long flags;
 	int ret;
