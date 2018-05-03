@@ -46,13 +46,13 @@ do {									\
  * BCH_ON_ERROR_CONTINUE mode
  */
 
-void bch2_inconsistent_error(struct bch_fs *);
+bool bch2_inconsistent_error(struct bch_fs *);
 
 #define bch2_fs_inconsistent(c, ...)					\
-do {									\
+({									\
 	bch_err(c, __VA_ARGS__);					\
 	bch2_inconsistent_error(c);					\
-} while (0)
+})
 
 #define bch2_fs_inconsistent_on(cond, c, ...)				\
 ({									\
