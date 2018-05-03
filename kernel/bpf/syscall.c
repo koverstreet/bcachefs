@@ -26,6 +26,7 @@
 #include <linux/cred.h>
 #include <linux/timekeeping.h>
 #include <linux/ctype.h>
+#include <linux/nospec.h>
 
 #define IS_FD_ARRAY(map) ((map)->map_type == BPF_MAP_TYPE_PROG_ARRAY || \
 			   (map)->map_type == BPF_MAP_TYPE_PERF_EVENT_ARRAY || \
@@ -97,12 +98,14 @@ static int check_uarg_tail_zero(void __user *uaddr,
 static struct bpf_map *find_and_alloc_map(union bpf_attr *attr)
 {
 	const struct bpf_map_ops *ops;
+	u32 type = attr->map_type;
 	struct bpf_map *map;
 	int err;
 
-	if (attr->map_type >= ARRAY_SIZE(bpf_map_types))
+	if (type >= ARRAY_SIZE(bpf_map_types))
 		return ERR_PTR(-EINVAL);
-	ops = bpf_map_types[attr->map_type];
+	type = array_index_nospec(type, ARRAY_SIZE(bpf_map_types));
+	ops = bpf_map_types[type];
 	if (!ops)
 		return ERR_PTR(-EINVAL);
 
@@ -115,7 +118,7 @@ static struct bpf_map *find_and_alloc_map(union bpf_attr *attr)
 	if (IS_ERR(map))
 		return map;
 	map->ops = ops;
-	map->map_type = attr->map_type;
+	map->map_type = type;
 	return map;
 }
 
