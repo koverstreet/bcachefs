@@ -144,24 +144,49 @@ static void journal_entry_null_range(void *start, void *end)
 		memset(entry, 0, sizeof(*entry));
 }
 
+#define JOURNAL_ENTRY_REREAD	5
+#define JOURNAL_ENTRY_NONE	6
+#define JOURNAL_ENTRY_BAD	7
+
+#define journal_entry_err(c, msg, ...)					\
+({									\
+	switch (write) {						\
+	case READ:							\
+		mustfix_fsck_err(c, msg, ##__VA_ARGS__);		\
+		break;							\
+	case WRITE:							\
+		bch_err(c, "corrupt metadata before write:\n"		\
+			msg, ##__VA_ARGS__);				\
+		if (bch2_fs_inconsistent(c)) {				\
+			ret = BCH_FSCK_ERRORS_NOT_FIXED;		\
+			goto fsck_err;					\
+		}							\
+		break;							\
+	}								\
+	true;								\
+})
+
+#define journal_entry_err_on(cond, c, msg, ...)				\
+	((cond) ? journal_entry_err(c, msg, ##__VA_ARGS__) : false)
+
 static int journal_validate_key(struct bch_fs *c, struct jset *jset,
 				struct jset_entry *entry,
 				struct bkey_i *k, enum bkey_type key_type,
-				const char *type)
+				const char *type, int write)
 {
 	void *next = vstruct_next(entry);
 	const char *invalid;
 	char buf[160];
 	int ret = 0;
 
-	if (mustfix_fsck_err_on(!k->k.u64s, c,
+	if (journal_entry_err_on(!k->k.u64s, c,
 			"invalid %s in journal: k->u64s 0", type)) {
 		entry->u64s = cpu_to_le16((u64 *) k - entry->_data);
 		journal_entry_null_range(vstruct_next(entry), next);
 		return 0;
 	}
 
-	if (mustfix_fsck_err_on((void *) bkey_next(k) >
+	if (journal_entry_err_on((void *) bkey_next(k) >
 				(void *) vstruct_next(entry), c,
 			"invalid %s in journal: extends past end of journal entry",
 			type)) {
@@ -170,7 +195,7 @@ static int journal_validate_key(struct bch_fs *c, struct jset *jset,
 		return 0;
 	}
 
-	if (mustfix_fsck_err_on(k->k.format != KEY_FORMAT_CURRENT, c,
+	if (journal_entry_err_on(k->k.format != KEY_FORMAT_CURRENT, c,
 			"invalid %s in journal: bad format %u",
 			type, k->k.format)) {
 		le16_add_cpu(&entry->u64s, -k->k.u64s);
@@ -198,26 +223,6 @@ fsck_err:
 	return ret;
 }
 
-#define JOURNAL_ENTRY_REREAD	5
-#define JOURNAL_ENTRY_NONE	6
-#define JOURNAL_ENTRY_BAD	7
-
-#define journal_entry_err(c, msg, ...)					\
-({									\
-	if (write == READ) {						\
-		mustfix_fsck_err(c, msg, ##__VA_ARGS__);		\
-	} else {							\
-		bch_err(c, "detected corrupt metadata before write:\n"	\
-	                msg, ##__VA_ARGS__);				\
-		ret = BCH_FSCK_ERRORS_NOT_FIXED;			\
-		goto fsck_err;						\
-	}								\
-	true;								\
-})
-
-#define journal_entry_err_on(cond, c, msg, ...)				\
-	((cond) ? journal_entry_err(c, msg, ##__VA_ARGS__) : false)
-
 static int journal_entry_validate_btree_keys(struct bch_fs *c,
 					     struct jset *jset,
 					     struct jset_entry *entry,
@@ -229,7 +234,7 @@ static int journal_entry_validate_btree_keys(struct bch_fs *c,
 		int ret = journal_validate_key(c, jset, entry, k,
 				bkey_type(entry->level,
 					  entry->btree_id),
-				"key");
+				"key", write);
 		if (ret)
 			return ret;
 	}
@@ -259,8 +264,8 @@ static int journal_entry_validate_btree_root(struct bch_fs *c,
 		return 0;
 	}
 
-	return journal_validate_key(c, jset, entry, k,
-				    BKEY_TYPE_BTREE, "btree root");
+	return journal_validate_key(c, jset, entry, k, BKEY_TYPE_BTREE,
+				    "btree root", write);
 fsck_err:
 	return ret;
 }

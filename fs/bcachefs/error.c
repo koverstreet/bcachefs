@@ -3,20 +3,22 @@
 #include "io.h"
 #include "super.h"
 
-void bch2_inconsistent_error(struct bch_fs *c)
+bool bch2_inconsistent_error(struct bch_fs *c)
 {
 	set_bit(BCH_FS_ERROR, &c->flags);
 
 	switch (c->opts.errors) {
 	case BCH_ON_ERROR_CONTINUE:
-		break;
+		return false;
 	case BCH_ON_ERROR_RO:
 		if (bch2_fs_emergency_read_only(c))
 			bch_err(c, "emergency read only");
-		break;
+		return true;
 	case BCH_ON_ERROR_PANIC:
 		panic(bch2_fmt(c, "panic after error"));
-		break;
+		return true;
+	default:
+		BUG();
 	}
 }
 

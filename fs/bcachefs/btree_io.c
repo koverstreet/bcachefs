@@ -948,6 +948,7 @@ enum btree_validate_ret {
 
 #define btree_err(type, c, b, i, msg, ...)				\
 ({									\
+	__label__ out;							\
 	char _buf[300], *out = _buf, *end = out + sizeof(_buf);		\
 									\
 	out += btree_err_msg(c, b, i, b->written, write, out, end - out);\
@@ -957,7 +958,11 @@ enum btree_validate_ret {
 	    write == READ &&						\
 	    !test_bit(BCH_FS_INITIAL_GC_DONE, &c->flags)) {		\
 		mustfix_fsck_err(c, "%s", _buf);			\
-	} else {							\
+		goto out;						\
+	}								\
+									\
+	switch (write) {						\
+	case READ:							\
 		bch_err(c, "%s", _buf);					\
 									\
 		switch (type) {						\
@@ -977,7 +982,17 @@ enum btree_validate_ret {
 			ret = BCH_FSCK_ERRORS_NOT_FIXED;		\
 			goto fsck_err;					\
 		}							\
+		break;							\
+	case WRITE:							\
+		bch_err(c, "corrupt metadata before write: %s", _buf);	\
+									\
+		if (bch2_fs_inconsistent(c)) {				\
+			ret = BCH_FSCK_ERRORS_NOT_FIXED;		\
+			goto fsck_err;					\
+		}							\
+		break;							\
 	}								\
+out:									\
 	true;								\
 })
 
