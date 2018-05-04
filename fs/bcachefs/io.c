@@ -21,10 +21,10 @@
 #include "journal.h"
 #include "keylist.h"
 #include "move.h"
+#include "rebalance.h"
 #include "replicas.h"
 #include "super.h"
 #include "super-io.h"
-#include "tier.h"
 
 #include <linux/blkdev.h>
 #include <linux/random.h>

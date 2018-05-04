@@ -197,7 +197,6 @@
 #include <linux/zstd.h>
 
 #include "bcachefs_format.h"
-#include "bset.h"
 #include "fifo.h"
 #include "opts.h"
 #include "util.h"
@@ -296,11 +295,13 @@ enum bch_time_stats {
 };
 
 #include "alloc_types.h"
+#include "btree_types.h"
 #include "buckets_types.h"
 #include "clock_types.h"
 #include "journal_types.h"
 #include "keylist_types.h"
 #include "quota_types.h"
+#include "rebalance_types.h"
 #include "super_types.h"
 
 /*
@@ -580,12 +581,6 @@ struct bch_fs {
 	struct delayed_work	pd_controllers_update;
 	unsigned		pd_controllers_update_seconds;
 
-	/* REBALANCE */
-	struct task_struct	*rebalance_thread;
-	struct bch_pd_controller rebalance_pd;
-
-	atomic64_t		rebalance_work_unknown_dev;
-
 	struct bch_devs_mask	rw_devs[BCH_DATA_NR];
 
 	u64			capacity; /* sectors */
@@ -674,6 +669,9 @@ struct bch_fs {
 
 	atomic64_t		key_version;
 
+	/* REBALANCE */
+	struct bch_fs_rebalance	rebalance;
+
 	/* VFS IO PATH - fs-io.c */
 	struct bio_set		writepage_bioset;
 	struct bio_set		dio_write_bioset;
@@ -724,8 +722,6 @@ struct bch_fs {
 
 	unsigned		btree_gc_periodic:1;
 	unsigned		copy_gc_enabled:1;
-	unsigned		rebalance_enabled:1;
-	unsigned		rebalance_percent;
 	bool			promote_whole_extents;
 
 #define BCH_DEBUG_PARAM(name, description) bool name;

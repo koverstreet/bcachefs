@@ -5,8 +5,8 @@
 #include "compress.h"
 #include "extents.h"
 #include "fs.h"
+#include "rebalance.h"
 #include "str_hash.h"
-#include "tier.h"
 #include "xattr.h"
 
 #include <linux/dcache.h>

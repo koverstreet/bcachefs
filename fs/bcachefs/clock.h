@@ -3,7 +3,8 @@
 
 void bch2_io_timer_add(struct io_clock *, struct io_timer *);
 void bch2_io_timer_del(struct io_clock *, struct io_timer *);
-void bch2_kthread_io_clock_wait(struct io_clock *, unsigned long);
+void bch2_kthread_io_clock_wait(struct io_clock *, unsigned long,
+				unsigned long);
 void bch2_increment_clock(struct bch_fs *, unsigned, int);
 
 void bch2_io_clock_schedule_timeout(struct io_clock *, unsigned long);

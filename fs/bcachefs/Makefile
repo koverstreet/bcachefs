@@ -40,13 +40,13 @@ bcachefs-y		:=	\
 	movinggc.o		\
 	opts.o			\
 	quota.o			\
+	rebalance.o		\
 	replicas.o		\
 	siphash.o		\
 	six.o			\
 	super.o			\
 	super-io.o		\
 	sysfs.o			\
-	tier.o			\
 	trace.o			\
 	util.o			\
 	xattr.o

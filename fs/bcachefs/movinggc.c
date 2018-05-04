@@ -241,7 +241,8 @@ static int bch2_copygc_thread(void *arg)
 			ca->mi.bucket_size;
 		if (available > reserve) {
 			next = last + available - reserve;
-			bch2_kthread_io_clock_wait(clock, next);
+			bch2_kthread_io_clock_wait(clock, next,
+					MAX_SCHEDULE_TIMEOUT);
 			continue;
 		}
 
@@ -252,7 +253,8 @@ static int bch2_copygc_thread(void *arg)
 		fragmented = usage.sectors_fragmented;
 		if (fragmented < reserve) {
 			next = last + reserve - fragmented;
-			bch2_kthread_io_clock_wait(clock, next);
+			bch2_kthread_io_clock_wait(clock, next,
+					MAX_SCHEDULE_TIMEOUT);
 			continue;
 		}
 

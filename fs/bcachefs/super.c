@@ -33,11 +33,11 @@
 #include "migrate.h"
 #include "movinggc.h"
 #include "quota.h"
+#include "rebalance.h"
 #include "replicas.h"
 #include "super.h"
 #include "super-io.h"
 #include "sysfs.h"
-#include "tier.h"
 
 #include <linux/backing-dev.h>
 #include <linux/blkdev.h>
@@ -590,8 +590,7 @@ static struct bch_fs *bch2_fs_alloc(struct bch_sb *sb, struct bch_opts opts)
 	seqcount_init(&c->gc_pos_lock);
 
 	c->copy_gc_enabled		= 1;
-	c->rebalance_enabled		= 1;
-	c->rebalance_percent		= 10;
+	c->rebalance.enabled		= 1;
 	c->promote_whole_extents	= true;
 
 	c->journal.write_time	= &c->times[BCH_TIME_journal_write];

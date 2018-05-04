@@ -42,7 +42,8 @@ void bch2_io_timer_del(struct io_clock *clock, struct io_timer *timer)
 }
 
 struct io_clock_wait {
-	struct io_timer		timer;
+	struct io_timer		io_timer;
+	struct timer_list	cpu_timer;
 	struct task_struct	*task;
 	int			expired;
 };
@@ -50,7 +51,16 @@ struct io_clock_wait {
 static void io_clock_wait_fn(struct io_timer *timer)
 {
 	struct io_clock_wait *wait = container_of(timer,
-				struct io_clock_wait, timer);
+				struct io_clock_wait, io_timer);
+
+	wait->expired = 1;
+	wake_up_process(wait->task);
+}
+
+static void io_clock_cpu_timeout(struct timer_list *timer)
+{
+	struct io_clock_wait *wait = container_of(timer,
+				struct io_clock_wait, cpu_timer);
 
 	wait->expired = 1;
 	wake_up_process(wait->task);
@@ -61,35 +71,38 @@ void bch2_io_clock_schedule_timeout(struct io_clock *clock, unsigned long until)
 	struct io_clock_wait wait;
 
 	/* XXX: calculate sleep time rigorously */
-	wait.timer.expire	= until;
-	wait.timer.fn		= io_clock_wait_fn;
+	wait.io_timer.expire	= until;
+	wait.io_timer.fn	= io_clock_wait_fn;
 	wait.task		= current;
 	wait.expired		= 0;
-	bch2_io_timer_add(clock, &wait.timer);
+	bch2_io_timer_add(clock, &wait.io_timer);
 
 	schedule();
 
-	bch2_io_timer_del(clock, &wait.timer);
+	bch2_io_timer_del(clock, &wait.io_timer);
 }
 
-/*
- * _only_ to be used from a kthread
- */
 void bch2_kthread_io_clock_wait(struct io_clock *clock,
-			       unsigned long until)
+				unsigned long io_until,
+				unsigned long cpu_timeout)
 {
+	bool kthread = (current->flags & PF_KTHREAD) != 0;
 	struct io_clock_wait wait;
 
-	/* XXX: calculate sleep time rigorously */
-	wait.timer.expire	= until;
-	wait.timer.fn		= io_clock_wait_fn;
+	wait.io_timer.expire	= io_until;
+	wait.io_timer.fn	= io_clock_wait_fn;
 	wait.task		= current;
 	wait.expired		= 0;
-	bch2_io_timer_add(clock, &wait.timer);
+	bch2_io_timer_add(clock, &wait.io_timer);
+
+	timer_setup_on_stack(&wait.cpu_timer, io_clock_cpu_timeout, 0);
+
+	if (cpu_timeout != MAX_SCHEDULE_TIMEOUT)
+		mod_timer(&wait.cpu_timer, cpu_timeout + jiffies);
 
 	while (1) {
 		set_current_state(TASK_INTERRUPTIBLE);
-		if (kthread_should_stop())
+		if (kthread && kthread_should_stop())
 			break;
 
 		if (wait.expired)
@@ -100,7 +113,9 @@ void bch2_kthread_io_clock_wait(struct io_clock *clock,
 	}
 
 	__set_current_state(TASK_RUNNING);
-	bch2_io_timer_del(clock, &wait.timer);
+	del_singleshot_timer_sync(&wait.cpu_timer);
+	destroy_timer_on_stack(&wait.cpu_timer);
+	bch2_io_timer_del(clock, &wait.io_timer);
 }
 
 static struct io_timer *get_expired_timer(struct io_clock *clock,

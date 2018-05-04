@@ -13,8 +13,6 @@
 
 void bch2_to_binary(char *, const u64 *, unsigned);
 
-#define BKEY_PADDED(key)	__BKEY_PADDED(key, BKEY_EXTENT_VAL_U64s_MAX)
-
 /* bkey with split value, const */
 struct bkey_s_c {
 	const struct bkey	*k;
