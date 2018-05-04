@@ -274,19 +274,29 @@ do {									\
 #define BCH_DEBUG_PARAMS() BCH_DEBUG_PARAMS_ALWAYS()
 #endif
 
-#define BCH_TIME_STATS()				\
-	BCH_TIME_STAT(btree_node_mem_alloc)		\
-	BCH_TIME_STAT(btree_gc)				\
-	BCH_TIME_STAT(btree_split)			\
-	BCH_TIME_STAT(btree_sort)			\
-	BCH_TIME_STAT(btree_read)			\
-	BCH_TIME_STAT(data_write)			\
-	BCH_TIME_STAT(data_read)			\
-	BCH_TIME_STAT(data_promote)			\
-	BCH_TIME_STAT(journal_write)			\
-	BCH_TIME_STAT(journal_delay)			\
-	BCH_TIME_STAT(journal_blocked)			\
-	BCH_TIME_STAT(journal_flush_seq)
+#define BCH_TIME_STATS()			\
+	x(btree_node_mem_alloc)			\
+	x(btree_gc)				\
+	x(btree_split)				\
+	x(btree_sort)				\
+	x(btree_read)				\
+	x(btree_lock_contended_read)		\
+	x(btree_lock_contended_intent)		\
+	x(btree_lock_contended_write)		\
+	x(data_write)				\
+	x(data_read)				\
+	x(data_promote)				\
+	x(journal_write)			\
+	x(journal_delay)			\
+	x(journal_blocked)			\
+	x(journal_flush_seq)
+
+enum bch_time_stats {
+#define x(name) BCH_TIME_##name,
+	BCH_TIME_STATS()
+#undef x
+	BCH_TIME_STAT_NR
+};
 
 #include "alloc_types.h"
 #include "buckets_types.h"
@@ -725,10 +735,7 @@ struct bch_fs {
 	BCH_DEBUG_PARAMS_ALL()
 #undef BCH_DEBUG_PARAM
 
-#define BCH_TIME_STAT(name)				\
-	struct bch2_time_stats	name##_time;
-	BCH_TIME_STATS()
-#undef BCH_TIME_STAT
+	struct bch2_time_stats	times[BCH_TIME_STAT_NR];
 };
 
 static inline void bch2_set_ra_pages(struct bch_fs *c, unsigned ra_pages)
