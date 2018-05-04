@@ -1236,6 +1236,7 @@ static void journal_write_done(struct closure *cl)
 	struct journal_buf *w = journal_prev_buf(j);
 	struct bch_devs_list devs =
 		bch2_extent_devs(bkey_i_to_s_c_extent(&w->key));
+	u64 seq = le64_to_cpu(w->data->seq);
 
 	if (!devs.nr) {
 		bch_err(c, "unable to write journal to sufficient devices");
@@ -1248,9 +1249,9 @@ out:
 	__bch2_time_stats_update(j->write_time, j->write_start_time);
 
 	spin_lock(&j->lock);
-	j->last_seq_ondisk = le64_to_cpu(w->data->last_seq);
-
-	journal_seq_pin(j, le64_to_cpu(w->data->seq))->devs = devs;
+	j->last_seq_ondisk = seq;
+	if (seq >= j->pin.front)
+		journal_seq_pin(j, seq)->devs = devs;
 
 	/*
 	 * Updating last_seq_ondisk may let bch2_journal_reclaim_work() discard
