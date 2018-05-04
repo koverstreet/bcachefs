@@ -13,6 +13,8 @@
 #include <linux/kthread.h>
 #include <linux/log2.h>
 #include <linux/math64.h>
+#include <linux/percpu.h>
+#include <linux/preempt.h>
 #include <linux/random.h>
 #include <linux/seq_file.h>
 #include <linux/string.h>
