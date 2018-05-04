@@ -207,8 +207,14 @@ struct prctl_mm_map {
 # define PR_SVE_VL_LEN_MASK		0xffff
 # define PR_SVE_VL_INHERIT		(1 << 17) /* inherit across exec */
 
-/* Control the LSM specific peer information */
-#define	PR_GET_DISPLAY_LSM	52
-#define	PR_SET_DISPLAY_LSM	53
+/*
+ * Control the LSM specific peer information
+ *
+ * The Ubuntu kernel provides an early preview of LSM Stacking. Use these
+ * PRCTLs at your own risk. Their values are not guaranteed to be stable in the
+ * case of colliding with an upstream PRCTL.
+ */
+#define	PR_GET_DISPLAY_LSM	1000000
+#define	PR_SET_DISPLAY_LSM	1000001
 
 #endif /* _LINUX_PRCTL_H */
