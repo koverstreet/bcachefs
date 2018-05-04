@@ -42,37 +42,28 @@ void bch2_btree_node_unlock_write(struct btree *b, struct btree_iter *iter)
 	six_unlock_write(&b->lock);
 }
 
-void bch2_btree_node_lock_write(struct btree *b, struct btree_iter *iter)
+void __bch2_btree_node_lock_write(struct btree *b, struct btree_iter *iter)
 {
+	struct bch_fs *c = iter->c;
 	struct btree_iter *linked;
 	unsigned readers = 0;
-
-	EBUG_ON(iter->l[b->level].b != b);
-	EBUG_ON(iter->lock_seq[b->level] != b->lock.state.seq);
-
-	if (six_trylock_write(&b->lock))
-		return;
 
 	for_each_linked_btree_iter(iter, linked)
 		if (linked->l[b->level].b == b &&
 		    btree_node_read_locked(linked, b->level))
 			readers++;
 
-	if (likely(!readers)) {
-		six_lock_write(&b->lock);
-	} else {
-		/*
-		 * Must drop our read locks before calling six_lock_write() -
-		 * six_unlock() won't do wakeups until the reader count
-		 * goes to 0, and it's safe because we have the node intent
-		 * locked:
-		 */
-		atomic64_sub(__SIX_VAL(read_lock, readers),
-			     &b->lock.state.counter);
-		six_lock_write(&b->lock);
-		atomic64_add(__SIX_VAL(read_lock, readers),
-			     &b->lock.state.counter);
-	}
+	/*
+	 * Must drop our read locks before calling six_lock_write() -
+	 * six_unlock() won't do wakeups until the reader count
+	 * goes to 0, and it's safe because we have the node intent
+	 * locked:
+	 */
+	atomic64_sub(__SIX_VAL(read_lock, readers),
+		     &b->lock.state.counter);
+	btree_node_lock_type(c, b, SIX_LOCK_write);
+	atomic64_add(__SIX_VAL(read_lock, readers),
+		     &b->lock.state.counter);
 }
 
 bool __bch2_btree_node_relock(struct btree_iter *iter, unsigned level)
@@ -135,6 +126,7 @@ bool __bch2_btree_node_lock(struct btree *b, struct bpos pos,
 			   struct btree_iter *iter,
 			   enum six_lock_type type)
 {
+	struct bch_fs *c = iter->c;
 	struct btree_iter *linked;
 
 	/* Can't have children locked before ancestors: */
@@ -206,7 +198,7 @@ bool __bch2_btree_node_lock(struct btree *b, struct bpos pos,
 		}
 	}
 
-	six_lock_type(&b->lock, type);
+	__btree_node_lock_type(c, b, type);
 	return true;
 }
 

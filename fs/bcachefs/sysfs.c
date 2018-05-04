@@ -198,11 +198,11 @@ read_attribute(data_replicas_have);
 	BCH_DEBUG_PARAMS()
 #undef BCH_DEBUG_PARAM
 
-#define BCH_TIME_STAT(_name)						\
+#define x(_name)						\
 	static struct attribute sysfs_time_stat_##_name =		\
 		{ .name = #_name, .mode = S_IRUGO };
 	BCH_TIME_STATS()
-#undef BCH_TIME_STAT
+#undef x
 
 static struct attribute sysfs_state_rw = {
 	.name = "state",
@@ -613,11 +613,12 @@ SHOW(bch2_fs_time_stats)
 {
 	struct bch_fs *c = container_of(kobj, struct bch_fs, time_stats);
 
-#define BCH_TIME_STAT(name)						\
+#define x(name)						\
 	if (attr == &sysfs_time_stat_##name)				\
-		return bch2_time_stats_print(&c->name##_time, buf, PAGE_SIZE);
+		return bch2_time_stats_print(&c->times[BCH_TIME_##name],\
+					     buf, PAGE_SIZE);
 	BCH_TIME_STATS()
-#undef BCH_TIME_STAT
+#undef x
 
 	return 0;
 }
@@ -629,10 +630,10 @@ STORE(bch2_fs_time_stats)
 SYSFS_OPS(bch2_fs_time_stats);
 
 struct attribute *bch2_fs_time_stats_files[] = {
-#define BCH_TIME_STAT(name)						\
+#define x(name)						\
 	&sysfs_time_stat_##name,
 	BCH_TIME_STATS()
-#undef BCH_TIME_STAT
+#undef x
 	NULL
 };
 

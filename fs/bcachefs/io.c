@@ -269,7 +269,7 @@ static void bch2_write_done(struct closure *cl)
 	percpu_ref_put(&c->writes);
 	bch2_keylist_free(&op->insert_keys, op->inline_keys);
 
-	bch2_time_stats_update(&c->data_write_time, op->start_time);
+	bch2_time_stats_update(&c->times[BCH_TIME_data_write], op->start_time);
 
 	closure_return(cl);
 }
@@ -979,7 +979,8 @@ static void promote_done(struct closure *cl)
 		container_of(cl, struct promote_op, cl);
 	struct bch_fs *c = op->write.op.c;
 
-	bch2_time_stats_update(&c->data_promote_time, op->start_time);
+	bch2_time_stats_update(&c->times[BCH_TIME_data_promote],
+			       op->start_time);
 
 	bch2_bio_free_pages_pool(c, &op->write.op.wbio.bio);
 	promote_free(c, op);
@@ -1179,7 +1180,8 @@ static inline struct bch_read_bio *bch2_rbio_free(struct bch_read_bio *rbio)
 
 static void bch2_rbio_done(struct bch_read_bio *rbio)
 {
-	bch2_time_stats_update(&rbio->c->data_read_time, rbio->start_time);
+	bch2_time_stats_update(&rbio->c->times[BCH_TIME_data_read],
+			       rbio->start_time);
 	bio_endio(&rbio->bio);
 }
 
