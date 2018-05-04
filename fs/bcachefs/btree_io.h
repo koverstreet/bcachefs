@@ -134,7 +134,7 @@ do {									\
 									\
 		six_unlock_read(&(_b)->lock);				\
 		btree_node_wait_on_io(_b);				\
-		six_lock_read(&(_b)->lock, NULL, NULL);			\
+		btree_node_lock_type(c, b, SIX_LOCK_read);		\
 	}								\
 } while (0)
 

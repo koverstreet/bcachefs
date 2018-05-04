@@ -2110,7 +2110,7 @@ again:
 			if (btree_node_dirty(b) && (!b->written || b->level)) {
 				if (btree_node_may_write(b)) {
 					rcu_read_unlock();
-					six_lock_read(&b->lock, NULL, NULL);
+					btree_node_lock_type(c, b, SIX_LOCK_read);
 					bch2_btree_node_write(c, b, SIX_LOCK_read);
 					six_unlock_read(&b->lock);
 					goto again;

@@ -368,10 +368,10 @@ err:
 
 static void bch2_fs_free(struct bch_fs *c)
 {
-#define BCH_TIME_STAT(name)				\
-	bch2_time_stats_exit(&c->name##_time);
-	BCH_TIME_STATS()
-#undef BCH_TIME_STAT
+	unsigned i;
+
+	for (i = 0; i < BCH_TIME_STAT_NR; i++)
+		bch2_time_stats_exit(&c->times[i]);
 
 	bch2_fs_quota_exit(c);
 	bch2_fs_fsio_exit(c);
@@ -534,10 +534,8 @@ static struct bch_fs *bch2_fs_alloc(struct bch_sb *sb, struct bch_opts opts)
 
 	init_rwsem(&c->gc_lock);
 
-#define BCH_TIME_STAT(name)				\
-	bch2_time_stats_init(&c->name##_time);
-	BCH_TIME_STATS()
-#undef BCH_TIME_STAT
+	for (i = 0; i < BCH_TIME_STAT_NR; i++)
+		bch2_time_stats_init(&c->times[i]);
 
 	bch2_fs_allocator_init(c);
 	bch2_fs_rebalance_init(c);
@@ -565,10 +563,10 @@ static struct bch_fs *bch2_fs_alloc(struct bch_sb *sb, struct bch_opts opts)
 	c->rebalance_percent		= 10;
 	c->promote_whole_extents	= true;
 
-	c->journal.write_time	= &c->journal_write_time;
-	c->journal.delay_time	= &c->journal_delay_time;
-	c->journal.blocked_time	= &c->journal_blocked_time;
-	c->journal.flush_seq_time = &c->journal_flush_seq_time;
+	c->journal.write_time	= &c->times[BCH_TIME_journal_write];
+	c->journal.delay_time	= &c->times[BCH_TIME_journal_delay];
+	c->journal.blocked_time	= &c->times[BCH_TIME_journal_blocked];
+	c->journal.flush_seq_time = &c->times[BCH_TIME_journal_flush_seq];
 
 	bch2_fs_btree_cache_init_early(&c->btree_cache);
 

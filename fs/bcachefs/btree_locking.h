@@ -100,6 +100,39 @@ static inline void btree_node_unlock(struct btree_iter *iter, unsigned level)
 	mark_btree_node_unlocked(iter, level);
 }
 
+static inline enum bch_time_stats lock_to_time_stat(enum six_lock_type type)
+{
+	switch (type) {
+	case SIX_LOCK_read:
+		return BCH_TIME_btree_lock_contended_read;
+	case SIX_LOCK_intent:
+		return BCH_TIME_btree_lock_contended_intent;
+	case SIX_LOCK_write:
+		return BCH_TIME_btree_lock_contended_write;
+	default:
+		BUG();
+	}
+}
+
+/*
+ * wrapper around six locks that just traces lock contended time
+ */
+static inline void __btree_node_lock_type(struct bch_fs *c, struct btree *b,
+					  enum six_lock_type type)
+{
+	u64 start_time = local_clock();
+
+	six_lock_type(&b->lock, type, NULL, NULL);
+	bch2_time_stats_update(&c->times[lock_to_time_stat(type)], start_time);
+}
+
+static inline void btree_node_lock_type(struct bch_fs *c, struct btree *b,
+					enum six_lock_type type)
+{
+	if (!six_trylock_type(&b->lock, type))
+		__btree_node_lock_type(c, b, type);
+}
+
 bool __bch2_btree_node_lock(struct btree *, struct bpos, unsigned,
 			   struct btree_iter *, enum six_lock_type);
 
@@ -127,7 +160,17 @@ static inline bool bch2_btree_node_relock(struct btree_iter *iter,
 bool bch2_btree_iter_relock(struct btree_iter *);
 
 void bch2_btree_node_unlock_write(struct btree *, struct btree_iter *);
-void bch2_btree_node_lock_write(struct btree *, struct btree_iter *);
+
+void __bch2_btree_node_lock_write(struct btree *, struct btree_iter *);
+
+static inline void bch2_btree_node_lock_write(struct btree *b, struct btree_iter *iter)
+{
+	EBUG_ON(iter->l[b->level].b != b);
+	EBUG_ON(iter->lock_seq[b->level] != b->lock.state.seq);
+
+	if (!six_trylock_write(&b->lock))
+		__bch2_btree_node_lock_write(b, iter);
+}
 
 #endif /* _BCACHEFS_BTREE_LOCKING_H */
 

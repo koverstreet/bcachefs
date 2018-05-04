@@ -564,7 +564,7 @@ void bch2_gc(struct bch_fs *c)
 out:
 	up_write(&c->gc_lock);
 	trace_gc_end(c);
-	bch2_time_stats_update(&c->btree_gc_time, start_time);
+	bch2_time_stats_update(&c->times[BCH_TIME_btree_gc], start_time);
 
 	/*
 	 * Wake up allocator in case it was waiting for buckets
