@@ -294,6 +294,7 @@ static void hclgevf_request_link_info(struct hclgevf_dev *hdev)
 
 void hclgevf_update_link_status(struct hclgevf_dev *hdev, int link_state)
 {
+	struct hnae3_handle *rhandle = &hdev->roce;
 	struct hnae3_handle *handle = &hdev->nic;
 	struct hnae3_client *rclient;
 	struct hnae3_client *client;
@@ -304,7 +305,7 @@ void hclgevf_update_link_status(struct hclgevf_dev *hdev, int link_state)
 	if (link_state != hdev->hw.mac.link) {
 		client->ops->link_status_change(handle, !!link_state);
 		if (rclient && rclient->ops->link_status_change)
-			rclient->ops->link_status_change(handle, !!link_state);
+			rclient->ops->link_status_change(rhandle, !!link_state);
 		hdev->hw.mac.link = link_state;
 	}
 }
