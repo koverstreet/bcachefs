@@ -158,9 +158,6 @@ static inline bool btree_keys_expensive_checks(const struct btree *b)
 #endif
 }
 
-struct btree_node_iter;
-struct btree_node_iter_set;
-
 enum bset_aux_tree_type {
 	BSET_NO_AUX_TREE,
 	BSET_RO_AUX_TREE,
@@ -420,14 +417,6 @@ static inline enum bch_extent_overlap bch2_extent_overlap(const struct bkey *k,
 }
 
 /* Btree key iteration */
-
-struct btree_node_iter {
-	u8		is_extents;
-
-	struct btree_node_iter_set {
-		u16	k, end;
-	} data[MAX_BSETS];
-};
 
 static inline void __bch2_btree_node_iter_init(struct btree_node_iter *iter,
 					      bool is_extents)
