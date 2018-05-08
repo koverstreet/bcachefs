@@ -55,6 +55,9 @@
  * charge of setting up it's own stack, GDT and IDT.
  */
 
+#define PVH_GDT_ENTRY_CANARY	4
+#define PVH_CANARY_SEL		(PVH_GDT_ENTRY_CANARY * 8)
+
 ENTRY(pvh_start_xen)
 	cld
 
@@ -99,6 +102,12 @@ ENTRY(pvh_start_xen)
 	/* 64-bit entry point. */
 	.code64
 1:
+	/* Set base address in stack canary descriptor. */
+	mov $MSR_GS_BASE,%ecx
+	mov $_pa(canary), %eax
+	xor %edx, %edx
+	wrmsr
+
 	call xen_prepare_pvh
 
 	/* startup_64 expects boot_params in %rsi. */
@@ -108,6 +117,17 @@ ENTRY(pvh_start_xen)
 	jmp *%rax
 
 #else /* CONFIG_X86_64 */
+
+	/* Set base address in stack canary descriptor. */
+	movl $_pa(gdt_start),%eax
+	movl $_pa(canary),%ecx
+	movw %cx, (PVH_GDT_ENTRY_CANARY * 8) + 2(%eax)
+	shrl $16, %ecx
+	movb %cl, (PVH_GDT_ENTRY_CANARY * 8) + 4(%eax)
+	movb %ch, (PVH_GDT_ENTRY_CANARY * 8) + 7(%eax)
+
+	mov $PVH_CANARY_SEL,%eax
+	mov %eax,%gs
 
 	call mk_early_pgtbl_32
 
@@ -152,9 +172,13 @@ gdt_start:
 	.quad GDT_ENTRY(0xc09a, 0, 0xfffff) /* __KERNEL_CS */
 #endif
 	.quad GDT_ENTRY(0xc092, 0, 0xfffff) /* __KERNEL_DS */
+	.quad GDT_ENTRY(0x4090, 0, 0x18)    /* PVH_CANARY_SEL */
 gdt_end:
 
-	.balign 4
+	.balign 16
+canary:
+	.fill 48, 1, 0
+
 early_stack:
 	.fill 256, 1, 0
 early_stack_end:
