@@ -176,6 +176,79 @@ struct btree_cache {
 	struct closure_waitlist	alloc_wait;
 };
 
+struct btree_node_iter {
+	u8		is_extents;
+
+	struct btree_node_iter_set {
+		u16	k, end;
+	} data[MAX_BSETS];
+};
+
+#define BTREE_ITER_SLOTS		(1 << 0)
+#define BTREE_ITER_INTENT		(1 << 1)
+#define BTREE_ITER_PREFETCH		(1 << 2)
+/*
+ * Used in bch2_btree_iter_traverse(), to indicate whether we're searching for
+ * @pos or the first key strictly greater than @pos
+ */
+#define BTREE_ITER_IS_EXTENTS		(1 << 3)
+/*
+ * indicates we need to call bch2_btree_iter_traverse() to revalidate iterator:
+ */
+#define BTREE_ITER_AT_END_OF_LEAF	(1 << 4)
+#define BTREE_ITER_ERROR		(1 << 5)
+
+enum btree_iter_uptodate {
+	BTREE_ITER_UPTODATE		= 0,
+	BTREE_ITER_NEED_PEEK		= 1,
+	BTREE_ITER_NEED_RELOCK		= 2,
+	BTREE_ITER_NEED_TRAVERSE	= 3,
+	BTREE_ITER_END			= 4,
+};
+
+/*
+ * @pos			- iterator's current position
+ * @level		- current btree depth
+ * @locks_want		- btree level below which we start taking intent locks
+ * @nodes_locked	- bitmask indicating which nodes in @nodes are locked
+ * @nodes_intent_locked	- bitmask indicating which locks are intent locks
+ */
+struct btree_iter {
+	struct bch_fs		*c;
+	struct bpos		pos;
+
+	u8			flags;
+	unsigned		uptodate:4;
+	enum btree_id		btree_id:4;
+	unsigned		level:4,
+				locks_want:4,
+				nodes_locked:4,
+				nodes_intent_locked:4;
+
+	struct btree_iter_level {
+		struct btree	*b;
+		struct btree_node_iter iter;
+	}			l[BTREE_MAX_DEPTH];
+
+	u32			lock_seq[BTREE_MAX_DEPTH];
+
+	/*
+	 * Current unpacked key - so that bch2_btree_iter_next()/
+	 * bch2_btree_iter_next_slot() can correctly advance pos.
+	 */
+	struct bkey		k;
+
+	/*
+	 * Circular linked list of linked iterators: linked iterators share
+	 * locks (e.g. two linked iterators may have the same node intent
+	 * locked, or read and write locked, at the same time), and insertions
+	 * through one iterator won't invalidate the other linked iterators.
+	 */
+
+	/* Must come last: */
+	struct btree_iter	*next;
+};
+
 #define BTREE_FLAG(flag)						\
 static inline bool btree_node_ ## flag(struct btree *b)			\
 {	return test_bit(BTREE_NODE_ ## flag, &b->flags); }		\

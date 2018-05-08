@@ -4,6 +4,7 @@
 #include "btree_iter.h"
 #include "buckets.h"
 #include "io_types.h"
+#include "move_types.h"
 
 struct bch_read_bio;
 struct moving_context;
@@ -47,16 +48,6 @@ int bch2_migrate_write_init(struct bch_fs *, struct migrate_write *,
 typedef enum data_cmd (*move_pred_fn)(struct bch_fs *, void *,
 				enum bkey_type, struct bkey_s_c_extent,
 				struct bch_io_opts *, struct data_opts *);
-
-struct bch_move_stats {
-	enum bch_data_type	data_type;
-	struct btree_iter	iter;
-
-	atomic64_t		keys_moved;
-	atomic64_t		sectors_moved;
-	atomic64_t		sectors_seen;
-	atomic64_t		sectors_raced;
-};
 
 int bch2_move_data(struct bch_fs *, struct bch_ratelimit *,
 		   struct write_point_specifier,
