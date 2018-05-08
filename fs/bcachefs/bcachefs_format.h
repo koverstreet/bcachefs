@@ -3,6 +3,72 @@
 
 /*
  * bcachefs on disk data structures
+ *
+ * OVERVIEW:
+ *
+ * There are three main types of on disk data structures in bcachefs (this is
+ * reduced from 5 in bcache)
+ *
+ *  - superblock
+ *  - journal
+ *  - btree
+ *
+ * The btree is the primary structure, most metadata exists as keys in the
+ * various btrees. There are only a small number of btrees, they're not
+ * sharded - we have one btree for extents, another for inodes, et cetera.
+ *
+ * SUPERBLOCK:
+ *
+ * The superblock contains the location of the journal, the list of devices in
+ * the filesystem, and in general any metadata we need in order to decide
+ * whether we can start a filesystem or prior to reading the journal/btree
+ * roots.
+ *
+ * The superblock is extensible, and most of the contents of the superblock are
+ * in variable length, type tagged fields; see struct bch_sb_field.
+ *
+ * Backup superblocks do not reside in a fixed location; also, superblocks do
+ * not have a fixed size. To locate backup superblocks we have struct
+ * bch_sb_layout; we store a copy of this inside every superblock, and also
+ * before the first superblock.
+ *
+ * JOURNAL:
+ *
+ * The journal primarily records btree updates in the order they occurred;
+ * journal replay consists of just iterating over all the keys in the open
+ * journal entries and re-inserting them into the btrees.
+ *
+ * The journal also contains entry types for the btree roots, and blacklisted
+ * journal sequence numbers (see journal_seq_blacklist.c).
+ *
+ * BTREE:
+ *
+ * bcachefs btrees are copy on write b+ trees, where nodes are big (typically
+ * 128k-256k) and log structured. We use struct btree_node for writing the first
+ * entry in a given node (offset 0), and struct btree_node_entry for all
+ * subsequent writes.
+ *
+ * After the header, btree node entries contain a list of keys in sorted order.
+ * Values are stored inline with the keys; since values are variable length (and
+ * keys effectively are variable length too, due to packing) we can't do random
+ * access without building up additional in memory tables in the btree node read
+ * path.
+ *
+ * BTREE KEYS (struct bkey):
+ *
+ * The various btrees share a common format for the key - so as to avoid
+ * switching in fastpath lookup/comparison code - but define their own
+ * structures for the key values.
+ *
+ * The size of a key/value pair is stored as a u8 in units of u64s, so the max
+ * size is just under 2k. The common part also contains a type tag for the
+ * value, and a format field indicating whether the key is packed or not (and
+ * also meant to allow adding new key fields in the future, if desired).
+ *
+ * bkeys, when stored within a btree node, may also be packed. In that case, the
+ * bkey_format in that node is used to unpack it. Packed bkeys mean that we can
+ * be generous with field sizes in the common part of the key format (64 bit
+ * inode number, 64 bit offset, 96 bit version field, etc.) for negligible cost.
  */
 
 #include <asm/types.h>
@@ -1378,34 +1444,5 @@ struct btree_node_entry {
 	};
 	};
 } __attribute__((packed, aligned(8)));
-
-/* Obsolete: */
-
-struct prio_set {
-	struct bch_csum		csum;
-
-	__le64			magic;
-	__le32			nonce[3];
-	__le16			version;
-	__le16			flags;
-
-	__u8			encrypted_start[0];
-
-	__le64			next_bucket;
-
-	struct bucket_disk {
-		__le16		prio[2];
-		__u8		gen;
-	} __attribute__((packed)) data[];
-} __attribute__((packed, aligned(8)));
-
-LE32_BITMASK(PSET_CSUM_TYPE,	struct prio_set, flags, 0, 4);
-
-#define PSET_MAGIC		__cpu_to_le64(0x6750e15f87337f91ULL)
-
-static inline __u64 __pset_magic(struct bch_sb *sb)
-{
-	return __le64_to_cpu(__bch2_sb_magic(sb) ^ PSET_MAGIC);
-}
 
 #endif /* _BCACHEFS_FORMAT_H */
