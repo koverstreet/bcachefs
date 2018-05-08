@@ -187,8 +187,6 @@ static int bch2_rebalance_thread(void *arg)
 	prev_cputime	= curr_cputime();
 
 	while (!kthread_wait_freezable(r->enabled)) {
-		struct bch_move_stats move_stats = { 0 };
-
 		start			= jiffies;
 		cputime			= curr_cputime();
 
@@ -225,8 +223,6 @@ static int bch2_rebalance_thread(void *arg)
 			continue;
 		}
 
-		r->state = REBALANCE_RUNNING;
-
 		/* minimum 1 mb/sec: */
 		r->pd.rate.rate =
 			max_t(u64, 1 << 11,
@@ -239,13 +235,17 @@ static int bch2_rebalance_thread(void *arg)
 		prev_start	= start;
 		prev_cputime	= cputime;
 
+		r->state = REBALANCE_RUNNING;
+		memset(&r->move_stats, 0, sizeof(r->move_stats));
 		rebalance_work_reset(c);
 
-		bch2_move_data(c, &r->pd.rate,
+		bch2_move_data(c,
+			       /* ratelimiting disabled for now */
+			       NULL, /*  &r->pd.rate, */
 			       writepoint_ptr(&c->rebalance_write_point),
 			       POS_MIN, POS_MAX,
 			       rebalance_pred, NULL,
-			       &move_stats);
+			       &r->move_stats);
 	}
 
 	return 0;
@@ -289,6 +289,9 @@ ssize_t bch2_rebalance_work_show(struct bch_fs *c, char *buf)
 		break;
 	case REBALANCE_RUNNING:
 		out += scnprintf(out, end - out, "running\n");
+		out += scnprintf(out, end - out, "pos %llu:%llu\n",
+				 r->move_stats.iter.pos.inode,
+				 r->move_stats.iter.pos.offset);
 		break;
 	}
 
