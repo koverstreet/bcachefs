@@ -6,6 +6,9 @@
 #include <asm/ioctl.h>
 #include "bcachefs_format.h"
 
+/*
+ * Flags common to multiple ioctls:
+ */
 #define BCH_FORCE_IF_DATA_LOST		(1 << 0)
 #define BCH_FORCE_IF_METADATA_LOST	(1 << 1)
 #define BCH_FORCE_IF_DATA_DEGRADED	(1 << 2)
@@ -15,12 +18,23 @@
 	(BCH_FORCE_IF_DATA_DEGRADED|		\
 	 BCH_FORCE_IF_METADATA_DEGRADED)
 
+/*
+ * If cleared, ioctl that refer to a device pass it as a pointer to a pathname
+ * (e.g. /dev/sda1); if set, the dev field is the device's index within the
+ * filesystem:
+ */
 #define BCH_BY_INDEX			(1 << 4)
 
+/*
+ * For BCH_IOCTL_READ_SUPER: get superblock of a specific device, not filesystem
+ * wide superblock:
+ */
 #define BCH_READ_DEV			(1 << 5)
 
 /* global control dev: */
 
+/* These are currently broken, and probably unnecessary: */
+#if 0
 #define BCH_IOCTL_ASSEMBLE	_IOW(0xbc, 1, struct bch_ioctl_assemble)
 #define BCH_IOCTL_INCREMENTAL	_IOW(0xbc, 2, struct bch_ioctl_incremental)
 
@@ -36,12 +50,18 @@ struct bch_ioctl_incremental {
 	__u64			pad;
 	__u64			dev;
 };
+#endif
 
 /* filesystem ioctls: */
 
 #define BCH_IOCTL_QUERY_UUID	_IOR(0xbc,	1,  struct bch_ioctl_query_uuid)
+
+/* These only make sense when we also have incremental assembly */
+#if 0
 #define BCH_IOCTL_START		_IOW(0xbc,	2,  struct bch_ioctl_start)
 #define BCH_IOCTL_STOP		_IO(0xbc,	3)
+#endif
+
 #define BCH_IOCTL_DISK_ADD	_IOW(0xbc,	4,  struct bch_ioctl_disk)
 #define BCH_IOCTL_DISK_REMOVE	_IOW(0xbc,	5,  struct bch_ioctl_disk)
 #define BCH_IOCTL_DISK_ONLINE	_IOW(0xbc,	6,  struct bch_ioctl_disk)
@@ -53,14 +73,70 @@ struct bch_ioctl_incremental {
 #define BCH_IOCTL_DISK_GET_IDX	_IOW(0xbc,	13,  struct bch_ioctl_disk_get_idx)
 #define BCH_IOCTL_DISK_RESIZE	_IOW(0xbc,	13,  struct bch_ioctl_disk_resize)
 
+/*
+ * BCH_IOCTL_QUERY_UUID: get filesystem UUID
+ *
+ * Returns user visible UUID, not internal UUID (which may not ever be changed);
+ * the filesystem's sysfs directory may be found under /sys/fs/bcachefs with
+ * this UUID.
+ */
 struct bch_ioctl_query_uuid {
 	uuid_le			uuid;
 };
 
+#if 0
 struct bch_ioctl_start {
 	__u32			flags;
 	__u32			pad;
 };
+#endif
+
+/*
+ * BCH_IOCTL_DISK_ADD: add a new device to an existing filesystem
+ *
+ * The specified device must not be open or in use. On success, the new device
+ * will be an online member of the filesystem just like any other member.
+ *
+ * The device must first be prepared by userspace by formatting with a bcachefs
+ * superblock, which is only used for passing in superblock options/parameters
+ * for that device (in struct bch_member). The new device's superblock should
+ * not claim to be a member of any existing filesystem - UUIDs on it will be
+ * ignored.
+ */
+
+/*
+ * BCH_IOCTL_DISK_REMOVE: permanently remove a member device from a filesystem
+ *
+ * Any data present on @dev will be permanently deleted, and @dev will be
+ * removed from its slot in the filesystem's list of member devices. The device
+ * may be either offline or offline.
+ *
+ * Will fail removing @dev would leave us with insufficient read write devices
+ * or degraded/unavailable data, unless the approprate BCH_FORCE_IF_* flags are
+ * set.
+ */
+
+/*
+ * BCH_IOCTL_DISK_ONLINE: given a disk that is already a member of a filesystem
+ * but is not open (e.g. because we started in degraded mode), bring it online
+ *
+ * all existing data on @dev will be available once the device is online,
+ * exactly as if @dev was present when the filesystem was first mounted
+ */
+
+/*
+ * BCH_IOCTL_DISK_OFFLINE: offline a disk, causing the kernel to close that
+ * block device, without removing it from the filesystem (so it can be brought
+ * back online later)
+ *
+ * Data present on @dev will be unavailable while @dev is offline (unless
+ * replicated), but will still be intact and untouched if @dev is brought back
+ * online
+ *
+ * Will fail (similarly to BCH_IOCTL_DISK_SET_STATE) if offlining @dev would
+ * leave us with insufficient read write devices or degraded/unavailable data,
+ * unless the approprate BCH_FORCE_IF_* flags are set.
+ */
 
 struct bch_ioctl_disk {
 	__u32			flags;
@@ -68,6 +144,16 @@ struct bch_ioctl_disk {
 	__u64			dev;
 };
 
+/*
+ * BCH_IOCTL_DISK_SET_STATE: modify state of a member device of a filesystem
+ *
+ * @new_state		- one of the bch_member_state states (rw, ro, failed,
+ *			  spare)
+ *
+ * Will refuse to change member state if we would then have insufficient devices
+ * to write to, or if it would result in degraded data (when @new_state is
+ * failed or spare) unless the appropriate BCH_FORCE_IF_* flags are set.
+ */
 struct bch_ioctl_disk_set_state {
 	__u32			flags;
 	__u8			new_state;
@@ -82,6 +168,17 @@ enum bch_data_ops {
 	BCH_DATA_OP_NR		= 3,
 };
 
+/*
+ * BCH_IOCTL_DATA: operations that walk and manipulate filesystem data (e.g.
+ * scrub, rereplicate, migrate).
+ *
+ * This ioctl kicks off a job in the background, and returns a file descriptor.
+ * Reading from the file descriptor returns a struct bch_ioctl_data_progress,
+ * indicating current progress, and closing the file descriptor will stop the
+ * job. The file descriptor is O_CLOEXEC.
+ *
+ * @start	- position 
+ */
 struct bch_ioctl_data {
 	__u32			op;
 	__u32			flags;
@@ -128,6 +225,19 @@ struct bch_ioctl_fs_usage {
 	__u64			sectors[BCH_DATA_NR][BCH_REPLICAS_MAX];
 };
 
+/*
+ * BCH_IOCTL_USAGE: query filesystem disk space usage
+ *
+ * Returns disk space usage broken out by data type, number of replicas, and
+ * by component device
+ *
+ * @nr_devices	- number of devices userspace allocated space for in @devs
+ *
+ * On success, @fs and @devs will be filled out appropriately and devs[i].alive
+ * will indicate if a device was present in that slot
+ *
+ * Returns -ERANGE if @nr_devices was too small
+ */
 struct bch_ioctl_usage {
 	__u16			nr_devices;
 	__u16			pad[3];
@@ -136,6 +246,20 @@ struct bch_ioctl_usage {
 	struct bch_ioctl_dev_usage devs[0];
 };
 
+/*
+ * BCH_IOCTL_READ_SUPER: read filesystem superblock
+ *
+ * Equivalent to reading the superblock directly from the block device, except
+ * avoids racing with the kernel writing the superblock or having to figure out
+ * which block device to read
+ *
+ * @sb		- buffer to read into
+ * @size	- size of userspace allocated buffer
+ * @dev		- device to read superblock for, if BCH_READ_DEV flag is
+ *		  specified
+ *
+ * Returns -ERANGE if buffer provided is too small
+ */
 struct bch_ioctl_read_super {
 	__u32			flags;
 	__u32			pad;
@@ -144,10 +268,22 @@ struct bch_ioctl_read_super {
 	__u64			sb;
 };
 
+/*
+ * BCH_IOCTL_DISK_GET_IDX: give a path to a block device, query filesystem to
+ * determine if disk is a (online) member - if so, returns device's index
+ *
+ * Returns -ENOENT if not found
+ */
 struct bch_ioctl_disk_get_idx {
 	__u64			dev;
 };
 
+/*
+ * BCH_IOCTL_DISK_RESIZE: resize filesystem on a device
+ *
+ * @dev		- member to resize
+ * @nbuckets	- new number of buckets
+ */
 struct bch_ioctl_disk_resize {
 	__u32			flags;
 	__u32			pad;

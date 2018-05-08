@@ -111,7 +111,14 @@ struct bkey_format {
 /* Btree keys - all units are in sectors */
 
 struct bpos {
-	/* Word order matches machine byte order */
+	/*
+	 * Word order matches machine byte order - btree code treats a bpos as a
+	 * single large integer, for search/comparison purposes
+	 *
+	 * Note that wherever a bpos is embedded in another on disk data
+	 * structure, it has to be byte swabbed when reading in metadata that
+	 * wasn't written in native endian order:
+	 */
 #if defined(__LITTLE_ENDIAN)
 	__u32		snapshot;
 	__u64		offset;
