@@ -87,6 +87,7 @@ static inline int numa_update_cpu_topology(bool cpus_locked)
 extern int start_topology_update(void);
 extern int stop_topology_update(void);
 extern int prrn_is_enabled(void);
+extern int timed_topology_update(int nsecs);
 #else
 static inline int start_topology_update(void)
 {
@@ -100,15 +101,11 @@ static inline int prrn_is_enabled(void)
 {
 	return 0;
 }
+static inline int timed_topology_update(int nsecs)
+{
+	return 0;
+}
 #endif /* CONFIG_NUMA && CONFIG_PPC_SPLPAR */
-
-#if defined(CONFIG_HOTPLUG_CPU) || defined(CONFIG_NEED_MULTIPLE_NODES)
-#if defined(CONFIG_PPC_SPLPAR)
-extern int timed_topology_update(int nsecs);
-#else
-#define	timed_topology_update(nsecs)
-#endif /* CONFIG_PPC_SPLPAR */
-#endif /* CONFIG_HOTPLUG_CPU || CONFIG_NEED_MULTIPLE_NODES */
 
 #include <asm-generic/topology.h>
 
