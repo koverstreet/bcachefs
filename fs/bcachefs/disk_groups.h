@@ -54,34 +54,8 @@ static inline struct target target_decode(unsigned target)
 	return (struct target) { .type = TARGET_NULL };
 }
 
-static inline bool dev_in_target(struct bch_dev *ca, unsigned target)
-{
-	struct target t = target_decode(target);
-
-	switch (t.type) {
-	case TARGET_NULL:
-		return false;
-	case TARGET_DEV:
-		return ca->dev_idx == t.dev;
-	case TARGET_GROUP:
-		return ca->mi.group && ca->mi.group - 1 == t.group;
-	default:
-		BUG();
-	}
-}
-
-static inline bool dev_idx_in_target(struct bch_fs *c, unsigned dev, unsigned target)
-{
-	bool ret;
-
-	rcu_read_lock();
-	ret = dev_in_target(rcu_dereference(c->devs[dev]), target);
-	rcu_read_unlock();
-
-	return ret;
-}
-
 const struct bch_devs_mask *bch2_target_to_mask(struct bch_fs *, unsigned);
+bool bch2_dev_in_target(struct bch_fs *, unsigned, unsigned);
 
 int bch2_disk_path_find(struct bch_sb_handle *, const char *);
 int bch2_disk_path_find_or_create(struct bch_sb_handle *, const char *);

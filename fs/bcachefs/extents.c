@@ -160,13 +160,11 @@ bch2_extent_has_target(struct bch_fs *c, struct bkey_s_c_extent e, unsigned targ
 {
 	const struct bch_extent_ptr *ptr;
 
-	extent_for_each_ptr(e, ptr) {
-		struct bch_dev *ca = bch_dev_bkey_exists(c, ptr->dev);
-
-		if (dev_in_target(ca, target) &&
-		    (!ptr->cached || !ptr_stale(ca, ptr)))
+	extent_for_each_ptr(e, ptr)
+		if (bch2_dev_in_target(c, ptr->dev, target) &&
+		    (!ptr->cached ||
+		     !ptr_stale(bch_dev_bkey_exists(c, ptr->dev), ptr)))
 			return ptr;
-	}
 
 	return NULL;
 }
@@ -2025,7 +2023,7 @@ void bch2_extent_mark_replicas_cached(struct bch_fs *c,
 			int n = bch2_extent_ptr_durability(c, ptr);
 
 			if (n && n <= extra &&
-			    !dev_in_target(c->devs[ptr->dev], target)) {
+			    !bch2_dev_in_target(c, ptr->dev, target)) {
 				ptr->cached = true;
 				extra -= n;
 			}
