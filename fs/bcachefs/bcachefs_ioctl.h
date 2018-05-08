@@ -191,6 +191,9 @@ struct bch_ioctl_data {
 		__u32		dev;
 		__u32		pad;
 	}			migrate;
+	struct {
+		__u64		pad[8];
+	};
 	};
 } __attribute__((packed, aligned(8)));
 
