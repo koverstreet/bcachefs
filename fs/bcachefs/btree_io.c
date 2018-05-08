@@ -1385,7 +1385,8 @@ start:
 
 	bch2_time_stats_update(&c->times[BCH_TIME_btree_read], rb->start_time);
 	bio_put(&rb->bio);
-	clear_btree_node_read_in_flight(b);
+
+	clear_bit_unlock(BTREE_NODE_read_in_flight, &b->flags);
 	wake_up_bit(&b->flags, BTREE_NODE_read_in_flight);
 }
 
@@ -1413,11 +1414,15 @@ void bch2_btree_node_read(struct bch_fs *c, struct btree *b,
 	int ret;
 
 	trace_btree_read(c, b);
+	set_btree_node_read_in_flight(b);
 
 	ret = bch2_btree_pick_ptr(c, b, NULL, &pick);
 	if (bch2_fs_fatal_err_on(ret <= 0, c,
 			"btree node read error: no device to read from")) {
 		set_btree_node_read_error(b);
+
+		clear_bit_unlock(BTREE_NODE_read_in_flight, &b->flags);
+		wake_up_bit(&b->flags, BTREE_NODE_read_in_flight);
 		return;
 	}
 
@@ -1436,8 +1441,6 @@ void bch2_btree_node_read(struct bch_fs *c, struct btree *b,
 	bio->bi_end_io		= btree_node_read_endio;
 	bio->bi_private		= b;
 	bch2_bio_map(bio, b->data);
-
-	set_btree_node_read_in_flight(b);
 
 	if (rb->have_ioref) {
 		this_cpu_add(ca->io_done->sectors[READ][BCH_DATA_BTREE],

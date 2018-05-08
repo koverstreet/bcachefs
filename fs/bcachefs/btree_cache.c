@@ -577,19 +577,22 @@ err:
 
 /* Slowpath, don't want it inlined into btree_iter_traverse() */
 static noinline struct btree *bch2_btree_node_fill(struct bch_fs *c,
-						   struct btree_iter *iter,
-						   const struct bkey_i *k,
-						   unsigned level,
-						   enum six_lock_type lock_type)
+				struct btree_iter *iter,
+				const struct bkey_i *k,
+				unsigned level,
+				enum six_lock_type lock_type,
+				bool sync)
 {
 	struct btree_cache *bc = &c->btree_cache;
 	struct btree *b;
+	u32 seq;
 
 	/*
 	 * Parent node must be locked, else we could read in a btree node that's
 	 * been freed:
 	 */
 	BUG_ON(!btree_node_locked(iter, level + 1));
+	BUG_ON(level >= BTREE_MAX_DEPTH);
 
 	b = bch2_btree_node_mem_alloc(c);
 	if (IS_ERR(b))
@@ -612,22 +615,27 @@ static noinline struct btree *bch2_btree_node_fill(struct bch_fs *c,
 	}
 
 	/*
-	 * If the btree node wasn't cached, we can't drop our lock on
-	 * the parent until after it's added to the cache - because
-	 * otherwise we could race with a btree_split() freeing the node
-	 * we're trying to lock.
-	 *
-	 * But the deadlock described below doesn't exist in this case,
-	 * so it's safe to not drop the parent lock until here:
+	 * btree node has been added to cache, drop all btree locks before
+	 * doing IO:
 	 */
-	if (btree_node_read_locked(iter, level + 1))
-		btree_node_unlock(iter, level + 1);
+	set_btree_node_read_in_flight(b);
 
-	bch2_btree_node_read(c, b, true);
 	six_unlock_write(&b->lock);
+	seq = b->lock.state.seq;
+	six_unlock_intent(&b->lock);
 
-	if (lock_type == SIX_LOCK_read)
-		six_lock_downgrade(&b->lock);
+	bch2_btree_iter_unlock(iter);
+
+	bch2_btree_node_read(c, b, sync);
+
+	if (!bch2_btree_iter_relock(iter))
+		return ERR_PTR(-EINTR);
+
+	if (!sync)
+		return NULL;
+
+	if (!six_relock_type(&b->lock, lock_type, seq))
+		return ERR_PTR(-EINTR);
 
 	return b;
 }
@@ -855,12 +863,13 @@ out_upgrade:
 	goto out;
 }
 
-void bch2_btree_node_prefetch(struct bch_fs *c, const struct bkey_i *k,
-			      unsigned level, enum btree_id btree_id)
+int bch2_btree_node_prefetch(struct bch_fs *c, const struct bkey_i *k,
+			     unsigned level, enum btree_id btree_id)
 {
 	struct btree_cache *bc = &c->btree_cache;
 	struct btree *b;
 
+	BUG_ON(!btree_node_locked(iter, level + 1));
 	BUG_ON(level >= BTREE_MAX_DEPTH);
 
 	rcu_read_lock();
@@ -870,27 +879,12 @@ void bch2_btree_node_prefetch(struct bch_fs *c, const struct bkey_i *k,
 	if (b)
 		return;
 
-	b = bch2_btree_node_mem_alloc(c);
+	b = bch2_btree_node_fill(c, iter, k, level, SIX_LOCK_read, false);
 	if (IS_ERR(b))
-		return;
+		return PTR_ERR(b);
 
-	bkey_copy(&b->key, k);
-	if (bch2_btree_node_hash_insert(bc, b, level, btree_id)) {
-		/* raced with another fill: */
-
-		/* mark as unhashed... */
-		bkey_i_to_extent(&b->key)->v._data[0] = 0;
-
-		mutex_lock(&bc->lock);
-		list_add(&b->list, &bc->freeable);
-		mutex_unlock(&bc->lock);
-		goto out;
-	}
-
-	bch2_btree_node_read(c, b, false);
-out:
-	six_unlock_write(&b->lock);
-	six_unlock_intent(&b->lock);
+	BUG_ON(b);
+	return 0;
 }
 
 int bch2_print_btree_node(struct bch_fs *c, struct btree *b,

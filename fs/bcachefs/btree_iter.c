@@ -813,7 +813,7 @@ static inline int btree_iter_lock_root(struct btree_iter *iter,
 }
 
 noinline
-static void btree_iter_prefetch(struct btree_iter *iter)
+static int btree_iter_prefetch(struct btree_iter *iter)
 {
 	struct btree_iter_level *l = &iter->l[iter->level];
 	struct btree_node_iter node_iter = l->iter;
@@ -823,8 +823,9 @@ static void btree_iter_prefetch(struct btree_iter *iter)
 		? (iter->level > 1 ? 0 :  2)
 		: (iter->level > 1 ? 1 : 16);
 	bool was_locked = btree_node_locked(iter, iter->level);
+	int ret = 0;
 
-	while (nr) {
+	while (nr && !ret) {
 		if (!bch2_btree_node_relock(iter, iter->level))
 			return;
 
@@ -834,13 +835,15 @@ static void btree_iter_prefetch(struct btree_iter *iter)
 			break;
 
 		bch2_bkey_unpack(l->b, &tmp.k, k);
-		bch2_btree_node_prefetch(iter->c, &tmp.k,
+		ret = bch2_btree_node_prefetch(iter->c, &tmp.k,
 					 iter->level - 1,
 					 iter->btree_id);
 	}
 
 	if (!was_locked)
 		btree_node_unlock(iter, iter->level);
+
+	return ret;
 }
 
 static inline int btree_iter_down(struct btree_iter *iter)
@@ -862,11 +865,13 @@ static inline int btree_iter_down(struct btree_iter *iter)
 
 	mark_btree_node_locked(iter, level, lock_type);
 	btree_iter_node_set(iter, b);
-
-	if (iter->flags & BTREE_ITER_PREFETCH)
-		btree_iter_prefetch(iter);
-
 	iter->level = level;
+
+	if (iter->flags & BTREE_ITER_PREFETCH) {
+		int ret = btree_iter_prefetch(iter);
+		if (ret)
+			return ret;
+	}
 
 	return 0;
 }
