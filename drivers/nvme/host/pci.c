@@ -1070,8 +1070,17 @@ static int adapter_delete_queue(struct nvme_dev *dev, u8 opcode, u16 id)
 static int adapter_alloc_cq(struct nvme_dev *dev, u16 qid,
 						struct nvme_queue *nvmeq)
 {
+	struct nvme_ctrl *ctrl = &dev->ctrl;
 	struct nvme_command c;
 	int flags = NVME_QUEUE_PHYS_CONTIG | NVME_CQ_IRQ_ENABLED;
+
+	/*
+	 * Some drives have a bug that auto-enables WRRU if MEDIUM isn't
+	 * set. Since URGENT priority is zeroes, it makes all queues
+	 * URGENT.
+	 */
+	if (ctrl->quirks & NVME_QUIRK_MEDIUM_PRIO_SQ)
+		flags |= NVME_SQ_PRIO_MEDIUM;
 
 	/*
 	 * Note: we (ab)use the fact that the prp fields survive if no data
@@ -2668,7 +2677,8 @@ static const struct pci_device_id nvme_id_table[] = {
 		.driver_data = NVME_QUIRK_STRIPE_SIZE |
 				NVME_QUIRK_DEALLOCATE_ZEROES, },
 	{ PCI_VDEVICE(INTEL, 0xf1a5),	/* Intel 600P/P3100 */
-		.driver_data = NVME_QUIRK_NO_DEEPEST_PS },
+		.driver_data = NVME_QUIRK_NO_DEEPEST_PS |
+				NVME_QUIRK_MEDIUM_PRIO_SQ },
 	{ PCI_VDEVICE(INTEL, 0x5845),	/* Qemu emulated controller */
 		.driver_data = NVME_QUIRK_IDENTIFY_CNS, },
 	{ PCI_DEVICE(0x1c58, 0x0003),	/* HGST adapter */
