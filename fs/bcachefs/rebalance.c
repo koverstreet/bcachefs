@@ -21,10 +21,8 @@ static inline bool rebalance_ptr_pred(struct bch_fs *c,
 				      struct bch_extent_crc_unpacked crc,
 				      struct bch_io_opts *io_opts)
 {
-	struct bch_dev *ca = bch_dev_bkey_exists(c, ptr->dev);
-
 	if (io_opts->background_target &&
-	    !dev_in_target(ca, io_opts->background_target) &&
+	    !bch2_dev_in_target(c, ptr->dev, io_opts->background_target) &&
 	    !ptr->cached)
 		return true;
 

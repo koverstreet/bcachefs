@@ -1393,12 +1393,10 @@ static void writepoint_drop_ptrs(struct bch_fs *c,
 {
 	int i;
 
-	for (i = wp->first_ptr - 1; i >= 0; --i) {
-		struct bch_dev *ca = bch_dev_bkey_exists(c, wp->ptrs[i]->ptr.dev);
-
-		if (dev_in_target(ca, target) == in_target)
+	for (i = wp->first_ptr - 1; i >= 0; --i)
+		if (bch2_dev_in_target(c, wp->ptrs[i]->ptr.dev,
+				       target) == in_target)
 			writepoint_drop_ptr(c, wp, i);
-	}
 }
 
 static void verify_not_stale(struct bch_fs *c, const struct write_point *wp)
@@ -1555,7 +1553,7 @@ struct write_point *bch2_alloc_sectors_start(struct bch_fs *c,
 	/* does writepoint have ptrs we don't want to use? */
 	if (target)
 		writepoint_for_each_ptr(wp, ob, i)
-			if (!dev_idx_in_target(c, ob->ptr.dev, target)) {
+			if (!bch2_dev_in_target(c, ob->ptr.dev, target)) {
 				swap(wp->ptrs[i], wp->ptrs[wp->first_ptr]);
 				wp->first_ptr++;
 			}
@@ -1590,7 +1588,8 @@ alloc_done:
 		 * one in the target we want:
 		 */
 		if (cache_idx >= 0) {
-			if (!dev_in_target(ca, target)) {
+			if (!bch2_dev_in_target(c, wp->ptrs[i]->ptr.dev,
+						target)) {
 				writepoint_drop_ptr(c, wp, i);
 			} else {
 				writepoint_drop_ptr(c, wp, cache_idx);
@@ -1621,7 +1620,7 @@ alloc_done:
 
 			if (ca->mi.durability &&
 			    ca->mi.durability <= nr_ptrs_effective - nr_replicas &&
-			    !dev_idx_in_target(c, ob->ptr.dev, target)) {
+			    !bch2_dev_in_target(c, ob->ptr.dev, target)) {
 				swap(wp->ptrs[i], wp->ptrs[wp->first_ptr]);
 				wp->first_ptr++;
 				nr_ptrs_effective -= ca->mi.durability;
