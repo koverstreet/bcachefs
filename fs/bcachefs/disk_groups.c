@@ -196,6 +196,36 @@ const struct bch_devs_mask *bch2_target_to_mask(struct bch_fs *c, unsigned targe
 	}
 }
 
+bool bch2_dev_in_target(struct bch_fs *c, unsigned dev, unsigned target)
+{
+	struct target t = target_decode(target);
+
+	switch (t.type) {
+	case TARGET_NULL:
+		return false;
+	case TARGET_DEV:
+		return dev == t.dev;
+	case TARGET_GROUP: {
+		struct bch_disk_groups_cpu *g;
+		const struct bch_devs_mask *m;
+		bool ret;
+
+		rcu_read_lock();
+		g = rcu_dereference(c->disk_groups);
+		m = t.group < g->nr && !g->entries[t.group].deleted
+			? &g->entries[t.group].devs
+			: NULL;
+
+		ret = m ? test_bit(dev, m->d) : false;
+		rcu_read_unlock();
+
+		return ret;
+	}
+	default:
+		BUG();
+	}
+}
+
 static int __bch2_disk_group_find(struct bch_sb_field_disk_groups *groups,
 				  unsigned parent,
 				  const char *name, unsigned namelen)
