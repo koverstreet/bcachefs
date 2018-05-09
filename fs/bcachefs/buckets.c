@@ -957,7 +957,8 @@ void bch2_dev_buckets_free(struct bch_dev *ca)
 	kvpfree(ca->buckets_dirty,
 		BITS_TO_LONGS(ca->mi.nbuckets) * sizeof(unsigned long));
 	kvpfree(ca->oldest_gens, ca->mi.nbuckets * sizeof(u8));
-	kvpfree(ca->buckets,	 sizeof(struct bucket_array) +
+	kvpfree(rcu_dereference_protected(ca->buckets, 1),
+		sizeof(struct bucket_array) +
 		ca->mi.nbuckets * sizeof(struct bucket));
 
 	free_percpu(ca->usage_percpu);

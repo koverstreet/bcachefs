@@ -113,14 +113,7 @@ static inline void *kvpmalloc(size_t size, gfp_t gfp_mask)
 		: vpmalloc(size, gfp_mask);
 }
 
-void mempool_free_vp(void *element, void *pool_data);
-void *mempool_alloc_vp(gfp_t gfp_mask, void *pool_data);
-
-static inline int mempool_init_vp_pool(mempool_t *pool, int min_nr, size_t size)
-{
-	return mempool_init(pool, min_nr, mempool_alloc_vp,
-			    mempool_free_vp, (void *) size);
-}
+int mempool_init_kvpmalloc_pool(mempool_t *, int, size_t);
 
 #define HEAP(type)							\
 struct {								\

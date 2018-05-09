@@ -324,7 +324,7 @@ struct jset_entry_ops {
 			struct jset_entry *, int);
 };
 
-const struct jset_entry_ops bch2_jset_entry_ops[] = {
+static const struct jset_entry_ops bch2_jset_entry_ops[] = {
 #define x(f, nr)						\
 	[BCH_JSET_ENTRY_##f]	= (struct jset_entry_ops) {	\
 		.validate	= journal_entry_validate_##f,	\

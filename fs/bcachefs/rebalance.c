@@ -304,7 +304,7 @@ void bch2_rebalance_stop(struct bch_fs *c)
 	c->rebalance.pd.rate.rate = UINT_MAX;
 	bch2_ratelimit_reset(&c->rebalance.pd.rate);
 
-	p = c->rebalance.thread;
+	p = rcu_dereference_protected(c->rebalance.thread, 1);
 	c->rebalance.thread = NULL;
 
 	if (p) {
@@ -328,9 +328,8 @@ int bch2_rebalance_start(struct bch_fs *c)
 		return PTR_ERR(p);
 
 	get_task_struct(p);
-
 	rcu_assign_pointer(c->rebalance.thread, p);
-	wake_up_process(c->rebalance.thread);
+	wake_up_process(p);
 	return 0;
 }
 

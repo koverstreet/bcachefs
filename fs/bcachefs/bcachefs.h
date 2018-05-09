@@ -383,7 +383,7 @@ struct bch_dev {
 	struct bch_dev_usage	usage_cached;
 
 	/* Allocator: */
-	struct task_struct	*alloc_thread;
+	struct task_struct __rcu *alloc_thread;
 
 	/*
 	 * free: Buckets that are ready to be used
@@ -458,7 +458,6 @@ enum {
 	/* shutdown: */
 	BCH_FS_EMERGENCY_RO,
 	BCH_FS_WRITE_DISABLE_COMPLETE,
-	BCH_FS_GC_STOPPING,
 
 	/* errors: */
 	BCH_FS_ERROR,

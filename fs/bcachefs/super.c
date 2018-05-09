@@ -644,7 +644,8 @@ static struct bch_fs *bch2_fs_alloc(struct bch_sb *sb, struct bch_opts opts)
 			BIOSET_NEED_BVECS) ||
 	    !(c->usage_percpu = alloc_percpu(struct bch_fs_usage)) ||
 	    lg_lock_init(&c->usage_lock) ||
-	    mempool_init_vp_pool(&c->btree_bounce_pool, 1, btree_bytes(c)) ||
+	    mempool_init_kvpmalloc_pool(&c->btree_bounce_pool, 1,
+					btree_bytes(c)) ||
 	    bch2_io_clock_init(&c->io_clock[READ]) ||
 	    bch2_io_clock_init(&c->io_clock[WRITE]) ||
 	    bch2_fs_journal_init(&c->journal) ||

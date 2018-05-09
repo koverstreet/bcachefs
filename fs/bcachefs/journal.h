@@ -365,6 +365,8 @@ static inline void bch2_journal_set_replay_done(struct journal *j)
 ssize_t bch2_journal_print_debug(struct journal *, char *);
 ssize_t bch2_journal_print_pins(struct journal *, char *);
 
+int bch2_set_nr_journal_buckets(struct bch_fs *, struct bch_dev *,
+				unsigned nr);
 int bch2_dev_journal_alloc(struct bch_dev *);
 
 void bch2_dev_journal_stop(struct journal *, struct bch_dev *);

@@ -131,4 +131,7 @@ static inline struct bch_member_cpu bch2_mi_to_cpu(struct bch_member *mi)
 	};
 }
 
+size_t bch2_sb_field_to_text(char *, size_t, struct bch_sb *,
+			     struct bch_sb_field *);
+
 #endif /* _BCACHEFS_SUPER_IO_H */

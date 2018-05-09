@@ -1797,8 +1797,8 @@ static int __btree_node_rewrite(struct bch_fs *c, struct btree_iter *iter,
 	bch2_btree_node_write(c, n, SIX_LOCK_intent);
 
 	if (parent) {
-		bch2_btree_insert_node(as, parent, iter,
-				       &keylist_single(&n->key));
+		bch2_keylist_add(&as->parent_keys, &n->key);
+		bch2_btree_insert_node(as, parent, iter, &as->parent_keys);
 	} else {
 		bch2_btree_set_root(as, n, iter);
 	}

@@ -480,7 +480,7 @@ static const unsigned bch2_compression_opt_to_feature[] = {
 
 #undef BCH_FEATURE_NONE
 
-int __bch2_check_set_has_compressed_data(struct bch_fs *c, u64 f)
+static int __bch2_check_set_has_compressed_data(struct bch_fs *c, u64 f)
 {
 	int ret = 0;
 
@@ -527,26 +527,6 @@ void bch2_fs_compress_exit(struct bch_fs *c)
 		mempool_exit(&c->compress_workspace[i]);
 	mempool_exit(&c->compression_bounce[WRITE]);
 	mempool_exit(&c->compression_bounce[READ]);
-}
-
-static void *mempool_kvpmalloc(gfp_t gfp_mask, void *pool_data)
-{
-	size_t size = (size_t)pool_data;
-	return kvpmalloc(size, gfp_mask);
-}
-
-void mempool_kvpfree(void *element, void *pool_data)
-{
-	size_t size = (size_t)pool_data;
-	kvpfree(element, size);
-}
-
-static int mempool_init_kvpmalloc_pool(mempool_t *pool, int min_nr, size_t size)
-{
-	return !mempool_initialized(pool)
-		? mempool_init(pool, min_nr, mempool_kvpmalloc,
-			       mempool_kvpfree, (void *) size)
-		: 0;
 }
 
 static int __bch2_fs_compress_init(struct bch_fs *c, u64 features)
@@ -610,6 +590,9 @@ have_compressed:
 
 		if (i->decompress_workspace)
 			decompress_workspace_needed = true;
+
+		if (mempool_initialized(&c->compress_workspace[i->type]))
+			continue;
 
 		ret = mempool_init_kvpmalloc_pool(
 				&c->compress_workspace[i->type],
