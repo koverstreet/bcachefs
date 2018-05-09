@@ -11,7 +11,7 @@ enum rebalance_state {
 };
 
 struct bch_fs_rebalance {
-	struct task_struct	*thread;
+	struct task_struct __rcu *thread;
 	struct bch_pd_controller pd;
 
 	atomic64_t		work_unknown_dev;

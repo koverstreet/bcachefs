@@ -17,8 +17,8 @@ static int group_cmp(const void *_l, const void *_r)
 		strncmp(l->label, r->label, sizeof(l->label));
 }
 
-const char *bch2_sb_disk_groups_validate(struct bch_sb *sb,
-					 struct bch_sb_field *f)
+static const char *bch2_sb_disk_groups_validate(struct bch_sb *sb,
+						struct bch_sb_field *f)
 {
 	struct bch_sb_field_disk_groups *groups =
 		field_to_type(f, disk_groups);
@@ -163,7 +163,8 @@ int bch2_sb_disk_groups_to_cpu(struct bch_fs *c)
 		}
 	}
 
-	old_g = c->disk_groups;
+	old_g = rcu_dereference_protected(c->disk_groups,
+				lockdep_is_held(&c->sb_lock));
 	rcu_assign_pointer(c->disk_groups, cpu_g);
 	if (old_g)
 		kfree_rcu(old_g, rcu);
