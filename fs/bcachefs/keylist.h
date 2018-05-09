@@ -56,9 +56,6 @@ static inline struct bkey_i *bch2_keylist_front(struct keylist *l)
 	     _k != (_keylist)->top;				\
 	     _k = bkey_next(_k))
 
-#define keylist_single(k)					\
-	((struct keylist) { .keys = k, .top = bkey_next(k) })
-
 static inline u64 keylist_sectors(struct keylist *keys)
 {
 	struct bkey_i *k;

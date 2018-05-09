@@ -145,7 +145,7 @@ bch2_extent_has_group(struct bch_fs *c, struct bkey_s_c_extent e, unsigned group
 	const struct bch_extent_ptr *ptr;
 
 	extent_for_each_ptr(e, ptr) {
-		struct bch_dev *ca = c->devs[ptr->dev];
+		struct bch_dev *ca = bch_dev_bkey_exists(c, ptr->dev);
 
 		if (ca->mi.group &&
 		    ca->mi.group - 1 == group)
