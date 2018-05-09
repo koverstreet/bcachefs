@@ -103,7 +103,8 @@ static inline void bch2_wake_allocator(struct bch_dev *ca)
 	struct task_struct *p;
 
 	rcu_read_lock();
-	if ((p = READ_ONCE(ca->alloc_thread)))
+	p = rcu_dereference(ca->alloc_thread);
+	if (p)
 		wake_up_process(p);
 	rcu_read_unlock();
 }

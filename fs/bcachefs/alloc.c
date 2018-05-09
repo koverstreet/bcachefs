@@ -1898,8 +1898,9 @@ void bch2_dev_allocator_add(struct bch_fs *c, struct bch_dev *ca)
 /* stop allocator thread: */
 void bch2_dev_allocator_stop(struct bch_dev *ca)
 {
-	struct task_struct *p = ca->alloc_thread;
+	struct task_struct *p;
 
+	p = rcu_dereference_protected(ca->alloc_thread, 1);
 	ca->alloc_thread = NULL;
 
 	/*
@@ -1934,7 +1935,7 @@ int bch2_dev_allocator_start(struct bch_dev *ca)
 		return PTR_ERR(p);
 
 	get_task_struct(p);
-	ca->alloc_thread = p;
+	rcu_assign_pointer(ca->alloc_thread, p);
 	wake_up_process(p);
 	return 0;
 }
