@@ -18,7 +18,6 @@ if [ -d /etc/kernel/postrm.d ]; then
     if [ -f /usr/lib/linux/triggers/$version ]; then
 	echo "$0 ... removing pending trigger"
 	rm -f /usr/lib/linux/triggers/$version
-	rmdir --ignore-fail-on-non-empty /usr/lib/linux/triggers
     fi
     DEB_MAINT_PARAMS="$*" run-parts --report --exit-on-error --arg=$version \
 	      --arg=$image_path /etc/kernel/postrm.d

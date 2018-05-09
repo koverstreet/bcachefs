@@ -10,7 +10,6 @@ fi
 
 depmod -a -F /boot/System.map-$version $version || true
 if [ -d /etc/kernel/postinst.d ]; then
-    mkdir -p /usr/lib/linux/triggers
     cat - >/usr/lib/linux/triggers/$version <<EOF
 DEB_MAINT_PARAMS="$*" run-parts --report --exit-on-error --arg=$version \
 	    --arg="$image_path" /etc/kernel/postinst.d

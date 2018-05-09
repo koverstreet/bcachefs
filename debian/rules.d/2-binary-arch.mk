@@ -250,11 +250,14 @@ endif
 	fi
 
 	echo "interest linux-update-$(abi_release)-$*" >"$(DROOT)/$(bin_pkg_name)-$*.triggers"
+	install -d $(pkgdir_bin)/usr/lib/linux/triggers
 	$(call install_control,$(bin_pkg_name)-$*,image,postinst postrm preinst prerm)
+	install -d $(pkgdir)/usr/lib/linux/triggers
 	$(call install_control,$(mods_pkg_name)-$*,extra,postinst postrm)
 ifeq ($(do_extras_package),true)
 	# Install the postinit/postrm scripts in the extras package.
 	if [ -f $(DEBIAN)/control.d/$(target_flavour).inclusion-list ] ; then	\
+		install -d $(pkgdir_ex)/usr/lib/linux/triggers; \
 		$(call install_control,$(mods_extra_pkg_name)-$*,extra,postinst postrm); \
 	fi
 endif

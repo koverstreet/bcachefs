@@ -21,7 +21,6 @@ depmod -a -F /boot/System.map-$version $version 2>/dev/null || true
 #    # We want to behave as if linux-image (without us) was installed, therefore
 #    # we do not want the postinst support to know we are being removed, claim
 #    # this is an installation event.
-#    mkdir -p /usr/lib/linux/triggers
 #    cat - >/usr/lib/linux/triggers/$version <<EOF
 #DEB_MAINT_PARAMS="configure" run-parts --report --exit-on-error --arg=$version \
 #	--arg="$image_path" /etc/kernel/postinst.d
