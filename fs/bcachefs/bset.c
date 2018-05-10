@@ -672,7 +672,7 @@ static inline unsigned bkey_mantissa(const struct bkey_packed *k,
 	 * (and then the bits we want are at the high end, so we shift them
 	 * back down):
 	 */
-#ifdef __LITTLE_ENDIAN
+#if __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
 	v >>= f->exponent & 7;
 #else
 	v >>= 64 - (f->exponent & 7) - (idx < BFLOAT_32BIT_NR ? 32 : 16);
@@ -761,7 +761,7 @@ static void make_bfloat(struct btree *b, struct bset_tree *t,
 	 * Then we calculate the actual shift value, from the start of the key
 	 * (k->_data), to get the key bits starting at exponent:
 	 */
-#ifdef __LITTLE_ENDIAN
+#if __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
 	shift = (int) (b->format.key_u64s * 64 - b->nr_key_bits) + exponent;
 
 	EBUG_ON(shift + bits > b->format.key_u64s * 64);

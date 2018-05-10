@@ -279,24 +279,38 @@ bch2_extent_crc_unpack(const struct bkey *k, const union bch_extent_crc *crc)
 			.uncompressed_size	= k->size,
 			.live_size		= k->size,
 		};
-	case BCH_EXTENT_CRC32:
-		return (struct bch_extent_crc_unpacked) {
+	case BCH_EXTENT_CRC32: {
+		struct bch_extent_crc_unpacked ret = (struct bch_extent_crc_unpacked) {
 			common_fields(crc->crc32),
-			.csum.lo		= (__force __le64) crc->crc32.csum,
 		};
-	case BCH_EXTENT_CRC64:
-		return (struct bch_extent_crc_unpacked) {
+
+		*((__le32 *) &ret.csum.lo) = crc->crc32.csum;
+
+		memcpy(&ret.csum.lo, &crc->crc32.csum,
+		       sizeof(crc->crc32.csum));
+
+		return ret;
+	}
+	case BCH_EXTENT_CRC64: {
+		struct bch_extent_crc_unpacked ret = (struct bch_extent_crc_unpacked) {
 			common_fields(crc->crc64),
 			.nonce			= crc->crc64.nonce,
 			.csum.lo		= (__force __le64) crc->crc64.csum_lo,
-			.csum.hi		= (__force __le64) crc->crc64.csum_hi,
 		};
-	case BCH_EXTENT_CRC128:
-		return (struct bch_extent_crc_unpacked) {
+
+		*((__le16 *) &ret.csum.hi) = crc->crc64.csum_hi;
+
+		return ret;
+	}
+	case BCH_EXTENT_CRC128: {
+		struct bch_extent_crc_unpacked ret = (struct bch_extent_crc_unpacked) {
 			common_fields(crc->crc128),
 			.nonce			= crc->crc128.nonce,
 			.csum			= crc->crc128.csum,
 		};
+
+		return ret;
+	}
 	default:
 		BUG();
 	}

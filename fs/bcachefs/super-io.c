@@ -621,7 +621,7 @@ static void write_one_super(struct bch_fs *c, struct bch_dev *ca, unsigned idx)
 	bio_reset(bio, ca->disk_sb.bdev, REQ_OP_WRITE|REQ_SYNC|REQ_META);
 	bio->bi_iter.bi_sector	= le64_to_cpu(sb->offset);
 	bio->bi_iter.bi_size	=
-		roundup(vstruct_bytes(sb),
+		roundup((size_t) vstruct_bytes(sb),
 			bdev_logical_block_size(ca->disk_sb.bdev));
 	bio->bi_end_io		= write_super_endio;
 	bio->bi_private		= ca;
