@@ -118,7 +118,7 @@ install-%: splopts += INSTALL_MOD_PATH=$(pkgdir)/
 install-%: splopts += INSTALL_MOD_DIR=kernel/zfs
 install-%: splopts += $(conc_level)
 install-%: zfsopts  = $(splopts)
-install-%: checks-%
+install-%: $(stampdir)/stamp-build-%
 	@echo Debug: $@ kernel_file $(kernel_file) kernfile $(kernfile) install_file $(install_file) instfile $(instfile)
 	dh_testdir
 	dh_testroot
@@ -404,6 +404,24 @@ ifeq ($(do_tools_hyperv),true)
 endif
 endif
 
+	# Build the final ABI information.
+	install -d $(abidir)
+	sed -e 's/^\(.\+\)[[:space:]]\+\(.\+\)[[:space:]]\(.\+\)$$/\3 \2 \1/'	\
+		$(builddir)/build-$*/Module.symvers | sort > $(abidir)/$*
+
+	# Build the final ABI modules information.
+	find $(pkgdir_bin) $(pkgdir) $(pkgdir_ex) -name \*.ko | \
+		sed -e 's/.*\/\([^\/]*\)\.ko/\1/' | sort > $(abidir)/$*.modules
+
+	# Build the final ABI retpoline information.
+	if grep -q CONFIG_RETPOLINE=y $(builddir)/build-$*/.config; then \
+		echo "# retpoline v1.0" >$(abidir)/$*.retpoline; \
+		$(SHELL) $(DROOT)/scripts/retpoline-extract $(builddir)/build-$* $(CURDIR) | \
+			sort >>$(abidir)/$*.retpoline; \
+	else \
+		echo "# RETPOLINE NOT ENABLED" >$(abidir)/$*.retpoline; \
+	fi
+
 headers_tmp := $(CURDIR)/debian/tmp-headers
 headers_dir := $(CURDIR)/debian/linux-libc-dev
 
@@ -482,7 +500,7 @@ binary-%: pkgtools = $(tools_flavour_pkg_name)-$*
 binary-%: pkgcloud = $(cloud_flavour_pkg_name)-$*
 binary-%: rprovides = $(if $(filter true,$(call custom_override,do_zfs,$*)),$(comma) spl-modules$(comma) spl-dkms$(comma) zfs-modules$(comma) zfs-dkms)
 binary-%: target_flavour = $*
-binary-%: install-%
+binary-%: checks-%
 	@echo Debug: $@
 	dh_testdir
 	dh_testroot
