@@ -14,7 +14,7 @@
  *  - journal
  *  - btree
  *
- * The btree is the primary structure, most metadata exists as keys in the
+ * The btree is the primary structure; most metadata exists as keys in the
  * various btrees. There are only a small number of btrees, they're not
  * sharded - we have one btree for extents, another for inodes, et cetera.
  *
@@ -119,11 +119,11 @@ struct bpos {
 	 * structure, it has to be byte swabbed when reading in metadata that
 	 * wasn't written in native endian order:
 	 */
-#if defined(__LITTLE_ENDIAN)
+#if __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
 	__u32		snapshot;
 	__u64		offset;
 	__u64		inode;
-#elif defined(__BIG_ENDIAN)
+#elif __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
 	__u64		inode;
 	__u64		offset;		/* Points to end of extent - sectors */
 	__u32		snapshot;
@@ -157,10 +157,10 @@ struct bch_val {
 };
 
 struct bversion {
-#if defined(__LITTLE_ENDIAN)
+#if __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
 	__u64		lo;
 	__u32		hi;
-#elif defined(__BIG_ENDIAN)
+#elif __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
 	__u32		hi;
 	__u64		lo;
 #endif
@@ -184,13 +184,13 @@ struct bkey {
 	/* Type of the value */
 	__u8		type;
 
-#if defined(__LITTLE_ENDIAN)
+#if __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
 	__u8		pad[1];
 
 	struct bversion	version;
 	__u32		size;		/* extent size, in sectors */
 	struct bpos	p;
-#elif defined(__BIG_ENDIAN)
+#elif __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
 	struct bpos	p;
 	__u32		size;		/* extent size, in sectors */
 	struct bversion	version;
@@ -349,10 +349,10 @@ BKEY_VAL_TYPE(cookie,		KEY_TYPE_COOKIE);
  *
  * If an extent is not checksummed or compressed, when the extent is trimmed we
  * don't have to remember the extent we originally allocated and wrote: we can
- * merely adjust ptr->offset to point to the start of the start of the data that
- * is currently live. The size field in struct bkey records the current (live)
- * size of the extent, and is also used to mean "size of region on disk that we
- * point to" in this case.
+ * merely adjust ptr->offset to point to the start of the data that is currently
+ * live. The size field in struct bkey records the current (live) size of the
+ * extent, and is also used to mean "size of region on disk that we point to" in
+ * this case.
  *
  * Thus an extent that is not checksummed or compressed will consist only of a
  * list of bch_extent_ptrs, with none of the fields in
@@ -520,11 +520,11 @@ struct bch_extent_crc128 {
 #elif defined (__BIG_ENDIAN_BITFIELD)
 	__u64			compression_type:4,
 				csum_type:4,
-				nonce:14,
+				nonce:13,
 				offset:13,
 				_uncompressed_size:13,
 				_compressed_size:13,
-				type:3;
+				type:4;
 #endif
 	struct bch_csum		csum;
 } __attribute__((packed, aligned(8)));
@@ -570,7 +570,7 @@ struct bch_extent_reservation {
 };
 
 union bch_extent_entry {
-#if defined(__LITTLE_ENDIAN) ||  __BITS_PER_LONG == 64
+#if __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__ ||  __BITS_PER_LONG == 64
 	unsigned long			type;
 #elif __BITS_PER_LONG == 32
 	struct {

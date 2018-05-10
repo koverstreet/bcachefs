@@ -423,7 +423,7 @@ static struct bch_csum bch2_checksum_merge(unsigned type,
 	BUG_ON(!bch2_checksum_mergeable(type));
 
 	while (b_len) {
-		unsigned b = min(b_len, PAGE_SIZE);
+		unsigned b = min_t(unsigned, b_len, PAGE_SIZE);
 
 		a.lo = bch2_checksum_update(type, a.lo,
 				page_address(ZERO_PAGE(0)), b);

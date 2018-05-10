@@ -301,18 +301,19 @@ static ssize_t bch2_data_job_read(struct file *file, char __user *buf,
 {
 	struct bch_data_ctx *ctx = file->private_data;
 	struct bch_fs *c = ctx->c;
-	struct bch_ioctl_data_progress p = {
-		.data_type	= ctx->stats.data_type,
-		.btree_id	= ctx->stats.iter.btree_id,
-		.pos		= ctx->stats.iter.pos,
-		.sectors_done	= atomic64_read(&ctx->stats.sectors_seen),
-		.sectors_total	= bch2_fs_sectors_used(c, bch2_fs_usage_read(c)),
+	struct bch_ioctl_data_event e = {
+		.type			= BCH_DATA_EVENT_PROGRESS,
+		.p.data_type		= ctx->stats.data_type,
+		.p.btree_id		= ctx->stats.iter.btree_id,
+		.p.pos			= ctx->stats.iter.pos,
+		.p.sectors_done		= atomic64_read(&ctx->stats.sectors_seen),
+		.p.sectors_total	= bch2_fs_sectors_used(c, bch2_fs_usage_read(c)),
 	};
 
-	if (len != sizeof(p))
+	if (len < sizeof(e))
 		return -EINVAL;
 
-	return copy_to_user(buf, &p, sizeof(p)) ?: sizeof(p);
+	return copy_to_user(buf, &e, sizeof(e)) ?: sizeof(e);
 }
 
 static const struct file_operations bcachefs_data_ops = {
