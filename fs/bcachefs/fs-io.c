@@ -678,7 +678,7 @@ static void bch2_clear_page_bits(struct page *page)
 	if (!PagePrivate(page))
 		return;
 
-	s = xchg(page_state(page), (struct bch_page_state) { .v = 0 });
+	s.v = xchg(&page_state(page)->v, 0);
 	ClearPagePrivate(page);
 
 	if (s.dirty_sectors)

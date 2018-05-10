@@ -248,7 +248,7 @@ int bch2_journal_seq_should_ignore(struct bch_fs *c, u64 seq, struct btree *b)
 	if (!bl->nr_entries ||
 	    is_power_of_2(bl->nr_entries)) {
 		n = krealloc(bl->entries,
-			     max(bl->nr_entries * 2, 8UL) * sizeof(*n),
+			     max_t(size_t, bl->nr_entries * 2, 8) * sizeof(*n),
 			     GFP_KERNEL);
 		if (!n) {
 			ret = -ENOMEM;

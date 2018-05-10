@@ -17,15 +17,15 @@
 
 #define bucket_cmpxchg(g, new, expr)				\
 ({								\
-	u64 _v = READ_ONCE((g)->_mark.counter);			\
+	u64 _v = atomic64_read(&(g)->_mark.v);			\
 	struct bucket_mark _old;				\
 								\
 	do {							\
-		(new).counter = _old.counter = _v;		\
+		(new).v.counter = _old.v.counter = _v;		\
 		expr;						\
-	} while ((_v = cmpxchg(&(g)->_mark.counter,		\
-			       _old.counter,			\
-			       (new).counter)) != _old.counter);\
+	} while ((_v = atomic64_cmpxchg(&(g)->_mark.v,		\
+			       _old.v.counter,			\
+			       (new).v.counter)) != _old.v.counter);\
 	_old;							\
 })
 

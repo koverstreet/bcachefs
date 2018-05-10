@@ -589,25 +589,31 @@ BKEY_VAL_ACCESSORS(quota,		BCH_QUOTA);
 
 /* byte order helpers */
 
-#if !defined(__LITTLE_ENDIAN) && !defined(__BIG_ENDIAN)
+#if __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
+
+static inline unsigned high_word_offset(const struct bkey_format *f)
+{
+	return f->key_u64s - 1;
+}
+
+#define high_bit_offset		0
+#define nth_word(p, n)		((p) - (n))
+
+#elif __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
+
+static inline unsigned high_word_offset(const struct bkey_format *f)
+{
+	return 0;
+}
+
+#define high_bit_offset		KEY_PACKED_BITS_START
+#define nth_word(p, n)		((p) + (n))
+
+#else
 #error edit for your odd byteorder.
 #endif
 
-#ifdef __LITTLE_ENDIAN
-
-#define high_bit_offset		0
-#define __high_word(u64s, k)	((k)->_data + (u64s) - 1)
-#define nth_word(p, n)		((p) - (n))
-
-#else
-
-#define high_bit_offset		KEY_PACKED_BITS_START
-#define __high_word(u64s, k)	((k)->_data)
-#define nth_word(p, n)		((p) + (n))
-
-#endif
-
-#define high_word(format, k)	__high_word((format)->key_u64s, k)
+#define high_word(f, k)		((k)->_data + high_word_offset(f))
 #define next_word(p)		nth_word(p, 1)
 #define prev_word(p)		nth_word(p, -1)
 

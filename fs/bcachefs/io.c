@@ -1511,7 +1511,7 @@ csum_err:
 	}
 
 	bch2_dev_io_error(ca,
-		"data checksum error, inode %llu offset %llu: expected %0llx%0llx got %0llx%0llx (type %u)",
+		"data checksum error, inode %llu offset %llu: expected %0llx:%0llx got %0llx:%0llx (type %u)",
 		rbio->pos.inode, (u64) rbio->bvec_iter.bi_sector,
 		rbio->pick.crc.csum.hi, rbio->pick.crc.csum.lo,
 		csum.hi, csum.lo, crc.csum_type);

@@ -7,7 +7,7 @@
 struct bucket_mark {
 	union {
 	struct {
-		u64		counter;
+		atomic64_t	v;
 	};
 
 	struct {
