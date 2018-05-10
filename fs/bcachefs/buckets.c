@@ -555,9 +555,9 @@ static void bch2_mark_pointer(struct bch_fs *c,
 		return;
 	}
 
-	v = READ_ONCE(g->_mark.counter);
+	v = atomic64_read(&g->_mark.v);
 	do {
-		new.counter = old.counter = v;
+		new.v.counter = old.v.counter = v;
 		saturated = 0;
 
 		/*
@@ -600,9 +600,9 @@ static void bch2_mark_pointer(struct bch_fs *c,
 			g->_mark = new;
 			break;
 		}
-	} while ((v = cmpxchg(&g->_mark.counter,
-			      old.counter,
-			      new.counter)) != old.counter);
+	} while ((v = atomic64_cmpxchg(&g->_mark.v,
+			      old.v.counter,
+			      new.v.counter)) != old.v.counter);
 
 	bch2_dev_usage_update(c, ca, old, new);
 

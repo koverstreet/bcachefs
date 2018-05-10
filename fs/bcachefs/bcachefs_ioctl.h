@@ -172,11 +172,9 @@ enum bch_data_ops {
  * scrub, rereplicate, migrate).
  *
  * This ioctl kicks off a job in the background, and returns a file descriptor.
- * Reading from the file descriptor returns a struct bch_ioctl_data_progress,
+ * Reading from the file descriptor returns a struct bch_ioctl_data_event,
  * indicating current progress, and closing the file descriptor will stop the
  * job. The file descriptor is O_CLOEXEC.
- *
- * @start	- position 
  */
 struct bch_ioctl_data {
 	__u32			op;
@@ -196,6 +194,12 @@ struct bch_ioctl_data {
 	};
 } __attribute__((packed, aligned(8)));
 
+enum bch_data_event {
+	BCH_DATA_EVENT_PROGRESS	= 0,
+	/* XXX: add an event for reporting errors */
+	BCH_DATA_EVENT_NR	= 1,
+};
+
 struct bch_ioctl_data_progress {
 	__u8			data_type;
 	__u8			btree_id;
@@ -204,6 +208,15 @@ struct bch_ioctl_data_progress {
 
 	__u64			sectors_done;
 	__u64			sectors_total;
+} __attribute__((packed, aligned(8)));
+
+struct bch_ioctl_data_event {
+	__u8			type;
+	__u8			pad[7];
+	union {
+	struct bch_ioctl_data_progress p;
+	__u64			pad2[15];
+	};
 } __attribute__((packed, aligned(8)));
 
 struct bch_ioctl_dev_usage {

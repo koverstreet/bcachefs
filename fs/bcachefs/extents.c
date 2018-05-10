@@ -730,7 +730,7 @@ err:
 	bch2_fs_bug(c, "%s btree pointer %s: bucket %zi "
 		      "gen %i mark %08x",
 		      err, buf, PTR_BUCKET_NR(ca, ptr),
-		      mark.gen, (unsigned) mark.counter);
+		      mark.gen, (unsigned) mark.v.counter);
 }
 
 void bch2_btree_ptr_to_text(struct bch_fs *c, char *buf,

@@ -610,9 +610,10 @@ static inline bool inode_bitmap_test(struct inode_bitmap *b, size_t nr)
 static inline int inode_bitmap_set(struct inode_bitmap *b, size_t nr)
 {
 	if (nr >= b->size) {
-		size_t new_size = max(max(PAGE_SIZE * 8,
-					  b->size * 2),
-					  nr + 1);
+		size_t new_size = max_t(size_t, max_t(size_t,
+					PAGE_SIZE * 8,
+					b->size * 2),
+					nr + 1);
 		void *n;
 
 		new_size = roundup_pow_of_two(new_size);
@@ -642,7 +643,7 @@ struct pathbuf {
 static int path_down(struct pathbuf *p, u64 inum)
 {
 	if (p->nr == p->size) {
-		size_t new_size = max(256UL, p->size * 2);
+		size_t new_size = max_t(size_t, 256UL, p->size * 2);
 		void *n = krealloc(p->entries,
 				   new_size * sizeof(p->entries[0]),
 				   GFP_KERNEL);

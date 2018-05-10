@@ -68,9 +68,9 @@ struct closure;
 #define __flatten
 #endif
 
-#ifdef __LITTLE_ENDIAN
+#if __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
 #define CPU_BIG_ENDIAN		0
-#else
+#elif __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
 #define CPU_BIG_ENDIAN		1
 #endif
 

@@ -146,6 +146,8 @@ struct six_lock_waiter {
 /* This is probably up there with the more evil things I've done */
 #define waitlist_bitnr(id) ilog2((((union six_lock_state) { .waiters = 1 << (id) }).l))
 
+#ifdef CONFIG_LOCK_SPIN_ON_OWNER
+
 static inline int six_can_spin_on_owner(struct six_lock *lock)
 {
 	struct task_struct *owner;
@@ -256,6 +258,15 @@ fail:
 
 	return false;
 }
+
+#else /* CONFIG_LOCK_SPIN_ON_OWNER */
+
+static inline bool six_optimistic_spin(struct six_lock *lock, enum six_lock_type type)
+{
+	return false;
+}
+
+#endif
 
 noinline
 static void __six_lock_type_slowpath(struct six_lock *lock, enum six_lock_type type)
