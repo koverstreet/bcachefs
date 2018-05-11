@@ -611,14 +611,6 @@ static void tun_queue_purge(struct tun_file *tfile)
 	skb_queue_purge(&tfile->sk.sk_error_queue);
 }
 
-static void tun_cleanup_tx_array(struct tun_file *tfile)
-{
-	if (tfile->tx_array.ring.queue) {
-		skb_array_cleanup(&tfile->tx_array);
-		memset(&tfile->tx_array, 0, sizeof(tfile->tx_array));
-	}
-}
-
 static void __tun_detach(struct tun_file *tfile, bool clean)
 {
 	struct tun_file *ntfile;
@@ -665,7 +657,6 @@ static void __tun_detach(struct tun_file *tfile, bool clean)
 			    tun->dev->reg_state == NETREG_REGISTERED)
 				unregister_netdevice(tun->dev);
 		}
-		tun_cleanup_tx_array(tfile);
 		sock_put(&tfile->sk);
 	}
 }
@@ -707,13 +698,11 @@ static void tun_detach_all(struct net_device *dev)
 		/* Drop read queue */
 		tun_queue_purge(tfile);
 		sock_put(&tfile->sk);
-		tun_cleanup_tx_array(tfile);
 	}
 	list_for_each_entry_safe(tfile, tmp, &tun->disabled, next) {
 		tun_enable_queue(tfile);
 		tun_queue_purge(tfile);
 		sock_put(&tfile->sk);
-		tun_cleanup_tx_array(tfile);
 	}
 	BUG_ON(tun->numdisabled != 0);
 
@@ -760,7 +749,7 @@ static int tun_attach(struct tun_struct *tun, struct file *file,
 	}
 
 	if (!tfile->detached &&
-	    skb_array_init(&tfile->tx_array, dev->tx_queue_len, GFP_KERNEL)) {
+	    skb_array_resize(&tfile->tx_array, dev->tx_queue_len, GFP_KERNEL)) {
 		err = -ENOMEM;
 		goto out;
 	}
@@ -2872,6 +2861,11 @@ static int tun_chr_open(struct inode *inode, struct file * file)
 					    &tun_proto, 0);
 	if (!tfile)
 		return -ENOMEM;
+	if (skb_array_init(&tfile->tx_array, 0, GFP_KERNEL)) {
+		sk_free(&tfile->sk);
+		return -ENOMEM;
+	}
+
 	RCU_INIT_POINTER(tfile->tun, NULL);
 	tfile->flags = 0;
 	tfile->ifindex = 0;
@@ -2892,8 +2886,6 @@ static int tun_chr_open(struct inode *inode, struct file * file)
 
 	sock_set_flag(&tfile->sk, SOCK_ZEROCOPY);
 
-	memset(&tfile->tx_array, 0, sizeof(tfile->tx_array));
-
 	return 0;
 }
 
@@ -2902,6 +2894,7 @@ static int tun_chr_close(struct inode *inode, struct file *file)
 	struct tun_file *tfile = file->private_data;
 
 	tun_detach(tfile, true);
+	skb_array_cleanup(&tfile->tx_array);
 
 	return 0;
 }
