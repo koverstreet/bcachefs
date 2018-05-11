@@ -748,8 +748,10 @@ static __init void cpufeatures_cpu_quirks(void)
 		cur_cpu_spec->cpu_features |= CPU_FTR_P9_TM_HV_ASSIST |
 			CPU_FTR_P9_TM_XER_SO_BUG;
 
-	if ((version & 0xffff0000) == 0x004e0000)
+	if ((version & 0xffff0000) == 0x004e0000) {
 		cur_cpu_spec->cpu_features |= CPU_FTR_P9_TLBIE_BUG;
+		cur_cpu_spec->cpu_features |= CPU_FTR_P9_TIDR;
+	}
 }
 
 static void __init cpufeatures_setup_finished(void)
