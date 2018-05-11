@@ -118,7 +118,12 @@ static int __init find_bit_test(void)
 	test_find_next_bit(bitmap, BITMAP_LEN);
 	test_find_next_zero_bit(bitmap, BITMAP_LEN);
 	test_find_last_bit(bitmap, BITMAP_LEN);
-	test_find_first_bit(bitmap, BITMAP_LEN);
+
+	/*
+	 * test_find_first_bit() may take some time, so
+	 * traverse only part of bitmap to avoid soft lockup.
+	 */
+	test_find_first_bit(bitmap, BITMAP_LEN / 10);
 
 	pr_err("\nStart testing find_bit() with sparse bitmap\n");
 
