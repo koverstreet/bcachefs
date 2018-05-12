@@ -518,8 +518,7 @@ qla24xx_async_gnl_sp_done(void *s, int res)
 		    (loop_id & 0x7fff));
 	}
 
-	spin_lock_irqsave(&vha->hw->tgt.sess_lock, flags);
-	vha->gnl.sent = 0;
+	spin_lock_irqsave(&vha->gnl.fcports_lock, flags);
 
 	INIT_LIST_HEAD(&h);
 	fcport = tf = NULL;
@@ -528,13 +527,15 @@ qla24xx_async_gnl_sp_done(void *s, int res)
 
 	list_for_each_entry_safe(fcport, tf, &h, gnl_entry) {
 		list_del_init(&fcport->gnl_entry);
+		spin_lock(&vha->hw->tgt.sess_lock);
 		fcport->flags &= ~(FCF_ASYNC_SENT | FCF_ASYNC_ACTIVE);
+		spin_unlock(&vha->hw->tgt.sess_lock);
 		ea.fcport = fcport;
 
 		qla2x00_fcport_event_handler(vha, &ea);
 	}
 
-	spin_unlock_irqrestore(&vha->hw->tgt.sess_lock, flags);
+	spin_unlock_irqrestore(&vha->gnl.fcports_lock, flags);
 
 	sp->free(sp);
 }
@@ -553,20 +554,22 @@ int qla24xx_async_gnl(struct scsi_qla_host *vha, fc_port_t *fcport)
 	ql_dbg(ql_dbg_disc, vha, 0x20d9,
 	    "Async-gnlist WWPN %8phC \n", fcport->port_name);
 
-	spin_lock_irqsave(&vha->hw->tgt.sess_lock, flags);
+	spin_lock_irqsave(&vha->gnl.fcports_lock, flags);
+	if (!list_empty(&fcport->gnl_entry)) {
+		spin_unlock_irqrestore(&vha->gnl.fcports_lock, flags);
+		rval = QLA_SUCCESS;
+		goto done;
+	}
+
+	spin_lock(&vha->hw->tgt.sess_lock);
 	fcport->flags |= FCF_ASYNC_SENT;
 	fcport->disc_state = DSC_GNL;
 	fcport->last_rscn_gen = fcport->rscn_gen;
 	fcport->last_login_gen = fcport->login_gen;
+	spin_unlock(&vha->hw->tgt.sess_lock);
 
 	list_add_tail(&fcport->gnl_entry, &vha->gnl.fcports);
-	if (vha->gnl.sent) {
-		spin_unlock_irqrestore(&vha->hw->tgt.sess_lock, flags);
-		rval = QLA_SUCCESS;
-		goto done;
-	}
-	vha->gnl.sent = 1;
-	spin_unlock_irqrestore(&vha->hw->tgt.sess_lock, flags);
+	spin_unlock_irqrestore(&vha->gnl.fcports_lock, flags);
 
 	sp = qla2x00_get_sp(vha, fcport, GFP_KERNEL);
 	if (!sp)
