@@ -340,7 +340,8 @@ int bch2_btree_keys_alloc(struct btree *, unsigned, gfp_t);
 void bch2_btree_keys_init(struct btree *, bool *);
 
 void bch2_bset_init_first(struct btree *, struct bset *);
-void bch2_bset_init_next(struct btree *, struct bset *);
+void bch2_bset_init_next(struct bch_fs *, struct btree *,
+			 struct btree_node_entry *);
 void bch2_bset_build_aux_tree(struct btree *, struct bset_tree *, bool);
 void bch2_bset_fix_invalidated_key(struct btree *, struct bset_tree *,
 				  struct bkey_packed *);
