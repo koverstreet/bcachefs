@@ -227,11 +227,30 @@ static inline bool bset_unwritten(struct btree *b, struct bset *i)
 	return (void *) i > write_block(b);
 }
 
-static inline unsigned bset_end_sector(struct bch_fs *c, struct btree *b,
-				       struct bset *i)
+static inline ssize_t __bch_btree_u64s_remaining(struct bch_fs *c,
+						 struct btree *b,
+						 void *end)
 {
-	return round_up(bset_byte_offset(b, vstruct_end(i)),
-			block_bytes(c)) >> 9;
+	ssize_t used = bset_byte_offset(b, end) / sizeof(u64) +
+		b->whiteout_u64s +
+		b->uncompacted_whiteout_u64s;
+	ssize_t total = c->opts.btree_node_size << 6;
+
+	return total - used;
+}
+
+static inline size_t bch_btree_keys_u64s_remaining(struct bch_fs *c,
+						   struct btree *b)
+{
+	ssize_t remaining = __bch_btree_u64s_remaining(c, b,
+				btree_bkey_last(b, bset_tree_last(b)));
+
+	BUG_ON(remaining < 0);
+
+	if (bset_written(b, btree_bset_last(b)))
+		return 0;
+
+	return remaining;
 }
 
 static inline unsigned btree_write_set_buffer(struct btree *b)
@@ -247,20 +266,19 @@ static inline struct btree_node_entry *want_new_bset(struct bch_fs *c,
 						     struct btree *b)
 {
 	struct bset *i = btree_bset_last(b);
-	unsigned offset = max_t(unsigned, b->written << 9,
-				bset_byte_offset(b, vstruct_end(i)));
-	ssize_t remaining_space = (ssize_t) btree_bytes(c) - (ssize_t)
-		(offset + sizeof(struct btree_node_entry) +
-		 b->whiteout_u64s * sizeof(u64) +
-		 b->uncompacted_whiteout_u64s * sizeof(u64));
+	struct btree_node_entry *bne = max(write_block(b),
+			(void *) btree_bkey_last(b, bset_tree_last(b)));
+	ssize_t remaining_space =
+		__bch_btree_u64s_remaining(c, b, &bne->keys.start[0]);
 
-	EBUG_ON(offset > btree_bytes(c));
-
-	if ((unlikely(bset_written(b, i)) &&
-	     remaining_space > block_bytes(c)) ||
-	    (unlikely(vstruct_bytes(i) > btree_write_set_buffer(b)) &&
-	     remaining_space > btree_write_set_buffer(b)))
-		return (void *) b->data + offset;
+	if (unlikely(bset_written(b, i))) {
+		if (remaining_space > (ssize_t) (block_bytes(c) >> 3))
+			return bne;
+	} else {
+		if (unlikely(vstruct_bytes(i) > btree_write_set_buffer(b)) &&
+		    remaining_space > (ssize_t) (btree_write_set_buffer(b) >> 3))
+			return bne;
+	}
 
 	return NULL;
 }
@@ -284,23 +302,6 @@ static inline void reserve_whiteout(struct btree *b, struct bset_tree *t,
 		b->uncompacted_whiteout_u64s +=
 			bkeyp_key_u64s(&b->format, k);
 	}
-}
-
-static inline size_t bch_btree_keys_u64s_remaining(struct bch_fs *c,
-						   struct btree *b)
-{
-	struct bset *i = btree_bset_last(b);
-	unsigned used = bset_byte_offset(b, vstruct_end(i)) / sizeof(u64) +
-		b->whiteout_u64s +
-		b->uncompacted_whiteout_u64s;
-	unsigned total = c->opts.btree_node_size << 6;
-
-	EBUG_ON(used > total);
-
-	if (bset_written(b, i))
-		return 0;
-
-	return total - used;
 }
 
 /*

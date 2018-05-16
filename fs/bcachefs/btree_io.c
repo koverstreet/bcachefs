@@ -879,7 +879,7 @@ void bch2_btree_init_next(struct bch_fs *c, struct btree *b,
 
 	bne = want_new_bset(c, b);
 	if (bne)
-		bch2_bset_init_next(b, &bne->keys);
+		bch2_bset_init_next(c, b, bne);
 
 	bch2_btree_build_aux_trees(b);
 
@@ -1746,6 +1746,7 @@ void __bch2_btree_node_write(struct bch_fs *c, struct btree *b,
 	BUG_ON((b->will_make_reachable != 0) != !b->written);
 
 	BUG_ON(b->written >= c->opts.btree_node_size);
+	BUG_ON(b->written & (c->opts.block_size - 1));
 	BUG_ON(bset_written(b, btree_bset_last(b)));
 	BUG_ON(le64_to_cpu(b->data->magic) != bset_magic(c));
 	BUG_ON(memcmp(&b->data->format, &b->format, sizeof(b->format)));
@@ -1978,7 +1979,7 @@ bool bch2_btree_post_write_cleanup(struct bch_fs *c, struct btree *b)
 
 	bne = want_new_bset(c, b);
 	if (bne)
-		bch2_bset_init_next(b, &bne->keys);
+		bch2_bset_init_next(c, b, bne);
 
 	bch2_btree_build_aux_trees(b);
 
