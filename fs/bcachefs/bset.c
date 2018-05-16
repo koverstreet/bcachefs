@@ -7,6 +7,7 @@
  */
 
 #include "bcachefs.h"
+#include "btree_cache.h"
 #include "bset.h"
 #include "eytzinger.h"
 #include "util.h"
@@ -963,10 +964,14 @@ void bch2_bset_init_first(struct btree *b, struct bset *i)
 	set_btree_bset(b, t, i);
 }
 
-void bch2_bset_init_next(struct btree *b, struct bset *i)
+void bch2_bset_init_next(struct bch_fs *c, struct btree *b,
+			 struct btree_node_entry *bne)
 {
+	struct bset *i = &bne->keys;
 	struct bset_tree *t;
 
+	BUG_ON(bset_byte_offset(b, bne) >= btree_bytes(c));
+	BUG_ON((void *) bne < (void *) btree_bkey_last(b, bset_tree_last(b)));
 	BUG_ON(b->nsets >= MAX_BSETS);
 
 	memset(i, 0, sizeof(*i));
