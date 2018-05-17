@@ -186,8 +186,6 @@
 #include <linux/list.h>
 #include <linux/mutex.h>
 #include <linux/percpu-refcount.h>
-#include <linux/radix-tree.h>
-#include <linux/rbtree.h>
 #include <linux/rhashtable.h>
 #include <linux/rwsem.h>
 #include <linux/seqlock.h>
@@ -321,8 +319,6 @@ enum bch_time_stats {
 #define BTREE_NODE_RESERVE		(BTREE_RESERVE_MAX * 4)
 
 struct btree;
-struct crypto_blkcipher;
-struct crypto_ahash;
 
 enum gc_phase {
 	GC_PHASE_SB		= BTREE_ID_NR + 1,

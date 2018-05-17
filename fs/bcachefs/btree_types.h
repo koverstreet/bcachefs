@@ -3,8 +3,6 @@
 
 #include <linux/list.h>
 #include <linux/rhashtable.h>
-#include <linux/semaphore.h>
-#include <linux/workqueue.h>
 
 #include "bkey_methods.h"
 #include "journal_types.h"
