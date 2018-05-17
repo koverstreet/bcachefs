@@ -98,6 +98,7 @@ drivers/net/ethernet/intel/igbvf/igbvf.ko
 drivers/net/ethernet/intel/ixgbe/*
 drivers/net/ethernet/intel/ixgbevf/ixgbevf.ko
 drivers/net/ethernet/mellanox/*
+drivers/net/ethernet/netronome/nfp/nfp.ko
 drivers/net/ethernet/realtek/8139cp.ko
 drivers/net/ethernet/realtek/8139too.ko
 drivers/net/fddi/*
