@@ -27,55 +27,73 @@
 #define simple_strtoint(c, end, base)	simple_strtol(c, end, base)
 #define simple_strtouint(c, end, base)	simple_strtoul(c, end, base)
 
+static const char si_units[] = "?kMGTPEZY";
+
+static int __bch2_strtoh(const char *cp, u64 *res,
+			 u64 t_max, bool t_signed)
+{
+	bool positive = *cp != '-';
+	unsigned u;
+	u64 v = 0;
+
+	if (*cp == '+' || *cp == '-')
+		cp++;
+
+	if (!isdigit(*cp))
+		return -EINVAL;
+
+	do {
+		if (v > U64_MAX / 10)
+			return -ERANGE;
+		v *= 10;
+		if (v > U64_MAX - (*cp - '0'))
+			return -ERANGE;
+		v += *cp - '0';
+		cp++;
+	} while (isdigit(*cp));
+
+	for (u = 1; u < ARRAY_SIZE(si_units); u++)
+		if (*cp == si_units[u]) {
+			cp++;
+			goto got_unit;
+		}
+	u = 0;
+got_unit:
+	if (*cp == '\n')
+		cp++;
+	if (*cp)
+		return -EINVAL;
+
+	if (fls64(v) + u * 10 > 64)
+		return -ERANGE;
+
+	v <<= u * 10;
+
+	if (positive) {
+		if (v > t_max)
+			return -ERANGE;
+	} else {
+		if (v && !t_signed)
+			return -ERANGE;
+
+		if (v > t_max + 1)
+			return -ERANGE;
+		v = -v;
+	}
+
+	*res = v;
+	return 0;
+}
+
 #define STRTO_H(name, type)					\
 int bch2_ ## name ## _h(const char *cp, type *res)		\
 {								\
-	int u = 0;						\
-	char *e;						\
-	type i = simple_ ## name(cp, &e, 10);			\
-								\
-	switch (tolower(*e)) {					\
-	default:						\
-		return -EINVAL;					\
-	case 'y':						\
-	case 'z':						\
-		u++;						\
-	case 'e':						\
-		u++;						\
-	case 'p':						\
-		u++;						\
-	case 't':						\
-		u++;						\
-	case 'g':						\
-		u++;						\
-	case 'm':						\
-		u++;						\
-	case 'k':						\
-		u++;						\
-		if (e++ == cp)					\
-			return -EINVAL;				\
-	case '\n':						\
-	case '\0':						\
-		if (*e == '\n')					\
-			e++;					\
-	}							\
-								\
-	if (*e)							\
-		return -EINVAL;					\
-								\
-	while (u--) {						\
-		if ((type) ~0 > 0 &&				\
-		    (type) ~0 / 1024 <= i)			\
-			return -EINVAL;				\
-		if ((i > 0 && ANYSINT_MAX(type) / 1024 < i) ||	\
-		    (i < 0 && -ANYSINT_MAX(type) / 1024 > i))	\
-			return -EINVAL;				\
-		i *= 1024;					\
-	}							\
-								\
-	*res = i;						\
-	return 0;						\
-}								\
+	u64 v;							\
+	int ret = __bch2_strtoh(cp, &v, ANYSINT_MAX(type),	\
+			ANYSINT_MAX(type) != ((type) ~0ULL));	\
+	*res = v;						\
+	return ret;						\
+}
 
 STRTO_H(strtoint, int)
 STRTO_H(strtouint, unsigned int)
@@ -84,7 +102,6 @@ STRTO_H(strtoull, unsigned long long)
 
 ssize_t bch2_hprint(char *buf, s64 v)
 {
-	static const char units[] = "?kMGTPEZY";
 	char dec[4] = "";
 	int u, t = 0;
 
@@ -103,7 +120,7 @@ ssize_t bch2_hprint(char *buf, s64 v)
 	if (v < 100 && v > -100)
 		scnprintf(dec, sizeof(dec), ".%i", t / 103);
 
-	return sprintf(buf, "%lli%s%c", v, dec, units[u]);
+	return sprintf(buf, "%lli%s%c", v, dec, si_units[u]);
 }
 
 ssize_t bch2_scnprint_string_list(char *buf, size_t size,
