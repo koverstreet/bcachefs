@@ -1702,6 +1702,7 @@ static int bch2_direct_IO_read(struct kiocb *req, struct iov_iter *iter)
 	struct bio *bio;
 	loff_t offset = req->ki_pos;
 	bool sync = is_sync_kiocb(req);
+	size_t shorten;
 	ssize_t ret;
 
 	if ((offset|iter->count) & (block_bytes(c) - 1))
@@ -1709,10 +1710,12 @@ static int bch2_direct_IO_read(struct kiocb *req, struct iov_iter *iter)
 
 	ret = min_t(loff_t, iter->count,
 		    max_t(loff_t, 0, i_size_read(&inode->v) - offset));
-	iov_iter_truncate(iter, round_up(ret, block_bytes(c)));
 
 	if (!ret)
 		return ret;
+
+	shorten = iov_iter_count(iter) - round_up(ret, block_bytes(c));
+	iter->count -= shorten;
 
 	bio = bio_alloc_bioset(GFP_KERNEL,
 			       iov_iter_npages(iter, BIO_MAX_PAGES),
@@ -1768,6 +1771,8 @@ start:
 
 		bch2_read(c, rbio_init(bio, opts), inode->v.i_ino);
 	}
+
+	iter->count += shorten;
 
 	if (sync) {
 		closure_sync(&dio->cl);
