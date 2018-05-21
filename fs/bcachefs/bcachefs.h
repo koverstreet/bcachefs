@@ -182,10 +182,10 @@
 #include <linux/bio.h>
 #include <linux/closure.h>
 #include <linux/kobject.h>
-#include <linux/lglock.h>
 #include <linux/list.h>
 #include <linux/mutex.h>
 #include <linux/percpu-refcount.h>
+#include <linux/percpu-rwsem.h>
 #include <linux/rhashtable.h>
 #include <linux/rwsem.h>
 #include <linux/seqlock.h>
@@ -591,7 +591,7 @@ struct bch_fs {
 
 	struct bch_fs_usage __percpu *usage_percpu;
 	struct bch_fs_usage	usage_cached;
-	struct lglock		usage_lock;
+	struct percpu_rw_semaphore usage_lock;
 
 	struct closure_waitlist	freelist_wait;
 

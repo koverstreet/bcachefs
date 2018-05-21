@@ -331,7 +331,7 @@ void bch2_fs_usage_apply(struct bch_fs *c,
 		stats->online_reserved	-= added;
 	}
 
-	lg_local_lock(&c->usage_lock);
+	percpu_down_read_preempt_disable(&c->usage_lock);
 	/* online_reserved not subject to gc: */
 	this_cpu_ptr(c->usage_percpu)->online_reserved +=
 		stats->online_reserved;
@@ -341,7 +341,7 @@ void bch2_fs_usage_apply(struct bch_fs *c,
 		bch2_usage_add(this_cpu_ptr(c->usage_percpu), stats);
 
 	bch2_fs_stats_verify(c);
-	lg_local_unlock(&c->usage_lock);
+	percpu_up_read_preempt_enable(&c->usage_lock);
 
 	memset(stats, 0, sizeof(*stats));
 }
@@ -352,7 +352,7 @@ static void bch2_dev_usage_update(struct bch_fs *c, struct bch_dev *ca,
 	struct bch_dev_usage *dev_usage;
 
 	if (c)
-		lockdep_assert_held(&c->usage_lock);
+		percpu_rwsem_assert_held(&c->usage_lock);
 
 	if (old.data_type && new.data_type &&
 	    old.data_type != new.data_type) {
@@ -399,12 +399,13 @@ bool bch2_invalidate_bucket(struct bch_fs *c, struct bch_dev *ca,
 	struct bucket *g;
 	struct bucket_mark new;
 
-	lg_local_lock(&c->usage_lock);
+	percpu_rwsem_assert_held(&c->usage_lock);
+
 	g = bucket(ca, b);
 
 	*old = bucket_data_cmpxchg(c, ca, g, new, ({
 		if (!is_available_bucket(new)) {
-			lg_local_unlock(&c->usage_lock);
+			percpu_up_read_preempt_enable(&c->usage_lock);
 			return false;
 		}
 
@@ -414,7 +415,6 @@ bool bch2_invalidate_bucket(struct bch_fs *c, struct bch_dev *ca,
 		new.dirty_sectors	= 0;
 		new.gen++;
 	}));
-	lg_local_unlock(&c->usage_lock);
 
 	if (!old->owned_by_allocator && old->cached_sectors)
 		trace_invalidate(ca, bucket_to_sector(ca, b),
@@ -429,19 +429,16 @@ void bch2_mark_alloc_bucket(struct bch_fs *c, struct bch_dev *ca,
 	struct bucket *g;
 	struct bucket_mark old, new;
 
-	lg_local_lock(&c->usage_lock);
+	percpu_rwsem_assert_held(&c->usage_lock);
 	g = bucket(ca, b);
 
 	if (!(flags & BCH_BUCKET_MARK_GC_LOCK_HELD) &&
-	    gc_will_visit(c, pos)) {
-		lg_local_unlock(&c->usage_lock);
+	    gc_will_visit(c, pos))
 		return;
-	}
 
 	old = bucket_data_cmpxchg(c, ca, g, new, ({
 		new.owned_by_allocator	= owned_by_allocator;
 	}));
-	lg_local_unlock(&c->usage_lock);
 
 	BUG_ON(!owned_by_allocator && !old.owned_by_allocator &&
 	       c->gc_pos.phase == GC_PHASE_DONE);
@@ -471,16 +468,14 @@ void bch2_mark_metadata_bucket(struct bch_fs *c, struct bch_dev *ca,
 	BUG_ON(!type);
 
 	if (likely(c)) {
-		lg_local_lock(&c->usage_lock);
+		percpu_rwsem_assert_held(&c->usage_lock);
 
 		if (!(flags & BCH_BUCKET_MARK_GC_LOCK_HELD) &&
-		    gc_will_visit(c, pos)) {
-			lg_local_unlock(&c->usage_lock);
+		    gc_will_visit(c, pos))
 			return;
-		}
 	}
 
-	preempt_disable();
+	rcu_read_lock();
 
 	g = bucket(ca, b);
 	old = bucket_data_cmpxchg(c, ca, g, new, ({
@@ -489,10 +484,7 @@ void bch2_mark_metadata_bucket(struct bch_fs *c, struct bch_dev *ca,
 		new.data_type		= type;
 	}));
 
-	preempt_enable();
-
-	if (likely(c))
-		lg_local_unlock(&c->usage_lock);
+	rcu_read_unlock();
 
 	BUG_ON(!(flags & BCH_BUCKET_MARK_MAY_MAKE_UNAVAILABLE) &&
 	       bucket_became_unavailable(c, old, new));
@@ -654,10 +646,13 @@ void bch2_mark_key(struct bch_fs *c, struct bkey_s_c k,
 	 *    (e.g. the btree node lock, or the relevant allocator lock).
 	 */
 
-	lg_local_lock(&c->usage_lock);
+	percpu_down_read_preempt_disable(&c->usage_lock);
 	if (!(flags & BCH_BUCKET_MARK_GC_LOCK_HELD) &&
 	    gc_will_visit(c, pos))
 		flags |= BCH_BUCKET_MARK_GC_WILL_VISIT;
+
+	if (!stats)
+		stats = this_cpu_ptr(c->usage_percpu);
 
 	switch (k.k->type) {
 	case BCH_EXTENT:
@@ -693,7 +688,7 @@ void bch2_mark_key(struct bch_fs *c, struct bkey_s_c k,
 		break;
 	}
 	}
-	lg_local_unlock(&c->usage_lock);
+	percpu_up_read_preempt_enable(&c->usage_lock);
 }
 
 /* Disk reservations: */
@@ -711,19 +706,19 @@ static u64 __recalc_sectors_available(struct bch_fs *c)
 /* Used by gc when it's starting: */
 void bch2_recalc_sectors_available(struct bch_fs *c)
 {
-	lg_global_lock(&c->usage_lock);
+	percpu_down_write(&c->usage_lock);
 	atomic64_set(&c->sectors_available, __recalc_sectors_available(c));
-	lg_global_unlock(&c->usage_lock);
+	percpu_up_write(&c->usage_lock);
 }
 
 void __bch2_disk_reservation_put(struct bch_fs *c, struct disk_reservation *res)
 {
-	lg_local_lock(&c->usage_lock);
+	percpu_down_read_preempt_disable(&c->usage_lock);
 	this_cpu_sub(c->usage_percpu->online_reserved,
 		     res->sectors);
 
 	bch2_fs_stats_verify(c);
-	lg_local_unlock(&c->usage_lock);
+	percpu_up_read_preempt_enable(&c->usage_lock);
 
 	res->sectors = 0;
 }
@@ -738,7 +733,7 @@ int bch2_disk_reservation_add(struct bch_fs *c, struct disk_reservation *res,
 	s64 sectors_available;
 	int ret;
 
-	lg_local_lock(&c->usage_lock);
+	percpu_down_read_preempt_disable(&c->usage_lock);
 	stats = this_cpu_ptr(c->usage_percpu);
 
 	if (sectors <= stats->available_cache)
@@ -750,7 +745,7 @@ int bch2_disk_reservation_add(struct bch_fs *c, struct disk_reservation *res,
 		get = min((u64) sectors + SECTORS_CACHE, old);
 
 		if (get < sectors) {
-			lg_local_unlock(&c->usage_lock);
+			percpu_up_read_preempt_enable(&c->usage_lock);
 			goto recalculate;
 		}
 	} while ((v = atomic64_cmpxchg(&c->sectors_available,
@@ -765,7 +760,7 @@ out:
 
 	bch2_disk_reservations_verify(c, flags);
 	bch2_fs_stats_verify(c);
-	lg_local_unlock(&c->usage_lock);
+	percpu_up_read_preempt_enable(&c->usage_lock);
 	return 0;
 
 recalculate:
@@ -785,8 +780,8 @@ recalculate:
 		else if (!down_read_trylock(&c->gc_lock))
 			return -EINTR;
 	}
-	lg_global_lock(&c->usage_lock);
 
+	percpu_down_write(&c->usage_lock);
 	sectors_available = __recalc_sectors_available(c);
 
 	if (sectors <= sectors_available ||
@@ -804,7 +799,8 @@ recalculate:
 	}
 
 	bch2_fs_stats_verify(c);
-	lg_global_unlock(&c->usage_lock);
+	percpu_up_write(&c->usage_lock);
+
 	if (!(flags & BCH_DISK_RESERVATION_GC_LOCK_HELD))
 		up_read(&c->gc_lock);
 
@@ -874,7 +870,7 @@ int bch2_dev_buckets_resize(struct bch_fs *c, struct bch_dev *ca, u64 nbuckets)
 	if (resize) {
 		down_write(&c->gc_lock);
 		down_write(&ca->bucket_lock);
-		lg_global_lock(&c->usage_lock);
+		percpu_down_write(&c->usage_lock);
 	}
 
 	old_buckets = bucket_array(ca);
@@ -900,7 +896,7 @@ int bch2_dev_buckets_resize(struct bch_fs *c, struct bch_dev *ca, u64 nbuckets)
 	swap(ca->buckets_dirty, buckets_dirty);
 
 	if (resize)
-		lg_global_unlock(&c->usage_lock);
+		percpu_up_write(&c->usage_lock);
 
 	spin_lock(&c->freelist_lock);
 	for (i = 0; i < RESERVE_NR; i++) {

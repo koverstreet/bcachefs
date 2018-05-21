@@ -725,7 +725,10 @@ static int __bch2_set_nr_journal_buckets(struct bch_dev *ca, unsigned nr,
 		long bucket;
 
 		if (new_fs) {
+			percpu_down_read_preempt_disable(&c->usage_lock);
 			bucket = bch2_bucket_alloc_new_fs(ca);
+			percpu_up_read_preempt_enable(&c->usage_lock);
+
 			if (bucket < 0) {
 				ret = -ENOSPC;
 				goto err;
@@ -741,8 +744,10 @@ static int __bch2_set_nr_journal_buckets(struct bch_dev *ca, unsigned nr,
 			bucket = sector_to_bucket(ca, ob->ptr.offset);
 		}
 
-		if (c)
+		if (c) {
+			percpu_down_read_preempt_disable(&c->usage_lock);
 			spin_lock(&c->journal.lock);
+		}
 
 		__array_insert_item(ja->buckets,		ja->nr, ja->last_idx);
 		__array_insert_item(ja->bucket_seq,		ja->nr, ja->last_idx);
@@ -759,15 +764,17 @@ static int __bch2_set_nr_journal_buckets(struct bch_dev *ca, unsigned nr,
 		}
 		ja->nr++;
 
-		if (c)
-			spin_unlock(&c->journal.lock);
-
 		bch2_mark_metadata_bucket(c, ca, bucket, BCH_DATA_JOURNAL,
 				ca->mi.bucket_size,
 				gc_phase(GC_PHASE_SB),
 				new_fs
 				? BCH_BUCKET_MARK_MAY_MAKE_UNAVAILABLE
 				: 0);
+
+		if (c) {
+			spin_unlock(&c->journal.lock);
+			percpu_up_read_preempt_enable(&c->usage_lock);
+		}
 
 		if (!new_fs)
 			bch2_open_bucket_put(c, ob);

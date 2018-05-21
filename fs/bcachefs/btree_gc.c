@@ -118,20 +118,17 @@ static u8 bch2_gc_mark_key(struct bch_fs *c, enum bkey_type type,
 			   struct bkey_s_c k, unsigned flags)
 {
 	struct gc_pos pos = { 0 };
-	struct bch_fs_usage *stats;
 	u8 ret = 0;
 
-	preempt_disable();
-	stats = this_cpu_ptr(c->usage_percpu);
 	switch (type) {
 	case BKEY_TYPE_BTREE:
-		bch2_mark_key(c, k, c->opts.btree_node_size, true, pos, stats,
+		bch2_mark_key(c, k, c->opts.btree_node_size, true, pos, NULL,
 			      0, flags|
 			      BCH_BUCKET_MARK_MAY_MAKE_UNAVAILABLE|
 			      BCH_BUCKET_MARK_GC_LOCK_HELD);
 		break;
 	case BKEY_TYPE_EXTENTS:
-		bch2_mark_key(c, k, k.k->size, false, pos, stats,
+		bch2_mark_key(c, k, k.k->size, false, pos, NULL,
 			      0, flags|
 			      BCH_BUCKET_MARK_MAY_MAKE_UNAVAILABLE|
 			      BCH_BUCKET_MARK_GC_LOCK_HELD);
@@ -140,7 +137,6 @@ static u8 bch2_gc_mark_key(struct bch_fs *c, enum bkey_type type,
 	default:
 		BUG();
 	}
-	preempt_enable();
 
 	return ret;
 }
@@ -320,8 +316,10 @@ void bch2_mark_dev_superblock(struct bch_fs *c, struct bch_dev *ca,
 	unsigned i;
 	u64 b;
 
-	if (c)
+	if (c) {
 		lockdep_assert_held(&c->sb_lock);
+		percpu_down_read_preempt_disable(&c->usage_lock);
+	}
 
 	for (i = 0; i < layout->nr_superblocks; i++) {
 		u64 offset = le64_to_cpu(layout->sb_offset[i]);
@@ -345,8 +343,10 @@ void bch2_mark_dev_superblock(struct bch_fs *c, struct bch_dev *ca,
 					  gc_phase(GC_PHASE_SB), flags);
 	}
 
-	if (c)
+	if (c) {
+		percpu_up_read_preempt_enable(&c->usage_lock);
 		spin_unlock(&c->journal.lock);
+	}
 }
 
 static void bch2_mark_superblocks(struct bch_fs *c)
@@ -397,6 +397,8 @@ static void bch2_mark_allocator_buckets(struct bch_fs *c)
 	size_t i, j, iter;
 	unsigned ci;
 
+	percpu_down_read_preempt_disable(&c->usage_lock);
+
 	spin_lock(&c->freelist_lock);
 	gc_pos_set(c, gc_pos_alloc(c, NULL));
 
@@ -433,6 +435,8 @@ static void bch2_mark_allocator_buckets(struct bch_fs *c)
 		}
 		spin_unlock(&ob->lock);
 	}
+
+	percpu_up_read_preempt_enable(&c->usage_lock);
 }
 
 static void bch2_gc_start(struct bch_fs *c)
@@ -444,7 +448,7 @@ static void bch2_gc_start(struct bch_fs *c)
 	size_t b;
 	int cpu;
 
-	lg_global_lock(&c->usage_lock);
+	percpu_down_write(&c->usage_lock);
 
 	/*
 	 * Indicates to buckets code that gc is now in progress - done under
@@ -470,7 +474,7 @@ static void bch2_gc_start(struct bch_fs *c)
 		memset(p->s, 0, sizeof(p->s));
 	}
 
-	lg_global_unlock(&c->usage_lock);
+	percpu_up_write(&c->usage_lock);
 
 	/* Clear bucket marks: */
 	for_each_member_device(ca, c, i) {

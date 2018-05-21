@@ -223,7 +223,7 @@ static void bch2_alloc_read_key(struct bch_fs *c, struct bkey_s_c k)
 	if (a.k->p.offset >= ca->mi.nbuckets)
 		return;
 
-	lg_local_lock(&c->usage_lock);
+	percpu_down_read_preempt_disable(&c->usage_lock);
 
 	g = bucket(ca, a.k->p.offset);
 	bucket_cmpxchg(g, new, ({
@@ -237,7 +237,7 @@ static void bch2_alloc_read_key(struct bch_fs *c, struct bkey_s_c k)
 	if (a.v->fields & (1 << BCH_ALLOC_FIELD_WRITE_TIME))
 		g->io_time[WRITE] = get_alloc_field(&d, 2);
 
-	lg_local_unlock(&c->usage_lock);
+	percpu_up_read_preempt_enable(&c->usage_lock);
 }
 
 int bch2_alloc_read(struct bch_fs *c, struct list_head *journal_replay_list)
@@ -304,7 +304,7 @@ static int __bch2_alloc_write_key(struct bch_fs *c, struct bch_dev *ca,
 		if (ret)
 			break;
 
-		lg_local_lock(&c->usage_lock);
+		percpu_down_read_preempt_disable(&c->usage_lock);
 		g = bucket(ca, b);
 
 		/* read mark under btree node lock: */
@@ -320,7 +320,7 @@ static int __bch2_alloc_write_key(struct bch_fs *c, struct bch_dev *ca,
 			put_alloc_field(&d, 2, g->io_time[READ]);
 		if (a->v.fields & (1 << BCH_ALLOC_FIELD_WRITE_TIME))
 			put_alloc_field(&d, 2, g->io_time[WRITE]);
-		lg_local_unlock(&c->usage_lock);
+		percpu_up_read_preempt_enable(&c->usage_lock);
 
 		ret = bch2_btree_insert_at(c, NULL, NULL, journal_seq,
 					   BTREE_INSERT_ATOMIC|
@@ -583,15 +583,20 @@ static void bch2_invalidate_one_bucket(struct bch_fs *c, struct bch_dev *ca,
 {
 	struct bucket_mark m;
 
+	percpu_down_read_preempt_disable(&c->usage_lock);
 	spin_lock(&c->freelist_lock);
+
 	if (!bch2_invalidate_bucket(c, ca, bucket, &m)) {
 		spin_unlock(&c->freelist_lock);
+		percpu_up_read_preempt_enable(&c->usage_lock);
 		return;
 	}
 
 	verify_not_on_freelist(c, ca, bucket);
 	BUG_ON(!fifo_push(&ca->free_inc, bucket));
+
 	spin_unlock(&c->freelist_lock);
+	percpu_up_read_preempt_enable(&c->usage_lock);
 
 	/* gc lock held: */
 	bucket_io_clock_reset(c, ca, bucket, READ);
@@ -1077,11 +1082,15 @@ void __bch2_open_bucket_put(struct bch_fs *c, struct open_bucket *ob)
 {
 	struct bch_dev *ca = bch_dev_bkey_exists(c, ob->ptr.dev);
 
+	percpu_down_read_preempt_disable(&c->usage_lock);
 	spin_lock(&ob->lock);
+
 	bch2_mark_alloc_bucket(c, ca, PTR_BUCKET_NR(ca, &ob->ptr),
 			       false, gc_pos_alloc(c, ob), 0);
 	ob->valid = false;
+
 	spin_unlock(&ob->lock);
+	percpu_up_read_preempt_enable(&c->usage_lock);
 
 	spin_lock(&c->freelist_lock);
 	ob->freelist = c->open_buckets_freelist;
@@ -1151,6 +1160,7 @@ int bch2_bucket_alloc(struct bch_fs *c, struct bch_dev *ca,
 	long bucket;
 
 	spin_lock(&c->freelist_lock);
+
 	if (may_alloc_partial &&
 	    ca->open_buckets_partial_nr) {
 		int ret = ca->open_buckets_partial[--ca->open_buckets_partial_nr];
@@ -1202,7 +1212,6 @@ out:
 	ob = bch2_open_bucket_alloc(c);
 
 	spin_lock(&ob->lock);
-	lg_local_lock(&c->usage_lock);
 	buckets = bucket_array(ca);
 
 	ob->valid	= true;
@@ -1215,8 +1224,6 @@ out:
 
 	bucket_io_clock_reset(c, ca, bucket, READ);
 	bucket_io_clock_reset(c, ca, bucket, WRITE);
-
-	lg_local_unlock(&c->usage_lock);
 	spin_unlock(&ob->lock);
 
 	spin_unlock(&c->freelist_lock);
@@ -1296,7 +1303,6 @@ static enum bucket_alloc_ret bch2_bucket_alloc_set(struct bch_fs *c,
 	if (nr_ptrs_effective >= nr_replicas)
 		return ALLOC_SUCCESS;
 
-	rcu_read_lock();
 	devs_sorted = bch2_wp_alloc_list(c, wp, devs);
 
 	for (i = 0; i < devs_sorted.nr; i++) {
@@ -1337,7 +1343,6 @@ static enum bucket_alloc_ret bch2_bucket_alloc_set(struct bch_fs *c,
 			break;
 		}
 	}
-	rcu_read_unlock();
 
 	EBUG_ON(reserve == RESERVE_MOVINGGC &&
 		ret != ALLOC_SUCCESS &&
@@ -1422,8 +1427,13 @@ static int open_bucket_add_buckets(struct bch_fs *c,
 				   struct closure *cl)
 {
 	struct bch_devs_mask devs = c->rw_devs[wp->type];
+	const struct bch_devs_mask *t;
 	struct open_bucket *ob;
 	unsigned i;
+	int ret;
+
+	percpu_down_read_preempt_disable(&c->usage_lock);
+	rcu_read_lock();
 
 	/* Don't allocate from devices we already have pointers to: */
 	for (i = 0; i < devs_have->nr; i++)
@@ -1432,17 +1442,16 @@ static int open_bucket_add_buckets(struct bch_fs *c,
 	writepoint_for_each_ptr_all(wp, ob, i)
 		__clear_bit(ob->ptr.dev, devs.d);
 
-	if (target) {
-		const struct bch_devs_mask *t;
+	t = bch2_target_to_mask(c, target);
+	if (t)
+		bitmap_and(devs.d, devs.d, t->d, BCH_SB_MEMBERS_MAX);
 
-		rcu_read_lock();
-		t = bch2_target_to_mask(c, target);
-		if (t)
-			bitmap_and(devs.d, devs.d, t->d, BCH_SB_MEMBERS_MAX);
-		rcu_read_unlock();
-	}
+	ret = bch2_bucket_alloc_set(c, wp, nr_replicas, reserve, &devs, cl);
 
-	return bch2_bucket_alloc_set(c, wp, nr_replicas, reserve, &devs, cl);
+	rcu_read_unlock();
+	percpu_up_read_preempt_enable(&c->usage_lock);
+
+	return ret;
 }
 
 static struct write_point *__writepoint_find(struct hlist_head *head,
@@ -1980,10 +1989,12 @@ static int __bch2_fs_allocator_start(struct bch_fs *c)
 			if (!is_available_bucket(m) || m.cached_sectors)
 				continue;
 
+			percpu_down_read_preempt_disable(&c->usage_lock);
 			bch2_mark_alloc_bucket(c, ca, bu, true,
 					gc_pos_alloc(c, NULL),
 					BCH_BUCKET_MARK_MAY_MAKE_UNAVAILABLE|
 					BCH_BUCKET_MARK_GC_LOCK_HELD);
+			percpu_up_read_preempt_enable(&c->usage_lock);
 
 			fifo_push(&ca->free_inc, bu);
 			ca->nr_invalidated++;

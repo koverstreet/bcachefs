@@ -32,7 +32,7 @@ static inline struct bucket_array *bucket_array(struct bch_dev *ca)
 {
 	return rcu_dereference_check(ca->buckets,
 				     !ca->fs ||
-				     lockdep_is_held(&ca->fs->usage_lock) ||
+				     percpu_rwsem_is_held(&ca->fs->usage_lock) ||
 				     lockdep_is_held(&ca->fs->gc_lock) ||
 				     lockdep_is_held(&ca->bucket_lock));
 }

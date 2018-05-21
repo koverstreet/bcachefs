@@ -176,6 +176,8 @@ const struct bch_devs_mask *bch2_target_to_mask(struct bch_fs *c, unsigned targe
 	struct target t = target_decode(target);
 
 	switch (t.type) {
+	case TARGET_NULL:
+		return NULL;
 	case TARGET_DEV: {
 		struct bch_dev *ca = t.dev < c->sb.nr_devices
 			? rcu_dereference(c->devs[t.dev])

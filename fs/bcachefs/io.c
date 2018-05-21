@@ -1698,9 +1698,9 @@ noclone:
 	if (!rbio->have_ioref)
 		goto no_device_postclone;
 
-	lg_local_lock(&c->usage_lock);
+	percpu_down_read_preempt_disable(&c->usage_lock);
 	bucket_io_clock_reset(c, ca, PTR_BUCKET_NR(ca, &pick.ptr), READ);
-	lg_local_unlock(&c->usage_lock);
+	percpu_up_read_preempt_enable(&c->usage_lock);
 
 	this_cpu_add(ca->io_done->sectors[READ][BCH_DATA_USER],
 		     bio_sectors(&rbio->bio));
