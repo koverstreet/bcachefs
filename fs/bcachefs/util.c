@@ -126,24 +126,6 @@ ssize_t bch2_scnprint_string_list(char *buf, size_t size,
 	return out - buf;
 }
 
-ssize_t bch2_read_string_list(const char *buf, const char * const list[])
-{
-	size_t i, len;
-
-	buf = skip_spaces(buf);
-
-	len = strlen(buf);
-	while (len && isspace(buf[len - 1]))
-		--len;
-
-	for (i = 0; list[i]; i++)
-		if (strlen(list[i]) == len &&
-		    !memcmp(buf, list[i], len))
-			break;
-
-	return list[i] ? i : -EINVAL;
-}
-
 ssize_t bch2_scnprint_flag_list(char *buf, size_t size,
 				const char * const list[], u64 flags)
 {
@@ -178,7 +160,7 @@ u64 bch2_read_flag_list(char *opt, const char * const list[])
 	s = strim(d);
 
 	while ((p = strsep(&s, ","))) {
-		int flag = bch2_read_string_list(p, list);
+		int flag = match_string(list, -1, p);
 		if (flag < 0) {
 			ret = -1;
 			break;
