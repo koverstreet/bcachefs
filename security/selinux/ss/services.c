@@ -50,7 +50,6 @@
 #include <linux/audit.h>
 #include <linux/mutex.h>
 #include <linux/selinux.h>
-#include <linux/flex_array.h>
 #include <linux/vmalloc.h>
 #include <net/netlabel.h>
 
@@ -546,15 +545,13 @@ static void type_attribute_bounds_av(struct policydb *policydb,
 	struct type_datum *target;
 	u32 masked = 0;
 
-	source = flex_array_get_ptr(policydb->type_val_to_struct_array,
-				    scontext->type - 1);
+	source = policydb->type_val_to_struct_array[scontext->type - 1];
 	BUG_ON(!source);
 
 	if (!source->bounds)
 		return;
 
-	target = flex_array_get_ptr(policydb->type_val_to_struct_array,
-				    tcontext->type - 1);
+	target = policydb->type_val_to_struct_array[tcontext->type - 1];
 	BUG_ON(!target);
 
 	memset(&lo_avd, 0, sizeof(lo_avd));
@@ -654,11 +651,9 @@ static void context_struct_compute_av(struct policydb *policydb,
 	 */
 	avkey.target_class = tclass;
 	avkey.specified = AVTAB_AV | AVTAB_XPERMS;
-	sattr = flex_array_get(policydb->type_attr_map_array,
-			       scontext->type - 1);
+	sattr = &policydb->type_attr_map_array[scontext->type - 1];
 	BUG_ON(!sattr);
-	tattr = flex_array_get(policydb->type_attr_map_array,
-			       tcontext->type - 1);
+	tattr = &policydb->type_attr_map_array[tcontext->type - 1];
 	BUG_ON(!tattr);
 	ebitmap_for_each_positive_bit(sattr, snode, i) {
 		ebitmap_for_each_positive_bit(tattr, tnode, j) {
@@ -901,8 +896,7 @@ int security_bounded_transition(struct selinux_state *state,
 
 	index = new_context->type;
 	while (true) {
-		type = flex_array_get_ptr(policydb->type_val_to_struct_array,
-					  index - 1);
+		type = policydb->type_val_to_struct_array[index - 1];
 		BUG_ON(!type);
 
 		/* not bounded anymore */
@@ -1065,11 +1059,9 @@ void security_compute_xperms_decision(struct selinux_state *state,
 
 	avkey.target_class = tclass;
 	avkey.specified = AVTAB_XPERMS;
-	sattr = flex_array_get(policydb->type_attr_map_array,
-				scontext->type - 1);
+	sattr = &policydb->type_attr_map_array[scontext->type - 1];
 	BUG_ON(!sattr);
-	tattr = flex_array_get(policydb->type_attr_map_array,
-				tcontext->type - 1);
+	tattr = &policydb->type_attr_map_array[tcontext->type - 1];
 	BUG_ON(!tattr);
 	ebitmap_for_each_positive_bit(sattr, snode, i) {
 		ebitmap_for_each_positive_bit(tattr, tnode, j) {
