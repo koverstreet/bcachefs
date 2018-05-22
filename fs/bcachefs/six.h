@@ -1,6 +1,61 @@
 #ifndef _BCACHEFS_SIX_H
 #define _BCACHEFS_SIX_H
 
+/*
+ * Shared/intent/exclusive locks: sleepable read/write locks, much like rw
+ * semaphores, except with a third intermediate state, intent. Basic operations
+ * are:
+ *
+ * six_lock_read(&foo->lock);
+ * six_unlock_read(&foo->lock);
+ *
+ * six_lock_intent(&foo->lock);
+ * six_unlock_intent(&foo->lock);
+ *
+ * six_lock_write(&foo->lock);
+ * six_unlock_write(&foo->lock);
+ *
+ * Intent locks block other intent locks, but do not block read locks, and you
+ * must have an intent lock held before taking a write lock, like so:
+ *
+ * six_lock_intent(&foo->lock);
+ * six_lock_write(&foo->lock);
+ * six_unlock_write(&foo->lock);
+ * six_unlock_intent(&foo->lock);
+ *
+ * Other operations:
+ *
+ *   six_trylock_read()
+ *   six_trylock_intent()
+ *   six_trylock_write()
+ *
+ *   six_lock_downgrade():	convert from intent to read
+ *   six_lock_tryupgrade():	attempt to convert from read to intent
+ *
+ * Locks also embed a sequence number, which is incremented when the lock is
+ * locked or unlocked for write. The current sequence number can be grabbed
+ * while a lock is held from lock->state.seq; then, if you drop the lock you can
+ * use six_relock_(read|intent_write)(lock, seq) to attempt to retake the lock
+ * iff it hasn't been locked for write in the meantime.
+ *
+ * There are also operations that take the lock type as a parameter, where the
+ * type is one of SIX_LOCK_read, SIX_LOCK_intent, or SIX_LOCK_write:
+ *
+ *   six_lock_type(lock, type)
+ *   six_unlock_type(lock, type)
+ *   six_relock(lock, type, seq)
+ *   six_trylock_type(lock, type)
+ *   six_trylock_convert(lock, from, to)
+ *
+ * A lock may be held multiple types by the same thread (for read or intent,
+ * not write) - up to SIX_LOCK_MAX_RECURSE. However, the six locks code does
+ * _not_ implement the actual recursive checks itself though - rather, if your
+ * code (e.g. btree iterator code) knows that the current thread already has a
+ * lock held, and for the correct type, six_lock_increment() may be used to
+ * bump up the counter for that type - the only effect is that one more call to
+ * unlock will be required before the lock is unlocked.
+ */
+
 #include <linux/lockdep.h>
 #include <linux/osq_lock.h>
 #include <linux/sched.h>
@@ -9,21 +64,6 @@
 #include "util.h"
 
 #define SIX_LOCK_SEPARATE_LOCKFNS
-
-/*
- * LOCK STATES:
- *
- * read, intent, write (i.e. shared/intent/exclusive, hence the name)
- *
- * read and write work as with normal read/write locks - a lock can have
- * multiple readers, but write excludes reads and other write locks.
- *
- * Intent does not block read, but it does block other intent locks. The idea is
- * by taking an intent lock, you can then later upgrade to a write lock without
- * dropping your read lock and without deadlocking - because no other thread has
- * the intent lock and thus no other thread could be trying to take the write
- * lock.
- */
 
 union six_lock_state {
 	struct {
