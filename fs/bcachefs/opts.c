@@ -218,7 +218,7 @@ int bch2_opt_parse(struct bch_fs *c, const struct bch_option *opt,
 			return -ERANGE;
 		break;
 	case BCH_OPT_STR:
-		ret = bch2_read_string_list(val, opt->choices);
+		ret = match_string(opt->choices, -1, val);
 		if (ret < 0)
 			return ret;
 
