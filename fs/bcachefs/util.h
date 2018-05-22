@@ -352,8 +352,6 @@ bool bch2_is_zero(const void *, size_t);
 
 ssize_t bch2_scnprint_string_list(char *, size_t, const char * const[], size_t);
 
-ssize_t bch2_read_string_list(const char *, const char * const[]);
-
 ssize_t bch2_scnprint_flag_list(char *, size_t, const char * const[], u64);
 u64 bch2_read_flag_list(char *, const char * const[]);
 

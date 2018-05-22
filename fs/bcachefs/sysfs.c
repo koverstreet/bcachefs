@@ -921,7 +921,7 @@ STORE(bch2_dev)
 	}
 
 	if (attr == &sysfs_cache_replacement_policy) {
-		ssize_t v = bch2_read_string_list(buf, bch2_cache_replacement_policies);
+		ssize_t v = __sysfs_match_string(bch2_cache_replacement_policies, -1, buf);
 
 		if (v < 0)
 			return v;
