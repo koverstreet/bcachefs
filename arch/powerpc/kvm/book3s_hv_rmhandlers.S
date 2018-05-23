@@ -801,7 +801,10 @@ END_FTR_SECTION(CPU_FTR_TM | CPU_FTR_P9_TM_HV_ASSIST, 0)
 	/*
 	 * NOTE THAT THIS TRASHES ALL NON-VOLATILE REGISTERS INCLUDING CR
 	 */
+	mr      r3, r4
+	ld      r4, VCPU_MSR(r3)
 	bl	kvmppc_restore_tm_hv
+	ld	r4, HSTATE_KVM_VCPU(r13)
 91:
 #endif
 
@@ -1740,7 +1743,10 @@ END_FTR_SECTION(CPU_FTR_TM | CPU_FTR_P9_TM_HV_ASSIST, 0)
 	/*
 	 * NOTE THAT THIS TRASHES ALL NON-VOLATILE REGISTERS INCLUDING CR
 	 */
+	mr      r3, r9
+	ld      r4, VCPU_MSR(r3)
 	bl	kvmppc_save_tm_hv
+	ld	r9, HSTATE_KVM_VCPU(r13)
 91:
 #endif
 
@@ -2644,7 +2650,8 @@ END_FTR_SECTION(CPU_FTR_TM | CPU_FTR_P9_TM_HV_ASSIST, 0)
 	/*
 	 * NOTE THAT THIS TRASHES ALL NON-VOLATILE REGISTERS INCLUDING CR
 	 */
-	ld	r9, HSTATE_KVM_VCPU(r13)
+	ld	r3, HSTATE_KVM_VCPU(r13)
+	ld      r4, VCPU_MSR(r3)
 	bl	kvmppc_save_tm_hv
 91:
 #endif
@@ -2763,7 +2770,10 @@ END_FTR_SECTION(CPU_FTR_TM | CPU_FTR_P9_TM_HV_ASSIST, 0)
 	/*
 	 * NOTE THAT THIS TRASHES ALL NON-VOLATILE REGISTERS INCLUDING CR
 	 */
+	mr      r3, r4
+	ld      r4, VCPU_MSR(r3)
 	bl	kvmppc_restore_tm_hv
+	ld	r4, HSTATE_KVM_VCPU(r13)
 91:
 #endif
 
@@ -3059,9 +3069,10 @@ END_FTR_SECTION_IFSET(CPU_FTR_ALTIVEC)
 #ifdef CONFIG_PPC_TRANSACTIONAL_MEM
 /*
  * Save transactional state and TM-related registers.
- * Called with r9 pointing to the vcpu struct.
+ * Called with r3 pointing to the vcpu struct and r4 containing
+ * the guest MSR value.
  * This can modify all checkpointed registers, but
- * restores r1, r2 and r9 (vcpu pointer) before exit.
+ * restores r1 and r2 before exit.
  */
 kvmppc_save_tm_hv:
 	/* See if we need to handle fake suspend mode */
@@ -3144,9 +3155,10 @@ END_FTR_SECTION_NESTED(CPU_FTR_P9_TM_XER_SO_BUG, CPU_FTR_P9_TM_XER_SO_BUG, 96)
 
 /*
  * Restore transactional state and TM-related registers.
- * Called with r4 pointing to the vcpu struct.
+ * Called with r3 pointing to the vcpu struct
+ * and r4 containing the guest MSR value.
  * This potentially modifies all checkpointed registers.
- * It restores r1, r2, r4 from the PACA.
+ * It restores r1 and r2 from the PACA.
  */
 kvmppc_restore_tm_hv:
 	/*
@@ -3173,15 +3185,14 @@ END_FTR_SECTION_IFCLR(CPU_FTR_P9_TM_HV_ASSIST)
 	 * The user may change these outside of a transaction, so they must
 	 * always be context switched.
 	 */
-	ld	r5, VCPU_TFHAR(r4)
-	ld	r6, VCPU_TFIAR(r4)
-	ld	r7, VCPU_TEXASR(r4)
+	ld	r5, VCPU_TFHAR(r3)
+	ld	r6, VCPU_TFIAR(r3)
+	ld	r7, VCPU_TEXASR(r3)
 	mtspr	SPRN_TFHAR, r5
 	mtspr	SPRN_TFIAR, r6
 	mtspr	SPRN_TEXASR, r7
 
-	ld	r5, VCPU_MSR(r4)
-	rldicl. r5, r5, 64 - MSR_TS_S_LG, 62
+	rldicl. r5, r4, 64 - MSR_TS_S_LG, 62
 	beqlr		/* TM not active in guest */
 
 	/* Make sure the failure summary is set */
@@ -3194,10 +3205,8 @@ END_FTR_SECTION_IFCLR(CPU_FTR_P9_TM_HV_ASSIST)
 	b	9f		/* and return */
 10:	stdu	r1, -PPC_MIN_STKFRM(r1)
 	/* guest is in transactional state, so simulate rollback */
-	mr	r3, r4
 	bl	kvmhv_emulate_tm_rollback
 	nop
-	ld      r4, HSTATE_KVM_VCPU(r13) /* our vcpu pointer has been trashed */
 	addi	r1, r1, PPC_MIN_STKFRM
 9:	ld	r0, PPC_LR_STKOFF(r1)
 	mtlr	r0
