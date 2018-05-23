@@ -220,57 +220,6 @@ do {									\
 		heap_sift_down(heap, _i, cmp);				\
 } while (0)
 
-/*
- * Simple array based allocator - preallocates a number of elements and you can
- * never allocate more than that, also has no locking.
- *
- * Handy because if you know you only need a fixed number of elements you don't
- * have to worry about memory allocation failure, and sometimes a mempool isn't
- * what you want.
- *
- * We treat the free elements as entries in a singly linked list, and the
- * freelist as a stack - allocating and freeing push and pop off the freelist.
- */
-
-#define DECLARE_ARRAY_ALLOCATOR(type, name, size)			\
-	struct {							\
-		type	*freelist;					\
-		type	data[size];					\
-	} name
-
-#define array_alloc(array)						\
-({									\
-	typeof((array)->freelist) _ret = (array)->freelist;		\
-									\
-	if (_ret)							\
-		(array)->freelist = *((typeof((array)->freelist) *) _ret);\
-									\
-	_ret;								\
-})
-
-#define array_free(array, ptr)						\
-do {									\
-	typeof((array)->freelist) _ptr = ptr;				\
-									\
-	*((typeof((array)->freelist) *) _ptr) = (array)->freelist;	\
-	(array)->freelist = _ptr;					\
-} while (0)
-
-#define array_allocator_init(array)					\
-do {									\
-	typeof((array)->freelist) _i;					\
-									\
-	BUILD_BUG_ON(sizeof((array)->data[0]) < sizeof(void *));	\
-	(array)->freelist = NULL;					\
-									\
-	for (_i = (array)->data;					\
-	     _i < (array)->data + ARRAY_SIZE((array)->data);		\
-	     _i++)							\
-		array_free(array, _i);					\
-} while (0)
-
-#define array_freelist_empty(array)	((array)->freelist == NULL)
-
 #define ANYSINT_MAX(t)							\
 	((((t) 1 << (sizeof(t) * 8 - 2)) - (t) 1) * (t) 2 + (t) 1)
 
