@@ -53,9 +53,15 @@ static inline int bch2_acl_count(size_t size)
 struct posix_acl;
 
 struct posix_acl *bch2_get_acl(struct inode *, int, bool);
+int __bch2_set_acl(struct inode *, struct posix_acl *, int);
 int bch2_set_acl(struct user_namespace *, struct inode *, struct posix_acl *, int);
 
 #else
+
+static inline int __bch2_set_acl(struct inode *inode, struct posix_acl *acl, int type)
+{
+	return 0;
+}
 
 static inline int bch2_set_acl(struct user_namespace *mnt_userns,
 			       struct inode *inode, struct posix_acl *acl, int type)
