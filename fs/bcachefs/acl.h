@@ -52,9 +52,15 @@ static inline int bch2_acl_count(size_t size)
 struct posix_acl;
 
 extern struct posix_acl *bch2_get_acl(struct inode *, int);
+extern int __bch2_set_acl(struct inode *, struct posix_acl *, int);
 extern int bch2_set_acl(struct inode *, struct posix_acl *, int);
 
 #else
+
+static inline int __bch2_set_acl(struct inode *inode, struct posix_acl *acl, int type)
+{
+	return 0;
+}
 
 static inline int bch2_set_acl(struct inode *inode, struct posix_acl *acl, int type)
 {
