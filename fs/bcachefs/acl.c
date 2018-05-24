@@ -176,34 +176,19 @@ struct posix_acl *bch2_get_acl(struct inode *vinode, int type)
 	return acl;
 }
 
-int bch2_set_acl(struct inode *vinode, struct posix_acl *acl, int type)
+int __bch2_set_acl(struct inode *vinode, struct posix_acl *acl, int type)
 {
 	struct bch_inode_info *inode = to_bch_ei(vinode);
 	struct bch_fs *c = inode->v.i_sb->s_fs_info;
-	umode_t mode = inode->v.i_mode;
 	int name_index;
 	void *value = NULL;
 	size_t size = 0;
 	int ret;
 
-	if (type == ACL_TYPE_ACCESS && acl) {
-		ret = posix_acl_update_mode(&inode->v, &mode, &acl);
-		if (ret)
-			return ret;
-	}
-
 	switch (type) {
 	case ACL_TYPE_ACCESS:
 		name_index = BCH_XATTR_INDEX_POSIX_ACL_ACCESS;
-		if (acl) {
-			ret = posix_acl_equiv_mode(acl, &inode->v.i_mode);
-			if (ret < 0)
-				return ret;
-			if (ret == 0)
-				acl = NULL;
-		}
 		break;
-
 	case ACL_TYPE_DEFAULT:
 		name_index = BCH_XATTR_INDEX_POSIX_ACL_DEFAULT;
 		if (!S_ISDIR(inode->v.i_mode))
@@ -220,20 +205,7 @@ int bch2_set_acl(struct inode *vinode, struct posix_acl *acl, int type)
 			return (int)PTR_ERR(value);
 	}
 
-	if (mode != inode->v.i_mode) {
-		mutex_lock(&inode->ei_update_lock);
-		inode->v.i_mode = mode;
-		inode->v.i_ctime = current_time(&inode->v);
-
-		ret = bch2_write_inode(c, inode);
-		mutex_unlock(&inode->ei_update_lock);
-
-		if (ret)
-			goto err;
-	}
-
 	ret = bch2_xattr_set(c, inode, "", value, size, 0, name_index);
-err:
 	kfree(value);
 
 	if (ret == -ERANGE)
@@ -241,6 +213,35 @@ err:
 
 	if (!ret)
 		set_cached_acl(&inode->v, type, acl);
+
+	return ret;
+}
+
+int bch2_set_acl(struct inode *vinode, struct posix_acl *acl, int type)
+{
+	struct bch_inode_info *inode = to_bch_ei(vinode);
+	struct bch_fs *c = inode->v.i_sb->s_fs_info;
+	umode_t mode = inode->v.i_mode;
+	int ret;
+
+	if (type == ACL_TYPE_ACCESS && acl) {
+		ret = posix_acl_update_mode(&inode->v, &mode, &acl);
+		if (ret)
+			return ret;
+	}
+
+	ret = __bch2_set_acl(vinode, acl, type);
+	if (ret)
+		return ret;
+
+	if (mode != inode->v.i_mode) {
+		mutex_lock(&inode->ei_update_lock);
+		inode->v.i_mode = mode;
+		inode->v.i_ctime = current_time(&inode->v);
+
+		ret = bch2_write_inode(c, inode);
+		mutex_unlock(&inode->ei_update_lock);
+	}
 
 	return ret;
 }
