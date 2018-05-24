@@ -1813,6 +1813,13 @@ static long bch2_dio_write_loop(struct dio_write *dio)
 		if (unlikely(ret < 0))
 			goto err;
 
+		/* gup might have faulted pages back in: */
+		ret = write_invalidate_inode_pages_range(mapping,
+				req->ki_pos + (dio->iop.op.written << 9),
+				req->ki_pos + iov_iter_count(&dio->iter) - 1);
+		if (unlikely(ret))
+			goto err;
+
 		dio->iop.op.pos = POS(inode->v.i_ino,
 				(req->ki_pos >> 9) + dio->iop.op.written);
 
