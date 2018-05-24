@@ -243,13 +243,13 @@ static struct bch_inode_info *bch2_vfs_inode_create(struct bch_fs *c,
 	atomic_long_inc(&c->nr_inodes);
 
 	if (default_acl) {
-		ret = bch2_set_acl(&inode->v, default_acl, ACL_TYPE_DEFAULT);
+		ret = __bch2_set_acl(&inode->v, default_acl, ACL_TYPE_DEFAULT);
 		if (unlikely(ret))
 			goto err;
 	}
 
 	if (acl) {
-		ret = bch2_set_acl(&inode->v, acl, ACL_TYPE_ACCESS);
+		ret = __bch2_set_acl(&inode->v, acl, ACL_TYPE_ACCESS);
 		if (unlikely(ret))
 			goto err;
 	}
