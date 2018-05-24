@@ -2278,7 +2278,7 @@ static long bch2_fcollapse(struct bch_inode_info *inode,
 	loff_t new_size;
 	int ret;
 
-	if ((offset | len) & (PAGE_SIZE - 1))
+	if ((offset | len) & (block_bytes(c) - 1))
 		return -EINVAL;
 
 	bch2_btree_iter_init(&dst, c, BTREE_ID_EXTENTS,
@@ -2369,7 +2369,7 @@ btree_iter_err:
 	bch2_btree_iter_unlock(&dst);
 
 	ret = bch2_inode_truncate(c, inode->v.i_ino,
-				 round_up(new_size, PAGE_SIZE) >> 9,
+				 round_up(new_size, block_bytes(c)) >> 9,
 				 &i_sectors_hook.hook,
 				 &inode->ei_journal_seq);
 	if (ret)
