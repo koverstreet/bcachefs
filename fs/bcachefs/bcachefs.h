@@ -302,21 +302,14 @@ enum bch_time_stats {
 #include "rebalance_types.h"
 #include "super_types.h"
 
-/*
- * Number of nodes we might have to allocate in a worst case btree split
- * operation - we split all the way up to the root, then allocate a new root.
- */
-#define btree_reserve_required_nodes(depth)	(((depth) + 1) * 2 + 1)
-
 /* Number of nodes btree coalesce will try to coalesce at once */
 #define GC_MERGE_NODES		4U
 
 /* Maximum number of nodes we might need to allocate atomically: */
-#define BTREE_RESERVE_MAX						\
-	(btree_reserve_required_nodes(BTREE_MAX_DEPTH) + GC_MERGE_NODES)
+#define BTREE_RESERVE_MAX	(BTREE_MAX_DEPTH + (BTREE_MAX_DEPTH - 1))
 
 /* Size of the freelist we allocate btree nodes from: */
-#define BTREE_NODE_RESERVE		(BTREE_RESERVE_MAX * 4)
+#define BTREE_NODE_RESERVE	(BTREE_RESERVE_MAX * 4)
 
 struct btree;
 
