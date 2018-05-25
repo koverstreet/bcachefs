@@ -2360,8 +2360,11 @@ static long bch2_fcollapse(struct bch_inode_info *inode,
 btree_iter_err:
 		if (ret == -EINTR)
 			ret = 0;
-		if (ret)
+		if (ret) {
+			bch2_btree_iter_unlock(&src);
+			bch2_btree_iter_unlock(&dst);
 			goto err_put_sectors_dirty;
+		}
 		/*
 		 * XXX: if we error here we've left data with multiple
 		 * pointers... which isn't a _super_ serious problem...
@@ -2387,9 +2390,6 @@ err_put_sectors_dirty:
 err:
 	bch2_pagecache_block_put(&inode->ei_pagecache_lock);
 	inode_unlock(&inode->v);
-
-	bch2_btree_iter_unlock(&src);
-	bch2_btree_iter_unlock(&dst);
 	return ret;
 }
 
