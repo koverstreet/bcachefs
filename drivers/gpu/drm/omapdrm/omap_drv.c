@@ -580,7 +580,7 @@ static int pdev_probe(struct platform_device *pdev)
 	priv->omaprev = soc ? (unsigned int)soc->data : 0;
 	priv->wq = alloc_ordered_workqueue("omapdrm", 0);
 
-	spin_lock_init(&priv->list_lock);
+	mutex_init(&priv->list_lock);
 	INIT_LIST_HEAD(&priv->obj_list);
 
 	/* Allocate and initialize the DRM device. */
