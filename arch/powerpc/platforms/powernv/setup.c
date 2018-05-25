@@ -130,7 +130,6 @@ static void __init pnv_setup_arch(void)
 {
 	set_arch_panic_timeout(10, ARCH_PANIC_TIMEOUT);
 
-	setup_stf_barrier();
 	pnv_setup_rfi_flush();
 
 	/* Initialize SMP */
