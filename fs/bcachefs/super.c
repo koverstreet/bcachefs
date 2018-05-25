@@ -1180,6 +1180,8 @@ static int bch2_dev_attach_bdev(struct bch_fs *c, struct bch_sb_handle *sb)
 	if (ret)
 		return ret;
 
+	bch2_dev_sysfs_online(c, ca);
+
 	if (c->sb.nr_devices == 1)
 		snprintf(c->name, sizeof(c->name), "%pg", ca->disk_sb.bdev);
 	snprintf(ca->name, sizeof(ca->name), "%pg", ca->disk_sb.bdev);
