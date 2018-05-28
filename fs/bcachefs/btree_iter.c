@@ -152,7 +152,7 @@ bool __bch2_btree_node_lock(struct btree *b, struct bpos pos,
 	 * the prev sibling in btree node merging:
 	 */
 	if (iter->nodes_locked &&
-	    __ffs(iter->nodes_locked) == level &&
+	    __ffs(iter->nodes_locked) <= level &&
 	    __btree_iter_cmp(iter->btree_id, pos, iter))
 		return false;
 
