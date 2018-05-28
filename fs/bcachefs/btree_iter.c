@@ -593,6 +593,8 @@ static inline void __btree_iter_init(struct btree_iter *iter,
 	/* Skip to first non whiteout: */
 	if (b->level)
 		bch2_btree_node_iter_peek(&l->iter, b);
+
+	btree_iter_set_dirty(iter, BTREE_ITER_NEED_PEEK);
 }
 
 static inline void btree_iter_node_set(struct btree_iter *iter,
@@ -1085,6 +1087,8 @@ struct bkey_s_c bch2_btree_iter_peek(struct btree_iter *iter)
 	EBUG_ON(!!(iter->flags & BTREE_ITER_IS_EXTENTS) !=
 		(iter->btree_id == BTREE_ID_EXTENTS));
 	EBUG_ON(iter->flags & BTREE_ITER_SLOTS);
+	EBUG_ON(iter->uptodate == BTREE_ITER_UPTODATE &&
+		!btree_node_locked(iter, 0));
 
 	if (iter->uptodate == BTREE_ITER_UPTODATE) {
 		struct bkey_packed *k =
@@ -1093,8 +1097,6 @@ struct bkey_s_c bch2_btree_iter_peek(struct btree_iter *iter)
 			.k = &iter->k,
 			.v = bkeyp_val(&l->b->format, k)
 		};
-
-		EBUG_ON(!btree_node_locked(iter, 0));
 
 		if (debug_check_bkeys(iter->c))
 			bch2_bkey_debugcheck(iter->c, l->b, ret);
@@ -1258,15 +1260,15 @@ struct bkey_s_c bch2_btree_iter_peek_slot(struct btree_iter *iter)
 	EBUG_ON(!!(iter->flags & BTREE_ITER_IS_EXTENTS) !=
 		(iter->btree_id == BTREE_ID_EXTENTS));
 	EBUG_ON(!(iter->flags & BTREE_ITER_SLOTS));
+	EBUG_ON(iter->uptodate == BTREE_ITER_UPTODATE &&
+		!btree_node_locked(iter, 0));
 
 	if (iter->uptodate == BTREE_ITER_UPTODATE) {
-		struct bkey_s_c ret = { .k = &iter->k };;
+		struct bkey_s_c ret = { .k = &iter->k };
 
 		if (!bkey_deleted(&iter->k))
 			ret.v = bkeyp_val(&l->b->format,
 				__bch2_btree_node_iter_peek_all(&l->iter, l->b));
-
-		EBUG_ON(!btree_node_locked(iter, 0));
 
 		if (debug_check_bkeys(iter->c))
 			bch2_bkey_debugcheck(iter->c, l->b, ret);
