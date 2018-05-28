@@ -296,6 +296,11 @@ DEFINE_EVENT(btree_node, btree_compact,
 	TP_ARGS(c, b)
 );
 
+DEFINE_EVENT(btree_node, btree_merge,
+	TP_PROTO(struct bch_fs *c, struct btree *b),
+	TP_ARGS(c, b)
+);
+
 DEFINE_EVENT(btree_node, btree_set_root,
 	TP_PROTO(struct bch_fs *c, struct btree *b),
 	TP_ARGS(c, b)

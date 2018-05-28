@@ -1717,6 +1717,8 @@ retry:
 		goto out_unlock;
 	}
 
+	trace_btree_merge(c, b);
+
 	bch2_btree_interior_update_will_free_node(as, b);
 	bch2_btree_interior_update_will_free_node(as, m);
 
