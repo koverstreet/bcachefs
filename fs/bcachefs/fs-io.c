@@ -2481,7 +2481,7 @@ static long bch2_fallocate(struct bch_inode_info *inode, int mode,
 					&i_sectors_hook.quota_res,
 					sectors, true);
 			if (unlikely(ret))
-				goto err_put_sectors_dirty;
+				goto btree_iter_err;
 		}
 
 		if (reservation.v.nr_replicas < replicas ||
@@ -2489,7 +2489,7 @@ static long bch2_fallocate(struct bch_inode_info *inode, int mode,
 			ret = bch2_disk_reservation_get(c, &disk_res, sectors,
 							replicas, 0);
 			if (unlikely(ret))
-				goto err_put_sectors_dirty;
+				goto btree_iter_err;
 
 			reservation.v.nr_replicas = disk_res.nr_replicas;
 		}
@@ -2501,8 +2501,12 @@ static long bch2_fallocate(struct bch_inode_info *inode, int mode,
 					  BTREE_INSERT_ENTRY(&iter, &reservation.k_i));
 		bch2_disk_reservation_put(c, &disk_res);
 btree_iter_err:
-		if (ret < 0 && ret != -EINTR)
+		if (ret == -EINTR)
+			ret = 0;
+		if (ret) {
+			bch2_btree_iter_unlock(&iter);
 			goto err_put_sectors_dirty;
+		}
 
 	}
 	bch2_btree_iter_unlock(&iter);
@@ -2542,7 +2546,6 @@ btree_iter_err:
 err_put_sectors_dirty:
 	ret = i_sectors_dirty_finish(c, &i_sectors_hook) ?: ret;
 err:
-	bch2_btree_iter_unlock(&iter);
 	pagecache_block_put(&mapping->add_lock);
 	inode_unlock(&inode->v);
 	return ret;
