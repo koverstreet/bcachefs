@@ -288,7 +288,7 @@ int bch2_alloc_read(struct bch_fs *c, struct list_head *journal_replay_list)
 
 static int __bch2_alloc_write_key(struct bch_fs *c, struct bch_dev *ca,
 				  size_t b, struct btree_iter *iter,
-				  u64 *journal_seq)
+				  u64 *journal_seq, bool nowait)
 {
 	struct bucket_mark m;
 	__BKEY_PADDED(k, DIV_ROUND_UP(sizeof(struct bch_alloc), 8)) alloc_key;
@@ -296,6 +296,13 @@ static int __bch2_alloc_write_key(struct bch_fs *c, struct bch_dev *ca,
 	struct bkey_i_alloc *a;
 	u8 *d;
 	int ret;
+	unsigned flags = BTREE_INSERT_ATOMIC|
+		BTREE_INSERT_NOFAIL|
+		BTREE_INSERT_USE_RESERVE|
+		BTREE_INSERT_USE_ALLOC_RESERVE;
+
+	if (nowait)
+		flags |= BTREE_INSERT_NOWAIT;
 
 	bch2_btree_iter_set_pos(iter, POS(ca->dev_idx, b));
 
@@ -322,12 +329,7 @@ static int __bch2_alloc_write_key(struct bch_fs *c, struct bch_dev *ca,
 			put_alloc_field(&d, 2, g->io_time[WRITE]);
 		percpu_up_read_preempt_enable(&c->usage_lock);
 
-		ret = bch2_btree_insert_at(c, NULL, NULL, journal_seq,
-					   BTREE_INSERT_ATOMIC|
-					   BTREE_INSERT_NOFAIL|
-					   BTREE_INSERT_USE_RESERVE|
-					   BTREE_INSERT_USE_ALLOC_RESERVE|
-					   BTREE_INSERT_NOWAIT,
+		ret = bch2_btree_insert_at(c, NULL, NULL, journal_seq, flags,
 					   BTREE_INSERT_ENTRY(iter, &a->k_i));
 		bch2_btree_iter_cond_resched(iter);
 	} while (ret == -EINTR);
@@ -352,7 +354,8 @@ int bch2_alloc_replay_key(struct bch_fs *c, struct bpos pos)
 	bch2_btree_iter_init(&iter, c, BTREE_ID_ALLOC, POS_MIN,
 			     BTREE_ITER_SLOTS|BTREE_ITER_INTENT);
 
-	ret = __bch2_alloc_write_key(c, ca, pos.offset, &iter, NULL);
+	ret = __bch2_alloc_write_key(c, ca, pos.offset, &iter,
+				     NULL, false);
 	bch2_btree_iter_unlock(&iter);
 	return ret;
 }
@@ -372,7 +375,8 @@ int bch2_alloc_write(struct bch_fs *c)
 
 		down_read(&ca->bucket_lock);
 		for_each_set_bit(bucket, ca->buckets_dirty, ca->mi.nbuckets) {
-			ret = __bch2_alloc_write_key(c, ca, bucket, &iter, NULL);
+			ret = __bch2_alloc_write_key(c, ca, bucket, &iter,
+						     NULL, false);
 			if (ret)
 				break;
 
@@ -817,7 +821,8 @@ static void sort_free_inc(struct bch_fs *c, struct bch_dev *ca)
 }
 
 static int bch2_invalidate_free_inc(struct bch_fs *c, struct bch_dev *ca,
-				    u64 *journal_seq, size_t nr)
+				    u64 *journal_seq, size_t nr,
+				    bool nowait)
 {
 	struct btree_iter iter;
 	int ret = 0;
@@ -825,14 +830,12 @@ static int bch2_invalidate_free_inc(struct bch_fs *c, struct bch_dev *ca,
 	bch2_btree_iter_init(&iter, c, BTREE_ID_ALLOC, POS(ca->dev_idx, 0),
 			     BTREE_ITER_SLOTS|BTREE_ITER_INTENT);
 
-	/*
-	 * XXX: if ca->nr_invalidated != 0, just return if we'd block doing the
-	 * btree update or journal_res_get
-	 */
+	/* Only use nowait if we've already invalidated at least one bucket: */
 	while (ca->nr_invalidated < min(nr, fifo_used(&ca->free_inc))) {
 		size_t b = fifo_idx_entry(&ca->free_inc, ca->nr_invalidated);
 
-		ret = __bch2_alloc_write_key(c, ca, b, &iter, journal_seq);
+		ret = __bch2_alloc_write_key(c, ca, b, &iter, journal_seq,
+					     nowait && ca->nr_invalidated);
 		if (ret)
 			break;
 
@@ -840,7 +843,9 @@ static int bch2_invalidate_free_inc(struct bch_fs *c, struct bch_dev *ca,
 	}
 
 	bch2_btree_iter_unlock(&iter);
-	return ret;
+
+	/* If we used NOWAIT, don't return the error: */
+	return ca->nr_invalidated ? 0 : ret;
 }
 
 static bool __push_invalidated_bucket(struct bch_fs *c, struct bch_dev *ca, size_t bucket)
@@ -948,7 +953,8 @@ static int bch2_allocator_thread(void *arg)
 				 fifo_used(&ca->free_inc));
 
 			journal_seq = 0;
-			ret = bch2_invalidate_free_inc(c, ca, &journal_seq, SIZE_MAX);
+			ret = bch2_invalidate_free_inc(c, ca, &journal_seq,
+						       SIZE_MAX, true);
 			if (ret) {
 				bch_err(ca, "error invalidating buckets: %i", ret);
 				goto stop;
@@ -2062,7 +2068,8 @@ not_enough:
 
 	for_each_rw_member(ca, c, dev_iter) {
 		ret = bch2_invalidate_free_inc(c, ca, &journal_seq,
-					       ca->free[RESERVE_BTREE].size);
+					       ca->free[RESERVE_BTREE].size,
+					       false);
 		if (ret) {
 			percpu_ref_put(&ca->io_ref);
 			return ret;
