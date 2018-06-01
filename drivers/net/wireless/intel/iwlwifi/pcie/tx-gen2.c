@@ -411,7 +411,12 @@ struct iwl_tfh_tfd *iwl_pcie_gen2_build_tfd(struct iwl_trans *trans,
 
 	hdr_len = ieee80211_hdrlen(hdr->frame_control);
 
-	if (amsdu) {
+	/*
+	 * Only build A-MSDUs here if doing so by GSO, otherwise it may be
+	 * an A-MSDU for other reasons, e.g. NAN or an A-MSDU having been
+	 * built in the higher layers already.
+	 */
+	if (amsdu && skb_shinfo(skb)->gso_size) {
 		if (iwl_pcie_gen2_build_amsdu(trans, skb, tfd,
 					      tb1_len + IWL_FIRST_TB_SIZE,
 					      hdr_len, dev_cmd))
