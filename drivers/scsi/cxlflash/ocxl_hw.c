@@ -776,10 +776,13 @@ static int ocxlflash_config_fn(struct pci_dev *pdev, struct ocxl_hw_afu *afu)
 		goto out;
 	}
 
-	/* Only one AFU per function is supported by ocxlflash */
-	if (fcfg->max_afu_index != 0)
-		dev_warn(dev, "%s: Unexpected AFU index value %d\n",
-			 __func__, fcfg->max_afu_index);
+	/* Check if function has AFUs defined, only 1 per function supported */
+	if (fcfg->max_afu_index >= 0) {
+		afu->is_present = true;
+		if (fcfg->max_afu_index != 0)
+			dev_warn(dev, "%s: Unexpected AFU index value %d\n",
+				 __func__, fcfg->max_afu_index);
+	}
 
 	rc = ocxl_config_get_actag_info(pdev, &base, &enabled, &supported);
 	if (unlikely(rc)) {
@@ -894,6 +897,10 @@ static int ocxlflash_config_afu(struct pci_dev *pdev, struct ocxl_hw_afu *afu)
 	int pos;
 	int rc = 0;
 
+	/* This HW AFU function does not have any AFUs defined */
+	if (!afu->is_present)
+		goto out;
+
 	/* Read AFU config at index 0 */
 	rc = ocxl_config_read_afu(pdev, fcfg, acfg, 0);
 	if (unlikely(rc)) {
@@ -949,6 +956,7 @@ static void *ocxlflash_create_afu(struct pci_dev *pdev)
 
 	afu->pdev = pdev;
 	afu->dev = dev;
+	idr_init(&afu->idr);
 
 	rc = ocxlflash_config_fn(pdev, afu);
 	if (unlikely(rc)) {
@@ -972,7 +980,6 @@ static void *ocxlflash_create_afu(struct pci_dev *pdev)
 		goto err3;
 	}
 
-	idr_init(&afu->idr);
 	afu->ocxl_ctx = ctx;
 out:
 	return afu;
@@ -981,6 +988,7 @@ err3:
 err2:
 	ocxlflash_unconfig_fn(pdev, afu);
 err1:
+	idr_destroy(&afu->idr);
 	kfree(afu);
 	afu = NULL;
 	goto out;

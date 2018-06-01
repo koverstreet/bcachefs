@@ -43,6 +43,7 @@ struct ocxl_hw_afu {
 	void *link_token;		/* Link token for the SPA */
 	struct idr idr;			/* IDR to manage contexts */
 	int max_pasid;			/* Maximum number of contexts */
+	bool is_present;		/* Function has AFUs defined */
 };
 
 enum ocxlflash_ctx_state {
