@@ -747,8 +747,13 @@ up:
 	}
 
 	for_each_btree_key(&iter, c, BTREE_ID_INODES, POS_MIN, 0, k) {
-		if (k.k->type != BCH_INODE_FS ||
-		    !S_ISDIR(le16_to_cpu(bkey_s_c_to_inode(k).v->bi_mode)))
+		if (k.k->type != BCH_INODE_FS)
+			continue;
+
+		if (!S_ISDIR(le16_to_cpu(bkey_s_c_to_inode(k).v->bi_mode)))
+			continue;
+
+		if (!bch2_empty_dir(c, k.k->p.inode))
 			continue;
 
 		if (fsck_err_on(!inode_bitmap_test(&dirs_done, k.k->p.inode), c,
