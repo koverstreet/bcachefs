@@ -257,12 +257,12 @@ static int i_sectors_dirty_finish(struct bch_fs *c, struct i_sectors_hook *h)
 	int ret;
 
 	mutex_lock(&h->inode->ei_update_lock);
-	if (h->new_i_size != U64_MAX)
-		i_size_write(&h->inode->v, h->new_i_size);
-
 	i_sectors_acct(c, h->inode, &h->quota_res, h->sectors);
 
 	ret = __bch2_write_inode(c, h->inode, i_sectors_dirty_finish_fn, h);
+
+	if (!ret && h->new_i_size != U64_MAX)
+		i_size_write(&h->inode->v, h->new_i_size);
 	mutex_unlock(&h->inode->ei_update_lock);
 
 	bch2_quota_reservation_put(c, h->inode, &h->quota_res);
@@ -348,17 +348,25 @@ bchfs_extent_update_hook(struct extent_insert_hook *hook,
 			return BTREE_INSERT_NEED_TRAVERSE;
 		}
 
-		BUG_ON(h->inode_u.bi_flags & BCH_INODE_I_SIZE_DIRTY);
+		/* truncate in progress? */
+		if (h->inode_u.bi_flags & BCH_INODE_I_SIZE_DIRTY)
+			goto no_i_size_update;
 
 		h->inode_u.bi_size = offset;
 		do_pack = true;
 
 		inode->ei_inode.bi_size = offset;
 
-		if (h->op->is_dio)
-			i_size_write(&inode->v, offset);
+		spin_lock(&inode->v.i_lock);
+		if (offset > inode->v.i_size) {
+			if (h->op->is_dio)
+				i_size_write(&inode->v, offset);
+			else
+				BUG();
+		}
+		spin_unlock(&inode->v.i_lock);
 	}
-
+no_i_size_update:
 	if (sectors) {
 		if (!h->need_inode_update) {
 			h->need_inode_update = true;
@@ -1443,8 +1451,10 @@ int bch2_write_end(struct file *file, struct address_space *mapping,
 		copied = 0;
 	}
 
+	spin_lock(&inode->v.i_lock);
 	if (pos + copied > inode->v.i_size)
 		i_size_write(&inode->v, pos + copied);
+	spin_unlock(&inode->v.i_lock);
 
 	if (copied) {
 		if (!PageUptodate(page))
@@ -1549,8 +1559,10 @@ static int __bch2_buffered_write(struct bch_inode_info *inode,
 	nr_pages_copied = DIV_ROUND_UP(offset + copied, PAGE_SIZE);
 	inode->ei_last_dirtied = (unsigned long) current;
 
+	spin_lock(&inode->v.i_lock);
 	if (pos + copied > inode->v.i_size)
 		i_size_write(&inode->v, pos + copied);
+	spin_unlock(&inode->v.i_lock);
 
 	if (copied < len &&
 	    ((offset + copied) & (PAGE_SIZE - 1))) {
@@ -2135,25 +2147,61 @@ static int bch2_truncate_page(struct bch_inode_info *inode, loff_t from)
 				    from, from + PAGE_SIZE);
 }
 
+static int bch2_extend(struct bch_inode_info *inode, struct iattr *iattr)
+{
+	struct bch_fs *c = inode->v.i_sb->s_fs_info;
+	struct address_space *mapping = inode->v.i_mapping;
+	int ret;
+
+	ret = filemap_write_and_wait_range(mapping,
+			inode->ei_inode.bi_size, S64_MAX);
+	if (ret)
+		return ret;
+
+	truncate_setsize(&inode->v, iattr->ia_size);
+	setattr_copy(&inode->v, iattr);
+
+	mutex_lock(&inode->ei_update_lock);
+	inode->v.i_mtime = inode->v.i_ctime = current_time(&inode->v);
+	ret = bch2_write_inode_size(c, inode, inode->v.i_size);
+	mutex_unlock(&inode->ei_update_lock);
+
+	return ret;
+}
+
 int bch2_truncate(struct bch_inode_info *inode, struct iattr *iattr)
 {
 	struct bch_fs *c = inode->v.i_sb->s_fs_info;
 	struct address_space *mapping = inode->v.i_mapping;
-	bool shrink = iattr->ia_size <= inode->v.i_size;
 	struct i_sectors_hook i_sectors_hook =
 		i_sectors_hook_init(inode, BCH_INODE_I_SIZE_DIRTY);
+	bool shrink;
 	int ret = 0;
 
 	inode_dio_wait(&inode->v);
 	pagecache_block_get(&mapping->add_lock);
 
-	truncate_setsize(&inode->v, iattr->ia_size);
+	BUG_ON(inode->v.i_size < inode->ei_inode.bi_size);
 
-	/* sync appends.. */
-	/* XXX what protects inode->i_size? */
+	shrink = iattr->ia_size <= inode->v.i_size;
+
+	if (!shrink) {
+		ret = bch2_extend(inode, iattr);
+		goto err_put_pagecache;
+	}
+
+	ret = bch2_truncate_page(inode, iattr->ia_size);
+	if (unlikely(ret))
+		goto err_put_pagecache;
+
 	if (iattr->ia_size > inode->ei_inode.bi_size)
 		ret = filemap_write_and_wait_range(mapping,
-						   inode->ei_inode.bi_size, S64_MAX);
+				inode->ei_inode.bi_size,
+				iattr->ia_size - 1);
+	else if (iattr->ia_size & (PAGE_SIZE - 1))
+		ret = filemap_write_and_wait_range(mapping,
+				round_down(iattr->ia_size, PAGE_SIZE),
+				iattr->ia_size - 1);
 	if (ret)
 		goto err_put_pagecache;
 
@@ -2161,41 +2209,31 @@ int bch2_truncate(struct bch_inode_info *inode, struct iattr *iattr)
 
 	ret = i_sectors_dirty_start(c, &i_sectors_hook);
 	if (unlikely(ret))
-		goto err;
+		goto err_put_pagecache;
 
-	/*
-	 * There might be persistent reservations (from fallocate())
-	 * above i_size, which bch2_inode_truncate() will discard - we're
-	 * only supposed to discard them if we're doing a real truncate
-	 * here (new i_size < current i_size):
-	 */
-	if (shrink) {
-		ret = bch2_truncate_page(inode, iattr->ia_size);
-		if (unlikely(ret))
-			goto err;
+	truncate_setsize(&inode->v, iattr->ia_size);
 
-		ret = bch2_inode_truncate(c, inode->v.i_ino,
-					  round_up(iattr->ia_size, PAGE_SIZE) >> 9,
-					  &i_sectors_hook.hook,
-					  &inode->ei_journal_seq);
-		if (unlikely(ret))
-			goto err;
-	}
+	ret = bch2_inode_truncate(c, inode->v.i_ino,
+				  round_up(iattr->ia_size, PAGE_SIZE) >> 9,
+				  &i_sectors_hook.hook,
+				  &inode->ei_journal_seq);
+	if (unlikely(ret))
+		goto err_put_sectors_dirty;
 
 	setattr_copy(&inode->v, iattr);
 	inode->v.i_mtime = inode->v.i_ctime = current_time(&inode->v);
-err:
-	/*
-	 * On error - in particular, bch2_truncate_page() error - don't clear
-	 * I_SIZE_DIRTY, as we've left data above i_size!:
-	 */
-	if (ret)
-		i_sectors_hook.flags &= ~BCH_INODE_I_SIZE_DIRTY;
-
+out:
 	ret = i_sectors_dirty_finish(c, &i_sectors_hook) ?: ret;
 err_put_pagecache:
 	pagecache_block_put(&mapping->add_lock);
 	return ret;
+err_put_sectors_dirty:
+	/*
+	 * On error - in particular, bch2_truncate_page() error - don't clear
+	 * I_SIZE_DIRTY, as we've left data above i_size!:
+	 */
+	i_sectors_hook.flags &= ~BCH_INODE_I_SIZE_DIRTY;
+	goto out;
 }
 
 /* fallocate: */
@@ -2375,7 +2413,6 @@ btree_iter_err:
 	if (ret)
 		goto err_put_sectors_dirty;
 
-	i_size_write(&inode->v, new_size);
 	i_sectors_hook.new_i_size = new_size;
 err_put_sectors_dirty:
 	ret = i_sectors_dirty_finish(c, &i_sectors_hook) ?: ret;
