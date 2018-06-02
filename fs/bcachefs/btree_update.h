@@ -82,31 +82,49 @@ int __bch2_btree_insert_at(struct btree_insert *);
 			__VA_ARGS__					\
 		}})
 
+enum {
+	__BTREE_INSERT_ATOMIC,
+	__BTREE_INSERT_NOUNLOCK,
+	__BTREE_INSERT_NOFAIL,
+	__BTREE_INSERT_USE_RESERVE,
+	__BTREE_INSERT_USE_ALLOC_RESERVE,
+	__BTREE_INSERT_JOURNAL_REPLAY,
+	__BTREE_INSERT_NOWAIT,
+	__BTREE_INSERT_GC_LOCK_HELD,
+	__BCH_HASH_SET_MUST_CREATE,
+	__BCH_HASH_SET_MUST_REPLACE,
+};
+
 /*
- * Don't drop/retake locks: instead return -EINTR if need to upgrade to intent
- * locks, -EAGAIN if need to wait on btree reserve
+ * Don't drop/retake locks before doing btree update, instead return -EINTR if
+ * we had to drop locks for any reason
  */
-#define BTREE_INSERT_ATOMIC		(1 << 0)
+#define BTREE_INSERT_ATOMIC		(1 << __BTREE_INSERT_ATOMIC)
+
+/*
+ * Don't drop locks _after_ successfully updating btree:
+ */
+#define BTREE_INSERT_NOUNLOCK		(1 << __BTREE_INSERT_NOUNLOCK)
 
 /* Don't check for -ENOSPC: */
-#define BTREE_INSERT_NOFAIL		(1 << 1)
+#define BTREE_INSERT_NOFAIL		(1 << __BTREE_INSERT_NOFAIL)
 
 /* for copygc, or when merging btree nodes */
-#define BTREE_INSERT_USE_RESERVE	(1 << 2)
-#define BTREE_INSERT_USE_ALLOC_RESERVE	(1 << 3)
+#define BTREE_INSERT_USE_RESERVE	(1 << __BTREE_INSERT_USE_RESERVE)
+#define BTREE_INSERT_USE_ALLOC_RESERVE	(1 << __BTREE_INSERT_USE_ALLOC_RESERVE)
 
 /*
  * Insert is for journal replay: don't get journal reservations, or mark extents
  * (bch_mark_key)
  */
-#define BTREE_INSERT_JOURNAL_REPLAY	(1 << 4)
+#define BTREE_INSERT_JOURNAL_REPLAY	(1 << __BTREE_INSERT_JOURNAL_REPLAY)
 
 /* Don't block on allocation failure (for new btree nodes: */
-#define BTREE_INSERT_NOWAIT		(1 << 5)
-#define BTREE_INSERT_GC_LOCK_HELD	(1 << 6)
+#define BTREE_INSERT_NOWAIT		(1 << __BTREE_INSERT_NOWAIT)
+#define BTREE_INSERT_GC_LOCK_HELD	(1 << __BTREE_INSERT_GC_LOCK_HELD)
 
-#define BCH_HASH_SET_MUST_CREATE	(1 << 7)
-#define BCH_HASH_SET_MUST_REPLACE	(1 << 8)
+#define BCH_HASH_SET_MUST_CREATE	(1 << __BCH_HASH_SET_MUST_CREATE)
+#define BCH_HASH_SET_MUST_REPLACE	(1 << __BCH_HASH_SET_MUST_REPLACE)
 
 int bch2_btree_delete_at(struct btree_iter *, unsigned);
 
