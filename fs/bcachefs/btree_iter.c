@@ -105,15 +105,19 @@ success:
 
 bool bch2_btree_iter_relock(struct btree_iter *iter)
 {
-	unsigned l;
+	unsigned l = iter->level;
 
-	for (l = iter->level;
-	     l < max_t(unsigned, iter->locks_want, 1) && iter->l[l].b;
-	     l++)
+	do {
+		if (!btree_iter_node(iter, l))
+			break;
+
 		if (!bch2_btree_node_relock(iter, l)) {
 			btree_iter_set_dirty(iter, BTREE_ITER_NEED_TRAVERSE);
 			return false;
 		}
+
+		l++;
+	} while (l < iter->locks_want);
 
 	if (iter->uptodate == BTREE_ITER_NEED_RELOCK)
 		iter->uptodate = BTREE_ITER_NEED_PEEK;
@@ -888,8 +892,11 @@ int __must_check __bch2_btree_iter_traverse(struct btree_iter *iter)
 {
 	unsigned depth_want = iter->level;
 
-	if (unlikely(!iter->l[iter->level].b))
+	if (unlikely(iter->uptodate == BTREE_ITER_END))
 		return 0;
+
+	BUG_ON(iter->level >= BTREE_MAX_DEPTH);
+	BUG_ON(!iter->l[iter->level].b);
 
 	iter->flags &= ~BTREE_ITER_AT_END_OF_LEAF;
 
@@ -973,6 +980,8 @@ int __must_check bch2_btree_iter_traverse(struct btree_iter *iter)
 	if (unlikely(ret))
 		ret = btree_iter_traverse_error(iter, ret);
 
+	BUG_ON(ret == -EINTR && !btree_iter_linked(iter));
+
 	return ret;
 }
 
@@ -985,16 +994,26 @@ struct btree *bch2_btree_iter_peek_node(struct btree_iter *iter)
 
 	EBUG_ON(iter->flags & BTREE_ITER_IS_EXTENTS);
 
+	if (iter->uptodate == BTREE_ITER_UPTODATE)
+		return iter->l[iter->level].b;
+
+	if (unlikely(iter->uptodate == BTREE_ITER_END))
+		return NULL;
+
 	ret = bch2_btree_iter_traverse(iter);
 	if (ret)
 		return ERR_PTR(ret);
 
 	b = iter->l[iter->level].b;
-
-	if (b) {
-		EBUG_ON(bkey_cmp(b->key.k.p, iter->pos) < 0);
-		iter->pos = b->key.k.p;
+	if (!b) {
+		iter->uptodate = BTREE_ITER_END;
+		return NULL;
 	}
+
+	BUG_ON(bkey_cmp(b->key.k.p, iter->pos) < 0);
+
+	iter->pos = b->key.k.p;
+	iter->uptodate = BTREE_ITER_UPTODATE;
 
 	return b;
 }
@@ -1008,8 +1027,10 @@ struct btree *bch2_btree_iter_next_node(struct btree_iter *iter, unsigned depth)
 
 	btree_iter_up(iter);
 
-	if (!btree_iter_node(iter, iter->level))
+	if (!btree_iter_node(iter, iter->level)) {
+		iter->uptodate = BTREE_ITER_END;
 		return NULL;
+	}
 
 	/* parent node usually won't be locked: redo traversal if necessary */
 	btree_iter_set_dirty(iter, BTREE_ITER_NEED_TRAVERSE);
@@ -1018,8 +1039,7 @@ struct btree *bch2_btree_iter_next_node(struct btree_iter *iter, unsigned depth)
 		return NULL;
 
 	b = iter->l[iter->level].b;
-	if (!b)
-		return b;
+	BUG_ON(!b);
 
 	if (bkey_cmp(iter->pos, b->key.k.p) < 0) {
 		/* Haven't gotten to the end of the parent node: */
