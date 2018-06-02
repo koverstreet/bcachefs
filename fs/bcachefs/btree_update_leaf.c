@@ -356,6 +356,11 @@ static inline int do_btree_insert_at(struct btree_insert *trans,
 		}
 	}
 
+	if (journal_seq_verify(c) &&
+	    !(trans->flags & BTREE_INSERT_JOURNAL_REPLAY))
+		trans_for_each_entry(trans, i)
+			i->k->k.version.lo = trans->journal_res.seq;
+
 	trans_for_each_entry(trans, i) {
 		switch (btree_insert_key_leaf(trans, i)) {
 		case BTREE_INSERT_OK:
