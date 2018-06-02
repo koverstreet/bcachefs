@@ -146,35 +146,51 @@ void bch2_btree_interior_update_will_free_node(struct btree_update *,
 					       struct btree *);
 
 void bch2_btree_insert_node(struct btree_update *, struct btree *,
-			    struct btree_iter *, struct keylist *);
+			    struct btree_iter *, struct keylist *,
+			    unsigned);
 int bch2_btree_split_leaf(struct bch_fs *, struct btree_iter *, unsigned);
 
-int __bch2_foreground_maybe_merge(struct bch_fs *, struct btree_iter *,
-				  unsigned, enum btree_node_sibling);
+void __bch2_foreground_maybe_merge(struct bch_fs *, struct btree_iter *,
+				   unsigned, unsigned, enum btree_node_sibling);
 
-static inline int bch2_foreground_maybe_merge_sibling(struct bch_fs *c,
+static inline void bch2_foreground_maybe_merge_sibling(struct bch_fs *c,
 					struct btree_iter *iter,
-					unsigned level,
+					unsigned level, unsigned flags,
 					enum btree_node_sibling sib)
 {
 	struct btree *b;
 
+	/*
+	 * iterators are inconsistent when they hit end of leaf, until
+	 * traversed again
+	 *
+	 * XXX inconsistent how?
+	 */
+	if (iter->flags & BTREE_ITER_AT_END_OF_LEAF)
+		return;
+
+	if (iter->uptodate >= BTREE_ITER_NEED_TRAVERSE)
+		return;
+
 	if (!bch2_btree_node_relock(iter, level))
-		return 0;
+		return;
 
 	b = iter->l[level].b;
 	if (b->sib_u64s[sib] > c->btree_foreground_merge_threshold)
-		return 0;
+		return;
 
-	return __bch2_foreground_maybe_merge(c, iter, level, sib);
+	__bch2_foreground_maybe_merge(c, iter, level, flags, sib);
 }
 
 static inline void bch2_foreground_maybe_merge(struct bch_fs *c,
 					       struct btree_iter *iter,
-					       unsigned level)
+					       unsigned level,
+					       unsigned flags)
 {
-	bch2_foreground_maybe_merge_sibling(c, iter, level, btree_prev_sib);
-	bch2_foreground_maybe_merge_sibling(c, iter, level, btree_next_sib);
+	bch2_foreground_maybe_merge_sibling(c, iter, level, flags,
+					    btree_prev_sib);
+	bch2_foreground_maybe_merge_sibling(c, iter, level, flags,
+					    btree_next_sib);
 }
 
 void bch2_btree_set_root_for_read(struct bch_fs *, struct btree *);
