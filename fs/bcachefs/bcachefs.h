@@ -259,6 +259,10 @@ do {									\
 		"Reread btree nodes at various points to verify the "	\
 		"mergesort in the read path against modifications "	\
 		"done in memory")					\
+	BCH_DEBUG_PARAM(journal_seq_verify,				\
+		"Store the journal sequence number in the version "	\
+		"number of every btree key, and verify that btree "	\
+		"update ordering is preserved during recovery")
 
 #define BCH_DEBUG_PARAMS_ALL() BCH_DEBUG_PARAMS_ALWAYS() BCH_DEBUG_PARAMS_DEBUG()
 
