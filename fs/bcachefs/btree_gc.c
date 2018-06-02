@@ -780,7 +780,7 @@ next:
 		bch2_keylist_add_in_order(&keylist, &new_nodes[i]->key);
 
 	/* Insert the newly coalesced nodes */
-	bch2_btree_insert_node(as, parent, iter, &keylist);
+	bch2_btree_insert_node(as, parent, iter, &keylist, 0);
 
 	BUG_ON(!bch2_keylist_empty(&keylist));
 

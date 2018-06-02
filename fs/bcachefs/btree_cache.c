@@ -649,7 +649,14 @@ struct btree *bch2_btree_node_get(struct bch_fs *c, struct btree_iter *iter,
 	struct btree *b;
 	struct bset_tree *t;
 
-	/* btree_node_fill() requires parent to be locked: */
+	/*
+	 * XXX: locking optimization
+	 *
+	 * we can make the locking looser here - caller can drop lock on parent
+	 * node before locking child node (and potentially blocking): we just
+	 * have to have bch2_btree_node_fill() call relock on the parent and
+	 * return -EINTR if that fails
+	 */
 	EBUG_ON(!btree_node_locked(iter, level + 1));
 	EBUG_ON(level >= BTREE_MAX_DEPTH);
 retry:
@@ -749,6 +756,7 @@ retry:
 struct btree *bch2_btree_node_get_sibling(struct bch_fs *c,
 					  struct btree_iter *iter,
 					  struct btree *b,
+					  bool may_drop_locks,
 					  enum btree_node_sibling sib)
 {
 	struct btree *parent;
@@ -785,25 +793,46 @@ struct btree *bch2_btree_node_get_sibling(struct bch_fs *c,
 
 	ret = bch2_btree_node_get(c, iter, &tmp.k, level, SIX_LOCK_intent);
 
-	if (IS_ERR(ret) && PTR_ERR(ret) == -EINTR) {
-		btree_node_unlock(iter, level);
-
+	if (PTR_ERR_OR_ZERO(ret) == -EINTR && may_drop_locks) {
 		if (!bch2_btree_node_relock(iter, level + 1)) {
 			bch2_btree_iter_set_locks_want(iter, level + 2);
 			return ERR_PTR(-EINTR);
 		}
 
-		ret = bch2_btree_node_get(c, iter, &tmp.k, level, SIX_LOCK_intent);
-	}
+#if 0
+		/*
+		 * we might have got -EINTR because trylock failed, and we're
+		 * holding other locks that would cause us to deadlock:
+		 *
+		 * to do this correctly, we need a bch2_btree_iter_relock()
+		 * that relocks all linked iters
+		 */
+		struct btree_iter *linked;
 
-	if (!bch2_btree_node_relock(iter, level)) {
-		btree_iter_set_dirty(iter, BTREE_ITER_NEED_RELOCK);
+		for_each_linked_btree_iter(iter, linked) {
+			if (btree_iter_cmp(iter, linked) < 0)
+				__bch2_btree_iter_unlock(linked);
 
-		if (!IS_ERR(ret)) {
-			six_unlock_intent(&ret->lock);
-			ret = ERR_PTR(-EINTR);
+		}
+#endif
+		if (sib == btree_prev_sib)
+			btree_node_unlock(iter, level);
+
+		ret = bch2_btree_node_get(c, iter, &tmp.k, level,
+					  SIX_LOCK_intent);
+
+		if (!bch2_btree_node_relock(iter, level)) {
+			btree_iter_set_dirty(iter, BTREE_ITER_NEED_RELOCK);
+
+			if (!IS_ERR(ret)) {
+				six_unlock_intent(&ret->lock);
+				ret = ERR_PTR(-EINTR);
+			}
 		}
 	}
+
+	BUG_ON((!may_drop_locks || !IS_ERR(ret)) &&
+	       !btree_node_locked(iter, level));
 
 	return ret;
 }
