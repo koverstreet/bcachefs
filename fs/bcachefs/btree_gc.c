@@ -148,6 +148,9 @@ int bch2_btree_mark_key_initial(struct bch_fs *c, enum bkey_type type,
 		? BCH_DATA_BTREE : BCH_DATA_USER;
 	int ret = 0;
 
+	BUG_ON(journal_seq_verify(c) &&
+	       k.k->version.lo > journal_cur_seq(&c->journal));
+
 	if (test_bit(BCH_FS_REBUILD_REPLICAS, &c->flags) ||
 	    fsck_err_on(!bch2_bkey_replicas_marked(c, data_type, k), c,
 			"superblock not marked as containing replicas (type %u)",
