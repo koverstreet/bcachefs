@@ -137,6 +137,9 @@ enum opt_type {
 	BCH_OPT(degraded,		u8,	OPT_MOUNT,		\
 		OPT_BOOL(),						\
 		NO_SB_OPT,			false)			\
+	BCH_OPT(discard,		u8,	OPT_MOUNT,		\
+		OPT_BOOL(),						\
+		NO_SB_OPT,			false)			\
 	BCH_OPT(verbose_recovery,	u8,	OPT_MOUNT,		\
 		OPT_BOOL(),						\
 		NO_SB_OPT,			false)			\
