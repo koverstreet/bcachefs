@@ -99,6 +99,14 @@ static inline void btree_node_unlock(struct btree_iter *iter, unsigned level)
 	mark_btree_node_unlocked(iter, level);
 }
 
+static inline void __bch2_btree_iter_unlock(struct btree_iter *iter)
+{
+	btree_iter_set_dirty(iter, BTREE_ITER_NEED_RELOCK);
+
+	while (iter->nodes_locked)
+		btree_node_unlock(iter, __ffs(iter->nodes_locked));
+}
+
 static inline enum bch_time_stats lock_to_time_stat(enum six_lock_type type)
 {
 	switch (type) {
