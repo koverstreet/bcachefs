@@ -268,14 +268,6 @@ bool __bch2_btree_iter_set_locks_want(struct btree_iter *iter,
 	return false;
 }
 
-static void __bch2_btree_iter_unlock(struct btree_iter *iter)
-{
-	btree_iter_set_dirty(iter, BTREE_ITER_NEED_RELOCK);
-
-	while (iter->nodes_locked)
-		btree_node_unlock(iter, __ffs(iter->nodes_locked));
-}
-
 int bch2_btree_iter_unlock(struct btree_iter *iter)
 {
 	struct btree_iter *linked;
@@ -972,6 +964,10 @@ int __must_check bch2_btree_iter_traverse(struct btree_iter *iter)
 	int ret;
 
 	if (iter->uptodate < BTREE_ITER_NEED_RELOCK)
+		return 0;
+
+	if (iter->uptodate == BTREE_ITER_NEED_RELOCK &&
+	    __bch2_btree_iter_relock(iter))
 		return 0;
 
 	ret = __bch2_btree_iter_traverse(iter);

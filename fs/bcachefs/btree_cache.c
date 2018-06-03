@@ -794,32 +794,28 @@ struct btree *bch2_btree_node_get_sibling(struct bch_fs *c,
 	ret = bch2_btree_node_get(c, iter, &tmp.k, level, SIX_LOCK_intent);
 
 	if (PTR_ERR_OR_ZERO(ret) == -EINTR && may_drop_locks) {
+		struct btree_iter *linked;
+
 		if (!bch2_btree_node_relock(iter, level + 1)) {
 			bch2_btree_iter_set_locks_want(iter, level + 2);
 			return ERR_PTR(-EINTR);
 		}
 
-#if 0
 		/*
-		 * we might have got -EINTR because trylock failed, and we're
+		 * We might have got -EINTR because trylock failed, and we're
 		 * holding other locks that would cause us to deadlock:
-		 *
-		 * to do this correctly, we need a bch2_btree_iter_relock()
-		 * that relocks all linked iters
 		 */
-		struct btree_iter *linked;
-
-		for_each_linked_btree_iter(iter, linked) {
+		for_each_linked_btree_iter(iter, linked)
 			if (btree_iter_cmp(iter, linked) < 0)
 				__bch2_btree_iter_unlock(linked);
 
-		}
-#endif
 		if (sib == btree_prev_sib)
 			btree_node_unlock(iter, level);
 
 		ret = bch2_btree_node_get(c, iter, &tmp.k, level,
 					  SIX_LOCK_intent);
+
+		bch2_btree_iter_relock(iter);
 
 		if (!bch2_btree_node_relock(iter, level)) {
 			btree_iter_set_dirty(iter, BTREE_ITER_NEED_RELOCK);
