@@ -35,10 +35,8 @@ void bch2_btree_node_unlock_write(struct btree *b, struct btree_iter *iter)
 	EBUG_ON(iter->l[b->level].b != b);
 	EBUG_ON(iter->lock_seq[b->level] + 1 != b->lock.state.seq);
 
-	for_each_linked_btree_node(iter, b, linked)
+	for_each_btree_iter_with_node(iter, b, linked)
 		linked->lock_seq[b->level] += 2;
-
-	iter->lock_seq[b->level] += 2;
 
 	six_unlock_write(&b->lock);
 }
@@ -104,7 +102,7 @@ success:
 	return true;
 }
 
-bool bch2_btree_iter_relock(struct btree_iter *iter)
+static bool __bch2_btree_iter_relock(struct btree_iter *iter)
 {
 	unsigned l = iter->level;
 
@@ -123,6 +121,17 @@ bool bch2_btree_iter_relock(struct btree_iter *iter)
 	if (iter->uptodate == BTREE_ITER_NEED_RELOCK)
 		iter->uptodate = BTREE_ITER_NEED_PEEK;
 	return true;
+}
+
+bool bch2_btree_iter_relock(struct btree_iter *iter)
+{
+	struct btree_iter *linked;
+	bool ret = true;
+
+	for_each_btree_iter(iter, linked)
+		ret &= __bch2_btree_iter_relock(linked);
+
+	return ret;
 }
 
 /* Slowpath: */
@@ -244,7 +253,7 @@ bool __bch2_btree_iter_set_locks_want(struct btree_iter *iter,
 	iter->locks_want = new_locks_want;
 	btree_iter_drop_extra_locks(iter);
 
-	if (bch2_btree_iter_relock(iter))
+	if (__bch2_btree_iter_relock(iter))
 		return true;
 
 	/*
@@ -272,9 +281,8 @@ int bch2_btree_iter_unlock(struct btree_iter *iter)
 {
 	struct btree_iter *linked;
 
-	for_each_linked_btree_iter(iter, linked)
+	for_each_btree_iter(iter, linked)
 		__bch2_btree_iter_unlock(linked);
-	__bch2_btree_iter_unlock(iter);
 
 	return iter->flags & BTREE_ITER_ERROR ? -EIO : 0;
 }
@@ -325,11 +333,8 @@ void bch2_btree_iter_verify(struct btree_iter *iter, struct btree *b)
 {
 	struct btree_iter *linked;
 
-	if (iter->l[b->level].b == b)
-		__bch2_btree_iter_verify(iter, b);
-
-	for_each_linked_btree_node(iter, b, linked)
-		__bch2_btree_iter_verify(iter, b);
+	for_each_btree_iter_with_node(iter, b, linked)
+		__bch2_btree_iter_verify(linked, b);
 }
 
 #endif
@@ -461,12 +466,7 @@ void bch2_btree_node_iter_fix(struct btree_iter *iter,
 		__bch2_btree_node_iter_fix(iter, b, node_iter, t,
 					  where, clobber_u64s, new_u64s);
 
-	if (iter->l[b->level].b == b)
-		__bch2_btree_node_iter_fix(iter, b,
-					  &iter->l[b->level].iter, t,
-					  where, clobber_u64s, new_u64s);
-
-	for_each_linked_btree_node(iter, b, linked)
+	for_each_btree_iter_with_node(iter, b, linked)
 		__bch2_btree_node_iter_fix(linked, b,
 					  &linked->l[b->level].iter, t,
 					  where, clobber_u64s, new_u64s);
@@ -673,7 +673,6 @@ void bch2_btree_iter_node_drop(struct btree_iter *iter, struct btree *b)
 	unsigned level = b->level;
 
 	if (iter->l[level].b == b) {
-		btree_iter_set_dirty(iter, BTREE_ITER_NEED_TRAVERSE);
 		btree_node_unlock(iter, level);
 		iter->l[level].b = BTREE_ITER_NOT_END;
 	}
@@ -687,9 +686,8 @@ void bch2_btree_iter_reinit_node(struct btree_iter *iter, struct btree *b)
 {
 	struct btree_iter *linked;
 
-	for_each_linked_btree_node(iter, b, linked)
+	for_each_btree_iter_with_node(iter, b, linked)
 		__btree_iter_init(linked, b);
-	__btree_iter_init(iter, b);
 }
 
 static inline int btree_iter_lock_root(struct btree_iter *iter,
@@ -1033,17 +1031,21 @@ struct btree *bch2_btree_iter_next_node(struct btree_iter *iter, unsigned depth)
 		return NULL;
 	}
 
-	/* parent node usually won't be locked: redo traversal if necessary */
-	btree_iter_set_dirty(iter, BTREE_ITER_NEED_TRAVERSE);
-	ret = bch2_btree_iter_traverse(iter);
-	if (ret)
-		return NULL;
+	if (!bch2_btree_node_relock(iter, iter->level)) {
+		btree_iter_set_dirty(iter, BTREE_ITER_NEED_TRAVERSE);
+		ret = bch2_btree_iter_traverse(iter);
+		if (ret)
+			return NULL;
+	}
 
 	b = iter->l[iter->level].b;
 	BUG_ON(!b);
 
 	if (bkey_cmp(iter->pos, b->key.k.p) < 0) {
-		/* Haven't gotten to the end of the parent node: */
+		/*
+		 * Haven't gotten to the end of the parent node: go back down to
+		 * the next child node
+		 */
 
 		/* ick: */
 		iter->pos	= iter->btree_id == BTREE_ID_INODES
@@ -1368,13 +1370,11 @@ void bch2_btree_iter_unlink(struct btree_iter *iter)
 	if (!btree_iter_linked(iter))
 		return;
 
-	for_each_linked_btree_iter(iter, linked) {
-
+	for_each_linked_btree_iter(iter, linked)
 		if (linked->next == iter) {
 			linked->next = iter->next;
 			return;
 		}
-	}
 
 	BUG();
 }
