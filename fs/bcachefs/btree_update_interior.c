@@ -1492,9 +1492,8 @@ bch2_btree_insert_keys_interior(struct btree_update *as, struct btree *b,
 
 	btree_update_updated_node(as, b);
 
-	for_each_linked_btree_node(iter, b, linked)
+	for_each_btree_iter_with_node(iter, b, linked)
 		bch2_btree_node_iter_peek(&linked->l[b->level].iter, b);
-	bch2_btree_node_iter_peek(&iter->l[b->level].iter, b);
 
 	bch2_btree_iter_verify(iter, b);
 }
@@ -1572,11 +1571,9 @@ int bch2_btree_split_leaf(struct bch_fs *c, struct btree_iter *iter,
 	 * We already have a disk reservation and open buckets pinned; this
 	 * allocation must not block:
 	 */
-	for_each_linked_btree_iter(iter, linked)
+	for_each_btree_iter(iter, linked)
 		if (linked->btree_id == BTREE_ID_EXTENTS)
 			flags |= BTREE_INSERT_USE_RESERVE;
-	if (iter->btree_id == BTREE_ID_EXTENTS)
-		flags |= BTREE_INSERT_USE_RESERVE;
 
 	closure_init_stack(&cl);
 
