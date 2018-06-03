@@ -421,6 +421,9 @@ int __bch2_btree_insert_at(struct btree_insert *trans)
 	unsigned flags;
 	int ret;
 
+	/* for the sake of sanity: */
+	BUG_ON(trans->nr > 1 && !(trans->flags & BTREE_INSERT_ATOMIC));
+
 	trans_for_each_entry(trans, i) {
 		BUG_ON(i->iter->level);
 		BUG_ON(bkey_cmp(bkey_start_pos(&i->k->k), i->iter->pos));
@@ -429,10 +432,6 @@ int __bch2_btree_insert_at(struct btree_insert *trans)
 					 bkey_i_to_s_c(i->k)));
 		BUG_ON(i->iter->uptodate == BTREE_ITER_END);
 	}
-
-	/* for sanity purposes: */
-	if (trans->nr > 1)
-		trans->flags |= BTREE_INSERT_ATOMIC;
 
 	bubble_sort(trans->entries, trans->nr, btree_trans_cmp);
 
