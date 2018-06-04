@@ -2045,10 +2045,17 @@ int bch2_fsync(struct file *file, loff_t start, loff_t end, int datasync)
 	struct bch_fs *c = inode->v.i_sb->s_fs_info;
 	int ret;
 
-	ret = filemap_write_and_wait_range(inode->v.i_mapping, start, end);
+	ret = file_write_and_wait_range(file, start, end);
 	if (ret)
 		return ret;
 
+	if (datasync && !(inode->v.i_state & I_DIRTY_DATASYNC))
+		goto out;
+
+	ret = sync_inode_metadata(&inode->v, 1);
+	if (ret)
+		return ret;
+out:
 	if (c->opts.journal_flush_disabled)
 		return 0;
 
