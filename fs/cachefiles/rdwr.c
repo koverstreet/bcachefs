@@ -58,9 +58,9 @@ static int cachefiles_read_waiter(wait_queue_entry_t *wait, unsigned mode,
 
 	spin_lock(&object->work_lock);
 	list_add_tail(&monitor->op_link, &monitor->op->to_do);
+	fscache_enqueue_retrieval(monitor->op);
 	spin_unlock(&object->work_lock);
 
-	fscache_enqueue_retrieval(monitor->op);
 	return 0;
 }
 
