@@ -1035,6 +1035,13 @@ static const struct dmi_system_id i8k_blacklist_fan_type_dmi_table[] __initconst
 			DMI_EXACT_MATCH(DMI_PRODUCT_NAME, "Inspiron 580 "),
 		},
 	},
+	{
+		.ident = "Dell XPS13 9333",
+		.matches = {
+			DMI_MATCH(DMI_SYS_VENDOR, "Dell Inc."),
+			DMI_EXACT_MATCH(DMI_PRODUCT_NAME, "XPS13 9333"),
+		},
+	},
 	{ }
 };
 
