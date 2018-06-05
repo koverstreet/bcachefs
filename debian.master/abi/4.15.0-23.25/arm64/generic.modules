@@ -35,6 +35,7 @@
 DAC960
 a100u2w
 a3d
+a53-pll
 a8293
 aacraid
 aat2870-regulator
@@ -42,6 +43,7 @@ aat2870_bl
 ab3100
 ab3100-otp
 abp060mg
+ac97_bus
 acard-ahci
 acecad
 acenic
@@ -207,9 +209,8 @@ adt7475
 adt7x10
 adummy
 adutux
-adv7170
-adv7175
 adv7511
+adv7511_drm
 adv7604
 adv7842
 adv_pci1710
@@ -310,6 +311,7 @@ ansi_cprng
 anubis
 aoe
 apbps2
+apcs-msm8916
 apds9300
 apds9802als
 apds990x
@@ -446,6 +448,7 @@ b53_mdio
 b53_mmap
 b53_spi
 b53_srab
+bam_dma
 bas_gigaset
 batman-adv
 baycom_par
@@ -556,9 +559,6 @@ bridge
 broadcom
 broadsheetfb
 bsd_comp
-bt819
-bt856
-bt866
 bt878
 btbcm
 btcoexist
@@ -650,6 +650,7 @@ cdc_ether
 cdc_mbim
 cdc_ncm
 cdc_subset
+cec
 ceph
 cfg80211
 cfi_cmdset_0001
@@ -692,6 +693,7 @@ clk-hi655x
 clk-max77686
 clk-palmas
 clk-pwm
+clk-qcom
 clk-rk808
 clk-rpm
 clk-s2mps11
@@ -699,6 +701,7 @@ clk-scpi
 clk-si514
 clk-si5351
 clk-si570
+clk-smd-rpm
 clk-twl6040
 clk-versaclock5
 clk-wm831x
@@ -912,7 +915,6 @@ dib3000mc
 dib7000m
 dib7000p
 dib8000
-dib9000
 dibx000_common
 digi_acceleport
 digicolor-usart
@@ -973,6 +975,8 @@ dp83848
 dp83867
 dpot-dac
 drbd
+drm
+drm_kms_helper
 drop_monitor
 drv260x
 drv2665
@@ -1233,6 +1237,7 @@ fb_ssd1331
 fb_ssd1351
 fb_st7735r
 fb_st7789v
+fb_sys_fops
 fb_tinylcd
 fb_tls8204
 fb_uc1611
@@ -1260,6 +1265,7 @@ firewire-net
 firewire-ohci
 firewire-sbp2
 firewire-serial
+fixed
 fjes
 fl512
 fld
@@ -1353,6 +1359,7 @@ gcc-ipq806x
 gcc-ipq8074
 gcc-mdm9615
 gcc-msm8660
+gcc-msm8916
 gcc-msm8960
 gcc-msm8974
 gcc-msm8994
@@ -1543,6 +1550,8 @@ hdlcdrv
 hdm_dim2
 hdm_i2c
 hdm_usb
+hdma
+hdma_mgmt
 hdpvr
 he
 helene
@@ -1672,6 +1681,7 @@ hid-zydacron
 hideep
 hidp
 hih6130
+hinic
 hip04_eth
 hisax
 hisax_fcpcipnp
@@ -1735,6 +1745,7 @@ i1480-dfu-usb
 i1480-est
 i2400m
 i2400m-usb
+i2c-algo-bit
 i2c-algo-pca
 i2c-ali1535
 i2c-ali1563
@@ -1777,6 +1788,7 @@ i2c-parport
 i2c-parport-light
 i2c-pca-platform
 i2c-piix4
+i2c-qup
 i2c-rcar
 i2c-riic
 i2c-rk3x
@@ -2096,7 +2108,6 @@ kl5kusb105
 kmx61
 ko2iblnd
 kobil_sct
-ks0127
 ks7010
 ks8842
 ks8851
@@ -2205,7 +2216,6 @@ lg2160
 lgdt3305
 lgdt3306a
 lgdt330x
-lgs8gl5
 lgs8gxx
 lib80211
 lib80211_crypt_ccmp
@@ -2512,6 +2522,7 @@ mdio-mux-mmioreg
 mdio-octeon
 mdio-thunder
 mdio-xgene
+mdt_loader
 me4000
 me_daq
 media
@@ -2618,6 +2629,7 @@ mscc
 msdos
 msi001
 msi2500
+msm
 msm-rng
 msp3400
 mspro_block
@@ -2955,6 +2967,7 @@ nvme-fc
 nvme-loop
 nvme-rdma
 nvmem-bcm-ocotp
+nvmem_qfprom
 nvmem_sunxi_sid
 nvmet
 nvmet-fc
@@ -3004,7 +3017,6 @@ osst
 oti6858
 ov2640
 ov5642
-ov5645
 ov7640
 ov7670
 ov772x
@@ -3162,6 +3174,7 @@ phy-qcom-qusb2
 phy-qcom-ufs
 phy-qcom-ufs-qmp-14nm
 phy-qcom-ufs-qmp-20nm
+phy-qcom-usb-hs
 phy-qcom-usb-hsic
 phy-rcar-gen2
 phy-rcar-gen3-usb2
@@ -3181,12 +3194,15 @@ pinctrl-max77620
 pinctrl-mcp23s08
 pinctrl-mdm9615
 pinctrl-msm8660
+pinctrl-msm8916
 pinctrl-msm8960
 pinctrl-msm8994
 pinctrl-msm8996
 pinctrl-msm8x74
 pinctrl-qdf2xxx
 pinctrl-rk805
+pinctrl-spmi-gpio
+pinctrl-spmi-mpp
 pinctrl-ssbi-gpio
 pinctrl-ssbi-mpp
 pistachio-internal-dac
@@ -3210,6 +3226,7 @@ pm-notifier-error-inject
 pm2fb
 pm3fb
 pm80xx
+pm8941-pwrkey
 pm8941-wled
 pm8xxx-vibrator
 pmbus
@@ -3291,10 +3308,12 @@ qca_7k_common
 qcaspi
 qcauart
 qcaux
+qcom-apcs-ipc-mailbox
 qcom-camss
 qcom-coincell
 qcom-emac
 qcom-spmi-iadc
+qcom-spmi-pmic
 qcom-spmi-temp-alarm
 qcom-spmi-vadc
 qcom-vadc-common
@@ -3305,11 +3324,15 @@ qcom_glink_native
 qcom_glink_rpm
 qcom_glink_smem
 qcom_gsbi
+qcom_hwspinlock
 qcom_nandc
 qcom_rpm
 qcom_rpm-regulator
 qcom_smbb
-qcom_wcnss_pil
+qcom_smd
+qcom_smd-regulator
+qcom_spmi-regulator
+qcom_tsens
 qcrypto
 qcserial
 qed
@@ -3533,6 +3556,7 @@ reboot-mode
 redboot
 redrat3
 reed_solomon
+regmap-spmi
 regmap-w1
 regulator-haptic
 reiserfs
@@ -3587,6 +3611,7 @@ rp2
 rpcrdma
 rpcsec_gss_krb5
 rpmsg_char
+rpmsg_core
 rpr0521
 rrpc
 rsi_91x
@@ -3758,7 +3783,6 @@ s526
 s5h1409
 s5h1411
 s5h1420
-s5h1432
 s5m8767
 s626
 s6e63m0
@@ -3766,7 +3790,6 @@ s6sy761
 s921
 saa6588
 saa6752hs
-saa7110
 saa7115
 saa7127
 saa7134
@@ -3778,7 +3801,6 @@ saa7146
 saa7146_vv
 saa7164
 saa717x
-saa7185
 saa7706h
 safe_serial
 salsa20_generic
@@ -3854,15 +3876,18 @@ scsi_transport_srp
 sctp
 sctp_diag
 sctp_probe
+sdhci
 sdhci-acpi
 sdhci-brcmstb
 sdhci-cadence
 sdhci-iproc
+sdhci-msm
 sdhci-of-arasan
 sdhci-of-at91
 sdhci-of-esdhc
 sdhci-omap
 sdhci-pci
+sdhci-pltfm
 sdhci-pxav3
 sdhci-xenon-driver
 sdhci_f_sdh30
@@ -3955,8 +3980,11 @@ smartpqi
 smb347-charger
 smc
 smc_diag
+smd-rpm
+smem
 smipcie
 smm665
+smp2p
 smsc
 smsc47b397
 smsc47m1
@@ -3967,9 +3995,11 @@ smsc9420
 smsc95xx
 smscufx
 smsdvb
+smsm
 smsmdtv
 smssdio
 smsusb
+snd
 snd-ac97-codec
 snd-ad1889
 snd-ak4113
@@ -4068,6 +4098,8 @@ snd-opl3-synth
 snd-oxfw
 snd-oxygen
 snd-oxygen-lib
+snd-pcm
+snd-pcm-dmaengine
 snd-pcxhr
 snd-portman2x4
 snd-pt2258
@@ -4099,10 +4131,12 @@ snd-soc-ak4613
 snd-soc-ak4642
 snd-soc-ak5386
 snd-soc-alc5623
+snd-soc-apq8016-sbc
 snd-soc-audio-graph-card
 snd-soc-audio-graph-scu-card
 snd-soc-bcm2835-i2s
 snd-soc-bt-sco
+snd-soc-core
 snd-soc-cs35l32
 snd-soc-cs35l33
 snd-soc-cs35l34
@@ -4136,13 +4170,19 @@ snd-soc-fsl-sai
 snd-soc-fsl-spdif
 snd-soc-fsl-ssi
 snd-soc-gtm601
+snd-soc-hdmi-codec
 snd-soc-imx-audmux
 snd-soc-inno-rk3036
+snd-soc-lpass-apq8016
+snd-soc-lpass-cpu
 snd-soc-lpass-ipq806x
+snd-soc-lpass-platform
 snd-soc-max98357a
 snd-soc-max98504
 snd-soc-max9860
 snd-soc-max98927
+snd-soc-msm8916-analog
+snd-soc-msm8916-digital
 snd-soc-nau8540
 snd-soc-nau8810
 snd-soc-nau8824
@@ -4216,6 +4256,7 @@ snd-soc-wm8985
 snd-soc-xtfpga-i2s
 snd-soc-zx-aud96p22
 snd-sonicvibes
+snd-timer
 snd-trident
 snd-ua101
 snd-usb-6fire
@@ -4249,6 +4290,7 @@ softing
 solo6x10
 solos-pci
 sony-btf-mpx
+soundcore
 sp2
 sp805_wdt
 sp8870
@@ -4295,6 +4337,7 @@ spi-oc-tiny
 spi-pl022
 spi-pxa2xx-pci
 spi-pxa2xx-platform
+spi-qup
 spi-rockchip
 spi-rspi
 spi-sc18is602
@@ -4313,6 +4356,8 @@ spi_ks8995
 spidev
 spl
 splat
+spmi
+spmi-pmic-arb
 sprd-dma
 sprd-sc27xx-spi
 sprd_hwspinlock
@@ -4425,6 +4470,9 @@ synaptics_usb
 synclink_gt
 synclinkmp
 syscon-reboot-mode
+syscopyarea
+sysfillrect
+sysimgblt
 sysv
 t1pci
 t5403
@@ -4717,6 +4765,7 @@ uio_pruss
 uio_sercos3
 uleds
 uli526x
+ulpi
 umc
 umem
 ums-alauda
@@ -4887,7 +4936,6 @@ vp27smpx
 vport-geneve
 vport-gre
 vport-vxlan
-vpx3220
 vrf
 vringh
 vsock
@@ -4944,6 +4992,7 @@ walkera0701
 wanxl
 warrior
 wcn36xx
+wcnss_ctrl
 wd719x
 wdat_wdt
 wdt87xx_i2c

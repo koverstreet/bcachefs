@@ -7149,9 +7149,9 @@ EXPORT_SYMBOL_GPL net/l2tp/l2tp_core 0x00000000	l2tp_session_set_header_len
 EXPORT_SYMBOL_GPL net/l2tp/l2tp_core 0x00000000	l2tp_tunnel_closeall
 EXPORT_SYMBOL_GPL net/l2tp/l2tp_core 0x00000000	l2tp_tunnel_create
 EXPORT_SYMBOL_GPL net/l2tp/l2tp_core 0x00000000	l2tp_tunnel_delete
-EXPORT_SYMBOL_GPL net/l2tp/l2tp_core 0x00000000	l2tp_tunnel_find
 EXPORT_SYMBOL_GPL net/l2tp/l2tp_core 0x00000000	l2tp_tunnel_find_nth
 EXPORT_SYMBOL_GPL net/l2tp/l2tp_core 0x00000000	l2tp_tunnel_get
+EXPORT_SYMBOL_GPL net/l2tp/l2tp_core 0x00000000	l2tp_tunnel_register
 EXPORT_SYMBOL_GPL net/l2tp/l2tp_core 0x00000000	l2tp_udp_encap_recv
 EXPORT_SYMBOL_GPL net/l2tp/l2tp_core 0x00000000	l2tp_xmit_skb
 EXPORT_SYMBOL_GPL net/l2tp/l2tp_netlink 0x00000000	l2tp_nl_register_ops

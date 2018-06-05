@@ -16303,9 +16303,9 @@ EXPORT_SYMBOL_GPL net/l2tp/l2tp_core 0x00000000	l2tp_session_set_header_len
 EXPORT_SYMBOL_GPL net/l2tp/l2tp_core 0x00000000	l2tp_tunnel_closeall
 EXPORT_SYMBOL_GPL net/l2tp/l2tp_core 0x00000000	l2tp_tunnel_create
 EXPORT_SYMBOL_GPL net/l2tp/l2tp_core 0x00000000	l2tp_tunnel_delete
-EXPORT_SYMBOL_GPL net/l2tp/l2tp_core 0x00000000	l2tp_tunnel_find
 EXPORT_SYMBOL_GPL net/l2tp/l2tp_core 0x00000000	l2tp_tunnel_find_nth
 EXPORT_SYMBOL_GPL net/l2tp/l2tp_core 0x00000000	l2tp_tunnel_get
+EXPORT_SYMBOL_GPL net/l2tp/l2tp_core 0x00000000	l2tp_tunnel_register
 EXPORT_SYMBOL_GPL net/l2tp/l2tp_core 0x00000000	l2tp_udp_encap_recv
 EXPORT_SYMBOL_GPL net/l2tp/l2tp_core 0x00000000	l2tp_xmit_skb
 EXPORT_SYMBOL_GPL net/l2tp/l2tp_netlink 0x00000000	l2tp_nl_register_ops
@@ -22593,12 +22593,10 @@ EXPORT_SYMBOL_GPL vmlinux 0x00000000	x509_free_certificate
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	x86_family
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	x86_model
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	x86_platform
-EXPORT_SYMBOL_GPL vmlinux 0x00000000	x86_spec_ctrl_get_default
-EXPORT_SYMBOL_GPL vmlinux 0x00000000	x86_spec_ctrl_restore_host
-EXPORT_SYMBOL_GPL vmlinux 0x00000000	x86_spec_ctrl_set
-EXPORT_SYMBOL_GPL vmlinux 0x00000000	x86_spec_ctrl_set_guest
+EXPORT_SYMBOL_GPL vmlinux 0x00000000	x86_spec_ctrl_base
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	x86_stepping
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	x86_vector_domain
+EXPORT_SYMBOL_GPL vmlinux 0x00000000	x86_virt_spec_ctrl
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	xattr_getsecurity
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	xdp_do_flush_map
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	xdp_do_generic_redirect
