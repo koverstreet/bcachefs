@@ -1589,6 +1589,8 @@ static int hclgevf_misc_irq_init(struct hclgevf_dev *hdev)
 		return ret;
 	}
 
+	hclgevf_clear_event_cause(hdev, 0);
+
 	/* enable misc. vector(vector 0) */
 	hclgevf_enable_vector(&hdev->misc_vector, true);
 
@@ -1599,6 +1601,7 @@ static void hclgevf_misc_irq_uninit(struct hclgevf_dev *hdev)
 {
 	/* disable misc vector(vector 0) */
 	hclgevf_enable_vector(&hdev->misc_vector, false);
+	synchronize_irq(hdev->misc_vector.vector_irq);
 	free_irq(hdev->misc_vector.vector_irq, hdev);
 	hclgevf_free_vector(hdev, 0);
 }
