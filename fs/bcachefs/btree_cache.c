@@ -763,17 +763,15 @@ struct btree *bch2_btree_node_get_sibling(struct bch_fs *c,
 	struct btree_node_iter node_iter;
 	struct bkey_packed *k;
 	BKEY_PADDED(k) tmp;
-	struct btree *ret;
+	struct btree *ret = NULL;
 	unsigned level = b->level;
 
 	parent = btree_iter_node(iter, level + 1);
 	if (!parent)
 		return NULL;
 
-	if (!bch2_btree_node_relock(iter, level + 1)) {
-		bch2_btree_iter_set_locks_want(iter, level + 2);
-		return ERR_PTR(-EINTR);
-	}
+	if (!bch2_btree_node_relock(iter, level + 1))
+		goto out_upgrade;
 
 	node_iter = iter->l[parent->level].iter;
 
@@ -786,7 +784,7 @@ struct btree *bch2_btree_node_get_sibling(struct bch_fs *c,
 			: (bch2_btree_node_iter_advance(&node_iter, parent),
 			   bch2_btree_node_iter_peek_all(&node_iter, parent));
 		if (!k)
-			return NULL;
+			goto out;
 	} while (bkey_deleted(k));
 
 	bch2_bkey_unpack(parent, &tmp.k, k);
@@ -796,10 +794,8 @@ struct btree *bch2_btree_node_get_sibling(struct bch_fs *c,
 	if (PTR_ERR_OR_ZERO(ret) == -EINTR && may_drop_locks) {
 		struct btree_iter *linked;
 
-		if (!bch2_btree_node_relock(iter, level + 1)) {
-			bch2_btree_iter_set_locks_want(iter, level + 2);
-			return ERR_PTR(-EINTR);
-		}
+		if (!bch2_btree_node_relock(iter, level + 1))
+			goto out_upgrade;
 
 		/*
 		 * We might have got -EINTR because trylock failed, and we're
@@ -815,7 +811,11 @@ struct btree *bch2_btree_node_get_sibling(struct bch_fs *c,
 		ret = bch2_btree_node_get(c, iter, &tmp.k, level,
 					  SIX_LOCK_intent);
 
-		bch2_btree_iter_relock(iter);
+		/*
+		 * before btree_iter_relock() calls btree_iter_verify_locks():
+		 */
+		if (btree_lock_want(iter, level + 1) == BTREE_NODE_UNLOCKED)
+			btree_node_unlock(iter, level + 1);
 
 		if (!bch2_btree_node_relock(iter, level)) {
 			btree_iter_set_dirty(iter, BTREE_ITER_NEED_RELOCK);
@@ -825,12 +825,25 @@ struct btree *bch2_btree_node_get_sibling(struct bch_fs *c,
 				ret = ERR_PTR(-EINTR);
 			}
 		}
+
+		bch2_btree_iter_relock(iter);
 	}
+out:
+	if (btree_lock_want(iter, level + 1) == BTREE_NODE_UNLOCKED)
+		btree_node_unlock(iter, level + 1);
+
+	bch2_btree_iter_verify_locks(iter);
 
 	BUG_ON((!may_drop_locks || !IS_ERR(ret)) &&
-	       !btree_node_locked(iter, level));
+	       (iter->uptodate >= BTREE_ITER_NEED_RELOCK ||
+		!btree_node_locked(iter, level)));
 
 	return ret;
+out_upgrade:
+	if (may_drop_locks)
+		bch2_btree_iter_upgrade(iter, level + 2);
+	ret = ERR_PTR(-EINTR);
+	goto out;
 }
 
 void bch2_btree_node_prefetch(struct bch_fs *c, const struct bkey_i *k,

@@ -223,8 +223,7 @@ found:
 	mutex_unlock(&c->btree_interior_update_lock);
 }
 
-static void __btree_node_free(struct bch_fs *c, struct btree *b,
-			      struct btree_iter *iter)
+static void __btree_node_free(struct bch_fs *c, struct btree *b)
 {
 	trace_btree_node_free(c, b);
 
@@ -237,21 +236,11 @@ static void __btree_node_free(struct bch_fs *c, struct btree *b,
 
 	clear_btree_node_noevict(b);
 
-	btree_node_lock_type(c, b, SIX_LOCK_write);
-
 	bch2_btree_node_hash_remove(&c->btree_cache, b);
 
 	mutex_lock(&c->btree_cache.lock);
 	list_move(&b->list, &c->btree_cache.freeable);
 	mutex_unlock(&c->btree_cache.lock);
-
-	/*
-	 * By using six_unlock_write() directly instead of
-	 * bch2_btree_node_unlock_write(), we don't update the iterator's
-	 * sequence numbers and cause future bch2_btree_node_relock() calls to
-	 * fail:
-	 */
-	six_unlock_write(&b->lock);
 }
 
 void bch2_btree_node_free_never_inserted(struct bch_fs *c, struct btree *b)
@@ -264,7 +253,9 @@ void bch2_btree_node_free_never_inserted(struct bch_fs *c, struct btree *b)
 
 	clear_btree_node_dirty(b);
 
-	__btree_node_free(c, b, NULL);
+	btree_node_lock_type(c, b, SIX_LOCK_write);
+	__btree_node_free(c, b);
+	six_unlock_write(&b->lock);
 
 	bch2_open_bucket_put_refs(c, &ob.nr, ob.refs);
 }
@@ -283,9 +274,9 @@ void bch2_btree_node_free_inmem(struct bch_fs *c, struct btree *b,
 	 */
 	btree_update_drop_new_node(c, b);
 
-	bch2_btree_iter_node_drop_linked(iter, b);
-
-	__btree_node_free(c, b, iter);
+	__bch2_btree_node_lock_write(b, iter);
+	__btree_node_free(c, b);
+	six_unlock_write(&b->lock);
 
 	bch2_btree_iter_node_drop(iter, b);
 }
@@ -499,7 +490,9 @@ static void bch2_btree_reserve_put(struct bch_fs *c, struct btree_reserve *reser
 			bch2_btree_open_bucket_put(c, b);
 		}
 
-		__btree_node_free(c, b, NULL);
+		btree_node_lock_type(c, b, SIX_LOCK_write);
+		__btree_node_free(c, b);
+		six_unlock_write(&b->lock);
 
 		six_unlock_intent(&b->lock);
 	}
@@ -1593,7 +1586,7 @@ int bch2_btree_split_leaf(struct bch_fs *c, struct btree_iter *iter,
 	 * XXX: figure out how far we might need to split,
 	 * instead of locking/reserving all the way to the root:
 	 */
-	if (!bch2_btree_iter_set_locks_want(iter, U8_MAX)) {
+	if (!bch2_btree_iter_upgrade(iter, U8_MAX)) {
 		ret = -EINTR;
 		goto out;
 	}
@@ -1614,7 +1607,11 @@ int bch2_btree_split_leaf(struct bch_fs *c, struct btree_iter *iter,
 	btree_split(as, b, iter, NULL, flags);
 	bch2_btree_update_done(as);
 
-	bch2_btree_iter_set_locks_want(iter, 1);
+	/*
+	 * We haven't successfully inserted yet, so don't downgrade all the way
+	 * back to read locks;
+	 */
+	__bch2_btree_iter_downgrade(iter, 1);
 out:
 	up_read(&c->gc_lock);
 	closure_sync(&cl);
@@ -1697,7 +1694,7 @@ retry:
 	if (!down_read_trylock(&c->gc_lock))
 		goto err_cycle_gc_lock;
 
-	if (!bch2_btree_iter_set_locks_want(iter, U8_MAX)) {
+	if (!bch2_btree_iter_upgrade(iter, U8_MAX)) {
 		ret = -EINTR;
 		goto err_unlock;
 	}
@@ -1753,7 +1750,15 @@ retry:
 	six_unlock_intent(&m->lock);
 	up_read(&c->gc_lock);
 out:
-	bch2_btree_iter_set_locks_want(iter, 1);
+	/*
+	 * Don't downgrade locks here: we're called after successful insert,
+	 * and the caller will downgrade locks after a successful insert
+	 * anyways (in case e.g. a split was required first)
+	 *
+	 * And we're also called when inserting into interior nodes in the
+	 * split path, and downgrading to read locks in there is potentially
+	 * confusing:
+	 */
 	closure_sync(&cl);
 	return;
 
@@ -1771,8 +1776,6 @@ err_cycle_gc_lock:
 	goto err;
 
 err_unlock:
-	if (ret != -EINTR && ret != -EAGAIN)
-		bch2_btree_iter_set_locks_want(iter, 1);
 	six_unlock_intent(&m->lock);
 	up_read(&c->gc_lock);
 err:
@@ -1831,7 +1834,7 @@ static int __btree_node_rewrite(struct bch_fs *c, struct btree_iter *iter,
 
 	bch2_btree_node_free_inmem(c, b, iter);
 
-	BUG_ON(!bch2_btree_iter_node_replace(iter, n));
+	bch2_btree_iter_node_replace(iter, n);
 
 	bch2_btree_update_done(as);
 	return 0;
@@ -1846,7 +1849,6 @@ static int __btree_node_rewrite(struct bch_fs *c, struct btree_iter *iter,
 int bch2_btree_node_rewrite(struct bch_fs *c, struct btree_iter *iter,
 			    __le64 seq, unsigned flags)
 {
-	unsigned locks_want = iter->locks_want;
 	struct closure cl;
 	struct btree *b;
 	int ret;
@@ -1855,7 +1857,7 @@ int bch2_btree_node_rewrite(struct bch_fs *c, struct btree_iter *iter,
 
 	closure_init_stack(&cl);
 
-	bch2_btree_iter_set_locks_want(iter, U8_MAX);
+	bch2_btree_iter_upgrade(iter, U8_MAX);
 
 	if (!(flags & BTREE_INSERT_GC_LOCK_HELD)) {
 		if (!down_read_trylock(&c->gc_lock)) {
@@ -1882,7 +1884,7 @@ int bch2_btree_node_rewrite(struct bch_fs *c, struct btree_iter *iter,
 		closure_sync(&cl);
 	}
 
-	bch2_btree_iter_set_locks_want(iter, locks_want);
+	bch2_btree_iter_downgrade(iter);
 
 	if (!(flags & BTREE_INSERT_GC_LOCK_HELD))
 		up_read(&c->gc_lock);
@@ -1998,6 +2000,9 @@ int bch2_btree_node_update_key(struct bch_fs *c, struct btree_iter *iter,
 
 	closure_init_stack(&cl);
 
+	if (!bch2_btree_iter_upgrade(iter, U8_MAX))
+		return -EINTR;
+
 	if (!down_read_trylock(&c->gc_lock)) {
 		bch2_btree_iter_unlock(iter);
 		down_read(&c->gc_lock);
@@ -2057,6 +2062,8 @@ int bch2_btree_node_update_key(struct bch_fs *c, struct btree_iter *iter,
 		goto err_free_update;
 
 	__bch2_btree_node_update_key(c, as, iter, b, new_hash, new_key);
+
+	bch2_btree_iter_downgrade(iter);
 err:
 	if (new_hash) {
 		mutex_lock(&c->btree_cache.lock);
