@@ -92,9 +92,11 @@ __next_iter_with_node(struct btree_iter *iter, struct btree *b,
 
 #ifdef CONFIG_BCACHEFS_DEBUG
 void bch2_btree_iter_verify(struct btree_iter *, struct btree *);
+void bch2_btree_iter_verify_locks(struct btree_iter *);
 #else
 static inline void bch2_btree_iter_verify(struct btree_iter *iter,
-					 struct btree *b) {}
+					  struct btree *b) {}
+static inline void bch2_btree_iter_verify_locks(struct btree_iter *iter) {}
 #endif
 
 void bch2_btree_node_iter_fix(struct btree_iter *, struct btree *,
@@ -102,22 +104,28 @@ void bch2_btree_node_iter_fix(struct btree_iter *, struct btree *,
 			     struct bkey_packed *, unsigned, unsigned);
 
 int bch2_btree_iter_unlock(struct btree_iter *);
-bool __bch2_btree_iter_set_locks_want(struct btree_iter *, unsigned);
 
-static inline bool bch2_btree_iter_set_locks_want(struct btree_iter *iter,
-						 unsigned new_locks_want)
+bool __bch2_btree_iter_upgrade(struct btree_iter *, unsigned);
+
+static inline bool bch2_btree_iter_upgrade(struct btree_iter *iter,
+					   unsigned new_locks_want)
 {
 	new_locks_want = min(new_locks_want, BTREE_MAX_DEPTH);
 
-	if (iter->locks_want == new_locks_want &&
-	    iter->nodes_intent_locked == (1 << new_locks_want) - 1)
-		return true;
-
-	return __bch2_btree_iter_set_locks_want(iter, new_locks_want);
+	return iter->locks_want < new_locks_want
+		?  __bch2_btree_iter_upgrade(iter, new_locks_want)
+		: iter->uptodate <= BTREE_ITER_NEED_PEEK;
 }
 
-bool bch2_btree_iter_node_replace(struct btree_iter *, struct btree *);
-void bch2_btree_iter_node_drop_linked(struct btree_iter *, struct btree *);
+void __bch2_btree_iter_downgrade(struct btree_iter *, unsigned);
+
+static inline void bch2_btree_iter_downgrade(struct btree_iter *iter)
+{
+	if (iter->locks_want > (iter->flags & BTREE_ITER_INTENT) ? 1 : 0)
+		__bch2_btree_iter_downgrade(iter, 0);
+}
+
+void bch2_btree_iter_node_replace(struct btree_iter *, struct btree *);
 void bch2_btree_iter_node_drop(struct btree_iter *, struct btree *);
 
 void bch2_btree_iter_reinit_node(struct btree_iter *, struct btree *);

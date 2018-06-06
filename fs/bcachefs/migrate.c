@@ -126,7 +126,13 @@ static int bch2_dev_metadata_drop(struct bch_fs *c, unsigned dev_idx, int flags)
 retry:
 			if (!bch2_extent_has_device(bkey_i_to_s_c_extent(&b->key),
 						    dev_idx)) {
-				bch2_btree_iter_set_locks_want(&iter, 0);
+				/*
+				 * we might have found a btree node key we
+				 * needed to update, and then tried to update it
+				 * but got -EINTR after upgrading the iter, but
+				 * then raced and the node is now gone:
+				 */
+				bch2_btree_iter_downgrade(&iter);
 
 				ret = bch2_mark_bkey_replicas(c, BCH_DATA_BTREE,
 							      bkey_i_to_s_c(&b->key));
@@ -140,11 +146,6 @@ retry:
 						    dev_idx, flags, true);
 				if (ret)
 					goto err;
-
-				if (!bch2_btree_iter_set_locks_want(&iter, U8_MAX)) {
-					b = bch2_btree_iter_peek_node(&iter);
-					goto retry;
-				}
 
 				ret = bch2_btree_node_update_key(c, &iter, b, new_key);
 				if (ret == -EINTR) {
