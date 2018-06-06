@@ -958,6 +958,24 @@ io_error:
 	goto out;
 }
 
+static unsigned btree_iter_up_until_locked(struct btree_iter *iter,
+					   bool check_pos)
+{
+	unsigned l = iter->level;
+
+	while (btree_iter_node(iter, l) &&
+	       !(is_btree_node(iter, l) &&
+		 bch2_btree_node_relock(iter, l) &&
+		 (!check_pos ||
+		  btree_iter_pos_in_node(iter, iter->l[l].b)))) {
+		btree_node_unlock(iter, l);
+		iter->l[l].b = BTREE_ITER_NOT_END;
+		l++;
+	}
+
+	return l;
+}
+
 /*
  * This is the main state machine for walking down the btree - walks down to a
  * specified depth
@@ -997,19 +1015,10 @@ int __must_check __bch2_btree_iter_traverse(struct btree_iter *iter)
 	}
 
 	/*
-	 * If the current node isn't locked, go up until we have a locked node
-	 * or run out of nodes:
+	 * XXX: correctly using BTREE_ITER_UPTODATE should make using check_pos
+	 * here unnecessary
 	 */
-	while (btree_iter_node(iter, iter->level) &&
-	       !(is_btree_node(iter, iter->level) &&
-		 bch2_btree_node_relock(iter, iter->level) &&
-
-		 /*
-		  * XXX: correctly using BTREE_ITER_UPTODATE should make
-		  * comparing iter->pos against node's key unnecessary
-		  */
-		 btree_iter_pos_in_node(iter, iter->l[iter->level].b)))
-		btree_iter_up(iter);
+	iter->level = btree_iter_up_until_locked(iter, true);
 
 	/*
 	 * If we've got a btree node locked (i.e. we aren't about to relock the
@@ -1186,10 +1195,51 @@ void bch2_btree_iter_set_pos_same_leaf(struct btree_iter *iter, struct bpos new_
 
 void bch2_btree_iter_set_pos(struct btree_iter *iter, struct bpos new_pos)
 {
-	EBUG_ON(bkey_cmp(new_pos, iter->pos) < 0); /* XXX handle this */
+	int cmp = bkey_cmp(new_pos, iter->pos);
+	unsigned level;
+
+	if (!cmp)
+		return;
+
 	iter->pos = new_pos;
 
-	btree_iter_set_dirty(iter, BTREE_ITER_NEED_TRAVERSE);
+	level = btree_iter_up_until_locked(iter, true);
+
+	if (btree_iter_node(iter, level)) {
+		unsigned nr_advanced = 0;
+		struct btree_iter_level *l = &iter->l[level];
+		struct bkey_s_c k;
+		struct bkey u;
+
+		/*
+		 * We might have to skip over many keys, or just a few: try
+		 * advancing the node iterator, and if we have to skip over too
+		 * many keys just reinit it (or if we're rewinding, since that
+		 * is expensive).
+		 */
+		if (cmp > 0) {
+			while ((k = __btree_iter_peek_all(iter, l, &u)).k &&
+			       !btree_iter_pos_cmp(iter, k.k)) {
+				if (nr_advanced > 8)
+					goto reinit_node;
+
+				__btree_iter_advance(l);
+				nr_advanced++;
+			}
+		} else {
+reinit_node:
+			__btree_iter_init(iter, iter->l[level].b);
+		}
+
+		/* Don't leave it locked if we're not supposed to: */
+		if (btree_lock_want(iter, level) == BTREE_NODE_UNLOCKED)
+			btree_node_unlock(iter, level);
+	}
+
+	if (level != iter->level)
+		btree_iter_set_dirty(iter, BTREE_ITER_NEED_TRAVERSE);
+	else
+		btree_iter_set_dirty(iter, BTREE_ITER_NEED_PEEK);
 }
 
 struct bkey_s_c bch2_btree_iter_peek(struct btree_iter *iter)
