@@ -415,10 +415,13 @@ int __bch2_btree_insert_at(struct btree_insert *trans)
 {
 	struct bch_fs *c = trans->c;
 	struct btree_insert_entry *i;
-	struct btree_iter *split = NULL;
+	struct btree_iter *linked, *split = NULL;
 	bool cycle_gc_lock = false;
 	unsigned flags;
 	int ret;
+
+	for_each_btree_iter(trans->entries[0].iter, linked)
+		bch2_btree_iter_verify_locks(linked);
 
 	/* for the sake of sanity: */
 	BUG_ON(trans->nr > 1 && !(trans->flags & BTREE_INSERT_ATOMIC));
@@ -441,13 +444,7 @@ retry:
 	cycle_gc_lock = false;
 
 	trans_for_each_entry(trans, i) {
-		if (i->iter->locks_want < 1 &&
-		    !bch2_btree_iter_set_locks_want(i->iter, 1)) {
-			ret = -EINTR;
-			goto err;
-		}
-
-		if (i->iter->uptodate > BTREE_ITER_NEED_PEEK) {
+		if (!bch2_btree_iter_upgrade(i->iter, 1)) {
 			ret = -EINTR;
 			goto err;
 		}
@@ -466,18 +463,24 @@ retry:
 		bch2_foreground_maybe_merge(c, i->iter, 0, trans->flags);
 
 	trans_for_each_entry(trans, i)
-		bch2_btree_iter_set_locks_want(i->iter, 1);
+		bch2_btree_iter_downgrade(i->iter);
 out:
 	percpu_ref_put(&c->writes);
 
-	if ((trans->flags & BTREE_INSERT_NOUNLOCK) && trans->did_work)
-		trans_for_each_entry(trans, i)
-			BUG_ON(!btree_node_locked(i->iter, 0));
+	if (IS_ENABLED(CONFIG_BCACHEFS_DEBUG)) {
+		/* make sure we didn't drop or screw up locks: */
+		for_each_btree_iter(trans->entries[0].iter, linked) {
+			bch2_btree_iter_verify_locks(linked);
+			BUG_ON((trans->flags & BTREE_INSERT_NOUNLOCK) &&
+			       trans->did_work &&
+			       linked->uptodate >= BTREE_ITER_NEED_RELOCK);
+		}
 
-	/* make sure we didn't lose an error: */
-	if (!ret && IS_ENABLED(CONFIG_BCACHEFS_DEBUG))
-		trans_for_each_entry(trans, i)
-			BUG_ON(!i->done);
+		/* make sure we didn't lose an error: */
+		if (!ret)
+			trans_for_each_entry(trans, i)
+				BUG_ON(!i->done);
+	}
 
 	BUG_ON(!(trans->flags & BTREE_INSERT_ATOMIC) && ret == -EINTR);
 
