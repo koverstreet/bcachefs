@@ -790,7 +790,7 @@ next:
 
 	BUG_ON(iter->l[old_nodes[0]->level].b != old_nodes[0]);
 
-	BUG_ON(!bch2_btree_iter_node_replace(iter, new_nodes[0]));
+	bch2_btree_iter_node_replace(iter, new_nodes[0]);
 
 	for (i = 0; i < nr_new_nodes; i++)
 		bch2_btree_open_bucket_put(c, new_nodes[i]);
