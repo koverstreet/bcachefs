@@ -318,7 +318,13 @@ enum bch_time_stats {
 struct btree;
 
 enum gc_phase {
-	GC_PHASE_SB		= BTREE_ID_NR + 1,
+	GC_PHASE_START,
+	GC_PHASE_SB,
+
+#define DEF_BTREE_ID(kwd, val, name) GC_PHASE_BTREE_##kwd,
+	DEFINE_BCH_BTREE_IDS()
+#undef DEF_BTREE_ID
+
 	GC_PHASE_PENDING_DELETE,
 	GC_PHASE_ALLOC,
 	GC_PHASE_DONE
