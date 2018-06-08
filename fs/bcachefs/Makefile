@@ -41,6 +41,7 @@ bcachefs-y		:=	\
 	opts.o			\
 	quota.o			\
 	rebalance.o		\
+	recovery.o		\
 	replicas.o		\
 	siphash.o		\
 	super.o			\
