@@ -46,8 +46,6 @@ static inline struct gc_pos gc_phase(enum gc_phase phase)
 	};
 }
 
-#define GC_POS_MIN	gc_phase(0)
-
 static inline int gc_pos_cmp(struct gc_pos l, struct gc_pos r)
 {
 	if (l.phase != r.phase)
@@ -59,17 +57,23 @@ static inline int gc_pos_cmp(struct gc_pos l, struct gc_pos r)
 	return 0;
 }
 
+static inline struct gc_pos gc_pos_btree(enum btree_id id,
+					 struct bpos pos, unsigned level)
+{
+	return (struct gc_pos) {
+		.phase	= GC_PHASE_BTREE_EXTENTS + id,
+		.pos	= pos,
+		.level	= level,
+	};
+}
+
 /*
  * GC position of the pointers within a btree node: note, _not_ for &b->key
  * itself, that lives in the parent node:
  */
 static inline struct gc_pos gc_pos_btree_node(struct btree *b)
 {
-	return (struct gc_pos) {
-		.phase	= b->btree_id,
-		.pos	= b->key.k.p,
-		.level	= b->level,
-	};
+	return gc_pos_btree(b->btree_id, b->key.k.p, b->level);
 }
 
 /*
@@ -81,11 +85,7 @@ static inline struct gc_pos gc_pos_btree_node(struct btree *b)
  */
 static inline struct gc_pos gc_pos_btree_root(enum btree_id id)
 {
-	return (struct gc_pos) {
-		.phase	= (int) id,
-		.pos	= POS_MAX,
-		.level	= U8_MAX,
-	};
+	return gc_pos_btree(id, POS_MAX, BTREE_MAX_DEPTH);
 }
 
 static inline struct gc_pos gc_pos_alloc(struct bch_fs *c, struct open_bucket *ob)

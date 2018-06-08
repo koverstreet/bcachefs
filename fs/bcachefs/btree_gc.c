@@ -246,6 +246,11 @@ static int bch2_gc_btree(struct bch_fs *c, enum btree_id btree_id)
 	unsigned max_stale;
 	int ret = 0;
 
+	gc_pos_set(c, gc_pos_btree(btree_id, POS_MIN, 0));
+
+	if (!c->btree_roots[btree_id].b)
+		return 0;
+
 	/*
 	 * if expensive_debug_checks is on, run range_checks on all leaf nodes:
 	 */
@@ -457,7 +462,7 @@ static void bch2_gc_start(struct bch_fs *c)
 	 * Indicates to buckets code that gc is now in progress - done under
 	 * usage_lock to avoid racing with bch2_mark_key():
 	 */
-	__gc_pos_set(c, GC_POS_MIN);
+	__gc_pos_set(c, gc_phase(GC_PHASE_START));
 
 	/* Save a copy of the existing bucket stats while we recompute them: */
 	for_each_member_device(ca, c, i) {
@@ -538,22 +543,18 @@ void bch2_gc(struct bch_fs *c)
 
 	bch2_gc_start(c);
 
-	/* Walk btree: */
-	while (c->gc_pos.phase < (int) BTREE_ID_NR) {
-		int ret = c->btree_roots[c->gc_pos.phase].b
-			? bch2_gc_btree(c, (int) c->gc_pos.phase)
-			: 0;
+	bch2_mark_superblocks(c);
 
+	/* Walk btree: */
+	for (i = 0; i < BTREE_ID_NR; i++) {
+		int ret = bch2_gc_btree(c, i);
 		if (ret) {
 			bch_err(c, "btree gc failed: %d", ret);
 			set_bit(BCH_FS_GC_FAILURE, &c->flags);
 			goto out;
 		}
-
-		gc_pos_set(c, gc_phase(c->gc_pos.phase + 1));
 	}
 
-	bch2_mark_superblocks(c);
 	bch2_mark_pending_btree_node_frees(c);
 	bch2_mark_allocator_buckets(c);
 
@@ -1006,6 +1007,8 @@ static int bch2_initial_gc_btree(struct bch_fs *c, enum btree_id id)
 
 	btree_node_range_checks_init(&r, 0);
 
+	gc_pos_set(c, gc_pos_btree(id, POS_MIN, 0));
+
 	if (!c->btree_roots[id].b)
 		return 0;
 
@@ -1044,36 +1047,33 @@ err:
 	return bch2_btree_iter_unlock(&iter) ?: ret;
 }
 
-static int __bch2_initial_gc(struct bch_fs *c, struct list_head *journal)
+int bch2_initial_gc(struct bch_fs *c, struct list_head *journal)
 {
 	unsigned iter = 0;
 	enum btree_id id;
-	int ret;
+	int ret = 0;
 
-	mutex_lock(&c->sb_lock);
-	if (!bch2_sb_get_replicas(c->disk_sb.sb)) {
-		if (BCH_SB_INITIALIZED(c->disk_sb.sb))
-			bch_info(c, "building replicas info");
-		set_bit(BCH_FS_REBUILD_REPLICAS, &c->flags);
-	}
-	mutex_unlock(&c->sb_lock);
+	down_write(&c->gc_lock);
 again:
 	bch2_gc_start(c);
+
+	bch2_mark_superblocks(c);
 
 	for (id = 0; id < BTREE_ID_NR; id++) {
 		ret = bch2_initial_gc_btree(c, id);
 		if (ret)
-			return ret;
+			goto err;
 	}
 
 	ret = bch2_journal_mark(c, journal);
 	if (ret)
-		return ret;
+		goto err;
 
 	if (test_bit(BCH_FS_FIXED_GENS, &c->flags)) {
 		if (iter++ > 2) {
 			bch_info(c, "Unable to fix bucket gens, looping");
-			return -EINVAL;
+			ret = -EINVAL;
+			goto err;
 		}
 
 		bch_info(c, "Fixed gens, restarting initial mark and sweep:");
@@ -1088,21 +1088,9 @@ again:
 	if (c->sb.encryption_type)
 		atomic64_add(1 << 16, &c->key_version);
 
-	bch2_mark_superblocks(c);
-
 	gc_pos_set(c, gc_phase(GC_PHASE_DONE));
 	set_bit(BCH_FS_INITIAL_GC_DONE, &c->flags);
-
-	return 0;
-}
-
-int bch2_initial_gc(struct bch_fs *c, struct list_head *journal)
-{
-	int ret;
-
-	down_write(&c->gc_lock);
-	ret = __bch2_initial_gc(c, journal);
+err:
 	up_write(&c->gc_lock);
-
 	return ret;
 }
