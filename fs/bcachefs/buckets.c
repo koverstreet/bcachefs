@@ -360,8 +360,9 @@ static void bch2_dev_usage_update(struct bch_fs *c, struct bch_dev *ca,
 	    old.data_type != new.data_type) {
 		BUG_ON(!c);
 		bch2_fs_inconsistent(c,
-			"different types of data in same bucket: %u, %u",
-			old.data_type, new.data_type);
+			"different types of data in same bucket: %s, %s",
+			bch2_data_types[old.data_type],
+			bch2_data_types[new.data_type]);
 	}
 
 	preempt_disable();
