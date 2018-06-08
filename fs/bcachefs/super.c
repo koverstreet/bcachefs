@@ -715,6 +715,13 @@ const char *bch2_fs_start(struct bch_fs *c)
 	bch2_recalc_capacity(c);
 
 	if (BCH_SB_INITIALIZED(c->disk_sb.sb)) {
+		mutex_lock(&c->sb_lock);
+		if (!bch2_sb_get_replicas(c->disk_sb.sb)) {
+			bch_info(c, "building replicas info");
+			set_bit(BCH_FS_REBUILD_REPLICAS, &c->flags);
+		}
+		mutex_unlock(&c->sb_lock);
+
 		ret = bch2_journal_read(c, &journal);
 		if (ret)
 			goto err;
