@@ -878,7 +878,8 @@ struct bch_sb_field {
 	x(crypt,	2)	\
 	x(replicas,	3)	\
 	x(quota,	4)	\
-	x(disk_groups,	5)
+	x(disk_groups,	5)	\
+	x(clean,	6)
 
 enum bch_sb_field_type {
 #define x(f, nr)	BCH_SB_FIELD_##f = nr,
@@ -1046,6 +1047,37 @@ LE64_BITMASK(BCH_GROUP_PARENT,		struct bch_disk_group, flags[0], 6, 24)
 struct bch_sb_field_disk_groups {
 	struct bch_sb_field	field;
 	struct bch_disk_group	entries[0];
+};
+
+/*
+ * On clean shutdown, store btree roots and current journal sequence number in
+ * the superblock:
+ */
+struct jset_entry {
+	__le16			u64s;
+	__u8			btree_id;
+	__u8			level;
+	__u8			type; /* designates what this jset holds */
+	__u8			pad[3];
+
+	union {
+		struct bkey_i	start[0];
+		__u64		_data[0];
+	};
+};
+
+struct bch_sb_field_clean {
+	struct bch_sb_field	field;
+
+	__le32			flags;
+	__le16			read_clock;
+	__le16			write_clock;
+	__le64			journal_seq;
+
+	union {
+		struct jset_entry start[0];
+		__u64		_data[0];
+	};
 };
 
 /* Superblock: */
@@ -1264,19 +1296,6 @@ static inline __u64 __bset_magic(struct bch_sb *sb)
 #define BCACHE_JSET_VERSION_UUID	1	/* Always latest UUID format */
 #define BCACHE_JSET_VERSION_JKEYS	2
 #define BCACHE_JSET_VERSION		2
-
-struct jset_entry {
-	__le16			u64s;
-	__u8			btree_id;
-	__u8			level;
-	__u8			type; /* designates what this jset holds */
-	__u8			pad[3];
-
-	union {
-		struct bkey_i	start[0];
-		__u64		_data[0];
-	};
-};
 
 #define JSET_KEYS_U64s	(sizeof(struct jset_entry) / sizeof(__u64))
 
