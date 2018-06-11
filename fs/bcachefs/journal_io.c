@@ -950,7 +950,8 @@ int bch2_journal_replay(struct bch_fs *c, struct list_head *list)
 	j->replay_journal_seq = 0;
 
 	bch2_journal_set_replay_done(j);
-	ret = bch2_journal_flush_all_pins(j);
+	bch2_journal_flush_all_pins(j);
+	ret = bch2_journal_error(j);
 err:
 	bch2_journal_entries_free(list);
 	return ret;
