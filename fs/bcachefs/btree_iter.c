@@ -865,7 +865,7 @@ io_error:
 	BUG_ON(ret != -EIO);
 
 	iter->flags |= BTREE_ITER_ERROR;
-	iter->l[iter->level].b = NULL;
+	iter->l[iter->level].b = BTREE_ITER_NOT_END;
 	goto out;
 }
 
