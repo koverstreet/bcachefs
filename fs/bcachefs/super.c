@@ -169,16 +169,6 @@ struct bch_fs *bch2_uuid_to_fs(uuid_le uuid)
  * - allocator depends on the journal (when it rewrites prios and gens)
  */
 
-static void bch2_fs_mark_clean(struct bch_fs *c, bool clean)
-{
-	mutex_lock(&c->sb_lock);
-	if (BCH_SB_CLEAN(c->disk_sb.sb) != clean) {
-		SET_BCH_SB_CLEAN(c->disk_sb.sb, clean);
-		bch2_write_super(c);
-	}
-	mutex_unlock(&c->sb_lock);
-}
-
 static void __bch2_fs_read_only(struct bch_fs *c)
 {
 	struct bch_dev *ca;
@@ -281,10 +271,8 @@ void bch2_fs_read_only(struct bch_fs *c)
 
 	if (!bch2_journal_error(&c->journal) &&
 	    !test_bit(BCH_FS_ERROR, &c->flags) &&
-	    !test_bit(BCH_FS_EMERGENCY_RO, &c->flags)) {
-
+	    !test_bit(BCH_FS_EMERGENCY_RO, &c->flags))
 		bch2_fs_mark_clean(c, true);
-	}
 
 	if (c->state != BCH_FS_STOPPING)
 		c->state = BCH_FS_RO;
