@@ -309,8 +309,10 @@ static inline int do_btree_insert_at(struct btree_insert *trans,
 	unsigned u64s;
 	int ret;
 
-	trans_for_each_entry(trans, i)
+	trans_for_each_entry(trans, i) {
 		BUG_ON(i->done);
+		BUG_ON(i->iter->uptodate >= BTREE_ITER_NEED_RELOCK);
+	}
 
 	u64s = 0;
 	trans_for_each_entry(trans, i)
@@ -402,6 +404,17 @@ out:
 	return ret;
 }
 
+static inline void btree_insert_entry_checks(struct bch_fs *c,
+					     struct btree_insert_entry *i)
+{
+	BUG_ON(i->iter->level);
+	BUG_ON(bkey_cmp(bkey_start_pos(&i->k->k), i->iter->pos));
+	BUG_ON(debug_check_bkeys(c) &&
+	       !bkey_deleted(&i->k->k) &&
+	       bch2_bkey_invalid(c, i->iter->btree_id,
+				 bkey_i_to_s_c(i->k)));
+}
+
 /**
  * __bch_btree_insert_at - insert keys at given iterator positions
  *
@@ -422,20 +435,16 @@ int __bch2_btree_insert_at(struct btree_insert *trans)
 	unsigned flags;
 	int ret;
 
+	BUG_ON(!trans->nr);
+
 	for_each_btree_iter(trans->entries[0].iter, linked)
 		bch2_btree_iter_verify_locks(linked);
 
 	/* for the sake of sanity: */
 	BUG_ON(trans->nr > 1 && !(trans->flags & BTREE_INSERT_ATOMIC));
 
-	trans_for_each_entry(trans, i) {
-		BUG_ON(i->iter->level);
-		BUG_ON(bkey_cmp(bkey_start_pos(&i->k->k), i->iter->pos));
-		BUG_ON(debug_check_bkeys(c) &&
-		       !bkey_deleted(&i->k->k) &&
-		       bch2_bkey_invalid(c, i->iter->btree_id,
-					 bkey_i_to_s_c(i->k)));
-	}
+	trans_for_each_entry(trans, i)
+		btree_insert_entry_checks(c, i);
 
 	bubble_sort(trans->entries, trans->nr, btree_trans_cmp);
 
@@ -557,6 +566,49 @@ err:
 	}
 
 	goto out;
+}
+
+void bch2_trans_update(struct btree_trans *trans,
+		       struct btree_iter *iter,
+		       struct bkey_i *k,
+		       unsigned extra_journal_res)
+{
+	struct btree_insert_entry *i;
+
+	BUG_ON(trans->nr_updates >= ARRAY_SIZE(trans->updates));
+
+	i = &trans->updates[trans->nr_updates++];
+
+	*i = (struct btree_insert_entry) {
+		.iter	= iter,
+		.k		= k,
+		.extra_res	= extra_journal_res,
+	};
+
+	btree_insert_entry_checks(trans->c, i);
+}
+
+int bch2_trans_commit(struct btree_trans *trans,
+		      struct disk_reservation *disk_res,
+		      struct extent_insert_hook *hook,
+		      u64 *journal_seq,
+		      unsigned flags)
+{
+	struct btree_insert insert = {
+		.c		= trans->c,
+		.disk_res	= disk_res,
+		.journal_seq	= journal_seq,
+		.flags		= flags,
+		.nr		= trans->nr_updates,
+		.entries	= trans->updates,
+	};
+
+	if (!trans->nr_updates)
+		return 0;
+
+	trans->nr_updates = 0;
+
+	return __bch2_btree_insert_at(&insert);
 }
 
 int bch2_btree_delete_at(struct btree_iter *iter, unsigned flags)
