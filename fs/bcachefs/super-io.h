@@ -131,6 +131,10 @@ static inline struct bch_member_cpu bch2_mi_to_cpu(struct bch_member *mi)
 	};
 }
 
+/* BCH_SB_FIELD_clean: */
+
+void bch2_fs_mark_clean(struct bch_fs *, bool);
+
 size_t bch2_sb_field_to_text(char *, size_t, struct bch_sb *,
 			     struct bch_sb_field *);
 
