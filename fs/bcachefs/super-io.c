@@ -4,6 +4,7 @@
 #include "disk_groups.h"
 #include "error.h"
 #include "io.h"
+#include "journal.h"
 #include "replicas.h"
 #include "quota.h"
 #include "super-io.h"
@@ -88,6 +89,9 @@ int bch2_sb_realloc(struct bch_sb_handle *sb, unsigned u64s)
 	unsigned order = get_order(new_bytes);
 	struct bch_sb *new_sb;
 	struct bio *bio;
+
+	if (sb->sb && sb->page_order >= order)
+		return 0;
 
 	if (sb->have_layout) {
 		u64 max_bytes = 512 << sb->sb->layout.sb_max_size_bits;
@@ -847,6 +851,84 @@ static const char *bch2_sb_validate_crypt(struct bch_sb *sb,
 
 static const struct bch_sb_field_ops bch_sb_field_ops_crypt = {
 	.validate	= bch2_sb_validate_crypt,
+};
+
+/* BCH_SB_FIELD_clean: */
+
+void bch2_fs_mark_clean(struct bch_fs *c, bool clean)
+{
+	struct bch_sb_field_clean *sb_clean;
+	unsigned u64s = sizeof(*sb_clean) / sizeof(u64);
+	struct jset_entry *entry;
+	struct btree_root *r;
+
+	mutex_lock(&c->sb_lock);
+	if (clean == BCH_SB_CLEAN(c->disk_sb.sb))
+		goto out;
+
+	SET_BCH_SB_CLEAN(c->disk_sb.sb, clean);
+
+	if (!clean)
+		goto write_super;
+
+	mutex_lock(&c->btree_root_lock);
+
+	for (r = c->btree_roots;
+	     r < c->btree_roots + BTREE_ID_NR;
+	     r++)
+		if (r->alive)
+			u64s += jset_u64s(r->key.u64s);
+
+	sb_clean = bch2_sb_resize_clean(&c->disk_sb, u64s);
+	if (!sb_clean) {
+		bch_err(c, "error resizing superblock while setting filesystem clean");
+		goto out;
+	}
+
+	sb_clean->flags		= 0;
+	sb_clean->read_clock	= cpu_to_le16(c->bucket_clock[READ].hand);
+	sb_clean->write_clock	= cpu_to_le16(c->bucket_clock[WRITE].hand);
+	sb_clean->journal_seq	= journal_cur_seq(&c->journal) - 1;
+
+	entry = sb_clean->start;
+	memset(entry, 0,
+	       vstruct_end(&sb_clean->field) - (void *) entry);
+
+	for (r = c->btree_roots;
+	     r < c->btree_roots + BTREE_ID_NR;
+	     r++)
+		if (r->alive) {
+			entry->u64s	= r->key.u64s;
+			entry->btree_id	= r - c->btree_roots;
+			entry->level	= r->level;
+			entry->type	= BCH_JSET_ENTRY_btree_root;
+			bkey_copy(&entry->start[0], &r->key);
+			entry = vstruct_next(entry);
+			BUG_ON((void *) entry > vstruct_end(&sb_clean->field));
+		}
+
+	BUG_ON(entry != vstruct_end(&sb_clean->field));
+
+	mutex_unlock(&c->btree_root_lock);
+write_super:
+	bch2_write_super(c);
+out:
+	mutex_unlock(&c->sb_lock);
+}
+
+static const char *bch2_sb_validate_clean(struct bch_sb *sb,
+					  struct bch_sb_field *f)
+{
+	struct bch_sb_field_clean *clean = field_to_type(f, clean);
+
+	if (vstruct_bytes(&clean->field) < sizeof(*clean))
+		return "invalid field crypt: wrong size";
+
+	return NULL;
+}
+
+static const struct bch_sb_field_ops bch_sb_field_ops_clean = {
+	.validate	= bch2_sb_validate_clean,
 };
 
 static const struct bch_sb_field_ops *bch2_sb_field_ops[] = {

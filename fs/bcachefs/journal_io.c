@@ -13,37 +13,6 @@
 
 #include <trace/events/bcachefs.h>
 
-static struct jset_entry *bch2_journal_find_entry(struct jset *j, unsigned type,
-						 enum btree_id id)
-{
-	struct jset_entry *entry;
-
-	for_each_jset_entry_type(entry, j, type)
-		if (entry->btree_id == id)
-			return entry;
-
-	return NULL;
-}
-
-struct bkey_i *bch2_journal_find_btree_root(struct bch_fs *c, struct jset *j,
-					   enum btree_id id, unsigned *level)
-{
-	struct bkey_i *k;
-	struct jset_entry *entry =
-		bch2_journal_find_entry(j, BCH_JSET_ENTRY_btree_root, id);
-
-	if (!entry)
-		return NULL;
-
-	if (!entry->u64s)
-		return ERR_PTR(-EINVAL);
-
-	k = entry->start;
-	*level = entry->level;
-	*level = entry->level;
-	return k;
-}
-
 struct journal_list {
 	struct closure		cl;
 	struct mutex		lock;
@@ -717,6 +686,37 @@ void bch2_journal_entries_free(struct list_head *list)
 	}
 }
 
+int bch2_journal_set_seq(struct bch_fs *c, u64 last_seq, u64 end_seq)
+{
+	struct journal *j = &c->journal;
+	struct journal_entry_pin_list *p;
+	u64 seq, nr = end_seq - last_seq + 1;
+
+	if (nr > j->pin.size) {
+		free_fifo(&j->pin);
+		init_fifo(&j->pin, roundup_pow_of_two(nr), GFP_KERNEL);
+		if (!j->pin.data) {
+			bch_err(c, "error reallocating journal fifo (%llu open entries)", nr);
+			return -ENOMEM;
+		}
+	}
+
+	atomic64_set(&j->seq, end_seq);
+	j->last_seq_ondisk = last_seq;
+
+	j->pin.front	= last_seq;
+	j->pin.back	= end_seq + 1;
+
+	fifo_for_each_entry_ptr(p, &j->pin, seq) {
+		INIT_LIST_HEAD(&p->list);
+		INIT_LIST_HEAD(&p->flushed);
+		atomic_set(&p->count, 0);
+		p->devs.nr = 0;
+	}
+
+	return 0;
+}
+
 int bch2_journal_read(struct bch_fs *c, struct list_head *list)
 {
 	struct journal *j = &c->journal;
@@ -724,10 +724,9 @@ int bch2_journal_read(struct bch_fs *c, struct list_head *list)
 	struct journal_replay *i;
 	struct journal_entry_pin_list *p;
 	struct bch_dev *ca;
-	u64 cur_seq, end_seq, seq;
+	u64 cur_seq, end_seq;
 	unsigned iter;
-	size_t entries = 0;
-	u64 nr, keys = 0;
+	size_t keys = 0, entries = 0;
 	bool degraded = false;
 	int ret = 0;
 
@@ -783,43 +782,13 @@ int bch2_journal_read(struct bch_fs *c, struct list_head *list)
 		}
 	}
 
-	list_for_each_entry(i, list, list) {
-		struct jset_entry *entry;
-		struct bkey_i *k, *_n;
-
-		for_each_jset_key(k, _n, entry, &i->j)
-			keys++;
-	}
-
 	i = list_last_entry(list, struct journal_replay, list);
 
-	nr = le64_to_cpu(i->j.seq) - le64_to_cpu(i->j.last_seq) + 1;
-
-	fsck_err_on(c->sb.clean && (keys || nr > 1), c,
-		    "filesystem marked clean but journal not empty (%llu keys in %llu entries)",
-		    keys, nr);
-
-	if (nr > j->pin.size) {
-		free_fifo(&j->pin);
-		init_fifo(&j->pin, roundup_pow_of_two(nr), GFP_KERNEL);
-		if (!j->pin.data) {
-			bch_err(c, "error reallocating journal fifo (%llu open entries)", nr);
-			return -ENOMEM;
-		}
-	}
-
-	atomic64_set(&j->seq, le64_to_cpu(i->j.seq));
-	j->last_seq_ondisk = le64_to_cpu(i->j.last_seq);
-
-	j->pin.front	= le64_to_cpu(i->j.last_seq);
-	j->pin.back	= le64_to_cpu(i->j.seq) + 1;
-
-	fifo_for_each_entry_ptr(p, &j->pin, seq) {
-		INIT_LIST_HEAD(&p->list);
-		INIT_LIST_HEAD(&p->flushed);
-		atomic_set(&p->count, 0);
-		p->devs.nr = 0;
-	}
+	ret = bch2_journal_set_seq(c,
+				   le64_to_cpu(i->j.last_seq),
+				   le64_to_cpu(i->j.seq));
+	if (ret)
+		return ret;
 
 	mutex_lock(&j->blacklist_lock);
 
@@ -842,6 +811,8 @@ int bch2_journal_read(struct bch_fs *c, struct list_head *list)
 				struct journal_replay, list)->j.seq);
 
 	list_for_each_entry(i, list, list) {
+		struct jset_entry *entry;
+		struct bkey_i *k, *_n;
 		bool blacklisted;
 
 		mutex_lock(&j->blacklist_lock);
@@ -863,10 +834,13 @@ int bch2_journal_read(struct bch_fs *c, struct list_head *list)
 			journal_last_seq(j), end_seq);
 
 		cur_seq = le64_to_cpu(i->j.seq) + 1;
+
+		for_each_jset_key(k, _n, entry, &i->j)
+			keys++;
 		entries++;
 	}
 
-	bch_info(c, "journal read done, %llu keys in %zu entries, seq %llu",
+	bch_info(c, "journal read done, %zu keys in %zu entries, seq %llu",
 		 keys, entries, journal_cur_seq(j));
 fsck_err:
 	return ret;
