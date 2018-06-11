@@ -253,6 +253,39 @@ struct btree_iter {
 	struct btree_iter	*next;
 };
 
+#define BTREE_ITER_MAX		8
+
+struct btree_insert_entry {
+	struct btree_iter *iter;
+	struct bkey_i	*k;
+	unsigned	extra_res;
+	/*
+	 * true if entire key was inserted - can only be false for
+	 * extents
+	 */
+	bool		done;
+};
+
+struct btree_trans {
+	struct bch_fs		*c;
+
+	u8			nr_iters;
+	u8			iters_live;
+	u8			iters_linked;
+	u8			nr_updates;
+
+	unsigned		mem_top;
+	unsigned		mem_bytes;
+	void			*mem;
+
+	struct btree_iter	*iters;
+	u64			iter_ids[BTREE_ITER_MAX];
+
+	struct btree_insert_entry updates[BTREE_ITER_MAX];
+
+	struct btree_iter	iters_onstack[2];
+};
+
 #define BTREE_FLAG(flag)						\
 static inline bool btree_node_ ## flag(struct btree *b)			\
 {	return test_bit(BTREE_NODE_ ## flag, &b->flags); }		\
