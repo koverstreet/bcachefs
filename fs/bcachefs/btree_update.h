@@ -27,16 +27,7 @@ struct btree_insert {
 	bool			did_work;
 
 	unsigned short		nr;
-	struct btree_insert_entry {
-		struct btree_iter *iter;
-		struct bkey_i	*k;
-		unsigned	extra_res;
-		/*
-		 * true if entire key was inserted - can only be false for
-		 * extents
-		 */
-		bool		done;
-	}			*entries;
+	struct btree_insert_entry  *entries;
 };
 
 int __bch2_btree_insert_at(struct btree_insert *);
@@ -145,5 +136,32 @@ int bch2_btree_node_rewrite(struct bch_fs *c, struct btree_iter *,
 			    __le64, unsigned);
 int bch2_btree_node_update_key(struct bch_fs *, struct btree_iter *,
 			       struct btree *, struct bkey_i_extent *);
+
+/* new transactional interface: */
+
+void bch2_trans_update(struct btree_trans *, struct btree_iter *,
+			     struct bkey_i *, unsigned);
+int bch2_trans_commit(struct btree_trans *,
+		      struct disk_reservation *,
+		      struct extent_insert_hook *,
+		      u64 *, unsigned);
+
+#define bch2_trans_do(_c, _journal_seq, _flags, _do)			\
+({									\
+	struct btree_trans trans;					\
+	int _ret;							\
+									\
+	bch2_trans_init(&trans, (_c));					\
+									\
+	do {								\
+		bch2_trans_begin(&trans);				\
+									\
+		_ret = (_do) ?:	bch2_trans_commit(&trans, NULL, NULL,	\
+					(_journal_seq), (_flags));	\
+	} while (_ret == -EINTR);					\
+									\
+	bch2_trans_exit(&trans);					\
+	_ret;								\
+})
 
 #endif /* _BCACHEFS_BTREE_UPDATE_H */
