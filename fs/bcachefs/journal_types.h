@@ -117,6 +117,7 @@ enum {
 	JOURNAL_REPLAY_DONE,
 	JOURNAL_STARTED,
 	JOURNAL_NEED_WRITE,
+	JOURNAL_NOT_EMPTY,
 };
 
 /* Embedded in struct bch_fs */

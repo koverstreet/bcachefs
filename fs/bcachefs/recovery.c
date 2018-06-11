@@ -75,6 +75,11 @@ int bch2_fs_recovery(struct bch_fs *c)
 		goto err;
 	bch_verbose(c, "mark and sweep done");
 
+	mutex_lock(&c->sb_lock);
+	SET_BCH_SB_CLEAN(c->disk_sb.sb, false);
+	bch2_write_super(c);
+	mutex_unlock(&c->sb_lock);
+
 	if (c->opts.noreplay)
 		goto out;
 
@@ -183,6 +188,13 @@ int bch2_fs_initialize(struct bch_fs *c)
 	err = "error writing first journal entry";
 	if (bch2_journal_meta(&c->journal))
 		goto err;
+
+	mutex_lock(&c->sb_lock);
+	SET_BCH_SB_INITIALIZED(c->disk_sb.sb, true);
+	SET_BCH_SB_CLEAN(c->disk_sb.sb, false);
+
+	bch2_write_super(c);
+	mutex_unlock(&c->sb_lock);
 
 	return 0;
 err:

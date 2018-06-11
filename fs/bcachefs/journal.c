@@ -75,6 +75,19 @@ static inline size_t journal_entry_u64s_reserve(struct journal_buf *buf)
 	return BTREE_ID_NR * (JSET_KEYS_U64s + BKEY_EXTENT_U64s_MAX);
 }
 
+static inline bool journal_entry_empty(struct jset *j)
+{
+	struct jset_entry *i;
+
+	if (j->seq != j->last_seq)
+		return false;
+
+	vstruct_for_each(j, i)
+		if (i->type || i->u64s)
+			return false;
+	return true;
+}
+
 static enum {
 	JOURNAL_ENTRY_ERROR,
 	JOURNAL_ENTRY_INUSE,
@@ -128,6 +141,11 @@ static enum {
 	bch2_journal_reclaim_fast(j);
 	/* XXX: why set this here, and not in bch2_journal_write()? */
 	buf->data->last_seq	= cpu_to_le64(journal_last_seq(j));
+
+	if (journal_entry_empty(buf->data))
+		clear_bit(JOURNAL_NOT_EMPTY, &j->flags);
+	else
+		set_bit(JOURNAL_NOT_EMPTY, &j->flags);
 
 	journal_pin_new_entry(j, 1);
 
@@ -884,7 +902,17 @@ void bch2_dev_journal_stop(struct journal *j, struct bch_dev *ca)
 
 void bch2_fs_journal_stop(struct journal *j)
 {
+	struct bch_fs *c = container_of(j, struct bch_fs, journal);
+
 	wait_event(j->wait, journal_flush_write(j));
+
+	/* do we need to write another journal entry? */
+	if (test_bit(JOURNAL_NOT_EMPTY, &j->flags) ||
+	    c->btree_roots_dirty)
+		bch2_journal_meta(j);
+
+	BUG_ON(!bch2_journal_error(j) &&
+	       test_bit(JOURNAL_NOT_EMPTY, &j->flags));
 
 	cancel_delayed_work_sync(&j->write_work);
 	cancel_delayed_work_sync(&j->reclaim_work);

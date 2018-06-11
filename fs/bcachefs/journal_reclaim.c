@@ -337,34 +337,22 @@ static int journal_flush_done(struct journal *j, u64 seq_to_flush,
 	return ret;
 }
 
-int bch2_journal_flush_pins(struct journal *j, u64 seq_to_flush)
+void bch2_journal_flush_pins(struct journal *j, u64 seq_to_flush)
 {
-	struct bch_fs *c = container_of(j, struct bch_fs, journal);
 	struct journal_entry_pin *pin;
 	u64 pin_seq;
-	bool flush;
 
 	if (!test_bit(JOURNAL_STARTED, &j->flags))
-		return 0;
-again:
-	wait_event(j->wait, journal_flush_done(j, seq_to_flush, &pin, &pin_seq));
-	if (pin) {
-		/* flushing a journal pin might cause a new one to be added: */
+		return;
+
+	while (1) {
+		wait_event(j->wait, journal_flush_done(j, seq_to_flush,
+						       &pin, &pin_seq));
+		if (!pin)
+			break;
+
 		pin->flush(j, pin, pin_seq);
-		goto again;
 	}
-
-	spin_lock(&j->lock);
-	flush = journal_last_seq(j) != j->last_seq_ondisk ||
-		(seq_to_flush == U64_MAX && c->btree_roots_dirty);
-	spin_unlock(&j->lock);
-
-	return flush ? bch2_journal_meta(j) : 0;
-}
-
-int bch2_journal_flush_all_pins(struct journal *j)
-{
-	return bch2_journal_flush_pins(j, U64_MAX);
 }
 
 int bch2_journal_flush_device_pins(struct journal *j, int dev_idx)
@@ -383,7 +371,9 @@ int bch2_journal_flush_device_pins(struct journal *j, int dev_idx)
 			seq = iter;
 	spin_unlock(&j->lock);
 
-	ret = bch2_journal_flush_pins(j, seq);
+	bch2_journal_flush_pins(j, seq);
+
+	ret = bch2_journal_error(j);
 	if (ret)
 		return ret;
 
