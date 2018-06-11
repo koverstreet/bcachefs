@@ -1,9 +1,6 @@
 #ifndef _BCACHEFS_JOURNAL_IO_H
 #define _BCACHEFS_JOURNAL_IO_H
 
-struct bkey_i *bch2_journal_find_btree_root(struct bch_fs *, struct jset *,
-					    enum btree_id, unsigned *);
-
 /*
  * Only used for holding the journal entries we read in btree_journal_read()
  * during cache_registration
@@ -37,6 +34,7 @@ static inline struct jset_entry *__jset_entry_type_next(struct jset *jset,
 	for_each_jset_entry_type(entry, jset, BCH_JSET_ENTRY_btree_keys)	\
 		vstruct_for_each_safe(entry, k, _n)
 
+int bch2_journal_set_seq(struct bch_fs *c, u64, u64);
 int bch2_journal_read(struct bch_fs *, struct list_head *);
 
 int bch2_journal_entry_sectors(struct journal *);
