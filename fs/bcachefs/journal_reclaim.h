@@ -29,8 +29,13 @@ void bch2_journal_pin_add_if_older(struct journal *,
 void bch2_journal_reclaim_fast(struct journal *);
 void bch2_journal_reclaim_work(struct work_struct *);
 
-int bch2_journal_flush_pins(struct journal *, u64);
-int bch2_journal_flush_all_pins(struct journal *);
+void bch2_journal_flush_pins(struct journal *, u64);
+
+static inline void bch2_journal_flush_all_pins(struct journal *j)
+{
+	bch2_journal_flush_pins(j, U64_MAX);
+}
+
 int bch2_journal_flush_device_pins(struct journal *, int);
 
 #endif /* _BCACHEFS_JOURNAL_RECLAIM_H */
