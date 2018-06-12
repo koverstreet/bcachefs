@@ -1,6 +1,10 @@
 #ifndef _BCACHEFS_ACL_H
 #define _BCACHEFS_ACL_H
 
+struct bch_inode_unpacked;
+struct bch_hash_info;
+struct posix_acl;
+
 #ifdef CONFIG_BCACHEFS_POSIX_ACL
 
 #define BCH_ACL_VERSION	0x0001
@@ -20,20 +24,26 @@ typedef struct {
 	__le32		a_version;
 } bch_acl_header;
 
-struct posix_acl;
+struct posix_acl *bch2_get_acl(struct inode *, int);
 
-extern struct posix_acl *bch2_get_acl(struct inode *, int);
-extern int __bch2_set_acl(struct inode *, struct posix_acl *, int);
-extern int bch2_set_acl(struct inode *, struct posix_acl *, int);
+int bch2_set_acl_trans(struct btree_trans *,
+		       struct bch_inode_unpacked *,
+		       const struct bch_hash_info *,
+		       struct posix_acl *, int);
+int __bch2_set_acl(struct inode *, struct posix_acl *, int);
+int bch2_set_acl(struct inode *, struct posix_acl *, int);
 
 #else
 
-static inline int __bch2_set_acl(struct inode *inode, struct posix_acl *acl, int type)
+static inline int bch2_set_acl_trans(struct btree_trans *trans,
+				     struct bch_inode_unpacked *inode_u,
+				     const struct bch_hash_info *hash_info,
+				     struct posix_acl *acl, int type)
 {
 	return 0;
 }
 
-static inline int bch2_set_acl(struct inode *inode, struct posix_acl *acl, int type)
+static inline int __bch2_set_acl(struct inode *inode, struct posix_acl *acl, int type)
 {
 	return 0;
 }
