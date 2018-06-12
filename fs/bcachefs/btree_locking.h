@@ -166,8 +166,11 @@ bool __bch2_btree_node_relock(struct btree_iter *, unsigned);
 static inline bool bch2_btree_node_relock(struct btree_iter *iter,
 					  unsigned level)
 {
-	return likely(__btree_lock_want(iter, level) ==
-		      btree_node_locked_type(iter, level)) ||
+	EBUG_ON(btree_node_locked(iter, level) &&
+		btree_node_locked_type(iter, level) !=
+		__btree_lock_want(iter, level));
+
+	return likely(btree_node_locked(iter, level)) ||
 		__bch2_btree_node_relock(iter, level);
 }
 
