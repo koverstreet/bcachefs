@@ -238,6 +238,7 @@ static inline int bch2_hash_needs_whiteout(const struct bch_hash_desc desc,
 {
 	struct bkey_s_c k;
 
+	bch2_btree_iter_copy(iter, start);
 	bch2_btree_iter_next_slot(iter);
 
 	for_each_btree_key_continue(iter, BTREE_ITER_SLOTS, k) {
