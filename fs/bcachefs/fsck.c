@@ -173,6 +173,39 @@ err:
 	return ret;
 }
 
+/* fsck hasn't been converted to new transactions yet: */
+static int fsck_hash_delete_at(const struct bch_hash_desc desc,
+			       struct bch_hash_info *info,
+			       struct btree_iter *orig_iter)
+{
+	struct btree_trans trans;
+	struct btree_iter *iter;
+	int ret;
+
+	bch2_btree_iter_unlock(orig_iter);
+
+	bch2_trans_init(&trans, orig_iter->c);
+retry:
+	bch2_trans_begin(&trans);
+
+	iter = bch2_trans_copy_iter(&trans, orig_iter);
+	if (IS_ERR(iter)) {
+		ret = PTR_ERR(iter);
+		goto err;
+	}
+
+	ret   = bch2_hash_delete_at(&trans, desc, info, iter) ?:
+		bch2_trans_commit(&trans, NULL, NULL, NULL,
+				  BTREE_INSERT_ATOMIC|
+				  BTREE_INSERT_NOFAIL);
+err:
+	if (ret == -EINTR)
+		goto retry;
+
+	bch2_trans_exit(&trans);
+	return ret;
+}
+
 static int hash_check_key(const struct bch_hash_desc desc,
 			  struct hash_check *h, struct bch_fs *c,
 			  struct btree_iter *k_iter, struct bkey_s_c k)
@@ -226,7 +259,7 @@ static int hash_check_key(const struct bch_hash_desc desc,
 				"duplicate hash table keys:\n%s",
 				(bch2_bkey_val_to_text(c, bkey_type(0, desc.btree_id),
 						       buf, sizeof(buf), k), buf))) {
-			ret = bch2_hash_delete_at(desc, &h->info, &h->iter, NULL);
+			ret = fsck_hash_delete_at(desc, &h->info, &h->iter);
 			if (ret)
 				return ret;
 			return 1;
