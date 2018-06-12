@@ -21,8 +21,16 @@ struct bch_hash_info;
 struct bch_inode_info;
 
 unsigned bch2_dirent_name_bytes(struct bkey_s_c_dirent);
+
+int __bch2_dirent_create(struct btree_trans *, u64,
+			 const struct bch_hash_info *, u8,
+			 const struct qstr *, u64, int);
 int bch2_dirent_create(struct bch_fs *c, u64, const struct bch_hash_info *,
 		       u8, const struct qstr *, u64, u64 *, int);
+
+int __bch2_dirent_delete(struct btree_trans *, u64,
+			 const struct bch_hash_info *,
+			 const struct qstr *);
 int bch2_dirent_delete(struct bch_fs *, u64, const struct bch_hash_info *,
 		       const struct qstr *, u64 *);
 
@@ -32,6 +40,10 @@ enum bch_rename_mode {
 	BCH_RENAME_EXCHANGE,
 };
 
+int __bch2_dirent_rename(struct btree_trans *,
+			 struct bch_inode_info *, const struct qstr *,
+			 struct bch_inode_info *, const struct qstr *,
+			 enum bch_rename_mode);
 int bch2_dirent_rename(struct bch_fs *,
 		       struct bch_inode_info *, const struct qstr *,
 		       struct bch_inode_info *, const struct qstr *,
