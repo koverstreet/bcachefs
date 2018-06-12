@@ -35,15 +35,12 @@ struct xattr_handler;
 struct bch_hash_info;
 struct bch_inode_info;
 
-struct bkey_s_c bch2_xattr_get_iter(struct bch_fs *,
-				    struct btree_iter *,
-				    struct bch_inode_info *,
-				    const char *, int);
 int bch2_xattr_get(struct bch_fs *, struct bch_inode_info *,
 		  const char *, void *, size_t, int);
 
-int bch2_xattr_set(struct bch_fs *, u64, const struct bch_hash_info *,
-		   const char *, const void *, size_t, int, int, u64 *);
+int bch2_xattr_set(struct btree_trans *, u64, const struct bch_hash_info *,
+		   const char *, const void *, size_t, int, int);
+
 ssize_t bch2_xattr_list(struct dentry *, char *, size_t);
 
 extern const struct xattr_handler *bch2_xattr_handlers[];
