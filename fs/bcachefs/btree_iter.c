@@ -281,13 +281,9 @@ void bch2_btree_iter_verify_locks(struct btree_iter *iter)
 __flatten
 static bool __bch2_btree_iter_relock(struct btree_iter *iter)
 {
-	if (iter->uptodate < BTREE_ITER_NEED_RELOCK)
-		return true;
-
-	if (iter->uptodate > BTREE_ITER_NEED_TRAVERSE)
-		return false;
-
-	return btree_iter_get_locks(iter, false);
+	return iter->uptodate >= BTREE_ITER_NEED_RELOCK
+		? btree_iter_get_locks(iter, false)
+		: true;
 }
 
 bool bch2_btree_iter_relock(struct btree_iter *iter)
@@ -990,24 +986,10 @@ int __must_check __bch2_btree_iter_traverse(struct btree_iter *iter)
 	if (unlikely(iter->level >= BTREE_MAX_DEPTH))
 		return 0;
 
+	if (__bch2_btree_iter_relock(iter))
+		return 0;
+
 	iter->flags &= ~BTREE_ITER_AT_END_OF_LEAF;
-
-	/* make sure we have all the intent locks we need - ugh */
-	if (unlikely(iter->l[iter->level].b &&
-		     iter->level + 1 < iter->locks_want)) {
-		unsigned i;
-
-		for (i = iter->level + 1;
-		     i < iter->locks_want && iter->l[i].b;
-		     i++)
-			if (!bch2_btree_node_relock(iter, i)) {
-				while (iter->level < BTREE_MAX_DEPTH &&
-				       iter->l[iter->level].b &&
-				       iter->level + 1 < iter->locks_want)
-					btree_iter_up(iter);
-				break;
-			}
-	}
 
 	/*
 	 * XXX: correctly using BTREE_ITER_UPTODATE should make using check_pos
@@ -1056,9 +1038,6 @@ int __must_check __bch2_btree_iter_traverse(struct btree_iter *iter)
 int __must_check bch2_btree_iter_traverse(struct btree_iter *iter)
 {
 	int ret;
-
-	if (__bch2_btree_iter_relock(iter))
-		return 0;
 
 	ret = __bch2_btree_iter_traverse(iter);
 	if (unlikely(ret))
