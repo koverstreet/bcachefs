@@ -64,9 +64,28 @@ void __bch2_btree_node_lock_write(struct btree *b, struct btree_iter *iter)
 		     &b->lock.state.counter);
 }
 
-bool __bch2_btree_node_relock(struct btree_iter *iter, unsigned level)
+/*
+ * Lock a btree node if we already have it locked on one of our linked
+ * iterators:
+ */
+static inline bool btree_node_lock_increment(struct btree_iter *iter,
+					     struct btree *b, unsigned level,
+					     enum btree_node_locked_type want)
 {
 	struct btree_iter *linked;
+
+	for_each_linked_btree_iter(iter, linked)
+		if (linked->l[level].b == b &&
+		    btree_node_locked_type(linked, level) >= want) {
+			six_lock_increment(&b->lock, want);
+			return true;
+		}
+
+	return false;
+}
+
+bool __bch2_btree_node_relock(struct btree_iter *iter, unsigned level)
+{
 	struct btree *b = iter->l[level].b;
 	int want = __btree_lock_want(iter, level);
 	int have = btree_node_locked_type(iter, level);
@@ -85,14 +104,11 @@ bool __bch2_btree_node_relock(struct btree_iter *iter, unsigned level)
 	    : six_relock_type(&b->lock, want, iter->lock_seq[level]))
 		goto success;
 
-	for_each_linked_btree_iter(iter, linked)
-		if (linked->l[level].b == b &&
-		    btree_node_locked_type(linked, level) == want &&
-		    iter->lock_seq[level] == b->lock.state.seq) {
-			btree_node_unlock(iter, level);
-			six_lock_increment(&b->lock, want);
-			goto success;
-		}
+	if (iter->lock_seq[level] >> 1 == b->lock.state.seq >> 1 &&
+	    btree_node_lock_increment(iter, b, level, want)) {
+		btree_node_unlock(iter, level);
+		goto success;
+	}
 
 	return false;
 success:
@@ -158,15 +174,11 @@ bool __bch2_btree_node_lock(struct btree *b, struct bpos pos,
 	EBUG_ON(type == SIX_LOCK_intent &&
 		iter->nodes_locked != iter->nodes_intent_locked);
 
-	for_each_linked_btree_iter(iter, linked)
-		if (linked->l[level].b == b &&
-		    btree_node_locked_type(linked, level) == type) {
-			six_lock_increment(&b->lock, type);
-			return true;
-		}
+	if (btree_node_lock_increment(iter, b, level, type))
+		return true;
 
 	/*
-	 * Must lock btree nodes in key order - this case hapens when locking
+	 * Must lock btree nodes in key order - this case happens when locking
 	 * the prev sibling in btree node merging:
 	 */
 	if (iter->nodes_locked &&
