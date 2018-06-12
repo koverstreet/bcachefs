@@ -29,8 +29,8 @@ struct btree *bch2_btree_node_get_sibling(struct bch_fs *, struct btree_iter *,
 					  struct btree *, bool,
 					  enum btree_node_sibling);
 
-void bch2_btree_node_prefetch(struct bch_fs *, const struct bkey_i *,
-			      unsigned, enum btree_id);
+void bch2_btree_node_prefetch(struct bch_fs *, struct btree_iter *,
+			      const struct bkey_i *, unsigned);
 
 void bch2_fs_btree_cache_exit(struct bch_fs *);
 int bch2_fs_btree_cache_init(struct bch_fs *);
