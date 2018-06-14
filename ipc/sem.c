@@ -84,6 +84,7 @@
 #include <linux/nsproxy.h>
 #include <linux/ipc_namespace.h>
 #include <linux/sched/wake_q.h>
+#include <linux/nospec.h>
 
 #include <linux/uaccess.h>
 #include "util.h"
@@ -333,6 +334,7 @@ static inline int sem_lock(struct sem_array *sma, struct sembuf *sops,
 			      int nsops)
 {
 	struct sem *sem;
+	int idx;
 
 	if (nsops != 1) {
 		/* Complex operation - acquire a full lock */
@@ -350,7 +352,8 @@ static inline int sem_lock(struct sem_array *sma, struct sembuf *sops,
 	 *
 	 * Both facts are tracked by use_global_mode.
 	 */
-	sem = &sma->sems[sops->sem_num];
+	idx = array_index_nospec(sops->sem_num, sma->sem_nsems);
+	sem = &sma->sems[idx];
 
 	/*
 	 * Initial check for use_global_lock. Just an optimization,
@@ -608,7 +611,8 @@ static int perform_atomic_semop_slow(struct sem_array *sma, struct sem_queue *q)
 	un = q->undo;
 
 	for (sop = sops; sop < sops + nsops; sop++) {
-		curr = &sma->sems[sop->sem_num];
+		int idx = array_index_nospec(sop->sem_num, sma->sem_nsems);
+		curr = &sma->sems[idx];
 		sem_op = sop->sem_op;
 		result = curr->semval;
 
@@ -688,7 +692,9 @@ static int perform_atomic_semop(struct sem_array *sma, struct sem_queue *q)
 	 * until the operations can go through.
 	 */
 	for (sop = sops; sop < sops + nsops; sop++) {
-		curr = &sma->sems[sop->sem_num];
+		int idx = array_index_nospec(sop->sem_num, sma->sem_nsems);
+
+		curr = &sma->sems[idx];
 		sem_op = sop->sem_op;
 		result = curr->semval;
 
@@ -1304,6 +1310,7 @@ static int semctl_setval(struct ipc_namespace *ns, int semid, int semnum,
 		return -EIDRM;
 	}
 
+	semnum = array_index_nospec(semnum, sma->sem_nsems);
 	curr = &sma->sems[semnum];
 
 	ipc_assert_locked_object(&sma->sem_perm);
@@ -1457,6 +1464,8 @@ static int semctl_main(struct ipc_namespace *ns, int semid, int semnum,
 		err = -EIDRM;
 		goto out_unlock;
 	}
+
+	semnum = array_index_nospec(semnum, nsems);
 	curr = &sma->sems[semnum];
 
 	switch (cmd) {
@@ -2015,7 +2024,8 @@ static long do_semtimedop(int semid, struct sembuf __user *tsops,
 	 */
 	if (nsops == 1) {
 		struct sem *curr;
-		curr = &sma->sems[sops->sem_num];
+		int idx = array_index_nospec(sops->sem_num, sma->sem_nsems);
+		curr = &sma->sems[idx];
 
 		if (alter) {
 			if (sma->complex_count) {
