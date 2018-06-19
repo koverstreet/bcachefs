@@ -1046,14 +1046,14 @@ int btrfs_open_devices(struct btrfs_fs_devices *fs_devices,
 {
 	int ret;
 
-	mutex_lock(&uuid_mutex);
+	lockdep_assert_held(&uuid_mutex);
+
 	if (fs_devices->opened) {
 		fs_devices->opened++;
 		ret = 0;
 	} else {
 		ret = __btrfs_open_devices(fs_devices, flags, holder);
 	}
-	mutex_unlock(&uuid_mutex);
 	return ret;
 }
 
