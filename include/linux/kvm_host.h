@@ -1049,6 +1049,8 @@ static inline int mmu_notifier_retry(struct kvm *kvm, unsigned long mmu_seq)
 #define KVM_MAX_IRQ_ROUTES 4096 //FIXME: we can have more than that...
 #elif defined(CONFIG_ARM64)
 #define KVM_MAX_IRQ_ROUTES 4096
+#elif defined(CONFIG_X86)
+#define KVM_MAX_IRQ_ROUTES 2048
 #else
 #define KVM_MAX_IRQ_ROUTES 1024
 #endif
