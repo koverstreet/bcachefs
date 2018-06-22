@@ -71,10 +71,10 @@ nfp_bpf_xdp_offload(struct nfp_app *app, struct nfp_net *nn,
 
 	ret = nfp_net_bpf_offload(nn, prog, running);
 	/* Stop offload if replace not possible */
-	if (ret && prog)
-		nfp_bpf_xdp_offload(app, nn, NULL);
+	if (ret)
+		return ret;
 
-	nn->dp.bpf_offload_xdp = prog && !ret;
+	nn->dp.bpf_offload_xdp = !!prog;
 	return ret;
 }
 
