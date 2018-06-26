@@ -44,7 +44,7 @@ Build-Depends-Indep:
  asciidoc <!stage1>,
  python-sphinx <!stage1>,
  python-sphinx-rtd-theme <!stage1>,
-Vcs-Git: git://git.launchpad.net/~ubuntu-kernel/ubuntu/+source/linux/+git/zesty
+Vcs-Git: git://git.launchpad.net/~ubuntu-kernel/ubuntu/+source/linux/+git/bionic
 XS-Testsuite: autopkgtest
 #XS-Testsuite-Depends: gcc-4.7 binutils
 
