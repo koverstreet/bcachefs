@@ -794,6 +794,11 @@ struct bch_dirent {
 } __attribute__((packed, aligned(8)));
 BKEY_VAL_TYPE(dirent,		BCH_DIRENT);
 
+#define BCH_NAME_MAX	(U8_MAX * sizeof(u64) -				\
+			 sizeof(struct bkey) -				\
+			 offsetof(struct bch_dirent, d_name))
+
+
 /* Xattrs */
 
 enum {
