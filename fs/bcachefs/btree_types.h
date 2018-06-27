@@ -209,7 +209,6 @@ enum btree_iter_uptodate {
 	BTREE_ITER_NEED_PEEK		= 1,
 	BTREE_ITER_NEED_RELOCK		= 2,
 	BTREE_ITER_NEED_TRAVERSE	= 3,
-	BTREE_ITER_END			= 4,
 };
 
 /*
@@ -224,7 +223,7 @@ struct btree_iter {
 	struct bpos		pos;
 
 	u8			flags;
-	unsigned		uptodate:4;
+	enum btree_iter_uptodate uptodate:4;
 	enum btree_id		btree_id:4;
 	unsigned		level:4,
 				locks_want:4,
