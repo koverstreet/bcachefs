@@ -12,6 +12,8 @@
 #include "recovery.h"
 #include "super-io.h"
 
+#include <linux/stat.h>
+
 struct bkey_i *btree_root_find(struct bch_fs *c,
 			       struct bch_sb_field_clean *clean,
 			       struct jset *j,
