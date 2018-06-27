@@ -1119,7 +1119,7 @@ static int bch2_statfs(struct dentry *dentry, struct kstatfs *buf)
 	       le64_to_cpup((void *) c->sb.user_uuid.b + sizeof(u64));
 	buf->f_fsid.val[0] = fsid & 0xFFFFFFFFUL;
 	buf->f_fsid.val[1] = (fsid >> 32) & 0xFFFFFFFFUL;
-	buf->f_namelen	= NAME_MAX;
+	buf->f_namelen	= BCH_NAME_MAX;
 
 	return 0;
 }
