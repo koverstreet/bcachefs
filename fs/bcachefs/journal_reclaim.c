@@ -394,7 +394,7 @@ int bch2_journal_flush_device_pins(struct journal *j, int dev_idx)
 	}
 	spin_unlock(&j->lock);
 
-	bch2_replicas_gc_end(c, ret);
+	ret = bch2_replicas_gc_end(c, ret);
 	mutex_unlock(&c->replicas_gc_lock);
 
 	return ret;

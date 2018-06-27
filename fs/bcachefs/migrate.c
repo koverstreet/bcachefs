@@ -160,7 +160,7 @@ retry:
 
 	ret = 0;
 out:
-	bch2_replicas_gc_end(c, ret);
+	ret = bch2_replicas_gc_end(c, ret);
 	mutex_unlock(&c->replicas_gc_lock);
 
 	return ret;
