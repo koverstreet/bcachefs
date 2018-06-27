@@ -920,7 +920,7 @@ static int btree_err_msg(struct bch_fs *c, struct btree *b, struct bset *i,
 	char *out = buf, *end = buf + len;
 
 	out += scnprintf(out, end - out,
-			 "error validating btree node %s "
+			 "error validating btree node %s"
 			 "at btree %u level %u/%u\n"
 			 "pos %llu:%llu node offset %u",
 			 write ? "before write " : "",
@@ -1120,7 +1120,7 @@ static int validate_bset(struct bch_fs *c, struct btree *b,
 
 			bch2_bkey_val_to_text(c, type, buf, sizeof(buf), u);
 			btree_err(BTREE_ERR_FIXABLE, c, b, i,
-				  "invalid bkey:\n%s\n%s", buf, invalid);
+				  "invalid bkey:\n%s\n%s", invalid, buf);
 
 			i->u64s = cpu_to_le16(le16_to_cpu(i->u64s) - k->u64s);
 			memmove_u64s_down(k, bkey_next(k),

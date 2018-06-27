@@ -15,7 +15,7 @@
 
 static unsigned xattr_val_u64s(unsigned name_len, unsigned val_len)
 {
-	return DIV_ROUND_UP(sizeof(struct bch_xattr) +
+	return DIV_ROUND_UP(offsetof(struct bch_xattr, x_name) +
 			    name_len + val_len, sizeof(u64));
 }
 

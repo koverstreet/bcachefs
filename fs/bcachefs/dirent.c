@@ -12,7 +12,8 @@
 
 unsigned bch2_dirent_name_bytes(struct bkey_s_c_dirent d)
 {
-	unsigned len = bkey_val_bytes(d.k) - sizeof(struct bch_dirent);
+	unsigned len = bkey_val_bytes(d.k) -
+		offsetof(struct bch_dirent, d_name);
 
 	while (len && !d.v->d_name[len - 1])
 		--len;
@@ -22,7 +23,8 @@ unsigned bch2_dirent_name_bytes(struct bkey_s_c_dirent d)
 
 static unsigned dirent_val_u64s(unsigned len)
 {
-	return DIV_ROUND_UP(sizeof(struct bch_dirent) + len, sizeof(u64));
+	return DIV_ROUND_UP(offsetof(struct bch_dirent, d_name) + len,
+			    sizeof(u64));
 }
 
 static u64 bch2_dirent_hash(const struct bch_hash_info *info,
@@ -98,7 +100,7 @@ const char *bch2_dirent_invalid(const struct bch_fs *c, struct bkey_s_c k)
 		if (bkey_val_u64s(k.k) > dirent_val_u64s(len))
 			return "value too big";
 
-		if (len > NAME_MAX)
+		if (len > BCH_NAME_MAX)
 			return "dirent name too big";
 
 		if (memchr(d.v->d_name, '/', len))
@@ -141,9 +143,14 @@ static struct bkey_i_dirent *dirent_create_key(u8 type,
 	struct bkey_i_dirent *dirent;
 	unsigned u64s = BKEY_U64s + dirent_val_u64s(name->len);
 
+	if (name->len > BCH_NAME_MAX)
+		return ERR_PTR(-ENAMETOOLONG);
+
+	BUG_ON(u64s > U8_MAX);
+
 	dirent = kmalloc(u64s * sizeof(u64), GFP_NOFS);
 	if (!dirent)
-		return NULL;
+		return ERR_PTR(-ENOMEM);
 
 	bkey_dirent_init(&dirent->k_i);
 	dirent->k.u64s = u64s;
@@ -153,7 +160,8 @@ static struct bkey_i_dirent *dirent_create_key(u8 type,
 	memcpy(dirent->v.d_name, name->name, name->len);
 	memset(dirent->v.d_name + name->len, 0,
 	       bkey_val_bytes(&dirent->k) -
-	       (sizeof(struct bch_dirent) + name->len));
+	       offsetof(struct bch_dirent, d_name) -
+	       name->len);
 
 	EBUG_ON(bch2_dirent_name_bytes(dirent_i_to_s_c(dirent)) != name->len);
 
@@ -169,8 +177,8 @@ int bch2_dirent_create(struct bch_fs *c, u64 dir_inum,
 	int ret;
 
 	dirent = dirent_create_key(type, name, dst_inum);
-	if (!dirent)
-		return -ENOMEM;
+	if (IS_ERR(dirent))
+		return PTR_ERR(dirent);
 
 	ret = bch2_hash_set(bch2_dirent_hash_desc, hash_info, c, dir_inum,
 			   journal_seq, &dirent->k_i, flags);
@@ -204,7 +212,7 @@ int bch2_dirent_rename(struct bch_fs *c,
 	struct bpos src_pos = bch2_dirent_pos(src_dir, src_name);
 	struct bpos dst_pos = bch2_dirent_pos(dst_dir, dst_name);
 	bool need_whiteout;
-	int ret = -ENOMEM;
+	int ret;
 
 	bch2_btree_iter_init(&src_iter, c, BTREE_ID_DIRENTS, src_pos,
 			     BTREE_ITER_SLOTS|BTREE_ITER_INTENT);
@@ -218,15 +226,19 @@ int bch2_dirent_rename(struct bch_fs *c,
 
 	if (mode == BCH_RENAME_EXCHANGE) {
 		new_src = dirent_create_key(0, src_name, 0);
-		if (!new_src)
+		if (IS_ERR(new_src)) {
+			ret = PTR_ERR(new_src);
 			goto err;
+		}
 	} else {
 		new_src = (void *) &delete;
 	}
 
 	new_dst = dirent_create_key(0, dst_name, 0);
-	if (!new_dst)
+	if (IS_ERR(new_dst)) {
+		ret = PTR_ERR(new_dst);
 		goto err;
+	}
 retry:
 	/*
 	 * Note that on -EINTR/dropped locks we're not restarting the lookup
