@@ -215,10 +215,8 @@ static int bch2_mark_replicas_slowpath(struct bch_fs *c,
 	return 0;
 err:
 	mutex_unlock(&c->sb_lock);
-	if (new_gc)
-		kfree(new_gc);
-	if (new_r)
-		kfree(new_r);
+	kfree(new_gc);
+	kfree(new_r);
 	return ret;
 }
 
@@ -265,10 +263,9 @@ int bch2_mark_bkey_replicas(struct bch_fs *c,
 	return bch2_mark_replicas(c, data_type, bch2_bkey_dirty_devs(k));
 }
 
-int bch2_replicas_gc_end(struct bch_fs *c, int err)
+int bch2_replicas_gc_end(struct bch_fs *c, int ret)
 {
 	struct bch_replicas_cpu *new_r, *old_r;
-	int ret = 0;
 
 	lockdep_assert_held(&c->replicas_gc_lock);
 
@@ -276,29 +273,31 @@ int bch2_replicas_gc_end(struct bch_fs *c, int err)
 
 	new_r = rcu_dereference_protected(c->replicas_gc,
 					  lockdep_is_held(&c->sb_lock));
+	rcu_assign_pointer(c->replicas_gc, NULL);
 
-	if (err) {
-		rcu_assign_pointer(c->replicas_gc, NULL);
-		kfree_rcu(new_r, rcu);
+	if (ret)
 		goto err;
-	}
 
 	if (bch2_cpu_replicas_to_sb_replicas(c, new_r)) {
 		ret = -ENOSPC;
 		goto err;
 	}
 
+	bch2_write_super(c);
+
+	/* don't update in memory replicas until changes are persistent */
+
 	old_r = rcu_dereference_protected(c->replicas,
 					  lockdep_is_held(&c->sb_lock));
 
 	rcu_assign_pointer(c->replicas, new_r);
-	rcu_assign_pointer(c->replicas_gc, NULL);
 	kfree_rcu(old_r, rcu);
-
-	bch2_write_super(c);
-err:
+out:
 	mutex_unlock(&c->sb_lock);
 	return ret;
+err:
+	kfree_rcu(new_r, rcu);
+	goto out;
 }
 
 int bch2_replicas_gc_start(struct bch_fs *c, unsigned typemask)
