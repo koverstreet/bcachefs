@@ -68,7 +68,7 @@ static int verify_superblock_clean(struct bch_fs *c,
 
 	for (i = 0; i < BTREE_ID_NR; i++) {
 		struct bkey_i *k1, *k2;
-		unsigned l1, l2;
+		unsigned l1 = 0, l2 = 0;
 
 		k1 = btree_root_find(c, clean, NULL, i, &l1);
 		k2 = btree_root_find(c, NULL, j, i, &l2);
@@ -76,13 +76,9 @@ static int verify_superblock_clean(struct bch_fs *c,
 		if (!k1 && !k2)
 			continue;
 
-		if (!k1 || !k2 ||
-		    k1->k.u64s != k2->k.u64s ||
-		    memcmp(k1, k2, bkey_bytes(k1)) ||
-		    l1 != l2)
-			panic("k1 %px l1 %u k2 %px l2 %u\n", k1, l1, k2, l2);
-
 		mustfix_fsck_err_on(!k1 || !k2 ||
+				    IS_ERR(k1) ||
+				    IS_ERR(k2) ||
 				    k1->k.u64s != k2->k.u64s ||
 				    memcmp(k1, k2, bkey_bytes(k1)) ||
 				    l1 != l2, c,
