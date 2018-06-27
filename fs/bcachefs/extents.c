@@ -778,7 +778,7 @@ static bool __bch2_cut_front(struct bpos where, struct bkey_s k)
 	 * cause offset to point to the next bucket:
 	 */
 	if (!len)
-		__set_bkey_deleted(k.k);
+		k.k->type = KEY_TYPE_DELETED;
 	else if (bkey_extent_is_data(k.k)) {
 		struct bkey_s_extent e = bkey_s_to_extent(k);
 		union bch_extent_entry *entry;
@@ -833,7 +833,7 @@ bool bch2_cut_back(struct bpos where, struct bkey *k)
 	k->size = len;
 
 	if (!len)
-		__set_bkey_deleted(k);
+		k->type = KEY_TYPE_DELETED;
 
 	return true;
 }
@@ -1103,7 +1103,7 @@ static void bch2_drop_subtract(struct extent_insert_state *s, struct bkey_s k)
 		bch2_subtract_sectors(s, k.s_c,
 				     bkey_start_offset(k.k), k.k->size);
 	k.k->size = 0;
-	__set_bkey_deleted(k.k);
+	k.k->type = KEY_TYPE_DELETED;
 }
 
 static bool bch2_extent_merge_inline(struct bch_fs *,

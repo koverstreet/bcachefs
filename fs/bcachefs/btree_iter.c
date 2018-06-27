@@ -453,6 +453,8 @@ static void __bch2_btree_node_iter_fix(struct btree_iter *iter,
 	if (new_u64s &&
 	    btree_iter_pos_cmp_packed(b, &iter->pos, where,
 				      iter->flags & BTREE_ITER_IS_EXTENTS)) {
+		btree_iter_set_dirty(iter, BTREE_ITER_NEED_PEEK);
+
 		bch2_btree_node_iter_push(node_iter, b, where, end);
 
 		if (!b->level &&
@@ -481,6 +483,8 @@ found:
 		set->k = (int) set->k + shift;
 		goto iter_current_key_not_modified;
 	}
+
+	btree_iter_set_dirty(iter, BTREE_ITER_NEED_PEEK);
 
 	bch2_btree_node_iter_sort(node_iter, b);
 	if (!b->level && node_iter == &iter->l[0].iter)
@@ -1355,6 +1359,7 @@ recheck:
 				      n.p.offset));
 
 		EBUG_ON(!n.size);
+		n.type = KEY_TYPE_DISCARD;
 	}
 
 	iter->k = n;
@@ -1375,7 +1380,7 @@ struct bkey_s_c bch2_btree_iter_peek_slot(struct btree_iter *iter)
 	if (iter->uptodate == BTREE_ITER_UPTODATE) {
 		struct bkey_s_c ret = { .k = &iter->k };
 
-		if (!bkey_deleted(&iter->k))
+		if (!bkey_whiteout(&iter->k))
 			ret.v = bkeyp_val(&l->b->format,
 				__bch2_btree_node_iter_peek_all(&l->iter, l->b));
 
@@ -1416,6 +1421,8 @@ struct bkey_s_c bch2_btree_iter_next_slot(struct btree_iter *iter)
 
 	if (!bkey_deleted(&iter->k))
 		__btree_iter_advance(&iter->l[0]);
+
+	btree_iter_set_dirty(iter, BTREE_ITER_NEED_PEEK);
 
 	return __bch2_btree_iter_peek_slot(iter);
 }
