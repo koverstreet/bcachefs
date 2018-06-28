@@ -199,14 +199,17 @@ void bch2_btree_root_alloc(struct bch_fs *, enum btree_id);
 static inline unsigned btree_update_reserve_required(struct bch_fs *c,
 						     struct btree *b)
 {
-	unsigned depth = btree_node_root(c, b)->level - b->level + 1;
+	unsigned depth = btree_node_root(c, b)->level + 1;
 
 	/*
 	 * Number of nodes we might have to allocate in a worst case btree
 	 * split operation - we split all the way up to the root, then allocate
-	 * a new root.
+	 * a new root, unless we're already at max depth:
 	 */
-	return depth * 2 + 1;
+	if (depth < BTREE_MAX_DEPTH)
+		return (depth - b->level) * 2 + 1;
+	else
+		return (depth - b->level) * 2 - 1;
 }
 
 static inline void btree_node_reset_sib_u64s(struct btree *b)
