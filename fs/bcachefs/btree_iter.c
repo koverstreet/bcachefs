@@ -1359,7 +1359,6 @@ recheck:
 				      n.p.offset));
 
 		EBUG_ON(!n.size);
-		n.type = KEY_TYPE_DISCARD;
 	}
 
 	iter->k = n;
@@ -1380,11 +1379,12 @@ struct bkey_s_c bch2_btree_iter_peek_slot(struct btree_iter *iter)
 	if (iter->uptodate == BTREE_ITER_UPTODATE) {
 		struct bkey_s_c ret = { .k = &iter->k };
 
-		if (!bkey_whiteout(&iter->k))
+		if (!bkey_deleted(&iter->k))
 			ret.v = bkeyp_val(&l->b->format,
 				__bch2_btree_node_iter_peek_all(&l->iter, l->b));
 
-		if (debug_check_bkeys(iter->c))
+		if (debug_check_bkeys(iter->c) &&
+		    !bkey_deleted(ret.k))
 			bch2_bkey_debugcheck(iter->c, l->b, ret);
 		return ret;
 	}
