@@ -2019,7 +2019,9 @@ static int alx_resume(struct device *dev)
 	}
 
 	if (netif_running(netdev)) {
+		rtnl_lock();
 		err = __alx_open(alx, true);
+		rtnl_unlock();
 		if (err)
 			return err;
 	}
