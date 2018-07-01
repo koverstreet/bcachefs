@@ -2,10 +2,28 @@
 
 #include "bcachefs.h"
 #include "btree_update.h"
+#include "journal_reclaim.h"
 #include "tests.h"
 
 #include "linux/kthread.h"
 #include "linux/random.h"
+
+static void delete_test_keys(struct bch_fs *c)
+{
+	int ret;
+
+	ret = bch2_btree_delete_range(c, BTREE_ID_EXTENTS,
+				      POS(0, 0), POS(0, U64_MAX),
+				      ZERO_VERSION, NULL, NULL, NULL);
+	BUG_ON(ret);
+
+	ret = bch2_btree_delete_range(c, BTREE_ID_DIRENTS,
+				      POS(0, 0), POS(0, U64_MAX),
+				      ZERO_VERSION, NULL, NULL, NULL);
+	BUG_ON(ret);
+}
+
+/* unit tests */
 
 static void test_delete(struct bch_fs *c, u64 nr)
 {
@@ -35,6 +53,206 @@ static void test_delete(struct bch_fs *c, u64 nr)
 
 	bch2_btree_iter_unlock(&iter);
 }
+
+static void test_delete_written(struct bch_fs *c, u64 nr)
+{
+	struct btree_iter iter;
+	struct bkey_i_cookie k;
+	int ret;
+
+	bkey_cookie_init(&k.k_i);
+
+	bch2_btree_iter_init(&iter, c, BTREE_ID_DIRENTS, k.k.p,
+			     BTREE_ITER_INTENT);
+
+	ret = bch2_btree_iter_traverse(&iter);
+	BUG_ON(ret);
+
+	ret = bch2_btree_insert_at(c, NULL, NULL, NULL, 0,
+				   BTREE_INSERT_ENTRY(&iter, &k.k_i));
+	BUG_ON(ret);
+
+	bch2_journal_flush_all_pins(&c->journal);
+
+	ret = bch2_btree_delete_at(&iter, 0);
+	BUG_ON(ret);
+
+	bch2_btree_iter_unlock(&iter);
+}
+
+static void test_iterate(struct bch_fs *c, u64 nr)
+{
+	struct btree_iter iter;
+	struct bkey_s_c k;
+	u64 i;
+	int ret;
+
+	delete_test_keys(c);
+
+	pr_info("inserting test keys");
+
+	for (i = 0; i < nr; i++) {
+		struct bkey_i_cookie k;
+
+		bkey_cookie_init(&k.k_i);
+		k.k.p.offset = i;
+
+		ret = bch2_btree_insert(c, BTREE_ID_DIRENTS, &k.k_i,
+					NULL, NULL, NULL, 0);
+		BUG_ON(ret);
+	}
+
+	pr_info("iterating forwards");
+
+	i = 0;
+
+	for_each_btree_key(&iter, c, BTREE_ID_DIRENTS, POS(0, 0), 0, k)
+		BUG_ON(k.k->p.offset != i++);
+	bch2_btree_iter_unlock(&iter);
+
+	BUG_ON(i != nr);
+}
+
+static void test_iterate_extents(struct bch_fs *c, u64 nr)
+{
+	struct btree_iter iter;
+	struct bkey_s_c k;
+	u64 i;
+	int ret;
+
+	delete_test_keys(c);
+
+	pr_info("inserting test extents");
+
+	for (i = 0; i < nr; i += 8) {
+		struct bkey_i_cookie k;
+
+		bkey_cookie_init(&k.k_i);
+		k.k.p.offset = i + 8;
+		k.k.size = 8;
+
+		ret = bch2_btree_insert(c, BTREE_ID_EXTENTS, &k.k_i,
+					NULL, NULL, NULL, 0);
+		BUG_ON(ret);
+	}
+
+	pr_info("iterating forwards");
+
+	i = 0;
+
+	for_each_btree_key(&iter, c, BTREE_ID_EXTENTS, POS(0, 0), 0, k) {
+		BUG_ON(bkey_start_offset(k.k) != i);
+		i = k.k->p.offset;
+	}
+	bch2_btree_iter_unlock(&iter);
+
+	BUG_ON(i != nr);
+}
+
+static void test_iterate_slots(struct bch_fs *c, u64 nr)
+{
+	struct btree_iter iter;
+	struct bkey_s_c k;
+	u64 i;
+	int ret;
+
+	delete_test_keys(c);
+
+	pr_info("inserting test keys");
+
+	for (i = 0; i < nr; i++) {
+		struct bkey_i_cookie k;
+
+		bkey_cookie_init(&k.k_i);
+		k.k.p.offset = i * 2;
+
+		ret = bch2_btree_insert(c, BTREE_ID_DIRENTS, &k.k_i,
+					NULL, NULL, NULL, 0);
+		BUG_ON(ret);
+	}
+
+	pr_info("iterating forwards");
+
+	i = 0;
+
+	for_each_btree_key(&iter, c, BTREE_ID_DIRENTS, POS(0, 0), 0, k) {
+		BUG_ON(k.k->p.offset != i);
+		i += 2;
+	}
+	bch2_btree_iter_unlock(&iter);
+
+	BUG_ON(i != nr * 2);
+
+	pr_info("iterating forwards by slots");
+
+	i = 0;
+
+	for_each_btree_key(&iter, c, BTREE_ID_DIRENTS, POS(0, 0),
+			   BTREE_ITER_SLOTS, k) {
+		BUG_ON(bkey_deleted(k.k) != (i & 1));
+		BUG_ON(k.k->p.offset != i++);
+
+		if (i == nr * 2)
+			break;
+	}
+	bch2_btree_iter_unlock(&iter);
+}
+
+static void test_iterate_slots_extents(struct bch_fs *c, u64 nr)
+{
+	struct btree_iter iter;
+	struct bkey_s_c k;
+	u64 i;
+	int ret;
+
+	delete_test_keys(c);
+
+	pr_info("inserting test keys");
+
+	for (i = 0; i < nr; i += 16) {
+		struct bkey_i_cookie k;
+
+		bkey_cookie_init(&k.k_i);
+		k.k.p.offset = i + 16;
+		k.k.size = 8;
+
+		ret = bch2_btree_insert(c, BTREE_ID_EXTENTS, &k.k_i,
+					NULL, NULL, NULL, 0);
+		BUG_ON(ret);
+	}
+
+	pr_info("iterating forwards");
+
+	i = 0;
+
+	for_each_btree_key(&iter, c, BTREE_ID_EXTENTS, POS(0, 0), 0, k) {
+		BUG_ON(bkey_start_offset(k.k) != i + 8);
+		BUG_ON(k.k->size != 8);
+		i += 16;
+	}
+	bch2_btree_iter_unlock(&iter);
+
+	BUG_ON(i != nr);
+
+	pr_info("iterating forwards by slots");
+
+	i = 0;
+
+	for_each_btree_key(&iter, c, BTREE_ID_EXTENTS, POS(0, 0),
+			   BTREE_ITER_SLOTS, k) {
+		BUG_ON(bkey_deleted(k.k) != !(i % 16));
+
+		BUG_ON(bkey_start_offset(k.k) != i);
+		BUG_ON(k.k->size != 8);
+		i = k.k->p.offset;
+
+		if (i == nr)
+			break;
+	}
+	bch2_btree_iter_unlock(&iter);
+}
+
+/* perf tests */
 
 static u64 test_rand(void)
 {
@@ -183,7 +401,7 @@ static void seq_delete(struct bch_fs *c, u64 nr)
 	int ret;
 
 	ret = bch2_btree_delete_range(c, BTREE_ID_DIRENTS,
-				      POS_MIN, POS_MAX,
+				      POS(0, 0), POS(0, U64_MAX),
 				      ZERO_VERSION, NULL, NULL, NULL);
 	BUG_ON(ret);
 }
@@ -256,6 +474,11 @@ void bch2_btree_perf_test(struct bch_fs *c, const char *testname,
 
 	/* a unit test, not a perf test: */
 	perf_test(test_delete);
+	perf_test(test_delete_written);
+	perf_test(test_iterate);
+	perf_test(test_iterate_extents);
+	perf_test(test_iterate_slots);
+	perf_test(test_iterate_slots_extents);
 
 	if (!j.fn) {
 		pr_err("unknown test %s", testname);
