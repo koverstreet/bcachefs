@@ -1685,67 +1685,66 @@ static inline unsigned __btree_node_iter_used(struct btree_node_iter *iter)
 /*
  * Expensive:
  */
-struct bkey_packed *bch2_btree_node_iter_prev_all(struct btree_node_iter *iter,
-						  struct btree *b)
+struct bkey_packed *bch2_btree_node_iter_prev_filter(struct btree_node_iter *iter,
+						     struct btree *b,
+						     unsigned min_key_type)
 {
 	struct bkey_packed *k, *prev = NULL;
+	struct bkey_packed *orig_pos = bch2_btree_node_iter_peek_all(iter, b);
 	struct btree_node_iter_set *set;
 	struct bset_tree *t;
-	struct bset_tree *prev_t;
-	unsigned end, used;
+	unsigned end;
 
 	bch2_btree_node_iter_verify(iter, b);
 
 	for_each_bset(b, t) {
-		k = bch2_bkey_prev_all(b, t,
-			bch2_btree_node_iter_bset_pos(iter, b, t));
+		k = bch2_bkey_prev_filter(b, t,
+			bch2_btree_node_iter_bset_pos(iter, b, t),
+			min_key_type);
 		if (k &&
 		    (!prev || __btree_node_iter_cmp(iter->is_extents, b,
 						    k, prev) > 0)) {
 			prev = k;
-			prev_t = t;
+			end = t->end_offset;
 		}
 	}
 
 	if (!prev)
-		return NULL;
+		goto out;
 
 	/*
 	 * We're manually memmoving instead of just calling sort() to ensure the
 	 * prev we picked ends up in slot 0 - sort won't necessarily put it
 	 * there because of duplicate deleted keys:
 	 */
-	end = __btree_node_key_to_offset(b, btree_bkey_last(b, prev_t));
 	btree_node_iter_for_each(iter, set)
-		if (set->end == end) {
-			memmove(&iter->data[1],
-				&iter->data[0],
-				(void *) set - (void *) &iter->data[0]);
-			goto out;
-		}
+		if (set->end == end)
+			goto found;
 
-	used = __btree_node_iter_used(iter);
-	BUG_ON(used >= ARRAY_SIZE(iter->data));
+	BUG_ON(set != &iter->data[__btree_node_iter_used(iter)]);
+found:
+	BUG_ON(set >= iter->data + ARRAY_SIZE(iter->data));
 
 	memmove(&iter->data[1],
 		&iter->data[0],
-		(void *) &iter->data[used] - (void *) &iter->data[0]);
-out:
+		(void *) set - (void *) &iter->data[0]);
+
 	iter->data[0].k = __btree_node_key_to_offset(b, prev);
 	iter->data[0].end = end;
+out:
+	if (IS_ENABLED(CONFIG_BCACHEFS_DEBUG)) {
+		struct btree_node_iter iter2 = *iter;
+
+		if (prev)
+			bch2_btree_node_iter_advance(&iter2, b);
+
+		while ((k = bch2_btree_node_iter_peek_all(&iter2, b)) != orig_pos) {
+			BUG_ON(k->type >= min_key_type);
+			bch2_btree_node_iter_advance(&iter2, b);
+		}
+	}
+
 	return prev;
-}
-
-struct bkey_packed *bch2_btree_node_iter_prev(struct btree_node_iter *iter,
-					      struct btree *b)
-{
-	struct bkey_packed *k;
-
-	do {
-		k = bch2_btree_node_iter_prev_all(iter, b);
-	} while (k && bkey_deleted(k));
-
-	return k;
 }
 
 struct bkey_s_c bch2_btree_node_iter_peek_unpack(struct btree_node_iter *iter,
