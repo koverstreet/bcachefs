@@ -252,9 +252,6 @@ static int check_extents(struct bch_fs *c)
 
 	for_each_btree_key(&iter, c, BTREE_ID_EXTENTS,
 			   POS(BCACHEFS_ROOT_INO, 0), 0, k) {
-		if (k.k->type == KEY_TYPE_DISCARD)
-			continue;
-
 		ret = walk_inode(c, &w, k.k->p.inode);
 		if (ret)
 			break;
