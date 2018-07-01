@@ -1074,6 +1074,18 @@ int __must_check bch2_btree_iter_traverse(struct btree_iter *iter)
 	return ret;
 }
 
+static inline void bch2_btree_iter_checks(struct btree_iter *iter,
+					  enum btree_iter_type type)
+{
+	EBUG_ON(iter->btree_id >= BTREE_ID_NR);
+	EBUG_ON((iter->flags & BTREE_ITER_TYPE) != type);
+	EBUG_ON(!!(iter->flags & BTREE_ITER_IS_EXTENTS) !=
+		(iter->btree_id == BTREE_ID_EXTENTS &&
+		 type != BTREE_ITER_NODES));
+
+	bch2_btree_iter_verify_locks(iter);
+}
+
 /* Iterate across nodes (leaf and interior nodes) */
 
 struct btree *bch2_btree_iter_peek_node(struct btree_iter *iter)
@@ -1081,8 +1093,7 @@ struct btree *bch2_btree_iter_peek_node(struct btree_iter *iter)
 	struct btree *b;
 	int ret;
 
-	EBUG_ON(iter->flags & BTREE_ITER_IS_EXTENTS);
-	bch2_btree_iter_verify_locks(iter);
+	bch2_btree_iter_checks(iter, BTREE_ITER_NODES);
 
 	if (iter->uptodate == BTREE_ITER_UPTODATE)
 		return iter->l[iter->level].b;
@@ -1113,8 +1124,7 @@ struct btree *bch2_btree_iter_next_node(struct btree_iter *iter, unsigned depth)
 	struct btree *b;
 	int ret;
 
-	EBUG_ON(iter->flags & BTREE_ITER_IS_EXTENTS);
-	bch2_btree_iter_verify_locks(iter);
+	bch2_btree_iter_checks(iter, BTREE_ITER_NODES);
 
 	btree_iter_up(iter);
 
@@ -1248,10 +1258,7 @@ struct bkey_s_c bch2_btree_iter_peek(struct btree_iter *iter)
 	struct bkey_s_c k;
 	int ret;
 
-	EBUG_ON(!!(iter->flags & BTREE_ITER_IS_EXTENTS) !=
-		(iter->btree_id == BTREE_ID_EXTENTS));
-	EBUG_ON(iter->flags & BTREE_ITER_SLOTS);
-	bch2_btree_iter_verify_locks(iter);
+	bch2_btree_iter_checks(iter, BTREE_ITER_KEYS);
 
 	if (iter->uptodate == BTREE_ITER_UPTODATE) {
 		struct bkey_packed *k =
@@ -1324,10 +1331,7 @@ struct bkey_s_c bch2_btree_iter_next(struct btree_iter *iter)
 	struct bkey_packed *p;
 	struct bkey_s_c k;
 
-	EBUG_ON(!!(iter->flags & BTREE_ITER_IS_EXTENTS) !=
-		(iter->btree_id == BTREE_ID_EXTENTS));
-	EBUG_ON(iter->flags & BTREE_ITER_SLOTS);
-	bch2_btree_iter_verify_locks(iter);
+	bch2_btree_iter_checks(iter, BTREE_ITER_KEYS);
 
 	if (unlikely(iter->uptodate != BTREE_ITER_UPTODATE)) {
 		k = bch2_btree_iter_peek(iter);
@@ -1421,10 +1425,7 @@ struct bkey_s_c bch2_btree_iter_peek_slot(struct btree_iter *iter)
 	struct btree_iter_level *l = &iter->l[0];
 	int ret;
 
-	EBUG_ON(!!(iter->flags & BTREE_ITER_IS_EXTENTS) !=
-		(iter->btree_id == BTREE_ID_EXTENTS));
-	EBUG_ON(!(iter->flags & BTREE_ITER_SLOTS));
-	bch2_btree_iter_verify_locks(iter);
+	bch2_btree_iter_checks(iter, BTREE_ITER_SLOTS);
 
 	if (iter->uptodate == BTREE_ITER_UPTODATE) {
 		struct bkey_s_c ret = { .k = &iter->k };
@@ -1451,10 +1452,7 @@ struct bkey_s_c bch2_btree_iter_peek_slot(struct btree_iter *iter)
 
 struct bkey_s_c bch2_btree_iter_next_slot(struct btree_iter *iter)
 {
-	EBUG_ON(!!(iter->flags & BTREE_ITER_IS_EXTENTS) !=
-		(iter->btree_id == BTREE_ID_EXTENTS));
-	EBUG_ON(!(iter->flags & BTREE_ITER_SLOTS));
-	bch2_btree_iter_verify_locks(iter);
+	bch2_btree_iter_checks(iter, BTREE_ITER_SLOTS);
 
 	iter->pos = btree_type_successor(iter->btree_id, iter->k.p);
 

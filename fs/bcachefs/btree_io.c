@@ -1547,7 +1547,7 @@ static void bch2_btree_node_write_error(struct bch_fs *c,
 
 	__bch2_btree_iter_init(&iter, c, b->btree_id, b->key.k.p,
 			       BTREE_MAX_DEPTH,
-			       b->level, 0);
+			       b->level, BTREE_ITER_NODES);
 retry:
 	ret = bch2_btree_iter_traverse(&iter);
 	if (ret)

@@ -72,7 +72,8 @@ static void journal_seq_blacklist_flush(struct journal *j,
 		n = bl->entries[i];
 		mutex_unlock(&j->blacklist_lock);
 
-		__bch2_btree_iter_init(&iter, c, n.btree_id, n.pos, 0, 0, 0);
+		__bch2_btree_iter_init(&iter, c, n.btree_id, n.pos,
+				       0, 0, BTREE_ITER_NODES);
 
 		b = bch2_btree_iter_peek_node(&iter);
 
