@@ -1347,6 +1347,51 @@ struct bkey_s_c bch2_btree_iter_next(struct btree_iter *iter)
 	return k;
 }
 
+struct bkey_s_c bch2_btree_iter_prev(struct btree_iter *iter)
+{
+	struct btree_iter_level *l = &iter->l[0];
+	struct bkey_packed *p;
+	struct bkey_s_c k;
+	int ret;
+
+	bch2_btree_iter_checks(iter, BTREE_ITER_KEYS);
+
+	if (unlikely(iter->uptodate != BTREE_ITER_UPTODATE)) {
+		k = bch2_btree_iter_peek(iter);
+		if (IS_ERR(k.k))
+			return k;
+	}
+
+	while (1) {
+		p = bch2_btree_node_iter_prev(&l->iter, l->b);
+		if (likely(p))
+			break;
+
+		iter->pos = l->b->data->min_key;
+		if (!bkey_cmp(iter->pos, POS_MIN))
+			return bkey_s_c_null;
+
+		bch2_btree_iter_set_pos(iter,
+			btree_type_predecessor(iter->btree_id, iter->pos));
+
+		ret = bch2_btree_iter_traverse(iter);
+		if (unlikely(ret))
+			return bkey_s_c_err(ret);
+
+		p = bch2_btree_node_iter_peek(&l->iter, l->b);
+		if (p)
+			break;
+	}
+
+	k = __btree_iter_unpack(iter, l, &iter->k, p);
+
+	EBUG_ON(bkey_cmp(bkey_start_pos(k.k), iter->pos) > 0);
+
+	iter->pos	= bkey_start_pos(k.k);
+	iter->uptodate	= BTREE_ITER_UPTODATE;
+	return k;
+}
+
 static inline struct bkey_s_c
 __bch2_btree_iter_peek_slot(struct btree_iter *iter)
 {
