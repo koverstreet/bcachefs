@@ -269,6 +269,16 @@ static inline struct bpos bkey_successor(struct bpos p)
 	return ret;
 }
 
+static inline struct bpos bkey_predecessor(struct bpos p)
+{
+	struct bpos ret = p;
+
+	if (!ret.offset--)
+		BUG_ON(!ret.inode--);
+
+	return ret;
+}
+
 static inline u64 bkey_start_offset(const struct bkey *k)
 {
 	return k->p.offset - k->size;

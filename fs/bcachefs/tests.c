@@ -111,6 +111,14 @@ static void test_iterate(struct bch_fs *c, u64 nr)
 	bch2_btree_iter_unlock(&iter);
 
 	BUG_ON(i != nr);
+
+	pr_info("iterating backwards");
+
+	while (!IS_ERR_OR_NULL((k = bch2_btree_iter_prev(&iter)).k))
+		BUG_ON(k.k->p.offset != --i);
+	bch2_btree_iter_unlock(&iter);
+
+	BUG_ON(i);
 }
 
 static void test_iterate_extents(struct bch_fs *c, u64 nr)
@@ -147,6 +155,16 @@ static void test_iterate_extents(struct bch_fs *c, u64 nr)
 	bch2_btree_iter_unlock(&iter);
 
 	BUG_ON(i != nr);
+
+	pr_info("iterating backwards");
+
+	while (!IS_ERR_OR_NULL((k = bch2_btree_iter_prev(&iter)).k)) {
+		BUG_ON(k.k->p.offset != i);
+		i = bkey_start_offset(k.k);
+	}
+	bch2_btree_iter_unlock(&iter);
+
+	BUG_ON(i);
 }
 
 static void test_iterate_slots(struct bch_fs *c, u64 nr)
