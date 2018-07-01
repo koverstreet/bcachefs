@@ -1522,6 +1522,7 @@ EXPORT_SYMBOL net/netfilter/x_tables 0x00000000	xt_check_entry_offsets
 EXPORT_SYMBOL net/netfilter/x_tables 0x00000000	xt_check_proc_name
 EXPORT_SYMBOL net/netfilter/x_tables 0x00000000	xt_compat_check_entry_offsets
 EXPORT_SYMBOL net/netfilter/x_tables 0x00000000	xt_compat_init_offsets
+EXPORT_SYMBOL net/netfilter/x_tables 0x00000000	xt_counters_alloc
 EXPORT_SYMBOL net/netfilter/x_tables 0x00000000	xt_find_jump_offset
 EXPORT_SYMBOL net/netfilter/x_tables 0x00000000	xt_find_match
 EXPORT_SYMBOL net/netfilter/x_tables 0x00000000	xt_find_target
@@ -4236,6 +4237,7 @@ EXPORT_SYMBOL vmlinux 0x00000000	pcim_iomap_table
 EXPORT_SYMBOL vmlinux 0x00000000	pcim_iounmap
 EXPORT_SYMBOL vmlinux 0x00000000	pcim_iounmap_regions
 EXPORT_SYMBOL vmlinux 0x00000000	pcim_pin_device
+EXPORT_SYMBOL vmlinux 0x00000000	pcim_set_mwi
 EXPORT_SYMBOL vmlinux 0x00000000	pcix_get_max_mmrbc
 EXPORT_SYMBOL vmlinux 0x00000000	pcix_get_mmrbc
 EXPORT_SYMBOL vmlinux 0x00000000	pcix_set_mmrbc
@@ -7149,8 +7151,8 @@ EXPORT_SYMBOL_GPL net/l2tp/l2tp_core 0x00000000	l2tp_session_set_header_len
 EXPORT_SYMBOL_GPL net/l2tp/l2tp_core 0x00000000	l2tp_tunnel_closeall
 EXPORT_SYMBOL_GPL net/l2tp/l2tp_core 0x00000000	l2tp_tunnel_create
 EXPORT_SYMBOL_GPL net/l2tp/l2tp_core 0x00000000	l2tp_tunnel_delete
-EXPORT_SYMBOL_GPL net/l2tp/l2tp_core 0x00000000	l2tp_tunnel_find_nth
 EXPORT_SYMBOL_GPL net/l2tp/l2tp_core 0x00000000	l2tp_tunnel_get
+EXPORT_SYMBOL_GPL net/l2tp/l2tp_core 0x00000000	l2tp_tunnel_get_nth
 EXPORT_SYMBOL_GPL net/l2tp/l2tp_core 0x00000000	l2tp_tunnel_register
 EXPORT_SYMBOL_GPL net/l2tp/l2tp_core 0x00000000	l2tp_udp_encap_recv
 EXPORT_SYMBOL_GPL net/l2tp/l2tp_core 0x00000000	l2tp_xmit_skb
