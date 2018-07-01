@@ -428,6 +428,7 @@ int __bch2_btree_insert_at(struct btree_insert *trans)
 		BUG_ON(i->iter->level);
 		BUG_ON(bkey_cmp(bkey_start_pos(&i->k->k), i->iter->pos));
 		BUG_ON(debug_check_bkeys(c) &&
+		       !bkey_deleted(&i->k->k) &&
 		       bch2_bkey_invalid(c, i->iter->btree_id,
 					 bkey_i_to_s_c(i->k)));
 	}
@@ -644,11 +645,6 @@ int bch2_btree_delete_range(struct bch_fs *c, enum btree_id id,
 		if (bkey_cmp(iter.pos, end) >= 0)
 			break;
 
-		if (k.k->type == KEY_TYPE_DISCARD) {
-			bch2_btree_iter_next(&iter);
-			continue;
-		}
-
 		bkey_init(&delete.k);
 
 		/*
@@ -665,15 +661,6 @@ int bch2_btree_delete_range(struct bch_fs *c, enum btree_id id,
 		delete.k.version = version;
 
 		if (iter.flags & BTREE_ITER_IS_EXTENTS) {
-			/*
-			 * The extents btree is special - KEY_TYPE_DISCARD is
-			 * used for deletions, not KEY_TYPE_DELETED. This is an
-			 * internal implementation detail that probably
-			 * shouldn't be exposed (internally, KEY_TYPE_DELETED is
-			 * used as a proxy for k->size == 0):
-			 */
-			delete.k.type = KEY_TYPE_DISCARD;
-
 			/* create the biggest key we can */
 			bch2_key_resize(&delete.k, max_sectors);
 			bch2_cut_back(end, &delete.k);
