@@ -482,9 +482,11 @@ static inline int __btree_node_iter_cmp(bool is_extents,
 	 * For extents, bkey_deleted() is used as a proxy for k->size == 0, so
 	 * deleted keys have to sort last.
 	 */
-	return bkey_cmp_packed(b, l, r) ?: is_extents
-		? (int) bkey_deleted(l) - (int) bkey_deleted(r)
-		: (int) bkey_deleted(r) - (int) bkey_deleted(l);
+	return bkey_cmp_packed(b, l, r)
+		?: (is_extents
+		    ? (int) bkey_deleted(l) - (int) bkey_deleted(r)
+		    : (int) bkey_deleted(r) - (int) bkey_deleted(l))
+		?: (l > r) - (l < r);
 }
 
 static inline int btree_node_iter_cmp(struct btree_node_iter *iter,
@@ -524,24 +526,33 @@ __bch2_btree_node_iter_peek_all(struct btree_node_iter *iter,
 }
 
 static inline struct bkey_packed *
+bch2_btree_node_iter_peek_filter(struct btree_node_iter *iter,
+				 struct btree *b,
+				 unsigned min_key_type)
+{
+	while (!bch2_btree_node_iter_end(iter)) {
+		struct bkey_packed *k = __bch2_btree_node_iter_peek_all(iter, b);
+
+		if (k->type >= min_key_type)
+			return k;
+
+		bch2_btree_node_iter_advance(iter, b);
+	}
+
+	return NULL;
+}
+
+static inline struct bkey_packed *
 bch2_btree_node_iter_peek_all(struct btree_node_iter *iter,
 			      struct btree *b)
 {
-	return bch2_btree_node_iter_end(iter)
-		? NULL
-		: __bch2_btree_node_iter_peek_all(iter, b);
+	return bch2_btree_node_iter_peek_filter(iter, b, 0);
 }
 
 static inline struct bkey_packed *
 bch2_btree_node_iter_peek(struct btree_node_iter *iter, struct btree *b)
 {
-	struct bkey_packed *ret;
-
-	while ((ret = bch2_btree_node_iter_peek_all(iter, b)) &&
-	       bkey_deleted(ret))
-		bch2_btree_node_iter_advance(iter, b);
-
-	return ret;
+	return bch2_btree_node_iter_peek_filter(iter, b, KEY_TYPE_DELETED + 1);
 }
 
 static inline struct bkey_packed *
@@ -555,10 +566,20 @@ bch2_btree_node_iter_next_all(struct btree_node_iter *iter, struct btree *b)
 	return ret;
 }
 
-struct bkey_packed *bch2_btree_node_iter_prev_all(struct btree_node_iter *,
-						 struct btree *);
-struct bkey_packed *bch2_btree_node_iter_prev(struct btree_node_iter *,
-					     struct btree *);
+struct bkey_packed *bch2_btree_node_iter_prev_filter(struct btree_node_iter *,
+						     struct btree *, unsigned);
+
+static inline struct bkey_packed *
+bch2_btree_node_iter_prev_all(struct btree_node_iter *iter, struct btree *b)
+{
+	return bch2_btree_node_iter_prev_filter(iter, b, 0);
+}
+
+static inline struct bkey_packed *
+bch2_btree_node_iter_prev(struct btree_node_iter *iter, struct btree *b)
+{
+	return bch2_btree_node_iter_prev_filter(iter, b, KEY_TYPE_DELETED + 1);
+}
 
 /*
  * Iterates over all _live_ keys - skipping deleted (and potentially
