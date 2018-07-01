@@ -552,7 +552,7 @@ bch2_btree_node_iter_peek_all(struct btree_node_iter *iter,
 static inline struct bkey_packed *
 bch2_btree_node_iter_peek(struct btree_node_iter *iter, struct btree *b)
 {
-	return bch2_btree_node_iter_peek_filter(iter, b, KEY_TYPE_DELETED + 1);
+	return bch2_btree_node_iter_peek_filter(iter, b, KEY_TYPE_DISCARD + 1);
 }
 
 static inline struct bkey_packed *
@@ -578,7 +578,7 @@ bch2_btree_node_iter_prev_all(struct btree_node_iter *iter, struct btree *b)
 static inline struct bkey_packed *
 bch2_btree_node_iter_prev(struct btree_node_iter *iter, struct btree *b)
 {
-	return bch2_btree_node_iter_prev_filter(iter, b, KEY_TYPE_DELETED + 1);
+	return bch2_btree_node_iter_prev_filter(iter, b, KEY_TYPE_DISCARD + 1);
 }
 
 /*

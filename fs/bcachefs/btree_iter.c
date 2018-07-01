@@ -1338,7 +1338,7 @@ struct bkey_s_c bch2_btree_iter_next(struct btree_iter *iter)
 		p = bch2_btree_node_iter_peek_all(&l->iter, l->b);
 		if (unlikely(!p))
 			return bch2_btree_iter_peek_next_leaf(iter);
-	} while (bkey_deleted(p));
+	} while (bkey_whiteout(p));
 
 	k = __btree_iter_unpack(iter, l, &iter->k, p);
 
