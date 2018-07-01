@@ -1979,11 +1979,11 @@ bool bch2_extent_normalize(struct bch_fs *c, struct bkey_s k)
 		return false;
 
 	case KEY_TYPE_DELETED:
-	case KEY_TYPE_COOKIE:
 		return true;
-
 	case KEY_TYPE_DISCARD:
 		return bversion_zero(k.k->version);
+	case KEY_TYPE_COOKIE:
+		return false;
 
 	case BCH_EXTENT:
 	case BCH_EXTENT_CACHED:
