@@ -137,6 +137,7 @@ struct btree *bch2_btree_iter_next_node(struct btree_iter *, unsigned);
 
 struct bkey_s_c bch2_btree_iter_peek(struct btree_iter *);
 struct bkey_s_c bch2_btree_iter_next(struct btree_iter *);
+struct bkey_s_c bch2_btree_iter_prev(struct btree_iter *);
 
 struct bkey_s_c bch2_btree_iter_peek_slot(struct btree_iter *);
 struct bkey_s_c bch2_btree_iter_next_slot(struct btree_iter *);
@@ -170,6 +171,19 @@ static inline struct bpos btree_type_successor(enum btree_id id,
 		pos.offset = 0;
 	} else if (id != BTREE_ID_EXTENTS) {
 		pos = bkey_successor(pos);
+	}
+
+	return pos;
+}
+
+static inline struct bpos btree_type_predecessor(enum btree_id id,
+					       struct bpos pos)
+{
+	if (id == BTREE_ID_INODES) {
+		--pos.inode;
+		pos.offset = 0;
+	} else /* if (id != BTREE_ID_EXTENTS) */ {
+		pos = bkey_predecessor(pos);
 	}
 
 	return pos;
