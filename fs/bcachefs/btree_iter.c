@@ -1338,7 +1338,7 @@ struct bkey_s_c bch2_btree_iter_next(struct btree_iter *iter)
 		p = bch2_btree_node_iter_peek_all(&l->iter, l->b);
 		if (unlikely(!p))
 			return bch2_btree_iter_peek_next_leaf(iter);
-	} while (bkey_deleted(p));
+	} while (bkey_whiteout(p));
 
 	k = __btree_iter_unpack(iter, l, &iter->k, p);
 
@@ -1406,13 +1406,6 @@ recheck:
 	       bkey_cmp(bkey_start_pos(k.k), iter->pos) == 0)
 		__btree_iter_advance(l);
 
-	if (k.k && bkey_cmp(bkey_start_pos(k.k), iter->pos) <= 0) {
-		EBUG_ON(bkey_cmp(k.k->p, iter->pos) < 0);
-		EBUG_ON(bkey_deleted(k.k));
-		iter->uptodate = BTREE_ITER_UPTODATE;
-		return k;
-	}
-
 	/*
 	 * If we got to the end of the node, check if we need to traverse to the
 	 * next node:
@@ -1426,6 +1419,15 @@ recheck:
 		goto recheck;
 	}
 
+	if (k.k &&
+	    !bkey_whiteout(k.k) &&
+	    bkey_cmp(bkey_start_pos(k.k), iter->pos) <= 0) {
+		EBUG_ON(bkey_cmp(k.k->p, iter->pos) < 0);
+		EBUG_ON(bkey_deleted(k.k));
+		iter->uptodate = BTREE_ITER_UPTODATE;
+		return k;
+	}
+
 	/* hole */
 	bkey_init(&n);
 	n.p = iter->pos;
@@ -1437,6 +1439,13 @@ recheck:
 
 			iter->pos = bkey_successor(iter->pos);
 			goto recheck;
+		}
+
+		if (k.k && bkey_whiteout(k.k)) {
+			struct btree_node_iter node_iter = l->iter;
+
+			k = __btree_iter_unpack(iter, l, &iter->k,
+				bch2_btree_node_iter_peek(&node_iter, l->b));
 		}
 
 		if (!k.k)

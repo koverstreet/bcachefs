@@ -2064,6 +2064,29 @@ out:
 
 /* truncate: */
 
+static inline int range_has_data(struct bch_fs *c,
+				  struct bpos start,
+				  struct bpos end)
+{
+
+	struct btree_iter iter;
+	struct bkey_s_c k;
+	int ret = 0;
+
+	for_each_btree_key(&iter, c, BTREE_ID_EXTENTS,
+			   start, 0, k) {
+		if (bkey_cmp(bkey_start_pos(k.k), end) >= 0)
+			break;
+
+		if (bkey_extent_is_data(k.k)) {
+			ret = 1;
+			break;
+		}
+	}
+
+	return bch2_btree_iter_unlock(&iter) ?: ret;
+}
+
 static int __bch2_truncate_page(struct bch_inode_info *inode,
 				pgoff_t index, loff_t start, loff_t end)
 {
@@ -2085,30 +2108,16 @@ static int __bch2_truncate_page(struct bch_inode_info *inode,
 
 	page = find_lock_page(mapping, index);
 	if (!page) {
-		struct btree_iter iter;
-		struct bkey_s_c k = bkey_s_c_null;
-
 		/*
 		 * XXX: we're doing two index lookups when we end up reading the
 		 * page
 		 */
-		for_each_btree_key(&iter, c, BTREE_ID_EXTENTS,
-				   POS(inode->v.i_ino,
-				       index << PAGE_SECTOR_SHIFT), 0, k) {
-			if (bkey_cmp(bkey_start_pos(k.k),
-				     POS(inode->v.i_ino,
-					 (index + 1) << PAGE_SECTOR_SHIFT)) >= 0)
-				break;
+		ret = range_has_data(c,
+				POS(inode->v.i_ino, index << PAGE_SECTOR_SHIFT),
+				POS(inode->v.i_ino, (index + 1) << PAGE_SECTOR_SHIFT));
+		if (ret <= 0)
+			return ret;
 
-			if (k.k->type != KEY_TYPE_DISCARD &&
-			    k.k->type != BCH_RESERVATION) {
-				bch2_btree_iter_unlock(&iter);
-				goto create;
-			}
-		}
-		bch2_btree_iter_unlock(&iter);
-		return 0;
-create:
 		page = find_or_create_page(mapping, index, GFP_KERNEL);
 		if (unlikely(!page)) {
 			ret = -ENOMEM;
@@ -2374,9 +2383,6 @@ static long bch2_fcollapse(struct bch_inode_info *inode,
 			goto btree_iter_err;
 
 		bkey_reassemble(&copy.k, k);
-
-		if (bkey_deleted(&copy.k.k))
-			copy.k.k.type = KEY_TYPE_DISCARD;
 
 		bch2_cut_front(src.pos, &copy.k);
 		copy.k.k.p.offset -= len >> 9;
