@@ -987,6 +987,10 @@ void bch2_bset_init_next(struct bch_fs *c, struct btree *b,
 	set_btree_bset(b, t, i);
 }
 
+/*
+ * find _some_ key in the same bset as @k that precedes @k - not necessarily the
+ * immediate predecessor:
+ */
 static struct bkey_packed *__bkey_prev(struct btree *b, struct bset_tree *t,
 				       struct bkey_packed *k)
 {
@@ -1025,40 +1029,31 @@ static struct bkey_packed *__bkey_prev(struct btree *b, struct bset_tree *t,
 	return p;
 }
 
-struct bkey_packed *bch2_bkey_prev_all(struct btree *b, struct bset_tree *t,
-				       struct bkey_packed *k)
+struct bkey_packed *bch2_bkey_prev_filter(struct btree *b,
+					  struct bset_tree *t,
+					  struct bkey_packed *k,
+					  unsigned min_key_type)
 {
-	struct bkey_packed *p;
+	struct bkey_packed *p, *i, *ret = NULL, *orig_k = k;
 
-	p = __bkey_prev(b, t, k);
-	if (!p)
-		return NULL;
-
-	while (bkey_next(p) != k)
-		p = bkey_next(p);
-
-	return p;
-}
-
-struct bkey_packed *bch2_bkey_prev(struct btree *b, struct bset_tree *t,
-				   struct bkey_packed *k)
-{
-	while (1) {
-		struct bkey_packed *p, *i, *ret = NULL;
-
-		p = __bkey_prev(b, t, k);
-		if (!p)
-			return NULL;
-
+	while ((p = __bkey_prev(b, t, k)) && !ret) {
 		for (i = p; i != k; i = bkey_next(i))
-			if (!bkey_deleted(i))
+			if (i->type >= min_key_type)
 				ret = i;
-
-		if (ret)
-			return ret;
 
 		k = p;
 	}
+
+	if (IS_ENABLED(CONFIG_BCACHEFS_DEBUG)) {
+		BUG_ON(ret >= orig_k);
+
+		for (i = ret ? bkey_next(ret) : btree_bkey_first(b, t);
+		     i != orig_k;
+		     i = bkey_next(i))
+			BUG_ON(i->type >= min_key_type);
+	}
+
+	return ret;
 }
 
 /* Insert */
