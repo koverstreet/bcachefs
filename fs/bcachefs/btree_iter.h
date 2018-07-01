@@ -207,7 +207,8 @@ static inline void bch2_btree_iter_cond_resched(struct btree_iter *iter)
 #define __for_each_btree_node(_iter, _c, _btree_id, _start,		\
 			      _locks_want, _depth, _flags, _b)		\
 	for (__bch2_btree_iter_init((_iter), (_c), (_btree_id), _start,	\
-				    _locks_want, _depth, _flags),	\
+				    _locks_want, _depth,		\
+				    _flags|BTREE_ITER_NODES),		\
 	     _b = bch2_btree_iter_peek_node(_iter);			\
 	     (_b);							\
 	     (_b) = bch2_btree_iter_next_node(_iter, _depth))
