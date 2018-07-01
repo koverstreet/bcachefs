@@ -1144,9 +1144,12 @@ static void extent_bset_insert(struct bch_fs *c, struct btree_iter *iter,
 	struct bset_tree *t = bset_tree_last(l->b);
 	struct bkey_packed *where =
 		bch2_btree_node_iter_bset_pos(&l->iter, l->b, t);
-	struct bkey_packed *prev = bch2_bkey_prev(l->b, t, where);
+	struct bkey_packed *prev = bch2_bkey_prev_filter(l->b, t, where,
+							 KEY_TYPE_DISCARD);
 	struct bkey_packed *next_live_key = where;
 	unsigned clobber_u64s;
+
+	EBUG_ON(bkey_deleted(&insert->k) || !insert->k.size);
 
 	if (prev)
 		where = bkey_next(prev);
@@ -1189,6 +1192,7 @@ static void extent_insert_committed(struct extent_insert_state *s)
 		: &s->whiteout;
 	BKEY_PADDED(k) split;
 
+	EBUG_ON(bkey_deleted(&insert->k) || !insert->k.size);
 	EBUG_ON(bkey_cmp(insert->k.p, s->committed) < 0);
 	EBUG_ON(bkey_cmp(s->committed, bkey_start_pos(&insert->k)) < 0);
 
@@ -1246,8 +1250,6 @@ __extent_insert_advance_pos(struct extent_insert_state *s,
 		ret = hook->fn(hook, s->committed, next_pos, k, s->insert->k);
 	else
 		ret = BTREE_INSERT_OK;
-
-	EBUG_ON(bkey_deleted(&s->insert->k->k) || !s->insert->k->k.size);
 
 	if (ret == BTREE_INSERT_OK)
 		s->committed = next_pos;
@@ -1447,6 +1449,7 @@ __bch2_delete_fixup_extent(struct extent_insert_state *s)
 	EBUG_ON(bkey_cmp(iter->pos, bkey_start_pos(&insert->k)));
 
 	s->whiteout = *insert;
+	s->whiteout.k.type = KEY_TYPE_DISCARD;
 
 	while (bkey_cmp(s->committed, insert->k.p) < 0 &&
 	       (ret = extent_insert_should_stop(s)) == BTREE_INSERT_OK &&
@@ -1488,6 +1491,8 @@ __bch2_delete_fixup_extent(struct extent_insert_state *s)
 		} else if (k.k->needs_whiteout ||
 			   bset_written(b, bset(b, t))) {
 			struct bkey_i discard = *insert;
+
+			discard.k.type = KEY_TYPE_DISCARD;
 
 			switch (overlap) {
 			case BCH_EXTENT_OVERLAP_FRONT:
@@ -1635,7 +1640,7 @@ bch2_insert_fixup_extent(struct btree_insert *trans,
 	};
 
 	EBUG_ON(iter->level);
-	EBUG_ON(bkey_deleted(&insert->k->k) || !insert->k->k.size);
+	EBUG_ON(!insert->k->k.size);
 
 	/*
 	 * As we process overlapping extents, we advance @iter->pos both to
@@ -2052,11 +2057,6 @@ int bch2_extent_pick_ptr(struct bch_fs *c, struct bkey_s_c k,
 	int ret;
 
 	switch (k.k->type) {
-	case KEY_TYPE_DELETED:
-	case KEY_TYPE_DISCARD:
-	case KEY_TYPE_COOKIE:
-		return 0;
-
 	case KEY_TYPE_ERROR:
 		return -EIO;
 
@@ -2070,11 +2070,8 @@ int bch2_extent_pick_ptr(struct bch_fs *c, struct bkey_s_c k,
 
 		return ret;
 
-	case BCH_RESERVATION:
-		return 0;
-
 	default:
-		BUG();
+		return 0;
 	}
 }
 
@@ -2100,7 +2097,6 @@ enum merge_result bch2_extent_merge(struct bch_fs *c, struct btree *b,
 		return BCH_MERGE_NOMERGE;
 
 	switch (l->k.type) {
-	case KEY_TYPE_DELETED:
 	case KEY_TYPE_DISCARD:
 	case KEY_TYPE_ERROR:
 		/* These types are mergeable, and no val to check */
