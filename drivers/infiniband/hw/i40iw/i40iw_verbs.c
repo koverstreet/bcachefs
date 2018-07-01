@@ -1390,6 +1390,7 @@ static void i40iw_set_hugetlb_values(u64 addr, struct i40iw_mr *iwmr)
 	struct vm_area_struct *vma;
 	struct hstate *h;
 
+	down_read(&current->mm->mmap_sem);
 	vma = find_vma(current->mm, addr);
 	if (vma && is_vm_hugetlb_page(vma)) {
 		h = hstate_vma(vma);
@@ -1398,6 +1399,7 @@ static void i40iw_set_hugetlb_values(u64 addr, struct i40iw_mr *iwmr)
 			iwmr->page_msk = huge_page_mask(h);
 		}
 	}
+	up_read(&current->mm->mmap_sem);
 }
 
 /**
