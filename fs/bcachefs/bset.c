@@ -1677,7 +1677,7 @@ void bch2_btree_node_iter_advance(struct btree_node_iter *iter,
 #endif
 }
 
-static inline bool __btree_node_iter_used(struct btree_node_iter *iter)
+static inline unsigned __btree_node_iter_used(struct btree_node_iter *iter)
 {
 	unsigned n = ARRAY_SIZE(iter->data);
 
