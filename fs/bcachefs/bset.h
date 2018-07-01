@@ -393,10 +393,21 @@ static inline bool btree_iter_pos_cmp_p_or_unp(const struct btree *b,
 }
 
 struct bset_tree *bch2_bkey_to_bset(struct btree *, struct bkey_packed *);
-struct bkey_packed *bch2_bkey_prev_all(struct btree *, struct bset_tree *,
-				  struct bkey_packed *);
-struct bkey_packed *bch2_bkey_prev(struct btree *, struct bset_tree *,
-				   struct bkey_packed *);
+
+struct bkey_packed *bch2_bkey_prev_filter(struct btree *, struct bset_tree *,
+					  struct bkey_packed *, unsigned);
+
+static inline struct bkey_packed *
+bch2_bkey_prev_all(struct btree *b, struct bset_tree *t, struct bkey_packed *k)
+{
+	return bch2_bkey_prev_filter(b, t, k, 0);
+}
+
+static inline struct bkey_packed *
+bch2_bkey_prev(struct btree *b, struct bset_tree *t, struct bkey_packed *k)
+{
+	return bch2_bkey_prev_filter(b, t, k, KEY_TYPE_DELETED + 1);
+}
 
 enum bch_extent_overlap {
 	BCH_EXTENT_OVERLAP_ALL		= 0,
