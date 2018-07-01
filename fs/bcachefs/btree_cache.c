@@ -778,14 +778,12 @@ struct btree *bch2_btree_node_get_sibling(struct bch_fs *c,
 	k = bch2_btree_node_iter_peek_all(&node_iter, parent);
 	BUG_ON(bkey_cmp_left_packed(parent, k, &b->key.k.p));
 
-	do {
-		k = sib == btree_prev_sib
-			? bch2_btree_node_iter_prev_all(&node_iter, parent)
-			: (bch2_btree_node_iter_advance(&node_iter, parent),
-			   bch2_btree_node_iter_peek_all(&node_iter, parent));
-		if (!k)
-			goto out;
-	} while (bkey_deleted(k));
+	k = sib == btree_prev_sib
+		? bch2_btree_node_iter_prev(&node_iter, parent)
+		: (bch2_btree_node_iter_advance(&node_iter, parent),
+		   bch2_btree_node_iter_peek(&node_iter, parent));
+	if (!k)
+		goto out;
 
 	bch2_bkey_unpack(parent, &tmp.k, k);
 
@@ -837,6 +835,17 @@ out:
 	BUG_ON((!may_drop_locks || !IS_ERR(ret)) &&
 	       (iter->uptodate >= BTREE_ITER_NEED_RELOCK ||
 		!btree_node_locked(iter, level)));
+
+	if (!IS_ERR_OR_NULL(ret)) {
+		struct btree *n1 = ret, *n2 = b;
+
+		if (sib != btree_prev_sib)
+			swap(n1, n2);
+
+		BUG_ON(bkey_cmp(btree_type_successor(n1->btree_id,
+						     n1->key.k.p),
+				n2->data->min_key));
+	}
 
 	return ret;
 out_upgrade:
