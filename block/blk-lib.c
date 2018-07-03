@@ -54,6 +54,8 @@ int __blkdev_issue_discard(struct block_device *bdev, sector_t sector,
 		sector_t end_sect;
 
 		req_sects = min(req_sects, bio_allowed_max_sectors(q));
+		if (!req_sects)
+			goto fail;
 
 		end_sect = sector + req_sects;
 
@@ -77,6 +79,14 @@ int __blkdev_issue_discard(struct block_device *bdev, sector_t sector,
 
 	*biop = bio;
 	return 0;
+
+fail:
+	if (bio) {
+		submit_bio_wait(bio);
+		bio_put(bio);
+	}
+	*biop = NULL;
+	return -EOPNOTSUPP;
 }
 EXPORT_SYMBOL(__blkdev_issue_discard);
 
