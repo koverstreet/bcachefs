@@ -589,7 +589,7 @@ static int entry(u64 ip, struct thread *thread,
 	thread__find_addr_location(thread, PERF_RECORD_MISC_USER,
 				   MAP__FUNCTION, ip, &al);
 
-	e.ip = al.addr;
+	e.ip  = ip;
 	e.map = al.map;
 	e.sym = al.sym;
 
