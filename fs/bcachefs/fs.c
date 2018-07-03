@@ -34,6 +34,19 @@ static void bch2_vfs_inode_init(struct bch_fs *,
 				struct bch_inode_info *,
 				struct bch_inode_unpacked *);
 
+static void journal_seq_copy(struct bch_inode_info *dst,
+			     u64 journal_seq)
+{
+	u64 old, v = READ_ONCE(dst->ei_journal_seq);
+
+	do {
+		old = v;
+
+		if (old >= journal_seq)
+			break;
+	} while ((v = cmpxchg(&dst->ei_journal_seq, old, journal_seq)) != old);
+}
+
 /*
  * I_SIZE_DIRTY requires special handling:
  *
@@ -241,6 +254,24 @@ static struct inode *bch2_vfs_inode_get(struct bch_fs *c, u64 inum)
 	return &inode->v;
 }
 
+static void bch2_inode_init_owner(struct bch_inode_unpacked *inode_u,
+				  const struct inode *dir, umode_t mode)
+{
+	kuid_t uid = current_fsuid();
+	kgid_t gid;
+
+	if (dir && dir->i_mode & S_ISGID) {
+		gid = dir->i_gid;
+		if (S_ISDIR(mode))
+			mode |= S_ISGID;
+	} else
+		gid = current_fsgid();
+
+	inode_u->bi_uid		= from_kuid(dir->i_sb->s_user_ns, uid);
+	inode_u->bi_gid		= from_kgid(dir->i_sb->s_user_ns, gid);
+	inode_u->bi_mode	= mode;
+}
+
 static struct bch_inode_info *bch2_vfs_inode_create(struct bch_fs *c,
 						    struct bch_inode_info *dir,
 						    umode_t mode, dev_t rdev)
@@ -334,30 +365,155 @@ static int bch2_vfs_dirent_create(struct bch_fs *c,
 	return 0;
 }
 
+static int inode_update_for_create_fn(struct bch_inode_info *inode,
+				      struct bch_inode_unpacked *bi,
+				      void *p)
+{
+	struct bch_fs *c = inode->v.i_sb->s_fs_info;
+	struct bch_inode_unpacked *new_inode = p;
+	struct timespec64 now = current_time(&inode->v);
+
+	bi->bi_mtime = bi->bi_ctime = timespec_to_bch2_time(c, now);
+
+	if (S_ISDIR(new_inode->bi_mode))
+		bi->bi_nlink++;
+
+	return 0;
+}
+
 static int __bch2_create(struct bch_inode_info *dir, struct dentry *dentry,
-			 umode_t mode, dev_t rdev)
+			 umode_t mode, dev_t rdev, bool tmpfile)
 {
 	struct bch_fs *c = dir->v.i_sb->s_fs_info;
-	struct bch_inode_info *inode;
+	struct btree_trans trans;
+	struct bch_inode_unpacked dir_u;
+	struct bch_inode_info *inode, *old;
+	struct bch_inode_unpacked inode_u;
+	struct bch_hash_info hash_info;
+	struct posix_acl *default_acl = NULL, *acl = NULL;
 	int ret;
 
-	inode = bch2_vfs_inode_create(c, dir, mode, rdev);
-	if (unlikely(IS_ERR(inode)))
-		return PTR_ERR(inode);
+	bch2_inode_init(c, &inode_u, 0, 0, 0, rdev, &dir->ei_inode);
+	bch2_inode_init_owner(&inode_u, &dir->v, mode);
 
-	ret = bch2_vfs_dirent_create(c, dir, mode_to_type(mode),
-				     &dentry->d_name, inode->v.i_ino);
-	if (unlikely(ret)) {
-		clear_nlink(&inode->v);
-		iput(&inode->v);
+	inode_u.bi_project = dir->ei_qid.q[QTYP_PRJ];
+
+	hash_info = bch2_hash_info_init(c, &inode_u);
+
+	if (tmpfile)
+		inode_u.bi_flags |= BCH_INODE_UNLINKED;
+
+	ret = bch2_quota_acct(c, bch_qid(&inode_u), Q_INO, 1, BCH_QUOTA_PREALLOC);
+	if (ret)
 		return ret;
+
+#ifdef CONFIG_BCACHEFS_POSIX_ACL
+	ret = posix_acl_create(&dir->v, &inode_u.bi_mode, &default_acl, &acl);
+	if (ret)
+		goto err;
+#endif
+
+	/*
+	 * preallocate vfs inode before btree transaction, so that nothing can
+	 * fail after the transaction succeeds:
+	 */
+	inode = to_bch_ei(new_inode(c->vfs_sb));
+	if (unlikely(!inode)) {
+		ret = -ENOMEM;
+		goto err;
 	}
 
-	if (dir->ei_journal_seq > inode->ei_journal_seq)
-		inode->ei_journal_seq = dir->ei_journal_seq;
+	bch2_trans_init(&trans, c);
+retry:
+	bch2_trans_begin(&trans);
 
+	ret   = __bch2_inode_create(&trans, &inode_u,
+				    BLOCKDEV_INODE_MAX, 0,
+				    &c->unused_inode_hint) ?:
+		(default_acl
+		 ? bch2_set_acl_trans(&trans, &inode_u, &hash_info,
+				      default_acl, ACL_TYPE_DEFAULT)
+		 : 0) ?:
+		(acl
+		 ? bch2_set_acl_trans(&trans, &inode_u, &hash_info,
+				      acl, ACL_TYPE_ACCESS)
+		 : 0) ?:
+		(!tmpfile
+		 ? __bch2_dirent_create(&trans, dir->v.i_ino,
+					&dir->ei_str_hash,
+					mode_to_type(mode),
+					&dentry->d_name,
+					inode_u.bi_inum,
+					BCH_HASH_SET_MUST_CREATE)
+		: 0) ?:
+		(!tmpfile
+		 ? bch2_write_inode_trans(&trans, dir, &dir_u,
+					  inode_update_for_create_fn,
+					  &inode_u)
+		 : 0) ?:
+		bch2_trans_commit(&trans, NULL, NULL,
+				  &inode->ei_journal_seq,
+				  BTREE_INSERT_ATOMIC|
+				  BTREE_INSERT_NOUNLOCK);
+	if (ret == -EINTR)
+		goto retry;
+	if (unlikely(ret))
+		goto err_trans;
+
+	atomic_long_inc(&c->nr_inodes);
+
+	if (!tmpfile) {
+		bch2_inode_update_after_write(c, dir, &dir_u,
+					      ATTR_MTIME|ATTR_CTIME);
+		journal_seq_copy(dir, inode->ei_journal_seq);
+	}
+
+	bch2_vfs_inode_init(c, inode, &inode_u);
+
+	set_cached_acl(&inode->v, ACL_TYPE_ACCESS, acl);
+	set_cached_acl(&inode->v, ACL_TYPE_DEFAULT, default_acl);
+
+	/*
+	 * we must insert the new inode into the inode cache before calling
+	 * bch2_trans_exit() and dropping locks, else we could race with another
+	 * thread pulling the inode in and modifying it:
+	 */
+
+	old = to_bch_ei(insert_inode_locked2(&inode->v));
+	if (unlikely(old)) {
+		/*
+		 * We raced, another process pulled the new inode into cache
+		 * before us:
+		 */
+		old->ei_journal_seq = inode->ei_journal_seq;
+		make_bad_inode(&inode->v);
+		iput(&inode->v);
+
+		inode = old;
+	} else {
+		/*
+		 * we really don't want insert_inode_locked2() to be setting
+		 * I_NEW...
+		 */
+		unlock_new_inode(&inode->v);
+	}
+
+	bch2_trans_exit(&trans);
+
+	if (tmpfile)
+		d_mark_tmpfile(dentry, &inode->v);
 	d_instantiate(dentry, &inode->v);
-	return 0;
+out:
+	posix_acl_release(default_acl);
+	posix_acl_release(acl);
+	return ret;
+err_trans:
+	bch2_trans_exit(&trans);
+	make_bad_inode(&inode->v);
+	iput(&inode->v);
+err:
+	bch2_quota_acct(c, bch_qid(&inode_u), Q_INO, -1, BCH_QUOTA_WARN);
+	goto out;
 }
 
 /* methods */
@@ -383,7 +539,7 @@ static struct dentry *bch2_lookup(struct inode *vdir, struct dentry *dentry,
 static int bch2_create(struct inode *vdir, struct dentry *dentry,
 		       umode_t mode, bool excl)
 {
-	return __bch2_create(to_bch_ei(vdir), dentry, mode|S_IFREG, 0);
+	return __bch2_create(to_bch_ei(vdir), dentry, mode|S_IFREG, 0, false);
 }
 
 static int bch2_link(struct dentry *old_dentry, struct inode *vdir,
@@ -467,9 +623,7 @@ static int bch2_symlink(struct inode *vdir, struct dentry *dentry,
 	if (unlikely(ret))
 		goto err;
 
-	/* XXX: racy */
-	if (dir->ei_journal_seq < inode->ei_journal_seq)
-		dir->ei_journal_seq = inode->ei_journal_seq;
+	journal_seq_copy(dir, inode->ei_journal_seq);
 
 	ret = bch2_vfs_dirent_create(c, dir, DT_LNK, &dentry->d_name,
 				     inode->v.i_ino);
@@ -486,19 +640,7 @@ err:
 
 static int bch2_mkdir(struct inode *vdir, struct dentry *dentry, umode_t mode)
 {
-	struct bch_fs *c = vdir->i_sb->s_fs_info;
-	struct bch_inode_info *dir = to_bch_ei(vdir);
-	int ret;
-
-	lockdep_assert_held(&dir->v.i_rwsem);
-
-	ret = __bch2_create(dir, dentry, mode|S_IFDIR, 0);
-	if (unlikely(ret))
-		return ret;
-
-	bch2_inc_nlink(c, dir);
-
-	return 0;
+	return __bch2_create(to_bch_ei(vdir), dentry, mode|S_IFDIR, 0, false);
 }
 
 static int bch2_rmdir(struct inode *vdir, struct dentry *dentry)
@@ -514,7 +656,7 @@ static int bch2_rmdir(struct inode *vdir, struct dentry *dentry)
 static int bch2_mknod(struct inode *vdir, struct dentry *dentry,
 		      umode_t mode, dev_t rdev)
 {
-	return __bch2_create(to_bch_ei(vdir), dentry, mode, rdev);
+	return __bch2_create(to_bch_ei(vdir), dentry, mode, rdev, false);
 }
 
 static int bch2_rename(struct bch_fs *c,
@@ -752,17 +894,7 @@ static int bch2_setattr(struct dentry *dentry, struct iattr *iattr)
 
 static int bch2_tmpfile(struct inode *vdir, struct dentry *dentry, umode_t mode)
 {
-	struct bch_fs *c = vdir->i_sb->s_fs_info;
-	struct bch_inode_info *dir = to_bch_ei(vdir);
-	struct bch_inode_info *inode;
-
-	/* XXX: i_nlink should be 0? */
-	inode = bch2_vfs_inode_create(c, dir, mode, 0);
-	if (unlikely(IS_ERR(inode)))
-		return PTR_ERR(inode);
-
-	d_tmpfile(dentry, &inode->v);
-	return 0;
+	return __bch2_create(to_bch_ei(vdir), dentry, mode, 0, true);
 }
 
 static int bch2_fill_extent(struct fiemap_extent_info *info,
