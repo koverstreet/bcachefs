@@ -875,7 +875,7 @@ static int omap_rtc_probe(struct platform_device *pdev)
 
 	ret = rtc_register_device(rtc->rtc);
 	if (ret)
-		goto err;
+		goto err_deregister_pinctrl;
 
 	if (rtc->is_pmic_controller) {
 		if (!pm_power_off) {
@@ -886,6 +886,8 @@ static int omap_rtc_probe(struct platform_device *pdev)
 
 	return 0;
 
+err_deregister_pinctrl:
+	pinctrl_unregister(rtc->pctldev);
 err:
 	device_init_wakeup(&pdev->dev, false);
 	rtc->type->lock(rtc);
