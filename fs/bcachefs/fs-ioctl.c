@@ -87,6 +87,8 @@ void bch2_inode_flags_to_vfs(struct bch_inode_info *inode)
 struct flags_set {
 	unsigned		mask;
 	unsigned		flags;
+
+	unsigned		projid;
 };
 
 static int bch2_inode_flags_set(struct bch_inode_info *inode,
@@ -150,7 +152,7 @@ static int bch2_ioc_setflags(struct bch_fs *c,
 	}
 
 	mutex_lock(&inode->ei_update_lock);
-	ret = __bch2_write_inode(c, inode, bch2_inode_flags_set, &s);
+	ret = __bch2_write_inode(c, inode, bch2_inode_flags_set, &s, 0);
 
 	if (!ret)
 		bch2_inode_flags_to_vfs(inode);
@@ -185,14 +187,25 @@ static int bch2_set_projid(struct bch_fs *c,
 
 	qid.q[QTYP_PRJ] = projid;
 
-	ret = bch2_quota_transfer(c, 1 << QTYP_PRJ, qid, inode->ei_qid,
-				  inode->v.i_blocks +
-				  inode->ei_quota_reserved);
+	return bch2_quota_transfer(c, 1 << QTYP_PRJ, qid, inode->ei_qid,
+				   inode->v.i_blocks +
+				   inode->ei_quota_reserved);
 	if (ret)
 		return ret;
 
 	inode->ei_qid.q[QTYP_PRJ] = projid;
 	return 0;
+}
+
+static int fssetxattr_inode_update_fn(struct bch_inode_info *inode,
+				      struct bch_inode_unpacked *bi,
+				      void *p)
+{
+	struct flags_set *s = p;
+
+	bi->bi_project = s->projid;
+
+	return bch2_inode_flags_set(inode, bi, p);
 }
 
 static int bch2_ioc_fssetxattr(struct bch_fs *c,
@@ -211,6 +224,8 @@ static int bch2_ioc_fssetxattr(struct bch_fs *c,
 	if (fa.fsx_xflags)
 		return -EOPNOTSUPP;
 
+	s.projid = fa.fsx_projid;
+
 	ret = mnt_want_write_file(file);
 	if (ret)
 		return ret;
@@ -226,7 +241,7 @@ static int bch2_ioc_fssetxattr(struct bch_fs *c,
 	if (ret)
 		goto err_unlock;
 
-	ret = __bch2_write_inode(c, inode, bch2_inode_flags_set, &s);
+	ret = __bch2_write_inode(c, inode, fssetxattr_inode_update_fn, &s, 0);
 	if (!ret)
 		bch2_inode_flags_to_vfs(inode);
 err_unlock:
