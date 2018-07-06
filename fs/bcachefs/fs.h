@@ -51,8 +51,16 @@ struct bch_inode_unpacked;
 typedef int (*inode_set_fn)(struct bch_inode_info *,
 			    struct bch_inode_unpacked *, void *);
 
+void bch2_inode_update_after_write(struct bch_fs *,
+				   struct bch_inode_info *,
+				   struct bch_inode_unpacked *,
+				   unsigned);
+int __must_check bch2_write_inode_trans(struct btree_trans *,
+				struct bch_inode_info *,
+				struct bch_inode_unpacked *,
+				inode_set_fn, void *);
 int __must_check __bch2_write_inode(struct bch_fs *, struct bch_inode_info *,
-				    inode_set_fn, void *);
+				    inode_set_fn, void *, unsigned);
 int __must_check bch2_write_inode(struct bch_fs *,
 				  struct bch_inode_info *);
 
