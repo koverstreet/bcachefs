@@ -40,14 +40,10 @@ enum bch_rename_mode {
 	BCH_RENAME_EXCHANGE,
 };
 
-int __bch2_dirent_rename(struct btree_trans *,
-			 struct bch_inode_info *, const struct qstr *,
-			 struct bch_inode_info *, const struct qstr *,
-			 enum bch_rename_mode);
-int bch2_dirent_rename(struct bch_fs *,
+int bch2_dirent_rename(struct btree_trans *,
 		       struct bch_inode_info *, const struct qstr *,
 		       struct bch_inode_info *, const struct qstr *,
-		       u64 *, enum bch_rename_mode);
+		       enum bch_rename_mode);
 
 u64 bch2_dirent_lookup(struct bch_fs *, u64, const struct bch_hash_info *,
 		       const struct qstr *);
