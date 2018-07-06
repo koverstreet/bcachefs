@@ -542,32 +542,65 @@ static int bch2_create(struct inode *vdir, struct dentry *dentry,
 	return __bch2_create(to_bch_ei(vdir), dentry, mode|S_IFREG, 0, false);
 }
 
+static int inode_update_for_link_fn(struct bch_inode_info *inode,
+				    struct bch_inode_unpacked *bi,
+				    void *p)
+{
+	struct bch_fs *c = inode->v.i_sb->s_fs_info;
+	struct timespec64 now = current_time(&inode->v);
+
+	bi->bi_ctime = timespec_to_bch2_time(c, now);
+
+	if (bi->bi_flags & BCH_INODE_UNLINKED)
+		bi->bi_flags &= ~BCH_INODE_UNLINKED;
+	else
+		bi->bi_nlink++;
+
+	return 0;
+}
+
 static int bch2_link(struct dentry *old_dentry, struct inode *vdir,
 		     struct dentry *dentry)
 {
 	struct bch_fs *c = vdir->i_sb->s_fs_info;
 	struct bch_inode_info *dir = to_bch_ei(vdir);
 	struct bch_inode_info *inode = to_bch_ei(old_dentry->d_inode);
+	struct btree_trans trans;
+	struct bch_inode_unpacked inode_u;
 	int ret;
 
 	lockdep_assert_held(&inode->v.i_rwsem);
 
-	inode->v.i_ctime = current_time(&dir->v);
+	bch2_trans_init(&trans, c);
+retry:
+	bch2_trans_begin(&trans);
 
-	ret = bch2_inc_nlink(c, inode);
-	if (ret)
+	ret   = __bch2_dirent_create(&trans, dir->v.i_ino,
+				     &dir->ei_str_hash,
+				     mode_to_type(inode->v.i_mode),
+				     &dentry->d_name,
+				     inode->v.i_ino,
+				     BCH_HASH_SET_MUST_CREATE) ?:
+		bch2_write_inode_trans(&trans, inode, &inode_u,
+				       inode_update_for_link_fn,
+				       NULL) ?:
+		bch2_trans_commit(&trans, NULL, NULL,
+				  &inode->ei_journal_seq,
+				  BTREE_INSERT_ATOMIC|
+				  BTREE_INSERT_NOUNLOCK);
+
+	if (ret == -EINTR)
+		goto retry;
+
+	if (likely(!ret))
+		bch2_inode_update_after_write(c, inode, &inode_u, ATTR_CTIME);
+
+	bch2_trans_exit(&trans);
+
+	if (unlikely(ret))
 		return ret;
 
 	ihold(&inode->v);
-
-	ret = bch2_vfs_dirent_create(c, dir, mode_to_type(inode->v.i_mode),
-				     &dentry->d_name, inode->v.i_ino);
-	if (unlikely(ret)) {
-		bch2_dec_nlink(c, inode);
-		iput(&inode->v);
-		return ret;
-	}
-
 	d_instantiate(dentry, &inode->v);
 	return 0;
 }
