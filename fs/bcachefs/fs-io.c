@@ -193,7 +193,7 @@ static int __must_check bch2_write_inode_size(struct bch_fs *c,
 					      struct bch_inode_info *inode,
 					      loff_t new_size)
 {
-	return __bch2_write_inode(c, inode, inode_set_size, &new_size);
+	return __bch2_write_inode(c, inode, inode_set_size, &new_size, 0);
 }
 
 static void i_sectors_acct(struct bch_fs *c, struct bch_inode_info *inode,
@@ -259,7 +259,7 @@ static int i_sectors_dirty_finish(struct bch_fs *c, struct i_sectors_hook *h)
 	mutex_lock(&h->inode->ei_update_lock);
 	i_sectors_acct(c, h->inode, &h->quota_res, h->sectors);
 
-	ret = __bch2_write_inode(c, h->inode, i_sectors_dirty_finish_fn, h);
+	ret = __bch2_write_inode(c, h->inode, i_sectors_dirty_finish_fn, h, 0);
 
 	if (!ret && h->new_i_size != U64_MAX)
 		i_size_write(&h->inode->v, h->new_i_size);
@@ -289,7 +289,7 @@ static int i_sectors_dirty_start(struct bch_fs *c, struct i_sectors_hook *h)
 	int ret;
 
 	mutex_lock(&h->inode->ei_update_lock);
-	ret = __bch2_write_inode(c, h->inode, i_sectors_dirty_start_fn, h);
+	ret = __bch2_write_inode(c, h->inode, i_sectors_dirty_start_fn, h, 0);
 	mutex_unlock(&h->inode->ei_update_lock);
 
 	return ret;

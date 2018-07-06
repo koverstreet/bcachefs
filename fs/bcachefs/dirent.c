@@ -355,7 +355,7 @@ u64 bch2_dirent_lookup(struct bch_fs *c, u64 dir_inum,
 	struct btree_trans trans;
 	struct btree_iter *iter;
 	struct bkey_s_c k;
-	u64 inum;
+	u64 inum = 0;
 
 	bch2_trans_init(&trans, c);
 
@@ -363,14 +363,13 @@ u64 bch2_dirent_lookup(struct bch_fs *c, u64 dir_inum,
 				hash_info, dir_inum, name, 0);
 	if (IS_ERR(iter)) {
 		BUG_ON(PTR_ERR(iter) == -EINTR);
-		bch2_trans_exit(&trans);
-		return 0;
+		goto out;
 	}
 
 	k = bch2_btree_iter_peek_slot(iter);
 	inum = le64_to_cpu(bkey_s_c_to_dirent(k).v->d_inum);
+out:
 	bch2_trans_exit(&trans);
-
 	return inum;
 }
 
