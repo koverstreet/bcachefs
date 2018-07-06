@@ -212,7 +212,7 @@ static struct bpos bch2_dirent_pos(struct bch_inode_info *inode,
 	return POS(inode->v.i_ino, bch2_dirent_hash(&inode->ei_str_hash, name));
 }
 
-int __bch2_dirent_rename(struct btree_trans *trans,
+int bch2_dirent_rename(struct btree_trans *trans,
 		struct bch_inode_info *src_dir, const struct qstr *src_name,
 		struct bch_inode_info *dst_dir, const struct qstr *dst_name,
 		enum bch_rename_mode mode)
@@ -315,18 +315,6 @@ int __bch2_dirent_rename(struct btree_trans *trans,
 	bch2_trans_update(trans, src_iter, &new_src->k_i, 0);
 	bch2_trans_update(trans, dst_iter, &new_dst->k_i, 0);
 	return 0;
-}
-
-int bch2_dirent_rename(struct bch_fs *c,
-		struct bch_inode_info *src_dir, const struct qstr *src_name,
-		struct bch_inode_info *dst_dir, const struct qstr *dst_name,
-		u64 *journal_seq, enum bch_rename_mode mode)
-{
-	return bch2_trans_do(c, journal_seq, BTREE_INSERT_ATOMIC,
-			__bch2_dirent_rename(&trans,
-					     src_dir, src_name,
-					     dst_dir, dst_name,
-					     mode));
 }
 
 int __bch2_dirent_delete(struct btree_trans *trans, u64 dir_inum,
