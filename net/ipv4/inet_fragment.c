@@ -224,7 +224,7 @@ void inet_frags_exit_net(struct netns_frags *nf, struct inet_frags *f)
 	unsigned int seq;
 	int i;
 
-	nf->low_thresh = 0;
+	nf->high_thresh = 0; /* prevent creation of new frags */
 
 evict_again:
 	local_bh_disable();
