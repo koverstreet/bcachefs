@@ -62,127 +62,156 @@ static void bch2_vfs_inode_init(struct bch_fs *,
  * be set explicitly.
  */
 
-int __must_check __bch2_write_inode(struct bch_fs *c,
-				    struct bch_inode_info *inode,
-				    inode_set_fn set,
-				    void *p)
+void bch2_inode_update_after_write(struct bch_fs *c,
+				   struct bch_inode_info *inode,
+				   struct bch_inode_unpacked *bi,
+				   unsigned fields)
 {
-	struct btree_iter iter;
-	struct bch_inode_unpacked inode_u;
-	struct bkey_inode_buf inode_p;
-	u64 inum = inode->v.i_ino;
-	unsigned i_nlink = READ_ONCE(inode->v.i_nlink);
-	int ret;
+	set_nlink(&inode->v, bi->bi_flags & BCH_INODE_UNLINKED
+		  ? 0
+		  : bi->bi_nlink + nlink_bias(inode->v.i_mode));
 
-	/*
-	 * We can't write an inode with i_nlink == 0 because it's stored biased;
-	 * however, we don't need to because if i_nlink is 0 the inode is
-	 * getting deleted when it's evicted.
-	 */
-	if (!i_nlink)
-		return 0;
+	if (fields & ATTR_ATIME)
+		inode->v.i_atime = bch2_time_to_timespec(c, bi->bi_atime);
+	if (fields & ATTR_MTIME)
+		inode->v.i_mtime = bch2_time_to_timespec(c, bi->bi_mtime);
+	if (fields & ATTR_CTIME)
+		inode->v.i_ctime = bch2_time_to_timespec(c, bi->bi_ctime);
+
+	inode->ei_inode		= *bi;
+	inode->ei_qid		= bch_qid(bi);
+}
+
+int __must_check bch2_write_inode_trans(struct btree_trans *trans,
+				struct bch_inode_info *inode,
+				struct bch_inode_unpacked *inode_u,
+				inode_set_fn set,
+				void *p)
+{
+	struct bch_fs *c = trans->c;
+	struct btree_iter *iter;
+	struct bkey_inode_buf *inode_p;
+	struct bkey_s_c k;
+	u64 inum = inode->v.i_ino;
+	int ret;
 
 	lockdep_assert_held(&inode->ei_update_lock);
 
-	bch2_btree_iter_init(&iter, c, BTREE_ID_INODES, POS(inum, 0),
-			     BTREE_ITER_SLOTS|BTREE_ITER_INTENT);
+	iter = bch2_trans_get_iter(trans, BTREE_ID_INODES, POS(inum, 0),
+				   BTREE_ITER_SLOTS|BTREE_ITER_INTENT);
+	if (IS_ERR(iter))
+		return PTR_ERR(iter);
 
-	do {
-		struct bkey_s_c k = bch2_btree_iter_peek_slot(&iter);
+	k = bch2_btree_iter_peek_slot(iter);
+	if ((ret = btree_iter_err(k)))
+		return ret;
 
-		if ((ret = btree_iter_err(k)))
-			goto out;
+	if (WARN_ONCE(k.k->type != BCH_INODE_FS,
+		      "inode %llu not found when updating", inum))
+		return -ENOENT;
 
-		if (WARN_ONCE(k.k->type != BCH_INODE_FS,
-			      "inode %llu not found when updating", inum)) {
-			bch2_btree_iter_unlock(&iter);
-			return -ENOENT;
-		}
+	ret = bch2_inode_unpack(bkey_s_c_to_inode(k), inode_u);
+	if (WARN_ONCE(ret,
+		      "error %i unpacking inode %llu", ret, inum))
+		return -ENOENT;
 
-		ret = bch2_inode_unpack(bkey_s_c_to_inode(k), &inode_u);
-		if (WARN_ONCE(ret,
-			      "error %i unpacking inode %llu", ret, inum)) {
-			ret = -ENOENT;
-			break;
-		}
+	BUG_ON(inode_u->bi_size != inode->ei_inode.bi_size);
 
-		BUG_ON(inode_u.bi_size != inode->ei_inode.bi_size);
+	BUG_ON(inode_u->bi_size != inode->ei_inode.bi_size &&
+	       !(inode_u->bi_flags & BCH_INODE_I_SIZE_DIRTY) &&
+	       inode_u->bi_size > i_size_read(&inode->v));
 
-		if (set) {
-			ret = set(inode, &inode_u, p);
-			if (ret)
-				goto out;
-		}
+	inode_u->bi_mode	= inode->v.i_mode;
+	inode_u->bi_uid		= i_uid_read(&inode->v);
+	inode_u->bi_gid		= i_gid_read(&inode->v);
+	inode_u->bi_project	= inode->ei_qid.q[QTYP_PRJ];
+	inode_u->bi_dev		= inode->v.i_rdev;
+	inode_u->bi_atime	= timespec_to_bch2_time(c, inode->v.i_atime);
+	inode_u->bi_mtime	= timespec_to_bch2_time(c, inode->v.i_mtime);
+	inode_u->bi_ctime	= timespec_to_bch2_time(c, inode->v.i_ctime);
 
-		BUG_ON(i_nlink < nlink_bias(inode->v.i_mode));
-
-		BUG_ON(inode_u.bi_size != inode->ei_inode.bi_size &&
-		       !(inode_u.bi_flags & BCH_INODE_I_SIZE_DIRTY) &&
-		       inode_u.bi_size > i_size_read(&inode->v));
-
-		inode_u.bi_mode	= inode->v.i_mode;
-		inode_u.bi_uid	= i_uid_read(&inode->v);
-		inode_u.bi_gid	= i_gid_read(&inode->v);
-		inode_u.bi_project = inode->ei_qid.q[QTYP_PRJ];
-		inode_u.bi_nlink= i_nlink - nlink_bias(inode->v.i_mode);
-		inode_u.bi_dev	= inode->v.i_rdev;
-		inode_u.bi_atime= timespec_to_bch2_time(c, inode->v.i_atime);
-		inode_u.bi_mtime= timespec_to_bch2_time(c, inode->v.i_mtime);
-		inode_u.bi_ctime= timespec_to_bch2_time(c, inode->v.i_ctime);
-
-		bch2_inode_pack(&inode_p, &inode_u);
-
-		ret = bch2_btree_insert_at(c, NULL, NULL,
-				&inode->ei_journal_seq,
-				BTREE_INSERT_ATOMIC|
-				BTREE_INSERT_NOUNLOCK|
-				BTREE_INSERT_NOFAIL,
-				BTREE_INSERT_ENTRY(&iter, &inode_p.inode.k_i));
-	} while (ret == -EINTR);
-
-	if (!ret) {
-		/*
-		 * the btree node lock protects inode->ei_inode, not
-		 * ei_update_lock; this is important for inode updates via
-		 * bchfs_write_index_update
-		 */
-		inode->ei_inode = inode_u;
-		inode->ei_qid	= bch_qid(&inode_u);
+	if (set) {
+		ret = set(inode, inode_u, p);
+		if (ret)
+			return ret;
 	}
-out:
-	bch2_btree_iter_unlock(&iter);
 
+	inode_p = bch2_trans_kmalloc(trans, sizeof(*inode_p));
+	if (IS_ERR(inode_p))
+		return PTR_ERR(inode_p);
+
+	bch2_inode_pack(inode_p, inode_u);
+	bch2_trans_update(trans, iter, &inode_p->inode.k_i, 0);
+	return 0;
+}
+
+int __must_check __bch2_write_inode(struct bch_fs *c,
+				    struct bch_inode_info *inode,
+				    inode_set_fn set,
+				    void *p, unsigned fields)
+{
+	struct btree_trans trans;
+	struct bch_inode_unpacked inode_u;
+	int ret;
+
+	bch2_trans_init(&trans, c);
+retry:
+	bch2_trans_begin(&trans);
+
+	ret = bch2_write_inode_trans(&trans, inode, &inode_u, set, p) ?:
+		bch2_trans_commit(&trans, NULL, NULL,
+				  &inode->ei_journal_seq,
+				  BTREE_INSERT_ATOMIC|
+				  BTREE_INSERT_NOUNLOCK|
+				  BTREE_INSERT_NOFAIL);
+	if (ret == -EINTR)
+		goto retry;
+
+	/*
+	 * the btree node lock protects inode->ei_inode, not ei_update_lock;
+	 * this is important for inode updates via bchfs_write_index_update
+	 */
+	if (!ret)
+		bch2_inode_update_after_write(c, inode, &inode_u, fields);
+
+	bch2_trans_exit(&trans);
 	return ret < 0 ? ret : 0;
 }
 
 int __must_check bch2_write_inode(struct bch_fs *c,
 				  struct bch_inode_info *inode)
 {
-	return __bch2_write_inode(c, inode, NULL, NULL);
+	return __bch2_write_inode(c, inode, NULL, NULL, 0);
 }
 
-static int bch2_inc_nlink(struct bch_fs *c, struct bch_inode_info *inode)
+static int inode_mod_nlink_fn(struct bch_inode_info *inode,
+				  struct bch_inode_unpacked *bi, void *p)
+{
+	bi->bi_nlink += (long) p;
+	return 0;
+}
+
+static int bch2_mod_nlink(struct bch_fs *c, struct bch_inode_info *inode,
+			  int count)
 {
 	int ret;
 
 	mutex_lock(&inode->ei_update_lock);
-	inc_nlink(&inode->v);
-	ret = bch2_write_inode(c, inode);
+	ret = __bch2_write_inode(c, inode, inode_mod_nlink_fn,
+				 (void *)(long) count, 0);
 	mutex_unlock(&inode->ei_update_lock);
 
 	return ret;
 }
 
+static int bch2_inc_nlink(struct bch_fs *c, struct bch_inode_info *inode)
+{
+	return bch2_mod_nlink(c, inode, 1);
+}
+
 static int bch2_dec_nlink(struct bch_fs *c, struct bch_inode_info *inode)
 {
-	int ret = 0;
-
-	mutex_lock(&inode->ei_update_lock);
-	drop_nlink(&inode->v);
-	ret = bch2_write_inode(c, inode);
-	mutex_unlock(&inode->ei_update_lock);
-
-	return ret;
+	return bch2_mod_nlink(c, inode, -1);
 }
 
 static struct inode *bch2_vfs_inode_get(struct bch_fs *c, u64 inum)
@@ -987,24 +1016,20 @@ static void bch2_vfs_inode_init(struct bch_fs *c,
 				struct bch_inode_info *inode,
 				struct bch_inode_unpacked *bi)
 {
+	bch2_inode_update_after_write(c, inode, bi, ~0);
+
 	inode->v.i_mode		= bi->bi_mode;
 	i_uid_write(&inode->v, bi->bi_uid);
 	i_gid_write(&inode->v, bi->bi_gid);
 	inode->v.i_blocks	= bi->bi_sectors;
 	inode->v.i_ino		= bi->bi_inum;
-	set_nlink(&inode->v, bi->bi_nlink + nlink_bias(inode->v.i_mode));
 	inode->v.i_rdev		= bi->bi_dev;
 	inode->v.i_generation	= bi->bi_generation;
 	inode->v.i_size		= bi->bi_size;
-	inode->v.i_atime	= bch2_time_to_timespec(c, bi->bi_atime);
-	inode->v.i_mtime	= bch2_time_to_timespec(c, bi->bi_mtime);
-	inode->v.i_ctime	= bch2_time_to_timespec(c, bi->bi_ctime);
 
 	inode->ei_journal_seq	= 0;
 	inode->ei_quota_reserved = 0;
-	inode->ei_qid		= bch_qid(bi);
 	inode->ei_str_hash	= bch2_hash_info_init(c, bi);
-	inode->ei_inode		= *bi;
 
 	bch2_inode_flags_to_vfs(inode);
 
@@ -1059,6 +1084,19 @@ static void bch2_destroy_inode(struct inode *vinode)
 	call_rcu(&vinode->i_rcu, bch2_i_callback);
 }
 
+static int inode_update_times_fn(struct bch_inode_info *inode,
+				 struct bch_inode_unpacked *bi,
+				 void *p)
+{
+	struct bch_fs *c = inode->v.i_sb->s_fs_info;
+
+	bi->bi_atime	= timespec_to_bch2_time(c, inode->v.i_atime);
+	bi->bi_mtime	= timespec_to_bch2_time(c, inode->v.i_mtime);
+	bi->bi_ctime	= timespec_to_bch2_time(c, inode->v.i_ctime);
+
+	return 0;
+}
+
 static int bch2_vfs_write_inode(struct inode *vinode,
 				struct writeback_control *wbc)
 {
@@ -1067,7 +1105,8 @@ static int bch2_vfs_write_inode(struct inode *vinode,
 	int ret;
 
 	mutex_lock(&inode->ei_update_lock);
-	ret = bch2_write_inode(c, inode);
+	ret = __bch2_write_inode(c, inode, inode_update_times_fn, NULL,
+				 ATTR_ATIME|ATTR_MTIME|ATTR_CTIME);
 	mutex_unlock(&inode->ei_update_lock);
 
 	if (c->opts.journal_flush_disabled)
