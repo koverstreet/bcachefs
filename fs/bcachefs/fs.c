@@ -197,36 +197,6 @@ int __must_check bch2_write_inode(struct bch_fs *c,
 	return __bch2_write_inode(c, inode, NULL, NULL, 0);
 }
 
-static int inode_mod_nlink_fn(struct bch_inode_info *inode,
-				  struct bch_inode_unpacked *bi, void *p)
-{
-	bi->bi_nlink += (long) p;
-	return 0;
-}
-
-static int bch2_mod_nlink(struct bch_fs *c, struct bch_inode_info *inode,
-			  int count)
-{
-	int ret;
-
-	mutex_lock(&inode->ei_update_lock);
-	ret = __bch2_write_inode(c, inode, inode_mod_nlink_fn,
-				 (void *)(long) count, 0);
-	mutex_unlock(&inode->ei_update_lock);
-
-	return ret;
-}
-
-static int bch2_inc_nlink(struct bch_fs *c, struct bch_inode_info *inode)
-{
-	return bch2_mod_nlink(c, inode, 1);
-}
-
-static int bch2_dec_nlink(struct bch_fs *c, struct bch_inode_info *inode)
-{
-	return bch2_mod_nlink(c, inode, -1);
-}
-
 static struct inode *bch2_vfs_inode_get(struct bch_fs *c, u64 inum)
 {
 	struct bch_inode_unpacked inode_u;
@@ -739,142 +709,143 @@ static int bch2_mknod(struct inode *vdir, struct dentry *dentry,
 	return __bch2_create(to_bch_ei(vdir), dentry, mode, rdev, false);
 }
 
-static int bch2_rename(struct bch_fs *c,
-		       struct bch_inode_info *old_dir,
-		       struct dentry *old_dentry,
-		       struct bch_inode_info *new_dir,
-		       struct dentry *new_dentry)
+struct rename_info {
+	u64			now;
+	struct bch_inode_info	*src_dir;
+	struct bch_inode_info	*dst_dir;
+	struct bch_inode_info	*src_inode;
+	struct bch_inode_info	*dst_inode;
+	enum bch_rename_mode	mode;
+};
+
+static int inode_update_for_rename_fn(struct bch_inode_info *inode,
+				      struct bch_inode_unpacked *bi,
+				      void *p)
 {
-	struct bch_inode_info *old_inode = to_bch_ei(old_dentry->d_inode);
-	struct bch_inode_info *new_inode = to_bch_ei(new_dentry->d_inode);
-	struct timespec64 now = current_time(&old_dir->v);
-	int ret;
+	struct rename_info *info = p;
 
-	lockdep_assert_held(&old_dir->v.i_rwsem);
-	lockdep_assert_held(&new_dir->v.i_rwsem);
-
-	if (new_inode)
-		filemap_write_and_wait_range(old_inode->v.i_mapping,
-					     0, LLONG_MAX);
-
-	if (new_inode && S_ISDIR(old_inode->v.i_mode)) {
-		lockdep_assert_held(&new_inode->v.i_rwsem);
-
-		if (!S_ISDIR(new_inode->v.i_mode))
-			return -ENOTDIR;
-
-		if (bch2_empty_dir(c, new_inode->v.i_ino))
-			return -ENOTEMPTY;
-
-		ret = bch2_dirent_rename(c,
-				old_dir, &old_dentry->d_name,
-				new_dir, &new_dentry->d_name,
-				&old_inode->ei_journal_seq, BCH_RENAME_OVERWRITE);
-		if (unlikely(ret))
-			return ret;
-
-		clear_nlink(&new_inode->v);
-		bch2_dec_nlink(c, old_dir);
-	} else if (new_inode) {
-		lockdep_assert_held(&new_inode->v.i_rwsem);
-
-		ret = bch2_dirent_rename(c,
-				old_dir, &old_dentry->d_name,
-				new_dir, &new_dentry->d_name,
-				&old_inode->ei_journal_seq, BCH_RENAME_OVERWRITE);
-		if (unlikely(ret))
-			return ret;
-
-		new_inode->v.i_ctime = now;
-		bch2_dec_nlink(c, new_inode);
-	} else if (S_ISDIR(old_inode->v.i_mode)) {
-		ret = bch2_dirent_rename(c,
-				old_dir, &old_dentry->d_name,
-				new_dir, &new_dentry->d_name,
-				&old_inode->ei_journal_seq, BCH_RENAME);
-		if (unlikely(ret))
-			return ret;
-
-		bch2_inc_nlink(c, new_dir);
-		bch2_dec_nlink(c, old_dir);
-	} else {
-		ret = bch2_dirent_rename(c,
-				old_dir, &old_dentry->d_name,
-				new_dir, &new_dentry->d_name,
-				&old_inode->ei_journal_seq, BCH_RENAME);
-		if (unlikely(ret))
-			return ret;
+	if (inode == info->src_dir) {
+		bi->bi_nlink -= S_ISDIR(info->src_inode->v.i_mode);
+		bi->bi_nlink += info->dst_inode &&
+			S_ISDIR(info->dst_inode->v.i_mode) &&
+			info->mode == BCH_RENAME_EXCHANGE;
 	}
 
-	old_dir->v.i_ctime = old_dir->v.i_mtime = now;
-	new_dir->v.i_ctime = new_dir->v.i_mtime = now;
-	mark_inode_dirty_sync(&old_dir->v);
-	mark_inode_dirty_sync(&new_dir->v);
+	if (inode == info->dst_dir) {
+		bi->bi_nlink += S_ISDIR(info->src_inode->v.i_mode);
+		bi->bi_nlink -= info->dst_inode &&
+			S_ISDIR(info->dst_inode->v.i_mode);
+	}
 
-	old_inode->v.i_ctime = now;
-	mark_inode_dirty_sync(&old_inode->v);
+	if (inode == info->dst_inode &&
+	    info->mode == BCH_RENAME_OVERWRITE) {
+		BUG_ON(bi->bi_nlink &&
+		       S_ISDIR(info->dst_inode->v.i_mode));
+
+		if (bi->bi_nlink)
+			bi->bi_nlink--;
+		else
+			bi->bi_flags |= BCH_INODE_UNLINKED;
+	}
+
+	if (inode == info->src_dir ||
+	    inode == info->dst_dir)
+		bi->bi_mtime = info->now;
+	bi->bi_ctime = info->now;
 
 	return 0;
 }
 
-static int bch2_rename_exchange(struct bch_fs *c,
-				struct bch_inode_info *old_dir,
-				struct dentry *old_dentry,
-				struct bch_inode_info *new_dir,
-				struct dentry *new_dentry)
-{
-	struct bch_inode_info *old_inode = to_bch_ei(old_dentry->d_inode);
-	struct bch_inode_info *new_inode = to_bch_ei(new_dentry->d_inode);
-	struct timespec64 now = current_time(&old_dir->v);
-	int ret;
-
-	ret = bch2_dirent_rename(c,
-				 old_dir, &old_dentry->d_name,
-				 new_dir, &new_dentry->d_name,
-				 &old_inode->ei_journal_seq, BCH_RENAME_EXCHANGE);
-	if (unlikely(ret))
-		return ret;
-
-	if (S_ISDIR(old_inode->v.i_mode) !=
-	    S_ISDIR(new_inode->v.i_mode)) {
-		if (S_ISDIR(old_inode->v.i_mode)) {
-			bch2_inc_nlink(c, new_dir);
-			bch2_dec_nlink(c, old_dir);
-		} else {
-			bch2_dec_nlink(c, new_dir);
-			bch2_inc_nlink(c, old_dir);
-		}
-	}
-
-	old_dir->v.i_ctime = old_dir->v.i_mtime = now;
-	new_dir->v.i_ctime = new_dir->v.i_mtime = now;
-	mark_inode_dirty_sync(&old_dir->v);
-	mark_inode_dirty_sync(&new_dir->v);
-
-	old_inode->v.i_ctime = now;
-	new_inode->v.i_ctime = now;
-	mark_inode_dirty_sync(&old_inode->v);
-	mark_inode_dirty_sync(&new_inode->v);
-
-	return 0;
-}
-
-static int bch2_rename2(struct inode *old_vdir, struct dentry *old_dentry,
-			struct inode *new_vdir, struct dentry *new_dentry,
+static int bch2_rename2(struct inode *src_vdir, struct dentry *src_dentry,
+			struct inode *dst_vdir, struct dentry *dst_dentry,
 			unsigned flags)
 {
-	struct bch_fs *c = old_vdir->i_sb->s_fs_info;
-	struct bch_inode_info *old_dir = to_bch_ei(old_vdir);
-	struct bch_inode_info *new_dir = to_bch_ei(new_vdir);
+	struct bch_fs *c = src_vdir->i_sb->s_fs_info;
+	struct rename_info i = {
+		.now		= timespec_to_bch2_time(c,
+						current_time(src_vdir)),
+		.src_dir	= to_bch_ei(src_vdir),
+		.dst_dir	= to_bch_ei(dst_vdir),
+		.src_inode	= to_bch_ei(src_dentry->d_inode),
+		.dst_inode	= to_bch_ei(dst_dentry->d_inode),
+		.mode		= flags & RENAME_EXCHANGE
+				? BCH_RENAME_EXCHANGE
+			: dst_dentry->d_inode
+				? BCH_RENAME_OVERWRITE : BCH_RENAME,
+	};
+	struct btree_trans trans;
+	struct bch_inode_unpacked dst_dir_u, src_dir_u;
+	struct bch_inode_unpacked src_inode_u, dst_inode_u;
+	u64 journal_seq = 0;
+	int ret;
 
 	if (flags & ~(RENAME_NOREPLACE|RENAME_EXCHANGE))
 		return -EINVAL;
 
-	if (flags & RENAME_EXCHANGE)
-		return bch2_rename_exchange(c, old_dir, old_dentry,
-					    new_dir, new_dentry);
+	if (i.mode == BCH_RENAME_OVERWRITE) {
+		if (S_ISDIR(i.src_inode->v.i_mode) !=
+		    S_ISDIR(i.dst_inode->v.i_mode))
+			return -ENOTDIR;
 
-	return bch2_rename(c, old_dir, old_dentry, new_dir, new_dentry);
+		if (S_ISDIR(i.src_inode->v.i_mode) &&
+		    bch2_empty_dir(c, i.dst_inode->v.i_ino))
+			return -ENOTEMPTY;
+
+		ret = filemap_write_and_wait_range(i.src_inode->v.i_mapping,
+						   0, LLONG_MAX);
+		if (ret)
+			return ret;
+	}
+
+	bch2_trans_init(&trans, c);
+retry:
+	bch2_trans_begin(&trans);
+	i.now = timespec_to_bch2_time(c, current_time(src_vdir)),
+
+	ret   = bch2_dirent_rename(&trans,
+				   i.src_dir, &src_dentry->d_name,
+				   i.dst_dir, &dst_dentry->d_name,
+				   i.mode) ?:
+		bch2_write_inode_trans(&trans, i.src_dir, &src_dir_u,
+				       inode_update_for_rename_fn, &i) ?:
+		(i.src_dir != i.dst_dir
+		 ? bch2_write_inode_trans(&trans, i.dst_dir, &dst_dir_u,
+				       inode_update_for_rename_fn, &i)
+		 : 0 ) ?:
+		bch2_write_inode_trans(&trans, i.src_inode, &src_inode_u,
+				       inode_update_for_rename_fn, &i) ?:
+		(i.dst_inode
+		 ? bch2_write_inode_trans(&trans, i.dst_inode, &dst_inode_u,
+				       inode_update_for_rename_fn, &i)
+		 : 0 ) ?:
+		bch2_trans_commit(&trans, NULL, NULL,
+				  &journal_seq,
+				  BTREE_INSERT_ATOMIC|
+				  BTREE_INSERT_NOUNLOCK);
+	if (ret == -EINTR)
+		goto retry;
+	if (unlikely(ret))
+		goto err;
+
+	bch2_inode_update_after_write(c, i.src_dir, &src_dir_u,
+				      ATTR_MTIME|ATTR_CTIME);
+	journal_seq_copy(i.src_dir, journal_seq);
+
+	if (i.src_dir != i.dst_dir) {
+		bch2_inode_update_after_write(c, i.dst_dir, &dst_dir_u,
+					      ATTR_MTIME|ATTR_CTIME);
+		journal_seq_copy(i.dst_dir, journal_seq);
+	}
+
+	bch2_inode_update_after_write(c, i.src_inode, &src_inode_u,
+				      ATTR_CTIME);
+	if (i.dst_inode)
+		bch2_inode_update_after_write(c, i.dst_inode, &dst_inode_u,
+					      ATTR_CTIME);
+err:
+	bch2_trans_exit(&trans);
+
+	return ret;
 }
 
 static int bch2_setattr_nonsize(struct bch_inode_info *inode, struct iattr *iattr)
