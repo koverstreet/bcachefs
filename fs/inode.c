@@ -1434,6 +1434,18 @@ EXPORT_SYMBOL(find_inode_nowait);
 
 int insert_inode_locked(struct inode *inode)
 {
+	struct inode *old = insert_inode_locked2(inode);
+
+	if (!old)
+		return 0;
+
+	iput(old);
+	return -EBUSY;
+}
+EXPORT_SYMBOL(insert_inode_locked);
+
+struct inode *insert_inode_locked2(struct inode *inode)
+{
 	struct super_block *sb = inode->i_sb;
 	ino_t ino = inode->i_ino;
 	struct hlist_head *head = inode_hashtable + hash(sb, ino);
@@ -1459,7 +1471,7 @@ int insert_inode_locked(struct inode *inode)
 			hlist_add_head(&inode->i_hash, head);
 			spin_unlock(&inode->i_lock);
 			spin_unlock(&inode_hash_lock);
-			return 0;
+			return NULL;
 		}
 		if (unlikely(old->i_state & I_CREATING)) {
 			spin_unlock(&old->i_lock);
@@ -1470,14 +1482,12 @@ int insert_inode_locked(struct inode *inode)
 		spin_unlock(&old->i_lock);
 		spin_unlock(&inode_hash_lock);
 		wait_on_inode(old);
-		if (unlikely(!inode_unhashed(old))) {
-			iput(old);
-			return -EBUSY;
-		}
+		if (unlikely(!inode_unhashed(old)))
+			return old;
 		iput(old);
 	}
 }
-EXPORT_SYMBOL(insert_inode_locked);
+EXPORT_SYMBOL(insert_inode_locked2);
 
 int insert_inode_locked4(struct inode *inode, unsigned long hashval,
 		int (*test)(struct inode *, void *), void *data)
