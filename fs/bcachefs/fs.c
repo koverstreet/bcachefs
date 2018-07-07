@@ -605,33 +605,80 @@ retry:
 	return 0;
 }
 
+static int inode_update_dir_for_unlink_fn(struct bch_inode_info *inode,
+					  struct bch_inode_unpacked *bi,
+					  void *p)
+{
+	struct bch_fs *c = inode->v.i_sb->s_fs_info;
+	struct bch_inode_info *unlink_inode = p;
+	struct timespec64 now = current_time(&inode->v);
+
+	bi->bi_mtime = bi->bi_ctime = timespec_to_bch2_time(c, now);
+
+	bi->bi_nlink -= S_ISDIR(unlink_inode->v.i_mode);
+
+	return 0;
+}
+
+static int inode_update_for_unlink_fn(struct bch_inode_info *inode,
+				      struct bch_inode_unpacked *bi,
+				      void *p)
+{
+	struct bch_fs *c = inode->v.i_sb->s_fs_info;
+	struct timespec64 now = current_time(&inode->v);
+
+	bi->bi_ctime = timespec_to_bch2_time(c, now);
+	if (bi->bi_nlink)
+		bi->bi_nlink--;
+	else
+		bi->bi_flags |= BCH_INODE_UNLINKED;
+
+	return 0;
+}
+
 static int bch2_unlink(struct inode *vdir, struct dentry *dentry)
 {
 	struct bch_fs *c = vdir->i_sb->s_fs_info;
 	struct bch_inode_info *dir = to_bch_ei(vdir);
 	struct bch_inode_info *inode = to_bch_ei(dentry->d_inode);
+	struct bch_inode_unpacked dir_u, inode_u;
+	struct btree_trans trans;
 	int ret;
 
-	lockdep_assert_held(&inode->v.i_rwsem);
+	bch2_trans_init(&trans, c);
+retry:
+	bch2_trans_begin(&trans);
 
-	ret = bch2_dirent_delete(c, dir->v.i_ino, &dir->ei_str_hash,
-				 &dentry->d_name, &dir->ei_journal_seq);
+	ret   = __bch2_dirent_delete(&trans, dir->v.i_ino,
+				     &dir->ei_str_hash,
+				     &dentry->d_name) ?:
+		bch2_write_inode_trans(&trans, dir, &dir_u,
+				       inode_update_dir_for_unlink_fn,
+				       inode) ?:
+		bch2_write_inode_trans(&trans, inode, &inode_u,
+				       inode_update_for_unlink_fn,
+				       NULL) ?:
+		bch2_trans_commit(&trans, NULL, NULL,
+				  &dir->ei_journal_seq,
+				  BTREE_INSERT_ATOMIC|
+				  BTREE_INSERT_NOUNLOCK|
+				  BTREE_INSERT_NOFAIL);
+	if (ret == -EINTR)
+		goto retry;
 	if (ret)
-		return ret;
+		goto err;
 
 	if (dir->ei_journal_seq > inode->ei_journal_seq)
 		inode->ei_journal_seq = dir->ei_journal_seq;
 
-	inode->v.i_ctime = dir->v.i_ctime;
+	bch2_inode_update_after_write(c, dir, &dir_u,
+				      ATTR_MTIME|ATTR_CTIME);
+	bch2_inode_update_after_write(c, inode, &inode_u,
+				      ATTR_MTIME);
+err:
+	bch2_trans_exit(&trans);
 
-	if (S_ISDIR(inode->v.i_mode)) {
-		bch2_dec_nlink(c, dir);
-		drop_nlink(&inode->v);
-	}
-
-	bch2_dec_nlink(c, inode);
-
-	return 0;
+	return ret;
 }
 
 static int bch2_symlink(struct inode *vdir, struct dentry *dentry,
