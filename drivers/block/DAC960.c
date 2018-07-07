@@ -21,6 +21,7 @@
 #define DAC960_DriverDate			"21 Aug 2007"
 
 
+#include <linux/compiler.h>
 #include <linux/module.h>
 #include <linux/types.h>
 #include <linux/miscdevice.h>
@@ -6433,7 +6434,7 @@ static bool DAC960_V2_ExecuteUserCommand(DAC960_Controller_T *Controller,
   return true;
 }
 
-static int dac960_proc_show(struct seq_file *m, void *v)
+static int __maybe_unused dac960_proc_show(struct seq_file *m, void *v)
 {
   unsigned char *StatusMessage = "OK\n";
   int ControllerNumber;
@@ -6466,7 +6467,8 @@ static const struct file_operations dac960_proc_fops = {
 	.release	= single_release,
 };
 
-static int dac960_initial_status_proc_show(struct seq_file *m, void *v)
+static int __maybe_unused dac960_initial_status_proc_show(struct seq_file *m,
+							  void *v)
 {
 	DAC960_Controller_T *Controller = (DAC960_Controller_T *)m->private;
 	seq_printf(m, "%.*s", Controller->InitialStatusLength, Controller->CombinedStatusBuffer);
@@ -6486,7 +6488,8 @@ static const struct file_operations dac960_initial_status_proc_fops = {
 	.release	= single_release,
 };
 
-static int dac960_current_status_proc_show(struct seq_file *m, void *v)
+static int __maybe_unused dac960_current_status_proc_show(struct seq_file *m,
+							  void *v)
 {
   DAC960_Controller_T *Controller = (DAC960_Controller_T *) m->private;
   unsigned char *StatusMessage =
