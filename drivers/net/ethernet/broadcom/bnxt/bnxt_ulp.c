@@ -130,7 +130,6 @@ static int bnxt_req_msix_vecs(struct bnxt_en_dev *edev, int ulp_id,
 		ent[i].ring_idx = idx + i;
 		ent[i].db_offset = (idx + i) * 0x80;
 	}
-	bnxt_set_max_func_irqs(bp, max_idx - avail_msix);
 	bnxt_set_max_func_cp_rings(bp, max_cp_rings - avail_msix);
 	edev->ulp_tbl[ulp_id].msix_requested = avail_msix;
 	return avail_msix;
@@ -150,7 +149,6 @@ static int bnxt_free_msix_vecs(struct bnxt_en_dev *edev, int ulp_id)
 	msix_requested = edev->ulp_tbl[ulp_id].msix_requested;
 	bnxt_set_max_func_cp_rings(bp, max_cp_rings + msix_requested);
 	edev->ulp_tbl[ulp_id].msix_requested = 0;
-	bnxt_set_max_func_irqs(bp, bp->total_irqs);
 	return 0;
 }
 

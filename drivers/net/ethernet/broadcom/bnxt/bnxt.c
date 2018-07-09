@@ -5466,7 +5466,7 @@ static unsigned int bnxt_get_max_func_irqs(struct bnxt *bp)
 	return min_t(unsigned int, bp->pf.max_irqs, bp->pf.max_cp_rings);
 }
 
-void bnxt_set_max_func_irqs(struct bnxt *bp, unsigned int max_irqs)
+static void bnxt_set_max_func_irqs(struct bnxt *bp, unsigned int max_irqs)
 {
 #if defined(CONFIG_BNXT_SRIOV)
 	if (BNXT_VF(bp))
