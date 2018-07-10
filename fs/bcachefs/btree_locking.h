@@ -148,17 +148,19 @@ static inline void btree_node_lock_type(struct bch_fs *c, struct btree *b,
 }
 
 bool __bch2_btree_node_lock(struct btree *, struct bpos, unsigned,
-			   struct btree_iter *, enum six_lock_type);
+			    struct btree_iter *, enum six_lock_type, bool);
 
 static inline bool btree_node_lock(struct btree *b, struct bpos pos,
 				   unsigned level,
 				   struct btree_iter *iter,
-				   enum six_lock_type type)
+				   enum six_lock_type type,
+				   bool may_drop_locks)
 {
 	EBUG_ON(level >= BTREE_MAX_DEPTH);
 
 	return likely(six_trylock_type(&b->lock, type)) ||
-		__bch2_btree_node_lock(b, pos, level, iter, type);
+		__bch2_btree_node_lock(b, pos, level, iter,
+				       type, may_drop_locks);
 }
 
 bool __bch2_btree_node_relock(struct btree_iter *, unsigned);
