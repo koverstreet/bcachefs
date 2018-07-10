@@ -297,10 +297,25 @@ int __bch2_set_acl(struct inode *vinode, struct posix_acl *acl, int type)
 	return 0;
 }
 
+static int inode_update_for_set_acl_fn(struct bch_inode_info *inode,
+				       struct bch_inode_unpacked *bi,
+				       void *p)
+{
+	struct bch_fs *c = inode->v.i_sb->s_fs_info;
+	struct timespec64 now = current_time(&inode->v);
+	umode_t mode = (unsigned long) p;
+
+	bi->bi_ctime	= timespec_to_bch2_time(c, now);
+	bi->bi_mode	= mode;
+	return 0;
+}
+
 int bch2_set_acl(struct inode *vinode, struct posix_acl *acl, int type)
 {
 	struct bch_inode_info *inode = to_bch_ei(vinode);
 	struct bch_fs *c = inode->v.i_sb->s_fs_info;
+	struct btree_trans trans;
+	struct bch_inode_unpacked inode_u;
 	umode_t mode = inode->v.i_mode;
 	int ret;
 
@@ -310,18 +325,32 @@ int bch2_set_acl(struct inode *vinode, struct posix_acl *acl, int type)
 			return ret;
 	}
 
-	ret = __bch2_set_acl(vinode, acl, type);
-	if (ret)
-		return ret;
+	bch2_trans_init(&trans, c);
+retry:
+	bch2_trans_begin(&trans);
 
-	if (mode != inode->v.i_mode) {
-		mutex_lock(&inode->ei_update_lock);
-		inode->v.i_mode = mode;
-		inode->v.i_ctime = current_time(&inode->v);
+	ret   = bch2_set_acl_trans(&trans,
+				   &inode->ei_inode,
+				   &inode->ei_str_hash,
+				   acl, type) ?:
+		bch2_write_inode_trans(&trans, inode, &inode_u,
+				       inode_update_for_set_acl_fn,
+				       (void *)(unsigned long) mode) ?:
+		bch2_trans_commit(&trans, NULL, NULL,
+				  &inode->ei_journal_seq,
+				  BTREE_INSERT_ATOMIC|
+				  BTREE_INSERT_NOUNLOCK);
+	if (ret == -EINTR)
+		goto retry;
+	if (unlikely(ret))
+		goto err;
 
-		ret = bch2_write_inode(c, inode);
-		mutex_unlock(&inode->ei_update_lock);
-	}
+	bch2_inode_update_after_write(c, inode, &inode_u,
+				      ATTR_CTIME|ATTR_MODE);
+
+	set_cached_acl(&inode->v, type, acl);
+err:
+	bch2_trans_exit(&trans);
 
 	return ret;
 }
