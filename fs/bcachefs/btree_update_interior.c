@@ -1586,7 +1586,8 @@ int bch2_btree_split_leaf(struct bch_fs *c, struct btree_iter *iter,
 	 * XXX: figure out how far we might need to split,
 	 * instead of locking/reserving all the way to the root:
 	 */
-	if (!bch2_btree_iter_upgrade(iter, U8_MAX)) {
+	if (!bch2_btree_iter_upgrade(iter, U8_MAX,
+			!(flags & BTREE_INSERT_NOUNLOCK))) {
 		ret = -EINTR;
 		goto out;
 	}
@@ -1694,7 +1695,8 @@ retry:
 	if (!down_read_trylock(&c->gc_lock))
 		goto err_cycle_gc_lock;
 
-	if (!bch2_btree_iter_upgrade(iter, U8_MAX)) {
+	if (!bch2_btree_iter_upgrade(iter, U8_MAX,
+			!(flags & BTREE_INSERT_NOUNLOCK))) {
 		ret = -EINTR;
 		goto err_unlock;
 	}
@@ -1857,7 +1859,7 @@ int bch2_btree_node_rewrite(struct bch_fs *c, struct btree_iter *iter,
 
 	closure_init_stack(&cl);
 
-	bch2_btree_iter_upgrade(iter, U8_MAX);
+	bch2_btree_iter_upgrade(iter, U8_MAX, true);
 
 	if (!(flags & BTREE_INSERT_GC_LOCK_HELD)) {
 		if (!down_read_trylock(&c->gc_lock)) {
@@ -2000,7 +2002,7 @@ int bch2_btree_node_update_key(struct bch_fs *c, struct btree_iter *iter,
 
 	closure_init_stack(&cl);
 
-	if (!bch2_btree_iter_upgrade(iter, U8_MAX))
+	if (!bch2_btree_iter_upgrade(iter, U8_MAX, true))
 		return -EINTR;
 
 	if (!down_read_trylock(&c->gc_lock)) {
