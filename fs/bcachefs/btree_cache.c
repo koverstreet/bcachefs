@@ -651,7 +651,8 @@ static noinline struct btree *bch2_btree_node_fill(struct bch_fs *c,
  */
 struct btree *bch2_btree_node_get(struct bch_fs *c, struct btree_iter *iter,
 				  const struct bkey_i *k, unsigned level,
-				  enum six_lock_type lock_type)
+				  enum six_lock_type lock_type,
+				  bool may_drop_locks)
 {
 	struct btree_cache *bc = &c->btree_cache;
 	struct btree *b;
@@ -718,7 +719,8 @@ retry:
 		if (btree_node_read_locked(iter, level + 1))
 			btree_node_unlock(iter, level + 1);
 
-		if (!btree_node_lock(b, k->k.p, level, iter, lock_type))
+		if (!btree_node_lock(b, k->k.p, level, iter,
+				     lock_type, may_drop_locks))
 			return ERR_PTR(-EINTR);
 
 		if (unlikely(PTR_HASH(&b->key) != PTR_HASH(k) ||
@@ -795,7 +797,8 @@ struct btree *bch2_btree_node_get_sibling(struct bch_fs *c,
 
 	bch2_bkey_unpack(parent, &tmp.k, k);
 
-	ret = bch2_btree_node_get(c, iter, &tmp.k, level, SIX_LOCK_intent);
+	ret = bch2_btree_node_get(c, iter, &tmp.k, level,
+				  SIX_LOCK_intent, may_drop_locks);
 
 	if (PTR_ERR_OR_ZERO(ret) == -EINTR && may_drop_locks) {
 		struct btree_iter *linked;
@@ -815,7 +818,7 @@ struct btree *bch2_btree_node_get_sibling(struct bch_fs *c,
 			btree_node_unlock(iter, level);
 
 		ret = bch2_btree_node_get(c, iter, &tmp.k, level,
-					  SIX_LOCK_intent);
+					  SIX_LOCK_intent, may_drop_locks);
 
 		/*
 		 * before btree_iter_relock() calls btree_iter_verify_locks():
@@ -858,7 +861,7 @@ out:
 	return ret;
 out_upgrade:
 	if (may_drop_locks)
-		bch2_btree_iter_upgrade(iter, level + 2);
+		bch2_btree_iter_upgrade(iter, level + 2, true);
 	ret = ERR_PTR(-EINTR);
 	goto out;
 }

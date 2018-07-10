@@ -442,7 +442,7 @@ retry:
 	cycle_gc_lock = false;
 
 	trans_for_each_entry(trans, i) {
-		if (!bch2_btree_iter_upgrade(i->iter, 1)) {
+		if (!bch2_btree_iter_upgrade(i->iter, 1, true)) {
 			ret = -EINTR;
 			goto err;
 		}
