@@ -20,35 +20,6 @@ typedef struct {
 	__le32		a_version;
 } bch_acl_header;
 
-static inline size_t bch2_acl_size(int count)
-{
-	if (count <= 4) {
-		return sizeof(bch_acl_header) +
-		       count * sizeof(bch_acl_entry_short);
-	} else {
-		return sizeof(bch_acl_header) +
-		       4 * sizeof(bch_acl_entry_short) +
-		       (count - 4) * sizeof(bch_acl_entry);
-	}
-}
-
-static inline int bch2_acl_count(size_t size)
-{
-	ssize_t s;
-
-	size -= sizeof(bch_acl_header);
-	s = size - 4 * sizeof(bch_acl_entry_short);
-	if (s < 0) {
-		if (size % sizeof(bch_acl_entry_short))
-			return -1;
-		return size / sizeof(bch_acl_entry_short);
-	} else {
-		if (s % sizeof(bch_acl_entry))
-			return -1;
-		return s / sizeof(bch_acl_entry) + 4;
-	}
-}
-
 struct posix_acl;
 
 extern struct posix_acl *bch2_get_acl(struct inode *, int);
