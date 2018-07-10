@@ -355,4 +355,47 @@ err:
 	return ret;
 }
 
+int bch2_acl_chmod(struct btree_trans *trans,
+		   struct bch_inode_info *inode,
+		   umode_t mode,
+		   struct posix_acl **new_acl)
+{
+	struct btree_iter *iter;
+	struct bkey_s_c_xattr xattr;
+	struct bkey_i_xattr *new;
+	struct posix_acl *acl;
+	int ret = 0;
+
+	iter = bch2_hash_lookup(trans, bch2_xattr_hash_desc,
+			&inode->ei_str_hash, inode->v.i_ino,
+			&X_SEARCH(BCH_XATTR_INDEX_POSIX_ACL_ACCESS, "", 0),
+			BTREE_ITER_INTENT);
+	if (IS_ERR(iter))
+		return PTR_ERR(iter) != -ENOENT ? PTR_ERR(iter) : 0;
+
+	xattr = bkey_s_c_to_xattr(bch2_btree_iter_peek_slot(iter));
+
+	acl = bch2_acl_from_disk(xattr_val(xattr.v),
+			le16_to_cpu(xattr.v->x_val_len));
+	if (IS_ERR_OR_NULL(acl))
+		return PTR_ERR(acl);
+
+	ret = __posix_acl_chmod(&acl, GFP_KERNEL, mode);
+	if (ret)
+		goto err;
+
+	new = bch2_acl_to_xattr(trans, acl, ACL_TYPE_ACCESS);
+	if (IS_ERR(new)) {
+		ret = PTR_ERR(new);
+		goto err;
+	}
+
+	bch2_trans_update(trans, iter, &new->k_i, 0);
+	*new_acl = acl;
+	acl = NULL;
+err:
+	kfree(acl);
+	return ret;
+}
+
 #endif /* CONFIG_BCACHEFS_POSIX_ACL */
