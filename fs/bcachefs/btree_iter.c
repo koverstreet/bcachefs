@@ -117,11 +117,11 @@ static bool bch2_btree_node_upgrade(struct btree_iter *iter, unsigned level)
 	if (!is_btree_node(iter, level))
 		return false;
 
-	if (race_fault())
-		return false;
-
 	if (btree_node_intent_locked(iter, level))
 		return true;
+
+	if (race_fault())
+		return false;
 
 	if (btree_node_locked(iter, level)
 	    ? six_lock_tryupgrade(&b->lock)
@@ -182,7 +182,8 @@ static inline bool btree_iter_get_locks(struct btree_iter *iter,
 bool __bch2_btree_node_lock(struct btree *b, struct bpos pos,
 			   unsigned level,
 			   struct btree_iter *iter,
-			   enum six_lock_type type)
+			   enum six_lock_type type,
+			   bool may_drop_locks)
 {
 	struct bch_fs *c = iter->c;
 	struct btree_iter *linked;
@@ -233,10 +234,12 @@ bool __bch2_btree_node_lock(struct btree *b, struct bpos pos,
 		 */
 		if (type == SIX_LOCK_intent &&
 		    linked->nodes_locked != linked->nodes_intent_locked) {
-			linked->locks_want = max_t(unsigned,
-					linked->locks_want,
-					__fls(linked->nodes_locked) + 1);
-			btree_iter_get_locks(linked, true);
+			if (may_drop_locks) {
+				linked->locks_want = max_t(unsigned,
+						linked->locks_want,
+						__fls(linked->nodes_locked) + 1);
+				btree_iter_get_locks(linked, true);
+			}
 			ret = false;
 		}
 
@@ -247,10 +250,12 @@ bool __bch2_btree_node_lock(struct btree *b, struct bpos pos,
 		 */
 		if (linked->btree_id == iter->btree_id &&
 		    level > __fls(linked->nodes_locked)) {
-			linked->locks_want = max_t(unsigned,
-						   linked->locks_want,
-						   iter->locks_want);
-			btree_iter_get_locks(linked, true);
+			if (may_drop_locks) {
+				linked->locks_want = max_t(unsigned,
+							   linked->locks_want,
+							   iter->locks_want);
+				btree_iter_get_locks(linked, true);
+			}
 			ret = false;
 		}
 	}
@@ -323,6 +328,30 @@ bool __bch2_btree_iter_upgrade(struct btree_iter *iter,
 		}
 
 	return false;
+}
+
+bool __bch2_btree_iter_upgrade_nounlock(struct btree_iter *iter,
+					unsigned new_locks_want)
+{
+	unsigned l = iter->level;
+
+	EBUG_ON(iter->locks_want >= new_locks_want);
+
+	iter->locks_want = new_locks_want;
+
+	do {
+		if (!btree_iter_node(iter, l))
+			break;
+
+		if (!bch2_btree_node_upgrade(iter, l)) {
+			iter->locks_want = l;
+			return false;
+		}
+
+		l++;
+	} while (l < iter->locks_want);
+
+	return true;
 }
 
 void __bch2_btree_iter_downgrade(struct btree_iter *iter,
@@ -792,7 +821,7 @@ static inline int btree_iter_lock_root(struct btree_iter *iter,
 
 		lock_type = __btree_lock_want(iter, iter->level);
 		if (unlikely(!btree_node_lock(b, POS_MAX, iter->level,
-					      iter, lock_type)))
+					      iter, lock_type, true)))
 			return -EINTR;
 
 		if (likely(b == c->btree_roots[iter->btree_id].b &&
@@ -855,7 +884,7 @@ static inline int btree_iter_down(struct btree_iter *iter)
 	bch2_bkey_unpack(l->b, &tmp.k,
 			 bch2_btree_node_iter_peek(&l->iter, l->b));
 
-	b = bch2_btree_node_get(iter->c, iter, &tmp.k, level, lock_type);
+	b = bch2_btree_node_get(iter->c, iter, &tmp.k, level, lock_type, true);
 	if (unlikely(IS_ERR(b)))
 		return PTR_ERR(b);
 
