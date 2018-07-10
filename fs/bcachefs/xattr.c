@@ -13,23 +13,7 @@
 #include <linux/posix_acl_xattr.h>
 #include <linux/xattr.h>
 
-static unsigned xattr_val_u64s(unsigned name_len, unsigned val_len)
-{
-	return DIV_ROUND_UP(offsetof(struct bch_xattr, x_name) +
-			    name_len + val_len, sizeof(u64));
-}
-
-#define xattr_val(_xattr)	((_xattr)->x_name + (_xattr)->x_name_len)
-
 static const struct xattr_handler *bch2_xattr_type_to_handler(unsigned);
-
-struct xattr_search_key {
-	u8		type;
-	struct qstr	name;
-};
-
-#define X_SEARCH(_type, _name, _len) ((struct xattr_search_key)	\
-	{ .type = _type, .name = QSTR_INIT(_name, _len) })
 
 static u64 bch2_xattr_hash(const struct bch_hash_info *info,
 			  const struct xattr_search_key *key)
@@ -158,6 +142,17 @@ void bch2_xattr_to_text(struct bch_fs *c, char *buf,
 	}
 }
 
+struct bkey_s_c bch2_xattr_get_iter(struct bch_fs *c,
+				    struct btree_iter *iter,
+				    struct bch_inode_info *inode,
+				    const char *name, int type)
+{
+	return bch2_hash_lookup(bch2_xattr_hash_desc,
+				&inode->ei_str_hash,
+				c, inode->v.i_ino, iter,
+				&X_SEARCH(type, name, strlen(name)));
+}
+
 int bch2_xattr_get(struct bch_fs *c, struct bch_inode_info *inode,
 		  const char *name, void *buffer, size_t size, int type)
 {
@@ -185,19 +180,15 @@ int bch2_xattr_get(struct bch_fs *c, struct bch_inode_info *inode,
 	return ret;
 }
 
-int __bch2_xattr_set(struct bch_fs *c, u64 inum,
-		    const struct bch_hash_info *hash_info,
-		    const char *name, const void *value, size_t size,
-		    int flags, int type, u64 *journal_seq)
+int bch2_xattr_set(struct bch_fs *c, u64 inum,
+		   const struct bch_hash_info *hash_info,
+		   const char *name, const void *value, size_t size,
+		   int flags, int type, u64 *journal_seq)
 {
 	struct xattr_search_key search = X_SEARCH(type, name, strlen(name));
 	int ret;
 
-	if (!value) {
-		ret = bch2_hash_delete(bch2_xattr_hash_desc, hash_info,
-				      c, inum,
-				      journal_seq, &search);
-	} else {
+	if (value) {
 		struct bkey_i_xattr *xattr;
 		unsigned u64s = BKEY_U64s +
 			xattr_val_u64s(search.name.len, size);
@@ -223,21 +214,15 @@ int __bch2_xattr_set(struct bch_fs *c, u64 inum,
 				(flags & XATTR_CREATE ? BCH_HASH_SET_MUST_CREATE : 0)|
 				(flags & XATTR_REPLACE ? BCH_HASH_SET_MUST_REPLACE : 0));
 		kfree(xattr);
+	} else {
+		ret = bch2_hash_delete(bch2_xattr_hash_desc, hash_info,
+				       c, inum, journal_seq, &search);
 	}
 
 	if (ret == -ENOENT)
 		ret = flags & XATTR_REPLACE ? -ENODATA : 0;
 
 	return ret;
-}
-
-int bch2_xattr_set(struct bch_fs *c, struct bch_inode_info *inode,
-		   const char *name, const void *value, size_t size,
-		   int flags, int type)
-{
-	return __bch2_xattr_set(c, inode->v.i_ino, &inode->ei_str_hash,
-				name, value, size, flags, type,
-				&inode->ei_journal_seq);
 }
 
 static size_t bch2_xattr_emit(struct dentry *dentry,
@@ -323,8 +308,9 @@ static int bch2_xattr_set_handler(const struct xattr_handler *handler,
 	struct bch_inode_info *inode = to_bch_ei(vinode);
 	struct bch_fs *c = inode->v.i_sb->s_fs_info;
 
-	return bch2_xattr_set(c, inode, name, value, size, flags,
-			      handler->flags);
+	return bch2_xattr_set(c, inode->v.i_ino, &inode->ei_str_hash,
+			      name, value, size, flags, handler->flags,
+			      &inode->ei_journal_seq);
 }
 
 static const struct xattr_handler bch_xattr_user_handler = {
