@@ -279,24 +279,6 @@ int bch2_set_acl_trans(struct btree_trans *trans,
 	return ret == -ENOENT ? 0 : ret;
 }
 
-int __bch2_set_acl(struct inode *vinode, struct posix_acl *acl, int type)
-{
-	struct bch_inode_info *inode = to_bch_ei(vinode);
-	struct bch_fs *c = inode->v.i_sb->s_fs_info;
-	int ret;
-
-	ret = bch2_trans_do(c, &inode->ei_journal_seq, BTREE_INSERT_ATOMIC,
-			bch2_set_acl_trans(&trans,
-					   &inode->ei_inode,
-					   &inode->ei_str_hash,
-					   acl, type));
-	if (ret)
-		return ret;
-
-	set_cached_acl(&inode->v, type, acl);
-	return 0;
-}
-
 static int inode_update_for_set_acl_fn(struct bch_inode_info *inode,
 				       struct bch_inode_unpacked *bi,
 				       void *p)
