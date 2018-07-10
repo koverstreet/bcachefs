@@ -83,6 +83,9 @@ void bch2_inode_update_after_write(struct bch_fs *c,
 	set_nlink(&inode->v, bi->bi_flags & BCH_INODE_UNLINKED
 		  ? 0
 		  : bi->bi_nlink + nlink_bias(inode->v.i_mode));
+	i_uid_write(&inode->v, bi->bi_uid);
+	i_gid_write(&inode->v, bi->bi_gid);
+	inode->v.i_mode	= bi->bi_mode;
 
 	if (fields & ATTR_ATIME)
 		inode->v.i_atime = bch2_time_to_timespec(c, bi->bi_atime);
@@ -101,7 +104,6 @@ int __must_check bch2_write_inode_trans(struct btree_trans *trans,
 				inode_set_fn set,
 				void *p)
 {
-	struct bch_fs *c = trans->c;
 	struct btree_iter *iter;
 	struct bkey_inode_buf *inode_p;
 	struct bkey_s_c k;
@@ -133,15 +135,6 @@ int __must_check bch2_write_inode_trans(struct btree_trans *trans,
 	BUG_ON(inode_u->bi_size != inode->ei_inode.bi_size &&
 	       !(inode_u->bi_flags & BCH_INODE_I_SIZE_DIRTY) &&
 	       inode_u->bi_size > i_size_read(&inode->v));
-
-	inode_u->bi_mode	= inode->v.i_mode;
-	inode_u->bi_uid		= i_uid_read(&inode->v);
-	inode_u->bi_gid		= i_gid_read(&inode->v);
-	inode_u->bi_project	= inode->ei_qid.q[QTYP_PRJ];
-	inode_u->bi_dev		= inode->v.i_rdev;
-	inode_u->bi_atime	= timespec_to_bch2_time(c, inode->v.i_atime);
-	inode_u->bi_mtime	= timespec_to_bch2_time(c, inode->v.i_mtime);
-	inode_u->bi_ctime	= timespec_to_bch2_time(c, inode->v.i_ctime);
 
 	if (set) {
 		ret = set(inode, inode_u, p);
@@ -189,12 +182,6 @@ retry:
 
 	bch2_trans_exit(&trans);
 	return ret < 0 ? ret : 0;
-}
-
-int __must_check bch2_write_inode(struct bch_fs *c,
-				  struct bch_inode_info *inode)
-{
-	return __bch2_write_inode(c, inode, NULL, NULL, 0);
 }
 
 static struct inode *bch2_vfs_inode_get(struct bch_fs *c, u64 inum)
@@ -848,10 +835,48 @@ err:
 	return ret;
 }
 
+static int inode_update_for_setattr_fn(struct bch_inode_info *inode,
+				       struct bch_inode_unpacked *bi,
+				       void *p)
+{
+	struct bch_fs *c = inode->v.i_sb->s_fs_info;
+	struct iattr *attr = p;
+	unsigned int ia_valid = attr->ia_valid;
+
+	if (ia_valid & ATTR_UID)
+		bi->bi_uid = from_kuid(inode->v.i_sb->s_user_ns, attr->ia_uid);
+	if (ia_valid & ATTR_GID)
+		bi->bi_gid = from_kgid(inode->v.i_sb->s_user_ns, attr->ia_gid);
+
+	if (ia_valid & ATTR_ATIME)
+		bi->bi_atime = timespec_to_bch2_time(c, attr->ia_atime);
+	if (ia_valid & ATTR_MTIME)
+		bi->bi_mtime = timespec_to_bch2_time(c, attr->ia_mtime);
+	if (ia_valid & ATTR_CTIME)
+		bi->bi_ctime = timespec_to_bch2_time(c, attr->ia_ctime);
+
+	if (ia_valid & ATTR_MODE) {
+		umode_t mode = attr->ia_mode;
+		kgid_t gid = ia_valid & ATTR_GID
+			? attr->ia_gid
+			: inode->v.i_gid;
+
+		if (!in_group_p(gid) &&
+		    !capable_wrt_inode_uidgid(&inode->v, CAP_FSETID))
+			mode &= ~S_ISGID;
+		bi->bi_mode = mode;
+	}
+
+	return 0;
+}
+
 static int bch2_setattr_nonsize(struct bch_inode_info *inode, struct iattr *iattr)
 {
 	struct bch_fs *c = inode->v.i_sb->s_fs_info;
 	struct bch_qid qid = inode->ei_qid;
+	struct btree_trans trans;
+	struct bch_inode_unpacked inode_u;
+	struct posix_acl *acl = NULL;
 	unsigned qtypes = 0;
 	int ret;
 
@@ -876,18 +901,38 @@ static int bch2_setattr_nonsize(struct bch_inode_info *inode, struct iattr *iatt
 					  inode->v.i_blocks +
 					  inode->ei_quota_reserved);
 		if (ret)
-			goto out_unlock;
+			goto err;
 	}
 
-	setattr_copy(&inode->v, iattr);
+	bch2_trans_init(&trans, c);
+retry:
+	bch2_trans_begin(&trans);
+	kfree(acl);
+	acl = NULL;
 
-	ret = bch2_write_inode(c, inode);
-out_unlock:
+	ret = bch2_write_inode_trans(&trans, inode, &inode_u,
+				inode_update_for_setattr_fn, iattr) ?:
+		(iattr->ia_valid & ATTR_MODE
+		 ? bch2_acl_chmod(&trans, inode, iattr->ia_mode, &acl)
+		 : 0) ?:
+		bch2_trans_commit(&trans, NULL, NULL,
+				  &inode->ei_journal_seq,
+				  BTREE_INSERT_ATOMIC|
+				  BTREE_INSERT_NOUNLOCK|
+				  BTREE_INSERT_NOFAIL);
+	if (ret == -EINTR)
+		goto retry;
+	if (unlikely(ret))
+		goto err_trans;
+
+	bch2_inode_update_after_write(c, inode, &inode_u, iattr->ia_valid);
+
+	if (acl)
+		set_cached_acl(&inode->v, ACL_TYPE_ACCESS, acl);
+err_trans:
+	bch2_trans_exit(&trans);
+err:
 	mutex_unlock(&inode->ei_update_lock);
-
-	if (!ret &&
-	    iattr->ia_valid & ATTR_MODE)
-		ret = posix_acl_chmod(&inode->v, inode->v.i_mode);
 
 	return ret;
 }
@@ -1201,9 +1246,6 @@ static void bch2_vfs_inode_init(struct bch_fs *c,
 {
 	bch2_inode_update_after_write(c, inode, bi, ~0);
 
-	inode->v.i_mode		= bi->bi_mode;
-	i_uid_write(&inode->v, bi->bi_uid);
-	i_gid_write(&inode->v, bi->bi_gid);
 	inode->v.i_blocks	= bi->bi_sectors;
 	inode->v.i_ino		= bi->bi_inum;
 	inode->v.i_rdev		= bi->bi_dev;
