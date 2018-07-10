@@ -12,96 +12,175 @@
 #include "fs.h"
 #include "xattr.h"
 
+static inline size_t bch2_acl_size(unsigned nr_short, unsigned nr_long)
+{
+	return sizeof(bch_acl_header) +
+		sizeof(bch_acl_entry_short) * nr_short +
+		sizeof(bch_acl_entry) * nr_long;
+}
+
+static inline int acl_to_xattr_type(int type)
+{
+	switch (type) {
+	case ACL_TYPE_ACCESS:
+		return BCH_XATTR_INDEX_POSIX_ACL_ACCESS;
+	case ACL_TYPE_DEFAULT:
+		return BCH_XATTR_INDEX_POSIX_ACL_DEFAULT;
+	default:
+		BUG();
+	}
+}
+
 /*
  * Convert from filesystem to in-memory representation.
  */
 static struct posix_acl *bch2_acl_from_disk(const void *value, size_t size)
 {
-	const char *end = (char *)value + size;
-	int n, count;
+	const void *p, *end = value + size;
 	struct posix_acl *acl;
+	struct posix_acl_entry *out;
+	unsigned count = 0;
 
 	if (!value)
 		return NULL;
 	if (size < sizeof(bch_acl_header))
-		return ERR_PTR(-EINVAL);
+		goto invalid;
 	if (((bch_acl_header *)value)->a_version !=
 	    cpu_to_le32(BCH_ACL_VERSION))
-		return ERR_PTR(-EINVAL);
-	value = (char *)value + sizeof(bch_acl_header);
-	count = bch2_acl_count(size);
-	if (count < 0)
-		return ERR_PTR(-EINVAL);
-	if (count == 0)
-		return NULL;
-	acl = posix_acl_alloc(count, GFP_KERNEL);
-	if (!acl)
-		return ERR_PTR(-ENOMEM);
-	for (n = 0; n < count; n++) {
-		bch_acl_entry *entry =
-			(bch_acl_entry *)value;
-		if ((char *)value + sizeof(bch_acl_entry_short) > end)
-			goto fail;
-		acl->a_entries[n].e_tag  = le16_to_cpu(entry->e_tag);
-		acl->a_entries[n].e_perm = le16_to_cpu(entry->e_perm);
-		switch (acl->a_entries[n].e_tag) {
+		goto invalid;
+
+	p = value + sizeof(bch_acl_header);
+	while (p < end) {
+		const bch_acl_entry *entry = p;
+
+		if (p + sizeof(bch_acl_entry_short) > end)
+			goto invalid;
+
+		switch (le16_to_cpu(entry->e_tag)) {
 		case ACL_USER_OBJ:
 		case ACL_GROUP_OBJ:
 		case ACL_MASK:
 		case ACL_OTHER:
-			value = (char *)value +
-				sizeof(bch_acl_entry_short);
+			p += sizeof(bch_acl_entry_short);
 			break;
-
 		case ACL_USER:
-			value = (char *)value + sizeof(bch_acl_entry);
-			if ((char *)value > end)
-				goto fail;
-			acl->a_entries[n].e_uid =
-				make_kuid(&init_user_ns,
-					  le32_to_cpu(entry->e_id));
+		case ACL_GROUP:
+			p += sizeof(bch_acl_entry);
+			break;
+		default:
+			goto invalid;
+		}
+
+		count++;
+	}
+
+	if (p > end)
+		goto invalid;
+
+	if (!count)
+		return NULL;
+
+	acl = posix_acl_alloc(count, GFP_KERNEL);
+	if (!acl)
+		return ERR_PTR(-ENOMEM);
+
+	out = acl->a_entries;
+
+	p = value + sizeof(bch_acl_header);
+	while (p < end) {
+		const bch_acl_entry *in = p;
+
+		out->e_tag  = le16_to_cpu(in->e_tag);
+		out->e_perm = le16_to_cpu(in->e_perm);
+
+		switch (out->e_tag) {
+		case ACL_USER_OBJ:
+		case ACL_GROUP_OBJ:
+		case ACL_MASK:
+		case ACL_OTHER:
+			p += sizeof(bch_acl_entry_short);
+			break;
+		case ACL_USER:
+			out->e_uid = make_kuid(&init_user_ns,
+					       le32_to_cpu(in->e_id));
+			p += sizeof(bch_acl_entry);
 			break;
 		case ACL_GROUP:
-			value = (char *)value + sizeof(bch_acl_entry);
-			if ((char *)value > end)
-				goto fail;
-			acl->a_entries[n].e_gid =
-				make_kgid(&init_user_ns,
-					  le32_to_cpu(entry->e_id));
+			out->e_gid = make_kgid(&init_user_ns,
+					       le32_to_cpu(in->e_id));
+			p += sizeof(bch_acl_entry);
 			break;
-
-		default:
-			goto fail;
 		}
-	}
-	if (value != end)
-		goto fail;
-	return acl;
 
-fail:
-	posix_acl_release(acl);
+		out++;
+	}
+
+	BUG_ON(out != acl->a_entries + acl->a_count);
+
+	return acl;
+invalid:
+	pr_err("invalid acl entry");
 	return ERR_PTR(-EINVAL);
 }
+
+#define acl_for_each_entry(acl, acl_e)			\
+	for (acl_e = acl->a_entries;			\
+	     acl_e < acl->a_entries + acl->a_count;	\
+	     acl_e++)
 
 /*
  * Convert from in-memory to filesystem representation.
  */
-static void *bch2_acl_to_disk(const struct posix_acl *acl, size_t *size)
+static struct bkey_i_xattr *
+bch2_acl_to_xattr(const struct posix_acl *acl,
+		  int type)
 {
-	bch_acl_header *ext_acl;
-	char *e;
-	size_t n;
+	struct bkey_i_xattr *xattr;
+	bch_acl_header *acl_header;
+	const struct posix_acl_entry *acl_e;
+	void *outptr;
+	unsigned nr_short = 0, nr_long = 0, acl_len, u64s;
 
-	*size = bch2_acl_size(acl->a_count);
-	ext_acl = kmalloc(sizeof(bch_acl_header) + acl->a_count *
-			sizeof(bch_acl_entry), GFP_KERNEL);
-	if (!ext_acl)
-		return ERR_PTR(-ENOMEM);
-	ext_acl->a_version = cpu_to_le32(BCH_ACL_VERSION);
-	e = (char *)ext_acl + sizeof(bch_acl_header);
-	for (n = 0; n < acl->a_count; n++) {
-		const struct posix_acl_entry *acl_e = &acl->a_entries[n];
-		bch_acl_entry *entry = (bch_acl_entry *)e;
+	acl_for_each_entry(acl, acl_e) {
+		switch (acl_e->e_tag) {
+		case ACL_USER:
+		case ACL_GROUP:
+			nr_long++;
+			break;
+		case ACL_USER_OBJ:
+		case ACL_GROUP_OBJ:
+		case ACL_MASK:
+		case ACL_OTHER:
+			nr_short++;
+			break;
+		default:
+			return ERR_PTR(-EINVAL);
+		}
+	}
+
+	acl_len = bch2_acl_size(nr_short, nr_long);
+	u64s = BKEY_U64s + xattr_val_u64s(0, acl_len);
+
+	if (u64s > U8_MAX)
+		return ERR_PTR(-E2BIG);
+
+	xattr = kmalloc(u64s * sizeof(u64), GFP_KERNEL);
+	if (IS_ERR(xattr))
+		return xattr;
+
+	bkey_xattr_init(&xattr->k_i);
+	xattr->k.u64s		= u64s;
+	xattr->v.x_type		= acl_to_xattr_type(type);
+	xattr->v.x_name_len	= 0,
+	xattr->v.x_val_len	= cpu_to_le16(acl_len);
+
+	acl_header = xattr_val(&xattr->v);
+	acl_header->a_version = cpu_to_le32(BCH_ACL_VERSION);
+
+	outptr = (void *) acl_header + sizeof(*acl_header);
+
+	acl_for_each_entry(acl, acl_e) {
+		bch_acl_entry *entry = outptr;
 
 		entry->e_tag = cpu_to_le16(acl_e->e_tag);
 		entry->e_perm = cpu_to_le16(acl_e->e_perm);
@@ -109,70 +188,54 @@ static void *bch2_acl_to_disk(const struct posix_acl *acl, size_t *size)
 		case ACL_USER:
 			entry->e_id = cpu_to_le32(
 				from_kuid(&init_user_ns, acl_e->e_uid));
-			e += sizeof(bch_acl_entry);
+			outptr += sizeof(bch_acl_entry);
 			break;
 		case ACL_GROUP:
 			entry->e_id = cpu_to_le32(
 				from_kgid(&init_user_ns, acl_e->e_gid));
-			e += sizeof(bch_acl_entry);
+			outptr += sizeof(bch_acl_entry);
 			break;
 
 		case ACL_USER_OBJ:
 		case ACL_GROUP_OBJ:
 		case ACL_MASK:
 		case ACL_OTHER:
-			e += sizeof(bch_acl_entry_short);
+			outptr += sizeof(bch_acl_entry_short);
 			break;
-
-		default:
-			goto fail;
 		}
 	}
-	return (char *)ext_acl;
 
-fail:
-	kfree(ext_acl);
-	return ERR_PTR(-EINVAL);
+	BUG_ON(outptr != xattr_val(&xattr->v) + acl_len);
+
+	return xattr;
 }
 
 struct posix_acl *bch2_get_acl(struct inode *vinode, int type)
 {
 	struct bch_inode_info *inode = to_bch_ei(vinode);
 	struct bch_fs *c = inode->v.i_sb->s_fs_info;
-	int name_index;
-	char *value = NULL;
-	struct posix_acl *acl;
-	int ret;
+	struct btree_iter iter;
+	struct bkey_s_c_xattr xattr;
+	struct bkey_s_c k;
+	struct posix_acl *acl = NULL;
+	int name_index = acl_to_xattr_type(type);
 
-	switch (type) {
-	case ACL_TYPE_ACCESS:
-		name_index = BCH_XATTR_INDEX_POSIX_ACL_ACCESS;
-		break;
-	case ACL_TYPE_DEFAULT:
-		name_index = BCH_XATTR_INDEX_POSIX_ACL_DEFAULT;
-		break;
-	default:
-		BUG();
+	k = bch2_xattr_get_iter(c, &iter, inode, "", name_index);
+	if (IS_ERR(k.k)) {
+		if (PTR_ERR(k.k) != -ENOENT)
+			acl = ERR_CAST(k.k);
+		goto out;
 	}
-	ret = bch2_xattr_get(c, inode, "", NULL, 0, name_index);
-	if (ret > 0) {
-		value = kmalloc(ret, GFP_KERNEL);
-		if (!value)
-			return ERR_PTR(-ENOMEM);
-		ret = bch2_xattr_get(c, inode, "", value,
-				    ret, name_index);
-	}
-	if (ret > 0)
-		acl = bch2_acl_from_disk(value, ret);
-	else if (ret == -ENODATA || ret == -ENOSYS)
-		acl = NULL;
-	else
-		acl = ERR_PTR(ret);
-	kfree(value);
+
+	xattr = bkey_s_c_to_xattr(k);
+
+	acl = bch2_acl_from_disk(xattr_val(xattr.v),
+			le16_to_cpu(xattr.v->x_val_len));
 
 	if (!IS_ERR(acl))
 		set_cached_acl(&inode->v, type, acl);
-
+out:
+	bch2_btree_iter_unlock(&iter);
 	return acl;
 }
 
@@ -180,36 +243,30 @@ int __bch2_set_acl(struct inode *vinode, struct posix_acl *acl, int type)
 {
 	struct bch_inode_info *inode = to_bch_ei(vinode);
 	struct bch_fs *c = inode->v.i_sb->s_fs_info;
-	int name_index;
-	void *value = NULL;
-	size_t size = 0;
 	int ret;
 
-	switch (type) {
-	case ACL_TYPE_ACCESS:
-		name_index = BCH_XATTR_INDEX_POSIX_ACL_ACCESS;
-		break;
-	case ACL_TYPE_DEFAULT:
-		name_index = BCH_XATTR_INDEX_POSIX_ACL_DEFAULT;
-		if (!S_ISDIR(inode->v.i_mode))
-			return acl ? -EACCES : 0;
-		break;
-
-	default:
-		return -EINVAL;
-	}
+	if (type == ACL_TYPE_DEFAULT &&
+	    !S_ISDIR(inode->v.i_mode))
+		return acl ? -EACCES : 0;
 
 	if (acl) {
-		value = bch2_acl_to_disk(acl, &size);
-		if (IS_ERR(value))
-			return (int)PTR_ERR(value);
+		struct bkey_i_xattr *xattr =
+			bch2_acl_to_xattr(acl, type);
+		if (IS_ERR(xattr))
+			return PTR_ERR(xattr);
+
+		ret = bch2_hash_set(bch2_xattr_hash_desc, &inode->ei_str_hash,
+				    c, inode->v.i_ino, &inode->ei_journal_seq,
+				    &xattr->k_i, 0);
+		kfree(xattr);
+	} else {
+		struct xattr_search_key search =
+			X_SEARCH(acl_to_xattr_type(type), "", 0);
+
+		ret = bch2_hash_delete(bch2_xattr_hash_desc, &inode->ei_str_hash,
+				       c, inode->v.i_ino, &inode->ei_journal_seq,
+				       &search);
 	}
-
-	ret = bch2_xattr_set(c, inode, "", value, size, 0, name_index);
-	kfree(value);
-
-	if (ret == -ERANGE)
-		ret = -E2BIG;
 
 	if (!ret)
 		set_cached_acl(&inode->v, type, acl);
