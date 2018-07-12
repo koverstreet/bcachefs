@@ -97,7 +97,11 @@ const char *bch2_dirent_invalid(const struct bch_fs *c, struct bkey_s_c k)
 		if (!len)
 			return "empty name";
 
-		if (bkey_val_u64s(k.k) > dirent_val_u64s(len))
+		/*
+		 * older versions of bcachefs were buggy and creating dirent
+		 * keys that were bigger than necessary:
+		 */
+		if (bkey_val_u64s(k.k) > dirent_val_u64s(len + 7))
 			return "value too big";
 
 		if (len > BCH_NAME_MAX)
