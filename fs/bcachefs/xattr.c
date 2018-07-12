@@ -74,7 +74,6 @@ const char *bch2_xattr_invalid(const struct bch_fs *c, struct bkey_s_c k)
 {
 	const struct xattr_handler *handler;
 	struct bkey_s_c_xattr xattr;
-	unsigned u64s;
 
 	switch (k.k->type) {
 	case BCH_XATTR:
@@ -82,13 +81,15 @@ const char *bch2_xattr_invalid(const struct bch_fs *c, struct bkey_s_c k)
 			return "value too small";
 
 		xattr = bkey_s_c_to_xattr(k);
-		u64s = xattr_val_u64s(xattr.v->x_name_len,
-				      le16_to_cpu(xattr.v->x_val_len));
 
-		if (bkey_val_u64s(k.k) < u64s)
+		if (bkey_val_u64s(k.k) <
+			xattr_val_u64s(xattr.v->x_name_len,
+				       le16_to_cpu(xattr.v->x_val_len)))
 			return "value too small";
 
-		if (bkey_val_u64s(k.k) > u64s)
+		if (bkey_val_u64s(k.k) >
+			xattr_val_u64s(xattr.v->x_name_len,
+				       le16_to_cpu(xattr.v->x_val_len) + 4))
 			return "value too big";
 
 		handler = bch2_xattr_type_to_handler(xattr.v->x_type);
