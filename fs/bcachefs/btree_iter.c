@@ -1580,8 +1580,13 @@ void bch2_btree_iter_link(struct btree_iter *iter, struct btree_iter *new)
 
 void bch2_btree_iter_copy(struct btree_iter *dst, struct btree_iter *src)
 {
+	unsigned i;
+
 	__bch2_btree_iter_unlock(dst);
 	memcpy(dst, src, offsetof(struct btree_iter, next));
-	dst->nodes_locked = dst->nodes_intent_locked = 0;
-	dst->uptodate = BTREE_ITER_NEED_RELOCK;
+
+	for (i = 0; i < BTREE_MAX_DEPTH; i++)
+		if (btree_node_locked(dst, i))
+			six_lock_increment(&dst->l[i].b->lock,
+					   __btree_lock_want(dst, i));
 }
