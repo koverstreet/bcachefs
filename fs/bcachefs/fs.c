@@ -1096,7 +1096,9 @@ static void bch2_evict_inode(struct inode *vinode)
 		bch2_quota_acct(c, inode->ei_qid, Q_INO, -1,
 				BCH_QUOTA_WARN);
 		bch2_inode_rm(c, inode->v.i_ino);
-		atomic_long_dec(&c->nr_inodes);
+
+		WARN_ONCE(atomic_long_dec_return(&c->nr_inodes) < 0,
+			  "nr_inodes < 0");
 	}
 }
 
