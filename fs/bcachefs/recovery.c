@@ -250,12 +250,10 @@ int bch2_fs_recovery(struct bch_fs *c)
 	if (c->opts.norecovery)
 		goto out;
 
-	bch_verbose(c, "starting fsck:");
 	err = "error in fsck";
-	ret = bch2_fsck(c, !c->opts.nofsck);
+	ret = bch2_fsck(c);
 	if (ret)
 		goto err;
-	bch_verbose(c, "fsck done");
 
 	if (enabled_qtypes(c)) {
 		bch_verbose(c, "reading quotas:");

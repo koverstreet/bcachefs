@@ -147,11 +147,17 @@ void bch2_flush_fsck_errs(struct bch_fs *);
 #define need_fsck_err_on(cond, c, ...)					\
 	__fsck_err_on(cond, c, FSCK_CAN_IGNORE|FSCK_NEED_FSCK, ##__VA_ARGS__)
 
+#define need_fsck_err(c, ...)						\
+	__fsck_err(c, FSCK_CAN_IGNORE|FSCK_NEED_FSCK, ##__VA_ARGS__)
+
 #define mustfix_fsck_err(c, ...)					\
 	__fsck_err(c, FSCK_CAN_FIX, ##__VA_ARGS__)
 
 #define mustfix_fsck_err_on(cond, c, ...)				\
 	__fsck_err_on(cond, c, FSCK_CAN_FIX, ##__VA_ARGS__)
+
+#define fsck_err(c, ...)						\
+	__fsck_err(c, FSCK_CAN_FIX|FSCK_CAN_IGNORE, ##__VA_ARGS__)
 
 #define fsck_err_on(cond, c, ...)					\
 	__fsck_err_on(cond, c, FSCK_CAN_FIX|FSCK_CAN_IGNORE, ##__VA_ARGS__)

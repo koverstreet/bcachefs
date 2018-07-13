@@ -203,6 +203,10 @@ const char *bch2_inode_invalid(const struct bch_fs *c, struct bkey_s_c k)
 		if (unpacked.bi_compression >= BCH_COMPRESSION_OPT_NR + 1)
 			return "invalid data checksum type";
 
+		if ((unpacked.bi_flags & BCH_INODE_UNLINKED) &&
+		    unpacked.bi_nlink != 0)
+			return "flagged as unlinked but bi_nlink != 0";
+
 		return NULL;
 	}
 	case BCH_INODE_BLOCKDEV:
