@@ -722,9 +722,7 @@ enum {
 
 	__BCH_INODE_I_SIZE_DIRTY= 5,
 	__BCH_INODE_I_SECTORS_DIRTY= 6,
-
-	/* not implemented yet: */
-	__BCH_INODE_HAS_XATTRS	= 7, /* has xattrs in xattr btree */
+	__BCH_INODE_UNLINKED	= 7,
 
 	/* bits 20+ reserved for packed fields below: */
 };
@@ -736,7 +734,7 @@ enum {
 #define BCH_INODE_NOATIME	(1 << __BCH_INODE_NOATIME)
 #define BCH_INODE_I_SIZE_DIRTY	(1 << __BCH_INODE_I_SIZE_DIRTY)
 #define BCH_INODE_I_SECTORS_DIRTY (1 << __BCH_INODE_I_SECTORS_DIRTY)
-#define BCH_INODE_HAS_XATTRS	(1 << __BCH_INODE_HAS_XATTRS)
+#define BCH_INODE_UNLINKED	(1 << __BCH_INODE_UNLINKED)
 
 LE32_BITMASK(INODE_STR_HASH,	struct bch_inode, bi_flags, 20, 24);
 LE32_BITMASK(INODE_NR_FIELDS,	struct bch_inode, bi_flags, 24, 32);
@@ -1222,6 +1220,7 @@ enum bch_sb_features {
 	BCH_FEATURE_LZ4			= 0,
 	BCH_FEATURE_GZIP		= 1,
 	BCH_FEATURE_ZSTD		= 2,
+	BCH_FEATURE_ATOMIC_NLINK	= 3,
 };
 
 /* options: */
