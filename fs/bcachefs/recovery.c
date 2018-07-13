@@ -180,6 +180,10 @@ int bch2_fs_recovery(struct bch_fs *c)
 		unsigned level;
 		struct bkey_i *k;
 
+		if (i == BTREE_ID_ALLOC &&
+		    c->opts.kill_alloc_btree)
+			continue;
+
 		k = btree_root_find(c, clean, j, i, &level);
 		if (!k)
 			continue;
