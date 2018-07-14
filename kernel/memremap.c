@@ -534,7 +534,6 @@ void put_zone_device_private_or_public_page(struct page *page)
 		__ClearPageActive(page);
 		__ClearPageWaiters(page);
 
-		page->mapping = NULL;
 		mem_cgroup_uncharge(page);
 
 		page->pgmap->page_free(page, page->pgmap->data);
