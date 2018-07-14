@@ -416,6 +416,11 @@ static int bchfs_write_index_update(struct bch_write_op *wop)
 		    op->inode->ei_inode.bi_size)
 			hook.need_inode_update = true;
 
+		/* optimization for fewer transaction restarts: */
+		ret = bch2_btree_iter_traverse(&extent_iter);
+		if (ret)
+			goto err;
+
 		if (hook.need_inode_update) {
 			struct bkey_s_c inode;
 
