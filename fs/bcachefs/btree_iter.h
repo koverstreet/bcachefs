@@ -288,6 +288,11 @@ static __always_inline u64 __btree_iter_id(void)
 	ret |= _RET_IP_ & U32_MAX;
 	ret <<= 32;
 	ret |= _THIS_IP_ & U32_MAX;
+#if 0
+	pr_info("iter_id %llx, %pf:%pf", ret,
+		(void *) _RET_IP_,
+		(void *) _THIS_IP_);
+#endif
 	return ret;
 }
 
@@ -312,6 +317,8 @@ void *bch2_trans_kmalloc(struct btree_trans *, size_t);
 int bch2_trans_unlock(struct btree_trans *);
 void bch2_trans_init(struct btree_trans *, struct bch_fs *);
 int bch2_trans_exit(struct btree_trans *);
+
+#define TRACE_TRANSACTION_RESTARTS
 
 #ifdef TRACE_TRANSACTION_RESTARTS
 #define bch2_trans_begin(_trans)					\

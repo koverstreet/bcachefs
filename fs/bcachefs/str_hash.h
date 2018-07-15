@@ -99,8 +99,8 @@ static inline void bch2_str_hash_update(struct bch_str_hash_ctx *ctx,
 	}
 }
 
-static inline u64 bch2_str_hash_end(struct bch_str_hash_ctx *ctx,
-				   const struct bch_hash_info *info)
+static inline u64 __bch2_str_hash_end(struct bch_str_hash_ctx *ctx,
+				      const struct bch_hash_info *info)
 {
 	switch (info->type) {
 	case BCH_STR_HASH_CRC32C:
@@ -112,6 +112,14 @@ static inline u64 bch2_str_hash_end(struct bch_str_hash_ctx *ctx,
 	default:
 		BUG();
 	}
+}
+
+static inline u64 bch2_str_hash_end(struct bch_str_hash_ctx *ctx,
+				   const struct bch_hash_info *info)
+{
+	u64 ret = __bch2_str_hash_end(ctx, info);
+
+	return (ret & 7) << 32;
 }
 
 struct bch_hash_desc {
