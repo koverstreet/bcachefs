@@ -262,7 +262,11 @@ do {									\
 	BCH_DEBUG_PARAM(journal_seq_verify,				\
 		"Store the journal sequence number in the version "	\
 		"number of every btree key, and verify that btree "	\
-		"update ordering is preserved during recovery")
+		"update ordering is preserved during recovery")		\
+	BCH_DEBUG_PARAM(inject_invalid_keys,				\
+		"Store the journal sequence number in the version "	\
+		"number of every btree key, and verify that btree "	\
+		"update ordering is preserved during recovery")		\
 
 #define BCH_DEBUG_PARAMS_ALL() BCH_DEBUG_PARAMS_ALWAYS() BCH_DEBUG_PARAMS_DEBUG()
 

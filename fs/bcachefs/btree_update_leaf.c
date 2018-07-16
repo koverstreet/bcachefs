@@ -354,10 +354,14 @@ static inline int do_btree_insert_at(struct btree_insert *trans,
 		}
 	}
 
-	if (journal_seq_verify(c) &&
-	    !(trans->flags & BTREE_INSERT_JOURNAL_REPLAY))
-		trans_for_each_entry(trans, i)
-			i->k->k.version.lo = trans->journal_res.seq;
+	if (!(trans->flags & BTREE_INSERT_JOURNAL_REPLAY)) {
+		if (journal_seq_verify(c))
+			trans_for_each_entry(trans, i)
+				i->k->k.version.lo = trans->journal_res.seq;
+		else if (inject_invalid_keys(c))
+			trans_for_each_entry(trans, i)
+				i->k->k.version = MAX_VERSION;
+	}
 
 	trans_for_each_entry(trans, i) {
 		switch (btree_insert_key_leaf(trans, i)) {
