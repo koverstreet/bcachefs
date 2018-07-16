@@ -52,7 +52,7 @@ static int __bch2_strtoh(const char *cp, u64 *res,
 		cp++;
 	} while (isdigit(*cp));
 
-	for (u = 1; u < ARRAY_SIZE(si_units); u++)
+	for (u = 1; u < strlen(si_units); u++)
 		if (*cp == si_units[u]) {
 			cp++;
 			goto got_unit;
