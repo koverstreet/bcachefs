@@ -1449,7 +1449,7 @@ static struct bkey_packed *bch2_bset_search(struct btree *b,
 		       !btree_iter_pos_cmp_packed(b, &search, m, strictly_greater))
 			m = bkey_next(m);
 
-	if (IS_ENABLED(CONFIG_BCACHEFS_DEBUG)) {
+	if (btree_keys_expensive_checks(b)) {
 		struct bkey_packed *prev = bch2_bkey_prev_all(b, t, m);
 
 		BUG_ON(prev &&
