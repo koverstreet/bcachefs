@@ -1298,7 +1298,9 @@ int bch2_btree_node_read_done(struct bch_fs *c, struct btree *b, bool have_retry
 		struct bkey_s_c u = bkey_disassemble(b, k, &tmp);
 		const char *invalid = bch2_bkey_val_invalid(c, type, u);
 
-		if (invalid) {
+		if (invalid ||
+		    (inject_invalid_keys(c) &&
+		     !bversion_cmp(u.k->version, MAX_VERSION))) {
 			char buf[160];
 
 			bch2_bkey_val_to_text(c, type, buf, sizeof(buf), u);
@@ -1310,6 +1312,7 @@ int bch2_btree_node_read_done(struct bch_fs *c, struct btree *b, bool have_retry
 			i->u64s = cpu_to_le16(le16_to_cpu(i->u64s) - k->u64s);
 			memmove_u64s_down(k, bkey_next(k),
 					  (u64 *) vstruct_end(i) - (u64 *) k);
+			set_btree_bset_end(b, b->set);
 			continue;
 		}
 
