@@ -31,6 +31,7 @@
 int smc_clc_wait_msg(struct smc_sock *smc, void *buf, int buflen,
 		     u8 expected_type)
 {
+	long rcvtimeo = smc->clcsock->sk->sk_rcvtimeo;
 	struct sock *clc_sk = smc->clcsock->sk;
 	struct smc_clc_msg_hdr *clcm = buf;
 	struct msghdr msg = {NULL, 0};
@@ -87,7 +88,6 @@ int smc_clc_wait_msg(struct smc_sock *smc, void *buf, int buflen,
 	vec.iov_len = buflen;
 	memset(&msg, 0, sizeof(struct msghdr));
 	krflags = MSG_WAITALL;
-	smc->clcsock->sk->sk_rcvtimeo = CLC_WAIT_TIME;
 	len = kernel_recvmsg(smc->clcsock, &msg, &vec, 1, datlen, krflags);
 	if (len < datlen) {
 		smc->sk.sk_err = EPROTO;
@@ -103,6 +103,7 @@ int smc_clc_wait_msg(struct smc_sock *smc, void *buf, int buflen,
 	}
 
 out:
+	smc->clcsock->sk->sk_rcvtimeo = rcvtimeo;
 	return reason_code;
 }
 
