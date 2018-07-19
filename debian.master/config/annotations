@@ -2456,6 +2456,7 @@ CONFIG_I2C_CHARDEV                              note<LP:1417032>
 
 # Menu: Device Drivers >> I2C support >> I2C support >> I2C Algorithms
 CONFIG_I2C_ALGOBIT                              policy<{'amd64': 'm', 'arm64': 'm', 'armhf': 'm', 'i386': 'm', 'ppc64el': 'm'}>
+CONFIG_I2C_AMD_MP2				policy<{'amd64': 'y', 'arm64': 'n', 'armhf': 'n', 'i386': 'y', 'ppc64el': 'n'}>
 CONFIG_I2C_ALGOPCA                              policy<{'amd64': 'm', 'arm64': 'm', 'armhf': 'm', 'i386': 'm', 'ppc64el': 'm'}>
 
 # Menu: Device Drivers >> I2C support >> I2C support >> I2C Hardware Bus support
