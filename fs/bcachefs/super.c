@@ -435,6 +435,8 @@ void bch2_fs_stop(struct bch_fs *c)
 	struct bch_dev *ca;
 	unsigned i;
 
+	bch_verbose(c, "shutting down");
+
 	for_each_member_device(ca, c, i)
 		if (ca->kobj.state_in_sysfs &&
 		    ca->disk_sb.bdev)
@@ -475,6 +477,8 @@ void bch2_fs_stop(struct bch_fs *c)
 	for (i = 0; i < c->sb.nr_devices; i++)
 		if (c->devs[i])
 			bch2_dev_free(rcu_dereference_protected(c->devs[i], 1));
+
+	bch_verbose(c, "shutdown complete");
 
 	kobject_put(&c->kobj);
 }
