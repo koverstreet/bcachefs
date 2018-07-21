@@ -2605,11 +2605,6 @@ int __split_vma(struct mm_struct *mm, struct vm_area_struct *vma,
 	if (!new)
 		return -ENOMEM;
 
-	/* most fields are the same, copy all, and then fixup */
-	*new = *vma;
-
-	INIT_LIST_HEAD(&new->anon_vma_chain);
-
 	if (new_below)
 		new->vm_end = addr;
 	else {
@@ -3203,13 +3198,11 @@ struct vm_area_struct *copy_vma(struct vm_area_struct **vmap,
 		new_vma = vm_area_dup(vma);
 		if (!new_vma)
 			goto out;
-		*new_vma = *vma;
 		new_vma->vm_start = addr;
 		new_vma->vm_end = addr + len;
 		new_vma->vm_pgoff = pgoff;
 		if (vma_dup_policy(vma, new_vma))
 			goto out_free_vma;
-		INIT_LIST_HEAD(&new_vma->anon_vma_chain);
 		if (anon_vma_clone(new_vma, vma))
 			goto out_free_mempol;
 		if (new_vma->vm_file)
