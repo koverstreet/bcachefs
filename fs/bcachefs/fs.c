@@ -268,6 +268,7 @@ __bch2_create(struct bch_inode_info *dir, struct dentry *dentry,
 	struct bch_inode_unpacked inode_u;
 	struct bch_hash_info hash_info;
 	struct posix_acl *default_acl = NULL, *acl = NULL;
+	u64 journal_seq = 0;
 	int ret;
 
 	bch2_inode_init(c, &inode_u, 0, 0, 0, rdev, &dir->ei_inode);
@@ -332,7 +333,7 @@ retry:
 					  &inode_u)
 		 : 0) ?:
 		bch2_trans_commit(&trans, NULL, NULL,
-				  &inode->ei_journal_seq,
+				  &journal_seq,
 				  BTREE_INSERT_ATOMIC|
 				  BTREE_INSERT_NOUNLOCK);
 	if (ret == -EINTR)
@@ -350,6 +351,7 @@ retry:
 	}
 
 	bch2_vfs_inode_init(c, inode, &inode_u);
+	journal_seq_copy(inode, journal_seq);
 
 	set_cached_acl(&inode->v, ACL_TYPE_ACCESS, acl);
 	set_cached_acl(&inode->v, ACL_TYPE_DEFAULT, default_acl);
