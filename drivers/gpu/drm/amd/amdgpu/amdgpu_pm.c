@@ -31,6 +31,7 @@
 #include <linux/power_supply.h>
 #include <linux/hwmon.h>
 #include <linux/hwmon-sysfs.h>
+#include <linux/nospec.h>
 
 #include "amd_powerplay.h"
 
@@ -310,6 +311,7 @@ static ssize_t amdgpu_set_pp_force_state(struct device *dev,
 			count = -EINVAL;
 			goto fail;
 		}
+		idx = array_index_nospec(idx, ARRAY_SIZE(data.states));
 
 		amdgpu_dpm_get_pp_num_states(adev, &data);
 		state = data.states[idx];
