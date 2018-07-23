@@ -159,7 +159,6 @@ static void bch2_btree_node_free_index(struct btree_update *as, struct btree *b,
 {
 	struct bch_fs *c = as->c;
 	struct pending_btree_node_free *d;
-	unsigned replicas;
 
 	/*
 	 * btree_update lock is only needed here to avoid racing with
@@ -176,15 +175,6 @@ static void bch2_btree_node_free_index(struct btree_update *as, struct btree *b,
 found:
 	BUG_ON(d->index_update_done);
 	d->index_update_done = true;
-
-	/*
-	 * Btree nodes are accounted as freed in bch_alloc_stats when they're
-	 * freed from the index:
-	 */
-	replicas = bch2_extent_nr_dirty_ptrs(k);
-	if (replicas)
-		stats->replicas[replicas - 1].data[BCH_DATA_BTREE] -=
-			c->opts.btree_node_size * replicas;
 
 	/*
 	 * We're dropping @k from the btree, but it's still live until the
@@ -207,15 +197,16 @@ found:
 	 * bch2_mark_key() compares the current gc pos to the pos we're
 	 * moving this reference from, hence one comparison here:
 	 */
-	if (gc_pos_cmp(c->gc_pos, gc_phase(GC_PHASE_PENDING_DELETE)) < 0) {
-		struct bch_fs_usage tmp = { 0 };
+	if (gc_pos_cmp(c->gc_pos, b
+		       ? gc_pos_btree_node(b)
+		       : gc_pos_btree_root(as->btree_id)) >= 0 &&
+	    gc_pos_cmp(c->gc_pos, gc_phase(GC_PHASE_PENDING_DELETE)) < 0) {
+		struct gc_pos pos = { 0 };
 
 		bch2_mark_key(c, BKEY_TYPE_BTREE,
 			      bkey_i_to_s_c(&d->key),
-			      false, 0, b
-			      ? gc_pos_btree_node(b)
-			      : gc_pos_btree_root(as->btree_id),
-			      &tmp, 0, 0);
+			      false, 0, pos,
+			      NULL, 0, BCH_BUCKET_MARK_GC);
 		/*
 		 * Don't apply tmp - pending deletes aren't tracked in
 		 * bch_alloc_stats:
@@ -286,19 +277,13 @@ void bch2_btree_node_free_inmem(struct bch_fs *c, struct btree *b,
 static void bch2_btree_node_free_ondisk(struct bch_fs *c,
 					struct pending_btree_node_free *pending)
 {
-	struct bch_fs_usage stats = { 0 };
-
 	BUG_ON(!pending->index_update_done);
 
 	bch2_mark_key(c, BKEY_TYPE_BTREE,
 		      bkey_i_to_s_c(&pending->key),
 		      false, 0,
 		      gc_phase(GC_PHASE_PENDING_DELETE),
-		      &stats, 0, 0);
-	/*
-	 * Don't apply stats - pending deletes aren't tracked in
-	 * bch_alloc_stats:
-	 */
+		      NULL, 0, 0);
 }
 
 static struct btree *__bch2_btree_node_alloc(struct bch_fs *c,
