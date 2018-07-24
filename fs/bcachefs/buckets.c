@@ -66,6 +66,7 @@
 #include "alloc.h"
 #include "btree_gc.h"
 #include "buckets.h"
+#include "debug.h"
 #include "error.h"
 #include "movinggc.h"
 
@@ -74,22 +75,67 @@
 
 static inline u64 __bch2_fs_sectors_used(struct bch_fs *, struct bch_fs_usage);
 
+static inline int is_unavailable_bucket(struct bucket_mark m)
+{
+	return !is_available_bucket(m);
+}
+
+static inline int is_fragmented_bucket(struct bucket_mark m,
+				       struct bch_dev *ca)
+{
+	if (!m.owned_by_allocator &&
+	    m.data_type == BCH_DATA_USER &&
+	    bucket_sectors_used(m))
+		return max_t(int, 0, (int) ca->mi.bucket_size -
+			     bucket_sectors_used(m));
+	return 0;
+}
+
+static inline enum bch_data_type bucket_type(struct bucket_mark m)
+{
+	return m.cached_sectors && !m.dirty_sectors
+		? BCH_DATA_CACHED
+		: m.data_type;
+}
+
+static inline void __dev_usage_update(struct bch_dev *ca,
+				      struct bch_dev_usage *u,
+				      struct bucket_mark old,
+				      struct bucket_mark new)
+{
+	if (bucket_type(old))
+		u->buckets[bucket_type(old)]--;
+	if (bucket_type(new))
+		u->buckets[bucket_type(new)]++;
+
+	u->buckets_alloc +=
+		(int) new.owned_by_allocator - (int) old.owned_by_allocator;
+	u->buckets_unavailable +=
+		is_unavailable_bucket(new) - is_unavailable_bucket(old);
+
+	u->sectors[old.data_type] -= old.dirty_sectors;
+	u->sectors[new.data_type] += new.dirty_sectors;
+	u->sectors[BCH_DATA_CACHED] +=
+		(int) new.cached_sectors - (int) old.cached_sectors;
+	u->sectors_fragmented +=
+		is_fragmented_bucket(new, ca) - is_fragmented_bucket(old, ca);
+}
+
 #ifdef DEBUG_BUCKETS
 
-#define lg_local_lock	lg_global_lock
-#define lg_local_unlock	lg_global_unlock
-
-static void bch2_fs_stats_verify(struct bch_fs *c)
+static void bch2_fs_usage_verify(struct bch_fs *c)
 {
 	struct bch_fs_usage stats =
 		__bch2_fs_usage_read(c);
 	unsigned i, j;
 
 	for (i = 0; i < ARRAY_SIZE(stats.replicas); i++) {
+		BUG_ON(stats.replicas[i].data[0]);
+
 		for (j = 0; j < ARRAY_SIZE(stats.replicas[i].data); j++)
 			if ((s64) stats.replicas[i].data[j] < 0)
 				panic("replicas %u %s sectors underflow: %lli\n",
-				      i + 1, bch_data_types[j],
+				      i + 1, bch2_data_types[j],
 				      stats.replicas[i].data[j]);
 
 		if ((s64) stats.replicas[i].persistent_reserved < 0)
@@ -97,34 +143,56 @@ static void bch2_fs_stats_verify(struct bch_fs *c)
 			      i + 1, stats.replicas[i].persistent_reserved);
 	}
 
+	BUG_ON(stats.buckets[0]);
+
 	for (j = 0; j < ARRAY_SIZE(stats.buckets); j++)
-		if ((s64) stats.replicas[i].data_buckets[j] < 0)
+		if ((s64) stats.buckets[j] < 0)
 			panic("%s buckets underflow: %lli\n",
-			      bch_data_types[j],
-			      stats.buckets[j]);
+			      bch2_data_types[j], stats.buckets[j]);
 
 	if ((s64) stats.online_reserved < 0)
 		panic("sectors_online_reserved underflow: %lli\n",
 		      stats.online_reserved);
 }
 
-static void bch2_dev_stats_verify(struct bch_dev *ca)
+static void bch2_dev_usage_verify_full(struct bch_dev *ca)
 {
-	struct bch_dev_usage stats =
-		__bch2_dev_usage_read(ca);
-	u64 n = ca->mi.nbuckets - ca->mi.first_bucket;
+	struct bch_dev_usage s1 = __bch2_dev_usage_read(ca), s2 = { 0 };
+	struct bucket_array *buckets = bucket_array(ca);
+	struct bucket_mark zero_mark;
+	struct bucket *g;
+
+	memset(&zero_mark, 0, sizeof(zero_mark));
+
+	for_each_bucket(g, buckets)
+		__dev_usage_update(ca, &s2, zero_mark, g->mark);
+
+	BUG_ON(memcmp(&s1, &s2, sizeof(s1)));
+}
+
+static void bch2_dev_usage_verify(struct bch_dev *ca)
+{
+	struct bch_dev_usage s1 = __bch2_dev_usage_read(ca);
 	unsigned i;
 
-	for (i = 0; i < ARRAY_SIZE(stats.buckets); i++)
-		BUG_ON(stats.buckets[i]		> n);
-	BUG_ON(stats.buckets_alloc		> n);
-	BUG_ON(stats.buckets_unavailable	> n);
+	BUG_ON(s1.buckets[0]);
+	BUG_ON(s1.sectors[0]);
+
+	for (i = 0; i < ARRAY_SIZE(s1.buckets); i++)
+		BUG_ON(s1.buckets[i]	> ca->mi.nbuckets);
+	BUG_ON(s1.buckets_alloc		> ca->mi.nbuckets);
+	BUG_ON(s1.buckets_unavailable	> ca->mi.nbuckets);
+
+	if (expensive_debug_checks(ca->fs))
+		bch2_dev_usage_verify_full(ca);
+
+	bch2_fs_usage_verify(ca->fs);
 }
 
 static void bch2_disk_reservations_verify(struct bch_fs *c, int flags)
 {
 	if (!(flags & BCH_DISK_RESERVATION_NOFAIL)) {
-		u64 used = __bch2_fs_sectors_used(c);
+		u64 used = __bch2_fs_sectors_used(c, bch2_fs_usage_read(c));
 		u64 cached = 0;
 		u64 avail = atomic64_read(&c->sectors_available);
 		int cpu;
@@ -140,8 +208,8 @@ static void bch2_disk_reservations_verify(struct bch_fs *c, int flags)
 
 #else
 
-static void bch2_fs_stats_verify(struct bch_fs *c) {}
-static void bch2_dev_stats_verify(struct bch_dev *ca) {}
+static void bch2_fs_usage_verify(struct bch_fs *c) {}
+static void bch2_dev_usage_verify(struct bch_dev *ca) {}
 static void bch2_disk_reservations_verify(struct bch_fs *c, int flags) {}
 
 #endif
@@ -304,29 +372,6 @@ static u64 bch2_fs_sectors_free(struct bch_fs *c, struct bch_fs_usage stats)
 	return c->capacity - bch2_fs_sectors_used(c, stats);
 }
 
-static inline int is_unavailable_bucket(struct bucket_mark m)
-{
-	return !is_available_bucket(m);
-}
-
-static inline int is_fragmented_bucket(struct bucket_mark m,
-				       struct bch_dev *ca)
-{
-	if (!m.owned_by_allocator &&
-	    m.data_type == BCH_DATA_USER &&
-	    bucket_sectors_used(m))
-		return max_t(int, 0, (int) ca->mi.bucket_size -
-			     bucket_sectors_used(m));
-	return 0;
-}
-
-static inline enum bch_data_type bucket_type(struct bucket_mark m)
-{
-	return m.cached_sectors && !m.dirty_sectors
-		?  BCH_DATA_CACHED
-		: m.data_type;
-}
-
 static bool bucket_became_unavailable(struct bch_fs *c,
 				      struct bucket_mark old,
 				      struct bucket_mark new)
@@ -356,15 +401,15 @@ void bch2_fs_usage_apply(struct bch_fs *c,
 	}
 
 	percpu_down_read_preempt_disable(&c->usage_lock);
+
 	/* online_reserved not subject to gc: */
-	this_cpu_ptr(c->usage_percpu)->online_reserved +=
-		stats->online_reserved;
-	stats->online_reserved = 0;
-
-	if (!gc_will_visit(c, gc_pos))
+	if (likely(!gc_will_visit(c, gc_pos)))
 		bch2_usage_add(this_cpu_ptr(c->usage_percpu), stats);
+	else
+		this_cpu_ptr(c->usage_percpu)->online_reserved +=
+			stats->online_reserved;
 
-	bch2_fs_stats_verify(c);
+	bch2_fs_usage_verify(c);
 	percpu_up_read_preempt_enable(&c->usage_lock);
 
 	memset(stats, 0, sizeof(*stats));
@@ -374,8 +419,6 @@ static void bch2_dev_usage_update(struct bch_fs *c, struct bch_dev *ca,
 				  struct bch_fs_usage *stats,
 				  struct bucket_mark old, struct bucket_mark new)
 {
-	struct bch_dev_usage *dev_usage;
-
 	percpu_rwsem_assert_held(&c->usage_lock);
 
 	bch2_fs_inconsistent_on(old.data_type && new.data_type &&
@@ -384,39 +427,18 @@ static void bch2_dev_usage_update(struct bch_fs *c, struct bch_dev *ca,
 		bch2_data_types[old.data_type],
 		bch2_data_types[new.data_type]);
 
-	stats->buckets[bucket_type(old)] -= ca->mi.bucket_size;
-	stats->buckets[bucket_type(new)] += ca->mi.bucket_size;
+	if (bucket_type(old))
+		stats->buckets[bucket_type(old)] -= ca->mi.bucket_size;
+	if (bucket_type(new))
+		stats->buckets[bucket_type(new)] += ca->mi.bucket_size;
 
-	dev_usage = this_cpu_ptr(ca->usage_percpu);
-
-	dev_usage->buckets[bucket_type(old)]--;
-	dev_usage->buckets[bucket_type(new)]++;
-
-	dev_usage->buckets_alloc +=
-		(int) new.owned_by_allocator - (int) old.owned_by_allocator;
-	dev_usage->buckets_unavailable +=
-		is_unavailable_bucket(new) - is_unavailable_bucket(old);
-
-	dev_usage->sectors[old.data_type] -= old.dirty_sectors;
-	dev_usage->sectors[new.data_type] += new.dirty_sectors;
-	dev_usage->sectors[BCH_DATA_CACHED] +=
-		(int) new.cached_sectors - (int) old.cached_sectors;
-	dev_usage->sectors_fragmented +=
-		is_fragmented_bucket(new, ca) - is_fragmented_bucket(old, ca);
+	__dev_usage_update(ca, this_cpu_ptr(ca->usage_percpu), old, new);
 
 	if (!is_available_bucket(old) && is_available_bucket(new))
 		bch2_wake_allocator(ca);
 
-	bch2_dev_stats_verify(ca);
+	bch2_dev_usage_verify(ca);
 }
-
-#define bucket_data_cmpxchg(c, ca, stats, g, new, expr)		\
-({								\
-	struct bucket_mark _old = bucket_cmpxchg(g, new, expr);	\
-								\
-	bch2_dev_usage_update(c, ca, stats, _old, new);		\
-	_old;							\
-})
 
 void bch2_invalidate_bucket(struct bch_fs *c, struct bch_dev *ca,
 			    size_t b, struct bucket_mark *old)
@@ -426,10 +448,11 @@ void bch2_invalidate_bucket(struct bch_fs *c, struct bch_dev *ca,
 	struct bucket_mark new;
 
 	percpu_rwsem_assert_held(&c->usage_lock);
+	bch2_dev_usage_verify(ca);
 
 	g = bucket(ca, b);
 
-	*old = bucket_data_cmpxchg(c, ca, stats, g, new, ({
+	*old = bucket_cmpxchg(g, new, ({
 		BUG_ON(!is_available_bucket(new));
 
 		new.owned_by_allocator	= 1;
@@ -445,6 +468,10 @@ void bch2_invalidate_bucket(struct bch_fs *c, struct bch_dev *ca,
 	 */
 	stats->replicas[0].data[BCH_DATA_CACHED] -= old->cached_sectors;
 
+	bch2_dev_usage_update(c, ca, stats, *old, new);
+
+	bch2_fs_usage_verify(c);
+
 	if (!old->owned_by_allocator && old->cached_sectors)
 		trace_invalidate(ca, bucket_to_sector(ca, b),
 				 old->cached_sectors);
@@ -459,15 +486,19 @@ void bch2_mark_alloc_bucket(struct bch_fs *c, struct bch_dev *ca,
 	struct bucket_mark old, new;
 
 	percpu_rwsem_assert_held(&c->usage_lock);
+	bch2_dev_usage_verify(ca);
+
 	g = bucket(ca, b);
 
 	if (!(flags & BCH_BUCKET_MARK_GC_LOCK_HELD) &&
 	    gc_will_visit(c, pos))
 		return;
 
-	old = bucket_data_cmpxchg(c, ca, stats, g, new, ({
+	old = bucket_cmpxchg(g, new, ({
 		new.owned_by_allocator	= owned_by_allocator;
 	}));
+
+	bch2_dev_usage_update(c, ca, stats, old, new);
 
 	BUG_ON(!owned_by_allocator && !old.owned_by_allocator &&
 	       c->gc_pos.phase == GC_PHASE_DONE);
@@ -502,12 +533,16 @@ void bch2_mark_metadata_bucket(struct bch_fs *c, struct bch_dev *ca,
 		stats = this_cpu_ptr(c->usage_percpu);
 
 		g = bucket(ca, b);
-		old = bucket_data_cmpxchg(c, ca, stats, g, new, ({
+		old = bucket_cmpxchg(g, new, ({
 			new.data_type = type;
 			checked_add(new.dirty_sectors, sectors);
 		}));
 
 		stats->replicas[0].data[type] += sectors;
+
+		bch2_dev_usage_update(c, ca, stats, old, new);
+
+		bch2_fs_usage_verify(c);
 	} else {
 		rcu_read_lock();
 
@@ -568,28 +603,21 @@ static void bch2_mark_pointer(struct bch_fs *c,
 			  +__disk_sectors(crc, new_sectors);
 	}
 
-	/*
-	 * fs level usage (which determines free space) is in uncompressed
-	 * sectors, until copygc + compression is sorted out:
-	 *
-	 * note also that we always update @fs_usage, even when we otherwise
-	 * wouldn't do anything because gc is running - this is because the
-	 * caller still needs to account w.r.t. its disk reservation. It is
-	 * caller's responsibility to not apply @fs_usage if gc is in progress.
-	 */
-	fs_usage->replicas
-		[!ptr->cached && replicas ? replicas - 1 : 0].data
-		[!ptr->cached ? data_type : BCH_DATA_CACHED] +=
-			uncompressed_sectors;
-
 	if (flags & BCH_BUCKET_MARK_GC_WILL_VISIT) {
+		/*
+		 * if GC is running the allocator can't be invalidating
+		 * buckets, so no concerns about racing here:
+		 */
+		if (gen_after(g->mark.gen, ptr->gen))
+			return;
+
 		if (journal_seq)
 			bucket_cmpxchg(g, new, ({
 				new.journal_seq_valid	= 1;
 				new.journal_seq		= journal_seq;
 			}));
 
-		return;
+		goto fs_usage;
 	}
 
 	v = atomic64_read(&g->_mark.v);
@@ -637,6 +665,20 @@ static void bch2_mark_pointer(struct bch_fs *c,
 
 	BUG_ON(!(flags & BCH_BUCKET_MARK_MAY_MAKE_UNAVAILABLE) &&
 	       bucket_became_unavailable(c, old, new));
+fs_usage:
+	/*
+	 * fs level usage (which determines free space) is in uncompressed
+	 * sectors, until copygc + compression is sorted out:
+	 *
+	 * note also that we always update @fs_usage, even when we otherwise
+	 * wouldn't do anything because gc is running - this is because the
+	 * caller still needs to account w.r.t. its disk reservation. It is
+	 * caller's responsibility to not apply @fs_usage if gc is in progress.
+	 */
+	fs_usage->replicas
+		[!ptr->cached && replicas ? replicas - 1 : 0].data
+		[!ptr->cached ? data_type : BCH_DATA_CACHED] +=
+			uncompressed_sectors;
 }
 
 void bch2_mark_key(struct bch_fs *c, struct bkey_s_c k,
@@ -731,10 +773,9 @@ void bch2_recalc_sectors_available(struct bch_fs *c)
 void __bch2_disk_reservation_put(struct bch_fs *c, struct disk_reservation *res)
 {
 	percpu_down_read_preempt_disable(&c->usage_lock);
-	this_cpu_sub(c->usage_percpu->online_reserved,
-		     res->sectors);
+	this_cpu_sub(c->usage_percpu->online_reserved, res->sectors);
 
-	bch2_fs_stats_verify(c);
+	bch2_fs_usage_verify(c);
 	percpu_up_read_preempt_enable(&c->usage_lock);
 
 	res->sectors = 0;
@@ -751,6 +792,8 @@ int bch2_disk_reservation_add(struct bch_fs *c, struct disk_reservation *res,
 	int ret;
 
 	percpu_down_read_preempt_disable(&c->usage_lock);
+	bch2_fs_usage_verify(c);
+
 	stats = this_cpu_ptr(c->usage_percpu);
 
 	if (sectors <= stats->available_cache)
@@ -776,7 +819,7 @@ out:
 	res->sectors		+= sectors;
 
 	bch2_disk_reservations_verify(c, flags);
-	bch2_fs_stats_verify(c);
+	bch2_fs_usage_verify(c);
 	percpu_up_read_preempt_enable(&c->usage_lock);
 	return 0;
 
@@ -815,7 +858,7 @@ recalculate:
 		ret = -ENOSPC;
 	}
 
-	bch2_fs_stats_verify(c);
+	bch2_fs_usage_verify(c);
 	percpu_up_write(&c->usage_lock);
 
 	if (!(flags & BCH_DISK_RESERVATION_GC_LOCK_HELD))

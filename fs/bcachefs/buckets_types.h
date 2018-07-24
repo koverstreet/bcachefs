@@ -50,9 +50,9 @@ struct bucket_array {
 };
 
 struct bch_dev_usage {
-	u64			buckets[BCH_DATA_NR];
 	u64			buckets_alloc;
 	u64			buckets_unavailable;
+	u64			buckets[BCH_DATA_NR];
 
 	/* _compressed_ sectors: */
 	u64			sectors[BCH_DATA_NR];

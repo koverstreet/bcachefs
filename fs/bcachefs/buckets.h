@@ -10,6 +10,22 @@
 #include "buckets_types.h"
 #include "super.h"
 
+#ifdef DEBUG_BUCKETS
+
+#define percpu_down_read_preempt_disable(l)		\
+do {							\
+	percpu_down_write(l);				\
+	preempt_disable();				\
+} while (0)
+
+#define percpu_up_read_preempt_enable(l)		\
+do {							\
+	preempt_enable();				\
+	percpu_up_write(l);				\
+} while (0)
+
+#endif
+
 #define for_each_bucket(_b, _buckets)				\
 	for (_b = (_buckets)->b + (_buckets)->first_bucket;	\
 	     _b < (_buckets)->b + (_buckets)->nbuckets; _b++)
