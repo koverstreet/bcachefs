@@ -247,29 +247,28 @@ bch2_fs_usage_read(struct bch_fs *c)
 struct fs_usage_sum {
 	u64	hidden;
 	u64	data;
+	u64	cached;
 	u64	reserved;
 };
 
 static inline struct fs_usage_sum __fs_usage_sum(struct bch_fs_usage stats)
 {
 	struct fs_usage_sum sum = { 0 };
-	unsigned i, j;
+	unsigned i;
 
 	/*
 	 * For superblock and journal we count bucket usage, not sector usage,
 	 * because any internal fragmentation should _not_ be counted as
 	 * free space:
 	 */
-	for (j = 1; j < BCH_DATA_BTREE; j++)
-		sum.hidden += stats.buckets[j];
+	sum.hidden += stats.buckets[BCH_DATA_SB];
+	sum.hidden += stats.buckets[BCH_DATA_JOURNAL];
 
 	for (i = 0; i < ARRAY_SIZE(stats.replicas); i++) {
-		for (j = BCH_DATA_BTREE;
-		     j < ARRAY_SIZE(stats.replicas[i].data);
-		     j++)
-			sum.data += stats.replicas[i].data[j] * (i + 1);
-
-		sum.reserved += stats.replicas[i].persistent_reserved * (i + 1);
+		sum.data	+= stats.replicas[i].data[BCH_DATA_BTREE];
+		sum.data	+= stats.replicas[i].data[BCH_DATA_USER];
+		sum.cached	+= stats.replicas[i].data[BCH_DATA_CACHED];
+		sum.reserved	+= stats.replicas[i].persistent_reserved;
 	}
 
 	sum.reserved += stats.online_reserved;
@@ -377,17 +376,13 @@ static void bch2_dev_usage_update(struct bch_fs *c, struct bch_dev *ca,
 {
 	struct bch_dev_usage *dev_usage;
 
-	if (c)
-		percpu_rwsem_assert_held(&c->usage_lock);
+	percpu_rwsem_assert_held(&c->usage_lock);
 
-	if (old.data_type && new.data_type &&
-	    old.data_type != new.data_type) {
-		BUG_ON(!c);
-		bch2_fs_inconsistent(c,
-			"different types of data in same bucket: %s, %s",
-			bch2_data_types[old.data_type],
-			bch2_data_types[new.data_type]);
-	}
+	bch2_fs_inconsistent_on(old.data_type && new.data_type &&
+				old.data_type != new.data_type, c,
+		"different types of data in same bucket: %s, %s",
+		bch2_data_types[old.data_type],
+		bch2_data_types[new.data_type]);
 
 	stats->buckets[bucket_type(old)] -= ca->mi.bucket_size;
 	stats->buckets[bucket_type(new)] += ca->mi.bucket_size;
@@ -444,6 +439,12 @@ void bch2_invalidate_bucket(struct bch_fs *c, struct bch_dev *ca,
 		new.gen++;
 	}));
 
+	/*
+	 * This isn't actually correct yet, since fs usage is still
+	 * uncompressed sectors:
+	 */
+	stats->replicas[0].data[BCH_DATA_CACHED] -= old->cached_sectors;
+
 	if (!old->owned_by_allocator && old->cached_sectors)
 		trace_invalidate(ca, bucket_to_sector(ca, b),
 				 old->cached_sectors);
@@ -497,26 +498,31 @@ void bch2_mark_metadata_bucket(struct bch_fs *c, struct bch_dev *ca,
 		if (!(flags & BCH_BUCKET_MARK_GC_LOCK_HELD) &&
 		    gc_will_visit(c, pos))
 			return;
+
+		stats = this_cpu_ptr(c->usage_percpu);
+
+		g = bucket(ca, b);
+		old = bucket_data_cmpxchg(c, ca, stats, g, new, ({
+			new.data_type = type;
+			checked_add(new.dirty_sectors, sectors);
+		}));
+
+		stats->replicas[0].data[type] += sectors;
+	} else {
+		rcu_read_lock();
+
+		g = bucket(ca, b);
+		old = bucket_cmpxchg(g, new, ({
+			new.data_type = type;
+			checked_add(new.dirty_sectors, sectors);
+		}));
+
+		rcu_read_unlock();
 	}
-
-	rcu_read_lock();
-	stats = this_cpu_ptr(c->usage_percpu);
-
-	g = bucket(ca, b);
-	old = bucket_data_cmpxchg(c, ca, stats, g, new, ({
-		new.data_type = type;
-		checked_add(new.dirty_sectors, sectors);
-	}));
-
-	stats->replicas[0].data[type] += sectors;
-
-	rcu_read_unlock();
 
 	BUG_ON(!(flags & BCH_BUCKET_MARK_MAY_MAKE_UNAVAILABLE) &&
 	       bucket_became_unavailable(c, old, new));
 }
-
-/* Reverting this until the copygc + compression issue is fixed: */
 
 static int __disk_sectors(struct bch_extent_crc_unpacked crc, unsigned sectors)
 {
@@ -537,12 +543,14 @@ static void bch2_mark_pointer(struct bch_fs *c,
 			      const struct bch_extent_ptr *ptr,
 			      struct bch_extent_crc_unpacked crc,
 			      s64 sectors, enum bch_data_type data_type,
-			      struct bch_fs_usage *stats,
+			      unsigned replicas,
+			      struct bch_fs_usage *fs_usage,
 			      u64 journal_seq, unsigned flags)
 {
 	struct bucket_mark old, new;
 	struct bch_dev *ca = bch_dev_bkey_exists(c, ptr->dev);
 	struct bucket *g = PTR_BUCKET(ca, ptr);
+	s64 uncompressed_sectors = sectors;
 	u64 v;
 
 	if (crc.compression_type) {
@@ -559,6 +567,20 @@ static void bch2_mark_pointer(struct bch_fs *c,
 		sectors = -__disk_sectors(crc, old_sectors)
 			  +__disk_sectors(crc, new_sectors);
 	}
+
+	/*
+	 * fs level usage (which determines free space) is in uncompressed
+	 * sectors, until copygc + compression is sorted out:
+	 *
+	 * note also that we always update @fs_usage, even when we otherwise
+	 * wouldn't do anything because gc is running - this is because the
+	 * caller still needs to account w.r.t. its disk reservation. It is
+	 * caller's responsibility to not apply @fs_usage if gc is in progress.
+	 */
+	fs_usage->replicas
+		[!ptr->cached && replicas ? replicas - 1 : 0].data
+		[!ptr->cached ? data_type : BCH_DATA_CACHED] +=
+			uncompressed_sectors;
 
 	if (flags & BCH_BUCKET_MARK_GC_WILL_VISIT) {
 		if (journal_seq)
@@ -611,7 +633,7 @@ static void bch2_mark_pointer(struct bch_fs *c,
 			      old.v.counter,
 			      new.v.counter)) != old.v.counter);
 
-	bch2_dev_usage_update(c, ca, stats, old, new);
+	bch2_dev_usage_update(c, ca, fs_usage, old, new);
 
 	BUG_ON(!(flags & BCH_BUCKET_MARK_MAY_MAKE_UNAVAILABLE) &&
 	       bucket_became_unavailable(c, old, new));
@@ -674,15 +696,13 @@ void bch2_mark_key(struct bch_fs *c, struct bkey_s_c k,
 
 		extent_for_each_ptr_crc(e, ptr, crc)
 			bch2_mark_pointer(c, e, ptr, crc, sectors, data_type,
-					  stats, journal_seq, flags);
-
-		if (replicas)
-			stats->replicas[replicas - 1].data[data_type] += sectors;
+					  replicas, stats, journal_seq, flags);
 		break;
 	}
 	case BCH_RESERVATION:
 		if (replicas)
-			stats->replicas[replicas - 1].persistent_reserved += sectors;
+			stats->replicas[replicas - 1].persistent_reserved +=
+				sectors * replicas;
 		break;
 	}
 	percpu_up_read_preempt_enable(&c->usage_lock);
