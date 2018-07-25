@@ -73,6 +73,15 @@
 #include <linux/preempt.h>
 #include <trace/events/bcachefs.h>
 
+#define bch2_usage_add(_acc, _stats)					\
+do {									\
+	typeof(_acc) _a = (_acc), _s = (_stats);			\
+	unsigned i;							\
+									\
+	for (i = 0; i < sizeof(*_a) / sizeof(u64); i++)			\
+		((u64 *) (_a))[i] += ((u64 *) (_s))[i];			\
+} while (0)
+
 static inline u64 __bch2_fs_sectors_used(struct bch_fs *, struct bch_fs_usage);
 
 static inline int is_unavailable_bucket(struct bucket_mark m)
@@ -121,12 +130,28 @@ static inline void __dev_usage_update(struct bch_dev *ca,
 		is_fragmented_bucket(new, ca) - is_fragmented_bucket(old, ca);
 }
 
+void bch2_dev_usage_verify_full(struct bch_dev *ca)
+{
+	struct bch_dev_usage s1 = __bch2_dev_usage_read(ca), s2 = { 0 };
+	struct bucket_array *buckets = bucket_array(ca);
+	struct bucket_mark zero_mark;
+	struct bucket *g;
+
+	memset(&zero_mark, 0, sizeof(zero_mark));
+
+	for_each_bucket(g, buckets)
+		__dev_usage_update(ca, &s2, zero_mark, g->mark);
+
+	BUG_ON(memcmp(&s1, &s2, sizeof(s1)));
+}
+
 #ifdef DEBUG_BUCKETS
 
 static void bch2_fs_usage_verify(struct bch_fs *c)
 {
-	struct bch_fs_usage stats =
-		__bch2_fs_usage_read(c);
+	struct bch_fs_usage stats = __bch2_fs_usage_read(c);
+	struct bch_dev_usage dev_u = { 0 };
+	struct bch_dev *ca;
 	unsigned i, j;
 
 	for (i = 0; i < ARRAY_SIZE(stats.replicas); i++) {
@@ -153,21 +178,31 @@ static void bch2_fs_usage_verify(struct bch_fs *c)
 	if ((s64) stats.online_reserved < 0)
 		panic("sectors_online_reserved underflow: %lli\n",
 		      stats.online_reserved);
-}
 
-static void bch2_dev_usage_verify_full(struct bch_dev *ca)
-{
-	struct bch_dev_usage s1 = __bch2_dev_usage_read(ca), s2 = { 0 };
-	struct bucket_array *buckets = bucket_array(ca);
-	struct bucket_mark zero_mark;
-	struct bucket *g;
+	for_each_member_device(ca, c, i) {
+		struct bch_dev_usage a = __bch2_dev_usage_read(ca);
 
-	memset(&zero_mark, 0, sizeof(zero_mark));
+		bch2_usage_add(&dev_u, &a);
+	}
 
-	for_each_bucket(g, buckets)
-		__dev_usage_update(ca, &s2, zero_mark, g->mark);
+	/* XXX: not currently correct if compression is enabled */
+	for (i = 0; i < BCH_DATA_NR; i++) {
+		u64 a = 0;
 
-	BUG_ON(memcmp(&s1, &s2, sizeof(s1)));
+		/*
+		 * btree nodes that are pending delete aren't counted under fs
+		 * usage, but are under dev usage...
+		 */
+		if (i == BCH_DATA_BTREE)
+			continue;
+
+		for (j = 0; j < ARRAY_SIZE(stats.replicas); j++)
+			a += stats.replicas[j].data[i];
+
+		if (a != dev_u.sectors[i])
+			panic("data type %s: got %llu should be %llu\n",
+			      bch2_data_types[i], a, dev_u.sectors[i]);
+	}
 }
 
 static void bch2_dev_usage_verify(struct bch_dev *ca)
@@ -185,8 +220,6 @@ static void bch2_dev_usage_verify(struct bch_dev *ca)
 
 	if (expensive_debug_checks(ca->fs))
 		bch2_dev_usage_verify_full(ca);
-
-	bch2_fs_usage_verify(ca->fs);
 }
 
 static void bch2_disk_reservations_verify(struct bch_fs *c, int flags)
@@ -250,15 +283,6 @@ void bch2_bucket_seq_cleanup(struct bch_fs *c)
 		up_read(&ca->bucket_lock);
 	}
 }
-
-#define bch2_usage_add(_acc, _stats)					\
-do {									\
-	typeof(_acc) _a = (_acc), _s = (_stats);			\
-	unsigned i;							\
-									\
-	for (i = 0; i < sizeof(*_a) / sizeof(u64); i++)			\
-		((u64 *) (_a))[i] += ((u64 *) (_s))[i];			\
-} while (0)
 
 #define bch2_usage_read_raw(_stats)					\
 ({									\
@@ -381,10 +405,10 @@ static bool bucket_became_unavailable(struct bch_fs *c,
 	       (!c || c->gc_pos.phase == GC_PHASE_DONE);
 }
 
-void bch2_fs_usage_apply(struct bch_fs *c,
-			 struct bch_fs_usage *stats,
-			 struct disk_reservation *disk_res,
-			 struct gc_pos gc_pos)
+void __bch2_fs_usage_apply(struct bch_fs *c,
+			   struct bch_fs_usage *stats,
+			   struct disk_reservation *disk_res,
+			   struct gc_pos gc_pos)
 {
 	struct fs_usage_sum sum = __fs_usage_sum(*stats);
 	s64 added = sum.data + sum.reserved;
@@ -400,8 +424,6 @@ void bch2_fs_usage_apply(struct bch_fs *c,
 		stats->online_reserved	-= added;
 	}
 
-	percpu_down_read_preempt_disable(&c->usage_lock);
-
 	/* online_reserved not subject to gc: */
 	if (likely(!gc_will_visit(c, gc_pos)))
 		bch2_usage_add(this_cpu_ptr(c->usage_percpu), stats);
@@ -409,10 +431,19 @@ void bch2_fs_usage_apply(struct bch_fs *c,
 		this_cpu_ptr(c->usage_percpu)->online_reserved +=
 			stats->online_reserved;
 
-	bch2_fs_usage_verify(c);
-	percpu_up_read_preempt_enable(&c->usage_lock);
-
 	memset(stats, 0, sizeof(*stats));
+
+	bch2_fs_usage_verify(c);
+}
+
+void bch2_fs_usage_apply(struct bch_fs *c,
+			 struct bch_fs_usage *stats,
+			 struct disk_reservation *disk_res,
+			 struct gc_pos gc_pos)
+{
+	percpu_down_read_preempt_disable(&c->usage_lock);
+	__bch2_fs_usage_apply(c, stats, disk_res, gc_pos);
+	percpu_up_read_preempt_enable(&c->usage_lock);
 }
 
 static void bch2_dev_usage_update(struct bch_fs *c, struct bch_dev *ca,
@@ -447,6 +478,7 @@ void bch2_invalidate_bucket(struct bch_fs *c, struct bch_dev *ca,
 	struct bucket *g;
 	struct bucket_mark new;
 
+	lockdep_assert_held(&c->gc_lock);
 	percpu_rwsem_assert_held(&c->usage_lock);
 	bch2_dev_usage_verify(ca);
 
@@ -681,11 +713,11 @@ fs_usage:
 			uncompressed_sectors;
 }
 
-void bch2_mark_key(struct bch_fs *c, struct bkey_s_c k,
-		   s64 sectors, enum bch_data_type data_type,
-		   struct gc_pos pos,
-		   struct bch_fs_usage *stats,
-		   u64 journal_seq, unsigned flags)
+void __bch2_mark_key(struct bch_fs *c, struct bkey_s_c k,
+		     s64 sectors, enum bch_data_type data_type,
+		     struct gc_pos pos,
+		     struct bch_fs_usage *stats,
+		     u64 journal_seq, unsigned flags)
 {
 	unsigned replicas = bch2_extent_nr_dirty_ptrs(k);
 
@@ -719,7 +751,6 @@ void bch2_mark_key(struct bch_fs *c, struct bkey_s_c k,
 	 *    (e.g. the btree node lock, or the relevant allocator lock).
 	 */
 
-	percpu_down_read_preempt_disable(&c->usage_lock);
 	if (!(flags & BCH_BUCKET_MARK_GC_LOCK_HELD) &&
 	    gc_will_visit(c, pos))
 		flags |= BCH_BUCKET_MARK_GC_WILL_VISIT;
@@ -747,6 +778,17 @@ void bch2_mark_key(struct bch_fs *c, struct bkey_s_c k,
 				sectors * replicas;
 		break;
 	}
+}
+
+void bch2_mark_key(struct bch_fs *c, struct bkey_s_c k,
+		   s64 sectors, enum bch_data_type data_type,
+		   struct gc_pos pos,
+		   struct bch_fs_usage *stats,
+		   u64 journal_seq, unsigned flags)
+{
+	percpu_down_read_preempt_disable(&c->usage_lock);
+	__bch2_mark_key(c, k, sectors, data_type, pos,
+			stats, journal_seq, flags);
 	percpu_up_read_preempt_enable(&c->usage_lock);
 }
 

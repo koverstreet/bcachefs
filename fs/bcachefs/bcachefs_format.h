@@ -827,6 +827,7 @@ enum {
 enum {
 	BCH_ALLOC_FIELD_READ_TIME	= 0,
 	BCH_ALLOC_FIELD_WRITE_TIME	= 1,
+	/* XXX last_gc has to be persistent too */
 };
 
 struct bch_alloc {

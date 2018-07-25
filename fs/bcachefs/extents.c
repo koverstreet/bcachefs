@@ -1071,8 +1071,8 @@ static void bch2_add_sectors(struct extent_insert_state *s,
 	if (!sectors)
 		return;
 
-	bch2_mark_key(c, k, sectors, BCH_DATA_USER, gc_pos_btree_node(b),
-		      &s->stats, s->trans->journal_res.seq, 0);
+	__bch2_mark_key(c, k, sectors, BCH_DATA_USER, gc_pos_btree_node(b),
+			&s->stats, s->trans->journal_res.seq, 0);
 }
 
 static void bch2_subtract_sectors(struct extent_insert_state *s,
@@ -1650,6 +1650,8 @@ bch2_insert_fixup_extent(struct btree_insert *trans,
 	 */
 	EBUG_ON(bkey_cmp(iter->pos, bkey_start_pos(&insert->k->k)));
 
+	percpu_down_read_preempt_disable(&c->usage_lock);
+
 	if (!s.deleting &&
 	    !(trans->flags & BTREE_INSERT_JOURNAL_REPLAY))
 		bch2_add_sectors(&s, bkey_i_to_s_c(insert->k),
@@ -1680,8 +1682,10 @@ bch2_insert_fixup_extent(struct btree_insert *trans,
 				     bkey_start_offset(&insert->k->k),
 				     insert->k->k.size);
 
-	bch2_fs_usage_apply(c, &s.stats, trans->disk_res,
-			   gc_pos_btree_node(b));
+	__bch2_fs_usage_apply(c, &s.stats, trans->disk_res,
+			      gc_pos_btree_node(b));
+
+	percpu_up_read_preempt_enable(&c->usage_lock);
 
 	EBUG_ON(bkey_cmp(iter->pos, bkey_start_pos(&insert->k->k)));
 	EBUG_ON(bkey_cmp(iter->pos, s.committed));

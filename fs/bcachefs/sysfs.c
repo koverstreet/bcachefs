@@ -767,6 +767,10 @@ static ssize_t show_dev_alloc_debug(struct bch_dev *ca, char *buf)
 	struct bch_fs *c = ca->fs;
 	struct bch_dev_usage stats = bch2_dev_usage_read(c, ca);
 
+	percpu_down_write(&c->usage_lock);
+	bch2_dev_usage_verify_full(ca);
+	percpu_up_write(&c->usage_lock);
+
 	return scnprintf(buf, PAGE_SIZE,
 		"free_inc:               %zu/%zu\n"
 		"free[RESERVE_BTREE]:    %zu/%zu\n"

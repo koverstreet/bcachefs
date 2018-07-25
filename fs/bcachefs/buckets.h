@@ -144,6 +144,8 @@ static inline bool bucket_unused(struct bucket_mark mark)
 
 /* Device usage: */
 
+void bch2_dev_usage_verify_full(struct bch_dev *);
+
 struct bch_dev_usage __bch2_dev_usage_read(struct bch_dev *);
 struct bch_dev_usage bch2_dev_usage_read(struct bch_fs *, struct bch_dev *);
 
@@ -185,6 +187,8 @@ static inline u64 dev_buckets_free(struct bch_fs *c, struct bch_dev *ca)
 
 struct bch_fs_usage __bch2_fs_usage_read(struct bch_fs *);
 struct bch_fs_usage bch2_fs_usage_read(struct bch_fs *);
+void __bch2_fs_usage_apply(struct bch_fs *, struct bch_fs_usage *,
+			   struct disk_reservation *, struct gc_pos);
 void bch2_fs_usage_apply(struct bch_fs *, struct bch_fs_usage *,
 			 struct disk_reservation *, struct gc_pos);
 
@@ -219,6 +223,8 @@ void bch2_mark_metadata_bucket(struct bch_fs *, struct bch_dev *,
 #define BCH_BUCKET_MARK_GC_WILL_VISIT		(1 << 2)
 #define BCH_BUCKET_MARK_GC_LOCK_HELD		(1 << 3)
 
+void __bch2_mark_key(struct bch_fs *, struct bkey_s_c, s64, enum bch_data_type,
+		     struct gc_pos, struct bch_fs_usage *, u64, unsigned);
 void bch2_mark_key(struct bch_fs *, struct bkey_s_c, s64, enum bch_data_type,
 		   struct gc_pos, struct bch_fs_usage *, u64, unsigned);
 
