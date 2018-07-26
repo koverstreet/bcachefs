@@ -961,8 +961,9 @@ static int hns_mac_get_mode(phy_interface_t phy_if)
 	}
 }
 
-u8 __iomem *hns_mac_get_vaddr(struct dsaf_device *dsaf_dev,
-			      struct hns_mac_cb *mac_cb, u32 mac_mode_idx)
+static u8 __iomem *
+hns_mac_get_vaddr(struct dsaf_device *dsaf_dev,
+		  struct hns_mac_cb *mac_cb, u32 mac_mode_idx)
 {
 	u8 __iomem *base = dsaf_dev->io_base;
 	int mac_id = mac_cb->mac_id;
@@ -980,7 +981,8 @@ u8 __iomem *hns_mac_get_vaddr(struct dsaf_device *dsaf_dev,
  * @mac_cb: mac control block
  * return 0 - success , negative --fail
  */
-int hns_mac_get_cfg(struct dsaf_device *dsaf_dev, struct hns_mac_cb *mac_cb)
+static int
+hns_mac_get_cfg(struct dsaf_device *dsaf_dev, struct hns_mac_cb *mac_cb)
 {
 	int ret;
 	u32 mac_mode_idx;
