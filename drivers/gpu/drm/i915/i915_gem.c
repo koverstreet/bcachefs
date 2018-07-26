@@ -4991,6 +4991,8 @@ int i915_gem_init(struct drm_i915_private *dev_priv)
 
 	ret = i915_gem_init_hw(dev_priv);
 	if (ret == -EIO) {
+		mutex_lock(&dev_priv->drm.struct_mutex);
+
 		/* Allow engine initialisation to fail by marking the GPU as
 		 * wedged. But we only want to do this where the GPU is angry,
 		 * for all other failure, such as an allocation failure, bail.
@@ -4999,7 +5001,14 @@ int i915_gem_init(struct drm_i915_private *dev_priv)
 			DRM_ERROR("Failed to initialize GPU, declaring it wedged\n");
 			i915_gem_set_wedged(dev_priv);
 		}
-		ret = 0;
+
+		/* Minimal basic recovery for KMS */
+		ret = i915_ggtt_enable_hw(dev_priv);
+		i915_gem_restore_gtt_mappings(dev_priv);
+		i915_gem_restore_fences(dev_priv);
+		intel_init_clock_gating(dev_priv);
+
+		mutex_unlock(&dev_priv->drm.struct_mutex);
 	}
 
 out_unlock:
