@@ -9,6 +9,7 @@
 
 #include <linux/slab.h>
 #include <linux/cpumask.h>
+#include <linux/kmemleak.h>
 #include <linux/percpu.h>
 
 struct vmemmap_backing {
