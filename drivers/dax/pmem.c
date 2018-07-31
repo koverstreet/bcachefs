@@ -105,14 +105,18 @@ static int dax_pmem_probe(struct device *dev)
 	if (rc)
 		return rc;
 
-	rc = devm_add_action_or_reset(dev, dax_pmem_percpu_exit,
-							&dax_pmem->ref);
-	if (rc)
+	rc = devm_add_action(dev, dax_pmem_percpu_exit, &dax_pmem->ref);
+	if (rc) {
+		percpu_ref_exit(&dax_pmem->ref);
 		return rc;
+	}
 
 	addr = devm_memremap_pages(dev, &res, &dax_pmem->ref, altmap);
-	if (IS_ERR(addr))
+	if (IS_ERR(addr)) {
+		devm_remove_action(dev, dax_pmem_percpu_exit, &dax_pmem->ref);
+		percpu_ref_exit(&dax_pmem->ref);
 		return PTR_ERR(addr);
+	}
 
 	rc = devm_add_action_or_reset(dev, dax_pmem_percpu_kill,
 							&dax_pmem->ref);
