@@ -1725,6 +1725,8 @@ void bch2_recalc_capacity(struct bch_fs *c)
 
 	bch2_set_ra_pages(c, ra_pages);
 
+	c->opts.gc_reserve_percent = 3;
+
 	for_each_rw_member(ca, c, i) {
 		u64 dev_reserve = 0;
 
