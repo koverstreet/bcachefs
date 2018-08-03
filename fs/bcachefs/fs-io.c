@@ -403,6 +403,49 @@ no_i_size_update:
 	return BTREE_INSERT_OK;
 }
 
+static int sum_sector_overwrites(struct bkey_i *new, struct btree_iter *_iter,
+				 bool *allocating)
+{
+	struct btree_iter iter;
+	struct bkey_s_c old;
+	int delta = 0;
+
+	bch2_btree_iter_init(&iter, _iter->c, BTREE_ID_EXTENTS, POS_MIN,
+			     BTREE_ITER_SLOTS);
+
+	bch2_btree_iter_link(_iter, &iter);
+	bch2_btree_iter_copy(&iter, _iter);
+
+	for_each_btree_key_continue(&iter, BTREE_ITER_SLOTS, old) {
+		if (bkey_cmp(new->k.p, bkey_start_pos(old.k)) <= 0)
+			break;
+
+		if (!bch2_extent_is_fully_allocated(old))
+			*allocating = true;
+
+		delta += (min(new->k.p.offset,
+			      old.k->p.offset) -
+			  max(bkey_start_offset(&new->k),
+			      bkey_start_offset(old.k))) *
+			(bkey_extent_is_allocation(&new->k) -
+			 bkey_extent_is_allocation(old.k));
+	}
+
+	bch2_btree_iter_unlink(&iter);
+
+	return delta;
+}
+
+void bch2_extent_trim_atomic(struct bkey_i *k, struct btree_iter *iter)
+{
+	struct btree *b = iter->l[0].b;
+
+	BUG_ON(iter->uptodate);
+
+	if (bkey_cmp(b->key.k.p, k->k.p) < 0)
+		bch2_cut_back(b->key.k.p, &k->k);
+}
+
 static int bchfs_write_index_update(struct bch_write_op *wop)
 {
 	struct bchfs_write_op *op = container_of(wop,
@@ -430,20 +473,34 @@ static int bchfs_write_index_update(struct bch_write_op *wop)
 	hook.need_inode_update	= false;
 
 	do {
-		/* XXX: inode->i_size locking */
-		k = bch2_keylist_front(keys);
-		if (min(k->k.p.offset << 9, op->new_i_size) >
-		    op->inode->ei_inode.bi_size)
-			hook.need_inode_update = true;
+		int i_sectors_delta;
+		u64 new_i_size;
+		bool allocating = false;
 
-		/* optimization for fewer transaction restarts: */
+		BKEY_PADDED(k) tmp;
+
 		ret = bch2_btree_iter_traverse(extent_iter);
 		if (ret)
 			goto err;
 
-		if (hook.need_inode_update) {
-			struct bkey_s_c inode;
+		bkey_copy(&tmp.k, bch2_keylist_front(keys));
+		k = &tmp.k;
 
+		bch2_extent_trim_atomic(k, extent_iter);
+
+		i_sectors_delta = sum_sector_overwrites(k, extent_iter,
+							&allocating);
+
+		if (op->unalloc && allocating) {
+			ret = -ENOSPC;
+			goto err;
+		}
+
+		new_i_size = min(k->k.p.offset << 9, op->new_i_size);
+
+		/* XXX: inode->i_size locking */
+		if (i_sectors_delta ||
+		    new_i_size > op->inode->ei_inode.bi_size) {
 			if (!inode_iter) {
 				inode_iter = bch2_trans_get_iter(&trans,
 					BTREE_ID_INODES,
@@ -452,48 +509,46 @@ static int bchfs_write_index_update(struct bch_write_op *wop)
 				BUG_ON(IS_ERR(inode_iter));
 			}
 
-			inode = bch2_btree_iter_peek_slot(inode_iter);
-			if ((ret = btree_iter_err(inode)))
+			ret = bch2_btree_iter_traverse(inode_iter);
+			if (ret)
 				goto err;
 
-			if (WARN_ONCE(inode.k->type != BCH_INODE_FS,
-				      "inode %llu not found when updating",
-				      extent_iter->pos.inode)) {
-				ret = -ENOENT;
-				break;
-			}
+			hook.inode_u = op->inode->ei_inode;
 
-			if (WARN_ONCE(bkey_bytes(inode.k) >
-				      sizeof(hook.inode_p),
-				      "inode %llu too big (%zu bytes, buf %zu)",
-				      extent_iter->pos.inode,
-				      bkey_bytes(inode.k),
-				      sizeof(hook.inode_p))) {
-				ret = -ENOENT;
-				break;
-			}
+			hook.inode_u.bi_sectors += i_sectors_delta;
 
-			bkey_reassemble(&hook.inode_p.inode.k_i, inode);
-			ret = bch2_inode_unpack(bkey_s_c_to_inode(inode),
-					       &hook.inode_u);
-			if (WARN_ONCE(ret,
-				      "error %i unpacking inode %llu",
-				      ret, extent_iter->pos.inode)) {
-				ret = -ENOENT;
-				break;
-			}
+			/* XXX: this is slightly suspect */
+			if (!(hook.inode_u.bi_flags & BCH_INODE_I_SIZE_DIRTY))
+				hook.inode_u.bi_size =
+					max(hook.inode_u.bi_size, new_i_size);
+
+			bch2_inode_pack(&hook.inode_p, &hook.inode_u);
 
 			ret = bch2_btree_insert_at(wop->c, &wop->res,
-					&hook.hook, op_journal_seq(wop),
+					NULL, op_journal_seq(wop),
 					BTREE_INSERT_NOFAIL|
 					BTREE_INSERT_ATOMIC|
 					BTREE_INSERT_USE_RESERVE,
 					BTREE_INSERT_ENTRY(extent_iter, k),
 					BTREE_INSERT_ENTRY_EXTRA_RES(inode_iter,
 							&hook.inode_p.inode.k_i, 2));
+			if (!ret) {
+				op->inode->ei_inode = hook.inode_u;
+
+				op->sectors_added += i_sectors_delta;
+
+				spin_lock(&op->inode->v.i_lock);
+				if (new_i_size > op->inode->v.i_size) {
+					if (op->is_dio)
+						i_size_write(&op->inode->v, new_i_size);
+					else
+						BUG();
+				}
+				spin_unlock(&op->inode->v.i_lock);
+			}
 		} else {
 			ret = bch2_btree_insert_at(wop->c, &wop->res,
-					&hook.hook, op_journal_seq(wop),
+					NULL, op_journal_seq(wop),
 					BTREE_INSERT_NOFAIL|
 					BTREE_INSERT_ATOMIC|
 					BTREE_INSERT_NOUNLOCK|
@@ -512,11 +567,10 @@ err:
 		if (ret)
 			break;
 
-		if (hook.need_inode_update)
-			op->inode->ei_inode = hook.inode_u;
-
-		BUG_ON(bkey_cmp(extent_iter->pos, k->k.p) < 0);
-		bch2_keylist_pop_front(keys);
+		if (bkey_cmp(extent_iter->pos, bch2_keylist_front(keys)->k.p) < 0)
+			bch2_cut_front(extent_iter->pos, bch2_keylist_front(keys));
+		else
+			bch2_keylist_pop_front(keys);
 	} while (!bch2_keylist_empty(keys));
 
 	bch2_trans_exit(&trans);

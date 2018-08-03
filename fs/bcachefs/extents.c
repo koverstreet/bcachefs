@@ -1267,9 +1267,6 @@ extent_insert_advance_pos(struct extent_insert_state *s, struct bkey_s_c k)
 					k.k ? k.k->p : b->key.k.p);
 	enum btree_insert_ret ret;
 
-	if (race_fault())
-		return BTREE_INSERT_NEED_TRAVERSE;
-
 	/* hole? */
 	if (k.k && bkey_cmp(s->committed, bkey_start_pos(k.k)) < 0) {
 		ret = __extent_insert_advance_pos(s, bkey_start_pos(k.k),

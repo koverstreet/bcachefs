@@ -332,7 +332,7 @@ static inline void reserve_whiteout(struct btree *b, struct bset_tree *t,
  * insert into could be written out from under us)
  */
 static inline bool bch2_btree_node_insert_fits(struct bch_fs *c,
-					      struct btree *b, unsigned u64s)
+					       struct btree *b, unsigned u64s)
 {
 	if (unlikely(btree_node_fake(b)))
 		return false;
