@@ -1110,3 +1110,55 @@ ssize_t bch2_journal_print_pins(struct journal *j, char *buf)
 
 	return ret;
 }
+
+
+struct seq_id {
+	u64			head, tail;
+#define SEQ_ID_NR		1024
+	unsigned long		bits[BITS_TO_LONGS(SEQ_ID_NR)];
+};
+
+static inline bool id_free_is_clear(u64 id)
+{
+	return (id >> ilog2(SEQ_ID_NR)) & 1;
+}
+
+void seq_id_free(struct seq_id *s, u64 id)
+{
+	u64 v;
+
+	(id_free_is_clear(id)
+	 ? test_and_clear_bit
+	 : test_and_set_bit)(id & (SEQ_ID_NR - 1), s->bits);
+
+	smp_mb();
+	/* must see s->tail _after_ clearing our id: */
+	v = READ_ONCE(s->tail);
+	if (v != id)
+		return;
+
+	do {
+		id = v;
+
+		if (id == s->head ||
+		    id_free_is_clear(id) !=
+		    test_bit(id & (SEQ_ID_NR - 1), s->bits))
+			return;
+	} while ((v = cmpxchg(&s->tail, id, id + 1)) != id);
+
+	/* issue wakeup */
+}
+
+s64 seq_id_alloc(struct seq_id *s)
+{
+	u64 id, v = READ_ONCE(s->head);
+
+	do {
+		id = v;
+
+		if (id > s->tail + SEQ_ID_NR)
+			return -1;
+	} while ((v = cmpxchg(&s->head, id, id + 1)) != id);
+
+	return id;
+}
