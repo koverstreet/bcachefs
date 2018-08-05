@@ -206,10 +206,8 @@ found:
 		       btree_node_iter_cmp(b, set[-1], set[0]) > 0);
 }
 
-static void bch2_verify_insert_pos(struct btree *b,
-				   struct bkey_packed *where,
-				   struct bkey_packed *insert,
-				   unsigned clobber_u64s)
+void bch2_verify_insert_pos(struct btree *b, struct bkey_packed *where,
+			    struct bkey_packed *insert, unsigned clobber_u64s)
 {
 	struct bset_tree *t = bch2_bkey_to_bset(b, where);
 	struct bkey_packed *prev = bch2_bkey_prev_all(b, t, where);
@@ -260,22 +258,11 @@ static void bch2_verify_insert_pos(struct btree *b,
 #endif
 }
 
-void bch2_verify_key_order(struct btree *b,
-			   struct btree_node_iter *_iter,
-			   struct bkey_packed *where)
-{
-	bch2_verify_insert_pos(b, where, where, where->u64s);
-}
-
 #else
 
 static inline void bch2_btree_node_iter_next_check(struct btree_node_iter *iter,
 						   struct btree *b) {}
 
-static inline void bch2_verify_insert_pos(struct btree *b,
-					  struct bkey_packed *where,
-					  struct bkey_packed *insert,
-					  unsigned clobber_u64s) {}
 #endif
 
 /* Auxiliary search trees */
