@@ -1983,6 +1983,7 @@ char *pointer(const char *fmt, char *buf, char *end, void *ptr,
 		case 'F':
 			return device_node_string(buf, end, ptr, spec, fmt + 1);
 		}
+		break;
 	case 'x':
 		return pointer_string(buf, end, ptr, spec);
 #ifdef CONFIG_KMSG_IDS
