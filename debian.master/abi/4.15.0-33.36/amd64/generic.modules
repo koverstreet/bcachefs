@@ -4563,7 +4563,6 @@ tpci200
 tpl0102
 tpm-rng
 tpm_atmel
-tpm_crb
 tpm_i2c_atmel
 tpm_i2c_infineon
 tpm_i2c_nuvoton
