@@ -847,19 +847,6 @@ static void ipvlan_del_addr(struct ipvl_dev *ipvlan, void *iaddr, bool is_v6)
 	kfree_rcu(addr, rcu);
 }
 
-static bool ipvlan_is_valid_dev(const struct net_device *dev)
-{
-	struct ipvl_dev *ipvlan = netdev_priv(dev);
-
-	if (!netif_is_ipvlan(dev))
-		return false;
-
-	if (!ipvlan || !ipvlan->port)
-		return false;
-
-	return true;
-}
-
 #if IS_ENABLED(CONFIG_IPV6)
 static int ipvlan_add_addr6(struct ipvl_dev *ipvlan, struct in6_addr *ip6_addr)
 {
