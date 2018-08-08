@@ -72,8 +72,7 @@ static int reattach_inode(struct bch_fs *c,
 	bch2_inode_pack(&packed, lostfound_inode);
 
 	ret = bch2_btree_insert(c, BTREE_ID_INODES, &packed.inode.k_i,
-			       NULL, NULL, NULL,
-			       BTREE_INSERT_NOFAIL);
+				NULL, NULL, BTREE_INSERT_NOFAIL);
 	if (ret) {
 		bch_err(c, "error %i reattaching inode %llu while updating lost+found",
 			ret, inum);
@@ -201,7 +200,7 @@ retry:
 	}
 
 	ret   = bch2_hash_delete_at(&trans, desc, info, iter) ?:
-		bch2_trans_commit(&trans, NULL, NULL, NULL,
+		bch2_trans_commit(&trans, NULL, NULL,
 				  BTREE_INSERT_ATOMIC|
 				  BTREE_INSERT_NOFAIL);
 err:
@@ -289,6 +288,13 @@ fsck_err:
 	return ret;
 }
 
+static int bch2_inode_truncate(struct bch_fs *c, u64 inode_nr, u64 new_size)
+{
+	return bch2_btree_delete_range(c, BTREE_ID_EXTENTS,
+			POS(inode_nr, round_up(new_size, block_bytes(c)) >> 9),
+			POS(inode_nr + 1, 0), NULL);
+}
+
 /*
  * Walk extents: verify that extents have a corresponding S_ISREG inode, and
  * that i_size an i_sectors are consistent
@@ -319,7 +325,7 @@ static int check_extents(struct bch_fs *c)
 			k.k->type, k.k->p.inode, w.inode.bi_mode)) {
 			bch2_btree_iter_unlock(&iter);
 
-			ret = bch2_inode_truncate(c, k.k->p.inode, 0, NULL, NULL);
+			ret = bch2_inode_truncate(c, k.k->p.inode, 0);
 			if (ret)
 				goto err;
 			continue;
@@ -341,10 +347,7 @@ static int check_extents(struct bch_fs *c)
 			bch2_inode_pack(&p, &w.inode);
 
 			ret = bch2_btree_insert(c, BTREE_ID_INODES,
-						&p.inode.k_i,
-						NULL,
-						NULL,
-						NULL,
+						&p.inode.k_i, NULL, NULL,
 						BTREE_INSERT_NOFAIL);
 			if (ret) {
 				bch_err(c, "error in fs gc: error %i "
@@ -365,8 +368,7 @@ static int check_extents(struct bch_fs *c)
 			bch2_btree_iter_unlock(&iter);
 
 			ret = bch2_inode_truncate(c, k.k->p.inode,
-					round_up(w.inode.bi_size, PAGE_SIZE) >> 9,
-					NULL, NULL);
+						  w.inode.bi_size);
 			if (ret)
 				goto err;
 			continue;
@@ -507,7 +509,7 @@ static int check_dirents(struct bch_fs *c)
 			bkey_reassemble(&n->k_i, d.s_c);
 			n->v.d_type = mode_to_type(target.bi_mode);
 
-			ret = bch2_btree_insert_at(c, NULL, NULL, NULL,
+			ret = bch2_btree_insert_at(c, NULL, NULL,
 					BTREE_INSERT_NOFAIL,
 					BTREE_INSERT_ENTRY(iter, &n->k_i));
 			kfree(n);
@@ -601,7 +603,7 @@ create_root:
 	bch2_inode_pack(&packed, root_inode);
 
 	return bch2_btree_insert(c, BTREE_ID_INODES, &packed.inode.k_i,
-				 NULL, NULL, NULL, BTREE_INSERT_NOFAIL);
+				 NULL, NULL, BTREE_INSERT_NOFAIL);
 }
 
 /* Get lost+found, create if it doesn't exist: */
@@ -645,7 +647,7 @@ create_lostfound:
 	bch2_inode_pack(&packed, root_inode);
 
 	ret = bch2_btree_insert(c, BTREE_ID_INODES, &packed.inode.k_i,
-				NULL, NULL, NULL, BTREE_INSERT_NOFAIL);
+				NULL, NULL, BTREE_INSERT_NOFAIL);
 	if (ret)
 		return ret;
 
@@ -1093,9 +1095,7 @@ static int check_inode(struct bch_fs *c,
 		 * just switch units to bytes and that issue goes away
 		 */
 
-		ret = bch2_inode_truncate(c, u.bi_inum,
-				round_up(u.bi_size, PAGE_SIZE) >> 9,
-				NULL, NULL);
+		ret = bch2_inode_truncate(c, u.bi_inum, u.bi_size);
 		if (ret) {
 			bch_err(c, "error in fs gc: error %i "
 				"truncating inode", ret);
@@ -1141,7 +1141,7 @@ static int check_inode(struct bch_fs *c,
 
 		bch2_inode_pack(&p, &u);
 
-		ret = bch2_btree_insert_at(c, NULL, NULL, NULL,
+		ret = bch2_btree_insert_at(c, NULL, NULL,
 					  BTREE_INSERT_NOFAIL,
 					  BTREE_INSERT_ENTRY(iter, &p.inode.k_i));
 		if (ret && ret != -EINTR)
