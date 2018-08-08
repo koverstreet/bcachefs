@@ -416,6 +416,17 @@ endif
 		/sbin/modinfo $$ko | grep ^firmware || true; \
 	done | sort -u >$(abidir)/$*.fwinfo
 
+	# Build the final ABI compiler information.
+	ko=$$(find $(pkgdir_bin) $(pkgdir) $(pkgdir_ex) -name \*.ko | head -1); \
+	readelf -p .comment "$$ko" | gawk ' \
+		($$1 == "[") { \
+			printf("%s", $$3); \
+			for (n=4; n<=NF; n++) { \
+				printf(" %s", $$n); \
+			} \
+			print "" \
+		}' | sort -u >$(abidir)/$*.compiler
+
 	# Build the final ABI retpoline information.
 	if grep -q CONFIG_RETPOLINE=y $(builddir)/build-$*/.config; then \
 		echo "# retpoline v1.0" >$(abidir)/$*.retpoline; \
@@ -437,6 +448,8 @@ endif
 		$(pkgdir_bldinfo)/usr/lib/linux/$(abi_release)-$*/fwinfo
 	install -m644 $(abidir)/$*.retpoline \
 		$(pkgdir_bldinfo)/usr/lib/linux/$(abi_release)-$*/retpoline
+	install -m644 $(abidir)/$*.compiler \
+		$(pkgdir_bldinfo)/usr/lib/linux/$(abi_release)-$*/compiler
 
 headers_tmp := $(CURDIR)/debian/tmp-headers
 headers_dir := $(CURDIR)/debian/linux-libc-dev
