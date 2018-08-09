@@ -1568,7 +1568,7 @@ int __init ap_module_init(void)
 	if (rc)
 		return rc;
 
-	if (ap_instructions_available() != 0) {
+	if (!ap_instructions_available()) {
 		pr_warn("The hardware system does not support AP instructions\n");
 		return -ENODEV;
 	}
