@@ -67,39 +67,54 @@ getall() {
 			do
 				dpkg-deb --extract $filename tmp
 			done
-			find tmp -name "*.ko" | while read f; do
-				modinfo $f | grep ^firmware >> $fwinfo
-			done
-			if [ -f tmp/boot/abi-* ]; then
-				mv tmp/boot/abi-* $abidir/$arch/$sub
+			# FORM 1: linux-image et al extracted here.
+			if [ -d tmp/boot ]; then
+				echo -n "images..."
+				find tmp -name "*.ko" | while read f; do
+					modinfo $f | grep ^firmware >> $fwinfo
+				done
+				if [ -f tmp/boot/abi-* ]; then
+					mv tmp/boot/abi-* $abidir/$arch/$sub
+				else
+					echo -n "NO ABI FILE..."
+				fi
+				if [ -f tmp/boot/retpoline-* ]; then
+					mv tmp/boot/retpoline-* $abidir/$arch/$sub.retpoline
+				else
+					echo -n "NO RETPOLINE FILE..."
+				fi
+				(cd tmp; find lib/modules/$verabi-$sub/kernel -name '*.ko') | \
+					sed -e 's/.*\/\([^\/]*\)\.ko/\1/' | sort > \
+					$abidir/$arch/$sub.modules
+				(
+					cd tmp;
+					# Prevent exposing some errors when called by python scripts. SIGPIPE seems to get
+					# exposed when using the `find ...` form of the command.
+					ko=$(find lib/modules/$verabi-$sub/kernel \
+						-name '*.ko' | head -1)
+					readelf -p .comment "$ko" | gawk '
+						($1 == "[") {
+							printf("%s", $3);
+							for (n=4; n<=NF; n++) {
+								printf(" %s", $n);
+							}
+							print ""
+						}' | sort -u >$abidir/$arch/$sub.compiler
+					version=`cat $abidir/$arch/$sub.compiler`
+					echo -n "$version..."
+				)
+			# FORM 2: moduleinfo packages
+			# cranky-fix -- modinfo supported
 			else
-				echo -n "NO ABI FILE..."
+				echo -n "buildinfo..."
+				base="tmp/usr/lib/linux/${verabi}-${sub}"
+				mv "$base/abi" "$abidir/$arch/$sub"
+				for comp in 'modules' 'retpoline' 'compiler'
+				do
+					mv "$base/$comp" "$abidir/$arch/$sub.$comp"
+				done
+				cat "$base/fwinfo" >>"$fwinfo"
 			fi
-			if [ -f tmp/boot/retpoline-* ]; then
-				mv tmp/boot/retpoline-* $abidir/$arch/$sub.retpoline
-			else
-				echo -n "NO RETPOLINE FILE..."
-			fi
-			(cd tmp; find lib/modules/$verabi-$sub/kernel -name '*.ko') | \
-				sed -e 's/.*\/\([^\/]*\)\.ko/\1/' | sort > \
-				$abidir/$arch/$sub.modules
-			(
-				cd tmp;
-				# Prevent exposing some errors when called by python scripts. SIGPIPE seems to get
-				# exposed when using the `find ...` form of the command.
-				ko=$(find lib/modules/$verabi-$sub/kernel \
-					-name '*.ko' | head -1)
-				readelf -p .comment "$ko" | gawk '
-					($1 == "[") {
-						printf("%s", $3);
-						for (n=4; n<=NF; n++) {
-							printf(" %s", $n);
-						}
-						print ""
-					}' | sort -u >$abidir/$arch/$sub.compiler
-				version=`cat $abidir/$arch/$sub.compiler`
-				echo -n "$version..."
-			)
 			rm -rf tmp $filenames
 			echo "done."
 		else
