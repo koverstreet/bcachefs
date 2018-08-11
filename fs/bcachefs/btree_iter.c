@@ -550,13 +550,13 @@ next_bset:
 }
 
 void bch2_btree_node_iter_fix(struct btree_iter *iter,
-			     struct btree *b,
-			     struct btree_node_iter *node_iter,
-			     struct bset_tree *t,
-			     struct bkey_packed *where,
-			     unsigned clobber_u64s,
-			     unsigned new_u64s)
+			      struct btree *b,
+			      struct btree_node_iter *node_iter,
+			      struct bkey_packed *where,
+			      unsigned clobber_u64s,
+			      unsigned new_u64s)
 {
+	struct bset_tree *t = bch2_bkey_to_bset(b, where);
 	struct btree_iter *linked;
 
 	if (node_iter != &iter->l[b->level].iter)
