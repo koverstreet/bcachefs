@@ -426,6 +426,11 @@ void bch2_btree_iter_verify(struct btree_iter *iter, struct btree *b)
 		__bch2_btree_iter_verify(linked, b);
 }
 
+#else
+
+static inline void __bch2_btree_iter_verify(struct btree_iter *iter,
+					    struct btree *b) {}
+
 #endif
 
 static void __bch2_btree_node_iter_fix(struct btree_iter *iter,
