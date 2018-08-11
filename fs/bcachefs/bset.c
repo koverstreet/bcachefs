@@ -1125,9 +1125,10 @@ static void ro_aux_tree_fix_invalidated_key(struct btree *b,
  * modified, fix any auxiliary search tree by remaking all the nodes in the
  * auxiliary search tree that @k corresponds to
  */
-void bch2_bset_fix_invalidated_key(struct btree *b, struct bset_tree *t,
-				   struct bkey_packed *k)
+void bch2_bset_fix_invalidated_key(struct btree *b, struct bkey_packed *k)
 {
+	struct bset_tree *t = bch2_bkey_to_bset(b, k);
+
 	switch (bset_aux_tree_type(t)) {
 	case BSET_NO_AUX_TREE:
 		break;
