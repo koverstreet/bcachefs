@@ -15,10 +15,7 @@ unsigned bch2_dirent_name_bytes(struct bkey_s_c_dirent d)
 	unsigned len = bkey_val_bytes(d.k) -
 		offsetof(struct bch_dirent, d_name);
 
-	while (len && !d.v->d_name[len - 1])
-		--len;
-
-	return len;
+	return strnlen(d.v->d_name, len);
 }
 
 static unsigned dirent_val_u64s(unsigned len)
