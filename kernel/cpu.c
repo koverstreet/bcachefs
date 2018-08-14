@@ -2291,7 +2291,9 @@ void __init boot_cpu_init(void)
  */
 void __init boot_cpu_hotplug_init(void)
 {
+#ifdef CONFIG_SMP
 	per_cpu_ptr(&cpuhp_state, smp_processor_id())->booted_once = true;
+#endif
 	per_cpu_ptr(&cpuhp_state, smp_processor_id())->state = CPUHP_ONLINE;
 }
 
