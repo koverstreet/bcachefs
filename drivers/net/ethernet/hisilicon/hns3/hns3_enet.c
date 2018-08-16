@@ -3406,7 +3406,7 @@ static int hns3_reset_notify_down_enet(struct hnae3_handle *handle)
 	struct net_device *ndev = kinfo->netdev;
 
 	if (!netif_running(ndev))
-		return 0;
+		return -EIO;
 
 	return hns3_nic_net_stop(ndev);
 }
