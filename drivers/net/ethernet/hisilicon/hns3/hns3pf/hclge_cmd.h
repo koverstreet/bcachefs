@@ -45,7 +45,7 @@ struct hclge_cmq_ring {
 	u16 desc_num;
 	int next_to_use;
 	int next_to_clean;
-	u8 ring_type; /* cmq ring type */
+	u8 flag;
 	spinlock_t lock; /* Command queue lock */
 };
 
