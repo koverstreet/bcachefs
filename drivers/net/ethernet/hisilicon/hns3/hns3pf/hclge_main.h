@@ -190,6 +190,7 @@ struct hclge_hw {
 	int num_vec;
 	struct hclge_cmq cmq;
 	struct hclge_caps caps;
+	void *back;
 };
 
 /* TQP stats */
