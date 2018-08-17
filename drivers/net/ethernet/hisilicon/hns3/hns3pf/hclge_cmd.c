@@ -228,7 +228,8 @@ int hclge_cmd_send(struct hclge_hw *hw, struct hclge_desc *desc, int num)
 		desc_to_use = &hw->cmq.csq.desc[hw->cmq.csq.next_to_use];
 		*desc_to_use = desc[handle];
 		(hw->cmq.csq.next_to_use)++;
-		hw->cmq.csq.next_to_use %= hw->cmq.csq.desc_num;
+		if (hw->cmq.csq.next_to_use == hw->cmq.csq.desc_num)
+			hw->cmq.csq.next_to_use = 0;
 		handle++;
 	}
 
@@ -268,7 +269,8 @@ int hclge_cmd_send(struct hclge_hw *hw, struct hclge_desc *desc, int num)
 			hw->cmq.last_status = desc_ret;
 			ntc++;
 			handle++;
-			ntc %= hw->cmq.csq.desc_num;
+			if (ntc == hw->cmq.csq.desc_num)
+				ntc = 0;
 		}
 	}
 
