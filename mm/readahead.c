@@ -141,6 +141,42 @@ out:
 	return ret;
 }
 
+static inline bool slot_has_page(void **slot)
+{
+	struct page *page = radix_tree_deref_slot(slot);
+
+	return page && !radix_tree_exceptional_entry(page);
+}
+
+static unsigned count_empty_slots(struct address_space *mapping,
+				 pgoff_t *start, pgoff_t end)
+{
+	struct radix_tree_iter iter;
+	void **slot;
+
+	if (*start >= end)
+		return 0;
+
+	rcu_read_lock();
+	radix_tree_for_each_slot(slot, &mapping->i_pages, &iter, *start) {
+		if (iter.index >= end)
+			break;
+
+		if (!slot_has_page(slot))
+			continue;
+
+		if (iter.index == *start) {
+			(*start)++;
+		} else {
+			end = iter.index;
+			break;
+		}
+	}
+	rcu_read_unlock();
+
+	return end - *start;
+}
+
 /*
  * __do_page_cache_readahead() actually reads a chunk of disk.  It allocates
  * the pages first, then submits them for I/O. This avoids the very bad
@@ -154,63 +190,45 @@ unsigned int __do_page_cache_readahead(struct address_space *mapping,
 		unsigned long lookahead_size)
 {
 	struct inode *inode = mapping->host;
-	struct page *page;
-	unsigned long end_index;	/* The last page we want to read */
 	LIST_HEAD(page_pool);
-	int page_idx;
-	unsigned int nr_pages = 0;
 	loff_t isize = i_size_read(inode);
+	pgoff_t end = min_t(pgoff_t, offset + nr_to_read,
+			    (isize - 1) >> PAGE_SHIFT);
+	pgoff_t readahead_idx = offset + nr_to_read - lookahead_size;
 	gfp_t gfp_mask = readahead_gfp_mask(mapping);
+	unsigned nr_slots, nr_pages = 0;
 
 	if (isize == 0)
-		goto out;
+		return 0;
 
-	end_index = ((isize - 1) >> PAGE_SHIFT);
+	while (1) {
+		/* Find out how many contiguous, empty slots we have: */
+		nr_slots = count_empty_slots(mapping, &offset, end);
 
-	/*
-	 * Preallocate as many pages as we will need.
-	 */
-	for (page_idx = 0; page_idx < nr_to_read; page_idx++) {
-		pgoff_t page_offset = offset + page_idx;
+		/* Preallocate one page per empty slot: */
+		for (nr_pages = 0; nr_pages < nr_slots; nr_pages++) {
+			struct page *page = __page_cache_alloc(gfp_mask);
+			if (!page)
+				break;
 
-		if (page_offset > end_index)
-			break;
-
-		rcu_read_lock();
-		page = radix_tree_lookup(&mapping->i_pages, page_offset);
-		rcu_read_unlock();
-		if (page && !radix_tree_exceptional_entry(page)) {
-			/*
-			 * Page already present?  Kick off the current batch of
-			 * contiguous pages before continuing with the next
-			 * batch.
-			 */
-			if (nr_pages)
-				read_pages(mapping, filp, &page_pool, nr_pages,
-						gfp_mask);
-			nr_pages = 0;
-			continue;
+			page->index = offset;
+			if (offset == readahead_idx)
+				SetPageReadahead(page);
+			list_add(&page->lru, &page_pool);
+			offset++;
 		}
 
-		page = __page_cache_alloc(gfp_mask);
-		if (!page)
+		if (!nr_pages)
 			break;
-		page->index = page_offset;
-		list_add(&page->lru, &page_pool);
-		if (page_idx == nr_to_read - lookahead_size)
-			SetPageReadahead(page);
-		nr_pages++;
+
+		/*
+		 * Now start the IO.  We ignore I/O errors - if the page is not
+		 * uptodate then the caller will launch readpage again, and
+		 * will then handle the error.
+		 */
+		read_pages(mapping, filp, &page_pool, nr_pages, gfp_mask);
 	}
 
-	/*
-	 * Now start the IO.  We ignore I/O errors - if the page is not
-	 * uptodate then the caller will launch readpage again, and
-	 * will then handle the error.
-	 */
-	if (nr_pages)
-		read_pages(mapping, filp, &page_pool, nr_pages, gfp_mask);
-	BUG_ON(!list_empty(&page_pool));
-out:
 	return nr_pages;
 }
 
