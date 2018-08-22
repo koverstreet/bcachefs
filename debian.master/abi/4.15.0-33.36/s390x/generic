@@ -4523,6 +4523,7 @@ EXPORT_SYMBOL vmlinux 0x00000000	rwsem_down_write_failed_killable
 EXPORT_SYMBOL vmlinux 0x00000000	rwsem_downgrade_wake
 EXPORT_SYMBOL vmlinux 0x00000000	rwsem_wake
 EXPORT_SYMBOL vmlinux 0x00000000	s390_arch_random_counter
+EXPORT_SYMBOL vmlinux 0x00000000	s390_arch_random_generate
 EXPORT_SYMBOL vmlinux 0x00000000	s390_epoch_delta_notifier
 EXPORT_SYMBOL vmlinux 0x00000000	s390_isolate_bp
 EXPORT_SYMBOL vmlinux 0x00000000	s390_isolate_bp_guest
