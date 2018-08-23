@@ -178,32 +178,65 @@ void pagecache_block_get(struct pagecache_lock *lock)
 }
 EXPORT_SYMBOL(pagecache_block_get);
 
+static int page_cache_tree_insert_vec(struct address_space *mapping,
+				      struct page *pages[],
+				      unsigned nr_pages,
+				      void *shadow[],
+				      pgoff_t index)
+{
+	struct radix_tree_iter iter;
+	void *p, **slot;
+	int i = 0, error = 0;
+
+	if (!nr_pages)
+		return 0;
+
+	radix_tree_iter_init(&iter, index);
+
+	while (1) {
+		error = __radix_tree_create2(&mapping->i_pages,
+					     &iter, 0, &slot);
+		if (error)
+			break;
+have_slot:
+		BUG_ON(iter.index != index + i);
+
+		p = radix_tree_deref_slot_protected(slot,
+					&mapping->i_pages.xa_lock);
+		if (shadow)
+			shadow[i] = p;
+
+		if (radix_tree_exceptional_entry(p)) {
+			mapping->nrexceptional--;
+		} else if (p) {
+			error = -EEXIST;
+			break;
+		}
+
+		__radix_tree_replace(&mapping->i_pages, iter.node, slot, pages[i],
+				     workingset_lookup_update(mapping));
+		mapping->nrpages++;
+
+		if (++i == nr_pages)
+			break;
+
+		slot++;
+		iter.index++;
+
+		if (radix_tree_chunk_size(&iter))
+			goto have_slot;
+	}
+
+	return i ?: error;
+}
+
 static int page_cache_tree_insert(struct address_space *mapping,
 				  struct page *page, void **shadowp)
 {
-	struct radix_tree_node *node;
-	void **slot;
-	int error;
-
-	error = __radix_tree_create(&mapping->i_pages, page->index, 0,
-				    &node, &slot);
-	if (error)
-		return error;
-	if (*slot) {
-		void *p;
-
-		p = radix_tree_deref_slot_protected(slot,
-						    &mapping->i_pages.xa_lock);
-		if (!radix_tree_exceptional_entry(p))
-			return -EEXIST;
-
-		mapping->nrexceptional--;
-		if (shadowp)
-			*shadowp = p;
-	}
-	__radix_tree_replace(&mapping->i_pages, node, slot, page,
-			     workingset_lookup_update(mapping));
-	mapping->nrpages++;
+	int ret = page_cache_tree_insert_vec(mapping, &page, 1,
+					     shadowp, page->index);
+	if (ret < 0)
+		return ret;
 	return 0;
 }
 
