@@ -773,53 +773,86 @@ static void bch2_readpages_end_io(struct bio *bio)
 	bio_put(bio);
 }
 
-struct readpages_iter {
-	struct address_space	*mapping;
-	struct list_head	pages;
-	unsigned		nr_pages;
-};
-
 static inline void page_state_init_for_read(struct page *page)
 {
 	SetPagePrivate(page);
 	page->private = 0;
 }
 
-static int readpage_add_page(struct readpages_iter *iter, struct page *page)
+struct readpages_iter {
+	struct address_space	*mapping;
+	struct page		**pages;
+	unsigned		nr_pages;
+	unsigned		nr_added;
+	unsigned		idx;
+	pgoff_t			offset;
+};
+
+static int readpages_iter_init(struct readpages_iter *iter,
+			       struct address_space *mapping,
+			       struct list_head *pages, unsigned nr_pages)
 {
-	int ret;
+	memset(iter, 0, sizeof(*iter));
 
-	prefetchw(&page->flags);
+	iter->mapping	= mapping;
+	iter->offset	= list_last_entry(pages, struct page, lru)->index;
 
-	ret = add_to_page_cache_lru(page, iter->mapping,
-				    page->index, GFP_NOFS);
-	if (!ret)
-		page_state_init_for_read(page);
+	iter->pages = kmalloc_array(nr_pages, sizeof(struct page *), GFP_NOFS);
+	if (!iter->pages)
+		return -ENOMEM;
 
-	put_page(page);
-	return ret;
+	while (!list_empty(pages)) {
+		struct page *page = list_last_entry(pages, struct page, lru);
+
+		prefetchw(&page->flags);
+		iter->pages[iter->nr_pages++] = page;
+		list_del(&page->lru);
+	}
+
+	return 0;
 }
 
 static inline struct page *readpage_iter_next(struct readpages_iter *iter)
 {
-	while (iter->nr_pages) {
-		struct page *page =
-			list_last_entry(&iter->pages, struct page, lru);
+	struct page *page;
+	unsigned i;
+	int ret;
 
-		prefetchw(&page->flags);
-		list_del(&page->lru);
-		iter->nr_pages--;
+	BUG_ON(iter->idx > iter->nr_added);
+	BUG_ON(iter->nr_added > iter->nr_pages);
 
-		if (!readpage_add_page(iter, page))
-			return page;
+	if (iter->idx < iter->nr_added)
+		goto out;
+
+	while (1) {
+		if (iter->idx == iter->nr_pages)
+			return NULL;
+
+		ret = add_to_page_cache_lru_vec(iter->mapping,
+				iter->pages	+ iter->nr_added,
+				iter->nr_pages	- iter->nr_added,
+				iter->offset	+ iter->nr_added,
+				GFP_NOFS);
+		if (ret > 0)
+			break;
+
+		page = iter->pages[iter->nr_added];
+		iter->idx++;
+		iter->nr_added++;
+
+		put_page(page);
 	}
 
-	return NULL;
-}
+	iter->nr_added += ret;
 
-#define for_each_readpage_page(_iter, _page)				\
-	for (;								\
-	     ((_page) = __readpage_next_page(&(_iter)));)		\
+	for (i = iter->idx; i < iter->nr_added; i++)
+		put_page(iter->pages[i]);
+out:
+	EBUG_ON(iter->pages[iter->idx]->index != iter->offset + iter->idx);
+
+	page_state_init_for_read(iter->pages[iter->idx]);
+	return iter->pages[iter->idx];
+}
 
 static void bch2_add_page_sectors(struct bio *bio, struct bkey_s_c k)
 {
@@ -851,22 +884,21 @@ static void readpage_bio_extend(struct readpages_iter *iter,
 				struct bio *bio, u64 offset,
 				bool get_more)
 {
-	struct page *page;
-	pgoff_t page_offset;
-	int ret;
-
 	while (bio_end_sector(bio) < offset &&
 	       bio->bi_vcnt < bio->bi_max_vecs) {
-		page_offset = bio_end_sector(bio) >> PAGE_SECTOR_SHIFT;
+		pgoff_t page_offset = bio_end_sector(bio) >> PAGE_SECTOR_SHIFT;
+		struct page *page = readpage_iter_next(iter);
+		int ret;
 
-		if (iter->nr_pages) {
-			page = list_last_entry(&iter->pages, struct page, lru);
-			if (page->index != page_offset)
+		if (page) {
+			if (iter->offset + iter->idx != page_offset)
 				break;
 
-			list_del(&page->lru);
-			iter->nr_pages--;
-		} else if (get_more) {
+			iter->idx++;
+		} else {
+			if (!get_more)
+				break;
+
 			page = xa_load(&iter->mapping->i_pages, page_offset);
 			if (page && !xa_is_value(page))
 				break;
@@ -875,21 +907,21 @@ static void readpage_bio_extend(struct readpages_iter *iter,
 			if (!page)
 				break;
 
-			page->index = page_offset;
-			ClearPageReadahead(bio->bi_io_vec[bio->bi_vcnt - 1].bv_page);
-		} else {
-			break;
-		}
+			page_state_init_for_read(page);
 
-		ret = readpage_add_page(iter, page);
-		if (ret)
-			break;
+			ret = add_to_page_cache_lru(page, iter->mapping,
+						    page_offset, GFP_NOFS);
+			if (ret) {
+				ClearPagePrivate(page);
+				put_page(page);
+				break;
+			}
+
+			put_page(page);
+		}
 
 		__bio_add_page(bio, page, PAGE_SIZE, 0);
 	}
-
-	if (!iter->nr_pages)
-		SetPageReadahead(bio->bi_io_vec[bio->bi_vcnt - 1].bv_page);
 }
 
 static void bchfs_read(struct bch_fs *c, struct btree_iter *iter,
@@ -971,37 +1003,42 @@ int bch2_readpages(struct file *file, struct address_space *mapping,
 	struct bch_io_opts opts = io_opts(c, inode);
 	struct btree_iter iter;
 	struct page *page;
-	struct readpages_iter readpages_iter = {
-		.mapping = mapping, .nr_pages = nr_pages
-	};
+	struct readpages_iter readpages_iter;
+	int ret;
+
+	ret = readpages_iter_init(&readpages_iter, mapping, pages, nr_pages);
+	BUG_ON(ret);
 
 	bch2_btree_iter_init(&iter, c, BTREE_ID_EXTENTS, POS_MIN,
 			     BTREE_ITER_SLOTS);
-
-	INIT_LIST_HEAD(&readpages_iter.pages);
-	list_add(&readpages_iter.pages, pages);
-	list_del_init(pages);
 
 	if (current->pagecache_lock != &mapping->add_lock)
 		pagecache_add_get(&mapping->add_lock);
 
 	while ((page = readpage_iter_next(&readpages_iter))) {
-		unsigned n = max_t(unsigned,
-				   min_t(unsigned, readpages_iter.nr_pages + 1,
-					 BIO_MAX_PAGES),
-				   c->sb.encoded_extent_max >> PAGE_SECTOR_SHIFT);
-
+		pgoff_t index = readpages_iter.offset + readpages_iter.idx;
+		unsigned n = min_t(unsigned,
+				   readpages_iter.nr_pages -
+				   readpages_iter.idx,
+				   BIO_MAX_PAGES);
 		struct bch_read_bio *rbio =
 			rbio_init(bio_alloc_bioset(GFP_NOFS, n, &c->bio_read),
 				  opts);
 
+		readpages_iter.idx++;
+
+		bio_set_op_attrs(&rbio->bio, REQ_OP_READ, 0);
+		rbio->bio.bi_iter.bi_sector = (sector_t) index << PAGE_SECTOR_SHIFT;
 		rbio->bio.bi_end_io = bch2_readpages_end_io;
-		bio_add_page_contig(&rbio->bio, page);
+		__bio_add_page(&rbio->bio, page, PAGE_SIZE, 0);
+
 		bchfs_read(c, &iter, rbio, inode->v.i_ino, &readpages_iter);
 	}
 
 	if (current->pagecache_lock != &mapping->add_lock)
 		pagecache_add_put(&mapping->add_lock);
+
+	kfree(readpages_iter.pages);
 
 	return 0;
 }
