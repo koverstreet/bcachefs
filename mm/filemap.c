@@ -1012,16 +1012,26 @@ int add_to_page_cache(struct page *page, struct address_space *mapping,
 }
 EXPORT_SYMBOL(add_to_page_cache);
 
-int add_to_page_cache_lru(struct page *page, struct address_space *mapping,
-				pgoff_t offset, gfp_t gfp_mask)
+int add_to_page_cache_lru_vec(struct address_space *mapping,
+			      struct page **pages,
+			      unsigned nr_pages,
+			      pgoff_t offset, gfp_t gfp_mask)
 {
-	void *shadow = NULL;
-	int ret;
+	void *shadow_stack[8], **shadow = shadow_stack;
+	int i, ret = 0, err = 0, nr_added;
 
-	ret = add_to_page_cache_vec(&page, 1, mapping, offset,
-				    gfp_mask, &shadow);
-	if (unlikely(ret))
-		return ret;
+	if (nr_pages > ARRAY_SIZE(shadow_stack)) {
+		shadow = kmalloc_array(nr_pages, sizeof(void *), gfp_mask);
+		if (!shadow)
+			goto slowpath;
+	}
+
+	for (i = 0; i < nr_pages; i++)
+		VM_BUG_ON_PAGE(PageActive(pages[i]), pages[i]);
+
+	ret = add_to_page_cache_vec(pages, nr_pages, mapping,
+				    offset, gfp_mask, shadow);
+	nr_added = ret > 0 ? ret : 0;
 
 	/*
 	 * The page might have been evicted from cache only recently, in which
@@ -1030,10 +1040,38 @@ int add_to_page_cache_lru(struct page *page, struct address_space *mapping,
 	 * the working set, only to cache data that will get overwritten with
 	 * something else, is a waste of memory.
 	 */
-	WARN_ON_ONCE(PageActive(page));
-	if (!(gfp_mask & __GFP_WRITE) && shadow)
-		workingset_refault(page, shadow);
-	lru_cache_add(page);
+	for (i = 0; i < nr_added; i++) {
+		struct page *page = pages[i];
+		void *s = shadow[i];
+
+		WARN_ON_ONCE(PageActive(page));
+		if (!(gfp_mask & __GFP_WRITE) && s)
+			workingset_refault(page, s);
+		lru_cache_add(page);
+	}
+
+	if (shadow != shadow_stack)
+		kfree(shadow);
+
+	return ret;
+slowpath:
+	for (i = 0; i < nr_pages; i++) {
+		err = add_to_page_cache_lru(pages[i], mapping,
+					    offset + i, gfp_mask);
+		if (err)
+			break;
+	}
+
+	return i ?: err;
+}
+EXPORT_SYMBOL_GPL(add_to_page_cache_lru_vec);
+
+int add_to_page_cache_lru(struct page *page, struct address_space *mapping,
+				pgoff_t offset, gfp_t gfp_mask)
+{
+	int ret = add_to_page_cache_lru_vec(mapping, &page, 1, offset, gfp_mask);
+	if (ret < 0)
+		return ret;
 	return 0;
 }
 EXPORT_SYMBOL_GPL(add_to_page_cache_lru);
