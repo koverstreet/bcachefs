@@ -778,7 +778,7 @@ CONFIG_SCLP_VT220_CONSOLE                       policy<{'s390x': 'y'}>
 CONFIG_SCLP_ASYNC                               policy<{'s390x': 'm'}>
 CONFIG_SCLP_ASYNC_ID                            policy<{'s390x': '"000000000"'}>
 CONFIG_HMC_DRV                                  policy<{'s390x': 'm'}>
-CONFIG_SCLP_OFB                                 policy<{'s390x': 'n'}>
+CONFIG_SCLP_OFB                                 policy<{'s390x': 'y'}>
 CONFIG_S390_TAPE                                policy<{'s390x': 'm'}>
 CONFIG_S390_TAPE_34XX                           policy<{'s390x': 'm'}>
 CONFIG_S390_TAPE_3590                           policy<{'s390x': 'm'}>
@@ -794,6 +794,7 @@ CONFIG_XILLYBUS_OF                              policy<{'arm64': 'm', 'armhf': '
 #
 CONFIG_DEVKMEM                                  mark<ENFORCED> note</dev/kmem is a large attack vector>
 CONFIG_HVC_UDBG                                 mark<ENFORCED> note<LP#1680888>
+CONFIG_SCLP_OFB                                 mark<ENFORCED> note<LP:1787898>
 
 # Menu: Device Drivers >> Character devices >> Enable TTY
 CONFIG_TTY                                      policy<{'amd64': 'y', 'arm64': 'y', 'armhf': 'y', 'i386': 'y', 'ppc64el': 'y', 's390x': 'y'}>
