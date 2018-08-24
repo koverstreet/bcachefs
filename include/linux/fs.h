@@ -416,7 +416,6 @@ void pagecache_block_get(struct pagecache_lock *);
 struct address_space {
 	struct inode		*host;		/* owner: inode, block_device */
 	struct radix_tree_root	i_pages;	/* cached pages */
-	struct pagecache_lock	add_lock;	/* protects adding new pages */
 	atomic_t		i_mmap_writable;/* count VM_SHARED mappings */
 	struct rb_root_cached	i_mmap;		/* tree of private and shared mappings */
 	struct rw_semaphore	i_mmap_rwsem;	/* protect tree, count, list */
@@ -432,6 +431,8 @@ struct address_space {
 	struct list_head	private_list;	/* for use by the address_space */
 	void			*private_data;	/* ditto */
 	errseq_t		wb_err;
+	struct pagecache_lock	add_lock
+		____cacheline_aligned_in_smp;	/* protects adding new pages */
 } __attribute__((aligned(sizeof(long)))) __randomize_layout;
 	/*
 	 * On most architectures that alignment is already the case; but
