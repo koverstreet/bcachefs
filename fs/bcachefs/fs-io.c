@@ -772,11 +772,8 @@ static void bch2_readpages_end_io(struct bio *bio)
 
 static inline void page_state_init_for_read(struct page *page)
 {
-	struct bch_page_state *s = page_state(page);
-
-	BUG_ON(s->reserved);
-	s->sectors	= 0;
-	s->compressed	= 0;
+	SetPagePrivate(page);
+	page->private = 0;
 }
 
 struct readpages_iter {
@@ -804,10 +801,7 @@ static int readpages_iter_init(struct readpages_iter *iter,
 	while (!list_empty(pages)) {
 		struct page *page = list_last_entry(pages, struct page, lru);
 
-		BUG_ON(iter->nr_pages >= nr_pages);
-
-		page_state_init_for_read(page);
-
+		prefetchw(&page->flags);
 		iter->pages[iter->nr_pages++] = page;
 		list_del(&page->lru);
 	}
@@ -843,7 +837,6 @@ static inline struct page *readpage_iter_next(struct readpages_iter *iter)
 		iter->idx++;
 		iter->nr_added++;
 
-		ClearPagePrivate(page);
 		put_page(page);
 	}
 
@@ -854,6 +847,7 @@ static inline struct page *readpage_iter_next(struct readpages_iter *iter)
 out:
 	EBUG_ON(iter->pages[iter->idx]->index != iter->offset + iter->idx);
 
+	page_state_init_for_read(iter->pages[iter->idx]);
 	return iter->pages[iter->idx];
 }
 
