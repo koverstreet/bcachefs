@@ -60,4 +60,6 @@ void tipc_sk_rht_destroy(struct net *net);
 int tipc_nl_sk_dump(struct sk_buff *skb, struct netlink_callback *cb);
 int tipc_nl_publ_dump(struct sk_buff *skb, struct netlink_callback *cb);
 
+int tipc_dump_start(struct netlink_callback *cb);
+int tipc_dump_done(struct netlink_callback *cb);
 #endif

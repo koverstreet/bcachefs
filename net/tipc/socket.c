@@ -3190,6 +3190,35 @@ msg_cancel:
 	return -EMSGSIZE;
 }
 
+int tipc_dump_start(struct netlink_callback *cb)
+{
+	struct rhashtable_iter *iter = (void *)cb->args[0];
+	struct net *net = sock_net(cb->skb->sk);
+	struct tipc_net *tn = tipc_net(net);
+
+	if (!iter) {
+		iter = kmalloc(sizeof(*iter), GFP_KERNEL);
+		if (!iter)
+			return -ENOMEM;
+
+		cb->args[0] = (long)iter;
+	}
+
+	rhashtable_walk_enter(&tn->sk_rht, iter);
+	return 0;
+}
+EXPORT_SYMBOL(tipc_dump_start);
+
+int tipc_dump_done(struct netlink_callback *cb)
+{
+	struct rhashtable_iter *hti = (void *)cb->args[0];
+
+	rhashtable_walk_exit(hti);
+	kfree(hti);
+	return 0;
+}
+EXPORT_SYMBOL(tipc_dump_done);
+
 int tipc_nl_sk_dump(struct sk_buff *skb, struct netlink_callback *cb)
 {
 	int err;
