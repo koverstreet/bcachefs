@@ -3997,20 +3997,12 @@ readpages_get_pages(struct address_space *mapping, struct list_head *page_list,
 
 	page = lru_to_page(page_list);
 
-	/*
-	 * Lock the page and put it in the cache. Since no one else
-	 * should have access to this page, we're safe to simply set
-	 * PG_locked without checking it first.
-	 */
-	__SetPageLocked(page);
-	rc = add_to_page_cache_locked(page, mapping,
-				      page->index, gfp);
+	rc = add_to_page_cache(page, mapping,
+			       page->index, gfp);
 
 	/* give up if we can't stick it in the cache */
-	if (rc) {
-		__ClearPageLocked(page);
+	if (rc)
 		return rc;
-	}
 
 	/* move first page to the tmplist */
 	*offset = (loff_t)page->index << PAGE_SHIFT;
@@ -4029,11 +4021,8 @@ readpages_get_pages(struct address_space *mapping, struct list_head *page_list,
 		if (*bytes + PAGE_SIZE > rsize)
 			break;
 
-		__SetPageLocked(page);
-		if (add_to_page_cache_locked(page, mapping, page->index, gfp)) {
-			__ClearPageLocked(page);
+		if (add_to_page_cache(page, mapping, page->index, gfp))
 			break;
-		}
 		list_move_tail(&page->lru, tmplist);
 		(*bytes) += PAGE_SIZE;
 		expected_index++;
