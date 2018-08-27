@@ -11709,7 +11709,8 @@ CONFIG_ARCH_DIGICOLOR                           policy<{'armhf': 'n'}>
 CONFIG_ARCH_HIGHBANK                            policy<{'armhf': 'y'}>
 CONFIG_ARCH_KEYSTONE                            policy<{'armhf': 'n'}>
 CONFIG_ARCH_S5PV210                             policy<{'armhf': 'n'}>
-CONFIG_ARCH_TANGO                               policy<{'armhf': 'y'}>
+CONFIG_ARCH_TANGO                               policy<{'armhf': 'n'}>
+CONFIG_ARCH_TANGO                               mark<ENFORCED> note <LP:1787945>
 CONFIG_ARCH_WM8850                              policy<{'armhf': 'n'}>
 CONFIG_ARCH_ZYNQ                                policy<{'armhf': 'n'}>
 CONFIG_ARM_THUMB                                policy<{'armhf': 'y'}>

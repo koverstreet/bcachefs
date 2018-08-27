@@ -4500,8 +4500,6 @@ sysimgblt
 sysv
 t1pci
 t5403
-tango-ir
-tango_nand
 tap
 target_core_file
 target_core_iblock
