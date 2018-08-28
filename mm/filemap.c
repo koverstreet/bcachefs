@@ -860,10 +860,10 @@ int replace_page_cache_page(struct page *old, struct page *new, gfp_t gfp_mask)
 }
 EXPORT_SYMBOL_GPL(replace_page_cache_page);
 
-static int __add_to_page_cache_locked(struct page *page,
-				      struct address_space *mapping,
-				      pgoff_t offset, gfp_t gfp_mask,
-				      void **shadowp)
+static int __add_to_page_cache(struct page *page,
+			       struct address_space *mapping,
+			       pgoff_t offset, gfp_t gfp_mask,
+			       void **shadowp)
 {
 	XA_STATE(xas, &mapping->i_pages, offset);
 	int huge = PageHuge(page);
@@ -885,6 +885,7 @@ static int __add_to_page_cache_locked(struct page *page,
 			goto out;
 	}
 
+	__SetPageLocked(page);
 	get_page(page);
 	page->mapping = mapping;
 	page->index = offset;
@@ -929,27 +930,28 @@ error:
 	if (!huge)
 		mem_cgroup_cancel_charge(page, memcg, false);
 	put_page(page);
+	__ClearPageLocked(page);
 	error = xas_error(&xas);
 	goto out;
 }
 
 /**
- * add_to_page_cache_locked - add a locked page to the pagecache
+ * add_to_page_cache - add a newly allocated page to the pagecache
  * @page:	page to add
  * @mapping:	the page's address_space
  * @offset:	page index
  * @gfp_mask:	page allocation mode
  *
- * This function is used to add a page to the pagecache. It must be locked.
- * This function does not add the page to the LRU.  The caller must do that.
+ * This function is used to add a page to the pagecache. It must be newly
+ * allocated.  This function does not add the page to the LRU.  The caller must
+ * do that.
  */
-int add_to_page_cache_locked(struct page *page, struct address_space *mapping,
-		pgoff_t offset, gfp_t gfp_mask)
+int add_to_page_cache(struct page *page, struct address_space *mapping,
+		      pgoff_t offset, gfp_t gfp_mask)
 {
-	return __add_to_page_cache_locked(page, mapping, offset,
-					  gfp_mask, NULL);
+	return __add_to_page_cache(page, mapping, offset, gfp_mask, NULL);
 }
-EXPORT_SYMBOL(add_to_page_cache_locked);
+EXPORT_SYMBOL(add_to_page_cache);
 
 int add_to_page_cache_lru(struct page *page, struct address_space *mapping,
 				pgoff_t offset, gfp_t gfp_mask)
@@ -957,26 +959,22 @@ int add_to_page_cache_lru(struct page *page, struct address_space *mapping,
 	void *shadow = NULL;
 	int ret;
 
-	__SetPageLocked(page);
-	ret = __add_to_page_cache_locked(page, mapping, offset,
-					 gfp_mask, &shadow);
+	ret = __add_to_page_cache(page, mapping, offset, gfp_mask, &shadow);
 	if (unlikely(ret))
-		__ClearPageLocked(page);
-	else {
-		/*
-		 * The page might have been evicted from cache only
-		 * recently, in which case it should be activated like
-		 * any other repeatedly accessed page.
-		 * The exception is pages getting rewritten; evicting other
-		 * data from the working set, only to cache data that will
-		 * get overwritten with something else, is a waste of memory.
-		 */
-		WARN_ON_ONCE(PageActive(page));
-		if (!(gfp_mask & __GFP_WRITE) && shadow)
-			workingset_refault(page, shadow);
-		lru_cache_add(page);
-	}
-	return ret;
+		return ret;
+
+	/*
+	 * The page might have been evicted from cache only recently, in which
+	 * case it should be activated like any other repeatedly accessed page.
+	 * The exception is pages getting rewritten; evicting other data from
+	 * the working set, only to cache data that will get overwritten with
+	 * something else, is a waste of memory.
+	 */
+	WARN_ON_ONCE(PageActive(page));
+	if (!(gfp_mask & __GFP_WRITE) && shadow)
+		workingset_refault(page, shadow);
+	lru_cache_add(page);
+	return 0;
 }
 EXPORT_SYMBOL_GPL(add_to_page_cache_lru);
 
