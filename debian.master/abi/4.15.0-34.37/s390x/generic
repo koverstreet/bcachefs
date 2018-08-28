@@ -2087,6 +2087,7 @@ EXPORT_SYMBOL vmlinux 0x00000000	bio_chain
 EXPORT_SYMBOL vmlinux 0x00000000	bio_clone_bioset
 EXPORT_SYMBOL vmlinux 0x00000000	bio_clone_fast
 EXPORT_SYMBOL vmlinux 0x00000000	bio_copy_data
+EXPORT_SYMBOL vmlinux 0x00000000	bio_devname
 EXPORT_SYMBOL vmlinux 0x00000000	bio_endio
 EXPORT_SYMBOL vmlinux 0x00000000	bio_free_pages
 EXPORT_SYMBOL vmlinux 0x00000000	bio_init
@@ -2474,6 +2475,7 @@ EXPORT_SYMBOL vmlinux 0x00000000	d_find_any_alias
 EXPORT_SYMBOL vmlinux 0x00000000	d_genocide
 EXPORT_SYMBOL vmlinux 0x00000000	d_hash_and_lookup
 EXPORT_SYMBOL vmlinux 0x00000000	d_instantiate
+EXPORT_SYMBOL vmlinux 0x00000000	d_instantiate_new
 EXPORT_SYMBOL vmlinux 0x00000000	d_instantiate_no_diralias
 EXPORT_SYMBOL vmlinux 0x00000000	d_invalidate
 EXPORT_SYMBOL vmlinux 0x00000000	d_lookup

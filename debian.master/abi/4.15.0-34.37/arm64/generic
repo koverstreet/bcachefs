@@ -6178,6 +6178,8 @@ EXPORT_SYMBOL vmlinux 0x00000000	__arch_copy_in_user
 EXPORT_SYMBOL vmlinux 0x00000000	__arch_copy_to_user
 EXPORT_SYMBOL vmlinux 0x00000000	__arm_smccc_hvc
 EXPORT_SYMBOL vmlinux 0x00000000	__arm_smccc_smc
+EXPORT_SYMBOL vmlinux 0x00000000	__ashlti3
+EXPORT_SYMBOL vmlinux 0x00000000	__ashrti3
 EXPORT_SYMBOL vmlinux 0x00000000	__bdevname
 EXPORT_SYMBOL vmlinux 0x00000000	__bforget
 EXPORT_SYMBOL vmlinux 0x00000000	__bio_clone_fast
@@ -6444,6 +6446,7 @@ EXPORT_SYMBOL vmlinux 0x00000000	__ll_sc_atomic_xor
 EXPORT_SYMBOL vmlinux 0x00000000	__local_bh_enable_ip
 EXPORT_SYMBOL vmlinux 0x00000000	__lock_buffer
 EXPORT_SYMBOL vmlinux 0x00000000	__lock_page
+EXPORT_SYMBOL vmlinux 0x00000000	__lshrti3
 EXPORT_SYMBOL vmlinux 0x00000000	__mark_inode_dirty
 EXPORT_SYMBOL vmlinux 0x00000000	__mb_cache_entry_free
 EXPORT_SYMBOL vmlinux 0x00000000	__mdiobus_register
@@ -6881,6 +6884,7 @@ EXPORT_SYMBOL vmlinux 0x00000000	bio_chain
 EXPORT_SYMBOL vmlinux 0x00000000	bio_clone_bioset
 EXPORT_SYMBOL vmlinux 0x00000000	bio_clone_fast
 EXPORT_SYMBOL vmlinux 0x00000000	bio_copy_data
+EXPORT_SYMBOL vmlinux 0x00000000	bio_devname
 EXPORT_SYMBOL vmlinux 0x00000000	bio_endio
 EXPORT_SYMBOL vmlinux 0x00000000	bio_flush_dcache_pages
 EXPORT_SYMBOL vmlinux 0x00000000	bio_free_pages
@@ -7291,6 +7295,7 @@ EXPORT_SYMBOL vmlinux 0x00000000	d_find_any_alias
 EXPORT_SYMBOL vmlinux 0x00000000	d_genocide
 EXPORT_SYMBOL vmlinux 0x00000000	d_hash_and_lookup
 EXPORT_SYMBOL vmlinux 0x00000000	d_instantiate
+EXPORT_SYMBOL vmlinux 0x00000000	d_instantiate_new
 EXPORT_SYMBOL vmlinux 0x00000000	d_instantiate_no_diralias
 EXPORT_SYMBOL vmlinux 0x00000000	d_invalidate
 EXPORT_SYMBOL vmlinux 0x00000000	d_lookup
@@ -21502,6 +21507,7 @@ EXPORT_SYMBOL_GPL vmlinux 0x00000000	usb_amd_dev_put
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	usb_amd_find_chipset_info
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	usb_amd_hang_symptom_quirk
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	usb_amd_prefetch_quirk
+EXPORT_SYMBOL_GPL vmlinux 0x00000000	usb_amd_pt_check_port
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	usb_amd_quirk_pll_disable
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	usb_amd_quirk_pll_enable
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	usb_anchor_empty
