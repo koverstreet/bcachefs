@@ -3126,6 +3126,8 @@ static void i40evf_remove(struct pci_dev *pdev)
 
 	flush_scheduled_work();
 
+	cancel_work_sync(&adapter->adminq_task);
+
 	i40evf_free_rss(adapter);
 
 	if (hw->aq.asq.count)
