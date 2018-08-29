@@ -7929,6 +7929,7 @@ static int mvpp2_port_probe(struct platform_device *pdev,
 	dev->min_mtu = ETH_MIN_MTU;
 	/* 9676 == 9700 - 20 and rounding to 8 */
 	dev->max_mtu = 9676;
+	dev->dev.of_node = port_node;
 
 	err = register_netdev(dev);
 	if (err < 0) {
