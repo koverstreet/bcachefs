@@ -70,25 +70,35 @@ struct bvec_iter {
 static inline bool bvec_iter_advance(const struct bio_vec *bv,
 		struct bvec_iter *iter, unsigned bytes)
 {
+	unsigned bvec_len;
+
 	if (WARN_ONCE(bytes > iter->bi_size,
 		     "Attempted to advance past end of bvec iter\n")) {
 		iter->bi_size = 0;
 		return false;
 	}
 
-	while (bytes) {
-		unsigned iter_len = bvec_iter_len(bv, *iter);
-		unsigned len = min(bytes, iter_len);
+	iter->bi_size -= bytes;
 
-		bytes -= len;
-		iter->bi_size -= len;
-		iter->bi_bvec_done += len;
+	bv += iter->bi_idx;
 
-		if (iter->bi_bvec_done == __bvec_iter_bvec(bv, *iter)->bv_len) {
-			iter->bi_bvec_done = 0;
-			iter->bi_idx++;
-		}
+	while (1) {
+		/* don't deref bv when bytes == 0: */
+		if (!bytes)
+			break;
+
+		bvec_len = bv->bv_len - iter->bi_bvec_done;
+		if (bytes < bvec_len)
+			break;
+
+		bytes -= bvec_len;
+
+		iter->bi_bvec_done = 0;
+		iter->bi_idx++;
+		bv++;
 	}
+
+	iter->bi_bvec_done	+= bytes;
 	return true;
 }
 
