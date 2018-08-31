@@ -17,7 +17,6 @@ config BCACHEFS_FS
 	select CRYPTO_CHACHA20
 	select CRYPTO_POLY1305
 	select KEYS
-	select COMPACTION
 	select SIXLOCKS
 	---help---
 	The bcachefs filesystem - a modern, copy on write filesystem, with
