@@ -916,7 +916,8 @@ static int nf_tables_deltable(struct net *net, struct sock *nlsk,
 
 static void nf_tables_table_destroy(struct nft_ctx *ctx)
 {
-	BUG_ON(ctx->table->use > 0);
+	if (WARN_ON(ctx->table->use > 0))
+		return;
 
 	kfree(ctx->table->name);
 	kfree(ctx->table);
@@ -1289,7 +1290,8 @@ static void nft_chain_stats_replace(struct nft_base_chain *chain,
 
 static void nf_tables_chain_destroy(struct nft_chain *chain)
 {
-	BUG_ON(chain->use > 0);
+	if (WARN_ON(chain->use > 0))
+		return;
 
 	if (nft_is_base_chain(chain)) {
 		struct nft_base_chain *basechain = nft_base_chain(chain);
@@ -5957,7 +5959,8 @@ int __nft_release_basechain(struct nft_ctx *ctx)
 {
 	struct nft_rule *rule, *nr;
 
-	BUG_ON(!nft_is_base_chain(ctx->chain));
+	if (WARN_ON(!nft_is_base_chain(ctx->chain)))
+		return 0;
 
 	nf_tables_unregister_hooks(ctx->net, ctx->chain->table, ctx->chain,
 				   ctx->afi->nops);
