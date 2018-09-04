@@ -3089,12 +3089,12 @@ static int rtnl_dump_all(struct sk_buff *skb, struct netlink_callback *cb)
 {
 	int idx;
 	int s_idx = cb->family;
+	int type = cb->nlh->nlmsg_type - RTM_BASE;
 
 	if (s_idx == 0)
 		s_idx = 1;
 
 	for (idx = 1; idx <= RTNL_FAMILY_MAX; idx++) {
-		int type = cb->nlh->nlmsg_type-RTM_BASE;
 		struct rtnl_link *handlers;
 		rtnl_dumpit_func dumpit;
 
