@@ -1424,6 +1424,11 @@ static int selinux_genfs_get_sid(struct dentry *dentry,
 			}
 		}
 		rc = security_genfs_sid(sb->s_type->name, path, tclass, sid);
+		if (rc == -ENOENT) {
+			/* No match in policy, mark as unlabeled. */
+			*sid = SECINITSID_UNLABELED;
+			rc = 0;
+		}
 	}
 	free_page((unsigned long)buffer);
 	return rc;
