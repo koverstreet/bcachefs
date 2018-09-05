@@ -1302,8 +1302,13 @@ call_fn:
 			/* lg %skb_data,data_off(%b6) */
 			EMIT6_DISP_LH(0xe3000000, 0x0004, REG_SKB_DATA, REG_0,
 				      BPF_REG_6, offsetof(struct sk_buff, data));
-		/* basr %b5,%w1 (%b5 is call saved) */
-		EMIT2(0x0d00, BPF_REG_5, REG_W1);
+		if (IS_ENABLED(CC_USING_EXPOLINE) && !nospec_disable) {
+			/* brasl %r5,__s390_indirect_jump_r1 */
+			EMIT6_PCREL_RILB(0xc0050000, BPF_REG_5, jit->r1_thunk_ip);
+		} else {
+			/* basr %b5,%w1 (%b5 is call saved) */
+			EMIT2(0x0d00, BPF_REG_5, REG_W1);
+		}
 
 		/*
 		 * Note: For fast access we jump directly after the
