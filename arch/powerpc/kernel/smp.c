@@ -570,9 +570,10 @@ static void stop_this_cpu(void *dummy)
 	/* Remove this CPU */
 	set_cpu_online(smp_processor_id(), false);
 
-	local_irq_disable();
+	hard_irq_disable();
+	spin_begin();
 	while (1)
-		;
+		spin_cpu_relax();
 }
 
 #ifdef CONFIG_NMI_IPI
