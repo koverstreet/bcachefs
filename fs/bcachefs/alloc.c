@@ -1250,7 +1250,6 @@ void bch2_wp_rescale(struct bch_fs *c, struct bch_dev *ca,
 	u64 free_space_inv = free_space
 		? div64_u64(1ULL << 48, free_space)
 		: 1ULL << 48;
-	u64 scale = *v / 4;
 
 	if (*v + free_space_inv >= *v)
 		*v += free_space_inv;
@@ -1259,7 +1258,7 @@ void bch2_wp_rescale(struct bch_fs *c, struct bch_dev *ca,
 
 	for (v = wp->next_alloc;
 	     v < wp->next_alloc + ARRAY_SIZE(wp->next_alloc); v++)
-		*v = *v < scale ? 0 : *v - scale;
+		*v -= *v / 63;
 }
 
 static enum bucket_alloc_ret bch2_bucket_alloc_set(struct bch_fs *c,
