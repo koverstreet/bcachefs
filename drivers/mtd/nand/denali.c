@@ -1417,9 +1417,7 @@ EXPORT_SYMBOL(denali_init);
 
 void denali_remove(struct denali_nand_info *denali)
 {
-	struct mtd_info *mtd = nand_to_mtd(&denali->nand);
-
-	nand_release(mtd);
+	nand_release(&denali->nand);
 	kfree(denali->buf);
 	denali_disable_irq(denali);
 }
