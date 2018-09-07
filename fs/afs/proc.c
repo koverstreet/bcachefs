@@ -262,13 +262,13 @@ static ssize_t afs_proc_cells_write(struct file *file, const char __user *buf,
 		goto inval;
 
 	args = strchr(name, ' ');
-	if (!args)
-		goto inval;
-	do {
-		*args++ = 0;
-	} while(*args == ' ');
-	if (!*args)
-		goto inval;
+	if (args) {
+		do {
+			*args++ = 0;
+		} while(*args == ' ');
+		if (!*args)
+			goto inval;
+	}
 
 	/* determine command to perform */
 	_debug("cmd=%s name=%s args=%s", kbuf, name, args);
@@ -283,7 +283,6 @@ static ssize_t afs_proc_cells_write(struct file *file, const char __user *buf,
 		}
 
 		set_bit(AFS_CELL_FL_NO_GC, &cell->flags);
-		printk("kAFS: Added new cell '%s'\n", name);
 	} else {
 		goto inval;
 	}
