@@ -1048,6 +1048,7 @@ static void __init early_identify_cpu(struct cpuinfo_x86 *c)
 		cpu_detect(c);
 		get_cpu_vendor(c);
 		get_cpu_cap(c);
+		c->x86_cache_bits = c->x86_phys_bits;
 		setup_force_cpu_cap(X86_FEATURE_CPUID);
 
 		if (this_cpu->c_early_init)
@@ -1174,6 +1175,8 @@ static void generic_identify(struct cpuinfo_x86 *c)
 	get_cpu_vendor(c);
 
 	get_cpu_cap(c);
+
+	c->x86_cache_bits = c->x86_phys_bits;
 
 	if (c->cpuid_level >= 0x00000001) {
 		c->initial_apicid = (cpuid_ebx(1) >> 24) & 0xFF;
