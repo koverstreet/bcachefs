@@ -1200,6 +1200,7 @@ void
 gf100_grctx_generate_r406800(struct gf100_gr *gr)
 {
 	struct nvkm_device *device = gr->base.engine.subdev.device;
+	const struct gf100_grctx_func *func = gr->func->grctx;
 	u64 tpc_mask = 0, tpc_set = 0;
 	u8  tpcnr[GPC_MAX];
 	int gpc, tpc;
@@ -1228,6 +1229,11 @@ gf100_grctx_generate_r406800(struct gf100_gr *gr)
 			nvkm_wr32(device, 0x406c04 + (i * 0x20), upper_32_bits(tpc_set ^ tpc_mask));
 		}
 	}
+
+	if (func->tpc_mask)
+		func->tpc_mask(gr);
+	if (func->smid_config)
+		func->smid_config(gr);
 }
 
 void

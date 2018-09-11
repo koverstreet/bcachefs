@@ -213,6 +213,7 @@ gm200_gr = {
 	.init_rop_active_fbps = gm200_gr_init_rop_active_fbps,
 	.init_ppc_exceptions = gk104_gr_init_ppc_exceptions,
 	.rops = gm200_gr_rops,
+	.tpc_nr = 4,
 	.ppc_nr = 2,
 	.grctx = &gm200_grctx,
 	.sclass = {

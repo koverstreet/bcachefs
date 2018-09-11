@@ -94,4 +94,6 @@ gp102_grctx = {
 	.attrib_nr = 0x320,
 	.alpha_nr_max = 0xc00,
 	.alpha_nr = 0x800,
+	.tpc_mask = gm200_grctx_generate_tpc_mask,
+	.smid_config = gp100_grctx_generate_smid_config,
 };
