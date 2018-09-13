@@ -18146,6 +18146,10 @@ EXPORT_SYMBOL_GPL vmlinux 0x00000000	amd_df_indirect_read
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	amd_flush_garts
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	amd_get_nb_id
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	amd_get_nodes_per_socket
+EXPORT_SYMBOL_GPL vmlinux 0x00000000	amd_i2c_register_cb
+EXPORT_SYMBOL_GPL vmlinux 0x00000000	amd_mp2_connect
+EXPORT_SYMBOL_GPL vmlinux 0x00000000	amd_mp2_read
+EXPORT_SYMBOL_GPL vmlinux 0x00000000	amd_mp2_write
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	amd_nb_has_feature
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	amd_nb_misc_ids
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	amd_nb_num
