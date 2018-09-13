@@ -1002,7 +1002,7 @@ gen8_ppgtt_insert_pte_entries(struct i915_hw_ppgtt *ppgtt,
 	do {
 		vaddr[idx->pte] = pte_encode | iter->dma;
 
-		iter->dma += PAGE_SIZE;
+		iter->dma += I915_GTT_PAGE_SIZE;
 		if (iter->dma >= iter->max) {
 			iter->sg = __sg_next(iter->sg);
 			if (!iter->sg) {
@@ -1656,8 +1656,8 @@ static void gen6_dump_ppgtt(struct i915_hw_ppgtt *ppgtt, struct seq_file *m)
 
 		for (pte = 0; pte < GEN6_PTES; pte+=4) {
 			unsigned long va =
-				(pde * PAGE_SIZE * GEN6_PTES) +
-				(pte * PAGE_SIZE);
+				(pde * I915_GTT_PAGE_SIZE * GEN6_PTES) +
+				(pte * I915_GTT_PAGE_SIZE);
 			int i;
 			bool found = false;
 			for (i = 0; i < 4; i++)
@@ -1872,7 +1872,7 @@ static void gen6_ppgtt_insert_entries(struct i915_address_space *vm,
 	do {
 		vaddr[act_pte] = pte_encode | GEN6_PTE_ADDR_ENCODE(iter.dma);
 
-		iter.dma += PAGE_SIZE;
+		iter.dma += I915_GTT_PAGE_SIZE;
 		if (iter.dma == iter.max) {
 			iter.sg = __sg_next(iter.sg);
 			if (!iter.sg)
@@ -1997,7 +1997,7 @@ static int gen6_ppgtt_allocate_page_directories(struct i915_hw_ppgtt *ppgtt)
 		DRM_DEBUG("Forced to use aperture for PDEs\n");
 
 	ppgtt->pd.base.ggtt_offset =
-		ppgtt->node.start / PAGE_SIZE * sizeof(gen6_pte_t);
+		ppgtt->node.start / I915_GTT_PAGE_SIZE * sizeof(gen6_pte_t);
 
 	ppgtt->pd_addr = (gen6_pte_t __iomem *)ggtt->gsm +
 		ppgtt->pd.base.ggtt_offset / sizeof(gen6_pte_t);
@@ -2044,7 +2044,7 @@ static int gen6_ppgtt_init(struct i915_hw_ppgtt *ppgtt)
 	if (ret)
 		return ret;
 
-	ppgtt->base.total = I915_PDES * GEN6_PTES * PAGE_SIZE;
+	ppgtt->base.total = I915_PDES * GEN6_PTES * I915_GTT_PAGE_SIZE;
 
 	gen6_scratch_va_range(ppgtt, 0, ppgtt->base.total);
 	gen6_write_page_range(ppgtt, 0, ppgtt->base.total);
@@ -2066,7 +2066,7 @@ static int gen6_ppgtt_init(struct i915_hw_ppgtt *ppgtt)
 
 	DRM_DEBUG_DRIVER("Allocated pde space (%lldM) at GTT entry: %llx\n",
 			 ppgtt->node.size >> 20,
-			 ppgtt->node.start / PAGE_SIZE);
+			 ppgtt->node.start / I915_GTT_PAGE_SIZE);
 
 	DRM_DEBUG_DRIVER("Adding PPGTT at offset %x\n",
 			 ppgtt->pd.base.ggtt_offset << 10);
@@ -2895,7 +2895,7 @@ static unsigned int gen8_get_total_gtt_size(u16 bdw_gmch_ctl)
 		bdw_gmch_ctl = 1 << bdw_gmch_ctl;
 
 #ifdef CONFIG_X86_32
-	/* Limit 32b platforms to a 2GB GGTT: 4 << 20 / pte size * PAGE_SIZE */
+	/* Limit 32b platforms to a 2GB GGTT: 4 << 20 / pte size * I915_GTT_PAGE_SIZE */
 	if (bdw_gmch_ctl > 4)
 		bdw_gmch_ctl = 4;
 #endif
@@ -3661,9 +3661,9 @@ rotate_pages(const dma_addr_t *in, unsigned int offset,
 			 * the entries so the sg list can be happily traversed.
 			 * The only thing we need are DMA addresses.
 			 */
-			sg_set_page(sg, NULL, PAGE_SIZE, 0);
+			sg_set_page(sg, NULL, I915_GTT_PAGE_SIZE, 0);
 			sg_dma_address(sg) = in[offset + src_idx];
-			sg_dma_len(sg) = PAGE_SIZE;
+			sg_dma_len(sg) = I915_GTT_PAGE_SIZE;
 			sg = sg_next(sg);
 			src_idx -= stride;
 		}
@@ -3676,7 +3676,7 @@ static noinline struct sg_table *
 intel_rotate_pages(struct intel_rotation_info *rot_info,
 		   struct drm_i915_gem_object *obj)
 {
-	const unsigned long n_pages = obj->base.size / PAGE_SIZE;
+	const unsigned long n_pages = obj->base.size / I915_GTT_PAGE_SIZE;
 	unsigned int size = intel_rotation_info_size(rot_info);
 	struct sgt_iter sgt_iter;
 	dma_addr_t dma_addr;
