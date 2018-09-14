@@ -24,6 +24,8 @@ typedef struct {
 	unsigned int use_skey:1;
 	/* The mmu context uses CMMA. */
 	unsigned int use_cmma:1;
+	/* The mmu context is for compat task */
+	unsigned int compat_mm:1;
 } mm_context_t;
 
 #define INIT_MM_CONTEXT(name)						   \
