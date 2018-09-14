@@ -902,7 +902,7 @@ update_vf_mac_exit:
 	mutex_unlock(&bp->hwrm_cmd_lock);
 }
 
-int bnxt_approve_mac(struct bnxt *bp, u8 *mac)
+int bnxt_approve_mac(struct bnxt *bp, u8 *mac, bool strict)
 {
 	struct hwrm_func_vf_cfg_input req = {0};
 	int rc = 0;
@@ -920,12 +920,13 @@ int bnxt_approve_mac(struct bnxt *bp, u8 *mac)
 	memcpy(req.dflt_mac_addr, mac, ETH_ALEN);
 	rc = hwrm_send_message(bp, &req, sizeof(req), HWRM_CMD_TIMEOUT);
 mac_done:
-	if (rc) {
+	if (rc && strict) {
 		rc = -EADDRNOTAVAIL;
 		netdev_warn(bp->dev, "VF MAC address %pM not approved by the PF\n",
 			    mac);
+		return rc;
 	}
-	return rc;
+	return 0;
 }
 #else
 
@@ -942,7 +943,7 @@ void bnxt_update_vf_mac(struct bnxt *bp)
 {
 }
 
-int bnxt_approve_mac(struct bnxt *bp, u8 *mac)
+int bnxt_approve_mac(struct bnxt *bp, u8 *mac, bool strict)
 {
 	return 0;
 }
