@@ -802,7 +802,6 @@ static int __allocate_data_block(struct dnode_of_data *dn)
 	struct f2fs_sb_info *sbi = F2FS_I_SB(dn->inode);
 	struct f2fs_summary sum;
 	struct node_info ni;
-	pgoff_t fofs;
 	blkcnt_t count = 1;
 	int err;
 
@@ -825,12 +824,10 @@ alloc:
 					&sum, CURSEG_WARM_DATA, NULL, false);
 	set_data_blkaddr(dn);
 
-	/* update i_size */
-	fofs = start_bidx_of_node(ofs_of_node(dn->node_page), dn->inode) +
-							dn->ofs_in_node;
-	if (i_size_read(dn->inode) < ((loff_t)(fofs + 1) << PAGE_SHIFT))
-		f2fs_i_size_write(dn->inode,
-				((loff_t)(fofs + 1) << PAGE_SHIFT));
+	/*
+	 * i_size will be updated by direct_IO. Otherwise, we'll get stale
+	 * data from unwritten block via dio_read.
+	 */
 	return 0;
 }
 
@@ -980,6 +977,8 @@ next_block:
 					last_ofs_in_node = dn.ofs_in_node;
 				}
 			} else {
+				WARN_ON(flag != F2FS_GET_BLOCK_PRE_DIO &&
+					flag != F2FS_GET_BLOCK_DIO);
 				err = __allocate_data_block(&dn);
 				if (!err)
 					set_inode_flag(inode, FI_APPEND_WRITE);
@@ -1103,7 +1102,7 @@ static int get_data_block_dio(struct inode *inode, sector_t iblock,
 			struct buffer_head *bh_result, int create)
 {
 	return __get_data_block(inode, iblock, bh_result, create,
-						F2FS_GET_BLOCK_DEFAULT, NULL);
+						F2FS_GET_BLOCK_DIO, NULL);
 }
 
 static int get_data_block_bmap(struct inode *inode, sector_t iblock,
