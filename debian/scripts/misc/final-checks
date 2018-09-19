@@ -2,6 +2,7 @@
 
 debian="$1"
 abi="$2"
+abi=${abi%~*}
 
 . "$debian/etc/kernelconfig"
 
