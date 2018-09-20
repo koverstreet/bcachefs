@@ -2217,6 +2217,8 @@ static struct inode *shmem_get_inode(struct super_block *sb, const struct inode 
 			break;
 		}
 
+		lockdep_annotate_inode_mutex_key(inode);
+
 		if (!sbinfo->idr_nouse) {
 			/* inum 0 and 1 are unused */
 			mutex_lock(&sbinfo->idr_lock);
