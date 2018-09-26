@@ -400,7 +400,7 @@ static int xcan_do_set_mode(struct net_device *ndev, enum can_mode mode)
  *
  * Return: 0 on success and failure value on error
  */
-static int xcan_start_xmit(struct sk_buff *skb, struct net_device *ndev)
+static netdev_tx_t xcan_start_xmit(struct sk_buff *skb, struct net_device *ndev)
 {
 	struct xcan_priv *priv = netdev_priv(ndev);
 	struct net_device_stats *stats = &ndev->stats;
