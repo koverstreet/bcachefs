@@ -828,7 +828,7 @@ static int check_leaf(struct btrfs_fs_info *fs_info, struct extent_buffer *leaf,
 	int slot;
 
 	if (btrfs_header_level(leaf) != 0) {
-		generic_err(root, leaf, 0,
+		generic_err(fs_info, leaf, 0,
 			"invalid level for leaf, have %d expect 0",
 			btrfs_header_level(leaf));
 		return -EUCLEAN;
