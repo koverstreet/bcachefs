@@ -286,13 +286,13 @@ static void tun_napi_init(struct tun_struct *tun, struct tun_file *tfile,
 	}
 }
 
-static void tun_napi_disable(struct tun_struct *tun, struct tun_file *tfile)
+static void tun_napi_disable(struct tun_file *tfile)
 {
 	if (tfile->napi_enabled)
 		napi_disable(&tfile->napi);
 }
 
-static void tun_napi_del(struct tun_struct *tun, struct tun_file *tfile)
+static void tun_napi_del(struct tun_file *tfile)
 {
 	if (tfile->napi_enabled)
 		netif_napi_del(&tfile->napi);
@@ -619,8 +619,8 @@ static void __tun_detach(struct tun_file *tfile, bool clean)
 	tun = rtnl_dereference(tfile->tun);
 
 	if (tun && clean) {
-		tun_napi_disable(tun, tfile);
-		tun_napi_del(tun, tfile);
+		tun_napi_disable(tfile);
+		tun_napi_del(tfile);
 	}
 
 	if (tun && !tfile->detached) {
@@ -679,7 +679,7 @@ static void tun_detach_all(struct net_device *dev)
 	for (i = 0; i < n; i++) {
 		tfile = rtnl_dereference(tun->tfiles[i]);
 		BUG_ON(!tfile);
-		tun_napi_disable(tun, tfile);
+		tun_napi_disable(tfile);
 		tfile->socket.sk->sk_shutdown = RCV_SHUTDOWN;
 		tfile->socket.sk->sk_data_ready(tfile->socket.sk);
 		RCU_INIT_POINTER(tfile->tun, NULL);
@@ -695,7 +695,7 @@ static void tun_detach_all(struct net_device *dev)
 	synchronize_net();
 	for (i = 0; i < n; i++) {
 		tfile = rtnl_dereference(tun->tfiles[i]);
-		tun_napi_del(tun, tfile);
+		tun_napi_del(tfile);
 		/* Drop read queue */
 		tun_queue_purge(tfile);
 		sock_put(&tfile->sk);
