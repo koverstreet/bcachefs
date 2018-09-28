@@ -212,11 +212,13 @@ union bch_extent_crc {
 #define to_entry(_entry)						\
 ({									\
 	BUILD_BUG_ON(!type_is(_entry, union bch_extent_crc *) &&	\
-		     !type_is(_entry, struct bch_extent_ptr *));	\
+		     !type_is(_entry, struct bch_extent_ptr *) &&	\
+		     !type_is(_entry, struct bch_extent_stripe_ptr *));	\
 									\
 	__builtin_choose_expr(						\
 		(type_is_exact(_entry, const union bch_extent_crc *) ||	\
-		 type_is_exact(_entry, const struct bch_extent_ptr *)),	\
+		 type_is_exact(_entry, const struct bch_extent_ptr *) ||\
+		 type_is_exact(_entry, const struct bch_extent_stripe_ptr *)),\
 		(const union bch_extent_entry *) (_entry),		\
 		(union bch_extent_entry *) (_entry));			\
 })
@@ -401,6 +403,20 @@ out:									\
 
 void bch2_extent_crc_append(struct bkey_i_extent *,
 			    struct bch_extent_crc_unpacked);
+void bch2_extent_ptr_decoded_append(struct bkey_i_extent *,
+				    struct extent_ptr_decoded *);
+
+static inline void __extent_entry_insert(struct bkey_i_extent *e,
+					 union bch_extent_entry *dst,
+					 union bch_extent_entry *new)
+{
+	union bch_extent_entry *end = extent_entry_last(extent_i_to_s(e));
+
+	memmove_u64s_up((u64 *) dst + extent_entry_u64s(new),
+			dst, (u64 *) end - (u64 *) dst);
+	e->k.u64s += extent_entry_u64s(new);
+	memcpy(dst, new, extent_entry_bytes(new));
+}
 
 static inline void __extent_entry_push(struct bkey_i_extent *e)
 {
@@ -491,7 +507,6 @@ static inline struct bch_devs_list bch2_bkey_cached_devs(struct bkey_s_c k)
 bool bch2_can_narrow_extent_crcs(struct bkey_s_c_extent,
 				 struct bch_extent_crc_unpacked);
 bool bch2_extent_narrow_crcs(struct bkey_i_extent *, struct bch_extent_crc_unpacked);
-void bch2_extent_drop_redundant_crcs(struct bkey_s_extent);
 
 union bch_extent_entry *bch2_extent_drop_ptr(struct bkey_s_extent ,
 					     struct bch_extent_ptr *);
