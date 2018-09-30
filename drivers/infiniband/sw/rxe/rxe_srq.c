@@ -31,6 +31,7 @@
  * SOFTWARE.
  */
 
+#include <linux/vmalloc.h>
 #include "rxe.h"
 #include "rxe_loc.h"
 #include "rxe_queue.h"
@@ -128,13 +129,18 @@ int rxe_srq_from_init(struct rxe_dev *rxe, struct rxe_srq *srq,
 
 	err = do_mmap_info(rxe, udata, false, context, q->buf,
 			   q->buf_size, &q->ip);
-	if (err)
+	if (err) {
+		vfree(q->buf);
+		kfree(q);
 		return err;
+	}
 
 	if (udata && udata->outlen >= sizeof(struct mminfo) + sizeof(u32)) {
 		if (copy_to_user(udata->outbuf + sizeof(struct mminfo),
-				 &srq->srq_num, sizeof(u32)))
+				 &srq->srq_num, sizeof(u32))) {
+			rxe_queue_cleanup(q);
 			return -EFAULT;
+		}
 	}
 	return 0;
 }
