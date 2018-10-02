@@ -1027,7 +1027,7 @@ static void promote_start(struct promote_op *op, struct bch_read_bio *rbio)
 noinline
 static struct promote_op *__promote_alloc(struct bch_fs *c,
 					  struct bpos pos,
-					  struct extent_pick_ptr *pick,
+					  struct extent_ptr_decoded *pick,
 					  struct bch_io_opts opts,
 					  unsigned rbio_sectors,
 					  struct bch_read_bio **rbio)
@@ -1107,7 +1107,7 @@ err:
 static inline struct promote_op *promote_alloc(struct bch_fs *c,
 					       struct bvec_iter iter,
 					       struct bkey_s_c k,
-					       struct extent_pick_ptr *pick,
+					       struct extent_ptr_decoded *pick,
 					       struct bch_io_opts opts,
 					       unsigned flags,
 					       struct bch_read_bio **rbio,
@@ -1414,7 +1414,7 @@ out:
 }
 
 static bool should_narrow_crcs(struct bkey_s_c k,
-			       struct extent_pick_ptr *pick,
+			       struct extent_ptr_decoded *pick,
 			       unsigned flags)
 {
 	return !(flags & BCH_READ_IN_RETRY) &&
@@ -1569,7 +1569,7 @@ int __bch2_read_extent(struct bch_fs *c, struct bch_read_bio *orig,
 		       struct bvec_iter iter, struct bkey_s_c k,
 		       struct bch_devs_mask *avoid, unsigned flags)
 {
-	struct extent_pick_ptr pick;
+	struct extent_ptr_decoded pick;
 	struct bch_read_bio *rbio = NULL;
 	struct bch_dev *ca;
 	struct promote_op *promote = NULL;
