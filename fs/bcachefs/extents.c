@@ -604,7 +604,7 @@ static inline bool dev_latency_better(struct bch_fs *c,
 static int extent_pick_read_device(struct bch_fs *c,
 				   struct bkey_s_c_extent e,
 				   struct bch_devs_mask *avoid,
-				   struct extent_pick_ptr *pick)
+				   struct extent_ptr_decoded *pick)
 {
 	const struct bch_extent_ptr *ptr;
 	struct bch_extent_crc_unpacked crc;
@@ -623,7 +623,7 @@ static int extent_pick_read_device(struct bch_fs *c,
 		if (ret && !dev_latency_better(c, ptr, &pick->ptr))
 			continue;
 
-		*pick = (struct extent_pick_ptr) {
+		*pick = (struct extent_ptr_decoded) {
 			.ptr	= *ptr,
 			.crc	= crc,
 		};
@@ -754,7 +754,7 @@ int bch2_btree_ptr_to_text(struct bch_fs *c, char *buf,
 
 int bch2_btree_pick_ptr(struct bch_fs *c, const struct btree *b,
 			struct bch_devs_mask *avoid,
-			struct extent_pick_ptr *pick)
+			struct extent_ptr_decoded *pick)
 {
 	return extent_pick_read_device(c, bkey_i_to_s_c_extent(&b->key),
 				       avoid, pick);
@@ -1959,7 +1959,7 @@ void bch2_extent_mark_replicas_cached(struct bch_fs *c,
  */
 int bch2_extent_pick_ptr(struct bch_fs *c, struct bkey_s_c k,
 			 struct bch_devs_mask *avoid,
-			 struct extent_pick_ptr *pick)
+			 struct extent_ptr_decoded *pick)
 {
 	int ret;
 
