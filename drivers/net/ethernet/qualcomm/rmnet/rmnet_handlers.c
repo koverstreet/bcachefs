@@ -125,7 +125,7 @@ static int rmnet_map_egress_handler(struct sk_buff *skb,
 	required_headroom = sizeof(struct rmnet_map_header);
 
 	if (skb_headroom(skb) < required_headroom) {
-		if (pskb_expand_head(skb, required_headroom, 0, GFP_KERNEL))
+		if (pskb_expand_head(skb, required_headroom, 0, GFP_ATOMIC))
 			goto fail;
 	}
 
