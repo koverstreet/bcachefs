@@ -423,7 +423,7 @@ static inline void set_cold_node(struct inode *inode, struct page *page)
 	struct f2fs_node *rn = F2FS_NODE(page);
 	unsigned int flag = le32_to_cpu(rn->footer.flag);
 
-	if (S_ISDIR(inode->i_mode))
+	if (inode && S_ISDIR(inode->i_mode))
 		flag &= ~(0x1 << COLD_BIT_SHIFT);
 	else
 		flag |= (0x1 << COLD_BIT_SHIFT);
