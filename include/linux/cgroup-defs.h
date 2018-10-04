@@ -405,6 +405,7 @@ struct cgroup {
 	 * specific task are charged to the dom_cgrp.
 	 */
 	struct cgroup *dom_cgrp;
+	struct cgroup *old_dom_cgrp;		/* used while enabling threaded */
 
 	/* cgroup basic resource statistics */
 	struct cgroup_cpu_stat __percpu *cpu_stat;
