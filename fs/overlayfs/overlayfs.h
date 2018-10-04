@@ -146,8 +146,8 @@ static inline int ovl_do_setxattr(struct dentry *dentry, const char *name,
 	err = __vfs_setxattr_noperm(dentry, name, value, size, flags);
 	inode_unlock(inode);
 
-	pr_debug("setxattr(%pd2, \"%s\", \"%*s\", 0x%x) = %i\n",
-		 dentry, name, (int) size, (char *) value, flags, err);
+	pr_debug("setxattr(%pd2, \"%s\", \"%*pE\", %zu, 0x%x) = %i\n",
+		 dentry, name, min((int)size, 48), value, size, flags, err);
 	return err;
 }
 
