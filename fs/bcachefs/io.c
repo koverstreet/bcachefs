@@ -370,7 +370,7 @@ static void __bch2_write_index(struct bch_write_op *op)
 		}
 	}
 out:
-	bch2_open_bucket_put_refs(c, &op->open_buckets_nr, op->open_buckets);
+	bch2_open_buckets_put(c, &op->open_buckets);
 	return;
 err:
 	keys->top = keys->keys;
@@ -817,8 +817,8 @@ static void __bch2_write(struct closure *cl)
 again:
 	do {
 		/* +1 for possible cache device: */
-		if (op->open_buckets_nr + op->nr_replicas + 1 >
-		    ARRAY_SIZE(op->open_buckets))
+		if (op->open_buckets.nr + op->nr_replicas + 1 >
+		    ARRAY_SIZE(op->open_buckets.v))
 			goto flush_io;
 
 		if (bch2_keylist_realloc(&op->insert_keys,
@@ -849,11 +849,7 @@ again:
 
 		ret = bch2_write_extent(op, wp);
 
-		BUG_ON(op->open_buckets_nr + wp->nr_ptrs - wp->first_ptr >
-		       ARRAY_SIZE(op->open_buckets));
-		bch2_open_bucket_get(c, wp,
-				     &op->open_buckets_nr,
-				     op->open_buckets);
+		bch2_open_bucket_get(c, wp, &op->open_buckets);
 		bch2_alloc_sectors_done(c, wp);
 
 		if (ret < 0)
