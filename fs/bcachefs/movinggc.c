@@ -5,6 +5,7 @@
  */
 
 #include "bcachefs.h"
+#include "alloc_foreground.h"
 #include "btree_iter.h"
 #include "btree_update.h"
 #include "buckets.h"

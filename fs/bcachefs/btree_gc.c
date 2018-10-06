@@ -4,7 +4,7 @@
  */
 
 #include "bcachefs.h"
-#include "alloc.h"
+#include "alloc_background.h"
 #include "bkey_methods.h"
 #include "btree_locking.h"
 #include "btree_update_interior.h"
