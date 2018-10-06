@@ -53,13 +53,8 @@ struct btree_write {
 	struct closure_waitlist		wait;
 };
 
-struct btree_ob_ref {
-	u8			nr;
-	u8			refs[BCH_REPLICAS_MAX];
-};
-
 struct btree_alloc {
-	struct btree_ob_ref	ob;
+	struct open_buckets	ob;
 	BKEY_PADDED(k);
 };
 
@@ -126,7 +121,7 @@ struct btree {
 	 */
 	unsigned long		will_make_reachable;
 
-	struct btree_ob_ref	ob;
+	struct open_buckets	ob;
 
 	/* lru list */
 	struct list_head	list;
