@@ -1,6 +1,6 @@
 
 #include "bcachefs.h"
-#include "alloc.h"
+#include "alloc_background.h"
 #include "btree_gc.h"
 #include "btree_update.h"
 #include "btree_update_interior.h"
