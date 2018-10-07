@@ -386,6 +386,7 @@ static int u32_init(struct tcf_proto *tp)
 	rcu_assign_pointer(tp_c->hlist, root_ht);
 	root_ht->tp_c = tp_c;
 
+	root_ht->refcnt++;
 	rcu_assign_pointer(tp->root, root_ht);
 	tp->data = tp_c;
 	return 0;
@@ -592,7 +593,7 @@ static int u32_destroy_hnode(struct tcf_proto *tp, struct tc_u_hnode *ht)
 	struct tc_u_hnode __rcu **hn;
 	struct tc_u_hnode *phn;
 
-	WARN_ON(ht->refcnt);
+	WARN_ON(--ht->refcnt);
 
 	u32_clear_hnode(tp, ht);
 
@@ -631,7 +632,7 @@ static void u32_destroy(struct tcf_proto *tp)
 
 	WARN_ON(root_ht == NULL);
 
-	if (root_ht && --root_ht->refcnt == 0)
+	if (root_ht && --root_ht->refcnt == 1)
 		u32_destroy_hnode(tp, root_ht);
 
 	if (--tp_c->refcnt == 0) {
@@ -677,7 +678,6 @@ static int u32_delete(struct tcf_proto *tp, void *arg, bool *last)
 		return -EINVAL;
 
 	if (ht->refcnt == 1) {
-		ht->refcnt--;
 		u32_destroy_hnode(tp, ht);
 	} else {
 		return -EBUSY;
@@ -686,11 +686,11 @@ static int u32_delete(struct tcf_proto *tp, void *arg, bool *last)
 out:
 	*last = true;
 	if (root_ht) {
-		if (root_ht->refcnt > 1) {
+		if (root_ht->refcnt > 2) {
 			*last = false;
 			goto ret;
 		}
-		if (root_ht->refcnt == 1) {
+		if (root_ht->refcnt == 2) {
 			if (!ht_empty(root_ht)) {
 				*last = false;
 				goto ret;
