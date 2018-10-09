@@ -1399,11 +1399,9 @@ struct pblk_line *pblk_line_replace_data(struct pblk *pblk)
 	unsigned int left_seblks;
 	int is_next = 0;
 
-	cur = l_mg->data_line;
 	new = l_mg->data_next;
 	if (!new)
 		goto out;
-	l_mg->data_line = new;
 
 	spin_lock(&l_mg->free_lock);
 	if (pblk->state != PBLK_STATE_RUNNING) {
@@ -1412,6 +1410,8 @@ struct pblk_line *pblk_line_replace_data(struct pblk *pblk)
 		spin_unlock(&l_mg->free_lock);
 		goto out;
 	}
+	cur = l_mg->data_line;
+	l_mg->data_line = new;
 
 	pblk_line_setup_metadata(new, l_mg, &pblk->lm);
 	spin_unlock(&l_mg->free_lock);
