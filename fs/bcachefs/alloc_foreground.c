@@ -628,6 +628,13 @@ alloc_done:
 
 	return wp;
 err:
+	open_bucket_for_each(c, &wp->ptrs, ob, i)
+		if (ptrs.nr < ARRAY_SIZE(ptrs.v))
+			ob_push(c, &ptrs, ob);
+		else
+			open_bucket_free_unused(c, wp, ob);
+	wp->ptrs = ptrs;
+
 	mutex_unlock(&wp->lock);
 	return ERR_PTR(ret);
 }
