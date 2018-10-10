@@ -903,6 +903,7 @@ dell-smbios-smm
 dell-smbios-wmi
 dell-smm-hwmon
 dell-smo8800
+dell-uart-backlight
 dell-wmi
 dell-wmi-aio
 dell-wmi-descriptor

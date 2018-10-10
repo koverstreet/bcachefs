@@ -17359,6 +17359,7 @@ EXPORT_SYMBOL_GPL vmlinux 0x00000000	clk_hw_unregister_gate
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	clk_hw_unregister_mux
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	clk_is_match
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	clk_multiplier_ops
+EXPORT_SYMBOL_GPL vmlinux 0x00000000	clk_mux_determine_rate_flags
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	clk_mux_ops
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	clk_mux_ro_ops
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	clk_notifier_register
