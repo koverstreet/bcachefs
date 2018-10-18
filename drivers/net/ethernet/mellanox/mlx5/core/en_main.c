@@ -3280,6 +3280,7 @@ static int set_feature_cvlan_filter(struct net_device *netdev, bool enable)
 	return 0;
 }
 
+#ifdef CONFIG_MLX5_ESWITCH
 static int set_feature_tc_num_filters(struct net_device *netdev, bool enable)
 {
 	struct mlx5e_priv *priv = netdev_priv(netdev);
@@ -3292,6 +3293,7 @@ static int set_feature_tc_num_filters(struct net_device *netdev, bool enable)
 
 	return 0;
 }
+#endif
 
 static int set_feature_rx_all(struct net_device *netdev, bool enable)
 {
@@ -3389,8 +3391,10 @@ static int mlx5e_set_features(struct net_device *netdev,
 	err |= mlx5e_handle_feature(netdev, &oper_features, features,
 				    NETIF_F_HW_VLAN_CTAG_FILTER,
 				    set_feature_cvlan_filter);
+#ifdef CONFIG_MLX5_ESWITCH
 	err |= mlx5e_handle_feature(netdev, &oper_features, features,
 				    NETIF_F_HW_TC, set_feature_tc_num_filters);
+#endif
 	err |= mlx5e_handle_feature(netdev, &oper_features, features,
 				    NETIF_F_RXALL, set_feature_rx_all);
 	err |= mlx5e_handle_feature(netdev, &oper_features, features,
