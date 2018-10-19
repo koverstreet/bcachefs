@@ -912,8 +912,6 @@ defxx
 dell-laptop
 dell-rbtn
 dell-smbios
-dell-smbios-smm
-dell-smbios-wmi
 dell-smm-hwmon
 dell-smo8800
 dell-uart-backlight
