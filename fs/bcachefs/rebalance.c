@@ -29,7 +29,12 @@ static inline bool rebalance_ptr_pred(struct bch_fs *c,
 	    p.crc.compression_type !=
 	    bch2_compression_opt_to_type[io_opts->background_compression])
 		return true;
-
+#if 0
+	if (io_opts->ec &&
+	    !p.ec_nr &&
+	    can_do_ec(c))
+		return true;
+#endif
 	return false;
 }
 
