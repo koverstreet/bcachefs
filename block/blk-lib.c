@@ -49,15 +49,12 @@ int __blkdev_issue_discard(struct block_device *bdev, sector_t sector,
 	if ((sector | nr_sects) & bs_mask)
 		return -EINVAL;
 
+	if (!nr_sects)
+		return -EINVAL;
+
 	while (nr_sects) {
-		unsigned int req_sects = nr_sects;
-		sector_t end_sect;
-
-		req_sects = min(req_sects, bio_allowed_max_sectors(q));
-		if (!req_sects)
-			goto fail;
-
-		end_sect = sector + req_sects;
+		unsigned int req_sects = min_t(unsigned int, nr_sects,
+				bio_allowed_max_sectors(q));
 
 		bio = next_bio(bio, 0, gfp_mask);
 		bio->bi_iter.bi_sector = sector;
@@ -65,8 +62,8 @@ int __blkdev_issue_discard(struct block_device *bdev, sector_t sector,
 		bio_set_op_attrs(bio, op, 0);
 
 		bio->bi_iter.bi_size = req_sects << 9;
+		sector += req_sects;
 		nr_sects -= req_sects;
-		sector = end_sect;
 
 		/*
 		 * We can loop for a long time in here, if someone does
@@ -79,14 +76,6 @@ int __blkdev_issue_discard(struct block_device *bdev, sector_t sector,
 
 	*biop = bio;
 	return 0;
-
-fail:
-	if (bio) {
-		submit_bio_wait(bio);
-		bio_put(bio);
-	}
-	*biop = NULL;
-	return -EOPNOTSUPP;
 }
 EXPORT_SYMBOL(__blkdev_issue_discard);
 
