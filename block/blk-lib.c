@@ -53,6 +53,8 @@ int __blkdev_issue_discard(struct block_device *bdev, sector_t sector,
 		unsigned int req_sects = nr_sects;
 		sector_t end_sect;
 
+		req_sects = min(req_sects, bio_allowed_max_sectors(q));
+
 		end_sect = sector + req_sects;
 
 		bio = next_bio(bio, 0, gfp_mask);
