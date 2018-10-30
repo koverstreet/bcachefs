@@ -1011,9 +1011,9 @@ enum bch_data_type {
 };
 
 struct bch_replicas_entry {
-	u8			data_type;
-	u8			nr;
-	u8			devs[0];
+	__u8			data_type;
+	__u8			nr_devs;
+	__u8			devs[0];
 };
 
 struct bch_sb_field_replicas {
