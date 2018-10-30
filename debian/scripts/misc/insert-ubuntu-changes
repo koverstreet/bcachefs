@@ -1,9 +1,12 @@
 #!/usr/bin/perl
 
-if ($#ARGV != 2) {
-	die "Usage: $0 <changelog> <stop at> <start at>\n";
+if ($#ARGV != 2 && $#ARGV != 3) {
+	die "Usage: $0 <changelog> <stop at> <start at> [<source changelog>]\n";
 }
-my ($changelog, $end, $start) = @ARGV;
+if ($#ARGV == 2) {
+	push(@ARGV, "debian.master/changelog")
+}
+my ($changelog, $end, $start, $source_changelog) = @ARGV;
 
 $end =~ s/^\D+//;
 $start =~ s/^\D+//;
@@ -32,7 +35,7 @@ sub version_cmp($$) {
 
 my @changes = ();
 my $output = 0;
-open(CHG, "<debian.master/changelog") ||
+open(CHG, "<$source_changelog") ||
 	open(CHG, "<debian/changelog") ||
 	die "$0: debian/changelog: open failed - $!\n";
 while (<CHG>) {
