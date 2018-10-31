@@ -56,7 +56,7 @@ extern void paging_init(void);
 #define PGDIR_SHIFT	22
 #define PTRS_PER_PGD	1024
 #define PTRS_PER_PUD	1	/* we don't really have any PUD physically */
-#define __PAGETABLE_PUD_FOLDED
+#define __PAGETABLE_PUD_FOLDED 1
 #define PTRS_PER_PMD	1	/* we don't really have any PMD physically */
 #define __PAGETABLE_PMD_FOLDED
 #define PTRS_PER_PTE	1024
