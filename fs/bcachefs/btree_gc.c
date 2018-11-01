@@ -14,6 +14,7 @@
 #include "buckets.h"
 #include "clock.h"
 #include "debug.h"
+#include "ec.h"
 #include "error.h"
 #include "extents.h"
 #include "journal.h"
@@ -113,6 +114,7 @@ static bool bkey_type_needs_gc(enum bkey_type type)
 	switch (type) {
 	case BKEY_TYPE_BTREE:
 	case BKEY_TYPE_EXTENTS:
+	case BKEY_TYPE_EC:
 		return true;
 	default:
 		return false;
@@ -339,15 +341,27 @@ static int bch2_gc_btree(struct bch_fs *c, enum btree_id btree_id,
 	return 0;
 }
 
+static inline int btree_id_gc_phase_cmp(enum btree_id l, enum btree_id r)
+{
+	return  (int) btree_id_to_gc_phase(l) -
+		(int) btree_id_to_gc_phase(r);
+}
+
 static int bch2_gc_btrees(struct bch_fs *c, struct list_head *journal,
 			  bool initial)
 {
+	enum btree_id ids[BTREE_ID_NR];
 	unsigned i;
 
-	for (i = 0; i < BTREE_ID_NR; i++) {
-		enum bkey_type type = bkey_type(0, i);
+	for (i = 0; i < BTREE_ID_NR; i++)
+		ids[i] = i;
+	bubble_sort(ids, BTREE_ID_NR, btree_id_gc_phase_cmp);
 
-		int ret = bch2_gc_btree(c, i, initial);
+	for (i = 0; i < BTREE_ID_NR; i++) {
+		enum btree_id id = ids[i];
+		enum bkey_type type = bkey_type(0, id);
+
+		int ret = bch2_gc_btree(c, id, initial);
 		if (ret)
 			return ret;
 
@@ -579,6 +593,7 @@ static void bch2_gc_start(struct bch_fs *c)
 				new.data_type		= 0;
 				new.cached_sectors	= 0;
 				new.dirty_sectors	= 0;
+				new.stripe		= 0;
 			}));
 			ca->oldest_gens[b] = new.gen;
 		}
