@@ -232,20 +232,24 @@ const char *bch2_sb_validate(struct bch_sb_handle *disk_sb)
 	struct bch_sb_field *f;
 	struct bch_sb_field_members *mi;
 	const char *err;
+	u32 version, version_min;
 	u16 block_size;
 
-	if (le64_to_cpu(sb->version) < BCH_SB_VERSION_MIN ||
-	    le64_to_cpu(sb->version) > BCH_SB_VERSION_MAX)
-		return"Unsupported superblock version";
+	version		= le16_to_cpu(sb->version);
+	version_min	= version >= bcachefs_metadata_version_new_versioning
+		? le16_to_cpu(sb->version_min)
+		: version;
+
+	if (version    >= bcachefs_metadata_version_max ||
+	    version_min < bcachefs_metadata_version_min)
+		return "Unsupported superblock version";
+
+	if (version_min > version)
+		return "Bad minimum version";
 
 	if (sb->features[1] ||
 	    (le64_to_cpu(sb->features[0]) & (~0ULL << BCH_FEATURE_NR)))
 		return "Filesystem has incompatible features";
-
-	if (le64_to_cpu(sb->version) < BCH_SB_VERSION_EXTENT_MAX) {
-		SET_BCH_SB_ENCODED_EXTENT_MAX_BITS(sb, 7);
-		SET_BCH_SB_POSIX_ACL(sb, 1);
-	}
 
 	block_size = le16_to_cpu(sb->block_size);
 
@@ -333,13 +337,6 @@ const char *bch2_sb_validate(struct bch_sb_handle *disk_sb)
 			return err;
 	}
 
-	if (le64_to_cpu(sb->version) < BCH_SB_VERSION_EXTENT_NONCE_V1 &&
-	    bch2_sb_get_crypt(sb) &&
-	    BCH_SB_INITIALIZED(sb))
-		return "Incompatible extent nonces";
-
-	sb->version = cpu_to_le64(BCH_SB_VERSION_MAX);
-
 	return NULL;
 }
 
@@ -356,6 +353,7 @@ static void bch2_sb_update(struct bch_fs *c)
 
 	c->sb.uuid		= src->uuid;
 	c->sb.user_uuid		= src->user_uuid;
+	c->sb.version		= le16_to_cpu(src->version);
 	c->sb.nr_devices	= src->nr_devices;
 	c->sb.clean		= BCH_SB_CLEAN(src);
 	c->sb.encryption_type	= BCH_SB_ENCRYPTION_TYPE(src);
@@ -377,6 +375,7 @@ static void __copy_super(struct bch_sb_handle *dst_handle, struct bch_sb *src)
 	unsigned i;
 
 	dst->version		= src->version;
+	dst->version_min	= src->version_min;
 	dst->seq		= src->seq;
 	dst->uuid		= src->uuid;
 	dst->user_uuid		= src->user_uuid;
@@ -476,8 +475,8 @@ reread:
 	if (uuid_le_cmp(sb->sb->magic, BCACHE_MAGIC))
 		return "Not a bcachefs superblock";
 
-	if (le64_to_cpu(sb->sb->version) < BCH_SB_VERSION_MIN ||
-	    le64_to_cpu(sb->sb->version) > BCH_SB_VERSION_MAX)
+	if (le16_to_cpu(sb->sb->version) <  bcachefs_metadata_version_min ||
+	    le16_to_cpu(sb->sb->version) >= bcachefs_metadata_version_max)
 		return "Unsupported superblock version";
 
 	bytes = vstruct_bytes(sb->sb);
@@ -843,12 +842,6 @@ static const char *bch2_sb_validate_members(struct bch_sb *sb,
 			return "bucket size smaller than btree node size";
 	}
 
-	if (le64_to_cpu(sb->version) < BCH_SB_VERSION_EXTENT_MAX)
-		for (m = mi->members;
-		     m < mi->members + sb->nr_devices;
-		     m++)
-			SET_BCH_MEMBER_DATA_ALLOWED(m, ~0);
-
 	return NULL;
 }
 
@@ -877,6 +870,16 @@ static const struct bch_sb_field_ops bch_sb_field_ops_crypt = {
 };
 
 /* BCH_SB_FIELD_clean: */
+
+void bch2_sb_clean_renumber(struct bch_sb_field_clean *clean, int write)
+{
+	struct jset_entry *entry;
+
+	for (entry = clean->start;
+	     entry < (struct jset_entry *) vstruct_end(&clean->field);
+	     entry = vstruct_next(entry))
+		bch2_bkey_renumber(BKEY_TYPE_BTREE, bkey_to_packed(entry->start), write);
+}
 
 void bch2_fs_mark_clean(struct bch_fs *c, bool clean)
 {
@@ -931,6 +934,10 @@ void bch2_fs_mark_clean(struct bch_fs *c, bool clean)
 		}
 
 	BUG_ON(entry != vstruct_end(&sb_clean->field));
+
+	if (le16_to_cpu(c->disk_sb.sb->version) <
+	    bcachefs_metadata_version_bkey_renumber)
+		bch2_sb_clean_renumber(sb_clean, WRITE);
 
 	mutex_unlock(&c->btree_root_lock);
 write_super:

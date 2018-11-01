@@ -122,49 +122,39 @@ static void *stripe_csum(struct bch_stripe *s, unsigned dev, unsigned csum_idx)
 	return csums + (dev * stripe_csums_per_device(s) + csum_idx) * csum_bytes;
 }
 
-const char *bch2_ec_key_invalid(const struct bch_fs *c, struct bkey_s_c k)
+const char *bch2_stripe_invalid(const struct bch_fs *c, struct bkey_s_c k)
 {
+	const struct bch_stripe *s = bkey_s_c_to_stripe(k).v;
+
 	if (k.k->p.inode)
 		return "invalid stripe key";
 
-	switch (k.k->type) {
-	case BCH_STRIPE: {
-		const struct bch_stripe *s = bkey_s_c_to_stripe(k).v;
+	if (bkey_val_bytes(k.k) < sizeof(*s))
+		return "incorrect value size";
 
-		if (bkey_val_bytes(k.k) < sizeof(*s))
-			return "incorrect value size";
+	if (bkey_val_u64s(k.k) != stripe_val_u64s(s))
+		return "incorrect value size";
 
-		if (bkey_val_u64s(k.k) != stripe_val_u64s(s))
-			return "incorrect value size";
-
-		return NULL;
-	}
-	default:
-		return "invalid type";
-	}
+	return NULL;
 }
 
-void bch2_ec_key_to_text(struct printbuf *out, struct bch_fs *c,
+void bch2_stripe_to_text(struct printbuf *out, struct bch_fs *c,
 			 struct bkey_s_c k)
 {
-	switch (k.k->type) {
-	case BCH_STRIPE: {
-		const struct bch_stripe *s = bkey_s_c_to_stripe(k).v;
-		unsigned i;
+	const struct bch_stripe *s = bkey_s_c_to_stripe(k).v;
+	unsigned i;
 
-		pr_buf(out, "algo %u sectors %u blocks %u:%u csum %u gran %u",
-		       s->algorithm,
-		       le16_to_cpu(s->sectors),
-		       s->nr_blocks - s->nr_redundant,
-		       s->nr_redundant,
-		       s->csum_type,
-		       1U << s->csum_granularity_bits);
+	pr_buf(out, "algo %u sectors %u blocks %u:%u csum %u gran %u",
+	       s->algorithm,
+	       le16_to_cpu(s->sectors),
+	       s->nr_blocks - s->nr_redundant,
+	       s->nr_redundant,
+	       s->csum_type,
+	       1U << s->csum_granularity_bits);
 
-		for (i = 0; i < s->nr_blocks; i++)
-			pr_buf(out, " %u:%llu", s->ptrs[i].dev,
-			       (u64) s->ptrs[i].offset);
-	}
-	}
+	for (i = 0; i < s->nr_blocks; i++)
+		pr_buf(out, " %u:%llu", s->ptrs[i].dev,
+		       (u64) s->ptrs[i].offset);
 }
 
 static int ptr_matches_stripe(struct bch_fs *c,
