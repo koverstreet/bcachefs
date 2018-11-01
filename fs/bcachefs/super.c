@@ -19,6 +19,7 @@
 #include "compress.h"
 #include "debug.h"
 #include "disk_groups.h"
+#include "ec.h"
 #include "error.h"
 #include "fs.h"
 #include "fs-io.h"
@@ -395,6 +396,7 @@ static void bch2_fs_free(struct bch_fs *c)
 
 	bch2_fs_quota_exit(c);
 	bch2_fs_fsio_exit(c);
+	bch2_fs_ec_exit(c);
 	bch2_fs_encryption_exit(c);
 	bch2_fs_io_exit(c);
 	bch2_fs_btree_cache_exit(c);
@@ -576,6 +578,11 @@ static struct bch_fs *bch2_fs_alloc(struct bch_sb *sb, struct bch_opts opts)
 	INIT_LIST_HEAD(&c->fsck_errors);
 	mutex_init(&c->fsck_error_lock);
 
+	INIT_LIST_HEAD(&c->ec_new_stripe_list);
+	mutex_init(&c->ec_new_stripe_lock);
+	mutex_init(&c->ec_stripes_lock);
+	spin_lock_init(&c->ec_stripes_heap_lock);
+
 	seqcount_init(&c->gc_pos_lock);
 
 	c->copy_gc_enabled		= 1;
@@ -644,6 +651,7 @@ static struct bch_fs *bch2_fs_alloc(struct bch_sb *sb, struct bch_opts opts)
 	    bch2_fs_io_init(c) ||
 	    bch2_fs_encryption_init(c) ||
 	    bch2_fs_compress_init(c) ||
+	    bch2_fs_ec_init(c) ||
 	    bch2_fs_fsio_init(c))
 		goto err;
 
@@ -712,6 +720,10 @@ const char *bch2_fs_start(struct bch_fs *c)
 	ret = BCH_SB_INITIALIZED(c->disk_sb.sb)
 		? bch2_fs_recovery(c)
 		: bch2_fs_initialize(c);
+	if (ret)
+		goto err;
+
+	ret = bch2_opts_check_may_set(c);
 	if (ret)
 		goto err;
 
