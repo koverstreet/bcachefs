@@ -164,7 +164,7 @@ TRACE_EVENT(btree_write,
 	TP_ARGS(b, bytes, sectors),
 
 	TP_STRUCT__entry(
-		__field(enum bkey_type,	type)
+		__field(enum btree_node_type,	type)
 		__field(unsigned,	bytes			)
 		__field(unsigned,	sectors			)
 	),
