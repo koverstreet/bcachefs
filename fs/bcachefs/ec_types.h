@@ -22,7 +22,7 @@ struct ec_stripe {
 
 struct ec_stripe_heap_entry {
 	size_t			idx;
-	unsigned		blocks_nonempty;
+	unsigned		blocks_empty;
 };
 
 typedef HEAP(struct ec_stripe_heap_entry) ec_stripes_heap;

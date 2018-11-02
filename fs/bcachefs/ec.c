@@ -555,15 +555,15 @@ static ssize_t stripe_idx_to_delete(struct bch_fs *c)
 {
 	ec_stripes_heap *h = &c->ec_stripes_heap;
 
-	return h->data[0].blocks_nonempty == 0 ? h->data[0].idx : -1;
+	return h->data[0].blocks_empty == U32_MAX ? h->data[0].idx : -1;
 }
 
 static inline int ec_stripes_heap_cmp(ec_stripes_heap *h,
 				      struct ec_stripe_heap_entry l,
 				      struct ec_stripe_heap_entry r)
 {
-	return ((l.blocks_nonempty > r.blocks_nonempty) -
-		(l.blocks_nonempty < r.blocks_nonempty));
+	return ((l.blocks_empty < r.blocks_empty) -
+		(l.blocks_empty > r.blocks_empty));
 }
 
 static inline void ec_stripes_heap_set_backpointer(ec_stripes_heap *h,
@@ -584,10 +584,17 @@ static void heap_verify_backpointer(struct bch_fs *c, size_t idx)
 	BUG_ON(h->data[m->heap_idx].idx != idx);
 }
 
-static inline unsigned stripe_entry_blocks(struct ec_stripe *m)
+static inline unsigned stripe_entry_blocks_empty(struct ec_stripe *m)
 {
-	return atomic_read(&m->pin)
-		? UINT_MAX : atomic_read(&m->blocks_nonempty);
+	unsigned nonempty;
+
+	if (atomic_read(&m->pin))
+		return 0;
+
+	nonempty = atomic_read(&m->blocks_nonempty);
+	return nonempty
+		? m->nr_blocks - m->nr_redundant - nonempty
+		: U32_MAX;
 }
 
 void bch2_stripes_heap_update(struct bch_fs *c,
@@ -606,8 +613,8 @@ void bch2_stripes_heap_update(struct bch_fs *c,
 
 	heap_verify_backpointer(c, idx);
 
-	h->data[m->heap_idx].blocks_nonempty =
-		stripe_entry_blocks(m);
+	h->data[m->heap_idx].blocks_empty =
+		stripe_entry_blocks_empty(m);
 
 	i = m->heap_idx;
 	heap_sift_up(h,	  i, ec_stripes_heap_cmp,
@@ -646,7 +653,7 @@ void bch2_stripes_heap_insert(struct bch_fs *c,
 
 	heap_add(&c->ec_stripes_heap, ((struct ec_stripe_heap_entry) {
 			.idx = idx,
-			.blocks_nonempty = stripe_entry_blocks(m),
+			.blocks_empty = stripe_entry_blocks_empty(m),
 		}),
 		 ec_stripes_heap_cmp,
 		 ec_stripes_heap_set_backpointer);
