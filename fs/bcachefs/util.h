@@ -76,6 +76,14 @@ struct closure;
 	(__builtin_types_compatible_p(typeof(_val), _type) ||		\
 	 __builtin_types_compatible_p(typeof(_val), const _type))
 
+/* Userspace doesn't align allocations as nicely as the kernel allocators: */
+static inline size_t buf_pages(void *p, size_t len)
+{
+	return DIV_ROUND_UP(len +
+			    ((unsigned long) p & (PAGE_SIZE - 1)),
+			    PAGE_SIZE);
+}
+
 static inline void vpfree(void *p, size_t size)
 {
 	if (is_vmalloc_addr(p))
