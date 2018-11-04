@@ -163,7 +163,7 @@ static struct phy_driver realtek_drvs[] = {
 		.read_status    = &genphy_read_status,
 	}, {
 		.phy_id		= 0x001cc816,
-		.name		= "RTL8201F 10/100Mbps Ethernet",
+		.name		= "RTL8201F Fast Ethernet",
 		.phy_id_mask	= 0x001fffff,
 		.features	= PHY_BASIC_FEATURES,
 		.flags		= PHY_HAS_INTERRUPT,
