@@ -19,6 +19,17 @@ struct _ccu_nm {
 	unsigned long	m, min_m, max_m;
 };
 
+static unsigned long ccu_nm_calc_rate(unsigned long parent,
+				      unsigned long n, unsigned long m)
+{
+	u64 rate = parent;
+
+	rate *= n;
+	do_div(rate, m);
+
+	return rate;
+}
+
 static void ccu_nm_find_best(unsigned long parent, unsigned long rate,
 			     struct _ccu_nm *nm)
 {
@@ -28,7 +39,8 @@ static void ccu_nm_find_best(unsigned long parent, unsigned long rate,
 
 	for (_n = nm->min_n; _n <= nm->max_n; _n++) {
 		for (_m = nm->min_m; _m <= nm->max_m; _m++) {
-			unsigned long tmp_rate = parent * _n  / _m;
+			unsigned long tmp_rate = ccu_nm_calc_rate(parent,
+								  _n, _m);
 
 			if (tmp_rate > rate)
 				continue;
@@ -98,7 +110,7 @@ static unsigned long ccu_nm_recalc_rate(struct clk_hw *hw,
 			return rate;
 	}
 
-	return parent_rate * n / m;
+	return ccu_nm_calc_rate(parent_rate, n, m);
 }
 
 static long ccu_nm_round_rate(struct clk_hw *hw, unsigned long rate,
@@ -120,7 +132,7 @@ static long ccu_nm_round_rate(struct clk_hw *hw, unsigned long rate,
 
 	ccu_nm_find_best(*parent_rate, rate, &_nm);
 
-	return *parent_rate * _nm.n / _nm.m;
+	return ccu_nm_calc_rate(*parent_rate, _nm.n, _nm.m);
 }
 
 static int ccu_nm_set_rate(struct clk_hw *hw, unsigned long rate,
