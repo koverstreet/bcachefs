@@ -1424,7 +1424,9 @@ void bch2_btree_node_read(struct bch_fs *c, struct btree *b,
 
 	ca = bch_dev_bkey_exists(c, pick.ptr.dev);
 
-	bio = bio_alloc_bioset(GFP_NOIO, btree_pages(c), &c->btree_bio);
+	bio = bio_alloc_bioset(GFP_NOIO, buf_pages(b->data,
+						   btree_bytes(c)),
+			       &c->btree_bio);
 	rb = container_of(bio, struct btree_read_bio, bio);
 	rb->c			= c;
 	rb->start_time		= local_clock();
@@ -1879,7 +1881,9 @@ void __bch2_btree_node_write(struct bch_fs *c, struct btree *b,
 
 	trace_btree_write(b, bytes_to_write, sectors_to_write);
 
-	wbio = container_of(bio_alloc_bioset(GFP_NOIO, 1 << order, &c->btree_bio),
+	wbio = container_of(bio_alloc_bioset(GFP_NOIO,
+				buf_pages(data, sectors_to_write << 9),
+				&c->btree_bio),
 			    struct btree_write_bio, wbio.bio);
 	wbio_init(&wbio->wbio.bio);
 	wbio->data			= data;
