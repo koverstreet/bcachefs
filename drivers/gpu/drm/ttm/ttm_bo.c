@@ -1472,7 +1472,6 @@ static void ttm_bo_global_kobj_release(struct kobject *kobj)
 
 	ttm_mem_unregister_shrink(glob->mem_glob, &glob->shrink);
 	__free_page(glob->dummy_read_page);
-	kfree(glob);
 }
 
 void ttm_bo_global_release(struct drm_global_reference *ref)

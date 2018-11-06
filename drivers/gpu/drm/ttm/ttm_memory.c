@@ -166,16 +166,7 @@ static struct kobj_type ttm_mem_zone_kobj_type = {
 	.default_attrs = ttm_mem_zone_attrs,
 };
 
-static void ttm_mem_global_kobj_release(struct kobject *kobj)
-{
-	struct ttm_mem_global *glob =
-		container_of(kobj, struct ttm_mem_global, kobj);
-
-	kfree(glob);
-}
-
 static struct kobj_type ttm_mem_glob_kobj_type = {
-	.release = &ttm_mem_global_kobj_release,
 };
 
 static bool ttm_zones_above_swap_target(struct ttm_mem_global *glob,
