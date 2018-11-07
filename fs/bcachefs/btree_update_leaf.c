@@ -11,6 +11,7 @@
 #include "journal.h"
 #include "journal_reclaim.h"
 #include "keylist.h"
+#include "replicas.h"
 
 #include <linux/sort.h>
 #include <trace/events/bcachefs.h>
@@ -300,8 +301,8 @@ static inline int btree_trans_cmp(struct btree_insert_entry l,
 
 static enum btree_insert_ret
 btree_key_can_insert(struct btree_insert *trans,
-		      struct btree_insert_entry *insert,
-		      unsigned *u64s)
+		     struct btree_insert_entry *insert,
+		     unsigned *u64s)
 {
 	struct bch_fs *c = trans->c;
 	struct btree *b = insert->iter->l[0].b;
@@ -309,6 +310,12 @@ btree_key_can_insert(struct btree_insert *trans,
 
 	if (unlikely(btree_node_fake(b)))
 		return BTREE_INSERT_BTREE_NODE_FULL;
+
+	if (!bch2_bkey_replicas_marked(c,
+			insert->iter->btree_id,
+			bkey_i_to_s_c(insert->k),
+			true))
+		return BTREE_INSERT_NEED_MARK_REPLICAS;
 
 	ret = !btree_node_is_extents(b)
 		? BTREE_INSERT_OK
@@ -326,8 +333,7 @@ btree_key_can_insert(struct btree_insert *trans,
  * Get journal reservation, take write locks, and attempt to do btree update(s):
  */
 static inline int do_btree_insert_at(struct btree_insert *trans,
-				     struct btree_iter **split,
-				     bool *cycle_gc_lock)
+				     struct btree_insert_entry **stopped_at)
 {
 	struct bch_fs *c = trans->c;
 	struct btree_insert_entry *i;
@@ -371,22 +377,10 @@ static inline int do_btree_insert_at(struct btree_insert *trans,
 			u64s = 0;
 
 		u64s += i->k->k.u64s;
-		switch (btree_key_can_insert(trans, i, &u64s)) {
-		case BTREE_INSERT_OK:
-			break;
-		case BTREE_INSERT_BTREE_NODE_FULL:
-			ret = -EINTR;
-			*split = i->iter;
+		ret = btree_key_can_insert(trans, i, &u64s);
+		if (ret) {
+			*stopped_at = i;
 			goto out;
-		case BTREE_INSERT_ENOSPC:
-			ret = -ENOSPC;
-			goto out;
-		case BTREE_INSERT_NEED_GC_LOCK:
-			ret = -EINTR;
-			*cycle_gc_lock = true;
-			goto out;
-		default:
-			BUG();
 		}
 	}
 
@@ -444,8 +438,7 @@ int __bch2_btree_insert_at(struct btree_insert *trans)
 {
 	struct bch_fs *c = trans->c;
 	struct btree_insert_entry *i;
-	struct btree_iter *linked, *split = NULL;
-	bool cycle_gc_lock = false;
+	struct btree_iter *linked;
 	unsigned flags;
 	int ret;
 
@@ -465,9 +458,6 @@ int __bch2_btree_insert_at(struct btree_insert *trans)
 	if (unlikely(!percpu_ref_tryget(&c->writes)))
 		return -EROFS;
 retry:
-	split = NULL;
-	cycle_gc_lock = false;
-
 	trans_for_each_entry(trans, i) {
 		unsigned old_locks_want = i->iter->locks_want;
 		unsigned old_uptodate = i->iter->uptodate;
@@ -485,7 +475,7 @@ retry:
 		}
 	}
 
-	ret = do_btree_insert_at(trans, &split, &cycle_gc_lock);
+	ret = do_btree_insert_at(trans, &i);
 	if (unlikely(ret))
 		goto err;
 
@@ -520,8 +510,9 @@ err:
 	if (!trans->did_work)
 		flags &= ~BTREE_INSERT_NOUNLOCK;
 
-	if (split) {
-		ret = bch2_btree_split_leaf(c, split, flags);
+	switch (ret) {
+	case BTREE_INSERT_BTREE_NODE_FULL:
+		ret = bch2_btree_split_leaf(c, i->iter, flags);
 
 		/*
 		 * if the split succeeded without dropping locks the insert will
@@ -546,9 +537,10 @@ err:
 			trans_restart(" (split)");
 			ret = -EINTR;
 		}
-	}
+		break;
+	case BTREE_INSERT_NEED_GC_LOCK:
+		ret = -EINTR;
 
-	if (cycle_gc_lock) {
 		if (!down_read_trylock(&c->gc_lock)) {
 			if (flags & BTREE_INSERT_NOUNLOCK)
 				goto out;
@@ -557,6 +549,24 @@ err:
 			down_read(&c->gc_lock);
 		}
 		up_read(&c->gc_lock);
+		break;
+	case BTREE_INSERT_ENOSPC:
+		ret = -ENOSPC;
+		break;
+	case BTREE_INSERT_NEED_MARK_REPLICAS:
+		if (flags & BTREE_INSERT_NOUNLOCK) {
+			ret = -EINTR;
+			goto out;
+		}
+
+		bch2_btree_iter_unlock(trans->entries[0].iter);
+		ret = bch2_mark_bkey_replicas(c, i->iter->btree_id,
+					      bkey_i_to_s_c(i->k))
+			?: -EINTR;
+		break;
+	default:
+		BUG_ON(ret >= 0);
+		break;
 	}
 
 	if (ret == -EINTR) {
