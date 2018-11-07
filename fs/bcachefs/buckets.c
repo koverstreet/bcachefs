@@ -335,6 +335,17 @@ static bool bucket_became_unavailable(struct bch_fs *c,
 	       (!c || c->gc_pos.phase == GC_PHASE_DONE);
 }
 
+static s64 update_bad(struct bch_fs_usage *stats,
+		       struct disk_reservation *disk_res)
+{
+	struct fs_usage_sum sum = __fs_usage_sum(*stats);
+	s64 added = sum.data + sum.reserved;
+
+	if (added > (s64) (disk_res ? disk_res->sectors : 0))
+		return added;
+	return 0;
+}
+
 void bch2_fs_usage_apply(struct bch_fs *c,
 			 struct bch_fs_usage *stats,
 			 struct disk_reservation *disk_res,
@@ -349,6 +360,11 @@ void bch2_fs_usage_apply(struct bch_fs *c,
 	 * reservation:
 	 */
 	should_not_have_added = added - (s64) (disk_res ? disk_res->sectors : 0);
+	if (should_not_have_added > 0)
+		panic("added %lli reserved %llu\n",
+		      added,
+		      disk_res ? disk_res->sectors : 0);
+
 	if (WARN_ONCE(should_not_have_added > 0,
 		      "disk usage increased without a reservation")) {
 		atomic64_sub(should_not_have_added, &c->sectors_available);
@@ -484,7 +500,6 @@ void bch2_mark_alloc_bucket(struct bch_fs *c, struct bch_dev *ca,
 do {								\
 	unsigned _res = (unsigned) (a) + (b);			\
 	(a) = _res;						\
-	BUG_ON((a) != _res);					\
 } while (0)
 
 void bch2_mark_metadata_bucket(struct bch_fs *c, struct bch_dev *ca,
@@ -680,6 +695,8 @@ static void bch2_mark_stripe_ptr(struct bch_fs *c,
 	bch2_stripes_heap_update(c, m, p.idx);
 }
 
+static bool verbose;
+
 static void bch2_mark_extent(struct bch_fs *c, struct bkey_s_c k,
 			     s64 sectors, enum bch_data_type data_type,
 			     struct gc_pos pos,
@@ -716,6 +733,16 @@ static void bch2_mark_extent(struct bch_fs *c, struct bkey_s_c k,
 							&ec_redundancy);
 			if (!p.ptr.cached)
 				replicas++;
+
+			if (verbose)
+				pr_info("sectors %lli disk %lli adjusted %lli",
+					sectors, disk_sectors,
+					adjusted_disk_sectors);
+
+			if (0 && adjusted_disk_sectors != disk_sectors)
+				pr_info("disk_sectors %lli adjusted %lli",
+					disk_sectors,
+					adjusted_disk_sectors);
 
 			if (p.ptr.cached)
 				cached_sectors	+= adjusted_disk_sectors;
@@ -895,6 +922,7 @@ void bch2_mark_update(struct btree_insert *trans,
 	struct bch_fs_usage	stats = { 0 };
 	struct gc_pos		pos = gc_pos_btree_node(b);
 	struct bkey_packed	*_k;
+	s64 added;
 
 	if (!(trans->flags & BTREE_INSERT_JOURNAL_REPLAY))
 		bch2_mark_key(c, btree_node_type(b), bkey_i_to_s_c(insert->k),
@@ -950,6 +978,72 @@ void bch2_mark_update(struct btree_insert *trans,
 			      pos, &stats, trans->journal_res.seq, 0);
 
 		bch2_btree_node_iter_advance(&node_iter, b);
+	}
+
+	if ((added = update_bad(&stats, trans->disk_res))) {
+		char buf[200];
+		s64 sectors;
+
+		verbose = true;
+
+		sectors = bpos_min(insert->k->k.p, b->key.k.p).offset -
+			bkey_start_offset(&insert->k->k);
+
+		bch2_bkey_val_to_text(c, btree_node_type(b),
+				      buf, sizeof(buf),
+				      bkey_i_to_s_c(insert->k));
+		pr_info("adding %lli\n%s", sectors, buf);
+
+		node_iter = iter->l[0].iter;
+
+		while ((_k = bch2_btree_node_iter_peek_filter(&node_iter, b,
+							      KEY_TYPE_DISCARD))) {
+			struct bkey		unpacked;
+			struct bkey_s_c		k;
+
+			k = bkey_disassemble(b, _k, &unpacked);
+
+			if (btree_node_is_extents(b)
+			    ? bkey_cmp(insert->k->k.p, bkey_start_pos(k.k)) <= 0
+			    : bkey_cmp(insert->k->k.p, k.k->p))
+				break;
+
+			sectors = 0;
+
+			if (btree_node_is_extents(b)) {
+				switch (bch2_extent_overlap(&insert->k->k, k.k)) {
+				case BCH_EXTENT_OVERLAP_ALL:
+					sectors = -((s64) k.k->size);
+					break;
+				case BCH_EXTENT_OVERLAP_BACK:
+					sectors = bkey_start_offset(&insert->k->k) -
+						k.k->p.offset;
+					break;
+				case BCH_EXTENT_OVERLAP_FRONT:
+					sectors = bkey_start_offset(k.k) -
+						insert->k->k.p.offset;
+					break;
+				case BCH_EXTENT_OVERLAP_MIDDLE:
+					sectors = k.k->p.offset - insert->k->k.p.offset;
+					BUG_ON(sectors <= 0);
+
+					pr_info("adding %lli", sectors);
+					sectors = bkey_start_offset(&insert->k->k) -
+						k.k->p.offset;
+					break;
+				}
+			}
+
+			bch2_bkey_val_to_text(c, btree_node_type(b),
+					      buf, sizeof(buf), k);
+			pr_info("subtracting %lli\n%s", sectors, buf);
+
+			bch2_mark_key(c, btree_node_type(b), k,
+				      false, sectors,
+				      pos, &stats, trans->journal_res.seq, 0);
+
+			bch2_btree_node_iter_advance(&node_iter, b);
+		}
 	}
 
 	bch2_fs_usage_apply(c, &stats, trans->disk_res, pos);
