@@ -146,7 +146,7 @@ static int delay_ctr(struct dm_target *ti, unsigned int argc, char **argv)
 	dc->reads = dc->writes = 0;
 
 	ret = -EINVAL;
-	if (sscanf(argv[1], "%llu%c", &tmpll, &dummy) != 1) {
+	if (sscanf(argv[1], "%llu%c", &tmpll, &dummy) != 1 || tmpll != (sector_t)tmpll) {
 		ti->error = "Invalid device sector";
 		goto bad;
 	}
