@@ -410,7 +410,7 @@ static ssize_t set_datatype_show(struct most_c_obj *c,
 
 	for (i = 0; i < ARRAY_SIZE(ch_data_type); i++) {
 		if (c->cfg.data_type & ch_data_type[i].most_ch_data_type)
-			return snprintf(buf, PAGE_SIZE, ch_data_type[i].name);
+			return snprintf(buf, PAGE_SIZE, "%s", ch_data_type[i].name);
 	}
 	return snprintf(buf, PAGE_SIZE, "unconfigured\n");
 }
