@@ -482,6 +482,7 @@ firmware:       i6050-fw-usb-1.5.sbcf
 firmware:       i915/bxt_dmc_ver1_07.bin
 firmware:       i915/bxt_guc_ver8_7.bin
 firmware:       i915/bxt_huc_ver01_07_1398.bin
+firmware:       i915/glk_dmc_ver1_04.bin
 firmware:       i915/kbl_dmc_ver1_01.bin
 firmware:       i915/kbl_guc_ver9_14.bin
 firmware:       i915/kbl_huc_ver02_00_1810.bin

@@ -42,6 +42,7 @@ aat2870_bl
 ab3100
 ab3100-otp
 abp060mg
+ac97_bus
 acard-ahci
 acecad
 acenic
@@ -649,6 +650,7 @@ cdc_ether
 cdc_mbim
 cdc_ncm
 cdc_subset
+cec
 ceph
 cfg80211
 cfi_cmdset_0001
@@ -2511,6 +2513,7 @@ mdio-mux-mmioreg
 mdio-octeon
 mdio-thunder
 mdio-xgene
+mdt_loader
 me4000
 me_daq
 media
@@ -2617,6 +2620,7 @@ mscc
 msdos
 msi001
 msi2500
+msm
 msm-rng
 msp3400
 mspro_block
@@ -3969,6 +3973,7 @@ smsdvb
 smsmdtv
 smssdio
 smsusb
+snd
 snd-ac97-codec
 snd-ad1889
 snd-ak4113
@@ -4067,6 +4072,8 @@ snd-opl3-synth
 snd-oxfw
 snd-oxygen
 snd-oxygen-lib
+snd-pcm
+snd-pcm-dmaengine
 snd-pcxhr
 snd-portman2x4
 snd-pt2258
@@ -4098,10 +4105,12 @@ snd-soc-ak4613
 snd-soc-ak4642
 snd-soc-ak5386
 snd-soc-alc5623
+snd-soc-apq8016-sbc
 snd-soc-audio-graph-card
 snd-soc-audio-graph-scu-card
 snd-soc-bcm2835-i2s
 snd-soc-bt-sco
+snd-soc-core
 snd-soc-cs35l32
 snd-soc-cs35l33
 snd-soc-cs35l34
@@ -4135,13 +4144,19 @@ snd-soc-fsl-sai
 snd-soc-fsl-spdif
 snd-soc-fsl-ssi
 snd-soc-gtm601
+snd-soc-hdmi-codec
 snd-soc-imx-audmux
 snd-soc-inno-rk3036
+snd-soc-lpass-apq8016
+snd-soc-lpass-cpu
 snd-soc-lpass-ipq806x
+snd-soc-lpass-platform
 snd-soc-max98357a
 snd-soc-max98504
 snd-soc-max9860
 snd-soc-max98927
+snd-soc-msm8916-analog
+snd-soc-msm8916-digital
 snd-soc-nau8540
 snd-soc-nau8810
 snd-soc-nau8824
@@ -4215,6 +4230,7 @@ snd-soc-wm8985
 snd-soc-xtfpga-i2s
 snd-soc-zx-aud96p22
 snd-sonicvibes
+snd-timer
 snd-trident
 snd-ua101
 snd-usb-6fire
