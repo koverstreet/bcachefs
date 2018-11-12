@@ -24,8 +24,7 @@ unsigned bch2_dirent_name_bytes(struct bkey_s_c_dirent);
 
 static inline unsigned dirent_val_u64s(unsigned len)
 {
-	return DIV_ROUND_UP(offsetof(struct bch_dirent, d_name) + len,
-			    sizeof(u64));
+	return DIV_ROUND_UP(sizeof(struct bch_dirent) + len, sizeof(u64));
 }
 
 int __bch2_dirent_create(struct btree_trans *, u64,

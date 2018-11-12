@@ -12,10 +12,12 @@
 
 unsigned bch2_dirent_name_bytes(struct bkey_s_c_dirent d)
 {
-	unsigned len = bkey_val_bytes(d.k) -
-		offsetof(struct bch_dirent, d_name);
+	unsigned len = bkey_val_bytes(d.k) - sizeof(struct bch_dirent);
 
-	return strnlen(d.v->d_name, len);
+	while (len && !d.v->d_name[len - 1])
+		--len;
+
+	return len;
 }
 
 static u64 bch2_dirent_hash(const struct bch_hash_info *info,
@@ -151,8 +153,7 @@ static struct bkey_i_dirent *dirent_create_key(struct btree_trans *trans,
 	memcpy(dirent->v.d_name, name->name, name->len);
 	memset(dirent->v.d_name + name->len, 0,
 	       bkey_val_bytes(&dirent->k) -
-	       offsetof(struct bch_dirent, d_name) -
-	       name->len);
+	       (sizeof(struct bch_dirent) + name->len));
 
 	EBUG_ON(bch2_dirent_name_bytes(dirent_i_to_s_c(dirent)) != name->len);
 
