@@ -1160,6 +1160,7 @@ ems_pci
 ems_usb
 emu10k1-gp
 emxx_udc
+ena
 enc28j60
 enclosure
 encx24j600

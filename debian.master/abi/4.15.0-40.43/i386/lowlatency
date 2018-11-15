@@ -20487,6 +20487,7 @@ EXPORT_SYMBOL_GPL vmlinux 0x00000000	net_dec_ingress_queue
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	net_inc_egress_queue
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	net_inc_ingress_queue
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	net_namespace_list
+EXPORT_SYMBOL_GPL vmlinux 0x00000000	net_ns_get_ownership
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	net_ns_type_operations
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	net_prio_cgrp_subsys_enabled_key
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	net_prio_cgrp_subsys_on_dfl_key
@@ -20979,6 +20980,7 @@ EXPORT_SYMBOL_GPL vmlinux 0x00000000	pm_schedule_suspend
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	pm_stay_awake
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	pm_suspend_global_flags
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	pm_suspend_target_state
+EXPORT_SYMBOL_GPL vmlinux 0x00000000	pm_suspend_via_s2idle
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	pm_system_wakeup
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	pm_trace_rtc_abused
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	pm_wakeup_dev_event

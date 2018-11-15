@@ -2019,12 +2019,14 @@ EXPORT_SYMBOL vmlinux 0x00000000	alloc_pages_exact
 EXPORT_SYMBOL vmlinux 0x00000000	alloc_skb_with_frags
 EXPORT_SYMBOL vmlinux 0x00000000	allocate_resource
 EXPORT_SYMBOL vmlinux 0x00000000	always_delete_dentry
+EXPORT_SYMBOL vmlinux 0x00000000	ap_apqn_in_matrix_owned_by_def_drv
 EXPORT_SYMBOL vmlinux 0x00000000	ap_bus_force_rescan
 EXPORT_SYMBOL vmlinux 0x00000000	ap_cancel_message
 EXPORT_SYMBOL vmlinux 0x00000000	ap_domain_index
 EXPORT_SYMBOL vmlinux 0x00000000	ap_driver_register
 EXPORT_SYMBOL vmlinux 0x00000000	ap_driver_unregister
 EXPORT_SYMBOL vmlinux 0x00000000	ap_flush_queue
+EXPORT_SYMBOL vmlinux 0x00000000	ap_owned_by_def_drv
 EXPORT_SYMBOL vmlinux 0x00000000	ap_query_configuration
 EXPORT_SYMBOL vmlinux 0x00000000	ap_queue_init_reply
 EXPORT_SYMBOL vmlinux 0x00000000	ap_queue_irq_ctrl
@@ -9598,6 +9600,7 @@ EXPORT_SYMBOL_GPL vmlinux 0x00000000	net_dec_ingress_queue
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	net_inc_egress_queue
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	net_inc_ingress_queue
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	net_namespace_list
+EXPORT_SYMBOL_GPL vmlinux 0x00000000	net_ns_get_ownership
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	net_ns_type_operations
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	net_prio_cgrp_subsys_enabled_key
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	net_prio_cgrp_subsys_on_dfl_key
