@@ -51,9 +51,9 @@ def exec_cmd(command, nsonly=True):
     (rawout, serr) = proc.communicate()
 
     if proc.returncode != 0 and len(serr) > 0:
-        foutput = serr.decode("utf-8")
+        foutput = serr.decode("utf-8", errors="ignore")
     else:
-        foutput = rawout.decode("utf-8")
+        foutput = rawout.decode("utf-8", errors="ignore")
 
     proc.stdout.close()
     proc.stderr.close()
