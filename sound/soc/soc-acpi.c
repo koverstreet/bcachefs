@@ -81,11 +81,17 @@ struct snd_soc_acpi_mach *
 snd_soc_acpi_find_machine(struct snd_soc_acpi_mach *machines)
 {
 	struct snd_soc_acpi_mach *mach;
+	struct snd_soc_acpi_mach *mach_alt;
 
 	for (mach = machines; mach->id[0]; mach++) {
 		if (snd_soc_acpi_check_hid(mach->id) == true) {
-			if (mach->machine_quirk)
-				mach = mach->machine_quirk(mach);
+			if (mach->machine_quirk) {
+				mach_alt = mach->machine_quirk(mach);
+				if (!mach_alt)
+					continue; /* not full match, ignore */
+				mach = mach_alt;
+			}
+
 			return mach;
 		}
 	}
