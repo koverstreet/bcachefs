@@ -386,25 +386,6 @@ finish:
 	return retval;
 }
 
-static void sctp_packet_release_owner(struct sk_buff *skb)
-{
-	sk_free(skb->sk);
-}
-
-static void sctp_packet_set_owner_w(struct sk_buff *skb, struct sock *sk)
-{
-	skb_orphan(skb);
-	skb->sk = sk;
-	skb->destructor = sctp_packet_release_owner;
-
-	/*
-	 * The data chunks have already been accounted for in sctp_sendmsg(),
-	 * therefore only reserve a single byte to keep socket around until
-	 * the packet has been transmitted.
-	 */
-	refcount_inc(&sk->sk_wmem_alloc);
-}
-
 static int sctp_packet_pack(struct sctp_packet *packet,
 			    struct sk_buff *head, int gso, gfp_t gfp)
 {
@@ -582,7 +563,7 @@ int sctp_packet_transmit(struct sctp_packet *packet, gfp_t gfp)
 	if (!head)
 		goto out;
 	skb_reserve(head, packet->overhead + MAX_HEADER);
-	sctp_packet_set_owner_w(head, sk);
+	skb_set_owner_w(head, sk);
 
 	/* set sctp header */
 	sh = skb_push(head, sizeof(struct sctphdr));
