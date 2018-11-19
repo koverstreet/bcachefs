@@ -147,7 +147,7 @@ static int bch2_gc_mark_key(struct bch_fs *c, struct bkey_s_c k,
 					k.k->type, ptr->gen)) {
 				g->_mark.gen = ptr->gen;
 				g->gen_valid = 1;
-				set_bit(b, ca->buckets_dirty);
+				bucket_set_dirty(ca, b);
 			}
 
 			if (mustfix_fsck_err_on(gen_cmp(ptr->gen, g->mark.gen) > 0, c,
@@ -155,7 +155,7 @@ static int bch2_gc_mark_key(struct bch_fs *c, struct bkey_s_c k,
 					k.k->type, ptr->gen, g->mark.gen)) {
 				g->_mark.gen = ptr->gen;
 				g->gen_valid = 1;
-				set_bit(b, ca->buckets_dirty);
+				bucket_set_dirty(ca, b);
 				set_bit(BCH_FS_FIXED_GENS, &c->flags);
 			}
 		}
