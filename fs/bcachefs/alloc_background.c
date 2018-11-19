@@ -184,9 +184,9 @@ static void __alloc_read_key(struct bucket *g, const struct bch_alloc *a)
 	g->_mark.cached_sectors	= get_alloc_field(a, &d, idx++);
 }
 
-static void __alloc_write_key(struct bkey_i_alloc *a, struct bucket *g)
+static void __alloc_write_key(struct bkey_i_alloc *a, struct bucket *g,
+			      struct bucket_mark m)
 {
-	struct bucket_mark m = READ_ONCE(g->mark);
 	unsigned idx = 0;
 	void *d = a->v.data;
 
@@ -279,6 +279,8 @@ static int __bch2_alloc_write_key(struct bch_fs *c, struct bch_dev *ca,
 	__BKEY_PADDED(k, 8) alloc_key;
 #endif
 	struct bkey_i_alloc *a = bkey_alloc_init(&alloc_key.k);
+	struct bucket *g;
+	struct bucket_mark m;
 	int ret;
 
 	BUG_ON(BKEY_ALLOC_VAL_U64s_MAX > 8);
@@ -286,7 +288,10 @@ static int __bch2_alloc_write_key(struct bch_fs *c, struct bch_dev *ca,
 	a->k.p = POS(ca->dev_idx, b);
 
 	percpu_down_read_preempt_disable(&c->usage_lock);
-	__alloc_write_key(a, bucket(ca, b));
+	g = bucket(ca, b);
+	m = bucket_cmpxchg(g, m, m.dirty = false);
+
+	__alloc_write_key(a, g, m);
 	percpu_up_read_preempt_enable(&c->usage_lock);
 
 	bch2_btree_iter_cond_resched(iter);
@@ -349,19 +354,24 @@ int bch2_alloc_write(struct bch_fs *c)
 
 	for_each_rw_member(ca, c, i) {
 		struct btree_iter iter;
-		unsigned long bucket;
+		struct bucket_array *buckets;
+		size_t b;
 
 		bch2_btree_iter_init(&iter, c, BTREE_ID_ALLOC, POS_MIN,
 				     BTREE_ITER_SLOTS|BTREE_ITER_INTENT);
 
 		down_read(&ca->bucket_lock);
-		for_each_set_bit(bucket, ca->buckets_dirty, ca->mi.nbuckets) {
-			ret = __bch2_alloc_write_key(c, ca, bucket,
-						     &iter, NULL, 0);
+		buckets = bucket_array(ca);
+
+		for (b = buckets->first_bucket;
+		     b < buckets->nbuckets;
+		     b++) {
+			if (!buckets->b[b].mark.dirty)
+				continue;
+
+			ret = __bch2_alloc_write_key(c, ca, b, &iter, NULL, 0);
 			if (ret)
 				break;
-
-			clear_bit(bucket, ca->buckets_dirty);
 		}
 		up_read(&ca->bucket_lock);
 		bch2_btree_iter_unlock(&iter);
@@ -538,6 +548,10 @@ static bool bch2_can_invalidate_bucket(struct bch_dev *ca,
 	u8 gc_gen;
 
 	if (!is_available_bucket(mark))
+		return false;
+
+	if (ca->buckets_nouse &&
+	    test_bit(bucket, ca->buckets_nouse))
 		return false;
 
 	gc_gen = bucket_gc_gen(ca, bucket);
@@ -1339,6 +1353,7 @@ static int __bch2_fs_allocator_start(struct bch_fs *c)
 			m = READ_ONCE(buckets->b[bu].mark);
 
 			if (!buckets->b[bu].gen_valid ||
+			    !test_bit(bu, ca->buckets_nouse) ||
 			    !is_available_bucket(m) ||
 			    m.cached_sectors)
 				continue;
@@ -1377,7 +1392,7 @@ not_enough:
 				bch2_invalidate_one_bucket(c, ca, bu, &journal_seq);
 
 			fifo_push(&ca->free[RESERVE_BTREE], bu);
-			set_bit(bu, ca->buckets_dirty);
+			bucket_set_dirty(ca, bu);
 		}
 	}
 
