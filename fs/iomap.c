@@ -856,7 +856,7 @@ iomap_dio_actor(struct inode *inode, loff_t pos, loff_t length,
 	struct iov_iter iter;
 	struct bio *bio;
 	bool need_zeroout = false;
-	int nr_pages, ret;
+	int nr_pages, ret = 0;
 	size_t copied = 0;
 
 	if ((pos | length | align) & ((1 << blkbits) - 1))
@@ -922,8 +922,14 @@ iomap_dio_actor(struct inode *inode, loff_t pos, loff_t length,
 
 		ret = bio_iov_iter_get_pages(bio, &iter);
 		if (unlikely(ret)) {
+			/*
+			 * We have to stop part way through an IO. We must fall
+			 * through to the sub-block tail zeroing here, otherwise
+			 * this short IO may expose stale data in the tail of
+			 * the block we haven't written data to.
+			 */
 			bio_put(bio);
-			return copied ? copied : ret;
+			goto zero_tail;
 		}
 
 		n = bio->bi_iter.bi_size;
@@ -956,6 +962,7 @@ iomap_dio_actor(struct inode *inode, loff_t pos, loff_t length,
 	 * the block tail in the latter case, we can expose stale data via mmap
 	 * reads of the EOF block.
 	 */
+zero_tail:
 	if (need_zeroout ||
 	    ((dio->flags & IOMAP_DIO_WRITE) && pos >= i_size_read(inode))) {
 		/* zero out from the end of the write to the end of the block */
@@ -963,7 +970,7 @@ iomap_dio_actor(struct inode *inode, loff_t pos, loff_t length,
 		if (pad)
 			iomap_dio_zero(dio, iomap, pos, fs_block_size - pad);
 	}
-	return copied;
+	return copied ? copied : ret;
 }
 
 ssize_t
@@ -1056,6 +1063,15 @@ iomap_dio_rw(struct kiocb *iocb, struct iov_iter *iter,
 				wait_for_completion = true;
 				ret = 0;
 			}
+
+			/*
+			 * Splicing to pipes can fail on a full pipe. We have to
+			 * swallow this to make it look like a short IO
+			 * otherwise the higher splice layers will completely
+			 * mishandle the error and stop moving data.
+			 */
+			if (ret == -EFAULT)
+				ret = 0;
 			break;
 		}
 		pos += ret;
