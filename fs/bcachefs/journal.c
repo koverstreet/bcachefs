@@ -334,15 +334,14 @@ u64 bch2_inode_journal_seq(struct journal *j, u64 inode)
 }
 
 static int __journal_res_get(struct journal *j, struct journal_res *res,
-			      unsigned u64s_min, unsigned u64s_max)
+			     unsigned flags)
 {
 	struct bch_fs *c = container_of(j, struct bch_fs, journal);
 	struct journal_buf *buf;
 	int ret;
 retry:
-	ret = journal_res_get_fast(j, res, u64s_min, u64s_max);
-	if (ret)
-		return ret;
+	if (journal_res_get_fast(j, res))
+		return 0;
 
 	spin_lock(&j->lock);
 	/*
@@ -350,10 +349,9 @@ retry:
 	 * that just did journal_entry_open() and call journal_entry_close()
 	 * unnecessarily
 	 */
-	ret = journal_res_get_fast(j, res, u64s_min, u64s_max);
-	if (ret) {
+	if (journal_res_get_fast(j, res)) {
 		spin_unlock(&j->lock);
-		return 1;
+		return 0;
 	}
 
 	/*
@@ -376,7 +374,12 @@ retry:
 		spin_unlock(&j->lock);
 		return -EROFS;
 	case JOURNAL_ENTRY_INUSE:
-		/* haven't finished writing out the previous one: */
+		/*
+		 * haven't finished writing out the previous entry, can't start
+		 * another yet:
+		 * signal to caller which sequence number we're trying to open:
+		 */
+		res->seq = journal_cur_seq(j) + 1;
 		spin_unlock(&j->lock);
 		trace_journal_entry_full(c);
 		goto blocked;
@@ -388,6 +391,8 @@ retry:
 
 	/* We now have a new, closed journal buf - see if we can open it: */
 	ret = journal_entry_open(j);
+	if (!ret)
+		res->seq = journal_cur_seq(j);
 	spin_unlock(&j->lock);
 
 	if (ret < 0)
@@ -407,7 +412,7 @@ retry:
 blocked:
 	if (!j->res_get_blocked_start)
 		j->res_get_blocked_start = local_clock() ?: 1;
-	return 0;
+	return -EAGAIN;
 }
 
 /*
@@ -421,14 +426,14 @@ blocked:
  * btree node write locks.
  */
 int bch2_journal_res_get_slowpath(struct journal *j, struct journal_res *res,
-				 unsigned u64s_min, unsigned u64s_max)
+				  unsigned flags)
 {
 	int ret;
 
 	wait_event(j->wait,
-		   (ret = __journal_res_get(j, res, u64s_min,
-					    u64s_max)));
-	return ret < 0 ? ret : 0;
+		   (ret = __journal_res_get(j, res, flags)) != -EAGAIN ||
+		   (flags & JOURNAL_RES_GET_NONBLOCK));
+	return ret;
 }
 
 u64 bch2_journal_last_unwritten_seq(struct journal *j)
@@ -452,28 +457,55 @@ u64 bch2_journal_last_unwritten_seq(struct journal *j)
  * btree root - every journal entry contains the roots of all the btrees, so it
  * doesn't need to bother with getting a journal reservation
  */
-int bch2_journal_open_seq_async(struct journal *j, u64 seq, struct closure *parent)
+int bch2_journal_open_seq_async(struct journal *j, u64 seq, struct closure *cl)
 {
-	int ret;
-
+	struct bch_fs *c = container_of(j, struct bch_fs, journal);
+	bool need_reclaim = false;
+retry:
 	spin_lock(&j->lock);
-	BUG_ON(seq > journal_cur_seq(j));
 
 	if (seq < journal_cur_seq(j) ||
 	    journal_entry_is_open(j)) {
 		spin_unlock(&j->lock);
-		return 1;
+		return 0;
 	}
 
-	ret = journal_entry_open(j);
-	if (!ret)
-		closure_wait(&j->async_wait, parent);
+	if (journal_cur_seq(j) < seq) {
+		switch (journal_buf_switch(j, false)) {
+		case JOURNAL_ENTRY_ERROR:
+			spin_unlock(&j->lock);
+			return -EROFS;
+		case JOURNAL_ENTRY_INUSE:
+			/* haven't finished writing out the previous one: */
+			trace_journal_entry_full(c);
+			goto blocked;
+		case JOURNAL_ENTRY_CLOSED:
+			break;
+		case JOURNAL_UNLOCKED:
+			goto retry;
+		}
+	}
+
+	BUG_ON(journal_cur_seq(j) < seq);
+
+	if (!journal_entry_open(j)) {
+		need_reclaim = true;
+		goto blocked;
+	}
+
 	spin_unlock(&j->lock);
 
-	if (!ret)
-		bch2_journal_reclaim_work(&j->reclaim_work.work);
+	return 0;
+blocked:
+	if (!j->res_get_blocked_start)
+		j->res_get_blocked_start = local_clock() ?: 1;
 
-	return ret;
+	closure_wait(&j->async_wait, cl);
+	spin_unlock(&j->lock);
+
+	if (need_reclaim)
+		bch2_journal_reclaim_work(&j->reclaim_work.work);
+	return -EAGAIN;
 }
 
 static int journal_seq_error(struct journal *j, u64 seq)
@@ -593,11 +625,10 @@ int bch2_journal_flush_seq(struct journal *j, u64 seq)
 void bch2_journal_meta_async(struct journal *j, struct closure *parent)
 {
 	struct journal_res res;
-	unsigned u64s = jset_u64s(0);
 
 	memset(&res, 0, sizeof(res));
 
-	bch2_journal_res_get(j, &res, u64s, u64s);
+	bch2_journal_res_get(j, &res, jset_u64s(0), 0);
 	bch2_journal_res_put(j, &res);
 
 	bch2_journal_flush_seq_async(j, res.seq, parent);
@@ -606,12 +637,11 @@ void bch2_journal_meta_async(struct journal *j, struct closure *parent)
 int bch2_journal_meta(struct journal *j)
 {
 	struct journal_res res;
-	unsigned u64s = jset_u64s(0);
 	int ret;
 
 	memset(&res, 0, sizeof(res));
 
-	ret = bch2_journal_res_get(j, &res, u64s, u64s);
+	ret = bch2_journal_res_get(j, &res, jset_u64s(0), 0);
 	if (ret)
 		return ret;
 
