@@ -2142,7 +2142,7 @@ int btrfs_qgroup_inherit(struct btrfs_trans_handle *trans,
 	int ret = 0;
 	int i;
 	u64 *i_qgroups;
-	struct btrfs_root *quota_root = fs_info->quota_root;
+	struct btrfs_root *quota_root;
 	struct btrfs_qgroup *srcgroup;
 	struct btrfs_qgroup *dstgroup;
 	u32 level_size = 0;
@@ -2152,6 +2152,7 @@ int btrfs_qgroup_inherit(struct btrfs_trans_handle *trans,
 	if (!test_bit(BTRFS_FS_QUOTA_ENABLED, &fs_info->flags))
 		goto out;
 
+	quota_root = fs_info->quota_root;
 	if (!quota_root) {
 		ret = -EINVAL;
 		goto out;
