@@ -1239,6 +1239,7 @@ static void bnxt_re_task(struct work_struct *work)
 				"Failed to register with IB: %#x", rc);
 			bnxt_re_remove_one(rdev);
 			bnxt_re_dev_unreg(rdev);
+			goto exit;
 		}
 		break;
 	case NETDEV_UP:
@@ -1262,6 +1263,7 @@ static void bnxt_re_task(struct work_struct *work)
 	}
 	smp_mb__before_atomic();
 	clear_bit(BNXT_RE_FLAG_TASK_IN_PROG, &rdev->flags);
+exit:
 	kfree(re_work);
 }
 
