@@ -13,23 +13,20 @@
 #include <linux/kernel.h>
 #include <linux/log2.h>
 
-struct genradix_node;
+struct genradix_root;
 
 struct __genradix {
-	struct genradix_node		*root;
-	size_t				depth;
+	struct genradix_root __rcu	*root;
 };
 
 /*
- * NOTE: currently, sizeof(_type) must be a power of two and not larger than
- * PAGE_SIZE:
+ * NOTE: currently, sizeof(_type) must not be larger than PAGE_SIZE:
  */
 
 #define __GENRADIX_INITIALIZER					\
 	{							\
 		.tree = {					\
 			.root = NULL,				\
-			.depth = 0,				\
 		}						\
 	}
 
