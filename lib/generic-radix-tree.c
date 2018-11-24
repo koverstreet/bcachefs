@@ -196,11 +196,9 @@ static void genradix_free_recurse(struct genradix_node *n, unsigned level)
 
 void __genradix_free(struct __genradix *radix)
 {
-	struct genradix_root *r = READ_ONCE(radix->root);
+	struct genradix_root *r = xchg(&radix->root, NULL);
 
 	genradix_free_recurse(genradix_root_to_node(r),
 			      genradix_root_to_depth(r));
-
-	radix->root = NULL;
 }
 EXPORT_SYMBOL(__genradix_free);
