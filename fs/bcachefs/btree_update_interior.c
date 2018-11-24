@@ -261,8 +261,6 @@ void bch2_btree_node_free_inmem(struct bch_fs *c, struct btree *b,
 	for_each_btree_iter(iter, linked)
 		BUG_ON(linked->l[b->level].b == b);
 
-	BUG_ON(b->lock.state.read_lock || b->lock.state.intent_lock != 1);
-
 	/*
 	 * Is this a node that isn't reachable on disk yet?
 	 *
