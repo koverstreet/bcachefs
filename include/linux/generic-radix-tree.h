@@ -125,4 +125,12 @@ static inline void __genradix_iter_advance(struct genradix_iter *iter,
 #define genradix_iter_advance(_iter, _radix)			\
 	__genradix_iter_advance(_iter, __genradix_obj_size(_radix))
 
+#define genradix_for_each_from(_radix, _iter, _p, _start)	\
+	for (_iter = genradix_iter_init(_radix, _start);	\
+	     (_p = genradix_iter_peek(&_iter, _radix)) != NULL;	\
+	     genradix_iter_advance(&_iter, _radix))
+
+#define genradix_for_each(_radix, _iter, _p)			\
+	genradix_for_each_from(_radix, _iter, _p, 0)
+
 #endif /* _LINUX_GENERIC_RADIX_TREE_H */
