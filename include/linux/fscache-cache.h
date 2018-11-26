@@ -183,7 +183,7 @@ static inline void fscache_enqueue_retrieval(struct fscache_retrieval *op)
 static inline void fscache_retrieval_complete(struct fscache_retrieval *op,
 					      int n_pages)
 {
-	if (atomic_sub_return(n_pages, &op->n_pages) <= 0)
+	if (atomic_sub_return_relaxed(n_pages, &op->n_pages) <= 0)
 		fscache_op_complete(&op->op, true);
 }
 
