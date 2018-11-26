@@ -100,7 +100,7 @@ void __bch2_open_bucket_put(struct bch_fs *c, struct open_bucket *ob)
 		return;
 	}
 
-	percpu_down_read_preempt_disable(&c->usage_lock);
+	percpu_down_read_preempt_disable(&c->mark_lock);
 	spin_lock(&ob->lock);
 
 	bch2_mark_alloc_bucket(c, ca, PTR_BUCKET_NR(ca, &ob->ptr),
@@ -108,7 +108,7 @@ void __bch2_open_bucket_put(struct bch_fs *c, struct open_bucket *ob)
 	ob->valid = false;
 
 	spin_unlock(&ob->lock);
-	percpu_up_read_preempt_enable(&c->usage_lock);
+	percpu_up_read_preempt_enable(&c->mark_lock);
 
 	spin_lock(&c->freelist_lock);
 	ob->freelist = c->open_buckets_freelist;
@@ -440,7 +440,7 @@ static int ec_stripe_alloc(struct bch_fs *c, struct ec_stripe_head *h)
 	open_bucket_for_each(c, &h->blocks, ob, i)
 		__clear_bit(ob->ptr.dev, devs.d);
 
-	percpu_down_read_preempt_disable(&c->usage_lock);
+	percpu_down_read_preempt_disable(&c->mark_lock);
 	rcu_read_lock();
 
 	if (h->parity.nr < h->redundancy) {
@@ -476,12 +476,12 @@ static int ec_stripe_alloc(struct bch_fs *c, struct ec_stripe_head *h)
 	}
 
 	rcu_read_unlock();
-	percpu_up_read_preempt_enable(&c->usage_lock);
+	percpu_up_read_preempt_enable(&c->mark_lock);
 
 	return bch2_ec_stripe_new_alloc(c, h);
 err:
 	rcu_read_unlock();
-	percpu_up_read_preempt_enable(&c->usage_lock);
+	percpu_up_read_preempt_enable(&c->mark_lock);
 	return -1;
 }
 
@@ -637,7 +637,7 @@ static int open_bucket_add_buckets(struct bch_fs *c,
 	if (*nr_effective >= nr_replicas)
 		return 0;
 
-	percpu_down_read_preempt_disable(&c->usage_lock);
+	percpu_down_read_preempt_disable(&c->mark_lock);
 	rcu_read_lock();
 
 retry_blocking:
@@ -654,7 +654,7 @@ retry_blocking:
 	}
 
 	rcu_read_unlock();
-	percpu_up_read_preempt_enable(&c->usage_lock);
+	percpu_up_read_preempt_enable(&c->mark_lock);
 
 	return ret;
 }

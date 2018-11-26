@@ -1720,9 +1720,9 @@ noclone:
 
 	bch2_increment_clock(c, bio_sectors(&rbio->bio), READ);
 
-	percpu_down_read_preempt_disable(&c->usage_lock);
+	percpu_down_read_preempt_disable(&c->mark_lock);
 	bucket_io_clock_reset(c, ca, PTR_BUCKET_NR(ca, &pick.ptr), READ);
-	percpu_up_read_preempt_enable(&c->usage_lock);
+	percpu_up_read_preempt_enable(&c->mark_lock);
 
 	if (likely(!(flags & (BCH_READ_IN_RETRY|BCH_READ_LAST_FRAGMENT)))) {
 		bio_inc_remaining(&orig->bio);
