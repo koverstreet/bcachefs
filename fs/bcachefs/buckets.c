@@ -322,7 +322,7 @@ void bch2_fs_usage_apply(struct bch_fs *c,
 	s64 added = sum.data + sum.reserved;
 	s64 should_not_have_added;
 
-	percpu_rwsem_assert_held(&c->usage_lock);
+	percpu_rwsem_assert_held(&c->mark_lock);
 
 	/*
 	 * Not allowed to reduce sectors_available except by getting a
@@ -362,7 +362,7 @@ static void bch2_dev_usage_update(struct bch_fs *c, struct bch_dev *ca,
 {
 	struct bch_dev_usage *dev_usage;
 
-	percpu_rwsem_assert_held(&c->usage_lock);
+	percpu_rwsem_assert_held(&c->mark_lock);
 
 	bch2_fs_inconsistent_on(old.data_type && new.data_type &&
 				old.data_type != new.data_type, c,
@@ -409,14 +409,14 @@ void bch2_dev_usage_from_buckets(struct bch_fs *c, struct bch_dev *ca)
 	struct bucket_array *buckets;
 	struct bucket *g;
 
-	percpu_down_read_preempt_disable(&c->usage_lock);
+	percpu_down_read_preempt_disable(&c->mark_lock);
 	fs_usage = this_cpu_ptr(c->usage[0]);
 	buckets = bucket_array(ca);
 
 	for_each_bucket(g, buckets)
 		if (g->mark.data_type)
 			bch2_dev_usage_update(c, ca, fs_usage, old, g->mark, false);
-	percpu_up_read_preempt_enable(&c->usage_lock);
+	percpu_up_read_preempt_enable(&c->mark_lock);
 }
 
 #define bucket_data_cmpxchg(c, ca, fs_usage, g, new, expr)	\
@@ -451,7 +451,7 @@ static void __bch2_invalidate_bucket(struct bch_fs *c, struct bch_dev *ca,
 void bch2_invalidate_bucket(struct bch_fs *c, struct bch_dev *ca,
 			    size_t b, struct bucket_mark *old)
 {
-	percpu_rwsem_assert_held(&c->usage_lock);
+	percpu_rwsem_assert_held(&c->mark_lock);
 
 	__bch2_invalidate_bucket(c, ca, b, old, false);
 
@@ -480,7 +480,7 @@ void bch2_mark_alloc_bucket(struct bch_fs *c, struct bch_dev *ca,
 			    size_t b, bool owned_by_allocator,
 			    struct gc_pos pos, unsigned flags)
 {
-	percpu_rwsem_assert_held(&c->usage_lock);
+	percpu_rwsem_assert_held(&c->mark_lock);
 
 	if (!(flags & BCH_BUCKET_MARK_GC))
 		__bch2_mark_alloc_bucket(c, ca, b, owned_by_allocator, false);
@@ -525,7 +525,7 @@ void bch2_mark_metadata_bucket(struct bch_fs *c, struct bch_dev *ca,
 	       type != BCH_DATA_JOURNAL);
 
 	if (likely(c)) {
-		percpu_rwsem_assert_held(&c->usage_lock);
+		percpu_rwsem_assert_held(&c->mark_lock);
 
 		if (!(flags & BCH_BUCKET_MARK_GC))
 			__bch2_mark_metadata_bucket(c, ca, b, type, sectors,
@@ -916,10 +916,10 @@ int bch2_mark_key(struct bch_fs *c, struct bkey_s_c k,
 {
 	int ret;
 
-	percpu_down_read_preempt_disable(&c->usage_lock);
+	percpu_down_read_preempt_disable(&c->mark_lock);
 	ret = bch2_mark_key_locked(c, k, inserting, sectors,
 				   pos, stats, journal_seq, flags);
-	percpu_up_read_preempt_enable(&c->usage_lock);
+	percpu_up_read_preempt_enable(&c->mark_lock);
 
 	return ret;
 }
@@ -938,7 +938,7 @@ void bch2_mark_update(struct btree_insert *trans,
 	if (!btree_node_type_needs_gc(iter->btree_id))
 		return;
 
-	percpu_down_read_preempt_disable(&c->usage_lock);
+	percpu_down_read_preempt_disable(&c->mark_lock);
 
 	if (!(trans->flags & BTREE_INSERT_JOURNAL_REPLAY))
 		bch2_mark_key_locked(c, bkey_i_to_s_c(insert->k), true,
@@ -995,7 +995,7 @@ void bch2_mark_update(struct btree_insert *trans,
 
 	bch2_fs_usage_apply(c, &stats, trans->disk_res, pos);
 
-	percpu_up_read_preempt_enable(&c->usage_lock);
+	percpu_up_read_preempt_enable(&c->mark_lock);
 }
 
 /* Disk reservations: */
@@ -1012,12 +1012,12 @@ static u64 bch2_recalc_sectors_available(struct bch_fs *c)
 
 void __bch2_disk_reservation_put(struct bch_fs *c, struct disk_reservation *res)
 {
-	percpu_down_read_preempt_disable(&c->usage_lock);
+	percpu_down_read_preempt_disable(&c->mark_lock);
 	this_cpu_sub(c->usage[0]->online_reserved,
 		     res->sectors);
 
 	bch2_fs_stats_verify(c);
-	percpu_up_read_preempt_enable(&c->usage_lock);
+	percpu_up_read_preempt_enable(&c->mark_lock);
 
 	res->sectors = 0;
 }
@@ -1032,7 +1032,7 @@ int bch2_disk_reservation_add(struct bch_fs *c, struct disk_reservation *res,
 	s64 sectors_available;
 	int ret;
 
-	percpu_down_read_preempt_disable(&c->usage_lock);
+	percpu_down_read_preempt_disable(&c->mark_lock);
 	stats = this_cpu_ptr(c->usage[0]);
 
 	if (sectors <= stats->available_cache)
@@ -1044,7 +1044,7 @@ int bch2_disk_reservation_add(struct bch_fs *c, struct disk_reservation *res,
 		get = min((u64) sectors + SECTORS_CACHE, old);
 
 		if (get < sectors) {
-			percpu_up_read_preempt_enable(&c->usage_lock);
+			percpu_up_read_preempt_enable(&c->mark_lock);
 			goto recalculate;
 		}
 	} while ((v = atomic64_cmpxchg(&c->sectors_available,
@@ -1059,7 +1059,7 @@ out:
 
 	bch2_disk_reservations_verify(c, flags);
 	bch2_fs_stats_verify(c);
-	percpu_up_read_preempt_enable(&c->usage_lock);
+	percpu_up_read_preempt_enable(&c->mark_lock);
 	return 0;
 
 recalculate:
@@ -1080,7 +1080,7 @@ recalculate:
 			return -EINTR;
 	}
 
-	percpu_down_write(&c->usage_lock);
+	percpu_down_write(&c->mark_lock);
 	sectors_available = bch2_recalc_sectors_available(c);
 
 	if (sectors <= sectors_available ||
@@ -1098,7 +1098,7 @@ recalculate:
 	}
 
 	bch2_fs_stats_verify(c);
-	percpu_up_write(&c->usage_lock);
+	percpu_up_write(&c->mark_lock);
 
 	if (!(flags & BCH_DISK_RESERVATION_GC_LOCK_HELD))
 		up_read(&c->gc_lock);
@@ -1174,7 +1174,7 @@ int bch2_dev_buckets_resize(struct bch_fs *c, struct bch_dev *ca, u64 nbuckets)
 	if (resize) {
 		down_write(&c->gc_lock);
 		down_write(&ca->bucket_lock);
-		percpu_down_write(&c->usage_lock);
+		percpu_down_write(&c->mark_lock);
 	}
 
 	old_buckets = bucket_array(ca);
@@ -1204,7 +1204,7 @@ int bch2_dev_buckets_resize(struct bch_fs *c, struct bch_dev *ca, u64 nbuckets)
 	swap(ca->buckets_written, buckets_written);
 
 	if (resize)
-		percpu_up_write(&c->usage_lock);
+		percpu_up_write(&c->mark_lock);
 
 	spin_lock(&c->freelist_lock);
 	for (i = 0; i < RESERVE_NR; i++) {
