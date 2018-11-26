@@ -102,6 +102,9 @@ flavours := $(firstword $(flavours))
 disable_d_i=true
 endif
 
+# Versions of dkms packages.
+dkms_nvidia_version=$(shell gawk '/^nvidia-graphics-drivers-/ { print $$2; }' debian/dkms-versions)
+
 # Debian Build System targets
 binary: binary-indep binary-arch
 
