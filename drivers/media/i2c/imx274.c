@@ -684,16 +684,19 @@ static int imx274_regmap_util_write_table_8(struct regmap *regmap,
 
 static inline int imx274_read_reg(struct stimx274 *priv, u16 addr, u8 *val)
 {
+	unsigned int uint_val;
 	int err;
 
-	err = regmap_read(priv->regmap, addr, (unsigned int *)val);
+	err = regmap_read(priv->regmap, addr, &uint_val);
 	if (err)
 		dev_err(&priv->client->dev,
 			"%s : i2c read failed, addr = %x\n", __func__, addr);
 	else
 		dev_dbg(&priv->client->dev,
 			"%s : addr 0x%x, val=0x%x\n", __func__,
-			addr, *val);
+			addr, uint_val);
+
+	*val = uint_val;
 	return err;
 }
 
