@@ -500,6 +500,10 @@ enum bch_fs_state {
 	BCH_FS_RW,
 };
 
+struct bch_fs_pcpu {
+	u64			sectors_available;
+};
+
 struct bch_fs {
 	struct closure		cl;
 
@@ -612,9 +616,11 @@ struct bch_fs {
 
 	atomic64_t		sectors_available;
 
-	struct bch_fs_usage __percpu *usage[2];
+	struct bch_fs_pcpu __percpu	*pcpu;
 
-	struct percpu_rw_semaphore mark_lock;
+	struct bch_fs_usage __percpu	*usage[2];
+
+	struct percpu_rw_semaphore	mark_lock;
 
 	/*
 	 * When we invalidate buckets, we use both the priority and the amount
