@@ -388,8 +388,14 @@ int bch2_fs_initialize(struct bch_fs *c)
 		goto err;
 
 	mutex_lock(&c->sb_lock);
-	c->disk_sb.sb->version = c->disk_sb.sb->version_min =
-		le16_to_cpu(bcachefs_metadata_version_current);
+	if (0) {
+		c->disk_sb.sb->version = c->disk_sb.sb->version_min =
+			le16_to_cpu(bcachefs_metadata_version_current);
+	} else {
+		c->disk_sb.sb->version =
+			le16_to_cpu(bcachefs_metadata_version_min);
+	}
+
 	c->disk_sb.sb->features[0] |= 1ULL << BCH_FEATURE_ATOMIC_NLINK;
 
 	SET_BCH_SB_INITIALIZED(c->disk_sb.sb, true);
