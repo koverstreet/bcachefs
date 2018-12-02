@@ -154,7 +154,7 @@ static struct meson_clk_pll meson8b_vid_pll = {
 	},
 	.n = {
 		.reg_off = HHI_VID_PLL_CNTL,
-		.shift   = 9,
+		.shift   = 10,
 		.width   = 5,
 	},
 	.od = {
