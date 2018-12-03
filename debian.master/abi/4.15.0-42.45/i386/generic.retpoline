@@ -1,3 +1,4 @@
+# retpoline v1.0
 arch/x86/pci/pcbios.c .text pci_bios_read lcall *(%esi)
 arch/x86/pci/pcbios.c .text pci_bios_read lcall *(%esi)
 arch/x86/pci/pcbios.c .text pci_bios_write lcall *(%esi)
