@@ -1487,6 +1487,8 @@ static void __split_and_process_bio(struct mapped_device *md,
 		return;
 	}
 
+	blk_queue_split(md->queue, &bio);
+
 	ci.map = map;
 	ci.md = md;
 	ci.io = alloc_io(md);
