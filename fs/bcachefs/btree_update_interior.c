@@ -1923,6 +1923,25 @@ static void __bch2_btree_node_update_key(struct bch_fs *c,
 
 	btree_interior_update_add_node_reference(as, b);
 
+	/*
+	 * XXX: the rest of the update path treats this like we're actually
+	 * inserting a new node and deleting the existing node, so the
+	 * reservation needs to include enough space for @b
+	 *
+	 * that is actually sketch as fuck though and I am surprised the code
+	 * seems to work like that, definitely need to go back and rework it
+	 * into something saner.
+	 *
+	 * (I think @b is just getting double counted until the btree update
+	 * finishes and "deletes" @b on disk)
+	 */
+	ret = bch2_disk_reservation_add(c, &as->reserve->disk_res,
+			c->opts.btree_node_size *
+			bch2_extent_nr_ptrs(extent_i_to_s_c(new_key)),
+			BCH_DISK_RESERVATION_NOFAIL|
+			BCH_DISK_RESERVATION_GC_LOCK_HELD);
+	BUG_ON(ret);
+
 	parent = btree_node_parent(iter, b);
 	if (parent) {
 		if (new_hash) {
