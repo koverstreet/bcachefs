@@ -342,7 +342,7 @@ static int __journal_res_get(struct journal *j, struct journal_res *res,
 	struct journal_buf *buf;
 	int ret;
 retry:
-	if (journal_res_get_fast(j, res))
+	if (journal_res_get_fast(j, res, flags))
 		return 0;
 
 	spin_lock(&j->lock);
@@ -351,7 +351,7 @@ retry:
 	 * that just did journal_entry_open() and call journal_entry_close()
 	 * unnecessarily
 	 */
-	if (journal_res_get_fast(j, res)) {
+	if (journal_res_get_fast(j, res, flags)) {
 		spin_unlock(&j->lock);
 		return 0;
 	}
@@ -377,11 +377,11 @@ retry:
 		return -EROFS;
 	case JOURNAL_ENTRY_INUSE:
 		/*
-		 * haven't finished writing out the previous entry, can't start
-		 * another yet:
-		 * signal to caller which sequence number we're trying to open:
+		 * The current journal entry is still open, but we failed to get
+		 * a journal reservation because there's not enough space in it,
+		 * and we can't close it and start another because we haven't
+		 * finished writing out the previous entry:
 		 */
-		res->seq = journal_cur_seq(j) + 1;
 		spin_unlock(&j->lock);
 		trace_journal_entry_full(c);
 		goto blocked;
@@ -393,8 +393,6 @@ retry:
 
 	/* We now have a new, closed journal buf - see if we can open it: */
 	ret = journal_entry_open(j);
-	if (!ret)
-		res->seq = journal_cur_seq(j);
 	spin_unlock(&j->lock);
 
 	if (ret < 0)
