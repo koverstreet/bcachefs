@@ -486,7 +486,6 @@ static inline int do_btree_insert_at(struct btree_insert *trans,
 					&trans->journal_res, u64s,
 					JOURNAL_RES_GET_NONBLOCK)) == -EAGAIN) {
 			struct btree_iter *iter = NULL;
-			struct closure cl;
 
 			trans_for_each_iter(trans, i)
 				iter = i->iter;
@@ -494,13 +493,9 @@ static inline int do_btree_insert_at(struct btree_insert *trans,
 			if (iter)
 				bch2_btree_iter_unlock(iter);
 
-			closure_init_stack(&cl);
-
-			while ((ret = bch2_journal_open_seq_async(&c->journal,
-							trans->journal_res.seq,
-							&cl)) == -EAGAIN)
-				closure_sync(&cl);
-
+			ret = bch2_journal_res_get(&c->journal,
+					&trans->journal_res, u64s,
+					JOURNAL_RES_GET_CHECK);
 			if (ret)
 				return ret;
 
