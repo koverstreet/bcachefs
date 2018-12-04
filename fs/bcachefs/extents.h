@@ -509,18 +509,6 @@ void bch2_extent_crc_append(struct bkey_i_extent *,
 void bch2_extent_ptr_decoded_append(struct bkey_i_extent *,
 				    struct extent_ptr_decoded *);
 
-static inline void __extent_entry_insert(struct bkey_i_extent *e,
-					 union bch_extent_entry *dst,
-					 union bch_extent_entry *new)
-{
-	union bch_extent_entry *end = extent_entry_last(extent_i_to_s(e));
-
-	memmove_u64s_up((u64 *) dst + extent_entry_u64s(new),
-			dst, (u64 *) end - (u64 *) dst);
-	e->k.u64s += extent_entry_u64s(new);
-	memcpy(dst, new, extent_entry_bytes(new));
-}
-
 static inline void __extent_entry_push(struct bkey_i_extent *e)
 {
 	union bch_extent_entry *entry = extent_entry_last(extent_i_to_s(e));

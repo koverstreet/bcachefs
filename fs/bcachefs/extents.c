@@ -1495,6 +1495,18 @@ void bch2_extent_crc_append(struct bkey_i_extent *e,
 	__extent_entry_push(e);
 }
 
+static inline void __extent_entry_insert(struct bkey_i_extent *e,
+					 union bch_extent_entry *dst,
+					 union bch_extent_entry *new)
+{
+	union bch_extent_entry *end = extent_entry_last(extent_i_to_s(e));
+
+	memmove_u64s_up((u64 *) dst + extent_entry_u64s(new),
+			dst, (u64 *) end - (u64 *) dst);
+	e->k.u64s += extent_entry_u64s(new);
+	memcpy(dst, new, extent_entry_bytes(new));
+}
+
 void bch2_extent_ptr_decoded_append(struct bkey_i_extent *e,
 				    struct extent_ptr_decoded *p)
 {
@@ -1503,8 +1515,10 @@ void bch2_extent_ptr_decoded_append(struct bkey_i_extent *e,
 	unsigned i;
 
 	extent_for_each_crc(extent_i_to_s(e), crc, pos)
-		if (!bch2_crc_unpacked_cmp(crc, p->crc))
+		if (!bch2_crc_unpacked_cmp(crc, p->crc)) {
+			pos = extent_entry_next(pos);
 			goto found;
+		}
 
 	bch2_extent_crc_append(e, p->crc);
 	pos = extent_entry_last(extent_i_to_s(e));
