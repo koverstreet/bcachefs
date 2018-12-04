@@ -271,8 +271,12 @@ static inline void bch2_journal_res_put(struct journal *j,
 int bch2_journal_res_get_slowpath(struct journal *, struct journal_res *,
 				  unsigned);
 
+#define JOURNAL_RES_GET_NONBLOCK	(1 << 0)
+#define JOURNAL_RES_GET_CHECK		(1 << 1)
+
 static inline int journal_res_get_fast(struct journal *j,
-				       struct journal_res *res)
+				       struct journal_res *res,
+				       unsigned flags)
 {
 	union journal_res_state old, new;
 	u64 v = atomic64_read(&j->reservations.counter);
@@ -287,6 +291,9 @@ static inline int journal_res_get_fast(struct journal *j,
 		if (new.cur_entry_offset + res->u64s > j->cur_entry_u64s)
 			return 0;
 
+		if (flags & JOURNAL_RES_GET_CHECK)
+			return 1;
+
 		new.cur_entry_offset += res->u64s;
 		journal_state_inc(&new);
 	} while ((v = atomic64_cmpxchg(&j->reservations.counter,
@@ -299,8 +306,6 @@ static inline int journal_res_get_fast(struct journal *j,
 	return 1;
 }
 
-#define JOURNAL_RES_GET_NONBLOCK	(1 << 0)
-
 static inline int bch2_journal_res_get(struct journal *j, struct journal_res *res,
 				       unsigned u64s, unsigned flags)
 {
@@ -311,15 +316,17 @@ static inline int bch2_journal_res_get(struct journal *j, struct journal_res *re
 
 	res->u64s = u64s;
 
-	if (journal_res_get_fast(j, res))
+	if (journal_res_get_fast(j, res, flags))
 		goto out;
 
 	ret = bch2_journal_res_get_slowpath(j, res, flags);
 	if (ret)
 		return ret;
 out:
-	lock_acquire_shared(&j->res_map, 0, 0, NULL, _THIS_IP_);
-	EBUG_ON(!res->ref);
+	if (!(flags & JOURNAL_RES_GET_CHECK)) {
+		lock_acquire_shared(&j->res_map, 0, 0, NULL, _THIS_IP_);
+		EBUG_ON(!res->ref);
+	}
 	return 0;
 }
 
