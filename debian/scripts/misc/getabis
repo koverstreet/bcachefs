@@ -28,7 +28,7 @@ fwinfo=$abidir/fwinfo
 test -d $tmpdir || mkdir $tmpdir
 
 package_prefixes() {
-	__package_prefixes="$@"
+	: # no longer used ...
 }
 
 getall() {
@@ -39,89 +39,118 @@ getall() {
 
 	for sub in $@; do
 		if [ -f $abidir/$arch/$sub ]; then
-			echo "Exists: $sub"
+			echo "Existing $sub($arch)..."
 			continue
 		fi
-		echo -n "Fetching $sub($arch)..."
-		prefixes=""
+		echo "Fetching $sub($arch)..."
+		getall_set "linux-buildinfo" "$arch" "$sub" || \
+		getall_set "linux-image-unsigned linux-modules linux-modules-extra" "$arch" "$sub" || \
+		getall_set "linux-image-unsigned linux-modules" "$arch" "$sub" || \
+		getall_set "linux-image linux-modules linux-modules-extra" "$arch" "$sub" || \
+		getall_set "linux-image linux-modules" "$arch" "$sub" || \
+		getall_set "linux-image linux-image-extra" "$arch" "$sub" || \
+		getall_set "linux-image" "$arch" "$sub" || \
+		{ echo "FAILED"; exit 1; }
+	done
+}
+getall_set()
+{
+	prefixes="$1"
+	arch="$2"
+	sub="$3"
+	(
+		echo -n "  set:"
 		filenames=""
 		cd $tmpdir
-		for prefix in $__package_prefixes
+		found=1
+		for prefix in $prefixes
 		do
+			echo -n " $prefix="
+			if [ "$found" = 0 ]; then
+				echo -n "-"
+				continue
+			fi
 			filename=${prefix}-${verabi}-${sub}_${verfull}_${arch}.deb
 			for r in "${repo_list[@]}"
 			do
 				if ! [ -f $filename ]; then
 					$WGET $r/$filename
+					rc="$?"
+					# If this was not successful or a valid error
+					# return from the server all bets are off, bail.
+					[ "$rc" != 0 -a "$rc" != 8 ] && return 1
 				fi
 				if [ -f $filename ]; then
-					prefixes="$prefixes $prefix"
+					echo -n "y"
 					filenames="$filenames $filename"
 					break
 				fi
 			done
-		done
-		if [ "$filenames" != "" ]; then
-			echo -n "extracting$prefixes..."
-			for filename in $filenames
-			do
-				dpkg-deb --extract $filename tmp
-			done
-			# FORM 1: linux-image et al extracted here.
-			if [ -d tmp/boot ]; then
-				echo -n "images..."
-				find tmp -name "*.ko" | while read f; do
-					modinfo $f | grep ^firmware >> $fwinfo
-				done
-				if [ -f tmp/boot/abi-* ]; then
-					mv tmp/boot/abi-* $abidir/$arch/$sub
-				else
-					echo -n "NO ABI FILE..."
-				fi
-				if [ -f tmp/boot/retpoline-* ]; then
-					mv tmp/boot/retpoline-* $abidir/$arch/$sub.retpoline
-				else
-					echo -n "NO RETPOLINE FILE..."
-				fi
-				(cd tmp; find lib/modules/$verabi-$sub/kernel -name '*.ko') | \
-					sed -e 's/.*\/\([^\/]*\)\.ko/\1/' | sort > \
-					$abidir/$arch/$sub.modules
-				(
-					cd tmp;
-					# Prevent exposing some errors when called by python scripts. SIGPIPE seems to get
-					# exposed when using the `find ...` form of the command.
-					ko=$(find lib/modules/$verabi-$sub/kernel \
-						-name '*.ko' | head -1)
-					readelf -p .comment "$ko" | gawk '
-						($1 == "[") {
-							printf("%s", $3);
-							for (n=4; n<=NF; n++) {
-								printf(" %s", $n);
-							}
-							print ""
-						}' | sort -u >$abidir/$arch/$sub.compiler
-					version=`cat $abidir/$arch/$sub.compiler`
-					echo -n "$version..."
-				)
-			# FORM 2: moduleinfo packages
-			# cranky-fix -- modinfo supported
-			else
-				echo -n "buildinfo..."
-				base="tmp/usr/lib/linux/${verabi}-${sub}"
-				mv "$base/abi" "$abidir/$arch/$sub"
-				for comp in 'modules' 'retpoline' 'compiler'
-				do
-					mv "$base/$comp" "$abidir/$arch/$sub.$comp"
-				done
-				cat "$base/fwinfo" >>"$fwinfo"
+			if [ ! -f "$filename" ]; then
+				echo -n "n"
+				found=0
 			fi
-			rm -rf tmp $filenames
-			echo "done."
-		else
-			echo "FAILED."
+		done
+		echo ""
+		if [ "$found" = 0 ]; then
+			return 1
 		fi
-		cd $origdir
-	done
+		echo "  extracting..."
+		for filename in $filenames
+		do
+			dpkg-deb --extract $filename tmp
+		done
+		# FORM 1: linux-image et al extracted here.
+		if [ -d tmp/boot ]; then
+			echo "  images..."
+			find tmp -name "*.ko" | while read f; do
+				modinfo $f | grep ^firmware >> $fwinfo
+			done
+			if [ -f tmp/boot/abi-* ]; then
+				mv tmp/boot/abi-* $abidir/$arch/$sub
+			else
+				echo "    NO ABI FILE"
+			fi
+			if [ -f tmp/boot/retpoline-* ]; then
+				mv tmp/boot/retpoline-* $abidir/$arch/$sub.retpoline
+			else
+				echo "    NO RETPOLINE FILE"
+			fi
+			(cd tmp; find lib/modules/$verabi-$sub/kernel -name '*.ko') | \
+				sed -e 's/.*\/\([^\/]*\)\.ko/\1/' | sort > \
+				$abidir/$arch/$sub.modules
+			(
+				cd tmp;
+				# Prevent exposing some errors when called by python scripts. SIGPIPE seems to get
+				# exposed when using the `find ...` form of the command.
+				ko=$(find lib/modules/$verabi-$sub/kernel \
+					-name '*.ko' | head -1)
+				readelf -p .comment "$ko" | gawk '
+					($1 == "[") {
+						printf("%s", $3);
+						for (n=4; n<=NF; n++) {
+							printf(" %s", $n);
+						}
+						print ""
+					}' | sort -u >$abidir/$arch/$sub.compiler
+				version=`cat $abidir/$arch/$sub.compiler`
+				echo "    $version"
+			)
+		# FORM 2: moduleinfo packages
+		# cranky-fix -- modinfo supported
+		else
+			echo "  buildinfo..."
+			base="tmp/usr/lib/linux/${verabi}-${sub}"
+			mv "$base/abi" "$abidir/$arch/$sub"
+			for comp in 'modules' 'retpoline' 'compiler'
+			do
+				mv "$base/$comp" "$abidir/$arch/$sub.$comp"
+			done
+			cat "$base/fwinfo" >>"$fwinfo"
+		fi
+		rm -rf tmp $filenames
+		echo "  done"
+	)
 }
 
 # MAIN
@@ -132,8 +161,6 @@ echo $abi > $abidir/abiname
 
 # NOTE: The flavours are hardcoded, because they may have changed from the
 # current build.
-
-__package_prefixes="linux-image"
 
 . $DEBIAN/etc/getabis
 
