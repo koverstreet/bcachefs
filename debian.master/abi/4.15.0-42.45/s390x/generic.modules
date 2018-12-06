@@ -784,6 +784,7 @@ unix_diag
 veth
 vfio
 vfio-pci
+vfio_ap
 vfio_ccw
 vfio_iommu_type1
 vfio_mdev

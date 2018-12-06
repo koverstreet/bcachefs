@@ -754,7 +754,7 @@ EXPORT_SYMBOL drivers/s390/crypto/zcrypt 0x00000000	zcrypt_card_get
 EXPORT_SYMBOL drivers/s390/crypto/zcrypt 0x00000000	zcrypt_card_put
 EXPORT_SYMBOL drivers/s390/crypto/zcrypt 0x00000000	zcrypt_card_register
 EXPORT_SYMBOL drivers/s390/crypto/zcrypt 0x00000000	zcrypt_card_unregister
-EXPORT_SYMBOL drivers/s390/crypto/zcrypt 0x00000000	zcrypt_device_status_mask
+EXPORT_SYMBOL drivers/s390/crypto/zcrypt 0x00000000	zcrypt_device_status_mask_ext
 EXPORT_SYMBOL drivers/s390/crypto/zcrypt 0x00000000	zcrypt_msgtype
 EXPORT_SYMBOL drivers/s390/crypto/zcrypt 0x00000000	zcrypt_queue_alloc
 EXPORT_SYMBOL drivers/s390/crypto/zcrypt 0x00000000	zcrypt_queue_free
@@ -2029,14 +2029,12 @@ EXPORT_SYMBOL vmlinux 0x00000000	ap_flush_queue
 EXPORT_SYMBOL vmlinux 0x00000000	ap_owned_by_def_drv
 EXPORT_SYMBOL vmlinux 0x00000000	ap_query_configuration
 EXPORT_SYMBOL vmlinux 0x00000000	ap_queue_init_reply
-EXPORT_SYMBOL vmlinux 0x00000000	ap_queue_irq_ctrl
 EXPORT_SYMBOL vmlinux 0x00000000	ap_queue_message
 EXPORT_SYMBOL vmlinux 0x00000000	ap_queue_remove
 EXPORT_SYMBOL vmlinux 0x00000000	ap_queue_resume
 EXPORT_SYMBOL vmlinux 0x00000000	ap_queue_suspend
 EXPORT_SYMBOL vmlinux 0x00000000	ap_recv
 EXPORT_SYMBOL vmlinux 0x00000000	ap_send
-EXPORT_SYMBOL vmlinux 0x00000000	ap_test_queue
 EXPORT_SYMBOL vmlinux 0x00000000	arch_debugfs_dir
 EXPORT_SYMBOL vmlinux 0x00000000	arch_read_lock_wait
 EXPORT_SYMBOL vmlinux 0x00000000	arch_spin_lock_wait
@@ -9436,6 +9434,8 @@ EXPORT_SYMBOL_GPL vmlinux 0x00000000	ktime_get_snapshot
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	ktime_get_ts64
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	ktime_get_with_offset
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	ktime_mono_to_any
+EXPORT_SYMBOL_GPL vmlinux 0x00000000	kvm_arch_crypto_clear_masks
+EXPORT_SYMBOL_GPL vmlinux 0x00000000	kvm_arch_crypto_set_masks
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	kvm_clear_guest
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	kvm_clear_guest_page
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	kvm_debugfs_dir
