@@ -820,6 +820,9 @@ int driver_attach(struct device_driver *drv)
 }
 EXPORT_SYMBOL_GPL(driver_attach);
 
+void *vfio_pci_driver_ptr = (void *)0xdeadfeed;
+EXPORT_SYMBOL(vfio_pci_driver_ptr);
+
 /*
  * __device_release_driver() must be called with @dev lock held.
  * When called for a USB interface, @dev->parent lock must be held as well.
@@ -872,8 +875,13 @@ static void __device_release_driver(struct device *dev, struct device *parent)
 		 * A concurrent invocation of the same function might
 		 * have released the driver successfully while this one
 		 * was waiting, so check for that.
+		 * LP: #1792099
+		 *
+		 * Limit this to the vfio_pci_driver as some drivers NULL
+		 * out this pointer in their remove() function.
+		 * LP: #1803942
 		 */
-		if (dev->driver != drv)
+		if (drv == vfio_pci_driver_ptr && dev->driver != drv)
 			return;
 
 		device_links_driver_cleanup(dev);

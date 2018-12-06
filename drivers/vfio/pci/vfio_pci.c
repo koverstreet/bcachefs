@@ -1310,6 +1310,7 @@ static struct pci_driver vfio_pci_driver = {
 	.remove		= vfio_pci_remove,
 	.err_handler	= &vfio_err_handlers,
 };
+extern void *vfio_pci_driver_ptr;
 
 struct vfio_devices {
 	struct vfio_device **devices;
@@ -1404,6 +1405,8 @@ put_devs:
 
 static void __exit vfio_pci_cleanup(void)
 {
+	vfio_pci_driver_ptr = (void *)0xdeadfeed;
+
 	pci_unregister_driver(&vfio_pci_driver);
 	vfio_pci_uninit_perm_bits();
 }
@@ -1464,6 +1467,9 @@ static int __init vfio_pci_init(void)
 		goto out_driver;
 
 	vfio_pci_fill_ids();
+
+	/* Advertise my address. */
+	vfio_pci_driver_ptr = &vfio_pci_driver;
 
 	return 0;
 
