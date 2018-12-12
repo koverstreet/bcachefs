@@ -707,8 +707,10 @@ void wbt_disable_default(struct request_queue *q)
 {
 	struct rq_wb *rwb = q->rq_wb;
 
-	if (rwb && rwb->enable_state == WBT_STATE_ON_DEFAULT)
+	if (rwb && rwb->enable_state == WBT_STATE_ON_DEFAULT) {
+		blk_stat_deactivate(rwb->cb);
 		wbt_exit(q);
+	}
 }
 EXPORT_SYMBOL_GPL(wbt_disable_default);
 
