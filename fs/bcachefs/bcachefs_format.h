@@ -73,6 +73,7 @@
 
 #include <asm/types.h>
 #include <asm/byteorder.h>
+#include <linux/kernel.h>
 #include <linux/uuid.h>
 
 #define LE_BITMASK(_bits, name, type, field, offset, end)		\
