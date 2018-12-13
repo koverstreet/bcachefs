@@ -1325,7 +1325,7 @@ fail:
 		dmaengine_terminate_all(chan);
 	for (i = 0; i < 2; i++)
 		s->cookie_rx[i] = -EINVAL;
-	s->active_rx = -EINVAL;
+	s->active_rx = 0;
 	sci_rx_dma_release(s, true);
 }
 
