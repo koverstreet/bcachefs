@@ -244,8 +244,7 @@ void bch_debug_init_cache_set(struct cache_set *c)
 
 void bch_debug_exit(void)
 {
-	if (!IS_ERR_OR_NULL(debug))
-		debugfs_remove_recursive(debug);
+	debugfs_remove_recursive(debug);
 }
 
 int __init bch_debug_init(struct kobject *kobj)
