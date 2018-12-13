@@ -2,12 +2,14 @@
 
 #include "bcachefs.h"
 #include "chardev.h"
+#include "dirent.h"
 #include "fs.h"
 #include "fs-ioctl.h"
 #include "quota.h"
 
 #include <linux/compat.h>
 #include <linux/mount.h>
+#include <linux/namei.h>
 
 #define FS_IOC_GOINGDOWN	     _IOR('X', 125, __u32)
 
@@ -189,6 +191,100 @@ err:
 	return ret;
 }
 
+static int reinherit_attrs_fn(struct bch_inode_info *inode,
+			      struct bch_inode_unpacked *bi,
+			      void *p)
+{
+	struct bch_inode_info *dir = p;
+	u64 src, dst;
+	unsigned id;
+	int ret = 1;
+
+	for (id = 0; id < Inode_opt_nr; id++) {
+		if (bi->bi_fields_set & (1 << id))
+			continue;
+
+		src = bch2_inode_opt_get(&dir->ei_inode, id);
+		dst = bch2_inode_opt_get(bi, id);
+
+		if (src == dst)
+			continue;
+
+		__bch2_inode_opt_set(bi, id, src);
+		ret = 0;
+	}
+
+	return ret;
+}
+
+static int __reinherit_attrs(struct bch_fs *c,
+			     struct bch_inode_info *dir,
+			     struct bch_inode_info *inode)
+{
+	int ret;
+
+	mutex_lock(&inode->ei_update_lock);
+	ret = bch2_write_inode(c, inode, reinherit_attrs_fn, dir, 0);
+	mutex_unlock(&inode->ei_update_lock);
+
+	if (ret < 0)
+		return ret;
+
+	return !ret;
+}
+
+static int reinherit_attrs_trans(struct btree_trans *trans,
+				 struct bch_inode_info *inode,
+
+static int bch2_ioc_reinherit_attrs(struct bch_fs *c,
+				    struct file *file,
+				    struct bch_inode_info *inode,
+				    const char __user *name)
+{
+	struct inode *vinode = NULL;
+	char *kname = NULL;
+	struct qstr qstr;
+	int ret = 0;
+	u64 inum;
+
+	kname = kmalloc(BCH_NAME_MAX + 1, GFP_KERNEL);
+	if (!kname)
+		return -ENOMEM;
+
+	ret = strncpy_from_user(kname, name, BCH_NAME_MAX);
+	if (unlikely(ret < 0))
+		goto err;
+
+	qstr.hash_len	= ret;
+	qstr.name	= kname;
+
+	ret = -ENOENT;
+	inum = bch2_dirent_lookup(c, inode->v.i_ino,
+				  &inode->ei_str_hash,
+				  &qstr);
+	if (!inum)
+		goto err;
+
+	vinode = bch2_vfs_inode_get(c, inum);
+	ret = PTR_ERR_OR_ZERO(vinode);
+	if (ret)
+		goto err;
+
+	ret = mnt_want_write_file(file);
+	if (ret)
+		goto err;
+
+	ret = __reinherit_attrs(c, inode, to_bch_ei(vinode));
+
+	mnt_drop_write_file(file);
+err:
+	if (vinode)
+		iput(vinode);
+	kfree(kname);
+
+	return ret;
+}
+
 long bch2_fs_file_ioctl(struct file *file, unsigned cmd, unsigned long arg)
 {
 	struct bch_inode_info *inode = file_bch_inode(file);
@@ -205,7 +301,12 @@ long bch2_fs_file_ioctl(struct file *file, unsigned cmd, unsigned long arg)
 	case FS_IOC_FSGETXATTR:
 		return bch2_ioc_fsgetxattr(inode, (void __user *) arg);
 	case FS_IOC_FSSETXATTR:
-		return bch2_ioc_fssetxattr(c, file, inode, (void __user *) arg);
+		return bch2_ioc_fssetxattr(c, file, inode,
+					   (void __user *) arg);
+
+	case BCHFS_IOC_REINHERIT_ATTRS:
+		return bch2_ioc_reinherit_attrs(c, file, inode,
+						(void __user *) arg);
 
 	case FS_IOC_GETVERSION:
 		return -ENOTTY;

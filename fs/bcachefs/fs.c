@@ -197,7 +197,7 @@ retry:
 	return ret < 0 ? ret : 0;
 }
 
-static struct inode *bch2_vfs_inode_get(struct bch_fs *c, u64 inum)
+struct inode *bch2_vfs_inode_get(struct bch_fs *c, u64 inum)
 {
 	struct bch_inode_unpacked inode_u;
 	struct bch_inode_info *inode;

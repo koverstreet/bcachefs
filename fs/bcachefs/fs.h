@@ -53,6 +53,8 @@ struct bch_inode_unpacked;
 
 #ifndef NO_BCACHEFS_FS
 
+struct inode *bch2_vfs_inode_get(struct bch_fs *, u64);
+
 /* returns 0 if we want to do the update, or error is passed up */
 typedef int (*inode_set_fn)(struct bch_inode_info *,
 			    struct bch_inode_unpacked *, void *);

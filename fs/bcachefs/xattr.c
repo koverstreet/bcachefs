@@ -443,10 +443,14 @@ static int inode_opt_set_fn(struct bch_inode_info *inode,
 {
 	struct inode_opt_set *s = p;
 
-	if (s->defined)
+	if (s->defined) {
 		bch2_inode_opt_set(bi, s->id, s->v);
-	else
+		bi->bi_fields_set |= 1U << s->id;
+	} else {
 		bch2_inode_opt_clear(bi, s->id);
+		bi->bi_fields_set &= ~(1U << s->id);
+	}
+
 	return 0;
 }
 
@@ -460,13 +464,19 @@ static int bch2_xattr_bcachefs_set(const struct xattr_handler *handler,
 	const struct bch_option *opt;
 	char *buf;
 	struct inode_opt_set s;
-	int ret;
+	int opt_id, inode_opt_id, ret;
 
-	s.id = bch2_opt_lookup(name);
-	if (s.id < 0 || !bch2_opt_is_inode_opt(s.id))
+	opt_id = bch2_opt_lookup(name);
+	if (opt_id < 0)
 		return -EINVAL;
 
-	opt = bch2_opt_table + s.id;
+	opt = bch2_opt_table + opt_id;
+
+	inode_opt_id = opt_to_inode_opt(opt_id);
+	if (inode_opt_id < 0)
+		return -EINVAL;
+
+	s.id = inode_opt_id;
 
 	if (value) {
 		buf = kmalloc(size + 1, GFP_KERNEL);
@@ -481,7 +491,7 @@ static int bch2_xattr_bcachefs_set(const struct xattr_handler *handler,
 		if (ret < 0)
 			return ret;
 
-		ret = bch2_opt_check_may_set(c, s.id, s.v);
+		ret = bch2_opt_check_may_set(c, opt_id, s.v);
 		if (ret < 0)
 			return ret;
 
@@ -495,8 +505,8 @@ static int bch2_xattr_bcachefs_set(const struct xattr_handler *handler,
 	mutex_unlock(&inode->ei_update_lock);
 
 	if (value &&
-	    (s.id == Opt_background_compression ||
-	     s.id == Opt_background_target))
+	    (opt_id == Opt_background_compression ||
+	     opt_id == Opt_background_target))
 		bch2_rebalance_add_work(c, inode->v.i_blocks);
 
 	return ret;
