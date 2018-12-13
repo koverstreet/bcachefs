@@ -274,14 +274,13 @@ __bch2_create(struct bch_inode_info *dir, struct dentry *dentry,
 	bch2_inode_init(c, &inode_u, 0, 0, 0, rdev, &dir->ei_inode);
 	bch2_inode_init_owner(&inode_u, &dir->v, mode);
 
-	inode_u.bi_project = dir->ei_qid.q[QTYP_PRJ];
-
 	hash_info = bch2_hash_info_init(c, &inode_u);
 
 	if (tmpfile)
 		inode_u.bi_flags |= BCH_INODE_UNLINKED;
 
-	ret = bch2_quota_acct(c, bch_qid(&inode_u), Q_INO, 1, KEY_TYPE_QUOTA_PREALLOC);
+	ret = bch2_quota_acct(c, bch_qid(&inode_u), Q_INO, 1,
+			      KEY_TYPE_QUOTA_PREALLOC);
 	if (ret)
 		return ERR_PTR(ret);
 

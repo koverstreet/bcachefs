@@ -114,9 +114,9 @@ static int bch2_set_projid(struct bch_fs *c,
 
 	qid.q[QTYP_PRJ] = projid;
 
-	return bch2_quota_transfer(c, 1 << QTYP_PRJ, qid, inode->ei_qid,
-				   inode->v.i_blocks +
-				   inode->ei_quota_reserved);
+	ret = bch2_quota_transfer(c, 1 << QTYP_PRJ, qid, inode->ei_qid,
+				  inode->v.i_blocks +
+				  inode->ei_quota_reserved);
 	if (ret)
 		return ret;
 
@@ -171,7 +171,11 @@ static int bch2_ioc_fssetxattr(struct bch_fs *c,
 	}
 
 	mutex_lock(&inode->ei_update_lock);
+
+	mutex_lock(&inode->ei_quota_lock);
 	ret = bch2_set_projid(c, inode, fa.fsx_projid);
+	mutex_unlock(&inode->ei_quota_lock);
+
 	if (ret)
 		goto err_unlock;
 

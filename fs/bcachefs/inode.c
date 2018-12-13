@@ -12,7 +12,12 @@
 
 #include <asm/unaligned.h>
 
-#define FIELD_BYTES()						\
+const char * const bch2_inode_opts[] = {
+#define x(name, ...)	#name,
+	BCH_INODE_OPTS()
+#undef  x
+	NULL,
+};
 
 static const u8 byte_table[8] = { 1, 2, 3, 4, 6, 8, 10, 13 };
 static const u8 bits_table[8] = {
@@ -254,7 +259,8 @@ void bch2_inode_init(struct bch_fs *c, struct bch_inode_unpacked *inode_u,
 
 	/* ick */
 	inode_u->bi_flags |= c->opts.str_hash << INODE_STR_HASH_OFFSET;
-	get_random_bytes(&inode_u->bi_hash_seed, sizeof(inode_u->bi_hash_seed));
+	get_random_bytes(&inode_u->bi_hash_seed,
+			 sizeof(inode_u->bi_hash_seed));
 
 	inode_u->bi_mode	= mode;
 	inode_u->bi_uid		= uid;
