@@ -6406,6 +6406,8 @@ static const struct hda_fixup alc269_fixups[] = {
 	[ALC285_FIXUP_LENOVO_HEADPHONE_NOISE] = {
 		.type = HDA_FIXUP_FUNC,
 		.v.func = alc285_fixup_invalidate_dacs,
+		.chained = true,
+		.chain_id = ALC269_FIXUP_THINKPAD_ACPI
 	},
 };
 
