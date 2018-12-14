@@ -443,13 +443,12 @@ static int inode_opt_set_fn(struct bch_inode_info *inode,
 {
 	struct inode_opt_set *s = p;
 
-	if (s->defined) {
-		bch2_inode_opt_set(bi, s->id, s->v);
+	if (s->defined)
 		bi->bi_fields_set |= 1U << s->id;
-	} else {
-		bch2_inode_opt_clear(bi, s->id);
+	else
 		bi->bi_fields_set &= ~(1U << s->id);
-	}
+
+	bch2_inode_opt_set(bi, s->id, s->v);
 
 	return 0;
 }
@@ -479,24 +478,36 @@ static int bch2_xattr_bcachefs_set(const struct xattr_handler *handler,
 	s.id = inode_opt_id;
 
 	if (value) {
+		u64 v = 0;
+
 		buf = kmalloc(size + 1, GFP_KERNEL);
 		if (!buf)
 			return -ENOMEM;
 		memcpy(buf, value, size);
 		buf[size] = '\0';
 
-		ret = bch2_opt_parse(c, opt, buf, &s.v);
+		ret = bch2_opt_parse(c, opt, buf, &v);
 		kfree(buf);
 
 		if (ret < 0)
 			return ret;
 
-		ret = bch2_opt_check_may_set(c, opt_id, s.v);
+		ret = bch2_opt_check_may_set(c, opt_id, v);
 		if (ret < 0)
 			return ret;
 
+		s.v = v + 1;
 		s.defined = true;
 	} else {
+		if (!IS_ROOT(dentry)) {
+			struct bch_inode_info *dir =
+				to_bch_ei(d_inode(dentry->d_parent));
+
+			s.v = bch2_inode_opt_get(&dir->ei_inode, inode_opt_id);
+		} else {
+			s.v = 0;
+		}
+
 		s.defined = false;
 	}
 

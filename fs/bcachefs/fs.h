@@ -29,6 +29,30 @@ struct bch_inode_info {
 #define to_bch_ei(_inode)					\
 	container_of_or_null(_inode, struct bch_inode_info, v)
 
+static inline int ptrcmp(void *l, void *r)
+{
+	return (l > r) - (l < r);
+}
+
+#define __bch2_lock_inodes(_lock, ...)					\
+do {									\
+	struct bch_inode_info *a[] = { NULL, __VA_ARGS__ };		\
+	unsigned i;							\
+									\
+	bubble_sort(&a[1], ARRAY_SIZE(a) - 1 , ptrcmp);			\
+									\
+	for (i = ARRAY_SIZE(a) - 1; a[i]; --i)				\
+		if (a[i] != a[i - 1]) {					\
+			if (_lock)					\
+				mutex_lock_nested(&a[i]->ei_update_lock, i);\
+			else						\
+				mutex_unlock(&a[i]->ei_update_lock);	\
+		}							\
+} while (0)
+
+#define bch2_lock_inodes(...)	__bch2_lock_inodes(true, __VA_ARGS__)
+#define bch2_unlock_inodes(...)	__bch2_lock_inodes(false, __VA_ARGS__)
+
 static inline struct bch_inode_info *file_bch_inode(struct file *file)
 {
 	return to_bch_ei(file_inode(file));
@@ -49,11 +73,38 @@ static inline u64 bch2_current_time(struct bch_fs *c)
 	return timespec_to_bch2_time(c, current_kernel_time64());
 }
 
+static inline bool inode_attr_changing(struct bch_inode_info *dir,
+				struct bch_inode_info *inode,
+				enum inode_opt_id id)
+{
+	return !(inode->ei_inode.bi_fields_set & (1 << id)) &&
+		bch2_inode_opt_get(&dir->ei_inode, id) !=
+		bch2_inode_opt_get(&inode->ei_inode, id);
+}
+
+static inline bool inode_attrs_changing(struct bch_inode_info *dir,
+				 struct bch_inode_info *inode)
+{
+	unsigned id;
+
+	for (id = 0; id < Inode_opt_nr; id++)
+		if (inode_attr_changing(dir, inode, id))
+			return true;
+
+	return false;
+}
+
 struct bch_inode_unpacked;
 
 #ifndef NO_BCACHEFS_FS
 
 struct inode *bch2_vfs_inode_get(struct bch_fs *, u64);
+
+int bch2_fs_quota_transfer(struct bch_fs *,
+			   struct bch_inode_info *,
+			   struct bch_qid,
+			   unsigned,
+			   enum quota_acct_mode);
 
 /* returns 0 if we want to do the update, or error is passed up */
 typedef int (*inode_set_fn)(struct bch_inode_info *,
@@ -69,6 +120,10 @@ int __must_check bch2_write_inode_trans(struct btree_trans *,
 				inode_set_fn, void *);
 int __must_check bch2_write_inode(struct bch_fs *, struct bch_inode_info *,
 				  inode_set_fn, void *, unsigned);
+
+int bch2_reinherit_attrs_fn(struct bch_inode_info *,
+			    struct bch_inode_unpacked *,
+			    void *);
 
 void bch2_vfs_exit(void);
 int bch2_vfs_init(void);

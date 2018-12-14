@@ -47,30 +47,6 @@ static void journal_seq_copy(struct bch_inode_info *dst,
 	} while ((v = cmpxchg(&dst->ei_journal_seq, old, journal_seq)) != old);
 }
 
-static inline int ptrcmp(void *l, void *r)
-{
-	return (l > r) - (l < r);
-}
-
-#define __bch2_lock_inodes(_lock, ...)					\
-do {									\
-	struct bch_inode_info *a[] = { NULL, __VA_ARGS__ };		\
-	unsigned i;							\
-									\
-	bubble_sort(&a[1], ARRAY_SIZE(a) - 1 , ptrcmp);			\
-									\
-	for (i = ARRAY_SIZE(a) - 1; a[i]; --i)				\
-		if (a[i] != a[i - 1]) {					\
-			if (_lock)					\
-				mutex_lock_nested(&a[i]->ei_update_lock, i);\
-			else						\
-				mutex_unlock(&a[i]->ei_update_lock);	\
-		}							\
-} while (0)
-
-#define bch2_lock_inodes(...)	__bch2_lock_inodes(true, __VA_ARGS__)
-#define bch2_unlock_inodes(...)	__bch2_lock_inodes(false, __VA_ARGS__)
-
 /*
  * I_SIZE_DIRTY requires special handling:
  *
@@ -119,7 +95,6 @@ void bch2_inode_update_after_write(struct bch_fs *c,
 		inode->v.i_ctime = bch2_time_to_timespec(c, bi->bi_ctime);
 
 	inode->ei_inode		= *bi;
-	inode->ei_qid		= bch_qid(bi);
 
 	bch2_inode_flags_to_vfs(inode);
 }
@@ -195,6 +170,67 @@ retry:
 
 	bch2_trans_exit(&trans);
 	return ret < 0 ? ret : 0;
+}
+
+int bch2_fs_quota_transfer(struct bch_fs *c,
+			   struct bch_inode_info *inode,
+			   struct bch_qid new_qid,
+			   unsigned qtypes,
+			   enum quota_acct_mode mode)
+{
+	unsigned i;
+	int ret;
+
+	qtypes &= enabled_qtypes(c);
+
+	for (i = 0; i < QTYP_NR; i++)
+		if (new_qid.q[i] == inode->ei_qid.q[i])
+			qtypes &= ~(1U << i);
+
+	if (!qtypes)
+		return 0;
+
+	mutex_lock(&inode->ei_quota_lock);
+
+	ret = bch2_quota_transfer(c, qtypes, new_qid,
+				  inode->ei_qid,
+				  inode->v.i_blocks +
+				  inode->ei_quota_reserved,
+				  mode);
+	if (!ret)
+		for (i = 0; i < QTYP_NR; i++)
+			if (qtypes & (1 << i))
+				inode->ei_qid.q[i] = new_qid.q[i];
+
+	mutex_unlock(&inode->ei_quota_lock);
+
+	return ret;
+}
+
+int bch2_reinherit_attrs_fn(struct bch_inode_info *inode,
+			    struct bch_inode_unpacked *bi,
+			    void *p)
+{
+	struct bch_inode_info *dir = p;
+	u64 src, dst;
+	unsigned id;
+	int ret = 1;
+
+	for (id = 0; id < Inode_opt_nr; id++) {
+		if (bi->bi_fields_set & (1 << id))
+			continue;
+
+		src = bch2_inode_opt_get(&dir->ei_inode, id);
+		dst = bch2_inode_opt_get(bi, id);
+
+		if (src == dst)
+			continue;
+
+		bch2_inode_opt_set(bi, id, src);
+		ret = 0;
+	}
+
+	return ret;
 }
 
 struct inode *bch2_vfs_inode_get(struct bch_fs *c, u64 inum)
@@ -663,6 +699,7 @@ static int inode_update_for_rename_fn(struct bch_inode_info *inode,
 				      void *p)
 {
 	struct rename_info *info = p;
+	int ret;
 
 	if (inode == info->src_dir) {
 		bi->bi_nlink -= S_ISDIR(info->src_inode->v.i_mode);
@@ -675,6 +712,19 @@ static int inode_update_for_rename_fn(struct bch_inode_info *inode,
 		bi->bi_nlink += S_ISDIR(info->src_inode->v.i_mode);
 		bi->bi_nlink -= info->dst_inode &&
 			S_ISDIR(info->dst_inode->v.i_mode);
+	}
+
+	if (inode == info->src_inode) {
+		ret = bch2_reinherit_attrs_fn(inode, bi, info->dst_dir);
+
+		BUG_ON(!ret && S_ISDIR(info->src_inode->v.i_mode));
+	}
+
+	if (inode == info->dst_inode &&
+	    info->mode == BCH_RENAME_EXCHANGE) {
+		ret = bch2_reinherit_attrs_fn(inode, bi, info->src_dir);
+
+		BUG_ON(!ret && S_ISDIR(info->dst_inode->v.i_mode));
 	}
 
 	if (inode == info->dst_inode &&
@@ -741,6 +791,39 @@ static int bch2_rename2(struct inode *src_vdir, struct dentry *src_dentry,
 			 i.dst_inode);
 
 	bch2_trans_init(&trans, c);
+
+	if (S_ISDIR(i.src_inode->v.i_mode) &&
+	    inode_attrs_changing(i.dst_dir, i.src_inode)) {
+		ret = -EXDEV;
+		goto err;
+	}
+
+	if (i.mode == BCH_RENAME_EXCHANGE &&
+	    S_ISDIR(i.dst_inode->v.i_mode) &&
+	    inode_attrs_changing(i.src_dir, i.dst_inode)) {
+		ret = -EXDEV;
+		goto err;
+	}
+
+	if (inode_attr_changing(i.dst_dir, i.src_inode, Inode_opt_project)) {
+		ret = bch2_fs_quota_transfer(c, i.src_inode,
+					     i.dst_dir->ei_qid,
+					     1 << QTYP_PRJ,
+					     KEY_TYPE_QUOTA_PREALLOC);
+		if (ret)
+			goto err;
+	}
+
+	if (i.mode == BCH_RENAME_EXCHANGE &&
+	    inode_attr_changing(i.src_dir, i.dst_inode, Inode_opt_project)) {
+		ret = bch2_fs_quota_transfer(c, i.dst_inode,
+					     i.src_dir->ei_qid,
+					     1 << QTYP_PRJ,
+					     KEY_TYPE_QUOTA_PREALLOC);
+		if (ret)
+			goto err;
+	}
+
 retry:
 	bch2_trans_begin(&trans);
 	i.now = bch2_current_time(c);
@@ -791,6 +874,17 @@ retry:
 					      ATTR_CTIME);
 err:
 	bch2_trans_exit(&trans);
+
+	bch2_fs_quota_transfer(c, i.src_inode,
+			       bch_qid(&i.src_inode->ei_inode),
+			       1 << QTYP_PRJ,
+			       KEY_TYPE_QUOTA_NOCHECK);
+	if (i.dst_inode)
+		bch2_fs_quota_transfer(c, i.dst_inode,
+				       bch_qid(&i.dst_inode->ei_inode),
+				       1 << QTYP_PRJ,
+				       KEY_TYPE_QUOTA_NOCHECK);
+
 	bch2_unlock_inodes(i.src_dir,
 			   i.dst_dir,
 			   i.src_inode,
@@ -837,36 +931,26 @@ static int inode_update_for_setattr_fn(struct bch_inode_info *inode,
 static int bch2_setattr_nonsize(struct bch_inode_info *inode, struct iattr *iattr)
 {
 	struct bch_fs *c = inode->v.i_sb->s_fs_info;
-	struct bch_qid qid = inode->ei_qid;
+	struct bch_qid qid;
 	struct btree_trans trans;
 	struct bch_inode_unpacked inode_u;
 	struct posix_acl *acl = NULL;
-	unsigned qtypes = 0;
 	int ret;
 
 	mutex_lock(&inode->ei_update_lock);
 
-	if (c->opts.usrquota &&
-	    (iattr->ia_valid & ATTR_UID) &&
-	    !uid_eq(iattr->ia_uid, inode->v.i_uid)) {
-		qid.q[QTYP_USR] = from_kuid(&init_user_ns, iattr->ia_uid),
-		qtypes |= 1 << QTYP_USR;
-	}
+	qid = inode->ei_qid;
 
-	if (c->opts.grpquota &&
-	    (iattr->ia_valid & ATTR_GID) &&
-	    !gid_eq(iattr->ia_gid, inode->v.i_gid)) {
+	if (iattr->ia_valid & ATTR_UID)
+		qid.q[QTYP_USR] = from_kuid(&init_user_ns, iattr->ia_uid);
+
+	if (iattr->ia_valid & ATTR_GID)
 		qid.q[QTYP_GRP] = from_kgid(&init_user_ns, iattr->ia_gid);
-		qtypes |= 1 << QTYP_GRP;
-	}
 
-	if (qtypes) {
-		ret = bch2_quota_transfer(c, qtypes, qid, inode->ei_qid,
-					  inode->v.i_blocks +
-					  inode->ei_quota_reserved);
-		if (ret)
-			goto err;
-	}
+	ret = bch2_fs_quota_transfer(c, inode, qid, ~0,
+				     KEY_TYPE_QUOTA_PREALLOC);
+	if (ret)
+		goto err;
 
 	bch2_trans_init(&trans, c);
 retry:

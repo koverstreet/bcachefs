@@ -89,37 +89,19 @@ static inline struct bch_io_opts bch2_inode_opts_get(struct bch_inode_unpacked *
 	return ret;
 }
 
-/* XXX switch to inode_opt_id */
-
-static inline void __bch2_inode_opt_set(struct bch_inode_unpacked *inode,
-					enum inode_opt_id id, u64 v)
+static inline void bch2_inode_opt_set(struct bch_inode_unpacked *inode,
+				      enum inode_opt_id id, u64 v)
 {
 	switch (id) {
 #define x(_name, ...)							\
 	case Inode_opt_##_name:						\
 		inode->bi_##_name = v;					\
-		if (v)							\
-			inode->bi_fields_set |= 1U << Inode_opt_##_name;\
-		else							\
-			inode->bi_fields_set &= ~(1U << Inode_opt_##_name);\
 		break;
 	BCH_INODE_OPTS()
 #undef x
 	default:
 		BUG();
 	}
-}
-
-static inline void bch2_inode_opt_set(struct bch_inode_unpacked *inode,
-				      enum inode_opt_id id, u64 v)
-{
-	return __bch2_inode_opt_set(inode, id, v + 1);
-}
-
-static inline void bch2_inode_opt_clear(struct bch_inode_unpacked *inode,
-					enum inode_opt_id id)
-{
-	return __bch2_inode_opt_set(inode, id, 0);
 }
 
 static inline u64 bch2_inode_opt_get(struct bch_inode_unpacked *inode,

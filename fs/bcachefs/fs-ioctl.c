@@ -109,21 +109,12 @@ static int bch2_set_projid(struct bch_fs *c,
 			   u32 projid)
 {
 	struct bch_qid qid = inode->ei_qid;
-	int ret;
-
-	if (projid == inode->ei_qid.q[QTYP_PRJ])
-		return 0;
 
 	qid.q[QTYP_PRJ] = projid;
 
-	ret = bch2_quota_transfer(c, 1 << QTYP_PRJ, qid, inode->ei_qid,
-				  inode->v.i_blocks +
-				  inode->ei_quota_reserved);
-	if (ret)
-		return ret;
-
-	inode->ei_qid.q[QTYP_PRJ] = projid;
-	return 0;
+	return bch2_fs_quota_transfer(c, inode, qid,
+				      1 << QTYP_PRJ,
+				      KEY_TYPE_QUOTA_PREALLOC);
 }
 
 static int fssetxattr_inode_update_fn(struct bch_inode_info *inode,
@@ -174,10 +165,7 @@ static int bch2_ioc_fssetxattr(struct bch_fs *c,
 
 	mutex_lock(&inode->ei_update_lock);
 
-	mutex_lock(&inode->ei_quota_lock);
 	ret = bch2_set_projid(c, inode, fa.fsx_projid);
-	mutex_unlock(&inode->ei_quota_lock);
-
 	if (ret)
 		goto err_unlock;
 
@@ -191,56 +179,12 @@ err:
 	return ret;
 }
 
-static int reinherit_attrs_fn(struct bch_inode_info *inode,
-			      struct bch_inode_unpacked *bi,
-			      void *p)
-{
-	struct bch_inode_info *dir = p;
-	u64 src, dst;
-	unsigned id;
-	int ret = 1;
-
-	for (id = 0; id < Inode_opt_nr; id++) {
-		if (bi->bi_fields_set & (1 << id))
-			continue;
-
-		src = bch2_inode_opt_get(&dir->ei_inode, id);
-		dst = bch2_inode_opt_get(bi, id);
-
-		if (src == dst)
-			continue;
-
-		__bch2_inode_opt_set(bi, id, src);
-		ret = 0;
-	}
-
-	return ret;
-}
-
-static int __reinherit_attrs(struct bch_fs *c,
-			     struct bch_inode_info *dir,
-			     struct bch_inode_info *inode)
-{
-	int ret;
-
-	mutex_lock(&inode->ei_update_lock);
-	ret = bch2_write_inode(c, inode, reinherit_attrs_fn, dir, 0);
-	mutex_unlock(&inode->ei_update_lock);
-
-	if (ret < 0)
-		return ret;
-
-	return !ret;
-}
-
-static int reinherit_attrs_trans(struct btree_trans *trans,
-				 struct bch_inode_info *inode,
-
 static int bch2_ioc_reinherit_attrs(struct bch_fs *c,
 				    struct file *file,
-				    struct bch_inode_info *inode,
+				    struct bch_inode_info *src,
 				    const char __user *name)
 {
+	struct bch_inode_info *dst;
 	struct inode *vinode = NULL;
 	char *kname = NULL;
 	struct qstr qstr;
@@ -253,33 +197,52 @@ static int bch2_ioc_reinherit_attrs(struct bch_fs *c,
 
 	ret = strncpy_from_user(kname, name, BCH_NAME_MAX);
 	if (unlikely(ret < 0))
-		goto err;
+		goto err1;
 
 	qstr.hash_len	= ret;
 	qstr.name	= kname;
 
 	ret = -ENOENT;
-	inum = bch2_dirent_lookup(c, inode->v.i_ino,
-				  &inode->ei_str_hash,
+	inum = bch2_dirent_lookup(c, src->v.i_ino,
+				  &src->ei_str_hash,
 				  &qstr);
 	if (!inum)
-		goto err;
+		goto err1;
 
 	vinode = bch2_vfs_inode_get(c, inum);
 	ret = PTR_ERR_OR_ZERO(vinode);
 	if (ret)
-		goto err;
+		goto err1;
+
+	dst = to_bch_ei(vinode);
 
 	ret = mnt_want_write_file(file);
 	if (ret)
-		goto err;
+		goto err2;
 
-	ret = __reinherit_attrs(c, inode, to_bch_ei(vinode));
+	bch2_lock_inodes(src, dst);
+
+	if (inode_attr_changing(src, dst, Inode_opt_project)) {
+		ret = bch2_fs_quota_transfer(c, dst,
+					     src->ei_qid,
+					     1 << QTYP_PRJ,
+					     KEY_TYPE_QUOTA_PREALLOC);
+		if (ret)
+			goto err3;
+	}
+
+	ret = bch2_write_inode(c, dst, bch2_reinherit_attrs_fn, src, 0);
+err3:
+	bch2_unlock_inodes(src, dst);
+
+	/* return true if we did work */
+	if (ret >= 0)
+		ret = !ret;
 
 	mnt_drop_write_file(file);
-err:
-	if (vinode)
-		iput(vinode);
+err2:
+	iput(vinode);
+err1:
 	kfree(kname);
 
 	return ret;
