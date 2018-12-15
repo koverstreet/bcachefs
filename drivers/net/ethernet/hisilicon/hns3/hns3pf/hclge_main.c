@@ -6608,8 +6608,7 @@ static int hclge_get_reset_status(struct hclge_dev *hdev, u16 queue_id)
 	return hnae3_get_bit(req->ready_to_reset, HCLGE_TQP_RESET_B);
 }
 
-static u16 hclge_covert_handle_qid_global(struct hnae3_handle *handle,
-					  u16 queue_id)
+u16 hclge_covert_handle_qid_global(struct hnae3_handle *handle, u16 queue_id)
 {
 	struct hnae3_queue *queue;
 	struct hclge_tqp *tqp;
@@ -7982,6 +7981,7 @@ static const struct hnae3_ae_ops hclge_ops = {
 	.get_hw_reset_stat = hclge_get_hw_reset_stat,
 	.ae_dev_resetting = hclge_ae_dev_resetting,
 	.ae_dev_reset_cnt = hclge_ae_dev_reset_cnt,
+	.get_global_queue_id = hclge_covert_handle_qid_global,
 };
 
 static struct hnae3_ae_algo ae_algo = {
