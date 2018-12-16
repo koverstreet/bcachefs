@@ -1244,6 +1244,7 @@ struct bnxt {
 	dma_addr_t		hwrm_dbg_resp_dma_addr;
 #define HWRM_DBG_REG_BUF_SIZE	128
 
+	struct rtnl_link_stats64	net_stats_prev;
 	struct rx_port_stats	*hw_rx_port_stats;
 	struct tx_port_stats	*hw_tx_port_stats;
 	dma_addr_t		hw_rx_port_stats_map;
