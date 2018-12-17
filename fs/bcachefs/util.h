@@ -700,6 +700,23 @@ do {									\
 	}								\
 } while (0)
 
+static inline void acc_u64s(u64 *acc, const u64 *src, unsigned nr)
+{
+	unsigned i;
+
+	for (i = 0; i < nr; i++)
+		acc[i] += src[i];
+}
+
+static inline void acc_u64s_percpu(u64 *acc, const u64 __percpu *src,
+				   unsigned nr)
+{
+	int cpu;
+
+	for_each_possible_cpu(cpu)
+		acc_u64s(acc, per_cpu_ptr(src, cpu), nr);
+}
+
 static inline int uuid_le_cmp(const uuid_le u1, const uuid_le u2)
 {
 	return memcmp(&u1, &u2, sizeof(uuid_le));
