@@ -55,7 +55,8 @@ static inline int bch2_quota_acct(struct bch_fs *c, struct bch_qid qid,
 
 static inline int bch2_quota_transfer(struct bch_fs *c, unsigned qtypes,
 				      struct bch_qid dst,
-				      struct bch_qid src, u64 space)
+				      struct bch_qid src, u64 space,
+				      enum quota_acct_mode mode)
 {
 	return 0;
 }
