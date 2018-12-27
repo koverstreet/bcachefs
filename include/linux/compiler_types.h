@@ -284,6 +284,10 @@ struct ftrace_likely_data {
 #define __always_inline inline __attribute__((always_inline))
 #endif
 
+#ifndef __flatten
+#define __flatten __attribute__((flatten))
+#endif
+
 /*
  * Rather then using noinline to prevent stack consumption, use
  * noinline_for_stack instead.  For documentation reasons.
