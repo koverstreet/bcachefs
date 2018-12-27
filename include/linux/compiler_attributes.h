@@ -253,4 +253,9 @@
  */
 #define __weak                          __attribute__((__weak__))
 
+/*
+ *   gcc: https://gcc.gnu.org/onlinedocs/gcc/Common-Function-Attributes.html#index-flatten-function-attribute
+ */
+#define __flatten __attribute__((flatten))
+
 #endif /* __LINUX_COMPILER_ATTRIBUTES_H */
