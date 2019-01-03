@@ -1791,7 +1791,6 @@ ib_isert
 ib_mthca
 ib_srp
 ib_srpt
-ib_ucm
 ib_umad
 ib_uverbs
 ibm-cffps
