@@ -2637,6 +2637,7 @@ static void hclge_misc_irq_uninit(struct hclge_dev *hdev)
 static int hclge_notify_client(struct hclge_dev *hdev,
 			       enum hnae3_reset_notify_type type)
 {
+	struct hnae3_client *rclient = hdev->roce_client;
 	struct hnae3_client *client = hdev->nic_client;
 	struct hnae3_handle *handle;
 	int ret;
@@ -2653,36 +2654,19 @@ static int hclge_notify_client(struct hclge_dev *hdev,
 				"notify nic client failed %d", ret);
 			return ret;
 		}
-	}
 
-	return 0;
-}
-
-static int hclge_notify_roce_client(struct hclge_dev *hdev,
-				    enum hnae3_reset_notify_type type)
-{
-	struct hnae3_client *client = hdev->roce_client;
-	struct hnae3_handle *handle;
-	int ret = 0;
-	u16 i;
-
-	if (!client)
-		return 0;
-
-	if (!client->ops->reset_notify)
-		return -EOPNOTSUPP;
-
-	for (i = 0; i < hdev->num_vmdq_vport + 1; i++) {
-		handle = &hdev->vport[i].roce;
-		ret = client->ops->reset_notify(handle, type);
-		if (ret) {
-			dev_err(&hdev->pdev->dev,
-				"notify roce client failed %d", ret);
-			return ret;
+		if (rclient && rclient->ops->reset_notify) {
+			handle = &hdev->vport[i].roce;
+			ret = rclient->ops->reset_notify(handle, type);
+			if (ret) {
+				dev_err(&hdev->pdev->dev,
+					"notify roce client failed %d", ret);
+				return ret;
+			}
 		}
 	}
 
-	return ret;
+	return 0;
 }
 
 static int hclge_reset_wait(struct hclge_dev *hdev)
@@ -2833,10 +2817,6 @@ static void hclge_reset(struct hclge_dev *hdev)
 
 	/* perform reset of the stack & ae device for a client */
 	handle = &hdev->vport[0].nic;
-
-	hclge_notify_roce_client(hdev, HNAE3_DOWN_CLIENT);
-	hclge_notify_roce_client(hdev, HNAE3_UNINIT_CLIENT);
-
 	rtnl_lock();
 	hclge_notify_client(hdev, HNAE3_DOWN_CLIENT);
 
@@ -2855,9 +2835,6 @@ static void hclge_reset(struct hclge_dev *hdev)
 	hclge_notify_client(hdev, HNAE3_UP_CLIENT);
 	handle->last_reset_time = jiffies;
 	rtnl_unlock();
-
-	hclge_notify_roce_client(hdev, HNAE3_INIT_CLIENT);
-	hclge_notify_roce_client(hdev, HNAE3_UP_CLIENT);
 }
 
 static void hclge_reset_event(struct hnae3_handle *handle)
