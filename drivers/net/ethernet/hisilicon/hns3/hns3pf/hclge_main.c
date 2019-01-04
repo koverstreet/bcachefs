@@ -2380,7 +2380,6 @@ static void hclge_update_link_status(struct hclge_dev *hdev)
 {
 	struct hnae3_client *rclient = hdev->roce_client;
 	struct hnae3_client *client = hdev->nic_client;
-	struct hnae3_handle *rhandle;
 	struct hnae3_handle *handle;
 	int state;
 	int i;
@@ -2392,10 +2391,8 @@ static void hclge_update_link_status(struct hclge_dev *hdev)
 		for (i = 0; i < hdev->num_vmdq_vport + 1; i++) {
 			handle = &hdev->vport[i].nic;
 			client->ops->link_status_change(handle, state);
-			rhandle = &hdev->vport[i].roce;
 			if (rclient && rclient->ops->link_status_change)
-				rclient->ops->link_status_change(rhandle,
-								 state);
+				rclient->ops->link_status_change(handle, state);
 		}
 		hdev->hw.mac.link = state;
 	}
