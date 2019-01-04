@@ -2013,7 +2013,6 @@ static int hclge_init_roce_base_info(struct hclge_vport *vport)
 
 	roce->rinfo.netdev = nic->kinfo.netdev;
 	roce->rinfo.roce_io_base = vport->back->hw.io_base;
-	roce->rinfo.is_reset = false;
 
 	roce->pdev = nic->pdev;
 	roce->ae_algo = nic->ae_algo;
@@ -2633,38 +2632,18 @@ static int hclge_notify_client(struct hclge_dev *hdev,
 			       enum hnae3_reset_notify_type type)
 {
 	struct hnae3_client *client = hdev->nic_client;
-	struct hnae3_handle *handle;
-	int ret;
 	u16 i;
 
 	if (!client->ops->reset_notify)
 		return -EOPNOTSUPP;
 
 	for (i = 0; i < hdev->num_vmdq_vport + 1; i++) {
-		if (hdev->roce_client) {
-			handle = &hdev->vport[i].roce;
-			client = hdev->roce_client;
-			if (type == HNAE3_UNINIT_CLIENT)
-				if (handle)
-					client->ops->uninit_instance(handle,
-								     true);
-		}
-
-		client = hdev->nic_client;
-		handle = &hdev->vport[i].nic;
+		struct hnae3_handle *handle = &hdev->vport[i].nic;
+		int ret;
 
 		ret = client->ops->reset_notify(handle, type);
 		if (ret)
 			return ret;
-
-		if (hdev->roce_client) {
-			handle = &hdev->vport[i].roce;
-			client = hdev->roce_client;
-			if (type == HNAE3_INIT_CLIENT)
-				if (handle)
-					return client->ops->init_instance(
-									handle);
-		}
 	}
 
 	return 0;
