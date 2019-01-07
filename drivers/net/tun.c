@@ -758,10 +758,6 @@ static int tun_attach(struct tun_struct *tun, struct file *file,
 
 	tfile->queue_index = tun->numqueues;
 	tfile->socket.sk->sk_shutdown &= ~RCV_SHUTDOWN;
-	rcu_assign_pointer(tfile->tun, tun);
-	rcu_assign_pointer(tun->tfiles[tun->numqueues], tfile);
-	tun->numqueues++;
-
 	if (tfile->detached) {
 		tun_enable_queue(tfile);
 	} else {
@@ -775,6 +771,13 @@ static int tun_attach(struct tun_struct *tun, struct file *file,
 	 * refcnt.
 	 */
 
+	/* Publish tfile->tun and tun->tfiles only after we've fully
+	 * initialized tfile; otherwise we risk using half-initialized
+	 * object.
+	 */
+	rcu_assign_pointer(tfile->tun, tun);
+	rcu_assign_pointer(tun->tfiles[tun->numqueues], tfile);
+	tun->numqueues++;
 out:
 	return err;
 }
