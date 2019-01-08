@@ -216,7 +216,8 @@ static inline const char *check_heap_object(const void *ptr, unsigned long n,
 /*
  * Validates that the given object is:
  * - not bogus address
- * - known-safe heap or stack object
+ * - fully contained by stack (or stack frame, when available)
+ * - fully within SLAB object (or object whitelist area, when available)
  * - not in kernel text
  */
 void __check_object_size(const void *ptr, unsigned long n, bool to_user)
@@ -229,11 +230,6 @@ void __check_object_size(const void *ptr, unsigned long n, bool to_user)
 
 	/* Check for invalid addresses. */
 	err = check_bogus_address(ptr, n);
-	if (err)
-		goto report;
-
-	/* Check for bad heap object. */
-	err = check_heap_object(ptr, n, to_user);
 	if (err)
 		goto report;
 
@@ -254,6 +250,9 @@ void __check_object_size(const void *ptr, unsigned long n, bool to_user)
 		err = "<process stack>";
 		goto report;
 	}
+
+	/* Check for bad heap object. */
+	check_heap_object(ptr, n, to_user);
 
 	/* Check for object in kernel to avoid text exposure. */
 	err = check_kernel_text_object(ptr, n);
