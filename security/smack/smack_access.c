@@ -642,7 +642,7 @@ bool smack_privileged(int cap)
 		return true;
 
 	rc = cap_capable(current_cred(), &init_user_ns, cap,
-				SECURITY_CAP_AUDIT);
+				CAP_OPT_NONE);
 	if (rc)
 		return false;
 
