@@ -2771,6 +2771,8 @@ static void addr_handler(int status, struct sockaddr *src_addr,
 {
 	struct rdma_id_private *id_priv = context;
 	struct rdma_cm_event event;
+	struct sockaddr *addr;
+	struct sockaddr_storage old_addr;
 
 	memset(&event, 0, sizeof event);
 	mutex_lock(&id_priv->handler_mutex);
@@ -2778,7 +2780,14 @@ static void addr_handler(int status, struct sockaddr *src_addr,
 			   RDMA_CM_ADDR_RESOLVED))
 		goto out;
 
-	memcpy(cma_src_addr(id_priv), src_addr, rdma_addr_size(src_addr));
+	/*
+	 * Store the previous src address, so that if we fail to acquire
+	 * matching rdma device, old address can be restored back, which helps
+	 * to cancel the cma listen operation correctly.
+	 */
+	addr = cma_src_addr(id_priv);
+	memcpy(&old_addr, addr, rdma_addr_size(addr));
+	memcpy(addr, src_addr, rdma_addr_size(src_addr));
 	if (!status && !id_priv->cma_dev) {
 		status = cma_acquire_dev(id_priv, NULL);
 		if (status)
@@ -2789,6 +2798,8 @@ static void addr_handler(int status, struct sockaddr *src_addr,
 	}
 
 	if (status) {
+		memcpy(addr, &old_addr,
+		       rdma_addr_size((struct sockaddr *)&old_addr));
 		if (!cma_comp_exch(id_priv, RDMA_CM_ADDR_RESOLVED,
 				   RDMA_CM_ADDR_BOUND))
 			goto out;
