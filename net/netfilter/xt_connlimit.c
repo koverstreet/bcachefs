@@ -97,8 +97,7 @@ same_source(const union nf_inet_addr *addr,
 }
 
 static bool add_hlist(struct hlist_head *head,
-		      const struct nf_conntrack_tuple *tuple,
-		      const union nf_inet_addr *addr)
+		      const struct nf_conntrack_tuple *tuple)
 {
 	struct xt_connlimit_conn *conn;
 
@@ -211,7 +210,7 @@ count_tree(struct net *net, struct rb_root *root,
 			if (!addit)
 				return count;
 
-			if (!add_hlist(&rbconn->hhead, tuple, addr))
+			if (!add_hlist(&rbconn->hhead, tuple))
 				return 0; /* hotdrop */
 
 			return count + 1;
