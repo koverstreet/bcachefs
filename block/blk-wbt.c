@@ -484,6 +484,13 @@ static inline unsigned int get_limit(struct rq_wb *rwb, unsigned long rw)
 	unsigned int limit;
 
 	/*
+	 * If we got disabled, just return UINT_MAX. This ensures that
+	 * we'll properly inc a new IO, and dec+wakeup at the end.
+	 */
+	if (!rwb_enabled(rwb))
+		return UINT_MAX;
+
+	/*
 	 * At this point we know it's a buffered write. If this is
 	 * kswapd trying to free memory, or REQ_SYNC is set, then
 	 * it's WB_SYNC_ALL writeback, and we'll use the max limit for
@@ -517,16 +524,6 @@ static void __wbt_wait(struct rq_wb *rwb, enum wbt_flags wb_acct,
 	struct rq_wait *rqw = get_rq_wait(rwb, wb_acct);
 	DECLARE_WAITQUEUE(wait, current);
 
-	/*
-	* inc it here even if disabled, since we'll dec it at completion.
-	* this only happens if the task was sleeping in __wbt_wait(),
-	* and someone turned it off at the same time.
-	*/
-	if (!rwb_enabled(rwb)) {
-		atomic_inc(&rqw->inflight);
-		return;
-	}
-
 	if (!waitqueue_active(&rqw->wait)
 		&& atomic_inc_below(&rqw->inflight, get_limit(rwb, rw)))
 		return;
@@ -534,11 +531,6 @@ static void __wbt_wait(struct rq_wb *rwb, enum wbt_flags wb_acct,
 	add_wait_queue_exclusive(&rqw->wait, &wait);
 	do {
 		set_current_state(TASK_UNINTERRUPTIBLE);
-
-		if (!rwb_enabled(rwb)) {
-			atomic_inc(&rqw->inflight);
-			break;
-		}
 
 		if (atomic_inc_below(&rqw->inflight, get_limit(rwb, rw)))
 			break;
