@@ -758,23 +758,11 @@ int sys_rt_sigreturn(unsigned long r3, unsigned long r4, unsigned long r5,
 					   &uc_transact->uc_mcontext))
 			goto badframe;
 	}
-#endif
+	else
 	/* Fall through, for non-TM restore */
-	if (!MSR_TM_ACTIVE(msr)) {
-		/*
-		 * Unset MSR[TS] on the thread regs since MSR from user
-		 * context does not have MSR active, and recheckpoint was
-		 * not called since restore_tm_sigcontexts() was not called
-		 * also.
-		 *
-		 * If not unsetting it, the code can RFID to userspace with
-		 * MSR[TS] set, but without CPU in the proper state,
-		 * causing a TM bad thing.
-		 */
-		current->thread.regs->msr &= ~MSR_TS_MASK;
-		if (restore_sigcontext(current, NULL, 1, &uc->uc_mcontext))
-			goto badframe;
-	}
+#endif
+	if (restore_sigcontext(current, NULL, 1, &uc->uc_mcontext))
+		goto badframe;
 
 	if (restore_altstack(&uc->uc_stack))
 		goto badframe;
