@@ -3,6 +3,7 @@
 
 #include <linux/dynamic_fault.h>
 
+#include "bset.h"
 #include "btree_types.h"
 
 static inline void btree_iter_set_dirty(struct btree_iter *iter,
