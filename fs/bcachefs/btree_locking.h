@@ -13,7 +13,6 @@
 #include <linux/six.h>
 
 #include "btree_iter.h"
-#include "btree_io.h"
 
 /* matches six lock types */
 enum btree_node_locked_type {
