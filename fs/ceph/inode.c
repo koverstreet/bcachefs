@@ -534,7 +534,7 @@ void ceph_destroy_inode(struct inode *inode)
 
 	ceph_fscache_unregister_inode_cookie(ci);
 
-	ceph_queue_caps_release(inode);
+	__ceph_remove_caps(inode);
 
 	/*
 	 * we may still have a snap_realm reference if there are stray
