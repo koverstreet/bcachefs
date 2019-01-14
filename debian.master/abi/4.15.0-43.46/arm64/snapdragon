@@ -10935,6 +10935,7 @@ EXPORT_SYMBOL vmlinux 0x00000000	vc_cons
 EXPORT_SYMBOL vmlinux 0x00000000	vc_resize
 EXPORT_SYMBOL vmlinux 0x00000000	verify_spi_info
 EXPORT_SYMBOL vmlinux 0x00000000	vesa_modes
+EXPORT_SYMBOL vmlinux 0x00000000	vfio_pci_driver_ptr
 EXPORT_SYMBOL vmlinux 0x00000000	vfree
 EXPORT_SYMBOL vmlinux 0x00000000	vfs_clone_file_prep_inodes
 EXPORT_SYMBOL vmlinux 0x00000000	vfs_clone_file_range

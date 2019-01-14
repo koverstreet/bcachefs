@@ -5379,6 +5379,7 @@ EXPORT_SYMBOL vmlinux 0x00000000	uuid_is_valid
 EXPORT_SYMBOL vmlinux 0x00000000	uuid_null
 EXPORT_SYMBOL vmlinux 0x00000000	uuid_parse
 EXPORT_SYMBOL vmlinux 0x00000000	verify_spi_info
+EXPORT_SYMBOL vmlinux 0x00000000	vfio_pci_driver_ptr
 EXPORT_SYMBOL vmlinux 0x00000000	vfree
 EXPORT_SYMBOL vmlinux 0x00000000	vfs_clone_file_prep_inodes
 EXPORT_SYMBOL vmlinux 0x00000000	vfs_clone_file_range
