@@ -13,4 +13,4 @@ TEST_GEN_PROGS += reuseport_dualstack reuseaddr_conflict
 KSFT_KHDR_INSTALL := 1
 include ../lib.mk
 
-$(OUTPUT)/reuseport_bpf_numa: LDFLAGS += -lnuma
+$(OUTPUT)/reuseport_bpf_numa: LDLIBS += -lnuma
