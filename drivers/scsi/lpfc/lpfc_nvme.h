@@ -39,7 +39,7 @@ struct lpfc_nvme_qhandle {
 /* Declare nvme-based local and remote port definitions. */
 struct lpfc_nvme_lport {
 	struct lpfc_vport *vport;
-	struct completion lport_unreg_done;
+	struct completion *lport_unreg_cmp;
 	/* Add stats counters here */
 	atomic_t xmt_fcp_noxri;
 	atomic_t xmt_fcp_bad_ndlp;
