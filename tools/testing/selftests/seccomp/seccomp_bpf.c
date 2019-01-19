@@ -2680,6 +2680,12 @@ TEST(syscall_restart)
 	struct utsname utsbuf;
 #endif
 
+	/* Only real root can get metadata. */
+	if (geteuid()) {
+		XFAIL(return, "get_metadata requires real root");
+		return;
+	}
+
 	ASSERT_EQ(0, pipe(pipefd));
 
 	child_pid = fork();
