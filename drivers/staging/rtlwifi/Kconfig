@@ -17,6 +17,6 @@ config RTLPHYDM_ST
 	default m
 
 config RTLWIFI_DEBUG_ST
-	boolean
+	bool "Debugging output for Realtek RTL8822BE driver"
 	depends on R8822BE
-	default y
+	default n
