@@ -207,13 +207,14 @@ static bool bucket_became_unavailable(struct bucket_mark old,
 	       !is_available_bucket(new);
 }
 
-void bch2_fs_usage_apply(struct bch_fs *c,
-			 struct bch_fs_usage *fs_usage,
-			 struct disk_reservation *disk_res,
-			 struct gc_pos gc_pos)
+int bch2_fs_usage_apply(struct bch_fs *c,
+			struct bch_fs_usage *fs_usage,
+			struct disk_reservation *disk_res,
+			struct gc_pos gc_pos)
 {
 	s64 added = fs_usage->s.data + fs_usage->s.reserved;
 	s64 should_not_have_added;
+	int ret = 0;
 
 	percpu_rwsem_assert_held(&c->mark_lock);
 
@@ -226,6 +227,7 @@ void bch2_fs_usage_apply(struct bch_fs *c,
 		      "disk usage increased without a reservation")) {
 		atomic64_sub(should_not_have_added, &c->sectors_available);
 		added -= should_not_have_added;
+		ret = -1;
 	}
 
 	if (added > 0) {
@@ -245,6 +247,8 @@ void bch2_fs_usage_apply(struct bch_fs *c,
 	}
 
 	memset(fs_usage, 0, sizeof(*fs_usage));
+
+	return ret;
 }
 
 static inline void account_bucket(struct bch_fs_usage *fs_usage,
@@ -833,6 +837,8 @@ void bch2_mark_update(struct btree_insert *trans,
 	struct bch_fs_usage	fs_usage = { 0 };
 	struct gc_pos		pos = gc_pos_btree_node(b);
 	struct bkey_packed	*_k;
+	u64 disk_res_sectors = trans->disk_res ? trans->disk_res->sectors : 0;
+	static int warned_disk_usage = 0;
 
 	if (!btree_node_type_needs_gc(iter->btree_id))
 		return;
@@ -892,7 +898,37 @@ void bch2_mark_update(struct btree_insert *trans,
 		bch2_btree_node_iter_advance(&node_iter, b);
 	}
 
-	bch2_fs_usage_apply(c, &fs_usage, trans->disk_res, pos);
+	if (bch2_fs_usage_apply(c, &fs_usage, trans->disk_res, pos) &&
+	    !warned_disk_usage &&
+	    !xchg(&warned_disk_usage, 1)) {
+		char buf[200];
+
+		pr_err("disk usage increased more than %llu sectors reserved", disk_res_sectors);
+
+		pr_err("while inserting");
+		bch2_bkey_val_to_text(&PBUF(buf), c, bkey_i_to_s_c(insert->k));
+		pr_err("%s", buf);
+		pr_err("overlapping with");
+
+		node_iter = iter->l[0].iter;
+		while ((_k = bch2_btree_node_iter_peek_filter(&node_iter, b,
+							      KEY_TYPE_discard))) {
+			struct bkey		unpacked;
+			struct bkey_s_c		k;
+
+			k = bkey_disassemble(b, _k, &unpacked);
+
+			if (btree_node_is_extents(b)
+			    ? bkey_cmp(insert->k->k.p, bkey_start_pos(k.k)) <= 0
+			    : bkey_cmp(insert->k->k.p, k.k->p))
+				break;
+
+			bch2_bkey_val_to_text(&PBUF(buf), c, k);
+			pr_err("%s", buf);
+
+			bch2_btree_node_iter_advance(&node_iter, b);
+		}
+	}
 
 	percpu_up_read_preempt_enable(&c->mark_lock);
 }
