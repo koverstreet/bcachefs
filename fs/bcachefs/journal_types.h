@@ -23,6 +23,7 @@ struct journal_buf {
 
 	unsigned		size;
 	unsigned		disk_sectors;
+	unsigned		u64s_reserved;
 	/* bloom filter: */
 	unsigned long		has_inode[1024 / sizeof(unsigned long)];
 };
@@ -154,6 +155,9 @@ struct journal {
 	u64			seq_ondisk;
 	u64			last_seq_ondisk;
 
+	/* Reserved space in journal entry to be used just prior to write */
+	unsigned		entry_u64s_reserved;
+
 	/*
 	 * FIFO of journal entries whose btree updates have not yet been
 	 * written out.
@@ -240,6 +244,13 @@ struct journal_device {
 
 	/* for bch_journal_read_device */
 	struct closure		read;
+};
+
+/*
+ * journal_entry_res - reserve space in every journal entry:
+ */
+struct journal_entry_res {
+	unsigned		u64s;
 };
 
 #endif /* _BCACHEFS_JOURNAL_TYPES_H */
