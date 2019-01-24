@@ -132,6 +132,7 @@ do {									\
 write_attribute(trigger_journal_flush);
 write_attribute(trigger_btree_coalesce);
 write_attribute(trigger_gc);
+write_attribute(trigger_alloc_write);
 write_attribute(prune_cache);
 rw_attribute(btree_gc_periodic);
 
@@ -494,6 +495,12 @@ STORE(__bch2_fs)
 	if (attr == &sysfs_trigger_gc)
 		bch2_gc(c, NULL, false);
 
+	if (attr == &sysfs_trigger_alloc_write) {
+		bool wrote;
+
+		bch2_alloc_write(c, false, &wrote);
+	}
+
 	if (attr == &sysfs_prune_cache) {
 		struct shrink_control sc;
 
@@ -586,6 +593,7 @@ struct attribute *bch2_fs_internal_files[] = {
 	&sysfs_trigger_journal_flush,
 	&sysfs_trigger_btree_coalesce,
 	&sysfs_trigger_gc,
+	&sysfs_trigger_alloc_write,
 	&sysfs_prune_cache,
 
 	&sysfs_copy_gc_enabled,
