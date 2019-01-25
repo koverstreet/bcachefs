@@ -1238,7 +1238,7 @@ static int qcom_pcie_probe(struct platform_device *pdev)
 
 	pcie->ops = (struct qcom_pcie_ops *)of_device_get_match_data(dev);
 
-	pcie->reset = devm_gpiod_get_optional(dev, "perst", GPIOD_OUT_LOW);
+	pcie->reset = devm_gpiod_get_optional(dev, "perst", GPIOD_OUT_HIGH);
 	if (IS_ERR(pcie->reset))
 		return PTR_ERR(pcie->reset);
 
