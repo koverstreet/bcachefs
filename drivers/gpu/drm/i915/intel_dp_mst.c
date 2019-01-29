@@ -173,7 +173,6 @@ static void intel_mst_post_disable_dp(struct intel_encoder *encoder,
 
 	intel_mst->connector = NULL;
 	if (intel_dp->active_mst_links == 0) {
-		intel_dp_sink_dpms(intel_dp, DRM_MODE_DPMS_OFF);
 		intel_dig_port->base.post_disable(&intel_dig_port->base,
 						  NULL, NULL);
 	}
@@ -202,11 +201,7 @@ static void intel_mst_pre_enable_dp(struct intel_encoder *encoder,
 
 	DRM_DEBUG_KMS("active links %d\n", intel_dp->active_mst_links);
 
-	if (intel_dp->active_mst_links == 0)
-		intel_dp_sink_dpms(intel_dp, DRM_MODE_DPMS_ON);
-
 	drm_dp_send_power_updown_phy(&intel_dp->mst_mgr, connector->port, true);
-
 	if (intel_dp->active_mst_links == 0)
 		intel_dig_port->base.pre_enable(&intel_dig_port->base,
 						pipe_config, NULL);
