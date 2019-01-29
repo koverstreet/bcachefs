@@ -89,9 +89,14 @@ struct its_device;
  * The ITS structure - contains most of the infrastructure, with the
  * top-level MSI domain, the command queue, the collections, and the
  * list of devices writing to it.
+ *
+ * dev_alloc_lock has to be taken for device allocations, while the
+ * spinlock must be taken to parse data structures such as the device
+ * list.
  */
 struct its_node {
 	raw_spinlock_t		lock;
+	struct mutex		dev_alloc_lock;
 	struct list_head	entry;
 	void __iomem		*base;
 	phys_addr_t		phys_base;
@@ -146,6 +151,7 @@ struct its_device {
 	void			*itt;
 	u32			nr_ites;
 	u32			device_id;
+	bool			shared;
 };
 
 static struct {
@@ -2202,6 +2208,7 @@ static int its_msi_prepare(struct irq_domain *domain, struct device *dev,
 	struct its_device *its_dev;
 	struct msi_domain_info *msi_info;
 	u32 dev_id;
+	int err = 0;
 
 	/*
 	 * We ignore "dev" entierely, and rely on the dev_id that has
@@ -2224,6 +2231,7 @@ static int its_msi_prepare(struct irq_domain *domain, struct device *dev,
 		return -EINVAL;
 	}
 
+	mutex_lock(&its->dev_alloc_lock);
 	its_dev = its_find_device(its, dev_id);
 	if (its_dev) {
 		/*
@@ -2231,18 +2239,22 @@ static int its_msi_prepare(struct irq_domain *domain, struct device *dev,
 		 * another alias (PCI bridge of some sort). No need to
 		 * create the device.
 		 */
+		its_dev->shared = true;
 		pr_debug("Reusing ITT for devID %x\n", dev_id);
 		goto out;
 	}
 
 	its_dev = its_create_device(its, dev_id, nvec, true);
-	if (!its_dev)
-		return -ENOMEM;
+	if (!its_dev) {
+		err = -ENOMEM;
+		goto out;
+	}
 
 	pr_debug("ITT %d entries, %d bits\n", nvec, ilog2(nvec));
 out:
+	mutex_unlock(&its->dev_alloc_lock);
 	info->scratchpad[0].ptr = its_dev;
-	return 0;
+	return err;
 }
 
 static struct msi_domain_ops its_msi_domain_ops = {
@@ -2346,6 +2358,7 @@ static void its_irq_domain_free(struct irq_domain *domain, unsigned int virq,
 {
 	struct irq_data *d = irq_domain_get_irq_data(domain, virq);
 	struct its_device *its_dev = irq_data_get_irq_chip_data(d);
+	struct its_node *its = its_dev->its;
 	int i;
 
 	for (i = 0; i < nr_irqs; i++) {
@@ -2360,8 +2373,14 @@ static void its_irq_domain_free(struct irq_domain *domain, unsigned int virq,
 		irq_domain_reset_irq_data(data);
 	}
 
-	/* If all interrupts have been freed, start mopping the floor */
-	if (bitmap_empty(its_dev->event_map.lpi_map,
+	mutex_lock(&its->dev_alloc_lock);
+
+	/*
+	 * If all interrupts have been freed, start mopping the
+	 * floor. This is conditionned on the device not being shared.
+	 */
+	if (!its_dev->shared &&
+	    bitmap_empty(its_dev->event_map.lpi_map,
 			 its_dev->event_map.nr_lpis)) {
 		its_lpi_free_chunks(its_dev->event_map.lpi_map,
 				    its_dev->event_map.lpi_base,
@@ -2372,6 +2391,8 @@ static void its_irq_domain_free(struct irq_domain *domain, unsigned int virq,
 		its_send_mapd(its_dev, 0);
 		its_free_device(its_dev);
 	}
+
+	mutex_unlock(&its->dev_alloc_lock);
 
 	irq_domain_free_irqs_parent(domain, virq, nr_irqs);
 }
@@ -3190,6 +3211,7 @@ static int __init its_probe_one(struct resource *res,
 	}
 
 	raw_spin_lock_init(&its->lock);
+	mutex_init(&its->dev_alloc_lock);
 	INIT_LIST_HEAD(&its->entry);
 	INIT_LIST_HEAD(&its->its_device_list);
 	typer = gic_read_typer(its_base + GITS_TYPER);
