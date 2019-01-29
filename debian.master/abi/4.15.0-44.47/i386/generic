@@ -14508,6 +14508,8 @@ EXPORT_SYMBOL_GPL drivers/power/supply/pcf50633-charger 0x00000000	pcf50633_mbc_
 EXPORT_SYMBOL_GPL drivers/power/supply/pcf50633-charger 0x00000000	pcf50633_mbc_usb_curlim_set
 EXPORT_SYMBOL_GPL drivers/pwm/pwm-lpss 0x00000000	pwm_lpss_probe
 EXPORT_SYMBOL_GPL drivers/pwm/pwm-lpss 0x00000000	pwm_lpss_remove
+EXPORT_SYMBOL_GPL drivers/pwm/pwm-lpss 0x00000000	pwm_lpss_resume
+EXPORT_SYMBOL_GPL drivers/pwm/pwm-lpss 0x00000000	pwm_lpss_suspend
 EXPORT_SYMBOL_GPL drivers/regulator/mc13xxx-regulator-core 0x00000000	mc13xxx_fixed_regulator_ops
 EXPORT_SYMBOL_GPL drivers/regulator/mc13xxx-regulator-core 0x00000000	mc13xxx_fixed_regulator_set_voltage
 EXPORT_SYMBOL_GPL drivers/regulator/mc13xxx-regulator-core 0x00000000	mc13xxx_regulator_ops
@@ -16527,6 +16529,9 @@ EXPORT_SYMBOL_GPL net/netfilter/x_tables 0x00000000	xt_tee_enabled
 EXPORT_SYMBOL_GPL net/netfilter/x_tables 0x00000000	xt_unregister_table
 EXPORT_SYMBOL_GPL net/netfilter/xt_RATEEST 0x00000000	xt_rateest_lookup
 EXPORT_SYMBOL_GPL net/netfilter/xt_RATEEST 0x00000000	xt_rateest_put
+EXPORT_SYMBOL_GPL net/netfilter/xt_connlimit 0x00000000	nf_conncount_add
+EXPORT_SYMBOL_GPL net/netfilter/xt_connlimit 0x00000000	nf_conncount_cache_free
+EXPORT_SYMBOL_GPL net/netfilter/xt_connlimit 0x00000000	nf_conncount_lookup
 EXPORT_SYMBOL_GPL net/nfc/nci/nci_spi 0x00000000	nci_spi_allocate_spi
 EXPORT_SYMBOL_GPL net/nfc/nci/nci_spi 0x00000000	nci_spi_read
 EXPORT_SYMBOL_GPL net/nfc/nci/nci_spi 0x00000000	nci_spi_send
@@ -18059,6 +18064,7 @@ EXPORT_SYMBOL_GPL vmlinux 0x00000000	acpi_processor_ffh_cstate_enter
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	acpi_processor_ffh_cstate_probe
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	acpi_processor_get_performance_info
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	acpi_register_gsi
+EXPORT_SYMBOL_GPL vmlinux 0x00000000	acpi_release_memory
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	acpi_scan_lock_acquire
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	acpi_scan_lock_release
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	acpi_set_modalias
@@ -20772,6 +20778,7 @@ EXPORT_SYMBOL_GPL vmlinux 0x00000000	perf_event_read_value
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	perf_event_refresh
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	perf_event_release_kernel
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	perf_event_sysfs_show
+EXPORT_SYMBOL_GPL vmlinux 0x00000000	perf_event_update_userpage
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	perf_get_aux
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	perf_get_x86_pmu_capability
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	perf_guest_get_msrs

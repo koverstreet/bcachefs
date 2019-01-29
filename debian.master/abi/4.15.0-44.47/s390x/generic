@@ -2030,6 +2030,7 @@ EXPORT_SYMBOL vmlinux 0x00000000	ap_owned_by_def_drv
 EXPORT_SYMBOL vmlinux 0x00000000	ap_query_configuration
 EXPORT_SYMBOL vmlinux 0x00000000	ap_queue_init_reply
 EXPORT_SYMBOL vmlinux 0x00000000	ap_queue_message
+EXPORT_SYMBOL vmlinux 0x00000000	ap_queue_reinit_state
 EXPORT_SYMBOL vmlinux 0x00000000	ap_queue_remove
 EXPORT_SYMBOL vmlinux 0x00000000	ap_queue_resume
 EXPORT_SYMBOL vmlinux 0x00000000	ap_queue_suspend
@@ -7474,6 +7475,9 @@ EXPORT_SYMBOL_GPL net/netfilter/x_tables 0x00000000	xt_tee_enabled
 EXPORT_SYMBOL_GPL net/netfilter/x_tables 0x00000000	xt_unregister_table
 EXPORT_SYMBOL_GPL net/netfilter/xt_RATEEST 0x00000000	xt_rateest_lookup
 EXPORT_SYMBOL_GPL net/netfilter/xt_RATEEST 0x00000000	xt_rateest_put
+EXPORT_SYMBOL_GPL net/netfilter/xt_connlimit 0x00000000	nf_conncount_add
+EXPORT_SYMBOL_GPL net/netfilter/xt_connlimit 0x00000000	nf_conncount_cache_free
+EXPORT_SYMBOL_GPL net/netfilter/xt_connlimit 0x00000000	nf_conncount_lookup
 EXPORT_SYMBOL_GPL net/nsh/nsh 0x00000000	nsh_pop
 EXPORT_SYMBOL_GPL net/nsh/nsh 0x00000000	nsh_push
 EXPORT_SYMBOL_GPL net/openvswitch/openvswitch 0x00000000	__ovs_vport_ops_register
@@ -9814,6 +9818,7 @@ EXPORT_SYMBOL_GPL vmlinux 0x00000000	perf_event_read_value
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	perf_event_refresh
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	perf_event_release_kernel
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	perf_event_sysfs_show
+EXPORT_SYMBOL_GPL vmlinux 0x00000000	perf_event_update_userpage
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	perf_get_aux
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	perf_pmu_migrate_context
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	perf_pmu_register
