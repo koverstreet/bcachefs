@@ -149,12 +149,11 @@ int smc_tx_sendmsg(struct smc_sock *smc, struct msghdr *msg, size_t len)
 			return send_done ?: -ECONNRESET;
 
 		if (!atomic_read(&conn->sndbuf_space)) {
+			if (send_done)
+				return send_done;
 			rc = smc_tx_wait_memory(smc, msg->msg_flags);
-			if (rc) {
-				if (send_done)
-					return send_done;
+			if (rc)
 				goto out_err;
-			}
 			continue;
 		}
 
