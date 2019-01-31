@@ -251,9 +251,12 @@ void bch2_inode_init(struct bch_fs *c, struct bch_inode_unpacked *inode_u,
 		     uid_t uid, gid_t gid, umode_t mode, dev_t rdev,
 		     struct bch_inode_unpacked *parent)
 {
-	s64 now = timespec_to_bch2_time(c,
-		timespec64_trunc(current_kernel_time64(),
-				 c->sb.time_precision));
+	struct timespec64 ts;
+	s64 now;
+
+	ktime_get_coarse_real_ts64(&ts);
+	now = timespec_to_bch2_time(c,
+		timespec64_trunc(ts, c->sb.time_precision));
 
 	memset(inode_u, 0, sizeof(*inode_u));
 
