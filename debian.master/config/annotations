@@ -5889,7 +5889,11 @@ CONFIG_PPS_CLIENT_KTIMER                        flag<TESTING>
 CONFIG_PPS                                      flag<REVIEW>
 
 # Menu: Device Drivers >> PTP clock support
+CONFIG_DP83640_PHY                              policy<{'amd64': 'm', 'arm64': 'm', 'armhf': 'm', 'i386': 'm', 'ppc64el': 'm', 's390x': 'm'}>
 CONFIG_PTP_1588_CLOCK_PCH                       policy<{'i386': 'm'}>
+
+CONFIG_DP83640_PHY                              mark<ENFORCED> note<LP:1785816>
+
 
 # Menu: Device Drivers >> PTP clock support >> PTP clock support
 CONFIG_PTP_1588_CLOCK                           policy<{'amd64': 'm', 'arm64': 'm', 'armhf': 'y', 'i386': 'm', 'ppc64el': 'y', 's390x': 'm'}>
@@ -10028,7 +10032,7 @@ CONFIG_AFIUCV                                   policy<{'s390x': 'm'}>
 CONFIG_SMC                                      policy<{'amd64': 'm', 'arm64': 'm', 'armhf': 'm', 'i386': 'm', 'ppc64el': 'm', 's390x': 'm'}>
 CONFIG_SMC_DIAG                                 policy<{'amd64': 'm', 'arm64': 'm', 'armhf': 'm', 'i386': 'm', 'ppc64el': 'm', 's390x': 'm'}>
 CONFIG_NETWORK_SECMARK                          policy<{'amd64': 'y', 'arm64': 'y', 'armhf': 'y', 'i386': 'y', 'ppc64el': 'y', 's390x': 'y'}>
-CONFIG_NETWORK_PHY_TIMESTAMPING                 policy<{'amd64': 'n', 'arm64': 'n', 'armhf': 'n', 'i386': 'n', 'ppc64el': 'n', 's390x': 'n'}>
+CONFIG_NETWORK_PHY_TIMESTAMPING                 policy<{'amd64': 'y', 'arm64': 'y', 'armhf': 'y', 'i386': 'y', 'ppc64el': 'y', 's390x': 'y'}>
 CONFIG_BRIDGE                                   policy<{'amd64': 'm', 'arm64': 'm', 'armhf': 'm', 'i386': 'm', 'ppc64el': 'm', 's390x': 'm'}>
 CONFIG_BRIDGE_IGMP_SNOOPING                     policy<{'amd64': 'y', 'arm64': 'y', 'armhf': 'y', 'i386': 'y', 'ppc64el': 'y', 's390x': 'y'}>
 CONFIG_BRIDGE_VLAN_FILTERING                    policy<{'amd64': 'y', 'arm64': 'y', 'armhf': 'y', 'i386': 'y', 'ppc64el': 'y', 's390x': 'y'}>
@@ -10058,6 +10062,7 @@ CONFIG_CGROUP_NET_CLASSID                       policy<{'amd64': 'y', 'arm64': '
 CONFIG_BPF_JIT                                  policy<{'amd64': 'y', 'arm64': 'y', 'armhf': 'y', 'ppc64el': 'y', 's390x': 'y'}>
 CONFIG_BPF_STREAM_PARSER                        policy<{'amd64': 'y', 'arm64': 'y', 'armhf': 'y', 'i386': 'y', 'ppc64el': 'y', 's390x': 'y'}>
 
+CONFIG_NETWORK_PHY_TIMESTAMPING                 mark<ENFORCED> note<LP:1785816>
 # Menu: Networking support >> Networking options >> 6LoWPAN Support
 CONFIG_6LOWPAN                                  policy<{'amd64': 'm', 'arm64': 'm', 'armhf': 'm', 'i386': 'm', 'ppc64el': 'm', 's390x': 'n'}>
 CONFIG_6LOWPAN_DEBUGFS                          policy<{'amd64': 'n', 'arm64': 'n', 'armhf': 'n', 'i386': 'n', 'ppc64el': 'n'}>
