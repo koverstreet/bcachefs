@@ -1221,9 +1221,23 @@ xfs_buf_iodone(
 }
 
 /*
- * Requeue a failed buffer for writeback
+ * Requeue a failed buffer for writeback.
  *
- * Return true if the buffer has been re-queued properly, false otherwise
+ * We clear the log item failed state here as well, but we have to be careful
+ * about reference counts because the only active reference counts on the buffer
+ * may be the failed log items. Hence if we clear the log item failed state
+ * before queuing the buffer for IO we can release all active references to
+ * the buffer and free it, leading to use after free problems in
+ * xfs_buf_delwri_queue. It makes no difference to the buffer or log items which
+ * order we process them in - the buffer is locked, and we own the buffer list
+ * so nothing on them is going to change while we are performing this action.
+ *
+ * Hence we can safely queue the buffer for IO before we clear the failed log
+ * item state, therefore  always having an active reference to the buffer and
+ * avoiding the transient zero-reference state that leads to use-after-free.
+ *
+ * Return true if the buffer was added to the buffer list, false if it was
+ * already on the buffer list.
  */
 bool
 xfs_buf_resubmit_failed_buffers(
@@ -1232,11 +1246,12 @@ xfs_buf_resubmit_failed_buffers(
 	struct list_head	*buffer_list)
 {
 	struct xfs_log_item	*next;
+	bool			ret;
+
+	ret = xfs_buf_delwri_queue(bp, buffer_list);
 
 	/*
-	 * Clear XFS_LI_FAILED flag from all items before resubmit
-	 *
-	 * XFS_LI_FAILED set/clear is protected by xa_lock, caller  this
+	 * XFS_LI_FAILED set/clear is protected by xa_lock, caller of this
 	 * function already have it acquired
 	 */
 	for (; lip; lip = next) {
@@ -1244,6 +1259,5 @@ xfs_buf_resubmit_failed_buffers(
 		xfs_clear_li_failed(lip);
 	}
 
-	/* Add this buffer back to the delayed write list */
-	return xfs_buf_delwri_queue(bp, buffer_list);
+	return ret;
 }
