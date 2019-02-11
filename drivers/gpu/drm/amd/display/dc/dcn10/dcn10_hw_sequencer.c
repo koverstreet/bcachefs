@@ -2959,6 +2959,7 @@ static const struct hw_sequencer_funcs dcn10_funcs = {
 	.enable_stream = dce110_enable_stream,
 	.disable_stream = dce110_disable_stream,
 	.unblank_stream = dce110_unblank_stream,
+	.blank_stream = dce110_blank_stream,
 	.enable_display_power_gating = dcn10_dummy_display_power_gating,
 	.power_down_front_end = dcn10_power_down_fe,
 	.power_on_front_end = dcn10_power_on_fe,
