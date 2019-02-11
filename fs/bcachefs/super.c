@@ -496,7 +496,9 @@ static void bch2_fs_free(struct bch_fs *c)
 	bch2_fs_compress_exit(c);
 	percpu_free_rwsem(&c->mark_lock);
 	kfree(c->usage_scratch);
+	free_percpu(c->usage[1]);
 	free_percpu(c->usage[0]);
+	kfree(c->usage_base);
 	free_percpu(c->pcpu);
 	mempool_exit(&c->btree_iters_pool);
 	mempool_exit(&c->btree_bounce_pool);
@@ -689,6 +691,8 @@ static struct bch_fs *bch2_fs_alloc(struct bch_sb *sb, struct bch_opts opts)
 	spin_lock_init(&c->ec_stripes_heap_lock);
 
 	seqcount_init(&c->gc_pos_lock);
+
+	seqcount_init(&c->usage_lock);
 
 	c->copy_gc_enabled		= 1;
 	c->rebalance.enabled		= 1;
@@ -1469,13 +1473,8 @@ err:
 static void dev_usage_clear(struct bch_dev *ca)
 {
 	struct bucket_array *buckets;
-	int cpu;
 
-	for_each_possible_cpu(cpu) {
-		struct bch_dev_usage *p =
-			per_cpu_ptr(ca->usage[0], cpu);
-		memset(p, 0, sizeof(*p));
-	}
+	percpu_memset(ca->usage[0], 0, sizeof(*ca->usage[0]));
 
 	down_read(&ca->bucket_lock);
 	buckets = bucket_array(ca);

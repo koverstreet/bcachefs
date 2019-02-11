@@ -235,42 +235,11 @@ static ssize_t show_fs_alloc_debug(struct bch_fs *c, char *buf)
 {
 	struct printbuf out = _PBUF(buf, PAGE_SIZE);
 	struct bch_fs_usage *fs_usage = bch2_fs_usage_read(c);
-	unsigned i;
 
 	if (!fs_usage)
 		return -ENOMEM;
 
-	pr_buf(&out, "capacity:\t\t\t%llu\n", c->capacity);
-
-	pr_buf(&out, "hidden:\t\t\t\t%llu\n",
-	       fs_usage->hidden);
-	pr_buf(&out, "data:\t\t\t\t%llu\n",
-	       fs_usage->data);
-	pr_buf(&out, "cached:\t\t\t\t%llu\n",
-	       fs_usage->cached);
-	pr_buf(&out, "reserved:\t\t\t%llu\n",
-	       fs_usage->reserved);
-	pr_buf(&out, "nr_inodes:\t\t\t%llu\n",
-	       fs_usage->nr_inodes);
-	pr_buf(&out, "online reserved:\t\t%llu\n",
-	       fs_usage->online_reserved);
-
-	for (i = 0;
-	     i < ARRAY_SIZE(fs_usage->persistent_reserved);
-	     i++) {
-		pr_buf(&out, "%u replicas:\n", i + 1);
-		pr_buf(&out, "\treserved:\t\t%llu\n",
-		       fs_usage->persistent_reserved[i]);
-	}
-
-	for (i = 0; i < c->replicas.nr; i++) {
-		struct bch_replicas_entry *e =
-			cpu_replicas_entry(&c->replicas, i);
-
-		pr_buf(&out, "\t");
-		bch2_replicas_entry_to_text(&out, e);
-		pr_buf(&out, ":\t%llu\n", fs_usage->replicas[i]);
-	}
+	bch2_fs_usage_to_text(&out, c, fs_usage);
 
 	percpu_up_read_preempt_enable(&c->mark_lock);
 

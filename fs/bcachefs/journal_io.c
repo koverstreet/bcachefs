@@ -993,7 +993,8 @@ void bch2_journal_write(struct closure *cl)
 	j->write_start_time = local_clock();
 
 	start	= vstruct_last(jset);
-	end	= bch2_journal_super_entries_add_common(c, start);
+	end	= bch2_journal_super_entries_add_common(c, start,
+						le64_to_cpu(jset->seq));
 	u64s	= (u64 *) end - (u64 *) start;
 	BUG_ON(u64s > j->entry_u64s_reserved);
 

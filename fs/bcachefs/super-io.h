@@ -136,7 +136,7 @@ static inline struct bch_member_cpu bch2_mi_to_cpu(struct bch_member *mi)
 
 struct jset_entry *
 bch2_journal_super_entries_add_common(struct bch_fs *,
-				      struct jset_entry *);
+				      struct jset_entry *, u64);
 
 void bch2_sb_clean_renumber(struct bch_sb_field_clean *, int);
 

@@ -221,7 +221,14 @@ static inline unsigned fs_usage_u64s(struct bch_fs *c)
 void bch2_fs_usage_scratch_put(struct bch_fs *, struct bch_fs_usage *);
 struct bch_fs_usage *bch2_fs_usage_scratch_get(struct bch_fs *);
 
+u64 bch2_fs_usage_read_one(struct bch_fs *, u64 *);
+
 struct bch_fs_usage *bch2_fs_usage_read(struct bch_fs *);
+
+void bch2_fs_usage_acc_to_base(struct bch_fs *, unsigned);
+
+void bch2_fs_usage_to_text(struct printbuf *,
+			   struct bch_fs *, struct bch_fs_usage *);
 
 u64 bch2_fs_sectors_used(struct bch_fs *, struct bch_fs_usage *);
 
@@ -251,7 +258,7 @@ int bch2_mark_key(struct bch_fs *, struct bkey_s_c,
 		  bool, s64, struct bch_fs_usage *,
 		  u64, unsigned);
 int bch2_fs_usage_apply(struct bch_fs *, struct bch_fs_usage *,
-			struct disk_reservation *);
+			struct disk_reservation *, unsigned);
 
 int bch2_mark_overwrite(struct btree_trans *, struct btree_iter *,
 			struct bkey_s_c, struct bkey_i *,
