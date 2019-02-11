@@ -1085,7 +1085,7 @@ static void bch2_btree_set_root_inmem(struct btree_update *as, struct btree *b)
 		bch2_btree_node_free_index(as, NULL,
 					   bkey_i_to_s_c(&old->key),
 					   fs_usage);
-	bch2_fs_usage_apply(c, fs_usage, &as->reserve->disk_res);
+	bch2_fs_usage_apply(c, fs_usage, &as->reserve->disk_res, 0);
 
 	bch2_fs_usage_scratch_put(c, fs_usage);
 	percpu_up_read(&c->mark_lock);
@@ -1190,7 +1190,7 @@ static void bch2_insert_fixup_btree_ptr(struct btree_update *as, struct btree *b
 					   bkey_disassemble(b, k, &tmp),
 					   fs_usage);
 
-	bch2_fs_usage_apply(c, fs_usage, &as->reserve->disk_res);
+	bch2_fs_usage_apply(c, fs_usage, &as->reserve->disk_res, 0);
 
 	bch2_fs_usage_scratch_put(c, fs_usage);
 	percpu_up_read(&c->mark_lock);
@@ -2004,7 +2004,7 @@ static void __bch2_btree_node_update_key(struct bch_fs *c,
 		bch2_btree_node_free_index(as, NULL,
 					   bkey_i_to_s_c(&b->key),
 					   fs_usage);
-		bch2_fs_usage_apply(c, fs_usage, &as->reserve->disk_res);
+		bch2_fs_usage_apply(c, fs_usage, &as->reserve->disk_res, 0);
 
 		bch2_fs_usage_scratch_put(c, fs_usage);
 		percpu_up_read(&c->mark_lock);
