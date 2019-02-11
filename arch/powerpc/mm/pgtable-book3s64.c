@@ -259,15 +259,14 @@ static pmd_t *get_pmd_from_cache(struct mm_struct *mm)
 	return (pmd_t *)ret;
 }
 
-static pmd_t *__alloc_for_pmdcache(struct mm_struct *mm)
+static pmd_t *__alloc_for_pmdcache(struct mm_struct *mm, gfp_t gfp)
 {
 	void *ret = NULL;
 	struct page *page;
-	gfp_t gfp = GFP_KERNEL_ACCOUNT | __GFP_ZERO;
 
-	if (mm == &init_mm)
-		gfp &= ~__GFP_ACCOUNT;
-	page = alloc_page(gfp);
+	if (mm != &init_mm)
+		gfp |= __GFP_ACCOUNT;
+	page = alloc_page(gfp|__GFP_ZERO);
 	if (!page)
 		return NULL;
 	if (!pgtable_pmd_page_ctor(page)) {
@@ -300,7 +299,8 @@ static pmd_t *__alloc_for_pmdcache(struct mm_struct *mm)
 	return (pmd_t *)ret;
 }
 
-pmd_t *pmd_fragment_alloc(struct mm_struct *mm, unsigned long vmaddr)
+pmd_t *pmd_fragment_alloc(struct mm_struct *mm, unsigned long vmaddr,
+			  gfp_t gfp)
 {
 	pmd_t *pmd;
 
@@ -308,7 +308,7 @@ pmd_t *pmd_fragment_alloc(struct mm_struct *mm, unsigned long vmaddr)
 	if (pmd)
 		return pmd;
 
-	return __alloc_for_pmdcache(mm);
+	return __alloc_for_pmdcache(mm, gfp);
 }
 
 void pmd_fragment_free(unsigned long *pmd)
@@ -341,13 +341,14 @@ static pte_t *get_pte_from_cache(struct mm_struct *mm)
 	return (pte_t *)ret;
 }
 
-static pte_t *__alloc_for_ptecache(struct mm_struct *mm, int kernel)
+static pte_t *__alloc_for_ptecache(struct mm_struct *mm, int kernel,
+				   gfp_t gfp)
 {
 	void *ret = NULL;
 	struct page *page;
 
 	if (!kernel) {
-		page = alloc_page(PGALLOC_GFP | __GFP_ACCOUNT);
+		page = alloc_page(gfp | __GFP_ZERO | __GFP_ACCOUNT);
 		if (!page)
 			return NULL;
 		if (!pgtable_page_ctor(page)) {
@@ -355,7 +356,7 @@ static pte_t *__alloc_for_ptecache(struct mm_struct *mm, int kernel)
 			return NULL;
 		}
 	} else {
-		page = alloc_page(PGALLOC_GFP);
+		page = alloc_page(gfp | __GFP_ZERO);
 		if (!page)
 			return NULL;
 	}
@@ -384,7 +385,8 @@ static pte_t *__alloc_for_ptecache(struct mm_struct *mm, int kernel)
 	return (pte_t *)ret;
 }
 
-pte_t *pte_fragment_alloc(struct mm_struct *mm, unsigned long vmaddr, int kernel)
+pte_t *pte_fragment_alloc(struct mm_struct *mm, unsigned long vmaddr,
+			  int kernel, gfp_t gfp)
 {
 	pte_t *pte;
 
@@ -392,7 +394,7 @@ pte_t *pte_fragment_alloc(struct mm_struct *mm, unsigned long vmaddr, int kernel
 	if (pte)
 		return pte;
 
-	return __alloc_for_ptecache(mm, kernel);
+	return __alloc_for_ptecache(mm, kernel, gfp);
 }
 
 void pte_fragment_free(unsigned long *table, int kernel)

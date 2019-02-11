@@ -43,12 +43,13 @@ EXPORT_SYMBOL(ioremap_bot);	/* aka VMALLOC_END */
 
 extern char etext[], _stext[], _sinittext[], _einittext[];
 
-__ref pte_t *pte_alloc_one_kernel(struct mm_struct *mm, unsigned long address)
+__ref pte_t *pte_alloc_one_kernel(struct mm_struct *mm, unsigned long address,
+				  gfp_t gfp)
 {
 	pte_t *pte;
 
 	if (slab_is_available()) {
-		pte = (pte_t *)__get_free_page(GFP_KERNEL|__GFP_ZERO);
+		pte = (pte_t *)get_zeroed_page(gfp);
 	} else {
 		pte = __va(memblock_phys_alloc(PAGE_SIZE, PAGE_SIZE));
 		if (pte)
@@ -231,7 +232,7 @@ int map_kernel_page(unsigned long va, phys_addr_t pa, pgprot_t prot)
 	/* Use upper 10 bits of VA to index the first level map */
 	pd = pmd_offset(pud_offset(pgd_offset_k(va), va), va);
 	/* Use middle 10 bits of VA to index the second-level map */
-	pg = pte_alloc_kernel(pd, va);
+	pg = pte_alloc_kernel(pd, va, GFP_KERNEL);
 	if (pg != 0) {
 		err = 0;
 		/* The PTE should never be already set nor present in the

@@ -70,7 +70,8 @@ static inline void pgd_free(struct mm_struct *mm, pgd_t *pgd)
 	free_page((unsigned long)pgd);
 }
 
-extern pte_t *pte_alloc_one_kernel(struct mm_struct *mm, unsigned long address);
+extern pte_t *pte_alloc_one_kernel(struct mm_struct *mm, unsigned long address,
+				   gfp_t gfp);
 
 static inline struct page *pte_alloc_one(struct mm_struct *mm,
 					 unsigned long address)

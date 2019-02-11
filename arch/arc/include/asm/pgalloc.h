@@ -91,14 +91,10 @@ static inline int __get_order_pte(void)
 }
 
 static inline pte_t *pte_alloc_one_kernel(struct mm_struct *mm,
-					unsigned long address)
+					  unsigned long address,
+					  gfp_t gfp)
 {
-	pte_t *pte;
-
-	pte = (pte_t *) __get_free_pages(GFP_KERNEL | __GFP_ZERO,
-					 __get_order_pte());
-
-	return pte;
+	return (pte_t *) __get_free_pages(gfp|__GFP_ZERO, __get_order_pte());
 }
 
 static inline pgtable_t

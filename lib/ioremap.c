@@ -65,7 +65,7 @@ static int ioremap_pte_range(pmd_t *pmd, unsigned long addr,
 	u64 pfn;
 
 	pfn = phys_addr >> PAGE_SHIFT;
-	pte = pte_alloc_kernel(pmd, addr);
+	pte = pte_alloc_kernel(pmd, addr, GFP_KERNEL);
 	if (!pte)
 		return -ENOMEM;
 	do {
@@ -83,7 +83,7 @@ static inline int ioremap_pmd_range(pud_t *pud, unsigned long addr,
 	unsigned long next;
 
 	phys_addr -= addr;
-	pmd = pmd_alloc(&init_mm, pud, addr);
+	pmd = pmd_alloc(&init_mm, pud, addr, GFP_KERNEL);
 	if (!pmd)
 		return -ENOMEM;
 	do {
@@ -110,7 +110,7 @@ static inline int ioremap_pud_range(p4d_t *p4d, unsigned long addr,
 	unsigned long next;
 
 	phys_addr -= addr;
-	pud = pud_alloc(&init_mm, p4d, addr);
+	pud = pud_alloc(&init_mm, p4d, addr, GFP_KERNEL);
 	if (!pud)
 		return -ENOMEM;
 	do {
@@ -137,7 +137,7 @@ static inline int ioremap_p4d_range(pgd_t *pgd, unsigned long addr,
 	unsigned long next;
 
 	phys_addr -= addr;
-	p4d = p4d_alloc(&init_mm, pgd, addr);
+	p4d = p4d_alloc(&init_mm, pgd, addr, GFP_KERNEL);
 	if (!p4d)
 		return -ENOMEM;
 	do {

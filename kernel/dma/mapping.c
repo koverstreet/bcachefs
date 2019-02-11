@@ -274,7 +274,7 @@ static struct vm_struct *__dma_common_pages_remap(struct page **pages,
 	if (!area)
 		return NULL;
 
-	if (map_vm_area(area, prot, pages)) {
+	if (map_vm_area(area, GFP_KERNEL, prot, pages)) {
 		vunmap(area->addr);
 		return NULL;
 	}

@@ -210,14 +210,14 @@ pte_t *huge_pte_alloc(struct mm_struct *mm,
 	pte_t *ptep = NULL;
 
 	pgdp = pgd_offset(mm, addr);
-	pudp = pud_alloc(mm, pgdp, addr);
+	pudp = pud_alloc(mm, pgdp, addr, GFP_KERNEL);
 	if (!pudp)
 		return NULL;
 
 	if (sz == PUD_SIZE) {
 		ptep = (pte_t *)pudp;
 	} else if (sz == (PAGE_SIZE * CONT_PTES)) {
-		pmdp = pmd_alloc(mm, pudp, addr);
+		pmdp = pmd_alloc(mm, pudp, addr, GFP_KERNEL);
 
 		WARN_ON(addr & (sz - 1));
 		/*
@@ -233,9 +233,9 @@ pte_t *huge_pte_alloc(struct mm_struct *mm,
 		    pud_none(READ_ONCE(*pudp)))
 			ptep = huge_pmd_share(mm, addr, pudp);
 		else
-			ptep = (pte_t *)pmd_alloc(mm, pudp, addr);
+			ptep = (pte_t *)pmd_alloc(mm, pudp, addr, GFP_KERNEL);
 	} else if (sz == (PMD_SIZE * CONT_PMDS)) {
-		pmdp = pmd_alloc(mm, pudp, addr);
+		pmdp = pmd_alloc(mm, pudp, addr, GFP_KERNEL);
 		WARN_ON(addr & (sz - 1));
 		return (pte_t *)pmdp;
 	}

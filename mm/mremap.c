@@ -65,14 +65,14 @@ static pmd_t *alloc_new_pmd(struct mm_struct *mm, struct vm_area_struct *vma,
 	pmd_t *pmd;
 
 	pgd = pgd_offset(mm, addr);
-	p4d = p4d_alloc(mm, pgd, addr);
+	p4d = p4d_alloc(mm, pgd, addr, GFP_KERNEL);
 	if (!p4d)
 		return NULL;
-	pud = pud_alloc(mm, p4d, addr);
+	pud = pud_alloc(mm, p4d, addr, GFP_KERNEL);
 	if (!pud)
 		return NULL;
 
-	pmd = pmd_alloc(mm, pud, addr);
+	pmd = pmd_alloc(mm, pud, addr, GFP_KERNEL);
 	if (!pmd)
 		return NULL;
 

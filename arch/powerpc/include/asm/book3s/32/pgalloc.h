@@ -45,7 +45,7 @@ static inline void pgd_free(struct mm_struct *mm, pgd_t *pgd)
  * We don't have any real pmd's, and this code never triggers because
  * the pgd will always be present..
  */
-/* #define pmd_alloc_one(mm,address)       ({ BUG(); ((pmd_t *)2); }) */
+/* #define pmd_alloc_one(mm,address,gfp) ({ BUG(); ((pmd_t *)2); }) */
 #define pmd_free(mm, x) 		do { } while (0)
 #define __pmd_free_tlb(tlb,x,a)		do { } while (0)
 /* #define pgd_populate(mm, pmd, pte)      BUG() */
@@ -82,7 +82,8 @@ static inline void pmd_populate(struct mm_struct *mm, pmd_t *pmdp,
 #define pmd_pgtable(pmd) pmd_page(pmd)
 #endif
 
-extern pte_t *pte_alloc_one_kernel(struct mm_struct *mm, unsigned long addr);
+extern pte_t *pte_alloc_one_kernel(struct mm_struct *mm, unsigned long addr,
+				   gfp_t gfp);
 extern pgtable_t pte_alloc_one(struct mm_struct *mm, unsigned long addr);
 
 static inline void pte_free_kernel(struct mm_struct *mm, pte_t *pte)

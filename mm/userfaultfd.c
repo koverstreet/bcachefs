@@ -153,10 +153,10 @@ static pmd_t *mm_alloc_pmd(struct mm_struct *mm, unsigned long address)
 	pud_t *pud;
 
 	pgd = pgd_offset(mm, address);
-	p4d = p4d_alloc(mm, pgd, address);
+	p4d = p4d_alloc(mm, pgd, address, GFP_KERNEL);
 	if (!p4d)
 		return NULL;
-	pud = pud_alloc(mm, p4d, address);
+	pud = pud_alloc(mm, p4d, address, GFP_KERNEL);
 	if (!pud)
 		return NULL;
 	/*
@@ -164,7 +164,7 @@ static pmd_t *mm_alloc_pmd(struct mm_struct *mm, unsigned long address)
 	 * missing, the *pmd may be already established and in
 	 * turn it may also be a trans_huge_pmd.
 	 */
-	return pmd_alloc(mm, pud, address);
+	return pmd_alloc(mm, pud, address, GFP_KERNEL);
 }
 
 #ifdef CONFIG_HUGETLB_PAGE

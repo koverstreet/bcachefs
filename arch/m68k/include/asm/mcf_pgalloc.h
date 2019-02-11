@@ -13,15 +13,10 @@ extern inline void pte_free_kernel(struct mm_struct *mm, pte_t *pte)
 extern const char bad_pmd_string[];
 
 extern inline pte_t *pte_alloc_one_kernel(struct mm_struct *mm,
-	unsigned long address)
+					  unsigned long address,
+					  gfp_t gfp)
 {
-	unsigned long page = __get_free_page(GFP_DMA);
-
-	if (!page)
-		return NULL;
-
-	memset((void *)page, 0, PAGE_SIZE);
-	return (pte_t *) (page);
+	return (pte_t *) get_zeroed_page(gfp|GFP_DMA);
 }
 
 extern inline pmd_t *pmd_alloc_kernel(pgd_t *pgd, unsigned long address)
@@ -30,7 +25,7 @@ extern inline pmd_t *pmd_alloc_kernel(pgd_t *pgd, unsigned long address)
 }
 
 #define pmd_alloc_one_fast(mm, address) ({ BUG(); ((pmd_t *)1); })
-#define pmd_alloc_one(mm, address)      ({ BUG(); ((pmd_t *)2); })
+#define pmd_alloc_one(mm, address, gfp) ({ BUG(); ((pmd_t *)2); })
 
 #define pte_alloc_one_fast(mm, addr) pte_alloc_one(mm, addr)
 

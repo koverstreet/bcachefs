@@ -418,13 +418,13 @@ static pmd_t *pmd_alloc_map(struct mm_struct *mm, unsigned long addr)
 	pmd_t *pmd;
 
 	pgd = pgd_offset(mm, addr);
-	p4d = p4d_alloc(mm, pgd, addr);
+	p4d = p4d_alloc(mm, pgd, addr, GFP_KERNEL);
 	if (!p4d)
 		return NULL;
-	pud = pud_alloc(mm, p4d, addr);
+	pud = pud_alloc(mm, p4d, addr, GFP_KERNEL);
 	if (!pud)
 		return NULL;
-	pmd = pmd_alloc(mm, pud, addr);
+	pmd = pmd_alloc(mm, pud, addr, GFP_KERNEL);
 	return pmd;
 }
 

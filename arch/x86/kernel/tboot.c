@@ -124,13 +124,13 @@ static int map_tboot_page(unsigned long vaddr, unsigned long pfn,
 	pte_t *pte;
 
 	pgd = pgd_offset(&tboot_mm, vaddr);
-	p4d = p4d_alloc(&tboot_mm, pgd, vaddr);
+	p4d = p4d_alloc(&tboot_mm, pgd, vaddr, GFP_KERNEL);
 	if (!p4d)
 		return -1;
-	pud = pud_alloc(&tboot_mm, p4d, vaddr);
+	pud = pud_alloc(&tboot_mm, p4d, vaddr, GFP_KERNEL);
 	if (!pud)
 		return -1;
-	pmd = pmd_alloc(&tboot_mm, pud, vaddr);
+	pmd = pmd_alloc(&tboot_mm, pud, vaddr, GFP_KERNEL);
 	if (!pmd)
 		return -1;
 	pte = pte_alloc_map(&tboot_mm, pmd, vaddr);

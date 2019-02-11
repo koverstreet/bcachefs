@@ -29,9 +29,9 @@ pte_t *huge_pte_alloc(struct mm_struct *mm, unsigned long addr,
 	pte_t *pte = NULL;
 
 	pgd = pgd_offset(mm, addr);
-	pud = pud_alloc(mm, pgd, addr);
+	pud = pud_alloc(mm, pgd, addr, GFP_KERNEL);
 	if (pud)
-		pte = (pte_t *)pmd_alloc(mm, pud, addr);
+		pte = (pte_t *)pmd_alloc(mm, pud, addr, GFP_KERNEL);
 
 	return pte;
 }

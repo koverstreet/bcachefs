@@ -25,13 +25,17 @@ static inline void pmd_populate(struct mm_struct *mm, pmd_t *pmd,
 extern void pgd_init(unsigned long *p);
 
 static inline pte_t *pte_alloc_one_kernel(struct mm_struct *mm,
-					unsigned long address)
+					  unsigned long address,
+					  gfp_t gfp)
 {
 	pte_t *pte;
 	unsigned long *kaddr, i;
 
-	pte = (pte_t *) __get_free_pages(GFP_KERNEL | __GFP_RETRY_MAYFAIL,
+	pte = (pte_t *) __get_free_pages(gfp | __GFP_RETRY_MAYFAIL,
 					 PTE_ORDER);
+	if (!pte)
+		return NULL;
+
 	kaddr = (unsigned long *)pte;
 	if (address & 0x80000000)
 		for (i = 0; i < (PAGE_SIZE/4); i++)

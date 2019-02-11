@@ -300,7 +300,7 @@ static int __init consistent_init(void)
 
 	do {
 		pgd = pgd_offset(&init_mm, CONSISTENT_BASE);
-		pmd = pmd_alloc(&init_mm, pgd, CONSISTENT_BASE);
+		pmd = pmd_alloc(&init_mm, pgd, CONSISTENT_BASE, GFP_KERNEL);
 		if (!pmd) {
 			pr_err("%s: no pmd tables\n", __func__);
 			ret = -ENOMEM;
@@ -310,7 +310,7 @@ static int __init consistent_init(void)
 		 * It's not necessary to warn here. */
 		/* WARN_ON(!pmd_none(*pmd)); */
 
-		pte = pte_alloc_kernel(pmd, CONSISTENT_BASE);
+		pte = pte_alloc_kernel(pmd, CONSISTENT_BASE, GFP_KERNEL);
 		if (!pte) {
 			ret = -ENOMEM;
 			break;

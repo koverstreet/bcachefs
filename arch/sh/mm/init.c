@@ -53,13 +53,13 @@ static pte_t *__get_pte_phys(unsigned long addr)
 		return NULL;
 	}
 
-	pud = pud_alloc(NULL, pgd, addr);
+	pud = pud_alloc(NULL, pgd, addr, GFP_KERNEL);
 	if (unlikely(!pud)) {
 		pud_ERROR(*pud);
 		return NULL;
 	}
 
-	pmd = pmd_alloc(NULL, pud, addr);
+	pmd = pmd_alloc(NULL, pud, addr, GFP_KERNEL);
 	if (unlikely(!pmd)) {
 		pmd_ERROR(*pmd);
 		return NULL;

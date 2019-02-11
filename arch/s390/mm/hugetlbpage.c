@@ -192,14 +192,14 @@ pte_t *huge_pte_alloc(struct mm_struct *mm,
 	pmd_t *pmdp = NULL;
 
 	pgdp = pgd_offset(mm, addr);
-	p4dp = p4d_alloc(mm, pgdp, addr);
+	p4dp = p4d_alloc(mm, pgdp, addr, GFP_KERNEL);
 	if (p4dp) {
-		pudp = pud_alloc(mm, p4dp, addr);
+		pudp = pud_alloc(mm, p4dp, addr, GFP_KERNEL);
 		if (pudp) {
 			if (sz == PUD_SIZE)
 				return (pte_t *) pudp;
 			else if (sz == PMD_SIZE)
-				pmdp = pmd_alloc(mm, pudp, addr);
+				pmdp = pmd_alloc(mm, pudp, addr, GFP_KERNEL);
 		}
 	}
 	return (pte_t *) pmdp;

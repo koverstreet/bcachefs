@@ -119,17 +119,18 @@ EXPORT_SYMBOL(iounmap);
  */
 
 pte_t __ref *pte_alloc_one_kernel(struct mm_struct *mm,
-					 unsigned long address)
+				  unsigned long address,
+				  gfp_t gfp)
 {
 	pte_t *pte;
 
 	if (likely(mem_init_done)) {
-		pte = (pte_t *) __get_free_page(GFP_KERNEL);
+		pte = (pte_t *) get_zeroed_page(gfp);
 	} else {
 		pte = (pte_t *) __va(memblock_phys_alloc(PAGE_SIZE, PAGE_SIZE));
+		if (pte)
+			clear_page(pte);
 	}
 
-	if (pte)
-		clear_page(pte);
 	return pte;
 }
