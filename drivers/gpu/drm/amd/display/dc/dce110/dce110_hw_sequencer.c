@@ -924,8 +924,6 @@ void hwss_edp_power_control(
 				"%s: Skipping Panel Power action: %s\n",
 				__func__, (power_up ? "On":"Off"));
 	}
-
-	hwss_edp_wait_for_hpd_ready(link, true);
 }
 
 /*todo: cloned in stream enc, fix*/
@@ -1026,11 +1024,9 @@ void dce110_disable_stream(struct pipe_ctx *pipe_ctx, int option)
 	}
 
 	/* blank at encoder level */
-	if (dc_is_dp_signal(pipe_ctx->stream->signal)) {
-		if (pipe_ctx->stream->sink->link->connector_signal == SIGNAL_TYPE_EDP)
-			hwss_edp_backlight_control(link, false);
+	if (dc_is_dp_signal(pipe_ctx->stream->signal))
 		pipe_ctx->stream_res.stream_enc->funcs->dp_blank(pipe_ctx->stream_res.stream_enc);
-	}
+
 	link->link_enc->funcs->connect_dig_be_to_fe(
 			link->link_enc,
 			pipe_ctx->stream_res.stream_enc->id,
@@ -1042,15 +1038,12 @@ void dce110_unblank_stream(struct pipe_ctx *pipe_ctx,
 		struct dc_link_settings *link_settings)
 {
 	struct encoder_unblank_param params = { { 0 } };
-	struct dc_link *link = pipe_ctx->stream->sink->link;
 
 	/* only 3 items below are used by unblank */
 	params.pixel_clk_khz =
 		pipe_ctx->stream->timing.pix_clk_khz;
 	params.link_settings.link_rate = link_settings->link_rate;
 	pipe_ctx->stream_res.stream_enc->funcs->dp_unblank(pipe_ctx->stream_res.stream_enc, &params);
-	if (link->connector_signal == SIGNAL_TYPE_EDP)
-		hwss_edp_backlight_control(link, true);
 }
 
 
@@ -1396,10 +1389,8 @@ static void power_down_encoders(struct dc *dc)
 
 			if (!dc->links[i]->wa_flags.dp_keep_receiver_powered)
 				dp_receiver_power_ctrl(dc->links[i], false);
-			if (connector_id == CONNECTOR_ID_EDP) {
+			if (connector_id == CONNECTOR_ID_EDP)
 				signal = SIGNAL_TYPE_EDP;
-				hwss_edp_backlight_control(dc->links[i], false);
-			}
 		}
 
 		dc->links[i]->link_enc->funcs->disable_output(
@@ -3004,6 +2995,7 @@ static const struct hw_sequencer_funcs dce110_funcs = {
 	.optimize_shared_resources = optimize_shared_resources,
 	.edp_backlight_control = hwss_edp_backlight_control,
 	.edp_power_control = hwss_edp_power_control,
+	.edp_wait_for_hpd_ready = hwss_edp_wait_for_hpd_ready,
 };
 
 void dce110_hw_sequencer_construct(struct dc *dc)
